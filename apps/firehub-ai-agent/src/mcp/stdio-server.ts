@@ -16,7 +16,9 @@ import { FireHubApiClient, parseProactiveExecutionId, parseSharePurpose } from '
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION, PROACTIVE_EXECUTION_ID_ENV } from '../constants.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
 import type { SafeToolFn, JsonResultFn } from './firehub-mcp-server.js';
+import { DB_DIALECT_ENV, parseDbDialect, type DbDialect } from '../agent/db-dialect.js';
 import {
+  isToolAvailableForDialect,
   isToolPermitted,
   registerAllTools,
   toolErrorResult,
@@ -48,6 +50,8 @@ export function createMcpSafeTool(
   server: McpServer,
   tracker: FailureTracker,
   userPermissions?: string[],
+  // WD-79: 테넌트 방언 — Tibero 에서 미지원인 도구(행 검색)는 권한과 마찬가지로 등록 자체를 건너뛴다.
+  dbDialect?: DbDialect,
 ): SafeToolFn {
   return function safeTool<Schema extends AnyZodRawShape>(
     name: string,
@@ -56,7 +60,7 @@ export function createMcpSafeTool(
     handler: (args: InferShape<Schema>) => Promise<ToolResult>,
   ) {
     // 권한 없는 도구는 등록 자체를 건너뛴다 — 에이전트가 도구 존재를 인지하지 못하게 한다.
-    if (isToolPermitted(name, userPermissions)) {
+    if (isToolPermitted(name, userPermissions) && isToolAvailableForDialect(name, dbDialect)) {
       server.tool(
         name,
         description,
@@ -220,7 +224,9 @@ async function main(): Promise<void> {
 
   // 연속 실패 트래커 생성 후 safeTool 래퍼에 주입 (Tier1 경고 주입용) + 권한 게이팅
   const tracker = createTracker();
-  const safeTool = createMcpSafeTool(server, tracker, userPermissions);
+  // WD-79: 부모가 심은 테넌트 방언(없거나 모르는 값이면 PG).
+  const dbDialect = parseDbDialect(process.env[DB_DIALECT_ENV]);
+  const safeTool = createMcpSafeTool(server, tracker, userPermissions, dbDialect);
 
   // Register all FireHub tools (공통 함수 사용)
   // GraphRAG 도구는 LLM completion 을 호출하므로 자격증명이 필요하다 — resolveStdioCredentials
@@ -229,6 +235,7 @@ async function main(): Promise<void> {
   // (#708 — 환경/키체인 폴백 없음).
   registerAllTools(apiClient, safeTool, jsonResult, {
     userPermissions,
+    dbDialect,
     credentials: resolveStdioCredentials(process.env),
   });
 

@@ -1,19 +1,27 @@
 import { z } from 'zod/v4';
 import type { FireHubApiClient } from '../api-client.js';
+import { DEFAULT_DB_DIALECT, type DbDialect } from '../../agent/db-dialect.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 
 export function registerDataTools(
   apiClient: FireHubApiClient,
   safeTool: SafeToolFn,
   jsonResult: JsonResultFn,
+  // WD-79: 테넌트 저장소 방언 — Tibero 일 때만 도구 설명을 Tibero 용으로 바꾼다(PG 는 기존 설명 그대로).
+  dialect: DbDialect = DEFAULT_DB_DIALECT,
 ) {
+  const isTibero = dialect === 'TIBERO';
   return [
     safeTool(
       'execute_sql_query',
       '데이터셋 테이블에 SQL 쿼리를 실행합니다. SELECT, INSERT, UPDATE, DELETE를 지원합니다. 테이블명은 데이터셋의 tableName을 사용하세요 (get_dataset으로 확인).',
       {
         datasetId: z.number().describe('대상 데이터셋 ID'),
-        sql: z.string().describe('실행할 SQL 쿼리. 테이블명은 data."{tableName}" 형식으로 사용'),
+        sql: z.string().describe(
+          isTibero
+            ? '실행할 SQL 쿼리. 테이블명은 get_data_schema 가 돌려준 schema 로 genia_t{id}.{tableName} 형식으로 사용'
+            : '실행할 SQL 쿼리. 테이블명은 data."{tableName}" 형식으로 사용',
+        ),
         maxRows: z
           .number()
           .min(1)

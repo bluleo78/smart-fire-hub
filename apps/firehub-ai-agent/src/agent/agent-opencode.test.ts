@@ -39,6 +39,12 @@ describe('buildOpenCodeConfig', () => {
     expect(Array.isArray(cfg.mcp.firehub.command)).toBe(true);
   });
 
+  // WD-79: 테넌트 DB 방언을 MCP 프로세스 환경에 싣는다.
+  it("dbDialect 'TIBERO' 면 mcp.firehub 환경에 DB_DIALECT=TIBERO 를 싣고, 없으면 키 자체가 없다", () => {
+    expect(buildOpenCodeConfig({ ...BASE, dbDialect: 'TIBERO' }).mcp.firehub.environment.DB_DIALECT).toBe('TIBERO');
+    expect('DB_DIALECT' in buildOpenCodeConfig(BASE).mcp.firehub.environment).toBe(false);
+  });
+
   // S3: Proactive 실행이면 stdio MCP 프로세스에 AI_PURPOSE=share 를 심는다(채팅은 심지 않는다).
   it("aiPurpose 'share' 면 mcp.firehub 환경에 AI_PURPOSE=share 를 싣고, 없으면 키 자체가 없다", () => {
     expect(buildOpenCodeConfig({ ...BASE, aiPurpose: 'share' }).mcp.firehub.environment.AI_PURPOSE).toBe('share');

@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { DEFAULT_DB_DIALECT, type DbDialect } from '../../agent/db-dialect.js';
 import { canvasSchema } from './shared-schemas.js';
 import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
@@ -135,7 +136,10 @@ export function registerAnalyticsTools(
   apiClient: FireHubApiClient,
   safeTool: SafeToolFn,
   jsonResult: JsonResultFn,
+  // WD-79: 테넌트 저장소 방언 — Tibero 일 때만 도구 설명을 Tibero 용으로 바꾼다(PG 는 기존 설명 그대로).
+  dialect: DbDialect = DEFAULT_DB_DIALECT,
 ) {
+  const isTibero = dialect === 'TIBERO';
   return [
     // 1. 임시 SQL 실행 (SELECT-only, 저장 없이)
     // CRITICAL: AI 도구는 readOnly=true로 호출. DML(INSERT/UPDATE/DELETE) 차단.
@@ -144,9 +148,15 @@ export function registerAnalyticsTools(
     //   "집계는 SQL 로" 규칙을 두어 opencode·cli 경로 모두에 적용되게 한다.
     safeTool(
       'execute_analytics_query',
-      'data 스키마의 모든 테이블에서 SELECT 쿼리를 실행합니다. cross-dataset JOIN 가능. DML은 지원하지 않습니다. 10행 이상의 고정 참고 데이터(명단·코드표)는 VALUES로 인라인하지 말고 데이터셋으로 만들어 JOIN하세요. 합계·평균·비율·증감률은 반환된 원시 행으로 직접 계산하지 말고 집계 SQL(SUM/AVG/COUNT/GROUP BY)로 계산해 결과값을 그대로 인용하세요.',
+      isTibero
+        ? '테넌트 저장소(Tibero)의 모든 테이블에서 SELECT 쿼리를 실행합니다. cross-dataset JOIN 가능. DML은 지원하지 않습니다. 10행 이상의 고정 참고 데이터(명단·코드표)는 VALUES로 인라인하지 말고 데이터셋으로 만들어 JOIN하세요. 합계·평균·비율·증감률은 반환된 원시 행으로 직접 계산하지 말고 집계 SQL(SUM/AVG/COUNT/GROUP BY)로 계산해 결과값을 그대로 인용하세요.'
+        : 'data 스키마의 모든 테이블에서 SELECT 쿼리를 실행합니다. cross-dataset JOIN 가능. DML은 지원하지 않습니다. 10행 이상의 고정 참고 데이터(명단·코드표)는 VALUES로 인라인하지 말고 데이터셋으로 만들어 JOIN하세요. 합계·평균·비율·증감률은 반환된 원시 행으로 직접 계산하지 말고 집계 SQL(SUM/AVG/COUNT/GROUP BY)로 계산해 결과값을 그대로 인용하세요.',
       {
-        sql: z.string().describe('실행할 SELECT SQL 쿼리. 테이블명은 data 스키마에서 그냥 "tableName" 형식으로 사용'),
+        sql: z.string().describe(
+          isTibero
+            ? '실행할 SELECT SQL 쿼리. 테이블명은 get_data_schema 가 돌려준 schema 로 genia_t{id}.{tableName} 형식으로 사용'
+            : '실행할 SELECT SQL 쿼리. 테이블명은 data 스키마에서 그냥 "tableName" 형식으로 사용',
+        ),
         maxRows: z
           .number()
           .min(1)

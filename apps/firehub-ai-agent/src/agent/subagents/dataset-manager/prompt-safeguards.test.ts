@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { loadSubagents, resetSubagentCache } from '../../subagent-loader.js';
+import { findPgOnlySyntax, removedNonPgLines } from '../../tibero-prompt-lint.fixture.js';
 
 /**
  * dataset-manager 프롬프트 회귀 가드 (#571).
@@ -56,5 +58,56 @@ describe('dataset-manager prompt safeguards (#571)', () => {
     expect(agent).toContain('핵심 기억사항');
     const memo = agent.split('핵심 기억사항')[1];
     expect(memo).toMatch(/delete_dataset.*deletedAt|deletedAt.*delete_dataset/s);
+  });
+});
+
+/**
+ * Tibero 테넌트용 dataset-manager 사본(tibero/*.md) 가드 (WD-79).
+ *
+ * Tibero 저장소는 GEOMETRY 컬럼을 만들 수 없고(api 422 — "GEOMETRY 컬럼: Tibero 저장소에서 아직 지원하지 않습니다"),
+ * 이름은 30자·Tibero 예약어 제한을 받는다. PG 안내(GEOMETRY 자동 제안, 63자)를 그대로 주면 만들 수 없는 설계를 권한다.
+ */
+describe('dataset-manager Tibero 사본 (WD-79)', () => {
+  const readTibero = (name: string) => fs.readFileSync(path.join(__dirname, 'tibero', name), 'utf-8');
+  const FILES = ['agent.md', 'rules.md', 'examples.md'] as const;
+  // 원본에서 지우거나 바꿔도 되는 PG 전용 줄 표지(GIS 제안·이름 길이)
+  const PG_MARKER = /GEOMETRY|GiST|PostGIS|SRID|4326|공간|GIS|lat|lng|위경도|WKT|GeoJSON|NUMERIC\(9,6\)|63자|56자|PostgreSQL/;
+
+  it.each(FILES)('tibero/%s 에 PG 전용 문법이 없다', (name) => {
+    expect(findPgOnlySyntax(readTibero(name))).toEqual([]);
+  });
+
+  it.each(FILES)('tibero/%s 는 PG 전용 줄 외에는 원본 줄을 그대로 지닌다(안전 가드 누락 방지)', (name) => {
+    const original = fs.readFileSync(path.join(__dirname, name), 'utf-8');
+    expect(removedNonPgLines(original, readTibero(name), PG_MARKER)).toEqual([]);
+  });
+
+  it.each(FILES)('tibero/%s 는 GEOMETRY 컬럼을 권하지 않는다(SRID·GiST·GEOMETRY(Point) 제안 없음)', (name) => {
+    const text = readTibero(name);
+    expect(text).not.toMatch(/GEOMETRY\(Point|SRID|GiST|PostGIS/);
+  });
+
+  it('tibero/rules.md 가 GEOMETRY 거부(422)와 30자·예약어 이름 규칙을 안내하고 63자 안내는 없다', () => {
+    const rules = readTibero('rules.md');
+    expect(rules).toContain('GEOMETRY');
+    expect(rules).toContain('422');
+    expect(rules).toContain('30자');
+    expect(rules).toContain('예약어');
+    expect(rules).not.toContain('63자');
+  });
+
+  it('tibero/rules.md 와 agent.md 에도 delete_dataset deletedAt 요약 의무가 남아 있다(#571)', () => {
+    expect(readTibero('rules.md')).toMatch(/시각이 빠진 요약.*규칙 위반|규칙 위반.*시각/s);
+    const memo = readTibero('agent.md').split('핵심 기억사항')[1] ?? '';
+    expect(memo).toMatch(/delete_dataset.*deletedAt|deletedAt.*delete_dataset/s);
+  });
+
+  it('로더가 TIBERO 에서 사본을 쓴다 — description(메인 위임 가이드에 실림)도 GEOMETRY 를 약속하지 않는다', () => {
+    resetSubagentCache();
+    const tibero = loadSubagents(undefined, 'TIBERO')['dataset-manager'];
+    expect(tibero.description).not.toMatch(/GEOMETRY|SRID/);
+    expect(tibero.prompt).not.toMatch(/GEOMETRY\(Point|SRID|GiST/);
+    expect(loadSubagents(undefined, 'POSTGRESQL')['dataset-manager'].description).toContain('SRID 4326');
+    resetSubagentCache();
   });
 });

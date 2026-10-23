@@ -17,6 +17,7 @@ import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
 import type { ChatProviderOptions, SSEEvent } from '../providers/types.js';
 import { FireHubApiClient, type SharePurpose } from '../mcp/api-client.js';
+import { DB_DIALECT_ENV, type DbDialect } from './db-dialect.js';
 import {
   splitOpencodeModelOrNull,
   type OpencodeModelParts,
@@ -24,7 +25,7 @@ import {
 import { getStdioServerCommand } from '../mcp/stdio-server-command.js';
 import { OPENCODE_MCP_CREDENTIAL_ENV } from '../mcp/opencode-mcp-credential-env.js';
 import { REPORT_DIR_ENV, WRITE_REPORT_FILE_TOOL } from '../mcp/tools/report-file-tools.js';
-import { OPENCODE_SYSTEM_PROMPT, OPENCODE_UI_ONLY_TOOLS } from './system-prompt.js';
+import { opencodeSystemPromptFor, OPENCODE_UI_ONLY_TOOLS } from './system-prompt.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
 // 트랜스크립트: CLI 와 동일 포맷/경로로 저장하면 history 엔드포인트가 그대로 읽는다.
 import { readCliTranscript, writeCliTranscript, type CliTranscript } from './agent-cli.js';
@@ -123,6 +124,8 @@ export interface BuildOpenCodeConfigOptions {
   aiPurpose?: SharePurpose;
   /** WD-198: 스마트 작업 실행 id — 있으면 firehub MCP 프로세스가 X-Proactive-Execution-Id 를 싣는다. */
   proactiveExecutionId?: number;
+  /** WD-79: 테넌트 저장소 방언 — MCP 프로세스 env(DB_DIALECT)로 넘긴다. */
+  dbDialect?: DbDialect;
   /** WD-62: Proactive 실행의 리포트 디렉터리 — 있으면 MCP 프로세스가 write_report_file 을 이 디렉터리 전용으로 연다. */
   reportDir?: string;
   /** WD-59: 설정 › AI 에이전트의 최대 턴 수(ai.max_turns) → agent.build.steps. */
@@ -161,6 +164,7 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
     reasoningEffort,
     aiPurpose,
     proactiveExecutionId,
+    dbDialect,
     reportDir,
     maxTurns,
     temperature,
@@ -275,6 +279,7 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
           ...(isPositiveInteger(proactiveExecutionId)
             ? { [PROACTIVE_EXECUTION_ID_ENV]: String(proactiveExecutionId) }
             : {}),
+          ...(dbDialect ? { [DB_DIALECT_ENV]: dbDialect } : {}),
           // WD-62: opencode 는 호스트 Write·하위 에이전트가 없어 리포트 세 파일을 이 디렉터리 전용 MCP 도구로 쓴다.
           // 경로는 모델 인자가 아니라 여기서만 정해진다. 일반 채팅엔 키가 없어 도구도 등록되지 않는다.
           ...(reportDir ? { [REPORT_DIR_ENV]: reportDir } : {}),
@@ -609,6 +614,7 @@ export async function* executeOpenCodeAgent(
     model,
     aiPurpose,
     proactiveExecutionId,
+    dbDialect,
     reportDir,
     maxTurns,
     temperature,
@@ -711,6 +717,7 @@ export async function* executeOpenCodeAgent(
     reasoningEffort: credentials.reasoningEffort,
     aiPurpose,
     proactiveExecutionId,
+    dbDialect,
     reportDir,
     maxTurns,
     temperature,
@@ -729,7 +736,12 @@ export async function* executeOpenCodeAgent(
   //  - 위임(task)은 buildOpenCodeConfig 에서 차단하므로 subagent 정의(.opencode/agents)·위임 가이드는
   //    쓰지 않는다. OPENCODE_SYSTEM_PROMPT 가 firehub 도구 직접 호출·결과 요약을 지시한다.
   //  - AGENTS.md 는 비밀이 아니므로 그대로 디스크에 쓴다(config 만 env 로 옮겼다).
-  const effectiveSystemPrompt = resolveSystemPrompt(OPENCODE_SYSTEM_PROMPT, systemPrompt, overrideSystemPrompt);
+  //  - WD-79: Tibero 테넌트는 Tibero 문법 판 프롬프트를 받는다(PG 는 OPENCODE_SYSTEM_PROMPT 와 바이트 동일).
+  const effectiveSystemPrompt = resolveSystemPrompt(
+    opencodeSystemPromptFor(dbDialect),
+    systemPrompt,
+    overrideSystemPrompt,
+  );
   await writeFile(join(userWorkDir, 'AGENTS.md'), effectiveSystemPrompt, 'utf-8');
 
   // 자식 프로세스 환경 구성 — **허용 목록**으로 빈 객체에서 조립한다(이슈 #696).

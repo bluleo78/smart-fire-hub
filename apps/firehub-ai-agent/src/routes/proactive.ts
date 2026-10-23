@@ -7,6 +7,8 @@ import type { AgentType, ProviderConfig } from '../providers/index.js';
 // 목이 정의하지 않은 값이라 undefined 가 되어 라우트가 깨진다.
 import { isKnownAgentType } from '../providers/types.js';
 import { parseProactiveExecutionId, parseSharePurpose } from '../mcp/api-client.js';
+import { DEFAULT_DB_DIALECT, parseDbDialect, type DbDialect } from '../agent/db-dialect.js';
+import { TIBERO_SQL_GUIDE } from '../agent/tibero-sql-guide.js';
 import { internalAuth } from '../middleware/auth.js';
 import { isValidTenantId, proactiveReportDir } from '../agent/tenant-paths.js';
 import {
@@ -55,6 +57,8 @@ interface ProactiveRequest {
   aiPurpose?: string;
   /** WD-198: api(ProactiveAiClient)가 싣는 실행 id — 이 실행의 MCP 호출에 X-Proactive-Execution-Id 로 되돌려 보낸다. */
   proactiveExecutionId?: number;
+  /** WD-79: 테넌트 저장소 방언("POSTGRESQL" | "TIBERO") — parseDbDialect 로 해석한다. */
+  dbDialect?: string;
 }
 
 interface OutputSection {
@@ -235,15 +239,21 @@ function buildTemplateSectionList(template: Template): string {
  *
  * <p>sdk/cli 는 report-writer 하위 에이전트에게 reportDir 저장을 위임하고(기존 동작), opencode 는 위임이
  * 불가능하므로 {@link OPENCODE_REPORT_GUIDE} 로 직접 작성·write_report_file 저장을 지시한다(WD-62).
+ *
+ * <p>dialect 가 TIBERO 면 끝(footer 뒤)에 {@link TIBERO_SQL_GUIDE} 를 붙인다(WD-79). PG 결과는 변경 전과 같다.
  */
 export function buildProactiveSystemPrompt(
   template: Template | undefined,
   reportDir: string,
   agentType: AgentType,
+  dialect: DbDialect = DEFAULT_DB_DIALECT,
 ): string {
   const parts = agentType === 'opencode' ? OPENCODE_PROMPT_PARTS : delegationPromptParts(reportDir);
   const body = template ? parts.templateHeading + buildTemplateSectionList(template) : parts.noTemplate;
-  return parts.header + body + parts.footer;
+  const prompt = parts.header + body + parts.footer;
+  // WD-79: Proactive 는 overrideSystemPrompt 라 메인 프롬프트(Tibero SQL 규칙 포함)가 들어가지 않는다 — Tibero
+  // 테넌트면 리포트 분석 SQL 도 Tibero 문법으로 쓰도록 끝에 공용 규칙을 붙인다. PG 는 변경 전과 바이트 동일.
+  return dialect === 'TIBERO' ? `${prompt}\n${TIBERO_SQL_GUIDE}` : prompt;
 }
 
 function getSectionTypeGuide(type?: string): string | null {
@@ -418,7 +428,9 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
   // 세그먼트를 넣었는데 여기만 빼면, 한 테넌트의 에이전트가 Glob/Read 로 `proactive-report-*` 를
   // 훑어 남의 리포트 본문을 읽을 수 있다 — tenant-paths.ts 가 없애려던 비대칭 그 자체다.
   const reportDir = proactiveReportDir(tenantId, userId, Date.now());
-  const systemPrompt = buildProactiveSystemPrompt(body.template, reportDir, agentType);
+  // WD-79: 테넌트 저장소 방언 — 같은 값을 프롬프트(아래)와 provider(MCP 도구 노출·서브에이전트 사본)에 함께 쓴다.
+  const dbDialect = parseDbDialect(body.dbDialect);
+  const systemPrompt = buildProactiveSystemPrompt(body.template, reportDir, agentType, dbDialect);
   const initialUserMessage = `${body.prompt}\n\n컨텍스트:\n${JSON.stringify(body.context)}`;
 
   let rawText = '';
@@ -457,6 +469,8 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
       aiPurpose: parseSharePurpose(body.aiPurpose),
       // WD-198: 양의 정수만 싣는다 — 그 외 값은 헤더 없이(실행에 묶이지 않은 호출로) 간다.
       proactiveExecutionId: parseProactiveExecutionId(body.proactiveExecutionId),
+      // WD-79: 테넌트 저장소 방언 — provider 가 MCP 도구 노출·설명과 서브에이전트(report-writer 등) 사본 선택에 반영한다.
+      dbDialect,
       // WD-62: opencode 실행기가 이 값을 MCP 프로세스 env 로 넘겨 write_report_file 을 이 디렉터리 전용으로 연다.
       reportDir,
     });

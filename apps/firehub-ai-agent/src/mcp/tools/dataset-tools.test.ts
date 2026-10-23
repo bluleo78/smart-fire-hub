@@ -363,6 +363,18 @@ describe('Dataset MCP Tools', () => {
       expect(client.getDatasetSearchIndex).not.toHaveBeenCalled();
       expect(JSON.parse(result.content[0].text)).toMatchObject({ id: 4, searchIndex: null });
     });
+
+    it('Tibero 저장소면 TABLE 데이터셋이어도 색인 조회를 호출하지 않고 searchIndex=null 이다', async () => {
+      // Tibero 는 행 검색을 지원하지 않아 색인 조회가 매번 422 다 — 실패할 요청을 보내지 않는다(WD-79).
+      const tiberoServer = createFireHubMcpServer(client, { dbDialect: 'TIBERO' });
+      (client.getDataset as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 5, name: 't', storageType: 'TABLE' });
+      (client.getDatasetSearchIndex as ReturnType<typeof vi.fn>).mockClear();
+
+      const result = await invokeTool(tiberoServer, 'get_dataset', { id: 5 });
+
+      expect(client.getDatasetSearchIndex).not.toHaveBeenCalled();
+      expect(JSON.parse(result.content[0].text)).toMatchObject({ id: 5, searchIndex: null });
+    });
   });
 
   // --- tool registration ---

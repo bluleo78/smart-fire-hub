@@ -5,6 +5,8 @@ import {
   filterToolsByPermissions,
   createSafeTool,
   safeTool,
+  TIBERO_UNSUPPORTED_TOOLS,
+  isToolAvailableForDialect,
 } from './firehub-mcp-server.js';
 import { FireHubApiClient } from './api-client.js';
 import { createTracker, FAILURE_WARN_SENTINEL } from '../agent/failure-streak.js';
@@ -30,6 +32,26 @@ async function invokeTool(server: any, toolName: string, args: Record<string, un
   if (!entry) throw new Error(`Tool ${toolName} not found in registered tools`);
   return entry.handler(args, {});
 }
+
+describe('방언별 도구 노출 (WD-79)', () => {
+  const names = (opts?: Parameters<typeof buildAllMcpTools>[1]) =>
+    buildAllMcpTools(createMockClient(), opts).map((t) => t.name);
+
+  it('Tibero 면 search_dataset_rows 가 없다', () => {
+    expect(names({ dbDialect: 'TIBERO' })).not.toContain('search_dataset_rows');
+  });
+  it('PG·옵션 없음이면 search_dataset_rows 가 있다', () => {
+    expect(names({ dbDialect: 'POSTGRESQL' })).toContain('search_dataset_rows');
+    expect(names()).toContain('search_dataset_rows');
+  });
+  it('isToolAvailableForDialect 판정', () => {
+    expect(TIBERO_UNSUPPORTED_TOOLS.has('search_dataset_rows')).toBe(true);
+    expect(isToolAvailableForDialect('search_dataset_rows', 'TIBERO')).toBe(false);
+    expect(isToolAvailableForDialect('search_dataset_rows', 'POSTGRESQL')).toBe(true);
+    expect(isToolAvailableForDialect('search_dataset_rows', undefined)).toBe(true);
+    expect(isToolAvailableForDialect('list_datasets', 'TIBERO')).toBe(true);
+  });
+});
 
 describe('createFireHubMcpServer', () => {
   it('should return McpSdkServerConfigWithInstance with type sdk', () => {

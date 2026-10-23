@@ -389,6 +389,43 @@ describe('executeAgent', () => {
     expect(events.every((e) => (e as { type: string }).type !== 'error')).toBe(true);
   });
 
+  // WD-79: Tibero 테넌트는 Tibero 메인 프롬프트와 Tibero 서브에이전트 정의를 받는다(PG 는 그대로).
+  it.each([
+    ['TIBERO', true],
+    [undefined, false],
+  ] as const)('dbDialect=%s → systemPrompt·agents 가 방언을 따른다 (WD-79)', async (dbDialect, tibero) => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const mockQuery = vi.mocked(query);
+    async function* fakeStream() {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 's',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      };
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+    const { executeAgent } = await import('./agent-sdk.js');
+    const { TIBERO_SQL_GUIDE } = await import('./tibero-sql-guide.js');
+
+    for await (const _e of executeAgent({
+      message: 'hello',
+      tenantId: 1,
+      userId: 1,
+      apiKey: 'sk-test-key',
+      ...(dbDialect ? { dbDialect } : {}),
+    })) {
+      /* drain */
+    }
+
+    const opts = (mockQuery.mock.calls[0][0] as {
+      options: { systemPrompt: string; agents: Record<string, { prompt: string }> };
+    }).options;
+    expect(opts.systemPrompt.includes(TIBERO_SQL_GUIDE) && TIBERO_SQL_GUIDE.length > 0).toBe(tibero);
+    expect(opts.systemPrompt.includes('search_dataset_rows')).toBe(!tibero);
+    expect(opts.agents['data-analyst'].prompt.includes('Tibero')).toBe(tibero);
+  });
+
   // AS-21 (#216): deferred-tools(ToolSearch 메타 호출) 강제 비활성 검증.
   //
   // 1차 fix(f81beb89): settingSources:[] 만 적용 → 회귀 발생.

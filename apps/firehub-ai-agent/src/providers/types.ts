@@ -1,5 +1,6 @@
 import type { OutputColumn, ClassifyResponse } from '../services/classification-service.js';
 import type { SharePurpose } from '../mcp/api-client.js';
+import type { DbDialect } from '../agent/db-dialect.js';
 
 export type SSEEvent = {
   type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'turn' | 'done' | 'error' | 'compaction' | 'ping' | 'cost_alarm';
@@ -36,6 +37,11 @@ export interface ChatProviderOptions {
    * 최고 등급을 리포트에 남긴다. 채팅에는 없다.
    */
   proactiveExecutionId?: number;
+  /**
+   * WD-79: 테넌트 저장소 방언. Tibero 면 행 검색 도구를 숨기고 도구 설명을 Tibero 용으로 바꾸며, 프롬프트도 Tibero 판으로 바꾼다
+   * (메인 시스템 프롬프트의 SQL 규칙 = TIBERO_SQL_GUIDE, 서브에이전트는 `tibero/` 사본 — system-prompt.ts·subagent-loader.ts).
+   */
+  dbDialect?: DbDialect;
   /**
    * WD-62: Proactive 실행의 리포트 산출 디렉터리. opencode 실행기만 읽어 MCP 프로세스 env 로 주입한다
    * (write_report_file 도구가 이 디렉터리에만 쓴다). SDK·CLI 는 report-writer 하위 에이전트 경로를 쓰므로 무시한다.

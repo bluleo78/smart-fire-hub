@@ -1,4 +1,5 @@
 import type { AxiosInstance } from 'axios';
+import type { DbDialect } from '../../agent/db-dialect.js';
 
 export interface AnalyticsQueryResult {
   queryType: string;
@@ -71,6 +72,10 @@ export interface SchemaTable {
 
 export interface SchemaInfo {
   tables: SchemaTable[];
+  /** WD-79: 테넌트 저장소 방언 — api 가 내려주면 채워진다(구버전 api 면 없음). */
+  dialect?: DbDialect;
+  /** WD-79: 테이블 참조에 쓸 스키마 이름(Tibero 는 genia_t{id}). */
+  schema?: string;
 }
 
 export type ChartType =

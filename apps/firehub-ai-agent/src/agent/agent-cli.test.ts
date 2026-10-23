@@ -58,6 +58,8 @@ vi.mock('./subagent-loader.js', async () => {
 });
 
 import { executeCliAgent } from './agent-cli.js';
+import { loadSubagents } from './subagent-loader.js';
+import { TIBERO_SQL_GUIDE } from './tibero-sql-guide.js';
 
 /** spawn() 호출 시 사용할 가짜 child process — readline 호환 stdout Readable + stderr EventEmitter. */
 function makeFakeChild() {
@@ -1205,6 +1207,31 @@ describe('executeCliAgent — #240 subagent registration', () => {
     expect(systemPrompt).toContain('## 전문 에이전트 활용');
     expect(systemPrompt).toContain('pipeline-builder');
   });
+
+  // WD-79: Tibero 테넌트는 Tibero 메인 프롬프트와 Tibero 서브에이전트 정의를 받는다(PG 는 그대로).
+  it.each([
+    ['TIBERO', true],
+    [undefined, false],
+  ] as const)('dbDialect=%s → 메인 프롬프트·서브에이전트 로드가 방언을 따른다 (WD-79)', async (dbDialect, tibero) => {
+    const loadSpy = vi.mocked(loadSubagents);
+    loadSpy.mockClear();
+    capturedSystemPromptFile = null;
+    const gen = executeCliAgent({
+      message: 'test',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+      ...(dbDialect ? { dbDialect } : {}),
+    });
+    for await (const _ev of gen) {
+      // drain
+    }
+    const systemPrompt = capturedSystemPromptFile!.content;
+    expect(systemPrompt.includes(TIBERO_SQL_GUIDE) && TIBERO_SQL_GUIDE.length > 0).toBe(tibero);
+    expect(systemPrompt.includes('search_dataset_rows')).toBe(!tibero);
+    expect(loadSpy).toHaveBeenCalledWith(undefined, tibero ? 'TIBERO' : undefined);
+  });
 });
 
 describe('executeCliAgent — #277 비용 가드레일', () => {
@@ -2219,6 +2246,19 @@ describe('buildMcpConfig — AI_PURPOSE(S3)', () => {
       const cfg = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }, 'share', bad) as Cfg;
       expect('PROACTIVE_EXECUTION_ID' in cfg.mcpServers.firehub.env).toBe(false);
     }
+  });
+});
+
+// WD-79: stdio MCP 프로세스 env 에 DB_DIALECT 를 심는다(stdio-server.ts main 이 읽어 Tibero 에서 도구를 숨긴다).
+describe('buildMcpConfig — DB_DIALECT(WD-79)', () => {
+  type Cfg = { mcpServers: { firehub: { env: Record<string, string> } } };
+  it('dbDialect 가 있으면 env 에 DB_DIALECT 를 싣고, 없으면 키 자체가 없다', async () => {
+    const { buildMcpConfig } = await import('./agent-cli.js');
+    // 7번째 인자는 WD-198 의 스마트 작업 실행 id — 방언은 그 뒤 8번째다.
+    const t = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }, undefined, undefined, 'TIBERO') as Cfg;
+    expect(t.mcpServers.firehub.env.DB_DIALECT).toBe('TIBERO');
+    const none = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }) as Cfg;
+    expect('DB_DIALECT' in none.mcpServers.firehub.env).toBe(false);
   });
 });
 

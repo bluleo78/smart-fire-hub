@@ -1,0 +1,177 @@
+# 파이프라인 생성 예제
+
+## 예제 0: 단순 필터 — DESIGN 단계 출력 + SELECT * 회피 (필수 패턴)
+
+**요구사항 (사용자 짧은 요청)**: "데이터셋 화재 발생 위치(id=67)에서 사망자수 > 0 행만 필터링하는 SQL 파이프라인 만들어줘. 이름은 'fatal_fires_filter'."
+
+(Tibero 테넌트는 출력 데이터셋이 필수다 — 요청에 출력 데이터셋이 없으면 Phase 1 에서 먼저 묻는다. 아래는 사용자가 출력 데이터셋 ID 68(`fatal_fires`)을 알려준 경우다.)
+
+이 짧은 한 줄은 **위임 신호가 아님** — 반드시 Phase 1 (`get_dataset`) → Phase 2 DESIGN 텍스트 → 사용자 승인 → Phase 4 `create_pipeline` 순서를 지킨다.
+
+### Phase 1 — 스키마 확인 (도구 호출)
+`get_dataset(id=67)`·`get_dataset(id=68)`로 입력·출력 데이터셋 확인 → `occurred_at` (TIMESTAMP), `death_count` (INTEGER), `location` (TEXT). `get_data_schema` 의 `schema` 는 `GENIA_T5`.
+
+### Phase 2 — DESIGN 텍스트 (사용자에게 출력)
+
+```
+## 설계안: fatal_fires_filter
+
+| 스텝 | 타입 | 입력 | 출력 |
+|------|------|------|------|
+| filter_fatal_fires | SQL | genia_t5.fire_incidents | 데이터셋 68 (`fatal_fires`) |
+
+### SQL
+```sql
+SELECT
+  occurred_at,
+  death_count,
+  location
+FROM genia_t5.fire_incidents
+WHERE death_count > 0
+```
+
+### 검증 체크리스트
+- [✅] 컬럼명이 실제 스키마와 일치 (occurred_at / death_count / location)
+- [✅] SELECT * 미사용 — 필요한 컬럼만 명시
+- [✅] 예약 컬럼(id/import_id/created_at/_updated_at) 충돌 없음
+- [✅] {{#N}} 미사용 (단일 스텝)
+- [✅] outputDatasetId 지정 (68) — Tibero SQL 단계 필수
+- [✅] 순환 의존성 없음
+
+**이대로 생성할까요?** (예 / 수정 요청)
+```
+
+### Phase 4 — 사용자 승인 후 create_pipeline 호출
+
+사용자가 "예" / "응" / "ok" / "생성해" 등으로 응답한 다음에만 `create_pipeline`을 호출. `SELECT *`가 절대 들어가지 않은 scriptContent로 호출한다.
+
+**핵심**:
+- DESIGN 텍스트 없이 곧장 `create_pipeline`을 호출하지 않는다.
+- `SELECT *`를 쓰지 않는다. 필터링만 해도 컬럼을 모두 풀어 적는다.
+- 사용자가 짧게 요청해도 설계안을 보여주고 승인받는 단계를 생략하지 않는다.
+
+---
+
+## 예제 1: 단순 SQL 집계
+
+**요구사항**: sales 테이블을 월별로 집계하여 monthly_summary에 저장
+
+```json
+{
+  "name": "월별 매출 집계",
+  "description": "sales 데이터를 월별로 집계합니다",
+  "steps": [
+    {
+      "name": "monthly_agg",
+      "scriptType": "SQL",
+      "scriptContent": "SELECT TRUNC(order_date, 'MM') AS mon, COUNT(*) AS order_count, SUM(amount) AS total_amount, ROUND(AVG(amount), 2) AS avg_amount FROM genia_t5.sales GROUP BY TRUNC(order_date, 'MM') ORDER BY 1",
+      "outputDatasetId": 15,
+      "loadStrategy": "REPLACE"
+    }
+  ]
+}
+```
+
+## 예제 2: 멀티스텝 SQL (스텝 참조)
+
+**요구사항**: 주문 데이터를 카테고리별로 집계 후 순위 매기기
+
+```json
+{
+  "name": "카테고리별 매출 순위",
+  "steps": [
+    {
+      "name": "category_agg",
+      "scriptType": "SQL",
+      "scriptContent": "SELECT category, SUM(amount) AS total FROM genia_t5.orders GROUP BY category",
+      "outputDatasetId": 19,
+      "loadStrategy": "REPLACE"
+    },
+    {
+      "name": "add_rank",
+      "scriptType": "SQL",
+      "scriptContent": "SELECT category, total, RANK() OVER (ORDER BY total DESC) AS sales_rank FROM {{#1}}",
+      "dependsOnStepNames": ["category_agg"],
+      "outputDatasetId": 20,
+      "loadStrategy": "REPLACE"
+    }
+  ]
+}
+```
+
+**포인트**:
+- 첫 번째 스텝: Tibero 는 출력 데이터셋이 필수 → 중간 결과용 데이터셋(ID 19)에 적재
+- 두 번째 스텝: {{#1}}로 첫 번째 스텝의 출력 데이터셋(ID 19) 테이블 참조
+- dependsOnStepNames로 실행 순서 보장
+
+## 예제 3: Python + SQL 조합
+
+**요구사항**: 외부 API에서 환율 데이터 수집 → 매출에 환율 적용
+
+**Tibero 테넌트 응답 (Phase 1 에서 즉시 고지)**: "Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다." / "Tibero 저장소 테넌트에서는 아직 API 수집 단계를 실행할 수 없습니다." — 외부 API 수집 단계는 이 테넌트에서 실행할 수 없다고 알린다. 환율이 이미 데이터셋(예: `exchange_rates`)에 있다면 SQL 단계로만 설계한다:
+
+```json
+{
+  "name": "환율 적용 매출",
+  "steps": [
+    {
+      "name": "apply_rate",
+      "scriptType": "SQL",
+      "scriptContent": "SELECT s.order_no, s.currency, s.amount, r.rate, ROUND(s.amount * r.rate, 2) AS amount_usd FROM genia_t5.sales s JOIN genia_t5.exchange_rates r ON s.currency = r.currency",
+      "outputDatasetId": 25,
+      "loadStrategy": "REPLACE"
+    }
+  ]
+}
+```
+
+## 예제 4: AI_CLASSIFY 분류
+
+**요구사항**: 고객 리뷰를 감성 분석
+
+**Tibero 테넌트 응답**: "Tibero 저장소 테넌트에서는 아직 AI 분류 단계를 실행할 수 없습니다." — 이 테넌트에서는 AI 분류 스텝을 만들지 않고 그대로 알린다. 규칙으로 나눌 수 있는 분류(예: 키워드 포함 여부)라면 `UPPER(review_text) LIKE UPPER('%불만%')` 조건으로 거르는 SQL 단계를 대안으로 제안할 수 있다.
+
+---
+
+## 예제 5: 파이프라인 삭제 — 트리거 조회 후 정확한 영향 고지 (refs #598)
+
+**사용자**: 47번 파이프라인(inspector-tool-test-002) 삭제해줘
+
+**에이전트 (Turn 1)**:
+
+[파이프라인 삭제 워크플로] `get_pipeline(47)` → 200, 이름 확인. `list_triggers(pipelineId=47)` 호출 → SCHEDULE 트리거 1개(ID 58, "매일 새벽 3시") 발견.
+
+ID 47 'inspector-tool-test-002' 삭제. 이 파이프라인의 SCHEDULE 트리거 1개(ID 58)도 함께 **영구 삭제**됩니다(복구 불가). 계속할까요? (네/아니오) **[응답 종료 — delete_pipeline 호출 금지]**
+
+**사용자 (Turn 2)**: 네
+
+**에이전트 (Turn 2)**: `delete_pipeline(47)` 호출 → "'inspector-tool-test-002' 파이프라인(ID: 47)이 삭제되었습니다. 함께 등록돼 있던 SCHEDULE 트리거(ID 58)도 영구 삭제되었습니다."
+
+> ❌ 잘못된 응답 (회귀 패턴): `list_triggers`를 호출하지 않고 도구 설명의 고정 문구를 그대로 인용해 "연결된 체인 트리거도 비활성화됩니다. 계속할까요?"라고 답하는 것 — 이 파이프라인이 소유한 SCHEDULE 트리거는 "비활성화"가 아니라 "영구 삭제"되며, 애초에 트리거 존재 자체를 확인하지 않았다.
+> ❌ 트리거가 없는데도 "연결된 트리거가 있을 수 있습니다" 같은 모호한 표현을 쓰는 것 — 조회 결과가 없으면 "연결된 트리거 없음"으로 명확히 고지한다.
+
+## 예제 6: CREATE→EXECUTE→VERIFY 성공 후 REPORT — 후속 작업 제안 필수 (refs #610)
+
+**요구사항 (사용자, 2턴)**: 1턴에서 DESIGN 승인 후, "네, 이대로 생성해주세요. 생성 후 바로 실행까지 해주세요."
+
+**에이전트**:
+1. `create_pipeline(...)` → ID 59 생성 확인
+2. `execute_pipeline(59)` → execution ID 320
+3. `get_execution_status(59, 320)` → 모든 스텝 COMPLETED 확인
+4. 응답(Phase 7):
+
+```
+파이프라인 생성 및 실행이 완료되었습니다.
+
+**파이프라인**: `데이터셋55_행수카운트` (ID: 59)
+- 스텝 `count_rows` (SQL): 입력 데이터셋 55(`test_dataset_tmp`) → `SELECT COUNT(*) AS row_count FROM genia_t5.test_dataset_tmp` → 출력: 데이터셋 56(`row_count_result`)
+
+**실행 결과** (execution ID: 320)
+- 상태: COMPLETED
+- `count_rows` 스텝: COMPLETED, 1행 출력 (집계 결과 1건)
+- `row_count` 값: 0 — 데이터셋 55의 `rowCount`가 생성 확인 시점(get_dataset) 기준 0이었으므로, COUNT(*) 결과도 0으로 확인됩니다.
+
+이 파이프라인을 정기적으로 실행하도록 트리거를 설정해드릴까요? 아니면 실행 결과를 스마트 작업으로 등록해 리포트로 받아보시겠어요?
+```
+
+> ❌ 잘못된 응답 (회귀 패턴, #610): 위 예시에서 마지막 문단(후속 작업 제안)을 생략하고 실행 결과 요약만으로 응답을 끝내는 것 — Phase 7의 4번 항목이 누락된 검수 결함이다.

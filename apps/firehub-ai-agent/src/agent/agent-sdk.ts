@@ -2,9 +2,10 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import fs from 'fs/promises';
 import { FireHubApiClient, type SharePurpose } from '../mcp/api-client.js';
+import type { DbDialect } from './db-dialect.js';
 import { createFireHubMcpServer } from '../mcp/firehub-mcp-server.js';
 import { fetchSessionPermissionsFailClosed } from '../mcp/session-permissions.js';
-import { SYSTEM_PROMPT, FILE_ATTACHMENT_PROMPT } from './system-prompt.js';
+import { systemPromptFor, FILE_ATTACHMENT_PROMPT } from './system-prompt.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
 import {
   DEFAULT_MODEL,
@@ -75,6 +76,8 @@ export interface AgentOptions {
   aiPurpose?: SharePurpose;
   /** WD-198: 스마트 작업 실행 id — MCP 도구의 api 호출에 X-Proactive-Execution-Id 를 싣는다(ChatProviderOptions 참고). */
   proactiveExecutionId?: number;
+  /** WD-79: 테넌트 저장소 방언 — MCP 도구 노출·설명에 반영한다(ChatProviderOptions.dbDialect 참고). */
+  dbDialect?: DbDialect;
 }
 
 export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEvent> {
@@ -132,6 +135,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   // (넘기지 않으면 컨테이너의 고정 env 만 보게 되어 채팅과 인증 경로가 갈라진다.)
   const firehubServer = createFireHubMcpServer(apiClient, {
     userPermissions,
+    dbDialect: options.dbDialect,
     credentials: { apiKey, oauthToken },
   });
 
@@ -222,11 +226,12 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   }
 
   // Load subagents and build dynamic delegation guide
-  const subagents = loadSubagents();
+  // WD-79: Tibero 테넌트는 메인 프롬프트·서브에이전트 모두 Tibero 문법 판을 받는다(PG 는 기존과 바이트 동일).
+  const subagents = loadSubagents(undefined, options.dbDialect);
   const subagentGuide = buildSubagentGuide(subagents);
   // #260: 파일 첨부 가이드는 fileIds가 있는 요청에만 동적 첨부 (cold cache_creation 945 토큰 절감)
   const fileAttachmentGuide = fileIds?.length ? FILE_ATTACHMENT_PROMPT : '';
-  const basePrompt = `${SYSTEM_PROMPT}${subagentGuide}${fileAttachmentGuide}`;
+  const basePrompt = `${systemPromptFor(options.dbDialect)}${subagentGuide}${fileAttachmentGuide}`;
 
   const effectiveSystemPrompt = resolveSystemPrompt(basePrompt, systemPrompt, overrideSystemPrompt);
 

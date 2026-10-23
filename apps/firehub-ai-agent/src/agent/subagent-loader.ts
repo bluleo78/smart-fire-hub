@@ -2,6 +2,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
+import { DEFAULT_DB_DIALECT, type DbDialect } from './db-dialect.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -101,12 +102,37 @@ function parseFrontmatter(content: string): { frontmatter: Frontmatter; body: st
   return { frontmatter, body };
 }
 
+/** Tibero 테넌트용 사본을 두는 서브에이전트 하위 디렉터리 이름(WD-79). */
+const TIBERO_VARIANT_DIR = 'tibero';
+
+/**
+ * 서브에이전트 디렉터리의 파일 경로를 방언에 맞게 고른다(WD-79).
+ *
+ * <p>TIBERO 이고 `tibero/<파일명>` 이 있으면 그 사본을, 아니면 원본을 쓴다. PG 는 `tibero/` 경로를 아예 만들지도
+ * 확인하지도 않는다 — PG 프롬프트가 사본 유무와 무관하게 변경 전과 바이트 동일해야 하기 때문이다.
+ * 대체만 한다: 원본 디렉터리에서 고른 파일 이름에 대해서만 부르므로 `tibero/` 에만 있는 파일이 새로 더해지지 않고,
+ * 기본 제외(examples.md)도 그대로 적용된다.
+ */
+function resolveVariantPath(dirPath: string, fileName: string, dialect: DbDialect): string {
+  if (dialect === 'TIBERO') {
+    const variant = path.join(dirPath, TIBERO_VARIANT_DIR, fileName);
+    if (fs.existsSync(variant)) {
+      return variant;
+    }
+  }
+  return path.join(dirPath, fileName);
+}
+
 /**
  * Scan a subagent directory, parse agent.md frontmatter + body,
  * collect knowledge files, and return an AgentDefinition or null if invalid.
+ *
+ * WD-79: dialect 가 TIBERO 면 agent.md·지식 파일을 `tibero/` 사본으로 대체한다(resolveVariantPath).
+ * 지식 파일 목록은 원본 디렉터리의 `*.md` 만 본다 — readdirSync 가 돌려주는 `tibero` 하위 디렉터리는 `.md` 로
+ * 끝나지 않아 걸러진다. 100KB 한도는 대체한 뒤의 실제 내용 크기로 잰다.
  */
-function loadSubagentDir(dirPath: string, dirName: string): AgentDefinition | null {
-  const agentMdPath = path.join(dirPath, 'agent.md');
+function loadSubagentDir(dirPath: string, dirName: string, dialect: DbDialect): AgentDefinition | null {
+  const agentMdPath = resolveVariantPath(dirPath, 'agent.md', dialect);
 
   if (!fs.existsSync(agentMdPath)) {
     console.warn(`[subagent-loader] Skipping "${dirName}": agent.md not found`);
@@ -152,7 +178,7 @@ function loadSubagentDir(dirPath: string, dirName: string): AgentDefinition | nu
   let knowledgeTotalSize = 0;
 
   for (const fileName of knowledgeFiles) {
-    const filePath = path.join(dirPath, fileName);
+    const filePath = resolveVariantPath(dirPath, fileName, dialect);
     let fileContent: string;
     try {
       fileContent = fs.readFileSync(filePath, 'utf-8');
@@ -204,24 +230,32 @@ function loadSubagentDir(dirPath: string, dirName: string): AgentDefinition | nu
 // 기본 subagents 디렉터리 로드 결과를 모듈 수준에서 메모이즈한다.
 // 서브에이전트 정의는 런타임에 변경되지 않으므로 매 채팅 턴마다 디스크 I/O를
 // 반복할 필요가 없다. 명시적 경로로 호출되는 경우(테스트 등)는 캐시 우회.
-let cachedDefaultSubagents: Record<string, AgentDefinition> | null = null;
+// WD-79: 방언마다 결과가 다르므로 방언별로 따로 캐시한다(한 방언 결과가 다른 방언 요청에 섞이면 안 된다).
+const cachedDefaultSubagents = new Map<DbDialect, Record<string, AgentDefinition>>();
 
 /**
- * 테스트에서 기본 경로 캐시를 초기화할 때 사용한다.
+ * 테스트에서 기본 경로 캐시를 초기화할 때 사용한다. 모든 방언의 캐시를 비운다.
  */
 export function resetSubagentCache(): void {
-  cachedDefaultSubagents = null;
+  cachedDefaultSubagents.clear();
 }
 
 /**
  * Scan the subagents directory and load all valid subagent definitions.
  * Returns a Record<name, AgentDefinition>.
  * Individual load failures do not crash the entire loader.
+ *
+ * @param dialect 테넌트 저장소 방언(WD-79). TIBERO 면 각 서브에이전트의 `tibero/` 사본으로 같은 이름 파일을 대체한다.
+ *   생략·undefined 는 POSTGRESQL(기존 동작 그대로).
  */
-export function loadSubagents(subagentsDir?: string): Record<string, AgentDefinition> {
+export function loadSubagents(
+  subagentsDir?: string,
+  dialect: DbDialect = DEFAULT_DB_DIALECT,
+): Record<string, AgentDefinition> {
   // 기본 디렉터리 호출(인자 없음)에 대해서만 모듈 캐시를 사용한다.
-  if (subagentsDir === undefined && cachedDefaultSubagents) {
-    return cachedDefaultSubagents;
+  const cached = subagentsDir === undefined ? cachedDefaultSubagents.get(dialect) : undefined;
+  if (cached) {
+    return cached;
   }
 
   const dir = subagentsDir ?? path.join(__dirname, 'subagents');
@@ -254,7 +288,7 @@ export function loadSubagents(subagentsDir?: string): Record<string, AgentDefini
     }
 
     try {
-      const agentDef = loadSubagentDir(entryPath, entry);
+      const agentDef = loadSubagentDir(entryPath, entry, dialect);
       if (agentDef !== null) {
         result[entry] = agentDef;
       }
@@ -265,7 +299,7 @@ export function loadSubagents(subagentsDir?: string): Record<string, AgentDefini
 
   // 기본 경로 호출 결과는 이후 호출을 위해 캐시한다.
   if (subagentsDir === undefined) {
-    cachedDefaultSubagents = result;
+    cachedDefaultSubagents.set(dialect, result);
   }
 
   return result;

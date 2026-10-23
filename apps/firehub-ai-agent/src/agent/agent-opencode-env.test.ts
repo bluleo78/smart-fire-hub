@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vites
 import { EventEmitter } from 'events';
 import { Readable } from 'stream';
 import { existsSync } from 'fs';
-import { mkdir, rm, writeFile } from 'fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { useTempHome } from './temp-home.fixture.js';
@@ -36,6 +36,8 @@ vi.mock('child_process', () => ({
 import { executeOpenCodeAgent } from './agent-opencode.js';
 import { opencodeWorkspaceDir } from './tenant-paths.js';
 import { HARD_DENIED } from './opencode-child-env.js';
+import { opencodeSystemPromptFor } from './system-prompt.js';
+import { TIBERO_SQL_GUIDE } from './tibero-sql-guide.js';
 
 /** spawn() 이 돌려줄 가짜 child — readline 이 즉시 끝나도록 빈 stdout, stderr 는 EventEmitter. */
 function makeFakeChild() {
@@ -179,6 +181,18 @@ describe('executeOpenCodeAgent — 자식 프로세스 env/디스크 배선', ()
     await driveToInit();
     const parsed = JSON.parse(spawnEnv().OPENCODE_CONFIG_CONTENT);
     expect('FIREHUB_REPORT_DIR' in parsed.mcp.firehub.environment).toBe(false);
+  });
+
+  // WD-79: Tibero 테넌트는 AGENTS.md(시스템 지시)로 Tibero 판 opencode 프롬프트를 받는다(PG 는 그대로).
+  it.each([
+    ['TIBERO', true],
+    [undefined, false],
+  ] as const)('dbDialect=%s → AGENTS.md 가 방언별 opencode 프롬프트다 (WD-79)', async (dbDialect, tibero) => {
+    await driveToInit({ ...OPTIONS, ...(dbDialect ? { dbDialect } : {}) });
+    const workDir = opencodeWorkspaceDir(OPTIONS.tenantId, OPTIONS.userId);
+    const agentsMd = await readFile(join(workDir, 'AGENTS.md'), 'utf-8');
+    expect(agentsMd).toBe(opencodeSystemPromptFor(tibero ? 'TIBERO' : 'POSTGRESQL'));
+    expect(agentsMd.includes(TIBERO_SQL_GUIDE) && TIBERO_SQL_GUIDE.length > 0).toBe(tibero);
   });
 
   it('userWorkDir 에 남아있던 과거 opencode.json 파일을 지운다', async () => {

@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { SYSTEM_PROMPT, FILE_ATTACHMENT_PROMPT } from './system-prompt.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import {
+  SYSTEM_PROMPT,
+  FILE_ATTACHMENT_PROMPT,
+  OPENCODE_SYSTEM_PROMPT,
+  systemPromptFor,
+  opencodeSystemPromptFor,
+} from './system-prompt.js';
+import { TIBERO_SQL_GUIDE } from './tibero-sql-guide.js';
+import { findPgOnlySyntax, hasTiberoCoreRules } from './tibero-prompt-lint.fixture.js';
 
 // SYSTEM_PROMPT 텍스트가 도구 선택 규칙을 충분히 명시하는지 보장하는 회귀 테스트.
 // LLM 실제 동작은 통합 환경에서만 검증 가능하므로, 본 단위 테스트는 프롬프트가
@@ -12,7 +23,8 @@ describe('SYSTEM_PROMPT', () => {
   });
 
   // 내용·의미 기반 행 찾기는 search_dataset_rows, 가능 여부는 get_dataset 의 searchIndex 로 판단
-  it('내용 기반 행 찾기는 search_dataset_rows 로 안내한다', () => {
+  // (PG 테넌트 전용 — Tibero 프롬프트에는 이 도구가 없다. 아래 "방언별 프롬프트" 절 참고, WD-79)
+  it('내용 기반 행 찾기는 search_dataset_rows 로 안내한다 (PG)', () => {
     expect(SYSTEM_PROMPT).toContain('search_dataset_rows');
     expect(SYSTEM_PROMPT).toContain('searchIndex');
   });
@@ -773,5 +785,92 @@ describe('SYSTEM_PROMPT — GraphRAG 라우팅 예외', () => {
     expect(graphSection).not.toBe('');
     expect(graphSection).toMatch(/우선/);
     expect(graphSection).toContain('data-analyst');
+  });
+});
+
+/**
+ * 방언별 메인·opencode 프롬프트(WD-79).
+ *
+ * PG 테넌트에게 가는 프롬프트는 변경 전과 바이트 단위로 같아야 한다 — 픽스처는 변경 전 코드에서 덤프했다
+ * (`__fixtures__/pg-prompts/`). 픽스처는 BRAND_NAME 이 비어 있을 때(기본 브랜드) 값이라, 테스트 환경에
+ * BRAND_NAME 이 있으면 바이트 비교만 건너뛴다.
+ */
+describe('방언별 프롬프트 (WD-79)', () => {
+  const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '__fixtures__', 'pg-prompts');
+  const fixture = (name: string) => fs.readFileSync(path.join(FIXTURES, name), 'utf-8');
+  const brandOverridden = !!process.env.BRAND_NAME?.trim();
+
+  describe('PG — 변경 전과 바이트 동일', () => {
+    it.skipIf(brandOverridden)('systemPromptFor(POSTGRESQL) 와 SYSTEM_PROMPT 가 픽스처와 같다', () => {
+      expect(systemPromptFor('POSTGRESQL')).toBe(fixture('system-prompt.txt'));
+      expect(SYSTEM_PROMPT).toBe(fixture('system-prompt.txt'));
+    });
+
+    it.skipIf(brandOverridden)('opencodeSystemPromptFor(POSTGRESQL) 와 OPENCODE_SYSTEM_PROMPT 가 픽스처와 같다', () => {
+      expect(opencodeSystemPromptFor('POSTGRESQL')).toBe(fixture('opencode-system-prompt.txt'));
+      expect(OPENCODE_SYSTEM_PROMPT).toBe(fixture('opencode-system-prompt.txt'));
+    });
+
+    it('PG 프롬프트에는 Tibero 규칙이 섞이지 않는다', () => {
+      expect(systemPromptFor('POSTGRESQL')).not.toContain('Tibero');
+      expect(opencodeSystemPromptFor('POSTGRESQL')).not.toContain('Tibero');
+    });
+  });
+
+  describe('TIBERO', () => {
+    const main = systemPromptFor('TIBERO');
+    const opencode = opencodeSystemPromptFor('TIBERO');
+
+    it('검사 자체가 PG 전용 문법을 잡는다(예외 처리가 모든 줄을 통과시키지 않는지 확인)', () => {
+      expect(findPgOnlySyntax(OPENCODE_SYSTEM_PROMPT).length).toBeGreaterThan(0);
+    });
+
+    it.each([
+      ['main', main],
+      ['opencode', opencode],
+    ])('%s: PG 전용 문법(::·DATE_TRUNC·ILIKE·LIMIT·ST_DWithin·psycopg2)이 없다', (_n, prompt) => {
+      expect(findPgOnlySyntax(prompt)).toEqual([]);
+    });
+
+    it.each([
+      ['main', main],
+      ['opencode', opencode],
+    ])('%s: genia_t 한정·TRUNC(·FETCH FIRST/ROWNUM 규칙과 공용 TIBERO_SQL_GUIDE 를 담는다', (_n, prompt) => {
+      expect(hasTiberoCoreRules(prompt)).toBe(true);
+      expect(TIBERO_SQL_GUIDE.length).toBeGreaterThan(0);
+      expect(prompt).toContain(TIBERO_SQL_GUIDE);
+    });
+
+    it.each([
+      ['main', main],
+      ['opencode', opencode],
+    ])('%s: 행 검색 도구(search_dataset_rows)·searchIndex 를 언급하지 않는다', (_n, prompt) => {
+      expect(prompt).not.toContain('search_dataset_rows');
+      expect(prompt).not.toContain('searchIndex');
+    });
+
+    it.each([
+      ['main', main],
+      ['opencode', opencode],
+    ])('%s: SQLState(42703 등) 자기 교정 규칙과 PG 테이블 표기(data."tableName")가 없다', (_n, prompt) => {
+      expect(prompt).not.toMatch(/SQLState|42703|42P01|42601/);
+      expect(prompt).not.toContain('data."tableName"');
+    });
+
+    it('opencode: PG 전용 PII 마스킹 SQL 식(SPLIT_PART·REGEXP_REPLACE)을 주지 않는다', () => {
+      expect(opencode).not.toContain('SPLIT_PART');
+      expect(opencode).not.toContain('REGEXP_REPLACE');
+      // 마스킹 의무 자체는 그대로다
+      expect(opencode).toContain('PII 값 자체가 질문의 답인 경우에도 마스킹 필수');
+    });
+
+    it('Tibero 프롬프트도 PG 와 나머지 규칙(라우팅·PII·파괴 가드)은 같다', () => {
+      for (const needle of ['## L1. 라우팅', '## L5. PII 마스킹', '## L3. 통합 가드 패턴']) {
+        expect(main).toContain(needle);
+      }
+      for (const needle of ['## 파괴 작업 2턴 확인', '## PII 마스킹', '위임 금지']) {
+        expect(opencode).toContain(needle);
+      }
+    });
   });
 });

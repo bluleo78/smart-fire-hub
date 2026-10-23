@@ -103,6 +103,24 @@ describe('stdio-server main() — 세션 사용자 권한으로 도구 등록 �
     expect(mcpServerConnectMock).toHaveBeenCalledTimes(1);
   });
 
+  // WD-79: 방언 게이팅 — Tibero 는 행 검색 도구를 등록하지 않는다.
+  it('DB_DIALECT=TIBERO 면 search_dataset_rows 를 등록하지 않고 다른 도구는 남긴다 (WD-79)', async () => {
+    getSessionPermissionsMock.mockResolvedValue(['dataset:read', 'data:read']);
+    process.env.DB_DIALECT = 'TIBERO';
+    const { main } = await import('./stdio-server.js');
+    await main();
+    expect(registeredToolNames).not.toContain('search_dataset_rows');
+    expect(registeredToolNames).toContain(UNGATED);
+  });
+
+  it('DB_DIALECT 가 없거나 PG 면 search_dataset_rows 를 등록한다 (WD-79)', async () => {
+    getSessionPermissionsMock.mockResolvedValue(['dataset:read', 'data:read']);
+    delete process.env.DB_DIALECT;
+    const { main } = await import('./stdio-server.js');
+    await main();
+    expect(registeredToolNames).toContain('search_dataset_rows');
+  });
+
   // WD-62: 리포트 쓰기 도구는 부모가 reportDir 을 주입한 실행(opencode Proactive)에서만 노출된다.
   it('FIREHUB_REPORT_DIR 가 주입되면 write_report_file 을 등록한다 (WD-62)', async () => {
     getSessionPermissionsMock.mockResolvedValue([]);

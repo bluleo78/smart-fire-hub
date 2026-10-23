@@ -27,6 +27,7 @@ export class ClaudeSdkChatProvider implements ChatProvider {
       abortSignal: options.abortSignal,
       aiPurpose: options.aiPurpose,
       proactiveExecutionId: options.proactiveExecutionId,
+      dbDialect: options.dbDialect,
     };
     yield* executeAgent(agentOptions);
   }

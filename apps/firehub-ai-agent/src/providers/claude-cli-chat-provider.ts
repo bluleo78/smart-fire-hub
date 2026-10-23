@@ -30,6 +30,7 @@ export class ClaudeCliChatProvider implements ChatProvider {
       abortSignal: options.abortSignal,
       aiPurpose: options.aiPurpose,
       proactiveExecutionId: options.proactiveExecutionId,
+      dbDialect: options.dbDialect,
     };
     yield* executeCliAgent(cliOptions);
   }

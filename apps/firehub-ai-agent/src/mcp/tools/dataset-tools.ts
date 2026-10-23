@@ -2,13 +2,40 @@ import { z } from 'zod/v4';
 import type { FireHubApiClient } from '../api-client.js';
 import type { RowSearchBody } from '../api-client/dataset-api.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
+import { DEFAULT_DB_DIALECT, type DbDialect } from '../../agent/db-dialect.js';
 import { formatKst } from './kst-time.js';
+
+/** 테이블·컬럼 이름 규칙의 공통 앞부분(방언과 무관한 패턴). 뒤에 방언별 길이 상한이 붙는다. */
+const NAME_PATTERN_PREFIX = '([a-z][a-z0-9_]* 패턴, 최대 ';
+
+/**
+ * add_dataset_column 이 받는 컬럼 타입(#597). 백엔드 DB 제약조건(V29__enable_postgis.sql)·프론트엔드 검증 스키마와 같은 허용 목록이다.
+ * Tibero 는 GEOMETRY 를 뺀 목록이다(WD-79) — PG 목록의 순서는 예전 그대로다(GEOMETRY 가 끝).
+ */
+const TIBERO_COLUMN_TYPES = ['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP', 'VARCHAR'] as const;
+const PG_COLUMN_TYPES = [...TIBERO_COLUMN_TYPES, 'GEOMETRY'] as const;
+
+/** add_dataset_column 설명의 공통 앞부분. PG 는 뒤에 GEOMETRY SRID 권장이 붙는다. */
+const ADD_COLUMN_DESCRIPTION = '데이터셋에 컬럼을 추가합니다.';
 
 export function registerDatasetTools(
   apiClient: FireHubApiClient,
   safeTool: SafeToolFn,
   jsonResult: JsonResultFn,
+  // WD-79: 테넌트 저장소 방언 — Tibero 일 때만 도구 설명을 Tibero 용으로 바꾼다(PG 는 기존 설명 그대로).
+  dialect: DbDialect = DEFAULT_DB_DIALECT,
 ) {
+  const isTibero = dialect === 'TIBERO';
+  // WD-79: 방언별 설명은 공통 앞부분 + 방언별 뒷부분으로 만든다 — PG 결과 문자열은 예전과 바이트 단위로 같다(PG 도구 설명 픽스처).
+  // 이름 규칙의 길이 상한만 다르다: PG 는 63바이트 식별자(테이블은 서버 상한 56자), Tibero 는 30자 + 예약어 불가.
+  const nameLimitSuffix = (pgLimit: string) => (isTibero ? '30자, Tibero 예약어 불가)' : `${pgLimit})`);
+  const tableNameDescription = `테이블 이름 ${NAME_PATTERN_PREFIX}${nameLimitSuffix('56자')}`;
+  const columnNameDescription = `컬럼 이름 ${NAME_PATTERN_PREFIX}${nameLimitSuffix('63자')}`;
+  // Tibero 저장소는 GEOMETRY 타입이 없다(웹도 같은 이유로 숨긴다) — 열거값과 SRID 권장 문구를 함께 뺀다.
+  const addColumnTypes = isTibero ? TIBERO_COLUMN_TYPES : PG_COLUMN_TYPES;
+  const addColumnDescription = isTibero
+    ? ADD_COLUMN_DESCRIPTION
+    : `${ADD_COLUMN_DESCRIPTION} GEOMETRY 컬럼의 경우 SRID 4326을 권장합니다.`;
   return [
     safeTool(
       'list_datasets',
@@ -57,8 +84,9 @@ export function registerDatasetTools(
         const result = (await apiClient.getDataset(args.id)) as Record<string, unknown>;
         // 행 검색 가능 여부(검색 대상 필드·색인 상태)를 함께 준다. 실패해도 상세 조회는 막지 않는다.
         // 행 검색은 TABLE 데이터셋 전용이다 — DOCUMENT/FILE 에 조회하면 매번 400 이므로 아예 부르지 않는다.
+        // Tibero 저장소는 행 검색 자체를 지원하지 않아(매번 422) 역시 부르지 않는다(WD-79).
         const searchIndex =
-          result.storageType === 'TABLE'
+          result.storageType === 'TABLE' && !isTibero
             ? await apiClient.getDatasetSearchIndex(args.id).catch(() => null)
             : null;
         return jsonResult({ ...result, searchIndex });
@@ -130,11 +158,13 @@ export function registerDatasetTools(
 
     safeTool(
       'create_dataset',
-      '새 데이터셋을 생성합니다. 데이터셋 생성 시 data 스키마에 실제 PostgreSQL 테이블이 생성됩니다.',
+      isTibero
+        ? '새 데이터셋을 생성합니다. 데이터셋 생성 시 테넌트 저장소(Tibero)의 스키마 genia_t{id} 에 실제 테이블이 생성됩니다.'
+        : '새 데이터셋을 생성합니다. 데이터셋 생성 시 data 스키마에 실제 PostgreSQL 테이블이 생성됩니다.',
       {
         name: z.string().describe('데이터셋 이름'),
         // WD-95: 서버 상한(56자)을 넘으면 400 — PostgreSQL 이 63바이트에서 이름을 잘라 기존 테이블과 겹치는 것을 막는 상한이다.
-        tableName: z.string().describe('테이블 이름 ([a-z][a-z0-9_]* 패턴, 최대 56자)'),
+        tableName: z.string().describe(tableNameDescription),
         description: z.string().optional().describe('데이터셋 설명'),
         categoryId: z.number().optional().describe('카테고리 ID'),
         originType: z
@@ -144,7 +174,7 @@ export function registerDatasetTools(
         columns: z
           .array(
             z.object({
-              columnName: z.string().describe('컬럼 이름 ([a-z][a-z0-9_]* 패턴, 최대 63자)'),
+              columnName: z.string().describe(columnNameDescription),
               displayName: z.string().describe('표시 이름'),
               dataType: z
                 .string()
@@ -234,20 +264,16 @@ export function registerDatasetTools(
 
     safeTool(
       'add_dataset_column',
-      '데이터셋에 컬럼을 추가합니다. GEOMETRY 컬럼의 경우 SRID 4326을 권장합니다.',
+      addColumnDescription,
       {
         datasetId: z.number().describe('데이터셋 ID'),
-        columnName: z.string().describe('컬럼 이름 ([a-z][a-z0-9_]* 패턴, 최대 63자)'),
+        columnName: z.string().describe(columnNameDescription),
         displayName: z.string().describe('표시 이름'),
         // #597: 자유 문자열이면 지원하지 않는 값(예: MONEY)이 그대로 백엔드로 전달되어
         // DB CHECK 제약조건 위반(409, opaque 메시지)으로만 걸러졌다.
         // 백엔드 DB 제약조건(V29__enable_postgis.sql)·프론트엔드 검증 스키마와 동일한
         // 허용 목록을 z.enum으로 강제해 MCP 레이어에서 즉시 명확한 오류를 반환한다.
-        dataType: z
-          .enum(['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP', 'VARCHAR', 'GEOMETRY'])
-          .describe(
-            '데이터 타입 (TEXT, INTEGER, DECIMAL, BOOLEAN, DATE, TIMESTAMP, VARCHAR, GEOMETRY)',
-          ),
+        dataType: z.enum(addColumnTypes).describe(`데이터 타입 (${addColumnTypes.join(', ')})`),
         maxLength: z.number().optional().describe('VARCHAR 최대 길이'),
         isNullable: z.boolean().optional().describe('NULL 허용 여부 (기본값: true)'),
         isIndexed: z.boolean().optional().describe('인덱스 생성 여부'),
@@ -257,7 +283,7 @@ export function registerDatasetTools(
         datasetId: number;
         columnName: string;
         displayName: string;
-        dataType: 'TEXT' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP' | 'VARCHAR' | 'GEOMETRY';
+        dataType: (typeof PG_COLUMN_TYPES)[number];
         maxLength?: number;
         isNullable?: boolean;
         isIndexed?: boolean;

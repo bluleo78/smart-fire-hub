@@ -2,6 +2,13 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { loadSubagents, resetSubagentCache } from '../../subagent-loader.js';
+import { TIBERO_SQL_GUIDE } from '../../tibero-sql-guide.js';
+import {
+  findPgOnlySyntax,
+  hasTiberoCoreRules,
+  removedNonPgLines,
+} from '../../tibero-prompt-lint.fixture.js';
 
 /**
  * pipeline-builder 프롬프트 회귀 가드.
@@ -301,5 +308,94 @@ describe('pipeline-builder workflow social-engineering safeguards (#250)', () =>
   it('rules.md가 실행 계정 스키마를 특정 이름으로 단정하지 않는다', () => {
     const rules = readPrompt('rules.md');
     expect(rules).not.toMatch(/실행 계정은 `data` 스키마로 제한/);
+  });
+});
+
+/**
+ * Tibero 테넌트용 pipeline-builder 사본(tibero/*.md) 가드 (WD-79).
+ *
+ * Tibero 테넌트는 SQL 단계만 실행된다 — api(PipelineAsyncRunner)가 Python·API 수집·AI 분류·증분 SQL 단계를
+ * 거부한다. PG 안내(Python 단계 + psycopg2/DB_URL, data."table" 표기, permission denied for schema 해석)를 그대로
+ * 주면 실행되지 않는 파이프라인을 설계한다.
+ */
+describe('pipeline-builder Tibero 사본 (WD-79)', () => {
+  const readTibero = (name: string) => fs.readFileSync(path.join(__dirname, 'tibero', name), 'utf-8');
+  const FILES = ['agent.md', 'rules.md', 'step-types.md', 'examples.md'] as const;
+  // 원본에서 지우거나 바꿔도 되는 PG 전용 줄 표지(수정 1차: temp/임시 데이터셋 자동 생성 — Tibero 는 출력 데이터셋 필수)
+  const PG_MARKER =
+    /::|DATE_TRUNC|INTERVAL|NOW\(\)|LIMIT|ST_|psycopg2|DB_URL|DB_SCHEMA|data\.|data_t|PostgreSQL|BIGSERIAL|SQLState|permission denied|스키마|GEOMETRY|"[a-z_]+"|Python|PYTHON|python|temp|TEMP|임시 데이터셋/;
+
+  it.each(FILES)('tibero/%s 에 PG 전용 문법(psycopg2 포함)과 data."테이블" 표기가 없다', (name) => {
+    const text = readTibero(name);
+    expect(findPgOnlySyntax(text)).toEqual([]);
+    expect(text).not.toMatch(/data\."|data_t\d/);
+    expect(text).not.toContain('DB_URL');
+  });
+
+  it.each(FILES)('tibero/%s 는 PG 전용 줄 외에는 원본 줄을 그대로 지닌다(안전 가드 누락 방지)', (name) => {
+    const original = fs.readFileSync(path.join(__dirname, name), 'utf-8');
+    expect(removedNonPgLines(original, readTibero(name), PG_MARKER)).toEqual([]);
+  });
+
+  it('tibero/rules.md 가 api 거부 문구를 그대로 인용해 Python·API 수집·AI 분류·증분 단계 대신 SQL 단계로 안내한다', () => {
+    const rules = readTibero('rules.md');
+    expect(rules).toContain('Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다.');
+    expect(rules).toContain('Tibero 저장소 테넌트에서는 아직 API 수집 단계를 실행할 수 없습니다.');
+    expect(rules).toContain('Tibero 저장소 테넌트에서는 아직 AI 분류 단계를 실행할 수 없습니다.');
+    expect(rules).toContain('Tibero 저장소 테넌트에서는 아직 증분 SQL 단계를 실행할 수 없습니다.');
+    expect(rules).toMatch(/SQL 단계로/);
+  });
+
+  // 수정 1차: api 는 Tibero SQL 단계에 outputDatasetId 가 없으면 항상 거부한다(PipelineAsyncRunner
+  // TIBERO_OUTPUTLESS_SELECT_UNSUPPORTED). 사본이 "미지정 → temp 자동 생성" 을 가르치면 실행이 항상 실패한다.
+  it.each(FILES)('tibero/%s 는 임시(temp) 데이터셋 자동 생성을 안내하지 않는다', (name) => {
+    const text = readTibero(name);
+    expect(text).not.toMatch(/(temp|TEMP|임시 데이터셋|임시 테이블)[^\n]{0,20}자동\s*생성/);
+    expect(text).not.toMatch(/미지정[^\n]{0,30}자동\s*생성/);
+    expect(text).not.toMatch(/temp 테이블 참조|temp 자동/);
+  });
+
+  it('tibero/rules.md 거부 표에 출력 데이터셋 없는 SQL 단계 문구가 있고, 모든 SQL 단계에 outputDatasetId 를 지정하라고 한다', () => {
+    const rules = readTibero('rules.md');
+    expect(rules).toContain('Tibero 저장소 테넌트의 SQL 단계는 출력 데이터셋을 지정해야 합니다.');
+    expect(rules).toContain('Tibero SQL 단계는 반드시 outputDatasetId 를 지정한다');
+    expect(readTibero('agent.md')).toContain('Tibero SQL 단계는 반드시 outputDatasetId 를 지정한다');
+    expect(readTibero('step-types.md')).toContain('Tibero SQL 단계는 반드시 outputDatasetId 를 지정한다');
+  });
+
+  it('tibero/examples.md 의 SQL 스텝 JSON 은 모두 outputDatasetId 를 가진다', () => {
+    const examples = readTibero('examples.md');
+    // ```json 블록마다 "scriptType": "SQL" 스텝 객체를 잘라 outputDatasetId 가 있는지 본다
+    const blocks = [...examples.matchAll(/```json\n([\s\S]*?)```/g)].map((m) => m[1]);
+    const sqlSteps = blocks.flatMap((b) => b.split(/\n\s*\},?\s*\n\s*\{/).filter((s) => s.includes('"scriptType": "SQL"')));
+    expect(sqlSteps.length).toBeGreaterThan(2);
+    for (const s of sqlSteps) expect(s, s).toContain('"outputDatasetId"');
+  });
+
+  it('tibero/rules.md 는 공용 TIBERO_SQL_GUIDE 를 그대로 옮겨 적는다', () => {
+    expect(TIBERO_SQL_GUIDE.length).toBeGreaterThan(0);
+    expect(readTibero('rules.md')).toContain(TIBERO_SQL_GUIDE.trim());
+  });
+
+  it('tibero/rules.md 는 테이블 없음(-8033)을 스키마 한정자를 지울 근거로 삼지 말라고 한다(#682 의 Tibero 판)', () => {
+    const rules = readTibero('rules.md');
+    expect(rules).toContain('JDBC-8033');
+    expect(rules).toMatch(/한정자를 (지우지|떼지) 않는다/);
+  });
+
+  it('tibero 사본에도 #242 placeholder SQL 금지·abort 규칙이 남아 있다', () => {
+    const rules = readTibero('rules.md');
+    const agent = readTibero('agent.md');
+    expect(rules).toMatch(/placeholder/i);
+    expect(agent).toMatch(/placeholder/i);
+  });
+
+  it('로더가 TIBERO 에서 사본을 쓴다 — SQL 핵심 규칙과 Python 거부 안내를 담는다', () => {
+    resetSubagentCache();
+    const tibero = loadSubagents(undefined, 'TIBERO')['pipeline-builder'];
+    expect(hasTiberoCoreRules(tibero.prompt)).toBe(true);
+    expect(findPgOnlySyntax(tibero.prompt)).toEqual([]);
+    expect(tibero.prompt).toContain('Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다.');
+    resetSubagentCache();
   });
 });

@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { TIBERO_SQL_GUIDE } from '../agent/tibero-sql-guide.js';
+import { findPgOnlySyntax, hasTiberoCoreRules } from '../agent/tibero-prompt-lint.fixture.js';
 import proactiveRouter, {
   buildSectionPrompt,
   parseSections,
@@ -376,6 +381,25 @@ describe('Proactive routes — integration tests', () => {
 
     it('aiPurpose 가 없으면 넘기지 않는다', async () => {
       expect((await run({})).aiPurpose).toBeUndefined();
+    });
+
+    // WD-79: 테넌트 DB 방언 — 'TIBERO' 만 TIBERO, 나머지는 POSTGRESQL.
+    it("바디의 dbDialect 'TIBERO' 를 provider.execute 의 dbDialect 로 넘긴다", async () => {
+      expect(((await run({ dbDialect: 'TIBERO' })) as { dbDialect?: string }).dbDialect).toBe('TIBERO');
+    });
+
+    it("dbDialect 가 없으면 'POSTGRESQL'", async () => {
+      expect(((await run({})) as { dbDialect?: string }).dbDialect).toBe('POSTGRESQL');
+    });
+
+    // WD-79: Proactive 는 overrideSystemPrompt 라 메인 프롬프트가 안 들어간다 — 리포트 프롬프트에 직접 싣는다.
+    it("dbDialect 'TIBERO' 면 리포트 시스템 프롬프트에 TIBERO_SQL_GUIDE 를 싣고, 없으면 싣지 않는다", async () => {
+      const tibero = (await run({ dbDialect: 'TIBERO' })) as { systemPrompt?: string };
+      expect(TIBERO_SQL_GUIDE.length).toBeGreaterThan(0);
+      expect(tibero.systemPrompt).toContain(TIBERO_SQL_GUIDE);
+      mockExecute.mockClear();
+      const pg = (await run({})) as { systemPrompt?: string };
+      expect(pg.systemPrompt).not.toContain('Tibero');
     });
 
     it("'none' 등 다른 값은 버린다 — LLM 실행에서 AI 판정을 끄면 안 된다", async () => {
@@ -851,5 +875,64 @@ describe('buildProactiveSystemPrompt', () => {
     const p = buildProactiveSystemPrompt(undefined, DIR, 'opencode');
     expect(p).toContain('자유 형식');
     expect(p).not.toMatch(/위임/);
+  });
+});
+
+/**
+ * 방언별 Proactive 프롬프트(WD-79).
+ *
+ * PG 는 변경 전과 바이트 동일해야 한다 — 픽스처(`src/agent/__fixtures__/pg-prompts/proactive-*.txt`)는 변경 전
+ * 코드에서 아래 RICH_TEMPLATE·DIR 로 덤프했다(정적·구분선·그룹·스타일까지 거치도록).
+ * Tibero 는 PG 프롬프트 끝(footer 뒤)에 TIBERO_SQL_GUIDE 를 붙인다.
+ */
+describe('buildProactiveSystemPrompt — 방언별 (WD-79)', () => {
+  const DIR = '/tmp/proactive-report/t3/7-1';
+  const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'agent', '__fixtures__', 'pg-prompts');
+  const fixture = (name: string) => fs.readFileSync(path.join(FIXTURES, name), 'utf-8');
+  const RICH_TEMPLATE = {
+    style: '간결한 보고체',
+    output_format: 'html',
+    sections: [
+      { key: 'title', label: '제목', type: 'text', static: true, content: '고정' },
+      { key: 'summary', label: '요약', type: 'text', instruction: '핵심을 먼저' },
+      { key: 'div', label: '-', type: 'divider' },
+      {
+        key: 'grp',
+        label: '지표 묶음',
+        type: 'group',
+        instruction: '지표를 모은다',
+        children: [
+          { key: 'kpi', label: '주요 지표', type: 'cards', instruction: '전월 대비' },
+          { key: 'tbl', label: '표', type: 'table' },
+        ],
+      },
+      { key: 'rec', label: '권고', type: 'recommendation' },
+    ],
+  };
+  const CASES = [
+    ['sdk', undefined, 'proactive-sdk-no-template.txt'],
+    ['sdk', RICH_TEMPLATE, 'proactive-sdk-template.txt'],
+    ['opencode', undefined, 'proactive-opencode-no-template.txt'],
+    ['opencode', RICH_TEMPLATE, 'proactive-opencode-template.txt'],
+  ] as const;
+
+  it.each(CASES)('PG(%s) — 방언 생략·POSTGRESQL 모두 변경 전과 바이트 동일 (%#)', (agentType, template, file) => {
+    expect(buildProactiveSystemPrompt(template, DIR, agentType)).toBe(fixture(file));
+    expect(buildProactiveSystemPrompt(template, DIR, agentType, 'POSTGRESQL')).toBe(fixture(file));
+  });
+
+  it.each(CASES)('TIBERO(%s) — PG 프롬프트 뒤에 TIBERO_SQL_GUIDE 를 붙인다 (%#)', (agentType, template, file) => {
+    const p = buildProactiveSystemPrompt(template, DIR, agentType, 'TIBERO');
+    expect(TIBERO_SQL_GUIDE.length).toBeGreaterThan(0);
+    expect(p.startsWith(fixture(file))).toBe(true);
+    expect(p.endsWith(TIBERO_SQL_GUIDE)).toBe(true);
+    expect(findPgOnlySyntax(p)).toEqual([]);
+    expect(hasTiberoCoreRules(p)).toBe(true);
+  });
+
+  it('cli 경로도 sdk 와 같은 Tibero 규칙을 받는다', () => {
+    expect(buildProactiveSystemPrompt(undefined, DIR, 'cli', 'TIBERO')).toBe(
+      buildProactiveSystemPrompt(undefined, DIR, 'sdk', 'TIBERO'),
+    );
   });
 });

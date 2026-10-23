@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { loadSubagents, buildSubagentGuide, resetSubagentCache } from './subagent-loader.js';
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
+import { findPgOnlySyntax } from './tibero-prompt-lint.fixture.js';
 
 // Helpers
 
@@ -945,5 +947,233 @@ describe('loadSubagents error paths', () => {
     // File entry skipped — no agents loaded
     expect(result).toEqual({});
     fs.rmSync(tmpDir, { recursive: true });
+  });
+});
+
+// ── SL-16: 방언별 지식 파일 대체 (WD-79) ─────────────────────────────────────
+//
+// Tibero 테넌트는 서브에이전트 디렉터리의 `tibero/<파일명>` 이 있으면 같은 이름의 agent.md·지식 파일을
+// 그것으로 대체한다. PG 는 `tibero/` 를 절대 읽지 않는다(PG 프롬프트 바이트 동일 보장).
+
+/** `tibero/` 하위 파일까지 만드는 헬퍼 — makeSubagentDir 는 하위 디렉터리를 만들지 않는다. */
+function writeTiberoFile(agentDir: string, name: string, content: string): void {
+  fs.mkdirSync(path.join(agentDir, 'tibero'), { recursive: true });
+  fs.writeFileSync(path.join(agentDir, 'tibero', name), content, 'utf-8');
+}
+
+const TIBERO_AGENT_MD = `---
+name: test-agent
+description: "A tibero test agent"
+tools:
+  - mcp__firehub__execute_analytics_query
+---
+
+This is the TIBERO agent prompt body.
+`;
+
+describe('SL-16: 방언별 지식 파일 대체 (WD-79)', () => {
+  it('TIBERO 는 tibero/rules.md 로 같은 이름의 rules.md 를 대체하고, PG 는 원본을 쓴다', () => {
+    const root = makeTempDir();
+    const dir = makeSubagentDir(root, 'agent', BASIC_AGENT_MD, { 'rules.md': 'PG RULES' });
+    writeTiberoFile(dir, 'rules.md', 'TIBERO RULES');
+
+    const tibero = loadSubagents(root, 'TIBERO')['agent'];
+    expect(tibero.prompt).toContain('### rules.md\n\nTIBERO RULES');
+    expect(tibero.prompt).not.toContain('PG RULES');
+
+    const pg = loadSubagents(root, 'POSTGRESQL')['agent'];
+    expect(pg.prompt).toContain('### rules.md\n\nPG RULES');
+    expect(pg.prompt).not.toContain('TIBERO RULES');
+    // 방언 생략 = POSTGRESQL
+    expect(loadSubagents(root)['agent'].prompt).toBe(pg.prompt);
+  });
+
+  it('TIBERO 는 tibero/agent.md 로 frontmatter(description·tools)와 본문을 대체한다', () => {
+    const root = makeTempDir();
+    const dir = makeSubagentDir(root, 'agent', BASIC_AGENT_MD);
+    writeTiberoFile(dir, 'agent.md', TIBERO_AGENT_MD);
+
+    const tibero = loadSubagents(root, 'TIBERO')['agent'];
+    expect(tibero.description).toBe('A tibero test agent');
+    expect(tibero.tools).toEqual(['mcp__firehub__execute_analytics_query']);
+    expect(tibero.prompt).toContain('TIBERO agent prompt body');
+
+    const pg = loadSubagents(root, 'POSTGRESQL')['agent'];
+    expect(pg.description).toBe('A test agent');
+    expect(pg.tools).toBeUndefined();
+  });
+
+  it('tibero/ 에 대체본이 없는 파일은 TIBERO 에서도 원본을 쓴다', () => {
+    const root = makeTempDir();
+    const dir = makeSubagentDir(root, 'agent', BASIC_AGENT_MD, { 'a.md': 'A ORIG', 'b.md': 'B ORIG' });
+    writeTiberoFile(dir, 'b.md', 'B TIBERO');
+
+    const prompt = loadSubagents(root, 'TIBERO')['agent'].prompt;
+    expect(prompt).toContain('A ORIG');
+    expect(prompt).toContain('B TIBERO');
+    expect(prompt).not.toContain('B ORIG');
+  });
+
+  it('tibero/ 에만 있는 파일은 지식 파일로 더하지 않는다(대체만 한다)', () => {
+    const root = makeTempDir();
+    const dir = makeSubagentDir(root, 'agent', BASIC_AGENT_MD, { 'rules.md': 'PG RULES' });
+    writeTiberoFile(dir, 'extra.md', 'TIBERO ONLY EXTRA');
+
+    const prompt = loadSubagents(root, 'TIBERO')['agent'].prompt;
+    expect(prompt).not.toContain('TIBERO ONLY EXTRA');
+    expect(prompt).not.toContain('### extra.md');
+  });
+
+  it('기본 제외 파일(examples.md)은 tibero/ 에 있어도 넣지 않는다', () => {
+    const root = makeTempDir();
+    const dir = makeSubagentDir(root, 'agent', BASIC_AGENT_MD, { 'examples.md': 'PG EXAMPLES' });
+    writeTiberoFile(dir, 'examples.md', 'TIBERO EXAMPLES');
+
+    expect(loadSubagents(root, 'TIBERO')['agent'].prompt).not.toContain('EXAMPLES');
+  });
+
+  it('*.md 글롭은 tibero/ 하위 디렉터리를 줍지 않는다(PG 프롬프트에 tibero 흔적 없음)', () => {
+    const root = makeTempDir();
+    const dir = makeSubagentDir(root, 'agent', BASIC_AGENT_MD, { 'rules.md': 'PG RULES' });
+    writeTiberoFile(dir, 'rules.md', 'TIBERO RULES');
+
+    const prompt = loadSubagents(root, 'POSTGRESQL')['agent'].prompt;
+    expect(prompt).not.toContain('### tibero');
+    expect(prompt).not.toContain('TIBERO');
+  });
+
+  it('PG 로드는 tibero/ 아래 파일을 한 번도 읽지 않는다', () => {
+    const root = makeTempDir();
+    const dir = makeSubagentDir(root, 'agent', BASIC_AGENT_MD, { 'rules.md': 'PG RULES' });
+    writeTiberoFile(dir, 'rules.md', 'TIBERO RULES');
+    writeTiberoFile(dir, 'agent.md', TIBERO_AGENT_MD);
+
+    const readSpy = vi.spyOn(fs, 'readFileSync');
+    const existsSpy = vi.spyOn(fs, 'existsSync');
+    loadSubagents(root, 'POSTGRESQL');
+    const touched = [...readSpy.mock.calls, ...existsSpy.mock.calls].map((c) => String(c[0]));
+    expect(touched.some((p) => p.includes(`${path.sep}tibero${path.sep}`))).toBe(false);
+  });
+
+  it('100KB 한도는 대체한 뒤의 크기로 잰다', () => {
+    const root = makeTempDir();
+    const big = 'x'.repeat(101 * 1024);
+    // 원본은 작고 Tibero 대체본이 크면 → TIBERO 만 건너뛴다
+    const a = makeSubagentDir(root, 'small-pg', BASIC_AGENT_MD, { 'rules.md': 'small' });
+    writeTiberoFile(a, 'rules.md', big);
+    // 원본은 크고 Tibero 대체본이 작으면 → PG 만 건너뛴다
+    const b = makeSubagentDir(root, 'big-pg', BASIC_AGENT_MD, { 'rules.md': big });
+    writeTiberoFile(b, 'rules.md', 'small');
+
+    const tibero = loadSubagents(root, 'TIBERO');
+    expect(tibero['small-pg']).toBeUndefined();
+    expect(tibero['big-pg']).toBeDefined();
+
+    const pg = loadSubagents(root, 'POSTGRESQL');
+    expect(pg['small-pg']).toBeDefined();
+    expect(pg['big-pg']).toBeUndefined();
+  });
+});
+
+// ── SL-17: 기본 경로 캐시는 방언별 (WD-79) ───────────────────────────────────
+
+describe('SL-17: 기본 경로 캐시는 방언별이다 (WD-79)', () => {
+  beforeEach(() => resetSubagentCache());
+  afterEach(() => resetSubagentCache());
+
+  it('TIBERO 를 먼저 불러도 이후 PG 결과가 Tibero 본으로 오염되지 않는다(반대 순서도)', () => {
+    const tiberoFirst = loadSubagents(undefined, 'TIBERO');
+    const pgAfter = loadSubagents(undefined, 'POSTGRESQL');
+    expect(pgAfter['data-analyst'].prompt).not.toBe(tiberoFirst['data-analyst'].prompt);
+    expect(pgAfter['data-analyst'].prompt).not.toContain('Tibero');
+
+    resetSubagentCache();
+    const pgFirst = loadSubagents(undefined, 'POSTGRESQL');
+    const tiberoAfter = loadSubagents(undefined, 'TIBERO');
+    expect(tiberoAfter['data-analyst'].prompt).toContain('Tibero');
+    expect(pgFirst['data-analyst'].prompt).toBe(pgAfter['data-analyst'].prompt);
+  });
+
+  it('같은 방언은 캐시된 같은 객체를 돌려주고, resetSubagentCache 는 모든 방언을 비운다', () => {
+    const pg1 = loadSubagents();
+    const t1 = loadSubagents(undefined, 'TIBERO');
+    expect(loadSubagents(undefined, 'POSTGRESQL')).toBe(pg1);
+    expect(loadSubagents(undefined, 'TIBERO')).toBe(t1);
+
+    resetSubagentCache();
+    expect(loadSubagents()).not.toBe(pg1);
+    expect(loadSubagents(undefined, 'TIBERO')).not.toBe(t1);
+  });
+});
+
+// ── SL-18: 실제 서브에이전트 — PG 바이트 동일 (WD-79) ────────────────────────
+//
+// 픽스처는 변경 전 코드의 loadSubagents() 결과를 덤프한 것이다(`__fixtures__/pg-prompts/`).
+// FIREHUB_SUBAGENT_INCLUDE_EXAMPLES=1 이면 examples.md 가 들어가 픽스처와 달라지므로 건너뛴다.
+
+describe('SL-18: 실제 서브에이전트 PG 프롬프트는 변경 전과 바이트 동일 (WD-79)', () => {
+  const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '__fixtures__', 'pg-prompts');
+  const includeExamples = process.env.FIREHUB_SUBAGENT_INCLUDE_EXAMPLES === '1';
+  beforeEach(() => resetSubagentCache());
+
+  it.skipIf(includeExamples)('loadSubagents(undefined, POSTGRESQL) 의 각 prompt 가 픽스처와 같다', () => {
+    const agents = loadSubagents(undefined, 'POSTGRESQL');
+    const fixtureNames = fs
+      .readdirSync(FIXTURES)
+      .filter((f) => f.startsWith('subagent-') && f.endsWith('.txt'))
+      .map((f) => f.slice('subagent-'.length, -'.txt'.length))
+      .sort();
+    expect(Object.keys(agents).sort()).toEqual(fixtureNames);
+    for (const name of fixtureNames) {
+      const expected = fs.readFileSync(path.join(FIXTURES, `subagent-${name}.txt`), 'utf-8');
+      expect(agents[name].prompt, `${name} prompt`).toBe(expected);
+    }
+  });
+
+  it.skipIf(includeExamples)('PG 의 description·tools·model·maxTurns 도 변경 전과 같다', () => {
+    const agents = loadSubagents(undefined, 'POSTGRESQL');
+    const expected = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'subagent-definitions.json'), 'utf-8'));
+    const actual = Object.fromEntries(
+      Object.entries(agents).map(([name, def]) => {
+        const { prompt: _prompt, ...rest } = def;
+        return [name, rest];
+      }),
+    );
+    expect(JSON.parse(JSON.stringify(actual))).toEqual(expected);
+  });
+});
+
+// ── SL-19: 실제 서브에이전트 — Tibero 프롬프트 (WD-79) ───────────────────────
+
+describe('SL-19: 실제 서브에이전트 Tibero 프롬프트 (WD-79)', () => {
+  beforeEach(() => resetSubagentCache());
+  afterEach(() => resetSubagentCache());
+
+  it('11개 Tibero 프롬프트 모두 PG 전용 문법(::·DATE_TRUNC·ILIKE·LIMIT·ST_DWithin·psycopg2)이 없다', () => {
+    const agents = loadSubagents(undefined, 'TIBERO');
+    expect(Object.keys(agents).length).toBe(11);
+    for (const [name, def] of Object.entries(agents)) {
+      expect(findPgOnlySyntax(def.prompt), name).toEqual([]);
+    }
+  });
+
+  it('검사 자체가 PG 프롬프트의 PG 전용 문법을 잡는다(예외 처리가 모든 줄을 통과시키지 않는지 확인)', () => {
+    const pg = loadSubagents(undefined, 'POSTGRESQL');
+    for (const name of ['data-analyst', 'pipeline-builder']) {
+      expect(findPgOnlySyntax(pg[name].prompt).length, name).toBeGreaterThan(0);
+    }
+  });
+
+  it('tibero/ 사본이 없는 서브에이전트는 Tibero 에서도 PG 와 같은 정의를 쓴다', () => {
+    const pg = loadSubagents(undefined, 'POSTGRESQL');
+    const tibero = loadSubagents(undefined, 'TIBERO');
+    const variants = new Set(['data-analyst', 'pipeline-builder', 'dataset-manager']);
+    for (const name of Object.keys(pg)) {
+      if (variants.has(name)) {
+        expect(tibero[name].prompt, name).not.toBe(pg[name].prompt);
+      } else {
+        expect(tibero[name], name).toEqual(pg[name]);
+      }
+    }
   });
 });

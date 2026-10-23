@@ -1,12 +1,40 @@
 import { z } from 'zod/v4';
 import type { FireHubApiClient } from '../api-client.js';
+import { DEFAULT_DB_DIALECT, type DbDialect } from '../../agent/db-dialect.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
+
+/** create_pipeline 스텝 scriptContent 설명의 공통 앞부분(방언 무관). */
+const CREATE_SCRIPT_CONTENT_PREFIX =
+  'SQL 또는 Python 스크립트 (API_CALL, AI_CLASSIFY은 불필요). SQL: SELECT 문 결과가 자동으로 출력 데이터셋에 적재됨 (INSERT INTO 불필요). 다른 스텝 출력을 {{#번호}}로 참조 가능. Python: stdout에 JSON 배열을 출력하면 자동으로 출력 데이터셋에 적재됨 (예: print(json.dumps([{"col": "val"}]))). 로그는 stderr로 출력 (print("...", file=sys.stderr)). ';
+/** update_pipeline 스텝 scriptContent 설명의 공통 앞부분(방언 무관). */
+const UPDATE_SCRIPT_CONTENT_PREFIX =
+  'SQL 또는 Python 스크립트. SQL 스텝에서 다른 스텝 출력을 {{#번호}}로 참조 가능 (예: SELECT * FROM {{#1}}). ';
+/** 명시적 데이터셋 참조 안내 — PG 는 data 스키마, Tibero 는 get_data_schema 가 돌려준 테넌트 스키마(WD-79). */
+const PG_DATASET_REF = '명시적 데이터셋은 data."tableName" 사용';
+const TIBERO_DATASET_REF = '명시적 데이터셋은 get_data_schema 가 돌려준 schema 로 genia_t{id}.{tableName} 사용';
 
 export function registerPipelineTools(
   apiClient: FireHubApiClient,
   safeTool: SafeToolFn,
   jsonResult: JsonResultFn,
+  // WD-79: 테넌트 저장소 방언 — Tibero 일 때만 도구 설명을 Tibero 용으로 바꾼다(PG 는 기존 설명 그대로).
+  dialect: DbDialect = DEFAULT_DB_DIALECT,
 ) {
+  const isTibero = dialect === 'TIBERO';
+  // WD-79 수정 1차: Tibero 테넌트는 출력 데이터셋 없는 SQL 단계를 api(PipelineAsyncRunner)가 거부하고(TEMP 자동 생성은 2단계),
+  // AI 분류 단계도 실행하지 않는다. PG 설명은 기존 문자열 그대로 둔다(PG 도구 설명 픽스처 테스트).
+  const outputDatasetIdDescription = isTibero
+    ? '출력 데이터셋 ID. Tibero SQL 단계는 반드시 outputDatasetId 를 지정한다 — 비우면 실행 시 "Tibero 저장소 테넌트의 SQL 단계는 출력 데이터셋을 지정해야 합니다." 로 거부된다'
+    : '출력 데이터셋 ID (미지정 시 실행할 때 TEMP 타입 임시 데이터셋이 자동 생성됨)';
+  // pythonConfig.outputColumns 설명. Tibero 테넌트는 api(PipelineAsyncRunner)가 Python 단계 실행을 거부하므로(Python 지원은
+  // 2웨이브 WD-78) 그 거부 문구를 그대로 알려 SQL 단계를 쓰게 한다.
+  const pythonOutputColumnsDescription = isTibero
+    ? '출력 컬럼 정의 (Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다 — SQL 단계를 사용)'
+    : '출력 컬럼 정의. 출력 데이터셋 미지정 시 임시 데이터셋 자동 생성에 사용';
+  // scriptContent 설명은 공통 앞부분 + 방언별 "명시적 데이터셋 참조" 뒷부분이다 — PG 결과 문자열은 예전과 같다(픽스처).
+  const explicitDatasetRef = isTibero ? TIBERO_DATASET_REF : PG_DATASET_REF;
+  // 출력 컬럼 이름 규칙 — 길이 상한만 방언별(PG 63바이트 식별자, Tibero 30자 + 예약어 불가).
+  const outputColumnNameDescription = `컬럼명 (snake_case, 최대 ${isTibero ? '30자, Tibero 예약어 불가' : '63자'})`;
   return [
     safeTool(
       'list_pipelines',
@@ -48,8 +76,8 @@ export function registerPipelineTools(
               scriptContent: z
                 .string()
                 .optional()
-                .describe('SQL 또는 Python 스크립트 (API_CALL, AI_CLASSIFY은 불필요). SQL: SELECT 문 결과가 자동으로 출력 데이터셋에 적재됨 (INSERT INTO 불필요). 다른 스텝 출력을 {{#번호}}로 참조 가능. Python: stdout에 JSON 배열을 출력하면 자동으로 출력 데이터셋에 적재됨 (예: print(json.dumps([{"col": "val"}]))). 로그는 stderr로 출력 (print("...", file=sys.stderr)). 명시적 데이터셋은 data."tableName" 사용'),
-              outputDatasetId: z.number().optional().describe('출력 데이터셋 ID (미지정 시 실행할 때 TEMP 타입 임시 데이터셋이 자동 생성됨)'),
+                .describe(CREATE_SCRIPT_CONTENT_PREFIX + explicitDatasetRef),
+              outputDatasetId: z.number().optional().describe(outputDatasetIdDescription),
               inputDatasetIds: z.array(z.number()).optional().describe('입력 데이터셋 ID 목록'),
               dependsOnStepNames: z
                 .array(z.string())
@@ -139,9 +167,9 @@ export function registerPipelineTools(
               pythonConfig: z
                 .object({
                   outputColumns: z.array(z.object({
-                    name: z.string().describe('컬럼명 (snake_case, 최대 63자)'),
+                    name: z.string().describe(outputColumnNameDescription),
                     type: z.enum(['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP']).describe('컬럼 타입'),
-                  })).optional().describe('출력 컬럼 정의. 출력 데이터셋 미지정 시 임시 데이터셋 자동 생성에 사용'),
+                  })).optional().describe(pythonOutputColumnsDescription),
                 })
                 .optional()
                 .describe('Python 스텝 설정'),
@@ -187,8 +215,8 @@ export function registerPipelineTools(
               name: z.string().describe('스텝 이름'),
               description: z.string().optional().describe('스텝 설명'),
               scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL', 'AI_CLASSIFY']).describe('스텝 유형'),
-              scriptContent: z.string().optional().describe('SQL 또는 Python 스크립트. SQL 스텝에서 다른 스텝 출력을 {{#번호}}로 참조 가능 (예: SELECT * FROM {{#1}}). 명시적 데이터셋은 data."tableName" 사용'),
-              outputDatasetId: z.number().optional().describe('출력 데이터셋 ID (미지정 시 실행할 때 TEMP 타입 임시 데이터셋이 자동 생성됨)'),
+              scriptContent: z.string().optional().describe(UPDATE_SCRIPT_CONTENT_PREFIX + explicitDatasetRef),
+              outputDatasetId: z.number().optional().describe(outputDatasetIdDescription),
               inputDatasetIds: z.array(z.number()).optional().describe('입력 데이터셋 ID 목록'),
               dependsOnStepNames: z.array(z.string()).optional().describe('의존 스텝 이름 목록'),
               loadStrategy: z
@@ -215,9 +243,9 @@ export function registerPipelineTools(
               pythonConfig: z
                 .object({
                   outputColumns: z.array(z.object({
-                    name: z.string().describe('컬럼명 (snake_case, 최대 63자)'),
+                    name: z.string().describe(outputColumnNameDescription),
                     type: z.enum(['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP']).describe('컬럼 타입'),
-                  })).optional().describe('출력 컬럼 정의. 출력 데이터셋 미지정 시 임시 데이터셋 자동 생성에 사용'),
+                  })).optional().describe(pythonOutputColumnsDescription),
                 })
                 .optional()
                 .describe('Python 스텝 설정'),

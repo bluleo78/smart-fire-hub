@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.ai.service.AiChatRequestBuilder.Prepared;
+import com.smartfirehub.dataset.storage.DataStoreBackend;
+import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.model.AiCredential;
@@ -26,6 +28,7 @@ class AiChatRequestBuilderTest {
 
   @Mock private SettingsService settingsService;
   @Mock private AiCredentialService aiCredentialService;
+  @Mock private DataStoreResolver dataStoreResolver;
   @InjectMocks private AiChatRequestBuilder builder;
 
   @Test
@@ -82,5 +85,26 @@ class AiChatRequestBuilderTest {
 
     assertThat(prepared.body()).isNull();
     assertThat(prepared.problem()).isEqualTo(empty.incompleteMessage());
+  }
+
+  @Test
+  @DisplayName("WD-79 — Tibero 테넌트면 바디에 dbDialect=TIBERO 를 싣는다")
+  void prepare_tiberoTenant_sendsTiberoDialect() {
+    when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.model", "claude-sonnet-5"));
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.CliApi("sk-live"));
+    when(dataStoreResolver.backendFor(7L)).thenReturn(DataStoreBackend.TIBERO);
+
+    assertThat(builder.prepare(7L, 42L, "", "hi").body()).containsEntry("dbDialect", "TIBERO");
+  }
+
+  @Test
+  @DisplayName("WD-79 — PG 테넌트면 바디에 dbDialect=POSTGRESQL 을 싣는다")
+  void prepare_pgTenant_sendsPostgresqlDialect() {
+    when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.model", "claude-sonnet-5"));
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.CliApi("sk-live"));
+    when(dataStoreResolver.backendFor(7L)).thenReturn(DataStoreBackend.POSTGRESQL);
+
+    assertThat(builder.prepare(7L, 42L, "", "hi", true).body())
+        .containsEntry("dbDialect", "POSTGRESQL");
   }
 }

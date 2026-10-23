@@ -1,5 +1,7 @@
 package com.smartfirehub.ai.service;
 
+import com.smartfirehub.dataset.storage.DataStoreBackend;
+import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.model.AiCredential;
@@ -23,11 +25,15 @@ public class AiChatRequestBuilder {
 
   private final SettingsService settingsService;
   private final AiCredentialService aiCredentialService;
+  private final DataStoreResolver dataStoreResolver;
 
   public AiChatRequestBuilder(
-      SettingsService settingsService, AiCredentialService aiCredentialService) {
+      SettingsService settingsService,
+      AiCredentialService aiCredentialService,
+      DataStoreResolver dataStoreResolver) {
     this.settingsService = settingsService;
     this.aiCredentialService = aiCredentialService;
+    this.dataStoreResolver = dataStoreResolver;
   }
 
   /**
@@ -88,6 +94,10 @@ public class AiChatRequestBuilder {
     body.put("sessionId", sessionId != null ? sessionId : "");
     body.put("userId", userId);
     body.put("tenantId", tenantId);
+    // 테넌트 데이터 저장소 방언 — ai-agent 가 프롬프트에 SQL 방언 지침(Tibero 는 LIMIT/ILIKE 불가 등)을 넣는 근거다(WD-79).
+    // 스레드 컨텍스트(PipelineDataSchema.isTibero)가 아니라 호출부가 넘긴 명시적 tenantId 로 판정한다 —
+    // 이 메서드가 받는 tenantId 가 곧 요청 바디의 tenantId 라, 두 값이 어긋나면 방언과 워크스페이스가 다른 테넌트를 가리키게 된다.
+    body.put("dbDialect", DataStoreBackend.dialectOf(dataStoreResolver.backendFor(tenantId)));
     // 자격증명 필드(agentType/apiKey/oauthToken/providerId/baseUrl/reasoningEffort)는 유형별
     // applyTo() 가 채운다 — 분류·프로액티브 경로와 같은 메서드를 공유한다(이슈 #695).
     credential.applyTo(body);

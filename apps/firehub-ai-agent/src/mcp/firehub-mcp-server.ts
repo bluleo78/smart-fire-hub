@@ -8,6 +8,7 @@ import { createTracker, FAILURE_WARN_HINT, type FailureTracker } from '../agent/
 import { FireHubApiClient } from './api-client.js';
 import { policyBlockedOf, policyBlockedResultText } from './policy-blocked.js';
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../constants.js';
+import type { DbDialect } from '../agent/db-dialect.js';
 import { registerCategoryTools } from './tools/category-tools.js';
 import { registerDatasetTools } from './tools/dataset-tools.js';
 import { registerDataTools } from './tools/data-tools.js';
@@ -218,8 +219,25 @@ export function isToolPermitted(name: string, userPermissions: string[] | undefi
   return userPermissions.includes(required);
 }
 
+/**
+ * Tibero 테넌트 저장소에서 아직 지원하지 않아 숨기는 도구(WD-79/WD-80).
+ * 행 검색(search_dataset_rows)은 api 가 422 로 거절하므로, 에이전트가 헛걸음하지 않게 목록에서 뺀다.
+ */
+export const TIBERO_UNSUPPORTED_TOOLS: ReadonlySet<string> = new Set(['search_dataset_rows']);
+
+/**
+ * 도구가 해당 방언에서 노출 가능한지 판정한다. 방언이 없거나 PG 면 항상 true(후방호환).
+ * stdio 경로는 등록 시점에 이 판정을 직접 쓴다(isToolPermitted 와 같은 이유).
+ */
+export function isToolAvailableForDialect(name: string, dialect: DbDialect | undefined): boolean {
+  if (dialect !== 'TIBERO') return true;
+  return !TIBERO_UNSUPPORTED_TOOLS.has(name);
+}
+
 /** registerAllTools/buildAllMcpTools의 공통 옵션 */
 export interface BuildToolsOptions {
+  /** WD-79: 테넌트 저장소 방언. 없으면 PG 로 본다(도구 숨김·설명 모두 기존 그대로). */
+  dbDialect?: DbDialect;
   /**
    * 세션 사용자의 권한 목록. `undefined`면 모든 도구 허용(후방호환),
    * `[]`면 권한 요구가 있는 도구는 전부 제외(fail-closed).
@@ -250,17 +268,19 @@ export function registerAllTools(
   jsonResultFn: JsonResultFn,
   options: BuildToolsOptions = {},
 ) {
+  // 방언 기본값(PG)은 각 register* 의 기본 인자(DEFAULT_DB_DIALECT)가 정한다.
+  const dialect = options.dbDialect;
   const allTools = [
     ...registerCategoryTools(apiClient, safeToolFn, jsonResultFn),
-    ...registerDatasetTools(apiClient, safeToolFn, jsonResultFn),
+    ...registerDatasetTools(apiClient, safeToolFn, jsonResultFn, dialect),
     ...registerFindDatasetTools(apiClient, safeToolFn, jsonResultFn),
     ...registerDataImportTools(apiClient, safeToolFn, jsonResultFn),
-    ...registerDataTools(apiClient, safeToolFn, jsonResultFn),
-    ...registerPipelineTools(apiClient, safeToolFn, jsonResultFn),
+    ...registerDataTools(apiClient, safeToolFn, jsonResultFn, dialect),
+    ...registerPipelineTools(apiClient, safeToolFn, jsonResultFn, dialect),
     ...registerTriggerTools(apiClient, safeToolFn, jsonResultFn),
     ...registerApiConnectionTools(apiClient, safeToolFn, jsonResultFn),
     ...registerMiscTools(apiClient, safeToolFn, jsonResultFn),
-    ...registerAnalyticsTools(apiClient, safeToolFn, jsonResultFn),
+    ...registerAnalyticsTools(apiClient, safeToolFn, jsonResultFn, dialect),
     ...registerDocumentTools(apiClient, safeToolFn, jsonResultFn),
     ...registerFileObjectTools(apiClient, safeToolFn, jsonResultFn),
     ...registerUiTools(safeToolFn, jsonResultFn),
@@ -269,7 +289,10 @@ export function registerAllTools(
     ...registerAuditTools(apiClient, safeToolFn, jsonResultFn),
     ...registerGraphragTools(apiClient, safeToolFn, jsonResultFn, options.credentials),
   ];
-  return filterToolsByPermissions(allTools, options.userPermissions);
+  // 권한 필터 다음에 방언 필터 — Tibero 미지원 도구는 목록에서 뺀다. PG·옵션 없음이면 판정이 항상 true 라 목록이 그대로다.
+  return filterToolsByPermissions(allTools, options.userPermissions).filter((t) =>
+    isToolAvailableForDialect(t.name, options.dbDialect),
+  );
 }
 
 /**

@@ -36,6 +36,14 @@ function createMockClient(): FireHubApiClient {
   return client as FireHubApiClient;
 }
 
+/**
+ * 실제 safeTool 래퍼(SDK createSafeTool·stdio createMcpSafeTool)처럼 이름을 가진 도구 객체를 돌려주는 스텁.
+ * registerAllTools 의 방언 필터가 항상 tool.name 을 읽으므로(WD-79) undefined 를 돌려주면 안 된다.
+ */
+function safeToolStub() {
+  return vi.fn((name: string) => ({ name }));
+}
+
 describe('registerAllTools — options.credentials 가 registerGraphragTools 로 전달된다', () => {
   beforeEach(() => {
     registerGraphragToolsMock.mockClear();
@@ -43,7 +51,7 @@ describe('registerAllTools — options.credentials 가 registerGraphragTools 로
 
   it('opencode 자격증명을 그대로 registerGraphragTools 의 4번째 인자로 넘긴다', () => {
     const client = createMockClient();
-    const safeTool = vi.fn();
+    const safeTool = safeToolStub();
     const jsonResult = vi.fn();
     const credentials = {
       agentType: 'opencode' as const,
@@ -62,7 +70,7 @@ describe('registerAllTools — options.credentials 가 registerGraphragTools 로
 
   it('credentials 를 생략하면 registerGraphragTools 는 undefined 를 받는다 (ambient 로 새지 않는다)', () => {
     const client = createMockClient();
-    const safeTool = vi.fn();
+    const safeTool = safeToolStub();
     const jsonResult = vi.fn();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

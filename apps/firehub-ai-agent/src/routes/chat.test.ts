@@ -298,6 +298,18 @@ describe('Chat routes — integration tests', () => {
       expect((await run({})).aiPurpose).toBeUndefined();
     });
 
+    // WD-79: 테넌트 DB 방언 — 'TIBERO' 만 TIBERO, 나머지는 POSTGRESQL.
+    it("바디의 dbDialect 'TIBERO' 를 provider.execute 의 dbDialect 로 넘긴다", async () => {
+      const opts = (await run({ dbDialect: 'TIBERO' })) as { dbDialect?: string };
+      expect(opts.dbDialect).toBe('TIBERO');
+    });
+
+    it("dbDialect 가 없거나 모르는 값이면 'POSTGRESQL'", async () => {
+      expect(((await run({})) as { dbDialect?: string }).dbDialect).toBe('POSTGRESQL');
+      mockExecute.mockClear();
+      expect(((await run({ dbDialect: 'tibero' })) as { dbDialect?: string }).dbDialect).toBe('POSTGRESQL');
+    });
+
     it("'none' 등 다른 값은 버린다 — LLM 실행에서 AI 판정을 끄면 안 된다", async () => {
       expect((await run({ aiPurpose: 'none' })).aiPurpose).toBeUndefined();
       mockExecute.mockClear();

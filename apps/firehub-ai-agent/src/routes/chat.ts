@@ -8,6 +8,7 @@ import type { AgentType, ProviderConfig } from '../providers/index.js';
 // 가져오면 목이 정의하지 않은 값이라 undefined 가 되어 라우트가 깨진다.
 import { AGENT_RUN_SETTING_SUPPORT, isKnownAgentType } from '../providers/types.js';
 import { parseSharePurpose } from '../mcp/api-client.js';
+import { parseDbDialect } from '../agent/db-dialect.js';
 import { internalAuth } from '../middleware/auth.js';
 import { readSessionTranscript } from '../agent/transcript-reader.js';
 import { checkSessionOwnership } from '../agent/session-owner.js';
@@ -57,6 +58,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     navigationContext,
     screenContext,
     aiPurpose,
+    dbDialect,
   } = req.body;
 
   const hasMessage = message && typeof message === 'string';
@@ -175,6 +177,8 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       // MCP 호출이 X-AI-Purpose: share 를 붙여 share_policy 판정을 받게 한다. 'share' 외의 값은 버린다 — 특히
       // 'none'(AI 판정 제외)이 바디로 들어와도 LLM 실행에 실리면 안 된다(proactive.ts 와 같은 규칙).
       aiPurpose: parseSharePurpose(aiPurpose),
+      // WD-79: 테넌트 저장소 방언 — 'TIBERO' 만 Tibero, 나머지는 PG(기존 동작 유지).
+      dbDialect: parseDbDialect(dbDialect),
     });
 
     for await (const event of events) {

@@ -147,6 +147,29 @@ class SqlValidatorTiberoTest {
         .isEqualTo(SqlValidator.StatementKind.QUERY);
   }
 
+  /**
+   * WD-79: Tibero 프롬프트가 가르치는 상위 N 건 문법(FETCH FIRST n ROWS ONLY)이 검증기를 통과해야 한다 — 프롬프트대로 쓴 SQL 이 거부되면
+   * 에이전트가 같은 질의를 되풀이한다.
+   */
+  @Test
+  void promptTaught_fetchFirstRowsOnly_passes() {
+    assertThat(
+            validator.validate(
+                "SELECT region, SUM(amount) AS total FROM genia_t5.sales GROUP BY region"
+                    + " ORDER BY total DESC FETCH FIRST 10 ROWS ONLY"))
+        .isEqualTo(SqlValidator.StatementKind.QUERY);
+  }
+
+  /** WD-79: Tibero 프롬프트가 가르치는 중앙값 문법(PERCENTILE_CONT ... WITHIN GROUP)이 검증기를 통과해야 한다. */
+  @Test
+  void promptTaught_percentileContWithinGroup_passes() {
+    assertThat(
+            validator.validate(
+                "SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY amount) AS median_amount"
+                    + " FROM genia_t5.sales"))
+        .isEqualTo(SqlValidator.StatementKind.QUERY);
+  }
+
   @Test
   void probe_alternativeQuoting_isRejectedWithTiberoMessage() {
     // q'[..]' 는 JSqlParser·PG 검사와 경계가 갈리는 표기라 Tibero 전용 안내로 먼저 거부한다.

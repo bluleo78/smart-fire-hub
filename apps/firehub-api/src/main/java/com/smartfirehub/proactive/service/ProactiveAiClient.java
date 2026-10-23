@@ -2,6 +2,8 @@ package com.smartfirehub.proactive.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dataset.storage.DataStoreBackend;
+import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
@@ -29,11 +31,15 @@ public class ProactiveAiClient {
 
   private final WebClient webClient;
   private final ObjectMapper objectMapper;
+  private final DataStoreResolver dataStoreResolver;
 
   @Value("${agent.internal-token}")
   private String internalToken;
 
-  public ProactiveAiClient(@Value("${agent.url}") String agentUrl, ObjectMapper objectMapper) {
+  public ProactiveAiClient(
+      @Value("${agent.url}") String agentUrl,
+      ObjectMapper objectMapper,
+      DataStoreResolver dataStoreResolver) {
     HttpClient httpClient = HttpClient.create().responseTimeout(TIMEOUT);
     this.webClient =
         WebClient.builder()
@@ -42,6 +48,7 @@ public class ProactiveAiClient {
             .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
             .build();
     this.objectMapper = objectMapper;
+    this.dataStoreResolver = dataStoreResolver;
   }
 
   /**
@@ -86,7 +93,11 @@ public class ProactiveAiClient {
       }
       // ai-agent 가 디스크 산출물 경로를 테넌트별로 가르는 데 쓴다(경로 스코핑 전용).
       // 이 경로는 @Scheduled/@Async 배경 잡에서 오므로 TenantScopedRunner 가 세운 컨텍스트를 읽는다.
-      body.put("tenantId", TenantContext.require("프로액티브 AI 호출"));
+      long tenantId = TenantContext.require("프로액티브 AI 호출");
+      body.put("tenantId", tenantId);
+      // 테넌트 데이터 저장소 방언(WD-79) — ai-agent 가 리포트 생성 프롬프트에 SQL 방언 지침을 넣는 근거.
+      // 바디의 tenantId 와 같은 값으로 판정해 둘이 어긋나지 않게 한다.
+      body.put("dbDialect", DataStoreBackend.dialectOf(dataStoreResolver.backendFor(tenantId)));
       // 리포트는 발송(공유)된다 — ai-agent 가 이 값을 읽어 실행 중 MCP 호출에 X-AI-Purpose: share 를 실어, API 가 AI 판정에
       // 더해 SHARE 정책(공유 금지 등급 제외)까지 걸게 한다(스펙 §4.3 Proactive 행).
       body.put("aiPurpose", AiCallContext.PURPOSE_SHARE);
