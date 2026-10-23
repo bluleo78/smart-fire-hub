@@ -10,7 +10,9 @@ import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
+import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
@@ -19,8 +21,10 @@ import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.jooq.impl.DSL;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @RequiredArgsConstructor
@@ -33,6 +37,16 @@ public class ChartService {
 
   /** 삭제 영향 범위(WD-86) — 차트를 지우면 CASCADE 로 함께 사라지는 대시보드 위젯을 센다. */
   private final AnalyticsDashboardRepository dashboardRepository;
+
+  /** 테넌트 저장소 판정 — Tibero 인지에 따라 차트 데이터 실행 구간을 나눈다(WD-207). */
+  private final PipelineDataSchema pipelineDataSchema;
+
+  /**
+   * RLS GUC 가 필요한 조회 구간을 여는 readOnly 트랜잭션 템플릿 — 기존 {@code @Transactional(readOnly = true)} 와 같은
+   * 값이다. 공용 빈({@link TransactionTemplateConfig#READ_ONLY})을 주입받는다.
+   */
+  @Qualifier(TransactionTemplateConfig.READ_ONLY)
+  private final TransactionTemplate readOnlyTx;
 
   /** List charts with optional filters and pagination. */
   // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
@@ -79,8 +93,8 @@ public class ChartService {
 
   /** Get a single chart — owner or any shared chart. */
   // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
-  // 참고(자기호출): getChartData 가 이 메서드를 this. 로 직접 호출하지만, getChartData 도
-  // 아래에서 같은 @Transactional(readOnly=true)로 열려 있어 프록시를 안 타도 무해하다.
+  // 참고: getChartData 는 이 메서드를 부르지 않는다 — 리포지토리 원본을 직접 읽는 loadChart 를 readOnly 템플릿 구간 안에서
+  // 부른다(WD-207). 이 어노테이션은 컨트롤러 등 외부 호출 경로용이다.
   @Transactional(readOnly = true)
   public ChartResponse getById(Long id, Long userId) {
     return withholdDenied(
@@ -181,9 +195,30 @@ public class ChartService {
    * Execute the chart's linked saved query and return combined chart + query result. The user must
    * have access to the chart (owner or shared).
    */
-  // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
-  @Transactional(readOnly = true)
   public ChartDataResponse getChartData(Long id, Long userId) {
+    if (!pipelineDataSchema.isTibero()) {
+      // PG 테넌트: 기존과 같이 세 단계를 readOnly 트랜잭션 하나에서 차례로 실행한다.
+      return readOnlyTx.execute(
+          status -> assembleChartData(executeChart(loadChart(id, userId), userId)));
+    }
+    // Tibero 실행(최대 35초) 동안 PG 연결을 쥐지 않으려고 구간을 나눈다(WD-207).
+    // 1) RLS GUC 가 필요한 차트·SQL 조회만 readOnly 트랜잭션, 2) 판정·실행은 트랜잭션 밖(판정은 자체 트랜잭션 리포지토리를 쓴다),
+    // 3) 응답 조립은 DB 읽기가 없어 템플릿이 필요 없다.
+    ChartLoad load = readOnlyTx.execute(status -> loadChart(id, userId));
+    return assembleChartData(executeChart(load, userId));
+  }
+
+  /** 1단계에서 읽은 차트 응답과 저장 쿼리 SQL 원문. */
+  private record ChartLoad(ChartResponse chart, String sqlText) {}
+
+  /** 2단계 결과 — 판정이 거부면 result 는 null(실행하지 않았다). */
+  private record ChartExecution(
+      ChartResponse chart,
+      GuardedSqlExecutor.AnalyticsJudgment judgment,
+      com.smartfirehub.analytics.dto.AnalyticsQueryResponse result) {}
+
+  /** 1단계: 차트와 저장 쿼리 SQL 을 읽는다. RLS 가 걸려 있어 반드시 트랜잭션 안에서 불러야 한다. */
+  private ChartLoad loadChart(Long id, Long userId) {
     // getById 가 아니라 리포지토리 원본을 쓴다 — getById 의 config 가림 판정과 아래 판정이 같은 저장 쿼리를 두 번 판정하지 않게. 통과하면
     // 조회자가 데이터를 보므로 config 를 그대로 주고, 거부면 deniedData 가 config 를 빈 맵으로 지운다.
     ChartResponse chart =
@@ -192,17 +227,30 @@ public class ChartService {
         chartRepository
             .findSavedQuerySqlText(id, userId)
             .orElseThrow(() -> SavedQueryNotFoundException.usedByChart());
+    return new ChartLoad(chart, sqlText);
+  }
+
+  /** 2단계: 조회자 기준으로 판정하고, 통과하면 실행한다. Tibero 에서는 트랜잭션 밖에서 불린다. */
+  private ChartExecution executeChart(ChartLoad load, Long userId) {
     // 보안 등급(S2): 조회자 기준 판정 — 위반이면 실행하지 않고 200 + denied. 단건 위젯 경로(DashboardWidgetCard→useChartData)도
     // 대시보드 일괄 경로와 같은 계약이어야 위젯 하나가 화면 전체를 오류로 만들지 않는다(스펙 §4.2 4행).
     // 판정은 한 번 — 통과한 토큰의 정규화본을 그대로 실행하므로 판정과 실행 사이에 다른 판정이 끼지 않는다.
     GuardedSqlExecutor.AnalyticsJudgment judgment =
-        judge(clearanceResolver.resolve(userId), sqlText);
+        judge(clearanceResolver.resolve(userId), load.sqlText());
     if (judgment.denied()) {
-      return deniedData(chart);
+      return new ChartExecution(load.chart(), judgment, null);
+    }
+    return new ChartExecution(load.chart(), judgment, executeJudged(judgment));
+  }
+
+  /** 3단계: 응답 조립(DB 읽기 없음). 거부는 denied 응답, 통과는 실행 결과와 조회자별 내보내기 플래그. */
+  private ChartDataResponse assembleChartData(ChartExecution exec) {
+    if (exec.judgment().denied()) {
+      return deniedData(exec.chart());
     }
     // 내보내기 플래그는 조회자 판정 토큰에서 계산한다(설계 결정 5 — 결과 캐시와 무관하게 조회자별).
     return new ChartDataResponse(
-        chart, executeJudged(judgment), false, judgment.exportAllowedFor());
+        exec.chart(), exec.result(), false, exec.judgment().exportAllowedFor());
   }
 
   /**

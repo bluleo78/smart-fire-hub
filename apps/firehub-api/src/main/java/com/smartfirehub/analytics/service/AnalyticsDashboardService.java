@@ -19,6 +19,8 @@ import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
+import com.smartfirehub.global.config.TransactionTemplateConfig;
+import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
@@ -30,8 +32,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @RequiredArgsConstructor
@@ -53,6 +57,16 @@ public class AnalyticsDashboardService {
 
   /** 캐시 히트 시 조회자별 감사 등급 접근 기록(실행은 chartService.executeJudged 가 한다). */
   private final GuardedSqlExecutor guardedSqlExecutor;
+
+  /** 테넌트 저장소 판정 — Tibero 인지에 따라 대시보드 데이터 실행 구간을 나눈다(WD-207). */
+  private final PipelineDataSchema pipelineDataSchema;
+
+  /**
+   * RLS GUC 가 필요한 조회 구간을 여는 readOnly 트랜잭션 템플릿 — 기존 {@code @Transactional(readOnly = true)} 와 같은 값.
+   * 공용 빈({@link TransactionTemplateConfig#READ_ONLY})을 주입받는다.
+   */
+  @Qualifier(TransactionTemplateConfig.READ_ONLY)
+  private final TransactionTemplate readOnlyTx;
 
   /**
    * 대시보드 결과 캐시 키 — 저장 쿼리 id 와 <b>그 요청에서 판정한 SQL 원문</b>. id 만 키로 쓰면 소유자가 SQL 을 바꾼 뒤(TTL 60초 안) 새 SQL
@@ -180,9 +194,38 @@ public class AnalyticsDashboardService {
     }
   }
 
-  // RLS 가 걸린 dashboard/dashboard_widget 을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
-  @Transactional(readOnly = true)
   public DashboardDataResponse getDashboardData(Long dashboardId, Long userId) {
+    if (!pipelineDataSchema.isTibero()) {
+      // PG 테넌트: 기존과 같이 세 단계를 readOnly 트랜잭션 하나에서 차례로 실행한다.
+      return readOnlyTx.execute(
+          status ->
+              assembleDashboard(
+                  executeDashboard(loadDashboard(dashboardId, userId), userId), userId));
+    }
+    // Tibero 실행(위젯마다 최대 35초) 동안 PG 연결을 쥐지 않으려고 구간을 나눈다(WD-207).
+    // 1) RLS GUC 가 필요한 위젯·대시보드·SQL 조회는 readOnly 트랜잭션, 2) 판정·캐시·실행은 트랜잭션 밖(캐시 로더의 실행도 밖에서 돈다),
+    // 3) 위젯별 차트 조회·응답 조립은 다시 readOnly 트랜잭션.
+    DashboardLoad load = readOnlyTx.execute(status -> loadDashboard(dashboardId, userId));
+    DashboardExecution exec = executeDashboard(load, userId);
+    return readOnlyTx.execute(status -> assembleDashboard(exec, userId));
+  }
+
+  /** 1단계 결과 — 대시보드, 위젯 상한을 적용한 위젯, 차트→저장 쿼리, 저장 쿼리→SQL 원문(미리 읽어 2단계가 DB 를 안 읽게 한다). */
+  private record DashboardLoad(
+      DashboardResponse dashboard,
+      List<DashboardResponse.DashboardWidgetResponse> widgets,
+      Map<Long, Long> chartIdToSavedQueryId,
+      Map<Long, String> sqlByQuery) {}
+
+  /** 2단계 결과 — 저장 쿼리별 실행 결과, 거부된 저장 쿼리, 조회자별 내보내기 플래그. */
+  private record DashboardExecution(
+      DashboardLoad load,
+      Map<Long, AnalyticsQueryResponse> resultByQuery,
+      java.util.Set<Long> deniedQueries,
+      Map<Long, Boolean> exportByQuery) {}
+
+  /** 1단계: 위젯·대시보드·저장 쿼리 id·SQL 을 모두 읽는다. RLS 가 걸려 있어 반드시 트랜잭션 안에서 불러야 한다. */
+  private DashboardLoad loadDashboard(Long dashboardId, Long userId) {
     // 1. Load dashboard + widgets — 조회자 기준(볼 수 없는 차트는 이름을 가린 위젯, WD-195)
     List<DashboardResponse.DashboardWidgetResponse> widgets = viewerWidgets(dashboardId, userId);
     DashboardResponse dashboard =
@@ -199,8 +242,8 @@ public class AnalyticsDashboardService {
                 : widgets)
             .stream().filter(DashboardResponse.DashboardWidgetResponse::accessible).toList();
 
-    // 3. Deduplicate by saved_query_id, execute cache misses
-    // Build map: savedQueryId -> sqlText (via chart->savedQuery join)
+    // 3. Deduplicate by saved_query_id
+    // Build map: chartId -> savedQueryId (via chart->savedQuery join)
     Map<Long, Long> chartIdToSavedQueryId = new HashMap<>();
     for (DashboardResponse.DashboardWidgetResponse widget : limitedWidgets) {
       Long chartId = widget.chartId();
@@ -211,7 +254,17 @@ public class AnalyticsDashboardService {
         }
       }
     }
+    // 저장 쿼리별 SQL 원문 — 없으면 빈 문자열(기존 동작: 빈 SQL 은 빈 결과).
+    Map<Long, String> sqlByQuery = new HashMap<>();
+    for (Long savedQueryId : new java.util.HashSet<>(chartIdToSavedQueryId.values())) {
+      sqlByQuery.put(
+          savedQueryId, chartRepository.findSavedQuerySqlTextById(savedQueryId).orElse(""));
+    }
+    return new DashboardLoad(dashboard, limitedWidgets, chartIdToSavedQueryId, sqlByQuery);
+  }
 
+  /** 2단계: 판정·캐시·실행·recordDelivered. DB 를 읽지 않으며 Tibero 에서는 트랜잭션 밖에서 불린다. */
+  private DashboardExecution executeDashboard(DashboardLoad load, Long userId) {
     // Execute each unique savedQueryId — 보안 등급(S2): 조회자 판정이 먼저, 캐시는 그 뒤(스펙 §4.2 4행).
     //
     // 캐시를 조회자 간에 공유해도 안전한 이유:
@@ -226,8 +279,8 @@ public class AnalyticsDashboardService {
     // 조회자별 내보내기 플래그 — 공유 캐시(queryResultCache) 밖에 둔다. 캐시 결과에 실으면 먼저 데운 조회자의 값이 다른 조회자에게 샌다(설계 결정 5,
     // Review Focus 2). 빈 SQL·판정 없음은 false(fail-closed).
     Map<Long, Boolean> exportByQuery = new HashMap<>();
-    for (Long savedQueryId : new java.util.HashSet<>(chartIdToSavedQueryId.values())) {
-      String sqlText = chartRepository.findSavedQuerySqlTextById(savedQueryId).orElse("");
+    for (Long savedQueryId : new java.util.HashSet<>(load.chartIdToSavedQueryId().values())) {
+      String sqlText = load.sqlByQuery().getOrDefault(savedQueryId, "");
       if (sqlText.isBlank()) {
         // 빈 SQL 은 판정할 테이블이 없다 — 기존 동작(빈 결과)을 유지한다.
         resultByQuery.put(savedQueryId, emptyQueryResponse());
@@ -256,11 +309,16 @@ public class AnalyticsDashboardService {
       }
       resultByQuery.put(savedQueryId, result);
     }
+    return new DashboardExecution(load, resultByQuery, deniedQueries, exportByQuery);
+  }
 
+  /** 3단계: 위젯마다 차트를 조회(RLS — 트랜잭션 안에서 불러야 한다)해 응답을 조립한다. */
+  private DashboardDataResponse assembleDashboard(DashboardExecution exec, Long userId) {
+    DashboardLoad load = exec.load();
     // 4. Build widget data list
     List<DashboardDataResponse.WidgetData> widgetDataList = new ArrayList<>();
-    for (DashboardResponse.DashboardWidgetResponse widget : limitedWidgets) {
-      Long savedQueryId = chartIdToSavedQueryId.get(widget.chartId());
+    for (DashboardResponse.DashboardWidgetResponse widget : load.widgets()) {
+      Long savedQueryId = load.chartIdToSavedQueryId().get(widget.chartId());
       // chartId 별로 한 번만 조회하여 불필요한 중복 DB 쿼리 방지 (이슈 #148)
       ChartResponse chartResponse =
           chartService.getByIdOptional(widget.chartId(), userId).orElse(null);
@@ -268,23 +326,23 @@ public class AnalyticsDashboardService {
         continue;
       }
       ChartDataResponse chartData;
-      if (savedQueryId != null && deniedQueries.contains(savedQueryId)) {
+      if (savedQueryId != null && exec.deniedQueries().contains(savedQueryId)) {
         // 위반 위젯 — 빈 결과 + denied. 거부 코드·원본 데이터셋 이름은 싣지 않는다(스펙 §2.5).
         chartData = ChartService.deniedData(chartResponse);
       } else {
         AnalyticsQueryResponse queryResult =
-            savedQueryId != null ? resultByQuery.get(savedQueryId) : null;
+            savedQueryId != null ? exec.resultByQuery().get(savedQueryId) : null;
         chartData =
             new ChartDataResponse(
                 chartResponse,
                 queryResult != null ? queryResult : emptyQueryResponse(),
                 false,
-                savedQueryId != null && exportByQuery.getOrDefault(savedQueryId, false));
+                savedQueryId != null && exec.exportByQuery().getOrDefault(savedQueryId, false));
       }
       widgetDataList.add(new DashboardDataResponse.WidgetData(widget.id(), chartData));
     }
 
-    return new DashboardDataResponse(dashboard, widgetDataList);
+    return new DashboardDataResponse(load.dashboard(), widgetDataList);
   }
 
   @Transactional

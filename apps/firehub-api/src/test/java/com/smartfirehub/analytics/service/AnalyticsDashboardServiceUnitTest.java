@@ -16,6 +16,8 @@ import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
+import com.smartfirehub.global.config.TransactionTemplateConfig;
+import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.time.LocalDateTime;
@@ -23,11 +25,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * AnalyticsDashboardService 순수 단위 테스트. getDashboardData()에서 chartService.getByIdOptional()이 위젯당 1회만
@@ -45,7 +48,26 @@ class AnalyticsDashboardServiceUnitTest {
   @Mock private ClearanceResolver clearanceResolver;
   @Mock private GuardedSqlExecutor guardedSqlExecutor;
 
-  @InjectMocks private AnalyticsDashboardService dashboardService;
+  private AnalyticsDashboardService dashboardService;
+
+  /**
+   * 생성자에 트랜잭션 템플릿이 생겨 @InjectMocks 로는 만들 수 없다 — 가짜 트랜잭션 매니저 위의 템플릿으로 직접 만든다(PG 경로: isTibero=false,
+   * 트랜잭션 구간 자체는 이 테스트의 관심사가 아니다. 구간 검증은 ChartDashboardTxTest).
+   */
+  @BeforeEach
+  void setUp() {
+    dashboardService =
+        new AnalyticsDashboardService(
+            dashboardRepository,
+            widgetRepository,
+            chartService,
+            chartRepository,
+            savedQueryRepository,
+            clearanceResolver,
+            guardedSqlExecutor,
+            mock(PipelineDataSchema.class),
+            TransactionTemplateConfig.readOnly(mock(PlatformTransactionManager.class)));
+  }
 
   /**
    * getDashboardData() 위젯 루프에서 동일한 chartId에 대해 chartService.getByIdOptional()이 정확히 1회만 호출되는지 검증. 이전

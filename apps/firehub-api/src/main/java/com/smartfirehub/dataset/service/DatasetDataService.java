@@ -19,6 +19,7 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.QueryHistoryRepository;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.math.BigDecimal;
@@ -35,6 +36,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Slf4j
 @Service
@@ -48,6 +50,12 @@ public class DatasetDataService {
   private final GuardedSqlExecutor guardedSqlExecutor;
   private final ClearanceResolver clearanceResolver;
   private final QueryHistoryRepository queryHistoryRepository;
+
+  /** 실행 구간을 코드로 나누는 트랜잭션 템플릿(쓰기 기본값) — Tibero 실행을 PG 트랜잭션 밖에 두려고 쓴다(WD-207). */
+  private final TransactionTemplate tx;
+
+  /** 테넌트 저장소 판정 — Tibero 인지에 따라 실행 구간을 나눈다. */
+  private final PipelineDataSchema pipelineDataSchema;
 
   // DOCUMENT 데이터셋은 data.<table> 동적 테이블이 없고 데이터가 document_chunk 에 저장된다.
   private static final String DOCUMENT_TYPE = "DOCUMENT";
@@ -200,17 +208,36 @@ public class DatasetDataService {
     return new DataQueryResponse(columns, rows, page, size, totalElements, totalPages);
   }
 
-  @Transactional
   public SqlQueryResponse executeQuery(Long datasetId, SqlQueryRequest request, Long userId) {
+    if (!pipelineDataSchema.isTibero()) {
+      // PG 테넌트: 기존과 같이 존재 확인·실행·기록을 쓰기 트랜잭션 하나로 처리한다.
+      return tx.execute(
+          status -> {
+            SqlQueryResponse response = checkAndExecute(datasetId, request);
+            saveHistory(datasetId, request, userId, response);
+            return response;
+          });
+    }
+    // Tibero 실행(최대 35초) 동안 PG 연결을 쥐지 않으려고 구간을 나눈다(WD-207).
+    // 존재 확인은 리포지토리 자체 트랜잭션, 실행은 트랜잭션 밖, 기록만 쓰기 트랜잭션으로 연다.
+    // 실행이 예외(400/403)면 기록 없이 그대로 올라간다.
+    SqlQueryResponse response = checkAndExecute(datasetId, request);
+    tx.executeWithoutResult(status -> saveHistory(datasetId, request, userId, response));
+    return response;
+  }
+
+  /** 데이터셋 존재를 확인하고 SQL 을 실행한다. 트랜잭션 구간은 호출자(executeQuery)가 정한다. */
+  private SqlQueryResponse checkAndExecute(Long datasetId, SqlQueryRequest request) {
     datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
 
     // 보안 등급(S2): 경로의 데이터셋이 아니라 SQL 이 참조하는 모든 데이터셋을 실행자 기준으로 판정한다 — /query 는 data 스키마 전체에 닿는다.
-    SqlQueryResponse response =
-        guardedSqlExecutor.executeDatasetQuery(
-            clearanceResolver.current(), request.sql(), request.maxRows());
+    return guardedSqlExecutor.executeDatasetQuery(
+        clearanceResolver.current(), request.sql(), request.maxRows());
+  }
 
-    // Save to query history
-    boolean success = response.error() == null;
+  /** 실행 결과를 쿼리 이력에 저장한다. 호출자가 연 쓰기 트랜잭션 안에서 부른다. */
+  private void saveHistory(
+      Long datasetId, SqlQueryRequest request, Long userId, SqlQueryResponse response) {
     queryHistoryRepository.save(
         datasetId,
         userId,
@@ -218,10 +245,8 @@ public class DatasetDataService {
         response.queryType(),
         response.affectedRows(),
         response.executionTimeMs(),
-        success,
+        response.error() == null,
         response.error());
-
-    return response;
   }
 
   @Transactional(readOnly = true)

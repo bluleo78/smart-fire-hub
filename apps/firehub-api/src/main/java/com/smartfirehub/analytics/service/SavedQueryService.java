@@ -10,7 +10,9 @@ import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
+import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -20,9 +22,11 @@ import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.impl.DSL;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
@@ -41,6 +45,19 @@ public class SavedQueryService {
   private final ChartRepository chartRepository;
 
   private final AnalyticsDashboardRepository dashboardRepository;
+
+  /** 실행 구간을 코드로 나누는 트랜잭션 템플릿(쓰기 기본값) — Tibero 실행을 PG 트랜잭션 밖에 두려고 쓴다(WD-207). */
+  private final TransactionTemplate tx;
+
+  /** 테넌트 저장소 판정 — Tibero 인지에 따라 실행 구간을 나눈다. */
+  private final PipelineDataSchema pipelineDataSchema;
+
+  /**
+   * Tibero 실행 전 저장 쿼리 조회 구간의 readOnly 트랜잭션 템플릿(WD-207) — 공용 빈({@link
+   * TransactionTemplateConfig#READ_ONLY})을 주입받는다(ChartService·AnalyticsDashboardService 와 같은 방식).
+   */
+  @Qualifier(TransactionTemplateConfig.READ_ONLY)
+  private final TransactionTemplate readOnlyTx;
 
   /**
    * 응답의 연결 데이터셋 이름 가시성(보안 등급, 스펙 §2.5) — 조회자가 볼 수 없는 데이터셋은 이름만 null, datasetId 는 유지(웹 편집기가 PUT 으로
@@ -85,8 +102,8 @@ public class SavedQueryService {
 
   /** Get a single saved query — owner or any shared query. */
   // RLS 가 걸린 saved_query 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
-  // 참고(자기호출): executeById 가 이 메서드를 this. 로 직접 호출하지만, executeById 가 이미
-  // @Transactional(쓰기)로 열려 있어 프록시를 안 타도 무해하다(같은 트랜잭션에 합류).
+  // 참고(자기호출): executeById 가 이 메서드를 this. 로 직접 호출하지만, 항상 TransactionTemplate 이 연
+  // 트랜잭션 안(PG 는 쓰기, Tibero 는 readOnly)에서만 부르므로 프록시를 안 타도 무해하다.
   @Transactional(readOnly = true)
   public SavedQueryResponse getById(Long id, Long userId) {
     return savedQueryRepository
@@ -197,9 +214,21 @@ public class SavedQueryService {
    * Execute a saved query by ID. 성공한 사용자 SELECT 는 애드혹 실행과 같은 규칙으로 실행 기록(runId)을 남긴다 — 저장 쿼리 결과도 서버
    * 재실행 내보내기를 할 수 있게(code-review 4). 기록은 실행 시점 SQL 스냅샷·실행자 소유다.
    */
-  @Transactional
   public AnalyticsQueryResponse executeById(Long id, int maxRows, boolean readOnly, Long userId) {
-    SavedQueryResponse query = getById(id, userId);
+    if (!pipelineDataSchema.isTibero()) {
+      // PG 테넌트: 기존과 같이 조회·실행·기록 부착 전체를 쓰기 트랜잭션 하나로 실행한다.
+      return tx.execute(status -> runSavedQuery(getById(id, userId), maxRows, readOnly, userId));
+    }
+    // Tibero 실행(최대 35초) 동안 PG 연결을 쥐지 않으려고 구간을 나눈다(WD-207).
+    // 1) RLS GUC 가 필요한 저장 쿼리 조회만 readOnly 트랜잭션으로, 2) 실행·기록 부착은 트랜잭션 밖에서
+    //    (attachRun 은 자체 트랜잭션 리포지토리다).
+    SavedQueryResponse query = readOnlyTx.execute(status -> getById(id, userId));
+    return runSavedQuery(query, maxRows, readOnly, userId);
+  }
+
+  /** 조회해 둔 저장 쿼리를 실행하고 실행 기록을 붙인다. 트랜잭션 구간은 호출자(executeById)가 정한다. */
+  private AnalyticsQueryResponse runSavedQuery(
+      SavedQueryResponse query, int maxRows, boolean readOnly, Long userId) {
     // 저장 쿼리 실행도 실행자 기준 판정 — 공유 쿼리를 자격 없는 사람이 실행하는 경로(스펙 §4.2 3행).
     Clearance c = clearanceResolver.resolve(userId);
     AnalyticsQueryResponse r =
