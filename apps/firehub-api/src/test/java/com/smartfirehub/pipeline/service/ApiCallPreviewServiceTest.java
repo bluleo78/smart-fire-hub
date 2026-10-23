@@ -828,17 +828,84 @@ class ApiCallPreviewServiceTest {
   }
 
   /**
-   * 쿼리에 그대로 쓸 수 없는 문자가 섞인 키: 예전에는 Spring 의 {@code Invalid character '=' for QUERY_PARAM in "<키>"} 가
-   * 분류되지 않은 오류로 그대로 errorMessage·로그에 실렸다.
+   * 쿼리에 그대로 쓸 수 없는 문자가 섞인 디코딩 키(WD-182): 예전에는 「URL 인코딩된 값을 넣으세요」로 실패했다(그 전에는 Spring 메시지에 키 원문이 실렸다,
+   * WD-177). 이제 공용 규칙으로 한 번 인코딩해 호출하고, resolvedUrl·오류 문구엔 원문·보낸 형태가 없다.
    */
   @Test
-  void preview_specialCharKey_noSecretInErrorOrUrl() {
+  void preview_specialCharKey_encodedOnce_noSecretInErrorOrUrl() {
+    stubWd182();
+
     ApiCallPreviewResponse response = previewWithQueryAuth(baseUrl() + "/wd177", WD177_SPECIAL_KEY);
 
-    assertThat(response.success()).isFalse();
-    assertThat(response.errorMessage()).contains("요청 URL 을 만들 수 없습니다");
+    assertThat(response.success()).isTrue();
+    assertThat(receivedWd177Urls())
+        .containsExactly("/wd177?serviceKey=pv%2Bk%2Fe%3D%3D%EB%B9%84%EB%B0%80%20Qq77");
     assertNoSecret(response.errorMessage(), WD177_SPECIAL_KEY);
     assertNoSecret(response.resolvedUrl(), WD177_SPECIAL_KEY);
+    assertThat(response.resolvedUrl()).doesNotContain("pv%2Bk%2Fe%3D%3D");
+  }
+
+  /**
+   * 공공데이터포털이 주는 같은 키의 인코딩 키·디코딩 키(시험용 가짜 키)가 미리보기에서도 「테스트」·실행과 같은 바이트로 나간다(WD-182). 기대값은
+   * ApiConnectionTestUrlMaskingTest·ApiCallExecutorTest 와 같다.
+   */
+  @Test
+  void preview_encodedAndDecodedKeys_sameBytes() {
+    stubWd182();
+
+    assertThat(previewWithQueryAuth(baseUrl() + "/wd177", "rP1x%2FAbC%2Bd%3D%3D").success())
+        .isTrue();
+    assertThat(previewWithQueryAuth(baseUrl() + "/wd177", "rP1x/AbC+d==").success()).isTrue();
+
+    assertThat(receivedWd177Urls())
+        .containsExactly(
+            "/wd177?serviceKey=rP1x%2FAbC%2Bd%3D%3D", "/wd177?serviceKey=rP1x%2FAbC%2Bd%3D%3D");
+  }
+
+  /** 키가 아닌 정적 쿼리 값에 쓸 수 없는 문자가 있으면 여전히 고정 문구로 실패하고 호출하지 않는다 — 키 원문·보낸 형태는 문구에 없다(WD-177 유지). */
+  @Test
+  void preview_unbuildableStaticParam_failsWithoutCallOrSecret() {
+    stubWd182();
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/wd177",
+                "GET",
+                null,
+                java.util.Map.of("q", "a=b 한글"),
+                null,
+                "$",
+                null,
+                null,
+                queryAuth(WD177_SPECIAL_KEY),
+                2000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage())
+        .contains("요청 URL 을 만들 수 없습니다")
+        .doesNotContain("URL 인코딩된 값을 넣으세요")
+        .doesNotContain("pv%2Bk%2Fe%3D%3D");
+    assertNoSecret(response.errorMessage(), WD177_SPECIAL_KEY);
+    assertNoSecret(response.resolvedUrl(), WD177_SPECIAL_KEY);
+    assertThat(wireMock.getAllServeEvents()).isEmpty();
+  }
+
+  private static void stubWd182() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/wd177"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"a\":1}]")));
+  }
+
+  /** WireMock 이 /wd177 로 받은 요청 URL(받은 순서, 디코딩하지 않은 원형). */
+  private static java.util.List<String> receivedWd177Urls() {
+    return wireMock.findAll(getRequestedFor(urlPathEqualTo("/wd177"))).stream()
+        .map(com.github.tomakehurst.wiremock.verification.LoggedRequest::getUrl)
+        .toList();
   }
 
   // =========================================================================

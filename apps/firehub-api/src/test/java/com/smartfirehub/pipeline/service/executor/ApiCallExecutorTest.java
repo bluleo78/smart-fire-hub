@@ -242,27 +242,106 @@ class ApiCallExecutorTest {
   }
 
   /**
-   * 쿼리에 그대로 쓸 수 없는 문자가 섞인 키: 예전에는 Spring 이 키 원문을 담은 메시지로 실패하고, 그 메시지가 재시도 로그·「N회 재시도 후에도 실패」 문구(실행
-   * 기록 DB)에 그대로 실렸다. 이제 원문 없는 고정 문구로, 재시도 없이 즉시 실패한다.
+   * 쿼리에 그대로 쓸 수 없는 문자가 섞인 디코딩 키(WD-182): 예전에는 「URL 인코딩된 값을 넣으세요」로 즉시 실패했다(그 전에는 키 원문이 실행 기록에 실렸다,
+   * WD-177). 이제 공용 규칙으로 한 번 인코딩해 호출하고, 실행 로그엔 원문·보낸 형태가 없다.
    */
   @Test
-  void execute_apiKeyQueryAuth_specialCharKey_failsWithoutKeyAndWithoutRetry() {
+  void execute_apiKeyQueryAuth_specialCharKey_encodedOnce_logHasNoKey() {
+    stubEmptyItems("/api/q");
     String key = "ex+k/y==비밀 Ww11";
-    Map<String, String> auth =
-        Map.of(
-            "authType", "API_KEY", "placement", "query", "paramName", "serviceKey", "apiKey", key);
+    String sent = "ex%2Bk%2Fy%3D%3D%EB%B9%84%EB%B0%80%20Ww11";
 
-    assertThatThrownBy(() -> executor.execute(simpleGetConfig("/api/q"), "t", auth, "APPEND", null))
+    ApiCallExecutor.ApiCallResult result =
+        executor.execute(simpleGetConfig("/api/q"), "t", queryAuth(key), "APPEND", null);
+
+    assertThat(receivedUrls("/api/q")).containsExactly("/api/q?serviceKey=" + sent);
+    assertThat(result.log())
+        .doesNotContain(key)
+        .doesNotContain(sent)
+        .doesNotContain(java.net.URLEncoder.encode(key, java.nio.charset.StandardCharsets.UTF_8));
+  }
+
+  /**
+   * 공공데이터포털이 주는 같은 키의 인코딩 키·디코딩 키(시험용 가짜 키)가 Java 실행기에서도 「테스트」·미리보기와 같은 바이트로 나간다(WD-182). 페이지네이션
+   * 파라미터가 붙어도 키 인코딩은 같다.
+   */
+  @Test
+  void execute_apiKeyQueryAuth_encodedAndDecodedKeys_sameBytes() {
+    stubEmptyItems("/api/q");
+
+    executor.execute(
+        simpleGetConfig("/api/q"), "t", queryAuth("rP1x%2FAbC%2Bd%3D%3D"), "APPEND", null);
+    executor.execute(simpleGetConfig("/api/q"), "t", queryAuth("rP1x/AbC+d=="), "APPEND", null);
+
+    assertThat(receivedUrls("/api/q"))
+        .containsExactly(
+            "/api/q?serviceKey=rP1x%2FAbC%2Bd%3D%3D", "/api/q?serviceKey=rP1x%2FAbC%2Bd%3D%3D");
+  }
+
+  /**
+   * 키가 아닌 정적 쿼리 값에 쓸 수 없는 문자가 있으면 여전히 URL 을 만들 수 없다 — 원문 없는 고정 문구로, 재시도 없이 즉시 실패한다(WD-177 처리 유지).
+   * 함께 붙는 키 원문·보낸 형태도 문구에 없다.
+   */
+  @Test
+  void execute_unbuildableStaticParam_failsWithoutKeyAndWithoutRetry() {
+    String key = "ex+k/y==비밀 Ww11";
+    ApiCallConfig base = simpleGetConfig("/api/q");
+    ApiCallConfig config =
+        new ApiCallConfig(
+            base.url(),
+            base.method(),
+            base.headers(),
+            Map.of("q", "a=b 한글"),
+            base.body(),
+            base.responseFormat(),
+            base.dataPath(),
+            base.fieldMappings(),
+            base.sourceTimezone(),
+            base.pagination(),
+            base.retry(),
+            base.timeoutMs(),
+            base.maxDurationMs(),
+            base.maxResponseSizeMb(),
+            base.inlineAuth(),
+            base.apiConnectionId(),
+            base.path(),
+            base.customUrl());
+
+    assertThatThrownBy(() -> executor.execute(config, "t", queryAuth(key), "APPEND", null))
         .isInstanceOf(ApiCallException.class)
         // 재시도 소진 문구(「API 호출에 실패했습니다: …」)로 감싸이지 않은 고정 문구 그대로여야 한다 — 재시도 경로를 타지 않았다는 뜻.
         .hasMessageStartingWith("요청 URL 을 만들 수 없습니다")
         .satisfies(
             e ->
                 assertThat(e.getMessage())
+                    .doesNotContain("URL 인코딩된 값을 넣으세요")
                     .doesNotContain(key)
+                    .doesNotContain("ex%2Bk%2Fy%3D%3D")
                     .doesNotContain(
                         java.net.URLEncoder.encode(key, java.nio.charset.StandardCharsets.UTF_8)));
     assertThat(wireMock.getAllServeEvents()).isEmpty();
+  }
+
+  private static Map<String, String> queryAuth(String key) {
+    return Map.of(
+        "authType", "API_KEY", "placement", "query", "paramName", "serviceKey", "apiKey", key);
+  }
+
+  private static void stubEmptyItems(String path) {
+    wireMock.stubFor(
+        get(urlPathEqualTo(path))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"items\":[]}")));
+  }
+
+  /** WireMock 이 path 로 받은 요청 URL(디코딩하지 않은 원형). */
+  private static List<String> receivedUrls(String path) {
+    return wireMock.findAll(getRequestedFor(urlPathEqualTo(path))).stream()
+        .map(com.github.tomakehurst.wiremock.verification.LoggedRequest::getUrl)
+        .toList();
   }
 
   // -------------------------------------------------------------------------

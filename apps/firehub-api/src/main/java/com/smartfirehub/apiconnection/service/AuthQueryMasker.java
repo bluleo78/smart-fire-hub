@@ -19,13 +19,16 @@ import org.springframework.web.util.UriComponentsBuilder;
  * ****9876} 으로 가리는데 여기만 드러났다. 호출 URL 과 표시 URL 을 <b>같은 빌더 입력</b>에서 만들고 인증 파라미터 값만 {@link
  * #maskSecret} 으로 바꿔, 인코딩 전 원문이든 인코딩된 형태든 표시 URL 에는 남지 않게 한다(완성된 URL 에서 문자열 치환을 하면 인코딩 형태가 달라 놓친다).
  *
- * <p><b>URL 을 만들 수 없을 때.</b> {@code build(true)} 는 값에 {@code = 공백 한글} 처럼 쿼리에 그대로 쓸 수 없는 문자가 있으면
- * {@code Invalid character '=' for QUERY_PARAM in "<값 원문>"} 을 던진다 — 메시지에 키 원문이 그대로 실린다. 이 예외가 400
- * 응답·실행 기록·로그로 나가지 않도록 원문을 담지 않은 고정 문구의 {@link InvalidRequestUrlException} 으로 바꾼다(원인 예외를 cause 로 잇지
- * 않는다 — 원인 사슬을 따라가 근본 원인 메시지를 쓰는 분류기가 다시 원문을 꺼내기 때문이다).
+ * <p><b>인증 키 인코딩(WD-182).</b> 호출 URL 의 인증 파라미터 값은 {@link QueryApiKeyEncoding#encode} 로 한 번만 인코딩한다 —
+ * 이미 인코딩된 키({@code abc%2Bd%3D%3D})는 그대로, 디코딩 키({@code abc+d==})는 {@code abc%2Bd%3D%3D} 로 같은 바이트가
+ * 나간다. 연결 테스트·상태 점검·미리보기·Java 실행기가 모두 이 빌더를 거치므로 규칙이 한 곳에 있다. 예전에는 값을 그대로 {@code build(true)} 에 넣어
+ * 디코딩 키({@code = 공백 한글})는 URL 을 만들지 못했고, {@code +} 는 서버가 공백으로 읽었다.
  *
- * <p>호출 URL 은 예전과 똑같이 만든다(값을 다시 인코딩하지 않는다). 공공데이터포털처럼 이미 인코딩된 키({@code abc%2Bd%3D%3D})를 넣어 쓰는 연결이
- * 많아, 인코딩을 바꾸면 {@code %} 가 {@code %25} 가 돼 지금 되는 연결이 깨진다.
+ * <p><b>URL 을 만들 수 없을 때.</b> 인증 키 밖의 값(정적 쿼리 파라미터·기준 URL)은 예전처럼 다시 인코딩하지 않는다. {@code build(true)} 는
+ * 그런 값에 {@code = 공백 한글} 처럼 쿼리에 그대로 쓸 수 없는 문자가 있으면 {@code Invalid character '=' for QUERY_PARAM in
+ * "<값 원문>"} 을 던진다. 이 예외가 400 응답·실행 기록·로그로 나가지 않도록 원문을 담지 않은 고정 문구의 {@link
+ * InvalidRequestUrlException} 으로 바꾼다(원인 예외를 cause 로 잇지 않는다 — 원인 사슬을 따라가 근본 원인 메시지를 쓰는 분류기가 다시 원문을
+ * 꺼내기 때문이다).
  */
 public final class AuthQueryMasker {
 
@@ -55,7 +58,8 @@ public final class AuthQueryMasker {
    * @param queryParams 붙일 쿼리 파라미터(순서 유지). 인증 파라미터가 이미 들어 있으면 그 값을 가린다
    * @param authParamName 인증 쿼리 파라미터 이름(null 이면 가릴 것 없음)
    * @param authSecret 인증 쿼리 파라미터 값(키 원문)
-   * @throws InvalidRequestUrlException 값에 쿼리에 그대로 쓸 수 없는 문자가 있어 호출 URL 을 만들 수 없을 때(문구에 원문 없음)
+   * @throws InvalidRequestUrlException 기준 URL·정적 쿼리 값에 URL 에 그대로 쓸 수 없는 문자가 있어 호출 URL 을 만들 수 없을
+   *     때(문구에 원문 없음). 인증 키 값은 {@link QueryApiKeyEncoding#encode} 로 인코딩하므로 원인이 되지 않는다(WD-182)
    */
   public static AuthQueryUrls build(
       String url, Map<String, String> queryParams, String authParamName, String authSecret) {
@@ -72,9 +76,16 @@ public final class AuthQueryMasker {
     // 만들어져야 하므로 검사하는 build(true) 를 쓰지 않는다. 혹시 기준 URL 자체에 키가 있으면 그것도 지운다(방어).
     String displayUrl = scrubSecret(displayBuilder.build().toUriString(), authSecret);
 
-    // 호출용: 예전과 같은 방식(build(true), 재인코딩 없음).
+    // 호출용: 인증 파라미터 값만 공용 규칙으로 한 번 인코딩하고(WD-182), 나머지는 예전과 같이 build(true)(재인코딩 없음)로 둔다.
+    // 인코딩한 키는 비예약 문자와 %XX 로만 이뤄져 build(true) 검사를 항상 통과한다.
     UriComponentsBuilder callBuilder = UriComponentsBuilder.fromUriString(url);
-    params.forEach(callBuilder::queryParam);
+    params.forEach(
+        (name, value) ->
+            callBuilder.queryParam(
+                name,
+                authParamName != null && authParamName.equals(name)
+                    ? QueryApiKeyEncoding.encode(value)
+                    : value));
     String callUrl;
     try {
       callUrl = callBuilder.build(true).toUriString();
@@ -129,9 +140,16 @@ public final class AuthQueryMasker {
     return out;
   }
 
-  /** 비밀값이 문장에 나타날 수 있는 형태들(원문, form 인코딩, %20 인코딩, 이미 인코딩된 값의 디코딩형). 긴 것부터 지운다. */
+  /**
+   * 비밀값이 문장에 나타날 수 있는 형태들(실제로 보낸 형태, 원문, form 인코딩, %20 인코딩, 이미 인코딩된 값의 디코딩형). 긴 것부터 지운다.
+   *
+   * <p>실제로 보낸 형태({@link QueryApiKeyEncoding#encode})는 섞인 키({@code abc%2Bd==} → {@code
+   * abc%2Bd%3D%3D})나 {@code * ~} 가 든 키에서 다른 형태와 다르다 — 리다이렉트 Location·응답 본문이 보낸 쿼리를 되울리면 이 형태로 실려
+   * 온다(WD-182).
+   */
   private static Set<String> secretForms(String secret) {
     Set<String> forms = new LinkedHashSet<>();
+    forms.add(QueryApiKeyEncoding.encode(secret));
     String formEncoded = URLEncoder.encode(secret, StandardCharsets.UTF_8);
     forms.add(formEncoded);
     forms.add(formEncoded.replace("+", "%20"));
@@ -160,13 +178,16 @@ public final class AuthQueryMasker {
     }
   }
 
-  /** 쿼리 값에 URL 에 그대로 쓸 수 없는 문자가 있어 호출 URL 을 만들 수 없을 때. 메시지에 값 원문을 담지 않는다. */
+  /**
+   * 주소·정적 쿼리 값에 URL 에 그대로 쓸 수 없는 문자가 있어 호출 URL 을 만들 수 없을 때. 메시지에 값 원문을 담지 않는다. 인증 키는 공용 규칙으로 인코딩되므로
+   * 키 때문에는 나지 않는다(WD-182) — 「API 키는 URL 인코딩된 값을 넣으세요」 안내를 걷어 냈다.
+   */
   public static final class InvalidRequestUrlException extends IllegalArgumentException {
 
     public InvalidRequestUrlException() {
       super(
-          "요청 URL 을 만들 수 없습니다 — 쿼리 파라미터(API 키 포함)에 URL 에 그대로 쓸 수 없는 문자(=·공백·한글 등)가 있습니다."
-              + " URL 인코딩된 값을 넣으세요");
+          "요청 URL 을 만들 수 없습니다 — 주소나 쿼리 파라미터에 URL 에 그대로 쓸 수 없는 문자(=·공백·한글 등)가 있습니다."
+              + " 주소·쿼리 파라미터 값은 URL 인코딩해 넣으세요(API 키는 인코딩 키·디코딩 키 모두 넣을 수 있습니다)");
     }
   }
 }

@@ -5,8 +5,8 @@ import random
 import time
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, List, Optional
-from urllib.parse import urlsplit
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -16,6 +16,7 @@ from app.schemas.responses import ApiCallExecuteResponse
 from app.services import api_call_errors as errors
 from app.services.api_call_errors import RetryableApiCallError
 from app.services.db_utils import insert_batch
+from app.services.query_key_encoding import encode_query_key
 from app.validators.ssrf_protection import SsrfException, validate_url
 
 logger = logging.getLogger(__name__)
@@ -220,18 +221,22 @@ def _do_request(
     # Build auth headers
     req_headers = dict(headers)
     req_params = dict(query_params)
-    _apply_auth(auth, req_headers, req_params)
+    auth_query = _apply_auth(auth, req_headers, req_params)
 
-    current_url = url
+    # 쿼리 문자열은 직접 만들어 URL 에 붙이고 httpx 에 params= 를 넘기지 않는다(WD-182). params= 를 넘기면 httpx 가
+    # (1) 값을 다시 인코딩해 인코딩 키의 %2B 가 %252B 로 나가고 (2) URL 에 이미 있던 쿼리를 통째로 바꿔 버린다(httpx 0.28,
+    # params={} 여도 쿼리가 사라진다). 문자열 URL 의 쿼리는 httpx 가 유효한 %XX 를 그대로 보낸다.
+    current_url = _build_request_url(url, req_params, auth_query)
     redirect_count = 0
 
     with httpx.Client(follow_redirects=False, timeout=timeout_sec) as client:
         while True:
+            # 리다이렉트 대상(Location)은 받은 그대로 쓴다 — 예전에는 params={} 로 Location 의 쿼리(흔한 http→https 리다이렉트가
+            # 옮겨 주는 키 포함)까지 지워졌다(WD-182).
             resp = client.request(
                 method=method,
                 url=current_url,
                 headers=req_headers,
-                params=req_params if redirect_count == 0 else {},
                 content=body.encode() if body else None,
             )
 
@@ -277,18 +282,47 @@ def _do_request(
                 raise ApiCallException(errors.not_json_message()) from e
 
 
+def _build_request_url(
+    url: str,
+    params: Dict[str, str],
+    auth_query: Optional[Tuple[str, str]],
+) -> str:
+    """URL 에 정적·페이지네이션 파라미터와 쿼리 인증 키를 붙인 호출 URL 을 만든다(WD-182).
+
+    순서는 Java(``AuthQueryMasker.build``)와 같다 — URL 에 이미 있던 쿼리, 정적·페이지네이션 파라미터, 인증 키.
+    정적·페이지네이션 파라미터는 예전과 같은 httpx ``QueryParams`` 인코딩을 쓰고, 인증 키 값만 api 와 공용 규칙
+    (``encode_query_key``)으로 한 번 인코딩한다 — 인코딩 키·디코딩 키 모두 api 의 연결 테스트·미리보기와 같은 바이트가 나간다.
+    """
+    parts = urlsplit(url)
+    pieces = []
+    if parts.query:
+        pieces.append(parts.query)
+    if params:
+        pieces.append(str(httpx.QueryParams(params)))
+    if auth_query is not None:
+        name, raw_key = auth_query
+        pieces.append(f"{quote(name, safe='')}={encode_query_key(raw_key)}")
+    if not pieces:
+        return url
+    return urlunsplit(parts._replace(query="&".join(pieces)))
+
+
 def _apply_auth(
     auth: Optional[dict],
     headers: Dict[str, str],
     params: Dict[str, str],
-) -> None:
+) -> Optional[Tuple[str, str]]:
     """Apply authentication to request headers or query params.
 
     Supports both Java decryptedAuth format (authType, headerName, apiKey,
     placement, paramName) and generic format (type, key_name, key_value, location).
+
+    쿼리 인증(API_KEY + placement=query)은 ``params`` 에 넣지 않고 ``(파라미터 이름, 키 원문)`` 을 돌려준다(WD-182) —
+    ``params`` 는 httpx 식으로 인코딩되므로, 키는 ``_build_request_url`` 이 공용 규칙으로 따로 붙인다. 같은 이름의 정적
+    파라미터가 있으면 ``params`` 에서 지운다(Java 처럼 그 이름으로는 키 하나만 나간다 — 위치는 맨 끝). 그 밖에는 None.
     """
     if not auth:
-        return
+        return None
     auth_type = (auth.get("authType") or auth.get("type") or "").upper()
     if auth_type == "BEARER":
         token = auth.get("token") or auth.get("value") or ""
@@ -298,11 +332,13 @@ def _apply_auth(
         if placement == "QUERY":
             param_name = auth.get("paramName") or auth.get("key_name") or "api_key"
             api_key = auth.get("apiKey") or auth.get("key_value") or auth.get("value") or ""
-            params[param_name] = api_key
+            params.pop(param_name, None)
+            return (param_name, api_key)
         else:
             header_name = auth.get("headerName") or auth.get("key_name") or "x-api-key"
             api_key = auth.get("apiKey") or auth.get("key_value") or auth.get("value") or ""
             headers[header_name] = api_key
+    return None
 
 
 # ---------------------------------------------------------------------------
