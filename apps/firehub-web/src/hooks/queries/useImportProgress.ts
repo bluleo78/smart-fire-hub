@@ -10,6 +10,8 @@ export interface ImportProgress {
   errorRows?: number;
   message?: string;
   errorMessage?: string;
+  /** 임포트가 실패한 것이 아니라 진행 상황을 확인할 수 없어 추적을 멈춘 경우 true (WD-203) */
+  unobservable?: boolean;
 }
 
 // 백엔드 AsyncJobService.failJob()은 실패 시 stage='FAILED'와 함께 "마지막으로 기록된 progress"를
@@ -39,5 +41,6 @@ export function useImportProgress(jobId: string | null): ImportProgress | null {
     errorRows: typeof meta.errorRows === 'number' ? meta.errorRows : undefined,
     message: jobProgress.message,
     errorMessage: jobProgress.errorMessage,
+    unobservable: jobProgress.unobservable,
   };
 }

@@ -889,6 +889,43 @@ test.describe('API 연결 페이지', () => {
     expect(listCallCount).toBeGreaterThanOrEqual(2);
   });
 
+  test('전체 갱신 Job 진행 조회가 403 이면 재시도를 멈추고 버튼을 되돌리며 한국어 문구를 보인다 (WD-203)', async ({
+    authenticatedPage: page,
+  }) => {
+    // WD-203 회귀 테스트: 진행 SSE·상태 조회가 403 을 주면 예전엔 오류를 삼키고 영원히 재시도해
+    // 버튼이 「갱신 중...」에 멈췄다. 이제는 즉시 멈추고 서버 문구를 토스트로 보여야 한다.
+    await mockApi(page, 'GET', '/api/v1/api-connections', [
+      createApiConnection({ id: 1, name: '공공 데이터 API', lastStatus: 'UP' }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/api-connections/selectable', []);
+    await mockApi(page, 'POST', '/api/v1/api-connections/refresh-all', { jobId: 'job-203' });
+
+    let jobRequests = 0;
+    const forbidden = JSON.stringify({
+      status: 403,
+      error: 'Forbidden',
+      message: '이 작업을 시작한 사용자만 진행 상황을 볼 수 있습니다.',
+    });
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/jobs/job-203/'),
+      (route) => {
+        jobRequests += 1;
+        return route.fulfill({ status: 403, contentType: 'application/json', body: forbidden });
+      },
+    );
+
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '전체 갱신' }).click();
+
+    await expect(page.getByText('이 작업을 시작한 사용자만 진행 상황을 볼 수 있습니다.')).toBeVisible();
+    // 「갱신 중...」이 풀리고 다시 누를 수 있어야 한다
+    await expect(page.getByRole('button', { name: '전체 갱신' })).toBeEnabled();
+
+    // 재연결 백오프 첫 주기(3초)를 넘겨 기다려도 추가 요청이 없어야 한다(요청 1회로 끝)
+    await page.waitForTimeout(4000);
+    expect(jobRequests).toBe(1);
+  });
+
   test('상세 페이지에서 지금 확인 버튼 클릭 시 test API가 호출된다', async ({
     authenticatedPage: page,
   }) => {

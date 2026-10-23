@@ -3,6 +3,8 @@ package com.smartfirehub.job.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
+import com.smartfirehub.job.exception.JobAccessDeniedException;
+import com.smartfirehub.job.exception.JobNotFoundException;
 import com.smartfirehub.job.repository.AsyncJobRepository;
 import java.io.IOException;
 import java.util.Collections;
@@ -16,7 +18,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -166,14 +167,8 @@ public class AsyncJobService {
    * completeJob}·{@code failJob})에서 이미 걷어낸 것과 같은 형태다.
    */
   public SseEmitter subscribe(String jobId, Long userId) {
-    // Single query — owner verification + current state
-    AsyncJobStatusResponse status =
-        asyncJobRepository
-            .findById(jobId)
-            .orElseThrow(() -> new IllegalArgumentException("Job not found: " + jobId));
-    if (!status.userId().equals(userId)) {
-      throw new AccessDeniedException("Access denied: not the owner of job " + jobId);
-    }
+    // 단일 조회 — 소유자 확인 + 현재 상태
+    AsyncJobStatusResponse status = findOwnedJob(jobId, userId);
 
     // Subscriber limit
     CopyOnWriteArrayList<SseEmitter> list =
@@ -213,13 +208,26 @@ public class AsyncJobService {
 
   @Transactional(readOnly = true)
   public AsyncJobStatusResponse getJobStatus(String jobId, Long userId) {
-    // Single query — includes userId for ownership verification
+    return findOwnedJob(jobId, userId);
+  }
+
+  /**
+   * 작업을 조회하고 요청자가 그 작업을 시작한 사람(소유자)인지 확인한다(WD-203).
+   *
+   * <p>작업 진행 조회 엔드포인트(/jobs/{id}/progress·status)는 기능 권한(data:read 등)을 요구하지 않는다. 작업은
+   * 임포트(data:import) ·API 연결 전체 갱신(apiconnection:write)·내보내기(data:export) 등 서로 다른 권한으로 시작되므로, 하나의
+   * 기능 권한으로 막으면 작업을 시작한 사람이 자기 작업을 지켜보지 못한다. 대신 <b>소유자 확인</b>이 접근 경계다 — 진행 정보는 시작 시점에 그 사람이 이미 권한을
+   * 가졌던 범위의 것뿐이다. 테넌트 격리는 async_job RLS(V96)가 맡아 다른 테넌트의 작업은 조회 자체가 비어 {@link JobNotFoundException}
+   * 이 된다.
+   *
+   * @throws JobNotFoundException 작업이 없거나(다른 테넌트 포함) — 404
+   * @throws JobAccessDeniedException 같은 테넌트의 다른 사용자가 시작한 작업 — 403
+   */
+  private AsyncJobStatusResponse findOwnedJob(String jobId, Long userId) {
     AsyncJobStatusResponse status =
-        asyncJobRepository
-            .findById(jobId)
-            .orElseThrow(() -> new IllegalArgumentException("Job not found: " + jobId));
+        asyncJobRepository.findById(jobId).orElseThrow(() -> new JobNotFoundException(jobId));
     if (!status.userId().equals(userId)) {
-      throw new AccessDeniedException("Access denied: not the owner of job " + jobId);
+      throw new JobAccessDeniedException();
     }
     return status;
   }

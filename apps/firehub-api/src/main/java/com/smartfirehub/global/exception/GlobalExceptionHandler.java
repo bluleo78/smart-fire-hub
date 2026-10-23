@@ -269,6 +269,20 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
   }
 
+  /**
+   * 남이 시작한 비동기 작업 조회 — 403(WD-203). 진행 SSE 엔드포인트({@code Accept: text/event-stream})에서도 메시지 본문이 나가도록
+   * Content-Type 을 JSON 으로 미리 정한다. 정하지 않으면 내용 협상에 실패해 본문 없는 403 이 되어 웹이 사유를 보여 줄 수 없다. 전역 403 핸들러는
+   * 다른 엔드포인트 응답을 바꾸지 않도록 그대로 둔다.
+   */
+  @ExceptionHandler(com.smartfirehub.job.exception.JobAccessDeniedException.class)
+  public ResponseEntity<ErrorResponse> handleJobAccessDenied(
+      com.smartfirehub.job.exception.JobAccessDeniedException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.FORBIDDEN, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.FORBIDDEN)
+        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+        .body(response);
+  }
+
   /** 소속되지 않았거나 정지된 테넌트 선택 시도 — 403 반환. */
   @ExceptionHandler(TenantAccessDeniedException.class)
   public ResponseEntity<ErrorResponse> handleTenantAccessDenied(
@@ -289,6 +303,22 @@ public class GlobalExceptionHandler {
       RoleNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  /**
+   * 비동기 작업(async_job)이 없거나 다른 테넌트의 것이라 보이지 않을 때 — 404 반환(WD-203).
+   *
+   * <p>진행 SSE 엔드포인트({@code produces=text/event-stream})에서도 던져지므로 Content-Type 을 JSON 으로 미리 정한다. 정하지
+   * 않으면 요청의 {@code Accept: text/event-stream} 과 협상하다 오류 본문을 쓸 변환기를 못 찾아 404 대신 처리 실패(500)로 바뀌고, 웹
+   * 훅이 이를 일시 오류로 보고 재시도를 이어 간다.
+   */
+  @ExceptionHandler(com.smartfirehub.job.exception.JobNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleJobNotFound(
+      com.smartfirehub.job.exception.JobNotFoundException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.NOT_FOUND)
+        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+        .body(response);
   }
 
   /** 요소 단위 온톨로지 편집 — 이 온톨로지 안에 존재하지 않는 타입/속성/관계 id를 지목하면 404 반환. */
