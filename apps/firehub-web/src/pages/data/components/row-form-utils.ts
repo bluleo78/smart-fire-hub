@@ -58,6 +58,45 @@ function parseNumberLiteral(raw: unknown): NumberLiteral | null {
   };
 }
 
+/** (WD-201) 위치 칸에 넣을 수 있는 GeoJSON geometry 타입 — Feature 는 안의 geometry 를 이 목록으로 본다. */
+const GEOJSON_GEOMETRY_TYPES = [
+  'Point', 'LineString', 'Polygon',
+  'MultiPoint', 'MultiLineString', 'MultiPolygon',
+  'GeometryCollection',
+];
+
+const GEOJSON_FORMAT_ERROR = 'GeoJSON 형식으로 입력하세요. 예: {"type":"Point","coordinates":[126.97,37.56]}';
+
+/**
+ * (WD-201) GeoJSON 위치 입력값의 오류 문구를 돌려준다(문제없으면 null).
+ * 서버 GeoJsonValues 와 같은 판정이다 — 클라이언트가 통과시킨 값을 서버가 영문 사유로 거부하던 불일치(Feature)를 막는다.
+ */
+export function geoJsonInputError(value: string): string | null {
+  // 빈 값은 nullable 처리(optional/literal '')가 맡는다 — 필수 칸의 빈 값은 형식 오류로 본다.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return GEOJSON_FORMAT_ERROR;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return GEOJSON_FORMAT_ERROR;
+  const obj = parsed as Record<string, unknown>;
+  if (obj.type === 'FeatureCollection') {
+    return 'FeatureCollection 은 저장할 수 없습니다. 한 칸에는 위치 하나만 들어가므로 Feature 하나나 geometry 를 입력하세요';
+  }
+  if (obj.type === 'Feature') {
+    const geometry = obj.geometry;
+    if (geometry === null || geometry === undefined) {
+      return 'Feature 에 geometry 가 없습니다. 위치가 없으면 값을 비워 두세요';
+    }
+    if (typeof geometry !== 'object' || Array.isArray(geometry)) return GEOJSON_FORMAT_ERROR;
+    return GEOJSON_GEOMETRY_TYPES.includes((geometry as Record<string, unknown>).type as string)
+      ? null
+      : GEOJSON_FORMAT_ERROR;
+  }
+  return GEOJSON_GEOMETRY_TYPES.includes(obj.type as string) ? null : GEOJSON_FORMAT_ERROR;
+}
+
 /** (WD-98) DECIMAL 입력 검사 — 형식 오류·정수부 12자리 초과·소수부 7자리 이상이면 안내 문구, 통과하면 null. */
 export function decimalInputError(raw: unknown): string | null {
   const n = parseNumberLiteral(raw);
@@ -149,23 +188,12 @@ export function buildRowZodSchema(
         break;
       }
       case 'GEOMETRY': {
-        // GeoJSON 유효성 검증: type 필드가 GeoJSON 표준 값인지 확인
-        const GEOJSON_TYPES = [
-          'Point', 'LineString', 'Polygon',
-          'MultiPoint', 'MultiLineString', 'MultiPolygon',
-          'GeometryCollection', 'Feature', 'FeatureCollection',
-        ];
-        const geoField = z.string().refine(
-          (v) => {
-            try {
-              const parsed = JSON.parse(v);
-              return GEOJSON_TYPES.includes(parsed?.type);
-            } catch {
-              return false;
-            }
-          },
-          { message: 'GeoJSON 형식으로 입력하세요. 예: {"type":"Point","coordinates":[126.97,37.56]}' },
-        );
+        // (WD-201) 서버(GeoJsonValues)와 같은 규칙·문구로 검증한다. 한 칸에는 도형 하나만 들어가므로
+        // geometry 타입과 Feature(서버가 안의 geometry 를 꺼내 저장)만 받고 FeatureCollection 은 거부한다.
+        const geoField = z.string().superRefine((v, ctx) => {
+          const message = geoJsonInputError(v);
+          if (message) ctx.addIssue({ code: 'custom', message });
+        });
         if (col.isNullable) {
           field = geoField.optional().or(z.literal(''));
         } else {

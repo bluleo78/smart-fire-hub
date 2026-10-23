@@ -406,7 +406,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     assertThatThrownBy(
             () -> datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("col", 123))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Expected string");
+        .hasMessageContaining("문자열이어야 합니다");
   }
 
   /** 정상: VARCHAR(10) 최대 길이 이내 값 저장 성공 */
@@ -432,7 +432,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                 datasetDataService.addRow(
                     dataset.id(), new RowDataRequest(Map.of("col", "toolongvalue"))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Column 'col': 최대 5자까지 입력할 수 있습니다(입력 12자)");
+        .hasMessageContaining("'col' 필드: 최대 5자까지 입력할 수 있습니다(입력 12자)");
   }
 
   /** 정상: INTEGER 타입 숫자 값 저장 성공 */
@@ -459,7 +459,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                 datasetDataService.addRow(
                     dataset.id(), new RowDataRequest(Map.of("num", "not_a_number"))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Expected numeric");
+        .hasMessageContaining("숫자 형식이 아닙니다");
   }
 
   /** 정상: DECIMAL 타입 숫자 값 저장 성공 */
@@ -485,7 +485,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                 datasetDataService.addRow(
                     dataset.id(), new RowDataRequest(Map.of("price", "cheap"))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Expected numeric");
+        .hasMessageContaining("숫자 형식이 아닙니다");
   }
 
   /** 정상: BOOLEAN 타입 true/false 저장 성공 */
@@ -511,7 +511,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                 datasetDataService.addRow(
                     dataset.id(), new RowDataRequest(Map.of("active", "yes"))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Expected boolean");
+        .hasMessageContaining("참/거짓(true/false) 값이어야 합니다");
   }
 
   /** 정상: DATE 타입 "yyyy-MM-dd" 형식 문자열 저장 성공 */
@@ -552,7 +552,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                 datasetDataService.addRow(
                     dataset.id(), new RowDataRequest(Map.of("birthday", 20240115))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("date string");
+        .hasMessageContaining("날짜 형식이 아닙니다 (yyyy-MM-dd)");
   }
 
   /** 정상: TIMESTAMP 타입 "yyyy-MM-ddTHH:mm:ss" 형식 문자열 저장 성공 */
@@ -580,7 +580,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                 datasetDataService.addRow(
                     dataset.id(), new RowDataRequest(Map.of("ts", "2024-01-15 10:30:00"))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("timestamp format");
+        .hasMessageContaining("날짜시간 형식이 아닙니다 (yyyy-MM-ddTHH:mm:ss)");
   }
 
   /** 예외: TIMESTAMP 타입에 문자열이 아닌 값을 넣으면 IllegalArgumentException */
@@ -594,7 +594,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                 datasetDataService.addRow(
                     dataset.id(), new RowDataRequest(Map.of("ts", 1234567890L))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("timestamp string");
+        .hasMessageContaining("날짜시간 형식이 아닙니다");
   }
 
   /** 정상: GEOMETRY 타입 — 유효한 Point GeoJSON 저장 성공 */
@@ -639,19 +639,112 @@ class DatasetDataServiceTest extends IntegrationTestBase {
         .hasMessageContaining("type");
   }
 
-  /** 예외: GEOMETRY 타입 — 지원하지 않는 GeoJSON type이면 IllegalArgumentException */
+  /** 예외: GEOMETRY 타입 — 지원하지 않는 GeoJSON type이면 한국어 사유로 IllegalArgumentException */
   @Test
   void addRow_geometryType_unsupportedType_throwsIllegalArgument() {
     DatasetDetailResponse dataset =
         createSingleColumnDataset("type_geom_bad_type", "geom", "GEOMETRY", null, true);
 
-    String invalidGeoJson = "{\"type\":\"Feature\",\"coordinates\":[127.0,37.5]}";
+    String invalidGeoJson = "{\"type\":\"Circle\",\"coordinates\":[127.0,37.5]}";
     assertThatThrownBy(
             () ->
                 datasetDataService.addRow(
                     dataset.id(), new RowDataRequest(Map.of("geom", invalidGeoJson))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Unsupported GeoJSON type");
+        .hasMessage(
+            "입력값을 확인하세요: 'geom' 필드: 지원하지 않는 GeoJSON type 입니다: Circle"
+                + " (Point·LineString·Polygon·MultiPoint·MultiLineString·MultiPolygon·GeometryCollection·Feature"
+                + " 만 입력할 수 있습니다)");
+  }
+
+  /** 정상(WD-201): GeoJSON Feature 는 안의 geometry 로 저장된다 — Feature 자체가 아니라 POINT 가 들어가야 한다. */
+  @Test
+  void addRow_geometryType_feature_storesInnerGeometry() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd201_geom_feature", "geom", "GEOMETRY", null, true);
+
+    String feature =
+        "{\"type\":\"Feature\",\"properties\":{\"name\":\"서울\"},"
+            + "\"geometry\":{\"type\":\"Point\",\"coordinates\":[126.9779692,37.566535]}}";
+    RowDataResponse row =
+        datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("geom", feature)));
+
+    // 좌표 자릿수까지 그대로 — Feature 에서 꺼낼 때 double 로 반올림되지 않는다.
+    assertThat(readGeometryText(dataset.tableName(), "geom", row.id()))
+        .isEqualTo("POINT(126.9779692 37.566535)");
+  }
+
+  /** 정상(WD-201): 행 편집에서도 Feature 를 받아 안의 geometry 로 바꿔 저장한다. */
+  @Test
+  void updateRow_geometryType_feature_storesInnerGeometry() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd201_geom_feature_upd", "geom", "GEOMETRY", null, true);
+    RowDataResponse row =
+        datasetDataService.addRow(
+            dataset.id(),
+            new RowDataRequest(Map.of("geom", "{\"type\":\"Point\",\"coordinates\":[1,2]}")));
+
+    String feature =
+        "{\"type\":\"Feature\",\"properties\":{},"
+            + "\"geometry\":{\"type\":\"LineString\",\"coordinates\":[[1,2],[3,4]]}}";
+    datasetDataService.updateRow(
+        dataset.id(), row.id(), new RowDataRequest(Map.of("geom", feature)));
+
+    assertThat(readGeometryText(dataset.tableName(), "geom", row.id()))
+        .isEqualTo("LINESTRING(1 2,3 4)");
+  }
+
+  /** 예외(WD-201): FeatureCollection 은 칸 하나에 담을 수 없어 한국어 사유로 거부한다. */
+  @Test
+  void addRow_geometryType_featureCollection_rejectedInKorean() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd201_geom_fc", "geom", "GEOMETRY", null, true);
+
+    String fc = "{\"type\":\"FeatureCollection\",\"features\":[]}";
+    assertThatThrownBy(
+            () -> datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("geom", fc))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "입력값을 확인하세요: 'geom' 필드: FeatureCollection 은 저장할 수 없습니다."
+                + " 한 칸에는 위치 하나만 들어가므로 Feature 하나나 geometry 를 입력하세요");
+  }
+
+  /** 예외(WD-201): geometry 가 null·없음인 Feature 는 거부한다(빈 위치는 값을 비워 두는 것으로 표현). */
+  @Test
+  void addRow_geometryType_featureWithoutGeometry_rejected() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd201_geom_feat_null", "geom", "GEOMETRY", null, true);
+
+    for (String feature :
+        List.of(
+            "{\"type\":\"Feature\",\"properties\":{},\"geometry\":null}",
+            "{\"type\":\"Feature\",\"coordinates\":[127.0,37.5]}")) {
+      assertThatThrownBy(
+              () ->
+                  datasetDataService.addRow(
+                      dataset.id(), new RowDataRequest(Map.of("geom", feature))))
+          .as("value=%s", feature)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("입력값을 확인하세요: 'geom' 필드: Feature 에 geometry 가 없습니다. 위치가 없으면 값을 비워 두세요");
+    }
+  }
+
+  /** 예외(WD-201): WKT 처럼 JSON 이 아닌 값은 한국어 사유만 — JSON 파서 원문(토큰·위치)을 싣지 않는다. */
+  @Test
+  void addRow_geometryType_wkt_rejectedWithoutParserDetail() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd201_geom_wkt", "geom", "GEOMETRY", null, true);
+
+    assertThatThrownBy(
+            () ->
+                datasetDataService.addRow(
+                    dataset.id(), new RowDataRequest(Map.of("geom", "POINT(1 2)"))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "입력값을 확인하세요: 'geom' 필드: GeoJSON 형식이 아닙니다."
+                + " 예: {\"type\":\"Point\",\"coordinates\":[126.97,37.56]}")
+        .message()
+        .doesNotContain("Unrecognized", "Source", "token");
   }
 
   /** 예외: GEOMETRY 타입 — coordinates 필드 없으면 IllegalArgumentException */
@@ -680,7 +773,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                 datasetDataService.addRow(
                     dataset.id(), new RowDataRequest(Map.of("geom", "not_json"))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Invalid GeoJSON");
+        .hasMessageContaining("GeoJSON 형식이 아닙니다");
   }
 
   /** 예외: GEOMETRY 타입에 문자열이 아닌 값을 넣으면 IllegalArgumentException */
@@ -692,7 +785,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     assertThatThrownBy(
             () -> datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("geom", 123))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("GeoJSON string");
+        .hasMessageContaining("GeoJSON 문자열이어야 합니다");
   }
 
   /** 정상: nullable 컬럼에 null 값 저장 성공 */
@@ -720,10 +813,10 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     data.put("required_col", null);
     assertThatThrownBy(() -> datasetDataService.addRow(dataset.id(), new RowDataRequest(data)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("cannot be null");
+        .hasMessage("입력값을 확인하세요: 'required_col' 필드: 필수 입력 항목입니다");
   }
 
-  /** 예외: 배치 삽입에서 특정 행에 오류가 있으면 "Row N:" 접두사 포함 예외 */
+  /** 예외: 배치 삽입에서 특정 행에 오류가 있으면 "N번째 행:" 접두사(1부터 셈) 포함 예외 */
   @Test
   void addRowsBatch_rowIndexInErrorMessage() {
     DatasetDetailResponse dataset =
@@ -731,13 +824,13 @@ class DatasetDataServiceTest extends IntegrationTestBase {
 
     List<Map<String, Object>> rows =
         List.of(
-            Map.of("num", 1), Map.of("num", 2), Map.of("num", "invalid") // Row 2에서 오류
+            Map.of("num", 1), Map.of("num", 2), Map.of("num", "invalid") // 3번째 행에서 오류
             );
 
     assertThatThrownBy(
             () -> datasetDataService.addRowsBatch(dataset.id(), new BatchRowDataRequest(rows)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Row 2:");
+        .hasMessageContaining("3번째 행: 입력값을 확인하세요: 'num' 필드:");
   }
 
   // =========================================================================
@@ -1051,6 +1144,18 @@ class DatasetDataServiceTest extends IntegrationTestBase {
         .get("v", String.class);
   }
 
+  /** 위치 칸에 실제로 저장된 geometry 를 WKT 로 읽는다 — Feature 가 아니라 도형이 들어갔는지 확인하는 용도(WD-201). */
+  private String readGeometryText(String tableName, String column, Long rowId) {
+    return dsl.fetchOne(
+            "SELECT ST_AsText(\""
+                + column
+                + "\") AS v FROM data.\""
+                + tableName
+                + "\" WHERE id = ?",
+            rowId)
+        .get("v", String.class);
+  }
+
   /**
    * 회귀(WD-98): 소수 정수부 13자리는 INSERT 의 영어 「Data integrity violation」(409)이 아니라, 검증 단계에서 필드명과 한국어 사유가
    * 담긴 400(IllegalArgumentException)으로 거부된다. 사유 문구까지 고정한다 — DB 오류 번역(같은 400·한국어)만으로도 통과하면 검증이 빠져도
@@ -1067,7 +1172,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                     dataset.id(),
                     new RowDataRequest(Map.of("price", new BigDecimal("1234567890123")))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Column 'price': 정수부는 최대 12자리까지 입력할 수 있습니다")
+        .hasMessageContaining("'price' 필드: 정수부는 최대 12자리까지 입력할 수 있습니다")
         .hasMessageNotContaining("저장하지 못했습니다");
   }
 
@@ -1102,7 +1207,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                       dataset.id(), new RowDataRequest(Map.of("price", value))))
           .as("value=%s", value)
           .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("Column 'price': 소수점 아래는 최대 6자리까지 입력할 수 있습니다");
+          .hasMessageContaining("'price' 필드: 소수점 아래는 최대 6자리까지 입력할 수 있습니다");
     }
 
     RowDataResponse trailingZeros =
@@ -1131,7 +1236,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                   datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("price", bad))))
           .as("value=%s", bad)
           .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("Column 'price': Expected numeric value");
+          .hasMessageContaining("'price' 필드: 숫자 형식이 아닙니다");
     }
   }
 
@@ -1153,15 +1258,15 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                             "num",
                             java.math.BigInteger.TWO.pow(64).add(java.math.BigInteger.ONE)))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Column 'num': 정수 범위를 벗어났습니다: 18446744073709551617");
+        .hasMessageContaining("'num' 필드: 정수 범위를 벗어났습니다: 18446744073709551617");
     assertThatThrownBy(
             () -> datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("num", 1e30))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Column 'num': 정수 범위를 벗어났습니다");
+        .hasMessageContaining("'num' 필드: 정수 범위를 벗어났습니다");
     assertThatThrownBy(
             () -> datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("num", 1.9))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Column 'num': 정수 형식이 아닙니다: 1.9");
+        .hasMessageContaining("'num' 필드: 정수 형식이 아닙니다: 1.9");
 
     RowDataResponse whole =
         datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("num", 3.0)));
@@ -1188,12 +1293,12 @@ class DatasetDataServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(
             () -> datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("num", "1.9"))))
-        .hasMessageContaining("Column 'num': 정수 형식이 아닙니다: 1.9");
+        .hasMessageContaining("'num' 필드: 정수 형식이 아닙니다: 1.9");
     assertThatThrownBy(
             () ->
                 datasetDataService.addRow(
                     dataset.id(), new RowDataRequest(Map.of("num", "9223372036854775808"))))
-        .hasMessageContaining("Column 'num': 정수 범위를 벗어났습니다: 9223372036854775808");
+        .hasMessageContaining("'num' 필드: 정수 범위를 벗어났습니다: 9223372036854775808");
   }
 
   /** 회귀(WD-98): 행 API 는 엄격 모드 — 초과분이 공백뿐이어도(PG 는 잘라 저장) 길이 초과로 거부한다. */
@@ -1206,7 +1311,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
             () ->
                 datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("col", "abc  "))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Column 'col': 최대 3자까지 입력할 수 있습니다(입력 5자)");
+        .hasMessageContaining("'col' 필드: 최대 3자까지 입력할 수 있습니다(입력 5자)");
   }
 
   /** 회귀(WD-98): VARCHAR 길이는 UTF-16 이 아니라 문자(코드포인트) 수로 센다 — 이모지 5자는 VARCHAR(5)에 들어간다. */
@@ -1233,7 +1338,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                 datasetDataService.addRow(
                     dataset.id(), new RowDataRequest(Map.of("col", "a".repeat(256)))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Column 'col': 최대 255자까지 입력할 수 있습니다(입력 256자)");
+        .hasMessageContaining("'col' 필드: 최대 255자까지 입력할 수 있습니다(입력 256자)");
   }
 
   /** 회귀(WD-98): NUL 문자는 INSERT 의 22021 이 아니라 검증 단계에서 거부된다(TEXT·VARCHAR 모두). */
@@ -1247,7 +1352,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                 datasetDataService.addRow(
                     dataset.id(), new RowDataRequest(Map.of("col", "a\u0000b"))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Column 'col': 저장할 수 없는 문자(NUL)가 포함되어 있습니다");
+        .hasMessageContaining("'col' 필드: 저장할 수 없는 문자(NUL)가 포함되어 있습니다");
   }
 
   /** 회귀(WD-98): 행 수정도 같은 검사를 거친다 — 정수부 13자리·길이 초과는 거부, 경계 값은 저장. */
@@ -1273,13 +1378,13 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                     added.id(),
                     new RowDataRequest(Map.of("price", new BigDecimal("12345678901234")))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Column 'price': 정수부는 최대 12자리까지 입력할 수 있습니다");
+        .hasMessageContaining("'가격(price)' 필드: 정수부는 최대 12자리까지 입력할 수 있습니다");
     assertThatThrownBy(
             () ->
                 datasetDataService.updateRow(
                     dataset.id(), added.id(), new RowDataRequest(Map.of("code", "abcd"))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Column 'code': 최대 3자까지 입력할 수 있습니다(입력 4자)");
+        .hasMessageContaining("'코드(code)' 필드: 최대 3자까지 입력할 수 있습니다(입력 4자)");
 
     datasetDataService.updateRow(
         dataset.id(),

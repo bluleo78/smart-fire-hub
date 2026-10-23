@@ -838,6 +838,68 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     });
   });
 
+  test('(WD-201) GEOMETRY — FeatureCollection 은 한국어 안내로 막고, Feature 는 그대로 제출된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const geoDataset = createDatasetDetail({
+      id: 3,
+      rowCount: 0,
+      columns: [
+        createColumn({ id: 1, columnName: 'id', displayName: 'ID', dataType: 'INTEGER', isPrimaryKey: true }),
+        createColumn({
+          id: 3,
+          columnName: 'geom',
+          displayName: '위치 (지오메트리)',
+          dataType: 'GEOMETRY',
+          isPrimaryKey: false,
+          isNullable: true,
+          columnOrder: 1,
+        }),
+      ],
+    });
+
+    await mockApi(page, 'GET', '/api/v1/datasets/3', geoDataset);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/3/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/3/stats', []);
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/3/data',
+      (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ columns: geoDataset.columns, rows: [], page: 0, size: 50, totalElements: 0, totalPages: 0 }),
+      }),
+    );
+    const addCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/3/data/rows',
+      { id: 1, geom: '{"type":"Point","coordinates":[126.97,37.56]}' },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/3');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: /행 추가/ }).click();
+    await page.locator('#add-id').fill('1');
+
+    // FeatureCollection — 한 칸에 위치 하나만 들어가므로 서버와 같은 문구로 막고 POST 를 보내지 않는다
+    await page.locator('#add-geom').fill('{"type":"FeatureCollection","features":[]}');
+    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+    await expect(page.getByText('FeatureCollection 은 저장할 수 없습니다')).toBeVisible();
+
+    // Feature — 클라이언트는 통과시키고 서버가 안의 geometry 를 꺼내 저장한다
+    const feature = '{"type":"Feature","properties":{},"geometry":{"type":"Point","coordinates":[126.97,37.56]}}';
+    await page.locator('#add-geom').fill(feature);
+    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+
+    // 첫 POST 가 Feature 여야 한다 — FeatureCollection 이 먼저 전송됐다면 여기서 드러난다
+    const captured = await addCapture.waitForRequest();
+    expect((captured.payload as { data: Record<string, unknown> }).data).toMatchObject({ id: '1', geom: feature });
+  });
+
   test('사용자 정의 PK(NOT NULL) 컬럼이 있는 데이터셋 — 편집 시 PK는 읽기 전용으로 표시되고 값이 유지된 채 저장된다', async ({
     authenticatedPage: page,
   }) => {

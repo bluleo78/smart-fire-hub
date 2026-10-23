@@ -255,4 +255,24 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
         .failJob(Mockito.anyString(), Mockito.anyString());
     assertThat(countRows(tableName)).isEqualTo(2);
   }
+
+  @Test
+  void append_featureGeoJson_storesInnerGeometry() throws Exception {
+    // WD-201: 행 추가·편집과 같은 규칙 — Feature 는 안의 geometry 로 저장된다. 수정 전에는 ST_GeomFromGeoJSON 이
+    // Feature 를 "invalid GeoJson representation" 으로 거부해 INSERT 에서 잡 전체가 실패했다.
+    String tableName = "process_geom_feature";
+    Long datasetId = createGeometryDataset(tableName);
+    String rows =
+        "서울,\"{\"\"type\"\":\"\"Feature\"\",\"\"properties\"\":{},"
+            + "\"\"geometry\"\":{\"\"type\"\":\"\"Point\"\",\"\"coordinates\"\":[126.97,37.56]}}\"\n"
+            + "부산,\"{\"\"type\"\":\"\"Point\"\",\"\"coordinates\"\":[129,35.1]}\"\n";
+    runImport("geom-feature-job", datasetId, writeGeometryCsv(rows), "APPEND");
+
+    Mockito.verify(asyncJobService, Mockito.never())
+        .failJob(Mockito.anyString(), Mockito.anyString());
+    assertThat(geometries(tableName))
+        .containsEntry("서울", "POINT(126.97 37.56)")
+        .containsEntry("부산", "POINT(129 35.1)")
+        .hasSize(2);
+  }
 }

@@ -1,8 +1,5 @@
 package com.smartfirehub.dataset.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.BatchRowDataRequest;
 import com.smartfirehub.dataset.dto.BatchRowDataResponse;
 import com.smartfirehub.dataset.dto.ColumnStatsResponse;
@@ -35,9 +32,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DatasetDataService {
@@ -49,7 +48,6 @@ public class DatasetDataService {
   private final GuardedSqlExecutor guardedSqlExecutor;
   private final ClearanceResolver clearanceResolver;
   private final QueryHistoryRepository queryHistoryRepository;
-  private final ObjectMapper objectMapper;
 
   // DOCUMENT 데이터셋은 data.<table> 동적 테이블이 없고 데이터가 document_chunk 에 저장된다.
   private static final String DOCUMENT_TYPE = "DOCUMENT";
@@ -118,7 +116,8 @@ public class DatasetDataService {
       try {
         validatedRows.add(validateAndConvertRowData(columns, request.rows().get(i)));
       } catch (IllegalArgumentException e) {
-        throw new IllegalArgumentException("Row " + i + ": " + e.getMessage());
+        // 사용자에게 보이는 행 번호는 1부터 센다(요청 배열 인덱스 0 = 1번째 행).
+        throw new IllegalArgumentException((i + 1) + "번째 행: " + e.getMessage());
       }
     }
 
@@ -306,7 +305,8 @@ public class DatasetDataService {
       try {
         validatedRows.add(validateAndConvertRowData(columns, request.rows().get(i)));
       } catch (IllegalArgumentException e) {
-        throw new IllegalArgumentException("Row " + i + ": " + e.getMessage());
+        // 사용자에게 보이는 행 번호는 1부터 센다(요청 배열 인덱스 0 = 1번째 행).
+        throw new IllegalArgumentException((i + 1) + "번째 행: " + e.getMessage());
       }
     }
 
@@ -463,7 +463,7 @@ public class DatasetDataService {
 
       if (value == null) {
         if (!col.isNullable()) {
-          errors.add("Column '" + col.columnName() + "' cannot be null");
+          errors.add(fieldLabel(col) + ": 필수 입력 항목입니다");
         }
         result.put(col.columnName(), null);
         continue;
@@ -472,16 +472,31 @@ public class DatasetDataService {
       try {
         Object converted = convertValue(col, value);
         result.put(col.columnName(), converted);
+      } catch (IllegalArgumentException e) {
+        // 변환기가 던지는 IllegalArgumentException 은 모두 사용자용 한국어 사유다(WD-201).
+        errors.add(fieldLabel(col) + ": " + e.getMessage());
       } catch (Exception e) {
-        errors.add("Column '" + col.columnName() + "': " + e.getMessage());
+        // 그 밖의 예외 문구는 내부 정보(파서·라이브러리 원문)일 수 있어 사용자 문구에 싣지 않는다.
+        log.debug("행 값 변환 실패: column={}", col.columnName(), e);
+        errors.add(fieldLabel(col) + ": 값을 저장할 수 있는 형식으로 바꾸지 못했습니다");
       }
     }
 
     if (!errors.isEmpty()) {
-      throw new IllegalArgumentException("Validation errors: " + String.join("; ", errors));
+      // 화면 토스트에 그대로 보이는 문구라 한국어로 묶는다(WD-201) — 칸별 사유는 "; " 로 잇는다.
+      throw new IllegalArgumentException("입력값을 확인하세요: " + String.join("; ", errors));
     }
 
     return result;
+  }
+
+  /** 오류 문구에 쓸 필드 이름 — 화면 표시 이름이 있으면 「표시 이름(컬럼명)」, 없으면 컬럼명. */
+  private static String fieldLabel(DatasetColumnResponse col) {
+    String display = col.displayName();
+    if (display == null || display.isBlank() || display.equals(col.columnName())) {
+      return "'" + col.columnName() + "' 필드";
+    }
+    return "'" + display + "(" + col.columnName() + ")' 필드";
   }
 
   /**
@@ -498,7 +513,7 @@ public class DatasetDataService {
     return switch (col.dataType()) {
       case "TEXT", "VARCHAR" -> {
         if (!(value instanceof String s)) {
-          throw new IllegalArgumentException("Expected string value");
+          throw new IllegalArgumentException("문자열이어야 합니다");
         }
         yield s;
       }
@@ -508,36 +523,37 @@ public class DatasetDataService {
         if (value instanceof Boolean b) {
           yield b;
         }
-        throw new IllegalArgumentException("Expected boolean value");
+        throw new IllegalArgumentException("참/거짓(true/false) 값이어야 합니다");
       }
       case "DATE" -> {
         if (value instanceof String s) {
           try {
             yield LocalDate.parse(s);
           } catch (Exception e) {
-            throw new IllegalArgumentException("Expected date format yyyy-MM-dd");
+            throw new IllegalArgumentException("날짜 형식이 아닙니다 (yyyy-MM-dd)");
           }
         }
-        throw new IllegalArgumentException("Expected date string in yyyy-MM-dd format");
+        throw new IllegalArgumentException("날짜 형식이 아닙니다 (yyyy-MM-dd)");
       }
       case "TIMESTAMP" -> {
         if (value instanceof String s) {
           try {
             yield LocalDateTime.parse(s);
           } catch (Exception e) {
-            throw new IllegalArgumentException("Expected timestamp format yyyy-MM-ddTHH:mm:ss");
+            throw new IllegalArgumentException("날짜시간 형식이 아닙니다 (yyyy-MM-ddTHH:mm:ss)");
           }
         }
-        throw new IllegalArgumentException("Expected timestamp string");
+        throw new IllegalArgumentException("날짜시간 형식이 아닙니다 (yyyy-MM-ddTHH:mm:ss)");
       }
       case "GEOMETRY" -> {
         if (!(value instanceof String s)) {
-          throw new IllegalArgumentException("Expected GeoJSON string");
+          throw new IllegalArgumentException("GeoJSON 문자열이어야 합니다");
         }
-        validateGeoJson(s);
-        yield s;
+        // Feature 는 안의 geometry 로 바꿔 저장한다 — ST_GeomFromGeoJSON 은 Feature 를 받지 못한다(WD-201, 임포트와 같은
+        // 규칙).
+        yield GeoJsonValues.toStorableGeometry(s);
       }
-      default -> throw new IllegalArgumentException("Unknown data type: " + col.dataType());
+      default -> throw new IllegalArgumentException("알 수 없는 데이터 타입입니다: " + col.dataType());
     };
   }
 
@@ -552,16 +568,16 @@ public class DatasetDataService {
    */
   private static BigDecimal parseNumber(Object value) {
     if (!(value instanceof String) && !(value instanceof Number)) {
-      throw new IllegalArgumentException("Expected numeric value");
+      throw new IllegalArgumentException("숫자 형식이 아닙니다");
     }
     String s = value.toString().trim();
     if (s.isEmpty() || s.length() > MAX_NUMBER_STRING_LENGTH) {
-      throw new IllegalArgumentException("Expected numeric value");
+      throw new IllegalArgumentException("숫자 형식이 아닙니다");
     }
     try {
       return new BigDecimal(s);
     } catch (NumberFormatException e) {
-      throw new IllegalArgumentException("Expected numeric value");
+      throw new IllegalArgumentException("숫자 형식이 아닙니다");
     }
   }
 
@@ -572,34 +588,5 @@ public class DatasetDataService {
       types.put(col.columnName(), col.dataType());
     }
     return types;
-  }
-
-  private static final Set<String> VALID_GEOJSON_TYPES =
-      Set.of(
-          "Point",
-          "LineString",
-          "Polygon",
-          "MultiPoint",
-          "MultiLineString",
-          "MultiPolygon",
-          "GeometryCollection");
-
-  private void validateGeoJson(String value) {
-    if (value == null || value.isBlank()) return;
-    try {
-      JsonNode node = objectMapper.readTree(value);
-      if (!node.has("type")) {
-        throw new IllegalArgumentException("Invalid GeoJSON: 'type' field is required");
-      }
-      String type = node.get("type").asText();
-      if (!VALID_GEOJSON_TYPES.contains(type)) {
-        throw new IllegalArgumentException("Unsupported GeoJSON type: " + type);
-      }
-      if (!"GeometryCollection".equals(type) && !node.has("coordinates")) {
-        throw new IllegalArgumentException("Invalid GeoJSON: 'coordinates' field is required");
-      }
-    } catch (JsonProcessingException e) {
-      throw new IllegalArgumentException("Invalid GeoJSON: " + e.getMessage());
-    }
   }
 }

@@ -9,6 +9,7 @@ import {
   buildRowZodSchema,
   computeChangedFields,
   decimalInputError,
+  geoJsonInputError,
   integerInputError,
   pickChangedValues,
   toTemporalFormValue,
@@ -182,5 +183,42 @@ describe('buildRowZodSchema — 물리 타입 한도 (WD-98)', () => {
     const required = buildRowZodSchema([{ ...col('code', 'VARCHAR'), isNullable: false, maxLength: 3 }], 'add');
     expect(issues(required, { code: '' })).toEqual(['필수 입력 항목입니다.']);
     expect(issues(required, { code: 'abcd' })).toEqual(['최대 3자']);
+  });
+});
+
+describe('GEOMETRY 입력 검증 (WD-201)', () => {
+  const FORMAT_MSG = 'GeoJSON 형식으로 입력하세요. 예: {"type":"Point","coordinates":[126.97,37.56]}';
+  const FC_MSG =
+    'FeatureCollection 은 저장할 수 없습니다. 한 칸에는 위치 하나만 들어가므로 Feature 하나나 geometry 를 입력하세요';
+
+  it('geometry 와 Feature(안에 geometry 가 있는)는 통과한다', () => {
+    expect(geoJsonInputError('{"type":"Point","coordinates":[126.97,37.56]}')).toBeNull();
+    expect(
+      geoJsonInputError('{"type":"Feature","properties":{},"geometry":{"type":"Point","coordinates":[1,2]}}'),
+    ).toBeNull();
+  });
+
+  it('FeatureCollection 은 서버와 같은 한국어 문구로 거부한다', () => {
+    expect(geoJsonInputError('{"type":"FeatureCollection","features":[]}')).toBe(FC_MSG);
+  });
+
+  it('geometry 가 null·없는 Feature, WKT, 모르는 type 은 거부한다', () => {
+    expect(geoJsonInputError('{"type":"Feature","properties":{},"geometry":null}')).toBe(
+      'Feature 에 geometry 가 없습니다. 위치가 없으면 값을 비워 두세요',
+    );
+    expect(geoJsonInputError('{"type":"Feature","geometry":{"type":"Feature"}}')).toBe(FORMAT_MSG);
+    expect(geoJsonInputError('POINT(1 2)')).toBe(FORMAT_MSG);
+    expect(geoJsonInputError('{"type":"Circle"}')).toBe(FORMAT_MSG);
+    expect(geoJsonInputError('[1,2]')).toBe(FORMAT_MSG);
+  });
+
+  it('스키마: Feature 는 통과, FeatureCollection 은 칸 오류, NULL 허용 칸의 빈 값은 통과', () => {
+    const schema = buildRowZodSchema([col('g', 'GEOMETRY')], 'add');
+    const feature = '{"type":"Feature","properties":{},"geometry":{"type":"Point","coordinates":[1,2]}}';
+    expect(schema.parse({ g: feature }).g).toBe(feature);
+    const fc = schema.safeParse({ g: '{"type":"FeatureCollection","features":[]}' });
+    expect(fc.success).toBe(false);
+    expect(fc.success ? [] : fc.error.issues.map((i) => i.message)).toContain(FC_MSG);
+    expect(schema.parse({ g: '' }).g).toBe('');
   });
 });

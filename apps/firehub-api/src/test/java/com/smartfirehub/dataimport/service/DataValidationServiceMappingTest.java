@@ -47,6 +47,40 @@ class DataValidationServiceMappingTest {
     assertThat(result).isEqualTo(geojson);
   }
 
+  /**
+   * WD-201: Feature 는 안의 geometry 만 남긴다 — 행 추가·편집 API 와 같은 규칙(ST_GeomFromGeoJSON 은 Feature 를 못
+   * 받는다).
+   */
+  @Test
+  void convertValue_geometryFeature_unwrapsGeometry() throws Exception {
+    String feature =
+        "{\"type\":\"Feature\",\"properties\":{\"a\":1},"
+            + "\"geometry\":{\"type\":\"Point\",\"coordinates\":[127.0,37.50]}}";
+    Object result = service.convertValue(feature, "GEOMETRY");
+    // 좌표 표기(127.0, 37.50)가 double 반올림 없이 그대로 남는다
+    assertThat(result).isEqualTo("{\"type\":\"Point\",\"coordinates\":[127.0,37.50]}");
+  }
+
+  /** WD-201: FeatureCollection·WKT 는 임포트 검증 단계에서 한국어 사유로 거부된다(INSERT 에서 원인 없이 실패하지 않게). */
+  @Test
+  void convertValue_geometryFeatureCollectionOrWkt_rejectedInKorean() {
+    assertThatThrownBy(
+            () ->
+                service.convertValue(
+                    "{\"type\":\"FeatureCollection\",\"features\":[]}", "GEOMETRY"))
+        .hasMessageContaining("FeatureCollection 은 저장할 수 없습니다");
+    // geometry 자리에 Feature 를 겹친 값도 형식 오류로 안내한다
+    assertThatThrownBy(
+            () ->
+                service.convertValue(
+                    "{\"type\":\"Feature\",\"geometry\":{\"type\":\"Feature\"}}", "GEOMETRY"))
+        .hasMessageStartingWith("GeoJSON 형식이 아닙니다");
+    assertThatThrownBy(() -> service.convertValue("POINT(1 2)", "GEOMETRY"))
+        .hasMessageStartingWith("GeoJSON 형식이 아닙니다")
+        .message()
+        .doesNotContain("Unrecognized", "Source");
+  }
+
   // -----------------------------------------------------------------------
   // convertValue — unknown data type
   // -----------------------------------------------------------------------

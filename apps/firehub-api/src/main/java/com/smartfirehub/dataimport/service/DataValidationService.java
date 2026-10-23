@@ -4,6 +4,7 @@ import com.smartfirehub.dataimport.dto.ColumnMappingEntry;
 import com.smartfirehub.dataimport.dto.ValidationErrorDetail;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.service.ColumnPhysicalType;
+import com.smartfirehub.dataset.service.GeoJsonValues;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -226,8 +227,13 @@ public class DataValidationService {
         yield timestamp;
       }
       case "GEOMETRY" -> {
-        // GeoJSON string — pass through as-is (PostGIS will validate on INSERT)
-        yield value;
+        // 행 추가·편집 API 와 같은 규칙으로 검증·정규화한다(WD-201) — Feature 는 안의 geometry 로 바꾸고,
+        // FeatureCollection·WKT 등 저장할 수 없는 값은 INSERT 에서 원인 없이 실패하기 전에 행·칸 단위 사유로 거부한다.
+        try {
+          yield GeoJsonValues.toStorableGeometry(value);
+        } catch (IllegalArgumentException e) {
+          throw new Exception(e.getMessage());
+        }
       }
       default -> throw new Exception("알 수 없는 데이터 타입입니다: " + dataType);
     };
