@@ -35,10 +35,10 @@ import com.smartfirehub.file.repository.FileDatasetConfigRepository;
 import com.smartfirehub.file.service.FileObjectStorageService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
-import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.mapping.service.MappingReferenceService;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
+import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
@@ -184,6 +184,9 @@ public class DatasetService {
   private final MappingReferenceService mappingReferenceService;
   // WD-221: 삭제되는 데이터셋을 데이터 변경 트리거의 감시 목록·스냅숏에서 빼고, 감시 대상이 모두 사라진 트리거는 끈다.
   private final TriggerRepository triggerRepository;
+
+  /** 테넌트 방언(PG/Tibero)별 SQL 파서·데이터 스키마 — 사용처 SQL 대조에 쓴다(WD-206). */
+  private final PipelineDataSchema pipelineDataSchema;
 
   /** 파이프라인 전용 출처 필드를 일반 생성 경로에서 보냈을 때의 오류 코드. */
   public static final String ORIGIN_RESERVED_CODE = "DATASET_ORIGIN_RESERVED";
@@ -1139,7 +1142,9 @@ public class DatasetService {
             .where(field(name("dataset", "id"), Long.class).eq(datasetId))
             .fetchOptional(field(name("dataset", "table_name"), String.class))
             .orElseThrow(() -> new DatasetNotFoundException());
-    String dataSchema = DataSchema.current();
+    // WD-206: SQL 본문 대조는 테넌트 방언 기준 범위로 — 한 번 만들어 파이프라인·대시보드 양쪽에 쓴다.
+    DatasetSqlReferenceMatcher.Scope sqlScope =
+        DatasetSqlReferenceMatcher.scope(pipelineDataSchema, tableName);
 
     // 2. Pipelines: output_dataset_id 또는 pipeline_step_input.dataset_id 기준으로 조회. DISTINCT 로 중복 제거.
     List<DatasetReferencesResponse.ReferenceItem> pipelinesByFk =
@@ -1176,7 +1181,7 @@ public class DatasetService {
 
     // 2-1. (WD-143) 선언 입력 없이 SQL 스텝 본문으로만 이 테이블을 읽는 파이프라인 — FK 결과와 id 로 합친다.
     List<DatasetReferencesResponse.ReferenceItem> pipelines =
-        mergeById(pipelinesByFk, findPipelinesBySqlText(dataSchema, tableName));
+        mergeById(pipelinesByFk, findPipelinesBySqlText(sqlScope, tableName));
 
     // 3. Dashboards: dashboard → dashboard_widget → chart → saved_query.dataset_id 경로로 조회. 조회자
     // 가시성(본인 소유 또는
@@ -1212,7 +1217,7 @@ public class DatasetService {
     //      참조하는 위젯의 대시보드도 찾아 FK 결과와 id 로 합친다. 이게 없으면 "쿼리→차트→대시보드" 로 쓰는 데이터셋이 확인 창에 안 잡힌다.
     java.util.Map<Long, DashboardHit> dashboardHits = new java.util.TreeMap<>();
     dashboardsByFk.forEach(d -> dashboardHits.putIfAbsent(d.id(), d));
-    findDashboardsBySqlText(dataSchema, tableName, dashboardVisible)
+    findDashboardsBySqlText(sqlScope, tableName, dashboardVisible)
         .forEach(d -> dashboardHits.putIfAbsent(d.id(), d));
     List<DatasetReferencesResponse.ReferenceItem> dashboards =
         dashboardHits.values().stream()
@@ -1275,7 +1280,7 @@ public class DatasetService {
    * 저장 검증과 같은 치환({{#N}}·{{last_run_at}})을 거쳐야 파싱된다.
    */
   private List<DatasetReferencesResponse.ReferenceItem> findPipelinesBySqlText(
-      String dataSchema, String tableName) {
+      DatasetSqlReferenceMatcher.Scope scope, String tableName) {
     Field<Long> pipelineId = field(name("pipeline", "id"), Long.class);
     Field<String> pipelineName = field(name("pipeline", "name"), String.class);
     Field<String> script = field(name("pipeline_step", "script_content"), String.class);
@@ -1291,9 +1296,7 @@ public class DatasetService {
         .filter(
             r ->
                 DatasetSqlReferenceMatcher.references(
-                    PipelineService.substituteStepReferencesForValidation(r.get(script)),
-                    dataSchema,
-                    tableName))
+                    PipelineService.substituteStepReferencesForValidation(r.get(script)), scope))
         .map(
             r ->
                 new DatasetReferencesResponse.ReferenceItem(r.get(pipelineId), r.get(pipelineName)))
@@ -1308,7 +1311,7 @@ public class DatasetService {
    * #findPipelinesBySqlText} 와 같다. 가시성은 FK 경로와 같은 조건({@code visible})으로 함께 읽어 호출부가 이름을 가린다.
    */
   private List<DashboardHit> findDashboardsBySqlText(
-      String dataSchema, String tableName, Field<Boolean> visible) {
+      DatasetSqlReferenceMatcher.Scope scope, String tableName, Field<Boolean> visible) {
     Field<Long> dashboardId = field(name("dashboard", "id"), Long.class);
     Field<String> dashboardName = field(name("dashboard", "name"), String.class);
     Field<String> sqlText = field(name("saved_query", "sql_text"), String.class);
@@ -1328,7 +1331,7 @@ public class DatasetService {
         .where(sqlText.likeIgnoreCase(containsPattern(tableName), '\\'))
         .fetch()
         .stream()
-        .filter(r -> DatasetSqlReferenceMatcher.references(r.get(sqlText), dataSchema, tableName))
+        .filter(r -> DatasetSqlReferenceMatcher.references(r.get(sqlText), scope))
         .map(
             r ->
                 new DashboardHit(

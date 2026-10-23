@@ -97,7 +97,9 @@ class DatasetServiceFileTest {
             org.mockito.Mockito.mock(
                 com.smartfirehub.mapping.service.MappingReferenceService.class),
             // 이 테스트는 데이터셋 삭제를 쓰지 않아 트리거 감시 목록 정리(WD-221)는 호출되지 않는다.
-            org.mockito.Mockito.mock(com.smartfirehub.pipeline.repository.TriggerRepository.class));
+            org.mockito.Mockito.mock(com.smartfirehub.pipeline.repository.TriggerRepository.class),
+            // 이 테스트는 사용처 조회를 쓰지 않아 방언 판정(WD-206)은 호출되지 않는다.
+            org.mockito.Mockito.mock(com.smartfirehub.pipeline.service.PipelineDataSchema.class));
   }
 
   @Test
