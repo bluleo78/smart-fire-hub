@@ -264,9 +264,18 @@ public class SavedQueryRepository {
     return Optional.ofNullable(r);
   }
 
-  public void shareQueries(List<Long> queryIds) {
+  /**
+   * 주어진 저장 쿼리 중 {@code ownerId} 가 만든 것만 공유로 바꾼다(WD-194).
+   *
+   * <p>대시보드 공유 시 위젯 차트가 쓰는 쿼리를 함께 공유하는 용도다. 차트 주인이 아니라 <b>쿼리 주인</b>으로 거른다 — 내 차트가 남의 쿼리(만들 때는 공유였다가
+   * 주인이 비공개로 되돌린 것)를 쓰는 경우에도 그 쿼리는 주인만 공유할 수 있어야 하기 때문이다.
+   */
+  public void shareQueries(List<Long> queryIds, Long ownerId) {
     if (queryIds.isEmpty()) return;
-    dsl.update(SQ).set(SQ_IS_SHARED, true).where(SQ_ID.in(queryIds)).execute();
+    dsl.update(SQ)
+        .set(SQ_IS_SHARED, true)
+        .where(SQ_ID.in(queryIds).and(SQ_CREATED_BY.eq(ownerId)))
+        .execute();
   }
 
   public Long insert(CreateSavedQueryRequest req, Long userId) {

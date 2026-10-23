@@ -305,9 +305,18 @@ public class ChartRepository {
     update.where(C_ID.eq(id)).execute();
   }
 
-  public void shareCharts(List<Long> chartIds) {
+  /**
+   * 주어진 차트 중 {@code ownerId} 가 만든 것만 공유로 바꾼다(WD-194).
+   *
+   * <p>대시보드를 공유할 때 위젯 차트를 함께 공유하는 용도다. 남이 만든 차트는 그 주인만 공유 여부를 정할 수 있으므로 작성자 조건 없이 바꾸면 남이 비공개로 되돌린
+   * 차트가 내 대시보드 저장 한 번으로 주인 모르게 다시 공유된다. 그래서 소유자 인자를 필수로 받는다.
+   */
+  public void shareCharts(List<Long> chartIds, Long ownerId) {
     if (chartIds.isEmpty()) return;
-    dsl.update(C).set(C_IS_SHARED, true).where(C_ID.in(chartIds)).execute();
+    dsl.update(C)
+        .set(C_IS_SHARED, true)
+        .where(C_ID.in(chartIds).and(C_CREATED_BY.eq(ownerId)))
+        .execute();
   }
 
   public List<Long> findSavedQueryIdsByChartIds(List<Long> chartIds) {

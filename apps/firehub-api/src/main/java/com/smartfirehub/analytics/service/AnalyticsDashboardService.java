@@ -96,19 +96,10 @@ public class AnalyticsDashboardService {
         .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + id));
     dashboardRepository.update(id, req, userId);
 
-    // When sharing a dashboard, auto-share all contained charts
+    // 대시보드를 공유하면 위젯이 쓰는 차트·쿼리 중 요청자 본인 것만 함께 공유한다(WD-194).
+    // 웹 설정 창은 이름만 바꿔도 isShared 를 늘 보내므로, 재저장마다 이 경로를 탄다.
     if (Boolean.TRUE.equals(req.isShared())) {
-      List<DashboardResponse.DashboardWidgetResponse> currentWidgets =
-          widgetRepository.findByDashboardId(id);
-      List<Long> chartIds =
-          currentWidgets.stream().map(DashboardResponse.DashboardWidgetResponse::chartId).toList();
-      if (!chartIds.isEmpty()) {
-        chartRepository.shareCharts(chartIds);
-        List<Long> savedQueryIds = chartRepository.findSavedQueryIdsByChartIds(chartIds);
-        if (!savedQueryIds.isEmpty()) {
-          savedQueryRepository.shareQueries(savedQueryIds);
-        }
-      }
+      shareOwnedWidgetResources(id, userId);
     }
 
     List<DashboardResponse.DashboardWidgetResponse> widgets =
@@ -116,6 +107,32 @@ public class AnalyticsDashboardService {
     return dashboardRepository
         .findById(id, userId, widgets)
         .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + id));
+  }
+
+  /**
+   * 대시보드 위젯이 쓰는 차트·저장 쿼리 중 {@code userId} 가 만든 것만 공유로 바꾼다(WD-194).
+   *
+   * <p>무엇을: 위젯의 차트 id 와 그 차트들이 쓰는 저장 쿼리 id 를 모아, 각각 작성자가 요청자인 행만 is_shared=true 로 바꾼다.
+   *
+   * <p>왜: 대시보드는 남이 공유한 차트도 위젯으로 담을 수 있다. 예전에는 소유자 조건 없이 일괄 공유해서, 남의 비공개 쿼리나 주인이 비공개로 되돌린 차트가 대시보드
+   * 저장 한 번으로 주인 모르게 공유로 바뀌었다. 남의 자원의 공유 여부는 그 주인만 정한다. 남의 차트가 비공개 쿼리를 쓰더라도 조회자 화면의 차트 데이터 경로는 쿼리
+   * 가시성을 따로 보지 않으므로(차트 가시성 + 보안 등급 판정만 본다) 이 제한으로 공유 대시보드 표시가 달라지지 않는다.
+   *
+   * <p>위젯 추가 시에도 같은 규칙을 쓰려면 이 메서드를 재사용한다.
+   */
+  private void shareOwnedWidgetResources(Long dashboardId, Long userId) {
+    List<Long> chartIds =
+        widgetRepository.findByDashboardId(dashboardId).stream()
+            .map(DashboardResponse.DashboardWidgetResponse::chartId)
+            .distinct()
+            .toList();
+    if (chartIds.isEmpty()) {
+      return;
+    }
+    chartRepository.shareCharts(chartIds, userId);
+    // 쿼리는 남의 차트가 쓰는 것까지 모으되, 리포지토리가 쿼리 작성자로 다시 거른다 — 남의 차트가 내 쿼리를 쓰면 내 쿼리는 공유된다.
+    List<Long> savedQueryIds = chartRepository.findSavedQueryIdsByChartIds(chartIds);
+    savedQueryRepository.shareQueries(savedQueryIds, userId);
   }
 
   @Transactional
