@@ -257,6 +257,7 @@ public class FileParserService {
       int dataStart;
       if (opts.hasHeader()) {
         headers = allRows.get(0);
+        FileHeaderValidator.requireDistinctNames(headers); // WD-205: 같은 이름 열 중복 거절
         dataStart = 1;
       } else {
         // generate column_1, column_2, ... based on first row width
@@ -339,6 +340,7 @@ public class FileParserService {
           if (headerHolder[0] == null) {
             // 첫 행 = 헤더
             headerHolder[0] = new ArrayList<>(cells);
+            FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
             return true;
           }
           List<String> headers = headerHolder[0];
@@ -374,6 +376,7 @@ public class FileParserService {
       int dataStart;
       if (opts.hasHeader()) {
         headers = allRows.get(0);
+        FileHeaderValidator.requireDistinctNames(headers); // WD-205: 같은 이름 열 중복 거절
         dataStart = 1;
       } else {
         int colCount = allRows.get(0).length;
@@ -399,6 +402,7 @@ public class FileParserService {
       }
       if (opts.hasHeader()) {
         String[] headers = reader.readNext();
+        FileHeaderValidator.requireDistinctNames(headers); // WD-205
         return headers != null ? Arrays.asList(headers) : Collections.emptyList();
       } else {
         String[] firstRow = reader.readNext();
@@ -421,6 +425,7 @@ public class FileParserService {
       if (opts.hasHeader()) {
         headers = reader.readNext();
         if (headers == null) return Collections.emptyList();
+        FileHeaderValidator.requireDistinctNames(headers); // WD-205
       } else {
         String[] firstRow = reader.readNext();
         if (firstRow == null) return Collections.emptyList();
@@ -488,6 +493,7 @@ public class FileParserService {
       int dataStart;
       if (opts.hasHeader()) {
         headers = allRows.get(0);
+        FileHeaderValidator.requireDistinctNames(headers); // WD-205: 같은 이름 열 중복 거절
         dataStart = 1;
       } else {
         int colCount = allRows.get(0).length;
@@ -514,6 +520,7 @@ public class FileParserService {
       }
       if (opts.hasHeader()) {
         String[] headers = reader.readNext();
+        FileHeaderValidator.requireDistinctNames(headers); // WD-205
         return headers != null ? Arrays.asList(headers) : Collections.emptyList();
       } else {
         String[] firstRow = reader.readNext();
@@ -536,6 +543,7 @@ public class FileParserService {
       if (opts.hasHeader()) {
         headers = reader.readNext();
         if (headers == null) return Collections.emptyList();
+        FileHeaderValidator.requireDistinctNames(headers); // WD-205
       } else {
         String[] firstRow = reader.readNext();
         if (firstRow == null) return Collections.emptyList();
@@ -606,6 +614,7 @@ public class FileParserService {
       if (opts.hasHeader()) {
         headerRow = reader.readNext();
         if (headerRow == null) return; // 헤더뿐이거나 빈 파일
+        FileHeaderValidator.requireDistinctNames(headerRow); // WD-205
       } else {
         // 첫 행으로 column_N 헤더를 합성하고, 첫 행 자체도 데이터로 포함
         String[] firstRow = reader.readNext();
@@ -712,6 +721,7 @@ public class FileParserService {
         inputStream,
         (idx, cells) -> {
           headerHolder[0] = new ArrayList<>(cells);
+          FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
           return false; // 첫 행 후 즉시 중단
         });
 
@@ -735,6 +745,7 @@ public class FileParserService {
           if (headerHolder[0] == null) {
             // 첫 행 = 헤더
             headerHolder[0] = new ArrayList<>(cells);
+            FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
             return true;
           }
           List<String> headers = headerHolder[0];
@@ -789,6 +800,7 @@ public class FileParserService {
         file,
         (idx, cells) -> {
           headerHolder[0] = new ArrayList<>(cells);
+          FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
           return false; // 첫 행 후 즉시 중단
         });
 
@@ -807,6 +819,7 @@ public class FileParserService {
         (idx, cells) -> {
           if (headerHolder[0] == null) {
             headerHolder[0] = new ArrayList<>(cells);
+            FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
             return true;
           }
           List<String> headers = headerHolder[0];
@@ -847,6 +860,7 @@ public class FileParserService {
         (idx, cells) -> {
           if (headerHolder[0] == null) {
             headerHolder[0] = new ArrayList<>(cells);
+            FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
             return true;
           }
           List<String> headers = headerHolder[0];
@@ -881,6 +895,7 @@ public class FileParserService {
           if (headerHolder[0] == null) {
             // 첫 행 = 헤더
             headerHolder[0] = new ArrayList<>(cells);
+            FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
             return true;
           }
           List<String> headers = headerHolder[0];

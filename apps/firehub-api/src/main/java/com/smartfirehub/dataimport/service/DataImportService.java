@@ -7,6 +7,7 @@ import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.dataimport.dto.*;
 import com.smartfirehub.dataimport.exception.ConcurrentImportException;
 import com.smartfirehub.dataimport.exception.FileUnreadableException;
+import com.smartfirehub.dataimport.exception.InvalidFileHeaderException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetResponse;
@@ -1123,6 +1124,13 @@ public class DataImportService {
     for (Throwable cur = e; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
       if (cur instanceof FileUnreadableException unreadable) {
         return unreadable.getMessage();
+      }
+    }
+    // 헤더 규칙 위반(같은 이름 열 중복, WD-205)은 파서가 만든 한국어 문구를 그대로 쓴다. 메시지에 열 이름이 들어가므로
+    // 아래 문자열 매칭("Connection" 등)보다 먼저 판정해야 열 이름 때문에 엉뚱한 문구로 바뀌지 않는다. 래핑돼 올 수 있어 원인 체인을 훑는다.
+    for (Throwable t = e; t != null; t = t.getCause()) {
+      if (t instanceof InvalidFileHeaderException headerError) {
+        return headerError.getMessage();
       }
     }
 

@@ -308,4 +308,38 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
         .containsEntry("부산", "POINT(129 35.1)")
         .hasSize(2);
   }
+
+  @Test
+  void duplicateHeader_jobFailsWithKoreanHeaderMessage_noRowsInserted() throws Exception {
+    // WD-205: 헤더에 같은 이름(name)이 두 번 있는 파일을 바로 임포트 잡으로 넘기면(미리보기를 거치지 않는 API/AI 경로)
+    // 잡 실패 메시지가 일반 문구가 아니라 파서의 한국어 헤더 오류 문구 그대로여야 하고, 한 행도 적재되지 않아야 한다.
+    String tableName = "process_dup_header_dataset";
+    Long datasetId = createDatasetWithBigintColumn(tableName);
+    Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-test");
+    Files.createDirectories(tempDir);
+    Path csv = Files.createTempFile(tempDir, "process-dup-header-", ".csv");
+    Files.writeString(csv, "name,name,amount\n서울,부산,1\n", StandardCharsets.UTF_8);
+
+    dataImportService.processImport(
+        "process-dup-header-job-id",
+        datasetId,
+        csv.toString(),
+        "",
+        "",
+        "dup_header.csv",
+        Files.size(csv),
+        "CSV",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "APPEND",
+        1L);
+
+    assertThat(countRows(tableName)).isZero();
+    ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+    Mockito.verify(asyncJobService).failJob(Mockito.eq("process-dup-header-job-id"), msg.capture());
+    assertThat(msg.getValue())
+        .isEqualTo("파일에 같은 이름의 열이 있습니다: name (1·2번째 열). 열 이름을 고친 뒤 다시 올려 주세요.");
+  }
 }

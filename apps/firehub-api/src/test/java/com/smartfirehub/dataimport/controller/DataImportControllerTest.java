@@ -12,6 +12,7 @@ import com.smartfirehub.dataimport.dto.ImportMode;
 import com.smartfirehub.dataimport.dto.ImportPreviewResponse;
 import com.smartfirehub.dataimport.dto.ImportStartResponse;
 import com.smartfirehub.dataimport.exception.FileUnreadableException;
+import com.smartfirehub.dataimport.exception.InvalidFileHeaderException;
 import com.smartfirehub.dataimport.service.DataImportService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
@@ -187,5 +188,38 @@ class DataImportControllerTest {
         .andExpect(
             content()
                 .string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("OOXML"))));
+  }
+
+  /** WD-205: 헤더에 같은 이름의 열이 있으면 미리보기가 400 + 한국어 사유로 거절된다(기존 UnsupportedFileType 핸들러 경유). */
+  @Test
+  void previewImport_duplicateHeader_returns400WithKoreanMessage() throws Exception {
+    String message = "파일에 같은 이름의 열이 있습니다: region (1·2번째 열). 열 이름을 고친 뒤 다시 올려 주세요.";
+    when(importService.previewImport(anyLong(), any(), any(), anyBoolean()))
+        .thenThrow(new InvalidFileHeaderException(message));
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/preview")
+                .file(csvFile())
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(message));
+  }
+
+  /** WD-205: 사전 검증도 같은 규칙으로 400 + 한국어 사유를 돌려준다. */
+  @Test
+  void validateImport_duplicateHeader_returns400WithKoreanMessage() throws Exception {
+    String message = "파일에 같은 이름의 열이 있습니다: cnt (2·3번째 열). 열 이름을 고친 뒤 다시 올려 주세요.";
+    when(importService.validateImport(anyLong(), any(), any(), any()))
+        .thenThrow(new InvalidFileHeaderException(message));
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/validate")
+                .file(csvFile())
+                .param("mappings", "[]")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(message));
   }
 }
