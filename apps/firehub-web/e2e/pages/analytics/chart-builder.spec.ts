@@ -213,6 +213,33 @@ test.describe('차트 빌더 페이지', () => {
     expect(req.payload).toMatchObject({ name: '수정된 차트' });
   });
 
+  test('기존 차트 설명을 지우고 수정하면 빈 문자열로 전송된다 (WD-197)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 지운 설명을 undefined 로 보내면 필드가 빠져 서버가 옛 설명을 남긴다 — 빈 문자열로 보내야 지워진다.
+    await setupChartBuilderMocks(page, 1);
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/analytics/charts/1',
+      { id: 1, name: '테스트 차트', chartType: 'BAR' },
+      { capture: true },
+    );
+
+    await page.goto('/analytics/charts/1');
+    await expect(page.getByText('테스트 차트')).toBeVisible();
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByText('차트 수정')).toBeVisible();
+
+    const descInput = page.getByRole('dialog').getByLabel('설명');
+    await expect(descInput).toHaveValue('테스트용 막대 차트');
+    await descInput.fill('');
+    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ description: '' });
+  });
+
   /**
    * 회귀 테스트 — 이슈 #20
    * 존재하지 않는 차트 ID 접근 시 빈 빌더 대신 에러 안내가 표시되어야 한다.

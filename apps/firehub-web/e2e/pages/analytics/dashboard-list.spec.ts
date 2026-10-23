@@ -370,6 +370,30 @@ test.describe('대시보드 목록 페이지', () => {
     expect(tabCalls.some((v) => v === 'true')).toBe(true);
   });
 
+  test('설명을 지우고 저장하면 빈 문자열로 전송된다 (WD-197)', async ({ authenticatedPage: page }) => {
+    // 이전에는 지운 설명을 undefined 로 보내 필드가 빠졌고, 서버가 "변경 없음"으로 보고 옛 설명을 남겼다.
+    const dashboard = createDashboardListItem({ id: 1, name: '설명 대시보드', description: '지울 설명' });
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', createPageResponse([dashboard]));
+    const putCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/analytics/dashboards/1',
+      { ...dashboard, description: null },
+      { capture: true },
+    );
+
+    await page.goto('/analytics/dashboards');
+    await page.getByRole('row', { name: /설명 대시보드/ }).getByLabel('설정').click();
+    await expect(page.getByRole('dialog', { name: '대시보드 설정' })).toBeVisible();
+    const descInput = page.getByLabel('설명');
+    await expect(descInput).toHaveValue('지울 설명');
+    await descInput.fill('');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    const req = await putCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ description: '' });
+  });
+
   test('설정 다이얼로그를 취소 후 다시 열면 저장된 값이 표시된다 (#553)', async ({ authenticatedPage: page }) => {
     // 부모(DashboardListPage)가 "설정" 클릭 시 목록에 이미 있던 동일 참조의
     // dashboard 객체를 다시 넘기므로, EditDashboardDialog가 이를 "변경 없음"으로

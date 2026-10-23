@@ -298,10 +298,15 @@ public class SavedQueryRepository {
     var update = dsl.update(SQ).set(SQ_UPDATED_BY, userId).set(SQ_UPDATED_AT, LocalDateTime.now());
 
     if (req.name() != null) update = update.set(SQ_NAME, req.name());
-    if (req.description() != null) update = update.set(SQ_DESCRIPTION, req.description());
+    // 설명: 생략(null)은 "변경 없음", 빈 문자열(공백만 포함)은 "설명을 지움"으로 해석해 DB 값을 NULL로 비운다(WD-197).
+    // 웹이 지운 설명을 빈 문자열로 보내도 이전에는 null과 같이 무시돼 옛 설명이 그대로 남았다.
+    if (req.description() != null)
+      update = update.set(SQ_DESCRIPTION, blankToNull(req.description()));
     if (req.sqlText() != null) update = update.set(SQ_SQL_TEXT, req.sqlText());
     if (req.datasetId() != null) update = update.set(SQ_DATASET_ID, req.datasetId());
-    if (req.folder() != null) update = update.set(SQ_FOLDER, req.folder());
+    // 폴더: 생략(null)은 "변경 없음", 빈 문자열은 "폴더 없음으로 옮김"으로 해석해 NULL로 비운다(WD-197).
+    // 폴더는 이름 문자열이라 설명과 같은 신호(빈 문자열)를 쓰면 별도 플래그 없이 의도를 구분할 수 있다.
+    if (req.folder() != null) update = update.set(SQ_FOLDER, blankToNull(req.folder()));
     if (req.isShared() != null) update = update.set(SQ_IS_SHARED, req.isShared());
 
     update.where(SQ_ID.eq(id)).execute();
@@ -346,5 +351,15 @@ public class SavedQueryRepository {
         r.get(SQ_CREATED_AT),
         r.get(SQ_UPDATED_AT),
         r.get("chart_count", Long.class));
+  }
+
+  /**
+   * 갱신 요청의 빈 문자열(공백만 포함)을 NULL 로 바꾼다(WD-197).
+   *
+   * <p>갱신 API 는 null 을 "변경 없음"으로 쓰므로, 사용자가 값을 지웠다는 뜻은 빈 문자열로 받는다. 저장할 때는 "값 없음"을 NULL 한 가지로 맞춰
+   * 목록·상세가 "" 와 NULL 을 따로 다루지 않게 한다.
+   */
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
   }
 }

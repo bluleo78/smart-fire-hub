@@ -267,6 +267,26 @@ class ChartServiceTest extends IntegrationTestBase {
     assertThat(updated.chartType()).isEqualTo("BAR"); // 변경하지 않았으므로 유지
   }
 
+  /** 설명을 빈 문자열로 보내면 지워지고(NULL), 생략(null)하면 기존 설명이 남는다(WD-197). */
+  @Test
+  void update_blankDescriptionClears_nullKeeps() {
+    ChartResponse created = createChart("Desc Chart", false, ownerUserId);
+    chartService.update(
+        created.id(), new UpdateChartRequest(null, "옛 설명", null, null, null), ownerUserId);
+
+    // 생략(null) → 변경 없음
+    chartService.update(
+        created.id(), new UpdateChartRequest("이름만 바꿈", null, null, null, null), ownerUserId);
+    assertThat(chartService.getById(created.id(), ownerUserId).description()).isEqualTo("옛 설명");
+
+    // 빈 문자열 → NULL 로 지움
+    ChartResponse cleared =
+        chartService.update(
+            created.id(), new UpdateChartRequest(null, "", null, null, null), ownerUserId);
+    assertThat(cleared.description()).isNull();
+    assertThat(chartService.getById(created.id(), ownerUserId).description()).isNull();
+  }
+
   /** 예외: 다른 사용자는 차트를 수정할 수 없음 */
   @Test
   void update_nonOwnerCannotUpdate_throwsNotFound() {

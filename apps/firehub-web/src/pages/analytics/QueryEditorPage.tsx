@@ -601,9 +601,11 @@ export default function QueryEditorPage() {
           id: queryId!,
           data: {
             name: saveForm.name,
-            description: saveForm.description || undefined,
+            // 지운 설명·"폴더 없음"은 빈 문자열로 보낸다. undefined/null 은 서버가 "변경 없음"으로 보고
+            // 옛 설명·폴더를 그대로 남긴다 — 빈 문자열이어야 서버가 NULL 로 비운다(WD-197).
+            description: saveForm.description,
             sqlText: sql,
-            folder: saveForm.folder || null,
+            folder: saveForm.folder,
             isShared: saveForm.isShared,
           },
         });

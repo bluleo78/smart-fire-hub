@@ -144,6 +144,27 @@ class AnalyticsDashboardServiceTest extends IntegrationTestBase {
     assertThat(stillSharedChart.isShared()).isTrue();
   }
 
+  /** 설명을 빈 문자열로 보내면 지워지고(NULL), 생략(null)하면 기존 설명이 남는다(WD-197). */
+  @Test
+  void updateDashboard_blankDescriptionClears_nullKeeps() {
+    DashboardResponse dashboard =
+        dashboardService.create(
+            new CreateDashboardRequest("Desc Dashboard", "옛 설명", false, null), ownerUserId);
+
+    // 생략(null) → 변경 없음
+    dashboardService.update(
+        dashboard.id(), new UpdateDashboardRequest("이름만 바꿈", null, null, null, null), ownerUserId);
+    assertThat(dashboardService.getById(dashboard.id(), ownerUserId).description())
+        .isEqualTo("옛 설명");
+
+    // 빈 문자열(공백 포함) → NULL 로 지움
+    DashboardResponse cleared =
+        dashboardService.update(
+            dashboard.id(), new UpdateDashboardRequest(null, "  ", null, null, null), ownerUserId);
+    assertThat(cleared.description()).isNull();
+    assertThat(dashboardService.getById(dashboard.id(), ownerUserId).description()).isNull();
+  }
+
   @Test
   void updateDashboard_withClearAutoRefreshFlag_setsColumnToNull() {
     // Given: 자동 새로고침이 30초로 설정된 대시보드

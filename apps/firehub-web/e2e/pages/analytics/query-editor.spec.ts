@@ -333,6 +333,38 @@ test.describe('쿼리 에디터 페이지', () => {
     expect(req.payload).toMatchObject({ name: '수정된 쿼리' });
   });
 
+  test('기존 쿼리 설명을 지우고 "폴더 없음"으로 옮기면 빈 문자열로 전송된다 (WD-197)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 지운 설명·"폴더 없음"을 undefined/null 로 보내면 서버가 "변경 없음"으로 보고 옛 값을 남긴다.
+    await setupQueryEditorMocks(page, 1);
+    // 폴더에 들어 있는 쿼리로 덮어쓴다(나중에 등록한 route 가 먼저 처리된다).
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/1', createSavedQuery({ id: 1, folder: '보고서' }));
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', ['보고서']);
+    const cap = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/analytics/queries/1',
+      createSavedQuery({ id: 1, description: null, folder: null }),
+      { capture: true },
+    );
+
+    await page.goto('/analytics/queries/1');
+    await expect(page.getByText('테스트 쿼리')).toBeVisible();
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByRole('heading', { name: '쿼리 수정' })).toBeVisible();
+
+    const descInput = page.getByRole('dialog').getByLabel('설명');
+    await expect(descInput).toHaveValue('테스트용 저장 쿼리');
+    await descInput.fill('');
+    await page.getByRole('dialog').getByLabel('폴더').click();
+    await page.getByRole('option', { name: '폴더 없음' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+
+    const req = await cap.waitForRequest();
+    expect(req.payload).toMatchObject({ description: '', folder: '' });
+  });
+
   test('스키마 탐색기 테이블 클릭 시 컬럼 목록이 펼쳐진다', async ({
     authenticatedPage: page,
   }) => {

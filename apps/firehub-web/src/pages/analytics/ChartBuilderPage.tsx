@@ -750,10 +750,11 @@ export default function ChartBuilderPage() {
           id: chartId!,
           // 가려진 차트는 이름·설명·공유만 보낸다 — config·chartType 을 빼야 서버의 기존 설정이 덮어써지지 않는다(WD-31②).
           data: configWithheld
-            ? { name: saveForm.name, description: saveForm.description || undefined, isShared: saveForm.isShared }
+            // 설명은 지웠어도 빈 문자열로 보낸다 — undefined 면 필드가 빠져 서버가 "변경 없음"으로 보고 옛 설명을 남긴다(WD-197).
+            ? { name: saveForm.name, description: saveForm.description, isShared: saveForm.isShared }
             : {
                 name: saveForm.name,
-                description: saveForm.description || undefined,
+                description: saveForm.description,
                 chartType,
                 config,
                 isShared: saveForm.isShared,

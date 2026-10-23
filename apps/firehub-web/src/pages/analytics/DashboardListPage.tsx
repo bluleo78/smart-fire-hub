@@ -219,7 +219,8 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
         id: dashboard.id,
         data: {
           name: name.trim(),
-          description: description.trim() || undefined,
+          // 지운 설명은 빈 문자열로 보낸다 — undefined 면 필드가 빠져 서버가 "변경 없음"으로 보고 옛 설명을 남긴다(WD-197).
+          description: description.trim(),
           isShared,
           autoRefreshSeconds: parsedAutoRefresh.value,
           // 값을 지워 "수동"으로 되돌리는 요청임을 명시. 백엔드는 autoRefreshSeconds가 null이어도

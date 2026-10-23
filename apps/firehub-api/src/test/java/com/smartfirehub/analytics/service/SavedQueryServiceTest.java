@@ -189,6 +189,35 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     assertThat(updated.sqlText()).isEqualTo("SELECT 2");
   }
 
+  /** 설명·폴더를 빈 문자열로 보내면 지워지고(NULL), 생략(null)하면 기존 값이 남는다(WD-197). */
+  @Test
+  void update_blankDescriptionAndFolderClear_nullKeeps() {
+    SavedQueryResponse created = createQuery("Desc Query", "SELECT 1", "보고서", false, ownerUserId);
+    savedQueryService.update(
+        created.id(),
+        new UpdateSavedQueryRequest(null, "옛 설명", null, null, null, null),
+        ownerUserId);
+
+    // 생략(null) → 설명·폴더 모두 변경 없음
+    savedQueryService.update(
+        created.id(),
+        new UpdateSavedQueryRequest("이름만 바꿈", null, null, null, null, null),
+        ownerUserId);
+    SavedQueryResponse kept = savedQueryService.getById(created.id(), ownerUserId);
+    assertThat(kept.description()).isEqualTo("옛 설명");
+    assertThat(kept.folder()).isEqualTo("보고서");
+
+    // 빈 문자열 → 설명 지움, "폴더 없음"으로 이동
+    SavedQueryResponse cleared =
+        savedQueryService.update(
+            created.id(), new UpdateSavedQueryRequest(null, "", null, null, "", null), ownerUserId);
+    assertThat(cleared.description()).isNull();
+    assertThat(cleared.folder()).isNull();
+    SavedQueryResponse reloaded = savedQueryService.getById(created.id(), ownerUserId);
+    assertThat(reloaded.description()).isNull();
+    assertThat(reloaded.folder()).isNull();
+  }
+
   @Test
   void update_nonOwnerCannotUpdate_throwsNotFound() {
     SavedQueryResponse created = createQuery("Query", "SELECT 1", null, true, ownerUserId);
