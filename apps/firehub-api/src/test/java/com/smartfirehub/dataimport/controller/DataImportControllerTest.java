@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataimport.dto.ImportMode;
 import com.smartfirehub.dataimport.dto.ImportPreviewResponse;
 import com.smartfirehub.dataimport.dto.ImportStartResponse;
+import com.smartfirehub.dataimport.exception.FileUnreadableException;
 import com.smartfirehub.dataimport.service.DataImportService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
@@ -162,5 +163,29 @@ class DataImportControllerTest {
                 .file(csvFile())
                 .header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk());
+  }
+
+  /**
+   * 미리보기에서 파서가 파일을 읽지 못하면 400 + 한국어 안내가 나가야 한다(WD-204). 예전엔 엑셀이 아닌 .xlsx 가 빈 200 으로 나가 화면이 빈 2단계로
+   * 넘어갔고, 손상된 OOXML 은 POI 영문 메시지가 토스트에 보였다.
+   */
+  @Test
+  void previewImport_unreadableFile_returns400Korean() throws Exception {
+    when(importService.previewImport(anyLong(), any(), any(), anyBoolean()))
+        .thenThrow(
+            new FileUnreadableException(
+                FileUnreadableException.EXCEL_UNREADABLE,
+                new IllegalArgumentException("not a valid OOXML (Office Open XML) file")));
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/preview")
+                .file(csvFile())
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(FileUnreadableException.EXCEL_UNREADABLE))
+        .andExpect(
+            content()
+                .string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("OOXML"))));
   }
 }

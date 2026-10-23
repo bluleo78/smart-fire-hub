@@ -141,6 +141,12 @@ export function useImportDialog({
     setSelectedFile(file);
     try {
       const preview = await previewImport.mutateAsync(file);
+      // 서버가 성공 상태로 빈 본문을 돌려주면(예전 IOException 처리 결함, WD-204) 2단계가 빈 화면이 된다.
+      // 미리보기 내용(파일 컬럼 목록)이 없으면 다음 단계로 넘어가지 않고 오류로 안내한다.
+      if (!preview || !Array.isArray(preview.fileHeaders)) {
+        toast.error('파일 내용을 읽지 못했습니다. 파일을 확인한 뒤 다시 올려 주세요.');
+        return;
+      }
       setPreviewData(preview);
       setStep(2);
     } catch (error) {

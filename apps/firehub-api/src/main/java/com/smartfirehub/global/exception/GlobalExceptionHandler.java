@@ -57,6 +57,7 @@ import org.postgresql.util.ServerErrorMessage;
 import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
@@ -68,6 +69,7 @@ import org.springframework.web.context.request.async.AsyncRequestTimeoutExceptio
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+import org.springframework.web.util.DisconnectedClientHelper;
 
 @RestControllerAdvice
 @Slf4j
@@ -704,16 +706,34 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(response);
   }
 
+  /**
+   * IOException 처리.
+   *
+   * <p>SSE/스트리밍 응답 중 클라이언트가 끊으면 Broken pipe 류 IOException 이 난다(bfd5c1fc). 이미 커밋된 응답에는 JSON 을 쓸 수
+   * 없고, 끊긴 클라이언트에게는 쓸 곳도 없으므로 이 두 경우는 조용히 끝낸다(null = 처리 완료·본문 없음).
+   *
+   * <p>그 밖의(커밋 전·클라이언트 연결 정상) IOException 은 서버 처리 실패다. 예전에는 여기서도 로그만 남기고 void 로 끝내 HTTP 200 + 빈 본문이
+   * 나갔고, 화면은 이를 성공으로 오인했다(WD-204: 엑셀 아닌 .xlsx 미리보기가 빈 대화상자). 일반 예외와 같은 형식·문구의 500 JSON 을 돌려준다.
+   */
   @ExceptionHandler(IOException.class)
-  public void handleIOException(IOException ex, HttpServletResponse response) {
-    // SSE/streaming connections throw IOException (Broken pipe) when clients disconnect.
-    // If the response is already committed, we cannot write a JSON error body — just log and
-    // return.
+  public ResponseEntity<ErrorResponse> handleIOException(
+      IOException ex, HttpServletRequest request, HttpServletResponse response) {
     if (response.isCommitted()) {
       log.debug("IOException on committed response (client disconnect): {}", ex.getMessage());
-      return;
+      return null;
+    }
+    if (DisconnectedClientHelper.isClientDisconnectedException(ex)) {
+      log.debug("IOException from disconnected client: {}", ex.getMessage());
+      return null;
     }
     log.error("Unhandled IOException", ex);
+    ErrorResponse body =
+        buildError(
+            HttpStatus.INTERNAL_SERVER_ERROR, "예기치 않은 오류가 발생했습니다. 잠시 후 다시 시도하세요.", null, request);
+    // SSE 요청(Accept: text/event-stream)에서도 협상 실패 없이 JSON 이 나가도록 형식을 명시한다.
+    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+        .contentType(MediaType.APPLICATION_JSON)
+        .body(body);
   }
 
   @ExceptionHandler(AsyncRequestTimeoutException.class)

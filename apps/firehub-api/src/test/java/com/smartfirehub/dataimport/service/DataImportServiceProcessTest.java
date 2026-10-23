@@ -2,6 +2,7 @@ package com.smartfirehub.dataimport.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.dataimport.exception.FileUnreadableException;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
@@ -124,6 +125,38 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
     // 매핑 없는(no-mapping) 경로이므로 validate()의 영문 오류 메시지("Row 4001: ...")를 통해
     // rowIndexBase가 파일 전역 기준으로 정확히 threading됐음을 확인한다.
     assertThat(msg.getValue()).contains("4001");
+  }
+
+  /** 임포트 잡 경로에서도 엑셀이 아닌 .xlsx 는 한국어 안내로 실패해야 한다(WD-204). 예전엔 범용 「관리자에게 문의」 문구로 끝나 원인을 알 수 없었다. */
+  @Test
+  void xlsx_notExcel_failsJobWithKoreanMessage() throws Exception {
+    String tableName = "process_fake_xlsx_dataset";
+    Long datasetId = createDatasetWithBigintColumn(tableName);
+    Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-test");
+    Files.createDirectories(tempDir);
+    Path fake = Files.createTempFile(tempDir, "process-fake-", ".xlsx");
+    Files.writeString(fake, "not an excel file", StandardCharsets.UTF_8);
+
+    dataImportService.processImport(
+        "process-fake-xlsx-job-id",
+        datasetId,
+        fake.toString(),
+        "",
+        "",
+        "fake.xlsx",
+        Files.size(fake),
+        "XLSX",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "APPEND",
+        1L);
+
+    ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+    Mockito.verify(asyncJobService).failJob(Mockito.eq("process-fake-xlsx-job-id"), msg.capture());
+    assertThat(msg.getValue()).isEqualTo(FileUnreadableException.EXCEL_UNREADABLE);
+    assertThat(countRows(tableName)).isZero();
   }
 
   @Test

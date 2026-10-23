@@ -2,8 +2,10 @@ package com.smartfirehub.dataimport.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.smartfirehub.dataimport.dto.ParseOptions;
+import com.smartfirehub.dataimport.exception.FileUnreadableException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -16,6 +18,11 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import org.apache.poi.openxml4j.opc.OPCPackage;
+import org.apache.poi.poifs.crypt.EncryptionInfo;
+import org.apache.poi.poifs.crypt.EncryptionMode;
+import org.apache.poi.poifs.crypt.Encryptor;
+import org.apache.poi.poifs.filesystem.POIFSFileSystem;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.CreationHelper;
@@ -1020,5 +1027,87 @@ class FileParserServiceTest {
     Path file = writeCsvFile("x");
     assertThatThrownBy(() -> service.parseHeaders(file, "doc", ParseOptions.defaults()))
         .isInstanceOf(UnsupportedFileTypeException.class);
+  }
+
+  // -----------------------------------------------------------------------
+  // WD-204 — 읽을 수 없는 파일은 한국어 안내 예외(FileUnreadableException)로 바뀌고 파서 원문은 새지 않는다
+  // -----------------------------------------------------------------------
+
+  /** 파서 원문(영문 POI/opencsv 메시지)의 흔적이 사용자 메시지에 없는지 확인한다. */
+  private static void assertKoreanOnly(Throwable t, String expected) {
+    assertThat(t).isInstanceOf(FileUnreadableException.class).hasMessage(expected);
+    assertThat(t.getMessage())
+        .doesNotContain("OOXML")
+        .doesNotContain("Unsupported")
+        .doesNotContain("POI")
+        .doesNotContain("Unterminated");
+  }
+
+  /** 미리보기(헤더·샘플·행 수)와 임포트 잡(스트리밍) 경로 모두 같은 한국어 예외를 던지는지 확인한다. */
+  private void assertAllPathsUnreadable(Path file, String type, String expected) {
+    ParseOptions opts = ParseOptions.defaults();
+    assertKoreanOnly(catchThrowable(() -> service.parseHeaders(file, type, opts)), expected);
+    assertKoreanOnly(catchThrowable(() -> service.parseSampleRows(file, type, 5, opts)), expected);
+    assertKoreanOnly(catchThrowable(() -> service.countRows(file, type, opts)), expected);
+    assertKoreanOnly(
+        catchThrowable(() -> service.parseStreaming(file, type, opts, 100, batch -> {})), expected);
+  }
+
+  @Test
+  void excel_plainTextNamedXlsx_throwsKoreanUnreadable() throws Exception {
+    // printf 'not an excel file' > fake.xlsx — 예전엔 IOException 이 빈 200 응답이 됐다
+    Path file = writeXlsxFile("not an excel file".getBytes(StandardCharsets.UTF_8));
+    assertAllPathsUnreadable(file, "xlsx", FileUnreadableException.EXCEL_UNREADABLE);
+  }
+
+  @Test
+  void excel_corruptedZip_throwsKoreanUnreadable_withoutPoiText() throws Exception {
+    // printf 'PK\x03\x04garbage' > t.xlsx — 예전엔 POI 영문 메시지가 400 본문·토스트에 그대로 보였다
+    byte[] data = {'P', 'K', 3, 4, 'g', 'a', 'r', 'b', 'a', 'g', 'e'};
+    Path file = writeXlsxFile(data);
+    assertAllPathsUnreadable(file, "xlsx", FileUnreadableException.EXCEL_UNREADABLE);
+  }
+
+  @Test
+  void excel_emptyFile_throwsKoreanUnreadable() throws Exception {
+    Path file = writeXlsxFile(new byte[0]);
+    assertAllPathsUnreadable(file, "xlsx", FileUnreadableException.EXCEL_UNREADABLE);
+  }
+
+  @Test
+  void excel_ole2WithoutWorkbook_throwsKoreanUnreadable() throws Exception {
+    // OLE2 컨테이너지만 Workbook 스트림이 없는 파일(워드 등 다른 오피스 문서와 같은 경우)
+    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+    try (POIFSFileSystem fs = new POIFSFileSystem()) {
+      fs.writeFilesystem(bos);
+    }
+    Path file = tempDir.resolve("ole2-" + System.nanoTime() + ".xls");
+    Files.write(file, bos.toByteArray());
+    assertAllPathsUnreadable(file, "xls", FileUnreadableException.EXCEL_UNREADABLE);
+  }
+
+  @Test
+  void excel_encryptedXlsx_throwsKoreanEncryptedMessage() throws Exception {
+    // 암호가 걸린 xlsx 는 OLE2 컨테이너(EncryptedPackage) — 사용자가 직접 해결할 수 있어 별도 문구로 안내한다
+    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+    try (POIFSFileSystem fs = new POIFSFileSystem()) {
+      EncryptionInfo info = new EncryptionInfo(EncryptionMode.agile);
+      Encryptor enc = info.getEncryptor();
+      enc.confirmPassword("secret");
+      try (OPCPackage opc = OPCPackage.open(new ByteArrayInputStream(buildXlsx()));
+          java.io.OutputStream os = enc.getDataStream(fs)) {
+        opc.save(os);
+      }
+      fs.writeFilesystem(bos);
+    }
+    Path file = writeXlsxFile(bos.toByteArray());
+    assertAllPathsUnreadable(file, "xlsx", FileUnreadableException.EXCEL_ENCRYPTED);
+  }
+
+  @Test
+  void csv_unterminatedQuote_throwsKoreanUnreadable() throws Exception {
+    // 첫 줄부터 닫히지 않은 따옴표 — opencsv 가 CsvMalformedLineException(IOException 하위)을 던져 예전엔 빈 200 응답이 됐다
+    Path file = writeCsvFile("\"id,name\n1,a\n2,b\n");
+    assertAllPathsUnreadable(file, "csv", FileUnreadableException.CSV_UNREADABLE);
   }
 }

@@ -4,7 +4,10 @@ import com.opencsv.CSVParser;
 import com.opencsv.CSVParserBuilder;
 import com.opencsv.CSVReader;
 import com.opencsv.CSVReaderBuilder;
+import com.opencsv.exceptions.CsvMalformedLineException;
+import com.opencsv.exceptions.CsvValidationException;
 import com.smartfirehub.dataimport.dto.ParseOptions;
+import com.smartfirehub.dataimport.exception.FileUnreadableException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
@@ -16,9 +19,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.function.Consumer;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 @Service
+@Slf4j
 public class FileParserService {
 
   // -----------------------------------------------------------------------
@@ -111,7 +116,7 @@ public class FileParserService {
     return switch (fileType.toLowerCase()) {
       case "csv" -> {
         try (InputStream in = Files.newInputStream(file)) {
-          yield parseHeadersCsvFromStream(in, opts);
+          yield guardCsv(() -> parseHeadersCsvFromStream(in, opts));
         }
       }
       case "xlsx", "xls", "xlsb" -> parseHeadersExcelFile(file.toFile());
@@ -129,7 +134,7 @@ public class FileParserService {
     return switch (fileType.toLowerCase()) {
       case "csv" -> {
         try (InputStream in = Files.newInputStream(file)) {
-          yield parseSampleRowsCsvFromStream(in, maxRows, opts);
+          yield guardCsv(() -> parseSampleRowsCsvFromStream(in, maxRows, opts));
         }
       }
       case "xlsx", "xls", "xlsb" -> parseSampleRowsExcelFile(file.toFile(), maxRows);
@@ -146,7 +151,7 @@ public class FileParserService {
     return switch (fileType.toLowerCase()) {
       case "csv" -> {
         try (InputStream in = Files.newInputStream(file)) {
-          yield countRowsCsvFromStream(in, opts);
+          yield guardCsv(() -> countRowsCsvFromStream(in, opts));
         }
       }
       case "xlsx", "xls", "xlsb" -> countRowsExcelFile(file.toFile());
@@ -164,7 +169,7 @@ public class FileParserService {
     return switch (fileType.toLowerCase()) {
       case "csv" -> {
         try (InputStream in = Files.newInputStream(file)) {
-          yield parseCsvFromStream(in, opts);
+          yield guardCsv(() -> parseCsvFromStream(in, opts));
         }
       }
       case "xlsx", "xls", "xlsb" -> parseExcelFile(file.toFile());
@@ -196,12 +201,38 @@ public class FileParserService {
     switch (fileType.toLowerCase()) {
       case "csv" -> {
         try (InputStream in = Files.newInputStream(file)) {
-          parseStreamingCsvFromStream(in, opts, batchSize, onBatch);
+          guardCsv(
+              () -> {
+                parseStreamingCsvFromStream(in, opts, batchSize, onBatch);
+                return null;
+              });
         }
       }
       // Excel 분기: opts(hasHeader/skipRows) 미사용 — 위 Javadoc 참고
       case "xlsx", "xls", "xlsb" -> parseStreamingExcelFile(file.toFile(), batchSize, onBatch);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
+    }
+  }
+
+  /** CSV 파싱 호출을 감싸는 함수형 인터페이스 — checked 예외를 그대로 던질 수 있게 한다. */
+  @FunctionalInterface
+  private interface CsvCall<T> {
+    T call() throws Exception;
+  }
+
+  /**
+   * CSV 구문 오류(닫히지 않은 따옴표 등)를 한국어 안내 예외로 바꾼다 (WD-204).
+   *
+   * <p>opencsv 의 {@link CsvMalformedLineException} 은 {@link IOException} 하위라, 그대로 두면 전역 IOException
+   * 핸들러로 흘러가 미리보기·검증이 실패 응답 대신 빈 응답이 됐다. {@link CsvValidationException} 도 원문(영문)이 보이지 않게 함께 바꾼다. 배치
+   * 콜백이 던지는 예외(검증 중단·DB 오류)는 이 두 타입이 아니므로 그대로 전파된다.
+   */
+  private static <T> T guardCsv(CsvCall<T> call) throws Exception {
+    try {
+      return call.call();
+    } catch (CsvMalformedLineException | CsvValidationException e) {
+      log.warn("CSV parse failed: {}", e.toString(), e);
+      throw new FileUnreadableException(FileUnreadableException.CSV_UNREADABLE, e);
     }
   }
 
