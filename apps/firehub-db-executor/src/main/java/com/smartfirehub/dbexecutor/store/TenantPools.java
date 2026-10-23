@@ -27,6 +27,9 @@ import javax.sql.DataSource;
  * abort 해 다른 요청의 트랜잭션을 죽이기 때문이다. 그래서 {@link #borrow} 는 {@link Lease} 를 돌려주고, 맵에서 빠진(퇴역한) 풀은 마지막 대여가
  * 반납될 때 닫는다. 대여 중인 풀이 퇴역하면 살아 있는 풀 수가 잠시 {@code maxPools} 를 넘을 수 있다(허용).
  *
+ * <p>같은 테넌트라도 접속 계정(OWNER·읽기 전용)마다 보관소를 따로 둔다 — 어느 계정을 쓸지는 생성자로 받은 선택 함수가 정하고, 지문도 선택된 계정으로 계산한다.
+ * 그래서 RO 비밀번호만 바뀌면 RO 풀만 교체되고 OWNER 풀은 그대로다.
+ *
  * <p>풀 생성은 생성자로 주입한 팩토리가 맡는다(테스트에서는 가짜 DataSource). 풀 닫기는 잠금 밖에서 한다.
  */
 public class TenantPools {
@@ -75,12 +78,22 @@ public class TenantPools {
   }
 
   private final Function<StoreDescriptor, DataSource> factory;
+  private final Function<StoreDescriptor, StoreDescriptor.Account> account;
   private final int maxPools;
   // accessOrder=true: get/put 때마다 맨 뒤로 이동 → 맨 앞이 가장 오래 안 쓴 풀.
   private final LinkedHashMap<Long, Entry> pools = new LinkedHashMap<>(16, 0.75f, true);
 
-  public TenantPools(Function<StoreDescriptor, DataSource> factory, int maxPools) {
+  /**
+   * @param factory 풀 생성기(같은 선택 함수를 쓰는 {@link HikariPoolFactory})
+   * @param account 기술자에서 이 보관소가 쓸 계정을 고르는 함수(OWNER 면 {@code StoreDescriptor::owner})
+   * @param maxPools 유지할 풀 수 상한
+   */
+  public TenantPools(
+      Function<StoreDescriptor, DataSource> factory,
+      Function<StoreDescriptor, StoreDescriptor.Account> account,
+      int maxPools) {
     this.factory = factory;
+    this.account = account;
     this.maxPools = maxPools;
   }
 
@@ -164,9 +177,13 @@ public class TenantPools {
     }
   }
 
-  /** 접속값의 SHA-256 지문. 비밀번호를 그대로 들고 있지 않기 위해 해시만 비교한다. */
-  private static String fingerprint(StoreDescriptor d) {
-    StoreDescriptor.Account o = d.owner();
+  /** 선택된 계정의 접속값 SHA-256 지문. 비밀번호를 그대로 들고 있지 않기 위해 해시만 비교한다. */
+  private String fingerprint(StoreDescriptor d) {
+    StoreDescriptor.Account o = account.apply(d);
+    if (o == null) {
+      // 기술자에 이 보관소가 쓸 계정(예: ro)이 없다 — NPE 대신 원인을 알 수 있게 던진다.
+      throw new IllegalStateException("테넌트 " + d.tenantId() + " 의 접속 계정이 기술자에 없습니다.");
+    }
     String raw =
         d.host() + "|" + d.port() + "|" + d.database() + "|" + o.username() + "|" + o.password();
     try {

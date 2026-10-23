@@ -2,34 +2,62 @@ package com.smartfirehub.securitylevel.sql;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.CreateSavedQueryRequest;
+import com.smartfirehub.analytics.service.AnalyticsQueryExecutionService;
 import com.smartfirehub.analytics.service.SavedQueryService;
 import com.smartfirehub.dataset.dto.SqlQueryRequest;
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
+import com.smartfirehub.dataset.service.DataTableQueryService;
 import com.smartfirehub.dataset.service.DatasetDataService;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.NormalizedSql;
+import com.smartfirehub.pipeline.exception.ScriptExecutionException;
+import com.smartfirehub.pipeline.service.PipelineDataSchema;
+import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
+import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
+import com.smartfirehub.securitylevel.access.SqlAccessResult;
+import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 애드혹 SQL 단일 관문(스펙 §4.1): 판정한 문자열 = 실행한 문자열, 열람 거부 403, 오류 계약(데이터셋 400 예외·애널리틱스 200 error).
@@ -45,6 +73,7 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
   @Autowired private ClearanceResolver clearanceResolver;
   @Autowired private DatasetAccessGuard guard;
   @Autowired private SavedQueryService savedQueryService;
+  @Autowired private PlatformTransactionManager transactionManager;
 
   private SecurityFixture fx;
   private final List<Long> datasets = new ArrayList<>();
@@ -410,5 +439,228 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
   private static void asUser(long uid) {
     SecurityContextHolder.getContext()
         .setAuthentication(new UsernamePasswordAuthenticationToken(uid, null, List.of()));
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // 지표 수집(WD-76) — 판정은 그대로, 실행만 Tibero 테넌트면 db-executor 읽기 전용 조회(한 행)로 한다. 판정 가드는 허용을 돌려주는
+  // 목이다(판정 규칙 자체는 SqlAccessGuardTest 가 본다). 스프링 컨텍스트를 늘리지 않게 관문을 직접 만든다.
+  // ---------------------------------------------------------------------------------------------
+
+  /** 지표 관문과 협력자 목. tibero=true 면 실제 TiberoQueryService 에 Tibero 스키마·실행기 목을 꽂는다. */
+  private record MetricSetup(
+      GuardedSqlExecutor gate,
+      ExecutorClient executorClient,
+      DbExecutorClient dbExecutorClient,
+      TiberoQueryService tibero) {}
+
+  private static MetricSetup metricSetup(boolean tiberoTenant, String sql) {
+    DatasetAccessGuard allowAll = mock(DatasetAccessGuard.class);
+    when(allowAll.judgeSql(any(), eq(sql), eq(SqlAccessMode.INTERACTIVE)))
+        .thenReturn(
+            new DatasetAccessGuard.SqlVerdict(
+                new SqlAccessResult(true, null, null, null, Set.of(), Set.of(), true), null));
+    PipelineDataSchema schema = mock(PipelineDataSchema.class);
+    when(schema.isTibero()).thenReturn(tiberoTenant);
+    when(schema.validator()).thenReturn(SqlValidator.forTiberoSchema("GENIA_T5"));
+    DbExecutorClient db = mock(DbExecutorClient.class);
+    ExecutorClient executor = mock(ExecutorClient.class);
+    TiberoQueryService tibero = spy(new TiberoQueryService(schema, db));
+    GuardedSqlExecutor gate =
+        new GuardedSqlExecutor(
+            allowAll,
+            mock(DataTableQueryService.class),
+            mock(AnalyticsQueryExecutionService.class),
+            executor,
+            mock(SecurityAuditRecorder.class),
+            tibero);
+    return new MetricSetup(gate, executor, db, tibero);
+  }
+
+  /** Review Focus 4 — Tibero 지표: PG executor 를 부르지 않고 run(sql, 1). 1행이면 truncated=true, 첫 칸은 숫자. */
+  @Test
+  void metric_tiberoTenant_runsOnDbExecutorWithOneRow() {
+    String sql = "SELECT COUNT(*) AS cnt FROM genia_t5.orders";
+    MetricSetup m = metricSetup(true, sql);
+    // db-executor 는 행 수가 max_rows 에 닿으면 truncated=true 로 답한다(행 상한 1 → 1행이면 true).
+    when(m.dbExecutorClient().executeQuery(sql, 1))
+        .thenReturn(
+            new DbExecutorClient.QueryResult(
+                true,
+                List.of("cnt"),
+                List.of(Map.of("cnt", new java.math.BigDecimal("42"))),
+                1,
+                true,
+                null,
+                null));
+
+    ExecutorClient.QueryExecuteResult r = m.gate().executeMetricQuery(null, NormalizedSql.of(sql));
+
+    verify(m.tibero()).run(sql, 1);
+    verifyNoInteractions(m.executorClient());
+    assertThat(r.success()).isTrue();
+    assertThat(r.queryType()).isEqualTo("SELECT");
+    assertThat(r.columns()).containsExactly("cnt");
+    assertThat(r.rowCount()).isEqualTo(1);
+    assertThat(r.affectedRows()).isZero();
+    assertThat(r.truncated()).isTrue();
+    assertThat(r.error()).isNull();
+    // 폴러의 기존 규칙(첫 행 첫 칸 Number → doubleValue)으로 변환된다.
+    Object firstCell = r.rows().get(0).values().iterator().next();
+    assertThat(firstCell).isInstanceOf(Number.class);
+    assertThat(((Number) firstCell).doubleValue()).isEqualTo(42.0);
+  }
+
+  /** Review Focus 4 — 0행이면 truncated=false, 성공이지만 rows 가 비어 폴러가 "no data" 로 건너뛴다. */
+  @Test
+  void metric_tiberoTenant_zeroRows_isNotTruncated() {
+    String sql = "SELECT amount FROM genia_t5.orders WHERE 1 = 0";
+    MetricSetup m = metricSetup(true, sql);
+    when(m.dbExecutorClient().executeQuery(sql, 1))
+        .thenReturn(
+            new DbExecutorClient.QueryResult(
+                true, List.of("amount"), List.of(), 0, false, null, null));
+
+    ExecutorClient.QueryExecuteResult r = m.gate().executeMetricQuery(null, NormalizedSql.of(sql));
+
+    assertThat(r.success()).isTrue();
+    assertThat(r.rows()).isEmpty();
+    assertThat(r.rowCount()).isZero();
+    assertThat(r.truncated()).isFalse();
+    verifyNoInteractions(m.executorClient());
+  }
+
+  /** Tibero 지표 실패는 success=false + 사용자 문구 — PG 로 폴백하지 않는다. */
+  @Test
+  void metric_tiberoTenant_failure_isNotSuccess_andNoPgFallback() {
+    String sql = "SELECT COUNT(*) FROM genia_t5.orders";
+    MetricSetup m = metricSetup(true, sql);
+    when(m.dbExecutorClient().executeQuery(sql, 1))
+        .thenThrow(new ScriptExecutionException("Tibero 실행기에 연결하지 못했습니다."));
+
+    ExecutorClient.QueryExecuteResult r = m.gate().executeMetricQuery(null, NormalizedSql.of(sql));
+
+    assertThat(r.success()).isFalse();
+    assertThat(r.error()).isEqualTo("Tibero 실행기에 연결하지 못했습니다.");
+    assertThat(r.rows()).isEmpty();
+    verifyNoInteractions(m.executorClient());
+  }
+
+  /** PG 테넌트 지표는 기존대로 Python executor(readOnly, 한 행) — Tibero 조회는 부르지 않는다. */
+  @Test
+  void metric_pgTenant_keepsExecutorPath() {
+    String sql = "SELECT COUNT(*) FROM data.orders";
+    MetricSetup m = metricSetup(false, sql);
+    ExecutorClient.QueryExecuteResult pgResult =
+        new ExecutorClient.QueryExecuteResult(
+            true, "SELECT", List.of("count"), List.of(Map.of("count", 3)), 1, 0, 5L, true, null);
+    when(m.executorClient().executeQuery(sql, 1, true)).thenReturn(pgResult);
+
+    assertThat(m.gate().executeMetricQuery(null, NormalizedSql.of(sql))).isSameAs(pgResult);
+    verify(m.tibero(), never()).run(anyString(), anyInt());
+    verifyNoInteractions(m.dbExecutorClient());
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Tibero 애널리틱스는 PG 트랜잭션 밖에서 실행한다(WD-76 F6). @Transactional execute 안에서 db-executor 를 부르면
+  // TenantAwareTransactionManager 가 잡은 PG 커넥션을 응답(최대 35초) 내내 쥔다. 실제 @Transactional 프록시(앱의 @Primary
+  // 트랜잭션
+  // 매니저 + 어노테이션 속성)로 분석 실행 서비스를 감싸, 프록시를 지났다면 트랜잭션이 보이는 조건에서 확인한다.
+  // ---------------------------------------------------------------------------------------------
+
+  /** 트랜잭션 프록시로 감싼 분석 실행 서비스와 관문. txSeen 은 실행 지점에서 본 "실제 트랜잭션 진행 중" 여부. */
+  private record AnalyticsTxSetup(
+      GuardedSqlExecutor gate,
+      AnalyticsQueryExecutionService target,
+      AnalyticsQueryExecutionService proxied,
+      DbExecutorClient dbExecutorClient,
+      TiberoQueryService tibero,
+      List<Boolean> txSeen) {}
+
+  private AnalyticsTxSetup analyticsTxSetup(boolean tiberoTenant) {
+    DatasetAccessGuard allowAll = mock(DatasetAccessGuard.class);
+    when(allowAll.judgeSql(any(), anyString(), eq(SqlAccessMode.INTERACTIVE)))
+        .thenReturn(
+            new DatasetAccessGuard.SqlVerdict(
+                new SqlAccessResult(true, null, null, null, Set.of(), Set.of(), true), null));
+    PipelineDataSchema schema = mock(PipelineDataSchema.class);
+    when(schema.isTibero()).thenReturn(tiberoTenant);
+    when(schema.validator()).thenReturn(SqlValidator.forTiberoSchema("GENIA_T5"));
+    List<Boolean> txSeen = new ArrayList<>();
+    DbExecutorClient db = mock(DbExecutorClient.class);
+    when(db.executeQuery(anyString(), anyInt()))
+        .thenAnswer(
+            inv -> {
+              txSeen.add(TransactionSynchronizationManager.isActualTransactionActive());
+              return new DbExecutorClient.QueryResult(
+                  true, List.of("a"), List.of(Map.of("a", 1)), 1, false, null, null);
+            });
+    TiberoQueryService tibero = spy(new TiberoQueryService(schema, db));
+    AnalyticsQueryExecutionService target =
+        spy(new AnalyticsQueryExecutionService(dsl, mock(ExecutorClient.class), tibero));
+    ProxyFactory pf = new ProxyFactory(target);
+    pf.setProxyTargetClass(true);
+    pf.addAdvice(
+        new TransactionInterceptor(transactionManager, new AnnotationTransactionAttributeSource()));
+    AnalyticsQueryExecutionService proxied = (AnalyticsQueryExecutionService) pf.getProxy();
+    GuardedSqlExecutor gate =
+        new GuardedSqlExecutor(
+            allowAll,
+            mock(DataTableQueryService.class),
+            proxied,
+            mock(ExecutorClient.class),
+            mock(SecurityAuditRecorder.class),
+            tibero);
+    return new AnalyticsTxSetup(gate, target, proxied, db, tibero, txSeen);
+  }
+
+  /** Tibero 테넌트: 관문은 판정 뒤 트랜잭션 없는 진입으로 실행한다 — db-executor 호출 시점에 PG 트랜잭션이 없다. */
+  @Test
+  void analytics_tiberoTenant_runsOutsidePgTransaction() {
+    String sql = "SELECT A FROM GENIA_T5.T";
+    AnalyticsTxSetup t = analyticsTxSetup(true);
+
+    AnalyticsQueryResponse r =
+        t.gate().executeJudgedAnalytics(t.gate().judgeAnalytics(viewer, sql), 100, true);
+
+    assertThat(r.error()).isNull();
+    assertThat(r.rows()).hasSize(1);
+    assertThat(t.txSeen()).containsExactly(false);
+    verify(t.target(), never()).execute(any(NormalizedSql.class), anyInt(), anyBoolean());
+  }
+
+  /** 대조군: 같은 구성에서 @Transactional execute 로 들어가면 트랜잭션이 보인다(위 테스트가 트랜잭션을 감지할 수 있음을 보인다). */
+  @Test
+  void analytics_tiberoTenant_viaTransactionalExecute_wouldHoldTransaction() {
+    AnalyticsTxSetup t = analyticsTxSetup(true);
+
+    t.proxied().execute(NormalizedSql.of("SELECT A FROM GENIA_T5.T"), 100, true);
+
+    assertThat(t.txSeen()).containsExactly(true);
+  }
+
+  /** PG 테넌트: 기존대로 @Transactional execute(트랜잭션 안)로 실행하고 Tibero 조회는 부르지 않는다. */
+  @Test
+  void analytics_pgTenant_keepsTransactionalExecute() {
+    AnalyticsTxSetup t = analyticsTxSetup(false);
+    AnalyticsQueryResponse canned =
+        new AnalyticsQueryResponse("SELECT", List.of("a"), List.of(), 0, 0L, 0, false, null);
+    doAnswer(
+            inv -> {
+              t.txSeen().add(TransactionSynchronizationManager.isActualTransactionActive());
+              return canned;
+            })
+        .when(t.target())
+        .execute(any(NormalizedSql.class), anyInt(), anyBoolean());
+
+    AnalyticsQueryResponse r =
+        t.gate()
+            .executeJudgedAnalytics(
+                t.gate().judgeAnalytics(viewer, "SELECT a FROM data.t"), 100, true);
+
+    assertThat(r).isSameAs(canned);
+    assertThat(t.txSeen()).containsExactly(true);
+    verify(t.target()).execute(any(NormalizedSql.class), eq(100), eq(true));
+    verify(t.tibero(), never()).run(anyString(), anyInt());
+    verifyNoInteractions(t.dbExecutorClient());
   }
 }

@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   BarChart2,
@@ -35,6 +36,7 @@ import {
 } from '../../components/ui/select';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
+import { schemaInfoQueryOptions } from '../../hooks/queries/useAnalytics';
 import {
   useAddTag,
   useCategories,
@@ -49,6 +51,7 @@ import { useHorizontalOverflow } from '../../hooks/useHorizontalOverflow';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { handleApiError } from '../../lib/api-error';
+import { previewQuery } from '../analytics/components/schema-explorer-utils';
 import { ChangeSecurityLevelDialog } from './components/ChangeSecurityLevelDialog';
 import { CloneDatasetDialog } from './components/CloneDatasetDialog';
 import { LinkedPipelineStatus } from './components/LinkedPipelineStatus';
@@ -94,6 +97,22 @@ function tabsFor(storageType: 'TABLE' | 'DOCUMENT' | 'FILE' | undefined): string
 export default function DatasetDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  /**
+   * 쿼리/차트 바로가기에 넣을 미리보기 SQL.
+   * 방언(PG/Tibero)은 스키마 응답에 있으므로 클릭 시점에 조회한다 — useSchemaInfo 와 같은 캐시 키라
+   * 쿼리 화면을 한 번이라도 열었다면 재요청 없이 쓰고, 이 페이지에는 상시 fetch 를 추가하지 않는다.
+   * 조회 실패 시에는 기존 PG 문자열로 대체해 바로가기 자체는 막지 않는다.
+   */
+  const buildPreviewSql = async (tableName: string) => {
+    try {
+      const info = await queryClient.fetchQuery(schemaInfoQueryOptions);
+      return previewQuery(tableName, info);
+    } catch {
+      return previewQuery(tableName);
+    }
+  };
   const [searchParams, setSearchParams] = useSearchParams();
   const parsedDatasetId = Number(id);
   // id가 'abc'처럼 숫자로 변환 불가능한 경우 — Number()가 NaN을 반환하면
@@ -374,8 +393,8 @@ export default function DatasetDetailPage() {
                     variant="outline"
                     size="sm"
                     className="h-7 gap-1 text-xs"
-                    onClick={() => {
-                      const sql = `SELECT * FROM ${dataset.tableName} LIMIT 100`;
+                    onClick={async () => {
+                      const sql = await buildPreviewSql(dataset.tableName);
                       navigate(
                         `/analytics/queries/new?datasetId=${dataset.id}&sql=${encodeURIComponent(sql)}`
                       );
@@ -388,8 +407,8 @@ export default function DatasetDetailPage() {
                     variant="outline"
                     size="sm"
                     className="h-7 gap-1 text-xs"
-                    onClick={() => {
-                      const sql = `SELECT * FROM ${dataset.tableName} LIMIT 100`;
+                    onClick={async () => {
+                      const sql = await buildPreviewSql(dataset.tableName);
                       navigate(
                         `/analytics/charts/new?queryId=adhoc&sql=${encodeURIComponent(sql)}&datasetId=${dataset.id}`
                       );

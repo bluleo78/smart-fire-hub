@@ -48,6 +48,13 @@ public class GuardedSqlExecutor {
   private final SecurityAuditRecorder auditRecorder;
 
   /**
+   * Tibero 테넌트 판정·지표 SQL 실행 창구(WD-76). 판정은 위 가드 그대로, 실행만 이것으로 바꾼다. 애널리틱스는 {@link
+   * TiberoQueryService#isTibero} 판정만 쓰고 실행은 {@link AnalyticsQueryExecutionService#executeOnTibero}
+   * 로 한다(PG 트랜잭션 밖).
+   */
+  private final TiberoQueryService tiberoQueryService;
+
+  /**
    * 데이터셋 /query — 정규화 실패({@link SqlQueryException})·파싱 실패({@link UnsafeSqlException})는 기존과 같이
    * 예외(400), 열람 거부는 403.
    */
@@ -190,8 +197,14 @@ public class GuardedSqlExecutor {
       guard.auditDenial(judgment.clearance, AccessDenialAction.SQL, judgment.verdict.denial());
       throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
     }
+    // Tibero 테넌트(WD-76)는 PG 트랜잭션 밖에서 실행한다 — @Transactional execute 로 들어가면 db-executor 응답(최대 35초)을
+    // 기다리는
+    // 내내 PG 커넥션(테넌트 GUC 설정됨)을 쥔다. 판정은 위에서 이미 끝났고, 판정한 같은 정규화본을 실행한다. isTibero 는 RLS 없는
+    // tenant_data_store 를 테넌트별 캐시로 읽고 테넌트는 스레드 로컬이라 트랜잭션 없이도 맞게 판정된다. PG 테넌트는 기존 그대로다.
     AnalyticsQueryResponse response =
-        analyticsExecution.execute(judgment.normalized, maxRows, readOnly);
+        tiberoQueryService.isTibero()
+            ? analyticsExecution.executeOnTibero(judgment.normalized, maxRows)
+            : analyticsExecution.execute(judgment.normalized, maxRows, readOnly);
     // 실제로 실행돼 결과가 나가는 지점에서 감사 등급 접근을 남긴다(실행 오류 응답은 데이터가 없으므로 남기지 않는다).
     if (response.error() == null) {
       recordDelivered(judgment);
@@ -237,6 +250,12 @@ public class GuardedSqlExecutor {
     SqlAccessResult r = v.result();
     if (!r.allowed()) {
       throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
+    }
+    // Tibero 테넌트(WD-76)는 판정한 같은 문자열을 db-executor 읽기 전용 조회로 한 행만 읽는다 — PG executor 로 보내면 Tibero 데이터가
+    // 아닌 PG 를 읽는다. 폴러가 쓰는 결과 모양(QueryExecuteResult)으로 맞춘다: truncated 는 실행기가 정한 값(행 수 >= 1 이면 true),
+    // 실패는 success=false + 사용자 문구(폴러는 rows 가 비어 건너뛴다). PG 폴백은 없다.
+    if (tiberoQueryService.isTibero()) {
+      return tiberoQueryService.run(sql, 1).toQueryExecuteResult();
     }
     return executorClient.executeQuery(sql, 1, true);
   }

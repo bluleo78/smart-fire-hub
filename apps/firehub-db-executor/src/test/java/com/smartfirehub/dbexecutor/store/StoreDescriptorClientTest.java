@@ -38,6 +38,7 @@ class StoreDescriptorClientTest {
   private final AtomicInteger status = new AtomicInteger(200);
   private final AtomicReference<String> body = new AtomicReference<>(TIBERO_JSON);
   private final AtomicReference<String> lastAuth = new AtomicReference<>();
+  private final AtomicReference<String> lastUri = new AtomicReference<>();
   private volatile long delayMs = 0;
   private final AtomicLong clock = new AtomicLong(0);
   private StoreDescriptorClient client;
@@ -51,6 +52,7 @@ class StoreDescriptorClientTest {
         ex -> {
           hits.incrementAndGet();
           lastAuth.set(ex.getRequestHeaders().getFirst("Authorization"));
+          lastUri.set(ex.getRequestURI().toString());
           try {
             if (delayMs > 0) {
               Thread.sleep(delayMs);
@@ -70,7 +72,7 @@ class StoreDescriptorClientTest {
                 "tok",
                 "http://127.0.0.1:" + server.getAddress().getPort(),
                 60,
-                new DbExecutorProperties.Pool(8, 4)),
+                new DbExecutorProperties.Pool(8, 4, 2)),
             new ObjectMapper(),
             clock::get);
   }
@@ -95,6 +97,30 @@ class StoreDescriptorClientTest {
     clock.addAndGet(2_000_000_000L); // TTL(60s) 경과
     client.get(7);
     assertThat(hits.get()).isEqualTo(2);
+  }
+
+  /** RO 계정을 받으려고 {@code ?include=ro} 로 요청하고, 응답의 ro 를 파싱하되 toString 에는 비밀번호가 없다. */
+  @Test
+  void requestsRoAccount_andParsesIt_withoutLeakingPassword() {
+    String roPassword = "Ro-Pw-Secret";
+    body.set(
+        TIBERO_JSON.replace(
+            "\"extra\":1",
+            "\"ro\":{\"username\":\"GENIA_T7_RO\",\"password\":\"" + roPassword + "\"}"));
+
+    StoreDescriptor d = client.get(7);
+
+    assertThat(lastUri.get()).isEqualTo("/internal/executor/tenants/7/data-store?include=ro");
+    assertThat(d.ro().username()).isEqualTo("GENIA_T7_RO");
+    assertThat(d.ro().password()).isEqualTo(roPassword);
+    assertThat(d.toString()).doesNotContain(roPassword).doesNotContain(PASSWORD);
+  }
+
+  /** ro 가 없는 응답(아직 RO 계정 미생성)도 완전한 기술자다 — 파이프라인 경로는 RO 없이 동작한다. */
+  @Test
+  void roAbsent_isStillComplete() {
+    StoreDescriptor d = client.get(7);
+    assertThat(d.ro()).isNull();
   }
 
   @Test
@@ -129,6 +155,7 @@ class StoreDescriptorClientTest {
               poolCreated.incrementAndGet();
               return null;
             },
+            StoreDescriptor::owner,
             8);
     int[] codes = {409, 503, 401};
     for (int code : codes) {
@@ -241,7 +268,7 @@ class StoreDescriptorClientTest {
                 "tok",
                 "http://127.0.0.1:" + server.getAddress().getPort(),
                 60,
-                new DbExecutorProperties.Pool(8, 4)),
+                new DbExecutorProperties.Pool(8, 4, 2)),
             boom,
             clock::get);
     delayMs = 300;

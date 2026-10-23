@@ -1,4 +1,4 @@
-import { useInfiniteQuery,useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryOptions,useInfiniteQuery,useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { analyticsApi } from '../../api/analytics';
@@ -125,12 +125,18 @@ export function useExecuteSavedQuery() {
   });
 }
 
+/**
+ * 스키마 정보 쿼리 옵션 — useSchemaInfo 와 `queryClient.fetchQuery`(데이터셋 화면 바로가기)가
+ * 같은 키·함수·staleTime 을 공유하도록 한 곳에 둔다.
+ */
+export const schemaInfoQueryOptions = queryOptions({
+  queryKey: ['analytics', 'schema'],
+  queryFn: () => analyticsApi.getSchema().then((r) => r.data),
+  staleTime: 10 * 60 * 1000,
+});
+
 export function useSchemaInfo() {
-  return useQuery({
-    queryKey: ['analytics', 'schema'],
-    queryFn: () => analyticsApi.getSchema().then((r) => r.data),
-    staleTime: 10 * 60 * 1000,
-  });
+  return useQuery(schemaInfoQueryOptions);
 }
 
 export function useQueryFolders() {

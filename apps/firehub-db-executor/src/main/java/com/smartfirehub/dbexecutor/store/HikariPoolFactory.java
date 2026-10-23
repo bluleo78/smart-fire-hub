@@ -11,9 +11,17 @@ import javax.sql.DataSource;
 public class HikariPoolFactory implements Function<StoreDescriptor, DataSource> {
 
   private final int maxSize;
+  private final Function<StoreDescriptor, StoreDescriptor.Account> account;
 
-  public HikariPoolFactory(int maxSize) {
+  /**
+   * @param maxSize 풀당 최대 커넥션
+   * @param account 접속 계정 선택 함수(OWNER 풀은 {@code StoreDescriptor::owner}, 읽기 전용 풀은 {@code
+   *     StoreDescriptor::ro})
+   */
+  public HikariPoolFactory(
+      int maxSize, Function<StoreDescriptor, StoreDescriptor.Account> account) {
     this.maxSize = maxSize;
+    this.account = account;
   }
 
   @Override
@@ -21,8 +29,10 @@ public class HikariPoolFactory implements Function<StoreDescriptor, DataSource> 
     HikariDataSource ds = new HikariDataSource();
     ds.setDriverClassName(TiberoSession.DRIVER_CLASS);
     ds.setJdbcUrl(TiberoSession.jdbcUrl(d.host(), d.port(), d.database()));
-    ds.setUsername(d.owner().username());
-    ds.setPassword(d.owner().password());
+    // 계정이 없는 기술자는 TenantPools.fingerprint 가 풀 생성 전에 이미 거부한다(여기서는 null 이 아님).
+    StoreDescriptor.Account a = account.apply(d);
+    ds.setUsername(a.username());
+    ds.setPassword(a.password());
     ds.setMaximumPoolSize(maxSize);
     ds.setConnectionTimeout(10_000);
     ds.setIdleTimeout(600_000);
@@ -32,7 +42,7 @@ public class HikariPoolFactory implements Function<StoreDescriptor, DataSource> 
     // 한 요청 = 한 트랜잭션: 자동 커밋을 끈다(커밋·롤백은 실행 코드가 명시).
     ds.setAutoCommit(false);
     ds.setInitializationFailTimeout(-1);
-    ds.setPoolName("tibero-tenant-" + d.tenantId());
+    ds.setPoolName("tibero-tenant-" + d.tenantId() + "-" + a.username());
     return ds;
   }
 }

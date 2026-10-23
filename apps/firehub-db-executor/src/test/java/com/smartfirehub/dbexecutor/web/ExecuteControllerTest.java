@@ -15,6 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.smartfirehub.dbexecutor.sql.Deadline;
 import com.smartfirehub.dbexecutor.sql.ProbeRunner;
+import com.smartfirehub.dbexecutor.sql.QueryRunner;
 import com.smartfirehub.dbexecutor.sql.SqlRunner;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
@@ -23,6 +24,7 @@ import com.smartfirehub.dbexecutor.store.TenantPools;
 import com.smartfirehub.dbexecutor.web.dto.DbError;
 import com.smartfirehub.dbexecutor.web.dto.ProbeColumn;
 import com.smartfirehub.dbexecutor.web.dto.ProbeResponse;
+import com.smartfirehub.dbexecutor.web.dto.QueryResponse;
 import com.smartfirehub.dbexecutor.web.dto.SqlExecuteResponse;
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -48,13 +50,19 @@ class ExecuteControllerTest {
   private static final String AUTH = "Internal ctl-token";
   private static final StoreDescriptor D =
       new StoreDescriptor(
-          5L, "TIBERO", "h", 8629, "tb", "GENIA_T5", new StoreDescriptor.Account("u", "p"));
+          5L, "TIBERO", "h", 8629, "tb", "GENIA_T5", new StoreDescriptor.Account("u", "p"), null);
 
   @Autowired MockMvc mvc;
   @MockitoBean StoreDescriptorClient descriptors;
   @MockitoBean SqlRunner sqlRunner;
   @MockitoBean ProbeRunner probeRunner;
-  @MockitoBean TenantPools pools;
+  @MockitoBean QueryRunner queryRunner;
+
+  @MockitoBean(name = "tenantPools")
+  TenantPools pools;
+
+  @MockitoBean(name = "readOnlyPools")
+  TenantPools readOnlyPools;
 
   @Test
   void withoutToken_401() throws Exception {
@@ -98,6 +106,63 @@ class ExecuteControllerTest {
     verify(sqlRunner, never()).run(any(), anyString(), any(), any());
     verify(probeRunner, never()).probe(any(), anyString(), any());
     verifyNoInteractions(pools);
+  }
+
+  @Test
+  void queryDescriptorFailure_returns200WithKoreanReasonAndNeverRuns() throws Exception {
+    when(descriptors.get(eq(5L), any(Duration.class)))
+        .thenThrow(new StoreUnavailableException("503"));
+
+    mvc.perform(
+            post("/execute/query")
+                .header("Authorization", AUTH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"tenantId\":5,\"query\":\"SELECT 1 FROM DUAL\",\"maxRows\":10}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(false))
+        .andExpect(jsonPath("$.error").value("테넌트 저장소 정보를 가져오지 못했습니다(503)."))
+        .andExpect(jsonPath("$.row_count").value(0))
+        .andExpect(jsonPath("$.truncated").value(false));
+    verifyNoInteractions(queryRunner, readOnlyPools);
+  }
+
+  @Test
+  void queryMissingFields_returns200BadRequest() throws Exception {
+    for (String json :
+        new String[] {
+          "{\"query\":\"SELECT 1 FROM DUAL\",\"maxRows\":10}",
+          "{\"tenantId\":5,\"maxRows\":10}",
+          "{\"tenantId\":5,\"query\":\"SELECT 1 FROM DUAL\"}"
+        }) {
+      mvc.perform(
+              post("/execute/query")
+                  .header("Authorization", AUTH)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(json))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.success").value(false))
+          .andExpect(jsonPath("$.error").value("요청 형식이 올바르지 않습니다."));
+    }
+    verify(descriptors, never()).get(anyLong(), any());
+  }
+
+  @Test
+  void querySuccess_isSnakeCase() throws Exception {
+    when(descriptors.get(eq(5L), any(Duration.class))).thenReturn(D);
+    when(queryRunner.run(eq(D), eq("SELECT 1 FROM DUAL"), eq(10), any(Deadline.class)))
+        .thenReturn(
+            new QueryResponse(true, List.of("a"), List.of(Map.of("a", 1)), 1, true, null, null));
+
+    mvc.perform(
+            post("/execute/query")
+                .header("Authorization", AUTH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"tenantId\":5,\"query\":\"SELECT 1 FROM DUAL\",\"maxRows\":10}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.row_count").value(1))
+        .andExpect(jsonPath("$.truncated").value(true))
+        .andExpect(jsonPath("$.rows[0].a").value(1));
   }
 
   @Test

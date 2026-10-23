@@ -39,7 +39,8 @@ final class FakeJdbc {
           8629,
           "tibero",
           "GENIA_T5",
-          new StoreDescriptor.Account("GENIA_T5", "pw-secret"));
+          new StoreDescriptor.Account("GENIA_T5", "pw-secret"),
+          new StoreDescriptor.Account("GENIA_T5_RO", "ro-secret"));
 
   final List<String> events = Collections.synchronizedList(new ArrayList<>());
   final List<Integer> queryTimeouts = Collections.synchronizedList(new ArrayList<>());
@@ -51,6 +52,11 @@ final class FakeJdbc {
   volatile SQLException connectFailure;
   final Connection connection = mock(Connection.class);
   final TenantPools pools;
+
+  /** 읽기 전용 계정 풀(같은 가짜 DataSource, 계정만 RO 로 선택). */
+  final TenantPools roPools;
+
+  final List<Integer> maxRows = Collections.synchronizedList(new ArrayList<>());
 
   FakeJdbc() throws SQLException {
     DataSource ds = mock(DataSource.class);
@@ -71,6 +77,15 @@ final class FakeJdbc {
               factoryCalls.incrementAndGet();
               return ds;
             },
+            StoreDescriptor::owner,
+            8);
+    roPools =
+        new TenantPools(
+            d -> {
+              factoryCalls.incrementAndGet();
+              return ds;
+            },
+            StoreDescriptor::ro,
             8);
   }
 
@@ -91,6 +106,13 @@ final class FakeJdbc {
               handler.handle(sql);
               return resultSet;
             });
+    doAnswer(
+            inv -> {
+              maxRows.add(inv.getArgument(0));
+              return null;
+            })
+        .when(st)
+        .setMaxRows(anyInt());
     when(st.getUpdateCount()).thenAnswer(inv -> updateCount);
     when(st.getResultSet()).thenAnswer(inv -> resultSet);
     doAnswer(

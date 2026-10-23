@@ -10,9 +10,12 @@ import com.smartfirehub.global.util.ResultColumnNames;
 import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.sql.TiberoQueryService;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
@@ -23,7 +26,14 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class DataTableQueryService {
 
+  /** 데이터셋 화면에서 Tibero 테넌트의 데이터 변경 SQL 을 거부하는 문구 — 변경은 파이프라인(OWNER 계정)으로만 한다. */
+  static final String TIBERO_DML_MESSAGE =
+      "Tibero 저장소에서는 이 화면에서 데이터를 바꾸는 SQL 을 실행할 수 없습니다. 파이프라인을 이용해 주세요.";
+
   private final DSLContext dsl;
+
+  /** Tibero 테넌트의 데이터셋 화면 SQL 실행 창구(WD-76) — Tibero 면 PG 세션 문장 없이 이것으로만 조회한다. */
+  private final TiberoQueryService tiberoQueryService;
 
   /**
    * 데이터셋 애드혹 쿼리 전용 검증기 인스턴스 — {@link SqlValidator#forAdhocDataSchemaQueries()}로 직접 생성한다(팩터리 도입 근거는
@@ -49,6 +59,12 @@ public class DataTableQueryService {
   public SqlQueryResponse executeQuery(NormalizedSql normalized, int maxRows) {
     String cleanSql = normalized.text();
     String queryType = SqlValidationUtils.detectQueryType(cleanSql);
+
+    // Tibero 테넌트(WD-76): 데이터가 Tibero 에 있으므로 db-executor 읽기 전용 조회로만 실행한다. 아래 PG 검증기(data_t{id}
+    // 허용목록)·search_path·SAVEPOINT 는 PG 세션 전용이라 그 앞에서 갈라 하나도 실행하지 않는다. PG 폴백은 없다.
+    if (tiberoQueryService.isTibero()) {
+      return executeOnTibero(cleanSql, queryType, maxRows);
+    }
 
     // 부분문자열 대조(예: upperSql.contains("PUBLIC.")) 는 폐기했다 — PostgreSQL 이 허용하는 동등 표기
     // 변형(따옴표로 감싼 "public", 점 주변 공백 등)에 뚫린다(#385 R3 실측). AST 기반 스키마 화이트리스트가
@@ -107,16 +123,14 @@ public class DataTableQueryService {
         long executionTimeMs = System.currentTimeMillis() - startTime;
 
         // Filter out system columns (id, import_id, created_at, _updated_at)
-        Set<String> systemColumns = DataTableService.SYSTEM_COLUMNS;
-
-        List<String> visibleNames = new ArrayList<>();
-        List<Integer> visibleIndices = new ArrayList<>();
-        for (int i = 0; i < result.fields().length; i++) {
-          String colName = result.fields()[i].getName();
-          if (!systemColumns.contains(colName)) {
-            visibleNames.add(colName);
-            visibleIndices.add(i);
-          }
+        List<String> allNames = new ArrayList<>(result.fields().length);
+        for (var field : result.fields()) {
+          allNames.add(field.getName());
+        }
+        List<Integer> visibleIndices = visibleColumnIndices(allNames, false);
+        List<String> visibleNames = new ArrayList<>(visibleIndices.size());
+        for (int i : visibleIndices) {
+          visibleNames.add(allNames.get(i));
         }
         // 행을 이름 키 Map 으로 담으므로 JOIN 의 같은 이름 컬럼은 고유하게 바꾼다 — 안 그러면 앞 값이 덮인다(WD-85)
         List<String> columns = ResultColumnNames.unique(visibleNames);
@@ -175,5 +189,66 @@ public class DataTableQueryService {
         // May fail if connection is broken; non-critical since transaction will end
       }
     }
+  }
+
+  /**
+   * Tibero 테넌트의 데이터셋 화면 SQL 을 db-executor 읽기 전용 조회로 실행한다(WD-76).
+   *
+   * <p>데이터 변경 문장(INSERT·UPDATE·DELETE 등 SELECT 가 아닌 명시적 동사)은 실행기를 부르지 않고 이 화면 전용 문구로 거부한다 — PG 화면은
+   * DML 을 실행하지만 Tibero 분석 경로는 읽기 전용 계정이라 변경이 불가능하고, 사용자에게는 "파이프라인을 쓰라"가 맞는 안내다. 첫 키워드로 종류를 가릴 수 없는
+   * 문장(UNKNOWN — 괄호로 감싼 WITH 본문 등)은 여기서 단정하지 않고 TiberoQueryService 의 조회 전용 판정에 맡긴다(데이터를 바꾼다고 잘못
+   * 안내하지 않게). 어느 쪽이든 조회가 아니면 실행되지 않는다.
+   *
+   * <p>결과에서는 PG 경로와 같이 시스템 컬럼(id·import_id·created_at·_updated_at)을 뺀다. db-executor 는 컬럼 이름을 소문자로
+   * 돌려주지만, 대소문자에 기대지 않게 소문자로 접어 대조한다. 실패는 PG 경로와 같이 200 + error 다.
+   */
+  private SqlQueryResponse executeOnTibero(String sql, String queryType, int maxRows) {
+    if (!"SELECT".equals(queryType) && !"UNKNOWN".equals(queryType)) {
+      throw new SqlQueryException(TIBERO_DML_MESSAGE);
+    }
+    TiberoQueryService.Outcome out = tiberoQueryService.run(sql, maxRows);
+    if (out.error() != null) {
+      return new SqlQueryResponse(
+          queryType, List.of(), List.of(), 0, out.executionTimeMs(), out.error());
+    }
+    List<Integer> visibleIndices = visibleColumnIndices(out.columns(), true);
+    List<String> columns = new ArrayList<>(visibleIndices.size());
+    for (int i : visibleIndices) {
+      columns.add(out.columns().get(i));
+    }
+    // 시스템 컬럼이 없으면 행을 그대로 쓴다. 있으면 보이는 컬럼만 옮겨 담는다(시스템 컬럼 값이 응답 JSON 에 남지 않게).
+    List<Map<String, Object>> rows;
+    if (columns.size() == out.columns().size()) {
+      rows = out.rows();
+    } else {
+      rows = new ArrayList<>(out.rows().size());
+      for (Map<String, Object> source : out.rows()) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        for (String name : columns) {
+          row.put(name, source.get(name));
+        }
+        rows.add(row);
+      }
+    }
+    // affectedRows 는 PG SELECT 응답과 같이 행 수다(조회 이력의 "N행" 표시가 PG 와 같게).
+    return new SqlQueryResponse("SELECT", columns, rows, rows.size(), out.executionTimeMs(), null);
+  }
+
+  /**
+   * 시스템 컬럼(id·import_id·created_at·_updated_at)을 뺀 보이는 컬럼의 위치 목록(PG·Tibero 공용).
+   *
+   * @param caseFold true 면 소문자로 접어 대조한다(Tibero — 실행기가 이름을 소문자로 주지만 대소문자에 기대지 않는다). false 면 있는 그대로
+   *     대조한다(PG 기존 동작).
+   */
+  private static List<Integer> visibleColumnIndices(List<String> names, boolean caseFold) {
+    Set<String> systemColumns = DataTableService.SYSTEM_COLUMNS;
+    List<Integer> visible = new ArrayList<>(names.size());
+    for (int i = 0; i < names.size(); i++) {
+      String name = caseFold ? names.get(i).toLowerCase(Locale.ROOT) : names.get(i);
+      if (!systemColumns.contains(name)) {
+        visible.add(i);
+      }
+    }
+    return visible;
   }
 }

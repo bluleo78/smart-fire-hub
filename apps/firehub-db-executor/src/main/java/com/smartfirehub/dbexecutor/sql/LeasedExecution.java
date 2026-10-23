@@ -164,10 +164,13 @@ final class LeasedExecution {
   /** 드라이버 메시지에 비밀번호가 섞여 있으면 가린다(방어적, 정상 경로에서는 일어나지 않는다). */
   static String scrub(String message, StoreDescriptor d) {
     String m = message == null || message.isBlank() ? "알 수 없는 데이터베이스 오류" : message;
-    String password = d.owner() == null ? null : d.owner().password();
-    if (password != null && !password.isEmpty()) {
-      m = m.replace(password, "****");
-    }
-    return m;
+    m = mask(m, d.owner());
+    // 읽기 전용 계정 접속 실패 메시지에 RO 비밀번호가 섞일 수 있어 같이 가린다.
+    return mask(m, d.ro());
+  }
+
+  private static String mask(String m, StoreDescriptor.Account a) {
+    String password = a == null ? null : a.password();
+    return password != null && !password.isEmpty() ? m.replace(password, "****") : m;
   }
 }

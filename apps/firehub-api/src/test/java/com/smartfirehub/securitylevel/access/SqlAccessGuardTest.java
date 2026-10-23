@@ -350,13 +350,13 @@ class SqlAccessGuardTest extends IntegrationTestBase {
 
   // ---------------------------------------------------------------------------------------------
   // Tibero 테넌트(WD-77, 스펙 §5.0·§5.4) — 스키마는 GENIA_T{id}, 따옴표 없는 이름은 대문자로 접는다.
-  // Tibero 규칙은 Tibero 에서 실행될 SQL(파이프라인 SQL 단계 — PIPELINE_SAVE·PIPELINE_RUN)에만 적용한다. 대화형·분석·지표
-  // SQL(INTERACTIVE)은 아직 PG 에서 실행되므로 Tibero 테넌트여도 PG 규칙으로 판정한다(맨 아래 테스트).
+  // Tibero 테넌트의 SQL 은 모드와 무관하게 Tibero 에서 실행되므로(파이프라인 SQL 단계, 그리고 WD-76 부터 대화형·분석·지표 SQL 도
+  // db-executor 경유) 모든 모드를 Tibero 규칙으로 판정한다. 대화형만의 차이(미한정 이름 거부)는 맨 아래 테스트가 고정한다.
   // ---------------------------------------------------------------------------------------------
 
-  /** Tibero 규칙으로 판정하는 모드(파이프라인 SQL 단계 판정 경로). */
+  /** Tibero 규칙으로 판정하는 모드 — 파이프라인 SQL 단계와 대화형(WD-76) 모두. */
   private static final List<SqlAccessMode> TIBERO_RULE_MODES =
-      List.of(SqlAccessMode.PIPELINE_SAVE, SqlAccessMode.PIPELINE_RUN);
+      List.of(SqlAccessMode.PIPELINE_SAVE, SqlAccessMode.PIPELINE_RUN, SqlAccessMode.INTERACTIVE);
 
   /** 현재(기본 테스트) 테넌트를 Tibero 저장소로 보이게 하고, 그 테넌트의 Tibero 스키마 이름을 돌려준다. */
   private String asTiberoTenant() {
@@ -417,6 +417,16 @@ class SqlAccessGuardTest extends IntegrationTestBase {
       assertThat(guard.checkSql(c, sql, SqlAccessMode.PIPELINE_RUN).code())
           .as(sql)
           .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+      // 대화형: 스키마 있는 거부 대상은 같은 코드로, 미한정 이름(사전 뷰)은 문법 요구(UnsafeSqlException)로 막힌다
+      if (sql.equals("SELECT * FROM all_tables")) {
+        assertThatThrownBy(() -> guard.checkSql(c, sql, SqlAccessMode.INTERACTIVE))
+            .as("INTERACTIVE: " + sql)
+            .isInstanceOf(UnsafeSqlException.class);
+      } else {
+        assertThat(guard.checkSql(c, sql, SqlAccessMode.INTERACTIVE).code())
+            .as("INTERACTIVE: " + sql)
+            .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+      }
     }
   }
 
@@ -547,39 +557,71 @@ class SqlAccessGuardTest extends IntegrationTestBase {
   }
 
   /**
-   * F4(보안) — 대화형·분석·지표 SQL(INTERACTIVE)은 Tibero 테넌트여도 아직 PG 에서 실행된다. 그래서 PG 규칙으로 판정해야 한다: PG 어휘
-   * 검사({@code PgLexicalAmbiguityCheck})를 건너뛰지 않고, 허용 스키마는 PG 데이터 스키마({@code
-   * DataSchema.current()})다. Tibero 규칙으로 판정하면 PG 어휘 검사를 건너뛴 판정으로 PG 에서 실행될 수 있다.
+   * WD-76 — 대화형·분석·지표 SQL(INTERACTIVE)은 Tibero 테넌트면 db-executor 를 거쳐 Tibero(읽기 전용 계정)에서 실행된다. 그래서
+   * 실행될 곳의 규칙, 즉 Tibero 어휘 규칙과 테넌트 스키마({@code GENIA_T{id}})로 판정해야 한다 — PG 규칙으로 보면 판정이 본
+   * 스키마(data_t{id})와 실행되는 스키마가 갈라진다. (예전 F4 는 "아직 PG 에서 실행"을 전제로 PG 규칙을 고정했으나, 그 전제가 이 작업으로 바뀌었다.)
+   *
+   * <p>미한정 이름은 대화형에서는 거부한다 — 읽기 전용 계정 세션의 기본 스키마는 테넌트 스키마가 아니라서, 판정이 본 테이블(GENIA_T{id}.X)과 실행이 해석하는
+   * 테이블이 다르다. 이는 등급 거부(403)가 아니라 문법 요구라 Tibero 검증기와 같은 문구의 {@link UnsafeSqlException}(400)이다 —
+   * 숨김·허용 테이블에 똑같이 나오므로 존재를 드러내지 않는다. 미한정 DUAL(상수 조회)만 예외다.
    */
   @Test
-  void tibero_interactiveMode_isJudgedWithPgRules() {
+  void tibero_interactiveMode_isJudgedWithTiberoRules() {
     String tiberoSchema = asTiberoTenant();
-    Clearance c = userAt("민감");
-    String pgSchema = DataSchema.current();
-    // PG 어휘 검사가 적용된다 — Tibero 규칙이면 통과하는 백슬래시 문자열을 PG 규칙은 모호 표기로 거부한다.
-    assertThatThrownBy(
-            () ->
-                guard.checkSql(
-                    c, "SELECT 'C:\\' FROM " + pgSchema + "." + high, SqlAccessMode.INTERACTIVE))
-        .isInstanceOf(UnsafeSqlException.class);
-    assertThat(allowed(c, "SELECT 'C:\\' FROM " + high, SqlAccessMode.PIPELINE_RUN)).isTrue();
-    // 허용 스키마는 PG 데이터 스키마다.
-    assertThat(allowed(c, "SELECT * FROM " + pgSchema + "." + high, SqlAccessMode.INTERACTIVE))
-        .isTrue();
+    Clearance c = userAt("민감"); // 기밀(hidden)은 못 보고 민감(high)은 본다
+    String lower = tiberoSchema.toLowerCase();
+    // 테넌트 스키마의 허용 데이터셋은 허용 — 따옴표 없는 소문자·대문자·인용 대문자 모두 같은 테이블이다.
     for (String sql :
         List.of(
-            "SELECT * FROM " + tiberoSchema + "." + high,
+            "SELECT * FROM " + lower + "." + high,
+            "SELECT * FROM " + tiberoSchema + "." + high.toUpperCase(),
             "SELECT * FROM \"" + tiberoSchema + "\".\"" + high.toUpperCase() + "\"",
-            // PG 규칙에서 DUAL 은 데이터셋이 아니다(Tibero 규칙의 DUAL 예외는 Tibero 실행 SQL 에만).
+            // CTE 이름은 미한정이어도 테이블이 아니다(미한정 거부에 걸리지 않는다).
+            "WITH x AS (SELECT * FROM " + lower + "." + high + ") SELECT * FROM x",
+            // 미한정 DUAL 은 상수 조회라 데이터셋이 아니다.
             "SELECT 1 FROM DUAL")) {
+      assertThat(allowed(c, sql, SqlAccessMode.INTERACTIVE)).as(sql).isTrue();
+    }
+    SqlAccessResult r =
+        guard.requireSql(c, "SELECT * FROM " + lower + "." + high, SqlAccessMode.INTERACTIVE);
+    assertThat(r.readDatasetIds()).hasSize(1);
+    assertThat(r.effectiveLevel().name()).isEqualTo("민감");
+    // Tibero 어휘 규칙이다 — PG 검사가 막던 백슬래시 문자열도 Tibero 에선 모호하지 않아 통과한다.
+    assertThat(allowed(c, "SELECT 'C:\\' FROM " + lower + "." + high, SqlAccessMode.INTERACTIVE))
+        .isTrue();
+
+    // 거부: 등급 미달 데이터셋, 다른 테넌트 스키마, PG 데이터 스키마 — 모두 구분 불가 같은 코드다(존재 은닉).
+    for (String sql :
+        List.of(
+            "SELECT * FROM " + lower + "." + hidden,
+            "SELECT * FROM genia_t999." + high,
+            "SELECT * FROM " + DataSchema.current() + "." + high)) {
       assertThat(guard.checkSql(c, sql, SqlAccessMode.INTERACTIVE).code())
           .as(sql)
           .isEqualTo("DATASET_SQL_ACCESS_DENIED");
     }
-    // 같은 SQL 을 파이프라인 모드로 보면 Tibero 규칙이다.
-    assertThat(allowed(c, "SELECT * FROM " + tiberoSchema + "." + high, SqlAccessMode.PIPELINE_RUN))
-        .isTrue();
-    assertThat(allowed(c, "SELECT 1 FROM DUAL", SqlAccessMode.PIPELINE_RUN)).isTrue();
+    // 미한정 이름은 문법 요구 — 숨김(hidden)·허용(high) 구분 없이 Tibero 검증기와 같은 400 문구(쓴 그대로의 이름).
+    for (String name : List.of(high, hidden)) {
+      String expected =
+          "테이블 참조에 스키마가 없습니다: '"
+              + name
+              + "'. Tibero 저장소에서는 "
+              + lower
+              + "."
+              + name
+              + " 처럼 스키마와 함께 써 주세요.";
+      for (String sql :
+          List.of(
+              "SELECT * FROM " + name,
+              "SELECT * FROM " + lower + "." + high + " JOIN " + name + " ON 1 = 1")) {
+        assertThatThrownBy(() -> guard.checkSql(c, sql, SqlAccessMode.INTERACTIVE))
+            .as(sql)
+            .isInstanceOf(UnsafeSqlException.class)
+            .hasMessage(expected);
+      }
+    }
+    // 파이프라인 모드의 미한정 이름(OWNER 세션 기본 스키마로 해석)은 그대로 허용 — 대화형 전용 규칙이다.
+    assertThat(allowed(c, "SELECT * FROM " + high, SqlAccessMode.PIPELINE_RUN)).isTrue();
   }
 
   /** 거부 응답에서 클라이언트가 볼 수 있는 모든 것(상태·코드·메시지·부가 정보)을 한 문자열로. 허용되면 "ALLOWED". */

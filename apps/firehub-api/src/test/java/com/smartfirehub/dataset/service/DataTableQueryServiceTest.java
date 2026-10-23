@@ -3,13 +3,23 @@ package com.smartfirehub.dataset.service;
 import static com.smartfirehub.jooq.Tables.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.exception.SqlQueryException;
+import com.smartfirehub.global.util.NormalizedSql;
+import com.smartfirehub.pipeline.exception.ScriptExecutionException;
+import com.smartfirehub.pipeline.service.PipelineDataSchema;
+import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
+import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.sql.TiberoQueryService;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
+import java.util.Map;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -837,5 +847,92 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
     assertThat(arr.get(0).asText()).isEqualTo("123456789012.123456");
     assertThat(arr.get(1).isTextual()).isTrue();
     assertThat(arr.get(1).asText()).isEqualTo("1.5");
+  }
+
+  // =========================================================================
+  // Tibero 테넌트(WD-76) — 데이터셋 화면 SQL 은 db-executor 읽기 전용 조회로 실행한다
+  // =========================================================================
+
+  /** Tibero 테넌트로 꾸민 데이터셋 조회 서비스와 협력자 목(스프링 컨텍스트를 늘리지 않게 직접 만든다). */
+  private record TiberoSetup(
+      DataTableQueryService service, DSLContext pg, DbExecutorClient dbExecutorClient) {}
+
+  private static TiberoSetup tiberoSetup() {
+    PipelineDataSchema schema = mock(PipelineDataSchema.class);
+    when(schema.isTibero()).thenReturn(true);
+    when(schema.validator()).thenReturn(SqlValidator.forTiberoSchema("GENIA_T5"));
+    DbExecutorClient db = mock(DbExecutorClient.class);
+    DSLContext pg = mock(DSLContext.class);
+    return new TiberoSetup(
+        new DataTableQueryService(pg, new TiberoQueryService(schema, db)), pg, db);
+  }
+
+  /**
+   * Tibero 조회 결과에서도 시스템 컬럼(id·import_id·created_at·_updated_at)은 PG 경로와 같이 빠진다. PG 세션 문장은 하나도 없다.
+   */
+  @Test
+  void tibero_select_filtersSystemColumns_andRunsNoPgSessionStatement() {
+    TiberoSetup t = tiberoSetup();
+    String sql = "SELECT * FROM genia_t5.orders";
+    Map<String, Object> row1 = new java.util.LinkedHashMap<>();
+    row1.put("id", 1);
+    row1.put("region", "서울");
+    row1.put("amount", 10);
+    row1.put("import_id", 7);
+    row1.put("created_at", "2026-10-23 00:00:00");
+    row1.put("_updated_at", "2026-10-23 00:00:00");
+    when(t.dbExecutorClient().executeQuery(sql, 100))
+        .thenReturn(
+            new DbExecutorClient.QueryResult(
+                true,
+                List.of("id", "region", "amount", "import_id", "created_at", "_updated_at"),
+                List.of(row1),
+                1,
+                false,
+                null,
+                null));
+
+    SqlQueryResponse r = t.service().executeQuery(NormalizedSql.of(sql), 100);
+
+    assertThat(r.error()).isNull();
+    assertThat(r.queryType()).isEqualTo("SELECT");
+    assertThat(r.columns()).containsExactly("region", "amount");
+    assertThat(r.rows()).hasSize(1);
+    assertThat(r.rows().get(0)).containsOnlyKeys("region", "amount");
+    assertThat(r.rows().get(0)).containsEntry("region", "서울").containsEntry("amount", 10);
+    // SET LOCAL search_path·statement_timeout·SAVEPOINT 같은 PG 세션 문장을 실행하지 않는다.
+    verifyNoInteractions(t.pg());
+  }
+
+  /** 데이터 변경 SQL 은 실행기를 부르지 않고 데이터셋 화면 전용 문구로 거부한다(파이프라인으로 안내). */
+  @Test
+  void tibero_dml_isRejectedWithDatasetScreenMessage() {
+    TiberoSetup t = tiberoSetup();
+    for (String sql :
+        List.of(
+            "DELETE FROM genia_t5.orders",
+            "UPDATE genia_t5.orders SET region = 'x'",
+            "INSERT INTO genia_t5.orders (region) VALUES ('x')")) {
+      assertThatThrownBy(() -> t.service().executeQuery(NormalizedSql.of(sql), 100))
+          .as(sql)
+          .isInstanceOf(SqlQueryException.class)
+          .hasMessage("Tibero 저장소에서는 이 화면에서 데이터를 바꾸는 SQL 을 실행할 수 없습니다. 파이프라인을 이용해 주세요.");
+    }
+    verifyNoInteractions(t.pg(), t.dbExecutorClient());
+  }
+
+  /** 실행 실패(검증 거부·Tibero 오류)는 PG 경로와 같이 200 + error 로 돌려준다. */
+  @Test
+  void tibero_failure_isReturnedAsErrorField() {
+    TiberoSetup t = tiberoSetup();
+    String sql = "SELECT * FROM genia_t5.orders";
+    when(t.dbExecutorClient().executeQuery(sql, 100))
+        .thenThrow(new ScriptExecutionException("Tibero 실행기에 연결하지 못했습니다."));
+
+    SqlQueryResponse r = t.service().executeQuery(NormalizedSql.of(sql), 100);
+
+    assertThat(r.error()).isEqualTo("Tibero 실행기에 연결하지 못했습니다.");
+    assertThat(r.rows()).isEmpty();
+    verifyNoInteractions(t.pg());
   }
 }

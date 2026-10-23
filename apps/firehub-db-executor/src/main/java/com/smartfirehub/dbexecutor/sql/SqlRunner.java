@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 /**
@@ -42,7 +43,9 @@ public class SqlRunner {
   private final LeasedExecution execution;
 
   public SqlRunner(
-      TenantPools pools, ExecutionTimeouts timeouts, StoreDescriptorClient descriptors) {
+      @Qualifier("tenantPools") TenantPools pools,
+      ExecutionTimeouts timeouts,
+      StoreDescriptorClient descriptors) {
     this.limits = timeouts.sql();
     this.execution = new LeasedExecution(pools, descriptors);
   }
@@ -163,7 +166,7 @@ public class SqlRunner {
   }
 
   /** 본문 실행 결과. */
-  private record BodyResult(
+  record BodyResult(
       boolean query, int rowCount, List<Map<String, Object>> rows, List<String> columns) {}
 
   /** 본문을 실행한다. 결과 집합이 있고 returnRows 면 행을 읽어 변환한다. */
@@ -187,19 +190,34 @@ public class SqlRunner {
         });
   }
 
-  private static BodyResult readRows(ResultSet rs) throws SQLException {
+  /** 결과 집합을 행·컬럼으로 읽는다(/execute/sql 경로 — 컬럼 이름은 변환한 그대로, 기존 파이프라인 출력과 같다). */
+  static BodyResult readRows(ResultSet rs) throws SQLException {
+    return readRows(rs, false);
+  }
+
+  /**
+   * 결과 집합을 행·컬럼으로 읽는다.
+   *
+   * @param uniqueNames true 면 겹치는 컬럼 이름을 {@link ResultColumnNames#unique} 로 고유하게 만든다(QueryRunner 분석
+   *     조회 — JOIN 의 같은 이름 컬럼 값이 행 Map 에서 덮이지 않게, api PG 경로와 같은 규칙). 규칙은 {@link
+   *     ValueConverter#columnName} 변환 <b>뒤</b> 이름에 건다 — {@code REGION} 과 {@code "region"} 은 변환 뒤에야
+   *     겹친다.
+   */
+  static BodyResult readRows(ResultSet rs, boolean uniqueNames) throws SQLException {
     if (rs == null) {
       return new BodyResult(true, 0, List.of(), List.of());
     }
     ResultSetMetaData md = rs.getMetaData();
     int n = md.getColumnCount();
-    List<String> columns = new ArrayList<>(n);
+    List<String> converted = new ArrayList<>(n);
     // 컬럼 메타(타입·정밀도·자릿수)는 컬럼마다 한 번만 읽는다 — 칸마다 읽으면 행 수 × 컬럼 수만큼 드라이버를 부른다.
     ValueConverter.ColumnMeta[] metas = new ValueConverter.ColumnMeta[n];
     for (int i = 1; i <= n; i++) {
-      columns.add(ValueConverter.columnName(md.getColumnLabel(i)));
+      converted.add(ValueConverter.columnName(md.getColumnLabel(i)));
       metas[i - 1] = ValueConverter.ColumnMeta.of(md, i);
     }
+    // 응답 columns 와 행 Map 의 키가 같은 목록이어야 한다.
+    List<String> columns = uniqueNames ? ResultColumnNames.unique(converted) : converted;
     List<Map<String, Object>> rows = new ArrayList<>();
     while (rs.next()) {
       Map<String, Object> row = new LinkedHashMap<>();

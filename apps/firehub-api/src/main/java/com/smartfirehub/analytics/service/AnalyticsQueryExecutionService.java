@@ -16,6 +16,7 @@ import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutorResponseTooLargeException;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.sql.TiberoQueryService;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -39,6 +40,9 @@ public class AnalyticsQueryExecutionService {
   private final DSLContext dsl;
   private final ExecutorClient executorClient;
 
+  /** Tibero 테넌트의 분석 SQL 실행 창구(WD-76) — Tibero 면 PG(dsl·Python executor) 대신 이것으로만 실행한다. */
+  private final TiberoQueryService tiberoQueryService;
+
   /**
    * 애널리틱스 경로 전용 인스턴스 — 스프링 빈이 아니라 {@link SqlValidator#forAdhocDataSchemaQueries()}로 직접 생성한다(#385
    * Task 4, 팩터리 도입 근거는 R1). 스프링 컨텍스트의 무인자 {@link SqlValidator} 빈은 파이프라인 경로 전용이라 여기서 재사용하면 안 된다.
@@ -48,9 +52,11 @@ public class AnalyticsQueryExecutionService {
   @Value("${app.executor.enabled:false}")
   private boolean executorEnabled;
 
-  public AnalyticsQueryExecutionService(DSLContext dsl, ExecutorClient executorClient) {
+  public AnalyticsQueryExecutionService(
+      DSLContext dsl, ExecutorClient executorClient, TiberoQueryService tiberoQueryService) {
     this.dsl = dsl;
     this.executorClient = executorClient;
+    this.tiberoQueryService = tiberoQueryService;
   }
 
   /**
@@ -102,6 +108,18 @@ public class AnalyticsQueryExecutionService {
   @Transactional
   public AnalyticsQueryResponse execute(NormalizedSql normalized, int maxRows, boolean readOnly) {
     String cleanSql = normalized.text();
+
+    // Tibero 테넌트(WD-76): 데이터가 Tibero 에 있으므로 PG(직접 실행·Python executor)가 아니라 db-executor 읽기 전용 조회로만
+    // 실행한다. 아래 PG 검증기(data_t{id} 스키마 허용목록)·readOnly 검사보다 먼저 갈라야 한다 — PG 검증기는 GENIA_T{id} 참조를
+    // 거부하고, Tibero 경로는 readOnly 와 무관하게 조회만 실행한다(차트는 readOnly=false 로 오지만 DML 은 조회 전용 문구로 거부).
+    // 검증(Tibero 스키마·조회 전용·위치 파라미터)은 TiberoQueryService 가 한다. PG 폴백은 없다.
+    // 관문(GuardedSqlExecutor)은 Tibero 테넌트면 이 @Transactional 메서드 대신 executeOnTibero 를 직접 불러 PG 트랜잭션
+    // 밖에서
+    // 실행한다. 여기 분기는 그 밖의 진입(테스트용 문자열 오버로드 등)에서도 Tibero 데이터를 PG 로 실행하지 않게 하는 방어선이다.
+    if (tiberoQueryService.isTibero()) {
+      return executeOnTibero(normalized, maxRows);
+    }
+
     String queryType = SqlValidationUtils.detectQueryType(cleanSql);
 
     if (readOnly && !"SELECT".equals(queryType)) {
@@ -129,6 +147,34 @@ public class AnalyticsQueryExecutionService {
       return executeViaExecutor(cleanSql, maxRows, readOnly);
     }
     return executeDirectly(cleanSql, queryType, maxRows, readOnly);
+  }
+
+  /**
+   * Tibero 테넌트 분석 SQL 을 db-executor 읽기 전용 조회로 실행해 PG 경로와 같은 응답 모양으로 바꾼다(WD-76). 조회만 실행하므로 queryType
+   * 은 항상 SELECT, affectedRows·totalRows 는 PG SELECT 응답처럼 행 수다. 실패(검증 거부·Tibero 오류·연결 실패)는 이미 사용자
+   * 문구라 그대로 200 + error 로 돌려준다.
+   *
+   * <p><b>트랜잭션 없음(의도).</b> PG 를 건드리지 않으므로 {@code @Transactional} 을 두지 않는다 — 붙이면 {@code
+   * TenantAwareTransactionManager} 가 시작 때 PG 커넥션을 잡아 GUC 를 세우고, db-executor 응답(최대 35초)을 기다리는 내내 그
+   * 커넥션을 쥔다. 관문({@link com.smartfirehub.securitylevel.sql.GuardedSqlExecutor})이 판정을 마친 뒤 Tibero
+   * 테넌트면 {@link #execute(NormalizedSql, int, boolean)} 대신 이것을 부른다. 판정 없이 실행되는 일이 없도록 호출자는
+   * 관문뿐이다({@code SqlGateArchitectureTest}). 호출자가 이미 트랜잭션 안이면(저장 쿼리·차트·대시보드) 그 트랜잭션은 그대로 남는다.
+   */
+  public AnalyticsQueryResponse executeOnTibero(NormalizedSql normalized, int maxRows) {
+    TiberoQueryService.Outcome out = tiberoQueryService.run(normalized.text(), maxRows);
+    if (out.error() != null) {
+      return errorResponse(out.error());
+    }
+    int rowCount = out.rows().size();
+    return new AnalyticsQueryResponse(
+        "SELECT",
+        out.columns(),
+        out.rows(),
+        rowCount,
+        out.executionTimeMs(),
+        rowCount,
+        out.truncated(),
+        null);
   }
 
   private AnalyticsQueryResponse executeViaExecutor(String sql, int maxRows, boolean readOnly) {
@@ -427,8 +473,21 @@ public class AnalyticsQueryExecutionService {
    */
   @Transactional(readOnly = true)
   public SchemaInfoResponse getSchemaInfo(List<Long> datasetIds, String visibilitySql) {
+    // 응답의 방언·스키마는 두 백엔드 모두에 싣는다(빈 결과 경로 포함) — 웹 편집기가 한정 이름(genia_t5.orders)과 ROWNUM/LIMIT
+    // 스니펫을 고르는 근거다. Tibero 스키마는 쿼리에 소문자로 써도 대문자로 접히므로 소문자로 내려 PG 쪽 표기와 맞춘다.
+    boolean tibero = tiberoQueryService.isTibero();
+    String dialect = tibero ? "TIBERO" : "POSTGRESQL";
+    String schema =
+        tibero
+            ? tiberoQueryService.schemaName().toLowerCase(java.util.Locale.ROOT)
+            : DataSchema.current();
+
     if (datasetIds != null && datasetIds.isEmpty()) {
-      return new SchemaInfoResponse(List.of());
+      return new SchemaInfoResponse(List.of(), dialect, schema);
+    }
+
+    if (tibero) {
+      return new SchemaInfoResponse(getTiberoTables(datasetIds, visibilitySql), dialect, schema);
     }
 
     StringBuilder sql =
@@ -449,47 +508,82 @@ public class AnalyticsQueryExecutionService {
             .append("WHERE c.table_schema = ? ");
 
     if (datasetIds != null) {
-      // datasetIds 는 컨트롤러에서 Long 타입으로 바인딩 — SQL injection 위험 없음
-      String csv =
-          datasetIds.stream()
-              .map(String::valueOf)
-              .collect(java.util.stream.Collectors.joining(","));
-      sql.append("AND d.id IN (").append(csv).append(") ");
+      sql.append(idFilterClause(datasetIds));
     }
 
     sql.append("ORDER BY c.table_name, c.ordinal_position");
 
     var infoRecords = dsl.fetch(sql.toString(), DataSchema.current());
 
-    Map<String, SchemaInfoResponse.TableInfo> tableMap = new LinkedHashMap<>();
+    return new SchemaInfoResponse(assembleTables(infoRecords), dialect, schema);
+  }
 
-    for (var r : infoRecords) {
-      String tableName = r.get("table_name", String.class);
-      Long datasetId = r.get("dataset_id", Long.class);
-      String datasetName = r.get("dataset_name", String.class);
-
-      tableMap.computeIfAbsent(
-          tableName,
-          k ->
-              new SchemaInfoResponse.TableInfo(
-                  tableName, datasetName, datasetId, new ArrayList<>()));
-
-      var tableInfo = tableMap.get(tableName);
-      // 기존 테이블 항목에 컬럼 정보 추가
-      var columns = new ArrayList<>(tableInfo.columns());
-      columns.add(
-          new SchemaInfoResponse.ColumnInfo(
-              r.get("column_name", String.class),
-              r.get("data_type", String.class),
-              r.get("display_name", String.class)));
-
-      tableMap.put(
-          tableName,
-          new SchemaInfoResponse.TableInfo(
-              tableInfo.tableName(), tableInfo.datasetName(), tableInfo.datasetId(), columns));
+  /**
+   * Tibero 테넌트의 스키마 정보 — 테이블이 PG 에 없으므로 {@code information_schema} 대신 데이터셋 메타데이터({@code
+   * dataset}·{@code dataset_column})로 만든다. 컬럼 순서는 {@code column_order}, 테이블 이름은 스키마 없는 원래 {@code
+   * table_name} 이다. 보안 등급(S2) 가시성 조건은 PG 경로와 같이 별칭 {@code d} 기준으로 반드시 건다. 컬럼 없는 데이터셋도 LEFT JOIN 으로
+   * 빈 컬럼 목록의 테이블로 나온다.
+   */
+  // 주의: 이 경로는 메타데이터({@code dataset_column}) 컬럼만 나열한다. PG 경로는 물리 컬럼을 나열하므로 메타 행이 없는 컬럼도 포함하지만
+  // 여기서는 나오지 않고, 컬럼 메타가 없는 TABLE 데이터셋은 빈 컬럼 목록의 테이블로 나온다.
+  private List<SchemaInfoResponse.TableInfo> getTiberoTables(
+      List<Long> datasetIds, String visibilitySql) {
+    StringBuilder sql =
+        new StringBuilder()
+            .append("SELECT d.table_name, d.id AS dataset_id, d.name AS dataset_name, ")
+            .append("       dc.column_name, dc.data_type, dc.display_name ")
+            .append("FROM dataset d ")
+            .append("LEFT JOIN dataset_column dc ON dc.dataset_id = d.id ")
+            // PG 경로는 information_schema 를 INNER JOIN 하므로 물리 테이블이 없는 DOCUMENT 데이터셋이 자연히 빠진다.
+            // 메타데이터 기반인 이 경로는 같은 결과가 되도록 TABLE 저장 방식만 명시적으로 거른다.
+            .append("WHERE d.storage_type = 'TABLE' AND ")
+            .append(visibilitySql)
+            .append(" ");
+    if (datasetIds != null) {
+      sql.append(idFilterClause(datasetIds));
     }
+    sql.append("ORDER BY d.table_name, dc.column_order");
 
-    return new SchemaInfoResponse(new ArrayList<>(tableMap.values()));
+    return assembleTables(dsl.fetch(sql.toString()));
+  }
+
+  /**
+   * 스키마 정보 조회 결과 행을 테이블별로 묶는다(PG·Tibero 공용). 행은 table_name 순으로 오며, 컬럼 없는 데이터셋(LEFT JOIN)은 {@code
+   * column_name} 이 null 이라 빈 컬럼 목록의 테이블로만 나온다.
+   */
+  private static List<SchemaInfoResponse.TableInfo> assembleTables(
+      org.jooq.Result<org.jooq.Record> rows) {
+    Map<String, SchemaInfoResponse.TableInfo> tableMap = new LinkedHashMap<>();
+    for (var r : rows) {
+      String tableName = r.get("table_name", String.class);
+      var table =
+          tableMap.computeIfAbsent(
+              tableName,
+              k ->
+                  new SchemaInfoResponse.TableInfo(
+                      tableName,
+                      r.get("dataset_name", String.class),
+                      r.get("dataset_id", Long.class),
+                      new ArrayList<>()));
+      String columnName = r.get("column_name", String.class);
+      if (columnName != null) {
+        table
+            .columns()
+            .add(
+                new SchemaInfoResponse.ColumnInfo(
+                    columnName,
+                    r.get("data_type", String.class),
+                    r.get("display_name", String.class)));
+      }
+    }
+    return new ArrayList<>(tableMap.values());
+  }
+
+  /** {@code AND d.id IN (...)} 조건 — datasetIds 는 컨트롤러에서 Long 타입으로 바인딩되므로 SQL injection 위험 없음. */
+  private static String idFilterClause(List<Long> datasetIds) {
+    String csv =
+        datasetIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+    return "AND d.id IN (" + csv + ") ";
   }
 
   /**

@@ -3,12 +3,15 @@ package com.smartfirehub.dbexecutor.web;
 import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.sql.Deadline;
 import com.smartfirehub.dbexecutor.sql.ProbeRunner;
+import com.smartfirehub.dbexecutor.sql.QueryRunner;
 import com.smartfirehub.dbexecutor.sql.SqlRunner;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
 import com.smartfirehub.dbexecutor.store.StoreUnavailableException;
 import com.smartfirehub.dbexecutor.web.dto.ProbeRequest;
 import com.smartfirehub.dbexecutor.web.dto.ProbeResponse;
+import com.smartfirehub.dbexecutor.web.dto.QueryRequest;
+import com.smartfirehub.dbexecutor.web.dto.QueryResponse;
 import com.smartfirehub.dbexecutor.web.dto.SqlExecuteRequest;
 import com.smartfirehub.dbexecutor.web.dto.SqlExecuteResponse;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,9 +24,10 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>Python executor 관례대로 오류는 HTTP 200 + {@code success=false} 로 싣는다. 저장소 기술자를 못 얻으면 실행하지 않고(풀도 만들지
  * 않고) 그 한국어 사유를 돌려준다.
  *
- * <p>요청 전체 기한({@link Deadline})은 <b>요청이 여기 도착한 순간</b> 잡는다(/execute/sql 기본 55초, /execute/probe 기본
- * 30초). 기술자 조회는 남은 시간만큼만 기다리고, 풀 대여·실행도 같은 기한 안에서 한다 — 기술자 조회(최대 10초)·풀 대여(최대 10초) 뒤에 기한을 새로 잡으면
- * api 의 호출 제한(60초·35초)을 넘겨, api 가 먼저 포기해 단계를 FAILED 로 적은 뒤에 실행기가 커밋할 수 있다.
+ * <p>요청 전체 기한({@link Deadline})은 <b>요청이 여기 도착한 순간</b> 잡는다(/execute/sql 기본 55초,
+ * /execute/probe·/execute/query 기본 30초). 기술자 조회는 남은 시간만큼만 기다리고, 풀 대여·실행도 같은 기한 안에서 한다 — 기술자 조회(최대
+ * 10초)·풀 대여(최대 10초) 뒤에 기한을 새로 잡으면 api 의 호출 제한(60초·35초)을 넘겨, api 가 먼저 포기해 단계를 FAILED 로 적은 뒤에 실행기가
+ * 커밋할 수 있다.
  */
 @RestController
 public class ExecuteController {
@@ -33,16 +37,19 @@ public class ExecuteController {
   private final StoreDescriptorClient descriptors;
   private final SqlRunner sqlRunner;
   private final ProbeRunner probeRunner;
+  private final QueryRunner queryRunner;
   private final ExecutionTimeouts timeouts;
 
   public ExecuteController(
       StoreDescriptorClient descriptors,
       SqlRunner sqlRunner,
       ProbeRunner probeRunner,
+      QueryRunner queryRunner,
       ExecutionTimeouts timeouts) {
     this.descriptors = descriptors;
     this.sqlRunner = sqlRunner;
     this.probeRunner = probeRunner;
+    this.queryRunner = queryRunner;
     this.timeouts = timeouts;
   }
 
@@ -78,6 +85,23 @@ public class ExecuteController {
         return ProbeResponse.failure(e.getMessage(), null);
       }
       return probeRunner.probe(d, req.query(), deadline);
+    }
+  }
+
+  /** 분석 SQL 을 읽기 전용 계정으로 실행해 행을 돌려준다(최대 {@code maxRows} 행). */
+  @PostMapping("/execute/query")
+  public QueryResponse query(@RequestBody QueryRequest req) {
+    if (req.tenantId() == null || req.query() == null || req.maxRows() == null) {
+      return QueryResponse.failure(BAD_REQUEST, null);
+    }
+    try (Deadline deadline = new Deadline(timeouts.query().timeoutSeconds())) {
+      StoreDescriptor d;
+      try {
+        d = descriptors.get(req.tenantId(), deadline.remaining());
+      } catch (StoreUnavailableException e) {
+        return QueryResponse.failure(e.getMessage(), null);
+      }
+      return queryRunner.run(d, req.query(), req.maxRows(), deadline);
     }
   }
 }

@@ -13,6 +13,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 /**
@@ -38,7 +39,9 @@ public class ProbeRunner {
   private final LeasedExecution execution;
 
   public ProbeRunner(
-      TenantPools pools, ExecutionTimeouts timeouts, StoreDescriptorClient descriptors) {
+      @Qualifier("tenantPools") TenantPools pools,
+      ExecutionTimeouts timeouts,
+      StoreDescriptorClient descriptors) {
     this.timeoutSeconds = timeouts.probe().timeoutSeconds();
     this.execution = new LeasedExecution(pools, descriptors);
   }

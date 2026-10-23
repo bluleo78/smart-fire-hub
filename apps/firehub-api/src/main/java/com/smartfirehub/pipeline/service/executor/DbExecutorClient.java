@@ -43,6 +43,9 @@ public class DbExecutorClient {
   /** {@code /execute/probe} 응답 대기 한도 — 실행기의 probe 한도(30초)에 여유 5초. */
   static final Duration PROBE_TIMEOUT = Duration.ofSeconds(35);
 
+  /** {@code /execute/query} 응답 대기 한도 — 실행기의 조회 한도(30초)에 여유 5초. */
+  static final Duration QUERY_TIMEOUT = Duration.ofSeconds(35);
+
   /** 응답 본문 버퍼 한도 — PG 실행기 기본값과 같다({@link ExecutorClient#DEFAULT_MAX_RESPONSE_BYTES}). */
   private static final int MAX_RESPONSE_BYTES = ExecutorClient.DEFAULT_MAX_RESPONSE_BYTES;
 
@@ -51,6 +54,7 @@ public class DbExecutorClient {
 
   private final Duration sqlTimeout;
   private final Duration probeTimeout;
+  private final Duration queryTimeout;
 
   /**
    * 스프링 빈 생성자.
@@ -63,7 +67,7 @@ public class DbExecutorClient {
       WebClient.Builder webClientBuilder,
       @Value("${app.db-executor.base-url:}") String baseUrl,
       @Value("${app.executor.internal-token:dev-executor-token}") String internalToken) {
-    this(webClientBuilder, baseUrl, internalToken, SQL_TIMEOUT, PROBE_TIMEOUT);
+    this(webClientBuilder, baseUrl, internalToken, SQL_TIMEOUT, PROBE_TIMEOUT, QUERY_TIMEOUT);
   }
 
   /** 시간 한도를 바꿔 끼우는 생성자 — 시간 초과 테스트가 60초를 기다리지 않게 한다. */
@@ -72,9 +76,11 @@ public class DbExecutorClient {
       String baseUrl,
       String internalToken,
       Duration sqlTimeout,
-      Duration probeTimeout) {
+      Duration probeTimeout,
+      Duration queryTimeout) {
     this.sqlTimeout = sqlTimeout;
     this.probeTimeout = probeTimeout;
+    this.queryTimeout = queryTimeout;
     if (baseUrl == null || baseUrl.isBlank()) {
       this.webClient = null;
       return;
@@ -116,6 +122,21 @@ public class DbExecutorClient {
     Map<String, Object> request = new LinkedHashMap<>();
     request.put("query", query);
     return post("/execute/probe", withTenant(request), ProbeResult.class, probeTimeout);
+  }
+
+  /**
+   * 분석 SELECT 를 테넌트 읽기 전용 계정으로 실행한다. POST /execute/query, 응답 대기 35초.
+   *
+   * @param query 검증을 통과한 조회 SQL
+   * @param maxRows 가져올 행 상한(실행기가 1..10000 으로 제한)
+   * @return 조회 결과 — 실패면 {@code success=false} 와 {@code error}·{@code dbError}
+   * @throws ScriptExecutionException 주소 미설정·연결 실패·인증 실패·응답 시간 초과
+   */
+  public QueryResult executeQuery(String query, int maxRows) {
+    Map<String, Object> request = new LinkedHashMap<>();
+    request.put("query", query);
+    request.put("maxRows", maxRows);
+    return post("/execute/query", withTenant(request), QueryResult.class, queryTimeout);
   }
 
   /**
@@ -201,4 +222,30 @@ public class DbExecutorClient {
       @JsonProperty("type_name") String typeName,
       Integer precision,
       Integer scale) {}
+
+  /**
+   * 조회 응답.
+   *
+   * @param columns 결과 컬럼 이름(순서 보존)
+   * @param rows 행(컬럼명 → 값)
+   * @param rowCount 가져온 행 수
+   * @param truncated 행 수가 상한에 닿았는지
+   * @param error 실패 문구
+   * @param dbError 실패가 DB 오류일 때의 코드·메시지(아니면 null)
+   */
+  public record QueryResult(
+      boolean success,
+      List<String> columns,
+      List<Map<String, Object>> rows,
+      @JsonProperty("row_count") int rowCount,
+      boolean truncated,
+      String error,
+      @JsonProperty("db_error") DbError dbError) {
+
+    /** 실패 응답은 columns·rows 가 없을 수 있다 — 호출자가 null 을 따로 확인하지 않게 빈 목록으로 맞춘다. */
+    public QueryResult {
+      columns = columns == null ? List.of() : columns;
+      rows = rows == null ? List.of() : rows;
+    }
+  }
 }

@@ -10,6 +10,7 @@ import com.smartfirehub.pipeline.service.PipelineAsyncRunner;
 import com.smartfirehub.pipeline.service.PipelineSecurityGate;
 import com.smartfirehub.pipeline.service.SqlColumnProbe;
 import com.smartfirehub.pipeline.service.SqlScriptExecutor;
+import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.tngtech.archunit.core.domain.JavaAccess;
 import com.tngtech.archunit.core.domain.JavaClasses;
@@ -106,14 +107,17 @@ class SqlGateArchitectureTest {
         .check(PROD);
   }
 
-  /** 애널리틱스 실행 서비스(애드혹·저장 쿼리·차트·대시보드) — 관문만 부른다. */
+  /**
+   * 애널리틱스 실행 서비스(애드혹·저장 쿼리·차트·대시보드) — 관문만 부른다. Tibero 테넌트용 트랜잭션 없는 진입({@code executeOnTibero},
+   * WD-76)도 판정 없이 실행되는 경로이므로 같은 규칙에 묶는다.
+   */
   @Test
   void analyticsExecution_onlyThroughGate() {
     methods()
         .that()
         .areDeclaredIn(AnalyticsQueryExecutionService.class)
         .and()
-        .haveName("execute")
+        .haveNameMatching("execute|executeOnTibero")
         .should(onlyBeAccessedBy(GuardedSqlExecutor.class, AnalyticsQueryExecutionService.class))
         .check(PROD);
   }
@@ -168,6 +172,34 @@ class SqlGateArchitectureTest {
         .and()
         .haveName("executeQuery")
         .should(onlyBeAccessedBy(AnalyticsQueryExecutionService.class, GuardedSqlExecutor.class))
+        .check(PROD);
+  }
+
+  /** Tibero 분석 조회(db-executor /execute/query) — 서비스 하나만 부른다. */
+  @Test
+  void dbExecutorQuery_onlyFromTiberoQueryService() {
+    methods()
+        .that()
+        .areDeclaredIn(DbExecutorClient.class)
+        .and()
+        .haveName("executeQuery")
+        .should(onlyBeAccessedBy(TiberoQueryService.class))
+        .check(PROD);
+  }
+
+  /** Tibero 분석 조회 서비스 — 분석 실행 서비스·데이터셋 조회 서비스·관문만 부른다. */
+  @Test
+  void tiberoQueryService_onlyFromAnalyticsAndGate() {
+    methods()
+        .that()
+        .areDeclaredIn(TiberoQueryService.class)
+        .and()
+        .haveName("run")
+        .should(
+            onlyBeAccessedBy(
+                AnalyticsQueryExecutionService.class,
+                DataTableQueryService.class,
+                GuardedSqlExecutor.class))
         .check(PROD);
   }
 

@@ -176,7 +176,8 @@ public class StoreDescriptorClient {
   private StoreDescriptor fetch(long tenantId, long waitNanos) {
     HttpRequest req =
         HttpRequest.newBuilder(
-                URI.create(baseUrl + "/internal/executor/tenants/" + tenantId + "/data-store"))
+                URI.create(
+                    baseUrl + "/internal/executor/tenants/" + tenantId + "/data-store?include=ro"))
             .timeout(Duration.ofNanos(waitNanos))
             .header("Authorization", "Internal " + token)
             .GET()

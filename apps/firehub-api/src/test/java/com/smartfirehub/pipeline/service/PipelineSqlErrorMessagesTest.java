@@ -349,4 +349,14 @@ class PipelineSqlErrorMessagesTest {
     assertThat(PipelineSqlErrorMessages.describeTiberoMergeError(null, "boom", List.of("k")))
         .isNull();
   }
+
+  /** Tibero 테이블 없음 안내(WD-76 분석 조회용) — 파이프라인 42P01 문장과 같고, 다른 코드는 null. */
+  @Test
+  void tiberoMissingTableGuide_onlyForTableNotFoundCodes() {
+    String expected = "SQL 에서 참조한 테이블이 없습니다. 테이블 이름과 스키마 한정자를 확인하세요.";
+    assertThat(PipelineSqlErrorMessages.tiberoMissingTableGuide(-8033)).isEqualTo(expected);
+    assertThat(PipelineSqlErrorMessages.tiberoMissingTableGuide(942)).isEqualTo(expected);
+    assertThat(PipelineSqlErrorMessages.tiberoMissingTableGuide(-8026)).isNull();
+    assertThat(PipelineSqlErrorMessages.tiberoMissingTableGuide(-8034)).isNull();
+  }
 }

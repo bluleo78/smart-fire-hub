@@ -1168,6 +1168,11 @@ public class SqlValidator {
         // F9(수정 라운드 1) — name 이 점을 포함한 인용 이름(예: "my.table")이면 인용 없이 이어 붙였을 때
         // "<스키마>.my.table"이 되어 유효하지 않은 SQL 을 권하게 된다(#387-5 와 같은 계열). 시퀀스 쪽
         // (requireSafeSequenceArgument)이 이미 같은 문제를 인용으로 고쳤으므로 같은 방식을 따른다.
+        if (tibero) {
+          // Tibero 에서 따옴표 소문자("orders")는 대문자로 접히지 않아 다른(없는) 테이블이다 — PG 형식 안내가 틀리므로
+          // 따옴표 없이 스키마를 소문자로 쓴 형식(genia_t5.orders)을 권한다.
+          throw new UnsafeSqlException(tiberoUnqualifiedTableMessage(allowedSchema, name));
+        }
         throw new UnsafeSqlException(
             "테이블 참조에 스키마가 없습니다: '"
                 + name
@@ -1344,6 +1349,51 @@ public class SqlValidator {
       }
     }
     return result;
+  }
+
+  /**
+   * Tibero 테넌트의 "스키마 없는 테이블" 거부 문구 — {@link #validate} 와 대화형 판정({@link #requireQualifiedTables})이
+   * 같은 문구를 쓰도록 한 곳에서 만든다. Tibero 에서 따옴표 소문자({@code "orders"})는 대문자로 접히지 않아 다른(없는) 테이블이므로 PG 형식 안내
+   * 대신 따옴표 없이 스키마를 소문자로 쓴 형식({@code genia_t5.orders})을 권한다.
+   *
+   * @param tiberoSchema 테넌트 스키마(예: {@code GENIA_T5}) — 안내에는 소문자로 싣는다
+   * @param name 사용자가 쓴 그대로의 이름(따옴표만 뗀 값)
+   */
+  public static String tiberoUnqualifiedTableMessage(String tiberoSchema, String name) {
+    return "테이블 참조에 스키마가 없습니다: '"
+        + name
+        + "'. Tibero 저장소에서는 "
+        + tiberoSchema.toLowerCase(java.util.Locale.ROOT)
+        + "."
+        + name
+        + " 처럼 스키마와 함께 써 주세요.";
+  }
+
+  /**
+   * 스키마 없는(미한정) 테이블 참조를 {@link #validate} 와 같은 문구의 {@link UnsafeSqlException} 으로 거부한다(WD-76, Tibero
+   * 검증기 전용). 미한정 {@code DUAL} 만 예외다 — validate 의 Tibero 규칙과 같다.
+   *
+   * <p>왜 따로 있나: 보안 게이트({@code DatasetAccessGuard})는 {@link #referencedTables} 의 접힌 이름({@code
+   * ORDERS})만 받아 쓴 그대로의 이름을 모른다. Tibero 대화형 SQL 은 읽기 전용 계정 세션에서 실행돼 미한정 이름이 테넌트 스키마로 해석되지 않으므로 게이트가
+   * 미한정 이름을 막아야 하는데, 이는 등급 거부(403)가 아니라 문법 요구라 실행 경로의 검증기와 같은 400 문구여야 한다. 검사 대상은 validate 와 같은
+   * 집합(CTE 이름 제외, DML 쓰기 대상 포함)이다.
+   *
+   * @throws IllegalStateException PG 검증기에서 부른 경우(PG 의 미한정 정책은 모드별로 다르다 — 이 메서드의 계약 밖)
+   */
+  public void requireQualifiedTables(String sql) {
+    if (!tibero) {
+      throw new IllegalStateException("requireQualifiedTables 는 Tibero 검증기 전용입니다.");
+    }
+    Statement statement = parseSingleStatement(sql);
+    AstNodeCollector collected = collectSafely(statement, this::fold);
+    for (String fqn : collected.tableFqns(writeTargetsOf(statement, collected))) {
+      if (indexOfUnquotedDot(fqn) >= 0 || TIBERO_DUAL.equals(foldTiberoIdentifier(fqn))) {
+        continue;
+      }
+      // 첫 미한정 이름에서 바로 거부한다
+      throw new UnsafeSqlException(
+          tiberoUnqualifiedTableMessage(allowedSchema(), stripQuotes(fqn)));
+    }
   }
 
   /** 참조 테이블 이름. 검증기의 식별자 접기(PG: 소문자, Tibero: 대문자) 적용 결과. 미한정이면 schema 는 null. */

@@ -18,14 +18,18 @@ app:
   internal-token: ${EXECUTOR_INTERNAL_TOKEN:}
   api-base-url: ${DB_EXECUTOR_API_BASE_URL:http://api:8080}
   descriptor-ttl-seconds: 60
+  # 최악의 동시 세션 수 = max-pools × (max-size + read-only-max-size) = 8 × (4 + 2) = 48 — 외부 DB 세션 한도 안이어야 한다.
   pool:
     max-pools: 8
     max-size: 4
+    read-only-max-size: 2
   # 시간 제한(스펙 §4.3-4) — api 호출 제한(/execute/sql 60초, /execute/probe 35초)보다 짧아야 한다.
   sql:
     statement-timeout-seconds: 50
     total-timeout-seconds: 55
   probe:
+    timeout-seconds: 30
+  query:
     timeout-seconds: 30
 
 management:

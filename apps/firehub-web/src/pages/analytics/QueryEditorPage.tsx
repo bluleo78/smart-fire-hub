@@ -70,6 +70,7 @@ import { RUN_SHORTCUT_LABEL } from '../../lib/sql-run-shortcut-label';
 import { cn } from '../../lib/utils';
 import type { AnalyticsQueryResult } from '../../types/analytics';
 import type { ExportFormat } from '../../types/export';
+import { qualifiedName } from './components/schema-explorer-utils';
 import { SchemaExplorer } from './components/SchemaExplorer';
 
 // ============================================================
@@ -477,7 +478,9 @@ export default function QueryEditorPage() {
     const schemaTables = schemaInfo?.tables ?? [];
     const map: Record<string, string[]> = {};
     for (const table of schemaTables) {
-      map[table.tableName] = table.columns.map((c) => c.columnName);
+      // Tibero 는 `schema.table` 로 참조하므로 자동완성 키도 한정 이름으로 맞춘다(WD-76)
+      const key = qualifiedName(table.tableName, schemaInfo ?? {});
+      map[key] = table.columns.map((c) => c.columnName);
     }
     return map;
   }, [schemaInfo]);
@@ -842,6 +845,8 @@ export default function QueryEditorPage() {
           </div>
           <SchemaExplorer
             tables={tables}
+            dialect={schemaInfo?.dialect}
+            schema={schemaInfo?.schema}
             onInsertAtCursor={handleInsertAtCursor}
           />
         </div>

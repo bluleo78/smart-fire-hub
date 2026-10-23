@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -33,6 +34,9 @@ public class ExecutorDataStoreController {
   /** 토큰이 없거나 안전하지 않아 비밀번호를 내줄 수 없을 때의 503 코드 — 컨트롤러와 서비스가 함께 쓴다. */
   public static final String TOKEN_NOT_CONFIGURED_CODE = "EXECUTOR_TOKEN_NOT_CONFIGURED";
 
+  /** {@code ?include=ro} — 정확히 이 값일 때만 읽기 전용 계정을 싣는다(WD-76). 다른 값·없음은 기존 응답이다. */
+  static final String INCLUDE_RO = "ro";
+
   private final ExecutorDataStoreDescriptorService service;
   private final String token;
   private final boolean allowDefaultToken;
@@ -49,7 +53,8 @@ public class ExecutorDataStoreController {
   @GetMapping("/internal/executor/tenants/{tenantId}/data-store")
   public ResponseEntity<ExecutorDataStoreDescriptor> describe(
       @RequestHeader(value = "Authorization", required = false) String authHeader,
-      @PathVariable long tenantId) {
+      @PathVariable long tenantId,
+      @RequestParam(value = "include", required = false) String include) {
     // 설정 토큰이 비면 아무 요청도 인증할 수 없으므로 모든 요청을 503 으로 거부한다.
     if (token == null || token.isBlank()) {
       log.error("executor 내부 토큰이 비어 있어 저장소 기술자 제공을 거부한다");
@@ -60,7 +65,8 @@ public class ExecutorDataStoreController {
       return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
     }
     // 기본 토큰이면 비밀이 없는 PG 기술자만 내고, 비밀번호가 담길 Tibero 는 서비스가 복호화 전에 거부한다.
-    ExecutorDataStoreDescriptor descriptor = service.describe(tenantId, secretsAllowed());
+    ExecutorDataStoreDescriptor descriptor =
+        service.describe(tenantId, secretsAllowed(), INCLUDE_RO.equals(include));
     log.info("executor 저장소 기술자 제공: tenant={}, backend={}", tenantId, descriptor.backend());
     // 평문 비밀번호가 중간 캐시에 남지 않게 한다.
     return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(descriptor);

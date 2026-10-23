@@ -96,6 +96,10 @@ export interface SchemaColumn {
 
 export interface SchemaInfo {
   tables: SchemaTable[];
+  /** 테넌트 분석 저장소 방언 — 없으면 PostgreSQL 로 본다(WD-76) */
+  dialect?: 'POSTGRESQL' | 'TIBERO';
+  /** 테이블을 한정할 스키마명(Tibero 는 `schema.table` 로 참조) */
+  schema?: string;
 }
 
 // ============================================================

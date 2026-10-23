@@ -64,7 +64,8 @@ class DbExecutorClientTest {
   }
 
   private static DbExecutorClient client(String baseUrl, Duration timeout) {
-    return new DbExecutorClient(WebClient.builder(), baseUrl, "test-token", timeout, timeout);
+    return new DbExecutorClient(
+        WebClient.builder(), baseUrl, "test-token", timeout, timeout, timeout);
   }
 
   private static void stubJson(String path, String body) {
@@ -237,6 +238,7 @@ class DbExecutorClientTest {
             "http://localhost:1",
             "test-token",
             Duration.ofSeconds(5),
+            Duration.ofSeconds(5),
             Duration.ofSeconds(5));
 
     assertThatThrownBy(() -> client.executeSql("SELECT 1 FROM dual", List.of()))
@@ -266,5 +268,62 @@ class DbExecutorClientTest {
     assertThatThrownBy(() -> client().executeSql("SELECT 1 FROM dual", List.of()))
         .isInstanceOf(MissingTenantScopeException.class);
     assertThat(wireMock.getAllServeEvents()).isEmpty();
+  }
+
+  /** 조회 요청은 tenantId·query·maxRows 를 싣고, 응답 snake_case 필드가 레코드로 파싱된다. */
+  @Test
+  void executeQuery_postsTenantQueryMaxRows() {
+    stubJson(
+        "/execute/query",
+        """
+        {"success": true, "columns": ["A"], "rows": [{"A": 1}], "row_count": 1, "truncated": false, "error": null, "db_error": null}
+        """);
+
+    DbExecutorClient.QueryResult result = client().executeQuery("SELECT 1 FROM DUAL", 100);
+
+    assertThat(result.success()).isTrue();
+    assertThat(result.columns()).containsExactly("A");
+    assertThat(result.rows()).hasSize(1);
+    assertThat(result.rowCount()).isEqualTo(1);
+    assertThat(result.truncated()).isFalse();
+    assertThat(result.dbError()).isNull();
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/execute/query"))
+            .withHeader("Authorization", equalTo("Internal test-token"))
+            .withRequestBody(
+                equalToJson(
+                    """
+                    {"tenantId":5,"query":"SELECT 1 FROM DUAL","maxRows":100}
+                    """)));
+  }
+
+  /** 실행 오류 응답은 예외가 아니라 결과(db_error)로 돌아온다. */
+  @Test
+  void executeQuery_failureResponse_returnsDbError() {
+    stubJson(
+        "/execute/query",
+        """
+        {"success": false, "columns": [], "rows": [], "row_count": 0, "truncated": false, "error": "x", "db_error": {"code": -8026, "message": "JDBC-8026:Invalid identifier."}}
+        """);
+
+    DbExecutorClient.QueryResult result = client().executeQuery("SELECT x FROM DUAL", 10);
+
+    assertThat(result.success()).isFalse();
+    assertThat(result.dbError())
+        .isEqualTo(new ExecutorClient.DbError(-8026, "JDBC-8026:Invalid identifier."));
+  }
+
+  /** 연결 거부는 연결 실패 문구로 바뀐다. */
+  @Test
+  void executeQuery_connectionRefused_throwsConnectFailure() throws IOException {
+    int closedPort;
+    try (ServerSocket socket = new ServerSocket(0)) {
+      closedPort = socket.getLocalPort();
+    }
+    DbExecutorClient client = client("http://localhost:" + closedPort, Duration.ofSeconds(5));
+
+    assertThatThrownBy(() -> client.executeQuery("SELECT 1 FROM DUAL", 10))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage(DbExecutorClient.CONNECT_FAILURE_MESSAGE);
   }
 }

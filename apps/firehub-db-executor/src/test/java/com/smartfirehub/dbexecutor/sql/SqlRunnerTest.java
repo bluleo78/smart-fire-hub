@@ -43,7 +43,8 @@ class SqlRunnerTest {
         db.pools,
         new ExecutionTimeouts(
             new ExecutionTimeouts.Sql(statementSeconds, totalSeconds),
-            new ExecutionTimeouts.Probe(30)),
+            new ExecutionTimeouts.Probe(30),
+            new ExecutionTimeouts.Query(30)),
         descriptors);
   }
 

@@ -8,6 +8,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 import java.util.logging.Logger;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
@@ -78,12 +79,17 @@ class TenantPoolsTest {
   private final List<FakePool> created = new ArrayList<>();
 
   private TenantPools pools(int max) {
+    return pools(max, StoreDescriptor::owner);
+  }
+
+  private TenantPools pools(int max, Function<StoreDescriptor, StoreDescriptor.Account> account) {
     return new TenantPools(
         d -> {
           FakePool p = new FakePool(d);
           created.add(p);
           return p;
         },
+        account,
         max);
   }
 
@@ -95,7 +101,48 @@ class TenantPoolsTest {
         8629,
         "tb",
         "GENIA_T" + tenant,
-        new StoreDescriptor.Account("GENIA_T" + tenant, password));
+        new StoreDescriptor.Account("GENIA_T" + tenant, password),
+        new StoreDescriptor.Account("GENIA_T" + tenant + "_RO", "ro-" + password));
+  }
+
+  /** RO 풀의 지문은 RO 계정으로 계산한다 — RO 비밀번호만 바뀌면 RO 풀만 교체되고 OWNER 풀은 그대로다. */
+  @Test
+  void readOnlySelector_usesRoAccountForFingerprint() throws Exception {
+    TenantPools owner = pools(8);
+    TenantPools ro = pools(8, StoreDescriptor::ro);
+    StoreDescriptor before = desc(1, "a");
+    StoreDescriptor roRotated =
+        new StoreDescriptor(
+            1,
+            "TIBERO",
+            "h",
+            8629,
+            "tb",
+            "GENIA_T1",
+            before.owner(),
+            new StoreDescriptor.Account("GENIA_T1_RO", "rotated"));
+
+    owner.borrow(before).close();
+    ro.borrow(before).close();
+    assertThat(created).hasSize(2);
+
+    owner.borrow(roRotated).close(); // OWNER 값은 그대로 → 재사용
+    assertThat(created).hasSize(2);
+    ro.borrow(roRotated).close(); // RO 비밀번호가 바뀜 → RO 풀 교체
+    assertThat(created).hasSize(3);
+    assertThat(created.get(1).closed).isTrue();
+    assertThat(created.get(0).closed).isFalse();
+  }
+
+  @Test
+  void selectorReturningNull_failsWithClearMessage() {
+    TenantPools ro = pools(8, StoreDescriptor::ro);
+    StoreDescriptor noRo =
+        new StoreDescriptor(1, "TIBERO", "h", 8629, "tb", "GENIA_T1", desc(1, "a").owner(), null);
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> ro.borrow(noRo))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("접속 계정이 기술자에 없습니다");
+    assertThat(created).isEmpty();
   }
 
   @Test

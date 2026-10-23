@@ -53,4 +53,52 @@ test.describe('데이터셋 상세 — 차트/쿼리 단축 액션 (#98)', () =>
     expect(url.searchParams.get('datasetId')).toBe('1');
     expect(decodeURIComponent(url.searchParams.get('sql') ?? '')).toContain('test_dataset');
   });
+
+  /**
+   * WD-76: Tibero 테넌트는 스키마 한정 이름이 필수이고 LIMIT 이 없다 —
+   * 스키마 응답의 dialect 에 따라 바로가기 SQL 이 달라져야 한다. PG 는 기존 문자열 그대로.
+   */
+  async function openDetail(
+    page: import('@playwright/test').Page,
+    schemaInfo: Record<string, unknown>,
+  ) {
+    await setupDatasetDetailMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/schema', schemaInfo);
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+  }
+
+  test('Tibero: "쿼리 작성"은 스키마 한정 이름 + ROWNUM 으로 prefill 한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openDetail(page, { tables: [], dialect: 'TIBERO', schema: 'genia_t5' });
+    await page.getByRole('button', { name: '쿼리 작성' }).click();
+    await expect(page).toHaveURL(/\/analytics\/queries\/new\?datasetId=1&sql=/);
+    const sql = new URL(page.url()).searchParams.get('sql') ?? '';
+    expect(sql).toBe('SELECT *\nFROM genia_t5.test_dataset\nWHERE ROWNUM <= 100');
+    expect(sql).not.toContain('LIMIT');
+  });
+
+  test('Tibero: "차트 만들기"도 Tibero 문법으로 prefill 한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openDetail(page, { tables: [], dialect: 'TIBERO', schema: 'genia_t5' });
+    await page.getByRole('button', { name: '차트 만들기' }).click();
+    await expect(page).toHaveURL(/\/analytics\/charts\/new\?queryId=adhoc/);
+    const sql = new URL(page.url()).searchParams.get('sql') ?? '';
+    expect(sql).toBe('SELECT *\nFROM genia_t5.test_dataset\nWHERE ROWNUM <= 100');
+  });
+
+  test('PG(dialect 없음): 기존 SQL 문자열을 그대로 유지한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openDetail(page, { tables: [] });
+    await page.getByRole('button', { name: '쿼리 작성' }).click();
+    await expect(page).toHaveURL(/\/analytics\/queries\/new\?datasetId=1&sql=/);
+    expect(new URL(page.url()).searchParams.get('sql')).toBe(
+      'SELECT * FROM test_dataset LIMIT 100',
+    );
+  });
 });

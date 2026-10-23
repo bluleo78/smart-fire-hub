@@ -253,7 +253,7 @@ class SqlValidatorTiberoTest {
     assertThatThrownBy(() -> validator.validate("SELECT * FROM orders"))
         .isInstanceOf(UnsafeSqlException.class)
         .hasMessageContaining("테이블 참조에 스키마가 없습니다")
-        .hasMessageContaining(SCHEMA);
+        .hasMessageContaining(SCHEMA.toLowerCase());
   }
 
   @Test
@@ -410,5 +410,56 @@ class SqlValidatorTiberoTest {
     // 전용 목록은 공용 목록에 없는 이름만 둔다 — 겹치면 한쪽만 고쳐도 다른 쪽이 계속 허용해 정책이 갈라진다.
     assertThat(SqlValidator.TIBERO_EXTRA_FUNCTIONS)
         .doesNotContainAnyElementsOf(SqlValidator.ALLOWED_FUNCTIONS);
+  }
+
+  /** 스키마 없는 테이블 거부 문구는 Tibero 에서 통하는 소문자 한정 형식을 권한다(따옴표 소문자는 다른 테이블). */
+  @Test
+  void unqualifiedTable_message_suggestsFoldedSchemaForm() {
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM orders"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessage("테이블 참조에 스키마가 없습니다: 'orders'. Tibero 저장소에서는 genia_t5.orders 처럼 스키마와 함께 써 주세요.")
+        .satisfies(e -> assertThat(e.getMessage()).doesNotContain("\"orders\""));
+  }
+
+  /**
+   * WD-76 — 대화형 판정(DatasetAccessGuard)이 쓰는 미한정 거부. 대화형 SQL 은 읽기 전용 계정 세션에서 실행돼 미한정 이름이 테넌트 스키마로
+   * 해석되지 않는다. 문구는 validate 와 같은 빌더로 만든다(쓴 그대로의 이름). CTE 이름·미한정 DUAL·한정 이름은 통과한다.
+   */
+  @Test
+  void requireQualifiedTables_rejectsUnqualified_withValidateMessage() {
+    String ordersMessage =
+        "테이블 참조에 스키마가 없습니다: 'orders'. Tibero 저장소에서는 genia_t5.orders 처럼 스키마와 함께 써 주세요.";
+    assertThat(SqlValidator.tiberoUnqualifiedTableMessage(SCHEMA, "orders"))
+        .isEqualTo(ordersMessage);
+    for (String sql :
+        java.util.List.of(
+            "SELECT * FROM orders",
+            "SELECT * FROM genia_t5.a JOIN orders ON 1 = 1",
+            "DELETE FROM orders",
+            "WITH x AS (SELECT * FROM orders) SELECT * FROM x")) {
+      assertThatThrownBy(() -> validator.requireQualifiedTables(sql))
+          .as(sql)
+          .isInstanceOf(UnsafeSqlException.class)
+          .hasMessage(ordersMessage);
+    }
+    // 인용 이름은 따옴표만 떼고 쓴 그대로 보여 준다(validate 와 같다).
+    assertThatThrownBy(() -> validator.requireQualifiedTables("SELECT * FROM \"ORDERS\""))
+        .hasMessage(SqlValidator.tiberoUnqualifiedTableMessage(SCHEMA, "ORDERS"));
+    for (String sql :
+        java.util.List.of(
+            "SELECT * FROM genia_t5.orders",
+            "SELECT * FROM \"GENIA_T5\".\"ORDERS\"",
+            "WITH x AS (SELECT * FROM genia_t5.orders) SELECT * FROM x",
+            "SELECT SYSDATE FROM DUAL")) {
+      validator.requireQualifiedTables(sql);
+    }
+  }
+
+  /** 미한정 거부 문구 규칙은 Tibero 검증기 전용이다 — PG 검증기에서 부르면 계약 위반으로 막는다. */
+  @Test
+  void requireQualifiedTables_isTiberoOnly() {
+    assertThatThrownBy(
+            () -> SqlValidator.forAdhocDataSchemaQueries().requireQualifiedTables("SELECT 1"))
+        .isInstanceOf(IllegalStateException.class);
   }
 }

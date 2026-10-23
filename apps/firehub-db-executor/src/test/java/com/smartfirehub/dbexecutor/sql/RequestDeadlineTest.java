@@ -45,11 +45,15 @@ class RequestDeadlineTest {
   /** 전체 기한 2초(/execute/sql·/execute/probe 모두)로 줄인 컨트롤러. */
   private ExecuteController controller() {
     ExecutionTimeouts t =
-        new ExecutionTimeouts(new ExecutionTimeouts.Sql(50, 2), new ExecutionTimeouts.Probe(2));
+        new ExecutionTimeouts(
+            new ExecutionTimeouts.Sql(50, 2),
+            new ExecutionTimeouts.Probe(2),
+            new ExecutionTimeouts.Query(2));
     return new ExecuteController(
         descriptors,
         new SqlRunner(db.pools, t, descriptors),
         new ProbeRunner(db.pools, t, descriptors),
+        new QueryRunner(db.roPools, t, descriptors),
         t);
   }
 

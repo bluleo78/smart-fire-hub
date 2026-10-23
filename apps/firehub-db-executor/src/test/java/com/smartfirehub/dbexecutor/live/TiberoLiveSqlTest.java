@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.config.DbExecutorProperties;
 import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.sql.ProbeRunner;
+import com.smartfirehub.dbexecutor.sql.QueryRunner;
 import com.smartfirehub.dbexecutor.sql.SqlRunner;
 import com.smartfirehub.dbexecutor.store.HikariPoolFactory;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
@@ -18,6 +19,8 @@ import com.smartfirehub.dbexecutor.web.ExecuteController;
 import com.smartfirehub.dbexecutor.web.dto.ProbeColumn;
 import com.smartfirehub.dbexecutor.web.dto.ProbeRequest;
 import com.smartfirehub.dbexecutor.web.dto.ProbeResponse;
+import com.smartfirehub.dbexecutor.web.dto.QueryRequest;
+import com.smartfirehub.dbexecutor.web.dto.QueryResponse;
 import com.smartfirehub.dbexecutor.web.dto.SqlExecuteRequest;
 import com.smartfirehub.dbexecutor.web.dto.SqlExecuteResponse;
 import java.math.BigDecimal;
@@ -98,6 +101,10 @@ class TiberoLiveSqlTest {
   private String schema;
   private Connection owner;
   private TenantPools pools;
+
+  /** 읽기 전용(RO) 계정 풀 — /execute/query 가 쓴다. */
+  private TenantPools roPools;
+
   private StoreDescriptor descriptor;
   private ExecuteController controller;
 
@@ -112,9 +119,14 @@ class TiberoLiveSqlTest {
     schema = account.schema();
     owner = account.owner();
     descriptor = account.descriptor();
-    pools = new TenantPools(new HikariPoolFactory(4), 8);
+    pools =
+        new TenantPools(
+            new HikariPoolFactory(4, StoreDescriptor::owner), StoreDescriptor::owner, 8);
     // 풀이 계정 세션을 잡고 있으면 DROP USER 가 거절되므로 먼저 닫는다.
     account.closeBeforeDrop(pools::closeAll);
+    roPools =
+        new TenantPools(new HikariPoolFactory(2, StoreDescriptor::ro), StoreDescriptor::ro, 8);
+    account.closeBeforeDrop(roPools::closeAll);
     controller = controller(descriptor, new ExecutionTimeouts.Sql(50, 55));
     rowsPerSecond = calibrate();
     System.out.printf("LIVE calibrate rowsPerSecond=%.0f%n", rowsPerSecond);
@@ -129,10 +141,16 @@ class TiberoLiveSqlTest {
 
   /** 기술자 클라이언트를 테스트 더블로 바꾼 컨트롤러(HTTP 만 빼고 실제 경로). */
   private ExecuteController controller(StoreDescriptor descriptor, ExecutionTimeouts.Sql sql) {
+    return controller(descriptor, sql, new ExecutionTimeouts.Query(30));
+  }
+
+  /** 조회 시간 제한까지 고를 수 있는 컨트롤러(조회는 RO 풀로 간다). */
+  private ExecuteController controller(
+      StoreDescriptor descriptor, ExecutionTimeouts.Sql sql, ExecutionTimeouts.Query query) {
     StoreDescriptorClient descriptors =
         new StoreDescriptorClient(
             new DbExecutorProperties(
-                "live-token", "http://127.0.0.1:9", 60, new DbExecutorProperties.Pool(8, 4)),
+                "live-token", "http://127.0.0.1:9", 60, new DbExecutorProperties.Pool(8, 4, 2)),
             new ObjectMapper()) {
           @Override
           public StoreDescriptor get(long id, Duration budget) {
@@ -142,11 +160,13 @@ class TiberoLiveSqlTest {
             return descriptor;
           }
         };
-    ExecutionTimeouts timeouts = new ExecutionTimeouts(sql, new ExecutionTimeouts.Probe(30));
+    ExecutionTimeouts timeouts = new ExecutionTimeouts(sql, new ExecutionTimeouts.Probe(30), query);
     return new ExecuteController(
         descriptors,
         new SqlRunner(pools, timeouts, descriptors),
         new ProbeRunner(pools, timeouts, descriptors),
+        // 분석 조회는 RO 계정 풀로만 실행한다.
+        new QueryRunner(roPools, timeouts, descriptors),
         timeouts);
   }
 
@@ -282,6 +302,103 @@ class TiberoLiveSqlTest {
     assertThat(ms).isLessThan(15_000);
     assertThat(ids()).isEqualTo(idsBefore);
     assertThat(keys()).containsExactly(1L, 2L);
+  }
+
+  // ---------------------------------------------------------- 조회(/execute/query) — RO 계정
+
+  /** ORDERS 에 id_key 1..3 세 행을 넣고 RO 계정에 그 테이블 SELECT 만 준다(테이블은 매 테스트 새로 만들어진다). */
+  private void seedThreeRowsForRo() throws SQLException {
+    String t = "\"" + schema + "\".\"ORDERS\"";
+    for (int i = 1; i <= 3; i++) {
+      exec(
+          owner,
+          "INSERT INTO "
+              + t
+              + " (\"ID\", \"ID_KEY\", \"AMOUNT\", \"NAME\") VALUES ("
+              + i
+              + ", "
+              + i
+              + ", "
+              + (i * 10)
+              + ", 'n"
+              + i
+              + "')");
+    }
+    exec(owner, "COMMIT");
+    account.grantSelectToRo("ORDERS");
+  }
+
+  private String ordersSelect() {
+    return "SELECT \"ID_KEY\", \"NAME\" FROM \"" + schema + "\".\"ORDERS\" ORDER BY \"ID_KEY\"";
+  }
+
+  @Test
+  void live_query_readsWithRoAccount() throws Exception {
+    seedThreeRowsForRo();
+    // 상한 2 → 2행·잘림
+    QueryResponse cut = controller.query(new QueryRequest(tenantId, ordersSelect(), 2));
+    System.out.println(
+        "LIVE query maxRows=2 rows=" + cut.rowCount() + " truncated=" + cut.truncated());
+    assertThat(cut.success()).as(String.valueOf(cut.error())).isTrue();
+    assertThat(cut.rowCount()).isEqualTo(2);
+    assertThat(cut.truncated()).isTrue();
+    // 상한 10 → 3행·잘리지 않음
+    QueryResponse all = controller.query(new QueryRequest(tenantId, ordersSelect(), 10));
+    System.out.println(
+        "LIVE query maxRows=10 rows=" + all.rowCount() + " truncated=" + all.truncated());
+    assertThat(all.success()).as(String.valueOf(all.error())).isTrue();
+    assertThat(all.rowCount()).isEqualTo(3);
+    assertThat(all.truncated()).isFalse();
+    // 실제로 RO 계정으로 접속했는지 — 세션 사용자로 확인한다.
+    QueryResponse who =
+        controller.query(new QueryRequest(tenantId, "SELECT USER AS u FROM DUAL", 1));
+    assertThat(who.success()).as(String.valueOf(who.error())).isTrue();
+    assertThat(String.valueOf(who.rows().get(0).get("u"))).isEqualTo(account.roSchema());
+  }
+
+  @Test
+  void live_query_roCannotWrite() throws Exception {
+    seedThreeRowsForRo();
+    String t = "\"" + schema + "\".\"ORDERS\"";
+    // 1) RO 계정 커넥션으로 직접 UPDATE → DB 가 권한 부족으로 거부한다.
+    try (Connection ro = account.openRo()) {
+      SQLException e =
+          org.junit.jupiter.api.Assertions.assertThrows(
+              SQLException.class, () -> exec(ro, "UPDATE " + t + " SET \"NAME\" = 'x'"));
+      System.out.println(
+          "LIVE query ro-update errorCode=" + e.getErrorCode() + " message=" + e.getMessage());
+      // -8053 은 "JDBC-8053:Not authorized." — 쓰기 권한이 없다는 Tibero 의 권한 거부 코드다.
+      assertThat(e.getErrorCode()).isEqualTo(-8053);
+    }
+    assertThat(scalar("SELECT COUNT(*) FROM " + t + " WHERE \"NAME\" = 'x'")).isEqualTo("0");
+    // 2) QueryRunner 에 UPDATE → 조회 전용 문구로 거부(커넥션을 빌리기 전에).
+    QueryResponse r =
+        controller.query(new QueryRequest(tenantId, "UPDATE " + t + " SET \"NAME\" = 'x'", 10));
+    System.out.println("LIVE query runner-update error=" + r.error());
+    assertThat(r.success()).isFalse();
+    assertThat(r.error()).contains("조회");
+    assertThat(scalar("SELECT COUNT(*) FROM " + t + " WHERE \"NAME\" = 'x'")).isEqualTo("0");
+  }
+
+  @Test
+  void live_query_timeout() throws Exception {
+    seedThreeRowsForRo();
+    // 같은 풀을 쓰되 조회 제한만 2초로 줄인 실행기.
+    ExecuteController shortTimeout =
+        controller(descriptor, new ExecutionTimeouts.Sql(50, 55), new ExecutionTimeouts.Query(2));
+    // RO 풀 첫 접속 비용이 2~5초 창에 섞이지 않도록 같은 경로로 먼저 한 번 데운다.
+    assertThat(shortTimeout.query(new QueryRequest(tenantId, "SELECT 1 FROM DUAL", 1)).success())
+        .isTrue();
+    // 느린 본문은 DUAL 과 RO 가 SELECT 할 수 있는 ORDERS 만 건드린다.
+    String slow =
+        "SELECT \"ID_KEY\" FROM \"" + schema + "\".\"ORDERS\" WHERE (" + slowCount(10) + ") > 0";
+    long t0 = System.nanoTime();
+    QueryResponse r = shortTimeout.query(new QueryRequest(tenantId, slow, 10));
+    long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+    System.out.println("LIVE query timeout elapsedMs=" + ms + " error=" + r.error());
+    assertThat(r.success()).isFalse();
+    assertThat(r.error()).isEqualTo("실행 시간 제한(2초)을 넘어 중단했습니다.");
+    assertThat(ms).isBetween(2_000L, 5_000L);
   }
 
   @Test

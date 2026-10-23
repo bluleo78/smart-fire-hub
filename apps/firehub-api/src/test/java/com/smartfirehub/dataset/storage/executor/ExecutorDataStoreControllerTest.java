@@ -65,10 +65,20 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
   }
 
   private HttpResponse<String> get(long id, String authorization) throws Exception {
+    return get(id, authorization, "");
+  }
+
+  /** query 는 {@code ?include=ro} 처럼 물음표를 포함해 넘긴다(없으면 빈 문자열). */
+  private HttpResponse<String> get(long id, String authorization, String query) throws Exception {
     HttpRequest.Builder b =
         HttpRequest.newBuilder(
             URI.create(
-                "http://localhost:" + port + "/internal/executor/tenants/" + id + "/data-store"));
+                "http://localhost:"
+                    + port
+                    + "/internal/executor/tenants/"
+                    + id
+                    + "/data-store"
+                    + query));
     if (authorization != null) {
       b.header("Authorization", authorization);
     }
@@ -134,6 +144,55 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
         .doesNotContain("plain-S1");
   }
 
+  // ---- include=ro (WD-76) ----
+
+  @Test
+  void describe_includeRo_addsDecryptedRoAccount() throws Exception {
+    long id = newTibero(TenantDataStoreStatus.READY);
+
+    HttpResponse<String> res = get(id, "Internal " + token, "?include=ro");
+
+    assertThat(res.statusCode()).isEqualTo(200);
+    assertThat(res.body())
+        .contains("\"ro\":{\"username\":\"GENIA_T" + id + "_RO\",\"password\":\"plain-RO\"}")
+        // 소유 계정은 그대로, 슬롯 비밀번호는 여전히 내지 않는다.
+        .contains("\"password\":\"plain-OWNER\"")
+        .doesNotContain("plain-S1");
+  }
+
+  @Test
+  void describe_withoutInclude_hasNoRoField() throws Exception {
+    long id = newTibero(TenantDataStoreStatus.READY);
+
+    // Python 실행기 계약: include 가 없거나 ro 가 아니면 ro 키 자체가 없다.
+    assertThat(get(id, "Internal " + token).body()).doesNotContain("\"ro\"");
+    assertThat(get(id, "Internal " + token, "?include=other").body()).doesNotContain("\"ro\"");
+    assertThat(get(id, "Internal " + token, "?include=RO").body()).doesNotContain("\"ro\"");
+  }
+
+  @Test
+  void describe_includeRo_pgTenant_noRo() throws Exception {
+    HttpResponse<String> res = get(DEFAULT_TEST_TENANT_ID, "Internal " + token, "?include=ro");
+
+    assertThat(res.statusCode()).isEqualTo(200);
+    assertThat(res.body()).contains("\"backend\":\"POSTGRESQL\"").doesNotContain("\"ro\"");
+  }
+
+  @Test
+  void describe_includeRo_missingRoRow_omitsRo() throws Exception {
+    long id = newTibero(TenantDataStoreStatus.READY);
+    // RO 행만 지운다 — 실패 안내는 db-executor 가 한다.
+    dsl.deleteFrom(org.jooq.impl.DSL.table("tenant_data_store_account"))
+        .where(org.jooq.impl.DSL.field("tenant_id").eq(id))
+        .and(org.jooq.impl.DSL.field("account_role").eq("RO"))
+        .execute();
+
+    HttpResponse<String> res = get(id, "Internal " + token, "?include=ro");
+
+    assertThat(res.statusCode()).isEqualTo(200);
+    assertThat(res.body()).doesNotContain("\"ro\"").contains("\"password\":\"plain-OWNER\"");
+  }
+
   @Test
   void Tibero_PENDING_409_code() throws Exception {
     long id = newTibero(TenantDataStoreStatus.PENDING);
@@ -148,13 +207,13 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
 
   private static ExecutorDataStoreDescriptorService stubService() {
     ExecutorDataStoreDescriptorService service = mock(ExecutorDataStoreDescriptorService.class);
-    when(service.describe(anyLong(), anyBoolean()))
+    when(service.describe(anyLong(), anyBoolean(), anyBoolean()))
         .thenReturn(ExecutorDataStoreDescriptor.postgres(1));
     return service;
   }
 
   private static void assertNotConfigured(ExecutorDataStoreController c, String header) {
-    assertThatThrownBy(() -> c.describe(header, 1))
+    assertThatThrownBy(() -> c.describe(header, 1, null))
         .isInstanceOfSatisfying(
             CodedApiException.class,
             e -> {
@@ -169,7 +228,7 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
     ExecutorDataStoreController c = new ExecutorDataStoreController(service, "", false);
 
     assertNotConfigured(c, "Internal ");
-    verify(service, never()).describe(anyLong(), anyBoolean());
+    verify(service, never()).describe(anyLong(), anyBoolean(), anyBoolean());
   }
 
   @Test
@@ -184,10 +243,10 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
     for (String insecure : ExecutorDataStoreController.INSECURE_DEFAULT_TOKENS) {
       ResponseEntity<ExecutorDataStoreDescriptor> res =
           new ExecutorDataStoreController(service, insecure, false)
-              .describe("Internal " + insecure, 1);
+              .describe("Internal " + insecure, 1, null);
       assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
-    verify(service, times(2)).describe(1, false);
+    verify(service, times(2)).describe(1, false, false);
   }
 
   @Test
@@ -195,9 +254,42 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
     ExecutorDataStoreDescriptorService service = stubService();
 
     new ExecutorDataStoreController(service, "dev-executor-token", true)
-        .describe("Internal dev-executor-token", 1);
+        .describe("Internal dev-executor-token", 1, null);
 
-    verify(service).describe(1, true);
+    verify(service).describe(1, true, false);
+  }
+
+  @Test
+  void include_ro_만_includeReadOnly_true로_전달() {
+    ExecutorDataStoreDescriptorService service = stubService();
+    ExecutorDataStoreController c = new ExecutorDataStoreController(service, "t", false);
+
+    c.describe("Internal t", 1, "ro");
+    verify(service).describe(1, true, true);
+    c.describe("Internal t", 2, "RO");
+    c.describe("Internal t", 3, "ro,x");
+    verify(service).describe(2, true, false);
+    verify(service).describe(3, true, false);
+  }
+
+  /** 기본 토큰 + include=ro + Tibero: OWNER 와 같이 503 이고 RO 비밀번호도 새지 않는다. */
+  @Test
+  void describe_includeRo_defaultToken_503() {
+    long id = newTibero(TenantDataStoreStatus.READY);
+    ExecutorDataStoreDescriptorService real =
+        new ExecutorDataStoreDescriptorService(repository, encryption);
+
+    assertThatThrownBy(
+            () ->
+                new ExecutorDataStoreController(real, "executor-token", false)
+                    .describe("Internal executor-token", id, "ro"))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> {
+              assertThat(e.status()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+              assertThat(e.code()).isEqualTo("EXECUTOR_TOKEN_NOT_CONFIGURED");
+              assertThat(e.getMessage()).doesNotContain("plain-");
+            });
   }
 
   @Test
@@ -206,10 +298,10 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
 
     assertThat(
             new ExecutorDataStoreController(service, "executor-token", false)
-                .describe("Internal nope", 1)
+                .describe("Internal nope", 1, null)
                 .getStatusCode())
         .isEqualTo(HttpStatus.UNAUTHORIZED);
-    verify(service, never()).describe(anyLong(), anyBoolean());
+    verify(service, never()).describe(anyLong(), anyBoolean(), anyBoolean());
   }
 
   /** 기본 토큰 + Tibero 테넌트: 실제 서비스·DB 로 503 이고 본문에 비밀번호가 없다. 플래그를 켜면 200. */
@@ -221,7 +313,7 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
 
     ExecutorDataStoreController refused =
         new ExecutorDataStoreController(real, "executor-token", false);
-    assertThatThrownBy(() -> refused.describe("Internal executor-token", id))
+    assertThatThrownBy(() -> refused.describe("Internal executor-token", id, null))
         .isInstanceOfSatisfying(
             CodedApiException.class,
             e -> {
@@ -232,7 +324,7 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
 
     ResponseEntity<ExecutorDataStoreDescriptor> allowed =
         new ExecutorDataStoreController(real, "executor-token", true)
-            .describe("Internal executor-token", id);
+            .describe("Internal executor-token", id, null);
     assertThat(allowed.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(allowed.getBody().owner().password()).isEqualTo("plain-OWNER");
   }
@@ -242,15 +334,16 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
     ExecutorDataStoreController c =
         new ExecutorDataStoreController(stubService(), "s3cret-x", false);
 
-    assertThat(c.describe("Internal s3cret-x", 1).getStatusCode()).isEqualTo(HttpStatus.OK);
-    assertThat(c.describe("Internal nope", 1).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
-    assertThat(c.describe(null, 1).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(c.describe("Internal s3cret-x", 1, null).getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(c.describe("Internal nope", 1, null).getStatusCode())
+        .isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(c.describe(null, 1, null).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
   }
 
   @Test
   void 성공응답_no_store() {
     ResponseEntity<ExecutorDataStoreDescriptor> res =
-        new ExecutorDataStoreController(stubService(), "t", false).describe("Internal t", 1);
+        new ExecutorDataStoreController(stubService(), "t", false).describe("Internal t", 1, null);
 
     assertThat(res.getHeaders().getCacheControl()).contains("no-store");
   }

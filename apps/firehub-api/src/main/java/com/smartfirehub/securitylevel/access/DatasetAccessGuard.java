@@ -65,9 +65,9 @@ public class DatasetAccessGuard {
   private final AiCallContext aiCallContext;
 
   /**
-   * 테넌트 백엔드별 데이터 스키마·검증기(WD-77, 스펙 §5.0·§5.4). Tibero 테넌트의 파이프라인 SQL(Tibero 에서 실행될 SQL)은 이 빈이 주는
-   * 스키마({@code GENIA_T{id}})·Tibero 식별자 접기로 판정한다 — PG 테넌트와 Tibero 테넌트의 대화형 SQL(아직 PG 에서 실행)은 이 빈을
-   * 거치지 않고 기존 PG 경로 그대로다.
+   * 테넌트 백엔드별 데이터 스키마·검증기(WD-77, 스펙 §5.0·§5.4). Tibero 테넌트의 SQL(파이프라인 SQL, 그리고 WD-76 부터 db-executor
+   * 로 실행되는 대화형·분석·지표 SQL)은 이 빈이 주는 스키마({@code GENIA_T{id}})·Tibero 식별자 접기로 판정한다 — PG 테넌트는 이 빈을 거치지
+   * 않고 기존 PG 경로 그대로다.
    */
   private final PipelineDataSchema pipelineDataSchema;
 
@@ -659,11 +659,14 @@ public class DatasetAccessGuard {
     if (sql == null || sql.isBlank()) {
       throw new UnsafeSqlException("SQL 이 비어 있습니다.");
     }
-    // Tibero 어휘·스키마 규칙은 Tibero 에서 실행될 SQL, 즉 파이프라인 SQL 단계(PIPELINE_SAVE·PIPELINE_RUN)에만 쓴다(§5.4).
-    // 대화형·분석·지표 SQL(INTERACTIVE)은 Tibero 테넌트여도 아직 PG 에서 실행되므로 PG 규칙(PG 어휘 검사·PG 데이터 스키마)으로
-    // 판정한다 — Tibero 규칙으로 보면 PG 어휘 검사를 건너뛴 판정으로 PG 에서 실행될 수 있다.
+    // 판정은 SQL 이 실행될 곳의 규칙을 따른다(§5.4). Tibero 테넌트의 SQL 은 모드와 무관하게 Tibero 에서 실행된다.
+    // 파이프라인 SQL 단계(PIPELINE_SAVE·PIPELINE_RUN)는 러너가, 대화형·분석·지표 SQL(INTERACTIVE)은 WD-76 부터
+    // 관문 뒤 세 진입점(분석 실행·데이터셋 화면·지표 수집)이 db-executor 읽기 전용 조회로 실행한다. 그래서 Tibero 어휘 규칙과
+    // 테넌트 스키마(GENIA_T{id})로 판정해야 한다 — PG 규칙(data_t{id})으로 보면 판정이 본 스키마와 실행되는 스키마가 갈라진다.
+    // 전제: Tibero 테넌트의 INTERACTIVE 판정 뒤 실행은 반드시 그 세 진입점의 Tibero 분기로 간다. PG 에서 실행하는 INTERACTIVE
+    // 호출자가 새로 생기면 이 판정은 안전하지 않다(PG 어휘 검사를 건너뛴 판정으로 PG 에서 실행된다).
     // PG 테넌트는 모드와 무관하게 PG 규칙 그대로다.
-    boolean tibero = pipelineDataSchema.isTibero() && mode != SqlAccessMode.INTERACTIVE;
+    boolean tibero = pipelineDataSchema.isTibero();
     Set<String> readNames = new LinkedHashSet<>();
     Set<String> writeNames = new LinkedHashSet<>();
     // 어휘 검사: 받은 문자열 그대로 먼저 거부한다(위 Javadoc). PG 는 PG·JSqlParser 어휘가 갈리는 표기, Tibero 는 Tibero 어휘 규칙(대체
@@ -676,10 +679,15 @@ public class DatasetAccessGuard {
     // 끝 세미콜론(뒤 공백 포함)만 뗀다 — 그 외 정규화는 판정 문자열과 실행 문자열을 어긋나게 한다(위 Javadoc).
     String exact = SqlValidationUtils.removeTrailingSemicolon(sql.strip());
     // 참조 추출·데이터 스키마도 실행될 곳의 규칙을 따른다 — Tibero 는 테넌트 Tibero 검증기(따옴표 없으면 대문자 접기)·GENIA_T{id}.
+    SqlValidator tiberoValidator = tibero ? pipelineDataSchema.validator() : null;
     SqlValidator.ReferencedTables refs =
-        tibero
-            ? pipelineDataSchema.validator().referencedTables(exact)
-            : sqlParser.referencedTables(exact);
+        tibero ? tiberoValidator.referencedTables(exact) : sqlParser.referencedTables(exact);
+    // Tibero 대화형(WD-76)은 읽기 전용 계정 세션에서 실행돼 미한정 이름이 테넌트 스키마로 해석되지 않는다. 이는 등급 거부가 아니라 문법
+    // 요구라 403 이 아니라 실행 경로 검증기와 같은 문구의 UnsafeSqlException(400)으로 거부한다 — 숨김·허용 테이블에 똑같이 나오므로
+    // 존재를 드러내지 않고, 감사(거부 기록)에도 남지 않는다(requireSql 은 판정 거부만 감사한다). 미한정 DUAL 은 통과.
+    if (tibero && mode == SqlAccessMode.INTERACTIVE) {
+      tiberoValidator.requireQualifiedTables(exact);
+    }
     String dataSchema = tibero ? pipelineDataSchema.current() : DataSchema.current();
 
     // 1) 스키마 검사 + 이름 수집. 다른 스키마 참조는 매핑을 볼 것도 없이 거부.
@@ -791,7 +799,8 @@ public class DatasetAccessGuard {
    *   <li>Tibero 이름({@code tibero}, WD-77 스펙 §5.0·§5.4): 테이블 물리명은 메타데이터 이름의 대문자이므로 소문자로 되돌려 데이터셋
    *       매핑에 넘긴다. 소문자가 섞인 인용 이름은 우리 테이블일 수 없어 매핑 없음으로 거부한다. 미한정 {@code DUAL} 은 읽기면 시스템 의사 테이블이라
    *       판정에서 빼고(데이터셋이 아니다 — {@code dual} 데이터셋 이름은 {@code TiberoNames.validateUserName} 이 막는다), 쓰기
-   *       대상이면 정당한 용도가 없어 거부한다. 한정된 {@code genia_t5.dual} 은 일반 테이블처럼 판정한다.
+   *       대상이면 정당한 용도가 없어 거부한다. 한정된 {@code genia_t5.dual} 은 일반 테이블처럼 판정한다. 대화형(INTERACTIVE, WD-76)의
+   *       미한정 이름은 judgeSql 이 먼저 400 으로 막고, 여기서는 백스톱으로 거부한다 — 읽기 전용 계정 세션에서 실행돼 테넌트 스키마로 해석되지 않는다.
    *   <li>PIPELINE_SAVE 의 step_ref 더미는 건너뛴다.
    * </ul>
    *
@@ -815,6 +824,12 @@ public class DatasetAccessGuard {
       }
       if (!t.name().toUpperCase(Locale.ROOT).equals(t.name())) {
         return deniedVerdict("SQL_UNMAPPED_TABLE", null, t.name());
+      }
+      // 대화형(WD-76)의 미한정 이름은 judgeSql 이 requireQualifiedTables 로 먼저 400 으로 막는다. 여기는 그 검사와 이 루프의 대상
+      // 집합이 어긋날 때를 위한 백스톱이다(fail-closed, 위 DUAL 만 예외) — 미한정 이름이 판정에 들어가면 판정이 본 테이블(GENIA_T{id}.X)과
+      // 읽기 전용 세션이 해석하는 테이블이 다르다. 파이프라인 모드는 OWNER 세션이라 미한정 이름이 테넌트 스키마로 해석되므로 그대로 둔다.
+      if (t.schema() == null && mode == SqlAccessMode.INTERACTIVE) {
+        return deniedVerdict("SQL_OTHER_SCHEMA", null, t.name());
       }
       metadataName = t.name().toLowerCase(Locale.ROOT);
     }

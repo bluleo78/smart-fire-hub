@@ -192,6 +192,44 @@ public final class PipelineSqlErrorMessages {
   }
 
   /**
+   * Tibero "테이블 없음"({@link TiberoDialect.NotFound#TABLE}) 오류의 안내 문장 — 파이프라인 실패 문구({@link
+   * #describeTiberoError})와 같은 42P01 문장을 돌려준다(WD-76 분석 조회 오류, 스펙 §3.9). 권한이 없어 안 보이는 테이블도 Tibero 는
+   * 같은 코드로 알린다. 테이블 없음 코드가 아니면 null — 호출자가 자기 기본 문구를 쓴다.
+   *
+   * <p>분석 조회는 SQL 을 감싸지 않으므로 {@link #describeTiberoError} 의 줄 번호 보정·접두를 쓰지 않고 안내 문장만 꺼낸다(문장을 두 벌로
+   * 두지 않으려고 같은 {@link #guide} 를 거친다).
+   */
+  public static String tiberoMissingTableGuide(int code) {
+    if (!TiberoDialect.NotFound.TABLE.hasCode(code)) {
+      return null;
+    }
+    return guide(new PgError(tiberoSqlState(code), null, null, null, null));
+  }
+
+  /**
+   * Tibero 분석 조회(db-executor 읽기 전용 조회) 실패의 사용자 문구(WD-76). 시간 초과·테이블 없음·그 외 순으로 가른다.
+   *
+   * <p>분석은 SQL 을 감싸지 않으므로 줄 번호는 그대로 두고, 드라이버가 붙이는 " of null" 만 뗀다. 오류 문구 변환을 이 클래스 한 곳에 둬 파이프라인 실패
+   * 문구와 갈리지 않게 한다.
+   *
+   * @param code Tibero 오류 코드
+   * @param message 실행기가 준 원문(null 이면 빈 문자열로 취급)
+   */
+  public static String describeTiberoQueryError(int code, String message) {
+    String raw = message == null ? "" : message.replace(" of null", "");
+    if (TiberoDialect.STATEMENT_CANCELED.contains(code)) {
+      return "실행 시간 제한(30초)을 넘어 중단했습니다.\n원인: " + raw;
+    }
+    // 테이블 없음(이름 오류 또는 RO 계정에 SELECT 권한이 없는 테이블 — Tibero 는 같은 코드로 알린다)은 파이프라인과 같은 "참조한 테이블이 없습니다"
+    // 안내를 쓴다(스펙 §3.9).
+    String missingTable = tiberoMissingTableGuide(code);
+    if (missingTable != null) {
+      return missingTable + CAUSE_LABEL + raw;
+    }
+    return "Tibero 오류: " + raw;
+  }
+
+  /**
    * Tibero 오류 코드를 같은 뜻의 PostgreSQL SQLState 로 옮긴다 — 안내 문장을 PG 판과 공유하기 위한 대응표다. 모르면 분류 밖 상태값(일반 안내).
    */
   private static String tiberoSqlState(int code) {

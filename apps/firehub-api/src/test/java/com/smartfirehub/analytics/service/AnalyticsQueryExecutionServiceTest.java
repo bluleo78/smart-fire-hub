@@ -1,15 +1,26 @@
 package com.smartfirehub.analytics.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.SchemaInfoResponse;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.util.NormalizedSql;
+import com.smartfirehub.pipeline.exception.ScriptExecutionException;
+import com.smartfirehub.pipeline.service.PipelineDataSchema;
+import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
+import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.sql.TiberoQueryService;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
@@ -580,5 +591,108 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
     assertThat(response.queryType()).isEqualTo("DELETE");
     assertThat(response.affectedRows()).isEqualTo(2);
     assertThat(dsl.fetchValue("SELECT count(*) FROM data.exec_test")).isEqualTo(0L);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Tibero 테넌트(WD-76) — 분석 SQL 은 PG(dsl·Python executor)가 아니라 db-executor 읽기 전용 조회로 실행한다. 실제
+  // TiberoQueryService 에 스키마·실행기만 목으로 꽂아 검증 순서(조회 전용 거부)까지 함께 본다. 스프링 컨텍스트를 늘리지 않게(목 빈은
+  // 컨텍스트 캐시 키를 바꾼다) 서비스를 직접 만든다.
+  // ---------------------------------------------------------------------------------------------
+
+  /** Tibero 테넌트로 꾸민 분석 실행 서비스와 협력자 목. */
+  private record TiberoSetup(
+      AnalyticsQueryExecutionService service,
+      DSLContext pg,
+      ExecutorClient executorClient,
+      DbExecutorClient dbExecutorClient) {}
+
+  private static TiberoSetup tiberoSetup() {
+    PipelineDataSchema schema = mock(PipelineDataSchema.class);
+    when(schema.isTibero()).thenReturn(true);
+    when(schema.validator()).thenReturn(SqlValidator.forTiberoSchema("GENIA_T5"));
+    DbExecutorClient db = mock(DbExecutorClient.class);
+    DSLContext pg = mock(DSLContext.class);
+    ExecutorClient executor = mock(ExecutorClient.class);
+    return new TiberoSetup(
+        new AnalyticsQueryExecutionService(pg, executor, new TiberoQueryService(schema, db)),
+        pg,
+        executor,
+        db);
+  }
+
+  @Test
+  void tibero_select_runsOnDbExecutor_andMapsResponse() {
+    TiberoSetup t = tiberoSetup();
+    String sql = "SELECT region FROM genia_t5.orders";
+    when(t.dbExecutorClient().executeQuery(sql, 100))
+        .thenReturn(
+            new DbExecutorClient.QueryResult(
+                true,
+                List.of("region"),
+                List.of(Map.of("region", "서울"), Map.of("region", "부산")),
+                2,
+                false,
+                null,
+                null));
+
+    AnalyticsQueryResponse r = t.service().execute(NormalizedSql.of(sql), 100, true);
+
+    assertThat(r.error()).isNull();
+    assertThat(r.queryType()).isEqualTo("SELECT");
+    assertThat(r.columns()).containsExactly("region");
+    assertThat(r.rows()).extracting(m -> m.get("region")).containsExactly("서울", "부산");
+    assertThat(r.affectedRows()).isEqualTo(2);
+    assertThat(r.totalRows()).isEqualTo(2);
+    assertThat(r.truncated()).isFalse();
+    // PG 경로(직접 실행·Python executor)는 전혀 건드리지 않는다 — 폴백 없음.
+    verifyNoInteractions(t.pg(), t.executorClient());
+  }
+
+  @Test
+  void tibero_truncatedFlag_isPassedThrough() {
+    TiberoSetup t = tiberoSetup();
+    String sql = "SELECT region FROM genia_t5.orders";
+    when(t.dbExecutorClient().executeQuery(sql, 1))
+        .thenReturn(
+            new DbExecutorClient.QueryResult(
+                true, List.of("region"), List.of(Map.of("region", "서울")), 1, true, null, null));
+
+    AnalyticsQueryResponse r = t.service().execute(NormalizedSql.of(sql), 1, false);
+
+    assertThat(r.truncated()).isTrue();
+    assertThat(r.rows()).hasSize(1);
+  }
+
+  /**
+   * Review Focus 5 — 차트 경로는 readOnly=false 로 들어온다. PG 라면 DML 을 실행하지만 Tibero 분석 경로는 readOnly 와 무관하게
+   * 조회만 실행한다(조회 전용 거부 문구). 실행기는 부르지 않는다.
+   */
+  @Test
+  void tibero_dmlWithReadOnlyFalse_isRejectedAsQueryOnly() {
+    TiberoSetup t = tiberoSetup();
+    for (String sql :
+        List.of(
+            "UPDATE genia_t5.orders SET region = 'x'",
+            "DELETE FROM genia_t5.orders",
+            "INSERT INTO genia_t5.orders (region) VALUES ('x')")) {
+      AnalyticsQueryResponse r = t.service().execute(NormalizedSql.of(sql), 1000, false);
+      assertThat(r.error()).as(sql).isEqualTo("Tibero 저장소의 분석 SQL 은 조회(SELECT·WITH)만 실행합니다.");
+      assertThat(r.rows()).isEmpty();
+    }
+    verifyNoInteractions(t.pg(), t.executorClient(), t.dbExecutorClient());
+  }
+
+  @Test
+  void tibero_executorFailure_becomesErrorResponse() {
+    TiberoSetup t = tiberoSetup();
+    String sql = "SELECT region FROM genia_t5.orders";
+    when(t.dbExecutorClient().executeQuery(sql, 100))
+        .thenThrow(new ScriptExecutionException("Tibero 실행기에 연결하지 못했습니다."));
+
+    AnalyticsQueryResponse r = t.service().execute(NormalizedSql.of(sql), 100, true);
+
+    assertThat(r.error()).isEqualTo("Tibero 실행기에 연결하지 못했습니다.");
+    assertThat(r.queryType()).isEqualTo("UNKNOWN");
+    verifyNoInteractions(t.pg(), t.executorClient());
   }
 }

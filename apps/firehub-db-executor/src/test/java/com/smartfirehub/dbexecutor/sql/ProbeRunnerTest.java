@@ -24,7 +24,10 @@ class ProbeRunnerTest {
   private final ProbeRunner runner =
       new ProbeRunner(
           db.pools,
-          new ExecutionTimeouts(new ExecutionTimeouts.Sql(50, 55), new ExecutionTimeouts.Probe(30)),
+          new ExecutionTimeouts(
+              new ExecutionTimeouts.Sql(50, 55),
+              new ExecutionTimeouts.Probe(30),
+              new ExecutionTimeouts.Query(30)),
           descriptors);
 
   ProbeRunnerTest() throws SQLException {}

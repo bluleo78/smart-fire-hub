@@ -172,7 +172,9 @@ class SavedQueryControllerTest {
   void getSchema_withPermission_returnsSchema() throws Exception {
     SchemaInfoResponse schema =
         new SchemaInfoResponse(
-            List.of(new SchemaInfoResponse.TableInfo("my_table", "My Dataset", 1L, List.of())));
+            List.of(new SchemaInfoResponse.TableInfo("my_table", "My Dataset", 1L, List.of())),
+            "POSTGRESQL",
+            "data_t1");
     // PR-1 Task 2: 컨트롤러가 datasetIds 파라미터를 받는 오버로드로 변경됨 → null 분기 stub.
     when(executionService.getSchemaInfo((List<Long>) isNull(), any())).thenReturn(schema);
 
@@ -180,7 +182,9 @@ class SavedQueryControllerTest {
         .perform(
             get("/api/v1/analytics/queries/schema").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.tables[0].tableName").value("my_table"));
+        .andExpect(jsonPath("$.tables[0].tableName").value("my_table"))
+        .andExpect(jsonPath("$.dialect").value("POSTGRESQL"))
+        .andExpect(jsonPath("$.schema").value("data_t1"));
 
     // 추가 — datasetIds 미지정 시 서비스의 List<Long> 오버로드에 null 위임 검증
     verify(executionService).getSchemaInfo((java.util.List<Long>) isNull(), any());
@@ -192,7 +196,7 @@ class SavedQueryControllerTest {
   @Test
   void getSchema_singleDatasetId_passesListWithOneElement() throws Exception {
     when(executionService.getSchemaInfo(eq(List.of(11L)), any()))
-        .thenReturn(new SchemaInfoResponse(List.of()));
+        .thenReturn(new SchemaInfoResponse(List.of(), "POSTGRESQL", "data_t1"));
 
     mockMvc
         .perform(
@@ -207,7 +211,7 @@ class SavedQueryControllerTest {
   @Test
   void getSchema_multipleDatasetIds_passesListInOrder() throws Exception {
     when(executionService.getSchemaInfo(eq(List.of(11L, 7L)), any()))
-        .thenReturn(new SchemaInfoResponse(List.of()));
+        .thenReturn(new SchemaInfoResponse(List.of(), "POSTGRESQL", "data_t1"));
 
     mockMvc
         .perform(
@@ -228,7 +232,7 @@ class SavedQueryControllerTest {
   @Test
   void getSchema_emptyDatasetIdsParam_behaviorDocumented() throws Exception {
     when(executionService.getSchemaInfo((List<Long>) any(), any()))
-        .thenReturn(new SchemaInfoResponse(List.of()));
+        .thenReturn(new SchemaInfoResponse(List.of(), "POSTGRESQL", "data_t1"));
 
     mockMvc
         .perform(

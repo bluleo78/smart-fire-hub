@@ -28,6 +28,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -61,7 +62,7 @@ class TiberoLiveHttpTest {
     StoreDescriptorClient descriptorDouble() {
       return new StoreDescriptorClient(
           new DbExecutorProperties(
-              TOKEN, "http://127.0.0.1:9", 60, new DbExecutorProperties.Pool(8, 4)),
+              TOKEN, "http://127.0.0.1:9", 60, new DbExecutorProperties.Pool(8, 4, 2)),
           new ObjectMapper()) {
         @Override
         public StoreDescriptor get(long id, Duration budget) {
@@ -79,7 +80,10 @@ class TiberoLiveHttpTest {
 
   @Autowired private ObjectMapper json;
 
-  @Autowired private TenantPools pools;
+  // OWNER 풀. 읽기 전용 풀(readOnlyPools)은 RO 실서버 검증(Task 7)에서 다룬다.
+  @Autowired
+  @Qualifier("tenantPools")
+  private TenantPools pools;
 
   private final HttpClient http = HttpClient.newHttpClient();
 

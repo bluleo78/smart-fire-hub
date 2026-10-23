@@ -10,15 +10,24 @@ import {
 } from '../../../components/ui/dropdown-menu';
 import { Input } from '../../../components/ui/input';
 import { cn } from '../../../lib/utils';
-import type { SchemaTable } from '../../../types/analytics';
-import { generateSnippets, getTypeBadge, quoteIdentifier } from './schema-explorer-utils';
+import type { SchemaInfo, SchemaTable } from '../../../types/analytics';
+import {
+  columnReference,
+  generateSnippets,
+  getTypeBadge,
+  tableReference,
+} from './schema-explorer-utils';
 
 interface SchemaExplorerProps {
   tables: SchemaTable[];
+  /** 테넌트 방언·스키마 — 삽입 텍스트를 방언에 맞춘다(없으면 PG) */
+  dialect?: SchemaInfo['dialect'];
+  schema?: string;
   onInsertAtCursor: (text: string) => void;
 }
 
-export function SchemaExplorer({ tables, onInsertAtCursor }: SchemaExplorerProps) {
+export function SchemaExplorer({ tables, dialect, schema, onInsertAtCursor }: SchemaExplorerProps) {
+  const dialectInfo = useMemo(() => ({ dialect, schema }), [dialect, schema]);
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
 
@@ -145,7 +154,7 @@ export function SchemaExplorer({ tables, onInsertAtCursor }: SchemaExplorerProps
                   <button
                     type="button"
                     className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    onClick={() => onInsertAtCursor(quoteIdentifier(table.tableName))}
+                    onClick={() => onInsertAtCursor(tableReference(table, dialectInfo))}
                     title="테이블명 삽입"
                   >
                     <Plus className="h-3 w-3" />
@@ -166,7 +175,7 @@ export function SchemaExplorer({ tables, onInsertAtCursor }: SchemaExplorerProps
                       sideOffset={4}
                       className="w-56"
                     >
-                      {generateSnippets(table).map((snippet) => (
+                      {generateSnippets(table, dialectInfo).map((snippet) => (
                         <DropdownMenuItem
                           key={snippet.label}
                           onClick={() => onInsertAtCursor(snippet.sql)}
@@ -176,7 +185,7 @@ export function SchemaExplorer({ tables, onInsertAtCursor }: SchemaExplorerProps
                       ))}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
-                        onClick={() => onInsertAtCursor(quoteIdentifier(table.tableName))}
+                        onClick={() => onInsertAtCursor(tableReference(table, dialectInfo))}
                       >
                         테이블명 삽입
                       </DropdownMenuItem>
@@ -212,7 +221,7 @@ export function SchemaExplorer({ tables, onInsertAtCursor }: SchemaExplorerProps
                         <button
                           type="button"
                           className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground group-hover/col:opacity-100"
-                          onClick={() => onInsertAtCursor(quoteIdentifier(column.columnName))}
+                          onClick={() => onInsertAtCursor(columnReference(column.columnName, dialect))}
                           title="컬럼명 삽입"
                         >
                           <Plus className="h-3 w-3" />

@@ -30,16 +30,20 @@ final class TiberoLiveAccount implements AutoCloseable {
 
   private final long tenantId;
   private final String schema;
+  private final String roSchema;
   private final StoreDescriptor descriptor;
   private final Connection dba;
   private Connection owner;
   private boolean created;
+  private boolean roCreated;
   private final List<AutoCloseable> beforeDrop = new ArrayList<>();
 
   private TiberoLiveAccount(
       long tenantId, String schema, StoreDescriptor descriptor, Connection dba) {
     this.tenantId = tenantId;
     this.schema = schema;
+    // api TiberoDdlSql 이 만드는 읽기 전용 계정 이름 규칙(GENIA_T{id}_RO)을 그대로 따른다.
+    this.roSchema = schema + "_RO";
     this.descriptor = descriptor;
     this.dba = dba;
   }
@@ -77,6 +81,8 @@ final class TiberoLiveAccount implements AutoCloseable {
     String schema = "GENIA_T" + tenantId;
     // 비밀번호는 이 테스트 안에서만 쓰는 임의값이며 출력하지 않는다.
     String ownerPassword = "Wd" + UUID.randomUUID().toString().replace("-", "");
+    String roPassword = "Wd" + UUID.randomUUID().toString().replace("-", "");
+    String roName = schema + "_RO";
 
     Connection dba =
         DriverManager.getConnection(TiberoSession.jdbcUrl(host, port, sid), dbaUser, dbaPassword);
@@ -88,10 +94,11 @@ final class TiberoLiveAccount implements AutoCloseable {
             port,
             sid,
             schema,
-            new StoreDescriptor.Account(schema, ownerPassword));
+            new StoreDescriptor.Account(schema, ownerPassword),
+            new StoreDescriptor.Account(roName, roPassword));
     TiberoLiveAccount account = new TiberoLiveAccount(tenantId, schema, descriptor, dba);
     try {
-      if (account.userCount(schema) > 0) {
+      if (account.userCount(schema) > 0 || account.userCount(roName) > 0) {
         // 우리가 만든 계정이 아니다 — 절대 지우지 않고 중단한다(created 는 false 로 남는다).
         throw new IllegalStateException("이미 있는 계정이라 테스트를 중단합니다: " + schema);
       }
@@ -109,6 +116,10 @@ final class TiberoLiveAccount implements AutoCloseable {
       exec(
           dba,
           "GRANT CREATE SESSION, CREATE TABLE, CREATE VIEW, CREATE SEQUENCE TO \"" + schema + "\"");
+      // 읽기 전용 계정: 접속 권한만 준다. 테이블 SELECT 는 테스트가 테이블을 만든 뒤 grantSelectToRo 로 준다.
+      exec(dba, "CREATE USER \"" + roName + "\" IDENTIFIED BY \"" + roPassword + "\"");
+      account.roCreated = true;
+      exec(dba, "GRANT CREATE SESSION TO \"" + roName + "\"");
       account.owner =
           DriverManager.getConnection(
               TiberoSession.jdbcUrl(host, port, sid), schema, ownerPassword);
@@ -136,6 +147,25 @@ final class TiberoLiveAccount implements AutoCloseable {
     return descriptor;
   }
 
+  /** 읽기 전용 계정 이름. */
+  String roSchema() {
+    return roSchema;
+  }
+
+  /** 읽기 전용 계정으로 여는 직접 연결(호출자가 닫는다). 쓰기 거부 확인용이다. */
+  Connection openRo() throws SQLException {
+    StoreDescriptor.Account ro = descriptor.ro();
+    return DriverManager.getConnection(
+        TiberoSession.jdbcUrl(descriptor.host(), descriptor.port(), descriptor.database()),
+        ro.username(),
+        ro.password());
+  }
+
+  /** 소유 계정의 테이블 하나에만 읽기 전용 계정 SELECT 를 준다(테이블을 다시 만들면 권한도 사라지므로 그때마다 호출). */
+  void grantSelectToRo(String table) throws SQLException {
+    exec(dba, "GRANT SELECT ON \"" + schema + "\".\"" + table + "\" TO \"" + roSchema + "\"");
+  }
+
   /** 검증·DDL 용 직접 연결(소유 계정). 실행기 경로와 별개다. */
   Connection owner() {
     return owner;
@@ -157,8 +187,14 @@ final class TiberoLiveAccount implements AutoCloseable {
       first = run(first, c::close);
     }
     first = run(first, () -> closeQuietly(owner));
+    if (roCreated) {
+      first = run(first, () -> dropWithRetry(roSchema));
+    }
     if (created) {
-      first = run(first, this::dropWithRetry);
+      first = run(first, () -> dropWithRetry(schema));
+    }
+    if (created || roCreated) {
+      first = run(first, this::reportLeftover);
     }
     first = run(first, this::printReservedRange);
     first = run(first, () -> closeQuietly(dba));
@@ -188,11 +224,11 @@ final class TiberoLiveAccount implements AutoCloseable {
   }
 
   /** 시간 초과로 취소된 세션이 잠시 남아 있을 수 있어 몇 번 다시 시도한다. */
-  private void dropWithRetry() throws Exception {
+  private void dropWithRetry(String user) throws Exception {
     SQLException last = null;
     for (int attempt = 0; attempt < 12; attempt++) {
       try {
-        exec(dba, "DROP USER \"" + schema + "\" CASCADE");
+        exec(dba, "DROP USER \"" + user + "\" CASCADE");
         last = null;
         break;
       } catch (SQLException e) {
@@ -201,9 +237,13 @@ final class TiberoLiveAccount implements AutoCloseable {
       }
     }
     if (last != null) {
-      throw new IllegalStateException("테스트 계정 정리 실패(수동 확인 필요): " + schema, last);
+      throw new IllegalStateException("테스트 계정 정리 실패(수동 확인 필요): " + user, last);
     }
-    long mine = userCount(schema);
+  }
+
+  /** 이 테스트가 만든 두 계정(소유·읽기 전용)이 남았는지 확인하고 출력한다. */
+  private void reportLeftover() throws SQLException {
+    long mine = userCount(schema) + userCount(roSchema);
     System.out.println("LIVE leftover accounts=" + mine);
     assertThat(mine).as("이 테스트가 만든 계정이 남았다").isZero();
   }

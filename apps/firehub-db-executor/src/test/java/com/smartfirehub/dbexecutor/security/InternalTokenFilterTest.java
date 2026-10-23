@@ -13,7 +13,8 @@ class InternalTokenFilterTest {
 
   private final InternalTokenFilter filter =
       new InternalTokenFilter(
-          new DbExecutorProperties("secret", "http://x", 60, new DbExecutorProperties.Pool(8, 4)));
+          new DbExecutorProperties(
+              "secret", "http://x", 60, new DbExecutorProperties.Pool(8, 4, 2)));
 
   private MockHttpServletResponse call(String uri, String authorization) throws Exception {
     MockHttpServletRequest req = new MockHttpServletRequest("POST", uri);
@@ -61,7 +62,8 @@ class InternalTokenFilterTest {
 
   @Test
   void properties_toStringMasksToken() {
-    var p = new DbExecutorProperties("secret", "http://x", 60, new DbExecutorProperties.Pool(8, 4));
+    var p =
+        new DbExecutorProperties("secret", "http://x", 60, new DbExecutorProperties.Pool(8, 4, 2));
     assertThat(p.toString()).doesNotContain("secret").contains("internalToken=****");
   }
 
@@ -69,6 +71,7 @@ class InternalTokenFilterTest {
   void blankProperty_failsFast() {
     org.junit.jupiter.api.Assertions.assertThrows(
         IllegalStateException.class,
-        () -> new DbExecutorProperties(" ", "http://x", 60, new DbExecutorProperties.Pool(8, 4)));
+        () ->
+            new DbExecutorProperties(" ", "http://x", 60, new DbExecutorProperties.Pool(8, 4, 2)));
   }
 }

@@ -11,6 +11,7 @@ import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
+import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository;
@@ -60,6 +61,8 @@ public class MetricPollerService {
   private final AiHostingResolver aiHostingResolver;
   // 시스템 메트릭 「데이터셋 수」를 소유자가 볼 수 있는 데이터셋으로 한정한다(WD-168) — 홈 대시보드·리포트 컨텍스트와 같은 가시성 규칙.
   private final DatasetAccessGuard datasetAccessGuard;
+  // 데이터셋 메트릭 사전 검증을 테넌트 저장소의 검증기로 하기 위한 테넌트 저장소 판별·Tibero 검증기(WD-76).
+  private final PipelineDataSchema pipelineDataSchema;
 
   /**
    * 데이터셋 메트릭 SQL 검증기 — 애드혹 분석 쿼리({@code AnalyticsQueryExecutionService})와 같은 정책(현재 테넌트 데이터 스키마만,
@@ -250,7 +253,14 @@ public class MetricPollerService {
       NormalizedSql normalized;
       try {
         normalized = NormalizedSql.of(query);
-        metricSqlValidator.validate(normalized.text());
+        // 사전 검증은 테넌트 저장소의 검증기로 한다(WD-76). Tibero 테넌트의 메트릭은 관문 뒤에서 Tibero(db-executor)로 실행되므로
+        // PG 검증기(data_t{id} 허용목록)로 보면 genia_t{id} 참조가 전부 "invalid query" 로 건너뛰어져 한 번도 수집되지 않는다. 실행
+        // 직전 TiberoQueryService 가 같은 Tibero 검증기로 다시 보지만, 여기서도 걸러야 잘못된 메트릭이 PG 와 같이 경고 한 줄로 건너뛰어진다
+        // (관문의 판정 예외로 가면 매 주기 오류 로그가 된다). isTibero 는 poll() 의 forEachActiveTenant 가 세운 이 잡의 테넌트
+        // 컨텍스트로 해석한다.
+        SqlValidator validator =
+            pipelineDataSchema.isTibero() ? pipelineDataSchema.validator() : metricSqlValidator;
+        validator.validate(normalized.text());
       } catch (SqlQueryException | UnsafeSqlException e) {
         log.warn(
             "MetricPollerService: dataset metric '{}' has invalid query, skipping: {}",

@@ -39,10 +39,17 @@ public record DbExecutorProperties(
   }
 
   /**
-   * 풀 한도. 테넌트마다 풀이 생기므로 {@code maxPools × maxSize} 가 외부 DB 세션 한도를 넘지 않게 작게 잡는다(api 와 같은 값).
+   * 풀 한도. 테넌트마다 풀이 생긴다. OWNER 풀({@code /execute/sql}·probe)과 읽기 전용 풀({@code /execute/query},
+   * WD-76)은 서로 다른 풀 묶음이고 각각 {@code maxPools} 개까지 유지하므로, 최악의 동시 세션 수는 {@code maxPools × (maxSize +
+   * readOnlyMaxSize)} 다(기본값 8 × (4 + 2) = 48). 이 값이 외부 DB 세션 한도를 넘지 않게 작게 잡는다({@code
+   * maxPools}·{@code maxSize} 는 api 와 같은 값).
    *
    * @param maxPools 동시에 유지할 풀 수(넘으면 LRU 로 닫음)
-   * @param maxSize 풀당 최대 커넥션
+   * @param maxSize 풀당 최대 커넥션(OWNER 풀)
+   * @param readOnlyMaxSize 읽기 전용(분석 조회) 풀당 최대 커넥션 — 조회는 짧고 동시성이 낮아 작게 둔다
    */
-  public record Pool(@DefaultValue("8") int maxPools, @DefaultValue("4") int maxSize) {}
+  public record Pool(
+      @DefaultValue("8") int maxPools,
+      @DefaultValue("4") int maxSize,
+      @DefaultValue("2") int readOnlyMaxSize) {}
 }
