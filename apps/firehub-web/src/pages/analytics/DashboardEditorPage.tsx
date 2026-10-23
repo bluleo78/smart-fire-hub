@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   Check,
   Download,
+  Eye,
   LayoutDashboard,
   Loader2,
   Maximize2,
@@ -52,6 +53,7 @@ import {
   useRemoveWidget,
   useUpdateWidget,
 } from '../../hooks/queries/useAnalytics';
+import { useIsOwner } from '../../hooks/useIsOwner';
 import { handleApiError } from '../../lib/api-error';
 import type { ChartListItem, DashboardWidget } from '../../types/analytics';
 
@@ -261,6 +263,11 @@ export default function DashboardEditorPage() {
     (dashboard?.widgets ?? []).filter((w) => w.accessible !== false).map((w) => w.chartId),
   );
 
+  // 작성자만 위젯 추가·삭제·배치를 고칠 수 있다(서버는 남의 요청을 404 로 거절) — 남이 공유한 대시보드는 읽기 전용으로 보인다(WD-196).
+  // 새로고침·PDF·전체화면·링크 복사처럼 보기 성격의 기능은 그대로 둔다.
+  const isOwner = useIsOwner();
+  const canEdit = dashboard != null && isOwner(dashboard.createdBy);
+
   const addWidgetMutation = useAddWidget(dashboardId!);
   const removeWidgetMutation = useRemoveWidget(dashboardId!);
   const updateWidgetMutation = useUpdateWidget(dashboardId!);
@@ -430,12 +437,13 @@ export default function DashboardEditorPage() {
    * 편집 모드 진입: 현재 서버 위젯 목록을 스냅샷으로 저장하여 취소 시 롤백에 사용.
    */
   const handleStartEdit = useCallback(() => {
-    if (!dashboard) return;
+    // 남의 대시보드는 편집 모드에 들어가지 않는다(버튼도 숨기지만 진입점을 한 곳에서 막아 둔다, WD-196)
+    if (!dashboard || !canEdit) return;
     setEditingWidgets([...dashboard.widgets]);
     const items = widgetsToLayoutItems(dashboard.widgets);
     setLocalLayouts({ lg: items, md: items, sm: items });
     setIsEditing(true);
-  }, [dashboard]);
+  }, [dashboard, canEdit]);
 
   /**
    * 편집 취소(X 버튼): 로컬 변경사항(삭제·레이아웃)을 버리고 스냅샷으로 복원.
@@ -540,6 +548,18 @@ export default function DashboardEditorPage() {
                 {dashboard.autoRefreshSeconds}초
               </Badge>
             )}
+            {/* 남이 공유한 대시보드 — 편집 버튼 대신 읽기 전용임을 알린다(WD-196). 누가 공유했는지 함께 보여 줘 「왜 못 고치는지」를 바로 알게 한다. */}
+            {!canEdit && (
+              <Badge
+                variant="outline"
+                className="text-xs gap-1 shrink-0"
+                title={`${dashboard.createdByName}님이 공유한 대시보드입니다. 작성자만 고칠 수 있습니다.`}
+                data-testid="dashboard-readonly-badge"
+              >
+                <Eye className="h-2.5 w-2.5" />
+                보기 전용
+              </Badge>
+            )}
           </div>
           {dashboard.description && (
             <p className="text-xs text-muted-foreground truncate">{dashboard.description}</p>
@@ -619,7 +639,8 @@ export default function DashboardEditorPage() {
             )}
           </Button>
 
-          {isEditing ? (
+          {/* 편집 진입·차트 추가·완료·취소는 작성자에게만 보인다(WD-196) */}
+          {!canEdit ? null : isEditing ? (
             <>
               <Button
                 size="sm"
@@ -667,11 +688,12 @@ export default function DashboardEditorPage() {
             <LayoutDashboard className="h-12 w-12 text-muted-foreground" />
             <div>
               <p className="text-muted-foreground font-medium">위젯이 없습니다.</p>
+              {/* 남의 대시보드에서는 할 수 없는 일(편집 모드)을 권하지 않는다(WD-196) */}
               <p className="text-sm text-muted-foreground mt-1">
-                편집 모드에서 차트를 추가하세요.
+                {canEdit ? '편집 모드에서 차트를 추가하세요.' : '작성자가 아직 차트를 추가하지 않았습니다.'}
               </p>
             </div>
-            {!isEditing && (
+            {canEdit && !isEditing && (
               <Button variant="outline" onClick={handleStartEdit}>
                 <Pencil className="h-4 w-4" />
                 편집 모드

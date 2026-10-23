@@ -11,6 +11,7 @@ import {
   BarChart2,
   ChevronDown,
   ChevronRight,
+  Copy,
   Download,
   FileCode2,
   Loader2,
@@ -22,6 +23,7 @@ import { useLocation, useNavigate, useParams, useSearchParams } from 'react-rout
 import { toast } from 'sonner';
 
 import { exportsApi } from '../../api/exports';
+import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import {
@@ -51,6 +53,7 @@ import {
 import { Skeleton } from '../../components/ui/skeleton';
 import { Switch } from '../../components/ui/switch';
 import {
+  useCloneSavedQuery,
   useCreateSavedQuery,
   useExecuteAnalyticsQuery,
   useQueryFolders,
@@ -58,6 +61,7 @@ import {
   useSchemaInfo,
   useUpdateSavedQuery,
 } from '../../hooks/queries/useAnalytics';
+import { useIsOwner } from '../../hooks/useIsOwner';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError, handleApiErrorAsync } from '../../lib/api-error';
 import { downloadBlob, filenameFromContentDisposition } from '../../lib/download';
@@ -434,7 +438,6 @@ export default function QueryEditorPage() {
   // - 초기 로드(savedQuery로부터 setState)는 변경으로 간주하지 않기 위해 핸들러에서 명시적으로 markDirty()를 호출
   // - SQL 텍스트 변경(에디터 입력) 또는 저장 폼 필드 변경(이름/설명/폴더/공유) 시 dirty=true
   const [isDirty, setIsDirty] = useState(false);
-  const markDirty = useCallback(() => setIsDirty(true), []);
 
   // 미저장 변경사항 이탈 가드 (#639) — 사이드바 링크(<a> 클릭)·브라우저 뒤로가기·탭 닫기/새로고침을
   // 모두 포괄하는 공용 훅으로 교체. 기존에는 "목록으로 돌아가기" 버튼 전용 수동 가드만 있어
@@ -448,6 +451,16 @@ export default function QueryEditorPage() {
 
   // isError: 존재하지 않는 쿼리 ID(404 등) 접근 시 에러 상태를 감지한다.
   const { data: savedQuery, isLoading: queryLoading, isError: queryError } = useSavedQuery(queryId);
+
+  // 저장(덮어쓰기)·이름 변경은 작성자만 — 서버가 남의 수정 요청을 404 로 거절한다(WD-196). 남이 공유한 쿼리는 저장 버튼 대신
+  // 「복제」 안내를 둔다. SQL 을 고쳐 실행해 보는 것(읽기)은 그대로 허용하고, 보안 등급 판정도 실행 경로가 기존대로 한다.
+  const isOwner = useIsOwner();
+  const canEdit = isNew || (savedQuery != null && isOwner(savedQuery.createdBy));
+  // 저장할 수 없는 사용자는 변경을 추적하지 않는다 — 저장 못 할 「미저장 변경사항」 경고·이탈 확인이 뜨지 않게(WD-196)
+  const markDirty = useCallback(() => {
+    if (canEdit) setIsDirty(true);
+  }, [canEdit]);
+  const cloneSavedQuery = useCloneSavedQuery();
   const { data: schemaInfo } = useSchemaInfo();
   const { data: foldersData } = useQueryFolders();
 
@@ -543,6 +556,7 @@ export default function QueryEditorPage() {
   }, [sql, executeQuery]);
 
   const handleSaveClick = () => {
+    if (!canEdit) return; // 남의 쿼리는 저장 창을 열지 않는다(WD-196)
     if (savedQuery) {
       setSaveForm({
         name: savedQuery.name,
@@ -605,6 +619,21 @@ export default function QueryEditorPage() {
       handleApiError(error, '쿼리 저장에 실패했습니다.');
     } finally {
       savingRef.current = false;
+    }
+  };
+
+  /**
+   * 남이 공유한 쿼리를 내 쿼리로 복제하고 그 편집기로 옮긴다(WD-196) — 서버 복제(POST /queries/{id}/clone)는 비공개·내 소유 사본을
+   * 만든다(이름 「… (복사본)」). 복제본은 내 것이라 바로 저장·이름 변경을 할 수 있다.
+   */
+  const handleClone = async () => {
+    if (!queryId || cloneSavedQuery.isPending) return;
+    try {
+      const cloned = await cloneSavedQuery.mutateAsync(queryId);
+      toast.success(`복사본을 만들었습니다: ${cloned.name}`);
+      navigate(`/analytics/queries/${cloned.id}`);
+    } catch (error) {
+      handleApiError(error, '쿼리 복제에 실패했습니다.');
     }
   };
 
@@ -737,20 +766,23 @@ export default function QueryEditorPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleSaveClick}
-            disabled={isSaving}
-            className="gap-1.5"
-          >
-            {isSaving ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
-            저장
-          </Button>
+          {/* 저장은 작성자에게만(WD-196) — 실행은 누구나 */}
+          {canEdit && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSaveClick}
+              disabled={isSaving}
+              className="gap-1.5"
+            >
+              {isSaving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              저장
+            </Button>
+          )}
           <Button
             size="sm"
             onClick={handleExecute}
@@ -766,6 +798,31 @@ export default function QueryEditorPage() {
           </Button>
         </div>
       </div>
+
+      {/* 남이 공유한 쿼리 — 저장 버튼이 없는 이유와 복제 경로를 알린다(WD-196). 서버에 복제 기능이 있어 안내 옆에 버튼을 둔다. */}
+      {!canEdit && savedQuery && (
+        <SharedReadOnlyNotice
+          className="mb-3"
+          testId="query-shared-readonly"
+          message={`${savedQuery.createdByName}님이 공유한 쿼리입니다 — 실행해 볼 수 있고, 고치려면 복제해서 내 쿼리로 만드세요.`}
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => void handleClone()}
+              disabled={cloneSavedQuery.isPending}
+            >
+              {cloneSavedQuery.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+              복제
+            </Button>
+          }
+        />
+      )}
 
       {/* Main area: sidebar + editor + results */}
       <div className="flex flex-1 min-h-0 gap-3">

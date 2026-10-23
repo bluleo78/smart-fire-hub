@@ -63,7 +63,7 @@ public class ChartService {
     savedQueryRepository
         .findById(req.savedQueryId(), userId, DSL.trueCondition())
         .orElseThrow(
-            () -> new SavedQueryNotFoundException("Saved query not found: " + req.savedQueryId()));
+            () -> SavedQueryNotFoundException.forId(req.savedQueryId()));
     if ("MAP".equals(req.chartType())) {
       Object spatialColumn = req.config() != null ? req.config().get("spatialColumn") : null;
       if (spatialColumn == null || spatialColumn.toString().isBlank()) {
@@ -74,7 +74,7 @@ public class ChartService {
     return withholdDenied(
         chartRepository
             .findById(id, userId)
-            .orElseThrow(() -> new ChartNotFoundException("Chart not found after insert")),
+            .orElseThrow(() -> new ChartNotFoundException("저장한 차트를 다시 읽지 못했습니다")),
         userId);
   }
 
@@ -87,7 +87,7 @@ public class ChartService {
     return withholdDenied(
         chartRepository
             .findById(id, userId)
-            .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id)),
+            .orElseThrow(() -> ChartNotFoundException.forId(id)),
         userId);
   }
 
@@ -97,7 +97,7 @@ public class ChartService {
     ChartResponse existing =
         chartRepository
             .findByIdForOwner(id, userId)
-            .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id));
+            .orElseThrow(() -> ChartNotFoundException.forId(id));
     String effectiveType = req.chartType() != null ? req.chartType() : existing.chartType();
     java.util.Map<String, Object> effectiveConfig =
         req.config() != null ? req.config() : existing.config();
@@ -111,7 +111,7 @@ public class ChartService {
     return withholdDenied(
         chartRepository
             .findByIdForOwner(id, userId)
-            .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id)),
+            .orElseThrow(() -> ChartNotFoundException.forId(id)),
         userId);
   }
 
@@ -120,10 +120,10 @@ public class ChartService {
   public void delete(Long id, Long userId) {
     chartRepository
         .findByIdForOwner(id, userId)
-        .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id));
+        .orElseThrow(() -> ChartNotFoundException.forId(id));
     boolean deleted = chartRepository.deleteById(id, userId);
     if (!deleted) {
-      throw new ChartNotFoundException("Chart not found: " + id);
+      throw ChartNotFoundException.forId(id);
     }
   }
 
@@ -136,7 +136,7 @@ public class ChartService {
   public DeleteImpactResponse getDeleteImpact(Long id, Long userId) {
     chartRepository
         .findByIdForOwner(id, userId)
-        .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id));
+        .orElseThrow(() -> ChartNotFoundException.forId(id));
     return DeleteImpactResponse.forChart(
         dashboardRepository.findImpactByChartIds(List.of(id), userId));
   }
@@ -196,12 +196,12 @@ public class ChartService {
     ChartResponse chart =
         chartRepository
             .findById(id, userId)
-            .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id));
+            .orElseThrow(() -> ChartNotFoundException.forId(id));
     String sqlText =
         chartRepository
             .findSavedQuerySqlText(id, userId)
             .orElseThrow(
-                () -> new SavedQueryNotFoundException("Saved query not found for chart: " + id));
+                () -> new SavedQueryNotFoundException("차트가 쓰는 저장 쿼리를 찾을 수 없습니다: " + id));
     // 보안 등급(S2): 조회자 기준 판정 — 위반이면 실행하지 않고 200 + denied. 단건 위젯 경로(DashboardWidgetCard→useChartData)도
     // 대시보드 일괄 경로와 같은 계약이어야 위젯 하나가 화면 전체를 오류로 만들지 않는다(스펙 §4.2 4행).
     // 판정은 한 번 — 통과한 토큰의 정규화본을 그대로 실행하므로 판정과 실행 사이에 다른 판정이 끼지 않는다.

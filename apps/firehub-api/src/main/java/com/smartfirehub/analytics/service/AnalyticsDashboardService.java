@@ -78,7 +78,7 @@ public class AnalyticsDashboardService {
     List<DashboardResponse.DashboardWidgetResponse> widgets = viewerWidgets(id, userId);
     return dashboardRepository
         .findById(id, userId, widgets)
-        .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found after insert"));
+        .orElseThrow(() -> new DashboardNotFoundException("저장한 대시보드를 다시 읽지 못했습니다"));
   }
 
   // RLS 가 걸린 dashboard/dashboard_widget 을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
@@ -89,14 +89,14 @@ public class AnalyticsDashboardService {
     List<DashboardResponse.DashboardWidgetResponse> widgets = viewerWidgets(id, userId);
     return dashboardRepository
         .findById(id, userId, widgets)
-        .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + id));
+        .orElseThrow(() -> DashboardNotFoundException.forId(id));
   }
 
   @Transactional
   public DashboardResponse update(Long id, UpdateDashboardRequest req, Long userId) {
     dashboardRepository
         .findByIdForOwner(id, userId)
-        .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + id));
+        .orElseThrow(() -> DashboardNotFoundException.forId(id));
     dashboardRepository.update(id, req, userId);
 
     // 대시보드를 공유하면 위젯이 쓰는 차트·쿼리 중 요청자 본인 것만 함께 공유한다(WD-194).
@@ -108,7 +108,7 @@ public class AnalyticsDashboardService {
     List<DashboardResponse.DashboardWidgetResponse> widgets = viewerWidgets(id, userId);
     return dashboardRepository
         .findById(id, userId, widgets)
-        .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + id));
+        .orElseThrow(() -> DashboardNotFoundException.forId(id));
   }
 
   /**
@@ -170,10 +170,10 @@ public class AnalyticsDashboardService {
   public void delete(Long id, Long userId) {
     dashboardRepository
         .findByIdForOwner(id, userId)
-        .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + id));
+        .orElseThrow(() -> DashboardNotFoundException.forId(id));
     boolean deleted = dashboardRepository.deleteById(id, userId);
     if (!deleted) {
-      throw new DashboardNotFoundException("Dashboard not found: " + id);
+      throw DashboardNotFoundException.forId(id);
     }
   }
 
@@ -186,7 +186,7 @@ public class AnalyticsDashboardService {
         dashboardRepository
             .findById(dashboardId, userId, widgets)
             .orElseThrow(
-                () -> new DashboardNotFoundException("Dashboard not found: " + dashboardId));
+                () -> DashboardNotFoundException.forId(dashboardId));
 
     // 2. Enforce widget limit — 볼 수 없는 차트의 위젯은 데이터 조립에서 먼저 뺀다(WD-195).
     // 예전에는 위젯 루프에서 건너뛰기 전에 그 차트의 저장 쿼리를 이 조회자 자격으로 판정·실행하고 감사 기록(recordDelivered)까지 남겼다 —
@@ -292,18 +292,18 @@ public class AnalyticsDashboardService {
         dashboardRepository
             .findByIdForOwner(dashboardId, userId)
             .orElseThrow(
-                () -> new DashboardNotFoundException("Dashboard not found: " + dashboardId));
+                () -> DashboardNotFoundException.forId(dashboardId));
 
     // Verify chart access
     chartService
         .getByIdOptional(req.chartId(), userId)
-        .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + req.chartId()));
+        .orElseThrow(() -> ChartNotFoundException.forId(req.chartId()));
 
-    // Check widget limit
+    // Check widget limit — 문구는 화면 토스트로 그대로 나가므로 한국어(WD-196)
     int currentCount = widgetRepository.countByDashboardId(dashboardId);
     if (currentCount >= MAX_WIDGETS_PER_DASHBOARD) {
       throw new IllegalStateException(
-          "Dashboard has reached the maximum of " + MAX_WIDGETS_PER_DASHBOARD + " widgets");
+          "대시보드에는 위젯을 최대 " + MAX_WIDGETS_PER_DASHBOARD + "개까지 넣을 수 있습니다");
     }
 
     widgetRepository.insert(dashboardId, req);
@@ -323,14 +323,12 @@ public class AnalyticsDashboardService {
       Long dashboardId, Long widgetId, UpdateWidgetRequest req, Long userId) {
     dashboardRepository
         .findByIdForOwner(dashboardId, userId)
-        .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + dashboardId));
+        .orElseThrow(() -> DashboardNotFoundException.forId(dashboardId));
 
     widgetRepository
         .findById(widgetId, dashboardId)
         .orElseThrow(
-            () ->
-                new IllegalArgumentException(
-                    "Widget not found: " + widgetId + " in dashboard " + dashboardId));
+            () -> widgetNotFound(widgetId));
 
     widgetRepository.update(widgetId, req);
     return getById(dashboardId, userId);
@@ -340,13 +338,22 @@ public class AnalyticsDashboardService {
   public void removeWidget(Long dashboardId, Long widgetId, Long userId) {
     dashboardRepository
         .findByIdForOwner(dashboardId, userId)
-        .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + dashboardId));
+        .orElseThrow(() -> DashboardNotFoundException.forId(dashboardId));
 
     boolean deleted = widgetRepository.deleteById(widgetId, dashboardId);
     if (!deleted) {
-      throw new IllegalArgumentException(
-          "Widget not found: " + widgetId + " in dashboard " + dashboardId);
+      throw widgetNotFound(widgetId);
     }
+  }
+
+  /**
+   * 이 대시보드에 없는 위젯 id 거절(400) — 단건 수정·삭제 공용.
+   *
+   * <p>WD-196: 영어 원문(「Widget not found: 1 in dashboard 3」)이 토스트로 그대로 보였다. 한국어로 바꾸고 대시보드 id 는 빼서, 일괄 배치
+   * 저장의 「이 대시보드에 없는 위젯이 포함되어 있습니다」와 같은 결로 맞춘다.
+   */
+  private static IllegalArgumentException widgetNotFound(Long widgetId) {
+    return new IllegalArgumentException("위젯을 찾을 수 없습니다: " + widgetId);
   }
 
   /**
@@ -363,7 +370,7 @@ public class AnalyticsDashboardService {
   public void updateWidgetLayout(Long dashboardId, UpdateWidgetLayoutRequest req, Long userId) {
     dashboardRepository
         .findByIdForOwner(dashboardId, userId)
-        .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + dashboardId));
+        .orElseThrow(() -> DashboardNotFoundException.forId(dashboardId));
 
     List<UpdateWidgetLayoutRequest.WidgetPosition> positions = req.widgets();
     // 빈 목록은 바꿀 것이 없으므로 그대로 성공 처리한다(컨트롤러 검증이 null 은 이미 400 으로 걸렀다).

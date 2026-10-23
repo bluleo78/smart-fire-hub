@@ -117,6 +117,7 @@ public class SavedQueryRepository {
                 DS_NAME_ALIAS,
                 SQ_IS_SHARED,
                 U_NAME_ALIAS,
+                SQ_CREATED_BY,
                 SQ_CREATED_AT,
                 SQ_UPDATED_AT,
                 chartCountField)
@@ -143,6 +144,7 @@ public class SavedQueryRepository {
               r.get("dataset_name", String.class),
               Boolean.TRUE.equals(r.get(SQ_IS_SHARED)),
               r.get("created_by_name", String.class),
+              r.get(SQ_CREATED_BY),
               r.get(SQ_CREATED_AT),
               r.get(SQ_UPDATED_AT),
               r.get("chart_count", Long.class)));

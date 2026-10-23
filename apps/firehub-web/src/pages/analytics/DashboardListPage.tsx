@@ -44,6 +44,7 @@ import {
   useDeleteDashboard,
   useUpdateDashboard,
 } from '../../hooks/queries/useAnalytics';
+import { useIsOwner } from '../../hooks/useIsOwner';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
@@ -313,6 +314,8 @@ export default function DashboardListPage() {
   });
 
   const deleteDashboard = useDeleteDashboard();
+  // 남이 공유한 대시보드 줄에서는 편집·설정(이름·공유)·삭제를 숨긴다 — 서버가 작성자 외 요청을 404 로 거절한다(WD-196). 줄 클릭으로 보기는 그대로.
+  const isOwner = useIsOwner();
 
   const dashboards = dashboardsData?.content ?? [];
   const totalPages = dashboardsData?.totalPages ?? 0;
@@ -437,50 +440,52 @@ export default function DashboardListPage() {
                     </span>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0"
-                        title="편집"
-                        aria-label="편집"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/analytics/dashboards/${dashboard.id}`);
-                        }}
-                      >
-                        <Pencil size={13} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0"
-                        title="설정"
-                        aria-label="설정"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditDashboard(dashboard);
-                        }}
-                      >
-                        <Settings size={13} />
-                      </Button>
-                      <DeleteConfirmDialog
-                        entityName="대시보드"
-                        itemName={dashboard.name}
-                        onConfirm={() => handleDelete(dashboard.id, dashboard.name)}
-                        trigger={
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0"
-                            aria-label="삭제"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        }
-                      />
-                    </div>
+                    {isOwner(dashboard.createdBy) && (
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          title="편집"
+                          aria-label="편집"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/analytics/dashboards/${dashboard.id}`);
+                          }}
+                        >
+                          <Pencil size={13} />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          title="설정"
+                          aria-label="설정"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditDashboard(dashboard);
+                          }}
+                        >
+                          <Settings size={13} />
+                        </Button>
+                        <DeleteConfirmDialog
+                          entityName="대시보드"
+                          itemName={dashboard.name}
+                          onConfirm={() => handleDelete(dashboard.id, dashboard.name)}
+                          trigger={
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              aria-label="삭제"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          }
+                        />
+                      </div>
+                    )}
                   </TableCell>
                 </TableRow>
               ))

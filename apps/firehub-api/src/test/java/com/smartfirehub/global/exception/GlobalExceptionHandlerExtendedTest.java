@@ -42,7 +42,9 @@ class GlobalExceptionHandlerExtendedTest {
     mockMvc
         .perform(get("/test/exception2/saved-query-not-found"))
         .andExpect(status().isNotFound())
-        .andExpect(jsonPath("$.status").value(404));
+        .andExpect(jsonPath("$.status").value(404))
+        // WD-196: 분석 NotFound 문구는 한국어로 응답 message 에 그대로 실린다(화면 토스트 원문)
+        .andExpect(jsonPath("$.message").value("저장 쿼리를 찾을 수 없습니다: 55"));
   }
 
   @Test
@@ -50,7 +52,9 @@ class GlobalExceptionHandlerExtendedTest {
     mockMvc
         .perform(get("/test/exception2/chart-not-found"))
         .andExpect(status().isNotFound())
-        .andExpect(jsonPath("$.status").value(404));
+        .andExpect(jsonPath("$.status").value(404))
+        // WD-196: 분석 NotFound 문구는 한국어로 응답 message 에 그대로 실린다(화면 토스트 원문)
+        .andExpect(jsonPath("$.message").value("차트를 찾을 수 없습니다: 66"));
   }
 
   @Test
@@ -58,7 +62,9 @@ class GlobalExceptionHandlerExtendedTest {
     mockMvc
         .perform(get("/test/exception2/dashboard-not-found"))
         .andExpect(status().isNotFound())
-        .andExpect(jsonPath("$.status").value(404));
+        .andExpect(jsonPath("$.status").value(404))
+        // WD-196: 분석 NotFound 문구는 한국어로 응답 message 에 그대로 실린다(화면 토스트 원문)
+        .andExpect(jsonPath("$.message").value("대시보드를 찾을 수 없습니다: 77"));
   }
 
   @Test

@@ -1,11 +1,13 @@
 package com.smartfirehub.analytics.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
+import com.smartfirehub.analytics.dto.AddWidgetRequest;
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.DashboardDataResponse;
@@ -218,5 +220,57 @@ class AnalyticsDashboardServiceUnitTest {
     verify(chartService, times(1)).getByIdOptional(chartId2, userId);
     // getById는 절대 호출되면 안 됨
     verify(chartService, never()).getById(anyLong(), anyLong());
+  }
+
+  /**
+   * WD-196: 위젯 상한(20개)에 걸리면 한국어 문구로 거절한다 — 응답 message 가 화면 토스트로 그대로 나가므로 영어 원문(「Dashboard has
+   * reached the maximum of 20 widgets」)이 보이면 안 된다. 20개를 실제로 넣는 대신 개수만 상한으로 돌려준다.
+   */
+  @Test
+  void addWidget_atWidgetLimit_rejectsWithKoreanMessage() {
+    Long dashboardId = 1L;
+    Long userId = 10L;
+    Long chartId = 100L;
+    DashboardResponse dashboard =
+        new DashboardResponse(
+            dashboardId,
+            "Full Dash",
+            null,
+            false,
+            null,
+            List.of(),
+            20,
+            "Owner",
+            userId,
+            LocalDateTime.now(),
+            LocalDateTime.now());
+    ChartResponse chart =
+        new ChartResponse(
+            chartId,
+            "Chart",
+            null,
+            300L,
+            "Query",
+            "BAR",
+            Map.of(),
+            false,
+            "Owner",
+            userId,
+            LocalDateTime.now(),
+            LocalDateTime.now(),
+            0L,
+            false);
+    when(dashboardRepository.findByIdForOwner(dashboardId, userId))
+        .thenReturn(Optional.of(dashboard));
+    when(chartService.getByIdOptional(chartId, userId)).thenReturn(Optional.of(chart));
+    when(widgetRepository.countByDashboardId(dashboardId)).thenReturn(20);
+
+    assertThatThrownBy(
+            () ->
+                dashboardService.addWidget(
+                    dashboardId, new AddWidgetRequest(chartId, 0, 0, 6, 4), userId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("대시보드에는 위젯을 최대 20개까지 넣을 수 있습니다");
+    verify(widgetRepository, never()).insert(anyLong(), any());
   }
 }

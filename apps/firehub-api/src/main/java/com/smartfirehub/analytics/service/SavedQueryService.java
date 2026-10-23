@@ -80,7 +80,7 @@ public class SavedQueryService {
     Long id = savedQueryRepository.insert(req, userId);
     return savedQueryRepository
         .findById(id, userId, datasetNameVisible(viewer))
-        .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found after insert"));
+        .orElseThrow(() -> new SavedQueryNotFoundException("저장한 쿼리를 다시 읽지 못했습니다"));
   }
 
   /** Get a single saved query — owner or any shared query. */
@@ -91,7 +91,7 @@ public class SavedQueryService {
   public SavedQueryResponse getById(Long id, Long userId) {
     return savedQueryRepository
         .findById(id, userId, datasetNameVisible(userId))
-        .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
+        .orElseThrow(() -> SavedQueryNotFoundException.forId(id));
   }
 
   /**
@@ -104,7 +104,7 @@ public class SavedQueryService {
     SavedQueryResponse existing =
         savedQueryRepository
             .findByIdForOwner(id, userId, datasetNameVisible(viewer))
-            .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
+            .orElseThrow(() -> SavedQueryNotFoundException.forId(id));
 
     // 연결 데이터셋을 바꾸는 경우만 판정한다(create 와 같은 404) — 웹 편집기가 기존 값(편집자가 자격을 잃은 숨김 id 포함)을 그대로 되돌려
     // 보내는 저장은 막지 않는다(왕복 보존).
@@ -124,7 +124,7 @@ public class SavedQueryService {
     savedQueryRepository.update(id, req, userId);
     return savedQueryRepository
         .findByIdForOwner(id, userId, datasetNameVisible(viewer))
-        .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
+        .orElseThrow(() -> SavedQueryNotFoundException.forId(id));
   }
 
   /** Delete a saved query (owner only). CASCADE removes linked charts and widgets. */
@@ -133,10 +133,10 @@ public class SavedQueryService {
     // Verify ownership first — 소유 확인만 하고 응답을 쓰지 않으므로 이름 가시성 조건은 필요 없다.
     savedQueryRepository
         .findByIdForOwner(id, userId, DSL.trueCondition())
-        .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
+        .orElseThrow(() -> SavedQueryNotFoundException.forId(id));
     boolean deleted = savedQueryRepository.deleteById(id, userId);
     if (!deleted) {
-      throw new SavedQueryNotFoundException("Saved query not found: " + id);
+      throw SavedQueryNotFoundException.forId(id);
     }
   }
 
@@ -152,7 +152,7 @@ public class SavedQueryService {
   public DeleteImpactResponse getDeleteImpact(Long id, Long userId) {
     savedQueryRepository
         .findByIdForOwner(id, userId, DSL.trueCondition())
-        .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
+        .orElseThrow(() -> SavedQueryNotFoundException.forId(id));
     List<DeleteImpactResponse.ChartRawRef> charts =
         chartRepository.findImpactRefsBySavedQueryId(id, userId);
     List<Long> chartIds = charts.stream().map(DeleteImpactResponse.ChartRawRef::id).toList();
@@ -168,13 +168,13 @@ public class SavedQueryService {
     var raw =
         savedQueryRepository
             .findRawByIdUnrestricted(id)
-            .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
+            .orElseThrow(() -> SavedQueryNotFoundException.forId(id));
 
     // Verify access: owner or shared
     boolean isShared = Boolean.TRUE.equals(raw.get("is_shared", Boolean.class));
     Long ownerId = raw.get("created_by", Long.class);
     if (!isShared && !ownerId.equals(userId)) {
-      throw new SavedQueryNotFoundException("Saved query not found: " + id);
+      throw SavedQueryNotFoundException.forId(id);
     }
 
     String originalName = raw.get("name", String.class);
@@ -190,7 +190,7 @@ public class SavedQueryService {
     Long newId = savedQueryRepository.insert(cloneReq, userId);
     return savedQueryRepository
         .findById(newId, userId, datasetNameVisible(userId))
-        .orElseThrow(() -> new SavedQueryNotFoundException("Clone failed"));
+        .orElseThrow(() -> new SavedQueryNotFoundException("복제한 쿼리를 다시 읽지 못했습니다"));
   }
 
   /**

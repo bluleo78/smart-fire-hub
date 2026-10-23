@@ -199,7 +199,9 @@ class SavedQueryServiceTest extends IntegrationTestBase {
                     created.id(),
                     new UpdateSavedQueryRequest("Hacked", null, null, null, null, null),
                     otherUserId))
-        .isInstanceOf(SavedQueryNotFoundException.class);
+        .isInstanceOf(SavedQueryNotFoundException.class)
+        // WD-196: 공유 쿼리를 남이 저장하면 한국어 문구(예전 「Saved query not found: id」)
+        .hasMessage("저장 쿼리를 찾을 수 없습니다: " + created.id());
   }
 
   @Test
@@ -277,7 +279,8 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     SavedQueryResponse created = createQuery("Not Mine", "SELECT 1", null, true, ownerUserId);
 
     assertThatThrownBy(() -> savedQueryService.delete(created.id(), otherUserId))
-        .isInstanceOf(SavedQueryNotFoundException.class);
+        .isInstanceOf(SavedQueryNotFoundException.class)
+        .hasMessage("저장 쿼리를 찾을 수 없습니다: " + created.id());
   }
 
   @Test
@@ -387,6 +390,15 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     List<String> names = result.content().stream().map(SavedQueryListResponse::name).toList();
     assertThat(names).contains("My Private", "Other Shared");
     assertThat(names).doesNotContain("Other Private");
+    // WD-196: 목록 항목에 작성자 id 가 실린다 — 웹이 남의 공유 쿼리 줄에서 삭제·편집 버튼을 숨기는 근거
+    assertThat(result.content())
+        .filteredOn(q -> q.name().equals("Other Shared"))
+        .extracting(SavedQueryListResponse::createdBy)
+        .containsExactly(otherUserId);
+    assertThat(result.content())
+        .filteredOn(q -> q.name().equals("My Private"))
+        .extracting(SavedQueryListResponse::createdBy)
+        .containsExactly(ownerUserId);
   }
 
   @Test

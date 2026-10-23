@@ -100,6 +100,7 @@ class SavedQueryControllerTest {
         null,
         false,
         "홍길동",
+        1L,
         LocalDateTime.now(),
         LocalDateTime.now(),
         0L);

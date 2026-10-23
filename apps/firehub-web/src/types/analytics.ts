@@ -27,6 +27,8 @@ export interface SavedQueryListItem {
   datasetName: string | null;
   isShared: boolean;
   createdByName: string;
+  /** 작성자 id — 현재 사용자와 비교해 남의 공유 항목 줄에서 편집·삭제 버튼을 숨긴다(WD-196, useIsOwner). */
+  createdBy: number;
   createdAt: string;
   updatedAt: string;
   chartCount: number;
@@ -195,6 +197,8 @@ export interface ChartListItem {
   configWithheld?: boolean;
   isShared: boolean;
   createdByName: string;
+  /** 작성자 id — 현재 사용자와 비교해 남의 공유 항목 줄에서 편집·삭제 버튼을 숨긴다(WD-196, useIsOwner). */
+  createdBy: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -256,6 +260,8 @@ export interface DashboardListItem {
   autoRefreshSeconds: number | null;
   widgetCount: number;
   createdByName: string;
+  /** 작성자 id — 현재 사용자와 비교해 남의 공유 항목 줄에서 편집·삭제 버튼을 숨긴다(WD-196, useIsOwner). */
+  createdBy: number;
   createdAt: string;
   updatedAt: string;
 }

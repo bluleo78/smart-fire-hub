@@ -41,6 +41,7 @@ import {
   useQueryFolders,
   useSavedQueries,
 } from '../../hooks/queries/useAnalytics';
+import { useIsOwner } from '../../hooks/useIsOwner';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateTimeMinute, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
@@ -66,6 +67,8 @@ export default function QueryListPage() {
 
   const { data: foldersData } = useQueryFolders();
   const deleteQuery = useDeleteSavedQuery();
+  // 남이 공유한 쿼리 줄에서는 편집·삭제를 숨긴다 — 서버가 작성자 외 요청을 404 로 거절한다(WD-196). 실행·줄 클릭(보기)은 그대로.
+  const isOwner = useIsOwner();
   const executeSavedQuery = useExecuteSavedQuery();
 
   const queries = queriesData?.content ?? [];
@@ -271,37 +274,41 @@ export default function QueryListPage() {
                       >
                         <Play size={13} />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0"
-                        title="편집"
-                        aria-label="편집"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/analytics/queries/${query.id}`);
-                        }}
-                      >
-                        <Pencil size={13} />
-                      </Button>
-                      {/* WD-86: 함께 삭제되는 항목(CASCADE)을 창을 열 때 조회해 보여 준다 */}
-                      <AnalyticsDeleteConfirmDialog
-                        kind="query"
-                        id={query.id}
-                        itemName={query.name}
-                        onConfirm={() => handleDelete(query.id, query.name)}
-                        trigger={
+                      {isOwner(query.createdBy) && (
+                        <>
                           <Button
                             variant="ghost"
                             size="sm"
                             className="h-7 w-7 p-0"
-                            aria-label="삭제"
-                            onClick={(e) => e.stopPropagation()}
+                            title="편집"
+                            aria-label="편집"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/analytics/queries/${query.id}`);
+                            }}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Pencil size={13} />
                           </Button>
-                        }
-                      />
+                          {/* WD-86: 함께 삭제되는 항목(CASCADE)을 창을 열 때 조회해 보여 준다 */}
+                          <AnalyticsDeleteConfirmDialog
+                            kind="query"
+                            id={query.id}
+                            itemName={query.name}
+                            onConfirm={() => handleDelete(query.id, query.name)}
+                            trigger={
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                aria-label="삭제"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            }
+                          />
+                        </>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

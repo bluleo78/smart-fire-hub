@@ -8,6 +8,7 @@ import { findMissingChartColumns } from '../../components/analytics/chart-missin
 import { ChartConfigWithheldNotice } from '../../components/analytics/ChartConfigWithheldNotice';
 import { ChartRenderer } from '../../components/analytics/ChartRenderer';
 import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector';
+import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -56,6 +57,7 @@ import {
   useExecuteSavedQuery,
   useUpdateChart,
 } from '../../hooks/queries/useAnalytics';
+import { useIsOwner } from '../../hooks/useIsOwner';
 import { handleApiError } from '../../lib/api-error';
 import {
   exportChartAsPng,
@@ -338,7 +340,10 @@ function AddToDashboardDialog({
   const [selectedDashboardId, setSelectedDashboardId] = useState<number | null>(null);
   // 첫 페이지(100개)만 쓰면 101번째 이후 대시보드가 조용히 빠지므로 전 페이지를 모은다 (#737)
   const { data: allDashboards, isLoading, isError } = useAllDashboards();
-  const dashboards = allDashboards ?? [];
+  // 위젯은 대시보드 작성자만 넣을 수 있다 — 목록은 남이 공유한 대시보드도 주므로(보기용) 내 대시보드만 고르게 거른다(WD-196).
+  // 거르지 않으면 남의 대시보드를 골랐을 때 서버가 404 로 거절해 「대시보드를 찾을 수 없습니다」가 뜬다.
+  const isOwner = useIsOwner();
+  const dashboards = (allDashboards ?? []).filter((d) => isOwner(d.createdBy));
 
   // 다이얼로그를 열 때마다 선택 초기화 — state-based tracking으로 cascading render 방지
   const [openTracker, setOpenTracker] = useState(false);
@@ -489,6 +494,10 @@ export default function ChartBuilderPage() {
   const { data: existingChart, isLoading: chartLoading, isError: chartError } = useChart(chartId);
   // 서버가 설정을 가린 차트(WD-31②) — 설정 패널·차트 타입·쿼리 실행을 잠그고, 저장 시 config·chartType 을 보내지 않는다(기존 값 유지).
   const configWithheld = existingChart?.configWithheld === true;
+  // 저장(덮어쓰기)·이름 변경은 작성자만 — 서버가 남의 수정 요청을 404 로 거절한다(WD-196). 남이 공유한 차트는 저장 버튼 대신 안내를 둔다.
+  // 설정을 바꿔 미리보기를 다시 그려 보는 것(읽기)은 그대로 허용하되, 저장할 수 없으니 「미저장 변경사항」·이탈 경고는 띄우지 않는다.
+  const isOwner = useIsOwner();
+  const canEdit = isNew || (existingChart != null && isOwner(existingChart.createdBy));
 
   const executeQuery = useExecuteSavedQuery();
   const createChart = useCreateChart();
@@ -497,7 +506,10 @@ export default function ChartBuilderPage() {
   // 사용자 상호작용 후 변경 여부 추적
   // - 초기 로드(existingChart로부터 setState)는 변경으로 간주하지 않기 위해 핸들러에서 명시적으로 markDirty()를 호출
   const [isDirty, setIsDirty] = useState(false);
-  const markDirty = useCallback(() => setIsDirty(true), []);
+  // 저장할 수 없는 사용자(남의 공유 차트)는 변경을 추적하지 않는다 — 저장 못 할 「미저장 변경사항」 경고가 뜨지 않게(WD-196)
+  const markDirty = useCallback(() => {
+    if (canEdit) setIsDirty(true);
+  }, [canEdit]);
 
   // 이탈 확인 다이얼로그 상태 — 뒤로가기 클릭 시 dirty면 오픈
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
@@ -611,6 +623,7 @@ export default function ChartBuilderPage() {
   };
 
   const handleSaveClick = () => {
+    if (!canEdit) return; // 남의 차트는 저장 창을 열지 않는다(WD-196)
     if (existingChart) {
       setSaveForm({
         name: existingChart.name,
@@ -866,21 +879,32 @@ export default function ChartBuilderPage() {
           </Button>
         )}
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleSaveClick}
-          disabled={isSaving}
-          className="gap-1.5"
-        >
-          {isSaving ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="h-4 w-4" />
-          )}
-          저장
-        </Button>
+        {/* 저장은 작성자에게만(WD-196) */}
+        {canEdit && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSaveClick}
+            disabled={isSaving}
+            className="gap-1.5"
+          >
+            {isSaving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            저장
+          </Button>
+        )}
       </div>
+
+      {/* 남이 공유한 차트 — 저장 버튼이 없는 이유와 할 수 있는 일을 알린다(WD-196). 차트 복제 기능은 아직 없어 안내만 둔다. */}
+      {!canEdit && existingChart && (
+        <SharedReadOnlyNotice
+          testId="chart-shared-readonly"
+          message={`${existingChart.createdByName}님이 공유한 차트입니다 — 설정을 바꿔 볼 수는 있지만 저장·이름 변경은 작성자만 할 수 있습니다.`}
+        />
+      )}
 
       {/* Main layout: config panel (left) + preview (right) */}
       <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4 items-start">

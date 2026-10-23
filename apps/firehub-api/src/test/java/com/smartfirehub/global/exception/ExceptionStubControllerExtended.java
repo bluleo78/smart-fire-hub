@@ -35,17 +35,17 @@ public class ExceptionStubControllerExtended {
 
   @GetMapping("/saved-query-not-found")
   public void savedQueryNotFound() {
-    throw new SavedQueryNotFoundException("Saved query not found: 55");
+    throw SavedQueryNotFoundException.forId(55L);
   }
 
   @GetMapping("/chart-not-found")
   public void chartNotFound() {
-    throw new ChartNotFoundException("Chart not found: 66");
+    throw ChartNotFoundException.forId(66L);
   }
 
   @GetMapping("/dashboard-not-found")
   public void dashboardNotFound() {
-    throw new DashboardNotFoundException("Dashboard not found: 77");
+    throw DashboardNotFoundException.forId(77L);
   }
 
   @GetMapping("/api-connection-not-found")

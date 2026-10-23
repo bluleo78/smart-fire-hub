@@ -25,6 +25,7 @@ import { TableEmptyRow } from '../../components/ui/table-empty';
 import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useCharts, useDeleteChart } from '../../hooks/queries/useAnalytics';
+import { useIsOwner } from '../../hooks/useIsOwner';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
@@ -48,6 +49,8 @@ export default function ChartListPage() {
   });
 
   const deleteChart = useDeleteChart();
+  // 남이 공유한 차트 줄에서는 편집·삭제를 숨긴다 — 서버가 작성자 외 요청을 404 로 거절한다(WD-196). 줄 클릭으로 보기는 그대로.
+  const isOwner = useIsOwner();
 
   const charts = chartsData?.content ?? [];
   const totalPages = chartsData?.totalPages ?? 0;
@@ -169,39 +172,41 @@ export default function ChartListPage() {
                     </span>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0"
-                        title="편집"
-                        aria-label="편집"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/analytics/charts/${chart.id}`);
-                        }}
-                      >
-                        <Pencil size={13} />
-                      </Button>
-                      {/* WD-86: 함께 삭제되는 항목(CASCADE)을 창을 열 때 조회해 보여 준다 */}
-                      <AnalyticsDeleteConfirmDialog
-                        kind="chart"
-                        id={chart.id}
-                        itemName={chart.name}
-                        onConfirm={() => handleDelete(chart.id, chart.name)}
-                        trigger={
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0"
-                            aria-label="삭제"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        }
-                      />
-                    </div>
+                    {isOwner(chart.createdBy) && (
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          title="편집"
+                          aria-label="편집"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/analytics/charts/${chart.id}`);
+                          }}
+                        >
+                          <Pencil size={13} />
+                        </Button>
+                        {/* WD-86: 함께 삭제되는 항목(CASCADE)을 창을 열 때 조회해 보여 준다 */}
+                        <AnalyticsDeleteConfirmDialog
+                          kind="chart"
+                          id={chart.id}
+                          itemName={chart.name}
+                          onConfirm={() => handleDelete(chart.id, chart.name)}
+                          trigger={
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              aria-label="삭제"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          }
+                        />
+                      </div>
+                    )}
                   </TableCell>
                 </TableRow>
               ))

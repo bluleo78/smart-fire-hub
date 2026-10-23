@@ -48,6 +48,7 @@ export function createSavedQueryListItem(overrides?: Partial<SavedQueryListItem>
     datasetName: '테스트 데이터셋',
     isShared: false,
     createdByName: '테스트 사용자',
+    createdBy: 1, // MOCK_USER.id — 기본은 내 항목(WD-196 소유 판정)
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
     chartCount: 0,
@@ -111,6 +112,7 @@ export function createChartListItem(overrides?: Partial<ChartListItem>): ChartLi
     chartType: 'BAR',
     isShared: false,
     createdByName: '테스트 사용자',
+    createdBy: 1, // MOCK_USER.id — 기본은 내 항목(WD-196 소유 판정)
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
     ...overrides,
@@ -160,6 +162,7 @@ export function createDashboardListItem(overrides?: Partial<DashboardListItem>):
     autoRefreshSeconds: null,
     widgetCount: 1,
     createdByName: '테스트 사용자',
+    createdBy: 1, // MOCK_USER.id — 기본은 내 항목(WD-196 소유 판정)
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
     ...overrides,
