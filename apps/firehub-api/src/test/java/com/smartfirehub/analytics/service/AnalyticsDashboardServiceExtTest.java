@@ -326,8 +326,125 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
     dashboardService.updateWidgetLayout(
         dashboard.id(), new UpdateWidgetLayoutRequest(layouts), ownerUserId);
 
-    // 레이아웃 변경 후 대시보드 조회 가능 확인
-    DashboardResponse result = dashboardService.getById(dashboard.id(), ownerUserId);
-    assertThat(result.widgets()).hasSize(2);
+    // 레이아웃 변경 후 저장된 좌표·크기가 요청값과 같은지 확인한다(WD-193 — 개수만 보면 저장 여부를 증명하지 못한다).
+    assertThat(widgetLayout(w1)).containsExactly(2, 2, 5, 3);
+    assertThat(widgetLayout(w2)).containsExactly(7, 2, 5, 3);
+  }
+
+  /**
+   * WD-193: 자기 대시보드 경로에 남의 대시보드 위젯 id 를 섞으면 전체가 거절되고, 남의 위젯은 물론 함께 보낸 자기 위젯도 바뀌지 않아야 한다(자기 위젯 불변 =
+   * 일부 반영이 없었다는 증거).
+   */
+  @Test
+  void updateWidgetLayout_foreignWidgetMixedIn_rejectsAllAndLeavesDbUnchanged() {
+    Long ownWidget = addWidgetFor(ownerUserId, "WD193 Own");
+    Long ownDashboard = dashboardIdOf(ownWidget);
+    Long foreignWidget = addWidgetFor(otherUserId, "WD193 Foreign");
+
+    List<UpdateWidgetLayoutRequest.WidgetPosition> layouts =
+        List.of(
+            new UpdateWidgetLayoutRequest.WidgetPosition(ownWidget, 3, 3, 4, 4),
+            new UpdateWidgetLayoutRequest.WidgetPosition(foreignWidget, 11, 40, 1, 1));
+
+    assertThatThrownBy(
+            () ->
+                dashboardService.updateWidgetLayout(
+                    ownDashboard, new UpdateWidgetLayoutRequest(layouts), ownerUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("이 대시보드에 없는 위젯이 포함되어 있습니다: [" + foreignWidget + "]");
+
+    // 남의 위젯·자기 위젯 모두 추가 당시 값(0,0,6,4) 그대로
+    assertThat(widgetLayout(foreignWidget)).containsExactly(0, 0, 6, 4);
+    assertThat(widgetLayout(ownWidget)).containsExactly(0, 0, 6, 4);
+  }
+
+  /** WD-193: 없는 위젯 id 도 남의 위젯 id 와 같은 예외·문구로 거절된다 — 다른 대시보드에 위젯이 있는지 드러내지 않는다. */
+  @Test
+  void updateWidgetLayout_nonExistentWidget_rejectedWithSameMessage() {
+    Long ownWidget = addWidgetFor(ownerUserId, "WD193 Own2");
+    Long ownDashboard = dashboardIdOf(ownWidget);
+    long missingId = 999_999_999L;
+
+    assertThatThrownBy(
+            () ->
+                dashboardService.updateWidgetLayout(
+                    ownDashboard,
+                    new UpdateWidgetLayoutRequest(
+                        List.of(
+                            new UpdateWidgetLayoutRequest.WidgetPosition(missingId, 1, 1, 2, 2))),
+                    ownerUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("이 대시보드에 없는 위젯이 포함되어 있습니다: [" + missingId + "]");
+    assertThat(widgetLayout(ownWidget)).containsExactly(0, 0, 6, 4);
+  }
+
+  /** WD-193: 빈 목록은 아무것도 바꾸지 않고 정상 종료한다. */
+  @Test
+  void updateWidgetLayout_emptyList_noOp() {
+    Long ownWidget = addWidgetFor(ownerUserId, "WD193 Own3");
+    Long ownDashboard = dashboardIdOf(ownWidget);
+
+    dashboardService.updateWidgetLayout(
+        ownDashboard, new UpdateWidgetLayoutRequest(List.of()), ownerUserId);
+
+    assertThat(widgetLayout(ownWidget)).containsExactly(0, 0, 6, 4);
+  }
+
+  /** WD-193: 남의 대시보드 경로로는(소유 아님) 여전히 대시보드 404 로 거절되고 위젯은 바뀌지 않는다. */
+  @Test
+  void updateWidgetLayout_nonOwnerDashboardPath_throwsNotFound() {
+    Long foreignWidget = addWidgetFor(otherUserId, "WD193 Foreign2");
+    Long foreignDashboard = dashboardIdOf(foreignWidget);
+
+    assertThatThrownBy(
+            () ->
+                dashboardService.updateWidgetLayout(
+                    foreignDashboard,
+                    new UpdateWidgetLayoutRequest(
+                        List.of(
+                            new UpdateWidgetLayoutRequest.WidgetPosition(
+                                foreignWidget, 1, 1, 2, 2))),
+                    ownerUserId))
+        .isInstanceOf(DashboardNotFoundException.class);
+    assertThat(widgetLayout(foreignWidget)).containsExactly(0, 0, 6, 4);
+  }
+
+  // ── WD-193 헬퍼 ─────────────────────────────────────────────────────────
+
+  /** 사용자 소유 차트·대시보드를 만들고 위젯 하나(0,0,6,4)를 붙여 위젯 id 를 돌려준다. */
+  private Long addWidgetFor(Long userId, String name) {
+    var chart =
+        chartService.create(
+            new CreateChartRequest(name + " Chart", null, savedQueryId, "BAR", Map.of(), false),
+            userId);
+    DashboardResponse dashboard =
+        dashboardService.create(
+            new CreateDashboardRequest(name + " Dash", null, false, null), userId);
+    DashboardResponse after =
+        dashboardService.addWidget(
+            dashboard.id(), new AddWidgetRequest(chart.id(), 0, 0, 6, 4), userId);
+    return after.widgets().get(0).id();
+  }
+
+  /** 위젯이 속한 대시보드 id 를 DB 에서 직접 읽는다. */
+  private Long dashboardIdOf(Long widgetId) {
+    return dsl.select(DSL.field(DSL.name("dashboard_id"), Long.class))
+        .from(DSL.table(DSL.name("dashboard_widget")))
+        .where(DSL.field(DSL.name("id"), Long.class).eq(widgetId))
+        .fetchOne(0, Long.class);
+  }
+
+  /** 위젯의 [position_x, position_y, width, height] 를 DB 에서 직접 읽는다(서비스 우회 — 저장 결과 자체를 본다). */
+  private List<Integer> widgetLayout(Long widgetId) {
+    var r =
+        dsl.select(
+                DSL.field(DSL.name("position_x"), Integer.class),
+                DSL.field(DSL.name("position_y"), Integer.class),
+                DSL.field(DSL.name("width"), Integer.class),
+                DSL.field(DSL.name("height"), Integer.class))
+            .from(DSL.table(DSL.name("dashboard_widget")))
+            .where(DSL.field(DSL.name("id"), Long.class).eq(widgetId))
+            .fetchOne();
+    return List.of(r.value1(), r.value2(), r.value3(), r.value4());
   }
 }

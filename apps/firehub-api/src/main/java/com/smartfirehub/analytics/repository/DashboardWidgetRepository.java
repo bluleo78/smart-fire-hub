@@ -8,8 +8,11 @@ import com.smartfirehub.analytics.dto.UpdateWidgetLayoutRequest;
 import com.smartfirehub.analytics.dto.UpdateWidgetRequest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -129,7 +132,28 @@ public class DashboardWidgetRepository {
     update.where(DW_ID.eq(widgetId)).execute();
   }
 
-  public void batchUpdateLayout(List<UpdateWidgetLayoutRequest.WidgetPosition> positions) {
+  /**
+   * 주어진 위젯 id 중 해당 대시보드에 속한 것만 돌려준다 (WD-193).
+   *
+   * <p>배치 저장 전에 요청 위젯이 모두 경로 대시보드 소속인지 확인하는 데 쓴다.
+   */
+  public Set<Long> findIdsInDashboard(Long dashboardId, Collection<Long> widgetIds) {
+    if (widgetIds.isEmpty()) return Set.of();
+    return new HashSet<>(
+        dsl.select(DW_ID)
+            .from(DW)
+            .where(DW_DASHBOARD_ID.eq(dashboardId).and(DW_ID.in(widgetIds)))
+            .fetch(DW_ID));
+  }
+
+  /**
+   * 위젯 배치를 일괄 갱신한다.
+   *
+   * <p>WD-193: 갱신 조건에 dashboard_id 를 함께 건다. 서비스가 먼저 소속을 확인하지만, 이 메서드를 다른 곳에서 불러도 다른 대시보드의 위젯은 절대
+   * 바뀌지 않도록 하는 이중 방어다.
+   */
+  public void batchUpdateLayout(
+      Long dashboardId, List<UpdateWidgetLayoutRequest.WidgetPosition> positions) {
     for (UpdateWidgetLayoutRequest.WidgetPosition pos : positions) {
       dsl.update(DW)
           .set(DW_POSITION_X, pos.positionX())
@@ -137,7 +161,7 @@ public class DashboardWidgetRepository {
           .set(DW_WIDTH, pos.width())
           .set(DW_HEIGHT, pos.height())
           .set(DW_UPDATED_AT, LocalDateTime.now())
-          .where(DW_ID.eq(pos.widgetId()))
+          .where(DW_ID.eq(pos.widgetId()).and(DW_DASHBOARD_ID.eq(dashboardId)))
           .execute();
     }
   }

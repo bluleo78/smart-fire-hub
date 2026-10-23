@@ -247,4 +247,113 @@ class AnalyticsDashboardControllerTest {
     verify(dashboardService)
         .updateWidgetLayout(anyLong(), any(UpdateWidgetLayoutRequest.class), anyLong());
   }
+
+  // ── WD-193: 배치 저장 요청 검증 (null·null 원소·범위 밖 → 400, 서비스 미호출) ──────────────
+
+  /** 배치 저장 PUT 요청을 원문 JSON 본문으로 보낸다. */
+  private org.springframework.test.web.servlet.ResultActions putLayout(String body)
+      throws Exception {
+    return mockMvc.perform(
+        put("/api/v1/analytics/dashboards/1/widgets/layout")
+            .header("Authorization", "Bearer test-token")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body));
+  }
+
+  @Test
+  void updateWidgetLayout_nullWidgets_returns400() throws Exception {
+    putLayout("{\"widgets\":null}")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("Validation failed"))
+        .andExpect(jsonPath("$.errors.widgets").value("위젯 배치 목록(widgets)은 필수입니다."));
+    verify(dashboardService, never()).updateWidgetLayout(anyLong(), any(), anyLong());
+  }
+
+  @Test
+  void updateWidgetLayout_nullElement_returns400() throws Exception {
+    putLayout("{\"widgets\":[null]}")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors['widgets[0]']").value("위젯 배치 항목은 비어 있을 수 없습니다."));
+    verify(dashboardService, never()).updateWidgetLayout(anyLong(), any(), anyLong());
+  }
+
+  @Test
+  void updateWidgetLayout_outOfRangeValues_returns400WithFieldErrors() throws Exception {
+    // 탐색 재현값(너비 0·높이 99·음수 좌표)과 열 좌표 상한 초과(12)
+    putLayout(
+            "{\"widgets\":[{\"widgetId\":2,\"positionX\":-5,\"positionY\":-5,\"width\":0,\"height\":99},"
+                + "{\"widgetId\":3,\"positionX\":12,\"positionY\":241,\"width\":13,\"height\":0}]}")
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.errors['widgets[0].positionX']").value("열 위치(positionX)는 0 이상이어야 합니다."))
+        .andExpect(
+            jsonPath("$.errors['widgets[0].positionY']").value("행 위치(positionY)는 0 이상이어야 합니다."))
+        .andExpect(jsonPath("$.errors['widgets[0].width']").value("너비(width)는 1 이상이어야 합니다."))
+        .andExpect(jsonPath("$.errors['widgets[0].height']").value("높이(height)는 12 이하여야 합니다."))
+        .andExpect(
+            jsonPath("$.errors['widgets[1].positionX']").value("열 위치(positionX)는 11 이하여야 합니다."))
+        .andExpect(
+            jsonPath("$.errors['widgets[1].positionY']").value("행 위치(positionY)는 240 이하여야 합니다."))
+        .andExpect(jsonPath("$.errors['widgets[1].width']").value("너비(width)는 12 이하여야 합니다."))
+        .andExpect(jsonPath("$.errors['widgets[1].height']").value("높이(height)는 1 이상이어야 합니다."));
+    verify(dashboardService, never()).updateWidgetLayout(anyLong(), any(), anyLong());
+  }
+
+  @Test
+  void updateWidgetLayout_missingWidgetId_returns400() throws Exception {
+    putLayout("{\"widgets\":[{\"positionX\":0,\"positionY\":0,\"width\":6,\"height\":4}]}")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors['widgets[0].widgetId']").value("위젯 ID(widgetId)는 필수입니다."));
+    verify(dashboardService, never()).updateWidgetLayout(anyLong(), any(), anyLong());
+  }
+
+  @Test
+  void updateWidgetLayout_boundaryValues_returnsNoContent() throws Exception {
+    // 경계값(열 11·행 240·크기 1과 12)은 허용된다
+    putLayout(
+            "{\"widgets\":[{\"widgetId\":2,\"positionX\":11,\"positionY\":240,\"width\":1,\"height\":12},"
+                + "{\"widgetId\":3,\"positionX\":0,\"positionY\":0,\"width\":12,\"height\":1}]}")
+        .andExpect(status().isNoContent());
+    verify(dashboardService)
+        .updateWidgetLayout(eq(1L), any(UpdateWidgetLayoutRequest.class), anyLong());
+  }
+
+  @Test
+  void updateWidgetLayout_emptyList_returnsNoContent() throws Exception {
+    putLayout("{\"widgets\":[]}").andExpect(status().isNoContent());
+    verify(dashboardService)
+        .updateWidgetLayout(eq(1L), any(UpdateWidgetLayoutRequest.class), anyLong());
+  }
+
+  /** WD-193: 목록 길이는 대시보드 위젯 상한(20)까지 — 21개면 400 이고 서비스(소속 확인 IN 조회)까지 가지 않는다. */
+  @Test
+  void updateWidgetLayout_tooManyWidgets_returns400() throws Exception {
+    String items =
+        java.util.stream.IntStream.rangeClosed(1, 21)
+            .mapToObj(
+                i ->
+                    "{\"widgetId\":"
+                        + i
+                        + ",\"positionX\":0,\"positionY\":0,\"width\":1,\"height\":1}")
+            .collect(java.util.stream.Collectors.joining(","));
+    putLayout("{\"widgets\":[" + items + "]}")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.widgets").value("위젯 배치는 한 번에 20개까지 저장할 수 있습니다."));
+    verify(dashboardService, never()).updateWidgetLayout(anyLong(), any(), anyLong());
+  }
+
+  /** WD-193: 단건 수정도 같은 범위 규칙을 쓴다 — 음수 좌표는 400. */
+  @Test
+  void updateWidget_outOfRangePosition_returns400() throws Exception {
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/dashboards/1/widgets/2")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"positionX\":-1,\"positionY\":241}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.positionX").value("열 위치(positionX)는 0 이상이어야 합니다."))
+        .andExpect(jsonPath("$.errors.positionY").value("행 위치(positionY)는 240 이하여야 합니다."));
+    verify(dashboardService, never()).updateWidget(anyLong(), anyLong(), any(), anyLong());
+  }
 }

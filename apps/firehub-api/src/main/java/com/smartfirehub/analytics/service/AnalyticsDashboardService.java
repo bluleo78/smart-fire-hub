@@ -8,6 +8,7 @@ import com.smartfirehub.analytics.dto.ChartDataResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateDashboardRequest;
 import com.smartfirehub.analytics.dto.DashboardDataResponse;
+import com.smartfirehub.analytics.dto.DashboardGridLimits;
 import com.smartfirehub.analytics.dto.DashboardResponse;
 import com.smartfirehub.analytics.dto.UpdateDashboardRequest;
 import com.smartfirehub.analytics.dto.UpdateWidgetLayoutRequest;
@@ -23,8 +24,10 @@ import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -34,7 +37,9 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class AnalyticsDashboardService {
 
-  private static final int MAX_WIDGETS_PER_DASHBOARD = 20;
+  // 위젯 한도는 그리드 좌표 상한(DashboardGridLimits.MAX_POSITION_Y)의 근거이기도 해서 한 곳에 둔다(WD-193).
+  private static final int MAX_WIDGETS_PER_DASHBOARD =
+      DashboardGridLimits.MAX_WIDGETS_PER_DASHBOARD;
 
   private final AnalyticsDashboardRepository dashboardRepository;
   private final DashboardWidgetRepository widgetRepository;
@@ -306,13 +311,38 @@ public class AnalyticsDashboardService {
     }
   }
 
+  /**
+   * 위젯 배치(좌표·크기)를 일괄 저장한다.
+   *
+   * <p>WD-193: 예전에는 경로 대시보드의 소유만 확인하고 본문의 위젯 id 는 대시보드 소속을 보지 않아, 같은 워크스페이스의 다른 사람 대시보드 위젯을 옮기거나
+   * 크기를 바꿀 수 있었다. 이제 쓰기 전에 요청한 위젯 id 가 모두 이 대시보드 소속인지 먼저 확인하고, 하나라도 아니면 아무것도 쓰지 않고 전체를 거절한다(일부만
+   * 반영하지 않는다).
+   *
+   * <p>거절은 단건 수정·삭제({@code /widgets/{wId}})와 같은 400(IllegalArgumentException) 관례를 따른다. 없는 위젯 id 와
+   * 남의 대시보드 위젯 id 는 같은 문구로 응답해, 다른 대시보드에 그 위젯이 있는지 드러내지 않는다.
+   */
   @Transactional
   public void updateWidgetLayout(Long dashboardId, UpdateWidgetLayoutRequest req, Long userId) {
     dashboardRepository
         .findByIdForOwner(dashboardId, userId)
         .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + dashboardId));
 
-    widgetRepository.batchUpdateLayout(req.widgets());
+    List<UpdateWidgetLayoutRequest.WidgetPosition> positions = req.widgets();
+    // 빈 목록은 바꿀 것이 없으므로 그대로 성공 처리한다(컨트롤러 검증이 null 은 이미 400 으로 걸렀다).
+    if (positions == null || positions.isEmpty()) {
+      return;
+    }
+
+    // 요청 위젯 id 중 이 대시보드 소속이 아닌 것을 쓰기 전에 모두 찾는다 — 먼저 검사하므로 거절 시 어떤 행도 바뀌지 않는다.
+    Set<Long> requestedIds = new LinkedHashSet<>();
+    positions.forEach(p -> requestedIds.add(p.widgetId()));
+    Set<Long> ownedIds = widgetRepository.findIdsInDashboard(dashboardId, requestedIds);
+    List<Long> foreignIds = requestedIds.stream().filter(id -> !ownedIds.contains(id)).toList();
+    if (!foreignIds.isEmpty()) {
+      throw new IllegalArgumentException("이 대시보드에 없는 위젯이 포함되어 있습니다: " + foreignIds);
+    }
+
+    widgetRepository.batchUpdateLayout(dashboardId, positions);
   }
 
   private AnalyticsQueryResponse emptyQueryResponse() {
