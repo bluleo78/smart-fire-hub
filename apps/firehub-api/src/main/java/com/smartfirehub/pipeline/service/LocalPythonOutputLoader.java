@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.smartfirehub.dataset.service.DataTableRowService;
+import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -50,8 +51,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       내용이 붙은 경우 — Python {@code json.loads} 의 "Extra data" 포함) 적재하지 않고 스텝을 실패시킨다(WD-210, {@link
  *       #notJsonMessage}). 예전엔 조용히 0행이라 REPLACE 출력이 옛 데이터로 남아 갱신이 멈춘 걸 알 수 없었다.
  *   <li>첫 원소가 객체인 비어 있지 않은 배열만 행으로 본다. 아니면 0행(오류 아님).
- *   <li>컬럼은 <b>첫 행의 키</b>(순서 유지). 이후 행에 그 키가 없거나 행이 객체가 아니면 적재 실패(Python {@code KeyError}/{@code
- *       TypeError}). 이후 행의 여분 키는 무시.
+ *   <li>컬럼은 <b>첫 행의 키</b>(순서 유지). 이후 행에 그 키가 없거나 행이 객체가 아니면 적재 전에 실패한다(행 번호를 짚는 한국어 문구, WD-211). 이후
+ *       행의 여분 키는 무시.
+ *   <li>첫 행의 키가 출력 데이터셋 컬럼(시스템 컬럼 제외)에 없으면 적재 전에 실패한다(WD-211) — 예전엔 DB 가 거부한 INSERT 원문(내부 SQL·스키마)이
+ *       그대로 보였다.
  *   <li>타입 변환 실패는 오류가 아니라 null(Python 쪽이 경고 로그 후 None).
  *   <li>모든 행을 한 트랜잭션으로 적재한다(executor 는 한 커넥션에서 마지막에 한 번 commit).
  * </ul>
@@ -59,14 +62,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Slf4j
 @Component
 public class LocalPythonOutputLoader {
-
-  /**
-   * 적재 실패 문구 접두. 실행기 켠 경로에서 사용자가 보는 문구는 러너가 executor 오류({@code "Script succeeded but data insert
-   * failed: ..."}) 앞에 {@code "Python 실행 실패: "} 를 붙인 것이다. 로컬 경로는 이 예외를 러너가 감싸지 않고 그대로 스텝 오류로 쓰므로, 두
-   * 경로의 사용자 문구가 같도록 여기서 같은 접두 전체를 붙인다.
-   */
-  static final String INSERT_FAILED_PREFIX =
-      "Python 실행 실패: Script succeeded but data insert failed: ";
 
   /**
    * stdout 이 JSON 이 아닐 때의 사용자 문구(WD-210). executor({@code python_executor.py} 의 {@code
@@ -105,26 +100,35 @@ public class LocalPythonOutputLoader {
    * stdout 을 파싱·변환해 {@code tableName}(현재 테넌트 데이터 스키마)에 적재한다.
    *
    * @return 적재한 행 수(stdout 이 비었거나 JSON 이 행 배열이 아니면 0 — REPLACE 는 이 값으로 맞바꿈 여부를 정한다, #685)
+   * @param columnTypeMap 출력 데이터셋 컬럼 → 타입. 비었거나 null 이면 컬럼 존재 확인을 건너뛴다(executor 의 선택 필드와 같은 규칙)
    * @throws ScriptExecutionException 적재 실패 — 메시지는 실행기 켠 경로의 사용자 문구와 같다({@link
-   *     #INSERT_FAILED_PREFIX}). stdout 이 JSON 이 아니면 적재 전에 {@link #NOT_JSON_MESSAGE} 로 실패한다(DB 무접촉
-   *     — REPLACE 는 러너가 임시 테이블을 버려 원본이 남는다)
+   *     PythonStepErrorMessages}). stdout 이 JSON 이 아니면 적재 전에 {@link #NOT_JSON_MESSAGE} 로, 행 모양·컬럼
+   *     이름이 틀리면 적재 전에 행 번호·키를 짚는 문구로 실패한다(DB 무접촉 — REPLACE 는 러너가 임시 테이블을 버려 원본이 남는다)
    */
   public long load(String tableName, String stdout, Map<String, String> columnTypeMap) {
     List<Map<String, Object>> rows;
     try {
       rows = parseStdoutJson(stdout);
     } catch (StdoutNotJsonException e) {
-      // 적재 실패가 아니라 출력 형식 오류다 — INSERT_FAILED_PREFIX 를 붙이지 않는다. 실행기 켠 경로는 러너가 executor 오류 앞에
+      // 적재 실패가 아니라 출력 형식 오류다 — 적재 실패 문구(PythonStepErrorMessages)로 바꾸지 않는다. 실행기 켠 경로는 러너가 executor
+      // 오류 앞에
       // "Python 실행 실패: " 만 붙이므로, 두 경로 문구가 같도록 같은 접두만 붙인다.
-      throw new ScriptExecutionException("Python 실행 실패: " + e.getMessage(), e);
-    } catch (RuntimeException e) {
-      throw new ScriptExecutionException(INSERT_FAILED_PREFIX + e.getMessage(), e);
+      throw new ScriptExecutionException(PythonStepErrorMessages.PREFIX + e.getMessage(), e);
+    } catch (OutputRowsException e) {
+      // 행 모양 오류는 메시지가 곧 사용자 문구(접두 포함)다.
+      throw new ScriptExecutionException(e.getMessage(), e);
     }
     if (rows == null) {
       return 0;
     }
     try {
+      // 컬럼 존재·행 키 확인은 DB 에 닿기 전에 한다 — SQL 오류 문자열을 파싱하지 않고 어느 키가 문제인지 정확히 짚는다(WD-211).
+      requireKnownColumns(rows.get(0), columnTypeMap);
       applyTypeConversion(rows, columnTypeMap);
+    } catch (OutputRowsException e) {
+      throw new ScriptExecutionException(e.getMessage(), e);
+    }
+    try {
       toSessionLocalTimestamps(rows);
       List<String> columns = new ArrayList<>(rows.get(0).keySet());
       transactionTemplate.executeWithoutResult(
@@ -133,7 +137,33 @@ public class LocalPythonOutputLoader {
                   tableName, columns, rows, geometryOnly(columnTypeMap)));
       return rows.size();
     } catch (RuntimeException e) {
-      throw new ScriptExecutionException(INSERT_FAILED_PREFIX + e.getMessage(), e);
+      // 원문(jOOQ 의 SQL 메아리·내부 스키마)은 로그에만 남기고, 사용자에게는 데이터 오류 사유 또는 일반 안내만 보인다(WD-211).
+      log.warn("Python 출력 적재 실패: table={}", tableName, e);
+      throw new ScriptExecutionException(PythonStepErrorMessages.loadFailed(e), e);
+    }
+  }
+
+  /**
+   * 첫 행의 키(= 적재 컬럼)가 모두 출력 데이터셋 컬럼인지 확인한다. 첫 번째로 없는 키(첫 행 키 순서)를 짚는다. 시스템
+   * 컬럼(id·import_id·created_at· _updated_at)은 데이터셋 컬럼 목록에 없지만 물리 테이블에 있어, 예전처럼 DB 판단에 맡긴다(이 확인으로
+   * 동작을 바꾸지 않는다). 타입 맵이 비었거나 null 이면 확인할 근거가 없어 건너뛴다. executor({@code
+   * python_executor._require_known_columns})와 같은 규칙이다.
+   */
+  static void requireKnownColumns(Map<String, Object> firstRow, Map<String, String> columnTypeMap) {
+    if (columnTypeMap == null || columnTypeMap.isEmpty()) {
+      return;
+    }
+    for (String key : firstRow.keySet()) {
+      if (!columnTypeMap.containsKey(key) && !DataTableService.SYSTEM_COLUMNS.contains(key)) {
+        throw new OutputRowsException(PythonStepErrorMessages.unknownColumn(key));
+      }
+    }
+  }
+
+  /** 출력 JSON 행 모양·키 오류 — 메시지가 곧 사용자 문구(접두 포함)다. 적재 전에 던지므로 DB 는 건드리지 않았다. */
+  static final class OutputRowsException extends RuntimeException {
+    OutputRowsException(String message) {
+      super(message);
     }
   }
 
@@ -212,10 +242,11 @@ public class LocalPythonOutputLoader {
     }
     if (data instanceof List<?> list && !list.isEmpty() && list.get(0) instanceof Map) {
       List<Map<String, Object>> rows = new ArrayList<>(list.size());
-      for (Object element : list) {
+      for (int i = 0; i < list.size(); i++) {
+        Object element = list.get(i);
         if (!(element instanceof Map)) {
-          throw new IllegalArgumentException(
-              "row is not a JSON object: " + (element == null ? "null" : pyStr(element)));
+          // 행 번호는 1부터. 값은 싣지 않는다(PythonStepErrorMessages.ROW_NOT_OBJECT_MESSAGE 참고).
+          throw new OutputRowsException(PythonStepErrorMessages.rowNotObject(i + 1));
         }
         rows.add(new LinkedHashMap<>((Map<String, Object>) element));
       }
@@ -234,8 +265,8 @@ public class LocalPythonOutputLoader {
   // ---------------------------------------------------------------------------
 
   /**
-   * 컬럼 타입 맵에 따라 행 값을 제자리 변환한다. 맵이 비면 아무것도 하지 않는다. 그 뒤 첫 행의 키가 모든 행에 있는지 확인한다(원본의 {@code row[c]}
-   * KeyError).
+   * 컬럼 타입 맵에 따라 행 값을 제자리 변환한다. 맵이 비면 아무것도 하지 않는다. 그 뒤 첫 행의 키가 모든 행에 있는지 확인해, 빠진 행이 있으면 행 번호와 키를 짚는
+   * {@link OutputRowsException} 을 던진다(WD-211 — 예전엔 원본의 {@code row[c]} KeyError 처럼 영어 원문이었다).
    */
   static void applyTypeConversion(List<Map<String, Object>> rows, Map<String, String> typeMap) {
     if (typeMap != null && !typeMap.isEmpty()) {
@@ -253,10 +284,11 @@ public class LocalPythonOutputLoader {
       }
     }
     Set<String> columns = rows.get(0).keySet();
-    for (Map<String, Object> row : rows) {
+    for (int i = 0; i < rows.size(); i++) {
       for (String column : columns) {
-        if (!row.containsKey(column)) {
-          throw new IllegalArgumentException("row is missing key '" + column + "'");
+        if (!rows.get(i).containsKey(column)) {
+          // 행 번호는 1부터 — 첫 번째로 키가 빠진 행과 그 키(첫 행 키 순서)를 짚는다.
+          throw new OutputRowsException(PythonStepErrorMessages.rowMissingKey(i + 1, column));
         }
       }
     }

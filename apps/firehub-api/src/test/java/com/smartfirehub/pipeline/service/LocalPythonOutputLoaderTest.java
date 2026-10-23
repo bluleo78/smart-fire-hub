@@ -2,6 +2,10 @@ package com.smartfirehub.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -9,6 +13,7 @@ import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -18,6 +23,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.transaction.PlatformTransactionManager;
 
 /**
@@ -158,7 +165,7 @@ class LocalPythonOutputLoaderTest {
   /**
    * WD-210: 디버그 print 뒤 JSON 은 적재 전에 실패한다 — 예전엔 조용히 0행 "완료"였다. 문구는 executor
    * (test_python_executor.py 의 DEBUG_THEN_JSON_MESSAGE)와 같은 입력에 대해 글자 단위로 같고, 실행기 켠 경로처럼 러너 접두
-   * "Python 실행 실패: " 가 붙는다. 적재 실패 접두(INSERT_FAILED_PREFIX)는 붙지 않는다. DB 는 건드리지 않는다.
+   * "Python 실행 실패: " 가 붙는다. 적재 실패 문구(PythonStepErrorMessages)로 바뀌지 않는다. DB 는 건드리지 않는다.
    */
   @Test
   void debugPrintThenJson_failsBeforeInsertWithExecutorMessage() {
@@ -218,16 +225,111 @@ class LocalPythonOutputLoaderTest {
   }
 
   /**
-   * 적재 실패 문구는 실행기 켠 경로의 사용자 문구("Python 실행 실패: " + executor 오류)와 같다 — 로컬 경로는 러너가 이 예외를 감싸지 않는다(Task
-   * 5 리뷰 M1). 첫 행 뒤 원소가 객체가 아니면 파싱 단계에서 실패한다(DB 접근 전).
+   * WD-211: 첫 행 뒤 원소가 객체가 아니면 파싱 단계(DB 접근 전)에서 행 번호(1부터)를 짚는 한국어 문구로 실패한다 — 예전엔 「… row is not a
+   * JSON object: 3」. 문구는 executor(test_python_executor.py 의
+   * test_row_not_object_reports_row_number)와 같은 입력에 대해 글자 단위로 같고, 러너 접두 "Python 실행 실패: " 가 붙는다(로컬
+   * 경로는 러너가 감싸지 않는다).
    */
   @Test
-  void loadFailure_usesSameUserMessageAsExecutorPath() {
-    LocalPythonOutputLoader loader =
-        new LocalPythonOutputLoader(
-            mock(DataTableRowService.class), mock(PlatformTransactionManager.class));
-    assertThatThrownBy(() -> loader.load("t", "[{\"a\": 1}, 2]", Map.of()))
+  void rowNotObject_reportsRowNumberInKorean() {
+    DataTableRowService rowService = mock(DataTableRowService.class);
+    assertThatThrownBy(
+            () ->
+                loaderWith(rowService)
+                    .load("t", "[{\"name\": \"a\"}, {\"name\": \"b\"}, 3]", Map.of("name", "TEXT")))
         .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageStartingWith("Python 실행 실패: Script succeeded but data insert failed: ");
+        .hasMessage(
+            "Python 실행 실패: 출력 JSON 의 3번째 행이 객체가 아닙니다. 모든 행을 컬럼 이름을 키로 하는 JSON 객체로 출력해 주세요.");
+    verifyNoInteractions(rowService);
+  }
+
+  /**
+   * WD-211: 첫 행의 키가 출력 데이터셋 컬럼에 없으면 적재 전에 그 키를 짚어 실패한다 — 예전엔 jOOQ bad SQL grammar 원문(내부
+   * 스키마·INSERT).
+   */
+  @Test
+  void unknownColumnKey_failsBeforeInsertNamingTheKey() {
+    DataTableRowService rowService = mock(DataTableRowService.class);
+    assertThatThrownBy(
+            () -> loaderWith(rowService).load("t", "[{\"nocol\": \"a\"}]", Map.of("name", "TEXT")))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage(
+            "Python 실행 실패: 출력 JSON 의 'nocol' 가 출력 데이터셋 컬럼에 없습니다. 데이터셋 컬럼 이름과 같은 키로 출력해 주세요.");
+    verifyNoInteractions(rowService);
+  }
+
+  /** WD-211: 시스템 컬럼(created_at 등) 키는 데이터셋 컬럼 목록에 없어도 예전처럼 DB 판단에 맡긴다 — 이 확인으로 동작이 바뀌지 않는다. */
+  @Test
+  void systemColumnKey_isNotRejectedByColumnCheck() {
+    DataTableRowService rowService = mock(DataTableRowService.class);
+    LocalPythonOutputLoader loader = loaderWith(rowService);
+    assertThat(
+            loader.load("t", "[{\"name\": \"a\", \"created_at\": \"x\"}]", Map.of("name", "TEXT")))
+        .isEqualTo(1);
+  }
+
+  /** WD-211: 이후 행에 첫 행의 키가 없으면 행 번호와 키를 짚는다 — executor 와 같은 문구. */
+  @Test
+  void rowMissingFirstRowKey_reportsRowNumberAndKey() {
+    DataTableRowService rowService = mock(DataTableRowService.class);
+    assertThatThrownBy(
+            () ->
+                loaderWith(rowService)
+                    .load(
+                        "t",
+                        "[{\"name\": \"a\"}, {\"other\": \"b\"}]",
+                        Map.of("name", "TEXT", "other", "TEXT")))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage(
+            "Python 실행 실패: 출력 JSON 의 2번째 행에 첫 행의 키 'name' 가 없습니다. 모든 행에 첫 행과 같은 키를 넣어 주세요.");
+    verifyNoInteractions(rowService);
+  }
+
+  /** WD-211: 분류하지 못한 적재 실패는 원문(SQL·스키마)을 숨기고 일반 한국어 안내만 보인다. */
+  @Test
+  void otherInsertFailure_hidesRawSqlBehindGenericMessage() {
+    DataTableRowService rowService = mock(DataTableRowService.class);
+    doThrow(
+            new BadSqlGrammarException(
+                "jOOQ",
+                "INSERT INTO data.\"r8_out\" (\"name\") VALUES (?)",
+                new SQLException("column does not exist", "42703")))
+        .when(rowService)
+        .insertBatch(anyString(), anyList(), anyList(), anyMap());
+    LocalPythonOutputLoader loader = loaderWith(rowService);
+    assertThatThrownBy(() -> loader.load("r8_out", "[{\"name\": \"a\"}]", Map.of("name", "TEXT")))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage("Python 실행 실패: 출력 결과를 데이터셋에 적재하지 못했습니다. 출력 JSON 의 키와 값 형식을 확인해 주세요.");
+  }
+
+  /** WD-211: DB 데이터 오류(22xxx)는 DataExceptionTranslator 사유 문장을 재사용한다(원문 없이). */
+  @Test
+  void dataErrorOnInsert_usesDataExceptionTranslatorReason() {
+    DataTableRowService rowService = mock(DataTableRowService.class);
+    doThrow(
+            new DataIntegrityViolationException(
+                "jOOQ; SQL [INSERT INTO data.\"r8_out\" ...]",
+                new SQLException("value too long", "22001")))
+        .when(rowService)
+        .insertBatch(anyString(), anyList(), anyList(), anyMap());
+    LocalPythonOutputLoader loader = loaderWith(rowService);
+    assertThatThrownBy(() -> loader.load("r8_out", "[{\"name\": \"a\"}]", Map.of("name", "TEXT")))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage(
+            "Python 실행 실패: 출력 결과를 데이터셋에 적재하지 못했습니다: 글자 수 제한을 넘는 값이 있습니다. 출력 JSON 의 값이 데이터셋 컬럼의"
+                + " 타입·형식·길이에 맞는지 확인해 주세요.")
+        .hasMessageNotContaining("INSERT");
+  }
+
+  /**
+   * WD-211: 타임아웃·예기치 못한 오류 문구 — executor(TIMEOUT_MESSAGE·UNEXPECTED_ERROR_MESSAGE)와 같은 문장에 러너 접두.
+   */
+  @Test
+  void timeoutAndUnexpectedMessages_matchExecutor() {
+    assertThat(PythonStepErrorMessages.timeout(300))
+        .isEqualTo("Python 실행 실패: 실행 시간 제한(300초)을 넘어 스크립트를 중단했습니다.");
+    assertThat(PythonStepErrorMessages.unexpectedError())
+        .isEqualTo(
+            "Python 실행 실패: 스크립트 실행 중 예기치 못한 오류가 발생했습니다. 잠시 후 다시 실행하고, 계속되면 관리자에게 문의해 주세요.");
   }
 }

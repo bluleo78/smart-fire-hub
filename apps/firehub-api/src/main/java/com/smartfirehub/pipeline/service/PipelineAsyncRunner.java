@@ -172,7 +172,8 @@ public class PipelineAsyncRunner {
       // 실행 상태를 RUNNING으로 업데이트. 조건부 쓰기다(끝나지 않은 실행만) — 대기 중에 취소돼 이미 CANCELLED 인 실행을 되살리지 않는다.
       executionRepository.updateExecutionStatus(executionId, "RUNNING", executionStartedAt, null);
 
-      // 취소 체크포인트(WD-153) — 시작 직후. 대기 중(PENDING)에 취소된 실행은 취소 API 가 이미 CANCELLED·스텝 SKIPPED 로 마감했다 — 스텝을 하나도
+      // 취소 체크포인트(WD-153) — 시작 직후. 대기 중(PENDING)에 취소된 실행은 취소 API 가 이미 CANCELLED·스텝 SKIPPED 로 마감했다 —
+      // 스텝을 하나도
       // 돌리지 않고 끝낸다. 시작 쓰기와 이 확인 사이에 RUNNING 취소가 들어온 경우도 같은 마감으로 정리된다(조건부라 이미 마감된 실행에는 무동작).
       if (cancel.isCancelRequested()) {
         finishCancelled(executionId);
@@ -286,8 +287,8 @@ public class PipelineAsyncRunner {
   }
 
   /**
-   * 취소된 실행을 마감한다(WD-153) — 아직 시작하지 않은 스텝을 SKIPPED(취소 사유)로, 실행을 CANCELLED 로 바꾼다. 두 쓰기 모두 조건부라(PENDING
-   * 스텝만·끝나지 않은 실행만) 대기 중 취소로 이미 마감된 실행에는 무동작이다.
+   * 취소된 실행을 마감한다(WD-153) — 아직 시작하지 않은 스텝을 SKIPPED(취소 사유)로, 실행을 CANCELLED 로 바꾼다. 두 쓰기 모두
+   * 조건부라(PENDING 스텝만·끝나지 않은 실행만) 대기 중 취소로 이미 마감된 실행에는 무동작이다.
    *
    * <p><b>완료 이벤트를 발행하지 않는다.</b> PIPELINE_CHAIN 트리거는 조건이 ANY 여도 취소된 실행으로는 발화하지 않는다 — 사용자가 멈춘 흐름의 하위
    * 파이프라인이 이어서 돌면 "멈췄다"는 의도와 반대다. 완료 알림도 보내지 않는다(취소한 사람이 화면에서 결과를 이미 본다). 리스너 쪽에도 같은 방어를
@@ -398,10 +399,10 @@ public class PipelineAsyncRunner {
   /**
    * 개별 스텝 실행 — 협조적 취소 확인({@code cancel}, WD-153)을 받는다.
    *
-   * <p>스텝 안의 체크포인트: SQL·PYTHON·실행기(firehub-executor) 호출은 그 호출 하나를 기다리므로 <b>호출 직전·직후</b>만 본다(진행 중인 호출은
-   * 자기 타임아웃까지 끝까지 돈다). 로컬 API_CALL 은 페이지 사이·재시도 대기 중, AI_CLASSIFY 는 배치 사이·재시도 대기 중이다(실행기 안). 단 SQL 의
-   * "직후"는 확인하지 않는다 — SQL 스텝은 출력 비우기와 적재가 한 트랜잭션으로 이미 커밋돼 되돌릴 수 없으므로, 그 스텝을 CANCELLED 로 적으면 사실과 다르다.
-   * 그래서 정상 COMPLETED 로 남기고 다음 스텝 시작 전 체크포인트에서 멈춘다.
+   * <p>스텝 안의 체크포인트: SQL·PYTHON·실행기(firehub-executor) 호출은 그 호출 하나를 기다리므로 <b>호출 직전·직후</b>만 본다(진행 중인
+   * 호출은 자기 타임아웃까지 끝까지 돈다). 로컬 API_CALL 은 페이지 사이·재시도 대기 중, AI_CLASSIFY 는 배치 사이·재시도 대기 중이다(실행기 안). 단
+   * SQL 의 "직후"는 확인하지 않는다 — SQL 스텝은 출력 비우기와 적재가 한 트랜잭션으로 이미 커밋돼 되돌릴 수 없으므로, 그 스텝을 CANCELLED 로 적으면
+   * 사실과 다르다. 그래서 정상 COMPLETED 로 남기고 다음 스텝 시작 전 체크포인트에서 멈춘다.
    *
    * @return "COMPLETED" / "FAILED" / "CANCELLED"(체크포인트가 취소를 알아챔 — 남은 스텝을 돌리지 않는다)
    */
@@ -901,12 +902,23 @@ public class PipelineAsyncRunner {
                         if (pyColumnTypes != null) {
                           request.put("column_type_map", pyColumnTypes);
                         }
-                        // 취소 체크포인트(WD-153) — 실행기 호출 직전. REPLACE 면 빈 임시 테이블을 loadPythonOutput 의 실패 정리가 버린다.
+                        // 취소 체크포인트(WD-153) — 실행기 호출 직전. REPLACE 면 빈 임시 테이블을 loadPythonOutput 의 실패
+                        // 정리가 버린다.
                         cancel.checkpoint(0, isReplace);
                         var result = executorClient.executePython(request, readSlot);
                         if (!result.success()) {
+                          // 적재 데이터 오류(pg_error 22xxx)는 로컬 경로와 같은 한국어 사유 문구로 바꾼다(WD-211). 그 밖은
+                          // executor 가
+                          // 이미 분류한 문구(또는 사용자 스크립트 stderr)에 접두만 붙인다.
+                          ExecutorClient.PgError pg = result.pgError();
                           throw pythonRunFailure(
-                              "Python 실행 실패: " + result.error(), pyTenantId, pyStartedAt);
+                              PythonStepErrorMessages.fromExecutor(
+                                  result.error(),
+                                  pg != null ? pg.sqlState() : null,
+                                  pg != null ? pg.column() : null,
+                                  pg != null ? pg.message() : null),
+                              pyTenantId,
+                              pyStartedAt);
                         }
                         // 취소 체크포인트(WD-153) — 실행기 호출 직후·맞바꿈 전. REPLACE 면 실행기가 채운 임시 테이블을 버려 원본을 지키고,
                         // APPEND 면 실행기가 이미 넣은 행이 남는다(그 수를 문구에 남긴다).
@@ -930,7 +942,8 @@ public class PipelineAsyncRunner {
                 pyTenantId,
                 pyStartedAt);
           }
-          // 취소 체크포인트(WD-153) — 스크립트 실행 직후·적재 전. 로컬 경로는 API 가 stdout 을 적재하므로 여기서 멈추면 출력에 아무것도 쓰지 않는다.
+          // 취소 체크포인트(WD-153) — 스크립트 실행 직후·적재 전. 로컬 경로는 API 가 stdout 을 적재하므로 여기서 멈추면 출력에 아무것도 쓰지
+          // 않는다.
           cancel.checkpoint(0, false);
           if (pyOutputTable == null) {
             executionLog = outputText;
@@ -1030,7 +1043,8 @@ public class PipelineAsyncRunner {
             if (!result.success()) {
               throw new ScriptExecutionException("API_CALL 실행 실패: " + result.error());
             }
-            // 취소 체크포인트(WD-153) — 실행기 호출 직후·맞바꿈 전. REPLACE 면 아래 catch 가 임시 테이블을 버려 원본을 지키고, APPEND 면 이미
+            // 취소 체크포인트(WD-153) — 실행기 호출 직후·맞바꿈 전. REPLACE 면 아래 catch 가 임시 테이블을 버려 원본을 지키고, APPEND 면
+            // 이미
             // 넣은 행이 남는다.
             cancel.checkpoint(isReplace ? 0 : result.rowsLoaded(), isReplace);
             if (isReplace) {

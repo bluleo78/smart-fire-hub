@@ -119,6 +119,50 @@ class LocalPythonOutputLoaderDbTest extends IntegrationTestBase {
         .containsExactly(1, 2);
   }
 
+  /**
+   * WD-211: 실제 DB 에서 — 데이터셋에 없는 키는 적재 전에 그 키를 짚는 한국어 문구로 실패하고 이미 있던 행은 그대로다(예전엔 jOOQ bad SQL
+   * grammar 원문에 내부 스키마·INSERT 가 실렸다). VARCHAR 길이 초과(22001)는 DataExceptionTranslator 사유(길이 — PG 는 이
+   * 오류에 컬럼을 싣지 않는다)로 안내하고 SQL 원문은 싣지 않는다.
+   */
+  @Test
+  void unknownKeyAndDataError_failWithKoreanMessages() {
+    datasetService.createDataset(
+        new CreateDatasetRequest(
+            "local_py_wd211",
+            "local_py_wd211",
+            null,
+            null,
+            "TABLE",
+            "SOURCE",
+            List.of(
+                col("k", "INTEGER"),
+                new DatasetColumnRequest("code", "code", "VARCHAR", 3, true, false, null)),
+            null),
+        user());
+    Map<String, String> types = Map.of("k", "INTEGER", "code", "VARCHAR");
+    assertThat(loader.load("local_py_wd211", "[{\"k\":1,\"code\":\"abc\"}]", types)).isEqualTo(1);
+
+    assertThatThrownBy(() -> loader.load("local_py_wd211", "[{\"nocol\":\"a\"}]", types))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage(
+            "Python 실행 실패: 출력 JSON 의 'nocol' 가 출력 데이터셋 컬럼에 없습니다. 데이터셋 컬럼 이름과 같은 키로 출력해 주세요.");
+
+    // 적재 전 실패라 기존 행이 그대로다. (아래 데이터 오류는 테스트 트랜잭션을 중단시키므로 DB 조회는 그 앞에서 한다.)
+    assertThat(
+            dsl.fetch("SELECT k FROM " + DataSchema.qualify("local_py_wd211") + " ORDER BY k")
+                .getValues(0, Integer.class))
+        .containsExactly(1);
+
+    assertThatThrownBy(
+            () -> loader.load("local_py_wd211", "[{\"k\":2,\"code\":\"toolong\"}]", types))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage(
+            "Python 실행 실패: 출력 결과를 데이터셋에 적재하지 못했습니다: 글자 수 제한(최대 3자)을 넘는 값이 있습니다. 출력 JSON"
+                + " 의 값이 데이터셋 컬럼의 타입·형식·길이에 맞는지 확인해 주세요.")
+        .hasMessageNotContaining("INSERT")
+        .hasMessageNotContaining("jOOQ");
+  }
+
   /** 변환 타입을 하나씩 담은 특수 컬럼(이름, 데이터셋 타입) — 좁은 표·넓은 표에 같은 이름으로 만든다. */
   private static final List<List<String>> SPECIAL =
       List.of(

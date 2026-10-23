@@ -93,7 +93,8 @@ def test_timeout_handling():
 
     assert result.success is False
     assert result.exit_code == -1
-    assert "timed out" in result.error.lower()
+    # WD-211: 한국어 문구 — API 로컬 경로(PythonStepErrorMessages.TIMEOUT_MESSAGE)와 같은 문장이다
+    assert result.error == "실행 시간 제한(5초)을 넘어 스크립트를 중단했습니다."
     mock_proc.kill.assert_called_once()
 
 
@@ -583,8 +584,110 @@ def test_insert_failure_returns_error():
 
     assert result.success is False
     assert result.rows_loaded == 0
-    assert "Script succeeded but data insert failed" in result.error
-    assert "relation does not exist" in result.error
+    # WD-211: 원문(내부 테이블·SQL)은 사용자 문구에 싣지 않는다 — 일반 한국어 안내만. PG 오류가 아니라 pg_error 도 없다.
+    assert result.error == LOAD_FAILED_TEXT
+    assert "relation does not exist" not in result.error
+    assert result.pg_error is None
+
+
+# ---------------------------------------------------------------------------
+# WD-211: 적재 실패 분류 — API 로컬 경로(LocalPythonOutputLoaderTest)와 같은 입력·같은 문구
+# ---------------------------------------------------------------------------
+LOAD_FAILED_TEXT = "출력 결과를 데이터셋에 적재하지 못했습니다. 출력 JSON 의 키와 값 형식을 확인해 주세요."
+
+
+def _run_load(stdout, column_type_map=None, insert_side_effect=None):
+    """출력 테이블·컬럼 타입 맵이 있는 실행 — 적재 커넥션·insert_batch 목을 함께 돌려준다."""
+    settings = make_settings(nsjail_enabled=False)
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"), \
+         patch("app.services.python_executor.insert_batch", side_effect=insert_side_effect) as mock_insert, \
+         patch("app.services.python_executor.get_connection") as mock_get_conn:
+        mock_get_conn.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
+        mock_run.return_value = make_completed_process(stdout=stdout, stderr="log\n", returncode=0)
+        result = execute_python(
+            "...", None, settings, tenant_id=1, read_slot=2, output_table="r8_out",
+            column_type_map=column_type_map,
+        )
+    return result, mock_get_conn, mock_insert
+
+
+def test_unknown_column_key_fails_before_insert():
+    result, mock_get_conn, mock_insert = _run_load('[{"nocol": "a"}]', {"name": "TEXT"})
+
+    assert result.success is False
+    assert result.error == "출력 JSON 의 'nocol' 가 출력 데이터셋 컬럼에 없습니다. 데이터셋 컬럼 이름과 같은 키로 출력해 주세요."
+    assert result.output == "log\n"
+    assert result.exit_code == 0
+    mock_get_conn.assert_not_called()
+    mock_insert.assert_not_called()
+
+
+def test_system_column_key_is_left_to_db():
+    # 시스템 컬럼은 데이터셋 컬럼 목록에 없지만 물리 테이블에 있다 — 예전처럼 적재를 시도한다(동작 불변)
+    result, _, mock_insert = _run_load('[{"name": "a", "created_at": "2026-01-01"}]', {"name": "TEXT"})
+
+    assert result.success is True
+    assert result.rows_loaded == 1
+    mock_insert.assert_called_once()
+
+
+def test_row_not_object_reports_row_number():
+    result, mock_get_conn, mock_insert = _run_load('[{"name": "a"}, {"name": "b"}, 3]', {"name": "TEXT"})
+
+    assert result.success is False
+    assert result.error == "출력 JSON 의 3번째 행이 객체가 아닙니다. 모든 행을 컬럼 이름을 키로 하는 JSON 객체로 출력해 주세요."
+    mock_get_conn.assert_not_called()
+    mock_insert.assert_not_called()
+
+
+def test_row_missing_first_row_key_reports_row_number():
+    result, mock_get_conn, mock_insert = _run_load('[{"name": "a"}, {"other": "b"}]', {"name": "TEXT", "other": "TEXT"})
+
+    assert result.success is False
+    assert result.error == "출력 JSON 의 2번째 행에 첫 행의 키 'name' 가 없습니다. 모든 행에 첫 행과 같은 키를 넣어 주세요."
+    mock_get_conn.assert_not_called()
+    mock_insert.assert_not_called()
+
+
+class _FakePgError(Exception):
+    """psycopg2 오류 흉내 — pg_error_info 는 pgcode·diag 속성으로만 판별한다."""
+
+    def __init__(self, pgcode, column=None, message=None):
+        super().__init__(f'ERROR: {message}\nLINE 1: INSERT INTO "r8_out" ...')
+        self.pgcode = pgcode
+        self.diag = MagicMock(
+            message_primary=message, message_detail=None, message_hint=None, column_name=column,
+        )
+
+
+def test_db_data_error_sends_pg_error_without_raw_sql():
+    exc = _FakePgError("22001", column="name", message="value too long for type character varying(3)")
+    result, _, _ = _run_load('[{"name": "abcdef"}]', {"name": "TEXT"}, insert_side_effect=exc)
+
+    assert result.success is False
+    # 사용자 문구는 일반 안내 — 데이터 오류 사유 문장은 API 가 pg_error 로 만든다(DataExceptionTranslator)
+    assert result.error == LOAD_FAILED_TEXT
+    assert "INSERT INTO" not in result.error
+    assert result.pg_error is not None
+    assert result.pg_error.sql_state == "22001"
+    assert result.pg_error.column == "name"
+
+
+def test_unexpected_error_keeps_traceback_out_of_user_message():
+    settings = make_settings(nsjail_enabled=False)
+    with patch("app.services.python_executor.subprocess.run", side_effect=OSError("disk exploded")), \
+         patch("app.services.python_executor.os.unlink"):
+        result = execute_python("print(1)", None, settings, tenant_id=1, read_slot=2)
+
+    assert result.success is False
+    assert result.exit_code == -1
+    assert result.error == "스크립트 실행 중 예기치 못한 오류가 발생했습니다. 잠시 후 다시 실행하고, 계속되면 관리자에게 문의해 주세요."
+    assert "Traceback" not in result.error
+    # traceback 은 실행 로그 칸(output)과 로그에만 남는다
+    assert "Traceback" in result.output
+    assert "disk exploded" in result.output
 
 
 # ---------------------------------------------------------------------------

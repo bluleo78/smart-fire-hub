@@ -1411,13 +1411,65 @@ class PipelineAsyncRunnerTest {
     when(localPythonOutputLoader.load(eq(runTemp("out_bad")), anyString(), any()))
         .thenThrow(
             new ScriptExecutionException(
-                "Python 실행 실패: Script succeeded but data insert failed: x"));
+                "Python 실행 실패: 출력 결과를 데이터셋에 적재하지 못했습니다. 출력 JSON 의 키와 값 형식을 확인해 주세요."));
 
     String status = runner.executeStep(7411L, step, 74L, "TestPipeline", userId, false);
 
     assertThat(status).isEqualTo("FAILED");
     verify(dataTableService).dropTempTable("out_bad", runTemp("out_bad"));
     verify(dataTableService, never()).finishReplace(anyString(), anyString(), anyLong());
+  }
+
+  /**
+   * WD-211: 실행기 경로의 적재 데이터 오류(pg_error 22001)는 로컬 경로와 같은 한국어 사유 문구(DataExceptionTranslator)로 스텝 오류가
+   * 된다. executor 오류 문자열(일반 안내)이나 원문(내부 SQL)은 싣지 않는다. pg_error 가 없으면 executor 문구에 접두만 붙는다(대조군).
+   */
+  @Test
+  void 실행기_PYTHON_적재_데이터오류는_한국어_사유로_실패한다() {
+    Long outputDatasetId = 744L;
+    Long userId = 1L;
+    PipelineStepResponse step = replaceStep(7440L, "PYTHON", "print('x')", outputDatasetId);
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out_de"));
+    String generic = "출력 결과를 데이터셋에 적재하지 못했습니다. 출력 JSON 의 키와 값 형식을 확인해 주세요.";
+    when(executorClient.executePython(anyMap(), anyInt()))
+        .thenReturn(
+            new ExecutorClient.PythonExecuteResult(
+                false,
+                "",
+                0,
+                generic,
+                10L,
+                0,
+                new ExecutorClient.PgError(
+                    "22001", "value too long for type character varying(3)", null, null, "code")),
+            new ExecutorClient.PythonExecuteResult(false, "", 0, generic, 10L, 0));
+
+    assertThat(runner.executeStep(7445L, step, 74L, "TestPipeline", userId, true))
+        .isEqualTo("FAILED");
+    assertThat(runner.executeStep(7446L, step, 74L, "TestPipeline", userId, true))
+        .isEqualTo("FAILED");
+
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(7445L),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            eq(
+                "Python 실행 실패: 출력 결과를 데이터셋에 적재하지 못했습니다: 'code' 컬럼에 글자 수 제한(최대 3자)을 넘는 값이 있습니다. 출력"
+                    + " JSON 의 값이 데이터셋 컬럼의 타입·형식·길이에 맞는지 확인해 주세요."),
+            isNull(),
+            any());
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(7446L),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            eq("Python 실행 실패: " + generic),
+            isNull(),
+            any());
   }
 
   /**
