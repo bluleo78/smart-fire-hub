@@ -60,6 +60,7 @@ const widget: DashboardWidget = {
   positionY: 0,
   width: 6,
   height: 4,
+  accessible: true,
 };
 
 function queryResult(overrides: Partial<ChartDataResponse['queryResult']> = {}) {
@@ -170,5 +171,50 @@ describe('DashboardWidgetCard — 위젯 단위 신선도·새로고침 (#778)',
     );
     render(<DashboardWidgetCard widget={widget} isEditing={false} />);
     expect(screen.getByText('새로고침 실패')).toBeInTheDocument();
+  });
+});
+
+describe('DashboardWidgetCard — 볼 수 없는 차트 위젯 (WD-195)', () => {
+  // 서버는 조회자가 볼 수 없는 차트의 위젯을 이름·종류 없이 accessible=false 로 준다(자리만 남김)
+  const inaccessibleWidget: DashboardWidget = {
+    ...widget,
+    id: 9,
+    chartId: 9,
+    chartName: null,
+    chartType: null,
+    accessible: false,
+  };
+
+  beforeEach(() => {
+    useChartMock.mockReset();
+    useChartDataMock.mockReset();
+    useChartMock.mockReturnValue({ data: undefined, isLoading: false });
+    // 조회를 꺼도 TanStack 은 isError=false·data=undefined 를 준다 — 이전 실패 상태가 남은 경우까지 보려고 isError=true 로 둔다
+    useChartDataMock.mockReturnValue(chartDataState({ isError: true }));
+  });
+
+  it('안내 문구와 「볼 수 없는 차트」 제목을 보이고, 데이터 조회·신선도 바는 없다', () => {
+    render(<DashboardWidgetCard widget={inaccessibleWidget} isEditing={false} autoRefreshSeconds={30} />);
+
+    const notice = screen.getByTestId('widget-inaccessible');
+    expect(notice).toHaveTextContent('볼 수 없는 차트입니다');
+    expect(notice).toHaveTextContent('차트 주인이 공유하지 않았습니다.');
+    expect(screen.getByText('볼 수 없는 차트')).toBeInTheDocument();
+    // 데이터·메타 조회를 하지 않는다(404 → 새로고침 실패로 깨지던 원인)
+    expect(useChartDataMock).toHaveBeenCalledWith(9, { refetchInterval: 30_000, enabled: false });
+    expect(useChartMock).not.toHaveBeenCalled();
+    // 오류·새로고침 실패·재시도 없음
+    expect(screen.queryByText('새로고침 실패')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('새로고침')).not.toBeInTheDocument();
+    expect(screen.queryByText('데이터를 불러올 수 없습니다.')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('widget-denied')).not.toBeInTheDocument();
+  });
+
+  it('편집 모드에서는 대시보드 주인이 이 위젯을 제거할 수 있다', () => {
+    const onRemove = vi.fn();
+    render(<DashboardWidgetCard widget={inaccessibleWidget} isEditing onRemove={onRemove} />);
+
+    fireEvent.click(screen.getByTitle('위젯 제거'));
+    expect(onRemove).toHaveBeenCalledWith(9);
   });
 });

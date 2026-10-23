@@ -290,4 +290,124 @@ class AnalyticsDashboardServiceTest extends IntegrationTestBase {
     assertThat(chartSharedInDb(myChart)).isTrue();
     assertThat(querySharedInDb(othersQuery)).isFalse();
   }
+
+  // ── WD-195: 공유 대시보드 위젯 추가 시 공유 + 볼 수 없는 차트 위젯은 이름을 가린다 ─────────────────────
+
+  private Long createUser(String username) {
+    return dsl.insertInto(DSL.table(DSL.name("user")))
+        .set(DSL.field(DSL.name("user", "username"), String.class), username)
+        .set(DSL.field(DSL.name("user", "password"), String.class), "password")
+        .set(DSL.field(DSL.name("user", "name"), String.class), username)
+        .set(DSL.field(DSL.name("user", "email"), String.class), username + "@example.com")
+        .returning(DSL.field(DSL.name("user", "id"), Long.class))
+        .fetchOne()
+        .get(DSL.field(DSL.name("user", "id"), Long.class));
+  }
+
+  private DashboardResponse.DashboardWidgetResponse widgetOf(DashboardResponse d, Long chartId) {
+    return d.widgets().stream().filter(w -> w.chartId().equals(chartId)).findFirst().orElseThrow();
+  }
+
+  @Test
+  void addWidget_toSharedDashboard_sharesOwnPrivateChartAndQuery_visibleToOthers() {
+    // Given: 이미 공유된 대시보드 + owner 의 비공개 쿼리·차트(F3 재현)
+    DashboardResponse dashboard =
+        dashboardService.create(
+            new CreateDashboardRequest("이미 공유된 대시보드", null, true, null), ownerUserId);
+    Long myQuery = createQueryAs(ownerUserId, "공유 후 추가 쿼리", false);
+    Long myChart = createChartAs(ownerUserId, "공유 후 추가 차트", myQuery, false);
+
+    // When: 설정 창 재저장 없이 위젯만 추가
+    dashboardService.addWidget(
+        dashboard.id(), new AddWidgetRequest(myChart, 0, 0, 6, 4), ownerUserId);
+
+    // Then: 차트·쿼리가 공유로 바뀌고, 다른 사람 화면에서 이름·데이터가 정상으로 보인다
+    assertThat(chartSharedInDb(myChart)).isTrue();
+    assertThat(querySharedInDb(myQuery)).isTrue();
+    DashboardResponse viewerView = dashboardService.getById(dashboard.id(), otherUserId);
+    DashboardResponse.DashboardWidgetResponse w = widgetOf(viewerView, myChart);
+    assertThat(w.accessible()).isTrue();
+    assertThat(w.chartName()).isEqualTo("공유 후 추가 차트");
+    assertThat(dashboardService.getDashboardData(dashboard.id(), otherUserId).widgetData())
+        .extracting(d -> d.widgetId())
+        .containsExactly(w.id());
+  }
+
+  @Test
+  void addWidget_toPrivateDashboard_keepsChartPrivate() {
+    // 공유하지 않은 대시보드에 넣을 때는 아무것도 공유하지 않는다 — 공유 처리는 공유 대시보드에만 붙는다.
+    DashboardResponse dashboard =
+        dashboardService.create(
+            new CreateDashboardRequest("비공개 대시보드", null, false, null), ownerUserId);
+    Long myQuery = createQueryAs(ownerUserId, "비공개 쿼리", false);
+    Long myChart = createChartAs(ownerUserId, "비공개 차트", myQuery, false);
+
+    DashboardResponse afterAdd =
+        dashboardService.addWidget(
+            dashboard.id(), new AddWidgetRequest(myChart, 0, 0, 6, 4), ownerUserId);
+
+    assertThat(chartSharedInDb(myChart)).isFalse();
+    assertThat(querySharedInDb(myQuery)).isFalse();
+    // 주인 화면은 그대로 — 자기 비공개 차트는 이름까지 보인다
+    DashboardResponse.DashboardWidgetResponse w = widgetOf(afterAdd, myChart);
+    assertThat(w.accessible()).isTrue();
+    assertThat(w.chartName()).isEqualTo("비공개 차트");
+    assertThat(w.chartType()).isEqualTo("BAR");
+  }
+
+  @Test
+  void othersChartMadePrivate_widgetWithheldForViewerAndDashboardOwner_butOwnerCanRemove() {
+    // Given: other 의 공유 차트를 owner 가 공유 대시보드에 넣은 뒤, other 가 그 차트를 비공개로 돌린다
+    Long thirdUserId = createUser("dashboard_third_viewer");
+    Long othersQuery = createQueryAs(otherUserId, "남의 쿼리", true);
+    Long othersChart = createChartAs(otherUserId, "남의 기밀 차트", othersQuery, true);
+    Long myQuery = createQueryAs(ownerUserId, "내 쿼리", true);
+    Long myChart = createChartAs(ownerUserId, "내 공유 차트", myQuery, true);
+    DashboardResponse dashboard =
+        dashboardService.create(
+            new CreateDashboardRequest("섞인 공유 대시보드", null, true, null), ownerUserId);
+    dashboardService.addWidget(
+        dashboard.id(), new AddWidgetRequest(othersChart, 3, 2, 5, 3), ownerUserId);
+    dashboardService.addWidget(
+        dashboard.id(), new AddWidgetRequest(myChart, 0, 0, 3, 2), ownerUserId);
+    chartService.update(
+        othersChart, new UpdateChartRequest(null, null, null, null, false), otherUserId);
+
+    // Then: 제3 조회자 — 이름·종류 없이 accessible=false, 위치·크기는 유지, 이웃 위젯은 정상
+    DashboardResponse thirdView = dashboardService.getById(dashboard.id(), thirdUserId);
+    DashboardResponse.DashboardWidgetResponse hidden = widgetOf(thirdView, othersChart);
+    assertThat(hidden.accessible()).isFalse();
+    assertThat(hidden.chartName()).isNull();
+    assertThat(hidden.chartType()).isNull();
+    assertThat(hidden.positionX()).isEqualTo(3);
+    assertThat(hidden.positionY()).isEqualTo(2);
+    assertThat(hidden.width()).isEqualTo(5);
+    assertThat(hidden.height()).isEqualTo(3);
+    assertThat(widgetOf(thirdView, myChart).accessible()).isTrue();
+    assertThat(widgetOf(thirdView, myChart).chartName()).isEqualTo("내 공유 차트");
+
+    // 일괄 데이터 경로도 같은 규칙 — 볼 수 없는 위젯은 데이터에서 빠지고, 함께 실린 대시보드 위젯 목록에서도 이름이 가려진다
+    var thirdData = dashboardService.getDashboardData(dashboard.id(), thirdUserId);
+    assertThat(thirdData.widgetData()).extracting(d -> d.widgetId()).doesNotContain(hidden.id());
+    assertThat(widgetOf(thirdData.dashboard(), othersChart).chartName()).isNull();
+
+    // 대시보드 주인에게도 남의 비공개 차트는 가려진다(차트 단건 경로와 같은 규칙)
+    DashboardResponse ownerView = dashboardService.getById(dashboard.id(), ownerUserId);
+    assertThat(widgetOf(ownerView, othersChart).accessible()).isFalse();
+    assertThat(widgetOf(ownerView, othersChart).chartName()).isNull();
+    assertThat(widgetOf(ownerView, myChart).chartName()).isEqualTo("내 공유 차트");
+
+    // 차트 주인(other)에게는 자기 차트라 그대로 보인다
+    DashboardResponse chartOwnerView = dashboardService.getById(dashboard.id(), otherUserId);
+    assertThat(widgetOf(chartOwnerView, othersChart).accessible()).isTrue();
+    assertThat(widgetOf(chartOwnerView, othersChart).chartName()).isEqualTo("남의 기밀 차트");
+
+    // When: 대시보드 주인이 볼 수 없게 된 위젯을 삭제
+    dashboardService.removeWidget(dashboard.id(), hidden.id(), ownerUserId);
+
+    // Then: 삭제된다(남의 차트 자체는 그대로)
+    DashboardResponse afterRemove = dashboardService.getById(dashboard.id(), ownerUserId);
+    assertThat(afterRemove.widgets()).extracting(w -> w.chartId()).containsExactly(myChart);
+    assertThat(chartSharedInDb(othersChart)).isFalse();
+  }
 }

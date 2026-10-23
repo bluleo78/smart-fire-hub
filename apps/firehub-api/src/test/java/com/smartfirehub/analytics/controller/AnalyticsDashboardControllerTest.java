@@ -134,6 +134,51 @@ class AnalyticsDashboardControllerTest {
         .andExpect(jsonPath("$.name").value("테스트 대시보드"));
   }
 
+  /**
+   * WD-195: 볼 수 없는 차트의 위젯은 JSON 에서 accessible=false, chartName·chartType=null 로 나가고 위치·크기는 그대로다. 웹과
+   * ai-agent 가 읽는 필드 이름(accessible)이 레코드 접근자에서 바뀌지 않았는지 직렬화 단에서 고정한다.
+   */
+  @Test
+  void getDashboard_inaccessibleWidget_serializedWithoutChartName() throws Exception {
+    DashboardResponse.DashboardWidgetResponse visible =
+        new DashboardResponse.DashboardWidgetResponse(10L, 100L, "보이는 차트", "BAR", 0, 0, 6, 4, true);
+    DashboardResponse.DashboardWidgetResponse hidden =
+        new DashboardResponse.DashboardWidgetResponse(11L, 101L, "비공개 차트", "LINE", 6, 0, 6, 4, true)
+            .withheld();
+    DashboardResponse base = sampleDashboard();
+    DashboardResponse withWidgets =
+        new DashboardResponse(
+            base.id(),
+            base.name(),
+            base.description(),
+            true,
+            null,
+            List.of(visible, hidden),
+            2,
+            base.createdByName(),
+            base.createdBy(),
+            base.createdAt(),
+            base.updatedAt());
+    when(dashboardService.getById(1L, 1L)).thenReturn(withWidgets);
+
+    mockMvc
+        .perform(get("/api/v1/analytics/dashboards/1").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.widgets[0].accessible").value(true))
+        .andExpect(jsonPath("$.widgets[0].chartName").value("보이는 차트"))
+        .andExpect(jsonPath("$.widgets[1].accessible").value(false))
+        .andExpect(jsonPath("$.widgets[1].chartName").isEmpty())
+        .andExpect(jsonPath("$.widgets[1].chartType").isEmpty())
+        .andExpect(jsonPath("$.widgets[1].chartId").value(101))
+        .andExpect(jsonPath("$.widgets[1].positionX").value(6))
+        .andExpect(jsonPath("$.widgets[1].width").value(6))
+        .andExpect(jsonPath("$.widgets[1].height").value(4))
+        // 이름이 응답 어디에도 실리지 않는다
+        .andExpect(
+            content()
+                .string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("비공개 차트"))));
+  }
+
   // ── PUT /api/v1/analytics/dashboards/{id} ──────────────────────────────────
 
   @Test

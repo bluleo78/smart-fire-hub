@@ -1,6 +1,7 @@
 package com.smartfirehub.analytics.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -19,6 +20,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -59,7 +61,7 @@ class AnalyticsDashboardServiceUnitTest {
     // 위젯 1개 설정
     DashboardResponse.DashboardWidgetResponse widget =
         new DashboardResponse.DashboardWidgetResponse(
-            widgetId, chartId, "Test Chart", "BAR", 0, 0, 6, 4);
+            widgetId, chartId, "Test Chart", "BAR", 0, 0, 6, 4, true);
 
     DashboardResponse dashboardResponse =
         new DashboardResponse(
@@ -96,6 +98,8 @@ class AnalyticsDashboardServiceUnitTest {
         new AnalyticsQueryResponse("SELECT 1", List.of(), List.of(), 0, 0L, 0, false, null);
 
     when(widgetRepository.findByDashboardId(dashboardId)).thenReturn(List.of(widget));
+    // WD-195: 위젯 목록은 조회자 기준 차트 가시성을 한 번에 판정한다 — 이 테스트의 차트는 조회자 본인 것이라 보인다.
+    when(chartRepository.findVisibleIds(anyCollection(), eq(userId))).thenReturn(Set.of(chartId));
     when(dashboardRepository.findById(eq(dashboardId), eq(userId), anyList()))
         .thenReturn(Optional.of(dashboardResponse));
     when(chartRepository.findSavedQueryId(chartId)).thenReturn(savedQueryId);
@@ -132,10 +136,11 @@ class AnalyticsDashboardServiceUnitTest {
     Long savedQueryId = 300L;
 
     DashboardResponse.DashboardWidgetResponse widget1 =
-        new DashboardResponse.DashboardWidgetResponse(201L, chartId1, "Chart 1", "BAR", 0, 0, 6, 4);
+        new DashboardResponse.DashboardWidgetResponse(
+            201L, chartId1, "Chart 1", "BAR", 0, 0, 6, 4, true);
     DashboardResponse.DashboardWidgetResponse widget2 =
         new DashboardResponse.DashboardWidgetResponse(
-            202L, chartId2, "Chart 2", "LINE", 6, 0, 6, 4);
+            202L, chartId2, "Chart 2", "LINE", 6, 0, 6, 4, true);
 
     DashboardResponse dashboardResponse =
         new DashboardResponse(
@@ -188,6 +193,8 @@ class AnalyticsDashboardServiceUnitTest {
         new AnalyticsQueryResponse("SELECT 1", List.of(), List.of(), 0, 0L, 0, false, null);
 
     when(widgetRepository.findByDashboardId(dashboardId)).thenReturn(List.of(widget1, widget2));
+    when(chartRepository.findVisibleIds(anyCollection(), eq(userId)))
+        .thenReturn(Set.of(chartId1, chartId2));
     when(dashboardRepository.findById(eq(dashboardId), eq(userId), anyList()))
         .thenReturn(Optional.of(dashboardResponse));
     when(chartRepository.findSavedQueryId(anyLong())).thenReturn(savedQueryId);

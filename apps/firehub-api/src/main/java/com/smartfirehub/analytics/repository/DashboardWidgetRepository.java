@@ -54,6 +54,12 @@ public class DashboardWidgetRepository {
   private static final Field<String> C_CHART_TYPE =
       field(name("chart", "chart_type"), String.class).as("chart_type");
 
+  /**
+   * 대시보드의 위젯 전체(차트 이름·종류 포함, 조회자 가시성 미적용 원본).
+   *
+   * <p>주의(WD-195): 조회자에게 보이지 않는 차트의 이름도 들어 있다. 응답에 직접 쓰지 말고 서비스의 withholdInaccessible 을 거친다. 공유 처리
+   * (shareOwnedWidgetResources)는 모든 위젯의 차트 id 가 필요해서 여기서 거르지 않는다.
+   */
   public List<DashboardResponse.DashboardWidgetResponse> findByDashboardId(Long dashboardId) {
     var records =
         dsl.select(
@@ -181,6 +187,8 @@ public class DashboardWidgetRepository {
         r.get(DW_POSITION_X),
         r.get(DW_POSITION_Y),
         r.get(DW_WIDTH),
-        r.get(DW_HEIGHT));
+        r.get(DW_HEIGHT),
+        // 리포지토리는 조회자를 모르므로 원본 그대로 싣는다 — 조회자별 가림은 서비스(withholdInaccessible)가 한다(WD-195).
+        true);
   }
 }

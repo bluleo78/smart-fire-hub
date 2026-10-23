@@ -263,12 +263,20 @@ export interface DashboardListItem {
 export interface DashboardWidget {
   id: number;
   chartId: number;
-  chartName: string;
-  chartType: ChartType;
+  /** 조회자가 볼 수 없는 차트(accessible=false)면 서버가 이름을 싣지 않는다(null) — WD-195 */
+  chartName: string | null;
+  /** 조회자가 볼 수 없는 차트면 null — WD-195 */
+  chartType: ChartType | null;
   positionX: number;
   positionY: number;
   width: number;
   height: number;
+  /**
+   * 조회자가 이 위젯의 차트를 볼 수 있는지(본인 소유 또는 공유) — WD-195.
+   * false 면 차트 이름·종류·데이터를 볼 수 없고 자리(위치·크기)만 남는다.
+   * 보안 등급으로 원본 데이터를 못 보는 경우(차트 데이터의 denied)와는 다른 축이다 — 그 위젯은 accessible=true 다.
+   */
+  accessible: boolean;
 }
 
 export interface CreateDashboardRequest {

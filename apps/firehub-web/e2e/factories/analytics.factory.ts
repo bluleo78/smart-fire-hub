@@ -128,6 +128,7 @@ export function createWidget(overrides?: Partial<DashboardWidget>): DashboardWid
     positionY: 0,
     width: 6,
     height: 4,
+    accessible: true,
     ...overrides,
   };
 }

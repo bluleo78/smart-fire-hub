@@ -75,8 +75,7 @@ public class AnalyticsDashboardService {
   @Transactional
   public DashboardResponse create(CreateDashboardRequest req, Long userId) {
     Long id = dashboardRepository.insert(req, userId);
-    List<DashboardResponse.DashboardWidgetResponse> widgets =
-        widgetRepository.findByDashboardId(id);
+    List<DashboardResponse.DashboardWidgetResponse> widgets = viewerWidgets(id, userId);
     return dashboardRepository
         .findById(id, userId, widgets)
         .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found after insert"));
@@ -87,8 +86,7 @@ public class AnalyticsDashboardService {
   // 이미 @Transactional(쓰기)로 열려 있어 프록시를 안 타도 무해하다(같은 트랜잭션에 합류).
   @Transactional(readOnly = true)
   public DashboardResponse getById(Long id, Long userId) {
-    List<DashboardResponse.DashboardWidgetResponse> widgets =
-        widgetRepository.findByDashboardId(id);
+    List<DashboardResponse.DashboardWidgetResponse> widgets = viewerWidgets(id, userId);
     return dashboardRepository
         .findById(id, userId, widgets)
         .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + id));
@@ -107,8 +105,7 @@ public class AnalyticsDashboardService {
       shareOwnedWidgetResources(id, userId);
     }
 
-    List<DashboardResponse.DashboardWidgetResponse> widgets =
-        widgetRepository.findByDashboardId(id);
+    List<DashboardResponse.DashboardWidgetResponse> widgets = viewerWidgets(id, userId);
     return dashboardRepository
         .findById(id, userId, widgets)
         .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + id));
@@ -123,7 +120,7 @@ public class AnalyticsDashboardService {
    * 저장 한 번으로 주인 모르게 공유로 바뀌었다. 남의 자원의 공유 여부는 그 주인만 정한다. 남의 차트가 비공개 쿼리를 쓰더라도 조회자 화면의 차트 데이터 경로는 쿼리
    * 가시성을 따로 보지 않으므로(차트 가시성 + 보안 등급 판정만 본다) 이 제한으로 공유 대시보드 표시가 달라지지 않는다.
    *
-   * <p>위젯 추가 시에도 같은 규칙을 쓰려면 이 메서드를 재사용한다.
+   * <p>위젯 추가({@link #addWidget}) 시에도 대시보드가 공유 상태면 이 메서드를 그대로 쓴다(WD-195).
    */
   private void shareOwnedWidgetResources(Long dashboardId, Long userId) {
     List<Long> chartIds =
@@ -140,6 +137,35 @@ public class AnalyticsDashboardService {
     savedQueryRepository.shareQueries(savedQueryIds, userId);
   }
 
+  /**
+   * 조회자 기준 위젯 목록 — 조회자가 볼 수 없는 차트의 위젯은 이름·종류를 지우고 accessible=false 로 싣는다(WD-195).
+   *
+   * <p>무엇을: 위젯 차트 중 조회자에게 보이는(본인 소유 또는 공유) 차트를 한 번에 판정하고, 나머지 위젯은 {@link
+   * DashboardResponse.DashboardWidgetResponse#withheld()} 로 바꾼다. 위치·크기는 남긴다.
+   *
+   * <p>왜: 예전에는 위젯 목록이 차트 가시성을 보지 않아, 공유 대시보드에 들어간 남의(또는 주인이 나중에 비공개로 돌린) 차트 이름·종류가 다른 사람 화면과 AI 도구
+   * 응답에 그대로 실렸고, 같은 위젯의 데이터는 404 라 「새로고침 실패」로 깨져 보였다. 판정은 차트 단건·차트 데이터 경로와 같은
+   * 규칙(ChartRepository.visibleTo)이라 "이름은 보이는데 데이터는 404" 가 생기지 않는다. 대시보드 주인에게도 같은 규칙이다 — 남이 공유했다가
+   * 비공개로 돌린 차트는 주인에게도 가려지되, 위젯 삭제는 차트 가시성과 무관하게 할 수 있다.
+   *
+   * <p>보안 등급(원본 데이터 열람 불가)은 다른 축이다 — 그 차트는 보이는 차트라 여기서는 accessible=true 이고, 데이터 응답의 denied 로 가린다.
+   */
+  private List<DashboardResponse.DashboardWidgetResponse> viewerWidgets(
+      Long dashboardId, Long userId) {
+    List<DashboardResponse.DashboardWidgetResponse> widgets =
+        widgetRepository.findByDashboardId(dashboardId);
+    if (widgets.isEmpty()) {
+      return widgets;
+    }
+    Set<Long> visibleChartIds =
+        chartRepository.findVisibleIds(
+            widgets.stream().map(DashboardResponse.DashboardWidgetResponse::chartId).toList(),
+            userId);
+    return widgets.stream()
+        .map(w -> visibleChartIds.contains(w.chartId()) ? w : w.withheld())
+        .toList();
+  }
+
   @Transactional
   public void delete(Long id, Long userId) {
     dashboardRepository
@@ -154,20 +180,22 @@ public class AnalyticsDashboardService {
   // RLS 가 걸린 dashboard/dashboard_widget 을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
   public DashboardDataResponse getDashboardData(Long dashboardId, Long userId) {
-    // 1. Load dashboard + widgets
-    List<DashboardResponse.DashboardWidgetResponse> widgets =
-        widgetRepository.findByDashboardId(dashboardId);
+    // 1. Load dashboard + widgets — 조회자 기준(볼 수 없는 차트는 이름을 가린 위젯, WD-195)
+    List<DashboardResponse.DashboardWidgetResponse> widgets = viewerWidgets(dashboardId, userId);
     DashboardResponse dashboard =
         dashboardRepository
             .findById(dashboardId, userId, widgets)
             .orElseThrow(
                 () -> new DashboardNotFoundException("Dashboard not found: " + dashboardId));
 
-    // 2. Enforce widget limit
+    // 2. Enforce widget limit — 볼 수 없는 차트의 위젯은 데이터 조립에서 먼저 뺀다(WD-195).
+    // 예전에는 위젯 루프에서 건너뛰기 전에 그 차트의 저장 쿼리를 이 조회자 자격으로 판정·실행하고 감사 기록(recordDelivered)까지 남겼다 —
+    // 조회자가 받지도 않는 데이터를 실행할 이유가 없다. 이 위젯은 dashboard.widgets 에 accessible=false 로 남아 자리를 지킨다.
     List<DashboardResponse.DashboardWidgetResponse> limitedWidgets =
-        widgets.size() > MAX_WIDGETS_PER_DASHBOARD
-            ? widgets.subList(0, MAX_WIDGETS_PER_DASHBOARD)
-            : widgets;
+        (widgets.size() > MAX_WIDGETS_PER_DASHBOARD
+                ? widgets.subList(0, MAX_WIDGETS_PER_DASHBOARD)
+                : widgets)
+            .stream().filter(DashboardResponse.DashboardWidgetResponse::accessible).toList();
 
     // 3. Deduplicate by saved_query_id, execute cache misses
     // Build map: savedQueryId -> sqlText (via chart->savedQuery join)
@@ -260,9 +288,11 @@ public class AnalyticsDashboardService {
   @Transactional
   public DashboardResponse addWidget(Long dashboardId, AddWidgetRequest req, Long userId) {
     // Verify dashboard ownership
-    dashboardRepository
-        .findByIdForOwner(dashboardId, userId)
-        .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + dashboardId));
+    DashboardResponse dashboard =
+        dashboardRepository
+            .findByIdForOwner(dashboardId, userId)
+            .orElseThrow(
+                () -> new DashboardNotFoundException("Dashboard not found: " + dashboardId));
 
     // Verify chart access
     chartService
@@ -277,9 +307,17 @@ public class AnalyticsDashboardService {
     }
 
     widgetRepository.insert(dashboardId, req);
+
+    // 이미 공유된 대시보드에 위젯을 넣으면 그 차트·쿼리 중 요청자 본인 것을 공유한다(WD-195) — 대시보드 공유 시와 같은 규칙(WD-194).
+    // 예전에는 update() 에만 있어, 공유 대시보드에 비공개 차트를 넣으면 다른 사람 화면에서 그 위젯만 깨졌고 주인은 설정 창을 한 번 더
+    // 저장해야 했다. 남의 차트는 여기서도 공유로 바꾸지 않는다 — 남이 공유한 차트만 위젯으로 넣을 수 있어 추가 시점에는 이미 공유 상태다.
+    if (dashboard.isShared()) {
+      shareOwnedWidgetResources(dashboardId, userId);
+    }
     return getById(dashboardId, userId);
   }
 
+  // 위젯 단건 수정은 위치·크기만 바꾼다(UpdateWidgetRequest 에 chartId 가 없다) — 차트가 바뀌지 않으므로 공유 처리가 필요 없다(WD-195).
   @Transactional
   public DashboardResponse updateWidget(
       Long dashboardId, Long widgetId, UpdateWidgetRequest req, Long userId) {

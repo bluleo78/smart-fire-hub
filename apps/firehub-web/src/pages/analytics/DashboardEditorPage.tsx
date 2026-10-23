@@ -256,7 +256,10 @@ export default function DashboardEditorPage() {
   }, [isDashboardError, dashboardError]);
 
   // 위젯 데이터 중 내보내기 불가(정책 차단·열람 불가)가 하나라도 있으면 PDF 내보내기를 숨긴다(보조 다운로드 → 숨김, S4).
-  const pdfExportAllowed = useDashboardExportAllowed((dashboard?.widgets ?? []).map((w) => w.chartId));
+  // 볼 수 없는 차트의 위젯(accessible=false, WD-195)은 데이터를 받지 않고 안내 문구만 그리므로 내보낼 데이터가 없다 — 판정에서 뺀다.
+  const pdfExportAllowed = useDashboardExportAllowed(
+    (dashboard?.widgets ?? []).filter((w) => w.accessible !== false).map((w) => w.chartId),
+  );
 
   const addWidgetMutation = useAddWidget(dashboardId!);
   const removeWidgetMutation = useRemoveWidget(dashboardId!);
@@ -296,7 +299,10 @@ export default function DashboardEditorPage() {
    * 실패한 위젯은 각 카드의 신선도 바에 "새로고침 실패"로 남고, 여기서는 1회 토스트로만 알린다(#566).
    */
   const handleRefreshAll = useCallback(async () => {
-    const chartIds = [...new Set((dashboard?.widgets ?? []).map((w) => w.chartId))];
+    // 볼 수 없는 차트의 위젯(WD-195)은 데이터 쿼리가 없으므로 다시 조회할 대상에서 뺀다 — 넣으면 404 로 "불러오지 못했습니다" 토스트가 뜬다.
+    const chartIds = [
+      ...new Set((dashboard?.widgets ?? []).filter((w) => w.accessible !== false).map((w) => w.chartId)),
+    ];
     try {
       await Promise.all([
         // 메타 조회 실패는 위쪽 useEffect 가 이미 토스트하므로 여기서 다시 throw 하지 않는다(중복 토스트 방지)

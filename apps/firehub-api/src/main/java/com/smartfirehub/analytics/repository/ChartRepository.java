@@ -10,9 +10,12 @@ import com.smartfirehub.analytics.dto.UpdateChartRequest;
 import com.smartfirehub.global.util.LikePatternUtils;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
@@ -317,6 +320,18 @@ public class ChartRepository {
         .set(C_IS_SHARED, true)
         .where(C_ID.in(chartIds).and(C_CREATED_BY.eq(ownerId)))
         .execute();
+  }
+
+  /**
+   * 주어진 차트 중 조회자에게 보이는(본인 소유이거나 공유된) 차트 id 만 돌려준다(WD-195).
+   *
+   * <p>대시보드 위젯 목록에서 볼 수 없는 차트의 이름·종류를 가리는 데 쓴다. 차트 단건·차트 데이터 경로와 같은 {@link #visibleTo} 규칙을 써서 "위젯
+   * 목록에는 이름이 보이는데 데이터는 404" 같은 어긋남이 생기지 않게 한다. 위젯 수만큼이 아니라 한 번의 질의로 판정한다.
+   */
+  public Set<Long> findVisibleIds(Collection<Long> chartIds, Long userId) {
+    if (chartIds.isEmpty()) return Set.of();
+    return new HashSet<>(
+        dsl.select(C_ID).from(C).where(C_ID.in(chartIds).and(visibleTo(userId))).fetch(C_ID));
   }
 
   public List<Long> findSavedQueryIdsByChartIds(List<Long> chartIds) {

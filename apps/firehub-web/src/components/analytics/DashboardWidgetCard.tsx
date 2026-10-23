@@ -1,4 +1,4 @@
-import { AlertTriangle, Loader2, Lock, X } from 'lucide-react';
+import { AlertTriangle, EyeOff, Loader2, Lock, X } from 'lucide-react';
 import { useCallback, useRef } from 'react';
 
 import { useChart, useChartData } from '../../hooks/queries/useAnalytics';
@@ -122,6 +122,27 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching }: WidgetC
   );
 }
 
+/** 볼 수 없는 차트 위젯의 제목 — 서버가 차트 이름을 싣지 않으므로(WD-195) 이름 대신 쓴다 */
+const INACCESSIBLE_TITLE = '볼 수 없는 차트';
+
+/**
+ * 볼 수 없는 차트 위젯 본문(WD-195) — 조회자가 이 차트를 볼 수 없다(차트 주인이 공유하지 않았거나 비공개로 돌렸다).
+ * 오류가 아니므로 빨간 오류·재시도·신선도 바 없이 차분한 안내만 보인다. 보안 등급 잠금(widget-denied, 차트는 보이고 원본 데이터만 못 봄)과
+ * 원인이 달라 문구와 아이콘을 나눈다.
+ */
+function InaccessibleWidgetContent() {
+  return (
+    <div
+      data-testid="widget-inaccessible"
+      className="flex h-full flex-col items-center justify-center gap-1 text-center text-muted-foreground"
+    >
+      <EyeOff className="h-5 w-5" aria-hidden="true" />
+      <p className="text-sm font-medium">볼 수 없는 차트입니다</p>
+      <p className="text-xs">차트 주인이 공유하지 않았습니다.</p>
+    </div>
+  );
+}
+
 /**
  * 대시보드 위젯 카드.
  *
@@ -139,6 +160,10 @@ export function DashboardWidgetCard({
 }: DashboardWidgetCardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isVisible = useWidgetVisibility(containerRef);
+  // 조회자가 볼 수 없는 차트의 위젯(WD-195) — 서버가 accessible=false 로 주고 이름을 싣지 않는다. 데이터·메타를 조회하면 404 라
+  // 「새로고침 실패」로 깨져 보이므로 조회 자체를 하지 않는다. 필드가 없는 옛 응답은 볼 수 있는 것으로 다룬다.
+  const inaccessible = widget.accessible === false;
+  const title = inaccessible ? INACCESSIBLE_TITLE : (widget.chartName ?? '');
 
   // 대시보드 자동 새로고침 주기를 위젯 단건 쿼리의 refetchInterval 로 적용한다(기존 자동 새로고침 경로 유지)
   const refetchInterval =
@@ -153,7 +178,7 @@ export function DashboardWidgetCard({
     refetch,
   } = useChartData(widget.chartId, {
     refetchInterval,
-    enabled: isVisible,
+    enabled: isVisible && !inaccessible,
   });
 
   // 수동 새로고침 — 이 위젯의 데이터를 실제로 다시 조회하고, 실패하면 1회 토스트로 알린다(#566).
@@ -170,7 +195,7 @@ export function DashboardWidgetCard({
     <Card ref={containerRef} className="h-full py-2 gap-1 overflow-hidden flex flex-col">
       <CardHeader className={`px-3 pb-0 ${isEditing ? 'drag-handle cursor-grab active:cursor-grabbing' : ''}`}>
         <div className="flex items-center justify-between">
-          <CardTitle className="text-xs font-medium truncate">{widget.chartName}</CardTitle>
+          <CardTitle className="text-xs font-medium truncate">{title}</CardTitle>
           {isEditing && onRemove && (
             <Button
               variant="ghost"
@@ -189,17 +214,21 @@ export function DashboardWidgetCard({
       </CardHeader>
       <Separator />
       <CardContent className="px-3 pt-1 flex-1 min-h-0">
-        <WidgetErrorBoundary widgetName={widget.chartName}>
-          <WidgetContent
-            widget={widget}
-            chartData={chartData}
-            dataLoading={dataLoading}
-            dataFetching={dataFetching}
-          />
-        </WidgetErrorBoundary>
+        {inaccessible ? (
+          <InaccessibleWidgetContent />
+        ) : (
+          <WidgetErrorBoundary widgetName={title}>
+            <WidgetContent
+              widget={widget}
+              chartData={chartData}
+              dataLoading={dataLoading}
+              dataFetching={dataFetching}
+            />
+          </WidgetErrorBoundary>
+        )}
       </CardContent>
-      {/* 원본을 볼 수 없는(denied) 위젯은 신선도·재시도가 의미 없으므로 신선도 바를 숨긴다(목업 s4 ①) */}
-      {!chartData?.denied && (
+      {/* 원본을 볼 수 없는(denied) 위젯·볼 수 없는 차트 위젯은 신선도·재시도가 의미 없으므로 신선도 바를 숨긴다(목업 s4 ①, WD-195) */}
+      {!inaccessible && !chartData?.denied && (
         <WidgetFreshnessBar
           dataUpdatedAt={dataUpdatedAt}
           isFetching={dataFetching}

@@ -216,12 +216,16 @@ export interface DashboardWidget {
 export interface DashboardDetailWidget {
   id: number;
   chartId: number;
-  chartName: string;
-  chartType: string;
+  /** 조회자가 볼 수 없는 차트(accessible=false)면 서버가 이름을 싣지 않는다(null) — WD-195 */
+  chartName: string | null;
+  /** 조회자가 볼 수 없는 차트면 null — WD-195 */
+  chartType: string | null;
   positionX: number;
   positionY: number;
   width: number;
   height: number;
+  /** 조회자가 이 위젯의 차트를 볼 수 있는지(본인 소유 또는 공유). false 여도 좌표는 실려 배치 계산에 그대로 쓴다 — WD-195 */
+  accessible: boolean;
 }
 
 export interface DashboardDetail {
