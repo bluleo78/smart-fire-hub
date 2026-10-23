@@ -22,7 +22,10 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : '80%',
+  // 이 머신은 여러 자율 세션(smart-fire-hub·smart-workplace 등)이 동시에 코어를 나눠 쓰므로,
+  // 코어 비율이 아니라 고정 개수로 둔다(과거 80%=8개가 동시 실행 중인 다른 세션과 경합해
+  // 리소스 부족으로 pre-push Gradle 테스트 워커가 죽는 원인이 됐다).
+  workers: process.env.CI ? 1 : 4,
 
   /* HTML 리포터 — 실패 시 자동 열림 */
   reporter: 'html',

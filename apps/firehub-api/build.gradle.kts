@@ -259,6 +259,9 @@ tasks.withType<Test> {
         rootProject.projectDir.toPath().resolve("../..").normalize().toFile().absolutePath
     )
     useJUnitPlatform()
+    // 기본값(512MB)은 Spring Boot+Testcontainers+jOOQ+JaCoCo 계측이 겹친 통합테스트에는 작아서,
+    // 다른 세션들과 자원을 나눠 쓰는 부하 상황에서 워커 JVM이 OutOfMemoryError로 죽는 원인이 됐다.
+    maxHeapSize = "1536m"
     jvmArgs(
         "--add-opens", "java.base/java.lang=ALL-UNNAMED",
         "--add-opens", "java.base/java.lang.reflect=ALL-UNNAMED",
