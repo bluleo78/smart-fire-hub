@@ -397,16 +397,18 @@ public class ApiConnectionService {
       ssrfProtectionService.validateUrl(targetUrl);
 
       // placement=query 인 경우 URL 에 인증 파라미터 부착 (#113). 호출용·표시용을 함께 만든다(WD-177) — try 안에서 만들어,
-      // 키에 쓸 수 없는 문자가 있어 실패해도 400 응답에 키가 실리지 않고 DOWN 결과(고정 문구)로 돌아가게 한다.
+      // URL 을 만들 수 없어 실패해도 400 응답에 키가 실리지 않고 DOWN 결과(고정 문구)로 돌아가게 한다. 키 값은 인코딩 키·디코딩 키
+      // 모두 공용 규칙(QueryApiKeyEncoding)으로 한 번만 인코딩된다(WD-182).
       AuthQueryMasker.AuthQueryUrls urls =
           AuthQueryMasker.buildForAuth(targetUrl, authType, rawConfig);
       displayUrl = urls.displayUrl();
-      String url = urls.callUrl();
       // 응답 본문/헤더를 함께 받아 디버깅용으로 노출 (#76).
+      // 쿼리 인증이면 이미 인코딩을 마친 URI 를 넘긴다(WD-182) — 문자열로 넘기면 WebClient 가 템플릿으로 다시 인코딩해 인코딩 키의
+      // %2B 가 %252B 로 나갔다(미리보기·실행은 URI 를 넘겨 그대로 나가 경로마다 보내는 바이트가 달랐다). 쿼리 인증이 아니면 예전처럼
+      // 문자열로 넘겨 경로의 한글·공백을 WebClient 가 인코딩하게 둔다(buildForAuth 가 URL 을 손대지 않는다).
+      boolean queryAuth = AuthQueryMasker.queryAuthParamName(authType, rawConfig) != null;
       var resp =
-          webClient
-              .get()
-              .uri(url)
+          (queryAuth ? webClient.get().uri(urls.callUri()) : webClient.get().uri(urls.callUrl()))
               .headers(h -> buildAuthHeaders(authType, rawConfig).forEach(h::set))
               .retrieve()
               .toEntity(String.class)

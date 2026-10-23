@@ -70,7 +70,8 @@ public class ApiCallPreviewService {
       }
 
       // 5. Build URI — 호출용(키 원문)과 응답용(키 가림)을 함께 만든다(WD-177). 응답의 resolvedUrl 은 화면·AI 챗으로 나가므로
-      //    인증 쿼리 키를 ****XXXX 로 가린 표시용 URL 이다. 키에 쿼리에 쓸 수 없는 문자가 있으면 원문 없는 고정 문구로 실패한다.
+      //    인증 쿼리 키를 ****XXXX 로 가린 표시용 URL 이다. 키는 연결 테스트·실행과 같은 규칙으로 한 번만 인코딩한다(WD-182). 정적 쿼리
+      //    값에 쿼리에 쓸 수 없는 문자가 있으면 원문 없는 고정 문구로 실패한다.
       AuthQueryMasker.AuthQueryUrls urls =
           AuthQueryMasker.build(resolvedUrl, allQueryParams, authParamName, authSecret);
       URI requestUri = urls.callUri();

@@ -405,8 +405,9 @@ def test_auth_api_key_query():
     headers: Dict[str, str] = {}
     params: Dict[str, str] = {}
     auth = {"type": "API_KEY", "key_name": "api_key", "key_value": "secret", "location": "query"}
-    _apply_auth(auth, headers, params)
-    assert params.get("api_key") == "secret"
+    # 쿼리 키는 params(httpx 식 인코딩)에 넣지 않고 돌려준다 — 공용 규칙으로 따로 인코딩해 붙인다(WD-182).
+    assert _apply_auth(auth, headers, params) == ("api_key", "secret")
+    assert params == {}
     assert "api_key" not in headers
 
 
@@ -438,10 +439,11 @@ def test_auth_java_api_key_header():
 
 def test_auth_java_api_key_query():
     headers: Dict[str, str] = {}
-    params: Dict[str, str] = {}
+    params: Dict[str, str] = {"service_key": "static-value", "pageNo": "1"}
     auth = {"authType": "API_KEY", "placement": "query", "paramName": "service_key", "apiKey": "qry-secret"}
-    _apply_auth(auth, headers, params)
-    assert params.get("service_key") == "qry-secret"
+    assert _apply_auth(auth, headers, params) == ("service_key", "qry-secret")
+    # 같은 이름의 정적 파라미터는 지운다 — Java 처럼 그 이름으로는 키 하나만 나간다.
+    assert params == {"pageNo": "1"}
     assert len(headers) == 0
 
 
@@ -624,8 +626,9 @@ def test_401_message_has_no_query_key():
     assert result.error == "인증에 실패했습니다(HTTP 401) — API 키·토큰 설정을 확인하세요"
     assert "SECRET123" not in result.error
     assert client.request.call_count == 1
-    # 키는 실제로 쿼리로 보냈다(문구에서만 빠진 것)
-    assert client.request.call_args.kwargs["params"]["serviceKey"] == "SECRET123"
+    # 키는 실제로 쿼리로 보냈다(문구에서만 빠진 것). WD-182 부터 쿼리는 URL 에 직접 붙이고 params= 를 넘기지 않는다.
+    assert client.request.call_args.kwargs["url"] == "http://public.example.com/api/data?serviceKey=SECRET123"
+    assert "params" not in client.request.call_args.kwargs
 
 
 def test_redirect_ssrf_block_is_not_retried():

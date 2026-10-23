@@ -1,0 +1,30 @@
+{
+  "_comment": "WD-182 쿼리 API 키 인코딩 공용 사례 표. api 의 QueryApiKeyEncodingTest 와 executor 의 tests/test_query_key_encoding_vectors.py 가 함께 읽는다 — 한쪽 규칙만 바꾸면 어느 한쪽이 깨진다. input=저장된 키, preEncoded=유효한 %XX 가 있어 이미 인코딩된 키로 보는지, encoded=쿼리에 실제로 실리는 값. 키 값은 모두 시험용 가짜 키다.",
+  "cases": [
+    {"name": "인코딩 키(공공데이터포털 Encoding)", "input": "abc%2Bd%3D%3D", "preEncoded": true, "encoded": "abc%2Bd%3D%3D"},
+    {"name": "디코딩 키(공공데이터포털 Decoding)", "input": "abc+d==", "preEncoded": false, "encoded": "abc%2Bd%3D%3D"},
+    {"name": "공공키 모양 인코딩형", "input": "rP1x%2FAbC%2Bd%3D%3D", "preEncoded": true, "encoded": "rP1x%2FAbC%2Bd%3D%3D"},
+    {"name": "공공키 모양 디코딩형 — 인코딩형과 같은 값으로", "input": "rP1x/AbC+d==", "preEncoded": false, "encoded": "rP1x%2FAbC%2Bd%3D%3D"},
+    {"name": "소문자 hex 는 대소문자 그대로 보존", "input": "abc%2bd%3d", "preEncoded": true, "encoded": "abc%2bd%3d"},
+    {"name": "섞인 키 — %XX 보존, 생 = 만 인코딩", "input": "abc%2Bd==", "preEncoded": true, "encoded": "abc%2Bd%3D%3D"},
+    {"name": "섞인 키 — 생 + 는 공백이 아니라 글자 + 로 보고 %2B", "input": "a%2Fb+c", "preEncoded": true, "encoded": "a%2Fb%2Bc"},
+    {"name": "섞인 키 — 유효 %XX 와 무효 % 가 함께", "input": "%2B%zz", "preEncoded": true, "encoded": "%2B%25zz"},
+    {"name": "무효 % 다음 유효 %XX", "input": "%%41", "preEncoded": true, "encoded": "%25%41"},
+    {"name": "%25 는 유효 조각이라 보존", "input": "a%25b", "preEncoded": true, "encoded": "a%25b"},
+    {"name": "끝의 % 는 원문 % 로 보고 %25", "input": "100%", "preEncoded": false, "encoded": "100%25"},
+    {"name": "hex 한 자리뿐인 % 는 %25", "input": "a%4", "preEncoded": false, "encoded": "a%254"},
+    {"name": "hex 아닌 % 는 %25", "input": "a%zz", "preEncoded": false, "encoded": "a%25zz"},
+    {"name": "공백은 %20(+ 아님)", "input": "a b", "preEncoded": false, "encoded": "a%20b"},
+    {"name": "/ 는 %2F", "input": "abc/d", "preEncoded": false, "encoded": "abc%2Fd"},
+    {"name": "한글은 UTF-8 퍼센트 인코딩", "input": "키", "preEncoded": false, "encoded": "%ED%82%A4"},
+    {"name": "+ / = 한글 공백이 모두 섞인 디코딩 키", "input": "ab+c/d==키값 Zz42", "preEncoded": false, "encoded": "ab%2Bc%2Fd%3D%3D%ED%82%A4%EA%B0%92%20Zz42"},
+    {"name": "BMP 밖 글자(4바이트 UTF-8)", "input": "a😀", "preEncoded": false, "encoded": "a%F0%9F%98%80"},
+    {"name": "& 와 = 는 인코딩 — 파라미터 주입 방지", "input": "a&b=c", "preEncoded": false, "encoded": "a%26b%3Dc"},
+    {"name": "# 은 인코딩 — URL 잘림 방지", "input": "a#b", "preEncoded": false, "encoded": "a%23b"},
+    {"name": "? : @ 도 인코딩", "input": "a?b:c@d", "preEncoded": false, "encoded": "a%3Fb%3Ac%40d"},
+    {"name": "* 는 인코딩(URLEncoder 와 다름)", "input": "a*b", "preEncoded": false, "encoded": "a%2Ab"},
+    {"name": "비예약 문자 - . _ ~ 는 그대로", "input": "a~b-c.d_e", "preEncoded": false, "encoded": "a~b-c.d_e"},
+    {"name": "영숫자만", "input": "AZaz09", "preEncoded": false, "encoded": "AZaz09"},
+    {"name": "빈 값", "input": "", "preEncoded": false, "encoded": ""}
+  ]
+}

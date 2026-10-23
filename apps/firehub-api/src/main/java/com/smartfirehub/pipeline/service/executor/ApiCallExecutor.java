@@ -387,8 +387,9 @@ public class ApiCallExecutor {
     }
 
     // Build the full URI with query params (resolvedUrl은 이미 SSRF 검증 완료)
-    // (WD-177) 키에 쿼리에 쓸 수 없는 문자(=·공백·한글 등)가 있으면 Spring 이 키 원문을 담은 메시지로 실패해, 재시도 로그·실행
-    // 기록(DB)에 키가 남았다. 공용 빌더가 원문 없는 고정 문구로 바꿔 주고, 다시 보내도 같으므로 재시도하지 않는 ApiCallException 으로 낸다.
+    // (WD-182) 인증 키는 공용 빌더가 연결 테스트·미리보기와 같은 규칙(QueryApiKeyEncoding)으로 한 번만 인코딩한다 — 인코딩 키·디코딩 키
+    // 모두 같은 바이트가 나간다. (WD-177) 정적 쿼리 값에 쿼리에 쓸 수 없는 문자(=·공백·한글 등)가 있으면 Spring 이 원문을 담은 메시지로
+    // 실패하는데, 공용 빌더가 원문 없는 고정 문구로 바꿔 주고, 다시 보내도 같으므로 재시도하지 않는 ApiCallException 으로 낸다.
     URI requestUri;
     try {
       requestUri =

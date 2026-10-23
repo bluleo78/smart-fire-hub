@@ -81,6 +81,14 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
   /** 쿼리에 그대로 쓸 수 없는 문자(=·한글·공백)와 +·/ 가 섞인 키. */
   private static final String SPECIAL_KEY = "ab+c/d==키값 Zz42";
 
+  /** {@link #SPECIAL_KEY} 를 공용 규칙(QueryApiKeyEncoding)으로 한 번 인코딩한 값 — 대상 서버가 받아야 할 바이트(WD-182). */
+  private static final String SPECIAL_KEY_SENT = "ab%2Bc%2Fd%3D%3D%ED%82%A4%EA%B0%92%20Zz42";
+
+  /** 공공데이터포털이 주는 같은 키의 두 형태(시험용 가짜 키) — 어느 쪽을 넣어도 인코딩형이 한 번 인코딩된 값으로 나가야 한다(WD-182). */
+  private static final String PUBLIC_KEY_ENCODED = "rP1x%2FAbC%2Bd%3D%3D";
+
+  private static final String PUBLIC_KEY_DECODED = "rP1x/AbC+d==";
+
   private static final Table<?> USER_TABLE = table(name("user"));
   private static final Field<Long> U_ID = field(name("user", "id"), Long.class);
   private static final Table<?> API_CONNECTION = table(name("api_connection"));
@@ -195,6 +203,13 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
         .doesNotContain(key)
         .doesNotContain(formEncoded)
         .doesNotContain(formEncoded.replace("+", "%20"));
+  }
+
+  /** WireMock 이 /health 로 받은 모든 요청 URL(받은 순서, 디코딩하지 않은 원형). */
+  private static List<String> receivedUrls() {
+    return wireMock.findAll(getRequestedFor(urlPathEqualTo("/health"))).stream()
+        .map(LoggedRequest::getUrl)
+        .toList();
   }
 
   /** WireMock 이 실제로 받은 요청 URL(쿼리 포함, 디코딩하지 않은 원형). */
@@ -316,33 +331,34 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
   }
 
   /**
-   * 쿼리에 그대로 쓸 수 없는 문자가 섞인 키: 예전에는 Spring 이 {@code Invalid character '=' for QUERY_PARAM in "<키>"} 를
-   * 던져 400 응답 본문에 원문이 실렸다. 이제 예외 없이 DOWN 결과로 돌아오고, 응답·DB 어디에도 원문·인코딩형이 없다.
+   * 쿼리에 그대로 쓸 수 없는 문자가 섞인 디코딩 키(WD-182): 예전에는 URL 을 만들지 못해 「URL 인코딩된 값을 넣으세요」 DOWN 으로 끝났다(그 전에는
+   * Spring 이 키 원문을 담은 400 을 냈다, WD-177). 이제 공용 규칙으로 한 번 인코딩해 호출하고, 응답·DB 어디에도 원문·인코딩형이 없다.
    */
   @Test
-  void testConnection_specialCharKey_noExceptionAndNoSecretAnywhere() {
+  void testConnection_specialCharKey_encodedOnceAndNoSecretAnywhere() {
+    stubHealthOk();
     ApiConnectionResponse created =
         apiConnectionService.create(
             queryKeyReq("WD177 special", wireMockBase(), SPECIAL_KEY), testUserId);
 
     TestConnectionResponse result = apiConnectionService.testConnection(created.id());
 
-    assertThat(result.ok()).isFalse();
-    assertThat(result.errorMessage()).contains("요청 URL 을 만들 수 없습니다");
+    assertThat(result.ok()).isTrue();
+    assertThat(receivedUrl()).isEqualTo("/health?serviceKey=" + SPECIAL_KEY_SENT);
     assertNoSecret(result.requestUrl(), SPECIAL_KEY);
+    assertThat(result.requestUrl()).doesNotContain(SPECIAL_KEY_SENT);
     assertNoSecret(result.errorMessage(), SPECIAL_KEY);
     assertNoSecret(apiConnectionService.getById(created.id()).lastErrorMessage(), SPECIAL_KEY);
   }
 
   /**
-   * 이미 URL 인코딩된 키: 응답엔 인코딩형·디코딩형 모두 없다.
+   * 이미 URL 인코딩된 키: 대상 서버엔 받은 그대로(한 번 인코딩된 값) 도착하고, 응답엔 인코딩형·디코딩형 모두 없다.
    *
-   * <p>호출 URL 은 손대지 않았다. 다만 「테스트」 경로는 예전부터 WebClient {@code .uri(String)} 이 문자열을 템플릿으로 다시 인코딩해
-   * {@code %2B} 가 {@code %252B} 로 나간다(WD-177 이전부터의 동작, 실행·미리보기는 URI 를 넘겨 그대로 나감) — 이 테스트의 범위가 아니므로
-   * 요청이 도착했는지만 본다.
+   * <p>WD-182 이전에는 「테스트」 경로만 WebClient {@code .uri(String)} 이 문자열을 템플릿으로 다시 인코딩해 {@code %2B} 가
+   * {@code %252B} 로 나가 테스트가 실패했다(미리보기·실행은 그대로 나감). 이 결함의 핵심 회귀 TC 다.
    */
   @Test
-  void testConnection_preEncodedKey_responseHasNoForm() {
+  void testConnection_preEncodedKey_sentAsIs_responseHasNoForm() {
     String encodedKey = "abc%2Bdef%2F%3D%3D9876";
     wireMock.stubFor(get(urlPathEqualTo("/health")).willReturn(aResponse().withStatus(200)));
     ApiConnectionResponse created =
@@ -351,11 +367,57 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
 
     TestConnectionResponse result = apiConnectionService.testConnection(created.id());
 
+    assertThat(result.ok()).isTrue();
     assertThat(result.requestUrl())
         .endsWith("serviceKey=****9876")
         .doesNotContain(encodedKey)
         .doesNotContain("abc+def/==9876");
-    assertThat(receivedUrl()).startsWith("/health?serviceKey=");
+    assertThat(receivedUrl()).isEqualTo("/health?serviceKey=" + encodedKey);
+  }
+
+  /**
+   * 공공데이터포털처럼 같은 키를 인코딩 키·디코딩 키 두 형태로 넣어도 「테스트」·저장 전 테스트·10분 상태 점검이 대상 서버에 같은 바이트를 보낸다(WD-182).
+   * 미리보기·Java 실행기는 같은 기대값을 각 테스트 클래스에서 단언한다.
+   */
+  @Test
+  void encodedAndDecodedKeys_sameBytesOnTestPayloadAndScheduler() {
+    stubHealthOk();
+    String expected = "/health?serviceKey=" + PUBLIC_KEY_ENCODED;
+
+    // 저장된 연결 「테스트」
+    Long encId =
+        apiConnectionService
+            .create(queryKeyReq("WD182 enc", wireMockBase(), PUBLIC_KEY_ENCODED), testUserId)
+            .id();
+    Long decId =
+        apiConnectionService
+            .create(queryKeyReq("WD182 dec", wireMockBase(), PUBLIC_KEY_DECODED), testUserId)
+            .id();
+    assertThat(apiConnectionService.testConnection(encId).ok()).isTrue();
+    assertThat(apiConnectionService.testConnection(decId).ok()).isTrue();
+    assertThat(receivedUrls()).hasSizeGreaterThanOrEqualTo(2).allMatch(expected::equals);
+
+    // 저장 전 테스트
+    wireMock.resetRequests();
+    assertThat(
+            apiConnectionService
+                .testConnectionPayload(
+                    queryKeyReq("WD182 enc p", wireMockBase(), PUBLIC_KEY_ENCODED))
+                .ok())
+        .isTrue();
+    assertThat(
+            apiConnectionService
+                .testConnectionPayload(
+                    queryKeyReq("WD182 dec p", wireMockBase(), PUBLIC_KEY_DECODED))
+                .ok())
+        .isTrue();
+    assertThat(receivedUrls()).hasSizeGreaterThanOrEqualTo(2).allMatch(expected::equals);
+
+    // 10분 상태 점검 — testConnection 과 같은 경로다. 이 WireMock 포트를 가리키는 연결은 이 TC 가 만든 두 개뿐이다. 개수는 「두 개
+    // 이상」으로 본다 — 백그라운드 @Scheduled 실행이 겹쳐 같은 연결을 한 번 더 점검해도 보내는 값은 같아야 하기 때문이다.
+    wireMock.resetRequests();
+    scheduler.runOnce();
+    assertThat(receivedUrls()).hasSizeGreaterThanOrEqualTo(2).allMatch(expected::equals);
   }
 
   /**
@@ -429,16 +491,46 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     assertKoreanConnectionRefused(result.errorMessage());
   }
 
+  /** 저장 전 테스트도 디코딩 키를 한 번 인코딩해 호출한다(WD-182). */
   @Test
-  void testConnectionPayload_specialCharKey_noExceptionAndNoSecret() {
+  void testConnectionPayload_specialCharKey_encodedOnceAndNoSecret() {
+    stubHealthOk();
     TestConnectionResponse result =
         apiConnectionService.testConnectionPayload(
             queryKeyReq("WD177 payload special", wireMockBase(), SPECIAL_KEY));
 
-    assertThat(result.ok()).isFalse();
-    assertThat(result.errorMessage()).contains("요청 URL 을 만들 수 없습니다");
+    assertThat(result.ok()).isTrue();
+    assertThat(receivedUrl()).isEqualTo("/health?serviceKey=" + SPECIAL_KEY_SENT);
     assertNoSecret(result.requestUrl(), SPECIAL_KEY);
+    assertThat(result.requestUrl()).doesNotContain(SPECIAL_KEY_SENT);
     assertNoSecret(result.errorMessage(), SPECIAL_KEY);
+  }
+
+  /**
+   * 정말로 URL 을 만들 수 없는 경우(헬스체크 경로 쿼리에 생 공백·한글)는 여전히 고정 문구의 DOWN 이고 호출하지 않는다 — 함께 붙는 키 원문·인코딩형은 응답
+   * 어디에도 없다(WD-177 처리 유지).
+   */
+  @Test
+  void testConnectionPayload_unbuildableUrl_downWithoutCallOrSecret() {
+    stubHealthOk();
+    CreateApiConnectionRequest req =
+        new CreateApiConnectionRequest(
+            "WD182 unbuildable",
+            null,
+            "API_KEY",
+            Map.of("placement", "query", "paramName", "serviceKey", "apiKey", SPECIAL_KEY),
+            wireMockBase(),
+            "/health?q=a b 한글");
+
+    TestConnectionResponse result = apiConnectionService.testConnectionPayload(req);
+
+    assertThat(result.ok()).isFalse();
+    assertThat(result.errorMessage())
+        .startsWith("요청 URL 을 만들 수 없습니다")
+        .doesNotContain("URL 인코딩된 값을 넣으세요");
+    assertNoSecret(result.errorMessage(), SPECIAL_KEY);
+    assertNoSecret(result.requestUrl(), SPECIAL_KEY);
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
   }
 
   // ── WD-178: 호출 직전 주소 재검사 ──

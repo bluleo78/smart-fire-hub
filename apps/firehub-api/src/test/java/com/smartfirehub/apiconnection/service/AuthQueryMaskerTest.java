@@ -38,7 +38,7 @@ class AuthQueryMaskerTest {
     assertThat(urls.displayUrl()).isEqualTo("http://h.example/api?pageNo=1&serviceKey=****9876");
   }
 
-  /** 이미 인코딩된 키(공공데이터포털 Encoding 키)는 호출에 그대로 쓰이고, 표시 URL 엔 원문도 디코딩형도 없다. */
+  /** 이미 인코딩된 키(공공데이터포털 Encoding 키)는 호출에 그대로 쓰이고(다시 인코딩하지 않음, WD-182), 표시 URL 엔 원문도 디코딩형도 없다. */
   @Test
   void build_preEncodedKey_callUnchanged_displayHasNoForm() {
     String encodedKey = "abc%2Bdef%2F%3D%3D";
@@ -66,23 +66,48 @@ class AuthQueryMaskerTest {
   }
 
   /**
-   * 값에 쿼리에 그대로 쓸 수 없는 문자(=·한글·공백)가 있으면 Spring 은 키 원문을 담은 메시지로 실패한다 — 고정 문구로 바꾸고 cause 도 잇지 않아 근본
-   * 원인을 따라가는 분류기(ApiCallErrorMessages.describe)도 원문을 꺼낼 수 없어야 한다.
+   * 디코딩 키(=·한글·공백·+·/ 가 섞인 키)도 URL 을 만든다(WD-182) — 예전에는 build(true) 가 실패해 「URL 인코딩된 값을 넣으세요」로 끝났다.
+   * 호출 URL 엔 공용 규칙으로 한 번 인코딩한 값이, 표시 URL 엔 가린 값만 있다.
    */
   @Test
-  void build_invalidCharKey_throwsWithoutSecretOrCause() {
+  void build_decodedSpecialCharKey_encodedOnceInCallUrl_maskedInDisplay() {
     String key = "ab+c/d==키값 Xy9";
     Map<String, String> params = new LinkedHashMap<>();
+    params.put("pageNo", "1");
+    params.put("serviceKey", key);
+
+    AuthQueryMasker.AuthQueryUrls urls =
+        AuthQueryMasker.build("http://h.example/api", params, "serviceKey", key);
+
+    assertThat(urls.callUrl())
+        .isEqualTo(
+            "http://h.example/api?pageNo=1&serviceKey=ab%2Bc%2Fd%3D%3D%ED%82%A4%EA%B0%92%20Xy9");
+    assertThat(urls.displayUrl()).isEqualTo("http://h.example/api?pageNo=1&serviceKey=**** Xy9");
+  }
+
+  /**
+   * 키가 아닌 정적 쿼리 값에 쿼리에 그대로 쓸 수 없는 문자(=·한글·공백)가 있으면 여전히 URL 을 만들 수 없다 — Spring 은 원문을 담은 메시지로 실패하므로
+   * 고정 문구로 바꾸고 cause 도 잇지 않아, 근본 원인을 따라가는 분류기(ApiCallErrorMessages.describe)도 원문(같이 붙은 키 포함)을 꺼낼 수
+   * 없어야 한다.
+   */
+  @Test
+  void build_invalidStaticParam_throwsWithoutSecretOrCause() {
+    String key = "ab+c/d==키값 Xy9";
+    Map<String, String> params = new LinkedHashMap<>();
+    params.put("q", "a=b 한글");
     params.put("serviceKey", key);
 
     assertThatThrownBy(
             () -> AuthQueryMasker.build("http://h.example/api", params, "serviceKey", key))
         .isInstanceOf(AuthQueryMasker.InvalidRequestUrlException.class)
         .hasNoCause()
+        .hasMessageStartingWith("요청 URL 을 만들 수 없습니다")
         .satisfies(
             e ->
                 assertThat(e.getMessage())
                     .doesNotContain(key)
+                    .doesNotContain(QueryApiKeyEncoding.encode(key))
+                    .doesNotContain("a=b 한글")
                     .doesNotContain(URLEncoder.encode(key, StandardCharsets.UTF_8)));
   }
 
@@ -106,5 +131,24 @@ class AuthQueryMaskerTest {
     String preEncoded = "abc%2Bdef%2F%3D%3D";
     assertThat(AuthQueryMasker.scrubSecret("x abc+def/== y", preEncoded))
         .isEqualTo("x " + AuthQueryMasker.maskSecret(preEncoded) + " y");
+  }
+
+  /**
+   * 실제로 보낸 형태(공용 규칙 인코딩)도 지운다(WD-182). 섞인 키·{@code *} 가 든 키는 보낸 형태가 원문·form 인코딩형·디코딩형 어느 것과도 달라,
+   * 리다이렉트 Location·응답 본문이 보낸 쿼리를 되울리면 예전 형태 목록으로는 놓친다.
+   */
+  @Test
+  void scrubSecret_removesSentFormOfMixedAndStarKeys() {
+    String mixed = "abc%2Bd==Zz99";
+    String sentMixed = QueryApiKeyEncoding.encode(mixed);
+    assertThat(sentMixed).isEqualTo("abc%2Bd%3D%3DZz99");
+    assertThat(AuthQueryMasker.scrubSecret("Location: /h?serviceKey=" + sentMixed, mixed))
+        .isEqualTo("Location: /h?serviceKey=" + AuthQueryMasker.maskSecret(mixed));
+
+    String star = "ab*cd~ef9876";
+    String sentStar = QueryApiKeyEncoding.encode(star);
+    assertThat(sentStar).isEqualTo("ab%2Acd~ef9876");
+    assertThat(AuthQueryMasker.scrubSecret("echo " + sentStar, star))
+        .isEqualTo("echo " + AuthQueryMasker.maskSecret(star));
   }
 }
