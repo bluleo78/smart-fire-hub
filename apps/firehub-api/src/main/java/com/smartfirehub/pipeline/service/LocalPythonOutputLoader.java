@@ -46,8 +46,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 이미지) 의미를 기준으로 한다.
  *
  * <ul>
- *   <li>stdout 전체(앞뒤 공백 제거)가 JSON 이어야 한다. 뒤에 다른 내용이 붙으면 파싱 실패 → 적재 0행(Python {@code json.loads} 의
- *       "Extra data").
+ *   <li>stdout 전체(앞뒤 공백 제거)가 JSON 이어야 한다. 비었거나 공백뿐이면 0행. JSON 으로 읽히지 않으면(앞에 디버그 print 가 있거나 뒤에 다른
+ *       내용이 붙은 경우 — Python {@code json.loads} 의 "Extra data" 포함) 적재하지 않고 스텝을 실패시킨다(WD-210, {@link
+ *       #notJsonMessage}). 예전엔 조용히 0행이라 REPLACE 출력이 옛 데이터로 남아 갱신이 멈춘 걸 알 수 없었다.
  *   <li>첫 원소가 객체인 비어 있지 않은 배열만 행으로 본다. 아니면 0행(오류 아님).
  *   <li>컬럼은 <b>첫 행의 키</b>(순서 유지). 이후 행에 그 키가 없거나 행이 객체가 아니면 적재 실패(Python {@code KeyError}/{@code
  *       TypeError}). 이후 행의 여분 키는 무시.
@@ -66,6 +67,18 @@ public class LocalPythonOutputLoader {
    */
   static final String INSERT_FAILED_PREFIX =
       "Python 실행 실패: Script succeeded but data insert failed: ";
+
+  /**
+   * stdout 이 JSON 이 아닐 때의 사용자 문구(WD-210). executor({@code python_executor.py} 의 {@code
+   * NOT_JSON_MESSAGE})와 글자 단위로 같아야 한다 — 두 경로가 같은 스크립트에 같은 오류를 보이게 하려는 것이다. 앞부분 인용은 비밀이 섞일 수 있어
+   * {@link #NOT_JSON_EXCERPT_MAX} 자 이하로 자른다.
+   */
+  static final String NOT_JSON_MESSAGE =
+      "스크립트 출력이 JSON 이 아니어서 결과를 적재하지 않았습니다. 출력 데이터셋을 쓰는 스크립트는 결과 JSON 한 번만 print 해야"
+          + " 합니다(디버그 출력은 sys.stderr 로). 출력 앞부분: \"%s\"";
+
+  /** 오류 문구에 인용하는 stdout 앞부분 최대 길이(코드 포인트 — Python 문자열 슬라이스와 같은 단위). */
+  static final int NOT_JSON_EXCERPT_MAX = 100;
 
   /**
    * Python {@code json.loads} 와 같은 규칙의 파서: 뒤따르는 내용 거부, NaN/Infinity 허용, 실수는 Double(Python float).
@@ -91,14 +104,19 @@ public class LocalPythonOutputLoader {
   /**
    * stdout 을 파싱·변환해 {@code tableName}(현재 테넌트 데이터 스키마)에 적재한다.
    *
-   * @return 적재한 행 수(JSON 이 없거나 행이 아니면 0 — REPLACE 는 이 값으로 맞바꿈 여부를 정한다, #685)
+   * @return 적재한 행 수(stdout 이 비었거나 JSON 이 행 배열이 아니면 0 — REPLACE 는 이 값으로 맞바꿈 여부를 정한다, #685)
    * @throws ScriptExecutionException 적재 실패 — 메시지는 실행기 켠 경로의 사용자 문구와 같다({@link
-   *     #INSERT_FAILED_PREFIX})
+   *     #INSERT_FAILED_PREFIX}). stdout 이 JSON 이 아니면 적재 전에 {@link #NOT_JSON_MESSAGE} 로 실패한다(DB 무접촉
+   *     — REPLACE 는 러너가 임시 테이블을 버려 원본이 남는다)
    */
   public long load(String tableName, String stdout, Map<String, String> columnTypeMap) {
     List<Map<String, Object>> rows;
     try {
       rows = parseStdoutJson(stdout);
+    } catch (StdoutNotJsonException e) {
+      // 적재 실패가 아니라 출력 형식 오류다 — INSERT_FAILED_PREFIX 를 붙이지 않는다. 실행기 켠 경로는 러너가 executor 오류 앞에
+      // "Python 실행 실패: " 만 붙이므로, 두 경로 문구가 같도록 같은 접두만 붙인다.
+      throw new ScriptExecutionException("Python 실행 실패: " + e.getMessage(), e);
     } catch (RuntimeException e) {
       throw new ScriptExecutionException(INSERT_FAILED_PREFIX + e.getMessage(), e);
     }
@@ -155,20 +173,42 @@ public class LocalPythonOutputLoader {
   // _parse_stdout_json
   // ---------------------------------------------------------------------------
 
+  /** stdout 이 JSON 으로 읽히지 않음 — {@link #load} 가 적재 실패와 구분해 {@link #NOT_JSON_MESSAGE} 로 스텝을 실패시킨다. */
+  static final class StdoutNotJsonException extends RuntimeException {
+    StdoutNotJsonException(String message, Throwable cause) {
+      super(message, cause);
+    }
+  }
+
   /**
-   * stdout 의 JSON 행 배열. 비었거나 JSON 이 아니거나 "객체로 시작하는 비어 있지 않은 배열"이 아니면 null. 첫 원소만 객체인지 보는 것도 원본과 같다
-   * — 이후 원소가 객체가 아니면 적재 단계에서 실패한다.
+   * 앞뒤 공백을 뺀 stdout 의 앞 {@link #NOT_JSON_EXCERPT_MAX} 코드 포인트를 넣은 문구. 말줄임표는 붙이지 않는다(executor 와 같음).
+   */
+  static String notJsonMessage(String strippedStdout) {
+    String excerpt =
+        strippedStdout
+            .codePoints()
+            .limit(NOT_JSON_EXCERPT_MAX)
+            .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+            .toString();
+    return String.format(NOT_JSON_MESSAGE, excerpt);
+  }
+
+  /**
+   * stdout 의 JSON 행 배열. 비었거나 공백뿐이면 null(0행). JSON 으로 읽히지 않으면 {@link StdoutNotJsonException} — 추측
+   * 파싱(마지막 줄만 시도 등)은 하지 않는다(WD-210). JSON 이지만 "객체로 시작하는 비어 있지 않은 배열"이 아니면 null(오류 아님 — {@code []} 는
+   * 정상적인 빈 결과다). 첫 원소만 객체인지 보는 것도 원본과 같다 — 이후 원소가 객체가 아니면 적재 단계에서 실패한다.
    */
   @SuppressWarnings("unchecked")
   static List<Map<String, Object>> parseStdoutJson(String stdout) {
     if (stdout == null || stdout.strip().isEmpty()) {
       return null;
     }
+    String stripped = stdout.strip();
     Object data;
     try {
-      data = JSON.readValue(stdout.strip());
+      data = JSON.readValue(stripped);
     } catch (Exception e) {
-      return null;
+      throw new StdoutNotJsonException(notJsonMessage(stripped), e);
     }
     if (data instanceof List<?> list && !list.isEmpty() && list.get(0) instanceof Map) {
       List<Map<String, Object>> rows = new ArrayList<>(list.size());

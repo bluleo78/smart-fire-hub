@@ -550,6 +550,13 @@ export default function StepConfigPanel({
                 실행 시 스텝 결과에 맞는 임시 데이터셋이 자동 생성됩니다
               </p>
             )}
+            {/* 출력 데이터셋을 지정한 Python 스텝은 PythonOutputColumns 안내가 안 보이므로 여기서 같은 규칙을 알린다(WD-210) */}
+            {step.scriptType === 'PYTHON' && step.outputDatasetId !== null && (
+              <p data-testid="python-stdout-json-help" className="text-xs text-muted-foreground">
+                스크립트는 결과 JSON을 stdout에 한 번만 print 하세요. 디버그 출력은 sys.stderr로 보내야 합니다(stdout에
+                다른 내용이 섞이면 스텝이 실패합니다).
+              </p>
+            )}
             {/* 바꾸면 되돌릴 방법이 편집기 「취소」뿐이라 미리 알린다 */}
             {outputHidden && (
               <p id={outputDatasetRestrictedId} className="text-xs text-muted-foreground">

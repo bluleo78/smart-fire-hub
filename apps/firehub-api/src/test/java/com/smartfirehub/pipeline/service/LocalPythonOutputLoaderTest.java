@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
@@ -131,11 +132,15 @@ class LocalPythonOutputLoaderTest {
   void parseStdoutJson_matchesPythonRules() {
     assertThat(LocalPythonOutputLoader.parseStdoutJson("  [{\"a\":1}]\n"))
         .containsExactly(Map.of("a", 1));
-    // json.loads 는 뒤따르는 내용을 거부한다("Extra data") → 0행
-    assertThat(LocalPythonOutputLoader.parseStdoutJson("[{\"a\":1}] extra")).isNull();
+    // json.loads 는 뒤따르는 내용을 거부한다("Extra data") → JSON 아님으로 실패(WD-210, 예전엔 0행)
+    assertThatThrownBy(() -> LocalPythonOutputLoader.parseStdoutJson("[{\"a\":1}] extra"))
+        .isInstanceOf(LocalPythonOutputLoader.StdoutNotJsonException.class);
     assertThat(LocalPythonOutputLoader.parseStdoutJson("[1,2]")).isNull();
     assertThat(LocalPythonOutputLoader.parseStdoutJson("{\"a\":1}")).isNull();
-    assertThat(LocalPythonOutputLoader.parseStdoutJson("x")).isNull();
+    assertThatThrownBy(() -> LocalPythonOutputLoader.parseStdoutJson("x"))
+        .isInstanceOf(LocalPythonOutputLoader.StdoutNotJsonException.class);
+    // JSON 이지만 행 배열이 아닌 값은 기존대로 0행(오류 아님)
+    assertThat(LocalPythonOutputLoader.parseStdoutJson("123")).isNull();
     assertThat(LocalPythonOutputLoader.parseStdoutJson("[]")).isNull();
     // json.dumps 는 float nan/inf 를 NaN/Infinity/-Infinity 토큰으로 쓰고 json.loads 는 받아들인다
     assertThat(
@@ -143,6 +148,57 @@ class LocalPythonOutputLoaderTest {
         .containsExactly(
             Map.of("a", Double.NaN, "b", Double.POSITIVE_INFINITY, "c", Double.NEGATIVE_INFINITY));
     assertThat(LocalPythonOutputLoader.parseStdoutJson("")).isNull();
+    assertThat(LocalPythonOutputLoader.parseStdoutJson("  \n\t\n")).isNull();
+  }
+
+  private static LocalPythonOutputLoader loaderWith(DataTableRowService rowService) {
+    return new LocalPythonOutputLoader(rowService, mock(PlatformTransactionManager.class));
+  }
+
+  /**
+   * WD-210: 디버그 print 뒤 JSON 은 적재 전에 실패한다 — 예전엔 조용히 0행 "완료"였다. 문구는 executor
+   * (test_python_executor.py 의 DEBUG_THEN_JSON_MESSAGE)와 같은 입력에 대해 글자 단위로 같고, 실행기 켠 경로처럼 러너 접두
+   * "Python 실행 실패: " 가 붙는다. 적재 실패 접두(INSERT_FAILED_PREFIX)는 붙지 않는다. DB 는 건드리지 않는다.
+   */
+  @Test
+  void debugPrintThenJson_failsBeforeInsertWithExecutorMessage() {
+    DataTableRowService rowService = mock(DataTableRowService.class);
+    assertThatThrownBy(() -> loaderWith(rowService).load("t", "start\n[{\"a\": 1}]\n", Map.of()))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage(
+            "Python 실행 실패: 스크립트 출력이 JSON 이 아니어서 결과를 적재하지 않았습니다. 출력 데이터셋을 쓰는 스크립트는 결과 JSON"
+                + " 한 번만 print 해야 합니다(디버그 출력은 sys.stderr 로). 출력 앞부분: \"start\n[{\"a\": 1}]\"");
+    verifyNoInteractions(rowService);
+  }
+
+  /** JSON 이 아닌 문자열만 print 해도 실패한다. */
+  @Test
+  void plainTextStdout_fails() {
+    DataTableRowService rowService = mock(DataTableRowService.class);
+    assertThatThrownBy(() -> loaderWith(rowService).load("t", "plain text output\n", Map.of()))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessageStartingWith("Python 실행 실패: 스크립트 출력이 JSON 이 아니어서 결과를 적재하지 않았습니다.")
+        .hasMessageEndingWith("출력 앞부분: \"plain text output\"");
+    verifyNoInteractions(rowService);
+  }
+
+  /** 앞부분 인용은 100 코드 포인트 이하 — 비밀이 섞일 수 있어 뒤는 잘라낸다(말줄임표 없음). 서로게이트 쌍도 한 글자로 센다. */
+  @Test
+  void notJsonExcerpt_isCappedAt100CodePoints() {
+    String hundred = "\uD83D\uDE00".repeat(100); // 이모지 100자 = UTF-16 200단위
+    String message = LocalPythonOutputLoader.notJsonMessage(hundred + "SECRET_AFTER_100");
+    assertThat(message).endsWith("출력 앞부분: \"" + hundred + "\"").doesNotContain("SECRET");
+  }
+
+  /** 빈 stdout·공백뿐인 stdout 은 지금처럼 0행(실패 아님) — DB 무접촉. */
+  @Test
+  void emptyOrBlankStdout_keepsZeroRows() {
+    DataTableRowService rowService = mock(DataTableRowService.class);
+    LocalPythonOutputLoader loader = loaderWith(rowService);
+    assertThat(loader.load("t", "", Map.of())).isZero();
+    assertThat(loader.load("t", " \n\t ", Map.of())).isZero();
+    assertThat(loader.load("t", null, Map.of())).isZero();
+    verifyNoInteractions(rowService);
   }
 
   /** 컬럼은 첫 행의 키 — 이후 행에 그 키가 없으면 적재 실패(Python KeyError), 여분 키는 무시된다. */

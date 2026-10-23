@@ -145,7 +145,20 @@ def execute_python(
 
         rows_loaded = 0
         if success and output_table:
-            rows = _parse_stdout_json(stdout_text)
+            try:
+                rows = _parse_stdout_json(stdout_text)
+            except StdoutNotJsonError as e:
+                # 출력 테이블이 있는데 stdout 이 JSON 이 아니면 적재 전에 실패시킨다(WD-210). 예전엔 조용히 0행
+                # "완료"라 REPLACE 출력이 옛 데이터로 남아 갱신이 멈춘 걸 알 수 없었다. 적재(get_connection) 전이라
+                # 출력 테이블은 건드리지 않는다. 반환 형식은 아래 적재 실패 경로와 같다.
+                return PythonExecuteResponse(
+                    success=False,
+                    output=stderr_text,
+                    exit_code=0,
+                    error=str(e),
+                    execution_time_ms=elapsed_ms,
+                    rows_loaded=0,
+                )
             if rows:
                 try:
                     _apply_type_conversion(rows, column_type_map)
@@ -213,22 +226,46 @@ def execute_python(
 # stdout JSON parsing
 # ---------------------------------------------------------------------------
 
+# stdout 이 JSON 이 아닐 때의 사용자 문구(WD-210). API 로컬 경로(LocalPythonOutputLoader.NOT_JSON_MESSAGE)와
+# 글자 단위로 같아야 한다 — 두 경로가 같은 스크립트에 같은 오류를 보이게 하려는 것이다.
+NOT_JSON_MESSAGE = (
+    "스크립트 출력이 JSON 이 아니어서 결과를 적재하지 않았습니다. 출력 데이터셋을 쓰는 스크립트는 결과 JSON 한 번만 print 해야"
+    " 합니다(디버그 출력은 sys.stderr 로). 출력 앞부분: \"{excerpt}\""
+)
+
+# 오류 문구에 인용하는 stdout 앞부분 최대 길이(문자 = 코드 포인트). 비밀이 섞일 수 있어 짧게 둔다.
+NOT_JSON_EXCERPT_MAX = 100
+
+
+class StdoutNotJsonError(ValueError):
+    """출력 테이블이 있는 스텝의 stdout 이 JSON 으로 읽히지 않음 — 메시지가 곧 사용자 문구다."""
+
+
 def _parse_stdout_json(stdout: str) -> Optional[List[Dict[str, Any]]]:
-    """Parse JSON array from stdout. Returns None on failure."""
+    """stdout 의 JSON 행 배열을 읽는다.
+
+    - 비었거나 공백뿐이면 None(0행 — 기존 동작).
+    - JSON 으로 읽히지 않으면 ``StdoutNotJsonError``(WD-210). 앞에 디버그 print 가 있거나 뒤에 다른 내용이
+      붙은 경우다. 추측 파싱(마지막 줄만 시도 등)은 하지 않는다 — 무엇이 결과인지 스크립트가 정해야 한다.
+    - JSON 이지만 "dict 로 시작하는 비어 있지 않은 list" 가 아니면 None(오류 아님 — ``[]`` 는 정상 빈 결과).
+    """
     if not stdout or not stdout.strip():
         return None
+    stripped = stdout.strip()
     try:
-        data = json.loads(stdout.strip())
-        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
-            return data
-        if isinstance(data, (list, dict)):
-            logger.warning(
-                "stdout JSON parsed but is not a list of dicts, ignoring: type=%s",
-                type(data).__name__,
-            )
-        return None
-    except (json.JSONDecodeError, ValueError):
-        return None
+        data = json.loads(stripped)
+    except ValueError as e:  # json.JSONDecodeError 는 ValueError 의 하위 클래스
+        raise StdoutNotJsonError(
+            NOT_JSON_MESSAGE.format(excerpt=stripped[:NOT_JSON_EXCERPT_MAX])
+        ) from e
+    if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+        return data
+    if isinstance(data, (list, dict)):
+        logger.warning(
+            "stdout JSON parsed but is not a list of dicts, ignoring: type=%s",
+            type(data).__name__,
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
