@@ -13,6 +13,9 @@ interface ColumnTypeSelectProps {
   // 개별 옵션을 선택 불가로 표시할 값 목록. 항목 자체는 유지하여 현재 선택된
   // 값이 GEOMETRY 등 비활성 옵션이어도 라벨이 정상적으로 표시되게 한다. (#539)
   disabledOptions?: string[];
+  // 목록에서 아예 숨길 값 목록(예: Tibero 저장소의 GEOMETRY). 단 현재 값이 숨김 대상이면
+  // 라벨이 보이도록 그 항목은 남긴다. (WD-80)
+  hiddenOptions?: string[];
 }
 
 const DATA_TYPES = [
@@ -27,14 +30,14 @@ const DATA_TYPES = [
   { value: 'GEOMETRY', label: '지오메트리(좌표)' },
 ] as const;
 
-export function ColumnTypeSelect({ value, onChange, disabled, disabledOptions }: ColumnTypeSelectProps) {
+export function ColumnTypeSelect({ value, onChange, disabled, disabledOptions, hiddenOptions }: ColumnTypeSelectProps) {
   return (
     <Select value={value} onValueChange={onChange} disabled={disabled}>
       <SelectTrigger>
         <SelectValue placeholder="데이터 타입 선택" />
       </SelectTrigger>
       <SelectContent>
-        {DATA_TYPES.map((type) => (
+        {DATA_TYPES.filter((type) => !hiddenOptions?.includes(type.value) || type.value === value).map((type) => (
           <SelectItem
             key={type.value}
             value={type.value}

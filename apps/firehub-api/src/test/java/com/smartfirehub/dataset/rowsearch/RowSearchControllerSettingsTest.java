@@ -40,6 +40,8 @@ class RowSearchControllerSettingsTest {
   @Autowired private MockMvc mockMvc;
   @MockitoBean private SearchIndexSettingsService settingsService;
   @MockitoBean private RowSearchService rowSearchService;
+  // Tibero 차단 관문은 RowSearchTiberoTest 가 검증 — 여기서는 PG 처럼 통과시킨다.
+  @MockitoBean private RowSearchBackendGuard backendGuard;
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
   @MockitoBean private JwtProperties jwtProperties;
   @MockitoBean private PermissionService permissionService;

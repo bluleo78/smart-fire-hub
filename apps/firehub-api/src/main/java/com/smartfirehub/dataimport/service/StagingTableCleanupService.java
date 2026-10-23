@@ -230,7 +230,7 @@ public class StagingTableCleanupService {
     // 조회를 트랜잭션으로 감싸는 이유: TenantScopedRunner 는 ThreadLocal 만 세우고 GUC 는
     // TenantAwareTransactionManager.doBegin 에서만 주입된다. information_schema 는 오늘 RLS
     // 대상이 아니라 GUC 가 없어도 동작하지만, 스키마명을 테넌트에서 파생시키는 조회를 트랜잭션
-    // 경계 안에 두어야 형제 스케줄러(TriggerEventService.getRowCountEstimates)와 규약이 같아지고,
+    // 경계 안에 두어야 형제 스케줄러(TriggerEventService.collectRowCounts)와 규약이 같아지고,
     // 배선 회귀를 CleanupSchedulerTenantTest 의 프로브가 판별할 수 있다.
     return transactionTemplate.execute(
         status ->

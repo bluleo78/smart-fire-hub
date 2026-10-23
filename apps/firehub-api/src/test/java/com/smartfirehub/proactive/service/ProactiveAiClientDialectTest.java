@@ -57,7 +57,7 @@ class ProactiveAiClientDialectTest {
     wireMock.stubFor(post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
     TenantContext.set(5L);
     client.execute(
-        1L, "prompt", "{}", new AiCredential.Sdk("oat-test", "sk-x"), null, null, Map.of());
+        1L, "prompt", "{}", new AiCredential.Sdk("oat-test", "sk-x"), null, null, Map.of(), null);
   }
 
   @Test

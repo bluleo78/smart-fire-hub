@@ -2,6 +2,10 @@ package com.smartfirehub.dataset.storage.tibero;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.SQLNonTransientConnectionException;
+import java.sql.SQLRecoverableException;
+import java.sql.SQLTimeoutException;
+import java.sql.SQLTransientConnectionException;
 import java.sql.Statement;
 import java.util.Locale;
 import java.util.Set;
@@ -35,6 +39,27 @@ public final class TiberoErrors {
       }
     }
     return false;
+  }
+
+  /**
+   * 서버가 응답하지 않거나 연결이 끊겨 난 실패인지(WD-80) — 문장 하나의 문제가 아니라 같은 커넥션의 다음 문장도 똑같이 실패할 상황이다.
+   *
+   * <p>시간 초과({@link SQLTimeoutException}, Tibero 는 문장 취소 {@code -12040} 으로도 알린다 — {@link
+   * TiberoDialect#STATEMENT_CANCELED})와 연결 계열 예외·SQLState {@code 08xxx} 를 참으로 본다. 테이블 없음·권한 없음처럼
+   * 서버가 문장을 거절한 실패는 거짓이다. 통계(행 수·빈 테이블 판정)가 남은 테이블마다 시간 제한만큼 기다리지 않고 그 회차를 멈추는 데 쓴다.
+   */
+  static boolean isUnresponsive(SQLException e) {
+    if (e instanceof SQLTimeoutException
+        || e instanceof SQLRecoverableException
+        || e instanceof SQLTransientConnectionException
+        || e instanceof SQLNonTransientConnectionException) {
+      return true;
+    }
+    String state = e.getSQLState();
+    if (state != null && state.startsWith("08")) {
+      return true;
+    }
+    return hasAnyCode(e, TiberoDialect.STATEMENT_CANCELED);
   }
 
   /** 예외 체인에 주어진 코드 중 하나라도 있는지({@link TiberoDialect} 의 코드 묶음용). */

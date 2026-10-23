@@ -17,4 +17,17 @@ public enum DataStoreBackend {
   public static String dialectOf(DataStoreBackend backend) {
     return backend == TIBERO ? "TIBERO" : "POSTGRESQL";
   }
+
+  /**
+   * 행 검색(pgvector 색인) 지원 여부(WD-80). 색인이 PostgreSQL 전용이라 PG 만 true 다. 관문·기능 응답·배경 스윕이 같은 판정을 쓰도록 한
+   * 곳에 둔다.
+   */
+  public boolean supportsRowSearch() {
+    return this == POSTGRESQL;
+  }
+
+  /** GEOMETRY 컬럼 지원 여부(WD-80). PostGIS 가 있는 PostgreSQL 만 true 다. */
+  public boolean supportsGeometry() {
+    return this == POSTGRESQL;
+  }
 }

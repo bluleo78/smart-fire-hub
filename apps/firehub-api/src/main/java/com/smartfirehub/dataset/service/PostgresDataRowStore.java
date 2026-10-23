@@ -11,6 +11,7 @@ import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.TemporalSafeFetch;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -19,7 +20,9 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiConsumer;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.springframework.stereotype.Component;
 
 /**
@@ -30,6 +33,7 @@ import org.springframework.stereotype.Component;
  * com.smartfirehub.dataset.storage.DataStoreResolver} 로 이 구현을 골라 위임한다. 이름 검증은 백엔드 중립 {@link
  * DataTableNames} 를 쓴다.
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class PostgresDataRowStore implements DataRowStore {
@@ -409,6 +413,65 @@ public class PostgresDataRowStore implements DataRowStore {
       params[i] = pattern;
     }
     return params;
+  }
+
+  /**
+   * 테이블별 행 수 추정치({@code pg_stat_user_tables.n_live_tup}) — DATASET_CHANGE 폴러가 예전에 직접 돌리던 SQL 을
+   * 옮겼다(WD-80). 이름 목록은 {@link #emptyTables} 와 같이 배열 바인딩 하나로 넘겨 테이블 수만큼 왕복하지 않는다.
+   *
+   * <p>schemaname 도 리터럴이 아니라 현재 테넌트에서 파생시킨다. 낡은 리터럴을 남기면 스키마가 분리되는 순간 이 조회가 예외도 로그도 없이 0행을 돌려주고(아래
+   * catch 조차 타지 않는다) 스냅샷이 비어 트리거가 통째로 발화하지 않는다 — 30초 폴링이라 조용한 실패의 비용이 특히 크다.
+   *
+   * <p>통계 행이 없거나(null) 없는 테이블은 결과에서 빠진다. 조회가 실패하면 빈 결과다(셀 수 있는 테이블이 없다). 호출자의 트랜잭션에 그대로 참여한다.
+   */
+  @Override
+  public Map<String, Long> rowCounts(Collection<String> tableNames) {
+    Map<String, Long> result = new HashMap<>();
+    if (tableNames.isEmpty()) {
+      return result;
+    }
+    try {
+      for (Record r :
+          dsl.fetch(
+              "SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname = ? AND relname"
+                  + " = ANY(?)",
+              DataSchema.current(),
+              tableNames.toArray(String[]::new))) {
+        Long rowCount = r.get(1, Long.class);
+        if (rowCount != null) {
+          result.put(r.get(0, String.class), rowCount);
+        }
+      }
+    } catch (Exception e) {
+      log.debug("Failed to get row count estimates for tables {}: {}", tableNames, e.getMessage());
+    }
+    return result;
+  }
+
+  /**
+   * 통계상 행이 0 인 테이블 — 시스템 상태가 예전에 {@code dataset} 과 {@code pg_stat_user_tables} 를 조인해 세던 것과 같은
+   * 의미다(WD-80). 통계 행이 없는 테이블(없는 테이블 포함)은 조인에서 빠지던 것처럼 결과에서 빠진다. 이름 목록은 배열 바인딩 하나로 넘긴다.
+   *
+   * <p>schemaname 은 현재 테넌트에서 파생시킨다 — 낡은 리터럴이면 스키마가 분리되는 순간 예외도 로그도 없이 0행이 되어 빈 데이터셋 수가 조용히 0 으로
+   * 렌더링된다(오류로 보이지 않는 오답).
+   */
+  @Override
+  public Set<String> emptyTables(Collection<String> tableNames) {
+    if (tableNames.isEmpty()) {
+      return Set.of();
+    }
+    try {
+      return new HashSet<>(
+          dsl.fetch(
+                  "SELECT relname FROM pg_stat_user_tables WHERE schemaname = ? AND relname ="
+                      + " ANY(?) AND n_live_tup = 0",
+                  DataSchema.current(),
+                  tableNames.toArray(String[]::new))
+              .getValues(0, String.class));
+    } catch (Exception e) {
+      log.warn("빈 테이블 판정 실패 — 빈 데이터셋으로 세지 않는다: {}", e.getMessage());
+      return Set.of();
+    }
   }
 
   @Override

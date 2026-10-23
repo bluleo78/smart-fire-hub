@@ -1,7 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.dataset.repository.DatasetRepository;
-import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.notification.service.NotificationService;
@@ -13,7 +13,6 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.DSLContext;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
@@ -30,29 +29,34 @@ public class TriggerEventService {
   private final TriggerEventRepository triggerEventRepository;
   private final TriggerService triggerService;
   private final DatasetRepository datasetRepository;
-  private final DSLContext dsl;
   private final NotificationService notificationService;
   private final TenantScopedRunner tenantScopedRunner;
-  // dsl 직접 조회 구간에 GUC 를 주입하기 위한 트랜잭션 경계.
+  // 테이블 이름 조회(와 PG 행 수)를 한 트랜잭션에 묶는 경계 — probeDatasets 참고.
   private final TransactionTemplate transactionTemplate;
+  // 테넌트 저장소 백엔드 해석(WD-80) — 행 수를 그 백엔드의 저장소로 센다.
+  private final DataStoreResolver dataStoreResolver;
+  // 테넌트 저장소가 Tibero 인지 판정하는 단일 지점(WD-80) — Tibero 면 행 수를 PG 트랜잭션 밖에서 센다.
+  private final PipelineDataSchema pipelineDataSchema;
 
   public TriggerEventService(
       TriggerRepository triggerRepository,
       TriggerEventRepository triggerEventRepository,
       @Lazy TriggerService triggerService,
       DatasetRepository datasetRepository,
-      DSLContext dsl,
       NotificationService notificationService,
       TenantScopedRunner tenantScopedRunner,
-      TransactionTemplate transactionTemplate) {
+      TransactionTemplate transactionTemplate,
+      DataStoreResolver dataStoreResolver,
+      PipelineDataSchema pipelineDataSchema) {
     this.triggerRepository = triggerRepository;
     this.triggerEventRepository = triggerEventRepository;
     this.triggerService = triggerService;
     this.datasetRepository = datasetRepository;
-    this.dsl = dsl;
     this.notificationService = notificationService;
     this.tenantScopedRunner = tenantScopedRunner;
     this.transactionTemplate = transactionTemplate;
+    this.dataStoreResolver = dataStoreResolver;
+    this.pipelineDataSchema = pipelineDataSchema;
   }
 
   /**
@@ -172,8 +176,8 @@ public class TriggerEventService {
     }
     List<Long> datasetIds = datasetIdNumbers.stream().map(Number::longValue).toList();
 
-    // 감시 대상의 존재 여부와 행 수 추정치를 함께 모은다. 존재는 dataset 행으로 따로 판정한다 — 행 수 조회 실패(통계 행이 아직 없는 새
-    // 테이블 등)를 삭제로 오인해 감시 목록에서 빼지 않기 위함이다(WD-221).
+    // 감시 대상의 존재 여부와 행 수를 함께 모은다. 존재는 dataset 행으로 따로 판정한다 — 행 수 조회 실패(통계 행이 아직 없는 새
+    // 테이블, Tibero 네트워크 실패 등)를 삭제로 오인해 감시 목록에서 빼지 않기 위함이다(WD-221). 행 수는 테넌트 저장소 백엔드로 센다(WD-80).
     DatasetProbe probe = probeDatasets(datasetIds);
 
     // Get last snapshot
@@ -231,7 +235,7 @@ public class TriggerEventService {
     }
   }
 
-  /** 감시 대상 조회 결과 — 지금 있는 데이터셋 id 와 그중 행 수 추정치를 읽은 것. */
+  /** 감시 대상 조회 결과 — 지금 있는 데이터셋 id 와 그중 행 수를 읽은 것. */
   record DatasetProbe(Set<Long> existing, Map<Long, Long> rowCounts) {}
 
   /**
@@ -251,7 +255,8 @@ public class TriggerEventService {
    *       파이프라인이 계속 실행됐다.
    *   <li>직전 기준선이 없는 데이터셋(새 트리거·새로 추가된 감시 대상·다시 켠 트리거): 기준선만 잡고 변경으로 보지 않는다 — 예전엔 직전값을 -1 로 두어
    *       만들자마자(빈 데이터셋이어도) 첫 폴링에서 발화했다.
-   *   <li>있지만 행 수를 못 읽은 데이터셋: 변경으로 보지 않고 직전 기준선을 그대로 둔다 — 일시적 조회 실패가 다음 폴링의 거짓 「변경」이 되지 않게.
+   *   <li>있지만 행 수를 못 읽은 데이터셋: 변경으로 보지 않고 직전 기준선을 그대로 둔다 — 일시적 조회 실패(Tibero 는 네트워크를 거쳐 더 잦다, WD-80)가
+   *       다음 폴링의 거짓 「변경」이 되지 않게.
    * </ul>
    */
   static SnapshotDiff diffSnapshots(
@@ -281,57 +286,53 @@ public class TriggerEventService {
   }
 
   /**
-   * 모니터링 대상 데이터셋의 존재 여부와 행 수 추정치를 모은다.
+   * 모니터링 대상 데이터셋의 존재 여부와 행 수를 테넌트 저장소 백엔드로 모은다(WD-80). PG 는 통계 추정치, Tibero 는 정확한 {@code
+   * COUNT(*)} 다.
    *
-   * <p><b>트랜잭션 경계(P2-b)</b>: 이 구간을 감싸는 이유는 GUC 가 아니라 <b>커넥션 왕복 절감</b>이다. RLS 대상인 dataset 조회는 {@code
-   * datasetRepository}(클래스 레벨 {@code @Transactional}) 를 거치므로 이미 호출마다 GUC 가 주입되고, 여기서 {@code dsl} 로
-   * 직접 읽는 것은 {@code pg_stat_user_tables} (시스템 뷰 — RLS 무관, tenant_id 없음) 뿐이다. 감싸면 데이터셋 N 개에 대한 리포지토리
-   * 호출이 트랜잭션 하나에 합류한다("GUC 때문에 반드시 필요한 래핑" 은 아니라는 점을 분명히 남긴다).
+   * <p><b>트랜잭션 경계(P2-b)</b>: 테이블 이름 조회(RLS 대상인 dataset)는 {@code transactionTemplate} 안에서 한다. 감싸는
+   * 이유는 GUC 가 아니라 <b>커넥션 왕복 절감</b>이다 — {@code datasetRepository} 는 클래스 레벨 {@code @Transactional} 이라
+   * 호출마다 GUC 가 주입되지만, 감싸면 데이터셋 N 개에 대한 호출이 트랜잭션 하나에 합류한다. PG 는 지금처럼 행 수도 같은 트랜잭션에서 센다({@code
+   * pg_stat_user_tables} 는 RLS 무관 시스템 뷰). Tibero 는 네트워크 너머의 질의라 PG 커넥션을 쥔 채 세지 않도록 트랜잭션 밖에서 센다.
    *
    * <p>트리거 발화({@code triggerService.fireTrigger})와 알림은 <b>이 트랜잭션 밖</b>에 남긴다 — 파이프라인 실행을 시작하는 작업이라
    * 트랜잭션에 넣으면 그 동안 커넥션을 점유하고 실패 의미도 바뀐다.
    */
   private DatasetProbe probeDatasets(List<Long> datasetIds) {
-    DatasetProbe result =
-        transactionTemplate.execute(status -> collectRowCountEstimates(datasetIds));
-    return result == null ? new DatasetProbe(Set.of(), Map.of()) : result;
+    DatasetProbe probe;
+    if (pipelineDataSchema.isTibero()) {
+      // Tibero: 이름만 트랜잭션 안에서 읽고, Tibero 질의(행 수)는 PG 트랜잭션 밖에서 실행한다.
+      Map<Long, String> tableNames =
+          transactionTemplate.execute(status -> readTableNames(datasetIds));
+      probe = tableNames == null ? null : countRows(tableNames);
+    } else {
+      // PG: 이름과 행 수를 같은 트랜잭션에서 센다.
+      probe = transactionTemplate.execute(status -> countRows(readTableNames(datasetIds)));
+    }
+    // 판정할 수 없는 회차(null)는 모두 "있지만 못 읽음"으로 둔다 — 존재를 비우면 diffSnapshots 가 전부 삭제로 보고 감시 목록에서 빼 트리거를 끈다.
+    return probe == null ? new DatasetProbe(new HashSet<>(datasetIds), Map.of()) : probe;
   }
 
-  private DatasetProbe collectRowCountEstimates(List<Long> datasetIds) {
-    Map<Long, Long> result = new HashMap<>();
-    Set<Long> existing = new HashSet<>();
-
-    for (Long datasetId : datasetIds) {
-      Optional<String> tableNameOpt = datasetRepository.findTableNameById(datasetId);
-      if (tableNameOpt.isEmpty()) {
-        continue; // 삭제된 데이터셋 — existing 에 넣지 않아 diffSnapshots 가 감시 목록 정리 대상으로 본다(WD-221)
-      }
-      existing.add(datasetId);
-
-      String tableName = tableNameOpt.get();
-      try {
-        // schemaname 도 리터럴이 아니라 현재 테넌트에서 파생시킨다. 낡은 리터럴을 남기면 스키마가
-        // 분리되는 순간 이 조회가 **예외도 로그도 없이 0행**을 돌려주고(아래 catch 조차 타지 않는다),
-        // row count 스냅샷이 비어 DATASET_CHANGE 트리거가 통째로 발화하지 않는다 — 아무도 신고하지
-        // 않는 무동작이 된다. 30초 폴링이라 조용한 실패의 비용이 특히 크다.
-        Long rowCount =
-            dsl.fetchOne(
-                    "SELECT n_live_tup FROM pg_stat_user_tables WHERE schemaname = ? AND"
-                        + " relname = ?",
-                    DataSchema.current(),
-                    tableName)
-                .get(0, Long.class);
-        result.put(datasetId, rowCount);
-      } catch (Exception e) {
-        log.debug(
-            "Failed to get row count estimate for dataset {} (table: {}): {}",
-            datasetId,
-            tableName,
-            e.getMessage());
+  /** 테이블 이름으로 행 수를 세고 데이터셋별로 되돌린다. 트랜잭션 구간은 호출자(probeDatasets)가 정한다. */
+  private DatasetProbe countRows(Map<Long, String> tableNames) {
+    Map<String, Long> countsByTable = dataStoreResolver.rowStore().rowCounts(tableNames.values());
+    Map<Long, Long> counts = new HashMap<>();
+    for (Map.Entry<Long, String> e : tableNames.entrySet()) {
+      Long count = countsByTable.get(e.getValue());
+      if (count != null) {
+        counts.put(e.getKey(), count);
       }
     }
+    // 이름이 있는 데이터셋이 "있는" 데이터셋이다 — 행 수를 못 센 것은 counts 에서만 빠진다.
+    return new DatasetProbe(new HashSet<>(tableNames.keySet()), counts);
+  }
 
-    return new DatasetProbe(existing, result);
+  /** 데이터셋별 테이블 이름. 지워진 데이터셋(이름 없음)은 빠진다. 트랜잭션 안에서 부른다. */
+  private Map<Long, String> readTableNames(List<Long> datasetIds) {
+    Map<Long, String> tableNames = new LinkedHashMap<>();
+    for (Long datasetId : datasetIds) {
+      datasetRepository.findTableNameById(datasetId).ifPresent(t -> tableNames.put(datasetId, t));
+    }
+    return tableNames;
   }
 
   @SuppressWarnings("unchecked")

@@ -146,6 +146,23 @@ final class TiberoDmlSql {
     return "SELECT COUNT(*) FROM " + tbl(schema, table) + searchWhere(searchColumns, types);
   }
 
+  /**
+   * 빈 테이블 판정(WD-80): 테이블마다 {@code SELECT '<name>' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM
+   * "S"."T")} 를 {@code UNION ALL} 로 묶는다. 결과 행은 비어 있는 테이블의 메타데이터 이름이다. 바인드 없음.
+   *
+   * <p>이름은 {@link #tbl} 이 먼저 {@link DataTableNames} 형식({@code [a-z][a-z0-9_]*})으로 검증하므로 작은따옴표가 들어갈
+   * 수 없어 문자 리터럴로 그대로 넣어도 안전하다. "한 행이라도 있는가"만 보므로 전체를 세지 않는다.
+   */
+  static String emptyTables(String schema, List<String> tables) {
+    List<String> parts = new ArrayList<>(tables.size());
+    for (String table : tables) {
+      String qualified = tbl(schema, table);
+      parts.add(
+          "SELECT '" + table + "' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM " + qualified + ")");
+    }
+    return String.join(" UNION ALL ", parts);
+  }
+
   /** 단건 조회(PG 와 같이 {@code created_at} 포함). 바인드: id. */
   static String getRow(String schema, String table, List<String> columns) {
     String list = columns.isEmpty() ? "" : cols(columns) + ", ";

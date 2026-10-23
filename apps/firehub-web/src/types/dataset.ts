@@ -311,3 +311,16 @@ export interface DatasetReferencesResponse {
   triggers: DatasetTriggerReferenceItem[];
   totalCount: number;
 }
+
+/**
+ * 데이터 저장소 기능 지원 여부 (GET /data-store/capabilities).
+ * Tibero 처럼 일부 기능을 지원하지 않는 저장소일 때 화면이 해당 진입점을 숨기는 근거다. (WD-80)
+ */
+export interface DataStoreCapabilities {
+  /** 저장소 백엔드 — api 가 DataStoreBackend 이름을 그대로 내려주므로 아직 구현이 없는 MYSQL 도 올 수 있다. */
+  backend: 'POSTGRESQL' | 'TIBERO' | 'MYSQL';
+  /** GEOMETRY 컬럼 타입 지원 여부 */
+  geometry: boolean;
+  /** 데이터셋 행 검색(검색 탭) 지원 여부 */
+  rowSearch: boolean;
+}

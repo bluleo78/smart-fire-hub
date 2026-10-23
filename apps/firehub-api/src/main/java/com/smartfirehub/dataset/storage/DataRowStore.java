@@ -4,8 +4,10 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.SpatialFilter;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import java.time.Duration;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BiConsumer;
 
 /**
@@ -14,6 +16,9 @@ import java.util.function.BiConsumer;
  * <p>기존 {@code DataTableRowService} 의 SQL 실행 메서드 중 "전체 인자" 변형과 같은 이름·인자·반환·예외를 갖는다. 기본 인자만 채워 다른
  * 오버로드로 넘기는 짧은 변형은 파사드({@code DataTableRowService})에 남는다. 파사드가 {@link DataStoreResolver} 로 테넌트 백엔드의
  * 구현을 골라 위임하며, 모든 메서드는 호출자의 트랜잭션에 참여한다. 반환 타입 {@code UpsertResult} 는 파사드의 중첩 레코드를 그대로 쓴다.
+ *
+ * <p>예외: 행 수 통계({@link #rowCounts}·{@link #emptyTables}, WD-80)는 파사드에 짝이 없다. 트리거 폴러·시스템 상태가 {@link
+ * DataStoreResolver#rowStore()} 로 직접 부른다.
  */
 public interface DataRowStore {
 
@@ -72,6 +77,28 @@ public interface DataRowStore {
   /** 컬럼명 목록·검색어 기준으로 행 수를 센다. */
   long countRows(
       String tableName, List<String> columns, String search, Map<String, String> columnTypes);
+
+  /**
+   * 테이블별 행 수를 센다(WD-80). DATASET_CHANGE 트리거 폴러가 변경 감지에 쓴다.
+   *
+   * <p>셀 수 없는 테이블(없음·오류)은 결과에서 빠지고, 이 메서드는 예외를 던지지 않는다. 실패를 0 으로 바꾸면 폴러가 "행 수가 바뀌었다"로 오인해 트리거를 잘못
+   * 발동하므로, 호출자가 실패를 "값 없음"으로 구분할 수 있게 빼는 것이다. 값의 정확도는 백엔드마다 다르다(PostgreSQL 은 통계 추정치 {@code
+   * n_live_tup}, Tibero 는 정확한 {@code COUNT(*)}).
+   *
+   * @param tableNames 메타데이터 테이블 이름(소문자)
+   * @return {테이블 이름 → 행 수}. 센 테이블만 담긴다
+   */
+  Map<String, Long> rowCounts(Collection<String> tableNames);
+
+  /**
+   * 행이 하나도 없는 테이블 이름을 돌려준다(WD-80). 시스템 상태의 "빈 데이터셋 수"가 쓴다.
+   *
+   * <p>판정하지 못한 테이블(없음·오류)은 빠지고, 이 메서드는 예외를 던지지 않는다 — 판정 실패를 "비어 있음"으로 세지 않기 위해서다.
+   *
+   * @param tableNames 메타데이터 테이블 이름(소문자)
+   * @return 비어 있다고 판정된 테이블 이름
+   */
+  Set<String> emptyTables(Collection<String> tableNames);
 
   /** PK 컬럼 조합이 모든 행에서 유일한지 검사한다. */
   boolean checkDataUniqueness(String tableName, List<String> pkColumnNames);

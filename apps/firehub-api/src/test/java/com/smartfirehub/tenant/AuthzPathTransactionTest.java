@@ -101,7 +101,9 @@ class AuthzPathTransactionTest extends IntegrationTestBase {
     // 대시보드도 audit_log 를 직접 읽는다(AuditLogRepository 를 거치지 않는 별도 경로다).
     // AuditLogRepository.findAll 과 달리 이쪽은 메서드 레벨 @Transactional 이라 하나씩 고정한다.
     assertThat(isTransactional(DashboardService.class, "getStats")).isTrue();
-    assertThat(isTransactional(DashboardService.class, "getSystemHealth")).isTrue();
+    // getSystemHealth 는 어노테이션 대신 readOnly 템플릿으로 구간을 직접 연다(WD-80 — Tibero 빈 테이블 판정을 트랜잭션 밖으로 빼려고).
+    // 프록시 메타데이터로는 고정할 수 없어, DashboardServiceTiberoHealthTest 가 조회가 readOnly 트랜잭션 안에서 돌고
+    // RLS 아래 픽스처 데이터셋이 보이는 것으로 행위 고정한다.
     assertThat(isTransactional(DashboardService.class, "getAttentionItems")).isTrue();
     assertThat(
             isTransactional(

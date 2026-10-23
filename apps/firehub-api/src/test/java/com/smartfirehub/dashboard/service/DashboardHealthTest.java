@@ -23,6 +23,10 @@ class DashboardHealthTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
 
+  @Autowired private com.smartfirehub.securitylevel.access.DatasetAccessGuard datasetAccessGuard;
+
+  @Autowired private com.smartfirehub.securitylevel.access.ClearanceResolver clearanceResolver;
+
   private Long testUserId;
   private Long activePipeline1Id; // healthy (last exec COMPLETED)
   private Long activePipeline2Id; // failing (last exec FAILED, failing for 3h)
@@ -298,6 +302,48 @@ class DashboardHealthTest extends IntegrationTestBase {
     // 마지막 원소(오늘)의 카운트가 늘어나야 한다 — 고정 배열이라면 절대 변하지 않는다
     assertThat(after.pipelineHealth().trend().get(6)).isEqualTo(todayPipelineCountBefore + 1);
     assertThat(after.datasetHealth().trend().get(6)).isEqualTo(todayDatasetCountBefore + 1);
+  }
+
+  /**
+   * WD-80 — 빈 데이터셋 수가 저장소 경유로 바뀌어도 PG 결과는 예전 {@code pg_stat_user_tables} 조인과 같다.
+   *
+   * <p>실제 빈 테이블 하나를 테넌트 data 스키마에 만들고(테스트 트랜잭션 안이라 롤백된다) 그 테이블을 가리키는 데이터셋을 둔다. 기대값은 예전 조인 SQL 을 같은
+   * 조회자 조건으로 직접 돌려 얻는다 — 통계 갱신 지연과 무관하게 결정적이다.
+   */
+  @Test
+  void emptyDatasets_pg_unchanged() {
+    String emptyTable = "wd80_empty_" + System.nanoTime();
+    String schema = com.smartfirehub.global.tenant.DataSchema.current();
+    dsl.execute("CREATE TABLE \"" + schema + "\".\"" + emptyTable + "\" (id BIGINT)");
+    dsl.insertInto(DATASET)
+        .set(DATASET.NAME, "Empty Dataset " + System.nanoTime())
+        .set(DATASET.TABLE_NAME, emptyTable)
+        .set(DATASET.STORAGE_TYPE, "TABLE")
+        .set(DATASET.ORIGIN_TYPE, "SOURCE")
+        .set(DATASET.CREATED_BY, testUserId)
+        .execute();
+
+    // 예전 구현의 조인 그대로(같은 조회자 가시성 조건).
+    org.jooq.Condition visible = datasetAccessGuard.visibleCondition(clearanceResolver.current());
+    int expected =
+        dsl.fetchCount(
+            dsl.select(DATASET.ID)
+                .from(DATASET)
+                .join(org.jooq.impl.DSL.table("pg_stat_user_tables").as("psu"))
+                .on(
+                    org.jooq
+                        .impl
+                        .DSL
+                        .field("psu.relname", String.class)
+                        .eq(DATASET.TABLE_NAME)
+                        .and(org.jooq.impl.DSL.field("psu.schemaname", String.class).eq(schema)))
+                .where(org.jooq.impl.DSL.field("psu.n_live_tup", Long.class).eq(0L))
+                .and(visible));
+
+    SystemHealthResponse health = dashboardService.getSystemHealth();
+
+    assertThat(expected).isGreaterThanOrEqualTo(1);
+    assertThat(health.datasetHealth().empty()).isEqualTo(expected);
   }
 
   // ======================================================================

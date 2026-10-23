@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.rowsearch;
 
+import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import java.time.Duration;
 import java.util.HashSet;
@@ -22,6 +23,7 @@ public class RowSearchSweepScheduler {
   private final TenantScopedRunner tenantRunner;
   private final SearchIndexStateRepository states;
   private final RowSearchSyncService syncService;
+  private final DataStoreResolver dataStoreResolver;
   private final boolean enabled;
   private final long maxContinuousNanos;
 
@@ -35,11 +37,13 @@ public class RowSearchSweepScheduler {
       TenantScopedRunner tenantRunner,
       SearchIndexStateRepository states,
       RowSearchSyncService syncService,
+      DataStoreResolver dataStoreResolver,
       @Value("${row-search.sync.enabled:true}") boolean enabled,
       @Value("${row-search.sync.max-continuous-ms:600000}") long maxContinuousMs) {
     this.tenantRunner = tenantRunner;
     this.states = states;
     this.syncService = syncService;
+    this.dataStoreResolver = dataStoreResolver;
     this.enabled = enabled;
     this.maxContinuousNanos = Duration.ofMillis(maxContinuousMs).toNanos();
   }
@@ -75,6 +79,8 @@ public class RowSearchSweepScheduler {
     AtomicBoolean hasMore = new AtomicBoolean(false);
     tenantRunner.forEachActiveTenant(
         tenantId -> {
+          // 행 검색을 지원하지 않는 저장소(Tibero)는 색인이 없다(WD-80) — pgvector 접근 자체를 하지 않도록 건너뛴다.
+          if (!dataStoreResolver.backendFor(tenantId).supportsRowSearch()) return;
           for (Long datasetId : states.findDueDatasetIds()) {
             if (settled.contains(datasetId)) continue;
             try {

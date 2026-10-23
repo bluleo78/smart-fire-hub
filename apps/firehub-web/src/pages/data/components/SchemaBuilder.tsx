@@ -6,10 +6,13 @@ import { Card } from '../../../components/ui/card';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
+import { useDataStoreFeatures } from '../../../hooks/queries/useDataStoreCapabilities';
 import type { CreateDatasetFormData } from '../../../lib/validations/dataset';
 import { ColumnTypeSelect } from './ColumnTypeSelect';
 
 export function SchemaBuilder() {
+  // 저장소 GEOMETRY 지원 여부 — 조회 전·실패 시 지원으로 취급한다. (WD-80)
+  const { geometrySupported } = useDataStoreFeatures();
   const { control, register, setValue, watch, formState: { errors } } = useFormContext<CreateDatasetFormData>();
   const { fields, append, remove } = useFieldArray({
     control,
@@ -75,6 +78,8 @@ export function SchemaBuilder() {
               <Label htmlFor={`columns.${index}.dataType`}>데이터 타입 *</Label>
               <ColumnTypeSelect
                 value={watch(`columns.${index}.dataType`)}
+                // 저장소가 GEOMETRY 를 지원하지 않으면(Tibero) 목록에서 숨긴다. 조회 전·실패 시엔 그대로 둔다. (WD-80)
+                hiddenOptions={geometrySupported ? undefined : ['GEOMETRY']}
                 onChange={(value) => {
                   setValue(`columns.${index}.dataType`, value as CreateDatasetFormData['columns'][number]['dataType']);
                   // GEOMETRY 타입은 B-tree 인덱스 기반 PK 불가 — 선택 시 기본 키를 자동 해제한다 (#199)

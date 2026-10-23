@@ -12,6 +12,7 @@ import { InlineBanner } from '../../../components/ui/inline-banner';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { useAddColumn } from '../../../hooks/queries/useDatasets';
+import { useDataStoreFeatures } from '../../../hooks/queries/useDataStoreCapabilities';
 import { handleApiError } from '../../../lib/api-error';
 import type { AddColumnFormData, UpdateColumnFormData } from '../../../lib/validations/dataset';
 import {
@@ -59,6 +60,8 @@ export function ColumnDialog({
   const submittingLabel = mode === 'add' ? '추가 중...' : '수정 중...';
 
   const queryClient = useQueryClient();
+  // 저장소 GEOMETRY 지원 여부 — 조회 전·실패 시 지원으로 취급한다. (WD-80)
+  const { geometrySupported } = useDataStoreFeatures();
   const addColumn = useAddColumn(datasetId);
 
   const schema = mode === 'add' ? addColumnSchema : updateColumnSchema;
@@ -210,6 +213,8 @@ export function ColumnDialog({
               // 현재 타입이 GEOMETRY가 아닐 때만 GEOMETRY로의 변환을 막는다.
               // (현재 타입이 GEOMETRY면 위 disabled로 select 자체가 잠긴다)
               disabledOptions={mode === 'edit' && !isCurrentColumnGeometry ? ['GEOMETRY'] : undefined}
+              // 저장소가 GEOMETRY 를 지원하지 않으면(Tibero) 목록에서 숨긴다. 조회 전·실패 시엔 그대로 둔다. (WD-80)
+              hiddenOptions={geometrySupported ? undefined : ['GEOMETRY']}
             />
             {form.formState.errors.dataType && (
               <p className="text-sm text-destructive">

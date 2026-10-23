@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -70,6 +71,11 @@ class TiberoDataRowStoreTest {
     Function<String, Integer> updateCount = sql -> 1;
     Predicate<String> failWhen = sql -> false;
     Function<String, SQLException> failure;
+
+    /** 준비는 되지만 실행(executeQuery)에서 실패하는 문장 — 시간 초과·실행 중 연결 끊김처럼 서버에 보낸 뒤 나는 실패를 흉내 낸다. */
+    Predicate<String> queryFailWhen = sql -> false;
+
+    Function<String, SQLException> queryFailure;
 
     Fake() throws SQLException {
       when(conn.prepareStatement(anyString()))
@@ -170,6 +176,9 @@ class TiberoDataRowStoreTest {
       when(ps.executeQuery())
           .thenAnswer(
               inv -> {
+                if (queryFailWhen.test(sql)) {
+                  throw queryFailure.apply(sql);
+                }
                 for (int i = 0; i < queryMatchers.size(); i++) {
                   if (queryMatchers.get(i).test(sql)) {
                     return queryResults.get(i).apply(sql);
@@ -419,6 +428,194 @@ class TiberoDataRowStoreTest {
     long n = store.countRows("orders", List.of("name", "memo"), "a_b", null);
     assertThat(n).isEqualTo(42);
     assertThat(dml.last("COUNT(*)").binds).containsEntry(1, "%a\\_b%").containsEntry(2, "%a\\_b%");
+  }
+
+  // ---------- 행 수 통계(WD-80) ----------
+
+  /** 테이블이 없다는 SQLException(드라이버 메시지는 로그에 남기지 않는다). */
+  private static SQLException tableNotFound(String sql) {
+    return new SQLException("table or view does not exist", "42S02", -8033);
+  }
+
+  /** 이름 한 컬럼(VARCHAR) 결과. */
+  private static ResultSet names(String... values) {
+    Object[][] rows = new Object[values.length][];
+    for (int i = 0; i < values.length; i++) {
+      rows[i] = new Object[] {values[i]};
+    }
+    return rs(new String[] {"N"}, new String[] {"STR"}, rows);
+  }
+
+  /** 셀 수 없는 테이블(없음)은 결과에서 빠지고 예외가 나지 않는다. 테이블마다 정확한 COUNT(*) 를 한 커넥션에서 센다. */
+  @Test
+  void rowCounts_missingTable_isOmitted() {
+    dml.onQueryFn("COUNT(*)", sql -> single(sql.contains("\"ORDERS\"") ? 7 : 0));
+    dml.failWhen = sql -> sql.contains("\"MISSING\"");
+    dml.failure = TiberoDataRowStoreTest::tableNotFound;
+
+    Map<String, Long> counts = store.rowCounts(List.of("orders", "missing", "empty_t"));
+
+    assertThat(counts).isEqualTo(Map.of("orders", 7L, "empty_t", 0L));
+    assertThat(dmlCalls).isEqualTo(1);
+    assertThat(dml.last("\"ORDERS\"").sql)
+        .isEqualTo("SELECT COUNT(*) FROM \"GENIA_T5\".\"ORDERS\"");
+  }
+
+  /** 빈 입력은 연결하지 않고, 형식이 틀린 이름은 연결 전에 빠진다(예외 없음). */
+  @Test
+  void rowCounts_emptyInputAndInvalidName() {
+    assertThat(store.rowCounts(List.of())).isEmpty();
+    assertThat(dmlCalls).isZero();
+
+    dml.onQuery("COUNT(*)", single(2));
+    assertThat(store.rowCounts(List.of("Bad\"Name", "orders"))).isEqualTo(Map.of("orders", 2L));
+  }
+
+  /** 연결 자체가 실패해도 예외를 던지지 않고 빈 결과다 — 폴러가 그 회차를 "세기 실패"로 처리한다. */
+  @Test
+  void rowCounts_connectionFailure_returnsEmpty() {
+    // when(...) 로 다시 스텁하면 기존 답(가짜 커넥션 실행)이 null 인자로 불리므로 doThrow 를 쓴다.
+    org.mockito.Mockito.doThrow(new IllegalStateException("저장소 연결 실패"))
+        .when(connections)
+        .withDml(anyLong(), org.mockito.ArgumentMatchers.<SqlWork<Object>>any());
+
+    assertThat(store.rowCounts(List.of("orders"))).isEmpty();
+    assertThat(store.emptyTables(List.of("orders"))).isEmpty();
+  }
+
+  /** 빈 테이블 판정은 UNION ALL 한 문장으로 묶는다(테이블마다 왕복하지 않는다). */
+  @Test
+  void emptyTables_singleUnionStatement() {
+    dml.onQueryFn("NOT EXISTS", sql -> names("a"));
+
+    Set<String> empty = store.emptyTables(List.of("a", "b"));
+
+    assertThat(empty).containsExactly("a");
+    assertThat(dml.all("NOT EXISTS")).hasSize(1);
+    assertThat(dml.last("NOT EXISTS").sql)
+        .isEqualTo(
+            "SELECT 'a' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM \"GENIA_T5\".\"A\")"
+                + " UNION ALL "
+                + "SELECT 'b' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM \"GENIA_T5\".\"B\")");
+  }
+
+  /**
+   * 묶음 안 테이블 하나가 없으면 묶음 전체가 실패한다 — 그 묶음만 테이블별로 다시 판정해, 없는 테이블만 빠지고 나머지는 제대로 판정된다. 길이가 다른 문자 리터럴의
+   * UNION 은 CHAR 로 채워질 수 있어 읽은 이름의 공백을 잘라 낸다.
+   */
+  @Test
+  void emptyTables_chunkFailure_fallsBackPerTable() {
+    dml.failWhen = sql -> sql.contains("\"MISSING\"");
+    dml.failure = TiberoDataRowStoreTest::tableNotFound;
+    // a 는 비어 있고 b 는 행이 있다.
+    dml.onQueryFn("NOT EXISTS", sql -> sql.contains("\"A\")") ? names("a  ") : names());
+
+    Set<String> empty = store.emptyTables(List.of("a", "b", "missing"));
+
+    assertThat(empty).containsExactly("a");
+    // 실패한 묶음 문장은 준비 단계에서 거절돼 기록되지 않는다 — 기록된 것은 a·b 단건 재판정 두 개다.
+    assertThat(dml.all("NOT EXISTS")).hasSize(2);
+    assertThat(dmlCalls).isEqualTo(1);
+  }
+
+  /**
+   * 시간 초과는 그 테이블만의 문제가 아니라 서버가 응답하지 않는 것이다 — 남은 테이블마다 60초씩 기다리지 않도록 그 회차를 바로 멈추고 이미 센 테이블까지만 돌려준다.
+   * JDBC 표준 예외와 Tibero 자체 코드(-12040, 문장 취소) 둘 다 시간 초과로 본다.
+   */
+  @Test
+  void rowCounts_timeoutOnFirstTable_stopsRound() throws Exception {
+    for (SQLException timeout :
+        List.of(
+            new java.sql.SQLTimeoutException("timeout"),
+            new SQLException("Statement canceled.", null, -12040))) {
+      setUp();
+      dml.onQuery("COUNT(*)", single(3));
+      dml.queryFailWhen = sql -> sql.contains("\"T1\"");
+      dml.queryFailure = sql -> timeout;
+
+      Map<String, Long> counts = store.rowCounts(List.of("t1", "t2", "t3"));
+
+      assertThat(counts).as("%s", timeout.getClass().getSimpleName()).isEmpty();
+      verify(dml.conn, times(1)).prepareStatement(anyString());
+    }
+  }
+
+  /** 연결 계열 실패(SQLState 08xxx 포함)도 회차를 멈춘다 — 이미 센 테이블은 남긴다. */
+  @Test
+  void rowCounts_connectionErrorMidway_keepsCountedTablesOnly() throws SQLException {
+    dml.onQuery("COUNT(*)", single(3));
+    dml.queryFailWhen = sql -> sql.contains("\"T2\"");
+    dml.queryFailure = sql -> new SQLException("connection reset", "08006", 0);
+
+    Map<String, Long> counts = store.rowCounts(List.of("t1", "t2", "t3"));
+
+    assertThat(counts).isEqualTo(Map.of("t1", 3L));
+    verify(dml.conn, times(2)).prepareStatement(anyString());
+  }
+
+  /**
+   * 묶음 문장이 연결 계열 오류로 실패하면 테이블별로 다시 판정하지 않고 남은 묶음도 건너뛴다 — 응답 없는 서버에 테이블 수만큼 다시 묻지 않는다. 51개(묶음 두 개)로
+   * 두 번째 묶음도 건너뛰는지 본다.
+   */
+  @Test
+  void emptyTables_connectionErrorInChunk_noPerTableRetries() throws SQLException {
+    List<String> tables = new ArrayList<>();
+    for (int i = 0; i < 51; i++) {
+      tables.add("t" + i);
+    }
+    dml.queryFailWhen = sql -> true;
+    dml.queryFailure = sql -> new java.sql.SQLRecoverableException("io error");
+
+    assertThat(store.emptyTables(tables)).isEmpty();
+
+    verify(dml.conn, times(1)).prepareStatement(anyString());
+  }
+
+  /** 묶음 문장이 시간 초과(Tibero -12040)로 실패해도 테이블별 재판정 없이 멈춘다. 이미 판정한 묶음의 결과는 남긴다. */
+  @Test
+  void emptyTables_timeoutInSecondChunk_keepsFirstChunkResult() throws SQLException {
+    List<String> tables = new ArrayList<>();
+    for (int i = 0; i < 51; i++) {
+      tables.add("t" + i);
+    }
+    dml.onQueryFn("NOT EXISTS", sql -> names("t0"));
+    dml.queryFailWhen = sql -> sql.contains("'t50'");
+    dml.queryFailure = sql -> new SQLException("Statement canceled.", null, -12040);
+
+    assertThat(store.emptyTables(tables)).containsExactly("t0");
+
+    verify(dml.conn, times(2)).prepareStatement(anyString());
+  }
+
+  /** 테이블별 재판정 중에 시간 초과가 나면 남은 테이블도 묻지 않는다. */
+  @Test
+  void emptyTables_timeoutDuringPerTableFallback_stops() throws SQLException {
+    dml.failWhen = sql -> sql.contains("\"MISSING\"");
+    dml.failure = TiberoDataRowStoreTest::tableNotFound;
+    // 묶음은 없는 테이블로 실패하고, 단건 재판정에서 a 가 시간 초과다 — b·missing 은 묻지 않는다.
+    dml.queryFailWhen = sql -> sql.contains("\"A\")") && !sql.contains("UNION ALL");
+    dml.queryFailure = sql -> new java.sql.SQLTimeoutException("timeout");
+
+    assertThat(store.emptyTables(List.of("a", "b", "missing"))).isEmpty();
+
+    // 묶음 1번(준비 단계 실패) + a 단건 1번.
+    verify(dml.conn, times(2)).prepareStatement(anyString());
+  }
+
+  /** 50개씩 묶는다 — 51개면 문장 두 개. */
+  @Test
+  void emptyTables_chunksOf50() {
+    List<String> tables = new ArrayList<>();
+    for (int i = 0; i < 51; i++) {
+      tables.add("t" + i);
+    }
+
+    assertThat(store.emptyTables(tables)).isEmpty();
+
+    List<Stmt> stmts = dml.all("NOT EXISTS");
+    assertThat(stmts).hasSize(2);
+    assertThat(stmts.get(0).sql.split(" UNION ALL ")).hasSize(50);
+    assertThat(stmts.get(1).sql).doesNotContain("UNION ALL").contains("'t50'");
   }
 
   @Test

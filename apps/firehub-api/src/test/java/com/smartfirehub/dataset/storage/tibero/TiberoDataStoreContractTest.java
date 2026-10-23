@@ -1,5 +1,7 @@
 package com.smartfirehub.dataset.storage.tibero;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.dataset.storage.DataRowStore;
 import com.smartfirehub.dataset.storage.DataStoreContractTest;
@@ -9,10 +11,13 @@ import com.smartfirehub.dataset.storage.TenantDataStoreRepository;
 import com.smartfirehub.dataset.storage.external.ExternalAccountProvisioner;
 import com.smartfirehub.dataset.storage.external.ExternalStoreConnections;
 import com.smartfirehub.global.tenant.TenantContext;
+import java.util.List;
+import java.util.Map;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -96,5 +101,57 @@ class TiberoDataStoreContractTest extends DataStoreContractTest {
   @Override
   protected boolean emptyStringIsNull() {
     return true;
+  }
+
+  // ---------- 행 수 통계(WD-80) — Tibero 는 정확한 값 ----------
+
+  /** 행 수는 정확한 COUNT(*) 이고, 없는 테이블은 빠진다(예외 없음). */
+  @Test
+  void rowCounts_missingTable_isOmitted() {
+    String filled = createEmptyContractTable();
+    insertContractRows(filled, 2);
+    String empty = createEmptyContractTable();
+    String missing = newTableName();
+
+    assertThat(rowStore.rowCounts(List.of(filled, missing, empty)))
+        .isEqualTo(Map.of(filled, 2L, empty, 0L));
+  }
+
+  /** 세 테이블 중 하나가 없으면 묶음 질의가 실패하고, 테이블별 재판정으로 빈 테이블만 남는다. */
+  @Test
+  void emptyTables_chunkFailure_fallsBackPerTable() {
+    String empty = createEmptyContractTable();
+    String filled = createEmptyContractTable();
+    insertContractRows(filled, 1);
+    String missing = newTableName();
+
+    assertThat(rowStore.emptyTables(List.of(empty, filled, missing))).containsExactly(empty);
+  }
+
+  /** 이름 길이가 달라도(UNION ALL 문자 리터럴의 CHAR 채움) 묶음 질의가 원래 이름 그대로 돌려준다. 두 테이블 모두 있어 재판정 없이 묶음 경로다. */
+  @Test
+  void emptyTables_differentNameLengths_returnsExactNames() {
+    String shortName = newTableName();
+    String longName = shortName + "_long";
+    try {
+      for (String t : List.of(shortName, longName)) {
+        tableStore.createTable(
+            t,
+            List.of(
+                new com.smartfirehub.dataset.dto.DatasetColumnRequest(
+                    "name", "Name", "TEXT", null, true, false, null)));
+      }
+
+      assertThat(rowStore.emptyTables(List.of(longName, shortName)))
+          .containsExactlyInAnyOrder(shortName, longName);
+    } finally {
+      for (String t : List.of(shortName, longName)) {
+        try {
+          tableStore.dropTable(t);
+        } catch (RuntimeException ignored) {
+          // 만들기 전에 실패했을 수 있다 — 정리 실패는 무시한다.
+        }
+      }
+    }
   }
 }

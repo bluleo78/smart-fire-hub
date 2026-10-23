@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.storage.tibero;
 
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.SpatialFilter;
+import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.exception.RowNotFoundException;
 import com.smartfirehub.dataset.service.DataTableRowService.UpsertResult;
 import com.smartfirehub.dataset.storage.DataRowStore;
@@ -19,8 +20,10 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -301,6 +304,164 @@ public class TiberoDataRowStore implements DataRowStore {
             return readCount(ps);
           }
         });
+  }
+
+  // ---------- 행 수 통계(WD-80) ----------
+
+  /**
+   * 테이블별 정확한 행 수({@code COUNT(*)}). 사전 뷰({@code ALL_TABLES.NUM_ROWS})는 통계가 늦거나 비어 있어 쓰지 않는다.
+   *
+   * <p>커넥션 하나에서 테이블마다 센다. 한 테이블이 실패하면(없음·권한) 경고만 남기고 결과에서 빼며, 연결 자체가 실패해도 예외를 던지지 않는다 — 폴러가 실패를 "값
+   * 없음"으로 받아 그 회차를 건너뛰게 하려는 계약이다. 형식이 틀린 이름은 연결 전에 뺀다.
+   *
+   * <p>시간 초과·연결 끊김({@link TiberoErrors#isUnresponsive})이면 그 회차를 바로 멈추고 이미 센 테이블까지만 돌려준다. 응답 없는 서버에
+   * 남은 테이블마다 시간 제한(60초)만큼 기다리면 모든 테넌트를 차례로 도는 폴러가 그만큼 묶여 다른 테넌트의 트리거가 늦어지기 때문이다.
+   */
+  @Override
+  public Map<String, Long> rowCounts(Collection<String> tableNames) {
+    Map<String, Long> result = new LinkedHashMap<>();
+    List<String> names = validStatNames(tableNames, "행 수");
+    if (names.isEmpty()) {
+      return result;
+    }
+    try {
+      Ctx c = ctx("rowCounts");
+      connections.withDml(
+          c.tenantId(),
+          conn -> {
+            for (String table : names) {
+              try (PreparedStatement ps =
+                  prepare(conn, TiberoDmlSql.count(c.schema(), table, List.of(), Map.of()))) {
+                result.put(table, readCount(ps));
+              } catch (SQLException e) {
+                if (TiberoErrors.isUnresponsive(e)) {
+                  // 서버 무응답·연결 끊김 — 남은 테이블도 같은 이유로 실패하므로 이번 회차를 멈춘다.
+                  warnStatAborted("행 수", c.tenantId(), e);
+                  break;
+                }
+                warnStatFailure("행 수", c.tenantId(), table, e);
+              }
+            }
+            return null;
+          });
+    } catch (RuntimeException e) {
+      // 연결 실패 등 — 이미 센 테이블까지만 돌려준다. 드라이버 메시지에 접속 정보가 섞일 수 있어 예외 클래스 이름만 남긴다.
+      log.warn("Tibero 행 수 통계 실패 — 이번 회차는 세지 않는다: {}", e.getClass().getName());
+    }
+    return result;
+  }
+
+  /** 빈 테이블 판정을 한 문장으로 묶는 테이블 수 — 문장 길이를 적당히 두면서 데이터셋 수만큼 왕복하지 않게 한다. */
+  static final int EMPTY_CHECK_CHUNK = 50;
+
+  /**
+   * 행이 하나도 없는 테이블. {@value #EMPTY_CHECK_CHUNK}개씩 {@code UNION ALL} 한 문장으로 판정한다({@link
+   * TiberoDmlSql#emptyTables}).
+   *
+   * <p>묶음 안 테이블 하나가 없으면 문장 전체가 실패하므로, 실패한 묶음만 테이블별로 다시 판정한다 — 없는 테이블만 빠지고 나머지는 제대로 판정된다. 판정하지 못한
+   * 테이블은 빼고(비어 있다고 세지 않는다) 예외를 던지지 않는다.
+   *
+   * <p>시간 초과·연결 끊김({@link TiberoErrors#isUnresponsive})이면 테이블별 재판정도 남은 묶음도 하지 않고 이미 판정한 테이블까지만 돌려준다
+   * — 홈 대시보드 요청 스레드가 응답 없는 서버에 테이블 수만큼 시간 제한을 기다리지 않게 하려는 것이다.
+   */
+  @Override
+  public Set<String> emptyTables(Collection<String> tableNames) {
+    Set<String> result = new LinkedHashSet<>();
+    List<String> names = validStatNames(tableNames, "빈 테이블 판정");
+    if (names.isEmpty()) {
+      return result;
+    }
+    try {
+      Ctx c = ctx("emptyTables");
+      connections.withDml(
+          c.tenantId(),
+          conn -> {
+            chunks:
+            for (int from = 0; from < names.size(); from += EMPTY_CHECK_CHUNK) {
+              List<String> chunk =
+                  names.subList(from, Math.min(from + EMPTY_CHECK_CHUNK, names.size()));
+              try {
+                readEmptyNames(conn, c.schema(), chunk, result);
+              } catch (SQLException chunkFailure) {
+                if (TiberoErrors.isUnresponsive(chunkFailure)) {
+                  // 서버 무응답·연결 끊김 — 테이블별로 다시 물어도 같은 이유로 실패하므로 여기서 멈춘다.
+                  warnStatAborted("빈 테이블 판정", c.tenantId(), chunkFailure);
+                  break;
+                }
+                // 묶음 단위 실패(대개 없는 테이블 하나) — 이 묶음만 테이블별로 다시 판정한다.
+                for (String table : chunk) {
+                  try {
+                    readEmptyNames(conn, c.schema(), List.of(table), result);
+                  } catch (SQLException e) {
+                    if (TiberoErrors.isUnresponsive(e)) {
+                      warnStatAborted("빈 테이블 판정", c.tenantId(), e);
+                      break chunks;
+                    }
+                    warnStatFailure("빈 테이블 판정", c.tenantId(), table, e);
+                  }
+                }
+              }
+            }
+            return null;
+          });
+    } catch (RuntimeException e) {
+      // 드라이버 메시지에 접속 정보가 섞일 수 있어 예외 클래스 이름만 남긴다.
+      log.warn("Tibero 빈 테이블 판정 실패 — 판정한 테이블까지만 센다: {}", e.getClass().getName());
+    }
+    return result;
+  }
+
+  /**
+   * 빈 테이블 판정 문장 하나를 실행해 비어 있는 테이블 이름을 모은다. 길이가 다른 문자 리터럴의 {@code UNION ALL} 은 CHAR 로 맞춰져 뒤에 공백이 붙을
+   * 수 있어 잘라 낸다(우리 이름에는 공백이 없다).
+   */
+  private static void readEmptyNames(
+      Connection conn, String schema, List<String> tables, Set<String> into) throws SQLException {
+    try (PreparedStatement ps = prepare(conn, TiberoDmlSql.emptyTables(schema, tables));
+        ResultSet rs = ps.executeQuery()) {
+      while (rs.next()) {
+        String name = rs.getString(1);
+        if (name != null) {
+          into.add(name.trim());
+        }
+      }
+    }
+  }
+
+  /** 통계용 이름 목록: 중복을 없애고 형식이 틀린 이름은 경고와 함께 뺀다(통계는 예외를 던지지 않는다). */
+  private static List<String> validStatNames(Collection<String> tableNames, String operation) {
+    List<String> valid = new ArrayList<>();
+    for (String name : new LinkedHashSet<>(tableNames)) {
+      try {
+        DataTableNames.validate(name);
+        valid.add(name);
+      } catch (InvalidTableNameException e) {
+        log.warn("Tibero {}: 형식이 틀린 테이블 이름이라 건너뛴다: {}", operation, name);
+      }
+    }
+    return valid;
+  }
+
+  /** 테이블 하나의 통계 실패 경고. 드라이버 메시지 대신 예외 클래스와 오류 코드만 남긴다(접속 정보 노출 방지). */
+  /** 서버 무응답·연결 끊김으로 통계 회차를 멈췄다는 경고(회차당 한 번). 드라이버 메시지에 접속 정보가 섞일 수 있어 예외 클래스와 오류 코드만 남긴다. */
+  private static void warnStatAborted(String operation, long tenantId, SQLException e) {
+    log.warn(
+        "Tibero {} 중단 — 테넌트 {} 저장소가 응답하지 않아 이번 회차는 여기까지만 센다: {} (code {})",
+        operation,
+        tenantId,
+        e.getClass().getName(),
+        e.getErrorCode());
+  }
+
+  private static void warnStatFailure(
+      String operation, long tenantId, String table, SQLException e) {
+    log.warn(
+        "Tibero {} 실패 — 테넌트 {} 테이블 {} 은 이번에 빠진다: {} (code {})",
+        operation,
+        tenantId,
+        table,
+        e.getClass().getName(),
+        e.getErrorCode());
   }
 
   @Override

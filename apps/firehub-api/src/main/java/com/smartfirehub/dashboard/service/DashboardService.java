@@ -11,7 +11,9 @@ import com.smartfirehub.dashboard.dto.RecentImportResponse;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse.DatasetHealth;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse.PipelineHealth;
-import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.dataset.storage.DataStoreResolver;
+import com.smartfirehub.global.config.TransactionTemplateConfig;
+import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -28,8 +30,10 @@ import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Table;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 홈 대시보드(통계·건강도·주의 항목·활동) 조회.
@@ -39,6 +43,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 요청 사용자가 없어 current() 가 "아무것도 못 봄"이 된다)용으로 명시 자격을 쓴다.
  *
  * <p>인자 없는 형태에도 @Transactional 을 둔다 — 자기 호출은 프록시를 우회하므로 위임받는 쪽 어노테이션만으로는 트랜잭션(=RLS GUC)이 열리지 않는다.
+ * 시스템 상태({@code getSystemHealth})만은 어노테이션 대신 readOnly 템플릿으로 구간을 직접 연다(WD-80) — Tibero 테넌트의 빈 테이블
+ * 판정을 PG 트랜잭션 밖으로 빼야 해서다. 템플릿은 자기 호출에서도 그대로 동작한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -50,6 +56,23 @@ public class DashboardService {
   private final DatasetAccessGuard datasetAccessGuard;
 
   private final ClearanceResolver clearanceResolver;
+
+  /** 테넌트 저장소 해석(WD-80) — 빈 데이터셋 판정을 그 백엔드의 행 저장소로 한다. */
+  private final DataStoreResolver dataStoreResolver;
+
+  /**
+   * 테넌트 저장소가 Tibero 인지 판정하는 단일 지점(WD-80) — Tibero 면 빈 테이블 판정을 PG 트랜잭션 밖에서 한다. 다른 서비스(차트·저장 쿼리 등)와
+   * 같은 판정을 쓰려고 직접 비교하지 않고 이 빈에 맡긴다.
+   */
+  private final PipelineDataSchema pipelineDataSchema;
+
+  /**
+   * 시스템 상태 조회 구간의 readOnly 트랜잭션 템플릿(WD-80) — 예전 {@code @Transactional(readOnly = true)} 와 같은 값이다.
+   * Tibero 질의를 트랜잭션 밖으로 빼려면 구간을 나눠야 해서 어노테이션 대신 쓴다. 공용 빈({@link
+   * TransactionTemplateConfig#READ_ONLY})을 주입받는다.
+   */
+  @Qualifier(TransactionTemplateConfig.READ_ONLY)
+  private final TransactionTemplate readOnlyTx;
 
   // Table constants
   private static final Table<?> DATASET = table(name("dataset"));
@@ -217,13 +240,66 @@ public class DashboardService {
         recentExecutions);
   }
 
-  @Transactional(readOnly = true)
+  /**
+   * 요청 경로(홈 대시보드 API)의 시스템 상태 — 현재 요청 사용자 자격으로 계산한다.
+   *
+   * <p>예전 {@code @Transactional(readOnly = true)} 대신 readOnly 템플릿을 쓴다(WD-80). PG 는 그때처럼 자격 해석부터 전부
+   * readOnly 트랜잭션 하나 안이다(안쪽 템플릿은 이 트랜잭션에 합류한다). Tibero 는 바깥 트랜잭션을 열어 두면 빈 테이블 판정(Tibero 질의)이 그 안에
+   * 갇히므로, 자격 해석만 짧은 readOnly 트랜잭션에서 하고 나머지 구간은 {@link #getSystemHealth(Clearance)} 가 나눈다.
+   */
   public SystemHealthResponse getSystemHealth() {
-    return getSystemHealth(clearanceResolver.current());
+    if (!pipelineDataSchema.isTibero()) {
+      return readOnlyTx.execute(status -> getSystemHealth(clearanceResolver.current()));
+    }
+    Clearance viewer = readOnlyTx.execute(status -> clearanceResolver.current());
+    return getSystemHealth(viewer);
   }
 
-  @Transactional(readOnly = true)
+  /**
+   * 명시 자격으로 시스템 상태를 계산한다(비요청 경로 — proactive 리포트 컨텍스트 수집이 쓴다).
+   *
+   * <p>RLS 대상(파이프라인·데이터셋·감사 로그) 조회는 readOnly 트랜잭션 안에서 한다(WD-80, 예전 메서드 어노테이션과 같은 값). 빈 데이터셋 판정은 테넌트
+   * 저장소로 하며, PG 는 같은 트랜잭션 안에서, Tibero 는 네트워크 너머 질의라 PG 커넥션을 쥐지 않도록 트랜잭션 밖에서 한다.
+   */
   public SystemHealthResponse getSystemHealth(Clearance viewer) {
+    if (!pipelineDataSchema.isTibero()) {
+      return readOnlyTx.execute(
+          status -> {
+            HealthRead read = readHealth(viewer);
+            return read.withEmpty(countEmptyDatasets(read.tableNames()));
+          });
+    }
+    HealthRead read = readOnlyTx.execute(status -> readHealth(viewer));
+    return read.withEmpty(countEmptyDatasets(read.tableNames()));
+  }
+
+  /**
+   * 빈 데이터셋 수 — 테넌트 저장소가 비어 있다고 판정한 테이블 수다. 판정하지 못한 테이블은 세지 않는다(실패를 "비어 있음"으로 보지 않는다). table_name 은
+   * 전역 유니크라 테이블 수가 곧 데이터셋 수다(예전 조인이 데이터셋 행을 세던 것과 같다). 목록이 비어도 부른다 — 저장소가 연결 없이 끝낸다.
+   */
+  private int countEmptyDatasets(List<String> tableNames) {
+    return dataStoreResolver.rowStore().emptyTables(tableNames).size();
+  }
+
+  /** 트랜잭션 안에서 읽은 시스템 상태 조각과, 빈 테이블 판정에 넘길 조회자 가시 데이터셋의 테이블 이름. 판정 결과를 받아 응답을 완성한다. */
+  private record HealthRead(
+      PipelineHealth pipelineHealth,
+      int totalDatasets,
+      int freshDatasets,
+      int staleDatasets,
+      List<Integer> datasetTrend,
+      List<String> tableNames) {
+
+    SystemHealthResponse withEmpty(int emptyDatasets) {
+      return new SystemHealthResponse(
+          pipelineHealth,
+          new DatasetHealth(
+              totalDatasets, freshDatasets, staleDatasets, emptyDatasets, datasetTrend));
+    }
+  }
+
+  /** RLS 대상 테이블을 읽어 시스템 상태 조각을 모은다. readOnly 트랜잭션 안에서 불러야 한다. */
+  private HealthRead readHealth(Clearance viewer) {
     // ---- Pipeline health ----
     // Count all pipelines
     int totalPipelines = dsl.selectCount().from(PIPELINE).fetchOne(0, int.class);
@@ -387,25 +463,14 @@ public class DashboardService {
                                             .and(AL_RESOURCE_ID.eq(D_ID.cast(String.class))))))));
     int staleDatasets = staleWithOldImport + staleNoImport;
 
-    // empty: datasets where the data table has 0 rows
-    // Query pg_stat_user_tables for row estimates, or do a direct count
-    // We use information_schema + pg_class for accurate counts via pg_stat_user_tables
-    // For simplicity and correctness, count datasets whose table name appears in
-    // pg_stat_user_tables with n_live_tup=0
-    int emptyDatasets =
-        dsl.fetchCount(
-            dsl.select(D_ID)
-                .from(DATASET)
-                .join(table("pg_stat_user_tables").as("psu"))
-                .on(
-                    field("psu.relname", String.class)
-                        .eq(D_TABLE_NAME)
-                        // schemaname 도 현재 테넌트에서 파생시킨다 — 낡은 리터럴을 남기면 스키마가
-                        // 분리되는 순간 이 조인이 **예외도 로그도 없이 0행**이 되고, 빈 데이터셋
-                        // 개수가 조용히 0 으로 렌더링된다(오류로 보이지 않는 오답).
-                        .and(field("psu.schemaname", String.class).eq(DataSchema.current())))
-                .where(field("psu.n_live_tup", Long.class).eq(0L))
-                .and(visible));
+    // empty: 조회자가 볼 수 있는 표(TABLE) 데이터셋의 테이블 이름만 읽는다. 비어 있는지는 호출자가 테넌트 저장소로 판정한다(WD-80).
+    // DOCUMENT/FILE 은 물리 테이블이 없어 판정 대상이 아니다 — 예전 pg_stat_user_tables 조인도 이들을 (테이블이 없어) 뺐으므로
+    // PG 결과는 같고, Tibero 는 없는 테이블에 대한 원격 질의를 하지 않는다.
+    List<String> tableNames =
+        dsl.select(D_TABLE_NAME)
+            .from(DATASET)
+            .where(D_STORAGE_TYPE.eq("TABLE").and(visible))
+            .fetch(D_TABLE_NAME);
 
     // ---- Dataset trend (최근 7일 일자별 임포트 이력 건수, #669) ----
     Field<LocalDate> auditDay = field("CAST({0} AS date)", LocalDate.class, AL_ACTION_TIME);
@@ -422,10 +487,8 @@ public class DashboardService {
             .fetchMap(r -> r.get(auditDay), r -> r.get(1, Integer.class));
     List<Integer> datasetTrend = fillTrendDays(datasetCountsByDay);
 
-    DatasetHealth datasetHealth =
-        new DatasetHealth(totalDatasets, freshDatasets, staleDatasets, emptyDatasets, datasetTrend);
-
-    return new SystemHealthResponse(pipelineHealth, datasetHealth);
+    return new HealthRead(
+        pipelineHealth, totalDatasets, freshDatasets, staleDatasets, datasetTrend, tableNames);
   }
 
   @Transactional(readOnly = true)

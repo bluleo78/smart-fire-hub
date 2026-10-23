@@ -16,7 +16,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 데이터셋 행 검색: 검색 설정(검색 탭)과 행 검색(에이전트 도구) 엔드포인트. */
+/**
+ * 데이터셋 행 검색(Tibero 테넌트는 네 엔드포인트 모두 {@link RowSearchBackendGuard} 에서 422): 검색 설정(검색 탭)과 행 검색(에이전트
+ * 도구) 엔드포인트.
+ */
 @RestController
 @RequestMapping("/api/v1/datasets/{id}")
 @RequiredArgsConstructor
@@ -24,11 +27,13 @@ public class RowSearchController {
 
   private final SearchIndexSettingsService settingsService;
   private final RowSearchService rowSearchService;
+  private final RowSearchBackendGuard backendGuard;
 
   /** 검색 설정·색인 상태 조회. */
   @GetMapping("/search-index")
   @RequirePermission("dataset:read")
   public SearchIndexStatusResponse getSearchIndex(@PathVariable Long id) {
+    backendGuard.requireSupported();
     return settingsService.getStatus(id);
   }
 
@@ -37,6 +42,7 @@ public class RowSearchController {
   @RequirePermission("dataset:write")
   public SearchIndexStatusResponse updateSearchIndex(
       @PathVariable Long id, @Valid @RequestBody UpdateSearchIndexRequest request) {
+    backendGuard.requireSupported();
     return settingsService.update(id, request.fields());
   }
 
@@ -44,6 +50,7 @@ public class RowSearchController {
   @PostMapping("/search-index/reindex")
   @RequirePermission("dataset:write")
   public ResponseEntity<Void> reindex(@PathVariable Long id) {
+    backendGuard.requireSupported();
     settingsService.reindex(id);
     return ResponseEntity.accepted().build();
   }
@@ -53,6 +60,7 @@ public class RowSearchController {
   @RequirePermission("data:read")
   public RowSearchResponse searchRows(
       @PathVariable Long id, @RequestBody RowSearchRequest request) {
+    backendGuard.requireSupported();
     return rowSearchService.search(id, request);
   }
 }

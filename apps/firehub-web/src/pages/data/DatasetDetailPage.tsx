@@ -47,6 +47,7 @@ import {
   useToggleFavorite,
   useUpdateStatus,
 } from '../../hooks/queries/useDatasets';
+import { useDataStoreFeatures } from '../../hooks/queries/useDataStoreCapabilities';
 import { useHorizontalOverflow } from '../../hooks/useHorizontalOverflow';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
@@ -87,11 +88,14 @@ function tagNameError(tag: string): string | null {
 
 /**
  * 저장 유형별 유효 탭 — 초기 탭 결정과 ?tab= 동기화가 같은 목록을 쓰도록 한 곳에 둔다. 유형을 모르면(로드 전) 표 데이터셋 목록이다.
+ * rowSearch 는 저장소 기능 판정이다 — undefined(아직 조회 중)는 검색 탭을 유효로 둬 ?tab=search 를 미리 info 로 바꾸지 않는다
+ * (PG 는 조회가 끝나면 그대로 검색 탭이어야 해서, 미리 바꾸면 info → search 로 깜빡인다). (WD-80)
  */
-function tabsFor(storageType: 'TABLE' | 'DOCUMENT' | 'FILE' | undefined): string[] {
+function tabsFor(storageType: 'TABLE' | 'DOCUMENT' | 'FILE' | undefined, rowSearch?: boolean): string[] {
   if (storageType === 'DOCUMENT') return ['info', 'security', 'documents'];
   if (storageType === 'FILE') return ['info', 'security', 'objects'];
-  return ['info', 'security', 'columns', 'data', 'search', 'map', 'mapping', 'history'];
+  // 행 검색 미지원 저장소(Tibero)는 검색 탭을 뺀다 — ?tab=search 로 와도 기본 탭으로 대체된다. (WD-80)
+  return ['info', 'security', 'columns', 'data', ...(rowSearch !== false ? ['search'] : []), 'map', 'mapping', 'history'];
 }
 
 export default function DatasetDetailPage() {
@@ -133,7 +137,11 @@ export default function DatasetDetailPage() {
   // dataset 로드 전에는 isDocument=false이므로 validTabs는 전체 목록. 로드 후 useEffect가 재계산.
   const isDocument = dataset?.storageType === 'DOCUMENT';
   const isFile = dataset?.storageType === 'FILE';
-  const validTabs = tabsFor(dataset?.storageType);
+  // 행 검색 지원 여부의 세 상태(WD-80, 규칙은 useDataStoreFeatures): 조회 중 undefined, 실패 시 PG 기본값 true, 성공 시 응답 값.
+  // 조회 중에 PG 기본값으로 검색 탭을 띄우면 Tibero 는 GET /search-index 가 422 로 실패해 오류 토스트와 탭 깜빡임이 생겨서,
+  // 판정이 날 때까지 검색 탭 본문을 띄우지 않는다.
+  const { rowSearch } = useDataStoreFeatures();
+  const validTabs = tabsFor(dataset?.storageType, rowSearch);
   const tabParam = searchParams.get('tab');
   const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
   const [activeTab, setActiveTab] = useState(initialTab);
@@ -174,11 +182,11 @@ export default function DatasetDetailPage() {
   // useState 초기값은 최초 렌더링에만 반영되므로, searchParams 변경 시 별도 동기화가 필요하다.
   // 페인트 전 동기 보정으로 탭 깜빡임 방지.
   useLayoutEffect(() => {
-    const currentValidTabs = tabsFor(dataset?.storageType);
+    const currentValidTabs = tabsFor(dataset?.storageType, rowSearch);
     const newTabParam = searchParams.get('tab');
     const newTab = newTabParam && currentValidTabs.includes(newTabParam) ? newTabParam : 'info';
     setActiveTab(newTab);
-  }, [searchParams, dataset]);
+  }, [searchParams, dataset, rowSearch]);
   const { data: categoriesData } = useCategories();
   const { addRecent } = useRecentDatasets();
 
@@ -627,7 +635,7 @@ export default function DatasetDetailPage() {
               <>
                 <TabsTrigger value="columns">필드</TabsTrigger>
                 <TabsTrigger value="data">데이터</TabsTrigger>
-                <TabsTrigger value="search">검색</TabsTrigger>
+                {rowSearch !== false && <TabsTrigger value="search">검색</TabsTrigger>}
                 {hasGeometry && <TabsTrigger value="map">지도</TabsTrigger>}
                 <TabsTrigger value="mapping">매핑</TabsTrigger>
                 <TabsTrigger value="history">이력</TabsTrigger>
@@ -668,7 +676,8 @@ export default function DatasetDetailPage() {
             <DatasetMapTab dataset={dataset} datasetId={datasetId} />
           </div>
         )}
-        {activeTab === 'search' && (
+        {/* 판정 전(undefined)에는 본문을 띄우지 않는다 — 색인 조회가 미지원 저장소로 나가지 않게(WD-80). */}
+        {activeTab === 'search' && rowSearch === true && (
           <div className="mt-6">
             <DatasetSearchTab dataset={dataset} datasetId={datasetId} />
           </div>

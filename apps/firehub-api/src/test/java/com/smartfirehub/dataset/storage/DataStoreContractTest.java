@@ -133,6 +133,20 @@ public abstract class DataStoreContractTest extends IntegrationTestBase {
     return LocalDate.parse(value.toString().substring(0, 10));
   }
 
+  /** 백엔드 전용 계약 테스트(하위 클래스)용 — 빈 계약 테이블을 만든다. 정리는 이 클래스의 {@link #정리()} 가 맡는다. */
+  protected String createEmptyContractTable() {
+    return createContractTable(false);
+  }
+
+  /** 백엔드 전용 계약 테스트(하위 클래스)용 — 계약 테이블에 행 n 개를 넣는다. */
+  protected void insertContractRows(String table, int n) {
+    List<Map<String, Object>> rows = new ArrayList<>();
+    for (int i = 0; i < n; i++) {
+      rows.add(row("r" + i, i, "1.0", true, null));
+    }
+    rowStore().insertBatch(table, COLUMNS, rows, columnTypes());
+  }
+
   /** 전체 컬럼을 id 순으로 조회한다. */
   private List<Map<String, Object>> queryAll(String table) {
     return rowStore().queryData(table, COLUMNS, null, 0, 100, null, "ASC", columnTypes());
@@ -514,5 +528,20 @@ public abstract class DataStoreContractTest extends IntegrationTestBase {
     assertThat(asLong(got.get("qty"))).isEqualTo(7L);
     // 커밋 후에도 남아 있다.
     assertThat(rowStore().countRows(table, COLUMNS, null, columnTypes())).isEqualTo(1);
+  }
+
+  /**
+   * 행 수 통계(WD-80): 없는 테이블은 행 수에서도, 빈 테이블 판정에서도 빠지고 예외가 나지 않는다. 빈 테이블은 0 행·비어 있음으로 판정된다.
+   *
+   * <p>행이 있는 테이블의 정확한 값은 여기서 단언하지 않는다 — PostgreSQL 은 통계 추정치({@code n_live_tup})라 입력 직후 갱신이 늦을 수 있다.
+   * 정확한 값은 Tibero 전용 테스트가 본다.
+   */
+  @Test
+  void 행_수_통계는_없는_테이블을_뺀다() {
+    String empty = createEmptyContractTable();
+    String missing = newTableName();
+
+    assertThat(rowStore().rowCounts(List.of(empty, missing))).isEqualTo(Map.of(empty, 0L));
+    assertThat(rowStore().emptyTables(List.of(empty, missing))).containsExactly(empty);
   }
 }
