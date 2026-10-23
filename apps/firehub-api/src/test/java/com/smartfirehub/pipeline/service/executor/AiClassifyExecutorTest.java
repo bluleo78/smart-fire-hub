@@ -19,6 +19,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
@@ -68,6 +70,7 @@ class AiClassifyExecutorTest {
   private DSLContext dsl;
   private TransactionTemplate transactionTemplate;
   private PipelineExecutionRepository executionRepository;
+  private DatasetColumnRepository datasetColumnRepository;
   private AiClassifyTargetResolver targetResolver;
 
   private AiClassifyExecutor executor;
@@ -86,6 +89,7 @@ class AiClassifyExecutorTest {
     objectMapper = new ObjectMapper();
     dsl = mock(DSLContext.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
     executionRepository = mock(PipelineExecutionRepository.class);
+    datasetColumnRepository = mock(DatasetColumnRepository.class);
 
     // TransactionTemplate 은 mock 이 아니라 실물을 쓴다. mock 이면 execute/executeWithoutResult 가
     // 콜백을 아예 실행하지 않아 캐시 조회·쓰기가 통째로 사라지고, 아래 캐시 단언들이 조용히
@@ -110,7 +114,8 @@ class AiClassifyExecutorTest {
             dsl,
             transactionTemplate,
             executionRepository,
-            targetResolver);
+            targetResolver,
+            datasetColumnRepository);
   }
 
   @AfterEach
@@ -298,6 +303,77 @@ class AiClassifyExecutorTest {
     // APPEND → no swap/temp table
     verify(dataTableService, never()).createTempTable(anyString());
     verify(dataTableService, never()).swapTable(anyString(), anyString());
+  }
+
+  /**
+   * WD-214 회귀 가드: 입력 컬럼을 고르지 않은(null·빈 목록) 스텝은 화면 안내대로 "전체 컬럼"으로 조회해야 한다.
+   *
+   * <p>예전엔 columns=null 을 그대로 넘겨 DataTableRowService 의 반복문에서 NPE 로 스텝이 실패했다. mock 은 NPE 를 내지 않으므로
+   * 넘긴 인자 자체를 단언한다 — null 이 아니고, SELECT * 의 시스템 컬럼(import_id 등)이 아닌 데이터셋 사용자 컬럼 목록이어야 한다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withoutInputColumns_fetchesDatasetUserColumns() {
+    for (List<String> inputColumns : java.util.Arrays.asList(null, List.<String>of())) {
+      setUp();
+      when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+      when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+      when(dataTableRowService.countRows("source_table")).thenReturn(1L);
+      when(datasetColumnRepository.findByDatasetId(1L))
+          .thenReturn(
+              List.of(
+                  new DatasetColumnResponse(
+                      1L, "title", "제목", "TEXT", null, true, false, null, 0, false),
+                  new DatasetColumnResponse(
+                      2L, "body", "본문", "TEXT", null, true, false, null, 1, false)));
+
+      Map<String, Object> sourceRow = new HashMap<>();
+      sourceRow.put("id", 42L);
+      sourceRow.put("title", "hello");
+      when(dataTableRowService.queryData(eq("source_table"), any(), any(), anyInt(), anyInt()))
+          .thenReturn(List.of(sourceRow));
+
+      // 캐시 히트로 세워 AI 호출 없이 실행을 끝까지 돌린다 — 관심사는 조회 컬럼뿐이다.
+      Record1<JSONB> cachedRecord = mock(Record1.class);
+      when(cachedRecord.get(any(org.jooq.Field.class)))
+          .thenReturn(JSONB.valueOf("{\"category\":\"A\",\"score\":0.9}"));
+      stubCacheLookup(cachedRecord);
+
+      AiClassifyConfig config =
+          new AiClassifyConfig(
+              "Classify rows",
+              List.of(new OutputColumn("category", "TEXT"), new OutputColumn("score", "NUMERIC")),
+              inputColumns,
+              20,
+              "CONTINUE");
+      PipelineStepResponse step =
+          new PipelineStepResponse(
+              10L,
+              "AI Step",
+              "desc",
+              "AI_CLASSIFY",
+              null,
+              200L,
+              "output_table",
+              List.of(1L),
+              List.of(),
+              1,
+              "APPEND",
+              null,
+              objectMapper.convertValue(config, Map.class),
+              null,
+              null);
+
+      AiClassifyExecutor.ExecutionResult result = executor.execute(step, 100L, 1L);
+
+      ArgumentCaptor<List<String>> columnsCaptor = ArgumentCaptor.forClass(List.class);
+      verify(dataTableRowService)
+          .queryData(eq("source_table"), columnsCaptor.capture(), any(), anyInt(), anyInt());
+      assertThat(columnsCaptor.getValue())
+          .as("inputColumns=%s 이면 사용자 컬럼 전체로 조회", inputColumns)
+          .containsExactly("title", "body");
+      assertThat(result.outputRows()).isEqualTo(1);
+    }
   }
 
   @Test
@@ -1221,7 +1297,8 @@ class AiClassifyExecutorTest {
             dsl,
             transactionTemplate,
             executionRepository,
-            new AiClassifyTargetResolver(brokenChat));
+            new AiClassifyTargetResolver(brokenChat),
+            datasetColumnRepository);
 
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
     when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
@@ -1374,7 +1451,8 @@ class AiClassifyExecutorTest {
         dsl,
         transactionTemplate,
         executionRepository,
-        new AiClassifyTargetResolver(credentials));
+        new AiClassifyTargetResolver(credentials),
+        datasetColumnRepository);
   }
 
   /** 행 3개·배치 크기 1 = 캐시 미스 배치 3개. */

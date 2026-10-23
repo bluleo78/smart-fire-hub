@@ -67,9 +67,12 @@ public class DataTableRowService {
       String sortBy,
       String sortDir,
       Map<String, String> columnTypes) {
+    // null 컬럼 목록은 "전체 컬럼"(빈 목록과 같은 뜻)으로 받는다 — AI 분류 스텝처럼 입력 컬럼을 고르지 않은
+    // 호출자가 null 을 넘겨도 NPE 로 스텝이 죽지 않게 한다(WD-214). 저장소는 빈 목록을 SELECT * 로 처리한다.
+    List<String> cols = allColumnsIfNull(columns);
     // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
     DataTableNames.validate(tableName);
-    for (String col : columns) {
+    for (String col : cols) {
       DataTableNames.validate(col);
     }
     if (sortBy != null) {
@@ -77,7 +80,7 @@ public class DataTableRowService {
     }
     return resolver
         .rowStore()
-        .queryData(tableName, columns, search, page, size, sortBy, sortDir, columnTypes);
+        .queryData(tableName, cols, search, page, size, sortBy, sortDir, columnTypes);
   }
 
   /**
@@ -96,12 +99,15 @@ public class DataTableRowService {
       String sortBy,
       String sortDir,
       Map<String, String> columnTypes) {
+    // null 은 위 오버로드와 같이 "전체 컬럼"(빈 목록)으로, 검색 컬럼이 null 이면 출력 컬럼과 같게 본다(WD-214).
+    List<String> cols = allColumnsIfNull(columns);
+    List<String> searchCols = searchColumns != null ? searchColumns : cols;
     // 테넌트 해석 전에 이름부터 검증한다(위 오버로드와 같은 순서).
     DataTableNames.validate(tableName);
-    for (String col : columns) {
+    for (String col : cols) {
       DataTableNames.validate(col);
     }
-    for (String col : searchColumns) {
+    for (String col : searchCols) {
       DataTableNames.validate(col);
     }
     if (sortBy != null) {
@@ -109,8 +115,7 @@ public class DataTableRowService {
     }
     return resolver
         .rowStore()
-        .queryData(
-            tableName, columns, searchColumns, search, page, size, sortBy, sortDir, columnTypes);
+        .queryData(tableName, cols, searchCols, search, page, size, sortBy, sortDir, columnTypes);
   }
 
   /** 기존 시그니처 유지 (하위 호환) */
@@ -177,12 +182,14 @@ public class DataTableRowService {
 
   public long countRows(
       String tableName, List<String> columns, String search, Map<String, String> columnTypes) {
+    // queryData 와 같은 규칙: null 컬럼 목록은 "전체 컬럼"(빈 목록)으로 받는다(WD-214).
+    List<String> cols = allColumnsIfNull(columns);
     // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
     DataTableNames.validate(tableName);
-    for (String col : columns) {
+    for (String col : cols) {
       DataTableNames.validate(col);
     }
-    return resolver.rowStore().countRows(tableName, columns, search, columnTypes);
+    return resolver.rowStore().countRows(tableName, cols, search, columnTypes);
   }
 
   public boolean checkDataUniqueness(String tableName, List<String> pkColumnNames) {
@@ -495,5 +502,13 @@ public class DataTableRowService {
     // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
     DataTableNames.validate(stagingTable);
     resolver.rowStore().dropStagingTable(stagingTable);
+  }
+
+  /**
+   * 컬럼 목록이 null 이면 빈 목록을 돌려준다. 행 저장소는 빈 목록을 "전체 컬럼"으로 처리하므로, null 을 같은 뜻으로 받아 반복문 NPE 를 막는다(WD-214
+   * — 입력 컬럼 미지정 AI 분류 스텝이 "columns is null" 원문으로 실패하던 결함).
+   */
+  private static List<String> allColumnsIfNull(List<String> columns) {
+    return columns != null ? columns : List.of();
   }
 }

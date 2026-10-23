@@ -198,6 +198,35 @@ class DataTableRowServiceTest extends IntegrationTestBase {
     assertThat(rows).extracting(r -> r.get("name")).containsExactlyInAnyOrder("Alice", "Bob");
   }
 
+  /**
+   * WD-214 회귀 가드: 컬럼 목록 null 은 "전체 컬럼"(빈 목록과 같은 뜻)이다. 예전엔 반복문에서 NPE("columns" is null)로 실패해 입력 컬럼을
+   * 고르지 않은 AI 분류 스텝이 그 원문을 화면에 보였다. countRows·검색 컬럼 분리 오버로드도 같은 규칙이다.
+   */
+  @Test
+  void queryData_nullColumns_returnsAllColumns() {
+    DatasetDetailResponse dataset = createSimpleDataset("query_null_cols_test");
+    String tableName = dataset.tableName();
+
+    dataTableRowService.insertBatch(
+        tableName,
+        List.of("name", "value"),
+        List.of(Map.of("name", "Alice", "value", 10), Map.of("name", "Bob", "value", 20)));
+
+    List<Map<String, Object>> rows = dataTableRowService.queryData(tableName, null, null, 0, 10);
+    assertThat(rows).hasSize(2);
+    assertThat(rows).extracting(r -> r.get("name")).containsExactlyInAnyOrder("Alice", "Bob");
+    assertThat(rows.get(0)).containsKeys("id", "name", "value");
+
+    List<Map<String, Object>> split =
+        dataTableRowService.queryData(tableName, null, null, null, 0, 10, null, "ASC", null);
+    assertThat(split).hasSize(2);
+
+    assertThat(
+            dataTableRowService.countRows(
+                tableName, (List<String>) null, null, (Map<String, String>) null))
+        .isEqualTo(2);
+  }
+
   /** 정상: search 파라미터로 ILIKE 검색하면 일치하는 행만 반환되어야 한다. */
   @Test
   void queryData_withSearch_filtersRows() {
