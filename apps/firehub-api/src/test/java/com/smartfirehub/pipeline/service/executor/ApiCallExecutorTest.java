@@ -278,34 +278,83 @@ class ApiCallExecutorTest {
             "/api/q?serviceKey=rP1x%2FAbC%2Bd%3D%3D", "/api/q?serviceKey=rP1x%2FAbC%2Bd%3D%3D");
   }
 
+  /** config 의 정적 쿼리 파라미터만 바꾼 사본. */
+  private static ApiCallConfig withQueryParams(
+      ApiCallConfig base, Map<String, String> queryParams) {
+    return new ApiCallConfig(
+        base.url(),
+        base.method(),
+        base.headers(),
+        queryParams,
+        base.body(),
+        base.responseFormat(),
+        base.dataPath(),
+        base.fieldMappings(),
+        base.sourceTimezone(),
+        base.pagination(),
+        base.retry(),
+        base.timeoutMs(),
+        base.maxDurationMs(),
+        base.maxResponseSizeMb(),
+        base.inlineAuth(),
+        base.apiConnectionId(),
+        base.path(),
+        base.customUrl());
+  }
+
   /**
-   * 키가 아닌 정적 쿼리 값에 쓸 수 없는 문자가 있으면 여전히 URL 을 만들 수 없다 — 원문 없는 고정 문구로, 재시도 없이 즉시 실패한다(WD-177 처리 유지).
-   * 함께 붙는 키 원문·보낸 형태도 문구에 없다.
+   * 정적 쿼리 값에 {@code = 공백 한글} 이 있어도 이제 공용 규칙으로 한 번 인코딩해 호출한다(WD-200) — 예전에는 「URL 인코딩해 넣으세요」로 즉시
+   * 실패했다. 함께 붙는 키 원문·보낸 형태는 실행 로그에 없다.
    */
   @Test
-  void execute_unbuildableStaticParam_failsWithoutKeyAndWithoutRetry() {
+  void execute_unencodedStaticParam_encodedOnce_logHasNoKey() {
+    stubEmptyItems("/api/q");
     String key = "ex+k/y==비밀 Ww11";
-    ApiCallConfig base = simpleGetConfig("/api/q");
-    ApiCallConfig config =
-        new ApiCallConfig(
-            base.url(),
-            base.method(),
-            base.headers(),
-            Map.of("q", "a=b 한글"),
-            base.body(),
-            base.responseFormat(),
-            base.dataPath(),
-            base.fieldMappings(),
-            base.sourceTimezone(),
-            base.pagination(),
-            base.retry(),
-            base.timeoutMs(),
-            base.maxDurationMs(),
-            base.maxResponseSizeMb(),
-            base.inlineAuth(),
-            base.apiConnectionId(),
-            base.path(),
-            base.customUrl());
+    ApiCallConfig config = withQueryParams(simpleGetConfig("/api/q"), Map.of("q", "a=b 한글"));
+
+    ApiCallExecutor.ApiCallResult result =
+        executor.execute(config, "t", queryAuth(key), "APPEND", null);
+
+    assertThat(receivedUrls("/api/q"))
+        .containsExactly(
+            "/api/q?q=a%3Db%20%ED%95%9C%EA%B8%80"
+                + "&serviceKey=ex%2Bk%2Fy%3D%3D%EB%B9%84%EB%B0%80%20Ww11");
+    assertThat(result.log()).doesNotContain(key).doesNotContain("ex%2Bk%2Fy%3D%3D");
+  }
+
+  /**
+   * 같은 정적 토큰의 인코딩된 형태·인코딩 안 한 형태가 Java 실행기에서도 미리보기·Python 실행기와 같은 바이트로 나간다(WD-200, 공용 사례 표와 같은
+   * 기대값).
+   */
+  @Test
+  void execute_staticParam_encodedAndUnencoded_sameBytes() {
+    stubEmptyItems("/api/q");
+
+    executor.execute(
+        withQueryParams(simpleGetConfig("/api/q"), Map.of("token", "abc%2Bd%3D%3D")),
+        "t",
+        null,
+        "APPEND",
+        null);
+    executor.execute(
+        withQueryParams(simpleGetConfig("/api/q"), Map.of("token", "abc+d==")),
+        "t",
+        null,
+        "APPEND",
+        null);
+
+    assertThat(receivedUrls("/api/q"))
+        .containsExactly("/api/q?token=abc%2Bd%3D%3D", "/api/q?token=abc%2Bd%3D%3D");
+  }
+
+  /**
+   * 주소(기준 URL)에 직접 쓴 쿼리에 쓸 수 없는 문자가 있으면 여전히 URL 을 만들 수 없다 — 원문 없는 고정 문구로, 재시도 없이 즉시 실패한다(WD-177 처리
+   * 유지). 함께 붙는 키 원문·보낸 형태도 문구에 없다.
+   */
+  @Test
+  void execute_unbuildableBaseUrl_failsWithoutKeyAndWithoutRetry() {
+    String key = "ex+k/y==비밀 Ww11";
+    ApiCallConfig config = simpleGetConfig("/api/q?q=a b 한글");
 
     assertThatThrownBy(() -> executor.execute(config, "t", queryAuth(key), "APPEND", null))
         .isInstanceOf(ApiCallException.class)
@@ -314,7 +363,7 @@ class ApiCallExecutorTest {
         .satisfies(
             e ->
                 assertThat(e.getMessage())
-                    .doesNotContain("URL 인코딩된 값을 넣으세요")
+                    .doesNotContain("쿼리 파라미터 값은 URL 인코딩해 넣으세요")
                     .doesNotContain(key)
                     .doesNotContain("ex%2Bk%2Fy%3D%3D")
                     .doesNotContain(

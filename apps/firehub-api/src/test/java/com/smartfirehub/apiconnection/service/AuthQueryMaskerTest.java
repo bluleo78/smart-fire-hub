@@ -86,19 +86,40 @@ class AuthQueryMaskerTest {
   }
 
   /**
-   * 키가 아닌 정적 쿼리 값에 쿼리에 그대로 쓸 수 없는 문자(=·한글·공백)가 있으면 여전히 URL 을 만들 수 없다 — Spring 은 원문을 담은 메시지로 실패하므로
-   * 고정 문구로 바꾸고 cause 도 잇지 않아, 근본 원인을 따라가는 분류기(ApiCallErrorMessages.describe)도 원문(같이 붙은 키 포함)을 꺼낼 수
-   * 없어야 한다.
+   * 키가 아닌 정적 쿼리 값의 {@code = 공백 한글} 도 이제 공용 규칙으로 한 번 인코딩해 URL 을 만든다(WD-200) — 예전에는 「URL 인코딩해 넣으세요」로
+   * 거부했는데, 운영 실행(Python 실행기)은 같은 값을 인코딩해 보내 미리보기만 실패했다. 표시 URL 에도 보내는 인코딩 형태 그대로 보인다.
    */
   @Test
-  void build_invalidStaticParam_throwsWithoutSecretOrCause() {
+  void build_unencodedStaticParam_encodedOnce_sameInDisplay() {
     String key = "ab+c/d==키값 Xy9";
     Map<String, String> params = new LinkedHashMap<>();
     params.put("q", "a=b 한글");
     params.put("serviceKey", key);
 
+    AuthQueryMasker.AuthQueryUrls urls =
+        AuthQueryMasker.build("http://h.example/api", params, "serviceKey", key);
+
+    assertThat(urls.callUrl())
+        .isEqualTo(
+            "http://h.example/api?q=a%3Db%20%ED%95%9C%EA%B8%80"
+                + "&serviceKey=ab%2Bc%2Fd%3D%3D%ED%82%A4%EA%B0%92%20Xy9");
+    assertThat(urls.displayUrl())
+        .isEqualTo("http://h.example/api?q=a%3Db%20%ED%95%9C%EA%B8%80&serviceKey=**** Xy9");
+  }
+
+  /**
+   * 기준 URL(주소에 직접 쓴 쿼리)에 그대로 쓸 수 없는 문자(공백·한글)가 있으면 여전히 URL 을 만들 수 없다 — Spring 은 원문을 담은 메시지로 실패하므로
+   * 고정 문구로 바꾸고 cause 도 잇지 않아, 근본 원인을 따라가는 분류기(ApiCallErrorMessages.describe)도 원문(같이 붙은 키 포함)을 꺼낼 수
+   * 없어야 한다. 문구는 쿼리 파라미터 값을 인코딩하라고 하지 않는다(WD-200 — 이제 자동 인코딩된다).
+   */
+  @Test
+  void build_invalidBaseUrlQuery_throwsWithoutSecretOrCause() {
+    String key = "ab+c/d==키값 Xy9";
+    Map<String, String> params = new LinkedHashMap<>();
+    params.put("serviceKey", key);
+
     assertThatThrownBy(
-            () -> AuthQueryMasker.build("http://h.example/api", params, "serviceKey", key))
+            () -> AuthQueryMasker.build("http://h.example/api?q=a b 한글", params, "serviceKey", key))
         .isInstanceOf(AuthQueryMasker.InvalidRequestUrlException.class)
         .hasNoCause()
         .hasMessageStartingWith("요청 URL 을 만들 수 없습니다")
@@ -107,7 +128,8 @@ class AuthQueryMaskerTest {
                 assertThat(e.getMessage())
                     .doesNotContain(key)
                     .doesNotContain(QueryApiKeyEncoding.encode(key))
-                    .doesNotContain("a=b 한글")
+                    .doesNotContain("a b 한글")
+                    .doesNotContain("쿼리 파라미터 값은 URL 인코딩해 넣으세요")
                     .doesNotContain(URLEncoder.encode(key, StandardCharsets.UTF_8)));
   }
 

@@ -1,0 +1,22 @@
+{
+  "_comment": "WD-200 쿼리 파라미터(정적·페이지네이션·인증 키) 인코딩 공용 사례 표. api 의 QueryParamEncodingVectorsTest(AuthQueryMasker.build 호출 URL)와 executor 의 tests/test_query_key_encoding_vectors.py(_build_request_url)가 함께 읽는다 — 미리보기·Java 실행기·Python 실행기가 같은 설정으로 같은 쿼리 문자열을 보낸다는 근거다. url=기준 URL(이미 있는 쿼리는 그대로), params=붙일 파라미터 [이름, 값] 순서 목록, auth=쿼리 인증 [이름, 키] 또는 null, expected=실제 호출 URL. 키 값은 모두 시험용 가짜 값이다.",
+  "cases": [
+    {"name": "이미 인코딩된 값은 그대로(예전 Python 은 %252B 이중 인코딩)", "url": "http://h.example/api", "params": [["token", "abc%2Bd%3D%3D"]], "auth": null, "expected": "http://h.example/api?token=abc%2Bd%3D%3D"},
+    {"name": "인코딩 안 한 값은 한 번 인코딩(예전 Java 미리보기는 거부)", "url": "http://h.example/api", "params": [["token", "abc+d=="]], "auth": null, "expected": "http://h.example/api?token=abc%2Bd%3D%3D"},
+    {"name": "한글·공백 값", "url": "http://h.example/api", "params": [["q", "한글 값"]], "auth": null, "expected": "http://h.example/api?q=%ED%95%9C%EA%B8%80%20%EA%B0%92"},
+    {"name": "공백은 %20(예전 Python 은 +)", "url": "http://h.example/api", "params": [["q", "a b"]], "auth": null, "expected": "http://h.example/api?q=a%20b"},
+    {"name": "끝의 % 는 원문 % 로 보고 %25", "url": "http://h.example/api", "params": [["rate", "100%"]], "auth": null, "expected": "http://h.example/api?rate=100%25"},
+    {"name": "숫자는 그대로", "url": "http://h.example/api", "params": [["pageNo", "123"]], "auth": null, "expected": "http://h.example/api?pageNo=123"},
+    {"name": "생 + 는 글자 + 로 보고 %2B(예전 Java 는 생 + 를 보내 서버가 공백으로 읽음)", "url": "http://h.example/api", "params": [["q", "a+b"]], "auth": null, "expected": "http://h.example/api?q=a%2Bb"},
+    {"name": "쉼표 목록·예전 Java 가 그대로 보내던 문자도 인코딩", "url": "http://h.example/api", "params": [["fields", "a,b"], ["x", "+,:;@/?!$'()*"]], "auth": null, "expected": "http://h.example/api?fields=a%2Cb&x=%2B%2C%3A%3B%40%2F%3F%21%24%27%28%29%2A"},
+    {"name": "섞인 값 — %XX 보존, 생 + 만 인코딩", "url": "http://h.example/api", "params": [["q", "a%2Fb+c"]], "auth": null, "expected": "http://h.example/api?q=a%2Fb%2Bc"},
+    {"name": "소문자 hex 는 대소문자 그대로", "url": "http://h.example/api", "params": [["q", "abc%2bd%3d"]], "auth": null, "expected": "http://h.example/api?q=abc%2bd%3d"},
+    {"name": "& = # 는 인코딩 — 파라미터 주입·URL 잘림 방지", "url": "http://h.example/api", "params": [["q", "a&b=c#d"]], "auth": null, "expected": "http://h.example/api?q=a%26b%3Dc%23d"},
+    {"name": "빈 값은 name=", "url": "http://h.example/api", "params": [["empty", ""]], "auth": null, "expected": "http://h.example/api?empty="},
+    {"name": "파라미터 이름도 같은 규칙", "url": "http://h.example/api", "params": [["검색 어", "x"], ["a%5Bb%5D", "1"]], "auth": null, "expected": "http://h.example/api?%EA%B2%80%EC%83%89%20%EC%96%B4=x&a%5Bb%5D=1"},
+    {"name": "기준 URL 의 쿼리는 그대로 두고 뒤에 붙임", "url": "http://h.example/api?type=json&x=a%2Bb", "params": [["q", "a b"]], "auth": null, "expected": "http://h.example/api?type=json&x=a%2Bb&q=a%20b"},
+    {"name": "정적·페이지네이션(숫자)·인증 키 순서", "url": "http://h.example/api", "params": [["q", "한글"], ["pageNo", "1"], ["numOfRows", "100"]], "auth": ["serviceKey", "rP1x/AbC+d=="], "expected": "http://h.example/api?q=%ED%95%9C%EA%B8%80&pageNo=1&numOfRows=100&serviceKey=rP1x%2FAbC%2Bd%3D%3D"},
+    {"name": "인증 키와 같은 이름의 정적 파라미터 — 키 하나만, 맨 끝", "url": "http://h.example/api", "params": [["serviceKey", "static-value"], ["pageNo", "1"]], "auth": ["serviceKey", "rP1x%2FAbC%2Bd%3D%3D"], "expected": "http://h.example/api?pageNo=1&serviceKey=rP1x%2FAbC%2Bd%3D%3D"},
+    {"name": "파라미터 없으면 URL 그대로", "url": "http://h.example/api?x=1", "params": [], "auth": null, "expected": "http://h.example/api?x=1"}
+  ]
+}

@@ -12,6 +12,12 @@ import java.util.regex.Pattern;
  * 인코딩하고, Python 실행기({@code app/services/query_key_encoding.py})는 같은 규칙을 같은 사례 표({@code
  * fixtures/query-api-key-encoding-vectors.json})로 검증한다 — 한쪽만 바꾸면 어느 한쪽 테스트가 깨진다.
  *
+ * <p><b>정적 쿼리 파라미터에도 같은 규칙(WD-200).</b> API_CALL 스텝의 「쿼리 파라미터」(이름·값)와 페이지네이션 파라미터도 {@link
+ * AuthQueryMasker#build} 에서 이 규칙으로 인코딩한다. 예전에는 미리보기·Java 실행기가 값을 인코딩하지 않고(생 값은 거부) Python 실행기는
+ * httpx 로 다시 인코딩해 {@code %2B} 가 {@code %252B} 로 나갔다. Python 쪽({@code _build_request_url})도 같은 함수로
+ * 바꿔 미리보기와 실행이 같은 쿼리 문자열을 보낸다 — 공용 사례 표 {@code fixtures/query-param-encoding-vectors.json} 으로 함께
+ * 검증한다.
+ *
  * <p><b>규칙(방안 C, 자동 판별).</b>
  *
  * <ul>

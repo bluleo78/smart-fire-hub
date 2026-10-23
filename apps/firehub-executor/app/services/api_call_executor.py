@@ -6,7 +6,7 @@ import time
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -289,22 +289,35 @@ def _build_request_url(
 ) -> str:
     """URL 에 정적·페이지네이션 파라미터와 쿼리 인증 키를 붙인 호출 URL 을 만든다(WD-182).
 
-    순서는 Java(``AuthQueryMasker.build``)와 같다 — URL 에 이미 있던 쿼리, 정적·페이지네이션 파라미터, 인증 키.
-    정적·페이지네이션 파라미터는 예전과 같은 httpx ``QueryParams`` 인코딩을 쓰고, 인증 키 값만 api 와 공용 규칙
-    (``encode_query_key``)으로 한 번 인코딩한다 — 인코딩 키·디코딩 키 모두 api 의 연결 테스트·미리보기와 같은 바이트가 나간다.
+    순서는 Java(``AuthQueryMasker.build``)와 같다 — URL 에 이미 있던 쿼리(그대로), 정적·페이지네이션 파라미터, 인증 키.
+    붙이는 파라미터는 이름·값 모두 api 와 공용 규칙(``encode_query_key``)으로 한 번만 인코딩한다 — 인증 키(WD-182)뿐 아니라
+    정적·페이지네이션 파라미터도(WD-200). 예전에는 정적 파라미터를 httpx ``QueryParams`` 로 다시 인코딩해 이미 인코딩된 값
+    (``abc%2Bd%3D%3D``)이 ``abc%252Bd%253D%253D`` 로 나가 대상 서버 인증이 깨졌고, api 미리보기와 바이트가 달랐다.
+    공용 사례 표 ``fixtures/query-param-encoding-vectors.json`` 으로 Java 와 같은 쿼리 문자열인지 검증한다.
     """
     parts = urlsplit(url)
     pieces = []
     if parts.query:
         pieces.append(parts.query)
-    if params:
-        pieces.append(str(httpx.QueryParams(params)))
+    for name, value in params.items():
+        pieces.append(f"{_encode_param(name)}={_encode_param(value)}")
     if auth_query is not None:
         name, raw_key = auth_query
-        pieces.append(f"{quote(name, safe='')}={encode_query_key(raw_key)}")
+        pieces.append(f"{_encode_param(name)}={_encode_param(raw_key)}")
     if not pieces:
         return url
     return urlunsplit(parts._replace(query="&".join(pieces)))
+
+
+def _encode_param(raw: Any) -> str:
+    """쿼리 파라미터 이름·값 하나를 공용 규칙으로 인코딩한다(WD-200). None 은 빈 값, 그 밖은 ``str`` 로 바꾼 뒤 인코딩한다 —
+    Java(``AuthQueryMasker.encodeParam``)도 null 을 빈 값으로 보내 ``name=`` 으로 같은 바이트가 나간다."""
+    if raw is None:
+        return ""
+    # bool 은 예전 httpx QueryParams 처럼 소문자 true/false 로 보낸다 — str(True) 의 "True" 로 바이트가 바뀌지 않게.
+    if isinstance(raw, bool):
+        return "true" if raw else "false"
+    return encode_query_key(str(raw))
 
 
 def _apply_auth(

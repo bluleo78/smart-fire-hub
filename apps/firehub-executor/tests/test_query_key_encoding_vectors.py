@@ -132,10 +132,83 @@ def test_url_query_static_and_pagination_params_kept_in_java_order():
     ]
 
 
-def test_static_param_encoding_unchanged():
-    """정적 파라미터는 예전과 같은 httpx QueryParams 인코딩(공백 +, % 는 %25) — 이번 변경은 인증 키만 바꾼다."""
-    sent = _send("http://public.example.com/api/q", {"q": "a b%2B"}, None)
-    assert sent == [b"/api/q?q=a+b%252B"]
+def test_static_param_same_rule_as_key():
+    """정적 파라미터도 키와 같은 공용 규칙(WD-200) — 이미 인코딩된 값은 그대로(예전 httpx 경로는 %252B), 생 값은 한 번 인코딩
+    (공백은 %20, 예전 httpx 는 +). api 미리보기·Java 실행기와 같은 바이트다."""
+    enc = _send("http://public.example.com/api/q", {"token": "abc%2Bd%3D%3D"}, None)
+    dec = _send("http://public.example.com/api/q", {"token": "abc+d=="}, None)
+    assert enc == [b"/api/q?token=abc%2Bd%3D%3D"]
+    assert dec == [b"/api/q?token=abc%2Bd%3D%3D"]
+    assert _send("http://public.example.com/api/q", {"q": "a b%2B"}, None) == [b"/api/q?q=a%20b%2B"]
+
+
+def test_static_param_with_key_on_wire():
+    """정적(한글·=·공백)·인증 키가 함께 — 실제로 나가는 바이트가 api 의 ApiCallPreviewServiceTest·ApiCallExecutorTest 기대값과 같다."""
+    sent = _send(
+        "http://public.example.com/api/q",
+        {"q": "a=b 한글"},
+        _query_auth("ex+k/y==비밀 Ww11"),
+    )
+    assert sent == [
+        b"/api/q?q=a%3Db%20%ED%95%9C%EA%B8%80&serviceKey=ex%2Bk%2Fy%3D%3D%EB%B9%84%EB%B0%80%20Ww11"
+    ]
+
+
+def test_same_name_static_param_replaced_by_key_at_end():
+    """인증 키와 같은 이름의 정적 파라미터는 지우고 키 하나를 맨 끝에 — Java AuthQueryMasker.build 와 같은 순서(WD-200)."""
+    sent = _send(
+        "http://public.example.com/api/q",
+        {"serviceKey": "static-value", "pageNo": "1"},
+        _query_auth(_PUBLIC_KEY_ENCODED),
+    )
+    assert sent == [b"/api/q?pageNo=1&serviceKey=" + _PUBLIC_KEY_ENCODED.encode()]
+
+
+# ---------------------------------------------------------------------------
+# 쿼리 파라미터 공용 사례 표(WD-200) — api 의 QueryParamEncodingVectorsTest 와 같은 파일
+# ---------------------------------------------------------------------------
+
+_PARAM_FIXTURE = _FIXTURE.with_name("query-param-encoding-vectors.json")
+_PARAM_CASES = json.loads(_PARAM_FIXTURE.read_text(encoding="utf-8"))["cases"]
+
+
+def test_param_fixture_loaded():
+    """표가 비면 아래 파라미터 테스트가 공허하게 통과한다 — 사례가 읽혔고 인증 키 있는·없는 사례가 모두 있는지 확인한다."""
+    assert len(_PARAM_CASES) >= 15
+    assert any(c["auth"] is not None for c in _PARAM_CASES)
+    assert any(c["auth"] is None for c in _PARAM_CASES)
+
+
+def _params_with_auth(case):
+    """실행 요청과 같은 모양으로 만든다 — 정적·페이지네이션 파라미터(순서 유지) + _apply_auth 가 키를 떼어 낸다."""
+    params = {name: value for name, value in case["params"]}
+    auth = None
+    if case["auth"] is not None:
+        auth = _query_auth(case["auth"][1])
+        auth["paramName"] = case["auth"][0]
+    return params, auth
+
+
+@pytest.mark.parametrize("case", _PARAM_CASES, ids=[c["name"] for c in _PARAM_CASES])
+def test_build_request_url_matches_shared_param_vector(case):
+    params, auth = _params_with_auth(case)
+    headers: dict = {}
+    auth_query = api_call_executor._apply_auth(auth, headers, params)
+    assert api_call_executor._build_request_url(case["url"], params, auth_query) == case["expected"]
+
+
+@pytest.mark.parametrize("case", _PARAM_CASES, ids=[c["name"] for c in _PARAM_CASES])
+def test_wire_matches_shared_param_vector(case):
+    """httpx 가 URL 을 다시 인코딩하지 않고 표의 쿼리 문자열을 그대로 보내는지 — 실제 _do_request 로 확인한다."""
+    params, auth = _params_with_auth(case)
+    sent = _send(case["url"], params, auth)
+    # 대상 서버가 받은 경로+쿼리(디코딩 안 한 원형)가 표의 기대 URL 의 경로+쿼리와 바이트로 같아야 한다.
+    assert sent == [case["expected"].split("h.example", 1)[1].encode()]
+
+
+def test_none_param_value_sent_as_empty():
+    """None 값은 빈 값(name=) — Java 도 null 을 빈 값으로 보낸다."""
+    assert _send("http://public.example.com/api/q", {"q": None}, None) == [b"/api/q?q="]
 
 
 def test_no_params_url_untouched():

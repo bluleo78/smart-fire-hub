@@ -862,9 +862,12 @@ class ApiCallPreviewServiceTest {
             "/wd177?serviceKey=rP1x%2FAbC%2Bd%3D%3D", "/wd177?serviceKey=rP1x%2FAbC%2Bd%3D%3D");
   }
 
-  /** 키가 아닌 정적 쿼리 값에 쓸 수 없는 문자가 있으면 여전히 고정 문구로 실패하고 호출하지 않는다 — 키 원문·보낸 형태는 문구에 없다(WD-177 유지). */
+  /**
+   * 정적 쿼리 값에 {@code = 공백 한글} 이 있어도 이제 공용 규칙으로 한 번 인코딩해 호출한다(WD-200) — 예전에는 「URL 인코딩해 넣으세요」로 거부했지만
+   * 운영 실행(Python 실행기)은 같은 값을 인코딩해 보냈다. resolvedUrl 엔 보낸 인코딩 형태가 보이고 키는 가려진다.
+   */
   @Test
-  void preview_unbuildableStaticParam_failsWithoutCallOrSecret() {
+  void preview_unencodedStaticParam_encodedOnce_keyStillMasked() {
     stubWd182();
 
     ApiCallPreviewResponse response =
@@ -881,14 +884,45 @@ class ApiCallPreviewServiceTest {
                 queryAuth(WD177_SPECIAL_KEY),
                 2000));
 
-    assertThat(response.success()).isFalse();
-    assertThat(response.errorMessage())
-        .contains("요청 URL 을 만들 수 없습니다")
-        .doesNotContain("URL 인코딩된 값을 넣으세요")
-        .doesNotContain("pv%2Bk%2Fe%3D%3D");
-    assertNoSecret(response.errorMessage(), WD177_SPECIAL_KEY);
+    assertThat(response.success()).isTrue();
+    assertThat(receivedWd177Urls())
+        .containsExactly(
+            "/wd177?q=a%3Db%20%ED%95%9C%EA%B8%80"
+                + "&serviceKey=pv%2Bk%2Fe%3D%3D%EB%B9%84%EB%B0%80%20Qq77");
+    assertThat(response.resolvedUrl()).contains("q=a%3Db%20%ED%95%9C%EA%B8%80");
     assertNoSecret(response.resolvedUrl(), WD177_SPECIAL_KEY);
-    assertThat(wireMock.getAllServeEvents()).isEmpty();
+    assertThat(response.resolvedUrl()).doesNotContain("pv%2Bk%2Fe%3D%3D");
+  }
+
+  /**
+   * 같은 정적 토큰의 이미 인코딩된 형태·인코딩 안 한 형태가 미리보기에서 같은 바이트로 나간다(WD-200). 기대값은 executor 의 Python 실행기 테스트·공용
+   * 사례 표(query-param-encoding-vectors.json)와 같다 — 예전 Python 실행기는 인코딩된 형태를 {@code %252B} 로 이중 인코딩했다.
+   */
+  @Test
+  void preview_staticParam_encodedAndUnencoded_sameBytes() {
+    stubWd182();
+
+    for (String value : java.util.List.of("abc%2Bd%3D%3D", "abc+d==")) {
+      assertThat(
+              service
+                  .preview(
+                      new ApiCallPreviewRequest(
+                          baseUrl() + "/wd177",
+                          "GET",
+                          null,
+                          java.util.Map.of("token", value),
+                          null,
+                          "$",
+                          null,
+                          null,
+                          null,
+                          2000))
+                  .success())
+          .isTrue();
+    }
+
+    assertThat(receivedWd177Urls())
+        .containsExactly("/wd177?token=abc%2Bd%3D%3D", "/wd177?token=abc%2Bd%3D%3D");
   }
 
   private static void stubWd182() {

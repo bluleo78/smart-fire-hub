@@ -24,11 +24,18 @@ import org.springframework.web.util.UriComponentsBuilder;
  * 나간다. 연결 테스트·상태 점검·미리보기·Java 실행기가 모두 이 빌더를 거치므로 규칙이 한 곳에 있다. 예전에는 값을 그대로 {@code build(true)} 에 넣어
  * 디코딩 키({@code = 공백 한글})는 URL 을 만들지 못했고, {@code +} 는 서버가 공백으로 읽었다.
  *
- * <p><b>URL 을 만들 수 없을 때.</b> 인증 키 밖의 값(정적 쿼리 파라미터·기준 URL)은 예전처럼 다시 인코딩하지 않는다. {@code build(true)} 는
- * 그런 값에 {@code = 공백 한글} 처럼 쿼리에 그대로 쓸 수 없는 문자가 있으면 {@code Invalid character '=' for QUERY_PARAM in
- * "<값 원문>"} 을 던진다. 이 예외가 400 응답·실행 기록·로그로 나가지 않도록 원문을 담지 않은 고정 문구의 {@link
- * InvalidRequestUrlException} 으로 바꾼다(원인 예외를 cause 로 잇지 않는다 — 원인 사슬을 따라가 근본 원인 메시지를 쓰는 분류기가 다시 원문을
- * 꺼내기 때문이다).
+ * <p><b>정적·페이지네이션 쿼리 파라미터 인코딩(WD-200).</b> 붙이는 파라미터의 이름·값은 인증 키와 똑같이 {@link
+ * QueryApiKeyEncoding#encode} 로 한 번만 인코딩한다. 예전에는 값을 그대로 {@code build(true)} 에 넣어, 이미 인코딩된 값({@code
+ * abc%2Bd%3D%3D})은 그대로 나가고 생 값({@code = 공백 한글})은 「URL 인코딩해 넣으세요」로 거부했다. 그런데 운영 실행(Python 실행기)은 같은
+ * 값을 httpx 로 다시 인코딩해 {@code %252B} 로 보내 미리보기는 되는데 실행은 인증에 실패했다. 이제 미리보기·Java 실행기·Python 실행기({@code
+ * _build_request_url})가 같은 규칙으로 같은 바이트를 보낸다(공용 사례 표 {@code
+ * fixtures/query-param-encoding-vectors.json}). 인증 파라미터는 같은 이름의 정적 파라미터가 있어도 하나만, 맨 끝에 붙인다(Python
+ * {@code _apply_auth} 와 같은 순서).
+ *
+ * <p><b>URL 을 만들 수 없을 때.</b> 기준 URL(경로·이미 붙어 있던 쿼리)은 예전처럼 다시 인코딩하지 않는다. {@code build(true)} 는 그런 곳에
+ * {@code = 공백 한글} 처럼 URL 에 그대로 쓸 수 없는 문자가 있으면 {@code Invalid character ... in "<값 원문>"} 을 던진다. 이
+ * 예외가 400 응답·실행 기록·로그로 나가지 않도록 원문을 담지 않은 고정 문구의 {@link InvalidRequestUrlException} 으로 바꾼다(원인 예외를
+ * cause 로 잇지 않는다 — 원인 사슬을 따라가 근본 원인 메시지를 쓰는 분류기가 다시 원문을 꺼내기 때문이다).
  */
 public final class AuthQueryMasker {
 
@@ -58,34 +65,43 @@ public final class AuthQueryMasker {
    * @param queryParams 붙일 쿼리 파라미터(순서 유지). 인증 파라미터가 이미 들어 있으면 그 값을 가린다
    * @param authParamName 인증 쿼리 파라미터 이름(null 이면 가릴 것 없음)
    * @param authSecret 인증 쿼리 파라미터 값(키 원문)
-   * @throws InvalidRequestUrlException 기준 URL·정적 쿼리 값에 URL 에 그대로 쓸 수 없는 문자가 있어 호출 URL 을 만들 수 없을
-   *     때(문구에 원문 없음). 인증 키 값은 {@link QueryApiKeyEncoding#encode} 로 인코딩하므로 원인이 되지 않는다(WD-182)
+   * @throws InvalidRequestUrlException 기준 URL(경로·원래 쿼리)에 URL 에 그대로 쓸 수 없는 문자가 있어 호출 URL 을 만들 수 없을
+   *     때(문구에 원문 없음). 붙이는 파라미터의 이름·값은 {@link QueryApiKeyEncoding#encode} 로 인코딩하므로 원인이 되지
+   *     않는다(WD-182·WD-200)
    */
   public static AuthQueryUrls build(
       String url, Map<String, String> queryParams, String authParamName, String authSecret) {
     Map<String, String> params = queryParams != null ? queryParams : Map.of();
 
-    // 표시용: 같은 입력에서 인증 파라미터 값만 가린 값으로 바꾼다.
-    Map<String, String> displayParams = new LinkedHashMap<>(params);
-    if (authParamName != null && displayParams.containsKey(authParamName)) {
-      displayParams.put(authParamName, maskSecret(authSecret));
+    // 붙일 순서(WD-200): 인증 파라미터가 아닌 것은 받은 순서대로, 인증 파라미터는 맨 끝 하나. 호출자가 같은 이름의 정적 파라미터 자리에 키를
+    // 덮어 넣으면(LinkedHashMap.put) 그 자리에 남는데, Python 실행기는 맨 끝에 붙이므로 여기서 순서를 맞춘다.
+    Map<String, String> ordered = new LinkedHashMap<>();
+    params.forEach(
+        (name, value) -> {
+          if (authParamName == null || !authParamName.equals(name)) ordered.put(name, value);
+        });
+    boolean hasAuth = authParamName != null && params.containsKey(authParamName);
+    if (hasAuth) {
+      ordered.put(authParamName, params.get(authParamName));
     }
+
+    // 표시용: 같은 입력에서 인증 파라미터 값만 가린 값으로 바꾼다. 나머지는 실제로 보내는 인코딩 형태 그대로 보인다(WD-200).
     UriComponentsBuilder displayBuilder = UriComponentsBuilder.fromUriString(url);
-    displayParams.forEach(displayBuilder::queryParam);
+    ordered.forEach(
+        (name, value) ->
+            displayBuilder.queryParam(
+                encodeParam(name),
+                hasAuth && authParamName.equals(name)
+                    ? maskSecret(authSecret)
+                    : encodeParam(value)));
     // build()(encoded=false) 는 문자 검사 없이 이어 붙이기만 한다 — 가린 값의 끝 4자에 '=' 나 잘린 '%3' 가 있어도 표시 URL 은
     // 만들어져야 하므로 검사하는 build(true) 를 쓰지 않는다. 혹시 기준 URL 자체에 키가 있으면 그것도 지운다(방어).
     String displayUrl = scrubSecret(displayBuilder.build().toUriString(), authSecret);
 
-    // 호출용: 인증 파라미터 값만 공용 규칙으로 한 번 인코딩하고(WD-182), 나머지는 예전과 같이 build(true)(재인코딩 없음)로 둔다.
-    // 인코딩한 키는 비예약 문자와 %XX 로만 이뤄져 build(true) 검사를 항상 통과한다.
+    // 호출용: 이름·값을 모두 공용 규칙으로 한 번 인코딩한다(인증 키 WD-182, 정적·페이지네이션 파라미터 WD-200). 인코딩한 조각은 비예약 문자와
+    // %XX 로만 이뤄져 build(true) 검사를 항상 통과하므로, build(true) 가 실패하는 것은 기준 URL 자체가 잘못된 경우뿐이다.
     UriComponentsBuilder callBuilder = UriComponentsBuilder.fromUriString(url);
-    params.forEach(
-        (name, value) ->
-            callBuilder.queryParam(
-                name,
-                authParamName != null && authParamName.equals(name)
-                    ? QueryApiKeyEncoding.encode(value)
-                    : value));
+    ordered.forEach((name, value) -> callBuilder.queryParam(encodeParam(name), encodeParam(value)));
     String callUrl;
     try {
       callUrl = callBuilder.build(true).toUriString();
@@ -94,6 +110,14 @@ public final class AuthQueryMasker {
       throw new InvalidRequestUrlException();
     }
     return new AuthQueryUrls(callUrl, displayUrl);
+  }
+
+  /**
+   * 쿼리 파라미터 이름·값 하나를 공용 규칙({@link QueryApiKeyEncoding#encode})으로 인코딩한다. null 값은 빈 값으로 본다 — Spring 은
+   * null 값을 {@code name}(= 없음)으로, Python 실행기는 {@code name=} 으로 보내 바이트가 달라지므로 빈 값 하나로 맞춘다(WD-200).
+   */
+  private static String encodeParam(String raw) {
+    return QueryApiKeyEncoding.encode(raw != null ? raw : "");
   }
 
   /**
@@ -179,15 +203,17 @@ public final class AuthQueryMasker {
   }
 
   /**
-   * 주소·정적 쿼리 값에 URL 에 그대로 쓸 수 없는 문자가 있어 호출 URL 을 만들 수 없을 때. 메시지에 값 원문을 담지 않는다. 인증 키는 공용 규칙으로 인코딩되므로
-   * 키 때문에는 나지 않는다(WD-182) — 「API 키는 URL 인코딩된 값을 넣으세요」 안내를 걷어 냈다.
+   * 주소(경로·주소에 직접 쓴 쿼리)에 URL 에 그대로 쓸 수 없는 문자가 있어 호출 URL 을 만들 수 없을 때. 메시지에 값 원문을 담지 않는다. 인증
+   * 키(WD-182)와 쿼리 파라미터 이름·값(WD-200)은 공용 규칙으로 인코딩되므로 그 때문에는 나지 않는다 — 「쿼리 파라미터 값은 URL 인코딩해 넣으세요」 안내를
+   * 걷어 냈다.
    */
   public static final class InvalidRequestUrlException extends IllegalArgumentException {
 
     public InvalidRequestUrlException() {
       super(
-          "요청 URL 을 만들 수 없습니다 — 주소나 쿼리 파라미터에 URL 에 그대로 쓸 수 없는 문자(=·공백·한글 등)가 있습니다."
-              + " 주소·쿼리 파라미터 값은 URL 인코딩해 넣으세요(API 키는 인코딩 키·디코딩 키 모두 넣을 수 있습니다)");
+          "요청 URL 을 만들 수 없습니다 — 주소에 URL 에 그대로 쓸 수 없는 문자(공백·한글 등)가 있습니다."
+              + " 주소에 직접 쓴 경로·쿼리 값은 URL 인코딩해 넣으세요"
+              + "(쿼리 파라미터 칸·API 키는 인코딩한 값·인코딩하지 않은 값 모두 넣을 수 있습니다)");
     }
   }
 }
