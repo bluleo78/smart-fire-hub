@@ -219,28 +219,41 @@ public class DatasetService {
   }
 
   /**
+   * 러너 TEMP 재생성의 되돌리기 재료(WD-238) — 옛 테이블을 옮겨 둔 보관본 이름, 재생성 전 컬럼 메타 행 전체, 재생성 전 보안 등급. 스텝이 성공하면
+   * {@link #discardPipelineTempBackup}, 실패하면 {@link #restorePipelineTempTable} 에 넘긴다.
+   */
+  public record PipelineTempRebuild(
+      long datasetId,
+      String tableName,
+      String backupTableName,
+      long backupTableOid,
+      List<org.jooq.Record> columnSnapshot,
+      Long previousLevelId) {}
+
+  /**
    * 파이프라인 러너 전용 — 스텝 소유 TEMP 의 물리 테이블과 컬럼을 새 열 구성으로 <b>같은 데이터셋 id 그대로</b> 다시 만든다(WD-222).
    *
    * <p>왜 삭제 후 새로 만들지 않나: (1) 화면 저장으로 {@code pipeline_step.output_dataset_id} 에 TEMP id 가 고정된 스텝은
    * {@link #deleteDataset} 의 출력 참조 거부에 걸려 재생성이 실패하고, (2) id 가 바뀌면 다른 스텝 입력({@code
    * pipeline_step_input}, CASCADE)이 조용히 사라지고 열린 편집기가 없는 id 를 저장하며, (3) 관리자가 정한 보안 등급 등 데이터셋 메타가
    * 날아간다. 데이터셋 행(이름·등급·출처)은 건드리지 않고, 생성 경로({@link #createDatasetInternal})와 같은 순서로 컬럼 저장 → 테이블 생성만
-   * 다시 한다. 기존 행은 사라진다(빈 테이블) — 러너는 이 TEMP 를 "새로 만든 TEMP" 로 취급한다.
+   * 다시 한다. 새 테이블은 비어 있다 — 러너는 이 TEMP 를 "새로 만든 TEMP" 로 취급한다.
+   *
+   * <p><b>옛 테이블은 지우지 않고 보관한다(WD-238).</b> 재생성은 이 트랜잭션에서 커밋되고 본 실행(SQL·PYTHON·AI 분류·API 수집)은 다른 연결에서
+   * 돌아 한 트랜잭션으로 묶을 수 없다. 예전에는 여기서 옛 테이블을 DROP 해, 본 실행이 실패하면(0 나누기 등) 이전 결과 행이 모두 사라지고 열 메타만 실패한 SQL
+   * 의 것으로 바뀐 빈 테이블이 남았다. 이제 옛 테이블을 보관본 이름으로 옮기고({@link DataTableService#moveToRebuildBackup}) 컬럼 메타
+   * 행·등급을 돌려준다 — 러너가 스텝 결과에 따라 보관본을 버리거나 되돌린다. 행 검색 색인도 성공 때({@link #discardPipelineTempBackup})
+   * 지운다 — 되돌리면 같은 OID·같은 행의 테이블이 돌아와 색인이 그대로 맞는다.
    *
    * @param datasetId 러너 소유 TEMP 데이터셋 id(origin_type=TEMP, source_pipeline_step_id 있음)
    * @param columns 새 사용자 컬럼(러너가 SELECT 결과에서 만든 것)
+   * @return 되돌리기 재료
    */
   @Transactional
-  public void rebuildPipelineTempTable(Long datasetId, List<DatasetColumnRequest> columns) {
-    DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
-    // 러너 소유 TEMP 만 다시 만들 수 있다 — 사용자 데이터셋의 테이블을 지우는 경로가 되지 않게 막는다.
-    if (!"TEMP".equals(dataset.originType()) || dataset.sourcePipelineStepId() == null) {
-      throw new IllegalArgumentException("파이프라인 TEMP 데이터셋만 다시 만들 수 있습니다: " + datasetId);
-    }
-    // 검증은 DROP 보다 먼저다 — 실패할 컬럼 구성으로 옛 테이블을 지우지 않는다.
+  public PipelineTempRebuild rebuildPipelineTempTable(
+      Long datasetId, List<DatasetColumnRequest> columns) {
+    DatasetResponse dataset = requirePipelineTemp(datasetId);
+    // 검증은 테이블을 옮기기보다 먼저다 — 실패할 컬럼 구성으로 옛 테이블을 건드리지 않는다.
     dataTableService.validateNewColumns(columns);
     Set<String> seenColumnNames = new java.util.HashSet<>();
     for (DatasetColumnRequest col : columns) {
@@ -248,14 +261,73 @@ public class DatasetService {
         throw duplicateColumnName(col.columnName());
       }
     }
-    // 색인 테이블은 FK 가 없어 따로 지운다(deleteDataset 과 같은 이유) — 옛 열 기준 색인이 남지 않게 한다.
-    rowSearchIndex.drop(new IndexRef(TenantContext.require(), datasetId, dataset.tableName()));
-    dataTableService.dropTable(dataset.tableName());
+    // 되돌리기 재료는 무엇이든 바꾸기 전에 읽는다.
+    List<org.jooq.Record> columnSnapshot = columnRepository.snapshotByDatasetId(datasetId);
+    Long previousLevelId = datasetSecurityService.currentLevelId(datasetId);
+    long backupTableOid = dataTableService.moveToRebuildBackup(dataset.tableName());
+    String backupTableName = DataTableService.rebuildBackupTableName(dataset.tableName());
     columnRepository.deleteByDatasetId(datasetId);
     withColumnNameUniqueAs409(() -> columnRepository.saveBatch(datasetId, columns));
     dataTableService.createTable(dataset.tableName(), columns);
     // 컬럼이 바뀌었으므로 검색 원문·임베딩도 갱신한다(생성 경로와 같은 규칙).
     reindexSearch(datasetId);
+    return new PipelineTempRebuild(
+        datasetId,
+        dataset.tableName(),
+        backupTableName,
+        backupTableOid,
+        columnSnapshot,
+        previousLevelId);
+  }
+
+  /**
+   * 재생성한 TEMP 의 스텝이 실패·취소됐을 때 되돌린다(WD-238) — 새 테이블을 지우고 보관본을 원래 이름으로, 컬럼 메타를 재생성 전 행 그대로, 등급을 재생성 전
+   * 이상으로 되돌린다. 한 트랜잭션이다(테이블 되돌리기와 메타 되돌리기가 어긋나지 않게). 보관본이 없으면 아무것도 바꾸지 않고 예외를 던진다.
+   *
+   * @param runAsUserId 등급 복원 감사의 실행 주체
+   */
+  @Transactional
+  public void restorePipelineTempTable(PipelineTempRebuild rebuild, long runAsUserId) {
+    requirePipelineTemp(rebuild.datasetId());
+    dataTableService.restoreRebuildBackup(
+        rebuild.tableName(), rebuild.backupTableName(), rebuild.backupTableOid());
+    columnRepository.restoreSnapshot(rebuild.datasetId(), rebuild.columnSnapshot());
+    datasetSecurityService.restoreRebuiltPipelineTempLevel(
+        rebuild.datasetId(), rebuild.previousLevelId(), runAsUserId);
+    // 컬럼이 되돌아갔으므로 검색 원문·임베딩도 다시 맞춘다.
+    reindexSearch(rebuild.datasetId());
+  }
+
+  /**
+   * 재생성한 TEMP 의 스텝이 성공한 뒤 보관본을 버린다(WD-238). 옛 열 기준 행 검색 색인도 함께 지운다(재생성 전에는 재생성 때 지웠다 — 되돌릴 수 있도록 성공
+   * 시점으로 미뤘다). 색인 테이블은 FK 가 없어 따로 지운다.
+   *
+   * @return 이 실행의 보관본을 지웠는지
+   */
+  @Transactional
+  public boolean discardPipelineTempBackup(PipelineTempRebuild rebuild) {
+    requirePipelineTemp(rebuild.datasetId());
+    boolean existed =
+        dataTableService.dropRebuildBackup(
+            rebuild.tableName(), rebuild.backupTableName(), rebuild.backupTableOid());
+    // 이 실행의 보관본이 아니면(겹친 다른 실행이 이미 지우고 자기 것을 둠) 색인·보관본 모두 그 실행에 맡긴다.
+    if (existed) {
+      rowSearchIndex.drop(
+          new IndexRef(TenantContext.require(), rebuild.datasetId(), rebuild.tableName()));
+    }
+    return existed;
+  }
+
+  /** 러너 소유 TEMP 만 다시 만들거나 되돌릴 수 있다 — 사용자 데이터셋의 테이블을 옮기거나 지우는 경로가 되지 않게 막는다. */
+  private DatasetResponse requirePipelineTemp(Long datasetId) {
+    DatasetResponse dataset =
+        datasetRepository
+            .findById(datasetId)
+            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    if (!"TEMP".equals(dataset.originType()) || dataset.sourcePipelineStepId() == null) {
+      throw new IllegalArgumentException("파이프라인 TEMP 데이터셋만 다시 만들 수 있습니다: " + datasetId);
+    }
+    return dataset;
   }
 
   /** 생성 본체 — 출처 필드 검사는 두 공개 진입점이 맡는다. */
@@ -581,6 +653,13 @@ public class DatasetService {
       // 색인 테이블은 FK 가 없어 CASCADE 로 사라지지 않는다 — 원본과 함께 지운다.
       rowSearchIndex.drop(new IndexRef(TenantContext.require(), id, dataset.tableName()));
       dataTableService.dropTable(dataset.tableName());
+      // 러너 TEMP 는 재생성 도중 서버가 멈춰 남은 보관본이 있을 수 있다(WD-238) — 데이터셋과 함께 지워 고아로 남기지 않는다.
+      if ("TEMP".equals(dataset.originType())) {
+        dataTableService.dropRebuildBackup(
+            dataset.tableName(),
+            DataTableService.rebuildBackupTableName(dataset.tableName()),
+            null);
+      }
     }
     columnRepository.deleteByDatasetId(id);
     datasetRepository.deleteById(id);

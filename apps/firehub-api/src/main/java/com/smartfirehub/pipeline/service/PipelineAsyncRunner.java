@@ -9,6 +9,7 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.dataset.storage.tibero.TiberoPipelineSql;
 import com.smartfirehub.dataset.storage.tibero.TiberoSqlLexer;
@@ -421,6 +422,9 @@ public class PipelineAsyncRunner {
     LocalDateTime stepStartedAt = LocalDateTime.now(ZoneOffset.UTC);
     // 증분 스텝 잠금(WD-223) — 책갈피를 읽기 전에 잡고 책갈피 전진 뒤에 푼다. 실패·취소로 그 전에 끝나면 아래 finally 가 푼다.
     SessionAdvisoryLock.Held incrementalLock = null;
+    // 열 구성이 바뀌어 다시 만든 러너 TEMP 의 되돌리기 재료(WD-238) — 옛 테이블이 보관본으로 옮겨져 있다. 출력이 커밋되면 보관본을 버리고, 실패·취소면
+    // 아래 catch 가 되돌린다. 재생성은 커밋된 뒤 본 실행이 다른 연결·트랜잭션에서 돌아 한 트랜잭션으로 묶을 수 없기 때문이다.
+    DatasetService.PipelineTempRebuild tempRebuild = null;
 
     try {
       // 스텝 상태를 RUNNING으로 업데이트
@@ -632,6 +636,7 @@ public class PipelineAsyncRunner {
                   "",
                   !incrementalPartialRead);
           tempDatasetFresh = temp.fresh();
+          tempRebuild = temp.rebuild();
           outputDatasetId = temp.datasetId();
           outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
           // 여기서 즉시 truncate 하지 않는다 — 임시 데이터셋도 이번 실행 재사용 시 이전 실행 결과를
@@ -873,6 +878,7 @@ public class PipelineAsyncRunner {
                 ensureStepTemp(
                     step, pythonColumns, pipelineId, pipelineName, userId, pyRunAs, "Python ");
             pyTempFresh = pyTemp.fresh();
+            tempRebuild = pyTemp.rebuild();
             outputDatasetId = pyTemp.datasetId();
             outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
           }
@@ -1031,9 +1037,11 @@ public class PipelineAsyncRunner {
         // 출력이 없거나 이 스텝 소유 TEMP 면 임시 데이터셋 준비(WD-222 — 열이 바뀌면 재생성)
         if (ownedTempOutput) {
           List<ColumnInfo> apiColumns = inferApiCallColumns(apiCallConfig);
-          outputDatasetId =
+          StepTemp apiTemp =
               ensureUnpropagatedStepTemp(
                   step, apiColumns, pipelineId, pipelineName, userId, apiRunAs, "API_CALL ");
+          outputDatasetId = apiTemp.datasetId();
+          tempRebuild = apiTemp.rebuild();
           outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
           // 여기서 truncateTable 하지 않는다 — 다시 넣지 말 것.
           // 이유 셋:
@@ -1184,6 +1192,7 @@ public class PipelineAsyncRunner {
               ensureStepTemp(
                   step, aiColumns, pipelineId, pipelineName, userId, aiRunAs, "AI_CLASSIFY ");
           aiTempFresh = temp.fresh();
+          tempRebuild = temp.rebuild();
           outputDatasetId = temp.datasetId();
           outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
           // 여기서 truncateTable 하지 않는다 — 다시 넣지 말 것. API_CALL 블록과 같은 이유다:
@@ -1241,6 +1250,23 @@ public class PipelineAsyncRunner {
         throw new ScriptExecutionException("Unsupported script type: " + step.scriptType());
       }
 
+      // 재생성 TEMP 확정(WD-238) — 여기 오면 출력이 커밋됐다. 이후 단계(책갈피·행 수·상태 갱신)가 실패해도 이미 커밋된 새 출력을 되돌리지 않도록 가장
+      // 먼저 보관본을 버리고 재료를 비운다. 버리기 실패는 디스크만 차지하는 보관본이 남을 뿐이라(다음 재생성·데이터셋 삭제가 지운다) 스텝을 실패시키지 않는다.
+      if (tempRebuild != null) {
+        DatasetService.PipelineTempRebuild committed = tempRebuild;
+        tempRebuild = null;
+        try {
+          tempDatasetService.commitRebuild(committed);
+        } catch (Exception commitEx) {
+          log.warn(
+              "Step {}: 재생성 TEMP {} 의 보관본 {} 정리 실패 — 다음 재생성 때 지워진다",
+              step.name(),
+              committed.datasetId(),
+              committed.backupTableName(),
+              commitEx);
+        }
+      }
+
       // 증분 책갈피 전진 — 반드시 "출력이 커밋된 뒤"다.
       //
       // 출력(테넌트 파이프라인 롤 커넥션)과 책갈피(앱 커넥션)는 서로 다른 커넥션이라 한 트랜잭션으로
@@ -1292,6 +1318,9 @@ public class PipelineAsyncRunner {
       // 취소 체크포인트가 던진 예외(WD-153) — 실패가 아니라 CANCELLED 로 기록한다. 실행기가 감싸 던졌어도 원인 사슬에서 찾는다. REPLACE 스테이징
       // 정리는 실행기·러너의 실패 정리 경로가 이미 했다(예외를 다시 던지기 전에).
       PipelineExecutionCancelledException cancelled = PipelineExecutionCancelledException.findIn(e);
+      // 재생성 TEMP 되돌리기(WD-238) — 실패·취소 모두 이전 테이블·열 메타·등급을 되살린다. 상태 기록보다 먼저 해 실행 이력이 「실패」로 보일 때 출력은
+      // 이미 이전 결과다. 되돌리기 실패는 로그만 남기고 원래 실행 오류를 그대로 기록한다.
+      rollbackTempRebuild(tempRebuild, step, userId);
       if (cancelled != null) {
         log.info("Step {} cancelled by user request", step.name());
         executionRepository.updateStepExecution(
@@ -1319,6 +1348,31 @@ public class PipelineAsyncRunner {
       if (incrementalLock != null) {
         incrementalLock.close();
       }
+    }
+  }
+
+  /**
+   * 실패·취소한 스텝의 재생성 TEMP 를 되돌린다(WD-238). 재생성하지 않았으면(null) 아무것도 하지 않는다. 되돌리기가 실패하면 새 열 구성의 빈(또는 일부만
+   * 채운) 테이블과 보관본이 남는다 — 오류 로그로 알리고 예외는 삼킨다(원래 실행 오류를 가리지 않는다). 보관본은 다음 재생성·데이터셋 삭제가 지운다.
+   */
+  private void rollbackTempRebuild(
+      DatasetService.PipelineTempRebuild rebuild, PipelineStepResponse step, Long userId) {
+    if (rebuild == null) {
+      return;
+    }
+    try {
+      tempDatasetService.rollbackRebuild(rebuild, userId);
+      log.info(
+          "Step {} failed — restored temp dataset {} to its previous table and columns",
+          step.name(),
+          rebuild.datasetId());
+    } catch (Exception restoreEx) {
+      log.error(
+          "Step {}: 재생성 TEMP {} 되돌리기 실패(보관본 {}) — 이전 결과가 복원되지 않았습니다",
+          step.name(),
+          rebuild.datasetId(),
+          rebuild.backupTableName(),
+          restoreEx);
     }
   }
 
@@ -1550,8 +1604,12 @@ public class PipelineAsyncRunner {
     return name.toLowerCase(Locale.ROOT);
   }
 
-  /** 러너 소유 TEMP 출력 — 데이터셋 id 와 이번 실행에서 새로 만든(빈) 테이블인지. */
-  private record StepTemp(Long datasetId, boolean fresh) {}
+  /**
+   * 러너 소유 TEMP 출력 — 데이터셋 id, 이번 실행에서 새로 만든(빈) 테이블인지, 그리고 열 구성이 바뀌어 다시 만들었으면 그 되돌리기 재료(WD-238, 아니면
+   * null). 되돌리기 재료가 있으면 {@link #executeStep} 이 스텝 결과에 따라 보관본을 버리거나 되돌린다.
+   */
+  private record StepTemp(
+      Long datasetId, boolean fresh, DatasetService.PipelineTempRebuild rebuild) {}
 
   /**
    * 러너 소유 TEMP 출력(SQL SELECT·AI_CLASSIFY·PYTHON, 그리고 {@link #ensureUnpropagatedStepTemp} 를 거친
@@ -1593,7 +1651,7 @@ public class PipelineAsyncRunner {
       Long dsId = existingDatasetId.get();
       if (!tempDatasetService.hasSchemaChanged(dsId, columns)) {
         log.info("Reusing existing temp dataset {} for {}step {}", dsId, logLabel, step.name());
-        return new StepTemp(dsId, false);
+        return new StepTemp(dsId, false, null);
       }
       if (!allowRebuild) {
         throw new ScriptExecutionException(INCREMENTAL_TEMP_SCHEMA_CHANGED_MESSAGE);
@@ -1606,15 +1664,18 @@ public class PipelineAsyncRunner {
       // 같은 데이터셋 id 로 테이블·컬럼만 다시 만든다(WD-222) — 삭제 후 생성은 화면 저장으로 출력 id 가 TEMP 로 고정된 스텝에서 출력 참조
       // 거부(DatasetInUseException)로 실패하고, id 가 바뀌면 다른 스텝 입력·열린 편집기의 참조가 깨진다. 테이블이 비었으므로 fresh 다 —
       // 출력 등급 처리가 입력 최대 등급으로 정확히 맞춘다(삭제 후 생성 때와 같은 규칙).
-      tempDatasetService.rebuildTempDataset(dsId, columns);
-      return new StepTemp(dsId, true);
+      // 옛 테이블은 지우지 않고 보관한다(WD-238) — 이 스텝이 실패하면 executeStep 이 되돌린다.
+      DatasetService.PipelineTempRebuild rebuild =
+          tempDatasetService.rebuildTempDataset(dsId, columns);
+      return new StepTemp(dsId, true, rebuild);
     } else {
       log.info("Creating new temp dataset for {}step {}", logLabel, step.name());
     }
     return new StepTemp(
         tempDatasetService.createTempDataset(
             columns, pipelineId, pipelineName, stepId, step.name(), userId),
-        true);
+        true,
+        null);
   }
 
   /**
@@ -1627,9 +1688,9 @@ public class PipelineAsyncRunner {
    * 실행 주체 자격보다 높인 뒤에도 실행 주체가 TEMP 를 비우고(REPLACE) 덮어쓴다. 새로 만든(빈) TEMP 는 이번 실행 주체가 방금 만든 것이라 제외한다(SQL
    * 경로와 같은 규칙).
    *
-   * @return 준비된 TEMP 데이터셋 id
+   * @return 준비된 TEMP(재생성했으면 되돌리기 재료 포함 — 호출자가 스텝 결과 처리에 넘긴다)
    */
-  private Long ensureUnpropagatedStepTemp(
+  private StepTemp ensureUnpropagatedStepTemp(
       PipelineStepResponse step,
       List<ColumnInfo> columns,
       Long pipelineId,
@@ -1642,7 +1703,7 @@ public class PipelineAsyncRunner {
     if (!temp.fresh()) {
       pipelineSecurityGate.requireOutputVisible(temp.datasetId(), runAs);
     }
-    return temp.datasetId();
+    return temp;
   }
 
   /** PYTHON 적재 결과 — 실행 로그와 적재 행 수(REPLACE 맞바꿈 여부 판단 재료). */

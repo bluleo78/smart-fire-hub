@@ -107,6 +107,51 @@ public class DatasetSecurityService {
         "파이프라인 신규 임시 출력 등급 = 입력 최대 등급");
   }
 
+  /** 데이터셋의 현재 보안 등급 id — 러너 TEMP 재생성 전 보관용(WD-238). */
+  @Transactional(readOnly = true)
+  public Long currentLevelId(long datasetId) {
+    return levelRepository.findDatasetLevelId(datasetId);
+  }
+
+  /**
+   * 실패한 러너 TEMP 재생성을 되돌릴 때 등급을 재생성 전 등급 이상으로 되돌린다(WD-238). 재생성한 TEMP 는 「새로 만든 빈 TEMP」로 취급돼 입력 등급으로
+   * 정확히 맞춰지는데(낮추기 포함, {@link #assignNewPipelineTempLevel}), 실행이 실패해 이전 행을 되살리면 그 행이 낮아진 등급으로 노출된다.
+   * 그래서 지금 등급이 이전 등급보다 낮을 때만 이전 등급으로 올린다 — 같거나 높으면(실행 중 상향) 그대로 둔다. 허용 목록은 쓰기 전 좁히기만 일어났으므로 건드리지
+   * 않는다.
+   *
+   * @param previousLevelId 재생성 전 등급 id(null 이면 아무것도 하지 않는다)
+   */
+  @Transactional
+  public void restoreRebuiltPipelineTempLevel(
+      long datasetId, Long previousLevelId, long runAsUserId) {
+    if (previousLevelId == null) {
+      return;
+    }
+    Long currentId = levelRepository.findDatasetLevelId(datasetId);
+    if (previousLevelId.equals(currentId)) {
+      return;
+    }
+    // 이전 등급 정의가 그 사이 지워졌으면(등급 삭제는 데이터셋을 다른 등급으로 옮긴다) 되돌릴 대상이 없다 — 지금 등급을 둔다.
+    LevelPolicy previous = levelRepository.findById(previousLevelId).orElse(null);
+    if (previous == null) {
+      return;
+    }
+    int currentRank =
+        currentId == null
+            ? Integer.MIN_VALUE
+            : levelRepository.findById(currentId).map(LevelPolicy::rank).orElse(Integer.MIN_VALUE);
+    if (currentRank >= previous.rank()) {
+      return;
+    }
+    setPipelineOutputLevel(
+        datasetId,
+        previous,
+        runAsUserId,
+        false,
+        "DATASET_SECURITY_LEVEL_CHANGE",
+        "파이프라인 임시 출력 재생성 실패 — 되살린 이전 결과에 맞춰 이전 등급 복원");
+  }
+
   /**
    * 파이프라인 출력 등급 변경 공통부 — 이전 등급을 읽고, 등급(자동 상향이면 상향 시각도)을 바꾸고, 감사를 남긴다. 허용 목록은 여기서 건드리지 않는다 — 게이트가
    * 좁히기({@link #narrowPipelineOutputAllowlist})·쓰기 후 확정({@link #resetPipelineOutputAllowlist})으로 따로

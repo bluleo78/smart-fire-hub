@@ -841,6 +841,97 @@ public class PostgresDataTableStore implements DataTableStore {
     dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tmpName));
   }
 
+  /** 테이블의 OID(테넌트 데이터 스키마) — 없으면 null. 재생성 보관본이 「이 실행이 옮긴 그 테이블」인지 가리는 데 쓴다. */
+  private static Long tableOid(DSLContext ctx, String tableName) {
+    Object oid =
+        ctx.fetchValue("SELECT to_regclass(?)::oid::bigint", DataSchema.qualify(tableName));
+    return oid == null ? null : ((Number) oid).longValue();
+  }
+
+  /** 증분 인덱스({@link #createUpdatedAtIndex})의 고정 이름 — 보관본으로 옮길 때 함께 바꿔야 새 테이블이 같은 이름을 쓸 수 있다. */
+  private static String updatedAtIndexName(String tableName) {
+    return "ix_" + tableName + "_upd";
+  }
+
+  /**
+   * 러너 TEMP 테이블을 보관본으로 옮긴다(WD-238) — 지우지 않고 이름만 바꾸므로 행·id·_updated_at·권한(ACL)·OID 가 그대로 남아, 되돌리면
+   * 이전과 똑같은 테이블이 된다. 호출자 트랜잭션에 참여한다(재생성의 메타 변경·새 테이블 생성과 한 트랜잭션).
+   *
+   * <p>증분 인덱스 {@code ix_<table>_upd} 도 보관본 이름으로 바꾼다 — 그대로 두면 새 테이블의 {@code CREATE INDEX IF NOT
+   * EXISTS} 가 이름이 이미 있다고 보고 건너뛰어 새 테이블에 인덱스가 없다. id 시퀀스·PK 제약 이름은 PostgreSQL 이 새 테이블에 겹치지 않는 이름을 골라
+   * 주므로 바꾸지 않는다(맞바꿈은 시퀀스 실제 이름을 카탈로그로 읽는다 — {@link #swapTable}).
+   */
+  @Override
+  public long moveToRebuildBackup(String tableName, String backupName) {
+    DataTableNames.validate(tableName);
+    DataTableService.requireRebuildBackupOf(tableName, backupName);
+    Long oid = tableOid(dsl, tableName);
+    if (oid == null) {
+      throw new IllegalStateException("재생성할 테이블 '" + tableName + "' 이 없습니다");
+    }
+    dsl.execute(
+        "ALTER TABLE " + DataSchema.qualify(tableName) + " RENAME TO \"" + backupName + "\"");
+    dsl.execute(
+        "ALTER INDEX IF EXISTS "
+            + DataSchema.qualify(updatedAtIndexName(tableName))
+            + " RENAME TO \""
+            + updatedAtIndexName(backupName)
+            + "\"");
+    return oid;
+  }
+
+  /**
+   * 실패한 재생성을 되돌린다(WD-238) — 원래 이름의 새 테이블을 지우고 보관본과 그 증분 인덱스를 원래 이름으로 되돌린다. 한 트랜잭션이다. 보관본이 없으면(다른
+   * 실행이 이미 정리) 새 테이블까지 지우면 둘 다 잃으므로 아무것도 지우지 않고 예외를 던진다.
+   */
+  @Override
+  public void restoreRebuildBackup(String tableName, String backupName, long expectedOid) {
+    DataTableNames.validate(tableName);
+    DataTableService.requireRebuildBackupOf(tableName, backupName);
+    dsl.transaction(
+        cfg -> {
+          DSLContext tx = org.jooq.impl.DSL.using(cfg);
+          // 보관본을 배타 잠금으로 잡고 OID 를 본다 — 같은 TEMP 를 겹쳐 다시 만든 다른 실행이 이 이름에 자기 보관본을 두었으면(이 실행의 보관본은
+          // 그 실행이 이미 지웠다) 그 실행의 테이블·메타를 덮지 않도록 아무것도 바꾸지 않는다.
+          Long oid = tableOid(tx, backupName);
+          if (oid == null || oid != expectedOid) {
+            throw new IllegalStateException(
+                "테이블 '"
+                    + tableName
+                    + "' 의 재생성 보관본 '"
+                    + backupName
+                    + "' 이 "
+                    + (oid == null ? "없어" : "다른 실행의 것이라")
+                    + " 되돌릴 수 없습니다");
+          }
+          tx.execute("LOCK TABLE " + DataSchema.qualify(backupName) + " IN ACCESS EXCLUSIVE MODE");
+          tx.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tableName));
+          tx.execute(
+              "ALTER TABLE " + DataSchema.qualify(backupName) + " RENAME TO \"" + tableName + "\"");
+          tx.execute(
+              "ALTER INDEX IF EXISTS "
+                  + DataSchema.qualify(updatedAtIndexName(backupName))
+                  + " RENAME TO \""
+                  + updatedAtIndexName(tableName)
+                  + "\"");
+        });
+    // RENAME 은 ACL 을 그대로 두지만, 그 사이 등급이 바뀌었을 수 있어 PYTHON 읽기 슬롯 GRANT 를 커밋 후 다시 맞춘다.
+    pythonReadGrantSync.syncTableAfterCommit(tableName);
+  }
+
+  /** 재생성 보관본이 있으면(expectedOid 가 있으면 그 OID 일 때만) 지운다(소유 시퀀스도 함께). 지웠는지 돌려준다(WD-238). */
+  @Override
+  public boolean dropRebuildBackup(String tableName, String backupName, Long expectedOid) {
+    DataTableNames.validate(tableName);
+    DataTableService.requireRebuildBackupOf(tableName, backupName);
+    Long oid = tableOid(dsl, backupName);
+    if (oid == null || (expectedOid != null && !expectedOid.equals(oid))) {
+      return false;
+    }
+    dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(backupName));
+    return true;
+  }
+
   @Override
   public void renameColumn(String tableName, String oldName, String newName) {
     DataTableNames.validate(tableName);

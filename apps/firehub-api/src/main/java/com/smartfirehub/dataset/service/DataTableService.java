@@ -13,6 +13,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
@@ -22,6 +23,7 @@ import org.springframework.stereotype.Service;
  * 구현이 실행하며, 호출자의 트랜잭션에 그대로 참여한다. 이름 검증({@link #validateName})처럼 백엔드와 무관한 순수 검증과, 기본 인자만 채워 다른 오버로드로
  * 넘기는 편의 오버로드는 여기에 남긴다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DataTableService {
@@ -205,6 +207,65 @@ public class DataTableService {
       throw new InvalidTableNameException(
           "'" + tempName + "' 은(는) 테이블 '" + tableName + "' 의 REPLACE 임시 테이블 이름이 아닙니다");
     }
+  }
+
+  /** 러너 TEMP 재생성 보관본 이름 접두(WD-238) — 예약 접두 {@link #TEMP_TABLE_PREFIX} 아래라 사용자 테이블과 겹치지 않는다. */
+  public static final String REBUILD_BACKUP_PREFIX = TEMP_TABLE_PREFIX + "bak_";
+
+  /**
+   * 열 구성이 바뀐 러너 TEMP 를 다시 만드는 동안 옛 테이블을 보관할 이름 — {@code rtmp_bak_<원본 이름의 MD5 32 hex>}(41자, WD-238).
+   *
+   * <p><b>왜 원본마다 고정인가.</b> 서버가 스텝 도중 죽어 보관본이 남으면(되돌리기·정리 전) 다음 재생성이 이 이름으로 찾아 지운다 — 난수 이름이면 찾을 방법이
+   * 없다. 같은 TEMP 를 동시에 다시 만드는 두 실행은 뒤 실행이 남은 보관본을 지우므로 앞 실행의 되돌리기는 실패를 로그로만 남긴다(겹친 재생성은 원래도 나중 실행이
+   * 이긴다). REPLACE 임시 테이블({@link #newTempTableName}·{@link #legacyTempTableName})과는 모양이 달라 {@link
+   * #requireTempTableOf} 를 통과하지 못하고, REPLACE 의 옛 이름 잔재 정리도 이 이름을 지우지 않는다.
+   *
+   * <p>운영자 수동 확인: {@code SELECT relname FROM pg_class c JOIN pg_namespace n ON n.oid =
+   * c.relnamespace WHERE n.nspname = '<데이터 스키마>' AND c.relkind = 'r' AND c.relname LIKE
+   * 'rtmp\_bak\_%'} — 실행 중인 스텝이 없을 때 남은 것은 지워도 된다(데이터셋 메타는 이미 새 열 구성을 가리킨다).
+   */
+  public static String rebuildBackupTableName(String tableName) {
+    return REBUILD_BACKUP_PREFIX + DataTableNames.md5Hex(tableName);
+  }
+
+  /** {@code backupName} 이 {@code tableName} 의 재생성 보관본 이름인지 확인한다 — 아니면 거부해 실제 테이블을 지우거나 덮지 않게 한다. */
+  public static void requireRebuildBackupOf(String tableName, String backupName) {
+    if (backupName == null || !backupName.equals(rebuildBackupTableName(tableName))) {
+      throw new InvalidTableNameException(
+          "'" + backupName + "' 은(는) 테이블 '" + tableName + "' 의 재생성 보관본 이름이 아닙니다");
+    }
+  }
+
+  /**
+   * 러너 TEMP 테이블을 보관본으로 옮기고 그 이름을 돌려준다(WD-238). 호출자 트랜잭션에 참여한다 — 같은 트랜잭션에서 원래 이름으로 새 테이블을 만든다. 남은
+   * 보관본(서버가 도중에 죽은 이전 실행)은 먼저 지운다 — 데이터셋 메타가 이미 그 실행의 새 열 구성이라 되돌릴 근거가 없다.
+   *
+   * @return 옮긴 테이블의 OID(보관본 이름은 {@link #rebuildBackupTableName}) — 되돌리기·버리기에 그대로 넘긴다
+   */
+  public long moveToRebuildBackup(String tableName) {
+    DataTableNames.validate(tableName);
+    String backupName = rebuildBackupTableName(tableName);
+    if (resolver.tableStore().dropRebuildBackup(tableName, backupName, null)) {
+      log.warn("테이블 {} 의 남은 재생성 보관본 {} 을 지웠습니다(이전 실행이 마무리 전에 멈춘 흔적)", tableName, backupName);
+    }
+    return resolver.tableStore().moveToRebuildBackup(tableName, backupName);
+  }
+
+  /**
+   * 실패한 재생성을 되돌린다 — 새 테이블을 지우고 보관본을 원래 이름으로 되돌린다(WD-238). 보관본이 없거나 이 실행이 옮긴 테이블(OID)이 아니면 아무것도 지우지
+   * 않고 예외.
+   */
+  public void restoreRebuildBackup(String tableName, String backupName, long expectedOid) {
+    DataTableNames.validate(tableName);
+    requireRebuildBackupOf(tableName, backupName);
+    resolver.tableStore().restoreRebuildBackup(tableName, backupName, expectedOid);
+  }
+
+  /** 재생성 보관본이 있으면 지우고 지웠는지 돌려준다(WD-238) — 스텝 성공 뒤(이 실행이 옮긴 OID 만), 데이터셋 삭제 때(null — 무조건) 쓴다. */
+  public boolean dropRebuildBackup(String tableName, String backupName, Long expectedOid) {
+    DataTableNames.validate(tableName);
+    requireRebuildBackupOf(tableName, backupName);
+    return resolver.tableStore().dropRebuildBackup(tableName, backupName, expectedOid);
   }
 
   /**

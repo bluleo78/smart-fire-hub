@@ -194,6 +194,34 @@ public class DatasetColumnRepository {
   }
 
   /**
+   * 데이터셋 컬럼 메타 행 전체(모든 열 — id·is_searchable·tenant_id 포함)를 그대로 읽는다(WD-238). 응답 DTO 는 일부 열만 담아, 실패한
+   * TEMP 재생성을 되돌릴 때 검색 대상 설정·컬럼 id 를 잃지 않도록 행 그대로 보관한다.
+   */
+  public List<Record> snapshotByDatasetId(Long datasetId) {
+    return dsl.select()
+        .from(DATASET_COLUMN)
+        .where(COL_DATASET_ID.eq(datasetId))
+        .orderBy(COL_COLUMN_ORDER)
+        .fetch();
+  }
+
+  /**
+   * {@link #snapshotByDatasetId} 로 보관한 행으로 데이터셋 컬럼 메타를 되돌린다 — 현재 행을 지우고 보관 행을 id 까지 그대로 다시
+   * 넣는다(WD-238).
+   */
+  public void restoreSnapshot(Long datasetId, List<Record> snapshot) {
+    deleteByDatasetId(datasetId);
+    for (Record row : snapshot) {
+      // set(Record) 는 「바뀐 값」만 넣으므로 조회한 행에는 쓸 수 없다 — 열마다 값을 그대로 옮긴다.
+      java.util.Map<Field<?>, Object> values = new java.util.LinkedHashMap<>();
+      for (Field<?> f : row.fields()) {
+        values.put(field(name("dataset_column", f.getName())), row.get(f));
+      }
+      dsl.insertInto(DATASET_COLUMN).set(values).execute();
+    }
+  }
+
+  /**
    * 같은 데이터셋에 이 이름의 필드가 있는지 — 필드명 중복 사전 검사(WD-99). {@code excludeColumnId} 는 비교에서 뺄 필드(이름 변경 시 자기
    * 자신)이며 null 이면 모두 비교한다. 목록 전체를 읽지 않도록 EXISTS 한 번으로 묻는다.
    */
