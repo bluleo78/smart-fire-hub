@@ -90,6 +90,37 @@ public interface DataTableStore {
   /** 이번 실행의 임시(staging) 테이블({@code tempName})이 있으면 버린다. 실패 시 원본 보존용. 다른 실행의 임시 테이블은 건드리지 않는다. */
   void dropTempTable(String tableName, String tempName);
 
+  /**
+   * 열 구성이 바뀐 러너 TEMP 를 다시 만들기 전에 기존 테이블을 지우지 않고 보관본 이름({@code
+   * DataTableService.rebuildBackupTableName})으로 옮긴다(WD-238). 호출자 트랜잭션에 참여한다 — 같은 트랜잭션에서 원래 이름으로 새
+   * 테이블을 만든다. 스텝이 성공하면 {@link #dropRebuildBackup}, 실패하면 {@link #restoreRebuildBackup} 을 부른다.
+   *
+   * <p>기본 구현은 지원하지 않음 — 러너 TEMP 재생성은 PostgreSQL 테넌트에서만 일어난다(Tibero 는 출력 없는 SELECT·PYTHON·AI 분류를
+   * TEMP 준비 전에 거부한다).
+   *
+   * @return 옮긴 테이블의 OID — 되돌리기·버리기가 「이 실행이 옮긴 그 테이블」인지 확인하는 데 쓴다(같은 TEMP 를 겹쳐 다시 만든 다른 실행의 보관본을
+   *     건드리지 않게)
+   */
+  default long moveToRebuildBackup(String tableName, String backupName) {
+    throw new UnsupportedOperationException("이 저장소는 임시 데이터셋 재생성 보관을 지원하지 않습니다");
+  }
+
+  /**
+   * 실패한 재생성을 되돌린다(WD-238) — 원래 이름의 새 테이블을 지우고 보관본을 원래 이름으로 되돌린다. 보관본이 없으면 새 테이블을 지우지 않고 예외를 던진다(둘 다
+   * 잃지 않게). 보관본 OID 가 {@code expectedOid} 와 다르면(다른 실행이 옮긴 것) 역시 아무것도 바꾸지 않고 예외를 던진다.
+   */
+  default void restoreRebuildBackup(String tableName, String backupName, long expectedOid) {
+    throw new UnsupportedOperationException("이 저장소는 임시 데이터셋 재생성 보관을 지원하지 않습니다");
+  }
+
+  /**
+   * 재생성 보관본이 있으면 지우고, 지웠는지 돌려준다(WD-238). 스텝 성공 뒤·남은 보관본 정리에 쓴다. {@code expectedOid} 가 있으면 그 OID 의
+   * 보관본만 지운다(다르면 지우지 않고 false) — null 이면 남은 보관본을 무조건 지운다(재생성 직전·데이터셋 삭제).
+   */
+  default boolean dropRebuildBackup(String tableName, String backupName, Long expectedOid) {
+    throw new UnsupportedOperationException("이 저장소는 임시 데이터셋 재생성 보관을 지원하지 않습니다");
+  }
+
   /** 컬럼 이름을 바꾼다. 호출자 트랜잭션에 참여한다. */
   void renameColumn(String tableName, String oldName, String newName);
 

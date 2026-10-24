@@ -13,6 +13,7 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.security.PermissionChecker;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -1026,11 +1027,14 @@ class PipelineAsyncRunnerTest {
     when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(ownTemp));
     when(tempDatasetService.hasSchemaChanged(eq(ownTemp), any())).thenReturn(true);
     when(datasetRepository.findTableNameById(ownTemp)).thenReturn(Optional.of("ptmp_23_py"));
+    DatasetService.PipelineTempRebuild rebuild = rebuildHandle(ownTemp, "ptmp_23_py");
+    when(tempDatasetService.rebuildTempDataset(eq(ownTemp), any())).thenReturn(rebuild);
 
-    runner.executeStep(stepExecId, py, pipelineId, "TestPipeline", userId, false);
+    String status = runner.executeStep(stepExecId, py, pipelineId, "TestPipeline", userId, false);
 
     verify(tempDatasetService).rebuildTempDataset(eq(ownTemp), any());
     verify(tempDatasetService, never()).deleteTempDataset(any());
+    assertRebuildSettled(status, rebuild, userId);
   }
 
   /** API_CALL — 출력 id 가 소유 TEMP 이고 추론 열이 바뀌었으면 같은 id 로 다시 만든다. */
@@ -1058,11 +1062,14 @@ class PipelineAsyncRunnerTest {
     when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(ownTemp));
     when(tempDatasetService.hasSchemaChanged(eq(ownTemp), any())).thenReturn(true);
     when(datasetRepository.findTableNameById(ownTemp)).thenReturn(Optional.of("ptmp_24_api"));
+    DatasetService.PipelineTempRebuild rebuild = rebuildHandle(ownTemp, "ptmp_24_api");
+    when(tempDatasetService.rebuildTempDataset(eq(ownTemp), any())).thenReturn(rebuild);
 
-    runner.executeStep(stepExecId, api, pipelineId, "TestPipeline", userId, false);
+    String status = runner.executeStep(stepExecId, api, pipelineId, "TestPipeline", userId, false);
 
     verify(tempDatasetService).rebuildTempDataset(eq(ownTemp), any());
     verify(tempDatasetService, never()).deleteTempDataset(any());
+    assertRebuildSettled(status, rebuild, userId);
   }
 
   /** AI_CLASSIFY — 출력 id 가 소유 TEMP 이고 출력 열이 바뀌었으면 같은 id 로 다시 만든다. */
@@ -1081,6 +1088,8 @@ class PipelineAsyncRunnerTest {
     when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(ownTemp));
     when(tempDatasetService.hasSchemaChanged(eq(ownTemp), any())).thenReturn(true);
     when(datasetRepository.findTableNameById(ownTemp)).thenReturn(Optional.of("ptmp_25_ai"));
+    DatasetService.PipelineTempRebuild rebuild = rebuildHandle(ownTemp, "ptmp_25_ai");
+    when(tempDatasetService.rebuildTempDataset(eq(ownTemp), any())).thenReturn(rebuild);
     PipelineStepResponse noOutput = aiStepNoOutput(stepId, "ai-owned-temp", "REPLACE");
     PipelineStepResponse ai =
         new PipelineStepResponse(
@@ -1100,10 +1109,11 @@ class PipelineAsyncRunnerTest {
             null,
             null);
 
-    runner.executeStep(stepExecId, ai, pipelineId, "TestPipeline", userId, false);
+    String status = runner.executeStep(stepExecId, ai, pipelineId, "TestPipeline", userId, false);
 
     verify(tempDatasetService).rebuildTempDataset(eq(ownTemp), any());
     verify(tempDatasetService, never()).deleteTempDataset(any());
+    assertRebuildSettled(status, rebuild, userId);
   }
 
   /**
@@ -1154,6 +1164,8 @@ class PipelineAsyncRunnerTest {
     when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(ownTemp));
     when(tempDatasetService.hasSchemaChanged(eq(ownTemp), any())).thenReturn(true);
     when(datasetRepository.findTableNameById(ownTemp)).thenReturn(Optional.of("ptmp_27_inc"));
+    DatasetService.PipelineTempRebuild rebuild = rebuildHandle(ownTemp, "ptmp_27_inc");
+    when(tempDatasetService.rebuildTempDataset(eq(ownTemp), any())).thenReturn(rebuild);
     when(columnRepository.findByDatasetId(ownTemp))
         .thenReturn(List.of(col("code", false), col("name", false)));
     when(sqlExecutor.execute(anyList(), anyString())).thenReturn("ok");
@@ -1162,6 +1174,8 @@ class PipelineAsyncRunnerTest {
 
     assertThat(status).isEqualTo("COMPLETED");
     verify(tempDatasetService).rebuildTempDataset(eq(ownTemp), any());
+    // WD-238: 성공했으니 보관본을 버리고 되돌리지 않는다.
+    assertRebuildSettled(status, rebuild, userId);
   }
 
   /**
@@ -4164,5 +4178,26 @@ class PipelineAsyncRunnerTest {
             contains("취소 전까지 5행 적재됨"),
             isNull(),
             any());
+  }
+
+  /** 재생성 되돌리기 재료(WD-238) 픽스처 — 러너는 이 값을 그대로 확정·되돌리기에 넘기기만 한다. */
+  private static DatasetService.PipelineTempRebuild rebuildHandle(Long datasetId, String table) {
+    return new DatasetService.PipelineTempRebuild(
+        datasetId, table, "rtmp_bak_x", 1L, List.of(), null);
+  }
+
+  /**
+   * 재생성한 TEMP 가 스텝 결과에 맞게 정리됐는지(WD-238) — 실패·취소면 되돌리기만, 성공이면 보관본 버리기만 정확히 한 번. SQL 이 아닌 스텝(PYTHON·
+   * API_CALL·AI_CLASSIFY)도 같은 ensureStepTemp 경로를 지나 이 처리를 받는다.
+   */
+  private void assertRebuildSettled(
+      String status, DatasetService.PipelineTempRebuild rebuild, Long userId) {
+    if ("COMPLETED".equals(status)) {
+      verify(tempDatasetService).commitRebuild(rebuild);
+      verify(tempDatasetService, never()).rollbackRebuild(any(), anyLong());
+    } else {
+      verify(tempDatasetService).rollbackRebuild(rebuild, userId);
+      verify(tempDatasetService, never()).commitRebuild(any());
+    }
   }
 }

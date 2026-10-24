@@ -93,9 +93,23 @@ public class TempDatasetService {
   /**
    * 스키마가 바뀐 러너 소유 TEMP 를 같은 데이터셋 id 그대로 새 열 구성으로 다시 만든다(WD-222). 삭제 후 생성은 화면 저장으로 출력 id 가 고정된 스텝에서
    * 출력 참조 거부로 실패하고 id 가 바뀌어 참조가 깨지므로 쓰지 않는다 — 근거는 {@link DatasetService#rebuildPipelineTempTable}.
+   *
+   * <p>옛 테이블은 보관본으로 옮겨 두고 되돌리기 재료를 돌려준다(WD-238) — 호출자(러너)는 스텝이 끝나면 반드시 {@link #commitRebuild} 또는
+   * {@link #rollbackRebuild} 를 부른다.
    */
-  public void rebuildTempDataset(Long datasetId, List<ColumnInfo> columns) {
-    datasetService.rebuildPipelineTempTable(datasetId, toColumnRequests(columns));
+  public DatasetService.PipelineTempRebuild rebuildTempDataset(
+      Long datasetId, List<ColumnInfo> columns) {
+    return datasetService.rebuildPipelineTempTable(datasetId, toColumnRequests(columns));
+  }
+
+  /** 재생성한 TEMP 의 스텝이 성공했다 — 옛 테이블 보관본을 버린다(WD-238). */
+  public void commitRebuild(DatasetService.PipelineTempRebuild rebuild) {
+    datasetService.discardPipelineTempBackup(rebuild);
+  }
+
+  /** 재생성한 TEMP 의 스텝이 실패·취소됐다 — 이전 테이블·열 메타·등급을 되돌린다(WD-238). */
+  public void rollbackRebuild(DatasetService.PipelineTempRebuild rebuild, long runAsUserId) {
+    datasetService.restorePipelineTempTable(rebuild, runAsUserId);
   }
 
   /** TEMP 컬럼 정보를 데이터셋 컬럼 생성 요청으로 바꾼다 — 사전 검증과 실제 생성이 같은 요청을 쓰게 하는 단일 지점. */

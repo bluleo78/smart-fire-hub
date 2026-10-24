@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
@@ -381,6 +382,251 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     assertThat(storedOutputId(created)).isEqualTo(srcDatasetId);
   }
 
+  // ------------------------------------------------------------------ //
+  // WD-238: 열 변경 후 본 실행이 실패하면 이전 결과 보존
+  // ------------------------------------------------------------------ //
+
+  /** 열을 바꾼 SELECT 가 LIMIT 0 사전 점검은 통과하고 실제 행에서 0 나누기로 실패한다(원천의 amount=2 행). */
+  private static final String FAILING_SELECT = "code, 10 / (amount - 2) AS bad";
+
+  /**
+   * 자동 생성(TEMP) 출력 스텝의 SELECT 열을 바꾼 실행이 본 SQL 에서 실패하면 이전 결과 행·열 메타(id·검색 대상 설정 포함)·물리 테이블(OID)이 그대로
+   * 남고 데이터셋 id 도 그대로다 — REPLACE·APPEND 모두(WD-238). 결함: 러너가 TEMP 를 새 열 구성으로 DROP→CREATE 해 커밋한 뒤 본
+   * SQL 을 다른 트랜잭션에서 돌려, 실패하면 행이 0 이고 열 메타는 실패한 SQL 의 것인 빈 테이블이 남았다. 보관본은 남지 않아야 하고, 고친 SQL 로 다시 돌리면
+   * 새 열 구성으로 성공한다.
+   */
+  @Test
+  void columnChangeThenRunFails_keepsPreviousRowsAndColumns_replaceAndAppend() {
+    for (String strategy : List.of("REPLACE", "APPEND")) {
+      String name = pipelineName + " " + strategy;
+      Long pipelineId =
+          pipelineService
+              .createPipeline(
+                  new CreatePipelineRequest(
+                      name,
+                      "WD-238",
+                      List.of(sqlStep(STEP_NAME, "code, label", null, null, strategy))),
+                  userId)
+              .id();
+      pipelinesToCleanup.add(pipelineId);
+      assertThat(runAndWait(pipelineId)).as(strategy + " 첫 실행").isEqualTo("COMPLETED");
+      Long temp = tempIdOf(pipelineId);
+      // 검색 대상 설정은 응답 DTO 에 없는 열이다 — 되돌리기가 행 그대로 보관했는지 본다.
+      inTenantFixture(
+          () ->
+              dsl.execute(
+                  "UPDATE dataset_column SET is_searchable = true"
+                      + " WHERE dataset_id = ? AND column_name = 'label'",
+                  temp));
+      List<String> columnIdsBefore = columnIdentity(temp);
+      Long oidBefore = tableOid(temp);
+
+      updateStep(pipelineId, name, sqlStep(STEP_NAME, FAILING_SELECT, null, null, strategy));
+      assertThat(runAndWait(pipelineId)).as(strategy + " 열 변경 + 실행 오류").isEqualTo("FAILED");
+      assertThat(lastError(pipelineId)).contains("0");
+
+      assertThat(tempIdOf(pipelineId)).as(strategy + " TEMP id 유지").isEqualTo(temp);
+      assertThat(tempColumns(temp)).as(strategy + " 열 메타 보존").containsExactly("code", "label");
+      assertThat(columnIdentity(temp))
+          .as(strategy + " 컬럼 행(id·검색 대상) 보존")
+          .isEqualTo(columnIdsBefore);
+      assertThat(physicalColumns(temp))
+          .as(strategy + " 물리 열")
+          .contains("code", "label")
+          .doesNotContain("bad");
+      assertThat(rowCount(temp)).as(strategy + " 이전 행 보존").isEqualTo(2);
+      assertThat(tableOid(temp)).as(strategy + " 같은 물리 테이블로 되돌림").isEqualTo(oidBefore);
+      assertThat(backupExists(temp)).as(strategy + " 보관본 정리").isFalse();
+      assertThat(updatedAtIndexExists(temp)).as(strategy + " _updated_at 인덱스 되돌림").isTrue();
+
+      // SQL 을 고치면 새 열 구성으로 성공하고 보관본이 남지 않는다.
+      updateStep(
+          pipelineId,
+          name,
+          sqlStep(STEP_NAME, "code, amount * 10 AS scaled", null, null, strategy));
+      assertThat(runAndWait(pipelineId))
+          .as(strategy + " 고친 SQL — 오류: " + lastError(pipelineId))
+          .isEqualTo("COMPLETED");
+      assertThat(tempIdOf(pipelineId)).isEqualTo(temp);
+      assertThat(tempColumns(temp)).containsExactly("code", "scaled");
+      assertThat(rowCount(temp)).as(strategy + " 새 행").isEqualTo(2);
+      assertThat(nullCount(temp, "scaled")).isZero();
+      assertThat(backupExists(temp)).isFalse();
+      assertThat(updatedAtIndexExists(temp)).isTrue();
+    }
+  }
+
+  /**
+   * 서버가 재생성 도중 멈춰 남은 보관본(되돌리기·정리 전)은 다음 재생성이 지우고 실행은 성공한다. 파이프라인(=TEMP) 삭제도 남은 보관본을 함께 지운다(WD-238).
+   */
+  @Test
+  void leftoverRebuildBackup_clearedByNextRebuild_andByDelete() {
+    Long pipelineId = createPipeline(sqlStep(STEP_NAME, "code, label", null, null));
+    pipelinesToCleanup.add(pipelineId);
+    assertThat(runAndWait(pipelineId)).isEqualTo("COMPLETED");
+    Long temp = tempIdOf(pipelineId);
+    String table = tableNameOf(temp);
+    plantBackup(table);
+    assertThat(backupExists(temp)).isTrue();
+
+    assertSelectChangeRuns(
+        pipelineId, temp, "code, label, amount", null, "code", "label", "amount");
+
+    plantBackup(table);
+    pipelineService.deletePipeline(pipelineId);
+    pipelinesToCleanup.remove(pipelineId);
+    assertThat(
+            inTenantFixture(
+                () ->
+                    dsl.fetchValue(
+                        "SELECT to_regclass(?) IS NOT NULL",
+                        DataSchema.qualify(DataTableService.rebuildBackupTableName(table)))))
+        .as("삭제가 남은 보관본도 지운다")
+        .isEqualTo(false);
+  }
+
+  /**
+   * 되돌리기는 재생성 때 낮아진 등급을 재생성 전 등급으로 되돌린다(WD-238) — 재생성 TEMP 는 「새 빈 TEMP」로 입력 등급에 정확히 맞춰져 낮아질 수 있는데,
+   * 실패로 이전 행을 되살리면 그 행이 낮은 등급으로 노출된다. 러너 대신 서비스 진입점을 직접 불러 낮춤을 흉내 낸다.
+   */
+  @Test
+  void restoreRebuild_raisesLoweredLevelBack() {
+    Long pipelineId = createPipeline(sqlStep(STEP_NAME, "code, label", null, null));
+    pipelinesToCleanup.add(pipelineId);
+    assertThat(runAndWait(pipelineId)).isEqualTo("COMPLETED");
+    Long temp = tempIdOf(pipelineId);
+    Long low =
+        inTenantFixture(
+            () ->
+                dsl.fetchOne("SELECT id FROM security_level ORDER BY rank ASC LIMIT 1")
+                    .get(0, Long.class));
+    Long high =
+        inTenantFixture(
+            () ->
+                dsl.fetchOne("SELECT id FROM security_level ORDER BY rank DESC LIMIT 1")
+                    .get(0, Long.class));
+    assertThat(low).isNotEqualTo(high);
+    setLevel(temp, high);
+
+    DatasetService.PipelineTempRebuild rebuild =
+        datasetService.rebuildPipelineTempTable(
+            temp, List.of(new DatasetColumnRequest("x", "x", "TEXT", null, true, false, null)));
+    assertThat(rebuild.previousLevelId()).isEqualTo(high);
+    assertThat(backupExists(temp)).isTrue();
+    assertThat(rowCount(temp)).as("새 테이블은 비어 있다").isZero();
+    setLevel(temp, low); // 러너의 「새 TEMP 등급 = 입력 등급」 낮춤
+
+    datasetService.restorePipelineTempTable(rebuild, userId);
+    assertThat(levelOf(temp)).as("등급 복원").isEqualTo(high);
+    assertThat(tempColumns(temp)).containsExactly("code", "label");
+    assertThat(rowCount(temp)).isEqualTo(2);
+    assertThat(backupExists(temp)).isFalse();
+  }
+
+  /**
+   * 되돌리기는 이 실행이 옮긴 보관본(OID)일 때만 한다(WD-238) — 같은 TEMP 를 겹쳐 다시 만든 다른 실행이 보관본 이름에 자기 테이블을 두었으면, 되돌리기가
+   * 그 테이블을 원래 이름으로 올리고 옛 열 메타를 써서 물리 열과 메타가 어긋난다. 보관본을 다른 테이블로 바꿔치기한 뒤 되돌리기가 거부되고 현재 테이블·메타가 그대로인지
+   * 본다.
+   */
+  @Test
+  void restoreRebuild_refusesBackupOfAnotherRun() {
+    Long pipelineId = createPipeline(sqlStep(STEP_NAME, "code, label", null, null));
+    pipelinesToCleanup.add(pipelineId);
+    assertThat(runAndWait(pipelineId)).isEqualTo("COMPLETED");
+    Long temp = tempIdOf(pipelineId);
+    String table = tableNameOf(temp);
+
+    DatasetService.PipelineTempRebuild rebuild =
+        datasetService.rebuildPipelineTempTable(
+            temp, List.of(new DatasetColumnRequest("x", "x", "TEXT", null, true, false, null)));
+    // 다른 실행이 이 보관본을 지우고 자기 보관본을 둔 상황
+    inTenantFixture(
+        () ->
+            dsl.execute(
+                "DROP TABLE "
+                    + DataSchema.qualify(DataTableService.rebuildBackupTableName(table))));
+    plantBackup(table);
+
+    assertThatThrownBy(() -> datasetService.restorePipelineTempTable(rebuild, userId))
+        .hasMessageContaining("다른 실행의 것이라");
+    assertThat(tempColumns(temp)).as("메타 그대로").containsExactly("x");
+    assertThat(physicalColumns(temp)).as("현재 테이블 그대로").contains("x");
+    assertThat(datasetService.discardPipelineTempBackup(rebuild)).as("남의 보관본은 버리지도 않는다").isFalse();
+    assertThat(backupExists(temp)).isTrue();
+  }
+
+  private void updateStep(Long pipelineId, String name, PipelineStepRequest step) {
+    pipelineService.updatePipeline(
+        pipelineId, new UpdatePipelineRequest(name, null, null, List.of(step)), userId);
+  }
+
+  /** 컬럼 메타 행의 정체(id·이름·검색 대상) — 되돌리기가 행 그대로 되살렸는지 비교한다. */
+  private List<String> columnIdentity(Long datasetId) {
+    return inTenantFixture(
+        () ->
+            dsl.fetch(
+                    "SELECT id || ':' || column_name || ':' || is_searchable FROM dataset_column"
+                        + " WHERE dataset_id = ? ORDER BY column_order",
+                    datasetId)
+                .getValues(0, String.class));
+  }
+
+  private Long tableOid(Long datasetId) {
+    String table = tableNameOf(datasetId);
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne("SELECT to_regclass(?)::oid::bigint", DataSchema.qualify(table))
+                .get(0, Long.class));
+  }
+
+  private boolean backupExists(Long datasetId) {
+    String backup = DataTableService.rebuildBackupTableName(tableNameOf(datasetId));
+    return inTenantFixture(
+        () ->
+            Boolean.TRUE.equals(
+                dsl.fetchValue("SELECT to_regclass(?) IS NOT NULL", DataSchema.qualify(backup))));
+  }
+
+  /** 테이블의 증분 인덱스(ix_<table>_upd)가 그 테이블에 붙어 있는지. */
+  private boolean updatedAtIndexExists(Long datasetId) {
+    String table = tableNameOf(datasetId);
+    return inTenantFixture(
+        () ->
+            dsl.fetchCount(
+                    dsl.selectOne()
+                        .from("pg_indexes")
+                        .where(
+                            "schemaname = ? AND tablename = ? AND indexname = ?",
+                            DataSchema.current(),
+                            table,
+                            "ix_" + table + "_upd"))
+                > 0);
+  }
+
+  /** 서버가 도중에 멈춘 흔적처럼 보관본 이름의 테이블을 만든다. */
+  private void plantBackup(String table) {
+    inTenantFixture(
+        () ->
+            dsl.execute(
+                "CREATE TABLE "
+                    + DataSchema.qualify(DataTableService.rebuildBackupTableName(table))
+                    + " (id BIGINT)"));
+  }
+
+  private void setLevel(Long datasetId, Long levelId) {
+    inTenantFixture(
+        () ->
+            dsl.execute(
+                "UPDATE dataset SET security_level_id = ? WHERE id = ?", levelId, datasetId));
+  }
+
+  private Long levelOf(Long datasetId) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne("SELECT security_level_id FROM dataset WHERE id = ?", datasetId)
+                .get(0, Long.class));
+  }
+
   private Long stepIdOf(Long pipelineId, String stepName) {
     return inTenantFixture(
         () ->
@@ -430,6 +676,9 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     assertThat(rowCount(temp)).as("적재 행 수").isEqualTo(2);
     String last = expectedColumns[expectedColumns.length - 1];
     assertThat(nullCount(temp, last)).as("마지막 열 '" + last + "' 의 NULL 수").isZero();
+    // WD-238: 성공한 재생성은 보관본을 남기지 않고, 새 테이블이 증분 인덱스를 갖는다.
+    assertThat(backupExists(temp)).as("재생성 보관본 정리").isFalse();
+    assertThat(updatedAtIndexExists(temp)).as("새 테이블의 _updated_at 인덱스").isTrue();
   }
 
   private String selectSql(String selectList) {
@@ -445,6 +694,12 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
   /** SQL 스텝 요청 — outputDatasetId·id 는 화면 왕복을 흉내 낼 때만 채운다. */
   private PipelineStepRequest sqlStep(
       String name, String selectList, Long outputDatasetId, Long stepId) {
+    return sqlStep(name, selectList, outputDatasetId, stepId, "REPLACE");
+  }
+
+  /** {@link #sqlStep(String, String, Long, Long)} 에 적재 전략을 지정한 버전(WD-238). */
+  private PipelineStepRequest sqlStep(
+      String name, String selectList, Long outputDatasetId, Long stepId, String loadStrategy) {
     return new PipelineStepRequest(
         name,
         null,
@@ -453,7 +708,7 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
         outputDatasetId,
         List.of(srcDatasetId),
         null,
-        "REPLACE",
+        loadStrategy,
         null,
         null,
         null,
