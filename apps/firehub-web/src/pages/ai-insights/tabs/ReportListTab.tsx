@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { SecurityLevelBadge } from '@/components/ui/SecurityLevelBadge';
 import {
   Table,
   TableBody,
@@ -95,7 +96,13 @@ export default function ReportListTab() {
                 >
                   {/* 제목 셀은 유동 폭 — 픽셀 고정 대신 셀 폭을 따라 truncate 되게 한다 */}
                   <TableCell className="max-w-0">
-                    <div className="text-sm font-medium truncate">{report.title}</div>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-sm font-medium truncate">{report.title}</span>
+                      {/* 리포트 등급 배지(WD-198) — 열 수 없는 등급이면 서버가 요약을 비워 보낸다 */}
+                      {report.securityLevel && (
+                        <SecurityLevelBadge level={report.securityLevel} className="shrink-0" />
+                      )}
+                    </div>
                     {report.summary && (
                       <div className="text-xs text-muted-foreground truncate">{report.summary}</div>
                     )}

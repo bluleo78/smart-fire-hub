@@ -37,7 +37,8 @@ public class DocumentSearchService {
     }
     // 전역 청크 검색이라 청크 본문이 그대로 나간다 — 볼 수 없는 데이터셋의 청크는 SQL 에서 제외한다(별칭 d).
     String visibility = datasetAccessGuard.visibleSql(clearance, "d");
-    return switch (request.mode()) {
+    List<DocumentSearchHit> hits =
+        switch (request.mode()) {
       case KEYWORD ->
           chunkRepository.searchByTrigram(
               request.query(), request.datasetIds(), request.topK(), visibility);
@@ -48,6 +49,9 @@ public class DocumentSearchService {
       }
       case HYBRID -> hybridSearch(request, visibility);
     };
+    // 청크 본문이 호출자(AI)에게 간다 — 스마트 작업 실행 중이면 실린 청크의 데이터셋 등급을 리포트 등급에 넣는다(WD-198).
+    datasetAccessGuard.noteReportReads(hits.stream().map(DocumentSearchHit::datasetId).toList());
+    return hits;
   }
 
   /** 질의 임베딩 + 그 공간. 공간이 검색할 차원 테이블·모델 필터를 정한다(인제스션과 같은 provider). */

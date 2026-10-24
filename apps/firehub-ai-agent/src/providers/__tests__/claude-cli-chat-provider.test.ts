@@ -86,4 +86,14 @@ describe('ClaudeCliChatProvider', () => {
 
     expect(mockExecuteCliAgent.mock.calls[0][0].aiPurpose).toBe('share');
   });
+
+  // WD-198: 스마트 작업 실행 id 도 그대로 넘긴다 — agent-cli 가 stdio MCP env 로 심는다.
+  it('CLI-WD198: proactiveExecutionId 를 executeCliAgent 로 그대로 넘긴다', async () => {
+    mockExecuteCliAgent.mockReturnValue(makeStream([{ type: 'done' }]));
+    const provider = new ClaudeCliChatProvider(true);
+    for await (const _ of provider.execute({ message: 'hi', tenantId: 1, userId: 1, proactiveExecutionId: 4 })) {
+      /* consume */
+    }
+    expect(mockExecuteCliAgent.mock.calls[0][0].proactiveExecutionId).toBe(4);
+  });
 });

@@ -25,8 +25,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { RestrictedNotice } from '@/components/ui/restricted-notice';
 import { useExecution } from '@/hooks/queries/useProactiveMessages';
 import { useReportActions } from '@/hooks/useReportActions';
+import { isReportLevelBlocked, REPORT_LEVEL_BLOCKED_MESSAGE } from '@/lib/api-error';
 import { getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
 import { getSections } from '@/lib/proactive-utils';
 
@@ -55,14 +57,16 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // HTML 리포트 조회 — 모달이 열려 있고 유효한 ID일 때만 fetch
-  const { data: htmlResponse, isLoading: htmlLoading } = useQuery({
+  const { data: htmlResponse, isLoading: htmlLoading, error: htmlError } = useQuery({
     queryKey: ['execution-html', jobId, executionId],
     queryFn: () => proactiveApi.getExecutionHtml(jobId, executionId),
     enabled: open && !!jobId && !!executionId,
   });
 
   // 실행 메타데이터 조회 — useExecution 훅으로 통일 (RUNNING 시 폴링 포함)
-  const { data: execution, isLoading: metaLoading } = useExecution(jobId, executionId);
+  const { data: execution, isLoading: metaLoading, error: metaError } = useExecution(jobId, executionId);
+  // 리포트 등급이 작성자의 현재 보안 등급보다 높아 서버가 403 으로 막았는가(WD-198) — 「리포트가 없습니다」 대신 등급 안내를 보인다.
+  const levelBlocked = isReportLevelBlocked(htmlError) || isReportLevelBlocked(metaError);
 
   const rawHtml = htmlResponse?.data ?? null;
   const isLoading = htmlLoading || metaLoading;
@@ -186,6 +190,16 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
             </div>
           )}
 
+          {!isLoading && levelBlocked && (
+            <div className="flex items-center justify-center h-full px-6">
+              <RestrictedNotice
+                message={REPORT_LEVEL_BLOCKED_MESSAGE}
+                className="max-w-md"
+                data-testid="report-modal-level-blocked"
+              />
+            </div>
+          )}
+
           {/* HTML 리포트가 있으면 iframe으로 렌더링 */}
           {!isLoading && rawHtml && (
             <div className="h-full bg-white">
@@ -197,7 +211,7 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
           {!isLoading && !rawHtml && execution?.result && renderMarkdownFallback()}
 
           {/* 리포트도 결과도 없는 빈 상태 */}
-          {!isLoading && !rawHtml && !execution?.result && (
+          {!isLoading && !levelBlocked && !rawHtml && !execution?.result && (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               <p className="text-sm">리포트가 없습니다.</p>
             </div>

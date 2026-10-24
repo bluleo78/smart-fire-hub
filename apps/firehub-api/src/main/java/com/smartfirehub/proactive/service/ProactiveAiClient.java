@@ -55,6 +55,7 @@ public class ProactiveAiClient {
    * @param model opencode 에서만 실어 보낼 {@code ai.model}. {@code null} 이면 생략하고 ai-agent 라우트의 고정 기본값을 쓴다
    *     — sdk/cli/cli-api 는 지금까지 모델을 보낸 적이 없고, 여기서 보내기 시작하면 그 테넌트들의 프로액티브 비용이 조용히 바뀐다(의도된 gap, 별도
    *     이슈).
+   * @param executionId 이 호출을 일으킨 실행 id(WD-198) — ai-agent 가 MCP 호출 헤더로 되돌려 보내 리포트 등급 기록에 쓴다. null 이면 싣지 않는다
    */
   public ProactiveResult execute(
       Long userId,
@@ -63,7 +64,8 @@ public class ProactiveAiClient {
       AiCredential credential,
       String model,
       Map<String, Object> template,
-      Map<String, Object> config) {
+      Map<String, Object> config,
+      Long executionId) {
     try {
       Map<String, Object> body = new HashMap<>();
       body.put("prompt", prompt);
@@ -88,6 +90,11 @@ public class ProactiveAiClient {
       // 리포트는 발송(공유)된다 — ai-agent 가 이 값을 읽어 실행 중 MCP 호출에 X-AI-Purpose: share 를 실어, API 가 AI 판정에
       // 더해 SHARE 정책(공유 금지 등급 제외)까지 걸게 한다(스펙 §4.3 Proactive 행).
       body.put("aiPurpose", AiCallContext.PURPOSE_SHARE);
+      // 리포트 등급(WD-198): ai-agent 가 이 실행 중의 MCP 호출에 X-Proactive-Execution-Id 로 실어, api 가 그 호출에서 허용한 데이터셋
+      // 읽기의 등급을 이 실행에 남기게 한다. api 는 헤더 값을 믿지 않고 작성자·진행 중 여부를 확인한 뒤에만 기록한다.
+      if (executionId != null) {
+        body.put("proactiveExecutionId", executionId);
+      }
 
       String responseBody =
           webClient

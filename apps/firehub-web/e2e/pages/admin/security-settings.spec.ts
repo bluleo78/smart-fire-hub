@@ -153,6 +153,29 @@ test.describe('설정 › 데이터 보안', () => {
     });
   });
 
+  // WD-198: 리포트(스마트 작업 실행)만 가리키는 등급도 사용 중이다 — 옮길 등급을 묻고, 고른 값이 DELETE 로 나간다.
+  test('등급 삭제 — 리포트만 쓰는 등급도 옮길 등급을 묻는다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/security-levels/usage', [
+      { levelId: 1, datasetCount: 41, roleCount: 0, reportCount: 0 },
+      { levelId: 2, datasetCount: 230, roleCount: 4, reportCount: 0 },
+      { levelId: 3, datasetCount: 0, roleCount: 0, reportCount: 3 },
+      { levelId: 4, datasetCount: 5, roleCount: 1, reportCount: 0 },
+    ]);
+    const del = await mockApi(page, 'DELETE', '/api/v1/security-levels/3', {}, { capture: true });
+    await openTab(page);
+    await page.getByRole('button', { name: '민감 메뉴' }).click();
+    await page.getByRole('menuitem', { name: '삭제' }).click();
+    const dialog = page.getByRole('dialog', { name: "'민감' 등급 삭제" });
+    await expect(dialog).toContainText(
+      '데이터셋 0개와 역할 0개, 리포트 3개를 다른 등급으로 옮겨야 삭제할 수 있습니다.',
+    );
+    await expect(dialog).not.toContainText('사용 중이 아닌 등급입니다');
+    await dialog.getByRole('combobox', { name: '옮길 등급' }).click();
+    await page.getByRole('option', { name: /기밀/ }).click();
+    await dialog.getByRole('button', { name: '삭제' }).click();
+    expect((await del.waitForRequest()).payload).toMatchObject({ reassignToLevelId: 4 });
+  });
+
   test('기본 등급의 삭제 메뉴는 비활성', async ({
     authenticatedPage: page,
   }) => {

@@ -66,7 +66,8 @@ class ProactiveMessageControllerTest {
         null,
         "daily-report",
         LocalDateTime.now(),
-        false); // canViewReport — 작성자가 아닌 수신자 메시지(WD-162)
+        false, // canViewReport — 작성자가 아닌 수신자 메시지(WD-162)
+        false); // reportLevelBlocked — 리포트 등급 가림 없음(WD-198)
   }
 
   @Test

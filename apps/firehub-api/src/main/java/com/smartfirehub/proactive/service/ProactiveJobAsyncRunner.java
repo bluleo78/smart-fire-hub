@@ -60,6 +60,10 @@ public class ProactiveJobAsyncRunner {
   private final ProactiveOwnerEligibility ownerEligibility;
   // 실행 직전 워크스페이스(테넌트) 상태 재확인 — 「지금 실행」이 정지 워크스페이스에서 돌지 않게(WD-174)
   private final TenantRepository tenantRepository;
+  // 실행 동안 읽은 데이터셋의 최고 등급을 실행(리포트)에 남긴다(WD-198)
+  private final ProactiveReportLevelRecorder levelRecorder;
+  // 이상 탐지 실행이면 이상을 일으킨 지표 SQL 의 등급을 리포트 등급에 넣는다(WD-198)
+  private final MetricSqlAccessChecker metricSqlAccessChecker;
 
   /** 워크스페이스(테넌트)가 정지돼 실행하지 않은 사유(WD-174). 실행 이력의 오류 메시지로 남는다. */
   public static final String REASON_TENANT_SUSPENDED = "워크스페이스가 정지되어 실행하지 않았습니다";
@@ -156,10 +160,20 @@ public class ProactiveJobAsyncRunner {
       // 컨텍스트 수집
       // 컨텍스트는 작업 소유자 자격으로 거른다(보안 등급 — 볼 수 없는 데이터셋 이름이 리포트에 실리지 않게).
       // 이상 탐지 실행이면 감지된 이상도 싣는다(WD-171)
+      // 리포트 등급(WD-198): 컨텍스트에 싣는 api 내부 읽기(이전 리포트 본문·이상 탐지 지표 값)를 이 실행에 묶는다 — 범위 안에서 알린 등급은 그
+      // 자리에서 실행 행에 기록된다. 이상 탐지 지표 값은 폴러(실행 밖)가 읽었으므로 지표 SQL 을 작성자 자격으로 다시 판정해 그 등급을 넣는다.
+      final ProactiveJobResponse runJob = job;
       String context =
-          anomaly == null
-              ? contextCollector.collectContext(job.config(), jobId, userId)
-              : contextCollector.collectContext(job.config(), jobId, userId, anomaly);
+          levelRecorder.runInExecution(
+              executionId,
+              userId,
+              () -> {
+                if (anomaly == null) {
+                  return contextCollector.collectContext(runJob.config(), jobId, userId);
+                }
+                metricSqlAccessChecker.noteMetricLevel(runJob.config(), anomaly.metricId(), userId);
+                return contextCollector.collectContext(runJob.config(), jobId, userId, anomaly);
+              });
 
       // 템플릿 조회 (templateId가 있으면 sections/style 포함)
       // 작업 소유자가 쓸 수 있는 양식(기본·본인)만 읽는다(WD-163) — 수정 전에 남의 양식이 연결된 작업도 그 양식 내용을 계속 끌어 쓰지 않게,
@@ -205,7 +219,14 @@ public class ProactiveJobAsyncRunner {
       // AI 실행
       ProactiveResult result =
           aiClient.execute(
-              userId, job.prompt(), context, credential, opencodeModel, template, job.config());
+              userId,
+              job.prompt(),
+              context,
+              credential,
+              opencodeModel,
+              template,
+              job.config(),
+              executionId);
 
       // 발송 전 결과 검증 (이슈 #350) — 내용이 없거나 본문이 에이전트 실패 메시지인 결과를
       // COMPLETED로 기록하면 오류 원문이 그대로 CHAT/EMAIL로 나간다. 검증 실패 시 예외를 던져

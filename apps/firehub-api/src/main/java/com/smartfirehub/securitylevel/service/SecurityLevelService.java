@@ -56,6 +56,10 @@ public class SecurityLevelService {
   /** 등급 정의 변경 이벤트 발행기(공통 결정 R2: 발행은 이 서비스에서만, 변경마다 정확히 1번). */
   private final ApplicationEventPublisher events;
 
+  /** 리포트(스마트 작업 실행) 등급의 사용 중 집계·이동(WD-198). */
+  private final com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository
+      executionRepository;
+
   @Transactional(readOnly = true)
   public List<SecurityLevelResponse> list() {
     return repository.findAll().stream().map(SecurityLevelResponse::of).toList();
@@ -66,11 +70,16 @@ public class SecurityLevelService {
   public List<SecurityLevelUsage> usage() {
     Map<Long, Long> ds = repository.countDatasetsByLevel();
     Map<Long, Long> roles = repository.countRolesByLevel();
+    // 리포트 등급(WD-198)도 삭제 시 옮겨야 하므로 함께 센다 — 삭제 대화상자가 이 값으로 「옮길 등급」을 묻는다.
+    Map<Long, Long> reports = executionRepository.countByLevel();
     return repository.findAll().stream()
         .map(
             l ->
                 new SecurityLevelUsage(
-                    l.id(), ds.getOrDefault(l.id(), 0L), roles.getOrDefault(l.id(), 0L)))
+                    l.id(),
+                    ds.getOrDefault(l.id(), 0L),
+                    roles.getOrDefault(l.id(), 0L),
+                    reports.getOrDefault(l.id(), 0L)))
         .toList();
   }
 
@@ -185,7 +194,9 @@ public class SecurityLevelService {
     }
     long datasets = repository.countDatasetsByLevel().getOrDefault(id, 0L);
     long roles = repository.countRolesByLevel().getOrDefault(id, 0L);
-    boolean inUse = datasets > 0 || roles > 0;
+    // 리포트(스마트 작업 실행)도 등급을 가리킨다(WD-198) — 복합 FK 라 옮기지 않으면 삭제가 FK 위반으로 깨지고, 지우면 등급 없음(열림)이 된다.
+    long reports = executionRepository.countByLevel().getOrDefault(id, 0L);
+    boolean inUse = datasets > 0 || roles > 0 || reports > 0;
     Long toId = req == null ? null : req.reassignToLevelId();
     if (inUse && (toId == null || toId == id)) {
       throw new CodedApiException(
@@ -200,6 +211,7 @@ public class SecurityLevelService {
       requireDowngradeReason(downward && inUse, req.reason(), "하향 이동에는 사유(10자 이상)가 필요합니다.");
       repository.moveDatasets(id, toId);
       repository.moveRoles(id, toId);
+      executionRepository.moveLevel(id, toId);
       // 이동 대상이 허용 목록 필요 등급이면, 옮겨진 데이터셋의 빈 허용 목록이 고아(아무도 못 봄)가 되지 않게 같은 트랜잭션에서 채운다
       // (스펙 §2.4, §4.5). 이미 목록이 있는 데이터셋은 건드리지 않는다. 역할 이동 이후에 호출해 옮겨진 역할도 열람 역할로 포함된다.
       if (to.allowlistRequired()) {
@@ -213,6 +225,7 @@ public class SecurityLevelService {
     meta.put("reassignToLevelId", toId);
     meta.put("movedDatasets", datasets);
     meta.put("movedRoles", roles);
+    meta.put("movedReports", reports);
     meta.put("reason", req == null ? null : req.reason());
     audit.record(
         actor, "SECURITY_LEVEL_DELETE", "security_level", String.valueOf(id), target.name(), meta);

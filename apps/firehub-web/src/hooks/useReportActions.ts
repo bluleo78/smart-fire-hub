@@ -5,9 +5,9 @@
  * 동일한 PDF 다운로드/인쇄 로직의 중복을 제거하기 위해 추출되었다.
  */
 import { useCallback, useState } from 'react';
-import { toast } from 'sonner';
 
 import { proactiveApi } from '@/api/proactive';
+import { handleApiErrorAsync } from '@/lib/api-error';
 import { downloadBlob } from '@/lib/download';
 
 /**
@@ -20,8 +20,9 @@ export async function downloadReportPdf(jobId: number, executionId: number): Pro
   try {
     const response = await proactiveApi.downloadExecutionPdf(jobId, executionId);
     downloadBlob(`report-${executionId}.pdf`, response.data as Blob);
-  } catch {
-    toast.error('PDF 다운로드에 실패했습니다.');
+  } catch (error) {
+    // 서버 문구를 그대로 보인다(WD-198) — 리포트 등급 차단·등급 내보내기 정책 거부는 이유가 있는 403 이라 「실패」로만 뭉개면 다시 시도하게 된다.
+    await handleApiErrorAsync(error, 'PDF 다운로드에 실패했습니다.');
   }
 }
 

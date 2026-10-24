@@ -65,7 +65,12 @@ import {
   type PresignedUrlResponse,
 } from './api-client/file-object-api.js';
 import type { SerializedOntology, EntityType } from '../graphrag/ontology.js';
-import { AI_PURPOSE_HEADER, ON_BEHALF_OF_HEADER, ON_BEHALF_OF_TENANT_HEADER } from '../constants.js';
+import {
+  AI_PURPOSE_HEADER,
+  ON_BEHALF_OF_HEADER,
+  ON_BEHALF_OF_TENANT_HEADER,
+  PROACTIVE_EXECUTION_ID_HEADER,
+} from '../constants.js';
 import { POLICY_BLOCKED_CODE, type PolicyBlockedInfo } from './policy-blocked.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
 import { isPositiveInteger } from '../utils.js';
@@ -93,6 +98,19 @@ export type SharePurpose = Extract<AiPurpose, 'share'>;
  */
 export function parseSharePurpose(v: unknown): SharePurpose | undefined {
   return v === 'share' ? 'share' : undefined;
+}
+
+/**
+ * 외부 입력(요청 바디의 숫자·환경 변수의 문자열)의 스마트 작업 실행 id 를 해석한다(WD-198). 양의 정수일 때만 그 값, 그 외는 undefined
+ * — 헤더를 싣지 않는다(실행에 묶이지 않은 채팅과 같다). 소수·음수·숫자 아닌 문자열은 버린다.
+ */
+export function parseProactiveExecutionId(v: unknown): number | undefined {
+  if (isPositiveInteger(v)) return v;
+  if (typeof v === 'string' && /^[1-9][0-9]*$/.test(v.trim())) {
+    const n = Number(v.trim());
+    return Number.isSafeInteger(n) ? n : undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -128,7 +146,13 @@ export class FireHubApiClient {
    */
   readonly hasDelegatedUser: boolean;
   /** withPurpose 가 같은 대행 주체로 새 클라이언트를 만들 때 쓰는 생성자 인자. */
-  private readonly ctorArgs: { baseURL: string; internalToken: string; userId: number; tenantId?: number };
+  private readonly ctorArgs: {
+    baseURL: string;
+    internalToken: string;
+    userId: number;
+    tenantId?: number;
+    proactiveExecutionId?: number;
+  };
 
   /**
    * @param tenantId 원요청 테넌트(웹 세션 JWT 의 tenant 클레임에서 파생). 테넌트 헤더로 api 에
@@ -146,9 +170,9 @@ export class FireHubApiClient {
     internalToken: string,
     userId: number,
     tenantId?: number,
-    options?: { purpose?: AiPurpose },
+    options?: { purpose?: AiPurpose; proactiveExecutionId?: number },
   ) {
-    this.ctorArgs = { baseURL, internalToken, userId, tenantId };
+    this.ctorArgs = { baseURL, internalToken, userId, tenantId, proactiveExecutionId: options?.proactiveExecutionId };
     // 사용자 id 는 테넌트가 아니므로 테넌트 이름의 술어 대신 중립 이름의 양의 정수 검사를 쓴다.
     this.hasDelegatedUser = isPositiveInteger(userId);
     const headers: Record<string, string> = {
@@ -165,6 +189,11 @@ export class FireHubApiClient {
     // S3: 목적 헤더 — api(AiCallContext.markAiRequest)가 share 면 SHARE 판정을 더하고, none 이면 AI 경로로 보지 않는다.
     if (options?.purpose) {
       headers[AI_PURPOSE_HEADER] = options.purpose;
+    }
+    // WD-198: 스마트 작업 실행 중이면 실행 id 를 싣는다 — api 가 이 호출에서 허용한 데이터셋 읽기의 등급을 그 실행(리포트)에 남긴다.
+    // 양의 정수가 아니면 싣지 않는다(채팅·그래프 뷰어 등 실행에 묶이지 않은 호출).
+    if (isPositiveInteger(options?.proactiveExecutionId)) {
+      headers[PROACTIVE_EXECUTION_ID_HEADER] = String(options.proactiveExecutionId);
     }
     this.client = axios.create({ baseURL, headers });
 
@@ -240,8 +269,9 @@ export class FireHubApiClient {
    * 그래서 해당 도구는 데이터 읽기 전에 반드시 이 클라이언트를 쓴다. 온톨로지 캐시는 새 인스턴스라 공유하지 않는다.
    */
   withPurpose(purpose: AiPurpose): FireHubApiClient {
-    const { baseURL, internalToken, userId, tenantId } = this.ctorArgs;
-    return new FireHubApiClient(baseURL, internalToken, userId, tenantId, { purpose });
+    const { baseURL, internalToken, userId, tenantId, proactiveExecutionId } = this.ctorArgs;
+    // 실행 id 는 그대로 잇는다(WD-198) — GraphRAG 공유 목적 클라이언트로 읽은 데이터도 리포트 등급에 들어가야 한다.
+    return new FireHubApiClient(baseURL, internalToken, userId, tenantId, { purpose, proactiveExecutionId });
   }
 
   listCategories() {

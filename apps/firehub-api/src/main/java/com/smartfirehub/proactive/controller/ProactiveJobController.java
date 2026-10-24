@@ -161,6 +161,8 @@ public class ProactiveJobController {
     if (!jobId.equals(execution.jobId())) {
       return ResponseEntity.notFound().build();
     }
+    // 리포트 등급 > 작성자의 현재 등급이면 403(WD-198). 소속 검증 뒤에 둔다 — 남의 실행 id 로 등급 존재를 떠보지 못하게.
+    proactiveJobService.requireReportViewable(execution, userId);
     return ResponseEntity.ok(execution);
   }
 
@@ -170,7 +172,8 @@ public class ProactiveJobController {
       @PathVariable Long jobId, @PathVariable Long executionId, Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     ProactiveJobResponse job = proactiveJobService.getJob(jobId, userId);
-    ProactiveResult result = getValidatedResult(jobId, executionId);
+    // PDF 는 내려받기라 열람 판정에 더해 리포트 등급의 내보내기 정책도 본다(WD-198)
+    ProactiveResult result = getValidatedResult(jobId, executionId, userId, true);
     if (result == null) {
       return ResponseEntity.badRequest().build();
     }
@@ -197,7 +200,7 @@ public class ProactiveJobController {
       @PathVariable Long jobId, @PathVariable Long executionId, Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     proactiveJobService.getJob(jobId, userId);
-    ProactiveResult result = getValidatedResult(jobId, executionId);
+    ProactiveResult result = getValidatedResult(jobId, executionId, userId, false);
     if (result == null) {
       return ResponseEntity.badRequest().build();
     }
@@ -214,11 +217,20 @@ public class ProactiveJobController {
   /**
    * execution이 해당 job에 속하고 COMPLETED 상태인지 검증한 후 ProactiveResult를 반환한다. 검증 실패 시 null을 반환하며, 호출측에서
    * badRequest 등으로 처리한다.
+   *
+   * <p>소속 검증을 통과한 실행은 리포트 등급 판정(WD-198)을 받는다 — 작성자의 현재 등급으로 열 수 없으면 403. {@code export} 면 내보내기
+   * 정책(PDF)까지 본다.
    */
-  private ProactiveResult getValidatedResult(Long jobId, Long executionId) {
+  private ProactiveResult getValidatedResult(
+      Long jobId, Long executionId, Long userId, boolean export) {
     ProactiveJobExecutionResponse execution = proactiveJobService.getExecution(executionId);
     if (!jobId.equals(execution.jobId())) {
       return null;
+    }
+    if (export) {
+      proactiveJobService.requireReportExportable(execution, userId);
+    } else {
+      proactiveJobService.requireReportViewable(execution, userId);
     }
     if (!"COMPLETED".equals(execution.status()) || execution.result() == null) {
       return null;

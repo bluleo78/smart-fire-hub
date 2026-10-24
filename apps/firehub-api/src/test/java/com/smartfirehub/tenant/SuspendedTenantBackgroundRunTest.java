@@ -274,7 +274,7 @@ class SuspendedTenantBackgroundRunTest extends IntegrationTestBase {
 
     verify(proactiveJobService, never()).executeJob(anyLong(), anyLong());
     assertThat(proactiveExecutionCount()).as("정지 중 예약 실행은 실행 이력을 쌓지 않는다").isZero();
-    verify(proactiveAiClient, never()).execute(any(), any(), any(), any(), any(), any(), any());
+    verify(proactiveAiClient, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
   }
 
   /** 외부 API 트리거: 정지 워크스페이스면 409 + 워크스페이스 정지 사유, 실행·이벤트 없음. */

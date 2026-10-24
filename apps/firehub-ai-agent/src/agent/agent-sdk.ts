@@ -73,6 +73,8 @@ export interface AgentOptions {
   abortSignal?: AbortSignal;
   /** S3: 'share' 면 MCP 도구의 api 호출에 X-AI-Purpose: share 를 싣는다(ChatProviderOptions.aiPurpose 참고). */
   aiPurpose?: SharePurpose;
+  /** WD-198: 스마트 작업 실행 id — MCP 도구의 api 호출에 X-Proactive-Execution-Id 를 싣는다(ChatProviderOptions 참고). */
+  proactiveExecutionId?: number;
 }
 
 export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEvent> {
@@ -110,7 +112,11 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
   // S3: Proactive 실행이면 share 목적 — 이 클라이언트가 MCP 도구 전체에 주입된다.
-  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId, { purpose: options.aiPurpose });
+  // WD-198: 스마트 작업 실행이면 실행 id 도 싣는다 — api 가 이 실행에서 읽은 데이터셋 등급을 리포트에 남긴다.
+  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId, {
+    purpose: options.aiPurpose,
+    proactiveExecutionId: options.proactiveExecutionId,
+  });
 
   // 세션 사용자 권한 조회 + 첨부 파일 다운로드를 병렬 실행한다.
   // 두 작업은 서로 독립적이므로 순차 대기할 필요가 없다.

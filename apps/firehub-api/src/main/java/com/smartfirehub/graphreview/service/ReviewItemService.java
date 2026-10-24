@@ -267,11 +267,11 @@ public class ReviewItemService {
       offset = effectivePage * size;
     }
     // 출처 데이터셋을 볼 수 없는 항목은 SQL 에서 거른다 — 자바에서 거르면 limit/offset 페이지가 어긋난다.
-    return repo
-        .findByStatus(effective, itemType, offset, size, datasetAccessGuard.visibleCondition())
-        .stream()
-        .map(this::toResponse)
-        .toList();
+    List<ReviewItemRecord> rows =
+        repo.findByStatus(effective, itemType, offset, size, datasetAccessGuard.visibleCondition());
+    // 검수 항목에는 데이터에서 뽑은 엔티티 이름·속성 값이 실린다 — 스마트 작업 실행 중이면 출처 데이터셋 등급을 리포트 등급에 넣는다(WD-198).
+    datasetAccessGuard.noteReportReads(rows.stream().map(ReviewItemRecord::datasetId).toList());
+    return rows.stream().map(this::toResponse).toList();
   }
 
   /** 승인 — item_type별 그래프 변경을 먼저 수행하고, 성공해야 status를 approved로 갱신한다(실패 시 pending 유지). */

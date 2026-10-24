@@ -1,6 +1,7 @@
 import { createMessage } from '../../factories/ai-insight.factory';
 import { setupNotificationPanelMocks } from '../../fixtures/ai-insight.fixture';
 import { setupJobListMocks } from '../../fixtures/ai-insight.fixture';
+import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
@@ -58,5 +59,61 @@ test.describe('AI 알림 패널', () => {
 
     // "AI에게 물어보기" 버튼은 항상 표시되어야 한다
     await expect(page.getByRole('button', { name: 'AI에게 물어보기' })).toBeVisible();
+  });
+
+  /** WD-198: 리포트 등급 차단(403 + 코드)이면 리포트 모달이 「리포트가 없습니다」 대신 등급 안내를 보인다. */
+  test('리포트 등급 차단이면 리포트 모달에 등급 안내가 보인다', async ({ authenticatedPage: page }) => {
+    await setupNotificationPanelMocks(page, [
+      createMessage({ jobId: 1, executionId: 9, title: '등급 리포트', read: false }),
+    ]);
+    await setupJobListMocks(page);
+    const blocked = {
+      status: 403,
+      error: 'Forbidden',
+      code: 'REPORT_SECURITY_LEVEL_BLOCKED',
+      message: '현재 보안 등급으로 열 수 없는 리포트입니다',
+    };
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/9', blocked, { status: 403 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/9/html', blocked, { status: 403 });
+
+    await page.goto('/ai-insights/jobs');
+    await page.getByRole('button', { name: /AI 인사이트 알림/ }).click();
+    await page.getByRole('button', { name: /등급 리포트/ }).click();
+    await page.getByRole('button', { name: '리포트 보기' }).click();
+
+    await expect(page.getByTestId('report-modal-level-blocked')).toHaveText(
+      '현재 보안 등급으로 열 수 없는 리포트입니다',
+    );
+    await expect(page.getByText('리포트가 없습니다.')).toHaveCount(0);
+  });
+
+  /**
+   * WD-198: 연결된 리포트의 등급이 내 현재 보안 등급보다 높으면 서버가 요약을 비우고 reportLevelBlocked=true 로 준다.
+   * 목록 미리보기·상세 모두 「내용이 없습니다」가 아니라 등급 안내를 보이고, 리포트 보기·작성자 전용 안내는 보이지 않는다.
+   */
+  test('리포트 등급 때문에 요약이 비워진 알림은 등급 안내를 보인다', async ({ authenticatedPage: page }) => {
+    await setupNotificationPanelMocks(page, [
+      createMessage({
+        id: 7,
+        jobId: 1,
+        executionId: 9,
+        title: '민감 리포트 알림',
+        content: { title: '민감 리포트 알림', executionId: '9', jobId: '1' },
+        canViewReport: false,
+        reportLevelBlocked: true,
+      }),
+    ]);
+    await setupJobListMocks(page);
+
+    await page.goto('/ai-insights/jobs');
+    await page.getByRole('button', { name: /AI 인사이트 알림/ }).click();
+    const item = page.getByRole('button', { name: /민감 리포트 알림/ });
+    await expect(item).toContainText('현재 보안 등급으로 열 수 없는 리포트입니다');
+    await item.click();
+
+    await expect(page.getByTestId('message-level-blocked')).toHaveText('현재 보안 등급으로 열 수 없는 리포트입니다');
+    await expect(page.getByText('내용이 없습니다.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '리포트 보기' })).toHaveCount(0);
+    await expect(page.getByTestId('report-owner-only-notice')).toHaveCount(0);
   });
 });

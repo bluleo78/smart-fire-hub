@@ -25,6 +25,8 @@ export interface SecurityLevelUsage {
   levelId: number;
   datasetCount: number;
   roleCount: number;
+  /** 이 등급을 리포트 등급으로 가진 스마트 작업 실행 수(WD-198) — 삭제 시 함께 옮겨야 한다. 이전 서버 응답에는 없다. */
+  reportCount?: number;
 }
 
 export interface MyClearance {

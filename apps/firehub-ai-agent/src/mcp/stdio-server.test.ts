@@ -140,6 +140,18 @@ describe('stdio-server main() — AI_PURPOSE 배선(S3)', () => {
     const args = apiClientCtorMock.mock.calls[0];
     expect(args.slice(2)).toEqual([7, 3, { purpose: undefined }]);
   });
+
+  // WD-198: 부모가 심은 PROACTIVE_EXECUTION_ID 를 클라이언트의 실행 id 로 잇는다(숫자가 아니면 버린다).
+  it('PROACTIVE_EXECUTION_ID 를 클라이언트 proactiveExecutionId 로 넘긴다', async () => {
+    process.env.AI_PURPOSE = 'share';
+    process.env.PROACTIVE_EXECUTION_ID = '88';
+    const { main } = await import('./stdio-server.js');
+    await main();
+    expect(apiClientCtorMock).toHaveBeenCalledWith(expect.any(String), expect.any(String), 7, 3, {
+      purpose: 'share',
+      proactiveExecutionId: 88,
+    });
+  });
 });
 
 // S3: CLI·opencode 런타임의 도구 래퍼도 정책 차단을 고정 표식으로 싣는다(SDK 래퍼와 같은 헬퍼).

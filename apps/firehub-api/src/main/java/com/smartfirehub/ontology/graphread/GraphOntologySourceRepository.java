@@ -49,6 +49,12 @@ public class GraphOntologySourceRepository {
         .execute();
   }
 
+  /** 이 온톨로지의 출처 데이터셋 id(삭제된 데이터셋 포함) — 스마트 작업 리포트 등급 기록용(WD-198). */
+  @Transactional(readOnly = true)
+  public List<Long> findDatasetIds(long ontologyId) {
+    return dsl.select(GOS_DATASET_ID).from(GOS).where(GOS_ONTOLOGY_ID.eq(ontologyId)).fetch(GOS_DATASET_ID);
+  }
+
   /**
    * 이 온톨로지의 출처 중 읽기를 막는 것이 하나라도 있는가. 막는 출처는 둘이다.
    *

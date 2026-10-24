@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.service;
 
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.dto.NotificationEvent;
 import com.smartfirehub.notification.service.SseEmitterRegistry;
@@ -20,6 +21,12 @@ import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
 import com.smartfirehub.proactive.util.ProactiveCron;
 import com.smartfirehub.proactive.util.ProactiveTime;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessPolicy;
+import com.smartfirehub.securitylevel.access.LevelPolicy;
+import com.smartfirehub.securitylevel.ai.PolicyBlockedException;
+import com.smartfirehub.securitylevel.dto.SecurityLevelSummary;
 import com.smartfirehub.tenant.repository.TenantRepository;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.DateTimeException;
@@ -33,6 +40,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
@@ -59,6 +67,16 @@ public class ProactiveJobService {
   private final ProactiveOwnerEligibility ownerEligibility;
   // 이상 탐지 처리 전에 워크스페이스(테넌트)가 정지됐는지 본다(WD-174)
   private final TenantRepository tenantRepository;
+  // 리포트 열람 시 작성자의 현재 보안 등급을 계산한다(WD-198)
+  private final ClearanceResolver clearanceResolver;
+  // 스마트 작업 실행 중 AI 가 이전 리포트 본문을 읽으면 그 등급도 새 리포트 등급에 넣는다(WD-198)
+  private final ProactiveReportLevelRecorder levelRecorder;
+
+  /** 리포트 등급이 작성자의 현재 등급보다 높아 열 수 없을 때의 코드(WD-198). 웹이 이 코드로 안내 화면을 고른다. */
+  public static final String REPORT_LEVEL_BLOCKED_CODE = "REPORT_SECURITY_LEVEL_BLOCKED";
+
+  /** 리포트 등급 차단 문구(WD-198) — 사람이 정한 문구 그대로. */
+  public static final String REPORT_LEVEL_BLOCKED_MESSAGE = "현재 보안 등급으로 열 수 없는 리포트입니다";
 
   // 동시 실행 방지: jobId -> running flag
   private final ConcurrentHashMap<Long, AtomicBoolean> runningJobs = new ConcurrentHashMap<>();
@@ -77,7 +95,9 @@ public class ProactiveJobService {
       MetricSqlAccessChecker metricSqlAccessChecker,
       ReportTemplateRepository reportTemplateRepository,
       ProactiveOwnerEligibility ownerEligibility,
-      TenantRepository tenantRepository) {
+      TenantRepository tenantRepository,
+      ClearanceResolver clearanceResolver,
+      ProactiveReportLevelRecorder levelRecorder) {
     this.proactiveJobRepository = proactiveJobRepository;
     this.executionRepository = executionRepository;
     this.schedulerService = schedulerService;
@@ -89,6 +109,8 @@ public class ProactiveJobService {
     this.reportTemplateRepository = reportTemplateRepository;
     this.ownerEligibility = ownerEligibility;
     this.tenantRepository = tenantRepository;
+    this.clearanceResolver = clearanceResolver;
+    this.levelRecorder = levelRecorder;
     // asyncRunner가 runningJobs 맵을 공유하여 슬롯 해제가 동일한 맵에 반영되도록 한다
     asyncRunner.setRunningJobs(this.runningJobs);
   }
@@ -320,13 +342,88 @@ public class ProactiveJobService {
   }
 
   /**
+   * 리포트 전문(실행 상세·HTML·PDF) 열람 판정(WD-198). 리포트 등급이 있고 작성자의 <b>현재</b> 최대 등급 rank 가 그보다 낮으면 403 + 「현재
+   * 보안 등급으로 열 수 없는 리포트입니다」.
+   *
+   * <p>등급이 null(이 기능 이전의 리포트·등급 데이터를 읽지 않은 리포트)이면 지금처럼 열린다(사람이 고른 설계 D). 비교 기준은 데이터셋 열람과 같은
+   * security_level.rank 이며 등급의 rank 는 조회 시점 값을 쓴다(순서 변경 반영). 역할이 하나도 없는 작성자(NO_RANK)는 등급 있는 리포트를 모두
+   * 못 연다(fail-closed). 리포트 전문은 작성자만 열 수 있으므로(WD-162) 판정 주체는 작성자다.
+   *
+   * @return 판정에 쓴 작성자 자격(등급이 null 이면 null) — PDF 판정이 재사용한다
+   */
+  public Clearance requireReportViewable(
+      ProactiveJobExecutionResponse execution, Long ownerUserId) {
+    SecurityLevelSummary level = execution.securityLevel();
+    if (level == null) {
+      return null;
+    }
+    Clearance c = clearanceResolver.resolve(ownerUserId);
+    if (c.rank() < level.rank()) {
+      throw new CodedApiException(
+          HttpStatus.FORBIDDEN, REPORT_LEVEL_BLOCKED_CODE, REPORT_LEVEL_BLOCKED_MESSAGE);
+    }
+    // 열람 허용 = 리포트 본문이 호출자에게 간다. 스마트 작업 실행 중의 AI 호출(get_execution 등)이면 이 리포트 등급을 지금 실행의 리포트
+    // 등급에 넣는다 — 이전 리포트 내용이 새 리포트로 옮겨 가는 경로(WD-198). 실행에 묶이지 않은 요청이면 아무 일도 없다.
+    levelRecorder.noteLevelId(level.id());
+    return c;
+  }
+
+  /**
+   * 리포트 PDF 내려받기 판정(WD-198) — 열람 판정 + 리포트 등급의 내보내기 정책(export_policy). 데이터셋 내보내기({@code
+   * DatasetAccessGuard#requireExport})와 같은 규칙·문구·응답 형태(403 POLICY_BLOCKED, errors 에
+   * action·levelName·policyKey)다: PERMISSION 정책은 제한 데이터 내보내기 권한(data:export_restricted) 보유자만, DENY
+   * 는 누구도 못 받는다. 등급이 null 이면 판정할 데이터가 없어 지금처럼 내려받는다.
+   */
+  public void requireReportExportable(ProactiveJobExecutionResponse execution, Long ownerUserId) {
+    Clearance c = requireReportViewable(execution, ownerUserId);
+    SecurityLevelSummary level = execution.securityLevel();
+    if (level == null) {
+      return;
+    }
+    LevelPolicy.ExportPolicy policy = LevelPolicy.ExportPolicy.valueOf(level.exportPolicy());
+    if (DatasetAccessPolicy.exportPolicyAllows(policy, c.permissions())) {
+      return;
+    }
+    String message =
+        policy == LevelPolicy.ExportPolicy.PERMISSION
+            ? "'" + level.name() + "' 등급 데이터를 내보내려면 제한 데이터 내보내기 권한이 필요합니다."
+            : "'" + level.name() + "' 등급 데이터는 내보낼 수 없습니다.";
+    throw new CodedApiException(
+        HttpStatus.FORBIDDEN,
+        PolicyBlockedException.CODE,
+        message,
+        Map.of("action", "EXPORT", "levelName", level.name(), "policyKey", "export_policy"));
+  }
+
+  /**
    * 사용자가 소유한 모든 스마트 작업의 리포트를 잡 횡단으로 조회한다.
    *
    * <p>잡 단위 조회와 달리 getJob() 소유권 검증을 거치지 않으므로, 스코핑은 리포지토리 쿼리의 user_id 조건이 전담한다.
    */
   @Transactional(readOnly = true)
   public List<ReportListItemResponse> getReports(Long userId, int limit, int offset) {
-    return executionRepository.findReportsByUserId(userId, limit, offset);
+    List<ReportListItemResponse> reports =
+        executionRepository.findReportsByUserId(userId, limit, offset);
+    // 목록의 한 줄 요약도 리포트 본문의 일부다(WD-198) — 작성자의 현재 등급으로 열 수 없는 리포트는 요약을 비운다. 제목·등급 배지는 남겨 「등급 때문에
+    // 열 수 없는 리포트가 있다」는 것은 알 수 있게 한다. 등급 있는 리포트가 없으면 자격 계산도 하지 않는다.
+    if (reports.stream().noneMatch(r -> r.securityLevel() != null)) {
+      return reports;
+    }
+    int rank = clearanceResolver.resolve(userId).rank();
+    return reports.stream()
+        .map(
+            r ->
+                r.securityLevel() != null && rank < r.securityLevel().rank()
+                    ? new ReportListItemResponse(
+                        r.executionId(),
+                        r.jobId(),
+                        r.jobName(),
+                        r.title(),
+                        null,
+                        r.completedAt(),
+                        r.securityLevel())
+                    : r)
+        .toList();
   }
 
   /**

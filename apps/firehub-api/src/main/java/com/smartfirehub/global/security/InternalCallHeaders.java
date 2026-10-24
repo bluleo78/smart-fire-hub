@@ -28,5 +28,12 @@ public final class InternalCallHeaders {
    */
   public static final String AI_PURPOSE = "X-AI-Purpose";
 
+  /**
+   * 스마트 작업 실행 id(WD-198). ai-agent 가 스마트 작업 실행 중의 api 호출에만 싣는다 — api 는 그 요청에서 허용한 데이터셋 읽기의 등급을 그
+   * 실행(리포트)에 남긴다. 값은 믿지 않는다: 기록 시 실행의 작성자 = 대행 사용자, 요청 시점에 진행 중이었던 실행인지 확인하고 아니면 무시한다
+   * (ProactiveReportLevelRecorder). ai-agent 대응 상수는 constants.ts 의 PROACTIVE_EXECUTION_ID_HEADER.
+   */
+  public static final String PROACTIVE_EXECUTION_ID = "X-Proactive-Execution-Id";
+
   private InternalCallHeaders() {}
 }

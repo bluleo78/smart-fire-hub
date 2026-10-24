@@ -13,6 +13,7 @@ import {
   useProactiveMessages,
   useUnreadCount,
 } from '../../hooks/queries/useProactiveMessages';
+import { REPORT_LEVEL_BLOCKED_MESSAGE } from '../../lib/api-error';
 import { relativeOrShortDate } from '../../lib/formatters';
 import { getSections, REPORT_OWNER_ONLY_NOTICE } from '../../lib/proactive-utils';
 
@@ -62,7 +63,10 @@ function NotificationItem({
 }) {
   const isUnread = !message.read;
   const sections = getSections(message.content);
-  const preview = sections[0]?.content?.slice(0, 80) ?? '';
+  // 리포트 등급 때문에 서버가 요약을 비운 알림(WD-198)은 미리보기 자리에 등급 안내를 짧게 보인다 — 빈 줄로 남기면 내용 없는 알림처럼 보인다.
+  const preview = message.reportLevelBlocked
+    ? REPORT_LEVEL_BLOCKED_MESSAGE
+    : (sections[0]?.content?.slice(0, 80) ?? '');
   const relTime = getRelativeTime(message.createdAt);
 
   const handleClick = () => {
@@ -188,7 +192,10 @@ function DetailView({
 
       {/* Sections */}
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
-        {sections.length === 0 ? (
+        {message.reportLevelBlocked ? (
+          // 리포트 등급이 내 현재 보안 등급보다 높아 서버가 요약을 비웠다(WD-198) — 「내용이 없습니다」가 아니라 이유를 알린다.
+          <RestrictedNotice message={REPORT_LEVEL_BLOCKED_MESSAGE} data-testid="message-level-blocked" />
+        ) : sections.length === 0 ? (
           <p className="text-xs text-muted-foreground">내용이 없습니다.</p>
         ) : (
           sections.map((section) => (
@@ -211,7 +218,7 @@ function DetailView({
       {/* Footer — 리포트 보기(작성자) 또는 열람 안내(받은 사람) + AI에게 물어보기 */}
       <div className="px-3 py-2.5 border-t border-border/40 space-y-1.5">
         {/* 받은 사람: 전문을 열 수 없으므로 버튼 대신 이유를 알린다 (WD-162) */}
-        {hasReport && !canOpenReport && (
+        {hasReport && !canOpenReport && !message.reportLevelBlocked && (
           <RestrictedNotice message={REPORT_OWNER_ONLY_NOTICE} data-testid="report-owner-only-notice" />
         )}
         {canOpenReport && jobId && executionId && (

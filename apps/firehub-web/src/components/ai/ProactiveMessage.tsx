@@ -8,6 +8,7 @@ import { RestrictedNotice } from '@/components/ui/restricted-notice';
 import { parseUtcDate } from '@/lib/formatters';
 
 import type { ProactiveMessage as ProactiveMessageType } from '../../api/proactive';
+import { REPORT_LEVEL_BLOCKED_MESSAGE } from '../../lib/api-error';
 import { getSections, REPORT_OWNER_ONLY_NOTICE } from '../../lib/proactive-utils';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -74,6 +75,13 @@ export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveM
         )}
       </div>
 
+      {/* 리포트 등급이 내 현재 보안 등급보다 높아 서버가 요약을 비웠다(WD-198) — 빈 카드 대신 이유를 알린다 */}
+      {message.reportLevelBlocked && (
+        <div className="px-3 pb-2">
+          <RestrictedNotice message={REPORT_LEVEL_BLOCKED_MESSAGE} />
+        </div>
+      )}
+
       {/* Sections */}
       {sections.length > 0 && (
         <div className="px-3 pb-2 space-y-2">
@@ -93,7 +101,7 @@ export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveM
       )}
 
       {/* Footer — 리포트 보기 링크 (jobId/executionId가 있을 때) + 자세히 분석하기 */}
-      {hasReport && !canOpenReport && (
+      {hasReport && !canOpenReport && !message.reportLevelBlocked && (
         <div className="px-3 pb-2">
           <RestrictedNotice message={REPORT_OWNER_ONLY_NOTICE} />
         </div>

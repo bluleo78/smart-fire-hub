@@ -16,10 +16,11 @@ import { proactiveApi } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
 import { Button } from '@/components/ui/button';
 import { useReportActions } from '@/hooks/useReportActions';
-import { isForbiddenError, isNotFoundError } from '@/lib/api-error';
+import { isForbiddenError, isNotFoundError, isReportLevelBlocked } from '@/lib/api-error';
 import { REPORT_NOT_FOUND_NOTICE } from '@/lib/proactive-utils';
 
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
+import { ReportLevelBlockedNotice } from './components/ReportLevelBlockedNotice';
 
 export default function ReportViewerPage() {
   const { jobId, executionId } = useParams<{ jobId: string; executionId: string }>();
@@ -42,7 +43,9 @@ export default function ReportViewerPage() {
 
   const rawHtml = htmlResponse?.data ?? null;
   // 조회 권한 부족(403) — 「리포트를 불러올 수 없습니다」 대신 권한 안내를 보이는 기준 (WD-137). 다시 시도해도 같다.
-  const isForbidden = isError && isForbiddenError(error);
+  // 리포트 등급 차단(WD-198)은 같은 403 이지만 권한 요청 안내가 아니라 등급 안내다 — 먼저 가른다.
+  const isLevelBlocked = isError && isReportLevelBlocked(error);
+  const isForbidden = isError && isForbiddenError(error) && !isLevelBlocked;
   // 404 — 서버는 리포트가 없을 때와 작업 작성자가 아닐 때(받은 사람이 주소로 직접 연 경우)를 똑같이 404 로 숨긴다.
   // 「불러올 수 없습니다」는 일시 오류처럼 읽혀 다시 시도하게 만들므로, 두 경우를 함께 말하는 안내를 보인다 (WD-162).
   const isNotFound = isError && isNotFoundError(error);
@@ -124,6 +127,10 @@ export default function ReportViewerPage() {
           </div>
         )}
 
+        {!isInvalidParams && isLevelBlocked && !isLoading && (
+          <ReportLevelBlockedNotice testId="report-level-blocked" />
+        )}
+
         {!isInvalidParams && isForbidden && !isLoading && (
           <ProactiveReadForbiddenNotice subject="리포트" testId="report-forbidden" />
         )}
@@ -141,7 +148,7 @@ export default function ReportViewerPage() {
           </div>
         )}
 
-        {!isInvalidParams && isError && !isForbidden && !isNotFound && !isLoading && (
+        {!isInvalidParams && isError && !isForbidden && !isLevelBlocked && !isNotFound && !isLoading && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
             <p className="text-sm">리포트를 불러올 수 없습니다.</p>
             <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>

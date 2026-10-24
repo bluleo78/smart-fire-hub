@@ -75,7 +75,7 @@ class AnomalyTriggeredExecutionTest {
             mock(MetricSqlAccessChecker.class),
             mock(ReportTemplateRepository.class),
             eligibility,
-            suspended);
+            suspended, null, null);
     AnomalyEvent event =
         new AnomalyEvent(
             7L, 3L, "ds_total", "데이터셋수", 9.0, 8.08, 0.28, 3.3, "medium", List.of(8.0, 8.0));
@@ -104,7 +104,7 @@ class AnomalyTriggeredExecutionTest {
             mock(MetricSqlAccessChecker.class),
             mock(ReportTemplateRepository.class),
             mock(ProactiveOwnerEligibility.class),
-            activeTenant());
+            activeTenant(), null, null);
     AnomalyEvent event =
         new AnomalyEvent(
             7L, 3L, "ds_total", "데이터셋수", 9.0, 8.08, 0.28, 3.3, "medium", List.of(8.0, 8.0));
@@ -136,7 +136,7 @@ class AnomalyTriggeredExecutionTest {
             mock(MetricSqlAccessChecker.class),
             mock(ReportTemplateRepository.class),
             eligibility,
-            activeTenant());
+            activeTenant(), null, null);
     AnomalyEvent event =
         new AnomalyEvent(
             7L, 3L, "ds_total", "데이터셋수", 9.0, 8.08, 0.28, 3.3, "medium", List.of(8.0, 8.0));

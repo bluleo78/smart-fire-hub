@@ -37,6 +37,8 @@ public class ProactiveContextCollector {
   // 컨텍스트가 채팅 공급자로 가고 리포트로 발송되므로 대시보드 조회를 AI+SHARE 범위로 감싼다(스펙 §4.3 Proactive 행).
   private final AiCallContext aiCallContext;
   private final AiHostingResolver aiHostingResolver;
+  // 이전 리포트 본문을 컨텍스트에 실으면 그 리포트의 등급도 새 리포트로 넘어간다(WD-198)
+  private final ProactiveReportLevelRecorder levelRecorder;
 
   /**
    * 리포트 컨텍스트 수집.
@@ -135,6 +137,8 @@ public class ProactiveContextCollector {
       }
 
       // 5. Previous executions (last 3 COMPLETED)
+      // 실린 이전 리포트들의 등급(WD-198) — 대상 필터 뒤에도 남았을 때만 알린다(아래).
+      List<Long> previousLevelIds = List.of();
       if (jobId != null) {
         try {
           List<ProactiveJobExecutionResponse> recentExecutions =
@@ -143,6 +147,11 @@ public class ProactiveContextCollector {
                   .limit(3)
                   .toList();
           if (!recentExecutions.isEmpty()) {
+            previousLevelIds =
+                recentExecutions.stream()
+                    .filter(e -> e.securityLevel() != null)
+                    .map(e -> e.securityLevel().id())
+                    .toList();
             List<Map<String, Object>> prevExecs =
                 recentExecutions.stream().map(this::summarizeExecution).toList();
             context.put("previousExecutions", prevExecs);
@@ -154,6 +163,16 @@ public class ProactiveContextCollector {
 
       // config.targets 기반 필터링 (scope: ALL/SELECTED)
       applyTargetFilter(context, config);
+
+      // 이전 리포트 본문(sections)이 새 리포트의 입력이 된다 — 필터 뒤에도 실렸으면 그 리포트들의 등급을 이번 실행 등급에 넣는다(WD-198). 실행기
+      // 범위(ProactiveReportLevelRecorder#runInExecution) 밖에서 불리면 아무 일도 하지 않는다.
+      if (context.containsKey("previousExecutions")) {
+        previousLevelIds.forEach(levelRecorder::noteLevelId);
+      }
+      // 대시보드 항목(주의 항목·활동 피드)에는 데이터셋 이름·임포트 결과가 실린다 — 필터 뒤에도 실린 항목이 가리키는 데이터셋의 등급을 넣는다(WD-198).
+      // 대시보드 조회는 공용 풀 스레드라 실행기 범위가 닿지 않으므로, 결과를 받은 이 스레드(범위 안)에서 알린다. 통계(stats·systemHealth)는
+      // 개수뿐이라 넣지 않는다.
+      levelRecorder.noteDatasetIds(dashboardDatasetIds(context));
 
       // 이상 탐지 실행이면 이상 정보를 맨 앞에 싣는다(WD-171) — 필터 뒤라 항상 남고, 앞에 있어 길이 제한에 잘리지 않는다
       Map<String, Object> payload = context;
@@ -211,6 +230,30 @@ public class ProactiveContextCollector {
     anomalyInfo.put("triggerReason", "이 리포트는 메트릭 이상 감지에 의해 자동 생성되었습니다.");
 
     context.put("anomaly", anomalyInfo);
+  }
+
+  /** 컨텍스트에 실린 주의 항목·활동 피드 중 데이터셋을 가리키는 항목의 데이터셋 id(WD-198 리포트 등급용). */
+  private static List<Long> dashboardDatasetIds(Map<String, Object> context) {
+    List<Long> ids = new java.util.ArrayList<>();
+    if (context.get("attentionItems") instanceof List<?> items) {
+      for (Object o : items) {
+        if (o instanceof com.smartfirehub.dashboard.dto.AttentionItemResponse a
+            && "DATASET".equals(a.entityType())
+            && a.entityId() != null) {
+          ids.add(a.entityId());
+        }
+      }
+    }
+    if (context.get("activityFeed")
+            instanceof com.smartfirehub.dashboard.dto.ActivityFeedResponse feed
+        && feed.items() != null) {
+      for (var item : feed.items()) {
+        if ("DATASET".equals(item.entityType()) && item.entityId() != null) {
+          ids.add(item.entityId());
+        }
+      }
+    }
+    return ids;
   }
 
   private void applyTargetFilter(Map<String, Object> context, Map<String, Object> config) {

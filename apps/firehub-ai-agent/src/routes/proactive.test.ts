@@ -381,6 +381,15 @@ describe('Proactive routes — integration tests', () => {
     it("'none' 등 다른 값은 버린다 — LLM 실행에서 AI 판정을 끄면 안 된다", async () => {
       expect((await run({ aiPurpose: 'none' })).aiPurpose).toBeUndefined();
     });
+
+    // WD-198: api 가 실은 실행 id 를 실행 옵션으로 넘긴다 — MCP 호출이 X-Proactive-Execution-Id 를 싣는다.
+    it('바디의 proactiveExecutionId 를 넘기고, 양의 정수가 아니면 버린다', async () => {
+      const ok = (await run({ proactiveExecutionId: 31 })) as { proactiveExecutionId?: number };
+      expect(ok.proactiveExecutionId).toBe(31);
+      mockExecute.mockClear();
+      const bad = (await run({ proactiveExecutionId: 'x' })) as { proactiveExecutionId?: number };
+      expect(bad.proactiveExecutionId).toBeUndefined();
+    });
   });
 
   // WD-62: opencode 는 하위 에이전트·호스트 Write 가 없어 리포트 파일을 MCP 도구로 쓴다 — 그 도구가 쓸

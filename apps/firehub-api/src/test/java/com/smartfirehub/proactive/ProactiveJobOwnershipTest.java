@@ -73,6 +73,13 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
   private final List<Long> scratchTenants = new ArrayList<>();
   private final List<Long> users = new ArrayList<>();
   private final List<Long> roles = new ArrayList<>();
+  // WD-198 리포트 등급 검증용 데이터셋 메타 행
+  private final List<Long> datasets = new ArrayList<>();
+  @Autowired private com.smartfirehub.proactive.service.ProactiveReportLevelRecorder levelRecorder;
+
+  @Autowired
+  private com.smartfirehub.proactive.service.MetricSqlAccessChecker metricSqlAccessChecker;
+
   private long owner;
   private String ownerToken;
   private String otherToken;
@@ -133,6 +140,7 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
           () -> TenantRlsTestSupport.deleteProactiveAiCascade(dsl, t));
       TenantRlsTestSupport.deleteTenants(dsl, t);
     }
+    datasets.forEach(fx::deleteDatasetRow);
     users.forEach(fx::deleteUser);
     roles.forEach(fx::deleteRole);
   }
@@ -496,5 +504,262 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
                             field(name("permission", "code"), String.class)
                                 .eq("proactive:admin"))));
     assertThat(count).isEqualTo(1);
+  }
+
+  // ── WD-198: 리포트 등급 — 실행 중 읽은 데이터셋의 최고 등급 기록 + 열람·PDF 판정 ─────────────────────────────
+
+  /** 주인 작업에 실행 행을 직접 만든다(상태·완료 시각·리포트 등급 지정). 리포트 본문은 HTML 이 있는 완료 결과. */
+  private long insertExecution(String status, java.time.LocalDateTime completedAt, Long levelId) {
+    return TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.insertInto(table(name("proactive_job_execution")))
+                .set(field(name("job_id"), Long.class), jobId)
+                .set(field(name("status"), String.class), status)
+                .set(field(name("completed_at"), java.time.LocalDateTime.class), completedAt)
+                .set(field(name("security_level_id"), Long.class), levelId)
+                .set(
+                    field(name("result"), org.jooq.JSONB.class),
+                    org.jooq.JSONB.valueOf(
+                        "{\"title\":\"리포트\",\"summary\":\"요약 본문\",\"sections\":[],"
+                            + "\"htmlContent\":\"<p>본문</p>\"}"))
+                .returning(field(name("id"), Long.class))
+                .fetchSingle(field(name("id"), Long.class)));
+  }
+
+  /** 실행의 리포트 등급 id(없으면 null). */
+  private Long reportLevel(long executionId) {
+    return TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.select(field(name("security_level_id"), Long.class))
+                .from(table(name("proactive_job_execution")))
+                .where(field(name("id"), Long.class).eq(executionId))
+                .fetchSingle(field(name("security_level_id"), Long.class)));
+  }
+
+  /** 주인 역할을 모두 떼고 지정 등급의 역할(스마트 작업·데이터셋 읽기)만 붙인다 — 「작성자 등급 낮추기/올리기」. */
+  private void setOwnerLevel(String levelName, String... extraPerms) {
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> dsl.execute("delete from user_role where user_id = ?", owner));
+    List<String> perms =
+        new ArrayList<>(List.of("proactive:read", "proactive:write", "dataset:read"));
+    perms.addAll(List.of(extraPerms));
+    long rid =
+        fx.createRole(
+            "pjx_lv_" + System.nanoTime(), fx.levelId(levelName), perms.toArray(String[]::new));
+    roles.add(rid);
+    fx.assignRole(owner, rid);
+  }
+
+  private long dataset(String levelName) {
+    long id = fx.createDatasetRow("wd198_" + System.nanoTime(), fx.levelId(levelName), owner);
+    datasets.add(id);
+    return id;
+  }
+
+  /** ai-agent 가 스마트 작업 실행 중에 부르는 모양의 내부 대행 요청 — 데이터셋 단건 조회(인터셉터의 VIEW 강제를 지난다). */
+  private void agentReadsDataset(long onBehalfOf, long datasetId, Long executionId)
+      throws Exception {
+    MockHttpServletRequestBuilder req =
+        get("/api/v1/datasets/" + datasetId)
+            .header("Authorization", "Internal test-internal-token")
+            .header("X-On-Behalf-Of", String.valueOf(onBehalfOf))
+            .header("X-On-Behalf-Of-Tenant", String.valueOf(DEFAULT_TEST_TENANT_ID));
+    if (executionId != null) {
+      req = req.header("X-Proactive-Execution-Id", String.valueOf(executionId));
+    }
+    mockMvc.perform(req).andReturn();
+  }
+
+  @Test
+  void agentReadsDuringRun_recordMaxLevelOnly() throws Exception {
+    setOwnerLevel("내부");
+    long internal = dataset("내부");
+    long open = dataset("공개");
+    long exec = insertExecution("RUNNING", null, null);
+
+    // 실행 id 없는 같은 읽기(채팅 등)는 기록하지 않는다
+    agentReadsDataset(owner, open, null);
+    assertThat(reportLevel(exec)).isNull();
+
+    agentReadsDataset(owner, open, exec);
+    assertThat(reportLevel(exec)).isEqualTo(fx.levelId("공개"));
+    agentReadsDataset(owner, internal, exec);
+    assertThat(reportLevel(exec)).isEqualTo(fx.levelId("내부"));
+    // 더 낮은 등급을 나중에 읽어도 최고 등급이 남는다
+    agentReadsDataset(owner, open, exec);
+    assertThat(reportLevel(exec)).isEqualTo(fx.levelId("내부"));
+
+    // 실행 중 AI 가 이전 리포트 본문(get_execution)을 읽으면 그 리포트의 등급도 넣는다
+    setOwnerLevel("민감");
+    long previous = insertExecution("COMPLETED", java.time.LocalDateTime.now(), fx.levelId("민감"));
+    MockHttpServletResponse prev =
+        mockMvc
+            .perform(
+                get("/api/v1/proactive/jobs/" + jobId + "/executions/" + previous)
+                    .header("Authorization", "Internal test-internal-token")
+                    .header("X-On-Behalf-Of", String.valueOf(owner))
+                    .header("X-On-Behalf-Of-Tenant", String.valueOf(DEFAULT_TEST_TENANT_ID))
+                    .header("X-Proactive-Execution-Id", String.valueOf(exec)))
+            .andReturn()
+            .getResponse();
+    assertThat(prev.getStatus()).isEqualTo(200);
+    assertThat(reportLevel(exec)).isEqualTo(fx.levelId("민감"));
+  }
+
+  @Test
+  void forgedExecutionHeader_isIgnored() throws Exception {
+    setOwnerLevel("내부");
+    long internal = dataset("내부");
+    long running = insertExecution("RUNNING", null, null);
+    long finished = insertExecution("COMPLETED", java.time.LocalDateTime.now().minusDays(1), null);
+    // 남(작성자 아님)이 주인의 진행 중 실행 id 를 실어도 기록되지 않는다
+    long other = user();
+    // 남도 그 데이터셋을 볼 수 있는 등급이어야 한다 — 볼 수 없으면 기록 이전에 VIEW 거부로 끝나 작성자 조건을 증명하지 못한다(변이 확인)
+    long otherRole = fx.createRole("pjx_o_" + System.nanoTime(), fx.levelId("내부"), "dataset:read");
+    roles.add(otherRole);
+    fx.assignRole(other, otherRole);
+    agentReadsDataset(other, internal, running);
+    assertThat(reportLevel(running)).isNull();
+    // 이미 끝난 실행 id 도 무시된다(요청 시작 전에 끝남)
+    agentReadsDataset(owner, internal, finished);
+    assertThat(reportLevel(finished)).isNull();
+    // 숫자가 아닌 헤더는 무시되고 요청은 그대로 처리된다
+    mockMvc
+        .perform(
+            get("/api/v1/datasets/" + internal)
+                .header("Authorization", "Internal test-internal-token")
+                .header("X-On-Behalf-Of", String.valueOf(owner))
+                .header("X-On-Behalf-Of-Tenant", String.valueOf(DEFAULT_TEST_TENANT_ID))
+                .header("X-Proactive-Execution-Id", "abc"))
+        .andReturn();
+    assertThat(reportLevel(running)).isNull();
+    // 양성 대조: 같은 실행 id 를 작성자가 실으면 기록된다
+    agentReadsDataset(owner, internal, running);
+    assertThat(reportLevel(running)).isEqualTo(fx.levelId("내부"));
+  }
+
+  @Test
+  void runnerScope_recordsInternalReads_andMetricSqlLevel() {
+    setOwnerLevel("내부");
+    long internal = dataset("내부");
+    String table =
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () ->
+                dsl.select(field(name("table_name"), String.class))
+                    .from(table(name("dataset")))
+                    .where(field(name("id"), Long.class).eq(internal))
+                    .fetchSingle(field(name("table_name"), String.class)));
+    long exec = insertExecution("RUNNING", null, null);
+    Map<String, Object> config =
+        Map.of(
+            "anomaly",
+            Map.of(
+                "metrics",
+                List.of(
+                    Map.of(
+                        "id",
+                        "m1",
+                        "source",
+                        "dataset",
+                        "query",
+                        "SELECT count(*) FROM " + table))));
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    // 범위 밖이면 아무 일도 없다
+    metricSqlAccessChecker.noteMetricLevel(config, "m1", owner);
+    assertThat(reportLevel(exec)).isNull();
+    // 실행기 범위 안의 이상 탐지 지표 판정은 그 SQL 이 읽는 데이터셋 등급을 남긴다
+    levelRecorder.runInExecution(
+        exec,
+        owner,
+        () -> {
+          metricSqlAccessChecker.noteMetricLevel(config, "m1", owner);
+          return null;
+        });
+    assertThat(reportLevel(exec)).isEqualTo(fx.levelId("내부"));
+  }
+
+  private MockHttpServletResponse ownerGet(String url) throws Exception {
+    return mockMvc.perform(get(url).header("Authorization", ownerToken)).andReturn().getResponse();
+  }
+
+  @Test
+  void reportAboveOwnersCurrentLevel_is403_nullLevelStillOpens() throws Exception {
+    long sensitive = fx.levelId("민감");
+    long leveled = insertExecution("COMPLETED", java.time.LocalDateTime.now(), sensitive);
+    long legacy = insertExecution("COMPLETED", java.time.LocalDateTime.now(), null);
+    String base = "/api/v1/proactive/jobs/" + jobId + "/executions/";
+
+    // 작성자 등급이 리포트 등급 이상이면 열린다(양성 대조)
+    setOwnerLevel("민감");
+    assertThat(ownerGet(base + leveled).getStatus()).isEqualTo(200);
+    assertThat(ownerGet(base + leveled + "/html").getStatus()).isEqualTo(200);
+
+    // 작성자 등급을 낮추면 상세·HTML·PDF 모두 403 + 한국어 안내
+    setOwnerLevel("공개");
+    for (String suffix : List.of("", "/html", "/pdf")) {
+      MockHttpServletResponse r = ownerGet(base + leveled + suffix);
+      assertThat(r.getStatus()).as(suffix).isEqualTo(403);
+      JsonNode body = om.readTree(r.getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+      assertThat(body.path("code").asText()).isEqualTo("REPORT_SECURITY_LEVEL_BLOCKED");
+      assertThat(body.path("message").asText()).isEqualTo("현재 보안 등급으로 열 수 없는 리포트입니다");
+    }
+    // 등급 없는 리포트(이전 리포트)는 지금처럼 열린다
+    assertThat(ownerGet(base + legacy).getStatus()).isEqualTo(200);
+    assertThat(ownerGet(base + legacy + "/html").getStatus()).isEqualTo(200);
+
+    // 실행 목록·리포트 목록은 배지용 등급을 싣고, 열 수 없는 리포트의 요약은 비운다
+    JsonNode list = getJson("/api/v1/proactive/jobs/" + jobId + "/executions", ownerToken);
+    boolean sawBadge = false;
+    for (JsonNode row : list) {
+      if (row.path("id").asLong() == leveled) {
+        assertThat(row.path("securityLevel").path("name").asText()).isEqualTo("민감");
+        sawBadge = true;
+      }
+    }
+    assertThat(sawBadge).isTrue();
+    JsonNode reports = getJson("/api/v1/proactive/reports", ownerToken);
+    for (JsonNode row : reports) {
+      if (row.path("executionId").asLong() == leveled) {
+        assertThat(row.path("summary").isNull()).isTrue();
+        assertThat(row.path("securityLevel").path("name").asText()).isEqualTo("민감");
+      } else if (row.path("executionId").asLong() == legacy) {
+        assertThat(row.path("summary").asText()).isEqualTo("요약 본문");
+      }
+    }
+  }
+
+  @Test
+  void reportPdf_appliesLevelExportPolicy() throws Exception {
+    String base = "/api/v1/proactive/jobs/" + jobId + "/executions/";
+    // 기밀(export DENY): 열람은 되지만 PDF 는 403 POLICY_BLOCKED
+    long secret = insertExecution("COMPLETED", java.time.LocalDateTime.now(), fx.levelId("기밀"));
+    setOwnerLevel("기밀");
+    assertThat(ownerGet(base + secret + "/html").getStatus()).isEqualTo(200);
+    MockHttpServletResponse denied = ownerGet(base + secret + "/pdf");
+    assertThat(denied.getStatus()).isEqualTo(403);
+    JsonNode body = om.readTree(denied.getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+    assertThat(body.path("code").asText()).isEqualTo("POLICY_BLOCKED");
+    assertThat(body.path("message").asText()).isEqualTo("'기밀' 등급 데이터는 내보낼 수 없습니다.");
+
+    // 민감(export PERMISSION): 제한 데이터 내보내기 권한이 없으면 403, 있으면 판정 통과(403 아님)
+    long sensitive = insertExecution("COMPLETED", java.time.LocalDateTime.now(), fx.levelId("민감"));
+    setOwnerLevel("민감");
+    MockHttpServletResponse needPerm = ownerGet(base + sensitive + "/pdf");
+    assertThat(needPerm.getStatus()).isEqualTo(403);
+    assertThat(
+            om.readTree(needPerm.getContentAsString(java.nio.charset.StandardCharsets.UTF_8))
+                .path("message")
+                .asText())
+        .isEqualTo("'민감' 등급 데이터를 내보내려면 제한 데이터 내보내기 권한이 필요합니다.");
+    setOwnerLevel("민감", "data:export_restricted");
+    assertThat(ownerGet(base + sensitive + "/pdf").getStatus()).isNotEqualTo(403);
   }
 }
