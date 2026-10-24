@@ -147,6 +147,54 @@ class AsyncJobServiceTest extends IntegrationTestBase {
     assertThat(status.message()).isEqualTo("Completed");
   }
 
+  /**
+   * WD-250: 내보내기 파일의 서버 경로(filePath)는 DB 에는 남아 다운로드가 쓰지만, 작업 상태 응답과 완료 SSE 이벤트에는 실리지 않는다. 나머지
+   * 메타데이터(filename 등)는 그대로 나간다.
+   */
+  @Test
+  void completeJob_withFilePath_hiddenFromStatusAndSseButKeptInDb() throws IOException {
+    String jobId = asyncJobService.createJob("DATA_EXPORT", "dataset", "ds-fp", userId, null);
+    SseEmitter mockEmitter = mock(SseEmitter.class);
+    Object original = ReflectionTestUtils.getField(asyncJobService, "emitters");
+    ConcurrentHashMap<String, CopyOnWriteArrayList<SseEmitter>> emitters =
+        new ConcurrentHashMap<>();
+    emitters.put(jobId, new CopyOnWriteArrayList<>(List.of(mockEmitter)));
+    ReflectionTestUtils.setField(asyncJobService, "emitters", emitters);
+    try {
+      asyncJobService.completeJob(
+          jobId,
+          Map.of(
+              "filePath",
+              "/srv/tmp/firehub-exports/" + jobId + ".csv",
+              "filename",
+              "result.csv",
+              "fileSize",
+              10));
+
+      // 상태 응답 — filePath 없음, filename 은 있음
+      AsyncJobStatusResponse status = asyncJobService.getJobStatus(jobId, userId);
+      assertThat(status.metadata()).doesNotContainKey("filePath");
+      assertThat(status.metadata()).containsEntry("filename", "result.csv");
+
+      // DB 원본 — 다운로드가 읽는 filePath 는 그대로
+      assertThat(asyncJobRepository.findById(jobId).orElseThrow().metadata())
+          .containsEntry("filePath", "/srv/tmp/firehub-exports/" + jobId + ".csv");
+
+      // 완료 SSE 이벤트 본문에도 경로가 없다
+      org.mockito.ArgumentCaptor<SseEmitter.SseEventBuilder> captor =
+          org.mockito.ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
+      verify(mockEmitter, org.mockito.Mockito.atLeastOnce()).send(captor.capture());
+      String sent =
+          captor.getAllValues().stream()
+              .flatMap(b -> b.build().stream())
+              .map(d -> String.valueOf(d.getData()))
+              .reduce("", String::concat);
+      assertThat(sent).contains("result.csv").doesNotContain("filePath").doesNotContain("/srv/tmp");
+    } finally {
+      ReflectionTestUtils.setField(asyncJobService, "emitters", original);
+    }
+  }
+
   // ──────────────────────────────────────────────
   // failJob
   // ──────────────────────────────────────────────

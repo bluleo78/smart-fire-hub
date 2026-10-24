@@ -173,7 +173,7 @@ describe('DataImport MCP Tools', () => {
 
     it('returns isError on API failure', async () => {
       (client.getImportStatus as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error('API 오류 (404): Import not found'),
+        new Error('API 오류 (404): 가져오기 이력을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.'),
       );
 
       const result = await invokeTool(server, 'import_status', {
@@ -181,7 +181,7 @@ describe('DataImport MCP Tools', () => {
         importId: 999,
       });
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Import not found');
+      expect(result.content[0].text).toContain('가져오기 이력을 찾을 수 없습니다');
     });
   });
 

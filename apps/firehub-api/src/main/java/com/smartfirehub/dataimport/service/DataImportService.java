@@ -7,6 +7,7 @@ import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.dataimport.dto.*;
 import com.smartfirehub.dataimport.exception.ConcurrentImportException;
 import com.smartfirehub.dataimport.exception.FileUnreadableException;
+import com.smartfirehub.dataimport.exception.ImportNotFoundException;
 import com.smartfirehub.dataimport.exception.InvalidFileHeaderException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
@@ -107,7 +108,7 @@ public class DataImportService {
     // Validate file type
     String originalFilename = file.getOriginalFilename();
     if (originalFilename == null || originalFilename.isEmpty()) {
-      throw new UnsupportedFileTypeException("File name is required");
+      throw new UnsupportedFileTypeException(UnsupportedFileTypeException.FILE_NAME_REQUIRED);
     }
 
     String fileType = getFileType(originalFilename);
@@ -116,8 +117,7 @@ public class DataImportService {
         && !fileType.equals("xlsx")
         && !fileType.equals("xls")
         && !fileType.equals("xlsb")) {
-      throw new UnsupportedFileTypeException(
-          "Unsupported file type. Only CSV, XLSX, XLS, and XLSB are supported.");
+      throw new UnsupportedFileTypeException(UnsupportedFileTypeException.UNSUPPORTED_EXTENSION);
     }
 
     // MultipartFile을 임시 파일로 1회 spill 후 Path 기반 파서로 3회 모두 재사용한다.
@@ -175,7 +175,7 @@ public class DataImportService {
     // Validate file type
     String originalFilename = file.getOriginalFilename();
     if (originalFilename == null || originalFilename.isEmpty()) {
-      throw new UnsupportedFileTypeException("File name is required");
+      throw new UnsupportedFileTypeException(UnsupportedFileTypeException.FILE_NAME_REQUIRED);
     }
 
     String fileType = getFileType(originalFilename);
@@ -184,8 +184,7 @@ public class DataImportService {
         && !fileType.equals("xlsx")
         && !fileType.equals("xls")
         && !fileType.equals("xlsb")) {
-      throw new UnsupportedFileTypeException(
-          "Unsupported file type. Only CSV, XLSX, XLS, and XLSB are supported.");
+      throw new UnsupportedFileTypeException(UnsupportedFileTypeException.UNSUPPORTED_EXTENSION);
     }
 
     // Get dataset columns
@@ -297,7 +296,7 @@ public class DataImportService {
     // Validate file type
     String originalFilename = file.getOriginalFilename();
     if (originalFilename == null || originalFilename.isEmpty()) {
-      throw new UnsupportedFileTypeException("File name is required");
+      throw new UnsupportedFileTypeException(UnsupportedFileTypeException.FILE_NAME_REQUIRED);
     }
 
     String fileType = getFileType(originalFilename);
@@ -306,8 +305,7 @@ public class DataImportService {
         && !fileType.equals("xlsx")
         && !fileType.equals("xls")
         && !fileType.equals("xlsb")) {
-      throw new UnsupportedFileTypeException(
-          "Unsupported file type. Only CSV, XLSX, XLS, and XLSB are supported.");
+      throw new UnsupportedFileTypeException(UnsupportedFileTypeException.UNSUPPORTED_EXTENSION);
     }
 
     long fileSize = file.getSize();
@@ -1017,13 +1015,15 @@ public class DataImportService {
         .findById(datasetId)
         .orElseThrow(() -> new IllegalArgumentException(DatasetNotFoundException.MESSAGE));
 
+    // 없는 id·다른 데이터셋의 가져오기·가져오기가 아닌 감사 기록(같은 데이터셋의 내보내기 등)은 모두 같은 404 로 답한다(WD-250) —
+    // 감사 기록 id 는 모든 행위가 공유하는 번호라, 행위 종류를 보지 않으면 내보내기 기록이 가져오기 이력처럼 보였다.
     AuditLogResponse auditLog =
-        auditLogService
-            .findById(importId)
-            .orElseThrow(() -> new IllegalArgumentException("Import not found: " + importId));
+        auditLogService.findById(importId).orElseThrow(ImportNotFoundException::new);
 
-    if (!String.valueOf(datasetId).equals(auditLog.resourceId())) {
-      throw new IllegalArgumentException("Import does not belong to this dataset");
+    if (!"IMPORT".equals(auditLog.actionType())
+        || !"dataset".equals(auditLog.resource())
+        || !String.valueOf(datasetId).equals(auditLog.resourceId())) {
+      throw new ImportNotFoundException();
     }
 
     return mapToImportResponse(auditLog);

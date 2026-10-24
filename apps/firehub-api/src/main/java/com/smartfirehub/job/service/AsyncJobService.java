@@ -208,7 +208,8 @@ public class AsyncJobService {
 
   @Transactional(readOnly = true)
   public AsyncJobStatusResponse getJobStatus(String jobId, Long userId) {
-    return findOwnedJob(jobId, userId);
+    // 내보내기 파일의 서버 경로 같은 내부 전용 메타데이터는 응답에서 뺀다(WD-250). DB 의 원본은 그대로라 다운로드는 영향 없다.
+    return findOwnedJob(jobId, userId).withoutInternalMetadata();
   }
 
   /**
@@ -281,7 +282,8 @@ public class AsyncJobService {
     payload.put("stage", stage);
     payload.put("progress", progress);
     payload.put("message", message);
-    payload.put("metadata", metadata != null ? metadata : Collections.emptyMap());
+    // 진행 SSE 이벤트(진행·완료·구독 직후 현재 상태)도 상태 조회와 같이 내부 전용 키를 뺀다(WD-250).
+    payload.put("metadata", AsyncJobStatusResponse.publicMetadata(metadata));
     if (errorMessage != null) payload.put("errorMessage", errorMessage);
     return payload;
   }

@@ -1,5 +1,6 @@
 package com.smartfirehub.dataimport.controller;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataimport.dto.ColumnMappingEntry;
@@ -53,14 +54,18 @@ public class DataImportController {
   public ResponseEntity<ImportValidateResponse> validateImport(
       @PathVariable Long datasetId,
       @RequestParam("file") MultipartFile file,
-      @RequestParam("mappings") String mappingsJson,
+      // 선택 값으로 받고 아래에서 직접 확인한다(WD-250) — 필수(required)로 두면 빠졌을 때 Spring 의 누락 예외가 범용 핸들러로 떨어져 500 이
+      // 났다. 사전 검증은 확정한 매핑을 검사하는 단계라 매핑 없이는 400 한국어로 거부한다(빈 배열 [] 은 허용).
+      @RequestParam(value = "mappings", required = false) String mappingsJson,
       @RequestParam(defaultValue = ",") String delimiter,
       @RequestParam(defaultValue = "AUTO") String encoding,
       @RequestParam(defaultValue = "true") boolean hasHeader,
       @RequestParam(defaultValue = "0") int skipRows)
       throws Exception {
-    List<ColumnMappingEntry> mappings =
-        objectMapper.readValue(mappingsJson, new TypeReference<List<ColumnMappingEntry>>() {});
+    List<ColumnMappingEntry> mappings = parseMappings(mappingsJson);
+    if (mappings == null) {
+      throw new IllegalArgumentException(MISSING_MAPPINGS_MESSAGE);
+    }
     ParseOptions parseOptions = new ParseOptions(delimiter, encoding, hasHeader, skipRows);
     return ResponseEntity.ok(importService.validateImport(datasetId, file, mappings, parseOptions));
   }
@@ -86,18 +91,8 @@ public class DataImportController {
     String ipAddress = ClientIpExtractor.extract(request);
     String userAgent = request.getHeader("User-Agent");
 
-    ImportMode resolvedImportMode;
-    try {
-      resolvedImportMode = ImportMode.valueOf(importMode.toUpperCase());
-    } catch (IllegalArgumentException e) {
-      return ResponseEntity.badRequest().build();
-    }
-
-    List<ColumnMappingEntry> mappings = null;
-    if (mappingsJson != null && !mappingsJson.isEmpty()) {
-      mappings =
-          objectMapper.readValue(mappingsJson, new TypeReference<List<ColumnMappingEntry>>() {});
-    }
+    ImportMode resolvedImportMode = parseImportMode(importMode);
+    List<ColumnMappingEntry> mappings = parseMappings(mappingsJson);
 
     ParseOptions parseOptions = new ParseOptions(delimiter, encoding, hasHeader, skipRows);
     ImportStartResponse response =
@@ -125,5 +120,48 @@ public class DataImportController {
   public ResponseEntity<ImportResponse> getImport(
       @PathVariable Long datasetId, @PathVariable Long importId) {
     return ResponseEntity.ok(importService.getImportById(datasetId, importId));
+  }
+
+  /** importMode 값이 허용 목록에 없을 때의 400 문구 — 허용 값은 enum 에서 만들어 목록이 어긋나지 않게 한다(WD-250). */
+  static final String INVALID_IMPORT_MODE_MESSAGE =
+      "가져오기 방식(importMode) 값이 올바르지 않습니다. 사용할 수 있는 값: "
+          + String.join(
+              ", ", java.util.Arrays.stream(ImportMode.values()).map(Enum::name).toList());
+
+  /** mappings 가 JSON 배열로 읽히지 않을 때의 400 문구(WD-250). */
+  static final String INVALID_MAPPINGS_MESSAGE =
+      "열 매핑(mappings) 형식이 올바르지 않습니다. "
+          + "[{\"fileColumn\": \"파일 열\", \"datasetColumn\": \"데이터셋 열\"}] 형태의 JSON 배열로 보내 주세요.";
+
+  /** 사전 검증에 mappings 가 없을 때의 400 문구(WD-250). */
+  static final String MISSING_MAPPINGS_MESSAGE =
+      "열 매핑(mappings)이 없습니다. 파일 열과 데이터셋 열의 매핑을 함께 보내 주세요.";
+
+  /**
+   * importMode 문자열을 enum 으로 바꾼다(대소문자 무시). 예전에는 틀린 값에 본문 없는 400 을 돌려 사용자·AI 가 무엇이 틀렸는지 알 수
+   * 없었다(WD-250).
+   */
+  private static ImportMode parseImportMode(String importMode) {
+    try {
+      return ImportMode.valueOf(importMode.trim().toUpperCase(java.util.Locale.ROOT));
+    } catch (IllegalArgumentException e) {
+      throw new IllegalArgumentException(INVALID_IMPORT_MODE_MESSAGE);
+    }
+  }
+
+  /**
+   * mappings JSON 을 읽는다. 비었거나 JSON {@code null} 이면 매핑 없음(null)으로 본다.
+   *
+   * <p>예전에는 깨진 JSON 의 Jackson 예외가 범용 핸들러로 떨어져 500 이 났다 — 클라이언트 입력 오류이므로 한국어 400 으로 바꾼다(WD-250).
+   */
+  private List<ColumnMappingEntry> parseMappings(String mappingsJson) {
+    if (mappingsJson == null || mappingsJson.isBlank()) {
+      return null;
+    }
+    try {
+      return objectMapper.readValue(mappingsJson, new TypeReference<List<ColumnMappingEntry>>() {});
+    } catch (JsonProcessingException e) {
+      throw new IllegalArgumentException(INVALID_MAPPINGS_MESSAGE);
+    }
   }
 }

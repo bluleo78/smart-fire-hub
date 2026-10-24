@@ -16,6 +16,7 @@ import com.smartfirehub.dataimport.dto.ImportValidateResponse;
 import com.smartfirehub.dataimport.dto.ParseOptions;
 import com.smartfirehub.dataimport.exception.ConcurrentImportException;
 import com.smartfirehub.dataimport.exception.FileUnreadableException;
+import com.smartfirehub.dataimport.exception.ImportNotFoundException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
@@ -180,7 +181,9 @@ class DataImportServiceTest extends IntegrationTestBase {
                 dataImportService.importFile(
                     testDatasetId, file, null, testUserId, "Test User", null, null))
         .isInstanceOf(UnsupportedFileTypeException.class)
-        .hasMessageContaining("Unsupported file type");
+        // WD-250: 한국어 문구, 허용 형식 나열
+        .hasMessage(UnsupportedFileTypeException.UNSUPPORTED_EXTENSION)
+        .hasMessageContaining("CSV, XLSX, XLS, XLSB");
   }
 
   @Test
@@ -195,7 +198,7 @@ class DataImportServiceTest extends IntegrationTestBase {
                 dataImportService.importFile(
                     testDatasetId, file, null, testUserId, "Test User", null, null))
         .isInstanceOf(UnsupportedFileTypeException.class)
-        .hasMessageContaining("File name is required");
+        .hasMessage(UnsupportedFileTypeException.FILE_NAME_REQUIRED);
   }
 
   /**
@@ -447,9 +450,40 @@ class DataImportServiceTest extends IntegrationTestBase {
             testUserId);
 
     // When/Then
+    // WD-250: 다른 데이터셋의 가져오기는 없는 가져오기와 같은 404 문구(존재를 드러내지 않음)
     assertThatThrownBy(() -> dataImportService.getImportById(anotherDataset.id(), auditId))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("does not belong to this dataset");
+        .isInstanceOf(ImportNotFoundException.class)
+        .hasMessage(ImportNotFoundException.MESSAGE);
+  }
+
+  /** WD-250: 없는 가져오기 id — 400 「Import not found: N」 대신 404 한국어. */
+  @Test
+  void getImportById_missingId_throwsImportNotFound() {
+    assertThatThrownBy(() -> dataImportService.getImportById(testDatasetId, Long.MAX_VALUE))
+        .isInstanceOf(ImportNotFoundException.class)
+        .hasMessage(ImportNotFoundException.MESSAGE);
+  }
+
+  /** WD-250: 같은 데이터셋의 가져오기가 아닌 감사 기록(내보내기) id 는 가져오기 이력으로 보이지 않고 404 다. */
+  @Test
+  void getImportById_exportAuditId_throwsImportNotFound() {
+    Long exportAuditId =
+        auditLogService.log(
+            testUserId,
+            "Test User",
+            "DATA_EXPORT",
+            "dataset",
+            String.valueOf(testDatasetId),
+            "CSV 내보내기 완료 (1행)",
+            null,
+            null,
+            "SUCCESS",
+            null,
+            Map.of("format", "CSV", "rowCount", 1));
+
+    assertThatThrownBy(() -> dataImportService.getImportById(testDatasetId, exportAuditId))
+        .isInstanceOf(ImportNotFoundException.class)
+        .hasMessage(ImportNotFoundException.MESSAGE);
   }
 
   @Test

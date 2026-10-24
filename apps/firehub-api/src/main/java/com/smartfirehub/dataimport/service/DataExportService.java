@@ -6,6 +6,7 @@ import com.smartfirehub.dataimport.dto.ExportEstimate;
 import com.smartfirehub.dataimport.dto.ExportFormat;
 import com.smartfirehub.dataimport.dto.ExportRequest;
 import com.smartfirehub.dataimport.dto.ExportResult;
+import com.smartfirehub.dataimport.exception.ExportDownloadException;
 import com.smartfirehub.dataimport.service.export.CsvExportWriter;
 import com.smartfirehub.dataimport.service.export.CsvFormulaGuard;
 import com.smartfirehub.dataimport.service.export.ExcelExportWriter;
@@ -44,6 +45,10 @@ public class DataExportService {
 
   static final int SYNC_THRESHOLD = 50_000;
   private static final int PAGE_SIZE = 1000;
+
+  /** 비동기 내보내기 작업의 async_job.job_type — 다운로드는 이 종류의 작업만 받는다(WD-250). */
+  static final String EXPORT_JOB_TYPE = "DATA_EXPORT";
+
   static final Path EXPORT_DIR = Path.of(System.getProperty("java.io.tmpdir"), "firehub-exports");
 
   private final DatasetRepository datasetRepository;
@@ -132,7 +137,7 @@ public class DataExportService {
 
       String jobId =
           asyncJobService.createJob(
-              "DATA_EXPORT",
+              EXPORT_JOB_TYPE,
               "dataset",
               String.valueOf(datasetId),
               userId,
@@ -185,25 +190,35 @@ public class DataExportService {
     }
   }
 
+  /**
+   * 비동기 내보내기 파일 경로를 돌려준다. 내려받을 수 없으면 사유별 상태·한국어 문구의 {@link ExportDownloadException} 을 던진다(WD-250).
+   *
+   * <p>판정 순서가 의미를 가진다 — 작업 종류를 진행 단계보다 먼저 봐야 진행 중인 가져오기 작업 id 에 「아직 내보내기가 끝나지 않았습니다」가 나가지 않는다. 파일
+   * 경로는 서버 내부 값이라 작업 상태 응답에서는 빠지므로({@link AsyncJobStatusResponse#withoutInternalMetadata()}), 여기서는
+   * 리포지토리의 원본 메타데이터를 읽는다.
+   */
   public Path getExportFile(String jobId, Long userId) {
     AsyncJobStatusResponse status =
-        asyncJobRepository
-            .findById(jobId)
-            .orElseThrow(() -> new IllegalArgumentException("Job not found: " + jobId));
+        asyncJobRepository.findById(jobId).orElseThrow(ExportDownloadException::notFound);
+    if (!EXPORT_JOB_TYPE.equals(status.jobType())) {
+      throw ExportDownloadException.notFound();
+    }
     if (!status.userId().equals(userId)) {
-      throw new org.springframework.security.access.AccessDeniedException(
-          "Access denied: not the owner of job " + jobId);
+      throw ExportDownloadException.notOwner();
+    }
+    if ("FAILED".equals(status.stage())) {
+      throw ExportDownloadException.failed();
     }
     if (!"COMPLETED".equals(status.stage())) {
-      throw new IllegalStateException("Job is not completed: " + status.stage());
+      throw ExportDownloadException.notFinished();
     }
-    String filePath = (String) status.metadata().get("filePath");
-    if (filePath == null) {
-      throw new IllegalStateException("Export file path not found in job metadata");
+    Object filePath = status.metadata() != null ? status.metadata().get("filePath") : null;
+    if (!(filePath instanceof String pathText) || pathText.isBlank()) {
+      throw ExportDownloadException.cleanedUp();
     }
-    Path path = Path.of(filePath);
+    Path path = Path.of(pathText);
     if (!Files.exists(path)) {
-      throw new IllegalStateException("Export file not found (may have been cleaned up)");
+      throw ExportDownloadException.cleanedUp();
     }
     return path;
   }
@@ -341,7 +356,7 @@ public class DataExportService {
 
   private void checkRateLimit(Long userId) {
     List<AsyncJobStatusResponse> activeExports =
-        asyncJobRepository.findActiveByUserAndJobType(userId, "DATA_EXPORT");
+        asyncJobRepository.findActiveByUserAndJobType(userId, EXPORT_JOB_TYPE);
     if (activeExports.size() >= 3) {
       throw new IllegalStateException("동시 내보내기 작업이 3개를 초과할 수 없습니다. 기존 작업이 완료된 후 다시 시도하세요.");
     }
