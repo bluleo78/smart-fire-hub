@@ -680,7 +680,10 @@ class RoleGrantScopeTest extends IntegrationTestBase {
   // ── 픽스처 헬퍼(role·user_role·role_permission 은 RLS 대상이라 A 컨텍스트 안에서) ──────────────
 
   private long member(String prefix) {
-    String username = "wd116-" + prefix + "-" + System.nanoTime() + "@example.com";
+    // username 컬럼은 varchar(50) — nanoTime 십진수(15~16자리)를 그대로 붙이면 긴 prefix 에서 머신 가동 시간에 따라 50자를 넘는다.
+    // 36진수로 줄여 유일성은 유지하고 길이는 고정 범위로 둔다.
+    String username =
+        "wd116-" + prefix + "-" + Long.toString(System.nanoTime(), 36) + "@example.com";
     long id =
         TestUsers.createMember(
                 dsl,
