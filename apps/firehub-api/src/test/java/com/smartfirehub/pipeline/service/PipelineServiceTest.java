@@ -937,6 +937,79 @@ class PipelineServiceTest extends IntegrationTestBase {
     assertThat(response.steps()).hasSize(2);
   }
 
+  // ---------------------------------------------------------------- WD-216 입력 데이터셋 필수
+
+  /** WD-216 저장 거부 문구 — 스텝 이름을 앞에 붙인 stepError 형식. */
+  private static final String NO_INPUT_REJECTION =
+      "스텝 'ai_step': 입력 데이터셋을 지정하거나 앞 스텝에 연결하세요(AI 분류는 입력 데이터셋이나 앞 스텝의 출력을 분류합니다)";
+
+  /** WD-216: 명시 입력도 의존 스텝도 없는 AI 분류 스텝은 저장에서 한국어로 거부한다. 예전엔 저장되고 실행하면 0행 완료로 끝났다. */
+  @Test
+  void createPipeline_aiClassifyStep_noInputAndNoDependency_rejectedInKorean() {
+    CreatePipelineRequest request =
+        new CreatePipelineRequest(
+            "AI Pipeline", null, List.of(aiStepWithInputColumns(List.of(), null, List.of())));
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(NO_INPUT_REJECTION);
+  }
+
+  /** WD-216: 의존 스텝 이름이 이 파이프라인에 없는 스텝이면 러너가 건너뛰므로 입력이 없는 것과 같다 — 함께 거부한다. */
+  @Test
+  void createPipeline_aiClassifyStep_dependencyOnUnknownStep_rejectedInKorean() {
+    CreatePipelineRequest request =
+        new CreatePipelineRequest(
+            "AI Pipeline",
+            null,
+            List.of(aiStepWithInputColumns(null, List.of("no_such_step"), List.of())));
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(NO_INPUT_REJECTION);
+  }
+
+  /** WD-216: 수정 경로도 같다 — 입력을 모두 빼고 다시 저장하면 거부한다. */
+  @Test
+  void updatePipeline_aiClassifyStep_inputsRemoved_rejectedInKorean() {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "AI Pipeline",
+                null,
+                List.of(aiStepWithInputColumns(List.of(inputDatasetId), null, List.of()))),
+            testUserId);
+
+    UpdatePipelineRequest update =
+        new UpdatePipelineRequest(
+            "AI Pipeline", null, true, List.of(aiStepWithInputColumns(List.of(), null, List.of())));
+
+    assertThatThrownBy(() -> pipelineService.updatePipeline(created.id(), update, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(NO_INPUT_REJECTION);
+  }
+
+  /** WD-216: 명시 입력이 없어도 같은 파이프라인의 앞 스텝에 연결돼 있으면 실행 시 그 출력이 입력이 되므로 저장한다. */
+  @Test
+  void createPipeline_aiClassifyStep_noExplicitInputButDependency_saved() {
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "step1",
+                "First step",
+                "SQL",
+                "SELECT * FROM data.src_table",
+                null,
+                List.of(inputDatasetId),
+                null),
+            aiStepWithInputColumns(null, List.of("step1"), List.of()));
+
+    PipelineDetailResponse response =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest("AI Pipeline", null, steps), testUserId);
+    assertThat(response.steps()).hasSize(2);
+  }
+
   @Test
   void createPipeline_aiClassifyStep_missingAiConfig_throwsException() {
     List<PipelineStepRequest> steps =

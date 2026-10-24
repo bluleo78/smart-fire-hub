@@ -208,55 +208,91 @@ class AiClassifyExecutorTest {
         .hasMessageContaining("Output dataset table not found");
   }
 
+  /**
+   * WD-216: 입력 데이터셋이 하나도 없으면(명시 입력 없음 + 의존 스텝 출력도 해석되지 않음) 설정 오류다 — 예전에는 영어 「No input rows found」만
+   * 남기고 완료(0행)로 끝나 아무것도 분류되지 않은 것을 알 수 없었다. 한국어로 실패시키고 출력은 건드리지 않는다.
+   */
   @Test
-  void execute_withNullInputDatasetIds_returnsZeroRows() {
+  void execute_withNullInputDatasetIds_failsInKoreanWithoutTouchingOutput() {
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
-    PipelineStepResponse step = buildStep("APPEND", null);
+    PipelineStepResponse step = buildStep("REPLACE", null);
 
-    AiClassifyExecutor.ExecutionResult result = executor.execute(step, 100L, 1L);
-
-    assertThat(result.outputRows()).isEqualTo(0);
-    assertThat(result.executionLog()).contains("No input rows");
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(AiClassifyExecutor.NO_INPUT_DATASET_MESSAGE);
     verify(aiAgentClient, never()).classify(any(), any(), anyLong());
+    verify(dataTableService, never()).createTempTable(anyString());
     verify(dataTableRowService, never()).insertBatch(anyString(), anyList(), anyList(), anyMap());
   }
 
+  /** WD-216: 빈 목록도 null 과 같다 — 분류할 입력이 정해지지 않았다. */
   @Test
-  void execute_withEmptyInputDatasetIds_returnsZeroRows() {
+  void execute_withEmptyInputDatasetIds_failsInKorean() {
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
     PipelineStepResponse step = buildStep("APPEND", List.of());
 
-    AiClassifyExecutor.ExecutionResult result = executor.execute(step, 100L, 1L);
-
-    assertThat(result.outputRows()).isEqualTo(0);
-    assertThat(result.executionLog()).contains("No input rows");
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(AiClassifyExecutor.NO_INPUT_DATASET_MESSAGE);
+    verify(aiAgentClient, never()).classify(any(), any(), anyLong());
   }
 
+  /**
+   * WD-216: 입력 데이터셋은 있으나 0행이면 완료(0행)로 끝내되 한국어로 알린다 — PYTHON·API_CALL 의 0행 결과와 같은 계약(#685, 출력 유지).
+   * REPLACE 라도 임시 테이블을 만들지 않으므로 기존 출력 행은 그대로 남는다.
+   */
   @Test
-  void execute_withInputDatasetButNoRows_returnsZeroAndSkipsAi() {
+  void execute_withInputDatasetButNoRows_completesWithKoreanNoticeAndKeepsReplaceOutput() {
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
     when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
     when(dataTableRowService.countRows("source_table")).thenReturn(0L);
 
-    PipelineStepResponse step = buildStep("APPEND", List.of(1L));
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L));
 
     AiClassifyExecutor.ExecutionResult result = executor.execute(step, 100L, 1L);
 
     assertThat(result.outputRows()).isEqualTo(0);
+    assertThat(result.executionLog()).isEqualTo(AiClassifyExecutor.emptyInputMessage(1));
+    assertThat(result.executionLog()).contains("입력 데이터가 없어 분류하지 않았습니다");
     verify(aiAgentClient, never()).classify(any(), any(), anyLong());
+    // 출력 보존 — 임시 테이블 생성·맞바꿈·적재가 하나도 없다.
+    verify(dataTableService, never()).createTempTable(anyString());
+    verify(dataTableService, never()).swapTable(anyString(), anyString());
+    verify(dataTableRowService, never()).insertBatch(anyString(), anyList(), anyList(), anyMap());
   }
 
+  /**
+   * WD-216: 입력 데이터셋의 테이블을 찾을 수 없으면(실행 도중 삭제 등) 조용히 건너뛰지 않고 한국어로 실패한다 — 건너뛰면 남은 입력만 분류되거나 0행 완료로 끝나
+   * 누락을 알 수 없었다.
+   */
   @Test
-  void execute_withInputDatasetNotFound_skipsSource() {
+  void execute_withInputDatasetNotFound_failsInKorean() {
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
     when(datasetRepository.findTableNameById(99L)).thenReturn(Optional.empty());
 
     PipelineStepResponse step = buildStep("APPEND", List.of(99L));
 
-    AiClassifyExecutor.ExecutionResult result = executor.execute(step, 100L, 1L);
-
-    assertThat(result.outputRows()).isEqualTo(0);
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(AiClassifyExecutor.missingInputDatasetMessage(99L));
     verify(dataTableRowService, never()).countRows(anyString());
+  }
+
+  /** WD-216: 여러 입력 중 하나만 없어도 첫 조회 전에 실패한다 — 일부 입력만 분류되는 부분 결과를 만들지 않는다. */
+  @Test
+  void execute_withOneOfManyInputDatasetsMissing_failsBeforeAnyQuery() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(datasetRepository.findTableNameById(99L)).thenReturn(Optional.empty());
+
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L, 99L));
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(AiClassifyExecutor.missingInputDatasetMessage(99L));
+    verify(dataTableRowService, never()).countRows(anyString());
+    verify(dataTableRowService, never()).queryData(anyString(), any(), any(), anyInt(), anyInt());
+    verify(dataTableService, never()).createTempTable(anyString());
   }
 
   // -----------------------------------------------------------------------
