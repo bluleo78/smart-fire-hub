@@ -8,18 +8,28 @@ import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PausedTransactionRace;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import com.smartfirehub.support.TestUsers;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.jooq.DSLContext;
 import org.jooq.JSONB;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -358,6 +368,174 @@ class TriggerChainCycleValidationTest extends IntegrationTestBase {
             .orElseThrow();
     assertThat(listed.isEnabled()).isTrue();
     assertThat(listed.upstreamMissing()).isTrue();
+  }
+
+  // ------------------------------------------------------------------ 동시 저장(WD-239)
+  //
+  // 결함: F 에 「G 끝나면 실행」, G 에 「F 끝나면 실행」을 동시에 만들면 READ COMMITTED 두 트랜잭션이 서로의 아직 커밋되지 않은 간선을 못 봐 둘 다
+  // 저장됐다(순차면 409). 아래 테스트는 실제 커밋이 필요하므로 메서드 단위로 테스트 트랜잭션을 끄고, 만든 파이프라인(트리거는 CASCADE)과 사용자를
+  // 직접 지운다.
+
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void concurrentOppositeCreates_secondWaitsAndIsRejected() throws Exception {
+    List<Long> created = new ArrayList<>();
+    try {
+      // 커밋 전에 멈춘 첫 생성 동안 둘째 생성이 대기했는지까지 본다 — 대기하지 않으면 잠금이 경합 구간을 막지 못한 것이다(공허한 통과 방지).
+      for (int round = 0; round < 3; round++) {
+        Long f = pipeline("PF" + round);
+        Long g = pipeline("PG" + round);
+        created.add(f);
+        created.add(g);
+
+        PausedTransactionRace.Outcome<Long> out =
+            PausedTransactionRace.run(
+                fixtureTransactionTemplate,
+                DEFAULT_TEST_TENANT_ID,
+                () -> chain(f, g), // G → F
+                () -> chain(g, f)); // F → G — 첫째가 커밋되면 순환
+
+        assertThat(out.secondBlocked()).as("round %d: 둘째 생성이 첫째 커밋까지 대기", round).isTrue();
+        assertThat(out.secondError())
+            .as("round %d", round)
+            .isInstanceOf(CyclicTriggerDependencyException.class)
+            .hasMessageContaining("순환");
+        assertThat(enabledChainCount(f, g)).as("round %d: 저장된 활성 연쇄", round).isEqualTo(1);
+      }
+    } finally {
+      cleanupCommitted(created);
+    }
+  }
+
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void freeRunningOppositeCreates_exactlyOneSucceeds() throws Exception {
+    List<Long> created = new ArrayList<>();
+    try {
+      // 멈춤 없이 두 스레드를 동시에 출발시켜 실제 요청 경합에 가깝게 여러 번 반복한다(수정 전에는 둘 다 성공하는 회차가 나왔다).
+      for (int round = 0; round < 10; round++) {
+        Long f = pipeline("FF" + round);
+        Long g = pipeline("FG" + round);
+        created.add(f);
+        created.add(g);
+
+        List<Throwable> outcomes = raceFreely(() -> chain(f, g), () -> chain(g, f));
+
+        assertThat(outcomes.stream().filter(e -> e == null).count())
+            .as("round %d: 성공은 하나", round)
+            .isEqualTo(1);
+        assertThat(outcomes.stream().filter(e -> e != null).findFirst().orElseThrow())
+            .as("round %d: 나머지는 순환 거부", round)
+            .isInstanceOf(CyclicTriggerDependencyException.class);
+        assertThat(enabledChainCount(f, g)).as("round %d", round).isEqualTo(1);
+      }
+    } finally {
+      cleanupCommitted(created);
+    }
+  }
+
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void concurrentEnableViaToggleAndUpdate_secondWaitsAndIsRejected() throws Exception {
+    List<Long> created = new ArrayList<>();
+    try {
+      // 켜기 토글·수정(isEnabled=true) 두 경로가 서로 엇갈려 켜질 때도 같은 잠금으로 직렬화되는지 — 둘째 자리에 두 경로를 번갈아 둔다.
+      for (int round = 0; round < 2; round++) {
+        Long f = pipeline("TF" + round);
+        Long g = pipeline("TG" + round);
+        created.add(f);
+        created.add(g);
+        Long gf = chain(f, g); // G → F
+        triggerService.toggleTrigger(gf, false);
+        Long fg = chain(g, f); // F → G (G → F 가 꺼져 있어 허용)
+        triggerService.toggleTrigger(fg, false);
+
+        boolean toggleSecond = round == 0;
+        Runnable first =
+            toggleSecond
+                ? () ->
+                    triggerService.updateTrigger(
+                        gf, new UpdateTriggerRequest("chain", true, null, null), userId)
+                : () -> triggerService.toggleTrigger(gf, true);
+        PausedTransactionRace.Outcome<Boolean> out =
+            PausedTransactionRace.run(
+                fixtureTransactionTemplate,
+                DEFAULT_TEST_TENANT_ID,
+                first,
+                () -> {
+                  if (toggleSecond) {
+                    triggerService.toggleTrigger(fg, true);
+                  } else {
+                    triggerService.updateTrigger(
+                        fg, new UpdateTriggerRequest("chain", true, null, null), userId);
+                  }
+                  return true;
+                });
+
+        String path = toggleSecond ? "켜기 토글" : "수정";
+        assertThat(out.secondBlocked()).as("%s: 첫째 커밋까지 대기", path).isTrue();
+        assertThat(out.secondError())
+            .as(path)
+            .isInstanceOf(CyclicTriggerDependencyException.class)
+            .hasMessageContaining("순환");
+        assertThat(enabledChainCount(f, g)).as(path).isEqualTo(1);
+      }
+    } finally {
+      cleanupCommitted(created);
+    }
+  }
+
+  /** 두 작업을 같은 순간에 출발시켜 각각의 예외(성공이면 null)를 돌려준다. 각 스레드는 테스트 기본 테넌트 컨텍스트로 프로덕션 트랜잭션을 스스로 연다. */
+  private List<Throwable> raceFreely(Runnable a, Runnable b) throws Exception {
+    CyclicBarrier start = new CyclicBarrier(2);
+    ExecutorService pool = Executors.newFixedThreadPool(2);
+    try {
+      List<Future<Throwable>> futures = new ArrayList<>();
+      for (Runnable work : List.of(a, b)) {
+        futures.add(
+            pool.submit(
+                () -> {
+                  TenantContext.set(DEFAULT_TEST_TENANT_ID);
+                  try {
+                    start.await(10, TimeUnit.SECONDS);
+                    work.run();
+                    return (Throwable) null;
+                  } catch (Throwable e) {
+                    return e;
+                  } finally {
+                    TenantContext.clear();
+                  }
+                }));
+      }
+      List<Throwable> outcomes = new ArrayList<>();
+      for (Future<Throwable> future : futures) {
+        outcomes.add(future.get(30, TimeUnit.SECONDS));
+      }
+      return outcomes;
+    } finally {
+      pool.shutdownNow();
+    }
+  }
+
+  /** 두 파이프라인에 붙은 활성 연쇄 트리거 수(커밋된 값). */
+  private int enabledChainCount(Long p1, Long p2) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchCount(
+                PIPELINE_TRIGGER,
+                PIPELINE_TRIGGER
+                    .PIPELINE_ID
+                    .in(p1, p2)
+                    .and(PIPELINE_TRIGGER.TRIGGER_TYPE.eq("PIPELINE_CHAIN"))
+                    .and(PIPELINE_TRIGGER.IS_ENABLED.isTrue())));
+  }
+
+  /** 테스트 트랜잭션 없이 커밋된 픽스처를 지운다 — 파이프라인(트리거·이벤트 CASCADE) 다음 사용자 순서여야 FK 로 실패하지 않는다. */
+  private void cleanupCommitted(List<Long> pipelineIds) {
+    awaitSecurityAudit();
+    TenantRlsTestSupport.cleanupAll(
+        () -> pipelineIds.forEach(pipelineService::deletePipeline),
+        () -> TestUsers.cleanup(dsl, fixtureTransactionTemplate, userId, DEFAULT_TEST_TENANT_ID));
   }
 
   // ------------------------------------------------------------------ 픽스처

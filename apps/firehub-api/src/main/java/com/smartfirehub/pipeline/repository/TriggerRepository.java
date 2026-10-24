@@ -188,6 +188,24 @@ public class TriggerRepository {
   public record ChainEdgeRow(long triggerId, long pipelineId, String upstreamPipelineId) {}
 
   /**
+   * 이 테넌트의 연쇄 그래프 변경(새 활성 연쇄 간선을 더하는 생성·수정·켜기)을 직렬화하는 트랜잭션 단위 advisory 잠금(WD-239). 커밋·롤백 때 풀린다.
+   *
+   * <p>왜: 순환 검사({@link #findEnabledChainEdges} 로 읽어 판정)와 저장이 잠금 없이 분리돼 있으면, F←G 와 G←F 를 동시에 저장하는 두
+   * 트랜잭션이 서로의 아직 커밋되지 않은 간선을 못 보고 둘 다 통과해 순환이 저장된다. 검사 직전에 이 잠금을 잡으면 둘째 트랜잭션은 첫째가 커밋할 때까지 기다리고, 그
+   * 뒤의 간선 조회는 READ COMMITTED 의 문장 단위 스냅샷이라 첫째의 간선을 본다.
+   *
+   * <p>{@code MANDATORY}: 호출자의 저장 트랜잭션에 합류해야만 의미가 있다 — 트랜잭션 없이 부르면 문장이 끝나자마자 풀려 아무것도 막지 못하므로 그 실수를
+   * 예외로 드러낸다. 키는 접두어를 붙인 문자열 해시다 — 다른 테넌트 단위 잠금(member-admin-guard:, security_level_defs_t 등)과 키
+   * 공간을 나눈다.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void lockChainGraph(long tenantId) {
+    dsl.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended({0}, 0))",
+        val("pipeline-chain-graph:" + tenantId));
+  }
+
+  /**
    * 현재 테넌트(RLS)의 활성 PIPELINE_CHAIN 간선을 한 번에 읽는다(WD-106). 저장 시 순환·길이 검사가 노드마다 조회하지 않고(N+1) 메모리 그래프로
    * 판정하기 위한 것이다.
    */
