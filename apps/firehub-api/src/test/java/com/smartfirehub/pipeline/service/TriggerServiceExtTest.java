@@ -226,6 +226,132 @@ class TriggerServiceExtTest extends IntegrationTestBase {
     assertThat(storedSecret(created.id())).isNull();
   }
 
+  // -----------------------------------------------------------------------
+  // WD-243: API 트리거 토큰 해시 서버 소유 · 응답 마스킹
+  // -----------------------------------------------------------------------
+
+  @Test
+  void apiTrigger_responsesNeverContainTokenHash() {
+    TriggerResponse created = createApiTrigger("Masked API");
+
+    TriggerResponse listed =
+        triggerService.getTriggers(pipelineId).stream()
+            .filter(t -> t.id().equals(created.id()))
+            .findFirst()
+            .orElseThrow();
+    TriggerResponse single = triggerService.getTriggerById(pipelineId, created.id());
+
+    // 생성 응답은 원본 토큰만 한 번 싣고, 목록·단건 응답에는 해시도 원본 토큰도 없다. 마스킹은 서비스 응답 단계에서 사용자·권한과 무관하게
+    // 일어나므로(조회 권한만 있는 사용자도 같은 응답을 받는다) 여기서 한 번 확인하면 권한별로 같다.
+    assertThat(created.config()).doesNotContainKey("tokenHash").containsKey("rawToken");
+    for (TriggerResponse r : List.of(listed, single)) {
+      assertThat(r.config()).doesNotContainKeys("tokenHash", "rawToken");
+      assertThat(r.config()).containsEntry("allowedIps", List.of("10.0.0.0/8"));
+    }
+    // 저장값은 그대로라 외부 호출 토큰 조회는 바뀌지 않는다.
+    assertThat(storedTokenHash(created.id())).isNotBlank();
+    assertThat(triggerService.resolveApiToken((String) created.config().get("rawToken")))
+        .isNotNull();
+  }
+
+  @Test
+  void updateApiTrigger_withForgedTokenHash_keepsStoredHash() throws Exception {
+    TriggerResponse created = createApiTrigger("Forged API");
+    String before = storedTokenHash(created.id());
+    String rawToken = (String) created.config().get("rawToken");
+    String attackerToken = "attacker-raw-token-wd243";
+    String attackerHash = apiTokenHashOf(attackerToken);
+
+    // trigger:write 사용자가 자기 토큰 해시·빈 문자열·숫자를 넣어도 저장된 해시는 바뀌지 않는다
+    for (Object forged : List.of(attackerHash, "", 12345)) {
+      triggerService.updateTrigger(
+          pipelineId,
+          created.id(),
+          new UpdateTriggerRequest(
+              "Forged API",
+              null,
+              null,
+              Map.of("allowedIps", List.of(), "tokenHash", forged, "rawToken", "planted-raw")),
+          testUserId);
+      assertThat(storedTokenHash(created.id())).isEqualTo(before);
+    }
+    assertThat(storedConfigText(created.id()))
+        .doesNotContain(attackerHash)
+        .doesNotContain("planted-raw");
+    // 원래 토큰은 계속 이 트리거를 찾고, 공격자 토큰은 아무 트리거도 찾지 못한다
+    assertThat(triggerService.resolveApiToken(rawToken).id()).isEqualTo(created.id());
+    assertThat(triggerService.resolveApiToken(attackerToken)).isNull();
+  }
+
+  @Test
+  void updateApiTrigger_configWithoutTokenHash_keepsToken() {
+    TriggerResponse created = createApiTrigger("Echo API");
+    String before = storedTokenHash(created.id());
+    String rawToken = (String) created.config().get("rawToken");
+
+    // 웹 편집 창처럼 조회 응답의 config(해시 없음)를 되돌려 보내거나 allowedIps 만 보내도 토큰이 살아 있다
+    Map<String, Object> echoed = triggerService.getTriggerById(created.id()).config();
+    triggerService.updateTrigger(
+        created.id(), new UpdateTriggerRequest("Echo API", null, null, echoed), testUserId);
+    assertThat(storedTokenHash(created.id())).isEqualTo(before);
+
+    triggerService.updateTrigger(
+        created.id(),
+        new UpdateTriggerRequest(
+            "Echo API", null, null, Map.of("allowedIps", List.of("192.168.0.0/16"))),
+        testUserId);
+    assertThat(storedTokenHash(created.id())).isEqualTo(before);
+    assertThat(storedConfigText(created.id())).contains("192.168.0.0/16");
+    assertThat(triggerService.resolveApiToken(rawToken)).isNotNull();
+  }
+
+  @Test
+  void updateApiTrigger_withoutStoredHash_cannotPlantHash() {
+    TriggerResponse created = createApiTrigger("No Hash API");
+    // 예전 결함으로 해시가 이미 지워진 트리거 — 수정으로 해시를 새로 심을 수 없다
+    dsl.execute(
+        "update pipeline_trigger set config = config - 'tokenHash' where id = ?", created.id());
+
+    triggerService.updateTrigger(
+        created.id(),
+        new UpdateTriggerRequest("No Hash API", null, null, Map.of("tokenHash", "planted")),
+        testUserId);
+
+    assertThat(storedTokenHash(created.id())).isNull();
+  }
+
+  @Test
+  void createApiTrigger_withClientTokenHash_ignoresIt() {
+    TriggerResponse created =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest(
+                "Planted API",
+                TriggerType.API,
+                null,
+                Map.of("tokenHash", "client-hash", "rawToken", "client-raw")),
+            testUserId);
+    String rawToken = (String) created.config().get("rawToken");
+
+    assertThat(rawToken).isNotEqualTo("client-raw");
+    assertThat(storedTokenHash(created.id())).isNotEqualTo("client-hash");
+    assertThat(storedConfigText(created.id()))
+        .doesNotContain("client-hash")
+        .doesNotContain("client-raw")
+        .doesNotContain(rawToken);
+    assertThat(triggerService.resolveApiToken(rawToken).id()).isEqualTo(created.id());
+  }
+
+  @Test
+  void withServerOwnedKeys_otherTypes_passThrough() {
+    // 서버 소유 키가 없는 유형은 요청을 그대로 저장한다 — 이름이 같은 키가 있어도 건드리지 않는다
+    Map<String, Object> requested = Map.of("cron", "0 0 9 * * *", "tokenHash", "x");
+    assertThat(
+            TriggerService.withServerOwnedKeys(
+                "SCHEDULE", requested, Map.of("tokenHash", "stored")))
+        .isEqualTo(requested);
+  }
+
   @Test
   void verifyWebhookSignature_legacyDefaultKeyCiphertext_stillVerifies() throws Exception {
     TriggerResponse created = createSignedWebhook("Legacy Webhook");
@@ -269,6 +395,30 @@ class TriggerServiceExtTest extends IntegrationTestBase {
         dsl.fetchValue(
             "select config->>'secretEncrypted' from pipeline_trigger where id = ?", triggerId);
     return v == null ? null : v.toString();
+  }
+
+  /** API 트리거를 allowedIps 하나로 만든다(WD-243). 응답 config 의 rawToken 이 원본 토큰이다. */
+  private TriggerResponse createApiTrigger(String name) {
+    return triggerService.createTrigger(
+        pipelineId,
+        new CreateTriggerRequest(
+            name, TriggerType.API, null, Map.of("allowedIps", List.of("10.0.0.0/8"))),
+        testUserId);
+  }
+
+  /** DB 에 저장된 API 토큰 해시 — 응답에는 없으므로 직접 읽는다(WD-243). */
+  private String storedTokenHash(Long triggerId) {
+    Object hash =
+        dsl.fetchValue("select config->>'tokenHash' from pipeline_trigger where id = ?", triggerId);
+    return hash == null ? null : hash.toString();
+  }
+
+  /** 서버와 같은 방식(SHA-256 → Base64)으로 만든 공격자 토큰 해시(WD-243). */
+  private static String apiTokenHashOf(String rawToken) throws Exception {
+    return java.util.Base64.getEncoder()
+        .encodeToString(
+            java.security.MessageDigest.getInstance("SHA-256")
+                .digest(rawToken.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
   }
 
   private String storedConfigText(Long triggerId) {

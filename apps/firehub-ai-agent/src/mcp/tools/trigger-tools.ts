@@ -17,8 +17,9 @@ const TRIGGER_CONFIG_GUIDE =
 
 /**
  * 트리거 config 스키마. 서버가 읽는 키는 타입·범위를 검증하고(문자열 숫자 "60" 이 그대로 가 500 이 나던 문제, WD-227),
- * 그 밖의 키는 통과시킨다 — 조회 결과의 config(tokenHash·webhookId·hasSecret 등 서버 소유 키 포함)를 그대로 되돌려 보내는
- * 수정이 스키마에서 막히지 않게 하기 위함이다(서버 소유 키는 서버가 저장값으로 되살린다). 유형별 필수 키 검사는 서버에 맡긴다 —
+ * 그 밖의 키는 통과시킨다 — 조회 결과의 config(webhookId·hasSecret 등 표시값 포함)를 그대로 되돌려 보내는
+ * 수정이 스키마에서 막히지 않게 하기 위함이다(웹훅 암호문·webhookId·API tokenHash 같은 서버 소유 키는 응답에 없거나
+ * 보내도 무시되고, 서버가 저장값으로 되살린다 — WD-220·WD-243). 유형별 필수 키 검사는 서버에 맡긴다 —
  * 수정 요청에는 유형이 없어 여기서 유형별로 가를 수 없다.
  */
 const triggerConfigSchema = z.looseObject({
@@ -94,7 +95,7 @@ export function registerTriggerTools(
         const { pipelineId, triggerId, name, isEnabled, description, config } = args;
         // 서버 계약(UpdateTriggerRequest): name 은 @NotBlank 필수이고, config 를 보내면 저장된 config 를 통째로 바꾼다.
         // 도구는 「보낸 것만 바꾼다」로 쓰이므로 — 「폴링 주기만 바꿔 줘」가 감시 목록을 지우거나(서버가 빈 목록을 400 으로 거부),
-        // API 트리거의 allowedIps 수정이 저장된 tokenHash 를 지워 토큰을 못 쓰게 만들거나, 연쇄 조건만 바꾼 수정이 상위 파이프라인을
+        // API 트리거의 allowedIps 수정이 다른 키를 지우거나(tokenHash 는 서버가 따로 보존, WD-243), 연쇄 조건만 바꾼 수정이 상위 파이프라인을
         // 지우지 않게 — 이름이 없거나 config 를 받았을 때만 기존 트리거를 읽어 이름을 채우고 config 를 얕게 합친다(WD-227).
         // isEnabled·description 은 서버가 null 을 「바꾸지 않음」으로 보므로 받은 그대로 넘긴다.
         let resolvedName = name;
