@@ -707,6 +707,37 @@ public class AiClassifyExecutor {
     return new BatchResult(results, cacheHits.size(), cacheMissRows.size());
   }
 
+  /**
+   * 고른 입력 컬럼 중 입력 데이터셋에 없는 것이 있으면 어느 컬럼인지 한국어로 알리며 던진다(WD-215).
+   *
+   * <p>러너는 예외 메시지를 그대로 스텝 오류로 저장하므로, 여기 문구에는 테이블·스키마 이름을 싣지 않는다. 시스템 컬럼(id 등)은 물리 테이블에 늘 있으므로 있는
+   * 것으로 본다. 테이블이 없는 데이터셋은 기존대로 조회에서 건너뛰므로 여기서도 보지 않는다.
+   */
+  private void rejectMissingInputColumns(List<Long> inputDatasetIds, List<String> inputColumns) {
+    Set<String> missing = new LinkedHashSet<>();
+    for (Long datasetId : inputDatasetIds) {
+      if (datasetRepository.findTableNameById(datasetId).isEmpty()) {
+        continue;
+      }
+      Set<String> existing = new HashSet<>(DataTableService.SYSTEM_COLUMNS);
+      for (DatasetColumnResponse col : datasetColumnRepository.findByDatasetId(datasetId)) {
+        existing.add(col.columnName());
+      }
+      for (String c : inputColumns) {
+        if (!existing.contains(c)) {
+          missing.add(c);
+        }
+      }
+    }
+    if (!missing.isEmpty()) {
+      throw new IllegalStateException(
+          "입력 컬럼 "
+              + missing.stream().map(c -> "'" + c + "'").collect(Collectors.joining(", "))
+              + "이(가) 입력 데이터셋에 없습니다 — 저장 뒤 컬럼이 삭제되었거나 이름이 바뀌었을 수 있습니다."
+              + " 스텝의 입력 컬럼 필터에서 다시 고르세요");
+    }
+  }
+
   private List<Map<String, Object>> fetchInputRows(
       PipelineStepResponse step, AiClassifyConfig config) {
     List<Map<String, Object>> allRows = new ArrayList<>();
@@ -721,6 +752,10 @@ public class AiClassifyExecutor {
       List<String> cols = new ArrayList<>(config.inputColumns());
       cols.remove("id"); // queryData already adds id automatically
       selectedColumns = cols;
+      // WD-215: 조회 SQL 을 보내기 전에 고른 컬럼이 입력 데이터셋마다 있는지 본다. 저장 뒤 칸을 지우거나 이름을 바꾸면 예전에는
+      // queryData 가 깨지며 내부 SQL 원문(스키마·테이블 이름)이 스텝 오류에 그대로 실렸다. 한 데이터셋이라도 빠지면 그 조회가
+      // 깨지므로 첫 조회 전에 전부 확인한다(이미 일부를 읽고 나서 실패하지 않게).
+      rejectMissingInputColumns(step.inputDatasetIds(), config.inputColumns());
     }
 
     for (Long datasetId : step.inputDatasetIds()) {
