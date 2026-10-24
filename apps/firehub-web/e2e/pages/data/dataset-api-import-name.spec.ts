@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 import { createCategories, createColumn, createDatasetDetail } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
+import { DATASET_WRITE_PERMISSIONS, grantDatasetPermissions } from '../../fixtures/dataset.fixture';
 
 // 쓰기 진입점은 서버 권한이 있을 때만 보인다(WD-139) — 이 파일은 편집·적재 흐름을 검증하므로 데이터셋 쓰기 권한을 준다.
 // 개별 테스트가 다른 권한을 주면 그쪽이 나중에 등록돼 이긴다.
@@ -113,5 +113,68 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
 
     await expect(page.getByText(serverMessage)).toBeVisible();
     await expect(page.getByText('API 임포트 생성에 실패했습니다.')).toHaveCount(0);
+  });
+
+  /** 실행 옵션(4단계)까지 마법사를 진행한다 */
+  async function openOptionsStep(page: Page) {
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '인사 급여' })).toBeVisible();
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: 'API 가져오기' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/v1/data');
+    await dialog.getByRole('button', { name: '다음' }).click();
+    await dialog.getByRole('button', { name: '매핑 추가' }).click();
+    await dialog.getByRole('button', { name: '다음' }).click();
+    await dialog.getByRole('button', { name: '다음' }).click();
+    await expect(dialog.getByLabel('파이프라인 이름')).toBeVisible();
+    return dialog;
+  }
+
+  /**
+   * WD-251 — 서버는 즉시 실행에 pipeline:execute, 예약에 trigger:write 를 요구한다(직접 실행·트리거 생성과 같은 권한).
+   * 파이프라인 작성 권한만 있는 사용자에게는 두 옵션을 숨기고, 기본값(즉시 실행)이 켜져 있어도 요청에 싣지 않는다 — 실으면 완료가 403 이 된다.
+   */
+  test('실행·트리거 권한이 없으면 즉시 실행·스케줄 옵션을 숨기고 요청에도 싣지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDataTabMocks(page);
+    const create = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/1/api-import',
+      { pipelineId: 11, triggerId: null, executionId: null },
+      { capture: true },
+    );
+
+    const dialog = await openOptionsStep(page);
+    await expect(dialog.getByLabel('생성 후 즉시 실행')).toHaveCount(0);
+    await expect(dialog.getByLabel('스케줄 설정 (선택)')).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: '완료' }).click();
+    const req = await create.waitForRequest();
+    expect(req.payload).toMatchObject({ executeImmediately: false, schedule: null });
+  });
+
+  test('실행·트리거 권한이 있으면 두 옵션이 보이고 기본값대로 즉시 실행을 보낸다', async ({
+    authenticatedPage: page,
+  }) => {
+    await grantDatasetPermissions(page, [...DATASET_WRITE_PERMISSIONS, 'pipeline:execute', 'trigger:write']);
+    await setupDataTabMocks(page);
+    const create = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/1/api-import',
+      { pipelineId: 11, triggerId: 5, executionId: 7 },
+      { capture: true },
+    );
+
+    const dialog = await openOptionsStep(page);
+    await expect(dialog.getByLabel('생성 후 즉시 실행')).toBeChecked();
+    await dialog.getByLabel('스케줄 설정 (선택)').check();
+
+    await dialog.getByRole('button', { name: '완료' }).click();
+    const req = await create.waitForRequest();
+    expect(req.payload).toMatchObject({ executeImmediately: true, schedule: { cronExpression: '0 0 * * *' } });
   });
 });

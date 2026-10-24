@@ -16,12 +16,14 @@ import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.pipeline.service.TriggerService;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.SecurityFixture;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
@@ -121,6 +123,8 @@ class ApiImportServiceTest extends IntegrationTestBase {
 
   @Test
   void createApiImport_withSchedule_createsTrigger() {
+    // 예약 트리거 생성은 trigger:write 가 필요하다(WD-251) — 기본 USER 역할에는 없어 그 권한을 가진 역할로 바꾼다
+    restrictTestUserTo("trigger:write");
     // Given
     Map<String, Object> apiConfig =
         Map.of(
@@ -178,6 +182,8 @@ class ApiImportServiceTest extends IntegrationTestBase {
   /** 기본 트리거 이름에도 데이터셋 이름이 없다(WD-31④ — 파이프라인·트리거 목록에서 숨김 데이터셋 이름 노출). */
   @Test
   void createApiImport_withScheduleAndNoNames_triggerNameHasNoDatasetName() {
+    // 예약 트리거 생성은 trigger:write 가 필요하다(WD-251) — 기본 USER 역할에는 없어 그 권한을 가진 역할로 바꾼다
+    restrictTestUserTo("trigger:write");
     Map<String, Object> apiConfig = Map.of("url", "https://api.example.com/data", "method", "GET");
     ApiImportRequest request =
         new ApiImportRequest(
@@ -211,5 +217,121 @@ class ApiImportServiceTest extends IntegrationTestBase {
     // When / Then
     assertThatThrownBy(() -> apiImportService.createApiImport(999999L, request, testUserId))
         .isInstanceOf(DatasetNotFoundException.class);
+  }
+
+  // =========================================================================
+  // WD-251: 선택 옵션(즉시 실행·예약)은 직접 경로와 같은 권한을 요구한다
+  // =========================================================================
+
+  /**
+   * 결함 재현 역할 [dataset:read, data:read, pipeline:read, pipeline:write] 에 추가 권한을 더한 역할만 갖게 한다. USER
+   * 역할을 떼므로 판정이 이 역할로만 결정된다. 테스트 트랜잭션 안에서 만들어 롤백으로 사라진다(공유 USER 역할은 건드리지 않는다).
+   */
+  private void restrictTestUserTo(String... extraPermissions) {
+    SecurityFixture fx = new SecurityFixture(dsl, fixtureTransactionTemplate, null);
+    fx.removeUserRole(testUserId);
+    List<String> codes =
+        new java.util.ArrayList<>(
+            List.of("dataset:read", "data:read", "pipeline:read", "pipeline:write"));
+    codes.addAll(List.of(extraPermissions));
+    long roleId =
+        fx.createRole("wd251_" + System.nanoTime(), fx.levelId("내부"), codes.toArray(String[]::new));
+    fx.assignRole(testUserId, roleId);
+  }
+
+  /** 이 사용자가 만든 파이프라인·그 트리거·이 사용자 이름의 실행 행 수 — 전역 카운트가 아니라 이 사용자로 범위를 좁힌다. */
+  private long[] rowsCreatedByTestUser() {
+    long pipelines = dsl.fetchCount(PIPELINE, PIPELINE.CREATED_BY.eq(testUserId));
+    long triggers =
+        dsl.fetchCount(
+            PIPELINE_TRIGGER,
+            PIPELINE_TRIGGER.PIPELINE_ID.in(
+                dsl.select(PIPELINE.ID).from(PIPELINE).where(PIPELINE.CREATED_BY.eq(testUserId))));
+    long executions =
+        dsl.fetchCount(PIPELINE_EXECUTION, PIPELINE_EXECUTION.EXECUTED_BY.eq(testUserId));
+    return new long[] {pipelines, triggers, executions};
+  }
+
+  private ApiImportRequest optionRequest(boolean executeImmediately, String cron) {
+    Map<String, Object> apiConfig = Map.of("url", "https://api.example.com/data", "method", "GET");
+    ApiImportRequest.ScheduleConfig schedule =
+        cron == null ? null : new ApiImportRequest.ScheduleConfig(cron, null, null);
+    return new ApiImportRequest(
+        "WD-251 Pipeline", null, apiConfig, null, "REPLACE", executeImmediately, schedule);
+  }
+
+  @Test
+  void createApiImport_executeImmediatelyWithoutPipelineExecute_forbiddenAndCreatesNothing() {
+    restrictTestUserTo();
+
+    assertThatThrownBy(
+            () ->
+                apiImportService.createApiImport(
+                    testDatasetId, optionRequest(true, null), testUserId))
+        .isInstanceOf(AccessDeniedException.class)
+        .hasMessageContaining("이 작업을 할 권한이 없습니다")
+        .hasMessageContaining("pipeline:execute");
+
+    // 파이프라인·트리거·실행 어느 것도 만들어지지 않는다(부분 생성 금지)
+    assertThat(rowsCreatedByTestUser()).containsExactly(0L, 0L, 0L);
+  }
+
+  @Test
+  void createApiImport_scheduleWithoutTriggerWrite_forbiddenAndCreatesNothing() {
+    restrictTestUserTo();
+
+    assertThatThrownBy(
+            () ->
+                apiImportService.createApiImport(
+                    testDatasetId, optionRequest(false, "0 6 * * *"), testUserId))
+        .isInstanceOf(AccessDeniedException.class)
+        .hasMessageContaining("이 작업을 할 권한이 없습니다")
+        .hasMessageContaining("trigger:write");
+
+    assertThat(rowsCreatedByTestUser()).containsExactly(0L, 0L, 0L);
+  }
+
+  @Test
+  void createApiImport_scheduleWithTriggerWriteButExecuteWithout_forbiddenAndCreatesNothing() {
+    // 예약 권한만 있고 실행 권한이 없으면, 앞의 예약 확인을 통과해도 아무것도 만들지 않고 거부한다
+    restrictTestUserTo("trigger:write");
+
+    assertThatThrownBy(
+            () ->
+                apiImportService.createApiImport(
+                    testDatasetId, optionRequest(true, "0 6 * * *"), testUserId))
+        .isInstanceOf(AccessDeniedException.class)
+        .hasMessageContaining("pipeline:execute");
+
+    assertThat(rowsCreatedByTestUser()).containsExactly(0L, 0L, 0L);
+  }
+
+  @Test
+  void createApiImport_noOptions_pipelineWriteOnly_succeeds() {
+    // 즉시 실행·예약을 둘 다 요청하지 않으면 pipeline:write 만으로 만든다. 빈 cron 은 예전처럼 예약 없음으로 본다.
+    restrictTestUserTo();
+
+    ApiImportResponse response =
+        apiImportService.createApiImport(testDatasetId, optionRequest(false, " "), testUserId);
+
+    assertThat(response.pipelineId()).isNotNull();
+    assertThat(response.triggerId()).isNull();
+    assertThat(response.executionId()).isNull();
+    assertThat(rowsCreatedByTestUser()).containsExactly(1L, 0L, 0L);
+  }
+
+  @Test
+  void createApiImport_withExecuteAndTriggerPermissions_executesAndSchedules() {
+    // 양성 대조: 같은 역할에 두 권한을 더하면 기존 동작대로 실행·예약이 모두 만들어진다
+    restrictTestUserTo("pipeline:execute", "trigger:write");
+
+    ApiImportResponse response =
+        apiImportService.createApiImport(
+            testDatasetId, optionRequest(true, "0 6 * * *"), testUserId);
+
+    assertThat(response.pipelineId()).isNotNull();
+    assertThat(response.triggerId()).isNotNull();
+    assertThat(response.executionId()).isNotNull();
+    assertThat(rowsCreatedByTestUser()).containsExactly(1L, 1L, 1L);
   }
 }

@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useCreateApiImport } from '@/hooks/queries/useDatasets';
+import { usePipelinePermissions } from '@/hooks/queries/usePipelines';
 import { handleApiError } from '@/lib/api-error';
 import type { DatasetColumnResponse } from '@/types/dataset';
 
@@ -87,6 +88,9 @@ export function ApiImportWizard({
 }: ApiImportWizardProps) {
   const navigate = useNavigate();
   const createApiImport = useCreateApiImport(datasetId);
+  // 「생성 후 즉시 실행」은 pipeline:execute, 「스케줄 설정」은 trigger:write 가 있을 때만 보이고 보낸다(WD-251) —
+  // 서버가 직접 실행·트리거 생성과 같은 권한을 요구하므로, 없는 사용자에게 보이면 기본값(즉시 실행)만으로도 완료 시 403 이 된다.
+  const { canExecutePipeline, canWriteTrigger } = usePipelinePermissions();
 
   // 접근성: 라벨↔컨트롤 연결용 id 접두사 (#432).
   // 위저드는 같은 폼이 스텝마다 다시 마운트되고 다이얼로그가 중첩될 수 있어
@@ -225,8 +229,10 @@ export function ApiImportWizard({
         pipelineName: pipelineName || defaultPipelineName,
         apiConfig: buildApiConfig(),
         loadStrategy,
-        executeImmediately,
-        schedule: scheduleEnabled
+        // 권한을 불러오는 중이거나 없으면 옵션을 끈 채로 보낸다 — 체크 상태 기본값(true)을 권한에서 초기화하지 않는 이유는
+        // 권한이 비동기로 늦게 와서 권한 있는 사용자도 false 로 굳기 때문이다.
+        executeImmediately: executeImmediately && canExecutePipeline,
+        schedule: scheduleEnabled && canWriteTrigger
           ? { cronExpression, name: scheduleName || undefined }
           : null,
       },
@@ -728,62 +734,66 @@ export function ApiImportWizard({
               </Select>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="executeImmediately"
-                checked={executeImmediately}
-                onCheckedChange={(v) => setExecuteImmediately(!!v)}
-              />
-              <Label htmlFor="executeImmediately" className="cursor-pointer">
-                생성 후 즉시 실행
-              </Label>
-            </div>
-
-            <div className="border rounded-md p-3 space-y-3">
+            {canExecutePipeline && (
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="scheduleEnabled"
-                  checked={scheduleEnabled}
-                  onCheckedChange={(v) => setScheduleEnabled(!!v)}
+                  id="executeImmediately"
+                  checked={executeImmediately}
+                  onCheckedChange={(v) => setExecuteImmediately(!!v)}
                 />
-                <Label htmlFor="scheduleEnabled" className="cursor-pointer">
-                  스케줄 설정 (선택)
+                <Label htmlFor="executeImmediately" className="cursor-pointer">
+                  생성 후 즉시 실행
                 </Label>
               </div>
+            )}
 
-              {scheduleEnabled && (
-                <div className="space-y-2 pt-1">
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`${baseId}-cron`} className="text-xs">
-                      Cron 표현식
-                    </Label>
-                    {/* 예시 문구를 aria-describedby 로 입력에 연결한다 (#432, §J). */}
-                    <Input
-                      id={`${baseId}-cron`}
-                      aria-describedby={`${baseId}-cron-help`}
-                      placeholder="0 0 * * * (매일 자정)"
-                      value={cronExpression}
-                      onChange={(e) => setCronExpression(e.target.value)}
-                      className="font-mono text-sm"
-                    />
-                    <p id={`${baseId}-cron-help`} className="text-xs text-muted-foreground">
-                      예: <code>0 9 * * 1-5</code> — 평일 오전 9시
-                    </p>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`${baseId}-scheduleName`} className="text-xs">
-                      스케줄 이름 (선택)
-                    </Label>
-                    <Input
-                      id={`${baseId}-scheduleName`}
-                      placeholder="매일 API 동기화"
-                      value={scheduleName}
-                      onChange={(e) => setScheduleName(e.target.value)}
-                    />
-                  </div>
+            {canWriteTrigger && (
+              <div className="border rounded-md p-3 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="scheduleEnabled"
+                    checked={scheduleEnabled}
+                    onCheckedChange={(v) => setScheduleEnabled(!!v)}
+                  />
+                  <Label htmlFor="scheduleEnabled" className="cursor-pointer">
+                    스케줄 설정 (선택)
+                  </Label>
                 </div>
-              )}
-            </div>
+
+                {scheduleEnabled && (
+                  <div className="space-y-2 pt-1">
+                    <div className="space-y-1.5">
+                      <Label htmlFor={`${baseId}-cron`} className="text-xs">
+                        Cron 표현식
+                      </Label>
+                      {/* 예시 문구를 aria-describedby 로 입력에 연결한다 (#432, §J). */}
+                      <Input
+                        id={`${baseId}-cron`}
+                        aria-describedby={`${baseId}-cron-help`}
+                        placeholder="0 0 * * * (매일 자정)"
+                        value={cronExpression}
+                        onChange={(e) => setCronExpression(e.target.value)}
+                        className="font-mono text-sm"
+                      />
+                      <p id={`${baseId}-cron-help`} className="text-xs text-muted-foreground">
+                        예: <code>0 9 * * 1-5</code> — 평일 오전 9시
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor={`${baseId}-scheduleName`} className="text-xs">
+                        스케줄 이름 (선택)
+                      </Label>
+                      <Input
+                        id={`${baseId}-scheduleName`}
+                        placeholder="매일 API 동기화"
+                        value={scheduleName}
+                        onChange={(e) => setScheduleName(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
