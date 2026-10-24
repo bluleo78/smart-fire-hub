@@ -226,6 +226,8 @@ export default function PipelineEditorPage() {
         id: d.id,
         name: d.name,
         tableName: d.tableName,
+        // 출력 선택 목록이 자동 생성 임시 데이터셋(TEMP)을 거르는 데 쓴다(WD-224) — 입력 목록·숨김 판정은 전체 목록 그대로.
+        originType: d.originType,
       })) ?? [],
     [allDatasets],
   );

@@ -413,6 +413,27 @@ public class PipelineStepRepository {
   }
 
   /**
+   * 주어진 데이터셋 중 소유 스텝이 있는 러너 TEMP({@code origin_type='TEMP'} 이고 {@code source_pipeline_step_id} 가
+   * 있음)의 데이터셋 id → 소유 스텝 id 를 돌려준다(WD-224 — 스텝 출력 저장 검증). TEMP 가 아니거나 소유 스텝이 끊긴(SET NULL) 고아 TEMP 는
+   * 맵에 없다.
+   */
+  public Map<Long, Long> findTempOwnerStepIdsByDatasetIds(Collection<Long> datasetIds) {
+    Map<Long, Long> result = new HashMap<>();
+    if (datasetIds.isEmpty()) {
+      return result;
+    }
+    dsl.select(D_ID, D_SOURCE_PIPELINE_STEP_ID)
+        .from(DATASET)
+        .where(
+            D_ID.in(datasetIds)
+                .and(D_ORIGIN_TYPE.eq("TEMP"))
+                .and(D_SOURCE_PIPELINE_STEP_ID.isNotNull()))
+        .fetch()
+        .forEach(r -> result.put(r.get(D_ID), r.get(D_SOURCE_PIPELINE_STEP_ID)));
+    return result;
+  }
+
+  /**
    * 주어진 스텝들이 만든(러너 자동 생성) 임시 데이터셋 id 를 모두 읽는다(WD-170 — 스텝·파이프라인 삭제 때 함께 지울 후보).
    *
    * <p>{@link #findTempDatasetIdsByStepIds} 와 달리 한 스텝에 여럿이어도 전부 돌려준다 — 정리 대상이므로 하나도 빠뜨리면 안 된다.
