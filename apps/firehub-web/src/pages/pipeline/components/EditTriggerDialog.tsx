@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { useUpdateTrigger } from '@/hooks/queries/usePipelines';
+import { useAllPipelines, useUpdateTrigger } from '@/hooks/queries/usePipelines';
 import { iGa } from '@/lib/utils';
 import type { ErrorResponse } from '@/types/auth';
 import type { TriggerResponse } from '@/types/pipeline';
@@ -43,6 +43,8 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger }: E
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   const updateTrigger = useUpdateTrigger(pipelineId);
+  // 선행 파이프라인 존재 확인용(WD-218) — PipelineChainForm 과 같은 쿼리라 react-query 가 한 번만 받는다. 연쇄가 아니면 쓰지 않는다.
+  const { data: allPipelines, isError: pipelinesError } = useAllPipelines();
 
   // Reset when trigger changes (render-time state adjustment)
   const [prevTrigger, setPrevTrigger] = useState(trigger);
@@ -100,7 +102,16 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger }: E
     }
     if (trigger.triggerType === 'PIPELINE_CHAIN') {
       const c = config as { upstreamPipelineId: number | null };
-      if (!c.upstreamPipelineId) errors.upstreamPipelineId = '선행 파이프라인을 선택하세요';
+      if (!c.upstreamPipelineId) {
+        errors.upstreamPipelineId = '선행 파이프라인을 선택하세요';
+      } else if (
+        !pipelinesError &&
+        allPipelines !== undefined &&
+        !allPipelines.some((p) => p.id === c.upstreamPipelineId)
+      ) {
+        // 지워진 선행 id 를 그대로 저장하면 영원히 발화하지 않는다(WD-218). 목록을 못 받았으면 막지 않고 서버 검증(400)에 맡긴다.
+        errors.upstreamPipelineId = '선행 파이프라인이 삭제되었습니다. 다른 파이프라인을 고르세요';
+      }
     }
     if (trigger.triggerType === 'DATASET_CHANGE') {
       const c = config as { datasetIds: number[]; pollingIntervalSeconds: number; debounceSeconds: number };

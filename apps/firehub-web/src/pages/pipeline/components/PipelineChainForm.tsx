@@ -39,6 +39,10 @@ export default function PipelineChainForm({ pipelineId, config, onChange, errors
 
   const pipelines = (allPipelines ?? []).filter((p) => p.id !== pipelineId);
   const selected = pipelines.find((p) => p.id === config.upstreamPipelineId);
+  // 저장된 선행 id 가 (다 받은) 목록에 없으면 삭제된 파이프라인이다(WD-218) — 빈 「파이프라인 선택」으로 보이면 저장값이 지워진 id 그대로라는
+  // 사실이 가려진다. 로딩·조회 실패 중에는 판단하지 않는다(열 때마다 깜빡이거나 실패를 삭제로 위장하지 않게).
+  const missingUpstream =
+    !isLoading && !isError && allPipelines !== undefined && config.upstreamPipelineId != null && !selected;
 
   return (
     <div className="space-y-4">
@@ -58,8 +62,17 @@ export default function PipelineChainForm({ pipelineId, config, onChange, errors
                 errors?.upstreamPipelineId && 'border-destructive',
               )}
             >
-              <span className={cn('truncate', !selected && 'text-muted-foreground')}>
-                {selected ? selected.name : '파이프라인 선택'}
+              <span
+                className={cn(
+                  'truncate',
+                  missingUpstream ? 'text-destructive' : !selected && 'text-muted-foreground',
+                )}
+              >
+                {selected
+                  ? selected.name
+                  : missingUpstream
+                    ? `삭제된 파이프라인(ID ${config.upstreamPipelineId})`
+                    : '파이프라인 선택'}
               </span>
               <ChevronsUpDown className=" h-4 w-4 shrink-0 opacity-50" />
             </Button>

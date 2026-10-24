@@ -143,3 +143,78 @@ test.describe('파이프라인 연쇄 트리거 — 선행 파이프라인 목�
     await expect(page.getByText('파이프라인을 찾을 수 없습니다.')).toHaveCount(0);
   });
 });
+
+/**
+ * 선행 파이프라인이 삭제된 연쇄 트리거 (WD-218)
+ *
+ * 선행을 지우면 서버가 트리거를 끄지만, 예전 화면은 이유 없는 「비활성」만 보였고, 「활성화」는 성공했으며,
+ * 편집 창은 빈 「파이프라인 선택」으로 보이면서 지워진 id 그대로 저장됐다. 서버가 조회 시 내려 주는 upstreamMissing 과
+ * (다 받은) 선행 후보 목록에 id 가 없다는 사실로 이유를 드러내고 켜기·저장을 막는지 본다.
+ */
+test.describe('파이프라인 연쇄 트리거 — 삭제된 선행 파이프라인 (WD-218)', () => {
+  /** 선행 id 999 는 목록(1~205)에 없다 = 삭제된 파이프라인 */
+  const dangling = createTrigger({
+    id: 9,
+    name: '끊긴 연쇄',
+    triggerType: 'PIPELINE_CHAIN',
+    isEnabled: false,
+    config: { upstreamPipelineId: 999, condition: 'SUCCESS' },
+    upstreamMissing: true,
+  });
+
+  async function openMenu(page: Page) {
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '트리거' }).click();
+    await expect(page.getByText('끊긴 연쇄')).toBeVisible();
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+  }
+
+  test('목록에 꺼진 이유가 보이고 「활성화」 메뉴는 막힌다', async ({ authenticatedPage: page }) => {
+    await setupDetailMocks(page, [dangling]);
+    await mockPagedPipelines(page);
+
+    await openMenu(page);
+    await expect(page.getByText('선행 파이프라인이 삭제되어 꺼졌습니다. 편집에서 다른 파이프라인을 고르세요.')).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: '활성화' })).toBeDisabled();
+  });
+
+  test('켜진 채 남은 끊긴 연쇄는 실행되지 않는다고 알린다', async ({ authenticatedPage: page }) => {
+    await setupDetailMocks(page, [{ ...dangling, isEnabled: true }]);
+    await mockPagedPipelines(page);
+
+    await openMenu(page);
+    await expect(page.getByText('선행 파이프라인이 없어 실행되지 않습니다. 편집에서 다른 파이프라인을 고르세요.')).toBeVisible();
+    // 끄기는 늘 가능해야 한다
+    await expect(page.getByRole('menuitem', { name: '비활성화' })).toBeEnabled();
+  });
+
+  test('편집 창은 삭제된 파이프라인으로 표시하고, 그대로 저장하면 막으며, 다른 선행을 고르면 저장된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDetailMocks(page, [dangling]);
+    await mockPagedPipelines(page);
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1/triggers/9', {}, { capture: true });
+    const putUrls: string[] = [];
+    page.on('request', (r) => {
+      if (r.method() === 'PUT' && r.url().includes('/triggers/9')) putUrls.push(r.url());
+    });
+
+    await openMenu(page);
+    await page.getByRole('menuitem', { name: '편집' }).click();
+
+    const combo = page.getByRole('combobox', { name: '선행 파이프라인' });
+    await expect(combo).toHaveText('삭제된 파이프라인(ID 999)');
+
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByText('선행 파이프라인이 삭제되었습니다. 다른 파이프라인을 고르세요')).toBeVisible();
+    expect(putUrls).toHaveLength(0);
+
+    await combo.click();
+    await page.getByPlaceholder('파이프라인 검색...').fill('파이프라인 205');
+    await page.getByRole('option', { name: '파이프라인 205', exact: true }).click();
+    await expect(combo).toHaveText('파이프라인 205');
+    await page.getByRole('button', { name: '저장' }).click();
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ config: { upstreamPipelineId: 205 } });
+  });
+});
