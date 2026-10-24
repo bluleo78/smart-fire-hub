@@ -13,6 +13,7 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.pipeline.dto.*;
+import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.pipeline.service.TriggerService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -175,5 +176,44 @@ class TriggerControllerTest {
 
     // 켜져 있던 트리거이므로 같은 파이프라인 범위에서 끄기로 바뀐다.
     verify(triggerService).toggleTrigger(1L, 10L, false);
+  }
+
+  @Test
+  void getTriggers_missingPipeline_returnsNotFound() throws Exception {
+    // 없는(또는 삭제된) 파이프라인이면 빈 목록이 아니라 404 와 한국어 문구(WD-244).
+    when(triggerService.getTriggers(999999L)).thenThrow(new PipelineNotFoundException());
+
+    mockMvc
+        .perform(
+            get("/api/v1/pipelines/999999/triggers").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value(PipelineNotFoundException.PIPELINE_MESSAGE));
+  }
+
+  @Test
+  void getTriggerEvents_missingPipeline_returnsNotFound() throws Exception {
+    when(triggerService.getTriggerEvents(999999L, 20)).thenThrow(new PipelineNotFoundException());
+
+    mockMvc
+        .perform(
+            get("/api/v1/pipelines/999999/triggers/events")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value(PipelineNotFoundException.PIPELINE_MESSAGE));
+  }
+
+  @Test
+  void getTriggerEvents_limitOutOfRange_returnsKoreanBadRequest() throws Exception {
+    // 서비스의 limit 검증(IllegalArgumentException)이 400 과 한국어 문구로 나가야 한다(WD-244).
+    when(triggerService.getTriggerEvents(1L, -1))
+        .thenThrow(new IllegalArgumentException("limit 은 1~200 사이여야 합니다."));
+
+    mockMvc
+        .perform(
+            get("/api/v1/pipelines/1/triggers/events")
+                .param("limit", "-1")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("limit 은 1~200 사이여야 합니다."));
   }
 }

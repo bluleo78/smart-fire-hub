@@ -371,4 +371,32 @@ class PipelineControllerTest {
             org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message")
                 .value("실행 기록을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
   }
+
+  @Test
+  void getTriggerEvents_missingPipeline_returnsNotFound() throws Exception {
+    // /trigger-events 도 /triggers/events 와 같이 없는 파이프라인이면 404 와 한국어 문구(WD-244).
+    when(triggerService.getTriggerEvents(999999L, 20))
+        .thenThrow(new com.smartfirehub.pipeline.exception.PipelineNotFoundException());
+
+    mockMvc
+        .perform(
+            get("/api/v1/pipelines/999999/trigger-events")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("파이프라인을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
+  }
+
+  @Test
+  void getTriggerEvents_limitOutOfRange_returnsKoreanBadRequest() throws Exception {
+    when(triggerService.getTriggerEvents(1L, 100000))
+        .thenThrow(new IllegalArgumentException("limit 은 1~200 사이여야 합니다."));
+
+    mockMvc
+        .perform(
+            get("/api/v1/pipelines/1/trigger-events")
+                .param("limit", "100000")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("limit 은 1~200 사이여야 합니다."));
+  }
 }

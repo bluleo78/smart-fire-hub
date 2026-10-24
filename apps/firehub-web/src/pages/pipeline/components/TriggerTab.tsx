@@ -25,6 +25,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useDeleteTrigger, usePipelinePermissions, useToggleTrigger,useTriggers } from '@/hooks/queries/usePipelines';
+import { extractApiError, isNotFoundError } from '@/lib/api-error';
 import { formatDate } from '@/lib/formatters';
 import { iGa } from '@/lib/utils';
 import type { ErrorResponse } from '@/types/auth';
@@ -65,7 +66,10 @@ interface TriggerTabProps {
 }
 
 export default function TriggerTab({ pipelineId }: TriggerTabProps) {
-  const { data: triggers, isLoading } = useTriggers(pipelineId);
+  const { data: triggers, isLoading, isError, error } = useTriggers(pipelineId);
+  // 열린 상세 화면에서 다른 사람이 파이프라인을 지운 뒤 다시 불러오면 서버가 404 를 준다(WD-244). 예전엔 빈 목록이라
+  // 「트리거가 없습니다」로 보였다 — 이제는 파이프라인 없음 안내를 보이고, 쓸 수 없는 추가 버튼·이벤트 목록은 숨긴다.
+  const pipelineMissing = isError && isNotFoundError(error);
   const deleteTrigger = useDeleteTrigger(pipelineId);
   const toggleTrigger = useToggleTrigger(pipelineId);
   // 트리거 쓰기 진입점은 서버 권한과 같은 기준으로 숨긴다(WD-219) — 생성·편집·켜고 끄기 trigger:write, 삭제 trigger:delete.
@@ -117,7 +121,7 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
         {/* Header */}
         <div className="flex items-center justify-between">
           <h3 className="text-xl leading-7 font-semibold">트리거</h3>
-          {canWriteTrigger && (
+          {canWriteTrigger && !pipelineMissing && (
             <Button size="sm" onClick={() => setAddDialogOpen(true)}>
               <Plus className="h-4 w-4" />
               트리거 추가
@@ -128,6 +132,19 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
         {/* Trigger list */}
         {isLoading ? (
           <div className="text-sm text-muted-foreground">로딩 중...</div>
+        ) : isError ? (
+          // 조회 실패는 「트리거 없음」과 구분한다 — 404 면 서버의 「파이프라인을 찾을 수 없습니다…」 문구를 그대로 보인다(WD-244).
+          <div role="alert" className="flex flex-col items-center justify-center py-12 text-center">
+            <Clock className="h-12 w-12 text-muted-foreground/30 mb-4" />
+            <p className="text-muted-foreground text-sm">
+              {extractApiError(
+                error,
+                pipelineMissing
+                  ? '파이프라인을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.'
+                  : '트리거 목록을 불러오지 못했습니다.',
+              )}
+            </p>
+          </div>
         ) : !triggers || triggers.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <Clock className="h-12 w-12 text-muted-foreground/30 mb-4" />
@@ -233,12 +250,16 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
           </div>
         )}
 
-        {/* Trigger events */}
-        <Separator />
-        <div className="space-y-3">
-          <h4 className="text-sm font-medium">최근 트리거 이벤트</h4>
-          <TriggerEventLog pipelineId={pipelineId} />
-        </div>
+        {/* Trigger events — 파이프라인이 없으면(WD-244) 같은 404 안내가 겹치지 않게 숨긴다 */}
+        {!pipelineMissing && (
+          <>
+            <Separator />
+            <div className="space-y-3">
+              <h4 className="text-sm font-medium">최근 트리거 이벤트</h4>
+              <TriggerEventLog pipelineId={pipelineId} />
+            </div>
+          </>
+        )}
 
         {/* Add dialog */}
         <AddTriggerDialog
