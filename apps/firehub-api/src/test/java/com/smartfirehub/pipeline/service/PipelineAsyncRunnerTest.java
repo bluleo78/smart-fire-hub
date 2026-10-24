@@ -611,6 +611,8 @@ class PipelineAsyncRunnerTest {
 
     assertThat(status).isEqualTo("FAILED");
     verify(tempDatasetService, never()).deleteTempDataset(any());
+    // WD-222: 재생성은 같은 id 로 테이블만 다시 만든다 — 그 경로도 타지 않아야 한다.
+    verify(tempDatasetService, never()).rebuildTempDataset(any(), any());
     verify(tempDatasetService, never())
         .createTempDataset(any(), any(), anyString(), any(), anyString(), any());
   }
@@ -703,6 +705,8 @@ class PipelineAsyncRunnerTest {
     // then: 새 임시 데이터셋 생성하지 않음
     verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
     verify(tempDatasetService, never()).deleteTempDataset(any());
+    // WD-222: 재생성은 같은 id 로 테이블만 다시 만든다 — 그 경로도 타지 않아야 한다.
+    verify(tempDatasetService, never()).rebuildTempDataset(any(), any());
   }
 
   @Test
@@ -713,7 +717,6 @@ class PipelineAsyncRunnerTest {
     Long stepId = 206L;
     Long stepExecId = 306L;
     Long oldTempDatasetId = 777L;
-    Long newTempDatasetId = 778L;
 
     String selectSql = "SELECT id, name, extra FROM data.\"source\"";
     PipelineStepResponse sqlStep =
@@ -724,23 +727,21 @@ class PipelineAsyncRunnerTest {
     when(tempDatasetService.findExistingTempDataset(stepId))
         .thenReturn(Optional.of(oldTempDatasetId));
     when(tempDatasetService.hasSchemaChanged(eq(oldTempDatasetId), any())).thenReturn(true);
-    when(tempDatasetService.createTempDataset(
-            any(), eq(pipelineId), anyString(), eq(stepId), anyString(), eq(userId)))
-        .thenReturn(newTempDatasetId);
-    when(datasetRepository.findTableNameById(newTempDatasetId))
+    when(datasetRepository.findTableNameById(oldTempDatasetId))
         .thenReturn(Optional.of("ptmp_16_schema_change_step_5678"));
     // SELECT 컬럼 id는 시스템 예약어이므로 임시 데이터셋에는 id_1로 별칭 처리되어 저장된다(#645)
-    when(columnRepository.findByDatasetId(newTempDatasetId))
+    when(columnRepository.findByDatasetId(oldTempDatasetId))
         .thenReturn(List.of(col("id_1", false), col("name", false), col("extra", false)));
     when(sqlExecutor.execute(anyList(), anyString())).thenReturn("3 rows affected");
 
     // when
     runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
 
-    // then: 기존 데이터셋 삭제 후 새로 생성
-    verify(tempDatasetService).deleteTempDataset(oldTempDatasetId);
-    verify(tempDatasetService)
-        .createTempDataset(any(), eq(pipelineId), anyString(), eq(stepId), anyString(), eq(userId));
+    // then: 같은 데이터셋 id 로 테이블·컬럼만 다시 만든다(WD-222) — 삭제 후 생성은 고정 출력 스텝에서 출력 참조 거부로 실패하고 id 가 바뀐다.
+    verify(tempDatasetService).rebuildTempDataset(eq(oldTempDatasetId), any());
+    verify(tempDatasetService, never()).deleteTempDataset(any());
+    verify(tempDatasetService, never())
+        .createTempDataset(any(), any(), anyString(), any(), anyString(), any());
   }
 
   /** 실행 주체가 볼 수 없는 출력에 대한 게이트 거부(실제 게이트가 던지는 것과 같은 코드). */
@@ -772,6 +773,8 @@ class PipelineAsyncRunnerTest {
 
     assertThat(status).isEqualTo("FAILED");
     verify(tempDatasetService, never()).deleteTempDataset(any());
+    // WD-222: 재생성은 같은 id 로 테이블만 다시 만든다 — 그 경로도 타지 않아야 한다.
+    verify(tempDatasetService, never()).rebuildTempDataset(any(), any());
     verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
     verify(sqlExecutor, never()).execute(anyList(), anyString());
   }
@@ -807,6 +810,8 @@ class PipelineAsyncRunnerTest {
 
     assertThat(status).isEqualTo("FAILED");
     verify(tempDatasetService, never()).deleteTempDataset(any());
+    // WD-222: 재생성은 같은 id 로 테이블만 다시 만든다 — 그 경로도 타지 않아야 한다.
+    verify(tempDatasetService, never()).rebuildTempDataset(any(), any());
     verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
     verify(aiClassifyExecutor, never()).execute(any(), any(), any(), any());
   }
@@ -954,6 +959,8 @@ class PipelineAsyncRunnerTest {
 
     assertThat(status).isEqualTo("FAILED");
     verify(tempDatasetService, never()).deleteTempDataset(any());
+    // WD-222: 재생성은 같은 id 로 테이블만 다시 만든다 — 그 경로도 타지 않아야 한다.
+    verify(tempDatasetService, never()).rebuildTempDataset(any(), any());
     verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
     verify(pythonExecutor, never()).run(anyString(), anyInt());
   }
@@ -980,8 +987,180 @@ class PipelineAsyncRunnerTest {
 
     assertThat(status).isEqualTo("FAILED");
     verify(tempDatasetService, never()).deleteTempDataset(any());
+    // WD-222: 재생성은 같은 id 로 테이블만 다시 만든다 — 그 경로도 타지 않아야 한다.
+    verify(tempDatasetService, never()).rebuildTempDataset(any(), any());
     verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
     verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  // ── WD-222: 출력 id 가 이 스텝 소유 TEMP 로 들어와도(조회 coalesce·화면 저장 고정) 자동 생성처럼 열 변경 시 재생성 ─────────────
+
+  /** PYTHON — 출력 id 가 소유 TEMP 이고 outputColumns 가 바뀌었으면 같은 id 로 다시 만든다(예전에는 TEMP 준비 분기를 타지 않았다). */
+  @Test
+  void executeStep_pythonOwnedTempOutput_schemaChanged_rebuildsSameTemp() {
+    Long pipelineId = 23L, userId = 2L, stepId = 213L, stepExecId = 313L, ownTemp = 785L;
+    PipelineStepResponse py =
+        new PipelineStepResponse(
+            stepId,
+            "py-owned-temp",
+            null,
+            "PYTHON",
+            "print('x')",
+            ownTemp,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            null,
+            null,
+            Map.of("outputColumns", List.of(Map.of("name", "v", "type", "TEXT"))),
+            null);
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(objectMapper.convertValue(any(), eq(com.smartfirehub.pipeline.dto.PythonStepConfig.class)))
+        .thenReturn(
+            new com.smartfirehub.pipeline.dto.PythonStepConfig(
+                List.of(
+                    new com.smartfirehub.pipeline.dto.PythonStepConfig.OutputColumn("v", "TEXT"))));
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(ownTemp));
+    when(tempDatasetService.hasSchemaChanged(eq(ownTemp), any())).thenReturn(true);
+    when(datasetRepository.findTableNameById(ownTemp)).thenReturn(Optional.of("ptmp_23_py"));
+
+    runner.executeStep(stepExecId, py, pipelineId, "TestPipeline", userId, false);
+
+    verify(tempDatasetService).rebuildTempDataset(eq(ownTemp), any());
+    verify(tempDatasetService, never()).deleteTempDataset(any());
+  }
+
+  /** API_CALL — 출력 id 가 소유 TEMP 이고 추론 열이 바뀌었으면 같은 id 로 다시 만든다. */
+  @Test
+  void executeStep_apiCallOwnedTempOutput_schemaChanged_rebuildsSameTemp() {
+    Long pipelineId = 24L, userId = 2L, stepId = 214L, stepExecId = 314L, ownTemp = 786L;
+    PipelineStepResponse api =
+        new PipelineStepResponse(
+            stepId,
+            "api-owned-temp",
+            null,
+            "API_CALL",
+            null,
+            ownTemp,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            Map.of(),
+            null,
+            null,
+            null);
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(minimalApiConfig());
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(ownTemp));
+    when(tempDatasetService.hasSchemaChanged(eq(ownTemp), any())).thenReturn(true);
+    when(datasetRepository.findTableNameById(ownTemp)).thenReturn(Optional.of("ptmp_24_api"));
+
+    runner.executeStep(stepExecId, api, pipelineId, "TestPipeline", userId, false);
+
+    verify(tempDatasetService).rebuildTempDataset(eq(ownTemp), any());
+    verify(tempDatasetService, never()).deleteTempDataset(any());
+  }
+
+  /** AI_CLASSIFY — 출력 id 가 소유 TEMP 이고 출력 열이 바뀌었으면 같은 id 로 다시 만든다. */
+  @Test
+  void executeStep_aiClassifyOwnedTempOutput_schemaChanged_rebuildsSameTemp() {
+    Long pipelineId = 25L, userId = 2L, stepId = 215L, stepExecId = 315L, ownTemp = 787L;
+    when(permissionChecker.hasPermission(userId, "pipeline:ai_execute")).thenReturn(true);
+    when(objectMapper.convertValue(any(), eq(AiClassifyConfig.class)))
+        .thenReturn(
+            new AiClassifyConfig(
+                "Classify",
+                List.of(new AiClassifyConfig.OutputColumn("label", "TEXT")),
+                List.of("text"),
+                null,
+                null));
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(ownTemp));
+    when(tempDatasetService.hasSchemaChanged(eq(ownTemp), any())).thenReturn(true);
+    when(datasetRepository.findTableNameById(ownTemp)).thenReturn(Optional.of("ptmp_25_ai"));
+    PipelineStepResponse noOutput = aiStepNoOutput(stepId, "ai-owned-temp", "REPLACE");
+    PipelineStepResponse ai =
+        new PipelineStepResponse(
+            noOutput.id(),
+            noOutput.name(),
+            null,
+            "AI_CLASSIFY",
+            null,
+            ownTemp,
+            null,
+            noOutput.inputDatasetIds(),
+            List.of(),
+            0,
+            "REPLACE",
+            null,
+            Map.of(),
+            null,
+            null);
+
+    runner.executeStep(stepExecId, ai, pipelineId, "TestPipeline", userId, false);
+
+    verify(tempDatasetService).rebuildTempDataset(eq(ownTemp), any());
+    verify(tempDatasetService, never()).deleteTempDataset(any());
+  }
+
+  /**
+   * 증분 자동 생성 스텝 — 책갈피 이후 변경분만 읽는 실행에서 결과 열이 바뀌면 TEMP 를 다시 만들지 않고(빈 TEMP 에 변경분만 남는 조용한 누락) 전체 재생성 예약
+   * 안내로 실패한다. 아무것도 지우지 않고 SQL 도 돌리지 않으며 책갈피도 전진하지 않는다.
+   */
+  @Test
+  void executeStep_incrementalOwnedTemp_schemaChangedWithCursor_failsWithoutRebuild() {
+    Long pipelineId = 26L, userId = 1L, stepId = 216L, stepExecId = 316L, ownTemp = 788L;
+    PipelineStepResponse step = incrementalMergeStep(stepId, ownTemp, "APPEND");
+    stubProbeColumns("code", "name");
+    when(stepRepository.findCursor(stepId))
+        .thenReturn(
+            Optional.of(
+                new StepCursor(OffsetDateTime.parse("2026-10-01T00:00:00Z"), false, ownTemp)));
+    when(incrementalCursorService.captureCandidate())
+        .thenReturn(OffsetDateTime.parse("2026-10-02T00:00:00Z"));
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(ownTemp));
+    when(tempDatasetService.hasSchemaChanged(eq(ownTemp), any())).thenReturn(true);
+    when(datasetRepository.findTableNameById(ownTemp)).thenReturn(Optional.of("ptmp_26_inc"));
+
+    String status = runner.executeStep(stepExecId, step, pipelineId, "P", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId), eq("FAILED"), isNull(), isNull(), error.capture(), isNull(), any());
+    assertThat(error.getValue()).contains("전체 재생성");
+    verify(tempDatasetService, never()).rebuildTempDataset(any(), any());
+    verify(tempDatasetService, never()).deleteTempDataset(any());
+    verify(sqlExecutor, never()).execute(anyList(), anyString());
+    verify(stepRepository, never()).advanceCursor(any(), any(), anyBoolean(), any());
+  }
+
+  /** 증분 자동 생성 스텝이라도 전체 재생성 예약이 걸린 실행은 열이 바뀐 TEMP 를 다시 만든다(-infinity 로 전부 다시 채운다). */
+  @Test
+  void executeStep_incrementalOwnedTemp_schemaChangedWithFullRebuild_rebuilds() {
+    Long pipelineId = 27L, userId = 1L, stepId = 217L, stepExecId = 317L, ownTemp = 789L;
+    PipelineStepResponse step = incrementalMergeStep(stepId, ownTemp, "APPEND");
+    stubProbeColumns("code", "name");
+    when(stepRepository.findCursor(stepId))
+        .thenReturn(
+            Optional.of(
+                new StepCursor(OffsetDateTime.parse("2026-10-01T00:00:00Z"), true, ownTemp)));
+    when(incrementalCursorService.captureCandidate())
+        .thenReturn(OffsetDateTime.parse("2026-10-02T00:00:00Z"));
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(ownTemp));
+    when(tempDatasetService.hasSchemaChanged(eq(ownTemp), any())).thenReturn(true);
+    when(datasetRepository.findTableNameById(ownTemp)).thenReturn(Optional.of("ptmp_27_inc"));
+    when(columnRepository.findByDatasetId(ownTemp))
+        .thenReturn(List.of(col("code", false), col("name", false)));
+    when(sqlExecutor.execute(anyList(), anyString())).thenReturn("ok");
+
+    String status = runner.executeStep(stepExecId, step, pipelineId, "P", userId, false);
+
+    assertThat(status).isEqualTo("COMPLETED");
+    verify(tempDatasetService).rebuildTempDataset(eq(ownTemp), any());
   }
 
   /**

@@ -29,6 +29,7 @@ import com.smartfirehub.securitylevel.ai.AiCall;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.user.repository.UserRepository;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -615,6 +616,16 @@ public class PipelineService {
       // Stream.toList() 는 null 원소를 허용한다 — 새 스텝 자리는 null id 로 saveSteps 에 넘어간다.
       List<Long> matchedStepIds =
           matchedSteps.stream().map(m -> m == null ? null : m.id()).toList();
+      // 1-1) 자동 생성 출력 정규화(WD-222) — 웹 편집기·AI 도구는 조회 응답의 "해석된" 출력(출력 미지정이면 이 스텝의 러너 TEMP id)을 그대로
+      // 되돌려 보낸다. 그대로 저장하면 output_dataset_id 가 TEMP id 로 고정돼 자동 생성 스텝이 "명시 출력" 처럼 보인다. 같은 스텝의
+      // 소유 TEMP id 가 오면 미지정(null)으로 저장한다 — 러너도 같은 규칙으로 판정하지만(PipelineAsyncRunner), 저장값을 바로잡아 두면
+      // 이미 고정된 기존 스텝도 다음 저장에서 스스로 풀린다. 다른 스텝·다른 파이프라인의 TEMP 는 여기서 건드리지 않는다(WD-224).
+      List<PipelineStepRequest> steps =
+          normalizeOwnedTempOutputs(
+              request.steps(),
+              matchedStepIds,
+              stepRepository.findTempDatasetIdsByStepIds(
+                  matchedStepIds.stream().filter(java.util.Objects::nonNull).toList()));
 
       // 2) 요청에서 빠진 스텝만 지운다 — 먼저 지워야 그 이름을 새·이름 바뀐 스텝이 쓸 수 있다(UNIQUE (pipeline_id, name)).
       Set<Long> keptIds = new java.util.HashSet<>(matchedStepIds);
@@ -635,19 +646,14 @@ public class PipelineService {
       // 4) 이름이 바뀌는 스텝은 임시 이름으로 비켜 둔다 — 이름 맞바꾸기(A↔B)도 UNIQUE 에 걸리지 않게(리포지토리 Javadoc).
       for (int i = 0; i < matchedSteps.size(); i++) {
         PipelineStepResponse before = matchedSteps.get(i);
-        if (before != null && !before.name().equals(request.steps().get(i).name())) {
+        if (before != null && !before.name().equals(steps.get(i).name())) {
           stepRepository.renameStepTemporarily(id, before.id());
         }
       }
 
       // 5) 검증 + 제자리 갱신/새로 저장 + 입력·의존 재연결.
       saveSteps(
-          id,
-          request.steps(),
-          userId,
-          previouslySavedOutputIds,
-          previouslySavedInputIds,
-          matchedStepIds);
+          id, steps, userId, previouslySavedOutputIds, previouslySavedInputIds, matchedStepIds);
 
       // 6) 남은 스텝의 증분 책갈피 이월 규칙. 스텝 행이 그대로라 책갈피도 그대로 남아 있으므로 "버려야 할 때"만 되돌린다.
       //
@@ -665,7 +671,7 @@ public class PipelineService {
           continue; // 새 스텝 — 책갈피 없음(기본값)
         }
         Long sid = before.id();
-        PipelineStepRequest s = request.steps().get(i);
+        PipelineStepRequest s = steps.get(i);
         Long newResolvedOutput =
             s.outputDatasetId() != null ? s.outputDatasetId() : tempByStepId.get(sid);
         boolean sameOutput =
@@ -750,6 +756,46 @@ public class PipelineService {
     List<Long> stepIds = stepRepository.findStepIdsByPipelineId(id);
     List<Long> tempIds = stepRepository.findAutoTempDatasetIdsByStepIds(stepIds);
     return new PipelineDeleteImpactResponse(selectDeletableAutoTemps(tempIds, stepIds).size());
+  }
+
+  /**
+   * 요청 스텝의 출력이 짝지은 기존 스텝 자신의 러너 TEMP id 면 출력 미지정(null)으로 바꾼 목록을 돌려준다(WD-222). 조회 응답이 출력 미지정 스텝에 그
+   * 스텝의 TEMP id 를 채워 주므로(PipelineStepRepository#findByPipelineId 의 coalesce — 화면 표시·{{#N}} 참조용),
+   * 클라이언트가 그 값을 되돌려 보내도 "자동 생성" 이 유지되게 한다. 새 스텝(짝 없음)·다른 스텝의 TEMP·사용자 데이터셋은 그대로 둔다.
+   *
+   * @param stepRequests 요청 스텝(요청 순서)
+   * @param matchedStepIds 요청 순서대로 짝지은 기존 스텝 id(새 스텝은 null)
+   * @param tempByStepId 기존 스텝 id → 그 스텝의 러너 TEMP id
+   */
+  static List<PipelineStepRequest> normalizeOwnedTempOutputs(
+      List<PipelineStepRequest> stepRequests,
+      List<Long> matchedStepIds,
+      Map<Long, Long> tempByStepId) {
+    List<PipelineStepRequest> result = new ArrayList<>(stepRequests.size());
+    for (int i = 0; i < stepRequests.size(); i++) {
+      PipelineStepRequest s = stepRequests.get(i);
+      Long matchedId = matchedStepIds.get(i);
+      Long ownTemp = matchedId != null ? tempByStepId.get(matchedId) : null;
+      if (s.outputDatasetId() != null && s.outputDatasetId().equals(ownTemp)) {
+        s =
+            new PipelineStepRequest(
+                s.name(),
+                s.description(),
+                s.scriptType(),
+                s.scriptContent(),
+                null,
+                s.inputDatasetIds(),
+                s.dependsOnStepNames(),
+                s.loadStrategy(),
+                s.apiConfig(),
+                s.aiConfig(),
+                s.pythonConfig(),
+                s.apiConnectionId(),
+                s.id());
+      }
+      result.add(s);
+    }
+    return result;
   }
 
   /**
