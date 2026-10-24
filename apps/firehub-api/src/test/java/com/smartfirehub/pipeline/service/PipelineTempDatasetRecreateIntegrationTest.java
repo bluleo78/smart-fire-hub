@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
@@ -233,6 +234,178 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
           .containsExactly(java.util.Arrays.copyOfRange(change, 1, change.length));
       assertThat(rowCount(temp)).as("적재 행 수").isEqualTo(2);
     }
+  }
+
+  // ------------------------------------------------------------------ //
+  // WD-224: 다른 스텝의 TEMP 를 출력으로 지정하는 저장 거부
+  // ------------------------------------------------------------------ //
+
+  /**
+   * 다른 파이프라인 스텝이 만든 TEMP 를 출력으로 지정한 생성·수정은 400(IllegalArgumentException)과 한국어 안내로 거부된다(WD-224). 결함:
+   * 저장 검증이 가시성만 봐 204 로 저장됐고, 두 파이프라인이 실행될 때마다 서로의 결과를 덮어썼다. 거부된 수정은 원래 출력(자동 생성)을 바꾸지 않는다.
+   */
+  @Test
+  void otherPipelineTempAsOutput_createAndUpdateRejected() {
+    Long ownerPipeline = createPipeline(sqlStep(STEP_NAME, "code", null, null));
+    pipelinesToCleanup.add(ownerPipeline);
+    assertThat(runAndWait(ownerPipeline)).as("TEMP 를 만드는 실행").isEqualTo("COMPLETED");
+    Long foreignTemp = tempIdOf(ownerPipeline);
+    assertThat(foreignTemp).isNotNull();
+
+    // 생성 거부
+    assertThatThrownBy(
+            () ->
+                pipelineService.createPipeline(
+                    new CreatePipelineRequest(
+                        pipelineName + " X",
+                        null,
+                        List.of(sqlStep("쓰기", "code", foreignTemp, null))),
+                    userId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("스텝 '쓰기'")
+        .hasMessageContaining("자동으로 만든 임시 데이터셋")
+        .hasMessageContaining("「자동 생성」");
+
+    // 수정 거부 — 출력 미지정으로 만든 파이프라인을 남의 TEMP 로 바꾸려는 저장
+    Long writer =
+        pipelineService
+            .createPipeline(
+                new CreatePipelineRequest(
+                    pipelineName + " X", null, List.of(sqlStep("쓰기", "code", null, null))),
+                userId)
+            .id();
+    pipelinesToCleanup.add(writer);
+    Long writerStepId = stepIdOf(writer, "쓰기");
+    assertThatThrownBy(
+            () ->
+                pipelineService.updatePipeline(
+                    writer,
+                    new UpdatePipelineRequest(
+                        pipelineName + " X",
+                        null,
+                        null,
+                        List.of(sqlStep("쓰기", "code", foreignTemp, writerStepId))),
+                    userId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("자동으로 만든 임시 데이터셋");
+    assertThat(storedOutputId(writer)).as("거부된 수정은 출력을 바꾸지 않는다").isNull();
+  }
+
+  /**
+   * 같은 파이프라인 안 다른 스텝의 TEMP 도 거부된다(WD-224) — 덮어쓰기는 같다. 수정 경로의 왕복 보존 집합에는 형제 스텝의 TEMP 가 이미 들어 있어, 판정을
+   * 왕복 보존 예외 안에 두면 통과해 버린다(이 테스트가 그 회귀를 잡는다). 이미 DB 에 그렇게 고정된 스텝(레거시)도 다음 저장에서 같은 안내로 막힌다.
+   */
+  @Test
+  void siblingStepTempAsOutput_rejected_evenWhenAlreadyPinned() {
+    Long pipelineId =
+        pipelineService
+            .createPipeline(
+                new CreatePipelineRequest(
+                    pipelineName,
+                    null,
+                    List.of(sqlStep("A", "code", null, null), sqlStep("B", "code", null, null))),
+                userId)
+            .id();
+    pipelinesToCleanup.add(pipelineId);
+    assertThat(runAndWait(pipelineId)).as("두 스텝 TEMP 생성 실행").isEqualTo("COMPLETED");
+    Long stepA = stepIdOf(pipelineId, "A");
+    Long stepB = stepIdOf(pipelineId, "B");
+    Long tempA = tempOfStep(stepA);
+    assertThat(tempA).isNotNull();
+
+    java.util.function.Supplier<UpdatePipelineRequest> pinBToA =
+        () ->
+            new UpdatePipelineRequest(
+                pipelineName,
+                null,
+                null,
+                List.of(sqlStep("A", "code", tempA, stepA), sqlStep("B", "code", tempA, stepB)));
+    assertThatThrownBy(() -> pipelineService.updatePipeline(pipelineId, pinBToA.get(), userId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("스텝 'B'")
+        .hasMessageContaining("자동으로 만든 임시 데이터셋");
+
+    // 레거시: B 가 이미 A 의 TEMP 로 고정돼 있어도(왕복 보존 대상) 같은 값을 되돌려 보내는 저장은 막히고, 무엇을 바꿀지 알려 준다.
+    inTenantFixture(
+        () ->
+            dsl.execute(
+                "UPDATE pipeline_step SET output_dataset_id = ? WHERE id = ?", tempA, stepB));
+    assertThatThrownBy(() -> pipelineService.updatePipeline(pipelineId, pinBToA.get(), userId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("스텝 'B'")
+        .hasMessageContaining("새 데이터셋으로 바꾸거나 「자동 생성」으로 두세요");
+    // 안내대로 B 를 자동 생성으로 바꾸면 저장된다(A 는 자기 TEMP 왕복 → null 정규화).
+    pipelineService.updatePipeline(
+        pipelineId,
+        new UpdatePipelineRequest(
+            pipelineName,
+            null,
+            null,
+            List.of(sqlStep("A", "code", tempA, stepA), sqlStep("B", "code", null, stepB))),
+        userId);
+    assertThat(storedOutputOfStep(stepA)).as("A 자기 TEMP 왕복 → 정규화").isNull();
+    assertThat(storedOutputOfStep(stepB)).as("B 자동 생성").isNull();
+  }
+
+  /** 자기 TEMP 왕복 저장은 성공하고 null 로 정규화되며, 일반(사용자) 데이터셋 출력은 생성·수정 모두 허용된다(WD-224 가 막지 않는 경로). */
+  @Test
+  void ownTempRoundTrip_andRegularDatasetOutput_allowed() {
+    Long pipelineId = createPipeline(sqlStep(STEP_NAME, "code", null, null));
+    pipelinesToCleanup.add(pipelineId);
+    assertThat(runAndWait(pipelineId)).isEqualTo("COMPLETED");
+    Long temp = tempIdOf(pipelineId);
+    Long stepId = stepIdOf(pipelineId, STEP_NAME);
+
+    pipelineService.updatePipeline(
+        pipelineId,
+        new UpdatePipelineRequest(
+            pipelineName, null, null, List.of(sqlStep(STEP_NAME, "code", temp, stepId))),
+        userId);
+    assertThat(storedOutputId(pipelineId)).as("자기 TEMP 왕복 → null").isNull();
+
+    // 일반 데이터셋(원천 데이터셋)을 출력으로 — 저장만 본다(실행하지 않는다).
+    pipelineService.updatePipeline(
+        pipelineId,
+        new UpdatePipelineRequest(
+            pipelineName, null, null, List.of(sqlStep(STEP_NAME, "code", srcDatasetId, stepId))),
+        userId);
+    assertThat(storedOutputId(pipelineId)).isEqualTo(srcDatasetId);
+    Long created =
+        pipelineService
+            .createPipeline(
+                new CreatePipelineRequest(
+                    pipelineName + " R", null, List.of(sqlStep("쓰기", "code", srcDatasetId, null))),
+                userId)
+            .id();
+    pipelinesToCleanup.add(created);
+    assertThat(storedOutputId(created)).isEqualTo(srcDatasetId);
+  }
+
+  private Long stepIdOf(Long pipelineId, String stepName) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne(
+                    "SELECT id FROM pipeline_step WHERE pipeline_id = ? AND name = ?",
+                    pipelineId,
+                    stepName)
+                .get(0, Long.class));
+  }
+
+  private Long tempOfStep(Long stepId) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne(
+                    "SELECT max(id) FROM dataset WHERE source_pipeline_step_id = ?"
+                        + " AND origin_type = 'TEMP'",
+                    stepId)
+                .get(0, Long.class));
+  }
+
+  private Long storedOutputOfStep(Long stepId) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne("SELECT output_dataset_id FROM pipeline_step WHERE id = ?", stepId)
+                .get(0, Long.class));
   }
 
   /** 요청을 저장하고 실행해 성공·TEMP id 유지·열 구성·값(빠진/새 열이 NULL 이 아님)을 확인한다. */

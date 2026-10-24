@@ -180,6 +180,13 @@ public class PipelineService {
     for (PipelineStepRequest r : stepRequests) {
       requestStepNames.add(r.name());
     }
+    // 요청 출력 중 소유 스텝이 있는 러너 TEMP → 소유 스텝 id(WD-224 출력 판정용, 한 번에 읽는다).
+    Map<Long, Long> tempOwnerByDatasetId =
+        stepRepository.findTempOwnerStepIdsByDatasetIds(
+            stepRequests.stream()
+                .map(PipelineStepRequest::outputDatasetId)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet()));
 
     for (int i = 0; i < stepRequests.size(); i++) {
       PipelineStepRequest stepRequest = stepRequests.get(i);
@@ -256,6 +263,22 @@ public class PipelineService {
           }
         }
         pipelineSecurityGate.checkNewStepReferencesForSave(editorUserId, newInputs);
+      }
+
+      // WD-224: 다른 스텝이 소유한 러너 TEMP 는 출력으로 지정할 수 없다. 소유 스텝은 실행마다 그 TEMP 를 자기 결과로 비우고 다시
+      // 채우므로(필요하면 다시 만든다, WD-222), 다른 스텝이 같은 TEMP 에 쓰면 두 스텝이 실행될 때마다 서로의 결과를 덮어쓴다.
+      // 판정은 보안(가시성) 판정 뒤에 둔다 — 앞에 두면 숨김 데이터셋이 TEMP 인지 400/403 차이로 떠볼 수 있다. 왕복 보존 예외를 두지
+      // 않는다: previouslySavedOutputIds 에는 같은 파이프라인 형제 스텝의 TEMP·이미 고정된 남의 TEMP 도 들어 있어, 예외를 두면
+      // 그대로 통과한다. 자기 TEMP 는 짝지은 기존 스텝 id 와 소유 스텝 id 를 직접 비교해 허용한다(수정 경로는 앞서 null 로
+      // 정규화되지만, 한 스텝에 TEMP 가 여럿인 경우까지 정규화에 기대지 않는다). 소유 스텝이 끊긴 고아 TEMP(같은 저장에서 뺀 스텝의
+      // TEMP 를 넘겨받는 경우 등, WD-170)는 덮어쓸 소유자가 없으므로 허용한다.
+      Long outputId = stepRequest.outputDatasetId();
+      if (outputId != null && tempOwnerByDatasetId.containsKey(outputId)) {
+        Long ownStepId = existingStepIds != null ? existingStepIds.get(i) : null;
+        if (!tempOwnerByDatasetId.get(outputId).equals(ownStepId)) {
+          throw new IllegalArgumentException(
+              stepError(stepRequest.name(), FOREIGN_TEMP_OUTPUT_MESSAGE));
+        }
       }
 
       // WD-154: API_CALL 매핑의 대상 컬럼이 지정 출력 데이터셋에 실제로 있는지 — 출력·입력 보안 판정을 모두 지난 뒤에만 본다. 앞에 두면 볼
@@ -619,7 +642,7 @@ public class PipelineService {
       // 1-1) 자동 생성 출력 정규화(WD-222) — 웹 편집기·AI 도구는 조회 응답의 "해석된" 출력(출력 미지정이면 이 스텝의 러너 TEMP id)을 그대로
       // 되돌려 보낸다. 그대로 저장하면 output_dataset_id 가 TEMP id 로 고정돼 자동 생성 스텝이 "명시 출력" 처럼 보인다. 같은 스텝의
       // 소유 TEMP id 가 오면 미지정(null)으로 저장한다 — 러너도 같은 규칙으로 판정하지만(PipelineAsyncRunner), 저장값을 바로잡아 두면
-      // 이미 고정된 기존 스텝도 다음 저장에서 스스로 풀린다. 다른 스텝·다른 파이프라인의 TEMP 는 여기서 건드리지 않는다(WD-224).
+      // 이미 고정된 기존 스텝도 다음 저장에서 스스로 풀린다. 다른 스텝·다른 파이프라인의 TEMP 는 여기서 바꾸지 않고 saveSteps 가 거부한다(WD-224).
       List<PipelineStepRequest> steps =
           normalizeOwnedTempOutputs(
               request.steps(),
@@ -991,6 +1014,14 @@ public class PipelineService {
   }
 
   /** 스텝 검증 오류 문구 — 어느 스텝의 문제인지 앞에 붙인다(예: 「스텝 'API 호출': 응답 필드를 입력하세요」). */
+  /**
+   * 다른 스텝(같은 파이프라인 포함)이 소유한 러너 TEMP 를 출력으로 지정했을 때의 안내(WD-224). 데이터셋 이름은 넣지 않는다 — 이미 이 파이프라인에 있던
+   * 출력(왕복 보존)은 편집자가 볼 수 없는 데이터셋일 수 있다. 스텝 이름은 {@link #stepError} 가 앞에 붙인다.
+   */
+  static final String FOREIGN_TEMP_OUTPUT_MESSAGE =
+      "출력 데이터셋이 다른 스텝(이 파이프라인 또는 다른 파이프라인)이 자동으로 만든 임시 데이터셋입니다. 임시 데이터셋은 그 스텝이 실행할 때마다 다시"
+          + " 채우므로 출력으로 지정할 수 없습니다. 이 스텝의 출력을 새 데이터셋으로 바꾸거나 「자동 생성」으로 두세요.";
+
   private static String stepError(String stepName, String message) {
     return "스텝 '" + stepName + "': " + message;
   }

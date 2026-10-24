@@ -44,6 +44,8 @@ interface DatasetOption {
   id: number;
   name: string;
   tableName: string;
+  /** 데이터셋 출처 — TEMP(러너가 스텝마다 자동 생성한 임시 데이터셋)는 출력 선택 목록에서 뺀다(WD-224). 입력 목록은 그대로 쓴다. */
+  originType?: 'SOURCE' | 'DERIVED' | 'TEMP';
 }
 
 // 로드 전략별 도움말 — 삼항식 대신 매핑으로 두어 MERGE 추가 시 분기가 늘어나지 않게 한다.
@@ -113,6 +115,20 @@ export default function StepConfigPanel({
   const primaryInputId = step?.inputDatasetIds[0];
   const primaryInputHidden =
     datasetsLoaded && primaryInputId != null && !datasets.some((d) => d.id === primaryInputId);
+  // WD-224: 현재 출력이 다른 스텝의 자동 생성 임시 데이터셋(TEMP)인가. 이 스텝 자신의 TEMP 는 편집기 상태에서 null(자동 생성)로 바뀌어 있으므로
+  // 여기 걸리는 것은 다른 스텝·다른 파이프라인의 TEMP 뿐이다 — 서버가 저장을 거부하므로 무엇을 바꿔야 하는지 미리 알린다.
+  const outputIsForeignTemp =
+    step?.outputDatasetId != null &&
+    datasets.some((d) => d.id === step.outputDatasetId && d.originType === 'TEMP');
+  // 출력 선택 후보 — TEMP 는 소유 스텝이 실행마다 다시 채우므로 출력으로 고르면 서로의 결과를 덮어쓴다(WD-224). 입력 후보(inputDatasetOptions)는
+  // 같은 datasets 를 그대로 쓴다(다른 스텝의 결과를 입력으로 읽는 것은 허용). 현재 값이 TEMP 면 트리거가 빈 칸이 되지 않게 그 항목만 남긴다.
+  const outputDatasetOptions = useMemo(
+    () =>
+      datasets.filter(
+        (d) => d.originType !== 'TEMP' || (step?.outputDatasetId != null && d.id === step.outputDatasetId),
+      ),
+    [datasets, step?.outputDatasetId],
+  );
   const { data: outputDataset, isLoading: outputDatasetLoading } = useDataset(
     outputHidden ? 0 : (step?.outputDatasetId ?? 0),
   );
@@ -138,6 +154,7 @@ export default function StepConfigPanel({
   const outputDatasetHelpId = `${baseId}-output-dataset-help`;
   const outputDatasetRestrictedId = `${baseId}-output-dataset-restricted`;
   const outputDatasetErrorId = `${baseId}-output-dataset-error`;
+  const outputDatasetForeignTempId = `${baseId}-output-dataset-foreign-temp`;
   const loadStrategyId = `${baseId}-load-strategy`;
   const loadStrategyHelpId = `${baseId}-load-strategy-help`;
   const dependenciesLabelId = `${baseId}-dependencies-label`;
@@ -517,6 +534,7 @@ export default function StepConfigPanel({
                   [
                     step.outputDatasetId === null ? outputDatasetHelpId : null,
                     outputHidden ? outputDatasetRestrictedId : null,
+                    outputIsForeignTemp ? outputDatasetForeignTempId : null,
                     outputDatasetIdError ? outputDatasetErrorId : null,
                   ]
                     .filter(Boolean)
@@ -540,7 +558,7 @@ export default function StepConfigPanel({
                   </SelectItem>
                 )}
                 <SelectItem value="__auto__">자동 생성 (임시)</SelectItem>
-                {datasets.map((ds) => (
+                {outputDatasetOptions.map((ds) => (
                   <SelectItem key={ds.id} value={ds.id.toString()}>
                     {ds.name}
                   </SelectItem>
@@ -563,6 +581,15 @@ export default function StepConfigPanel({
             {outputHidden && (
               <p id={outputDatasetRestrictedId} className="text-xs text-muted-foreground">
                 이 출력 데이터셋을 볼 수 있는 권한이 없습니다. 다른 데이터셋으로 바꾸면 다시 선택할 수 없습니다.
+              </p>
+            )}
+            {outputIsForeignTemp && (
+              <p
+                id={outputDatasetForeignTempId}
+                data-testid="output-foreign-temp-help"
+                className="text-sm text-destructive"
+              >
+                다른 스텝이 자동으로 만든 임시 데이터셋은 출력으로 지정할 수 없습니다. 저장하려면 새 데이터셋으로 바꾸거나 「자동 생성」으로 두세요.
               </p>
             )}
             {outputDatasetIdError && (

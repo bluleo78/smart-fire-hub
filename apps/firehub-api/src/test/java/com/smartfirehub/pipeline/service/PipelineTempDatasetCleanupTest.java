@@ -172,10 +172,15 @@ class PipelineTempDatasetCleanupTest extends IntegrationTestBase {
   void deletePipeline_tempUsedAsOutputByOtherPipeline_isKept() {
     PipelineDetailResponse a = createPipeline("wd170 원래", "추출");
     Long tempId = createTemp(a, a.steps().get(0).id(), "추출");
-    // 다른 파이프라인 스텝이 그 TEMP 를 출력으로 지정한다(저장 검증이 막지 않는 경로 — 실제 서비스로 저장).
+    // 다른 파이프라인 스텝이 그 TEMP 를 출력으로 지정한 상태. WD-224 이후 저장 검증은 이를 거부하므로, 그 전에 저장돼 운영에 남아 있는
+    // 스텝(레거시 데이터)을 DB 를 직접 고쳐 재현한다 — 삭제가 그 출력을 지키는 안전장치는 레거시 데이터 때문에 여전히 필요하다.
     PipelineDetailResponse b =
         pipelineService.createPipeline(
-            new CreatePipelineRequest("wd170 남의출력", null, List.of(sqlStep("쓰기", tempId))), userId);
+            new CreatePipelineRequest("wd170 남의출력", null, List.of(sqlStep("쓰기", null))), userId);
+    dsl.execute(
+        "UPDATE pipeline_step SET output_dataset_id = ? WHERE id = ?",
+        tempId,
+        b.steps().get(0).id());
     assertThat(outputOf(b.steps().get(0).id())).isEqualTo(tempId);
     assertThat(pipelineService.getDeleteImpact(a.id()).tempDatasetCount())
         .as("보호되는 TEMP 는 영향 개수에서 빠진다")
