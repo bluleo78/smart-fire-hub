@@ -132,7 +132,7 @@ WHERE death_count > 0
 
 ## 예제 4: AI_CLASSIFY 분류
 
-**요구사항**: 고객 리뷰를 감성 분석
+**요구사항**: 고객 리뷰를 감성 분석 (리뷰는 기존 데이터셋 ID 25에 있음 — 앞 스텝이 없으므로 `inputDatasetIds` 필수, 없으면 저장 400)
 
 ```json
 {
@@ -150,6 +150,7 @@ WHERE death_count > 0
         "inputColumns": ["review_text"],
         "batchSize": 20
       },
+      "inputDatasetIds": [25],
       "outputDatasetId": 30,
       "loadStrategy": "REPLACE"
     }

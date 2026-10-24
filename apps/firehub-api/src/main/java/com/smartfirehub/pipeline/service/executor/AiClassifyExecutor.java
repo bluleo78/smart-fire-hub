@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -86,6 +87,27 @@ public class AiClassifyExecutor {
 
   public record ExecutionResult(long outputRows, String executionLog) {}
 
+  /**
+   * 분류할 입력 데이터셋이 하나도 정해지지 않았을 때(명시 입력 없음 + 의존 스텝 출력도 해석되지 않음)의 실패 문구(WD-216). 설정 오류이므로 실패시킨다 — 예전에는
+   * 영어 「No input rows found」와 함께 완료(0행)로 끝나 아무것도 분류되지 않은 것을 알 수 없었다. 저장 시점 거부가 1차 방어이고, 이 문구는 그 검증
+   * 이전에 저장된 스텝·실행 시점에 출력이 없던 의존 스텝을 위한 2차 방어다. 러너도 같은 문구를 쓴다.
+   */
+  public static final String NO_INPUT_DATASET_MESSAGE =
+      "AI 분류할 입력 데이터셋이 없습니다. 스텝에 입력 데이터셋을 지정하거나, 출력 데이터셋이 있는 앞 스텝에 연결하세요";
+
+  /**
+   * 입력 데이터셋은 있으나 행이 0개일 때 남기는 실행 로그(WD-216). 실패가 아니라 완료(0행)다 — PYTHON·API_CALL 의 0행 결과와 같은 계약(#685:
+   * 빈 결과는 기존 출력을 지우지 않는다)이고, 위쪽 필터가 아무 행도 내지 않은 정상 상황일 수 있다. 출력을 그대로 둔다는 것까지 알린다.
+   */
+  public static String emptyInputMessage(int inputDatasetCount) {
+    return "입력 데이터가 없어 분류하지 않았습니다(입력 데이터셋 " + inputDatasetCount + "개, 0행). 출력 데이터셋은 그대로 두었습니다";
+  }
+
+  /** 입력 데이터셋의 테이블을 찾지 못했을 때의 실패 문구(WD-216) — 삭제됐을 가능성을 알리고 다시 지정하게 한다. */
+  public static String missingInputDatasetMessage(Long datasetId) {
+    return "입력 데이터셋(ID " + datasetId + ")을 찾을 수 없습니다. 삭제되었을 수 있습니다 — 스텝의 입력 데이터셋을 다시 지정하세요";
+  }
+
   /** 취소 확인 없이 실행한다 — 단독 호출·기존 호출부용. 파이프라인 러너는 아래 취소 확인 오버로드를 쓴다. */
   public ExecutionResult execute(PipelineStepResponse step, Long stepExecutionId, Long userId) {
     return execute(step, stepExecutionId, userId, ExecutionCancelCheck.NONE);
@@ -99,6 +121,12 @@ public class AiClassifyExecutor {
   public ExecutionResult execute(
       PipelineStepResponse step, Long stepExecutionId, Long userId, ExecutionCancelCheck cancel) {
     AiClassifyConfig config = objectMapper.convertValue(step.aiConfig(), AiClassifyConfig.class);
+
+    // WD-216: 분류할 입력 데이터셋이 하나도 없으면 설정 오류로 실패시킨다(빈 입력 데이터와 구분). 러너가 의존 스텝 출력까지 해석한 뒤의
+    // 목록이므로, 여기서 비어 있으면 명시 입력도 없고 의존 스텝에서도 출력을 얻지 못한 것이다. 출력·임시 테이블을 건드리기 전에 던진다.
+    if (step.inputDatasetIds() == null || step.inputDatasetIds().isEmpty()) {
+      throw new IllegalStateException(NO_INPUT_DATASET_MESSAGE);
+    }
 
     String outputTableName =
         datasetRepository
@@ -121,9 +149,12 @@ public class AiClassifyExecutor {
     // 1. Fetch input rows (filtered by inputColumns if specified; id always included)
     List<Map<String, Object>> allInputRows = fetchInputRows(step, config);
 
+    // WD-216: 입력 데이터셋은 있으나 0행이면 완료(0행)로 끝내고 한국어로 알린다 — PYTHON·API_CALL 의 0행 결과와 같은 계약(#685).
+    // 임시 테이블 생성(아래) 전에 돌아가므로 REPLACE 라도 기존 출력 행은 그대로 남는다(비우지 않는다). 이 반환을 임시 테이블 생성 뒤로
+    // 옮기면 안 된다.
     if (allInputRows.isEmpty()) {
-      log.info("[AI_CLASSIFY] Step '{}': No input rows found, skipping", step.name());
-      return new ExecutionResult(0, "No input rows found");
+      log.info("[AI_CLASSIFY] Step '{}': 입력 0행 — 분류 생략, 출력 유지", step.name());
+      return new ExecutionResult(0, emptyInputMessage(step.inputDatasetIds().size()));
     }
 
     log.info("[AI_CLASSIFY] Step '{}': {} input rows", step.name(), allInputRows.size());
@@ -742,8 +773,16 @@ public class AiClassifyExecutor {
       PipelineStepResponse step, AiClassifyConfig config) {
     List<Map<String, Object>> allRows = new ArrayList<>();
 
-    if (step.inputDatasetIds() == null || step.inputDatasetIds().isEmpty()) {
-      return allRows;
+    // WD-216: 입력 데이터셋마다 테이블이 있는지 첫 조회 전에 전부 확인한다. 예전에는 못 찾은 입력을 조용히 건너뛰어 남은 입력만 분류되거나
+    // 0행 완료로 끝났다(누락을 알 수 없음). 저장된 입력 참조는 데이터셋 삭제 시 FK CASCADE 로 함께 사라지므로, 여기 걸리는 것은 실행
+    // 도중 삭제된 경우다. 아래 입력 컬럼 확인보다 먼저 둔다(그쪽은 없는 데이터셋을 건너뛴다).
+    Map<Long, String> tableNames = new LinkedHashMap<>();
+    for (Long datasetId : step.inputDatasetIds()) {
+      String tableName = datasetRepository.findTableNameById(datasetId).orElse(null);
+      if (tableName == null) {
+        throw new IllegalStateException(missingInputDatasetMessage(datasetId));
+      }
+      tableNames.put(datasetId, tableName);
     }
 
     // queryData 는 결과 맵에 "id" 를 항상 넣어 준다 — 따로 요청할 필요가 없다.
@@ -758,9 +797,9 @@ public class AiClassifyExecutor {
       rejectMissingInputColumns(step.inputDatasetIds(), config.inputColumns());
     }
 
-    for (Long datasetId : step.inputDatasetIds()) {
-      String tableName = datasetRepository.findTableNameById(datasetId).orElse(null);
-      if (tableName == null) continue;
+    for (Map.Entry<Long, String> input : tableNames.entrySet()) {
+      Long datasetId = input.getKey();
+      String tableName = input.getValue();
 
       // 입력 컬럼 미지정 = 화면 안내대로 "전체 컬럼"(WD-214). 예전엔 null 을 그대로 넘겨 NPE 로 스텝이 실패했다.
       // 빈 목록(SELECT *)으로 두지 않고 데이터셋에 정의된 사용자 컬럼을 명시한다 — * 는 import_id·created_at·

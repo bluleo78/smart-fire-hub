@@ -173,6 +173,12 @@ public class PipelineService {
 
     // Step 1: Save all steps and build name -> stepId map
     Map<String, Long> stepNameToId = new HashMap<>();
+    // 이번 요청에 든 스텝 이름 — AI_CLASSIFY 의 의존 스텝이 실제로 이 파이프라인에 있는지 본다(WD-216). 러너도 같은 파이프라인의 스텝만
+    // 이름으로 찾고 없는 이름은 건너뛰므로, 저장 대상 목록이 곧 실행 시점의 해석 범위다.
+    Set<String> requestStepNames = new java.util.HashSet<>();
+    for (PipelineStepRequest r : stepRequests) {
+      requestStepNames.add(r.name());
+    }
 
     for (int i = 0; i < stepRequests.size(); i++) {
       PipelineStepRequest stepRequest = stepRequests.get(i);
@@ -197,7 +203,7 @@ public class PipelineService {
 
       // Validate AI_CLASSIFY step requirements
       if ("AI_CLASSIFY".equals(stepRequest.scriptType())) {
-        validateAiClassifyStep(stepRequest);
+        validateAiClassifyStep(stepRequest, requestStepNames);
         // 보안 등급(최종 리뷰 C3): AI_CLASSIFY 는 명시 입력 데이터셋을 전부 읽어 LLM 으로 보낸다 — 편집자가 볼 수 없는 입력은 저장할 수
         // 없다(SQL 스텝의 저장 판정과 같은 의미). 의존 스텝 출력 자동 해석분은 실행 시점에 판정된다.
         if (stepRequest.inputDatasetIds() != null && !stepRequest.inputDatasetIds().isEmpty()) {
@@ -807,7 +813,7 @@ public class PipelineService {
    * <p>출력 컬럼 이름(WD-154): 빈 이름·형식 위반·중복은 실행 시점에야 영어 원문 오류(Invalid name: . Must match …)로 실패했다 — 저장에서
    * 막고 어느 스텝인지 한국어로 알린다. 출력 데이터셋을 자동 생성(TEMP)하는 스텝은 시스템 예약어도 막는다(TEMP 생성이 예약어를 거부한다).
    */
-  private void validateAiClassifyStep(PipelineStepRequest step) {
+  private void validateAiClassifyStep(PipelineStepRequest step, Set<String> requestStepNames) {
     String stepName = step.name();
 
     if (step.aiConfig() == null || step.aiConfig().isEmpty()) {
@@ -846,6 +852,23 @@ public class PipelineService {
       throw new IllegalArgumentException(
           stepError(stepName, "오류 처리 방식은 다음 중 하나여야 합니다: " + VALID_ON_ERROR));
     }
+
+    // WD-216: 분류할 입력이 정해져야 한다(설정 자체의 오류를 먼저 알리도록 마지막에 본다) — 명시 입력 데이터셋이 있거나, 같은 파이프라인의 앞 스텝에 연결돼
+    // 있어야 한다(러너가 명시 입력이
+    // 비었을 때 의존 스텝의 출력 데이터셋을 입력으로 해석한다, PipelineAsyncRunner 의 AI_CLASSIFY 분기). 예전엔 둘 다 없어도 저장되고
+    // 실행하면 영어 「No input rows found」와 함께 0행 완료로 끝났다. 의존 스텝이 실제로 출력을 낼지(SQL 조회·AI 분류는 출력 미지정 시
+    // 임시 데이터셋을 만든다)는 저장 시점에 단정할 수 없어 보지 않는다 — 실행 시 해석된 입력이 없으면 실행기가 한국어로 실패시킨다.
+    // 데이터를 읽지 않는 검사라 보안 판정보다 앞에 두어도 존재 오라클이 되지 않는다.
+    boolean hasExplicitInput =
+        step.inputDatasetIds() != null
+            && step.inputDatasetIds().stream().anyMatch(java.util.Objects::nonNull);
+    boolean hasDependency =
+        step.dependsOnStepNames() != null
+            && step.dependsOnStepNames().stream()
+                .anyMatch(n -> n != null && !n.equals(stepName) && requestStepNames.contains(n));
+    if (!hasExplicitInput && !hasDependency) {
+      throw new IllegalArgumentException(stepError(stepName, AI_CLASSIFY_NO_INPUT_MESSAGE));
+    }
   }
 
   /**
@@ -882,6 +905,10 @@ public class PipelineService {
       }
     }
   }
+
+  /** 입력 데이터셋도 의존 스텝도 없는 AI 분류 스텝의 저장 거부 문구(WD-216). */
+  static final String AI_CLASSIFY_NO_INPUT_MESSAGE =
+      "입력 데이터셋을 지정하거나 앞 스텝에 연결하세요(AI 분류는 입력 데이터셋이나 앞 스텝의 출력을 분류합니다)";
 
   /** 없는 입력 컬럼 안내 문구 — 저장 거부와 테스트가 같은 문구를 쓴다(WD-215). */
   static String missingInputColumnsMessage(List<String> missing) {

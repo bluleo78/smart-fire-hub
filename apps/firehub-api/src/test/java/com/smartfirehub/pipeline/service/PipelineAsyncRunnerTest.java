@@ -2182,7 +2182,7 @@ class PipelineAsyncRunnerTest {
             null,
             null,
             null,
-            List.of(),
+            List.of(AI_INPUT_DATASET_ID),
             List.of(),
             0,
             "REPLACE",
@@ -2220,6 +2220,103 @@ class PipelineAsyncRunnerTest {
             eq(stepExecId),
             eq(userId),
             any());
+  }
+
+  /**
+   * WD-216: 명시 입력이 없고 의존 스텝에서도 출력 데이터셋을 얻지 못하면 분류할 입력이 없다 — 출력 TEMP 를 만들기 전에 한국어로 실패한다. 예전에는 실행기가
+   * 영어 「No input rows found」와 함께 0행 완료를 돌려줘 스텝·실행 모두 COMPLETED 였다.
+   */
+  @Test
+  void executeStep_aiClassifyWithNoResolvableInput_failsInKoreanBeforeCreatingTemp() {
+    Long pipelineId = 24L, userId = 1L, stepId = 224L, stepExecId = 324L;
+    when(permissionChecker.hasPermission(userId, "pipeline:ai_execute")).thenReturn(true);
+    PipelineStepResponse aiStep =
+        new PipelineStepResponse(
+            stepId,
+            "ai-no-input",
+            null,
+            "AI_CLASSIFY",
+            null,
+            null,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            null,
+            Map.of(),
+            null,
+            null);
+
+    String status =
+        runner.executeStep(stepExecId, aiStep, pipelineId, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            eq(AiClassifyExecutor.NO_INPUT_DATASET_MESSAGE),
+            isNull(),
+            any());
+    verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
+    verify(aiClassifyExecutor, never()).execute(any(), any(), any(), any());
+  }
+
+  /** WD-216: 의존 스텝이 있어도 그 스텝이 출력 데이터셋을 갖지 않으면(출력 미지정 DML 등) 입력이 해석되지 않아 같은 실패다. */
+  @Test
+  void executeStep_aiClassifyWithDependencyWithoutOutput_failsInKorean() {
+    Long pipelineId = 25L, userId = 1L, step1Id = 225L, step2Id = 226L, stepExecId = 326L;
+    PipelineStepResponse dmlStep =
+        stepResponse(step1Id, "dml-src", "SQL", "UPDATE t SET a = 1", null, List.of());
+    PipelineStepResponse aiStep =
+        new PipelineStepResponse(
+            step2Id,
+            "ai-dep",
+            null,
+            "AI_CLASSIFY",
+            null,
+            null,
+            null,
+            List.of(),
+            List.of("dml-src"),
+            1,
+            "REPLACE",
+            null,
+            Map.of(),
+            null,
+            null);
+    when(permissionChecker.hasPermission(userId, "pipeline:ai_execute")).thenReturn(true);
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(dmlStep, aiStep));
+    when(datasetRepository.findBySourcePipelineStepId(step1Id)).thenReturn(Optional.empty());
+    // 가드가 없으면 TEMP 생성까지 가도록 설정을 준비해 둔다(가드가 있으면 쓰이지 않으므로 lenient) — 변이 시 아래 never() 가 잡는다.
+    lenient()
+        .when(objectMapper.convertValue(any(), eq(AiClassifyConfig.class)))
+        .thenReturn(
+            new AiClassifyConfig(
+                "Classify",
+                List.of(new AiClassifyConfig.OutputColumn("label", "TEXT")),
+                List.of("text"),
+                null,
+                null));
+
+    String status =
+        runner.executeStep(stepExecId, aiStep, pipelineId, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            eq(AiClassifyExecutor.NO_INPUT_DATASET_MESSAGE),
+            isNull(),
+            any());
+    verify(aiClassifyExecutor, never()).execute(any(), any(), any(), any());
+    verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -3046,7 +3143,13 @@ class PipelineAsyncRunnerTest {
         null);
   }
 
-  /** 출력 데이터셋을 지정하지 않은(=임시 데이터셋 자동 생성) AI_CLASSIFY 스텝. */
+  /** AI_CLASSIFY 테스트 스텝의 명시 입력 데이터셋 id(WD-216 이후 입력 필수). */
+  private static final Long AI_INPUT_DATASET_ID = 9001L;
+
+  /**
+   * 출력 데이터셋을 지정하지 않은(=임시 데이터셋 자동 생성) AI_CLASSIFY 스텝. 입력은 명시 입력 하나({@link #AI_INPUT_DATASET_ID})다 —
+   * 입력이 없으면 러너가 TEMP 를 만들기 전에 실패시키므로(WD-216) 출력 경로를 보는 테스트에는 입력이 있어야 한다.
+   */
   private PipelineStepResponse aiStepNoOutput(Long stepId, String name, String loadStrategy) {
     return new PipelineStepResponse(
         stepId,
@@ -3056,7 +3159,7 @@ class PipelineAsyncRunnerTest {
         null,
         null,
         null,
-        List.of(),
+        List.of(AI_INPUT_DATASET_ID),
         List.of(),
         0,
         loadStrategy,

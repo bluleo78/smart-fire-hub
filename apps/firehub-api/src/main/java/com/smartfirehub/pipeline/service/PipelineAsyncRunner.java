@@ -1116,6 +1116,13 @@ public class PipelineAsyncRunner {
           }
         }
 
+        // WD-216: 명시 입력도 없고 의존 스텝에서도 출력 데이터셋을 얻지 못했으면 분류할 입력이 없다 — 설정 오류로 실패시킨다. 저장 시점
+        // 검증(PipelineService) 이전에 저장된 스텝이나, 의존 스텝이 출력을 내지 않은 경우(예: 출력 미지정 DML SQL)가 여기 온다. 출력
+        // 임시 데이터셋을 만들기 전에 던져 빈 TEMP 를 남기지 않는다. 실행기도 같은 문구로 한 번 더 막는다.
+        if (resolvedInputDatasetIds == null || resolvedInputDatasetIds.isEmpty()) {
+          throw new ScriptExecutionException(AiClassifyExecutor.NO_INPUT_DATASET_MESSAGE);
+        }
+
         // 보안 등급(최종 리뷰 C3): 실행 주체가 해석된 입력(명시 + 의존 스텝 출력 자동 해석)을 모두 볼 수 있어야 한다 — 입력을 읽기 전,
         // 출력 TEMP 를 만들거나 지우기 전에 판정한다. 거부는 SQL 스텝과 같은 구분 불가 메시지로 스텝 실패가 된다.
         PipelineSecurityGate.RunAs aiRunAs = pipelineSecurityGate.runAs(userId);
