@@ -38,6 +38,7 @@ import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.mapping.service.MappingReferenceService;
+import com.smartfirehub.pipeline.repository.TriggerRepository;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
@@ -181,6 +182,8 @@ public class DatasetService {
   private final SearchIndexSettingsService searchIndexSettingsService;
   // WD-186: 필드 이름 변경·타입 변경·삭제가 이 데이터셋의 지식그래프 매핑(필드 이름 참조)을 깨지 않게 지킨다.
   private final MappingReferenceService mappingReferenceService;
+  // WD-221: 삭제되는 데이터셋을 데이터 변경 트리거의 감시 목록·스냅숏에서 빼고, 감시 대상이 모두 사라진 트리거는 끈다.
+  private final TriggerRepository triggerRepository;
 
   /** 파이프라인 전용 출처 필드를 일반 생성 경로에서 보냈을 때의 오류 코드. */
   public static final String ORIGIN_RESERVED_CODE = "DATASET_ORIGIN_RESERVED";
@@ -541,6 +544,9 @@ public class DatasetService {
     }
     columnRepository.deleteByDatasetId(id);
     datasetRepository.deleteById(id);
+    // 데이터 변경 트리거는 FK 가 아니라 config.datasetIds(JSONB)로 감시하므로 삭제가 전파되지 않는다(WD-221). 남겨 두면 폴러가 매
+    // 주기 「행 수 0 ≠ 직전값」으로 보고 삭제된 데이터셋으로 파이프라인을 계속 실행했다 — 같은 트랜잭션에서 감시 목록·스냅숏에서 뺀다.
+    triggerRepository.removeWatchedDataset(id);
 
     // 데이터셋 삭제 감사 로그 (#60/#92)
     var auth =

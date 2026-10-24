@@ -334,6 +334,16 @@ public class TriggerService {
       }
       requireNewWatchedDatasetsVisible(
           updatedConfig.get("datasetIds"), existing.config().get("datasetIds"), userId);
+      // config 수정은 저장된 config 를 통째로 바꾼다 — 감시 목록이 비면 영원히 발화하지 않는 트리거가 되므로 거부한다(WD-221).
+      requireWatchedDatasets(updatedConfig);
+    }
+    // config 없이 꺼진 데이터 변경 트리거를 켜는 수정은 토글 켜기와 같다 — 감시 대상이 모두 삭제돼 꺼진 트리거는 켤 수 없다(WD-221).
+    boolean enablesDatasetChange =
+        "DATASET_CHANGE".equals(existing.triggerType())
+            && !existing.isEnabled()
+            && Boolean.TRUE.equals(request.isEnabled());
+    if (enablesDatasetChange && request.config() == null) {
+      requireWatchedDatasets(existing.config());
     }
 
     // SCHEDULE: 생성과 같은 검증·정규화를 저장 전에 적용한다(WD-107). 예전에는 수정 경로가 이를 건너뛰어 5필드 cron(웹 프리셋
@@ -371,6 +381,10 @@ public class TriggerService {
     }
 
     triggerRepository.update(triggerId, request, userId);
+    if (enablesDatasetChange) {
+      // 꺼진 동안의 변경으로 켜자마자 발화하지 않게 기준선을 새로 잡는다(WD-221).
+      triggerRepository.clearPollSnapshot(triggerId);
+    }
 
     // If schedule trigger, re-register after commit
     if ("SCHEDULE".equals(existing.triggerType())) {
@@ -444,7 +458,18 @@ public class TriggerService {
       validateScheduleConfig(new HashMap<>(existing.config()));
     }
 
+    // 데이터 변경 트리거: 감시 대상이 모두 삭제돼 꺼진 트리거는 켜도 감시할 것이 없다 — 켜기를 거부한다(WD-221). 끄기는 늘 허용한다.
+    boolean enablesDatasetChange =
+        enabled && !existing.isEnabled() && "DATASET_CHANGE".equals(existing.triggerType());
+    if (enablesDatasetChange) {
+      requireWatchedDatasets(existing.config());
+    }
+
     triggerRepository.updateEnabled(triggerId, enabled);
+    if (enablesDatasetChange) {
+      // 다시 켠 트리거는 직전 기준선이 없는 것으로 본다 — 꺼진 동안의 변경으로 켜자마자 발화하지 않게(WD-221).
+      triggerRepository.clearPollSnapshot(triggerId);
+    }
 
     // Update scheduler after commit
     if ("SCHEDULE".equals(existing.triggerType())) {
@@ -468,6 +493,7 @@ public class TriggerService {
     return withUpstreamMissing(
         triggerRepository.findByPipelineId(pipelineId).stream()
             .map(TriggerService::toPublic)
+            .map(TriggerService::withWatchedDatasetsMissing)
             .toList());
   }
 
@@ -477,6 +503,7 @@ public class TriggerService {
         triggerRepository
             .findById(triggerId)
             .map(TriggerService::toPublic)
+            .map(TriggerService::withWatchedDatasetsMissing)
             .orElseThrow(() -> new TriggerNotFoundException("Trigger not found: " + triggerId));
     return withUpstreamMissing(List.of(trigger)).get(0);
   }
@@ -573,7 +600,8 @@ public class TriggerService {
         masked.nextFireTime(),
         masked.createdBy(),
         masked.createdAt(),
-        masked.upstreamMissing());
+        masked.upstreamMissing(),
+        masked.watchedDatasetsMissing());
   }
 
   /**
@@ -820,6 +848,36 @@ public class TriggerService {
       out.add(t.withUpstreamMissing(id == null || !existing.contains(id)));
     }
     return out;
+  }
+
+  /** 감시 목록이 비어 켤 수 없을 때의 거부 문구(WD-221). */
+  static final String WATCHED_DATASETS_MISSING_MESSAGE =
+      "감시할 데이터셋이 없습니다(삭제되었을 수 있습니다). 편집에서 감시할 데이터셋을 하나 이상 고르세요.";
+
+  /** 데이터 변경 트리거 config 의 감시 목록이 비어 있는가 — 목록이 아니거나 없으면 빈 것으로 본다(WD-221). */
+  private static boolean watchedDatasetsEmpty(Map<String, Object> config) {
+    Object ids = config == null ? null : config.get("datasetIds");
+    return !(ids instanceof List<?> list) || list.isEmpty();
+  }
+
+  /**
+   * 감시 목록이 비었으면 400(IllegalArgumentException)으로 거부한다(WD-221).
+   *
+   * <p>개별 id 의 존재를 확인하지 않고 목록이 비었는지만 본다 — 삭제된 id 는 데이터셋 삭제·폴러가 이미 목록에서 빼므로, 존재 확인을 더하면 볼 수 없는(상위
+   * 등급) 데이터셋이 있는지를 켜기 성공·실패로 떠볼 수 있게 될 뿐이다(WD-161).
+   */
+  private static void requireWatchedDatasets(Map<String, Object> config) {
+    if (watchedDatasetsEmpty(config)) {
+      throw new IllegalArgumentException(WATCHED_DATASETS_MISSING_MESSAGE);
+    }
+  }
+
+  /** 조회 응답에 데이터 변경 트리거의 감시 목록 비었음 표시를 붙인다(WD-221) — 감시 대상이 모두 삭제돼 꺼진 이유를 화면에 보이기 위함이다. */
+  private static TriggerResponse withWatchedDatasetsMissing(TriggerResponse t) {
+    if (!"DATASET_CHANGE".equals(t.triggerType())) {
+      return t;
+    }
+    return t.withWatchedDatasetsMissing(watchedDatasetsEmpty(t.config()));
   }
 
   private static Object upstreamValueOf(TriggerResponse t) {

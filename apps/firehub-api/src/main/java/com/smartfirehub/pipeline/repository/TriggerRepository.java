@@ -311,6 +311,55 @@ public class TriggerRepository {
   }
 
   /**
+   * 데이터 변경(DATASET_CHANGE) 트리거들의 감시 목록에서 데이터셋 하나를 뺀다(WD-221).
+   *
+   * <p>데이터셋이 삭제될 때와, 폴러가 이미 없는 감시 대상을 발견했을 때 부른다. 감시 목록({@code config.datasetIds})과 폴러의 행 수
+   * 스냅숏({@code trigger_state.lastSnapshot.<id>})에서 함께 지운다 — 남겨 두면 폴러가 매 주기 「행 수 0 ≠ 직전값」으로 보고 같은 삭제
+   * 데이터셋으로 파이프라인을 계속 실행했고, 편집 창에는 지워진 id 가 「열람 권한 없음」 칩으로 남아 권한 문제처럼 보였다. 지운 뒤 감시 대상이 하나도 남지 않으면 같은
+   * 문장에서 트리거를 끈다(꺼진 이유는 조회 응답의 {@code watchedDatasetsMissing} 이 「감시 목록이 비었음」으로 계산한다).
+   *
+   * <p>읽고-고쳐-쓰기 대신 SQL 한 문장으로 바꾸는 이유: 같은 시각에 폴러가 상태를 쓰거나 다른 감시 대상이 지워져도 서로의 변경을 덮지 않게 하기 위함이다.
+   * {@code jsonb_agg} 는 남는 원소가 없으면 NULL 이라 빈 배열로 감싼다. UPDATE 의 SET 식은 모두 바뀌기 전 행 값을 읽는다.
+   *
+   * @return 바뀐 트리거 수
+   */
+  public int removeWatchedDataset(Long datasetId) {
+    return dsl.execute(
+        """
+        UPDATE pipeline_trigger SET
+          config = jsonb_set(config, '{datasetIds}', COALESCE(
+            (SELECT jsonb_agg(e) FROM jsonb_array_elements(config -> 'datasetIds') e
+              WHERE e <> to_jsonb(?::bigint)), '[]'::jsonb)),
+          trigger_state = COALESCE(trigger_state, '{}'::jsonb) #- ARRAY['lastSnapshot', ?::text],
+          is_enabled = is_enabled AND EXISTS (
+            SELECT 1 FROM jsonb_array_elements(config -> 'datasetIds') e
+              WHERE e <> to_jsonb(?::bigint)),
+          updated_at = ?
+        WHERE trigger_type = 'DATASET_CHANGE'
+          AND jsonb_typeof(config -> 'datasetIds') = 'array'
+          AND (config -> 'datasetIds') @> to_jsonb(?::bigint)
+        """,
+        datasetId,
+        String.valueOf(datasetId),
+        datasetId,
+        LocalDateTime.now(),
+        datasetId);
+  }
+
+  /**
+   * 폴러의 행 수 스냅숏을 지운다(WD-221) — 꺼져 있던 데이터 변경 트리거를 다시 켤 때 부른다.
+   *
+   * <p>꺼진 동안의 변경으로 켜자마자 발화하지 않게, 켠 뒤 첫 폴링이 기준선만 새로 잡도록 한다. {@code lastCheckedAt} 도 지워 그 기준선을 폴링 주기를
+   * 기다리지 않고 다음 폴링에 바로 잡는다.
+   */
+  public void clearPollSnapshot(Long id) {
+    dsl.execute(
+        "UPDATE pipeline_trigger SET trigger_state = COALESCE(trigger_state, '{}'::jsonb)"
+            + " - 'lastSnapshot' - 'lastCheckedAt' WHERE id = ?",
+        id);
+  }
+
+  /**
    * 토큰 해시로 API 트리거를 찾는다. 켜짐 여부와 무관하게 찾는다(WD-152) — 맞는 토큰으로 꺼진 트리거를 부른 호출자에게 "토큰이 틀렸다"(401) 대신 "트리거가
    * 꺼져 있다"(409)를 알려 주기 위해서다. 켜짐 판정은 {@code TriggerService#fireTrigger} 한 곳에서만 한다.
    */

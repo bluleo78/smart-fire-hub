@@ -190,6 +190,10 @@ export interface TriggerResponse {
    * 연쇄 트리거의 선행 파이프라인이 없는지(삭제됨 등) — 서버가 조회 시 계산한다(WD-218). 옛 서버는 보내지 않으므로 선택값이고, 없으면 false 로 본다.
    */
   upstreamMissing?: boolean;
+  /**
+   * 데이터 변경 트리거의 감시 목록이 비었는지 — 감시 데이터셋이 모두 삭제되면 서버가 목록에서 빼고 트리거를 끈다(WD-221). 옛 서버는 보내지 않으므로 선택값이다.
+   */
+  watchedDatasetsMissing?: boolean;
 }
 
 export interface TriggerEventResponse {
