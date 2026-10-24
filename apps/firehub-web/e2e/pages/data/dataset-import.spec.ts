@@ -369,6 +369,47 @@ test.describe('FileUploadZone 파일 형식 검증 — #24 회귀 방지', () =>
 });
 
 test.describe('임포트 에러 처리 — useImportDialog 분기', () => {
+  test('진행 조회가 404 면 재시도 없이 「진행 상황 확인 불가」와 서버 문구를 보인다 (WD-203)', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createPreviewResponse());
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports`, createImportStartResponse());
+    // 나중에 등록한 route 가 이긴다 — 진행 SSE·상태 조회 모두 404 로 덮어쓴다
+    let jobRequests = 0;
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/jobs/job-123/'),
+      (route) => {
+        jobRequests += 1;
+        return route.fulfill({
+          status: 404,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 404, message: '작업을 찾을 수 없습니다. (작업 ID: job-123)' }),
+        });
+      },
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+    const importBtn = page.getByRole('dialog').getByRole('button', { name: '임포트' });
+    await expect(importBtn).toBeEnabled({ timeout: 10_000 });
+    await importBtn.click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('진행 상황 확인 불가')).toBeVisible({ timeout: 10_000 });
+    await expect(dialog.getByText('작업을 찾을 수 없습니다. (작업 ID: job-123)')).toBeVisible();
+    // 임포트 자체가 실패했다고 단정하지 않는다 — 실패 문구도, 단계 스텝퍼(실패 단계 표시)도 없다
+    await expect(dialog.getByText('임포트 실패')).toHaveCount(0);
+    await expect(dialog.getByText('검증', { exact: true })).toHaveCount(0);
+
+    // 재연결 백오프 첫 주기(3초)를 넘겨도 추가 요청이 없어야 한다
+    await page.waitForTimeout(4000);
+    expect(jobRequests).toBe(1);
+  });
+
   test('임포트 API 409 충돌 — "이미 진행 중인 임포트가 있습니다." 토스트가 표시된다', async ({ authenticatedPage: page }) => {
     await setupImportMocks(page);
     await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createPreviewResponse());

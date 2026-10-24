@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
+import com.smartfirehub.job.exception.JobNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
 import com.smartfirehub.user.dto.UserResponse;
@@ -189,12 +190,12 @@ class AsyncJobServiceTest extends IntegrationTestBase {
     assertThat(emitter).isNotNull();
   }
 
-  /** subscribe: 존재하지 않는 jobId → IllegalArgumentException. */
+  /** subscribe: 존재하지 않는 jobId → JobNotFoundException(404, 한국어 문구 — WD-203). */
   @Test
-  void subscribe_nonExistentJob_throwsIllegalArgument() {
+  void subscribe_nonExistentJob_throwsJobNotFound() {
     assertThatThrownBy(() -> asyncJobService.subscribe("non-existent-job-id", userId))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Job not found");
+        .isInstanceOf(JobNotFoundException.class)
+        .hasMessageContaining("작업을 찾을 수 없습니다");
   }
 
   /** subscribe: 다른 사용자의 job → AccessDeniedException. */
@@ -233,12 +234,29 @@ class AsyncJobServiceTest extends IntegrationTestBase {
     assertThat(status.userId()).isEqualTo(userId);
   }
 
-  /** getJobStatus: 존재하지 않는 jobId → IllegalArgumentException. */
+  /** getJobStatus: 존재하지 않는 jobId → JobNotFoundException(404, 한국어 문구 — WD-203). */
   @Test
-  void getJobStatus_nonExistentJob_throwsIllegalArgument() {
+  void getJobStatus_nonExistentJob_throwsJobNotFound() {
     assertThatThrownBy(() -> asyncJobService.getJobStatus("no-such-job", userId))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Job not found");
+        .isInstanceOf(JobNotFoundException.class)
+        .hasMessageContaining("작업을 찾을 수 없습니다");
+  }
+
+  /**
+   * getJobStatus: API 연결 전체 갱신 잡도 시작한 사용자가 그대로 조회한다(WD-203). 서비스는 기능 권한이 아니라 소유자만 본다 — 엔드포인트에서
+   * data:read 를 뺀 근거.
+   */
+  @Test
+  void getJobStatus_apiConnectionRefreshJob_ownerCanRead() {
+    String jobId =
+        asyncJobService.createJob(
+            "API_CONNECTION_REFRESH_ALL", "api_connection", "all", userId, null);
+    asyncJobService.completeJob(jobId, Map.of("total", 2, "checked", 2));
+
+    AsyncJobStatusResponse status = asyncJobService.getJobStatus(jobId, userId);
+
+    assertThat(status.jobType()).isEqualTo("API_CONNECTION_REFRESH_ALL");
+    assertThat(status.stage()).isEqualTo("COMPLETED");
   }
 
   /** getJobStatus: 다른 사용자가 조회 → AccessDeniedException. */
@@ -258,7 +276,8 @@ class AsyncJobServiceTest extends IntegrationTestBase {
     String jobId = asyncJobService.createJob("IMPORT", "dataset", "ds-10", otherUser.id(), null);
 
     assertThatThrownBy(() -> asyncJobService.getJobStatus(jobId, userId))
-        .isInstanceOf(AccessDeniedException.class);
+        .isInstanceOf(AccessDeniedException.class)
+        .hasMessageContaining("이 작업을 시작한 사용자만");
   }
 
   // ──────────────────────────────────────────────

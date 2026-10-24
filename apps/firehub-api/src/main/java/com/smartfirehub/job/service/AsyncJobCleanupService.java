@@ -50,7 +50,8 @@ public class AsyncJobCleanupService {
           job.jobType(),
           job.stage(),
           staleThreshold);
-      asyncJobService.failJob(job.jobId(), "Job timed out: no progress for 30 minutes");
+      // 사용자 화면 토스트로 그대로 보이는 실패 문구라 한국어로 둔다(WD-203: 진행 조회 실패가 이제 화면에 드러남).
+      asyncJobService.failJob(job.jobId(), "30분 동안 진행이 없어 작업을 중단했습니다. 다시 시도해 주세요.");
     }
   }
 

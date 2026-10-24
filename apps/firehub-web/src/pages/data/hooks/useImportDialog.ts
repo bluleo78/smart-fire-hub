@@ -98,8 +98,10 @@ export function useImportDialog({
   // 현재 열려 있는 다이얼로그의 선택 파일과 이름이 같은 가장 최근 FAILED 이력에서
   // 검증 오류 상세를 찾는다. jobId는 ImportResponse에 없어 직접 매칭할 수 없기 때문에
   // fileName + 최신순 정렬을 근사 매칭 기준으로 사용한다.
+  // 진행 상황을 확인할 수 없어 멈춘 경우(WD-203)는 이번 임포트의 실패가 아니므로 예전 실패 이력의 오류를 붙이지 않는다
+  const progressUnobservable = importProgress?.unobservable === true;
   const failedErrors = useMemo(() => {
-    if (importProgress?.stage !== 'FAILED' || !imports) return null;
+    if (importProgress?.stage !== 'FAILED' || progressUnobservable || !imports) return null;
     const candidates = imports
       .filter((i) => i.status === 'FAILED' && (!selectedFile || i.fileName === selectedFile.name))
       .sort((a, b) => parseUtcDate(b.createdAt).getTime() - parseUtcDate(a.createdAt).getTime());
@@ -108,7 +110,7 @@ export function useImportDialog({
       if (parsed) return parsed;
     }
     return null;
-  }, [importProgress?.stage, imports, selectedFile]);
+  }, [importProgress?.stage, progressUnobservable, imports, selectedFile]);
 
   // Reset state when dialog closes
   useEffect(() => {

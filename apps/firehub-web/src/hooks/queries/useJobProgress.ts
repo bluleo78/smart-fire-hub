@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { useEffect, useRef,useState } from 'react';
 
 import { getAccessToken } from '../../api/client';
@@ -49,6 +50,20 @@ export function parseSseLine(
   }
   return null;
 }
+/**
+ * 재시도해도 결과가 바뀌지 않는 HTTP 상태 (WD-203).
+ * - 400: 잘못된 작업 ID 등 요청 자체 오류
+ * - 403: 남의 작업이거나 권한이 없음
+ * - 404: 작업이 없음(삭제·다른 테넌트)
+ * 이 상태를 받으면 SSE 재연결·REST 폴링을 즉시 멈추고 종단(FAILED) 상태로 넘긴다.
+ * 예전에는 오류를 삼키고 3초마다 영원히 폴링해, 소비 화면이 「갱신 중...」에 멈췄다.
+ * 401(토큰 만료)은 재연결 때 새 토큰을 쓰므로, 5xx·네트워크 오류는 일시적일 수 있으므로 기존처럼 재시도한다.
+ */
+const NON_RETRYABLE_STATUSES = new Set([400, 403, 404]);
+
+/** 진행 상황을 확인할 수 없을 때 보여 줄 기본 문구 — 서버 메시지가 없을 때 쓴다. */
+export const JOB_UNOBSERVABLE_MESSAGE = '작업 진행 상황을 확인할 수 없습니다.';
+
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 3000;
 const REST_POLL_INTERVAL_MS = 3000;
@@ -63,6 +78,8 @@ export function useJobProgress(jobId: string | null): JobProgress | null {
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const isTerminalRef = useRef(false);
+  // 마지막으로 받은 진행 정보 — 추적 불가로 종단 처리할 때 진행률을 0 으로 되돌리지 않기 위해 보관한다
+  const lastProgressRef = useRef<JobProgress | null>(null);
   // Forward ref so retry closures always call the latest connect
   const connectRef = useRef<(() => void) | null>(null);
 
@@ -79,6 +96,7 @@ export function useJobProgress(jobId: string | null): JobProgress | null {
 
     isTerminalRef.current = false;
     retryCountRef.current = 0;
+    lastProgressRef.current = null;
 
     function clearRetryTimer() {
       if (retryTimerRef.current !== null) {
@@ -95,7 +113,31 @@ export function useJobProgress(jobId: string | null): JobProgress | null {
     }
 
     function applyProgress(jp: JobProgress) {
+      lastProgressRef.current = jp;
       setState({ forJobId: jp.jobId, progress: jp });
+    }
+
+    /**
+     * 서버가 400/403/404 로 답해 더 기다려도 소용없을 때 추적을 끝낸다 (WD-203).
+     * 재시도 타이머·폴링을 모두 멈추고 stage='FAILED' + unobservable 로 종단 상태를 만들어,
+     * 소비자(전체 갱신 버튼·임포트 다이얼로그)가 "진행 중" 표시를 해제하고 문구를 보이게 한다.
+     */
+    function stopAsUnobservable(forJobId: string, serverMessage?: string) {
+      if (isTerminalRef.current) return;
+      isTerminalRef.current = true;
+      clearRetryTimer();
+      clearPollInterval();
+      const last = lastProgressRef.current;
+      applyProgress({
+        jobId: forJobId,
+        jobType: last?.jobType ?? '',
+        stage: 'FAILED',
+        progress: last?.progress ?? 0,
+        message: last?.message,
+        metadata: last?.metadata,
+        errorMessage: serverMessage?.trim() || JOB_UNOBSERVABLE_MESSAGE,
+        unobservable: true,
+      });
     }
 
     function startRestPolling() {
@@ -123,8 +165,17 @@ export function useJobProgress(jobId: string | null): JobProgress | null {
             isTerminalRef.current = true;
             clearPollInterval();
           }
-        } catch {
-          // keep polling on error
+        } catch (error: unknown) {
+          // 400/403/404 는 다시 물어도 같은 답이므로 즉시 멈춘다(WD-203). 그 밖의 오류(5xx·네트워크)는 일시적일 수 있어 계속 폴링한다.
+          const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+          if (status !== undefined && NON_RETRYABLE_STATUSES.has(status)) {
+            const data = axios.isAxiosError(error) ? error.response?.data : undefined;
+            const serverMessage =
+              data && typeof data === 'object' && typeof (data as { message?: unknown }).message === 'string'
+                ? (data as { message: string }).message
+                : undefined;
+            stopAsUnobservable(currentJobId, serverMessage);
+          }
         }
       }, REST_POLL_INTERVAL_MS);
     }
@@ -151,6 +202,26 @@ export function useJobProgress(jobId: string | null): JobProgress | null {
         credentials: 'include',
       }).then(async (response) => {
         if (!response.ok) {
+          // 400/403/404: 재연결해도 같은 답이므로 재시도 없이 종단 처리한다(WD-203).
+          // SSE 요청이라 오류 본문이 비어 있을 수 있어, JSON message 가 있을 때만 쓰고 없으면 기본 문구를 쓴다.
+          if (NON_RETRYABLE_STATUSES.has(response.status)) {
+            let serverMessage: string | undefined;
+            try {
+              const body: unknown = await response.json();
+              if (body && typeof body === 'object' && typeof (body as { message?: unknown }).message === 'string') {
+                serverMessage = (body as { message: string }).message;
+              }
+            } catch {
+              // 본문이 없거나 JSON 이 아니면 기본 문구를 쓴다
+            }
+            if (!controller.signal.aborted) stopAsUnobservable(currentJobId, serverMessage);
+            return;
+          }
+          // 409(구독자 수 초과): 작업은 살아 있으니 SSE 대신 REST 폴링으로 바로 넘어간다.
+          if (response.status === 409) {
+            if (!controller.signal.aborted) startRestPolling();
+            return;
+          }
           throw new Error(`HTTP ${response.status}`);
         }
         retryCountRef.current = 0;

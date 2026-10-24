@@ -6,11 +6,12 @@
  * currentEventType이 data: 처리 직후 초기화되지 않고 빈 줄에서 초기화되어야 한다.
  */
 import { renderHook } from '@testing-library/react';
+import { AxiosError, type AxiosResponse } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { jobsApi } from '../../api/jobs';
 import type { SseParserState } from './useJobProgress';
-import { parseSseLine, useJobProgress } from './useJobProgress';
+import { JOB_UNOBSERVABLE_MESSAGE, parseSseLine, useJobProgress } from './useJobProgress';
 
 // jobsApi.getJobStatus 를 모킹하여 REST 폴백(startRestPolling) 호출 여부를 관찰한다
 vi.mock('../../api/jobs', () => ({
@@ -217,5 +218,140 @@ describe('useJobProgress — done=true 종료 시 REST 폴백 전환', () => {
     await vi.advanceTimersByTimeAsync(10000);
 
     expect(jobsApi.getJobStatus).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * WD-203: 서버가 400/403/404 로 답하면 재시도·폴링을 즉시 멈추고 종단(FAILED + unobservable) 상태로 넘긴다.
+ * 예전엔 SSE 는 지수 백오프로 5회 재연결, REST 폴링은 오류를 삼키고 3초마다 영원히 돌아
+ * 소비 화면(전체 갱신 버튼)이 「갱신 중...」에 멈췄다. 5xx·네트워크 오류는 기존처럼 재시도해야 한다.
+ */
+describe('useJobProgress — 재시도 불가 상태(400/403/404)에서 추적 중단', () => {
+  const encoder = new TextEncoder();
+
+  /** 진행 이벤트 하나를 주고 done=true 로 끝나는 SSE 응답(→ REST 폴백 전환)을 만든다 */
+  function streamThenDone() {
+    let sent = false;
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: vi.fn(async () => {
+            if (!sent) {
+              sent = true;
+              return {
+                done: false,
+                value: encoder.encode(
+                  'event: progress\ndata: {"jobId":"job-r","jobType":"IMPORT","stage":"INSERTING","progress":55,"message":""}\n\n',
+                ),
+              };
+            }
+            return { done: true, value: undefined };
+          }),
+          cancel: vi.fn(),
+        }),
+      },
+    };
+  }
+
+  /** axios.isAxiosError 를 통과하는 실제 AxiosError 를 만든다 */
+  function axiosErrorWith(status: number, data?: unknown) {
+    return new AxiosError('fail', 'ERR_BAD_RESPONSE', undefined, undefined, {
+      status,
+      data,
+    } as AxiosResponse);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.mocked(jobsApi.getJobStatus).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('SSE 403 이면 재연결하지 않고 서버 문구로 FAILED(unobservable) 종단 처리한다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ message: '이 작업을 시작한 사용자만 진행 상황을 볼 수 있습니다.' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result } = renderHook(() => useJobProgress('job-403'));
+
+    await vi.waitFor(() => expect(result.current?.stage).toBe('FAILED'));
+    expect(result.current?.unobservable).toBe(true);
+    expect(result.current?.jobId).toBe('job-403');
+    expect(result.current?.errorMessage).toBe('이 작업을 시작한 사용자만 진행 상황을 볼 수 있습니다.');
+
+    // 지수 백오프 전체(3+6+12+24+48초)와 폴링 여러 주기를 넘겨도 추가 요청이 없어야 한다
+    await vi.advanceTimersByTimeAsync(200_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(jobsApi.getJobStatus).not.toHaveBeenCalled();
+  });
+
+  it('SSE 404 본문이 비어 있으면 기본 한국어 문구를 쓴다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => {
+        throw new SyntaxError('Unexpected end of JSON input');
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result } = renderHook(() => useJobProgress('job-404'));
+
+    await vi.waitFor(() => expect(result.current?.stage).toBe('FAILED'));
+    expect(result.current?.errorMessage).toBe(JOB_UNOBSERVABLE_MESSAGE);
+    await vi.advanceTimersByTimeAsync(200_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('SSE 5xx 는 기존처럼 백오프 후 재연결한다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result } = renderHook(() => useJobProgress('job-500'));
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.current).toBeNull();
+  });
+
+  it('REST 폴링 중 404 면 즉시 멈추고 마지막 진행률을 유지한 채 종단 처리한다', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamThenDone()));
+    vi.mocked(jobsApi.getJobStatus).mockRejectedValue(
+      axiosErrorWith(404, { message: '작업을 찾을 수 없습니다. (작업 ID: job-r)' }),
+    );
+
+    const { result } = renderHook(() => useJobProgress('job-r'));
+
+    await vi.advanceTimersByTimeAsync(3000);
+    await vi.waitFor(() => expect(result.current?.stage).toBe('FAILED'));
+    expect(result.current?.unobservable).toBe(true);
+    expect(result.current?.progress).toBe(55);
+    expect(result.current?.errorMessage).toContain('작업을 찾을 수 없습니다');
+
+    // 60초를 더 흘려도 상태 조회는 처음 한 번뿐이어야 한다
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(jobsApi.getJobStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('REST 폴링 중 5xx 는 계속 폴링한다', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamThenDone()));
+    vi.mocked(jobsApi.getJobStatus).mockRejectedValue(axiosErrorWith(503));
+
+    const { result } = renderHook(() => useJobProgress('job-r'));
+
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(vi.mocked(jobsApi.getJobStatus).mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(result.current?.stage).toBe('INSERTING');
   });
 });

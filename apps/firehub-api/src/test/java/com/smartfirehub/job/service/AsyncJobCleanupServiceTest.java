@@ -65,7 +65,7 @@ class AsyncJobCleanupServiceTest {
 
     asyncJobCleanupService.failStaleJobs();
 
-    verify(asyncJobService, times(2)).failJob(anyString(), contains("timed out"));
+    verify(asyncJobService, times(2)).failJob(anyString(), contains("30분 동안 진행이 없어"));
   }
 
   /** 정상: failJob 호출 시 각 잡의 jobId가 정확하게 전달되어야 한다. */

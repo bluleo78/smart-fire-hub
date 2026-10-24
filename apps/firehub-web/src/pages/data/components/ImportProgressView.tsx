@@ -138,17 +138,19 @@ export function ImportProgressView({ progress, onClose, failedErrors }: ImportPr
 
   return (
     <div className="space-y-6 py-2">
-      {/* Stage stepper */}
-      <div className="flex items-start justify-between gap-1">
-        {STAGES.map((s, idx) => (
-          <div key={s} className="flex items-center flex-1">
-            <StepIndicator stage={s} label={STAGE_LABELS[s]} currentStage={stage} failedProgress={pct} />
-            {idx < STAGES.length - 1 && (
-              <div className="flex-1 h-px bg-border mx-1 mt-[-12px]" />
-            )}
-          </div>
-        ))}
-      </div>
+      {/* Stage stepper — 진행 상황을 확인할 수 없어 멈춘 경우(WD-203)엔 어느 단계가 실패했다고 표시할 근거가 없으므로 숨긴다 */}
+      {!progress.unobservable && (
+        <div className="flex items-start justify-between gap-1">
+          {STAGES.map((s, idx) => (
+            <div key={s} className="flex items-center flex-1">
+              <StepIndicator stage={s} label={STAGE_LABELS[s]} currentStage={stage} failedProgress={pct} />
+              {idx < STAGES.length - 1 && (
+                <div className="flex-1 h-px bg-border mx-1 mt-[-12px]" />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Progress bar — VALIDATING은 분모가 없어 스피너(indeterminate), INSERTING은 % 바 */}
       {!isTerminal && isValidatingIndeterminate && (
@@ -190,7 +192,8 @@ export function ImportProgressView({ progress, onClose, failedErrors }: ImportPr
         <div className="rounded-md border border-destructive/20 bg-destructive/5 p-4 space-y-2">
           <div className="flex items-center gap-2 text-destructive font-medium">
             <XCircle className="w-5 h-5" />
-            <span>임포트 실패</span>
+            {/* 진행 상황을 확인할 수 없어 추적을 멈춘 경우(WD-203)엔 임포트가 실패했다고 단정하지 않는다 */}
+            <span>{progress.unobservable ? '진행 상황 확인 불가' : '임포트 실패'}</span>
           </div>
           {progress.errorMessage && (
             <p className="text-sm text-destructive pl-7">{progress.errorMessage}</p>
