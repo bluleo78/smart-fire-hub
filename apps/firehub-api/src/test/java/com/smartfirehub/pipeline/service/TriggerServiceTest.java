@@ -432,4 +432,55 @@ class TriggerServiceTest extends IntegrationTestBase {
         .hasMessage(PipelineNotFoundException.PIPELINE_MESSAGE);
     assertThat(dsl.fetchCount(PIPELINE_TRIGGER, PIPELINE_TRIGGER.NAME.eq("Orphan"))).isZero();
   }
+
+  // ── WD-244: 트리거 목록·이벤트 조회도 파이프라인 존재를 확인하고 limit 범위를 검사한다 ──
+
+  @Test
+  void getTriggers_missingPipeline_throwsPipelineNotFound() {
+    // 예전엔 없는 파이프라인 id 로도 빈 목록이 나갔다 — 상세·실행 목록과 같은 404 로 맞춘다.
+    assertThatThrownBy(() -> triggerService.getTriggers(99_999_999L))
+        .isInstanceOf(PipelineNotFoundException.class)
+        .hasMessage(PipelineNotFoundException.PIPELINE_MESSAGE);
+  }
+
+  @Test
+  void getTriggers_deletedPipeline_throwsPipelineNotFound() {
+    // 열린 상세 화면에서 다른 사람이 지운 뒤 다시 불러오는 경우 — 방금 삭제한 id 도 404.
+    pipelineService.deletePipeline(pipelineId2);
+    assertThatThrownBy(() -> triggerService.getTriggers(pipelineId2))
+        .isInstanceOf(PipelineNotFoundException.class);
+    assertThatThrownBy(() -> triggerService.getTriggerEvents(pipelineId2, 20))
+        .isInstanceOf(PipelineNotFoundException.class);
+  }
+
+  @Test
+  void getTriggerEvents_missingPipeline_throwsPipelineNotFoundBeforeLimitCheck() {
+    // 존재 확인이 limit 검증보다 먼저다 — 없는 파이프라인이면 limit 이 틀려도 404.
+    assertThatThrownBy(() -> triggerService.getTriggerEvents(99_999_999L, 20))
+        .isInstanceOf(PipelineNotFoundException.class)
+        .hasMessage(PipelineNotFoundException.PIPELINE_MESSAGE);
+    assertThatThrownBy(() -> triggerService.getTriggerEvents(99_999_999L, -1))
+        .isInstanceOf(PipelineNotFoundException.class);
+  }
+
+  @Test
+  void getTriggersAndEvents_existingPipelineWithoutTriggers_returnEmpty() {
+    // 있는 파이프라인에 트리거·이벤트가 없으면 여전히 빈 목록이다(404 가 아니다).
+    assertThat(triggerService.getTriggers(pipelineId)).isEmpty();
+    assertThat(triggerService.getTriggerEvents(pipelineId, 20)).isEmpty();
+    // 경계값 1·상한은 허용한다.
+    assertThat(triggerService.getTriggerEvents(pipelineId, 1)).isEmpty();
+    assertThat(triggerService.getTriggerEvents(pipelineId, TriggerService.MAX_TRIGGER_EVENT_LIMIT))
+        .isEmpty();
+  }
+
+  @Test
+  void getTriggerEvents_limitOutOfRange_throwsKoreanBadRequest() {
+    // 음수는 예전엔 DB 오류(「저장할 수 없는 값…」)로, 상한 초과는 그대로 통과했다.
+    for (int limit : new int[] {-1, 0, TriggerService.MAX_TRIGGER_EVENT_LIMIT + 1, 100_000}) {
+      assertThatThrownBy(() -> triggerService.getTriggerEvents(pipelineId, limit))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("limit 은 1~200 사이여야 합니다.");
+    }
+  }
 }

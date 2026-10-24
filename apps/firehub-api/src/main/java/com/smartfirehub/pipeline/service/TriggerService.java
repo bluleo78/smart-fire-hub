@@ -503,6 +503,9 @@ public class TriggerService {
 
   @Transactional(readOnly = true)
   public List<TriggerResponse> getTriggers(Long pipelineId) {
+    // 없는(또는 이미 삭제된·다른 테넌트의) 파이프라인이면 빈 목록 200 이 아니라 상세·실행 목록과 같은 404 로 답한다(WD-244).
+    // 예전엔 빈 목록이 나가 열린 상세 화면이 「트리거가 없습니다」로 보였다.
+    requirePipelineExists(pipelineId);
     // 스냅숏 제거가 레코드를 다시 만들므로 선행 없음 표시는 그 뒤에 붙인다(WD-218).
     return withUpstreamMissing(
         triggerRepository.findByPipelineId(pipelineId).stream()
@@ -548,6 +551,12 @@ public class TriggerService {
    */
   @Transactional(readOnly = true)
   public List<TriggerEventResponse> getTriggerEvents(Long pipelineId, int limit) {
+    // 파이프라인 존재를 limit 검증(400)보다 먼저 확인한다 — createTrigger(WD-228)와 같은 순서(WD-244).
+    requirePipelineExists(pipelineId);
+    // 음수 limit 이 DB 오류(「저장할 수 없는 값…」 400)로 번역되고 상한도 없던 것을 막는다(WD-244).
+    if (limit < 1 || limit > MAX_TRIGGER_EVENT_LIMIT) {
+      throw new IllegalArgumentException(TRIGGER_EVENT_LIMIT_MESSAGE);
+    }
     List<TriggerEventResponse> events = triggerEventRepository.findByPipelineId(pipelineId, limit);
     Clearance viewer = null;
     Map<Long, Boolean> visible = new HashMap<>();
@@ -584,6 +593,23 @@ public class TriggerService {
               e.createdAt()));
     }
     return out;
+  }
+
+  /**
+   * 트리거 이벤트 조회 limit 상한(WD-244). 같은 파이프라인 도메인의 목록 API(파이프라인 목록 {@code size} 의 {@code @Max(200)})와
+   * 맞춘다.
+   */
+  static final int MAX_TRIGGER_EVENT_LIMIT = 200;
+
+  /** limit 범위 밖일 때의 400 문구(WD-244). */
+  static final String TRIGGER_EVENT_LIMIT_MESSAGE =
+      "limit 은 1~" + MAX_TRIGGER_EVENT_LIMIT + " 사이여야 합니다.";
+
+  /** 경로의 파이프라인이 (지금 테넌트에) 있는지 확인한다 — RLS 로 다른 테넌트의 파이프라인도 "없음"이다. 없으면 404(WD-244). */
+  private void requirePipelineExists(Long pipelineId) {
+    if (!pipelineRepository.existsById(pipelineId)) {
+      throw new PipelineNotFoundException();
+    }
   }
 
   /** 데이터 변경 트리거 이벤트 detail 의 변경 데이터셋 id 목록 키({@code TriggerEventService} 가 쓴다). */

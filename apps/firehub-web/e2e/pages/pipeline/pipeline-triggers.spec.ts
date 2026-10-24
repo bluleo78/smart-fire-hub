@@ -1186,4 +1186,44 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect(firedRow.getByRole('link', { name: '#77' })).toBeVisible();
     await expect(firedRow.locator('p')).toHaveCount(0);
   });
+
+  test('삭제된 파이프라인 — 트리거 목록이 404 면 「트리거가 없습니다」 대신 파이프라인 없음 안내를 보인다 (WD-244)', async ({
+    authenticatedPage: page,
+  }) => {
+    const notFound = {
+      status: 404,
+      error: 'Not Found',
+      message: '파이프라인을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.',
+    };
+    await setupTriggerTabMocks(page);
+    // 나중에 등록한 route 가 먼저 매칭된다 — 상세는 열린 채(캐시) 트리거·이벤트 조회만 404. 재시도(1회)에도 계속 404 다.
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', notFound, { status: 404 });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', notFound, { status: 404 });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '트리거' }).click();
+
+    await expect(page.getByRole('alert').filter({ hasText: notFound.message })).toBeVisible();
+    await expect(page.getByText('트리거가 없습니다.')).toHaveCount(0);
+    // 없는 파이프라인에 트리거를 추가할 수 없으므로 추가 버튼과 이벤트 목록을 숨긴다
+    await expect(page.getByRole('button', { name: /트리거 추가/ })).toHaveCount(0);
+    await expect(page.getByText('최근 트리거 이벤트')).toHaveCount(0);
+  });
+
+  test('트리거 이벤트 조회 실패 — 「이벤트가 없습니다」 대신 서버 문구를 보인다 (WD-244)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTriggerTabMocks(page);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/pipelines/1/trigger-events',
+      { status: 400, error: 'Bad Request', message: 'limit 은 1~200 사이여야 합니다.' },
+      { status: 400 },
+    );
+    await gotoTriggerTab(page);
+
+    await expect(page.getByRole('alert').filter({ hasText: 'limit 은 1~200 사이여야 합니다.' })).toBeVisible();
+    await expect(page.getByText('트리거 이벤트가 없습니다.')).toHaveCount(0);
+  });
 });

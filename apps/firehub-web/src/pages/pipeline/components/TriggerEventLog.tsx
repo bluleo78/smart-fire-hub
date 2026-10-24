@@ -10,6 +10,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useTriggerEvents } from '@/hooks/queries/usePipelines';
+import { extractApiError } from '@/lib/api-error';
 import { formatDate } from '@/lib/formatters';
 import type { TriggerEventResponse } from '@/types/pipeline';
 
@@ -53,10 +54,19 @@ interface TriggerEventLogProps {
 }
 
 export default function TriggerEventLog({ pipelineId }: TriggerEventLogProps) {
-  const { data: events, isLoading } = useTriggerEvents(pipelineId);
+  const { data: events, isLoading, isError, error } = useTriggerEvents(pipelineId);
 
   if (isLoading) {
     return <div className="text-sm text-muted-foreground p-4">이벤트 로딩 중...</div>;
+  }
+
+  // 조회 실패를 「이벤트 없음」으로 보이지 않는다 — 파이프라인이 삭제되면 서버의 404 문구를 그대로 보인다(WD-244).
+  if (isError) {
+    return (
+      <div role="alert" className="text-sm text-muted-foreground p-4 text-center">
+        {extractApiError(error, '트리거 이벤트를 불러오지 못했습니다.')}
+      </div>
+    );
   }
 
   if (!events || events.length === 0) {
