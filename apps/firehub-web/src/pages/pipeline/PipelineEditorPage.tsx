@@ -416,6 +416,8 @@ export default function PipelineEditorPage() {
                   selectedEditorStep ? { id: selectedEditorStep.id, name: selectedEditorStep.name } : undefined
                 }
                 onClose={() => dispatch({ type: 'SELECT_STEP', payload: { tempId: null } })}
+                /* 서버가 준 저장된 정의 — 편집 중인 미저장 상태가 아니라 저장본에서 출력 데이터셋 이름을 찾는다(WD-209) */
+                pipelineSteps={pipelineData?.steps}
               />
             </div>
           ) : !executions || executions.length === 0 ? (
