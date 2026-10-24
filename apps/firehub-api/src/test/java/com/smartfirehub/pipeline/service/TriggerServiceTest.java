@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
+import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -330,5 +331,104 @@ class TriggerServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> triggerService.createTrigger(pipelineId, request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("cron");
+  }
+
+  // ── WD-228: 단건 API 는 경로의 파이프라인 소속 트리거만 다룬다 ──
+
+  /** 파이프라인 1 에 스케줄 트리거를 하나 만든다 — 다른 파이프라인 경로로 건드려 보는 대상. */
+  private TriggerResponse createScheduleTriggerOnPipeline1() {
+    return triggerService.createTrigger(
+        pipelineId,
+        new CreateTriggerRequest(
+            "Owned Trigger", TriggerType.SCHEDULE, "orig", Map.of("cron", "0 9 * * *")),
+        testUserId);
+  }
+
+  @Test
+  void getTriggerById_otherPipeline_throwsNotFound() {
+    TriggerResponse created = createScheduleTriggerOnPipeline1();
+
+    // 다른(존재하는) 파이프라인과 없는 파이프라인 모두 없는 트리거와 같은 404 여야 한다.
+    assertThatThrownBy(() -> triggerService.getTriggerById(pipelineId2, created.id()))
+        .isInstanceOf(TriggerNotFoundException.class)
+        .hasMessage(TriggerNotFoundException.MESSAGE);
+    assertThatThrownBy(() -> triggerService.getTriggerById(99_999_999L, created.id()))
+        .isInstanceOf(TriggerNotFoundException.class);
+    // 맞는 파이프라인이면 그대로 조회된다.
+    assertThat(triggerService.getTriggerById(pipelineId, created.id()).name())
+        .isEqualTo("Owned Trigger");
+  }
+
+  @Test
+  void updateTrigger_otherPipeline_throwsNotFoundAndLeavesTriggerUnchanged() {
+    TriggerResponse created = createScheduleTriggerOnPipeline1();
+    TriggerResponse before = triggerService.getTriggerById(created.id());
+
+    assertThatThrownBy(
+            () ->
+                triggerService.updateTrigger(
+                    pipelineId2,
+                    created.id(),
+                    new UpdateTriggerRequest("renamed", false, "changed", null),
+                    testUserId))
+        .isInstanceOf(TriggerNotFoundException.class);
+
+    TriggerResponse after = triggerService.getTriggerById(created.id());
+    assertThat(after.name()).isEqualTo(before.name());
+    assertThat(after.description()).isEqualTo(before.description());
+    assertThat(after.isEnabled()).isTrue();
+
+    // 맞는 파이프라인이면 수정된다.
+    triggerService.updateTrigger(
+        pipelineId,
+        created.id(),
+        new UpdateTriggerRequest("renamed", null, null, null),
+        testUserId);
+    assertThat(triggerService.getTriggerById(created.id()).name()).isEqualTo("renamed");
+  }
+
+  @Test
+  void deleteTrigger_otherPipeline_throwsNotFoundAndKeepsTrigger() {
+    TriggerResponse created = createScheduleTriggerOnPipeline1();
+
+    assertThatThrownBy(() -> triggerService.deleteTrigger(pipelineId2, created.id()))
+        .isInstanceOf(TriggerNotFoundException.class);
+    assertThat(triggerService.getTriggers(pipelineId))
+        .extracting(TriggerResponse::id)
+        .contains(created.id());
+
+    // 맞는 파이프라인이면 지워진다.
+    triggerService.deleteTrigger(pipelineId, created.id());
+    assertThat(triggerService.getTriggers(pipelineId))
+        .extracting(TriggerResponse::id)
+        .doesNotContain(created.id());
+  }
+
+  @Test
+  void toggleTrigger_otherPipeline_throwsNotFoundAndKeepsState() {
+    TriggerResponse created = createScheduleTriggerOnPipeline1();
+
+    assertThatThrownBy(() -> triggerService.toggleTrigger(pipelineId2, created.id(), false))
+        .isInstanceOf(TriggerNotFoundException.class);
+    assertThat(triggerService.getTriggerById(created.id()).isEnabled()).isTrue();
+
+    // 맞는 파이프라인이면 꺼진다.
+    triggerService.toggleTrigger(pipelineId, created.id(), false);
+    assertThat(triggerService.getTriggerById(created.id()).isEnabled()).isFalse();
+  }
+
+  @Test
+  void createTrigger_missingPipeline_throwsPipelineNotFound() {
+    // 예전엔 FK 위반으로 409 「연결할 항목을 찾을 수 없습니다」가 났다 — 이제는 파이프라인 없음 404.
+    assertThatThrownBy(
+            () ->
+                triggerService.createTrigger(
+                    99_999_999L,
+                    new CreateTriggerRequest(
+                        "Orphan", TriggerType.SCHEDULE, null, Map.of("cron", "0 9 * * *")),
+                    testUserId))
+        .isInstanceOf(PipelineNotFoundException.class)
+        .hasMessage(PipelineNotFoundException.PIPELINE_MESSAGE);
+    assertThat(dsl.fetchCount(PIPELINE_TRIGGER, PIPELINE_TRIGGER.NAME.eq("Orphan"))).isZero();
   }
 }

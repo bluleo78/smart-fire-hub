@@ -5,6 +5,7 @@ import com.smartfirehub.global.security.MemberEligibility;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
+import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
@@ -184,6 +185,11 @@ public class TriggerService {
 
   @Transactional
   public TriggerResponse createTrigger(Long pipelineId, CreateTriggerRequest request, Long userId) {
+    // 없는 파이프라인에 트리거를 만들려 하면 FK 위반(409 「연결할 항목을 찾을 수 없습니다」)이 아니라 404 로 답한다(WD-228).
+    // RLS 가 걸린 일반 조회라 다른 테넌트의 파이프라인도 "없음"과 같은 답이 된다. 설정 검증(400)보다 먼저 확인한다.
+    if (!pipelineRepository.existsById(pipelineId)) {
+      throw new PipelineNotFoundException();
+    }
     Map<String, Object> processedConfig =
         new HashMap<>(request.config() != null ? request.config() : Map.of());
     String rawApiToken = null;
@@ -289,6 +295,18 @@ public class TriggerService {
     return response;
   }
 
+  /**
+   * 경로의 파이프라인에 속한 트리거만 수정한다(WD-228) — HTTP 단건 API 용. 트리거가 없거나 다른 파이프라인의 트리거면 똑같이 404 로 답해 다른 파이프라인
+   * 트리거의 존재를 드러내지 않는다.
+   */
+  @Transactional
+  public void updateTrigger(
+      Long pipelineId, Long triggerId, UpdateTriggerRequest request, Long userId) {
+    requireTriggerInPipeline(pipelineId, triggerId);
+    updateTrigger(triggerId, request, userId);
+  }
+
+  /** 트리거 id 만으로 수정한다 — 소속 파이프라인을 확인하지 않으므로 경로에 pipelineId 가 있는 API 는 위 오버로드를 쓴다. */
   @Transactional
   public void updateTrigger(Long triggerId, UpdateTriggerRequest request, Long userId) {
     TriggerResponse existing =
@@ -390,6 +408,14 @@ public class TriggerService {
     }
   }
 
+  /** 경로의 파이프라인에 속한 트리거만 지운다(WD-228). 없거나 다른 파이프라인의 트리거면 404. */
+  @Transactional
+  public void deleteTrigger(Long pipelineId, Long triggerId) {
+    requireTriggerInPipeline(pipelineId, triggerId);
+    deleteTrigger(triggerId);
+  }
+
+  /** 트리거 id 만으로 지운다 — 소속 파이프라인을 확인하지 않는다. */
   @Transactional
   public void deleteTrigger(Long triggerId) {
     TriggerResponse existing =
@@ -409,6 +435,14 @@ public class TriggerService {
     }
   }
 
+  /** 경로의 파이프라인에 속한 트리거만 켜고 끈다(WD-228). 없거나 다른 파이프라인의 트리거면 404. */
+  @Transactional
+  public void toggleTrigger(Long pipelineId, Long triggerId, boolean enabled) {
+    requireTriggerInPipeline(pipelineId, triggerId);
+    toggleTrigger(triggerId, enabled);
+  }
+
+  /** 트리거 id 만으로 켜고 끈다 — 소속 파이프라인을 확인하지 않는다. */
   @Transactional
   public void toggleTrigger(Long triggerId, boolean enabled) {
     TriggerResponse existing =
@@ -473,6 +507,25 @@ public class TriggerService {
             .toList());
   }
 
+  /** 경로의 파이프라인에 속한 트리거만 조회한다(WD-228). 없거나 다른 파이프라인의 트리거면 404. */
+  @Transactional(readOnly = true)
+  public TriggerResponse getTriggerById(Long pipelineId, Long triggerId) {
+    requireTriggerInPipeline(pipelineId, triggerId);
+    return getTriggerById(triggerId);
+  }
+
+  /**
+   * 트리거가 경로의 파이프라인 소속인지 확인한다(WD-228). 예전엔 단건 API 가 경로의 pipelineId 를 무시해 {@code
+   * /pipelines/99999/triggers/1} 로 파이프라인 1 의 트리거를 읽고 고칠 수 있었다. 없는 트리거와 다른 파이프라인의 트리거를 같은 404 로 답한다.
+   */
+  private void requireTriggerInPipeline(Long pipelineId, Long triggerId) {
+    triggerRepository
+        .findById(triggerId)
+        .filter(t -> Objects.equals(t.pipelineId(), pipelineId))
+        .orElseThrow(TriggerNotFoundException::new);
+  }
+
+  /** 트리거 id 만으로 조회한다 — 소속 파이프라인을 확인하지 않으므로 경로에 pipelineId 가 있는 API 는 위 오버로드를 쓴다. */
   @Transactional(readOnly = true)
   public TriggerResponse getTriggerById(Long triggerId) {
     TriggerResponse trigger =
