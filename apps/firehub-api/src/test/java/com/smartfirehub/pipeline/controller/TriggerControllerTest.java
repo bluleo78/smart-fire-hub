@@ -13,6 +13,7 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.pipeline.dto.*;
+import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.pipeline.service.TriggerService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.time.LocalDateTime;
@@ -118,7 +119,8 @@ class TriggerControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isNoContent());
 
-    verify(triggerService).updateTrigger(eq(10L), any(UpdateTriggerRequest.class), eq(1L));
+    // 경로의 pipelineId 가 서비스까지 전달돼야 소속 확인이 된다(WD-228).
+    verify(triggerService).updateTrigger(eq(1L), eq(10L), any(UpdateTriggerRequest.class), eq(1L));
   }
 
   @Test
@@ -128,11 +130,50 @@ class TriggerControllerTest {
             delete("/api/v1/pipelines/1/triggers/10").header("Authorization", "Bearer test-token"))
         .andExpect(status().isNoContent());
 
-    verify(triggerService).deleteTrigger(10L);
+    verify(triggerService).deleteTrigger(1L, 10L);
   }
 
   @Test
   void getTriggers_withoutAuth_returnsUnauthorized() throws Exception {
     mockMvc.perform(get("/api/v1/pipelines/1/triggers")).andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  void getTriggerById_passesPathPipelineId() throws Exception {
+    when(triggerService.getTriggerById(1L, 10L)).thenReturn(sampleTrigger());
+
+    mockMvc
+        .perform(
+            get("/api/v1/pipelines/1/triggers/10").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").value(10));
+
+    verify(triggerService).getTriggerById(1L, 10L);
+  }
+
+  @Test
+  void getTriggerById_otherPipeline_returnsNotFound() throws Exception {
+    // 다른 파이프라인 경로면 서비스가 없는 트리거와 같은 예외를 던진다 — 404 와 한국어 문구로 답해야 한다(WD-228).
+    when(triggerService.getTriggerById(99999L, 10L)).thenThrow(new TriggerNotFoundException());
+
+    mockMvc
+        .perform(
+            get("/api/v1/pipelines/99999/triggers/10").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value(TriggerNotFoundException.MESSAGE));
+  }
+
+  @Test
+  void toggleTrigger_passesPathPipelineId() throws Exception {
+    when(triggerService.getTriggerById(1L, 10L)).thenReturn(sampleTrigger());
+
+    mockMvc
+        .perform(
+            patch("/api/v1/pipelines/1/triggers/10/toggle")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNoContent());
+
+    // 켜져 있던 트리거이므로 같은 파이프라인 범위에서 끄기로 바뀐다.
+    verify(triggerService).toggleTrigger(1L, 10L, false);
   }
 }
