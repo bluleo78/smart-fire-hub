@@ -152,7 +152,9 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
         // 생성된 트리거의 webhookId를 config에 반영해 WebhookTriggerForm의 URL 표시 UI를 활성화
         const webhookId = result.config?.webhookId as string | undefined;
         if (webhookId) {
-          setConfig((prev) => ({ ...prev, webhookId }));
+          // 서버가 알려 준 시크릿 설정 여부도 함께 반영한다(WD-220) — 응답에는 암호문이 없다.
+          const hasSecret = result.config?.hasSecret as boolean | undefined;
+          setConfig((prev) => ({ ...prev, webhookId, hasSecret }));
         }
       } else if (selectedType !== 'API') {
         handleClose();
@@ -277,7 +279,7 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
             )}
             {selectedType === 'WEBHOOK' && (
               <WebhookTriggerForm
-                config={config as { webhookId?: string; secret?: string }}
+                config={config as { webhookId?: string; secret?: string; hasSecret?: boolean }}
                 onChange={handleConfigChange}
                 // 생성 완료(createdTrigger 존재) 후 시크릿 키 입력란을 읽기 전용으로 전환한다.
                 // 이름/설명 필드와 동일하게 EditTriggerDialog의 isEditMode 패턴을 따른다 (#656).

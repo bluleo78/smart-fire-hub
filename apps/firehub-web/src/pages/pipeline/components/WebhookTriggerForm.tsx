@@ -10,6 +10,11 @@ interface WebhookTriggerFormProps {
   config: {
     webhookId?: string;
     secret?: string;
+    /**
+     * 서버가 알려 주는 시크릿 설정 여부(WD-220). 서버는 시크릿 암호문을 더는 내려주지 않으므로 화면은 이 값으로만
+     * 「설정됨/없음」을 보인다. 생성 전 입력 단계에는 없다(undefined).
+     */
+    hasSecret?: boolean;
   };
   onChange: (config: WebhookTriggerFormProps['config']) => void;
   isEditMode?: boolean;
@@ -24,6 +29,9 @@ export default function WebhookTriggerForm({ config, onChange, isEditMode, error
   const secretId = `${baseId}-secret`;
   const secretNoteId = `${baseId}-secret-note`;
   const secretErrorId = `${baseId}-secret-error`;
+  const secretStatusId = `${baseId}-secret-status`;
+  // 수정 모드에서 서버가 설정 여부를 알려 준 경우에만 상태 문구를 보인다(WD-220) — 시크릿 값은 어떤 경로로도 내려오지 않는다.
+  const showSecretStatus = isEditMode && typeof config.hasSecret === 'boolean';
 
   const webhookUrl = config.webhookId
     ? `${window.location.origin}/api/v1/triggers/webhook/${config.webhookId}`
@@ -80,16 +88,31 @@ export default function WebhookTriggerForm({ config, onChange, isEditMode, error
           type="password"
           value={config.secret ?? ''}
           onChange={(e) => onChange({ ...config, secret: e.target.value })}
-          placeholder="HMAC-SHA256 서명 검증에 사용할 시크릿 키"
+          placeholder={
+            showSecretStatus && config.hasSecret
+              ? '설정됨 (보안상 표시하지 않습니다)'
+              : 'HMAC-SHA256 서명 검증에 사용할 시크릿 키'
+          }
           disabled={isEditMode}
-          /* 수정 모드 안내문과 오류 문구를 조건부로 연결한다 */
+          /* 수정 모드 안내문·설정 상태·오류 문구를 조건부로 연결한다 */
           aria-describedby={
-            [isEditMode ? secretNoteId : null, errors?.secret ? secretErrorId : null]
+            [
+              showSecretStatus ? secretStatusId : null,
+              isEditMode ? secretNoteId : null,
+              errors?.secret ? secretErrorId : null,
+            ]
               .filter(Boolean)
               .join(' ') || undefined
           }
           aria-invalid={!!errors?.secret}
         />
+        {showSecretStatus && (
+          <p id={secretStatusId} className="text-sm">
+            {config.hasSecret
+              ? '시크릿 설정됨 — 수신 시 서명을 검증합니다.'
+              : '시크릿 없음 — 서명 없이 수신합니다.'}
+          </p>
+        )}
         {isEditMode && (
           <p id={secretNoteId} className="text-xs text-muted-foreground">
             시크릿 키는 수정할 수 없습니다. 변경이 필요하면 트리거를 삭제 후 재생성하세요.

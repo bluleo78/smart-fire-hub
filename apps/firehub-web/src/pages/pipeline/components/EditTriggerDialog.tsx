@@ -214,7 +214,7 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger }: E
           )}
           {trigger.triggerType === 'WEBHOOK' && (
             <WebhookTriggerForm
-              config={config as { webhookId?: string; secret?: string }}
+              config={config as { webhookId?: string; secret?: string; hasSecret?: boolean }}
               onChange={handleConfigChange}
               isEditMode
             />
