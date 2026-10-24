@@ -2,11 +2,13 @@ package com.smartfirehub.pipeline.service;
 
 import static com.smartfirehub.jooq.Tables.USER;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import java.util.Map;
@@ -96,6 +98,25 @@ class LocalPythonOutputLoaderDbTest extends IntegrationTestBase {
             dsl.fetch("SELECT ts::text FROM " + DataSchema.qualify("local_py_tz") + " ORDER BY k")
                 .getValues(0, String.class))
         .containsExactly(kst, utc);
+  }
+
+  /**
+   * WD-210: 정상 JSON 은 적재되고, 이어서 JSON 이 아닌 stdout(디버그 print 뒤 JSON)은 적재 전에 실패해 이미 있던 행이 그대로 남는다 —
+   * 실패가 적재 전이라 출력에 아무것도 쓰지 않는다(REPLACE 는 러너가 임시 테이블을 버려 원본을 지킨다).
+   */
+  @Test
+  void notJsonStdout_failsWithoutTouchingExistingRows() {
+    createTable("local_py_notjson", List.of(col("k", "INTEGER")));
+    Map<String, String> types = Map.of("k", "INTEGER");
+    assertThat(loader.load("local_py_notjson", "[{\"k\":1},{\"k\":2}]\n", types)).isEqualTo(2);
+
+    assertThatThrownBy(() -> loader.load("local_py_notjson", "start\n[{\"k\":3}]\n", types))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessageContaining("스크립트 출력이 JSON 이 아니어서 결과를 적재하지 않았습니다.");
+    assertThat(
+            dsl.fetch("SELECT k FROM " + DataSchema.qualify("local_py_notjson") + " ORDER BY k")
+                .getValues(0, Integer.class))
+        .containsExactly(1, 2);
   }
 
   /** 변환 타입을 하나씩 담은 특수 컬럼(이름, 데이터셋 타입) — 좁은 표·넓은 표에 같은 이름으로 만든다. */

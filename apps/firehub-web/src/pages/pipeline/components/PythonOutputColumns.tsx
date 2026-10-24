@@ -184,6 +184,13 @@ export default function PythonOutputColumns({
           이 컬럼 정의를 기반으로 임시 데이터셋이 자동 생성됩니다.
         </p>
       )}
+      {/* stdout 전체가 JSON 하나여야 적재된다(WD-210) — 앞뒤에 디버그 print 가 섞이면 스텝이 실패하므로 미리 알린다 */}
+      {(columns.length > 0 || !readOnly) && (
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          stdout에는 결과 JSON을 <span className="font-medium text-foreground">한 번만</span> print 하세요.
+          디버그 출력은 <code className="font-mono">sys.stderr</code>로 보내야 합니다(stdout에 다른 내용이 섞이면 스텝이 실패합니다).
+        </p>
+      )}
     </section>
   );
 }

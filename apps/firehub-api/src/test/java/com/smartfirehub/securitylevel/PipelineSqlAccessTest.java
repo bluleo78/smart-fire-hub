@@ -1020,7 +1020,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
 
   /**
    * 동작 변화(R5): 예전 로컬 REPLACE 는 스크립트 전에 출력을 비웠다 — 비JSON stdout 이면 빈 테이블이 남았다. 이제 실행기 켠 경로와 같이 0행이면
-   * 원본을 유지한다(#685).
+   * 원본을 유지한다(#685). WD-210 부터는 비JSON stdout 이면 조용히 0행 완료가 아니라 스텝이 실패하고(적재 전 실패), 원본은 그대로 남는다.
    */
   @Test
   void run_localPythonReplace_nonJsonStdout_keepsOriginalRows() throws Exception {
@@ -1030,7 +1030,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     long user = pythonUserAt("공개");
     long p = pipeline(user, List.of(pythonStep(outId)));
 
-    assertThat(waitForEnd(executionService.executePipeline(p, user))).isEqualTo("COMPLETED");
+    assertThat(waitForEnd(executionService.executePipeline(p, user))).isEqualTo("FAILED");
     assertThat(values(out)).containsExactly("old");
   }
 

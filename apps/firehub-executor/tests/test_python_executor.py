@@ -6,6 +6,7 @@ import pytest
 from app.config import Settings
 from app.tenant import TenantResolutionError
 from app.services.python_executor import (
+    StdoutNotJsonError,
     _parse_stdout_json,
     execute_python,
 )
@@ -392,21 +393,101 @@ def test_stdout_json_auto_insert():
 
 
 # ---------------------------------------------------------------------------
-# test_stdout_non_json_no_error
+# WD-210: 출력 테이블이 있는데 stdout 이 JSON 이 아니면 적재 전에 실패한다
+#   (예전엔 조용히 "완료·0행" — REPLACE 출력이 옛 데이터로 남아 갱신이 멈춘 걸 알 수 없었다)
 # ---------------------------------------------------------------------------
-def test_stdout_non_json_no_error():
-    settings = make_settings(nsjail_enabled=False)
 
+# API 로컬 경로(LocalPythonOutputLoaderTest)와 같은 입력·같은 기대 문구 — 두 경로 문구 패리티의 증거다.
+DEBUG_THEN_JSON_STDOUT = 'start\n[{"a": 1}]\n'
+DEBUG_THEN_JSON_MESSAGE = (
+    "스크립트 출력이 JSON 이 아니어서 결과를 적재하지 않았습니다. 출력 데이터셋을 쓰는 스크립트는 결과 JSON 한 번만 print 해야"
+    ' 합니다(디버그 출력은 sys.stderr 로). 출력 앞부분: "start\n[{"a": 1}]"'
+)
+
+
+def _run_with_output_table(stdout, stderr=""):
+    """출력 테이블이 있는 실행 — 적재 커넥션·insert_batch 호출 여부를 함께 돌려준다."""
+    settings = make_settings(nsjail_enabled=False)
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
-        mock_run.return_value = make_completed_process(stdout="plain text output\n", returncode=0)
+         patch("app.services.python_executor.os.unlink"), \
+         patch("app.services.python_executor.insert_batch") as mock_insert, \
+         patch("app.services.python_executor.get_connection") as mock_get_conn:
+        mock_get_conn.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
+        mock_run.return_value = make_completed_process(stdout=stdout, stderr=stderr, returncode=0)
         result = execute_python(
-            "print('plain text output')", None, settings, tenant_id=1, read_slot=2,
-            output_table="my_table",
+            "...", None, settings, tenant_id=1, read_slot=2, output_table="my_table",
         )
+    return result, mock_get_conn, mock_insert
+
+
+def test_stdout_debug_print_then_json_fails_before_insert():
+    result, mock_get_conn, mock_insert = _run_with_output_table(
+        DEBUG_THEN_JSON_STDOUT, stderr="dbg\n"
+    )
+
+    assert result.success is False
+    assert result.error == DEBUG_THEN_JSON_MESSAGE
+    assert result.rows_loaded == 0
+    # 반환 형식은 적재 실패 경로와 같다 — 로그는 stderr, exit_code 는 스크립트의 0
+    assert result.exit_code == 0
+    assert result.output == "dbg\n"
+    # 적재 전 실패 — 출력 테이블(REPLACE 면 임시 테이블)에 손대지 않는다
+    mock_get_conn.assert_not_called()
+    mock_insert.assert_not_called()
+
+
+def test_stdout_plain_text_fails():
+    result, mock_get_conn, mock_insert = _run_with_output_table("plain text output\n")
+
+    assert result.success is False
+    assert result.error.startswith("스크립트 출력이 JSON 이 아니어서 결과를 적재하지 않았습니다.")
+    assert result.error.endswith('출력 앞부분: "plain text output"')
+    mock_insert.assert_not_called()
+
+
+def test_stdout_not_json_excerpt_is_capped_at_100_chars():
+    # 비밀이 섞일 수 있어 앞부분 인용은 100자(코드 포인트) 이하 — 말줄임표 없음
+    secret_tail = "SECRET_AFTER_100"
+    stdout = "가" * 100 + secret_tail
+    result, _, _ = _run_with_output_table(stdout)
+
+    assert result.success is False
+    assert result.error.endswith('출력 앞부분: "' + "가" * 100 + '"')
+    assert secret_tail not in result.error
+
+
+@pytest.mark.parametrize("stdout", ["", "   \n\t\n"])
+def test_stdout_empty_or_whitespace_keeps_zero_rows(stdout):
+    result, mock_get_conn, mock_insert = _run_with_output_table(stdout)
 
     assert result.success is True
     assert result.rows_loaded == 0
+    assert result.error is None
+    mock_insert.assert_not_called()
+
+
+@pytest.mark.parametrize("stdout", ["[]", "[1, 2]", '{"a": 1}', "123"])
+def test_stdout_valid_json_but_not_rows_keeps_zero_rows(stdout):
+    # JSON 으로는 읽힌다 — 기존 규칙대로 0행(오류 아님). [] 는 정상 빈 결과(#685 가 지키는 경우)다.
+    result, _, mock_insert = _run_with_output_table(stdout)
+
+    assert result.success is True
+    assert result.rows_loaded == 0
+    mock_insert.assert_not_called()
+
+
+def test_stdout_not_json_without_output_table_is_not_checked():
+    # 출력 테이블이 없는 스텝은 지금처럼 stdout 을 검사하지 않는다
+    settings = make_settings(nsjail_enabled=False)
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"):
+        mock_run.return_value = make_completed_process(stdout=DEBUG_THEN_JSON_STDOUT, returncode=0)
+        result = execute_python("...", None, settings, tenant_id=1, read_slot=2)
+
+    assert result.success is True
+    assert result.error is None
+    assert result.output == DEBUG_THEN_JSON_STDOUT
 
 
 # ---------------------------------------------------------------------------
@@ -519,7 +600,14 @@ def test_parse_stdout_json_empty_string():
 
 
 def test_parse_stdout_json_plain_text():
-    assert _parse_stdout_json("hello world") is None
+    with pytest.raises(StdoutNotJsonError):
+        _parse_stdout_json("hello world")
+
+
+def test_parse_stdout_json_trailing_content_is_not_json():
+    # json.loads 의 "Extra data" — 마지막 줄만 시도하는 식의 추측 파싱은 하지 않는다
+    with pytest.raises(StdoutNotJsonError):
+        _parse_stdout_json('[{"a": 1}]\ndone')
 
 
 def test_parse_stdout_json_empty_array():

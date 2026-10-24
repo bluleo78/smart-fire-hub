@@ -1420,6 +1420,44 @@ class PipelineAsyncRunnerTest {
     verify(dataTableService, never()).finishReplace(anyString(), anyString(), anyLong());
   }
 
+  /**
+   * WD-210: 로컬 PYTHON + REPLACE 에서 stdout 이 JSON 이 아니면(디버그 print 뒤 JSON) 스텝이 실패하고 원본은 그대로다 — 예전엔
+   * "완료·0행"이라 #685 규칙으로 맞바꾸지 않아 옛 데이터가 남고 갱신이 멈춘 걸 알 수 없었다. 적재기는 실제 파싱을 태운다(thenCallRealMethod —
+   * 파싱이 DB 접근 전에 실패하므로 목의 빈 필드에 닿지 않는다). 임시 테이블은 버리고 맞바꿈은 없다.
+   */
+  @Test
+  void 실행기_꺼진_PYTHON_REPLACE_stdout이_JSON이_아니면_실패하고_원본을_맞바꾸지_않는다() {
+    Long outputDatasetId = 743L;
+    Long userId = 1L;
+    PipelineStepResponse step = replaceStep(7430L, "PYTHON", "print('x')", outputDatasetId);
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out_nj"));
+    when(pythonExecutor.run("print('x')", 2))
+        .thenReturn(new PythonScriptExecutor.RunResult(0, "start\n[{\"v\": 1}]\n", ""));
+    when(outputTableSessionLock.callLocked(eq("out_nj"), any()))
+        .thenAnswer(inv -> inv.<java.util.function.Supplier<?>>getArgument(1).get());
+    when(localPythonOutputLoader.load(eq(runTemp("out_nj")), anyString(), any()))
+        .thenCallRealMethod();
+
+    String status = runner.executeStep(7431L, step, 74L, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(7431L),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            eq(
+                "Python 실행 실패: 스크립트 출력이 JSON 이 아니어서 결과를 적재하지 않았습니다. 출력 데이터셋을 쓰는 스크립트는 결과"
+                    + " JSON 한 번만 print 해야 합니다(디버그 출력은 sys.stderr 로). 출력 앞부분: \"start\n[{\"v\": 1}]\""),
+            isNull(),
+            any());
+    verify(dataTableService).dropTempTable("out_nj", runTemp("out_nj"));
+    verify(dataTableService, never()).finishReplace(anyString(), anyString(), anyLong());
+    verify(dataTableRowService, never()).truncateTable(anyString());
+  }
+
   /** 출력 없는 로컬 PYTHON 은 적재하지 않고, 실행 로그는 stdout+stderr 다(executor 와 같은 규칙). */
   @Test
   void 실행기_꺼진_PYTHON_출력없음은_stdout과_stderr를_로그로_남긴다() {
@@ -2049,7 +2087,8 @@ class PipelineAsyncRunnerTest {
         .thenReturn(tempDatasetId);
     when(datasetRepository.findTableNameById(tempDatasetId)).thenReturn(Optional.of("ptmp_api"));
     when(columnRepository.findByDatasetId(tempDatasetId)).thenReturn(List.of(col("name", false)));
-    when(apiCallExecutor.execute(any(), eq("ptmp_api"), isNull(), eq("APPEND"), any(), any(), any()))
+    when(apiCallExecutor.execute(
+            any(), eq("ptmp_api"), isNull(), eq("APPEND"), any(), any(), any()))
         .thenReturn(new ApiCallExecutor.ApiCallResult(5, "log"));
 
     // when
@@ -2061,7 +2100,8 @@ class PipelineAsyncRunnerTest {
     verify(tempDatasetService)
         .createTempDataset(
             any(), eq(pipelineId), eq("TestPipeline"), eq(stepId), eq("api-step"), eq(userId));
-    verify(apiCallExecutor).execute(any(), eq("ptmp_api"), isNull(), eq("APPEND"), any(), any(), any());
+    verify(apiCallExecutor)
+        .execute(any(), eq("ptmp_api"), isNull(), eq("APPEND"), any(), any(), any());
   }
 
   @Test
@@ -2988,7 +3028,8 @@ class PipelineAsyncRunnerTest {
     when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(minimalApiConfig());
     stubReusedTempDataset(stepId, dsId, "ptmp_api_fail");
     when(columnRepository.findByDatasetId(dsId)).thenReturn(List.of(col("name", false)));
-    when(apiCallExecutor.execute(any(), eq("ptmp_api_fail"), isNull(), eq("REPLACE"), any(), any(), any()))
+    when(apiCallExecutor.execute(
+            any(), eq("ptmp_api_fail"), isNull(), eq("REPLACE"), any(), any(), any()))
         .thenThrow(new ScriptExecutionException("API 호출 실패"));
 
     // when
@@ -3444,8 +3485,7 @@ class PipelineAsyncRunnerTest {
     when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("P"));
     when(sqlExecutor.execute(anyList(), anyString())).thenReturn("ok");
     // 시작 직후 false, s1 시작 전 false, s1 안(SQL 직전) false, s2 시작 전 true
-    when(executionRepository.isCancelRequested(executionId))
-        .thenReturn(false, false, false, true);
+    when(executionRepository.isCancelRequested(executionId)).thenReturn(false, false, false, true);
 
     runner.executeAsync(
         pipelineId,
