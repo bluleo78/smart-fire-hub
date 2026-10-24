@@ -997,6 +997,9 @@ public class TriggerService {
    */
   private void validatePipelineChain(
       Long targetPipelineId, Long upstreamPipelineId, Long excludeTriggerId) {
+    // 테넌트 단위로 「검사 → 저장」을 직렬화한다(WD-239). 잠금 없이 읽으면 동시에 저장되는 반대 방향 연쇄(F←G·G←F)를 서로 못 봐 둘 다 통과했다.
+    // 잠금은 호출자(생성·수정·켜기)의 저장 트랜잭션 안에서 잡혀 커밋까지 유지되고, 반드시 간선 조회보다 먼저 잡아야 앞 트랜잭션의 커밋된 간선이 보인다.
+    triggerRepository.lockChainGraph(TenantContext.require("연쇄 트리거 순환 검사"));
     List<ChainGraph.Edge> edges = new ArrayList<>();
     for (TriggerRepository.ChainEdgeRow row : triggerRepository.findEnabledChainEdges()) {
       // 숫자로 읽을 수 없는 상류는 실행 시 조회에서도 간선이 될 수 없다 — 건너뛴다.
