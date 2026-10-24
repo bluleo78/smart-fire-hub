@@ -125,6 +125,7 @@ class PipelineAsyncRunnerTiberoTest {
   @Mock PythonScriptValidator pythonScriptValidator;
   @Mock IncrementalCursorService incrementalCursorService;
   @Mock OutputTableSessionLock outputTableSessionLock;
+  @Mock IncrementalStepLock incrementalStepLock;
   @Mock PipelineSecurityGate pipelineSecurityGate;
   @Mock DatasetAccessGuard datasetAccessGuard;
   @Mock AiHostingResolver aiHostingResolver;

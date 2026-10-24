@@ -94,6 +94,7 @@ class PipelineAsyncRunnerTest {
   @Mock PythonScriptValidator pythonScriptValidator;
   @Mock IncrementalCursorService incrementalCursorService;
   @Mock OutputTableSessionLock outputTableSessionLock;
+  @Mock IncrementalStepLock incrementalStepLock;
   // 보안 등급 판정은 PipelineSqlAccessTest(통합)가 검증한다 — 여기서는 통과(목 기본값)로 두고 실행 로직만 본다.
   @Mock PipelineSecurityGate pipelineSecurityGate;
   // S3 AI_CLASSIFY 입력 AI 판정 — 판정 자체는 AiClassifyInputAccessTest(통합)가 검증한다. 여기서는 통과(목 기본값)로 둔다.
@@ -3261,6 +3262,190 @@ class PipelineAsyncRunnerTest {
     verify(executionRepository)
         .updateStepExecution(
             eq(stepExecId), eq("FAILED"), isNull(), isNull(), contains("MERGE"), isNull(), any());
+  }
+
+  // ------------------------------------------------------------------ //
+  // 증분 스텝 겹침 직렬화(WD-223)
+  // ------------------------------------------------------------------ //
+
+  /**
+   * 증분 스텝은 책갈피·후보를 읽기 <b>전에</b> 스텝 잠금을 잡고, 책갈피를 전진시킨 <b>뒤에</b> 푼다. 순서가 어긋나면(후보를 먼저 잡고 기다리거나, 전진 전에
+   * 풀면) 겹친 실행이 같은 구간을 다시 적재한다.
+   */
+  @Test
+  void 증분_스텝은_책갈피_읽기_전에_잠그고_전진_뒤에_푼다() {
+    Long stepId = 710L;
+    Long outputDatasetId = 98L;
+    PipelineStepResponse step = incrementalMergeStep(stepId, outputDatasetId, "APPEND");
+    SessionAdvisoryLock.Held held = mock(SessionAdvisoryLock.Held.class);
+    when(incrementalStepLock.acquire(eq(stepId), eq("incremental-step"), any())).thenReturn(held);
+    // 첫 해제 순간에 책갈피가 이미 전진했는지 기록한다 — finally 안전망이 뒤에서 한 번 더 닫아도 "전진 전 조기 해제" 변이를 잡는다.
+    java.util.concurrent.atomic.AtomicBoolean advanced =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    java.util.concurrent.atomic.AtomicReference<Boolean> advancedAtFirstRelease =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    doAnswer(
+            inv -> {
+              advanced.set(true);
+              return null;
+            })
+        .when(stepRepository)
+        .advanceCursor(any(), any(), anyBoolean(), any());
+    doAnswer(
+            inv -> {
+              advancedAtFirstRelease.compareAndSet(null, advanced.get());
+              return null;
+            })
+        .when(held)
+        .close();
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("incremental_out"));
+    when(columnRepository.findByDatasetId(outputDatasetId))
+        .thenReturn(List.of(col("code", false), col("name", false)));
+    stubProbeColumns("code", "name");
+    when(stepRepository.findCursor(stepId))
+        .thenReturn(Optional.of(new StepCursor(null, false, outputDatasetId)));
+    when(incrementalCursorService.captureCandidate())
+        .thenReturn(OffsetDateTime.parse("2026-10-24T01:00:00Z"));
+    when(sqlExecutor.execute(anyList(), anyString())).thenReturn("ok");
+
+    String status = runner.executeStep(810L, step, 78L, "P", 1L, false);
+
+    assertThat(status).isEqualTo("COMPLETED");
+    org.mockito.InOrder order =
+        inOrder(incrementalStepLock, stepRepository, incrementalCursorService, sqlExecutor, held);
+    order.verify(incrementalStepLock).acquire(eq(stepId), eq("incremental-step"), any());
+    order.verify(stepRepository).findCursor(stepId);
+    order.verify(incrementalCursorService).captureCandidate();
+    order.verify(sqlExecutor).execute(anyList(), anyString());
+    order.verify(stepRepository).advanceCursor(eq(stepId), any(), eq(false), any());
+    order.verify(held, atLeastOnce()).close();
+    assertThat(advancedAtFirstRelease.get()).as("잠금은 책갈피 전진 뒤에야 처음 풀린다").isTrue();
+  }
+
+  /** 실행기를 켠 경로(운영 기본값)도 같은 잠금 아래에서 책갈피를 읽고 전진시킨다. */
+  @Test
+  void 실행기를_켠_증분_스텝도_책갈피_읽기_전에_잠그고_전진_뒤에_푼다() {
+    Long stepId = 714L;
+    Long outputDatasetId = 102L;
+    PipelineStepResponse step = incrementalMergeStep(stepId, outputDatasetId, "APPEND");
+    SessionAdvisoryLock.Held held = mock(SessionAdvisoryLock.Held.class);
+    when(incrementalStepLock.acquire(eq(stepId), any(), any())).thenReturn(held);
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("incremental_out"));
+    when(columnRepository.findByDatasetId(outputDatasetId))
+        .thenReturn(List.of(col("code", false), col("name", false)));
+    stubProbeColumns("code", "name");
+    when(stepRepository.findCursor(stepId))
+        .thenReturn(Optional.of(new StepCursor(null, false, outputDatasetId)));
+    when(incrementalCursorService.captureCandidate())
+        .thenReturn(OffsetDateTime.parse("2026-10-24T01:00:00Z"));
+    when(executorClient.executeSql(anyString(), anyList()))
+        .thenReturn(
+            new ExecutorClient.SqlExecuteResult(
+                true, List.of(), List.of(), 0, "ok", null, null, null));
+
+    String status = runner.executeStep(814L, step, 82L, "P", 1L, true);
+
+    assertThat(status).isEqualTo("COMPLETED");
+    org.mockito.InOrder order = inOrder(incrementalStepLock, stepRepository, executorClient, held);
+    order.verify(incrementalStepLock).acquire(eq(stepId), any(), any());
+    order.verify(stepRepository).findCursor(stepId);
+    order.verify(executorClient).executeSql(anyString(), anyList());
+    order.verify(stepRepository).advanceCursor(eq(stepId), any(), eq(false), any());
+    order.verify(held, atLeastOnce()).close();
+  }
+
+  /** 증분 스텝이 실패해도 잠금은 풀린다 — 풀리지 않으면 그 스텝의 다음 실행이 모두 상한까지 기다린다. */
+  @Test
+  void 증분_스텝이_실패해도_잠금을_푼다() {
+    Long stepId = 711L;
+    Long outputDatasetId = 99L;
+    PipelineStepResponse step = incrementalMergeStep(stepId, outputDatasetId, "APPEND");
+    SessionAdvisoryLock.Held held = mock(SessionAdvisoryLock.Held.class);
+    when(incrementalStepLock.acquire(eq(stepId), any(), any())).thenReturn(held);
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("incremental_out"));
+    when(columnRepository.findByDatasetId(outputDatasetId))
+        .thenReturn(List.of(col("code", false), col("name", false)));
+    stubProbeColumns("code", "name");
+    when(stepRepository.findCursor(stepId))
+        .thenReturn(Optional.of(new StepCursor(null, false, outputDatasetId)));
+    when(incrementalCursorService.captureCandidate())
+        .thenReturn(OffsetDateTime.parse("2026-10-24T01:00:00Z"));
+    when(sqlExecutor.execute(anyList(), anyString()))
+        .thenThrow(new ScriptExecutionException("boom"));
+
+    String status = runner.executeStep(811L, step, 79L, "P", 1L, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(stepRepository, never()).advanceCursor(any(), any(), anyBoolean(), any());
+    verify(held).close();
+  }
+
+  /** 대기 상한을 넘기면 책갈피를 읽지도 쓰지도 않고 한국어 안내로 실패한다 — 책갈피가 그대로라 다음 실행이 그 구간을 읽는다. */
+  @Test
+  void 증분_스텝_잠금_대기가_상한을_넘기면_책갈피를_건드리지_않고_실패한다() {
+    Long stepId = 712L;
+    Long stepExecId = 812L;
+    Long outputDatasetId = 100L;
+    PipelineStepResponse step = incrementalMergeStep(stepId, outputDatasetId, "APPEND");
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("incremental_out"));
+    when(incrementalStepLock.acquire(eq(stepId), any(), any()))
+        .thenThrow(
+            new ScriptExecutionException(
+                IncrementalStepLock.timeoutMessage("incremental-step", 1_800_000)));
+
+    String status = runner.executeStep(stepExecId, step, 80L, "P", 1L, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(stepRepository, never()).findCursor(any());
+    verify(stepRepository, never()).advanceCursor(any(), any(), anyBoolean(), any());
+    verify(sqlExecutor, never()).execute(anyList(), anyString());
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            contains("30분 넘게 끝나지 않아"),
+            isNull(),
+            any());
+  }
+
+  /** 증분이 아닌 SQL 스텝은 스텝 잠금을 잡지 않는다 — 불필요한 직렬화로 겹친 실행을 늦추지 않는다. */
+  @Test
+  void 증분이_아닌_SQL_스텝은_스텝_잠금을_잡지_않는다() {
+    Long stepId = 713L;
+    Long outputDatasetId = 101L;
+    PipelineStepResponse step =
+        new PipelineStepResponse(
+            stepId,
+            "plain-step",
+            null,
+            "SQL",
+            "SELECT code, name FROM data.\"source\"",
+            outputDatasetId,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "APPEND",
+            null,
+            null,
+            null,
+            null);
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("plain_out"));
+    when(columnRepository.findByDatasetId(outputDatasetId))
+        .thenReturn(List.of(col("code", false), col("name", false)));
+    stubProbeColumns("code", "name");
+    when(sqlExecutor.execute(anyList(), anyString())).thenReturn("ok");
+
+    String status = runner.executeStep(813L, step, 81L, "P", 1L, false);
+
+    assertThat(status).isEqualTo("COMPLETED");
+    verifyNoInteractions(incrementalStepLock);
   }
 
   // ------------------------------------------------------------------ //

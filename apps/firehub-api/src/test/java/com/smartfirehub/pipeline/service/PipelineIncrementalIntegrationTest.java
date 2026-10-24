@@ -603,6 +603,158 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
   }
 
   // ------------------------------------------------------------------ //
+  // 시나리오 7: 같은 증분 스텝의 실행 두 개가 겹친다(WD-223)
+  // ------------------------------------------------------------------ //
+
+  /**
+   * 같은 증분 APPEND 스텝의 실행 둘이 겹쳐도 같은 구간을 두 번 적재하지 않고, 뒤 실행은 앞 실행 도중 들어온 새 행을 놓치지 않는다.
+   *
+   * <p>재현 조건(WD-223): 앞 실행이 느린 동안 뒤 실행이 시작되면, 수정 전에는 두 실행이 같은 책갈피(여기서는 첫 실행이라 전체 읽기)를 읽어 원천 전체가 출력에
+   * 두 번씩 들어갔다(둘 다 COMPLETED). 출력은 PK 없는 데이터셋이다 — PK 가 있으면 중복이 고유 위반 실패로 바뀌어 결함 모양이 달라진다. MERGE 가
+   * 아니라 APPEND 인 이유도 같다(MERGE 는 멱등이라 중복을 가린다).
+   *
+   * <p>느린 실행은 {@code pg_sleep} 대신(SQL 가드가 막는다) 작은 두 계열의 곱 개수 세기로 만든다 — 메모리 안에서 끝나 디스크를 쓰지 않는다. 새 행은
+   * 앞 실행의 본 문장이 원천을 읽는 중(원천 테이블의 관계 잠금을 쥔 동안)에 넣는다 — 그 전에 넣으면 앞 실행의 스냅샷에도 보여, 직렬 실행에서도 생기는 경계 겹침과
+   * 구분이 안 된다.
+   */
+  @Test
+  void 같은_증분_스텝의_실행이_겹쳐도_중복_적재하지_않고_새_행을_놓치지_않는다() throws Exception {
+    seedSource(1, 20);
+    List<DatasetColumnRequest> noPkColumns =
+        List.of(
+            new DatasetColumnRequest("code", "Code", "TEXT", null, true, false, null, false),
+            new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null, false));
+    String appendTable = "inc_app_" + suffix;
+    Long appendDatasetId =
+        datasetService
+            .createDataset(
+                new CreateDatasetRequest(
+                    "Inc Append " + suffix,
+                    appendTable,
+                    null,
+                    null,
+                    "TABLE",
+                    "DERIVED",
+                    noPkColumns,
+                    null),
+                userId)
+            .id();
+    try {
+      pipelineService.updatePipeline(
+          pipelineId,
+          new UpdatePipelineRequest(
+              "Inc Pipeline " + suffix,
+              "증분 처리 통합 테스트",
+              null,
+              List.of(
+                  new PipelineStepRequest(
+                      STEP_NAME,
+                      "느린 증분 APPEND",
+                      "SQL",
+                      "SELECT code, name FROM "
+                          + DataSchema.qualify(srcTable)
+                          + " WHERE _updated_at >= {{last_run_at}}"
+                          + " AND (SELECT count(*) FROM generate_series(1, 12000) a,"
+                          + " generate_series(1, 12000) b) > 0",
+                      appendDatasetId,
+                      null,
+                      null,
+                      "APPEND"))),
+          userId);
+
+      Long exec1 = executionService.executePipeline(pipelineId, userId);
+      awaitSourceReadInProgress();
+      // 앞 실행의 본 문장이 원천을 읽는 중 — 이 행은 앞 실행에 보이지 않고, 뒤 실행만 읽어야 한다.
+      dsl.execute(
+          "INSERT INTO "
+              + DataSchema.qualify(srcTable)
+              + " (code, name) VALUES ('NEW1', 'new-row')");
+      Long exec2 = executionService.executePipeline(pipelineId, userId);
+
+      assertThat(awaitTerminal(exec1)).as("앞 실행").isEqualTo("COMPLETED");
+      assertThat(awaitTerminal(exec2)).as("뒤 실행").isEqualTo("COMPLETED");
+      // 전제: 두 실행이 실제로 겹쳤다(뒤 실행의 스텝이 앞 실행 스텝이 끝나기 전에 시작했다). 아니면 이 테스트는 직렬 실행을 본 것이라 공허하다.
+      // 스텝 RUNNING 기록은 잠금 대기보다 앞이므로 수정 후에도 참이다. 실행 기록은 RLS 대상이라 테넌트 범위에서 읽는다.
+      Boolean overlapped =
+          inTenantFixture(
+              () ->
+                  dsl.fetchOne(
+                          "SELECT (SELECT started_at FROM pipeline_step_execution WHERE execution_id = ?)"
+                              + " < (SELECT completed_at FROM pipeline_step_execution"
+                              + " WHERE execution_id = ?)",
+                          exec2,
+                          exec1)
+                      .get(0, Boolean.class));
+      assertThat(overlapped).as("두 실행이 겹쳐야 검증이 의미 있다").isTrue();
+
+      var perCode =
+          dsl.fetch(
+              "SELECT code, count(*) AS n FROM "
+                  + DataSchema.qualify(appendTable)
+                  + " GROUP BY code HAVING count(*) > 1");
+      assertThat(perCode).as("겹친 두 실행이 같은 구간을 두 번 적재하면 안 된다").isEmpty();
+      assertThat(
+              dsl.fetchOne("SELECT count(*) FROM " + DataSchema.qualify(appendTable))
+                  .get(0, Integer.class))
+          .as("원천 20행 + 앞 실행 도중 들어온 새 행 1개")
+          .isEqualTo(21);
+      assertThat(nameOf(appendTable, "NEW1"))
+          .as("뒤 실행은 앞 실행이 전진시킨 책갈피로 읽어 새 행을 놓치지 않는다")
+          .isEqualTo("new-row");
+      assertThat(injectedLastRunAt(exec2)).as("뒤 실행은 앞 실행이 남긴 책갈피로 읽는다(전체 읽기 아님)").isNotNull();
+    } finally {
+      // 파이프라인이 이 데이터셋을 출력으로 참조하므로 먼저 지운다(tearDown 은 이미 지워진 파이프라인을 무시한다).
+      try {
+        pipelineService.deletePipeline(pipelineId);
+        pipelineId = null;
+      } catch (Exception ignored) {
+        // 정리 실패가 본 검증 결과를 가리지 않게 한다.
+      }
+      try {
+        datasetService.deleteDataset(appendDatasetId);
+      } catch (Exception ignored) {
+        // 위와 같은 이유.
+      }
+    }
+  }
+
+  /** 다른 세션이 원천 테이블의 관계 잠금을 계속 쥐고 있을 때까지(= 앞 실행의 본 문장이 원천을 읽는 중) 기다린다. */
+  private void awaitSourceReadInProgress() throws InterruptedException {
+    String rel = DataSchema.qualify(srcTable);
+    long deadline = System.currentTimeMillis() + 30_000;
+    int consecutive = 0;
+    while (System.currentTimeMillis() < deadline) {
+      Integer held =
+          dsl.fetchOne(
+                  "SELECT count(*) FROM pg_locks WHERE locktype = 'relation' AND granted"
+                      + " AND relation = to_regclass(?) AND pid <> pg_backend_pid()",
+                  rel)
+              .get(0, Integer.class);
+      // 컬럼 probe(LIMIT 0)도 잠깐 잠금을 잡으므로, 연속으로 보일 때만 본 문장으로 본다.
+      consecutive = held > 0 ? consecutive + 1 : 0;
+      if (consecutive >= 4) {
+        return;
+      }
+      Thread.sleep(100);
+    }
+    throw new IllegalStateException("앞 실행의 원천 읽기를 관측하지 못했습니다");
+  }
+
+  /** 실행이 종료 상태가 될 때까지 기다려 그 상태를 돌려준다. */
+  private String awaitTerminal(Long executionId) throws InterruptedException {
+    long deadline = System.currentTimeMillis() + 120_000;
+    String status = null;
+    while (System.currentTimeMillis() < deadline) {
+      status = pipelineService.getExecutionById(pipelineId, executionId).status();
+      if ("COMPLETED".equals(status) || "FAILED".equals(status) || "CANCELLED".equals(status)) {
+        return status;
+      }
+      Thread.sleep(200);
+    }
+    return status;
+  }
+
+  // ------------------------------------------------------------------ //
   // Helpers
   // ------------------------------------------------------------------ //
 

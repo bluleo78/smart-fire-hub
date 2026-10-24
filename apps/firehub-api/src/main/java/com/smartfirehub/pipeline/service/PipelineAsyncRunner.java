@@ -120,6 +120,10 @@ public class PipelineAsyncRunner {
   private final PythonScriptValidator pythonScriptValidator;
   private final IncrementalCursorService incrementalCursorService;
   private final OutputTableSessionLock outputTableSessionLock;
+
+  /** 증분 스텝의 「책갈피 읽기 → 적재 → 전진」 직렬화 잠금(WD-223). */
+  private final IncrementalStepLock incrementalStepLock;
+
   private final PipelineSecurityGate pipelineSecurityGate;
   private final PythonReadGrantSync pythonReadGrantSync;
   private final LocalPythonOutputLoader localPythonOutputLoader;
@@ -415,6 +419,8 @@ public class PipelineAsyncRunner {
       boolean executorEnabled,
       ExecutionCancelCheck cancel) {
     LocalDateTime stepStartedAt = LocalDateTime.now(ZoneOffset.UTC);
+    // 증분 스텝 잠금(WD-223) — 책갈피를 읽기 전에 잡고 책갈피 전진 뒤에 푼다. 실패·취소로 그 전에 끝나면 아래 finally 가 푼다.
+    SessionAdvisoryLock.Held incrementalLock = null;
 
     try {
       // 스텝 상태를 RUNNING으로 업데이트
@@ -525,6 +531,9 @@ public class PipelineAsyncRunner {
             throw new ScriptExecutionException(
                 "{{last_run_at}} 은 REPLACE 와 함께 쓸 수 없습니다(매 실행 출력이 변경분만 남습니다). MERGE 를 사용하세요.");
           }
+          // 같은 스텝의 겹친 실행 직렬화(WD-223) — 책갈피·후보를 읽기 "전에" 잡는다. 기다린 뒤에 읽어야 앞 실행이 전진시킨
+          // 책갈피를 본다(후보를 먼저 잡고 기다리면 advanceCursor 가 책갈피를 뒤로 되돌린다). 비증분 스텝은 잡지 않는다.
+          incrementalLock = incrementalStepLock.acquire(step.id(), step.name(), cancel);
           StepCursor cursor =
               stepRepository
                   .findCursor(step.id())
@@ -1247,6 +1256,10 @@ public class PipelineAsyncRunner {
         // 저장됐으면 새 출력의 책갈피를 전진시키지 않아야 한다(리포지토리 Javadoc).
         stepRepository.advanceCursor(
             step.id(), stepCursorCandidate, stepWasFullRebuild, outputDatasetId);
+        // 책갈피가 전진했으니 기다리던 다음 실행을 바로 풀어 준다(행 수 계산·상태 갱신까지 붙잡지 않는다, WD-223).
+        if (incrementalLock != null) {
+          incrementalLock.close();
+        }
       }
 
       // WD-30: 출력이 커밋된 뒤에만 러너 TEMP 허용 목록을 시드로 확정한다(넓힘 포함 — 출력이 전부 교체된 실행만 계획이 있다). 실패 경로(catch)는 여기
@@ -1301,6 +1314,11 @@ public class PipelineAsyncRunner {
           null,
           LocalDateTime.now(ZoneOffset.UTC));
       return "FAILED";
+    } finally {
+      // 증분 스텝 잠금 안전망(WD-223) — 실패·취소·예외로 전진 전에 끝났으면 여기서 푼다(이미 풀었으면 아무것도 하지 않는다).
+      if (incrementalLock != null) {
+        incrementalLock.close();
+      }
     }
   }
 
