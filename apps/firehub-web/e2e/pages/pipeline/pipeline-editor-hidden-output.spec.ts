@@ -62,7 +62,7 @@ async function setupMocks(
       page,
       'GET',
       `/api/v1/datasets/${id}`,
-      { status: 404, error: 'Not Found', message: `Dataset not found: ${id}` },
+      { status: 404, error: 'Not Found', message: '데이터셋을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.' },
       { status: 404 },
     );
   }

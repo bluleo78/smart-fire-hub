@@ -321,9 +321,7 @@ public class DatasetService {
   /** 러너 소유 TEMP 만 다시 만들거나 되돌릴 수 있다 — 사용자 데이터셋의 테이블을 옮기거나 지우는 경로가 되지 않게 막는다. */
   private DatasetResponse requirePipelineTemp(Long datasetId) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     if (!"TEMP".equals(dataset.originType()) || dataset.sourcePipelineStepId() == null) {
       throw new IllegalArgumentException("파이프라인 TEMP 데이터셋만 다시 만들 수 있습니다: " + datasetId);
     }
@@ -377,8 +375,7 @@ public class DatasetService {
     if (request.categoryId() != null) {
       categoryRepository
           .findById(request.categoryId())
-          .orElseThrow(
-              () -> new CategoryNotFoundException("카테고리를 찾을 수 없습니다: " + request.categoryId()));
+          .orElseThrow(() -> new CategoryNotFoundException());
     }
 
     DatasetResponse dataset = datasetRepository.save(request, userId);
@@ -504,7 +501,7 @@ public class DatasetService {
     DatasetResponse dataset =
         datasetRepository
             .findById(id, currentUserId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
+            .orElseThrow(() -> new DatasetNotFoundException());
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(id);
     // DOCUMENT/FILE 데이터셋은 data.<table> 동적 테이블이 없으므로 countRows(존재하지 않는 테이블 COUNT) 가 실패한다.
@@ -602,9 +599,7 @@ public class DatasetService {
   @Transactional
   public void updateDataset(Long id, UpdateDatasetRequest request, Long userId) {
     DatasetResponse current =
-        datasetRepository
-            .findById(id)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
+        datasetRepository.findById(id).orElseThrow(() -> new DatasetNotFoundException());
 
     // 이름을 바꿀 때도 볼 수 있는 데이터셋끼리만 겹침을 본다(WD-155) — 예전에는 DB 유일 제약이 걸려, 숨긴 데이터셋 이름으로
     // 바꾸면 409·없는 이름이면 200 으로 갈려 존재가 드러났다.
@@ -618,8 +613,7 @@ public class DatasetService {
     if (request.categoryId() != null) {
       categoryRepository
           .findById(request.categoryId())
-          .orElseThrow(
-              () -> new CategoryNotFoundException("카테고리를 찾을 수 없습니다: " + request.categoryId()));
+          .orElseThrow(() -> new CategoryNotFoundException());
     }
 
     datasetRepository.update(id, request, userId);
@@ -631,9 +625,7 @@ public class DatasetService {
   @Transactional
   public void deleteDataset(Long id) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(id)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
+        datasetRepository.findById(id).orElseThrow(() -> new DatasetNotFoundException());
 
     // 파이프라인 스텝 출력 데이터셋으로 참조 중인 경우 삭제 불가 (#126)
     // FK 위반 500 오류를 방지하기 위해 삭제 전 참조 건수를 확인한다.
@@ -694,9 +686,7 @@ public class DatasetService {
   @Transactional
   public DatasetColumnResponse addColumn(Long datasetId, AddColumnRequest request) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "컬럼 관리");
 
     DatasetColumnRequest colRequest =
@@ -763,9 +753,7 @@ public class DatasetService {
   @Transactional
   public void updateColumn(Long datasetId, Long columnId, UpdateColumnRequest request) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "컬럼 관리");
 
     // WD-186: 이름·타입을 바꿀 수 있는 요청이면 필드를 읽기 전에 매핑 저장과 직렬화하는 잠금을 잡는다 — 아래에서 읽는 현재 필드
@@ -990,9 +978,7 @@ public class DatasetService {
   @Transactional
   public void updatePrimaryKeys(Long datasetId, List<Long> requestedPkIds) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "기본키 변경");
 
     List<Long> pkIds = requestedPkIds != null ? requestedPkIds : List.of();
@@ -1039,9 +1025,7 @@ public class DatasetService {
   @Transactional
   public void deleteColumn(Long datasetId, Long columnId) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "컬럼 관리");
 
     // WD-186: 필드를 읽기 전에 매핑 저장과 직렬화하는 잠금을 잡는다 — 판정 직후 매핑 저장이 이 필드를 새로 연결하는 틈을 없앤다.
@@ -1100,9 +1084,7 @@ public class DatasetService {
 
   @Transactional
   public void reorderColumns(Long datasetId, ReorderColumnsRequest request) {
-    datasetRepository
-        .findById(datasetId)
-        .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
 
     List<DatasetColumnResponse> existingColumns = columnRepository.findByDatasetId(datasetId);
     Set<Long> existingIds =
@@ -1156,7 +1138,7 @@ public class DatasetService {
             .from(table(name("dataset")))
             .where(field(name("dataset", "id"), Long.class).eq(datasetId))
             .fetchOptional(field(name("dataset", "table_name"), String.class))
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+            .orElseThrow(() -> new DatasetNotFoundException());
     String dataSchema = DataSchema.current();
 
     // 2. Pipelines: output_dataset_id 또는 pipeline_step_input.dataset_id 기준으로 조회. DISTINCT 로 중복 제거.
@@ -1381,9 +1363,7 @@ public class DatasetService {
           "Invalid status. Must be one of: NONE, CERTIFIED, DEPRECATED");
     }
 
-    datasetRepository
-        .findById(id)
-        .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
+    datasetRepository.findById(id).orElseThrow(() -> new DatasetNotFoundException());
 
     datasetRepository.updateStatus(id, request.status(), request.note(), userId);
     return getDatasetById(id, userId);
@@ -1398,9 +1378,7 @@ public class DatasetService {
       Long sourceId, CloneDatasetRequest request, Long userId) {
     // 1. Fetch source dataset with columns
     DatasetResponse sourceDataset =
-        datasetRepository
-            .findById(sourceId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + sourceId));
+        datasetRepository.findById(sourceId).orElseThrow(() -> new DatasetNotFoundException());
     // DOCUMENT 데이터셋은 동적 테이블이 없어 복제 시 phantom 테이블이 생기므로 Phase 1 에서는 거부한다.
     rejectIfDocument(sourceDataset.storageType(), "복제");
 

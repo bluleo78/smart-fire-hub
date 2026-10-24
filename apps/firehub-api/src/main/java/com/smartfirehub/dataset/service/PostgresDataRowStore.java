@@ -1015,7 +1015,7 @@ public class PostgresDataRowStore implements DataRowStore {
 
     int affected = dsl.execute(sql.toString(), values);
     if (affected == 0) {
-      throw new RowNotFoundException("Row not found: " + rowId);
+      throw new RowNotFoundException();
     }
   }
 
@@ -1038,7 +1038,7 @@ public class PostgresDataRowStore implements DataRowStore {
     // 단건 조회도 데이터 탭과 같은 계약 — 범위 밖 날짜·시각은 PG 원문(#769)
     var record = TemporalSafeFetch.fetchOne(dsl, sql.toString(), rowId);
     if (record == null) {
-      throw new RowNotFoundException("Row not found: " + rowId);
+      throw new RowNotFoundException();
     }
 
     Map<String, Object> result = new HashMap<>();

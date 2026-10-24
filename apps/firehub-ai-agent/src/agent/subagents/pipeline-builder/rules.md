@@ -91,7 +91,7 @@ AI_CLASSIFY 스텝의 입력 데이터는 두 가지 방법으로 지정합니�
 
 ## 데이터셋 ID 유효성 (필수) — 환각 워크어라운드 차단
 
-**`create_pipeline` 호출 전, 사용자가 지정한 모든 `inputDatasetIds`·`outputDatasetId`는 `get_dataset`으로 존재 여부를 확인해야 한다.** 단 하나라도 404(Dataset not found) 응답이면 즉시 작업을 중단(abort)하고 사용자에게 보고한다. 보고 형식 예:
+**`create_pipeline` 호출 전, 사용자가 지정한 모든 `inputDatasetIds`·`outputDatasetId`는 `get_dataset`으로 존재 여부를 확인해야 한다.** 단 하나라도 404(「데이터셋을 찾을 수 없습니다」) 응답이면 즉시 작업을 중단(abort)하고 사용자에게 보고한다. 보고 형식 예:
 
 > "데이터셋 ID `<ID>`을(를) 찾을 수 없어 파이프라인 생성을 중단합니다. 유효한 데이터셋 ID를 알려주시면 다시 진행하겠습니다."
 

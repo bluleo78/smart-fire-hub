@@ -11,6 +11,7 @@ import com.smartfirehub.dataimport.exception.InvalidFileHeaderException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetResponse;
+import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataExceptionTranslator;
@@ -101,7 +102,7 @@ public class DataImportService {
     // Validate dataset exists
     datasetRepository
         .findById(datasetId)
-        .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+        .orElseThrow(() -> new IllegalArgumentException(DatasetNotFoundException.MESSAGE));
 
     // Validate file type
     String originalFilename = file.getOriginalFilename();
@@ -169,7 +170,7 @@ public class DataImportService {
     // Validate dataset exists
     datasetRepository
         .findById(datasetId)
-        .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+        .orElseThrow(() -> new IllegalArgumentException(DatasetNotFoundException.MESSAGE));
 
     // Validate file type
     String originalFilename = file.getOriginalFilename();
@@ -291,7 +292,7 @@ public class DataImportService {
     // Validate dataset exists
     datasetRepository
         .findById(datasetId)
-        .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+        .orElseThrow(() -> new IllegalArgumentException(DatasetNotFoundException.MESSAGE));
 
     // Validate file type
     String originalFilename = file.getOriginalFilename();
@@ -999,7 +1000,7 @@ public class DataImportService {
   public List<ImportResponse> getImportsByDatasetId(Long datasetId) {
     datasetRepository
         .findById(datasetId)
-        .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+        .orElseThrow(() -> new IllegalArgumentException(DatasetNotFoundException.MESSAGE));
 
     List<AuditLogResponse> auditLogs =
         auditLogService.findByResource("IMPORT", "dataset", String.valueOf(datasetId));
@@ -1009,7 +1010,7 @@ public class DataImportService {
   public ImportResponse getImportById(Long datasetId, Long importId) {
     datasetRepository
         .findById(datasetId)
-        .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+        .orElseThrow(() -> new IllegalArgumentException(DatasetNotFoundException.MESSAGE));
 
     AuditLogResponse auditLog =
         auditLogService

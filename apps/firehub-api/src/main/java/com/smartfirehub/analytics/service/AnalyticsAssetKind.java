@@ -53,11 +53,11 @@ public enum AnalyticsAssetKind {
   }
 
   /** 없거나 다른 워크스페이스 자산일 때 — 작성자 경로와 같은 예외·문구(전역 핸들러가 404)로 답해 존재를 드러내지 않는다. */
-  public RuntimeException notFound(Long id) {
+  public RuntimeException notFound() {
     return switch (this) {
-      case DASHBOARD -> DashboardNotFoundException.forId(id);
-      case CHART -> ChartNotFoundException.forId(id);
-      case QUERY -> SavedQueryNotFoundException.forId(id);
+      case DASHBOARD -> new DashboardNotFoundException();
+      case CHART -> new ChartNotFoundException();
+      case QUERY -> new SavedQueryNotFoundException();
     };
   }
 

@@ -43,8 +43,8 @@ class GlobalExceptionHandlerExtendedTest {
         .perform(get("/test/exception2/saved-query-not-found"))
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.status").value(404))
-        // WD-196: 분석 NotFound 문구는 한국어로 응답 message 에 그대로 실린다(화면 토스트 원문)
-        .andExpect(jsonPath("$.message").value("저장 쿼리를 찾을 수 없습니다: 55"));
+        // WD-196·WD-240: 분석 NotFound 문구는 한국어·번호 없이 응답 message 에 그대로 실린다(화면 토스트 원문)
+        .andExpect(jsonPath("$.message").value("저장 쿼리를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
   }
 
   @Test
@@ -53,8 +53,8 @@ class GlobalExceptionHandlerExtendedTest {
         .perform(get("/test/exception2/chart-not-found"))
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.status").value(404))
-        // WD-196: 분석 NotFound 문구는 한국어로 응답 message 에 그대로 실린다(화면 토스트 원문)
-        .andExpect(jsonPath("$.message").value("차트를 찾을 수 없습니다: 66"));
+        // WD-196·WD-240: 분석 NotFound 문구는 한국어·번호 없이 응답 message 에 그대로 실린다(화면 토스트 원문)
+        .andExpect(jsonPath("$.message").value("차트를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
   }
 
   @Test
@@ -63,8 +63,8 @@ class GlobalExceptionHandlerExtendedTest {
         .perform(get("/test/exception2/dashboard-not-found"))
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.status").value(404))
-        // WD-196: 분석 NotFound 문구는 한국어로 응답 message 에 그대로 실린다(화면 토스트 원문)
-        .andExpect(jsonPath("$.message").value("대시보드를 찾을 수 없습니다: 77"));
+        // WD-196·WD-240: 분석 NotFound 문구는 한국어·번호 없이 응답 message 에 그대로 실린다(화면 토스트 원문)
+        .andExpect(jsonPath("$.message").value("대시보드를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
   }
 
   @Test
@@ -134,7 +134,9 @@ class GlobalExceptionHandlerExtendedTest {
     mockMvc
         .perform(get("/test/exception2/category-not-found"))
         .andExpect(status().isNotFound())
-        .andExpect(jsonPath("$.status").value(404));
+        .andExpect(jsonPath("$.status").value(404))
+        // WD-240: 영어 「Category not found: N」 대신 한국어·번호 없는 문구
+        .andExpect(jsonPath("$.message").value("카테고리를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
   }
 
   @Test

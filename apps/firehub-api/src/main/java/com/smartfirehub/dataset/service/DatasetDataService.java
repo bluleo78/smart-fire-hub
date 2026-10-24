@@ -64,9 +64,7 @@ public class DatasetDataService {
   @Transactional(readOnly = true)
   public List<ColumnStatsResponse> getDatasetStats(Long datasetId) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "통계 조회");
 
     long rowCount = dataTableRowService.countRows(dataset.tableName());
@@ -81,9 +79,7 @@ public class DatasetDataService {
   @Transactional
   public DataDeleteResponse truncateDatasetData(Long datasetId) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "데이터 삭제");
     long rowCount = dataTableRowService.countRows(dataset.tableName());
     dataTableRowService.truncateTable(dataset.tableName());
@@ -93,9 +89,7 @@ public class DatasetDataService {
   @Transactional(readOnly = true)
   public RowCountResponse getRowCount(Long datasetId) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "행 수 조회");
     long rowCount = dataTableRowService.countRows(dataset.tableName());
     return new RowCountResponse(rowCount);
@@ -104,9 +98,7 @@ public class DatasetDataService {
   @Transactional
   public BatchRowDataResponse replaceDatasetData(Long datasetId, BatchRowDataRequest request) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "데이터 교체");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -134,9 +126,7 @@ public class DatasetDataService {
   @Transactional
   public DataDeleteResponse deleteDataRows(Long datasetId, List<Long> rowIds) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "행 삭제");
     int deletedCount = dataTableRowService.deleteRows(dataset.tableName(), rowIds);
     return new DataDeleteResponse(deletedCount);
@@ -170,9 +160,7 @@ public class DatasetDataService {
       boolean includeTotalCount,
       SpatialFilter spatialFilter) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "데이터 조회");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -214,9 +202,7 @@ public class DatasetDataService {
 
   @Transactional
   public SqlQueryResponse executeQuery(Long datasetId, SqlQueryRequest request, Long userId) {
-    datasetRepository
-        .findById(datasetId)
-        .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
 
     // 보안 등급(S2): 경로의 데이터셋이 아니라 SQL 이 참조하는 모든 데이터셋을 실행자 기준으로 판정한다 — /query 는 data 스키마 전체에 닿는다.
     SqlQueryResponse response =
@@ -240,9 +226,7 @@ public class DatasetDataService {
 
   @Transactional(readOnly = true)
   public PageResponse<QueryHistoryResponse> getQueryHistory(Long datasetId, int page, int size) {
-    datasetRepository
-        .findById(datasetId)
-        .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
 
     List<QueryHistoryResponse> content =
         queryHistoryRepository.findByDatasetId(datasetId, page, size);
@@ -254,9 +238,7 @@ public class DatasetDataService {
   @Transactional
   public RowDataResponse addRow(Long datasetId, RowDataRequest request) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "행 추가");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -293,9 +275,7 @@ public class DatasetDataService {
   @Transactional
   public BatchRowDataResponse addRowsBatch(Long datasetId, BatchRowDataRequest request) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "행 일괄 추가");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -321,9 +301,7 @@ public class DatasetDataService {
   @Transactional
   public void updateRow(Long datasetId, Long rowId, RowDataRequest request) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "행 수정");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -360,9 +338,7 @@ public class DatasetDataService {
   @Transactional(readOnly = true)
   public RowDataResponse getRow(Long datasetId, Long rowId) {
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "행 조회");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -399,9 +375,7 @@ public class DatasetDataService {
 
   @Transactional
   public void propagateDescriptions(Long datasetId) {
-    datasetRepository
-        .findById(datasetId)
-        .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
 
     List<DatasetColumnResponse> targetColumns = columnRepository.findByDatasetId(datasetId);
 

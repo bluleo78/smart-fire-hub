@@ -95,7 +95,8 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
     // When/Then
     assertThatThrownBy(() -> categoryService.getCategoryById(999999L))
         .isInstanceOf(CategoryNotFoundException.class)
-        .hasMessageContaining("999999");
+        // WD-240: 영어 「Category not found: N」 대신 한국어·번호 없는 문구
+        .hasMessage("카테고리를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
   }
 
   // =========================================================================
@@ -179,7 +180,8 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
     // When/Then
     assertThatThrownBy(() -> categoryService.updateCategory(999999L, "이름", "설명"))
         .isInstanceOf(CategoryNotFoundException.class)
-        .hasMessageContaining("999999");
+        // WD-240: 영어 「Category not found: N」 대신 한국어·번호 없는 문구
+        .hasMessage("카테고리를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
   }
 
   // =========================================================================
@@ -208,7 +210,8 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
     // When/Then
     assertThatThrownBy(() -> categoryService.deleteCategory(999999L))
         .isInstanceOf(CategoryNotFoundException.class)
-        .hasMessageContaining("999999");
+        // WD-240: 영어 「Category not found: N」 대신 한국어·번호 없는 문구
+        .hasMessage("카테고리를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
   }
 
   /**

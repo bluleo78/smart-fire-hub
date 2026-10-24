@@ -113,9 +113,7 @@ public class SearchIndexSettingsService {
    */
   static DatasetResponse requireTableDataset(DatasetRepository datasetRepository, long datasetId) {
     DatasetResponse d =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     if (!"TABLE".equals(d.storageType())) {
       throw new IllegalArgumentException("행 검색은 TABLE 데이터셋만 지원합니다");
     }

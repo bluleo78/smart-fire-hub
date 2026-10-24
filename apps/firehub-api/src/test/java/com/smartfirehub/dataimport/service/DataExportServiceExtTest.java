@@ -13,6 +13,7 @@ import com.smartfirehub.dataimport.dto.ExportResult;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetResponse;
+import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
@@ -260,7 +261,7 @@ class DataExportServiceExtTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> dataExportService.estimateExport(99999L, request))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Dataset not found");
+        .hasMessage(DatasetNotFoundException.MESSAGE);
   }
 
   // -----------------------------------------------------------------------
@@ -276,7 +277,7 @@ class DataExportServiceExtTest extends IntegrationTestBase {
                 dataExportService.exportDataset(
                     99999L, request, userId, "user", "127.0.0.1", "agent"))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Dataset not found");
+        .hasMessage(DatasetNotFoundException.MESSAGE);
   }
 
   // -----------------------------------------------------------------------

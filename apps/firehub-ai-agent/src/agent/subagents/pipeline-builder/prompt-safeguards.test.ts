@@ -40,7 +40,7 @@ describe('pipeline-builder prompt safeguards (#242)', () => {
     const rules = readPrompt('rules.md');
     expect(rules).toContain('데이터셋 ID 유효성');
     // 404 시 abort 키워드
-    expect(rules).toMatch(/404|Dataset not found/);
+    expect(rules).toMatch(/404|데이터셋을 찾을 수 없습니다/);
     // abort/중단 표현
     expect(rules).toMatch(/abort|중단/);
   });
@@ -86,7 +86,7 @@ describe('pipeline-builder prompt safeguards (#242)', () => {
   it('agent.md Phase 1 DISCOVER에 404 abort 지침이 있어야 한다', () => {
     const agent = readPrompt('agent.md');
     expect(agent).toContain('Phase 1');
-    expect(agent).toMatch(/404|Dataset not found/);
+    expect(agent).toMatch(/404|데이터셋을 찾을 수 없습니다/);
     // placeholder/더미 SQL 우회 금지 언급
     expect(agent.toLowerCase()).toContain('placeholder');
   });

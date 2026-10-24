@@ -13,6 +13,7 @@ import com.smartfirehub.dataimport.service.export.ExportWriter;
 import com.smartfirehub.dataimport.service.export.GeoJsonExportWriter;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetResponse;
+import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
@@ -65,7 +66,7 @@ public class DataExportService {
     DatasetResponse dataset =
         datasetRepository
             .findById(datasetId)
-            .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+            .orElseThrow(() -> new IllegalArgumentException(DatasetNotFoundException.MESSAGE));
 
     List<DatasetColumnResponse> allColumns = columnRepository.findByDatasetId(datasetId);
     List<DatasetColumnResponse> selectedColumns = resolveColumns(allColumns, request);
@@ -105,7 +106,7 @@ public class DataExportService {
     DatasetResponse dataset =
         datasetRepository
             .findById(datasetId)
-            .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+            .orElseThrow(() -> new IllegalArgumentException(DatasetNotFoundException.MESSAGE));
 
     List<DatasetColumnResponse> allColumns = columnRepository.findByDatasetId(datasetId);
     List<DatasetColumnResponse> selectedColumns = resolveColumns(allColumns, request);

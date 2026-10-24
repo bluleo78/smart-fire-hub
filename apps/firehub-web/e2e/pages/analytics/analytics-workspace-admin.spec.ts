@@ -220,7 +220,7 @@ test.describe('분석 자산 「워크스페이스 전체」 보기 (WD-199)', (
       page,
       'GET',
       '/api/v1/analytics/admin/charts/12/delete-impact',
-      { status: 404, error: 'Not Found', message: '차트를 찾을 수 없습니다: 12' },
+      { status: 404, error: 'Not Found', message: '차트를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.' },
       { status: 404 },
     );
 

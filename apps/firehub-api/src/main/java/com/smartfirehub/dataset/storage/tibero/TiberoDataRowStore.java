@@ -710,7 +710,7 @@ public class TiberoDataRowStore implements DataRowStore {
               }
             });
     if (affected == 0) {
-      throw new RowNotFoundException("Row not found: " + rowId);
+      throw new RowNotFoundException();
     }
   }
 
@@ -731,7 +731,7 @@ public class TiberoDataRowStore implements DataRowStore {
               }
             });
     if (row == null) {
-      throw new RowNotFoundException("Row not found: " + rowId);
+      throw new RowNotFoundException();
     }
     return row;
   }

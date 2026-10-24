@@ -107,11 +107,11 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
     Clearance c = clearanceResolver.resolve(uid);
     assertThatThrownBy(() -> guard.requireView(c, sensitive))
         .isInstanceOf(DatasetNotFoundException.class)
-        .hasMessage("Dataset not found: " + sensitive);
+        .hasMessage(DatasetNotFoundException.MESSAGE);
     long missing = 9_000_000_000L;
     assertThatThrownBy(() -> guard.requireView(c, missing))
         .isInstanceOf(DatasetNotFoundException.class)
-        .hasMessage("Dataset not found: " + missing);
+        .hasMessage(DatasetNotFoundException.MESSAGE);
   }
 
   @Test
@@ -306,7 +306,7 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
                 guard.requireViewThenAiForDatasets(
                     lowC, List.of(ds), new AiCall(ProviderHosting.SELF_HOSTED, false)))
         .isInstanceOf(DatasetNotFoundException.class)
-        .hasMessage("Dataset not found: " + ds);
+        .hasMessage(DatasetNotFoundException.MESSAGE);
     long high = user("기밀", false);
     Clearance highC = clearanceResolver.resolve(high);
     assertThatThrownBy(

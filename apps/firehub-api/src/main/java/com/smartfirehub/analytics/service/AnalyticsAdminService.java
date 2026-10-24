@@ -129,7 +129,7 @@ public class AnalyticsAdminService {
   private WorkspaceItemRow requireWorkspaceItem(AnalyticsAssetKind kind, Long id, long tenantId) {
     return workspaceRepository
         .findWorkspaceRow(kind, id, tenantId)
-        .orElseThrow(() -> kind.notFound(id));
+        .orElseThrow(() -> kind.notFound());
   }
 
   /**
