@@ -13,6 +13,7 @@ import { createColumn, createDataset, createDatasetDetail } from '../../factorie
 import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 const EMPTY_ROW = '비어 있는 매핑 행이 있습니다 — 채우거나 삭제하세요';
 const TARGET_REQUIRED = '대상 컬럼 이름을 입력하세요';
@@ -104,6 +105,11 @@ async function openExistingApiStep(page: Page, fieldMappings: Array<Record<strin
 }
 
 test.describe('스텝 출력 컬럼 저장 검증 (WD-154)', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test('빈 매핑 행은 저장을 막고 그 행 아래에 안내한다 — 행을 지우면 저장된다', async ({
     authenticatedPage: page,
   }) => {

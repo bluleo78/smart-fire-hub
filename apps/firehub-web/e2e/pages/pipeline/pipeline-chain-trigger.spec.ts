@@ -13,6 +13,7 @@ import type { Page } from '@playwright/test';
 import { createPipelineDetail, createPipelines, createTrigger } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /** 서버 목록 조회 상한 — PipelineController 의 @Max(200) 과 같게 둔다. */
 const SERVER_MAX_SIZE = 200;
@@ -70,6 +71,11 @@ async function openChainForm(page: Page) {
 }
 
 test.describe('파이프라인 연쇄 트리거 — 선행 파이프라인 목록 (#737)', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test('두 번째 페이지에만 있는 파이프라인을 선행으로 골라 생성 payload 로 전달된다', async ({
     authenticatedPage: page,
   }) => {
@@ -152,6 +158,11 @@ test.describe('파이프라인 연쇄 트리거 — 선행 파이프라인 목�
  * (다 받은) 선행 후보 목록에 id 가 없다는 사실로 이유를 드러내고 켜기·저장을 막는지 본다.
  */
 test.describe('파이프라인 연쇄 트리거 — 삭제된 선행 파이프라인 (WD-218)', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   /** 선행 id 999 는 목록(1~205)에 없다 = 삭제된 파이프라인 */
   const dangling = createTrigger({
     id: 9,

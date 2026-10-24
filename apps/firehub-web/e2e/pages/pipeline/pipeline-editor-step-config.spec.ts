@@ -7,8 +7,14 @@
 
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 test.describe('파이프라인 에디터 — 스텝 설정', () => {
+  // 추가·삭제·생성 경로·실행·수정 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 파이프라인 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   async function setupNewEditorMocks(page: import('@playwright/test').Page) {
     await mockApi(page, 'GET', '/api/v1/datasets', {
       content: [],

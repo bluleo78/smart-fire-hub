@@ -1,13 +1,18 @@
 import { createPipeline } from '../factories/pipeline.factory';
 import { mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
-import { setupPipelineEditorMocks, setupPipelineMocks } from '../fixtures/pipeline.fixture';
+import { grantPipelinePermissions, setupPipelineEditorMocks, setupPipelineMocks } from '../fixtures/pipeline.fixture';
 
 /**
  * 파이프라인 워크플로우 E2E 플로우 테스트
  * - 목록 → 에디터 이동, 실행 플로우 등 페이지 간 흐름을 통합 검증한다.
  */
 test.describe('파이프라인 워크플로우', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test('목록 페이지에서 행 클릭 시 에디터 페이지로 이동한다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {

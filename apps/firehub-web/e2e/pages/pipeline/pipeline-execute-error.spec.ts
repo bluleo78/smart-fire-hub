@@ -8,11 +8,16 @@
 import { createExecutionDetail, createStepExecution } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
+import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
 const INACTIVE_MESSAGE = '비활성 파이프라인은 실행할 수 없습니다. 파이프라인 편집에서 활성화한 뒤 다시 실행하세요.';
 
 test.describe('파이프라인 실행 실패 안내 (WD-110)', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test('비활성 파이프라인을 실행하면 서버 사유가 토스트에 보인다', async ({ authenticatedPage: page }) => {
     await setupPipelineEditorMocks(page, 1);
     const executeCapture = await mockApi(

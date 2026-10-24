@@ -16,6 +16,7 @@ import type { PipelineDetailResponse, UpdatePipelineRequest } from '@/types/pipe
 import { createExecution, createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /** sql1, py1 두 스텝을 가진 파이프라인 상세 — 설명은 모두 비어 있다 */
 function initialDetail(sqlDesc: string | null = null): PipelineDetailResponse {
@@ -53,6 +54,11 @@ const node = (page: Page, name: string) => page.locator('.react-flow__node', { h
 const stepDesc = (page: Page) => page.locator('#step-description');
 
 test.describe('파이프라인 상세 — 편집 취소 복원 기준 (#742)', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   /**
    * (a) 저장 → 수정 → 취소 → 다른 필드 변경 → 저장. 서버는 PUT 을 반영하는 상태 기반 모킹.
    * 두 번째 PUT 에 첫 저장 값이 그대로 실려야 한다(조용한 되돌림 방지).

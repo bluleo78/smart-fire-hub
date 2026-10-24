@@ -11,7 +11,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
-import { useCancelFullRebuild, useReserveFullRebuild } from '@/hooks/queries/usePipelines';
+import { useCancelFullRebuild, usePipelinePermissions, useReserveFullRebuild } from '@/hooks/queries/usePipelines';
 import { formatDateTime } from '@/lib/formatters';
 
 interface Props {
@@ -47,9 +47,11 @@ export function IncrementalProcessingSection({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const reserve = useReserveFullRebuild(pipelineId);
   const cancel = useCancelFullRebuild(pipelineId);
+  // 재생성 예약/취소는 서버가 pipeline:write 를 요구한다(PipelineController full-rebuild) — 권한이 없으면 버튼을 숨긴다(WD-219).
+  const { canWritePipeline } = usePipelinePermissions();
 
   // 저장 전(id 없음) 또는 편집기에 미저장 변경사항이 있으면 예약을 막는다.
-  // 예약은 "실행"처럼 조회 모드에서도 쓸 수 있는 운영 동작이라 readOnly 로는 막지 않는다.
+  // 예약은 "실행"처럼 조회 모드에서도 쓸 수 있는 운영 동작이라 readOnly 로는 막지 않는다 — 대신 권한(pipeline:write)으로 가린다.
   const disabled = stepId == null || isDirty;
 
   // fullRebuildMode(REBUILD_OUTPUT/READ_ALL) 별 문구를 이 한 곳에서만 결정한다.
@@ -106,32 +108,36 @@ export function IncrementalProcessingSection({
       ) : fullRebuildPending ? (
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs text-muted-foreground">{copy.pendingLabel}</p>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={disabled || cancel.isPending}
-            onClick={() => {
-              if (stepId != null) cancel.mutate(stepId);
-            }}
-          >
-            예약 취소
-          </Button>
+          {canWritePipeline && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={disabled || cancel.isPending}
+              onClick={() => {
+                if (stepId != null) cancel.mutate(stepId);
+              }}
+            >
+              예약 취소
+            </Button>
+          )}
         </div>
       ) : (
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs text-muted-foreground">
             마지막 처리 시점: {lastRunAt ? formatDateTime(lastRunAt) : '아직 실행 전'}
           </p>
-          <Button size="sm" variant="outline" disabled={disabled} onClick={() => setConfirmOpen(true)}>
-            {copy.reserveLabel}
-          </Button>
+          {canWritePipeline && (
+            <Button size="sm" variant="outline" disabled={disabled} onClick={() => setConfirmOpen(true)}>
+              {copy.reserveLabel}
+            </Button>
+          )}
         </div>
       )}
 
-      {stepId == null && (
+      {canWritePipeline && stepId == null && (
         <p className="text-xs text-muted-foreground">파이프라인을 저장한 뒤 사용할 수 있습니다.</p>
       )}
-      {stepId != null && isDirty && (
+      {canWritePipeline && stepId != null && isDirty && (
         <p className="text-xs text-muted-foreground">저장 후 예약할 수 있습니다.</p>
       )}
 

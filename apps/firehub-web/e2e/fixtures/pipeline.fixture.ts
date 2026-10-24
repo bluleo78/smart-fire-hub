@@ -16,6 +16,32 @@ import { createPageResponse, mockApi } from './api-mock';
  */
 
 /**
+ * 파이프라인 상세의 쓰기 진입점을 모두 쓰는 권한 묶음 (WD-219) — 서버 PipelineController·TriggerController 의 @RequirePermission 과 같다.
+ * 수정·증분 재생성 예약 pipeline:write, 실행·재실행·실행 취소 pipeline:execute, 트리거 생성·편집·켜고 끄기 trigger:write, 트리거 삭제 trigger:delete.
+ * 기본 인증 fixture 의 권한은 빈 목록이라(조회 전용과 같다) 실행·수정·트리거 편집 흐름을 검증하는 spec 은 이 권한을 명시적으로 준다.
+ */
+export const PIPELINE_ALL_PERMISSIONS = [
+  'pipeline:read',
+  'pipeline:write',
+  'pipeline:execute',
+  'pipeline:delete',
+  'trigger:read',
+  'trigger:write',
+  'trigger:delete',
+];
+
+/**
+ * 내 권한 코드(/auth/me/permissions)를 파이프라인 권한으로 덮어쓴다 (WD-219).
+ * 픽스처(setupPipelineEditorMocks) 안에 숨기지 않고 spec 이 직접 부르게 한 이유는 grantDatasetPermissions 와 같다 —
+ * 라우트는 나중에 등록한 것이 이기므로, 상세 모킹 헬퍼가 권한까지 덮으면 그보다 먼저 좁은 권한을 준 테스트가 조용히 넓은 권한으로 바뀐다.
+ * 합쳐지지 않고 덮어쓰므로 데이터셋 권한도 필요한 spec 은 합집합 배열을 한 번만 넘긴다.
+ * @param permissions - 줄 권한 코드(기본: PIPELINE_ALL_PERMISSIONS). 부분 권한 검증 시 일부만 넘긴다.
+ */
+export async function grantPipelinePermissions(page: Page, permissions: string[] = PIPELINE_ALL_PERMISSIONS) {
+  await mockApi(page, 'GET', '/api/v1/auth/me/permissions', permissions);
+}
+
+/**
  * 파이프라인 목록 페이지 API 모킹
  * - 파이프라인 페이지 목록을 모킹한다.
  * @param count - 목록에 포함할 파이프라인 수 (기본값: 5)

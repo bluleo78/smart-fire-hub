@@ -13,6 +13,7 @@ import type { TriggerEventResponse } from '@/types/pipeline';
 import { createPipelineDetail, createTrigger } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /** 파이프라인 상세 + 트리거 리스트 공통 모킹 */
 async function setupTriggerTabMocks(
@@ -44,6 +45,11 @@ async function gotoTriggerTab(page: Page) {
 }
 
 test.describe('파이프라인 트리거 탭', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test('스케줄 트리거 추가 — cron + concurrencyPolicy 가 POST payload 로 전송된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {

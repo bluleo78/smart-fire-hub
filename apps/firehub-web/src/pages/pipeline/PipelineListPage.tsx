@@ -22,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import { useDeletePipeline,usePipelines } from '../../hooks/queries/usePipelines';
+import { useDeletePipeline,usePipelinePermissions,usePipelines } from '../../hooks/queries/usePipelines';
 import { formatDateOnly, formatDateTimeMinute } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
 import { PipelineDeleteConfirmDialog } from './components/PipelineDeleteConfirmDialog';
@@ -36,6 +36,8 @@ export default function PipelineListPage() {
   // 조회 실패를 빈 목록으로 그리지 않는다 (WD-122) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
   const isForbidden = isError && isForbiddenError(error);
   const deletePipeline = useDeletePipeline();
+  // 추가(pipeline:write)·삭제(pipeline:delete) 버튼은 서버 권한과 같은 기준으로 숨긴다(WD-219) — 예전엔 조회 전용 사용자에게도 보여 눌러야 403 을 받았다.
+  const { canWritePipeline, canDeletePipeline } = usePipelinePermissions();
 
   /**
    * 클라이언트 사이드 정렬 상태 — 이슈 #80 1차 대응.
@@ -94,8 +96,8 @@ export default function PipelineListPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">파이프라인 관리</h1>
-        {/* 조회 권한이 없으면 만들어도 볼 수 없으니 추가 버튼을 숨긴다 (WD-122). */}
-        {!isForbidden && (
+        {/* 조회 권한이 없으면 만들어도 볼 수 없으니 추가 버튼을 숨긴다 (WD-122). 생성 권한(pipeline:write)이 없어도 숨긴다 (WD-219). */}
+        {!isForbidden && canWritePipeline && (
           <Button asChild>
             <Link to="/pipelines/new">
               <Plus className="h-4 w-4" />
@@ -174,17 +176,20 @@ export default function PipelineListPage() {
                     {formatDateOnly(pipeline.createdAt)}
                   </TableCell>
                   <TableCell>
-                    {/* WD-170: 함께 삭제될 자동 생성 임시 데이터셋 개수를 안내하는 파이프라인 전용 확인 창 */}
-                    <PipelineDeleteConfirmDialog
-                      pipelineId={pipeline.id}
-                      itemName={pipeline.name}
-                      onConfirm={() => handleDelete(pipeline.id, pipeline.name)}
-                      trigger={
-                        <Button variant="outline" size="sm" aria-label="삭제">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      }
-                    />
+                    {/* WD-170: 함께 삭제될 자동 생성 임시 데이터셋 개수를 안내하는 파이프라인 전용 확인 창.
+                        삭제 권한(pipeline:delete)이 없으면 버튼을 그리지 않는다(WD-219) — 열 자체는 두어 표 모양을 유지한다. */}
+                    {canDeletePipeline && (
+                      <PipelineDeleteConfirmDialog
+                        pipelineId={pipeline.id}
+                        itemName={pipeline.name}
+                        onConfirm={() => handleDelete(pipeline.id, pipeline.name)}
+                        trigger={
+                          <Button variant="outline" size="sm" aria-label="삭제">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        }
+                      />
+                    )}
                   </TableCell>
                 </TableRow>
               ))

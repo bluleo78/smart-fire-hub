@@ -9,8 +9,14 @@
 import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 test.describe('파이프라인 스텝 편집기 — 스텝 참조 삽입 후 커서 위치 (#743)', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test('참조 버튼으로 {{#1}} 을 넣고 이어서 입력하면 글자가 참조 뒤에 붙는다', async ({
     authenticatedPage: page,
   }) => {

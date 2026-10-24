@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import { createDataset } from "../../factories/dataset.factory";
 import { mockApi } from "../../fixtures/api-mock";
 import { expect, test } from "../../fixtures/auth.fixture";
+import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /**
  * 파이프라인 스텝 출력 컬럼명 길이 상한 E2E (WD-95)
@@ -53,6 +54,11 @@ async function openNewStep(
 }
 
 test.describe("파이프라인 출력 컬럼명 길이 상한 (WD-95)", () => {
+  // 추가·삭제·생성 경로·실행·수정 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 파이프라인 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test("Python 출력 컬럼명 64자는 인라인 오류, 63자는 오류 없음", async ({
     authenticatedPage: page,
   }) => {

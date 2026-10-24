@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { usePipelinePermissions } from '@/hooks/queries/usePipelines';
 
 import type { EditorAction,PipelineEditorState } from '../hooks/usePipelineEditor';
 import type { ExecutionCancelState } from '../utils/execution-cancel';
@@ -64,6 +65,9 @@ export function EditorHeader({
   pipelineId,
 }: EditorHeaderProps) {
   const [executeDialogOpen, setExecuteDialogOpen] = useState(false);
+  // 권한이 없으면 실행·재실행·실행 취소·수정 버튼을 숨긴다(WD-219) — 예전엔 조회 전용 사용자에게도 보여 눌러야 403 을 받았다.
+  // 데이터셋 상세(WD-139)·API 연결 목록과 같은 숨김 방식. 서버 근거는 usePipelinePermissions 주석 참고.
+  const { canExecutePipeline, canWritePipeline } = usePipelinePermissions();
 
   function handleExecuteClick() {
     if (state.isDirty) {
@@ -126,7 +130,7 @@ export function EditorHeader({
         재실행 버튼 — 실행 상세 모드에서 종료된 실행(FAILED/COMPLETED/CANCELLED)일 때만 표시.
         클릭 시 같은 파이프라인을 동일 입력으로 다시 실행하고, 새 실행 ID로 라우팅한다 (이슈 #84).
       */}
-      {pipelineId !== null && isExecutionMode && canRerun && (
+      {pipelineId !== null && isExecutionMode && canRerun && canExecutePipeline && (
         <Button
           variant="outline"
           disabled={isExecuting}
@@ -143,7 +147,7 @@ export function EditorHeader({
         (재실행은 종료된 실행에만 보이므로 둘이 동시에 보이지 않는다). 취소 요청이 이미 기록됐으면 실행기가 멈출 때까지
         「취소 요청됨」으로 비활성 표시해 같은 요청을 다시 보내지 않게 한다.
       */}
-      {pipelineId !== null && isExecutionMode && cancelState !== 'hidden' && (
+      {pipelineId !== null && isExecutionMode && cancelState !== 'hidden' && canExecutePipeline && (
         <Button
           variant="outline"
           disabled={cancelState === 'requested' || isCancelling}
@@ -154,8 +158,8 @@ export function EditorHeader({
         </Button>
       )}
 
-      {/* Execute button — 조회/편집 모두에서 표시 (실행 상세에서는 숨김) */}
-      {pipelineId !== null && !isExecutionMode && (
+      {/* Execute button — 조회/편집 모두에서 표시 (실행 상세에서는 숨김). pipeline:execute 가 없으면 숨김(WD-219) */}
+      {pipelineId !== null && !isExecutionMode && canExecutePipeline && (
         <>
           {state.isDirty ? (
             <AlertDialog open={executeDialogOpen} onOpenChange={setExecuteDialogOpen}>
@@ -197,8 +201,8 @@ export function EditorHeader({
         </>
       )}
 
-      {/* 수정 버튼 — 조회 모드에서만 표시 (실행 상세에서는 숨김) */}
-      {!isEditing && !isExecutionMode && pipelineId !== null && (
+      {/* 수정 버튼 — 조회 모드에서만 표시 (실행 상세에서는 숨김). pipeline:write 가 없으면 숨김(WD-219) */}
+      {!isEditing && !isExecutionMode && pipelineId !== null && canWritePipeline && (
         <Button variant="outline" onClick={onEdit}>
           <Pencil className="h-4 w-4" />
           수정
