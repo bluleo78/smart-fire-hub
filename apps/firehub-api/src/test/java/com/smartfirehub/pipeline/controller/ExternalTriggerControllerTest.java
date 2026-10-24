@@ -176,6 +176,74 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
         .andExpect(jsonPath("$.message").value("Invalid token"));
   }
 
+  /**
+   * 회귀 테스트(WD-243): trigger:write 사용자가 남의 API 트리거 수정 config 에 자기 토큰의 해시를 넣어도 저장되지 않는다. 공격자 토큰은 401,
+   * 원래 토큰은 계속 실행된다. 예전에는 해시가 그대로 바뀌어 공격자 토큰이 생성자 신원으로 실행됐고 원래 토큰은 401 이었다.
+   */
+  @Test
+  void apiTrigger_updateWithForgedTokenHash_attackerTokenUnauthorized_originalStillWorks()
+      throws Exception {
+    TriggerResponse trigger =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest("API Forged", TriggerType.API, null, Map.of()),
+            testUserId);
+    String rawToken = (String) trigger.config().get("rawToken");
+    String attackerToken = "attacker-token-" + UUID.randomUUID();
+    String attackerHash =
+        java.util.Base64.getEncoder()
+            .encodeToString(
+                java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(attackerToken.getBytes(StandardCharsets.UTF_8)));
+
+    triggerService.updateTrigger(
+        pipelineId,
+        trigger.id(),
+        new UpdateTriggerRequest(
+            "API Forged", null, null, Map.of("allowedIps", List.of(), "tokenHash", attackerHash)),
+        testUserId);
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + attackerToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+        .andExpect(status().isUnauthorized());
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.triggerId").value(trigger.id().intValue()));
+  }
+
+  /** 회귀 테스트(WD-243): config 에 allowedIps 만 보내 저장해도 토큰 해시가 지워지지 않아 원래 토큰이 계속 동작한다. */
+  @Test
+  void apiTrigger_updateConfigOnlyAllowedIps_originalTokenStillWorks() throws Exception {
+    TriggerResponse trigger =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest("API Config Only", TriggerType.API, null, Map.of()),
+            testUserId);
+    String rawToken = (String) trigger.config().get("rawToken");
+
+    triggerService.updateTrigger(
+        pipelineId,
+        trigger.id(),
+        new UpdateTriggerRequest(
+            "API Config Only", null, null, Map.of("allowedIps", List.of("127.0.0.1"))),
+        testUserId);
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.triggerId").value(trigger.id().intValue()));
+  }
+
   @Test
   void webhookTrigger_validWebhookId_triggersExecution() throws Exception {
     TriggerResponse trigger =

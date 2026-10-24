@@ -88,7 +88,8 @@ class TriggerServiceTest extends IntegrationTestBase {
     assertThat(response.id()).isNotNull();
     assertThat(response.triggerType()).isEqualTo("API");
     assertThat(response.config()).containsKey("rawToken");
-    assertThat(response.config()).containsKey("tokenHash");
+    // 토큰 해시는 서버 소유 키라 생성 응답에도 싣지 않는다(WD-243) — 원본 토큰만 한 번 보인다.
+    assertThat(response.config()).doesNotContainKey("tokenHash");
     assertThat(response.config().get("rawToken")).isNotNull();
   }
 

@@ -201,10 +201,13 @@ public class TriggerService {
       case API -> {
         // allowedIps 형식 검증 (IP 또는 CIDR만 허용)
         validateAllowedIps(processedConfig);
+        // 서버 소유 키는 클라이언트가 넣지 못한다(WD-243) — 원본 토큰 표시값이 DB 에 남거나 남의 해시가 심기지 않게 먼저 버린다.
+        processedConfig.remove(API_RAW_TOKEN);
+        processedConfig.remove(API_TOKEN_HASH);
         // Generate API token
         rawApiToken = generateSecureToken();
         String tokenHash = sha256Hash(rawApiToken);
-        processedConfig.put("tokenHash", tokenHash);
+        processedConfig.put(API_TOKEN_HASH, tokenHash);
       }
       case PIPELINE_CHAIN -> {
         Long upstreamPipelineId = chainUpstreamOf(processedConfig);
@@ -276,7 +279,7 @@ public class TriggerService {
     // If API trigger, return the raw token in a modified response (one-time only)
     if (rawApiToken != null) {
       Map<String, Object> configWithToken = new HashMap<>(response.config());
-      configWithToken.put("rawToken", rawApiToken);
+      configWithToken.put(API_RAW_TOKEN, rawApiToken);
       response =
           new TriggerResponse(
               response.id(),
@@ -365,17 +368,18 @@ public class TriggerService {
       validateScheduleConfig(new HashMap<>(existing.config()));
     }
 
-    // WEBHOOK: config 는 통째로 바뀌므로(repository.update) 서버 소유 키를 DB 값으로 되살린다(WD-220). 응답에는 암호문이 없어서,
-    // 웹 편집 창이 받은 config 를 그대로 되돌려 보내면 시크릿이 지워지고 서명 없는 호출을 모두 받아들이게 된다. 클라이언트가 보낸
-    // 암호문·웹훅 id 는 무시한다(다른 시크릿 심기·다른 웹훅 주소 가로채기 방지). 수정 경로에는 시크릿 재설정 기능이 없으므로(웹도 수정 모드에서
-    // 입력을 막는다) 평문 secret 도 버린다 — 예전에는 평문이 그대로 저장됐다.
-    if ("WEBHOOK".equals(existing.triggerType()) && request.config() != null) {
+    // WEBHOOK·API: config 는 통째로 바뀌므로(repository.update) 서버 소유 키를 DB 값으로 되살린다(WD-220·WD-243).
+    // 응답에는 이 키가 없어서, 웹 편집 창이 받은 config 를 그대로 되돌려 보내면 웹훅 시크릿·API 토큰 해시가 지워진다(시크릿 없는 웹훅은 서명 없는 호출을
+    // 모두 받고, 해시 없는 API 트리거는 토큰이 영구 폐기된다). 클라이언트가 보낸 값도 무시한다 — trigger:write 만 있는 사용자가 남의 API
+    // 트리거에 자기 토큰 해시를 넣어 생성자 신원으로 실행하거나, 다른 시크릿을 심거나, 다른 웹훅 주소를 가로채지 못하게 한다. 수정 경로에는
+    // 시크릿·토큰 재발급 기능이 없으므로 평문 secret·rawToken 도 버린다.
+    if (SERVER_OWNED_KEYS.containsKey(existing.triggerType()) && request.config() != null) {
       request =
           new UpdateTriggerRequest(
               request.name(),
               request.isEnabled(),
               request.description(),
-              withServerOwnedWebhookKeys(request.config(), existing.config()));
+              withServerOwnedKeys(existing.triggerType(), request.config(), existing.config()));
     }
 
     triggerRepository.update(triggerId, request, userId);
@@ -600,23 +604,53 @@ public class TriggerService {
   /** 웹훅 주소를 이루는 서버 발급 id. */
   private static final String WEBHOOK_ID = "webhookId";
 
+  /** API 트리거 config 의 토큰 해시 키 — 외부 호출 토큰을 찾는 기준. 응답에서 빼고, 수정 시 DB 값을 유지한다(WD-243). */
+  private static final String API_TOKEN_HASH = "tokenHash";
+
+  /** API 트리거 생성 응답에만 한 번 싣는 원본 토큰 키 — 저장하지 않는다(WD-243). */
+  private static final String API_RAW_TOKEN = "rawToken";
+
   /**
-   * 트리거 응답 공통 마스킹: 폴러 스냅숏 제거(WD-161) + 웹훅 시크릿 암호문 제거(WD-220).
+   * 유형별 서버 소유 config 키(WD-220·WD-243) — 클라이언트가 넣거나 바꾸지 못하고, 수정 시 저장된 값으로 되살린다. 저장된 값이 없으면 없는 채로
+   * 둔다(수정으로 시크릿·토큰 해시를 새로 심을 수 없다).
+   */
+  private static final Map<String, List<String>> SERVER_OWNED_KEYS =
+      Map.of(
+          "WEBHOOK", List.of(WEBHOOK_SECRET_ENCRYPTED, WEBHOOK_ID),
+          "API", List.of(API_TOKEN_HASH));
+
+  /** 유형별로 저장하지 않는 키 — 응답 전용 표시값(hasSecret·rawToken)과 평문 시크릿. 수정 요청에 와도 버린다. */
+  private static final Map<String, List<String>> NEVER_STORED_KEYS =
+      Map.of(
+          "WEBHOOK", List.of(WEBHOOK_HAS_SECRET, WEBHOOK_SECRET_PLAIN),
+          "API", List.of(API_RAW_TOKEN));
+
+  /**
+   * 트리거 응답 공통 마스킹: 폴러 스냅숏 제거(WD-161) + 웹훅 시크릿 암호문 제거(WD-220) + API 토큰 해시 제거(WD-243).
    *
    * <p>웹훅 암호문은 예전 기본 키(공개 소스)로 풀 수 있어 조회 권한만 있는 사용자가 서명을 위조할 수 있었다. 화면이 「시크릿 설정됨」을 보일 수 있게 대신
    * {@code hasSecret} 만 싣는다. 웹훅 id 는 주소 표시에 필요해 남긴다. 저장값은 그대로라 서명 검증은 바뀌지 않는다.
    */
   static TriggerResponse toPublic(TriggerResponse r) {
     TriggerResponse masked = withoutPollSnapshot(r);
-    if (!"WEBHOOK".equals(masked.triggerType())) {
+    boolean webhook = "WEBHOOK".equals(masked.triggerType());
+    boolean api = "API".equals(masked.triggerType());
+    if (!webhook && !api) {
       return masked;
     }
     Map<String, Object> config =
         new HashMap<>(masked.config() != null ? masked.config() : Map.of());
-    Object enc = config.remove(WEBHOOK_SECRET_ENCRYPTED);
-    // 옛 수정 경로가 평문 secret 을 저장했을 수 있다 — 응답에 싣지 않는다.
-    config.remove(WEBHOOK_SECRET_PLAIN);
-    config.put(WEBHOOK_HAS_SECRET, enc instanceof String s && !s.isEmpty());
+    if (webhook) {
+      Object enc = config.remove(WEBHOOK_SECRET_ENCRYPTED);
+      // 옛 수정 경로가 평문 secret 을 저장했을 수 있다 — 응답에 싣지 않는다.
+      config.remove(WEBHOOK_SECRET_PLAIN);
+      config.put(WEBHOOK_HAS_SECRET, enc instanceof String s && !s.isEmpty());
+    } else {
+      // API 토큰 해시는 조회 권한만 있는 사용자에게 보일 이유가 없다(WD-243) — 화면은 토큰을 다시 보여 주지 않고, 수정 시 서버가
+      // 저장값을 되살린다. 옛 생성 경로가 클라이언트가 보낸 rawToken 을 저장했을 수 있어 함께 뺀다(원본 토큰은 생성 응답에만 따로 싣는다).
+      config.remove(API_TOKEN_HASH);
+      config.remove(API_RAW_TOKEN);
+    }
     return new TriggerResponse(
         masked.id(),
         masked.pipelineId(),
@@ -634,22 +668,18 @@ public class TriggerService {
   }
 
   /**
-   * 웹훅 수정 요청 config 에서 서버 소유 키(암호문·웹훅 id·표시값·평문 시크릿)를 버리고 저장된 값으로 되살린 사본(WD-220). 저장된 값이 없으면 없는 채로
-   * 둔다 — 시크릿 없던 웹훅에 수정으로 시크릿을 심을 수 없다.
+   * 수정 요청 config 에서 유형별 서버 소유 키(웹훅 암호문·웹훅 id, API 토큰 해시)와 저장하지 않는 키(표시값·평문 시크릿·원본 토큰)를 버리고, 서버 소유
+   * 키는 저장된 값으로 되살린 사본(WD-220·WD-243). 저장된 값이 없으면 없는 채로 둔다 — 시크릿 없던 웹훅에 시크릿을, 해시 없는 API 트리거에 해시를
+   * 수정으로 심을 수 없다. 서버 소유 키가 없는 유형은 요청 사본을 그대로 돌려준다.
    */
-  static Map<String, Object> withServerOwnedWebhookKeys(
-      Map<String, Object> requested, Map<String, Object> stored) {
+  static Map<String, Object> withServerOwnedKeys(
+      String triggerType, Map<String, Object> requested, Map<String, Object> stored) {
     Map<String, Object> merged = new HashMap<>(requested);
-    merged.remove(WEBHOOK_SECRET_ENCRYPTED);
-    merged.remove(WEBHOOK_HAS_SECRET);
-    merged.remove(WEBHOOK_SECRET_PLAIN);
-    merged.remove(WEBHOOK_ID);
-    if (stored != null) {
-      if (stored.get(WEBHOOK_SECRET_ENCRYPTED) != null) {
-        merged.put(WEBHOOK_SECRET_ENCRYPTED, stored.get(WEBHOOK_SECRET_ENCRYPTED));
-      }
-      if (stored.get(WEBHOOK_ID) != null) {
-        merged.put(WEBHOOK_ID, stored.get(WEBHOOK_ID));
+    NEVER_STORED_KEYS.getOrDefault(triggerType, List.of()).forEach(merged::remove);
+    for (String key : SERVER_OWNED_KEYS.getOrDefault(triggerType, List.of())) {
+      merged.remove(key);
+      if (stored != null && stored.get(key) != null) {
+        merged.put(key, stored.get(key));
       }
     }
     return merged;
