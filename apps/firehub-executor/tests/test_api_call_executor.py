@@ -712,3 +712,273 @@ def test_timeout_real_socket_retried_with_cause():
         "API 호출이 1회 재시도 후에도 실패했습니다 — 마지막 오류: "
         "응답 시간 초과(0.3초) — 대상 서버 상태나 시간 제한을 확인하세요"
     )
+
+
+# ---------------------------------------------------------------------------
+# WD-212: 데이터 경로 규칙을 Java JsonResponseParser(jayway)와 맞춘다 — 매치 없음은 실패, [] 매치는 0행 정상
+# ---------------------------------------------------------------------------
+
+from app.services import api_call_errors as errors  # noqa: E402
+from app.services.api_call_executor import _extract_data  # noqa: E402
+
+NESTED = {
+    "response": {
+        "body": {
+            "items": [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}],
+            "empty": [],
+            "single": {"id": 3, "name": "C"},
+            "nul": None,
+        }
+    },
+    "list": [{"id": 1}, {"id": 2}],
+    "결과": {"목록": [{"id": 9}]},
+}
+
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        # 정의된 경로 — 목록이면 그 목록, 객체면 한 행 후보, [] 는 0행, null 은 0행(Java 도 같게 고침)
+        ("$.response.body.items", NESTED["response"]["body"]["items"]),
+        ("$.response.body.empty", []),
+        ("$.response.body.single", [{"id": 3, "name": "C"}]),
+        ("$.response.body.nul", []),
+        ("$.list[0]", [{"id": 1}]),
+        ("$.list[-1]", [{"id": 2}]),
+        # 정의되지 않은 경로 — 매치 전부(예전에는 첫 매치만 써 [*] 가 첫 원소 하나뿐이었다)
+        ("$.list[*]", [{"id": 1}, {"id": 2}]),
+        ("$.response.body.items[*]", NESTED["response"]["body"]["items"]),
+        ("$.response.body.empty[*]", []),
+        ("$.list[?(@.id > 1)]", [{"id": 2}]),
+        ("$.list[?(@.id > 9)]", []),
+        ("$..zz", []),
+        ("$.list[*].zz", []),
+        # 한글 키 점 표기 — jayway 는 읽는다(jsonpath_ng 렉서용으로 대괄호 표기로 바꿔 읽는다)
+        ("$.결과.목록", [{"id": 9}]),
+        ("$['결과']['목록']", [{"id": 9}]),
+    ],
+)
+def test_extract_data_matches_java_rules(path, expected):
+    assert _extract_data(NESTED, path) == expected
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "$.response.body.missing",   # 없는 키(Java PathNotFoundException)
+        "$.nope.items",              # 중간 키 없음
+        "$.list[5]",                 # 범위 밖 인덱스
+        "$.response.body.items.id",  # 배열에 필드 접근
+        "$.missing[*]",              # 와일드카드 앞 경로가 없음(jayway 도 실패)
+        "$.missing..id",
+    ],
+)
+def test_extract_data_not_found_raises_java_message(path):
+    with pytest.raises(ApiCallException) as ei:
+        _extract_data(NESTED, path)
+    assert str(ei.value) == f"응답에서 데이터 경로를 찾을 수 없습니다: {path}"
+
+
+# 두 라이브러리(jayway·jsonpath_ng)가 모두 문법 오류로 보는 경로만 둔다. 끝의 「[」(예: $.data[)는 jayway 가 받아들여 서로 다르다(알려진 차이).
+@pytest.mark.parametrize("path", ["$..", "$.a b", "$.list[?(@.id >", "$[\"data\""])
+def test_extract_data_syntax_error_raises_java_message(path):
+    with pytest.raises(ApiCallException) as ei:
+        _extract_data(NESTED, path)
+    assert str(ei.value) == errors.data_path_invalid_message(path)
+    assert "Parse error" not in str(ei.value) and "Unexpected" not in str(ei.value)
+
+
+def test_path_not_found_fails_step_and_rolls_back():
+    """수정 전에는 success=True·rows_loaded=0 이었다 — REPLACE 면 api 가 옛 데이터를 그대로 두고 「완료」로 기록했다."""
+    req = make_request(data_path="$.data.items")
+    conn, _ = make_conn()
+    with patch("app.services.api_call_executor.validate_url"), patch(
+        "app.services.api_call_executor._do_request", return_value={"result": {"rows": []}}
+    ), patch("app.services.api_call_executor.insert_batch") as mock_insert:
+        result = execute_api_call(req, conn)
+    assert result.success is False
+    assert result.error == "응답에서 데이터 경로를 찾을 수 없습니다: $.data.items"
+    mock_insert.assert_not_called()
+    conn.rollback.assert_called_once()
+    conn.commit.assert_not_called()
+
+
+def test_empty_array_match_is_zero_row_success():
+    req = make_request(data_path="$.data.items")
+    conn, _ = make_conn()
+    with patch("app.services.api_call_executor.validate_url"), patch(
+        "app.services.api_call_executor._do_request", return_value={"data": {"items": []}}
+    ):
+        result = execute_api_call(req, conn)
+    assert result.success is True and result.rows_loaded == 0 and result.error is None
+    conn.commit.assert_called_once()
+
+
+def test_single_object_match_loads_one_row():
+    req = make_request(data_path="$.data.item")
+    conn, _ = make_conn()
+    with patch("app.services.api_call_executor.validate_url"), patch(
+        "app.services.api_call_executor._do_request", return_value={"data": {"item": {"id": 7, "name": "Z"}}}
+    ), patch("app.services.api_call_executor.insert_batch") as mock_insert:
+        result = execute_api_call(req, conn)
+    assert result.success is True and result.rows_loaded == 1
+    assert mock_insert.call_args.args[2] == [{"id": 7, "name": "Z"}]
+
+
+def test_offset_pagination_path_missing_on_later_page_fails():
+    """둘째 페이지에서 경로가 사라지면 실패(롤백) — 첫 페이지 적재분도 커밋하지 않는다."""
+    req = make_request(
+        data_path="$.items",
+        pagination=PaginationConfig(type="OFFSET", page_size=2, offset_param="offset", limit_param="limit"),
+    )
+    conn, _ = make_conn()
+    pages = [{"items": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]}, {"error": "bad offset"}]
+    with patch("app.services.api_call_executor.validate_url"), patch(
+        "app.services.api_call_executor._do_request", side_effect=pages
+    ), patch("app.services.api_call_executor.insert_batch"):
+        result = execute_api_call(req, conn)
+    assert result.success is False
+    assert result.error == "응답에서 데이터 경로를 찾을 수 없습니다: $.items"
+    conn.commit.assert_not_called()
+
+
+def test_load_db_error_is_korean_and_raw_only_in_log(caplog):
+    """psycopg2 적재 오류 원문(내부 테이블·값)은 사용자 문구에 싣지 않는다 — 로그에만 남는다."""
+    import psycopg2
+
+    req = make_request()
+    conn, _ = make_conn()
+    raw = 'invalid input syntax for type bigint: "abc"\nCONTEXT: COPY ptmp_secret_table'
+    with patch("app.services.api_call_executor.validate_url"), patch(
+        "app.services.api_call_executor._do_request", return_value={"items": [{"id": 1, "name": "x"}]}
+    ), patch("app.services.api_call_executor.insert_batch", side_effect=psycopg2.DataError(raw)):
+        with caplog.at_level("ERROR"):
+            result = execute_api_call(req, conn)
+    assert result.success is False
+    assert result.error == errors.load_failed_message()
+    assert "ptmp_secret_table" not in result.error
+    assert "ptmp_secret_table" in caplog.text
+    conn.rollback.assert_called_once()
+
+
+def test_unexpected_error_is_korean_not_raw():
+    """HTTP 요청 밖(파싱·매핑 등)의 예기치 못한 예외는 원문 대신 한국어 일반 문구. 요청 중 예외는 기존 WD-150 분류
+    (describe_exception — Java describe 4단계와 같은 「API 호출 중 오류가 발생했습니다: …」)를 그대로 탄다."""
+    req = make_request()
+    conn2, _ = make_conn()
+    with patch("app.services.api_call_executor.validate_url"), patch(
+        "app.services.api_call_executor._do_request", return_value={"items": [{"id": 1, "name": "x"}]}
+    ), patch("app.services.api_call_executor._parse_and_map", side_effect=KeyError("internal_key")):
+        result2 = execute_api_call(req, conn2)
+    assert result2.success is False
+    assert result2.error == errors.unexpected_error_message()
+    assert "internal_key" not in result2.error
+
+
+# ---------------------------------------------------------------------------
+# WD-212 라이브 대체: 실제 FastAPI 엔드포인트(/execute/api-call)를 TestClient 로 호출 — httpx.Client 만 실제 모양 응답으로 바꾼다
+# ---------------------------------------------------------------------------
+
+def _json_response(payload: Any) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = 200
+    raw = json.dumps(payload, ensure_ascii=False).encode()
+    resp.content = raw
+    resp.headers = {"content-type": "application/json", "content-length": str(len(raw))}
+    resp.json.side_effect = lambda: json.loads(raw)
+    return resp
+
+
+def _post_api_call(test_client, headers, data_path, payload, insert_side_effect=None):
+    from unittest.mock import AsyncMock
+
+    conn_cm = MagicMock()
+    conn, _ = make_conn()
+    conn_cm.return_value.__enter__.return_value = conn
+    body = {
+        "tenantId": 7,
+        "url": "http://public.example.com/openapi/list?pageNo=1",
+        "method": "GET",
+        "data_path": data_path,
+        "field_mappings": [
+            {"source_field": "stationName", "target_column": "station_name", "data_type": "TEXT"},
+            {"source_field": "pm10Value", "target_column": "pm10", "data_type": "INTEGER"},
+        ],
+        "output_table": "ptmp_out",
+        "retry": {"max_retries": 0, "initial_backoff_ms": 0, "max_backoff_ms": 0},
+    }
+    with patch("app.routers.api_call.unsupported_error", new=AsyncMock(return_value=None)), patch(
+        "app.routers.api_call.get_connection", conn_cm
+    ), patch("app.services.api_call_executor.validate_url"), patch(
+        "app.services.api_call_executor.httpx.Client", return_value=_patched_client([_json_response(payload)])
+    ), patch("app.services.api_call_executor.insert_batch", side_effect=insert_side_effect) as mock_insert:
+        resp = test_client.post("/execute/api-call", json=body, headers=headers)
+    return resp, conn, mock_insert
+
+
+# 공공데이터 API 모양 응답(response.body.items.item)
+AIR_OK = {
+    "response": {
+        "header": {"resultCode": "00", "resultMsg": "NORMAL_CODE"},
+        "body": {"items": {"item": [{"stationName": "종로구", "pm10Value": "41"}]}, "totalCount": 1},
+    }
+}
+AIR_ERROR = {"response": {"header": {"resultCode": "30", "resultMsg": "SERVICE_KEY_IS_NOT_REGISTERED_ERROR"}}}
+AIR_EMPTY = {"response": {"header": {"resultCode": "00"}, "body": {"items": {"item": []}, "totalCount": 0}}}
+
+
+def test_route_path_ok(test_client, mock_auth_header):
+    resp, conn, mock_insert = _post_api_call(test_client, mock_auth_header, "$.response.body.items.item", AIR_OK)
+    data = resp.json()
+    assert resp.status_code == 200 and data["success"] is True and data["rows_loaded"] == 1
+    assert mock_insert.call_args.args[2] == [{"station_name": "종로구", "pm10": 41}]
+
+
+def test_route_path_missing_fails_with_java_message(test_client, mock_auth_header):
+    """인증키 오류 응답처럼 body 가 없는 응답 — 예전에는 success=true·0행이었다."""
+    resp, conn, mock_insert = _post_api_call(test_client, mock_auth_header, "$.response.body.items.item", AIR_ERROR)
+    data = resp.json()
+    assert resp.status_code == 200
+    assert data["success"] is False
+    assert data["error"] == "응답에서 데이터 경로를 찾을 수 없습니다: $.response.body.items.item"
+    mock_insert.assert_not_called()
+    conn.commit.assert_not_called()
+
+
+def test_route_empty_array_is_zero_row_success(test_client, mock_auth_header):
+    resp, _, mock_insert = _post_api_call(test_client, mock_auth_header, "$.response.body.items.item", AIR_EMPTY)
+    data = resp.json()
+    assert data["success"] is True and data["rows_loaded"] == 0 and data["error"] is None
+    mock_insert.assert_not_called()
+
+
+def test_route_single_object_is_one_row(test_client, mock_auth_header):
+    payload = {"response": {"body": {"items": {"item": {"stationName": "중구", "pm10Value": "12"}}}}}
+    resp, _, mock_insert = _post_api_call(test_client, mock_auth_header, "$.response.body.items.item", payload)
+    data = resp.json()
+    assert data["success"] is True and data["rows_loaded"] == 1
+    assert mock_insert.call_args.args[2] == [{"station_name": "중구", "pm10": 12}]
+
+
+def test_route_syntax_error(test_client, mock_auth_header):
+    resp, _, _ = _post_api_call(test_client, mock_auth_header, "$.response..", AIR_OK)
+    data = resp.json()
+    assert data["success"] is False
+    assert data["error"] == "데이터 경로(JSONPath) 형식이 올바르지 않습니다: $.response.. — 예: $.data.items"
+
+
+def test_route_load_error_is_korean(test_client, mock_auth_header):
+    import psycopg2
+
+    resp, conn, _ = _post_api_call(
+        test_client,
+        mock_auth_header,
+        "$.response.body.items.item",
+        AIR_OK,
+        insert_side_effect=psycopg2.errors.lookup("22P02")('invalid input syntax for type bigint: "x"'),
+    )
+    data = resp.json()
+    assert data["success"] is False
+    assert data["error"] == errors.load_failed_message()
+    assert "bigint" not in data["error"]
+    conn.rollback.assert_called_once()

@@ -110,6 +110,22 @@ public final class ApiCallErrorMessages {
     return "응답이 JSON 형식이 아닙니다 — 대상 API 의 응답 형식을 확인하세요";
   }
 
+  /**
+   * 응답에 데이터 경로가 없을 때(WD-212). Python 실행기 {@code api_call_errors.data_path_not_found_message} 와 같은
+   * 문장이다 — 실행기도 같은 상황을 「완료·0행」이 아니라 이 문구의 실패로 알린다.
+   */
+  public static String dataPathNotFound(String dataPath) {
+    return "응답에서 데이터 경로를 찾을 수 없습니다: " + dataPath;
+  }
+
+  /**
+   * 데이터 경로가 JSONPath 문법에 맞지 않을 때(WD-212). jayway 의 영어 원문은 싣지 않는다 — Python(jsonpath_ng) 원문과 달라 두 경로
+   * 문구가 갈리기 때문이다. Python 실행기 {@code api_call_errors.data_path_invalid_message} 와 같은 문장.
+   */
+  public static String dataPathInvalid(String dataPath) {
+    return "데이터 경로(JSONPath) 형식이 올바르지 않습니다: " + dataPath + " — 예: $.data.items";
+  }
+
   public static String interrupted() {
     return "재시도 대기 중 실행이 중단되었습니다";
   }

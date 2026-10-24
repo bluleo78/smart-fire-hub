@@ -10,7 +10,10 @@ from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
-from jsonpath_ng import parse as jsonpath_parse
+import psycopg2
+from jsonpath_ng import jsonpath as jp
+from jsonpath_ng.ext import parse as jsonpath_parse
+from jsonpath_ng.ext.filter import Filter as JsonPathFilter
 from app.schemas.requests import ApiCallExecuteRequest, FieldMapping
 from app.schemas.responses import ApiCallExecuteResponse
 from app.services import api_call_errors as errors
@@ -136,9 +139,19 @@ def execute_api_call(request: ApiCallExecuteRequest, conn) -> ApiCallExecuteResp
     except Exception as e:
         conn.rollback()
         elapsed_ms = int((time.monotonic() - start_time) * 1000)
-        logger.exception("Unexpected error in execute_api_call")
+        # 원문(psycopg2 오류의 내부 테이블·SQL·값, 파이썬 예외 문자열)은 로그에만 남기고 사용자에게는 한국어 문구를 보인다(WD-212).
+        # 예전에는 str(e) 원문이 그대로 스텝 오류가 됐다. 적재(DB) 오류와 그 밖의 오류를 나눠, 사용자가 매핑을 볼지 관리자에게 물을지
+        # 알 수 있게 한다. PG 데이터 오류(22xxx) 사유 문장은 이번엔 만들지 않는다(api 가 pg_error 를 읽는 WD-211 이 아직 기반에 없다).
+        if isinstance(e, psycopg2.Error):
+            logger.exception(
+                "API call load failed: table=%s pgcode=%s", request.output_table, getattr(e, "pgcode", None)
+            )
+            message = errors.load_failed_message()
+        else:
+            logger.exception("Unexpected error in execute_api_call")
+            message = errors.unexpected_error_message()
         return ApiCallExecuteResponse(
-            success=False, error=str(e), execution_time_ms=elapsed_ms
+            success=False, error=message, execution_time_ms=elapsed_ms
         )
 
 
@@ -383,25 +396,160 @@ def _parse_and_map(
 
 
 def _extract_data(response_body: Any, data_path: str) -> List[Any]:
-    """Use jsonpath_ng to extract list of items at data_path."""
+    """데이터 경로(JSONPath)로 응답에서 행 후보 목록을 꺼낸다 — Java ``JsonResponseParser.parseAndMap`` 과 같은 규칙(WD-212).
+
+    예전에는 매치가 없거나 파싱 오류가 나도 ``[]`` 를 돌려 「완료·0행」으로 끝났다. REPLACE 출력이면 옛 데이터가 그대로 남아
+    응답 모양이 바뀌어 갱신이 멈춘 것을 사용자가 알 수 없었고, 같은 설정을 Java 경로는 실패로 알렸다. 규칙(jayway 실측):
+
+    - 경로가 비었거나 ``$`` 면 응답 전체(목록이면 그대로, 아니면 한 행 후보).
+    - 문법 오류 → ``data_path_invalid_message`` 실패(Java ``InvalidPathException``).
+    - **정의된 경로**(루트·필드 하나·인덱스 하나로만 된 경로): 매치가 없으면 ``data_path_not_found_message`` 실패
+      (Java ``PathNotFoundException`` — 없는 키, 범위 밖 인덱스, 배열에 필드 접근 등). 값이 목록이면 그 목록(``[]`` 면 0행 정상),
+      객체·스칼라면 한 행 후보, JSON null 이면 0행(Java 도 같게 고쳤다).
+    - **정의되지 않은 경로**(``[*]``·``..``·슬라이스·필터·``*``·여러 필드/인덱스): 첫 비정의 구간 **앞까지**의 경로가 없을 때만
+      실패한다(jayway: ``$.missing[*]`` 실패, ``$..missing`` 은 빈 목록). 그 밖에는 매치된 값 전부를 돌려준다(없으면 0행 정상).
+      예전 구현은 첫 매치만 써 ``$.list[*]`` 가 첫 원소 하나만 적재했다 — Java 처럼 전부 적재한다.
+
+    문구는 Java ``ApiCallErrorMessages`` 와 글자 단위로 같아야 한다(양쪽 테스트가 같은 문자열을 단언한다).
+    """
     if not data_path or data_path.strip() in ("$", ""):
         if isinstance(response_body, list):
             return response_body
-        return [response_body]
+        return [] if response_body is None else [response_body]
 
     try:
-        expr = jsonpath_parse(data_path)
-        matches = expr.find(response_body)
+        expr = jsonpath_parse(_bracket_non_ascii_keys(data_path))
+    except Exception as e:
+        # 파서 원문(영어)은 로그에만 — 사용자 문구는 Java 와 같은 한국어.
+        logger.warning("jsonpath parse error for path '%s': %s", data_path, e)
+        raise ApiCallException(errors.data_path_invalid_message(data_path)) from e
+
+    segments = _flatten_child(expr)
+    definite_len = 0
+    for seg in segments:
+        if not _is_definite_segment(seg):
+            break
+        definite_len += 1
+
+    matches = _find_safe(expr, response_body, data_path)
+
+    if definite_len == len(segments):
+        # 정의된 경로 — 값 하나. 매치가 없으면 Java 처럼 실패.
         if not matches:
-            return []
-        # If the matched value is a list, return it; otherwise wrap
+            raise ApiCallException(errors.data_path_not_found_message(data_path))
         value = matches[0].value
+        if value is None:
+            return []
         if isinstance(value, list):
             return value
         return [value]
+
+    # 정의되지 않은 경로 — 첫 비정의 구간 앞까지가 응답에 있어야 한다(없으면 Java 처럼 실패).
+    if definite_len > 0 and not _is_root_only(segments[:definite_len]):
+        prefix = _join_child(segments[:definite_len])
+        if not _find_safe(prefix, response_body, data_path):
+            raise ApiCallException(errors.data_path_not_found_message(data_path))
+    return [m.value for m in matches]
+
+
+def _find_safe(expr: Any, response_body: Any, data_path: str) -> list:
+    """``find`` 중 예외(필터의 타입 비교 등)는 「매치 없음」으로 본다 — jayway 는 같은 경우 예외 없이 매치하지 않는다."""
+    try:
+        return expr.find(response_body)
     except Exception as e:
-        logger.warning("jsonpath parse/find error for path '%s': %s", data_path, e)
+        logger.warning("jsonpath find error for path '%s': %s", data_path, e)
         return []
+
+
+def _flatten_child(expr: Any) -> List[Any]:
+    """``Child(Child(a, b), c)`` 를 ``[a, b, c]`` 로 편다(왼쪽부터 평가 순서).
+
+    ``a..b``(Descendants)는 왼쪽(``a``)을 펴고 자기 자신을 비정의 구간 하나로 붙인다 — ``$.missing..id`` 의 앞부분
+    ``$.missing`` 이 없으면 Java 처럼 실패시키려고. 구간은 정의 여부 판정과 앞부분 재조립에만 쓰고, 매치는 원래 식으로 찾는다.
+    """
+    if isinstance(expr, jp.Child):
+        return _flatten_child(expr.left) + _flatten_child(expr.right)
+    if isinstance(expr, jp.Descendants):
+        return _flatten_child(expr.left) + [expr]
+    return [expr]
+
+
+def _join_child(segments: List[Any]) -> Any:
+    """``_flatten_child`` 의 반대 — 구간 목록을 다시 ``Child`` 식으로 묶는다."""
+    expr = segments[0]
+    for seg in segments[1:]:
+        expr = jp.Child(expr, seg)
+    return expr
+
+
+def _is_root_only(segments: List[Any]) -> bool:
+    return all(isinstance(s, (jp.Root, jp.This)) for s in segments)
+
+
+def _is_definite_segment(seg: Any) -> bool:
+    """jayway 의 「정의된 경로」 구간인지 — 루트, 필드 하나(``*`` 아님), 인덱스 하나. 모르는 노드는 비정의로 본다
+    (정상 경로를 새로 실패시키지 않으려고 — 비정의는 앞부분만 확인한다)."""
+    if isinstance(seg, (jp.Root, jp.This)):
+        return True
+    if isinstance(seg, JsonPathFilter):
+        return False
+    if isinstance(seg, jp.Fields):
+        return len(seg.fields) == 1 and seg.fields[0] != "*"
+    if type(seg) is jp.Index:
+        return len(seg.indices) == 1
+    return False
+
+
+def _bracket_non_ascii_keys(path: str) -> str:
+    """점 표기 키에 jsonpath_ng 가 못 읽는 글자(한글 등)가 있으면 대괄호 표기로 바꾼다 — ``$.결과.목록`` → ``$['결과']['목록']``.
+
+    jayway(Java)는 ``$.결과.목록`` 을 읽지만 jsonpath_ng 렉서는 영문·숫자·_·@·-·한자만 키로 받아, 그대로 두면 Java 에서 되는
+    경로가 실행기에서만 문법 오류가 된다. 대괄호·따옴표 안(필터 식·이미 대괄호인 키)은 건드리지 않는다.
+    """
+    out: List[str] = []
+    i, n = 0, len(path)
+    depth = 0
+    quote: Optional[str] = None
+    while i < n:
+        c = path[i]
+        if quote:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(path[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in ("'", '"'):
+            quote = c
+        elif c == "[":
+            depth += 1
+        elif c == "]":
+            depth = max(0, depth - 1)
+        elif c == "." and depth == 0:
+            # 「..」(하위 전체)는 점 두 개를 그대로 두고 그 뒤 키만 본다.
+            dots = 1
+            while i + dots < n and path[i + dots] == ".":
+                dots += 1
+            j = i + dots
+            while j < n and path[j] not in ".[":
+                j += 1
+            key = path[i + dots:j]
+            if key and any(ord(ch) > 127 for ch in key):
+                escaped = key.replace("\\", "\\\\").replace("'", "\\'")
+                # 「.키」는 「['키']」로, 「..키」는 「..['키']」로(하위 전체 검색은 유지).
+                out.append(".." if dots > 1 else "")
+                out.append(f"['{escaped}']")
+                i = j
+                continue
+            out.append(path[i:j])
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
 
 
 def _read_path_safe(response_body: Any, path: str) -> Any:
