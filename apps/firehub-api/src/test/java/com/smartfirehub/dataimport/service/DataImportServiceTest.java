@@ -787,7 +787,8 @@ class DataImportServiceTest extends IntegrationTestBase {
               return invocation.callRealMethod();
             })
         .when(validationService)
-        .validate(Mockito.anyList(), Mockito.anyList(), Mockito.anyInt());
+        // 임포트 잡은 열 날짜 순서 상태를 함께 넘기는 4인자 오버로드를 부른다(WD-246)
+        .validate(Mockito.anyList(), Mockito.anyList(), Mockito.anyInt(), Mockito.any());
 
     // When
     dataImportService.processImport(
