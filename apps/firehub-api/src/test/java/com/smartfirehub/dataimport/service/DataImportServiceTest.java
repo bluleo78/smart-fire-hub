@@ -15,6 +15,7 @@ import com.smartfirehub.dataimport.dto.ImportStartResponse;
 import com.smartfirehub.dataimport.dto.ImportValidateResponse;
 import com.smartfirehub.dataimport.dto.ParseOptions;
 import com.smartfirehub.dataimport.exception.ConcurrentImportException;
+import com.smartfirehub.dataimport.exception.FileUnreadableException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
@@ -195,6 +196,32 @@ class DataImportServiceTest extends IntegrationTestBase {
                     testDatasetId, file, null, testUserId, "Test User", null, null))
         .isInstanceOf(UnsupportedFileTypeException.class)
         .hasMessageContaining("File name is required");
+  }
+
+  /**
+   * 엑셀이 아닌 .xlsx·손상된 OOXML 은 미리보기·사전 검증 모두 한국어 안내 예외(→ 400)로 끝나야 한다(WD-204). 예전엔 미리보기가 빈 200 이 되거나
+   * POI 영문 메시지가 그대로 노출됐다.
+   */
+  @Test
+  void previewAndValidate_unreadableExcel_throwKoreanFileUnreadable() {
+    byte[][] bodies = {
+      "not an excel file".getBytes(StandardCharsets.UTF_8),
+      new byte[] {'P', 'K', 3, 4, 'g', 'a', 'r', 'b', 'a', 'g', 'e'}
+    };
+    for (byte[] body : bodies) {
+      MockMultipartFile file =
+          new MockMultipartFile(
+              "file",
+              "fake.xlsx",
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              body);
+      assertThatThrownBy(() -> dataImportService.previewImport(testDatasetId, file))
+          .isInstanceOf(FileUnreadableException.class)
+          .hasMessage(FileUnreadableException.EXCEL_UNREADABLE);
+      assertThatThrownBy(() -> dataImportService.validateImport(testDatasetId, file, null))
+          .isInstanceOf(FileUnreadableException.class)
+          .hasMessage(FileUnreadableException.EXCEL_UNREADABLE);
+    }
   }
 
   @Test

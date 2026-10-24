@@ -1,5 +1,6 @@
 package com.smartfirehub.dataimport.service;
 
+import com.smartfirehub.dataimport.exception.FileUnreadableException;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -10,9 +11,11 @@ import java.util.List;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
+import org.apache.poi.EncryptedDocumentException;
 import org.apache.poi.openxml4j.exceptions.OpenXML4JException;
 import org.apache.poi.openxml4j.opc.OPCPackage;
 import org.apache.poi.openxml4j.opc.PackageAccess;
+import org.apache.poi.poifs.crypt.Decryptor;
 import org.apache.poi.poifs.filesystem.FileMagic;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
 import org.apache.poi.ss.util.CellAddress;
@@ -27,6 +30,8 @@ import org.apache.poi.xssf.eventusermodel.XSSFSheetXMLHandler.SheetContentsHandl
 import org.apache.poi.xssf.model.StylesTable;
 import org.apache.poi.xssf.usermodel.XSSFComment;
 import org.apache.poi.xssf.usermodel.XSSFRelation;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 import org.xml.sax.XMLReader;
@@ -39,7 +44,24 @@ import org.xml.sax.XMLReader;
  */
 public final class ExcelStreamingParser {
 
+  private static final Logger log = LoggerFactory.getLogger(ExcelStreamingParser.class);
+
   private ExcelStreamingParser() {}
+
+  /**
+   * RowConsumer(호출자 콜백)가 던진 예외를 POI 파싱 예외와 구별하기 위한 표식 래퍼 (WD-204).
+   *
+   * <p>콜백 안에서는 임포트 잡의 fail-fast 검증 중단·DB 적재 오류 등 파일 형식과 무관한 예외가 나온다. 이를 「엑셀 파일을 읽을 수 없습니다」로 바꾸면 실패
+   * 사유가 거짓이 되므로, 콜백 예외만 이 래퍼로 감싸 두었다가 바깥에서 원래 예외로 되돌려 그대로 전파한다.
+   */
+  private static final class ConsumerFailure extends RuntimeException {
+    private final RuntimeException original;
+
+    ConsumerFailure(RuntimeException original) {
+      super(null, original, false, false);
+      this.original = original;
+    }
+  }
 
   /**
    * Early-exit 신호용 sentinel. RuntimeException으로 선언하여 SheetContentsHandler 콜백에서 checked exception 제약
@@ -79,12 +101,71 @@ public final class ExcelStreamingParser {
    * 기반 오픈에서 발생하던 대용량 파일 OOM을 근본적으로 회피한다.
    */
   public static void parse(File file, RowConsumer consumer) throws Exception {
-    FileMagic magic = FileMagic.valueOf(file);
-    switch (magic) {
-      case OOXML -> parseOoxml(file, consumer);
-      case OLE2 -> parseXls(file, consumer);
-      default -> throw new IOException("Unsupported Excel format: " + magic);
+    // 콜백 예외에 표식을 달아 파일 파싱 실패와 구별한다(ConsumerFailure 참고).
+    RowConsumer guarded =
+        (idx, cells) -> {
+          try {
+            return consumer.accept(idx, cells);
+          } catch (RuntimeException e) {
+            throw new ConsumerFailure(e);
+          }
+        };
+    try {
+      FileMagic magic = FileMagic.valueOf(file);
+      switch (magic) {
+        case OOXML -> parseOoxml(file, guarded);
+        case OLE2 -> parseXls(file, guarded);
+        default -> throw new IOException("Unsupported Excel format: " + magic);
+      }
+    } catch (Exception e) {
+      // 1) 콜백이 던진 예외는 원래 예외 그대로 돌려준다(SAX 가 감쌌을 수 있어 원인 체인을 따라간다).
+      ConsumerFailure consumerFailure = findConsumerFailure(e);
+      if (consumerFailure != null) {
+        throw consumerFailure.original;
+      }
+      // 2) 파일 자체가 사라진 경우(업로드 중단 등)는 형식 문제가 아니므로 기존 예외를 유지한다 —
+      //    임포트 잡의 사용자 메시지 변환이 「파일 업로드가 중간에 실패했습니다」로 따로 안내한다.
+      if (!file.exists()) {
+        throw e;
+      }
+      // 3) 그 밖의 모든 예외(알 수 없는 포맷·손상된 OOXML·빈 파일·구형 XLS·레코드 손상 등)는 파일을 읽지 못한 것이다.
+      //    POI 원문(영문·내부 구조 노출)은 로그에만 남기고 사용자에게는 한국어 안내만 보낸다.
+      log.warn("Excel parse failed: {}", e.toString(), e);
+      String userMessage =
+          hasCause(e, EncryptedDocumentException.class)
+              ? FileUnreadableException.EXCEL_ENCRYPTED
+              : FileUnreadableException.EXCEL_UNREADABLE;
+      throw new FileUnreadableException(userMessage, e);
     }
+  }
+
+  /** 원인 체인(SAXException 의 내장 예외 포함)에서 콜백 예외 표식을 찾는다. 없으면 null. */
+  private static ConsumerFailure findConsumerFailure(Throwable t) {
+    for (Throwable cur = t; cur != null; cur = nextCause(cur)) {
+      if (cur instanceof ConsumerFailure cf) {
+        return cf;
+      }
+    }
+    return null;
+  }
+
+  /** 원인 체인에 주어진 타입의 예외가 있는지 확인한다. */
+  private static boolean hasCause(Throwable t, Class<? extends Throwable> type) {
+    for (Throwable cur = t; cur != null; cur = nextCause(cur)) {
+      if (type.isInstance(cur)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** SAXException 은 getCause 대신 getException 에 원인을 담는 경우가 있어 둘 다 본다. 자기 참조 순환은 끊는다. */
+  private static Throwable nextCause(Throwable cur) {
+    Throwable next =
+        (cur instanceof SAXException sax && sax.getException() != null)
+            ? sax.getException()
+            : cur.getCause();
+    return next == cur ? null : next;
   }
 
   // ---------------------------------------------------------------------
@@ -242,6 +323,11 @@ public final class ExcelStreamingParser {
   private static void parseXls(File file, RowConsumer consumer) throws Exception {
     // readOnly=true — 파싱 전용이므로 파일 잠금/쓰기 권한이 필요 없다(읽기 전용 마운트에서도 안전).
     try (POIFSFileSystem fs = new POIFSFileSystem(file, true)) {
+      // 암호가 걸린 .xlsx 는 OLE2 컨테이너(EncryptedPackage) 안에 들어 있어 이 경로로 온다. HSSF 는 이를 「Workbook 항목 없음」으로만
+      // 실패시키므로, 사용자에게 「암호 해제」 안내를 줄 수 있도록 먼저 판별한다(WD-204).
+      if (fs.getRoot().hasEntryCaseInsensitive(Decryptor.DEFAULT_POIFS_ENTRY)) {
+        throw new EncryptedDocumentException("Encrypted OOXML package in OLE2 container");
+      }
       org.apache.poi.hssf.eventusermodel.HSSFEventFactory factory =
           new org.apache.poi.hssf.eventusermodel.HSSFEventFactory();
       org.apache.poi.hssf.eventusermodel.HSSFRequest request =

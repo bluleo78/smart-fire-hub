@@ -430,4 +430,31 @@ class ExcelStreamingParserTest {
     assertThat(rows.get(1)).containsExactly("alice", "30");
     assertThat(rows.get(2)).containsExactly("bob", "25");
   }
+
+  /** 콜백 예외 전파 확인용 표식 예외 — 파서가 이를 「파일을 읽을 수 없음」으로 바꾸면 안 된다(WD-204). */
+  private static final class ConsumerBoom extends RuntimeException {}
+
+  /**
+   * RowConsumer 가 던진 예외(임포트 잡의 fail-fast 검증 중단·DB 오류 등)는 파일 형식 오류로 바뀌지 않고 같은 인스턴스 그대로 전파돼야 한다
+   * (WD-204). XLSX(SAX 경로)·XLS(HSSF 이벤트 경로) 둘 다 확인한다.
+   */
+  @Test
+  void consumer_exception_propagates_unchanged_for_xlsx_and_xls(@TempDir File tempDir)
+      throws Exception {
+    for (byte[] data : List.of(buildXlsx(), buildXls())) {
+      File f = new File(tempDir, "boom-" + System.nanoTime() + ".bin");
+      try (FileOutputStream out = new FileOutputStream(f)) {
+        out.write(data);
+      }
+      ConsumerBoom boom = new ConsumerBoom();
+      assertThatThrownBy(
+              () ->
+                  ExcelStreamingParser.parse(
+                      f,
+                      (idx, cells) -> {
+                        throw boom;
+                      }))
+          .isSameAs(boom);
+    }
+  }
 }

@@ -1,9 +1,11 @@
 package com.smartfirehub.global.exception;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -18,6 +20,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -370,5 +374,57 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.status").value(400))
         .andExpect(jsonPath("$.error").value("Bad Request"))
         .andExpect(jsonPath("$.message").value(containsString("public.user")));
+  }
+
+  /**
+   * 커밋 전 응답의 IOException 은 빈 200 이 아니라 일반 예외와 같은 형식의 500 JSON 이어야 한다(WD-204). 예전엔 void 핸들러가 로그만 남겨
+   * 화면이 성공으로 오인했다. 원문 메시지는 노출하지 않는다.
+   */
+  @Test
+  void ioException_uncommitted_returns500Json_notEmpty200() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/io-error"))
+        .andExpect(status().isInternalServerError())
+        .andExpect(jsonPath("$.status").value(500))
+        .andExpect(jsonPath("$.message").value("예기치 않은 오류가 발생했습니다. 잠시 후 다시 시도하세요."))
+        .andExpect(content().string(not(containsString("Unsupported Excel format"))));
+  }
+
+  /** SSE 요청(Accept: text/event-stream)이라도 협상 실패 없이 JSON 500 이 나가야 한다. */
+  @Test
+  void ioException_uncommitted_withEventStreamAccept_stillReturns500Json() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/io-error").accept(MediaType.TEXT_EVENT_STREAM))
+        .andExpect(status().isInternalServerError())
+        .andExpect(jsonPath("$.status").value(500));
+  }
+
+  /** 클라이언트 연결 끊김(Broken pipe)은 기존처럼 본문 없이 조용히 끝낸다(bfd5c1fc 의도 유지). */
+  @Test
+  void ioException_clientDisconnected_staysSilent() throws Exception {
+    mockMvc.perform(get("/test/exception/io-broken-pipe")).andExpect(content().string(""));
+  }
+
+  /** 이미 커밋된(스트리밍 중) 응답에는 아무것도 쓰지 않는다 — 핸들러가 null(처리 완료)을 돌려준다. */
+  @Test
+  void ioException_committedResponse_returnsNull() {
+    GlobalExceptionHandler handler = new GlobalExceptionHandler();
+    MockHttpServletResponse response = new MockHttpServletResponse();
+    response.setCommitted(true);
+    assertThat(
+            handler.handleIOException(
+                new java.io.IOException("Unsupported"), new MockHttpServletRequest(), response))
+        .isNull();
+  }
+
+  /** 엑셀/CSV 를 읽지 못한 경우 400 + 한국어 안내, POI 원문은 본문에 없다(WD-204). */
+  @Test
+  void fileUnreadable_returns400_koreanWithoutParserText() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/file-unreadable"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400))
+        .andExpect(jsonPath("$.message").value("엑셀 파일을 읽을 수 없습니다. 파일이 손상되었거나 엑셀 형식이 아닙니다."))
+        .andExpect(content().string(not(containsString("OOXML"))));
   }
 }

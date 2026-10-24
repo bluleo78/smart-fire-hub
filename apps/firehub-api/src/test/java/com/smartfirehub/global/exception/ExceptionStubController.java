@@ -215,4 +215,25 @@ public class ExceptionStubController {
   public void methodArgumentNotValid(@RequestBody @Valid ValidatedBody body) {
     // validation failure is triggered by Spring before reaching here
   }
+
+  /** 커밋 전 응답에서 난 일반 IOException — 예전엔 빈 200 이 나갔다(WD-204). */
+  @GetMapping("/io-error")
+  public void ioError() throws java.io.IOException {
+    throw new java.io.IOException("Unsupported Excel format: UNKNOWN");
+  }
+
+  /** 클라이언트가 끊어진 경우의 IOException — 기존처럼 조용히 끝나야 한다(bfd5c1fc). */
+  @GetMapping("/io-broken-pipe")
+  public void ioBrokenPipe() throws java.io.IOException {
+    throw new java.io.IOException("Broken pipe");
+  }
+
+  /** 파서가 파일을 읽지 못한 경우 — 한국어 안내와 400(WD-204). */
+  @GetMapping("/file-unreadable")
+  public void fileUnreadable() {
+    throw new com.smartfirehub.dataimport.exception.FileUnreadableException(
+        com.smartfirehub.dataimport.exception.FileUnreadableException.EXCEL_UNREADABLE,
+        new IllegalArgumentException(
+            "No valid entries or contents found, this is not a valid OOXML (Office Open XML) file"));
+  }
 }

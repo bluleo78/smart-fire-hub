@@ -6,6 +6,7 @@ import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.dataimport.dto.*;
 import com.smartfirehub.dataimport.exception.ConcurrentImportException;
+import com.smartfirehub.dataimport.exception.FileUnreadableException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetResponse;
@@ -1117,6 +1118,14 @@ public class DataImportService {
   }
 
   private String toUserFriendlyMessage(Exception e) {
+    // 파서가 파일을 읽지 못한 경우(엑셀 아님·손상·암호·깨진 CSV)는 파서가 이미 사용자용 한국어 문구를 실어 두었다 — 그대로 쓴다(WD-204).
+    // REPLACE 경로는 트랜잭션 람다가 예외를 감쌀 수 있어 원인 체인까지 본다.
+    for (Throwable cur = e; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
+      if (cur instanceof FileUnreadableException unreadable) {
+        return unreadable.getMessage();
+      }
+    }
+
     // DB 단계 데이터 오류(SQLState 22xxx)는 원인 체인의 SQLState 로 먼저 판정한다 — 메시지 문자열 매칭(아래 "Connection" 등)은
     // 예외 메시지에 실린 SQL 문 텍스트에 걸릴 수 있어 순서상 앞에 둔다(WD-96).
     // 사유 문장은 행 검증이 빠뜨린 값(메타데이터와 물리 타입 불일치 등)이 INSERT 에서 실패한 경우에도 무엇을 고칠지 알려 준다.

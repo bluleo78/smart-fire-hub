@@ -447,6 +447,64 @@ test.describe('임포트 에러 처리 — useImportDialog 분기', () => {
     await expect(page.getByText('이미 진행 중인 임포트가 있습니다.')).toBeVisible({ timeout: 5000 });
   });
 
+  /**
+   * WD-204 — 엑셀이 아니거나 손상된 파일: 서버가 400 + 한국어 안내를 돌려주면 그 문구가 토스트로 보이고,
+   * 다이얼로그는 1단계(파일 선택 영역)에 머문다(빈 2단계로 넘어가지 않는다).
+   */
+  test('미리보기 400(읽을 수 없는 엑셀) — 서버 한국어 안내가 토스트로 보이고 1단계에 머문다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    const message = '엑셀 파일을 읽을 수 없습니다. 파일이 손상되었거나 엑셀 형식이 아닙니다.';
+    await mockApi(
+      page,
+      'POST',
+      `/api/v1/datasets/${DATASET_ID}/imports/preview`,
+      { status: 400, error: 'Bad Request', message, timestamp: '2024-01-01T00:00:00Z', path: `/api/v1/datasets/${DATASET_ID}/imports/preview` },
+      { status: 400 },
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+
+    const dialog = page.getByRole('dialog');
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 400),
+      dialog.locator('input[type="file"]').setInputFiles({
+        name: 'fake.xlsx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        buffer: Buffer.from('not an excel file'),
+      }),
+    ]);
+
+    await expect(page.getByText(message)).toBeVisible({ timeout: 5000 });
+    // 1단계 파일 선택 영역(선택한 파일 이름)이 그대로 보이고, 2단계(임포트 버튼)로 넘어가지 않았다
+    await expect(dialog.getByText(/fake\.xlsx/)).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '임포트' })).toHaveCount(0);
+  });
+
+  /** WD-204 — 서버가 성공 상태로 빈 본문을 돌려줘도 빈 2단계 대신 오류 안내를 보이고 1단계에 머문다(방어). */
+  test('미리보기 200 빈 본문 — 오류 토스트가 보이고 빈 2단계로 넘어가지 않는다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/imports/preview`,
+      (route) => route.fulfill({ status: 200, body: '' }),
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+
+    const dialog = page.getByRole('dialog');
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      dialog.locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+
+    await expect(page.getByText('파일 내용을 읽지 못했습니다. 파일을 확인한 뒤 다시 올려 주세요.')).toBeVisible({ timeout: 5000 });
+    await expect(dialog.getByText(/fire-incidents-sample\.csv/)).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '임포트' })).toHaveCount(0);
+  });
+
   test('검증 결과 errorRows > 0 — 경고 토스트가 표시된다', async ({ authenticatedPage: page }) => {
     await setupImportMocks(page);
     await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createPreviewResponse());
