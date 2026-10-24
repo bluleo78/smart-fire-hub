@@ -469,6 +469,10 @@ export class FireHubApiClient {
   listTriggers(pipelineId: number) {
     return this._triggers.listTriggers(pipelineId);
   }
+  /** 트리거 단건 조회 — update_trigger 의 이름 채움·config 합치기에 쓴다(WD-227). */
+  getTrigger(pipelineId: number, triggerId: number) {
+    return this._triggers.getTrigger(pipelineId, triggerId);
+  }
   createTrigger(
     pipelineId: number,
     data: {
