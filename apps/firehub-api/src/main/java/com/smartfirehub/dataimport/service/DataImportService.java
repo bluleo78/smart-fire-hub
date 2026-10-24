@@ -26,6 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
@@ -132,8 +133,11 @@ public class DataImportService {
 
       List<String> headers = fileParserService.parseHeaders(tempFile, fileType, parseOptions);
 
+      // 엑셀 오류 셀은 파서가 검증용 표식으로 넘긴다 — 미리보기에는 엑셀이 보여 주는 모양(#DIV/0!)으로 바꿔 보인다(WD-252).
       List<Map<String, String>> sampleRows =
-          fileParserService.parseSampleRows(tempFile, fileType, 5, parseOptions);
+          fileParserService.parseSampleRows(tempFile, fileType, 5, parseOptions).stream()
+              .map(DataImportService::toDisplayRow)
+              .toList();
 
       // partial 미리보기는 파일 끝이 잘려 있어 전체 행수를 셀 수 없다(위 Javadoc 참고).
       int totalRows = partial ? -1 : fileParserService.countRows(tempFile, fileType, parseOptions);
@@ -150,6 +154,13 @@ public class DataImportService {
       // 미리보기 완료 후 임시 파일 정리 — 누적 방지
       Files.deleteIfExists(tempFile);
     }
+  }
+
+  /** 미리보기 행의 엑셀 오류 셀 표식을 표시 문자열로 바꾼다. 순서·null 값은 그대로 둔다. */
+  private static Map<String, String> toDisplayRow(Map<String, String> row) {
+    Map<String, String> display = new LinkedHashMap<>();
+    row.forEach((k, v) -> display.put(k, LegacyExcelDataFormatter.toDisplay(v)));
+    return display;
   }
 
   // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,

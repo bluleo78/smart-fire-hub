@@ -11,6 +11,7 @@ import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.TimeZone;
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream;
 import org.apache.poi.openxml4j.opc.OPCPackage;
@@ -97,7 +98,7 @@ class ExcelStreamingParserTest {
   }
 
   @Test
-  void date_cell_serialized_as_iso_local_date_time() throws Exception {
+  void date_cell_serialized_as_date_text() throws Exception {
     byte[] data = buildXlsxWithDate();
     List<List<String>> rows = new ArrayList<>();
     ExcelStreamingParser.parse(
@@ -108,8 +109,8 @@ class ExcelStreamingParserTest {
         });
 
     assertThat(rows).hasSize(2);
-    // 시스템 타임존 의존 — 날짜 패턴만 검증
-    assertThat(rows.get(1).get(0)).matches("\\d{4}-\\d{2}-\\d{2}T.*");
+    // new Date(0L) 의 일련값은 만들 때의 시간대에 따라 달라 날짜 모양만 본다 — ISO 'T' 가 아니라 날짜 또는 "날짜 시각"(WD-252)
+    assertThat(rows.get(1).get(0)).matches("\\d{4}-\\d{2}-\\d{2}( \\d{2}:\\d{2}:\\d{2})?");
   }
 
   @Test
@@ -180,9 +181,9 @@ class ExcelStreamingParserTest {
     assertThat(rows.get(0)).containsExactly("name", "age");
   }
 
-  /** XLS 날짜 셀이 ISO LocalDateTime 형식 문자열로 직렬화되는지 확인한다. */
+  /** XLS 날짜 셀이 날짜 문자열로 직렬화되는지 확인한다. */
   @Test
-  void xls_date_cell_serialized_as_iso_local_date_time() throws Exception {
+  void xls_date_cell_serialized_as_date_text() throws Exception {
     byte[] data;
     try (org.apache.poi.hssf.usermodel.HSSFWorkbook wb =
             new org.apache.poi.hssf.usermodel.HSSFWorkbook();
@@ -207,9 +208,9 @@ class ExcelStreamingParserTest {
           rows.add(cells);
           return true;
         });
-    // 시스템 타임존 의존 — 날짜 패턴만 검증
+    // new Date(0L) 의 일련값은 만들 때의 시간대에 따라 달라 날짜 모양만 본다(WD-252)
     assertThat(rows).hasSize(2);
-    assertThat(rows.get(1).get(0)).matches("\\d{4}-\\d{2}-\\d{2}T.*");
+    assertThat(rows.get(1).get(0)).matches("\\d{4}-\\d{2}-\\d{2}( \\d{2}:\\d{2}:\\d{2})?");
   }
 
   /**
@@ -456,5 +457,198 @@ class ExcelStreamingParserTest {
                       }))
           .isSameAs(boom);
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // WD-252: 셀 값이 경고 없이 바뀌지 않는다
+  // ---------------------------------------------------------------------
+
+  /** 2025-01-21 의 엑셀 1900 체계 일련값. */
+  private static final double SERIAL_2025_01_21 = 45678d;
+
+  /**
+   * WD-252 재현 파일과 같은 셀 종류를 한 행에 담는다: 큰 수·작은 수·소수·부동소수 수식·오류 셀·오류 수식·"ERROR:" 글자 문자열·h:mm 시각·날짜·숨은
+   * 시각 날짜·날짜시각.
+   */
+  private static void fillCellTypes(Workbook wb, boolean evaluate) {
+    Sheet sheet = wb.createSheet("data");
+    CreationHelper helper = wb.getCreationHelper();
+    CellStyle time = wb.createCellStyle();
+    time.setDataFormat(helper.createDataFormat().getFormat("h:mm"));
+    CellStyle date = wb.createCellStyle();
+    date.setDataFormat(helper.createDataFormat().getFormat("yyyy-mm-dd"));
+    CellStyle dateTime = wb.createCellStyle();
+    dateTime.setDataFormat(helper.createDataFormat().getFormat("yyyy-mm-dd hh:mm"));
+
+    String[] headers = {
+      "big",
+      "neg",
+      "dec",
+      "tiny",
+      "f_dec",
+      "err",
+      "f_err",
+      "err_txt",
+      "time",
+      "d",
+      "d_hidden",
+      "ts",
+      "long"
+    };
+    Row h = sheet.createRow(0);
+    for (int i = 0; i < headers.length; i++) h.createCell(i).setCellValue(headers[i]);
+    Row r = sheet.createRow(1);
+    r.createCell(0).setCellValue(1e20);
+    r.createCell(1).setCellValue(-1e19);
+    r.createCell(2).setCellValue(12345678.5);
+    r.createCell(3).setCellValue(0.00001);
+    r.createCell(4).setCellFormula("0.1+0.2");
+    r.createCell(5).setCellErrorValue(org.apache.poi.ss.usermodel.FormulaError.DIV0.getCode());
+    r.createCell(6).setCellFormula("1/0");
+    r.createCell(7).setCellValue("ERROR:#DIV/0!");
+    var t = r.createCell(8);
+    t.setCellValue(0.5);
+    t.setCellStyle(time);
+    var d = r.createCell(9);
+    d.setCellValue(SERIAL_2025_01_21);
+    d.setCellStyle(date);
+    var dh = r.createCell(10);
+    dh.setCellValue(SERIAL_2025_01_21 + 0.25);
+    dh.setCellStyle(date);
+    var ts = r.createCell(11);
+    ts.setCellValue(SERIAL_2025_01_21 + 0.5);
+    ts.setCellStyle(dateTime);
+    r.createCell(12).setCellValue(1234567890123456d);
+    if (evaluate) {
+      helper.createFormulaEvaluator().evaluateAll();
+    }
+  }
+
+  private static List<List<String>> parseAll(byte[] data) throws Exception {
+    List<List<String>> rows = new ArrayList<>();
+    ExcelStreamingParser.parse(
+        new ByteArrayInputStream(data),
+        (idx, cells) -> {
+          rows.add(cells);
+          return true;
+        });
+    return rows;
+  }
+
+  private static byte[] write(Workbook wb) throws Exception {
+    try (wb;
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      wb.write(out);
+      return out.toByteArray();
+    }
+  }
+
+  private static void assertCellTypesRow(List<String> row) {
+    assertThat(row.get(0)).isEqualTo("100000000000000000000");
+    assertThat(row.get(1)).isEqualTo("-10000000000000000000");
+    assertThat(row.get(2)).isEqualTo("12345678.5");
+    assertThat(row.get(3)).isEqualTo("0.00001");
+    assertThat(row.get(4)).isEqualTo("0.3");
+    assertThat(LegacyExcelDataFormatter.errorCodeOf(row.get(5))).isEqualTo("#DIV/0!");
+    assertThat(LegacyExcelDataFormatter.errorCodeOf(row.get(6))).isEqualTo("#DIV/0!");
+    // 같은 글자를 입력한 문자열 셀은 오류 셀이 아니다
+    assertThat(row.get(7)).isEqualTo("ERROR:#DIV/0!");
+    assertThat(row.get(8)).isEqualTo("12:00:00");
+    assertThat(row.get(9)).isEqualTo("2025-01-21");
+    assertThat(row.get(10)).isEqualTo("2025-01-21 06:00:00");
+    assertThat(row.get(11)).isEqualTo("2025-01-21 12:00:00");
+    assertThat(row.get(12)).isEqualTo("1234567890123456");
+  }
+
+  @Test
+  void xlsx_cell_types_are_kept_as_excel_shows_them() throws Exception {
+    XSSFWorkbook wb = new XSSFWorkbook();
+    fillCellTypes(wb, true);
+    List<List<String>> rows = parseAll(write(wb));
+    assertThat(rows).hasSize(2);
+    assertCellTypesRow(rows.get(1));
+  }
+
+  @Test
+  void xls_cell_types_are_kept_as_excel_shows_them() throws Exception {
+    org.apache.poi.hssf.usermodel.HSSFWorkbook wb =
+        new org.apache.poi.hssf.usermodel.HSSFWorkbook();
+    fillCellTypes(wb, true);
+    List<List<String>> rows = parseAll(write(wb));
+    assertThat(rows).hasSize(2);
+    assertCellTypesRow(rows.get(1));
+  }
+
+  /** XLS 불리언 결과 수식은 예전에 캐시값 0.0 을 숫자로 읽어 "0" 이 됐다. */
+  @Test
+  void xls_boolean_formula_result_is_boolean() throws Exception {
+    org.apache.poi.hssf.usermodel.HSSFWorkbook wb =
+        new org.apache.poi.hssf.usermodel.HSSFWorkbook();
+    Sheet sheet = wb.createSheet("data");
+    sheet.createRow(0).createCell(0).setCellValue("b");
+    sheet.createRow(1).createCell(0).setCellFormula("1=1");
+    wb.getCreationHelper().createFormulaEvaluator().evaluateAll();
+    List<List<String>> rows = parseAll(write(wb));
+    assertThat(rows.get(1)).containsExactly("true");
+  }
+
+  /** JVM 기본 시간대를 바꿔도 같은 값이 나와야 한다(공유 컨텍스트 없는 단위 테스트라 잠시 바꾸고 복원한다). */
+  @Test
+  void xlsx_and_xls_results_do_not_depend_on_default_time_zone() throws Exception {
+    TimeZone original = TimeZone.getDefault();
+    try {
+      for (String zone : new String[] {"Asia/Seoul", "UTC", "America/New_York"}) {
+        TimeZone.setDefault(TimeZone.getTimeZone(zone));
+        XSSFWorkbook x = new XSSFWorkbook();
+        fillCellTypes(x, true);
+        assertCellTypesRow(parseAll(write(x)).get(1));
+        org.apache.poi.hssf.usermodel.HSSFWorkbook b =
+            new org.apache.poi.hssf.usermodel.HSSFWorkbook();
+        fillCellTypes(b, true);
+        assertCellTypesRow(parseAll(write(b)).get(1));
+      }
+    } finally {
+      TimeZone.setDefault(original);
+    }
+  }
+
+  /** workbookPr date1904="1" 워크북의 날짜가 1900 체계로 읽혀 1,462일 앞당겨지지 않는다. */
+  @Test
+  void xlsx_date1904_workbook_dates_are_not_shifted() throws Exception {
+    XSSFWorkbook wb = new XSSFWorkbook();
+    var pr =
+        wb.getCTWorkbook().isSetWorkbookPr()
+            ? wb.getCTWorkbook().getWorkbookPr()
+            : wb.getCTWorkbook().addNewWorkbookPr();
+    pr.setDate1904(true);
+    Sheet sheet = wb.createSheet("data");
+    CellStyle date = wb.createCellStyle();
+    date.setDataFormat(wb.getCreationHelper().createDataFormat().getFormat("yyyy-mm-dd"));
+    sheet.createRow(0).createCell(0).setCellValue("d");
+    var c = sheet.createRow(1).createCell(0);
+    c.setCellValue(SERIAL_2025_01_21 - 1462); // 1904 체계 일련값
+    c.setCellStyle(date);
+    List<List<String>> rows = parseAll(write(wb));
+    assertThat(rows.get(1)).containsExactly("2025-01-21");
+  }
+
+  @Test
+  void xls_date1904_workbook_dates_are_not_shifted() throws Exception {
+    org.apache.poi.hssf.usermodel.HSSFWorkbook wb =
+        new org.apache.poi.hssf.usermodel.HSSFWorkbook();
+    org.apache.poi.hssf.record.DateWindow1904Record rec =
+        (org.apache.poi.hssf.record.DateWindow1904Record)
+            wb.getInternalWorkbook()
+                .findFirstRecordBySid(org.apache.poi.hssf.record.DateWindow1904Record.sid);
+    rec.setWindowing((short) 1);
+    Sheet sheet = wb.createSheet("data");
+    CellStyle date = wb.createCellStyle();
+    date.setDataFormat(wb.getCreationHelper().createDataFormat().getFormat("yyyy-mm-dd"));
+    sheet.createRow(0).createCell(0).setCellValue("d");
+    var c = sheet.createRow(1).createCell(0);
+    c.setCellValue(SERIAL_2025_01_21 - 1462);
+    c.setCellStyle(date);
+    List<List<String>> rows = parseAll(write(wb));
+    assertThat(rows.get(1)).containsExactly("2025-01-21");
   }
 }

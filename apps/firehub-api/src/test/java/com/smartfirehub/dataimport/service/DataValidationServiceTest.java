@@ -701,8 +701,73 @@ class DataValidationServiceTest {
         .isEqualTo(LocalDate.of(2026, 5, 10));
     assertThat(service.convertValue("2026-05-10T00:00:00", "DATE"))
         .isEqualTo(LocalDate.of(2026, 5, 10));
+    // 자정이 아닌 시각은 자르면 값이 바뀌므로 거부하고, 왜인지(숨은 시각) 짚어 준다(WD-252)
     assertThatThrownBy(() -> service.convertValue("2026-05-10T10:30", "DATE"))
-        .hasMessageContaining("날짜 형식이 아닙니다");
+        .hasMessageContaining("날짜에 시각(10:30:00)이 들어 있어");
+  }
+
+  // -----------------------------------------------------------------------
+  // WD-252: 엑셀 파서 출력(날짜·시각·오류 셀·큰 수)
+  // -----------------------------------------------------------------------
+
+  /**
+   * 엑셀 파서는 날짜시각 서식 셀을 "yyyy-MM-dd HH:mm:ss" 로 읽는다 — 자정이면 DATE 열이 날짜로 받아야 한다(예전 ISO 'T' 와 같은 동작).
+   */
+  @Test
+  void convertValue_date_acceptsMidnightSpaceDateTimeFromExcelParser() throws Exception {
+    assertThat(service.convertValue("2025-01-21 00:00:00", "DATE"))
+        .isEqualTo(LocalDate.of(2025, 1, 21));
+    assertThat(service.convertValue("2025-01-21", "DATE")).isEqualTo(LocalDate.of(2025, 1, 21));
+    assertThatThrownBy(() -> service.convertValue("2025-01-21 06:00:00", "DATE"))
+        .hasMessageContaining("날짜에 시각(06:00:00)이 들어 있어")
+        .hasMessageContaining("2025-01-21 06:00:00");
+    assertThat(service.convertValue("2025-01-21 06:00:00", "TIMESTAMP"))
+        .isEqualTo(LocalDateTime.of(2025, 1, 21, 6, 0));
+  }
+
+  /** h:mm 서식 셀(시각만)은 날짜·날짜시간 열에 가짜 날짜(1899-12-31)를 붙여 저장하지 않고 거부한다. */
+  @Test
+  void convertValue_timeOnlyValue_isRejectedForDateAndTimestamp() throws Exception {
+    assertThatThrownBy(() -> service.convertValue("12:00:00", "TIMESTAMP"))
+        .hasMessageContaining("시각만 있는 값은 날짜로 저장할 수 없습니다")
+        .hasMessageContaining("12:00:00");
+    assertThatThrownBy(() -> service.convertValue("12:00:00", "DATE"))
+        .hasMessageContaining("시각만 있는 값은 날짜로 저장할 수 없습니다");
+    assertThat(service.convertValue("12:00:00", "TEXT")).isEqualTo("12:00:00");
+  }
+
+  /** 엑셀 오류 셀 표식은 어떤 타입으로도 받지 않고, 행·열과 엑셀 표시 문자열로 알린다. */
+  @Test
+  void excelErrorCell_isRejectedWithRowColumnAndExcelDisplay() {
+    String marker = LegacyExcelDataFormatter.errorCellFromXssf("ERROR:#DIV/0!");
+    for (String type : List.of("TEXT", "INTEGER", "DECIMAL", "DATE", "TIMESTAMP", "BOOLEAN")) {
+      assertThatThrownBy(() -> service.convertValue(marker, type))
+          .as(type)
+          .hasMessageContaining("엑셀 오류 값(#DIV/0!)은 가져올 수 없습니다");
+    }
+    Map<String, String> row = new HashMap<>();
+    row.put("err", marker);
+    DataValidationService.ValidationResult result =
+        service.validate(List.of(row), List.of(col("err", "TEXT", true)));
+    assertThat(result.errorCount()).isEqualTo(1);
+    assertThat(result.errors().get(0))
+        .startsWith("1행 'err' 컬럼")
+        .contains("엑셀 오류 값(#DIV/0!)")
+        .doesNotContain("\u0000");
+    // 매핑 경로의 상세 값은 표식이 아니라 엑셀이 보여 주는 모양
+    ValidationErrorDetail detail = validateCell(service, col("err", "TEXT", true), marker).error();
+    assertThat(detail.value()).isEqualTo("#DIV/0!");
+    // CSV 처럼 같은 글자를 입력한 값은 그대로 문자열이다
+    assertThat(validateCell(service, col("err", "TEXT", true), "ERROR:#DIV/0!").error()).isNull();
+  }
+
+  /** 엑셀 1e20 셀은 평문으로 읽혀 INTEGER 열에서 Long 최댓값으로 포화되지 않고 범위 오류가 난다. */
+  @Test
+  void convertValue_integer_excelHugeNumber_isRangeError() {
+    assertThatThrownBy(() -> service.convertValue("100000000000000000000", "INTEGER"))
+        .hasMessageContaining("정수 범위를 벗어났습니다: 100000000000000000000");
+    assertThatThrownBy(() -> service.convertValue("-10000000000000000000", "INTEGER"))
+        .hasMessageContaining("정수 범위를 벗어났습니다");
   }
 
   /** 내보낸 CSV 의 시각은 0 이 아닌 소수 초를 붙인다(WD-159) — 다시 임포트할 때 그대로 읽혀야 한다. */

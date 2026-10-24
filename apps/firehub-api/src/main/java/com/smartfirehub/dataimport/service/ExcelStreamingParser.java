@@ -203,13 +203,16 @@ public final class ExcelStreamingParser {
     ReadOnlySharedStringsTable strings = new ReadOnlySharedStringsTable(pkg);
     StylesTable styles = reader.getStylesTable();
 
+    // 1904 날짜 체계 워크북이면 날짜 셀이 1,462일 앞당겨지지 않도록 formatter 에 알린다(WD-252).
+    LegacyExcelDataFormatter formatter = new LegacyExcelDataFormatter(readXlsxDate1904(reader));
+
     XSSFReader.SheetIterator sheets = (XSSFReader.SheetIterator) reader.getSheetsData();
     if (!sheets.hasNext()) return;
     try (InputStream sheetStream = sheets.next()) {
-      SheetContentsHandler handler = new RowAggregatingHandler(consumer);
+      RowAggregatingHandler handler = new RowAggregatingHandler(consumer);
       XMLReader xmlReader = newXmlReader();
       xmlReader.setContentHandler(
-          new XSSFSheetXMLHandler(styles, strings, handler, new LegacyExcelDataFormatter(), false));
+          new ErrorAwareSheetXmlHandler(styles, strings, handler, formatter));
       try {
         xmlReader.parse(new InputSource(sheetStream));
       } catch (EarlyStopException ignore) {
@@ -222,6 +225,69 @@ public final class ExcelStreamingParser {
         }
         // 정상 조기 종료
       }
+    }
+  }
+
+  /**
+   * workbook.xml 의 {@code <workbookPr date1904="1">} 를 읽어 1904 날짜 체계인지 판정한다. workbookPr 를 만나면 바로
+   * 멈춘다(시트 앞쪽의 작은 요소라 전체를 읽지 않는다).
+   */
+  private static boolean readXlsxDate1904(XSSFReader reader) throws Exception {
+    final boolean[] date1904 = {false};
+    XMLReader xmlReader = newXmlReader();
+    xmlReader.setContentHandler(
+        new org.xml.sax.helpers.DefaultHandler() {
+          @Override
+          public void startElement(
+              String uri, String localName, String qName, org.xml.sax.Attributes attributes) {
+            if ("workbookPr".equals(localName)) {
+              String v = attributes.getValue("date1904");
+              date1904[0] = "1".equals(v) || "true".equalsIgnoreCase(v);
+              throw EarlyStopException.INSTANCE;
+            }
+            if ("sheets".equals(localName)) {
+              // workbookPr 는 sheets 보다 앞에 온다 — 여기까지 없으면 기본(1900) 체계다.
+              throw EarlyStopException.INSTANCE;
+            }
+          }
+        });
+    try (InputStream wb = reader.getWorkbookData()) {
+      xmlReader.parse(new InputSource(wb));
+    } catch (EarlyStopException ignore) {
+      // 필요한 속성을 읽었다
+    } catch (SAXException e) {
+      if (!(e.getCause() instanceof EarlyStopException)
+          && !(e.getException() instanceof EarlyStopException)) {
+        throw e;
+      }
+    }
+    return date1904[0];
+  }
+
+  /**
+   * POI 의 XSSF 시트 핸들러는 오류 셀({@code <c t="e">})을 "ERROR:#DIV/0!" 문자열로만 넘겨, 같은 글자를 입력한 문자열 셀과 구별할 수
+   * 없다. 셀 시작 요소의 {@code t} 속성을 먼저 보고 행 집계기에 오류 셀임을 알려, 검증 단계가 거부할 수 있는 표식으로 바꾸게 한다(WD-252).
+   */
+  private static final class ErrorAwareSheetXmlHandler extends XSSFSheetXMLHandler {
+    private final RowAggregatingHandler rows;
+
+    ErrorAwareSheetXmlHandler(
+        StylesTable styles,
+        ReadOnlySharedStringsTable strings,
+        RowAggregatingHandler rows,
+        LegacyExcelDataFormatter formatter) {
+      super(styles, strings, rows, formatter, false);
+      this.rows = rows;
+    }
+
+    @Override
+    public void startElement(
+        String uri, String localName, String qName, org.xml.sax.Attributes attributes)
+        throws SAXException {
+      if ("c".equals(localName)) {
+        rows.currentCellIsXssfError = "e".equals(attributes.getValue("t"));
+      }
+      super.startElement(uri, localName, qName, attributes);
     }
   }
 
@@ -239,18 +305,99 @@ public final class ExcelStreamingParser {
     XSSFBSharedStringsTable strings = new XSSFBSharedStringsTable(pkg);
     XSSFBStylesTable styles = reader.getXSSFBStylesTable();
 
+    LegacyExcelDataFormatter formatter = new LegacyExcelDataFormatter(readXlsbDate1904(reader));
+
     var sheets = reader.getSheetsData();
     if (!sheets.hasNext()) return;
     try (InputStream sheetStream = sheets.next()) {
-      SheetContentsHandler handler = new RowAggregatingHandler(consumer);
+      RowAggregatingHandler handler = new RowAggregatingHandler(consumer);
       XSSFBSheetHandler sheetHandler =
-          new XSSFBSheetHandler(
-              sheetStream, styles, null, strings, handler, new LegacyExcelDataFormatter(), false);
+          new ErrorAwareXlsbSheetHandler(sheetStream, styles, strings, handler, formatter);
       try {
         sheetHandler.parse();
       } catch (EarlyStopException ignore) {
         // 정상 조기 종료
       }
+    }
+  }
+
+  /** BIFF12 워크북 속성 레코드(BrtWbProp) 번호. POI 가 정의해 두지 않아 직접 둔다. */
+  private static final int XLSB_BRT_WB_PROP = 153;
+
+  /** XLSB 오류 셀 레코드(BrtCellError)·오류 결과 수식 레코드(BrtFmlaError) 번호. */
+  private static final int XLSB_BRT_CELL_ERROR = 3;
+
+  private static final int XLSB_BRT_FMLA_ERROR = 11;
+
+  /** 셀 레코드 앞의 셀 머리(열 4바이트 + 스타일·플래그 4바이트) 길이. 오류 코드는 그 바로 뒤 1바이트다. */
+  private static final int XLSB_CELL_HEADER_LENGTH = 8;
+
+  /**
+   * XLSB 워크북의 BrtWbProp 레코드 첫 4바이트 플래그 중 최하위 비트(f1904)로 1904 날짜 체계인지 판정한다. POI 가 이 레코드를 해석하지 않아
+   * 바이너리 레코드 파서로 직접 읽는다.
+   */
+  private static boolean readXlsbDate1904(XSSFBReader reader) throws Exception {
+    final boolean[] date1904 = {false};
+    try (InputStream wb = reader.getWorkbookData()) {
+      new org.apache.poi.xssf.binary.XSSFBParser(wb) {
+        @Override
+        public void handleRecord(int recordType, byte[] data) {
+          if (recordType == XLSB_BRT_WB_PROP && data.length >= 4) {
+            date1904[0] = (org.apache.poi.util.LittleEndian.getInt(data, 0) & 1) != 0;
+            throw EarlyStopException.INSTANCE;
+          }
+        }
+      }.parse();
+    } catch (EarlyStopException ignore) {
+      // 필요한 플래그를 읽었다
+    } catch (Exception e) {
+      // 워크북 속성은 보조 정보다 — 읽지 못해도 시트 읽기를 막지 않고 예전 동작(1900 체계)으로 둔다.
+      log.warn("XLSB workbook property read failed, assuming 1900 date system: {}", e.toString());
+      return false;
+    }
+    return date1904[0];
+  }
+
+  /**
+   * POI 의 XLSB 시트 핸들러는 오류 셀을 코드 없이 "ERROR" 로만 넘긴다. 레코드에서 오류 코드를 먼저 읽어 행 집계기에 표식 값으로 넘긴다(WD-252).
+   */
+  private static final class ErrorAwareXlsbSheetHandler extends XSSFBSheetHandler {
+    private final RowAggregatingHandler rows;
+
+    ErrorAwareXlsbSheetHandler(
+        InputStream sheetStream,
+        XSSFBStylesTable styles,
+        XSSFBSharedStringsTable strings,
+        RowAggregatingHandler rows,
+        LegacyExcelDataFormatter formatter) {
+      super(sheetStream, styles, null, strings, rows, formatter, false);
+      this.rows = rows;
+    }
+
+    @Override
+    public void handleRecord(int id, byte[] data)
+        throws org.apache.poi.xssf.binary.XSSFBParseException {
+      if ((id == XLSB_BRT_CELL_ERROR || id == XLSB_BRT_FMLA_ERROR)
+          && data.length > XLSB_CELL_HEADER_LENGTH) {
+        rows.overrideNextCell =
+            LegacyExcelDataFormatter.errorCell(errorCodeString(data[XLSB_CELL_HEADER_LENGTH]));
+        try {
+          super.handleRecord(id, data);
+        } finally {
+          rows.overrideNextCell = null;
+        }
+        return;
+      }
+      super.handleRecord(id, data);
+    }
+  }
+
+  /** 엑셀 오류 코드 바이트를 표시 문자열(#DIV/0! 등)로 바꾼다. 알 수 없는 코드면 null(표식만 남는다). */
+  private static String errorCodeString(int code) {
+    try {
+      return org.apache.poi.ss.usermodel.FormulaError.forInt(code).getString();
+    } catch (IllegalArgumentException e) {
+      return null;
     }
   }
 
@@ -268,6 +415,12 @@ public final class ExcelStreamingParser {
     private final RowConsumer consumer;
     private List<String> currentRow;
     private int currentRowIndex = -1;
+
+    /** XSSF: 지금 읽는 셀이 오류 셀({@code t="e"})인지. 셀 시작 요소마다 {@link ErrorAwareSheetXmlHandler} 가 갱신한다. */
+    boolean currentCellIsXssfError;
+
+    /** XLSB: 다음 셀 값 대신 쓸 오류 셀 표식. {@link ErrorAwareXlsbSheetHandler} 가 오류 레코드 처리 동안만 설정한다. */
+    String overrideNextCell;
 
     RowAggregatingHandler(RowConsumer consumer) {
       this.consumer = consumer;
@@ -312,7 +465,15 @@ public final class ExcelStreamingParser {
       while (currentRow.size() < colIdx) {
         currentRow.add("");
       }
-      currentRow.add(formattedValue == null ? "" : formattedValue);
+      String value = formattedValue;
+      if (overrideNextCell != null) {
+        value = overrideNextCell;
+      } else if (currentCellIsXssfError && formattedValue != null) {
+        // 엑셀 오류 셀 — 검증 단계가 「엑셀 오류 값은 가져올 수 없습니다」로 거부하도록 표식으로 바꾼다.
+        value = LegacyExcelDataFormatter.errorCellFromXssf(formattedValue);
+      }
+      currentCellIsXssfError = false;
+      currentRow.add(value == null ? "" : value);
     }
   }
 
@@ -358,6 +519,7 @@ public final class ExcelStreamingParser {
 
     private final RowConsumer consumer;
     private org.apache.poi.hssf.eventusermodel.FormatTrackingHSSFListener formatTracker;
+    // 1904 여부는 워크북 전역 레코드(DateWindow1904Record)가 시트보다 먼저 와서 알려 준다.
     private final LegacyExcelDataFormatter formatter = new LegacyExcelDataFormatter();
     private org.apache.poi.hssf.record.SSTRecord sst;
 
@@ -395,6 +557,11 @@ public final class ExcelStreamingParser {
           return;
         case org.apache.poi.hssf.record.SSTRecord.sid:
           sst = (org.apache.poi.hssf.record.SSTRecord) record;
+          return;
+        case org.apache.poi.hssf.record.DateWindow1904Record.sid:
+          // 1904 날짜 체계 워크북(맥 엑셀 옛 기본값) — 날짜가 1,462일 앞당겨지지 않게 formatter 에 알린다(WD-252).
+          formatter.setUse1904Windowing(
+              ((org.apache.poi.hssf.record.DateWindow1904Record) record).getWindowing() == 1);
           return;
       }
 
@@ -437,16 +604,29 @@ public final class ExcelStreamingParser {
           {
             org.apache.poi.hssf.record.BoolErrRecord r =
                 (org.apache.poi.hssf.record.BoolErrRecord) record;
-            appendCell(r.getColumn(), r.isBoolean() ? String.valueOf(r.getBooleanValue()) : "");
+            // 오류 셀(#DIV/0! 등)은 예전에 빈 값으로 바뀌어 조용히 사라졌다 — 검증이 거부할 표식으로 넘긴다(WD-252).
+            appendCell(
+                r.getColumn(),
+                r.isBoolean()
+                    ? String.valueOf(r.getBooleanValue())
+                    : LegacyExcelDataFormatter.errorCell(errorCodeString(r.getErrorValue())));
             break;
           }
         case org.apache.poi.hssf.record.FormulaRecord.sid:
           {
             org.apache.poi.hssf.record.FormulaRecord r =
                 (org.apache.poi.hssf.record.FormulaRecord) record;
-            if (Double.isNaN(r.getValue())) {
+            // 캐시된 결과 종류로 나눈다. 문자열·불리언·오류 결과는 getValue() 가 0.0 이라 숫자로 읽으면 "0" 이 저장된다.
+            org.apache.poi.ss.usermodel.CellType resultType = r.getCachedResultTypeEnum();
+            if (resultType == org.apache.poi.ss.usermodel.CellType.STRING) {
               // 문자열 결과 — 다음 StringRecord 대기, placeholder 추가
               appendCell(r.getColumn(), "");
+            } else if (resultType == org.apache.poi.ss.usermodel.CellType.BOOLEAN) {
+              appendCell(r.getColumn(), String.valueOf(r.getCachedBooleanValue()));
+            } else if (resultType == org.apache.poi.ss.usermodel.CellType.ERROR) {
+              appendCell(
+                  r.getColumn(),
+                  LegacyExcelDataFormatter.errorCell(errorCodeString(r.getCachedErrorValue())));
             } else {
               int formatIndex = formatTracker.getFormatIndex(r);
               String formatString = formatTracker.getFormatString(r);

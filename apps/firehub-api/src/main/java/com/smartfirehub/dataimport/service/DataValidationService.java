@@ -49,6 +49,20 @@ public class DataValidationService {
   // 리터럴을 여러 곳에 흩뿌리지 않고 상수 하나로 묶어 두 곳이 어긋나지 않게 한다.
   static final String REQUIRED_FIELD_EMPTY = "필수 값이 비어 있습니다";
 
+  /** DATE 열이 자정이면 날짜로 받는 날짜시각 형식(ISO 와 엑셀 파서 출력 모양). */
+  private static final List<DateTimeFormatter> MIDNIGHT_DATE_TIME_FORMATTERS =
+      List.of(
+          DateTimeFormatter.ISO_LOCAL_DATE_TIME,
+          DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+
+  /**
+   * 날짜 없이 시각만 있는 값(예: 12:00:00). 엑셀 h:mm 서식 셀(일련값 &lt; 1)을 파서가 이렇게 읽는다 — 예전엔 1899-12-31 가짜 날짜가 붙어
+   * TIMESTAMP 열에 그대로 저장됐다(WD-252).
+   */
+  private static final Pattern TIME_ONLY = Pattern.compile("\\d{1,2}:\\d{2}(:\\d{2}(\\.\\d+)?)?");
+
+  static final String TIME_ONLY_MESSAGE = "시각만 있는 값은 날짜로 저장할 수 없습니다(날짜를 함께 넣거나 텍스트 열로 가져와 주세요): ";
+
   /** 콤마 제거 후 부호와 숫자로만 이뤄진 정수 리터럴 — 이 형식이 아니면 형식 오류, 맞으면 BIGINT 범위만 남는다. */
   private static final Pattern INTEGER_LITERAL = Pattern.compile("[+-]?\\d+");
 
@@ -222,6 +236,14 @@ public class DataValidationService {
       return null;
     }
 
+    // 엑셀 오류 셀(#DIV/0! 등)은 어떤 타입으로도 받지 않는다 — 예전엔 TEXT 열에 "ERROR:#DIV/0!" 글자로 저장됐다(WD-252).
+    // 표식은 엑셀 파서만 만들고 NUL 을 품고 있어 CSV 값과 겹치지 않는다.
+    String excelError = LegacyExcelDataFormatter.errorCodeOf(value);
+    if (excelError != null) {
+      throw new Exception(
+          "엑셀 오류 값(" + excelError + ")은 가져올 수 없습니다 — 원본 파일에서 수식이나 값을 고친 뒤 다시 가져와 주세요");
+    }
+
     // Strip surrounding quotes from CSV parsing
     if (value.length() >= 2
         && ((value.startsWith("'") && value.endsWith("'"))
@@ -273,18 +295,30 @@ public class DataValidationService {
           } catch (DateTimeParseException ignored) {
           }
         }
-        // Excel 날짜 셀은 임포트 파서(LegacyExcelDataFormatter)가 "2026-05-10T00:00" 같은 ISO 날짜시각으로 읽는다. 자정이면
-        // 날짜만 있는 값으로 받는다 — 내보낸 Excel(WD-159, 날짜 셀)을 고쳐 다시 임포트할 때와 사용자가 만든 날짜 셀 파일 모두.
-        // 자정이 아닌 시각은 날짜로 자르면 값이 바뀌므로 그대로 거부한다.
-        if (date == null) {
+        // 자정 날짜시각은 날짜만 있는 값으로 받는다 — ISO 형식("2026-05-10T00:00", CSV·예전 파서 출력)과, 엑셀 파서
+        // (LegacyExcelDataFormatter)가 날짜시각 서식 셀을 읽은 "2026-05-10 00:00:00" 모두. 내보낸 Excel(WD-159)을 고쳐
+        // 다시
+        // 임포트할 때와 사용자가 만든 날짜 셀 파일 모두에 해당한다. 자정이 아닌 시각은 날짜로 자르면 값이 바뀌므로 그대로 거부한다.
+        for (DateTimeFormatter formatter :
+            date != null ? List.<DateTimeFormatter>of() : MIDNIGHT_DATE_TIME_FORMATTERS) {
           try {
-            LocalDateTime dateTime =
-                LocalDateTime.parse(value, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-            if (dateTime.toLocalTime().equals(LocalTime.MIDNIGHT)) {
-              date = dateTime.toLocalDate();
+            LocalDateTime dateTime = LocalDateTime.parse(value, formatter);
+            if (!dateTime.toLocalTime().equals(LocalTime.MIDNIGHT)) {
+              // 엑셀 날짜 서식 셀은 날짜만 보여도 시각 소수가 숨어 있을 수 있다 — 왜 거부되는지 알 수 있게 시각을 짚어 준다.
+              throw new Exception(
+                  "날짜에 시각("
+                      + dateTime.toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                      + ")이 들어 있어 날짜 열에 저장하면 값이 바뀝니다: "
+                      + value
+                      + " (엑셀 셀이 날짜만 보여도 시각이 숨어 있을 수 있습니다 — 시각을 지우거나 날짜시간 열로 가져와 주세요)");
             }
+            date = dateTime.toLocalDate();
+            break;
           } catch (DateTimeParseException ignored) {
           }
+        }
+        if (date == null && TIME_ONLY.matcher(value).matches()) {
+          throw new Exception(TIME_ONLY_MESSAGE + value);
         }
         if (date == null) {
           throw new Exception(
@@ -319,6 +353,9 @@ public class DataValidationService {
             } catch (DateTimeParseException ignored) {
             }
           }
+        }
+        if (timestamp == null && TIME_ONLY.matcher(value).matches()) {
+          throw new Exception(TIME_ONLY_MESSAGE + value);
         }
         if (timestamp == null) {
           throw new Exception(
@@ -587,8 +624,13 @@ public class DataValidationService {
                 column.maxLength());
         convertedRow.add(convertedValue);
       } catch (Exception e) {
+        // 엑셀 오류 셀 표식은 사용자에게 엑셀이 보여 주는 모양(#DIV/0!)으로 돌려준다.
         errorSink.add(
-            new ValidationErrorDetail(rowIndex, column.columnName(), rawValue, e.getMessage()));
+            new ValidationErrorDetail(
+                rowIndex,
+                column.columnName(),
+                LegacyExcelDataFormatter.toDisplay(rawValue),
+                e.getMessage()));
         rowValid = false;
       }
     }

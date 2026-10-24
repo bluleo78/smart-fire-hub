@@ -39,7 +39,9 @@ final class FileHeaderValidator {
    * <p>열 번호는 사용자가 보는 순서대로 1부터 센다. 겹치는 이름이 여러 개면 한 번에 모두 알려 재업로드를 한 번으로 끝내게 한다.
    */
   static void requireDistinctNames(List<String> headers) {
-    if (headers == null || headers.size() < 2) return;
+    if (headers == null) return;
+    rejectExcelErrorNames(headers);
+    if (headers.size() < 2) return;
 
     // 정규화한 이름 → 등장한 열 번호(1부터). 등장 순서를 유지해 메시지가 파일 순서를 따르게 한다.
     Map<String, List<Integer>> positions = new LinkedHashMap<>();
@@ -59,6 +61,21 @@ final class FileHeaderValidator {
 
     throw new InvalidFileHeaderException(
         "파일에 같은 이름의 열이 있습니다: " + String.join(", ", duplicated) + ". 열 이름을 고친 뒤 다시 올려 주세요.");
+  }
+
+  /**
+   * 엑셀 헤더 셀이 오류 셀(#REF! 등)이면 열 이름으로 쓸 수 없으므로 거부한다(WD-252). 파서가 오류 셀을 표식으로 넘기는데, 그대로 두면 표식(NUL 포함)이
+   * 열 이름으로 미리보기·매핑에 보인다.
+   */
+  private static void rejectExcelErrorNames(List<String> headers) {
+    List<String> errors = new ArrayList<>();
+    for (int i = 0; i < headers.size(); i++) {
+      String code = LegacyExcelDataFormatter.errorCodeOf(headers.get(i));
+      if (code != null) errors.add((i + 1) + "번째 열 " + code);
+    }
+    if (errors.isEmpty()) return;
+    throw new InvalidFileHeaderException(
+        "헤더 행에 엑셀 오류 값이 있습니다: " + String.join(", ", errors) + ". 열 이름을 고친 뒤 다시 올려 주세요.");
   }
 
   /** 비교용 이름: 앞쪽 BOM 과 앞뒤 공백을 제거한다. null 은 빈 이름으로 본다. */

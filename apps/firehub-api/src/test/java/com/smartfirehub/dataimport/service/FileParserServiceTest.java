@@ -330,9 +330,26 @@ class FileParserServiceTest {
     List<Map<String, String>> rows = service.parse(data, "xlsx");
 
     assertThat(rows).hasSize(1);
-    // epoch millis = 0 → 시스템 타임존에 따라 1969-12-31 또는 1970-01-01
+    // epoch millis = 0 → 만들 때의 시스템 타임존에 따라 일련값이 달라 날짜 모양만 본다(ISO 'T' 아님, WD-252)
     String dateStr = rows.get(0).get("when");
-    assertThat(dateStr).matches("\\d{4}-\\d{2}-\\d{2}T.*");
+    assertThat(dateStr).matches("\\d{4}-\\d{2}-\\d{2}( \\d{2}:\\d{2}:\\d{2})?");
+  }
+
+  /** 헤더 셀이 엑셀 오류 셀(#REF!)이면 표식이 열 이름이 되지 않게 한국어 헤더 오류로 거부한다(WD-252). */
+  @Test
+  void parseHeaders_xlsxHeaderErrorCell_isRejected() throws Exception {
+    byte[] data;
+    try (Workbook wb = new XSSFWorkbook();
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      Row h = wb.createSheet("s").createRow(0);
+      h.createCell(0).setCellValue("name");
+      h.createCell(1).setCellErrorValue(org.apache.poi.ss.usermodel.FormulaError.REF.getCode());
+      wb.write(out);
+      data = out.toByteArray();
+    }
+    assertThatThrownBy(() -> service.parseHeaders(data, "xlsx"))
+        .isInstanceOf(com.smartfirehub.dataimport.exception.InvalidFileHeaderException.class)
+        .hasMessageContaining("헤더 행에 엑셀 오류 값이 있습니다: 2번째 열 #REF!");
   }
 
   @Test
