@@ -431,6 +431,31 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }
 
+  /** 가져오기 이력이 없거나 이 데이터셋의 것이 아닐 때 — 404(WD-250). */
+  @ExceptionHandler(com.smartfirehub.dataimport.exception.ImportNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleImportNotFound(
+      com.smartfirehub.dataimport.exception.ImportNotFoundException ex,
+      HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  /**
+   * 비동기 내보내기 파일을 내려받을 수 없을 때 — 상태는 예외가 정한다(404 없음·403 남의 작업·409 진행 중/실패/정리됨, WD-250).
+   *
+   * <p>다운로드 요청은 파일을 기대해 {@code Accept} 가 JSON 을 포함하지 않을 수 있으므로 Content-Type 을 JSON 으로 미리 정해 오류 본문이
+   * 내용 협상 실패로 사라지지 않게 한다(작업 상태 404·403 핸들러와 같은 이유).
+   */
+  @ExceptionHandler(com.smartfirehub.dataimport.exception.ExportDownloadException.class)
+  public ResponseEntity<ErrorResponse> handleExportDownload(
+      com.smartfirehub.dataimport.exception.ExportDownloadException ex,
+      HttpServletRequest request) {
+    ErrorResponse response = buildError(ex.status(), ex.getMessage(), null, request);
+    return ResponseEntity.status(ex.status())
+        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+        .body(response);
+  }
+
   @ExceptionHandler(UnsupportedFileTypeException.class)
   public ResponseEntity<ErrorResponse> handleUnsupportedFileType(
       UnsupportedFileTypeException ex, HttpServletRequest request) {

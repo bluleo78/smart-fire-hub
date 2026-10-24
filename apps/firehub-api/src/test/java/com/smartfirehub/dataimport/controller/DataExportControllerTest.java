@@ -238,4 +238,44 @@ class DataExportControllerTest {
       Files.deleteIfExists(tmp);
     }
   }
+
+  /**
+   * WD-250: 다운로드할 수 없는 사유별 상태·한국어 문구. 파일을 기대하는 {@code Accept: application/octet-stream} 요청이어도 오류
+   * 본문이 JSON 으로 나가야 화면·AI 가 사유를 보여 줄 수 있다.
+   */
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "notFound, 404",
+    "notOwner, 403",
+    "notFinished, 409",
+    "failed, 409",
+    "cleanedUp, 409"
+  })
+  void downloadExportFile_unavailable_returnsStatusWithKoreanJson(String reason, int expected)
+      throws Exception {
+    mockAuth();
+    com.smartfirehub.dataimport.exception.ExportDownloadException ex =
+        switch (reason) {
+          case "notFound" ->
+              com.smartfirehub.dataimport.exception.ExportDownloadException.notFound();
+          case "notOwner" ->
+              com.smartfirehub.dataimport.exception.ExportDownloadException.notOwner();
+          case "notFinished" ->
+              com.smartfirehub.dataimport.exception.ExportDownloadException.notFinished();
+          case "failed" -> com.smartfirehub.dataimport.exception.ExportDownloadException.failed();
+          default -> com.smartfirehub.dataimport.exception.ExportDownloadException.cleanedUp();
+        };
+    when(exportService.getExportFile(eq("job-x"), eq(1L))).thenThrow(ex);
+
+    mockMvc
+        .perform(
+            get("/api/v1/exports/job-x/file")
+                .header("Authorization", "Bearer valid-token")
+                .accept(MediaType.APPLICATION_OCTET_STREAM))
+        .andExpect(status().is(expected))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                .contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.message").value(ex.getMessage()));
+  }
 }

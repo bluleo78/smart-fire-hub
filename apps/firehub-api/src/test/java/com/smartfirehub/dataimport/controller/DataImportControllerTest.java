@@ -222,4 +222,149 @@ class DataImportControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.message").value(message));
   }
+
+  // ── WD-250: 입력 오류는 400 + 한국어(빈 본문·500·영어 문구 대신) ─────────────────────────
+
+  /** 틀린 importMode — 예전에는 본문 없는 400. 허용 값을 나열한 한국어 문구로 답하고 서비스는 부르지 않는다. */
+  @Test
+  void importFile_invalidImportMode_returns400Korean() throws Exception {
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports")
+                .file(csvFile())
+                .param("importMode", "MERGE")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(DataImportController.INVALID_IMPORT_MODE_MESSAGE))
+        .andExpect(
+            jsonPath("$.message")
+                .value(org.hamcrest.Matchers.containsString("APPEND, UPSERT, REPLACE")));
+    verify(importService, org.mockito.Mockito.never())
+        .importFile(anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), any());
+  }
+
+  /** importMode 는 대소문자를 가리지 않는다(기존 동작 유지). */
+  @Test
+  void importFile_lowercaseImportMode_isAccepted() throws Exception {
+    when(importService.importFile(
+            anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), any()))
+        .thenReturn(new ImportStartResponse("job-1", "PENDING"));
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports")
+                .file(csvFile())
+                .param("importMode", "replace")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isCreated());
+    verify(importService)
+        .importFile(
+            anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), eq(ImportMode.REPLACE));
+  }
+
+  /** 깨진 mappings JSON — 예전에는 Jackson 예외가 500 으로 떨어졌다. */
+  @Test
+  void importFile_brokenMappingsJson_returns400Korean() throws Exception {
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports")
+                .file(csvFile())
+                .param("mappings", "{not json")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(DataImportController.INVALID_MAPPINGS_MESSAGE));
+  }
+
+  /** 사전 검증의 깨진 mappings(배열이 아닌 객체)도 같은 400. */
+  @Test
+  void validateImport_mappingsNotArray_returns400Korean() throws Exception {
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/validate")
+                .file(csvFile())
+                .param("mappings", "{\"fileColumn\":\"a\"}")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(DataImportController.INVALID_MAPPINGS_MESSAGE));
+  }
+
+  /** mappings 없이 사전 검증 — 예전에는 필수 파라미터 누락으로 500. 400 한국어로 거부하고 서비스는 부르지 않는다. */
+  @Test
+  void validateImport_withoutMappings_returns400Korean() throws Exception {
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/validate")
+                .file(csvFile())
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(DataImportController.MISSING_MAPPINGS_MESSAGE));
+    verify(importService, org.mockito.Mockito.never())
+        .validateImport(anyLong(), any(), any(), any());
+  }
+
+  /** JSON null 도 매핑 없음으로 본다 — 같은 400. */
+  @Test
+  void validateImport_nullMappings_returns400Korean() throws Exception {
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/validate")
+                .file(csvFile())
+                .param("mappings", "null")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(DataImportController.MISSING_MAPPINGS_MESSAGE));
+  }
+
+  /** 허용하지 않는 인코딩 — 영어 「Unsupported encoding … Allowed: [순서가 매번 다른 집합]」 대신 고정 순서 한국어. */
+  @Test
+  void previewImport_unsupportedEncoding_returns400Korean() throws Exception {
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/preview")
+                .file(csvFile())
+                .param("encoding", "LATIN1")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.message")
+                .value(
+                    "지원하지 않는 인코딩입니다. 사용할 수 있는 값: AUTO, UTF-8, UTF-16LE, UTF-16BE, EUC-KR, CP949, MS949"));
+  }
+
+  /** 지원하지 않는 확장자 — 서비스가 던진 한국어 문구가 400 으로 그대로 나간다. */
+  @Test
+  void previewImport_unsupportedExtension_returns400Korean() throws Exception {
+    when(importService.previewImport(anyLong(), any(), any(), anyBoolean()))
+        .thenThrow(
+            new com.smartfirehub.dataimport.exception.UnsupportedFileTypeException(
+                com.smartfirehub.dataimport.exception.UnsupportedFileTypeException
+                    .UNSUPPORTED_EXTENSION));
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/preview")
+                .file(new MockMultipartFile("file", "a.txt", "text/plain", "x".getBytes()))
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.message")
+                .value(
+                    com.smartfirehub.dataimport.exception.UnsupportedFileTypeException
+                        .UNSUPPORTED_EXTENSION));
+  }
+
+  /** 없는(또는 다른 데이터셋의) 가져오기 id — 예전 400 「Import not found: N」 대신 404 한국어. */
+  @Test
+  void getImport_notFound_returns404Korean() throws Exception {
+    when(importService.getImportById(1L, 999999L))
+        .thenThrow(new com.smartfirehub.dataimport.exception.ImportNotFoundException());
+
+    mockMvc
+        .perform(
+            get("/api/v1/datasets/1/imports/999999").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNotFound())
+        .andExpect(
+            jsonPath("$.message")
+                .value(com.smartfirehub.dataimport.exception.ImportNotFoundException.MESSAGE));
+  }
 }

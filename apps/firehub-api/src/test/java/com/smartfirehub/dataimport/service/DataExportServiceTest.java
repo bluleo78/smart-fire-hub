@@ -40,7 +40,6 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -582,8 +581,13 @@ class DataExportServiceTest extends IntegrationTestBase {
                     LocalDateTime.now(),
                     999L)));
 
+    // WD-250: 남의 내보내기는 403 상태의 ExportDownloadException(한국어 문구)
     assertThatThrownBy(() -> dataExportService.getExportFile("test-job", userId))
-        .isInstanceOf(AccessDeniedException.class);
+        .isInstanceOfSatisfying(
+            com.smartfirehub.dataimport.exception.ExportDownloadException.class,
+            e -> assertThat(e.status()).isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN))
+        .hasMessage(
+            com.smartfirehub.dataimport.exception.ExportDownloadException.NOT_OWNER_MESSAGE);
   }
 
   // === Audit log verification ===

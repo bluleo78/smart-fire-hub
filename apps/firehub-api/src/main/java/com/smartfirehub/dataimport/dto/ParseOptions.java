@@ -22,15 +22,19 @@ public record ParseOptions(
 
   // MS949는 CP949의 표준 JVM 별칭이며 EUC-KR(부분집합)도 디코딩 가능하므로
   // 한국어 CSV의 AUTO 폴백 기본 라벨로 사용한다.
-  private static final java.util.Set<String> ALLOWED_ENCODINGS =
-      java.util.Set.of("AUTO", "UTF-8", "UTF-16LE", "UTF-16BE", "EUC-KR", "CP949", "MS949");
+  // 순서가 고정된 List 로 둔다 — 오류 문구에 허용 값을 나열하므로 Set.of 처럼 실행마다 순서가 바뀌면 안 된다(WD-250).
+  private static final java.util.List<String> ALLOWED_ENCODINGS =
+      java.util.List.of("AUTO", "UTF-8", "UTF-16LE", "UTF-16BE", "EUC-KR", "CP949", "MS949");
+
+  /** 허용하지 않는 인코딩일 때의 400 문구 — 사용자 입력은 되풀이하지 않고 고를 수 있는 값만 알려 준다(WD-250). */
+  public static final String UNSUPPORTED_ENCODING_MESSAGE =
+      "지원하지 않는 인코딩입니다. 사용할 수 있는 값: " + String.join(", ", ALLOWED_ENCODINGS);
 
   public ParseOptions {
     if (delimiter == null || delimiter.isEmpty()) delimiter = ",";
     if (encoding == null || encoding.isEmpty()) encoding = "AUTO";
     if (!ALLOWED_ENCODINGS.contains(encoding)) {
-      throw new IllegalArgumentException(
-          "Unsupported encoding: " + encoding + ". Allowed: " + ALLOWED_ENCODINGS);
+      throw new IllegalArgumentException(UNSUPPORTED_ENCODING_MESSAGE);
     }
   }
 

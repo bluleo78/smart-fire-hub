@@ -10,6 +10,7 @@ import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.dataimport.dto.ExportFormat;
 import com.smartfirehub.dataimport.dto.ExportRequest;
 import com.smartfirehub.dataimport.dto.ExportResult;
+import com.smartfirehub.dataimport.exception.ExportDownloadException;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetResponse;
@@ -30,7 +31,7 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.access.AccessDeniedException;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -102,12 +103,15 @@ class DataExportServiceExtTest extends IntegrationTestBase {
   // -----------------------------------------------------------------------
 
   @Test
-  void getExportFile_jobNotFound_throwsIllegalArgument() {
+  void getExportFile_jobNotFound_throws404() {
     when(asyncJobRepository.findById("missing-job")).thenReturn(Optional.empty());
 
+    // WD-250: 작업 상태 API 와 같이 404, 한국어 문구(예전 400 「Job not found: …」)
     assertThatThrownBy(() -> dataExportService.getExportFile("missing-job", userId))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Job not found");
+        .isInstanceOfSatisfying(
+            ExportDownloadException.class,
+            e -> assertThat(e.status()).isEqualTo(HttpStatus.NOT_FOUND))
+        .hasMessage(ExportDownloadException.NOT_FOUND_MESSAGE);
   }
 
   // -----------------------------------------------------------------------
@@ -115,7 +119,7 @@ class DataExportServiceExtTest extends IntegrationTestBase {
   // -----------------------------------------------------------------------
 
   @Test
-  void getExportFile_jobNotCompleted_throwsIllegalState() {
+  void getExportFile_jobNotCompleted_throws409() {
     when(asyncJobRepository.findById("running-job"))
         .thenReturn(
             Optional.of(
@@ -132,8 +136,10 @@ class DataExportServiceExtTest extends IntegrationTestBase {
                     userId)));
 
     assertThatThrownBy(() -> dataExportService.getExportFile("running-job", userId))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("not completed");
+        .isInstanceOfSatisfying(
+            ExportDownloadException.class,
+            e -> assertThat(e.status()).isEqualTo(HttpStatus.CONFLICT))
+        .hasMessage(ExportDownloadException.NOT_FINISHED_MESSAGE);
   }
 
   // -----------------------------------------------------------------------
@@ -141,7 +147,7 @@ class DataExportServiceExtTest extends IntegrationTestBase {
   // -----------------------------------------------------------------------
 
   @Test
-  void getExportFile_completedButNoFilePath_throwsIllegalState() {
+  void getExportFile_completedButNoFilePath_throws409CleanedUp() {
     when(asyncJobRepository.findById("no-path-job"))
         .thenReturn(
             Optional.of(
@@ -158,8 +164,10 @@ class DataExportServiceExtTest extends IntegrationTestBase {
                     userId)));
 
     assertThatThrownBy(() -> dataExportService.getExportFile("no-path-job", userId))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("file path not found");
+        .isInstanceOfSatisfying(
+            ExportDownloadException.class,
+            e -> assertThat(e.status()).isEqualTo(HttpStatus.CONFLICT))
+        .hasMessage(ExportDownloadException.CLEANED_UP_MESSAGE);
   }
 
   // -----------------------------------------------------------------------
@@ -167,7 +175,7 @@ class DataExportServiceExtTest extends IntegrationTestBase {
   // -----------------------------------------------------------------------
 
   @Test
-  void getExportFile_fileNotOnDisk_throwsIllegalState() {
+  void getExportFile_fileNotOnDisk_throws409CleanedUp() {
     when(asyncJobRepository.findById("ghost-file-job"))
         .thenReturn(
             Optional.of(
@@ -184,8 +192,10 @@ class DataExportServiceExtTest extends IntegrationTestBase {
                     userId)));
 
     assertThatThrownBy(() -> dataExportService.getExportFile("ghost-file-job", userId))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("not found");
+        .isInstanceOfSatisfying(
+            ExportDownloadException.class,
+            e -> assertThat(e.status()).isEqualTo(HttpStatus.CONFLICT))
+        .hasMessage(ExportDownloadException.CLEANED_UP_MESSAGE);
   }
 
   // -----------------------------------------------------------------------
@@ -193,7 +203,7 @@ class DataExportServiceExtTest extends IntegrationTestBase {
   // -----------------------------------------------------------------------
 
   @Test
-  void getExportFile_notOwner_throwsAccessDenied() {
+  void getExportFile_notOwner_throws403() {
     when(asyncJobRepository.findById("owned-job"))
         .thenReturn(
             Optional.of(
@@ -210,8 +220,67 @@ class DataExportServiceExtTest extends IntegrationTestBase {
                     userId + 9999L))); // 다른 사용자 소유
 
     assertThatThrownBy(() -> dataExportService.getExportFile("owned-job", userId))
-        .isInstanceOf(AccessDeniedException.class)
-        .hasMessageContaining("not the owner");
+        .isInstanceOfSatisfying(
+            ExportDownloadException.class,
+            e -> assertThat(e.status()).isEqualTo(HttpStatus.FORBIDDEN))
+        .hasMessage(ExportDownloadException.NOT_OWNER_MESSAGE);
+  }
+
+  // -----------------------------------------------------------------------
+  // getExportFile — 내보내기가 아닌 작업 id·실패한 내보내기 (WD-250)
+  // -----------------------------------------------------------------------
+
+  /** 가져오기 작업 id 로 다운로드 — 진행 중이어도 「끝나지 않았습니다」가 아니라 없는 작업과 같은 404 다. */
+  @Test
+  void getExportFile_importJobId_throws404EvenWhileRunning() {
+    when(asyncJobRepository.findById("import-job"))
+        .thenReturn(Optional.of(job("import-job", "IMPORT", "IMPORTING", Map.of(), userId)));
+
+    assertThatThrownBy(() -> dataExportService.getExportFile("import-job", userId))
+        .isInstanceOfSatisfying(
+            ExportDownloadException.class,
+            e -> assertThat(e.status()).isEqualTo(HttpStatus.NOT_FOUND))
+        .hasMessage(ExportDownloadException.NOT_FOUND_MESSAGE);
+  }
+
+  /** 실패한 내보내기 — 409, 「끝나지 않았습니다」가 아니라 다시 내보내라는 문구. */
+  @Test
+  void getExportFile_failedExport_throws409Failed() {
+    when(asyncJobRepository.findById("failed-job"))
+        .thenReturn(Optional.of(job("failed-job", "DATA_EXPORT", "FAILED", Map.of(), userId)));
+
+    assertThatThrownBy(() -> dataExportService.getExportFile("failed-job", userId))
+        .isInstanceOfSatisfying(
+            ExportDownloadException.class,
+            e -> assertThat(e.status()).isEqualTo(HttpStatus.CONFLICT))
+        .hasMessage(ExportDownloadException.FAILED_MESSAGE);
+  }
+
+  /** 완료된 내 내보내기 — 파일이 있으면 그 경로를 돌려준다(상태 응답에서 filePath 를 빼도 다운로드는 DB 원본으로 동작). */
+  @Test
+  void getExportFile_completedWithFile_returnsPath() throws Exception {
+    java.nio.file.Path tmp = java.nio.file.Files.createTempFile("wd250-export", ".csv");
+    try {
+      when(asyncJobRepository.findById("ok-job"))
+          .thenReturn(
+              Optional.of(
+                  job(
+                      "ok-job",
+                      "DATA_EXPORT",
+                      "COMPLETED",
+                      Map.of("filePath", tmp.toString()),
+                      userId)));
+
+      assertThat(dataExportService.getExportFile("ok-job", userId)).isEqualTo(tmp);
+    } finally {
+      java.nio.file.Files.deleteIfExists(tmp);
+    }
+  }
+
+  private static AsyncJobStatusResponse job(
+      String id, String type, String stage, Map<String, Object> metadata, Long owner) {
+    return new AsyncJobStatusResponse(
+        id, type, stage, 0, null, metadata, null, LocalDateTime.now(), LocalDateTime.now(), owner);
   }
 
   // -----------------------------------------------------------------------
