@@ -15,6 +15,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
@@ -108,7 +109,9 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
             // 진척 기록(#691)은 이 테스트의 관심사(캐시 테넌트 격리)가 아니므로 mock 으로 둔다.
             mock(PipelineExecutionRepository.class),
             // 분류 공급자는 이 테스트의 관심사(테넌트 격리)가 아니다 — 미설정 테넌트로 고정한다(#707).
-            stubUseChat());
+            stubUseChat(),
+            // 입력 컬럼 해석(WD-214)도 이 테스트의 관심사가 아니다.
+            mock(DatasetColumnRepository.class));
 
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
     when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));

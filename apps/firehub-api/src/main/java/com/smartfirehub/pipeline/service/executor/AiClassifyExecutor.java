@@ -4,6 +4,8 @@ import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
@@ -79,6 +81,8 @@ public class AiClassifyExecutor {
   // 해시와 ai-agent 요청에 함께 쓰이고, 미설정(UseChat)이면 채팅 설정은 첫 캐시 미스 배치에서
   // 해석돼 그 실행 동안 재사용된다(UseChat 인스턴스가 실행마다 새로 만들어지므로 실행 간에는 섞이지 않는다).
   private final AiClassifyTargetResolver targetResolver;
+  // 입력 컬럼 미지정 시 "전체 컬럼"을 데이터셋에 정의된 사용자 컬럼으로 풀기 위한 저장소(WD-214).
+  private final DatasetColumnRepository datasetColumnRepository;
 
   public record ExecutionResult(long outputRows, String executionLog) {}
 
@@ -712,16 +716,27 @@ public class AiClassifyExecutor {
     }
 
     // queryData 는 결과 맵에 "id" 를 항상 넣어 준다 — 따로 요청할 필요가 없다.
-    List<String> columnsToFetch = null;
+    List<String> selectedColumns = null;
     if (config.inputColumns() != null && !config.inputColumns().isEmpty()) {
       List<String> cols = new ArrayList<>(config.inputColumns());
       cols.remove("id"); // queryData already adds id automatically
-      columnsToFetch = cols;
+      selectedColumns = cols;
     }
 
     for (Long datasetId : step.inputDatasetIds()) {
       String tableName = datasetRepository.findTableNameById(datasetId).orElse(null);
       if (tableName == null) continue;
+
+      // 입력 컬럼 미지정 = 화면 안내대로 "전체 컬럼"(WD-214). 예전엔 null 을 그대로 넘겨 NPE 로 스텝이 실패했다.
+      // 빈 목록(SELECT *)으로 두지 않고 데이터셋에 정의된 사용자 컬럼을 명시한다 — * 는 import_id·created_at·
+      // _updated_at 같은 시스템 컬럼까지 실어 LLM 입력을 오염시키고, 그 값이 rowContentHash 에 섞여 재적재마다
+      // 캐시가 빗나가기 때문이다. 입력 데이터셋이 여럿이면 각자 자기 컬럼으로 조회한다.
+      List<String> columnsToFetch =
+          selectedColumns != null
+              ? selectedColumns
+              : datasetColumnRepository.findByDatasetId(datasetId).stream()
+                  .map(DatasetColumnResponse::columnName)
+                  .toList();
 
       long total = dataTableRowService.countRows(tableName);
       int pageSize = 1000;
