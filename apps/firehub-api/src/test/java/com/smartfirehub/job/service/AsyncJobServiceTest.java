@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.exception.JobNotFoundException;
+import com.smartfirehub.job.repository.AsyncJobRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
 import com.smartfirehub.user.dto.UserResponse;
@@ -21,6 +22,7 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -37,6 +39,7 @@ class AsyncJobServiceTest extends IntegrationTestBase {
   @Autowired private AsyncJobService asyncJobService;
   @Autowired private DSLContext dsl;
   @Autowired private PasswordEncoder passwordEncoder;
+  @Autowired private AsyncJobRepository asyncJobRepository;
 
   private Long userId;
 
@@ -385,5 +388,82 @@ class AsyncJobServiceTest extends IntegrationTestBase {
 
     verify(mockEmitter, times(1)).send(any(SseEmitter.SseEventBuilder.class));
     assertThat(list).isEmpty();
+  }
+
+  // ──────────────────────────────────────────────
+  // 진행 중 작업 부분 유니크 인덱스(idx_async_job_active_unique, V146 — WD-247)
+  // ──────────────────────────────────────────────
+
+  /** 내보내기용 두 번째 테스트 사용자를 만든다(다른 사용자 동시 내보내기 재현용). */
+  private Long createSecondUser() {
+    return TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "jobTestUser2",
+            "jobtest2@example.com",
+            "Password123",
+            "Job Tester 2",
+            DEFAULT_TEST_TENANT_ID)
+        .id();
+  }
+
+  /**
+   * WD-247: 같은 데이터셋에 진행 중 내보내기가 있어도 다른 사용자의 내보내기·같은 사용자의 다른 형식 내보내기 작업을 만들 수 있다. V146 이전에는 부분 유니크
+   * 인덱스가 DATA_EXPORT 에도 걸려 두 번째 createJob 이 DataIntegrityViolation(→ 409)으로 실패했다.
+   */
+  @Test
+  void createJob_dataExport_sameDatasetWhileActive_allowsOtherUserAndFormat() {
+    Long otherUserId = createSecondUser();
+
+    String csvJob =
+        asyncJobService.createJob(
+            "DATA_EXPORT", "dataset", "ds-wd247", userId, Map.of("format", "CSV"));
+    String otherUserJob =
+        asyncJobService.createJob(
+            "DATA_EXPORT", "dataset", "ds-wd247", otherUserId, Map.of("format", "CSV"));
+    String excelJob =
+        asyncJobService.createJob(
+            "DATA_EXPORT", "dataset", "ds-wd247", userId, Map.of("format", "EXCEL"));
+
+    // 세 작업 모두 진행 중(PENDING)으로 같은 데이터셋에 공존한다.
+    assertThat(List.of(csvJob, otherUserJob, excelJob)).doesNotHaveDuplicates();
+    assertThat(asyncJobService.findActiveJobs("DATA_EXPORT", "dataset", "ds-wd247")).hasSize(3);
+  }
+
+  /**
+   * WD-247: 내보내기를 인덱스에서 뺀 뒤에도 사용자당 동시 내보내기 상한(3개)이 세는 진행 중 목록에 같은 데이터셋 내보내기가 모두 잡힌다. 상한
+   * 판정(DataExportService.checkRateLimit)은 이 조회 결과 개수로 막으므로, 인덱스가 사라진 자리를 상한이 그대로 지킨다.
+   */
+  @Test
+  void findActiveByUserAndJobType_countsSameDatasetExportsForUserLimit() {
+    asyncJobService.createJob("DATA_EXPORT", "dataset", "ds-wd247-limit", userId, null);
+    asyncJobService.createJob("DATA_EXPORT", "dataset", "ds-wd247-limit", userId, null);
+    asyncJobService.createJob("DATA_EXPORT", "dataset", "ds-wd247-limit", userId, null);
+    String done =
+        asyncJobService.createJob("DATA_EXPORT", "dataset", "ds-wd247-limit", userId, null);
+    asyncJobService.completeJob(done, null);
+
+    // 완료된 작업은 빼고 진행 중 3개만 센다 → 상한(>= 3)에 걸린다.
+    assertThat(asyncJobRepository.findActiveByUserAndJobType(userId, "DATA_EXPORT")).hasSize(3);
+  }
+
+  /**
+   * WD-247: 가져오기(IMPORT)의 「데이터셋당 진행 중 1개」 제약은 V146 이후에도 유지된다 — 다른 사용자라도 같은 데이터셋에 두 번째 진행 중 임포트를 만들면
+   * DB 가 거부한다(DataImportService 가 이를 한국어 409 로 바꾼다).
+   *
+   * <p>위반은 트랜잭션을 중단시키므로 마지막 문장으로 둔다(클래스 레벨 @Transactional 이 끝에 롤백한다).
+   */
+  @Test
+  void createJob_import_sameDatasetWhileActive_stillRejected() {
+    Long otherUserId = createSecondUser();
+    asyncJobService.createJob("IMPORT", "dataset", "ds-wd247-import", userId, null);
+
+    assertThatThrownBy(
+            () ->
+                asyncJobService.createJob(
+                    "IMPORT", "dataset", "ds-wd247-import", otherUserId, null))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("idx_async_job_active_unique");
   }
 }
