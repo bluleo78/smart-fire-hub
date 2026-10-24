@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -283,7 +284,8 @@ class ProactiveJobControllerTest {
             LocalDateTime.now(),
             null,
             null,
-            LocalDateTime.now(), null);
+            LocalDateTime.now(),
+            null);
     when(proactiveJobService.getExecutions(eq(10L), eq(1L), anyInt(), anyInt()))
         .thenReturn(List.of(exec));
 
@@ -311,7 +313,8 @@ class ProactiveJobControllerTest {
             null,
             null,
             null,
-            LocalDateTime.now(), null);
+            LocalDateTime.now(),
+            null);
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
     mockMvc
@@ -337,7 +340,8 @@ class ProactiveJobControllerTest {
             null,
             null,
             null,
-            LocalDateTime.now(), null);
+            LocalDateTime.now(),
+            null);
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
     mockMvc
@@ -345,6 +349,42 @@ class ProactiveJobControllerTest {
             get("/api/v1/proactive/jobs/10/executions/99")
                 .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isNotFound());
+  }
+
+  /**
+   * WD-249 — 한글 제목 리포트 PDF 다운로드에도 내보내기와 같은 Content-Disposition(ASCII 대체 filename + UTF-8
+   * filename*)이 실린다. 예전엔 filename* 만 있어 그것을 모르는 클라이언트는 이름을 못 받았다.
+   */
+  @Test
+  void downloadExecutionPdf_koreanTitle_setsAsciiSafeContentDisposition() throws Exception {
+    mockAuth("proactive:read");
+    when(proactiveJobService.getJob(10L, 1L)).thenReturn(sampleJob());
+    ProactiveJobExecutionResponse exec =
+        new ProactiveJobExecutionResponse(
+            99L,
+            10L,
+            "COMPLETED",
+            LocalDateTime.now(),
+            LocalDateTime.now(),
+            null,
+            Map.of("title", "일일 보고서"),
+            null,
+            LocalDateTime.now(),
+            null);
+    when(proactiveJobService.getExecution(99L)).thenReturn(exec);
+    when(pdfExportService.generatePdf(any(), eq("daily-report"))).thenReturn(new byte[] {1, 2});
+
+    mockMvc
+        .perform(
+            get("/api/v1/proactive/jobs/10/executions/99/pdf")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(
+            header()
+                .string(
+                    "Content-Disposition",
+                    "attachment; filename=\"______.pdf\"; filename*=UTF-8''"
+                        + "%EC%9D%BC%EC%9D%BC_%EB%B3%B4%EA%B3%A0%EC%84%9C.pdf"));
   }
 
   @Test
@@ -362,7 +402,8 @@ class ProactiveJobControllerTest {
             null,
             null,
             null,
-            LocalDateTime.now(), null);
+            LocalDateTime.now(),
+            null);
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
     mockMvc
@@ -379,7 +420,16 @@ class ProactiveJobControllerTest {
     // status != COMPLETED 분기
     ProactiveJobExecutionResponse exec =
         new ProactiveJobExecutionResponse(
-            99L, 10L, "RUNNING", LocalDateTime.now(), null, null, null, null, LocalDateTime.now(), null);
+            99L,
+            10L,
+            "RUNNING",
+            LocalDateTime.now(),
+            null,
+            null,
+            null,
+            null,
+            LocalDateTime.now(),
+            null);
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
     mockMvc
@@ -403,7 +453,8 @@ class ProactiveJobControllerTest {
             null,
             null,
             null,
-            LocalDateTime.now(), null);
+            LocalDateTime.now(),
+            null);
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
     mockMvc

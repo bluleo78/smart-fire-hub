@@ -2,6 +2,7 @@ package com.smartfirehub.proactive.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.global.util.ContentDispositions;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionSummaryResponse;
@@ -14,8 +15,6 @@ import com.smartfirehub.proactive.service.PdfExportService;
 import com.smartfirehub.proactive.service.ProactiveJobService;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import jakarta.validation.Valid;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -179,13 +178,14 @@ public class ProactiveJobController {
     }
 
     byte[] pdfBytes = pdfExportService.generatePdf(result, job.name());
-    String encodedName =
-        URLEncoder.encode(result.effectiveTitle(job.name()) + ".pdf", StandardCharsets.UTF_8)
-            .replace("+", "%20");
 
     HttpHeaders headers = new HttpHeaders();
     headers.setContentType(MediaType.APPLICATION_PDF);
-    headers.set(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encodedName);
+    // 내보내기 계열과 같은 규칙(ASCII 대체 filename + RFC 5987 filename*) — filename* 를 모르는 클라이언트도 이름을
+    // 받는다(WD-249)
+    headers.set(
+        HttpHeaders.CONTENT_DISPOSITION,
+        ContentDispositions.attachment(result.effectiveTitle(job.name()) + ".pdf"));
 
     return ResponseEntity.ok().headers(headers).body(pdfBytes);
   }

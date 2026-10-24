@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -160,8 +161,81 @@ class DataExportControllerTest {
 
     mockMvc
         .perform(get("/api/v1/exports/job-xyz/file").header("Authorization", "Bearer valid-token"))
-        .andExpect(status().isOk());
+        .andExpect(status().isOk())
+        // ASCII 이름은 수정 전과 같은 헤더(호환)
+        .andExpect(
+            header()
+                .string(
+                    "Content-Disposition",
+                    "attachment; filename=\"result.csv\"; filename*=UTF-8''result.csv"));
 
     Files.deleteIfExists(tmp);
+  }
+
+  /**
+   * WD-249 — 한글 이름 동기 내보내기 응답에 Content-Disposition 이 실제로 실리고, 따옴표 filename 은 ASCII 대체·한글은 filename*
+   * 로만 간다(Tomcat 이 비ASCII 헤더를 지우던 결함).
+   */
+  @Test
+  void exportDataset_koreanFilename_setsAsciiSafeContentDisposition() throws Exception {
+    mockAuth();
+    when(userRepository.findById(1L)).thenReturn(Optional.empty());
+
+    StreamingResponseBody body = outputStream -> outputStream.write("id\n1\n".getBytes());
+    when(exportService.exportDataset(
+            eq(1L), any(ExportRequest.class), eq(1L), anyString(), anyString(), any()))
+        .thenReturn(ExportResult.sync(body, "화재_통계.csv", "text/csv"));
+
+    ExportRequest req = new ExportRequest(ExportFormat.CSV, null, null, null);
+
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/export")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isOk())
+        .andExpect(
+            header()
+                .string(
+                    "Content-Disposition",
+                    "attachment; filename=\"_____.csv\"; filename*=UTF-8''"
+                        + "%ED%99%94%EC%9E%AC_%ED%86%B5%EA%B3%84.csv"));
+  }
+
+  /** WD-249 — 비동기 내보내기 파일 다운로드도 한글 이름에서 같은 헤더 형식을 쓴다. */
+  @Test
+  void downloadExportFile_koreanFilename_setsAsciiSafeContentDisposition() throws Exception {
+    mockAuth();
+    Path tmp = Files.createTempFile("export-test", ".xlsx");
+    Files.writeString(tmp, "x");
+    when(exportService.getExportFile(eq("job-ko"), eq(1L))).thenReturn(tmp);
+    AsyncJobStatusResponse job =
+        new AsyncJobStatusResponse(
+            "job-ko",
+            "EXPORT",
+            "COMPLETED",
+            100,
+            null,
+            Map.of("filename", "화재 통계.xlsx", "contentType", "application/octet-stream"),
+            null,
+            LocalDateTime.now(),
+            LocalDateTime.now(),
+            1L);
+    when(asyncJobService.getJobStatus("job-ko", 1L)).thenReturn(job);
+
+    try {
+      mockMvc
+          .perform(get("/api/v1/exports/job-ko/file").header("Authorization", "Bearer valid-token"))
+          .andExpect(status().isOk())
+          .andExpect(
+              header()
+                  .string(
+                      "Content-Disposition",
+                      "attachment; filename=\"_____.xlsx\"; filename*=UTF-8''"
+                          + "%ED%99%94%EC%9E%AC_%ED%86%B5%EA%B3%84.xlsx"));
+    } finally {
+      Files.deleteIfExists(tmp);
+    }
   }
 }
