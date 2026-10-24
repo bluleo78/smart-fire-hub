@@ -77,12 +77,12 @@ public class ExceptionStubController {
 
   @GetMapping("/pipeline-not-found")
   public void pipelineNotFound() {
-    throw new PipelineNotFoundException("Pipeline not found");
+    throw new PipelineNotFoundException();
   }
 
   @GetMapping("/trigger-not-found")
   public void triggerNotFound() {
-    throw new TriggerNotFoundException("Trigger not found");
+    throw new TriggerNotFoundException();
   }
 
   @GetMapping("/ai-session-not-found")

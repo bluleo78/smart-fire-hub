@@ -282,9 +282,11 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
                 new CreatePipelineRequest("WD153 other " + suffix, "다른 파이프라인", List.of()), userId)
             .id();
     try {
+      // WD-226: 다른 파이프라인 경로의 실행 취소는 내부 id 없는 한국어 문구로 404
       assertThatThrownBy(
               () -> pipelineService.cancelExecution(otherPipelineId, executionId, userId))
-          .isInstanceOf(PipelineNotFoundException.class);
+          .isInstanceOf(PipelineNotFoundException.class)
+          .hasMessage("실행 기록을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
     } finally {
       pipelineService.deletePipeline(otherPipelineId);
     }

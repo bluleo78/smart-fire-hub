@@ -207,8 +207,10 @@ class TriggerServiceTest extends IntegrationTestBase {
 
     triggerService.deleteTrigger(created.id());
 
+    // WD-226: 내부 id 없는 한국어 문구로 404
     assertThatThrownBy(() -> triggerService.getTriggerById(created.id()))
-        .isInstanceOf(TriggerNotFoundException.class);
+        .isInstanceOf(TriggerNotFoundException.class)
+        .hasMessage("트리거를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
   }
 
   @Test

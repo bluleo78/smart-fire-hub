@@ -359,14 +359,16 @@ class PipelineControllerTest {
   @Test
   void cancelExecution_notFound_returns404() throws Exception {
     when(pipelineService.cancelExecution(1L, 44L, 1L))
-        .thenThrow(
-            new com.smartfirehub.pipeline.exception.PipelineNotFoundException(
-                "Execution not found"));
+        .thenThrow(com.smartfirehub.pipeline.exception.PipelineNotFoundException.execution());
 
     mockMvc
         .perform(
             post("/api/v1/pipelines/1/executions/44/cancel")
                 .header("Authorization", "Bearer test-token"))
-        .andExpect(status().isNotFound());
+        .andExpect(status().isNotFound())
+        // WD-226: 응답 message 는 토스트에 그대로 실리는 한국어 문구
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message")
+                .value("실행 기록을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
   }
 }

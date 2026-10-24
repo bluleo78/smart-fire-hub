@@ -255,10 +255,7 @@ public class PipelineExecutionService {
         executionRepository
             .findPipelineIdOfExecution(executionId)
             .filter(pipelineId::equals)
-            .orElseThrow(
-                () ->
-                    new PipelineNotFoundException(
-                        "Execution not found: " + executionId + " in pipeline " + pipelineId));
+            .orElseThrow(PipelineNotFoundException::execution);
 
     PipelineExecutionRepository.CancelRequestResult result =
         executionRepository

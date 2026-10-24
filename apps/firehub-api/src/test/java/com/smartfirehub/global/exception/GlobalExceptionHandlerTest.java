@@ -131,7 +131,7 @@ class GlobalExceptionHandlerTest {
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.status").value(404))
         .andExpect(jsonPath("$.error").value("Not Found"))
-        .andExpect(jsonPath("$.message").value("Pipeline not found"));
+        .andExpect(jsonPath("$.message").value("파이프라인을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
   }
 
   @Test
@@ -141,7 +141,7 @@ class GlobalExceptionHandlerTest {
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.status").value(404))
         .andExpect(jsonPath("$.error").value("Not Found"))
-        .andExpect(jsonPath("$.message").value("Trigger not found"));
+        .andExpect(jsonPath("$.message").value("트리거를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
   }
 
   @Test
