@@ -186,6 +186,10 @@ export interface TriggerResponse {
   config: Record<string, unknown>;
   nextFireTime: string | null;
   createdAt: string;
+  /**
+   * 연쇄 트리거의 선행 파이프라인이 없는지(삭제됨 등) — 서버가 조회 시 계산한다(WD-218). 옛 서버는 보내지 않으므로 선택값이고, 없으면 false 로 본다.
+   */
+  upstreamMissing?: boolean;
 }
 
 export interface TriggerEventResponse {

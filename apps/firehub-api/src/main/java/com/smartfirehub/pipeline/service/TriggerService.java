@@ -202,6 +202,8 @@ public class TriggerService {
         if (upstreamPipelineId.equals(pipelineId)) {
           throw new CyclicTriggerDependencyException(SELF_CHAIN_MESSAGE);
         }
+        // 없는(삭제된) 선행을 가리키는 연쇄는 영원히 발화하지 않는다 — 활성으로 만들어지기 전에 거부한다(WD-218).
+        requireUpstreamExists(upstreamPipelineId);
         // 새 트리거는 활성 상태로 만들어지므로 곧바로 연쇄 그래프의 간선이 된다 — 순환·길이를 검사한다.
         validatePipelineChain(pipelineId, upstreamPipelineId, null);
         validateChainCondition(processedConfig.getOrDefault("condition", "SUCCESS"));
@@ -402,6 +404,10 @@ public class TriggerService {
     if (enabled && "PIPELINE_CHAIN".equals(existing.triggerType())) {
       // 켤 때만 상류를 해석한다 — 끄는 것은 잘못 저장된 값이 있어도 막지 않는다.
       Long upstreamPipelineId = chainUpstreamOf(existing.config());
+      // 선행이 삭제돼 자동으로 꺼진 트리거를 다시 켜면 발화 대상이 없어 영원히 무동작이다 — 켜기를 거부한다(WD-218).
+      if (upstreamPipelineId != null) {
+        requireUpstreamExists(upstreamPipelineId);
+      }
       if (addsNewActiveChainEdge(existing, upstreamPipelineId, enabled)) {
         validatePipelineChain(existing.pipelineId(), upstreamPipelineId, existing.id());
       }
@@ -433,17 +439,21 @@ public class TriggerService {
 
   @Transactional(readOnly = true)
   public List<TriggerResponse> getTriggers(Long pipelineId) {
-    return triggerRepository.findByPipelineId(pipelineId).stream()
-        .map(TriggerService::withoutPollSnapshot)
-        .toList();
+    // 스냅숏 제거가 레코드를 다시 만들므로 선행 없음 표시는 그 뒤에 붙인다(WD-218).
+    return withUpstreamMissing(
+        triggerRepository.findByPipelineId(pipelineId).stream()
+            .map(TriggerService::withoutPollSnapshot)
+            .toList());
   }
 
   @Transactional(readOnly = true)
   public TriggerResponse getTriggerById(Long triggerId) {
-    return triggerRepository
-        .findById(triggerId)
-        .map(TriggerService::withoutPollSnapshot)
-        .orElseThrow(() -> new TriggerNotFoundException("Trigger not found: " + triggerId));
+    TriggerResponse trigger =
+        triggerRepository
+            .findById(triggerId)
+            .map(TriggerService::withoutPollSnapshot)
+            .orElseThrow(() -> new TriggerNotFoundException("Trigger not found: " + triggerId));
+    return withUpstreamMissing(List.of(trigger)).get(0);
   }
 
   /**
@@ -679,6 +689,52 @@ public class TriggerService {
   /** 자기 자신을 상류로 지정한 연쇄 거부 문구. */
   private static final String SELF_CHAIN_MESSAGE = "파이프라인은 자기 자신이 끝났을 때 다시 실행되도록 연결할 수 없습니다.";
 
+  /** 선행 파이프라인이 없을 때의 거부 문구(WD-218). 삭제됐든 처음부터 없든(다른 테넌트 id 포함) 같은 문구다. */
+  static final String UPSTREAM_MISSING_MESSAGE = "선행 파이프라인이 삭제되었거나 없습니다. 다른 파이프라인을 고르세요.";
+
+  /**
+   * 연쇄 트리거의 선행 파이프라인이 지금 테넌트에 있는지 확인하고, 없으면 400(IllegalArgumentException)으로 거부한다(WD-218).
+   *
+   * <p>RLS 가 걸린 일반 조회라 다른 테넌트의 파이프라인 id 도 "없음"과 같은 문구가 된다 — 다른 테넌트 파이프라인의 존재를 떠보는 오라클이 되지 않는다. 같은
+   * 테넌트 안에서는 파이프라인 목록이 사용자별로 걸러지지 않으므로(목록 조회로 이미 모두 보인다) 감출 정보가 없다.
+   */
+  private void requireUpstreamExists(Long upstreamPipelineId) {
+    if (!pipelineRepository.existsById(upstreamPipelineId)) {
+      throw new IllegalArgumentException(UPSTREAM_MISSING_MESSAGE);
+    }
+  }
+
+  /**
+   * 조회 응답에 연쇄 트리거의 선행 없음 표시를 붙인다(WD-218) — 선행 id 들을 한 번에 조회한다. 숫자로 읽을 수 없는 선행도 실행 시 간선이 될 수 없으므로
+   * 없음으로 본다. 켜짐 여부와 무관하게 계산한다(결함 이전에 없는 선행으로 켜진 채 남은 트리거도 드러내기 위함).
+   */
+  private List<TriggerResponse> withUpstreamMissing(List<TriggerResponse> triggers) {
+    Set<Long> upstreamIds = new HashSet<>();
+    for (TriggerResponse t : triggers) {
+      if ("PIPELINE_CHAIN".equals(t.triggerType())) {
+        Long id = ChainGraph.parseUpstreamIdOrNull(upstreamValueOf(t));
+        if (id != null) {
+          upstreamIds.add(id);
+        }
+      }
+    }
+    Set<Long> existing = pipelineRepository.findExistingIds(upstreamIds);
+    List<TriggerResponse> out = new ArrayList<>(triggers.size());
+    for (TriggerResponse t : triggers) {
+      if (!"PIPELINE_CHAIN".equals(t.triggerType())) {
+        out.add(t);
+        continue;
+      }
+      Long id = ChainGraph.parseUpstreamIdOrNull(upstreamValueOf(t));
+      out.add(t.withUpstreamMissing(id == null || !existing.contains(id)));
+    }
+    return out;
+  }
+
+  private static Object upstreamValueOf(TriggerResponse t) {
+    return t.config() == null ? null : t.config().get("upstreamPipelineId");
+  }
+
   /**
    * 연쇄 트리거 config 에서 상류 파이프라인 id 를 꺼낸다. 없으면 null, 숫자로 읽을 수 없으면 400.
    *
@@ -733,6 +789,12 @@ public class TriggerService {
       throw new CyclicTriggerDependencyException(SELF_CHAIN_MESSAGE);
     }
     boolean enabledAfter = request.isEnabled() != null ? request.isEnabled() : existing.isEnabled();
+    // 선행 존재 확인(WD-218): config 를 보낸 수정은 그 선행을 저장하는 것이므로 늘 확인한다(웹 편집 창은 늘 config 를 보낸다 — 지워진 id
+    // 그대로 「수정되었습니다」가 되던 경로). config 없이 꺼진 트리거를 켜는 수정은 토글 켜기와 같아 확인한다. 이름만 바꾸거나 끄는 수정은
+    // 확인하지 않는다 — 선행이 사라진 트리거라도 끄거나 이름을 고칠 수는 있어야 한다.
+    if (request.config() != null || (enabledAfter && !existing.isEnabled())) {
+      requireUpstreamExists(upstreamAfter);
+    }
     if (addsNewActiveChainEdge(existing, upstreamAfter, enabledAfter)) {
       validatePipelineChain(existing.pipelineId(), upstreamAfter, existing.id());
     }

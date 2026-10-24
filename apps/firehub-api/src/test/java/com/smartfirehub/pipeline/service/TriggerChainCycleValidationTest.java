@@ -11,6 +11,7 @@ import static org.jooq.impl.DSL.table;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -223,6 +224,140 @@ class TriggerChainCycleValidationTest extends IntegrationTestBase {
         .hasMessageContaining("이미")
         .hasMessageContaining(label("A"))
         .hasMessageContaining(label("B"));
+  }
+
+  // ------------------------------------------------------------------ 선행 파이프라인 존재(WD-218)
+
+  @Test
+  void create_withMissingUpstream_isRejectedInKorean() {
+    // 결함: 없는 파이프라인 id 를 선행으로 생성하면 201·활성이었다 — 영원히 발화하지 않는 트리거가 생겼다.
+    Long b = pipeline("B");
+    Long gone = pipeline("Gone");
+    pipelineService.deletePipeline(gone);
+
+    assertThatThrownBy(() -> chain(b, gone))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(TriggerService.UPSTREAM_MISSING_MESSAGE);
+  }
+
+  @Test
+  void upstreamOfOtherTenant_isRejectedWithSameMessageAsMissing() {
+    // 다른 테넌트의 파이프라인 id 는 "없음"과 같은 문구·유형이어야 한다 — 문구가 다르면 남의 테넌트 파이프라인 존재를 떠보는 오라클이 된다.
+    Long b = pipeline("B");
+    long otherTenant = TenantRlsTestSupport.createActiveTenant(dsl, "wd218");
+    String prev =
+        dsl.resultQuery("select coalesce(current_setting('app.tenant_id', true), '')")
+            .fetchOneInto(String.class);
+    Long foreign;
+    dsl.execute("select set_config('app.tenant_id', ?, true)", String.valueOf(otherTenant));
+    try {
+      foreign =
+          dsl.insertInto(table(name("pipeline")))
+              .set(field(name("name"), String.class), "wd218-foreign-" + unique)
+              .set(field(name("is_active"), Boolean.class), true)
+              .set(field(name("created_by"), Long.class), userId)
+              .returning(field(name("id"), Long.class))
+              .fetchOne()
+              .get(field(name("id"), Long.class));
+    } finally {
+      dsl.execute("select set_config('app.tenant_id', ?, true)", prev);
+    }
+    assertThat(foreign).as("다른 테넌트 파이프라인이 실제로 만들어져야 단언이 공허하지 않다").isNotNull();
+
+    assertThatThrownBy(() -> chain(b, foreign))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(TriggerService.UPSTREAM_MISSING_MESSAGE);
+  }
+
+  @Test
+  void deletedUpstream_disablesTrigger_showsReason_andBlocksReEnableAndSave() {
+    Long a = pipeline("A");
+    Long b = pipeline("B");
+    Long ba = chain(b, a); // A → B
+
+    // 선행이 있으면 표시 없음.
+    assertThat(triggerService.getTriggerById(ba).upstreamMissing()).isFalse();
+
+    pipelineService.deletePipeline(a);
+
+    // 서버가 자동으로 끈 트리거는 목록·단건 조회에서 이유(선행 없음)를 함께 내려 준다.
+    TriggerResponse listed =
+        triggerService.getTriggers(b).stream()
+            .filter(t -> t.id().equals(ba))
+            .findFirst()
+            .orElseThrow();
+    assertThat(listed.isEnabled()).isFalse();
+    assertThat(listed.upstreamMissing()).isTrue();
+    assertThat(triggerService.getTriggerById(ba).upstreamMissing()).isTrue();
+
+    // 켜기 거부(결함: 성공 토스트와 함께 「활성」이 됐다).
+    assertThatThrownBy(() -> triggerService.toggleTrigger(ba, true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(TriggerService.UPSTREAM_MISSING_MESSAGE);
+    // config 없이 켜는 수정도 같은 거부.
+    assertThatThrownBy(
+            () ->
+                triggerService.updateTrigger(
+                    ba, new UpdateTriggerRequest(null, true, null, null), userId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(TriggerService.UPSTREAM_MISSING_MESSAGE);
+    // 지워진 id 그대로 저장(웹 편집 창은 늘 config 를 보낸다) 거부(결함: 「수정되었습니다」).
+    assertThatThrownBy(
+            () ->
+                triggerService.updateTrigger(
+                    ba, new UpdateTriggerRequest("chain", null, null, chainConfig(a)), userId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(TriggerService.UPSTREAM_MISSING_MESSAGE);
+    assertThat(triggerService.getTriggerById(ba).isEnabled()).isFalse();
+
+    // 이름만 바꾸거나 끄는 것은 막지 않는다.
+    assertThatCode(
+            () ->
+                triggerService.updateTrigger(
+                    ba, new UpdateTriggerRequest("renamed", false, null, null), userId))
+        .doesNotThrowAnyException();
+    assertThatCode(() -> triggerService.toggleTrigger(ba, false)).doesNotThrowAnyException();
+
+    // 다른(있는) 선행으로 바꾸면 저장되고 표시가 사라진다.
+    Long c = pipeline("C");
+    triggerService.updateTrigger(
+        ba, new UpdateTriggerRequest("chain", null, null, chainConfig(c)), userId);
+    assertThat(triggerService.getTriggerById(ba).upstreamMissing()).isFalse();
+    assertThatCode(() -> triggerService.toggleTrigger(ba, true)).doesNotThrowAnyException();
+  }
+
+  @Test
+  void update_toMissingUpstream_isRejected() {
+    // 결함: PUT 으로 없는 id(999 등)를 선행으로 바꾸면 204 였다.
+    Long a = pipeline("A");
+    Long b = pipeline("B");
+    Long ba = chain(b, a);
+    Long gone = pipeline("Gone");
+    pipelineService.deletePipeline(gone);
+
+    assertThatThrownBy(
+            () ->
+                triggerService.updateTrigger(
+                    ba, new UpdateTriggerRequest("chain", null, null, chainConfig(gone)), userId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(TriggerService.UPSTREAM_MISSING_MESSAGE);
+  }
+
+  @Test
+  void legacyEnabledDanglingTrigger_isFlaggedEvenWhileEnabled() {
+    // 결함 이전에 없는 선행으로 켜진 채 남은 트리거(운영 잔존분)도 표시로 드러나야 한다 — 켜짐 여부와 무관하게 계산한다.
+    Long b = pipeline("B");
+    Long gone = pipeline("Gone");
+    pipelineService.deletePipeline(gone);
+    Long legacy = insertChainTrigger(b, gone);
+
+    TriggerResponse listed =
+        triggerService.getTriggers(b).stream()
+            .filter(t -> t.id().equals(legacy))
+            .findFirst()
+            .orElseThrow();
+    assertThat(listed.isEnabled()).isTrue();
+    assertThat(listed.upstreamMissing()).isTrue();
   }
 
   // ------------------------------------------------------------------ 픽스처

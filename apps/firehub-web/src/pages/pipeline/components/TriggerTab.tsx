@@ -155,6 +155,14 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
                           {trigger.isEnabled ? '활성' : '비활성'}
                         </Badge>
                       </div>
+                      {/* 선행 파이프라인이 없는 연쇄 트리거는 꺼진 이유·무동작 이유를 보인다(WD-218) — 예전엔 이유 없는 「비활성」만 보였다. */}
+                      {trigger.upstreamMissing && (
+                        <p className="text-xs text-destructive mt-0.5">
+                          {trigger.isEnabled
+                            ? '선행 파이프라인이 없어 실행되지 않습니다. 편집에서 다른 파이프라인을 고르세요.'
+                            : '선행 파이프라인이 삭제되어 꺼졌습니다. 편집에서 다른 파이프라인을 고르세요.'}
+                        </p>
+                      )}
                       {trigger.description && (
                         <p className="text-xs text-muted-foreground mt-0.5 truncate">
                           {trigger.description}
@@ -180,7 +188,11 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
                         <Pencil className="h-4 w-4" />
                         편집
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleToggle(trigger)}>
+                      {/* 선행이 없으면 켜도 발화할 대상이 없다 — 켜기만 막고 끄기는 늘 허용한다(WD-218). 서버도 켜기를 거부한다. */}
+                      <DropdownMenuItem
+                        disabled={!trigger.isEnabled && !!trigger.upstreamMissing}
+                        onClick={() => handleToggle(trigger)}
+                      >
                         <Power className="h-4 w-4" />
                         {trigger.isEnabled ? '비활성화' : '활성화'}
                       </DropdownMenuItem>

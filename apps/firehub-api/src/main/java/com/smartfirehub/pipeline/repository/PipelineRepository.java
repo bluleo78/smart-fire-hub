@@ -4,8 +4,11 @@ import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.pipeline.dto.PipelineResponse;
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -180,6 +183,23 @@ public class PipelineRepository {
 
   public boolean existsByName(String name) {
     return dsl.fetchExists(dsl.selectOne().from(PIPELINE).where(P_NAME.eq(name)));
+  }
+
+  /**
+   * 파이프라인이 (지금 테넌트에) 있는가 — 연쇄 트리거의 선행 파이프라인 존재 확인용(WD-218).
+   *
+   * <p>RLS 가 걸린 일반 조회라 다른 테넌트의 파이프라인은 "없음"과 똑같이 보인다(존재를 떠보는 오라클이 되지 않는다).
+   */
+  public boolean existsById(Long id) {
+    return dsl.fetchExists(dsl.selectOne().from(PIPELINE).where(P_ID.eq(id)));
+  }
+
+  /** 주어진 id 중 (지금 테넌트에) 실제로 있는 파이프라인 id 만 돌려준다 — 트리거 목록의 선행 없음 표시를 한 번의 조회로 계산하기 위함(WD-218). */
+  public Set<Long> findExistingIds(Collection<Long> ids) {
+    if (ids.isEmpty()) {
+      return Set.of();
+    }
+    return new HashSet<>(dsl.select(P_ID).from(PIPELINE).where(P_ID.in(ids)).fetch(P_ID));
   }
 
   public Optional<String> findNameById(Long id) {

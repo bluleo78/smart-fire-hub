@@ -1074,6 +1074,8 @@ public class PipelineService {
         .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + id));
 
     // Disable chain triggers that reference this pipeline as upstream
+    // 꺼진 이유(선행 삭제)는 따로 저장하지 않는다 — 트리거 조회가 선행 존재를 계산해 upstreamMissing 으로 내려 주고, 다시 켜기·저장은
+    // TriggerService 가 거부한다(WD-218).
     int disabled = triggerRepository.disableByUpstreamPipelineId(id);
     if (disabled > 0) {
       log.info("Disabled {} chain triggers referencing pipeline {}", disabled, id);
