@@ -14,7 +14,7 @@ import {
 } from "../../factories/pipeline.factory";
 import { mockApi } from "../../fixtures/api-mock";
 import { expect, test } from "../../fixtures/auth.fixture";
-import { setupPipelineEditorMocks } from "../../fixtures/pipeline.fixture";
+import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
 /** POST /pipelines/1/execute 를 늦게 응답하며 호출 횟수를 세는 라우트를 건다. 반환 함수로 현재 횟수를 읽는다. */
 async function countExecuteCalls(page: Page): Promise<() => number> {
@@ -46,6 +46,11 @@ async function countExecuteCalls(page: Page): Promise<() => number> {
 }
 
 test.describe("파이프라인 실행 더블클릭 중복 방지 (WD-208)", () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test("「실행」 버튼을 더블클릭해도 실행 API 는 한 번만 호출된다", async ({
     authenticatedPage: page,
   }) => {

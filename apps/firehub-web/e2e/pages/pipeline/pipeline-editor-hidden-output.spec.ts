@@ -12,6 +12,7 @@ import { createDataset } from '../../factories/dataset.factory';
 import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 const HIDDEN_OUTPUT_ID = 77;
 /** 목록에 없는(볼 수 없는) 입력 데이터셋 — 입력 선택칸이 모르는 id 를 조용히 버리면 저장 한 번에 입력 참조가 사라진다. */
@@ -89,6 +90,11 @@ type PutPayload = {
 };
 
 test.describe('파이프라인 에디터 — 볼 수 없는 출력·입력 데이터셋', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test('출력 Select·입력 칩이 잠금 표시되고, 다른 필드만 고쳐 저장해도 숨김 id 가 PUT 에 유지된다', async ({
     authenticatedPage: page,
   }) => {

@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { useDeleteTrigger, useToggleTrigger,useTriggers } from '@/hooks/queries/usePipelines';
+import { useDeleteTrigger, usePipelinePermissions, useToggleTrigger,useTriggers } from '@/hooks/queries/usePipelines';
 import { formatDate } from '@/lib/formatters';
 import { iGa } from '@/lib/utils';
 import type { ErrorResponse } from '@/types/auth';
@@ -68,6 +68,9 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
   const { data: triggers, isLoading } = useTriggers(pipelineId);
   const deleteTrigger = useDeleteTrigger(pipelineId);
   const toggleTrigger = useToggleTrigger(pipelineId);
+  // 트리거 쓰기 진입점은 서버 권한과 같은 기준으로 숨긴다(WD-219) — 생성·편집·켜고 끄기 trigger:write, 삭제 trigger:delete.
+  // 예전엔 trigger:read 만 있는 사용자에게도 「트리거 추가」·⋯ 메뉴가 보여 눌러야 403 토스트를 받았다.
+  const { canWriteTrigger, canDeleteTrigger } = usePipelinePermissions();
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editTrigger, setEditTrigger] = useState<TriggerResponse | null>(null);
@@ -114,10 +117,12 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
         {/* Header */}
         <div className="flex items-center justify-between">
           <h3 className="text-xl leading-7 font-semibold">트리거</h3>
-          <Button size="sm" onClick={() => setAddDialogOpen(true)}>
-            <Plus className="h-4 w-4" />
-            트리거 추가
-          </Button>
+          {canWriteTrigger && (
+            <Button size="sm" onClick={() => setAddDialogOpen(true)}>
+              <Plus className="h-4 w-4" />
+              트리거 추가
+            </Button>
+          )}
         </div>
 
         {/* Trigger list */}
@@ -177,34 +182,43 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
                     </div>
                   </div>
 
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => setEditTrigger(trigger)}>
-                        <Pencil className="h-4 w-4" />
-                        편집
-                      </DropdownMenuItem>
-                      {/* 선행이 없으면 켜도 발화할 대상이 없다 — 켜기만 막고 끄기는 늘 허용한다(WD-218). 서버도 켜기를 거부한다. */}
-                      <DropdownMenuItem
-                        disabled={!trigger.isEnabled && !!trigger.upstreamMissing}
-                        onClick={() => handleToggle(trigger)}
-                      >
-                        <Power className="h-4 w-4" />
-                        {trigger.isEnabled ? '비활성화' : '활성화'}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="text-destructive"
-                        onClick={() => setDeletingTrigger(trigger)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        삭제
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  {/* 쓰기·삭제 권한이 모두 없으면 메뉴에 남는 항목이 없으므로 ⋯ 버튼 자체를 그리지 않는다(WD-219) — 빈 메뉴가 열리지 않게. */}
+                  {(canWriteTrigger || canDeleteTrigger) && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label={`트리거 "${trigger.name}" 작업`}>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {canWriteTrigger && (
+                          <DropdownMenuItem onClick={() => setEditTrigger(trigger)}>
+                            <Pencil className="h-4 w-4" />
+                            편집
+                          </DropdownMenuItem>
+                        )}
+                        {/* 선행이 없으면 켜도 발화할 대상이 없다 — 켜기만 막고 끄기는 늘 허용한다(WD-218). 서버도 켜기를 거부한다. */}
+                        {canWriteTrigger && (
+                          <DropdownMenuItem
+                            disabled={!trigger.isEnabled && !!trigger.upstreamMissing}
+                            onClick={() => handleToggle(trigger)}
+                          >
+                            <Power className="h-4 w-4" />
+                            {trigger.isEnabled ? '비활성화' : '활성화'}
+                          </DropdownMenuItem>
+                        )}
+                        {canDeleteTrigger && (
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => setDeletingTrigger(trigger)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            삭제
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
                 </CardContent>
               </Card>
             ))}

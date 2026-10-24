@@ -28,7 +28,7 @@ import {
 } from '@/components/ui/table';
 import { Tabs, TabsContent,TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAllDatasets } from '@/hooks/queries/useDatasets';
-import { useCancelExecution, useExecutePipeline, useExecution, useExecutions,usePipeline } from '@/hooks/queries/usePipelines';
+import { useCancelExecution, useExecutePipeline, useExecution, useExecutions,usePipeline, usePipelinePermissions } from '@/hooks/queries/usePipelines';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError } from '@/lib/api-error';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
@@ -92,6 +92,8 @@ export default function PipelineEditorPage() {
   // 서버 목록 상한(100)을 넘어도 전부 보이도록 전 페이지를 모은다 (#732)
   const { data: allDatasets } = useAllDatasets();
   const { data: executions } = useExecutions(pipelineId ?? 0);
+  // 실행 이력 행의 「실행 취소」는 pipeline:execute 가 있을 때만 보인다(WD-219) — 헤더 버튼과 같은 기준.
+  const { canExecutePipeline } = usePipelinePermissions();
 
   /** 존재하지 않는 실행 ID 접근 시 toast 알림 후 파이프라인 페이지로 리다이렉트 — ApiConnectionDetailPage와 동일 패턴 */
   useEffect(() => {
@@ -475,7 +477,7 @@ export default function PipelineEditorPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <ExecutionRowCancelButton
-                          state={getExecutionCancelState(exec)}
+                          state={canExecutePipeline ? getExecutionCancelState(exec) : 'hidden'}
                           pending={cancelExecutionMutation.isPending && cancelExecutionMutation.variables === exec.id}
                           executionId={exec.id}
                           onClick={() => setCancelTargetExecId(exec.id)}

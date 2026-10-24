@@ -13,6 +13,7 @@
 
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /** 신규 에디터 공통 모킹 — 데이터셋 목록만 있으면 된다 */
 async function setupNewEditorMocks(page: import('@playwright/test').Page) {
@@ -26,6 +27,11 @@ async function setupNewEditorMocks(page: import('@playwright/test').Page) {
 }
 
 test.describe('usePipelineValidation — 스텝 수준 유효성 검사', () => {
+  // 추가·삭제·생성 경로·실행·수정 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 파이프라인 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   /**
    * 스텝 이름이 비어있는 상태로 저장 시 → Zod 스키마 검증 실패
    * editorPipelineSchema.shape.steps.element.safeParse 경로를 커버한다.
@@ -247,6 +253,11 @@ test.describe('usePipelineValidation — 스텝 수준 유효성 검사', () => 
 });
 
 test.describe('usePipelineValidation — PYTHON 스텝 출력 컬럼 검증', () => {
+  // 추가·삭제·생성 경로·실행·수정 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 파이프라인 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   /**
    * PYTHON 스텝에서 출력 컬럼명을 비워둔 채 저장 시 에러를 표시하고 POST API를 호출하지 않는다.
    * usePipelineValidation.ts의 pythonConfig.outputColumns.name 빈값 검증 분기를 커버한다.
@@ -305,6 +316,11 @@ test.describe('usePipelineValidation — PYTHON 스텝 출력 컬럼 검증', ()
 });
 
 test.describe('usePipelineValidation — AI_CLASSIFY 스텝 검증', () => {
+  // 추가·삭제·생성 경로·실행·수정 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 파이프라인 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   /**
    * AI_CLASSIFY 스텝에서 프롬프트 없이 저장 시 에러를 표시한다.
    * usePipelineValidation.ts의 aiConfig.prompt 검증 분기를 커버한다.
@@ -393,6 +409,11 @@ test.describe('usePipelineValidation — AI_CLASSIFY 스텝 검증', () => {
 });
 
 test.describe('usePipelineValidation — API_CALL 스텝 URL 검증', () => {
+  // 추가·삭제·생성 경로·실행·수정 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 파이프라인 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   /**
    * API_CALL 스텝에서 URL을 비워둔 채 저장 시 클라이언트 검증 에러를 표시하고 POST API를 호출하지 않는다.
    * usePipelineValidation.ts의 apiConfig.customUrl 빈값 검증 분기를 커버한다.

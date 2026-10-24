@@ -86,7 +86,11 @@ function App() {
               </Route>
               <Route path="/data/datasets/:id" element={<DatasetDetailPage />} />
               <Route path="/pipelines" element={<PipelineListPage />} />
-              <Route path="/pipelines/new" element={<PipelineEditorPage />} />
+              {/* 파이프라인 생성 — 서버 POST /pipelines 가 pipeline:write 를 요구한다. 주소로 직접 들어와 편집기를 다 채운 뒤에야 403 을 받지 않게
+                  진입부터 같은 권한으로 막고, 없으면 레이아웃 안에서 권한 안내를 보인다(WD-219, 데이터셋 생성 WD-144 선례) */}
+              <Route element={<AdminOrPermissionRoute permission="pipeline:write" />}>
+                <Route path="/pipelines/new" element={<PipelineEditorPage />} />
+              </Route>
               <Route path="/pipelines/:id" element={<PipelineEditorPage />} />
               <Route path="/pipelines/:id/executions/:execId" element={<PipelineEditorPage />} />
               <Route path="/analytics/queries" element={<QueryListPage />} />

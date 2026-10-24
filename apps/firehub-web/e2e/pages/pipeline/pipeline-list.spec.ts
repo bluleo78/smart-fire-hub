@@ -1,13 +1,18 @@
 import { createPipeline, createPipelines } from '../../factories/pipeline.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { mockPipelineDeleteImpact, setupPipelineMocks } from '../../fixtures/pipeline.fixture';
+import { grantPipelinePermissions, mockPipelineDeleteImpact, setupPipelineMocks } from '../../fixtures/pipeline.fixture';
 
 /**
  * 파이프라인 목록 페이지 E2E 테스트
  * - API 모킹 기반으로 백엔드 없이 목록 페이지 UI를 검증한다.
  */
 test.describe('파이프라인 목록 페이지', () => {
+  // 추가·삭제·생성 경로·실행·수정 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 파이프라인 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test('파이프라인 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 5개 파이프라인 목록을 모킹한 후 목록 페이지 접근
     await setupPipelineMocks(page, 5);

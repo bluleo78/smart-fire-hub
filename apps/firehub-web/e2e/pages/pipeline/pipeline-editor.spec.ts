@@ -1,7 +1,7 @@
 import { createExecution, createPipelineDetail, createTrigger } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
+import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
 /**
  * 파이프라인 에디터 페이지 E2E 테스트
@@ -10,6 +10,11 @@ import { setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
  *   페이지 레벨 렌더링과 탭 전환에 집중한다.
  */
 test.describe('파이프라인 에디터 페이지', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test('기존 파이프라인을 로드하면 탭 메뉴가 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 에디터 API 모킹
     await setupPipelineEditorMocks(page, 1);

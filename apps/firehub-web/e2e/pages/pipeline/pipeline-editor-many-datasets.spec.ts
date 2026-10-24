@@ -13,6 +13,7 @@ import { createColumn, createDataset, createDatasetDetail } from '../../factorie
 import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /** 서버 목록 조회 상한 — DatasetController 의 Math.min(size, 100) 과 같게 둔다. */
 const SERVER_MAX_SIZE = 100;
@@ -79,6 +80,11 @@ async function setupMocks(page: Page) {
 }
 
 test.describe('파이프라인 에디터 — 데이터셋 100개 초과 (#732)', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test('두 번째 페이지에만 있는 출력/입력 데이터셋이 스텝에 이름으로 표시된다', async ({
     authenticatedPage: page,
   }) => {

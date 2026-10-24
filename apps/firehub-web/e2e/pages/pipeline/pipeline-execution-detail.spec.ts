@@ -18,7 +18,7 @@ import {
 } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
+import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
 /** 가림 표시 스크린샷 경로 — `apps/firehub-web/test-results/tc/<suite>/` 규약(디자인 검토 증빙). */
 const MASKED_SCREENSHOT_DIR = 'test-results/tc/security-level-execution-masked';
@@ -44,6 +44,11 @@ async function expectMutedMaskedBlock(page: Page, maskedText: string) {
 }
 
 test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test('실행 탭에서 실행 클릭 시 ExecutionSummary가 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupPipelineEditorMocks(page, 1);
 

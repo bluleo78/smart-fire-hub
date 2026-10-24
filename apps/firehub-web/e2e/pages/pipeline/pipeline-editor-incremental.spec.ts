@@ -10,6 +10,7 @@ import { createColumn, createDataset, createDatasetDetail } from '../../factorie
 import { createExecution, createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 const SQL = 'SELECT code, name FROM src WHERE _updated_at >= {{last_run_at}}';
 const OUTPUT_DATASET_ID = 10;
@@ -43,6 +44,11 @@ async function setupMocks(
 }
 
 test.describe('파이프라인 SQL 스텝 증분 처리', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test('PK가 있는 출력이면 MERGE를 고를 수 있고 PK가 표시되며 저장 payload에 반영된다', async ({
     authenticatedPage: page,
   }) => {

@@ -4,6 +4,34 @@ import { useEffect, useRef } from 'react';
 import { pipelinesApi } from '../../api/pipelines';
 import { fetchAllPages } from '../../lib/fetch-all-pages';
 import type { CreateTriggerRequest, PipelineExecutionResponse, UpdatePipelineRequest, UpdateTriggerRequest } from '../../types/pipeline';
+import { useMyPermissions } from './useMyPermissions';
+
+/**
+ * 파이프라인 목록(추가·삭제)과 상세 화면(헤더·실행 이력·트리거 탭·증분 처리)의 쓰기 진입점을 보일지 정하는 권한 묶음 (WD-219).
+ * 화면은 권한 코드를 직접 읽지 않고 이 훅만 쓴다(데이터셋 상세의 useDatasetPermissions 와 같은 방식, WD-139·WD-144).
+ *
+ * 조회 권한만 있는 사용자(pipeline:read·trigger:read)에게 「실행」「수정」「트리거 추가」·⋯ 메뉴를 보여 주면
+ * 눌러야 403 토스트를 받는다. 서버 컨트롤러(PipelineController·TriggerController)의 @RequirePermission 을 그대로 따라 나눈다 —
+ * 정의 수정(pipeline:write)·실행/취소(pipeline:execute)·트리거 생성/수정/켜고 끄기(trigger:write)·트리거 삭제(trigger:delete)는
+ * 서로 다른 권한이라 하나로 뭉치면 일부 사용자가 잘못 막히거나 열린다.
+ * 권한을 불러오는 동안은 빈 집합이라 모두 false — 버튼이 나타났다 사라지는 깜빡임이 없다. 최종 판정은 서버이고 여기는 노출 결정용이다.
+ */
+export function usePipelinePermissions() {
+  const { permissions, isLoading } = useMyPermissions();
+  return {
+    /** 「수정」(PUT /pipelines/{id})·증분 처리 재생성 예약/취소(POST·DELETE .../full-rebuild) — pipeline:write */
+    canWritePipeline: permissions.has('pipeline:write'),
+    /** 목록 행 삭제(DELETE /pipelines/{id}) — pipeline:delete. 「파이프라인 추가」·/pipelines/new 진입은 canWritePipeline(POST /pipelines 가 pipeline:write) */
+    canDeletePipeline: permissions.has('pipeline:delete'),
+    /** 「실행」·「재실행」(POST .../execute)·「실행 취소」(POST .../executions/{execId}/cancel) — pipeline:execute */
+    canExecutePipeline: permissions.has('pipeline:execute'),
+    /** 「트리거 추가」(POST)·편집(PUT)·활성화/비활성화(PATCH .../toggle) — trigger:write */
+    canWriteTrigger: permissions.has('trigger:write'),
+    /** 트리거 삭제(DELETE .../triggers/{triggerId}) — trigger:delete */
+    canDeleteTrigger: permissions.has('trigger:delete'),
+    isLoading,
+  };
+}
 
 export function usePipelines(params: { page?: number; size?: number }) {
   return useQuery({

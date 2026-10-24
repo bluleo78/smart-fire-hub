@@ -11,6 +11,7 @@
 import type { ApiConnectionSelectable } from '../../../src/types/api-connection';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /** 모킹용 API 연결 목록 — ApiConnectionSelectable 타입으로 스펙 정합성 보장 */
 const MOCK_CONNECTIONS: ApiConnectionSelectable[] = [
@@ -87,6 +88,11 @@ async function addAndOpenApiCallStep(page: import('@playwright/test').Page) {
 }
 
 test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
+  // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
   test.beforeEach(async ({ authenticatedPage: page }) => {
     await setupEditorMocks(page);
   });
