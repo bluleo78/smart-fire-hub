@@ -54,11 +54,32 @@ public record ParseOptions(
    */
   public static String detectEncoding(byte[] data) {
     if (data == null || data.length == 0) return "UTF-8";
-    if (hasUtf8Bom(data)) return "UTF-8";
-    if (hasUtf16LeBom(data)) return "UTF-16LE";
-    if (hasUtf16BeBom(data)) return "UTF-16BE";
+    Bom bom = detectBom(data);
+    if (bom != null) return bom.encoding();
     if (isStrictUtf8(data)) return "UTF-8";
     return "MS949";
+  }
+
+  /**
+   * 파일 앞의 BOM(바이트 순서 표시) 판별 결과.
+   *
+   * @param encoding BOM 이 가리키는 실제 인코딩
+   * @param length 본문 앞에서 건너뛸 BOM 바이트 수
+   */
+  public record Bom(String encoding, int length) {}
+
+  /**
+   * 데이터 앞의 BOM 을 판별한다(WD-245). 없으면 null.
+   *
+   * <p>엑셀 「CSV UTF-8」은 앞에 {@code EF BB BF} 를 붙인다. 이 바이트를 그대로 디코딩하면 첫 헤더가 U+FEFF 로 시작해 데이터셋 열과 매핑되지
+   * 않으므로, CSV 리더는 이 결과로 BOM 을 건너뛰고 BOM 이 가리키는 인코딩으로 읽는다. 최소 앞 3바이트만 있으면 판별된다.
+   */
+  public static Bom detectBom(byte[] d) {
+    if (d == null) return null;
+    if (hasUtf8Bom(d)) return new Bom("UTF-8", 3);
+    if (hasUtf16LeBom(d)) return new Bom("UTF-16LE", 2);
+    if (hasUtf16BeBom(d)) return new Bom("UTF-16BE", 2);
+    return null;
   }
 
   /** UTF-8 BOM (EF BB BF) 시작 여부. */

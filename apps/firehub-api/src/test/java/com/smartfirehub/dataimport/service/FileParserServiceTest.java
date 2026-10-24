@@ -738,8 +738,8 @@ class FileParserServiceTest {
     List<Map<String, String>> rows = service.parse(data, "csv");
 
     assertThat(rows).hasSize(1);
-    // BOM is attached to the first header key
-    assertThat(rows.get(0).values()).contains("Alice", "30");
+    // WD-245: BOM 은 읽기 단계에서 소비되어 첫 헤더 키가 정확히 "name" 이어야 한다
+    assertThat(rows.get(0)).containsEntry("name", "Alice").containsEntry("age", "30");
   }
 
   @Test
@@ -822,6 +822,165 @@ class FileParserServiceTest {
     List<Map<String, String>> rows = service.parse(data, "csv");
     assertThat(rows).hasSize(1);
     assertThat(rows.get(0).values()).contains("Alice", "30");
+  }
+
+  // -----------------------------------------------------------------------
+  // WD-245: 파일 앞 BOM 소비 — 바이트·스트림 두 경로 모두 첫 헤더에 U+FEFF 가 남지 않아야 한다
+  // -----------------------------------------------------------------------
+
+  private static final byte[] UTF8_BOM = {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
+  private static final byte[] UTF16LE_BOM = {(byte) 0xFF, (byte) 0xFE};
+  private static final byte[] UTF16BE_BOM = {(byte) 0xFE, (byte) 0xFF};
+
+  /** BOM 바이트 + 본문을 이어 붙인다. */
+  private static byte[] withBom(byte[] bom, String body, Charset charset) {
+    byte[] b = body.getBytes(charset);
+    byte[] out = new byte[bom.length + b.length];
+    System.arraycopy(bom, 0, out, 0, bom.length);
+    System.arraycopy(b, 0, out, bom.length, b.length);
+    return out;
+  }
+
+  /** 원시 바이트를 임시 CSV 파일로 저장한다(스트림 경로 테스트용). */
+  private Path writeCsvBytes(byte[] data) throws Exception {
+    Path file = tempDir.resolve("bom-" + System.nanoTime() + ".csv");
+    Files.write(file, data);
+    return file;
+  }
+
+  /** 스트리밍 경로(실제 임포트·검증)로 모든 행을 모은다. */
+  private List<Map<String, String>> streamAll(Path file, ParseOptions opts) throws Exception {
+    List<Map<String, String>> all = new ArrayList<>();
+    service.parseStreaming(file, "csv", opts, 100, all::addAll);
+    return all;
+  }
+
+  @Test
+  void bom_utf8_bytesPath_headerAndValuesMapped() throws Exception {
+    byte[] data = withBom(UTF8_BOM, "name,도시\n홍길동,서울\n", StandardCharsets.UTF_8);
+    ParseOptions opts = ParseOptions.defaults();
+
+    // 미리보기(헤더·샘플)·전체 파싱 모두 첫 헤더가 정확히 "name"
+    assertThat(service.parseHeaders(data, "csv", opts)).containsExactly("name", "도시");
+    assertThat(service.parseSampleRows(data, "csv", 5, opts).get(0))
+        .containsEntry("name", "홍길동")
+        .containsEntry("도시", "서울");
+    assertThat(service.parse(data, "csv", opts).get(0)).containsEntry("name", "홍길동");
+  }
+
+  @Test
+  void bom_utf8_streamPath_headerAndValuesMapped() throws Exception {
+    Path file = writeCsvBytes(withBom(UTF8_BOM, "name,도시\n홍길동,서울\n", StandardCharsets.UTF_8));
+    ParseOptions opts = ParseOptions.defaults();
+
+    assertThat(service.parseHeaders(file, "csv", opts)).containsExactly("name", "도시");
+    assertThat(service.parseSampleRows(file, "csv", 5, opts).get(0)).containsEntry("name", "홍길동");
+    assertThat(service.parse(file, "csv", opts).get(0)).containsEntry("name", "홍길동");
+    // 실제 임포트가 지나는 스트리밍 경로 — 값이 null 로 빠지던 결함의 직접 재현
+    List<Map<String, String>> rows = streamAll(file, opts);
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0)).containsEntry("name", "홍길동").containsEntry("도시", "서울");
+    assertThat(rows.get(0).keySet()).noneMatch(k -> k.indexOf('\uFEFF') >= 0);
+    // 행 수 세기(헤더 제외)도 그대로
+    assertThat(service.countRows(file, "csv", opts)).isEqualTo(1);
+  }
+
+  @Test
+  void bom_utf8_inputStreamOverloads_headerMapped() throws Exception {
+    byte[] data = withBom(UTF8_BOM, "name,age\nAlice,30\n", StandardCharsets.UTF_8);
+
+    assertThat(service.parseHeaders(new ByteArrayInputStream(data), "csv", ParseOptions.defaults()))
+        .containsExactly("name", "age");
+    // 옛 parseCSV(InputStream) 경로도 같은 빌더를 지나 BOM 이 소비된다
+    assertThat(service.parseCSV(new ByteArrayInputStream(data)).get(0))
+        .containsEntry("name", "Alice");
+  }
+
+  @Test
+  void bom_utf16le_bothPaths_bomConsumed() throws Exception {
+    byte[] data = withBom(UTF16LE_BOM, "name,도시\n홍길동,서울\n", Charset.forName("UTF-16LE"));
+    ParseOptions opts = ParseOptions.defaults();
+
+    assertThat(service.parseHeaders(data, "csv", opts)).containsExactly("name", "도시");
+    Path file = writeCsvBytes(data);
+    assertThat(service.parseHeaders(file, "csv", opts)).containsExactly("name", "도시");
+    assertThat(streamAll(file, opts).get(0)).containsEntry("name", "홍길동").containsEntry("도시", "서울");
+  }
+
+  @Test
+  void bom_utf16be_bothPaths_bomConsumed() throws Exception {
+    byte[] data = withBom(UTF16BE_BOM, "name,도시\n홍길동,서울\n", Charset.forName("UTF-16BE"));
+    ParseOptions opts = ParseOptions.defaults();
+
+    assertThat(service.parseHeaders(data, "csv", opts)).containsExactly("name", "도시");
+    Path file = writeCsvBytes(data);
+    assertThat(service.parseHeaders(file, "csv", opts)).containsExactly("name", "도시");
+    assertThat(streamAll(file, opts).get(0)).containsEntry("name", "홍길동");
+  }
+
+  @Test
+  void bom_explicitEncodingMatchingBom_bomConsumed() throws Exception {
+    // 사용자가 BOM 과 같은 인코딩을 명시해도 BOM 은 소비된다
+    byte[] data = withBom(UTF8_BOM, "name,age\nAlice,30\n", StandardCharsets.UTF_8);
+    ParseOptions opts = new ParseOptions(",", "UTF-8", true, 0);
+
+    assertThat(service.parseHeaders(data, "csv", opts)).containsExactly("name", "age");
+    assertThat(streamAll(writeCsvBytes(data), opts).get(0)).containsEntry("name", "Alice");
+
+    byte[] le = withBom(UTF16LE_BOM, "name,age\nAlice,30\n", Charset.forName("UTF-16LE"));
+    ParseOptions leOpts = new ParseOptions(",", "UTF-16LE", true, 0);
+    assertThat(service.parseHeaders(le, "csv", leOpts)).containsExactly("name", "age");
+    assertThat(streamAll(writeCsvBytes(le), leOpts).get(0)).containsEntry("name", "Alice");
+  }
+
+  @Test
+  void bom_explicitEucKrButUtf8Bom_bomWins() throws Exception {
+    // UTF-8 BOM 이 있으면 실제 인코딩은 UTF-8 — EUC-KR 로 읽으면 BOM 이 깨진 글자로 헤더에 붙고 한글이 깨지므로 BOM 을 우선한다
+    byte[] data = withBom(UTF8_BOM, "이름,도시\n홍길동,서울\n", StandardCharsets.UTF_8);
+    ParseOptions opts = new ParseOptions(",", "EUC-KR", true, 0);
+
+    assertThat(service.parseHeaders(data, "csv", opts)).containsExactly("이름", "도시");
+    assertThat(service.parse(data, "csv", opts).get(0)).containsEntry("이름", "홍길동");
+    assertThat(streamAll(writeCsvBytes(data), opts).get(0))
+        .containsEntry("이름", "홍길동")
+        .containsEntry("도시", "서울");
+  }
+
+  @Test
+  void noBom_explicitEucKr_stillUsesChosenEncoding() throws Exception {
+    // BOM 이 없으면 사용자가 고른 인코딩을 그대로 따른다(기존 동작)
+    byte[] data = "이름,도시\n홍길동,서울\n".getBytes(Charset.forName("EUC-KR"));
+    ParseOptions opts = new ParseOptions(",", "EUC-KR", true, 0);
+
+    assertThat(service.parseHeaders(data, "csv", opts)).containsExactly("이름", "도시");
+    assertThat(streamAll(writeCsvBytes(data), opts).get(0)).containsEntry("이름", "홍길동");
+  }
+
+  @Test
+  void noBom_utf8_unchanged_firstCharNotDropped() throws Exception {
+    // BOM 없는 파일은 첫 바이트를 건너뛰지 않는다(첫 헤더 글자가 잘리면 안 된다) — 짧은 파일 포함
+    ParseOptions opts = ParseOptions.defaults();
+    byte[] data = "name,age\nAlice,30\n".getBytes(StandardCharsets.UTF_8);
+    assertThat(service.parseHeaders(data, "csv", opts)).containsExactly("name", "age");
+    Path file = writeCsvBytes(data);
+    assertThat(service.parseHeaders(file, "csv", opts)).containsExactly("name", "age");
+    assertThat(streamAll(file, opts).get(0)).containsEntry("name", "Alice");
+
+    // 명시 인코딩 + 3바이트 미만 파일도 그대로 읽힌다
+    ParseOptions utf8 = new ParseOptions(",", "UTF-8", true, 0);
+    assertThat(
+            service.parseHeaders(writeCsvBytes("ab".getBytes(StandardCharsets.UTF_8)), "csv", utf8))
+        .containsExactly("ab");
+  }
+
+  @Test
+  void detectBom_returnsEncodingAndLength() {
+    assertThat(ParseOptions.detectBom(UTF8_BOM)).isEqualTo(new ParseOptions.Bom("UTF-8", 3));
+    assertThat(ParseOptions.detectBom(UTF16LE_BOM)).isEqualTo(new ParseOptions.Bom("UTF-16LE", 2));
+    assertThat(ParseOptions.detectBom(UTF16BE_BOM)).isEqualTo(new ParseOptions.Bom("UTF-16BE", 2));
+    assertThat(ParseOptions.detectBom("name".getBytes(StandardCharsets.UTF_8))).isNull();
+    assertThat(ParseOptions.detectBom(new byte[0])).isNull();
+    assertThat(ParseOptions.detectBom(null)).isNull();
   }
 
   // -----------------------------------------------------------------------

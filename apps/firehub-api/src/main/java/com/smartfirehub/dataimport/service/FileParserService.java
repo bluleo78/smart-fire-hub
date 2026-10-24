@@ -242,7 +242,9 @@ public class FileParserService {
 
   public List<Map<String, String>> parseCSV(InputStream inputStream, ParseOptions opts)
       throws Exception {
-    try (CSVReader reader = buildCsvReader(inputStream, opts)) {
+    // WD-245: 스트림 경로 빌더를 함께 써 BOM 소비·AUTO 인코딩 감지를 다른 CSV 경로와 똑같이 적용한다(이전엔 AUTO 를 UTF-8 로 고정하고 BOM 을
+    // 남겼다).
+    try (CSVReader reader = buildCsvReaderFromStream(inputStream, opts)) {
       // skip rows before header
       for (int s = 0; s < opts.skipRows(); s++) {
         if (reader.readNext() == null) break;
@@ -649,59 +651,67 @@ public class FileParserService {
   // Private CSV reader builders
   // -----------------------------------------------------------------------
 
-  private CSVReader buildCsvReader(InputStream inputStream, ParseOptions opts) {
-    char sep = opts.delimiter().charAt(0);
-    String encoding = opts.encoding();
-    if ("AUTO".equals(encoding)) {
-      encoding = "UTF-8"; // fallback; use buildCsvReaderFromBytes for auto-detect
-    }
-    Charset charset = Charset.forName(encoding);
-    CSVParser parser = new CSVParserBuilder().withSeparator(sep).build();
-    return new CSVReaderBuilder(new InputStreamReader(inputStream, charset))
-        .withCSVParser(parser)
-        .build();
-  }
-
+  /**
+   * 바이트 배열 기반 CSVReader 빌더. 앞의 BOM 은 건너뛰고(WD-245), AUTO 인코딩이면 전체 바이트로 인코딩을 감지한다.
+   *
+   * <p>BOM 처리 규칙은 {@link #resolveEncoding} 참고.
+   */
   private CSVReader buildCsvReaderFromBytes(byte[] data, ParseOptions opts) {
-    char sep = opts.delimiter().charAt(0);
-    String encoding = opts.encoding();
-    if ("AUTO".equals(encoding)) {
-      encoding = ParseOptions.detectEncoding(data);
-    }
-    Charset charset = Charset.forName(encoding);
-    CSVParser parser = new CSVParserBuilder().withSeparator(sep).build();
-    return new CSVReaderBuilder(new InputStreamReader(new ByteArrayInputStream(data), charset))
-        .withCSVParser(parser)
-        .build();
+    ParseOptions.Bom bom = ParseOptions.detectBom(data);
+    String encoding = resolveEncoding(opts, bom, () -> ParseOptions.detectEncoding(data));
+    int offset = bom == null ? 0 : bom.length();
+    // BOM 바이트를 뺀 나머지만 리더에 넘긴다 — U+FEFF 가 첫 헤더 이름에 섞이지 않게 한다.
+    return newCsvReader(
+        new ByteArrayInputStream(data, offset, data.length - offset), encoding, opts);
   }
 
   /**
-   * InputStream 기반 CSVReader 빌더. AUTO 인코딩인 경우: BufferedInputStream에 mark를 설정하고 선행 바이트를 읽어 인코딩을 감지한
-   * 뒤 reset()으로 스트림 처음으로 돌아간다. mark를 지원하지 않는 InputStream이면 BufferedInputStream으로 감싼다.
+   * InputStream 기반 CSVReader 빌더. 미리보기·검증·임포트·사전 검증 샘플의 스트림 경로가 모두 여기를 지난다.
+   *
+   * <p>BufferedInputStream 에 mark 를 걸고 선행 바이트를 읽어 BOM(항상)과 인코딩(AUTO 일 때)을 판별한 뒤 reset 하고, BOM 이 있으면
+   * 그 바이트만큼 건너뛴다(WD-245). mark 를 지원하는 BufferedInputStream 이 아니면 감싼다.
    */
   private CSVReader buildCsvReaderFromStream(InputStream inputStream, ParseOptions opts)
       throws IOException {
+    BufferedInputStream buffered =
+        inputStream instanceof BufferedInputStream bi
+            ? bi
+            : new BufferedInputStream(inputStream, ENCODING_PEEK_LIMIT * 2);
+    boolean auto = "AUTO".equals(opts.encoding());
+    // AUTO 면 인코딩 감지용으로 넉넉히, 명시 인코딩이면 BOM 판별에 필요한 3바이트만 본다.
+    int peekLimit = auto ? ENCODING_PEEK_LIMIT : BOM_PEEK_LIMIT;
+    buffered.mark(peekLimit);
+    byte[] peek = buffered.readNBytes(peekLimit);
+    buffered.reset();
+
+    ParseOptions.Bom bom = ParseOptions.detectBom(peek);
+    String encoding = resolveEncoding(opts, bom, () -> ParseOptions.detectEncoding(peek));
+    if (bom != null) buffered.skipNBytes(bom.length()); // U+FEFF 가 첫 헤더에 섞이지 않게 BOM 소비
+    return newCsvReader(buffered, encoding, opts);
+  }
+
+  /** BOM 판별에 필요한 최대 선행 바이트 수(UTF-8 BOM 3바이트). */
+  private static final int BOM_PEEK_LIMIT = 3;
+
+  /**
+   * 실제로 읽을 인코딩을 정한다(WD-245).
+   *
+   * <p>BOM 이 있으면 사용자가 고른 인코딩보다 BOM 을 우선한다. BOM 은 파일 스스로 밝힌 인코딩이라, 예컨대 UTF-8 BOM 파일을 EUC-KR 로 읽으면
+   * BOM 3바이트가 깨진 글자로 첫 헤더에 붙고 한글 본문도 모두 깨진다 — 사용자 선택을 따를 이유가 없다. BOM 이 없을 때만 명시 인코딩을 쓰고, AUTO 면 감지
+   * 결과를 쓴다.
+   */
+  private static String resolveEncoding(
+      ParseOptions opts, ParseOptions.Bom bom, java.util.function.Supplier<String> autoDetect) {
+    if (bom != null) return bom.encoding();
+    return "AUTO".equals(opts.encoding()) ? autoDetect.get() : opts.encoding();
+  }
+
+  /** 인코딩·구분자를 적용한 CSVReader 를 만든다. 입력 스트림은 이미 BOM 이 소비된 상태여야 한다. */
+  private static CSVReader newCsvReader(InputStream in, String encoding, ParseOptions opts) {
     char sep = opts.delimiter().charAt(0);
-    String encoding = opts.encoding();
-
-    if ("AUTO".equals(encoding)) {
-      // mark/reset으로 선행 바이트만 읽어 인코딩 감지 후 스트림 리셋
-      BufferedInputStream buffered =
-          inputStream instanceof BufferedInputStream bi
-              ? bi
-              : new BufferedInputStream(inputStream, ENCODING_PEEK_LIMIT * 2);
-      buffered.mark(ENCODING_PEEK_LIMIT);
-      byte[] peek = buffered.readNBytes(ENCODING_PEEK_LIMIT);
-      buffered.reset();
-      encoding = ParseOptions.detectEncoding(peek);
-      inputStream = buffered; // reset 된 스트림을 사용
-    }
-
     Charset charset = Charset.forName(encoding);
     CSVParser parser = new CSVParserBuilder().withSeparator(sep).build();
-    return new CSVReaderBuilder(new InputStreamReader(inputStream, charset))
-        .withCSVParser(parser)
-        .build();
+    return new CSVReaderBuilder(new InputStreamReader(in, charset)).withCSVParser(parser).build();
   }
 
   // -----------------------------------------------------------------------
