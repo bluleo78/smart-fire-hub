@@ -46,9 +46,7 @@ public class DocumentIngestionService {
       Long datasetId, byte[] data, String originalName, String mimeType, Long userId) {
     // 잘못된 대상에 blob 이 먼저 저장되지 않도록, 체크섬/저장보다 앞서 대상 데이터셋을 검증한다.
     DatasetResponse dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     // 문서 인제스션은 DOCUMENT 타입 데이터셋에서만 허용한다(SOURCE 등 다른 타입 차단).
     if (!"DOCUMENT".equals(dataset.storageType())) {
       throw new IllegalArgumentException("DOCUMENT 데이터셋만 문서를 업로드할 수 있습니다");

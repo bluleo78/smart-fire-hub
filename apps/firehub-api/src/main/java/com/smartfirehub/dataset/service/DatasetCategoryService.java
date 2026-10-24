@@ -29,9 +29,7 @@ public class DatasetCategoryService {
   // RLS 가 걸린 dataset_category 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
   public CategoryResponse getCategoryById(Long id) {
-    return categoryRepository
-        .findById(id)
-        .orElseThrow(() -> new CategoryNotFoundException("Category not found: " + id));
+    return categoryRepository.findById(id).orElseThrow(() -> new CategoryNotFoundException());
   }
 
   @Transactional
@@ -44,9 +42,7 @@ public class DatasetCategoryService {
 
   @Transactional
   public void updateCategory(Long id, String name, String description) {
-    categoryRepository
-        .findById(id)
-        .orElseThrow(() -> new CategoryNotFoundException("Category not found: " + id));
+    categoryRepository.findById(id).orElseThrow(() -> new CategoryNotFoundException());
 
     // 자기 자신을 제외한 다른 카테고리에 동일 이름이 존재하는지 확인
     if (categoryRepository.existsByNameExcludingId(name, id)) {
@@ -62,9 +58,7 @@ public class DatasetCategoryService {
 
   @Transactional
   public void deleteCategory(Long id) {
-    categoryRepository
-        .findById(id)
-        .orElseThrow(() -> new CategoryNotFoundException("Category not found: " + id));
+    categoryRepository.findById(id).orElseThrow(() -> new CategoryNotFoundException());
 
     // Check if any datasets reference this category
     var DATASET = table(name("dataset"));

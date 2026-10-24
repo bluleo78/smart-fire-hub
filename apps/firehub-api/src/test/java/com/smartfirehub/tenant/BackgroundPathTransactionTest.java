@@ -101,7 +101,7 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
     try {
       assertThat(datasetRepository.findById(datasetId))
           .as(
-              "배경 잡 형태(트랜잭션 없음)에서 데이터셋이 안 보이면, 임포트 잡이 'Dataset not found'"
+              "배경 잡 형태(트랜잭션 없음)에서 데이터셋이 안 보이면, 임포트 잡이 '데이터셋을 찾을 수 없습니다'"
                   + " 로 실패한다 — 리포지토리가 자기 트랜잭션을 열어야 한다")
           .isPresent();
     } finally {

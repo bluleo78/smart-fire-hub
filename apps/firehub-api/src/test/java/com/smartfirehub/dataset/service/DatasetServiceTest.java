@@ -437,7 +437,9 @@ class DatasetServiceTest extends IntegrationTestBase {
     assertThatThrownBy(
             () ->
                 datasetService.reorderColumns(999999L, new ReorderColumnsRequest(List.of(1L, 2L))))
-        .isInstanceOf(DatasetNotFoundException.class);
+        .isInstanceOf(DatasetNotFoundException.class)
+        // WD-240: 영어 「Dataset not found: N」 대신 한국어·번호 없는 문구
+        .hasMessage("데이터셋을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
   }
 
   @Test

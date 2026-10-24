@@ -72,9 +72,9 @@ public class DatasetAccessGuard {
   private final PipelineDataSchema pipelineDataSchema;
 
   /**
-   * 스마트 작업 리포트 등급 기록기(WD-198). 데이터셋 내용을 내주는 허용 지점(단건 VIEW·대화형 SQL·내보내기·다건 VIEW→AI)이 허용한 등급을
-   * 알린다 — 스마트 작업 실행에 묶인 요청·범위가 아니면 기록기가 아무 일도 하지 않는다. 값 판정·목록 조건(visibleCondition)은 행 내용을 내주지 않으므로
-   * 알리지 않는다.
+   * 스마트 작업 리포트 등급 기록기(WD-198). 데이터셋 내용을 내주는 허용 지점(단건 VIEW·대화형 SQL·내보내기·다건 VIEW→AI)이 허용한 등급을 알린다 —
+   * 스마트 작업 실행에 묶인 요청·범위가 아니면 기록기가 아무 일도 하지 않는다. 값 판정·목록 조건(visibleCondition)은 행 내용을 내주지 않으므로 알리지
+   * 않는다.
    */
   private final ProactiveReportLevelRecorder reportLevelRecorder;
 
@@ -129,8 +129,8 @@ public class DatasetAccessGuard {
   }
 
   /**
-   * 목록 조건(visibleSql·visibleCondition)으로만 걸러 내용을 돌려주는 경로(문서 청크 검색·검수 항목·지식그래프 읽기)가, 결과에 실린 데이터셋
-   * id 를 스마트 작업 리포트 등급 기록에 넘긴다(WD-198). 판정은 하지 않는다 — 실행에 묶인 요청이 아니면 아무 일도 하지 않는다.
+   * 목록 조건(visibleSql·visibleCondition)으로만 걸러 내용을 돌려주는 경로(문서 청크 검색·검수 항목·지식그래프 읽기)가, 결과에 실린 데이터셋 id
+   * 를 스마트 작업 리포트 등급 기록에 넘긴다(WD-198). 판정은 하지 않는다 — 실행에 묶인 요청이 아니면 아무 일도 하지 않는다.
    */
   public void noteReportReads(Collection<Long> datasetIds) {
     reportLevelRecorder.noteDatasetIds(datasetIds);
@@ -155,7 +155,7 @@ public class DatasetAccessGuard {
     if (!d.allowed()) {
       // 실제 사유는 감사에만 남긴다 — 응답은 "없음"과 같은 404 그대로.
       auditDenial(c, AccessDenialAction.VIEW, new DenialDetail(d.reasonCode(), datasetId, null));
-      throw new DatasetNotFoundException("Dataset not found: " + datasetId);
+      throw new DatasetNotFoundException();
     }
     // AI 대행 요청·AI 범위면 VIEW 통과 후에만 AI(+SHARE) 판정(스펙 §4.3). 볼 수 없는 데이터셋은 위에서 404 로 존재를 숨기고(스펙
     // §2.5), 볼 수 있는 것만 등급 이름이 실린 403 POLICY_BLOCKED 가 된다. 거부는 requireAiFacts 가 AI 동작으로 감사하고, 허용이면
@@ -165,7 +165,8 @@ public class DatasetAccessGuard {
       requireAiFacts(c, f, ai.get());
       auditRecorder.recordAccess(c.userId(), AccessKind.AI, List.of(datasetId));
     }
-    // 데이터셋 단위 경로(행 조회·행 검색·문서 청크·파일·/query 등)는 전부 이 VIEW 강제를 지난다(DatasetAccessInterceptor) — 스마트 작업 실행
+    // 데이터셋 단위 경로(행 조회·행 검색·문서 청크·파일·/query 등)는 전부 이 VIEW 강제를 지난다(DatasetAccessInterceptor) — 스마트 작업
+    // 실행
     // 중이면 그 등급을 리포트 등급에 넣는다(WD-198).
     reportLevelRecorder.noteRead(f.level());
   }
@@ -203,12 +204,12 @@ public class DatasetAccessGuard {
   public void requireExport(Clearance c, long datasetId) {
     AccessFacts f = accessRepository.findFactsByDatasetIds(List.of(datasetId), c).get(datasetId);
     if (f == null) {
-      throw new DatasetNotFoundException("Dataset not found: " + datasetId);
+      throw new DatasetNotFoundException();
     }
     Decision view = decide(c, f, DatasetAction.VIEW, null);
     if (!view.allowed()) {
       auditDenial(c, AccessDenialAction.VIEW, new DenialDetail(view.reasonCode(), datasetId, null));
-      throw new DatasetNotFoundException("Dataset not found: " + datasetId);
+      throw new DatasetNotFoundException();
     }
     Decision d = decide(c, f, DatasetAction.EXPORT, null);
     if (!d.allowed()) {
@@ -438,7 +439,7 @@ public class DatasetAccessGuard {
       if (!view.allowed()) {
         // 메시지는 requireView 의 404 와 바이트 단위로 같아야 한다(존재 은닉). 실제 사유는 VIEW 로 감사(requireView 와 같은 규칙).
         auditDenial(c, AccessDenialAction.VIEW, new DenialDetail(view.reasonCode(), id, null));
-        throw new DatasetNotFoundException("Dataset not found: " + id);
+        throw new DatasetNotFoundException();
       }
     }
     for (Long id : datasetIds) {

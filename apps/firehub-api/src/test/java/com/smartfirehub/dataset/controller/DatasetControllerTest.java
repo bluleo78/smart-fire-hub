@@ -305,11 +305,13 @@ class DatasetControllerTest {
   @Test
   void getReferences_nonexistentDataset_returns404() throws Exception {
     when(datasetService.getReferences(eq(999L), anyLong()))
-        .thenThrow(new DatasetNotFoundException("Dataset not found: 999"));
+        .thenThrow(new DatasetNotFoundException());
 
     mockMvc
         .perform(
             get("/api/v1/datasets/999/references").header("Authorization", "Bearer test-token"))
-        .andExpect(status().isNotFound());
+        .andExpect(status().isNotFound())
+        // WD-240: 영어 「Dataset not found: N」 대신 한국어·번호 없는 문구가 응답 message 로 나간다
+        .andExpect(jsonPath("$.message").value("데이터셋을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
   }
 }

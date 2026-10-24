@@ -161,7 +161,7 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
     // WD-196: 소유자 확인 실패 문구는 한국어(존재를 숨기는 404 정책은 그대로 — 없는 대시보드와 같은 문구)
     assertThatThrownBy(() -> dashboardService.delete(created.id(), otherUserId))
         .isInstanceOf(DashboardNotFoundException.class)
-        .hasMessage("대시보드를 찾을 수 없습니다: " + created.id());
+        .hasMessage("대시보드를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
   }
 
   /**
@@ -183,7 +183,7 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
             .widgets()
             .get(0)
             .id();
-    String expected = "대시보드를 찾을 수 없습니다: " + shared.id();
+    String expected = "대시보드를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.";
 
     // 조회는 된다(공유) — 주인 확인은 쓰기에만 걸린다
     assertThat(dashboardService.getById(shared.id(), otherUserId).createdBy())
@@ -219,7 +219,7 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
   void delete_nonExistent_throwsNotFound() {
     assertThatThrownBy(() -> dashboardService.delete(999999L, ownerUserId))
         .isInstanceOf(DashboardNotFoundException.class)
-        .hasMessage("대시보드를 찾을 수 없습니다: 999999");
+        .hasMessage("대시보드를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."); // WD-240: 번호 없음
   }
 
   // =========================================================================
@@ -304,7 +304,7 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
                 dashboardService.updateWidget(
                     dashboard.id(), 999999L, new UpdateWidgetRequest(0, 0, 4, 4), ownerUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("위젯을 찾을 수 없습니다: 999999"); // WD-196: 한국어 문구
+        .hasMessage("위젯을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."); // WD-196·WD-240: 한국어·번호 없음
   }
 
   // =========================================================================
@@ -342,7 +342,7 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> dashboardService.removeWidget(dashboard.id(), 999999L, ownerUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("위젯을 찾을 수 없습니다: 999999"); // WD-196: 한국어 문구
+        .hasMessage("위젯을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."); // WD-196·WD-240: 한국어·번호 없음
   }
 
   // =========================================================================

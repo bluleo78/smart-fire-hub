@@ -379,7 +379,9 @@ class DataTableRowServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(
             () -> dataTableRowService.getRow(tableName, List.of("name", "value"), 999999L))
-        .isInstanceOf(RowNotFoundException.class);
+        .isInstanceOf(RowNotFoundException.class)
+        // WD-240: 영어 「Row not found: N」 대신 한국어·번호 없는 문구
+        .hasMessage("행을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
   }
 
   // =========================================================================
@@ -413,7 +415,9 @@ class DataTableRowServiceTest extends IntegrationTestBase {
             () ->
                 dataTableRowService.updateRow(
                     tableName, 999999L, List.of("name", "value"), Map.of("name", "X", "value", 0)))
-        .isInstanceOf(RowNotFoundException.class);
+        .isInstanceOf(RowNotFoundException.class)
+        // WD-240: 영어 「Row not found: N」 대신 한국어·번호 없는 문구
+        .hasMessage("행을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
   }
 
   // =========================================================================

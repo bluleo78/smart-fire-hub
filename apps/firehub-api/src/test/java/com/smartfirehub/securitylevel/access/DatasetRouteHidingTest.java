@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -136,7 +137,8 @@ class DatasetRouteHidingTest extends IntegrationTestBase {
           enumerated.add(m + " " + pattern);
           // 보조 변수(columnId 등)는 1 이라 엔티티 부재로도 404 가 날 수 있다 — 본문 메시지가 '데이터셋' 부재(가드가 만든
           // 것)임을 확인해야 가드 증거가 된다.
-          String expected = "Dataset not found: " + hiddenId;
+          String expected =
+              DatasetNotFoundException.MESSAGE; // WD-240: 번호 없는 한국어 문구(행·카테고리 문구와 달라 가드 증거가 된다)
           String message = "";
           try {
             JsonNode n = objectMapper.readTree(response.getContentAsString());
@@ -225,8 +227,8 @@ class DatasetRouteHidingTest extends IntegrationTestBase {
     JsonNode none = postJson("/api/v1/datasets/" + missing + "/api-import", body);
     assertThat(hidden.get("status").asInt()).isEqualTo(404);
     assertThat(none.get("status").asInt()).isEqualTo(404);
-    assertThat(hidden.get("message").asText()).isEqualTo("Dataset not found: " + hiddenId);
-    assertThat(none.get("message").asText()).isEqualTo("Dataset not found: " + missing);
+    assertThat(hidden.get("message").asText()).isEqualTo(DatasetNotFoundException.MESSAGE);
+    assertThat(none.get("message").asText()).isEqualTo(DatasetNotFoundException.MESSAGE);
     // 바이트 동일 비교: 가변 필드(timestamp)를 빼고 id 만 정규화하면 본문 전체가 같아야 한다.
     ((com.fasterxml.jackson.databind.node.ObjectNode) hidden).remove("timestamp");
     ((com.fasterxml.jackson.databind.node.ObjectNode) none).remove("timestamp");
@@ -240,8 +242,8 @@ class DatasetRouteHidingTest extends IntegrationTestBase {
     JsonNode hidden = body("/api/v1/datasets/" + hiddenId);
     JsonNode none = body("/api/v1/datasets/" + missing);
     assertThat(hidden.get("status").asInt()).isEqualTo(404);
-    assertThat(hidden.get("message").asText()).isEqualTo("Dataset not found: " + hiddenId);
-    assertThat(none.get("message").asText()).isEqualTo("Dataset not found: " + missing);
+    assertThat(hidden.get("message").asText()).isEqualTo(DatasetNotFoundException.MESSAGE);
+    assertThat(none.get("message").asText()).isEqualTo(DatasetNotFoundException.MESSAGE);
     assertThat(hidden.get("error").asText()).isEqualTo(none.get("error").asText());
     assertThat(hidden.has("code")).isEqualTo(none.has("code"));
   }

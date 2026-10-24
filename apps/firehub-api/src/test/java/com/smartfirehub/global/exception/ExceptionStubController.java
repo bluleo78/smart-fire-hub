@@ -72,7 +72,7 @@ public class ExceptionStubController {
 
   @GetMapping("/dataset-not-found")
   public void datasetNotFound() {
-    throw new DatasetNotFoundException("Dataset not found");
+    throw new DatasetNotFoundException();
   }
 
   @GetMapping("/pipeline-not-found")

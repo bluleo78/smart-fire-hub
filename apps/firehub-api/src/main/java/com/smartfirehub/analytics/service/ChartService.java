@@ -62,8 +62,7 @@ public class ChartService {
     // 저장 쿼리 접근 확인만 한다(연결 데이터셋 이름은 쓰지 않아 가시성 조건이 필요 없다).
     savedQueryRepository
         .findById(req.savedQueryId(), userId, DSL.trueCondition())
-        .orElseThrow(
-            () -> SavedQueryNotFoundException.forId(req.savedQueryId()));
+        .orElseThrow(() -> new SavedQueryNotFoundException());
     if ("MAP".equals(req.chartType())) {
       Object spatialColumn = req.config() != null ? req.config().get("spatialColumn") : null;
       if (spatialColumn == null || spatialColumn.toString().isBlank()) {
@@ -74,7 +73,7 @@ public class ChartService {
     return withholdDenied(
         chartRepository
             .findById(id, userId)
-            .orElseThrow(() -> new ChartNotFoundException("저장한 차트를 다시 읽지 못했습니다")),
+            .orElseThrow(() -> ChartNotFoundException.reloadFailed()),
         userId);
   }
 
@@ -85,9 +84,7 @@ public class ChartService {
   @Transactional(readOnly = true)
   public ChartResponse getById(Long id, Long userId) {
     return withholdDenied(
-        chartRepository
-            .findById(id, userId)
-            .orElseThrow(() -> ChartNotFoundException.forId(id)),
+        chartRepository.findById(id, userId).orElseThrow(() -> new ChartNotFoundException()),
         userId);
   }
 
@@ -97,7 +94,7 @@ public class ChartService {
     ChartResponse existing =
         chartRepository
             .findByIdForOwner(id, userId)
-            .orElseThrow(() -> ChartNotFoundException.forId(id));
+            .orElseThrow(() -> new ChartNotFoundException());
     String effectiveType = req.chartType() != null ? req.chartType() : existing.chartType();
     java.util.Map<String, Object> effectiveConfig =
         req.config() != null ? req.config() : existing.config();
@@ -111,19 +108,17 @@ public class ChartService {
     return withholdDenied(
         chartRepository
             .findByIdForOwner(id, userId)
-            .orElseThrow(() -> ChartNotFoundException.forId(id)),
+            .orElseThrow(() -> new ChartNotFoundException()),
         userId);
   }
 
   /** Delete a chart (owner only). */
   @Transactional
   public void delete(Long id, Long userId) {
-    chartRepository
-        .findByIdForOwner(id, userId)
-        .orElseThrow(() -> ChartNotFoundException.forId(id));
+    chartRepository.findByIdForOwner(id, userId).orElseThrow(() -> new ChartNotFoundException());
     boolean deleted = chartRepository.deleteById(id, userId);
     if (!deleted) {
-      throw ChartNotFoundException.forId(id);
+      throw new ChartNotFoundException();
     }
   }
 
@@ -134,9 +129,7 @@ public class ChartService {
   // RLS 가 걸린 chart/dashboard/dashboard_widget 을 읽는다 — 트랜잭션이 없으면 조용히 0행("연결 없음"으로 위장)이 된다.
   @Transactional(readOnly = true)
   public DeleteImpactResponse getDeleteImpact(Long id, Long userId) {
-    chartRepository
-        .findByIdForOwner(id, userId)
-        .orElseThrow(() -> ChartNotFoundException.forId(id));
+    chartRepository.findByIdForOwner(id, userId).orElseThrow(() -> new ChartNotFoundException());
     return DeleteImpactResponse.forChart(
         dashboardRepository.findImpactByChartIds(List.of(id), userId));
   }
@@ -194,14 +187,11 @@ public class ChartService {
     // getById 가 아니라 리포지토리 원본을 쓴다 — getById 의 config 가림 판정과 아래 판정이 같은 저장 쿼리를 두 번 판정하지 않게. 통과하면
     // 조회자가 데이터를 보므로 config 를 그대로 주고, 거부면 deniedData 가 config 를 빈 맵으로 지운다.
     ChartResponse chart =
-        chartRepository
-            .findById(id, userId)
-            .orElseThrow(() -> ChartNotFoundException.forId(id));
+        chartRepository.findById(id, userId).orElseThrow(() -> new ChartNotFoundException());
     String sqlText =
         chartRepository
             .findSavedQuerySqlText(id, userId)
-            .orElseThrow(
-                () -> new SavedQueryNotFoundException("차트가 쓰는 저장 쿼리를 찾을 수 없습니다: " + id));
+            .orElseThrow(() -> SavedQueryNotFoundException.usedByChart());
     // 보안 등급(S2): 조회자 기준 판정 — 위반이면 실행하지 않고 200 + denied. 단건 위젯 경로(DashboardWidgetCard→useChartData)도
     // 대시보드 일괄 경로와 같은 계약이어야 위젯 하나가 화면 전체를 오류로 만들지 않는다(스펙 §4.2 4행).
     // 판정은 한 번 — 통과한 토큰의 정규화본을 그대로 실행하므로 판정과 실행 사이에 다른 판정이 끼지 않는다.

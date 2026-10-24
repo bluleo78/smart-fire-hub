@@ -134,7 +134,7 @@ class SavedQueryServiceTest extends IntegrationTestBase {
                     ownerUserId))
         // 없는 id 는 숨김 id 와 같은 DatasetNotFoundException(404, 같은 메시지)이다(존재 은닉 — Task 3 C2).
         .isInstanceOf(com.smartfirehub.dataset.exception.DatasetNotFoundException.class)
-        .hasMessage("Dataset not found: 999999");
+        .hasMessage("데이터셋을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."); // WD-240: 한국어·번호 없음
   }
 
   // =========================================================================
@@ -230,7 +230,7 @@ class SavedQueryServiceTest extends IntegrationTestBase {
                     otherUserId))
         .isInstanceOf(SavedQueryNotFoundException.class)
         // WD-196: 공유 쿼리를 남이 저장하면 한국어 문구(예전 「Saved query not found: id」)
-        .hasMessage("저장 쿼리를 찾을 수 없습니다: " + created.id());
+        .hasMessage("저장 쿼리를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."); // WD-240: 번호 없음
   }
 
   @Test
@@ -309,7 +309,7 @@ class SavedQueryServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> savedQueryService.delete(created.id(), otherUserId))
         .isInstanceOf(SavedQueryNotFoundException.class)
-        .hasMessage("저장 쿼리를 찾을 수 없습니다: " + created.id());
+        .hasMessage("저장 쿼리를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."); // WD-240: 번호 없음
   }
 
   @Test

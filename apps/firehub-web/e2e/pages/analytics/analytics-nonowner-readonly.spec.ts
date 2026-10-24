@@ -106,17 +106,19 @@ test.describe('대시보드 — 남이 공유한 대시보드는 보기 전용 (
 
   test('없는 대시보드 주소는 화면 안내와 같은 한국어 문구를 보인다', async ({ authenticatedPage: page }) => {
     // 서버(WD-196)는 없는 대시보드·남의 비공개 대시보드를 같은 한국어 404 로 답한다 — 웹은 그 문구를 그대로 토스트한다.
+    // WD-240: 서버 문구에서 번호를 뺐다(「…: 999」 → 「… 이미 삭제되었을 수 있습니다.」).
     await mockApi(
       page,
       'GET',
       '/api/v1/analytics/dashboards/999',
-      { status: 404, error: 'Not Found', message: '대시보드를 찾을 수 없습니다: 999' },
+      { status: 404, error: 'Not Found', message: '대시보드를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.' },
       { status: 404 },
     );
 
     await page.goto('/analytics/dashboards/999');
-    await expect(page.getByText('대시보드를 찾을 수 없습니다.')).toBeVisible();
-    await expect(page.getByText('대시보드를 찾을 수 없습니다: 999')).toBeVisible();
+    await expect(page.getByText('대시보드를 찾을 수 없습니다.', { exact: true })).toBeVisible();
+    await expect(page.getByText('대시보드를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.')).toBeVisible();
+    await expect(page.getByText(/찾을 수 없습니다: 999/)).toHaveCount(0);
     await expect(page.getByText(/Dashboard not found/)).toHaveCount(0);
   });
 });

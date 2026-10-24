@@ -300,7 +300,7 @@ class ChartServiceTest extends IntegrationTestBase {
                     otherUserId))
         .isInstanceOf(ChartNotFoundException.class)
         // WD-196: 공유 차트를 남이 저장하면 한국어 문구(예전 「Chart not found: id」)
-        .hasMessage("차트를 찾을 수 없습니다: " + created.id());
+        .hasMessage("차트를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."); // WD-240: 번호 없음
   }
 
   /** 예외: MAP 타입으로 변경 시 spatialColumn 누락이면 IllegalArgumentException */
@@ -357,7 +357,7 @@ class ChartServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> chartService.delete(created.id(), otherUserId))
         .isInstanceOf(ChartNotFoundException.class)
-        .hasMessage("차트를 찾을 수 없습니다: " + created.id());
+        .hasMessage("차트를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."); // WD-240: 번호 없음
   }
 
   // =========================================================================

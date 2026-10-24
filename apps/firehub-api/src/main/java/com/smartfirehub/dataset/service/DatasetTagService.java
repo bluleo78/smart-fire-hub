@@ -25,9 +25,7 @@ public class DatasetTagService {
 
   @Transactional
   public void addTag(Long datasetId, String tagName, Long userId) {
-    datasetRepository
-        .findById(datasetId)
-        .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
 
     // 태그 중복 검사는 대소문자를 구분하지 않는다 — "Test"와 "test"는 동일 태그로 취급 (#671)
     boolean alreadyExists =
@@ -44,9 +42,7 @@ public class DatasetTagService {
 
   @Transactional
   public void deleteTag(Long datasetId, String tagName) {
-    datasetRepository
-        .findById(datasetId)
-        .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     tagRepository.delete(datasetId, tagName);
 
     // 태그 삭제 반영

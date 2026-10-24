@@ -89,14 +89,14 @@ describe('Dataset MCP Tools', () => {
 
     it('returns isError on API failure', async () => {
       (client.deleteDataset as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error('API 오류 (404): Dataset not found'),
+        new Error('API 오류 (404): 데이터셋을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.'),
       );
 
       const result = await invokeTool(server, 'delete_dataset', { id: 999 });
 
       // safeTool 래퍼가 에러를 isError 응답으로 변환해야 한다
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Dataset not found');
+      expect(result.content[0].text).toContain('데이터셋을 찾을 수 없습니다');
     });
   });
 
@@ -236,13 +236,13 @@ describe('Dataset MCP Tools', () => {
 
     it('returns isError on API failure', async () => {
       (client.getDatasetReferences as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error('API 오류 (404): Dataset not found'),
+        new Error('API 오류 (404): 데이터셋을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.'),
       );
 
       const result = await invokeTool(server, 'get_dataset_references', { id: 999 });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Dataset not found');
+      expect(result.content[0].text).toContain('데이터셋을 찾을 수 없습니다');
     });
   });
 

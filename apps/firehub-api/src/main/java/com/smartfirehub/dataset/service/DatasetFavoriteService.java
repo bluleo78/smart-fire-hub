@@ -17,9 +17,7 @@ public class DatasetFavoriteService {
 
   @Transactional
   public FavoriteToggleResponse toggleFavorite(Long datasetId, Long userId) {
-    datasetRepository
-        .findById(datasetId)
-        .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
 
     if (favoriteRepository.existsByUserIdAndDatasetId(userId, datasetId)) {
       favoriteRepository.delete(userId, datasetId);

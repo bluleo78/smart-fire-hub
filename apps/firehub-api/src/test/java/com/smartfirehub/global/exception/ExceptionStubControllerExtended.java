@@ -35,17 +35,17 @@ public class ExceptionStubControllerExtended {
 
   @GetMapping("/saved-query-not-found")
   public void savedQueryNotFound() {
-    throw SavedQueryNotFoundException.forId(55L);
+    throw new SavedQueryNotFoundException();
   }
 
   @GetMapping("/chart-not-found")
   public void chartNotFound() {
-    throw ChartNotFoundException.forId(66L);
+    throw new ChartNotFoundException();
   }
 
   @GetMapping("/dashboard-not-found")
   public void dashboardNotFound() {
-    throw DashboardNotFoundException.forId(77L);
+    throw new DashboardNotFoundException();
   }
 
   @GetMapping("/api-connection-not-found")
@@ -86,7 +86,7 @@ public class ExceptionStubControllerExtended {
 
   @GetMapping("/category-not-found")
   public void categoryNotFound() {
-    throw new CategoryNotFoundException("Category not found");
+    throw new CategoryNotFoundException();
   }
 
   @GetMapping("/duplicate-dataset-name")
