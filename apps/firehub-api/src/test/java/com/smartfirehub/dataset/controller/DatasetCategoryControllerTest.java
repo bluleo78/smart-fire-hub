@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.controller;
 
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -8,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.CategoryRequest;
 import com.smartfirehub.dataset.dto.CategoryResponse;
+import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.dataset.service.DatasetCategoryService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
@@ -112,5 +114,39 @@ class DatasetCategoryControllerTest {
         .perform(
             delete("/api/v1/dataset-categories/1").header("Authorization", "Bearer test-token"))
         .andExpect(status().isNoContent());
+  }
+
+  /** POST /dataset-categories — 이름 중복이면 409 와 한국어 문구(영어 원문·받은 이름 없음)를 그대로 내보낸다(WD-241). */
+  @Test
+  void createCategory_duplicateName_returnsConflictWithKoreanMessage() throws Exception {
+    when(categoryService.createCategory(anyString(), anyString()))
+        .thenThrow(DuplicateDatasetNameException.categoryName());
+
+    mockMvc
+        .perform(
+            post("/api/v1/dataset-categories")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new CategoryRequest(" 행정 ", "설명"))))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("이미 사용 중인 카테고리 이름입니다."));
+  }
+
+  /** PUT /dataset-categories/{id} — 제어 문자가 든 이름은 400 과 한국어 사유를 내보낸다(WD-241). */
+  @Test
+  void updateCategory_controlCharacterName_returnsBadRequest() throws Exception {
+    String message = "카테고리 이름에 줄바꿈·탭 같은 제어 문자를 쓸 수 없습니다.";
+    doThrow(new IllegalArgumentException(message))
+        .when(categoryService)
+        .updateCategory(eq(1L), anyString(), anyString());
+
+    mockMvc
+        .perform(
+            put("/api/v1/dataset-categories/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new CategoryRequest("행\n정", "설명"))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(message));
   }
 }
