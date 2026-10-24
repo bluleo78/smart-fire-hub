@@ -24,6 +24,7 @@ import {
   type ImportValidateResponse,
   type ImportStartResponse,
   type ImportResponse,
+  type AsyncJobStatusResponse,
 } from './api-client/dataimport-api.js';
 import {
   createAnalyticsApi,
@@ -603,6 +604,11 @@ export class FireHubApiClient {
   /** 임포트 상태 조회. 진행률/실패 행 수 등을 확인할 때 사용. */
   getImportStatus(datasetId: number, importId: number): Promise<ImportResponse> {
     return this._dataImport.getImportStatus(datasetId, importId);
+  }
+
+  /** start_import 가 준 jobId 로 임포트 작업의 단계·진행률·결과를 조회한다(WD-254). */
+  getImportJobStatus(jobId: string): Promise<AsyncJobStatusResponse> {
+    return this._dataImport.getImportJobStatus(jobId);
   }
 
   /**

@@ -86,6 +86,25 @@ export interface ImportResponse {
   createdAt: string;
 }
 
+/**
+ * 백엔드 AsyncJobStatusResponse 미러(GET /jobs/{jobId}/status).
+ * start_import 가 돌려주는 jobId 로 진행 상황을 조회할 때 쓴다(WD-254).
+ * stage: PENDING·PARSING·VALIDATING·INSERTING·COMPLETED·FAILED.
+ * 완료 시 metadata 에 totalRows·successRows·errorRows, 실패 시 errorMessage 에 사용자용 사유가 담긴다.
+ */
+export interface AsyncJobStatusResponse {
+  jobId: string;
+  jobType: string;
+  stage: string;
+  progress: number;
+  message: string | null;
+  metadata: Record<string, unknown> | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  userId: number;
+}
+
 export type ImportMode = 'APPEND' | 'UPSERT' | 'REPLACE';
 
 export interface PreviewImportArgs {
@@ -167,8 +186,8 @@ export function createDataImportApi(client: AxiosInstance) {
     },
 
     /**
-     * 실제 임포트 작업을 시작한다. 백엔드는 Jobrunr 로 비동기 처리하고 jobId 를
-     * 반환하므로 호출자는 getImportStatus 로 진행 상황을 폴링해야 한다.
+     * 실제 임포트 작업을 시작한다. 백엔드는 Jobrunr 로 비동기 처리하고 jobId(UUID)를
+     * 반환하므로 호출자는 getImportJobStatus(jobId) 로 진행 상황을 폴링해야 한다(WD-254).
      */
     async startImport(args: StartImportArgs): Promise<ImportStartResponse> {
       const extra: Record<string, string> = {};
@@ -187,6 +206,17 @@ export function createDataImportApi(client: AxiosInstance) {
     async getImportStatus(datasetId: number, importId: number): Promise<ImportResponse> {
       const { data } = await client.get<ImportResponse>(
         `/datasets/${datasetId}/imports/${importId}`,
+      );
+      return data;
+    },
+
+    /**
+     * 비동기 작업 상태 조회(start_import 가 준 jobId). 백엔드는 작업을 시작한 사용자만 보게 하므로
+     * 대행 호출(X-On-Behalf-Of)이면 그 사용자의 작업만 조회된다. 다른 사용자 작업 403, 없는 작업 404.
+     */
+    async getImportJobStatus(jobId: string): Promise<AsyncJobStatusResponse> {
+      const { data } = await client.get<AsyncJobStatusResponse>(
+        `/jobs/${encodeURIComponent(jobId)}/status`,
       );
       return data;
     },

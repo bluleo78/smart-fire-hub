@@ -476,6 +476,25 @@ describe('FireHubApiClient', () => {
       expect(result).toEqual(mockResp);
     });
 
+    it('getImportJobStatus calls GET /jobs/:jobId/status (WD-254)', async () => {
+      const mockResp = {
+        jobId: 'be5b2a44-ad66-4bfc-b8cd-ff06cf8c67e7',
+        jobType: 'IMPORT',
+        stage: 'COMPLETED',
+        progress: 100,
+        message: 'Completed',
+        metadata: { totalRows: 3, successRows: 3, errorRows: 0 },
+        errorMessage: null,
+        createdAt: '2026-10-25T07:12:38',
+        updatedAt: '2026-10-25T07:12:39',
+        userId: 3,
+      };
+      nock(BASE_URL).get('/jobs/be5b2a44-ad66-4bfc-b8cd-ff06cf8c67e7/status').reply(200, mockResp);
+
+      const result = await client.getImportJobStatus('be5b2a44-ad66-4bfc-b8cd-ff06cf8c67e7');
+      expect(result).toEqual(mockResp);
+    });
+
     it('getImportStatus calls GET /datasets/:id/imports/:importId', async () => {
       const mockResp = {
         id: 99,

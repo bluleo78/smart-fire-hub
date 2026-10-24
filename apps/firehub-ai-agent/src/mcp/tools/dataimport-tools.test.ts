@@ -149,7 +149,7 @@ describe('DataImport MCP Tools', () => {
   });
 
   describe('import_status', () => {
-    it('calls apiClient.getImportStatus with datasetId and importId', async () => {
+    it('하위 호환: datasetId+importId 면 기존 이력 조회(getImportStatus)를 부른다', async () => {
       const mockResp = {
         id: 99,
         datasetId: 7,
@@ -182,6 +182,148 @@ describe('DataImport MCP Tools', () => {
       });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('가져오기 이력을 찾을 수 없습니다');
+    });
+  });
+
+  // WD-254: start_import 는 UUID jobId 를 돌려주므로 import_status 는 jobId 로 작업 상태를 조회해야 한다.
+  describe('import_status (jobId 경로, WD-254)', () => {
+    const baseJob = {
+      jobId: 'be5b2a44-ad66-4bfc-b8cd-ff06cf8c67e7',
+      jobType: 'IMPORT',
+      message: 'Inserting rows...',
+      errorMessage: null,
+      createdAt: '2026-10-25T07:12:38',
+      updatedAt: '2026-10-25T07:12:39',
+      userId: 3,
+    };
+
+    it('jobId 로 작업 상태 API 를 부르고 진행 중 요약(done=false, 한국어 단계)을 돌려준다', async () => {
+      (client.getImportJobStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...baseJob,
+        stage: 'INSERTING',
+        progress: 70,
+        metadata: { totalRows: 1000, processedRows: 500 },
+      });
+
+      const result = await invokeTool(server, 'import_status', { jobId: baseJob.jobId });
+
+      expect(client.getImportJobStatus).toHaveBeenCalledWith(baseJob.jobId);
+      expect(client.getImportStatus).not.toHaveBeenCalled();
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed).toMatchObject({
+        jobId: baseJob.jobId,
+        stage: 'INSERTING',
+        stageLabel: '적재 중',
+        progress: 70,
+        done: false,
+        processedRows: 500,
+        successRows: null,
+      });
+      expect(parsed.summary).toContain('진행 중');
+      expect(parsed.summary).toContain('500/1,000행');
+      // 백엔드의 영어 message 는 요약에 싣지 않는다
+      expect(result.content[0].text).not.toContain('Inserting rows');
+    });
+
+    it('완료되면 done=true 와 적재 행 수 요약을 돌려준다', async () => {
+      (client.getImportJobStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...baseJob,
+        stage: 'COMPLETED',
+        progress: 100,
+        message: 'Completed',
+        metadata: { totalRows: 1234, successRows: 1234, errorRows: 0 },
+      });
+
+      const result = await invokeTool(server, 'import_status', { jobId: baseJob.jobId });
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed).toMatchObject({
+        stage: 'COMPLETED',
+        done: true,
+        totalRows: 1234,
+        successRows: 1234,
+        errorRows: 0,
+        errorMessage: null,
+      });
+      expect(parsed.summary).toBe(
+        '임포트가 완료되었습니다. 1,234행을 적재했습니다 (전체 1,234행).',
+      );
+    });
+
+    it('실패하면 done=true 와 백엔드의 한국어 실패 사유를 돌려준다', async () => {
+      (client.getImportJobStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...baseJob,
+        stage: 'FAILED',
+        progress: 40,
+        metadata: {},
+        errorMessage: '3행: amount 값이 숫자가 아닙니다.',
+      });
+
+      const result = await invokeTool(server, 'import_status', { jobId: baseJob.jobId });
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.done).toBe(true);
+      expect(parsed.stageLabel).toBe('실패');
+      expect(parsed.errorMessage).toBe('3행: amount 값이 숫자가 아닙니다.');
+      expect(parsed.summary).toBe('임포트가 실패했습니다. 사유: 3행: amount 값이 숫자가 아닙니다.');
+    });
+
+    it('jobId 와 importId 가 함께 오면 jobId 를 우선한다', async () => {
+      (client.getImportJobStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...baseJob,
+        stage: 'PENDING',
+        progress: 0,
+        metadata: {},
+      });
+
+      await invokeTool(server, 'import_status', {
+        jobId: baseJob.jobId,
+        datasetId: 7,
+        importId: 99,
+      });
+
+      expect(client.getImportJobStatus).toHaveBeenCalledWith(baseJob.jobId);
+      expect(client.getImportStatus).not.toHaveBeenCalled();
+    });
+
+    it('임포트가 아닌 작업(jobType)이면 한국어 오류를 돌려준다', async () => {
+      (client.getImportJobStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...baseJob,
+        jobType: 'EXPORT',
+        stage: 'COMPLETED',
+        progress: 100,
+        metadata: {},
+      });
+
+      const result = await invokeTool(server, 'import_status', { jobId: baseJob.jobId });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('임포트 작업이 아닙니다');
+    });
+
+    it('남의 작업이면 백엔드 403 한국어 메시지를 그대로 전한다', async () => {
+      (client.getImportJobStatus as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('API 오류 (403): 이 작업을 시작한 사용자만 진행 상황을 볼 수 있습니다.'),
+      );
+
+      const result = await invokeTool(server, 'import_status', { jobId: baseJob.jobId });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('이 작업을 시작한 사용자만');
+    });
+
+    it('jobId 도 importId 도 없으면 한국어 안내 오류를 돌려준다', async () => {
+      const result = await invokeTool(server, 'import_status', { datasetId: 7 });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('jobId 가 필요합니다');
+      expect(client.getImportJobStatus).not.toHaveBeenCalled();
+      expect(client.getImportStatus).not.toHaveBeenCalled();
+    });
+
+    it('importId 만 있고 datasetId 가 없으면 한국어 안내 오류를 돌려준다', async () => {
+      const result = await invokeTool(server, 'import_status', { importId: 99 });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('datasetId 도 함께');
+      expect(client.getImportStatus).not.toHaveBeenCalled();
     });
   });
 
