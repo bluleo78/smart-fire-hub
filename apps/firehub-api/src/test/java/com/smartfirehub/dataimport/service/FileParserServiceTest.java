@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.smartfirehub.dataimport.dto.ParseOptions;
 import com.smartfirehub.dataimport.exception.FileUnreadableException;
+import com.smartfirehub.dataimport.exception.InvalidFileHeaderException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -18,6 +19,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.openxml4j.opc.OPCPackage;
 import org.apache.poi.poifs.crypt.EncryptionInfo;
 import org.apache.poi.poifs.crypt.EncryptionMode;
@@ -1109,5 +1111,246 @@ class FileParserServiceTest {
     // 첫 줄부터 닫히지 않은 따옴표 — opencsv 가 CsvMalformedLineException(IOException 하위)을 던져 예전엔 빈 200 응답이 됐다
     Path file = writeCsvFile("\"id,name\n1,a\n2,b\n");
     assertAllPathsUnreadable(file, "csv", FileUnreadableException.CSV_UNREADABLE);
+  }
+
+  // -----------------------------------------------------------------------
+  // WD-205: 같은 이름 열(trim·BOM 제거 기준)이 있는 헤더 거절 — 빈 이름 열은 몇 개든 기존 동작 유지
+  // 행을 「헤더 이름 → 값」 Map 으로 담으므로 겹치는 이름이 있으면 뒤 열 값이 앞 열을 조용히 덮어쓴다.
+  // 모든 형식·모든 헤더 읽기 지점(헤더/샘플/전체/스트리밍)이 같은 400 예외로 거절하는지 확인한다.
+  // -----------------------------------------------------------------------
+
+  private static final String DUP_MSG =
+      "파일에 같은 이름의 열이 있습니다: region (1·2번째 열). 열 이름을 고친 뒤 다시 올려 주세요.";
+
+  /** 헤더 한 줄 + 데이터 한 줄짜리 Excel(xlsx/xls) 바이트를 만든다. 빈 칸은 셀을 만들지 않는다. */
+  private static byte[] buildWorkbook(Workbook wb, String[] header, String[] data)
+      throws Exception {
+    try (wb;
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      Sheet sheet = wb.createSheet("Sheet1");
+      String[][] rows = {header, data};
+      for (int r = 0; r < rows.length; r++) {
+        Row row = sheet.createRow(r);
+        for (int c = 0; c < rows[r].length; c++) {
+          if (!rows[r][c].isEmpty()) row.createCell(c).setCellValue(rows[r][c]);
+        }
+      }
+      wb.write(out);
+      return out.toByteArray();
+    }
+  }
+
+  private Path writeFile(String ext, byte[] data) throws Exception {
+    Path file = tempDir.resolve("wd205-" + System.nanoTime() + "." + ext);
+    Files.write(file, data);
+    return file;
+  }
+
+  @Test
+  void duplicateHeader_csv_everyEntryPointRejectsWithKoreanMessage() throws Exception {
+    String csv = "region,region,cnt\n서울,부산,1\n";
+    Path file = writeCsvFile(csv);
+    ParseOptions opts = ParseOptions.defaults();
+    List<List<Map<String, String>>> batches = new ArrayList<>();
+
+    // Path 오버로드(실서비스 경로): 헤더·샘플·전체·스트리밍
+    assertThatThrownBy(() -> service.parseHeaders(file, "csv", opts))
+        .isExactlyInstanceOf(InvalidFileHeaderException.class)
+        .hasMessage(DUP_MSG);
+    assertThatThrownBy(() -> service.parseSampleRows(file, "csv", 5, opts))
+        .isExactlyInstanceOf(InvalidFileHeaderException.class)
+        .hasMessage(DUP_MSG);
+    assertThatThrownBy(() -> service.parse(file, "csv", opts))
+        .isExactlyInstanceOf(InvalidFileHeaderException.class)
+        .hasMessage(DUP_MSG);
+    assertThatThrownBy(() -> service.parseStreaming(file, "csv", opts, 3, batches::add))
+        .isExactlyInstanceOf(InvalidFileHeaderException.class)
+        .hasMessage(DUP_MSG);
+    assertThat(batches).isEmpty(); // 데이터 행을 하나도 넘기기 전에 거절
+
+    // InputStream·byte[] 오버로드도 같은 규칙
+    assertThatThrownBy(() -> service.parseCSV(toStream(csv), opts))
+        .isInstanceOf(InvalidFileHeaderException.class);
+    assertThatThrownBy(() -> service.parseHeaders(toStream(csv), "csv", opts))
+        .isInstanceOf(InvalidFileHeaderException.class);
+    assertThatThrownBy(() -> service.parseSampleRows(toStream(csv), "csv", 5, opts))
+        .isInstanceOf(InvalidFileHeaderException.class);
+    assertThatThrownBy(() -> service.parse(toStream(csv), "csv", opts))
+        .isInstanceOf(InvalidFileHeaderException.class);
+    assertThatThrownBy(() -> service.parse(toBytes(csv), "csv"))
+        .isInstanceOf(InvalidFileHeaderException.class);
+    assertThatThrownBy(() -> service.parseHeaders(toBytes(csv), "csv"))
+        .isInstanceOf(InvalidFileHeaderException.class);
+    assertThatThrownBy(() -> service.parseSampleRows(toBytes(csv), "csv", 5))
+        .isInstanceOf(InvalidFileHeaderException.class);
+    // 기존 400 핸들러를 타도록 UnsupportedFileTypeException 계열이어야 한다
+    assertThat(new InvalidFileHeaderException("x"))
+        .isInstanceOf(UnsupportedFileTypeException.class);
+  }
+
+  @Test
+  void duplicateHeader_csvWithBomAndSpaces_comparedAfterTrim() throws Exception {
+    // 엑셀이 내보낸 UTF-8 CSV 는 첫 칸 앞에 BOM 이 붙는다 — BOM·공백을 걷어낸 이름으로 비교한다
+    Path file = writeCsvFile("\uFEFFregion, region ,cnt\n서울,부산,1\n");
+    assertThatThrownBy(() -> service.parseHeaders(file, "csv", ParseOptions.defaults()))
+        .isInstanceOf(InvalidFileHeaderException.class)
+        .hasMessage(DUP_MSG);
+  }
+
+  @Test
+  void blankHeaders_twoOrMore_keepExistingBehavior() throws Exception {
+    // 동작 고정: 이름이 빈 열은 몇 개든 거절하지 않는다(빈 이름 열은 기본 미매핑이라 피해가 작고, 거절하면 끝 빈 열 파일 회귀가 크다)
+    Path file = writeCsvFile("a,b,,d,  \n1,2,3,4,5\n");
+    assertThat(service.parseHeaders(file, "csv", ParseOptions.defaults()))
+        .containsExactly("a", "b", "", "d", "  ");
+    assertThat(service.parseSampleRows(file, "csv", 5, ParseOptions.defaults())).hasSize(1);
+  }
+
+  @Test
+  void duplicateNames_withBlanks_onlyNamedDuplicatesReported() throws Exception {
+    // 겹치는 이름이 여러 개면 한 번에 모두 알리고, 빈 이름 열(2·4번째)은 메시지에 넣지 않는다
+    Path file = writeCsvFile("x,,x,,y,y\n1,2,3,4,5,6\n");
+    assertThatThrownBy(() -> service.parseHeaders(file, "csv", ParseOptions.defaults()))
+        .hasMessage("파일에 같은 이름의 열이 있습니다: x (1·3번째 열), y (5·6번째 열). 열 이름을 고친 뒤 다시 올려 주세요.");
+  }
+
+  @Test
+  void trailingDelimiters_twoBlankHeaders_stillAccepted() throws Exception {
+    // 회귀 방지: 엑셀 CSV 내보내기에서 흔한 끝 빈 열(a,b,,)은 계속 통과한다
+    Path file = writeCsvFile("a,b,,\n1,2,,\n");
+    assertThat(service.parseHeaders(file, "csv", ParseOptions.defaults()))
+        .containsExactly("a", "b", "", "");
+    List<List<Map<String, String>>> batches = new ArrayList<>();
+    service.parseStreaming(file, "csv", ParseOptions.defaults(), 10, batches::add);
+    assertThat(batches).hasSize(1);
+    assertThat(batches.get(0).get(0)).containsEntry("a", "1").containsEntry("b", "2");
+  }
+
+  @Test
+  void singleBlankHeader_keepsExistingBehavior() throws Exception {
+    // 이름 없는 열이 하나뿐이면 겹칠 대상이 없으므로 기존처럼 빈 문자열 키로 통과한다
+    Path file = writeCsvFile("a,,c\n1,2,3\n");
+    assertThat(service.parseHeaders(file, "csv", ParseOptions.defaults()))
+        .containsExactly("a", "", "c");
+    assertThat(service.parse(file, "csv", ParseOptions.defaults()))
+        .containsExactly(Map.of("a", "1", "", "2", "c", "3"));
+  }
+
+  @Test
+  void noHeaderMode_generatedNamesNeverRejected() throws Exception {
+    // hasHeader=false 면 column_N 을 합성하므로 첫 행에 같은 값이 있어도 헤더 검사 대상이 아니다
+    Path file = writeCsvFile("x,x\n1,2\n");
+    ParseOptions opts = new ParseOptions(",", "UTF-8", false, 0);
+    assertThat(service.parseHeaders(file, "csv", opts)).containsExactly("column_1", "column_2");
+  }
+
+  @Test
+  void duplicateHeader_xlsxAndXls_everyEntryPointRejected() throws Exception {
+    String[] header = {"region", "region", "cnt"};
+    String[] data = {"서울", "부산", "1"};
+    for (Object[] fmt :
+        new Object[][] {
+          {"xlsx", buildWorkbook(new XSSFWorkbook(), header, data)},
+          {"xls", buildWorkbook(new HSSFWorkbook(), header, data)}
+        }) {
+      String type = (String) fmt[0];
+      byte[] bytes = (byte[]) fmt[1];
+      Path file = writeFile(type, bytes);
+      ParseOptions opts = ParseOptions.defaults();
+      List<List<Map<String, String>>> batches = new ArrayList<>();
+
+      // SAX(XSSF)·이벤트(HSSF) 콜백 안에서 던진 예외가 감싸지지 않고 그대로 나오는지 정확한 타입으로 확인
+      assertThatThrownBy(() -> service.parseHeaders(file, type, opts))
+          .isExactlyInstanceOf(InvalidFileHeaderException.class)
+          .hasMessage(DUP_MSG);
+      assertThatThrownBy(() -> service.parseSampleRows(file, type, 5, opts))
+          .isExactlyInstanceOf(InvalidFileHeaderException.class);
+      assertThatThrownBy(() -> service.parse(file, type, opts))
+          .isExactlyInstanceOf(InvalidFileHeaderException.class);
+      assertThatThrownBy(() -> service.parseStreaming(file, type, opts, 3, batches::add))
+          .isExactlyInstanceOf(InvalidFileHeaderException.class);
+      assertThat(batches).isEmpty();
+      // InputStream 오버로드
+      assertThatThrownBy(() -> service.parseHeaders(new ByteArrayInputStream(bytes), type, opts))
+          .isExactlyInstanceOf(InvalidFileHeaderException.class);
+      assertThatThrownBy(
+              () -> service.parseSampleRows(new ByteArrayInputStream(bytes), type, 5, opts))
+          .isExactlyInstanceOf(InvalidFileHeaderException.class);
+      assertThatThrownBy(() -> service.parseExcel(new ByteArrayInputStream(bytes)))
+          .isExactlyInstanceOf(InvalidFileHeaderException.class);
+    }
+  }
+
+  @Test
+  void blankHeaders_xlsx_middleGapsAccepted() throws Exception {
+    // 헤더 셀이 비어 있는 열 2개(2·4번째) — 열 위치 보정으로 빈 이름이 채워지지만 빈 이름은 거절 대상이 아니다
+    byte[] bytes =
+        buildWorkbook(
+            new XSSFWorkbook(),
+            new String[] {"a", "", "c", "", "e"},
+            new String[] {"1", "2", "3", "4", "5"});
+    Path file = writeFile("xlsx", bytes);
+    assertThat(service.parseHeaders(file, "xlsx", ParseOptions.defaults()))
+        .containsExactly("a", "", "c", "", "e");
+  }
+
+  @Test
+  void normalHeaders_xlsx_stillParse() throws Exception {
+    byte[] bytes =
+        buildWorkbook(
+            new XSSFWorkbook(), new String[] {"region", "city"}, new String[] {"서울", "부산"});
+    Path file = writeFile("xlsx", bytes);
+    assertThat(service.parse(file, "xlsx", ParseOptions.defaults()))
+        .containsExactly(Map.of("region", "서울", "city", "부산"));
+  }
+
+  @Test
+  void xlsStyledBlankHeaderCells_stillAccepted() throws Exception {
+    // 회귀 방지: xls 헤더 행 오른쪽에 서식만 있는 빈 셀(BlankRecord)은 빈 이름 열로 잡히지만 거절하지 않는다
+    byte[] bytes;
+    try (Workbook wb = new HSSFWorkbook();
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      Sheet sheet = wb.createSheet("Sheet1");
+      CellStyle bordered = wb.createCellStyle();
+      bordered.setBorderBottom(org.apache.poi.ss.usermodel.BorderStyle.THIN);
+      Row header = sheet.createRow(0);
+      header.createCell(0).setCellValue("a");
+      header.createCell(1).setCellValue("b");
+      header.createCell(2).setCellStyle(bordered);
+      header.createCell(3).setCellStyle(bordered);
+      Row data = sheet.createRow(1);
+      data.createCell(0).setCellValue("1");
+      data.createCell(1).setCellValue("2");
+      wb.write(out);
+      bytes = out.toByteArray();
+    }
+    Path file = writeFile("xls", bytes);
+    assertThat(service.parseHeaders(file, "xls", ParseOptions.defaults()))
+        .containsExactly("a", "b", "", "");
+  }
+
+  @Test
+  void xlsxStyledBlankHeaderCells_ignoredSoNotRejected() throws Exception {
+    // xlsx 는 서식만 있는 빈 셀을 SAX 핸들러가 셀로 넘기지 않아 헤더에 아예 잡히지 않는다(xls 와 대비)
+    byte[] bytes;
+    try (Workbook wb = new XSSFWorkbook();
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      Sheet sheet = wb.createSheet("Sheet1");
+      CellStyle bordered = wb.createCellStyle();
+      bordered.setBorderBottom(org.apache.poi.ss.usermodel.BorderStyle.THIN);
+      Row header = sheet.createRow(0);
+      header.createCell(0).setCellValue("a");
+      header.createCell(1).setCellValue("b");
+      header.createCell(2).setCellStyle(bordered);
+      header.createCell(3).setCellStyle(bordered);
+      Row data = sheet.createRow(1);
+      data.createCell(0).setCellValue("1");
+      data.createCell(1).setCellValue("2");
+      wb.write(out);
+      bytes = out.toByteArray();
+    }
+    Path file = writeFile("xlsx", bytes);
+    assertThat(service.parseHeaders(file, "xlsx", ParseOptions.defaults()))
+        .containsExactly("a", "b");
   }
 }

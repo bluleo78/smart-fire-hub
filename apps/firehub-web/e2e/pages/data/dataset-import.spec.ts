@@ -975,3 +975,37 @@ test.describe('#653 회귀 방지 — 매핑 0개 시 검증/임포트 차단', 
     await expect(importBtn).toBeEnabled();
   });
 });
+
+test.describe('WD-205 — 같은 이름 열 헤더 거절', () => {
+  /**
+   * WD-205: 헤더에 같은 이름의 열이 있는 파일은 서버가 미리보기 단계에서 400 + 한국어 사유로 거절한다.
+   * 웹은 별도 분기 없이 기존 handleApiError 경로로 서버 문구를 토스트에 그대로 보여야 하고, 매핑 단계로 넘어가면 안 된다.
+   */
+  test('WD-205 중복 헤더 파일 — 미리보기 400 사유가 토스트로 보이고 매핑 단계로 가지 않는다', async ({ authenticatedPage: page }) => {
+    const message = '파일에 같은 이름의 열이 있습니다: region (1·2번째 열). 열 이름을 고친 뒤 다시 올려 주세요.';
+    await setupImportMocks(page);
+    const previewCapture = await mockApi(
+      page,
+      'POST',
+      `/api/v1/datasets/${DATASET_ID}/imports/preview`,
+      { status: 400, error: 'Bad Request', message, errors: null },
+      { status: 400, capture: true },
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+    await page.getByRole('dialog').locator('input[type="file"]').setInputFiles({
+      name: 'dup-header.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from('region,region,cnt\n서울,부산,1\n', 'utf-8'),
+    });
+
+    await previewCapture.waitForRequest();
+    // 서버 문구 그대로 토스트 노출 (일반 실패 문구로 바뀌지 않음)
+    await expect(page.getByText(message)).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('미리보기 로드에 실패했습니다.')).not.toBeVisible();
+    // 매핑 단계(검증 버튼)로 넘어가지 않는다
+    await expect(page.getByRole('dialog').getByRole('button', { name: '검증' })).not.toBeVisible();
+  });
+});
