@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 # 슬롯 상한은 tenant.py 한 곳에서 정한다 — 여기 숫자를 따로 두면 슬롯 수가 바뀔 때 검증과 롤 이름 조립이 어긋난다.
 from app.tenant import MAX_READ_SLOT
@@ -53,12 +53,35 @@ class PythonExecuteRequest(TenantScopedRequest):
     # 기본값(또는 테넌트 롤 폴백)을 두면 구 API·위조 요청이 등급 밖 데이터를 읽는다.
     # strict=True: "2"·2.5·True 같은 값이 조용히 정수로 바뀌지 않게(HMAC 메시지 표기가 Java 와 어긋난다).
     read_slot: int = Field(alias="readSlot", ge=1, le=MAX_READ_SLOT, strict=True)
+    # Tibero 저장소 테넌트 전용 실행 1회용 스크립트 토큰(WD-78). api 가 서명해 Tibero 요청에만 싣고, PG 요청에는 키 자체가 없다.
+    # 스크립트에 GENIA_DB_TOKEN 으로 넘겨 조회 도우미가 db-executor 슬롯 조회에 쓴다. SecretStr 이라 요청 모델을 repr·로그로 찍어도
+    # 값이 나오지 않는다. Tibero 인데 없으면 실행하지 않는다(라우터).
+    script_token: Optional[SecretStr] = None
+
+
+# 슬롯 조회 요청 조합 거부 문구 — db-executor ExecuteController 와 같은 문장(두 실행기 같은 계약, WD-78).
+SLOT_REQUIRES_STREAM = "슬롯 조회(readSlot)는 stream:true 로만 실행할 수 있습니다."
+STREAM_REQUIRES_SLOT = "스트리밍 조회(stream)는 슬롯 조회(readSlot)에서만 쓸 수 있습니다."
 
 
 class QueryExecuteRequest(TenantScopedRequest):
     query: str
     max_rows: int = 1000
     read_only: bool = False
+    # 슬롯 스트리밍 조회(WD-78) — readSlot 과 stream:true 를 함께 보낼 때만 받는다. 슬롯 롤(resolve_read_db_url)로 끝까지
+    # 읽어 NDJSON 으로 흘려보낸다(행 상한 없음, max_rows 무시). api 의 PG 경로는 쓰지 않는다 — db-executor 와 같은 계약을 위한 대칭.
+    # strict=True: "2"·True 같은 값이 조용히 정수·불리언으로 바뀌지 않게(python 실행 요청의 readSlot 과 같은 규칙).
+    read_slot: Optional[int] = Field(default=None, alias="readSlot", ge=1, le=MAX_READ_SLOT, strict=True)
+    stream: bool = Field(default=False, strict=True)
+
+    @model_validator(mode="after")
+    def _slot_and_stream_together(self) -> "QueryExecuteRequest":
+        """readSlot·stream 은 함께여야 한다 — 하나만 오면 422(fail-closed). 슬롯 조회의 길을 하나로 둔다(db-executor 와 같은 규칙)."""
+        if self.read_slot is not None and not self.stream:
+            raise ValueError(SLOT_REQUIRES_STREAM)
+        if self.stream and self.read_slot is None:
+            raise ValueError(STREAM_REQUIRES_SLOT)
+        return self
 
 
 class ProbeRequest(TenantScopedRequest):

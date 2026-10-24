@@ -415,9 +415,14 @@ final class TiberoDmlSql {
    * 스테이징 테이블(PK·시스템 컬럼 없음, 입력 순번 {@code _SEQ} 포함)과 그 전용 시퀀스를 만든다. PK 제약을 두지 않아 같은 PK 가 여러 번 들어와도
    * 되고, 중복 정리는 승격 SQL 에서 한다.
    *
+   * <p><b>{@code _SEQ} 인덱스(WD-77).</b> db-executor 적재({@code /execute/load})는 요청마다 {@code
+   * MAX("_SEQ")} 로 다음 순번을 정하므로, 인덱스가 없으면 청크마다 스테이징 전체를 훑어 행 수에 대해 이차로 느려진다. 인덱스 이름은 스테이징 이름에서
+   * 파생하고({@link TiberoNames#stagingSeqIndexName}) 테이블 DROP 때 함께 지워진다. 테이블 바로 뒤·시퀀스 앞에 만들어, 시퀀스 생성이
+   * 실패했을 때 테이블만 지우면 인덱스도 함께 정리된다. 가져오기(import) 스테이징도 같은 문장을 쓴다(순번 조회 비용이 줄 뿐 동작은 같다).
+   *
    * @param stagingPhysical 대문자 {@code STG_<hex>}
    * @param columnDdls 컬럼별 타입 DDL(columns 와 같은 순서)
-   * @return [CREATE TABLE, CREATE SEQUENCE]
+   * @return [CREATE TABLE, CREATE INDEX({@code _SEQ}), CREATE SEQUENCE]
    */
   static List<String> createStaging(
       String schema, String stagingPhysical, List<String> columns, List<String> columnDdls) {
@@ -430,6 +435,11 @@ final class TiberoDmlSql {
     ddl.append(")");
     return List.of(
         ddl.toString(),
+        "CREATE INDEX "
+            + TiberoNames.qualified(schema, TiberoNames.stagingSeqIndexName(stagingPhysical))
+            + " ON "
+            + stgTbl(schema, stagingPhysical)
+            + " (\"_SEQ\")",
         "CREATE SEQUENCE "
             + stgSeq(schema, stagingPhysical)
             + " START WITH 1 INCREMENT BY 1 NOCACHE");
@@ -522,11 +532,32 @@ final class TiberoDmlSql {
       String stagingPhysical,
       List<String> columns,
       List<String> pkColumns) {
-    String list = cols(columns);
-    String source =
+    return insertFromSource(
+        schema,
+        table,
+        columns,
         pkColumns.isEmpty()
-            ? "SELECT " + list + " FROM " + stgTbl(schema, stagingPhysical) + " ORDER BY \"_SEQ\""
-            : promoteUpsertSource(schema, stagingPhysical, columns, pkColumns);
+            ? stagingInInputOrder(schema, stagingPhysical, columns)
+            : promoteUpsertSource(schema, stagingPhysical, columns, pkColumns));
+  }
+
+  /** 스테이징 전 행을 입력 순서({@code _SEQ})대로 고르는 소스 — 승격(PK 없음)과 옮기기가 같은 문장을 쓴다. */
+  private static String stagingInInputOrder(
+      String schema, String stagingPhysical, List<String> columns) {
+    return "SELECT "
+        + cols(columns)
+        + " FROM "
+        + stgTbl(schema, stagingPhysical)
+        + " ORDER BY \"_SEQ\"";
+  }
+
+  /**
+   * 소스 질의의 행을 출력 테이블에 넣는 INSERT … SELECT 공통 골격 — {@code ID} 는 출력 테이블 전용 시퀀스 {@code NEXTVAL}, {@code
+   * _UPDATED_AT} 은 {@code SYSTIMESTAMP}. ORDER BY 는 NEXTVAL 과 같은 질의 블록에 둘 수 없어 소스를 인라인 뷰로 감싼다.
+   */
+  private static String insertFromSource(
+      String schema, String table, List<String> columns, String source) {
+    String list = cols(columns);
     return "INSERT INTO "
         + tbl(schema, table)
         + " (\"ID\", "
@@ -557,19 +588,7 @@ final class TiberoDmlSql {
    */
   static String moveFromStaging(
       String schema, String table, String stagingPhysical, List<String> columns) {
-    String list = cols(columns);
-    return "INSERT INTO "
-        + tbl(schema, table)
-        + " (\"ID\", "
-        + list
-        + ", \"_UPDATED_AT\") SELECT "
-        + seq(schema, table)
-        + ".NEXTVAL, "
-        + list
-        + ", SYSTIMESTAMP FROM (SELECT "
-        + list
-        + " FROM "
-        + stgTbl(schema, stagingPhysical)
-        + " ORDER BY \"_SEQ\")";
+    return insertFromSource(
+        schema, table, columns, stagingInInputOrder(schema, stagingPhysical, columns));
   }
 }

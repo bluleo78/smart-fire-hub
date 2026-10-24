@@ -739,3 +739,332 @@ def test_nsjail_keeps_error_level_diagnostics():
         "AppArmor 가 mount 를 막은 장애에서 로그만으로 원인을 알 수 없었다"
     )
     assert "--quiet" in cmd
+
+
+# ===========================================================================
+# Tibero 테넌트 경로(WD-78) — 조회 도우미 환경·원격 적재·토큰 비노출
+# ===========================================================================
+import json as _json
+import os
+from datetime import datetime as _dt, timezone as _tz
+
+import httpx as _httpx
+
+from app.db.backends.remote import RemoteLoadError, RemoteLoader
+from app.services.python_executor import execute_python_tibero
+
+SCRIPT_TOKEN = "v1.4.3.7.1999999999.U0lHTkFUVVJFLWZvci10ZXN0LW9ubHktbm90LXJlYWw"
+DBX_URL = "http://db-executor:8090"
+STG = "STG_0123456789ABCDEF01234567"
+
+
+def make_tibero_settings(**kwargs):
+    values = dict(db_executor_base_url=DBX_URL, db_executor_load_token="load-token-for-test")
+    values.update(kwargs)
+    return make_settings(**values)
+
+
+class _RecordingLoader:
+    """RemoteLoader 대역 — 받은 인자를 기록하고 행 수를 돌려준다."""
+
+    def __init__(self, error=None):
+        self.calls = []
+        self.drop_keys = []
+        self._error = error
+
+    def load(self, tenant_id, table, rows, column_type_map, timeout_seconds=None, drop_keys=frozenset()):
+        self.calls.append((tenant_id, table, rows, column_type_map))
+        self.drop_keys.append(drop_keys)
+        if self._error:
+            raise self._error
+        return len(rows)
+
+
+def _run_tibero(settings, *, stdout="", stderr="", returncode=0, loader=None, **kwargs):
+    """PG 전용 경로(슬롯 롤 URL·스키마·PG 연결)를 부르면 실패하도록 막고 Tibero 경로를 돌린다."""
+    loader = loader or _RecordingLoader()
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"), \
+         patch("app.services.python_executor.resolve_read_db_url", side_effect=AssertionError("PG 슬롯 롤 금지")), \
+         patch("app.services.python_executor.resolve_schema", side_effect=AssertionError("PG 스키마 금지")), \
+         patch("app.services.python_executor.get_connection", side_effect=AssertionError("PG 연결 금지")):
+        mock_run.return_value = make_completed_process(stdout=stdout, stderr=stderr, returncode=returncode)
+        args = dict(tenant_id=4, script_token=SCRIPT_TOKEN, loader=loader)
+        args.update(kwargs)
+        result = execute_python_tibero("print(1)", None, settings, **args)
+    return result, mock_run, loader
+
+
+def test_tibero_fallback_env_has_helper_settings_and_no_pg_url():
+    result, mock_run, _ = _run_tibero(make_tibero_settings(nsjail_enabled=False))
+    assert result.success is True
+    env = mock_run.call_args.kwargs["env"]
+    assert env["GENIA_DB_URL"] == DBX_URL
+    assert env["GENIA_DB_TOKEN"] == SCRIPT_TOKEN
+    # 패키지 경로 + 리포의 sandbox(도우미 위치) — nsjail 없는 개발 실행기에서도 genia_db 를 import 할 수 있다(M7).
+    paths = env["PYTHONPATH"].split(os.pathsep)
+    assert paths[0] == "/usr/local/lib/python3.11/dist-packages"
+    assert any(os.path.isfile(os.path.join(p, "genia_db.py")) for p in paths)
+    assert "DB_URL" not in env and "DB_SCHEMA" not in env
+    # 스크립트가 받는 비밀은 토큰 하나뿐 — 적재 토큰·실행기 토큰은 넘기지 않는다.
+    assert "load-token-for-test" not in repr(env)
+    assert "changeme" not in repr(env)
+
+
+def test_tibero_nsjail_passes_token_by_name_only_never_in_argv():
+    result, mock_run, _ = _run_tibero(make_tibero_settings(nsjail_enabled=True))
+    assert result.success is True
+    cmd = mock_run.call_args.args[0]
+    assert cmd[0] == "/usr/sbin/nsjail"
+    # 토큰 값은 명령줄(ps·TimeoutExpired 문구)에 나타나지 않는다 — nsjail 이 자기 환경에서 이름으로 가져간다.
+    assert all(SCRIPT_TOKEN not in part for part in cmd)
+    env_values = [cmd[i + 1] for i, part in enumerate(cmd) if part == "--env"]
+    assert "GENIA_DB_TOKEN" in env_values
+    assert f"GENIA_DB_URL={DBX_URL}" in env_values
+    assert "PYTHONPATH=/opt/python-packages" in env_values
+    assert not any(v.startswith("DB_URL=") or v.startswith("DB_SCHEMA=") for v in env_values)
+    assert mock_run.call_args.kwargs["env"]["GENIA_DB_TOKEN"] == SCRIPT_TOKEN
+    # 샌드박스 바닥 설정(proc 차단·패키지 경로)은 PG 경로와 같다.
+    assert "--disable_proc" in cmd
+    assert "/usr/local/lib/python3.11/dist-packages:/opt/python-packages" in cmd
+
+
+def test_tibero_nsjail_base_args_match_pg_path():
+    """두 경로가 같은 샌드박스 바닥(--env 앞까지)을 쓴다 — 한쪽만 바뀌면 격리 수준이 갈린다."""
+    settings = make_tibero_settings(nsjail_enabled=True)
+    _, tibero_run, _ = _run_tibero(settings)
+    with patch("app.services.python_executor.subprocess.run") as pg_run, \
+         patch("app.services.python_executor.os.unlink"):
+        pg_run.return_value = make_completed_process(stdout="", returncode=0)
+        execute_python("print(1)", None, settings, tenant_id=4, read_slot=3)
+    t_cmd, p_cmd = tibero_run.call_args.args[0], pg_run.call_args.args[0]
+
+    # 임시 스크립트 경로는 실행마다 다르므로 그 마운트 인자는 빼고 비교한다.
+    def strip(c):
+        return [x for x in c[: c.index("--env")] if not x.endswith(":/script.py")]
+
+    assert strip(t_cmd) == strip(p_cmd)
+
+
+@pytest.mark.parametrize("token", [None, "", "   "])
+def test_tibero_missing_token_still_fails_closed_when_called_directly(token):
+    """토큰 누락 문구는 라우터가 낸다(라우트 테스트가 고정). 서비스를 직접 불러도 빈 토큰은 테넌트 대조에서 막혀 스크립트를 띄우지 않는다."""
+    result, mock_run, loader = _run_tibero(make_tibero_settings(), script_token=token, output_table=STG)
+    assert result.success is False
+    assert result.error == "스크립트 토큰의 테넌트가 요청 테넌트와 다릅니다"
+    assert result.exit_code == 1 and result.execution_time_ms == 0
+    mock_run.assert_not_called()
+    assert loader.calls == []
+
+
+def test_tibero_missing_db_executor_url_fails_before_running():
+    result, mock_run, _ = _run_tibero(make_tibero_settings(db_executor_base_url=""))
+    assert result.success is False
+    # 코드리뷰 3: 응답 오류는 api 스텝 오류로 사용자에게 보이므로 환경 변수 이름을 싣지 않는다(서버 WARN 로그에만).
+    assert result.error == "Python 조회 설정이 준비되지 않아 실행할 수 없습니다. 운영자에게 문의하세요."
+    assert "DB_EXECUTOR_" not in result.error
+    mock_run.assert_not_called()
+
+
+def test_tibero_non_staging_output_table_is_refused_by_remote_loader_when_called_directly():
+    """스테이징 이름 검사는 라우터가 띄우기 전에 한다(라우트 테스트가 고정). 서비스를 직접 불러도 원격 적재기가 다시 거부해 아무것도 보내지 않는다."""
+    sent = []
+
+    def handler(request):
+        sent.append(request)
+        return _httpx.Response(200, json={"success": True, "rows_loaded": 1})
+
+    settings = make_tibero_settings()
+    loader = RemoteLoader(settings, client=_httpx.Client(transport=_httpx.MockTransport(handler)))
+    result, _, _ = _run_tibero(settings, stdout='[{"a": 1}]', output_table="orders", loader=loader)
+    assert result.success is False
+    # 원문(이름 거부 사유)은 로그에만 — 사용자 문구는 PG 와 같은 일반 적재 실패 안내다(WD-211).
+    assert result.error == "출력 결과를 데이터셋에 적재하지 못했습니다. 출력 JSON 의 키와 값 형식을 확인해 주세요."
+    assert sent == []
+
+
+def test_tibero_stdout_rows_go_to_remote_loader_with_staging_table():
+    ctm = {"a": "INTEGER"}
+    result, _, loader = _run_tibero(
+        make_tibero_settings(),
+        stdout='[{"a": "1"}, {"a": "2"}]',
+        stderr="log line\n",
+        output_table=STG,
+        column_type_map=ctm,
+    )
+    assert result.success is True
+    assert result.rows_loaded == 2
+    assert result.output == "log line\n"  # 출력 테이블이 있으면 stderr 만(PG 와 같은 규칙)
+    # 원시 행 그대로 넘긴다 — 변환·직렬화·시스템 키 빼기는 RemoteLoader(to_wire_rows)가 청크마다 한다.
+    assert loader.calls == [(4, STG, [{"a": "1"}, {"a": "2"}], ctm)]
+    assert loader.drop_keys == [frozenset({"id", "import_id", "created_at", "_updated_at"})]
+
+
+def test_tibero_no_output_table_does_not_load():
+    result, _, loader = _run_tibero(make_tibero_settings(), stdout='[{"a": 1}]', stderr="e")
+    assert result.success is True and result.rows_loaded == 0
+    assert result.output == '[{"a": 1}]e'
+    assert loader.calls == []
+
+
+def test_tibero_script_failure_does_not_load():
+    result, _, loader = _run_tibero(
+        make_tibero_settings(), stdout='[{"a": 1}]', stderr="Traceback", returncode=1, output_table=STG
+    )
+    assert result.success is False and result.exit_code == 1
+    assert loader.calls == []
+
+
+def test_tibero_remote_load_failure_returns_insert_failed_error():
+    loader = _RecordingLoader(error=RemoteLoadError("Tibero 적재(db-executor) 응답 시간이 초과되었습니다"))
+    result, _, _ = _run_tibero(make_tibero_settings(), stdout='[{"a": 1}]', output_table=STG, loader=loader)
+    assert result.success is False
+    # 원격 적재 실패 원문은 로그에만 두고 PG 와 같은 일반 안내를 보인다(WD-211).
+    assert result.error == "출력 결과를 데이터셋에 적재하지 못했습니다. 출력 JSON 의 키와 값 형식을 확인해 주세요."
+    assert result.rows_loaded == 0
+
+
+def test_tibero_token_is_redacted_from_captured_output_and_error():
+    """D3: 스크립트가 토큰을 찍어도(실수·악의) 실행 로그·오류에는 남지 않는다."""
+    leak = f"token={SCRIPT_TOKEN}\n"
+    ok, _, _ = _run_tibero(make_tibero_settings(), stdout=leak, stderr=leak)
+    assert SCRIPT_TOKEN not in ok.output
+    failed, _, _ = _run_tibero(make_tibero_settings(), stdout=leak, stderr=leak, returncode=1)
+    assert SCRIPT_TOKEN not in failed.output and SCRIPT_TOKEN not in (failed.error or "")
+
+
+def test_tibero_timeout_message_has_no_token():
+    settings = make_tibero_settings(nsjail_enabled=True)
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["nsjail"], timeout=5)
+        result = execute_python_tibero(
+            "x", 5, settings, tenant_id=4, script_token=SCRIPT_TOKEN, loader=_RecordingLoader()
+        )
+    assert result.success is False
+    # 시간 초과 문구는 PG 와 같은 한국어 고정 문구다(WD-211).
+    assert result.error == "실행 시간 제한(5초)을 넘어 스크립트를 중단했습니다."
+    assert SCRIPT_TOKEN not in repr(result)
+
+
+def test_tibero_unexpected_error_traceback_is_redacted():
+    settings = make_tibero_settings()
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"):
+        mock_run.side_effect = RuntimeError(f"boom {SCRIPT_TOKEN}")
+        result = execute_python_tibero(
+            "x", None, settings, tenant_id=4, script_token=SCRIPT_TOKEN, loader=_RecordingLoader()
+        )
+    assert result.success is False
+    # 사용자 문구는 PG 와 같은 일반 안내(WD-211), traceback 은 실행 로그 칸(output)에만 — 거기서도 토큰은 지워진다.
+    assert result.error == "스크립트 실행 중 예기치 못한 오류가 발생했습니다. 잠시 후 다시 실행하고, 계속되면 관리자에게 문의해 주세요."
+    assert "boom" in result.output and SCRIPT_TOKEN not in result.output
+
+
+def test_tibero_kst_aware_datetime_lands_as_same_instant():
+    """D2: 스크립트가 KST 오프셋 시각을 내도 db-executor 에는 같은 순간으로 간다.
+
+    규약: 오프셋이 있는 시각은 오프셋을 단 ISO 로 보낸다 — db-executor LoadValues 가 UTC 로 환산해 저장한다(공용 벡터
+    python-remote-load-wire.json 이 이미 +09:00 → 01:02:03 UTC 를 양쪽에서 고정). 오프셋 없는 시각은 api_call 의 UTC-naive
+    규약대로 UTC 로 읽힌다.
+    """
+    captured = []
+
+    def handler(request):
+        captured.append(_json.loads(request.content))
+        return _httpx.Response(200, json={"success": True, "rows_loaded": len(captured[-1]["rows"])})
+
+    settings = make_tibero_settings()
+    loader = RemoteLoader(settings, client=_httpx.Client(transport=_httpx.MockTransport(handler)))
+    stdout = _json.dumps([{"ts": "2026-10-24T09:30:00+09:00", "naive": "2026-10-24T00:30:00"}])
+    result, _, _ = _run_tibero(
+        settings,
+        stdout=stdout,
+        output_table=STG,
+        column_type_map={"ts": "TIMESTAMP", "naive": "TIMESTAMP"},
+        loader=loader,
+    )
+    assert result.success is True and result.rows_loaded == 1
+    (row,) = captured[0]["rows"]
+    sent = _dt.fromisoformat(row["ts"])
+    assert sent.utcoffset() is not None  # 오프셋을 잃지 않는다(잃으면 09:30 이 UTC 로 읽혀 9시간 밀린다)
+    assert sent.astimezone(_tz.utc) == _dt(2026, 10, 24, 0, 30, tzinfo=_tz.utc)
+    # 오프셋 없는 값은 UTC 벽시계 그대로 — 위 KST 값과 같은 순간이다.
+    assert _dt.fromisoformat(row["naive"]).replace(tzinfo=_tz.utc) == sent.astimezone(_tz.utc)
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "v1.5.3.7.1999999999.U0lHTkFUVVJF",  # 다른 테넌트
+        "v1.04.3.7.1999999999.U0lHTkFUVVJF",  # 표기가 다른 같은 숫자도 거부(서명 메시지 표기가 갈린다)
+        "garbage",
+        "v1.\u0664.3.7.1999999999.U0lHTkFUVVJF",  # 비 ASCII 숫자
+    ],
+)
+def test_tibero_token_tenant_must_match_request_tenant(token):
+    """M8: 토큰의 테넌트 필드가 요청 테넌트와 다르면 띄우지 않는다 — 읽기(토큰 테넌트)와 적재(요청 테넌트)가 갈리지 않게."""
+    result, mock_run, loader = _run_tibero(make_tibero_settings(), script_token=token, output_table=STG)
+    assert result.success is False
+    assert result.error == "스크립트 토큰의 테넌트가 요청 테넌트와 다릅니다"
+    assert token not in result.error
+    mock_run.assert_not_called()
+    assert loader.calls == []
+
+
+def test_tibero_select_star_rows_drop_system_keys_before_remote_load():
+    """코드리뷰 1: ``SELECT *`` 모양 행(시스템 컬럼 id·import_id·created_at·_updated_at 포함)도 Tibero 에 적재된다.
+
+    PG 는 출력 테이블이 시스템 컬럼을 물리적으로 가져서 이 키들을 그대로 받는다. Tibero 스테이징은 사용자 컬럼만 가지므로(시스템 컬럼은 옮길 때
+    채운다) 이 네 키만 빼고 보낸다. 시스템 이름이 아닌 키는 그대로 둔다 — 출력에 없는 키는 PG 처럼 적재 실패여야 한다.
+    """
+    stdout = _json.dumps([
+        {"id": 1, "name": "a", "import_id": None, "created_at": "2026-10-24T00:00:00", "_updated_at": "2026-10-24T00:00:00"},
+        {"id": 2, "name": "b", "import_id": 9, "created_at": "2026-10-24T00:00:00", "_updated_at": "2026-10-24T00:00:00"},
+    ])
+    ctm = {"name": "TEXT"}
+    captured = []
+
+    def handler(request):
+        captured.append(_json.loads(request.content))
+        return _httpx.Response(200, json={"success": True, "rows_loaded": len(captured[-1]["rows"])})
+
+    settings = make_tibero_settings()
+    loader = RemoteLoader(settings, client=_httpx.Client(transport=_httpx.MockTransport(handler)))
+    result, _, _ = _run_tibero(settings, stdout=stdout, output_table=STG, column_type_map=ctm, loader=loader)
+    assert result.success is True and result.rows_loaded == 2
+    # 빼는 일은 적재기가 청크를 복사할 때 한다 — db-executor 로 가는 행에는 시스템 키가 없다.
+    assert [c["rows"] for c in captured] == [[{"name": "a"}, {"name": "b"}]]
+
+
+def test_tibero_non_system_extra_key_fails_before_load_like_pg():
+    """시스템 이름이 아닌 여분 키는 걸러내지 않는다 — PG 와 같이 적재 전 컬럼 확인(WD-211)에서 한국어 문구로 실패하고 db-executor 로는 보내지 않는다."""
+    captured = []
+
+    def handler(request):
+        captured.append(_json.loads(request.content))
+        return _httpx.Response(200, json={"success": True, "rows_loaded": len(captured[-1]["rows"])})
+
+    settings = make_tibero_settings()
+    loader = RemoteLoader(settings, client=_httpx.Client(transport=_httpx.MockTransport(handler)))
+    result, _, _ = _run_tibero(
+        settings,
+        stdout='[{"id": 1, "name": "a", "foo": 1}]',
+        output_table=STG,
+        column_type_map={"name": "TEXT"},
+        loader=loader,
+    )
+    assert result.success is False
+    assert result.error == "출력 JSON 의 'foo' 가 출력 데이터셋 컬럼에 없습니다. 데이터셋 컬럼 이름과 같은 키로 출력해 주세요."
+    assert captured == []
+
+
+def test_tibero_rows_with_only_system_keys_fail_with_clear_message():
+    """시스템 키만 있는 행은 적재할 컬럼이 없다 — 빈 행을 보내 db-executor 의 모호한 거부를 받는 대신 분명한 문구로 실패한다."""
+    result, _, loader = _run_tibero(
+        make_tibero_settings(), stdout='[{"id": 1, "created_at": "2026-10-24"}]', output_table=STG
+    )
+    assert result.success is False
+    # 이 실행기가 만든 한국어 사유라 그대로 싣는다(API 로컬 경로 ONLY_SYSTEM_KEYS 와 같은 문구).
+    assert result.error.startswith("출력 행에 시스템 컬럼")
+    assert loader.calls == []

@@ -338,7 +338,7 @@ describe('pipeline-builder Tibero 사본 (WD-79)', () => {
   });
 
   // WD-77: Tibero 도 API 수집·AI 분류·증분 SQL·출력 없는 SQL·직접 INSERT 를 실행한다 — 불가 문구가 남으면 모델이 만들지 않는다.
-  // Python 거부 문구는 15번 작업 전까지 그대로 둔다.
+  // WD-78: Python 단계도 실행한다 — Python 거부 문구가 남으면 모델이 Python 단계를 만들지 않는다.
   const REMOVED_REFUSALS = [
     '아직 API 수집 단계를 실행할 수 없습니다',
     '아직 AI 분류 단계를 실행할 수 없습니다',
@@ -346,6 +346,10 @@ describe('pipeline-builder Tibero 사본 (WD-79)', () => {
     '출력 데이터셋을 지정해야 합니다',
     'Tibero SQL 단계는 반드시 outputDatasetId 를 지정한다',
     '직접 INSERT 는 지원하지 않',
+    '아직 Python 단계를 실행할 수 없습니다',
+    'Python 단계 자체를 실행할 수 없다',
+    'PYTHON 스텝만 실행되지 않는다',
+    'Python 스텝을 만들지 않으므로',
   ];
 
   it.each(FILES)('tibero/%s 에 API 수집·AI 분류·증분·출력 없는 SQL 불가 문구가 없다', (name) => {
@@ -354,10 +358,37 @@ describe('pipeline-builder Tibero 사본 (WD-79)', () => {
     expect(text).not.toMatch(/PYTHON·API_CALL·AI_CLASSIFY|API_CALL·AI_CLASSIFY·증분/);
   });
 
-  it('tibero/rules.md 는 Python 거부 문구만 남기고 SQL 단계로 안내한다', () => {
+  // WD-78: Tibero Python 단계는 genia_db 조회 도우미로 입력을 읽는다 — PG 의 접속 문자열·psycopg2 안내는 없다.
+  it.each(FILES)('tibero/%s 에 Python 단계 실행 불가·DB 접속 문자열 안내가 없다', (name) => {
+    const text = readTibero(name);
+    expect(text).not.toMatch(/Python 단계를 실행할 수 없|실행하지 못하는 것은 PYTHON/);
+    expect(text).not.toContain('psycopg2');
+    expect(text).not.toContain('DB_URL');
+  });
+
+  it('tibero/step-types.md 의 Python 절은 genia_db 조회 도우미를 안내한다', () => {
+    const t = readTibero('step-types.md');
+    expect(t).toContain('import genia_db');
+    expect(t).toContain('genia_db.query(');
+    expect(t).toContain('genia_db.iter_query(');
+    expect(t).toContain('genia_db.QueryError');
+    expect(t).toContain('FROM genia_t5.');
+    expect(t).toMatch(/3개/);
+    expect(t).toMatch(/권한 오류/);
+    expect(t).toMatch(/JSON 배열/);
+    expect(t).toMatch(/SELECT|WITH/);
+  });
+
+  it('tibero/rules.md 는 Python 단계의 genia_db 사용·권한 오류 우회 금지를 알린다', () => {
     const rules = readTibero('rules.md');
-    expect(rules).toContain('Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다.');
-    expect(rules).toMatch(/SQL 단계로/);
+    expect(rules).toContain('genia_db');
+    expect(rules).toMatch(/권한 오류[^\n]*우회/);
+  });
+
+  it('tibero/examples.md 예제 3 은 genia_db 로 읽는 Python 단계다', () => {
+    const ex = readTibero('examples.md');
+    expect(ex).toContain('genia_db.query(');
+    expect(ex).toContain('"scriptType": "PYTHON"');
   });
 
   it('tibero/rules.md 는 증분·직접 INSERT 의 트리거 권한 오류를 한 줄로 안내한다', () => {
@@ -406,12 +437,13 @@ describe('pipeline-builder Tibero 사본 (WD-79)', () => {
     expect(agent).toMatch(/placeholder/i);
   });
 
-  it('로더가 TIBERO 에서 사본을 쓴다 — SQL 핵심 규칙과 Python 거부 안내를 담는다', () => {
+  it('로더가 TIBERO 에서 사본을 쓴다 — SQL 핵심 규칙과 Python 조회 도우미 안내를 담는다', () => {
     resetSubagentCache();
     const tibero = loadSubagents(undefined, 'TIBERO')['pipeline-builder'];
     expect(hasTiberoCoreRules(tibero.prompt)).toBe(true);
     expect(findPgOnlySyntax(tibero.prompt)).toEqual([]);
-    expect(tibero.prompt).toContain('Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다.');
+    expect(tibero.prompt).toContain('genia_db.query(');
+    expect(tibero.prompt).not.toContain('아직 Python 단계를 실행할 수 없습니다');
     resetSubagentCache();
   });
 });

@@ -12,6 +12,7 @@ import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataTableNames;
+import com.smartfirehub.dataset.storage.TenantDataStoreRepository;
 import com.smartfirehub.dataset.storage.tibero.TiberoNames;
 import com.smartfirehub.dataset.storage.tibero.TiberoPipelineSql;
 import com.smartfirehub.dataset.storage.tibero.TiberoSqlLexer;
@@ -32,6 +33,7 @@ import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.pipeline.service.executor.ScriptTokenIssuer;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -39,7 +41,8 @@ import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import com.smartfirehub.securitylevel.ai.AiCall;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.securitylevel.pythonread.PythonReadAccessException;
-import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrants;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -64,6 +67,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -133,7 +137,7 @@ public class PipelineAsyncRunner {
   private final IncrementalStepLock incrementalStepLock;
 
   private final PipelineSecurityGate pipelineSecurityGate;
-  private final PythonReadGrantSync pythonReadGrantSync;
+  private final PythonReadGrants pythonReadGrants;
   private final LocalPythonOutputLoader localPythonOutputLoader;
 
   /** AI_CLASSIFY 입력의 AI 정책 판정(S3 §4.3) — PipelineSecurityGate(흐름 B 소유)를 고치지 않고 호출부에서 가드를 직접 부른다. */
@@ -141,6 +145,28 @@ public class PipelineAsyncRunner {
 
   /** AI_CLASSIFY 가 실제로 쓸 분류 공급자의 호스팅 — 실행 시점 값으로 판정한다(저장 후 외부로 바뀐 경우를 막는다). */
   private final AiHostingResolver aiHostingResolver;
+
+  /** Tibero 테넌트 PYTHON 의 실행 1회용 스크립트 토큰 발급기(WD-78) — 스크립트가 조회 도우미로 db-executor 슬롯 조회를 부를 때 쓴다. */
+  private final ScriptTokenIssuer scriptTokenIssuer;
+
+  /** 스크립트 토큰에 싣는 테넌트 세대 번호({@code script_token_epoch}) 조회(WD-78). */
+  private final TenantDataStoreRepository tenantDataStoreRepository;
+
+  /**
+   * 실행기(firehub-executor)의 Python 실행 시간 제한(초) — 실행기 {@code python_timeout} 과 같은 값이어야 한다. 기본값·환경 변수
+   * 이름 ({@code EXECUTOR_PYTHON_TIMEOUT})을 실행기와 맞춰 한 값을 두 서비스에 같이 줄 수 있게 했다. Tibero 스크립트 토큰 만료를 정하는
+   * 데만 쓴다 — 실행기 쪽만 늘리면 긴 스크립트의 늦은 조회가 만료(401)로 실패한다(fail-closed). final 이 아닌 필드 주입이라 생성자 주입 테스트에서는
+   * 기본값이 남는다.
+   */
+  @Value("${app.executor.python-timeout-seconds:1800}")
+  private long executorPythonTimeoutSeconds = 1800;
+
+  /** 스크립트 토큰 만료에 더하는 여유(초) — 발급부터 실행 시작까지(스테이징 DDL·실행기 대기)와 시계 차이를 덮는다. */
+  static final long PYTHON_TOKEN_TTL_MARGIN_SECONDS = 60;
+
+  /** 실행기 끈(로컬) Tibero PYTHON 의 스크립트 토큰 유효 시간 — 자식 프로세스 시간 제한 + 여유. */
+  static final Duration LOCAL_PYTHON_TOKEN_TTL =
+      Duration.ofSeconds(PythonScriptExecutor.TIMEOUT_SECONDS + PYTHON_TOKEN_TTL_MARGIN_SECONDS);
 
   /**
    * 파이프라인을 비동기로 실행한다.
@@ -438,13 +464,10 @@ public class PipelineAsyncRunner {
       executionRepository.updateStepExecution(
           stepExecId, "RUNNING", null, null, null, stepStartedAt, null);
 
-      // Tibero 저장소 테넌트 판정(WD-77, 스펙 §5.1) — 이 스텝에서 한 번만 묻는다(테넌트 백엔드는 생성 후 불변이다). 아직 Tibero 로
-      // 적재할 수 없는 스텝 종류는 무엇이든 하기 전에(권한 확인·TEMP 생성·실행기 호출·임시 테이블 맞바꿈 전에) 실패시킨다 — 그 경로들은 PG
-      // 전용(PG 임시 테이블 맞바꿈·PG 슬롯 롤·PG 적재)이라 Tibero 테넌트 데이터를 PG 에 쓰거나 예외로 어중간하게 멈춘다.
-      boolean tiberoTenant = pipelineDataSchema.isTibero();
-      if (tiberoTenant) {
-        rejectUnsupportedTiberoStep(step.scriptType());
-      }
+      // Tibero 저장소 테넌트 판정(WD-77, 스펙 §5.1) — 이 스텝에서 한 번만 묻는다(테넌트 백엔드는 생성 후 불변이다). 모든 스텝 종류가
+      // Tibero 에서 열렸다(Python 은 WD-78) — 종류별 분기가 이 값으로 Tibero 경로(db-executor·스테이징·조회 도우미)를 고른다.
+      DataStoreBackend backend = pipelineDataSchema.backend();
+      boolean tiberoTenant = backend == DataStoreBackend.TIBERO;
 
       // WD-30: 러너 TEMP 의 쓰기 후 허용 목록 확정 계획(출력 등급 처리가 채운다 — 허용 목록 필요 입력이 없거나 출력이 전부 교체되지 않으면 null).
       PipelineSecurityGate.OutputAllowlistPlan allowlistPlan = null;
@@ -557,11 +580,7 @@ public class PipelineAsyncRunner {
               tiberoTenant
                   ? tiberoIncrementalCursor.captureCandidate()
                   : incrementalCursorService.captureCandidate();
-          sql =
-              LastRunAtPlaceholder.substitute(
-                  sql,
-                  injected,
-                  tiberoTenant ? DataStoreBackend.TIBERO : DataStoreBackend.POSTGRESQL);
+          sql = LastRunAtPlaceholder.substitute(sql, injected, backend);
           // 소스 테이블의 백필(_updated_at 컬럼+트리거) 완료 여부를 여기서 따로 확인하지 않는다.
           // V124 백필은 락을 못 잡은 테이블을 건너뛸 수 있지만, 그 결과는 fail-closed 다:
           // 컬럼이 없으면 사용자 SQL 의 `_updated_at >= {{last_run_at}}` 이 PG 에서
@@ -934,10 +953,23 @@ public class PipelineAsyncRunner {
         final long pyStartedAt = System.currentTimeMillis();
         final long pyTenantId = pyRunAs.clearance().tenantId();
         try {
-          readSlot = pythonReadGrantSync.prepareForRun(pyRunAs.clearance(), pyReadRank);
+          readSlot = pythonReadGrants.prepareForRun(pyRunAs.clearance(), pyReadRank);
         } catch (PythonReadAccessException e) {
           throw new ScriptExecutionException(e.getMessage(), e);
         }
+        // Tibero(WD-78): 스크립트는 슬롯 계정으로 db-executor 를 거쳐 읽는다 — 그 자격인 스크립트 토큰을 슬롯 준비 **뒤에** 발급한다.
+        // prepareForRun 이 등급 변경을 반영하며 세대를 올릴 수 있으므로(GRANT 전에 올림) 세대는 그 뒤에 읽어야 새 토큰이 거부되지 않는다.
+        // 발급 실패는 스테이징을 만들기 전·실행 전에 단계를 멈춘다(fail-closed). PG 는 토큰이 없다(요청 본문 불변).
+        final String scriptToken =
+            tiberoTenant
+                ? issueScriptToken(
+                    pyTenantId,
+                    readSlot,
+                    executorEnabled
+                        ? Duration.ofSeconds(
+                            executorPythonTimeoutSeconds + PYTHON_TOKEN_TTL_MARGIN_SECONDS)
+                        : LOCAL_PYTHON_TOKEN_TTL)
+                : null;
 
         if (outputDatasetId == null) {
           log.warn("Python 스텝 '{}': 출력 데이터셋이 지정되지 않았습니다. 결과가 저장되지 않습니다.", step.name());
@@ -958,10 +990,14 @@ public class PipelineAsyncRunner {
           // 없는 값을 REPLACE 로 폴백하지만, 이 경로의 맞바꿈은 "명시적으로 REPLACE 라고 적힌" 경우에만
           // 탄다(예전부터의 동작, 바꾸지 않는다).
           boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy) && pyOutputTable != null;
+          // Tibero 는 APPEND 도 스테이징을 거친다(tiberoAppendStaged 참고). PG APPEND 는 예전처럼 출력에 직접 적재한다.
+          boolean tiberoAppend = tiberoAppendStaged(tiberoTenant, isReplace, pyOutputTable);
+          boolean staged = isReplace || tiberoAppend;
           executionLog =
               loadPythonOutput(
                       pyOutputTable,
                       isReplace,
+                      tiberoAppend,
                       targetTable -> {
                         Map<String, Object> request = new LinkedHashMap<>();
                         request.put("script", step.scriptContent());
@@ -971,9 +1007,13 @@ public class PipelineAsyncRunner {
                         if (pyColumnTypes != null) {
                           request.put("column_type_map", pyColumnTypes);
                         }
-                        // 취소 체크포인트(WD-153) — 실행기 호출 직전. REPLACE 면 빈 임시 테이블을 loadPythonOutput 의 실패
+                        // Tibero 에만 싣는다 — PG 요청 본문에는 키 자체가 없다(PG 동작 불변).
+                        if (scriptToken != null) {
+                          request.put("script_token", scriptToken);
+                        }
+                        // 취소 체크포인트(WD-153) — 실행기 호출 직전. 스테이징이면 빈 임시 테이블을 loadPythonOutput 의 실패
                         // 정리가 버린다.
-                        cancel.checkpoint(0, isReplace);
+                        cancel.checkpoint(0, staged);
                         var result = executorClient.executePython(request, readSlot);
                         if (!result.success()) {
                           // 적재 데이터 오류(pg_error 22xxx)는 로컬 경로와 같은 한국어 사유 문구로 바꾼다(WD-211). 그 밖은
@@ -989,9 +1029,9 @@ public class PipelineAsyncRunner {
                               pyTenantId,
                               pyStartedAt);
                         }
-                        // 취소 체크포인트(WD-153) — 실행기 호출 직후·맞바꿈 전. REPLACE 면 실행기가 채운 임시 테이블을 버려 원본을 지키고,
-                        // APPEND 면 실행기가 이미 넣은 행이 남는다(그 수를 문구에 남긴다).
-                        cancel.checkpoint(isReplace ? 0 : result.rowsLoaded(), isReplace);
+                        // 취소 체크포인트(WD-153) — 실행기 호출 직후·맞바꿈 전. 스테이징이면 실행기가 채운 임시 테이블을 버려 원본을 지키고,
+                        // PG APPEND 면 실행기가 이미 넣은 행이 남는다(그 수를 문구에 남긴다).
+                        cancel.checkpoint(staged ? 0 : result.rowsLoaded(), staged);
                         return new PythonLoad(result.output(), result.rowsLoaded());
                       })
                   .log();
@@ -1001,9 +1041,15 @@ public class PipelineAsyncRunner {
           // 테이블이 있으면 stderr, 없으면 stdout+stderr(executor 와 동일). REPLACE 판정은 예전 로컬
           // 경로 그대로 해석된 전략(알 수 없는 값 → REPLACE 폴백)을 쓴다.
           boolean isReplace = strategy != LoadStrategy.APPEND && pyOutputTable != null;
+          // Tibero 는 APPEND 도 스테이징 적재 후 옮긴다(실행기 켠 경로와 같다 — tiberoAppendStaged 참고).
+          boolean tiberoAppend = tiberoAppendStaged(tiberoTenant, isReplace, pyOutputTable);
           // 취소 체크포인트(WD-153) — 스크립트 실행 직전.
           cancel.checkpoint(0, false);
-          PythonScriptExecutor.RunResult run = pythonExecutor.run(step.scriptContent(), readSlot);
+          // Tibero 자식은 PG 슬롯 롤이 아니라 조회 도우미 환경(db-executor 주소·스크립트 토큰)으로 띄운다.
+          PythonScriptExecutor.RunResult run =
+              tiberoTenant
+                  ? pythonExecutor.runTibero(step.scriptContent(), scriptToken)
+                  : pythonExecutor.run(step.scriptContent(), readSlot);
           String outputText = pyOutputTable != null ? run.stderr() : run.stdout() + run.stderr();
           if (!run.succeeded()) {
             throw pythonRunFailure(
@@ -1022,17 +1068,26 @@ public class PipelineAsyncRunner {
                     loadPythonOutput(
                         pyOutputTable,
                         isReplace,
+                        tiberoAppend,
                         targetTable ->
                             new PythonLoad(
                                 outputText,
-                                localPythonOutputLoader.load(
-                                    targetTable, run.stdout(), pyColumnTypes)));
+                                // Tibero 대상은 언제나 스테이징이다 — PG 트랜잭션 없이 스테이징 창구로 넣는다.
+                                tiberoTenant
+                                    ? localPythonOutputLoader.loadStaging(
+                                        targetTable, run.stdout(), pyColumnTypes)
+                                    : localPythonOutputLoader.load(
+                                        targetTable, run.stdout(), pyColumnTypes)));
             // REPLACE 는 출력 테이블 세션 잠금 아래에서 임시 테이블 생성 → 적재 → 맞바꿈을 한다(#735).
             // 임시 테이블 이름은 WD-151 부터 실행마다 달라 임시 테이블 충돌만 놓고 보면 이 잠금이 없어도 되지만, 예전 동작(같은 출력의 로컬
             // REPLACE 끼리, 그리고 SQL 스텝의 비우기+적재와 직렬화 — 잠금 키가 같다)을 바꾸지 않으려고 그대로 둔다. 스크립트 실행(읽기
             // 전용)은 잠금 밖 — 쓰는 구간만 덮는다.
+            // Tibero 는 이 잠금을 잡지 않는다 — 잠금의 목적(같은 출력의 PG SQL 비우기+적재와의 직렬화)이 Tibero 에는 없고(Tibero SQL
+            // 단계는 이
+            // 키를 잡지 않는다), 잡으면 Tibero 작업 내내 PG 풀 연결만 쥔다. 원자성은 스테이징 + 옮기기(한 Tibero 트랜잭션)가 맡는다.
+            boolean takePgLock = isReplace && !tiberoTenant;
             executionLog =
-                (isReplace ? outputTableSessionLock.callLocked(pyOutputTable, load) : load.get())
+                (takePgLock ? outputTableSessionLock.callLocked(pyOutputTable, load) : load.get())
                     .log();
           }
         }
@@ -1102,11 +1157,10 @@ public class PipelineAsyncRunner {
           boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy) && outputTableName != null;
           // 이번 실행 전용 임시 테이블(WD-151) — 이름이 실행마다 달라 같은 출력에 겹친 실행과 생성·적재·정리가 서로 닿지 않는다. 실행기에는 이
           // 이름을 그대로 적재 대상으로 넘긴다(실행기는 임시 테이블 이름을 스스로 만들지 않는다).
-          // Tibero 는 REPLACE 뿐 아니라 APPEND 도 스테이징을 거친다(WD-77, 스펙 §3.3) — 요청 하나가 Tibero 트랜잭션 하나라 여러
-          // 페이지를 출력에 직접
-          // 넣으면 중간 실패가 일부 행을 남긴다. PG 의 APPEND 는 그대로 출력에 직접 적재한다(finishAppend 는 PG 에서 예외다 — 부르지
-          // 않는다).
-          boolean tiberoAppend = tiberoTenant && !isReplace && outputTableName != null;
+          // Tibero 는 REPLACE 뿐 아니라 APPEND 도 스테이징을 거친다(tiberoAppendStaged 참고). PG 의 APPEND 는 그대로 출력에
+          // 직접
+          // 적재한다(finishAppend 는 PG 에서 예외다 — 부르지 않는다).
+          boolean tiberoAppend = tiberoAppendStaged(tiberoTenant, isReplace, outputTableName);
           boolean useStaging = isReplace || tiberoAppend;
           String tempTable = useStaging ? dataTableService.createTempTable(outputTableName) : null;
           String targetTable = useStaging ? tempTable : outputTableName;
@@ -1413,12 +1467,19 @@ public class PipelineAsyncRunner {
   }
 
   /**
-   * Tibero 테넌트에서 아직 실행할 수 없는 스텝 종류 → 거부 문구(스펙 §5.1). Python 결과 적재는 후속 작업이다. API 수집·AI 분류는
-   * 열렸다(WD-77: 실행기 켠 API 수집은 스테이징 적재 + 옮기기, AI 분류·로컬 API 수집은 행 저장소 + 임시 테이블 교체). SQL 과 알 수 없는 종류는
-   * 여기 없다 — 후자는 기존 분기가 거부한다.
+   * Tibero 테넌트의 APPEND 적재가 스테이징을 거치는가(WD-77·WD-78, 스펙 §3.3) — PYTHON(실행기 켬/끔)·API_CALL 세 경로가 같은 조건을
+   * 쓴다.
+   *
+   * <p>실행기 적재는 db-executor 요청 하나가 Tibero 트랜잭션 하나라, 여러 요청(페이지·청크)을 출력에 직접 넣으면 중간 실패가 일부 행을 남긴다. 그래서
+   * Tibero 는 APPEND 도 스테이징에 모은 뒤 옮기기 한 번으로 전부 반영 또는 전부 취소한다. REPLACE 는 원래 스테이징을 거치므로 여기서 세지 않고, 출력
+   * 테이블이 없으면 적재할 것이 없다.
+   *
+   * @param isReplace 경로별로 해석한 REPLACE 여부(경로마다 해석 규칙이 달라 호출자가 넘긴다)
    */
-  private static final Map<String, String> TIBERO_UNSUPPORTED_STEP_TYPES =
-      Map.of("PYTHON", "Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다.");
+  private static boolean tiberoAppendStaged(
+      boolean tiberoTenant, boolean isReplace, String outputTable) {
+    return tiberoTenant && !isReplace && outputTable != null;
+  }
 
   /** Tibero 결과 컬럼이 따옴표 소문자·대소문자 섞인 이름이라 적재 대상으로 쓸 수 없을 때의 안내(이름은 뒤에 붙인다). */
   static final String TIBERO_QUOTED_RESULT_COLUMN_PREFIX = "Tibero 결과 컬럼 이름은 따옴표 없는 별칭으로 써 주세요(";
@@ -1449,9 +1510,8 @@ public class PipelineAsyncRunner {
         pipelineDataSchema.validator().referencedTables(sql).reads()) {
       tables.add(TiberoNames.physical(read.name()));
     }
-    for (String table : tables) {
-      dataTableService.ensureRowTrigger(table);
-    }
+    // 상태 확인·생성을 한 접속에서 묶는다. 하나라도 못 보장하면 예외로 실행 전에 멈춘다(fail-closed).
+    dataTableService.ensureRowTriggers(List.copyOf(tables));
   }
 
   /**
@@ -1463,38 +1523,33 @@ public class PipelineAsyncRunner {
    * 앞선 검증이 이미 거부했다. 검증을 통과한 SQL 이라 따옴표·주석이 닫혀 있어 어휘 분석기가 예외를 던지지 않는다.
    */
   private void ensureTiberoRowTriggers(String sql) {
-    boolean insert = "INSERT".equals(TiberoSqlLexer.firstKeyword(sql));
-    boolean update = "UPDATE".equals(TiberoSqlLexer.firstKeyword(sql));
+    String keyword = TiberoSqlLexer.firstKeyword(sql);
+    boolean insert = "INSERT".equals(keyword);
+    boolean update = "UPDATE".equals(keyword);
     if (!insert && !update) {
       return;
     }
-    for (SqlValidator.TableName target :
-        pipelineDataSchema.validator().referencedTables(sql).writes()) {
-      if (insert) {
-        dataTableService.ensureRowTrigger(target.name());
-        continue;
-      }
-      try {
-        dataTableService.ensureRowTrigger(target.name());
-      } catch (RuntimeException e) {
-        // 권한 부족뿐 아니라 접속·DDL 오류도 UPDATE 를 막지 않는다(이전부터 허용되던 문장) — 원인은 스택 없이 클래스·메시지만 남긴다.
-        log.warn(
-            "Tibero 행 트리거를 보장하지 못해 트리거 없이 UPDATE 를 실행합니다(_UPDATED_AT 이 갱신되지 않음): {} — {}: {}",
-            target.name(),
-            e.getClass().getSimpleName(),
-            e.getMessage());
-      }
+    List<String> targets =
+        pipelineDataSchema.validator().referencedTables(sql).writes().stream()
+            .map(SqlValidator.TableName::name)
+            .toList();
+    if (targets.isEmpty()) {
+      return;
     }
-  }
-
-  /**
-   * Tibero 테넌트에서 아직 실행할 수 없는 스텝 종류면 한국어 문구로 실패시킨다({@link #TIBERO_UNSUPPORTED_STEP_TYPES}). SQL 스텝의
-   * 거부(증분·사용자 INSERT·출력 없는 SELECT)는 치환·검증이 끝난 SQL 을 봐야 해서 SQL 분기 안 제자리에 둔다.
-   */
-  private static void rejectUnsupportedTiberoStep(String scriptType) {
-    String message = scriptType == null ? null : TIBERO_UNSUPPORTED_STEP_TYPES.get(scriptType);
-    if (message != null) {
-      throw new ScriptExecutionException(message);
+    if (insert) {
+      dataTableService.ensureRowTriggers(targets);
+      return;
+    }
+    try {
+      dataTableService.ensureRowTriggers(targets);
+    } catch (RuntimeException e) {
+      // 권한 부족뿐 아니라 접속·DDL 오류도 UPDATE 를 막지 않는다(이전부터 허용되던 문장) — 원인은 스택 없이 클래스·메시지만 남긴다.
+      // UPDATE 의 쓰기 대상은 한 테이블이라 테이블마다 따로 보장하던 때와 결과가 같다.
+      log.warn(
+          "Tibero 행 트리거를 보장하지 못해 트리거 없이 UPDATE 를 실행합니다(_UPDATED_AT 이 갱신되지 않음): {} — {}: {}",
+          targets,
+          e.getClass().getSimpleName(),
+          e.getMessage());
     }
   }
 
@@ -1853,22 +1908,31 @@ public class PipelineAsyncRunner {
   private record PythonLoad(String log, long rowsLoaded) {}
 
   /**
-   * PYTHON 출력 적재의 REPLACE 준비·마무리 — 실행기 켠 경로(executor 가 적재)와 끈 경로(API 가 stdout JSON 적재)가 같이 쓴다.
+   * PYTHON 출력 적재의 스테이징 준비·마무리 — 실행기 켠 경로(executor 가 적재)와 끈 경로(API 가 stdout JSON 적재)가 같이 쓴다.
    *
    * <p>REPLACE 면 이번 실행 전용 임시 테이블({@link DataTableService#createTempTable} 이 돌려준 이름, WD-151)을 만들고 그
    * 이름으로 {@code load} 를 부른 뒤, 적재 행 수로 맞바꿈 여부를 {@link DataTableService#finishReplace} 에 맡긴다(0행·JSON
-   * 없음이면 원본 유지 — 판단은 거기 단독, #685). 실패하면 임시 테이블을 지우고 예외를 다시 던진다 — 원본은 그대로다. REPLACE 가 아니면 출력 테이블(없으면
-   * null)로 바로 부른다.
+   * 없음이면 원본 유지 — 판단은 거기 단독, #685). Tibero APPEND({@code tiberoAppend}, WD-78)도 같은 스테이징을 거쳐 {@link
+   * DataTableService#finishAppend} 로 옮긴다. 실패하면 임시 테이블을 지우고 예외를 다시 던진다 — 원본은 그대로다. 둘 다 아니면(PG
+   * APPEND·출력 없음) 출력 테이블(없으면 null)로 바로 부른다.
    */
   private PythonLoad loadPythonOutput(
-      String outputTable, boolean isReplace, Function<String, PythonLoad> load) {
-    if (!isReplace) {
+      String outputTable,
+      boolean isReplace,
+      boolean tiberoAppend,
+      Function<String, PythonLoad> load) {
+    if (!isReplace && !tiberoAppend) {
       return load.apply(outputTable);
     }
     String tempTable = dataTableService.createTempTable(outputTable);
     try {
       PythonLoad result = load.apply(tempTable);
-      dataTableService.finishReplace(outputTable, tempTable, result.rowsLoaded());
+      if (isReplace) {
+        dataTableService.finishReplace(outputTable, tempTable, result.rowsLoaded());
+      } else {
+        // 스테이징의 행을 출력에 한 Tibero 트랜잭션으로 옮긴다(0행이면 스테이징만 버린다).
+        dataTableService.finishAppend(outputTable, tempTable, result.rowsLoaded());
+      }
       return result;
     } catch (RuntimeException e) {
       try {
@@ -2174,13 +2238,36 @@ public class PipelineAsyncRunner {
   }
 
   /**
+   * Tibero PYTHON 의 스크립트 토큰을 발급한다(WD-78). 세대({@code script_token_epoch})는 {@code prepareForRun} 뒤에
+   * 읽어야 한다 — 호출부 참조. 세대가 없거나(테넌트 저장소 행 없음) 발급하지 못하면(서명 키 미설정 등) 한국어 문구로 단계를 실패시킨다(fail-closed). 토큰은
+   * 로그하지 않는다.
+   */
+  private String issueScriptToken(long tenantId, int readSlot, Duration ttl) {
+    long epoch =
+        tenantDataStoreRepository
+            .findScriptTokenEpoch(tenantId)
+            .orElseThrow(
+                () ->
+                    new ScriptExecutionException(
+                        "Tibero 저장소 정보에서 스크립트 토큰 세대를 찾지 못해 Python 단계를 실행할 수 없습니다."));
+    try {
+      return scriptTokenIssuer.issue(tenantId, readSlot, epoch, ttl);
+    } catch (IllegalStateException | IllegalArgumentException e) {
+      // 발급기 문구는 설정 키·환경 변수 이름을 담는다 — 스텝 오류(사용자 화면)에는 일반 안내만 싣고 자세한 사유는 서버 WARN 로그로 남긴다(코드리뷰 3).
+      // 발급기 문구에는 키·토큰 값이 없어 로그에 남겨도 된다.
+      log.warn("Tibero PYTHON 스크립트 토큰 발급 실패: tenantId={} — {}", tenantId, e.getMessage());
+      throw new ScriptExecutionException(PythonScriptExecutor.TIBERO_SETUP_MISSING, e);
+    }
+  }
+
+  /**
    * PYTHON 실행 실패 예외. 실행 중 등급 정의 변경으로 이 테넌트의 슬롯 롤 세션이 끊겼다면(PythonReadGrantSync 가 새 GRANT 커밋 전에 끊는다)
    * 원인을 앞에 밝힌다 — 스크립트 출력에는 "terminating connection due to administrator command" 만 남아 사용자가 원인을 알 수
    * 없다. 판정에는 쓰지 않는다(끊김 자체가 fail-closed 이고, 이 문구는 안내일 뿐).
    */
   private ScriptExecutionException pythonRunFailure(
       String message, long tenantId, long startedAtMillis) {
-    if (pythonReadGrantSync.slotSessionsTerminatedSince(tenantId, startedAtMillis)) {
+    if (pythonReadGrants.slotSessionsTerminatedSince(tenantId, startedAtMillis)) {
       return new ScriptExecutionException(
           "실행 중 보안 등급 구성이 바뀌어 Python 읽기 연결을 끊었습니다. 다시 실행하세요. — " + message);
     }

@@ -24,11 +24,8 @@ export function registerPipelineTools(
   // WD-77: Tibero 도 출력 데이터셋 없는 SQL 단계에 TEMP 임시 데이터셋을 자동 생성하므로 PG 와 같은 설명을 쓴다
   // (PG 설명은 기존 문자열 그대로 — PG 도구 설명 픽스처 테스트).
   const outputDatasetIdDescription = '출력 데이터셋 ID (미지정 시 실행할 때 TEMP 타입 임시 데이터셋이 자동 생성됨)';
-  // pythonConfig.outputColumns 설명. Tibero 테넌트는 api(PipelineAsyncRunner)가 Python 단계 실행을 거부하므로(Python 지원은
-  // 2웨이브 WD-78) 그 거부 문구를 그대로 알려 SQL 단계를 쓰게 한다.
-  const pythonOutputColumnsDescription = isTibero
-    ? '출력 컬럼 정의 (Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다 — SQL 단계를 사용)'
-    : '출력 컬럼 정의. 출력 데이터셋 미지정 시 임시 데이터셋 자동 생성에 사용';
+  // pythonConfig.outputColumns 설명 — Tibero 도 Python 단계를 실행하므로(WD-78) PG 와 같은 문구다(PG 도구 설명 픽스처).
+  const pythonOutputColumnsDescription = '출력 컬럼 정의. 출력 데이터셋 미지정 시 임시 데이터셋 자동 생성에 사용';
   // scriptContent 설명은 공통 앞부분 + 방언별 "명시적 데이터셋 참조" 뒷부분이다 — PG 결과 문자열은 예전과 같다(픽스처).
   const explicitDatasetRef = isTibero ? TIBERO_DATASET_REF : PG_DATASET_REF;
   // 출력 컬럼 이름 규칙 — 길이 상한만 방언별(PG 63바이트 식별자, Tibero 30자 + 예약어 불가).

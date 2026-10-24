@@ -1,6 +1,6 @@
 # 파이프라인 스텝 타입 상세 스펙
 
-> **Tibero 테넌트**: PYTHON 스텝만 실행되지 않는다(`rules.md` 맨 위 절) — 아래 2절은 참고용이며 이 테넌트에서는 설계하지 않는다. SQL·API_CALL·AI_CLASSIFY 는 PG 와 같다.
+> **Tibero 테넌트**: PYTHON 스텝은 입력 표를 `genia_db`(아래 2절)로 읽는다. SQL·API_CALL·AI_CLASSIFY 는 PG 와 같다.
 
 ## 1. SQL 스텝
 
@@ -40,8 +40,6 @@
 
 ## 2. PYTHON 스텝
 
-> Tibero 테넌트: "Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다."
-
 **용도**: Python으로 복잡한 데이터 처리 (API 호출, 데이터 가공 등)
 
 **필수 필드**:
@@ -54,13 +52,24 @@
 - stderr는 로그용: `print("진행 중...", file=sys.stderr)`
 
 **pythonConfig.outputColumns**:
-- 출력 컬럼 스키마 정의 (Tibero 테넌트는 Python 스텝을 실행하지 않는다)
+- 출력 데이터셋 없이 temp 데이터셋을 자동 생성하려면 정의
 - `{ outputColumns: [{ name: "col_name", type: "TEXT" }] }`
 - 지원 타입: TEXT, INTEGER, DECIMAL, BOOLEAN, DATE, TIMESTAMP
 - stdout JSON의 키 이름이 outputColumns의 name과 일치해야 함
 
 **환경변수** (자동 제공):
-- Tibero 테넌트는 Python 단계를 실행하지 않으므로 DB 접속용 환경변수를 쓰지 않는다.
+- Tibero 테넌트에는 DB 접속용 환경변수가 없다. 입력은 아래 `genia_db` 로 읽는다.
+
+**입력 조회 — `genia_db` (Tibero 테넌트, 설치 없이 `import genia_db`)**:
+- DB 접속용 환경변수·PG 드라이버는 이 테넌트에서 쓸 수 없다. 입력 데이터는 조회 도우미로만 읽는다.
+- `genia_db.query(sql)` → 결과 전체를 `list[dict]` 로 돌려준다.
+- `genia_db.iter_query(sql)` → 행(dict)을 한 줄씩 돌려주는 반복자. 큰 표를 메모리에 다 올리지 않고 읽을 때 쓴다. **동시에 열 수 있는 반복자는 3개까지**이고, 열었으면 끝까지 다 읽거나 `close()`(또는 `contextlib.closing`)로 닫는다. 반복하면서 행마다 느린 처리(행마다 외부 API 호출 등)를 하면 스트림이 시간 초과로 끊겨 `QueryError` 가 나므로, 오래 걸리는 처리는 `query()` 로 먼저 다 받아 두고 하거나 반복자는 지체 없이 읽어 낸다.
+- 실패(문법 오류·권한 오류·연결 끊김 등)는 `genia_db.QueryError` 로 나온다. 잡아서 삼키지 말고 그대로 실패시켜 사용자에게 원인이 보이게 한다.
+- SQL 은 **Tibero SQL 의 SELECT/WITH 한 문장**(읽기 전용)이다. 표는 SQL 스텝과 같이 스키마로 한정한다: `FROM genia_t5.sales` (`get_data_schema` 의 `schema` 값, 따옴표 없이).
+- 이번 실행의 보안 등급보다 높은 표는 권한이 주어지지 않아 조회하면 권한 오류가 난다. 우회하지 말고 그대로 사용자에게 보고한다.
+- 결과 출력은 PG 와 같다: 가공한 결과를 stdout 에 JSON 배열(객체 배열)로 `print(json.dumps(result, ensure_ascii=False, default=str))` 한다(날짜·숫자 타입은 `default=str` 로 문자열이 되므로 outputColumns 타입과 맞는지 확인).
+- 예: `import json, genia_db` / `rows = genia_db.query("SELECT region, SUM(amount) AS total FROM genia_t5.sales GROUP BY region")` / `print(json.dumps(rows, ensure_ascii=False, default=str))`
+
 - ⚠️ 금지(저장·실행 시 차단됨): 셸 실행(`subprocess`/`os.system`/`os.popen`), 동적 코드 실행(`eval`/`exec`/`__import__`/`importlib`/`ctypes`). 데이터 가공은 pandas/numpy 로 한다.
 
 **⚠️ 이전 스텝 temp 출력 참조 불가 (refs #654)**: PYTHON scriptContent에는 SQL의 `{{#N}}` 같은 치환이 적용되지 않고, `dependsOnStepNames` → 입력 자동 resolve도 구현되어 있지 않다(AI_CLASSIFY 전용). PYTHON 스텝이 조회할 수 있는 것은 **`inputDatasetIds`로 명시 지정된 영구(TABLE) 데이터셋**뿐이며, 조회할 실제 테이블명을 하드코딩해야 한다. 이전 스텝(SQL/PYTHON 무관)의 `outputDatasetId` 미지정 temp 출력에만 의존하는 PYTHON 스텝 설계는 현재 지원하지 않는다 — 아래 예시는 모두 체인의 **첫 스텝**(외부 API 호출)이거나 영구 데이터셋을 조회하는 경우이며, "이전 스텝 temp 출력을 이어받는 PYTHON" 예시는 의도적으로 없다. 자세한 대안은 `rules.md`의 "PYTHON 입력 데이터셋 (제약)" 절 참조.

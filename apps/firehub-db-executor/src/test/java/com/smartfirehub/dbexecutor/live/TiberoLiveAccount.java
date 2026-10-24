@@ -38,6 +38,9 @@ final class TiberoLiveAccount implements AutoCloseable {
   private boolean roCreated;
   private final List<AutoCloseable> beforeDrop = new ArrayList<>();
 
+  /** 이 테스트가 만든 슬롯 계정(WD-78) — 번호 → 비밀번호. 정리 때 지운다. */
+  private final java.util.TreeMap<Integer, String> slotPasswords = new java.util.TreeMap<>();
+
   private TiberoLiveAccount(
       long tenantId, String schema, StoreDescriptor descriptor, Connection dba) {
     this.tenantId = tenantId;
@@ -166,6 +169,45 @@ final class TiberoLiveAccount implements AutoCloseable {
     exec(dba, "GRANT SELECT ON \"" + schema + "\".\"" + table + "\" TO \"" + roSchema + "\"");
   }
 
+  /**
+   * 슬롯 계정 {@code GENIA_T{id}_S{k}} 를 만든다(WD-78) — api TiberoDdlSql 처럼 접속 권한만 준다. 테이블 SELECT 는 테스트가
+   * 소유 계정으로 GRANT 한다(Task 12 의 동기화와 같은 주체). 이미 있으면 남의 계정이라 중단한다.
+   */
+  void createSlot(int k) throws SQLException {
+    String user = slotUser(k);
+    if (userCount(user) > 0) {
+      throw new IllegalStateException("이미 있는 계정이라 테스트를 중단합니다: " + user);
+    }
+    // 비밀번호는 이 테스트 안에서만 쓰는 임의값이며 출력하지 않는다.
+    String password = "Wd" + UUID.randomUUID().toString().replace("-", "");
+    exec(dba, "CREATE USER \"" + user + "\" IDENTIFIED BY \"" + password + "\"");
+    slotPasswords.put(k, password);
+    exec(dba, "GRANT CREATE SESSION TO \"" + user + "\"");
+  }
+
+  /** 슬롯 계정 이름(api DataStoreAccountRole.usernameFor 와 같은 규칙). */
+  String slotUser(int k) {
+    return schema + "_S" + k;
+  }
+
+  /** 만든 슬롯 계정까지 담은 기술자(스크립트 토큰 세대 0). */
+  StoreDescriptor descriptorWithSlots() {
+    List<StoreDescriptor.SlotAccount> slots = new ArrayList<>();
+    slotPasswords.forEach(
+        (k, pw) -> slots.add(new StoreDescriptor.SlotAccount(k, slotUser(k), pw)));
+    return new StoreDescriptor(
+        descriptor.tenantId(),
+        descriptor.backend(),
+        descriptor.host(),
+        descriptor.port(),
+        descriptor.database(),
+        descriptor.schema(),
+        descriptor.owner(),
+        descriptor.ro(),
+        slots,
+        0L);
+  }
+
   /** 검증·DDL 용 직접 연결(소유 계정). 실행기 경로와 별개다. */
   Connection owner() {
     return owner;
@@ -199,13 +241,16 @@ final class TiberoLiveAccount implements AutoCloseable {
       first = run(first, c::close);
     }
     first = run(first, () -> closeQuietly(owner));
+    for (Integer k : slotPasswords.keySet()) {
+      first = run(first, () -> dropWithRetry(slotUser(k)));
+    }
     if (roCreated) {
       first = run(first, () -> dropWithRetry(roSchema));
     }
     if (created) {
       first = run(first, () -> dropWithRetry(schema));
     }
-    if (created || roCreated) {
+    if (created || roCreated || !slotPasswords.isEmpty()) {
       first = run(first, this::reportLeftover);
     }
     first = run(first, this::printReservedRange);
@@ -253,9 +298,12 @@ final class TiberoLiveAccount implements AutoCloseable {
     }
   }
 
-  /** 이 테스트가 만든 두 계정(소유·읽기 전용)이 남았는지 확인하고 출력한다. */
+  /** 이 테스트가 만든 계정(소유·읽기 전용·슬롯)이 남았는지 확인하고 출력한다. */
   private void reportLeftover() throws SQLException {
     long mine = userCount(schema) + userCount(roSchema);
+    for (Integer k : slotPasswords.keySet()) {
+      mine += userCount(slotUser(k));
+    }
     System.out.println("LIVE leftover accounts=" + mine);
     assertThat(mine).as("이 테스트가 만든 계정이 남았다").isZero();
   }

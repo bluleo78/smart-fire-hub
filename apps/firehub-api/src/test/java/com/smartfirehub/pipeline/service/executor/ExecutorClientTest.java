@@ -56,7 +56,8 @@ class ExecutorClientTest {
         WebClient.builder(),
         "http://localhost:" + wireMock.port(),
         "test-token",
-        ExecutorClient.DEFAULT_MAX_RESPONSE_BYTES);
+        ExecutorClient.DEFAULT_MAX_RESPONSE_BYTES,
+        1800);
   }
 
   // -------------------------------------------------------------------------
@@ -617,7 +618,11 @@ class ExecutorClientTest {
 
   private ExecutorClient smallLimitClient(int maxResponseBytes) {
     return new ExecutorClient(
-        WebClient.builder(), "http://localhost:" + wireMock.port(), "test-token", maxResponseBytes);
+        WebClient.builder(),
+        "http://localhost:" + wireMock.port(),
+        "test-token",
+        maxResponseBytes,
+        1800);
   }
 
   /** 행 수 n, md5 텍스트 컬럼 수 cols 인 executor /execute/query 성공 응답 JSON 을 만든다. */

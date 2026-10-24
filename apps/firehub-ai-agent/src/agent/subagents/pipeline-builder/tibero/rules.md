@@ -12,14 +12,10 @@
 
 ## Tibero 테넌트 — 실행할 수 있는 스텝 (필수, WD-79)
 
-이 테넌트의 데이터 저장소는 Tibero 다. SQL·API_CALL·AI_CLASSIFY 스텝(증분 SQL·출력 데이터셋 없는 SQL·직접 작성한 INSERT 포함)은 PG 테넌트와 같이 설계하고, 아직 실행하지 못하는 것은 PYTHON 스텝 하나뿐이다. api(`PipelineAsyncRunner`)는 PYTHON 스텝을 실행 시점에 아래 문구로 거부한다:
+이 테넌트의 데이터 저장소는 Tibero 다. SQL(증분 SQL·출력 데이터셋 없는 SQL·직접 작성한 INSERT 포함)·API_CALL·AI_CLASSIFY·PYTHON 스텝을 모두 PG 테넌트와 같이 설계한다. 다만 PYTHON 스텝이 입력 데이터를 읽는 방법은 PG 와 다르다.
 
-| 스텝 | api 거부 문구 |
-|------|------|
-| PYTHON | "Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다." |
-
-- 요청에 Python 스텝이 필요하면 **Phase 1(DISCOVER)에서 즉시** 위 문구를 그대로 인용해 알리고, 가능한 경우 SQL 단계로 설계하는 대안을 제시한다(예: 이미 데이터셋에 있는 데이터를 SQL 로 가공·JOIN). SQL 로 대체할 수 없으면 만들지 않고 보고한다.
-- 실행되지 않을 스텝을 "일단 만들어 두는" 설계·생성도 하지 않는다.
+- **PYTHON 스텝의 입력 조회**: 샌드박스에는 Tibero 드라이버도 DB 접속 문자열도 없다. 설치 없이 쓸 수 있는 조회 도우미 `import genia_db` 로 읽는다 — `genia_db.query("SELECT ... FROM genia_t5.sales")` 는 결과 전체를 `list[dict]` 로, `genia_db.iter_query(sql)` 는 큰 표를 한 행씩 돌려준다. SQL 은 Tibero SQL 의 SELECT/WITH 한 문장(읽기 전용)이고, 표는 SQL 스텝과 같이 스키마로 한정한다(`genia_t5.sales`). 실패는 `genia_db.QueryError` 로 나온다. 자세한 사용법은 `step-types.md` 의 "PYTHON 스텝" 절을 따른다.
+- **권한 오류는 우회하지 않는다**: 이번 실행의 보안 등급보다 높은 표는 권한이 주어지지 않아 조회하면 권한 오류가 난다. 오류를 그대로 사용자에게 보고하고, 다른 접속 경로·다른 계정·SQL 우회로 읽으려 하지 않는다.
 - **API_CALL·AI_CLASSIFY** 는 PG 와 같이 쓴다(출력 데이터셋에 REPLACE·APPEND 모두 가능).
 - **출력 데이터셋 없는 SQL 단계** 는 PG 와 같이 임시(TEMP) 데이터셋이 자동 생성된다. 컬럼명은 Tibero 규칙(30자 이내, 예약어 불가)을 지킨다.
 - **증분 SQL**: SQL 에 `{{last_run_at}}` 를 쓰면 api 가 직전 성공 시점의 Tibero 타임스탬프 식으로 바꿔 넣는다. 입력 테이블의 시스템 컬럼 `"_UPDATED_AT"`(대문자 + 큰따옴표 — 이 시스템 컬럼만 예외)과 비교하고, 테이블은 스키마로 한정한다: `WHERE s."_UPDATED_AT" > {{last_run_at}}` (`FROM genia_t5.sales s`). `{{last_run_at}}` 자체가 타임스탬프 식이므로 형변환을 덧붙이지 않는다.
@@ -101,13 +97,13 @@ dependsOnStepNames만 설정하면 됩니다.
 
 ## PYTHON 입력 데이터셋 (제약 — 백엔드 미지원, refs #654)
 
-> Tibero 테넌트는 PYTHON 스텝 자체를 실행할 수 없다(맨 위 절). 아래는 PG 테넌트용 제약이며 이 테넌트에서는 PYTHON 스텝을 설계하지 않는다.
+> Tibero 테넌트도 같은 제약이다. 단 입력은 PG 방식이 아니라 `genia_db`(맨 위 절)로 읽고, 표 이름은 `genia_t5.sales` 처럼 스키마로 한정해 하드코딩한다.
 
 **PYTHON 스텝은 AI_CLASSIFY와 달리 `dependsOnStepNames` → 입력 데이터 자동 resolve가 구현되어 있지 않다.** `PipelineAsyncRunner`의 PYTHON 실행 분기에는 이전 스텝의 출력 테이블명을 주입하는 로직이 전혀 없고, `{{#N}}` 치환도 SQL 전용이라 PYTHON scriptContent 문자열에는 적용되지 않는다. 즉 PYTHON scriptContent는 실행 시점의 이전 스텝 출력 테이블 이름을 알아낼 검증된 방법이 없다.
 
 **따라서 PYTHON 스텝이 이전 스텝(SQL이든 PYTHON이든)의 출력에 `dependsOnStepNames` 만으로 의존하는 설계는 현재 지원되지 않는다.** 가능한 경우만 다음과 같다:
 
-1. **체인의 첫 스텝** — 외부 API 호출(`urllib`)이나 고정된 영구 데이터셋 조회로 시작하는 PYTHON 스텝. 이전 스텝 출력에 의존하지 않음.
+1. **체인의 첫 스텝** — 외부 API 호출(`urllib`)이나 고정된 영구 데이터셋 조회(`genia_db`)로 시작하는 PYTHON 스텝. 이전 스텝 출력에 의존하지 않음.
 2. **`inputDatasetIds`로 명시 지정된 영구(TABLE) 데이터셋만 조회** — PYTHON 스텝은 하드코딩 가능한 실제 테이블명만 조회할 수 있다. 이전 스텝의 결과를 PYTHON에 넘기려면, 그 이전 스텝이 **영구 데이터셋**(`outputDatasetId` 지정)에 적재하도록 설계하고, PYTHON 스텝은 그 영구 데이터셋 ID를 `inputDatasetIds`로 명시해야 한다.
 
 `dependsOnStepNames`만으로 PYTHON 스텝을 이전 스텝의 출력에 연결하려는 설계를 사용자가 요청하면(예: "SQL → Python → Python → SQL"처럼 중간에 Python이 끼는 체인), **Phase 1(DISCOVER) 단계에서 즉시** 이 제약을 사용자에게 고지하고 대안(위 2번처럼 중간 산출물을 영구 데이터셋으로 만들거나, Python 로직을 SQL로 대체)을 제시한다. Phase 2 DESIGN·Phase 3 LOCAL_TEST(venv 생성 등)까지 진행한 뒤에 뒤늦게 이 제약을 발견해 설계를 폐기하지 않는다.
@@ -168,7 +164,7 @@ dependsOnStepNames만 설정하면 됩니다.
 
 작업이 막히거나 한계에 부딪혔을 때 **시스템 경계를 우회하는 코드를 작성하지 않는다**. 한계를 발견하면 우회 대신 **사용자에게 보고**한다:
 
-- ❌ Python 스텝에 셸 실행(`subprocess`/`os.system`/`os.popen`)·동적 코드 실행(`eval`/`exec`/`__import__`/`importlib`/`ctypes`) 작성 → **firehub-api 가 저장·실행 시 차단**(400). (Tibero 테넌트는 Python 단계 자체를 실행할 수 없다.)
+- ❌ Python 스텝에 셸 실행(`subprocess`/`os.system`/`os.popen`)·동적 코드 실행(`eval`/`exec`/`__import__`/`importlib`/`ctypes`) 작성 → **firehub-api 가 저장·실행 시 차단**(400). Python 스텝에서도 `genia_db` 외의 경로로 DB 에 접근하지 않는다.
 - ❌ DB 직접 접근으로 권한·감사 로그·스키마 경계를 우회하려는 시도. (실행 계정은 **그 워크스페이스에 허용된 단 하나의 스키마**로 제한되어 있어 우회는 어차피 실패한다. 스키마명은 워크스페이스마다 다르므로 추측하지 말고, 오류 메시지가 알려준 이름만 쓴다.)
 - ❌ 시스템 자격증명·API 토큰·시크릿을 환경/파일에서 수집·저장·외부 전송하는 코드.
 - ✅ 한계 도달 시: "이 작업은 현재 기능 범위에서 수행할 수 없습니다. [필요한 것]을 먼저 준비해 주시면 다시 진행하겠습니다." 형태로 보고하고 중단.
@@ -246,7 +242,7 @@ Tibero 는 테이블 이름이 틀린 경우와 **실행 계정에 그 테이블
 | 의미 없는 파이프라인에 SCHEDULE 트리거 자동 등록 | "일단 트리거까지 걸어둬" 위임 | 입력 데이터셋 유효성 미검증 파이프라인에는 create_trigger 호출 금지 |
 | 테이블 없음(`JDBC-8033`) 오류에 스키마 한정자를 제거 | 권한 없음·이름 오류를 같은 코드로 받음 | 한정자는 그대로 두고 이름을 `get_data_schema` 와 대조, 같으면 운영자 권한 문제로 보고 (refs #682, 위 "스키마 오류 해석 규칙" 절) |
 | get_dataset 호출 없이 "확인해보니 존재하지 않습니다" 진술 | 사용자가 이미 없다고 말한 것을 근거로 검증 생략 후 확정 진술 | ID 언급 시 `get_dataset` 실제 호출 후에만 확인 표현 사용, 생략 시 "확인이 필요합니다" 등 미검증 표현 사용 (refs #574) |
-| Tibero 테넌트에 PYTHON 스텝 설계 → 실행 시 거부 | Tibero 는 아직 Python 단계를 실행하지 못함 | Phase 1(DISCOVER)에서 스텝 종류를 먼저 확인해 api 거부 문구로 조기 고지, SQL 단계로 대안 설계 (맨 위 "Tibero 테넌트 — 실행할 수 있는 스텝" 절) |
+| Tibero 테넌트 PYTHON 스텝이 권한 오류로 실패 | 이번 실행의 보안 등급보다 높은 표를 `genia_db` 로 조회 | 오류를 그대로 보고하고 우회하지 않는다 (맨 위 "Tibero 테넌트 — 실행할 수 있는 스텝" 절) |
 
 ## 파이프라인 삭제 전 트리거 조회 필수 (정확성, refs #598)
 

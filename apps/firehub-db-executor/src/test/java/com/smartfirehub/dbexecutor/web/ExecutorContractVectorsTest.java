@@ -13,6 +13,7 @@ import com.smartfirehub.dbexecutor.sql.Deadline;
 import com.smartfirehub.dbexecutor.sql.LoadRunner;
 import com.smartfirehub.dbexecutor.sql.ProbeRunner;
 import com.smartfirehub.dbexecutor.sql.QueryRunner;
+import com.smartfirehub.dbexecutor.sql.SlotQueryRunner;
 import com.smartfirehub.dbexecutor.sql.SqlRunner;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
@@ -56,12 +57,16 @@ class ExecutorContractVectorsTest {
   @MockitoBean ProbeRunner probeRunner;
   @MockitoBean LoadRunner loadRunner;
   @MockitoBean QueryRunner queryRunner;
+  @MockitoBean SlotQueryRunner slotQueryRunner;
 
   @MockitoBean(name = "tenantPools")
   TenantPools pools;
 
   @MockitoBean(name = "readOnlyPools")
   TenantPools readOnlyPools;
+
+  @MockitoBean(name = "slotPools")
+  TenantPools slotPools;
 
   private static JsonNode load() {
     try {
@@ -123,6 +128,15 @@ class ExecutorContractVectorsTest {
                 .getResponse()
                 .getContentAsString();
         JsonNode res = OM.readTree(body);
+        if (ex.get("request").path("stream").asBoolean(false)) {
+          // stream:true 요청의 실행 전 거부는 NDJSON 실패 줄 하나다(스트리밍 응답 모양,
+          // query.streaming.failureLastLineKeys).
+          assertThat(body.split("\n")).as(label).hasSize(1);
+          assertThat(res.get("success").asBoolean()).as(label).isFalse();
+          assertThat(res.has("error") && res.has("db_error")).as(label).isTrue();
+          checked++;
+          continue;
+        }
         for (String field : names(ep.get("responseFields"))) {
           assertThat(res.has(field)).as(label + " 응답 키 " + field).isTrue();
         }
@@ -160,8 +174,9 @@ class ExecutorContractVectorsTest {
     org.mockito.Mockito.verifyNoInteractions(queryRunner);
   }
 
+  /** readSlot 은 stream:true 와 함께일 때만 받는다(WD-78) — 하나만 있으면 한국어 사유로 거부하고 아무것도 실행하지 않는다. */
   @Test
-  void readSlot_isRejectedForNow() throws Exception {
+  void readSlotWithoutStream_rejected_andNothingRuns() throws Exception {
     stubRunners();
     String body =
         mvc.perform(
@@ -175,8 +190,69 @@ class ExecutorContractVectorsTest {
             .getContentAsString();
     JsonNode res = OM.readTree(body);
     assertThat(res.get("success").asBoolean()).isFalse();
-    assertThat(res.get("error").asText()).isEqualTo("슬롯 조회는 아직 지원하지 않습니다.");
-    org.mockito.Mockito.verifyNoInteractions(queryRunner);
+    assertThat(res.get("error").asText()).isEqualTo("슬롯 조회(readSlot)는 stream:true 로만 실행할 수 있습니다.");
+    org.mockito.Mockito.verifyNoInteractions(queryRunner, slotQueryRunner);
+  }
+
+  /**
+   * 스트리밍 벡터 중 요청 형식 단계에서 거부되는 예시(requestLevel)를 창구로 보낸다 — NDJSON 실패 줄 하나이고 스트리머는 돌지 않는다(Python 실행기도
+   * 같은 예시를 자기 창구로 검사한다).
+   */
+  @Test
+  void streamingRequestLevelExamples_singleNdjsonFailureLine() throws Exception {
+    stubRunners();
+    JsonNode streaming = FIXTURE.get("endpoints").get("query").get("streaming");
+    int checked = 0;
+    for (JsonNode ex : streaming.get("examples")) {
+      if (!ex.path("requestLevel").asBoolean(false)) {
+        continue;
+      }
+      String label = ex.get("name").asText();
+      org.springframework.mock.web.MockHttpServletResponse res =
+          mvc.perform(
+                  post("/execute/query")
+                      .header("Authorization", "Internal ctl-token")
+                      .contentType(MediaType.APPLICATION_JSON)
+                      .content(OM.writeValueAsString(ex.get("request"))))
+              .andReturn()
+              .getResponse();
+      assertThat(res.getContentType()).as(label).isEqualTo(streaming.get("contentType").asText());
+      String[] lines = res.getContentAsString(java.nio.charset.StandardCharsets.UTF_8).split("\n");
+      assertThat(lines).as(label).hasSize(ex.get("expectLines").asInt());
+      JsonNode last = OM.readTree(lines[lines.length - 1]);
+      assertThat(last.get("success").asBoolean())
+          .as(label)
+          .isEqualTo(ex.get("expectSuccess").asBoolean());
+      assertThat(names(streaming.get("failureLastLineKeys")))
+          .as(label)
+          .containsExactlyElementsOf(
+              () -> {
+                java.util.List<String> keys = new java.util.ArrayList<>();
+                last.fieldNames().forEachRemaining(keys::add);
+                return keys.iterator();
+              });
+      checked++;
+    }
+    assertThat(checked).isGreaterThanOrEqualTo(1);
+    org.mockito.Mockito.verifyNoInteractions(slotQueryRunner);
+  }
+
+  /** 슬롯 스트리밍 응답의 Content-Type 은 계약 벡터 값이다(두 실행기 같음). */
+  @Test
+  void slotStream_contentTypeMatchesVector() throws Exception {
+    stubRunners();
+    JsonNode streaming = FIXTURE.get("endpoints").get("query").get("streaming");
+    String contentType =
+        mvc.perform(
+                post("/execute/query")
+                    .header("Authorization", "Internal ctl-token")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        OM.writeValueAsString(streaming.get("examples").get(0).get("request"))))
+            .andReturn()
+            .getResponse()
+            .getContentType();
+    assertThat(contentType).isEqualTo(streaming.get("contentType").asText());
   }
 
   @Test

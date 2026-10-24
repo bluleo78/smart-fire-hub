@@ -47,7 +47,7 @@ import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
-import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrants;
 import java.sql.Types;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -128,7 +128,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
   @Mock PipelineSecurityGate pipelineSecurityGate;
   @Mock DatasetAccessGuard datasetAccessGuard;
   @Mock AiHostingResolver aiHostingResolver;
-  @Mock PythonReadGrantSync pythonReadGrantSync;
+  @Mock PythonReadGrants pythonReadGrantSync;
   @Mock LocalPythonOutputLoader localPythonOutputLoader;
 
   @InjectMocks PipelineAsyncRunner runner;
@@ -203,8 +203,8 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
     run(sqlStep(INCREMENTAL_SELECT, "MERGE"));
 
     var order = inOrder(dataTableService, dbExecutorClient);
-    order.verify(dataTableService).ensureRowTrigger("ORDERS");
-    order.verify(dataTableService).ensureRowTrigger("SRC_ORDERS");
+    // 출력·입력 테이블을 한 번에(한 접속) 보장한다 — 출력이 먼저다.
+    order.verify(dataTableService).ensureRowTriggers(List.of("ORDERS", "SRC_ORDERS"));
     order.verify(dbExecutorClient).executeSql(anyString(), anyList());
   }
 
@@ -220,7 +220,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
         sqlStep(
             "SELECT k, v FROM genia_t5.orders WHERE \"_UPDATED_AT\" >= {{last_run_at}}", "MERGE"));
 
-    verify(dataTableService, org.mockito.Mockito.times(1)).ensureRowTrigger("ORDERS");
+    verify(dataTableService).ensureRowTriggers(List.of("ORDERS"));
   }
 
   @Test
@@ -228,7 +228,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
     stubCursor(LAST, false);
     doThrow(new DataStoreFeatureUnsupportedException(MISSING_PRIVILEGE))
         .when(dataTableService)
-        .ensureRowTrigger(anyString());
+        .ensureRowTriggers(any());
 
     String status = run(sqlStep(INCREMENTAL_SELECT, "MERGE"));
 
@@ -238,15 +238,17 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
     verify(stepRepository, never()).advanceCursor(any(), any(), anyBoolean(), any());
   }
 
-  /** 입력 테이블 하나라도 트리거를 못 보장하면(출력은 통과) 같은 안내로 실패한다. */
+  /**
+   * 출력·입력을 함께 보장하는 호출이 거부되면(예: 입력 하나만 트리거가 없고 권한 부족) 같은 안내로 실패한다. 어느 테이블이 모자란지 가리는 판정은 저장소
+   * 몫이다({@code
+   * TiberoDataTableStoreTriggerTest#ensureRowTriggers_oneMissingWithoutPrivilege_422_noDdl}).
+   */
   @Test
   void incrementalMerge_inputTableTriggerMissing_failsClosed() {
     stubCursor(LAST, false);
-    // 출력(ORDERS)은 이미 트리거가 있어 통과하고, 입력(SRC_ORDERS)만 권한 부족으로 거부된다.
-    lenient().doNothing().when(dataTableService).ensureRowTrigger("ORDERS");
     doThrow(new DataStoreFeatureUnsupportedException(MISSING_PRIVILEGE))
         .when(dataTableService)
-        .ensureRowTrigger("SRC_ORDERS");
+        .ensureRowTriggers(List.of("ORDERS", "SRC_ORDERS"));
 
     String status = run(sqlStep(INCREMENTAL_SELECT, "MERGE"));
 
@@ -320,7 +322,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
 
     verify(incrementalCursorService).captureCandidate();
     verifyNoInteractions(tiberoIncrementalCursor, dbExecutorClient);
-    verify(dataTableService, never()).ensureRowTrigger(anyString());
+    verify(dataTableService, never()).ensureRowTriggers(any());
     ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
     verify(sqlExecutor).execute(anyList(), sql.capture());
     assertThat(sql.getValue()).contains("'2026-10-24T01:02:03.123456Z'::timestamptz");

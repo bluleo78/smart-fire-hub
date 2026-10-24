@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.smartfirehub.dataset.service.DataTableRowService;
-import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.storage.DataTableStore;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -154,7 +154,7 @@ public class LocalPythonOutputLoader {
       return;
     }
     for (String key : firstRow.keySet()) {
-      if (!columnTypeMap.containsKey(key) && !DataTableService.SYSTEM_COLUMNS.contains(key)) {
+      if (!columnTypeMap.containsKey(key) && !DataTableStore.SYSTEM_COLUMNS.contains(key)) {
         throw new OutputRowsException(PythonStepErrorMessages.unknownColumn(key));
       }
     }
@@ -164,6 +164,119 @@ public class LocalPythonOutputLoader {
   static final class OutputRowsException extends RuntimeException {
     OutputRowsException(String message) {
       super(message);
+    }
+  }
+
+  /**
+   * Tibero 테넌트(WD-78): stdout 을 파싱·변환해 이번 실행의 <b>스테이징</b>({@code STG_<24HEX>})에 적재한다. 출력 테이블
+   * 반영(옮기기)은 러너가 {@code finishReplace}/{@code finishAppend} 로 한 Tibero 트랜잭션에서 한다.
+   *
+   * <p>PG 경로({@link #load})와 다른 점: PG 트랜잭션({@code TransactionTemplate})으로 감싸지 않는다(Tibero 적재는 Tibero
+   * 연결에서 일어나 PG 트랜잭션이 원자성을 주지 못한다 — 원자성은 스테이징 + 옮기기가 맡는다). 스테이징은 실제 테이블과 모양이 달라 전용 창구({@code
+   * insertTempBatch})로 쓴다. 값은 실행기 켠 경로(db-executor 원격 적재)와 같은 결과가 되게 {@link #toTiberoStagingValues}
+   * 로 맞춘다. 파싱·행 모양 확인·실패 문구는 PG 경로(WD-210·211)와 같다.
+   *
+   * @return 적재한 행 수(JSON 이 없거나 행이 아니면 0)
+   * @throws ScriptExecutionException 적재 실패 — 문구는 {@link #load} 와 같은 규칙({@link
+   *     PythonStepErrorMessages}). 시스템 키만 있는 행은 {@link #ONLY_SYSTEM_KEYS} 사유로 실패한다
+   */
+  public long loadStaging(String stagingTable, String stdout, Map<String, String> columnTypeMap) {
+    List<Map<String, Object>> rows;
+    try {
+      rows = parseStdoutJson(stdout);
+    } catch (StdoutNotJsonException e) {
+      throw new ScriptExecutionException(PythonStepErrorMessages.PREFIX + e.getMessage(), e);
+    } catch (OutputRowsException e) {
+      throw new ScriptExecutionException(e.getMessage(), e);
+    }
+    if (rows == null) {
+      return 0;
+    }
+    try {
+      // 컬럼 존재 확인은 DB 에 닿기 전에 PG 경로와 같은 규칙으로 한다(WD-211 — 시스템 컬럼은 통과).
+      requireKnownColumns(rows.get(0), columnTypeMap);
+      // SELECT * 모양 출력의 시스템 컬럼 키는 스테이징에 없다 — PG 처럼 적재되게 빼고 넣는다(코드리뷰 1, 실행기 켠 경로와 같다).
+      removeSystemKeys(rows);
+      applyTypeConversion(rows, columnTypeMap);
+    } catch (OutputRowsException e) {
+      throw new ScriptExecutionException(e.getMessage(), e);
+    } catch (IllegalArgumentException e) {
+      // 시스템 키만 있는 행 — 이 클래스가 만든 한국어 사유라 그대로 싣는다(실행기 켠 경로와 같은 문구).
+      throw new ScriptExecutionException(PythonStepErrorMessages.PREFIX + e.getMessage(), e);
+    }
+    try {
+      toTiberoStagingValues(rows);
+      List<String> columns = new ArrayList<>(rows.get(0).keySet());
+      dataTableRowService.insertTempBatch(stagingTable, columns, rows, null);
+      return rows.size();
+    } catch (RuntimeException e) {
+      // 원문(Tibero 오류 문장·내부 이름)은 로그에만 남기고 PG 경로와 같은 안내를 보인다(WD-211).
+      log.warn("Python 출력 Tibero 스테이징 적재 실패: table={}", stagingTable, e);
+      throw new ScriptExecutionException(PythonStepErrorMessages.loadFailed(e), e);
+    }
+  }
+
+  /**
+   * Tibero 스테이징 적재 전에 각 행에서 시스템 컬럼 키({@link DataTableStore#SYSTEM_COLUMNS} — 대소문자 그대로)만 지운다(코드리뷰
+   * 1).
+   *
+   * <p>PG 와 같은 결과가 목표다: PG 출력 테이블은 시스템 컬럼을 물리적으로 가져 {@code SELECT *} 로 다른 데이터셋을 읽어 낸
+   * 행(id·created_at 등 포함)이 그대로 적재된다. Tibero 스테이징에는 그 컬럼이 없어(옮길 때 채운다) 키를 남기면 적재가 실패한다. 시스템 이름이
+   * <b>아닌</b> 여분 키는 남긴다 — PG 도 출력에 없는 키는 실패하므로 같다. 알려진 차이: PG 는 행이 준 id·import_id·created_at 값을
+   * 저장하고 Tibero 는 옮길 때 새로 채운다. 실행기 켠 경로({@code python_executor._without_system_keys})와 같은 규칙이다.
+   *
+   * @throws IllegalArgumentException 지우고 나니 첫 행에 적재할 컬럼이 없을 때(시스템 키만 있는 행)
+   */
+  static void removeSystemKeys(List<Map<String, Object>> rows) {
+    for (Map<String, Object> row : rows) {
+      row.keySet().removeAll(DataTableStore.SYSTEM_COLUMNS);
+    }
+    if (rows.get(0).isEmpty()) {
+      throw new IllegalArgumentException(ONLY_SYSTEM_KEYS);
+    }
+  }
+
+  /** 시스템 키만 있는 출력 행의 실패 사유 — 실행기 켠 경로({@code _TIBERO_ONLY_SYSTEM_KEYS})와 같은 문구. */
+  static final String ONLY_SYSTEM_KEYS =
+      "출력 행에 시스템 컬럼(id·import_id·created_at·_updated_at) 말고 적재할 컬럼이 없습니다";
+
+  /** 중첩 값(JSON 객체·배열)을 문자열로 만들 때 쓰는 직렬화기 — Python {@code json.dumps} 처럼 값만 담는다(공백 차이는 의미 없음). */
+  private static final JsonMapper NESTED_JSON = JsonMapper.builder().build();
+
+  /**
+   * Tibero 스테이징에 바인딩할 수 있게 값을 바꾼다 — 실행기 켠 경로({@code remote.to_wire_value} → db-executor {@code
+   * LoadValues})와 같은 결과가 목표다. 불리언은 두 경로 모두 Boolean 으로 남아 1/0 으로 바인딩된다(같다).
+   *
+   * <p><b>알려진 차이</b>: 64비트를 넘는 INTEGER 는 로컬에서 정확한 {@code BigInteger} 로 바인딩되고(물리 컬럼 범위를 넘으면 Tibero
+   * 오류), 원격 경로는 db-executor {@code LoadValues} 가 {@code longValueExact} 로 바꿔 요청 전체를 실패시킨다(값을 바꿔
+   * 저장하지 않는다 — 2ba6f765). 그래서 {@code Long.MAX_VALUE} 초과 ~ NUMBER(19) 상한 사이 값은 로컬에서는 저장되고 원격에서는
+   * 실패한다. 두 경로 모두 값을 조용히 바꾸지 않으므로 맞추지 않는다. 그 밖의 미세한 차이(변환 실패 처리 등)는 PG 경로와의 기존 차이를 따른다.
+   *
+   * <ul>
+   *   <li>오프셋 시각 → <b>UTC</b> {@link LocalDateTime}. db-executor 는 오프셋 시각을 UTC 로 환산해 저장한다(공용 벡터
+   *       {@code python-remote-load-wire.json}). PG 경로처럼 JVM 시간대로 내리면 맥(KST) 로컬 실행에서 9시간 어긋난다.
+   *   <li>비유한 실수(NaN·Infinity) → NULL. Tibero NUMBER 는 NaN 을 담지 못하고, 원격 경로도 None 으로 보낸다.
+   *   <li>중첩 객체·배열 → JSON 문자열(원격 경로의 {@code json.dumps} 와 같다 — 드라이버는 Map·List 를 바인딩하지 못한다).
+   * </ul>
+   */
+  static void toTiberoStagingValues(List<Map<String, Object>> rows) {
+    for (Map<String, Object> row : rows) {
+      for (Map.Entry<String, Object> e : row.entrySet()) {
+        Object v = e.getValue();
+        if (v instanceof OffsetDateTime odt) {
+          e.setValue(odt.withOffsetSameInstant(ZoneOffset.UTC).toLocalDateTime());
+        } else if (v instanceof Double d && !Double.isFinite(d)) {
+          e.setValue(null);
+        } else if (v instanceof Float f && !Float.isFinite(f)) {
+          e.setValue(null);
+        } else if (v instanceof Map<?, ?> || v instanceof List<?>) {
+          try {
+            e.setValue(NESTED_JSON.writeValueAsString(v));
+          } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            throw new IllegalArgumentException("cannot serialize nested value: " + ex.getMessage());
+          }
+        }
+      }
     }
   }
 

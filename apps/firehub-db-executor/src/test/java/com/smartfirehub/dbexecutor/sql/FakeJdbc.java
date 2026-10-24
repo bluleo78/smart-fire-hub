@@ -58,6 +58,14 @@ final class FakeJdbc {
   /** 읽기 전용 계정 풀(같은 가짜 DataSource, 계정만 RO 로 선택). */
   final TenantPools roPools;
 
+  /** 슬롯 계정 풀(같은 가짜 DataSource, 키 (테넌트, 슬롯), WD-78). 만든 슬롯 번호는 {@link #slotFactorySlots} 에 남는다. */
+  final TenantPools slotPools;
+
+  final List<Integer> slotFactorySlots = Collections.synchronizedList(new ArrayList<>());
+
+  /** setFetchSize 로 건 값(슬롯 스트리밍). */
+  final List<Integer> fetchSizes = Collections.synchronizedList(new ArrayList<>());
+
   /** 적재(PreparedStatement 배치) 기록: 준비한 SQL 은 events 에, 바인딩은 여기에("setInt(1,7)" 형태). */
   final List<String> binds = Collections.synchronizedList(new ArrayList<>());
 
@@ -100,6 +108,14 @@ final class FakeJdbc {
               return ds;
             },
             StoreDescriptor::ro,
+            8);
+    slotPools =
+        TenantPools.forSlots(
+            (d, slot) -> {
+              factoryCalls.incrementAndGet();
+              slotFactorySlots.add(slot);
+              return ds;
+            },
             8);
   }
 
@@ -171,6 +187,13 @@ final class FakeJdbc {
             })
         .when(st)
         .setMaxRows(anyInt());
+    doAnswer(
+            inv -> {
+              fetchSizes.add(inv.getArgument(0));
+              return null;
+            })
+        .when(st)
+        .setFetchSize(anyInt());
     when(st.getUpdateCount()).thenAnswer(inv -> updateCount);
     when(st.getResultSet()).thenAnswer(inv -> resultSet);
     doAnswer(

@@ -931,9 +931,12 @@ public class TiberoDataRowStore implements DataRowStore {
           try (Statement st = conn.createStatement()) {
             st.execute(statements.get(0));
             try {
-              st.execute(statements.get(1));
+              // 이어지는 _SEQ 인덱스·전용 시퀀스. 인덱스는 테이블에 딸려 있어 테이블 DROP 으로 함께 지워진다.
+              for (String sql : statements.subList(1, statements.size())) {
+                st.execute(sql);
+              }
             } catch (SQLException e) {
-              // 시퀀스 생성이 실패하면 테이블만 남지 않도록 지우고 원래 오류를 다시 던진다.
+              // 인덱스·시퀀스 생성이 실패하면 테이블만 남지 않도록 지우고 원래 오류를 다시 던진다.
               try {
                 st.execute(TiberoDmlSql.dropStaging(c.schema(), physical).get(0));
               } catch (SQLException cleanup) {

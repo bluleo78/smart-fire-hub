@@ -28,10 +28,6 @@ public final class LastRunAtPlaceholder {
   /** Tibero 에서 책갈피가 없을 때(첫 실행·전체 재생성 예약) 쓰는 리터럴 — 어떤 행의 {@code _UPDATED_AT} 보다 이르다(실서버로 비교 확인). */
   private static final String TIBERO_MINIMUM = "TIMESTAMP '0001-01-01 00:00:00.000000'";
 
-  /** Tibero 리터럴 본문 형식 — 마이크로초 6자리 고정(Tibero 시계 정밀도). */
-  private static final DateTimeFormatter TIBERO_FORMAT =
-      DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
-
   private LastRunAtPlaceholder() {}
 
   /** SQL 이 증분 플레이스홀더를 쓰는지 판별한다(증분 스텝 여부 판단의 유일한 기준). */
@@ -99,7 +95,9 @@ public final class LastRunAtPlaceholder {
     }
     // 열이 서버 벽시계라서, UTC 로 표현한 instant 를 서버 오프셋으로 옮긴 뒤 시간대를 떼어 비교한다(Ruling 13).
     return "CAST(TIMESTAMP '"
-        + value.withOffsetSameInstant(ZoneOffset.UTC).format(TIBERO_FORMAT)
-        + " +00:00' AT TIME ZONE TO_CHAR(SYSTIMESTAMP, 'TZH:TZM') AS TIMESTAMP)";
+        + value.withOffsetSameInstant(ZoneOffset.UTC).format(TiberoTimestamps.UTC_MICROS)
+        + " +00:00' AT TIME ZONE "
+        + TiberoTimestamps.SERVER_OFFSET_SQL
+        + " AS TIMESTAMP)";
   }
 }

@@ -1102,14 +1102,42 @@ class TiberoDataRowStoreTest {
     assertThat(dmlCalls).isZero();
     Stmt q = ddl.last("ALL_TAB_COLUMNS");
     assertThat(q.binds).containsEntry(1, S).containsEntry(2, "ORDERS");
-    assertThat(ddl.executed).hasSize(2);
+    assertThat(ddl.executed).hasSize(3);
     assertThat(ddl.executed.get(0))
         .startsWith("CREATE TABLE \"GENIA_T5\".\"" + stg.toUpperCase() + "\"")
         .contains("\"_SEQ\" NUMBER(19)")
         .contains("\"CODE\" VARCHAR2(20 CHAR)")
         .contains("\"QTY\" NUMBER(18,6)");
+    // _SEQ 인덱스(적재의 MAX("_SEQ") 가 전체 스캔이 되지 않게)는 테이블 뒤·시퀀스 앞이다.
     assertThat(ddl.executed.get(1))
+        .isEqualTo(
+            "CREATE INDEX \"GENIA_T5\".\""
+                + TiberoNames.stagingSeqIndexName(stg.toUpperCase())
+                + "\" ON \"GENIA_T5\".\""
+                + stg.toUpperCase()
+                + "\" (\"_SEQ\")");
+    assertThat(ddl.executed.get(2))
         .startsWith("CREATE SEQUENCE \"GENIA_T5\".\"" + TiberoNames.stagingSequenceName(stg));
+  }
+
+  /** _SEQ 인덱스·시퀀스 중 어느 것이 실패해도 테이블 DROP 하나로 정리하고(인덱스는 테이블과 함께 지워진다) 원래 오류를 던진다. */
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"CREATE INDEX", "CREATE SEQUENCE"})
+  void createStagingTable_indexOrSequenceFails_dropsTable(String failingPrefix) {
+    ddl.onQuery("ALL_TAB_COLUMNS", targetColumns());
+    ddl.failWhen = sql -> sql.startsWith(failingPrefix);
+    ddl.failure = sql -> new SQLException("boom", "42000", -1);
+
+    assertThatThrownBy(() -> store.createStagingTable("orders", List.of("code", "qty")))
+        .isInstanceOf(RuntimeException.class);
+
+    String drop = ddl.executed.get(ddl.executed.size() - 1);
+    assertThat(drop).startsWith("DROP TABLE \"GENIA_T5\".\"STG_");
+    assertThat(ddl.executed).noneMatch(sql -> sql.startsWith("DROP SEQUENCE"));
+    if (failingPrefix.equals("CREATE INDEX")) {
+      // 인덱스가 실패하면 시퀀스는 만들지 않는다.
+      assertThat(ddl.executed).noneMatch(sql -> sql.startsWith("CREATE SEQUENCE"));
+    }
   }
 
   @Test

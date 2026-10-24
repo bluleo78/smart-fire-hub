@@ -92,14 +92,17 @@ describe('Tibero 도구 설명', () => {
       expect(text(n), n).not.toContain('SRID');
     }
   });
-  // pythonConfig.outputColumns 는 Python 단계 설정이다 — Tibero 안내는 AI 분류가 아니라 Python 단계 미지원(api 거부 문구)이어야 한다.
-  it('파이프라인 pythonConfig.outputColumns 설명은 Python 단계 미지원을 알린다', () => {
+  // WD-78: Tibero 도 Python 단계를 실행한다 — pythonConfig.outputColumns 설명은 PG 와 같은 문구다.
+  it('파이프라인 pythonConfig.outputColumns 설명은 PG 와 같다', () => {
+    const pg = dump('POSTGRESQL');
     for (const n of ['create_pipeline', 'update_pipeline']) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const schema = t[n].schema as any;
-      const desc: string = schema.properties.steps.items.properties.pythonConfig.properties.outputColumns.description;
-      expect(desc, n).toContain('Python 단계를 실행할 수 없');
-      expect(desc, n).not.toContain('AI 분류');
+      const pick = (d: typeof t) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const schema = d[n].schema as any;
+        return schema.properties.steps.items.properties.pythonConfig.properties.outputColumns.description as string;
+      };
+      expect(pick(t), n).toBe(pick(pg));
+      expect(pick(t), n).not.toContain('Python 단계를 실행할 수 없');
     }
   });
   it('create_dataset 은 테이블이 놓이는 스키마를 알려준다', () => {

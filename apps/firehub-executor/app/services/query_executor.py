@@ -4,10 +4,16 @@ import logging
 import re
 import time
 import weakref
-from typing import Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
 
-from app.schemas.responses import QueryExecuteResponse, db_error_of
-from app.tenant import resolve_schema
+import psycopg2
+from pydantic import TypeAdapter
+
+from app.schemas.responses import DbErrorInfo, QueryExecuteResponse, db_error_of, to_json_value
+from app.tenant import resolve_read_db_url, resolve_schema
+
+if TYPE_CHECKING:
+    from app.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -784,3 +790,110 @@ def execute_query(
         except Exception:
             pass
         cursor.close()
+
+
+# ---------------------------------------------------------------------------
+# 슬롯 스트리밍 조회(WD-78) — db-executor 와 같은 NDJSON 계약(executor-db-contract-vectors.json 의 query.streaming)
+# ---------------------------------------------------------------------------
+
+NDJSON_MEDIA_TYPE = "application/x-ndjson"
+
+# 서버 측 커서가 한 번에 가져오는 행 수 — 큰 테이블을 메모리에 모으지 않고 나눠 받는다.
+STREAM_FETCH_SIZE = 1000
+
+# 슬롯 스트리밍의 문장 시간 제한. PG statement_timeout 은 문장(FETCH 하나) 단위라 전체 기한이 아니다(Ruling 5 와 같은 차이) —
+# db-executor 는 스크립트 토큰 만료까지를 전체 기한으로 쓴다. 긴 작업 상한(db-executor app.load.timeout-seconds)과 같은 값.
+STREAM_STATEMENT_TIMEOUT = "1800s"
+
+STREAM_QUERY_ONLY = "슬롯 조회는 조회(SELECT·WITH)만 실행합니다."
+
+# 스트리밍은 db-executor 처럼 read_only:true 를 요구한다 — 같은 문구(db-executor ExecuteController.READ_ONLY_REQUIRED).
+STREAM_READ_ONLY_REQUIRED = "읽기 전용 조회만 실행할 수 있습니다."
+
+# 슬롯 롤 접속 실패 고정 문구 — libpq 원문에는 호스트·롤 이름이 들어 있어 응답에 싣지 않는다(db-executor CONNECT_FAILED 와 같은 취지).
+STREAM_CONNECT_FAILED = "슬롯 롤로 데이터베이스에 연결하지 못했습니다."
+
+# 슬롯 롤 접속 대기 상한(초) — 닿지 않는 DB 에서 무한정 기다리지 않게.
+STREAM_CONNECT_TIMEOUT_SECONDS = 10
+
+# 한 줄 직렬화기 — 비스트리밍 응답(QueryExecuteResponse)과 같은 pydantic 직렬화를 써서 값 표기(Decimal·날짜 등)를 맞춘다.
+_LINE = TypeAdapter(Dict[str, Any])
+
+
+def _line(obj: Dict[str, Any]) -> bytes:
+    """JSON 한 줄 + 줄바꿈."""
+    return _LINE.dump_json(obj) + b"\n"
+
+
+def stream_failure_line(error: str, db_error: Optional[DbErrorInfo] = None) -> bytes:
+    """실패 마지막 줄 ``{"success":false,"error":...,"db_error":{...}}``. db_error 는 기존 응답처럼 실패마다 채운다."""
+    info = db_error if db_error is not None else db_error_of(error)
+    return _line({"success": False, "error": error, "db_error": info.model_dump()})
+
+
+def stream_slot_query(query: str, *, tenant_id: int, read_slot: int, settings: "Settings") -> Iterator[bytes]:
+    """슬롯 롤로 조회를 끝까지 읽어 NDJSON 줄을 하나씩 낸다(행 상한 없음).
+
+    - 첫 줄 ``{"columns":[...]}`` (이름은 분석 조회와 같은 고유화), 행마다 ``{"row":{...}}``, 마지막 줄
+      ``{"success":true,"row_count":N}`` 또는 실패 줄. 실행 전 거부(문장 검사·접속 실패)는 실패 줄 하나만 낸다.
+    - 접속은 테넌트 실행 롤 풀이 아니라 **슬롯 롤 직접 로그인**(``resolve_read_db_url``)이다 — 등급 밖 테이블은 DB 권한이 거부한다.
+      트랜잭션은 READ ONLY, search_path 는 테넌트 스키마. 서버 측(named) 커서로 ``STREAM_FETCH_SIZE`` 행씩 가져온다.
+    - named 커서는 첫 fetch 뒤에야 ``description`` 이 생기므로 컬럼 줄은 첫 묶음을 받은 뒤 낸다(빈 결과도 컬럼 줄이 나간다).
+    - 받는 쪽이 끊으면(제너레이터 close → GeneratorExit) finally 에서 커서를 닫고 롤백한 뒤 연결을 닫는다.
+    - geometry 를 GeoJSON 으로 감싸는 분석 조회의 변환은 하지 않는다(스크립트 읽기용 원값).
+    """
+    clean_sql = _normalize_sql(query)
+    if not clean_sql:
+        yield stream_failure_line("Query must not be empty")
+        return
+    # 분석 조회와 같은 분류(WD-91) — CTE 안 DML 도 SELECT 가 아니다. 슬롯 롤 권한·READ ONLY 트랜잭션이 2차 방어선이다.
+    if _detect_query_type(clean_sql) != "SELECT":
+        yield stream_failure_line(STREAM_QUERY_ONLY)
+        return
+    schema = resolve_schema(tenant_id)
+    conn = None
+    cursor = None
+    try:
+        conn = psycopg2.connect(
+            resolve_read_db_url(tenant_id, read_slot, settings),
+            connect_timeout=STREAM_CONNECT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001 — 접속 실패는 고정 문구로(원문은 로그에 종류만)
+        logger.warning("슬롯 롤 접속 실패 tenant=%s slot=%s 종류=%s", tenant_id, read_slot, type(exc).__name__)
+        yield stream_failure_line(STREAM_CONNECT_FAILED)
+        return
+    try:
+        conn.set_session(readonly=True)
+        with conn.cursor() as setup:
+            # 보간이 안전한 이유는 execute_query 와 같다(resolve_schema 는 테넌트 id 에서만 파생).
+            setup.execute(
+                f"SET LOCAL search_path = '{schema}', 'public'; "
+                f"SET LOCAL statement_timeout = '{STREAM_STATEMENT_TIMEOUT}'"
+            )
+        cursor = conn.cursor(name="slot_stream")
+        cursor.itersize = STREAM_FETCH_SIZE
+        cursor.execute(clean_sql)
+        batch = cursor.fetchmany(STREAM_FETCH_SIZE)
+        columns = _column_names(cursor)
+        yield _line({"columns": columns})
+        count = 0
+        while batch:
+            for row in batch:
+                yield _line({"row": {name: to_json_value(value) for name, value in zip(columns, row)}})
+                count += 1
+            batch = cursor.fetchmany(STREAM_FETCH_SIZE)
+        yield _line({"success": True, "row_count": count})
+    except Exception as exc:  # noqa: BLE001 — 모든 실패를 마지막 실패 줄로 알린다(받는 쪽은 마지막 줄로 판정)
+        yield stream_failure_line(str(exc), db_error_of(str(exc), sqlstate(exc)))
+    finally:
+        for close in (
+            (lambda: cursor.close()) if cursor is not None else None,
+            (lambda: conn.rollback()) if conn is not None else None,
+            (lambda: conn.close()) if conn is not None else None,
+        ):
+            if close is None:
+                continue
+            try:
+                close()
+            except Exception:  # noqa: BLE001 — 정리 실패는 응답에 영향 주지 않는다
+                pass

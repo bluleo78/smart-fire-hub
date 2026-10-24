@@ -40,6 +40,10 @@ class StoreDescriptorClientTest {
   private final AtomicReference<String> lastAuth = new AtomicReference<>();
   private final AtomicReference<String> lastUri = new AtomicReference<>();
   private volatile long delayMs = 0;
+
+  /** 응답을 만드는 동안 시계를 이만큼 앞으로 돌린다(조회 시작~도착 사이 경과 재현). */
+  private volatile long clockAdvanceDuringFetchNanos = 0;
+
   private final AtomicLong clock = new AtomicLong(0);
   private StoreDescriptorClient client;
 
@@ -59,6 +63,7 @@ class StoreDescriptorClientTest {
             }
           } catch (InterruptedException ignored) {
           }
+          clock.addAndGet(clockAdvanceDuringFetchNanos);
           byte[] b = body.get().getBytes(StandardCharsets.UTF_8);
           ex.getResponseHeaders().add("Content-Type", "application/json");
           ex.sendResponseHeaders(status.get(), b.length);
@@ -113,10 +118,82 @@ class StoreDescriptorClientTest {
 
     StoreDescriptor d = client.get(7);
 
-    assertThat(lastUri.get()).isEqualTo("/internal/executor/tenants/7/data-store?include=ro");
+    assertThat(lastUri.get()).isEqualTo("/internal/executor/tenants/7/data-store?include=ro,slots");
     assertThat(d.ro().username()).isEqualTo("GENIA_T7_RO");
     assertThat(d.ro().password()).isEqualTo(roPassword);
     assertThat(d.toString()).doesNotContain(roPassword).doesNotContain(PASSWORD);
+  }
+
+  /** 슬롯 계정·스크립트 토큰 세대(WD-78)를 파싱하고, 슬롯 비밀번호는 toString 에 나오지 않는다. */
+  @Test
+  void parsesSlotsAndScriptTokenEpoch_withoutLeakingSlotPassword() {
+    String slotPassword = "Slot-Pw-Secret";
+    body.set(
+        TIBERO_JSON.replace(
+            "\"extra\":1",
+            "\"slots\":[{\"slot\":2,\"username\":\"GENIA_T7_S2\",\"password\":\""
+                + slotPassword
+                + "\"}],\"scriptTokenEpoch\":4"));
+
+    StoreDescriptor d = client.get(7);
+
+    assertThat(d.slot(2).username()).isEqualTo("GENIA_T7_S2");
+    assertThat(d.slot(2).password()).isEqualTo(slotPassword);
+    assertThat(d.slot(1)).isNull();
+    assertThat(d.scriptTokenEpoch()).isEqualTo(4L);
+    assertThat(d.toString()).doesNotContain(slotPassword);
+  }
+
+  /** 스크립트 요청은 5초보다 오래된 캐시를 쓰지 않는다(Ruling 16) — 일반 요청은 TTL(60초) 동안 그대로 캐시를 쓴다. */
+  @Test
+  void maxAge_refetchesOlderCacheOnlyForThatCall() {
+    client.get(7);
+    assertThat(hits.get()).isEqualTo(1);
+
+    clock.addAndGet(4_000_000_000L); // 4초 경과 — 5초 이내라 캐시 사용
+    client.get(7, java.time.Duration.ofSeconds(10), java.time.Duration.ofSeconds(5));
+    assertThat(hits.get()).isEqualTo(1);
+
+    clock.addAndGet(2_000_000_000L); // 6초 경과 — 스크립트 요청은 새로 받는다
+    client.get(7, java.time.Duration.ofSeconds(10), java.time.Duration.ofSeconds(5));
+    assertThat(hits.get()).isEqualTo(2);
+
+    // 새로 받은 값이 캐시를 갱신했으므로 일반 요청은 다시 원격 호출하지 않는다.
+    client.get(7);
+    assertThat(hits.get()).isEqualTo(2);
+  }
+
+  /** 신선도는 조회를 <b>시작한</b> 시각부터 잰다(Ruling 18) — 응답이 늦게 와도 그만큼 낡은 것으로 본다. */
+  @Test
+  void maxAge_measuredFromFetchStart() {
+    // 응답을 만드는 동안 시계를 6초 앞으로 — 받은 시각 기준이면 0초, 시작 시각 기준이면 6초 낡았다.
+    clockAdvanceDuringFetchNanos = 6_000_000_000L;
+    client.get(7);
+    clockAdvanceDuringFetchNanos = 0;
+    assertThat(hits.get()).isEqualTo(1);
+
+    client.get(7, java.time.Duration.ofSeconds(10), java.time.Duration.ofSeconds(5));
+    assertThat(hits.get()).isEqualTo(2);
+  }
+
+  /** 최대 나이가 있으면 그보다 일찍 시작한 진행 중 조회에는 합류하지 않고 따로 받는다(Ruling 18). 최근에 시작한 조회에는 합류한다. */
+  @Test
+  void maxAge_doesNotJoinInflightFetchStartedTooEarly() throws Exception {
+    delayMs = 600;
+    ExecutorService pool = Executors.newSingleThreadExecutor();
+    Future<StoreDescriptor> slow = pool.submit(() -> client.get(7));
+    // 첫 조회가 시작될 때까지 기다린다(서버에 닿음).
+    long until = System.currentTimeMillis() + 5_000;
+    while (hits.get() == 0 && System.currentTimeMillis() < until) {
+      Thread.onSpinWait();
+    }
+    assertThat(hits.get()).isEqualTo(1);
+    clock.addAndGet(6_000_000_000L); // 진행 중 조회는 6초 전에 시작한 셈
+    delayMs = 0;
+    client.get(7, java.time.Duration.ofSeconds(10), java.time.Duration.ofSeconds(5));
+    assertThat(hits.get()).as("오래된 진행 중 조회에 합류하지 않고 따로 받았다").isEqualTo(2);
+    slow.get();
+    pool.shutdown();
   }
 
   /** ro 가 없는 응답(아직 RO 계정 미생성)도 완전한 기술자다 — 파이프라인 경로는 RO 없이 동작한다. */

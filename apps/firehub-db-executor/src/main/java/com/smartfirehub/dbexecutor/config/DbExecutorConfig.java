@@ -22,6 +22,12 @@ public class DbExecutorConfig {
         props.pool().maxPools());
   }
 
+  /** 슬롯 계정 풀(/execute/query + readSlot 스트리밍, WD-78) — 키 (테넌트, 슬롯), 풀당 커넥션 1. */
+  @Bean("slotPools")
+  public TenantPools slotPools(DbExecutorProperties props) {
+    return TenantPools.forSlots(HikariPoolFactory.forSlots(), props.pool().slotMaxPools());
+  }
+
   /** 읽기 전용 계정 풀(/execute/query). */
   @Bean("readOnlyPools")
   public TenantPools readOnlyPools(DbExecutorProperties props) {

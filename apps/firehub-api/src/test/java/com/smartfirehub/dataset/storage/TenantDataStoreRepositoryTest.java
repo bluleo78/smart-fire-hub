@@ -19,6 +19,7 @@ class TenantDataStoreRepositoryTest extends IntegrationTestBase {
   @Autowired private TenantDataStoreRepository repository;
   @Autowired private PlatformTenantRepository tenantRepository;
   @Autowired private DSLContext dsl;
+  @Autowired private com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync pgSync;
 
   private long tenantId;
 
@@ -156,5 +157,48 @@ class TenantDataStoreRepositoryTest extends IntegrationTestBase {
 
     assertThat(repository.find(id)).isEmpty();
     assertThat(repository.findAccounts(id)).isEmpty();
+  }
+
+  /** 세대 번호는 0 에서 시작해 올릴 때마다 1 씩 늘고, 행이 없으면 empty 다(V147). */
+  @Test
+  void scriptTokenEpoch_startsAtZero_andIncrementsByOne() {
+    long id = newTenant();
+    assertThat(repository.findScriptTokenEpoch(id)).isEmpty();
+    assertThat(repository.incrementScriptTokenEpoch(id)).isEmpty();
+
+    repository.insert(row(id), accounts(id, "enc-"));
+    assertThat(repository.findScriptTokenEpoch(id)).contains(0L);
+    assertThat(repository.incrementScriptTokenEpoch(id)).contains(1L);
+    assertThat(repository.incrementScriptTokenEpoch(id)).contains(2L);
+    assertThat(repository.findScriptTokenEpoch(id)).contains(2L);
+  }
+
+  /** PG 의 등급 정의 변경 동기화는 세대 번호를 건드리지 않는다(PG 는 세션을 끊는다). */
+  @Test
+  void pgSyncTenantForLevelsChange_doesNotTouchEpoch() {
+    long id = newTenant();
+    repository.insert(row(id), accounts(id, "enc-"));
+    repository.incrementScriptTokenEpoch(id);
+
+    com.smartfirehub.global.tenant.TenantContext.runScoped(id, pgSync::syncTenantForLevelsChange);
+
+    assertThat(repository.findScriptTokenEpoch(id)).contains(1L);
+  }
+
+  /**
+   * tenant_data_store 는 RLS 가 없는 전역 테이블이다 — 백엔드 해석(DataStoreResolver)이 테넌트 GUC 없이 읽어도 행이 보이고, 조회
+   * 실패가 "PG" 로 새지 않는 근거. 정책이 생기면(누가 RLS 를 걸면) 이 테스트가 먼저 알려 준다.
+   */
+  @Test
+  void tenantDataStore_hasNoRowLevelSecurity_andIsReadableWithoutTenantContext() {
+    assertThat(
+            dsl.fetchSingle(
+                    "select relrowsecurity from pg_class where oid = 'public.tenant_data_store'::regclass")
+                .get(0, Boolean.class))
+        .isFalse();
+    long id = newTenant();
+    repository.insert(row(id), accounts(id, "enc-"));
+    com.smartfirehub.global.tenant.TenantContext.clear();
+    assertThat(repository.findBackend(id)).contains(DataStoreBackend.TIBERO);
   }
 }

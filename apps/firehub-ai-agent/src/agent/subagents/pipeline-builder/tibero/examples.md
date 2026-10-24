@@ -103,16 +103,40 @@ WHERE death_count > 0
 
 **요구사항**: 외부 API에서 환율 데이터 수집 → 매출에 환율 적용
 
-**Tibero 테넌트 응답 (Phase 1 에서 즉시 고지)**: "Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다." — Python 로 수집하는 단계는 이 테넌트에서 실행할 수 없다고 알린다(외부 API 수집 자체는 API_CALL 스텝으로 가능하다). 환율이 이미 데이터셋(예: `exchange_rates`)에 있다면 SQL 단계로만 설계한다:
+**Tibero 테넌트**: 환율 수집은 Python(외부 API)이 맡고, Python 단계가 DB 표를 읽어야 할 때는 `genia_db.query` 를 쓴다(두 번째 단계 — 영구 데이터셋을 읽고 stdout 에 JSON 배열을 출력). 이전 스텝의 temp 출력은 Python 이 읽을 수 없으므로 두 Python 단계의 결과(`{{#1}}` 환율, `{{#2}}` 통화별 매출 합계) 결합은 SQL 단계가 맡는다:
 
 ```json
 {
   "name": "환율 적용 매출",
   "steps": [
     {
+      "name": "fetch_rates",
+      "scriptType": "PYTHON",
+      "scriptContent": "import json, urllib.request\ndata = json.loads(urllib.request.urlopen('https://api.exchangerate.host/latest?base=USD').read())\nresult = [{'currency': k, 'rate': v} for k, v in data['rates'].items()]\nprint(json.dumps(result))",
+      "pythonConfig": {
+        "outputColumns": [
+          { "name": "currency", "type": "TEXT" },
+          { "name": "rate", "type": "DECIMAL" }
+        ]
+      }
+    },
+    {
+      "name": "summarize_sales",
+      "scriptType": "PYTHON",
+      "scriptContent": "import json, genia_db\nrows = genia_db.query(\"SELECT currency, SUM(amount) AS total FROM genia_t5.sales GROUP BY currency\")\nprint(json.dumps(rows, ensure_ascii=False, default=str))",
+      "inputDatasetIds": [12],
+      "pythonConfig": {
+        "outputColumns": [
+          { "name": "currency", "type": "TEXT" },
+          { "name": "total", "type": "DECIMAL" }
+        ]
+      }
+    },
+    {
       "name": "apply_rate",
       "scriptType": "SQL",
-      "scriptContent": "SELECT s.order_no, s.currency, s.amount, r.rate, ROUND(s.amount * r.rate, 2) AS amount_usd FROM genia_t5.sales s JOIN genia_t5.exchange_rates r ON s.currency = r.currency",
+      "scriptContent": "SELECT t.currency, t.total, r.rate, ROUND(t.total * r.rate, 2) AS total_usd FROM {{#2}} t JOIN {{#1}} r ON t.currency = r.currency",
+      "dependsOnStepNames": ["fetch_rates", "summarize_sales"],
       "outputDatasetId": 25,
       "loadStrategy": "REPLACE"
     }

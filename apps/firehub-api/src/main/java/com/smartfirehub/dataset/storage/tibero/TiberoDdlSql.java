@@ -439,6 +439,34 @@ public final class TiberoDdlSql {
         + TiberoNames.quote(TiberoNames.physical(schema) + "_RO");
   }
 
+  /** 슬롯 계정 이름 형식 — GRANT/REVOKE 대상은 이 형식만 허용한다(식별자는 인용하지만 형식도 한 번 더 막는다). */
+  private static final java.util.regex.Pattern SLOT_ACCOUNT =
+      java.util.regex.Pattern.compile("GENIA_T[0-9]+_S(10|[1-9])");
+
+  /** 슬롯 계정에 테이블 SELECT 를 준다(WD-78). 테이블은 이미 물리(대문자) 이름이다. */
+  public static String grantSelectToSlot(String schema, String physicalTable, String slotAccount) {
+    return "GRANT SELECT ON "
+        + TiberoNames.qualified(schema, physicalTable)
+        + " TO "
+        + slotGrantee(slotAccount);
+  }
+
+  /** 슬롯 계정의 테이블 SELECT 를 회수한다(WD-78). */
+  public static String revokeSelectFromSlot(
+      String schema, String physicalTable, String slotAccount) {
+    return "REVOKE SELECT ON "
+        + TiberoNames.qualified(schema, physicalTable)
+        + " FROM "
+        + slotGrantee(slotAccount);
+  }
+
+  private static String slotGrantee(String slotAccount) {
+    if (!SLOT_ACCOUNT.matcher(slotAccount).matches()) {
+      throw new IllegalArgumentException("슬롯 계정 이름 형식이 올바르지 않습니다: " + slotAccount);
+    }
+    return TiberoNames.quote(slotAccount);
+  }
+
   /** BOOLEAN 의 이름 있는 CHECK 절. */
   private static String checkClause(String schema, String table, String column) {
     return "CONSTRAINT "

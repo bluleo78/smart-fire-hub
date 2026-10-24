@@ -4,7 +4,6 @@ import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
 import com.smartfirehub.dbexecutor.store.TenantPools;
-import com.smartfirehub.dbexecutor.web.dto.DbError;
 import com.smartfirehub.dbexecutor.web.dto.ProbeColumn;
 import com.smartfirehub.dbexecutor.web.dto.ProbeResponse;
 import java.sql.Connection;
@@ -72,32 +71,7 @@ public class ProbeRunner {
     return execution.withLease(
         d,
         deadline,
-        new LeasedExecution.Failures<>() {
-          @Override
-          public ProbeResponse expiredBeforeBorrow() {
-            return ProbeResponse.failure(timeoutMessage(timeoutSeconds), null);
-          }
-
-          @Override
-          public ProbeResponse connectFailed() {
-            return ProbeResponse.failure(LeasedExecution.CONNECT_FAILED, null);
-          }
-
-          @Override
-          public ProbeResponse timedOut() {
-            return ProbeResponse.failure(timeoutMessage(timeoutSeconds), null);
-          }
-
-          @Override
-          public ProbeResponse dbError(String message, DbError error) {
-            return ProbeResponse.failure(message, error);
-          }
-
-          @Override
-          public ProbeResponse unexpected() {
-            return ProbeResponse.failure(LeasedExecution.UNEXPECTED, null);
-          }
-        },
+        LeasedExecution.failures(timeoutMessage(timeoutSeconds), null, ProbeResponse::failure),
         c -> {
           List<ProbeColumn> columns = columns(c, deadline, wrapped);
           // 읽기만 했지만 트랜잭션을 깨끗이 닫아 커넥션을 반납한다(실패 경로의 ROLLBACK 은 LeasedExecution 이 한다).

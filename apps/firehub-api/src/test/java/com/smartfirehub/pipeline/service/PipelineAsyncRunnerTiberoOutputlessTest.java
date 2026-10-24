@@ -48,7 +48,7 @@ import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
-import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrants;
 import java.sql.Types;
 import java.util.List;
 import java.util.Map;
@@ -111,7 +111,7 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
   @Mock PipelineSecurityGate pipelineSecurityGate;
   @Mock DatasetAccessGuard datasetAccessGuard;
   @Mock AiHostingResolver aiHostingResolver;
-  @Mock PythonReadGrantSync pythonReadGrantSync;
+  @Mock PythonReadGrants pythonReadGrantSync;
   @Mock LocalPythonOutputLoader localPythonOutputLoader;
 
   /** 실제 JSON 변환기 — API_CALL·AI_CLASSIFY 설정 맵을 설정 레코드로 바꾸는 데 쓴다. */

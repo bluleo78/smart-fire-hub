@@ -2,7 +2,10 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.db.connection import init_pool, close_pool, is_pool_ready
@@ -70,6 +73,18 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_without_input(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """요청 형식 오류(422) 응답에서 각 오류의 ``input``(받은 값)을 뺀다 — 나머지 모양(``detail`` 의 type·loc·msg·ctx)은 FastAPI 기본과 같다.
+
+    기본 처리기는 오류마다 받은 값(누락 필드면 본문 전체)을 ``input`` 으로 되돌려 준다. 그러면 형식이 틀린 Tibero Python 요청이 스크립트
+    토큰(WD-78)을 응답에 그대로 싣는다. ``SecretStr`` 은 repr 만 가릴 뿐 이 경로는 막지 못한다. ``ctx`` 는 제약 값(최소·최대 등)이나 검증기의 고정 오류 문구만 담아
+    받은 값을 싣지 않으므로 그대로 둔다. 모든 창구에 적용한다 — 비밀이 아닌 창구에서도 받은 값을 되돌려 줄 이유가 없다.
+    """
+    errors = [{k: v for k, v in err.items() if k != "input"} for err in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
 
 app.include_router(health.router)
 app.include_router(sql.router)

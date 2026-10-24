@@ -55,7 +55,9 @@ class RequestDeadlineTest {
         new ProbeRunner(db.pools, t, descriptors),
         new QueryRunner(db.roPools, t, descriptors),
         new LoadRunner(db.pools, t, descriptors),
-        t);
+        null,
+        t,
+        new com.fasterxml.jackson.databind.ObjectMapper());
   }
 
   /** 기술자 조회가 delayMs 걸린 뒤 기술자를 돌려주게 한다(남은 시간은 기록만 하고 무시 — 최악의 경우). */

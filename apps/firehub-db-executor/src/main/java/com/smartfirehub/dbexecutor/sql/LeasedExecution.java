@@ -52,8 +52,16 @@ final class LeasedExecution {
     /** 대여 전에 기한이 지났다. */
     R expiredBeforeBorrow();
 
-    /** 커넥션을 빌리지 못했다. */
+    /** 커넥션을 빌리지 못했다(접속·인증 실패 등). */
     R connectFailed();
+
+    /**
+     * 풀이 꽉 차 대기 시간 안에 커넥션을 못 얻었다(기술자 탓이 아님). 기본은 {@link #connectFailed()} 와 같은 응답이다 — OWNER·RO 경로는
+     * 기존 문구를 유지하고, 슬롯 스트리밍만 「동시 조회가 많다」로 구분한다(Ruling 17).
+     */
+    default R poolExhausted() {
+      return connectFailed();
+    }
 
     /** 대여 후 시간 초과(기한 경과·cancel). */
     R timedOut();
@@ -65,11 +73,71 @@ final class LeasedExecution {
     R unexpected();
   }
 
-  private final TenantPools pools;
+  /** 실패 응답 하나를 만드는 함수 — 사용자에게 보일 문구와 DB 오류(없으면 null)로 응답을 만든다. */
+  @FunctionalInterface
+  interface FailureResponse<R> {
+    R of(String message, DbError error);
+  }
+
+  /**
+   * 실패 응답이 「문구 + DB 오류」 하나뿐인 실행기(적재·분석 조회·컬럼 탐지·슬롯 스트리밍)가 함께 쓰는 {@link Failures}. 실행기마다 같은 익명 클래스를
+   * 다섯 메서드씩 되풀이하지 않게 여기서 한 번 만든다. 대여 전·후 시간 초과는 같은 문구, 접속 실패·예기치 않은 오류는 고정 문구, DB 오류는 가린 드라이버 문구와
+   * 오류 코드를 싣는다. ({@link SqlRunner} 는 실패 종류마다 다른 실행 로그 줄을 쌓으므로 이 묶음을 쓰지 않는다.)
+   *
+   * @param timeoutMessage 시간 초과 문구(대여 전 기한 경과·대여 후 시간 초과 공통)
+   * @param poolBusyMessage 풀 고갈 문구 — null 이면 접속 실패와 같은 응답이다({@link Failures#poolExhausted()} 기본값)
+   * @param fail 문구·DB 오류로 응답을 만드는 함수(보통 {@code XxxResponse::failure})
+   */
+  static <R> Failures<R> failures(
+      String timeoutMessage, String poolBusyMessage, FailureResponse<R> fail) {
+    return new Failures<>() {
+      @Override
+      public R expiredBeforeBorrow() {
+        return fail.of(timeoutMessage, null);
+      }
+
+      @Override
+      public R connectFailed() {
+        return fail.of(CONNECT_FAILED, null);
+      }
+
+      @Override
+      public R poolExhausted() {
+        return poolBusyMessage == null ? connectFailed() : fail.of(poolBusyMessage, null);
+      }
+
+      @Override
+      public R timedOut() {
+        return fail.of(timeoutMessage, null);
+      }
+
+      @Override
+      public R dbError(String message, DbError error) {
+        return fail.of(message, error);
+      }
+
+      @Override
+      public R unexpected() {
+        return fail.of(UNEXPECTED, null);
+      }
+    };
+  }
+
+  /** 커넥션 대여 방법 — 보관소·슬롯 선택을 호출자가 정한다(슬롯 풀은 {@code (d) -> slotPools.borrow(d, k)}). */
+  @FunctionalInterface
+  interface Borrower {
+    TenantPools.Lease borrow(StoreDescriptor d) throws SQLException;
+  }
+
+  private final Borrower borrower;
   private final StoreDescriptorClient descriptors;
 
   LeasedExecution(TenantPools pools, StoreDescriptorClient descriptors) {
-    this.pools = pools;
+    this(pools::borrow, descriptors);
+  }
+
+  LeasedExecution(Borrower borrower, StoreDescriptorClient descriptors) {
+    this.borrower = borrower;
     this.descriptors = descriptors;
   }
 
@@ -80,7 +148,7 @@ final class LeasedExecution {
     }
     TenantPools.Lease lease;
     try {
-      lease = pools.borrow(d);
+      lease = borrower.borrow(d);
     } catch (SQLException | RuntimeException e) {
       boolean connectFailure = isConnectFailure(e);
       // 예외 객체는 넘기지 않는다 — 원인 체인의 드라이버 메시지에 비밀번호·접속 문자열이 섞일 수 있어 가린 문자열만 남긴다.
@@ -92,8 +160,9 @@ final class LeasedExecution {
       if (connectFailure) {
         // 로그인 실패면 기술자가 낡았을 수 있다(비밀번호 교체) — 캐시를 지워 다음 요청이 새로 받게 한다.
         descriptors.invalidate(d.tenantId());
+        return failures.connectFailed();
       }
-      return failures.connectFailed();
+      return failures.poolExhausted();
     }
     try (lease) {
       Connection c = lease.connection();
@@ -166,7 +235,17 @@ final class LeasedExecution {
     String m = message == null || message.isBlank() ? "알 수 없는 데이터베이스 오류" : message;
     m = mask(m, d.owner());
     // 읽기 전용 계정 접속 실패 메시지에 RO 비밀번호가 섞일 수 있어 같이 가린다.
-    return mask(m, d.ro());
+    m = mask(m, d.ro());
+    // 슬롯 계정(WD-78) 접속 실패 메시지에도 같은 규칙.
+    if (d.slots() != null) {
+      for (StoreDescriptor.SlotAccount s : d.slots()) {
+        String password = s == null ? null : s.password();
+        if (password != null && !password.isEmpty()) {
+          m = m.replace(password, "****");
+        }
+      }
+    }
+    return m;
   }
 
   private static String mask(String m, StoreDescriptor.Account a) {

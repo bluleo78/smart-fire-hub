@@ -32,6 +32,9 @@ RUN pip install --no-cache-dir --target=/opt/python-packages \
     lxml \
     numpy
 
+# Tibero 테넌트 스크립트용 조회 도우미(genia_db, WD-78) — 샌드박스 패키지 경로에 둔다(표준 라이브러리만 씀)
+COPY sandbox/genia_db.py /opt/python-packages/genia_db.py
+
 # App dependencies
 WORKDIR /app
 COPY requirements.txt .

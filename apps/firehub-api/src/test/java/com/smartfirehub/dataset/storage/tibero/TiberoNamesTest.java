@@ -94,6 +94,18 @@ class TiberoNamesTest {
         .isNotEqualTo(TiberoNames.stagingSequenceName("STG_ABD"));
   }
 
+  /** 스테이징 _SEQ 인덱스 이름(WD-77): 스테이징에서 파생한 13자 고정 길이, 스테이징마다 다르고 컬럼·PK 인덱스와 접두가 다르다. */
+  @Test
+  void stagingSeqIndexName_derivedFromStaging_fitsLimit() {
+    String stg = "STG_0123456789ABCDEF01234567";
+    String ix = TiberoNames.stagingSeqIndexName(stg);
+    assertThat(ix).matches("^SX_[0-9A-F]{10}$");
+    assertThat(ix.length()).isLessThanOrEqualTo(TiberoDialect.MAX_IDENTIFIER_LENGTH);
+    assertThat(TiberoNames.stagingSeqIndexName(stg)).isEqualTo(ix);
+    assertThat(TiberoNames.stagingSeqIndexName(stg.toLowerCase())).isEqualTo(ix);
+    assertThat(TiberoNames.stagingSeqIndexName("STG_0123456789ABCDEF01234568")).isNotEqualTo(ix);
+  }
+
   @Test
   void turkishDefaultLocale_doesNotChangeResults() {
     Locale original = Locale.getDefault();

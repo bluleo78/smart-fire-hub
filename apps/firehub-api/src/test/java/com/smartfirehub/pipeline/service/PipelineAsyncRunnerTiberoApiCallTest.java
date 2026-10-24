@@ -43,7 +43,7 @@ import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
-import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrants;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -116,7 +116,7 @@ class PipelineAsyncRunnerTiberoApiCallTest {
   @Mock PipelineSecurityGate pipelineSecurityGate;
   @Mock DatasetAccessGuard datasetAccessGuard;
   @Mock AiHostingResolver aiHostingResolver;
-  @Mock PythonReadGrantSync pythonReadGrantSync;
+  @Mock PythonReadGrants pythonReadGrantSync;
   @Mock LocalPythonOutputLoader localPythonOutputLoader;
 
   @InjectMocks PipelineAsyncRunner runner;

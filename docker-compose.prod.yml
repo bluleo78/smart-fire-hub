@@ -96,7 +96,8 @@ services:
       # db-executor 전용 내부 토큰(스펙 §3.4) — Python 실행기의 EXECUTOR_INTERNAL_TOKEN 과 **반드시 다른 값**이다
       # (같으면 api 기동 실패). 새 비밀값이라 기본값 없이 필수로 받는다.
       DB_EXECUTOR_INTERNAL_TOKEN: ${DB_EXECUTOR_INTERNAL_TOKEN:?DB_EXECUTOR_INTERNAL_TOKEN is required}
-      # 스크립트 1회용 토큰 서명 키 — db-executor 와 같은 .env 키. 발급·검증은 WD-78 에서 구현한다.
+      # 스크립트 1회용 토큰 서명 키 — db-executor 와 같은 .env 키(32바이트 이상 임의 값). api 가 Tibero Python 단계의 슬롯 조회
+      # 토큰을 이 키로 서명하고 db-executor 가 검증한다(WD-78).
       DB_EXECUTOR_SCRIPT_TOKEN_KEY: ${DB_EXECUTOR_SCRIPT_TOKEN_KEY:?DB_EXECUTOR_SCRIPT_TOKEN_KEY is required}
     depends_on:
       db:

@@ -17,11 +17,17 @@ public final class PreStatementRule {
   public static final String REJECTED = "허용되지 않은 선행 문장입니다.";
 
   /**
+   * 테넌트 스키마 이름의 문자 집합(대문자, 예: {@code GENIA_T5}) — 그룹 없는 정규식 조각. 적재 대상 규칙({@link LoadTableRule})도 같은
+   * 조각을 써서 두 규칙의 스키마 허용 범위가 갈리지 않게 한다. 그룹을 넣으면 {@link #DELETE_ALL} 의 그룹 번호가 밀리므로 넣지 않는다.
+   */
+  static final String SCHEMA_CHARS = "[A-Z0-9_]+";
+
+  /**
    * api {@code TiberoPipelineSql.deleteAll} 결과와 정확히 같은 모양. {@code matches()} 로 전체 일치를 요구하므로 뒤에 붙은
    * {@code WHERE}·세미콜론·개행·두 번째 문장은 모두 거부된다.
    */
   private static final Pattern DELETE_ALL =
-      Pattern.compile("^DELETE FROM \"([A-Z0-9_]+)\"\\.\"([A-Z0-9_$#]+)\"$");
+      Pattern.compile("^DELETE FROM \"(" + SCHEMA_CHARS + ")\"\\.\"([A-Z0-9_$#]+)\"$");
 
   private PreStatementRule() {}
 

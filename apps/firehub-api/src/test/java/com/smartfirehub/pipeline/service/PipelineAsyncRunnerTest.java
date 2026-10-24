@@ -36,7 +36,7 @@ import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.securitylevel.pythonread.PythonReadAccessException;
-import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrants;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;
@@ -101,7 +101,7 @@ class PipelineAsyncRunnerTest {
   // S3 AI_CLASSIFY 입력 AI 판정 — 판정 자체는 AiClassifyInputAccessTest(통합)가 검증한다. 여기서는 통과(목 기본값)로 둔다.
   @Mock DatasetAccessGuard datasetAccessGuard;
   @Mock AiHostingResolver aiHostingResolver;
-  @Mock PythonReadGrantSync pythonReadGrantSync;
+  @Mock PythonReadGrants pythonReadGrantSync;
   @Mock LocalPythonOutputLoader localPythonOutputLoader;
 
   @InjectMocks PipelineAsyncRunner runner;

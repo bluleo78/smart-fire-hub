@@ -100,7 +100,9 @@ class TiberoLiveCursorTest {
             new ProbeRunner(pools, timeouts, descriptors),
             new QueryRunner(roPools, timeouts, descriptors),
             new LoadRunner(pools, timeouts, descriptors),
-            timeouts);
+            null,
+            timeouts,
+            new com.fasterxml.jackson.databind.ObjectMapper());
     String s = "\"" + schema + "\"";
     exec(
         owner,
@@ -229,7 +231,8 @@ class TiberoLiveCursorTest {
   /** RO 계정으로 후보 문장을 /execute/query 에 실제로 보낸다. */
   private LocalDateTime candidate() {
     QueryResponse r =
-        controller.query(new QueryRequest(account.tenantId(), CANDIDATE_SQL, 1, true, null));
+        LiveQuery.run(
+            controller, new QueryRequest(account.tenantId(), CANDIDATE_SQL, 1, true, null, null));
     assertThat(r.success()).as(String.valueOf(r.error())).isTrue();
     assertThat(r.rows()).hasSize(1);
     String text = String.valueOf(r.rows().get(0).get("candidate"));

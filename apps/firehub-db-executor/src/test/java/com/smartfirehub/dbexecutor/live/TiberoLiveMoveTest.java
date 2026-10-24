@@ -103,7 +103,9 @@ class TiberoLiveMoveTest {
             new ProbeRunner(pools, timeouts, descriptors),
             new QueryRunner(pools, timeouts, descriptors),
             new LoadRunner(pools, timeouts, descriptors),
-            timeouts);
+            null,
+            timeouts,
+            new com.fasterxml.jackson.databind.ObjectMapper());
   }
 
   @AfterAll

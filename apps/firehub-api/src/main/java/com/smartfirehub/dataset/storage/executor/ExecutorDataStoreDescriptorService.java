@@ -8,7 +8,9 @@ import com.smartfirehub.dataset.storage.TenantDataStoreRepository;
 import com.smartfirehub.dataset.storage.TenantDataStoreRow;
 import com.smartfirehub.dataset.storage.TenantDataStoreStatus;
 import com.smartfirehub.global.exception.CodedApiException;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -17,8 +19,8 @@ import org.springframework.stereotype.Service;
  * 테넌트의 저장소 기술자를 만든다(WD-75).
  *
  * <p>백엔드 판정의 단일 출처다 — executor 는 요청 페이로드가 아니라 이 결과만 믿는다. 행이 없으면 기본 PostgreSQL 이다. Tibero 는 READY 일
- * 때만 OWNER 계정 하나를 복호화해 낸다(RO 는 {@code includeReadOnly} 요청 시에만, 슬롯은 소비자가 없으므로 복호화하지 않아 평문 노출을
- * 최소화한다).
+ * 때만 OWNER 계정 하나를 복호화해 낸다(RO 는 {@code includeReadOnly}, 슬롯 S1..S10 은 {@code includeSlots} 요청 시에만
+ * 복호화해 평문 노출을 최소화한다 — 둘 다 db-executor 토큰 경로에서만 요청된다).
  */
 @Slf4j
 @Service
@@ -49,19 +51,27 @@ public class ExecutorDataStoreDescriptorService {
           HttpStatus.CONFLICT, "DATA_STORE_BACKEND_UNSUPPORTED", "MySQL 저장소는 아직 실행기에서 지원하지 않습니다");
     }
     return new ExecutorDataStoreDescriptor(
-        tenantId, DataStoreBackend.TIBERO, null, null, null, null, null, null);
+        tenantId, DataStoreBackend.TIBERO, null, null, null, null, null, null, null, null);
+  }
+
+  /** {@link #describe(long, boolean, boolean, boolean)} 의 슬롯 없는 판(기존 호출자 호환). */
+  public ExecutorDataStoreDescriptor describe(
+      long tenantId, boolean secretsAllowed, boolean includeReadOnly) {
+    return describe(tenantId, secretsAllowed, includeReadOnly, false);
   }
 
   /**
    * @param includeReadOnly true 면 Tibero 기술자에 읽기 전용(RO) 계정을 복호화해 싣는다(db-executor 분석 조회용, WD-76). RO
    *     행이 없으면 {@code ro} 없이 응답한다(실패 안내는 소비자 몫). PostgreSQL 테넌트는 이 값과 무관하게 PG 기술자 그대로다.
+   * @param includeSlots true 면 Tibero 기술자에 슬롯 계정 S1..S10 을 복호화해 슬롯 번호 순으로 싣는다(db-executor 슬롯 스트리밍
+   *     조회용, WD-78). 복호화에 실패한 슬롯은 빼고 경고만 남긴다. false 면 슬롯 암호문을 복호화하지 않는다
    * @param secretsAllowed 평문 비밀번호를 내도 되는가(내부 토큰이 안전하게 설정됨). false 면 비밀번호가 담길 TIBERO 기술자는 복호화 전에 503
    *     으로 거부하고, 비밀이 없는 POSTGRESQL 기술자는 그대로 낸다.
    * @throws CodedApiException 503 — 비밀번호를 낼 수 없는 토큰 설정(EXECUTOR_TOKEN_NOT_CONFIGURED), 409 — Tibero
    *     가 아직 READY 가 아니거나(DATA_STORE_NOT_READY) 지원하지 않는 백엔드(DATA_STORE_BACKEND_UNSUPPORTED)
    */
   public ExecutorDataStoreDescriptor describe(
-      long tenantId, boolean secretsAllowed, boolean includeReadOnly) {
+      long tenantId, boolean secretsAllowed, boolean includeReadOnly, boolean includeSlots) {
     TenantDataStoreRow row = repository.find(tenantId).orElse(null);
     if (row == null || row.backend() == DataStoreBackend.POSTGRESQL) {
       return ExecutorDataStoreDescriptor.postgres(tenantId);
@@ -102,6 +112,15 @@ public class ExecutorDataStoreDescriptorService {
                 .map(a -> decryptReadOnly(tenantId, a))
                 .orElse(null)
             : null;
+    // 슬롯도 요청 시에만 복호화한다. 저장 순서와 무관하게 슬롯 번호 순으로 낸다.
+    List<ExecutorDataStoreDescriptor.SlotAccount> slots =
+        includeSlots
+            ? accounts.stream()
+                .map(a -> decryptSlot(tenantId, a))
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparingInt(ExecutorDataStoreDescriptor.SlotAccount::slot))
+                .toList()
+            : null;
     return new ExecutorDataStoreDescriptor(
         tenantId,
         DataStoreBackend.TIBERO,
@@ -111,7 +130,10 @@ public class ExecutorDataStoreDescriptorService {
         row.schemaName(),
         new ExecutorDataStoreDescriptor.Account(
             owner.username(), encryption.decrypt(owner.encryptedPassword())),
-        ro);
+        ro,
+        slots,
+        // 스크립트 토큰 세대 번호(Task 13 이 토큰에 싣고 db-executor 가 비교). 컬럼 기본값이 0 이라 행이 있으면 항상 값이 있다.
+        repository.findScriptTokenEpoch(tenantId).orElse(0L));
   }
 
   /**
@@ -131,6 +153,29 @@ public class ExecutorDataStoreDescriptorService {
       log.warn(
           "Tibero 읽기 전용 계정 비밀번호 복호화 실패 — 기술자에서 ro 를 뺀다 tenant={} 종류={}",
           tenantId,
+          e.getClass().getName());
+      return null;
+    }
+  }
+
+  /**
+   * 슬롯 계정(S1..S10)이면 복호화해 돌려주고, 슬롯이 아니면 null. 복호화에 실패하면 그 슬롯만 빼고 경고한다 — RO 와 같은 이유로, db-executor 는
+   * 모든 경로에서 {@code include=ro,slots} 로 받으므로 슬롯 하나의 손상이 파이프라인 전체를 멈추게 하지 않는다(그 슬롯의 스크립트 조회만 「슬롯 계정이
+   * 준비되지 않았습니다」로 실패한다). 로그에는 테넌트·슬롯·예외 종류만 남긴다.
+   */
+  private ExecutorDataStoreDescriptor.SlotAccount decryptSlot(long tenantId, StoredAccount a) {
+    if (a.role() == null || !a.role().isReadSlot()) {
+      return null;
+    }
+    try {
+      // 슬롯 번호도 try 안에서 얻는다 — 어떤 이유로든 실패하면 그 슬롯만 빠지고 기술자 전체는 계속 나간다.
+      return new ExecutorDataStoreDescriptor.SlotAccount(
+          a.role().readSlot(), a.username(), encryption.decrypt(a.encryptedPassword()));
+    } catch (RuntimeException e) {
+      log.warn(
+          "Tibero 슬롯 계정 비밀번호 복호화 실패 — 기술자에서 그 슬롯을 뺀다 tenant={} 슬롯={} 종류={}",
+          tenantId,
+          a.role(),
           e.getClass().getName());
       return null;
     }

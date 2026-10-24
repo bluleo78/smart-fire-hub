@@ -4,7 +4,6 @@ import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
 import com.smartfirehub.dbexecutor.store.TenantPools;
-import com.smartfirehub.dbexecutor.web.dto.DbError;
 import com.smartfirehub.dbexecutor.web.dto.LoadResponse;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -127,32 +126,7 @@ public class LoadRunner {
     return execution.withLease(
         d,
         deadline,
-        new LeasedExecution.Failures<>() {
-          @Override
-          public LoadResponse expiredBeforeBorrow() {
-            return LoadResponse.failure(timeoutMessage(total), null);
-          }
-
-          @Override
-          public LoadResponse connectFailed() {
-            return LoadResponse.failure(LeasedExecution.CONNECT_FAILED, null);
-          }
-
-          @Override
-          public LoadResponse timedOut() {
-            return LoadResponse.failure(timeoutMessage(total), null);
-          }
-
-          @Override
-          public LoadResponse dbError(String message, DbError error) {
-            return LoadResponse.failure(message, error);
-          }
-
-          @Override
-          public LoadResponse unexpected() {
-            return LoadResponse.failure(LeasedExecution.UNEXPECTED, null);
-          }
-        },
+        LeasedExecution.failures(timeoutMessage(total), null, LoadResponse::failure),
         c -> {
           // _SEQ 기준값은 같은 트랜잭션에서 한 번만 읽는다. 한 실행이 같은 스테이징에 /execute/load 를 여러 번 부르고(순차),
           // 호출 사이에 _SEQ 가 이어져야 옮길 때 ORDER BY "_SEQ" 가 입력 순서를 보장한다.

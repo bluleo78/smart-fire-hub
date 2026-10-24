@@ -175,7 +175,9 @@ class TiberoLiveSqlTest {
         // 분석 조회는 RO 계정 풀로만 실행한다.
         new QueryRunner(roPools, timeouts, descriptors),
         new LoadRunner(pools, timeouts, descriptors),
-        timeouts);
+        null,
+        timeouts,
+        new com.fasterxml.jackson.databind.ObjectMapper());
   }
 
   /** 매 테스트마다 api createTable 과 같은 모양의 출력 테이블·시퀀스를 새로 만든다. */
@@ -344,7 +346,8 @@ class TiberoLiveSqlTest {
   void live_query_readsWithRoAccount() throws Exception {
     seedThreeRowsForRo();
     // 상한 2 → 2행·잘림
-    QueryResponse cut = controller.query(new QueryRequest(tenantId, ordersSelect(), 2, true, null));
+    QueryResponse cut =
+        LiveQuery.run(controller, new QueryRequest(tenantId, ordersSelect(), 2, true, null, null));
     System.out.println(
         "LIVE query maxRows=2 rows=" + cut.rowCount() + " truncated=" + cut.truncated());
     assertThat(cut.success()).as(String.valueOf(cut.error())).isTrue();
@@ -352,7 +355,7 @@ class TiberoLiveSqlTest {
     assertThat(cut.truncated()).isTrue();
     // 상한 10 → 3행·잘리지 않음
     QueryResponse all =
-        controller.query(new QueryRequest(tenantId, ordersSelect(), 10, true, null));
+        LiveQuery.run(controller, new QueryRequest(tenantId, ordersSelect(), 10, true, null, null));
     System.out.println(
         "LIVE query maxRows=10 rows=" + all.rowCount() + " truncated=" + all.truncated());
     assertThat(all.success()).as(String.valueOf(all.error())).isTrue();
@@ -360,7 +363,9 @@ class TiberoLiveSqlTest {
     assertThat(all.truncated()).isFalse();
     // 실제로 RO 계정으로 접속했는지 — 세션 사용자로 확인한다.
     QueryResponse who =
-        controller.query(new QueryRequest(tenantId, "SELECT USER AS u FROM DUAL", 1, true, null));
+        LiveQuery.run(
+            controller,
+            new QueryRequest(tenantId, "SELECT USER AS u FROM DUAL", 1, true, null, null));
     assertThat(who.success()).as(String.valueOf(who.error())).isTrue();
     assertThat(String.valueOf(who.rows().get(0).get("u"))).isEqualTo(account.roSchema());
   }
@@ -382,8 +387,10 @@ class TiberoLiveSqlTest {
     assertThat(scalar("SELECT COUNT(*) FROM " + t + " WHERE \"NAME\" = 'x'")).isEqualTo("0");
     // 2) QueryRunner 에 UPDATE → 조회 전용 문구로 거부(커넥션을 빌리기 전에).
     QueryResponse r =
-        controller.query(
-            new QueryRequest(tenantId, "UPDATE " + t + " SET \"NAME\" = 'x'", 10, true, null));
+        LiveQuery.run(
+            controller,
+            new QueryRequest(
+                tenantId, "UPDATE " + t + " SET \"NAME\" = 'x'", 10, true, null, null));
     System.out.println("LIVE query runner-update error=" + r.error());
     assertThat(r.success()).isFalse();
     assertThat(r.error()).contains("조회");
@@ -398,15 +405,17 @@ class TiberoLiveSqlTest {
         controller(descriptor, new ExecutionTimeouts.Sql(50, 55), new ExecutionTimeouts.Query(2));
     // RO 풀 첫 접속 비용이 2~5초 창에 섞이지 않도록 같은 경로로 먼저 한 번 데운다.
     assertThat(
-            shortTimeout
-                .query(new QueryRequest(tenantId, "SELECT 1 FROM DUAL", 1, true, null))
+            LiveQuery.run(
+                    shortTimeout,
+                    new QueryRequest(tenantId, "SELECT 1 FROM DUAL", 1, true, null, null))
                 .success())
         .isTrue();
     // 느린 본문은 DUAL 과 RO 가 SELECT 할 수 있는 ORDERS 만 건드린다.
     String slow =
         "SELECT \"ID_KEY\" FROM \"" + schema + "\".\"ORDERS\" WHERE (" + slowCount(10) + ") > 0";
     long t0 = System.nanoTime();
-    QueryResponse r = shortTimeout.query(new QueryRequest(tenantId, slow, 10, true, null));
+    QueryResponse r =
+        LiveQuery.run(shortTimeout, new QueryRequest(tenantId, slow, 10, true, null, null));
     long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
     System.out.println("LIVE query timeout elapsedMs=" + ms + " error=" + r.error());
     assertThat(r.success()).isFalse();

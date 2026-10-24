@@ -106,7 +106,8 @@ class TiberoDataTableStoreTest {
             columnTypeCache,
             mock(TiberoDataRowStore.class),
             mock(TiberoBulkMover.class),
-            mock(TiberoTriggerPrivilege.class));
+            mock(TiberoTriggerPrivilege.class),
+            mock(com.smartfirehub.securitylevel.pythonread.TiberoPythonReadGrantSync.class));
     logs = new ch.qos.logback.core.read.ListAppender<>();
     logs.start();
     storeLogger().addAppender(logs);

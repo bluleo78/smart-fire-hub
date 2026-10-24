@@ -18,7 +18,7 @@ import java.util.Map;
  * ALL_OBJECTS}) 읽기 헬퍼(WD-74). 두 저장소가 같은 쿼리·바인딩 규칙(스키마·객체 이름은 대문자 물리 이름)을 쓰도록 한 곳에 둔다. 커넥션 종류는 호출자가
  * 정한다.
  */
-final class TiberoCatalog {
+public final class TiberoCatalog {
 
   private TiberoCatalog() {}
 
@@ -43,6 +43,154 @@ final class TiberoCatalog {
   static String staleStagingQuery() {
     return "SELECT OBJECT_NAME FROM ALL_OBJECTS WHERE OWNER = ? AND OBJECT_TYPE = 'TABLE'"
         + " AND OBJECT_NAME LIKE 'STG\\_%' ESCAPE '\\' AND CREATED < SYSDATE - ?";
+  }
+
+  /** OWNER 세션의 트리거 생성 권한 수 조회({@code SESSION_PRIVS}). 바인드 없음. */
+  static String createTriggerPrivilegeQuery() {
+    return "SELECT COUNT(*) FROM SESSION_PRIVS WHERE PRIVILEGE IN"
+        + " ('CREATE TRIGGER', 'CREATE ANY TRIGGER')";
+  }
+
+  /** OWNER 세션 소유 트리거의 상태 조회({@code USER_TRIGGERS}). 바인드: 트리거 이름 {@code n} 개(대문자). */
+  static String triggerStatusQuery(int n) {
+    return "SELECT TRIGGER_NAME, STATUS FROM USER_TRIGGERS WHERE TRIGGER_NAME IN ("
+        + String.join(", ", java.util.Collections.nCopies(n, "?"))
+        + ")";
+  }
+
+  /**
+   * OWNER 세션에 CREATE TRIGGER(또는 CREATE ANY TRIGGER) 권한이 있는가. 반드시 OWNER 세션에서 불러야 한다 — DBA 세션이면 DBA 의
+   * 권한이 나온다.
+   */
+  static boolean hasCreateTriggerPrivilege(Connection conn) throws SQLException {
+    try (var st = conn.createStatement();
+        ResultSet rs = st.executeQuery(createTriggerPrivilegeQuery())) {
+      return rs.next() && rs.getInt(1) > 0;
+    }
+  }
+
+  /**
+   * 주어진 트리거 중 OWNER 세션에 있고 켜진({@code STATUS} 가 ENABLED, 대소문자 무시) 것의 이름들. DISABLED 등은 없는 것으로 본다. 이름이
+   * 없으면 질의하지 않는다. 한 문장의 읽기·쓰기 대상 수만큼이라 IN 목록 한도(1000)에 닿지 않는다.
+   */
+  static java.util.Set<String> enabledTriggers(
+      Connection conn, java.util.Collection<String> triggerNames) throws SQLException {
+    java.util.Set<String> enabled = new java.util.TreeSet<>();
+    if (triggerNames.isEmpty()) {
+      return enabled;
+    }
+    try (PreparedStatement ps = conn.prepareStatement(triggerStatusQuery(triggerNames.size()))) {
+      int i = 1;
+      for (String name : triggerNames) {
+        ps.setString(i++, name);
+      }
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          if ("ENABLED".equalsIgnoreCase(rs.getString(2))) {
+            enabled.add(rs.getString(1));
+          }
+        }
+      }
+    }
+    return enabled;
+  }
+
+  /** OWNER 세션이 소유한 테이블 이름 조회({@code USER_TABLES}). 바인드: (테이블 한정 시) 테이블 물리 이름. */
+  static String ownTablesQuery(boolean singleTable) {
+    return "SELECT TABLE_NAME FROM USER_TABLES" + (singleTable ? " WHERE TABLE_NAME = ?" : "");
+  }
+
+  /**
+   * OWNER 가 슬롯 계정에 건 SELECT 권한 조회({@code USER_TAB_PRIVS_MADE}). 바인드: 슬롯 계정 LIKE 패턴({@code \}로
+   * 이스케이프), (테이블 한정 시) 테이블 물리 이름. 뷰·시퀀스 등 테이블이 아닌 객체의 GRANT 도 함께 나온다.
+   */
+  static String slotSelectGrantsQuery(boolean singleTable) {
+    return "SELECT TABLE_NAME, GRANTEE FROM USER_TAB_PRIVS_MADE WHERE GRANTEE LIKE ? ESCAPE '\\'"
+        + " AND PRIVILEGE = 'SELECT'"
+        + (singleTable ? " AND TABLE_NAME = ?" : "");
+  }
+
+  /**
+   * OWNER 가 지정한 계정들에 건 SELECT 권한 조회({@code USER_TAB_PRIVS_MADE}, WD-78). 바인드: 계정 이름 {@code
+   * grantees} 개, (테이블 한정 시) 테이블 물리 이름. LIKE 판({@link #slotSelectGrantsQuery})과 달리 계정을 정확히 묶어 다시 거를
+   * 필요가 없다.
+   */
+  static String slotSelectGrantsByGranteeQuery(int grantees, boolean singleTable) {
+    return "SELECT TABLE_NAME, GRANTEE FROM USER_TAB_PRIVS_MADE WHERE GRANTEE IN ("
+        + String.join(", ", java.util.Collections.nCopies(grantees, "?"))
+        + ") AND PRIVILEGE = 'SELECT'"
+        + (singleTable ? " AND TABLE_NAME = ?" : "");
+  }
+
+  /** OWNER 세션 소유 테이블 물리 이름들(대문자). {@code onlyTable} 이 null 이면 전부, 아니면 그 하나(있으면). */
+  public static java.util.Set<String> ownTables(Connection conn, String onlyTable)
+      throws SQLException {
+    java.util.Set<String> names = new java.util.TreeSet<>();
+    try (PreparedStatement ps = conn.prepareStatement(ownTablesQuery(onlyTable != null))) {
+      if (onlyTable != null) {
+        ps.setString(1, onlyTable);
+      }
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          names.add(rs.getString(1));
+        }
+      }
+    }
+    return names;
+  }
+
+  /**
+   * 테넌트 슬롯 계정({@code GENIA_T{id}_S%})에 걸린 SELECT 권한 {테이블 물리 이름 → 계정 이름 집합}. LIKE 는 {@code
+   * GENIA_T1_S%} 가 {@code GENIA_T1_SXYZ} 같은 이름도 잡을 수 있으므로 호출자가 슬롯 계정 이름 집합으로 다시 거른다.
+   */
+  public static Map<String, java.util.Set<String>> slotSelectGrants(
+      Connection conn, long tenantId, String onlyTable) throws SQLException {
+    Map<String, java.util.Set<String>> grants = new LinkedHashMap<>();
+    try (PreparedStatement ps = conn.prepareStatement(slotSelectGrantsQuery(onlyTable != null))) {
+      ps.setString(1, "GENIA\\_T" + tenantId + "\\_S%");
+      if (onlyTable != null) {
+        ps.setString(2, onlyTable);
+      }
+      readGrants(ps, grants);
+    }
+    return grants;
+  }
+
+  /**
+   * 지정한 계정들({@code grantees}, 정확한 이름)에 걸린 SELECT 권한 {테이블 물리 이름 → 계정 이름 집합}(WD-78). 실행 준비처럼 다룰 슬롯
+   * 계정을 이미 아는 경우 LIKE 로 테넌트 슬롯 전부를 읽은 뒤 거르지 않고 그 계정만 읽는다. 계정이 없으면 질의하지 않는다.
+   */
+  public static Map<String, java.util.Set<String>> slotSelectGrants(
+      Connection conn, java.util.Collection<String> grantees, String onlyTable)
+      throws SQLException {
+    Map<String, java.util.Set<String>> grants = new LinkedHashMap<>();
+    if (grantees.isEmpty()) {
+      return grants;
+    }
+    try (PreparedStatement ps =
+        conn.prepareStatement(slotSelectGrantsByGranteeQuery(grantees.size(), onlyTable != null))) {
+      int i = 1;
+      for (String grantee : grantees) {
+        ps.setString(i++, grantee);
+      }
+      if (onlyTable != null) {
+        ps.setString(i, onlyTable);
+      }
+      readGrants(ps, grants);
+    }
+    return grants;
+  }
+
+  /** (TABLE_NAME, GRANTEE) 행을 {테이블 → 계정 집합} 에 모은다. */
+  private static void readGrants(PreparedStatement ps, Map<String, java.util.Set<String>> grants)
+      throws SQLException {
+    try (ResultSet rs = ps.executeQuery()) {
+      while (rs.next()) {
+        grants
+            .computeIfAbsent(rs.getString(1), k -> new java.util.TreeSet<>())
+            .add(rs.getString(2));
+      }
+    }
   }
 
   /** 테이블의 {컬럼명(소문자) → 물리 타입}. 테이블이 없으면 빈 맵. */

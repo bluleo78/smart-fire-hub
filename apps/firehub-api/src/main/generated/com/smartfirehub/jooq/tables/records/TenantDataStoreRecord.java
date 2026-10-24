@@ -178,6 +178,24 @@ public class TenantDataStoreRecord extends UpdatableRecordImpl<TenantDataStoreRe
         return (LocalDateTime) get(10);
     }
 
+    /**
+     * Setter for <code>public.tenant_data_store.script_token_epoch</code>. 스크립트
+     * 토큰 세대 번호 — Tibero 등급 정의 변경 동기화가 GRANT 전에 올린다. 토큰이 이 값보다 낮으면 db-executor 가
+     * 거부(Task 13)
+     */
+    public void setScriptTokenEpoch(Long value) {
+        set(11, value);
+    }
+
+    /**
+     * Getter for <code>public.tenant_data_store.script_token_epoch</code>. 스크립트
+     * 토큰 세대 번호 — Tibero 등급 정의 변경 동기화가 GRANT 전에 올린다. 토큰이 이 값보다 낮으면 db-executor 가
+     * 거부(Task 13)
+     */
+    public Long getScriptTokenEpoch() {
+        return (Long) get(11);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -201,7 +219,7 @@ public class TenantDataStoreRecord extends UpdatableRecordImpl<TenantDataStoreRe
     /**
      * Create a detached, initialised TenantDataStoreRecord
      */
-    public TenantDataStoreRecord(Long tenantId, String backend, String host, Integer port, String databaseName, String schemaName, String tablespace, String provisionMode, String status, LocalDateTime createdAt, LocalDateTime updatedAt) {
+    public TenantDataStoreRecord(Long tenantId, String backend, String host, Integer port, String databaseName, String schemaName, String tablespace, String provisionMode, String status, LocalDateTime createdAt, LocalDateTime updatedAt, Long scriptTokenEpoch) {
         super(TenantDataStore.TENANT_DATA_STORE);
 
         setTenantId(tenantId);
@@ -215,6 +233,7 @@ public class TenantDataStoreRecord extends UpdatableRecordImpl<TenantDataStoreRe
         setStatus(status);
         setCreatedAt(createdAt);
         setUpdatedAt(updatedAt);
+        setScriptTokenEpoch(scriptTokenEpoch);
         resetChangedOnNotNull();
     }
 }

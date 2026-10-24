@@ -3,7 +3,8 @@
 #
 # ~/.tibero/credentials 의 TIBERO_* 값을 TIBERO_TEST_* 환경변수로 넘겨 다음을 실행한다.
 #   api 단계: 방언 확인(TiberoDialectProbeTest)과 계약 테스트(TiberoDataStoreContractTest)
-#   db-executor 단계: SQL 실행·컬럼 탐지 실서버 테스트(TiberoLiveSqlTest, WD-77)와 HTTP 끝-끝 테스트(TiberoLiveHttpTest)
+#   db-executor 단계: SQL 실행·컬럼 탐지 실서버 테스트(TiberoLiveSqlTest, WD-77)와 HTTP 끝-끝 테스트(TiberoLiveHttpTest),
+#                     슬롯 스트리밍·REVOKE 즉시 반영(TiberoLiveSlotStreamTest, WD-78)
 #
 # - 자격 증명 값은 어디에도 출력하지 않는다. 절대 `set -x` 를 켜지 말 것.
 # - 각 앱의 libs/tibero*.jar (Tibero JDBC 드라이버)가 있어야 한다. 없으면 안내 후 종료한다.
@@ -90,30 +91,32 @@ set +e
 status=0
 
 if [[ "$STAGE" == all || "$STAGE" == api ]]; then
-  echo "== api 단계 (TiberoDialectProbeTest, TiberoDataStoreContractTest, TiberoLiveTriggerTest)"
+  echo "== api 단계 (TiberoDialectProbeTest, TiberoDataStoreContractTest, TiberoLiveTriggerTest, TiberoLiveSlotGrantTest)"
   "$ROOT_DIR/apps/firehub-api/gradlew" -p "$ROOT_DIR/apps/firehub-api" test \
     --tests com.smartfirehub.dataset.storage.tibero.TiberoDialectProbeTest \
     --tests com.smartfirehub.dataset.storage.tibero.TiberoDataStoreContractTest \
     --tests com.smartfirehub.dataset.storage.tibero.TiberoLiveTriggerTest \
+    --tests com.smartfirehub.dataset.storage.tibero.TiberoLiveSlotGrantTest \
     -i 2>&1 | grep -E '^[[:space:]]*PROBE |[[:space:]]>[[:space:]].*[[:space:]](PASSED|FAILED|SKIPPED)$|^BUILD (SUCCESSFUL|FAILED)|tests completed'
   api_status=${PIPESTATUS[0]}
   # 테스트별 PASSED 줄은 gradle 로그 설정에 따라 안 찍힐 수 있으므로, 결과 XML 의 클래스별 합계를 함께 보여 준다.
-  print_totals "$ROOT_DIR"/apps/firehub-api/build/test-results/test/TEST-com.smartfirehub.dataset.storage.tibero.Tibero{DialectProbe,DataStoreContract,LiveTrigger}Test.xml
+  print_totals "$ROOT_DIR"/apps/firehub-api/build/test-results/test/TEST-com.smartfirehub.dataset.storage.tibero.Tibero{DialectProbe,DataStoreContract,LiveTrigger,LiveSlotGrant}Test.xml
   [[ $api_status -ne 0 ]] && status=$api_status
 fi
 
 if [[ "$STAGE" == all || "$STAGE" == db-executor ]]; then
-  echo "== db-executor 단계 (TiberoLiveSqlTest, TiberoLiveHttpTest, TiberoLiveLoadTest, TiberoLiveMoveTest, TiberoLiveCursorTest)"
+  echo "== db-executor 단계 (TiberoLiveSqlTest, TiberoLiveHttpTest, TiberoLiveLoadTest, TiberoLiveMoveTest, TiberoLiveCursorTest, TiberoLiveSlotStreamTest)"
   # --rerun: 입력이 같아도 실서버 테스트를 매번 실제로 돌린다(캐시된 초록 방지).
   "$ROOT_DIR/apps/firehub-db-executor/gradlew" -p "$ROOT_DIR/apps/firehub-db-executor" test \
     --tests com.smartfirehub.dbexecutor.live.TiberoLiveSqlTest \
     --tests com.smartfirehub.dbexecutor.live.TiberoLiveHttpTest \
     --tests com.smartfirehub.dbexecutor.live.TiberoLiveLoadTest \
     --tests com.smartfirehub.dbexecutor.live.TiberoLiveMoveTest \
-    --tests com.smartfirehub.dbexecutor.live.TiberoLiveCursorTest --rerun \
+    --tests com.smartfirehub.dbexecutor.live.TiberoLiveCursorTest \
+    --tests com.smartfirehub.dbexecutor.live.TiberoLiveSlotStreamTest --rerun \
     -i 2>&1 | grep -E '^[[:space:]]*LIVE |[[:space:]]>[[:space:]].*[[:space:]](PASSED|FAILED|SKIPPED)$|^BUILD (SUCCESSFUL|FAILED)|tests completed'
   executor_status=${PIPESTATUS[0]}
-  print_totals "$ROOT_DIR"/apps/firehub-db-executor/build/test-results/test/TEST-com.smartfirehub.dbexecutor.live.TiberoLive{Sql,Http,Load,Move,Cursor}Test.xml
+  print_totals "$ROOT_DIR"/apps/firehub-db-executor/build/test-results/test/TEST-com.smartfirehub.dbexecutor.live.TiberoLive{Sql,Http,Load,Move,Cursor,SlotStream}Test.xml
   [[ $executor_status -ne 0 ]] && status=$executor_status
 fi
 

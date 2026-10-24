@@ -8,6 +8,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.function.LongSupplier;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -19,7 +21,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *   <li>내부 토큰: 모든 창구.
  *   <li>적재 토큰: {@code POST /execute/load} 한 곳만(경로는 정확히 일치, 메서드는 POST) — Python 실행기가 SQL·조회 창구를 쓰지
  *       못하게 한다.
- *   <li>{@code Script <token>}: 스크립트 1회용 토큰 자리. 검증은 이후 작업에서 구현하므로 지금은 모두 401.
+ *   <li>{@code Script <token>}: 스크립트 1회용 토큰(WD-78, {@link ScriptToken}). {@code POST
+ *       /execute/query} 한 곳만(경로 정확히 일치) 허용하고, 서명·만료·모양을 여기서 확인한 뒤 검증된 값을 요청 속성 {@link
+ *       ScriptToken#ATTRIBUTE} 에 싣는다. 본문이 필요한 확인(readSlot·stream 존재, 본문 테넌트·슬롯 일치)과 기술자가 필요한
+ *       세대(epoch) 확인은 {@code ExecuteController} 가 한다. 서명 키가 비어 있으면 이 스킴은 언제나 401 이다.
  * </ul>
  *
  * <p>api 의 {@code InternalTokens.matches} 와 같은 규칙(접두어 확인·빈 토큰 거부·상수 시간 비교)이다.
@@ -28,6 +33,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class InternalTokenFilter extends OncePerRequestFilter {
 
   private static final String PREFIX = "Internal ";
+  private static final String SCRIPT_PREFIX = "Script ";
   private static final String UNAUTHORIZED_BODY =
       "{\"success\":false,\"error\":\"인증되지 않은 요청입니다.\"}";
 
@@ -37,12 +43,25 @@ public class InternalTokenFilter extends OncePerRequestFilter {
   /** 적재 토큰이 허용되는 유일한 경로 — 정확한 URI 일치만 인정한다(변형 표기는 거부). */
   private static final String LOAD_PATH = "/execute/load";
 
+  /** 스크립트 토큰이 허용되는 유일한 경로 — 정확한 URI 일치만 인정한다(변형 표기는 거부). */
+  private static final String QUERY_PATH = "/execute/query";
+
   private final String expectedToken;
   private final String loadToken;
+  private final String scriptTokenKey;
+  private final LongSupplier nowEpochSeconds;
 
+  @Autowired
   public InternalTokenFilter(DbExecutorProperties properties) {
+    this(properties, () -> System.currentTimeMillis() / 1000L);
+  }
+
+  /** 테스트용: 시계를 주입해 스크립트 토큰 만료를 재현한다. */
+  InternalTokenFilter(DbExecutorProperties properties, LongSupplier nowEpochSeconds) {
     this.expectedToken = properties.internalToken();
     this.loadToken = properties.loadToken();
+    this.scriptTokenKey = properties.scriptTokenKey();
+    this.nowEpochSeconds = nowEpochSeconds;
   }
 
   /**
@@ -60,7 +79,24 @@ public class InternalTokenFilter extends OncePerRequestFilter {
       HttpServletRequest request, HttpServletResponse response, FilterChain chain)
       throws ServletException, IOException {
     String header = request.getHeader("Authorization");
-    // Script 스킴은 matches 의 접두어 검사("Internal ")에서 걸러져 어느 쪽 자격에도 닿지 않는다.
+    if (header != null && header.startsWith(SCRIPT_PREFIX)) {
+      // 스크립트 자격: 정확히 POST /execute/query 일 때만 검증한다. 다른 창구는 서명이 맞아도 401(스펙 §3.4).
+      ScriptToken.Claims claims =
+          QUERY_PATH.equals(request.getRequestURI()) && "POST".equals(request.getMethod())
+              ? ScriptToken.verify(
+                  header.substring(SCRIPT_PREFIX.length()),
+                  scriptTokenKey,
+                  nowEpochSeconds.getAsLong())
+              : null;
+      if (claims == null) {
+        unauthorized(response);
+        return;
+      }
+      request.setAttribute(ScriptToken.ATTRIBUTE, claims);
+      chain.doFilter(request, response);
+      return;
+    }
+    // 그 밖의 스킴은 matches 의 접두어 검사("Internal ")에서 걸러져 어느 쪽 자격에도 닿지 않는다.
     boolean allowed =
         matches(header, expectedToken)
             || (LOAD_PATH.equals(request.getRequestURI())
@@ -70,6 +106,11 @@ public class InternalTokenFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    unauthorized(response);
+  }
+
+  /** 401 + 고정 본문. 컨트롤러가 스크립트 요청의 본문·세대 불일치를 거부할 때도 같은 응답을 쓴다. */
+  public static void unauthorized(HttpServletResponse response) throws IOException {
     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
     response.setContentType("application/json;charset=UTF-8");
     response.getWriter().write(UNAUTHORIZED_BODY);

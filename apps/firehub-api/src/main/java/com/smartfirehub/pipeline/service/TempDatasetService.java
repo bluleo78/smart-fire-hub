@@ -7,7 +7,6 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
-import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
 import com.smartfirehub.dataset.storage.tibero.TiberoNames;
 import java.util.List;
 import java.util.Optional;
@@ -68,7 +67,7 @@ public class TempDatasetService {
     // Tibero 는 식별자 30자 제한이라 PG 규칙(단계 이름 포함)을 못 쓴다 — 단계 id 기반의 안정적인 짧은 이름을 쓴다.
     String tableName =
         pipelineDataSchema.isTibero()
-            ? tiberoTempTableName(pipelineId, stepId)
+            ? TiberoNames.tempTableName(pipelineId, stepId)
             : "ptmp_" + pipelineId + "_" + sanitizeForTableName(stepName);
     String datasetName = pipelineName + " > " + stepName + " (자동생성)";
 
@@ -144,30 +143,6 @@ public class TempDatasetService {
    */
   public void deleteTempDataset(Long datasetId) {
     datasetService.deleteDataset(datasetId);
-  }
-
-  /**
-   * Tibero 테넌트의 TEMP 테이블 이름 {@code ptmp_<파이프라인 id>_<단계 id 36진수>}.
-   *
-   * <p>같은 파이프라인·단계면 항상 같은 이름이고 단계 이름과 무관하다 — 단계를 바꿔 이름이 달라지면 이전 TEMP 와 새 TEMP 가 따로 생겨 고아가 된다. 물리
-   * 이름은 대문자로 바뀌어도 길이가 같다. id 가 매우 커서 30자를 넘으면(두 id 가 합쳐 24자 초과) {@code ptmp_} + 두 id 의 SHA-256 앞 24
-   * hex 로 대신한다 (29자, 같은 입력엔 같은 이름).
-   */
-  static String tiberoTempTableName(Long pipelineId, Long stepId) {
-    String name = "ptmp_" + pipelineId + "_" + Long.toString(stepId, 36);
-    if (name.length() <= TiberoDialect.MAX_IDENTIFIER_LENGTH) {
-      return name;
-    }
-    try {
-      byte[] digest =
-          java.security.MessageDigest.getInstance("SHA-256")
-              .digest(
-                  (pipelineId + ":" + stepId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-      return "ptmp_" + java.util.HexFormat.of().formatHex(digest, 0, 12);
-    } catch (java.security.NoSuchAlgorithmException e) {
-      // SHA-256 은 모든 JVM 이 보장하므로 도달 불가
-      throw new IllegalStateException(e);
-    }
   }
 
   /**

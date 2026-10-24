@@ -45,7 +45,7 @@ import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
-import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrants;
 import java.sql.Types;
 import java.util.Arrays;
 import java.util.List;
@@ -66,7 +66,7 @@ import org.springframework.context.ApplicationEventPublisher;
 /**
  * Tibero 테넌트 SQL 단계의 사용자 직접 쓴 INSERT 개방 단위 테스트(WD-77 Task 9).
  *
- * <p>고정하는 것: INSERT 는 실행 전에 쓰기 대상 테이블마다 행 트리거를 보장({@code ensureRowTrigger})한 뒤 db-executor 로 그대로
+ * <p>고정하는 것: INSERT 는 실행 전에 쓰기 대상 테이블마다 행 트리거를 보장({@code ensureRowTriggers})한 뒤 db-executor 로 그대로
  * 가고, 트리거 권한이 없으면 Task 8 의 운영자 안내 문구로 실패하며(조용한 누락 없음, 실행기 호출 없음), UPDATE 는 같은 보장을 하되 권한 부족을 경고로만 넘겨
  * 예전처럼 실행되고, DELETE 는 트리거가 필요 없어 건드리지 않으며, PG 테넌트는 이 경로를 전혀 지나지 않는다.
  */
@@ -118,7 +118,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
   @Mock PipelineSecurityGate pipelineSecurityGate;
   @Mock DatasetAccessGuard datasetAccessGuard;
   @Mock AiHostingResolver aiHostingResolver;
-  @Mock PythonReadGrantSync pythonReadGrantSync;
+  @Mock PythonReadGrants pythonReadGrantSync;
   @Mock LocalPythonOutputLoader localPythonOutputLoader;
 
   @InjectMocks PipelineAsyncRunner runner;
@@ -167,7 +167,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
     assertThat(status).isEqualTo("COMPLETED");
     // 트리거 보장이 실행보다 먼저 — 트리거 없이 INSERT 가 나가면 ID 가 비어 실패한다.
     var order = inOrder(dataTableService, dbExecutorClient);
-    order.verify(dataTableService).ensureRowTrigger("ORDERS");
+    order.verify(dataTableService).ensureRowTriggers(List.of("ORDERS"));
     order.verify(dbExecutorClient).executeSql(eq(sql), anyList());
     verify(dbExecutorClient, never()).probe(anyString());
     verifyNoPgExecution();
@@ -178,7 +178,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
     String sql = "INSERT INTO genia_t5.orders (amount) SELECT amount FROM genia_t5.src_orders";
     doThrow(new DataStoreFeatureUnsupportedException(MISSING_PRIVILEGE))
         .when(dataTableService)
-        .ensureRowTrigger("ORDERS");
+        .ensureRowTriggers(List.of("ORDERS"));
 
     String status = run(sqlStep(sql, OUTPUT_ID, "APPEND"), false);
 
@@ -193,14 +193,14 @@ class PipelineAsyncRunnerTiberoInsertTest {
     String sql = "UPDATE genia_t5.orders SET amount = 1 WHERE amount IS NULL";
     doThrow(new DataStoreFeatureUnsupportedException(MISSING_PRIVILEGE))
         .when(dataTableService)
-        .ensureRowTrigger("ORDERS");
+        .ensureRowTriggers(List.of("ORDERS"));
     stubExecuteSuccess();
 
     String status = run(sqlStep(sql, OUTPUT_ID, "APPEND"), false);
 
     // 이전에도 허용되던 UPDATE 는 권한 없는 테넌트에서 막지 않는다 — _UPDATED_AT 만 운영자가 권한을 줄 때까지 움직이지 않는다.
     assertThat(status).isEqualTo("COMPLETED");
-    verify(dataTableService).ensureRowTrigger("ORDERS");
+    verify(dataTableService).ensureRowTriggers(List.of("ORDERS"));
     assertThat(captureSent().query()).isEqualTo(sql);
     verifyNoPgExecution();
   }
@@ -209,7 +209,9 @@ class PipelineAsyncRunnerTiberoInsertTest {
   @Test
   void userUpdate_plainRuntimeException_stillRuns() {
     String sql = "UPDATE genia_t5.orders SET amount = 1 WHERE amount IS NULL";
-    doThrow(new RuntimeException("접속 불가")).when(dataTableService).ensureRowTrigger("ORDERS");
+    doThrow(new RuntimeException("접속 불가"))
+        .when(dataTableService)
+        .ensureRowTriggers(List.of("ORDERS"));
     stubExecuteSuccess();
 
     String status = run(sqlStep(sql, OUTPUT_ID, "APPEND"), false);
@@ -222,7 +224,9 @@ class PipelineAsyncRunnerTiberoInsertTest {
   @Test
   void userInsert_plainRuntimeException_failsClosed() {
     String sql = "INSERT INTO genia_t5.orders (amount) SELECT amount FROM genia_t5.src_orders";
-    doThrow(new RuntimeException("접속 불가")).when(dataTableService).ensureRowTrigger("ORDERS");
+    doThrow(new RuntimeException("접속 불가"))
+        .when(dataTableService)
+        .ensureRowTriggers(List.of("ORDERS"));
 
     String status = run(sqlStep(sql, OUTPUT_ID, "APPEND"), false);
 
@@ -231,7 +235,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
     verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
   }
 
-  /** 따옴표 대상 이름도 검증기가 접은 물리 이름(대문자)으로 ensureRowTrigger 에 넘어간다. */
+  /** 따옴표 대상 이름도 검증기가 접은 물리 이름(대문자)으로 ensureRowTriggers 에 넘어간다. */
   @Test
   void userInsert_quotedTarget_ensuresPhysicalUpperCaseName() {
     stubExecuteSuccess();
@@ -243,7 +247,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
             false);
 
     assertThat(status).isEqualTo("COMPLETED");
-    verify(dataTableService).ensureRowTrigger("ORDERS");
+    verify(dataTableService).ensureRowTriggers(List.of("ORDERS"));
   }
 
   /** 첫 단어가 WITH 인 DML 은 트리거를 보장하지 않는다(결정 고정) — 트리거가 없으면 ID 가 NULL 이라 DB 가 크게 실패한다. */
@@ -258,7 +262,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
             "APPEND"),
         false);
 
-    verify(dataTableService, never()).ensureRowTrigger(anyString());
+    verify(dataTableService, never()).ensureRowTriggers(any());
   }
 
   @Test
@@ -269,7 +273,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
         run(sqlStep("DELETE FROM genia_t5.orders WHERE amount < 0", OUTPUT_ID, "APPEND"), false);
 
     assertThat(status).isEqualTo("COMPLETED");
-    verify(dataTableService, never()).ensureRowTrigger(anyString());
+    verify(dataTableService, never()).ensureRowTriggers(any());
   }
 
   @Test
@@ -280,7 +284,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
 
     run(sqlStep("SELECT amount FROM genia_t5.src_orders", OUTPUT_ID, "APPEND"), false);
 
-    verify(dataTableService, never()).ensureRowTrigger(anyString());
+    verify(dataTableService, never()).ensureRowTriggers(any());
   }
 
   /** PG 테넌트는 같은 INSERT 가 이전과 똑같이 PG 경로로 가고 Tibero 트리거 보장은 불리지 않는다. */
@@ -295,7 +299,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
             "APPEND"),
         false);
 
-    verify(dataTableService, never()).ensureRowTrigger(anyString());
+    verify(dataTableService, never()).ensureRowTriggers(any());
     verifyNoInteractions(dbExecutorClient);
     // PG 실행 경로(로컬 실행기)가 실제로 불렸다 — 이 테스트가 PG 경로를 지났다는 증거.
     verify(sqlExecutor).execute(anyList(), anyString());

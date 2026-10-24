@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import javax.sql.DataSource;
 
@@ -30,9 +31,16 @@ import javax.sql.DataSource;
  * <p>같은 테넌트라도 접속 계정(OWNER·읽기 전용)마다 보관소를 따로 둔다 — 어느 계정을 쓸지는 생성자로 받은 선택 함수가 정하고, 지문도 선택된 계정으로 계산한다.
  * 그래서 RO 비밀번호만 바뀌면 RO 풀만 교체되고 OWNER 풀은 그대로다.
  *
+ * <p>슬롯 풀(WD-78, {@link #forSlots})은 키가 (테넌트, 슬롯)이다 — 같은 테넌트라도 슬롯 계정 S1..S10 마다 풀이 따로이고, 계정은 기술자의
+ * {@code slots[k]} 다. 지문도 그 슬롯 계정으로 계산하므로 슬롯 하나의 비밀번호가 바뀌면 그 슬롯 풀만 교체된다. OWNER·RO 보관소는 슬롯 번호 0 하나만
+ * 쓰는 같은 구조다.
+ *
  * <p>풀 생성은 생성자로 주입한 팩토리가 맡는다(테스트에서는 가짜 DataSource). 풀 닫기는 잠금 밖에서 한다.
  */
 public class TenantPools {
+
+  /** 풀 키. OWNER·RO 보관소는 {@code slot=0}, 슬롯 보관소는 1..10. */
+  private record PoolKey(long tenantId, int slot) {}
 
   /** 풀 하나와 상태. {@code leases}·{@code retired} 는 {@code TenantPools} 모니터 아래에서만 바꾼다. */
   private static final class Entry {
@@ -77,11 +85,11 @@ public class TenantPools {
     }
   }
 
-  private final Function<StoreDescriptor, DataSource> factory;
-  private final Function<StoreDescriptor, StoreDescriptor.Account> account;
+  private final BiFunction<StoreDescriptor, Integer, DataSource> factory;
+  private final BiFunction<StoreDescriptor, Integer, StoreDescriptor.Account> account;
   private final int maxPools;
   // accessOrder=true: get/put 때마다 맨 뒤로 이동 → 맨 앞이 가장 오래 안 쓴 풀.
-  private final LinkedHashMap<Long, Entry> pools = new LinkedHashMap<>(16, 0.75f, true);
+  private final LinkedHashMap<PoolKey, Entry> pools = new LinkedHashMap<>(16, 0.75f, true);
 
   /**
    * @param factory 풀 생성기(같은 선택 함수를 쓰는 {@link HikariPoolFactory})
@@ -92,28 +100,55 @@ public class TenantPools {
       Function<StoreDescriptor, DataSource> factory,
       Function<StoreDescriptor, StoreDescriptor.Account> account,
       int maxPools) {
+    this((d, slot) -> factory.apply(d), (d, slot) -> account.apply(d), maxPools);
+  }
+
+  private TenantPools(
+      BiFunction<StoreDescriptor, Integer, DataSource> factory,
+      BiFunction<StoreDescriptor, Integer, StoreDescriptor.Account> account,
+      int maxPools) {
     this.factory = factory;
     this.account = account;
     this.maxPools = maxPools;
   }
 
+  /**
+   * 슬롯 풀 보관소(WD-78): 키 (테넌트, 슬롯), 계정 = 기술자 {@code slots[k]}.
+   *
+   * @param factory (기술자, 슬롯) → 풀 생성기({@link HikariPoolFactory#forSlots})
+   * @param maxPools 유지할 슬롯 풀 수 상한(전 테넌트·전 슬롯 합계)
+   */
+  public static TenantPools forSlots(
+      BiFunction<StoreDescriptor, Integer, DataSource> factory, int maxPools) {
+    return new TenantPools(factory, StoreDescriptor::slot, maxPools);
+  }
+
   /** 테넌트 풀에서 커넥션 하나를 빌린다. 반드시 {@link Lease#close()} 로 반납한다. */
   public Lease borrow(StoreDescriptor d) throws SQLException {
+    return borrow(d, 0);
+  }
+
+  /**
+   * (테넌트, 슬롯) 풀에서 커넥션 하나를 빌린다. 슬롯 보관소({@link #forSlots})는 1..10, OWNER·RO 보관소는 {@link
+   * #borrow(StoreDescriptor)} 를 쓴다. 반드시 {@link Lease#close()} 로 반납한다.
+   */
+  public Lease borrow(StoreDescriptor d, int slot) throws SQLException {
     List<DataSource> toClose = new ArrayList<>();
     Entry entry;
+    PoolKey key = new PoolKey(d.tenantId(), slot);
     synchronized (this) {
-      String fp = fingerprint(d);
-      entry = pools.get(d.tenantId());
+      String fp = fingerprint(d, slot);
+      entry = pools.get(key);
       if (entry != null && !entry.fingerprint.equals(fp)) {
-        pools.remove(d.tenantId());
+        pools.remove(key);
         retire(entry, toClose);
         entry = null;
       }
       if (entry == null) {
-        entry = new Entry(factory.apply(d), fp);
-        pools.put(d.tenantId(), entry);
+        entry = new Entry(factory.apply(d, slot), fp);
+        pools.put(key, entry);
         // 방금 넣은 것은 맨 뒤라 제거 대상에서 자연히 제외된다.
-        Iterator<Map.Entry<Long, Entry>> it = pools.entrySet().iterator();
+        Iterator<Map.Entry<PoolKey, Entry>> it = pools.entrySet().iterator();
         while (pools.size() > maxPools && it.hasNext()) {
           Entry victim = it.next().getValue();
           it.remove();
@@ -178,8 +213,8 @@ public class TenantPools {
   }
 
   /** 선택된 계정의 접속값 SHA-256 지문. 비밀번호를 그대로 들고 있지 않기 위해 해시만 비교한다. */
-  private String fingerprint(StoreDescriptor d) {
-    StoreDescriptor.Account o = account.apply(d);
+  private String fingerprint(StoreDescriptor d, int slot) {
+    StoreDescriptor.Account o = account.apply(d, slot);
     if (o == null) {
       // 기술자에 이 보관소가 쓸 계정(예: ro)이 없다 — NPE 대신 원인을 알 수 있게 던진다.
       throw new IllegalStateException("테넌트 " + d.tenantId() + " 의 접속 계정이 기술자에 없습니다.");

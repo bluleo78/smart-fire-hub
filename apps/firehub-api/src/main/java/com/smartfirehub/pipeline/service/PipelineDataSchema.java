@@ -39,6 +39,15 @@ public class PipelineDataSchema {
   }
 
   /**
+   * 파이프라인 SQL 방언으로 본 현재 테넌트의 백엔드 — Tibero 면 {@code TIBERO}, 그 밖(PG 등)은 모두 {@code POSTGRESQL}.
+   * 플레이스홀더 치환 등 방언을 받는 호출부가 {@code isTibero() ? TIBERO : POSTGRESQL} 을 저마다 쓰지 않게 한 곳에 둔다(아직 구현이 없는
+   * 백엔드도 예전처럼 PG 방언으로 간다).
+   */
+  public DataStoreBackend backend() {
+    return isTibero() ? DataStoreBackend.TIBERO : DataStoreBackend.POSTGRESQL;
+  }
+
+  /**
    * 현재 테넌트의 데이터 스키마 이름. PG 는 {@link DataSchema#current()}, Tibero 는 테넌트 OWNER 계정 스키마 {@code
    * GENIA_T{id}}({@link DataStoreAccountRole#usernameFor} 규칙)다.
    */

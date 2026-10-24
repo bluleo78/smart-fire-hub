@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class PythonReadGrantScheduler {
 
-  private final PythonReadGrantSync sync;
+  private final PythonReadGrants sync;
   private final TenantScopedRunner tenantScopedRunner;
   private final boolean enabled;
 
@@ -29,7 +29,7 @@ public class PythonReadGrantScheduler {
    *     꺼지지 않는다.
    */
   public PythonReadGrantScheduler(
-      PythonReadGrantSync sync,
+      PythonReadGrants sync,
       TenantScopedRunner tenantScopedRunner,
       @Value("${app.pipeline.python-read-sync.enabled:true}") boolean enabled) {
     this.sync = sync;

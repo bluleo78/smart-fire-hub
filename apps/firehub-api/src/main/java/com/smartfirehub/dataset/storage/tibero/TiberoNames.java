@@ -192,18 +192,46 @@ public final class TiberoNames {
     return "SQ_" + hash(10, "SQ", stagingTable);
   }
 
+  /**
+   * 스테이징 입력 순번({@code _SEQ}) 인덱스 이름 {@code SX_<10hex>}(13자, WD-77) — 스테이징 이름에서 파생해 30자 한도 안이고, 컬럼
+   * 인덱스({@code IX_})·PK 인덱스({@code UX_})와 접두가 달라 섞이지 않는다. 테이블을 지우면 인덱스도 함께 지워지므로 따로 지우지 않는다.
+   */
+  public static String stagingSeqIndexName(String stagingTable) {
+    return "SX_" + hash(10, "SX", stagingTable);
+  }
+
+  /**
+   * 러너 TEMP 테이블(메타데이터) 이름 {@code ptmp_<파이프라인 id>_<단계 id 36진수>}(WD-77) — Tibero 테넌트용.
+   *
+   * <p>같은 파이프라인·단계면 항상 같은 이름이고 단계 이름과 무관하다 — 단계를 바꿔 이름이 달라지면 이전 TEMP 와 새 TEMP 가 따로 생겨 고아가 된다. 물리
+   * 이름은 대문자로 바뀌어도 길이가 같다. id 가 매우 커서 30자를 넘으면(두 id 가 합쳐 24자 초과) {@code ptmp_} + {@code "<p>:<s>"} 의
+   * SHA-256 앞 24 소문자 hex 로 대신한다(29자, 같은 입력엔 같은 이름). 이 해시 규칙은 {@link #hash} 와 다르다 — 이미 만든 TEMP 이름과
+   * 같아야 하므로 바꾸지 않는다.
+   */
+  public static String tempTableName(long pipelineId, long stepId) {
+    String name = "ptmp_" + pipelineId + "_" + Long.toString(stepId, 36);
+    if (name.length() <= TiberoDialect.MAX_IDENTIFIER_LENGTH) {
+      return name;
+    }
+    byte[] digest = sha256(pipelineId + ":" + stepId);
+    return "ptmp_" + HexFormat.of().formatHex(digest, 0, 12);
+  }
+
   /** 대문자 정규화한 부분들을 '|' 로 이어 SHA-256 한 뒤 대문자 hex 앞 {@code length} 자(짝수)를 돌려준다. */
   private static String hash(int length, String... parts) {
     String[] upper = new String[parts.length];
     for (int i = 0; i < parts.length; i++) {
       upper[i] = parts[i].toUpperCase(Locale.ROOT);
     }
+    byte[] digest = sha256(String.join("|", upper));
+    // 바이트 하나가 hex 두 자이므로 필요한 앞부분 바이트만 대문자 hex 로 바꾼다.
+    return HexFormat.of().withUpperCase().formatHex(Arrays.copyOf(digest, length / 2));
+  }
+
+  /** UTF-8 문자열의 SHA-256 다이제스트 — 파생 이름 해시들이 함께 쓴다. */
+  private static byte[] sha256(String input) {
     try {
-      byte[] digest =
-          MessageDigest.getInstance("SHA-256")
-              .digest(String.join("|", upper).getBytes(StandardCharsets.UTF_8));
-      // 바이트 하나가 hex 두 자이므로 필요한 앞부분 바이트만 대문자 hex 로 바꾼다.
-      return HexFormat.of().withUpperCase().formatHex(Arrays.copyOf(digest, length / 2));
+      return MessageDigest.getInstance("SHA-256").digest(input.getBytes(StandardCharsets.UTF_8));
     } catch (NoSuchAlgorithmException e) {
       // SHA-256 은 모든 JVM 이 보장하므로 도달 불가
       throw new IllegalStateException(e);

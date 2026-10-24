@@ -154,4 +154,50 @@ class TiberoDataStoreContractTest extends DataStoreContractTest {
       }
     }
   }
+
+  // ---------- 스테이징 _SEQ 인덱스(WD-77) ----------
+
+  /**
+   * 스테이징을 만들면 {@code _SEQ} 한 컬럼 인덱스({@code SX_<10hex>})가 함께 생기고, 스테이징을 지우면 테이블과 함께 사라진다 —
+   * db-executor 적재의 청크별 {@code MAX("_SEQ")} 가 전체 스캔이 되지 않게 하는 인덱스다.
+   */
+  @Test
+  void staging_hasSeqIndex_droppedWithTable() {
+    String table = createEmptyContractTable();
+    String staging = rowStore.createStagingTable(table, List.of("name", "qty"));
+    String physical = TiberoNames.physical(staging);
+    String index = TiberoNames.stagingSeqIndexName(physical);
+    boolean dropped = false;
+    try {
+      assertThat(seqIndexColumns(index)).containsExactly(physical + "._SEQ");
+      rowStore.dropStagingTable(staging);
+      dropped = true;
+      assertThat(seqIndexColumns(index)).isEmpty();
+    } finally {
+      if (!dropped) {
+        rowStore.dropStagingTable(staging);
+      }
+    }
+  }
+
+  /** OWNER 세션에서 인덱스의 {테이블.컬럼} 목록(없으면 빈 목록). */
+  private List<String> seqIndexColumns(String index) {
+    return connections.withDdl(
+        env.tenantId,
+        conn -> {
+          List<String> out = new java.util.ArrayList<>();
+          try (var ps =
+              conn.prepareStatement(
+                  "SELECT TABLE_NAME, COLUMN_NAME FROM USER_IND_COLUMNS WHERE INDEX_NAME = ?"
+                      + " ORDER BY COLUMN_POSITION")) {
+            ps.setString(1, index);
+            try (var rs = ps.executeQuery()) {
+              while (rs.next()) {
+                out.add(rs.getString(1) + "." + rs.getString(2));
+              }
+            }
+          }
+          return out;
+        });
+  }
 }

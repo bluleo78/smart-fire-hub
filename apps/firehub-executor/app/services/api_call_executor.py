@@ -52,10 +52,7 @@ def execute_api_call(request: ApiCallExecuteRequest, conn) -> ApiCallExecuteResp
 
     except (SsrfException, ApiCallException) as e:
         conn.rollback()
-        elapsed_ms = int((time.monotonic() - start_time) * 1000)
-        return ApiCallExecuteResponse(
-            success=False, error=str(e), execution_time_ms=elapsed_ms
-        )
+        return _failure_response(e, start_time)
     except Exception as e:
         conn.rollback()
         elapsed_ms = int((time.monotonic() - start_time) * 1000)
@@ -83,29 +80,32 @@ def execute_api_call_remote(request: ApiCallExecuteRequest, loader: RemoteLoadBa
     여기서 중단돼도 부분 행이 출력에 남지 않는다 — 실패 시 스테이징 정리도 api 몫이다. 값 변환은 ``loader`` 가 보내기 전에 한다.
     """
     start_time = time.monotonic()
+
+    def write_remote(rows: List[Dict[str, Any]]) -> None:
+        # RemoteLoader 는 응답의 적재 행 수가 보낸 행 수와 다르면 RemoteLoadError 를 올린다 — 돌아오면 len(rows) 행이 들어간 것이라
+        # 반환값을 따로 세지 않는다.
+        loader.load(request.tenant_id, request.output_table, rows, request.column_type_map)
+
     try:
         # 스테이징 이름 검증 — 라우터가 이미 거르지만, 이 함수를 직접 부르는 경로도 같은 규칙을 지키게 한다(적재기도 다시 검증한다).
         require_staging_table(request.output_table)
-        total_rows, total_pages, log_lines = _fetch_and_write_pages(
-            request,
-            lambda rows: loader.load(
-                request.tenant_id, request.output_table, rows, request.column_type_map
-            ),
-            start_time,
-        )
+        total_rows, total_pages, log_lines = _fetch_and_write_pages(request, write_remote, start_time)
         return _success_response(request, total_rows, total_pages, log_lines, start_time)
 
-    except (SsrfException, ApiCallException, RemoteLoadError, ValueError) as e:
-        elapsed_ms = int((time.monotonic() - start_time) * 1000)
-        return ApiCallExecuteResponse(
-            success=False, error=str(e), execution_time_ms=elapsed_ms
-        )
     except Exception as e:
-        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        # 예상한 실패(SSRF·API 오류·원격 적재 실패·스테이징 이름 거부)는 응답 문구로 충분하다 — 그 밖의 예외만 스택과 함께 남긴다.
+        if isinstance(e, (SsrfException, ApiCallException, RemoteLoadError, ValueError)):
+            return _failure_response(e, start_time)
+        # 분류하지 못한 예외는 PG 경로와 같이 원문을 로그에만 남기고 한국어 문구를 보인다(WD-212 와 같은 규칙).
         logger.exception("Unexpected error in execute_api_call_remote")
-        return ApiCallExecuteResponse(
-            success=False, error=str(e), execution_time_ms=elapsed_ms
-        )
+        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        return ApiCallExecuteResponse(success=False, error=errors.unexpected_error_message(), execution_time_ms=elapsed_ms)
+
+
+def _failure_response(error: Exception, start_time: float) -> ApiCallExecuteResponse:
+    """예상한 실패(SSRF 거부·API 오류·원격 적재 실패)의 응답을 예외 문구 그대로 만든다 — PG·Tibero 경로가 같은 모양을 쓴다."""
+    elapsed_ms = int((time.monotonic() - start_time) * 1000)
+    return ApiCallExecuteResponse(success=False, error=str(error), execution_time_ms=elapsed_ms)
 
 
 def _success_response(
@@ -133,13 +133,13 @@ def _success_response(
 
 def _fetch_and_write_pages(
     request: ApiCallExecuteRequest,
-    write_rows: Callable[[List[Dict[str, Any]]], Optional[int]],
+    write_rows: Callable[[List[Dict[str, Any]]], None],
     start_time: float,
 ) -> Tuple[int, int, List[str]]:
     """API 를 페이지네이션으로 호출해 페이지마다 ``write_rows`` 로 적재하고 (총 행 수, 총 페이지 수, 로그 줄)을 돌려준다.
 
-    PG(커넥션 insert)와 Tibero(원격 적재)가 같은 호출·페이지·시간 제한 로직을 쓰도록 쓰기만 주입한다. ``write_rows`` 가
-    정수를 돌려주면(원격 적재의 적재 행 수) 그 값을, None 이면 ``len(rows)`` 를 센다. 빈 페이지는 쓰기를 부르지 않는다.
+    PG(커넥션 insert)와 Tibero(원격 적재)가 같은 호출·페이지·시간 제한 로직을 쓰도록 쓰기만 주입한다. ``write_rows`` 는 페이지
+    전체를 넣거나 예외를 올린다 — 행 수는 언제나 ``len(rows)`` 로 센다. 빈 페이지는 쓰기를 부르지 않는다.
     """
     # 1. SSRF validation on initial URL
     validate_url(request.url)
@@ -147,10 +147,6 @@ def _fetch_and_write_pages(
     total_rows = 0
     total_pages = 0
     log_lines: List[str] = []
-
-    def write(rows: List[Dict[str, Any]]) -> int:
-        written = write_rows(rows)
-        return len(rows) if written is None else written
 
     # 2. Pagination
     pagination_type = (request.pagination.type.upper() if request.pagination else "NONE")
@@ -187,7 +183,8 @@ def _fetch_and_write_pages(
                         total_count = None
 
             if rows:
-                total_rows += write(rows)
+                write_rows(rows)
+                total_rows += len(rows)
             total_pages += 1
 
             # Duration check
@@ -213,7 +210,8 @@ def _fetch_and_write_pages(
             request.column_type_map,
         )
         if rows:
-            total_rows += write(rows)
+            write_rows(rows)
+            total_rows += len(rows)
         total_pages = 1
 
     return total_rows, total_pages, log_lines

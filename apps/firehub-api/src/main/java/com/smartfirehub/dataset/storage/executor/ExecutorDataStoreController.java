@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.storage.executor;
 
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.security.InternalTokens;
+import java.util.Arrays;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,8 +26,9 @@ import org.springframework.web.bind.annotation.RestController;
  * <ul>
  *   <li>{@code app.executor.internal-token}(Python 실행기): backend 와 tenantId 만 — Tibero 여도 비밀·접속 정보를
  *       주지 않는다. Python 실행기는 Tibero 에 접속하지 않고 이 값으로 거부 여부만 판단한다.
- *   <li>{@code app.db-executor.internal-token}(db-executor): 현행 전체 기술자(OWNER, {@code include=ro} 면
- *       RO). 이 토큰이 비었거나 알려진 기본값이면 평문 비밀번호를 내지 않고 503 으로 거부한다(R-token) — 로컬·테스트는 {@code
+ *   <li>{@code app.db-executor.internal-token}(db-executor): 현행 전체 기술자(OWNER, {@code include} 에
+ *       {@code ro} 가 있으면 RO, {@code slots} 가 있으면 슬롯 계정 S1..S10 — WD-78). 이 토큰이 비었거나 알려진 기본값({@code
+ *       change-me} 자리표시자 포함)이면 평문 비밀번호를 내지 않고 503 으로 거부한다(R-token) — 로컬·테스트는 {@code
  *       app.executor.allow-default-token=true} 로만 허용한다.
  * </ul>
  *
@@ -41,11 +43,23 @@ public class ExecutorDataStoreController {
   static final Set<String> INSECURE_DEFAULT_TOKENS =
       Set.of("dev-executor-token", "executor-token", "dev-db-executor-token");
 
+  /**
+   * {@code .env.example} 자리표시자의 접두사(최종 리뷰 I2). 예시 값을 그대로 옮긴 토큰은 누구나 알므로 알려진 기본값과 같이 비밀을 내지 않는다
+   * (compose 의 {@code :?} 는 빈 값만 막는다).
+   */
+  static final String PLACEHOLDER_PREFIX = "change-me";
+
   /** 토큰이 없거나 안전하지 않아 비밀번호를 내줄 수 없을 때의 503 코드 — 컨트롤러와 서비스가 함께 쓴다. */
   public static final String TOKEN_NOT_CONFIGURED_CODE = "EXECUTOR_TOKEN_NOT_CONFIGURED";
 
-  /** {@code ?include=ro} — 정확히 이 값일 때만 읽기 전용 계정을 싣는다(WD-76). 다른 값·없음은 기존 응답이다. */
+  /** {@code ?include=} 의 값 — 읽기 전용 계정(WD-76). */
   static final String INCLUDE_RO = "ro";
+
+  /** {@code ?include=} 의 값 — 읽기 슬롯 계정 S1..S10(WD-78). */
+  static final String INCLUDE_SLOTS = "slots";
+
+  /** include 로 받을 수 있는 값 전체. 이 밖의 값이 하나라도 섞이면 아무것도 싣지 않는다. */
+  private static final Set<String> KNOWN_INCLUDES = Set.of(INCLUDE_RO, INCLUDE_SLOTS);
 
   private final ExecutorDataStoreDescriptorService service;
 
@@ -94,15 +108,39 @@ public class ExecutorDataStoreController {
       return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
     }
     // 기본 토큰이면 비밀이 없는 PG 기술자만 내고, 비밀번호가 담길 Tibero 는 서비스가 복호화 전에 거부한다.
+    Set<String> includes = includes(include);
     ExecutorDataStoreDescriptor descriptor =
-        service.describe(tenantId, secretsAllowed(), INCLUDE_RO.equals(include));
+        service.describe(
+            tenantId,
+            secretsAllowed(),
+            includes.contains(INCLUDE_RO),
+            includes.contains(INCLUDE_SLOTS));
     log.info("executor 저장소 기술자 제공: tenant={}, backend={}", tenantId, descriptor.backend());
     // 평문 비밀번호가 중간 캐시에 남지 않게 한다.
     return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(descriptor);
   }
 
-  /** 평문 비밀번호를 내도 되는가(db-executor 토큰 기준): 토큰이 알려진 기본값이 아니거나, 허용 플래그(로컬·테스트)가 켜져 있어야 한다. */
+  /**
+   * {@code include} 를 쉼표로 나눈 집합. 값마다 정확히(대소문자·공백 포함) {@link #KNOWN_INCLUDES} 중 하나여야 하고, 모르는 값이 하나라도
+   * 섞이면 빈 집합이다 — 오타·변형이 비밀을 더 내게 하지 않는다(fail-closed, 기존 {@code ro} 정확 일치 규칙의 확장).
+   */
+  static Set<String> includes(String include) {
+    if (include == null || include.isEmpty()) {
+      return Set.of();
+    }
+    String[] parts = include.split(",", -1);
+    if (!Arrays.stream(parts).allMatch(KNOWN_INCLUDES::contains)) {
+      return Set.of();
+    }
+    return Set.copyOf(Arrays.asList(parts));
+  }
+
+  /**
+   * 평문 비밀번호를 내도 되는가(db-executor 토큰 기준): 토큰이 알려진 기본값·{@code change-me} 자리표시자가 아니거나, 허용 플래그(로컬·테스트)가
+   * 켜져 있어야 한다.
+   */
   private boolean secretsAllowed() {
-    return allowDefaultToken || !INSECURE_DEFAULT_TOKENS.contains(token);
+    return allowDefaultToken
+        || !(INSECURE_DEFAULT_TOKENS.contains(token) || token.startsWith(PLACEHOLDER_PREFIX));
   }
 }

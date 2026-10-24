@@ -104,6 +104,16 @@ public interface DataTableStore {
   default void ensureRowTrigger(String tableName) {}
 
   /**
+   * 여러 테이블에 {@link #ensureRowTrigger} 를 적용한다(WD-77). 기본 구현은 테이블마다 차례로 부르고 첫 실패에서 멈춘다 — 트리거가 필요 없는
+   * 백엔드(PG)에서는 아무것도 하지 않는다. Tibero 는 상태 확인·생성을 한 접속에서 묶어 한다.
+   */
+  default void ensureRowTriggers(java.util.Collection<String> tableNames) {
+    for (String tableName : tableNames) {
+      ensureRowTrigger(tableName);
+    }
+  }
+
+  /**
    * 임시 테이블 이름이 이 백엔드·테이블의 것인지 확인한다(아니면 {@code InvalidTableNameException}). 기본은 PG 규칙 — {@code
    * DataTableService#requireTempTableOf}. 임시 테이블 이름 규칙이 다른 백엔드(Tibero 의 {@code STG_<24hex>})가
    * 재정의한다.

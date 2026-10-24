@@ -117,6 +117,13 @@ public class TenantDataStore extends TableImpl<TenantDataStoreRecord> {
      */
     public final TableField<TenantDataStoreRecord, LocalDateTime> UPDATED_AT = createField(DSL.name("updated_at"), SQLDataType.LOCALDATETIME(6).nullable(false).defaultValue(DSL.field(DSL.raw("now()"), SQLDataType.LOCALDATETIME)), this, "");
 
+    /**
+     * The column <code>public.tenant_data_store.script_token_epoch</code>. 스크립트
+     * 토큰 세대 번호 — Tibero 등급 정의 변경 동기화가 GRANT 전에 올린다. 토큰이 이 값보다 낮으면 db-executor 가
+     * 거부(Task 13)
+     */
+    public final TableField<TenantDataStoreRecord, Long> SCRIPT_TOKEN_EPOCH = createField(DSL.name("script_token_epoch"), SQLDataType.BIGINT.nullable(false).defaultValue(DSL.field(DSL.raw("0"), SQLDataType.BIGINT)), this, "스크립트 토큰 세대 번호 — Tibero 등급 정의 변경 동기화가 GRANT 전에 올린다. 토큰이 이 값보다 낮으면 db-executor 가 거부(Task 13)");
+
     private TenantDataStore(Name alias, Table<TenantDataStoreRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }

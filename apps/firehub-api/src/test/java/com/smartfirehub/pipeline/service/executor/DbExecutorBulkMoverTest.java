@@ -47,7 +47,7 @@ class DbExecutorBulkMoverTest {
   void moveReplace_sendsDeleteAsPreStatement_andMoveBody_withTimeout() {
     when(client.executeSql(anyString(), anyList(), anyInt())).thenReturn(ok());
 
-    mover.moveReplace(5L, S, "orders", STG, List.of("code"));
+    mover.move(5L, S, "orders", STG, List.of("code"), true);
 
     org.mockito.ArgumentCaptor<String> body = org.mockito.ArgumentCaptor.forClass(String.class);
     verify(client)
@@ -61,7 +61,7 @@ class DbExecutorBulkMoverTest {
   void moveAppend_hasNoPreStatement() {
     when(client.executeSql(anyString(), anyList(), anyInt())).thenReturn(ok());
 
-    mover.moveAppend(5L, S, "orders", STG, List.of("code"));
+    mover.move(5L, S, "orders", STG, List.of("code"), false);
 
     verify(client).executeSql(anyString(), eq(List.of()), eq(1800));
   }
@@ -73,14 +73,14 @@ class DbExecutorBulkMoverTest {
             new SqlExecuteResult(
                 false, null, null, 0, "", "boom", null, new DbError(-10007, "JDBC-10007:dup")));
 
-    assertThatThrownBy(() -> mover.moveReplace(5L, S, "orders", STG, List.of("code")))
+    assertThatThrownBy(() -> mover.move(5L, S, "orders", STG, List.of("code"), true))
         .isInstanceOf(ScriptExecutionException.class)
         .hasMessageContaining("JDBC-10007");
   }
 
   @Test
   void tenantMismatch_failsClosed() {
-    assertThatThrownBy(() -> mover.moveAppend(6L, S, "orders", STG, List.of("code")))
+    assertThatThrownBy(() -> mover.move(6L, S, "orders", STG, List.of("code"), false))
         .isInstanceOf(IllegalStateException.class);
     org.mockito.Mockito.verifyNoInteractions(client);
   }

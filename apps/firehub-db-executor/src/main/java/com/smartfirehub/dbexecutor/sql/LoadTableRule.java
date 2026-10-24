@@ -15,8 +15,8 @@ public final class LoadTableRule {
   /** api {@code TiberoNames.stagingTableName()} 결과 모양 — {@code matches()} 라 앞뒤 공백·개행도 거부된다. */
   private static final Pattern STAGING = Pattern.compile("STG_[0-9A-F]{24}");
 
-  /** 테넌트 스키마(대문자, 예: {@code GENIA_T5}) — {@link PreStatementRule} 과 같은 문자 집합. */
-  private static final Pattern SCHEMA = Pattern.compile("[A-Z0-9_]+");
+  /** 테넌트 스키마(대문자, 예: {@code GENIA_T5}) — {@link PreStatementRule#SCHEMA_CHARS} 와 같은 조각을 쓴다. */
+  private static final Pattern SCHEMA = Pattern.compile(PreStatementRule.SCHEMA_CHARS);
 
   private LoadTableRule() {}
 

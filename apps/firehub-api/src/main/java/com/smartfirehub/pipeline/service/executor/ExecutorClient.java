@@ -34,21 +34,34 @@ public class ExecutorClient {
    */
   public static final int DEFAULT_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 
+  /**
+   * Python 실행 HTTP 대기 여유(초) — 실행기 시간 제한({@code app.executor.python-timeout-seconds}) 뒤에 자식 프로세스
+   * 정리(60초)와 HTTP 버퍼(30초)를 더한다. 기본 1800초면 예전 고정값 1890초와 같다.
+   */
+  static final long PYTHON_HTTP_TIMEOUT_MARGIN_SECONDS = 90;
+
   private final WebClient webClient;
   private final int maxResponseBytes;
+
+  /** Python 실행 요청의 HTTP 대기 한도 — 실행기 시간 제한 + {@link #PYTHON_HTTP_TIMEOUT_MARGIN_SECONDS}. */
+  private final Duration pythonTimeout;
 
   public ExecutorClient(
       WebClient.Builder webClientBuilder,
       @Value("${app.executor.base-url:http://localhost:8000}") String executorBaseUrl,
       @Value("${app.executor.internal-token:dev-executor-token}") String executorToken,
       @Value("${app.executor.max-response-bytes:" + DEFAULT_MAX_RESPONSE_BYTES + "}")
-          int maxResponseBytes) {
+          int maxResponseBytes,
+      @Value("${app.executor.python-timeout-seconds:1800}") long pythonTimeoutSeconds) {
     if (maxResponseBytes <= 0) {
       // -1(무제한)·0 은 메모리 보호를 없애거나 모든 응답을 실패시킨다 — 설정 실수를 기동 시점에 드러낸다.
       throw new IllegalArgumentException(
           "app.executor.max-response-bytes 는 양수여야 합니다: " + maxResponseBytes);
     }
     this.maxResponseBytes = maxResponseBytes;
+    // 실행기 시간 제한을 늘리면 API 의 대기도 같이 늘어난다 — 따로 고정하면 실행기가 아직 도는데 API 가 먼저 끊는다.
+    this.pythonTimeout =
+        Duration.ofSeconds(pythonTimeoutSeconds + PYTHON_HTTP_TIMEOUT_MARGIN_SECONDS);
     this.webClient =
         internalClient(webClientBuilder, executorBaseUrl, executorToken, maxResponseBytes);
   }
@@ -120,8 +133,8 @@ public class ExecutorClient {
   }
 
   /**
-   * Python 실행 요청. POST /execute/python Timeout: 1890s (30분 nsjail + 60s subprocess + 30s HTTP
-   * buffer)
+   * Python 실행 요청. POST /execute/python Timeout: 실행기 시간 제한(기본 1800s, nsjail) + 60s subprocess + 30s
+   * HTTP buffer — 기본값이면 1890s.
    *
    * @param readSlot 실행 주체의 읽기 슬롯(1~10, PythonReadGrantSync.prepareForRun). executor 는 이 슬롯 롤로 스크립트를
    *     접속시킨다 — 없거나 범위 밖이면 executor 가 422 로 거부한다(테넌트 롤 폴백 없음, WD-29). 여기서도 먼저 막아 잘못된 값이 네트워크로 나가지
@@ -142,7 +155,7 @@ public class ExecutorClient {
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(PythonExecuteResult.class)
-                .timeout(Duration.ofSeconds(1890))
+                .timeout(pythonTimeout)
                 .block());
   }
 

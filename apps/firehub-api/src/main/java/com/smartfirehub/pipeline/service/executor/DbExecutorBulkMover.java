@@ -38,20 +38,19 @@ public class DbExecutorBulkMover implements TiberoBulkMover {
     this.timeoutSeconds = timeoutSeconds;
   }
 
+  /** REPLACE 면 비우기 선행문({@code DELETE})을 옮기기 본문과 같은 요청에 싣고, APPEND 면 본문만 보낸다. */
   @Override
-  public void moveReplace(
-      long tenantId, String schema, String table, String staging, List<String> columns) {
+  public void move(
+      long tenantId,
+      String schema,
+      String table,
+      String staging,
+      List<String> columns,
+      boolean replace) {
     requireCurrentTenant(tenantId);
     run(
         TiberoPipelineSql.moveFromStaging(schema, table, staging, columns),
-        List.of(TiberoPipelineSql.deleteAll(schema, table)));
-  }
-
-  @Override
-  public void moveAppend(
-      long tenantId, String schema, String table, String staging, List<String> columns) {
-    requireCurrentTenant(tenantId);
-    run(TiberoPipelineSql.moveFromStaging(schema, table, staging, columns), List.of());
+        replace ? List.of(TiberoPipelineSql.deleteAll(schema, table)) : List.of());
   }
 
   /** 실행기는 요청 컨텍스트의 테넌트로 접속한다 — 인자의 테넌트와 다르면 남의 스키마에 쓰게 되므로 fail-closed 로 막는다. */

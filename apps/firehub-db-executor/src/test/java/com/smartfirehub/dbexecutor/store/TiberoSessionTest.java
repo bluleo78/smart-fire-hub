@@ -22,4 +22,21 @@ class TiberoSessionTest {
     assertThat(TiberoSession.DRIVER_CLASS).isEqualTo("com.tmax.tibero.jdbc.TbDriver");
     assertThat(TiberoSession.jdbcUrl("h", 8629, "tb")).isEqualTo("jdbc:tibero:thin:@h:8629:tb");
   }
+
+  /** 슬롯 풀 세션 고정: NLS 고정 뒤 CURRENT_SCHEMA 를 테넌트 소유 스키마로(WD-78). 다른 스키마 이름은 만들지 않는다. */
+  @Test
+  void slotSessionInitSql_addsCurrentSchema_andRejectsForeignSchema() {
+    String sql = TiberoSession.slotSessionInitSql(5, "GENIA_T5");
+    String nls = TiberoSession.SESSION_INIT_SQL;
+    assertThat(sql).startsWith(nls.substring(0, nls.length() - "END;".length()));
+    assertThat(sql)
+        .endsWith("EXECUTE IMMEDIATE 'ALTER SESSION SET CURRENT_SCHEMA = \"GENIA_T5\"'; END;");
+    for (String bad :
+        new String[] {"GENIA_T6", "GENIA_T5\"'; DROP", "genia_t5", "SYS", null, "GENIA_T5_RO"}) {
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> TiberoSession.slotSessionInitSql(5, bad))
+          .as(String.valueOf(bad))
+          .isInstanceOf(IllegalStateException.class);
+    }
+  }
 }

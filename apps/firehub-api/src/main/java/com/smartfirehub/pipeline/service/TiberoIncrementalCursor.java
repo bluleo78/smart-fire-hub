@@ -6,7 +6,6 @@ import com.smartfirehub.pipeline.service.executor.DbExecutorClient.QueryResult;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -38,12 +37,10 @@ public class TiberoIncrementalCursor {
 
   /** 후보 조회 문장. db-executor 실서버 테스트(TiberoLiveCursorTest)가 같은 문장으로 검증한다. */
   static final String CANDIDATE_SQL =
-      "SELECT TO_CHAR(LEAST(SYSTIMESTAMP, NVL(FROM_TZ(CAST(MIN(START_TIME) AS TIMESTAMP),"
-          + " TO_CHAR(SYSTIMESTAMP, 'TZH:TZM')), SYSTIMESTAMP)) AT TIME ZONE '+00:00',"
+      "SELECT TO_CHAR(LEAST(SYSTIMESTAMP, NVL(FROM_TZ(CAST(MIN(START_TIME) AS TIMESTAMP), "
+          + TiberoTimestamps.SERVER_OFFSET_SQL
+          + "), SYSTIMESTAMP)) AT TIME ZONE '+00:00',"
           + " 'YYYY-MM-DD HH24:MI:SS.FF6') AS CANDIDATE FROM SYS._VT_TRANSACTION";
-
-  private static final DateTimeFormatter RESULT_FORMAT =
-      DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
 
   private static final String FAILURE_PREFIX = "Tibero 증분 커서 후보를 읽지 못했습니다";
 
@@ -68,7 +65,8 @@ public class TiberoIncrementalCursor {
     // 컬럼명은 실행기가 소문자로 정규화한다 — 별칭이 하나뿐이라 첫 값을 쓴다.
     Object value = row.values().stream().findFirst().orElse(null);
     try {
-      return LocalDateTime.parse(String.valueOf(value), RESULT_FORMAT).atOffset(ZoneOffset.UTC);
+      return LocalDateTime.parse(String.valueOf(value), TiberoTimestamps.UTC_MICROS)
+          .atOffset(ZoneOffset.UTC);
     } catch (DateTimeParseException e) {
       throw new ScriptExecutionException(FAILURE_PREFIX + ": 시각 형식을 해석할 수 없습니다(" + value + ").");
     }

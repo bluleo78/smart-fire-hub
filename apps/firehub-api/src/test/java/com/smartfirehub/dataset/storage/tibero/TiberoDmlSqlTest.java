@@ -226,18 +226,26 @@ class TiberoDmlSqlTest {
   private static final String STG = "STG_0123456789ABCDEF01234567";
   private static final String STG_T = "\"GENIA_T5\".\"" + STG + "\"";
 
+  /** 스테이징 = 테이블 → _SEQ 인덱스 → 전용 시퀀스(WD-77). 인덱스가 시퀀스보다 앞이라 시퀀스 실패 시 테이블 DROP 만으로 정리된다. */
   @Test
-  void createStaging_tableAndSequence() {
+  void createStaging_tableSeqIndexAndSequence() {
     List<String> sql =
         TiberoDmlSql.createStaging(
             S, STG, List.of("code", "qty"), List.of("VARCHAR2(10)", "NUMBER(18,6)"));
-    assertThat(sql).hasSize(2);
+    assertThat(sql).hasSize(3);
     assertThat(sql.get(0))
         .isEqualTo(
             "CREATE TABLE "
                 + STG_T
                 + " (\"_SEQ\" NUMBER(19), \"CODE\" VARCHAR2(10), \"QTY\" NUMBER(18,6))");
     assertThat(sql.get(1))
+        .isEqualTo(
+            "CREATE INDEX \"GENIA_T5\".\""
+                + TiberoNames.stagingSeqIndexName(STG)
+                + "\" ON "
+                + STG_T
+                + " (\"_SEQ\")");
+    assertThat(sql.get(2))
         .isEqualTo(
             "CREATE SEQUENCE \"GENIA_T5\".\""
                 + TiberoNames.stagingSequenceName(STG)

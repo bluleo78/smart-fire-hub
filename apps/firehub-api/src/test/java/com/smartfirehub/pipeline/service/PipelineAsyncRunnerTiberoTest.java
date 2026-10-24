@@ -45,7 +45,7 @@ import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
-import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrants;
 import java.sql.Types;
 import java.util.Arrays;
 import java.util.List;
@@ -74,7 +74,7 @@ import org.springframework.context.ApplicationEventPublisher;
  *       §2 실패 조건 1).
  *   <li>REPLACE/APPEND/MERGE 마다 실행기에 넘기는 문장·선행문(Tibero 판 비우기·INSERT…SELECT·MERGE).
  *   <li>probe 결과의 대문자 컬럼명이 메타데이터의 소문자 컬럼명과 맞춰진다.
- *   <li>Python 단계는 시작 즉시 한국어 문구로 실패한다.
+ *   <li>Python 단계의 Tibero 흐름(슬롯·토큰·스테이징)은 {@code PipelineAsyncRunnerTiberoPythonTest} 가 본다.
  *   <li>실행기 실패 응답은 Tibero 코드로 번역된 문구로 단계 실패가 된다.
  *   <li>{@code {{#N}}} 참조가 {@code "GENIA_T5"."<TABLE>"} 로 치환된다(Task 2 에서 미뤄 둔 러너 단위 테스트).
  * </ul>
@@ -129,7 +129,7 @@ class PipelineAsyncRunnerTiberoTest {
   @Mock PipelineSecurityGate pipelineSecurityGate;
   @Mock DatasetAccessGuard datasetAccessGuard;
   @Mock AiHostingResolver aiHostingResolver;
-  @Mock PythonReadGrantSync pythonReadGrantSync;
+  @Mock PythonReadGrants pythonReadGrantSync;
   @Mock LocalPythonOutputLoader localPythonOutputLoader;
 
   @InjectMocks PipelineAsyncRunner runner;
@@ -411,40 +411,7 @@ class PipelineAsyncRunnerTiberoTest {
     verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
   }
 
-  // ── 미지원 단계 · 증분 · 출력 없는 SELECT ────────────────────────────────────────────────
-
-  @ParameterizedTest
-  @CsvSource(
-      delimiter = '|',
-      value = {
-        "PYTHON|false|Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다.",
-        "PYTHON|true|Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다.",
-      })
-  void tiberoUnsupportedStepTypes_failImmediatelyInKorean(
-      String scriptType, boolean executorEnabled, String expected) {
-    PipelineStepResponse step =
-        step(scriptType, "print('x')", OUTPUT_ID, "REPLACE", List.of(), 0, "s1");
-
-    String status = run(step, executorEnabled);
-
-    assertThat(status).isEqualTo("FAILED");
-    assertThat(failureMessage()).isEqualTo(expected);
-    // 단계 시작 즉시 — 권한 확인·TEMP 생성·실행기·임시 테이블 맞바꿈 어느 것도 하지 않는다.
-    verifyNoInteractions(
-        executorClient,
-        dbExecutorClient,
-        sqlExecutor,
-        pythonExecutor,
-        apiCallExecutor,
-        aiClassifyExecutor,
-        apiConnectionService,
-        permissionChecker,
-        tempDatasetService,
-        dataTableService,
-        pipelineSecurityGate,
-        pythonReadGrantSync,
-        localPythonOutputLoader);
-  }
+  // ── 증분 · 출력 없는 SELECT ────────────────────────────────────────────────
 
   // ── 실행기 실패 → 단계 FAILED + 번역 문구 ────────────────────────────────────────────────
 

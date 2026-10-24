@@ -231,4 +231,97 @@ class TenantPoolsTest {
     held.close();
     assertThat(created.get(1).closed).isTrue();
   }
+
+  // ---- 슬롯 풀(WD-78): 키는 (테넌트, 슬롯), 계정은 기술자 slots[k] ----
+
+  /** 슬롯 계정 S1..S3 을 가진 기술자(슬롯 비밀번호는 "s{k}-" + password). */
+  private static StoreDescriptor withSlots(long tenant, String password) {
+    StoreDescriptor base = desc(tenant, password);
+    List<StoreDescriptor.SlotAccount> slots = new ArrayList<>();
+    for (int k = 1; k <= 3; k++) {
+      slots.add(
+          new StoreDescriptor.SlotAccount(
+              k, "GENIA_T" + tenant + "_S" + k, "s" + k + "-" + password));
+    }
+    return new StoreDescriptor(
+        tenant, "TIBERO", "h", 8629, "tb", "GENIA_T" + tenant, base.owner(), base.ro(), slots, 0L);
+  }
+
+  private final List<Integer> slotFactoryCalls = new ArrayList<>();
+
+  private TenantPools slotPools(int max) {
+    return TenantPools.forSlots(
+        (d, slot) -> {
+          slotFactoryCalls.add(slot);
+          FakePool p = new FakePool(d);
+          created.add(p);
+          return p;
+        },
+        max);
+  }
+
+  @Test
+  void slotPools_keyedByTenantAndSlot() throws Exception {
+    TenantPools p = slotPools(8);
+    StoreDescriptor d = withSlots(1, "a");
+    p.borrow(d, 1).close();
+    p.borrow(d, 2).close();
+    p.borrow(d, 1).close(); // 같은 (테넌트, 슬롯) → 재사용
+    p.borrow(withSlots(2, "a"), 1).close(); // 다른 테넌트의 같은 슬롯 → 다른 풀
+    assertThat(created).hasSize(3);
+    assertThat(slotFactoryCalls).containsExactly(1, 2, 1);
+  }
+
+  /** 슬롯 k 의 비밀번호만 바뀌면 그 슬롯 풀만 갈아 끼운다(다른 슬롯 풀은 그대로). */
+  @Test
+  void slotPools_slotPasswordRotation_replacesOnlyThatSlot() throws Exception {
+    TenantPools p = slotPools(8);
+    StoreDescriptor before = withSlots(1, "a");
+    p.borrow(before, 1).close();
+    p.borrow(before, 2).close();
+    List<StoreDescriptor.SlotAccount> rotated = new ArrayList<>(before.slots());
+    rotated.set(1, new StoreDescriptor.SlotAccount(2, "GENIA_T1_S2", "rotated"));
+    StoreDescriptor after =
+        new StoreDescriptor(
+            1, "TIBERO", "h", 8629, "tb", "GENIA_T1", before.owner(), before.ro(), rotated, 0L);
+
+    p.borrow(after, 1).close();
+    assertThat(created).hasSize(2);
+    p.borrow(after, 2).close();
+    assertThat(created).hasSize(3);
+    assertThat(created.get(1).closed).isTrue(); // 옛 슬롯 2 풀
+    assertThat(created.get(0).closed).isFalse(); // 슬롯 1 풀
+  }
+
+  @Test
+  void slotPools_missingSlotAccount_failsBeforeCreatingPool() {
+    TenantPools p = slotPools(8);
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> p.borrow(withSlots(1, "a"), 4))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("접속 계정이 기술자에 없습니다");
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> p.borrow(desc(1, "a"), 1))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(created).isEmpty();
+  }
+
+  @Test
+  void slotPools_lruAcrossTenantSlotKeys() throws Exception {
+    TenantPools p = slotPools(2);
+    StoreDescriptor d = withSlots(1, "a");
+    p.borrow(d, 1).close();
+    p.borrow(d, 2).close();
+    p.borrow(d, 3).close(); // 상한 2 → (1, 1) 퇴역
+    assertThat(created.get(0).closed).isTrue();
+    assertThat(created.get(1).closed).isFalse();
+  }
+
+  @Test
+  void descriptor_slotLookupAndMaskedToString() {
+    StoreDescriptor d = withSlots(1, "pw");
+    assertThat(d.slot(2).username()).isEqualTo("GENIA_T1_S2");
+    assertThat(d.slot(2).password()).isEqualTo("s2-pw");
+    assertThat(d.slot(4)).isNull();
+    assertThat(desc(1, "pw").slot(1)).isNull();
+    assertThat(d.toString()).doesNotContain("s1-pw").doesNotContain("s2-pw");
+  }
 }

@@ -24,11 +24,11 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @RequiredArgsConstructor
 public class PythonReadGrantListener {
 
-  private final PythonReadGrantSync sync;
+  private final PythonReadGrants sync;
 
   /**
    * 등급 정의 변경(추가·수정·삭제·순서) — 등급 위치가 바뀌므로 테넌트 전체를 다시 맞추고, 새 GRANT 커밋 전에 실행 중인 슬롯 롤 세션을 끊는다(실행 중 스크립트가
-   * 넓어진 슬롯으로 자격 밖 등급을 읽지 못하게 — {@link PythonReadGrantSync#syncTenantForLevelsChange()}).
+   * 넓어진 슬롯으로 자격 밖 등급을 읽지 못하게 — {@link PythonReadGrants#syncTenantForLevelsChange()}).
    */
   @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
   public void onLevelsChanged(SecurityLevelsChangedEvent event) {

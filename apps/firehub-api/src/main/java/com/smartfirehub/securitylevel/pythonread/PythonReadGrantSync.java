@@ -29,8 +29,6 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -50,7 +48,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Slf4j
 @Service
-public class PythonReadGrantSync {
+public class PythonReadGrantSync implements PythonReadGrantBackend {
 
   /**
    * 동기화 결과.
@@ -106,6 +104,7 @@ public class PythonReadGrantSync {
   }
 
   /** 현재 테넌트 전체 재동기화. 실패는 예외(호출부가 로그/실패를 정한다). */
+  @Override
   public SyncResult syncTenant() {
     return requiresNew.execute(status -> syncInTx(null, null, false));
   }
@@ -123,6 +122,7 @@ public class PythonReadGrantSync {
    *
    * <p>끊기에 실패하면(권한 없음·시간 초과) 예외로 이 동기화 트랜잭션을 되돌린다 — 이 경로가 넓힌 GRANT 는 커밋되지 않는다.
    */
+  @Override
   public SyncResult syncTenantForLevelsChange() {
     return requiresNew.execute(status -> syncInTx(null, null, true));
   }
@@ -139,53 +139,18 @@ public class PythonReadGrantSync {
   }
 
   /** 데이터셋 하나 — 테이블 이름을 찾아 syncTable. 물리 테이블이 없는 데이터셋(문서·파일형)은 할 일이 없다. */
+  @Override
   public void syncDataset(long datasetId) {
-    String table =
-        requiresNew.execute(
-            status ->
-                dsl.select(DATASET.TABLE_NAME)
-                    .from(DATASET)
-                    .where(DATASET.ID.eq(datasetId))
-                    .fetchOptional(DATASET.TABLE_NAME)
-                    .orElse(null));
-    if (table != null) {
-      syncTable(table);
-    }
+    PythonReadGrantBackend.syncDatasetTable(requiresNew, dsl, datasetId, this::syncTable);
   }
 
   /**
    * 쓰기 경로 훅 — Spring 트랜잭션 동기화가 활성이면 커밋 후, 아니면 즉시 syncTable. 실패는 로그만 남긴다(판정이 아니라 이중 방어선이라 커밋을 막지
-   * 않는다, 스펙 §4.3). 다음 JIT·일 1회 동기화가 회복한다.
+   * 않는다, 스펙 §4.3). 다음 JIT·일 1회 동기화가 회복한다. 공통부는 {@link PythonReadGrantBackend#scheduleTableSync}.
    */
+  @Override
   public void syncTableAfterCommit(String tableName) {
-    // 예약 단계 전체를 try 안에 둔다 — 테넌트 컨텍스트 누락(require 실패)·동기화 등록 실패도 "로그만, 커밋을 막지 않는다" 계약에 든다.
-    // require 가 밖에 있으면 컨텍스트 없는 쓰기 경로에서 예외가 호출자 트랜잭션을 롤백시킨다(이중 방어선이 본 작업을 깨뜨림).
-    try {
-      long tenantId = TenantContext.require("PYTHON 읽기 권한 동기화 예약");
-      Runnable work =
-          () -> {
-            try {
-              // afterCommit 콜백은 다른 컨텍스트에서 돌 수 있어 테넌트를 명시로 다시 세운다.
-              TenantContext.runScoped(tenantId, () -> syncTable(tableName));
-            } catch (RuntimeException e) {
-              log.warn(
-                  "PYTHON 읽기 권한 동기화 실패(다음 동기화에서 회복): tenant={} table={}", tenantId, tableName, e);
-            }
-          };
-      if (TransactionSynchronizationManager.isSynchronizationActive()) {
-        TransactionSynchronizationManager.registerSynchronization(
-            new TransactionSynchronization() {
-              @Override
-              public void afterCommit() {
-                work.run();
-              }
-            });
-      } else {
-        work.run();
-      }
-    } catch (RuntimeException e) {
-      log.warn("PYTHON 읽기 권한 동기화 예약 실패(다음 동기화에서 회복): table={}", tableName, e);
-    }
+    PythonReadGrantBackend.scheduleTableSync(tableName, log, "", this::syncTable);
   }
 
   /**
@@ -220,60 +185,14 @@ public class PythonReadGrantSync {
    * 최고 등급 — PipelineSecurityGate.pythonReadRank)로 고른다. readRank 는 자격 rank 이하여야 한다 — 넘으면 자격 밖 등급을 읽게
    * 되므로 거부한다 (fail-closed).
    */
+  @Override
   public int prepareForRun(Clearance runAs, int readRank) {
-    // 테넌트 일치 확인을 맨 먼저 — 동기화(syncTenant)는 TenantContext 테넌트를, 슬롯 계산은 runAs 의 rank 를 쓴다. 둘이 다르면
-    // 남의 테넌트 등급 스냅샷으로 슬롯을 고르게 되므로(과권한 가능) 계산 전에 거부한다. 컨텍스트가 비어도 같은 예외(fail-closed).
-    Long contextTenant = TenantContext.get();
-    if (contextTenant == null || contextTenant != runAs.tenantId()) {
-      log.error(
-          "PYTHON 실행 주체 테넌트 불일치: runAs.tenant={} context.tenant={}",
-          runAs.tenantId(),
-          contextTenant);
-      throw new PythonReadAccessException("실행 주체의 테넌트가 현재 실행 테넌트와 달라 Python 스크립트를 실행할 수 없습니다.");
-    }
-    if (runAs.rank() == Clearance.NO_RANK) {
-      throw new PythonReadAccessException("실행 주체에게 열람 등급이 없어 Python 스크립트를 실행할 수 없습니다.");
-    }
-    if (readRank > runAs.rank()) {
-      throw new PythonReadAccessException("Python 읽기 범위가 실행 주체의 열람 등급을 넘어 실행할 수 없습니다.");
-    }
-    SyncResult result;
-    try {
-      result = requiresNew.execute(status -> syncInTx(null, readRank, false));
-    } catch (RuntimeException e) {
-      throw new PythonReadAccessException("Python 읽기 권한을 준비하지 못해 실행을 중단했습니다.", e);
-    }
-    int slot = result.runSlot();
-    if (slot < 1 || slot > TenantPipelineRole.PYTHON_READ_SLOTS) {
-      throw new PythonReadAccessException("실행 주체의 열람 등급이 Python 읽기 슬롯 범위(1~10)를 벗어났습니다.");
-    }
-    if (!result.availableSlots().contains(slot)) {
-      throw new PythonReadAccessException("Python 읽기 롤이 준비되지 않았습니다. 관리자에게 문의하세요.");
-    }
-    // 회수 실패 = 그 롤에 과권한이 남았을 수 있다. 거부는 이 실행이 접속할 슬롯 롤에 남은 경우로만 좁힌다 — 다른 슬롯 롤의 과권한은 이 스크립트가
-    // 쓸 수 없다(슬롯 롤끼리 멤버십이 없고 직접 로그인한다). 넓게 거부하면 테이블 하나의 회수 실패가 테넌트 PYTHON 전체를 멈춘다.
-    String slotRole = TenantPipelineRole.pythonReadRoleName(runAs.tenantId(), slot);
-    Set<String> overGranted = new TreeSet<>();
-    result
-        .revokeFailed()
-        .forEach(
-            (table, rolesLeft) -> {
-              if (rolesLeft.contains(slotRole)) {
-                overGranted.add(table);
-              }
-            });
-    if (!result.revokeFailed().isEmpty()) {
-      // 테이블 이름은 사용자 메시지에 싣지 않는다(로그에만).
-      log.error(
-          "PYTHON 읽기 권한 회수 실패(tenant={}, 실행 슬롯 {}): {}",
-          runAs.tenantId(),
-          slot,
-          result.revokeFailed());
-    }
-    if (!overGranted.isEmpty()) {
-      throw new PythonReadAccessException("Python 읽기 권한을 회수하지 못한 데이터가 있어 실행을 중단했습니다. 관리자에게 문의하세요.");
-    }
-    return slot;
+    // 사전 검사·슬롯 판정·회수 실패 거부는 백엔드 공통 규칙(PythonReadRunGate)이다 — Tibero 판과 갈라지지 않게 한 곳에 둔다.
+    return PythonReadRunGate.prepare(
+        runAs,
+        readRank,
+        () -> requiresNew.execute(status -> syncInTx(null, readRank, false)),
+        slot -> TenantPipelineRole.pythonReadRoleName(runAs.tenantId(), slot));
   }
 
   /**

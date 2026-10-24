@@ -133,6 +133,11 @@
           "name": "readSlot",
           "required": false,
           "type": "int"
+        },
+        {
+          "name": "stream",
+          "required": false,
+          "type": "boolean"
         }
       ],
       "responseFields": [
@@ -147,7 +152,7 @@
         "error",
         "db_error"
       ],
-      "notes": "db-executor: read_only 가 true 가 아니면(false·누락) '읽기 전용 조회만 실행할 수 있습니다.' 로 거부하고 max_rows 는 필수다. Python 실행기: max_rows 기본 1000, read_only 기본 false(false 도 실행). readSlot 은 db-executor 가 아직 지원하지 않아 값이 있으면 거부한다(Task 13).",
+      "notes": "db-executor: read_only 가 true 가 아니면(false·누락) '읽기 전용 조회만 실행할 수 있습니다.' 로 거부하고 max_rows 는 필수다(슬롯 스트리밍은 max_rows 를 쓰지 않아 없어도 된다). Python 실행기: max_rows 기본 1000, read_only 기본 false(false 도 실행). readSlot 과 stream:true 는 함께일 때만 슬롯 스트리밍(streaming)이고, 둘 중 하나만 있으면 두 실행기 모두 거부한다(db-executor 200+success=false, Python 422) — 슬롯 조회의 길을 하나로 둔다(WD-78). stream:true 요청이 실행 전에 거부되면 db-executor 는 JSON 이 아니라 NDJSON 실패 줄 하나로 답한다(스트리밍 응답 모양 유지).",
       "examples": [
         {
           "name": "읽기 전용 조회",
@@ -181,8 +186,123 @@
           "backend": "db-executor",
           "expectSuccess": false,
           "expectErrorPresent": true
+        },
+        {
+          "name": "readSlot 만 있고 stream 없음 거부",
+          "request": {
+            "tenantId": 1,
+            "query": "SELECT 1",
+            "max_rows": 10,
+            "read_only": true,
+            "readSlot": 2
+          },
+          "expectSuccess": false,
+          "expectErrorPresent": true
+        },
+        {
+          "name": "stream 만 있고 readSlot 없음 거부",
+          "request": {
+            "tenantId": 1,
+            "query": "SELECT 1",
+            "max_rows": 10,
+            "read_only": true,
+            "stream": true
+          },
+          "expectSuccess": false,
+          "expectErrorPresent": true
         }
-      ]
+      ],
+      "streaming": {
+        "_doc": "슬롯 스트리밍 응답(WD-78, 스펙 §5.2). readSlot + stream:true 요청에 Content-Type application/x-ndjson 으로 한 줄에 JSON 하나씩 보낸다. 첫 줄 {\"columns\":[...]}, 행마다 {\"row\":{...}}, 마지막 줄 성공 {\"success\":true,\"row_count\":N} 또는 실패 {\"success\":false,\"error\":\"...\",\"db_error\":{...}|null}. 실행 전 거부(문장 검사·계정·접속)는 실패 줄 하나만 나간다(expectLines=1). 행 상한이 없고 max_rows 는 무시한다. 받는 쪽은 마지막 줄로 성공을 판정한다. examples 의 resultRows 는 테스트 대역이 돌려줄 행 수, failAfterRows 는 그 행 수를 보낸 뒤 DB 오류를 낸다는 뜻이다. 값 표기는 각 실행기의 비스트리밍 결과와 같은 변환을 쓴다(db-executor ValueConverter, Python 응답 직렬화). db_error 는 db-executor 가 DB 오류일 때만 채우고(그 밖은 null), Python 은 기존처럼 실패마다 채운다. requestLevel 이 true 인 예시는 요청 형식 단계(read_only 누락 등)에서 실행 전에 거부되는 경우라 각 실행기의 /execute/query 창구로 보내 검사한다(실패 줄 하나, Content-Type 은 contentType).",
+        "contentType": "application/x-ndjson",
+        "firstLineKeys": [
+          "columns"
+        ],
+        "rowLineKeys": [
+          "row"
+        ],
+        "successLastLineKeys": [
+          "success",
+          "row_count"
+        ],
+        "failureLastLineKeys": [
+          "success",
+          "error",
+          "db_error"
+        ],
+        "examples": [
+          {
+            "name": "10,001행 끝까지(행 상한 없음, max_rows 무시)",
+            "request": {
+              "tenantId": 5,
+              "query": "SELECT id FROM t",
+              "max_rows": 10,
+              "read_only": true,
+              "readSlot": 2,
+              "stream": true
+            },
+            "resultRows": 10001,
+            "expectSuccess": true,
+            "expectRowLines": 10001
+          },
+          {
+            "name": "빈 결과도 컬럼 줄과 성공 줄",
+            "request": {
+              "tenantId": 5,
+              "query": "SELECT id FROM t",
+              "max_rows": 10,
+              "read_only": true,
+              "readSlot": 2,
+              "stream": true
+            },
+            "resultRows": 0,
+            "expectSuccess": true,
+            "expectRowLines": 0
+          },
+          {
+            "name": "중간 DB 오류는 실패 마지막 줄",
+            "request": {
+              "tenantId": 5,
+              "query": "SELECT id FROM t",
+              "max_rows": 10,
+              "read_only": true,
+              "readSlot": 2,
+              "stream": true
+            },
+            "resultRows": 10,
+            "failAfterRows": 3,
+            "expectSuccess": false,
+            "expectRowLines": 3
+          },
+          {
+            "name": "조회가 아닌 문장은 실패 줄 하나",
+            "request": {
+              "tenantId": 5,
+              "query": "DELETE FROM t",
+              "max_rows": 10,
+              "read_only": true,
+              "readSlot": 2,
+              "stream": true
+            },
+            "resultRows": 0,
+            "expectSuccess": false,
+            "expectLines": 1
+          },
+          {
+            "name": "read_only 없는 스트리밍 요청은 실패 줄 하나",
+            "request": {
+              "tenantId": 5,
+              "query": "SELECT id FROM t",
+              "readSlot": 2,
+              "stream": true
+            },
+            "requestLevel": true,
+            "resultRows": 0,
+            "expectSuccess": false,
+            "expectLines": 1
+          }
+        ]
+      }
     },
     "probe": {
       "path": "/execute/probe",

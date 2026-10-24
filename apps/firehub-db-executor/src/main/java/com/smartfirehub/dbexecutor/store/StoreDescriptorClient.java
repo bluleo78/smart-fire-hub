@@ -33,6 +33,9 @@ import org.springframework.stereotype.Component;
  *       기술자 조회도 요청 전체 기한 안에 있어야 api 가 포기하기 전에 실행기가 끝난다.
  *   <li>무효화: 커넥션 대여(로그인)가 실패하면 실행기가 {@link #invalidate} 로 캐시를 지운다 — 비밀번호가 바뀐 뒤 TTL 동안 옛 기술자로 계속
  *       실패하지 않게.
+ *   <li>짧은 신선도(WD-78, Ruling 16): 스크립트 토큰 요청은 {@link #get(long, Duration, Duration)} 에 최대 나이(5초)를
+ *       줘서 그보다 오래된 캐시를 쓰지 않는다 — 등급 변경이 올린 스크립트 토큰 세대가 TTL(60초) 동안 가려지지 않게. 새로 받은 값은 캐시를 갱신한다.
+ *   <li>요청 범위: 언제나 {@code ?include=ro,slots} 로 받는다(RO·슬롯 계정 포함). 한 캐시를 모든 경로가 같이 쓰기 위해서다.
  * </ul>
  */
 @Component
@@ -40,7 +43,14 @@ public class StoreDescriptorClient {
 
   private static final Logger log = LoggerFactory.getLogger(StoreDescriptorClient.class);
 
-  private record Cached(StoreDescriptor descriptor, long expiresAtNanos) {}
+  /**
+   * 캐시 항목. {@code fetchedAtNanos} 는 그 값을 받으려고 원격 조회를 <b>시작한</b> 시각이다 — api 가 세대(epoch)를 읽은 시점은 시작과
+   * 도착 사이이므로 시작 시각으로 재야 최대 나이가 보수적으로 지켜진다(Ruling 18).
+   */
+  private record Cached(StoreDescriptor descriptor, long fetchedAtNanos, long expiresAtNanos) {}
+
+  /** 진행 중인 같은 테넌트 조회와 그 시작 시각 — 최대 나이가 있는 호출은 너무 일찍 시작한 조회에 합류하지 않는다. */
+  private record Inflight(CompletableFuture<StoreDescriptor> future, long startedNanos) {}
 
   /** 원격 조회 한 번의 최대 대기(접속·응답 포함). 호출자의 남은 시간이 더 짧으면 그 값을 쓴다. */
   static final Duration MAX_FETCH = Duration.ofSeconds(10);
@@ -58,8 +68,7 @@ public class StoreDescriptorClient {
   private final long ttlNanos;
   private final LongSupplier nanoClock;
   private final ConcurrentHashMap<Long, Cached> cache = new ConcurrentHashMap<>();
-  private final ConcurrentHashMap<Long, CompletableFuture<StoreDescriptor>> inflight =
-      new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<Long, Inflight> inflight = new ConcurrentHashMap<>();
 
   @Autowired
   public StoreDescriptorClient(DbExecutorProperties props, ObjectMapper mapper) {
@@ -89,7 +98,18 @@ public class StoreDescriptorClient {
    * @throws StoreUnavailableException 못 얻었거나 남은 시간 안에 끝나지 않았을 때(「…(시간 초과).」)
    */
   public StoreDescriptor get(long tenantId, Duration budget) {
-    StoreDescriptor hit = fresh(tenantId);
+    return get(tenantId, budget, null);
+  }
+
+  /**
+   * {@link #get(long, Duration)} 에 캐시 최대 나이를 더한 판. 조회를 시작한 지 {@code maxAge} 를 넘긴 캐시는 쓰지 않고 새로 받는다.
+   * 진행 중인 같은 테넌트 조회는 {@code maxAge} 안에 시작한 것에만 합류하고, 그보다 일찍 시작한 것이면 따로 받는다(Ruling 18).
+   *
+   * @param maxAge 캐시 최대 나이 — null 이면 TTL 만 본다
+   */
+  public StoreDescriptor get(long tenantId, Duration budget, Duration maxAge) {
+    long maxAgeNanos = maxAge == null ? Long.MAX_VALUE : maxAge.toNanos();
+    StoreDescriptor hit = fresh(tenantId, maxAgeNanos);
     if (hit != null) {
       return hit;
     }
@@ -97,29 +117,34 @@ public class StoreDescriptorClient {
     if (waitNanos <= 0) {
       throw new StoreUnavailableException(TIMED_OUT);
     }
-    CompletableFuture<StoreDescriptor> mine = new CompletableFuture<>();
-    CompletableFuture<StoreDescriptor> existing = inflight.putIfAbsent(tenantId, mine);
+    Inflight mine = new Inflight(new CompletableFuture<>(), nanoClock.getAsLong());
+    Inflight existing = inflight.putIfAbsent(tenantId, mine);
     if (existing != null) {
-      return await(existing, waitNanos);
+      if (mine.startedNanos() - existing.startedNanos() <= maxAgeNanos) {
+        return await(existing.future(), waitNanos);
+      }
+      // 진행 중인 조회가 너무 일찍 시작했다 — 그 결과는 최대 나이를 못 지킬 수 있어 등록 없이 따로 받는다(결과는 캐시를 갱신한다).
+      return fetch(tenantId, waitNanos);
     }
     try {
       // 선행 조회가 방금 끝나 캐시를 채웠을 수 있다(경합) — 다시 확인.
-      StoreDescriptor again = fresh(tenantId);
+      StoreDescriptor again = fresh(tenantId, maxAgeNanos);
       StoreDescriptor result = again != null ? again : fetch(tenantId, waitNanos);
-      mine.complete(result);
+      mine.future().complete(result);
       return result;
     } catch (RuntimeException | Error e) {
       // Error 까지 잡아 대기자를 반드시 깨운다(안 그러면 join 이 영원히 막힌다).
-      mine.completeExceptionally(e);
+      mine.future().completeExceptionally(e);
       throw e;
     } finally {
       inflight.remove(tenantId, mine);
     }
   }
 
-  private StoreDescriptor fresh(long tenantId) {
+  private StoreDescriptor fresh(long tenantId, long maxAgeNanos) {
     Cached c = cache.get(tenantId);
-    if (c != null && nanoClock.getAsLong() < c.expiresAtNanos()) {
+    long now = nanoClock.getAsLong();
+    if (c != null && now < c.expiresAtNanos() && now - c.fetchedAtNanos() <= maxAgeNanos) {
       return c.descriptor();
     }
     return null;
@@ -174,10 +199,15 @@ public class StoreDescriptorClient {
    * timeout} 은 접속 시간을 포함하지 않아(접속은 HttpClient 의 connectTimeout) 이렇게 해야 접속까지 한 상한에 묶인다.
    */
   private StoreDescriptor fetch(long tenantId, long waitNanos) {
+    // 신선도 기준 시각 — 요청을 보내기 전에 잰다(Cached 설명).
+    long startedNanos = nanoClock.getAsLong();
     HttpRequest req =
         HttpRequest.newBuilder(
                 URI.create(
-                    baseUrl + "/internal/executor/tenants/" + tenantId + "/data-store?include=ro"))
+                    baseUrl
+                        + "/internal/executor/tenants/"
+                        + tenantId
+                        + "/data-store?include=ro,slots"))
             .timeout(Duration.ofNanos(waitNanos))
             .header("Authorization", "Internal " + token)
             .GET()
@@ -226,7 +256,10 @@ public class StoreDescriptorClient {
     if (!d.isComplete()) {
       throw new StoreUnavailableException("응답 형식 오류");
     }
-    cache.put(tenantId, new Cached(d, nanoClock.getAsLong() + ttlNanos));
+    Cached fetched = new Cached(d, startedNanos, nanoClock.getAsLong() + ttlNanos);
+    // 늦게 끝난 옛 조회가 더 새로 시작한 조회의 결과를 덮지 않게 시작 시각이 늦은 쪽을 남긴다.
+    cache.merge(
+        tenantId, fetched, (old, neu) -> neu.fetchedAtNanos() >= old.fetchedAtNanos() ? neu : old);
     return d;
   }
 }

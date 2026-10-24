@@ -416,9 +416,7 @@ public class PipelineService {
    */
   private String substituteForValidation(String sql) {
     return substituteStepReferencesForValidation(
-        sql,
-        pipelineDataSchema::qualify,
-        pipelineDataSchema.isTibero() ? DataStoreBackend.TIBERO : DataStoreBackend.POSTGRESQL);
+        sql, pipelineDataSchema::qualify, pipelineDataSchema.backend());
   }
 
   /** 두 치환 변형의 공통 본문. {@code qualifier} 는 {@code {{#N}}} 더미 테이블 이름을 한정하는 함수다. */

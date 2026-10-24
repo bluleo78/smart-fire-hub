@@ -40,7 +40,8 @@ import org.springframework.stereotype.Service;
 @Slf4j
 @Service
 public class PythonScriptExecutor {
-  private static final int TIMEOUT_SECONDS = 300;
+  /** 자식 프로세스 시간 제한(초). 러너가 Tibero 스크립트 토큰 만료(이 값 + 여유)를 정할 때도 쓴다. */
+  static final int TIMEOUT_SECONDS = 300;
 
   @Value("${app.pipeline.datasource.url}")
   private String pipelineDbUrl;
@@ -53,6 +54,32 @@ public class PythonScriptExecutor {
    */
   @Value("${app.pipeline.role-password-secret}")
   private String rolePasswordSecret;
+
+  /**
+   * Tibero 테넌트(WD-78) 스크립트가 조회 도우미로 부를 db-executor 주소({@code GENIA_DB_URL}). 로컬 모드에서도 Tibero 읽기는
+   * db-executor 로만 한다(스펙 §5.3). 기본값을 둬 이 키가 없는 프로필도 기동한다 — 비면 Tibero 실행 시점에 실패한다.
+   */
+  @Value("${app.db-executor.base-url:}")
+  private String dbExecutorBaseUrl;
+
+  /**
+   * 조회 도우미 {@code genia_db.py} 가 있는 디렉터리(자식의 {@code PYTHONPATH}, WD-78). 로컬은 리포의 {@code
+   * ../firehub-executor/sandbox}(application-local.yml). 기본값이 비어 있어 다른 프로필도 기동하고, 비면 Tibero 실행 시점에
+   * 실패한다.
+   */
+  @Value("${app.pipeline.python-helper-dir:}")
+  private String pythonHelperDir;
+
+  /** 자식 출력에서 스크립트 토큰 자리에 남기는 표시. */
+  private static final String REDACTED = "****";
+
+  /**
+   * Tibero PYTHON 의 서버 설정(db-executor 주소·도우미 경로·스크립트 토큰 서명 키)이 없을 때 사용자에게 보이는 스텝 오류(코드리뷰 3). 설정
+   * 키·환경 변수 이름은 싣지 않는다 — 스텝 오류는 테넌트 사용자 화면에 나가므로 서버 배포 구성을 드러내지 않고, 어떤 설정이 비었는지는 서버 WARN 로그에만 남긴다.
+   * 러너의 토큰 발급 실패도 같은 문구를 쓴다.
+   */
+  public static final String TIBERO_SETUP_MISSING =
+      "Python 조회 설정이 준비되지 않아 실행할 수 없습니다. 운영자에게 문의하세요.";
 
   /**
    * 자식 프로세스 실행 결과 — executor 응답과 같은 재료(종료 코드·stdout·stderr)를 따로 돌려준다.
@@ -90,6 +117,41 @@ public class PythonScriptExecutor {
     // 안에서 터지면 그 설정 오류가 평범한 스텝 실패로 둔갑하고 프로퍼티 이름까지 사용자에게 노출된다.
     // 슬롯 범위 밖도 여기서 IllegalArgumentException(TenantPipelineRole) — 자식은 뜨지 않는다.
     Map<String, String> childEnvironment = buildEnvironment(tenantId, readSlot);
+    return runWithEnvironment(scriptContent, childEnvironment, timeoutSeconds);
+  }
+
+  /**
+   * Tibero 테넌트의 스크립트를 띄운다(WD-78, 스펙 §5.3). 자식은 PG 에 접속하지 않는다 — {@code DB_URL}·{@code DB_SCHEMA} 대신
+   * 조회 도우미 설정({@code GENIA_DB_URL}·{@code GENIA_DB_TOKEN})과 도우미 경로({@code PYTHONPATH})만 받는다. 출력 적재는
+   * 러너가 스테이징으로 한다({@link LocalPythonOutputLoader#loadStaging}).
+   *
+   * <p>토큰은 실행 1회용이지만 실행 중에는 슬롯 읽기 자격이므로, 자식이 찍어도 돌려주는 stdout·stderr(스텝 실행 로그·오류가 된다)에서 지운다. 설정(도우미
+   * 경로·db-executor 주소)이나 토큰이 비면 자식을 띄우지 않는다(fail-closed).
+   *
+   * @param scriptToken api 가 발급한 스크립트 토큰({@code ScriptTokenIssuer}) — 로그하지 않는다
+   */
+  public RunResult runTibero(String scriptContent, String scriptToken) {
+    // 환경 조립은 try 밖 — 설정 오류가 평범한 스텝 실패 문구 안에 묻히지 않게(run 과 같은 배치).
+    Map<String, String> childEnvironment = buildTiberoEnvironment(scriptToken);
+    RunResult raw = runWithEnvironment(scriptContent, childEnvironment, TIMEOUT_SECONDS);
+    return new RunResult(
+        raw.exitCode(), redact(raw.stdout(), scriptToken), redact(raw.stderr(), scriptToken));
+  }
+
+  /** {@code text} 에서 {@code secret} 을 지운다(빈 값이면 그대로). */
+  private static String redact(String text, String secret) {
+    if (text == null || secret == null || secret.isBlank()) {
+      return text;
+    }
+    return text.replace(secret, REDACTED);
+  }
+
+  /**
+   * 스크립트를 임시 파일로 써서 주어진 환경(상속 환경 없음)으로 띄우고 결과를 돌려준다 — PG·Tibero 공통. {@code timeoutSeconds} 를 넘기면
+   * 자식을 죽이고 한국어 시간 초과 문구(WD-211)로 실패한다.
+   */
+  private RunResult runWithEnvironment(
+      String scriptContent, Map<String, String> childEnvironment, int timeoutSeconds) {
     Path tempFile = null;
     Path stderrFile = null;
     // process를 try 바깥에 선언해 catch(InterruptedException)에서 강제 종료 가능하게 함
@@ -214,6 +276,35 @@ public class PythonScriptExecutor {
     // 같은 비밀을 두 곳에 두면 env 덤프 시 노출 면만 늘고 두 경로에서 쓸 수 있는 키가 갈라진다.
     env.put("DB_URL", libpqUrl(pipelineDbUrl, role, password));
     env.put("DB_SCHEMA", DataSchema.forTenant(tenantId));
+    env.put("PATH", "/usr/bin:/usr/local/bin");
+    env.put("HOME", "/tmp");
+    return env;
+  }
+
+  /**
+   * Tibero 자식 프로세스 환경(WD-78) — 도우미가 쓰는 두 값과 도우미 경로, 실행에 필요한 PATH·HOME 뿐이다. PG 접속 정보는 넣지 않는다. 도우미
+   * 경로는 절대 경로로 넘긴다(상대 경로는 자식 작업 디렉터리에 따라 뜻이 바뀐다).
+   *
+   * @throws ScriptExecutionException 토큰·db-executor 주소·도우미 경로 중 하나라도 비었을 때(자식을 띄우지 않는다). 설정 누락의 문구는
+   *     {@link #TIBERO_SETUP_MISSING} 이다(설정 키 이름 없음)
+   */
+  Map<String, String> buildTiberoEnvironment(String scriptToken) {
+    if (scriptToken == null || scriptToken.isBlank()) {
+      throw new ScriptExecutionException("Tibero 저장소 테넌트의 Python 실행에 필요한 스크립트 토큰이 없습니다.");
+    }
+    // 설정 누락은 사용자 화면에는 일반 안내만, 어떤 키가 비었는지는 서버 WARN 로그로(코드리뷰 3).
+    if (dbExecutorBaseUrl == null || dbExecutorBaseUrl.isBlank()) {
+      log.warn("Tibero PYTHON 실행 불가: app.db-executor.base-url 이 설정되지 않았습니다");
+      throw new ScriptExecutionException(TIBERO_SETUP_MISSING);
+    }
+    if (pythonHelperDir == null || pythonHelperDir.isBlank()) {
+      log.warn("Tibero PYTHON 실행 불가: app.pipeline.python-helper-dir 이 설정되지 않았습니다");
+      throw new ScriptExecutionException(TIBERO_SETUP_MISSING);
+    }
+    Map<String, String> env = new LinkedHashMap<>();
+    env.put("GENIA_DB_URL", dbExecutorBaseUrl.strip().replaceAll("/+$", ""));
+    env.put("GENIA_DB_TOKEN", scriptToken.strip());
+    env.put("PYTHONPATH", Path.of(pythonHelperDir.strip()).toAbsolutePath().normalize().toString());
     env.put("PATH", "/usr/bin:/usr/local/bin");
     env.put("HOME", "/tmp");
     return env;

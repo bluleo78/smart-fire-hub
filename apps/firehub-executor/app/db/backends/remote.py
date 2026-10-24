@@ -15,7 +15,7 @@ import math
 import re
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Protocol
+from typing import AbstractSet, Any, Dict, List, Optional, Protocol
 
 import httpx
 
@@ -60,6 +60,7 @@ class RemoteLoadBackend(Protocol):
         rows: List[Dict[str, Any]],
         column_type_map: Optional[dict],
         timeout_seconds: Optional[int] = None,
+        drop_keys: AbstractSet[str] = frozenset(),
     ) -> int: ...
 
 
@@ -117,9 +118,19 @@ def to_wire_value(value: Any, app_type: Optional[str]) -> Any:
     return str(value)
 
 
-def to_wire_rows(rows: List[Dict[str, Any]], column_type_map: Optional[dict]) -> List[Dict[str, Any]]:
-    """행 목록을 **복사해** 기존 Python 변환을 적용하고 JSON 값으로 직렬화한다(입력 행은 바꾸지 않는다)."""
-    copied = [dict(row) for row in rows]
+def to_wire_rows(
+    rows: List[Dict[str, Any]],
+    column_type_map: Optional[dict],
+    drop_keys: AbstractSet[str] = frozenset(),
+) -> List[Dict[str, Any]]:
+    """행 목록을 **복사해** 기존 Python 변환을 적용하고 JSON 값으로 직렬화한다(입력 행은 바꾸지 않는다).
+
+    ``drop_keys`` 가 있으면 복사하면서 그 키를 뺀다(변환 전에 — 뺄 키는 변환하지 않는다). 없으면 기존처럼 ``dict(row)`` 로 복사한다.
+    """
+    if drop_keys:
+        copied = [{k: v for k, v in row.items() if k not in drop_keys} for row in rows]
+    else:
+        copied = [dict(row) for row in rows]
     _apply_type_conversion(copied, column_type_map)
     types = column_type_map or {}
     return [{col: to_wire_value(val, types.get(col)) for col, val in row.items()} for row in copied]
@@ -161,8 +172,12 @@ class RemoteLoader:
         rows: List[Dict[str, Any]],
         column_type_map: Optional[dict],
         timeout_seconds: Optional[int] = None,
+        drop_keys: AbstractSet[str] = frozenset(),
     ) -> int:
         """rows 를 스테이징 ``table`` 에 적재하고 적재 행 수(전 청크 합)를 돌려준다.
+
+        ``drop_keys`` 에 든 키는 청크마다 행을 복사할 때 뺀다(Python Tibero 출력의 시스템 컬럼, WD-78) — 호출자가 전체 결과의 사본을
+        따로 만들지 않게. 비어 있으면(api-call) 행을 그대로 복사한다.
 
         ``LOAD_CHUNK_ROWS`` 행씩 순서대로 나눠 보낸다. 어느 청크든 실패하면 그 자리에서 멈추고 그 청크의 실패를 ``RemoteLoadError``
         (메시지 = 응답 ``error``)로 올린다 — 앞 청크가 넣은 행은 스테이징에만 있고, 실패한 단계의 스테이징 정리는 api 몫이다.
@@ -204,7 +219,7 @@ class RemoteLoader:
                 body: Dict[str, Any] = {
                     "tenantId": tenant_id,
                     "table": table,
-                    "rows": to_wire_rows(chunk, column_type_map),
+                    "rows": to_wire_rows(chunk, column_type_map, drop_keys),
                     "timeout_seconds": request_timeout,
                 }
                 if wire_types:

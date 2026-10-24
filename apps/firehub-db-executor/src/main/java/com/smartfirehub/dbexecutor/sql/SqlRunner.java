@@ -223,25 +223,46 @@ public class SqlRunner {
     if (rs == null) {
       return new BodyResult(true, 0, List.of(), List.of());
     }
-    ResultSetMetaData md = rs.getMetaData();
+    Columns cols = columns(rs.getMetaData(), uniqueNames);
+    List<Map<String, Object>> rows = new ArrayList<>();
+    while (rs.next()) {
+      rows.add(row(rs, cols));
+    }
+    return new BodyResult(true, rows.size(), rows, cols.names());
+  }
+
+  /**
+   * 결과 컬럼 이름과 변환 메타. 이름은 응답 {@code columns} 와 행 Map 의 키로 함께 쓴다.
+   *
+   * @param names 변환(·고유화)된 컬럼 이름
+   * @param metas 컬럼별 변환 메타(타입·정밀도·자릿수)
+   */
+  record Columns(List<String> names, ValueConverter.ColumnMeta[] metas) {}
+
+  /**
+   * 결과 집합 메타에서 컬럼 이름·변환 메타를 한 번만 읽는다 — 칸마다 읽으면 행 수 × 컬럼 수만큼 드라이버를 부른다. 슬롯 스트리밍({@link
+   * SlotQueryRunner})도 같은 규칙을 쓴다.
+   *
+   * @param uniqueNames true 면 겹치는 이름을 {@link ResultColumnNames#unique} 로 고유하게 만든다(변환 뒤 이름 기준)
+   */
+  static Columns columns(ResultSetMetaData md, boolean uniqueNames) throws SQLException {
     int n = md.getColumnCount();
     List<String> converted = new ArrayList<>(n);
-    // 컬럼 메타(타입·정밀도·자릿수)는 컬럼마다 한 번만 읽는다 — 칸마다 읽으면 행 수 × 컬럼 수만큼 드라이버를 부른다.
     ValueConverter.ColumnMeta[] metas = new ValueConverter.ColumnMeta[n];
     for (int i = 1; i <= n; i++) {
       converted.add(ValueConverter.columnName(md.getColumnLabel(i)));
       metas[i - 1] = ValueConverter.ColumnMeta.of(md, i);
     }
     // 응답 columns 와 행 Map 의 키가 같은 목록이어야 한다.
-    List<String> columns = uniqueNames ? ResultColumnNames.unique(converted) : converted;
-    List<Map<String, Object>> rows = new ArrayList<>();
-    while (rs.next()) {
-      Map<String, Object> row = new LinkedHashMap<>();
-      for (int i = 1; i <= n; i++) {
-        row.put(columns.get(i - 1), ValueConverter.read(rs, i, metas[i - 1]));
-      }
-      rows.add(row);
+    return new Columns(uniqueNames ? ResultColumnNames.unique(converted) : converted, metas);
+  }
+
+  /** 결과 집합의 현재 행을 컬럼 이름 → 변환된 값 Map 으로 읽는다. */
+  static Map<String, Object> row(ResultSet rs, Columns cols) throws SQLException {
+    Map<String, Object> row = new LinkedHashMap<>();
+    for (int i = 1; i <= cols.metas().length; i++) {
+      row.put(cols.names().get(i - 1), ValueConverter.read(rs, i, cols.metas()[i - 1]));
     }
-    return new BodyResult(true, rows.size(), rows, columns);
+    return row;
   }
 }

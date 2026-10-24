@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -17,6 +19,10 @@ import com.smartfirehub.dataset.storage.DataStoreFeatureUnsupportedException;
 import com.smartfirehub.dataset.storage.external.ExternalStoreConnections;
 import com.smartfirehub.dataset.storage.external.ExternalStoreConnections.SqlWork;
 import com.smartfirehub.global.tenant.TenantContext;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayDeque;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,16 +46,52 @@ class TiberoDataTableStoreTempTest {
   private TiberoBulkMover mover;
   private TiberoDataTableStore store;
 
-  /** withDdl 이 차례로 돌려줄 카탈로그 컬럼 맵(호출 순서대로). */
+  /** 카탈로그({@code ALL_TAB_COLUMNS}) 질의가 차례로 돌려줄 컬럼 맵(질의 순서대로). 옮기기는 스테이징 → 출력 순으로 한 커넥션에서 읽는다. */
   private final ArrayDeque<Map<String, TiberoColumnType>> catalogs = new ArrayDeque<>();
+
+  /** withDdl 이 넘긴 작업을 실제로 돌릴 가짜 커넥션 — 질의마다 {@link #catalogs} 에서 한 맵을 꺼내 결과로 낸다. */
+  private Connection catalogConnection() throws SQLException {
+    Connection conn = mock(Connection.class);
+    when(conn.prepareStatement(anyString()))
+        .thenAnswer(
+            inv -> {
+              PreparedStatement ps = mock(PreparedStatement.class);
+              when(ps.executeQuery()).thenAnswer(x -> catalogResult(catalogs.poll()));
+              return ps;
+            });
+    return conn;
+  }
+
+  /** 카탈로그 맵을 {@code TiberoCatalog#columnTypes} 가 읽는 열 순서의 ResultSet 으로 바꾼다. */
+  private static ResultSet catalogResult(Map<String, TiberoColumnType> catalog)
+      throws SQLException {
+    List<Map.Entry<String, TiberoColumnType>> rows =
+        catalog == null ? List.of() : List.copyOf(catalog.entrySet());
+    int[] at = {-1};
+    ResultSet rs = mock(ResultSet.class);
+    when(rs.next()).thenAnswer(x -> ++at[0] < rows.size());
+    when(rs.getString(1)).thenAnswer(x -> rows.get(at[0]).getKey().toUpperCase());
+    when(rs.getString(2)).thenAnswer(x -> rows.get(at[0]).getValue().dataType());
+    when(rs.getInt(3)).thenAnswer(x -> intOrZero(rows.get(at[0]).getValue().dataLength()));
+    when(rs.getInt(4)).thenAnswer(x -> intOrZero(rows.get(at[0]).getValue().precision()));
+    when(rs.getInt(5)).thenAnswer(x -> intOrZero(rows.get(at[0]).getValue().scale()));
+    when(rs.getString(6)).thenAnswer(x -> rows.get(at[0]).getValue().charUsed());
+    when(rs.getInt(7)).thenAnswer(x -> intOrZero(rows.get(at[0]).getValue().charLength()));
+    return rs;
+  }
+
+  private static int intOrZero(Integer v) {
+    return v == null ? 0 : v;
+  }
 
   @BeforeEach
   void setUp() throws Exception {
     TenantContext.set(5L);
     ExternalStoreConnections connections = mock(ExternalStoreConnections.class);
     when(connections.schemaOf(5L)).thenReturn(S);
+    Connection conn = catalogConnection();
     when(connections.withDdl(anyLong(), org.mockito.ArgumentMatchers.<SqlWork<Object>>any()))
-        .thenAnswer(inv -> catalogs.poll());
+        .thenAnswer(inv -> inv.<SqlWork<Object>>getArgument(1).apply(conn));
     rowStore = mock(TiberoDataRowStore.class);
     mover = mock(TiberoBulkMover.class);
     store =
@@ -58,7 +100,27 @@ class TiberoDataTableStoreTempTest {
             mock(TiberoColumnTypeCache.class),
             rowStore,
             mover,
-            mock(TiberoTriggerPrivilege.class));
+            mock(TiberoTriggerPrivilege.class),
+            slotGrantSync);
+  }
+
+  /** 슬롯 SELECT 권한 동기화(WD-78) 가짜 — REPLACE 가 이것을 건드리지 않음을 확인한다. */
+  private final com.smartfirehub.securitylevel.pythonread.TiberoPythonReadGrantSync slotGrantSync =
+      mock(com.smartfirehub.securitylevel.pythonread.TiberoPythonReadGrantSync.class);
+
+  /**
+   * REPLACE 는 테이블을 바꾸거나 이름을 바꾸지 않고 같은 테이블에 행만 옮긴다(스펙 §4.1) — 그래서 슬롯 GRANT 는 그대로 남고 다시 맞출 일이 없다.
+   * 옮기기· 정리가 GRANT 동기화를 부르지 않음을 고정한다(부르게 되면 맞바꿈 설계가 바뀐 것이므로 이 테스트가 알려 준다).
+   */
+  @Test
+  void finishReplace_keepsTableSoSlotGrantsSurvive_noGrantSync() {
+    catalogs.add(staging("code", "qty"));
+    catalogs.add(target());
+
+    store.finishReplace("orders", STG, 3);
+    store.finishReplace("orders", STG, 0);
+
+    org.mockito.Mockito.verifyNoInteractions(slotGrantSync);
   }
 
   @AfterEach
@@ -117,7 +179,7 @@ class TiberoDataTableStoreTempTest {
     store.swapTable("orders", STG);
 
     InOrder order = inOrder(mover, rowStore);
-    order.verify(mover).moveReplace(5L, S, "orders", STG, List.of("code", "qty"));
+    order.verify(mover).move(5L, S, "orders", STG, List.of("code", "qty"), true);
     order.verify(rowStore).dropStagingTable(STG_LOGICAL);
   }
 
@@ -126,7 +188,7 @@ class TiberoDataTableStoreTempTest {
     catalogs.add(staging("code", "qty"));
     catalogs.add(target());
     RuntimeException boom = new RuntimeException("boom");
-    doThrow(boom).when(mover).moveReplace(anyLong(), any(), any(), any(), any());
+    doThrow(boom).when(mover).move(anyLong(), any(), any(), any(), any(), eq(true));
 
     assertThatThrownBy(() -> store.swapTable("orders", STG)).isSameAs(boom);
 
@@ -153,7 +215,7 @@ class TiberoDataTableStoreTempTest {
     assertThatThrownBy(() -> store.swapTable("orders", STG))
         .isInstanceOf(InvalidTableNameException.class);
 
-    verify(mover, never()).moveReplace(anyLong(), any(), any(), any(), any());
+    verify(mover, never()).move(anyLong(), any(), any(), any(), any(), eq(true));
   }
 
   @Test
@@ -171,7 +233,7 @@ class TiberoDataTableStoreTempTest {
 
     store.finishReplace("orders", STG, 3);
 
-    verify(mover).moveReplace(5L, S, "orders", STG, List.of("code", "qty"));
+    verify(mover).move(5L, S, "orders", STG, List.of("code", "qty"), true);
   }
 
   @Test
@@ -182,9 +244,9 @@ class TiberoDataTableStoreTempTest {
     store.finishAppend("orders", STG, 7);
 
     InOrder order = inOrder(mover, rowStore);
-    order.verify(mover).moveAppend(5L, S, "orders", STG, List.of("code", "qty"));
+    order.verify(mover).move(5L, S, "orders", STG, List.of("code", "qty"), false);
     order.verify(rowStore).dropStagingTable(STG_LOGICAL);
-    verify(mover, never()).moveReplace(anyLong(), any(), any(), any(), any());
+    verify(mover, never()).move(anyLong(), any(), any(), any(), any(), eq(true));
   }
 
   @Test
@@ -200,7 +262,7 @@ class TiberoDataTableStoreTempTest {
     catalogs.add(staging("code", "qty"));
     catalogs.add(target());
     RuntimeException boom = new RuntimeException("boom");
-    doThrow(boom).when(mover).moveAppend(anyLong(), any(), any(), any(), any());
+    doThrow(boom).when(mover).move(anyLong(), any(), any(), any(), any(), eq(false));
 
     assertThatThrownBy(() -> store.finishAppend("orders", STG, 2)).isSameAs(boom);
 
@@ -227,7 +289,7 @@ class TiberoDataTableStoreTempTest {
         .isInstanceOf(InvalidTableNameException.class)
         .hasMessageContaining("임시 테이블이 아닙니다");
 
-    verify(mover, never()).moveReplace(anyLong(), any(), any(), any(), any());
+    verify(mover, never()).move(anyLong(), any(), any(), any(), any(), eq(true));
     verify(rowStore, never()).dropStagingTable(any());
   }
 
@@ -240,7 +302,7 @@ class TiberoDataTableStoreTempTest {
         .isInstanceOf(InvalidTableNameException.class)
         .hasMessageContaining("찾을 수 없습니다");
 
-    verify(mover, never()).moveReplace(anyLong(), any(), any(), any(), any());
+    verify(mover, never()).move(anyLong(), any(), any(), any(), any(), eq(true));
   }
 
   /** 옮기기가 커밋된 뒤 스테이징 DROP 이 실패해도 성공으로 끝나고 경고만 남는다(재시도 시 APPEND 중복 방지). */
@@ -262,7 +324,7 @@ class TiberoDataTableStoreTempTest {
       logger.detachAppender(logs);
     }
 
-    verify(mover).moveAppend(5L, S, "orders", STG, List.of("code", "qty"));
+    verify(mover).move(5L, S, "orders", STG, List.of("code", "qty"), false);
     assertThat(logs.list)
         .anyMatch(
             e ->

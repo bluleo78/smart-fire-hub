@@ -198,6 +198,37 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
     assertThat(res.body()).doesNotContain("\"ro\"").contains("\"password\":\"plain-OWNER\"");
   }
 
+  // ---- include=slots (WD-78) ----
+
+  /** db-executor 토큰 + include=ro,slots: S1..S10 을 복호화해 번호순으로 싣는다. */
+  @Test
+  void describe_includeSlots_dbExecutorToken_slotsDecrypted() throws Exception {
+    long id = newTibero(TenantDataStoreStatus.READY);
+
+    HttpResponse<String> res = get(id, "Internal " + token, "?include=ro,slots");
+
+    assertThat(res.statusCode()).isEqualTo(200);
+    assertThat(res.body())
+        .contains("{\"slot\":1,\"username\":\"GENIA_T" + id + "_S1\",\"password\":\"plain-S1\"}")
+        .contains("{\"slot\":10,\"username\":\"GENIA_T" + id + "_S10\",\"password\":\"plain-S10\"}")
+        .contains("\"password\":\"plain-RO\"")
+        .contains("\"scriptTokenEpoch\":");
+  }
+
+  /** Python 실행기 토큰은 include=slots 여도 슬롯·비밀이 없다. */
+  @Test
+  void describe_includeSlots_executorToken_noSecrets() throws Exception {
+    long id = newTibero(TenantDataStoreStatus.READY);
+
+    HttpResponse<String> res = get(id, "Internal " + executorToken, "?include=ro,slots");
+
+    assertThat(res.statusCode()).isEqualTo(200);
+    assertThat(res.body())
+        .doesNotContain("slots")
+        .doesNotContain("plain-")
+        .doesNotContain("password");
+  }
+
   @Test
   void Tibero_PENDING_409_code() throws Exception {
     long id = newTibero(TenantDataStoreStatus.PENDING);
@@ -269,14 +300,14 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
         .describe("Internal exec-t", 1, "ro");
 
     verify(service).describeBackendOnly(1);
-    verify(service, never()).describe(anyLong(), anyBoolean(), anyBoolean());
+    verify(service, never()).describe(anyLong(), anyBoolean(), anyBoolean(), anyBoolean());
   }
 
   // ---- R-token: 직접 생성 ----
 
   private static ExecutorDataStoreDescriptorService stubService() {
     ExecutorDataStoreDescriptorService service = mock(ExecutorDataStoreDescriptorService.class);
-    when(service.describe(anyLong(), anyBoolean(), anyBoolean()))
+    when(service.describe(anyLong(), anyBoolean(), anyBoolean(), anyBoolean()))
         .thenReturn(ExecutorDataStoreDescriptor.postgres(1));
     return service;
   }
@@ -297,7 +328,7 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
     ExecutorDataStoreController c = new ExecutorDataStoreController(service, "", "", false);
 
     assertNotConfigured(c, "Internal ");
-    verify(service, never()).describe(anyLong(), anyBoolean(), anyBoolean());
+    verify(service, never()).describe(anyLong(), anyBoolean(), anyBoolean(), anyBoolean());
   }
 
   @Test
@@ -316,7 +347,25 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
       assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
     verify(service, times(ExecutorDataStoreController.INSECURE_DEFAULT_TOKENS.size()))
-        .describe(1, false, false);
+        .describe(1, false, false, false);
+  }
+
+  /**
+   * 최종 리뷰 I2: {@code .env.example} 자리표시자({@code change-me…})를 그대로 옮긴 db-executor 토큰도 알려진 기본값처럼 비밀을
+   * 내지 않는다(Tibero 는 서비스가 503). 허용 플래그(로컬·테스트)가 켜져 있으면 기존 기본값과 같이 통과한다.
+   */
+  @Test
+  void change_me_자리표시자토큰_플래그없으면_비밀불허_있으면_허용() {
+    ExecutorDataStoreDescriptorService service = stubService();
+    String placeholder = "change-me-db-executor-internal-token";
+
+    new ExecutorDataStoreController(service, "exec-x", placeholder, false)
+        .describe("Internal " + placeholder, 1, null);
+    verify(service).describe(1, false, false, false);
+
+    new ExecutorDataStoreController(service, "exec-x", placeholder, true)
+        .describe("Internal " + placeholder, 1, null);
+    verify(service).describe(1, true, false, false);
   }
 
   @Test
@@ -326,20 +375,48 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
     new ExecutorDataStoreController(service, "exec-x", "dev-db-executor-token", true)
         .describe("Internal dev-db-executor-token", 1, null);
 
-    verify(service).describe(1, true, false);
+    verify(service).describe(1, true, false, false);
   }
 
+  /**
+   * include 는 쉼표로 나눈 정확한 값(ro·slots)만 받는다. 모르는 값이 하나라도 섞이면 아무것도 싣지 않는다(fail-closed — 오타가 비밀을 더 내게
+   * 하지 않는다). 대소문자도 정확히 맞아야 한다.
+   */
   @Test
-  void include_ro_만_includeReadOnly_true로_전달() {
+  void include_ro와_slots만_정확히_전달() {
     ExecutorDataStoreDescriptorService service = stubService();
     ExecutorDataStoreController c = new ExecutorDataStoreController(service, "exec-t", "t", false);
 
     c.describe("Internal t", 1, "ro");
-    verify(service).describe(1, true, true);
+    verify(service).describe(1, true, true, false);
     c.describe("Internal t", 2, "RO");
     c.describe("Internal t", 3, "ro,x");
-    verify(service).describe(2, true, false);
-    verify(service).describe(3, true, false);
+    verify(service).describe(2, true, false, false);
+    verify(service).describe(3, true, false, false);
+    c.describe("Internal t", 4, "slots");
+    verify(service).describe(4, true, false, true);
+    c.describe("Internal t", 5, "ro,slots");
+    verify(service).describe(5, true, true, true);
+    c.describe("Internal t", 6, "slots,ro");
+    verify(service).describe(6, true, true, true);
+    for (long id : new long[] {7, 8, 9, 10}) {
+      c.describe("Internal t", id, new String[] {"", "SLOTS", "slots,", "slots, ro"}[(int) id - 7]);
+      verify(service).describe(id, true, false, false);
+    }
+  }
+
+  /** Python 실행기 토큰은 include=slots 여도 종류만 — 슬롯 비밀번호를 복호화하지 않는다(Task 5 경계 유지). */
+  @Test
+  void 실행기토큰_include_slots_무시() {
+    ExecutorDataStoreDescriptorService service = stubService();
+    when(service.describeBackendOnly(anyLong()))
+        .thenReturn(ExecutorDataStoreDescriptor.postgres(1));
+
+    new ExecutorDataStoreController(service, "exec-t", "db-t", false)
+        .describe("Internal exec-t", 1, "ro,slots");
+
+    verify(service).describeBackendOnly(1);
+    verify(service, never()).describe(anyLong(), anyBoolean(), anyBoolean(), anyBoolean());
   }
 
   /** 기본 토큰 + include=ro + Tibero: OWNER 와 같이 503 이고 RO 비밀번호도 새지 않는다. */
@@ -362,6 +439,28 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
             });
   }
 
+  /** 기본 토큰 + include=slots + Tibero: OWNER 와 같이 503 이고 슬롯 비밀번호도 새지 않는다(복호화 전에 거부). */
+  @Test
+  void describe_includeSlots_defaultToken_503() {
+    long id = newTibero(TenantDataStoreStatus.READY);
+    ExecutorDataStoreDescriptorService real =
+        new ExecutorDataStoreDescriptorService(repository, encryption);
+
+    for (String include : new String[] {"slots", "ro,slots"}) {
+      assertThatThrownBy(
+              () ->
+                  new ExecutorDataStoreController(real, "exec-x", "executor-token", false)
+                      .describe("Internal executor-token", id, include))
+          .isInstanceOfSatisfying(
+              CodedApiException.class,
+              e -> {
+                assertThat(e.status()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                assertThat(e.code()).isEqualTo("EXECUTOR_TOKEN_NOT_CONFIGURED");
+                assertThat(e.getMessage()).doesNotContain("plain-");
+              });
+    }
+  }
+
   @Test
   void 기본토큰_틀린헤더_401() {
     ExecutorDataStoreDescriptorService service = stubService();
@@ -371,7 +470,7 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
                 .describe("Internal nope", 1, null)
                 .getStatusCode())
         .isEqualTo(HttpStatus.UNAUTHORIZED);
-    verify(service, never()).describe(anyLong(), anyBoolean(), anyBoolean());
+    verify(service, never()).describe(anyLong(), anyBoolean(), anyBoolean(), anyBoolean());
   }
 
   /** 기본 토큰 + Tibero 테넌트: 실제 서비스·DB 로 503 이고 본문에 비밀번호가 없다. 플래그를 켜면 200. */

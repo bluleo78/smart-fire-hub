@@ -10,12 +10,15 @@ import com.smartfirehub.dataset.storage.DataTableStore;
 import com.smartfirehub.dataset.storage.external.ExternalStoreConnections;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.pythonread.TiberoPythonReadGrantSync;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -85,12 +88,20 @@ public class TiberoDataTableStore implements DataTableStore {
   /** OWNER 의 트리거 생성 권한 확인(WD-77). */
   private final TiberoTriggerPrivilege triggerPrivilege;
 
+  /**
+   * 새 테이블의 슬롯 계정 SELECT 권한 동기화(WD-78). 파사드({@code PythonReadGrants})가 아니라 Tibero 판을 직접 받는다 — 파사드는
+   * 백엔드 해석을 위해 이 저장소를 들고 있는 리졸버에 기대므로 순환이 생긴다. 이 저장소는 Tibero 전용이라 분기도 필요 없다.
+   */
+  private final TiberoPythonReadGrantSync slotGrantSync;
+
   public TiberoDataTableStore(
       ExternalStoreConnections connections,
       TiberoColumnTypeCache columnTypeCache,
       TiberoDataRowStore rowStore,
       TiberoBulkMover mover,
-      TiberoTriggerPrivilege triggerPrivilege) {
+      TiberoTriggerPrivilege triggerPrivilege,
+      TiberoPythonReadGrantSync slotGrantSync) {
+    this.slotGrantSync = slotGrantSync;
     this.triggerPrivilege = triggerPrivilege;
     this.connections = connections;
     this.columnTypeCache = columnTypeCache;
@@ -115,6 +126,8 @@ public class TiberoDataTableStore implements DataTableStore {
     columnTypeCache.invalidate(tenantId, tableName);
     registerRollbackDrop(tenantId, schema, tableName);
     createRowTriggerBestEffort(tenantId, schema, tableName);
+    // 슬롯 계정 SELECT 는 데이터셋 행이 커밋된 뒤에야 계산할 수 있으므로 커밋 후로 예약한다(PG 와 같다). 스테이징은 이 경로를 지나지 않는다.
+    slotGrantSync.syncTableAfterCommit(tableName);
   }
 
   @Override
@@ -312,7 +325,8 @@ public class TiberoDataTableStore implements DataTableStore {
 
   @Override
   public void dropTempTable(String tableName, String tempName) {
-    requireStagingName(tempName);
+    // 스테이징 물리 이름 형식만 통과시킨다 — 실제 데이터 테이블을 지우는 일이 없게 하는 마지막 관문.
+    TiberoNames.requireStagingPhysicalName(tempName);
     TenantContext.require("Tibero dropTempTable");
     // 행 저장소의 dropStagingTable 은 소문자 논리 이름을 받아 물리 이름으로 되돌린다.
     rowStore.dropStagingTable(tempName.toLowerCase(Locale.ROOT));
@@ -320,7 +334,7 @@ public class TiberoDataTableStore implements DataTableStore {
 
   @Override
   public void requireTempTable(String tableName, String tempName) {
-    requireStagingName(tempName);
+    TiberoNames.requireStagingPhysicalName(tempName);
   }
 
   /** 러너 TEMP 의 열 구성이 바뀌었을 때의 안내 — Tibero 는 재생성 보관(WD-238)을 아직 지원하지 않는다. */
@@ -354,15 +368,13 @@ public class TiberoDataTableStore implements DataTableStore {
    * dropTempTable} 을 부르므로 여기서도 지우면 같은 DROP 이 두 번 나간다. 호출자의 DROP 마저 실패해 남은 스테이징은 고아 스윕이 회수한다.
    */
   private void move(String tableName, String tempName, boolean replace) {
-    requireStagingName(tempName);
+    TiberoNames.requireStagingPhysicalName(tempName);
     long tenantId = TenantContext.require("Tibero swapTable");
     String schema = connections.schemaOf(tenantId);
-    List<String> columns = stagingColumnsFor(tenantId, schema, tableName, tempName);
-    if (replace) {
-      mover.moveReplace(tenantId, schema, tableName, tempName, columns);
-    } else {
-      mover.moveAppend(tenantId, schema, tableName, tempName, columns);
-    }
+    // 스테이징·출력 카탈로그를 한 DDL 커넥션에서 읽는다 — withDdl 은 풀 밖 단발 접속이라 읽을 때마다 새로 연결하면 왕복이 두 배다.
+    List<String> columns =
+        connections.withDdl(tenantId, conn -> stagingColumnsFor(conn, schema, tableName, tempName));
+    mover.move(tenantId, schema, tableName, tempName, columns, replace);
     // 옮기기는 이미 커밋됐다. 여기서 DROP 이 실패해도 예외를 내면 호출부가 실패로 알고 재시도해 APPEND 행이 중복되므로 삼키고 경고만 남긴다 —
     // 남은 스테이징은 고아 스윕(StagingTableCleanupService)이 회수한다.
     try {
@@ -375,15 +387,16 @@ public class TiberoDataTableStore implements DataTableStore {
   /**
    * 스테이징의 데이터 컬럼(= 옮길 컬럼)을 카탈로그에서 읽고, 출력 테이블의 사용자 컬럼과 <b>같은 집합</b>인지 확인한다. {@code createTempTable}
    * 이 사용자 컬럼을 모두 복사하므로 같아야 한다 — 스테이징 이름에는 어느 테이블 것인지 정보가 없어서, 인자가 뒤바뀌었을 때 구조가 다른 테이블의 스테이징이면 여기서
-   * 막는다(구조가 같은 다른 테이블의 스테이징은 구분할 수 없다).
+   * 막는다(구조가 같은 다른 테이블의 스테이징은 구분할 수 없다). 스테이징이 없으면 출력 카탈로그는 읽지 않는다.
    */
-  private List<String> stagingColumnsFor(
-      long tenantId, String schema, String tableName, String tempName) {
-    Map<String, TiberoColumnType> stagingCatalog = catalogColumns(tenantId, schema, tempName);
+  private static List<String> stagingColumnsFor(
+      Connection conn, String schema, String tableName, String tempName) throws SQLException {
+    Map<String, TiberoColumnType> stagingCatalog =
+        TiberoCatalog.columnTypes(conn, schema, tempName);
     if (stagingCatalog.isEmpty()) {
       throw new InvalidTableNameException("임시(스테이징) 테이블 '" + tempName + "' 을(를) 찾을 수 없습니다");
     }
-    List<String> target = userColumnsOf(catalogColumns(tenantId, schema, tableName));
+    List<String> target = userColumnsOf(TiberoCatalog.columnTypes(conn, schema, tableName));
     List<String> staging = new ArrayList<>();
     for (String c : stagingCatalog.keySet()) {
       if (!STAGING_SEQ_COLUMN.equals(c)) {
@@ -411,11 +424,6 @@ public class TiberoDataTableStore implements DataTableStore {
       }
     }
     return out;
-  }
-
-  /** 스테이징 물리 이름({@code STG_<24 대문자 16진>}) 형식만 통과시킨다 — 실제 데이터 테이블을 지우거나 옮기는 일이 없게 하는 마지막 관문. */
-  private static void requireStagingName(String tempName) {
-    TiberoNames.requireStagingPhysicalName(tempName);
   }
 
   @Override
@@ -548,6 +556,7 @@ public class TiberoDataTableStore implements DataTableStore {
     columnTypeCache.invalidate(tenantId, targetTable);
     registerRollbackDrop(tenantId, schema, targetTable);
     createRowTriggerBestEffort(tenantId, schema, targetTable);
+    slotGrantSync.syncTableAfterCommit(targetTable);
   }
 
   /**
@@ -560,16 +569,48 @@ public class TiberoDataTableStore implements DataTableStore {
    */
   @Override
   public void ensureRowTrigger(String tableName) {
-    long tenantId = TenantContext.require("Tibero ensureRowTrigger");
-    String schema = connections.schemaOf(tenantId);
-    if (rowTriggerExists(tenantId, schema, tableName)) {
+    ensureRowTriggers(List.of(tableName));
+  }
+
+  /**
+   * {@link #ensureRowTrigger} 의 여러 테이블 판(WD-77) — 상태 확인({@code USER_TRIGGERS} IN 목록 한 번)·권한 확인·생성을
+   * <b>한 DDL 커넥션</b>에서 한다. {@code withDdl} 은 풀 밖 단발 접속이라 테이블마다 확인·권한·생성 접속을 따로 열면 테이블 수의 세 배만큼
+   * 연결한다.
+   *
+   * <p>권한은 없는 트리거가 하나라도 있을 때만 확인하고, 없으면 아무것도 만들지 않은 채 422 로 거부한다. 생성 도중 실패하면 그 앞 테이블의 트리거는 이미 만들어진
+   * 채 예외가 올라간다(테이블마다 차례로 보장하던 때와 같다). 같은 테이블이 여러 번 들어와도(대소문자 차이 포함) 한 번만 다룬다.
+   *
+   * @throws DataStoreFeatureUnsupportedException 없는 트리거가 있고 만들 권한이 없을 때
+   */
+  @Override
+  public void ensureRowTriggers(Collection<String> tableNames) {
+    if (tableNames.isEmpty()) {
       return;
     }
-    if (!triggerPrivilege.hasCreateTrigger(tenantId)) {
-      throw new DataStoreFeatureUnsupportedException(
-          TiberoTriggerPrivilege.missingPrivilegeMessage(tenantId));
+    long tenantId = TenantContext.require("Tibero ensureRowTrigger");
+    String schema = connections.schemaOf(tenantId);
+    // 트리거 이름 → 테이블(처음 나온 이름). 트리거 이름은 대문자 정규화한 스키마·테이블에서 파생하므로 같은 테이블이면 같은 키다.
+    Map<String, String> byTrigger = new LinkedHashMap<>();
+    for (String table : tableNames) {
+      byTrigger.putIfAbsent(TiberoNames.triggerName(schema, table), table);
     }
-    execute(tenantId, TiberoDdlSql.createRowTrigger(schema, tableName));
+    connections.withDdl(
+        tenantId,
+        conn -> {
+          Set<String> enabled = TiberoCatalog.enabledTriggers(conn, byTrigger.keySet());
+          List<String> missing = new ArrayList<>();
+          byTrigger.forEach(
+              (trigger, table) -> {
+                if (!enabled.contains(trigger)) {
+                  missing.add(table);
+                }
+              });
+          if (!missing.isEmpty() && !createRowTriggersIfPermitted(conn, schema, missing)) {
+            throw new DataStoreFeatureUnsupportedException(
+                TiberoTriggerPrivilege.missingPrivilegeMessage(tenantId));
+          }
+          return null;
+        });
   }
 
   /**
@@ -579,33 +620,31 @@ public class TiberoDataTableStore implements DataTableStore {
    */
   private void createRowTriggerBestEffort(long tenantId, String schema, String tableName) {
     try {
-      if (!triggerPrivilege.hasCreateTrigger(tenantId)) {
+      boolean created =
+          connections.withDdl(
+              tenantId, conn -> createRowTriggersIfPermitted(conn, schema, List.of(tableName)));
+      if (!created) {
         log.warn("Tibero OWNER 에 CREATE TRIGGER 권한이 없어 행 트리거 없이 테이블을 만들었습니다: {}", tableName);
-        return;
       }
-      execute(tenantId, TiberoDdlSql.createRowTrigger(schema, tableName));
     } catch (RuntimeException e) {
       log.warn("Tibero 행 트리거 생성 실패 — 트리거 없이 진행합니다: {}", tableName, e);
     }
   }
 
   /**
-   * 이 테이블의 행 트리거가 USER_TRIGGERS 에 있고 켜져 있는가(OWNER 세션). DISABLED 등 ENABLED 가 아닌 상태는 없는 것으로 본다 — 꺼진
-   * 트리거는 ID 를 채우지 못하므로 {@link #ensureRowTrigger} 가 {@code CREATE OR REPLACE} 로 다시 만들어 켠다.
+   * OWNER 에 트리거 권한이 있으면 테이블마다 행 트리거({@code CREATE OR REPLACE} — 꺼진 트리거도 다시 켠다)를 만들고 true, 권한이 없으면
+   * 아무것도 하지 않고 false. 보장({@link #ensureRowTriggers}, 권한 없으면 422)과 새 테이블의 최선 노력 생성(권한 없으면 경고)이 같은
+   * "권한 확인 → 생성" 을 쓴다. 생성 실패는 그대로 던진다.
    */
-  private boolean rowTriggerExists(long tenantId, String schema, String tableName) {
-    String trigger = TiberoNames.triggerName(schema, tableName);
-    return connections.withDdl(
-        tenantId,
-        conn -> {
-          try (var ps =
-              conn.prepareStatement("SELECT STATUS FROM USER_TRIGGERS WHERE TRIGGER_NAME = ?")) {
-            ps.setString(1, trigger);
-            try (var rs = ps.executeQuery()) {
-              return rs.next() && "ENABLED".equalsIgnoreCase(rs.getString(1));
-            }
-          }
-        });
+  private boolean createRowTriggersIfPermitted(Connection conn, String schema, List<String> tables)
+      throws SQLException {
+    if (!triggerPrivilege.hasCreateTrigger(conn)) {
+      return false;
+    }
+    for (String table : tables) {
+      TiberoErrors.runIgnoring(conn, TiberoDdlSql.createRowTrigger(schema, table));
+    }
+    return true;
   }
 
   /**

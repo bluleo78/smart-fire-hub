@@ -365,11 +365,11 @@ public class DataTableService {
   }
 
   /**
-   * 사용자 INSERT·UPDATE 대상 테이블의 행 트리거를 쓰기 전에 보장한다(WD-77). PG 는 아무것도 하지 않는다(저장소 기본 구현). 트리거 권한이 없는
-   * Tibero 테넌트는 운영자 안내가 든 422 가 난다.
+   * 사용자 INSERT·UPDATE·증분 대상 테이블들의 행 트리거를 쓰기 전에 보장한다(WD-77). PG 는 아무것도 하지 않는다(저장소 기본 구현). Tibero 는
+   * 테이블 여럿을 한 접속에서 확인·생성하며, 트리거 권한이 없는 테넌트는 운영자 안내가 든 422 가 난다.
    */
-  public void ensureRowTrigger(String tableName) {
-    resolver.tableStore().ensureRowTrigger(tableName);
+  public void ensureRowTriggers(java.util.Collection<String> tableNames) {
+    resolver.tableStore().ensureRowTriggers(tableNames);
   }
 
   /**

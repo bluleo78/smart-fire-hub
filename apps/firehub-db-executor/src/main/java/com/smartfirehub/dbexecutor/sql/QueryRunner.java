@@ -4,7 +4,6 @@ import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
 import com.smartfirehub.dbexecutor.store.TenantPools;
-import com.smartfirehub.dbexecutor.web.dto.DbError;
 import com.smartfirehub.dbexecutor.web.dto.QueryResponse;
 import java.sql.ResultSet;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -97,6 +96,27 @@ public class QueryRunner {
   }
 
   /**
+   * 조회 문장 검증: 가드({@link SqlRunner#validatedBody}, 외부 스키마·SYS 한정자 거부 포함) + 첫 키워드 SELECT·WITH +
+   * {@code FOR UPDATE} 거부. 슬롯 스트리밍({@link SlotQueryRunner})도 같은 규칙을 쓴다.
+   *
+   * @return 실행할 본문(끝 {@code ;} 제거)
+   * @throws TiberoSqlGuard.Rejected 거부 사유(한국어)
+   */
+  static String validatedQuery(String query, String tenantSchema) {
+    String body = SqlRunner.validatedBody(query, tenantSchema);
+    String first = TiberoSqlLexer.firstKeyword(body);
+    if (!first.equals("SELECT") && !first.equals("WITH")) {
+      throw new TiberoSqlGuard.Rejected(QUERY_ONLY);
+    }
+    // SELECT … FOR UPDATE 는 첫 키워드 검사를 통과한다. SELECT 권한만 있는 계정도 행을 잠글 수 있으므로(Oracle·Tibero 규칙)
+    // 권한이 막아 주지 않는다 — 커넥션을 빌리기 전에 여기서 거부한다.
+    if (hasForUpdate(body)) {
+      throw new TiberoSqlGuard.Rejected(FOR_UPDATE);
+    }
+    return body;
+  }
+
+  /**
    * 검증 → RO 풀 대여 → 조회 → 롤백. 오류는 {@code success=false} 로 돌려준다.
    *
    * @param maxRows 1..10000
@@ -108,16 +128,7 @@ public class QueryRunner {
     }
     String body;
     try {
-      body = SqlRunner.validatedBody(query, d.schema());
-      String first = TiberoSqlLexer.firstKeyword(body);
-      if (!first.equals("SELECT") && !first.equals("WITH")) {
-        throw new TiberoSqlGuard.Rejected(QUERY_ONLY);
-      }
-      // SELECT … FOR UPDATE 는 첫 키워드 검사를 통과한다. SELECT 권한만 있는 RO 계정도 행을 잠글 수 있으므로(Oracle·Tibero 규칙)
-      // 권한이 막아 주지 않는다 — 커넥션을 빌리기 전에 여기서 거부한다.
-      if (hasForUpdate(body)) {
-        throw new TiberoSqlGuard.Rejected(FOR_UPDATE);
-      }
+      body = validatedQuery(query, d.schema());
     } catch (TiberoSqlGuard.Rejected e) {
       return QueryResponse.failure(e.getMessage(), null);
     }
@@ -131,32 +142,7 @@ public class QueryRunner {
     return execution.withLease(
         d,
         deadline,
-        new LeasedExecution.Failures<>() {
-          @Override
-          public QueryResponse expiredBeforeBorrow() {
-            return QueryResponse.failure(timeoutMessage(timeoutSeconds), null);
-          }
-
-          @Override
-          public QueryResponse connectFailed() {
-            return QueryResponse.failure(LeasedExecution.CONNECT_FAILED, null);
-          }
-
-          @Override
-          public QueryResponse timedOut() {
-            return QueryResponse.failure(timeoutMessage(timeoutSeconds), null);
-          }
-
-          @Override
-          public QueryResponse dbError(String message, DbError error) {
-            return QueryResponse.failure(message, error);
-          }
-
-          @Override
-          public QueryResponse unexpected() {
-            return QueryResponse.failure(LeasedExecution.UNEXPECTED, null);
-          }
-        },
+        LeasedExecution.failures(timeoutMessage(timeoutSeconds), null, QueryResponse::failure),
         c -> {
           SqlRunner.BodyResult out =
               deadline.execute(

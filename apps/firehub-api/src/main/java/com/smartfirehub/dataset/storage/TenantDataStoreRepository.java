@@ -40,6 +40,8 @@ public class TenantDataStoreRepository {
   private static final Field<String> STATUS = field(name("status"), String.class);
   private static final Field<LocalDateTime> UPDATED_AT =
       field(name("updated_at"), LocalDateTime.class);
+  private static final Field<Long> SCRIPT_TOKEN_EPOCH =
+      field(name("script_token_epoch"), Long.class);
   private static final Field<String> ACCOUNT_ROLE = field(name("account_role"), String.class);
   private static final Field<String> USERNAME = field(name("username"), String.class);
   private static final Field<String> PASSWORD_ENC = field(name("password_enc"), String.class);
@@ -168,5 +170,31 @@ public class TenantDataStoreRepository {
             "저장소 계정 행이 없어 비밀번호를 교체하지 못했습니다: tenant=" + tenantId + ", role=" + account.role());
       }
     }
+  }
+
+  /**
+   * 테넌트의 스크립트 토큰 세대 번호(V147). 행이 없으면 empty.
+   *
+   * <p>스크립트 토큰(Task 13)이 발급 시점의 이 값을 싣고, db-executor 는 기술자의 값보다 낮은 토큰을 거부한다. 이 저장소는 값을 읽고 올리기만 한다.
+   */
+  public Optional<Long> findScriptTokenEpoch(long tenantId) {
+    return dsl.select(SCRIPT_TOKEN_EPOCH)
+        .from(STORE)
+        .where(TENANT_ID.eq(tenantId))
+        .fetchOptional(SCRIPT_TOKEN_EPOCH);
+  }
+
+  /**
+   * 스크립트 토큰 세대 번호를 1 올리고 새 값을 돌려준다(행이 없으면 empty). 호출자는 이 변경이 <b>커밋된 뒤에</b> 넓히는 GRANT 를 걸어야 한다 — 그래야
+   * 다른 읽는 쪽(기술자 조회)이 새 번호를 먼저 본다.
+   */
+  public Optional<Long> incrementScriptTokenEpoch(long tenantId) {
+    return dsl.update(STORE)
+        .set(SCRIPT_TOKEN_EPOCH, SCRIPT_TOKEN_EPOCH.plus(1L))
+        .set(UPDATED_AT, LocalDateTime.now())
+        .where(TENANT_ID.eq(tenantId))
+        .returning(SCRIPT_TOKEN_EPOCH)
+        .fetchOptional()
+        .map(r -> r.get(SCRIPT_TOKEN_EPOCH));
   }
 }

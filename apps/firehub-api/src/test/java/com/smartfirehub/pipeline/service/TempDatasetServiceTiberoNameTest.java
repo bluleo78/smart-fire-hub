@@ -28,27 +28,35 @@ class TempDatasetServiceTiberoNameTest {
 
   @Test
   void usualIds_followPtmpPipelineStepBase36Format() {
-    assertThat(TempDatasetService.tiberoTempTableName(77L, 100L)).isEqualTo("ptmp_77_2s");
-    assertThat(TempDatasetService.tiberoTempTableName(1L, 0L)).isEqualTo("ptmp_1_0");
+    assertThat(TiberoNames.tempTableName(77L, 100L)).isEqualTo("ptmp_77_2s");
+    assertThat(TiberoNames.tempTableName(1L, 0L)).isEqualTo("ptmp_1_0");
   }
 
   @Test
   void sameStep_sameName_differentStep_differentName() {
-    assertThat(TempDatasetService.tiberoTempTableName(5L, 9L))
-        .isEqualTo(TempDatasetService.tiberoTempTableName(5L, 9L));
-    assertThat(TempDatasetService.tiberoTempTableName(5L, 9L))
-        .isNotEqualTo(TempDatasetService.tiberoTempTableName(5L, 10L));
-    assertThat(TempDatasetService.tiberoTempTableName(5L, 9L))
-        .isNotEqualTo(TempDatasetService.tiberoTempTableName(6L, 9L));
+    assertThat(TiberoNames.tempTableName(5L, 9L)).isEqualTo(TiberoNames.tempTableName(5L, 9L));
+    assertThat(TiberoNames.tempTableName(5L, 9L)).isNotEqualTo(TiberoNames.tempTableName(5L, 10L));
+    assertThat(TiberoNames.tempTableName(5L, 9L)).isNotEqualTo(TiberoNames.tempTableName(6L, 9L));
+  }
+
+  /**
+   * 30자를 넘는 id 조합의 해시 이름을 값으로 고정한다 — 이미 만들어진 TEMP 테이블을 같은 이름으로 다시 찾아야 하므로 해시 규칙({@code "<p>:<s>"} 의
+   * SHA-256 앞 12바이트 소문자 hex)이 바뀌면 안 된다.
+   */
+  @Test
+  void hugeIds_hashedNameIsPinned() {
+    assertThat(TiberoNames.tempTableName(Long.MAX_VALUE, Long.MAX_VALUE))
+        .isEqualTo("ptmp_a56df284508cbc6d6fdd74d4");
+    assertThat(TiberoNames.tempTableName(123456789012345L, 987654321098765L))
+        .isEqualTo("ptmp_059b4a45536ff9eba82b3575");
   }
 
   @Test
   void hugeIds_stillFitThirtyChars_andStayStable() {
-    String name = TempDatasetService.tiberoTempTableName(Long.MAX_VALUE, Long.MAX_VALUE);
+    String name = TiberoNames.tempTableName(Long.MAX_VALUE, Long.MAX_VALUE);
     assertThat(TiberoNames.physical(name).length()).isLessThanOrEqualTo(30);
-    assertThat(name)
-        .isEqualTo(TempDatasetService.tiberoTempTableName(Long.MAX_VALUE, Long.MAX_VALUE));
-    assertThat(name).isNotEqualTo(TempDatasetService.tiberoTempTableName(Long.MAX_VALUE, 1L));
+    assertThat(name).isEqualTo(TiberoNames.tempTableName(Long.MAX_VALUE, Long.MAX_VALUE));
+    assertThat(name).isNotEqualTo(TiberoNames.tempTableName(Long.MAX_VALUE, 1L));
     // 사용자 이름 규칙(길이·예약어·스테이징 형식)을 통과하고 메타데이터 이름 형식(소문자 시작)이다.
     TiberoNames.validateUserName(name);
     assertThat(name).matches("^[a-z][a-z0-9_]*$");
@@ -58,7 +66,7 @@ class TempDatasetServiceTiberoNameTest {
   void boundary_lengthsNeverExceedThirty() {
     for (long p : new long[] {1L, 99_999_999L, 9_999_999_999_999L, Long.MAX_VALUE}) {
       for (long s : new long[] {0L, 35L, 36L, 1_000_000L, Long.MAX_VALUE}) {
-        assertThat(TempDatasetService.tiberoTempTableName(p, s).length())
+        assertThat(TiberoNames.tempTableName(p, s).length())
             .as("p=%d s=%d", p, s)
             .isLessThanOrEqualTo(30);
       }

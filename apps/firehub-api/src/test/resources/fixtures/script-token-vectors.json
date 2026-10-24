@@ -1,0 +1,31 @@
+{
+  "_doc": "스크립트 1회용 토큰 고정 벡터(WD-78, Ruling 16). api ScriptTokenIssuerTest 는 같은 입력·시각으로 정확히 이 문자열을 만들어야 하고, db-executor ScriptTokenTest 는 이 문자열을 같은 키로 검증해 같은 값을 꺼내야 한다. 형식: v1.<tenantId>.<slot>.<epoch>.<expEpochSeconds>.<base64url(HMAC-SHA256(key, 'v1.<tenantId>.<slot>.<epoch>.<exp>'), 패딩 없음)>. issuedAtEpochSeconds + ttlSeconds = expEpochSeconds. 키는 32바이트 이상이어야 한다(두 쪽 모두 짧은 키는 거부). rejected 는 같은 키로 올바르게 서명했지만 검증기가 거부해야 하는 토큰이다(reason 은 거부 이유).",
+  "key": "test-script-key-0123456789abcdef-32b",
+  "vectors": [
+    {
+      "tenantId": 7,
+      "slot": 3,
+      "epoch": 2,
+      "issuedAtEpochSeconds": 1699999400,
+      "ttlSeconds": 600,
+      "expEpochSeconds": 1700000000,
+      "token": "v1.7.3.2.1700000000.RH248H7oXbuOkEw2d2Hswv3q3nU2k5UFS4g_cu5I69k"
+    },
+    {
+      "tenantId": 900000001,
+      "slot": 10,
+      "epoch": 0,
+      "issuedAtEpochSeconds": 1700000000,
+      "ttlSeconds": 600,
+      "expEpochSeconds": 1700000600,
+      "token": "v1.900000001.10.0.1700000600.vHjaMpwHCCRjcX_alh0St-H5j5AidgZdIDULX4CBgNY"
+    }
+  ],
+  "rejected": [
+    {
+      "reason": "tenantId 가 19자리지만 long 범위(9223372036854775807)를 넘는다 — 숫자 모양 검사는 통과하고 숫자 변환에서 거부돼야 한다",
+      "verifyAtEpochSeconds": 1699999000,
+      "token": "v1.9223372036854775808.3.2.1700000000.MoV6iKpHQFzrxBDBnGY9wQp3gg76k0AoD5yUsrKniwY"
+    }
+  ]
+}

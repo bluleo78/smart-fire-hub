@@ -34,6 +34,8 @@ app:
     datasource:
       url: jdbc:postgresql://localhost:5432/smartfirehub
       password: pipeline_exec_pwd
+    # Tibero 테넌트 Python 단계(실행기 끔)의 조회 도우미 genia_db.py 위치 — 자식 프로세스 PYTHONPATH(WD-78). api 앱 디렉터리 기준 상대 경로.
+    python-helper-dir: ../firehub-executor/sandbox
   executor:
     enabled: false  # local dev: direct execution (no executor service needed)
     # 로컬은 기본 토큰(dev-executor-token)으로 저장소 기술자 엔드포인트를 쓸 수 있게 한다. 다른 프로필에는 두지 않는다.

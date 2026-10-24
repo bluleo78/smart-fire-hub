@@ -28,7 +28,7 @@ import org.slf4j.LoggerFactory;
  */
 class PythonReadGrantSchedulerTest {
 
-  private final PythonReadGrantSync sync = mock(PythonReadGrantSync.class);
+  private final PythonReadGrants sync = mock(PythonReadGrants.class);
   private final TenantRepository tenantRepository = mock(TenantRepository.class);
   private final TenantScopedRunner runner = new TenantScopedRunner(tenantRepository);
 
@@ -54,8 +54,7 @@ class PythonReadGrantSchedulerTest {
   void runAll_syncsEachTenantInItsOwnContext_andIsolatesFailures() {
     when(tenantRepository.findActiveTenantIds()).thenReturn(List.of(11L, 22L, 33L));
     List<Long> seen = new ArrayList<>();
-    when(sync.syncTenant())
-        .thenAnswer(
+    org.mockito.Mockito.doAnswer(
             inv -> {
               Long t = TenantContext.get();
               seen.add(t);
@@ -63,7 +62,9 @@ class PythonReadGrantSchedulerTest {
                 throw new IllegalStateException("테넌트 22 동기화 실패");
               }
               return null;
-            });
+            })
+        .when(sync)
+        .syncTenant();
 
     new PythonReadGrantScheduler(sync, runner, true).runAll("테스트");
 

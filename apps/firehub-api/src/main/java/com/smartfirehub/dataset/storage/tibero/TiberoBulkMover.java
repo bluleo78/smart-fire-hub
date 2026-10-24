@@ -14,7 +14,8 @@ import java.util.List;
 public interface TiberoBulkMover {
 
   /**
-   * 출력 테이블을 비우고 스테이징 행을 모두 옮긴다 — 한 Tibero 트랜잭션(비우기 + 옮기기 + 커밋). 실패하면 롤백되어 출력 테이블은 그대로다.
+   * 스테이징 행을 출력 테이블로 모두 옮긴다 — 한 Tibero 트랜잭션. {@code replace} 면 먼저 출력 테이블을 비우고(비우기 + 옮기기 + 커밋), 아니면
+   * 비우지 않고 덧붙인다(APPEND). 실패하면 롤백되어 출력 테이블은 그대로다.
    *
    * <p>비우기 선행문은 실행기가 그 테이블에 {@code LOCK TABLE … IN EXCLUSIVE MODE} 를 먼저 걸고 실행하므로, 같은 출력에 대한
    * REPLACE·APPEND 가 겹쳐도 한쪽이 끝난 뒤에야 다른 쪽이 진행한다.
@@ -27,10 +28,13 @@ public interface TiberoBulkMover {
    * @param table 출력 테이블(메타데이터 이름)
    * @param staging 스테이징 물리 이름({@code STG_<24 대문자 16진>})
    * @param columns 옮길 사용자 컬럼
+   * @param replace true 면 REPLACE(출력 비우기 후 옮기기), false 면 APPEND
    */
-  void moveReplace(
-      long tenantId, String schema, String table, String staging, List<String> columns);
-
-  /** 출력 테이블을 비우지 않고 스테이징 행을 옮긴다(APPEND). 인자는 {@link #moveReplace} 와 같다. */
-  void moveAppend(long tenantId, String schema, String table, String staging, List<String> columns);
+  void move(
+      long tenantId,
+      String schema,
+      String table,
+      String staging,
+      List<String> columns,
+      boolean replace);
 }
