@@ -94,7 +94,7 @@ pipelineId(및 DATASET_CHANGE의 datasetIds 배열 각 원소)가 지정된 생�
 ### Phase 3 — EXECUTE (실행)
 
 생성: create_trigger(pipelineId, name, triggerType, description?, config)
-수정: update_trigger(pipelineId, triggerId, name?, isEnabled?, description?, config?)
+수정: update_trigger(pipelineId, triggerId, name?, isEnabled?, description?, config?) — 보낸 필드만 바뀐다. name 을 빼면 기존 이름 유지, config 는 바꿀 키만 보내면 기존 config 위에 합쳐진다(rules.md "update_trigger — 변경 가능 필드" 참조)
 
 **단순 isEnabled 토글은 Phase 2를 생략하고 바로 update_trigger를 호출한다.**
 

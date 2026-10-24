@@ -25,11 +25,18 @@ describe('triggerApi (via FireHubApiClient)', () => {
     expect(result).toEqual(mock);
   });
 
+  it('getTrigger calls GET /pipelines/:id/triggers/:triggerId (WD-227)', async () => {
+    const mock = { id: 10, pipelineId: 5, name: '감시', config: { datasetIds: [7] } };
+    nock(BASE_URL).get('/pipelines/5/triggers/10').reply(200, mock);
+    const result = await client.getTrigger(5, 10);
+    expect(result).toEqual(mock);
+  });
+
   it('createTrigger calls POST /pipelines/:id/triggers', async () => {
     const body = {
       name: '매일 실행',
       triggerType: 'SCHEDULE',
-      config: { cronExpression: '0 9 * * *' },
+      config: { cron: '0 9 * * *' },
     };
     const mock = { id: 1, pipelineId: 5, ...body };
     nock(BASE_URL).post('/pipelines/5/triggers', body).reply(201, mock);
