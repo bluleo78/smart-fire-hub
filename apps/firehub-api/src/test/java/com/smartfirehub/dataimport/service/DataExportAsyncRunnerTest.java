@@ -179,7 +179,9 @@ class DataExportAsyncRunnerTest {
         "test-agent");
 
     // AsyncJobService에 실패 상태가 갱신되어야 한다
-    verify(asyncJobService).failJob(eq(jobId), contains("실패"));
+    // 예외 원문(영어·내부 정보)은 노출하지 않고 한국어 일반 문구만 남긴다(WD-248)
+    verify(asyncJobService).failJob(jobId, DataExportAsyncRunner.EXPORT_FAILED_MESSAGE);
+    verify(asyncJobService, never()).failJob(anyString(), contains("DB connection failed"));
 
     // 감사 로그가 FAILURE로 기록되어야 한다
     verify(auditLogService)
@@ -244,6 +246,58 @@ class DataExportAsyncRunnerTest {
     byte[] bytes = Files.readAllBytes(createdFile);
     assertThat(bytes[0]).isEqualTo((byte) 0x50); // 'P'
     assertThat(bytes[1]).isEqualTo((byte) 0x4B); // 'K'
+  }
+
+  // -----------------------------------------------------------------------
+  // WD-248 — Excel 셀 한도(32,767자)를 넘는 TEXT 값도 비동기 내보내기가 완료돼야 한다
+  // -----------------------------------------------------------------------
+
+  /** 32,767자를 넘는 값이 있어도 job 이 실패하지 않고 완료되며, 셀은 한도 길이로 잘리고 표시가 붙는다. */
+  @Test
+  void executeAsyncExport_excel_overLongTextCompletesWithTruncatedCell() throws Exception {
+    String jobId = "test-async-job-xlsx-long";
+    createdFile = DataExportService.EXPORT_DIR.resolve(jobId + ".xlsx");
+
+    DatasetResponse dataset = buildDataset(4L, "long_ds", "긴 값 데이터셋");
+    List<DatasetColumnResponse> columns = List.of(buildColumn("memo", "메모", "TEXT"));
+    Map<String, String> columnTypes = Map.of("memo", "TEXT");
+
+    when(dataTableRowService.countRows(anyString(), anyList(), isNull(), anyMap())).thenReturn(1L);
+    when(dataTableRowService.queryData(
+            anyString(),
+            anyList(),
+            anyList(),
+            isNull(),
+            eq(0),
+            anyInt(),
+            isNull(),
+            eq("ASC"),
+            anyMap()))
+        .thenReturn(List.of(Map.of("memo", "x".repeat(40_000))))
+        .thenReturn(List.of());
+
+    asyncRunner.executeAsyncExport(
+        jobId,
+        dataset,
+        columns,
+        columns.stream().map(DatasetColumnResponse::columnName).toList(),
+        columnTypes,
+        null,
+        ExportFormat.EXCEL,
+        null,
+        "long.xlsx",
+        4L,
+        "user",
+        "127.0.0.1",
+        "agent");
+
+    verify(asyncJobService, never()).failJob(anyString(), anyString());
+    verify(asyncJobService).completeJob(eq(jobId), anyMap());
+    try (org.apache.poi.xssf.usermodel.XSSFWorkbook wb =
+        new org.apache.poi.xssf.usermodel.XSSFWorkbook(Files.newInputStream(createdFile))) {
+      String cell = wb.getSheetAt(0).getRow(1).getCell(0).getStringCellValue();
+      assertThat(cell).hasSize(32_767).endsWith("…(잘림 — 전체 값은 CSV 로 내보내세요)");
+    }
   }
 
   // -----------------------------------------------------------------------

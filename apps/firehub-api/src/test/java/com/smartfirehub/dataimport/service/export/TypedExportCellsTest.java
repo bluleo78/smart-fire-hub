@@ -1,6 +1,7 @@
 package com.smartfirehub.dataimport.service.export;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -206,5 +207,106 @@ class TypedExportCellsTest {
     assertThat(csv)
         .contains(
             "\"3\",\"1234567.891\",\"2026-01-31\",\"2026-01-31 23:30:00\",\"true\",\"서울\",\"\"");
+  }
+
+  // --- WD-248: Excel 셀 한도(32,767자) ---
+
+  private static final int MAX = ExcelExportWriter.MAX_CELL_TEXT_LENGTH;
+
+  /** 한도를 넘는 문자열 셀은 앞부분 + 잘림 표시로 정확히 한도 길이가 되고, 같은 행의 숫자·날짜·참거짓 셀은 그대로다. */
+  @Test
+  void excel_overLongTextIsTruncatedWithMarker_otherCellsUnchanged() throws Exception {
+    String longText = "가".repeat(MAX + 1) + "끝";
+    Object[] row = {
+      3L,
+      new BigDecimal("1234567.891000"),
+      Date.valueOf("2026-01-31"),
+      Timestamp.valueOf("2026-01-31 23:30:00"),
+      true,
+      longText,
+      null
+    };
+    try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(excel(row)))) {
+      Row r = wb.getSheetAt(0).getRow(1);
+      String cell = r.getCell(5).getStringCellValue();
+      assertThat(cell).hasSize(MAX).endsWith(ExcelExportWriter.TRUNCATED_SUFFIX);
+      assertThat(cell)
+          .isEqualTo(
+              longText.substring(0, MAX - ExcelExportWriter.TRUNCATED_SUFFIX.length())
+                  + ExcelExportWriter.TRUNCATED_SUFFIX);
+      assertThat(cell).contains("전체 값은 CSV 로 내보내세요");
+      assertThat(r.getCell(0).getNumericCellValue()).isEqualTo(3.0);
+      assertThat(r.getCell(1).getNumericCellValue()).isEqualTo(1234567.891);
+      assertThat(DateUtil.isCellDateFormatted(r.getCell(2))).isTrue();
+      assertThat(r.getCell(3).getLocalDateTimeCellValue())
+          .isEqualTo(LocalDateTime.of(2026, 1, 31, 23, 30));
+      assertThat(r.getCell(4).getBooleanCellValue()).isTrue();
+      assertThat(r.getCell(6).getCellType()).isEqualTo(CellType.BLANK);
+    }
+  }
+
+  /** 정확히 한도 길이인 값은 자르지도 표시를 붙이지도 않는다 — 한 글자 넘으면 그때 자른다. */
+  @Test
+  void excel_textAtExactLimitIsKeptAsIs() throws Exception {
+    String exact = "a".repeat(MAX - 1) + "z";
+    try (XSSFWorkbook wb =
+        new XSSFWorkbook(
+            new ByteArrayInputStream(
+                excel(new Object[] {null, null, null, null, null, exact, null})))) {
+      assertThat(wb.getSheetAt(0).getRow(1).getCell(5).getStringCellValue()).isEqualTo(exact);
+    }
+    assertThat(ExcelExportWriter.fitCellText(exact)).isSameAs(exact);
+    assertThat(ExcelExportWriter.fitCellText(exact + "!")).hasSize(MAX);
+    assertThat(ExcelExportWriter.fitCellText(null)).isNull();
+  }
+
+  /** 자르는 자리가 서로게이트 쌍(이모지) 한가운데면 그 앞에서 잘라 짝 잃은 상위 서로게이트를 남기지 않는다. */
+  @Test
+  void excel_truncationDoesNotSplitSurrogatePair() throws Exception {
+    int cut = MAX - ExcelExportWriter.TRUNCATED_SUFFIX.length();
+    // cut-1 자리에 상위 서로게이트, cut 자리에 하위 서로게이트가 오도록 맞춘다
+    String text = "a".repeat(cut - 1) + "\uD83D\uDD25" + "b".repeat(100);
+    assertThat(Character.isHighSurrogate(text.charAt(cut - 1))).isTrue();
+    String fitted = ExcelExportWriter.fitCellText(text);
+    assertThat(fitted).hasSize(MAX - 1).endsWith(ExcelExportWriter.TRUNCATED_SUFFIX);
+    String head =
+        fitted.substring(0, fitted.length() - ExcelExportWriter.TRUNCATED_SUFFIX.length());
+    assertThat(head).isEqualTo("a".repeat(cut - 1));
+    assertThat(Character.isHighSurrogate(head.charAt(head.length() - 1))).isFalse();
+    // 이모지가 자르는 자리보다 앞에서 끝나면(쌍 전체가 안쪽) 그대로 남는다
+    String whole = "a".repeat(cut - 2) + "\uD83D\uDD25" + "b".repeat(100);
+    assertThat(ExcelExportWriter.fitCellText(whole))
+        .hasSize(MAX)
+        .startsWith("a".repeat(cut - 2) + "\uD83D\uDD25");
+    // 실제 셀로 써도 열린다
+    try (XSSFWorkbook wb =
+        new XSSFWorkbook(
+            new ByteArrayInputStream(
+                excel(new Object[] {null, null, null, null, null, text, null})))) {
+      assertThat(wb.getSheetAt(0).getRow(1).getCell(5).getStringCellValue()).isEqualTo(fitted);
+    }
+  }
+
+  /** 행 쓰기 중 예외가 나면 close() 가 부분 통합 문서를 출력에 쓰지 않는다 — 동기 응답이 200 으로 커밋된 뒤 끊기지 않게. */
+  @Test
+  void excel_failedRowWritesNothingOnClose() throws Exception {
+    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+    Object boom =
+        new Object() {
+          @Override
+          public String toString() {
+            throw new IllegalStateException("셀 값 변환 실패");
+          }
+        };
+    assertThatThrownBy(
+            () -> {
+              try (ExcelExportWriter w = new ExcelExportWriter(bos)) {
+                w.writeHeader(HEADER);
+                w.writeRow(ROW);
+                w.writeRow(new Object[] {boom});
+              }
+            })
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(bos.size()).isZero();
   }
 }
