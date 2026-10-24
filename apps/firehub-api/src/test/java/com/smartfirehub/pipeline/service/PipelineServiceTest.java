@@ -623,8 +623,14 @@ class PipelineServiceTest extends IntegrationTestBase {
     pipelineService.deletePipeline(pipelineId);
 
     // Then
+    // WD-226: 지운 파이프라인은 내부 id 없는 한국어 문구로 404 — 이 문구가 토스트·AI 챗에 그대로 실린다
     assertThatThrownBy(() -> pipelineService.getPipelineById(pipelineId))
-        .isInstanceOf(PipelineNotFoundException.class);
+        .isInstanceOf(PipelineNotFoundException.class)
+        .hasMessage("파이프라인을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
+    // 지운 파이프라인 실행도 같은 문구(결함 재현 경로: 화면을 연 채 다른 곳에서 지우고 「실행」)
+    assertThatThrownBy(() -> pipelineService.executePipeline(pipelineId, testUserId))
+        .isInstanceOf(PipelineNotFoundException.class)
+        .hasMessage("파이프라인을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
 
     // Verify steps deleted
     Long stepCount =
@@ -1207,7 +1213,7 @@ class PipelineServiceTest extends IntegrationTestBase {
     // When/Then: pipelineB 컨텍스트로 executionOfA 조회 시 404
     assertThatThrownBy(() -> pipelineService.getExecutionById(pipelineB.id(), executionOfA.id()))
         .isInstanceOf(PipelineNotFoundException.class)
-        .hasMessageContaining("Execution not found");
+        .hasMessage("실행 기록을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
 
     // Sanity: 정상 컨텍스트(pipelineA)에서는 정상 조회되어야 함
     ExecutionDetailResponse detail =
@@ -1225,7 +1231,7 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> pipelineService.getExecutionById(pipeline.id(), 999_999_999L))
         .isInstanceOf(PipelineNotFoundException.class)
-        .hasMessageContaining("Execution not found");
+        .hasMessage("실행 기록을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
   }
 
   // --- 증분 처리({{last_run_at}}) 저장 시점 검증 + 책갈피 이월 (Task 6) ---
@@ -2199,7 +2205,8 @@ class PipelineServiceTest extends IntegrationTestBase {
         stepRepository.findStepIdByPipelineAndName(pipelineA.id(), "stepA").orElseThrow();
 
     assertThatThrownBy(() -> pipelineService.setFullRebuildPending(pipelineB.id(), stepIdOfA, true))
-        .isInstanceOf(PipelineNotFoundException.class);
+        .isInstanceOf(PipelineNotFoundException.class)
+        .hasMessage("스텝을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
   }
 
   @Test

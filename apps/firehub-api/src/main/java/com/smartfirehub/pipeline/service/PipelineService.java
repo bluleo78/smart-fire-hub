@@ -485,9 +485,7 @@ public class PipelineService {
   @Transactional(readOnly = true)
   public PipelineDetailResponse getPipelineById(Long id) {
     PipelineResponse pipeline =
-        pipelineRepository
-            .findById(id)
-            .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + id));
+        pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
 
     List<PipelineStepResponse> steps =
         stepRepository.findByPipelineId(id, datasetAccessGuard.visibleCondition()).stream()
@@ -577,10 +575,7 @@ public class PipelineService {
         stepRepository.findByPipelineId(pipelineId).stream()
             .filter(s -> s.id().equals(stepId))
             .findFirst()
-            .orElseThrow(
-                () ->
-                    new PipelineNotFoundException(
-                        "Step not found in pipeline " + pipelineId + ": " + stepId));
+            .orElseThrow(PipelineNotFoundException::step);
     // 실행기와 같은 판정("SQL 스텝 + {{last_run_at}}")으로 거른다(#739). 플레이스홀더만 보면 PYTHON 스텝
     // 스크립트 주석 속 문자열에도 예약이 들어가, 실행기가 소비하지 않는(화면에도 안 보이는) 예약이 남았다가
     // 같은 이름·출력의 증분 SQL 로 바꿔 저장하는 순간 이월되어 확인 없이 출력을 지운다.
@@ -595,9 +590,7 @@ public class PipelineService {
   @Transactional
   public void updatePipeline(Long id, UpdatePipelineRequest request, Long userId) {
     // Verify pipeline exists
-    pipelineRepository
-        .findById(id)
-        .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + id));
+    pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
 
     // 이름 변경 시 중복 검사 — 다른 파이프라인에 동일 이름이 있으면 409 반환 (#181)
     if (request.name() != null) {
@@ -773,9 +766,7 @@ public class PipelineService {
    */
   @Transactional(readOnly = true)
   public PipelineDeleteImpactResponse getDeleteImpact(Long id) {
-    pipelineRepository
-        .findById(id)
-        .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + id));
+    pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
     List<Long> stepIds = stepRepository.findStepIdsByPipelineId(id);
     List<Long> tempIds = stepRepository.findAutoTempDatasetIdsByStepIds(stepIds);
     return new PipelineDeleteImpactResponse(selectDeletableAutoTemps(tempIds, stepIds).size());
@@ -1146,9 +1137,7 @@ public class PipelineService {
   @Transactional
   public void deletePipeline(Long id) {
     // Verify pipeline exists
-    pipelineRepository
-        .findById(id)
-        .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + id));
+    pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
 
     // Disable chain triggers that reference this pipeline as upstream
     // 꺼진 이유(선행 삭제)는 따로 저장하지 않는다 — 트리거 조회가 선행 존재를 계산해 upstreamMissing 으로 내려 주고, 다시 켜기·저장은
@@ -1182,9 +1171,7 @@ public class PipelineService {
       Long pipelineId, Long userId, String triggeredBy, Long triggerId) {
     // 파이프라인 존재 여부 확인
     PipelineResponse pipeline =
-        pipelineRepository
-            .findById(pipelineId)
-            .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + pipelineId));
+        pipelineRepository.findById(pipelineId).orElseThrow(PipelineNotFoundException::new);
 
     // 비활성 파이프라인은 수동 실행 불가 — 활성화 후 재시도해야 함 (#187)
     // 이 문구는 화면 토스트에 그대로 보이므로 사용자 안내 문장으로 쓴다(WD-110).
@@ -1217,18 +1204,14 @@ public class PipelineService {
    * 존재 여부를 숨긴다). 실제 취소 기록은 {@link PipelineExecutionService#cancelExecution} 이 한다.
    */
   public CancelExecutionResponse cancelExecution(Long pipelineId, Long executionId, Long userId) {
-    pipelineRepository
-        .findById(pipelineId)
-        .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + pipelineId));
+    pipelineRepository.findById(pipelineId).orElseThrow(PipelineNotFoundException::new);
     return executionService.cancelExecution(pipelineId, executionId, userId);
   }
 
   @Transactional(readOnly = true)
   public List<PipelineExecutionResponse> getExecutionsByPipelineId(Long pipelineId) {
     // Verify pipeline exists
-    pipelineRepository
-        .findById(pipelineId)
-        .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + pipelineId));
+    pipelineRepository.findById(pipelineId).orElseThrow(PipelineNotFoundException::new);
 
     return executionRepository.findExecutionsByPipelineId(pipelineId);
   }
@@ -1236,9 +1219,7 @@ public class PipelineService {
   @Transactional(readOnly = true)
   public ExecutionDetailResponse getExecutionById(Long pipelineId, Long executionId) {
     // 파이프라인 존재 확인
-    pipelineRepository
-        .findById(pipelineId)
-        .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + pipelineId));
+    pipelineRepository.findById(pipelineId).orElseThrow(PipelineNotFoundException::new);
 
     // 실행 조회 후, 해당 실행이 요청한 파이프라인에 속하는지 소유권 검증 (#188).
     // pipelineId가 일치하지 않으면 다른 파이프라인의 실행 상세가 노출되므로
@@ -1246,15 +1227,11 @@ public class PipelineService {
     ExecutionDetailResponse execution =
         executionRepository
             .findExecutionById(executionId)
-            .orElseThrow(
-                () ->
-                    new PipelineNotFoundException(
-                        "Execution not found: " + executionId + " in pipeline " + pipelineId));
+            .orElseThrow(PipelineNotFoundException::execution);
 
     if (!pipelineId.equals(execution.pipelineId())) {
-      // 크로스-파이프라인 접근 차단. 정보 노출 방지를 위해 동일한 not-found 메시지 형식 사용.
-      throw new PipelineNotFoundException(
-          "Execution not found: " + executionId + " in pipeline " + pipelineId);
+      // 크로스-파이프라인 접근 차단. 정보 노출 방지를 위해 없는 실행과 같은 문구로 답한다(WD-226).
+      throw PipelineNotFoundException.execution();
     }
 
     return withholdRawErrorsFromViewer(pipelineId, execution);

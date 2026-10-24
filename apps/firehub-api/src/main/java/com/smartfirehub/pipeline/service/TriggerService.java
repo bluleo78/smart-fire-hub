@@ -263,11 +263,7 @@ public class TriggerService {
     }
 
     TriggerResponse response =
-        triggerRepository
-            .findById(triggerId)
-            .orElseThrow(
-                () ->
-                    new TriggerNotFoundException("Trigger not found after creation: " + triggerId));
+        triggerRepository.findById(triggerId).orElseThrow(TriggerNotFoundException::new);
     // 생성 응답도 조회 응답과 같은 마스킹을 거친다(WD-220) — 웹훅 암호문이 생성 직후 응답으로 새지 않게.
     response = toPublic(response);
 
@@ -296,9 +292,7 @@ public class TriggerService {
   @Transactional
   public void updateTrigger(Long triggerId, UpdateTriggerRequest request, Long userId) {
     TriggerResponse existing =
-        triggerRepository
-            .findById(triggerId)
-            .orElseThrow(() -> new TriggerNotFoundException("Trigger not found: " + triggerId));
+        triggerRepository.findById(triggerId).orElseThrow(TriggerNotFoundException::new);
 
     // API 트리거 업데이트 시 allowedIps 형식 검증
     if ("API".equals(existing.triggerType()) && request.config() != null) {
@@ -399,9 +393,7 @@ public class TriggerService {
   @Transactional
   public void deleteTrigger(Long triggerId) {
     TriggerResponse existing =
-        triggerRepository
-            .findById(triggerId)
-            .orElseThrow(() -> new TriggerNotFoundException("Trigger not found: " + triggerId));
+        triggerRepository.findById(triggerId).orElseThrow(TriggerNotFoundException::new);
 
     triggerRepository.delete(triggerId);
 
@@ -420,9 +412,7 @@ public class TriggerService {
   @Transactional
   public void toggleTrigger(Long triggerId, boolean enabled) {
     TriggerResponse existing =
-        triggerRepository
-            .findById(triggerId)
-            .orElseThrow(() -> new TriggerNotFoundException("Trigger not found: " + triggerId));
+        triggerRepository.findById(triggerId).orElseThrow(TriggerNotFoundException::new);
 
     // 꺼져 있던 연쇄 트리거를 켜면 그 순간 연쇄 간선이 생긴다 — 꺼진 동안 반대 방향 연쇄가 추가됐을 수 있으므로 여기서도
     // 순환·길이를 검사한다(WD-106). 꺼진 트리거는 순환 계산에서 빠지므로 생성·수정 검사만으로는 이 경로가 비어 있었다.
@@ -490,7 +480,7 @@ public class TriggerService {
             .findById(triggerId)
             .map(TriggerService::toPublic)
             .map(TriggerService::withWatchedDatasetsMissing)
-            .orElseThrow(() -> new TriggerNotFoundException("Trigger not found: " + triggerId));
+            .orElseThrow(TriggerNotFoundException::new);
     return withUpstreamMissing(List.of(trigger)).get(0);
   }
 
