@@ -143,7 +143,18 @@ export default function PipelineEditorPage() {
     setIsEditing(false);
   };
 
+  /**
+   * 수동 실행 요청이 진행 중인지 표시하는 플래그(WD-208) — 「실행」·「재실행」·「저장 후 실행」이 함께 쓴다.
+   * 버튼의 disabled={isExecuting}(mutation isPending)은 다시 그려진 뒤에야 반영돼, 더블클릭의 두 번째 클릭이
+   * 그 전에 들어오면 같은 초에 수동 실행이 2건 생기고 APPEND 출력 행이 두 배가 됐다. ref 는 클릭 즉시 바뀌므로
+   * 요청이 끝날 때(성공·실패 모두)까지 들어온 클릭을 무시할 수 있다.
+   */
+  const executeInFlightRef = useRef(false);
+
   const handleExecute = async () => {
+    // 이미 실행 요청을 보내는 중이면 무시한다(더블클릭 중복 실행 방지, WD-208).
+    if (executeInFlightRef.current) return;
+    executeInFlightRef.current = true;
     try {
       await executeMutation.mutateAsync();
       toast.success('파이프라인 실행이 시작되었습니다.');
@@ -151,6 +162,8 @@ export default function PipelineEditorPage() {
       // 서버가 보낸 사유(비활성 파이프라인·보안 등급 403 등)를 그대로 보여 준다(WD-110).
       // 예전엔 사유를 버리고 고정 문구만 띄워 왜 실패했는지 알 수 없었다. 사유가 없을 때만 고정 문구를 쓴다.
       handleApiError(error, '파이프라인 실행에 실패했습니다.');
+    } finally {
+      executeInFlightRef.current = false;
     }
   };
 
@@ -160,6 +173,9 @@ export default function PipelineEditorPage() {
    * 새 실행이 시작되면 응답의 새 execution id로 이동하여 진행 상황을 볼 수 있게 한다.
    */
   const handleRerun = async () => {
+    // 「실행」과 같은 플래그로 진행 중 재클릭을 무시한다 — 더블클릭하면 새 실행이 2건 생기던 결함(WD-208).
+    if (executeInFlightRef.current) return;
+    executeInFlightRef.current = true;
     try {
       const res = await executeMutation.mutateAsync();
       const newExecId = res.data.id;
@@ -168,6 +184,8 @@ export default function PipelineEditorPage() {
     } catch (error) {
       // 실행 버튼과 같은 이유로 서버 사유를 보여 준다(WD-110).
       handleApiError(error, '재실행에 실패했습니다.');
+    } finally {
+      executeInFlightRef.current = false;
     }
   };
 
