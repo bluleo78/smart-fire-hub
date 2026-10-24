@@ -550,6 +550,10 @@ public class DataImportService {
       boolean[] pkNullFound = {false};
       List<ValidationErrorDetail> pkErrorsAccum = new ArrayList<>();
       boolean[] replaceNoPkTruncated = {false}; // REPLACE(PK 無) lazy truncate: 유효 행 발견 시 1회만
+      // 열마다 일·월 순서(일/월/연도 vs 월/일/연도)를 파일 전체 기준으로 하나로 정하는 상태(WD-246). Pass1 이 전량을 훑으며
+      // 근거 값으로 순서를 정하고 섞인 열을 거부한 뒤, Pass2 가 같은 상태로 모든 행을 해석한다 — 파일을 더 읽지 않는다.
+      DataValidationService.DateOrderContext dateOrders =
+          new DataValidationService.DateOrderContext();
 
       // Pass1 콜백: 검증 전용. 삽입하지 않고 카운트/오류만 누적하며, 첫 오류가 나오는 배치에서 fail-fast로
       // 중단한다(부분 적재 방지). rowIndexBase는 이전까지 누적 처리된 행 수(전역 오프셋)로, 오류 rowNumber가
@@ -559,7 +563,7 @@ public class DataImportService {
             if (hasMappings) {
               DataValidationService.ValidationResultWithDetails vr =
                   validationService.validateWithMapping(
-                      batch, columns, mappingsFinal, processedSoFar[0]);
+                      batch, columns, mappingsFinal, processedSoFar[0], dateOrders);
               validCount[0] += vr.validCount();
               errorCount[0] += vr.errorCount();
               if (detailErrorsAccum.size() < 100) {
@@ -568,7 +572,7 @@ public class DataImportService {
               }
             } else {
               DataValidationService.ValidationResult vr =
-                  validationService.validate(batch, columns, processedSoFar[0]);
+                  validationService.validate(batch, columns, processedSoFar[0], dateOrders);
               validCount[0] += vr.validCount();
               errorCount[0] += vr.errorCount();
               if (simpleErrorsAccum.size() < 100) {
@@ -687,7 +691,8 @@ public class DataImportService {
       // toRows() 변환을 사용해 "검증 통과 == 값 변환 성공"이 두 패스에서 어긋나지 않게 한다(핵심 위험 3).
       Consumer<List<Map<String, String>>> insertBatch =
           batch -> {
-            List<List<Object>> rows = validationService.toRows(batch, columns, mappingsFinal);
+            List<List<Object>> rows =
+                validationService.toRows(batch, columns, mappingsFinal, dateOrders);
             List<Map<String, Object>> rowMapsBatch =
                 rows.stream()
                     .map(

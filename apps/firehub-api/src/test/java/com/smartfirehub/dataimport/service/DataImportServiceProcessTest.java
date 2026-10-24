@@ -342,4 +342,98 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
     assertThat(msg.getValue())
         .isEqualTo("파일에 같은 이름의 열이 있습니다: name (1·2번째 열). 열 이름을 고친 뒤 다시 올려 주세요.");
   }
+
+  // ---- WD-246: 일·월이 앞에 오는 날짜를 열 단위로 한 가지 순서로 해석 ----
+
+  private Long createDateDataset(String tableName) {
+    DatasetDetailResponse dataset =
+        datasetService.createDataset(
+            new CreateDatasetRequest(
+                "Date Order Import " + tableName,
+                tableName,
+                "WD-246 날짜 순서 회귀",
+                null,
+                "TABLE",
+                "SOURCE",
+                List.of(
+                    new DatasetColumnRequest("name", "Name", "TEXT", null, false, false, null),
+                    new DatasetColumnRequest("dt", "Dt", "DATE", null, true, false, null)),
+                null),
+            testUserId);
+    return dataset.id();
+  }
+
+  private Path writeDateCsv(List<String> dates) throws Exception {
+    StringBuilder csv = new StringBuilder("name,dt\n");
+    for (int i = 0; i < dates.size(); i++) {
+      csv.append("r").append(i + 1).append(",").append(dates.get(i)).append("\n");
+    }
+    Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-test");
+    Files.createDirectories(tempDir);
+    Path tempFile = Files.createTempFile(tempDir, "process-date-", ".csv");
+    Files.writeString(tempFile, csv.toString(), StandardCharsets.UTF_8);
+    return tempFile;
+  }
+
+  private void runImport(String jobId, Long datasetId, Path csv) throws Exception {
+    dataImportService.processImport(
+        jobId,
+        datasetId,
+        csv.toString(),
+        "",
+        "",
+        "dates.csv",
+        Files.size(csv),
+        "CSV",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "APPEND",
+        1L);
+  }
+
+  @Test
+  void dateColumn_monthFirstEvidenceAfterFirstBatch_storesEarlierAmbiguousRowsMonthFirst()
+      throws Exception {
+    // 앞 2500행(첫 배치 2000행 + 사전검증 샘플 200행 모두 포함)은 01/02/2026 처럼 모호하고, 2501행에서야 월/일 근거(01/13/2026)가
+    // 나온다. Pass1 이 정한 월/일 순서를 Pass2 가 공유해야 앞 행들도 1월 2일로 저장된다 — 공유하지 않으면 2월 1일로 조용히 저장된다.
+    String tableName = "process_date_month_first";
+    Long datasetId = createDateDataset(tableName);
+    List<String> dates =
+        new java.util.ArrayList<>(java.util.Collections.nCopies(2500, "01/02/2026"));
+    dates.add("01/13/2026");
+    runImport("process-date-mdy-job-id", datasetId, writeDateCsv(dates));
+
+    Mockito.verify(asyncJobService, Mockito.never())
+        .failJob(Mockito.anyString(), Mockito.anyString());
+    var stored =
+        dsl.fetch(
+            "SELECT dt, count(*) AS n FROM data.\"" + tableName + "\" GROUP BY dt ORDER BY dt");
+    assertThat(stored).hasSize(2);
+    assertThat(stored.get(0).get("dt", java.time.LocalDate.class))
+        .isEqualTo(java.time.LocalDate.of(2026, 1, 2));
+    assertThat(stored.get(0).get("n", Long.class)).isEqualTo(2500L);
+    assertThat(stored.get(1).get("dt", java.time.LocalDate.class))
+        .isEqualTo(java.time.LocalDate.of(2026, 1, 13));
+  }
+
+  @Test
+  void dateColumn_mixedDayFirstAndMonthFirst_failsJobInKorean_noRowsInserted() throws Exception {
+    // WD-237 t2 재현(31/12 일/월 + 12/31 월/일) — 예전엔 COMPLETED 로 행마다 다른 순서로 저장됐다
+    String tableName = "process_date_mixed";
+    Long datasetId = createDateDataset(tableName);
+    runImport(
+        "process-date-mixed-job-id",
+        datasetId,
+        writeDateCsv(List.of("31/12/2026", "01/02/2026", "12/31/2026")));
+
+    assertThat(countRows(tableName)).isZero();
+    ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+    Mockito.verify(asyncJobService).failJob(Mockito.eq("process-date-mixed-job-id"), msg.capture());
+    assertThat(msg.getValue())
+        .startsWith("검증 실패로 한 행도 적재되지 않았습니다 (오류 1건)")
+        .contains("3행 'dt' 컬럼 - 같은 열에 일/월/연도와 월/일/연도 형식이 섞여 있습니다")
+        .contains("31/12/2026(1행, 일/월/연도)");
+  }
 }

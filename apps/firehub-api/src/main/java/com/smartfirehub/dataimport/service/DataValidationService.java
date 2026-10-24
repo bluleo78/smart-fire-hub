@@ -25,9 +25,9 @@ public class DataValidationService {
       List.of(
           DateTimeFormatter.ofPattern("yyyy-MM-dd"),
           DateTimeFormatter.ofPattern("yyyy/MM/dd"),
-          DateTimeFormatter.ofPattern("dd-MM-yyyy"),
-          DateTimeFormatter.ofPattern("dd/MM/yyyy"),
-          DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+          // 일·월이 앞 두 칸인 형식(dd/MM/yyyy·MM/dd/yyyy 등)은 여기서 다루지 않는다 — 형식 목록을 순서대로 시도해 첫 성공을 쓰면
+          // 01/02/2026 은 2월 1일, 12/31/2026 은 12월 31일로 같은 열 안에서 행마다 해석이 갈렸다(WD-246). 열 단위로 순서를
+          // 정하는 parseDayMonthLeading 이 맡는다.
           // 구분자 없는 8자리 yyyyMMdd(예: 20200316) — 공공/레거시 CSV에 흔한 형식
           DateTimeFormatter.ofPattern("yyyyMMdd"));
 
@@ -42,8 +42,7 @@ public class DataValidationService {
               .optionalEnd()
               .toFormatter(),
           DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"),
-          DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss"),
-          DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss"),
+          // dd-MM-yyyy HH:mm:ss·dd/MM/yyyy HH:mm:ss 는 parseDayMonthLeading 이 열 단위 순서로 해석한다(WD-246).
           DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
 
   // 필수값 누락 사유 문구. validate()가 요약 문자열을 조립할 때 이 값과 동일한지 비교해 문구를 분기하므로,
@@ -52,6 +51,74 @@ public class DataValidationService {
 
   /** 콤마 제거 후 부호와 숫자로만 이뤄진 정수 리터럴 — 이 형식이 아니면 형식 오류, 맞으면 BIGINT 범위만 남는다. */
   private static final Pattern INTEGER_LITERAL = Pattern.compile("[+-]?\\d+");
+
+  /**
+   * 일·월이 앞 두 칸이고 연도가 뒤에 오는 날짜(예: 31/12/2026, 12-31-2026, 1.2.2026)와 선택적 시각부(HH:mm:ss). 두 구분자는 같아야
+   * 한다. 앞 두 칸 중 어느 쪽이 일인지는 값 하나로 알 수 없으므로 {@link DateOrderContext} 가 열 단위로 정한다(WD-246).
+   */
+  private static final Pattern DAY_MONTH_LEADING =
+      Pattern.compile("(\\d{1,2})([/.-])(\\d{1,2})\\2(\\d{4})(?: (\\d{2}):(\\d{2}):(\\d{2}))?");
+
+  /** 일·월이 앞에 오는 날짜의 두 칸 순서. */
+  enum DayMonthOrder {
+    /** 일/월/연도(예: 31/12/2026) — 판단 근거가 없을 때의 기본값(기존 동작). */
+    DAY_FIRST("일/월/연도"),
+    /** 월/일/연도(예: 12/31/2026). */
+    MONTH_FIRST("월/일/연도");
+
+    private final String label;
+
+    DayMonthOrder(String label) {
+      this.label = label;
+    }
+  }
+
+  /**
+   * 한 번의 임포트(사전검증 샘플 또는 임포트 잡 전체)에서 열마다 일·월 순서를 하나로 정해 두는 상태(WD-246).
+   *
+   * <p>왜 필요한가: 01/02/2026 처럼 앞 두 칸이 모두 12 이하인 값은 값 하나로 일/월인지 월/일인지 알 수 없다. 예전에는 값마다 형식 목록의 첫 성공을 써서
+   * 같은 열 안에서도 12/31/2026 은 월/일, 01/02/2026 은 일/월로 섞여 저장됐다. 이제 열의 값 중 첫 칸이 12 를 넘는 값이 있으면 일/월/연도, 둘째
+   * 칸이 12 를 넘는 값이 있으면 월/일/연도로 열 전체를 해석하고, 둘 다 나오면 섞인 열로 거부한다. 판단 근거가 하나도 없으면(모두 12 이하) 기존 기본값인
+   * 일/월/연도를 쓴다.
+   *
+   * <p>임포트 잡은 검증(Pass1)이 파일 전체를 먼저 훑은 뒤 삽입(Pass2)을 다시 훑으므로, 같은 인스턴스를 두 패스에 넘기면 Pass1 이 정한 순서로 Pass2
+   * 가 모든 행(근거 값보다 앞에 있던 모호한 행 포함)을 해석한다 — 파일을 더 읽지 않는다. 열 이름을 키로 쓰고, 한 임포트 안에서만 쓰며 스레드 간에 공유하지 않는다.
+   */
+  public static final class DateOrderContext {
+
+    /** 열 순서를 처음 정한 값과 그 행 번호 — 섞인 열 오류 문구에 함께 보여 준다. */
+    private record Decision(DayMonthOrder order, String value, int rowNumber) {}
+
+    private final Map<String, Decision> decisions = new HashMap<>();
+
+    /** 열의 일·월 순서. 아직 근거가 없으면 기본값(일/월/연도). */
+    DayMonthOrder orderOf(String columnName) {
+      Decision decision = decisions.get(columnName);
+      return decision != null ? decision.order() : DayMonthOrder.DAY_FIRST;
+    }
+
+    /** 이미 다른 순서로 정해진 열이면 섞인 열 오류를 던진다. */
+    void checkConsistent(String columnName, DayMonthOrder evidence, String value) throws Exception {
+      Decision decision = decisions.get(columnName);
+      if (decision != null && decision.order() != evidence) {
+        throw new Exception(
+            "같은 열에 일/월/연도와 월/일/연도 형식이 섞여 있습니다: "
+                + decision.value()
+                + (decision.rowNumber() > 0 ? "(" + decision.rowNumber() + "행, " : "(")
+                + decision.order().label
+                + "), "
+                + value
+                + "("
+                + evidence.label
+                + ") — 한 열의 날짜는 한 가지 순서로 맞춰 주세요");
+      }
+    }
+
+    /** 첫 근거 값으로 열 순서를 정한다(이미 같은 순서로 정해져 있으면 그대로 둔다). */
+    void record(String columnName, DayMonthOrder evidence, String value, int rowNumber) {
+      decisions.putIfAbsent(columnName, new Decision(evidence, value, rowNumber));
+    }
+  }
 
   public ValidationResult validate(
       List<Map<String, String>> rows, List<DatasetColumnResponse> columns) {
@@ -66,6 +133,20 @@ public class DataValidationService {
    */
   public ValidationResult validate(
       List<Map<String, String>> rows, List<DatasetColumnResponse> columns, int rowIndexBase) {
+    // 이 호출 하나(샘플·단일 배치)만 보고 열의 일·월 순서를 정한다 — 여러 배치에 걸친 임포트 잡은 아래 오버로드로 상태를 넘긴다.
+    return validate(rows, columns, rowIndexBase, new DateOrderContext());
+  }
+
+  /**
+   * {@link #validate(List, List, int)} 와 같되, 열의 일·월 순서 판정 상태를 호출자가 넘긴다 — 임포트 잡이 배치마다 같은 상태를 넘겨 파일
+   * 전체에서 열 순서를 하나로 정하고, 삽입({@link #toRows(List, List, List, DateOrderContext)})에도 같은 상태를
+   * 쓴다(WD-246).
+   */
+  public ValidationResult validate(
+      List<Map<String, String>> rows,
+      List<DatasetColumnResponse> columns,
+      int rowIndexBase,
+      DateOrderContext dateOrders) {
     List<List<Object>> validRows = new ArrayList<>();
     List<String> errors = new ArrayList<>();
     int rowIndex = rowIndexBase;
@@ -77,7 +158,7 @@ public class DataValidationService {
       // 공유한다 — 별도 인라인 변환 루프를 유지하면 두 경로가 갈라져 "검증 통과 == 값 변환 성공"이 어긋나는
       // 미묘한 버그(Task2 핵심 위험)가 생긴다. 에러는 기존과 동일한 "행/컬럼/사유" 구조의 String 메시지로 조립한다.
       List<ValidationErrorDetail> rowErrors = new ArrayList<>();
-      List<Object> convertedRow = convertRowOrNull(row, columns, rowIndex, rowErrors);
+      List<Object> convertedRow = convertRowOrNull(row, columns, rowIndex, rowErrors, dateOrders);
 
       if (convertedRow != null) {
         validRows.add(convertedRow);
@@ -124,6 +205,19 @@ public class DataValidationService {
   }
 
   public Object convertValue(String value, String dataType) throws Exception {
+    // 값 하나만 변환하는 경로 — 열 순서 근거는 이 값 자체뿐이다(모호하면 일/월/연도).
+    return convertValue(value, dataType, "", new DateOrderContext(), 0);
+  }
+
+  /**
+   * 값 하나를 컬럼 타입으로 변환한다. 일·월이 앞에 오는 날짜는 {@code dateOrders} 의 열 순서로 해석하고, 이 값이 순서의 근거가 되면 기록한다.
+   *
+   * @param columnName 열 순서 판정 키(데이터셋 컬럼명)
+   * @param rowIndex 섞인 열 오류 문구에 쓰는 전역 행 번호(모르면 0)
+   */
+  private Object convertValue(
+      String value, String dataType, String columnName, DateOrderContext dateOrders, int rowIndex)
+      throws Exception {
     if (value == null || value.isEmpty()) {
       return null;
     }
@@ -167,8 +261,12 @@ public class DataValidationService {
         }
       }
       case "DATE" -> {
-        LocalDate date = null;
-        for (DateTimeFormatter formatter : DATE_FORMATTERS) {
+        // 일·월이 앞에 오는 형식은 열 단위 순서로 해석한다(WD-246). 시각부가 붙은 값은 DATE 로 받지 않는다(아래에서 형식 오류).
+        LocalDateTime dayMonth =
+            parseDayMonthLeading(value, false, columnName, dateOrders, rowIndex);
+        LocalDate date = dayMonth != null ? dayMonth.toLocalDate() : null;
+        for (DateTimeFormatter formatter :
+            date != null ? List.<DateTimeFormatter>of() : DATE_FORMATTERS) {
           try {
             date = LocalDate.parse(value, formatter);
             break;
@@ -192,14 +290,18 @@ public class DataValidationService {
           throw new Exception(
               "날짜 형식이 아닙니다: "
                   + value
-                  + " (허용 형식: yyyy-MM-dd, yyyy/MM/dd, dd-MM-yyyy, dd/MM/yyyy,"
-                  + " MM/dd/yyyy, yyyyMMdd)");
+                  + " (허용 형식: yyyy-MM-dd, yyyy/MM/dd, yyyyMMdd, dd/MM/yyyy, MM/dd/yyyy"
+                  + " — 일·월·연도 구분자는 / - . 중 하나, 한 열에서는 한 가지 순서만)");
         }
         yield date;
       }
       case "TIMESTAMP" -> {
-        LocalDateTime timestamp = null;
-        for (DateTimeFormatter formatter : TIMESTAMP_FORMATTERS) {
+        // 일·월이 앞에 오는 날짜(시각부 있거나 날짜만)는 DATE 와 같은 열 단위 순서로 해석한다 — 예전엔 시각부가 있으면 일/월만,
+        // 날짜만 있으면 일/월→월/일 순 첫 성공이라 TIMESTAMP 열에서도 행마다 해석이 갈렸다(WD-246).
+        LocalDateTime timestamp =
+            parseDayMonthLeading(value, true, columnName, dateOrders, rowIndex);
+        for (DateTimeFormatter formatter :
+            timestamp != null ? List.<DateTimeFormatter>of() : TIMESTAMP_FORMATTERS) {
           try {
             timestamp = LocalDateTime.parse(value, formatter);
             break;
@@ -222,7 +324,8 @@ public class DataValidationService {
           throw new Exception(
               "날짜시간 형식이 아닙니다: "
                   + value
-                  + " (허용 형식: yyyy-MM-dd HH:mm:ss, yyyyMMddHHmmss, ISO 형식, yyyy-MM-dd 등 날짜만 있는 형식)");
+                  + " (허용 형식: yyyy-MM-dd HH:mm:ss, yyyyMMddHHmmss, ISO 형식, dd/MM/yyyy HH:mm:ss,"
+                  + " MM/dd/yyyy HH:mm:ss, yyyy-MM-dd 등 날짜만 있는 형식)");
         }
         yield timestamp;
       }
@@ -237,6 +340,59 @@ public class DataValidationService {
       }
       default -> throw new Exception("알 수 없는 데이터 타입입니다: " + dataType);
     };
+  }
+
+  /**
+   * 일·월이 앞 두 칸이고 연도가 뒤에 오는 날짜를 열 단위 순서로 해석한다(WD-246).
+   *
+   * <p>판정: 첫 칸 &gt; 12 이면 일/월/연도, 둘째 칸 &gt; 12 이면 월/일/연도의 근거다. 근거가 열에 이미 정해진 순서와 다르면 섞인 열 오류, 근거가
+   * 없으면(둘 다 12 이하) 열에 정해진 순서(없으면 일/월/연도)를 쓴다. 날짜는 {@link LocalDate#of} 로 엄격하게 만든다 — 기본 SMART 해석기는
+   * 02/31 같은 없는 날짜를 그달 말일로 바꿔 조용히 저장한다.
+   *
+   * @param allowTime 시각부(HH:mm:ss) 허용 여부 — TIMESTAMP 만 true
+   * @return 이 형식이 아니면 null(호출자가 다른 형식을 시도). 두 칸이 모두 12 를 넘는 값도 null 로 돌려 기존 형식 오류 문구를 쓴다.
+   * @throws Exception 섞인 열이거나 없는 날짜·시각일 때(한국어 사유)
+   */
+  private static LocalDateTime parseDayMonthLeading(
+      String value, boolean allowTime, String columnName, DateOrderContext dateOrders, int rowIndex)
+      throws Exception {
+    java.util.regex.Matcher m = DAY_MONTH_LEADING.matcher(value);
+    if (!m.matches() || (!allowTime && m.group(5) != null)) {
+      return null;
+    }
+    int first = Integer.parseInt(m.group(1));
+    int second = Integer.parseInt(m.group(3));
+    int year = Integer.parseInt(m.group(4));
+    if (first > 12 && second > 12) {
+      return null;
+    }
+    DayMonthOrder evidence =
+        first > 12 ? DayMonthOrder.DAY_FIRST : second > 12 ? DayMonthOrder.MONTH_FIRST : null;
+    if (evidence != null) {
+      dateOrders.checkConsistent(columnName, evidence, value);
+    }
+    DayMonthOrder order = evidence != null ? evidence : dateOrders.orderOf(columnName);
+    int day = order == DayMonthOrder.DAY_FIRST ? first : second;
+    int month = order == DayMonthOrder.DAY_FIRST ? second : first;
+    LocalDateTime result;
+    try {
+      LocalDate date = LocalDate.of(year, month, day);
+      result =
+          m.group(5) == null
+              ? date.atStartOfDay()
+              : date.atTime(
+                  LocalTime.of(
+                      Integer.parseInt(m.group(5)),
+                      Integer.parseInt(m.group(6)),
+                      Integer.parseInt(m.group(7))));
+    } catch (java.time.DateTimeException e) {
+      throw new Exception("존재하지 않는 날짜입니다: " + value + " (" + order.label + "로 해석)");
+    }
+    // 실제로 있는 날짜일 때만 열 순서의 근거로 남긴다 — 잘못된 값이 열 순서를 정하지 않게.
+    if (evidence != null) {
+      dateOrders.record(columnName, evidence, value, rowIndex);
+    }
+    return result;
   }
 
   public ValidationResultWithDetails validateWithMapping(
@@ -258,6 +414,17 @@ public class DataValidationService {
       List<DatasetColumnResponse> columns,
       List<ColumnMappingEntry> mappings,
       int rowIndexBase) {
+    // 이 호출 하나(샘플·단일 배치)만 보고 열의 일·월 순서를 정한다 — 임포트 잡은 아래 오버로드로 상태를 넘긴다.
+    return validateWithMapping(rows, columns, mappings, rowIndexBase, new DateOrderContext());
+  }
+
+  /** {@link #validateWithMapping(List, List, List, int)} 와 같되 열의 일·월 순서 판정 상태를 호출자가 넘긴다(WD-246). */
+  public ValidationResultWithDetails validateWithMapping(
+      List<Map<String, String>> rows,
+      List<DatasetColumnResponse> columns,
+      List<ColumnMappingEntry> mappings,
+      int rowIndexBase,
+      DateOrderContext dateOrders) {
 
     // Build mapping lookup: fileColumn -> datasetColumn
     Map<String, String> columnMapping = buildColumnMapping(mappings);
@@ -274,7 +441,8 @@ public class DataValidationService {
 
       // Pass1(검증)과 Pass2(삽입의 toRows)가 동일한 변환 로직(convertRowOrNull)을 호출한다 —
       // 두 벌로 갈라지면 "검증 통과 == 값 변환 성공"이 어긋나는 미묘한 버그가 생긴다(Task2 핵심 위험).
-      List<Object> convertedRow = convertRowOrNull(remappedRow, columns, rowIndex, errors);
+      List<Object> convertedRow =
+          convertRowOrNull(remappedRow, columns, rowIndex, errors, dateOrders);
       if (convertedRow != null) {
         validRows.add(convertedRow);
       }
@@ -296,6 +464,26 @@ public class DataValidationService {
       List<Map<String, String>> rows,
       List<DatasetColumnResponse> columns,
       List<ColumnMappingEntry> mappings) {
+    // 이 배치만 보고 열 순서를 정한다 — 먼저 배치 전체를 훑어 근거 값을 모은 뒤 변환해, 근거 값보다 앞의 모호한 행도 같은 순서로
+    // 해석한다. 임포트 잡은 Pass1 이 파일 전체로 정한 상태를 아래 오버로드로 넘긴다.
+    DateOrderContext dateOrders = new DateOrderContext();
+    if (mappings != null && !mappings.isEmpty()) {
+      validateWithMapping(rows, columns, mappings, 0, dateOrders);
+    } else {
+      validate(rows, columns, 0, dateOrders);
+    }
+    return toRows(rows, columns, mappings, dateOrders);
+  }
+
+  /**
+   * {@link #toRows(List, List, List)} 와 같되, Pass1 검증이 파일 전체를 보고 정한 열의 일·월 순서 상태를 받는다(WD-246). 새 상태를
+   * 쓰면 Pass1 이 월/일로 정한 열의 모호한 행(01/02/2026)을 Pass2 가 기본값 일/월로 해석해, 검증은 통과했는데 다른 날짜가 저장된다.
+   */
+  public List<List<Object>> toRows(
+      List<Map<String, String>> rows,
+      List<DatasetColumnResponse> columns,
+      List<ColumnMappingEntry> mappings,
+      DateOrderContext dateOrders) {
     boolean hasMappings = mappings != null && !mappings.isEmpty();
     Map<String, String> columnMapping = hasMappings ? buildColumnMapping(mappings) : Map.of();
     List<ValidationErrorDetail> discardedErrors = new ArrayList<>();
@@ -306,7 +494,7 @@ public class DataValidationService {
       rowIndex++;
       Map<String, String> effectiveRow = hasMappings ? remapRow(row, columnMapping) : row;
       List<Object> convertedRow =
-          convertRowOrNull(effectiveRow, columns, rowIndex, discardedErrors);
+          convertRowOrNull(effectiveRow, columns, rowIndex, discardedErrors, dateOrders);
       if (convertedRow == null) {
         // Pass1(검증)을 통과한 행이 Pass2(삽입)에서 변환 실패하는 것은 불변식 위반이다.
         // 조용히 빈 행을 삽입하면 데이터 정합성이 깨지므로 즉시 실패시킨다.
@@ -353,7 +541,8 @@ public class DataValidationService {
       Map<String, String> row,
       List<DatasetColumnResponse> columns,
       int rowIndex,
-      List<ValidationErrorDetail> errorSink) {
+      List<ValidationErrorDetail> errorSink,
+      DateOrderContext dateOrders) {
     List<Object> convertedRow = new ArrayList<>();
     boolean rowValid = true;
 
@@ -392,7 +581,8 @@ public class DataValidationService {
         // 거부하고, 통과한 값은 DB 가 실제로 저장할 값으로 정규화해 넘긴다.
         Object convertedValue =
             ColumnPhysicalType.enforceLimits(
-                convertValue(rawValue.trim(), column.dataType()),
+                convertValue(
+                    rawValue.trim(), column.dataType(), column.columnName(), dateOrders, rowIndex),
                 column.dataType(),
                 column.maxLength());
         convertedRow.add(convertedValue);

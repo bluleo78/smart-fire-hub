@@ -715,4 +715,155 @@ class DataValidationServiceTest {
     assertThat(service.convertValue("2025-12-01 08:05:30", "TIMESTAMP"))
         .isEqualTo(LocalDateTime.of(2025, 12, 1, 8, 5, 30));
   }
+
+  // -----------------------------------------------------------------------
+  // WD-246 — 일·월이 앞에 오는 날짜는 열 단위로 한 가지 순서로 해석
+  // -----------------------------------------------------------------------
+
+  /** 한 열짜리 DATE/TIMESTAMP 행 목록을 만든다. */
+  private static List<Map<String, String>> dateRows(String column, String... values) {
+    return java.util.Arrays.stream(values).map(v -> Map.of(column, v)).toList();
+  }
+
+  /** 임포트 잡과 같은 순서(검증 → 같은 상태로 변환)로 열 값을 변환해 첫 칸 값만 모은다. */
+  private List<Object> importColumn(List<DatasetColumnResponse> columns, String... values) {
+    DataValidationService.DateOrderContext ctx = new DataValidationService.DateOrderContext();
+    List<Map<String, String>> rows = dateRows(columns.get(0).columnName(), values);
+    DataValidationService.ValidationResult vr = service.validate(rows, columns, 0, ctx);
+    assertThat(vr.errors()).isEmpty();
+    return service.toRows(rows, columns, null, ctx).stream().map(r -> r.get(0)).toList();
+  }
+
+  @Test
+  void dayMonthLeading_monthFirstColumn_ambiguousRowsBeforeEvidenceAreMonthFirstToo() {
+    // 12/31 이 월/일 근거 — 앞에 나온 01/02 도 1월 2일, 03-04 도 3월 4일이어야 한다(예전: 2월 1일·4월 3일)
+    List<DatasetColumnResponse> columns = List.of(col("dt", "DATE", true));
+    assertThat(importColumn(columns, "01/02/2026", "12/31/2026", "03-04-2026"))
+        .containsExactly(
+            LocalDate.of(2026, 1, 2), LocalDate.of(2026, 12, 31), LocalDate.of(2026, 3, 4));
+  }
+
+  @Test
+  void dayMonthLeading_dayFirstColumn_isReadDayFirst() {
+    List<DatasetColumnResponse> columns = List.of(col("dt", "DATE", true));
+    assertThat(importColumn(columns, "01/02/2026", "31/12/2026", "05.06.2026"))
+        .containsExactly(
+            LocalDate.of(2026, 2, 1), LocalDate.of(2026, 12, 31), LocalDate.of(2026, 6, 5));
+  }
+
+  @Test
+  void dayMonthLeading_mixedColumn_isRejectedInKoreanWithBothExamples() {
+    // t2 재현 — 같은 열에 31/12(일/월)와 12/31(월/일)이 함께 있으면 섞인 열로 거부한다
+    List<DatasetColumnResponse> columns = List.of(col("dt", "DATE", true));
+    DataValidationService.ValidationResult vr =
+        service.validate(dateRows("dt", "31/12/2026", "01/02/2026", "12/31/2026"), columns);
+    assertThat(vr.validCount()).isEqualTo(2);
+    assertThat(vr.errors())
+        .singleElement()
+        .asString()
+        .startsWith("3행 'dt' 컬럼 - 같은 열에 일/월/연도와 월/일/연도 형식이 섞여 있습니다")
+        .contains("31/12/2026(1행, 일/월/연도)")
+        .contains("12/31/2026(월/일/연도)");
+  }
+
+  @Test
+  void dayMonthLeading_allAmbiguous_keepsDayFirstDefault() {
+    List<DatasetColumnResponse> columns = List.of(col("dt", "DATE", true));
+    assertThat(importColumn(columns, "01/02/2026", "03-04-2026", "1/2/2026"))
+        .containsExactly(
+            LocalDate.of(2026, 2, 1), LocalDate.of(2026, 4, 3), LocalDate.of(2026, 2, 1));
+  }
+
+  @Test
+  void dayMonthLeading_yearFirstFormats_unchangedInMonthFirstColumn() {
+    // 연도가 앞인 형식은 열 순서와 무관하게 연-월-일 그대로
+    List<DatasetColumnResponse> columns = List.of(col("dt", "DATE", true));
+    assertThat(importColumn(columns, "2026-01-02", "12/31/2026", "2026/03/04", "20260506"))
+        .containsExactly(
+            LocalDate.of(2026, 1, 2),
+            LocalDate.of(2026, 12, 31),
+            LocalDate.of(2026, 3, 4),
+            LocalDate.of(2026, 5, 6));
+  }
+
+  @Test
+  void dayMonthLeading_evidenceInLaterBatch_appliesToEarlierBatchAndConflictAcrossBatchesFails() {
+    // 임포트 잡처럼 배치마다 같은 상태를 넘긴다 — 샘플(앞 배치)이 모두 모호하고 뒤 배치에서 월/일 근거가 나와도
+    // 삽입 변환은 앞 배치까지 월/일로 해석한다.
+    List<DatasetColumnResponse> columns = List.of(col("dt", "DATE", true));
+    DataValidationService.DateOrderContext ctx = new DataValidationService.DateOrderContext();
+    List<Map<String, String>> batch1 = dateRows("dt", "01/02/2026", "03/04/2026");
+    List<Map<String, String>> batch2 = dateRows("dt", "01/13/2026");
+    assertThat(service.validate(batch1, columns, 0, ctx).errors()).isEmpty();
+    assertThat(service.validate(batch2, columns, 2, ctx).errors()).isEmpty();
+    assertThat(service.toRows(batch1, columns, null, ctx))
+        .containsExactly(List.of(LocalDate.of(2026, 1, 2)), List.of(LocalDate.of(2026, 3, 4)));
+
+    // 앞 배치가 일/월로 정한 열에 뒤 배치의 월/일 값이 나오면 그 행에서 거부(전역 행 번호)
+    DataValidationService.DateOrderContext ctx2 = new DataValidationService.DateOrderContext();
+    assertThat(service.validate(dateRows("dt", "31/12/2026"), columns, 0, ctx2).errors()).isEmpty();
+    assertThat(service.validate(dateRows("dt", "12/31/2026"), columns, 2000, ctx2).errors())
+        .singleElement()
+        .asString()
+        .startsWith("2001행 'dt' 컬럼 - 같은 열에 일/월/연도와 월/일/연도 형식이 섞여 있습니다")
+        .contains("31/12/2026(1행, 일/월/연도)");
+  }
+
+  @Test
+  void dayMonthLeading_mappingPath_usesSameColumnOrder() {
+    List<DatasetColumnResponse> columns = List.of(col("dt", "DATE", true));
+    List<ColumnMappingEntry> mappings = List.of(new ColumnMappingEntry("날짜", "dt"));
+    List<Map<String, String>> rows = dateRows("날짜", "01/02/2026", "12/31/2026");
+    DataValidationService.DateOrderContext ctx = new DataValidationService.DateOrderContext();
+    assertThat(service.validateWithMapping(rows, columns, mappings, 0, ctx).errors()).isEmpty();
+    assertThat(service.toRows(rows, columns, mappings, ctx).get(0))
+        .containsExactly(LocalDate.of(2026, 1, 2));
+    // 섞인 열은 매핑 경로에서도 상세 사유로 거부
+    List<ValidationErrorDetail> errors =
+        service
+            .validateWithMapping(dateRows("날짜", "31/12/2026", "12/31/2026"), columns, mappings)
+            .errors();
+    assertThat(errors)
+        .singleElement()
+        .satisfies(
+            e -> {
+              assertThat(e.rowNumber()).isEqualTo(2);
+              assertThat(e.columnName()).isEqualTo("dt");
+              assertThat(e.error()).contains("섞여 있습니다");
+            });
+  }
+
+  @Test
+  void dayMonthLeading_legacyToRowsWithoutContext_isSelfConsistentWithinBatch() {
+    List<DatasetColumnResponse> columns = List.of(col("dt", "DATE", true));
+    assertThat(service.toRows(dateRows("dt", "01/02/2026", "12/31/2026"), columns, null))
+        .containsExactly(List.of(LocalDate.of(2026, 1, 2)), List.of(LocalDate.of(2026, 12, 31)));
+  }
+
+  @Test
+  void dayMonthLeading_timestampColumn_followsSameRule_withAndWithoutTime() {
+    // TIMESTAMP 도 같은 규칙 — 예전엔 시각부가 있으면 일/월, 날짜만이면 일/월→월/일 첫 성공이었다
+    List<DatasetColumnResponse> columns = List.of(col("ts", "TIMESTAMP", true));
+    assertThat(importColumn(columns, "01/02/2026 10:30:00", "12/31/2026", "2026-05-06 07:08:09"))
+        .containsExactly(
+            LocalDateTime.of(2026, 1, 2, 10, 30, 0),
+            LocalDateTime.of(2026, 12, 31, 0, 0, 0),
+            LocalDateTime.of(2026, 5, 6, 7, 8, 9));
+    DataValidationService.ValidationResult mixed =
+        service.validate(dateRows("ts", "31/12/2026 01:00:00", "12/31/2026"), columns);
+    assertThat(mixed.errors()).singleElement().asString().contains("섞여 있습니다");
+  }
+
+  @Test
+  void dayMonthLeading_nonexistentDate_isRejectedInsteadOfClampedToMonthEnd() {
+    // 02/31 은 기본 해석기라면 2월 28일로 조용히 바뀐다 — 없는 날짜로 거부해야 한다
+    assertThatThrownBy(() -> service.convertValue("02/31/2026", "DATE"))
+        .hasMessageContaining("존재하지 않는 날짜입니다: 02/31/2026");
+    // 두 칸 모두 12 초과는 어느 순서로도 날짜가 아니다
+    assertThatThrownBy(() -> service.convertValue("13/13/2026", "DATE"))
+        .hasMessageContaining("날짜 형식이 아닙니다");
+    // DATE 는 시각부를 받지 않는다
+    assertThatThrownBy(() -> service.convertValue("01/02/2026 10:00:00", "DATE"))
+        .hasMessageContaining("날짜 형식이 아닙니다");
+  }
 }
