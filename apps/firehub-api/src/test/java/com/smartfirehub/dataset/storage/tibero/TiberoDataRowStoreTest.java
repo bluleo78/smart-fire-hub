@@ -1290,4 +1290,81 @@ class TiberoDataRowStoreTest {
         .isInstanceOf(com.smartfirehub.dataset.exception.InvalidTableNameException.class);
     verify(connections, times(0)).withDml(anyLong(), any());
   }
+
+  // ---------- 임시(스테이징) 쓰기 — api 로컬 REPLACE 경로(WD-77 Task 6) ----------
+
+  /**
+   * 발견 고정: Tibero 의 REPLACE 임시 테이블은 스테이징({@code STG_<24HEX>})이라 컬럼이 사용자 컬럼 + {@code _SEQ} 뿐이다. 실제
+   * 테이블용 {@code insertBatch} 는 {@code ID}·{@code _UPDATED_AT} 을 쓰는 INSERT 라 스테이징에는 쓸 수 없다 — 대문자 물리
+   * 이름은 이름 검증에서 막히고, 소문자 논리 이름으로 통과시켜도 스테이징에 없는 컬럼을 쓴다. 그래서 임시 테이블 쓰기는 {@code insertTempBatch} 를 따로
+   * 둔다.
+   */
+  @Test
+  void insertBatch_onStagingTable_cannotWork_becauseItWritesIdAndUpdatedAt() {
+    assertThatThrownBy(
+            () ->
+                store.insertBatch(
+                    "STG_0123456789ABCDEF01234567",
+                    List.of("code"),
+                    List.of(row("code", "A")),
+                    null))
+        .isInstanceOf(com.smartfirehub.dataset.exception.InvalidTableNameException.class);
+    assertThat(dmlCalls).isZero();
+
+    store.insertBatch(
+        "stg_0123456789abcdef01234567", List.of("code"), List.of(row("code", "A")), null);
+    assertThat(dml.last("INSERT INTO").sql)
+        .contains("\"ID\"")
+        .contains("\"_UPDATED_AT\"")
+        .doesNotContain("\"_SEQ\"");
+  }
+
+  @Test
+  void insertTempBatch_writesStagingRowsWithSeqAndNeverIdOrUpdatedAt() {
+    store.insertTempBatch(
+        "STG_0123456789ABCDEF01234567",
+        List.of("code", "qty"),
+        List.of(row("code", "A", "qty", 1), row("code", "B", "qty", 2)),
+        Map.of("code", "TEXT", "qty", "INTEGER"));
+
+    Stmt st = dml.last("INSERT INTO");
+    assertThat(st.sql)
+        .startsWith("INSERT INTO \"GENIA_T5\".\"STG_0123456789ABCDEF01234567\" (\"_SEQ\", ")
+        .contains(".NEXTVAL")
+        .doesNotContain("\"ID\"")
+        .doesNotContain("\"_UPDATED_AT\"");
+    assertThat(st.batches).hasSize(2);
+    // 스테이징은 DDL 이 아니라 DML 커넥션으로 쓴다(행 저장소 일반 경로와 같다).
+    assertThat(dmlCalls).isEqualTo(1);
+    assertThat(ddlCalls).isZero();
+  }
+
+  @Test
+  void insertTempBatch_emptyRows_isNoop() {
+    store.insertTempBatch("STG_0123456789ABCDEF01234567", List.of("code"), List.of(), null);
+    assertThat(dmlCalls).isZero();
+  }
+
+  @Test
+  void insertTempBatch_rejectsNamesThatAreNotStaging_soRealTablesAreNeverWritten() {
+    for (String bad : List.of("orders", "ptmp_1_x", "STG_0123456789ABCDEF0123456", "STG_XYZ", "")) {
+      assertThatThrownBy(
+              () -> store.insertTempBatch(bad, List.of("code"), List.of(row("code", "A")), null))
+          .isInstanceOf(com.smartfirehub.dataset.exception.InvalidTableNameException.class);
+    }
+    assertThat(dmlCalls).isZero();
+  }
+
+  @Test
+  void insertTempBatch_rejectsGeometryHintsLikeOtherWrites() {
+    assertThatThrownBy(
+            () ->
+                store.insertTempBatch(
+                    "STG_0123456789ABCDEF01234567",
+                    List.of("geom"),
+                    List.of(row("geom", "POINT(1 2)")),
+                    Map.of("geom", "GEOMETRY")))
+        .isInstanceOf(DataStoreFeatureUnsupportedException.class);
+    assertThat(dmlCalls).isZero();
+  }
 }

@@ -1,6 +1,6 @@
 from typing import Optional
 
-from app.schemas.responses import PgErrorInfo, SqlExecuteResponse
+from app.schemas.responses import PgErrorInfo, SqlExecuteResponse, db_error_of
 from app.services.query_executor import detect_statement_type, sqlstate
 from app.validators.sql_validator import (
     SqlValidationError,
@@ -13,7 +13,9 @@ from app.validators.sql_validator import (
 OUTPUT_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))"
 
 
-def execute_sql(query: str, conn, pre_statements=()) -> SqlExecuteResponse:
+def execute_sql(
+    query: str, conn, pre_statements=(), timeout_seconds: Optional[int] = None
+) -> SqlExecuteResponse:
     # 본 쿼리와 선행 문장(pre-statement) 모두 실행 전에 검증한다.
     # pre-statement 는 화이트리스트 기반 validate_pre_statement 로 본 쿼리보다 엄격하게 검사한다.
     try:
@@ -28,6 +30,7 @@ def execute_sql(query: str, conn, pre_statements=()) -> SqlExecuteResponse:
             row_count=0,
             execution_log="",
             error=str(exc),
+            db_error=db_error_of(str(exc)),
         )
 
     # 선행 문장이 있으면 "출력 비우기 + 쓰기"인 쓰기 트랜잭션이다.
@@ -39,6 +42,11 @@ def execute_sql(query: str, conn, pre_statements=()) -> SqlExecuteResponse:
 
     try:
         with conn.cursor() as cursor:
+            if timeout_seconds is not None:
+                # 요청별 시간 제한(WD-77): 이 트랜잭션에만 걸리는 statement_timeout(밀리초). SET 은 값을 바인딩하지 못하므로
+                # 검증된 정수(요청 스키마가 1 이상 정수만 받는다)를 int() 로 한 번 더 고정해 문장에 넣는다. LOCAL 이라 커밋·롤백
+                # 때 풀려 풀에 반납된 연결로 새지 않는다. 없으면 이 줄을 건너뛰어 기존 동작과 같다.
+                cursor.execute(f"SET LOCAL statement_timeout = {int(timeout_seconds) * 1000}")
             # 선행 문장(예: 출력 비우기 DELETE)과 본 쿼리를 같은 트랜잭션에서 실행한다.
             # 본 쿼리가 실패하면 아래 except 에서 rollback 하므로 선행 문장도 함께 취소된다 —
             # 이것이 "비우기와 쓰기를 원자적으로 만든다"는 이번 기능의 핵심이다.
@@ -87,6 +95,7 @@ def execute_sql(query: str, conn, pre_statements=()) -> SqlExecuteResponse:
             execution_log="",
             error=str(exc),
             pg_error=pg_error_info(exc),
+            db_error=db_error_of(str(exc), sqlstate(exc)),
         )
 
 

@@ -28,15 +28,47 @@ public final class TiberoPipelineSql {
   }
 
   /**
+   * 스테이징 → 출력 테이블 옮기기 본문({@link TiberoDmlSql#moveFromStaging}). REPLACE 는 선행문 {@link #deleteAll} 과
+   * 함께, APPEND 는 이 본문만 {@code /execute/sql} 로 보낸다.
+   */
+  public static String moveFromStaging(
+      String schema, String table, String stagingPhysical, List<String> columns) {
+    return TiberoDmlSql.moveFromStaging(schema, table, stagingPhysical, columns);
+  }
+
+  /**
    * 사용자 SELECT 를 인라인 뷰로 감싸 대상 컬럼만 INSERT 한다(추가·덮어쓰기 적재). 사용자 SQL 은 끝 세미콜론만 걷고 앞뒤에 개행을 둔다 — 끝이
    * {@code --} 주석이어도 닫는 괄호가 다음 줄이라 주석에 먹히지 않는다(PG 래퍼와 같은 이유). 서브쿼리 안에서 NEXTVAL 을 못 쓰므로 바깥 SELECT 에서
    * 부른다.
    */
   public static String insertSelect(
       String schema, String table, List<String> columns, String userSql) {
+    List<String> sources =
+        columns.stream().map(c -> TiberoNames.physical(c)).collect(Collectors.toList());
+    return insertSelect(schema, table, columns, sources, userSql);
+  }
+
+  /**
+   * 대상 컬럼 이름과 원본 열 이름이 다를 때의 {@link #insertSelect(String, String, List, String)} — 러너 자동 생성 TEMP 는
+   * 예약어 열({@code ID}·{@code _UPDATED_AT})을 {@code id_1}·{@code updated_at_1} 로 바꿔 만들기 때문이다.
+   *
+   * @param columns 대상 컬럼(메타데이터 이름)
+   * @param sourcePhysical 같은 위치의 사용자 SELECT 결과 열 물리 이름(탐지된 이름 — 이미 대문자) — 인용만 해서 쓴다
+   */
+  public static String insertSelect(
+      String schema,
+      String table,
+      List<String> columns,
+      List<String> sourcePhysical,
+      String userSql) {
+    if (columns.size() != sourcePhysical.size()) {
+      throw new IllegalArgumentException("대상 컬럼과 원본 열의 개수가 다릅니다");
+    }
     String insertCols = TiberoDmlSql.cols(columns);
     String selectCols =
-        columns.stream().map(c -> "src." + TiberoDmlSql.col(c)).collect(Collectors.joining(", "));
+        sourcePhysical.stream()
+            .map(c -> "src." + TiberoNames.quote(c))
+            .collect(Collectors.joining(", "));
     return "INSERT INTO "
         + TiberoDmlSql.tbl(schema, table)
         + " (\"ID\", "

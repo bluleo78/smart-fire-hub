@@ -5,6 +5,7 @@ import com.smartfirehub.apiconnection.service.ApiConnectionReader;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.tenant.DataSchema;
@@ -405,7 +406,8 @@ public class PipelineService {
    * DataSchema#qualify})이다. 파이프라인 저장 검증은 테넌트 백엔드에 맞춘 {@link #substituteForValidation} 을 쓴다(WD-77).
    */
   public static String substituteStepReferencesForValidation(String sql) {
-    return substituteStepReferencesForValidation(sql, DataSchema::qualify);
+    return substituteStepReferencesForValidation(
+        sql, DataSchema::qualify, DataStoreBackend.POSTGRESQL);
   }
 
   /**
@@ -413,18 +415,23 @@ public class PipelineService {
    * {@code "GENIA_T{id}"."STEP_REF_N"}, PG 테넌트는 {@link DataSchema#qualify} 그대로라 정적 변형과 결과가 같다.
    */
   private String substituteForValidation(String sql) {
-    return substituteStepReferencesForValidation(sql, pipelineDataSchema::qualify);
+    return substituteStepReferencesForValidation(
+        sql,
+        pipelineDataSchema::qualify,
+        pipelineDataSchema.isTibero() ? DataStoreBackend.TIBERO : DataStoreBackend.POSTGRESQL);
   }
 
   /** 두 치환 변형의 공통 본문. {@code qualifier} 는 {@code {{#N}}} 더미 테이블 이름을 한정하는 함수다. */
   private static String substituteStepReferencesForValidation(
-      String sql, UnaryOperator<String> qualifier) {
+      String sql, UnaryOperator<String> qualifier, DataStoreBackend backend) {
     // 증분 플레이스홀더도 여기서 유효한 타임스탬프 리터럴로 바꿔 둔다 — {{last_run_at}} 은 SQL 문법이
     // 아니므로 그대로 두면 저장 시점 SQL 가드(AST 파싱)가 항상 실패해 증분 스텝을 아예 저장할 수 없다.
     // 값 자체는 검증에 영향이 없으므로 고정된 epoch 를 쓴다(실행 시점 값은 러너가 따로 주입한다).
+    // 리터럴은 테넌트 방언대로 만든다 — Tibero 검증기(어휘 검사·AST)에 PG 의 {@code ::timestamptz} 캐스트를 넘기지 않는다(WD-77).
     return LastRunAtPlaceholder.substitute(
         substituteStepReferences(sql, qualifier),
-        java.time.OffsetDateTime.parse("1970-01-01T00:00:00Z"));
+        java.time.OffsetDateTime.parse("1970-01-01T00:00:00Z"),
+        backend);
   }
 
   /**

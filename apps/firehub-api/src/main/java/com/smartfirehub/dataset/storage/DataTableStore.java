@@ -82,6 +82,37 @@ public interface DataTableStore {
   }
 
   /**
+   * APPEND 적재를 마무리한다(WD-77) — 이번 실행의 임시(staging) 테이블에 쌓인 행을 <b>원본을 비우지 않고</b> 원본에 옮기고 임시 테이블을 버린다.
+   * 쓴 행이 없으면 버리기만 한다.
+   *
+   * <p>PG 의 APPEND 는 출력 테이블에 직접 적재하므로 이 메서드를 쓰지 않는다 — 기본 구현은 실수로 불리면 즉시 드러나도록 예외를 던진다. 임시 테이블을 경유해야
+   * 하는 백엔드(Tibero: 적재 실행기가 스테이징에만 쓴다)만 재정의한다.
+   *
+   * @param tempName {@link #createTempTable} 이 돌려준 이번 실행의 임시 테이블 이름
+   * @param rowsWritten 임시 테이블에 실제로 적재된 행 수
+   */
+  default void finishAppend(String tableName, String tempName, long rowsWritten) {
+    throw new UnsupportedOperationException("이 저장소는 임시 테이블 경유 APPEND 를 쓰지 않습니다: " + backend());
+  }
+
+  /**
+   * 사용자가 직접 쓴 INSERT·UPDATE 가 기대는 행 트리거(ID·_UPDATED_AT)를 쓰기 전에 보장한다(WD-77). 트리거가 필요 없는 백엔드(PG:
+   * 기본값·트리거가 테이블 생성 때 이미 있다)는 아무것도 하지 않는다 — 그래서 호출자가 백엔드를 가리지 않고 부를 수 있다.
+   *
+   * @throws DataStoreFeatureUnsupportedException 트리거가 필요한데 없고 만들 권한도 없을 때(Tibero)
+   */
+  default void ensureRowTrigger(String tableName) {}
+
+  /**
+   * 임시 테이블 이름이 이 백엔드·테이블의 것인지 확인한다(아니면 {@code InvalidTableNameException}). 기본은 PG 규칙 — {@code
+   * DataTableService#requireTempTableOf}. 임시 테이블 이름 규칙이 다른 백엔드(Tibero 의 {@code STG_<24hex>})가
+   * 재정의한다.
+   */
+  default void requireTempTable(String tableName, String tempName) {
+    com.smartfirehub.dataset.service.DataTableService.requireTempTableOf(tableName, tempName);
+  }
+
+  /**
    * 원본을 이번 실행의 임시 테이블({@code tempName})로 맞바꾼다. 원본 삭제와 리네임을 구현체 자체의 트랜잭션 블록 안에서 원자적으로 실행한다(호출자 트랜잭션이
    * 있으면 그 안에 중첩된다). 구현체는 {@code tempName} 이 그 테이블의 임시 테이블 이름인지 확인해야 한다.
    */
@@ -95,8 +126,8 @@ public interface DataTableStore {
    * DataTableService.rebuildBackupTableName})으로 옮긴다(WD-238). 호출자 트랜잭션에 참여한다 — 같은 트랜잭션에서 원래 이름으로 새
    * 테이블을 만든다. 스텝이 성공하면 {@link #dropRebuildBackup}, 실패하면 {@link #restoreRebuildBackup} 을 부른다.
    *
-   * <p>기본 구현은 지원하지 않음 — 러너 TEMP 재생성은 PostgreSQL 테넌트에서만 일어난다(Tibero 는 출력 없는 SELECT·PYTHON·AI 분류를
-   * TEMP 준비 전에 거부한다).
+   * <p>기본 구현은 지원하지 않음. Tibero 는 WD-77 2단계부터 러너 TEMP 를 만들지만 재생성 보관은 아직 지원하지 않아, 열 구성이 바뀐 재실행을
+   * 한국어 안내로 거부하고 보관본 정리({@link #dropRebuildBackup})는 「없음」으로 답한다({@code TiberoDataTableStore}).
    *
    * @return 옮긴 테이블의 OID — 되돌리기·버리기가 「이 실행이 옮긴 그 테이블」인지 확인하는 데 쓴다(같은 TEMP 를 겹쳐 다시 만든 다른 실행의 보관본을
    *     건드리지 않게)

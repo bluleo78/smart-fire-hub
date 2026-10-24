@@ -91,9 +91,17 @@ app:
     base-url: ${EXECUTOR_BASE_URL:http://localhost:8000}
     internal-token: ${EXECUTOR_INTERNAL_TOKEN:dev-executor-token}
   db-executor:
-    # Tibero 저장소 테넌트의 SQL 단계를 실행하는 firehub-db-executor 주소(WD-77). 인증은 위 executor.internal-token 을 같이 쓴다.
+    # Tibero 저장소 테넌트의 SQL 단계를 실행하는 firehub-db-executor 주소(WD-77).
+    # 인증은 아래 db-executor.internal-token 이다 — Python 실행기의 executor.internal-token 과 값이 달라야 한다(같으면 api 기동 실패).
     # 비우면 Tibero 테넌트 SQL 단계가 실패한다(fail-closed) — PG 로 폴백하지 않는다. PG 테넌트는 이 값을 쓰지 않는다.
     base-url: ${DB_EXECUTOR_BASE_URL:http://db-executor:8090}
+    # db-executor 전 창구 자격이자 db-executor 가 api 기술자 엔드포인트를 부를 때의 자격(OWNER·RO 비밀번호까지 받는다).
+    # 개발 기본값은 알려진 값이라 ExecutorDataStoreController 가 운영에서 비밀번호 제공을 거부한다(local·test 만 허용 플래그).
+    internal-token: ${DB_EXECUTOR_INTERNAL_TOKEN:dev-db-executor-token}
+    # 스크립트 1회용 토큰 서명 키(db-executor 와 같은 값). 발급은 WD-78 에서 구현 — 지금은 바인딩만 하며 비어 있어도 기동한다.
+    script-token-key: ${DB_EXECUTOR_SCRIPT_TOKEN_KEY:}
+    # 스테이징 적재(/execute/load)·옮기기(/execute/sql) 요청 시간 제한(초). 실행기가 1800 으로 자른다(WD-77).
+    move-timeout-seconds: ${DB_EXECUTOR_MOVE_TIMEOUT_SECONDS:1800}
   embedding:
     # 테넌트가 저장할 수 있는 Ollama Base URL 허용 목록(쉼표 구분, 정확 일치). 이 목록 밖의 주소는
     # 공개 https 여야 한다(SSRF 가드 — EmbeddingTargetGuard). 운영 Ollama 주소가 기본값과 다르면

@@ -37,6 +37,11 @@ class SqlExecuteRequest(TenantScopedRequest):
     # API 서버가 생성하는 문장만 들어오므로 validate_pre_statement 로 엄격히 검증한다.
     # alias 표기는 TenantScopedRequest.tenant_id(→ tenantId)와 같은 camelCase 규칙을 따른다.
     pre_statements: List[str] = Field(default_factory=list, alias="preStatements")
+    # 요청별 시간 제한(초, 선택). 있으면 이 요청의 트랜잭션에 SET LOCAL statement_timeout 으로 적용한다(긴 SQL 용, WD-77).
+    # 주의: PG statement_timeout 은 문장 단위 제한이다 — Python 실행기에서는 문장 단위 제한, db-executor 는 요청 전체 기한.
+    # 선행 문장이 여러 개면 각 문장마다 이 시간이 다시 주어진다.
+    # 없으면 기존 동작 그대로. 0 이하는 PG 에서 '제한 없음' 이 되어 의도와 반대라 422 로 거부한다(db-executor 도 거부).
+    timeout_seconds: Optional[int] = Field(default=None, gt=0, strict=True)
 
 
 class PythonExecuteRequest(TenantScopedRequest):
@@ -54,6 +59,26 @@ class QueryExecuteRequest(TenantScopedRequest):
     query: str
     max_rows: int = 1000
     read_only: bool = False
+
+
+class ProbeRequest(TenantScopedRequest):
+    """결과 컬럼 탐지 요청 — 쿼리만 받는다(행 수 제한·읽기전용 같은 옵션이 없다)."""
+
+    query: str
+
+
+class LoadRequest(TenantScopedRequest):
+    """``/execute/load`` 요청 — 행 목록을 테넌트 스키마의 테이블에 한 트랜잭션으로 적재한다(WD-77).
+
+    db-executor(Tibero) 와 같은 모양이다: ``table``·``rows``·``column_type_map``·``timeout_seconds``.
+    """
+
+    table: str
+    rows: List[dict]
+    column_type_map: Optional[dict] = None
+    # 요청별 시간 제한(초, 선택). Python 실행기에서는 문장 단위 제한(SET LOCAL statement_timeout — execute_values 가 페이지마다
+    # 문장을 실행하므로 페이지 하나에 적용된다), db-executor 는 요청 전체 기한이다. 의도된 차이이며 계약 벡터 notes 에도 적었다.
+    timeout_seconds: Optional[int] = Field(default=None, gt=0, strict=True)
 
 
 class FieldMapping(BaseModel):

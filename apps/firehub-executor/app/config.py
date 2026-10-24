@@ -56,9 +56,14 @@ class Settings(BaseSettings):
     data_store_cache_ttl_seconds: float = 60.0
     data_store_lookup_timeout_seconds: float = 5.0
 
-    # Tibero 접속/질의 타임아웃(초). 공유 서버가 멈춰도 executor 워커가 무한정 붙잡히지 않게 한다.
-    tibero_connect_timeout_seconds: int = 10
-    tibero_query_timeout_seconds: int = 30
+    # db-executor(Tibero 전담) 연결(스펙 §3.4). Python 실행기는 Tibero 에 직접 접속하지 않고, Tibero 테넌트의 적재는
+    # db-executor 의 /execute/load 로만 보낸다(원격 적재 — 후속 작업이 쓴다). 적재 토큰은 그 창구 하나만 허용되며
+    # db-executor 의 DB_EXECUTOR_LOAD_TOKEN 과 같은 값이다. 비어 있으면 원격 적재를 쓸 수 없다.
+    db_executor_base_url: str = ""
+    db_executor_load_token: str = ""
+    # 원격 적재 요청 한 번(페이지·청크 하나)의 HTTP 응답 대기 상한(초). httpx 기본 5초면 실제 적재가 끊긴다.
+    # 같은 값(내림)을 db-executor 에 timeout_seconds 로 보내 두 쪽이 함께 포기하게 한다(최종 리뷰 I3).
+    db_executor_load_timeout_seconds: float = 600.0
 
 
 @lru_cache

@@ -24,10 +24,10 @@ import org.springframework.web.reactive.function.client.WebClient;
  *
  * <p><b>계약.</b> 요청 본문은 camelCase({@code tenantId}·{@code query}·{@code preStatements}), 응답은
  * snake_case({@code row_count}·{@code execution_log}·{@code db_error}·{@code jdbc_type}·{@code
- * type_name})다. 인증은 PG 실행기와 같은 내부 토큰({@code Authorization: Internal <token>})이다. 실행 오류(검증 거부·DB
- * 오류·시간 초과)는 HTTP 200 + {@code success=false} 로 오고, 그건 정상 스텝 실패로 호출자가 번역한다. 그 밖의 전송 실패(주소 미설정·연결
- * 실패·401·5xx·응답 시간 초과)는 모두 {@link #CONNECT_FAILURE_MESSAGE} 로 바꿔 던진다 — 내부 주소·토큰 오류 같은 운영 정보가 실행 기록에
- * 남지 않게 문구는 하나로 두고, 원인은 로그에만 남긴다. 응답 본문이 버퍼 한도를 넘은 경우만은 PG 실행기와 같이 {@link
+ * type_name})다. 인증은 db-executor 전용 내부 토큰({@code Authorization: Internal <token>}, Python 실행기 토큰과
+ * 별개)이다. 실행 오류(검증 거부·DB 오류·시간 초과)는 HTTP 200 + {@code success=false} 로 오고, 그건 정상 스텝 실패로 호출자가 번역한다. 그
+ * 밖의 전송 실패(주소 미설정·연결 실패·401·5xx·응답 시간 초과)는 모두 {@link #CONNECT_FAILURE_MESSAGE} 로 바꿔 던진다 — 내부 주소·토큰
+ * 오류 같은 운영 정보가 실행 기록에 남지 않게 문구는 하나로 두고, 원인은 로그에만 남긴다. 응답 본문이 버퍼 한도를 넘은 경우만은 PG 실행기와 같이 {@link
  * ExecutorResponseTooLargeException}("결과가 너무 큽니다") 로 둔다.
  */
 @Service
@@ -46,6 +46,9 @@ public class DbExecutorClient {
   /** {@code /execute/query} 응답 대기 한도 — 실행기의 조회 한도(30초)에 여유 5초. */
   static final Duration QUERY_TIMEOUT = Duration.ofSeconds(35);
 
+  /** 요청별 시간 제한({@code timeout_seconds})을 쓰는 호출이 실행기 응답을 더 기다려 주는 여유(초). */
+  static final int RESPONSE_GRACE_SECONDS = 5;
+
   /** 응답 본문 버퍼 한도 — PG 실행기 기본값과 같다({@link ExecutorClient#DEFAULT_MAX_RESPONSE_BYTES}). */
   private static final int MAX_RESPONSE_BYTES = ExecutorClient.DEFAULT_MAX_RESPONSE_BYTES;
 
@@ -60,13 +63,14 @@ public class DbExecutorClient {
    * 스프링 빈 생성자.
    *
    * @param baseUrl db-executor 주소({@code app.db-executor.base-url}). 비어 있으면 호출마다 실패한다.
-   * @param internalToken PG 실행기와 같은 내부 토큰({@code app.executor.internal-token})
+   * @param internalToken db-executor 내부 토큰({@code app.db-executor.internal-token}) — Python 실행기
+   *     토큰과는 별개 값
    */
   @Autowired
   public DbExecutorClient(
       WebClient.Builder webClientBuilder,
       @Value("${app.db-executor.base-url:}") String baseUrl,
-      @Value("${app.executor.internal-token:dev-executor-token}") String internalToken) {
+      @Value("${app.db-executor.internal-token:dev-db-executor-token}") String internalToken) {
     this(webClientBuilder, baseUrl, internalToken, SQL_TIMEOUT, PROBE_TIMEOUT, QUERY_TIMEOUT);
   }
 
@@ -111,6 +115,33 @@ public class DbExecutorClient {
   }
 
   /**
+   * {@link #executeSql(String, List)} 에 요청별 시간 제한을 더한 판 — 스테이징에서 출력 테이블로 옮기는 대량 {@code INSERT …
+   * SELECT} 용이다. 실행기는 {@code timeout_seconds} 를 문장 제한이자 전체 기한으로 쓰고(상한 1800초), 이 클라이언트는 그보다 5초 더
+   * 기다린다 — 실행기가 시간 초과를 정상 실패 응답({@code success=false})으로 돌려줄 틈을 주기 위해서다.
+   *
+   * @param timeoutSeconds 1 이상. 0 이하면 실행기가 거부하므로 호출 전에 막는다
+   */
+  public SqlExecuteResult executeSql(String query, List<String> preStatements, int timeoutSeconds) {
+    requirePositive(timeoutSeconds);
+    Map<String, Object> request = new LinkedHashMap<>();
+    request.put("query", query);
+    request.put("preStatements", preStatements == null ? List.of() : preStatements);
+    request.put("timeout_seconds", timeoutSeconds);
+    return post(
+        "/execute/sql",
+        withTenant(request),
+        SqlExecuteResult.class,
+        Duration.ofSeconds(timeoutSeconds + RESPONSE_GRACE_SECONDS));
+  }
+
+  /** 시간 제한은 1 이상이어야 한다(실행기가 0 이하를 거부하므로 네트워크로 보내기 전에 막는다). */
+  private static void requirePositive(int timeoutSeconds) {
+    if (timeoutSeconds <= 0) {
+      throw new IllegalArgumentException("timeoutSeconds 는 1 이상이어야 합니다: " + timeoutSeconds);
+    }
+  }
+
+  /**
    * 사용자 SELECT 의 결과 컬럼 메타를 얻는다(실행기가 {@code WHERE 1 = 0} 으로 감싸 행 없이 실행). POST /execute/probe, 응답 대기
    * 35초.
    *
@@ -135,7 +166,9 @@ public class DbExecutorClient {
   public QueryResult executeQuery(String query, int maxRows) {
     Map<String, Object> request = new LinkedHashMap<>();
     request.put("query", query);
-    request.put("maxRows", maxRows);
+    request.put("max_rows", maxRows);
+    // 실행기 계약(Python 실행기와 같은 모양): 이 창구는 읽기 전용 조회만 받는다 — 명시하지 않으면 db-executor 가 거부한다.
+    request.put("read_only", true);
     return post("/execute/query", withTenant(request), QueryResult.class, queryTimeout);
   }
 

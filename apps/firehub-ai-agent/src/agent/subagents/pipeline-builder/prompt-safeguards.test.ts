@@ -321,9 +321,9 @@ describe('pipeline-builder workflow social-engineering safeguards (#250)', () =>
 describe('pipeline-builder Tibero 사본 (WD-79)', () => {
   const readTibero = (name: string) => fs.readFileSync(path.join(__dirname, 'tibero', name), 'utf-8');
   const FILES = ['agent.md', 'rules.md', 'step-types.md', 'examples.md'] as const;
-  // 원본에서 지우거나 바꿔도 되는 PG 전용 줄 표지(수정 1차: temp/임시 데이터셋 자동 생성 — Tibero 는 출력 데이터셋 필수)
+  // 원본에서 지우거나 바꿔도 되는 PG 전용 줄 표지 — WD-77 로 temp/임시 데이터셋 줄도 이제 원본 그대로 둔다(표지에서 뺐다)
   const PG_MARKER =
-    /::|DATE_TRUNC|INTERVAL|NOW\(\)|LIMIT|ST_|psycopg2|DB_URL|DB_SCHEMA|data\.|data_t|PostgreSQL|BIGSERIAL|SQLState|permission denied|스키마|GEOMETRY|"[a-z_]+"|Python|PYTHON|python|temp|TEMP|임시 데이터셋/;
+    /::|DATE_TRUNC|INTERVAL|NOW\(\)|LIMIT|ST_|psycopg2|DB_URL|DB_SCHEMA|data\.|data_t|PostgreSQL|BIGSERIAL|SQLState|permission denied|스키마|GEOMETRY|"[a-z_]+"|Python|PYTHON|python|출력 데이터셋 없이 temp/;
 
   it.each(FILES)('tibero/%s 에 PG 전용 문법(psycopg2 포함)과 data."테이블" 표기가 없다', (name) => {
     const text = readTibero(name);
@@ -337,39 +337,55 @@ describe('pipeline-builder Tibero 사본 (WD-79)', () => {
     expect(removedNonPgLines(original, readTibero(name), PG_MARKER)).toEqual([]);
   });
 
-  it('tibero/rules.md 가 api 거부 문구를 그대로 인용해 Python·API 수집·AI 분류·증분 단계 대신 SQL 단계로 안내한다', () => {
+  // WD-77: Tibero 도 API 수집·AI 분류·증분 SQL·출력 없는 SQL·직접 INSERT 를 실행한다 — 불가 문구가 남으면 모델이 만들지 않는다.
+  // Python 거부 문구는 15번 작업 전까지 그대로 둔다.
+  const REMOVED_REFUSALS = [
+    '아직 API 수집 단계를 실행할 수 없습니다',
+    '아직 AI 분류 단계를 실행할 수 없습니다',
+    '아직 증분 SQL 단계를 실행할 수 없습니다',
+    '출력 데이터셋을 지정해야 합니다',
+    'Tibero SQL 단계는 반드시 outputDatasetId 를 지정한다',
+    '직접 INSERT 는 지원하지 않',
+  ];
+
+  it.each(FILES)('tibero/%s 에 API 수집·AI 분류·증분·출력 없는 SQL 불가 문구가 없다', (name) => {
+    const text = readTibero(name);
+    for (const phrase of REMOVED_REFUSALS) expect(text, phrase).not.toContain(phrase);
+    expect(text).not.toMatch(/PYTHON·API_CALL·AI_CLASSIFY|API_CALL·AI_CLASSIFY·증분/);
+  });
+
+  it('tibero/rules.md 는 Python 거부 문구만 남기고 SQL 단계로 안내한다', () => {
     const rules = readTibero('rules.md');
     expect(rules).toContain('Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다.');
-    expect(rules).toContain('Tibero 저장소 테넌트에서는 아직 API 수집 단계를 실행할 수 없습니다.');
-    expect(rules).toContain('Tibero 저장소 테넌트에서는 아직 AI 분류 단계를 실행할 수 없습니다.');
-    expect(rules).toContain('Tibero 저장소 테넌트에서는 아직 증분 SQL 단계를 실행할 수 없습니다.');
     expect(rules).toMatch(/SQL 단계로/);
   });
 
-  // 수정 1차: api 는 Tibero SQL 단계에 outputDatasetId 가 없으면 항상 거부한다(PipelineAsyncRunner
-  // TIBERO_OUTPUTLESS_SELECT_UNSUPPORTED). 사본이 "미지정 → temp 자동 생성" 을 가르치면 실행이 항상 실패한다.
-  it.each(FILES)('tibero/%s 는 임시(temp) 데이터셋 자동 생성을 안내하지 않는다', (name) => {
-    const text = readTibero(name);
-    expect(text).not.toMatch(/(temp|TEMP|임시 데이터셋|임시 테이블)[^\n]{0,20}자동\s*생성/);
-    expect(text).not.toMatch(/미지정[^\n]{0,30}자동\s*생성/);
-    expect(text).not.toMatch(/temp 테이블 참조|temp 자동/);
-  });
-
-  it('tibero/rules.md 거부 표에 출력 데이터셋 없는 SQL 단계 문구가 있고, 모든 SQL 단계에 outputDatasetId 를 지정하라고 한다', () => {
+  it('tibero/rules.md 는 증분·직접 INSERT 의 트리거 권한 오류를 한 줄로 안내한다', () => {
     const rules = readTibero('rules.md');
-    expect(rules).toContain('Tibero 저장소 테넌트의 SQL 단계는 출력 데이터셋을 지정해야 합니다.');
-    expect(rules).toContain('Tibero SQL 단계는 반드시 outputDatasetId 를 지정한다');
-    expect(readTibero('agent.md')).toContain('Tibero SQL 단계는 반드시 outputDatasetId 를 지정한다');
-    expect(readTibero('step-types.md')).toContain('Tibero SQL 단계는 반드시 outputDatasetId 를 지정한다');
+    expect(rules).toContain('GRANT CREATE TRIGGER');
+    expect(rules).toMatch(/증분[^\n]*INSERT[^\n]*트리거|INSERT[^\n]*증분[^\n]*트리거/);
+    // 한 줄로만 — 같은 안내가 여러 줄에 퍼지지 않는다
+    expect(rules.split('\n').filter((l) => l.includes('GRANT CREATE TRIGGER'))).toHaveLength(1);
   });
 
-  it('tibero/examples.md 의 SQL 스텝 JSON 은 모두 outputDatasetId 를 가진다', () => {
-    const examples = readTibero('examples.md');
-    // ```json 블록마다 "scriptType": "SQL" 스텝 객체를 잘라 outputDatasetId 가 있는지 본다
-    const blocks = [...examples.matchAll(/```json\n([\s\S]*?)```/g)].map((m) => m[1]);
-    const sqlSteps = blocks.flatMap((b) => b.split(/\n\s*\},?\s*\n\s*\{/).filter((s) => s.includes('"scriptType": "SQL"')));
-    expect(sqlSteps.length).toBeGreaterThan(2);
-    for (const s of sqlSteps) expect(s, s).toContain('"outputDatasetId"');
+  it('tibero/rules.md 증분 안내는 Tibero 문법({{last_run_at}} 과 "_UPDATED_AT")이고 PG 형변환이 없다', () => {
+    const rules = readTibero('rules.md');
+    expect(rules).toContain('{{last_run_at}}');
+    expect(rules).toContain('"_UPDATED_AT"');
+    expect(rules).not.toContain('timestamptz');
+  });
+
+  it('tibero/rules.md 는 MERGE 직접 작성을 여전히 허용하지 않는다고 한다', () => {
+    expect(readTibero('rules.md')).toMatch(/MERGE[^\n]*(허용되지 않|쓰지 않)/);
+  });
+
+  it('tibero/rules.md 는 출력 데이터셋 미지정 시 임시(TEMP) 데이터셋 자동 생성을 안내한다(PG 와 같다)', () => {
+    expect(readTibero('rules.md')).toContain('outputDatasetId 미지정: TEMP 타입 임시 데이터셋 자동 생성');
+  });
+
+  it('tibero/examples.md·step-types.md 에 API_CALL·AI_CLASSIFY 예제가 있다', () => {
+    expect(readTibero('examples.md')).toContain('"scriptType": "AI_CLASSIFY"');
+    expect(readTibero('step-types.md')).toContain('"scriptType": "API_CALL"');
   });
 
   it('tibero/rules.md 는 공용 TIBERO_SQL_GUIDE 를 그대로 옮겨 적는다', () => {

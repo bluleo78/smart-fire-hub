@@ -339,6 +339,36 @@ class TiberoDmlSqlTest {
                 + " ORDER BY \"_SEQ\")");
   }
 
+  /**
+   * 옮기기 SQL 고정(WD-77). ID 는 전용 시퀀스, _UPDATED_AT 은 SYSTIMESTAMP — promoteReplace 와 같은 방식이며 출력 테이블에는
+   * _SEQ 가 없다. 스테이징 _SEQ(load 가 입력 순번으로 채움)로 입력 순서를 잡는다.
+   */
+  @Test
+  void moveFromStaging_exactSql() {
+    assertThat(
+            TiberoDmlSql.moveFromStaging(
+                S, "orders", "STG_0123456789ABCDEF01234567", List.of("code", "qty")))
+        .isEqualTo(
+            "INSERT INTO "
+                + T
+                + " (\"ID\", \"CODE\", \"QTY\", \"_UPDATED_AT\") SELECT "
+                + SEQ
+                + ".NEXTVAL, \"CODE\", \"QTY\", SYSTIMESTAMP FROM (SELECT \"CODE\", \"QTY\" FROM"
+                + " \"GENIA_T5\".\"STG_0123456789ABCDEF01234567\" ORDER BY \"_SEQ\")");
+  }
+
+  @Test
+  void moveFromStaging_rejectsBadNames() {
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> TiberoDmlSql.moveFromStaging(S, "orders", "orders; DROP", List.of("code")))
+        .isInstanceOf(RuntimeException.class);
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                TiberoDmlSql.moveFromStaging(
+                    S, "orders", "STG_0123456789ABCDEF01234567", List.of("co\"de")))
+        .isInstanceOf(RuntimeException.class);
+  }
+
   @Test
   void columnTypes_query_andDdlRebuild() {
     assertThat(TiberoCatalog.columnTypesQuery())

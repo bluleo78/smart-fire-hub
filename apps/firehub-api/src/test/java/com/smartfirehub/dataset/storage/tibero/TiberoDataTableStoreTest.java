@@ -100,7 +100,13 @@ class TiberoDataTableStoreTest {
     when(connections.withDdl(anyLong(), org.mockito.ArgumentMatchers.<SqlWork<Object>>any()))
         .thenAnswer(inv -> runWork(inv.getArgument(1), ddlConn));
     columnTypeCache = mock(TiberoColumnTypeCache.class);
-    store = new TiberoDataTableStore(connections, columnTypeCache);
+    store =
+        new TiberoDataTableStore(
+            connections,
+            columnTypeCache,
+            mock(TiberoDataRowStore.class),
+            mock(TiberoBulkMover.class),
+            mock(TiberoTriggerPrivilege.class));
     logs = new ch.qos.logback.core.read.ListAppender<>();
     logs.start();
     storeLogger().addAppender(logs);
@@ -931,24 +937,11 @@ class TiberoDataTableStoreTest {
   }
 
   @Test
-  void tempTableMethods_and_concurrently_unsupported422() {
-    assertThatThrownBy(() -> store.createTempTable("t"))
-        .isInstanceOfSatisfying(
-            DataStoreFeatureUnsupportedException.class,
-            e -> assertThat(e.getMessage()).contains("임시 테이블 교체(파이프라인 출력)"));
-    assertThatThrownBy(() -> store.swapTable("t", "t_tmp_1"))
-        .isInstanceOf(DataStoreFeatureUnsupportedException.class);
-    assertThatThrownBy(() -> store.dropTempTable("t", "t_tmp_1"))
-        .isInstanceOf(DataStoreFeatureUnsupportedException.class);
+  void concurrently_unsupported422() {
     assertThatThrownBy(() -> store.createPrimaryKeyIndexConcurrently("t", List.of("a")))
         .isInstanceOfSatisfying(
             DataStoreFeatureUnsupportedException.class,
             e -> assertThat(e.getMessage()).contains("온라인 PK 인덱스 생성"));
-    // finishReplace 는 인터페이스 기본 구현이 swap/drop 을 호출하므로 같은 예외가 난다.
-    assertThatThrownBy(() -> store.finishReplace("t", "t_tmp_1", 3))
-        .isInstanceOf(DataStoreFeatureUnsupportedException.class);
-    assertThatThrownBy(() -> store.finishReplace("t", "t_tmp_1", 0))
-        .isInstanceOf(DataStoreFeatureUnsupportedException.class);
     assertThat(ddl).isEmpty();
   }
 

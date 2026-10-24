@@ -1,4 +1,8 @@
 # 로컬 개발용 — api(5010) 를 바라보고 개발 토큰을 허용한다.
 app:
-  internal-token: ${EXECUTOR_INTERNAL_TOKEN:dev-executor-token}
+  # 로컬 개발 전용 — 알려진 개발 기본 토큰을 허용한다(다른 프로필에서는 기동 실패).
+  allow-default-token: true
+  # api 의 app.db-executor.internal-token 개발 기본값(dev-db-executor-token)과 같다.
+  internal-token: ${DB_EXECUTOR_INTERNAL_TOKEN:dev-db-executor-token}
+  load-token: ${DB_EXECUTOR_LOAD_TOKEN:dev-db-executor-load-token}
   api-base-url: ${DB_EXECUTOR_API_BASE_URL:http://localhost:5010}

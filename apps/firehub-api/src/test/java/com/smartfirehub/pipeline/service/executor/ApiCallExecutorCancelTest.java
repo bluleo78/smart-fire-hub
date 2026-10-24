@@ -24,8 +24,8 @@ import org.springframework.web.reactive.function.client.WebClient;
 /**
  * API_CALL 실행기의 협조적 취소 체크포인트(WD-153) — 페이지 사이·재시도 백오프 중·REPLACE 맞바꿈 직전.
  *
- * <p>취소 판정은 테스트가 직접 뒤집는 플래그로 준다(결정적). DB 판정 배선은 통합 테스트(PipelineExecutionCancelIntegrationTest)가
- * 본다. WireMock 으로 외부 API 를 흉내 낸다(ApiCallExecutorTest 와 같은 구성).
+ * <p>취소 판정은 테스트가 직접 뒤집는 플래그로 준다(결정적). DB 판정 배선은 통합 테스트(PipelineExecutionCancelIntegrationTest)가 본다.
+ * WireMock 으로 외부 API 를 흉내 낸다(ApiCallExecutorTest 와 같은 구성).
  */
 @ExtendWith(MockitoExtension.class)
 class ApiCallExecutorCancelTest {
@@ -159,7 +159,7 @@ class ApiCallExecutorCancelTest {
               return null;
             })
         .when(dataTableRowService)
-        .insertBatch(eq("rtmp_run_out_t"), anyList(), anyList());
+        .insertTempBatch(eq("rtmp_run_out_t"), anyList(), anyList(), isNull());
 
     assertThatThrownBy(
             () ->

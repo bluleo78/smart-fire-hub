@@ -554,7 +554,7 @@ class AiClassifyExecutorTest {
     // REPLACE → 임시 테이블 생성 + 스왑
     verify(dataTableService).createTempTable("output_table");
     verify(dataTableService).swapTable("output_table", RUN_TEMP);
-    verify(dataTableRowService).insertBatch(eq(RUN_TEMP), anyList(), anyList(), anyMap());
+    verify(dataTableRowService).insertTempBatch(eq(RUN_TEMP), anyList(), anyList(), anyMap());
   }
 
   // -----------------------------------------------------------------------
@@ -922,7 +922,8 @@ class AiClassifyExecutorTest {
 
     assertThat(result.outputRows()).isEqualTo(3);
     // 핵심 단언: 루프 끝의 한 번이 아니라 배치마다 한 번씩
-    verify(dataTableRowService, times(3)).insertBatch(eq(RUN_TEMP), anyList(), anyList(), anyMap());
+    verify(dataTableRowService, times(3))
+        .insertTempBatch(eq(RUN_TEMP), anyList(), anyList(), anyMap());
     verify(dataTableService).swapTable("output_table", RUN_TEMP);
   }
 
@@ -953,7 +954,8 @@ class AiClassifyExecutorTest {
         .hasMessageContaining("AI_CLASSIFY batch 2");
 
     // 첫 배치는 예외 전에 이미 적재됐다 — 모아 두던 구현에서는 0회였다.
-    verify(dataTableRowService, times(1)).insertBatch(eq(RUN_TEMP), anyList(), anyList(), anyMap());
+    verify(dataTableRowService, times(1))
+        .insertTempBatch(eq(RUN_TEMP), anyList(), anyList(), anyMap());
     verify(dataTableService).dropTempTable("output_table", RUN_TEMP);
     verify(dataTableService, never()).swapTable(anyString(), anyString());
   }
@@ -1008,7 +1010,7 @@ class AiClassifyExecutorTest {
         .thenReturn(classifyResponse(2, "B"));
     doThrow(new RuntimeException("insert failed: column mismatch"))
         .when(dataTableRowService)
-        .insertBatch(anyString(), anyList(), anyList(), anyMap());
+        .insertTempBatch(anyString(), anyList(), anyList(), anyMap());
 
     // 기본값 onError=CONTINUE — 그래도 스텝이 떨어져야 한다.
     PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 1);
@@ -1810,7 +1812,7 @@ class AiClassifyExecutorTest {
               return null;
             })
         .when(dataTableRowService)
-        .insertBatch(eq(RUN_TEMP), anyList(), anyList(), anyMap());
+        .insertTempBatch(eq(RUN_TEMP), anyList(), anyList(), anyMap());
 
     PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 1);
 

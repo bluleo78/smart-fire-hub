@@ -54,6 +54,7 @@ class RequestDeadlineTest {
         new SqlRunner(db.pools, t, descriptors),
         new ProbeRunner(db.pools, t, descriptors),
         new QueryRunner(db.roPools, t, descriptors),
+        new LoadRunner(db.pools, t, descriptors),
         t);
   }
 

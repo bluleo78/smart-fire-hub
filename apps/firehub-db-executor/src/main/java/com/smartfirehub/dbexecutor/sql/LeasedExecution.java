@@ -114,7 +114,7 @@ final class LeasedExecution {
           return failures.timedOut();
         }
         String message = scrub(e.getMessage(), d);
-        return failures.dbError(message, new DbError(e.getErrorCode(), message));
+        return failures.dbError(message, new DbError(e.getErrorCode(), e.getSQLState(), message));
       } catch (RuntimeException e) {
         rollbackQuietly(c);
         // 내부 결함이라 스택이 필요하다(접속 정보가 섞이는 경로가 아니다). SQL 원문은 메시지에 넣지 않는다.

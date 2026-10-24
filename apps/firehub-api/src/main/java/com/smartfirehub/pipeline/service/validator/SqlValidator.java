@@ -957,7 +957,11 @@ public class SqlValidator {
     // 구조 분석에 영향이 없으므로 고정된 epoch 를 쓴다.
     String parsed =
         LastRunAtPlaceholder.substitute(
-            sql, java.time.OffsetDateTime.parse("1970-01-01T00:00:00Z"));
+            sql,
+            java.time.OffsetDateTime.parse("1970-01-01T00:00:00Z"),
+            tibero
+                ? com.smartfirehub.dataset.storage.DataStoreBackend.TIBERO
+                : com.smartfirehub.dataset.storage.DataStoreBackend.POSTGRESQL);
     Statement stmt;
     try {
       stmt = parseSingleStatement(parsed);

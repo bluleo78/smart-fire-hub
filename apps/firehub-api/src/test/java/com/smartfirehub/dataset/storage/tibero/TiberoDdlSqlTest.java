@@ -307,4 +307,31 @@ class TiberoDdlSqlTest {
     assertThat(TiberoDdlSql.topValues(S, "t", "x", "DECIMAL"))
         .contains("TO_CHAR(\"X\", 'FM999999999999990.000000') AS VAL");
   }
+
+  /** 행 트리거 DDL: ID 가 비었을 때만 시퀀스, UPDATE 면 _UPDATED_AT 갱신(WD-77). 이름·인용이 실서버에서 확인한 형태다. */
+  @Test
+  void createRowTrigger_exactStatement() {
+    String seq = TiberoNames.sequenceName("GENIA_T5", "orders");
+    String trg = TiberoNames.triggerName("GENIA_T5", "orders");
+    assertThat(TiberoDdlSql.createRowTrigger("GENIA_T5", "orders"))
+        .isEqualTo(
+            "CREATE OR REPLACE TRIGGER \"GENIA_T5\".\""
+                + trg
+                + "\" BEFORE INSERT OR UPDATE ON \"GENIA_T5\".\"ORDERS\" FOR EACH ROW\n"
+                + "BEGIN\n"
+                + "  IF INSERTING AND :NEW.\"ID\" IS NULL THEN :NEW.\"ID\" := \"GENIA_T5\".\""
+                + seq
+                + "\".NEXTVAL; END IF;\n"
+                + "  IF UPDATING THEN :NEW.\"_UPDATED_AT\" := SYSTIMESTAMP; END IF;\n"
+                + "END;");
+  }
+
+  /** 트리거는 createTable 문장 목록에 섞이지 않는다 — 권한이 없어도 테이블 생성은 그대로여야 하므로 저장소가 따로 만든다. */
+  @Test
+  void createTable_statementsHaveNoTrigger() {
+    assertThat(
+            TiberoDdlSql.createTable("GENIA_T5", "t", List.of()).stream()
+                .noneMatch(sql -> sql.contains("TRIGGER")))
+        .isTrue();
+  }
 }

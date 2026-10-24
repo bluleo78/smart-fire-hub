@@ -13,7 +13,14 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
  * {@code /actuator/health} 를 뺀 모든 요청(특히 {@code /execute/**})을 {@code Authorization: Internal
- * <token>} 으로 보호한다.
+ * <token>} 으로 보호한다. 자격은 범위가 다르다(스펙 §3.4).
+ *
+ * <ul>
+ *   <li>내부 토큰: 모든 창구.
+ *   <li>적재 토큰: {@code POST /execute/load} 한 곳만(경로는 정확히 일치, 메서드는 POST) — Python 실행기가 SQL·조회 창구를 쓰지
+ *       못하게 한다.
+ *   <li>{@code Script <token>}: 스크립트 1회용 토큰 자리. 검증은 이후 작업에서 구현하므로 지금은 모두 401.
+ * </ul>
  *
  * <p>api 의 {@code InternalTokens.matches} 와 같은 규칙(접두어 확인·빈 토큰 거부·상수 시간 비교)이다.
  */
@@ -27,10 +34,15 @@ public class InternalTokenFilter extends OncePerRequestFilter {
   /** 토큰 없이 허용하는 유일한 경로. */
   private static final String HEALTH_PATH = "/actuator/health";
 
+  /** 적재 토큰이 허용되는 유일한 경로 — 정확한 URI 일치만 인정한다(변형 표기는 거부). */
+  private static final String LOAD_PATH = "/execute/load";
+
   private final String expectedToken;
+  private final String loadToken;
 
   public InternalTokenFilter(DbExecutorProperties properties) {
     this.expectedToken = properties.internalToken();
+    this.loadToken = properties.loadToken();
   }
 
   /**
@@ -47,7 +59,14 @@ public class InternalTokenFilter extends OncePerRequestFilter {
   protected void doFilterInternal(
       HttpServletRequest request, HttpServletResponse response, FilterChain chain)
       throws ServletException, IOException {
-    if (matches(request.getHeader("Authorization"), expectedToken)) {
+    String header = request.getHeader("Authorization");
+    // Script 스킴은 matches 의 접두어 검사("Internal ")에서 걸러져 어느 쪽 자격에도 닿지 않는다.
+    boolean allowed =
+        matches(header, expectedToken)
+            || (LOAD_PATH.equals(request.getRequestURI())
+                && "POST".equals(request.getMethod())
+                && matches(header, loadToken));
+    if (allowed) {
       chain.doFilter(request, response);
       return;
     }

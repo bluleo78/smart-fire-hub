@@ -1,6 +1,7 @@
 package com.smartfirehub.dbexecutor.sql;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
@@ -36,6 +37,12 @@ public final class Deadline implements AutoCloseable {
     T run(Statement st) throws SQLException;
   }
 
+  /** 준비된 문장({@link PreparedStatement}) 하나로 할 일 — 배치 적재처럼 같은 문장을 여러 번 실행한다. */
+  @FunctionalInterface
+  interface PreparedWork<T> {
+    T run(PreparedStatement ps) throws SQLException, TimedOut;
+  }
+
   private static final ScheduledThreadPoolExecutor TIMER = newTimer();
 
   /**
@@ -56,6 +63,7 @@ public final class Deadline implements AutoCloseable {
     return timer;
   }
 
+  private final int totalSeconds;
   private final long deadlineNanos;
   private final AtomicBoolean fired = new AtomicBoolean();
   private final AtomicReference<Statement> current = new AtomicReference<>();
@@ -63,9 +71,15 @@ public final class Deadline implements AutoCloseable {
 
   /** 지금부터 {@code totalSeconds} 초 뒤를 기한으로 잡고 타이머를 건다. */
   public Deadline(int totalSeconds) {
+    this.totalSeconds = totalSeconds;
     long totalNanos = TimeUnit.SECONDS.toNanos(totalSeconds);
     this.deadlineNanos = System.nanoTime() + totalNanos;
     this.timer = TIMER.schedule(this::fire, totalNanos, TimeUnit.NANOSECONDS);
+  }
+
+  /** 이 기한을 잡을 때 쓴 전체 제한(초) — 시간 초과 문구에 싣는다. */
+  public int totalSeconds() {
+    return totalSeconds;
   }
 
   /** 기한 도달: 표시를 먼저 세운 뒤 취소한다 — 취소 오류를 받은 쪽이 시간 초과로 판정할 수 있게. */
@@ -108,6 +122,26 @@ public final class Deadline implements AutoCloseable {
       begin(st);
       try {
         return work.run(st);
+      } finally {
+        end();
+      }
+    }
+  }
+
+  /**
+   * {@link #execute} 의 준비된 문장 판: SQL 을 준비해 감시에 등록하고 {@code work} 를 돌린 뒤 해제한다. 같은 문장을 여러 번(배치마다)
+   * 실행하는 일이라 {@code setQueryTimeout} 은 처음 한 번만 걸고, 배치마다 남은 시간으로 다시 거는 일({@link #statementTimeout})은
+   * {@code work} 가 한다.
+   *
+   * @throws TimedOut 이미 기한이 지나 문장을 시작하지 않았을 때
+   */
+  <T> T executePrepared(Connection c, String sql, int statementSeconds, PreparedWork<T> work)
+      throws SQLException, TimedOut {
+    try (PreparedStatement ps = c.prepareStatement(sql)) {
+      ps.setQueryTimeout(statementTimeout(statementSeconds));
+      begin(ps);
+      try {
+        return work.run(ps);
       } finally {
         end();
       }

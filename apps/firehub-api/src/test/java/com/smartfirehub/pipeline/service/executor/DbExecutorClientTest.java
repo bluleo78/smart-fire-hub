@@ -270,7 +270,7 @@ class DbExecutorClientTest {
     assertThat(wireMock.getAllServeEvents()).isEmpty();
   }
 
-  /** 조회 요청은 tenantId·query·maxRows 를 싣고, 응답 snake_case 필드가 레코드로 파싱된다. */
+  /** 조회 요청은 tenantId·query·max_rows·read_only 를 싣고, 응답 snake_case 필드가 레코드로 파싱된다. */
   @Test
   void executeQuery_postsTenantQueryMaxRows() {
     stubJson(
@@ -293,7 +293,7 @@ class DbExecutorClientTest {
             .withRequestBody(
                 equalToJson(
                     """
-                    {"tenantId":5,"query":"SELECT 1 FROM DUAL","maxRows":100}
+                    {"tenantId":5,"query":"SELECT 1 FROM DUAL","max_rows":100,"read_only":true}
                     """)));
   }
 
@@ -325,5 +325,35 @@ class DbExecutorClientTest {
     assertThatThrownBy(() -> client.executeQuery("SELECT 1 FROM DUAL", 10))
         .isInstanceOf(ScriptExecutionException.class)
         .hasMessage(DbExecutorClient.CONNECT_FAILURE_MESSAGE);
+  }
+
+  /** 옮기기용 executeSql 은 timeout_seconds 를 본문에 싣는다(실행기가 문장 제한·전체 기한으로 쓴다). */
+  @Test
+  void executeSql_withTimeout_sendsTimeoutSeconds() {
+    stubJson(
+        "/execute/sql",
+        """
+        {"success": true, "row_count": 2, "execution_log": "ok"}
+        """);
+
+    ExecutorClient.SqlExecuteResult result =
+        client().executeSql("INSERT INTO x SELECT 1 FROM dual", List.of(), 1800);
+
+    assertThat(result.success()).isTrue();
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/execute/sql"))
+            .withRequestBody(
+                equalToJson(
+                    """
+                    {"tenantId": 5, "query": "INSERT INTO x SELECT 1 FROM dual",
+                     "preStatements": [], "timeout_seconds": 1800}
+                    """)));
+  }
+
+  @Test
+  void executeSql_withNonPositiveTimeout_rejectedBeforeSending() {
+    assertThatThrownBy(() -> client().executeSql("SELECT 1", List.of(), 0))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(wireMock.getAllServeEvents()).isEmpty();
   }
 }

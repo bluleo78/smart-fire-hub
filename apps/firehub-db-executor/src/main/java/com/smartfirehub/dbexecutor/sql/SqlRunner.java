@@ -80,6 +80,24 @@ public class SqlRunner {
    */
   public SqlExecuteResponse run(
       StoreDescriptor d, String query, List<String> preStatements, Deadline deadline) {
+    return run(d, query, preStatements, deadline, null);
+  }
+
+  /**
+   * {@link #run(StoreDescriptor, String, List, Deadline)} 에 요청별 시간 제한을 더한 판.
+   *
+   * @param requestedSeconds 요청의 {@code timeout_seconds}(컨트롤러가 {@code app.load.timeout-seconds} 로 자른
+   *     값). 있으면 문장 제한과 시간 초과 문구가 이 값이다(전체 기한은 컨트롤러가 같은 값으로 잡는다). null 이면 기존 50/55초 그대로.
+   */
+  public SqlExecuteResponse run(
+      StoreDescriptor d,
+      String query,
+      List<String> preStatements,
+      Deadline deadline,
+      Integer requestedSeconds) {
+    int statementSeconds =
+        requestedSeconds != null ? requestedSeconds : limits.statementTimeoutSeconds();
+    int totalSeconds = requestedSeconds != null ? requestedSeconds : limits.totalTimeoutSeconds();
     List<String> pres = preStatements == null ? List.of() : preStatements;
     String body;
     List<String> locks = new ArrayList<>();
@@ -101,7 +119,8 @@ public class SqlRunner {
         new LeasedExecution.Failures<>() {
           @Override
           public SqlExecuteResponse expiredBeforeBorrow() {
-            return SqlExecuteResponse.failure(timeoutMessage(), null, "시간 초과로 실행하지 않았습니다.");
+            return SqlExecuteResponse.failure(
+                timeoutMessage(totalSeconds), null, "시간 초과로 실행하지 않았습니다.");
           }
 
           @Override
@@ -113,7 +132,8 @@ public class SqlRunner {
           @Override
           public SqlExecuteResponse timedOut() {
             log.add("시간 초과로 취소하고 롤백함");
-            return SqlExecuteResponse.failure(timeoutMessage(), null, String.join("\n", log));
+            return SqlExecuteResponse.failure(
+                timeoutMessage(totalSeconds), null, String.join("\n", log));
           }
 
           @Override
@@ -131,11 +151,11 @@ public class SqlRunner {
         },
         c -> {
           for (int i = 0; i < pres.size(); i++) {
-            update(c, deadline, locks.get(i));
-            int deleted = update(c, deadline, pres.get(i));
+            update(c, deadline, statementSeconds, locks.get(i));
+            int deleted = update(c, deadline, statementSeconds, pres.get(i));
             log.add("선행 문장 " + (i + 1) + ": 출력 테이블을 잠그고 " + deleted + "행 삭제");
           }
-          BodyResult out = body(c, deadline, body, returnRows);
+          BodyResult out = body(c, deadline, statementSeconds, body, returnRows);
           log.add("본문 실행: " + out.rowCount + "행 " + (out.query ? "조회" : "반영"));
           if (deadline.expired()) {
             // 본문이 끝났어도 기한을 넘겼으면 커밋하지 않는다 — api 는 이미 포기했을 수 있다.
@@ -148,17 +168,12 @@ public class SqlRunner {
         });
   }
 
-  /** 전체 시간 초과 문구(설정한 전체 제한 초). */
-  private String timeoutMessage() {
-    return timeoutMessage(limits.totalTimeoutSeconds());
-  }
-
   /** 결과 집합 없는 문장(LOCK·DELETE) 하나를 실행하고 반영 행 수를 돌려준다. */
-  private int update(Connection c, Deadline deadline, String sql)
+  private int update(Connection c, Deadline deadline, int statementSeconds, String sql)
       throws SQLException, Deadline.TimedOut {
     return deadline.execute(
         c,
-        limits.statementTimeoutSeconds(),
+        statementSeconds,
         st -> {
           st.execute(sql);
           return Math.max(st.getUpdateCount(), 0);
@@ -170,11 +185,12 @@ public class SqlRunner {
       boolean query, int rowCount, List<Map<String, Object>> rows, List<String> columns) {}
 
   /** 본문을 실행한다. 결과 집합이 있고 returnRows 면 행을 읽어 변환한다. */
-  private BodyResult body(Connection c, Deadline deadline, String sql, boolean returnRows)
+  private BodyResult body(
+      Connection c, Deadline deadline, int statementSeconds, String sql, boolean returnRows)
       throws SQLException, Deadline.TimedOut {
     return deadline.execute(
         c,
-        limits.statementTimeoutSeconds(),
+        statementSeconds,
         st -> {
           boolean hasResultSet = st.execute(sql);
           if (!hasResultSet) {

@@ -291,4 +291,39 @@ class ExecutorDataStoreDescriptorServiceTest {
     assertThat(d.toString()).doesNotContain("ropw");
     assertThat(owner.toString()).doesNotContain("pw").contains("****");
   }
+
+  /** 종류만 조회: Tibero 여도 계정을 읽거나 복호화하지 않고 backend·tenantId 만 낸다. */
+  @Test
+  void describeBackendOnly_Tibero_비밀없음_복호화안함() {
+    when(repository.find(7))
+        .thenReturn(Optional.of(row(DataStoreBackend.TIBERO, TenantDataStoreStatus.READY)));
+
+    ExecutorDataStoreDescriptor d = service.describeBackendOnly(7);
+
+    assertThat(d.backend()).isEqualTo(DataStoreBackend.TIBERO);
+    assertThat(d.tenantId()).isEqualTo(7);
+    assertThat(d.host()).isNull();
+    assertThat(d.owner()).isNull();
+    assertThat(d.ro()).isNull();
+    verify(repository, never()).findAccounts(anyLong());
+    verify(encryption, never()).decrypt(any());
+  }
+
+  @Test
+  void describeBackendOnly_행없음_POSTGRESQL() {
+    when(repository.find(3)).thenReturn(Optional.empty());
+
+    assertThat(service.describeBackendOnly(3).backend()).isEqualTo(DataStoreBackend.POSTGRESQL);
+  }
+
+  @Test
+  void describeBackendOnly_MySQL_409() {
+    when(repository.find(7))
+        .thenReturn(Optional.of(row(DataStoreBackend.MYSQL, TenantDataStoreStatus.READY)));
+
+    assertThatThrownBy(() -> service.describeBackendOnly(7))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> assertThat(e.code()).isEqualTo("DATA_STORE_BACKEND_UNSUPPORTED"));
+  }
 }

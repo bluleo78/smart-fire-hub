@@ -4,12 +4,10 @@
 
 **요구사항 (사용자 짧은 요청)**: "데이터셋 화재 발생 위치(id=67)에서 사망자수 > 0 행만 필터링하는 SQL 파이프라인 만들어줘. 이름은 'fatal_fires_filter'."
 
-(Tibero 테넌트는 출력 데이터셋이 필수다 — 요청에 출력 데이터셋이 없으면 Phase 1 에서 먼저 묻는다. 아래는 사용자가 출력 데이터셋 ID 68(`fatal_fires`)을 알려준 경우다.)
-
 이 짧은 한 줄은 **위임 신호가 아님** — 반드시 Phase 1 (`get_dataset`) → Phase 2 DESIGN 텍스트 → 사용자 승인 → Phase 4 `create_pipeline` 순서를 지킨다.
 
 ### Phase 1 — 스키마 확인 (도구 호출)
-`get_dataset(id=67)`·`get_dataset(id=68)`로 입력·출력 데이터셋 확인 → `occurred_at` (TIMESTAMP), `death_count` (INTEGER), `location` (TEXT). `get_data_schema` 의 `schema` 는 `GENIA_T5`.
+`get_dataset(id=67)`로 컬럼 목록 획득 → `occurred_at` (TIMESTAMP), `death_count` (INTEGER), `location` (TEXT). `get_data_schema` 의 `schema` 는 `GENIA_T5`.
 
 ### Phase 2 — DESIGN 텍스트 (사용자에게 출력)
 
@@ -18,7 +16,7 @@
 
 | 스텝 | 타입 | 입력 | 출력 |
 |------|------|------|------|
-| filter_fatal_fires | SQL | genia_t5.fire_incidents | 데이터셋 68 (`fatal_fires`) |
+| filter_fatal_fires | SQL | genia_t5.fire_incidents | temp 자동 생성 |
 
 ### SQL
 ```sql
@@ -35,7 +33,6 @@ WHERE death_count > 0
 - [✅] SELECT * 미사용 — 필요한 컬럼만 명시
 - [✅] 예약 컬럼(id/import_id/created_at/_updated_at) 충돌 없음
 - [✅] {{#N}} 미사용 (단일 스텝)
-- [✅] outputDatasetId 지정 (68) — Tibero SQL 단계 필수
 - [✅] 순환 의존성 없음
 
 **이대로 생성할까요?** (예 / 수정 요청)
@@ -83,9 +80,7 @@ WHERE death_count > 0
     {
       "name": "category_agg",
       "scriptType": "SQL",
-      "scriptContent": "SELECT category, SUM(amount) AS total FROM genia_t5.orders GROUP BY category",
-      "outputDatasetId": 19,
-      "loadStrategy": "REPLACE"
+      "scriptContent": "SELECT category, SUM(amount) AS total FROM genia_t5.orders GROUP BY category"
     },
     {
       "name": "add_rank",
@@ -100,15 +95,15 @@ WHERE death_count > 0
 ```
 
 **포인트**:
-- 첫 번째 스텝: Tibero 는 출력 데이터셋이 필수 → 중간 결과용 데이터셋(ID 19)에 적재
-- 두 번째 스텝: {{#1}}로 첫 번째 스텝의 출력 데이터셋(ID 19) 테이블 참조
+- 첫 번째 스텝: outputDatasetId 미지정 → temp 자동 생성
+- 두 번째 스텝: {{#1}}로 첫 번째 스텝의 temp 테이블 참조
 - dependsOnStepNames로 실행 순서 보장
 
 ## 예제 3: Python + SQL 조합
 
 **요구사항**: 외부 API에서 환율 데이터 수집 → 매출에 환율 적용
 
-**Tibero 테넌트 응답 (Phase 1 에서 즉시 고지)**: "Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다." / "Tibero 저장소 테넌트에서는 아직 API 수집 단계를 실행할 수 없습니다." — 외부 API 수집 단계는 이 테넌트에서 실행할 수 없다고 알린다. 환율이 이미 데이터셋(예: `exchange_rates`)에 있다면 SQL 단계로만 설계한다:
+**Tibero 테넌트 응답 (Phase 1 에서 즉시 고지)**: "Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다." — Python 로 수집하는 단계는 이 테넌트에서 실행할 수 없다고 알린다(외부 API 수집 자체는 API_CALL 스텝으로 가능하다). 환율이 이미 데이터셋(예: `exchange_rates`)에 있다면 SQL 단계로만 설계한다:
 
 ```json
 {
@@ -129,7 +124,28 @@ WHERE death_count > 0
 
 **요구사항**: 고객 리뷰를 감성 분석
 
-**Tibero 테넌트 응답**: "Tibero 저장소 테넌트에서는 아직 AI 분류 단계를 실행할 수 없습니다." — 이 테넌트에서는 AI 분류 스텝을 만들지 않고 그대로 알린다. 규칙으로 나눌 수 있는 분류(예: 키워드 포함 여부)라면 `UPPER(review_text) LIKE UPPER('%불만%')` 조건으로 거르는 SQL 단계를 대안으로 제안할 수 있다.
+```json
+{
+  "name": "리뷰 감성 분석",
+  "steps": [
+    {
+      "name": "classify_sentiment",
+      "scriptType": "AI_CLASSIFY",
+      "aiConfig": {
+        "prompt": "각 행의 review_text 컬럼을 읽고 감성을 분류하세요. positive/negative/neutral 중 하나를 선택하고 확신도를 0~1로 반환하세요.",
+        "outputColumns": [
+          { "name": "sentiment", "type": "TEXT" },
+          { "name": "confidence", "type": "DECIMAL" }
+        ],
+        "inputColumns": ["review_text"],
+        "batchSize": 20
+      },
+      "outputDatasetId": 30,
+      "loadStrategy": "REPLACE"
+    }
+  ]
+}
+```
 
 ---
 
@@ -164,7 +180,7 @@ ID 47 'inspector-tool-test-002' 삭제. 이 파이프라인의 SCHEDULE 트리�
 파이프라인 생성 및 실행이 완료되었습니다.
 
 **파이프라인**: `데이터셋55_행수카운트` (ID: 59)
-- 스텝 `count_rows` (SQL): 입력 데이터셋 55(`test_dataset_tmp`) → `SELECT COUNT(*) AS row_count FROM genia_t5.test_dataset_tmp` → 출력: 데이터셋 56(`row_count_result`)
+- 스텝 `count_rows` (SQL): 입력 데이터셋 55(`test_dataset_tmp`) → `SELECT COUNT(*) AS row_count FROM genia_t5.test_dataset_tmp` → 출력: temp 자동 생성
 
 **실행 결과** (execution ID: 320)
 - 상태: COMPLETED

@@ -34,6 +34,9 @@ public class PipelineExecutionRepository {
       field(name("pipeline_execution", "pipeline_id"), Long.class);
   private static final Field<String> PE_STATUS =
       field(name("pipeline_execution", "status"), String.class);
+  // 테넌트 열(V93) — 스윕 게이트가 RLS 에 더해 테넌트를 명시적으로 좁힐 때 쓴다.
+  private static final Field<Long> PE_TENANT_ID =
+      field(name("pipeline_execution", "tenant_id"), Long.class);
   private static final Field<Long> PE_EXECUTED_BY =
       field(name("pipeline_execution", "executed_by"), Long.class);
   private static final Field<LocalDateTime> PE_STARTED_AT =
@@ -229,6 +232,27 @@ public class PipelineExecutionRepository {
         .where(PSE_EXECUTION_ID.eq(executionId))
         .and(PSE_STATUS.eq("PENDING"))
         .execute();
+  }
+
+  /**
+   * 이 테넌트에 지금 RUNNING 인 파이프라인 실행이 있는가(최종 리뷰 I1 — 고아 staging 스윕 게이트).
+   *
+   * <p>Tibero 파이프라인 스텝은 import 와 같은 {@code STG_} 이름의 스테이징을 쓰고, 실행은 JobRunr 가 아니라 {@code @Async} 라
+   * 스윕의 JobRunr 게이트가 보지 못한다. 그래서 스윕이 테넌트마다 이 메서드로 "실행 중인 파이프라인이 없을 때만" 지우게 한다.
+   *
+   * <p>{@code pipeline_execution} 은 RLS 대상이라 GUC 가 없으면 0행(=거짓 "없음")이 된다 — 클래스의
+   * {@code @Transactional} 이 트랜잭션 시작 시 {@code TenantContext} 의 테넌트를 GUC 로 넣어 주므로, 호출자는 그 테넌트 컨텍스트
+   * 안에서 불러야 한다. {@code tenant_id} 조건도 명시해 RLS 와 이중으로 좁힌다.
+   *
+   * @param tenantId 확인할 테넌트(현재 {@code TenantContext} 와 같아야 한다)
+   * @return RUNNING 실행이 하나라도 있으면 true
+   */
+  public boolean hasRunningExecution(long tenantId) {
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from(PIPELINE_EXECUTION)
+            .where(PE_TENANT_ID.eq(tenantId))
+            .and(PE_STATUS.eq("RUNNING")));
   }
 
   /** 실행이 속한 파이프라인 id(소유권 검증용, #188) — 스텝 기록까지 읽는 {@link #findExecutionById} 보다 가볍다. */

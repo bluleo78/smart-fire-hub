@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.storage.tibero;
 import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreFeatureUnsupportedException;
 import com.smartfirehub.dataset.storage.DataTableStore;
@@ -46,9 +47,14 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p><b>인덱스 키 길이(A6).</b> 인덱스 컬럼들의 선언 바이트 폭 합이 {@link TiberoDialect#MAX_INDEX_KEY_BYTES} 를 넘으면 DDL
  * 전에 400 으로 거부한다(원문 ORA-01450 대신).
  *
- * <p><b>미지원(R4).</b> 임시 테이블 교체 계열과 온라인 PK 인덱스 생성은 {@link DataStoreFeatureUnsupportedException}(422,
- * {@link #unsupported}). {@code finishReplace} 는 인터페이스 기본 구현을 그대로 두며 {@code swapTable}/{@code
- * dropTempTable} 을 거쳐 같은 예외가 난다.
+ * <p><b>임시 테이블 교체(WD-77).</b> {@code createTempTable} 은 스테이징({@code STG_<24hex>})을 만든다. 적재는 이 저장소를
+ * 지나지 않는다 — api 로컬 경로(AI_CLASSIFY·로컬 API_CALL·로컬 PYTHON)는 {@code DataRowStore#insertTempBatch}, 실행기
+ * 경로(API_CALL·PYTHON)는 Python 실행기 {@code RemoteLoader} 가 db-executor {@code /execute/load} 로 보낸다.
+ * {@code swapTable}/{@code finishAppend} 는 {@link TiberoBulkMover} 를 거친 db-executor 의 한 트랜잭션 옮기기다.
+ * {@code finishReplace} 는 인터페이스 기본 구현(0행이면 원본 보존)을 그대로 쓴다.
+ *
+ * <p><b>미지원(R4).</b> 온라인 PK 인덱스 생성은 {@link DataStoreFeatureUnsupportedException}(422, {@link
+ * #unsupported}).
  *
  * <p><b>검색 타입 캐시.</b> 컬럼 구조를 바꾸는 DDL(생성·복제·삭제·컬럼 추가/삭제/이름·타입 변경) 뒤에는 {@link TiberoColumnTypeCache}
  * 의 해당 테이블 항목을 지워 다음 검색이 카탈로그를 다시 읽게 한다.
@@ -57,7 +63,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @Component
 public class TiberoDataTableStore implements DataTableStore {
 
-  private static final String TEMP_FEATURE = "임시 테이블 교체(파이프라인 출력)";
+  /** 스테이징에만 있는 입력 순번 컬럼(소문자 카탈로그 이름) — 옮기기 대상이 아니다. */
+  private static final String STAGING_SEQ_COLUMN = "_seq";
+
   private static final String ONLINE_PK_FEATURE = "온라인 PK 인덱스 생성";
 
   /** 통계 평균을 계산하는 숫자 논리 타입(PG 구현과 동일). */
@@ -68,10 +76,26 @@ public class TiberoDataTableStore implements DataTableStore {
   /** 행 저장소의 검색 타입 캐시 — 컬럼 구조를 바꾼 뒤 무효화한다. */
   private final TiberoColumnTypeCache columnTypeCache;
 
+  /** 스테이징 테이블 생성·삭제(DDL)를 맡는 행 저장소. */
+  private final TiberoDataRowStore rowStore;
+
+  /** 스테이징 → 출력 테이블 옮기기(DML)를 db-executor 에 맡기는 창구. */
+  private final TiberoBulkMover mover;
+
+  /** OWNER 의 트리거 생성 권한 확인(WD-77). */
+  private final TiberoTriggerPrivilege triggerPrivilege;
+
   public TiberoDataTableStore(
-      ExternalStoreConnections connections, TiberoColumnTypeCache columnTypeCache) {
+      ExternalStoreConnections connections,
+      TiberoColumnTypeCache columnTypeCache,
+      TiberoDataRowStore rowStore,
+      TiberoBulkMover mover,
+      TiberoTriggerPrivilege triggerPrivilege) {
+    this.triggerPrivilege = triggerPrivilege;
     this.connections = connections;
     this.columnTypeCache = columnTypeCache;
+    this.rowStore = rowStore;
+    this.mover = mover;
   }
 
   @Override
@@ -90,6 +114,7 @@ public class TiberoDataTableStore implements DataTableStore {
     // 같은 이름을 지웠다 다시 만든 경우 옛 구조가 캐시에 남지 않게 한다.
     columnTypeCache.invalidate(tenantId, tableName);
     registerRollbackDrop(tenantId, schema, tableName);
+    createRowTriggerBestEffort(tenantId, schema, tableName);
   }
 
   @Override
@@ -247,19 +272,150 @@ public class TiberoDataTableStore implements DataTableStore {
     }
   }
 
+  /**
+   * REPLACE·APPEND 적재용 스테이징 테이블을 만든다(WD-77). 출력 테이블의 <b>사용자 컬럼만</b> 같은 타입으로 복사한다({@code ID}·{@code
+   * IMPORT_ID}·{@code CREATED_AT}·{@code _UPDATED_AT} 은 옮길 때 채운다). 이름·DDL 은 기존 {@link
+   * TiberoDataRowStore#createStagingTable} 을 그대로 쓴다(고아 스윕과 같은 {@code STG_<24hex>} 규칙).
+   *
+   * @return 스테이징 <b>물리</b> 이름(대문자) — 적재(api {@code insertTempBatch}, 실행기 {@code /execute/load})와
+   *     옮기기가 이 이름을 그대로 받는다
+   */
   @Override
   public String createTempTable(String tableName) {
-    throw unsupported(TEMP_FEATURE);
+    long tenantId = TenantContext.require("Tibero createTempTable");
+    String schema = connections.schemaOf(tenantId);
+    List<String> userColumns = userColumnsOf(catalogColumns(tenantId, schema, tableName));
+    if (userColumns.isEmpty()) {
+      throw new IllegalStateException("테이블 '" + tableName + "' 을(를) 찾을 수 없거나 사용자 컬럼이 없습니다");
+    }
+    return TiberoNames.physical(rowStore.createStagingTable(tableName, userColumns));
   }
 
+  /**
+   * 스테이징 행으로 출력 테이블을 통째로 바꾼다 — 비우기 + 옮기기가 db-executor 의 한 Tibero 트랜잭션이라 실패하면 원본이 그대로다. 옮기기가 실패하면
+   * 예외를 전파한다(스테이징 정리는 호출자의 {@code dropTempTable}). 성공하면 스테이징을 지운다.
+   */
   @Override
   public void swapTable(String tableName, String tempName) {
-    throw unsupported(TEMP_FEATURE);
+    move(tableName, tempName, true);
+  }
+
+  /** {@link #swapTable} 의 APPEND 판 — 출력 테이블을 비우지 않는다. 쓴 행이 없으면 스테이징만 버린다. */
+  @Override
+  public void finishAppend(String tableName, String tempName, long rowsWritten) {
+    if (rowsWritten > 0) {
+      move(tableName, tempName, false);
+    } else {
+      dropTempTable(tableName, tempName);
+    }
   }
 
   @Override
   public void dropTempTable(String tableName, String tempName) {
-    throw unsupported(TEMP_FEATURE);
+    requireStagingName(tempName);
+    TenantContext.require("Tibero dropTempTable");
+    // 행 저장소의 dropStagingTable 은 소문자 논리 이름을 받아 물리 이름으로 되돌린다.
+    rowStore.dropStagingTable(tempName.toLowerCase(Locale.ROOT));
+  }
+
+  @Override
+  public void requireTempTable(String tableName, String tempName) {
+    requireStagingName(tempName);
+  }
+
+  /** 러너 TEMP 의 열 구성이 바뀌었을 때의 안내 — Tibero 는 재생성 보관(WD-238)을 아직 지원하지 않는다. */
+  public static final String TEMP_REBUILD_UNSUPPORTED_MESSAGE =
+      "Tibero 저장소에서는 결과 열이 바뀐 임시 출력 데이터셋을 다시 만들 수 없습니다. 스텝의 출력 데이터셋을 지정하거나, 임시 데이터셋을 삭제한 뒤 다시"
+          + " 실행하세요.";
+
+  /**
+   * 러너 TEMP 재생성 보관(WD-238)은 Tibero 에서 아직 지원하지 않는다 — 테이블만 옮기면 같은 이름 규칙의 시퀀스·트리거가 새 테이블과 부딪힌다.
+   * 아무것도 바꾸기 전에 거부하므로 기존 TEMP 와 행은 그대로 남는다(fail-closed). 기본 구현의 영어식 「지원하지 않음」 대신 사용자가 할 일을 알려 준다.
+   */
+  @Override
+  public long moveToRebuildBackup(String tableName, String backupName) {
+    throw new DataStoreFeatureUnsupportedException(TEMP_REBUILD_UNSUPPORTED_MESSAGE);
+  }
+
+  /**
+   * Tibero 는 재생성 보관본을 만들지 않으므로(위 {@link #moveToRebuildBackup}) 지울 것이 없다. 데이터셋 삭제가 TEMP 마다 남은 보관본 정리를
+   * 부르므로, 기본 구현처럼 예외를 던지면 Tibero 임시 데이터셋을 지울 수 없게 된다.
+   */
+  @Override
+  public boolean dropRebuildBackup(String tableName, String backupName, Long expectedOid) {
+    return false;
+  }
+
+  /**
+   * 옮기기 공통부. 순서: 이름 검증 → 스테이징·출력 컬럼 대조 → mover 로 옮기기 → 스테이징 DROP.
+   *
+   * <p><b>실패 시 정리는 호출자 몫(코드리뷰 7).</b> 대조·옮기기가 실패하면 스테이징을 지우지 않고 예외만 올린다 — 모든 호출자(러너의 PYTHON·실행기
+   * API_CALL 경로, {@code ApiCallExecutor}, {@code AiClassifyExecutor})가 실패 catch 에서 {@code
+   * dropTempTable} 을 부르므로 여기서도 지우면 같은 DROP 이 두 번 나간다. 호출자의 DROP 마저 실패해 남은 스테이징은 고아 스윕이 회수한다.
+   */
+  private void move(String tableName, String tempName, boolean replace) {
+    requireStagingName(tempName);
+    long tenantId = TenantContext.require("Tibero swapTable");
+    String schema = connections.schemaOf(tenantId);
+    List<String> columns = stagingColumnsFor(tenantId, schema, tableName, tempName);
+    if (replace) {
+      mover.moveReplace(tenantId, schema, tableName, tempName, columns);
+    } else {
+      mover.moveAppend(tenantId, schema, tableName, tempName, columns);
+    }
+    // 옮기기는 이미 커밋됐다. 여기서 DROP 이 실패해도 예외를 내면 호출부가 실패로 알고 재시도해 APPEND 행이 중복되므로 삼키고 경고만 남긴다 —
+    // 남은 스테이징은 고아 스윕(StagingTableCleanupService)이 회수한다.
+    try {
+      dropTempTable(tableName, tempName);
+    } catch (RuntimeException e) {
+      log.warn("옮기기 성공 뒤 Tibero 스테이징 삭제에 실패했습니다(고아 스윕이 회수): {}", tempName, e);
+    }
+  }
+
+  /**
+   * 스테이징의 데이터 컬럼(= 옮길 컬럼)을 카탈로그에서 읽고, 출력 테이블의 사용자 컬럼과 <b>같은 집합</b>인지 확인한다. {@code createTempTable}
+   * 이 사용자 컬럼을 모두 복사하므로 같아야 한다 — 스테이징 이름에는 어느 테이블 것인지 정보가 없어서, 인자가 뒤바뀌었을 때 구조가 다른 테이블의 스테이징이면 여기서
+   * 막는다(구조가 같은 다른 테이블의 스테이징은 구분할 수 없다).
+   */
+  private List<String> stagingColumnsFor(
+      long tenantId, String schema, String tableName, String tempName) {
+    Map<String, TiberoColumnType> stagingCatalog = catalogColumns(tenantId, schema, tempName);
+    if (stagingCatalog.isEmpty()) {
+      throw new InvalidTableNameException("임시(스테이징) 테이블 '" + tempName + "' 을(를) 찾을 수 없습니다");
+    }
+    List<String> target = userColumnsOf(catalogColumns(tenantId, schema, tableName));
+    List<String> staging = new ArrayList<>();
+    for (String c : stagingCatalog.keySet()) {
+      if (!STAGING_SEQ_COLUMN.equals(c)) {
+        staging.add(c);
+      }
+    }
+    if (staging.isEmpty() || !Set.copyOf(staging).equals(Set.copyOf(target))) {
+      throw new InvalidTableNameException(
+          "'" + tempName + "' 은(는) 테이블 '" + tableName + "' 의 임시 테이블이 아닙니다");
+    }
+    return staging;
+  }
+
+  /** 카탈로그의 {컬럼명(소문자) → 타입}. 테이블이 없으면 빈 맵. */
+  private Map<String, TiberoColumnType> catalogColumns(long tenantId, String schema, String table) {
+    return connections.withDdl(tenantId, conn -> TiberoCatalog.columnTypes(conn, schema, table));
+  }
+
+  /** 카탈로그 컬럼에서 시스템 컬럼을 뺀 사용자 컬럼(카탈로그 순서). */
+  private static List<String> userColumnsOf(Map<String, TiberoColumnType> catalog) {
+    List<String> out = new ArrayList<>();
+    for (String c : catalog.keySet()) {
+      if (!SYSTEM_COLUMNS.contains(c)) {
+        out.add(c);
+      }
+    }
+    return out;
+  }
+
+  /** 스테이징 물리 이름({@code STG_<24 대문자 16진>}) 형식만 통과시킨다 — 실제 데이터 테이블을 지우거나 옮기는 일이 없게 하는 마지막 관문. */
+  private static void requireStagingName(String tempName) {
+    TiberoNames.requireStagingPhysicalName(tempName);
   }
 
   @Override
@@ -391,6 +547,65 @@ public class TiberoDataTableStore implements DataTableStore {
     runCreating(tenantId, schema, targetTable, statements);
     columnTypeCache.invalidate(tenantId, targetTable);
     registerRollbackDrop(tenantId, schema, targetTable);
+    createRowTriggerBestEffort(tenantId, schema, targetTable);
+  }
+
+  /**
+   * ID·_UPDATED_AT 행 트리거가 없으면 만든다(WD-77). 사용자 INSERT·증분처럼 트리거에 기대는 경로가 쓰기 전에 부른다.
+   *
+   * <p>OWNER 에 트리거 권한이 없으면 만들 수 없으므로 운영자가 실행할 GRANT 문장이 든 422 로 거부한다 — 트리거 없이 쓰면 ID 가 비어 실패하거나 갱신
+   * 시각이 어긋난다. 이미 있으면 아무것도 하지 않는다.
+   *
+   * @throws DataStoreFeatureUnsupportedException 트리거가 없고 만들 권한도 없을 때
+   */
+  @Override
+  public void ensureRowTrigger(String tableName) {
+    long tenantId = TenantContext.require("Tibero ensureRowTrigger");
+    String schema = connections.schemaOf(tenantId);
+    if (rowTriggerExists(tenantId, schema, tableName)) {
+      return;
+    }
+    if (!triggerPrivilege.hasCreateTrigger(tenantId)) {
+      throw new DataStoreFeatureUnsupportedException(
+          TiberoTriggerPrivilege.missingPrivilegeMessage(tenantId));
+    }
+    execute(tenantId, TiberoDdlSql.createRowTrigger(schema, tableName));
+  }
+
+  /**
+   * 새 테이블에 행 트리거를 두되 실패해도 테이블 생성은 성공시킨다(WD-77). 권한이 없으면 건너뛰고(데이터셋 생성을 막지 않는다), 만들다 실패해도 경고만 남긴다 —
+   * 트리거가 필요한 경로는 {@link #ensureRowTrigger} 가 다시 시도하고 사유를 사용자에게 알린다. 스테이징 테이블은 이 경로를 지나지 않으므로 트리거가
+   * 없다.
+   */
+  private void createRowTriggerBestEffort(long tenantId, String schema, String tableName) {
+    try {
+      if (!triggerPrivilege.hasCreateTrigger(tenantId)) {
+        log.warn("Tibero OWNER 에 CREATE TRIGGER 권한이 없어 행 트리거 없이 테이블을 만들었습니다: {}", tableName);
+        return;
+      }
+      execute(tenantId, TiberoDdlSql.createRowTrigger(schema, tableName));
+    } catch (RuntimeException e) {
+      log.warn("Tibero 행 트리거 생성 실패 — 트리거 없이 진행합니다: {}", tableName, e);
+    }
+  }
+
+  /**
+   * 이 테이블의 행 트리거가 USER_TRIGGERS 에 있고 켜져 있는가(OWNER 세션). DISABLED 등 ENABLED 가 아닌 상태는 없는 것으로 본다 — 꺼진
+   * 트리거는 ID 를 채우지 못하므로 {@link #ensureRowTrigger} 가 {@code CREATE OR REPLACE} 로 다시 만들어 켠다.
+   */
+  private boolean rowTriggerExists(long tenantId, String schema, String tableName) {
+    String trigger = TiberoNames.triggerName(schema, tableName);
+    return connections.withDdl(
+        tenantId,
+        conn -> {
+          try (var ps =
+              conn.prepareStatement("SELECT STATUS FROM USER_TRIGGERS WHERE TRIGGER_NAME = ?")) {
+            ps.setString(1, trigger);
+            try (var rs = ps.executeQuery()) {
+              return rs.next() && "ENABLED".equalsIgnoreCase(rs.getString(1));
+            }
+          }
+        });
   }
 
   /**

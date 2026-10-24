@@ -98,6 +98,9 @@ public final class TiberoAccountPlan {
   /**
    * 실행 순서대로의 프로비저닝 단계: 소유 계정(생성·쿼터·권한), 이어서 RO 와 슬롯(각각 생성·CREATE SESSION).
    *
+   * <p>소유 계정의 CREATE TRIGGER(WD-77)는 테이블마다 ID·_UPDATED_AT 행 트리거를 두기 위한 권한이다. 기존 권한 순서는 그대로 두고 끝에 붙여
+   * 단계 수·순서가 바뀌지 않는다.
+   *
    * <p>RO·슬롯은 테이블 소유 없이 접속만 가능하며, 테이블 조회 권한은 이후 소유 계정이 개별로 부여한다.
    */
   public List<ProvisioningStep> provisioningSteps() {
@@ -119,7 +122,8 @@ public final class TiberoAccountPlan {
         steps.add(
             new ProvisioningStep(
                 u + " 권한 부여",
-                "GRANT CREATE SESSION, CREATE TABLE, CREATE VIEW, CREATE SEQUENCE TO " + q(u),
+                "GRANT CREATE SESSION, CREATE TABLE, CREATE VIEW, CREATE SEQUENCE, CREATE TRIGGER TO "
+                    + q(u),
                 null));
       } else {
         steps.add(new ProvisioningStep(u + " 권한 부여", "GRANT CREATE SESSION TO " + q(u), null));

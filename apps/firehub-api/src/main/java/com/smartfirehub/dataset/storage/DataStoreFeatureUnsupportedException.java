@@ -25,6 +25,15 @@ public class DataStoreFeatureUnsupportedException extends CodedApiException {
         featureKorean + ": " + displayName(backend) + " 저장소에서 아직 지원하지 않습니다");
   }
 
+  /**
+   * 안내 문장이 따로 정해져 있을 때(예: 운영자에게 요청할 GRANT 문장 포함) 그 문장을 그대로 메시지로 쓰는 생성자(WD-77).
+   *
+   * @param message 사용자에게 그대로 보일 한국어 메시지
+   */
+  public DataStoreFeatureUnsupportedException(String message) {
+    super(HttpStatus.UNPROCESSABLE_ENTITY, CODE, message);
+  }
+
   /** 사용자에게 보여 줄 백엔드 이름. 메시지가 특정 백엔드에 묶이지 않도록 호출자가 넘긴 백엔드로 만든다. */
   private static String displayName(DataStoreBackend backend) {
     return switch (backend) {

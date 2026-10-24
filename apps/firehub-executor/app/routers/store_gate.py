@@ -1,13 +1,14 @@
-"""실행 라우트 공용 저장소 게이트 (WD-75).
+"""실행 라우트 공용 저장소 게이트 (WD-75, WD-77).
 
-WD-75 범위에서 Tibero 를 실행하는 라우트는 없다. 네 실행 라우트(query/sql/api-call/python)는 핸들러 첫 줄에서
-이 게이트로 테넌트의 저장소 백엔드를 확인하고, PostgreSQL 이 아니면 기존 코드 경로로 들어가지 않고 실패 응답을 낸다.
+Python 실행기는 Tibero 에 직접 접속하지 않는다. 실행 라우트는 핸들러 첫 줄에서 이 게이트로 테넌트의 저장소 백엔드를 확인한다.
+- sql/query/probe/load/python 은 PostgreSQL 이 아니면 기존 코드 경로로 들어가지 않고 실패 응답을 낸다(``unsupported_error``).
+- api-call 은 창구별로 다르다: Tibero 테넌트는 거부하지 않고 db-executor 원격 적재로 보낸다(``backend_of`` 로 분기, WD-77).
 - 백엔드는 api 기술자 조회로만 정한다(요청 페이로드는 믿지 않는다).
 - 조회가 실패하면 PG 로 폴백하지 않는다(R-pg-lookup, fail-closed).
-- 게이트는 기술자의 backend 값만 본다 — 백엔드 객체(PostgresBackend/TiberoBackend)를 만들지 않는다.
+- 게이트는 기술자의 backend 값만 본다 — 백엔드 객체(PostgresBackend)를 만들지 않는다.
   판정에 필요 없는 객체 생성과 그 부수효과(접속 실패 콜백 연결 등)를 게이트에 끌어들이지 않기 위해서다.
 """
-from typing import Optional
+from typing import Optional, Tuple
 
 from starlette.concurrency import run_in_threadpool
 
@@ -17,9 +18,31 @@ from app.db.store_client import StoreLookupError, get_store_client
 
 # 사용자 실행 로그에 그대로 보이는 문구라 이슈 번호는 넣지 않는다.
 QUERY_UNSUPPORTED = "Tibero 저장소 워크스페이스의 SQL 조회는 실행기에서 처리하지 않습니다"
+PROBE_UNSUPPORTED = "Tibero 저장소 워크스페이스의 컬럼 탐지는 실행기에서 처리하지 않습니다"
 SQL_UNSUPPORTED = "Tibero 저장소 워크스페이스에서는 파이프라인 SQL 단계를 아직 실행할 수 없습니다"
-API_CALL_UNSUPPORTED = "Tibero 저장소 워크스페이스에서는 API 수집 적재를 아직 실행할 수 없습니다"
 PYTHON_UNSUPPORTED = "Tibero 저장소 워크스페이스에서는 Python 단계를 아직 실행할 수 없습니다"
+# /execute/load 는 PG 만 처리한다 — Tibero 적재는 db-executor 의 /execute/load 가 맡는다(Python→db-executor 원격 적재는 후속 작업).
+LOAD_UNSUPPORTED = "Tibero 저장소 워크스페이스의 적재는 이 실행기에서 처리하지 않습니다"
+
+
+def _lookup_backend(tenant_id: int, settings: Settings) -> Tuple[Optional[str], Optional[str]]:
+    """(backend, None) 또는 (None, 조회 실패 메시지). 블로킹 httpx 조회라 이벤트 루프 밖에서 부른다."""
+    try:
+        return get_store_client(settings).get(tenant_id).backend, None
+    except StoreLookupError as e:
+        return None, str(e)
+
+
+async def backend_of(tenant_id: int, settings: Settings) -> Tuple[Optional[str], Optional[str]]:
+    """테넌트의 저장소 백엔드를 ``(backend, error)`` 로 돌려준다 — 둘 중 하나만 채워진다(창구별 분기용, WD-77).
+
+    ``backend`` 는 ``"POSTGRESQL"`` 또는 ``"TIBERO"``, ``error`` 는 조회 실패의 한국어 메시지다(fail-closed — PG 로 폴백하지 않는다).
+    기술자가 캐시돼 있으면 블로킹 없이 이벤트 루프에서 바로 판정하고, 없을 때만 스레드풀에서 조회한다(``unsupported_error`` 와 같다).
+    """
+    descriptor = get_store_client(settings).peek(tenant_id)
+    if descriptor is not None:
+        return descriptor.backend, None
+    return await run_in_threadpool(_lookup_backend, tenant_id, settings)
 
 
 def postgres_only_error(tenant_id: int, settings: Settings, unsupported_message: str) -> Optional[str]:

@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.storage.tibero;
 
+import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -20,9 +21,58 @@ public final class TiberoNames {
 
   private TiberoNames() {}
 
-  /** 스테이징 테이블 이름 형식({@link #stagingTableName()}) — 대소문자 무시. 사용자 이름으로는 쓸 수 없다. */
+  /**
+   * 스테이징 테이블 이름 형식({@link #stagingTableName()}) {@code STG_<24 16진>} — 아래 두 판정의 단일 원본이다(코드리뷰 5).
+   * db-executor 적재 규칙({@code LoadTableRule})·Python 실행기({@code require_staging_table})와 같은 모양이다.
+   */
+  private static final String STAGING_REGEX = "STG_[0-9A-F]{24}";
+
+  /**
+   * 물리 이름 판정 — <b>대문자만</b>. 스테이징 물리 이름은 언제나 대문자({@link #stagingTableName()})이고, 이 이름을 그대로 인용해
+   * SQL(옮기기· 삭제)에 넣거나 카탈로그({@code ALL_OBJECTS})에서 고른 이름을 지우므로 정확히 그 모양이어야 한다.
+   */
+  private static final Pattern STAGING_PHYSICAL = Pattern.compile(STAGING_REGEX);
+
+  /**
+   * 모양 판정 — <b>대소문자 무시</b>. 소문자 메타데이터 이름({@code stg_<hex>})도 같은 스테이징을 가리키므로, 사용자 이름 거부(고아 스윕이 지울
+   * 이름을 사용자가 못 쓰게)와 임시 적재 관문(소문자 논리 이름으로 되돌려 쓴다)은 이쪽을 쓴다.
+   */
   private static final Pattern STAGING_SHAPED =
-      Pattern.compile("^stg_[0-9a-f]{24}$", Pattern.CASE_INSENSITIVE);
+      Pattern.compile(STAGING_REGEX, Pattern.CASE_INSENSITIVE);
+
+  /** 스테이징 관문 거부 문구 — 행 저장소·테이블 저장소 관문이 같은 문구를 쓴다. */
+  private static String notStagingMessage(String name) {
+    return "'" + name + "' 은(는) Tibero 임시(스테이징) 테이블 이름이 아닙니다";
+  }
+
+  /** 스테이징 이름 모양인가(대소문자 무시). null 이면 false. */
+  public static boolean isStagingName(String name) {
+    return name != null && STAGING_SHAPED.matcher(name).matches();
+  }
+
+  /** 스테이징 <b>물리</b> 이름(대문자 그대로)인가. null 이면 false. */
+  public static boolean isStagingPhysicalName(String name) {
+    return name != null && STAGING_PHYSICAL.matcher(name).matches();
+  }
+
+  /**
+   * 스테이징 이름 모양(대소문자 무시)이 아니면 {@link InvalidTableNameException}. 실제 데이터 테이블에 쓰지 못하게 하는 임시 적재 관문용이다.
+   */
+  public static void requireStagingName(String name) {
+    if (!isStagingName(name)) {
+      throw new InvalidTableNameException(notStagingMessage(name));
+    }
+  }
+
+  /**
+   * 스테이징 물리 이름(대문자)이 아니면 {@link InvalidTableNameException}. 실제 데이터 테이블을 지우거나 옮기는 일이 없게 하는 마지막
+   * 관문용이다.
+   */
+  public static void requireStagingPhysicalName(String name) {
+    if (!isStagingPhysicalName(name)) {
+      throw new InvalidTableNameException(notStagingMessage(name));
+    }
+  }
 
   /**
    * 메타데이터 이름(소문자)을 Tibero 물리 이름(대문자)으로 바꾼다.
@@ -44,7 +94,7 @@ public final class TiberoNames {
    */
   public static void validateUserName(String metadataName) {
     String upper = physical(metadataName);
-    if (STAGING_SHAPED.matcher(metadataName).matches()) {
+    if (isStagingName(metadataName)) {
       throw new IllegalArgumentException(
           "내부 스테이징 테이블용으로 예약된 이름 형식이라 사용할 수 없습니다(stg_ + 16진수 24자): " + metadataName);
     }
@@ -121,6 +171,14 @@ public final class TiberoNames {
   /** 테이블 전용 시퀀스 이름 {@code SQ_<10hex>}. */
   public static String sequenceName(String schema, String table) {
     return "SQ_" + hash(10, "SQ", schema, table);
+  }
+
+  /**
+   * 행 트리거 이름 {@code TG_<10hex>}(WD-77) — 스키마·테이블에서 파생해 길이(13자)가 30자 한도 안이고, 같은 테이블이면 언제나 같은 이름이라 존재
+   * 확인·재생성이 결정적이다.
+   */
+  public static String triggerName(String schema, String table) {
+    return "TG_" + hash(10, "TG", schema, table);
   }
 
   /** 스테이징 테이블 이름 {@code STG_<24hex>} — 호출마다 달라야 하므로 랜덤 UUID 기반. */

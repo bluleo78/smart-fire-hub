@@ -44,7 +44,12 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
 
   @LocalServerPort private int port;
 
+  /** Python 실행기 토큰 — 저장소 종류만 받는다. */
   @Value("${app.executor.internal-token}")
+  private String executorToken;
+
+  /** db-executor 토큰 — 전체 기술자(OWNER·RO)를 받는다. */
+  @Value("${app.db-executor.internal-token}")
   private String token;
 
   @Autowired private TenantDataStoreRepository repository;
@@ -203,6 +208,70 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
     assertThat(res.body()).contains("\"code\":\"DATA_STORE_NOT_READY\"");
   }
 
+  // ---- 토큰 분리(스펙 §3.4): Python 실행기 토큰은 저장소 종류만 받는다 ----
+
+  @Test
+  void 실행기토큰_Tibero_종류와_테넌트만_비밀_접속정보_없음() throws Exception {
+    long id = newTibero(TenantDataStoreStatus.READY);
+
+    HttpResponse<String> res = get(id, "Internal " + executorToken, "?include=ro");
+
+    assertThat(res.statusCode()).isEqualTo(200);
+    assertThat(res.body())
+        .contains("\"backend\":\"TIBERO\"")
+        .contains("\"tenantId\":" + id)
+        .doesNotContain("owner")
+        .doesNotContain("\"ro\"")
+        .doesNotContain("host")
+        .doesNotContain("password")
+        .doesNotContain("plain-");
+  }
+
+  @Test
+  void 실행기토큰_PG테넌트_기존과_같은_응답() throws Exception {
+    HttpResponse<String> res = get(DEFAULT_TEST_TENANT_ID, "Internal " + executorToken);
+
+    assertThat(res.statusCode()).isEqualTo(200);
+    assertThat(res.body()).contains("\"backend\":\"POSTGRESQL\"").doesNotContain("password");
+  }
+
+  @Test
+  void db실행기토큰_Tibero_전체기술자() throws Exception {
+    long id = newTibero(TenantDataStoreStatus.READY);
+
+    HttpResponse<String> res = get(id, "Internal " + token, "?include=ro");
+
+    assertThat(res.statusCode()).isEqualTo(200);
+    assertThat(res.body())
+        .contains("\"owner\":{\"username\":\"GENIA_T" + id + "\"")
+        .contains("\"password\":\"plain-OWNER\"")
+        .contains("\"password\":\"plain-RO\"")
+        .contains("\"host\":\"tibero.example\"");
+  }
+
+  @Test
+  void 두토큰이_같으면_기동_실패() {
+    ExecutorDataStoreDescriptorService service = stubService();
+
+    assertThatThrownBy(() -> new ExecutorDataStoreController(service, "same", "same", false))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("app.executor.internal-token")
+        .hasMessageContaining("app.db-executor.internal-token");
+  }
+
+  @Test
+  void 실행기토큰_service는_종류만_조회() {
+    ExecutorDataStoreDescriptorService service = stubService();
+    when(service.describeBackendOnly(anyLong()))
+        .thenReturn(ExecutorDataStoreDescriptor.postgres(1));
+
+    new ExecutorDataStoreController(service, "exec-t", "db-t", false)
+        .describe("Internal exec-t", 1, "ro");
+
+    verify(service).describeBackendOnly(1);
+    verify(service, never()).describe(anyLong(), anyBoolean(), anyBoolean());
+  }
+
   // ---- R-token: 직접 생성 ----
 
   private static ExecutorDataStoreDescriptorService stubService() {
@@ -225,7 +294,7 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
   @Test
   void 빈설정토큰_503_service_미호출() {
     ExecutorDataStoreDescriptorService service = stubService();
-    ExecutorDataStoreController c = new ExecutorDataStoreController(service, "", false);
+    ExecutorDataStoreController c = new ExecutorDataStoreController(service, "", "", false);
 
     assertNotConfigured(c, "Internal ");
     verify(service, never()).describe(anyLong(), anyBoolean(), anyBoolean());
@@ -234,7 +303,7 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
   @Test
   void 공백설정토큰_503() {
     assertNotConfigured(
-        new ExecutorDataStoreController(stubService(), "   ", true), "Internal    ");
+        new ExecutorDataStoreController(stubService(), "   ", "  ", true), "Internal    ");
   }
 
   @Test
@@ -242,19 +311,20 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
     ExecutorDataStoreDescriptorService service = stubService();
     for (String insecure : ExecutorDataStoreController.INSECURE_DEFAULT_TOKENS) {
       ResponseEntity<ExecutorDataStoreDescriptor> res =
-          new ExecutorDataStoreController(service, insecure, false)
+          new ExecutorDataStoreController(service, "exec-x", insecure, false)
               .describe("Internal " + insecure, 1, null);
       assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
-    verify(service, times(2)).describe(1, false, false);
+    verify(service, times(ExecutorDataStoreController.INSECURE_DEFAULT_TOKENS.size()))
+        .describe(1, false, false);
   }
 
   @Test
   void 기본토큰_플래그있으면_비밀허용_전달() {
     ExecutorDataStoreDescriptorService service = stubService();
 
-    new ExecutorDataStoreController(service, "dev-executor-token", true)
-        .describe("Internal dev-executor-token", 1, null);
+    new ExecutorDataStoreController(service, "exec-x", "dev-db-executor-token", true)
+        .describe("Internal dev-db-executor-token", 1, null);
 
     verify(service).describe(1, true, false);
   }
@@ -262,7 +332,7 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
   @Test
   void include_ro_만_includeReadOnly_true로_전달() {
     ExecutorDataStoreDescriptorService service = stubService();
-    ExecutorDataStoreController c = new ExecutorDataStoreController(service, "t", false);
+    ExecutorDataStoreController c = new ExecutorDataStoreController(service, "exec-t", "t", false);
 
     c.describe("Internal t", 1, "ro");
     verify(service).describe(1, true, true);
@@ -281,7 +351,7 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
 
     assertThatThrownBy(
             () ->
-                new ExecutorDataStoreController(real, "executor-token", false)
+                new ExecutorDataStoreController(real, "exec-x", "executor-token", false)
                     .describe("Internal executor-token", id, "ro"))
         .isInstanceOfSatisfying(
             CodedApiException.class,
@@ -297,7 +367,7 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
     ExecutorDataStoreDescriptorService service = stubService();
 
     assertThat(
-            new ExecutorDataStoreController(service, "executor-token", false)
+            new ExecutorDataStoreController(service, "exec-x", "executor-token", false)
                 .describe("Internal nope", 1, null)
                 .getStatusCode())
         .isEqualTo(HttpStatus.UNAUTHORIZED);
@@ -312,7 +382,7 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
         new ExecutorDataStoreDescriptorService(repository, encryption);
 
     ExecutorDataStoreController refused =
-        new ExecutorDataStoreController(real, "executor-token", false);
+        new ExecutorDataStoreController(real, "exec-x", "executor-token", false);
     assertThatThrownBy(() -> refused.describe("Internal executor-token", id, null))
         .isInstanceOfSatisfying(
             CodedApiException.class,
@@ -323,7 +393,7 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
             });
 
     ResponseEntity<ExecutorDataStoreDescriptor> allowed =
-        new ExecutorDataStoreController(real, "executor-token", true)
+        new ExecutorDataStoreController(real, "exec-x", "executor-token", true)
             .describe("Internal executor-token", id, null);
     assertThat(allowed.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(allowed.getBody().owner().password()).isEqualTo("plain-OWNER");
@@ -332,7 +402,7 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
   @Test
   void 커스텀토큰_OK_틀리면_401() {
     ExecutorDataStoreController c =
-        new ExecutorDataStoreController(stubService(), "s3cret-x", false);
+        new ExecutorDataStoreController(stubService(), "exec-s3cret", "s3cret-x", false);
 
     assertThat(c.describe("Internal s3cret-x", 1, null).getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(c.describe("Internal nope", 1, null).getStatusCode())
@@ -343,7 +413,8 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
   @Test
   void 성공응답_no_store() {
     ResponseEntity<ExecutorDataStoreDescriptor> res =
-        new ExecutorDataStoreController(stubService(), "t", false).describe("Internal t", 1, null);
+        new ExecutorDataStoreController(stubService(), "exec-t", "t", false)
+            .describe("Internal t", 1, null);
 
     assertThat(res.getHeaders().getCacheControl()).contains("no-store");
   }

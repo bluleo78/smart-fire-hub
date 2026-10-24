@@ -1,0 +1,4 @@
+{
+  "description": "Tibero 증분 커서 후보 조회 문장(WD-77 Task 10, Ruling 11). api TiberoIncrementalCursor.CANDIDATE_SQL 과 db-executor TiberoSqlGuard.CURSOR_CANDIDATE_SQL 이 이 값과 정확히 같아야 한다 — 두 복사본이 어긋나면 db-executor 가드가 후보 조회를 거부한다.",
+  "sql": "SELECT TO_CHAR(LEAST(SYSTIMESTAMP, NVL(FROM_TZ(CAST(MIN(START_TIME) AS TIMESTAMP), TO_CHAR(SYSTIMESTAMP, 'TZH:TZM')), SYSTIMESTAMP)) AT TIME ZONE '+00:00', 'YYYY-MM-DD HH24:MI:SS.FF6') AS CANDIDATE FROM SYS._VT_TRANSACTION"
+}

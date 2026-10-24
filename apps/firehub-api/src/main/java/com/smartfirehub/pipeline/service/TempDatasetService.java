@@ -7,6 +7,8 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
+import com.smartfirehub.dataset.storage.tibero.TiberoNames;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +22,9 @@ public class TempDatasetService {
   private final DatasetService datasetService;
   private final DatasetColumnRepository columnRepository;
   private final DataTableService dataTableService;
+
+  /** 테넌트 저장소 판정 — Tibero 테넌트의 TEMP 테이블 이름 규칙(30자)을 고르는 데 쓴다. */
+  private final PipelineDataSchema pipelineDataSchema;
 
   /** Find the dataset ID for an existing temp dataset linked to the given pipeline step (FK). */
   public Optional<Long> findExistingTempDataset(Long stepId) {
@@ -60,8 +65,11 @@ public class TempDatasetService {
       String stepName,
       Long userId) {
 
-    String sanitizedName = sanitizeForTableName(stepName);
-    String tableName = "ptmp_" + pipelineId + "_" + sanitizedName;
+    // Tibero 는 식별자 30자 제한이라 PG 규칙(단계 이름 포함)을 못 쓴다 — 단계 id 기반의 안정적인 짧은 이름을 쓴다.
+    String tableName =
+        pipelineDataSchema.isTibero()
+            ? tiberoTempTableName(pipelineId, stepId)
+            : "ptmp_" + pipelineId + "_" + sanitizeForTableName(stepName);
     String datasetName = pipelineName + " > " + stepName + " (자동생성)";
 
     List<DatasetColumnRequest> columnRequests = toColumnRequests(columns);
@@ -85,9 +93,17 @@ public class TempDatasetService {
    * 새 TEMP 데이터셋 컬럼이 생성 검증({@link DataTableService#validateNewColumns})을 통과하는지 미리 확인한다. 스키마가 바뀐 TEMP
    * 는 "옛 것 삭제 → 새로 생성" 이라, 러너가 삭제 전에 불러 실패할 생성이면 옛 TEMP 를 그대로 둔다. 실제 생성과 같은 요청({@link
    * #toColumnRequests})으로 검증한다.
+   *
+   * <p>Tibero 테넌트는 추가로 모든 컬럼 이름을 {@link TiberoNames#validateUserName}(30자·예약어·스테이징 형식)으로 본다 — 이 검사는
+   * 실제 생성 때 Tibero 저장소가 하므로, 여기서 먼저 하지 않으면 옛 TEMP 를 지운 뒤에야 실패해 이전 출력이 사라진다. PG 는 기존 검사만 한다.
    */
   public void validateColumnsForNewTemp(List<ColumnInfo> columns) {
     dataTableService.validateNewColumns(toColumnRequests(columns));
+    if (pipelineDataSchema.isTibero()) {
+      for (ColumnInfo column : columns) {
+        TiberoNames.validateUserName(column.name());
+      }
+    }
   }
 
   /**
@@ -128,6 +144,30 @@ public class TempDatasetService {
    */
   public void deleteTempDataset(Long datasetId) {
     datasetService.deleteDataset(datasetId);
+  }
+
+  /**
+   * Tibero 테넌트의 TEMP 테이블 이름 {@code ptmp_<파이프라인 id>_<단계 id 36진수>}.
+   *
+   * <p>같은 파이프라인·단계면 항상 같은 이름이고 단계 이름과 무관하다 — 단계를 바꿔 이름이 달라지면 이전 TEMP 와 새 TEMP 가 따로 생겨 고아가 된다. 물리
+   * 이름은 대문자로 바뀌어도 길이가 같다. id 가 매우 커서 30자를 넘으면(두 id 가 합쳐 24자 초과) {@code ptmp_} + 두 id 의 SHA-256 앞 24
+   * hex 로 대신한다 (29자, 같은 입력엔 같은 이름).
+   */
+  static String tiberoTempTableName(Long pipelineId, Long stepId) {
+    String name = "ptmp_" + pipelineId + "_" + Long.toString(stepId, 36);
+    if (name.length() <= TiberoDialect.MAX_IDENTIFIER_LENGTH) {
+      return name;
+    }
+    try {
+      byte[] digest =
+          java.security.MessageDigest.getInstance("SHA-256")
+              .digest(
+                  (pipelineId + ":" + stepId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      return "ptmp_" + java.util.HexFormat.of().formatHex(digest, 0, 12);
+    } catch (java.security.NoSuchAlgorithmException e) {
+      // SHA-256 은 모든 JVM 이 보장하므로 도달 불가
+      throw new IllegalStateException(e);
+    }
   }
 
   /**

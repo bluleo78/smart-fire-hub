@@ -139,4 +139,61 @@ class TiberoNamesTest {
     assertThat(a).matches("^STG_[0-9A-F]{24}$");
     assertThat(TiberoNames.stagingTableName()).isNotEqualTo(a);
   }
+
+  /** 트리거 이름은 TG_ + 10자 hex(30자 이내), 대소문자와 무관하게 안정적이며 테이블마다 다르다(WD-77). */
+  @Test
+  void triggerName_shortStableAndPerTable() {
+    String a = TiberoNames.triggerName("GENIA_T5", "orders");
+    assertThat(a).matches("^TG_[0-9A-F]{10}$");
+    assertThat(a.length()).isLessThanOrEqualTo(30);
+    assertThat(TiberoNames.triggerName("genia_t5", "ORDERS")).isEqualTo(a);
+    assertThat(TiberoNames.triggerName("GENIA_T5", "orders2")).isNotEqualTo(a);
+    assertThat(TiberoNames.triggerName("GENIA_T6", "orders")).isNotEqualTo(a);
+    // 시퀀스·인덱스 이름과 해시 입력이 달라 겹치지 않는다.
+    assertThat(a.substring(3))
+        .isNotEqualTo(TiberoNames.sequenceName("GENIA_T5", "orders").substring(3));
+  }
+
+  /**
+   * 코드리뷰 5: 스테이징 이름 판정을 한 곳에 모은다. 대소문자 무시 판정(사용자 이름 거부·임시 적재 관문)과 대문자 물리 이름 판정(옮기기·삭제 관문·고아 스윕)을 같은
+   * 정규식에서 만든다.
+   */
+  @Test
+  void stagingName_anyCase_vs_physicalUppercaseOnly() {
+    String physical = TiberoNames.stagingTableName();
+    String logical = physical.toLowerCase(Locale.ROOT);
+
+    assertThat(TiberoNames.isStagingName(physical)).isTrue();
+    assertThat(TiberoNames.isStagingName(logical)).isTrue();
+    assertThat(TiberoNames.isStagingPhysicalName(physical)).isTrue();
+    assertThat(TiberoNames.isStagingPhysicalName(logical)).isFalse();
+    for (String bad :
+        new String[] {
+          null,
+          "",
+          "STG_XYZ",
+          "stg_report",
+          "STG_0123456789ABCDEF0123456",
+          physical + "\n",
+          " " + physical
+        }) {
+      assertThat(TiberoNames.isStagingName(bad)).as(String.valueOf(bad)).isFalse();
+      assertThat(TiberoNames.isStagingPhysicalName(bad)).as(String.valueOf(bad)).isFalse();
+    }
+  }
+
+  @Test
+  void requireStagingName_throwsInvalidTableName_withSameMessageForBothGates() {
+    String physical = TiberoNames.stagingTableName();
+    assertThatCode(() -> TiberoNames.requireStagingName(physical.toLowerCase(Locale.ROOT)))
+        .doesNotThrowAnyException();
+    assertThatCode(() -> TiberoNames.requireStagingPhysicalName(physical))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> TiberoNames.requireStagingName("orders"))
+        .isInstanceOf(com.smartfirehub.dataset.exception.InvalidTableNameException.class)
+        .hasMessage("'orders' 은(는) Tibero 임시(스테이징) 테이블 이름이 아닙니다");
+    assertThatThrownBy(
+            () -> TiberoNames.requireStagingPhysicalName(physical.toLowerCase(Locale.ROOT)))
+        .isInstanceOf(com.smartfirehub.dataset.exception.InvalidTableNameException.class);
+  }
 }

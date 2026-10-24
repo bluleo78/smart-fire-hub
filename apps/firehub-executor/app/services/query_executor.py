@@ -6,7 +6,7 @@ import time
 import weakref
 from typing import Any, Dict, List, Tuple
 
-from app.schemas.responses import QueryExecuteResponse
+from app.schemas.responses import QueryExecuteResponse, db_error_of
 from app.tenant import resolve_schema
 
 logger = logging.getLogger(__name__)
@@ -623,6 +623,7 @@ def execute_query(
         return QueryExecuteResponse(
             success=False,
             error="Query must not be empty",
+            db_error=db_error_of("Query must not be empty"),
             execution_time_ms=0,
         )
 
@@ -639,6 +640,7 @@ def execute_query(
             success=False,
             query_type=query_type,
             error=f"read_only mode does not allow {detected} statements",
+            db_error=db_error_of(f"read_only mode does not allow {detected} statements"),
             execution_time_ms=int((time.perf_counter() - start) * 1000),
         )
 
@@ -773,6 +775,7 @@ def execute_query(
             success=False,
             query_type=query_type,
             error=str(exc),
+            db_error=db_error_of(str(exc), sqlstate(exc)),
             execution_time_ms=elapsed_ms,
         )
     finally:

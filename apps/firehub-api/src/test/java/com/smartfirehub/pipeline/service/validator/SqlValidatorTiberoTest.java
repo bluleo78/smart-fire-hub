@@ -485,4 +485,32 @@ class SqlValidatorTiberoTest {
             () -> SqlValidator.forAdhocDataSchemaQueries().requireQualifiedTables("SELECT 1"))
         .isInstanceOf(IllegalStateException.class);
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // WD-77 Task 10 — 증분(`{{last_run_at}}`): Tibero 리터럴 치환 뒤에도 검증·읽기 대상 추출·경고가 동작한다.
+  // ---------------------------------------------------------------------------------------------
+
+  /** Tibero 시간대 없는 TIMESTAMP 리터럴이 검증기를 통과하고, 읽기 테이블이 접힌 이름으로 나온다. */
+  @Test
+  void incremental_tiberoTimestampLiteral_validatesAndExposesReadTables() {
+    String sql =
+        com.smartfirehub.pipeline.service.LastRunAtPlaceholder.substitute(
+            "SELECT k, v FROM genia_t5.src_orders WHERE \"_UPDATED_AT\" >= {{last_run_at}}",
+            java.time.OffsetDateTime.parse("2026-10-24T01:02:03.123456Z"),
+            com.smartfirehub.dataset.storage.DataStoreBackend.TIBERO);
+
+    assertThat(validator.validate(sql)).isEqualTo(SqlValidator.StatementKind.QUERY);
+    assertThat(validator.referencedTables(sql).reads())
+        .containsExactly(new SqlValidator.TableName("GENIA_T5", "SRC_ORDERS"));
+  }
+
+  /** 증분 어드바이저리 경고는 Tibero 검증기에서도 계산된다(PG 리터럴 파싱 실패로 조용히 빈 목록이 되지 않는다). */
+  @Test
+  void incremental_warnings_workInTiberoMode() {
+    assertThat(
+            validator.incrementalWarnings(
+                "SELECT code, COUNT(*) FROM genia_t5.src WHERE \"_UPDATED_AT\" >= {{last_run_at}}"
+                    + " GROUP BY code"))
+        .isNotEmpty();
+  }
 }

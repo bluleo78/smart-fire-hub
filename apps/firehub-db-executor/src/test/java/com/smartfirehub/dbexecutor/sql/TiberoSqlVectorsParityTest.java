@@ -72,6 +72,24 @@ class TiberoSqlVectorsParityTest {
     }
   }
 
+  /**
+   * 두 복사본이 의도적으로 다른 지점 — db-executor 복사본만 증분 커서 후보 문장 전체 일치를 허용한다(Ruling 11). 짝: api
+   * TiberoSqlGuardTest.guardDivergence_apiRejectsCursorStatement.
+   */
+  @Test
+  void guardDivergence_dbExecutorAllowsCursorStatement() {
+    JsonNode cases = FIXTURE.get("guardDivergence");
+    assertThat(cases.size()).isGreaterThanOrEqualTo(1);
+    for (JsonNode c : cases) {
+      assertThat(c.get("dbExecutorAllowed").asBoolean()).isTrue();
+      String sql = c.get("sql").asText();
+      String schema = c.get("tenantSchema").asText();
+      assertThatCode(() -> check(sql, schema))
+          .as(c.get("name").asText())
+          .doesNotThrowAnyException();
+    }
+  }
+
   private static void check(String sql, String tenantSchema) {
     TiberoSqlGuard.requireAllowedStatement(sql);
     TiberoSqlGuard.requireNoForeignSchemaCalls(sql, tenantSchema);

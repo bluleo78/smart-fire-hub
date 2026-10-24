@@ -12,19 +12,19 @@
 
 ## Tibero 테넌트 — 실행할 수 있는 스텝 (필수, WD-79)
 
-이 테넌트의 데이터 저장소는 Tibero 다. api(`PipelineAsyncRunner`)는 **출력 데이터셋을 지정한 SQL 스텝만** 실행하고 나머지는 실행 시점에 아래 문구로 거부한다:
+이 테넌트의 데이터 저장소는 Tibero 다. SQL·API_CALL·AI_CLASSIFY 스텝(증분 SQL·출력 데이터셋 없는 SQL·직접 작성한 INSERT 포함)은 PG 테넌트와 같이 설계하고, 아직 실행하지 못하는 것은 PYTHON 스텝 하나뿐이다. api(`PipelineAsyncRunner`)는 PYTHON 스텝을 실행 시점에 아래 문구로 거부한다:
 
 | 스텝 | api 거부 문구 |
 |------|------|
 | PYTHON | "Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다." |
-| API_CALL | "Tibero 저장소 테넌트에서는 아직 API 수집 단계를 실행할 수 없습니다." |
-| AI_CLASSIFY | "Tibero 저장소 테넌트에서는 아직 AI 분류 단계를 실행할 수 없습니다." |
-| 증분 SQL | "Tibero 저장소 테넌트에서는 아직 증분 SQL 단계를 실행할 수 없습니다." |
-| 출력 데이터셋(outputDatasetId) 없는 SQL | "Tibero 저장소 테넌트의 SQL 단계는 출력 데이터셋을 지정해야 합니다." |
 
-- 요청에 위 스텝이 필요하면 **Phase 1(DISCOVER)에서 즉시** 해당 문구를 그대로 인용해 알리고, 가능한 경우 SQL 단계로 설계하는 대안을 제시한다(예: 이미 데이터셋에 있는 데이터를 SQL 로 가공·JOIN). SQL 로 대체할 수 없으면 만들지 않고 보고한다.
+- 요청에 Python 스텝이 필요하면 **Phase 1(DISCOVER)에서 즉시** 위 문구를 그대로 인용해 알리고, 가능한 경우 SQL 단계로 설계하는 대안을 제시한다(예: 이미 데이터셋에 있는 데이터를 SQL 로 가공·JOIN). SQL 로 대체할 수 없으면 만들지 않고 보고한다.
 - 실행되지 않을 스텝을 "일단 만들어 두는" 설계·생성도 하지 않는다.
-- **Tibero SQL 단계는 반드시 outputDatasetId 를 지정한다.** 임시 데이터셋을 대신 만들어 주지 않으므로, 출력 데이터셋이 없으면 데이터셋 생성(dataset-manager)을 먼저 안내하고 받은 ID 로 설계한다. 여러 스텝을 잇는 중간 결과도 각자 출력 데이터셋을 가져야 한다.
+- **API_CALL·AI_CLASSIFY** 는 PG 와 같이 쓴다(출력 데이터셋에 REPLACE·APPEND 모두 가능).
+- **출력 데이터셋 없는 SQL 단계** 는 PG 와 같이 임시(TEMP) 데이터셋이 자동 생성된다. 컬럼명은 Tibero 규칙(30자 이내, 예약어 불가)을 지킨다.
+- **증분 SQL**: SQL 에 `{{last_run_at}}` 를 쓰면 api 가 직전 성공 시점의 Tibero 타임스탬프 식으로 바꿔 넣는다. 입력 테이블의 시스템 컬럼 `"_UPDATED_AT"`(대문자 + 큰따옴표 — 이 시스템 컬럼만 예외)과 비교하고, 테이블은 스키마로 한정한다: `WHERE s."_UPDATED_AT" > {{last_run_at}}` (`FROM genia_t5.sales s`). `{{last_run_at}}` 자체가 타임스탬프 식이므로 형변환을 덧붙이지 않는다.
+- 증분 SQL 과 직접 작성한 INSERT 는 행 트리거가 필요하다 — 워크스페이스 Tibero 계정에 트리거 권한이 없으면 api 가 단계를 실패시키고 운영자에게 `GRANT CREATE TRIGGER` 를 요청하라는 한국어 안내를 낸다(그대로 전달한다).
+- 직접 작성한 MERGE 문은 검증기가 허용되지 않는 문장으로 거부한다 — SELECT 로 쓰고 `loadStrategy` 로 적재 방식을 고른다.
 - SQL 스텝 본문은 아래 "Tibero SQL 규칙" 을 따른다(테이블은 `genia_t5.sales` 처럼 스키마로 한정, 따옴표 없이). `{{#N}}` 참조는 그대로 쓴다.
 
 ## Tibero SQL 규칙 (SQL 스텝 본문)
@@ -62,14 +62,16 @@
 - N은 **1부터 시작** (0이 아님!)
 - N은 steps 배열 내 순서 기준 (첫 번째 스텝 = {{#1}})
 - SQL scriptContent 내에서만 사용
-- 실행 시 참조한 스텝의 출력 데이터셋 테이블(스키마로 한정한 이름)로 치환
-- 참조하는 스텝이 출력 데이터셋을 가져야 함 (Tibero 는 모든 SQL 단계가 outputDatasetId 필수) — **단, 이 자동 치환은 SQL scriptContent 전용이다. PYTHON 스텝의 scriptContent 문자열에는 `{{#N}}` 치환이 적용되지 않는다** (백엔드 `PipelineAsyncRunner`는 SQL 실행 분기에서만 치환을 수행). 아래 "PYTHON 입력 데이터셋 (제약)" 절 참조.
+- 실행 시 참조한 스텝의 출력(임시 데이터셋 포함) 테이블로 치환
+- 참조하는 스텝이 출력 데이터셋을 가져야 함 (temp 자동 생성 포함) — **단, 이 자동 치환은 SQL scriptContent 전용이다. PYTHON 스텝의 scriptContent 문자열에는 `{{#N}}` 치환이 적용되지 않는다** (백엔드 `PipelineAsyncRunner`는 SQL 실행 분기에서만 치환을 수행). 아래 "PYTHON 입력 데이터셋 (제약)" 절 참조.
 
 ## 출력 데이터셋
-- **Tibero SQL 단계는 반드시 outputDatasetId 를 지정한다.** 비워 두면 실행 시 "Tibero 저장소 테넌트의 SQL 단계는 출력 데이터셋을 지정해야 합니다." 로 거부된다(출력 데이터셋을 비워 두는 방식은 이 테넌트에서 아직 지원하지 않는다).
 - outputDatasetId 지정: 해당 데이터셋에 결과 적재
-- 출력 데이터셋의 컬럼은 SQL SELECT 결과 컬럼과 이름으로 맞춰진다 — 데이터셋 컬럼 구성을 먼저 확인한다
-- 출력 데이터셋을 가진 스텝은 {{#N}}으로 다른 스텝에서 참조 가능
+- outputDatasetId 미지정: TEMP 타입 임시 데이터셋 자동 생성
+  - SQL SELECT: 쿼리 컬럼에서 스키마 자동 추론 (컬럼명은 Tibero 30자 제한·예약어 규칙을 따른다)
+  - Python: pythonConfig.outputColumns에서 스키마 결정
+  - AI_CLASSIFY: aiConfig.outputColumns에서 스키마 결정
+- temp 데이터셋은 {{#N}}으로 다른 스텝에서 참조 가능
 
 ### 예약 컬럼 (자동 추가됨 — 절대 SELECT하지 마세요!)
 데이터셋 생성 시 시스템이 자동으로 다음 컬럼을 추가합니다:
@@ -137,7 +139,7 @@ dependsOnStepNames만 설정하면 됩니다.
 이때 다음 행동은 **모두 금지**한다 (어떤 이유로도 우회·자동 대체 금지):
 
 1. `inputDatasetIds`를 제거하고 `scriptContent`를 `SELECT 1`, `SELECT 1 AS placeholder`, `SELECT NULL`, `VALUES (1)` 등 임의의 더미 SQL로 대체해 `create_pipeline`을 호출하는 것
-2. `outputDatasetId`를 `null`로 바꿔 "일단 틀이라도 생성"하는 것 (Tibero 는 출력 데이터셋 없는 SQL 단계를 실행 시 거부한다)
+2. `outputDatasetId`를 `null`로 바꿔 임시 데이터셋을 자동 생성하게 만들어 "일단 틀이라도 생성"하는 것
 3. 존재하지 않는 ID 기반 파이프라인에 `create_trigger`(SCHEDULE 포함)를 등록하는 것 — 의미 없는 cron이 영구 잔존하므로 절대 금지
 4. `execute_pipeline`으로 더미 SQL을 실행해 "부분 성공"이라 보고하는 것
 
@@ -237,14 +239,14 @@ Tibero 는 테이블 이름이 틀린 경우와 **실행 계정에 그 테이블
 | INSERT INTO 직접 작성 | SQL 자동 적재 미인지 | SELECT만 작성 (자동 INSERT) |
 | {{#0}} 사용 | 0-indexed 착각 | {{#1}}부터 시작 |
 | 순환 의존성 | DAG 미검증 | 설계 시 의존 그래프 확인 |
-| outputDatasetId 없는 SQL 단계 | Tibero 의 출력 데이터셋 필수 규칙 미인지 | 모든 SQL 단계에 outputDatasetId 지정 ("Tibero 저장소 테넌트의 SQL 단계는 출력 데이터셋을 지정해야 합니다.") |
+| temp 데이터셋 수동 생성 | 자동 생성 미인지 | outputDatasetId 미지정으로 자동 생성 |
 | column "id" specified more than once | SELECT에 id/import_id/created_at/_updated_at 포함 | 예약 컬럼은 별칭 사용 (id → source_id) |
 | AI_CLASSIFY "No input rows found" | inputDatasetIds가 비어있고 의존 스텝 없음 | dependsOnStepNames로 이전 스텝 연결 (자동 resolve) |
 | placeholder/더미 SQL로 파이프라인 강제 생성 | 입력 데이터셋 404를 우회하려는 환각 | get_dataset 404 → 즉시 abort, SELECT 1 류 대체 금지 (위 "데이터셋 ID 유효성" 절 참조) |
 | 의미 없는 파이프라인에 SCHEDULE 트리거 자동 등록 | "일단 트리거까지 걸어둬" 위임 | 입력 데이터셋 유효성 미검증 파이프라인에는 create_trigger 호출 금지 |
 | 테이블 없음(`JDBC-8033`) 오류에 스키마 한정자를 제거 | 권한 없음·이름 오류를 같은 코드로 받음 | 한정자는 그대로 두고 이름을 `get_data_schema` 와 대조, 같으면 운영자 권한 문제로 보고 (refs #682, 위 "스키마 오류 해석 규칙" 절) |
 | get_dataset 호출 없이 "확인해보니 존재하지 않습니다" 진술 | 사용자가 이미 없다고 말한 것을 근거로 검증 생략 후 확정 진술 | ID 언급 시 `get_dataset` 실제 호출 후에만 확인 표현 사용, 생략 시 "확인이 필요합니다" 등 미검증 표현 사용 (refs #574) |
-| Tibero 테넌트에 PYTHON·API_CALL·AI_CLASSIFY·증분 SQL 스텝 설계 → 실행 시 거부 | Tibero 는 SQL 스텝만 실행 | Phase 1(DISCOVER)에서 스텝 종류를 먼저 확인해 api 거부 문구로 조기 고지, SQL 단계로 대안 설계 (맨 위 "Tibero 테넌트 — 실행할 수 있는 스텝" 절) |
+| Tibero 테넌트에 PYTHON 스텝 설계 → 실행 시 거부 | Tibero 는 아직 Python 단계를 실행하지 못함 | Phase 1(DISCOVER)에서 스텝 종류를 먼저 확인해 api 거부 문구로 조기 고지, SQL 단계로 대안 설계 (맨 위 "Tibero 테넌트 — 실행할 수 있는 스텝" 절) |
 
 ## 파이프라인 삭제 전 트리거 조회 필수 (정확성, refs #598)
 

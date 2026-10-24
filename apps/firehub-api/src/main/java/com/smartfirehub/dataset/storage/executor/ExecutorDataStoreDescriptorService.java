@@ -34,6 +34,25 @@ public class ExecutorDataStoreDescriptorService {
   }
 
   /**
+   * 백엔드 종류와 테넌트만 담은 기술자를 낸다 — Python 실행기용(스펙 §3.4). Tibero 여도 계정을 읽거나 복호화하지 않으므로 비밀·접속 정보가 담기지 않는다.
+   * READY 여부는 보지 않는다: Python 실행기는 Tibero 테넌트를 어차피 종류만으로 거부하고, 준비 상태 안내는 db-executor 몫이다.
+   *
+   * @throws CodedApiException 409 — 지원하지 않는 백엔드(DATA_STORE_BACKEND_UNSUPPORTED)
+   */
+  public ExecutorDataStoreDescriptor describeBackendOnly(long tenantId) {
+    TenantDataStoreRow row = repository.find(tenantId).orElse(null);
+    if (row == null || row.backend() == DataStoreBackend.POSTGRESQL) {
+      return ExecutorDataStoreDescriptor.postgres(tenantId);
+    }
+    if (row.backend() != DataStoreBackend.TIBERO) {
+      throw new CodedApiException(
+          HttpStatus.CONFLICT, "DATA_STORE_BACKEND_UNSUPPORTED", "MySQL 저장소는 아직 실행기에서 지원하지 않습니다");
+    }
+    return new ExecutorDataStoreDescriptor(
+        tenantId, DataStoreBackend.TIBERO, null, null, null, null, null, null);
+  }
+
+  /**
    * @param includeReadOnly true 면 Tibero 기술자에 읽기 전용(RO) 계정을 복호화해 싣는다(db-executor 분석 조회용, WD-76). RO
    *     행이 없으면 {@code ro} 없이 응답한다(실패 안내는 소비자 몫). PostgreSQL 테넌트는 이 값과 무관하게 PG 기술자 그대로다.
    * @param secretsAllowed 평문 비밀번호를 내도 되는가(내부 토큰이 안전하게 설정됨). false 면 비밀번호가 담길 TIBERO 기술자는 복호화 전에 503

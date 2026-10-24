@@ -590,14 +590,12 @@ executor 는 실행 요청 앞단에서 api 의 테넌트 저장소 기술자(`G
 
 - **배포 순서**: api → executor 순서로(또는 함께) 배포한다. 새 executor 와 옛 api 가 붙으면 기술자 엔드포인트가 없어 모든 실행이 "api 를 먼저 배포하세요" 오류로 실패한다(PG 로 폴백하지 않는다 — fail-closed).
 - **`EXECUTOR_API_BASE_URL`**: executor 가 api 를 찾는 주소. 기본값은 `http://api:8080` 이다 — compose 서비스명과 k8s Service 이름(`~/k8s/smart-fire-hub` 의 `api`, 포트 8080)이 모두 `api:8080` 이라 값이 없어도 동작한다(api 가 executor 를 `http://executor:8000` 으로 부르는 것과 같은 관례). api 서비스명·포트가 다른 환경에서만 명시한다. 주소가 틀리면 기술자 조회가 실패하고, 실패는 캐시하지 않으므로 PG 테넌트를 포함한 **모든 실행이 매번 실패한다**(PG 로 폴백하지 않는다). executor 는 이 값이 명시되지 않았으면 기동 로그에 WARNING 을 한 번 남긴다 — 서비스명이 기본과 같으면 무시해도 된다. 로컬 개발(api 5010)은 `EXECUTOR_API_BASE_URL=http://localhost:5010` 으로 덮어쓴다.
-- **토큰 체크리스트(필수)**: Tibero 백엔드 테넌트를 어떤 환경에서 쓰기 전에, api 의 `EXECUTOR_INTERNAL_TOKEN` 과 executor 의 `EXECUTOR_INTERNAL_SERVICE_TOKEN` 을 **같은 비기본 시크릿**으로 맞춘다. compose 에서는 `.env` 의 `EXECUTOR_INTERNAL_TOKEN` 키 하나가 api(`EXECUTOR_INTERNAL_TOKEN`)와 executor(`EXECUTOR_INTERNAL_SERVICE_TOKEN`) 양쪽에 매핑된다. 이 키를 바꾸면 두 서비스를 함께 재기동한다(한쪽만 바뀌면 api↔executor 호출이 401). 비어 있거나 기본값(`executor-token`, `dev-executor-token`)이면 api 가 평문 비밀번호가 담긴 Tibero 기술자 조회를 503 `EXECUTOR_TOKEN_NOT_CONFIGURED` 로 거부한다.
-  - PG 테넌트는 기본 토큰으로도 계속 동작한다(PG 기술자에는 비밀번호가 없다).
-  - 운영 Helm 차트(`~/k8s/smart-fire-hub`)의 `values.yaml` 은 현재 기본 토큰을 쓴다. Tibero 테넌트를 켜기 전에 차트 값 `secrets.executorInternalToken` 을 바꿔야 한다.
+- **토큰(WD-77 2단계에서 분리)**: Python executor 의 토큰(api `EXECUTOR_INTERNAL_TOKEN` = executor `EXECUTOR_INTERNAL_SERVICE_TOKEN`)은 기술자 엔드포인트에서 **backend·tenantId 만** 받는다(Tibero 여도 접속 정보·비밀번호 없음). 전체 기술자(OWNER·RO)는 db-executor 토큰(`DB_EXECUTOR_INTERNAL_TOKEN`)만 받는다. 두 값이 같으면 api 가 기동하지 않는다. PG 쪽 설정(`EXECUTOR_INTERNAL_TOKEN`·`EXECUTOR_INTERNAL_SERVICE_TOKEN`)은 그대로다.
+  - db-executor 토큰이 비어 있거나 기본값(`dev-db-executor-token` 등)이면 api 가 전체 기술자 조회를 503 `EXECUTOR_TOKEN_NOT_CONFIGURED` 로 거부한다. PG 테넌트는 영향 없다.
+  - 운영 Helm 차트(`~/k8s/smart-fire-hub`)에 새 비밀값(`DB_EXECUTOR_INTERNAL_TOKEN`·`DB_EXECUTOR_LOAD_TOKEN`·`DB_EXECUTOR_SCRIPT_TOKEN_KEY`)을 추가하는 일은 3웨이브 작업이다.
   - `app.executor.allow-default-token=true` 는 로컬·테스트 프로파일 전용이며 운영에서 켜지 않는다.
 - **노출 확인**: Ingress·nginx 가 `/internal/**` 를 외부에 노출하지 않는지 확인한다(평문 비밀번호를 내는 경로다. web·admin nginx 는 `/api/` 만 프록시한다).
-- **드라이버 반입**: `apps/firehub-executor/drivers/tibero/` 에 `libtbodbc.so` 와 의존 so 를 둔다. 커밋하지 않는다.
-  - **아키텍처 주의**: `scripts/deploy.sh` 는 `linux/amd64,linux/arm64` 멀티 플랫폼으로 빌드하고, 두 플랫폼이 같은 `drivers/` 디렉터리를 복사한다. 그래서 대상 아키텍처와 맞지 않는 `.so` 도 그대로 등록되고, 빌드는 성공하지만 **접속 시점에야** 로드 실패로 드러난다. 운영 노드 아키텍처에 맞는 드라이버 하나만 넣거나, 아키텍처별로 `--platform` 을 나눠 따로 빌드한다.
-- **이미지 확인**: `docker run --rm <img> odbcinst -q -d` 로 Tibero ODBC 드라이버가 등록됐는지 본다.
+- **ODBC 제거**: Python executor 는 더 이상 Tibero ODBC 드라이버·`pyodbc` 를 쓰지 않는다(이미지에 포함되지 않는다). Tibero 는 db-executor 로만 접근한다.
 - **롤백**: 이미지만 되돌린다. 마이그레이션은 없다.
 
 ### Tibero DB 실행기 (WD-77, 마이그레이션 없음)
@@ -605,7 +603,7 @@ executor 는 실행 요청 앞단에서 api 의 테넌트 저장소 기술자(`G
 Tibero 테넌트의 파이프라인 SQL 단계는 api 가 새 서비스 `db-executor`(`apps/firehub-db-executor`, Spring Boot, 포트 8090)로 보낸다. db-executor 는 Tibero JDBC 로 직접 실행하고, 테넌트 저장소 기술자는 api 에서 조회한다. 포트는 외부에 공개하지 않는다(api 만 내부망으로 호출).
 
 - **배포 순서**: **api 먼저, 그다음 db-executor.** api 가 `DB_EXECUTOR_BASE_URL`(기본 `http://db-executor:8090`)로 db-executor 를 부르고, db-executor 는 시작 후 api 의 기술자 엔드포인트를 쓴다. 새 api 가 먼저 떠 있어야 db-executor 호출이 의미가 있다.
-- **토큰(필수)**: api(`EXECUTOR_INTERNAL_TOKEN`), executor(`EXECUTOR_INTERNAL_SERVICE_TOKEN`), db-executor(`EXECUTOR_INTERNAL_TOKEN`) 세 곳에 **같은 비기본 시크릿**을 넣는다. compose 에서는 `.env` 의 `EXECUTOR_INTERNAL_TOKEN` 키 하나가 셋 모두에 매핑된다. 값을 바꾸면 세 서비스를 함께 재기동한다. 기본값(`executor-token`)이면 api 가 Tibero 기술자 조회를 503 으로 거부한다(WD-75 토큰 체크리스트와 동일).
+- **토큰(필수, 범위별 3종)**: `DB_EXECUTOR_INTERNAL_TOKEN`(api ↔ db-executor 전 창구·기술자 조회, api 와 db-executor 가 같은 값), `DB_EXECUTOR_LOAD_TOKEN`(Python executor 의 `EXECUTOR_DB_EXECUTOR_LOAD_TOKEN` 과 같은 값, `/execute/load` 만 허용), `DB_EXECUTOR_SCRIPT_TOKEN_KEY`(스크립트 1회용 토큰 서명 키, 이후 단계에서 사용). 새 비밀값이라 `docker-compose.prod.yml` 은 `${VAR:?… is required}` 로 필수 처리한다. 내부 토큰은 Python executor 토큰(`EXECUTOR_INTERNAL_TOKEN`)과 **달라야** 하고, 적재 토큰은 내부 토큰과 달라야 한다(같으면 기동 실패). 기본값이면 api 가 Tibero 기술자 조회를 503 으로 거부한다.
 - **환경 변수**: db-executor 는 `DB_EXECUTOR_API_BASE_URL`(기본 `http://api:8080`), api 는 `DB_EXECUTOR_BASE_URL`(기본 `http://db-executor:8090`). 서비스명·포트가 기본과 같으면 명시하지 않아도 된다.
 - **JDBC jar 반입(커밋 금지)**: api 이미지는 예전에 `libs/` 를 복사하지 않아 **운영 api 이미지에 Tibero JDBC 가 없었다.** 이제 api·db-executor 두 Dockerfile 모두 `COPY libs/ libs/` 를 하고, gradle 이 `libs/tibero*.jar` 를 classpath 에 얹는다. **이미지를 빌드하는 컴퓨터**의 아래 두 폴더에 공식 jar(예: `tibero7-jdbc-17.jar`)를 둔다.
   - `apps/firehub-api/libs/`

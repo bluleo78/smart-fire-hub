@@ -1,5 +1,6 @@
 package com.smartfirehub.dbexecutor.sql;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.TenantPools;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -56,6 +58,16 @@ final class FakeJdbc {
   /** 읽기 전용 계정 풀(같은 가짜 DataSource, 계정만 RO 로 선택). */
   final TenantPools roPools;
 
+  /** 적재(PreparedStatement 배치) 기록: 준비한 SQL 은 events 에, 바인딩은 여기에("setInt(1,7)" 형태). */
+  final List<String> binds = Collections.synchronizedList(new ArrayList<>());
+
+  /** executeBatch 직전 훅(호출 번호 1부터). 예외를 던지면 그 배치가 실패한다. */
+  interface BatchHook {
+    void before(int call) throws Exception;
+  }
+
+  volatile BatchHook batchHook = call -> {};
+
   final List<Integer> maxRows = Collections.synchronizedList(new ArrayList<>());
 
   FakeJdbc() throws SQLException {
@@ -69,6 +81,8 @@ final class FakeJdbc {
               return connection;
             });
     when(connection.createStatement()).thenAnswer(inv -> newStatement());
+    when(connection.prepareStatement(anyString()))
+        .thenAnswer(inv -> newPrepared(inv.getArgument(0)));
     doAnswer(inv -> events.add("COMMIT")).when(connection).commit();
     doAnswer(inv -> events.add("ROLLBACK")).when(connection).rollback();
     pools =
@@ -87,6 +101,50 @@ final class FakeJdbc {
             },
             StoreDescriptor::ro,
             8);
+  }
+
+  /** 적재용 PreparedStatement 모의 — 바인딩·addBatch·executeBatch·cancel·setQueryTimeout 을 기록한다. */
+  private PreparedStatement newPrepared(String sql) throws SQLException {
+    PreparedStatement ps = mock(PreparedStatement.class);
+    events.add(sql);
+    int[] pending = {0};
+    int[] calls = {0};
+    doAnswer(inv -> binds.add("setObject(" + inv.getArgument(0) + "," + inv.getArgument(1) + ")"))
+        .when(ps)
+        .setObject(anyInt(), any());
+    doAnswer(inv -> binds.add("setInt(" + inv.getArgument(0) + "," + inv.getArgument(1) + ")"))
+        .when(ps)
+        .setInt(anyInt(), anyInt());
+    doAnswer(inv -> binds.add("setNull(" + inv.getArgument(0) + "," + inv.getArgument(1) + ")"))
+        .when(ps)
+        .setNull(anyInt(), anyInt());
+    doAnswer(inv -> pending[0]++).when(ps).addBatch();
+    when(ps.executeBatch())
+        .thenAnswer(
+            inv -> {
+              batchHook.before(++calls[0]);
+              events.add("BATCH " + pending[0]);
+              int[] result = new int[pending[0]];
+              java.util.Arrays.fill(result, 1);
+              pending[0] = 0;
+              return result;
+            });
+    doAnswer(
+            inv -> {
+              events.add("CANCEL");
+              cancelled.countDown();
+              return null;
+            })
+        .when(ps)
+        .cancel();
+    doAnswer(
+            inv -> {
+              queryTimeouts.add(inv.getArgument(0));
+              return null;
+            })
+        .when(ps)
+        .setQueryTimeout(anyInt());
+    return ps;
   }
 
   private Statement newStatement() throws SQLException {

@@ -19,9 +19,18 @@ import org.springframework.web.bind.annotation.RestController;
  * executor 전용 저장소 기술자 엔드포인트(WD-75).
  *
  * <p>평문 DB 비밀번호를 내므로 {@code /api/} 밖 {@code /internal/executor/**} 에 둔다(web·admin nginx 는 {@code
- * /api/} 만 프록시한다). 인증은 {@code Authorization: Internal <token>} 을 이 컨트롤러가 직접 검증한다. 설정 토큰이 비었거나 알려진
- * 기본값이면 평문 비밀번호를 내지 않고 503 으로 거부한다(R-token) — 로컬·테스트는 {@code app.executor.allow-default-token=true}
- * 로만 허용한다.
+ * /api/} 만 프록시한다). 인증은 {@code Authorization: Internal <token>} 을 이 컨트롤러가 직접 검증하며, 토큰에 따라 줄 수 있는 범위가
+ * 다르다(스펙 §3.4).
+ *
+ * <ul>
+ *   <li>{@code app.executor.internal-token}(Python 실행기): backend 와 tenantId 만 — Tibero 여도 비밀·접속 정보를
+ *       주지 않는다. Python 실행기는 Tibero 에 접속하지 않고 이 값으로 거부 여부만 판단한다.
+ *   <li>{@code app.db-executor.internal-token}(db-executor): 현행 전체 기술자(OWNER, {@code include=ro} 면
+ *       RO). 이 토큰이 비었거나 알려진 기본값이면 평문 비밀번호를 내지 않고 503 으로 거부한다(R-token) — 로컬·테스트는 {@code
+ *       app.executor.allow-default-token=true} 로만 허용한다.
+ * </ul>
+ *
+ * <p>두 토큰이 같으면 Python 실행기가 전체 기술자를 받게 되므로 기동 시 실패시킨다(설정 실수 방지).
  */
 @RestController
 public class ExecutorDataStoreController {
@@ -29,7 +38,8 @@ public class ExecutorDataStoreController {
   private static final Logger log = LoggerFactory.getLogger(ExecutorDataStoreController.class);
 
   /** 설정 파일·compose 에 박혀 있는 알려진 기본 토큰. 이 값이면 누구나 추측할 수 있으므로 운영에서 거부한다. */
-  static final Set<String> INSECURE_DEFAULT_TOKENS = Set.of("dev-executor-token", "executor-token");
+  static final Set<String> INSECURE_DEFAULT_TOKENS =
+      Set.of("dev-executor-token", "executor-token", "dev-db-executor-token");
 
   /** 토큰이 없거나 안전하지 않아 비밀번호를 내줄 수 없을 때의 503 코드 — 컨트롤러와 서비스가 함께 쓴다. */
   public static final String TOKEN_NOT_CONFIGURED_CODE = "EXECUTOR_TOKEN_NOT_CONFIGURED";
@@ -38,14 +48,27 @@ public class ExecutorDataStoreController {
   static final String INCLUDE_RO = "ro";
 
   private final ExecutorDataStoreDescriptorService service;
+
+  /** Python 실행기 토큰 — 종류만 받는다. */
+  private final String executorToken;
+
+  /** db-executor 토큰 — 전체 기술자를 받는다. */
   private final String token;
+
   private final boolean allowDefaultToken;
 
   public ExecutorDataStoreController(
       ExecutorDataStoreDescriptorService service,
-      @Value("${app.executor.internal-token:}") String token,
+      @Value("${app.executor.internal-token:}") String executorToken,
+      @Value("${app.db-executor.internal-token:}") String token,
       @Value("${app.executor.allow-default-token:false}") boolean allowDefaultToken) {
+    // 같은 값이면 Python 실행기가 db-executor 전권(OWNER 비밀번호 포함)을 받는다 — 조용히 기동하지 않고 막는다.
+    if (!executorToken.isBlank() && executorToken.equals(token)) {
+      throw new IllegalStateException(
+          "app.executor.internal-token 과 app.db-executor.internal-token 이 같습니다 — 서로 다른 값이어야 합니다.");
+    }
     this.service = service;
+    this.executorToken = executorToken;
     this.token = token;
     this.allowDefaultToken = allowDefaultToken;
   }
@@ -55,11 +78,17 @@ public class ExecutorDataStoreController {
       @RequestHeader(value = "Authorization", required = false) String authHeader,
       @PathVariable long tenantId,
       @RequestParam(value = "include", required = false) String include) {
-    // 설정 토큰이 비면 아무 요청도 인증할 수 없으므로 모든 요청을 503 으로 거부한다.
-    if (token == null || token.isBlank()) {
+    // 설정 토큰이 둘 다 비면 아무 요청도 인증할 수 없으므로 모든 요청을 503 으로 거부한다.
+    if (executorToken.isBlank() && token.isBlank()) {
       log.error("executor 내부 토큰이 비어 있어 저장소 기술자 제공을 거부한다");
       throw new CodedApiException(
           HttpStatus.SERVICE_UNAVAILABLE, TOKEN_NOT_CONFIGURED_CODE, "executor 내부 토큰이 설정되지 않았습니다");
+    }
+    if (InternalTokens.matches(authHeader, executorToken)) {
+      // Python 실행기: 종류만. include=ro 도 무시한다(비밀을 낼 수 없는 토큰이다).
+      ExecutorDataStoreDescriptor kind = service.describeBackendOnly(tenantId);
+      log.info("executor 저장소 종류 제공: tenant={}, backend={}", tenantId, kind.backend());
+      return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(kind);
     }
     if (!InternalTokens.matches(authHeader, token)) {
       return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
@@ -72,7 +101,7 @@ public class ExecutorDataStoreController {
     return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(descriptor);
   }
 
-  /** 평문 비밀번호를 내도 되는가: 토큰이 알려진 기본값이 아니거나, 허용 플래그(로컬·테스트)가 켜져 있어야 한다. */
+  /** 평문 비밀번호를 내도 되는가(db-executor 토큰 기준): 토큰이 알려진 기본값이 아니거나, 허용 플래그(로컬·테스트)가 켜져 있어야 한다. */
   private boolean secretsAllowed() {
     return allowDefaultToken || !INSECURE_DEFAULT_TOKENS.contains(token);
   }

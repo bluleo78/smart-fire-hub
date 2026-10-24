@@ -41,6 +41,9 @@ app:
   db-executor:
     # 로컬 개발: 맥에서 띄운 firehub-db-executor(포트 8090). executor.enabled=false 여도 Tibero 테넌트는 이 주소로만 실행한다.
     base-url: http://localhost:8090
+    # firehub-db-executor 의 application-local.yml 기본값(dev-db-executor-token)과 같다. executor.internal-token(dev-executor-token)과
+    # 달라야 api 가 기동한다.
+    internal-token: ${DB_EXECUTOR_INTERNAL_TOKEN:dev-db-executor-token}
   embedding:
     ollama-allowed-base-urls: http://host.docker.internal:11434,http://localhost:11434
 

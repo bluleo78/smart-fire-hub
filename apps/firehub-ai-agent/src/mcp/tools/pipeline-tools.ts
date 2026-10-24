@@ -21,11 +21,9 @@ export function registerPipelineTools(
   dialect: DbDialect = DEFAULT_DB_DIALECT,
 ) {
   const isTibero = dialect === 'TIBERO';
-  // WD-79 수정 1차: Tibero 테넌트는 출력 데이터셋 없는 SQL 단계를 api(PipelineAsyncRunner)가 거부하고(TEMP 자동 생성은 2단계),
-  // AI 분류 단계도 실행하지 않는다. PG 설명은 기존 문자열 그대로 둔다(PG 도구 설명 픽스처 테스트).
-  const outputDatasetIdDescription = isTibero
-    ? '출력 데이터셋 ID. Tibero SQL 단계는 반드시 outputDatasetId 를 지정한다 — 비우면 실행 시 "Tibero 저장소 테넌트의 SQL 단계는 출력 데이터셋을 지정해야 합니다." 로 거부된다'
-    : '출력 데이터셋 ID (미지정 시 실행할 때 TEMP 타입 임시 데이터셋이 자동 생성됨)';
+  // WD-77: Tibero 도 출력 데이터셋 없는 SQL 단계에 TEMP 임시 데이터셋을 자동 생성하므로 PG 와 같은 설명을 쓴다
+  // (PG 설명은 기존 문자열 그대로 — PG 도구 설명 픽스처 테스트).
+  const outputDatasetIdDescription = '출력 데이터셋 ID (미지정 시 실행할 때 TEMP 타입 임시 데이터셋이 자동 생성됨)';
   // pythonConfig.outputColumns 설명. Tibero 테넌트는 api(PipelineAsyncRunner)가 Python 단계 실행을 거부하므로(Python 지원은
   // 2웨이브 WD-78) 그 거부 문구를 그대로 알려 SQL 단계를 쓰게 한다.
   const pythonOutputColumnsDescription = isTibero

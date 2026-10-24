@@ -235,6 +235,22 @@ public class DataTableRowService {
     resolver.rowStore().insertBatch(tableName, columns, rows, columnTypes);
   }
 
+  /**
+   * 이번 실행의 임시(REPLACE staging) 테이블에 행을 삽입한다(WD-77). {@link #insertBatch} 와 달리 임시 테이블이 실제 테이블과 다른
+   * 모양인 백엔드 (Tibero 스테이징)에서도 쓸 수 있다. 임시 테이블 이름 검증은 백엔드 구현이 한다(PG 는 기존 이름 규칙, Tibero 는 {@code
+   * STG_<24HEX>}).
+   */
+  public void insertTempBatch(
+      String tempTable,
+      List<String> columns,
+      List<Map<String, Object>> rows,
+      Map<String, String> columnTypes) {
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
+    resolver.rowStore().insertTempBatch(tempTable, columns, rows, columnTypes);
+  }
+
   public void insertBatchWithProgress(
       String tableName,
       List<String> columns,

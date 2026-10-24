@@ -10,6 +10,7 @@ import com.smartfirehub.pipeline.service.PipelineAsyncRunner;
 import com.smartfirehub.pipeline.service.PipelineSecurityGate;
 import com.smartfirehub.pipeline.service.SqlColumnProbe;
 import com.smartfirehub.pipeline.service.SqlScriptExecutor;
+import com.smartfirehub.pipeline.service.TiberoIncrementalCursor;
 import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.tngtech.archunit.core.domain.JavaAccess;
@@ -175,7 +176,11 @@ class SqlGateArchitectureTest {
         .check(PROD);
   }
 
-  /** Tibero 분석 조회(db-executor /execute/query) — 서비스 하나만 부른다. */
+  /**
+   * Tibero 분석 조회(db-executor /execute/query) — 사용자 SQL 은 서비스 하나({@link TiberoQueryService})만 부른다.
+   * 예외 하나: {@link TiberoIncrementalCursor} 는 사용자 SQL 이 아니라 고정 상수 문장(증분 커서 후보 조회)만 보낸다 — db-executor
+   * 가드도 그 문장 전체 일치만 허용한다.
+   */
   @Test
   void dbExecutorQuery_onlyFromTiberoQueryService() {
     methods()
@@ -183,7 +188,7 @@ class SqlGateArchitectureTest {
         .areDeclaredIn(DbExecutorClient.class)
         .and()
         .haveName("executeQuery")
-        .should(onlyBeAccessedBy(TiberoQueryService.class))
+        .should(onlyBeAccessedBy(TiberoQueryService.class, TiberoIncrementalCursor.class))
         .check(PROD);
   }
 

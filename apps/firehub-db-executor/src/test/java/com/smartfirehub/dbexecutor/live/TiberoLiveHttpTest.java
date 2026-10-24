@@ -45,11 +45,14 @@ import org.springframework.context.annotation.Primary;
  */
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = {"app.internal-token=live-http-token"})
+    properties = {"app.internal-token=live-http-token", "app.load-token=live-load-token"})
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TiberoLiveHttpTest {
 
   private static final String TOKEN = "live-http-token";
+
+  /** 적재 전용 토큰 — /execute/load 외 창구는 401 이어야 한다(스펙 §3.4). */
+  private static final String LOAD_TOKEN = "live-load-token";
 
   /** 테스트 더블이 돌려줄 기술자(BeforeAll 에서 계정을 만든 뒤 채운다). */
   private static volatile StoreDescriptor liveDescriptor;
@@ -62,7 +65,13 @@ class TiberoLiveHttpTest {
     StoreDescriptorClient descriptorDouble() {
       return new StoreDescriptorClient(
           new DbExecutorProperties(
-              TOKEN, "http://127.0.0.1:9", 60, new DbExecutorProperties.Pool(8, 4, 2)),
+              TOKEN,
+              "load-tok",
+              null,
+              "http://127.0.0.1:9",
+              60,
+              new DbExecutorProperties.Pool(8, 4, 2),
+              false),
           new ObjectMapper()) {
         @Override
         public StoreDescriptor get(long id, Duration budget) {
@@ -134,6 +143,13 @@ class TiberoLiveHttpTest {
 
   // ------------------------------------------------------------------ 테스트
 
+  /** 적재 토큰은 실서버 스택에서도 SQL·탐지 창구를 열지 못한다(필터 → 컨트롤러 전 구간). */
+  @Test
+  void 적재토큰은_sql과_probe에서_401() throws Exception {
+    assertThat(post("/execute/sql", sqlBody(replaceSelect()), LOAD_TOKEN).status).isEqualTo(401);
+    assertThat(post("/execute/probe", probeBody(), LOAD_TOKEN).status).isEqualTo(401);
+  }
+
   @Test
   void live_http_replace() throws Exception {
     JsonNode r = post("/execute/sql", sqlBody(replaceSelect()), TOKEN).json;
@@ -190,7 +206,7 @@ class TiberoLiveHttpTest {
     System.out.println("LIVE failure keys=" + fieldSet(bad));
     assertThat(bad.get("success").asBoolean()).isFalse();
     assertThat(fieldSet(bad)).isEqualTo(sqlKeys);
-    assertThat(fieldSet(bad.get("db_error"))).isEqualTo(Set.of("code", "message"));
+    assertThat(fieldSet(bad.get("db_error"))).isEqualTo(Set.of("code", "sql_state", "message"));
   }
 
   // ------------------------------------------------------------------ 도우미

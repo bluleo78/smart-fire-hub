@@ -357,4 +357,44 @@ class SqlRunnerTest {
     assertThat(res.error()).doesNotContain("pw-secret");
     assertThat(res.dbError().message()).doesNotContain("pw-secret");
   }
+
+  /** 요청별 timeout_seconds: 전체 기한·문장 제한이 그 값이고, 시간 초과 문구도 그 값을 쓴다. */
+  @Test
+  void requestedSeconds_overridesStatementAndTotalLimits() {
+    try (Deadline deadline = new Deadline(120)) {
+      SqlExecuteResponse res =
+          runner(50, 55).run(FakeJdbc.DESCRIPTOR, INSERT, List.of(DELETE), deadline, 120);
+
+      assertThat(res.success()).isTrue();
+      // 선행 LOCK·DELETE 와 본문 모두 50초가 아니라 요청 제한(120, 남은 시간 올림)을 쓴다.
+      assertThat(db.queryTimeouts).hasSize(3).allMatch(t -> t >= 119 && t <= 120);
+    }
+  }
+
+  @Test
+  void requestedSeconds_timeoutMessageUsesRequestedValue() {
+    try (Deadline expired = new Deadline(1)) {
+      sleep(1_100);
+      SqlExecuteResponse res =
+          runner(50, 55).run(FakeJdbc.DESCRIPTOR, INSERT, List.of(), expired, 1);
+      assertThat(res.success()).isFalse();
+      assertThat(res.error()).isEqualTo("실행 시간이 1초를 넘어 취소했습니다.");
+    }
+  }
+
+  @Test
+  void absentRequestedSeconds_keepsDefault50And55() {
+    try (Deadline deadline = new Deadline(55)) {
+      runner(50, 55).run(FakeJdbc.DESCRIPTOR, INSERT, List.of(), deadline, null);
+    }
+    assertThat(db.queryTimeouts).containsExactly(50);
+  }
+
+  private static void sleep(long ms) {
+    try {
+      Thread.sleep(ms);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+  }
 }

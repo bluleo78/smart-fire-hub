@@ -1,0 +1,353 @@
+{
+  "_doc": "두 실행기(Python firehub-executor, Java firehub-db-executor)의 DB 요청·응답 공통 계약(WD-77, Tibero 2단계 스펙 §3). 최상위 endpoints 아래 창구별로 requestFields(이름·필수·타입), responseFields(응답 JSON 이 반드시 가진 키), examples(요청 → 기대 결과)를 둔다. requestFields 는 두 실행기의 상위집합이고 백엔드별 정책 차이는 notes 에 적는다. example 의 backend 가 있으면 그 실행기에만 해당한다.",
+  "dbErrorFields": [
+    {
+      "name": "code",
+      "type": "int"
+    },
+    {
+      "name": "sql_state",
+      "type": "string|null"
+    },
+    {
+      "name": "message",
+      "type": "string"
+    }
+  ],
+  "endpoints": {
+    "sql": {
+      "path": "/execute/sql",
+      "requestFields": [
+        {
+          "name": "tenantId",
+          "required": true,
+          "type": "int"
+        },
+        {
+          "name": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "preStatements",
+          "required": false,
+          "type": "string[]"
+        },
+        {
+          "name": "params",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "timeout_seconds",
+          "required": false,
+          "type": "int"
+        }
+      ],
+      "responseFields": [
+        "success",
+        "columns",
+        "rows",
+        "row_count",
+        "execution_log",
+        "error",
+        "db_error"
+      ],
+      "notes": "params 는 db-executor 가 받기만 하고 무시한다(Tibero 문장은 api 가 값을 인라인한다). 알 수 없는 필드는 무시. timeout_seconds(선택)는 요청별 시간 제한(초)이다: 없으면 기존 제한, 0 이하는 거부한다. db-executor 는 min(요청값, app.load.timeout-seconds) 로 전체 기한·문장 제한을 잡고, Python 실행기는 SET LOCAL statement_timeout 으로 적용한다. 차이(의도됨): Python 실행기에서는 문장 단위 제한(PG statement_timeout 은 문장마다 적용), db-executor 는 요청 전체 기한이다.",
+      "examples": [
+        {
+          "name": "본문만",
+          "request": {
+            "tenantId": 1,
+            "query": "INSERT INTO t SELECT 1 FROM DUAL"
+          },
+          "expectSuccess": true
+        },
+        {
+          "name": "params·preStatements 동반",
+          "request": {
+            "tenantId": 1,
+            "query": "INSERT INTO t SELECT 1 FROM DUAL",
+            "preStatements": [
+              "DELETE FROM \"data\".\"t\""
+            ],
+            "params": {
+              "a": 1
+            }
+          },
+          "expectSuccess": true
+        },
+        {
+          "name": "tenantId 누락",
+          "request": {
+            "query": "SELECT 1 FROM DUAL"
+          },
+          "expectSuccess": false,
+          "expectErrorPresent": true
+        },
+        {
+          "name": "timeout_seconds 동반",
+          "request": {
+            "tenantId": 1,
+            "query": "INSERT INTO t SELECT 1 FROM DUAL",
+            "timeout_seconds": 120
+          },
+          "expectSuccess": true
+        },
+        {
+          "name": "timeout_seconds 0 거부",
+          "request": {
+            "tenantId": 1,
+            "query": "INSERT INTO t SELECT 1 FROM DUAL",
+            "timeout_seconds": 0
+          },
+          "expectSuccess": false,
+          "expectErrorPresent": true
+        }
+      ]
+    },
+    "query": {
+      "path": "/execute/query",
+      "requestFields": [
+        {
+          "name": "tenantId",
+          "required": true,
+          "type": "int"
+        },
+        {
+          "name": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "max_rows",
+          "required": true,
+          "type": "int"
+        },
+        {
+          "name": "read_only",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "readSlot",
+          "required": false,
+          "type": "int"
+        }
+      ],
+      "responseFields": [
+        "success",
+        "columns",
+        "rows",
+        "row_count",
+        "truncated",
+        "query_type",
+        "affected_rows",
+        "execution_time_ms",
+        "error",
+        "db_error"
+      ],
+      "notes": "db-executor: read_only 가 true 가 아니면(false·누락) '읽기 전용 조회만 실행할 수 있습니다.' 로 거부하고 max_rows 는 필수다. Python 실행기: max_rows 기본 1000, read_only 기본 false(false 도 실행). readSlot 은 db-executor 가 아직 지원하지 않아 값이 있으면 거부한다(Task 13).",
+      "examples": [
+        {
+          "name": "읽기 전용 조회",
+          "request": {
+            "tenantId": 1,
+            "query": "SELECT 1",
+            "max_rows": 10,
+            "read_only": true
+          },
+          "expectSuccess": true
+        },
+        {
+          "name": "read_only false 거부",
+          "request": {
+            "tenantId": 1,
+            "query": "SELECT 1",
+            "max_rows": 10,
+            "read_only": false
+          },
+          "backend": "db-executor",
+          "expectSuccess": false,
+          "expectErrorPresent": true
+        },
+        {
+          "name": "read_only 누락 거부",
+          "request": {
+            "tenantId": 1,
+            "query": "SELECT 1",
+            "max_rows": 10
+          },
+          "backend": "db-executor",
+          "expectSuccess": false,
+          "expectErrorPresent": true
+        }
+      ]
+    },
+    "probe": {
+      "path": "/execute/probe",
+      "requestFields": [
+        {
+          "name": "tenantId",
+          "required": true,
+          "type": "int"
+        },
+        {
+          "name": "query",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "responseFields": [
+        "success",
+        "columns",
+        "error",
+        "db_error"
+      ],
+      "notes": "columns 는 {name, jdbc_type, type_name, precision, scale} 목록.",
+      "examples": [
+        {
+          "name": "컬럼 탐지",
+          "request": {
+            "tenantId": 1,
+            "query": "SELECT 1 AS a FROM DUAL"
+          },
+          "expectSuccess": true
+        }
+      ]
+    },
+    "load": {
+      "path": "/execute/load",
+      "requestFields": [
+        {
+          "name": "tenantId",
+          "required": true,
+          "type": "int"
+        },
+        {
+          "name": "table",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "rows",
+          "required": true,
+          "type": "object[]"
+        },
+        {
+          "name": "column_type_map",
+          "required": false,
+          "type": "object"
+        },
+        {
+          "name": "timeout_seconds",
+          "required": false,
+          "type": "int"
+        }
+      ],
+      "responseFields": [
+        "success",
+        "rows_loaded",
+        "error",
+        "db_error"
+      ],
+      "notes": "적재는 한 트랜잭션이다(전부 반영 또는 전부 취소). Python 실행기(PG): table 은 그 테넌트 스키마의 소문자 식별자(^[a-z][a-z0-9_]*$, rtmp_ 임시 테이블 또는 출력 테이블), 테넌트 롤 연결로 insert_batch 후 commit. db-executor(Tibero): table 은 STG_ + 16진 대문자 24자 스테이징 테이블만 허용하고 OWNER 계정으로 500행 배치 INSERT 한다. 값 변환·바인딩은 tibero-bind-vectors.json 이 고정한다. 알 수 없는 필드는 무시. Python 실행기는 Tibero 테넌트를 거부한다. timeout_seconds 는 Python 실행기에서는 문장 단위 제한(execute_values 가 페이지마다 문장을 실행해 페이지 하나에 적용), db-executor 는 요청 전체 기한이다. 변환 불가 값: Python 실행기는 기존 PG 변환대로 None 으로 넣고, db-executor 는 fail-closed 로 요청 전체를 실패시킨다(tibero-bind-vectors.json 참조). 빈 행·null 행은 두 실행기 모두 거부한다.",
+      "examples": [
+        {
+          "name": "PG 적재",
+          "backend": "python",
+          "request": {
+            "tenantId": 1,
+            "table": "rtmp_ab12",
+            "rows": [
+              {
+                "a": 1,
+                "b": "x"
+              }
+            ],
+            "column_type_map": {
+              "a": "INTEGER",
+              "b": "TEXT"
+            }
+          },
+          "expectSuccess": true
+        },
+        {
+          "name": "Tibero 스테이징 적재",
+          "backend": "db-executor",
+          "request": {
+            "tenantId": 1,
+            "table": "STG_0123456789ABCDEF01234567",
+            "rows": [
+              {
+                "a": 1,
+                "b": "x"
+              }
+            ],
+            "column_type_map": {
+              "a": "INTEGER",
+              "b": "TEXT"
+            }
+          },
+          "expectSuccess": true
+        },
+        {
+          "name": "timeout_seconds 동반",
+          "backend": "python",
+          "request": {
+            "tenantId": 1,
+            "table": "rtmp_ab12",
+            "rows": [
+              {
+                "a": 1
+              }
+            ],
+            "timeout_seconds": 60
+          },
+          "expectSuccess": true
+        },
+        {
+          "name": "Tibero timeout_seconds 동반",
+          "backend": "db-executor",
+          "request": {
+            "tenantId": 1,
+            "table": "STG_0123456789ABCDEF01234567",
+            "rows": [
+              {
+                "a": 1
+              }
+            ],
+            "timeout_seconds": 60
+          },
+          "expectSuccess": true
+        },
+        {
+          "name": "tenantId 누락",
+          "request": {
+            "table": "t1",
+            "rows": [
+              {
+                "a": 1
+              }
+            ]
+          },
+          "expectSuccess": false,
+          "expectErrorPresent": true
+        },
+        {
+          "name": "table 누락",
+          "request": {
+            "tenantId": 1,
+            "rows": [
+              {
+                "a": 1
+              }
+            ]
+          },
+          "expectSuccess": false,
+          "expectErrorPresent": true
+        }
+      ]
+    }
+  }
+}

@@ -90,26 +90,30 @@ set +e
 status=0
 
 if [[ "$STAGE" == all || "$STAGE" == api ]]; then
-  echo "== api 단계 (TiberoDialectProbeTest, TiberoDataStoreContractTest)"
+  echo "== api 단계 (TiberoDialectProbeTest, TiberoDataStoreContractTest, TiberoLiveTriggerTest)"
   "$ROOT_DIR/apps/firehub-api/gradlew" -p "$ROOT_DIR/apps/firehub-api" test \
     --tests com.smartfirehub.dataset.storage.tibero.TiberoDialectProbeTest \
     --tests com.smartfirehub.dataset.storage.tibero.TiberoDataStoreContractTest \
+    --tests com.smartfirehub.dataset.storage.tibero.TiberoLiveTriggerTest \
     -i 2>&1 | grep -E '^[[:space:]]*PROBE |[[:space:]]>[[:space:]].*[[:space:]](PASSED|FAILED|SKIPPED)$|^BUILD (SUCCESSFUL|FAILED)|tests completed'
   api_status=${PIPESTATUS[0]}
   # 테스트별 PASSED 줄은 gradle 로그 설정에 따라 안 찍힐 수 있으므로, 결과 XML 의 클래스별 합계를 함께 보여 준다.
-  print_totals "$ROOT_DIR"/apps/firehub-api/build/test-results/test/TEST-com.smartfirehub.dataset.storage.tibero.Tibero{DialectProbe,DataStoreContract}Test.xml
+  print_totals "$ROOT_DIR"/apps/firehub-api/build/test-results/test/TEST-com.smartfirehub.dataset.storage.tibero.Tibero{DialectProbe,DataStoreContract,LiveTrigger}Test.xml
   [[ $api_status -ne 0 ]] && status=$api_status
 fi
 
 if [[ "$STAGE" == all || "$STAGE" == db-executor ]]; then
-  echo "== db-executor 단계 (TiberoLiveSqlTest, TiberoLiveHttpTest)"
+  echo "== db-executor 단계 (TiberoLiveSqlTest, TiberoLiveHttpTest, TiberoLiveLoadTest, TiberoLiveMoveTest, TiberoLiveCursorTest)"
   # --rerun: 입력이 같아도 실서버 테스트를 매번 실제로 돌린다(캐시된 초록 방지).
   "$ROOT_DIR/apps/firehub-db-executor/gradlew" -p "$ROOT_DIR/apps/firehub-db-executor" test \
     --tests com.smartfirehub.dbexecutor.live.TiberoLiveSqlTest \
-    --tests com.smartfirehub.dbexecutor.live.TiberoLiveHttpTest --rerun \
+    --tests com.smartfirehub.dbexecutor.live.TiberoLiveHttpTest \
+    --tests com.smartfirehub.dbexecutor.live.TiberoLiveLoadTest \
+    --tests com.smartfirehub.dbexecutor.live.TiberoLiveMoveTest \
+    --tests com.smartfirehub.dbexecutor.live.TiberoLiveCursorTest --rerun \
     -i 2>&1 | grep -E '^[[:space:]]*LIVE |[[:space:]]>[[:space:]].*[[:space:]](PASSED|FAILED|SKIPPED)$|^BUILD (SUCCESSFUL|FAILED)|tests completed'
   executor_status=${PIPESTATUS[0]}
-  print_totals "$ROOT_DIR"/apps/firehub-db-executor/build/test-results/test/TEST-com.smartfirehub.dbexecutor.live.TiberoLive{Sql,Http}Test.xml
+  print_totals "$ROOT_DIR"/apps/firehub-db-executor/build/test-results/test/TEST-com.smartfirehub.dbexecutor.live.TiberoLive{Sql,Http,Load,Move,Cursor}Test.xml
   [[ $executor_status -ne 0 ]] && status=$executor_status
 fi
 

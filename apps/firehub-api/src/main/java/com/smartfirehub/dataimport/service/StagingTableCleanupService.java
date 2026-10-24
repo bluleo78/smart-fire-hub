@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.dataset.storage.TenantDataStoreRepository;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -54,6 +55,8 @@ public class StagingTableCleanupService {
   private final TenantDataStoreRepository tenantDataStoreRepository;
   // 백엔드별 행 저장소 — 외부 백엔드의 고아 staging 정리를 그 구현에 맡긴다(구체 구현에 의존하지 않는다).
   private final DataStoreResolver dataStoreResolver;
+  // 외부 저장소 스윕의 테넌트별 추가 게이트 — Tibero 파이프라인 스테이징은 JobRunr 게이트에 잡히지 않는다(아래 sweepExternalTenants).
+  private final PipelineExecutionRepository pipelineExecutionRepository;
 
   /**
    * 외부 저장소 고아 staging 으로 볼 최소 나이({@code app.data-store.staging-min-age}, 기본 1시간). PG 스윕에는 나이 기준이
@@ -119,6 +122,13 @@ public class StagingTableCleanupService {
    * <p>순회는 PG 스윕과 같은 {@link TenantScopedRunner#forEachTenant} 를 쓴다 — 테넌트마다 컨텍스트를 세우고, 한 테넌트의 실패(연결
    * 불가·권한 등)는 로그만 남기고 다음 테넌트를 계속한다. 게이트 재확인 규칙도 PG 스윕과 같다.
    *
+   * <p><b>파이프라인 실행 게이트(최종 리뷰 I1).</b> Tibero 파이프라인 스텝(Python·API_CALL·AI_CLASSIFY 등)도 import 와 같은
+   * {@code STG_<24hex>} 이름의 스테이징을 쓴다(db-executor 적재 규칙이 이 접두사를 전제한다). 그런데 파이프라인 실행은 JobRunr 가 아니라
+   * {@code @Async} 라 위의 JobRunr 게이트가 보지 못하고, 한 스텝이 스테이징을 1시간 넘게 쥐는 일도 흔하다(LLM 배치·긴 API 페이지·스크립트).
+   * 그래서 테넌트마다 <b>RUNNING 파이프라인 실행이 없을 때만</b> 지운다 — 실행 중인 테넌트는 이번 주기를 건너뛰고(다음 주기에 회수), 나머지 테넌트는 그대로
+   * 정리한다. 이 게이트는 재확인 플래그와 무관하게 늘 적용한다. 조회가 실패하면 {@code forEachTenant} 가 그 테넌트를 건너뛰므로 실패해도 지우지 않는
+   * 쪽이다. PG 스윕({@code stg_import_})에는 적용하지 않는다(PG 파이프라인 임시 테이블은 이름이 달라 대상이 아니다).
+   *
    * @param recheckGatePerTenant 테넌트마다 활성 작업 게이트를 재확인할지(프로덕션 경로는 true)
    * @return 지운 staging 테이블 총 개수
    */
@@ -135,6 +145,12 @@ public class StagingTableCleanupService {
           tenantId -> {
             if (recheckGatePerTenant && hasActiveJobs()) {
               log.debug("순회 중 활성 JobRunr 작업 감지 — {} 테넌트 {} 스윕 건너뜀", backend, tenantId);
+              return;
+            }
+            // 실행 중인 파이프라인이 이 테넌트의 STG_ 스테이징을 쥐고 있을 수 있다 — 이번 주기는 이 테넌트만 건너뛴다.
+            // forEachTenant 가 테넌트 컨텍스트를 세운 상태라 저장소 트랜잭션이 RLS GUC 를 이 테넌트로 넣는다.
+            if (pipelineExecutionRepository.hasRunningExecution(tenantId)) {
+              log.debug("실행 중인 파이프라인 존재 — {} 테넌트 {} 스윕 건너뜀", backend, tenantId);
               return;
             }
             int dropped = rowStore.dropStaleStagingTables(tenantId, stagingMinAge);

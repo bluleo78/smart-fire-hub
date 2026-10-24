@@ -39,7 +39,8 @@ ROUTES = {
             "field_mappings": [{"source_field": "id", "target_column": "id"}],
             "output_table": "t",
         },
-        message=store_gate.API_CALL_UNSUPPORTED,
+        # Tibero 는 이 창구를 거부하지 않는다(원격 적재, WD-77 Task 6) — 조회 실패 거부 메시지만 쓴다.
+        message=None,
         conn="app.routers.api_call.get_connection",
         service="app.routers.api_call.api_call_executor.execute_api_call",
     ),
@@ -52,6 +53,8 @@ ROUTES = {
     ),
 }
 NAMES = list(ROUTES)
+# Tibero 테넌트를 거부하는 창구. api-call 은 Tibero 에서 원격 적재로 가므로 빠진다(아래 별도 테스트).
+TIBERO_BLOCKED_NAMES = [n for n in NAMES if n != "api-call"]
 
 
 def _gate_backend(kind=None, error=None):
@@ -89,7 +92,7 @@ def _assert_blocked_shape(name, data, message):
         assert data["execution_time_ms"] == 0
 
 
-@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("name", TIBERO_BLOCKED_NAMES)
 def test_tibero_tenant_blocked_on_every_route(test_client, mock_auth_header, name):
     r = ROUTES[name]
     service = MagicMock()
@@ -172,14 +175,12 @@ def test_gate_reads_descriptor_without_building_backend(mock_settings, kind):
     client.get.return_value = SimpleNamespace(backend=kind)
     with patch("app.routers.store_gate.get_store_client", return_value=client) as gsc, \
             patch("app.db.backends.PostgresBackend") as pg_cls, \
-            patch("app.db.backends.TiberoBackend") as tb_cls, \
             patch("app.db.backends.backend_for") as bf:
         err = store_gate.postgres_only_error(7, mock_settings, store_gate.SQL_UNSUPPORTED)
     assert err == (None if kind == "POSTGRESQL" else store_gate.SQL_UNSUPPORTED)
     gsc.assert_called_once_with(mock_settings)
     client.get.assert_called_once_with(7)
     pg_cls.assert_not_called()
-    tb_cls.assert_not_called()
     bf.assert_not_called()
 
 
@@ -204,3 +205,111 @@ async def test_unsupported_error_cache_miss_resolves_via_threadpool(mock_setting
         err = await store_gate.unsupported_error(7, mock_settings, store_gate.SQL_UNSUPPORTED)
     assert err == store_gate.SQL_UNSUPPORTED
     client.get.assert_called_once_with(7)
+
+
+# ---------------------------------------------------------------------------
+# API 수집(api-call) 창구 — Tibero 는 원격 적재로 간다(WD-77 Task 6). sql/query/probe/load/python 은 위 테스트가 계속 거부를 고정한다.
+# ---------------------------------------------------------------------------
+
+STAGING = "STG_0123456789ABCDEF01234567"
+REMOTE_SERVICE = "app.routers.api_call.api_call_executor.execute_api_call_remote"
+PG_SERVICE = "app.routers.api_call.api_call_executor.execute_api_call"
+
+
+def _api_call_body(**overrides):
+    body = dict(ROUTES["api-call"]["body"])
+    body.update(overrides)
+    return body
+
+
+def test_tibero_api_call_goes_to_remote_load_not_pg(test_client, mock_auth_header):
+    from app.db.backends.remote import RemoteLoader
+    from app.schemas.responses import ApiCallExecuteResponse
+
+    ret = ApiCallExecuteResponse(success=True, rows_loaded=5, total_pages=1)
+    conn = MagicMock()
+    with _gate_backend(kind="TIBERO"), patch(REMOTE_SERVICE, return_value=ret) as remote, \
+            patch(PG_SERVICE) as pg, patch("app.routers.api_call.get_connection", conn):
+        resp = test_client.post(
+            "/execute/api-call", json=_api_call_body(output_table=STAGING), headers=mock_auth_header
+        )
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True and resp.json()["rows_loaded"] == 5
+    remote.assert_called_once()
+    request, loader = remote.call_args.args
+    assert request.tenant_id == 7 and request.output_table == STAGING
+    assert isinstance(loader, RemoteLoader)
+    pg.assert_not_called()
+    conn.assert_not_called()  # PG 커넥션을 열지 않는다
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["test_table", STAGING.lower(), "STG_0123456789ABCDEF0123456", STAGING + "\n", "STG_0123456789ABCDEF012345ZZ"],
+)
+def test_tibero_api_call_rejects_non_staging_output_table(test_client, mock_auth_header, bad):
+    with _gate_backend(kind="TIBERO"), patch(REMOTE_SERVICE) as remote, patch(PG_SERVICE) as pg, \
+            patch("app.routers.api_call.get_connection") as conn:
+        resp = test_client.post(
+            "/execute/api-call", json=_api_call_body(output_table=bad), headers=mock_auth_header
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is False and "STG_" in data["error"]
+    remote.assert_not_called()
+    pg.assert_not_called()
+    conn.assert_not_called()
+
+
+def test_postgres_api_call_never_builds_remote_loader_and_keeps_pg_names(test_client, mock_auth_header):
+    # PG 는 STG 형식을 요구하지 않고(기존 PG 이름 그대로), 원격 적재기를 만들지 않는다.
+    from app.schemas.responses import ApiCallExecuteResponse
+
+    ret = ApiCallExecuteResponse(success=True, rows_loaded=1)
+    conn_cm = MagicMock()
+    with _gate_backend(kind="POSTGRESQL"), patch(PG_SERVICE, return_value=ret) as pg, \
+            patch(REMOTE_SERVICE) as remote, patch("app.routers.api_call.RemoteLoader") as loader_cls, \
+            patch("app.routers.api_call.get_connection", conn_cm):
+        resp = test_client.post("/execute/api-call", json=_api_call_body(), headers=mock_auth_header)
+    assert resp.status_code == 200 and resp.json()["rows_loaded"] == 1
+    pg.assert_called_once()
+    remote.assert_not_called()
+    loader_cls.assert_not_called()
+
+
+def test_tibero_api_call_remote_load_failure_is_success_false(test_client, mock_auth_header):
+    # 원격 적재 실패가 응답 success=False 로 나간다(서비스 계층 실제 코드 + 가짜 적재기).
+    from app.db.backends.remote import RemoteLoadError
+
+    loader = MagicMock()
+    loader.load.side_effect = RemoteLoadError("적재 실패 — 테스트")
+    page = {"items": [{"id": 1, "name": "a"}]}
+    with _gate_backend(kind="TIBERO"), patch("app.routers.api_call.RemoteLoader", return_value=loader), \
+            patch("app.services.api_call_executor.validate_url"), \
+            patch("app.services.api_call_executor._do_request", return_value=page):
+        resp = test_client.post(
+            "/execute/api-call",
+            json=_api_call_body(
+                output_table=STAGING,
+                field_mappings=[{"source_field": "id", "target_column": "id", "data_type": "INTEGER"}],
+            ),
+            headers=mock_auth_header,
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is False and data["error"] == "적재 실패 — 테스트"
+    assert data["rows_loaded"] == 0
+
+
+async def test_backend_of_returns_backend_or_error(mock_settings):
+    client = MagicMock()
+    client.peek.return_value = SimpleNamespace(backend="TIBERO")
+    with patch("app.routers.store_gate.get_store_client", return_value=client):
+        assert await store_gate.backend_of(7, mock_settings) == ("TIBERO", None)
+    client.peek.return_value = SimpleNamespace(backend="POSTGRESQL")
+    with patch("app.routers.store_gate.get_store_client", return_value=client):
+        assert await store_gate.backend_of(7, mock_settings) == ("POSTGRESQL", None)
+    client.peek.return_value = None
+    client.get.side_effect = StoreLookupError("조회 실패")
+    with patch("app.routers.store_gate.get_store_client", return_value=client):
+        assert await store_gate.backend_of(7, mock_settings) == (None, "조회 실패")

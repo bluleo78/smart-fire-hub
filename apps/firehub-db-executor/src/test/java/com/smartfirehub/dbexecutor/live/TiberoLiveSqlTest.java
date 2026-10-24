@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.config.DbExecutorProperties;
 import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
+import com.smartfirehub.dbexecutor.sql.LoadRunner;
 import com.smartfirehub.dbexecutor.sql.ProbeRunner;
 import com.smartfirehub.dbexecutor.sql.QueryRunner;
 import com.smartfirehub.dbexecutor.sql.SqlRunner;
@@ -150,7 +151,13 @@ class TiberoLiveSqlTest {
     StoreDescriptorClient descriptors =
         new StoreDescriptorClient(
             new DbExecutorProperties(
-                "live-token", "http://127.0.0.1:9", 60, new DbExecutorProperties.Pool(8, 4, 2)),
+                "live-token",
+                "load-tok",
+                null,
+                "http://127.0.0.1:9",
+                60,
+                new DbExecutorProperties.Pool(8, 4, 2),
+                false),
             new ObjectMapper()) {
           @Override
           public StoreDescriptor get(long id, Duration budget) {
@@ -167,6 +174,7 @@ class TiberoLiveSqlTest {
         new ProbeRunner(pools, timeouts, descriptors),
         // 분석 조회는 RO 계정 풀로만 실행한다.
         new QueryRunner(roPools, timeouts, descriptors),
+        new LoadRunner(pools, timeouts, descriptors),
         timeouts);
   }
 
@@ -336,14 +344,15 @@ class TiberoLiveSqlTest {
   void live_query_readsWithRoAccount() throws Exception {
     seedThreeRowsForRo();
     // 상한 2 → 2행·잘림
-    QueryResponse cut = controller.query(new QueryRequest(tenantId, ordersSelect(), 2));
+    QueryResponse cut = controller.query(new QueryRequest(tenantId, ordersSelect(), 2, true, null));
     System.out.println(
         "LIVE query maxRows=2 rows=" + cut.rowCount() + " truncated=" + cut.truncated());
     assertThat(cut.success()).as(String.valueOf(cut.error())).isTrue();
     assertThat(cut.rowCount()).isEqualTo(2);
     assertThat(cut.truncated()).isTrue();
     // 상한 10 → 3행·잘리지 않음
-    QueryResponse all = controller.query(new QueryRequest(tenantId, ordersSelect(), 10));
+    QueryResponse all =
+        controller.query(new QueryRequest(tenantId, ordersSelect(), 10, true, null));
     System.out.println(
         "LIVE query maxRows=10 rows=" + all.rowCount() + " truncated=" + all.truncated());
     assertThat(all.success()).as(String.valueOf(all.error())).isTrue();
@@ -351,7 +360,7 @@ class TiberoLiveSqlTest {
     assertThat(all.truncated()).isFalse();
     // 실제로 RO 계정으로 접속했는지 — 세션 사용자로 확인한다.
     QueryResponse who =
-        controller.query(new QueryRequest(tenantId, "SELECT USER AS u FROM DUAL", 1));
+        controller.query(new QueryRequest(tenantId, "SELECT USER AS u FROM DUAL", 1, true, null));
     assertThat(who.success()).as(String.valueOf(who.error())).isTrue();
     assertThat(String.valueOf(who.rows().get(0).get("u"))).isEqualTo(account.roSchema());
   }
@@ -373,7 +382,8 @@ class TiberoLiveSqlTest {
     assertThat(scalar("SELECT COUNT(*) FROM " + t + " WHERE \"NAME\" = 'x'")).isEqualTo("0");
     // 2) QueryRunner 에 UPDATE → 조회 전용 문구로 거부(커넥션을 빌리기 전에).
     QueryResponse r =
-        controller.query(new QueryRequest(tenantId, "UPDATE " + t + " SET \"NAME\" = 'x'", 10));
+        controller.query(
+            new QueryRequest(tenantId, "UPDATE " + t + " SET \"NAME\" = 'x'", 10, true, null));
     System.out.println("LIVE query runner-update error=" + r.error());
     assertThat(r.success()).isFalse();
     assertThat(r.error()).contains("조회");
@@ -387,13 +397,16 @@ class TiberoLiveSqlTest {
     ExecuteController shortTimeout =
         controller(descriptor, new ExecutionTimeouts.Sql(50, 55), new ExecutionTimeouts.Query(2));
     // RO 풀 첫 접속 비용이 2~5초 창에 섞이지 않도록 같은 경로로 먼저 한 번 데운다.
-    assertThat(shortTimeout.query(new QueryRequest(tenantId, "SELECT 1 FROM DUAL", 1)).success())
+    assertThat(
+            shortTimeout
+                .query(new QueryRequest(tenantId, "SELECT 1 FROM DUAL", 1, true, null))
+                .success())
         .isTrue();
     // 느린 본문은 DUAL 과 RO 가 SELECT 할 수 있는 ORDERS 만 건드린다.
     String slow =
         "SELECT \"ID_KEY\" FROM \"" + schema + "\".\"ORDERS\" WHERE (" + slowCount(10) + ") > 0";
     long t0 = System.nanoTime();
-    QueryResponse r = shortTimeout.query(new QueryRequest(tenantId, slow, 10));
+    QueryResponse r = shortTimeout.query(new QueryRequest(tenantId, slow, 10, true, null));
     long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
     System.out.println("LIVE query timeout elapsedMs=" + ms + " error=" + r.error());
     assertThat(r.success()).isFalse();
@@ -466,6 +479,45 @@ class TiberoLiveSqlTest {
     assertThat(q.columns())
         .extracting(ProbeColumn::name)
         .containsExactly("amount", "AMOUNT2", "Mixed");
+  }
+
+  /**
+   * 식(집계·ROUND)의 probe 보고값(WD-77 Task 7) — api {@code TiberoProbeTypes} 의 "맨 NUMBER" 판정 근거. 값은 출력해
+   * 두고, 확인한 실서버 값은 api {@code TiberoProbeTypesTest} 주석에 기록한다.
+   */
+  @Test
+  void live_probe_numericExpressionPrecisionAndScale() {
+    String from = " FROM " + schema.toLowerCase() + ".orders";
+    ProbeResponse agg =
+        controller.probe(
+            new ProbeRequest(tenantId, "SELECT COUNT(*) AS cnt, SUM(id_key) AS sum_key" + from));
+    ProbeResponse plain =
+        controller.probe(
+            new ProbeRequest(
+                tenantId, "SELECT ROUND(amount, 2) AS rounded, id_key, amount, 1 AS lit" + from));
+    assertThat(agg.success()).as(String.valueOf(agg.error())).isTrue();
+    assertThat(plain.success()).as(String.valueOf(plain.error())).isTrue();
+    for (ProbeColumn c : agg.columns()) {
+      System.out.println("LIVE probe numeric " + c);
+    }
+    for (ProbeColumn c : plain.columns()) {
+      System.out.println("LIVE probe numeric " + c);
+    }
+    // 2026-10-24 실서버(Tibero 7) 관측값 — api TiberoProbeTypes 규칙의 근거다.
+    //  COUNT(*)·SUM(정수열): NUMBER precision 0, scale 0 (맨 NUMBER 와 구별되지 않는다)
+    //  ROUND(amount,2)·리터럴 1: NUMBER precision 38, scale 0 (소수가 있어도 scale 0 으로 보고된다!)
+    //  NUMBER(19) 열: 19/0, NUMBER(18,6) 열: 18/6
+    assertThat(agg.columns())
+        .extracting(ProbeColumn::precision, ProbeColumn::scale)
+        .containsExactly(
+            org.assertj.core.groups.Tuple.tuple(0, 0), org.assertj.core.groups.Tuple.tuple(0, 0));
+    assertThat(plain.columns())
+        .extracting(ProbeColumn::precision, ProbeColumn::scale)
+        .containsExactly(
+            org.assertj.core.groups.Tuple.tuple(38, 0),
+            org.assertj.core.groups.Tuple.tuple(19, 0),
+            org.assertj.core.groups.Tuple.tuple(18, 6),
+            org.assertj.core.groups.Tuple.tuple(38, 0));
   }
 
   @Test

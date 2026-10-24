@@ -359,16 +359,37 @@ public class DataTableService {
   public void finishReplace(String tableName, String tempName, long rowsWritten) {
     // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
     DataTableNames.validate(tableName);
-    requireTempTableOf(tableName, tempName);
-    resolver.tableStore().finishReplace(tableName, tempName, rowsWritten);
+    DataTableStore store = resolver.tableStore();
+    store.requireTempTable(tableName, tempName);
+    store.finishReplace(tableName, tempName, rowsWritten);
+  }
+
+  /**
+   * 사용자 INSERT·UPDATE 대상 테이블의 행 트리거를 쓰기 전에 보장한다(WD-77). PG 는 아무것도 하지 않는다(저장소 기본 구현). 트리거 권한이 없는
+   * Tibero 테넌트는 운영자 안내가 든 422 가 난다.
+   */
+  public void ensureRowTrigger(String tableName) {
+    resolver.tableStore().ensureRowTrigger(tableName);
+  }
+
+  /**
+   * APPEND 적재를 마무리한다 — 임시 테이블의 행을 원본을 비우지 않고 옮기고 임시 테이블을 버린다(WD-77, Tibero 전용 경로). PG 는 출력 테이블에 직접
+   * 적재하므로 이 메서드를 부르지 않는다(PG 저장소 구현은 예외를 던진다).
+   */
+  public void finishAppend(String tableName, String tempName, long rowsWritten) {
+    DataTableNames.validate(tableName);
+    DataTableStore store = resolver.tableStore();
+    store.requireTempTable(tableName, tempName);
+    store.finishAppend(tableName, tempName, rowsWritten);
   }
 
   /** 원본을 이번 실행의 임시 테이블({@code tempName})로 맞바꾼다. 이름이 그 테이블의 임시 테이블 모양이 아니면 거부한다. */
   public void swapTable(String tableName, String tempName) {
     // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
     DataTableNames.validate(tableName);
-    requireTempTableOf(tableName, tempName);
-    resolver.tableStore().swapTable(tableName, tempName);
+    DataTableStore store = resolver.tableStore();
+    store.requireTempTable(tableName, tempName);
+    store.swapTable(tableName, tempName);
   }
 
   /**
@@ -378,8 +399,9 @@ public class DataTableService {
   public void dropTempTable(String tableName, String tempName) {
     // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
     DataTableNames.validate(tableName);
-    requireTempTableOf(tableName, tempName);
-    resolver.tableStore().dropTempTable(tableName, tempName);
+    DataTableStore store = resolver.tableStore();
+    store.requireTempTable(tableName, tempName);
+    store.dropTempTable(tableName, tempName);
   }
 
   public void renameColumn(String tableName, String oldName, String newName) {

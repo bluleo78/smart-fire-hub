@@ -14,8 +14,15 @@ spring:
       write-bigdecimal-as-plain: true
 
 app:
-  # 비어 있으면 기동 실패(DbExecutorProperties). api 와 같은 EXECUTOR_INTERNAL_TOKEN 을 쓴다.
-  internal-token: ${EXECUTOR_INTERNAL_TOKEN:}
+  # 비어 있으면 기동 실패(DbExecutorProperties). api 의 app.db-executor.internal-token 과 같은 값이다.
+  # Python 실행기의 EXECUTOR_INTERNAL_TOKEN 과는 별개의 값이다(스펙 §3.4 — 서로 다르게 둔다).
+  internal-token: ${DB_EXECUTOR_INTERNAL_TOKEN:}
+  # Python 실행기 전용 적재 토큰 — /execute/load 만 허용한다. 비우면 적재 자격 없음. 내부 토큰과 같으면 기동 실패.
+  load-token: ${DB_EXECUTOR_LOAD_TOKEN:}
+  # true 면 알려진 개발 기본 토큰을 허용한다. application-local.yml 에서만 켠다.
+  allow-default-token: false
+  # 스크립트 1회용 토큰 서명 키(api 와 같은 값). 검증은 WD-78 에서 구현 — 지금은 바인딩만 한다.
+  script-token-key: ${DB_EXECUTOR_SCRIPT_TOKEN_KEY:}
   api-base-url: ${DB_EXECUTOR_API_BASE_URL:http://api:8080}
   descriptor-ttl-seconds: 60
   # 최악의 동시 세션 수 = max-pools × (max-size + read-only-max-size) = 8 × (4 + 2) = 48 — 외부 DB 세션 한도 안이어야 한다.
@@ -31,6 +38,10 @@ app:
     timeout-seconds: 30
   query:
     timeout-seconds: 30
+  # 적재(/execute/load)·긴 SQL 의 전체 기한이자 /execute/sql 요청별 timeout_seconds 의 상한(스펙 §3.3) — 행 수에 비례하는 일이라
+  # 사용자 SQL 용 50/55초와 따로 둔다(파이프라인 단계 시간 제한에 맞춘다).
+  load:
+    timeout-seconds: 1800
 
 management:
   endpoints:

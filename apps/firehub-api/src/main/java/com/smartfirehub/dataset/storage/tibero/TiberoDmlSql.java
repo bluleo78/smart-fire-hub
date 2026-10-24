@@ -539,4 +539,37 @@ final class TiberoDmlSql {
         + source
         + ")";
   }
+
+  /**
+   * 스테이징 → 출력 테이블 옮기기 INSERT … SELECT (REPLACE·APPEND 공용, 본문만 — REPLACE 의 선행 DELETE 는 {@link
+   * #deleteAll}).
+   *
+   * <p><b>시스템 컬럼.</b> {@code promoteReplace} 와 같은 방식으로 채운다 — {@code ID} 는 출력 테이블 전용 시퀀스 {@code
+   * NEXTVAL}, {@code _UPDATED_AT} 은 {@code SYSTIMESTAMP}, {@code CREATED_AT} 은 컬럼 기본값, {@code
+   * IMPORT_ID} 는 NULL. 출력 테이블에는 {@code _SEQ} 컬럼이 없다(스테이징에만 있다) — 그래서 옮길 때 채울 {@code _SEQ} 도 없다.
+   *
+   * <p><b>입력 순서.</b> 실행기의 {@code /execute/load} 가 스테이징의 {@code _SEQ} 를 입력 순번(요청 시작 시 {@code
+   * MAX("_SEQ")} + 행 번호)으로 채우므로, {@code promoteReplace} 와 같이 {@code ORDER BY "_SEQ"} 로 {@code ID} 가
+   * 입력 순서대로 매겨지게 한다. ORDER BY 는 NEXTVAL 과 같은 질의 블록에 둘 수 없어 인라인 뷰 안에 둔다.
+   *
+   * @param stagingPhysical 스테이징 물리 이름({@code STG_<24 대문자 16진>})
+   * @param columns 옮길 사용자 컬럼(소문자 메타데이터 이름) — 출력·스테이징 양쪽에 있어야 한다
+   */
+  static String moveFromStaging(
+      String schema, String table, String stagingPhysical, List<String> columns) {
+    String list = cols(columns);
+    return "INSERT INTO "
+        + tbl(schema, table)
+        + " (\"ID\", "
+        + list
+        + ", \"_UPDATED_AT\") SELECT "
+        + seq(schema, table)
+        + ".NEXTVAL, "
+        + list
+        + ", SYSTIMESTAMP FROM (SELECT "
+        + list
+        + " FROM "
+        + stgTbl(schema, stagingPhysical)
+        + " ORDER BY \"_SEQ\")";
+  }
 }

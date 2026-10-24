@@ -297,7 +297,8 @@ public class AiClassifyExecutor {
         // 언제나 참이다.
         droppedRows += batch.size() - classifiedRows.size();
 
-        written += writeBatch(targetTable, outputColumnNames, classifiedRows, columnTypes);
+        written +=
+            writeBatch(isReplace, targetTable, outputColumnNames, classifiedRows, columnTypes);
 
         // 실패한 배치 뒤에도 남겨야 몇 번째에서 막혔는지가 보이므로 catch **밖**이다(#691).
         reportProgress(
@@ -417,6 +418,7 @@ public class AiClassifyExecutor {
    * 임시 테이블에 남는다. 빈 배치는 삽입하지 않는다.
    */
   private long writeBatch(
+      boolean isReplace,
       String targetTable,
       List<String> outputColumnNames,
       List<Map<String, Object>> rows,
@@ -427,7 +429,13 @@ public class AiClassifyExecutor {
     for (Map<String, Object> row : rows) {
       coerceRowValues(row, columnTypes);
     }
-    dataTableRowService.insertBatch(targetTable, outputColumnNames, rows, columnTypes);
+    if (isReplace) {
+      // REPLACE 의 대상은 이번 실행의 임시 테이블이다 — Tibero 스테이징은 실제 테이블과 모양이 달라 전용 창구로 쓴다(WD-77). PG 는 같은
+      // insertBatch.
+      dataTableRowService.insertTempBatch(targetTable, outputColumnNames, rows, columnTypes);
+    } else {
+      dataTableRowService.insertBatch(targetTable, outputColumnNames, rows, columnTypes);
+    }
     return rows.size();
   }
 

@@ -35,7 +35,8 @@ class TiberoAccountPlanTest {
     assertThat(steps.get(1).sql()).isEqualTo("ALTER USER \"GENIA_T5\" QUOTA UNLIMITED ON \"USR\"");
     assertThat(steps.get(2).sql())
         .isEqualTo(
-            "GRANT CREATE SESSION, CREATE TABLE, CREATE VIEW, CREATE SEQUENCE TO \"GENIA_T5\"");
+            "GRANT CREATE SESSION, CREATE TABLE, CREATE VIEW, CREATE SEQUENCE, CREATE TRIGGER TO"
+                + " \"GENIA_T5\"");
     assertThat(steps.get(0).description()).isEqualTo("GENIA_T5 계정 생성");
     assertThat(steps.get(1).description()).isEqualTo("GENIA_T5 테이블스페이스 할당");
     assertThat(steps.get(2).description()).isEqualTo("GENIA_T5 권한 부여");
@@ -207,5 +208,20 @@ class TiberoAccountPlanTest {
     for (ProvisioningStep step : plan.provisioningSteps()) {
       assertThat(lines).contains(step.sql() + ";");
     }
+  }
+
+  /** OWNER 의 트리거 생성 권한(WD-77)은 프로비저닝 단계와 운영자용 SCRIPT 문서 양쪽에 같은 문장으로 들어간다. */
+  @Test
+  void ownerGrant_includesCreateTrigger_inStepsAndScript() {
+    TiberoAccountPlan plan = TiberoAccountPlan.of(TENANT, null, accounts());
+    String grant =
+        "GRANT CREATE SESSION, CREATE TABLE, CREATE VIEW, CREATE SEQUENCE, CREATE TRIGGER TO"
+            + " \"GENIA_T5\"";
+
+    assertThat(plan.provisioningSteps()).hasSize(25);
+    assertThat(plan.provisioningSteps().get(2).sql()).isEqualTo(grant);
+    assertThat(plan.script()).contains(grant + ";\n");
+    // RO·슬롯에는 트리거 권한이 가지 않는다.
+    assertThat(plan.script().split("CREATE TRIGGER", -1)).hasSize(2);
   }
 }

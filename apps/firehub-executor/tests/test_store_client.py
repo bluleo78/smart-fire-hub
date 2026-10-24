@@ -12,10 +12,8 @@ PG = {"tenantId": 7, "backend": "POSTGRESQL"}
 
 
 def tibero(**over):
-    body = {
-        "tenantId": 7, "backend": "TIBERO", "host": "h", "port": 8629, "database": "tibero",
-        "schema": "GENIA_T7", "owner": {"username": "GENIA_T7", "password": "pw"},
-    }
+    # 스펙 §3.4: Python 실행기 토큰으로는 backend·tenantId 만 온다(접속 정보·비밀번호 없음).
+    body = {"tenantId": 7, "backend": "TIBERO"}
     body.update(over)
     return body
 
@@ -69,11 +67,20 @@ def test_request_carries_internal_token_and_path():
     assert calls[0].headers["Authorization"] == f"Internal {TEST_TOKEN}"
 
 
-def test_tibero_descriptor_parsed_and_password_hidden():
+def test_tibero_descriptor_has_backend_and_tenant_only():
     c, _, _ = make(respond(200, tibero()))
     desc = c.get(7)
-    assert desc.owner.password.get_secret_value() == "pw"
-    assert "pw" not in repr(desc)
+    assert desc.backend == "TIBERO" and desc.tenant_id == 7
+    assert not hasattr(desc, "owner")
+
+
+def test_tibero_secrets_in_body_are_never_kept():
+    # 만에 하나 api 가 접속 정보를 실어 보내도(구버전·설정 실수) 실행기는 받아 두지 않는다.
+    body = tibero(host="h", owner={"username": "GENIA_T7", "password": "pw-secret"})
+    c, _, _ = make(respond(200, body))
+    desc = c.get(7)
+    assert "pw-secret" not in repr(desc) and "pw-secret" not in str(desc.model_dump())
+    assert not hasattr(desc, "owner") and not hasattr(desc, "host")
 
 
 def test_404_is_lookup_error_not_postgres():
@@ -163,31 +170,18 @@ def test_rejects_descriptor_for_other_tenant():
         c.get(7)
 
 
-def test_rejects_tibero_schema_not_matching_owner_convention():
-    c, _, _ = make(respond(200, tibero(schema="SCOTT")))
-    with pytest.raises(StoreLookupError):
-        c.get(7)
-
-
-@pytest.mark.parametrize("over", [{"owner": None}, {"host": None}, {"port": None}, {"database": None}])
-def test_rejects_tibero_without_owner_or_host(over):
-    c, _, _ = make(respond(200, tibero(**over)))
-    with pytest.raises(StoreLookupError):
-        c.get(7)
-
-
 def test_rejects_unknown_backend():
     c, _, _ = make(respond(200, {"tenantId": 7, "backend": "MYSQL"}))
     with pytest.raises(StoreLookupError):
         c.get(7)
 
 
-def test_malformed_descriptor_error_hides_password():
-    body = tibero(port="x", owner={"username": "GENIA_T7", "password": 123})
+def test_malformed_descriptor_error_hides_body_values():
+    body = tibero(tenantId="secret-not-an-int")
     c, _, _ = make(respond(200, body))
     with pytest.raises(StoreLookupError) as ei:
         c.get(7)
-    assert "123" not in str(ei.value)
+    assert "secret-not-an-int" not in str(ei.value)
     assert ei.value.__cause__ is None
 
 

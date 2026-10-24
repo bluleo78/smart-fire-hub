@@ -5,7 +5,7 @@ import random
 import time
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -14,6 +14,7 @@ import psycopg2
 from jsonpath_ng import jsonpath as jp
 from jsonpath_ng.ext import parse as jsonpath_parse
 from jsonpath_ng.ext.filter import Filter as JsonPathFilter
+from app.db.backends.remote import RemoteLoadBackend, RemoteLoadError, require_staging_table
 from app.schemas.requests import ApiCallExecuteRequest, FieldMapping
 from app.schemas.responses import ApiCallExecuteResponse
 from app.services import api_call_errors as errors
@@ -38,97 +39,16 @@ class ApiCallException(Exception):
 # ---------------------------------------------------------------------------
 
 def execute_api_call(request: ApiCallExecuteRequest, conn) -> ApiCallExecuteResponse:
+    """PG 테넌트 경로 — 페이지마다 같은 커넥션·트랜잭션에 넣고 끝에 한 번 커밋한다(전부 반영 또는 전부 취소)."""
     start_time = time.monotonic()
+
+    def write_to_pg(rows: List[Dict[str, Any]]) -> None:
+        insert_batch(conn, request.output_table, rows)
+
     try:
-        # 1. SSRF validation on initial URL
-        validate_url(request.url)
-
-        total_rows = 0
-        total_pages = 0
-        log_lines: List[str] = []
-
-        # 2. Pagination
-        pagination_type = (request.pagination.type.upper() if request.pagination else "NONE")
-
-        if pagination_type == "OFFSET":
-            pag = request.pagination
-            page_size = pag.page_size or DEFAULT_PAGE_SIZE
-            offset = 0
-            total_count: Optional[int] = None
-
-            while total_pages < MAX_PAGES:
-                # Build pagination params
-                pag_params: Dict[str, str] = {}
-                if pag.offset_param:
-                    pag_params[pag.offset_param] = str(offset)
-                if pag.limit_param:
-                    pag_params[pag.limit_param] = str(page_size)
-
-                response_body = _execute_request(request, pag_params)
-                rows = _parse_and_map(
-                    response_body,
-                    request.data_path,
-                    request.field_mappings,
-                    request.column_type_map,
-                )
-
-                # Extract total count (first page only)
-                if total_count is None and pag.total_path:
-                    raw_total = _read_path_safe(response_body, pag.total_path)
-                    if raw_total is not None:
-                        try:
-                            total_count = int(raw_total)
-                        except (TypeError, ValueError):
-                            total_count = None
-
-                if rows:
-                    insert_batch(conn, request.output_table, rows)
-                    total_rows += len(rows)
-                total_pages += 1
-
-                # Duration check
-                elapsed_ms = int((time.monotonic() - start_time) * 1000)
-                if elapsed_ms >= request.max_duration_ms:
-                    log_lines.append(
-                        f"[WARN] maxDurationMs ({request.max_duration_ms} ms) exceeded "
-                        f"after {total_pages} pages. Partial result."
-                    )
-                    break
-
-                # Next page check
-                if not _has_next_page(offset, page_size, total_count, len(rows)):
-                    break
-                offset += page_size
-        else:
-            # Single request (NONE or unknown pagination type)
-            response_body = _execute_request(request, {})
-            rows = _parse_and_map(
-                response_body,
-                request.data_path,
-                request.field_mappings,
-                request.column_type_map,
-            )
-            if rows:
-                insert_batch(conn, request.output_table, rows)
-                total_rows += len(rows)
-            total_pages = 1
-
-        elapsed_ms = int((time.monotonic() - start_time) * 1000)
-        summary = (
-            f"url={request.url} method={request.method} "
-            f"pages={total_pages} rows={total_rows} duration={elapsed_ms}ms"
-        )
-        log_lines.insert(0, summary)
-
+        total_rows, total_pages, log_lines = _fetch_and_write_pages(request, write_to_pg, start_time)
         conn.commit()
-
-        return ApiCallExecuteResponse(
-            success=True,
-            rows_loaded=total_rows,
-            total_pages=total_pages,
-            execution_log="\n".join(log_lines),
-            execution_time_ms=elapsed_ms,
-        )
+        return _success_response(request, total_rows, total_pages, log_lines, start_time)
 
     except (SsrfException, ApiCallException) as e:
         conn.rollback()
@@ -153,6 +73,150 @@ def execute_api_call(request: ApiCallExecuteRequest, conn) -> ApiCallExecuteResp
         return ApiCallExecuteResponse(
             success=False, error=message, execution_time_ms=elapsed_ms
         )
+
+
+def execute_api_call_remote(request: ApiCallExecuteRequest, loader: RemoteLoadBackend) -> ApiCallExecuteResponse:
+    """Tibero 테넌트 경로 — PG 커넥션 없이 페이지마다 db-executor 로 원격 적재한다(WD-77 Task 6).
+
+    ``request.output_table`` 은 api 가 만든 **스테이징**(``STG_<24HEX>``)이다. 페이지를 같은 스테이징에 여러 번 load 하되 어느
+    호출이든 실패하면 즉시 중단하고 ``success=False`` 로 끝낸다. 출력 테이블 반영은 api 의 옮기기(한 Tibero 트랜잭션)가 하므로
+    여기서 중단돼도 부분 행이 출력에 남지 않는다 — 실패 시 스테이징 정리도 api 몫이다. 값 변환은 ``loader`` 가 보내기 전에 한다.
+    """
+    start_time = time.monotonic()
+    try:
+        # 스테이징 이름 검증 — 라우터가 이미 거르지만, 이 함수를 직접 부르는 경로도 같은 규칙을 지키게 한다(적재기도 다시 검증한다).
+        require_staging_table(request.output_table)
+        total_rows, total_pages, log_lines = _fetch_and_write_pages(
+            request,
+            lambda rows: loader.load(
+                request.tenant_id, request.output_table, rows, request.column_type_map
+            ),
+            start_time,
+        )
+        return _success_response(request, total_rows, total_pages, log_lines, start_time)
+
+    except (SsrfException, ApiCallException, RemoteLoadError, ValueError) as e:
+        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        return ApiCallExecuteResponse(
+            success=False, error=str(e), execution_time_ms=elapsed_ms
+        )
+    except Exception as e:
+        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        logger.exception("Unexpected error in execute_api_call_remote")
+        return ApiCallExecuteResponse(
+            success=False, error=str(e), execution_time_ms=elapsed_ms
+        )
+
+
+def _success_response(
+    request: ApiCallExecuteRequest,
+    total_rows: int,
+    total_pages: int,
+    log_lines: List[str],
+    start_time: float,
+) -> ApiCallExecuteResponse:
+    """성공 응답(요약 로그 맨 앞)을 만든다 — PG·Tibero 경로가 같은 모양을 쓴다."""
+    elapsed_ms = int((time.monotonic() - start_time) * 1000)
+    summary = (
+        f"url={request.url} method={request.method} "
+        f"pages={total_pages} rows={total_rows} duration={elapsed_ms}ms"
+    )
+    log_lines.insert(0, summary)
+    return ApiCallExecuteResponse(
+        success=True,
+        rows_loaded=total_rows,
+        total_pages=total_pages,
+        execution_log="\n".join(log_lines),
+        execution_time_ms=elapsed_ms,
+    )
+
+
+def _fetch_and_write_pages(
+    request: ApiCallExecuteRequest,
+    write_rows: Callable[[List[Dict[str, Any]]], Optional[int]],
+    start_time: float,
+) -> Tuple[int, int, List[str]]:
+    """API 를 페이지네이션으로 호출해 페이지마다 ``write_rows`` 로 적재하고 (총 행 수, 총 페이지 수, 로그 줄)을 돌려준다.
+
+    PG(커넥션 insert)와 Tibero(원격 적재)가 같은 호출·페이지·시간 제한 로직을 쓰도록 쓰기만 주입한다. ``write_rows`` 가
+    정수를 돌려주면(원격 적재의 적재 행 수) 그 값을, None 이면 ``len(rows)`` 를 센다. 빈 페이지는 쓰기를 부르지 않는다.
+    """
+    # 1. SSRF validation on initial URL
+    validate_url(request.url)
+
+    total_rows = 0
+    total_pages = 0
+    log_lines: List[str] = []
+
+    def write(rows: List[Dict[str, Any]]) -> int:
+        written = write_rows(rows)
+        return len(rows) if written is None else written
+
+    # 2. Pagination
+    pagination_type = (request.pagination.type.upper() if request.pagination else "NONE")
+
+    if pagination_type == "OFFSET":
+        pag = request.pagination
+        page_size = pag.page_size or DEFAULT_PAGE_SIZE
+        offset = 0
+        total_count: Optional[int] = None
+
+        while total_pages < MAX_PAGES:
+            # Build pagination params
+            pag_params: Dict[str, str] = {}
+            if pag.offset_param:
+                pag_params[pag.offset_param] = str(offset)
+            if pag.limit_param:
+                pag_params[pag.limit_param] = str(page_size)
+
+            response_body = _execute_request(request, pag_params)
+            rows = _parse_and_map(
+                response_body,
+                request.data_path,
+                request.field_mappings,
+                request.column_type_map,
+            )
+
+            # Extract total count (first page only)
+            if total_count is None and pag.total_path:
+                raw_total = _read_path_safe(response_body, pag.total_path)
+                if raw_total is not None:
+                    try:
+                        total_count = int(raw_total)
+                    except (TypeError, ValueError):
+                        total_count = None
+
+            if rows:
+                total_rows += write(rows)
+            total_pages += 1
+
+            # Duration check
+            elapsed_ms = int((time.monotonic() - start_time) * 1000)
+            if elapsed_ms >= request.max_duration_ms:
+                log_lines.append(
+                    f"[WARN] maxDurationMs ({request.max_duration_ms} ms) exceeded "
+                    f"after {total_pages} pages. Partial result."
+                )
+                break
+
+            # Next page check
+            if not _has_next_page(offset, page_size, total_count, len(rows)):
+                break
+            offset += page_size
+    else:
+        # Single request (NONE or unknown pagination type)
+        response_body = _execute_request(request, {})
+        rows = _parse_and_map(
+            response_body,
+            request.data_path,
+            request.field_mappings,
+            request.column_type_map,
+        )
+        if rows:
+            total_rows += write(rows)
+        total_pages = 1
+
+    return total_rows, total_pages, log_lines
 
 
 # ---------------------------------------------------------------------------

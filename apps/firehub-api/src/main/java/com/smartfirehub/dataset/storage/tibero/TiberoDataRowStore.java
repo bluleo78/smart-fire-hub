@@ -947,6 +947,25 @@ public class TiberoDataRowStore implements DataRowStore {
     return logical;
   }
 
+  /**
+   * REPLACE 임시 테이블(스테이징)에 행을 쓴다(WD-77). 스테이징은 사용자 컬럼 + {@code _SEQ} 뿐이라 일반 {@link
+   * #insertBatch}({@code ID}·{@code _UPDATED_AT} 을 쓴다)로는 쓸 수 없다 — 스테이징 전용 INSERT({@code _SEQ} 는 전용
+   * 시퀀스, 배치 순서대로)를 쓴다. 값 바인딩은 일반 INSERT 와 같은 규칙({@code TiberoValues})이라 AI 분류·로컬 API 수집이 만든 Java
+   * 값(Timestamp·BigDecimal 등)을 그대로 받는다. 스테이징 이름이 아니면 거부해 실제 테이블에 쓰는 일이 없게 한다.
+   */
+  @Override
+  public void insertTempBatch(
+      String tempTable,
+      List<String> columns,
+      List<Map<String, Object>> rows,
+      Map<String, String> columnTypes) {
+    rejectGeometryHints(columnTypes);
+    // 스테이징 이름(대소문자 무시)이 아니면 거부 — 실제 테이블에는 이 경로로 쓰지 못하게 하는 관문이다.
+    TiberoNames.requireStagingName(tempTable);
+    // 스테이징 삽입은 소문자 논리 이름을 받는다(물리 이름으로 되돌리는 쪽이 그쪽이다).
+    insertStagingBatchWithProgress(tempTable.toLowerCase(Locale.ROOT), columns, rows, null);
+  }
+
   @Override
   public void insertStagingBatchWithProgress(
       String stagingTable,

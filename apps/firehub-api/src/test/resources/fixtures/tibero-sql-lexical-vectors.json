@@ -567,6 +567,111 @@
       "sql": "SELECT 한DBMS_X FROM GENIA_T5.t",
       "tenantSchema": "GENIA_T5",
       "allowed": true
+    },
+    {
+      "name": "sys quoted schema and quoted table (Ruling 14)",
+      "sql": "SELECT * FROM \"SYS\".\"USER$\"",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "sys quoted schema, bare table",
+      "sql": "SELECT * FROM \"SYS\".USER$",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "sys space before dot",
+      "sql": "SELECT * FROM SYS . USER$",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "sys quoted with spaces around dot",
+      "sql": "SELECT * FROM \"SYS\" . \"USER$\"",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "sys newline before dot",
+      "sql": "SELECT * FROM SYS\n.USER$",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "sys comment before dot",
+      "sql": "SELECT * FROM SYS/*c*/.USER$",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "sys mixed case",
+      "sql": "SELECT * FROM Sys.user$",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "sys quoted transaction table",
+      "sql": "SELECT * FROM \"SYS\".\"_VT_TRANSACTION\"",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "sys unquoted transaction table",
+      "sql": "SELECT * FROM SYS._VT_TRANSACTION",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "alias named sys used as qualifier is rejected (conservative)",
+      "sql": "SELECT sys.a FROM GENIA_T5.t sys",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "column named sys without dot ok",
+      "sql": "SELECT sys FROM GENIA_T5.t WHERE sys > 1",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "qualified column named sys ok",
+      "sql": "SELECT t.sys FROM GENIA_T5.t t",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "quoted alias SYS without dot ok",
+      "sql": "SELECT a AS \"SYS\" FROM GENIA_T5.t",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "sys inside string literal ok",
+      "sql": "SELECT a FROM GENIA_T5.t WHERE note = 'SYS.X'",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "identifier starting with sys ok",
+      "sql": "SELECT sys_col, sysx.a FROM GENIA_T5.t sysx",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "quoted lowercase sys is a different identifier, allowed",
+      "sql": "SELECT * FROM \"sys\".\"X\"",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    }
+  ],
+  "guardDivergence": [
+    {
+      "name": "incremental cursor statement: api guard rejects, db-executor guard allows (Ruling 11)",
+      "sql": "SELECT TO_CHAR(LEAST(SYSTIMESTAMP, NVL(FROM_TZ(CAST(MIN(START_TIME) AS TIMESTAMP), TO_CHAR(SYSTIMESTAMP, 'TZH:TZM')), SYSTIMESTAMP)) AT TIME ZONE '+00:00', 'YYYY-MM-DD HH24:MI:SS.FF6') AS CANDIDATE FROM SYS._VT_TRANSACTION",
+      "tenantSchema": "GENIA_T5",
+      "apiAllowed": false,
+      "dbExecutorAllowed": true
     }
   ]
 }

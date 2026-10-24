@@ -196,6 +196,11 @@ public final class TiberoSqlGuard {
 
   /** 마스킹한 본문에서 위험 이름을 단어 경계로 찾아 거부한다. 큰따옴표 식별자 안도 검사한다. */
   private static void rejectDangerousNames(String masked) {
+    // SYS 스키마 한정자는 어떤 표기든 거부한다(Ruling 14). api 복사본은 예외가 없다 — db-executor 복사본만 증분 커서 후보 문장 전체 일치를 따로
+    // 허용한다
+    // (그 문장은 api 가 사용자 SQL 검증이 아니라 내부 조회로만 보낸다. 사용자 SQL 로 오면 여기서 거부된다 — 공유 고정값의 guardDivergence 로
+    // 고정).
+    rejectSysQualifier(masked);
     String up = masked.toUpperCase(Locale.ROOT);
     int n = up.length();
     for (int i = 0; i < n; i++) {
@@ -212,9 +217,6 @@ public final class TiberoSqlGuard {
           throw rejectedName(w);
         }
       }
-      if (up.startsWith("SYS.", i)) {
-        throw rejectedName("SYS.");
-      }
       if (up.startsWith("CURSOR", i) && !endsInIdent(up, i + 6)) {
         int k = i + 6;
         while (k < n && Character.isWhitespace(up.charAt(k))) {
@@ -225,6 +227,74 @@ public final class TiberoSqlGuard {
         }
       }
     }
+  }
+
+  /**
+   * 리터럴·주석을 가린 본문에서 {@code SYS} 스키마 한정자를 어떤 표기로든 찾아 거부한다 — {@code SYS.X}, {@code sys.x}, {@code
+   * "SYS".X}, {@code "SYS"."X"}, {@code SYS . X}(점 앞 공백·주석). 따옴표 소문자 {@code "sys"} 는 Tibero 에서
+   * {@code SYS} 와 다른 식별자라 거부하지 않는다. 뒤에 점이 없는 {@code SYS}(열·별칭 이름)는 허용한다. 식별자 안쪽 문자는 단어로 세지 않도록 따옴표
+   * 식별자를 통째로 건너뛴다. db-executor 복사본과 같게 유지한다.
+   */
+  private static void rejectSysQualifier(String masked) {
+    int n = masked.length();
+    int i = 0;
+    while (i < n) {
+      char c = masked.charAt(i);
+      if (c == '"') {
+        StringBuilder name = new StringBuilder();
+        int j = i + 1;
+        boolean closed = false;
+        while (j < n) {
+          if (masked.charAt(j) == '"') {
+            if (j + 1 < n && masked.charAt(j + 1) == '"') {
+              name.append('"');
+              j += 2;
+              continue;
+            }
+            closed = true;
+            j++;
+            break;
+          }
+          name.append(masked.charAt(j));
+          j++;
+        }
+        if (closed && name.toString().equals("SYS") && followedByDot(masked, j)) {
+          throw rejectedName("SYS.");
+        }
+        i = j;
+      } else if (TiberoSqlLexer.isIdentChar(c)) {
+        int s = i;
+        while (i < n && TiberoSqlLexer.isIdentChar(masked.charAt(i))) {
+          i++;
+        }
+        if (i - s == 3 && asciiEqualsIgnoreCase(masked, s, "SYS") && followedByDot(masked, i)) {
+          throw rejectedName("SYS.");
+        }
+      } else {
+        i++;
+      }
+    }
+  }
+
+  /** pos 부터 공백을 건너뛴 첫 문자가 점인지. */
+  private static boolean followedByDot(String s, int pos) {
+    int k = pos;
+    while (k < s.length() && Character.isWhitespace(s.charAt(k))) {
+      k++;
+    }
+    return k < s.length() && s.charAt(k) == '.';
+  }
+
+  /** s 의 pos 부터 expectedUpper(대문자 ASCII)와 ASCII 대소문자만 무시하고 같은지(로캘·비ASCII 접기 없음). */
+  private static boolean asciiEqualsIgnoreCase(String s, int pos, String expectedUpper) {
+    for (int k = 0; k < expectedUpper.length(); k++) {
+      char c = s.charAt(pos + k);
+      char upper = c >= 'a' && c <= 'z' ? (char) (c - 32) : c;
+      if (upper != expectedUpper.charAt(k)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private static Rejected rejectedName(String name) {

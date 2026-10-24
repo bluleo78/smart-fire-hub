@@ -74,7 +74,7 @@ import org.springframework.context.ApplicationEventPublisher;
  *       §2 실패 조건 1).
  *   <li>REPLACE/APPEND/MERGE 마다 실행기에 넘기는 문장·선행문(Tibero 판 비우기·INSERT…SELECT·MERGE).
  *   <li>probe 결과의 대문자 컬럼명이 메타데이터의 소문자 컬럼명과 맞춰진다.
- *   <li>Python·API 수집·AI 분류·증분·출력 없는 SELECT 단계는 시작 즉시 한국어 문구로 실패한다.
+ *   <li>Python 단계는 시작 즉시 한국어 문구로 실패한다.
  *   <li>실행기 실패 응답은 Tibero 코드로 번역된 문구로 단계 실패가 된다.
  *   <li>{@code {{#N}}} 참조가 {@code "GENIA_T5"."<TABLE>"} 로 치환된다(Task 2 에서 미뤄 둔 러너 단위 테스트).
  * </ul>
@@ -224,7 +224,7 @@ class PipelineAsyncRunnerTiberoTest {
 
   /**
    * 사용자 DML(UPDATE·DELETE)은 문장을 그대로 보낸다. REPLACE 면 PG 경로(#735)와 같이 출력 비우기 선행문을 같은 트랜잭션으로 붙인다. 사용자
-   * INSERT 는 단계 시작 시 거부한다(아래 tiberoUserInsert_*).
+   * INSERT 는 트리거 보장 뒤 실행한다(PipelineAsyncRunnerTiberoInsertTest).
    */
   @Test
   void tiberoDmlReplace_sendsUserSqlVerbatimWithTiberoDelete() {
@@ -270,28 +270,6 @@ class PipelineAsyncRunnerTiberoTest {
             contains("출력 데이터는 바뀌지 않았습니다"),
             isNull(),
             any());
-    verifyNoPgExecution();
-  }
-
-  /**
-   * F3 — Tibero 출력 테이블은 ID 기본값·트리거가 없어(시퀀스로 채움) 사용자가 쓴 INSERT 는 ID 가 비어 실패한다. 그래서 단계 시작 시(검증 직후, 보안
-   * 게이트·실행기 호출 전) 한국어 안내로 거부하고 SELECT 적재로 안내한다. 대소문자·앞 주석과 무관하다.
-   */
-  @ParameterizedTest
-  @CsvSource(
-      delimiter = '|',
-      value = {
-        "INSERT INTO genia_t5.orders (amount) SELECT amount FROM genia_t5.src_orders|REPLACE",
-        "insert into genia_t5.orders (amount) select amount from genia_t5.src_orders|APPEND",
-        "/* 적재 */ INSERT INTO genia_t5.orders (amount) SELECT 1 FROM DUAL|APPEND",
-      })
-  void tiberoUserInsert_isRejectedAtStepStart(String sql, String strategy) {
-    String status = run(sqlStep(sql, OUTPUT_ID, strategy), false);
-
-    assertThat(status).isEqualTo("FAILED");
-    assertThat(failureMessage())
-        .isEqualTo("Tibero 저장소 테넌트에서는 INSERT 를 직접 쓸 수 없습니다. SELECT 결과를 출력 데이터셋에 적재해 주세요.");
-    verifyNoInteractions(dbExecutorClient, pipelineSecurityGate);
     verifyNoPgExecution();
   }
 
@@ -441,10 +419,6 @@ class PipelineAsyncRunnerTiberoTest {
       value = {
         "PYTHON|false|Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다.",
         "PYTHON|true|Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다.",
-        "API_CALL|false|Tibero 저장소 테넌트에서는 아직 API 수집 단계를 실행할 수 없습니다.",
-        "API_CALL|true|Tibero 저장소 테넌트에서는 아직 API 수집 단계를 실행할 수 없습니다.",
-        "AI_CLASSIFY|false|Tibero 저장소 테넌트에서는 아직 AI 분류 단계를 실행할 수 없습니다.",
-        "AI_CLASSIFY|true|Tibero 저장소 테넌트에서는 아직 AI 분류 단계를 실행할 수 없습니다.",
       })
   void tiberoUnsupportedStepTypes_failImmediatelyInKorean(
       String scriptType, boolean executorEnabled, String expected) {
@@ -470,30 +444,6 @@ class PipelineAsyncRunnerTiberoTest {
         pipelineSecurityGate,
         pythonReadGrantSync,
         localPythonOutputLoader);
-  }
-
-  @Test
-  void tiberoIncrementalSqlStep_failsBeforeCursorWork() {
-    String sql = "SELECT amount FROM genia_t5.src_orders WHERE _updated_at >= {{last_run_at}}";
-
-    String status = run(sqlStep(sql, OUTPUT_ID, "MERGE"), false);
-
-    assertThat(status).isEqualTo("FAILED");
-    assertThat(failureMessage()).isEqualTo("Tibero 저장소 테넌트에서는 아직 증분 SQL 단계를 실행할 수 없습니다.");
-    // 커서 후보·책갈피는 PG 시계·PG 트리거 기준이라 손대지 않는다.
-    verifyNoInteractions(incrementalCursorService, dbExecutorClient, executorClient, sqlExecutor);
-    verify(stepRepository, never()).findCursor(any());
-    verify(executionRepository, never()).setInjectedLastRunAt(any(), any());
-  }
-
-  @Test
-  void tiberoSelectWithoutOutputDataset_failsWithoutProbeOrTemp() {
-    String status = run(sqlStep("SELECT amount FROM genia_t5.src_orders", null, "REPLACE"), false);
-
-    assertThat(status).isEqualTo("FAILED");
-    assertThat(failureMessage()).isEqualTo("Tibero 저장소 테넌트의 SQL 단계는 출력 데이터셋을 지정해야 합니다.");
-    // 임시 데이터셋 자동 생성은 PG 이름·타입 규칙이라 2단계 몫 — probe 로 사용자 SQL 을 돌리지도 않는다.
-    verifyNoInteractions(dbExecutorClient, sqlColumnProbe, tempDatasetService, executorClient);
   }
 
   // ── 실행기 실패 → 단계 FAILED + 번역 문구 ────────────────────────────────────────────────

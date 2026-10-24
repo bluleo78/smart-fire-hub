@@ -5,7 +5,7 @@ from app.db.connection import get_connection
 from app.dependencies import verify_internal_auth
 from app.routers.store_gate import QUERY_UNSUPPORTED, unsupported_error
 from app.schemas.requests import QueryExecuteRequest
-from app.schemas.responses import QueryExecuteResponse
+from app.schemas.responses import QueryExecuteResponse, db_error_of
 from app.services import query_executor
 
 router = APIRouter(prefix="/execute", tags=["execute"])
@@ -20,7 +20,7 @@ async def execute_query_endpoint(
     # Tibero 테넌트·조회 실패는 기존 PG 경로에 들어가기 전에 막는다(WD-75 게이트).
     err = await unsupported_error(request.tenant_id, settings, QUERY_UNSUPPORTED)
     if err:
-        return QueryExecuteResponse(success=False, error=err)
+        return QueryExecuteResponse(success=False, error=err, db_error=db_error_of(err))
     with get_connection(request.tenant_id, settings) as conn:
         return query_executor.execute_query(
             request.query,

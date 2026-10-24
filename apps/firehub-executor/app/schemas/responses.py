@@ -50,6 +50,23 @@ class PgErrorInfo(BaseModel):
     column: Optional[str] = None
 
 
+class DbErrorInfo(BaseModel):
+    """두 실행기(Python·db-executor) 공통 오류 구조(WD-77, 계약 벡터 ``dbErrorFields``).
+
+    ``code`` 는 DB 벤더 오류 코드다. PG 는 SQLState 문자열만 있고 숫자 코드가 없어 항상 0 이다.
+    ``pg_error`` 는 PG 전용 필드로 그대로 두고, 이 필드는 백엔드와 무관한 소비자를 위해 **추가**된다.
+    """
+
+    code: int = 0
+    sql_state: Optional[str] = None
+    message: str
+
+
+def db_error_of(message: str, sql_state: Optional[str] = None) -> DbErrorInfo:
+    """실패 응답에 싣는 ``db_error`` 를 만든다. 검증 거부처럼 SQLState 가 없으면 None 으로 둔다."""
+    return DbErrorInfo(code=0, sql_state=sql_state, message=message)
+
+
 class SqlExecuteResponse(BaseModel):
     success: bool
     rows: Optional[list] = None
@@ -59,6 +76,8 @@ class SqlExecuteResponse(BaseModel):
     error: Optional[str] = None
     # PG 오류로 실패했을 때만 채운다(검증 거부·연결 오류 등은 None). 기존 필드는 그대로라 구버전 API 와도 호환된다.
     pg_error: Optional[PgErrorInfo] = None
+    # 실행기 공통 오류 구조(WD-77). 실패 때만 채우고 성공이면 None. pg_error 와 병존한다.
+    db_error: Optional[DbErrorInfo] = None
 
     # 파이프라인 SQL 스텝 SELECT 도 같은 연결 풀·같은 행 값을 내보내므로 같은 직렬화 경계를 둔다(#763).
     @field_serializer("rows")
@@ -88,6 +107,8 @@ class QueryExecuteResponse(BaseModel):
     execution_time_ms: int = 0
     truncated: bool = False
     error: Optional[str] = None
+    # 실행기 공통 오류 구조(WD-77). 실패 때만 채운다.
+    db_error: Optional[DbErrorInfo] = None
 
     # 행을 만드는 곳이 여러 군데(주 경로·geometry 재시도·geometry 래핑)라 직렬화 경계 한 곳에서 바꾼다(#763).
     @field_serializer("rows")
@@ -102,3 +123,31 @@ class ApiCallExecuteResponse(BaseModel):
     execution_log: str = ""
     error: Optional[str] = None
     execution_time_ms: int = 0
+
+
+class ProbeColumn(BaseModel):
+    """probe 가 알아낸 결과 컬럼 하나. ``jdbc_type`` 은 ``java.sql.Types`` 정수값이다."""
+
+    name: str
+    jdbc_type: int
+    type_name: str
+    precision: Optional[int] = None
+    scale: Optional[int] = None
+
+
+class ProbeResponse(BaseModel):
+    """``/execute/probe`` 응답 — 행을 읽지 않고 쿼리의 결과 컬럼만 돌려준다."""
+
+    success: bool
+    columns: List[ProbeColumn] = []
+    error: Optional[str] = None
+    db_error: Optional[DbErrorInfo] = None
+
+
+class LoadResponse(BaseModel):
+    """``/execute/load`` 응답 — db-executor 와 같은 모양(``success``·``rows_loaded``·``error``·``db_error``)."""
+
+    success: bool
+    rows_loaded: int = 0
+    error: Optional[str] = None
+    db_error: Optional[DbErrorInfo] = None

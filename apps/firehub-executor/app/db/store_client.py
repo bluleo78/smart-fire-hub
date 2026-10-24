@@ -5,7 +5,7 @@
 
 fail-closed 원칙(R-pg-lookup): 조회가 어떤 이유로든 실패하면 ``StoreLookupError`` 를 던진다.
 PG 로 폴백하지 않는다 — Tibero 테넌트가 조용히 PG 에서 실행되는 것이 실패보다 나쁘다.
-비밀번호는 ``SecretStr`` 로만 들고, 로그·예외 메시지에 싣지 않는다.
+Python 실행기 토큰으로는 backend·tenantId 만 받는다 — Tibero 접속 정보·비밀번호는 받지도 들지도 않는다(스펙 §3.4).
 """
 from __future__ import annotations
 
@@ -15,10 +15,9 @@ import time
 from typing import Callable, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.config import Settings
-from app.tenant import resolve_tibero_owner
 
 _PREFIX = "데이터셋 저장소 정보를 조회하지 못했습니다"
 # api 본문 message 를 사용자 메시지에 싣을 때의 상한(과도하게 긴 본문이 로그를 채우지 않게).
@@ -29,25 +28,16 @@ class StoreLookupError(RuntimeError):
     """저장소 기술자 조회·검증 실패. 메시지는 한국어이며 비밀번호를 담지 않는다."""
 
 
-class StoreAccount(BaseModel):
-    """저장소 계정. 비밀번호는 SecretStr 이라 repr/로그에 노출되지 않는다."""
-
-    username: str
-    password: SecretStr
-
-
 class StoreDescriptor(BaseModel):
-    """api 가 알려주는 테넌트 저장소 기술자. PG 는 backend 만, Tibero 는 접속 정보 전부를 가진다."""
+    """api 가 알려주는 테넌트 저장소 기술자. Python 실행기에게는 backend 와 tenantId 만 온다.
+
+    접속 정보·계정 필드를 일부러 두지 않는다 — 본문에 실려 와도 모델이 받아 두지 않는다(pydantic 기본 extra=ignore).
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
     tenant_id: int = Field(alias="tenantId")
     backend: Literal["POSTGRESQL", "TIBERO"]
-    host: str | None = None
-    port: int | None = None
-    database: str | None = None
-    schema_name: str | None = Field(default=None, alias="schema")
-    owner: StoreAccount | None = None
 
 
 class StoreClient:
@@ -60,7 +50,7 @@ class StoreClient:
       ``DataStoreResolver`` 도 같은 전제로 만료 없이 캐시한다. 그래서 PG 테넌트는 워커 프로세스당 테넌트별 첫 조회
       이후로 api 에 의존하지 않는다 — api 재기동·과부하가 PG 파이프라인을 막지 않고, api→executor→api 재진입
       호출이 매 실행마다 생기지도 않는다. PG 항목은 ``invalidate`` 로만 버려진다.
-    - **TIBERO 기술자는 TTL(``data_store_cache_ttl_seconds``)을 지킨다.** 비밀번호가 회전될 수 있기 때문이다.
+    - **TIBERO 기술자는 TTL(``data_store_cache_ttl_seconds``)을 지킨다.** 저장소 종류·상태가 바뀔 수 있기 때문이다(접속 정보는 받지 않는다).
 
     동시성:
     - 테넌트별 **세대(generation)**: ``invalidate`` 가 세대를 올린다. 조회는 시작할 때의 세대를 기억했다가 끝났을 때
@@ -167,7 +157,7 @@ class StoreClient:
         try:
             desc = StoreDescriptor.model_validate(resp.json())
         except ValidationError as exc:
-            # str(ValidationError) 는 input_value 로 비밀번호를 그대로 싣는다 → 필드 위치만 쓴다.
+            # str(ValidationError) 는 input_value 로 본문 값을 그대로 싣는다 → 필드 위치만 쓴다.
             reason = ", ".join(".".join(map(str, e["loc"])) for e in exc.errors())
             raise StoreLookupError(f"데이터셋 저장소 정보가 올바르지 않습니다: {reason}") from None
         except ValueError:
@@ -206,18 +196,9 @@ class StoreClient:
 
     @staticmethod
     def _verify(tenant_id: int, desc: StoreDescriptor) -> None:
-        """다른 테넌트의 기술자나 규약에 어긋난 Tibero 기술자를 거부한다."""
+        """다른 테넌트의 기술자를 거부한다(backend 는 모델의 Literal 이 이미 두 값으로 좁힌다)."""
         if desc.tenant_id != tenant_id:
             raise StoreLookupError("데이터셋 저장소 정보가 올바르지 않습니다: 다른 테넌트의 기술자입니다")
-        if desc.backend != "TIBERO":
-            return
-        if not desc.host or desc.port is None or not desc.database or desc.owner is None:
-            raise StoreLookupError("데이터셋 저장소 정보가 올바르지 않습니다: Tibero 접속 정보가 비어 있습니다")
-        expected = resolve_tibero_owner(tenant_id)
-        if desc.schema_name != expected or desc.owner.username != expected:
-            raise StoreLookupError(
-                "데이터셋 저장소 정보가 올바르지 않습니다: 스키마·소유 계정이 테넌트 규약과 다릅니다"
-            )
 
 
 _singleton: StoreClient | None = None

@@ -51,6 +51,25 @@ class TiberoSqlGuardTest {
     }
   }
 
+  /**
+   * 두 복사본이 의도적으로 다른 지점 — db-executor 복사본만 증분 커서 후보 문장 전체 일치를 허용한다(Ruling 11). api 복사본(사용자 SQL 검증)은
+   * 이 문장도 거부한다. 짝: db-executor
+   * TiberoSqlVectorsParityTest.guardDivergence_dbExecutorAllowsCursorStatement.
+   */
+  @Test
+  void guardDivergence_apiRejectsCursorStatement() {
+    JsonNode cases = FIXTURE.get("guardDivergence");
+    assertThat(cases.size()).isGreaterThanOrEqualTo(1);
+    for (JsonNode c : cases) {
+      assertThat(c.get("apiAllowed").asBoolean()).isFalse();
+      String sql = c.get("sql").asText();
+      String schema = c.get("tenantSchema").asText();
+      assertThatThrownBy(() -> check(sql, schema))
+          .as(c.get("name").asText())
+          .isInstanceOf(TiberoSqlGuard.Rejected.class);
+    }
+  }
+
   @Test
   void rejectionMessage_isKorean_namesFunction() {
     assertThatThrownBy(

@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -14,6 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.smartfirehub.dbexecutor.sql.Deadline;
+import com.smartfirehub.dbexecutor.sql.LoadRunner;
 import com.smartfirehub.dbexecutor.sql.ProbeRunner;
 import com.smartfirehub.dbexecutor.sql.QueryRunner;
 import com.smartfirehub.dbexecutor.sql.SqlRunner;
@@ -22,6 +24,7 @@ import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
 import com.smartfirehub.dbexecutor.store.StoreUnavailableException;
 import com.smartfirehub.dbexecutor.store.TenantPools;
 import com.smartfirehub.dbexecutor.web.dto.DbError;
+import com.smartfirehub.dbexecutor.web.dto.LoadResponse;
 import com.smartfirehub.dbexecutor.web.dto.ProbeColumn;
 import com.smartfirehub.dbexecutor.web.dto.ProbeResponse;
 import com.smartfirehub.dbexecutor.web.dto.QueryResponse;
@@ -56,6 +59,7 @@ class ExecuteControllerTest {
   @MockitoBean StoreDescriptorClient descriptors;
   @MockitoBean SqlRunner sqlRunner;
   @MockitoBean ProbeRunner probeRunner;
+  @MockitoBean LoadRunner loadRunner;
   @MockitoBean QueryRunner queryRunner;
 
   @MockitoBean(name = "tenantPools")
@@ -103,7 +107,7 @@ class ExecuteControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.success").value(false))
         .andExpect(jsonPath("$.error").value("테넌트 저장소 정보를 가져오지 못했습니다(503)."));
-    verify(sqlRunner, never()).run(any(), anyString(), any(), any());
+    verify(sqlRunner, never()).run(any(), anyString(), any(), any(), any());
     verify(probeRunner, never()).probe(any(), anyString(), any());
     verifyNoInteractions(pools);
   }
@@ -117,7 +121,8 @@ class ExecuteControllerTest {
             post("/execute/query")
                 .header("Authorization", AUTH)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"tenantId\":5,\"query\":\"SELECT 1 FROM DUAL\",\"maxRows\":10}"))
+                .content(
+                    "{\"tenantId\":5,\"query\":\"SELECT 1 FROM DUAL\",\"max_rows\":10,\"read_only\":true}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.success").value(false))
         .andExpect(jsonPath("$.error").value("테넌트 저장소 정보를 가져오지 못했습니다(503)."))
@@ -130,8 +135,8 @@ class ExecuteControllerTest {
   void queryMissingFields_returns200BadRequest() throws Exception {
     for (String json :
         new String[] {
-          "{\"query\":\"SELECT 1 FROM DUAL\",\"maxRows\":10}",
-          "{\"tenantId\":5,\"maxRows\":10}",
+          "{\"query\":\"SELECT 1 FROM DUAL\",\"max_rows\":10,\"read_only\":true}",
+          "{\"tenantId\":5,\"max_rows\":10,\"read_only\":true}",
           "{\"tenantId\":5,\"query\":\"SELECT 1 FROM DUAL\"}"
         }) {
       mvc.perform(
@@ -151,13 +156,15 @@ class ExecuteControllerTest {
     when(descriptors.get(eq(5L), any(Duration.class))).thenReturn(D);
     when(queryRunner.run(eq(D), eq("SELECT 1 FROM DUAL"), eq(10), any(Deadline.class)))
         .thenReturn(
-            new QueryResponse(true, List.of("a"), List.of(Map.of("a", 1)), 1, true, null, null));
+            new QueryResponse(
+                true, List.of("a"), List.of(Map.of("a", 1)), 1, true, "SELECT", 0, 1L, null, null));
 
     mvc.perform(
             post("/execute/query")
                 .header("Authorization", AUTH)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"tenantId\":5,\"query\":\"SELECT 1 FROM DUAL\",\"maxRows\":10}"))
+                .content(
+                    "{\"tenantId\":5,\"query\":\"SELECT 1 FROM DUAL\",\"max_rows\":10,\"read_only\":true}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.success").value(true))
         .andExpect(jsonPath("$.row_count").value(1))
@@ -187,7 +194,8 @@ class ExecuteControllerTest {
             eq(D),
             eq("INSERT x"),
             eq(List.of("DELETE FROM \"GENIA_T5\".\"T\"")),
-            any(Deadline.class)))
+            any(Deadline.class),
+            isNull()))
         .thenReturn(
             new SqlExecuteResponse(
                 false,
@@ -196,7 +204,7 @@ class ExecuteControllerTest {
                 2,
                 "로그",
                 "오류",
-                new DbError(-10007, "TBR-10007: dup")));
+                new DbError(-10007, "23000", "TBR-10007: dup")));
 
     mvc.perform(
             post("/execute/sql")
@@ -242,5 +250,117 @@ class ExecuteControllerTest {
         .andExpect(jsonPath("$.columns[0].precision").value(0))
         .andExpect(jsonPath("$.columns[0].scale").value(-127))
         .andExpect(jsonPath("$.db_error").value(nullValue()));
+  }
+
+  private String postSql(String json) throws Exception {
+    return mvc.perform(
+            post("/execute/sql")
+                .header("Authorization", AUTH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json))
+        .andReturn()
+        .getResponse()
+        .getContentAsString();
+  }
+
+  @Test
+  void sqlTimeoutSeconds_isCappedByLoadLimit_andPassedToRunner() throws Exception {
+    when(descriptors.get(eq(5L), any(Duration.class))).thenReturn(D);
+    when(sqlRunner.run(eq(D), anyString(), any(), any(Deadline.class), any()))
+        .thenReturn(new SqlExecuteResponse(true, null, null, 1, "로그", null, null));
+
+    postSql("{\"tenantId\":5,\"query\":\"INSERT x\",\"timeout_seconds\":120}");
+    postSql("{\"tenantId\":5,\"query\":\"INSERT x\",\"timeout_seconds\":999999}");
+    postSql("{\"tenantId\":5,\"query\":\"INSERT x\"}");
+
+    org.mockito.ArgumentCaptor<Integer> seconds =
+        org.mockito.ArgumentCaptor.forClass(Integer.class);
+    verify(sqlRunner, org.mockito.Mockito.times(3))
+        .run(eq(D), anyString(), any(), any(Deadline.class), seconds.capture());
+    // 요청값은 app.load.timeout-seconds(1800) 로 자르고, 없으면 null(기존 50/55 그대로).
+    org.assertj.core.api.Assertions.assertThat(seconds.getAllValues())
+        .containsExactly(120, 1800, null);
+  }
+
+  @Test
+  void sqlTimeoutSeconds_zeroOrNegative_rejectedWithoutRunning() throws Exception {
+    for (String v : new String[] {"0", "-5"}) {
+      mvc.perform(
+              post("/execute/sql")
+                  .header("Authorization", AUTH)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content("{\"tenantId\":5,\"query\":\"INSERT x\",\"timeout_seconds\":" + v + "}"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.success").value(false))
+          .andExpect(jsonPath("$.error").value("timeout_seconds 는 1 이상이어야 합니다."));
+    }
+    verify(descriptors, never()).get(anyLong(), any());
+    verifyNoInteractions(sqlRunner);
+  }
+
+  @Test
+  void load_passesRequestThrough_andIsSnakeCase() throws Exception {
+    when(descriptors.get(eq(5L), any(Duration.class))).thenReturn(D);
+    when(loadRunner.load(
+            eq(D), eq("STG_0123456789ABCDEF01234567"), any(), any(), any(Deadline.class)))
+        .thenReturn(new LoadResponse(true, 2, null, null));
+
+    mvc.perform(
+            post("/execute/load")
+                .header("Authorization", AUTH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"tenantId\":5,\"table\":\"STG_0123456789ABCDEF01234567\","
+                        + "\"rows\":[{\"a\":1},{\"a\":2}],\"column_type_map\":{\"a\":\"INTEGER\"},"
+                        + "\"timeout_seconds\":60}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.rows_loaded").value(2))
+        .andExpect(jsonPath("$.db_error").value(nullValue()));
+    verify(loadRunner)
+        .load(
+            eq(D),
+            eq("STG_0123456789ABCDEF01234567"),
+            eq(List.of(Map.of("a", 1), Map.of("a", 2))),
+            eq(Map.of("a", "INTEGER")),
+            any(Deadline.class));
+  }
+
+  @Test
+  void load_badRequest_neverResolvesDescriptor() throws Exception {
+    for (String json :
+        new String[] {
+          "{\"table\":\"STG_0123456789ABCDEF01234567\",\"rows\":[]}",
+          "{\"tenantId\":5,\"rows\":[]}",
+          "{\"tenantId\":5,\"table\":\"STG_0123456789ABCDEF01234567\"}",
+          "{\"tenantId\":5,\"table\":\"STG_0123456789ABCDEF01234567\",\"rows\":[],\"timeout_seconds\":0}"
+        }) {
+      mvc.perform(
+              post("/execute/load")
+                  .header("Authorization", AUTH)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(json))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.success").value(false))
+          .andExpect(jsonPath("$.rows_loaded").value(0));
+    }
+    verify(descriptors, never()).get(anyLong(), any());
+    verifyNoInteractions(loadRunner);
+  }
+
+  @Test
+  void load_descriptorFailure_returns200WithKoreanReason() throws Exception {
+    when(descriptors.get(eq(5L), any(Duration.class)))
+        .thenThrow(new StoreUnavailableException("503"));
+
+    mvc.perform(
+            post("/execute/load")
+                .header("Authorization", AUTH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"tenantId\":5,\"table\":\"STG_0123456789ABCDEF01234567\",\"rows\":[]}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(false))
+        .andExpect(jsonPath("$.error").value("테넌트 저장소 정보를 가져오지 못했습니다(503)."));
+    verifyNoInteractions(loadRunner);
   }
 }

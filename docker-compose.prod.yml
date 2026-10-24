@@ -93,6 +93,11 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-firehub-files}
       # Tibero 테넌트 SQL 을 보내는 db-executor 주소(WD-77). 같은 네트워크의 db-executor 서비스를 가리킨다.
       DB_EXECUTOR_BASE_URL: http://db-executor:8090
+      # db-executor 전용 내부 토큰(스펙 §3.4) — Python 실행기의 EXECUTOR_INTERNAL_TOKEN 과 **반드시 다른 값**이다
+      # (같으면 api 기동 실패). 새 비밀값이라 기본값 없이 필수로 받는다.
+      DB_EXECUTOR_INTERNAL_TOKEN: ${DB_EXECUTOR_INTERNAL_TOKEN:?DB_EXECUTOR_INTERNAL_TOKEN is required}
+      # 스크립트 1회용 토큰 서명 키 — db-executor 와 같은 .env 키. 발급·검증은 WD-78 에서 구현한다.
+      DB_EXECUTOR_SCRIPT_TOKEN_KEY: ${DB_EXECUTOR_SCRIPT_TOKEN_KEY:?DB_EXECUTOR_SCRIPT_TOKEN_KEY is required}
     depends_on:
       db:
         condition: service_healthy
@@ -112,8 +117,11 @@ services:
       context: ./apps/firehub-db-executor
       dockerfile: Dockerfile
     environment:
-      # api 의 EXECUTOR_INTERNAL_TOKEN, executor 의 EXECUTOR_INTERNAL_SERVICE_TOKEN 과 **같은 .env 키**를 읽는다.
-      EXECUTOR_INTERNAL_TOKEN: ${EXECUTOR_INTERNAL_TOKEN:-executor-token}
+      # api 의 DB_EXECUTOR_INTERNAL_TOKEN 과 **같은 .env 키**(Python 실행기의 EXECUTOR_INTERNAL_TOKEN 과는 다른 값).
+      DB_EXECUTOR_INTERNAL_TOKEN: ${DB_EXECUTOR_INTERNAL_TOKEN:?DB_EXECUTOR_INTERNAL_TOKEN is required}
+      # Python 실행기 전용 적재 토큰 — /execute/load 만 허용. executor 의 EXECUTOR_DB_EXECUTOR_LOAD_TOKEN 과 같은 .env 키.
+      DB_EXECUTOR_LOAD_TOKEN: ${DB_EXECUTOR_LOAD_TOKEN:?DB_EXECUTOR_LOAD_TOKEN is required}
+      DB_EXECUTOR_SCRIPT_TOKEN_KEY: ${DB_EXECUTOR_SCRIPT_TOKEN_KEY:?DB_EXECUTOR_SCRIPT_TOKEN_KEY is required}
       # 테넌트 저장소 기술자(/internal/executor/**)를 조회할 api 주소.
       DB_EXECUTOR_API_BASE_URL: http://api:8080
     networks:
@@ -144,6 +152,9 @@ services:
       EXECUTOR_INTERNAL_SERVICE_TOKEN: ${EXECUTOR_INTERNAL_TOKEN:-executor-token}
       # 테넌트 저장소 기술자(/internal/executor/**)를 조회할 api 주소(WD-75). 같은 네트워크의 api 서비스를 가리킨다.
       EXECUTOR_API_BASE_URL: http://api:8080
+      # Tibero 적재는 db-executor 로만 보낸다(Python 은 Tibero 에 직접 접속하지 않는다). 적재 토큰은 /execute/load 만 허용된다.
+      EXECUTOR_DB_EXECUTOR_BASE_URL: http://db-executor:8090
+      EXECUTOR_DB_EXECUTOR_LOAD_TOKEN: ${DB_EXECUTOR_LOAD_TOKEN:?DB_EXECUTOR_LOAD_TOKEN is required}
       EXECUTOR_NSJAIL_ENABLED: "true"
       EXECUTOR_NSJAIL_PATH: /usr/sbin/nsjail
       EXECUTOR_PYTHON_PACKAGES_DIR: /opt/python-packages

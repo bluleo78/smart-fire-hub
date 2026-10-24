@@ -1,6 +1,8 @@
 package com.smartfirehub.pipeline.service;
 
+import com.smartfirehub.dataset.storage.DataStoreBackend;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -22,6 +24,13 @@ public final class LastRunAtPlaceholder {
 
   /** 책갈피가 없을 때(첫 실행·전체 재생성 예약) 쓰는 리터럴 — 모든 행이 이 값보다 크므로 전체를 읽는다. */
   private static final String NEGATIVE_INFINITY = "'-infinity'::timestamptz";
+
+  /** Tibero 에서 책갈피가 없을 때(첫 실행·전체 재생성 예약) 쓰는 리터럴 — 어떤 행의 {@code _UPDATED_AT} 보다 이르다(실서버로 비교 확인). */
+  private static final String TIBERO_MINIMUM = "TIMESTAMP '0001-01-01 00:00:00.000000'";
+
+  /** Tibero 리터럴 본문 형식 — 마이크로초 6자리 고정(Tibero 시계 정밀도). */
+  private static final DateTimeFormatter TIBERO_FORMAT =
+      DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
 
   private LastRunAtPlaceholder() {}
 
@@ -46,16 +55,51 @@ public final class LastRunAtPlaceholder {
   }
 
   /**
-   * 플레이스홀더를 타임스탬프 리터럴로 모두 치환한다.
+   * 플레이스홀더를 PG 타임스탬프 리터럴로 모두 치환한다 — {@link #substitute(String, OffsetDateTime, DataStoreBackend)} 의
+   * PG 위임이다.
    *
    * @param value 책갈피 값. {@code null} 이면 {@code '-infinity'::timestamptz}(전체 읽기).
    */
   public static String substitute(String sql, OffsetDateTime value) {
-    // ISO_OFFSET_DATE_TIME 은 소수 초를 필요한 자리수만큼만 출력한다(.123456 은 그대로) — 값 손실이 없다.
+    return substitute(sql, value, DataStoreBackend.POSTGRESQL);
+  }
+
+  /**
+   * 플레이스홀더를 방언별 타임스탬프 리터럴로 모두 치환한다.
+   *
+   * <p>PG(Tibero 가 아닌 모든 백엔드)는 기존 출력 그대로다.
+   *
+   * <p><b>Tibero:</b> {@code _UPDATED_AT} 은 시간대 없는 TIMESTAMP 이고 {@code SYSTIMESTAMP} 대입으로 채워지므로
+   * <b>Tibero 서버의 벽시계</b>를 담는다(서버 시간대가 UTC 라는 보장은 없다). 책갈피는 실제 시각(instant)이라, 서버 시계 기준으로 바꾼 값과 비교해야
+   * 한다. 그래서 리터럴이 아니라 <b>서버에서 변환하는 식</b>을 넣는다: {@code CAST(TIMESTAMP '<UTC 시각> +00:00' AT TIME ZONE
+   * TO_CHAR(SYSTIMESTAMP,'TZH:TZM') AS TIMESTAMP)} — 서버 오프셋으로 옮긴 벽시계를 시간대 없이 얻는다. 어떤 서버 시간대·세션
+   * 시간대에서도 맞다(실서버에서 세션 Asia/Seoul·UTC·America/New_York 모두 같은 값을 확인). 시간대 있는 값을 열과 직접 비교하면 세션 시간대로
+   * 열을 해석해 어긋나므로(세션 서울에서 0행) 반드시 이 변환을 거친다. 마이크로초 아래는 버린다(더 이른 값이라 {@code >=} 경계에서 안전하다).
+   *
+   * @param value 책갈피 값. {@code null} 이면 PG 는 {@code '-infinity'::timestamptz}, Tibero 는 {@code
+   *     TIMESTAMP '0001-01-01 00:00:00.000000'}(어떤 시간대에서도 어떤 행보다 이르다 — 전체 읽기).
+   * @param backend 테넌트 저장소 백엔드. {@code TIBERO} 만 Tibero 리터럴이다.
+   */
+  public static String substitute(String sql, OffsetDateTime value, DataStoreBackend backend) {
     String literal =
-        value == null
-            ? NEGATIVE_INFINITY
-            : "'" + value.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME) + "'::timestamptz";
+        backend == DataStoreBackend.TIBERO ? tiberoLiteral(value) : postgresLiteral(value);
     return PATTERN.matcher(sql).replaceAll(Matcher.quoteReplacement(literal));
+  }
+
+  private static String postgresLiteral(OffsetDateTime value) {
+    // ISO_OFFSET_DATE_TIME 은 소수 초를 필요한 자리수만큼만 출력한다(.123456 은 그대로) — 값 손실이 없다.
+    return value == null
+        ? NEGATIVE_INFINITY
+        : "'" + value.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME) + "'::timestamptz";
+  }
+
+  private static String tiberoLiteral(OffsetDateTime value) {
+    if (value == null) {
+      return TIBERO_MINIMUM;
+    }
+    // 열이 서버 벽시계라서, UTC 로 표현한 instant 를 서버 오프셋으로 옮긴 뒤 시간대를 떼어 비교한다(Ruling 13).
+    return "CAST(TIMESTAMP '"
+        + value.withOffsetSameInstant(ZoneOffset.UTC).format(TIBERO_FORMAT)
+        + " +00:00' AT TIME ZONE TO_CHAR(SYSTIMESTAMP, 'TZH:TZM') AS TIMESTAMP)";
   }
 }

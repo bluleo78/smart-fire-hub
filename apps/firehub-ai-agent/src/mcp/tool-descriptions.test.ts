@@ -74,12 +74,15 @@ describe('Tibero 도구 설명', () => {
       expect(text(n), n).toContain('30자');
     }
   });
-  // WD-79 수정 1차: api(PipelineAsyncRunner)는 Tibero SQL 단계에 출력 데이터셋이 없으면 실행을 거부한다 —
-  // "미지정 시 임시 데이터셋 자동 생성" 안내가 남아 있으면 모델이 항상 실패하는 파이프라인을 만든다.
-  it('파이프라인 outputDatasetId 설명은 Tibero 의 출력 데이터셋 필수 규칙이며 임시 데이터셋 자동 생성 안내가 없다', () => {
+  // WD-77: Tibero 도 출력 데이터셋 없는 SQL 단계에 임시 데이터셋을 자동 생성한다 — outputDatasetId 설명이 PG 와 같다.
+  it('파이프라인 outputDatasetId 설명은 PG 와 같고 불가 문구가 없다', () => {
     for (const n of ['create_pipeline', 'update_pipeline']) {
-      expect(text(n), n).not.toMatch(/임시 데이터셋[^"]{0,6}자동 생성|자동 생성됨/);
-      expect(text(n), n).toContain('Tibero 저장소 테넌트의 SQL 단계는 출력 데이터셋을 지정해야 합니다.');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const desc = (t[n].schema as any).properties.steps.items.properties.outputDatasetId.description;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pgDesc = (fixture[n].schema as any).properties.steps.items.properties.outputDatasetId.description;
+      expect(desc, n).toBe(pgDesc);
+      expect(text(n), n).not.toContain('출력 데이터셋을 지정해야 합니다');
     }
   });
   // Tibero 저장소는 GEOMETRY 타입을 지원하지 않는다(웹도 같은 이유로 숨긴다) — 열거값·SRID 안내가 남으면 모델이 항상 실패하는 컬럼을 만든다.

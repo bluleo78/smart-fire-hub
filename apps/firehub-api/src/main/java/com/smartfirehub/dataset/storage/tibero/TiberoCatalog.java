@@ -12,7 +12,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * Tibero 카탈로그 뷰({@code ALL_TAB_COLUMNS}·{@code ALL_CONSTRAINTS}·{@code ALL_IND_COLUMNS}·{@code
@@ -22,12 +21,6 @@ import java.util.regex.Pattern;
 final class TiberoCatalog {
 
   private TiberoCatalog() {}
-
-  /**
-   * 스테이징 테이블 물리 이름 형식({@link TiberoNames#stagingTableName()}). LIKE 만으로는 {@code stg_report} 같은 사용자
-   * 테이블도 걸린다.
-   */
-  private static final Pattern STAGING_NAME = Pattern.compile("^STG_[0-9A-F]{24}$");
 
   /** 컬럼 타입 조회. 바인드: 스키마(대문자), 테이블(대문자). */
   static String columnTypesQuery() {
@@ -123,7 +116,8 @@ final class TiberoCatalog {
       try (ResultSet rs = ps.executeQuery()) {
         while (rs.next()) {
           String name = rs.getString(1);
-          if (name != null && STAGING_NAME.matcher(name).matches()) {
+          // LIKE 만으로는 stg_report 같은 사용자 테이블도 걸린다 — 정확한 물리 이름(대문자) 형식만 남긴다.
+          if (TiberoNames.isStagingPhysicalName(name)) {
             names.add(name);
           }
         }

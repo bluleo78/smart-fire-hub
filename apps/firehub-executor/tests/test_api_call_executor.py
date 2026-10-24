@@ -907,7 +907,7 @@ def _post_api_call(test_client, headers, data_path, payload, insert_side_effect=
         "output_table": "ptmp_out",
         "retry": {"max_retries": 0, "initial_backoff_ms": 0, "max_backoff_ms": 0},
     }
-    with patch("app.routers.api_call.unsupported_error", new=AsyncMock(return_value=None)), patch(
+    with patch("app.routers.api_call.backend_of", new=AsyncMock(return_value=("POSTGRESQL", None))), patch(
         "app.routers.api_call.get_connection", conn_cm
     ), patch("app.services.api_call_executor.validate_url"), patch(
         "app.services.api_call_executor.httpx.Client", return_value=_patched_client([_json_response(payload)])
@@ -982,3 +982,131 @@ def test_route_load_error_is_korean(test_client, mock_auth_header):
     assert data["error"] == errors.load_failed_message()
     assert "bigint" not in data["error"]
     conn.rollback.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tibero 원격 적재 경로(execute_api_call_remote, WD-77 Task 6)
+# ---------------------------------------------------------------------------
+
+STAGING = "STG_0123456789ABCDEF01234567"
+
+
+def _remote_request(**kwargs) -> ApiCallExecuteRequest:
+    return make_request(output_table=STAGING, **kwargs)
+
+
+def test_remote_single_page_loads_through_loader_without_pg_connection():
+    from app.services.api_call_executor import execute_api_call_remote
+
+    loader = MagicMock()
+    loader.load.return_value = 2
+    body = {"items": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]}
+    req = _remote_request(column_type_map={"id": "INTEGER", "name": "TEXT"})
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("app.services.api_call_executor._do_request", return_value=body), \
+            patch("app.services.api_call_executor.insert_batch") as pg_insert:
+        result = execute_api_call_remote(req, loader)
+    assert result.success is True and result.rows_loaded == 2 and result.total_pages == 1
+    loader.load.assert_called_once_with(
+        1, STAGING, [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}], {"id": "INTEGER", "name": "TEXT"}
+    )
+    pg_insert.assert_not_called()
+
+
+def test_remote_pages_all_go_to_the_same_staging_in_order():
+    from app.services.api_call_executor import execute_api_call_remote
+
+    loader = MagicMock()
+    loader.load.side_effect = lambda tenant, table, rows, types: len(rows)
+    pages = [
+        {"items": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]},
+        {"items": [{"id": 3, "name": "c"}, {"id": 4, "name": "d"}]},
+        {"items": [{"id": 5, "name": "e"}]},
+    ]
+    req = _remote_request(pagination=PaginationConfig(type="OFFSET", page_size=2, offset_param="o", limit_param="l"))
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("app.services.api_call_executor._do_request", side_effect=pages):
+        result = execute_api_call_remote(req, loader)
+    assert result.success is True and result.rows_loaded == 5 and result.total_pages == 3
+    assert [c.args[1] for c in loader.load.call_args_list] == [STAGING] * 3
+    assert [[r["id"] for r in c.args[2]] for c in loader.load.call_args_list] == [[1, 2], [3, 4], [5]]
+
+
+def test_remote_load_failure_stops_immediately_and_reports_error():
+    from app.db.backends.remote import RemoteLoadError
+    from app.services.api_call_executor import execute_api_call_remote
+
+    loader = MagicMock()
+    loader.load.side_effect = [2, RemoteLoadError("적재 실패 — 두 번째 페이지")]
+    pages = [
+        {"items": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]},
+        {"items": [{"id": 3, "name": "c"}, {"id": 4, "name": "d"}]},
+        {"items": [{"id": 5, "name": "e"}]},
+    ]
+    req = _remote_request(pagination=PaginationConfig(type="OFFSET", page_size=2))
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("app.services.api_call_executor._do_request", side_effect=pages) as fetch:
+        result = execute_api_call_remote(req, loader)
+    assert result.success is False and result.error == "적재 실패 — 두 번째 페이지"
+    assert result.rows_loaded == 0
+    assert loader.load.call_count == 2  # 세 번째 페이지는 가져오지도 않는다
+    assert fetch.call_count == 2
+
+
+def test_remote_empty_result_loads_nothing_and_succeeds_with_zero_rows():
+    from app.services.api_call_executor import execute_api_call_remote
+
+    loader = MagicMock()
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("app.services.api_call_executor._do_request", return_value={"items": []}):
+        result = execute_api_call_remote(_remote_request(), loader)
+    assert result.success is True and result.rows_loaded == 0
+    loader.load.assert_not_called()
+
+
+def test_remote_http_failure_is_success_false_and_nothing_loaded():
+    from app.services.api_call_executor import execute_api_call_remote
+
+    loader = MagicMock()
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("app.services.api_call_executor._do_request", side_effect=ApiCallException("HTTP 404")):
+        result = execute_api_call_remote(_remote_request(), loader)
+    assert result.success is False and result.error == "HTTP 404"
+    loader.load.assert_not_called()
+
+
+def test_remote_ssrf_rejection_loads_nothing():
+    from app.services.api_call_executor import execute_api_call_remote
+
+    loader = MagicMock()
+    with patch("app.services.api_call_executor.validate_url", side_effect=SsrfException("blocked")):
+        result = execute_api_call_remote(_remote_request(), loader)
+    assert result.success is False and "blocked" in result.error
+    loader.load.assert_not_called()
+
+
+def test_remote_max_duration_keeps_partial_result_like_pg():
+    from app.services.api_call_executor import execute_api_call_remote
+
+    loader = MagicMock()
+    loader.load.side_effect = lambda tenant, table, rows, types: len(rows)
+    page = {"items": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]}
+    req = _remote_request(
+        pagination=PaginationConfig(type="OFFSET", page_size=2), max_duration_ms=0
+    )
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("app.services.api_call_executor._do_request", return_value=page):
+        result = execute_api_call_remote(req, loader)
+    assert result.success is True and result.total_pages == 1 and "Partial result" in result.execution_log
+
+
+@pytest.mark.parametrize("bad", ["test_table", STAGING.lower(), STAGING + "\n"])
+def test_remote_refuses_non_staging_output_table_without_any_call(bad):
+    from app.services.api_call_executor import execute_api_call_remote
+
+    loader = MagicMock()
+    with patch("app.services.api_call_executor._do_request") as fetch:
+        result = execute_api_call_remote(make_request(output_table=bad), loader)
+    assert result.success is False and "STG_" in result.error
+    fetch.assert_not_called()
+    loader.load.assert_not_called()

@@ -127,6 +127,7 @@ public class QueryRunner {
       return QueryResponse.failure(NO_RO_ACCOUNT, null);
     }
 
+    long startNanos = System.nanoTime();
     return execution.withLease(
         d,
         deadline,
@@ -175,6 +176,9 @@ public class QueryRunner {
               out.rows(),
               out.rowCount(),
               out.rowCount() >= maxRows,
+              "SELECT",
+              0,
+              (System.nanoTime() - startNanos) / 1_000_000L,
               null,
               null);
         });

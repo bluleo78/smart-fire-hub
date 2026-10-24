@@ -117,6 +117,25 @@ public interface DataRowStore {
       List<Map<String, Object>> rows,
       Map<String, String> columnTypes);
 
+  /**
+   * 이번 실행의 <b>임시(REPLACE staging) 테이블</b>에 행을 일괄 삽입한다(WD-77). api 안에서 임시 테이블에 직접 쓰는 경로(AI 분류·로컬 모드
+   * API 수집의 REPLACE)가 쓴다.
+   *
+   * <p>기본 구현은 {@link #insertBatch} 와 똑같이 위임한다 — PG 의 임시 테이블은 일반 테이블 모양이라 예전 호출과 동작이 같다(PG 불변). 임시
+   * 테이블이 실제 테이블과 다른 모양인 백엔드(Tibero 스테이징: 사용자 컬럼 + {@code _SEQ}, {@code ID}·{@code _UPDATED_AT} 없음)만
+   * 재정의한다.
+   *
+   * @param tempTable {@code DataTableService#createTempTable} 이 돌려준 이름
+   */
+  default void insertTempBatch(
+      String tempTable,
+      List<String> columns,
+      List<Map<String, Object>> rows,
+      Map<String, String> columnTypes) {
+    DataTableNames.validate(tempTable);
+    insertBatch(tempTable, columns, rows, columnTypes);
+  }
+
   /** 행을 일괄 삽입하며 청크마다 진행 콜백(처리 행 수, 전체 행 수)을 호출한다(import_id 없음). */
   void insertBatchWithProgress(
       String tableName,

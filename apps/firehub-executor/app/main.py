@@ -6,7 +6,7 @@ from fastapi import FastAPI
 
 from app.config import get_settings
 from app.db.connection import init_pool, close_pool, is_pool_ready
-from app.routers import health, sql, python_exec, query, api_call
+from app.routers import health, sql, python_exec, query, api_call, probe, load
 
 logger = logging.getLogger(__name__)
 
@@ -76,3 +76,5 @@ app.include_router(sql.router)
 app.include_router(python_exec.router)
 app.include_router(query.router)
 app.include_router(api_call.router)
+app.include_router(probe.router)
+app.include_router(load.router)

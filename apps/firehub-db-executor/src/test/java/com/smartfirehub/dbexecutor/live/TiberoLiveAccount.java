@@ -171,6 +171,18 @@ final class TiberoLiveAccount implements AutoCloseable {
     return owner;
   }
 
+  /**
+   * 소유 계정으로 새 직접 연결을 연다(호출자가 닫는다). 다른 세션이 잠금·미커밋 변경을 쥔 상황을 만들 때 쓴다 — 이 연결은 DROP USER 전에 호출자가 닫아야
+   * 한다.
+   */
+  Connection descriptorOwnerConnection() throws SQLException {
+    StoreDescriptor.Account o = descriptor.owner();
+    return DriverManager.getConnection(
+        TiberoSession.jdbcUrl(descriptor.host(), descriptor.port(), descriptor.database()),
+        o.username(),
+        o.password());
+  }
+
   /** DROP USER 전에 닫을 대상(예: 앱의 테넌트 풀)을 등록한다. 접속 중인 세션이 있으면 DROP USER 가 거절되기 때문이다. */
   void closeBeforeDrop(AutoCloseable closer) {
     beforeDrop.add(closer);

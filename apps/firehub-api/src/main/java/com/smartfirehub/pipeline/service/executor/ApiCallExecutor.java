@@ -190,7 +190,7 @@ public class ApiCallExecutor {
 
           // Insert batch into the target table (tmp for REPLACE, original for APPEND)
           List<String> columns = extractColumns(rows);
-          dataTableRowService.insertBatch(insertTarget, columns, rows);
+          writeRows(isReplace, insertTarget, columns, rows);
           totalRows += rows.size();
 
           // Check duration
@@ -233,7 +233,7 @@ public class ApiCallExecutor {
 
         if (!rows.isEmpty()) {
           List<String> columns = extractColumns(rows);
-          dataTableRowService.insertBatch(insertTarget, columns, rows);
+          writeRows(isReplace, insertTarget, columns, rows);
           totalRows += rows.size();
         }
         totalPages = 1;
@@ -658,6 +658,21 @@ public class ApiCallExecutor {
     }
 
     throw new ApiCallException("API_CALL: apiConnectionId 없이 호출하려면 customUrl(또는 레거시 url)이 필수입니다");
+  }
+
+  /**
+   * 페이지 행을 적재 대상에 쓴다. REPLACE 면 대상이 이번 실행의 임시 테이블이라 임시 테이블 전용 창구로 쓴다 — Tibero 의 임시 테이블은 스테이징({@code
+   * STG_…}: 사용자 컬럼 + {@code _SEQ})이라 실제 테이블용 {@code insertBatch}({@code ID}·{@code _UPDATED_AT} 을
+   * 씀)로는 쓸 수 없다(WD-77). PG 에서는 예전 {@code insertBatch} 호출과 똑같이 위임된다. APPEND 는 실제 출력 테이블에 직접 쓴다(PG 와
+   * 같은 커밋 특성).
+   */
+  private void writeRows(
+      boolean isReplace, String target, List<String> columns, List<Map<String, Object>> rows) {
+    if (isReplace) {
+      dataTableRowService.insertTempBatch(target, columns, rows, null);
+    } else {
+      dataTableRowService.insertBatch(target, columns, rows);
+    }
   }
 
   private List<String> extractColumns(List<Map<String, Object>> rows) {

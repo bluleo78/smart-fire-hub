@@ -70,9 +70,12 @@ class StoreDescriptorClientTest {
         new StoreDescriptorClient(
             new DbExecutorProperties(
                 "tok",
+                "load-tok",
+                null,
                 "http://127.0.0.1:" + server.getAddress().getPort(),
                 60,
-                new DbExecutorProperties.Pool(8, 4, 2)),
+                new DbExecutorProperties.Pool(8, 4, 2),
+                false),
             new ObjectMapper(),
             clock::get);
   }
@@ -266,9 +269,12 @@ class StoreDescriptorClientTest {
         new StoreDescriptorClient(
             new DbExecutorProperties(
                 "tok",
+                "load-tok",
+                null,
                 "http://127.0.0.1:" + server.getAddress().getPort(),
                 60,
-                new DbExecutorProperties.Pool(8, 4, 2)),
+                new DbExecutorProperties.Pool(8, 4, 2),
+                false),
             boom,
             clock::get);
     delayMs = 300;
