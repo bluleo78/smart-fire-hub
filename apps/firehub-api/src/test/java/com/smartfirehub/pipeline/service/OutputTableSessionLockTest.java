@@ -14,7 +14,11 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
+import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -31,13 +35,15 @@ import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 
 /**
  * 출력 테이블 세션 잠금(#735)의 계약 — 실제 DB 로 확인한다. 세션 범위 advisory 잠금은 커밋으로 풀리지 않고 풀로 돌아간 커넥션에도 남으므로, <b>누수가
  * 없다는 것</b>이 이 클래스의 핵심 단언이다.
  *
- * <p>잠금 관측은 {@code pg_locks} 의 advisory 행으로 한다. 테스트 DB 는 이 JVM 전용 컨테이너이고 제품 코드에서 advisory 잠금을 쓰는 곳은
- * 출력 테이블 직렬화뿐이라 다른 잠금이 섞이지 않는다. 클래스 레벨 {@code @Transactional} 은 쓰지 않는다 — 다른 커넥션이 픽스처를 봐야 한다.
+ * <p>잠금 관측은 {@code pg_locks} 의 advisory 행으로 한다. 테스트 DB 는 이 JVM 전용 컨테이너이고, 세션 범위 advisory 잠금은 출력 테이블
+ * 직렬화와 증분 스텝 직렬화(WD-223, 같은 클래스에서 검증)만 쓰며 테스트 클래스는 차례로 돌아 다른 잠금이 섞이지 않는다(트랜잭션 범위 잠금은 트랜잭션이 끝나면
+ * 사라진다). 클래스 레벨 {@code @Transactional} 은 쓰지 않는다 — 다른 커넥션이 픽스처를 봐야 한다.
  */
 class OutputTableSessionLockTest extends IntegrationTestBase {
 
@@ -45,6 +51,9 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
   @Autowired private SqlScriptExecutor sqlScriptExecutor;
   @Autowired private DSLContext dsl;
   @Autowired private DataTableService dataTableService;
+  @Autowired private DataSource dataSource;
+  @Autowired private IncrementalStepLock incrementalStepLock;
+  @Autowired private DataSourceProperties dataSourceProperties;
 
   private static String randomTable(String prefix) {
     return prefix + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
@@ -260,6 +269,114 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
     verify(release).executeQuery(OutputTableSessionLock.RELEASE_SQL);
     verify(connection, never()).abort(any());
     verify(connection).close();
+  }
+
+  // ------------------------------------------------------------------ //
+  // 증분 스텝 잠금(WD-223) — 같은 공통 장치(SessionAdvisoryLock)에 대기 상한·취소를 더한 판
+  // ------------------------------------------------------------------ //
+
+  /** 같은 스텝 키를 다른 실행이 쥐고 있으면 상한까지만 기다리고 한국어 안내로 실패한다 — 대기자는 잠금을 남기지 않는다. */
+  @Test
+  void 증분_스텝_잠금은_대기_상한을_넘기면_안내와_함께_실패한다() {
+    IncrementalStepLock shortWait = new IncrementalStepLock(dataSource, 600);
+    long stepId = 9_000_000L + (System.nanoTime() % 1_000_000);
+    try (SessionAdvisoryLock.Held first =
+        inTenant(() -> shortWait.acquire(stepId, "느린 스텝", ExecutionCancelCheck.NONE))) {
+      assertThat(advisoryLocks("granted")).isEqualTo(1);
+      long started = System.currentTimeMillis();
+      assertThatThrownBy(
+              () -> inTenant(() -> shortWait.acquire(stepId, "느린 스텝", ExecutionCancelCheck.NONE)))
+          .isInstanceOf(com.smartfirehub.pipeline.exception.ScriptExecutionException.class)
+          .hasMessageContaining("같은 증분 스텝('느린 스텝')의 이전 실행이")
+          .hasMessageContaining("다시 실행해 주세요");
+      assertThat(System.currentTimeMillis() - started).as("상한만큼은 기다린다").isGreaterThanOrEqualTo(600);
+      assertThat(advisoryLocks("granted")).as("대기자는 잠금을 쥐지 않는다").isEqualTo(1);
+    }
+    assertThat(advisoryLocks("true")).as("닫으면 잠금이 남지 않는다").isZero();
+  }
+
+  /** 기다리는 동안 실행이 취소되면 바로 취소 예외로 끝난다(WD-153) — 상한까지 기다리지 않는다. */
+  @Test
+  void 증분_스텝_잠금_대기_중_취소되면_바로_멈춘다() {
+    IncrementalStepLock longWait = new IncrementalStepLock(dataSource, 60_000);
+    long stepId = 8_000_000L + (System.nanoTime() % 1_000_000);
+    java.util.concurrent.atomic.AtomicInteger checks =
+        new java.util.concurrent.atomic.AtomicInteger();
+    // 처음 두 번은 취소 아님, 세 번째 확인부터 취소 — 대기 루프가 회차마다 취소를 보는지 확인한다.
+    ExecutionCancelCheck cancelLater = () -> checks.incrementAndGet() >= 3;
+    try (SessionAdvisoryLock.Held first =
+        inTenant(() -> longWait.acquire(stepId, "느린 스텝", ExecutionCancelCheck.NONE))) {
+      long started = System.currentTimeMillis();
+      assertThatThrownBy(() -> inTenant(() -> longWait.acquire(stepId, "느린 스텝", cancelLater)))
+          .isInstanceOf(PipelineExecutionCancelledException.class);
+      assertThat(System.currentTimeMillis() - started).isLessThan(10_000);
+    }
+    assertThat(advisoryLocks("true")).isZero();
+  }
+
+  /** 다른 스텝(다른 키)은 서로 기다리지 않는다 — 증분 스텝끼리라도 스텝이 다르면 직렬화하지 않는다. */
+  @Test
+  void 다른_증분_스텝의_잠금은_서로_막지_않는다() {
+    IncrementalStepLock shortWait = new IncrementalStepLock(dataSource, 600);
+    long stepId = 7_000_000L + (System.nanoTime() % 1_000_000);
+    try (SessionAdvisoryLock.Held a =
+            inTenant(() -> shortWait.acquire(stepId, "A", ExecutionCancelCheck.NONE));
+        SessionAdvisoryLock.Held b =
+            inTenant(() -> shortWait.acquire(stepId + 1, "B", ExecutionCancelCheck.NONE))) {
+      // 둘 다 상한(600ms) 안에 얻었다 — 같은 키였다면 두 번째가 안내와 함께 실패했다. (테스트 풀이 2개라 두 잠금을 쥔 채
+      // pg_locks 를 조회할 커넥션이 없다 — 대신 잡힌 핸들로 확인한다.)
+      assertThat(a).isNotNull();
+      assertThat(b).isNotNull();
+    }
+    assertThat(advisoryLocks("true")).isZero();
+  }
+
+  /**
+   * 운영 빈은 잠금 커넥션을 메인 풀이 아니라 잠금 전용 풀에서 얻는다 — 잠금을 쥔 동안 메인 풀의 사용 중 커넥션이 늘지 않는다. 메인 풀에서 얻으면 증분 스텝이 많이
+   * 동시에 돌 때 API 전체가 커넥션 타임아웃으로 멈춘다(WD-223 검토).
+   */
+  @Test
+  void 증분_스텝_잠금은_메인_풀이_아니라_잠금_전용_풀의_커넥션을_쥔다() {
+    HikariDataSource main = (HikariDataSource) dataSource;
+    long stepId = 6_000_000L + (System.nanoTime() % 1_000_000);
+    int activeBefore = main.getHikariPoolMXBean().getActiveConnections();
+    try (SessionAdvisoryLock.Held held =
+        inTenant(() -> incrementalStepLock.acquire(stepId, "A", ExecutionCancelCheck.NONE))) {
+      assertThat(main.getHikariPoolMXBean().getActiveConnections())
+          .as("잠금을 쥔 동안 메인 풀 사용 중 커넥션이 늘지 않는다")
+          .isEqualTo(activeBefore);
+      assertThat(advisoryLocks("granted")).as("잠금은 실제로 잡혀 있다").isEqualTo(1);
+    }
+    assertThat(advisoryLocks("true")).isZero();
+  }
+
+  /** 잠금 전용 풀이 바닥나면 메인 풀로 넘어가지 않고 상한 안에서 기다리다 같은 안내로 실패한다. */
+  @Test
+  void 잠금_전용_풀이_바닥나면_상한_안에서_기다리다_안내와_함께_실패한다() {
+    HikariConfig config = new HikariConfig();
+    config.setPoolName("wd223-test-lock-pool");
+    config.setJdbcUrl(dataSourceProperties.determineUrl());
+    config.setUsername(dataSourceProperties.determineUsername());
+    config.setPassword(dataSourceProperties.determinePassword());
+    config.setMaximumPoolSize(1);
+    config.setConnectionTimeout(IncrementalStepLock.POOL_CONNECTION_TIMEOUT_MS);
+    try (HikariDataSource onePool = new HikariDataSource(config)) {
+      IncrementalStepLock lock = new IncrementalStepLock(onePool, 1_500);
+      long stepId = 5_000_000L + (System.nanoTime() % 1_000_000);
+      try (SessionAdvisoryLock.Held first =
+          inTenant(() -> lock.acquire(stepId, "A", ExecutionCancelCheck.NONE))) {
+        long started = System.currentTimeMillis();
+        // 다른 스텝이라 잠금 경합은 없다 — 오직 잠금 전용 풀(1개)이 바닥나서 기다린다.
+        assertThatThrownBy(
+                () -> inTenant(() -> lock.acquire(stepId + 1, "B", ExecutionCancelCheck.NONE)))
+            .isInstanceOf(com.smartfirehub.pipeline.exception.ScriptExecutionException.class)
+            .hasMessageContaining("같은 증분 스텝('B')의 이전 실행이");
+        assertThat(System.currentTimeMillis() - started).isGreaterThanOrEqualTo(1_500);
+        // 메인 풀은 그대로 쓸 수 있다(이 조회가 메인 풀로 돈다).
+        assertThat(advisoryLocks("granted")).isEqualTo(1);
+      }
+    }
+    assertThat(advisoryLocks("true")).isZero();
   }
 
   private void awaitAdvisoryWaiters(int expected) {
