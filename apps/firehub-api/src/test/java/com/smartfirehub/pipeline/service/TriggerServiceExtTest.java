@@ -104,9 +104,176 @@ class TriggerServiceExtTest extends IntegrationTestBase {
     TriggerResponse response = triggerService.createTrigger(pipelineId, request, testUserId);
 
     assertThat(response.config()).containsKey("webhookId");
-    // 원본 secret은 없어야 하고 암호화된 값만 있어야 한다
+    // 응답에는 평문도 암호문도 없고 설정 여부만 있다(WD-220)
     assertThat(response.config()).doesNotContainKey("secret");
-    assertThat(response.config()).containsKey("secretEncrypted");
+    assertThat(response.config()).doesNotContainKey("secretEncrypted");
+    assertThat(response.config()).containsEntry("hasSecret", true);
+    // 저장소에는 새 형식(v2 GCM) 암호문이 남는다
+    assertThat(storedSecret(response.id())).startsWith("v2:");
+  }
+
+  // -----------------------------------------------------------------------
+  // WD-220: 웹훅 시크릿 응답 마스킹 · 수정 시 보존 · 레거시 암호문 호환
+  // -----------------------------------------------------------------------
+
+  @Test
+  void getTriggers_webhookWithSecret_hidesSecretEncrypted() {
+    TriggerResponse created = createSignedWebhook("Masked Webhook");
+
+    TriggerResponse listed =
+        triggerService.getTriggers(pipelineId).stream()
+            .filter(t -> t.id().equals(created.id()))
+            .findFirst()
+            .orElseThrow();
+    TriggerResponse single = triggerService.getTriggerById(created.id());
+
+    for (TriggerResponse r : List.of(listed, single)) {
+      assertThat(r.config()).doesNotContainKeys("secretEncrypted", "secret");
+      assertThat(r.config()).containsEntry("hasSecret", true);
+      assertThat(r.config()).containsEntry("webhookId", created.config().get("webhookId"));
+    }
+  }
+
+  @Test
+  void getTriggers_webhookWithoutSecret_reportsHasSecretFalse() {
+    TriggerResponse created =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest("Plain Webhook", TriggerType.WEBHOOK, null, Map.of()),
+            testUserId);
+
+    assertThat(triggerService.getTriggerById(created.id()).config())
+        .containsEntry("hasSecret", false)
+        .doesNotContainKey("secretEncrypted");
+  }
+
+  @Test
+  void updateTrigger_webhookEchoingResponseConfig_keepsSecretAndSignatureRequired() {
+    TriggerResponse created = createSignedWebhook("Echo Webhook");
+    String before = storedSecret(created.id());
+    String webhookId = (String) created.config().get("webhookId");
+
+    // 웹 편집 창처럼 조회 응답의 config(hasSecret 포함, 암호문 없음)를 그대로 되돌려 보낸다
+    Map<String, Object> echoed = triggerService.getTriggerById(created.id()).config();
+    triggerService.updateTrigger(
+        created.id(),
+        new UpdateTriggerRequest("Echo Webhook (renamed)", null, "edited", echoed),
+        testUserId);
+
+    assertThat(storedSecret(created.id())).isEqualTo(before);
+    assertThat(storedConfigText(created.id())).doesNotContain("hasSecret");
+    String body = "{\"event\":\"push\"}";
+    assertThat(triggerService.verifyWebhookSignature(webhookId, body, "sha256=wrong")).isFalse();
+    assertThat(triggerService.verifyWebhookSignature(webhookId, body, "")).isFalse();
+    assertThat(
+            triggerService.verifyWebhookSignature(
+                webhookId, body, computeHmacSha256(SIGNED_SECRET, body)))
+        .isTrue();
+  }
+
+  @Test
+  void updateTrigger_webhookWithForgedServerKeys_ignoresThem() {
+    TriggerResponse created = createSignedWebhook("Forged Webhook");
+    String before = storedSecret(created.id());
+    String webhookId = (String) created.config().get("webhookId");
+
+    // 클라이언트가 암호문·웹훅 id·평문 시크릿을 직접 넣어도 저장값이 바뀌지 않는다
+    triggerService.updateTrigger(
+        created.id(),
+        new UpdateTriggerRequest(
+            null,
+            null,
+            null,
+            Map.of(
+                "secretEncrypted", "forged",
+                "webhookId", "hijacked-id",
+                "secret", "plain-text",
+                "hasSecret", false)),
+        testUserId);
+
+    assertThat(storedSecret(created.id())).isEqualTo(before);
+    assertThat(storedConfigText(created.id()))
+        .contains(webhookId)
+        .doesNotContain("hijacked-id")
+        .doesNotContain("plain-text");
+  }
+
+  @Test
+  void updateTrigger_webhookWithoutSecret_cannotPlantSecret() {
+    TriggerResponse created =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest("No Secret Plant", TriggerType.WEBHOOK, null, Map.of()),
+            testUserId);
+
+    triggerService.updateTrigger(
+        created.id(),
+        new UpdateTriggerRequest(null, null, null, Map.of("secretEncrypted", "planted")),
+        testUserId);
+
+    assertThat(storedSecret(created.id())).isNull();
+  }
+
+  @Test
+  void createWebhookTrigger_withClientSecretEncrypted_ignoresIt() {
+    TriggerResponse created =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest(
+                "Planted On Create", TriggerType.WEBHOOK, null, Map.of("secretEncrypted", "x")),
+            testUserId);
+
+    assertThat(storedSecret(created.id())).isNull();
+  }
+
+  @Test
+  void verifyWebhookSignature_legacyDefaultKeyCiphertext_stillVerifies() throws Exception {
+    TriggerResponse created = createSignedWebhook("Legacy Webhook");
+    String webhookId = (String) created.config().get("webhookId");
+    // 운영에 남아 있는 옛 형식(기본 키 AES-ECB)으로 저장값을 바꿔 넣는다
+    javax.crypto.Cipher ecb = javax.crypto.Cipher.getInstance("AES/ECB/PKCS5Padding");
+    ecb.init(
+        javax.crypto.Cipher.ENCRYPT_MODE,
+        new javax.crypto.spec.SecretKeySpec(
+            "SmartFireHub2026DefaultSecretKey".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            "AES"));
+    String legacy =
+        java.util.Base64.getEncoder()
+            .encodeToString(
+                ecb.doFinal("legacy-secret".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    dsl.execute(
+        "update pipeline_trigger set config = jsonb_set(config, '{secretEncrypted}', to_jsonb(?::text)) where id = ?",
+        legacy,
+        created.id());
+
+    String body = "{}";
+    assertThat(
+            triggerService.verifyWebhookSignature(
+                webhookId, body, computeHmacSha256("legacy-secret", body)))
+        .isTrue();
+    assertThat(triggerService.verifyWebhookSignature(webhookId, body, "sha256=bad")).isFalse();
+  }
+
+  private static final String SIGNED_SECRET = "wd220-secret";
+
+  private TriggerResponse createSignedWebhook(String name) {
+    return triggerService.createTrigger(
+        pipelineId,
+        new CreateTriggerRequest(name, TriggerType.WEBHOOK, null, Map.of("secret", SIGNED_SECRET)),
+        testUserId);
+  }
+
+  /** 저장소에 실제로 남은 웹훅 암호문(응답은 마스킹되므로 DB 를 직접 본다). */
+  private String storedSecret(Long triggerId) {
+    Object v =
+        dsl.fetchValue(
+            "select config->>'secretEncrypted' from pipeline_trigger where id = ?", triggerId);
+    return v == null ? null : v.toString();
+  }
+
+  private String storedConfigText(Long triggerId) {
+    return String.valueOf(
+        dsl.fetchValue("select config::text from pipeline_trigger where id = ?", triggerId));
   }
 
   @Test

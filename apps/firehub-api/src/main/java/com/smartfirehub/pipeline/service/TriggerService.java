@@ -26,10 +26,10 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.*;
-import javax.crypto.Cipher;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
@@ -113,6 +113,8 @@ public class TriggerService {
   private final TriggerCreatorSkipNotifier creatorSkipNotifier;
   // 발화 시점 워크스페이스(테넌트) 상태 확인 — 정지된 워크스페이스의 트리거는 아예 실행하지 않는다(WD-174)
   private final TenantRepository tenantRepository;
+  // 웹훅 시크릿 암호화·복호화(WD-220) — 공개 기본 키 대신 WEBHOOK_SECRET_KEY 또는 마스터키 파생 키를 쓰고, 옛 암호문은 레거시 키로 푼다
+  private final WebhookSecretCipher webhookSecretCipher;
 
   public TriggerService(
       TriggerRepository triggerRepository,
@@ -125,7 +127,8 @@ public class TriggerService {
       ClearanceResolver clearanceResolver,
       MemberEligibility memberEligibility,
       TriggerCreatorSkipNotifier creatorSkipNotifier,
-      TenantRepository tenantRepository) {
+      TenantRepository tenantRepository,
+      @Value("${app.encryption.master-key}") String encryptionMasterKey) {
     this.triggerRepository = triggerRepository;
     this.triggerEventRepository = triggerEventRepository;
     this.triggerTenantResolver = triggerTenantResolver;
@@ -137,6 +140,9 @@ public class TriggerService {
     this.memberEligibility = memberEligibility;
     this.creatorSkipNotifier = creatorSkipNotifier;
     this.tenantRepository = tenantRepository;
+    // WEBHOOK_SECRET_KEY 는 예전부터 환경변수로만 읽었다 — 같은 이름을 그대로 존중한다(설정한 배포의 옛 암호문 호환).
+    this.webhookSecretCipher =
+        new WebhookSecretCipher(System.getenv("WEBHOOK_SECRET_KEY"), encryptionMasterKey);
   }
 
   /**
@@ -209,15 +215,19 @@ public class TriggerService {
         validateChainCondition(processedConfig.getOrDefault("condition", "SUCCESS"));
       }
       case WEBHOOK -> {
+        // 서버 소유 키는 클라이언트가 넣지 못한다(WD-220) — 암호문을 직접 넣어 시크릿을 심거나 응답 표시값이 저장되는 것을 막는다.
+        processedConfig.remove(WEBHOOK_SECRET_ENCRYPTED);
+        processedConfig.remove(WEBHOOK_HAS_SECRET);
         String webhookId = UUID.randomUUID().toString();
         processedConfig.put("webhookId", webhookId);
         // Encrypt secret if provided
         Object secret = processedConfig.get("secret");
         if (secret != null && !secret.toString().isEmpty()) {
-          String encrypted = encryptSecret(secret.toString());
-          processedConfig.put("secretEncrypted", encrypted);
-          processedConfig.remove("secret");
+          String encrypted = webhookSecretCipher.encrypt(secret.toString());
+          processedConfig.put(WEBHOOK_SECRET_ENCRYPTED, encrypted);
         }
+        // 빈 문자열이어도 평문 키는 저장하지 않는다.
+        processedConfig.remove(WEBHOOK_SECRET_PLAIN);
       }
       case DATASET_CHANGE -> {
         Object datasetIds = processedConfig.get("datasetIds");
@@ -265,6 +275,8 @@ public class TriggerService {
             .orElseThrow(
                 () ->
                     new TriggerNotFoundException("Trigger not found after creation: " + triggerId));
+    // 생성 응답도 조회 응답과 같은 마스킹을 거친다(WD-220) — 웹훅 암호문이 생성 직후 응답으로 새지 않게.
+    response = toPublic(response);
 
     // If API trigger, return the raw token in a modified response (one-time only)
     if (rawApiToken != null) {
@@ -343,6 +355,19 @@ public class TriggerService {
       // config 없이 꺼진 트리거를 켜는 수정은 토글로 켜기와 같다 — 저장된 config 로 실제로 스케줄을 걸 수 있는지 커밋 전에 확인한다.
       // 사본으로 검증해 저장값은 건드리지 않는다(등록 시 5필드는 어차피 정규화된다).
       validateScheduleConfig(new HashMap<>(existing.config()));
+    }
+
+    // WEBHOOK: config 는 통째로 바뀌므로(repository.update) 서버 소유 키를 DB 값으로 되살린다(WD-220). 응답에는 암호문이 없어서,
+    // 웹 편집 창이 받은 config 를 그대로 되돌려 보내면 시크릿이 지워지고 서명 없는 호출을 모두 받아들이게 된다. 클라이언트가 보낸
+    // 암호문·웹훅 id 는 무시한다(다른 시크릿 심기·다른 웹훅 주소 가로채기 방지). 수정 경로에는 시크릿 재설정 기능이 없으므로(웹도 수정 모드에서
+    // 입력을 막는다) 평문 secret 도 버린다 — 예전에는 평문이 그대로 저장됐다.
+    if ("WEBHOOK".equals(existing.triggerType()) && request.config() != null) {
+      request =
+          new UpdateTriggerRequest(
+              request.name(),
+              request.isEnabled(),
+              request.description(),
+              withServerOwnedWebhookKeys(request.config(), existing.config()));
     }
 
     triggerRepository.update(triggerId, request, userId);
@@ -442,7 +467,7 @@ public class TriggerService {
     // 스냅숏 제거가 레코드를 다시 만들므로 선행 없음 표시는 그 뒤에 붙인다(WD-218).
     return withUpstreamMissing(
         triggerRepository.findByPipelineId(pipelineId).stream()
-            .map(TriggerService::withoutPollSnapshot)
+            .map(TriggerService::toPublic)
             .toList());
   }
 
@@ -451,7 +476,7 @@ public class TriggerService {
     TriggerResponse trigger =
         triggerRepository
             .findById(triggerId)
-            .map(TriggerService::withoutPollSnapshot)
+            .map(TriggerService::toPublic)
             .orElseThrow(() -> new TriggerNotFoundException("Trigger not found: " + triggerId));
     return withUpstreamMissing(List.of(trigger)).get(0);
   }
@@ -506,6 +531,72 @@ public class TriggerService {
 
   /** 데이터 변경 트리거 폴러의 내부 상태 키 — 감시 데이터셋별 행 수({@code TriggerEventService}). */
   private static final String POLL_SNAPSHOT = "lastSnapshot";
+
+  /** 웹훅 config 의 저장 암호문 키 — 응답에서 빼고, 수정 시 DB 값을 유지한다(WD-220). */
+  private static final String WEBHOOK_SECRET_ENCRYPTED = "secretEncrypted";
+
+  /** 웹훅 config 의 응답 전용 표시 — 시크릿 설정 여부. 저장하지 않는다(WD-220). */
+  static final String WEBHOOK_HAS_SECRET = "hasSecret";
+
+  /** 생성 요청의 평문 시크릿 키 — 암호화한 뒤 저장하지 않는다. */
+  private static final String WEBHOOK_SECRET_PLAIN = "secret";
+
+  /** 웹훅 주소를 이루는 서버 발급 id. */
+  private static final String WEBHOOK_ID = "webhookId";
+
+  /**
+   * 트리거 응답 공통 마스킹: 폴러 스냅숏 제거(WD-161) + 웹훅 시크릿 암호문 제거(WD-220).
+   *
+   * <p>웹훅 암호문은 예전 기본 키(공개 소스)로 풀 수 있어 조회 권한만 있는 사용자가 서명을 위조할 수 있었다. 화면이 「시크릿 설정됨」을 보일 수 있게 대신
+   * {@code hasSecret} 만 싣는다. 웹훅 id 는 주소 표시에 필요해 남긴다. 저장값은 그대로라 서명 검증은 바뀌지 않는다.
+   */
+  static TriggerResponse toPublic(TriggerResponse r) {
+    TriggerResponse masked = withoutPollSnapshot(r);
+    if (!"WEBHOOK".equals(masked.triggerType())) {
+      return masked;
+    }
+    Map<String, Object> config =
+        new HashMap<>(masked.config() != null ? masked.config() : Map.of());
+    Object enc = config.remove(WEBHOOK_SECRET_ENCRYPTED);
+    // 옛 수정 경로가 평문 secret 을 저장했을 수 있다 — 응답에 싣지 않는다.
+    config.remove(WEBHOOK_SECRET_PLAIN);
+    config.put(WEBHOOK_HAS_SECRET, enc instanceof String s && !s.isEmpty());
+    return new TriggerResponse(
+        masked.id(),
+        masked.pipelineId(),
+        masked.triggerType(),
+        masked.name(),
+        masked.description(),
+        masked.isEnabled(),
+        config,
+        masked.triggerState(),
+        masked.nextFireTime(),
+        masked.createdBy(),
+        masked.createdAt(),
+        masked.upstreamMissing());
+  }
+
+  /**
+   * 웹훅 수정 요청 config 에서 서버 소유 키(암호문·웹훅 id·표시값·평문 시크릿)를 버리고 저장된 값으로 되살린 사본(WD-220). 저장된 값이 없으면 없는 채로
+   * 둔다 — 시크릿 없던 웹훅에 수정으로 시크릿을 심을 수 없다.
+   */
+  static Map<String, Object> withServerOwnedWebhookKeys(
+      Map<String, Object> requested, Map<String, Object> stored) {
+    Map<String, Object> merged = new HashMap<>(requested);
+    merged.remove(WEBHOOK_SECRET_ENCRYPTED);
+    merged.remove(WEBHOOK_HAS_SECRET);
+    merged.remove(WEBHOOK_SECRET_PLAIN);
+    merged.remove(WEBHOOK_ID);
+    if (stored != null) {
+      if (stored.get(WEBHOOK_SECRET_ENCRYPTED) != null) {
+        merged.put(WEBHOOK_SECRET_ENCRYPTED, stored.get(WEBHOOK_SECRET_ENCRYPTED));
+      }
+      if (stored.get(WEBHOOK_ID) != null) {
+        merged.put(WEBHOOK_ID, stored.get(WEBHOOK_ID));
+      }
+    }
+    return merged;
+  }
 
   /**
    * 조회 응답에서 데이터 변경 폴러의 행 수 스냅숏을 뺀다(WD-161).
@@ -890,14 +981,15 @@ public class TriggerService {
       return false;
     }
 
-    String secretEncrypted = (String) trigger.config().get("secretEncrypted");
+    String secretEncrypted = (String) trigger.config().get(WEBHOOK_SECRET_ENCRYPTED);
     if (secretEncrypted == null || secretEncrypted.isEmpty()) {
       // No secret configured, accept all
       return true;
     }
 
     try {
-      String secret = decryptSecret(secretEncrypted);
+      // 새 형식(v2 GCM)과 옛 ECB 암호문을 모두 푼다(WD-220).
+      String secret = webhookSecretCipher.decrypt(secretEncrypted);
       String expectedSignature = hmacSha256(secret, body);
       // Compare with timing-safe check
       return MessageDigest.isEqual(
@@ -932,32 +1024,6 @@ public class TriggerService {
     }
   }
 
-  private String encryptSecret(String plaintext) {
-    try {
-      String key = getWebhookSecretKey();
-      SecretKeySpec keySpec = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "AES");
-      Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
-      cipher.init(Cipher.ENCRYPT_MODE, keySpec);
-      byte[] encrypted = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
-      return Base64.getEncoder().encodeToString(encrypted);
-    } catch (Exception e) {
-      throw new CryptoException("AES encryption failed", e);
-    }
-  }
-
-  private String decryptSecret(String ciphertext) {
-    try {
-      String key = getWebhookSecretKey();
-      SecretKeySpec keySpec = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "AES");
-      Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
-      cipher.init(Cipher.DECRYPT_MODE, keySpec);
-      byte[] decrypted = cipher.doFinal(Base64.getDecoder().decode(ciphertext));
-      return new String(decrypted, StandardCharsets.UTF_8);
-    } catch (Exception e) {
-      throw new CryptoException("AES decryption failed", e);
-    }
-  }
-
   private String hmacSha256(String secret, String data) {
     try {
       Mac mac = Mac.getInstance("HmacSHA256");
@@ -973,17 +1039,6 @@ public class TriggerService {
     } catch (Exception e) {
       throw new CryptoException("HMAC-SHA256 failed", e);
     }
-  }
-
-  private String getWebhookSecretKey() {
-    String key = System.getenv("WEBHOOK_SECRET_KEY");
-    if (key == null || key.isEmpty()) {
-      // Default key for development (32 bytes for AES-256)
-      key = "SmartFireHub2026DefaultSecretKey";
-    }
-    // Normalize to exactly 32 bytes for AES-256
-    byte[] keyBytes = Arrays.copyOf(key.getBytes(StandardCharsets.UTF_8), 32);
-    return new String(keyBytes, StandardCharsets.UTF_8);
   }
 
   private void validateScheduleConfig(Map<String, Object> config) {

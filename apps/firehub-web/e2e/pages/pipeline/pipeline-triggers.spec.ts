@@ -219,6 +219,55 @@ test.describe('파이프라인 트리거 탭', () => {
     expect(req.payload).toMatchObject({ name: '설명 있는 스케줄' });
   });
 
+  /**
+   * 회귀 방지 테스트 (WD-220)
+   * 서버는 웹훅 시크릿 암호문 대신 hasSecret 만 내려준다. 편집 창은 그 값으로 「시크릿 설정됨」을 보이고,
+   * 저장 PUT 에 암호문을 싣지 않아야 한다(서버가 DB 값을 유지한다).
+   */
+  test('트리거 편집 — 웹훅은 hasSecret 으로 시크릿 설정 상태를 보이고 PUT 에 암호문을 싣지 않는다 (WD-220)', async ({
+    authenticatedPage: page,
+  }) => {
+    const existing = createTrigger({
+      id: 7,
+      name: '서명 웹훅',
+      triggerType: 'WEBHOOK',
+      config: { webhookId: 'wh-wd220', hasSecret: true },
+    });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1/triggers/7', '', { capture: true });
+
+    await gotoTriggerTab(page);
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('시크릿 설정됨 — 수신 시 서명을 검증합니다.')).toBeVisible();
+    await expect(dialog.getByPlaceholder('설정됨 (보안상 표시하지 않습니다)')).toBeDisabled();
+
+    await dialog.getByLabel(/^이름/).fill('서명 웹훅 (수정)');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: '서명 웹훅 (수정)', config: { webhookId: 'wh-wd220' } });
+    expect((req.payload as { config: Record<string, unknown> }).config).not.toHaveProperty('secretEncrypted');
+  });
+
+  test('트리거 편집 — 웹훅 시크릿이 없으면 「시크릿 없음」을 보인다 (WD-220)', async ({ authenticatedPage: page }) => {
+    const existing = createTrigger({
+      id: 8,
+      name: '서명 없는 웹훅',
+      triggerType: 'WEBHOOK',
+      config: { webhookId: 'wh-wd220-none', hasSecret: false },
+    });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+
+    await gotoTriggerTab(page);
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+
+    await expect(page.getByRole('dialog').getByText('시크릿 없음 — 서명 없이 수신합니다.')).toBeVisible();
+  });
+
   test('트리거 편집 — 이름 변경 후 PUT payload 검증', async ({ authenticatedPage: page }) => {
     const existing = createTrigger({
       id: 5,
