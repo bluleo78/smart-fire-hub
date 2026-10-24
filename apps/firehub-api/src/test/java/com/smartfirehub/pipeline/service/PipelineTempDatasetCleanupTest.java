@@ -101,7 +101,11 @@ class PipelineTempDatasetCleanupTest extends IntegrationTestBase {
         p.id(),
         new UpdatePipelineRequest(p.name(), null, null, List.of(sqlStep("추출", tempId))),
         userId);
-    assertThat(outputOf(stepId)).as("왕복 저장된 출력").isEqualTo(tempId);
+    // WD-222: 저장은 자기 TEMP id 를 출력 미지정(null)으로 정규화한다 — TEMP 를 명시 출력으로 고정하지 않는다.
+    assertThat(outputOf(stepId)).as("왕복 저장된 출력(정규화)").isNull();
+    // 정규화 이전에 이미 TEMP id 로 고정된 기존 스텝(운영 데이터)도 같은 결과여야 한다 — DB 를 직접 고정해 재현한다.
+    dsl.execute("UPDATE pipeline_step SET output_dataset_id = ? WHERE id = ?", tempId, stepId);
+    assertThat(outputOf(stepId)).as("고정된 출력").isEqualTo(tempId);
     String table = tableNameOf(tempId);
 
     pipelineService.deletePipeline(p.id());

@@ -434,6 +434,17 @@ public class PipelineAsyncRunner {
 
       // 출력 데이터셋 ID 및 테이블명 결정 (임시 데이터셋 포함)
       Long outputDatasetId = step.outputDatasetId();
+      // 이 스텝의 출력이 「이 스텝이 소유한 러너 TEMP」인가(WD-222). 스텝 조회(findByPipelineId)는 화면 표시·{{#N}} 참조를 위해 출력이
+      // 비어 있으면 그 스텝의 TEMP id 를 채워(coalesce) 주고, 화면 저장은 그 id 를 명시 출력으로 되돌려 고정한다. 그래서 두 번째 실행부터는
+      // 자동 생성(TEMP) 스텝도 출력 id 가 늘 채워져 있어, 아래 "출력 미지정 → TEMP 준비" 분기가 죽고 SELECT 열이 바뀌어도 TEMP 가 옛 열
+      // 구성 그대로 남았다(열 추가 → INSERT 개수 불일치, 이름 변경 → 열 불일치 실패). 출력 id 가 이 스텝의
+      // TEMP(source_pipeline_step_id =
+      // 스텝 id)와 같으면 미지정과 똑같이 취급해, 실행마다 결과 열과 TEMP 스키마를 비교하고 다르면 다시 만든다(ensureStepTemp). 다른 스텝·
+      // 다른 파이프라인의 TEMP 는 source_pipeline_step_id 가 달라 여기에 걸리지 않는다 — 그대로 명시 출력이다(WD-224 와 독립).
+      final boolean ownedTempOutput =
+          outputDatasetId == null
+              || outputDatasetId.equals(
+                  tempDatasetService.findExistingTempDataset(step.id()).orElse(null));
 
       String outputTableName = null;
       if (outputDatasetId != null) {
@@ -482,6 +493,9 @@ public class PipelineAsyncRunner {
       boolean incrementalStep = false;
       OffsetDateTime stepCursorCandidate = null;
       boolean stepWasFullRebuild = false;
+      // 증분 스텝이 이번 실행에서 책갈피 이후 변경분만 읽는가(전체 재생성 예약·첫 실행이 아님) — 그때는 소유 TEMP 를 비운 채 다시 만들 수
+      // 없다(WD-222, 아래 ensureStepTemp 호출 참고).
+      boolean incrementalPartialRead = false;
 
       // 스크립트 타입별 실행
       String executionLog;
@@ -519,6 +533,7 @@ public class PipelineAsyncRunner {
           stepWasFullRebuild = cursor.fullRebuildPending();
           // 전체 재생성 예약이면 책갈피를 무시하고 전체를 읽는다(-infinity).
           OffsetDateTime injected = stepWasFullRebuild ? null : cursor.lastRunAt();
+          incrementalPartialRead = injected != null;
           stepCursorCandidate = incrementalCursorService.captureCandidate();
           sql = LastRunAtPlaceholder.substitute(sql, injected);
           // 소스 테이블의 백필(_updated_at 컬럼+트리거) 완료 여부를 여기서 따로 확인하지 않는다.
@@ -571,8 +586,8 @@ public class PipelineAsyncRunner {
         // SELECT 가 아니면 probe 자체가 필요 없으므로 지연 획득한다.
         List<ColumnInfo> probedColumns = null;
 
-        // SELECT이고 outputDatasetId가 없으면 임시 데이터셋 자동 생성
-        if (isSelect && outputDatasetId == null) {
+        // SELECT이고 출력이 없거나 이 스텝 소유 TEMP 면 임시 데이터셋을 준비한다(없으면 생성, 열이 바뀌었으면 재생성 — WD-222)
+        if (isSelect && ownedTempOutput) {
           if (tiberoTenant) {
             // 임시 데이터셋 자동 생성은 이름 규칙(Tibero 30자)·probe 타입 역매핑이 정해진 뒤(2단계)에 한다(스펙 §2 비목표). 사용자 SQL 을
             // 돌리는 probe·TEMP 생성보다 먼저 거부한다.
@@ -594,8 +609,19 @@ public class PipelineAsyncRunner {
           // 붙이면 된다는 걸 알 수 없었다. 규칙은 DataTableNames 하나를 쓰고, 안내는 이 경로에서만 SQL 문맥으로 낸다.
           rejectInvalidResultColumnNames(selectColumns);
 
+          // 증분 스텝이 변경분만 읽는 실행이면 열이 바뀐 TEMP 를 다시 만들지 않는다(WD-222) — 다시 만든 TEMP 는 비어 있는데 이번 SQL 은
+          // 책갈피 이후 변경분만 채우고 책갈피까지 전진해, 그 전 행이 조용히 영영 빠진다. 전체 재생성 예약 뒤 실행하면(-infinity + 출력 비우기)
+          // 정상으로 다시 채워진다 — 그 안내와 함께 실패시킨다.
           StepTemp temp =
-              ensureStepTemp(step, selectColumns, pipelineId, pipelineName, userId, runAs, "");
+              ensureStepTemp(
+                  step,
+                  selectColumns,
+                  pipelineId,
+                  pipelineName,
+                  userId,
+                  runAs,
+                  "",
+                  !incrementalPartialRead);
           tempDatasetFresh = temp.fresh();
           outputDatasetId = temp.datasetId();
           outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
@@ -658,8 +684,8 @@ public class PipelineAsyncRunner {
         // 만든 TEMP·지정 출력 모두 입력 최대 등급보다 낮으면 자동 상향(지정 출력은 볼 수 있어야 한다). 사용자 DML 스텝의 지정 출력도
         // REPLACE 면 비우기(DELETE) 선행 문장의 대상이 되므로 실행 주체가 볼 수 있어야 하고, DML 쓰기 대상은 입력보다 낮으면 자동
         // 상향한다. 아래 실행(선행 문장 포함)보다 먼저다.
-        // 러너 소유 TEMP 여부는 게이트가 DB 로 판정한다 — 두 번째 실행부터 TEMP 는 step.outputDatasetId 로 들어와 위 자동 생성
-        // 분기를 타지 않기 때문이다(PipelineStepRepository 의 coalesce 폴백).
+        // 러너 소유 TEMP 여부는 게이트가 DB 로 따로 판정한다 — 비SELECT(사용자 DML) 스텝은 위 TEMP 준비 분기를 타지 않고 들어온 출력
+        // (coalesce 폴백으로 채워진 소유 TEMP 포함)을 그대로 쓰기 때문이다.
         if (outputDatasetId != null) {
           if (isSelect) {
             allowlistPlan =
@@ -822,8 +848,9 @@ public class PipelineAsyncRunner {
         // 실행 주체 자격은 이 스텝에서 한 번만 계산해 이 스텝의 모든 판정(출력·TEMP 삭제 전)에 쓴다.
         PipelineSecurityGate.RunAs pyRunAs = pipelineSecurityGate.runAs(userId);
         boolean pyTempFresh = false;
-        // outputDatasetId가 없고 pythonConfig에 outputColumns가 있으면 임시 데이터셋 자동 생성
-        if (outputDatasetId == null && step.pythonConfig() != null) {
+        // 출력이 없거나 이 스텝 소유 TEMP 이고 pythonConfig에 outputColumns가 있으면 임시 데이터셋 준비(WD-222 — 열이 바뀌면 재생성).
+        // outputColumns 가 없으면 들어온 출력(소유 TEMP 포함)을 그대로 쓴다(이전 동작 유지).
+        if (ownedTempOutput && step.pythonConfig() != null) {
           com.smartfirehub.pipeline.dto.PythonStepConfig pythonStepConfig =
               objectMapper.convertValue(
                   step.pythonConfig(), com.smartfirehub.pipeline.dto.PythonStepConfig.class);
@@ -992,8 +1019,8 @@ public class PipelineAsyncRunner {
         PipelineSecurityGate.RunAs apiRunAs = pipelineSecurityGate.runAs(userId);
         requireExistingOutputVisible(outputDatasetId, apiRunAs);
 
-        // outputDatasetId가 없으면 임시 데이터셋 자동 생성
-        if (outputDatasetId == null) {
+        // 출력이 없거나 이 스텝 소유 TEMP 면 임시 데이터셋 준비(WD-222 — 열이 바뀌면 재생성)
+        if (ownedTempOutput) {
           List<ColumnInfo> apiColumns = inferApiCallColumns(apiCallConfig);
           outputDatasetId =
               ensureUnpropagatedStepTemp(
@@ -1138,8 +1165,8 @@ public class PipelineAsyncRunner {
         // 이번 실행에서 TEMP 를 새로 만들었는지(빈 테이블) — SQL 스텝과 같은 이유로 새 TEMP 만 입력 최대 등급으로 "정확히" 맞춘다.
         boolean aiTempFresh = false;
 
-        // outputDatasetId가 없으면 임시 데이터셋 자동 생성
-        if (outputDatasetId == null) {
+        // 출력이 없거나 이 스텝 소유 TEMP 면 임시 데이터셋 준비(WD-222 — 열이 바뀌면 재생성)
+        if (ownedTempOutput) {
           com.smartfirehub.pipeline.dto.AiClassifyConfig aiClassifyConfig =
               objectMapper.convertValue(
                   step.aiConfig(), com.smartfirehub.pipeline.dto.AiClassifyConfig.class);
@@ -1299,6 +1326,14 @@ public class PipelineAsyncRunner {
   static final String TIBERO_QUOTED_RESULT_COLUMN_PREFIX = "Tibero 결과 컬럼 이름은 따옴표 없는 별칭으로 써 주세요(";
 
   /** Tibero 테넌트 출력 없는 SELECT 거부 문구(스펙 §5.1 — 임시 데이터셋 자동 생성은 2단계). */
+  /**
+   * 증분({{last_run_at}}) 자동 생성 스텝의 SELECT 열이 바뀌었는데 변경분만 읽는 실행일 때의 실패 문구(WD-222). 임시 데이터셋을 새 열로 다시
+   * 만들면 비어 있는 채로 변경분만 채워지므로, 전체 재생성을 예약해 처음부터 다시 채우게 안내한다.
+   */
+  static final String INCREMENTAL_TEMP_SCHEMA_CHANGED_MESSAGE =
+      "증분 스텝의 결과 열이 바뀌어 임시 출력 데이터셋을 다시 만들어야 합니다. 변경분만 읽으면 이전 행이 빠지므로, 스텝에서 「전체 재생성」을 예약한 뒤 다시"
+          + " 실행하세요.";
+
   static final String TIBERO_OUTPUTLESS_SELECT_UNSUPPORTED =
       "Tibero 저장소 테넌트의 SQL 단계는 출력 데이터셋을 지정해야 합니다.";
 
@@ -1518,6 +1553,22 @@ public class PipelineAsyncRunner {
       Long userId,
       PipelineSecurityGate.RunAs runAs,
       String logLabel) {
+    return ensureStepTemp(step, columns, pipelineId, pipelineName, userId, runAs, logLabel, true);
+  }
+
+  /**
+   * {@link #ensureStepTemp} 본체 — {@code allowRebuild=false} 면 열이 바뀐 TEMP 를 다시 만들지 않고, 아무것도 지우기 전에
+   * 전체 재생성 예약 안내로 실패한다(WD-222: 증분 스텝이 변경분만 읽는 실행에서 빈 TEMP 에 변경분만 채워지는 조용한 누락을 막는다).
+   */
+  private StepTemp ensureStepTemp(
+      PipelineStepResponse step,
+      List<ColumnInfo> columns,
+      Long pipelineId,
+      String pipelineName,
+      Long userId,
+      PipelineSecurityGate.RunAs runAs,
+      String logLabel,
+      boolean allowRebuild) {
     Long stepId = step.id();
     Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
     if (existingDatasetId.isPresent()) {
@@ -1526,11 +1577,19 @@ public class PipelineAsyncRunner {
         log.info("Reusing existing temp dataset {} for {}step {}", dsId, logLabel, step.name());
         return new StepTemp(dsId, false);
       }
-      // 새 컬럼을 옛 TEMP 를 지우기 전에 검증한다 — 지운 뒤 생성이 실패하면 이전 출력이 사라진다.
+      if (!allowRebuild) {
+        throw new ScriptExecutionException(INCREMENTAL_TEMP_SCHEMA_CHANGED_MESSAGE);
+      }
+      // 새 컬럼을 옛 TEMP 를 비우기 전에 검증한다 — 비운 뒤 생성이 실패하면 이전 출력이 사라진다.
       tempDatasetService.validateColumnsForNewTemp(columns);
-      log.info("Schema changed for {}step {}, recreating temp dataset", logLabel, step.name());
+      log.info(
+          "Schema changed for {}step {}, rebuilding temp dataset {}", logLabel, step.name(), dsId);
       pipelineSecurityGate.requireOutputVisible(dsId, runAs);
-      tempDatasetService.deleteTempDataset(dsId);
+      // 같은 데이터셋 id 로 테이블·컬럼만 다시 만든다(WD-222) — 삭제 후 생성은 화면 저장으로 출력 id 가 TEMP 로 고정된 스텝에서 출력 참조
+      // 거부(DatasetInUseException)로 실패하고, id 가 바뀌면 다른 스텝 입력·열린 편집기의 참조가 깨진다. 테이블이 비었으므로 fresh 다 —
+      // 출력 등급 처리가 입력 최대 등급으로 정확히 맞춘다(삭제 후 생성 때와 같은 규칙).
+      tempDatasetService.rebuildTempDataset(dsId, columns);
+      return new StepTemp(dsId, true);
     } else {
       log.info("Creating new temp dataset for {}step {}", logLabel, step.name());
     }

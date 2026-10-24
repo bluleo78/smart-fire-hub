@@ -152,8 +152,10 @@ export default function StepConfigPanel({
       .filter(({ step: s }) => s.tempId !== step.tempId);
 
     for (const { step: s, number } of otherSteps) {
-      if (number < stepNumber && s.outputDatasetId != null) {
-        const ds = datasets.find((d) => d.id === s.outputDatasetId);
+      // 자동 생성 스텝은 현재 임시 데이터셋(autoOutputDatasetId)을 입력 후보로 보여 준다(WD-222 — 저장 출력은 null 이지만 표시는 유지).
+      const prevOutputId = s.outputDatasetId ?? s.autoOutputDatasetId ?? null;
+      if (number < stepNumber && prevOutputId != null) {
+        const ds = datasets.find((d) => d.id === prevOutputId);
         if (ds) {
           prevStepDatasets.push({ ...ds, name: `[스텝${number}] ${ds.name}` });
           prevStepDatasetIds.add(ds.id);

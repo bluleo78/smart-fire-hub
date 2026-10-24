@@ -218,6 +218,46 @@ public class DatasetService {
     return createDatasetInternal(request, userId);
   }
 
+  /**
+   * 파이프라인 러너 전용 — 스텝 소유 TEMP 의 물리 테이블과 컬럼을 새 열 구성으로 <b>같은 데이터셋 id 그대로</b> 다시 만든다(WD-222).
+   *
+   * <p>왜 삭제 후 새로 만들지 않나: (1) 화면 저장으로 {@code pipeline_step.output_dataset_id} 에 TEMP id 가 고정된 스텝은
+   * {@link #deleteDataset} 의 출력 참조 거부에 걸려 재생성이 실패하고, (2) id 가 바뀌면 다른 스텝 입력({@code
+   * pipeline_step_input}, CASCADE)이 조용히 사라지고 열린 편집기가 없는 id 를 저장하며, (3) 관리자가 정한 보안 등급 등 데이터셋 메타가
+   * 날아간다. 데이터셋 행(이름·등급·출처)은 건드리지 않고, 생성 경로({@link #createDatasetInternal})와 같은 순서로 컬럼 저장 → 테이블 생성만
+   * 다시 한다. 기존 행은 사라진다(빈 테이블) — 러너는 이 TEMP 를 "새로 만든 TEMP" 로 취급한다.
+   *
+   * @param datasetId 러너 소유 TEMP 데이터셋 id(origin_type=TEMP, source_pipeline_step_id 있음)
+   * @param columns 새 사용자 컬럼(러너가 SELECT 결과에서 만든 것)
+   */
+  @Transactional
+  public void rebuildPipelineTempTable(Long datasetId, List<DatasetColumnRequest> columns) {
+    DatasetResponse dataset =
+        datasetRepository
+            .findById(datasetId)
+            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    // 러너 소유 TEMP 만 다시 만들 수 있다 — 사용자 데이터셋의 테이블을 지우는 경로가 되지 않게 막는다.
+    if (!"TEMP".equals(dataset.originType()) || dataset.sourcePipelineStepId() == null) {
+      throw new IllegalArgumentException("파이프라인 TEMP 데이터셋만 다시 만들 수 있습니다: " + datasetId);
+    }
+    // 검증은 DROP 보다 먼저다 — 실패할 컬럼 구성으로 옛 테이블을 지우지 않는다.
+    dataTableService.validateNewColumns(columns);
+    Set<String> seenColumnNames = new java.util.HashSet<>();
+    for (DatasetColumnRequest col : columns) {
+      if (!seenColumnNames.add(col.columnName())) {
+        throw duplicateColumnName(col.columnName());
+      }
+    }
+    // 색인 테이블은 FK 가 없어 따로 지운다(deleteDataset 과 같은 이유) — 옛 열 기준 색인이 남지 않게 한다.
+    rowSearchIndex.drop(new IndexRef(TenantContext.require(), datasetId, dataset.tableName()));
+    dataTableService.dropTable(dataset.tableName());
+    columnRepository.deleteByDatasetId(datasetId);
+    withColumnNameUniqueAs409(() -> columnRepository.saveBatch(datasetId, columns));
+    dataTableService.createTable(dataset.tableName(), columns);
+    // 컬럼이 바뀌었으므로 검색 원문·임베딩도 갱신한다(생성 경로와 같은 규칙).
+    reindexSearch(datasetId);
+  }
+
   /** 생성 본체 — 출처 필드 검사는 두 공개 진입점이 맡는다. */
   private DatasetDetailResponse createDatasetInternal(CreateDatasetRequest request, Long userId) {
     // 새 이름 검증은 저장 유형 분기·중복 검사·카탈로그 저장보다 먼저다 — 상한을 넘는 이름은 원래 문자열 비교인 중복 검사를 통과해
