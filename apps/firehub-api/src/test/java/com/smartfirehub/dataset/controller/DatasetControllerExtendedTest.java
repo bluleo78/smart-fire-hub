@@ -434,6 +434,21 @@ class DatasetControllerExtendedTest {
         .andExpect(status().isNoContent());
   }
 
+  @Test
+  void deleteTag_missingTag_returnsNotFoundWithKoreanMessage() throws Exception {
+    // 없는 태그 삭제는 204 로 지운 척하지 않고 404 와 한국어 사유를 준다 (WD-242)
+    org.mockito.Mockito.doThrow(
+            new com.smartfirehub.dataset.exception.DatasetTagNotFoundException())
+        .when(datasetTagService)
+        .deleteTag(anyLong(), anyString());
+
+    mockMvc
+        .perform(
+            delete("/api/v1/datasets/1/tags/fire").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("태그를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
+  }
+
   // ── 상태 변경 ─────────────────────────────────────────────────────────────────
 
   @Test

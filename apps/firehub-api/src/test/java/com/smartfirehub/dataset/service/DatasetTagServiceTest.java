@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
+import com.smartfirehub.dataset.exception.DatasetTagNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
 import java.util.List;
@@ -171,11 +172,52 @@ class DatasetTagServiceTest extends IntegrationTestBase {
     assertThat(allTags).doesNotContain("to-delete");
   }
 
-  /** 정상: 존재하지 않는 태그 삭제 시 예외 없이 조용히 처리되어야 한다 (idempotent). */
+  /**
+   * 예외: 데이터셋에 없는 태그를 지우면 한국어 문구의 DatasetTagNotFoundException(404)이어야 한다 (WD-242).
+   *
+   * <p>예전에는 조용히 204 로 끝나 지운 것처럼 보였다. 다른 데이터셋의 같은 이름 태그는 건드리지 않는다.
+   */
   @Test
-  void deleteTag_nonExistentTag_noException() {
-    // 존재하지 않는 태그를 삭제해도 예외가 발생하지 않아야 함
-    datasetTagService.deleteTag(datasetId, "nonexistent-tag");
+  void deleteTag_nonExistentTag_throwsTagNotFound() {
+    datasetTagService.addTag(datasetId2, "nonexistent-tag", testUserId);
+
+    assertThatThrownBy(() -> datasetTagService.deleteTag(datasetId, "nonexistent-tag"))
+        .isInstanceOf(DatasetTagNotFoundException.class)
+        .hasMessage("태그를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
+    assertThat(tagsOf(datasetId2)).containsExactly("nonexistent-tag");
+  }
+
+  /** 정상: 대소문자만 다른 이름으로 지워도 그 태그가 지워져야 한다 — 추가 중복 검사와 같은 기준 (WD-242, #671). */
+  @Test
+  void deleteTag_differentCase_deletesStoredTag() {
+    datasetTagService.addTag(datasetId, "Fire", testUserId);
+    datasetTagService.addTag(datasetId, "keep", testUserId);
+
+    datasetTagService.deleteTag(datasetId, "fire");
+
+    assertThat(tagsOf(datasetId)).containsExactly("keep");
+  }
+
+  /** 정상: 정확히 같은 이름으로 지우면 그 태그만 지워진다 — 기존 동작 유지 (WD-242). */
+  @Test
+  void deleteTag_exactName_deletesOnlyThatTag() {
+    datasetTagService.addTag(datasetId, "Fire", testUserId);
+    datasetTagService.addTag(datasetId, "keep", testUserId);
+    datasetTagService.addTag(datasetId2, "Fire", testUserId);
+
+    datasetTagService.deleteTag(datasetId, "Fire");
+
+    assertThat(tagsOf(datasetId)).containsExactly("keep");
+    assertThat(tagsOf(datasetId2)).containsExactly("Fire");
+  }
+
+  /** 데이터셋에 실제로 남은 태그 이름 — 집계(getAllDistinctTags)가 아니라 dataset_tag 를 직접 본다. */
+  private List<String> tagsOf(Long id) {
+    return dsl.select(DATASET_TAG.TAG_NAME)
+        .from(DATASET_TAG)
+        .where(DATASET_TAG.DATASET_ID.eq(id))
+        .orderBy(DATASET_TAG.TAG_NAME)
+        .fetch(DATASET_TAG.TAG_NAME);
   }
 
   /** 예외: 존재하지 않는 데이터셋 ID로 태그 삭제 시 DatasetNotFoundException이 발생해야 한다. */

@@ -330,7 +330,8 @@ export function useRemoveTag(datasetId: number) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (tagName: string) => datasetsApi.removeTag(datasetId, tagName),
-    onSuccess: () => {
+    // 실패해도 다시 읽는다 — 다른 탭에서 이미 지운 태그(404, WD-242)가 화면에 계속 남지 않게
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
       queryClient.invalidateQueries({ queryKey: ['datasets'] });
     },

@@ -513,6 +513,44 @@ test.describe('데이터셋 상세 페이지', () => {
     await expect.poll(() => removeTagCalled).toBe(true);
   });
 
+  test('이미 지워진 태그를 제거하면 서버 사유를 보이고 상세를 다시 읽는다 (WD-242)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDetailPageMocks(page, 1);
+    // 다른 탭에서 이미 지운 태그 — 서버는 404 와 한국어 사유를 준다
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/datasets/1/tags/'),
+      (route) => {
+        if (route.request().method() === 'DELETE') {
+          return route.fulfill({
+            status: 404,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              status: 404,
+              error: 'Not Found',
+              message: '태그를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.',
+            }),
+          });
+        }
+        return route.fallback();
+      },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // 실패 뒤 상세를 다시 읽는지 — 낡은 태그가 화면에 계속 남지 않게
+    const refetch = page.waitForRequest(
+      (req) => req.method() === 'GET' && new URL(req.url()).pathname === '/api/v1/datasets/1',
+    );
+    const testTagBadge = page.locator('[data-slot="badge"]').filter({ hasText: '테스트' });
+    await testTagBadge.getByRole('button').click();
+
+    await expect(page.getByText('태그를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.')).toBeVisible();
+    await expect(page.getByText('태그 제거에 실패했습니다.')).toHaveCount(0);
+    await refetch;
+  });
+
   test('관리자는 상태 변경 버튼을 볼 수 있고 CERTIFIED로 변경할 수 있다', async ({
     authenticatedPage: page,
   }) => {

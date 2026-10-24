@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.service;
 
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
+import com.smartfirehub.dataset.exception.DatasetTagNotFoundException;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
 import com.smartfirehub.dataset.search.DatasetChangedEvent;
@@ -43,7 +44,11 @@ public class DatasetTagService {
   @Transactional
   public void deleteTag(Long datasetId, String tagName) {
     datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
-    tagRepository.delete(datasetId, tagName);
+    // 추가와 같이 대소문자를 무시해 지우고, 지운 것이 없으면 404 로 알린다 — 204 로 지운 척하지 않는다 (WD-242)
+    int deleted = tagRepository.deleteIgnoreCase(datasetId, tagName);
+    if (deleted == 0) {
+      throw new DatasetTagNotFoundException();
+    }
 
     // 태그 삭제 반영
     reindexSearch(datasetId);

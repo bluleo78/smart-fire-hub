@@ -243,8 +243,9 @@ export default function DatasetDetailPage() {
     try {
       await removeTag.mutateAsync(tag);
       toast.success(`태그 "${tag}" 제거`);
-    } catch {
-      toast.error('태그 제거에 실패했습니다.');
+    } catch (error) {
+      // 이미 지워진 태그면 서버의 「태그를 찾을 수 없습니다…」(404)를 그대로 보인다 (WD-242)
+      handleApiError(error, '태그 제거에 실패했습니다.');
     }
   };
 
