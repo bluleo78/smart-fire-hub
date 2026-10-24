@@ -359,6 +359,14 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
   }
 
+  /** 데이터셋에 지우려는 태그가 없을 때 404(WD-242) — 예전에는 204 로 지운 것처럼 보였다. */
+  @ExceptionHandler(DatasetTagNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleDatasetTagNotFound(
+      DatasetTagNotFoundException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
   @ExceptionHandler(DuplicateDatasetNameException.class)
   public ResponseEntity<ErrorResponse> handleDuplicateDatasetName(
       DuplicateDatasetNameException ex, HttpServletRequest request) {

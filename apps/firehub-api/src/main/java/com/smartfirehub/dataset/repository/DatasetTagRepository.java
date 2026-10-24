@@ -41,10 +41,16 @@ public class DatasetTagRepository {
         .execute();
   }
 
-  public void delete(Long datasetId, String tagName) {
-    dsl.deleteFrom(DATASET_TAG)
+  /**
+   * 데이터셋의 태그를 대소문자 무시로 지우고 지운 행 수를 돌려준다.
+   *
+   * <p>WD-242: 추가 중복 검사가 대소문자를 무시하므로(#671) 삭제도 같은 기준이어야 한다 — 예전에는 정확 일치만 지워 「Fire」가 있을 때 「fire」 삭제가
+   * 204 를 주고도 아무것도 지우지 않았다. 호출자는 0 이면 없는 태그로 본다.
+   */
+  public int deleteIgnoreCase(Long datasetId, String tagName) {
+    return dsl.deleteFrom(DATASET_TAG)
         .where(DT_DATASET_ID.eq(datasetId))
-        .and(DT_TAG_NAME.eq(tagName))
+        .and(lower(DT_TAG_NAME).eq(lower(val(tagName))))
         .execute();
   }
 
