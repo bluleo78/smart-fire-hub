@@ -22,6 +22,7 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.security.PermissionInterceptor;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -35,6 +36,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -313,5 +315,27 @@ class DatasetControllerTest {
         .andExpect(status().isNotFound())
         // WD-240: 영어 「Dataset not found: N」 대신 한국어·번호 없는 문구가 응답 message 로 나간다
         .andExpect(jsonPath("$.message").value("데이터셋을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
+  }
+
+  /**
+   * WD-251: pipeline:write 만 가진 사용자가 즉시 실행을 요청하면 서비스가 던진 권한 거부가 인터셉터와 같은 403·한국어 문구로 나간다(빈 본문·500 이
+   * 아니다). 권한 판정 자체는 ApiImportServiceTest 가 실제 DB 로 본다.
+   */
+  @Test
+  void createApiImport_optionWithoutPermission_returnsForbiddenWithKoreanMessage()
+      throws Exception {
+    String message = PermissionInterceptor.missingPermissionMessage("pipeline:execute");
+    when(apiImportService.createApiImport(eq(1L), any(ApiImportRequest.class), eq(1L)))
+        .thenThrow(new AccessDeniedException(message));
+
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/api-import")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"apiConfig\":{\"url\":\"https://api.example.com\"},\"executeImmediately\":true}"))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.message").value(message));
   }
 }
