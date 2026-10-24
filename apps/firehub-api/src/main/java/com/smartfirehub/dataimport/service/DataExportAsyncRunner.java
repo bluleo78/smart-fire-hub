@@ -36,6 +36,9 @@ public class DataExportAsyncRunner {
   /** 페이지당 조회 행 수 — DataExportService와 동일 값 유지 */
   private static final int PAGE_SIZE = 1000;
 
+  /** 비동기 내보내기 실패 시 작업 상태에 남기는 사용자용 문구 — 웹은 앞에 「내보내기 실패: 」를 붙여 보인다. */
+  static final String EXPORT_FAILED_MESSAGE = "내보내기 파일을 만들지 못했습니다. 관리자에게 문의하세요.";
+
   private final DataTableRowService dataTableRowService;
   private final AsyncJobService asyncJobService;
   private final AuditLogService auditLogService;
@@ -159,7 +162,8 @@ public class DataExportAsyncRunner {
 
     } catch (Exception e) {
       log.error("Async export failed for jobId={}: {}", jobId, e.getMessage(), e);
-      asyncJobService.failJob(jobId, "내보내기 실패: " + e.getMessage());
+      // 예외 원문(라이브러리 영어 메시지·내부 정보)은 로그에만 남기고, 사용자에게는 한국어 일반 문구를 보인다(WD-248)
+      asyncJobService.failJob(jobId, EXPORT_FAILED_MESSAGE);
       try {
         Files.deleteIfExists(filePath);
       } catch (IOException ignored) {
