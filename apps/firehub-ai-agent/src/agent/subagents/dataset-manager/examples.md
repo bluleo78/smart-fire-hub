@@ -21,8 +21,9 @@
 **사용자**: 네, 만드세요.
 
 **에이전트**:
-4. `create_dataset(...)` + `validate_import(...)` + `start_import(...)` 순차 실행
-5. 응답: `fire_incidents 데이터셋 생성 완료. 임포트 작업 시작됨 (importId=imp-abc). 완료되면 알려드릴게요. 다른 컬럼을 더 추가하거나 조정할 게 있으면 말씀해주세요.`
+4. `create_dataset(...)` + `validate_import(...)` + `start_import(...)` 순차 실행 → `{ "jobId": "be5b2a44-…", "status": "PENDING" }`
+5. `import_status(jobId="be5b2a44-…")` → `done=false` 면 잠시 뒤 다시 조회, `done=true` 면 `summary` 확인
+6. 응답: `fire_incidents 데이터셋 생성 완료. 임포트가 완료되어 1,234행을 적재했습니다. 다른 컬럼을 더 추가하거나 조정할 게 있으면 말씀해주세요.` (아직 진행 중이면 "임포트 진행 중(적재 중, 60%)입니다. 끝나면 결과를 알려드릴게요.")
 
 ## 예시 2 — 삭제 확인 흐름
 
