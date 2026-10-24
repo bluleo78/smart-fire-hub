@@ -193,6 +193,11 @@ export interface ProactiveMessage {
    * 화면은 「리포트 보기」 대신 요약과 안내 문구를 보인다. 404 를 받고 나서 추측하지 않도록 서버가 사실을 실어 준다.
    */
   canViewReport: boolean;
+  /**
+   * 연결된 리포트의 등급이 내(수신자) 현재 보안 등급보다 높아 서버가 요약을 비우고 리포트 열기를 막았는가 (WD-198).
+   * true 면 「현재 보안 등급으로 열 수 없는 리포트입니다」 안내를 보인다. 이전 서버 응답에는 없다.
+   */
+  reportLevelBlocked?: boolean;
 }
 
 export interface RecipientResponse {

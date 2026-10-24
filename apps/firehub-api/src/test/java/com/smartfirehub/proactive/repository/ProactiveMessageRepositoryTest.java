@@ -352,4 +352,96 @@ class ProactiveMessageRepositoryTest extends IntegrationTestBase {
         .extracting(ProactiveMessageResponse::canViewReport)
         .isEqualTo(false);
   }
+
+  // -----------------------------------------------------------------------
+  // 리포트 등급 가림 (WD-198)
+  // -----------------------------------------------------------------------
+
+  /** 사용자에게 지정 등급의 역할만 준다(ACTIVE 멤버십 포함) — 수신자의 「현재 최대 등급」. 테스트 트랜잭션과 함께 롤백된다. */
+  private void giveLevel(Long uid, String levelName) {
+    Long levelId =
+        dsl.fetchValue(
+                    "select id from security_level where tenant_id = ? and name = ?",
+                    DEFAULT_TEST_TENANT_ID,
+                    levelName)
+                instanceof Number n
+            ? n.longValue()
+            : null;
+    dsl.execute(
+        "insert into membership(user_id, tenant_id, role, status) values (?, ?, 'MEMBER', 'ACTIVE')"
+            + " on conflict (user_id, tenant_id) do nothing",
+        uid,
+        DEFAULT_TEST_TENANT_ID);
+    Long roleId =
+        ((Number)
+                dsl.fetchValue(
+                    "insert into role(tenant_id, name, description, is_system, max_security_level_id)"
+                        + " values (?, ?, 'WD198', false, ?) returning id",
+                    DEFAULT_TEST_TENANT_ID,
+                    "pmrepo_lv_" + System.nanoTime(),
+                    levelId))
+            .longValue();
+    dsl.execute(
+        "insert into user_role(user_id, role_id, tenant_id) values (?, ?, ?)",
+        uid,
+        roleId,
+        DEFAULT_TEST_TENANT_ID);
+  }
+
+  private void setReportLevel(Long execId, String levelName) {
+    dsl.execute(
+        "update proactive_job_execution set security_level_id ="
+            + " (select id from security_level where tenant_id = ? and name = ?) where id = ?",
+        DEFAULT_TEST_TENANT_ID,
+        levelName,
+        execId);
+  }
+
+  /**
+   * 알림 메시지의 요약은 발송 때 리포트에서 복사해 둔 것이라 조회할 때마다 다시 나간다. 연결된 리포트의 등급이 수신자의 현재 등급보다 높으면 요약을 비우고 리포트 열기를
+   * 막는다(작성자·다른 수신자 같은 기준). 두 조회 경로가 같다. 등급 없는 리포트의 메시지는 지금처럼 보인다.
+   */
+  @Test
+  void reportLevelAboveRecipient_masksSummary_onBothQueries_nullLevelUnchanged() {
+    Long recipientId = createOtherUser("pmrepo_lv_recipient");
+    giveLevel(userId, "기밀");
+    giveLevel(recipientId, "공개");
+    Long leveled = createOwnedReportExecution();
+    setReportLevel(leveled, "민감");
+    Long legacy = createOwnedReportExecution();
+
+    repository.create(userId, leveled, "민감 리포트", Map.of("summary", "민감 요약"), "REPORT");
+    repository.create(recipientId, leveled, "민감 리포트", Map.of("summary", "민감 요약"), "REPORT");
+    repository.create(recipientId, legacy, "이전 리포트", Map.of("summary", "이전 요약"), "REPORT");
+
+    // 작성자(기밀) — 그대로
+    ProactiveMessageResponse owner = repository.findByUserId(userId, 20, 0, false).get(0);
+    assertThat(owner.content()).containsEntry("summary", "민감 요약");
+    assertThat(owner.canViewReport()).isTrue();
+    assertThat(owner.reportLevelBlocked()).isFalse();
+
+    // 다른 수신자(공개) — 등급 리포트는 요약을 비우고, 등급 없는 리포트는 그대로
+    for (List<ProactiveMessageResponse> list :
+        List.of(
+            repository.findByUserId(recipientId, 20, 0, false),
+            repository.findUnreadByUserId(recipientId))) {
+      ProactiveMessageResponse blocked =
+          list.stream().filter(m -> leveled.equals(m.executionId())).findFirst().orElseThrow();
+      assertThat(blocked.content()).doesNotContainKey("summary");
+      assertThat(blocked.canViewReport()).isFalse();
+      assertThat(blocked.reportLevelBlocked()).isTrue();
+      ProactiveMessageResponse open =
+          list.stream().filter(m -> legacy.equals(m.executionId())).findFirst().orElseThrow();
+      assertThat(open.content()).containsEntry("summary", "이전 요약");
+      assertThat(open.reportLevelBlocked()).isFalse();
+    }
+
+    // 작성자 등급을 낮추면 작성자 메시지도 가려지고 리포트 열기도 막힌다
+    dsl.execute("delete from user_role where user_id = ?", userId);
+    giveLevel(userId, "내부");
+    ProactiveMessageResponse lowered = repository.findUnreadByUserId(userId).get(0);
+    assertThat(lowered.content()).doesNotContainKey("summary");
+    assertThat(lowered.canViewReport()).isFalse();
+    assertThat(lowered.reportLevelBlocked()).isTrue();
+  }
 }

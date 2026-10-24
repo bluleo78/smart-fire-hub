@@ -6,7 +6,9 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveMessageResponse;
 import com.smartfirehub.proactive.util.ProactiveTime;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -32,6 +34,9 @@ public class ProactiveMessageRepository {
   private final DSLContext dsl;
   private final ObjectMapper objectMapper;
 
+  /** 수신자의 현재 보안 등급(WD-198) — 리포트 등급이 그보다 높은 메시지는 요약을 비워 돌려준다. */
+  private final ClearanceResolver clearanceResolver;
+
   private static final Table<?> PROACTIVE_MESSAGE = table(name("proactive_message"));
   private static final Field<Long> PM_ID = field(name("proactive_message", "id"), Long.class);
   private static final Field<Long> PM_USER_ID =
@@ -56,6 +61,19 @@ public class ProactiveMessageRepository {
       field(name("proactive_job_execution", "id"), Long.class);
   private static final Field<Long> PJE_JOB_ID =
       field(name("proactive_job_execution", "job_id"), Long.class);
+
+  /** 연결된 실행(리포트)의 등급 순위(WD-198). 실행·등급이 없으면 NULL — 지금처럼 요약을 보인다. 순위는 조회 시점 값이라 등급 순서 변경도 반영된다. */
+  private static final Field<Integer> REPORT_LEVEL_RANK =
+      field(
+              select(field(name("pm_sl", "rank"), Integer.class))
+                  .from(table(name("security_level")).as("pm_sl"))
+                  .where(
+                      field(name("pm_sl", "id"), Long.class)
+                          .eq(
+                              field(
+                                  name("proactive_job_execution", "security_level_id"),
+                                  Long.class))))
+          .as("report_level_rank");
 
   private static final Table<?> PROACTIVE_JOB = table(name("proactive_job"));
   private static final Field<Long> PJ_ID = field(name("proactive_job", "id"), Long.class);
@@ -97,27 +115,30 @@ public class ProactiveMessageRepository {
   }
 
   public List<ProactiveMessageResponse> findUnreadByUserId(Long userId) {
-    return dsl.select(
-            PM_ID,
-            PM_USER_ID,
-            PJE_JOB_ID,
-            PM_EXECUTION_ID,
-            PM_TITLE,
-            PM_CONTENT,
-            PM_MESSAGE_TYPE,
-            PM_READ,
-            PM_READ_AT,
-            PJ_NAME,
-            PM_CREATED_AT,
-            CAN_VIEW_REPORT)
-        .from(PROACTIVE_MESSAGE)
-        .leftJoin(PROACTIVE_JOB_EXECUTION)
-        .on(PM_EXECUTION_ID.eq(PJE_ID))
-        .leftJoin(PROACTIVE_JOB)
-        .on(PJE_JOB_ID.eq(PJ_ID))
-        .where(PM_USER_ID.eq(userId).and(PM_READ.isFalse()))
-        .orderBy(PM_ID.desc())
-        .fetch(r -> toResponse(r));
+    return toResponses(
+        dsl.select(
+                PM_ID,
+                PM_USER_ID,
+                PJE_JOB_ID,
+                PM_EXECUTION_ID,
+                PM_TITLE,
+                PM_CONTENT,
+                PM_MESSAGE_TYPE,
+                PM_READ,
+                PM_READ_AT,
+                PJ_NAME,
+                PM_CREATED_AT,
+                CAN_VIEW_REPORT,
+                REPORT_LEVEL_RANK)
+            .from(PROACTIVE_MESSAGE)
+            .leftJoin(PROACTIVE_JOB_EXECUTION)
+            .on(PM_EXECUTION_ID.eq(PJE_ID))
+            .leftJoin(PROACTIVE_JOB)
+            .on(PJE_JOB_ID.eq(PJ_ID))
+            .where(PM_USER_ID.eq(userId).and(PM_READ.isFalse()))
+            .orderBy(PM_ID.desc())
+            .fetch(),
+        userId);
   }
 
   public int countUnreadByUserId(Long userId) {
@@ -155,38 +176,69 @@ public class ProactiveMessageRepository {
     if (unreadOnly) {
       condition = condition.and(PM_READ.isFalse());
     }
-    return dsl.select(
-            PM_ID,
-            PM_USER_ID,
-            PJE_JOB_ID,
-            PM_EXECUTION_ID,
-            PM_TITLE,
-            PM_CONTENT,
-            PM_MESSAGE_TYPE,
-            PM_READ,
-            PM_READ_AT,
-            PJ_NAME,
-            PM_CREATED_AT,
-            CAN_VIEW_REPORT)
-        .from(PROACTIVE_MESSAGE)
-        .leftJoin(PROACTIVE_JOB_EXECUTION)
-        .on(PM_EXECUTION_ID.eq(PJE_ID))
-        .leftJoin(PROACTIVE_JOB)
-        .on(PJE_JOB_ID.eq(PJ_ID))
-        .where(condition)
-        .orderBy(PM_ID.desc())
-        .limit(limit)
-        .offset(offset)
-        .fetch(r -> toResponse(r));
+    return toResponses(
+        dsl.select(
+                PM_ID,
+                PM_USER_ID,
+                PJE_JOB_ID,
+                PM_EXECUTION_ID,
+                PM_TITLE,
+                PM_CONTENT,
+                PM_MESSAGE_TYPE,
+                PM_READ,
+                PM_READ_AT,
+                PJ_NAME,
+                PM_CREATED_AT,
+                CAN_VIEW_REPORT,
+                REPORT_LEVEL_RANK)
+            .from(PROACTIVE_MESSAGE)
+            .leftJoin(PROACTIVE_JOB_EXECUTION)
+            .on(PM_EXECUTION_ID.eq(PJE_ID))
+            .leftJoin(PROACTIVE_JOB)
+            .on(PJE_JOB_ID.eq(PJ_ID))
+            .where(condition)
+            .orderBy(PM_ID.desc())
+            .limit(limit)
+            .offset(offset)
+            .fetch(),
+        userId);
   }
 
-  private ProactiveMessageResponse toResponse(org.jooq.Record r) {
+  /**
+   * 행 → 응답 + 리포트 등급 가림(WD-198). 알림 메시지의 요약은 발송 때 리포트에서 복사해 둔 것이라, 화면이 다시 읽을 때마다 그대로 나간다. 그래서 연결된
+   * 리포트의 등급이 <b>수신자</b>의 현재 최대 등급보다 높으면 요약을 비우고 리포트 열기도 막는다(수신자가 작성자든 아니든 같은 기준 — 메시지를 보는 사람이
+   * 수신자다). 리포트 등급이 없는 메시지는 지금처럼 보인다. 자격 계산은 등급 있는 행이 하나라도 있을 때만 한 번 한다.
+   */
+  private List<ProactiveMessageResponse> toResponses(
+      List<? extends org.jooq.Record> rows, Long userId) {
+    Integer recipientRank = null;
+    if (rows.stream().anyMatch(r -> r.get(REPORT_LEVEL_RANK) != null)) {
+      recipientRank = clearanceResolver.resolve(userId).rank();
+    }
+    List<ProactiveMessageResponse> out = new java.util.ArrayList<>(rows.size());
+    for (org.jooq.Record r : rows) {
+      Integer reportRank = r.get(REPORT_LEVEL_RANK);
+      boolean blocked = reportRank != null && recipientRank < reportRank;
+      out.add(toResponse(r, blocked));
+    }
+    return out;
+  }
+
+  private ProactiveMessageResponse toResponse(org.jooq.Record r, boolean levelBlocked) {
     try {
       JSONB contentJsonb = r.get(PM_CONTENT);
       Map<String, Object> content =
           contentJsonb != null
               ? objectMapper.readValue(contentJsonb.data(), new TypeReference<>() {})
               : Map.of();
+      if (levelBlocked) {
+        // 요약(리포트 본문 일부)만 지운다 — 제목·작업 이름·시각은 남겨 「등급 때문에 볼 수 없는 알림」임을 알 수 있게 한다.
+        Map<String, Object> masked = new HashMap<>(content);
+        masked.remove("summary");
+        masked.remove("sections");
+        masked.remove("rawText");
+        content = masked;
+      }
       return new ProactiveMessageResponse(
           r.get(PM_ID),
           r.get(PM_USER_ID),
@@ -200,7 +252,8 @@ public class ProactiveMessageRepository {
           r.get(PJ_NAME),
           r.get(PM_CREATED_AT),
           // WD-162: 수신자 = 작업 주인일 때만 true — 프런트가 「리포트 보기」 대신 요약·안내를 보일지 고르는 기준
-          Boolean.TRUE.equals(r.get(CAN_VIEW_REPORT)));
+          Boolean.TRUE.equals(r.get(CAN_VIEW_REPORT)) && !levelBlocked,
+          levelBlocked);
     } catch (Exception e) {
       throw new RuntimeException("Failed to deserialize content", e);
     }

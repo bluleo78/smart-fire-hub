@@ -21,4 +21,9 @@ public record ProactiveMessageResponse(
     LocalDateTime readAt,
     String jobName,
     LocalDateTime createdAt,
-    boolean canViewReport) {}
+    boolean canViewReport,
+    /**
+     * 연결된 리포트의 등급이 수신자의 현재 보안 등급보다 높아 요약을 비우고 리포트 열기를 막았는가(WD-198). 화면은 이 값으로 「현재 보안 등급으로 열 수 없는
+     * 리포트입니다」 안내를 보인다.
+     */
+    boolean reportLevelBlocked) {}
