@@ -172,26 +172,21 @@ public class TriggerEventService {
     }
     List<Long> datasetIds = datasetIdNumbers.stream().map(Number::longValue).toList();
 
-    // Get current row count estimates
-    Map<Long, Long> currentSnapshot = getRowCountEstimates(datasetIds);
+    // 감시 대상의 존재 여부와 행 수 추정치를 함께 모은다. 존재는 dataset 행으로 따로 판정한다 — 행 수 조회 실패(통계 행이 아직 없는 새
+    // 테이블 등)를 삭제로 오인해 감시 목록에서 빼지 않기 위함이다(WD-221).
+    DatasetProbe probe = probeDatasets(datasetIds);
 
     // Get last snapshot
     Map<Long, Long> lastSnapshot = getLastSnapshot(state);
 
-    // Check for changes
-    List<Long> changedIds = new ArrayList<>();
-    for (Long datasetId : datasetIds) {
-      Long current = currentSnapshot.getOrDefault(datasetId, 0L);
-      Long last = lastSnapshot.getOrDefault(datasetId, -1L);
-      if (!current.equals(last)) {
-        changedIds.add(datasetId);
-      }
-    }
+    SnapshotDiff diff =
+        diffSnapshots(datasetIds, probe.existing(), probe.rowCounts(), lastSnapshot);
+    List<Long> changedIds = diff.changedIds();
 
     // Update state regardless of changes
     Map<String, Object> updatedState = new HashMap<>(state);
     updatedState.put("lastCheckedAt", LocalDateTime.now().toString());
-    updatedState.put("lastSnapshot", currentSnapshot);
+    updatedState.put("lastSnapshot", diff.nextSnapshot());
 
     if (!changedIds.isEmpty()) {
       // Check debounce
@@ -222,15 +217,71 @@ public class TriggerEventService {
 
     triggerRepository.updateTriggerState(trigger.id(), updatedState);
 
-    // If all monitored datasets are gone, disable trigger
-    if (currentSnapshot.isEmpty() && !datasetIds.isEmpty()) {
-      log.warn("All monitored datasets deleted for trigger {}, disabling", trigger.id());
-      triggerRepository.updateEnabled(trigger.id(), false);
+    // 이미 없는 감시 대상은 감시 목록·스냅숏에서 뺀다(WD-221). 데이터셋 삭제 경로가 같은 정리를 하므로 여기 걸리는 것은 그 수정 이전에 지워진
+    // 데이터셋(운영에 남은 옛 행)과 편집 창이 지워진 id 를 그대로 되돌려 저장한 경우다. 하나도 남지 않으면 같은 문장이 트리거를 끄고,
+    // 꺼진 이유는 조회 응답의 watchedDatasetsMissing 으로 보인다. 위 상태 저장 뒤에 해야 지운 스냅숏 키가 되살아나지 않는다.
+    for (Long missingId : diff.missingIds()) {
+      triggerRepository.removeWatchedDataset(missingId);
+    }
+    if (!diff.missingIds().isEmpty()) {
+      log.warn(
+          "Removed deleted datasets {} from DATASET_CHANGE trigger {}",
+          diff.missingIds(),
+          trigger.id());
     }
   }
 
+  /** 감시 대상 조회 결과 — 지금 있는 데이터셋 id 와 그중 행 수 추정치를 읽은 것. */
+  record DatasetProbe(Set<Long> existing, Map<Long, Long> rowCounts) {}
+
   /**
-   * 모니터링 대상 데이터셋의 행 수 추정치를 모은다.
+   * 스냅숏 비교 결과.
+   *
+   * @param changedIds 행 수가 직전 기준선과 달라진(=발화할) 데이터셋
+   * @param nextSnapshot 다음 폴링이 비교할 기준선(있는 데이터셋만)
+   * @param missingIds 더 이상 없는(삭제된) 감시 대상
+   */
+  record SnapshotDiff(List<Long> changedIds, Map<Long, Long> nextSnapshot, List<Long> missingIds) {}
+
+  /**
+   * 감시 대상별로 직전 기준선과 지금 행 수를 비교한다(WD-221). 순수 함수라 단위 테스트로 판정 규칙을 고정한다.
+   *
+   * <ul>
+   *   <li>없는(삭제된) 데이터셋: 변경 판정에서 빼고 기준선에서도 지운다 — 예전엔 행 수 0 과 직전값을 비교해 매 주기 「변경」이 되어 같은 삭제 데이터셋으로
+   *       파이프라인이 계속 실행됐다.
+   *   <li>직전 기준선이 없는 데이터셋(새 트리거·새로 추가된 감시 대상·다시 켠 트리거): 기준선만 잡고 변경으로 보지 않는다 — 예전엔 직전값을 -1 로 두어
+   *       만들자마자(빈 데이터셋이어도) 첫 폴링에서 발화했다.
+   *   <li>있지만 행 수를 못 읽은 데이터셋: 변경으로 보지 않고 직전 기준선을 그대로 둔다 — 일시적 조회 실패가 다음 폴링의 거짓 「변경」이 되지 않게.
+   * </ul>
+   */
+  static SnapshotDiff diffSnapshots(
+      List<Long> watched, Set<Long> existing, Map<Long, Long> current, Map<Long, Long> last) {
+    List<Long> changed = new ArrayList<>();
+    List<Long> missing = new ArrayList<>();
+    Map<Long, Long> next = new HashMap<>();
+    for (Long id : new LinkedHashSet<>(watched)) {
+      if (!existing.contains(id)) {
+        missing.add(id);
+        continue;
+      }
+      Long now = current.get(id);
+      Long before = last.get(id);
+      if (now == null) {
+        if (before != null) {
+          next.put(id, before);
+        }
+        continue;
+      }
+      next.put(id, now);
+      if (before != null && !now.equals(before)) {
+        changed.add(id);
+      }
+    }
+    return new SnapshotDiff(changed, next, missing);
+  }
+
+  /**
+   * 모니터링 대상 데이터셋의 존재 여부와 행 수 추정치를 모은다.
    *
    * <p><b>트랜잭션 경계(P2-b)</b>: 이 구간을 감싸는 이유는 GUC 가 아니라 <b>커넥션 왕복 절감</b>이다. RLS 대상인 dataset 조회는 {@code
    * datasetRepository}(클래스 레벨 {@code @Transactional}) 를 거치므로 이미 호출마다 GUC 가 주입되고, 여기서 {@code dsl} 로
@@ -240,20 +291,22 @@ public class TriggerEventService {
    * <p>트리거 발화({@code triggerService.fireTrigger})와 알림은 <b>이 트랜잭션 밖</b>에 남긴다 — 파이프라인 실행을 시작하는 작업이라
    * 트랜잭션에 넣으면 그 동안 커넥션을 점유하고 실패 의미도 바뀐다.
    */
-  private Map<Long, Long> getRowCountEstimates(List<Long> datasetIds) {
-    Map<Long, Long> result =
+  private DatasetProbe probeDatasets(List<Long> datasetIds) {
+    DatasetProbe result =
         transactionTemplate.execute(status -> collectRowCountEstimates(datasetIds));
-    return result == null ? Map.of() : result;
+    return result == null ? new DatasetProbe(Set.of(), Map.of()) : result;
   }
 
-  private Map<Long, Long> collectRowCountEstimates(List<Long> datasetIds) {
+  private DatasetProbe collectRowCountEstimates(List<Long> datasetIds) {
     Map<Long, Long> result = new HashMap<>();
+    Set<Long> existing = new HashSet<>();
 
     for (Long datasetId : datasetIds) {
       Optional<String> tableNameOpt = datasetRepository.findTableNameById(datasetId);
       if (tableNameOpt.isEmpty()) {
-        continue; // Dataset deleted, skip
+        continue; // 삭제된 데이터셋 — existing 에 넣지 않아 diffSnapshots 가 감시 목록 정리 대상으로 본다(WD-221)
       }
+      existing.add(datasetId);
 
       String tableName = tableNameOpt.get();
       try {
@@ -278,7 +331,7 @@ public class TriggerEventService {
       }
     }
 
-    return result;
+    return new DatasetProbe(existing, result);
   }
 
   @SuppressWarnings("unchecked")

@@ -36,6 +36,11 @@ class TriggerEventServiceTest extends IntegrationTestBase {
 
   @Autowired private TransactionTemplate tx;
 
+  @Autowired private com.smartfirehub.dataset.service.DatasetService datasetService;
+
+  /** WD-221 테스트가 만든 데이터셋 — 테스트가 지우지 않은 것은 정리에서 지운다. */
+  private final List<Long> createdDatasetIds = new java.util.ArrayList<>();
+
   private Long testUserId;
   private Long upstreamPipelineId;
   private Long downstreamPipelineId;
@@ -70,6 +75,14 @@ class TriggerEventServiceTest extends IntegrationTestBase {
 
   @AfterEach
   void cleanup() {
+    // WD-221 데이터셋(카탈로그 행 + 실제 테이블)을 지운다. 삭제 경로가 트리거 감시 목록도 정리하므로 파이프라인보다 먼저 지워도 된다.
+    for (Long datasetId : createdDatasetIds) {
+      try {
+        datasetService.deleteDataset(datasetId);
+      } catch (com.smartfirehub.dataset.exception.DatasetNotFoundException ignored) {
+        // 테스트 본문에서 이미 지웠다
+      }
+    }
     // pipeline 을 지우면 트리거·이벤트가 FK CASCADE 로 함께 사라진다. RLS 대상이라 트랜잭션 안에서.
     TenantRlsTestSupport.runInTenantTransaction(
         tx,
@@ -214,6 +227,232 @@ class TriggerEventServiceTest extends IntegrationTestBase {
     target.onPipelineCompleted(
         new PipelineCompletedEvent(upstreamPipelineId, 990_002L, "FAILED", testUserId));
     assertThat(downstreamExecutionCount()).isEqualTo(1);
+  }
+
+  // -----------------------------------------------------------------------
+  // WD-221: 데이터 변경 트리거 — 첫 폴링 무발화·삭제 대상 정리·전부 삭제 시 꺼짐과 이유
+  // -----------------------------------------------------------------------
+
+  /** 실제 테이블이 있는 데이터셋을 만든다(행 수 통계 행이 있어야 폴러가 기준선을 잡는다). */
+  private Long createWatchedDataset(String label) {
+    String table = "wd221_" + label + "_" + System.nanoTime();
+    Long id =
+        TenantRlsTestSupport.runInTenantTransaction(
+            tx,
+            DEFAULT_TEST_TENANT_ID,
+            () -> {
+              dsl.execute(
+                  "CREATE TABLE "
+                      + com.smartfirehub.global.tenant.DataSchema.qualify(table)
+                      + " (id bigint)");
+              return dsl.insertInto(DATASET)
+                  .set(DATASET.NAME, table)
+                  .set(DATASET.TABLE_NAME, table)
+                  .set(DATASET.STORAGE_TYPE, "TABLE")
+                  .set(DATASET.ORIGIN_TYPE, "SOURCE")
+                  .set(DATASET.CREATED_BY, testUserId)
+                  .returning(DATASET.ID)
+                  .fetchOne()
+                  .getId();
+            });
+    createdDatasetIds.add(id);
+    return id;
+  }
+
+  private Long createDatasetChangeTrigger(List<Long> datasetIds) {
+    return triggerService
+        .createTrigger(
+            downstreamPipelineId,
+            new CreateTriggerRequest(
+                "Watch datasets",
+                TriggerType.DATASET_CHANGE,
+                null,
+                Map.of(
+                    "datasetIds", datasetIds, "pollingIntervalSeconds", 30, "debounceSeconds", 0)),
+            testUserId)
+        .id();
+  }
+
+  /** 폴링 주기를 기다리지 않고 다음 폴링이 이 트리거를 보게 lastCheckedAt 을 지운 뒤 한 번 폴링한다. */
+  private void pollNow(Long triggerId) {
+    TriggerResponse t = triggerRepository.findById(triggerId).orElseThrow();
+    Map<String, Object> state = new java.util.HashMap<>(t.triggerState());
+    state.remove("lastCheckedAt");
+    triggerRepository.updateTriggerState(triggerId, state);
+    triggerEventService.pollDatasetChanges();
+  }
+
+  private int firedCount(Long triggerId) {
+    return TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.fetchCount(
+                TRIGGER_EVENT,
+                TRIGGER_EVENT.TRIGGER_ID.eq(triggerId).and(TRIGGER_EVENT.EVENT_TYPE.eq("FIRED"))));
+  }
+
+  @SuppressWarnings("unchecked")
+  private List<Number> watchedIds(Long triggerId) {
+    return (List<Number>)
+        triggerRepository.findById(triggerId).orElseThrow().config().get("datasetIds");
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> snapshotOf(Long triggerId) {
+    Object snap =
+        triggerRepository.findById(triggerId).orElseThrow().triggerState().get("lastSnapshot");
+    return snap == null ? Map.of() : (Map<String, Object>) snap;
+  }
+
+  /**
+   * 만든 직후 첫 폴링은 데이터가 바뀌지 않았으므로 발화하지 않고 기준선만 잡는다(예전엔 직전값 -1 과 비교해 빈 데이터셋도 바로 발화). 감시 대상을 추가하는 수정 뒤의
+   * 폴링도 같다.
+   */
+  @Test
+  void datasetChange_firstPollAndAddedTarget_doNotFire() {
+    Long a = createWatchedDataset("a");
+    Long triggerId = createDatasetChangeTrigger(List.of(a));
+
+    pollNow(triggerId);
+    assertThat(firedCount(triggerId)).isZero();
+    assertThat(snapshotOf(triggerId)).containsKey(String.valueOf(a));
+
+    Long c = createWatchedDataset("c");
+    triggerService.updateTrigger(
+        triggerId,
+        new UpdateTriggerRequest(
+            null,
+            null,
+            null,
+            Map.of(
+                "datasetIds", List.of(a, c), "pollingIntervalSeconds", 30, "debounceSeconds", 0)),
+        testUserId);
+    pollNow(triggerId);
+    assertThat(firedCount(triggerId)).isZero();
+    assertThat(snapshotOf(triggerId)).containsKeys(String.valueOf(a), String.valueOf(c));
+  }
+
+  /**
+   * 감시 대상 [A, B] 중 B 를 지우면 삭제 경로가 B 를 감시 목록·스냅숏에서 빼고, 이후 여러 번 폴링해도 B 로 발화하지 않는다(예전엔 매 주기 FIRED
+   * changedDatasets:[B]). 트리거는 A 를 계속 감시하므로 켜진 채다.
+   */
+  @Test
+  void datasetChange_deletingOneTarget_prunesItAndNeverRefires() {
+    Long a = createWatchedDataset("a");
+    Long b = createWatchedDataset("b");
+    Long triggerId = createDatasetChangeTrigger(List.of(a, b));
+    pollNow(triggerId);
+    assertThat(snapshotOf(triggerId)).containsKey(String.valueOf(b));
+
+    datasetService.deleteDataset(b);
+
+    assertThat(watchedIds(triggerId)).extracting(Number::longValue).containsExactly(a);
+    assertThat(snapshotOf(triggerId)).doesNotContainKey(String.valueOf(b));
+    for (int i = 0; i < 3; i++) {
+      pollNow(triggerId);
+    }
+    assertThat(firedCount(triggerId)).isZero();
+    TriggerResponse view = triggerService.getTriggerById(triggerId);
+    assertThat(view.isEnabled()).isTrue();
+    assertThat(view.watchedDatasetsMissing()).isFalse();
+  }
+
+  /**
+   * 이 수정 이전에 지워져 감시 목록에 남은 id(운영의 옛 행)도 폴러가 발화 없이 감시 목록·스냅숏에서 뺀다. 삭제 경로를 거치지 않은 상태를 만들려고 config 와
+   * 스냅숏에 없는 id 를 직접 넣는다.
+   */
+  @Test
+  void datasetChange_legacyDeletedIdInConfig_isPrunedByPollerWithoutFiring() {
+    Long a = createWatchedDataset("a");
+    Long triggerId = createDatasetChangeTrigger(List.of(a));
+    pollNow(triggerId);
+    long ghost = 987_654_321L;
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.execute(
+                "UPDATE pipeline_trigger SET config = jsonb_set(config, '{datasetIds}',"
+                    + " (config -> 'datasetIds') || to_jsonb(?::bigint)),"
+                    + " trigger_state = jsonb_set(trigger_state, ARRAY['lastSnapshot', ?::text],"
+                    + " '7'::jsonb) WHERE id = ?",
+                ghost,
+                String.valueOf(ghost),
+                triggerId));
+    assertThat(watchedIds(triggerId)).extracting(Number::longValue).contains(ghost);
+
+    pollNow(triggerId);
+    pollNow(triggerId);
+
+    assertThat(firedCount(triggerId)).isZero();
+    assertThat(watchedIds(triggerId)).extracting(Number::longValue).containsExactly(a);
+    assertThat(snapshotOf(triggerId)).doesNotContainKey(String.valueOf(ghost));
+  }
+
+  /**
+   * 감시 대상이 전부 지워지면 트리거가 꺼지고, 조회 응답이 꺼진 이유(watchedDatasetsMissing)를 보이며, 다시 켜기는 한국어로 거부된다. 예전엔 이유 없이
+   * 꺼졌고, 다시 켜면 삭제된 데이터셋으로 한 번 더 발화했다.
+   */
+  @Test
+  void datasetChange_allTargetsDeleted_disablesWithReason_andRejectsReenable() {
+    Long a = createWatchedDataset("a");
+    Long b = createWatchedDataset("b");
+    Long triggerId = createDatasetChangeTrigger(List.of(a, b));
+    pollNow(triggerId);
+
+    datasetService.deleteDataset(a);
+    datasetService.deleteDataset(b);
+
+    TriggerResponse view = triggerService.getTriggerById(triggerId);
+    assertThat(view.isEnabled()).isFalse();
+    assertThat(view.watchedDatasetsMissing()).isTrue();
+    assertThat(watchedIds(triggerId)).isEmpty();
+    // 목록 조회도 같은 이유를 보인다
+    assertThat(
+            triggerService.getTriggers(downstreamPipelineId).stream()
+                .filter(t -> t.id().equals(triggerId))
+                .findFirst()
+                .orElseThrow()
+                .watchedDatasetsMissing())
+        .isTrue();
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> triggerService.toggleTrigger(triggerId, true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(TriggerService.WATCHED_DATASETS_MISSING_MESSAGE);
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                triggerService.updateTrigger(
+                    triggerId, new UpdateTriggerRequest(null, true, null, null), testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(TriggerService.WATCHED_DATASETS_MISSING_MESSAGE);
+    assertThat(triggerRepository.findById(triggerId).orElseThrow().isEnabled()).isFalse();
+
+    // 다시 켜려 해도 폴링이 발화하지 않는다
+    pollNow(triggerId);
+    assertThat(firedCount(triggerId)).isZero();
+  }
+
+  /** 꺼진 트리거를 다시 켜면 기준선을 새로 잡는다 — 꺼진 동안의 차이로 켜자마자 발화하지 않게. 감시 대상이 있으면 켜기는 성공한다(대조). */
+  @Test
+  void datasetChange_reenable_clearsBaseline() {
+    Long a = createWatchedDataset("a");
+    Long triggerId = createDatasetChangeTrigger(List.of(a));
+    pollNow(triggerId);
+    triggerService.toggleTrigger(triggerId, false);
+    // 꺼진 동안 기준선이 실제와 달라진 상황(=변경)을 만든다
+    Map<String, Object> state =
+        new java.util.HashMap<>(triggerRepository.findById(triggerId).orElseThrow().triggerState());
+    state.put("lastSnapshot", Map.of(String.valueOf(a), 12345));
+    triggerRepository.updateTriggerState(triggerId, state);
+
+    triggerService.toggleTrigger(triggerId, true);
+
+    assertThat(triggerRepository.findById(triggerId).orElseThrow().isEnabled()).isTrue();
+    assertThat(snapshotOf(triggerId)).isEmpty();
+    pollNow(triggerId);
+    assertThat(firedCount(triggerId)).isZero();
   }
 
   private int downstreamExecutionCount() {

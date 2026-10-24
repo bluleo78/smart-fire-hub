@@ -1103,6 +1103,47 @@ test.describe('파이프라인 트리거 탭', () => {
   });
 
   /**
+   * 회귀 테스트 (WD-221): 감시 데이터셋이 모두 삭제되면 서버가 감시 목록을 비우고 트리거를 끈 뒤 watchedDatasetsMissing 을 내려 준다.
+   * 예전엔 이유 없는 「비활성」만 보였고 「활성화」도 눌렸다. 목록에 꺼진 이유가 보이고 「활성화」가 막히는지, 끄기는 막지 않는지 본다.
+   */
+  test('DATASET_CHANGE 트리거 — 감시 데이터셋이 모두 삭제되어 꺼진 이유가 보이고 활성화가 막힌다 (WD-221)', async ({
+    authenticatedPage: page,
+  }) => {
+    const orphan = createTrigger({
+      id: 31,
+      name: '감시 대상 없는 트리거',
+      triggerType: 'DATASET_CHANGE',
+      isEnabled: false,
+      config: { datasetIds: [], pollingIntervalSeconds: 60, debounceSeconds: 0 },
+      watchedDatasetsMissing: true,
+    });
+    const healthy = createTrigger({
+      id: 32,
+      name: '정상 감시 트리거',
+      triggerType: 'DATASET_CHANGE',
+      isEnabled: false,
+      config: { datasetIds: [42], pollingIntervalSeconds: 60, debounceSeconds: 0 },
+      watchedDatasetsMissing: false,
+    });
+    await setupTriggerTabMocks(page, { triggers: [orphan, healthy] });
+
+    await gotoTriggerTab(page);
+    const reason = '감시하던 데이터셋이 모두 삭제되어 꺼졌습니다. 편집에서 감시할 데이터셋을 고르세요.';
+    const orphanCard = page.locator('[data-slot="card"]').filter({ hasText: '감시 대상 없는 트리거' });
+    const healthyCard = page.locator('[data-slot="card"]').filter({ hasText: '정상 감시 트리거' });
+    await expect(orphanCard.getByText(reason)).toBeVisible();
+    // 대조: 감시 대상이 남은 꺼진 트리거에는 이유 문구가 없고 「활성화」가 가능하다
+    await expect(healthyCard.getByText(reason)).toHaveCount(0);
+
+    await orphanCard.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).click();
+    await expect(page.getByRole('menuitem', { name: '활성화' })).toBeDisabled();
+    await page.keyboard.press('Escape');
+
+    await healthyCard.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).click();
+    await expect(page.getByRole('menuitem', { name: '활성화' })).toBeEnabled();
+  });
+
+  /**
    * 회귀 테스트 (WD-152): 트리거 이벤트 로그가 건너뜀·오류 이벤트의 사유(detail.reason)를 배지 아래에 보여 준다. 예전엔 「건너뜀」 배지만
    * 보여 왜 실행되지 않았는지 알 수 없었다. 예외 원문(detail.error)은 보이지 않아야 하고, 사유가 없는 발화 이벤트에는 사유 문구가 없다.
    */

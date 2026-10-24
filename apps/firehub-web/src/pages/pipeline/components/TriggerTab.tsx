@@ -168,6 +168,12 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
                             : '선행 파이프라인이 삭제되어 꺼졌습니다. 편집에서 다른 파이프라인을 고르세요.'}
                         </p>
                       )}
+                      {/* 감시 데이터셋이 모두 삭제된 데이터 변경 트리거는 꺼진 이유를 보인다(WD-221) — 예전엔 이유 없는 「비활성」만 보였다. */}
+                      {trigger.watchedDatasetsMissing && (
+                        <p className="text-xs text-destructive mt-0.5">
+                          감시하던 데이터셋이 모두 삭제되어 꺼졌습니다. 편집에서 감시할 데이터셋을 고르세요.
+                        </p>
+                      )}
                       {trigger.description && (
                         <p className="text-xs text-muted-foreground mt-0.5 truncate">
                           {trigger.description}
@@ -197,10 +203,12 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
                             편집
                           </DropdownMenuItem>
                         )}
-                        {/* 선행이 없으면 켜도 발화할 대상이 없다 — 켜기만 막고 끄기는 늘 허용한다(WD-218). 서버도 켜기를 거부한다. */}
+                        {/* 선행이 없거나(WD-218) 감시 데이터셋이 모두 삭제되면(WD-221) 켜도 발화할 대상이 없다 — 켜기만 막고 끄기는 늘 허용한다. 서버도 켜기를 거부한다. */}
                         {canWriteTrigger && (
                           <DropdownMenuItem
-                            disabled={!trigger.isEnabled && !!trigger.upstreamMissing}
+                            disabled={
+                          !trigger.isEnabled && (!!trigger.upstreamMissing || !!trigger.watchedDatasetsMissing)
+                        }
                             onClick={() => handleToggle(trigger)}
                           >
                             <Power className="h-4 w-4" />
