@@ -6,7 +6,7 @@ import type { AgentType, ProviderConfig } from '../providers/index.js';
 // '../providers/index.js' 를 통째로 목킹하므로(ProviderFactory 만 정의) 그 경로로 가져오면
 // 목이 정의하지 않은 값이라 undefined 가 되어 라우트가 깨진다.
 import { isKnownAgentType } from '../providers/types.js';
-import { parseSharePurpose } from '../mcp/api-client.js';
+import { parseProactiveExecutionId, parseSharePurpose } from '../mcp/api-client.js';
 import { internalAuth } from '../middleware/auth.js';
 import { isValidTenantId, proactiveReportDir } from '../agent/tenant-paths.js';
 import {
@@ -53,6 +53,8 @@ interface ProactiveRequest {
   reasoningEffort?: string;
   /** S3: api(ProactiveAiClient)가 'share' 를 싣는다 — 리포트는 발송되므로 MCP 호출에 공유 목적을 건다. */
   aiPurpose?: string;
+  /** WD-198: api(ProactiveAiClient)가 싣는 실행 id — 이 실행의 MCP 호출에 X-Proactive-Execution-Id 로 되돌려 보낸다. */
+  proactiveExecutionId?: number;
 }
 
 interface OutputSection {
@@ -453,6 +455,8 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
       maxTurns: MAX_AGENT_TURNS,
       // 'share' 외의 값은 버린다 — 특히 'none'(AI 판정 제외)이 바디로 들어와도 LLM 실행에 실리면 안 된다.
       aiPurpose: parseSharePurpose(body.aiPurpose),
+      // WD-198: 양의 정수만 싣는다 — 그 외 값은 헤더 없이(실행에 묶이지 않은 호출로) 간다.
+      proactiveExecutionId: parseProactiveExecutionId(body.proactiveExecutionId),
       // WD-62: opencode 실행기가 이 값을 MCP 프로세스 env 로 넘겨 write_report_file 을 이 디렉터리 전용으로 연다.
       reportDir,
     });

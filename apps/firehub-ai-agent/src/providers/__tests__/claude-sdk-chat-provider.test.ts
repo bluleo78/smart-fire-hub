@@ -90,4 +90,14 @@ describe('ClaudeSdkChatProvider', () => {
 
     expect(mockExecuteAgent.mock.calls[0][0].aiPurpose).toBe('share');
   });
+
+  // WD-198: 스마트 작업 실행 id 도 그대로 넘긴다 — agent-sdk 가 MCP 대행 호출에 X-Proactive-Execution-Id 를 싣는다.
+  it('SDK-WD198: proactiveExecutionId 를 executeAgent 로 그대로 넘긴다', async () => {
+    mockExecuteAgent.mockReturnValue(makeStream([{ type: 'done' }]));
+    const provider = new ClaudeSdkChatProvider('sk-test', DEFAULT_MODEL);
+    for await (const _ of provider.execute({ message: 'hi', tenantId: 1, userId: 1, proactiveExecutionId: 6 })) {
+      /* consume */
+    }
+    expect(mockExecuteAgent.mock.calls[0][0].proactiveExecutionId).toBe(6);
+  });
 });

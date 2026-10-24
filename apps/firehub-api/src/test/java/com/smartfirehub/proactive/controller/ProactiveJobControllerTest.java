@@ -283,7 +283,7 @@ class ProactiveJobControllerTest {
             LocalDateTime.now(),
             null,
             null,
-            LocalDateTime.now());
+            LocalDateTime.now(), null);
     when(proactiveJobService.getExecutions(eq(10L), eq(1L), anyInt(), anyInt()))
         .thenReturn(List.of(exec));
 
@@ -311,7 +311,7 @@ class ProactiveJobControllerTest {
             null,
             null,
             null,
-            LocalDateTime.now());
+            LocalDateTime.now(), null);
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
     mockMvc
@@ -337,7 +337,7 @@ class ProactiveJobControllerTest {
             null,
             null,
             null,
-            LocalDateTime.now());
+            LocalDateTime.now(), null);
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
     mockMvc
@@ -362,7 +362,7 @@ class ProactiveJobControllerTest {
             null,
             null,
             null,
-            LocalDateTime.now());
+            LocalDateTime.now(), null);
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
     mockMvc
@@ -379,7 +379,7 @@ class ProactiveJobControllerTest {
     // status != COMPLETED 분기
     ProactiveJobExecutionResponse exec =
         new ProactiveJobExecutionResponse(
-            99L, 10L, "RUNNING", LocalDateTime.now(), null, null, null, null, LocalDateTime.now());
+            99L, 10L, "RUNNING", LocalDateTime.now(), null, null, null, null, LocalDateTime.now(), null);
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
     mockMvc
@@ -403,7 +403,7 @@ class ProactiveJobControllerTest {
             null,
             null,
             null,
-            LocalDateTime.now());
+            LocalDateTime.now(), null);
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
     mockMvc

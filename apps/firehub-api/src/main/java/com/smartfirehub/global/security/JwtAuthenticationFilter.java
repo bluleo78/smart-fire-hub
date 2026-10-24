@@ -3,6 +3,7 @@ package com.smartfirehub.global.security;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.platform.repository.PlatformRoleRepository;
+import com.smartfirehub.proactive.service.ProactiveReportLevelRecorder;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.tenant.dto.MembershipResponse;
 import com.smartfirehub.tenant.repository.MembershipRepository;
@@ -16,6 +17,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.lang.NonNull;
@@ -36,17 +38,25 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
   private final PlatformRoleRepository platformRoleRepository;
   private final String internalToken;
 
+  /**
+   * 스마트 작업 리포트 등급 기록기(WD-198) — 요청 끝에 그 요청이 모은 등급을 기록한다. ObjectProvider 인 이유: 웹 슬라이스 테스트처럼 이 빈이
+   * 없는 컨텍스트에서도 필터가 떠야 한다(없으면 기록을 건너뛴다).
+   */
+  private final ObjectProvider<ProactiveReportLevelRecorder> reportLevelRecorder;
+
   public JwtAuthenticationFilter(
       JwtTokenProvider jwtTokenProvider,
       @Lazy PermissionService permissionService,
       @Lazy MembershipRepository membershipRepository,
       @Lazy PlatformRoleRepository platformRoleRepository,
-      @Value("${agent.internal-token:}") String internalToken) {
+      @Value("${agent.internal-token:}") String internalToken,
+      ObjectProvider<ProactiveReportLevelRecorder> reportLevelRecorder) {
     this.jwtTokenProvider = jwtTokenProvider;
     this.permissionService = permissionService;
     this.membershipRepository = membershipRepository;
     this.platformRoleRepository = platformRoleRepository;
     this.internalToken = internalToken;
+    this.reportLevelRecorder = reportLevelRecorder;
   }
 
   @Override
@@ -75,6 +85,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
       filterChain.doFilter(request, response);
     } finally {
+      // 리포트 등급 기록(WD-198) — 스마트 작업 실행에 묶인 대행 요청이 읽은 등급을 여기서 한 번 기록한다. 서비스 트랜잭션이 모두 끝나 커넥션을 쥐지
+      // 않은 자리이고, 테넌트 컨텍스트(RLS GUC)를 지우기 전이어야 한다. 묶이지 않은 요청이면 아무 일도 하지 않는다.
+      ProactiveReportLevelRecorder recorder = reportLevelRecorder.getIfAvailable();
+      if (recorder != null) {
+        recorder.flushRequest(request);
+      }
       // 서블릿 컨테이너는 스레드를 풀에서 재사용한다. 정리하지 않으면 다음 요청이 이전 요청의
       // 테넌트를 물려받아 크로스 테넌트 접근이 된다.
       TenantContext.clear();
@@ -134,6 +150,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       setSecurityContext(userId);
       // AI 경로 표시(S3 §4.3) — 대행 인증이 성공한 요청만. 판정은 가드가 이 표시를 읽어 한다(호스팅은 API 가 계산).
       AiCallContext.markAiRequest(request, request.getHeader(InternalCallHeaders.AI_PURPOSE));
+      // 스마트 작업 실행 표시(WD-198) — 대행 인증이 성공한 요청만. 헤더 값의 진위(작성자·진행 중)는 기록 시점에 SQL 이 확인한다.
+      ProactiveReportLevelRecorder.markRequest(
+          request, request.getHeader(InternalCallHeaders.PROACTIVE_EXECUTION_ID), userId);
     } catch (NumberFormatException ignored) {
       // Invalid userId, skip authentication
     }

@@ -43,6 +43,16 @@ export const ON_BEHALF_OF_TENANT_HEADER = 'X-On-Behalf-Of-Tenant';
  */
 export const AI_PURPOSE_HEADER = 'X-AI-Purpose';
 
+/**
+ * 스마트 작업 실행 id 헤더(WD-198). 스마트 작업(proactive) 실행 중의 MCP 호출에만 싣는다 — api 가 그 호출에서 허용한
+ * 데이터셋 읽기의 등급을 그 실행(리포트)에 남겨, 작성자 등급이 낮아진 뒤 높은 등급 리포트를 열지 못하게 한다. api 는 값을 믿지 않고
+ * 작성자·진행 중 여부를 확인한다. api 대응 상수: InternalCallHeaders.PROACTIVE_EXECUTION_ID.
+ */
+export const PROACTIVE_EXECUTION_ID_HEADER = 'X-Proactive-Execution-Id';
+
+/** 부모 실행기(agent-cli·agent-opencode)가 stdio MCP 프로세스에 실행 id 를 넘기는 환경 변수 이름(WD-198). */
+export const PROACTIVE_EXECUTION_ID_ENV = 'PROACTIVE_EXECUTION_ID';
+
 /** API error message prefix */
 export const API_ERROR_PREFIX = 'API 오류';
 

@@ -68,4 +68,35 @@ public class MetricSqlAccessChecker {
       }
     }
   }
+
+  /**
+   * 이상 탐지로 시작된 실행의 리포트 등급에 그 지표 SQL 의 등급을 넣는다(WD-198). 지표 값은 폴러가 실행 밖에서 읽어 이상 이벤트로 넘기므로 그 읽기는 실행에
+   * 묶이지 않는다 — 대신 실행기 범위({@link ProactiveReportLevelRecorder#runInExecution}) 안에서 같은 SQL 을 작성자 자격으로 값 판정해
+   * 가드의 허용 지점이 등급을 알리게 한다. 판정만 하고 실행하지 않으며 감사도 남기지 않는다(checkSql). 거부·파싱 불가면 아무것도 남기지 않는다 — 폴러가 그
+   * 지표를 읽지 못했으므로 이벤트도 없었을 값이다.
+   */
+  public void noteMetricLevel(Map<String, Object> config, String metricId, long userId) {
+    if (metricId == null
+        || config == null
+        || !(config.get("anomaly") instanceof Map<?, ?> anomaly)
+        || !(anomaly.get("metrics") instanceof List<?> metrics)) {
+      return;
+    }
+    for (Object o : metrics) {
+      if (o instanceof Map<?, ?> metric
+          && metricId.equals(metric.get("id"))
+          && "dataset".equals(metric.get("source"))
+          && metric.get("query") instanceof String query
+          && !query.isBlank()) {
+        try {
+          guard.checkSql(
+              clearanceResolver.resolve(userId),
+              NormalizedSql.of(query).text(),
+              SqlAccessMode.INTERACTIVE);
+        } catch (SqlQueryException | UnsafeSqlException e) {
+          // 파싱 불가 — 폴러도 건너뛰는 지표다.
+        }
+      }
+    }
+  }
 }

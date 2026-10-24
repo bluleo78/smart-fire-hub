@@ -63,7 +63,7 @@ class ChatChannelTest {
         .thenReturn(
             Optional.of(
                 new ProactiveJobExecutionResponse(
-                    7L, 1L, "SUCCESS", null, null, null, Map.of(), List.of(), null)));
+                    7L, 1L, "SUCCESS", null, null, null, Map.of(), List.of(), null, null)));
     when(messageRepo.create(eq(99L), eq(7L), anyString(), any(), anyString())).thenReturn(42L);
 
     var result = channel.deliver(ctxWithUser(99L, Map.of("executionId", 7L)));

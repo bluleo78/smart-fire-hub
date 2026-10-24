@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { SecurityLevelBadge } from '@/components/ui/SecurityLevelBadge';
 import { StatusBadge } from '@/components/ui/status-badge';
 import {
   Table,
@@ -78,7 +79,13 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
                   onClick={() => navigate(`/ai-insights/jobs/${jobId}/executions/${exec.id}`)}
                 >
                   <TableCell className="text-sm">
-                    {formatDate(exec.startedAt)} ({timeAgo(exec.startedAt)})
+                    <div className="flex items-center gap-2">
+                      <span>
+                        {formatDate(exec.startedAt)} ({timeAgo(exec.startedAt)})
+                      </span>
+                      {/* 리포트 등급 배지(WD-198) — 실행 동안 읽은 데이터셋의 최고 등급 */}
+                      {exec.securityLevel && <SecurityLevelBadge level={exec.securityLevel} />}
+                    </div>
                   </TableCell>
                   <TableCell className="text-center">
                     {/* 의도된 건너뜀(서버는 FAILED 로 남김)은 실행 상세와 같게 회색 「건너뜀」으로 보인다 (WD-191) */}

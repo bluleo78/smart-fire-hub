@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import nock from 'nock';
-import { FireHubApiClient } from './api-client.js';
+import { FireHubApiClient, parseProactiveExecutionId } from './api-client.js';
 
 const BASE_URL = 'http://localhost:8080/api/v1';
 const TOKEN = 'test-token';
@@ -689,6 +689,41 @@ describe('FireHubApiClient', () => {
       const plain = nock(BASE_URL, { badheaders: ['x-ai-purpose'] }).get('/dataset-categories').reply(200, []);
       await client.listCategories();
       expect(plain.isDone()).toBe(true);
+    });
+
+    // WD-198: 스마트 작업 실행 중의 호출은 실행 id 헤더를 싣는다 — api 가 읽은 데이터셋 등급을 리포트에 남긴다.
+    it('proactiveExecutionId 가 양의 정수면 X-Proactive-Execution-Id 를 싣고 withPurpose 도 잇는다, 아니면 싣지 않는다', async () => {
+      const runClient = new FireHubApiClient(BASE_URL, TOKEN, USER_ID, TENANT_ID, {
+        purpose: 'share',
+        proactiveExecutionId: 42,
+      });
+      const scope = nock(BASE_URL, { reqheaders: { 'x-proactive-execution-id': '42' } })
+        .get('/dataset-categories')
+        .twice()
+        .reply(200, []);
+      await runClient.listCategories();
+      await runClient.withPurpose('share').listCategories();
+      expect(scope.isDone()).toBe(true);
+      for (const bad of [0, -1, 1.5, undefined]) {
+        const c = new FireHubApiClient(BASE_URL, TOKEN, USER_ID, TENANT_ID, { proactiveExecutionId: bad });
+        const plain = nock(BASE_URL, { badheaders: ['x-proactive-execution-id'] })
+          .get('/dataset-categories')
+          .reply(200, []);
+        await c.listCategories();
+        expect(plain.isDone()).toBe(true);
+      }
+      // 실행 id 없는 원 클라이언트(채팅)는 싣지 않는다
+      const chat = nock(BASE_URL, { badheaders: ['x-proactive-execution-id'] }).get('/dataset-categories').reply(200, []);
+      await client.listCategories();
+      expect(chat.isDone()).toBe(true);
+    });
+
+    it('parseProactiveExecutionId 는 양의 정수(숫자·숫자 문자열)만 받는다', () => {
+      expect(parseProactiveExecutionId(5)).toBe(5);
+      expect(parseProactiveExecutionId('12')).toBe(12);
+      for (const bad of [0, -3, 1.2, '0', '-1', '1.5', 'abc', '', undefined, null, '99999999999999999999']) {
+        expect(parseProactiveExecutionId(bad)).toBeUndefined();
+      }
     });
 
     it('생성자 purpose "none" 은 X-AI-Purpose: none 을 싣는다(그래프 뷰어·HITL)', async () => {

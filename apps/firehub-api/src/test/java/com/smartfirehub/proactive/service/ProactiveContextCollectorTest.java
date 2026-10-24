@@ -44,7 +44,7 @@ class ProactiveContextCollectorTest extends IntegrationTestBase {
                 "sections",
                 List.of(Map.of("key", "s1", "label", "요약", "content", "테스트 내용"))),
             List.of(),
-            LocalDateTime.now().minusDays(1));
+            LocalDateTime.now().minusDays(1), null);
     when(executionRepository.findByJobId(anyLong(), anyInt(), anyInt()))
         .thenReturn(List.of(execution));
 

@@ -432,7 +432,13 @@ public class OntologyService {
     if (!ontologyRepository.existsById(ontologyId)) {
       throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
     }
-    return new GraphAccessResponse(graphReadGate.canRead(ontologyId));
+    boolean readable = graphReadGate.canRead(ontologyId);
+    if (readable) {
+      // ai-agent 는 이 판정 뒤 Neo4j 에서 그래프(데이터셋에서 파생된 엔티티·속성 값)를 직접 읽는다 — 스마트 작업 실행 중이면 이 온톨로지의 출처
+      // 데이터셋 등급을 리포트 등급에 넣는다(WD-198). 실행에 묶이지 않은 요청이면 조회하지 않는다.
+      datasetAccessGuard.noteReportReads(sourceRepository.findDatasetIds(ontologyId));
+    }
+    return new GraphAccessResponse(readable);
   }
 
   /**

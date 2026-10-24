@@ -45,6 +45,14 @@ describe('buildOpenCodeConfig', () => {
     expect('AI_PURPOSE' in buildOpenCodeConfig(BASE).mcp.firehub.environment).toBe(false);
   });
 
+  // WD-198: 스마트 작업 실행 id 를 firehub MCP 환경으로 넘긴다(채팅은 넘기지 않는다).
+  it('proactiveExecutionId 가 있으면 mcp.firehub 환경에 PROACTIVE_EXECUTION_ID 를 싣고, 없으면 키가 없다', () => {
+    expect(
+      buildOpenCodeConfig({ ...BASE, proactiveExecutionId: 9 }).mcp.firehub.environment.PROACTIVE_EXECUTION_ID,
+    ).toBe('9');
+    expect('PROACTIVE_EXECUTION_ID' in buildOpenCodeConfig(BASE).mcp.firehub.environment).toBe(false);
+  });
+
   // GraphRAG 도구(stdio-server.ts)가 ambient ANTHROPIC_API_KEY 대신 이 테넌트의 opencode
   // provider 를 쓰도록 MCP 자식 env 에도 자격증명을 명시 전달해야 한다(Ruling #30).
   it('mcp.firehub 환경에 opencode 자격증명을 AI_CREDENTIAL_* 키로 전달한다', () => {

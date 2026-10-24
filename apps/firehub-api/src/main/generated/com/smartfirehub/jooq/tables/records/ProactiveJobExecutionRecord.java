@@ -163,6 +163,20 @@ public class ProactiveJobExecutionRecord extends UpdatableRecordImpl<ProactiveJo
         return (Long) get(9);
     }
 
+    /**
+     * Setter for <code>public.proactive_job_execution.security_level_id</code>.
+     */
+    public void setSecurityLevelId(Long value) {
+        set(10, value);
+    }
+
+    /**
+     * Getter for <code>public.proactive_job_execution.security_level_id</code>.
+     */
+    public Long getSecurityLevelId() {
+        return (Long) get(10);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -186,7 +200,7 @@ public class ProactiveJobExecutionRecord extends UpdatableRecordImpl<ProactiveJo
     /**
      * Create a detached, initialised ProactiveJobExecutionRecord
      */
-    public ProactiveJobExecutionRecord(Long id, Long jobId, String status, LocalDateTime startedAt, LocalDateTime completedAt, String errorMessage, JSONB result, LocalDateTime createdAt, String deliveredChannels, Long tenantId) {
+    public ProactiveJobExecutionRecord(Long id, Long jobId, String status, LocalDateTime startedAt, LocalDateTime completedAt, String errorMessage, JSONB result, LocalDateTime createdAt, String deliveredChannels, Long tenantId, Long securityLevelId) {
         super(ProactiveJobExecution.PROACTIVE_JOB_EXECUTION);
 
         setId(id);
@@ -199,6 +213,7 @@ public class ProactiveJobExecutionRecord extends UpdatableRecordImpl<ProactiveJo
         setCreatedAt(createdAt);
         setDeliveredChannels(deliveredChannels);
         setTenantId(tenantId);
+        setSecurityLevelId(securityLevelId);
         resetChangedOnNotNull();
     }
 }

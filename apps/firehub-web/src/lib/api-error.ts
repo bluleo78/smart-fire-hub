@@ -90,6 +90,24 @@ export function isNotFoundError(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 404;
 }
 
+/** 리포트 등급 차단 코드(WD-198) — api ProactiveJobService.REPORT_LEVEL_BLOCKED_CODE 와 같은 값. */
+const REPORT_LEVEL_BLOCKED_CODE = 'REPORT_SECURITY_LEVEL_BLOCKED';
+
+/** 리포트 등급 차단 안내 문구(WD-198, 사람이 정한 문구). 서버 message 와 같지만 web 이 상수로 들고 화면마다 복제하지 않는다. */
+export const REPORT_LEVEL_BLOCKED_MESSAGE = '현재 보안 등급으로 열 수 없는 리포트입니다';
+
+/**
+ * 리포트 등급 차단(403 + code) 인가(WD-198) — 리포트를 만들 때 읽은 데이터의 등급이 작성자의 현재 등급보다 높다.
+ * 조회 권한 부족(403, code 없음)과 구분해야 「조회 권한이 필요합니다」로 잘못 안내하지 않는다.
+ */
+export function isReportLevelBlocked(error: unknown): boolean {
+  return (
+    axios.isAxiosError(error) &&
+    error.response?.status === 403 &&
+    (error.response.data as ErrorResponse | undefined)?.code === REPORT_LEVEL_BLOCKED_CODE
+  );
+}
+
 /** 지식그래프 읽기 제한 코드(WD-28) — api GraphReadGate.RESTRICTED_CODE 와 같은 값. */
 const GRAPH_READ_RESTRICTED_CODE = 'GRAPH_READ_RESTRICTED';
 

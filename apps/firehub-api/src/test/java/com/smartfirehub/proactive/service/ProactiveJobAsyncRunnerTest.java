@@ -58,6 +58,7 @@ class ProactiveJobAsyncRunnerTest {
   @Mock ProactiveOwnerEligibility ownerEligibility;
   @Mock DeliveryChannel chatChannel;
   @Mock TenantRepository tenantRepository;
+  @Mock MetricSqlAccessChecker metricSqlAccessChecker;
 
   /** 실행 테넌트(WD-174 워크스페이스 정지 확인이 컨텍스트에서 읽는다). */
   private static final long TENANT_ID = 1L;
@@ -91,7 +92,9 @@ class ProactiveJobAsyncRunnerTest {
             List.of(chatChannel),
             notificationDispatcher,
             ownerEligibility,
-            tenantRepository);
+            tenantRepository,
+            new ProactiveReportLevelRecorder(executionRepository),
+            metricSqlAccessChecker);
     // 운영에서는 스케줄러·요청이 테넌트 컨텍스트를 세운 채 실행기를 부른다 — 기본은 ACTIVE 워크스페이스(WD-174)
     TenantContext.set(TENANT_ID);
     lenient().when(tenantRepository.isActive(TENANT_ID)).thenReturn(true);
@@ -138,7 +141,7 @@ class ProactiveJobAsyncRunnerTest {
         new AiCredential.Opencode("openai", "https://api.openai.com/v1", "medium", "sk-oai-secret");
     when(aiCredentialService.resolve()).thenReturn(credential);
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("openai/gpt-4o"));
-    when(aiClient.execute(eq(USER_ID), anyString(), anyString(), any(), any(), any(), any()))
+    when(aiClient.execute(eq(USER_ID), anyString(), anyString(), any(), any(), any(), any(), any()))
         .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
 
     runner.executeJob(JOB_ID, USER_ID);
@@ -153,7 +156,7 @@ class ProactiveJobAsyncRunnerTest {
             credentialCaptor.capture(),
             modelCaptor.capture(),
             any(),
-            any());
+            any(), any());
 
     assertThat(credentialCaptor.getValue()).isEqualTo(credential);
     assertThat(modelCaptor.getValue()).isEqualTo("openai/gpt-4o");
@@ -188,7 +191,7 @@ class ProactiveJobAsyncRunnerTest {
     when(aiCredentialService.resolve())
         .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk"));
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("openai/gpt-4o"));
-    when(aiClient.execute(eq(USER_ID), anyString(), anyString(), any(), any(), any(), any()))
+    when(aiClient.execute(eq(USER_ID), anyString(), anyString(), any(), any(), any(), any(), any()))
         .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
 
     // 소유자 범위 밖 → 양식 없이
@@ -215,7 +218,7 @@ class ProactiveJobAsyncRunnerTest {
     ArgumentCaptor<Map<String, Object>> templateCaptor = ArgumentCaptor.forClass(Map.class);
     verify(aiClient, times(2))
         .execute(
-            eq(USER_ID), anyString(), anyString(), any(), any(), templateCaptor.capture(), any());
+            eq(USER_ID), anyString(), anyString(), any(), any(), templateCaptor.capture(), any(), any());
     assertThat(templateCaptor.getAllValues().get(0)).isNull();
     assertThat(templateCaptor.getAllValues().get(1)).containsEntry("style", "formal");
     // 소유자 범위 없이 id 로만 읽는 경로는 쓰지 않는다
@@ -228,7 +231,7 @@ class ProactiveJobAsyncRunnerTest {
     when(aiCredentialService.resolve())
         .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk"));
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("openai/gpt-4o"));
-    when(aiClient.execute(eq(USER_ID), any(), any(), any(), any(), any(), any()))
+    when(aiClient.execute(eq(USER_ID), any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
     AnomalyEvent event =
         new AnomalyEvent(
@@ -239,8 +242,18 @@ class ProactiveJobAsyncRunnerTest {
     runner.executeJob(JOB_ID, USER_ID, event);
 
     verify(contextCollector).collectContext(any(), eq(JOB_ID), eq(USER_ID), eq(event));
+    // WD-198: 실행 id 가 ai-agent 로 넘어가고(MCP 호출 헤더로 되돌아와 리포트 등급을 남긴다), 이상을 일으킨 지표 SQL 의 등급도 판정된다
     verify(aiClient)
-        .execute(eq(USER_ID), anyString(), eq("{\"anomaly\":{}}"), any(), any(), any(), any());
+        .execute(
+            eq(USER_ID),
+            anyString(),
+            eq("{\"anomaly\":{}}"),
+            any(),
+            any(),
+            any(),
+            any(),
+            eq(EXECUTION_ID));
+    verify(metricSqlAccessChecker).noteMetricLevel(any(), eq("m1"), eq(USER_ID));
   }
 
   /**
@@ -260,7 +273,7 @@ class ProactiveJobAsyncRunnerTest {
     assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
         .isInstanceOf(ProactiveJobException.class);
 
-    verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any());
+    verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
     verify(executionRepository).updateError(eq(EXECUTION_ID), anyString());
   }
 
@@ -332,7 +345,7 @@ class ProactiveJobAsyncRunnerTest {
   @Test
   void 실행_시각_갱신이_실패해도_성공한_실행은_그대로_끝난다() {
     when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-test"));
-    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any()))
+    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(
             new ProactiveResult(
                 "리포트",
@@ -367,19 +380,19 @@ class ProactiveJobAsyncRunnerTest {
     verify(executionRepository).updateError(eq(EXECUTION_ID), errorCaptor.capture());
     assertThat(errorCaptor.getValue()).contains("공급자");
     assertThat(errorCaptor.getValue()).doesNotContain("모델을 다시 선택");
-    verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any());
+    verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
   }
 
   /** sdk 자격증명이면 모델을 아예 보내지 않는다 — ai-agent 라우트의 고정 기본값이 그대로 산다. */
   @Test
   void sdk_자격증명이면_모델을_보내지_않는다() {
     when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-anthropic"));
-    when(aiClient.execute(eq(USER_ID), anyString(), anyString(), any(), isNull(), any(), any()))
+    when(aiClient.execute(eq(USER_ID), anyString(), anyString(), any(), isNull(), any(), any(), any()))
         .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
 
     runner.executeJob(JOB_ID, USER_ID);
 
-    verify(aiClient).execute(eq(USER_ID), anyString(), anyString(), any(), isNull(), any(), any());
+    verify(aiClient).execute(eq(USER_ID), anyString(), anyString(), any(), isNull(), any(), any(), any());
   }
 
   /**
@@ -397,7 +410,7 @@ class ProactiveJobAsyncRunnerTest {
     assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
         .isInstanceOf(ProactiveJobException.class);
 
-    verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any());
+    verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
     verify(executionRepository).updateError(eq(EXECUTION_ID), anyString());
     verify(executionRepository, never()).updateResult(any(), any(), any(), any());
   }
@@ -448,7 +461,7 @@ class ProactiveJobAsyncRunnerTest {
   @Test
   void 자격_있는_주인의_작업은_그대로_실행되고_전달된다() {
     when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-test"));
-    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any()))
+    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(
             new ProactiveResult(
                 "리포트",

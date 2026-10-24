@@ -4,20 +4,26 @@ import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.jooq.tables.SecurityLevel;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionSummaryResponse;
 import com.smartfirehub.proactive.dto.ReportListItemResponse;
 import com.smartfirehub.proactive.util.ProactiveTime;
+import com.smartfirehub.securitylevel.dto.SecurityLevelSummary;
+import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
+import org.jooq.SelectFieldOrAsterisk;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -58,6 +64,16 @@ public class ProactiveJobExecutionRepository {
   /** 실제 전달된 채널 목록 (쉼표 구분 문자열, 예: "CHAT,EMAIL") */
   private static final Field<String> PJE_DELIVERED_CHANNELS =
       field(name("proactive_job_execution", "delivered_channels"), String.class);
+
+  /** 리포트 등급(WD-198) — 실행 동안 읽은 데이터셋의 최고 등급. null = 등급 데이터를 읽지 않음·이 컬럼 이전의 리포트. */
+  private static final Field<Long> PJE_SECURITY_LEVEL_ID =
+      field(name("proactive_job_execution", "security_level_id"), Long.class);
+
+  /**
+   * 응답 배지·열람 판정용 등급 조인(LEFT JOIN — 등급 없는 실행도 나온다). 별칭을 두는 이유: 같은 쿼리의 다른 조인과 이름이 겹치지 않게 한다. 등급
+   * 이름·순서(rank)는 지금 값을 읽는다 — 순서 변경 뒤에도 데이터셋 판정과 같은 기준으로 비교된다.
+   */
+  private static final SecurityLevel PJE_SL = com.smartfirehub.jooq.Tables.SECURITY_LEVEL.as("pje_sl");
 
   // 리포트 목록 조회용 — 잡 소유자 검증과 잡 이름 표기를 위해 proactive_job 을 조인한다
   private static final Table<?> PROACTIVE_JOB = table(name("proactive_job"));
@@ -107,7 +123,7 @@ public class ProactiveJobExecutionRepository {
 
   public List<ProactiveJobExecutionResponse> findByJobId(Long jobId, int limit, int offset) {
     return dsl.select(
-            PJE_ID,
+            withLevel(PJE_ID,
             PJE_JOB_ID,
             PJE_STATUS,
             PJE_STARTED_AT,
@@ -115,8 +131,10 @@ public class ProactiveJobExecutionRepository {
             PJE_ERROR_MESSAGE,
             PJE_RESULT,
             PJE_DELIVERED_CHANNELS,
-            PJE_CREATED_AT)
+            PJE_CREATED_AT))
         .from(PROACTIVE_JOB_EXECUTION)
+        .leftJoin(PJE_SL)
+        .on(PJE_SL.ID.eq(PJE_SECURITY_LEVEL_ID))
         .where(PJE_JOB_ID.eq(jobId))
         .orderBy(PJE_ID.desc())
         .limit(limit)
@@ -133,15 +151,17 @@ public class ProactiveJobExecutionRepository {
   public List<ProactiveJobExecutionSummaryResponse> findSummariesByJobId(
       Long jobId, int limit, int offset) {
     return dsl.select(
-            PJE_ID,
+            withLevel(PJE_ID,
             PJE_JOB_ID,
             PJE_STATUS,
             PJE_STARTED_AT,
             PJE_COMPLETED_AT,
             PJE_ERROR_MESSAGE,
             PJE_DELIVERED_CHANNELS,
-            PJE_CREATED_AT)
+            PJE_CREATED_AT))
         .from(PROACTIVE_JOB_EXECUTION)
+        .leftJoin(PJE_SL)
+        .on(PJE_SL.ID.eq(PJE_SECURITY_LEVEL_ID))
         .where(PJE_JOB_ID.eq(jobId))
         .orderBy(PJE_ID.desc())
         .limit(limit)
@@ -162,16 +182,18 @@ public class ProactiveJobExecutionRepository {
     Map<Long, ProactiveJobExecutionResponse> latest = new HashMap<>();
     if (jobIds.isEmpty()) return latest;
     dsl.select(
-            PJE_ID,
+            withLevel(PJE_ID,
             PJE_JOB_ID,
             PJE_STATUS,
             PJE_STARTED_AT,
             PJE_COMPLETED_AT,
             PJE_ERROR_MESSAGE,
             PJE_DELIVERED_CHANNELS,
-            PJE_CREATED_AT)
+            PJE_CREATED_AT))
         .distinctOn(PJE_JOB_ID)
         .from(PROACTIVE_JOB_EXECUTION)
+        .leftJoin(PJE_SL)
+        .on(PJE_SL.ID.eq(PJE_SECURITY_LEVEL_ID))
         .where(PJE_JOB_ID.in(jobIds))
         // 인덱스 (job_id, created_at DESC) 순서를 따른다 — 같은 시각이면 나중 행(id 큰 쪽)
         .orderBy(PJE_JOB_ID, PJE_CREATED_AT.desc(), PJE_ID.desc())
@@ -188,13 +210,14 @@ public class ProactiveJobExecutionRepository {
                         r.get(PJE_ERROR_MESSAGE),
                         null,
                         parseChannels(r.get(PJE_DELIVERED_CHANNELS)),
-                        r.get(PJE_CREATED_AT))));
+                        r.get(PJE_CREATED_AT),
+                        levelOf(r))));
     return latest;
   }
 
   public Optional<ProactiveJobExecutionResponse> findById(Long id) {
     return dsl.select(
-            PJE_ID,
+            withLevel(PJE_ID,
             PJE_JOB_ID,
             PJE_STATUS,
             PJE_STARTED_AT,
@@ -202,8 +225,10 @@ public class ProactiveJobExecutionRepository {
             PJE_ERROR_MESSAGE,
             PJE_RESULT,
             PJE_DELIVERED_CHANNELS,
-            PJE_CREATED_AT)
+            PJE_CREATED_AT))
         .from(PROACTIVE_JOB_EXECUTION)
+        .leftJoin(PJE_SL)
+        .on(PJE_SL.ID.eq(PJE_SECURITY_LEVEL_ID))
         .where(PJE_ID.eq(id))
         .fetchOptional(r -> toResponse(r));
   }
@@ -235,10 +260,13 @@ public class ProactiveJobExecutionRepository {
     // ProactiveResult.effectiveTitle(jobName) 과 동일한 규칙을 SQL 로 재현
     Field<String> effectiveTitle = coalesce(nullif(trim(title), val("")), PJ_NAME);
 
-    return dsl.select(PJE_ID, PJE_JOB_ID, PJ_NAME, effectiveTitle, summary, PJE_COMPLETED_AT)
+    return dsl.select(
+            withLevel(PJE_ID, PJE_JOB_ID, PJ_NAME, effectiveTitle, summary, PJE_COMPLETED_AT))
         .from(PROACTIVE_JOB_EXECUTION)
         .join(PROACTIVE_JOB)
         .on(PJE_JOB_ID.eq(PJ_ID))
+        .leftJoin(PJE_SL)
+        .on(PJE_SL.ID.eq(PJE_SECURITY_LEVEL_ID))
         .where(PJ_USER_ID.eq(userId))
         .and(PJE_STATUS.eq("COMPLETED"))
         .and(htmlContent.isNotNull())
@@ -254,7 +282,8 @@ public class ProactiveJobExecutionRepository {
                     r.get(PJ_NAME),
                     r.get(effectiveTitle),
                     r.get(summary),
-                    r.get(PJE_COMPLETED_AT)));
+                    r.get(PJE_COMPLETED_AT),
+                    levelOf(r)));
   }
 
   private ProactiveJobExecutionResponse toResponse(org.jooq.Record r) {
@@ -274,7 +303,8 @@ public class ProactiveJobExecutionRepository {
           r.get(PJE_ERROR_MESSAGE),
           result,
           channels,
-          r.get(PJE_CREATED_AT));
+          r.get(PJE_CREATED_AT),
+          levelOf(r));
     } catch (Exception e) {
       throw new RuntimeException("Failed to deserialize result", e);
     }
@@ -290,7 +320,86 @@ public class ProactiveJobExecutionRepository {
         r.get(PJE_COMPLETED_AT),
         r.get(PJE_ERROR_MESSAGE),
         channels,
-        r.get(PJE_CREATED_AT));
+        r.get(PJE_CREATED_AT),
+        levelOf(r));
+  }
+
+  /** 기본 select 목록에 등급 조인 컬럼을 덧붙인다. */
+  private static List<SelectFieldOrAsterisk> withLevel(SelectFieldOrAsterisk... base) {
+    List<SelectFieldOrAsterisk> all = new ArrayList<>(List.of(base));
+    all.addAll(List.of(PJE_SL.fields()));
+    return all;
+  }
+
+  /** 조인된 등급 → 응답 요약. 등급이 없으면 null. */
+  private static SecurityLevelSummary levelOf(org.jooq.Record r) {
+    if (r.get(PJE_SL.ID) == null) {
+      return null;
+    }
+    return SecurityLevelSummary.of(SecurityLevelRepository.toPolicy(r.into(PJE_SL)));
+  }
+
+  /**
+   * 리포트 등급을 올린다(WD-198) — 지금 등급이 없거나 rank 가 더 낮을 때만 바꾼다(「가장 높은 등급」만 남는다). 한 문장 UPDATE 라 동시
+   * 기록끼리 낮은 값으로 덮어쓰지 않는다.
+   *
+   * <p>헤더 위조 방지 조건(대행 요청 경로, {@code runningSince != null}): 실행의 작업 작성자가 {@code ownerUserId} 이고, 요청 시작 시점에
+   * 진행 중이었던 실행(지금 RUNNING 이거나 그 이후에 끝남)일 때만 갱신한다. 조건에 안 맞으면 0행 — 호출부는 조용히 무시한다. 실행기 내부
+   * 경로({@code runningSince == null})도 작성자 조건은 그대로 건다.
+   *
+   * <p>다른 테넌트의 등급 id 는 RLS 로 security_level 이 보이지 않아 rank 비교가 NULL → 갱신되지 않는다(복합 FK 도 거부한다).
+   *
+   * @return 갱신된 행 수(0 또는 1)
+   */
+  public int raiseSecurityLevel(
+      long executionId, long ownerUserId, long levelId, LocalDateTime runningSince) {
+    Field<Integer> newRank =
+        field(
+            select(com.smartfirehub.jooq.Tables.SECURITY_LEVEL.RANK)
+                .from(com.smartfirehub.jooq.Tables.SECURITY_LEVEL)
+                .where(com.smartfirehub.jooq.Tables.SECURITY_LEVEL.ID.eq(levelId)));
+    var cur = com.smartfirehub.jooq.Tables.SECURITY_LEVEL.as("cur_sl");
+    Field<Integer> curRank =
+        field(select(cur.RANK).from(cur).where(cur.ID.eq(PJE_SECURITY_LEVEL_ID)));
+    org.jooq.Condition running =
+        runningSince == null
+            ? noCondition()
+            : PJE_STATUS.eq("RUNNING").or(PJE_COMPLETED_AT.ge(runningSince));
+    return dsl.update(PROACTIVE_JOB_EXECUTION)
+        .set(PJE_SECURITY_LEVEL_ID, levelId)
+        .where(PJE_ID.eq(executionId))
+        .and(newRank.isNotNull())
+        .and(PJE_SECURITY_LEVEL_ID.isNull().or(curRank.lt(newRank)))
+        .and(
+            PJE_JOB_ID.in(
+                select(PJ_ID).from(PROACTIVE_JOB).where(PJ_USER_ID.eq(ownerUserId))))
+        .and(running)
+        .execute();
+  }
+
+  /** 데이터셋들의 등급 id(중복 제거) — 리포트 등급 기록이 결과에 실린 데이터셋 id 로부터 등급을 구할 때 쓴다(WD-198). RLS 로 현재 테넌트만 보인다. */
+  public Set<Long> findDatasetLevelIds(Collection<Long> datasetIds) {
+    return dsl.selectDistinct(com.smartfirehub.jooq.Tables.DATASET.SECURITY_LEVEL_ID)
+        .from(com.smartfirehub.jooq.Tables.DATASET)
+        .where(com.smartfirehub.jooq.Tables.DATASET.ID.in(datasetIds))
+        .fetchSet(com.smartfirehub.jooq.Tables.DATASET.SECURITY_LEVEL_ID);
+  }
+
+  /** 등급별 리포트(실행) 수 — 등급 삭제의 「사용 중」 판정(WD-198). */
+  public Map<Long, Long> countByLevel() {
+    return dsl.select(PJE_SECURITY_LEVEL_ID, count())
+        .from(PROACTIVE_JOB_EXECUTION)
+        .where(PJE_SECURITY_LEVEL_ID.isNotNull())
+        .groupBy(PJE_SECURITY_LEVEL_ID)
+        .fetchMap(PJE_SECURITY_LEVEL_ID, r -> r.get(1, Long.class));
+  }
+
+  /** 등급 삭제 시 그 등급의 리포트를 옮길 등급으로 옮긴다(WD-198) — 복합 FK 위반을 막고 리포트가 등급 없음(열림)으로 풀리지 않게. */
+  public int moveLevel(long fromLevelId, long toLevelId) {
+    return dsl.update(PROACTIVE_JOB_EXECUTION)
+        .set(PJE_SECURITY_LEVEL_ID, toLevelId)
+        .where(PJE_SECURITY_LEVEL_ID.eq(fromLevelId))
+        .execute();
   }
 
   /** deliveredChannels: 쉼표로 구분해 저장한 문자열을 리스트로 변환한다(비었으면 null). */

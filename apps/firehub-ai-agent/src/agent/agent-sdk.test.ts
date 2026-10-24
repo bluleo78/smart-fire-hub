@@ -946,6 +946,35 @@ describe('fetchSessionPermissionsFailClosed (Task 9)', () => {
       expect(vi.mocked(FireHubApiClient).mock.calls[0][4]).toEqual({ purpose: aiPurpose });
     }
   });
+
+  // WD-198: 스마트 작업 실행 id 를 MCP 도구에 주입되는 api 클라이언트로 넘긴다(X-Proactive-Execution-Id).
+  it('AS-WD198: proactiveExecutionId 를 FireHubApiClient 옵션으로 넘긴다', async () => {
+    const { FireHubApiClient } = await import('../mcp/api-client.js');
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    async function* fakeStream() {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-198',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      };
+    }
+    const { executeAgent } = await import('./agent-sdk.js');
+    vi.mocked(FireHubApiClient).mockClear();
+    vi.mocked(query).mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+    const events = executeAgent({
+      message: 'hi',
+      tenantId: 1,
+      userId: 1,
+      apiKey: 'sk-test',
+      aiPurpose: 'share',
+      proactiveExecutionId: 21,
+    });
+    for await (const _event of events) {
+      void _event;
+    }
+    expect(vi.mocked(FireHubApiClient).mock.calls[0][4]).toEqual({ purpose: 'share', proactiveExecutionId: 21 });
+  });
 });
 
 /**

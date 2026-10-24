@@ -17,6 +17,7 @@ import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.validator.PgLexicalAmbiguityCheck;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.proactive.service.ProactiveReportLevelRecorder;
 import com.smartfirehub.securitylevel.ai.AiCall;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.ai.PolicyBlockedException;
@@ -71,6 +72,13 @@ public class DatasetAccessGuard {
   private final PipelineDataSchema pipelineDataSchema;
 
   /**
+   * 스마트 작업 리포트 등급 기록기(WD-198). 데이터셋 내용을 내주는 허용 지점(단건 VIEW·대화형 SQL·내보내기·다건 VIEW→AI)이 허용한 등급을
+   * 알린다 — 스마트 작업 실행에 묶인 요청·범위가 아니면 기록기가 아무 일도 하지 않는다. 값 판정·목록 조건(visibleCondition)은 행 내용을 내주지 않으므로
+   * 알리지 않는다.
+   */
+  private final ProactiveReportLevelRecorder reportLevelRecorder;
+
+  /**
    * 참조 테이블 추출 전용 인스턴스 — 스프링 빈이 아니다. 스키마 허용 여부는 이 인스턴스가 아니라 {@link #checkSql} 이 테넌트 data 스키마와 대조해
    * 판정한다(추출은 스키마를 거부하지 않는다).
    */
@@ -120,6 +128,14 @@ public class DatasetAccessGuard {
     auditRecorder.recordDenial(c.userId(), action, d.reasonCode(), d.datasetId(), d.tableName());
   }
 
+  /**
+   * 목록 조건(visibleSql·visibleCondition)으로만 걸러 내용을 돌려주는 경로(문서 청크 검색·검수 항목·지식그래프 읽기)가, 결과에 실린 데이터셋
+   * id 를 스마트 작업 리포트 등급 기록에 넘긴다(WD-198). 판정은 하지 않는다 — 실행에 묶인 요청이 아니면 아무 일도 하지 않는다.
+   */
+  public void noteReportReads(Collection<Long> datasetIds) {
+    reportLevelRecorder.noteDatasetIds(datasetIds);
+  }
+
   /** 현재 요청 사용자 기준 VIEW 강제. */
   public void requireView(long datasetId) {
     requireView(clearanceResolver.current(), datasetId);
@@ -149,6 +165,9 @@ public class DatasetAccessGuard {
       requireAiFacts(c, f, ai.get());
       auditRecorder.recordAccess(c.userId(), AccessKind.AI, List.of(datasetId));
     }
+    // 데이터셋 단위 경로(행 조회·행 검색·문서 청크·파일·/query 등)는 전부 이 VIEW 강제를 지난다(DatasetAccessInterceptor) — 스마트 작업 실행
+    // 중이면 그 등급을 리포트 등급에 넣는다(WD-198).
+    reportLevelRecorder.noteRead(f.level());
   }
 
   /** 내보내기 엔드포인트 공통 권한 — exportAllowed 플래그는 이 권한까지 본다(UI 가 실제로 내려받을 수 있는가). */
@@ -207,6 +226,7 @@ public class DatasetAccessGuard {
           message,
           Map.of("action", "EXPORT", "levelName", levelName, "policyKey", "export_policy"));
     }
+    reportLevelRecorder.noteRead(f.level());
   }
 
   /**
@@ -245,6 +265,7 @@ public class DatasetAccessGuard {
             new DenialDetail(d.reasonCode(), id, f == null ? null : f.tableName()));
         throw exportMultiBlocked();
       }
+      reportLevelRecorder.noteRead(f.level());
     }
   }
 
@@ -394,6 +415,10 @@ public class DatasetAccessGuard {
     }
     // 허용이어도 접근 기록은 남기지 않는다 — 다건 판정은 저장·생성·실행 전 정책 확인이라 데이터가 이 자리에서 AI 로 가지 않는다(실제 전달은
     // requireView·SQL 관문이 AI 종류로 남긴다).
+    // 리포트 등급(WD-198)은 남긴다 — 검수 근거(원문 청크)처럼 이 판정 뒤에 데이터셋 내용을 돌려주는 호출부가 있다(보수적).
+    for (Long id : datasetIds) {
+      reportLevelRecorder.noteRead(facts.get(id).level());
+    }
   }
 
   /**
@@ -421,6 +446,10 @@ public class DatasetAccessGuard {
     }
     // 허용이어도 접근 기록은 남기지 않는다 — 다건 판정은 저장·생성·실행 전 정책 확인이라 데이터가 이 자리에서 AI 로 가지 않는다(실제 전달은
     // requireView·SQL 관문이 AI 종류로 남긴다).
+    // 리포트 등급(WD-198)은 남긴다 — 온톨로지 출처처럼 이 판정 뒤에 그 데이터셋에서 파생된 그래프가 만들어지고 리포트로 이어질 수 있다(보수적).
+    for (Long id : datasetIds) {
+      reportLevelRecorder.noteRead(facts.get(id).level());
+    }
   }
 
   /**
@@ -728,6 +757,13 @@ public class DatasetAccessGuard {
             SqlAccessResult.denied(
                 SQL_WRITE_DOWNGRADE_CODE, "'" + effective.name() + "' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다"),
             new DenialDetail(SQL_WRITE_DOWNGRADE_CODE, f.datasetId(), name));
+      }
+    }
+    // 대화형 SQL(MCP 쿼리·분석 쿼리·차트·대시보드 위젯·데이터셋 /query)은 결과 행이 호출자에게 간다 — 스마트 작업 실행 중이면 읽기·쓰기 대상
+    // (RETURNING 으로 쓰기 대상 행도 돌려줄 수 있다) 전부의 등급을 리포트 등급에 넣는다(WD-198). 파이프라인 모드는 결과가 호출자에게 가지 않는다.
+    if (mode == SqlAccessMode.INTERACTIVE) {
+      for (String name : all) {
+        reportLevelRecorder.noteRead(facts.get(name).level());
       }
     }
     return new SqlVerdict(

@@ -20,14 +20,16 @@ import { proactiveApi } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { SecurityLevelBadge } from '@/components/ui/SecurityLevelBadge';
 import { useExecution } from '@/hooks/queries/useProactiveMessages';
 import { useReportActions } from '@/hooks/useReportActions';
-import { isForbiddenError, isNotFoundError } from '@/lib/api-error';
+import { isForbiddenError, isNotFoundError, isReportLevelBlocked } from '@/lib/api-error';
 import { classifyExecutionOutcome, getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
 import { EXECUTION_NOT_FOUND_NOTICE, getSections } from '@/lib/proactive-utils';
 
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
+import { ReportLevelBlockedNotice } from './components/ReportLevelBlockedNotice';
 
 /** 마크다운 렌더링용 prose 클래스 */
 const PROSE_CLASSES = 'prose prose-sm dark:prose-invert max-w-none';
@@ -66,6 +68,19 @@ export default function ExecutionDetailPage() {
       <div className="flex items-center justify-center h-64 gap-2 text-muted-foreground">
         <Loader2 className="h-5 w-5 animate-spin" />
         <span className="text-sm">실행 정보를 불러오는 중...</span>
+      </div>
+    );
+  }
+
+  // 리포트 등급이 작성자의 현재 보안 등급보다 높으면(403 + 코드) 권한 요청 안내가 아니라 등급 안내를 보인다 (WD-198).
+  if (isError && isReportLevelBlocked(error)) {
+    return (
+      <div className="flex flex-col items-center gap-2">
+        <ReportLevelBlockedNotice testId="execution-level-blocked" />
+        <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
+          <ArrowLeft className="h-4 w-4" />
+          돌아가기
+        </Button>
       </div>
     );
   }
@@ -131,6 +146,8 @@ export default function ExecutionDetailPage() {
         <h1 className="text-lg font-semibold text-foreground">
           실행 #{executionIdNum}
         </h1>
+        {/* 리포트 등급 배지(WD-198) — 데이터셋과 같은 배지. 등급 데이터를 읽지 않은 리포트는 배지가 없다. */}
+        {execution.securityLevel && <SecurityLevelBadge level={execution.securityLevel} />}
       </div>
 
       {/* 4열 메타 카드 그리드: 상태, 실행 시각, 소요 시간, 전달 채널 */}

@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.dto;
 
+import com.smartfirehub.securitylevel.dto.SecurityLevelSummary;
 import java.time.LocalDateTime;
 
 /**
@@ -17,4 +18,6 @@ public record ReportListItemResponse(
     String title,
     /** result.summary — 목록에서 제목 아래 한 줄 요약으로 노출. 없으면 null */
     String summary,
-    LocalDateTime completedAt) {}
+    LocalDateTime completedAt,
+    /** 리포트 등급(WD-198) — 목록 배지용. null = 등급 없음. */
+    SecurityLevelSummary securityLevel) {}

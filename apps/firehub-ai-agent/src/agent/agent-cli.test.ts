@@ -2209,6 +2209,17 @@ describe('buildMcpConfig — AI_PURPOSE(S3)', () => {
     const chat = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }) as Cfg;
     expect('AI_PURPOSE' in chat.mcpServers.firehub.env).toBe(false);
   });
+
+  // WD-198: 스마트 작업 실행 id 를 stdio MCP 프로세스 env 로 넘긴다 — 채팅(없음)·잘못된 값은 키 자체가 없다.
+  it('proactiveExecutionId 가 양의 정수면 env 에 PROACTIVE_EXECUTION_ID, 아니면 키가 없다', async () => {
+    const { buildMcpConfig } = await import('./agent-cli.js');
+    const run = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }, 'share', 55) as Cfg;
+    expect(run.mcpServers.firehub.env.PROACTIVE_EXECUTION_ID).toBe('55');
+    for (const bad of [undefined, 0, -2]) {
+      const cfg = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }, 'share', bad) as Cfg;
+      expect('PROACTIVE_EXECUTION_ID' in cfg.mcpServers.firehub.env).toBe(false);
+    }
+  });
 });
 
 // WD-59: 설정 › AI 에이전트의 최대 턴 수를 claude CLI 의 --max-turns 로 넘긴다.

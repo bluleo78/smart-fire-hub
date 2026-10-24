@@ -8,6 +8,7 @@ import com.smartfirehub.jooq.Indexes;
 import com.smartfirehub.jooq.Keys;
 import com.smartfirehub.jooq.Public;
 import com.smartfirehub.jooq.tables.Dataset.DatasetPath;
+import com.smartfirehub.jooq.tables.ProactiveJobExecution.ProactiveJobExecutionPath;
 import com.smartfirehub.jooq.tables.Role.RolePath;
 import com.smartfirehub.jooq.tables.Tenant.TenantPath;
 import com.smartfirehub.jooq.tables.records.SecurityLevelRecord;
@@ -254,6 +255,19 @@ public class SecurityLevel extends TableImpl<SecurityLevelRecord> {
             _dataset = new DatasetPath(this, null, Keys.DATASET__FK_DATASET_SECURITY_LEVEL.getInverseKey());
 
         return _dataset;
+    }
+
+    private transient ProactiveJobExecutionPath _proactiveJobExecution;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.proactive_job_execution</code> table
+     */
+    public ProactiveJobExecutionPath proactiveJobExecution() {
+        if (_proactiveJobExecution == null)
+            _proactiveJobExecution = new ProactiveJobExecutionPath(this, null, Keys.PROACTIVE_JOB_EXECUTION__FK_PROACTIVE_JOB_EXECUTION_SECURITY_LEVEL.getInverseKey());
+
+        return _proactiveJobExecution;
     }
 
     private transient RolePath _role;

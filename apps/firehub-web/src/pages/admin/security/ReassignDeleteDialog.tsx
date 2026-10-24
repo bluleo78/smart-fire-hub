@@ -66,7 +66,9 @@ function ReassignDeleteForm({
   const [target, setTarget] = useState<string>('');
   const [reason, setReason] = useState('');
   const usageReady = usageState === 'ready';
-  const inUse = (usage?.datasetCount ?? 0) + (usage?.roleCount ?? 0) > 0;
+  // 리포트 등급(WD-198)도 사용 중이다 — 리포트만 가리키는 등급을 옮길 등급 없이 지우면 서버가 거부한다.
+  const reportCount = usage?.reportCount ?? 0;
+  const inUse = (usage?.datasetCount ?? 0) + (usage?.roleCount ?? 0) + reportCount > 0;
   const targetLevel = levels.find((l) => String(l.id) === target);
   const downward = !!targetLevel && targetLevel.rank < level.rank;
   const valid =
@@ -83,7 +85,9 @@ function ReassignDeleteForm({
             : usageState === 'error'
               ? '사용 현황을 확인하지 못해 삭제할 수 없습니다. 잠시 후 다시 시도하세요.'
               : inUse
-                ? `데이터셋 ${usage?.datasetCount ?? 0}개와 역할 ${usage?.roleCount ?? 0}개를 다른 등급으로 옮겨야 삭제할 수 있습니다.`
+                ? `데이터셋 ${usage?.datasetCount ?? 0}개와 역할 ${usage?.roleCount ?? 0}개${
+                    reportCount > 0 ? `, 리포트 ${reportCount}개` : ''
+                  }를 다른 등급으로 옮겨야 삭제할 수 있습니다.`
                 : '사용 중이 아닌 등급입니다. 삭제할까요?'}
         </DialogDescription>
       </DialogHeader>

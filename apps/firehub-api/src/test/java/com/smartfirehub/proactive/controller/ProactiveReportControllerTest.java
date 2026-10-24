@@ -58,7 +58,7 @@ class ProactiveReportControllerTest {
 
   private ReportListItemResponse sampleReport() {
     return new ReportListItemResponse(
-        11L, 3L, "월간 화재 통계", "8월 리포트", "요약문", LocalDateTime.of(2026, 8, 10, 9, 0));
+        11L, 3L, "월간 화재 통계", "8월 리포트", "요약문", LocalDateTime.of(2026, 8, 10, 9, 0), null);
   }
 
   @Test

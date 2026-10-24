@@ -9,6 +9,7 @@ import com.smartfirehub.jooq.Keys;
 import com.smartfirehub.jooq.Public;
 import com.smartfirehub.jooq.tables.ProactiveJob.ProactiveJobPath;
 import com.smartfirehub.jooq.tables.ProactiveMessage.ProactiveMessagePath;
+import com.smartfirehub.jooq.tables.SecurityLevel.SecurityLevelPath;
 import com.smartfirehub.jooq.tables.Tenant.TenantPath;
 import com.smartfirehub.jooq.tables.records.ProactiveJobExecutionRecord;
 
@@ -114,6 +115,11 @@ public class ProactiveJobExecution extends TableImpl<ProactiveJobExecutionRecord
      */
     public final TableField<ProactiveJobExecutionRecord, Long> TENANT_ID = createField(DSL.name("tenant_id"), SQLDataType.BIGINT.nullable(false).defaultValue(DSL.field(DSL.raw("(NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::bigint"), SQLDataType.BIGINT)), this, "");
 
+    /**
+     * The column <code>public.proactive_job_execution.security_level_id</code>.
+     */
+    public final TableField<ProactiveJobExecutionRecord, Long> SECURITY_LEVEL_ID = createField(DSL.name("security_level_id"), SQLDataType.BIGINT, this, "");
+
     private ProactiveJobExecution(Name alias, Table<ProactiveJobExecutionRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }
@@ -185,7 +191,7 @@ public class ProactiveJobExecution extends TableImpl<ProactiveJobExecutionRecord
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_PROACTIVE_EXECUTION_JOB);
+        return Arrays.asList(Indexes.IDX_PROACTIVE_EXECUTION_JOB, Indexes.IDX_PROACTIVE_JOB_EXECUTION_SECURITY_LEVEL);
     }
 
     @Override
@@ -200,7 +206,20 @@ public class ProactiveJobExecution extends TableImpl<ProactiveJobExecutionRecord
 
     @Override
     public List<ForeignKey<ProactiveJobExecutionRecord, ?>> getReferences() {
-        return Arrays.asList(Keys.PROACTIVE_JOB_EXECUTION__PROACTIVE_JOB_EXECUTION_JOB_ID_FKEY, Keys.PROACTIVE_JOB_EXECUTION__PROACTIVE_JOB_EXECUTION_TENANT_ID_FKEY);
+        return Arrays.asList(Keys.PROACTIVE_JOB_EXECUTION__FK_PROACTIVE_JOB_EXECUTION_SECURITY_LEVEL, Keys.PROACTIVE_JOB_EXECUTION__PROACTIVE_JOB_EXECUTION_JOB_ID_FKEY, Keys.PROACTIVE_JOB_EXECUTION__PROACTIVE_JOB_EXECUTION_TENANT_ID_FKEY);
+    }
+
+    private transient SecurityLevelPath _securityLevel;
+
+    /**
+     * Get the implicit join path to the <code>public.security_level</code>
+     * table.
+     */
+    public SecurityLevelPath securityLevel() {
+        if (_securityLevel == null)
+            _securityLevel = new SecurityLevelPath(this, Keys.PROACTIVE_JOB_EXECUTION__FK_PROACTIVE_JOB_EXECUTION_SECURITY_LEVEL, null);
+
+        return _securityLevel;
     }
 
     private transient ProactiveJobPath _proactiveJob;

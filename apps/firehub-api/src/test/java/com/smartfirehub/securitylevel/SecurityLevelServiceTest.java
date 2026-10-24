@@ -290,6 +290,58 @@ class SecurityLevelServiceTest extends IntegrationTestBase {
     assertThat(auditCount("SECURITY_LEVEL_DELETE")).isEqualTo(1);
   }
 
+  /**
+   * WD-198: 리포트(스마트 작업 실행)만 가리키는 등급도 「사용 중」이다 — 옮길 등급 없이 지우면 거부, 옮기면 리포트 등급도 함께 옮겨진다(지워서 등급
+   * 없음=열림이 되지 않고, 복합 FK 위반 500 도 나지 않는다).
+   */
+  @Test
+  void delete_levelUsedOnlyByReport_requiresReassign_andMovesReport() {
+    long sensitive = levelId("민감");
+    long secret = levelId("기밀");
+    long exec =
+        inTenantFixture(
+            tenantId,
+            () -> {
+              long job =
+                  dsl.insertInto(org.jooq.impl.DSL.table("proactive_job"))
+                      .set(org.jooq.impl.DSL.field("user_id", Long.class), actor)
+                      .set(org.jooq.impl.DSL.field("name", String.class), "wd198")
+                      .returning(org.jooq.impl.DSL.field("id", Long.class))
+                      .fetchSingle(org.jooq.impl.DSL.field("id", Long.class));
+              return dsl.insertInto(org.jooq.impl.DSL.table("proactive_job_execution"))
+                  .set(org.jooq.impl.DSL.field("job_id", Long.class), job)
+                  .set(org.jooq.impl.DSL.field("status", String.class), "COMPLETED")
+                  .set(org.jooq.impl.DSL.field("security_level_id", Long.class), sensitive)
+                  .returning(org.jooq.impl.DSL.field("id", Long.class))
+                  .fetchSingle(org.jooq.impl.DSL.field("id", Long.class));
+            });
+    try {
+      assertThatThrownBy(
+              () ->
+                  asTenant(
+                      () ->
+                          service.delete(sensitive, new DeleteSecurityLevelRequest(null, null), actor)))
+          .extracting(e -> ((CodedApiException) e).code())
+          .isEqualTo("SECURITY_LEVEL_REASSIGN_REQUIRED");
+      asTenant(() -> service.delete(sensitive, new DeleteSecurityLevelRequest(secret, null), actor));
+      Long moved =
+          inTenantFixture(
+              tenantId,
+              () ->
+                  dsl.select(org.jooq.impl.DSL.field("security_level_id", Long.class))
+                      .from(org.jooq.impl.DSL.table("proactive_job_execution"))
+                      .where(org.jooq.impl.DSL.field("id", Long.class).eq(exec))
+                      .fetchSingle(org.jooq.impl.DSL.field("security_level_id", Long.class)));
+      assertThat(moved).isEqualTo(secret);
+    } finally {
+      inTenantFixture(
+          tenantId,
+          () -> {
+            dsl.execute("delete from proactive_job where tenant_id = ?", tenantId);
+          });
+    }
+  }
+
   /** 허용 목록 필요 등급(기밀)으로 이동한 데이터셋이 고아가 되지 않는지 — 최상위 자격 역할 보유자에게 보여야 한다. */
   @Test
   void delete_reassignToAllowlistLevel_seedsGrants_andDatasetIsVisibleToTopRole() {

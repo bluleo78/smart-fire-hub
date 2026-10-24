@@ -44,7 +44,12 @@ import {
   type DownloadedFile,
 } from './file-downloader.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
-import { MAX_BUDGET_USD, COST_ALARM_TOKENS, COST_ALARM_TURNS } from '../constants.js';
+import {
+  MAX_BUDGET_USD,
+  COST_ALARM_TOKENS,
+  COST_ALARM_TURNS,
+  PROACTIVE_EXECUTION_ID_ENV,
+} from '../constants.js';
 import { isPositiveInteger } from '../utils.js';
 import { createTracker, buildHaltMessage } from './failure-streak.js';
 import { totalInputTokens } from './token-usage.js';
@@ -116,6 +121,8 @@ export interface BuildOpenCodeConfigOptions {
   reasoningEffort?: string;
   /** S3: 'share' 면 firehub MCP 프로세스가 X-AI-Purpose: share 를 싣는다(Proactive 리포트). */
   aiPurpose?: SharePurpose;
+  /** WD-198: 스마트 작업 실행 id — 있으면 firehub MCP 프로세스가 X-Proactive-Execution-Id 를 싣는다. */
+  proactiveExecutionId?: number;
   /** WD-62: Proactive 실행의 리포트 디렉터리 — 있으면 MCP 프로세스가 write_report_file 을 이 디렉터리 전용으로 연다. */
   reportDir?: string;
   /** WD-59: 설정 › AI 에이전트의 최대 턴 수(ai.max_turns) → agent.build.steps. */
@@ -153,6 +160,7 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
     model,
     reasoningEffort,
     aiPurpose,
+    proactiveExecutionId,
     reportDir,
     maxTurns,
     temperature,
@@ -263,6 +271,10 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
           TENANT_ID: String(tenantId),
           // S3: Proactive 실행이면 stdio MCP 프로세스가 X-AI-Purpose: share 를 싣게 한다(stdio-server.ts main).
           ...(aiPurpose ? { AI_PURPOSE: aiPurpose } : {}),
+          // WD-198: 스마트 작업 실행이면 MCP 호출에 실행 id 헤더를 싣게 한다 — api 가 읽은 데이터셋 등급을 리포트에 남긴다.
+          ...(isPositiveInteger(proactiveExecutionId)
+            ? { [PROACTIVE_EXECUTION_ID_ENV]: String(proactiveExecutionId) }
+            : {}),
           // WD-62: opencode 는 호스트 Write·하위 에이전트가 없어 리포트 세 파일을 이 디렉터리 전용 MCP 도구로 쓴다.
           // 경로는 모델 인자가 아니라 여기서만 정해진다. 일반 채팅엔 키가 없어 도구도 등록되지 않는다.
           ...(reportDir ? { [REPORT_DIR_ENV]: reportDir } : {}),
@@ -596,6 +608,7 @@ export async function* executeOpenCodeAgent(
     abortSignal,
     model,
     aiPurpose,
+    proactiveExecutionId,
     reportDir,
     maxTurns,
     temperature,
@@ -697,6 +710,7 @@ export async function* executeOpenCodeAgent(
     model: model ?? '',
     reasoningEffort: credentials.reasoningEffort,
     aiPurpose,
+    proactiveExecutionId,
     reportDir,
     maxTurns,
     temperature,

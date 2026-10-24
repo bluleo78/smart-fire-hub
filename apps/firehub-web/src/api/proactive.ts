@@ -1,3 +1,4 @@
+import type { SecurityLevelSummary } from '../types/security-level';
 import { client } from './client';
 
 export interface ReportTemplate {
@@ -106,6 +107,8 @@ export interface ProactiveJobExecution {
   errorMessage: string | null;
   startedAt: string;
   completedAt: string | null;
+  /** 리포트 등급(WD-198) — 실행 동안 읽은 데이터셋의 최고 등급. 없으면(null) 등급 데이터를 읽지 않았거나 이전 리포트. */
+  securityLevel?: SecurityLevelSummary | null;
 }
 
 /**
@@ -122,6 +125,8 @@ export interface ProactiveJobExecutionSummary {
   errorMessage: string | null;
   startedAt: string;
   completedAt: string | null;
+  /** 리포트 등급(WD-198) — 목록 배지용. */
+  securityLevel?: SecurityLevelSummary | null;
 }
 
 export interface ProactiveJob {
@@ -241,6 +246,8 @@ export interface ReportListItem {
   title: string;
   summary: string | null;
   completedAt: string;
+  /** 리포트 등급(WD-198) — 목록 배지용. 작성자의 현재 등급으로 열 수 없는 리포트는 summary 가 비어 온다. */
+  securityLevel?: SecurityLevelSummary | null;
 }
 
 export const proactiveApi = {

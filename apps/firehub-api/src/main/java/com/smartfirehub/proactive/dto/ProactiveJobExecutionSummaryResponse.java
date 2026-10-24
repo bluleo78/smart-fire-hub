@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.dto;
 
+import com.smartfirehub.securitylevel.dto.SecurityLevelSummary;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -19,4 +20,6 @@ public record ProactiveJobExecutionSummaryResponse(
     LocalDateTime completedAt,
     String errorMessage,
     List<String> deliveredChannels,
-    LocalDateTime createdAt) {}
+    LocalDateTime createdAt,
+    /** 리포트 등급(WD-198) — 목록 배지용. null = 등급 없음. */
+    SecurityLevelSummary securityLevel) {}

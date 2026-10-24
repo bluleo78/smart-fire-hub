@@ -56,7 +56,7 @@ class ProactiveAiClientTest extends IntegrationTestBase {
 
     // when: sdk 에이전트 타입으로 OAuth 토큰과 함께 호출
     client.execute(
-        1L, "prompt", "{}", new AiCredential.Sdk("oat-test", "sk-x"), null, null, Map.of());
+        1L, "prompt", "{}", new AiCredential.Sdk("oat-test", "sk-x"), null, null, Map.of(), null);
 
     // then: 요청 body에 oauthToken 키로 토큰이 전달되어야 한다 (구 cliOauthToken 키는 더 이상 사용하지 않음)
     wireMock.verify(
@@ -73,11 +73,27 @@ class ProactiveAiClientTest extends IntegrationTestBase {
     wireMock.stubFor(post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
 
     client.execute(
-        1L, "prompt", "{}", new AiCredential.Sdk("oat-test", "sk-x"), null, null, Map.of());
+        1L, "prompt", "{}", new AiCredential.Sdk("oat-test", "sk-x"), null, null, Map.of(), null);
 
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/proactive"))
             .withRequestBody(matchingJsonPath("$.aiPurpose", equalTo("share"))));
+  }
+
+  /**
+   * WD-198: 실행 id 를 바디에 싣는다 — ai-agent 가 이 값을 MCP 호출의 X-Proactive-Execution-Id 로 되돌려 보내야 api 가 실행 중 읽은
+   * 데이터셋 등급을 리포트에 남긴다. 실행 id 가 없으면(null) 키 자체를 싣지 않는다.
+   */
+  @Test
+  void execute_실행id를_바디에_proactiveExecutionId로_싣는다() {
+    wireMock.stubFor(post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
+
+    client.execute(
+        1L, "prompt", "{}", new AiCredential.Sdk("oat-test", "sk-x"), null, null, Map.of(), 77L);
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/proactive"))
+            .withRequestBody(matchingJsonPath("$.proactiveExecutionId", equalTo("77"))));
   }
 
   /**
@@ -96,7 +112,7 @@ class ProactiveAiClientTest extends IntegrationTestBase {
         new AiCredential.Opencode("openai", "https://api.openai.com/v1", "medium", "sk-oai-secret"),
         "openai/gpt-4o",
         null,
-        Map.of());
+        Map.of(), null);
 
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/proactive"))
@@ -120,7 +136,7 @@ class ProactiveAiClientTest extends IntegrationTestBase {
         new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"),
         "openai/gpt-4o",
         null,
-        Map.of());
+        Map.of(), null);
 
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/proactive"))
@@ -139,7 +155,7 @@ class ProactiveAiClientTest extends IntegrationTestBase {
         new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"),
         null,
         null,
-        Map.of());
+        Map.of(), null);
 
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/proactive")).withRequestBody(notMatching(".*model.*")));
@@ -151,7 +167,7 @@ class ProactiveAiClientTest extends IntegrationTestBase {
     wireMock.stubFor(post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
 
     client.execute(
-        1L, "prompt", "{}", new AiCredential.Sdk("oat-test", "sk-x"), null, null, Map.of());
+        1L, "prompt", "{}", new AiCredential.Sdk("oat-test", "sk-x"), null, null, Map.of(), null);
 
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/proactive"))
