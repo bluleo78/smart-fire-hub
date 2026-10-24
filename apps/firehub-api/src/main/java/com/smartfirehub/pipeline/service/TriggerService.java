@@ -170,7 +170,8 @@ public class TriggerService {
     }
     List<Long> added = new ArrayList<>();
     for (Object o : requestedList) {
-      // 숫자가 아닌 원소는 null 로 넘겨 가드가 같은 거부 응답을 내게 한다(형식 오류로 따로 구분하지 않는다).
+      // 호출부가 먼저 원소를 정수로 정규화하고 형식 오류는 400 으로 거부한다(WD-225). 그래도 숫자가 아닌 원소가 오면 null 로 넘겨 가드가
+      // 같은 거부 응답을 내게 한다(형식 오류는 존재 여부를 드러내지 않는다).
       Long id = o instanceof Number n ? n.longValue() : null;
       if (id == null || !already.contains(id)) {
         added.add(id);
@@ -230,26 +231,18 @@ public class TriggerService {
         processedConfig.remove(WEBHOOK_SECRET_PLAIN);
       }
       case DATASET_CHANGE -> {
-        Object datasetIds = processedConfig.get("datasetIds");
-        if (datasetIds == null
-            || !(datasetIds instanceof List)
-            || ((List<?>) datasetIds).isEmpty()) {
+        // 감시 목록은 비어 있지 않은 목록이어야 한다 — 키 없음·목록 아님·빈 목록은 같은 안내로 거부한다.
+        if (!(processedConfig.get(DatasetChangeTriggerConfig.DATASET_IDS_KEY)
+                instanceof List<?> ids)
+            || ids.isEmpty()) {
           throw new IllegalArgumentException(
-              "datasetIds is required and must not be empty for DATASET_CHANGE trigger");
+              DatasetChangeTriggerConfig.DATASET_IDS_REQUIRED_MESSAGE);
         }
-        // 폴링 주기 범위 검증: 30초 이상 3600초 이하
-        int pollingInterval =
-            ((Number) processedConfig.getOrDefault("pollingIntervalSeconds", 60)).intValue();
-        if (pollingInterval < 30 || pollingInterval > 3600) {
-          throw new IllegalArgumentException("pollingIntervalSeconds must be between 30 and 3600");
-        }
-        // 디바운스 시간 범위 검증: 0초 이상 3600초 이하
-        int debounceSeconds =
-            ((Number) processedConfig.getOrDefault("debounceSeconds", 0)).intValue();
-        if (debounceSeconds < 0 || debounceSeconds > 3600) {
-          throw new IllegalArgumentException("debounceSeconds must be between 0 and 3600");
-        }
-        // 형식·범위 검증(400) 뒤에 VIEW 판정 — 감시 대상 판정은 저장 직전 마지막 관문이다.
+        // 폴링 주기(30~3600)·디바운스(0~3600)·감시 목록 원소의 형식 오류는 400 한국어로 거부하고, 저장 config 에는 정규화한 정수를
+        // 넣는다(WD-225) — "60" 같은 문자열이 그대로 저장되면
+        // 조회·폴러가 저장 검증과 다른 값을 보게 된다.
+        processedConfig = DatasetChangeTriggerConfig.normalizedForSave(processedConfig);
+        Object datasetIds = processedConfig.get(DatasetChangeTriggerConfig.DATASET_IDS_KEY);
         requireNewWatchedDatasetsVisible(datasetIds, null, userId);
       }
     }
@@ -317,21 +310,14 @@ public class TriggerService {
       validateChainOnUpdate(existing, request);
     }
 
-    // DATASET_CHANGE 트리거 업데이트 시 폴링 주기·디바운스 범위 검증
+    // DATASET_CHANGE 트리거 업데이트 시 폴링 주기·디바운스·감시 목록 형식 검증(WD-225). 요청에 있는 키만 검증하고(키 없음·null 은 기본값),
+    // 정규화한 정수로 바꾼 config 를 저장한다 — config 는 통째로 바뀌므로 정규화한 사본으로 요청을 바꿔 끼운다.
     if ("DATASET_CHANGE".equals(existing.triggerType()) && request.config() != null) {
-      Map<String, Object> updatedConfig = request.config();
-      if (updatedConfig.containsKey("pollingIntervalSeconds")) {
-        int pollingInterval = ((Number) updatedConfig.get("pollingIntervalSeconds")).intValue();
-        if (pollingInterval < 30 || pollingInterval > 3600) {
-          throw new IllegalArgumentException("pollingIntervalSeconds must be between 30 and 3600");
-        }
-      }
-      if (updatedConfig.containsKey("debounceSeconds")) {
-        int debounceSeconds = ((Number) updatedConfig.get("debounceSeconds")).intValue();
-        if (debounceSeconds < 0 || debounceSeconds > 3600) {
-          throw new IllegalArgumentException("debounceSeconds must be between 0 and 3600");
-        }
-      }
+      Map<String, Object> updatedConfig =
+          DatasetChangeTriggerConfig.normalizedForSave(request.config());
+      request =
+          new UpdateTriggerRequest(
+              request.name(), request.isEnabled(), request.description(), updatedConfig);
       requireNewWatchedDatasetsVisible(
           updatedConfig.get("datasetIds"), existing.config().get("datasetIds"), userId);
       // config 수정은 저장된 config 를 통째로 바꾼다 — 감시 목록이 비면 영원히 발화하지 않는 트리거가 되므로 거부한다(WD-221).
