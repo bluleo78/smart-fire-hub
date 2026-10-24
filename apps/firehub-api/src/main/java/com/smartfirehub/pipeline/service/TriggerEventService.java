@@ -153,10 +153,10 @@ public class TriggerEventService {
     Map<String, Object> state = trigger.triggerState();
 
     // Check polling interval
+    // 저장 검증과 같은 해석 규칙으로 읽는다(WD-225) — 검증 이전에 저장된 읽을 수 없는 옛 값(문자열·int 넘침)은 기본값 60 으로 본다.
     int pollingIntervalSeconds =
-        config.containsKey("pollingIntervalSeconds")
-            ? ((Number) config.get("pollingIntervalSeconds")).intValue()
-            : 60;
+        DatasetChangeTriggerConfig.secondsOrDefault(
+            config.get(DatasetChangeTriggerConfig.POLLING_INTERVAL_KEY), 60);
 
     if (state.containsKey("lastCheckedAt")) {
       LocalDateTime lastChecked = LocalDateTime.parse(state.get("lastCheckedAt").toString());
@@ -190,10 +190,10 @@ public class TriggerEventService {
 
     if (!changedIds.isEmpty()) {
       // Check debounce
+      // 폴링 주기와 같은 해석 규칙(WD-225). 폴러의 디바운스 기본값은 60 으로 저장 검증의 기본값(0)과 다르다 — 기존 동작을 유지한다.
       int debounceSeconds =
-          config.containsKey("debounceSeconds")
-              ? ((Number) config.get("debounceSeconds")).intValue()
-              : 60;
+          DatasetChangeTriggerConfig.secondsOrDefault(
+              config.get(DatasetChangeTriggerConfig.DEBOUNCE_KEY), 60);
 
       if (isDebounceElapsed(state, debounceSeconds)) {
         log.info("Dataset change detected for trigger {}, datasets: {}", trigger.id(), changedIds);

@@ -409,7 +409,7 @@ class TriggerServiceExtTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> triggerService.createTrigger(pipelineId, request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("pollingIntervalSeconds must be between 30 and 3600");
+        .hasMessage(DatasetChangeTriggerConfig.POLLING_INTERVAL_MESSAGE);
   }
 
   /** pollingIntervalSeconds가 3600 초과이면 서버 측에서 IllegalArgumentException을 던져야 한다 (refs #196). */
@@ -424,7 +424,7 @@ class TriggerServiceExtTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> triggerService.createTrigger(pipelineId, request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("pollingIntervalSeconds must be between 30 and 3600");
+        .hasMessage(DatasetChangeTriggerConfig.POLLING_INTERVAL_MESSAGE);
   }
 
   /** pollingIntervalSeconds가 경계값(30초)이면 정상 생성되어야 한다 (refs #196). */
@@ -447,6 +447,183 @@ class TriggerServiceExtTest extends IntegrationTestBase {
 
     assertThat(response.id()).isNotNull();
     assertThat(response.config()).containsEntry("pollingIntervalSeconds", 30);
+  }
+
+  // -----------------------------------------------------------------------
+  // DATASET_CHANGE config 형식 검증·정규화(WD-225)
+  // -----------------------------------------------------------------------
+
+  /** 데이터 변경 트리거 생성 요청 — 감시 목록은 실제 데이터셋, 나머지 키는 인자로. null 값을 넣기 위해 HashMap 을 쓴다. */
+  private CreateTriggerRequest datasetChangeRequest(String name, Object... extraKeyValues) {
+    Map<String, Object> config = new java.util.HashMap<>();
+    config.put("datasetIds", List.of(watchedDatasetId));
+    for (int i = 0; i < extraKeyValues.length; i += 2) {
+      config.put((String) extraKeyValues[i], extraKeyValues[i + 1]);
+    }
+    return new CreateTriggerRequest(name, TriggerType.DATASET_CHANGE, null, config);
+  }
+
+  /** 숫자 아님·소수·int 넘침(2^32+60 이 예전엔 60 으로 잘려 통과)은 500 이나 통과가 아니라 400 한국어로 거부된다. */
+  @Test
+  void createDatasetChangeTrigger_invalidPollingInterval_rejectedInKorean() {
+    for (Object bad : List.<Object>of("abc", "", 30.9, 4294967356L, "4294967356", true, 29, 3601)) {
+      assertThatThrownBy(
+              () ->
+                  triggerService.createTrigger(
+                      pipelineId,
+                      datasetChangeRequest("bad-polling", "pollingIntervalSeconds", bad),
+                      testUserId))
+          .as("pollingIntervalSeconds=%s", bad)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage(DatasetChangeTriggerConfig.POLLING_INTERVAL_MESSAGE);
+    }
+  }
+
+  @Test
+  void createDatasetChangeTrigger_invalidDebounce_rejectedInKorean() {
+    for (Object bad : List.<Object>of("abc", 1.5, -1, 3601, 4294967296L)) {
+      assertThatThrownBy(
+              () ->
+                  triggerService.createTrigger(
+                      pipelineId,
+                      datasetChangeRequest("bad-debounce", "debounceSeconds", bad),
+                      testUserId))
+          .as("debounceSeconds=%s", bad)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage(DatasetChangeTriggerConfig.DEBOUNCE_MESSAGE);
+    }
+  }
+
+  /** 정수 문자열·소수부 0 실수는 받아 정수로 저장한다 — 조회·폴러가 저장 검증과 같은 값을 보게. */
+  @Test
+  void createDatasetChangeTrigger_numericStringAndWholeDouble_normalizedToInteger() {
+    TriggerResponse response =
+        triggerService.createTrigger(
+            pipelineId,
+            datasetChangeRequest(
+                "normalized", "pollingIntervalSeconds", " 60 ", "debounceSeconds", 5.0),
+            testUserId);
+
+    TriggerResponse stored = triggerService.getTriggerById(response.id());
+    assertThat(stored.config()).containsEntry("pollingIntervalSeconds", 60);
+    assertThat(stored.config()).containsEntry("debounceSeconds", 5);
+  }
+
+  /** null 은 키 없음과 같이 기본값으로 보고, 저장 config 에서 키를 지운다(예전엔 NPE 500). */
+  @Test
+  void createDatasetChangeTrigger_nullValues_treatedAsDefault() {
+    TriggerResponse response =
+        triggerService.createTrigger(
+            pipelineId,
+            datasetChangeRequest("nulls", "pollingIntervalSeconds", null, "debounceSeconds", null),
+            testUserId);
+
+    TriggerResponse stored = triggerService.getTriggerById(response.id());
+    assertThat(stored.config()).doesNotContainKeys("pollingIntervalSeconds", "debounceSeconds");
+  }
+
+  @Test
+  void createDatasetChangeTrigger_missingOrEmptyOrNonListDatasetIds_rejectedInKorean() {
+    for (Object bad : java.util.Arrays.asList(null, List.of(), "1")) {
+      Map<String, Object> config = new java.util.HashMap<>();
+      if (bad != null) {
+        config.put("datasetIds", bad);
+      }
+      assertThatThrownBy(
+              () ->
+                  triggerService.createTrigger(
+                      pipelineId,
+                      new CreateTriggerRequest("ids", TriggerType.DATASET_CHANGE, null, config),
+                      testUserId))
+          .as("datasetIds=%s", bad)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage(DatasetChangeTriggerConfig.DATASET_IDS_REQUIRED_MESSAGE);
+    }
+  }
+
+  /** 감시 목록 원소가 숫자가 아니면 400 한국어(VIEW 판정 403 보다 먼저), 숫자 문자열은 id 로 정규화한다. */
+  @Test
+  void createDatasetChangeTrigger_datasetIdElements_validatedAndNormalized() {
+    for (Object bad : java.util.Arrays.asList("abc", 1.5, null)) {
+      Map<String, Object> config = new java.util.HashMap<>();
+      config.put("datasetIds", java.util.Arrays.asList(watchedDatasetId, bad));
+      assertThatThrownBy(
+              () ->
+                  triggerService.createTrigger(
+                      pipelineId,
+                      new CreateTriggerRequest("ids", TriggerType.DATASET_CHANGE, null, config),
+                      testUserId))
+          .as("element=%s", bad)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage(DatasetChangeTriggerConfig.DATASET_ID_FORMAT_MESSAGE);
+    }
+
+    TriggerResponse response =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest(
+                "string-id",
+                TriggerType.DATASET_CHANGE,
+                null,
+                Map.of("datasetIds", List.of(String.valueOf(watchedDatasetId)))),
+            testUserId);
+    List<?> storedIds =
+        (List<?>) triggerService.getTriggerById(response.id()).config().get("datasetIds");
+    assertThat(storedIds).hasSize(1);
+    assertThat(((Number) storedIds.get(0)).longValue()).isEqualTo(watchedDatasetId);
+    assertThat(storedIds.get(0)).isInstanceOf(Number.class);
+  }
+
+  /** 수정 경로도 같은 규칙 — 문자열·null 은 500 이 아니라 400 한국어 또는 정규화 저장. */
+  @Test
+  void updateDatasetChangeTrigger_configValues_validatedAndNormalized() {
+    TriggerResponse created =
+        triggerService.createTrigger(pipelineId, datasetChangeRequest("upd"), testUserId);
+
+    for (Object bad : List.<Object>of("abc", 30.9, 4294967356L, 10)) {
+      Map<String, Object> config = new java.util.HashMap<>();
+      config.put("datasetIds", List.of(watchedDatasetId));
+      config.put("pollingIntervalSeconds", bad);
+      assertThatThrownBy(
+              () ->
+                  triggerService.updateTrigger(
+                      created.id(),
+                      new UpdateTriggerRequest("upd", null, null, config),
+                      testUserId))
+          .as("pollingIntervalSeconds=%s", bad)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage(DatasetChangeTriggerConfig.POLLING_INTERVAL_MESSAGE);
+    }
+    Map<String, Object> badDebounce = new java.util.HashMap<>();
+    badDebounce.put("datasetIds", List.of(watchedDatasetId));
+    badDebounce.put("debounceSeconds", "x");
+    assertThatThrownBy(
+            () ->
+                triggerService.updateTrigger(
+                    created.id(),
+                    new UpdateTriggerRequest("upd", null, null, badDebounce),
+                    testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(DatasetChangeTriggerConfig.DEBOUNCE_MESSAGE);
+    Map<String, Object> badIds = new java.util.HashMap<>();
+    badIds.put("datasetIds", List.of("abc"));
+    assertThatThrownBy(
+            () ->
+                triggerService.updateTrigger(
+                    created.id(), new UpdateTriggerRequest("upd", null, null, badIds), testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(DatasetChangeTriggerConfig.DATASET_ID_FORMAT_MESSAGE);
+
+    Map<String, Object> ok = new java.util.HashMap<>();
+    ok.put("datasetIds", List.of(watchedDatasetId));
+    ok.put("pollingIntervalSeconds", "120");
+    ok.put("debounceSeconds", null);
+    triggerService.updateTrigger(
+        created.id(), new UpdateTriggerRequest("upd", null, null, ok), testUserId);
+
+    TriggerResponse stored = triggerService.getTriggerById(created.id());
+    assertThat(stored.config()).containsEntry("pollingIntervalSeconds", 120);
+    assertThat(stored.config()).doesNotContainKey("debounceSeconds");
   }
 
   // -----------------------------------------------------------------------
