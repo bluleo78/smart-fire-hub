@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.tenant.TenantPipelineRole;
+import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -134,5 +135,19 @@ class PythonScriptExecutorTest extends IntegrationTestBase {
     assertThat(result.exitCode()).isEqualTo(1);
     assertThat(result.stderr()).contains("ValueError: test error");
     assertThat(result.stdout()).isEmpty();
+  }
+
+  /**
+   * WD-211: 실행 시간 제한을 넘으면 실행기 경로(python_executor.TIMEOUT_MESSAGE)와 같은 한국어 문구로 실패한다 — 예전엔 「Python
+   * script execution timed out after 300 seconds」. 제한은 1초로 줄여 실제 경로를 탄다. stdout 을 먼저 닫는 이유: 실행기는
+   * stdout 을 끝까지 읽은 뒤 제한 시간만큼 기다리므로, stdout 이 열려 있으면 읽기에서 먼저 막힌다.
+   */
+  @Test
+  @EnabledOnOs({OS.LINUX, OS.MAC})
+  void run_timeout_failsWithKoreanMessage() {
+    assertThatThrownBy(
+            () -> pythonScriptExecutor.run("import os, time\nos.close(1)\ntime.sleep(10)", 2, 1))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage("Python 실행 실패: 실행 시간 제한(1초)을 넘어 스크립트를 중단했습니다.");
   }
 }

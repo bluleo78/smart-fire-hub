@@ -73,6 +73,14 @@ public class PythonScriptExecutor {
    * @param readSlot 실행 주체 슬롯(1~10, PythonReadGrantSync.prepareForRun) — 테넌트 실행 롤로 대체하지 않는다
    */
   public RunResult run(String scriptContent, int readSlot) {
+    return run(scriptContent, readSlot, TIMEOUT_SECONDS);
+  }
+
+  /**
+   * {@link #run(String, int)} 의 본체 — 실행 시간 제한을 인자로 받는다. 테스트가 짧은 제한으로 타임아웃 문구를 실제 경로로 확인하려고 패키지 공개로
+   * 둔다(운영 호출은 언제나 {@link #TIMEOUT_SECONDS}).
+   */
+  RunResult run(String scriptContent, int readSlot, int timeoutSeconds) {
     // 테넌트 확인은 try 밖에서 한다 — MissingTenantScopeException 은 409·"배선 결함" 로그 구분이
     // 걸린 계약이라, ScriptExecutionException 으로 감싸면 스텝 실패와 배선 결함이 같은 모양이 된다
     // (SqlScriptExecutor·SqlColumnProbe 와 같은 배치).
@@ -119,13 +127,13 @@ public class PythonScriptExecutor {
       }
 
       // Wait for completion with timeout
-      boolean finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+      boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
 
       if (!finished) {
         // 타임아웃 시 강제 종료 (SIGKILL)
         process.destroyForcibly();
-        throw new ScriptExecutionException(
-            "Python script execution timed out after " + TIMEOUT_SECONDS + " seconds");
+        // 실행기 경로(python_executor.TIMEOUT_MESSAGE)와 같은 한국어 문구(WD-211). 러너가 감싸지 않으므로 접두까지 붙인다.
+        throw new ScriptExecutionException(PythonStepErrorMessages.timeout(timeoutSeconds));
       }
 
       int exitCode = process.exitValue();
@@ -145,7 +153,8 @@ public class PythonScriptExecutor {
       log.warn("Python script execution interrupted at waitFor — force-killing child process");
       // 인터럽트 상태 복원 (호출자가 인터럽트를 인지할 수 있도록)
       Thread.currentThread().interrupt();
-      throw new ScriptExecutionException("Python execution interrupted", ie);
+      // 사용자 문구는 아래 catch(Exception) 과 같은 한국어 문구(WD-211). 사용자 취소는 러너가 원인 사슬의 취소 예외로 따로 가린다.
+      throw new ScriptExecutionException(PythonStepErrorMessages.unexpectedError(), ie);
     } catch (Exception e) {
       // InterruptedIOException 포함: readLine() 블로킹 중 인터럽트된 경우
       boolean isInterrupted =
@@ -157,7 +166,9 @@ public class PythonScriptExecutor {
       } else {
         log.error("Python script execution failed", e);
       }
-      throw new ScriptExecutionException("Python execution failed: " + e.getMessage(), e);
+      // 스크립트 오류가 아닌 실행 환경 예외(임시 파일·프로세스 기동 실패 등) — 원문은 위 로그에만 남기고 사용자에게는 실행기 경로와 같은 한국어
+      // 문구만 보인다(WD-211, python_executor.UNEXPECTED_ERROR_MESSAGE). 위 waitFor 인터럽트와 같은 문구다.
+      throw new ScriptExecutionException(PythonStepErrorMessages.unexpectedError(), e);
     } finally {
       // 정상/예외 종료 모두에서 자식 프로세스가 살아있으면 강제 종료
       // 파이프라인 취소·타임아웃·예외 등 모든 경로에서 좀비 프로세스 방지

@@ -208,13 +208,33 @@ public class ExecutorClient {
                 .block());
   }
 
+  /**
+   * Python 실행 응답.
+   *
+   * @param pgError 출력 적재가 PostgreSQL 오류로 실패했을 때의 구조화 필드(WD-211) — 데이터 오류(SQLState 22)면 러너가 {@code
+   *     PythonStepErrorMessages#fromExecutor} 로 한국어 사유 문구를 만든다. 적재 실패가 아니거나 구버전 실행기면 null 이고, 그때는
+   *     {@code error} 문자열만 쓴다.
+   */
   public record PythonExecuteResult(
       boolean success,
       String output,
       @JsonProperty("exit_code") int exitCode,
       String error,
       @JsonProperty("execution_time_ms") long executionTimeMs,
-      @JsonProperty("rows_loaded") int rowsLoaded) {}
+      @JsonProperty("rows_loaded") int rowsLoaded,
+      @JsonProperty("pg_error") PgError pgError) {
+
+    /** pg_error 없는 응답(성공·적재 외 실패) — 호출부·테스트 편의용. */
+    public PythonExecuteResult(
+        boolean success,
+        String output,
+        int exitCode,
+        String error,
+        long executionTimeMs,
+        int rowsLoaded) {
+      this(success, output, exitCode, error, executionTimeMs, rowsLoaded, null);
+    }
+  }
 
   public record QueryExecuteResult(
       boolean success,

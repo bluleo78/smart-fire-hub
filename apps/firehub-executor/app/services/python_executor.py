@@ -15,6 +15,7 @@ from app.config import Settings
 from app.db.connection import get_connection
 from app.schemas.responses import PythonExecuteResponse
 from app.services.db_utils import insert_batch
+from app.services.sql_executor import pg_error_info
 from app.tenant import resolve_read_db_url, resolve_schema
 
 logger = logging.getLogger(__name__)
@@ -161,20 +162,39 @@ def execute_python(
                 )
             if rows:
                 try:
+                    # 행 모양·컬럼 이름은 DB 에 닿기 전에 확인한다(WD-211) — 어느 행·어느 키가 문제인지 정확히 짚고,
+                    # 출력 테이블(REPLACE 면 임시 테이블)은 건드리지 않는다.
+                    _require_rows_are_objects(rows)
+                    _require_known_columns(rows[0], column_type_map)
                     _apply_type_conversion(rows, column_type_map)
+                    _require_first_row_keys(rows)
+                except OutputRowsError as e:
+                    return PythonExecuteResponse(
+                        success=False,
+                        output=stderr_text,
+                        exit_code=0,
+                        error=str(e),
+                        execution_time_ms=elapsed_ms,
+                        rows_loaded=0,
+                    )
+                try:
                     # 적재도 테넌트 롤로 — 스크립트가 남의 스키마에 쓰지 못하게 한다.
                     with get_connection(tenant_id, settings) as conn:
                         insert_batch(conn, output_table, rows)
                         conn.commit()
                     rows_loaded = len(rows)
                 except Exception as e:
+                    # 원문(내부 테이블·SQL)은 로그에만 남긴다(WD-211). 사용자 문구는 일반 안내이고, PG 데이터 오류(22xxx)면
+                    # API 가 pg_error 로 한국어 사유 문구를 만든다(DataExceptionTranslator — 번역 규칙을 두 벌 두지 않는다).
+                    logger.warning("Python output insert failed: table=%s", output_table, exc_info=True)
                     return PythonExecuteResponse(
                         success=False,
                         output=stderr_text,
                         exit_code=0,
-                        error=f"Script succeeded but data insert failed: {e}",
+                        error=LOAD_FAILED_MESSAGE,
                         execution_time_ms=elapsed_ms,
                         rows_loaded=0,
+                        pg_error=pg_error_info(e),
                     )
 
         # output field: stderr only when output_table is set, otherwise stdout+stderr (legacy)
@@ -200,17 +220,21 @@ def execute_python(
             success=False,
             output="",
             exit_code=-1,
-            error=f"Execution timed out after {effective_timeout}s",
+            error=TIMEOUT_MESSAGE.format(seconds=effective_timeout),
             execution_time_ms=elapsed_ms,
         )
 
     except Exception:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
+        # 스크립트 오류가 아닌 실행기 쪽 예외(임시 파일·프로세스 기동 실패 등). traceback 은 사용자 문구(error)에 넣지 않고
+        # 로그와 output(실행 로그 칸)에만 남긴다(WD-211) — 예전엔 내부 경로가 담긴 traceback 전체가 스텝 오류로 보였다.
+        tb = traceback.format_exc()
+        logger.exception("Unexpected error while executing python script")
         return PythonExecuteResponse(
             success=False,
-            output="",
+            output=tb,
             exit_code=-1,
-            error=traceback.format_exc(),
+            error=UNEXPECTED_ERROR_MESSAGE,
             execution_time_ms=elapsed_ms,
         )
 
@@ -232,6 +256,70 @@ NOT_JSON_MESSAGE = (
     "스크립트 출력이 JSON 이 아니어서 결과를 적재하지 않았습니다. 출력 데이터셋을 쓰는 스크립트는 결과 JSON 한 번만 print 해야"
     " 합니다(디버그 출력은 sys.stderr 로). 출력 앞부분: \"{excerpt}\""
 )
+
+# ---------------------------------------------------------------------------
+# 적재 실패·타임아웃·예기치 못한 오류 사용자 문구(WD-211)
+# ---------------------------------------------------------------------------
+# API 로컬 경로(firehub-api PythonStepErrorMessages 의 같은 이름 상수)와 글자 단위로 같아야 한다 — 두 경로가 같은
+# 스크립트에 같은 오류를 보이게 하려는 것이다. 접두 "Python 실행 실패: " 는 API 러너가 붙이므로 여기엔 없다.
+# 데이터 오류(SQLState 22) 사유 문장은 여기서 만들지 않고 pg_error 로 보내 API 가 만든다.
+
+# 첫 행의 키가 출력 데이터셋 컬럼(시스템 컬럼 제외)에 없을 때.
+UNKNOWN_COLUMN_MESSAGE = "출력 JSON 의 '{key}' 가 출력 데이터셋 컬럼에 없습니다. 데이터셋 컬럼 이름과 같은 키로 출력해 주세요."
+
+# N번째(1부터) 행이 JSON 객체가 아닐 때. 값은 싣지 않는다(Java·Python 값 표기가 달라 문구가 갈리고, 사용자 데이터가 섞인다).
+ROW_NOT_OBJECT_MESSAGE = "출력 JSON 의 {row}번째 행이 객체가 아닙니다. 모든 행을 컬럼 이름을 키로 하는 JSON 객체로 출력해 주세요."
+
+# N번째(1부터) 행에 첫 행의 키가 없을 때 — 적재 컬럼은 첫 행의 키로 정해진다.
+ROW_MISSING_KEY_MESSAGE = "출력 JSON 의 {row}번째 행에 첫 행의 키 '{key}' 가 없습니다. 모든 행에 첫 행과 같은 키를 넣어 주세요."
+
+# 그 밖의 적재 실패(원문은 로그에만).
+LOAD_FAILED_MESSAGE = "출력 결과를 데이터셋에 적재하지 못했습니다. 출력 JSON 의 키와 값 형식을 확인해 주세요."
+
+# 실행 시간 제한 초과.
+TIMEOUT_MESSAGE = "실행 시간 제한({seconds}초)을 넘어 스크립트를 중단했습니다."
+
+# 스크립트 오류가 아닌 실행기 쪽 예기치 못한 예외.
+UNEXPECTED_ERROR_MESSAGE = "스크립트 실행 중 예기치 못한 오류가 발생했습니다. 잠시 후 다시 실행하고, 계속되면 관리자에게 문의해 주세요."
+
+
+# 데이터셋 물리 테이블이 자동으로 갖는 시스템 컬럼 — API 의 DataTableStore.SYSTEM_COLUMNS 와 같은 집합이어야 한다.
+_SYSTEM_COLUMNS = frozenset({"id", "import_id", "created_at", "_updated_at"})
+
+
+class OutputRowsError(ValueError):
+    """출력 JSON 행 모양·키 오류 — 메시지가 곧 사용자 문구다. 적재 전에 나므로 DB 는 건드리지 않았다."""
+
+
+def _require_rows_are_objects(rows: List[Any]) -> None:
+    """모든 행이 dict 인지 확인한다. 첫 번째로 객체가 아닌 행 번호(1부터)를 짚는다."""
+    for i, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise OutputRowsError(ROW_NOT_OBJECT_MESSAGE.format(row=i))
+
+
+def _require_known_columns(first_row: Dict[str, Any], column_type_map: Optional[dict]) -> None:
+    """첫 행의 키(= 적재 컬럼)가 모두 출력 데이터셋 컬럼인지 확인한다.
+
+    시스템 컬럼(id·import_id·created_at·_updated_at)은 데이터셋 컬럼 목록에 없지만 물리 테이블에 있어 예전처럼 DB
+    판단에 맡긴다. column_type_map 이 비었거나 없으면 확인할 근거가 없어 건너뛴다. API 로컬 경로
+    (LocalPythonOutputLoader.requireKnownColumns)와 같은 규칙이다.
+    """
+    if not column_type_map:
+        return
+    for key in first_row:
+        if key not in column_type_map and key not in _SYSTEM_COLUMNS:
+            raise OutputRowsError(UNKNOWN_COLUMN_MESSAGE.format(key=key))
+
+
+def _require_first_row_keys(rows: List[Dict[str, Any]]) -> None:
+    """첫 행의 키가 모든 행에 있는지 확인한다(insert_batch 의 row[c] KeyError 를 행 번호 있는 문구로)."""
+    columns = list(rows[0].keys())
+    for i, row in enumerate(rows, start=1):
+        for c in columns:
+            if c not in row:
+                raise OutputRowsError(ROW_MISSING_KEY_MESSAGE.format(row=i, key=c))
+
 
 # 오류 문구에 인용하는 stdout 앞부분 최대 길이(문자 = 코드 포인트). 비밀이 섞일 수 있어 짧게 둔다.
 NOT_JSON_EXCERPT_MAX = 100

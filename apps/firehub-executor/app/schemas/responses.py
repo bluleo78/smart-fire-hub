@@ -73,6 +73,9 @@ class PythonExecuteResponse(BaseModel):
     error: Optional[str] = None
     execution_time_ms: int
     rows_loaded: int = 0
+    # 출력 적재가 PG 오류로 실패했을 때만 채운다(WD-211). API 가 데이터 오류(22xxx)를 한국어 사유 문구로 바꾸는 데 쓴다.
+    # 기존 필드는 그대로라 구버전 API 와도 호환된다.
+    pg_error: Optional[PgErrorInfo] = None
 
 
 class QueryExecuteResponse(BaseModel):
