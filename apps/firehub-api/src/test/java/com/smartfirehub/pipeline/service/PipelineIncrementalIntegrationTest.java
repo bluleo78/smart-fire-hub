@@ -462,6 +462,70 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
     }
   }
 
+  /**
+   * 재실행 회귀 고정(WD-229): 같은 {@code SELECT *} 파이프라인을 두 번 실행해도 임시 데이터셋의 {@code id_1} 에 원본 {@code id} 가
+   * 채워진다.
+   *
+   * <p>예전에는 두 번째 실행부터 스텝 출력 id 가 TEMP id 로 채워져 예약어 별칭 경로(id → id_1)가 죽고 {@code id_1} 이 NULL 로 남았다.
+   * 지금은 소유한 TEMP 를 미지정과 같게 취급(ownedTempOutput)하므로 별칭 경로를 다시 탄다 — 이를 REPLACE·APPEND 모두에서 실DB 로 고정한다.
+   */
+  @org.junit.jupiter.params.ParameterizedTest(name = "[{index}] {0}")
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"REPLACE", "APPEND"})
+  void SELECT_스타_스텝을_다시_실행해도_id_1_에_원본_id가_들어간다(String strategy) {
+    seedSource(1, 3);
+
+    pipelineService.updatePipeline(
+        pipelineId,
+        new UpdatePipelineRequest(
+            "Inc Pipeline " + suffix,
+            "SELECT * 재실행",
+            null,
+            List.of(
+                new PipelineStepRequest(
+                    STEP_NAME,
+                    "select star rerun",
+                    "SQL",
+                    "SELECT * FROM " + DataSchema.qualify(srcTable),
+                    null,
+                    null,
+                    null,
+                    strategy))),
+        userId);
+
+    Long tempDatasetId = null;
+    try {
+      runAndWait("COMPLETED");
+      runAndWait("COMPLETED");
+
+      tempDatasetId = tempDatasetService.findExistingTempDataset(stepId()).orElseThrow();
+      Long finalTempDatasetId = tempDatasetId;
+      String tempTable =
+          inTenantFixture(
+              () ->
+                  (String)
+                      dsl.fetchValue(
+                          "SELECT table_name FROM dataset WHERE id = ?", finalTempDatasetId));
+      List<Long> aliased =
+          dsl.fetch("SELECT DISTINCT id_1 FROM " + DataSchema.qualify(tempTable))
+              .getValues(0, Long.class);
+      List<Long> sourceIds =
+          dsl.fetch("SELECT id FROM " + DataSchema.qualify(srcTable)).getValues(0, Long.class);
+
+      assertThat(aliased).as("재실행 뒤 id_1 에 NULL 이 없어야 한다").doesNotContainNull();
+      assertThat(aliased)
+          .as("id_1 은 원본 id 집합과 같아야 한다")
+          .containsExactlyInAnyOrderElementsOf(sourceIds);
+    } finally {
+      if (tempDatasetId != null) {
+        try {
+          datasetService.deleteDataset(tempDatasetId);
+        } catch (Exception ignored) {
+          // 정리 실패가 본 검증 결과를 가리지 않게 한다.
+        }
+      }
+    }
+  }
+
   // ------------------------------------------------------------------ //
   // 시나리오 6: SQL 끝의 한 줄 주석·세미콜론 (#741)
   // ------------------------------------------------------------------ //

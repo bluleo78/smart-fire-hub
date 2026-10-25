@@ -314,6 +314,38 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
         .contains("src.\"ID\", src.\"NAME\", src.\"_UPDATED_AT\", SYSTIMESTAMP");
   }
 
+  /**
+   * 재실행 회귀 고정(WD-229): 스텝 조회가 출력 id 를 TEMP id 로 채워 주는 두 번째 실행부터도, 소유한 TEMP 는 미지정과 똑같이 취급돼 예약어 열 별칭
+   * 경로(id → id_1)를 탄다. 예전에는 출력 id 가 채워져 이 경로가 죽어 id_1 이 NULL 로 남았다.
+   */
+  @Test
+  void outputlessSelectStar_rerunWithExistingTemp_stillLoadsAliasesFromSourceColumns() {
+    String sql = "SELECT * FROM genia_t5.src";
+    stubProbe(
+        new ProbeColumn("ID", Types.NUMERIC, "NUMBER", 19, 0),
+        new ProbeColumn("NAME", Types.VARCHAR, "VARCHAR", 100, 0),
+        new ProbeColumn("_UPDATED_AT", Types.TIMESTAMP, "TIMESTAMP", 0, 6));
+    // 기존 TEMP 가 같은 별칭 열로 이미 있다 — 재사용돼야 한다.
+    when(tmp.repo().findBySourcePipelineStepId(STEP_ID)).thenReturn(Optional.of(TEMP_ID));
+    when(tmp.columns().findByDatasetId(TEMP_ID))
+        .thenReturn(
+            List.of(col("id_1", "INTEGER"), col("name", "TEXT"), col("updated_at_1", "TIMESTAMP")));
+    stubTempColumns("id_1", "name", "updated_at_1");
+
+    // 재실행: 스텝 조회가 출력 id 를 TEMP id 로 채운 상태.
+    PipelineStepResponse rerun = step("SQL", sql, null, null, "APPEND", TEMP_ID);
+
+    String status = run(rerun);
+
+    assertThat(status).as(lastError).isEqualTo("COMPLETED");
+    verify(tmp.datasets(), never()).createPipelineTempDataset(any(), any());
+    ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+    verify(dbExecutorClient).executeSql(query.capture(), anyList());
+    assertThat(query.getValue())
+        .contains("(\"ID\", \"ID_1\", \"NAME\", \"UPDATED_AT_1\", \"_UPDATED_AT\") SELECT")
+        .contains("src.\"ID\", src.\"NAME\", src.\"_UPDATED_AT\", SYSTIMESTAMP");
+  }
+
   @Test
   void outputlessSelect_unaliasedExpression_failsWithGuidanceBeforeCreatingTemp() {
     stubProbe(new ProbeColumn("COUNT(*)", Types.NUMERIC, "NUMBER", 0, 0));
@@ -413,13 +445,23 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
       Map<String, Object> apiConfig,
       Map<String, Object> aiConfig,
       String strategy) {
+    return step(scriptType, content, apiConfig, aiConfig, strategy, null);
+  }
+
+  private static PipelineStepResponse step(
+      String scriptType,
+      String content,
+      Map<String, Object> apiConfig,
+      Map<String, Object> aiConfig,
+      String strategy,
+      Long outputDatasetId) {
     return new PipelineStepResponse(
         STEP_ID,
         "s1",
         null,
         scriptType,
         content,
-        null,
+        outputDatasetId,
         null,
         List.of(),
         List.of(),
