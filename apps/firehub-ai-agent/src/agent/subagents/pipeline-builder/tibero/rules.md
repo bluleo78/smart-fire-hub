@@ -92,8 +92,11 @@ AI_CLASSIFY 스텝의 입력 데이터는 두 가지 방법으로 지정합니�
    dependsOnStepNames만 설정하면, 실행 시 이전 스텝의 출력 데이터셋이 자동으로
    입력으로 사용됩니다. temp 데이터셋도 자동 resolve됩니다.
 
-파이프라인 생성 시 AI_CLASSIFY에 inputDatasetIds를 지정하지 마세요.
-dependsOnStepNames만 설정하면 됩니다.
+- 앞 스텝의 출력을 분류하면: inputDatasetIds를 비우고 dependsOnStepNames로 그 스텝을 연결하세요(권장).
+- 기존 데이터셋을 바로 분류하는 첫 스텝이면: **inputDatasetIds가 필수**입니다(연결할 앞 스텝이 없음).
+- 둘 다 없으면 저장이 400("입력 데이터셋을 지정하거나 앞 스텝에 연결하세요")으로 거부됩니다(WD-216).
+  의존 스텝이 출력 데이터셋을 만들지 않으면(출력 미지정 INSERT/UPDATE SQL 등) 저장은 되지만 실행 시
+  "AI 분류할 입력 데이터셋이 없습니다"로 실패합니다.
 
 ## PYTHON 입력 데이터셋 (제약 — 백엔드 미지원, refs #654)
 
@@ -128,7 +131,7 @@ dependsOnStepNames만 설정하면 됩니다.
 
 ## 데이터셋 ID 유효성 (필수) — 환각 워크어라운드 차단
 
-**`create_pipeline` 호출 전, 사용자가 지정한 모든 `inputDatasetIds`·`outputDatasetId`는 `get_dataset`으로 존재 여부를 확인해야 한다.** 단 하나라도 404(Dataset not found) 응답이면 즉시 작업을 중단(abort)하고 사용자에게 보고한다. 보고 형식 예:
+**`create_pipeline` 호출 전, 사용자가 지정한 모든 `inputDatasetIds`·`outputDatasetId`는 `get_dataset`으로 존재 여부를 확인해야 한다.** 단 하나라도 404(「데이터셋을 찾을 수 없습니다」) 응답이면 즉시 작업을 중단(abort)하고 사용자에게 보고한다. 보고 형식 예:
 
 > "데이터셋 ID `<ID>`을(를) 찾을 수 없어 파이프라인 생성을 중단합니다. 유효한 데이터셋 ID를 알려주시면 다시 진행하겠습니다."
 
@@ -237,7 +240,8 @@ Tibero 는 테이블 이름이 틀린 경우와 **실행 계정에 그 테이블
 | 순환 의존성 | DAG 미검증 | 설계 시 의존 그래프 확인 |
 | temp 데이터셋 수동 생성 | 자동 생성 미인지 | outputDatasetId 미지정으로 자동 생성 |
 | column "id" specified more than once | SELECT에 id/import_id/created_at/_updated_at 포함 | 예약 컬럼은 별칭 사용 (id → source_id) |
-| AI_CLASSIFY "No input rows found" | inputDatasetIds가 비어있고 의존 스텝 없음 | dependsOnStepNames로 이전 스텝 연결 (자동 resolve) |
+| AI_CLASSIFY 저장 400 "입력 데이터셋을 지정하거나 앞 스텝에 연결하세요" / 실행 실패 "AI 분류할 입력 데이터셋이 없습니다" | inputDatasetIds가 비어있고 의존 스텝 없음(또는 의존 스텝에 출력 데이터셋이 없음) | dependsOnStepNames로 출력이 있는 이전 스텝 연결 (자동 resolve) 또는 inputDatasetIds 지정 |
+| AI_CLASSIFY 완료 0행 "입력 데이터가 없어 분류하지 않았습니다" | 입력 데이터셋이 0행(출력은 그대로 유지됨) | 앞 스텝·입력 데이터셋에 행이 있는지 확인 |
 | placeholder/더미 SQL로 파이프라인 강제 생성 | 입력 데이터셋 404를 우회하려는 환각 | get_dataset 404 → 즉시 abort, SELECT 1 류 대체 금지 (위 "데이터셋 ID 유효성" 절 참조) |
 | 의미 없는 파이프라인에 SCHEDULE 트리거 자동 등록 | "일단 트리거까지 걸어둬" 위임 | 입력 데이터셋 유효성 미검증 파이프라인에는 create_trigger 호출 금지 |
 | 테이블 없음(`JDBC-8033`) 오류에 스키마 한정자를 제거 | 권한 없음·이름 오류를 같은 코드로 받음 | 한정자는 그대로 두고 이름을 `get_data_schema` 와 대조, 같으면 운영자 권한 문제로 보고 (refs #682, 위 "스키마 오류 해석 규칙" 절) |

@@ -78,7 +78,7 @@ pipelineId(및 DATASET_CHANGE의 datasetIds 배열 각 원소)가 지정된 생�
 ### Phase 3 — EXECUTE (실행)
 
 생성: create_trigger(pipelineId, name, triggerType, description?, config)
-수정: update_trigger(pipelineId, triggerId, name?, isEnabled?, description?, config?)
+수정: update_trigger(pipelineId, triggerId, name?, isEnabled?, description?, config?) — 보낸 필드만 바뀐다. name 을 빼면 기존 이름 유지, config 는 바꿀 키만 보내면 기존 config 위에 합쳐진다(rules.md "update_trigger — 변경 가능 필드" 참조)
 
 **단순 isEnabled 토글은 Phase 2를 생략하고 바로 update_trigger를 호출한다.**
 
@@ -214,7 +214,7 @@ Phase 1~3(IDENTIFY/DESIGN/EXECUTE)의 내부 추론과 도구 호출 진행 상�
   - 5필드 입력 시 서버가 자동으로 앞에 `"0 "`을 붙여 6필드로 정규화한다 (예: 입력 `0 3 * * *` → 저장 `0 0 3 * * *`).
   - 따라서 5필드/6필드 어느 쪽도 보내도 되지만, **응답 `config.cron`은 항상 6필드**다. 사용자에게 다시 보여줄 때는 응답 그대로 사용한다.
 - 사용자가 자연어("매일 오전 2시")로 말하면 cron으로 변환해준다.
-- 서버는 `timezone`(기본 `Asia/Seoul`), `concurrencyPolicy`(기본 `SKIP`)도 응답에 자동 추가한다. 사용자가 명시하지 않으면 명시적으로 지정하지 말고 서버 기본값에 맡긴다.
+- 서버는 `timezone`(기본 `Asia/Seoul`), `concurrencyPolicy`(`SKIP` | `ALLOW`, 기본 `SKIP`)도 응답에 자동 추가한다. 사용자가 명시하지 않으면 명시적으로 지정하지 말고 서버 기본값에 맡긴다.
 
 **자주 쓰는 cron 표현 (6필드 권장 — 입력 그대로 응답에 노출됨):**
 
@@ -234,6 +234,7 @@ Phase 1~3(IDENTIFY/DESIGN/EXECUTE)의 내부 추론과 도구 호출 진행 상�
 ```
 
 - config는 빈 객체. 서버가 토큰을 자동 생성한다.
+- `allowedIps`(선택): 호출을 허용할 IPv4 주소 또는 CIDR 문자열 배열(예: `["10.0.0.0/8"]`). 비우거나 생략하면 모든 IP를 허용한다. 사용자가 IP 제한을 요청할 때만 지정한다.
 - 생성 후 토큰은 대화에 노출하지 않는다. 파이프라인 상세 화면에서 확인 안내.
 
 ### PIPELINE_CHAIN
@@ -258,7 +259,7 @@ Phase 1~3(IDENTIFY/DESIGN/EXECUTE)의 내부 추론과 도구 호출 진행 상�
 }
 ```
 
-- `secret`: 선택 필드. 제공 시 서버가 AES-256-GCM으로 암호화.
+- `secret`: 선택 필드. 제공 시 서버가 AES-256-GCM으로 암호화. **생성 때만 설정 가능** — `update_trigger` 로 보낸 `secret` 은 서버가 버린다(시크릿을 바꾸려면 삭제 후 재생성).
 - 웹훅 URL과 시크릿은 파이프라인 상세 화면에서 확인 안내.
 - **응답 출력 금지 항목**: 서버가 반환하는 `config.webhookId`(UUID), 이 UUID를 포함한 모든 URL(`/api/webhooks/<UUID>`, `{서버주소}/api/webhooks/...` 등), URL 형식/템플릿/예시(`POST /webhooks/{id}`)는 채팅 응답에 포함하지 않는다. 표·코드 블록·자연어 어디에도 옮기지 말고 폐기한다.
 
@@ -266,12 +267,16 @@ Phase 1~3(IDENTIFY/DESIGN/EXECUTE)의 내부 추론과 도구 호출 진행 상�
 
 ```json
 {
-  "datasetIds": [7]
+  "datasetIds": [7],
+  "pollingIntervalSeconds": 60,
+  "debounceSeconds": 0
 }
 ```
 
 - `datasetIds`: 모니터링할 데이터셋 ID **배열** (필수, 최소 1개). 여러 개를 지정하면 그 중 **하나라도** 행 수가 변하면 트리거가 발화한다(OR 조건, `TriggerEventService`가 각 데이터셋을 개별 비교).
-- 서버가 기본 60초(`pollingIntervalSeconds`, 30~3600초 범위)마다 행 수 변화를 폴링한다. 지연이 있을 수 있으며, 즉시 감지가 필요한 경우 WEBHOOK 유형 사용을 권장한다.
+- `pollingIntervalSeconds`(선택): 행 수 변화를 확인하는 주기. **정수 30~3600초, 기본 60**. 지연이 있을 수 있으며, 즉시 감지가 필요한 경우 WEBHOOK 유형 사용을 권장한다.
+- `debounceSeconds`(선택): 변화 감지 후 발화까지 기다리는 시간. **정수 0~3600초, 기본 0**.
+- 숫자 값은 문자열(`"60"`)이 아니라 숫자(`60`)로 보낸다. 단수 `datasetId` 키는 없다 — 하나만 감시해도 `datasetIds: [7]` 배열로 보낸다.
 
 ## 대상 존재 확인 — 생성/수정 전 get_pipeline / get_dataset 필수 (정확성, refs #577)
 
@@ -293,7 +298,7 @@ Phase 1~3(IDENTIFY/DESIGN/EXECUTE)의 내부 추론과 도구 호출 진행 상�
 
 > "트리거 생성 요청이 거절되었습니다 (오류: `<원문>`). config 필드명/형식을 다시 확인해 주세요."
 
-규칙에 명시된 필드(`cron`, `upstreamPipelineId`, `condition`, `datasetIds`, `secret`)만 사용한다. 새 필드가 필요하다고 판단되면 사용자에게 확인을 요청한다.
+규칙에 명시된 필드(`cron`, `timezone`, `concurrencyPolicy`, `allowedIps`, `upstreamPipelineId`, `condition`, `secret`, `datasetIds`, `pollingIntervalSeconds`, `debounceSeconds`)만 사용한다. 새 필드가 필요하다고 판단되면 사용자에게 확인을 요청한다.
 
 ## 보안 규칙 요약
 
@@ -358,11 +363,17 @@ list_triggers 사용 시 메인 SYSTEM_PROMPT L4 의 'pipelineId 필수 + 미지
 
 ## update_trigger — 변경 가능 필드
 
+**보낸 필드만 바뀌고 나머지는 그대로 유지된다** (도구가 기존 트리거를 읽어 채운다, WD-227).
+
 | 필드 | 타입 | 설명 |
 |------|------|------|
-| `name` | string | 트리거 이름 변경 |
-| `isEnabled` | boolean | 활성화(true) / 비활성화(false) |
-| `description` | string | 설명 변경 |
-| `config` | object | 유형별 config 전체 교체 |
+| `name` | string | 트리거 이름 변경. **생략하면 기존 이름 유지** — 이름을 바꾸지 않는 수정에서 이름을 지어내 넣지 않는다 |
+| `isEnabled` | boolean | 활성화(true) / 비활성화(false). 생략하면 유지 |
+| `description` | string | 설명 변경. 생략하면 유지, 빈 문자열 `""`이면 설명을 지운다 |
+| `config` | object | **바꿀 키만** 담는다. 기존 config 위에 덮어써지고 보내지 않은 키는 유지된다 |
+
+- 예: "폴링 주기만 2분으로" → `config: { "pollingIntervalSeconds": 120 }` 만 보낸다. `datasetIds`를 함께 보낼 필요가 없고, 감시 목록은 그대로 남는다.
+- 배열 값(`datasetIds`, `allowedIps`)은 보낸 배열로 **통째로 바뀐다**. 데이터셋을 추가·제외할 때는 최종 목록 전체를 보낸다(추가할 데이터셋은 위 "대상 존재 확인" 규칙대로 `get_dataset` 확인).
+- WEBHOOK `secret`은 수정으로 바꿀 수 없다.
 
 **주의**: `triggerType`은 수정 불가. 유형 변경이 필요하면 삭제 후 재생성.

@@ -1007,6 +1007,7 @@
         },
         "name": {
           "type": "string",
+          "minLength": 1,
           "description": "트리거 이름"
         },
         "triggerType": {
@@ -1026,11 +1027,64 @@
         },
         "config": {
           "type": "object",
-          "propertyNames": {
-            "type": "string"
+          "properties": {
+            "cron": {
+              "type": "string"
+            },
+            "timezone": {
+              "type": "string"
+            },
+            "concurrencyPolicy": {
+              "type": "string",
+              "enum": [
+                "SKIP",
+                "ALLOW"
+              ]
+            },
+            "allowedIps": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "upstreamPipelineId": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "condition": {
+              "type": "string",
+              "enum": [
+                "SUCCESS",
+                "FAILURE",
+                "ANY"
+              ]
+            },
+            "secret": {
+              "type": "string"
+            },
+            "datasetIds": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "pollingIntervalSeconds": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 3600
+            },
+            "debounceSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3600
+            }
           },
           "additionalProperties": {},
-          "description": "트리거 설정. SCHEDULE: {cron} — 필드명은 반드시 \"cron\" (cronExpression/cron_expression 금지). 값은 Spring CronTrigger 6필드(\"초 분 시 일 월 요일\") 또는 5필드(\"분 시 일 월 요일\"). 5필드 입력 시 서버가 앞에 \"0 \"을 붙여 6필드로 정규화. 예: \"0 0 3 * * *\" (매일 3시). API: {}, PIPELINE_CHAIN: {upstreamPipelineId, condition?}, WEBHOOK: {secret?}, DATASET_CHANGE: {datasetId}"
+          "description": "트리거 설정. SCHEDULE: {cron(필수), timezone?(기본 \"Asia/Seoul\"), concurrencyPolicy?(\"SKIP\"|\"ALLOW\", 기본 \"SKIP\")} — 필드명은 반드시 \"cron\" (cronExpression/cron_expression 금지). 값은 Spring CronTrigger 6필드(\"초 분 시 일 월 요일\") 또는 5필드(\"분 시 일 월 요일\"). 5필드 입력 시 서버가 앞에 \"0 \"을 붙여 6필드로 정규화. 예: \"0 0 3 * * *\" (매일 3시). API: {allowedIps?: 문자열 배열(IPv4 또는 CIDR, 비우면 모든 IP 허용)} — 토큰은 서버가 만든다. PIPELINE_CHAIN: {upstreamPipelineId(필수, 정수), condition?(\"SUCCESS\"|\"FAILURE\"|\"ANY\", 기본 \"SUCCESS\")}. WEBHOOK: {secret?(생성 때만 설정 가능)}. DATASET_CHANGE: {datasetIds(필수, 데이터셋 ID 정수 배열 1개 이상 — 단수 datasetId 아님), pollingIntervalSeconds?(정수 30~3600, 기본 60), debounceSeconds?(정수 0~3600, 기본 0)}. 숫자 값은 문자열(\"60\")이 아니라 숫자(60)로 보낸다."
         }
       },
       "required": [
@@ -2163,24 +2217,24 @@
     }
   },
   "import_status": {
-    "description": "임포트 작업의 상태/진행률을 조회합니다. start_import 이후 주기적으로 호출.",
+    "description": "임포트 작업의 단계·진행률·결과를 조회합니다. start_import 가 돌려준 jobId 를 그대로 넣으세요. done=false 이면 잠시 뒤 다시 조회하고, done=true 이면 summary(적재 행 수 또는 실패 사유)를 사용자에게 전합니다. (예전 방식: 가져오기 이력 id 를 알면 datasetId+importId 로도 조회 가능)",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
+        "jobId": {
+          "description": "start_import 응답의 jobId(UUID 문자열). 이것을 우선 사용",
+          "type": "string"
+        },
         "datasetId": {
-          "type": "number",
-          "description": "데이터셋 ID"
+          "description": "데이터셋 ID (importId 로 조회할 때 필수)",
+          "type": "number"
         },
         "importId": {
-          "type": "number",
-          "description": "임포트 레코드 ID"
+          "description": "가져오기 이력(감사 기록) ID. jobId 가 없을 때만 사용",
+          "type": "number"
         }
       },
-      "required": [
-        "datasetId",
-        "importId"
-      ],
       "additionalProperties": false
     }
   },
@@ -4492,36 +4546,94 @@
     }
   },
   "update_trigger": {
-    "description": "파이프라인 트리거를 수정합니다",
+    "description": "파이프라인 트리거를 수정합니다. 보낸 필드만 바뀌고 나머지는 유지됩니다 — name 을 빼면 기존 이름을 그대로 쓰고, config 는 보낸 키만 기존 config 위에 덮어씁니다(예: 폴링 주기만 바꾸려면 config: {pollingIntervalSeconds: 120} 만 보내면 감시 데이터셋 목록은 유지). 배열 값(datasetIds·allowedIps)은 보낸 배열로 통째로 바뀌므로 추가·제외할 때는 최종 목록 전체를 보냅니다. 트리거 유형은 바꿀 수 없고, WEBHOOK 시크릿은 수정으로 바꿀 수 없습니다.",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
         "pipelineId": {
-          "type": "number",
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
           "description": "파이프라인 ID"
         },
         "triggerId": {
-          "type": "number",
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
           "description": "트리거 ID"
         },
         "name": {
-          "description": "트리거 이름",
-          "type": "string"
+          "description": "새 트리거 이름 (생략 시 기존 이름 유지)",
+          "type": "string",
+          "minLength": 1
         },
         "isEnabled": {
-          "description": "활성화 여부",
+          "description": "활성화 여부 (생략 시 유지)",
           "type": "boolean"
         },
         "description": {
-          "description": "트리거 설명",
+          "description": "트리거 설명 (생략 시 유지, 빈 문자열 \"\" 이면 설명을 지움)",
           "type": "string"
         },
         "config": {
-          "description": "트리거 설정",
+          "description": "바꿀 config 키만 담은 객체 (생략 시 config 유지). SCHEDULE: {cron(필수), timezone?(기본 \"Asia/Seoul\"), concurrencyPolicy?(\"SKIP\"|\"ALLOW\", 기본 \"SKIP\")} — 필드명은 반드시 \"cron\" (cronExpression/cron_expression 금지). 값은 Spring CronTrigger 6필드(\"초 분 시 일 월 요일\") 또는 5필드(\"분 시 일 월 요일\"). 5필드 입력 시 서버가 앞에 \"0 \"을 붙여 6필드로 정규화. 예: \"0 0 3 * * *\" (매일 3시). API: {allowedIps?: 문자열 배열(IPv4 또는 CIDR, 비우면 모든 IP 허용)} — 토큰은 서버가 만든다. PIPELINE_CHAIN: {upstreamPipelineId(필수, 정수), condition?(\"SUCCESS\"|\"FAILURE\"|\"ANY\", 기본 \"SUCCESS\")}. WEBHOOK: {secret?(생성 때만 설정 가능)}. DATASET_CHANGE: {datasetIds(필수, 데이터셋 ID 정수 배열 1개 이상 — 단수 datasetId 아님), pollingIntervalSeconds?(정수 30~3600, 기본 60), debounceSeconds?(정수 0~3600, 기본 0)}. 숫자 값은 문자열(\"60\")이 아니라 숫자(60)로 보낸다.",
           "type": "object",
-          "propertyNames": {
-            "type": "string"
+          "properties": {
+            "cron": {
+              "type": "string"
+            },
+            "timezone": {
+              "type": "string"
+            },
+            "concurrencyPolicy": {
+              "type": "string",
+              "enum": [
+                "SKIP",
+                "ALLOW"
+              ]
+            },
+            "allowedIps": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "upstreamPipelineId": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "condition": {
+              "type": "string",
+              "enum": [
+                "SUCCESS",
+                "FAILURE",
+                "ANY"
+              ]
+            },
+            "secret": {
+              "type": "string"
+            },
+            "datasetIds": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "pollingIntervalSeconds": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 3600
+            },
+            "debounceSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3600
+            }
           },
           "additionalProperties": {}
         }

@@ -76,7 +76,7 @@ maxTurns: 25
 
 **이 단계를 건너뛰면 잘못된 컬럼명으로 파이프라인이 실패하거나, 지원되지 않는 PYTHON temp 의존 설계로 전체 사이클(DESIGN~LOCAL_TEST~승인)이 낭비됩니다.**
 
-**🚨 404(Dataset not found) 응답 처리 — 즉시 abort**:
+**🚨 404(「데이터셋을 찾을 수 없습니다」) 응답 처리 — 즉시 abort**:
 입력 또는 출력 데이터셋 ID 중 하나라도 `get_dataset`이 404를 반환하면, Phase 2 이후로 진행하지 말고 즉시 작업을 중단한다. 사용자에게 어떤 ID가 존재하지 않는지 명확히 알리고 유효한 ID를 요청한다. `create_pipeline`·`create_trigger`·`execute_pipeline` 어느 것도 호출하지 않는다.
 
 다음 우회는 **모두 금지**한다:
