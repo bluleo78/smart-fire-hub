@@ -105,6 +105,9 @@ app:
     script-token-key: ${DB_EXECUTOR_SCRIPT_TOKEN_KEY:}
     # 스테이징 적재(/execute/load)·옮기기(/execute/sql) 요청 시간 제한(초). 실행기가 1800 으로 자른다(WD-77).
     move-timeout-seconds: ${DB_EXECUTOR_MOVE_TIMEOUT_SECONDS:1800}
+    # 선행 문장(REPLACE 출력 잠금·비우기 DELETE) 상한(초) — db-executor app.sql.pre-statement-timeout-seconds 와 같은 값이어야 한다.
+    # 실행기는 사용자 시간 제한을 본문에만 걸므로(WD-236), 선행 문장이 있는 /execute/sql 요청은 HTTP 대기를 이만큼 늘린다.
+    pre-statement-timeout-seconds: ${DB_EXECUTOR_PRE_STATEMENT_TIMEOUT_SECONDS:1800}
   embedding:
     # 테넌트가 저장할 수 있는 Ollama Base URL 허용 목록(쉼표 구분, 정확 일치). 이 목록 밖의 주소는
     # 공개 https 여야 한다(SSRF 가드 — EmbeddingTargetGuard). 운영 Ollama 주소가 기본값과 다르면

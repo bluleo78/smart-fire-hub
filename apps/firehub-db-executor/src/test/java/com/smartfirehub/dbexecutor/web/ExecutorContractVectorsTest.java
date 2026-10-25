@@ -152,6 +152,40 @@ class ExecutorContractVectorsTest {
     assertThat(checked).isGreaterThanOrEqualTo(13);
   }
 
+  /**
+   * 「선행 문장 + timeout_seconds」 벡터(WD-236, 스펙 §6): timeout_seconds 는 본문에만 걸린다 — 실행기는 요청값(120)을 본문
+   * 제한으로 받고, 도착 시점 기한은 선행 상한(app.sql.pre-statement-timeout-seconds 기본 1800)만큼 더 길다. Python 실행기도 같은
+   * 예시를 읽는다.
+   */
+  @Test
+  void preStatementsWithTimeout_vector_timeoutAppliesToBodyOnly() throws Exception {
+    stubRunners();
+    JsonNode ex = null;
+    for (JsonNode e : FIXTURE.get("endpoints").get("sql").get("examples")) {
+      if (e.get("name").asText().equals("선행 문장 + timeout_seconds")) {
+        ex = e;
+      }
+    }
+    assertThat(ex).as("선행 문장 + timeout_seconds 벡터").isNotNull();
+    int requested = ex.get("request").get("timeout_seconds").asInt();
+    mvc.perform(
+        post("/execute/sql")
+            .header("Authorization", "Internal ctl-token")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(OM.writeValueAsString(ex.get("request"))));
+
+    org.mockito.ArgumentCaptor<Deadline> deadline =
+        org.mockito.ArgumentCaptor.forClass(Deadline.class);
+    org.mockito.Mockito.verify(sqlRunner)
+        .run(
+            any(),
+            anyString(),
+            any(),
+            deadline.capture(),
+            org.mockito.ArgumentMatchers.eq(requested));
+    assertThat(deadline.getValue().totalSeconds()).isEqualTo(1800 + requested);
+  }
+
   @Test
   void readOnlyFalseOrMissing_rejectedWithKoreanMessage_andNothingRuns() throws Exception {
     stubRunners();

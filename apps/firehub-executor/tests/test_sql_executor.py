@@ -333,3 +333,41 @@ def test_validation_error_has_no_structured_fields():
 
     assert result.success is False
     assert result.pg_error is None
+
+
+def test_timeout_is_set_after_pre_statements_just_before_body():
+    # WD-236: 요청별 시간 제한은 선행 문장(잠금·비우기) 뒤, 본문 직전에만 건다.
+    # 선행 문장이 제한을 먹으면 db-executor(본문에만 적용)와 의미가 갈린다.
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    conn = make_conn(cursor)
+
+    result = execute_sql(
+        'INSERT INTO "data"."out" ("a") SELECT 1',
+        conn,
+        pre_statements=['DELETE FROM "data"."out"'],
+        timeout_seconds=30,
+    )
+
+    assert result.success
+    executed = [c.args[0] for c in cursor.execute.call_args_list]
+    assert executed == [
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        'DELETE FROM "data"."out"',
+        "SET LOCAL statement_timeout = 30000",
+        'INSERT INTO "data"."out" ("a") SELECT 1',
+    ]
+
+
+def test_timeout_without_pre_statements_precedes_body():
+    # 선행 문장이 없으면 기존과 같이 SET LOCAL -> 본문 순서다.
+    cursor = MagicMock()
+    cursor.description = [("a",)]
+    cursor.fetchall.return_value = [(1,)]
+    conn = make_conn(cursor)
+
+    result = execute_sql("SELECT 1 AS a", conn, timeout_seconds=5)
+
+    assert result.success
+    executed = [c.args[0] for c in cursor.execute.call_args_list]
+    assert executed == ["SET LOCAL statement_timeout = 5000", "SELECT 1 AS a"]

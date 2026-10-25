@@ -91,8 +91,11 @@ public class ExecuteController {
   /**
    * 선행 문장 + 본문 한 문장을 한 트랜잭션으로 실행한다.
    *
-   * <p>{@code timeout_seconds}(선택)가 있으면 {@code min(요청값, app.load.timeout-seconds)} 가 전체 기한이자 문장
+   * <p>{@code timeout_seconds}(선택)가 있으면 {@code min(요청값, app.load.timeout-seconds)} 가 본문의 전체 기한이자 문장
    * 제한이다(긴 SQL 용). 0 이하는 거부한다. 없으면 기존 50/55초 그대로다.
+   *
+   * <p>선행 문장(REPLACE 비우기)이 있으면 도착 시점 기한을 {@code 선행 상한 + 본문 전체 기한} 으로 잡는다 — 기술자 조회·대여·선행 문장을 덮고, 본문
+   * 기한은 실행기가 본문 시작 시점에 따로 잡는다(스펙 §6, WD-236). 선행 문장이 없으면 기존 그대로 본문 전체 기한 하나다.
    */
   @PostMapping("/execute/sql")
   public SqlExecuteResponse executeSql(@RequestBody SqlExecuteRequest req) {
@@ -104,9 +107,11 @@ public class ExecuteController {
     }
     // 실행기에는 자른 요청값을 그대로(없으면 null) 넘긴다 — null 이어야 문장 제한이 기존 50초로 남는다(전체 기한만 55초).
     Integer requested = capped(req.timeoutSeconds());
-    // 기한은 도착 즉시 — 기술자 조회·풀 대여·실행이 모두 이 안이다.
+    int bodySeconds = effectiveSeconds(requested, timeouts.sql().totalTimeoutSeconds());
+    boolean hasPreStatements = req.preStatements() != null && !req.preStatements().isEmpty();
+    // 기한은 도착 즉시 — 기술자 조회·풀 대여·실행이 모두 이 안이다(선행 문장이 있으면 선행 상한만큼 더 길다).
     try (Deadline deadline =
-        new Deadline(effectiveSeconds(requested, timeouts.sql().totalTimeoutSeconds()))) {
+        new Deadline(timeouts.sql().requestSeconds(bodySeconds, hasPreStatements))) {
       return withDescriptor(
           req.tenantId(),
           deadline,

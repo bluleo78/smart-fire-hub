@@ -2,6 +2,7 @@ package com.smartfirehub.dbexecutor.live;
 
 import static com.smartfirehub.dbexecutor.live.TiberoLiveAccount.exec;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.config.DbExecutorProperties;
@@ -36,6 +37,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.Timeout;
 
 /**
  * Tibero 실서버 테스트(WD-77 Task 4) — api 가 보내는 "스테이징 → 출력 테이블 옮기기" 를 실제 서버에서 확인한다.
@@ -92,7 +94,7 @@ class TiberoLiveMoveTest {
         };
     ExecutionTimeouts timeouts =
         new ExecutionTimeouts(
-            new ExecutionTimeouts.Sql(50, 55),
+            new ExecutionTimeouts.Sql(50, 55, 1800),
             new ExecutionTimeouts.Probe(30),
             new ExecutionTimeouts.Query(30),
             new ExecutionTimeouts.Load(1800));
@@ -317,5 +319,63 @@ class TiberoLiveMoveTest {
     // 앞선 APPEND 행도 REPLACE 가 지웠고, 스테이징 4행만 남는다.
     assertThat(count("1 = 1")).isEqualTo(4);
     assertThat(count("\"CODE\" = 'appended'")).isZero();
+  }
+
+  /**
+   * WD-236 무거운 실서버 사례({@code TIBERO_TEST_HEAVY=1} 일 때만): 기존 출력 300,000행을 비우는 선행 DELETE 가 오래 걸려도,
+   * 사용자 시간 제한(timeout_seconds 없음 → 기본 50/55초)은 본문에만 걸리므로 REPLACE 가 성공한다. 2웨이브에서는 한 기한을 삭제·본문이 나눠 써
+   * 52초에 실패하던 사례다(스펙 §6.3).
+   *
+   * <p>기존 행·스테이징은 소유 계정으로 서버 안에서 한 문장으로 만든다({@code CONNECT BY LEVEL}) — VPN 너머로 30만 행을 보내지 않고, 실행기의
+   * 50초 제한도 받지 않게. 시퀀스는 기존 ID 뒤(300,001)부터 시작한다. 시간이 오래 걸릴 수 있어 상한(14분)을 두고, 넘기면 실패로 끝나 계정
+   * 정리(@AfterAll)가 돈다.
+   */
+  @Test
+  @Timeout(value = 14, unit = TimeUnit.MINUTES, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+  void heavy_replaceOver300kExistingRows_succeedsWithDefaultLimit() throws Exception {
+    assumeTrue("1".equals(System.getenv("TIBERO_TEST_HEAVY")), "TIBERO_TEST_HEAVY=1 이 아님 — 건너뜀");
+    int oldRows = 300_000;
+    int newRows = 10_000;
+    TiberoLiveAccount.execIgnore(owner, "DROP SEQUENCE " + q("SQ_ORDERS"));
+    exec(
+        owner,
+        "CREATE SEQUENCE "
+            + q("SQ_ORDERS")
+            + " START WITH "
+            + (oldRows + 1)
+            + " INCREMENT BY 1 NOCACHE");
+    long seedStart = System.nanoTime();
+    exec(
+        owner,
+        "INSERT INTO "
+            + q("ORDERS")
+            + " (\"ID\", \"CODE\", \"QTY\") SELECT LEVEL, 'old' || LEVEL, 0 FROM DUAL CONNECT BY LEVEL <= "
+            + oldRows);
+    exec(
+        owner,
+        "INSERT INTO "
+            + q(STG)
+            + " (\"_SEQ\", \"CODE\", \"QTY\") SELECT LEVEL, 'n' || LEVEL, LEVEL FROM DUAL CONNECT BY LEVEL <= "
+            + newRows);
+    System.out.println(
+        "LIVE heavy seed ms=" + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - seedStart));
+    assertThat(count("1 = 1")).isEqualTo(oldRows);
+
+    long start = System.nanoTime();
+    SqlExecuteResponse res = run(move("CODE"), List.of(deleteAll()), null);
+    long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+    System.out.println(
+        "LIVE heavy replace success="
+            + res.success()
+            + " ms="
+            + elapsedMs
+            + " error="
+            + res.error()
+            + " log="
+            + String.valueOf(res.executionLog()).replace('\n', '|'));
+    assertThat(res.success()).as(String.valueOf(res.error())).isTrue();
+    assertThat(count("1 = 1")).isEqualTo(newRows);
+    assertThat(count("\"CODE\" LIKE 'old%'")).isZero();
   }
 }

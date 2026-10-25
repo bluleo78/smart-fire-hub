@@ -28,7 +28,7 @@ class QueryRunnerTest {
     return new QueryRunner(
         db.roPools,
         new ExecutionTimeouts(
-            new ExecutionTimeouts.Sql(50, 55),
+            new ExecutionTimeouts.Sql(50, 55, 1800),
             new ExecutionTimeouts.Probe(30),
             new ExecutionTimeouts.Query(timeoutSeconds)),
         descriptors);

@@ -49,6 +49,12 @@ public class DbExecutorClient {
   /** 요청별 시간 제한({@code timeout_seconds})을 쓰는 호출이 실행기 응답을 더 기다려 주는 여유(초). */
   static final int RESPONSE_GRACE_SECONDS = 5;
 
+  /**
+   * 선행 문장 상한 기본값(초) — db-executor {@code app.sql.pre-statement-timeout-seconds} 기본값과 같다(스펙 §6,
+   * WD-236).
+   */
+  static final int DEFAULT_PRE_STATEMENT_TIMEOUT_SECONDS = 1800;
+
   /** 응답 본문 버퍼 한도 — PG 실행기 기본값과 같다({@link ExecutorClient#DEFAULT_MAX_RESPONSE_BYTES}). */
   private static final int MAX_RESPONSE_BYTES = ExecutorClient.DEFAULT_MAX_RESPONSE_BYTES;
 
@@ -59,22 +65,37 @@ public class DbExecutorClient {
   private final Duration probeTimeout;
   private final Duration queryTimeout;
 
+  /** 선행 문장(REPLACE 비우기)이 있는 {@code /execute/sql} 요청이 더 기다리는 시간 — 실행기의 선행 상한과 같은 값. */
+  private final Duration preStatementTimeout;
+
   /**
    * 스프링 빈 생성자.
    *
    * @param baseUrl db-executor 주소({@code app.db-executor.base-url}). 비어 있으면 호출마다 실패한다.
    * @param internalToken db-executor 내부 토큰({@code app.db-executor.internal-token}) — Python 실행기
    *     토큰과는 별개 값
+   * @param preStatementTimeoutSeconds 선행 문장 상한({@code
+   *     app.db-executor.pre-statement-timeout-seconds}, 기본 1800) — db-executor {@code
+   *     app.sql.pre-statement-timeout-seconds} 와 같은 값이어야 한다
    */
   @Autowired
   public DbExecutorClient(
       WebClient.Builder webClientBuilder,
       @Value("${app.db-executor.base-url:}") String baseUrl,
-      @Value("${app.db-executor.internal-token:dev-db-executor-token}") String internalToken) {
-    this(webClientBuilder, baseUrl, internalToken, SQL_TIMEOUT, PROBE_TIMEOUT, QUERY_TIMEOUT);
+      @Value("${app.db-executor.internal-token:dev-db-executor-token}") String internalToken,
+      @Value("${app.db-executor.pre-statement-timeout-seconds:1800}")
+          int preStatementTimeoutSeconds) {
+    this(
+        webClientBuilder,
+        baseUrl,
+        internalToken,
+        SQL_TIMEOUT,
+        PROBE_TIMEOUT,
+        QUERY_TIMEOUT,
+        Duration.ofSeconds(preStatementTimeoutSeconds));
   }
 
-  /** 시간 한도를 바꿔 끼우는 생성자 — 시간 초과 테스트가 60초를 기다리지 않게 한다. */
+  /** 시간 한도를 바꿔 끼우는 생성자 — 시간 초과 테스트가 60초를 기다리지 않게 한다. 선행 상한은 기본값(1800초)이다. */
   DbExecutorClient(
       WebClient.Builder webClientBuilder,
       String baseUrl,
@@ -82,9 +103,33 @@ public class DbExecutorClient {
       Duration sqlTimeout,
       Duration probeTimeout,
       Duration queryTimeout) {
+    this(
+        webClientBuilder,
+        baseUrl,
+        internalToken,
+        sqlTimeout,
+        probeTimeout,
+        queryTimeout,
+        Duration.ofSeconds(DEFAULT_PRE_STATEMENT_TIMEOUT_SECONDS));
+  }
+
+  /** 선행 상한까지 바꿔 끼우는 생성자 — 선행 문장 대기 테스트가 1800초를 기다리지 않게 한다. */
+  DbExecutorClient(
+      WebClient.Builder webClientBuilder,
+      String baseUrl,
+      String internalToken,
+      Duration sqlTimeout,
+      Duration probeTimeout,
+      Duration queryTimeout,
+      Duration preStatementTimeout) {
+    if (preStatementTimeout.isNegative() || preStatementTimeout.isZero()) {
+      throw new IllegalArgumentException(
+          "app.db-executor.pre-statement-timeout-seconds 는 1 이상이어야 합니다: " + preStatementTimeout);
+    }
     this.sqlTimeout = sqlTimeout;
     this.probeTimeout = probeTimeout;
     this.queryTimeout = queryTimeout;
+    this.preStatementTimeout = preStatementTimeout;
     if (baseUrl == null || baseUrl.isBlank()) {
       this.webClient = null;
       return;
@@ -97,7 +142,8 @@ public class DbExecutorClient {
   }
 
   /**
-   * 본 문장을 선행 문장과 같은 트랜잭션으로 실행한다. POST /execute/sql, 응답 대기 60초.
+   * 본 문장을 선행 문장과 같은 트랜잭션으로 실행한다. POST /execute/sql, 응답 대기 60초(선행 문장이 있으면 + 선행 상한 — {@link
+   * #sqlWait(List)}).
    *
    * <p>선행 문장은 출력 비우기({@code DELETE FROM "S"."T"}) 뿐이며 실행기가 형식을 다시 검사하고, 그 대상 테이블을 먼저 잠근다(같은 출력에
    * REPLACE 두 실행이 겹쳐 행이 중복되는 #731 방지).
@@ -111,13 +157,15 @@ public class DbExecutorClient {
     Map<String, Object> request = new LinkedHashMap<>();
     request.put("query", query);
     request.put("preStatements", preStatements == null ? List.of() : preStatements);
-    return post("/execute/sql", withTenant(request), SqlExecuteResult.class, sqlTimeout);
+    return post(
+        "/execute/sql", withTenant(request), SqlExecuteResult.class, sqlWait(preStatements));
   }
 
   /**
    * {@link #executeSql(String, List)} 에 요청별 시간 제한을 더한 판 — 스테이징에서 출력 테이블로 옮기는 대량 {@code INSERT …
-   * SELECT} 용이다. 실행기는 {@code timeout_seconds} 를 문장 제한이자 전체 기한으로 쓰고(상한 1800초), 이 클라이언트는 그보다 5초 더
-   * 기다린다 — 실행기가 시간 초과를 정상 실패 응답({@code success=false})으로 돌려줄 틈을 주기 위해서다.
+   * SELECT} 용이다. 실행기는 {@code timeout_seconds} 를 본문의 문장 제한이자 전체 기한으로 쓰고(상한 1800초), 이 클라이언트는 그보다 5초 더
+   * 기다린다 — 실행기가 시간 초과를 정상 실패 응답({@code success=false})으로 돌려줄 틈을 주기 위해서다. 선행 문장이 있으면 선행 상한만큼 더
+   * 기다린다({@link #sqlWait(List, int)}).
    *
    * @param timeoutSeconds 1 이상. 0 이하면 실행기가 거부하므로 호출 전에 막는다
    */
@@ -131,7 +179,32 @@ public class DbExecutorClient {
         "/execute/sql",
         withTenant(request),
         SqlExecuteResult.class,
-        Duration.ofSeconds(timeoutSeconds + RESPONSE_GRACE_SECONDS));
+        sqlWait(preStatements, timeoutSeconds));
+  }
+
+  /**
+   * {@code /execute/sql} 기본 요청의 HTTP 대기: 60초, 선행 문장이 있으면 + 선행 상한.
+   *
+   * <p>왜(스펙 §6, WD-236): db-executor 는 사용자 시간 제한을 본문에만 걸고 본문 시작부터 잰다. 선행 문장(출력 잠금·비우기 DELETE)은 별도
+   * 상한(도착부터)을 받으므로, 실행기가 끝나는 최악 시점은 「선행 상한 + 본문 기한」이다. 대기를 그만큼 늘리지 않으면 큰 출력을 비우는 동안 api 가 먼저 포기해
+   * 단계를 실패로 적은 뒤 실행기가 커밋할 수 있다.
+   */
+  Duration sqlWait(List<String> preStatements) {
+    return plusPreStatementTimeout(sqlTimeout, preStatements);
+  }
+
+  /**
+   * {@code timeout_seconds} 요청의 HTTP 대기: {@code t + 5}초, 선행 문장이 있으면 + 선행 상한({@link #sqlWait(List)}
+   * 와 같은 이유).
+   */
+  Duration sqlWait(List<String> preStatements, int timeoutSeconds) {
+    return plusPreStatementTimeout(
+        Duration.ofSeconds(timeoutSeconds + RESPONSE_GRACE_SECONDS), preStatements);
+  }
+
+  /** 선행 문장이 하나라도 있으면 선행 상한을 더한다(null·빈 목록은 그대로). */
+  private Duration plusPreStatementTimeout(Duration base, List<String> preStatements) {
+    return preStatements == null || preStatements.isEmpty() ? base : base.plus(preStatementTimeout);
   }
 
   /** 시간 제한은 1 이상이어야 한다(실행기가 0 이하를 거부하므로 네트워크로 보내기 전에 막는다). */

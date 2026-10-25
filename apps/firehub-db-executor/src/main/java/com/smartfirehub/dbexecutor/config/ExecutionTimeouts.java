@@ -32,17 +32,42 @@ public record ExecutionTimeouts(
   }
 
   /**
-   * @param statementTimeoutSeconds 문장 하나의 {@code setQueryTimeout}(기본 50초)
-   * @param totalTimeoutSeconds 요청 전체 제한(기본 55초) — 넘으면 실행 중 문장을 cancel 하고 ROLLBACK
+   * {@code /execute/sql} 시간 제한(스펙 §6, WD-236).
+   *
+   * <p>사용자 본문 제한(문장·전체)은 <b>본문에만</b> 건다. REPLACE 의 선행 문장(출력 잠금·비우기 DELETE)은 기존 출력 행 수에 비례해 오래 걸리므로
+   * 본문 시간을 깎지 않게 별도 상한({@code preStatementTimeoutSeconds})을 받는다.
+   *
+   * @param statementTimeoutSeconds 본문 문장 하나의 {@code setQueryTimeout}(기본 50초)
+   * @param totalTimeoutSeconds 본문 전체 제한(기본 55초) — 넘으면 실행 중 문장을 cancel 하고 ROLLBACK. 선행 문장이 없으면 요청
+   *     도착부터, 있으면 본문 시작부터 잰다
+   * @param preStatementTimeoutSeconds 선행 문장의 문장마다·합계 상한(기본 1800초, 적재 상한과 같은 값) — 요청 도착부터 잰다
    */
   public record Sql(
       @DefaultValue("50") int statementTimeoutSeconds,
-      @DefaultValue("55") int totalTimeoutSeconds) {
+      @DefaultValue("55") int totalTimeoutSeconds,
+      @DefaultValue("1800") int preStatementTimeoutSeconds) {
 
     public Sql {
       if (statementTimeoutSeconds <= 0 || totalTimeoutSeconds <= 0) {
         throw new IllegalStateException("app.sql 시간 제한은 1초 이상이어야 합니다.");
       }
+      if (preStatementTimeoutSeconds <= 0) {
+        throw new IllegalStateException("app.sql.pre-statement-timeout-seconds 는 1초 이상이어야 합니다.");
+      }
+    }
+
+    /**
+     * 컨트롤러가 요청 도착 시점에 잡는 기한(초). 선행 문장이 없으면 본문 전체 기한 그대로(기존 동작 — 기술자 조회·대여·본문이 모두 그 안), 있으면 {@code
+     * 선행 상한 + 본문 전체 기한} 이다. 실행기({@code SqlRunner})는 이 기한의 남은 시간이 본문 몫({@code bodySeconds}) 아래로 떨어지면
+     * 선행 상한을 넘긴 것으로 보아 본문을 시작하지 않는다 — 그래서 본문은 언제나 이 기한 안에서 끝나고, api 의 HTTP 대기({@code 본문 대기 + 선행
+     * 상한})를 넘겨 커밋하는 일이 없다. 컨트롤러와 테스트가 같은 계산을 쓰도록 여기 한 곳에 둔다.
+     *
+     * @param bodySeconds 본문 전체 기한(요청의 {@code timeout_seconds} 를 자른 값, 없으면 {@link
+     *     #totalTimeoutSeconds})
+     * @param hasPreStatements 선행 문장이 하나라도 있는지
+     */
+    public int requestSeconds(int bodySeconds, boolean hasPreStatements) {
+      return hasPreStatements ? preStatementTimeoutSeconds + bodySeconds : bodySeconds;
     }
   }
 

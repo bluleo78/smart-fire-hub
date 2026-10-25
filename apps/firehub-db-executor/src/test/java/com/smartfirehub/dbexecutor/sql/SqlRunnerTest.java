@@ -1,7 +1,9 @@
 package com.smartfirehub.dbexecutor.sql;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -12,6 +14,8 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import com.smartfirehub.dbexecutor.LogCapture;
 import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
+import com.smartfirehub.dbexecutor.web.ExecuteController;
+import com.smartfirehub.dbexecutor.web.dto.SqlExecuteRequest;
 import com.smartfirehub.dbexecutor.web.dto.SqlExecuteResponse;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
@@ -19,6 +23,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.SQLTransientConnectionException;
 import java.sql.Types;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -41,20 +46,48 @@ class SqlRunnerTest {
   private SqlRunner runner(int statementSeconds, int totalSeconds) {
     return new SqlRunner(
         db.pools,
-        new ExecutionTimeouts(
-            new ExecutionTimeouts.Sql(statementSeconds, totalSeconds),
-            new ExecutionTimeouts.Probe(30),
-            new ExecutionTimeouts.Query(30)),
+        timeouts(new ExecutionTimeouts.Sql(statementSeconds, totalSeconds, 1800)),
         descriptors);
   }
 
-  /** 컨트롤러처럼 지금부터 전체 기한({@code totalSeconds})을 잡아 실행한다. */
+  private static ExecutionTimeouts timeouts(ExecutionTimeouts.Sql sql) {
+    return new ExecutionTimeouts(
+        sql, new ExecutionTimeouts.Probe(30), new ExecutionTimeouts.Query(30));
+  }
+
+  /**
+   * 컨트롤러처럼 지금부터 요청 기한을 잡아 실행한다 — 선행 문장이 있으면 {@code 선행 상한(기본 1800) + 본문 전체 기한}, 없으면 본문 전체 기한(컨트롤러와
+   * 같은 계산 {@link ExecutionTimeouts.Sql#requestSeconds}).
+   */
   private SqlExecuteResponse run(
       int statementSeconds, int totalSeconds, String query, List<String> preStatements) {
-    try (Deadline deadline = new Deadline(totalSeconds)) {
+    ExecutionTimeouts.Sql sql = new ExecutionTimeouts.Sql(statementSeconds, totalSeconds, 1800);
+    boolean hasPre = preStatements != null && !preStatements.isEmpty();
+    try (Deadline deadline = new Deadline(sql.requestSeconds(totalSeconds, hasPre))) {
       return runner(statementSeconds, totalSeconds)
           .run(FakeJdbc.DESCRIPTOR, query, preStatements, deadline);
     }
+  }
+
+  /**
+   * HTTP 만 뺀 실제 경로(컨트롤러 → 실제 SqlRunner → 모의 JDBC)로 실행한다 — 요청 기한은 컨트롤러가 도착 시점에 잡는다(WD-236 기한 분리는
+   * 컨트롤러 기한과 실행기 기한이 함께 만든다).
+   */
+  private SqlExecuteResponse viaController(
+      ExecutionTimeouts.Sql sql, String query, List<String> preStatements) {
+    when(descriptors.get(eq(5L), any(Duration.class))).thenReturn(FakeJdbc.DESCRIPTOR);
+    ExecutionTimeouts t = timeouts(sql);
+    ExecuteController controller =
+        new ExecuteController(
+            descriptors,
+            new SqlRunner(db.pools, t, descriptors),
+            null,
+            null,
+            null,
+            null,
+            t,
+            new com.fasterxml.jackson.databind.ObjectMapper());
+    return controller.executeSql(new SqlExecuteRequest(5L, query, preStatements));
   }
 
   @Test
@@ -69,9 +102,10 @@ class SqlRunnerTest {
     assertThat(res.error()).isNull();
     assertThat(res.dbError()).isNull();
     assertThat(res.executionLog()).isNotBlank();
-    // 문장마다 50초 제한(첫 문장은 전체 남은 시간 55초보다 짧으므로 정확히 50).
+    // 선행 LOCK·DELETE 는 선행 상한(1800, 남은 몫 올림), 본문은 본문 문장 제한 50초(WD-236 — 본문 시작부터 잰다).
     assertThat(db.queryTimeouts).hasSize(3);
-    assertThat(db.queryTimeouts.get(0)).isEqualTo(50);
+    assertThat(db.queryTimeouts.subList(0, 2)).allMatch(t -> t >= 1799 && t <= 1800);
+    assertThat(db.queryTimeouts.get(2)).isEqualTo(50);
   }
 
   @Test
@@ -358,17 +392,177 @@ class SqlRunnerTest {
     assertThat(res.dbError().message()).doesNotContain("pw-secret");
   }
 
-  /** 요청별 timeout_seconds: 전체 기한·문장 제한이 그 값이고, 시간 초과 문구도 그 값을 쓴다. */
+  /** 요청별 timeout_seconds: 본문 전체 기한·문장 제한이 그 값이고, 시간 초과 문구도 그 값을 쓴다. 선행 문장은 선행 상한을 쓴다. */
   @Test
   void requestedSeconds_overridesStatementAndTotalLimits() {
-    try (Deadline deadline = new Deadline(120)) {
+    // 컨트롤러가 잡는 기한: 선행 상한(1800) + 요청값(120).
+    try (Deadline deadline =
+        new Deadline(new ExecutionTimeouts.Sql(50, 55, 1800).requestSeconds(120, true))) {
       SqlExecuteResponse res =
           runner(50, 55).run(FakeJdbc.DESCRIPTOR, INSERT, List.of(DELETE), deadline, 120);
 
       assertThat(res.success()).isTrue();
-      // 선행 LOCK·DELETE 와 본문 모두 50초가 아니라 요청 제한(120, 남은 시간 올림)을 쓴다.
-      assertThat(db.queryTimeouts).hasSize(3).allMatch(t -> t >= 119 && t <= 120);
+      // 선행 LOCK·DELETE 는 선행 상한(1800, 남은 몫 올림), 본문은 50초가 아니라 요청 제한(120)을 쓴다(WD-236).
+      assertThat(db.queryTimeouts).hasSize(3);
+      assertThat(db.queryTimeouts.subList(0, 2)).allMatch(t -> t >= 1799 && t <= 1800);
+      assertThat(db.queryTimeouts.get(2)).isEqualTo(120);
     }
+  }
+
+  // ── WD-236: 선행 문장은 별도 상한, 사용자 시간 제한은 본문에만(본문 시작부터) ──
+
+  /** 선행 문장이 본문 전체 기한(1초)보다 오래 걸려도(선행 상한 5초 안) 본문은 자기 기한을 온전히 받아 성공하고 커밋된다. */
+  @Test
+  void preStatementsSlow_bodyStillGetsFullDeadline() {
+    db.handler =
+        sql -> {
+          if (sql.startsWith("DELETE")) {
+            Thread.sleep(1_300); // 기존 출력이 많아 비우기가 본문 기한(1초)보다 오래 걸린다.
+          } else if (sql.startsWith("INSERT")) {
+            Thread.sleep(300);
+          }
+          return false;
+        };
+
+    SqlExecuteResponse res =
+        viaController(new ExecutionTimeouts.Sql(50, 1, 5), INSERT, List.of(DELETE));
+
+    assertThat(res.success()).as(res.error()).isTrue();
+    assertThat(db.events).containsExactly(LOCK, DELETE, INSERT, "COMMIT");
+    // 본문 문장 제한은 남은 요청 기한이 아니라 본문 기한(1초)이다.
+    assertThat(db.queryTimeouts.get(2)).isEqualTo(1);
+  }
+
+  /** 선행 문장이 선행 상한(1초)을 넘기면 고정 문구로 실패하고 롤백하며 본문은 실행하지 않는다. */
+  @Test
+  void preStatementsExceedPreCap_failsWithPreMessageAndRollsBack() {
+    db.handler =
+        sql -> {
+          if (sql.startsWith("DELETE")) {
+            Thread.sleep(1_300); // 취소에 반응하지 않는 드라이버처럼 선행 상한(1초)을 넘겨 정상 종료한다.
+          }
+          return false;
+        };
+
+    SqlExecuteResponse res =
+        viaController(new ExecutionTimeouts.Sql(50, 5, 1), INSERT, List.of(DELETE));
+
+    assertThat(res.success()).isFalse();
+    assertThat(res.error()).isEqualTo("기존 출력 정리(선행 문장)가 1초 안에 끝나지 않아 취소했습니다.");
+    assertThat(res.dbError()).isNull();
+    assertThat(db.events).containsExactly(LOCK, DELETE, "ROLLBACK");
+  }
+
+  /**
+   * 멈춘 선행 문장은 선행 상한 시점에 문장 제한({@code setQueryTimeout})으로 끝나도록 남은 선행 몫을 문장 제한으로 건다. 드라이버가 그 제한(또는 요청
+   * 기한 cancel)으로 오류를 던지면 DB 오류가 아니라 선행 상한 초과 문구로 돌려준다.
+   */
+  @Test
+  void hangingPreStatement_isCancelledAndReportedAsPreTimeout() {
+    db.handler =
+        sql -> {
+          if (sql.startsWith("DELETE")) {
+            // 모의 드라이버는 setQueryTimeout 을 집행하지 않는다 — 요청 기한(선행 1 + 본문 1 = 2초)의 cancel 을 기다린다.
+            if (!db.cancelled.await(10, TimeUnit.SECONDS)) {
+              throw new AssertionError("cancel 이 호출되지 않았다");
+            }
+            throw new SQLException("statement cancelled", "72000", -1013);
+          }
+          return false;
+        };
+
+    SqlExecuteResponse res =
+        viaController(new ExecutionTimeouts.Sql(50, 1, 1), INSERT, List.of(DELETE));
+
+    assertThat(res.success()).isFalse();
+    assertThat(res.error()).isEqualTo("기존 출력 정리(선행 문장)가 1초 안에 끝나지 않아 취소했습니다.");
+    assertThat(res.dbError()).isNull();
+    assertThat(db.events).contains("CANCEL").endsWith("ROLLBACK").doesNotContain(INSERT, "COMMIT");
+    // 선행 문장의 문장 제한은 남은 선행 몫(요청 기한 - 본문 몫, 올림)이라 1초다 — 실제 드라이버는 선행 상한 시점에 스스로 끝낸다.
+    assertThat(db.queryTimeouts.subList(0, 2)).allMatch(t -> t == 1);
+  }
+
+  /** 본문이 본문 기한을 넘기면 지금처럼 실행 중 문장을 취소하고 롤백한다(회귀). */
+  @Test
+  void bodyExceedsDeadline_cancelsAndRollsBack() {
+    db.handler =
+        sql -> {
+          if (sql.startsWith("INSERT")) {
+            if (!db.cancelled.await(10, TimeUnit.SECONDS)) {
+              throw new AssertionError("cancel 이 호출되지 않았다");
+            }
+            throw new SQLException("statement cancelled", "72000", -1013);
+          }
+          return false;
+        };
+
+    long start = System.nanoTime();
+    SqlExecuteResponse res =
+        viaController(new ExecutionTimeouts.Sql(50, 1, 5), INSERT, List.of(DELETE));
+    long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+    assertThat(res.success()).isFalse();
+    assertThat(res.error()).isEqualTo("실행 시간이 1초를 넘어 취소했습니다.");
+    assertThat(res.dbError()).isNull();
+    assertThat(db.events).contains(INSERT, "CANCEL").endsWith("ROLLBACK").doesNotContain("COMMIT");
+    // 요청 기한(선행 5 + 본문 1 = 6초)이 아니라 본문 기한(본문 시작부터 1초)에 취소된다.
+    assertThat(elapsedMs).isLessThan(3_000);
+  }
+
+  /** 선행 문장이 없으면 기존 50/55초 동작 그대로 — 요청 도착부터 본문 전체 기한, 문장 제한 50초(선행 상한을 더하지 않는다). */
+  @Test
+  void noPreStatements_unchanged() {
+    SqlExecuteResponse ok = viaController(new ExecutionTimeouts.Sql(50, 55, 5), INSERT, List.of());
+    assertThat(ok.success()).isTrue();
+    assertThat(db.queryTimeouts).containsExactly(50);
+    assertThat(db.events).containsExactly(INSERT, "COMMIT");
+
+    db.events.clear();
+    db.handler =
+        sql -> {
+          if (sql.startsWith("INSERT")) {
+            if (!db.cancelled.await(10, TimeUnit.SECONDS)) {
+              throw new AssertionError("cancel 이 호출되지 않았다");
+            }
+            throw new SQLException("statement cancelled", "72000", -1013);
+          }
+          return false;
+        };
+    long start = System.nanoTime();
+    SqlExecuteResponse res = viaController(new ExecutionTimeouts.Sql(50, 1, 5), INSERT, List.of());
+    long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+    assertThat(res.success()).isFalse();
+    assertThat(res.error()).isEqualTo("실행 시간이 1초를 넘어 취소했습니다.");
+    assertThat(db.events).endsWith("ROLLBACK").doesNotContain("COMMIT");
+    // 선행 상한(5초)을 더하지 않은 도착 기한 1초에 취소된다.
+    assertThat(elapsedMs).isLessThan(3_000);
+  }
+
+  /** 커밋 직전 기한 검사는 본문 기한 기준이다 — 선행이 본문 기한보다 길었어도 본문이 자기 기한 안에 끝났으면 커밋한다. */
+  @Test
+  void commitCheck_usesBodyDeadline_notArrival() {
+    db.handler =
+        sql -> {
+          if (sql.startsWith("DELETE")) {
+            Thread.sleep(2_500);
+          } else if (sql.startsWith("INSERT")) {
+            Thread.sleep(200); // 도착부터 2.7초 — 도착 기준 본문 기한(2초)이면 커밋 직전에 지났다. 본문만으론 0.2초라 여유가 1.8초다.
+          }
+          return false;
+        };
+
+    SqlExecuteResponse res =
+        viaController(new ExecutionTimeouts.Sql(50, 2, 5), INSERT, List.of(DELETE));
+
+    assertThat(res.success()).as(res.error()).isTrue();
+    assertThat(db.events).endsWith("COMMIT").doesNotContain("ROLLBACK");
+  }
+
+  @Test
+  void preTimeoutMessage_isExactKoreanString() {
+    assertThat(SqlRunner.preTimeoutMessage(1800))
+        .isEqualTo("기존 출력 정리(선행 문장)가 1800초 안에 끝나지 않아 취소했습니다.");
   }
 
   @Test

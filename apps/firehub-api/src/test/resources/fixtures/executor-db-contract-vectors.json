@@ -53,7 +53,7 @@
         "error",
         "db_error"
       ],
-      "notes": "params 는 db-executor 가 받기만 하고 무시한다(Tibero 문장은 api 가 값을 인라인한다). 알 수 없는 필드는 무시. timeout_seconds(선택)는 요청별 시간 제한(초)이다: 없으면 기존 제한, 0 이하는 거부한다. db-executor 는 min(요청값, app.load.timeout-seconds) 로 전체 기한·문장 제한을 잡고, Python 실행기는 SET LOCAL statement_timeout 으로 적용한다. 차이(의도됨): Python 실행기에서는 문장 단위 제한(PG statement_timeout 은 문장마다 적용), db-executor 는 요청 전체 기한이다.",
+      "notes": "params 는 db-executor 가 받기만 하고 무시한다(Tibero 문장은 api 가 값을 인라인한다). 알 수 없는 필드는 무시. timeout_seconds(선택)는 요청별 시간 제한(초)이다: 없으면 기존 제한, 0 이하는 거부한다. db-executor 는 min(요청값, app.load.timeout-seconds) 로 본문의 전체 기한·문장 제한을 잡고, Python 실행기는 SET LOCAL statement_timeout 으로 적용한다. 두 실행기 모두 timeout_seconds(또는 기본 사용자 제한)는 본문에만 적용한다(본문 시작부터). 선행 문장은 별도 상한(db-executor app.sql.pre-statement-timeout-seconds, Python 실행기는 제한 없음).",
       "examples": [
         {
           "name": "본문만",
@@ -90,6 +90,18 @@
           "request": {
             "tenantId": 1,
             "query": "INSERT INTO t SELECT 1 FROM DUAL",
+            "timeout_seconds": 120
+          },
+          "expectSuccess": true
+        },
+        {
+          "name": "선행 문장 + timeout_seconds",
+          "request": {
+            "tenantId": 1,
+            "query": "INSERT INTO t SELECT 1 FROM DUAL",
+            "preStatements": [
+              "DELETE FROM \"data\".\"t\""
+            ],
             "timeout_seconds": 120
           },
           "expectSuccess": true

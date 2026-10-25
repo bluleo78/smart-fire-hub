@@ -42,11 +42,6 @@ def execute_sql(
 
     try:
         with conn.cursor() as cursor:
-            if timeout_seconds is not None:
-                # 요청별 시간 제한(WD-77): 이 트랜잭션에만 걸리는 statement_timeout(밀리초). SET 은 값을 바인딩하지 못하므로
-                # 검증된 정수(요청 스키마가 1 이상 정수만 받는다)를 int() 로 한 번 더 고정해 문장에 넣는다. LOCAL 이라 커밋·롤백
-                # 때 풀려 풀에 반납된 연결로 새지 않는다. 없으면 이 줄을 건너뛰어 기존 동작과 같다.
-                cursor.execute(f"SET LOCAL statement_timeout = {int(timeout_seconds) * 1000}")
             # 선행 문장(예: 출력 비우기 DELETE)과 본 쿼리를 같은 트랜잭션에서 실행한다.
             # 본 쿼리가 실패하면 아래 except 에서 rollback 하므로 선행 문장도 함께 취소된다 —
             # 이것이 "비우기와 쓰기를 원자적으로 만든다"는 이번 기능의 핵심이다.
@@ -61,6 +56,12 @@ def execute_sql(
                 # 키·문장은 API 의 SqlScriptExecutor.OUTPUT_LOCK_SQL 과 같아야 한다.
                 cursor.execute(OUTPUT_LOCK_SQL, (output_lock_key(stmt),))
                 cursor.execute(stmt)
+            if timeout_seconds is not None:
+                # 요청별 시간 제한(WD-77, WD-236): 이 트랜잭션에만 걸리는 statement_timeout(밀리초). 선행 문장(잠금·비우기)은
+                # 사용자 제한을 받지 않고 본문만 받는다 — db-executor 와 같은 의미다(스펙 §6.2). 그래서 선행 문장 루프 뒤,
+                # 본문 직전에 건다. SET 은 값을 바인딩하지 못하므로 검증된 정수(요청 스키마가 1 이상 정수만 받는다)를 int() 로
+                # 한 번 더 고정해 문장에 넣는다. LOCAL 이라 커밋·롤백 때 풀려 풀에 반납된 연결로 새지 않는다. 없으면 건너뛴다.
+                cursor.execute(f"SET LOCAL statement_timeout = {int(timeout_seconds) * 1000}")
             cursor.execute(query)
             if is_select:
                 columns = [desc[0] for desc in cursor.description] if cursor.description else []

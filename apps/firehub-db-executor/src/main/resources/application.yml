@@ -34,9 +34,13 @@ app:
     read-only-max-size: 2
     slot-max-pools: 8
   # 시간 제한(스펙 §4.3-4) — api 호출 제한(/execute/sql 60초, /execute/probe 35초)보다 짧아야 한다.
+  # sql 의 문장·전체 제한은 사용자 본문에만 건다. REPLACE 선행 문장(출력 잠금·비우기 DELETE)은 기존 출력 행 수에 비례해 오래 걸리므로
+  # 별도 상한(pre-statement-timeout-seconds, 요청 도착부터·문장마다)을 받는다 — api 의 app.db-executor.pre-statement-timeout-seconds 와
+  # 같은 값이어야 한다(환경변수 DB_EXECUTOR_PRE_STATEMENT_TIMEOUT_SECONDS 를 api 와 공유한다; api 가 선행 문장이 있는 요청을 이만큼 더 기다린다, 스펙 §6).
   sql:
     statement-timeout-seconds: 50
     total-timeout-seconds: 55
+    pre-statement-timeout-seconds: ${DB_EXECUTOR_PRE_STATEMENT_TIMEOUT_SECONDS:1800}
   probe:
     timeout-seconds: 30
   query:

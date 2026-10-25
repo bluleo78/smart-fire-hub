@@ -350,6 +350,76 @@ class DbExecutorClientTest {
                     """)));
   }
 
+  // ── WD-236: 선행 문장이 있으면 HTTP 대기 = 지금 값 + 선행 상한(app.db-executor.pre-statement-timeout-seconds) ──
+
+  /** 기본 경로: 선행 문장이 없으면 60초, 있으면 60 + 1800초(실행기의 선행 상한만큼 더 기다린다). */
+  @Test
+  void sqlWait_addsPreStatementTimeoutOnlyWhenPreStatementsPresent() {
+    DbExecutorClient client =
+        new DbExecutorClient(WebClient.builder(), "http://localhost:1", "test-token", 1800);
+
+    assertThat(client.sqlWait(List.of())).isEqualTo(Duration.ofSeconds(60));
+    assertThat(client.sqlWait(null)).isEqualTo(Duration.ofSeconds(60));
+    assertThat(client.sqlWait(List.of("DELETE FROM \"S\".\"T\"")))
+        .isEqualTo(Duration.ofSeconds(60 + 1800));
+  }
+
+  /** timeout_seconds 판: t + 5초, 선행 문장이 있으면 t + 5 + 1800초(옮기기 경로는 1800 + 5 + 1800). */
+  @Test
+  void sqlWait_withTimeout_isTimeoutPlusGracePlusPreStatementTimeout() {
+    DbExecutorClient client =
+        new DbExecutorClient(WebClient.builder(), "http://localhost:1", "test-token", 1800);
+
+    assertThat(client.sqlWait(List.of(), 120)).isEqualTo(Duration.ofSeconds(125));
+    assertThat(client.sqlWait(null, 120)).isEqualTo(Duration.ofSeconds(125));
+    assertThat(client.sqlWait(List.of("DELETE FROM \"S\".\"T\""), 120))
+        .isEqualTo(Duration.ofSeconds(120 + 5 + 1800));
+    assertThat(client.sqlWait(List.of("DELETE FROM \"S\".\"T\""), 1800))
+        .isEqualTo(Duration.ofSeconds(1800 + 5 + 1800));
+  }
+
+  /** 선행 상한은 설정값을 따른다(db-executor app.sql.pre-statement-timeout-seconds 와 같은 값으로 둔다). */
+  @Test
+  void sqlWait_usesConfiguredPreStatementTimeout() {
+    DbExecutorClient client =
+        new DbExecutorClient(WebClient.builder(), "http://localhost:1", "test-token", 600);
+
+    assertThat(client.sqlWait(List.of("DELETE FROM \"S\".\"T\"")))
+        .isEqualTo(Duration.ofSeconds(660));
+  }
+
+  /** 실제 대기: 선행 문장이 있으면 본문 대기(300ms)를 넘긴 응답도 선행 상한(3초) 안이면 받는다. 없으면 지금처럼 연결 실패다. */
+  @Test
+  void executeSql_withPreStatements_waitsLongerThanBodyWait() {
+    wireMock.stubFor(
+        post(urlEqualTo("/execute/sql"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withFixedDelay(1000)
+                    .withBody("{\"success\": true, \"row_count\": 1}")));
+    Duration shortWait = Duration.ofMillis(300);
+    DbExecutorClient client =
+        new DbExecutorClient(
+            WebClient.builder(),
+            "http://localhost:" + wireMock.port(),
+            "test-token",
+            shortWait,
+            shortWait,
+            shortWait,
+            Duration.ofSeconds(3));
+
+    assertThat(
+            client
+                .executeSql("INSERT INTO x SELECT 1 FROM dual", List.of("DELETE FROM \"S\".\"T\""))
+                .success())
+        .isTrue();
+    assertThatThrownBy(() -> client.executeSql("INSERT INTO x SELECT 1 FROM dual", List.of()))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage(DbExecutorClient.CONNECT_FAILURE_MESSAGE);
+  }
+
   @Test
   void executeSql_withNonPositiveTimeout_rejectedBeforeSending() {
     assertThatThrownBy(() -> client().executeSql("SELECT 1", List.of(), 0))

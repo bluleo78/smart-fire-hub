@@ -128,7 +128,7 @@ class TiberoLiveSqlTest {
     roPools =
         new TenantPools(new HikariPoolFactory(2, StoreDescriptor::ro), StoreDescriptor::ro, 8);
     account.closeBeforeDrop(roPools::closeAll);
-    controller = controller(descriptor, new ExecutionTimeouts.Sql(50, 55));
+    controller = controller(descriptor, new ExecutionTimeouts.Sql(50, 55, 1800));
     rowsPerSecond = calibrate();
     System.out.printf("LIVE calibrate rowsPerSecond=%.0f%n", rowsPerSecond);
   }
@@ -289,7 +289,7 @@ class TiberoLiveSqlTest {
     List<Long> idsBefore = ids();
 
     // 같은 풀을 쓰되 전체 제한만 2초로 줄인 실행기(문장 제한 50초는 그대로 — 전체 기한 감시 경로를 탄다).
-    ExecuteController shortTimeout = controller(descriptor, new ExecutionTimeouts.Sql(50, 2));
+    ExecuteController shortTimeout = controller(descriptor, new ExecutionTimeouts.Sql(50, 2, 1800));
     String slow =
         "SELECT 9 AS id_key, 9 AS amount, 'new' AS name FROM DUAL WHERE ("
             + slowCount(30)
@@ -402,7 +402,8 @@ class TiberoLiveSqlTest {
     seedThreeRowsForRo();
     // 같은 풀을 쓰되 조회 제한만 2초로 줄인 실행기.
     ExecuteController shortTimeout =
-        controller(descriptor, new ExecutionTimeouts.Sql(50, 55), new ExecutionTimeouts.Query(2));
+        controller(
+            descriptor, new ExecutionTimeouts.Sql(50, 55, 1800), new ExecutionTimeouts.Query(2));
     // RO 풀 첫 접속 비용이 2~5초 창에 섞이지 않도록 같은 경로로 먼저 한 번 데운다.
     assertThat(
             LiveQuery.run(

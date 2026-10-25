@@ -46,7 +46,7 @@ class RequestDeadlineTest {
   private ExecuteController controller() {
     ExecutionTimeouts t =
         new ExecutionTimeouts(
-            new ExecutionTimeouts.Sql(50, 2),
+            new ExecutionTimeouts.Sql(50, 2, 1800),
             new ExecutionTimeouts.Probe(2),
             new ExecutionTimeouts.Query(2));
     return new ExecuteController(
@@ -91,8 +91,9 @@ class RequestDeadlineTest {
     blockUntilCancelled("INSERT");
 
     long start = System.nanoTime();
-    SqlExecuteResponse res =
-        controller().executeSql(new SqlExecuteRequest(5L, INSERT, List.of(DELETE)));
+    // 선행 문장 없는 요청 — 도착 기한 하나가 기술자 조회·대여·본문을 덮는 경로다(선행 문장이 있으면 도착 기한이 선행 상한만큼 길고 본문 기한은
+    // 본문 시작부터다 — WD-236, SqlRunnerTest 가 덮는다).
+    SqlExecuteResponse res = controller().executeSql(new SqlExecuteRequest(5L, INSERT, List.of()));
     long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
 
     assertThat(res.success()).isFalse();
@@ -104,12 +105,34 @@ class RequestDeadlineTest {
     assertThat(budget.get()).isLessThanOrEqualTo(Duration.ofSeconds(2)).isPositive();
   }
 
+  /**
+   * 선행 문장이 있으면(WD-236) 도착 기한은 선행 상한(기본 1800) + 본문 기한(2초)이고, 본문 기한은 본문 시작부터다 — 기술자 조회(1.5초)가 본문 시간을
+   * 깎지 않는다. 그래도 커밋하지 않고 본문 기한 문구로 취소·롤백한다.
+   */
+  @Test
+  void withPreStatements_bodyDeadlineStartsAtBody_notArrival() {
+    slowDescriptor(1_500);
+    blockUntilCancelled("INSERT");
+
+    long start = System.nanoTime();
+    SqlExecuteResponse res =
+        controller().executeSql(new SqlExecuteRequest(5L, INSERT, List.of(DELETE)));
+    long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+    assertThat(res.success()).isFalse();
+    assertThat(res.error()).isEqualTo("실행 시간이 2초를 넘어 취소했습니다.");
+    assertThat(db.events).contains("CANCEL").endsWith("ROLLBACK").doesNotContain("COMMIT");
+    // 기술자 조회 1.5초 + 본문 기한 2초 뒤 취소(도착 기한 기준이면 2초 남짓).
+    assertThat(elapsedMs).isGreaterThanOrEqualTo(3_300).isLessThan(6_000);
+    // 기술자 조회에는 도착 기한(선행 상한 + 본문 기한)의 남은 시간을 상한으로 넘긴다.
+    assertThat(budget.get()).isGreaterThan(Duration.ofSeconds(1_800));
+  }
+
   @Test
   void descriptorUsingWholeDeadline_neverBorrowsOrRuns() {
     slowDescriptor(2_300);
 
-    SqlExecuteResponse res =
-        controller().executeSql(new SqlExecuteRequest(5L, INSERT, List.of(DELETE)));
+    SqlExecuteResponse res = controller().executeSql(new SqlExecuteRequest(5L, INSERT, List.of()));
 
     assertThat(res.success()).isFalse();
     assertThat(res.error()).isEqualTo("실행 시간이 2초를 넘어 취소했습니다.");

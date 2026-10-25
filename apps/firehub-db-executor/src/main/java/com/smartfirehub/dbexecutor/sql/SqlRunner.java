@@ -10,6 +10,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -26,9 +27,19 @@ import org.springframework.stereotype.Component;
  *       않는다.
  *   <li>한 트랜잭션(autoCommit=false 풀): 선행 문장마다 {@code LOCK TABLE … IN EXCLUSIVE MODE}(별도 문장) → DELETE,
  *       이어서 본문 → COMMIT. 예외·시간 초과면 ROLLBACK.
- *   <li>시간 제한: 문장마다 {@code setQueryTimeout}(기본 50초), 요청 전체(컨트롤러 도착부터, 기본 55초)가 넘으면 {@link Deadline}
- *       이 실행 중 문장을 cancel. 기한이 이미 지났으면 커넥션을 빌리지 않고, 빌린 뒤에 지났으면 실행하지 않으며, 본문이 끝난 뒤 커밋 직전에 지났으면
- *       ROLLBACK 한다.
+ *   <li>시간 제한: 문장마다 {@code setQueryTimeout}(기본 50초), 본문 전체(기본 55초)가 넘으면 {@link Deadline} 이 실행 중 문장을
+ *       cancel. 기한이 이미 지났으면 커넥션을 빌리지 않고, 빌린 뒤에 지났으면 실행하지 않으며, 본문이 끝난 뒤 커밋 직전에 지났으면 ROLLBACK 한다.
+ *   <li>선행 문장과 본문의 기한 분리(스펙 §6, WD-236): 사용자 시간 제한(기본 50/55초 또는 {@code timeout_seconds})은
+ *       <b>본문에만</b> 건다 — REPLACE 의 비우기 DELETE 는 기존 출력 행 수에 비례해 오래 걸려, 한 기한을 나눠 쓰면 삭제가 본문 시간을 깎아 같은
+ *       본문이 출력이 클수록 실패한다(2웨이브 30만 행 52초 실패). 그래서
+ *       <ul>
+ *         <li>선행 문장이 없으면 기존 그대로: 컨트롤러가 도착 시점에 잡은 본문 전체 기한 하나로 기술자 조회·대여·본문을 덮는다.
+ *         <li>있으면 컨트롤러가 도착 시점 기한을 {@code 선행 상한 + 본문 전체 기한} 으로 잡는다({@link
+ *             ExecutionTimeouts.Sql#requestSeconds}). 선행 문장은 그 기한에서 본문 몫을 뺀 시간(도착부터 선행 상한) 안에서 돌고 —
+ *             넘기면 {@link #preTimeoutMessage} 로 롤백·본문 미실행 — 본문 직전에 새 본문 기한(본문 전체 초)을 잡아 본문과 커밋 직전
+ *             검사를 그 기한으로 한다. 본문은 언제나 도착 기한 안에서 끝나므로 api 의 HTTP 대기({@code 본문 대기 + 선행 상한})를 넘겨 커밋하지
+ *             않는다.
+ *       </ul>
  *   <li>커넥션 대여(로그인) 실패: 그 테넌트의 기술자 캐시를 지우고 실패로 끝낸다 — 비밀번호가 바뀌었으면 다음 요청이 새 기술자로 풀을 다시 만든다(풀 고갈 대기 시간
  *       초과는 지우지 않는다). 대여·기한·실패 처리 뼈대는 {@link LeasedExecution} 이 ProbeRunner 와 함께 쓴다.
  *   <li>rows·columns 는 선행 문장이 없고 첫 키워드가 SELECT·WITH 일 때만 채운다.
@@ -40,6 +51,10 @@ public class SqlRunner {
   static final String EMPTY_QUERY = "실행할 SQL 이 비어 있습니다.";
 
   private final ExecutionTimeouts.Sql limits;
+
+  /** 선행 문장의 문장마다·합계 상한(초, {@code app.sql.pre-statement-timeout-seconds}). */
+  private final int preSeconds;
+
   private final LeasedExecution execution;
 
   public SqlRunner(
@@ -47,12 +62,18 @@ public class SqlRunner {
       ExecutionTimeouts timeouts,
       StoreDescriptorClient descriptors) {
     this.limits = timeouts.sql();
+    this.preSeconds = limits.preStatementTimeoutSeconds();
     this.execution = new LeasedExecution(pools, descriptors);
   }
 
   /** 전체 시간 초과 문구(기본 55초면 「실행 시간이 55초를 넘어 취소했습니다.」). */
   public static String timeoutMessage(int seconds) {
     return "실행 시간이 " + seconds + "초를 넘어 취소했습니다.";
+  }
+
+  /** 선행 문장 상한 초과 문구(기본 1800초면 「기존 출력 정리(선행 문장)가 1800초 안에 끝나지 않아 취소했습니다.」, WD-236). */
+  public static String preTimeoutMessage(int seconds) {
+    return "기존 출력 정리(선행 문장)가 " + seconds + "초 안에 끝나지 않아 취소했습니다.";
   }
 
   /**
@@ -76,7 +97,8 @@ public class SqlRunner {
    * @param d 테넌트 저장소 기술자(스키마·계정)
    * @param query 본문 한 문장
    * @param preStatements 선행 DELETE 목록(없으면 빈 목록 또는 null)
-   * @param deadline 요청 전체 기한(컨트롤러 도착 시점부터). 닫기는 호출자 몫이다.
+   * @param deadline 요청 기한(컨트롤러 도착 시점부터, 선행 문장이 있으면 {@code 선행 상한 + 본문 전체 기한} — {@link
+   *     ExecutionTimeouts.Sql#requestSeconds}). 닫기는 호출자 몫이다.
    */
   public SqlExecuteResponse run(
       StoreDescriptor d, String query, List<String> preStatements, Deadline deadline) {
@@ -87,7 +109,7 @@ public class SqlRunner {
    * {@link #run(StoreDescriptor, String, List, Deadline)} 에 요청별 시간 제한을 더한 판.
    *
    * @param requestedSeconds 요청의 {@code timeout_seconds}(컨트롤러가 {@code app.load.timeout-seconds} 로 자른
-   *     값). 있으면 문장 제한과 시간 초과 문구가 이 값이다(전체 기한은 컨트롤러가 같은 값으로 잡는다). null 이면 기존 50/55초 그대로.
+   *     값). 있으면 본문의 문장 제한·전체 기한과 시간 초과 문구가 이 값이다. null 이면 기존 50/55초 그대로. 선행 문장에는 걸지 않는다.
    */
   public SqlExecuteResponse run(
       StoreDescriptor d,
@@ -113,6 +135,8 @@ public class SqlRunner {
     boolean returnRows = pres.isEmpty() && (first.equals("SELECT") || first.equals("WITH"));
 
     List<String> log = new ArrayList<>();
+    // 어느 기한이 터졌는지 — 선행 상한 초과면 true(시간 초과 문구를 고른다). 한 요청 스레드에서만 쓴다.
+    boolean[] preTimedOut = {false};
     return execution.withLease(
         d,
         deadline,
@@ -132,8 +156,9 @@ public class SqlRunner {
           @Override
           public SqlExecuteResponse timedOut() {
             log.add("시간 초과로 취소하고 롤백함");
-            return SqlExecuteResponse.failure(
-                timeoutMessage(totalSeconds), null, String.join("\n", log));
+            String message =
+                preTimedOut[0] ? preTimeoutMessage(preSeconds) : timeoutMessage(totalSeconds);
+            return SqlExecuteResponse.failure(message, null, String.join("\n", log));
           }
 
           @Override
@@ -150,22 +175,88 @@ public class SqlRunner {
           }
         },
         c -> {
-          for (int i = 0; i < pres.size(); i++) {
-            update(c, deadline, statementSeconds, locks.get(i));
-            int deleted = update(c, deadline, statementSeconds, pres.get(i));
-            log.add("선행 문장 " + (i + 1) + ": 출력 테이블을 잠그고 " + deleted + "행 삭제");
+          if (pres.isEmpty()) {
+            // 선행 문장 없음: 기존 그대로 도착 기한 하나로 본문·커밋 직전 검사를 한다(기술자 조회·대여까지 같은 기한).
+            return bodyAndCommit(c, deadline, statementSeconds, body, returnRows, log);
           }
-          BodyResult out = body(c, deadline, statementSeconds, body, returnRows);
-          log.add("본문 실행: " + out.rowCount + "행 " + (out.query ? "조회" : "반영"));
-          if (deadline.expired()) {
-            // 본문이 끝났어도 기한을 넘겼으면 커밋하지 않는다 — api 는 이미 포기했을 수 있다.
-            throw new Deadline.TimedOut();
+          try {
+            for (int i = 0; i < pres.size(); i++) {
+              update(c, deadline, preStatementSeconds(deadline, totalSeconds), locks.get(i));
+              int deleted =
+                  update(c, deadline, preStatementSeconds(deadline, totalSeconds), pres.get(i));
+              log.add("선행 문장 " + (i + 1) + ": 출력 테이블을 잠그고 " + deleted + "행 삭제");
+            }
+            if (preBudgetExceeded(deadline, totalSeconds)) {
+              // 선행이 (취소에 반응하지 않고) 상한을 넘겨 끝났다 — 본문을 시작하면 도착 기한 뒤에 커밋할 수 있다.
+              throw new Deadline.TimedOut();
+            }
+          } catch (Deadline.TimedOut e) {
+            preTimedOut[0] = true;
+            throw e;
+          } catch (SQLException e) {
+            if (preBudgetExceeded(deadline, totalSeconds)) {
+              // 선행 상한 시점의 문장 제한(setQueryTimeout) 또는 도착 기한 cancel 로 생긴 오류 — 드라이버 문구 대신 고정 문구로 돌려준다.
+              preTimedOut[0] = true;
+              throw new Deadline.TimedOut();
+            }
+            throw e;
           }
-          c.commit();
-          log.add("커밋 완료");
-          return new SqlExecuteResponse(
-              true, out.rows, out.columns, out.rowCount, String.join("\n", log), null, null);
+          // 본문 기한은 본문 시작 시점부터 잰다 — 선행이 오래 걸려도 본문은 자기 기한을 온전히 받는다(스펙 §6).
+          try (Deadline bodyDeadline = new Deadline(totalSeconds)) {
+            try {
+              return bodyAndCommit(c, bodyDeadline, statementSeconds, body, returnRows, log);
+            } catch (SQLException e) {
+              if (bodyDeadline.expired()) {
+                // 본문 기한 cancel 로 생긴 오류다. LeasedExecution 은 도착 기한만 보므로 여기서 시간 초과로 바꾼다.
+                throw new Deadline.TimedOut();
+              }
+              throw e;
+            }
+          }
         });
+  }
+
+  /**
+   * 본문을 실행하고, 그 기한이 아직 남았으면 커밋한다.
+   *
+   * @param bodyDeadline 본문 기한 — 선행 문장이 없으면 도착 기한, 있으면 본문 시작 시점에 잡은 본문 기한. 커밋 직전 검사도 이 기한이다.
+   */
+  private SqlExecuteResponse bodyAndCommit(
+      Connection c,
+      Deadline bodyDeadline,
+      int statementSeconds,
+      String body,
+      boolean returnRows,
+      List<String> log)
+      throws SQLException, Deadline.TimedOut {
+    BodyResult out = body(c, bodyDeadline, statementSeconds, body, returnRows);
+    log.add("본문 실행: " + out.rowCount + "행 " + (out.query ? "조회" : "반영"));
+    if (bodyDeadline.expired()) {
+      // 본문이 끝났어도 기한을 넘겼으면 커밋하지 않는다 — api 는 이미 포기했을 수 있다.
+      throw new Deadline.TimedOut();
+    }
+    c.commit();
+    log.add("커밋 완료");
+    return new SqlExecuteResponse(
+        true, out.rows, out.columns, out.rowCount, String.join("\n", log), null, null);
+  }
+
+  /**
+   * 선행 몫을 다 썼는지: 도착 기한의 남은 시간이 본문 몫({@code bodySeconds}) 아래면 선행 상한(도착부터)을 넘긴 것이다. 이 시점에 본문을 시작하면
+   * 본문이 도착 기한 뒤에 끝나 api 가 포기한 뒤 커밋할 수 있다.
+   */
+  private static boolean preBudgetExceeded(Deadline deadline, int bodySeconds) {
+    return deadline.remaining().compareTo(Duration.ofSeconds(bodySeconds)) < 0;
+  }
+
+  /**
+   * 선행 문장 하나의 {@code setQueryTimeout}(초): 선행 상한과 남은 선행 몫(도착 기한 남은 시간 - 본문 몫, 올림, 최소 1초) 중 작은 값. 도착
+   * 기한의 cancel 은 본문 몫까지 더 늦게 오므로, 멈춘 선행 문장이 선행 상한 시점에 스스로 끝나게 하는 장치다.
+   */
+  private int preStatementSeconds(Deadline deadline, int bodySeconds) {
+    long nanos = deadline.remaining().minusSeconds(bodySeconds).toNanos();
+    long seconds = Math.max(1, (nanos + 999_999_999L) / 1_000_000_000L);
+    return (int) Math.min(preSeconds, seconds);
   }
 
   /** 결과 집합 없는 문장(LOCK·DELETE) 하나를 실행하고 반영 행 수를 돌려준다. */

@@ -44,7 +44,7 @@ class LoadRunnerTest {
     return new LoadRunner(
         db.pools,
         new ExecutionTimeouts(
-            new ExecutionTimeouts.Sql(50, 55),
+            new ExecutionTimeouts.Sql(50, 55, 1800),
             new ExecutionTimeouts.Probe(30),
             new ExecutionTimeouts.Query(30),
             new ExecutionTimeouts.Load(loadSeconds)),

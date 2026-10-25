@@ -17,7 +17,8 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>기한은 <b>요청이 컨트롤러에 도착한 시점</b>부터 잰다({@code ExecuteController} 가 만든다). 기술자 조회·풀 대여·실행이 모두 이 기한
  * 안이어야 api 의 호출 제한(/execute/sql 60초, /execute/probe 35초)보다 먼저 끝난다 — 실행 시작부터 재면 앞 단계 시간만큼 늦어져 api 가
- * 먼저 포기해 단계를 FAILED 로 적은 뒤에 실행기가 커밋할 수 있다.
+ * 먼저 포기해 단계를 FAILED 로 적은 뒤에 실행기가 커밋할 수 있다. 예외: {@code /execute/sql} 에 선행 문장(REPLACE 비우기)이 있으면 도착
+ * 기한은 {@code 선행 상한 + 본문 기한} 이고, {@link SqlRunner} 가 본문 직전에 본문 기한 하나를 따로 잡는다(스펙 §6, WD-236).
  *
  * <p>문장별 {@code setQueryTimeout} 만으로는 선행 문장이 여러 개일 때 합계가 api 호출 제한(60초)을 넘을 수 있어 따로 둔다. 타이머 스레드는 모든
  * 요청이 공유하는 데몬 스레드 하나다(요청마다 스레드를 만들지 않는다).
