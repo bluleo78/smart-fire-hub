@@ -59,6 +59,9 @@ app:
   cors:
     allowed-origins: http://localhost:5173
   pipeline:
+    # 스케줄러가 통합 테스트와 경합하지 않게 간격을 길게 한다(초기 지연도 같은 값) — 테스트는 beat()/sweepTenant() 를 직접 부른다.
+    heartbeat-interval: P1D
+    stale-sweep-interval: P1D
     datasource:
       url: jdbc:postgresql://testcontainers-import-missing.invalid:5432/MISSING_PostgresTestContainer
       password: pipeline_exec_pwd

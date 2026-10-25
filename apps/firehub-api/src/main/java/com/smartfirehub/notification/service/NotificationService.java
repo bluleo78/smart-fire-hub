@@ -49,14 +49,23 @@ public class NotificationService {
     if ("CANCELLED".equals(event.status())) {
       return;
     }
-    boolean failed = "FAILED".equals(event.status());
+    boolean failed = event.interrupted() || "FAILED".equals(event.status());
     String severity = failed ? "WARNING" : "INFO";
     // 사용자 화면에 토스트·알림으로 그대로 보이는 문구라 한국어로 쓴다(WD-97)
     String title = failed ? "파이프라인 실행 실패" : "파이프라인 실행 완료";
     String description =
-        failed
-            ? "파이프라인 실행(#" + event.executionId() + ")이 실패했습니다."
-            : "파이프라인 실행(#" + event.executionId() + ")이 완료되었습니다.";
+        event.interrupted()
+            // WD-230: 정리기가 마감한 중단 실행은 사용자 잘못이 아니라 api 재시작 때문임을 알린다.
+            ? "파이프라인 실행(#" + event.executionId() + ")이 api 재시작으로 중단되었습니다."
+            : failed
+                ? "파이프라인 실행(#" + event.executionId() + ")이 실패했습니다."
+                : "파이프라인 실행(#" + event.executionId() + ")이 완료되었습니다.";
+    Map<String, Object> metadata = new HashMap<>();
+    metadata.put("executionId", event.executionId());
+    metadata.put("status", event.status());
+    if (event.interrupted()) {
+      metadata.put("interrupted", true);
+    }
 
     NotificationEvent notification =
         new NotificationEvent(
@@ -67,7 +76,7 @@ public class NotificationService {
             description,
             "PIPELINE",
             event.pipelineId(),
-            Map.of("executionId", event.executionId(), "status", event.status()),
+            metadata,
             LocalDateTime.now());
 
     registry.broadcast(event.createdBy(), notification);

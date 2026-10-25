@@ -94,6 +94,7 @@ public class PipelineAsyncRunner {
 
   private final PipelineStepRepository stepRepository;
   private final PipelineExecutionRepository executionRepository;
+  private final PipelineExecutionRegistry executionRegistry;
   private final PipelineRepository pipelineRepository;
   private final DataTableService dataTableService;
   private final DataTableRowService dataTableRowService;
@@ -197,6 +198,30 @@ public class PipelineAsyncRunner {
       Map<Long, Long> stepIdToStepExecId,
       Long userId,
       boolean executorEnabled) {
+    try {
+      runExecution(
+          pipelineId,
+          executionId,
+          steps,
+          stepDependencyMap,
+          stepIdToStepExecId,
+          userId,
+          executorEnabled);
+    } finally {
+      // 어떤 경로로 끝나도(정상·실패·취소·마감 경합 패배·예상 밖 예외) 등록부에서 뺀다 — 안 빼면 하트비트가 끝난 실행을 계속 갱신한다(WD-230).
+      executionRegistry.unregister(executionId);
+    }
+  }
+
+  /** {@link #executeAsync} 의 본문 — 등록 해제를 어떤 종료 경로에서도 보장하려고 바깥 메서드가 try/finally 로 감싼다. */
+  private void runExecution(
+      Long pipelineId,
+      Long executionId,
+      List<PipelineStepResponse> steps,
+      Map<Long, List<Long>> stepDependencyMap,
+      Map<Long, Long> stepIdToStepExecId,
+      Long userId,
+      boolean executorEnabled) {
 
     LocalDateTime executionStartedAt = LocalDateTime.now(ZoneOffset.UTC);
     Long pipelineCreatedBy = pipelineRepository.findCreatedByIdById(pipelineId).orElse(null);
@@ -204,7 +229,8 @@ public class PipelineAsyncRunner {
 
     // 협조적 취소 확인(WD-153) — 체크포인트마다 DB 의 취소 요청을 PK 로 읽는다. 여러 API 인스턴스 중 어디서 취소를 받아도 보이고, 실행기에는 인자로
     // 넘겨 페이지·배치·재시도 대기 사이에서도 같은 판정을 쓴다.
-    ExecutionCancelCheck cancel = () -> executionRepository.isCancelRequested(executionId);
+    // WD-230: 취소 요청뿐 아니라 실행이 외부에서 마감된 경우(중단 정리기가 FAILED 로 만듦)에도 다음 체크포인트에서 멈춘다.
+    ExecutionCancelCheck cancel = () -> executionRepository.isStopRequested(executionId);
 
     try {
       // 실행 상태를 RUNNING으로 업데이트. 조건부 쓰기다(끝나지 않은 실행만) — 대기 중에 취소돼 이미 CANCELLED 인 실행을 되살리지 않는다.
@@ -294,8 +320,14 @@ public class PipelineAsyncRunner {
         finalStatus = "COMPLETED"; // 일부 스킵됐지만 실패 없음
       }
 
-      executionRepository.updateExecutionStatus(
-          executionId, finalStatus, null, LocalDateTime.now(ZoneOffset.UTC));
+      boolean won =
+          executionRepository.updateExecutionStatus(
+              executionId, finalStatus, null, LocalDateTime.now(ZoneOffset.UTC));
+      if (!won) {
+        // 마감 경합에서 졌다 — 정리기 등이 먼저 마감했다. 이벤트를 내면 중단된 실행이 정상 완료로 체인·알림을 일으킨다.
+        log.info("Pipeline execution {} 이미 마감된 실행 — 완료 이벤트 생략", executionId);
+        return;
+      }
       log.info("Pipeline execution {} completed with status: {}", executionId, finalStatus);
 
       // 체인 트리거를 위한 완료 이벤트 발행.
@@ -315,8 +347,13 @@ public class PipelineAsyncRunner {
       // 스텝 실행 레코드가 하나도 생성되기 전에 던져진 예외(토폴로지 정렬 실패, DB 오류 등)는
       // 스텝 레벨 error_message로 남길 곳이 없어 원인이 완전히 유실됐다(#517).
       // 최상위 예외 메시지를 execution 레벨 error_message로 보존한다.
-      executionRepository.updateExecutionStatus(
-          executionId, "FAILED", null, LocalDateTime.now(ZoneOffset.UTC), e.getMessage());
+      boolean won =
+          executionRepository.updateExecutionStatus(
+              executionId, "FAILED", null, LocalDateTime.now(ZoneOffset.UTC), e.getMessage());
+      if (!won) {
+        log.info("Pipeline execution {} 이미 마감된 실행 — 완료 이벤트 생략", executionId);
+        return;
+      }
 
       // 실패 이벤트 발행
       applicationEventPublisher.publishEvent(
@@ -325,22 +362,27 @@ public class PipelineAsyncRunner {
   }
 
   /**
-   * 취소된 실행을 마감한다(WD-153) — 아직 시작하지 않은 스텝을 SKIPPED(취소 사유)로, 실행을 CANCELLED 로 바꾼다. 두 쓰기 모두
-   * 조건부라(PENDING 스텝만·끝나지 않은 실행만) 대기 중 취소로 이미 마감된 실행에는 무동작이다.
+   * 취소된 실행을 마감한다(WD-153) — 아직 시작하지 않은 스텝을 SKIPPED(취소 사유)로, 실행을 CANCELLED 로 바꾼다. 두 쓰기는 한 트랜잭션({@code
+   * cancelAndSkipPendingSteps})이고 모두 조건부라(PENDING 스텝만·끝나지 않은 실행만) 대기 중 취소로 이미 마감된 실행에는 무동작이다.
    *
    * <p><b>완료 이벤트를 발행하지 않는다.</b> PIPELINE_CHAIN 트리거는 조건이 ANY 여도 취소된 실행으로는 발화하지 않는다 — 사용자가 멈춘 흐름의 하위
    * 파이프라인이 이어서 돌면 "멈췄다"는 의도와 반대다. 완료 알림도 보내지 않는다(취소한 사람이 화면에서 결과를 이미 본다). 리스너 쪽에도 같은 방어를
    * 둔다(TriggerEventService#matchesCondition·NotificationService).
+   *
+   * <p><b>WD-230</b>: 멈춘 이유가 취소 요청이 아니라 정리기의 외부 마감(FAILED)일 수도 있다. 그때는 CANCELLED 쓰기가 조건부라
+   * 지고(false), 정리기가 이미 닫은 스텝 행을 취소 문구로 덮으면 안 되므로 <b>상태 쓰기가 이긴 경우에만</b> 남은 스텝을 취소 사유로 SKIPPED
+   * 처리한다(쓰기 순서를 상태 → 스텝으로 바꾼 이유). 이 메서드는 어느 경우에도 이벤트를 발행하지 않는다.
    */
   private void finishCancelled(Long executionId) {
-    executionRepository.skipPendingStepsForCancel(executionId);
-    executionRepository.updateExecutionStatus(
-        executionId,
-        "CANCELLED",
-        null,
-        LocalDateTime.now(ZoneOffset.UTC),
-        PipelineExecutionCancelledException.CANCELLED_MESSAGE);
-    log.info("Pipeline execution {} cancelled by user request", executionId);
+    // 상태 쓰기와 남은 스텝 SKIPPED 를 한 트랜잭션으로 묶은 저장소 메서드 — 사이에서 죽어도 스텝이 PENDING 으로 남지 않는다.
+    boolean won =
+        executionRepository.cancelAndSkipPendingSteps(
+            executionId, LocalDateTime.now(ZoneOffset.UTC));
+    if (!won) {
+      log.info("Pipeline execution {} 이미 마감된 실행 — 취소 마감 생략", executionId);
+      return;
+    }
+    log.info("Pipeline execution {} 중지 요청 또는 외부 마감으로 실행을 멈췄습니다", executionId);
   }
 
   /**
@@ -1423,7 +1465,7 @@ public class PipelineAsyncRunner {
       // 이미 이전 결과다. 되돌리기 실패는 로그만 남기고 원래 실행 오류를 그대로 기록한다.
       rollbackTempRebuild(tempRebuild, step, userId);
       if (cancelled != null) {
-        log.info("Step {} cancelled by user request", step.name());
+        log.info("Step {} 중지 요청 또는 외부 마감으로 실행을 멈췄습니다", step.name());
         executionRepository.updateStepExecution(
             stepExecId,
             "CANCELLED",

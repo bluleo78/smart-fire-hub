@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.smartfirehub.audit.service.AuditLogService;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
@@ -16,12 +17,15 @@ import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.task.TaskRejectedException;
 
 /**
  * PipelineExecutionService 단위 테스트.
@@ -34,12 +38,55 @@ class PipelineExecutionServiceTest {
 
   @Mock PipelineStepRepository stepRepository;
   @Mock PipelineExecutionRepository executionRepository;
+  @Mock PipelineExecutionRegistry executionRegistry;
   @Mock PipelineRepository pipelineRepository;
   @Mock PipelineAsyncRunner asyncRunner;
   @Mock AuditLogService auditLogService;
   @Mock UserRepository userRepository;
 
   @InjectMocks PipelineExecutionService service;
+
+  /** 제출 지점이 실행을 등록부에 올릴 때 테넌트를 요구한다(WD-230) — HTTP 스레드가 승계해 둔 컨텍스트를 흉내 낸다. */
+  @BeforeEach
+  void setTenantContext() {
+    TenantContext.set(7L);
+  }
+
+  @AfterEach
+  void clearTenantContext() {
+    TenantContext.clear();
+  }
+
+  @Test
+  void executePipeline_registersExecutionWithTenantBeforeSubmitting() {
+    when(stepRepository.findByPipelineId(1L)).thenReturn(List.of());
+    when(executionRepository.createExecution(1L, 10L, "MANUAL", null)).thenReturn(42L);
+    when(pipelineRepository.findNameById(1L)).thenReturn(Optional.of("P"));
+
+    service.executePipeline(1L, 10L);
+
+    var order = inOrder(executionRegistry, asyncRunner);
+    order.verify(executionRegistry).register(42L, 7L);
+    order
+        .verify(asyncRunner)
+        .executeAsync(eq(1L), eq(42L), anyList(), anyMap(), anyMap(), eq(10L), anyBoolean());
+    verify(executionRegistry, never()).unregister(anyLong());
+  }
+
+  @Test
+  void executePipeline_whenSubmitRejected_unregistersAndRethrows() {
+    when(stepRepository.findByPipelineId(1L)).thenReturn(List.of());
+    when(executionRepository.createExecution(1L, 10L, "MANUAL", null)).thenReturn(42L);
+    doThrow(new TaskRejectedException("pool full"))
+        .when(asyncRunner)
+        .executeAsync(any(), any(), anyList(), anyMap(), anyMap(), any(), anyBoolean());
+
+    assertThatThrownBy(() -> service.executePipeline(1L, 10L))
+        .isInstanceOf(TaskRejectedException.class);
+
+    verify(executionRegistry).register(42L, 7L);
+    verify(executionRegistry).unregister(42L);
+  }
 
   // ------------------------------------------------------------------ //
   // validateDAG tests

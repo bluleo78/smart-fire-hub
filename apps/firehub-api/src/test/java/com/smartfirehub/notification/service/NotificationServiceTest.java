@@ -79,6 +79,28 @@ class NotificationServiceTest extends IntegrationTestBase {
     assertThat(notification.eventType()).isEqualTo("PIPELINE_FAILED");
     assertThat(notification.severity()).isEqualTo("WARNING");
     assertThat(notification.title()).isEqualTo("파이프라인 실행 실패");
+    // 일반 실패 문구·메타는 불변(WD-230 회귀)
+    assertThat(notification.description()).isEqualTo("파이프라인 실행(#200)이 실패했습니다.");
+    assertThat(notification.metadata()).doesNotContainKey("interrupted");
+  }
+
+  /** WD-230: 중단된 실행은 api 재시작 문구와 interrupted 메타를 싣고, 종류는 PIPELINE_FAILED 다. */
+  @Test
+  void onPipelineCompleted_interrupted_broadcastsInterruptedMessage() {
+    PipelineCompletedEvent event = new PipelineCompletedEvent(40L, 400L, "FAILED", 4L, true);
+
+    notificationService.onPipelineCompleted(event);
+
+    ArgumentCaptor<NotificationEvent> captor = forClass(NotificationEvent.class);
+    await()
+        .atMost(Duration.ofSeconds(3))
+        .untilAsserted(() -> verify(registry).broadcast(eq(4L), captor.capture()));
+
+    NotificationEvent notification = captor.getValue();
+    assertThat(notification.eventType()).isEqualTo("PIPELINE_FAILED");
+    assertThat(notification.title()).isEqualTo("파이프라인 실행 실패");
+    assertThat(notification.description()).isEqualTo("파이프라인 실행(#400)이 api 재시작으로 중단되었습니다.");
+    assertThat(notification.metadata()).containsEntry("interrupted", true);
   }
 
   /**

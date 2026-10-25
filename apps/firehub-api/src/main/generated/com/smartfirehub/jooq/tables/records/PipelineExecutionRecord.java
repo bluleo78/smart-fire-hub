@@ -202,6 +202,24 @@ public class PipelineExecutionRecord extends UpdatableRecordImpl<PipelineExecuti
         return (Long) get(12);
     }
 
+    /**
+     * Setter for <code>public.pipeline_execution.heartbeat_at</code>. 마지막 하트비트
+     * 시각(UTC). 실행을 쥔 api 가 주기적으로 갱신하며, 제출 시점·RUNNING 전환 시점에도 채운다. 오래되면 api
+     * 재시작으로 고아가 된 실행으로 보고 중단 처리(WD-230)
+     */
+    public void setHeartbeatAt(LocalDateTime value) {
+        set(13, value);
+    }
+
+    /**
+     * Getter for <code>public.pipeline_execution.heartbeat_at</code>. 마지막 하트비트
+     * 시각(UTC). 실행을 쥔 api 가 주기적으로 갱신하며, 제출 시점·RUNNING 전환 시점에도 채운다. 오래되면 api
+     * 재시작으로 고아가 된 실행으로 보고 중단 처리(WD-230)
+     */
+    public LocalDateTime getHeartbeatAt() {
+        return (LocalDateTime) get(13);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -225,7 +243,7 @@ public class PipelineExecutionRecord extends UpdatableRecordImpl<PipelineExecuti
     /**
      * Create a detached, initialised PipelineExecutionRecord
      */
-    public PipelineExecutionRecord(Long id, Long pipelineId, String status, Long executedBy, LocalDateTime startedAt, LocalDateTime completedAt, LocalDateTime createdAt, String triggeredBy, Long triggerId, Long tenantId, String errorMessage, LocalDateTime cancelRequestedAt, Long cancelRequestedBy) {
+    public PipelineExecutionRecord(Long id, Long pipelineId, String status, Long executedBy, LocalDateTime startedAt, LocalDateTime completedAt, LocalDateTime createdAt, String triggeredBy, Long triggerId, Long tenantId, String errorMessage, LocalDateTime cancelRequestedAt, Long cancelRequestedBy, LocalDateTime heartbeatAt) {
         super(PipelineExecution.PIPELINE_EXECUTION);
 
         setId(id);
@@ -241,6 +259,7 @@ public class PipelineExecutionRecord extends UpdatableRecordImpl<PipelineExecuti
         setErrorMessage(errorMessage);
         setCancelRequestedAt(cancelRequestedAt);
         setCancelRequestedBy(cancelRequestedBy);
+        setHeartbeatAt(heartbeatAt);
         resetChangedOnNotNull();
     }
 }

@@ -132,6 +132,13 @@ public class PipelineExecution extends TableImpl<PipelineExecutionRecord> {
      */
     public final TableField<PipelineExecutionRecord, Long> CANCEL_REQUESTED_BY = createField(DSL.name("cancel_requested_by"), SQLDataType.BIGINT, this, "");
 
+    /**
+     * The column <code>public.pipeline_execution.heartbeat_at</code>. 마지막 하트비트
+     * 시각(UTC). 실행을 쥔 api 가 주기적으로 갱신하며, 제출 시점·RUNNING 전환 시점에도 채운다. 오래되면 api
+     * 재시작으로 고아가 된 실행으로 보고 중단 처리(WD-230)
+     */
+    public final TableField<PipelineExecutionRecord, LocalDateTime> HEARTBEAT_AT = createField(DSL.name("heartbeat_at"), SQLDataType.LOCALDATETIME(6), this, "마지막 하트비트 시각(UTC). 실행을 쥔 api 가 주기적으로 갱신하며, 제출 시점·RUNNING 전환 시점에도 채운다. 오래되면 api 재시작으로 고아가 된 실행으로 보고 중단 처리(WD-230)");
+
     private PipelineExecution(Name alias, Table<PipelineExecutionRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }

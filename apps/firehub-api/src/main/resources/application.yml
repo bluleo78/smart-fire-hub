@@ -67,6 +67,10 @@ app:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:}
   pipeline:
+    # 하트비트로 주인이 죽은 실행을 「중단됨」으로 정리한다(WD-230). 하트비트 간격 < 정리 기준(stale-after)이어야 한다.
+    heartbeat-interval: ${PIPELINE_HEARTBEAT_INTERVAL:PT1M}
+    stale-sweep-interval: ${PIPELINE_STALE_SWEEP_INTERVAL:PT1M}
+    stale-after: ${PIPELINE_STALE_AFTER:PT5M}
     datasource:
       url: ${spring.datasource.url}
       # username 키는 #681 에서 제거했다 — 읽는 코드가 하나도 남지 않았다. 파이프라인 실행 접속은

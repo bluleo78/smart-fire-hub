@@ -60,8 +60,8 @@ public class TriggerEventService {
   }
 
   /**
-   * PIPELINE_CHAIN 트리거 처리 — 상위 파이프라인 완료 이벤트를 받아 하위 파이프라인을 발화한다. {@code @Async} 라 체인 트리거 실패가 상위
-   * 파이프라인 상태에 영향을 주지 않는다.
+   * PIPELINE_CHAIN 트리거 처리 — 상위 파이프라인 완료 이벤트를 받아 하위 파이프라인을 발화한다. 단 중단된 실행(WD-230, {@code
+   * event.interrupted()})은 조건과 무관하게 발화하지 않는다. {@code @Async} 라 체인 트리거 실패가 상위 파이프라인 상태에 영향을 주지 않는다.
    *
    * <p><b>테넌트 승계(P2-b)</b>: 이 경로는 RLS 가 걸린 {@code pipeline_trigger} 를 읽는다. 한정자를 {@code
    * "taskExecutor"} 로 <b>명시</b>하는 이유는, 그 이름의 빈이 {@code AsyncConfig} 에 {@link
@@ -69,12 +69,22 @@ public class TriggerEventService {
    * 같은 빈을 찾지만, 그 빈이 사라지면 조용히 데코레이터 없는 {@code SimpleAsyncTaskExecutor} 로 폴백해 테넌트가 승계되지 않고 — 예외도 로그도
    * 없이 — 체인 트리거가 영구히 발화하지 않는다. 명시해 두면 그때 기동 시점에 빈 해석이 실패한다.
    *
-   * <p>발행자는 {@code PipelineAsyncRunner.executeAsync}(=`pipelineExecutor` 풀, 데코레이터 있음) 하나뿐이며 그 스레드에는
-   * 이미 테넌트가 있으므로, 여기까지 제출 시점 캡처로 승계된다. 이벤트 페이로드에 tenantId 를 싣지 않는 근거다.
+   * <p>발행자는 러너({@code PipelineAsyncRunner.executeAsync}, `pipelineExecutor` 풀, 데코레이터 있음)와 정리기
+   * ({@code PipelineExecutionSweeper}, 같은 테넌트 컨텍스트에서 발행)다. 두 곳 모두 발행 스레드에 이미 테넌트가 있으므로, 여기까지 제출 시점
+   * 캡처로 승계된다. 이벤트 페이로드에 tenantId 를 싣지 않는 근거다.
    */
   @Async("taskExecutor")
   @EventListener
   public void onPipelineCompleted(PipelineCompletedEvent event) {
+    // WD-230: api 재시작으로 중단된 실행은 조건(SUCCESS/FAILURE/ANY)과 무관하게 체인을 발화하지 않는다 — 중간에 끊긴 상위 결과로 하위가 이어
+    // 돌면 안 된다.
+    if (event.interrupted()) {
+      log.info(
+          "PIPELINE_CHAIN: api 재시작으로 중단된 실행이라 체인 트리거를 발화하지 않음 (pipeline={}, execution={})",
+          event.pipelineId(),
+          event.executionId());
+      return;
+    }
     // 승계가 끊기면 아래 조회가 RLS 로 0행이 되어 원인 없는 무동작이 된다 — 진단 가능하게 남긴다.
     if (TenantContext.get() == null) {
       log.error(
@@ -286,8 +296,8 @@ public class TriggerEventService {
   }
 
   /**
-   * 모니터링 대상 데이터셋의 존재 여부와 행 수를 테넌트 저장소 백엔드로 모은다(WD-80). PG 는 통계 추정치, Tibero 는 정확한 {@code
-   * COUNT(*)} 다.
+   * 모니터링 대상 데이터셋의 존재 여부와 행 수를 테넌트 저장소 백엔드로 모은다(WD-80). PG 는 통계 추정치, Tibero 는 정확한 {@code COUNT(*)}
+   * 다.
    *
    * <p><b>트랜잭션 경계(P2-b)</b>: 테이블 이름 조회(RLS 대상인 dataset)는 {@code transactionTemplate} 안에서 한다. 감싸는
    * 이유는 GUC 가 아니라 <b>커넥션 왕복 절감</b>이다 — {@code datasetRepository} 는 클래스 레벨 {@code @Transactional} 이라

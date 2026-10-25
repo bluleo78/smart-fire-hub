@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.audit.service.AuditLogService;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.CancelExecutionResponse;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
@@ -43,6 +44,7 @@ public class PipelineExecutionService {
   private final PipelineAsyncRunner asyncRunner;
   private final AuditLogService auditLogService;
   private final UserRepository userRepository;
+  private final PipelineExecutionRegistry executionRegistry;
 
   @Value("${app.executor.enabled:false}")
   private boolean executorEnabled;
@@ -53,11 +55,13 @@ public class PipelineExecutionService {
       PipelineRepository pipelineRepository,
       PipelineAsyncRunner asyncRunner,
       UserRepository userRepository,
-      AuditLogService auditLogService) {
+      AuditLogService auditLogService,
+      PipelineExecutionRegistry executionRegistry) {
     this.stepRepository = stepRepository;
     this.executionRepository = executionRepository;
     this.pipelineRepository = pipelineRepository;
     this.asyncRunner = asyncRunner;
+    this.executionRegistry = executionRegistry;
     this.userRepository = userRepository;
     this.auditLogService = auditLogService;
   }
@@ -144,6 +148,34 @@ public class PipelineExecutionService {
   }
 
   /**
+   * 실행을 이 인스턴스 등록부에 올린 뒤 비동기 러너에 제출한다(WD-230). 등록부에 있는 동안 하트비트가 갱신되고 정리기가 건너뛴다. 제출이 예외(풀 포화로 인한
+   * {@code TaskRejectedException} 포함)를 던지면 러너가 영영 시작하지 않으므로 등록을 되돌리고 다시 던진다 — 안 그러면 하트비트가 죽은 실행을 계속
+   * 살려 둔다.
+   */
+  private void submitRegistered(
+      Long pipelineId,
+      Long executionId,
+      List<PipelineStepResponse> steps,
+      Map<Long, List<Long>> stepDependencyMap,
+      Map<Long, Long> stepIdToStepExecId,
+      Long userId) {
+    executionRegistry.register(executionId, TenantContext.require("파이프라인 실행 등록"));
+    try {
+      asyncRunner.executeAsync(
+          pipelineId,
+          executionId,
+          steps,
+          stepDependencyMap,
+          stepIdToStepExecId,
+          userId,
+          executorEnabled);
+    } catch (RuntimeException | Error e) {
+      executionRegistry.unregister(executionId);
+      throw e;
+    }
+  }
+
+  /**
    * 파이프라인을 비동기로 실행한다 (트리거 정보 포함).
    *
    * <p>실행 레코드를 생성한 뒤 {@link PipelineAsyncRunner#executeAsync}에 위임하여 HTTP 스레드를 블로킹하지 않는다.
@@ -171,7 +203,8 @@ public class PipelineExecutionService {
     // 중간에 예외 발생 시 @Transactional이 createExecution 포함 전체를 롤백한다
     Map<Long, Long> stepIdToStepExecId = new HashMap<>();
     for (PipelineStepResponse step : steps) {
-      Long stepExecId = executionRepository.createStepExecution(executionId, step.id(), step.name());
+      Long stepExecId =
+          executionRepository.createStepExecution(executionId, step.id(), step.name());
       stepIdToStepExecId.put(step.id(), stepExecId);
     }
 
@@ -194,26 +227,24 @@ public class PipelineExecutionService {
             public void afterCommit() {
               // 트랜잭션 커밋 완료 후 비동기 실행 위임
               // → Spring AOP 프록시를 통해 @Async("pipelineExecutor")가 올바르게 적용됨
-              asyncRunner.executeAsync(
+              submitRegistered(
                   pipelineId,
                   finalExecutionId,
                   finalSteps,
                   finalStepDependencyMap,
                   finalStepIdToStepExecId,
-                  userId,
-                  executorEnabled);
+                  userId);
             }
           });
     } else {
       // 트랜잭션 컨텍스트 없음 — 즉시 비동기 실행 위임
-      asyncRunner.executeAsync(
+      submitRegistered(
           pipelineId,
           finalExecutionId,
           finalSteps,
           finalStepDependencyMap,
           finalStepIdToStepExecId,
-          userId,
-          executorEnabled);
+          userId);
     }
 
     // 파이프라인 실행 감사 로그 (#60/#92)
@@ -263,8 +294,7 @@ public class PipelineExecutionService {
             .orElseThrow(ExecutionAlreadyFinishedException::new);
 
     // 실행 감사 로그와 짝을 맞춘다 — 누가 언제 어떤 실행을 멈췄는지 감사 화면에서 보이게.
-    String pipelineNameForLog =
-        pipelineRepository.findNameById(ownerPipelineId).orElse("Pipeline");
+    String pipelineNameForLog = pipelineRepository.findNameById(ownerPipelineId).orElse("Pipeline");
     String usernameForLog = userRepository.findById(userId).map(u -> u.username()).orElse(null);
     auditLogService.log(
         userId,

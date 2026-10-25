@@ -8,9 +8,11 @@ import com.smartfirehub.pipeline.dto.StepExecutionResponse;
 import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
@@ -22,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
 // 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
 // REQUIRED 라 서비스가 이미 연 트랜잭션에는 합류한다(기존 경로 동작 불변).
+@Slf4j
 @Transactional
 public class PipelineExecutionRepository {
 
@@ -37,6 +40,9 @@ public class PipelineExecutionRepository {
   // 테넌트 열(V93) — 스윕 게이트가 RLS 에 더해 테넌트를 명시적으로 좁힐 때 쓴다.
   private static final Field<Long> PE_TENANT_ID =
       field(name("pipeline_execution", "tenant_id"), Long.class);
+  // 하트비트 시각(V148, WD-230) — UTC. 실행을 쥔 api 가 주기적으로 갱신해, api 재시작으로 고아가 된 실행을 가려낸다.
+  private static final Field<LocalDateTime> PE_HEARTBEAT_AT =
+      field(name("pipeline_execution", "heartbeat_at"), LocalDateTime.class);
   private static final Field<Long> PE_EXECUTED_BY =
       field(name("pipeline_execution", "executed_by"), Long.class);
   private static final Field<LocalDateTime> PE_STARTED_AT =
@@ -124,6 +130,9 @@ public class PipelineExecutionRepository {
             .set(PE_PIPELINE_ID, pipelineId)
             .set(PE_STATUS, "PENDING")
             .set(PE_EXECUTED_BY, executedBy)
+            // 제출 시점 하트비트(WD-230). created_at 은 DB 세션 시간대라 UTC 임계값과 어긋날 수 있다.
+            // 판정은 Java UTC 로 찍은 이 값에 맡기며, 늘 채워지므로 created_at 폴백은 실제로 쓰이지 않는다.
+            .set(PE_HEARTBEAT_AT, LocalDateTime.now(ZoneOffset.UTC))
             .set(PE_TRIGGERED_BY, triggeredBy != null ? triggeredBy : "MANUAL");
 
     if (triggerId != null) {
@@ -133,16 +142,18 @@ public class PipelineExecutionRepository {
     return query.returning(PE_ID).fetchOne(r -> r.get(PE_ID));
   }
 
-  public void updateExecutionStatus(
+  public boolean updateExecutionStatus(
       Long executionId, String status, LocalDateTime startedAt, LocalDateTime completedAt) {
-    updateExecutionStatus(executionId, status, startedAt, completedAt, null);
+    return updateExecutionStatus(executionId, status, startedAt, completedAt, null);
   }
 
   /**
    * 파이프라인 실행 상태를 갱신한다. {@code errorMessage}가 주어지면 스텝 실행 레코드 생성 전에 발생한 최상위 예외의 메시지를 함께 저장한다(#517) —
    * 기존에는 FAILED 상태만 기록되고 원인이 완전히 유실됐다.
+   *
+   * @return 실제로 반영됐으면 true — 이미 끝난 실행(중단 정리·취소 등이 먼저 마감)이라 조건부 UPDATE 가 0행이면 false(WD-230)
    */
-  public void updateExecutionStatus(
+  public boolean updateExecutionStatus(
       Long executionId,
       String status,
       LocalDateTime startedAt,
@@ -152,6 +163,11 @@ public class PipelineExecutionRepository {
 
     if (startedAt != null) {
       query = query.set(PE_STARTED_AT, startedAt);
+    }
+
+    // RUNNING 전환은 곧 첫 하트비트다(WD-230) — 시작 시각을 그대로 쓴다.
+    if ("RUNNING".equals(status) && startedAt != null) {
+      query = query.set(PE_HEARTBEAT_AT, startedAt);
     }
 
     if (completedAt != null) {
@@ -164,19 +180,110 @@ public class PipelineExecutionRepository {
 
     // 끝나지 않은 실행만 갱신한다(WD-153) — 실행 상태를 쓰는 주체가 러너와 취소 API 둘이라, 무조건 쓰면 대기 중 취소로 이미 CANCELLED 가 된
     // 실행을 러너 시작 쓰기(RUNNING)가 되살리거나, 끝난 실행 상태를 다른 쪽이 덮어쓸 수 있다. 조건부 UPDATE 라 먼저 마감한 쪽이 이긴다.
-    query.where(PE_ID.eq(executionId)).and(PE_STATUS.in(ACTIVE_STATUSES)).execute();
+    return query.where(PE_ID.eq(executionId)).and(PE_STATUS.in(ACTIVE_STATUSES)).execute() == 1;
   }
 
   /**
-   * 이 실행에 취소 요청이 있는가(WD-153 협조적 취소 체크포인트). PK 한 행·한 컬럼만 읽는 싼 조회라 페이지·배치·재시도 대기 조각마다 불러도 된다. 행이
-   * 없으면(지워진 실행) 취소 아님으로 본다.
+   * 살아 있는 실행들의 하트비트를 갱신한다(WD-230). 끝난 실행은 건드리지 않는다 — 중단 정리로 이미 FAILED 가 된 실행의 하트비트가 되살아나 정리 판정을 흐리지
+   * 않게 한다.
+   *
+   * @return 갱신된 행 수
    */
-  public boolean isCancelRequested(Long executionId) {
+  public int touchHeartbeat(Collection<Long> executionIds, LocalDateTime now) {
+    if (executionIds == null || executionIds.isEmpty()) {
+      return 0;
+    }
+    return dsl.update(PIPELINE_EXECUTION)
+        .set(PE_HEARTBEAT_AT, now)
+        .where(PE_ID.in(executionIds))
+        .and(PE_STATUS.in(ACTIVE_STATUSES))
+        .execute();
+  }
+
+  /** 하트비트가 끊긴 실행 한 건 — 정리기가 닫고 파이프라인 단위로 알린다. */
+  public record StaleExecution(long executionId, long pipelineId) {}
+
+  /**
+   * 하트비트가 {@code threshold} 보다 오래된 미완료 실행을 찾는다(WD-230). 하트비트가 없는 옛 행은 started_at, 그것도 없으면
+   * created_at 으로 판단한다 — created_at 은 DB {@code NOW()} 기본값이라 하트비트가 생성 시 채워지는 지금은 거의 쓰이지 않는 마지막
+   * 폴백이다. 테넌트 조건을 RLS 에 더해 명시한다(호출자는 그 테넌트 컨텍스트 안에서 불러야 한다).
+   */
+  public List<StaleExecution> findStaleExecutions(long tenantId, LocalDateTime threshold) {
+    return dsl.select(PE_ID, PE_PIPELINE_ID)
+        .from(PIPELINE_EXECUTION)
+        .where(PE_TENANT_ID.eq(tenantId))
+        .and(PE_STATUS.in(ACTIVE_STATUSES))
+        .and(coalesce(PE_HEARTBEAT_AT, PE_STARTED_AT, PE_CREATED_AT).lt(threshold))
+        .fetch(r -> new StaleExecution(r.get(PE_ID), r.get(PE_PIPELINE_ID)));
+  }
+
+  /**
+   * 고아 실행을 중단(FAILED)으로 닫고 그 단계들을 함께 닫는다(WD-230) — 한 트랜잭션이다. 실행만 FAILED 가 되고 프로세스가 죽으면 정리기는 종료된 실행을
+   * 다시 보지 않으므로 단계가 영영 RUNNING/PENDING 으로 남는다. 그래서 둘을 묶어 모두 커밋되거나 모두 되돌려지게 한다.
+   *
+   * <p>실행 쓰기는 조건부(미완료만) UPDATE 라 그 사이 정상 마감·취소된 실행은 건드리지 않고, 두 번째 호출은 false 다. 진 호출은 단계도 건드리지 않는다.
+   * 이벤트 발행은 호출자가 커밋 뒤(이 메서드가 true 로 돌아온 다음)에 한다.
+   *
+   * @return 이 호출이 닫았으면 true
+   */
+  public boolean failInterruptedAndCloseSteps(long executionId, LocalDateTime now, String message) {
+    boolean won =
+        dsl.update(PIPELINE_EXECUTION)
+                .set(PE_STATUS, "FAILED")
+                .set(PE_COMPLETED_AT, now)
+                .set(PE_ERROR_MESSAGE, message)
+                .where(PE_ID.eq(executionId))
+                .and(PE_STATUS.in(ACTIVE_STATUSES))
+                .execute()
+            == 1;
+    if (!won) {
+      return false;
+    }
+    // RUNNING 단계는 FAILED, 아직 시작 못 한 PENDING 은 SKIPPED. 실행이 이미 FAILED 라 updateStepExecution 의 「실행이
+    // 미완료일 때만」
+    // 조건을 타지 않는 별도 쓰기다.
+    dsl.update(PIPELINE_STEP_EXECUTION)
+        .set(PSE_STATUS, "FAILED")
+        .set(PSE_ERROR_MESSAGE, message)
+        .set(PSE_COMPLETED_AT, now)
+        .where(PSE_EXECUTION_ID.eq(executionId))
+        .and(PSE_STATUS.eq("RUNNING"))
+        .execute();
+    skipPendingSteps(executionId, message, now);
+    return true;
+  }
+
+  /**
+   * 러너가 취소를 마감한다(WD-230) — 실행을 CANCELLED 로 쓰고, <b>그 쓰기가 이긴 경우에만</b> 남은 PENDING 단계를 취소 사유로 SKIPPED
+   * 처리한다. 한 트랜잭션이라 실행만 CANCELLED 가 되고 단계가 PENDING 으로 남는 상태가 생기지 않는다(종료된 실행은 정리기가 다시 보지 않는다). 진
+   * 경우(정리기가 이미 FAILED 로 닫음 등)는 아무것도 바꾸지 않는다.
+   *
+   * @return 이 호출이 CANCELLED 로 닫았으면 true
+   */
+  public boolean cancelAndSkipPendingSteps(Long executionId, LocalDateTime completedAt) {
+    boolean won =
+        updateExecutionStatus(
+            executionId,
+            "CANCELLED",
+            null,
+            completedAt,
+            PipelineExecutionCancelledException.CANCELLED_MESSAGE);
+    if (won) {
+      skipPendingStepsForCancel(executionId);
+    }
+    return won;
+  }
+
+  /**
+   * 러너가 멈춰야 하는가(WD-230) — 취소 요청이 있거나, 실행이 더는 PENDING/RUNNING 이 아니면(중단 정리로 FAILED 등) true. 행이 없으면
+   * false.
+   */
+  public boolean isStopRequested(long executionId) {
     return dsl.fetchExists(
         dsl.selectOne()
             .from(PIPELINE_EXECUTION)
             .where(PE_ID.eq(executionId))
-            .and(PE_CANCEL_REQUESTED_AT.isNotNull()));
+            .and(PE_CANCEL_REQUESTED_AT.isNotNull().or(PE_STATUS.notIn(ACTIVE_STATUSES))));
   }
 
   /** 취소 요청 결과 — 마감 후 상태({@code CANCELLED}=대기 중이라 즉시 마감, {@code RUNNING}=요청만 기록)와 첫 요청 시각. */
@@ -225,10 +332,21 @@ public class PipelineExecutionRepository {
    * 같이 쓴다. 이미 끝났거나 진행 중인 스텝은 건드리지 않는다.
    */
   public void skipPendingStepsForCancel(Long executionId) {
+    skipPendingSteps(
+        executionId,
+        PipelineExecutionCancelledException.SKIPPED_BY_CANCEL_MESSAGE,
+        LocalDateTime.now(ZoneOffset.UTC));
+  }
+
+  /**
+   * 실행의 PENDING 단계를 주어진 사유·시각으로 SKIPPED 마감하는 공통 쓰기 — 취소 마감과 중단 정리가 같이 쓴다. 실행 상태 조건은 걸지 않는다(호출자가 실행을
+   * 먼저 닫은 뒤에도 써야 하므로).
+   */
+  private void skipPendingSteps(Long executionId, String message, LocalDateTime now) {
     dsl.update(PIPELINE_STEP_EXECUTION)
         .set(PSE_STATUS, "SKIPPED")
-        .set(PSE_ERROR_MESSAGE, PipelineExecutionCancelledException.SKIPPED_BY_CANCEL_MESSAGE)
-        .set(PSE_COMPLETED_AT, LocalDateTime.now(ZoneOffset.UTC))
+        .set(PSE_ERROR_MESSAGE, message)
+        .set(PSE_COMPLETED_AT, now)
         .where(PSE_EXECUTION_ID.eq(executionId))
         .and(PSE_STATUS.eq("PENDING"))
         .execute();
@@ -339,7 +457,11 @@ public class PipelineExecutionRepository {
         .execute();
   }
 
-  public void updateStepExecution(
+  /**
+   * 스텝 실행 상태를 쓴다. 부모 실행이 PENDING/RUNNING 일 때만 반영한다(WD-230, WD-153 과 같은 취지) — 중단 정리·취소로 이미 끝난 실행의
+   * 단계를 늦게 도착한 러너 쓰기가 덮어쓰지 않게 한다. 호출부는 실행을 마감하기 <b>전에</b> 단계를 써야 한다(순서가 반대면 조용히 무반영).
+   */
+  public boolean updateStepExecution(
       Long stepExecId,
       String status,
       Integer outputRows,
@@ -369,7 +491,21 @@ public class PipelineExecutionRepository {
       query = query.set(PSE_COMPLETED_AT, completedAt);
     }
 
-    query.where(PSE_ID.eq(stepExecId)).execute();
+    int rows =
+        query
+            .where(PSE_ID.eq(stepExecId))
+            // 상관 EXISTS — 이 단계의 부모 실행 한 건만 본다(비상관 IN 은 활성 실행 전체를 훑는다).
+            .andExists(
+                dsl.selectOne()
+                    .from(PIPELINE_EXECUTION)
+                    .where(PE_ID.eq(PSE_EXECUTION_ID))
+                    .and(PE_STATUS.in(ACTIVE_STATUSES)))
+            .execute();
+    if (rows == 0) {
+      // 매개변수 log(스텝 로그)가 Lombok 로거를 가려 클래스명으로 지정한다.
+      PipelineExecutionRepository.log.debug("스텝 실행 {} 쓰기 무반영 — 부모 실행이 이미 끝났거나 행이 없다", stepExecId);
+    }
+    return rows == 1;
   }
 
   public List<PipelineExecutionResponse> findExecutionsByPipelineId(Long pipelineId) {

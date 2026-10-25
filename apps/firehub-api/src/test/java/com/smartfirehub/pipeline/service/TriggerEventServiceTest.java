@@ -229,6 +229,35 @@ class TriggerEventServiceTest extends IntegrationTestBase {
     assertThat(downstreamExecutionCount()).isEqualTo(1);
   }
 
+  /**
+   * WD-230: api 재시작으로 중단된 실행(interrupted)은 조건이 FAILURE·ANY 여도 체인을 발화하지 않는다. 같은 트리거가
+   * interrupted=false 의 FAILED 로는 발화하는 것(회귀 대조)을 함께 보인다.
+   */
+  @Test
+  void onPipelineCompleted_interruptedUpstream_doesNotFireFailureOrAny() {
+    for (String condition : List.of("FAILURE", "ANY")) {
+      triggerService.createTrigger(
+          downstreamPipelineId,
+          new CreateTriggerRequest(
+              "Chain " + condition,
+              TriggerType.PIPELINE_CHAIN,
+              "interrupted skip " + condition,
+              Map.of("upstreamPipelineId", upstreamPipelineId.intValue(), "condition", condition)),
+          testUserId);
+    }
+    TriggerEventService target =
+        org.springframework.test.util.AopTestUtils.getUltimateTargetObject(triggerEventService);
+
+    target.onPipelineCompleted(
+        new PipelineCompletedEvent(upstreamPipelineId, 990_011L, "FAILED", testUserId, true));
+    assertThat(downstreamExecutionCount()).isZero();
+
+    // 대조: interrupted=false 의 FAILED 는 두 트리거 모두 발화한다.
+    target.onPipelineCompleted(
+        new PipelineCompletedEvent(upstreamPipelineId, 990_012L, "FAILED", testUserId, false));
+    assertThat(downstreamExecutionCount()).isPositive();
+  }
+
   // -----------------------------------------------------------------------
   // WD-221: 데이터 변경 트리거 — 첫 폴링 무발화·삭제 대상 정리·전부 삭제 시 꺼짐과 이유
   // -----------------------------------------------------------------------
