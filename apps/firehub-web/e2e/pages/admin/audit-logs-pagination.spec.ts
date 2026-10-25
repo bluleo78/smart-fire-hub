@@ -40,10 +40,8 @@ test.describe('감사 로그 페이지네이션 - 강화 (이슈 #65)', () => {
     // 마지막 페이지 점프 버튼 클릭
     await nav.getByRole('button', { name: '마지막 페이지' }).click();
 
-    // API 가 page=19 로 호출됐는지 검증
-    await page.waitForTimeout(200);
-    const req = capture.lastRequest();
-    expect(req?.searchParams.get('page')).toBe('19');
+    // API 가 page=19 로 호출됐는지 검증 — 재호출될 때까지 기다린다(WD-257)
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('page')).toBe('19');
   });
 
   test('페이지 사이즈 selector 변경 시 size 파라미터가 변경되고 page 가 0 으로 리셋된다', async ({
@@ -64,19 +62,16 @@ test.describe('감사 로그 페이지네이션 - 강화 (이슈 #65)', () => {
 
     // 먼저 마지막 페이지로 점프 (page=19)
     await nav.getByRole('button', { name: '마지막 페이지' }).click();
-    await page.waitForTimeout(150);
-    expect(capture.lastRequest()?.searchParams.get('page')).toBe('19');
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('page')).toBe('19');
 
     // 페이지 사이즈를 50으로 변경
     const sizeSelector = page.getByRole('combobox', { name: '페이지 사이즈' });
     await sizeSelector.click();
     await page.getByRole('option', { name: '50' }).click();
 
-    await page.waitForTimeout(200);
-    const req = capture.lastRequest();
-    expect(req?.searchParams.get('size')).toBe('50');
-    // page 가 0 으로 리셋됐는지 확인
-    expect(req?.searchParams.get('page')).toBe('0');
+    // size=50 으로 재호출될 때까지 기다린 뒤, 같은 요청에서 page 가 0 으로 리셋됐는지 확인한다(WD-257)
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('size')).toBe('50');
+    expect(capture.lastRequest()?.searchParams.get('page')).toBe('0');
   });
 
   test('첫 페이지에서 처음/이전 버튼이 비활성화된다', async ({ authenticatedPage: page }) => {

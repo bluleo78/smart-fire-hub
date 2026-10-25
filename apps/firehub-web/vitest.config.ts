@@ -6,6 +6,8 @@ import { defineConfig } from 'vitest/config';
 // E2E는 Playwright 소관이므로 여기서는 단위 테스트만 다룬다.
 export default defineConfig({
   plugins: [react()],
+  // 빌드 상수 — 단위 테스트는 E2E 빌드가 아니다(src/types/build-constants.d.ts)
+  define: { __E2E__: 'false' },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

@@ -740,13 +740,15 @@ test.describe('API 연결 페이지', () => {
     await page.getByPlaceholder('API 키를 입력하세요').fill('test-key-123');
 
     await page.getByRole('button', { name: '생성' }).click();
-    await page.waitForTimeout(300);
 
-    expect(capturedBody).toMatchObject({
-      name: 'Test Connection',
-      baseUrl: 'https://api.example.com',
-      healthCheckPath: '/health',
-    });
+    // 생성 요청이 도착할 때까지 기다린다(고정 대기 대신 — WD-257)
+    await expect
+      .poll(() => capturedBody)
+      .toMatchObject({
+        name: 'Test Connection',
+        baseUrl: 'https://api.example.com',
+        healthCheckPath: '/health',
+      });
   });
 
   test('리스트에 Base URL 컬럼과 상태 배지가 표시된다', async ({ authenticatedPage: page }) => {
@@ -815,9 +817,9 @@ test.describe('API 연결 페이지', () => {
 
     await page.goto('/admin/api-connections');
     await page.getByRole('button', { name: '전체 갱신' }).click();
-    await page.waitForTimeout(300);
 
-    expect(called).toBe(true);
+    // 호출될 때까지 기다린다(고정 대기 대신 — WD-257)
+    await expect.poll(() => called).toBe(true);
   });
 
   test('전체 갱신 완료 시 Job 진행 상태를 추적해 상태 배지가 자동 갱신된다 (#548)', async ({
@@ -952,9 +954,9 @@ test.describe('API 연결 페이지', () => {
 
     // 연결 상태 카드의 "지금 확인" 버튼
     await page.getByRole('button', { name: '지금 확인' }).click();
-    await page.waitForTimeout(300);
 
-    expect(testCalled).toBe(true);
+    // 호출될 때까지 기다린다(고정 대기 대신 — WD-257)
+    await expect.poll(() => testCalled).toBe(true);
   });
 
   test('baseUrl 미입력 시 toast 에러가 표시된다', async ({ authenticatedPage: page }) => {

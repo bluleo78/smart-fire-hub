@@ -219,8 +219,8 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
       animate: false,
       undoable: false,
     });
-    // 테스트/디버그용: canvas라 DOM 셀렉터가 없으므로 dev 환경에서만 cy를 노출한다.
-    if (import.meta.env.DEV) {
+    // 테스트/디버그용: canvas라 DOM 셀렉터가 없으므로 dev 서버와 E2E 빌드(preview 포함)에서만 cy를 노출한다(WD-257).
+    if (import.meta.env.DEV || __E2E__) {
       (window as unknown as { __ontologyCy?: cytoscape.Core }).__ontologyCy = cy;
     }
 
@@ -242,7 +242,7 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
     return () => {
       ro.disconnect();
       clearTimeout(fitTimer);
-      if (import.meta.env.DEV) delete (window as unknown as { __ontologyCy?: cytoscape.Core }).__ontologyCy;
+      if (import.meta.env.DEV || __E2E__) delete (window as unknown as { __ontologyCy?: cytoscape.Core }).__ontologyCy;
       cy.destroy();
       cyRef.current = null;
     };

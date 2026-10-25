@@ -107,15 +107,9 @@ test.describe('사용자 관리 페이지', () => {
     const searchInput = page.getByPlaceholder('이름 또는 아이디로 검색...');
     await expect(searchInput).toBeVisible();
 
-    // 검색어 입력 후 debounce 대기
+    // 검색어 입력 → 디바운스 뒤 검색 파라미터로 재호출될 때까지 기다린다(고정 대기·if 가드 제거 — WD-257)
     await searchInput.fill('사용자');
-    await page.waitForTimeout(400);
-
-    // 검색 파라미터가 API에 전달되는지 확인
-    const req = capture.lastRequest();
-    if (req) {
-      expect(req.searchParams.get('search')).toBe('사용자');
-    }
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('search')).toBe('사용자');
 
     // 검색 필드에 입력값 유지 확인
     await expect(searchInput).toHaveValue('사용자');

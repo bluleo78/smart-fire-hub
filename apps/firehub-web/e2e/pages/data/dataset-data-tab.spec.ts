@@ -384,11 +384,8 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
     // "이름" 컬럼 헤더 버튼을 클릭한다 (displayName='이름')
     await page.getByRole('button', { name: /이름/ }).first().click();
 
-    // sortBy=name 으로 API 가 재호출되어야 한다
-    await page.waitForTimeout(300);
-    const sortedCall = sortCalls.find((c) => c.sortBy === 'name');
-    expect(sortedCall).toBeDefined();
-    expect(sortedCall?.sortDir).toBe('ASC');
+    // sortBy=name 으로 API 가 재호출되어야 한다 — 도착할 때까지 기다린다(WD-257)
+    await expect.poll(() => sortCalls.find((c) => c.sortBy === 'name')?.sortDir).toBe('ASC');
   });
 
   /**

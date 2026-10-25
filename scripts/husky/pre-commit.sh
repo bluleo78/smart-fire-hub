@@ -13,6 +13,9 @@
 
 set -e
 
+# 무거운 단계(E2E·gradle)는 저장소 전역에서 한 번에 하나만 — test-lock.sh 참조 (WD-257)
+. "$(dirname "$0")/test-lock.sh"
+
 # 1) 변경 파일 목록 (테스트용 주입 우선, 없으면 git stage 에서 추출)
 if [ -n "$PRECOMMIT_CHANGED_FILES" ]; then
   CHANGED="$PRECOMMIT_CHANGED_FILES"
@@ -44,7 +47,9 @@ NON_DOMAIN_PAGE=$(printf '%s\n' "$WEB_PAGE_CHANGES" | grep -vE "^apps/firehub-we
 
 if [ -n "$FORCE_FULL" ] || [ -n "$NON_DOMAIN_PAGE" ]; then
   echo "[pre-commit] 공유 영역/매핑 외 변경 감지 — 전체 E2E 실행"
-  [ -n "$PRECOMMIT_DRY_RUN" ] || pnpm test:e2e
+  # 전체 스위트는 빌드(~15초)보다 dev 서버 온디맨드 트랜스폼 비용이 훨씬 커서 preview 서버로 실행한다(playwright.config.ts 참조).
+  # 도메인 한정 실행(아래)은 소수 spec 이라 dev 서버를 유지한다.
+  [ -n "$PRECOMMIT_DRY_RUN" ] || (cd apps/firehub-web && run_locked env E2E_SERVER=preview pnpm test:e2e)
 elif [ -n "$WEB_PAGE_CHANGES" ]; then
   # 4) 도메인 단독 변경 → 전역 smoke + 해당 도메인의 non-smoke (중복 0)
   # 다중 도메인 지원: newline → space 명시 정규화 (zsh/bash 양쪽 안전)
@@ -60,9 +65,9 @@ elif [ -n "$WEB_PAGE_CHANGES" ]; then
     done
 
     # step 1: 전역 smoke
-    npx playwright test --grep "@smoke"
+    run_locked npx playwright test --grep "@smoke"
     # step 2: 해당 도메인의 non-smoke (--grep-invert 로 smoke 제외 → 중복 0)
-    npx playwright test $DOMAIN_SPECS --grep-invert "@smoke"
+    run_locked npx playwright test $DOMAIN_SPECS --grep-invert "@smoke"
     cd - >/dev/null
   fi
 else
@@ -72,4 +77,4 @@ fi
 
 # 6) Gradle — 모든 코드 변경 케이스에서 실행. build-cache 로 변경 없으면 즉시 통과.
 [ -n "$PRECOMMIT_DRY_RUN" ] && { echo "[pre-commit][dry-run] gradle test skip"; exit 0; }
-cd apps/firehub-api && ./gradlew test -x generateJooq --build-cache --configuration-cache
+cd apps/firehub-api && run_locked ./gradlew test -x generateJooq --build-cache --configuration-cache

@@ -105,14 +105,9 @@ test.describe('감사 로그 페이지', () => {
     await expect(searchInput).toBeVisible();
     await searchInput.fill('testuser');
 
-    // debounce 대기
-    await page.waitForTimeout(400);
-
-    // 검색 파라미터가 API에 전달되는지 확인
-    const req = capture.lastRequest();
-    if (req) {
-      expect(req.searchParams.get('search')).toBe('testuser');
-    }
+    // 디바운스 뒤 검색 파라미터로 재호출될 때까지 기다린다 — 고정 대기 후 한 번 읽기는 부하에서
+    // 첫 화면 요청을 읽어 실패하고, if 가드는 요청이 없으면 아무것도 확인하지 않았다(WD-257)
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('search')).toBe('testuser');
 
     // 입력값 유지 확인
     await expect(searchInput).toHaveValue('testuser');
@@ -175,23 +170,18 @@ test.describe('감사 로그 페이지', () => {
     );
     await page.goto('/admin/audit-logs');
 
-    // 초기 요청 소비 후 날짜 입력
-    await page.waitForTimeout(200);
+    // 첫 화면 요청이 나간 뒤에 날짜를 입력한다(고정 대기 대신 요청 도착을 기다린다 — WD-257)
+    await capture.waitForRequest();
 
     const startInput = page.getByLabel('시작 날짜');
     await startInput.fill('2026-04-01');
 
-    // 날짜 변경 후 API 재호출 대기
-    await page.waitForTimeout(300);
-
-    // API에 startDate 파라미터가 전달됐는지 검증
+    // API에 startDate 파라미터가 전달됐는지 검증 — 재호출될 때까지 기다린다(WD-257)
     // #164: toIsoDateTime이 UTC ISO 8601(Z suffix)으로 변환하므로 KST 환경에서는 날짜가 달라질 수 있다.
     // 따라서 ISO 8601 형식 자체(Z suffix)를 검증한다.
-    const req = capture.lastRequest();
-    if (req) {
-      const startDate = req.searchParams.get('startDate');
-      expect(startDate).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/);
-    }
+    await expect
+      .poll(() => capture.lastRequest()?.searchParams.get('startDate'))
+      .toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/);
   });
 
   test('종료 날짜 입력 시 endDate 파라미터가 API에 전달된다', async ({ authenticatedPage: page }) => {
@@ -204,19 +194,15 @@ test.describe('감사 로그 페이지', () => {
     );
     await page.goto('/admin/audit-logs');
 
-    await page.waitForTimeout(200);
+    await capture.waitForRequest();
 
     const endInput = page.getByLabel('종료 날짜');
     await endInput.fill('2026-04-30');
 
-    await page.waitForTimeout(300);
-
-    const req = capture.lastRequest();
-    if (req) {
-      const endDate = req.searchParams.get('endDate');
-      // #164: UTC ISO 8601 형식(Z suffix)이어야 한다
-      expect(endDate).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/);
-    }
+    // #164: UTC ISO 8601 형식(Z suffix)이어야 한다 — 재호출될 때까지 기다린다(WD-257)
+    await expect
+      .poll(() => capture.lastRequest()?.searchParams.get('endDate'))
+      .toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/);
   });
 
   /**
@@ -233,20 +219,19 @@ test.describe('감사 로그 페이지', () => {
       { capture: true },
     );
     await page.goto('/admin/audit-logs');
-    await page.waitForTimeout(200);
+    await capture.waitForRequest();
 
     await page.getByLabel('시작 날짜').fill('2026-04-01');
-    await page.waitForTimeout(300);
 
-    const req = capture.lastRequest();
-    if (req) {
-      const startDate = req.searchParams.get('startDate');
-      // UTC ISO 8601 형식이어야 한다: 'Z' suffix 포함, 타임존 offset 없는 로컬 형식 불허.
-      // KST(UTC+9) 환경에서는 날짜 부분이 하루 앞으로 변환될 수 있으므로 형식만 검증한다.
-      expect(startDate).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/);
-      // 'T' 없이 순수 날짜 문자열인 경우(버그 상태)가 아님을 보장
-      expect(startDate).not.toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
-    }
+    // UTC ISO 8601 형식이어야 한다: 'Z' suffix 포함, 타임존 offset 없는 로컬 형식 불허.
+    // KST(UTC+9) 환경에서는 날짜 부분이 하루 앞으로 변환될 수 있으므로 형식만 검증한다.
+    // 재호출될 때까지 기다린 뒤 읽는다(WD-257).
+    await expect
+      .poll(() => capture.lastRequest()?.searchParams.get('startDate'))
+      .toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/);
+    const startDate = capture.lastRequest()?.searchParams.get('startDate');
+    // 'T' 없이 순수 날짜 문자열인 경우(버그 상태)가 아님을 보장
+    expect(startDate).not.toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
   });
 
   /**
@@ -262,11 +247,12 @@ test.describe('감사 로그 페이지', () => {
       { capture: true },
     );
     await page.goto('/admin/audit-logs');
-    await page.waitForTimeout(200);
+    await capture.waitForRequest();
 
     // 종료일을 먼저 이른 날짜로 설정 (이 시점엔 시작일이 비어있어 유효한 조회 — 정상적으로 API 호출됨)
     await page.getByLabel('종료 날짜').fill('2026-09-01');
-    await page.waitForTimeout(300);
+    // 그 요청이 실제로 도착한 뒤에 기준 개수를 잡는다 — 늦게 온 요청이 「역전 뒤 추가 호출」로 오인되지 않게(WD-257)
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('endDate')).toBeTruthy();
 
     // 역전 직전 요청 카운트 기록 — 역전 이후에는 추가 호출이 없어야 함
     const requestsBeforeInvert = capture.requests.length;
@@ -499,8 +485,8 @@ test.describe('감사 로그 페이지', () => {
 
     await page.goto('/admin/audit-logs');
 
-    // 초기 요청 소비
-    await page.waitForTimeout(200);
+    // 첫 화면 요청 도착을 기다린다(WD-257)
+    await capture.waitForRequest();
 
     // dropdown 열기 — aria-label 로 정확히 지정
     await page.getByLabel('사용자 필터').click();
@@ -508,13 +494,8 @@ test.describe('감사 로그 페이지', () => {
     // 옵션 클릭 — '테스트 사용자 (testuser)' (setupAuditLogMocks 의 두 번째 사용자, id=2)
     await page.getByRole('option', { name: /테스트 사용자/ }).click();
 
-    // dropdown 변경 후 API 재호출 대기
-    await page.waitForTimeout(300);
-
-    // 캡처된 마지막 요청에 userId=2 가 포함되어야 함
-    const req = capture.lastRequest();
-    expect(req).toBeDefined();
-    expect(req?.searchParams.get('userId')).toBe('2');
+    // dropdown 변경 후 재호출된 마지막 요청에 userId=2 가 포함되어야 함 — 도착할 때까지 기다린다(WD-257)
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('userId')).toBe('2');
   });
 
   test('초기 진입 시 userId 파라미터가 전송되지 않는다 (#89)', async ({ authenticatedPage: page }) => {

@@ -95,16 +95,14 @@ test.describe('AI 채팅 스트리밍 중 beforeunload 가드 (WD-56)', () => {
     const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
     await chatInput.fill('beforeunload 테스트 메시지');
     await chatInput.press('Enter');
-    await page.waitForTimeout(300);
 
-    // 핵심 검증 1: 스트리밍 중에는 beforeunload가 막혀야 한다
-    expect(await isBeforeUnloadGuarded(page)).toBe(true);
+    // 핵심 검증 1: 스트리밍 중에는 beforeunload가 막혀야 한다 — 가드가 걸릴 때까지 기다린다(WD-257)
+    await expect.poll(() => isBeforeUnloadGuarded(page)).toBe(true);
 
     // 스트림 완료
     resolveStream();
-    await page.waitForTimeout(500);
 
-    // 핵심 검증 2: 스트리밍 종료 후에는 가드가 해제되어야 한다
-    expect(await isBeforeUnloadGuarded(page)).toBe(false);
+    // 핵심 검증 2: 스트리밍 종료 후에는 가드가 해제되어야 한다 — 풀릴 때까지 기다린다(WD-257)
+    await expect.poll(() => isBeforeUnloadGuarded(page)).toBe(false);
   });
 });

@@ -16,6 +16,10 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * 그래서 이 테스트는 "요소가 보이는가"가 아니라 **계산된 색이 의도한 토큰과 일치하는가**를
  * 검증한다. 리터럴 rgb를 하드코딩하지 않고 토큰 자체를 읽어 비교하므로
  * 팔레트가 바뀌어도(#375) 깨지지 않는다.
+ *
+ * 토큰은 원문 문자열(getPropertyValue)이 아니라 **탐침 요소에 입혀 계산된 색**으로 바꿔 비교한다.
+ * 빌드의 CSS 압축이 토큰 원문을 `oklch(0.5 0 0)` → `oklch(50% 0 0)` 처럼 다른 표기로 바꾸므로,
+ * 원문과 계산값(브라우저 정규화 표기)을 문자열로 비교하면 같은 색이어도 preview 빌드에서 실패한다(WD-257).
  */
 
 /** 6개 컬럼/행 — 카테고리+숫자 2컬럼으로 꺾은선/막대 어느 쪽이든 축·격자가 그려지도록 */
@@ -80,14 +84,22 @@ test.describe('차트 색 토큰 해석 (#374)', () => {
         expect(rootClass).toContain(mode);
 
         const measured = await page.evaluate(() => {
-          const root = getComputedStyle(document.documentElement);
+          // 토큰을 탐침 요소의 color 로 계산시켜 브라우저 정규화 표기로 얻는다(파일 머리 주석 참조)
+          const resolve = (name: string) => {
+            const probe = document.createElement('span');
+            probe.style.color = `var(${name})`;
+            document.body.appendChild(probe);
+            const color = getComputedStyle(probe).color;
+            probe.remove();
+            return color;
+          };
           const tick = document.querySelector('.recharts-cartesian-axis-tick-value');
           const grid = document.querySelector('.recharts-cartesian-grid line');
           return {
             tickFill: tick ? getComputedStyle(tick).fill : null,
             gridStroke: grid ? getComputedStyle(grid).stroke : null,
-            tokenMutedFg: root.getPropertyValue('--muted-foreground').trim(),
-            tokenBorder: root.getPropertyValue('--border').trim(),
+            tokenMutedFg: resolve('--muted-foreground'),
+            tokenBorder: resolve('--border'),
           };
         });
 
@@ -99,8 +111,8 @@ test.describe('차트 색 토큰 해석 (#374)', () => {
         // 격자선: initial `none`으로 떨어지지 않고 --border 토큰과 일치
         expect(measured.gridStroke).not.toBeNull();
         expect(measured.gridStroke).not.toBe('none');
-        // 브라우저는 `oklch(1 0 0 / 10%)`를 `oklch(1 0 0 / 0.1)`로 정규화한다
-        expect(normalizeAlpha(measured.gridStroke!)).toBe(normalizeAlpha(measured.tokenBorder));
+        // 양쪽 모두 계산값이라 알파 표기(`/ 10%` ↔ `/ 0.1`)도 같은 정규화를 거친다
+        expect(measured.gridStroke).toBe(measured.tokenBorder);
       });
     }
   }
@@ -146,14 +158,22 @@ test.describe('차트 색 토큰 해석 (#374)', () => {
 
     const style = await tooltip.evaluate((el) => {
       const cs = getComputedStyle(el as Element);
-      const root = getComputedStyle(document.documentElement);
+      // 토큰을 탐침 요소의 color 로 계산시켜 브라우저 정규화 표기로 얻는다(파일 머리 주석 참조)
+      const resolve = (name: string) => {
+        const probe = document.createElement('span');
+        probe.style.color = `var(${name})`;
+        document.body.appendChild(probe);
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+      };
       return {
         background: cs.backgroundColor,
         borderWidth: cs.borderTopWidth,
         borderStyle: cs.borderTopStyle,
         color: cs.color,
-        tokenPopover: root.getPropertyValue('--popover').trim(),
-        tokenPopoverFg: root.getPropertyValue('--popover-foreground').trim(),
+        tokenPopover: resolve('--popover'),
+        tokenPopoverFg: resolve('--popover-foreground'),
       };
     });
 
@@ -167,8 +187,3 @@ test.describe('차트 색 토큰 해석 (#374)', () => {
     expect(style.color).toBe(style.tokenPopoverFg);
   });
 });
-
-/** `oklch(1 0 0 / 10%)` ↔ `oklch(1 0 0 / 0.1)` 표기 차이를 흡수 */
-function normalizeAlpha(color: string): string {
-  return color.replace(/\/\s*([\d.]+)%/g, (_, p) => `/ ${Number(p) / 100}`).replace(/\s+/g, ' ');
-}

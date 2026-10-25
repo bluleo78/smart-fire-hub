@@ -411,7 +411,8 @@ export default function SchemaGraph({
     });
 
     cyRef.current = cy;
-    if (import.meta.env.DEV) {
+    // dev 서버와 E2E 빌드(preview 포함)에서만 노출한다 — 운영 번들에서는 빠진다(WD-257)
+    if (import.meta.env.DEV || __E2E__) {
       (window as unknown as { __ontologySchemaCy?: cytoscape.Core }).__ontologySchemaCy = cy;
     }
 
@@ -431,7 +432,7 @@ export default function SchemaGraph({
     return () => {
       ro.disconnect();
       clearTimeout(fitTimer);
-      if (import.meta.env.DEV) delete (window as unknown as { __ontologySchemaCy?: cytoscape.Core }).__ontologySchemaCy;
+      if (import.meta.env.DEV || __E2E__) delete (window as unknown as { __ontologySchemaCy?: cytoscape.Core }).__ontologySchemaCy;
       eh.destroy();
       ehRef.current = null;
       cy.destroy();

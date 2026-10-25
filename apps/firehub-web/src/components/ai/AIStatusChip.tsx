@@ -1,5 +1,5 @@
 import { Bell } from 'lucide-react';
-import { useCallback, useEffect,useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { useUnreadCount } from '../../hooks/queries/useProactiveMessages';
 import type { AIMode } from '../../types/ai';
@@ -229,8 +229,10 @@ export function AIStatusChip() {
    * 호버로 연 드롭다운은 포커스가 드롭다운 밖(본문·채팅 입력창)에 있을 수 있어 요소 단위 onKeyDown 으로는
    * Escape 를 받지 못한다. 열려 있는 동안 document 에서 받아 닫고 preventDefault 로 소비해,
    * 전체 화면의 Escape(사이드 패널 복귀, WD-61)가 함께 실행되지 않게 한다.
+   * useLayoutEffect 로 드롭다운이 그려지기 전에 붙인다 — useEffect 는 그린 뒤에 실행돼, 드롭다운이 보인 직후
+   * 누른 Escape 를 놓치고 전체 화면 Escape 로 넘어갈 틈이 있다(부하 시 E2E 실패, WD-257).
    */
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!showDropdown) return;
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key !== 'Escape') return;
