@@ -672,6 +672,9 @@ public class PipelineAsyncRunner {
           // 여기서 즉시 truncate 하지 않는다 — 임시 데이터셋도 이번 실행 재사용 시 이전 실행 결과를
           // 담고 있어(findExistingTempDataset) 일반 출력 테이블과 같은 원자성 문제를 겪는다. 비우기는
           // 아래 REPLACE 판단 블록에서 DELETE 선행 문장으로 통일해 처리한다(Task 4).
+        } else if (ownedTempOutput && outputDatasetId != null) {
+          // 비SELECT 가 이 스텝 소유 TEMP 에 직접 쓴다 — ensureStepTemp 를 거치지 않으므로 쓰기 전에 크래시 흔적을 맞춘다(WD-256).
+          tempDatasetService.reconcileTempDataset(outputDatasetId);
         }
 
         // 출력 비우기 결정 — REPLACE 는 SELECT(자동 적재)든 비SELECT(사용자가 직접 쓴
@@ -908,6 +911,8 @@ public class PipelineAsyncRunner {
         // 실행 주체 자격은 이 스텝에서 한 번만 계산해 이 스텝의 모든 판정(출력·TEMP 삭제 전)에 쓴다.
         PipelineSecurityGate.RunAs pyRunAs = pipelineSecurityGate.runAs(userId);
         boolean pyTempFresh = false;
+        // 이 스텝의 TEMP 를 ensureStepTemp 로 준비했는지(그 안에서 맞춤까지 한다).
+        boolean pyTempPrepared = false;
         // 출력이 없거나 이 스텝 소유 TEMP 이고 pythonConfig에 outputColumns가 있으면 임시 데이터셋 준비(WD-222 — 열이 바뀌면 재생성).
         // outputColumns 가 없으면 들어온 출력(소유 TEMP 포함)을 그대로 쓴다(이전 동작 유지).
         if (ownedTempOutput && step.pythonConfig() != null) {
@@ -927,7 +932,13 @@ public class PipelineAsyncRunner {
             tempRebuild = pyTemp.rebuild();
             outputDatasetId = pyTemp.datasetId();
             outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
+            pyTempPrepared = true;
           }
+        }
+        // outputColumns 가 없어 들어온 소유 TEMP 를 그대로 쓰는 경우 — ensureStepTemp 를 거치지 않으므로 쓰기 전에 크래시 흔적을
+        // 맞춘다(WD-256).
+        if (!pyTempPrepared && ownedTempOutput && outputDatasetId != null) {
+          tempDatasetService.reconcileTempDataset(outputDatasetId);
         }
         // 출력 등급(스펙 §4.5·공통 결정 R4): 실행 주체 자격 이하 & 허용 목록 아닌 최고 등급으로 상향(새 TEMP 는 정확히 맞춤). 들어온 출력
         // (지정 출력·재사용 TEMP)의 "쓰기 전 VIEW" 도 여기서 본다(enforceOutputLevel). 출력 비우기·맞바꿈·적재보다 먼저다. 거부되면 이
@@ -1836,6 +1847,9 @@ public class PipelineAsyncRunner {
     Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
     if (existingDatasetId.isPresent()) {
       Long dsId = existingDatasetId.get();
+      // 크래시로 남은 재생성 보관본을 먼저 맞춘다(WD-256) — Tibero 는 재생성 DDL 이 PG 트랜잭션 밖이라, 이전 실행이 마무리 전에 멈췄으면 메타와
+      // 물리 테이블이 어긋난 채 남을 수 있다. 맞춘 뒤의 메타로 스키마를 비교해야 재사용·재생성 판단이 맞다. PG 는 아무것도 하지 않는다.
+      tempDatasetService.reconcileTempDataset(dsId);
       if (!tempDatasetService.hasSchemaChanged(dsId, columns)) {
         log.info("Reusing existing temp dataset {} for {}step {}", dsId, logLabel, step.name());
         return new StepTemp(dsId, false, null);

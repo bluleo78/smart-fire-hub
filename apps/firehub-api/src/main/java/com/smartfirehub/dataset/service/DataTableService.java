@@ -240,15 +240,29 @@ public class DataTableService {
    * 러너 TEMP 테이블을 보관본으로 옮기고 그 이름을 돌려준다(WD-238). 호출자 트랜잭션에 참여한다 — 같은 트랜잭션에서 원래 이름으로 새 테이블을 만든다. 남은
    * 보관본(서버가 도중에 죽은 이전 실행)은 먼저 지운다 — 데이터셋 메타가 이미 그 실행의 새 열 구성이라 되돌릴 근거가 없다.
    *
+   * <p>{@code metaFingerprint} 는 재생성 전 컬럼 메타 지문이다(WD-256) — Tibero 는 보관본에 기록해 크래시 뒤 {@link
+   * #reconcileRebuildBackup} 이 재생성 커밋 여부를 가린다. PG 는 쓰지 않는다.
+   *
    * @return 옮긴 테이블의 OID(보관본 이름은 {@link #rebuildBackupTableName}) — 되돌리기·버리기에 그대로 넘긴다
    */
-  public long moveToRebuildBackup(String tableName) {
+  public long moveToRebuildBackup(String tableName, String metaFingerprint) {
     DataTableNames.validate(tableName);
     String backupName = rebuildBackupTableName(tableName);
     if (resolver.tableStore().dropRebuildBackup(tableName, backupName, null)) {
       log.warn("테이블 {} 의 남은 재생성 보관본 {} 을 지웠습니다(이전 실행이 마무리 전에 멈춘 흔적)", tableName, backupName);
     }
-    return resolver.tableStore().moveToRebuildBackup(tableName, backupName);
+    return resolver.tableStore().moveToRebuildBackup(tableName, backupName, metaFingerprint);
+  }
+
+  /**
+   * 크래시로 남은 재생성 보관본을 맞춘다(WD-256) — 테넌트 저장소에 맡긴다. PG 는 아무것도 하지 않고 {@code NONE}(인터페이스 기본 구현).
+   *
+   * @param metaFingerprint 현재 컬럼 메타 지문
+   */
+  public DataTableStore.RebuildBackupState reconcileRebuildBackup(
+      String tableName, String metaFingerprint) {
+    DataTableNames.validate(tableName);
+    return resolver.tableStore().reconcileRebuildBackup(tableName, metaFingerprint);
   }
 
   /**

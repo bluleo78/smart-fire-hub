@@ -486,6 +486,27 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
   }
 
   /**
+   * PG 회귀(WD-256): 크래시 흔적 맞춤은 PG 에서 아무 DDL 도 내지 않고 {@code NONE} 이다 — PG 보관은 재생성 트랜잭션과 함께 커밋·롤백돼 롤백
+   * 흔적이 없고, 스텝 도중 멈춰 남은 보관본은 다음 재생성이 지운다(위 테스트). 심어 둔 보관본이 그대로 남는지로 「DDL 없음」을 본다.
+   */
+  @Test
+  void reconcileOnPg_isNoopNone_leftoverBackupUntouched() {
+    Long pipelineId = createPipeline(sqlStep(STEP_NAME, "code, label", null, null));
+    pipelinesToCleanup.add(pipelineId);
+    assertThat(runAndWait(pipelineId)).isEqualTo("COMPLETED");
+    Long temp = tempIdOf(pipelineId);
+    plantBackup(tableNameOf(temp));
+
+    assertThat(datasetService.reconcilePipelineTempTable(temp))
+        .isEqualTo(com.smartfirehub.dataset.storage.DataTableStore.RebuildBackupState.NONE);
+    assertThat(backupExists(temp)).isTrue();
+    assertThat(tempColumns(temp)).containsExactly("code", "label");
+    // 재실행(재사용 경로 — 맞춤이 먼저 불린다)도 그대로 성공한다.
+    assertThat(runAndWait(pipelineId)).isEqualTo("COMPLETED");
+    assertThat(rowCount(temp)).isEqualTo(2);
+  }
+
+  /**
    * 되돌리기는 재생성 때 낮아진 등급을 재생성 전 등급으로 되돌린다(WD-238) — 재생성 TEMP 는 「새 빈 TEMP」로 입력 등급에 정확히 맞춰져 낮아질 수 있는데,
    * 실패로 이전 행을 되살리면 그 행이 낮은 등급으로 노출된다. 러너 대신 서비스 진입점을 직접 불러 낮춤을 흉내 낸다.
    */

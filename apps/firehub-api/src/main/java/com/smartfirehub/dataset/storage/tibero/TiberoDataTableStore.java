@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -55,6 +57,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 경로(API_CALL·PYTHON)는 Python 실행기 {@code RemoteLoader} 가 db-executor {@code /execute/load} 로 보낸다.
  * {@code swapTable}/{@code finishAppend} 는 {@link TiberoBulkMover} 를 거친 db-executor 의 한 트랜잭션 옮기기다.
  * {@code finishReplace} 는 인터페이스 기본 구현(0행이면 원본 보존)을 그대로 쓴다.
+ *
+ * <p><b>재생성 보관(WD-256).</b> 열 구성이 바뀐 러너 TEMP 는 옛 테이블을 {@link TiberoRebuildBackup} 으로 보관 이름에 옮긴 뒤 같은
+ * 이름으로 다시 만든다. 호출자 트랜잭션이 롤백되면 보상 하나가 새 테이블을 지우고 보관본을 되돌리며, 크래시로 남은 보관본은 {@link
+ * #reconcileRebuildBackup} 이 맞춘다(진행 중 보관 보호·테이블별 잠금 포함).
  *
  * <p><b>미지원(R4).</b> 온라인 PK 인덱스 생성은 {@link DataStoreFeatureUnsupportedException}(422, {@link
  * #unsupported}).
@@ -124,7 +130,12 @@ public class TiberoDataTableStore implements DataTableStore {
     runCreating(tenantId, schema, tableName, statements);
     // 같은 이름을 지웠다 다시 만든 경우 옛 구조가 캐시에 남지 않게 한다.
     columnTypeCache.invalidate(tenantId, tableName);
-    registerRollbackDrop(tenantId, schema, tableName);
+    // 같은 트랜잭션에서 이 테이블을 재생성 보관했으면 롤백 정리(새 테이블 DROP + 복원)는 보관 보상이 맡는다(WD-256) — 여기서 따로 DROP 을
+    // 등록하면 등록 순서상 보상이 되살린 테이블을 지운다.
+    if (!TransactionSynchronizationManager.hasResource(
+        new RebuildMarkerKey(tenantId, TiberoNames.physical(tableName)))) {
+      registerRollbackDrop(tenantId, schema, tableName);
+    }
     createRowTriggerBestEffort(tenantId, schema, tableName);
     // 슬롯 계정 SELECT 는 데이터셋 행이 커밋된 뒤에야 계산할 수 있으므로 커밋 후로 예약한다(PG 와 같다). 스테이징은 이 경로를 지나지 않는다.
     slotGrantSync.syncTableAfterCommit(tableName);
@@ -337,27 +348,367 @@ public class TiberoDataTableStore implements DataTableStore {
     TiberoNames.requireStagingPhysicalName(tempName);
   }
 
-  /** 러너 TEMP 의 열 구성이 바뀌었을 때의 안내 — Tibero 는 재생성 보관(WD-238)을 아직 지원하지 않는다. */
-  public static final String TEMP_REBUILD_UNSUPPORTED_MESSAGE =
-      "Tibero 저장소에서는 결과 열이 바뀐 임시 출력 데이터셋을 다시 만들 수 없습니다. 스텝의 출력 데이터셋을 지정하거나, 임시 데이터셋을 삭제한 뒤 다시"
-          + " 실행하세요.";
+  // ---------- 러너 TEMP 재생성 보관(WD-256) ----------
 
   /**
-   * 러너 TEMP 재생성 보관(WD-238)은 Tibero 에서 아직 지원하지 않는다 — 테이블만 옮기면 같은 이름 규칙의 시퀀스·트리거가 새 테이블과 부딪힌다.
-   * 아무것도 바꾸기 전에 거부하므로 기존 TEMP 와 행은 그대로 남는다(fail-closed). 기본 구현의 영어식 「지원하지 않음」 대신 사용자가 할 일을 알려 준다.
+   * 진행 중 보관 — 키(테넌트·스키마·테이블) → 이 JVM 이 옮긴 보관본의 {@code OBJECT_ID}.
+   *
+   * <p>왜 필요한가: 단계 겹침 검사는 TEMP 준비 전에 겹침을 막지 않는다(등급 확정용). 같은 단계의 두 실행이 겹치면, 한 실행이 보관한 뒤 재생성 메타가 커밋되기
+   * 전 창에서 다른 실행의 맞춤({@link #reconcileRebuildBackup})이 보관본 지문 = 현재(아직 옛) 메타 지문을 보고 「롤백 흔적」으로 오판해 진행
+   * 중 재생성을 되돌릴 수 있다. 그래서 보관 성공 때 넣고, 이 JVM 의 복원·삭제·롤백 보상이 끝날 때 빼며, 맞춤은 들어 있는 테이블이면 바로 {@code NONE}
+   * 이다. 프로세스가 죽으면 이 맵도 사라지므로 그때만 맞춤이 돈다(의도). JVM 안 상태로 충분한 근거: 운영 api 는 1개 인스턴스다.
+   *
+   * <p>집합이 아니라 OID 를 값으로 두는 이유: 겹친 재생성에서 나중 실행이 앞 실행의 보관본을 지우고({@code drop(null)}) 자기 것을 넣은 뒤 앞 실행의
+   * 복원이 「보관본이 다른 실행의 것」으로 실패해도, 그 실패가 나중 실행의 보호를 풀지 않게 한다 — 복원·{@code drop(id)}·보상은 자기 OID 일 때만 뺀다.
    */
-  @Override
-  public long moveToRebuildBackup(String tableName, String backupName) {
-    throw new DataStoreFeatureUnsupportedException(TEMP_REBUILD_UNSUPPORTED_MESSAGE);
+  private final Map<String, Long> inFlightBackups = new ConcurrentHashMap<>();
+
+  /**
+   * 테이블별 JVM 안 잠금 — 보관·복원·삭제·맞춤 한 연산 안의 DDL 순서(이름 바꾸기 여러 문장)가 다른 연산과 섞이지 않게 한다. 키는 {@link
+   * #inFlightBackups} 와 같다. 잠금 객체는 TEMP 테이블 수만큼만 생기므로 지우지 않는다.
+   */
+  private final Map<String, ReentrantLock> rebuildLocks = new ConcurrentHashMap<>();
+
+  /**
+   * 트랜잭션 리소스 키 — 「이 트랜잭션에서 이 테이블은 보관 보상이 맡음」 표시. 같은 트랜잭션의 {@link #createTable} 이 따로 롤백 DROP 을 등록하면
+   * 롤백 콜백 순서(등록 순)상 보관 보상이 되살린 테이블을 그 DROP 이 지우므로 건너뛰게 한다. Spring 은 리소스를 트랜잭션 끝에 치우지 않으므로 보상의
+   * {@code afterCompletion} 이 어떤 결과에서든 푼다.
+   */
+  private record RebuildMarkerKey(long tenantId, String physicalTable) {}
+
+  private static String rebuildKey(long tenantId, String schema, String tableName) {
+    return tenantId + ":" + schema + ":" + TiberoNames.physical(tableName);
+  }
+
+  /** 테이블 잠금을 잡고 작업을 한다. */
+  private <T> T underRebuildLock(String key, java.util.function.Supplier<T> work) {
+    ReentrantLock lock = rebuildLocks.computeIfAbsent(key, k -> new ReentrantLock());
+    lock.lock();
+    try {
+      return work.get();
+    } finally {
+      lock.unlock();
+    }
   }
 
   /**
-   * Tibero 는 재생성 보관본을 만들지 않으므로(위 {@link #moveToRebuildBackup}) 지울 것이 없다. 데이터셋 삭제가 TEMP 마다 남은 보관본 정리를
-   * 부르므로, 기본 구현처럼 예외를 던지면 Tibero 임시 데이터셋을 지울 수 없게 된다.
+   * 2인자판 — Tibero 는 지문 없이(빈 문자열) 3인자판을 부른다. 빈 지문은 보관본에 주석을 달지 않아 크래시 뒤 맞춤이 「판정 불가」로 보고 복원 쪽으로
+   * 처리한다(데이터를 지우는 쪽으로 틀리지 않게).
+   */
+  @Override
+  public long moveToRebuildBackup(String tableName, String backupName) {
+    return moveToRebuildBackup(tableName, backupName, "");
+  }
+
+  /**
+   * 열 구성이 바뀐 러너 TEMP 를 보관 이름으로 옮긴다({@link TiberoRebuildBackup#moveToBackup}, DDL 커넥션 = 스키마 OWNER
+   * 세션).
+   *
+   * <p>{@code backupName} 은 쓰지 않는다 — 파사드가 PG 규칙({@code rtmp_bak_<md5>}, 41자)으로 계산한 이름이라 Tibero 30자
+   * 한도에 맞지 않는다. Tibero 보관 이름은 도우미가 {@link TiberoNames#rebuildBackupTableName} 으로 같은 테이블에서 결정적으로
+   * 파생하므로 복원·삭제·맞춤도 같은 이름을 찾는다.
+   *
+   * <p>성공하면 진행 중 집합에 넣고(잠금 안에서 — 맞춤이 집합 확인과 보관 사이에 끼지 않게), 트랜잭션이 있으면 롤백 보상 하나를 등록한 뒤 표시를 건다. 실패하면
+   * 도우미가 이름을 되돌리고 트리거도 되살리지만, 권한·접속 문제로 못 했을 수 있으므로 저장소가 트리거를 한 번 더 보장한다(최선 노력 — 원래 예외를 가리지 않는다).
+   */
+  @Override
+  public long moveToRebuildBackup(String tableName, String backupName, String metaFingerprint) {
+    long tenantId = TenantContext.require("Tibero moveToRebuildBackup");
+    String schema = connections.schemaOf(tenantId);
+    String key = rebuildKey(tenantId, schema, tableName);
+    long oid =
+        underRebuildLock(
+            key,
+            () -> {
+              long moved;
+              try {
+                moved =
+                    connections.withDdl(
+                        tenantId,
+                        conn ->
+                            TiberoRebuildBackup.moveToBackup(
+                                conn, schema, tableName, metaFingerprint));
+              } catch (RuntimeException e) {
+                reEnsureRowTriggerQuietly(tenantId, schema, tableName, e);
+                throw e;
+              }
+              inFlightBackups.put(key, moved);
+              return moved;
+            });
+    columnTypeCache.invalidate(tenantId, tableName);
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      RebuildMarkerKey marker = new RebuildMarkerKey(tenantId, TiberoNames.physical(tableName));
+      // 보상을 먼저 등록하고 표시를 건다 — 표시만 남고 보상이 없는 상태(표시를 풀 주체가 없음)를 만들지 않는다.
+      TransactionSynchronizationManager.registerSynchronization(
+          new RebuildRollback(this, tenantId, schema, tableName, oid, key, marker));
+      if (!TransactionSynchronizationManager.hasResource(marker)) {
+        TransactionSynchronizationManager.bindResource(marker, Boolean.TRUE);
+      }
+    }
+    return oid;
+  }
+
+  /**
+   * 실패한 재생성을 되돌린다 — 확인은 지금, 물리 복원({@link TiberoRebuildBackup#restore})은 호출자 트랜잭션이 <b>커밋된 뒤</b>.
+   *
+   * <p>왜 미루나(리뷰 C1): 호출자({@code DatasetService.restorePipelineTempTable})는 같은 트랜잭션에서 컬럼 메타·등급을 재생성
+   * 전으로 되돌린다. Tibero DDL 은 PG 트랜잭션에 참여하지 못하므로, 물리 복원을 먼저 하고 그 DDL 이 실패하면 메타는 롤백돼 새 열 지문(fp_new)으로
+   * 남고 보관본은 옛 지문(fp_old)이라 다음 맞춤이 「재생성 커밋됨」으로 보고 보관본을 지워 옛 행을 잃는다. 물리 복원을 메타 복구 커밋 뒤로 미루면 불변식이 선다:
+   * <b>커밋 뒤의 어떤 실패·크래시도 메타=fp_old, 보관본=fp_old 를 남기므로 맞춤은 RESTORED 로 수렴한다.</b> 등급은 이미 재생성 전 이상으로
+   * 커밋됐으므로 되살아난 행이 낮은 등급으로 노출되는 일도 없다.
+   *
+   * <p>순서: (1) 테이블 잠금 안에서 보관본이 있고 OID 가 {@code expectedOid} 인지 확인 — 아니면 바로 예외(메타를 쓰기 전, 겹친 실행 동작
+   * 유지). (2) 트랜잭션 동기화가 있으면 커밋 뒤 복원을 등록하고(먼저 등록해야 아래 슬롯 GRANT 동기화보다 앞서 돈다), 없으면 바로 복원한다. 커밋 뒤 복원 실패는
+   * ERROR 로그만 남기고 던지지 않는다. 메타 트랜잭션이 롤백되면 물리 DDL 은 하지 않는다(보관본 그대로 — 맞춤이 판정). 어느 경우든 시도가 끝나면 이 OID 의
+   * 진행 중 표시를 뺀다. (3) 슬롯 GRANT 는 커밋 후 다시 맞춘다(등급이 되돌려졌다).
+   */
+  @Override
+  public void restoreRebuildBackup(String tableName, String backupName, long expectedOid) {
+    long tenantId = TenantContext.require("Tibero restoreRebuildBackup");
+    String schema = connections.schemaOf(tenantId);
+    String key = rebuildKey(tenantId, schema, tableName);
+    underRebuildLock(
+        key,
+        () ->
+            connections.withDdl(
+                tenantId,
+                conn -> {
+                  TiberoRebuildBackup.requireBackup(conn, schema, tableName, expectedOid);
+                  return null;
+                }));
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+              physicalRestoreQuietly(tenantId, schema, tableName, expectedOid, key);
+            }
+
+            @Override
+            public void afterCompletion(int status) {
+              if (status != STATUS_COMMITTED) {
+                // 메타가 커밋되지 않았다 — 물리 DDL 없이 보관본을 남기고 맞춤에 맡긴다.
+                inFlightBackups.remove(key, expectedOid);
+              }
+            }
+          });
+    } else {
+      physicalRestoreQuietly(tenantId, schema, tableName, expectedOid, key);
+    }
+    slotGrantSync.syncTableAfterCommit(tableName);
+  }
+
+  /**
+   * 물리 복원 본체 — 잠금 안에서 {@link TiberoRebuildBackup#restore} + 행 트리거 재생성, 끝나면 진행 중 표시 제거·검색 타입 캐시 무효화.
+   * 실패는 ERROR 로그만 남긴다(메타는 이미 옛 열로 커밋됐으므로 남은 보관본은 다음 맞춤이 복원한다).
+   */
+  private void physicalRestoreQuietly(
+      long tenantId, String schema, String tableName, long expectedOid, String key) {
+    try {
+      restoreBackupUnderLock(tenantId, schema, tableName, expectedOid, key);
+    } catch (RuntimeException e) {
+      log.error("Tibero 재생성 보관본 복원 실패 — 메타는 옛 열로 커밋됐고 보관본이 남았다(다음 실행의 맞춤이 복원): {}", tableName, e);
+    }
+  }
+
+  /**
+   * 보관본 복원 공통부(물리 복원·롤백 보상이 함께 쓴다) — 테이블 잠금 안에서 DDL 커넥션으로 {@link TiberoRebuildBackup#restore} + 행
+   * 트리거 재생성, 끝나면(성공·실패 모두) 이 OID 의 진행 중 표시를 빼고 검색 타입 캐시를 무효화한다. 복원 실패는 그대로 던진다 — 오류 문구는 호출자가 남긴다.
+   * 캐시 무효화 실패는 경고만 남기고 삼킨다.
+   */
+  private void restoreBackupUnderLock(
+      long tenantId, String schema, String tableName, long backupOid, String key) {
+    try {
+      underRebuildLock(
+          key,
+          () -> {
+            try {
+              connections.withDdl(
+                  tenantId,
+                  conn -> {
+                    TiberoRebuildBackup.restore(conn, schema, tableName, backupOid);
+                    createRowTriggerQuietly(conn, schema, tableName);
+                    return null;
+                  });
+            } finally {
+              inFlightBackups.remove(key, backupOid);
+            }
+            return null;
+          });
+    } finally {
+      try {
+        columnTypeCache.invalidate(tenantId, tableName);
+      } catch (RuntimeException e) {
+        log.warn("Tibero 재생성 복원 후 캐시 무효화 실패(무시): {}", tableName, e);
+      }
+    }
+  }
+
+  /**
+   * 재생성 보관본을 지운다({@link TiberoRebuildBackup#drop}) — 스텝 성공 뒤(이 실행의 OID 만), 재생성 직전 남은 보관본 정리·데이터셋
+   * 삭제(null — 무조건). null 정리는 진행 중 표시도 무조건 뺀다(겹친 재생성은 나중 실행이 이긴다 — PG 와 같다). 데이터셋 삭제 경로에서도 실제로 지운다.
    */
   @Override
   public boolean dropRebuildBackup(String tableName, String backupName, Long expectedOid) {
-    return false;
+    long tenantId = TenantContext.require("Tibero dropRebuildBackup");
+    String schema = connections.schemaOf(tenantId);
+    String key = rebuildKey(tenantId, schema, tableName);
+    return underRebuildLock(
+        key,
+        () -> {
+          try {
+            return connections.withDdl(
+                tenantId, conn -> TiberoRebuildBackup.drop(conn, schema, tableName, expectedOid));
+          } finally {
+            if (expectedOid == null) {
+              inFlightBackups.remove(key);
+            } else {
+              inFlightBackups.remove(key, expectedOid);
+            }
+          }
+        });
+  }
+
+  /**
+   * 크래시로 남은 보관본을 맞춘다({@link TiberoRebuildBackup#reconcile}). 이 JVM 이 보관 중인 테이블이면(진행 중 집합, 잠금을 잡은
+   * <b>뒤</b> 확인) 아무 DDL 없이 {@code NONE}. 맞춘 뒤에는 결과와 무관하게 행 트리거를 한 번 더 보장한다 — 복원했으면 보관 때 지운 트리거가 없고,
+   * {@code NONE} 이어도 이전 보관 실패가 트리거를 못 되살렸을 수 있다. 트리거가 있으면 DDL 을 내지 않고, 권한이 없으면 경고만 남긴다(오늘 성공하는 재사용
+   * 실행을 422 로 막지 않게).
+   */
+  @Override
+  public RebuildBackupState reconcileRebuildBackup(String tableName, String metaFingerprint) {
+    long tenantId = TenantContext.require("Tibero reconcileRebuildBackup");
+    String schema = connections.schemaOf(tenantId);
+    String key = rebuildKey(tenantId, schema, tableName);
+    RebuildBackupState state =
+        underRebuildLock(
+            key,
+            () -> {
+              if (inFlightBackups.containsKey(key)) {
+                return RebuildBackupState.NONE;
+              }
+              return connections.withDdl(
+                  tenantId,
+                  conn -> {
+                    RebuildBackupState s =
+                        TiberoRebuildBackup.reconcile(conn, schema, tableName, metaFingerprint);
+                    ensureRowTriggerQuietly(conn, schema, tableName);
+                    return s;
+                  });
+            });
+    if (state != RebuildBackupState.NONE) {
+      columnTypeCache.invalidate(tenantId, tableName);
+    }
+    return state;
+  }
+
+  /**
+   * 행 트리거가 없으면 만든다(최선 노력) — 원래 테이블이 없으면 아무것도 하지 않는다. 확인({@code USER_TRIGGERS})은 질의라 있으면 DDL 이 없다.
+   * 권한 없음·실패는 경고만 남긴다 — 트리거에 기대는 쓰기 경로는 {@link #ensureRowTrigger} 가 다시 확인하고 사유를 알린다.
+   */
+  private void ensureRowTriggerQuietly(Connection conn, String schema, String tableName) {
+    try {
+      if (TiberoCatalog.objectId(conn, schema, TiberoNames.physical(tableName), "TABLE") == null) {
+        return;
+      }
+      String trigger = TiberoNames.triggerName(schema, tableName);
+      if (TiberoCatalog.enabledTriggers(conn, List.of(trigger)).contains(trigger)) {
+        return;
+      }
+      createRowTriggerQuietly(conn, schema, tableName);
+    } catch (SQLException | RuntimeException e) {
+      log.warn("Tibero 재생성 보관 뒤 행 트리거 확인 실패 — 트리거 없이 진행합니다: {}", tableName, e);
+    }
+  }
+
+  /** 권한이 있으면 행 트리거를 만든다(최선 노력). 권한이 없거나 실패하면 경고만 남긴다. */
+  private void createRowTriggerQuietly(Connection conn, String schema, String tableName) {
+    try {
+      if (!createRowTriggersIfPermitted(conn, schema, List.of(tableName))) {
+        log.warn("Tibero OWNER 에 CREATE TRIGGER 권한이 없어 행 트리거를 만들지 못했습니다: {}", tableName);
+      }
+    } catch (SQLException | RuntimeException e) {
+      log.warn("Tibero 행 트리거 생성 실패(재생성 포함) — 트리거 없이 진행합니다: {}", tableName, e);
+    }
+  }
+
+  /** 보관 실패 뒤 트리거 재보장 — 새 DDL 커넥션에서 하고, 그 실패는 원래 예외에 덧붙인다(가리지 않는다). */
+  private void reEnsureRowTriggerQuietly(
+      long tenantId, String schema, String tableName, RuntimeException cause) {
+    try {
+      connections.withDdl(
+          tenantId,
+          conn -> {
+            ensureRowTriggerQuietly(conn, schema, tableName);
+            return null;
+          });
+    } catch (RuntimeException e) {
+      cause.addSuppressed(e);
+    }
+  }
+
+  /**
+   * 재생성 보관의 롤백 보상(WD-256) — 보관 직후 등록한다. 호출자 트랜잭션이 롤백되면 「원래 이름 테이블이 보관본과 다른 {@code OBJECT_ID} 면 그
+   * 테이블·시퀀스 DROP → 보관본 복원 → 트리거 재생성」 을 한다({@link TiberoRebuildBackup#restore} 가 OID 를 확인하고, 보관본이
+   * 없거나 남의 것이면 아무것도 바꾸지 않는다). 같은 트랜잭션의 {@code createTable} 은 표시({@link RebuildMarkerKey}) 때문에 롤백
+   * DROP 을 따로 등록하지 않으므로, 새 테이블 정리도 이 보상 하나가 맡는다.
+   *
+   * <p>커밋되면 아무것도 하지 않는다 — 보관본은 스텝 결과에 따라 러너가 버리거나 되돌린다(진행 중 표시도 그때 뺀다). 결과 불명이면 아무것도 지우지 않고 ERROR
+   * 로그만 남기며 진행 중 표시를 뺀다(다음 맞춤이 지문으로 판정한다). 어느 경우든 트랜잭션 표시는 푼다. 어떤 실패도 완료 콜백 밖으로 던지지 않는다.
+   */
+  private static final class RebuildRollback implements TransactionSynchronization {
+
+    private final TiberoDataTableStore store;
+    private final long tenantId;
+    private final String schema;
+    private final String tableName;
+    private final long backupOid;
+    private final String key;
+    private final RebuildMarkerKey marker;
+
+    RebuildRollback(
+        TiberoDataTableStore store,
+        long tenantId,
+        String schema,
+        String tableName,
+        long backupOid,
+        String key,
+        RebuildMarkerKey marker) {
+      this.store = store;
+      this.tenantId = tenantId;
+      this.schema = schema;
+      this.tableName = tableName;
+      this.backupOid = backupOid;
+      this.key = key;
+      this.marker = marker;
+    }
+
+    @Override
+    public void afterCompletion(int status) {
+      TransactionSynchronizationManager.unbindResourceIfPossible(marker);
+      if (status == STATUS_UNKNOWN) {
+        log.error(
+            "Tibero 재생성 보관 보상: PG 트랜잭션 결과를 알 수 없어(STATUS_UNKNOWN) 실행하지 않음 — 보관본이 남았을 수 있음(다음 실행의"
+                + " 맞춤이 판정): {}",
+            tableName);
+        store.inFlightBackups.remove(key, backupOid);
+        return;
+      }
+      if (status != STATUS_ROLLED_BACK) {
+        return;
+      }
+      try {
+        store.connections.rollbackBound(tenantId);
+      } catch (RuntimeException e) {
+        log.warn("테넌트 {} 재생성 보관 보상 전 묶인 커넥션 정리 실패 — 보상 DDL 은 계속 시도한다", tenantId, e);
+      }
+      try {
+        store.restoreBackupUnderLock(tenantId, schema, tableName, backupOid, key);
+      } catch (RuntimeException e) {
+        log.error(
+            "롤백 보상(재생성 보관본 복원) 실패 — 옛 테이블이 보관 이름으로 남았을 수 있음(다음 실행의 맞춤이 복원): {}", tableName, e);
+      }
+    }
   }
 
   /**
@@ -620,12 +971,13 @@ public class TiberoDataTableStore implements DataTableStore {
    */
   private void createRowTriggerBestEffort(long tenantId, String schema, String tableName) {
     try {
-      boolean created =
-          connections.withDdl(
-              tenantId, conn -> createRowTriggersIfPermitted(conn, schema, List.of(tableName)));
-      if (!created) {
-        log.warn("Tibero OWNER 에 CREATE TRIGGER 권한이 없어 행 트리거 없이 테이블을 만들었습니다: {}", tableName);
-      }
+      // 경고·삼킴 정책은 createRowTriggerQuietly 한 곳에 둔다(커넥션 확보 실패만 여기서 삼킨다).
+      connections.withDdl(
+          tenantId,
+          conn -> {
+            createRowTriggerQuietly(conn, schema, tableName);
+            return null;
+          });
     } catch (RuntimeException e) {
       log.warn("Tibero 행 트리거 생성 실패 — 트리거 없이 진행합니다: {}", tableName, e);
     }

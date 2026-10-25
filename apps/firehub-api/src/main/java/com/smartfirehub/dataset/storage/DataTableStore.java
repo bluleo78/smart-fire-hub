@@ -21,6 +21,16 @@ public interface DataTableStore {
   /** 사용자가 컬럼명으로 쓸 수 없는 시스템 예약 컬럼. 생성·컬럼 추가·결과 숨김이 모두 이 집합을 따른다. */
   Set<String> SYSTEM_COLUMNS = Set.of("id", "import_id", "created_at", UPDATED_AT_COLUMN);
 
+  /**
+   * 크래시 뒤 재생성 보관본 맞춤 결과(WD-256) — 보관본이 없었으면 {@code NONE}, 재생성이 커밋돼 옛 보관본을 지웠으면 {@code
+   * DROPPED_LEFTOVER}, 롤백됐거나 판정 불가여서 보관본을 원래 이름으로 되돌렸으면 {@code RESTORED}.
+   */
+  enum RebuildBackupState {
+    NONE,
+    DROPPED_LEFTOVER,
+    RESTORED
+  }
+
   /** 이 구현이 담당하는 백엔드. */
   DataStoreBackend backend();
 
@@ -136,14 +146,40 @@ public interface DataTableStore {
    * DataTableService.rebuildBackupTableName})으로 옮긴다(WD-238). 호출자 트랜잭션에 참여한다 — 같은 트랜잭션에서 원래 이름으로 새
    * 테이블을 만든다. 스텝이 성공하면 {@link #dropRebuildBackup}, 실패하면 {@link #restoreRebuildBackup} 을 부른다.
    *
-   * <p>기본 구현은 지원하지 않음. Tibero 는 WD-77 2단계부터 러너 TEMP 를 만들지만 재생성 보관은 아직 지원하지 않아, 열 구성이 바뀐 재실행을
-   * 한국어 안내로 거부하고 보관본 정리({@link #dropRebuildBackup})는 「없음」으로 답한다({@code TiberoDataTableStore}).
+   * <p>기본 구현은 지원하지 않음. PG·Tibero 가 재정의한다. Tibero(WD-256)는 DDL 이 PG 트랜잭션에 참여하지 못하므로 보관을 이름 바꾸기로 하고,
+   * 호출자 트랜잭션이 롤백되면 보상으로 되돌리며, 크래시로 남은 보관본은 {@link #reconcileRebuildBackup} 이 맞춘다 — 그래서 지문을 받는
+   * 3인자판({@link #moveToRebuildBackup(String, String, String)})을 쓴다.
    *
    * @return 옮긴 테이블의 OID — 되돌리기·버리기가 「이 실행이 옮긴 그 테이블」인지 확인하는 데 쓴다(같은 TEMP 를 겹쳐 다시 만든 다른 실행의 보관본을
    *     건드리지 않게)
    */
   default long moveToRebuildBackup(String tableName, String backupName) {
     throw new UnsupportedOperationException("이 저장소는 임시 데이터셋 재생성 보관을 지원하지 않습니다");
+  }
+
+  /**
+   * {@link #moveToRebuildBackup(String, String)} 에 컬럼 메타 지문을 더한 판(WD-256). 지문은 크래시 뒤 {@link
+   * #reconcileRebuildBackup} 이 「재생성이 커밋됐나」를 가리는 데 쓴다. PG 는 DDL 이 트랜잭션이라 크래시 흔적이 남지 않아 지문을 쓰지 않으므로
+   * 기본 구현은 2인자판에 그대로 맡긴다.
+   *
+   * @param metaFingerprint 재생성 전 컬럼 메타 지문({@code DatasetService.columnMetaFingerprint}, 소문자 hex
+   *     32자)
+   */
+  default long moveToRebuildBackup(String tableName, String backupName, String metaFingerprint) {
+    return moveToRebuildBackup(tableName, backupName);
+  }
+
+  /**
+   * 크래시로 남은 재생성 보관본을 맞춘다(WD-256) — 기존 TEMP 를 쓰기 전에 부른다. 보관본이 없으면 {@code NONE}, 재생성이 커밋됐으면(현재 지문이 보관
+   * 때와 다름) 보관본을 지우고 {@code DROPPED_LEFTOVER}, 롤백됐거나 판정할 수 없으면 보관본을 되돌리고 {@code RESTORED}.
+   *
+   * <p>기본 구현은 아무것도 하지 않고 {@code NONE} — PG 는 보관(이름 바꾸기)이 재생성 트랜잭션과 함께 커밋·롤백돼 「롤백 흔적」이 생기지 않고, 스텝 도중
+   * 멈춰 남은 보관본은 다음 재생성({@code DataTableService.moveToRebuildBackup})이 지운다.
+   *
+   * @param metaFingerprint 현재 컬럼 메타 지문
+   */
+  default RebuildBackupState reconcileRebuildBackup(String tableName, String metaFingerprint) {
+    return RebuildBackupState.NONE;
   }
 
   /**

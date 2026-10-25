@@ -26,9 +26,7 @@ import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
-import com.smartfirehub.dataset.storage.DataStoreFeatureUnsupportedException;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
-import com.smartfirehub.dataset.storage.tibero.TiberoDataTableStore;
 import com.smartfirehub.dataset.storage.tibero.TiberoPipelineSql;
 import com.smartfirehub.global.security.PermissionChecker;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -244,31 +242,78 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
     verify(tmp.datasets(), never()).deleteDataset(anyLong());
     verify(realTempDatasetService).hasSchemaChanged(eq(TEMP_ID), anyList());
     verify(dbExecutorClient).executeSql(anyString(), anyList());
+    // 재사용 경로도 크래시 흔적 맞춤이 스키마 비교보다 먼저다(WD-256).
+    org.mockito.InOrder order = org.mockito.Mockito.inOrder(realTempDatasetService);
+    order.verify(realTempDatasetService).reconcileTempDataset(TEMP_ID);
+    order.verify(realTempDatasetService).hasSchemaChanged(eq(TEMP_ID), anyList());
   }
 
   /**
-   * 열 타입이 바뀐 재실행은 같은 데이터셋 id 로 제자리 재생성을 요청한다(WD-222). Tibero 저장소는 재생성 보관(WD-238)을 아직 지원하지 않아 아무것도
-   * 바꾸기 전에 한국어 안내로 거부한다 — 단계는 실패하고, 옛 TEMP 를 지우거나 새로 만들지 않으며, 사용자 SQL 도 실행하지 않는다.
+   * 열 타입이 바뀐 재실행은 같은 데이터셋 id 로 제자리 재생성된다(WD-256 — 예전 422 거부 대체). 재생성 뒤 사용자 SQL 이 실행되고, 성공하면 보관본을
+   * 버린다. 기존 TEMP 를 쓰기 전에 크래시 흔적 맞춤이 스키마 비교보다 먼저 불린다.
    */
   @Test
-  void outputlessSelect_changedColumnType_rebuildRejectedOnTibero_keepsTempAndDoesNotRun() {
+  void outputlessSelect_changedColumnType_rebuiltUnderSameIdAndRuns_reconciledFirst() {
     String sql = "SELECT amount FROM genia_t5.src";
     stubProbe(new ProbeColumn("AMOUNT", Types.NUMERIC, "NUMBER", 18, 6));
     when(tmp.repo().findBySourcePipelineStepId(STEP_ID)).thenReturn(Optional.of(TEMP_ID));
     // 기존 TEMP 는 amount 가 TEXT — 타입이 바뀌었으니 다시 만들어야 한다.
     when(tmp.columns().findByDatasetId(TEMP_ID)).thenReturn(List.of(col("amount", "TEXT")));
-    when(tmp.datasets().rebuildPipelineTempTable(eq(TEMP_ID), anyList()))
-        .thenThrow(
-            new DataStoreFeatureUnsupportedException(
-                TiberoDataTableStore.TEMP_REBUILD_UNSUPPORTED_MESSAGE));
+    DatasetService.PipelineTempRebuild rebuild = rebuildOf();
+    when(tmp.datasets().rebuildPipelineTempTable(eq(TEMP_ID), anyList())).thenReturn(rebuild);
+    stubTempColumns("amount");
+
+    String status = run(sqlStep(sql, "REPLACE"));
+
+    assertThat(status).as(lastError).isEqualTo("COMPLETED");
+    verify(tmp.datasets(), never()).deleteDataset(anyLong());
+    verify(tmp.datasets(), never()).createPipelineTempDataset(any(), any());
+    verify(dbExecutorClient).executeSql(anyString(), anyList());
+    verify(realTempDatasetService).commitRebuild(rebuild);
+    verify(realTempDatasetService, never()).rollbackRebuild(any(), anyLong());
+    org.mockito.InOrder order = org.mockito.Mockito.inOrder(realTempDatasetService);
+    order.verify(realTempDatasetService).reconcileTempDataset(TEMP_ID);
+    order.verify(realTempDatasetService).hasSchemaChanged(eq(TEMP_ID), anyList());
+    order.verify(realTempDatasetService).rebuildTempDataset(eq(TEMP_ID), anyList());
+  }
+
+  /** 재생성한 TEMP 의 단계가 실패하면 이전 테이블·메타를 되돌린다(WD-238 의 되돌리기가 Tibero 에서도 불린다). */
+  @Test
+  void outputlessSelect_changedColumnType_stepFails_rollsBackRebuild() {
+    String sql = "SELECT amount FROM genia_t5.src";
+    stubProbe(new ProbeColumn("AMOUNT", Types.NUMERIC, "NUMBER", 18, 6));
+    when(tmp.repo().findBySourcePipelineStepId(STEP_ID)).thenReturn(Optional.of(TEMP_ID));
+    when(tmp.columns().findByDatasetId(TEMP_ID)).thenReturn(List.of(col("amount", "TEXT")));
+    DatasetService.PipelineTempRebuild rebuild = rebuildOf();
+    when(tmp.datasets().rebuildPipelineTempTable(eq(TEMP_ID), anyList())).thenReturn(rebuild);
+    stubTempColumns("amount");
+    when(dbExecutorClient.executeSql(anyString(), anyList()))
+        .thenReturn(
+            new SqlExecuteResult(false, List.of(), List.of(), 0, "", "0 으로 나눔", null, null));
 
     String status = run(sqlStep(sql, "REPLACE"));
 
     assertThat(status).isEqualTo("FAILED");
-    assertThat(lastError).contains(TiberoDataTableStore.TEMP_REBUILD_UNSUPPORTED_MESSAGE);
-    verify(tmp.datasets(), never()).deleteDataset(anyLong());
-    verify(tmp.datasets(), never()).createPipelineTempDataset(any(), any());
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(realTempDatasetService).rollbackRebuild(rebuild, USER_ID);
+    verify(realTempDatasetService, never()).commitRebuild(any());
+  }
+
+  /** 단계 출력이 이 단계 소유 TEMP 인 비SELECT(사용자가 직접 쓰는 DML)도 ensureStepTemp 를 거치지 않으므로 쓰기 전에 맞춘다. */
+  @Test
+  void ownedTempAsDmlOutput_reconciledBeforeWrite() {
+    when(tmp.repo().findBySourcePipelineStepId(STEP_ID)).thenReturn(Optional.of(TEMP_ID));
+
+    run(step("SQL", "DELETE FROM genia_t5.src WHERE 1 = 0", null, null, "APPEND", TEMP_ID));
+
+    org.mockito.InOrder order =
+        org.mockito.Mockito.inOrder(realTempDatasetService, dbExecutorClient);
+    order.verify(realTempDatasetService).reconcileTempDataset(TEMP_ID);
+    order.verify(dbExecutorClient).executeSql(anyString(), anyList());
+  }
+
+  private static DatasetService.PipelineTempRebuild rebuildOf() {
+    return new DatasetService.PipelineTempRebuild(
+        TEMP_ID, TEMP_TABLE, "rtmp_bak_x", 77L, List.of(), null);
   }
 
   @Test

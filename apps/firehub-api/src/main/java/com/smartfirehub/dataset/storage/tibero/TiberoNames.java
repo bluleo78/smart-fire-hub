@@ -40,6 +40,10 @@ public final class TiberoNames {
   private static final Pattern STAGING_SHAPED =
       Pattern.compile(STAGING_REGEX, Pattern.CASE_INSENSITIVE);
 
+  /** 재생성 보관본 테이블 이름 모양 {@code rb_<24hex>} — 사용자 이름으로 쓰면 보관본 맞춤이 지울 수 있어 예약한다. */
+  private static final Pattern REBUILD_BACKUP_SHAPED =
+      Pattern.compile("rb_[0-9a-f]{24}", Pattern.CASE_INSENSITIVE);
+
   /** 스테이징 관문 거부 문구 — 행 저장소·테이블 저장소 관문이 같은 문구를 쓴다. */
   private static String notStagingMessage(String name) {
     return "'" + name + "' 은(는) Tibero 임시(스테이징) 테이블 이름이 아닙니다";
@@ -90,13 +94,17 @@ public final class TiberoNames {
    * <p>스테이징 테이블 이름 형식({@code stg_<24hex>})도 거부한다 — 고아 staging 스윕({@link
    * TiberoCatalog#staleStagingTables})은 이 형식의 테이블을 오래되면 지우므로, 사용자 데이터셋이 이 이름을 가지면 데이터가 사라진다.
    *
-   * @throws IllegalArgumentException 30자 초과, 예약어, 스테이징 예약 형식
+   * @throws IllegalArgumentException 30자 초과, 예약어, 스테이징·재생성 보관본 예약 형식
    */
   public static void validateUserName(String metadataName) {
     String upper = physical(metadataName);
     if (isStagingName(metadataName)) {
       throw new IllegalArgumentException(
           "내부 스테이징 테이블용으로 예약된 이름 형식이라 사용할 수 없습니다(stg_ + 16진수 24자): " + metadataName);
+    }
+    if (REBUILD_BACKUP_SHAPED.matcher(metadataName).matches()) {
+      throw new IllegalArgumentException(
+          "내부 재생성 보관본용으로 예약된 이름 형식이라 사용할 수 없습니다(rb_ + 16진수 24자): " + metadataName);
     }
     if (upper.length() > TiberoDialect.MAX_IDENTIFIER_LENGTH) {
       throw new IllegalArgumentException(
@@ -179,6 +187,15 @@ public final class TiberoNames {
    */
   public static String triggerName(String schema, String table) {
     return "TG_" + hash(10, "TG", schema, table);
+  }
+
+  /**
+   * TEMP 재생성 보관본 테이블의 메타 이름 {@code rb_<24hex 소문자>}(27자, WD-256) — 스키마·원래 테이블에서 파생해 결정적이다. 크래시 뒤
+   * 맞춤({@link TiberoRebuildBackup#reconcile})이 원래 이름만으로 보관본을 다시 찾을 수 있어야 하기 때문이다. 물리 이름은 {@link
+   * #physical} 로 대문자가 된다.
+   */
+  public static String rebuildBackupTableName(String schema, String tableName) {
+    return "rb_" + hash(24, "RB", schema, tableName).toLowerCase(Locale.ROOT);
   }
 
   /** 스테이징 테이블 이름 {@code STG_<24hex>} — 호출마다 달라야 하므로 랜덤 UUID 기반. */

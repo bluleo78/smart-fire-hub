@@ -1034,7 +1034,49 @@ class PipelineAsyncRunnerTest {
 
     verify(tempDatasetService).rebuildTempDataset(eq(ownTemp), any());
     verify(tempDatasetService, never()).deleteTempDataset(any());
+    // 크래시 흔적 맞춤은 ensureStepTemp 안에서 한 번만(WD-256) — outputColumns 없음 분기의 맞춤과 겹치지 않는다.
+    verify(tempDatasetService, times(1)).reconcileTempDataset(ownTemp);
     assertRebuildSettled(status, rebuild, userId);
+  }
+
+  /**
+   * PYTHON — outputColumns 가 없어 들어온 소유 TEMP 를 그대로 쓰는 경로도 ensureStepTemp 를 거치지 않으므로 쓰기 전에 크래시 흔적을
+   * 맞춘다(WD-256).
+   */
+  @Test
+  void executeStep_pythonOwnedTempWithoutOutputColumns_reconcilesBeforeWrite() {
+    Long pipelineId = 40L, userId = 1L, stepId = 241L, stepExecId = 341L, ownTemp = 81L;
+    PipelineStepResponse pythonStep =
+        new PipelineStepResponse(
+            stepId,
+            "py-own-temp",
+            null,
+            "PYTHON",
+            "print('hello')",
+            ownTemp,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "APPEND",
+            null,
+            null,
+            null,
+            null);
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(ownTemp));
+    when(datasetRepository.findTableNameById(ownTemp)).thenReturn(Optional.of("ptmp_40_py"));
+    when(columnRepository.findByDatasetId(ownTemp)).thenReturn(List.of(col("col1", false)));
+    when(executorClient.executePython(any(), anyInt()))
+        .thenReturn(new ExecutorClient.PythonExecuteResult(true, "hello\n", 0, null, 100L, 0));
+
+    String status =
+        runner.executeStep(stepExecId, pythonStep, pipelineId, "TestPipeline", userId, true);
+
+    assertThat(status).isEqualTo("COMPLETED");
+    org.mockito.InOrder order = org.mockito.Mockito.inOrder(tempDatasetService, executorClient);
+    order.verify(tempDatasetService).reconcileTempDataset(ownTemp);
+    order.verify(executorClient).executePython(any(), anyInt());
   }
 
   /** API_CALL — 출력 id 가 소유 TEMP 이고 추론 열이 바뀌었으면 같은 id 로 다시 만든다. */

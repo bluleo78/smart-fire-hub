@@ -45,6 +45,96 @@ public final class TiberoCatalog {
         + " AND OBJECT_NAME LIKE 'STG\\_%' ESCAPE '\\' AND CREATED < SYSDATE - ?";
   }
 
+  /**
+   * 객체 OBJECT_ID 조회(WD-256). 바인드: 소유자(대문자), 객체 이름(대문자), 객체 유형({@code TABLE}·{@code SEQUENCE}·{@code
+   * TRIGGER}).
+   */
+  static String objectIdQuery() {
+    return "SELECT OBJECT_ID FROM ALL_OBJECTS WHERE OWNER = ? AND OBJECT_NAME = ?"
+        + " AND OBJECT_TYPE = ?";
+  }
+
+  /** 테이블 주석 조회(WD-256). 바인드: 소유자(대문자), 테이블(대문자). */
+  static String tableCommentQuery() {
+    return "SELECT COMMENTS FROM ALL_TAB_COMMENTS WHERE OWNER = ? AND TABLE_NAME = ?";
+  }
+
+  /** 테이블에 달린 색인의 {이름, 컬럼} 조회(WD-256). 바인드: 소유자(대문자), 테이블(대문자). */
+  static String tableIndexColumnsQuery() {
+    return "SELECT INDEX_NAME, COLUMN_NAME FROM ALL_IND_COLUMNS WHERE TABLE_OWNER = ?"
+        + " AND TABLE_NAME = ? ORDER BY INDEX_NAME, COLUMN_POSITION";
+  }
+
+  /** 테이블의 우리 CHECK 제약({@code CK_%}) {이름, 컬럼} 조회(WD-256). 바인드: 소유자(대문자), 테이블(대문자). */
+  static String checkConstraintColumnsQuery() {
+    return "SELECT c.CONSTRAINT_NAME, cc.COLUMN_NAME FROM ALL_CONSTRAINTS c JOIN ALL_CONS_COLUMNS cc"
+        + " ON cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME"
+        + " WHERE c.OWNER = ? AND c.TABLE_NAME = ? AND c.CONSTRAINT_TYPE = 'C'"
+        + " AND c.CONSTRAINT_NAME LIKE 'CK\\_%' ESCAPE '\\'";
+  }
+
+  /** 이름이 붙은 컬럼 하나 — 색인·제약 조회 결과 한 행. */
+  record NamedColumn(String name, String column) {}
+
+  /** 객체의 OBJECT_ID. 없으면 null. {@code type} 은 {@code TABLE}·{@code SEQUENCE}·{@code TRIGGER}. */
+  static Long objectId(Connection conn, String schema, String name, String type)
+      throws SQLException {
+    try (PreparedStatement ps = conn.prepareStatement(objectIdQuery())) {
+      ps.setString(1, TiberoNames.physical(schema));
+      ps.setString(2, name);
+      ps.setString(3, type);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) {
+          return null;
+        }
+        long id = rs.getLong(1);
+        return rs.wasNull() ? null : id;
+      }
+    }
+  }
+
+  /** 테이블 주석. 주석이 없거나 빈 문자열이면(Tibero 는 {@code IS ''} 를 NULL 로 돌려준다) null. */
+  static String tableComment(Connection conn, String schema, String table) throws SQLException {
+    try (PreparedStatement ps = conn.prepareStatement(tableCommentQuery())) {
+      ps.setString(1, TiberoNames.physical(schema));
+      ps.setString(2, table);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) {
+          return null;
+        }
+        String comment = rs.getString(1);
+        return comment == null || comment.isBlank() ? null : comment;
+      }
+    }
+  }
+
+  /** 테이블에 달린 색인 컬럼 행들(색인 이름 순·키 순서). */
+  static List<NamedColumn> tableIndexColumns(Connection conn, String schema, String table)
+      throws SQLException {
+    return namedColumns(conn, tableIndexColumnsQuery(), schema, table);
+  }
+
+  /** 테이블의 우리 CHECK 제약 컬럼 행들. */
+  static List<NamedColumn> checkConstraintColumns(Connection conn, String schema, String table)
+      throws SQLException {
+    return namedColumns(conn, checkConstraintColumnsQuery(), schema, table);
+  }
+
+  private static List<NamedColumn> namedColumns(
+      Connection conn, String sql, String schema, String table) throws SQLException {
+    List<NamedColumn> rows = new ArrayList<>();
+    try (PreparedStatement ps = conn.prepareStatement(sql)) {
+      ps.setString(1, TiberoNames.physical(schema));
+      ps.setString(2, table);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          rows.add(new NamedColumn(rs.getString(1), rs.getString(2)));
+        }
+      }
+    }
+    return rows;
+  }
+
   /** OWNER 세션의 트리거 생성 권한 수 조회({@code SESSION_PRIVS}). 바인드 없음. */
   static String createTriggerPrivilegeQuery() {
     return "SELECT COUNT(*) FROM SESSION_PRIVS WHERE PRIVILEGE IN"

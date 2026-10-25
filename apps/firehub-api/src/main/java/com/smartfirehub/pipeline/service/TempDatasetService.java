@@ -117,6 +117,14 @@ public class TempDatasetService {
     return datasetService.rebuildPipelineTempTable(datasetId, toColumnRequests(columns));
   }
 
+  /**
+   * 기존 TEMP 를 쓰기 전에 크래시로 남은 재생성 보관본을 맞춘다(WD-256) — 러너가 스키마 비교({@link #hasSchemaChanged}) 전에 부른다. PG
+   * 는 아무것도 하지 않는다.
+   */
+  public void reconcileTempDataset(Long datasetId) {
+    datasetService.reconcilePipelineTempTable(datasetId);
+  }
+
   /** 재생성한 TEMP 의 스텝이 성공했다 — 옛 테이블 보관본을 버린다(WD-238). */
   public void commitRebuild(DatasetService.PipelineTempRebuild rebuild) {
     datasetService.discardPipelineTempBackup(rebuild);

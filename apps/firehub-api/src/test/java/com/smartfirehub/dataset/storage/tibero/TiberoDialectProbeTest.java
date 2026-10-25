@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.storage.tibero;
 
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -33,6 +34,9 @@ class TiberoDialectProbeTest {
   private TiberoTestEnvironment.Dba dba;
   private Connection conn;
 
+  /** 이름 바꾸기 탐침이 OWNER 권한으로 DDL 을 돌리는 연결. DROP USER 전에 먼저 닫아야 한다. */
+  private Connection ownerConn;
+
   /** 만든 객체를 지우는 SQL. 역순으로 실행한다. */
   private final List<String> cleanups = new ArrayList<>();
 
@@ -48,6 +52,14 @@ class TiberoDialectProbeTest {
   /** 추적한 임시 객체를 역순으로 지우고 연결을 닫는다. 지우기 실패는 무시한다(없을 수 있다). */
   @AfterEach
   void cleanUp() {
+    if (ownerConn != null) {
+      try {
+        ownerConn.close();
+      } catch (SQLException ignored) {
+        // 닫기 실패는 무시한다.
+      }
+      ownerConn = null;
+    }
     if (conn == null) {
       return;
     }
@@ -69,6 +81,7 @@ class TiberoDialectProbeTest {
           // 만들어지지 않았거나 이미 지워진 객체다.
         }
       }
+      reportLeftoverAccounts();
     } finally {
       cleanups.clear();
       try {
@@ -645,5 +658,333 @@ class TiberoDialectProbeTest {
   private String nlsSession(String parameter) throws SQLException {
     return queryString(
         "SELECT VALUE FROM NLS_SESSION_PARAMETERS WHERE PARAMETER = '" + parameter + "'");
+  }
+
+  // ── 이름 바꾸기 탐침(WD-256) ─────────────────────────────
+
+  /** 이름 바꾸기 탐침이 만드는 계정. 이 실행이 만든 것만 지운다. */
+  private static final String OWN = P + "OWN";
+
+  private static final String RO = P + "RO";
+  private static final String SLOT = P + "SLOT";
+
+  /** 탐침 끝에 이 실행이 만든 계정이 남아 있지 않은지 DBA 연결로 확인해 출력한다. */
+  private void reportLeftoverAccounts() {
+    try {
+      String left =
+          queryString(
+              "SELECT LISTAGG(USERNAME, ',') WITHIN GROUP (ORDER BY USERNAME) FROM ALL_USERS"
+                  + " WHERE USERNAME IN ('"
+                  + OWN
+                  + "','"
+                  + RO
+                  + "','"
+                  + SLOT
+                  + "')");
+      report("rename.leftover_accounts", "INFO", left == null ? "none" : left);
+    } catch (SQLException e) {
+      report("rename.leftover_accounts", "INFO", "check failed " + describe(e));
+    }
+  }
+
+  /** 실패해도 테스트를 멈추지 않도록 한 항목을 독립적으로 실행해 SUPPORTED/UNSUPPORTED 로 남기는 동작. */
+  private interface Probe {
+    String run() throws SQLException;
+  }
+
+  private void item(String name, Probe probe) {
+    try {
+      supported(name, probe.run());
+    } catch (SQLException e) {
+      unsupported(name, e);
+    }
+  }
+
+  private void ownerExec(String sql) throws SQLException {
+    try (Statement st = ownerConn.createStatement()) {
+      st.execute(sql);
+    }
+  }
+
+  private String ownerString(String sql) throws SQLException {
+    try (Statement st = ownerConn.createStatement();
+        ResultSet rs = st.executeQuery(sql)) {
+      return rs.next() ? rs.getString(1) : null;
+    }
+  }
+
+  private String objectId(String name) throws SQLException {
+    return ownerString("SELECT OBJECT_ID FROM USER_OBJECTS WHERE OBJECT_NAME = '" + name + "'");
+  }
+
+  /** 두 계정에 대한 SELECT 부여 목록을 ALL_TAB_PRIVS 로 읽고, 안 되면 USER_TAB_PRIVS_MADE 로 읽는다. */
+  private String grantees(String table) throws SQLException {
+    try {
+      String v =
+          ownerString(
+              "SELECT LISTAGG(GRANTEE, ',') WITHIN GROUP (ORDER BY GRANTEE) FROM ALL_TAB_PRIVS"
+                  + " WHERE TABLE_NAME = '"
+                  + table
+                  + "' AND PRIVILEGE = 'SELECT' AND GRANTEE LIKE '"
+                  + P
+                  + "%'");
+      return "ALL_TAB_PRIVS:" + v;
+    } catch (SQLException e) {
+      String v =
+          ownerString(
+              "SELECT LISTAGG(GRANTEE, ',') WITHIN GROUP (ORDER BY GRANTEE) FROM USER_TAB_PRIVS_MADE"
+                  + " WHERE TABLE_NAME = '"
+                  + table
+                  + "' AND PRIVILEGE = 'SELECT'");
+      return "USER_TAB_PRIVS_MADE:" + v;
+    }
+  }
+
+  private String tabComment(String table) throws SQLException {
+    return ownerString("SELECT COMMENTS FROM USER_TAB_COMMENTS WHERE TABLE_NAME = '" + table + "'");
+  }
+
+  /**
+   * 테이블·시퀀스·색인·제약의 이름 바꾸기, 이름을 바꿔도 OBJECT_ID·GRANT·시퀀스 값·테이블 주석이 유지되는지, COMMENT ON TABLE 지원 여부를
+   * OWNER 계정(DDL 연결과 같은 권한)으로 확인한다. DBA 로 성공한 결과는 의미가 없어 계정 셋을 새로 만든다.
+   */
+  @Test
+  void rename_probes() throws SQLException {
+    String tablespace = System.getenv("TIBERO_TEST_TABLESPACE");
+    if (tablespace == null || tablespace.isBlank() || !tablespace.matches("[A-Za-z0-9_$#]+")) {
+      tablespace = "USR";
+    }
+    tablespace = tablespace.toUpperCase();
+    // 비밀번호는 임의값이며 출력하지 않는다.
+    String ownPw = "Wd" + java.util.UUID.randomUUID().toString().replace("-", "");
+    String roPw = "Wd" + java.util.UUID.randomUUID().toString().replace("-", "");
+    String slotPw = "Wd" + java.util.UUID.randomUUID().toString().replace("-", "");
+    createTracked(
+        "CREATE USER \"" + OWN + "\" IDENTIFIED BY \"" + ownPw + "\" DEFAULT TABLESPACE \""
+            + tablespace + "\"",
+        "DROP USER \"" + OWN + "\" CASCADE");
+    exec("ALTER USER \"" + OWN + "\" QUOTA UNLIMITED ON \"" + tablespace + "\"");
+    exec(
+        "GRANT CREATE SESSION, CREATE TABLE, CREATE VIEW, CREATE SEQUENCE, CREATE TRIGGER TO \""
+            + OWN
+            + "\"");
+    createTracked(
+        "CREATE USER \"" + RO + "\" IDENTIFIED BY \"" + roPw + "\"",
+        "DROP USER \"" + RO + "\" CASCADE");
+    exec("GRANT CREATE SESSION TO \"" + RO + "\"");
+    createTracked(
+        "CREATE USER \"" + SLOT + "\" IDENTIFIED BY \"" + slotPw + "\"",
+        "DROP USER \"" + SLOT + "\" CASCADE");
+    exec("GRANT CREATE SESSION TO \"" + SLOT + "\"");
+
+    ownerConn = DriverManager.getConnection(dba.target().jdbcUrl(), OWN, ownPw);
+    ownerConn.setAutoCommit(true);
+
+    String t1 = P + "T1";
+    String t2 = P + "T2";
+    String t3 = P + "T3";
+    String sq1 = P + "SQ1";
+    String sq2 = P + "SQ2";
+    String sq3 = P + "SQ3";
+
+    // 준비: 테이블(PK)+일반 색인+유니크 색인+체크 제약+행, 부여, 주석, 시퀀스. 준비 실패는 사실로 남기고 계속한다.
+    item(
+        "rename.setup_owner_ddl",
+        () -> {
+          ownerExec(
+              "CREATE TABLE " + t1 + " (ID NUMBER CONSTRAINT " + P + "PK1 PRIMARY KEY,"
+                  + " A NUMBER, B NUMBER, CONSTRAINT " + P + "CK1 CHECK (A > 0))");
+          ownerExec("CREATE INDEX " + P + "IX1 ON " + t1 + " (A)");
+          ownerExec("CREATE UNIQUE INDEX " + P + "UX1 ON " + t1 + " (B)");
+          ownerExec("INSERT INTO " + t1 + " VALUES (1, 1, 1)");
+          ownerExec("CREATE SEQUENCE " + sq1 + " START WITH 1 INCREMENT BY 1");
+          return "table+indexes+check+sequence created by owner";
+        });
+    item(
+        "rename.setup_grants",
+        () -> {
+          ownerExec("GRANT SELECT ON " + t1 + " TO \"" + RO + "\"");
+          ownerExec("GRANT SELECT ON " + t1 + " TO \"" + SLOT + "\"");
+          return grantees(t1);
+        });
+    item(
+        "rename.comment_on_table",
+        () -> {
+          ownerExec("COMMENT ON TABLE " + t1 + " IS 'fp-abc'");
+          return "readback=" + tabComment(t1);
+        });
+    String tableId = null;
+    String seqId = null;
+    try {
+      tableId = objectId(t1);
+      for (int i = 0; i < 3; i++) {
+        ownerString("SELECT " + sq1 + ".NEXTVAL FROM DUAL");
+      }
+      seqId = objectId(sq1);
+    } catch (SQLException e) {
+      unsupported("rename.setup_ids", e);
+    }
+    final String tid = tableId;
+    final String sid = seqId;
+
+    // 색인·제약 이름 바꾸기
+    item(
+        "rename.alter_index_rename",
+        () -> {
+          ownerExec("ALTER INDEX " + P + "IX1 RENAME TO " + P + "IX2");
+          return "now=" + ownerString("SELECT INDEX_NAME FROM USER_INDEXES WHERE INDEX_NAME = '"
+              + P + "IX2'");
+        });
+    item(
+        "rename.alter_index_rename_unique",
+        () -> {
+          ownerExec("ALTER INDEX " + P + "UX1 RENAME TO " + P + "UX2");
+          return "now=" + ownerString("SELECT INDEX_NAME FROM USER_INDEXES WHERE INDEX_NAME = '"
+              + P + "UX2'")
+              + " uniqueness="
+              + ownerString("SELECT UNIQUENESS FROM USER_INDEXES WHERE INDEX_NAME = '" + P + "UX2'");
+        });
+    item(
+        "rename.alter_table_rename_constraint",
+        () -> {
+          ownerExec("ALTER TABLE " + t1 + " RENAME CONSTRAINT " + P + "CK1 TO " + P + "CK2");
+          return "now=" + ownerString("SELECT CONSTRAINT_NAME FROM USER_CONSTRAINTS WHERE"
+              + " CONSTRAINT_NAME = '" + P + "CK2'");
+        });
+    item(
+        "rename.alter_table_rename_pk_constraint",
+        () -> {
+          ownerExec("ALTER TABLE " + t1 + " RENAME CONSTRAINT " + P + "PK1 TO " + P + "PK2");
+          return "now=" + ownerString("SELECT CONSTRAINT_NAME FROM USER_CONSTRAINTS WHERE"
+              + " CONSTRAINT_NAME = '" + P + "PK2'")
+              + " pk_index_name="
+              + ownerString("SELECT INDEX_NAME FROM USER_CONSTRAINTS WHERE CONSTRAINT_NAME = '"
+                  + P + "PK2'");
+        });
+
+    // 테이블: ALTER TABLE ... RENAME TO 후 유지 여부
+    item(
+        "rename.alter_table_rename_to",
+        () -> {
+          ownerExec("ALTER TABLE " + t1 + " RENAME TO " + t2);
+          return "now=" + ownerString("SELECT OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_NAME = '"
+              + t2 + "'");
+        });
+    item(
+        "rename.object_id_kept_alter_table",
+        () -> {
+          String now = objectId(t2);
+          if (tid == null || !tid.equals(now)) {
+            throw new SQLException("object_id before=" + tid + " after=" + now);
+          }
+          return "object_id=" + now;
+        });
+    item("rename.grant_kept_alter_table", () -> keptGrants(t2));
+    item(
+        "rename.comment_survives_rename",
+        () -> {
+          String c = tabComment(t2);
+          if (!"fp-abc".equals(c)) {
+            throw new SQLException("comment after rename=" + c);
+          }
+          return "comment=" + c;
+        });
+    item(
+        "rename.comment_after_rename_settable",
+        () -> {
+          ownerExec("COMMENT ON TABLE " + t2 + " IS 'fp-def'");
+          return "readback=" + tabComment(t2);
+        });
+    item(
+        "rename.comment_clear_empty",
+        () -> {
+          ownerExec("COMMENT ON TABLE " + t2 + " IS ''");
+          String c = tabComment(t2);
+          return "readback=" + (c == null ? "NULL" : "'" + c + "'");
+        });
+
+    // 테이블: RENAME a TO b 문 (OBJECT_ID 는 이미 위에서 기준 확인)
+    item(
+        "rename.table_rename_stmt",
+        () -> {
+          ownerExec("RENAME " + t2 + " TO " + t3);
+          return "now=" + ownerString("SELECT OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_NAME = '"
+              + t3 + "'");
+        });
+    item(
+        "rename.object_id_kept_table",
+        () -> {
+          String now = objectId(t3);
+          if (tid == null || !tid.equals(now)) {
+            throw new SQLException("object_id before=" + tid + " after=" + now);
+          }
+          return "object_id=" + now;
+        });
+    item("rename.grant_kept_ro", () -> keptGrantFor(t3, RO));
+    item("rename.grant_kept_slot", () -> keptGrantFor(t3, SLOT));
+    item(
+        "rename.rows_kept",
+        () -> "count=" + ownerString("SELECT COUNT(*) FROM " + t3));
+
+    // 시퀀스
+    item(
+        "rename.sequence_rename_stmt",
+        () -> {
+          ownerExec("RENAME " + sq1 + " TO " + sq2);
+          return "now=" + ownerString("SELECT OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_NAME = '"
+              + sq2 + "'");
+        });
+    item(
+        "rename.object_id_kept_sequence",
+        () -> {
+          String now = objectId(sq2);
+          if (sid == null || !sid.equals(now)) {
+            throw new SQLException("object_id before=" + sid + " after=" + now);
+          }
+          return "object_id=" + now;
+        });
+    item(
+        "rename.sequence_nextval_kept",
+        () -> {
+          String next = ownerString("SELECT " + sq2 + ".NEXTVAL FROM DUAL");
+          if (!"4".equals(next)) {
+            throw new SQLException("nextval after 3 uses and rename=" + next + " (expected 4)");
+          }
+          return "nextval=" + next;
+        });
+    // 대조군: 이름을 바꾸지 않은 시퀀스의 4번째 NEXTVAL — 캐시 때문에 21 이 나오는 것이 이름 바꾸기 탓인지 가른다.
+    item(
+        "rename.sequence_nextval_control_no_rename",
+        () -> {
+          String c = P + "SQC";
+          ownerExec("CREATE SEQUENCE " + c + " START WITH 1 INCREMENT BY 1");
+          for (int i = 0; i < 3; i++) {
+            ownerString("SELECT " + c + ".NEXTVAL FROM DUAL");
+          }
+          return "4th nextval without rename=" + ownerString("SELECT " + c + ".NEXTVAL FROM DUAL");
+        });
+    item(
+        "rename.alter_sequence_rename",
+        () -> {
+          ownerExec("ALTER SEQUENCE " + sq2 + " RENAME TO " + sq3);
+          return "now=" + ownerString("SELECT OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_NAME = '"
+              + sq3 + "'");
+        });
+  }
+
+  private String keptGrants(String table) throws SQLException {
+    String g = grantees(table);
+    if (!g.contains(RO) || !g.contains(SLOT)) {
+      throw new SQLException("grants after rename: " + g);
+    }
+    return g;
+  }
+
+  private String keptGrantFor(String table, String grantee) throws SQLException {
+    String g = grantees(table);
+    if (!g.contains(grantee)) {
+      throw new SQLException("grants after rename: " + g);
+    }
+    return g;
   }
 }

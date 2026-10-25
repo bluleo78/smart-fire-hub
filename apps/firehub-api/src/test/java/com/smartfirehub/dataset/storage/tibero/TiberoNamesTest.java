@@ -208,4 +208,24 @@ class TiberoNamesTest {
             () -> TiberoNames.requireStagingPhysicalName(physical.toLowerCase(Locale.ROOT)))
         .isInstanceOf(com.smartfirehub.dataset.exception.InvalidTableNameException.class);
   }
+
+  @Test
+  void rebuildBackupTableName_isPrefixedDeterministicAndLength27() {
+    String name = TiberoNames.rebuildBackupTableName("GENIA_T5", "ptmp_1_a");
+    assertThat(name).startsWith("rb_").hasSize(27).isEqualTo(name.toLowerCase(Locale.ROOT));
+    // 대소문자와 무관하게 결정적이고, 테이블·스키마가 다르면 다르다.
+    assertThat(TiberoNames.rebuildBackupTableName("genia_t5", "PTMP_1_A")).isEqualTo(name);
+    assertThat(TiberoNames.rebuildBackupTableName("GENIA_T5", "ptmp_1_b")).isNotEqualTo(name);
+    assertThat(TiberoNames.rebuildBackupTableName("GENIA_T6", "ptmp_1_a")).isNotEqualTo(name);
+    // 보관본 맞춤이 지울 수 있는 형식이라 사용자 이름으로는 거부한다(stg_ 와 같은 방식, 대소문자 무시).
+    for (String reserved : new String[] {name, name.toUpperCase(Locale.ROOT)}) {
+      assertThatThrownBy(() -> TiberoNames.validateUserName(reserved))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("내부 재생성 보관본용으로 예약된 이름");
+    }
+    for (String ok :
+        new String[] {"rb_report", "rb_0123456789abcdef0123456", "rb_0123456789abcdef0123456g"}) {
+      assertThatCode(() -> TiberoNames.validateUserName(ok)).doesNotThrowAnyException();
+    }
+  }
 }

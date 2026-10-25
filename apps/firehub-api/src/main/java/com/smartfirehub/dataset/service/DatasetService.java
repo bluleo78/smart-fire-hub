@@ -28,9 +28,11 @@ import com.smartfirehub.dataset.repository.DatasetTagRepository;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.rowsearch.RowSearchIndex;
 import com.smartfirehub.dataset.rowsearch.SearchColumnRepository;
+import com.smartfirehub.dataset.rowsearch.SearchConfig;
 import com.smartfirehub.dataset.rowsearch.SearchIndexSettingsService;
 import com.smartfirehub.dataset.search.DatasetChangedEvent;
 import com.smartfirehub.dataset.search.DatasetEmbeddingService;
+import com.smartfirehub.dataset.storage.DataTableStore.RebuildBackupState;
 import com.smartfirehub.file.repository.FileDatasetConfigRepository;
 import com.smartfirehub.file.service.FileObjectStorageService;
 import com.smartfirehub.global.dto.PageResponse;
@@ -44,13 +46,16 @@ import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
+import org.jooq.Record;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.postgresql.util.ServerErrorMessage;
 import org.springframework.context.ApplicationEventPublisher;
@@ -59,6 +64,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DatasetService {
@@ -267,7 +273,10 @@ public class DatasetService {
     // 되돌리기 재료는 무엇이든 바꾸기 전에 읽는다.
     List<org.jooq.Record> columnSnapshot = columnRepository.snapshotByDatasetId(datasetId);
     Long previousLevelId = datasetSecurityService.currentLevelId(datasetId);
-    long backupTableOid = dataTableService.moveToRebuildBackup(dataset.tableName());
+    // 지문은 바꾸기 전 스냅숏으로 만든다 — 재생성이 커밋되면 컬럼 행 id 가 바뀌어 크래시 뒤 맞춤이 「커밋됨」을 가린다(WD-256).
+    long backupTableOid =
+        dataTableService.moveToRebuildBackup(
+            dataset.tableName(), columnMetaFingerprint(columnSnapshot));
     String backupTableName = DataTableService.rebuildBackupTableName(dataset.tableName());
     columnRepository.deleteByDatasetId(datasetId);
     withColumnNameUniqueAs409(() -> columnRepository.saveBatch(datasetId, columns));
@@ -292,6 +301,9 @@ public class DatasetService {
   @Transactional
   public void restorePipelineTempTable(PipelineTempRebuild rebuild, long runAsUserId) {
     requirePipelineTemp(rebuild.datasetId());
+    // 저장소 되돌리기를 메타 쓰기보다 먼저 부른다(리뷰 C1). PG 는 DDL 도 이 트랜잭션이라 함께 커밋·롤백된다. Tibero 는 여기서 보관본(OID)만 확인해
+    // 없거나 남의 것이면 메타를 쓰기 전에 실패하고, 물리 복원은 아래 메타 복구가 <b>커밋된 뒤</b>로 미룬다 — 그래서 커밋 뒤 어떤 실패·크래시도 「메타=옛 열,
+    // 보관본=옛 지문」을 남겨 다음 맞춤이 복원으로 수렴한다(TiberoDataTableStore#restoreRebuildBackup).
     dataTableService.restoreRebuildBackup(
         rebuild.tableName(), rebuild.backupTableName(), rebuild.backupTableOid());
     columnRepository.restoreSnapshot(rebuild.datasetId(), rebuild.columnSnapshot());
@@ -319,6 +331,59 @@ public class DatasetService {
           new IndexRef(TenantContext.require(), rebuild.datasetId(), rebuild.tableName()));
     }
     return existed;
+  }
+
+  /**
+   * 크래시로 남은 러너 TEMP 재생성 보관본을 맞춘다(WD-256) — 러너가 기존 TEMP 를 쓰기 전에 부른다. 현재 컬럼 메타 지문으로 저장소에 맡긴다: 보관본 지문과
+   * 같으면(재생성 트랜잭션이 롤백돼 메타가 옛 열) 복원, 다르면(재생성이 커밋됨) 보관본 삭제. 복원했으면 컬럼 구성이 메타와 다시 맞으므로 검색 원문을 다시 맞춘다. PG
+   * 는 저장소가 아무것도 하지 않는다({@code NONE}).
+   *
+   * <p>트랜잭션인 이유: 러너는 트랜잭션 밖에서 돌아 RLS 문맥이 없다 — 데이터셋·컬럼 메타 읽기가 이 트랜잭션 안에서 테넌트 문맥을 얻는다.
+   */
+  @Transactional
+  public RebuildBackupState reconcilePipelineTempTable(Long datasetId) {
+    DatasetResponse dataset = requirePipelineTemp(datasetId);
+    String fingerprint = columnMetaFingerprint(columnRepository.snapshotByDatasetId(datasetId));
+    RebuildBackupState state =
+        dataTableService.reconcileRebuildBackup(dataset.tableName(), fingerprint);
+    if (state == RebuildBackupState.RESTORED) {
+      log.warn(
+          "TEMP 데이터셋 {} 의 재생성 보관본을 원래 테이블로 되돌렸습니다(이전 실행이 마무리 전에 멈춘 흔적): {}",
+          datasetId,
+          dataset.tableName());
+      reindexSearch(datasetId);
+    } else if (state == RebuildBackupState.DROPPED_LEFTOVER) {
+      log.warn(
+          "TEMP 데이터셋 {} 의 남은 재생성 보관본을 지웠습니다(재생성은 커밋됐으나 마무리 전에 멈춘 흔적): {}",
+          datasetId,
+          dataset.tableName());
+    }
+    return state;
+  }
+
+  /**
+   * 컬럼 메타 지문(WD-256) — {@code dataset_column} 행의 (id, column_name, data_type) 을 <b>id 순</b>으로 이은
+   * 문자열의 SHA-256 앞 32자(소문자 hex). 재생성은 컬럼 행을 지우고 새로 넣어 id 가 바뀌므로, 재생성이 커밋되면 물리 열이 같아도(INTEGER·BIGINT
+   * 는 Tibero 에서 둘 다 {@code NUMBER(19)}) 지문이 반드시 달라진다. 되돌리기({@code restoreSnapshot})는 id 까지 그대로 넣어
+   * 같은 지문으로 돌아간다.
+   *
+   * <p>구분: 필드 사이 U+001F(단위 구분자), 행 끝 U+001E(레코드 구분자). 컬럼 이름은 식별자 규칙상 제어 문자를 담을 수 없어 경계가 모호하지 않다. 입력
+   * 순서(스냅숏은 column_order 순)와 무관하게 id 로 정렬한다. data_type 이 null 이면 문자열 {@code null} 로 둔다.
+   */
+  public static String columnMetaFingerprint(List<Record> columnSnapshot) {
+    List<Record> sorted = new ArrayList<>(columnSnapshot);
+    sorted.sort(Comparator.comparingLong(r -> ((Number) r.get("id")).longValue()));
+    StringBuilder text = new StringBuilder();
+    for (Record r : sorted) {
+      text.append(r.get("id"))
+          .append('\u001F')
+          .append(r.get("column_name"))
+          .append('\u001F')
+          .append(r.get("data_type"))
+          .append('\u001E');
+    }
+    // SearchConfig.sha256 은 UTF-8 SHA-256 소문자 hex — 앞 32자만 지문으로 쓴다.
+    return SearchConfig.sha256(text.toString()).substring(0, 32);
   }
 
   /** 러너 소유 TEMP 만 다시 만들거나 되돌릴 수 있다 — 사용자 데이터셋의 테이블을 옮기거나 지우는 경로가 되지 않게 막는다. */
