@@ -663,6 +663,19 @@
       "sql": "SELECT * FROM \"sys\".\"X\"",
       "tenantSchema": "GENIA_T5",
       "allowed": true
+    },
+    {
+      "name": "quoted SYS schema rejected",
+      "sql": "SELECT * FROM \"SYS\".\"DUAL\"",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "quoted lowercase sys is another identifier",
+      "note": "가드는 허용, 다른 스키마라 접근 검사에서 거부",
+      "sql": "SELECT x FROM \"sys\".x",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
     }
   ],
   "guardDivergence": [

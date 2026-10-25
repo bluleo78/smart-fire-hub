@@ -680,8 +680,18 @@ public class DatasetAccessGuard {
     String exact = SqlValidationUtils.removeTrailingSemicolon(sql.strip());
     // 참조 추출·데이터 스키마도 실행될 곳의 규칙을 따른다 — Tibero 는 테넌트 Tibero 검증기(따옴표 없으면 대문자 접기)·GENIA_T{id}.
     SqlValidator tiberoValidator = tibero ? pipelineDataSchema.validator() : null;
-    SqlValidator.ReferencedTables refs =
-        tibero ? tiberoValidator.referencedTables(exact) : sqlParser.referencedTables(exact);
+    // 참조 추출 파서 선택(스펙 §4.2: 판정 파서 = 실행 검증 파서). Tibero 는 모드와 무관하게 Tibero 검증기, PG 는 대화형(INTERACTIVE)만
+    // 대화형 파서(sqlParser)로 두고, PG 파이프라인 모드(PIPELINE_SAVE·PIPELINE_RUN)는 실행 때 쓰는 파이프라인 검증기로 참조를 뽑는다.
+    // 판정이 허용한 SQL 을 실행 검증기가 다르게 해석하면 판정과 실행의 참조 집합이 갈라지기 때문이다. 미한정 이름은 여기서 거부하지 않는다 —
+    // referencedTables 는 스키마 null 로 돌려줄 뿐이고, 실행 시점의 validate 가 같은 400(UnsafeSqlException)으로 거부한다.
+    SqlValidator.ReferencedTables refs;
+    if (tibero) {
+      refs = tiberoValidator.referencedTables(exact);
+    } else if (mode == SqlAccessMode.INTERACTIVE) {
+      refs = sqlParser.referencedTables(exact);
+    } else {
+      refs = pipelineDataSchema.validator().referencedTables(exact);
+    }
     // Tibero 대화형(WD-76)은 읽기 전용 계정 세션에서 실행돼 미한정 이름이 테넌트 스키마로 해석되지 않는다. 이는 등급 거부가 아니라 문법
     // 요구라 403 이 아니라 실행 경로 검증기와 같은 문구의 UnsafeSqlException(400)으로 거부한다 — 숨김·허용 테이블에 똑같이 나오므로
     // 존재를 드러내지 않고, 감사(거부 기록)에도 남지 않는다(requireSql 은 판정 거부만 감사한다). 미한정 DUAL 은 통과.

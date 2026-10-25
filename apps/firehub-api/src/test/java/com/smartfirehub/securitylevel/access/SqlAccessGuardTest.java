@@ -37,6 +37,9 @@ class SqlAccessGuardTest extends IntegrationTestBase {
    */
   @MockitoSpyBean private DataStoreResolver dataStoreResolver;
 
+  /** PG 파이프라인 실행 검증기 빈(WD-232 — 판정 파서와 같은 규칙인지 대조). */
+  @Autowired private SqlValidator pipelineValidator;
+
   private SecurityFixture fx;
   private final List<Long> datasets = new ArrayList<>();
   private final List<Long> users = new ArrayList<>();
@@ -248,6 +251,68 @@ class SqlAccessGuardTest extends IntegrationTestBase {
                 guard.requireSql(
                     c, "SELECT * FROM " + schema + ".step_ref_1", SqlAccessMode.PIPELINE_RUN))
         .isInstanceOf(CodedApiException.class);
+  }
+
+  /**
+   * WD-232 — PG 파이프라인 모드(PIPELINE_SAVE·PIPELINE_RUN) 판정 결과 고정. 판정 파서를 실행 검증 파서로 바꾸기 전후로 한정 이름 판정이
+   * 같아야 한다(미한정 이름만 달라질 수 있다 — 아래 별도 테스트).
+   */
+  @Test
+  void pgPipelineModes_qualifiedNameJudgement_isPinned() {
+    Clearance c = userAt("민감");
+    String schema = DataSchema.current();
+    for (SqlAccessMode mode : List.of(SqlAccessMode.PIPELINE_SAVE, SqlAccessMode.PIPELINE_RUN)) {
+      // 한정 이름 허용 + 읽기 등급 반영
+      SqlAccessResult ok = guard.requireSql(c, "SELECT * FROM " + schema + "." + high, mode);
+      assertThat(ok.allowed()).as(mode.name()).isTrue();
+      assertThat(ok.readDatasetIds()).hasSize(1);
+      // 다른 스키마 거부
+      assertThat(guard.checkSql(c, "SELECT * FROM public.dataset", mode).code())
+          .as(mode.name())
+          .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+      // 숨김 테이블 거부
+      assertThat(guard.checkSql(c, "SELECT * FROM " + schema + "." + hidden, mode).code())
+          .as(mode.name())
+          .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+      // 쓰기 하향은 파이프라인 모드에서 허용(게이트가 자동 상향)
+      assertThat(
+              guard
+                  .checkSql(
+                      c,
+                      "INSERT INTO "
+                          + schema
+                          + "."
+                          + pub
+                          + " (a) SELECT a FROM "
+                          + schema
+                          + "."
+                          + high,
+                      mode)
+                  .allowed())
+          .as(mode.name())
+          .isTrue();
+    }
+  }
+
+  /**
+   * WD-232 — PG 파이프라인 모드의 미한정 이름 판정 고정. 판정 파서를 실행 검증기(allowUnqualifiedTables=false)로 바꿔도 {@code
+   * referencedTables} 는 미한정 이름을 거부하지 않고 스키마 null 로 돌려주므로 판정 결과는 그대로다(허용 데이터셋이면 허용, 숨김이면 거부). 미한정
+   * 이름의 거부는 판정이 아니라 실행 검증기({@code validate})가 맡는다 — 같은 SQL 을 실행 검증기가 거부하는지를 함께 고정한다.
+   */
+  @Test
+  void pgPipelineModes_unqualifiedName_judgementUnchanged_executionValidatorRejects() {
+    Clearance c = userAt("민감");
+    String visible = "SELECT * FROM " + high;
+    String secret = "SELECT * FROM " + hidden;
+    assertThatThrownBy(() -> pipelineValidator.validate(visible))
+        .isInstanceOf(UnsafeSqlException.class);
+    for (SqlAccessMode mode : List.of(SqlAccessMode.PIPELINE_SAVE, SqlAccessMode.PIPELINE_RUN)) {
+      assertThat(guard.checkSql(c, visible, mode).allowed()).as(mode.name()).isTrue();
+      assertThat(guard.checkSql(c, secret, mode).code())
+          .as(mode.name())
+          .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    }
+    assertThat(guard.requireSql(c, visible, SqlAccessMode.INTERACTIVE).allowed()).isTrue();
   }
 
   /**
