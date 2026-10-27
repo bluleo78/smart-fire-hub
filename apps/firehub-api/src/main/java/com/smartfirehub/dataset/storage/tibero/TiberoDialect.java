@@ -108,6 +108,36 @@ public final class TiberoDialect {
    */
   public static final Set<Integer> STATEMENT_CANCELED = Set.of(-12040);
 
+  // 아래 데이터 오류 코드 넷은 모두 실서버 측정값이다(Tibero 개발 서버, 2026-10-27 — 탐침: TiberoDataErrorCodeProbeTest).
+  // Oracle 양수 짝 코드(ORA-01722·01438·01861 등)는 측정하지 않아 넣지 않는다.
+  // 암묵 변환(INSERT…SELECT)·명시 변환(TO_NUMBER·TO_DATE·TO_TIMESTAMP)·바인드 값이 같은 코드로 나온다.
+
+  /**
+   * 숫자가 아닌 문자열을 숫자로 바꾸려 함({@code JDBC-5074:Given string does not represent a number in proper
+   * format.}) — PG 의 {@code 22P02}(invalid_text_representation)에 해당한다.
+   */
+  public static final Set<Integer> INVALID_NUMBER = Set.of(-5074);
+
+  /**
+   * 값이 컬럼의 정밀도를 넘음({@code JDBC-5111:NUMBER exceeds given precision. (n:.., p:18, s:6)}) —
+   * NUMBER(18,6) 의 정수부 12자리 초과와 NUMBER(19) 초과가 같은 코드다. PG 의 {@code
+   * 22003}(numeric_value_out_of_range)에 해당한다.
+   */
+  public static final Set<Integer> NUMBER_OVERFLOW = Set.of(-5111);
+
+  /**
+   * 날짜·시각 문자열의 형식이 틀림({@code JDBC-5113:Invalid year value 'abc'.}) — 숫자로 읽을 수 없는 조각이 있는 경우다. PG 의
+   * {@code 22007}(invalid_datetime_format)에 해당한다.
+   */
+  public static final Set<Integer> INVALID_DATETIME = Set.of(-5113);
+
+  /**
+   * 날짜·시각 필드가 허용 범위를 벗어남({@code JDBC-5114:Invalid day value '30': must be an integer between 1 and
+   * 28.}) — 2026-02-30·13월·0000년 같은 값이다. 형식 오류({@link #INVALID_DATETIME})와 코드가 따로 나와 PG 처럼 {@code
+   * 22008}(datetime_field_overflow)로 가른다.
+   */
+  public static final Set<Integer> DATETIME_OUT_OF_RANGE = Set.of(-5114);
+
   /** 무결성 위반으로 바꿀 오류 코드(중복 키 제외). */
   public static final Set<Integer> INTEGRITY_VIOLATIONS =
       Stream.of(NOT_NULL_INSERT, NOT_NULL_ENABLE_NULLS_FOUND, VALUE_TOO_LARGE)

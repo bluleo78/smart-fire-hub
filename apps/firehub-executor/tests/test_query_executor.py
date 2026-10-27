@@ -8,6 +8,7 @@ from app.services.query_executor import (
     _build_geojson_wrapped_sql,
     execute_query,
 )
+from tests.conftest import PgError
 
 
 # ---------------------------------------------------------------------------
@@ -856,7 +857,7 @@ def test_wrap_failure_on_one_column_does_not_revert_other_geometry_columns():
     def execute_side(sql, *args, **kwargs):
         executed_sqls.append(sql)
         if 'ST_AsGeoJSON("e")' in sql:
-            raise _PgError("function public.st_asgeojson(zz.geometry) does not exist", "42883")
+            raise PgError("function public.st_asgeojson(zz.geometry) does not exist", "42883")
         if 'ST_AsGeoJSON("g")' in sql:
             state["mode"] = "wrapped"
             cursor.description = [("e", 25, None, None, None, None, None), ("g", 25, None, None, None, None, None)]
@@ -891,18 +892,6 @@ def test_wrap_failure_on_one_column_does_not_revert_other_geometry_columns():
 # ---------------------------------------------------------------------------
 # #779 — 실행 중 오류에서 사용자 SQL 을 재실행하지 않는다
 # ---------------------------------------------------------------------------
-
-class _PgError(Exception):
-    """서버가 보낸 오류처럼 SQLSTATE(pgcode)를 가진 가짜 예외.
-
-    psycopg2.errors.DivisionByZero(...) 를 직접 만들면 pgcode 가 None 이라(서버가 채우는 값) SQLSTATE
-    판정 경로를 타지 않는다 — 그래서 pgcode 를 명시적으로 단 예외를 쓴다.
-    """
-
-    def __init__(self, msg: str, pgcode: str):
-        super().__init__(msg)
-        self.pgcode = pgcode
-
 
 def _geom_cursor(fail_on, *, raw_ok: bool = False):
     """geometry 컬럼 g 하나를 돌려주는 사용자 SQL(테이블 zz_t)용 모의 커서.
@@ -956,7 +945,7 @@ def test_runtime_error_with_geometry_column_runs_user_sql_once(msg, pgcode):
 
     수정 전에는 원 쿼리 → 래핑 → (컬럼 격리 후) 같은 래핑 재실행으로 사용자 SQL 이 3회 돌았다.
     """
-    conn, executed = _geom_cursor(lambda sql: _PgError(msg, pgcode) if "zz_t" in sql and "LIMIT 0" not in sql else None)
+    conn, executed = _geom_cursor(lambda sql: PgError(msg, pgcode) if "zz_t" in sql and "LIMIT 0" not in sql else None)
 
     result = execute_query("SELECT g, 1/(id-1) AS z FROM zz_t", max_rows=100, read_only=True, conn=conn, tenant_id=1)
 
@@ -971,7 +960,7 @@ def test_wrap_runtime_error_on_success_path_falls_back_without_isolation_retry()
 
     수정 전에는 LIMIT 0 격리 시험이 모두 통과해 같은 래핑 SQL 을 한 번 더 실행했다(사용자 SQL 3회).
     """
-    timeout = _PgError("canceling statement due to statement timeout", "57014")
+    timeout = PgError("canceling statement due to statement timeout", "57014")
     conn, executed = _geom_cursor(lambda sql: timeout if "ST_AsGeoJSON" in sql and "LIMIT 0" not in sql else None)
 
     result = execute_query("SELECT g, 1 AS z FROM zz_t", max_rows=100, read_only=True, conn=conn, tenant_id=1)
@@ -995,7 +984,7 @@ def test_wrap_failure_without_sqlstate_does_not_isolate():
 
 def test_isolation_that_drops_no_column_does_not_rerun_same_wrap():
     """해석 단계 오류(42xxx)라도 격리 결과가 원래 컬럼 구성과 같으면 같은 래핑 SQL 을 재실행하지 않는다(#779)."""
-    err = _PgError("operator does not exist", "42883")
+    err = PgError("operator does not exist", "42883")
     # 래핑 실행만 실패하고 LIMIT 0 격리 시험은 통과 → 빠지는 컬럼이 없다.
     conn, executed = _geom_cursor(lambda sql: err if "ST_AsGeoJSON" in sql and "_geom_probe" not in sql else None)
 
@@ -1098,3 +1087,43 @@ def test_duplicate_column_names_with_geometry_wrap_uses_unique_names():
     assert wrapped and wrapped[0].startswith('WITH _src("id", "id_2", "geom") AS (')
     assert result.columns == ["id", "id_2", "geom"]
     assert result.rows == [{"id": 1, "id_2": 2, "geom": '{"type":"Point","coordinates":[1,2]}'}]
+
+
+# ---------------------------------------------------------------------------
+# 시간 초과 판정(WD-261 §5.2) — 57014 + 「그 문장의 경과 시간 ≥ 그 문장에 건 제한 − 0.5초」
+# ---------------------------------------------------------------------------
+
+def test_timeout_detected_without_english_text(fake_clock):
+    # 서버 언어가 한국어라 원문에 영어 'statement timeout' 이 없어도, 제한만큼 돌았으면 시간 초과다.
+    from app.services.query_executor import is_statement_timeout
+
+    started_at = fake_clock()
+    fake_clock.advance(50)
+    assert is_statement_timeout(PgError("사용자 요청에 의해 문장 실행을 취소합니다", "57014"), started_at, 50) is True
+
+
+def test_admin_cancel_before_limit_is_not_timeout(fake_clock):
+    # 원문이 영어 'statement timeout' 이어도 제한 전에 끝난 57014 는 관리자 취소다(문구는 판정에 쓰지 않는다).
+    from app.services.query_executor import is_statement_timeout
+
+    started_at = fake_clock()
+    fake_clock.advance(10)
+    assert is_statement_timeout(PgError("canceling statement due to statement timeout", "57014"), started_at, 50) is False
+
+
+@pytest.mark.parametrize("elapsed, expected", [(49.49, False), (49.5, True), (60.0, True)])
+def test_timeout_tolerance_is_half_second(fake_clock, elapsed, expected):
+    from app.services.query_executor import is_statement_timeout
+
+    started_at = fake_clock()
+    fake_clock.advance(elapsed)
+    assert is_statement_timeout(PgError("x", "57014"), started_at, 50) is expected
+
+
+def test_non_57014_is_never_timeout(fake_clock):
+    from app.services.query_executor import is_statement_timeout
+
+    started_at = fake_clock()
+    fake_clock.advance(100)
+    assert is_statement_timeout(PgError("deadlock detected", "40P01"), started_at, 50) is False
+    assert is_statement_timeout(RuntimeError("boom"), started_at, 50) is False

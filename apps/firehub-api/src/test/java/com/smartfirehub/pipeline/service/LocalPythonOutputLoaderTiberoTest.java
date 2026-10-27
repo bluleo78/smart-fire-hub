@@ -14,6 +14,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
+import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.math.BigDecimal;
@@ -165,6 +166,26 @@ class LocalPythonOutputLoaderTiberoTest {
     assertThatThrownBy(() -> loader.loadStaging(STG, "[{\"a\": 1}]", null))
         .isInstanceOf(ScriptExecutionException.class)
         .hasMessage(PythonStepErrorMessages.loadDataError("글자 수 제한을 넘는 값이 있습니다"));
+  }
+
+  /**
+   * Python 적재 경로에서 Tibero 에 실제로 닿는 데이터 오류는 자릿수 초과뿐이다(값은 적재 전에 변환된다). 측정 코드 -5111(WD-261)은 PG 의
+   * 22003 과 같은 "숫자 범위" 안내가 되고 원문은 노출하지 않는다.
+   */
+  @Test
+  void loadStaging_tiberoNumberOverflow_usesNumericRangeMessage() {
+    doThrow(
+            new UncategorizedSQLException(
+                "insert", "INSERT INTO SECRET", new SQLException("JDBC-5111 secret", null, -5111)))
+        .when(rowService)
+        .insertTempBatch(anyString(), anyList(), anyList(), any());
+
+    assertThatThrownBy(() -> loader.loadStaging(STG, "[{\"a\": 1}]", null))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessageContaining("숫자 범위를 넘는 값이 있습니다")
+        .hasMessage(
+            PythonStepErrorMessages.loadDataError(
+                DataExceptionTranslator.describeDataError("22003", null, null)));
   }
 
   @Test

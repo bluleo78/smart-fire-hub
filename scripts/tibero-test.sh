@@ -91,7 +91,7 @@ set +e
 status=0
 
 if [[ "$STAGE" == all || "$STAGE" == api ]]; then
-  echo "== api 단계 (TiberoDialectProbeTest, TiberoDataStoreContractTest, TiberoLiveTriggerTest, TiberoLiveSlotGrantTest, TiberoLiveRebuildTest, TiberoLiveStoreRebuildTest)"
+  echo "== api 단계 (TiberoDialectProbeTest, TiberoDataStoreContractTest, TiberoLiveTriggerTest, TiberoLiveSlotGrantTest, TiberoLiveRebuildTest, TiberoLiveStoreRebuildTest, TiberoDataErrorCodeProbeTest)"
   "$ROOT_DIR/apps/firehub-api/gradlew" -p "$ROOT_DIR/apps/firehub-api" test \
     --tests com.smartfirehub.dataset.storage.tibero.TiberoDialectProbeTest \
     --tests com.smartfirehub.dataset.storage.tibero.TiberoDataStoreContractTest \
@@ -99,10 +99,11 @@ if [[ "$STAGE" == all || "$STAGE" == api ]]; then
     --tests com.smartfirehub.dataset.storage.tibero.TiberoLiveSlotGrantTest \
     --tests com.smartfirehub.dataset.storage.tibero.TiberoLiveRebuildTest \
     --tests com.smartfirehub.dataset.storage.tibero.TiberoLiveStoreRebuildTest \
+    --tests com.smartfirehub.dataset.storage.tibero.TiberoDataErrorCodeProbeTest \
     -i 2>&1 | grep -E '^[[:space:]]*PROBE |[[:space:]]>[[:space:]].*[[:space:]](PASSED|FAILED|SKIPPED)$|^BUILD (SUCCESSFUL|FAILED)|tests completed'
   api_status=${PIPESTATUS[0]}
   # 테스트별 PASSED 줄은 gradle 로그 설정에 따라 안 찍힐 수 있으므로, 결과 XML 의 클래스별 합계를 함께 보여 준다.
-  print_totals "$ROOT_DIR"/apps/firehub-api/build/test-results/test/TEST-com.smartfirehub.dataset.storage.tibero.Tibero{DialectProbe,DataStoreContract,LiveTrigger,LiveSlotGrant,LiveRebuild,LiveStoreRebuild}Test.xml
+  print_totals "$ROOT_DIR"/apps/firehub-api/build/test-results/test/TEST-com.smartfirehub.dataset.storage.tibero.Tibero{DialectProbe,DataErrorCodeProbe,DataStoreContract,LiveTrigger,LiveSlotGrant,LiveRebuild,LiveStoreRebuild}Test.xml
   [[ $api_status -ne 0 ]] && status=$api_status
 fi
 

@@ -154,6 +154,68 @@ class PipelineSqlErrorMessagesTest {
                 + "원인: ERROR: column \"nope\" does not exist");
   }
 
+  /**
+   * WD-261 §5.3 — PG SQL 단계 시간 초과의 화면 문구에 실행기의 「N초」 한국어 문구가 나온다.
+   *
+   * <p>재현(수정 전): 실행기가 시간 초과 때 {@code error}="실행 시간이 50초를 넘어 취소했습니다." 와 함께 {@code pg_error}(57014)를
+   * 보내 이 메서드가 {@code pg_error} 를 골랐고, 화면에는 일반 안내 + 영어 원문만 남아 「50초」가 사라졌다. 수정: 실행기가 시간 초과를
+   * db-executor 와 같은 모양(구조화 오류 없음 — {@code pg_error}·{@code db_error} null)으로 보낸다. 구조화 오류가 없다는 응답의
+   * 모양이 「실행기 문구가 곧 사용자 문구」라는 신호다(Tibero {@link PipelineSqlErrorMessages#describeTiberoError} 와 같은
+   * 규칙) — 문구 모양은 보지 않는다.
+   *
+   * <p>이 테스트는 api 쪽 계약만 고정한다(구조화 오류가 없으면 실행기 문구가 그대로 나온다). 실행기가 실제로 {@code pg_error} 를 null 로 보내는지의
+   * 회귀 방어는 executor(Python) 테스트가 맡는다.
+   */
+  @Test
+  void describeExecutorError_pgTimeout_showsExecutorKoreanSeconds() {
+    assertThat(
+            PipelineSqlErrorMessages.describeExecutorError(
+                PipelineSqlErrorMessages.EXECUTION_PREFIX, null, "실행 시간이 50초를 넘어 취소했습니다."))
+        .isEqualTo("SQL 실행 실패: 실행 시간이 50초를 넘어 취소했습니다.");
+  }
+
+  /** 선행 문장(출력 비우기) 시간 초과 문구도 같은 신호(구조화 오류 없음)로 화면까지 그대로 간다(WD-261·WD-262). */
+  @Test
+  void describeExecutorError_pgPreStatementTimeout_showsExecutorKoreanText() {
+    assertThat(
+            PipelineSqlErrorMessages.describeExecutorError(
+                PipelineSqlErrorMessages.EXECUTION_PREFIX,
+                null,
+                "기존 출력 정리(선행 문장)가 1800초 안에 끝나지 않아 취소했습니다."))
+        .isEqualTo("SQL 실행 실패: 기존 출력 정리(선행 문장)가 1800초 안에 끝나지 않아 취소했습니다.");
+  }
+
+  /** PG 시간 초과 화면 문구가 Tibero(db-executor) 같은 상황의 문구와 같다 — 두 실행기가 같은 응답 값을 보내므로 같은 문장이 된다. */
+  @Test
+  void describeExecutorError_timeout_sameAsTiberoTimeout() {
+    for (String executorText :
+        List.of("실행 시간이 50초를 넘어 취소했습니다.", "기존 출력 정리(선행 문장)가 1800초 안에 끝나지 않아 취소했습니다.")) {
+      assertThat(
+              PipelineSqlErrorMessages.describeExecutorError(
+                  PipelineSqlErrorMessages.EXECUTION_PREFIX, null, executorText))
+          .isEqualTo(
+              PipelineSqlErrorMessages.describeTiberoError(
+                  PipelineSqlErrorMessages.EXECUTION_PREFIX, null, executorText));
+    }
+  }
+
+  /**
+   * 구조화 오류(57014)가 있으면 — 실행기가 관리자 취소처럼 제한보다 일찍 끝난 취소로 판정해 원문과 함께 보낸 경우 — 지금처럼 「시간 제한을 넘거나 취소되어」 안내
+   * + 원문이다. 「N초」 문구로 바꾸지 않는다(관리자 취소가 시간 초과로 보이면 안 된다, 스펙 §2).
+   */
+  @Test
+  void describeExecutorError_pgCancelWithStructuredError_keepsGenericGuide() {
+    PgError pg = new PgError("57014", "canceling statement due to user request", null, null, null);
+    assertThat(
+            PipelineSqlErrorMessages.describeExecutorError(
+                PipelineSqlErrorMessages.EXECUTION_PREFIX,
+                pg,
+                "canceling statement due to user request"))
+        .isEqualTo(
+            "SQL 실행 실패: 실행 시간 제한을 넘거나 취소되어 SQL 실행이 중단되었습니다. 조건을 좁히거나 처리량을 줄여 다시 실행하세요.\n"
+                + "원인: ERROR: canceling statement due to user request");
+  }
+
   /** 구조화 오류가 없으면 오류 문자열을 쓰되 위치 표시 줄과 캐럿 줄만 걷어낸다(DETAIL 은 남긴다). */
   @Test
   void describeExecutorError_withoutStructuredError_stripsPositionLines() {
@@ -251,6 +313,11 @@ class PipelineSqlErrorMessagesTest {
         "-8033|SQL 에서 참조한 테이블이 없습니다",
         "942|SQL 에서 참조한 테이블이 없습니다",
         "-12040|실행 시간 제한을 넘거나 취소되어",
+        // 데이터 오류(WD-261, 실서버 측정 2026-10-27) — PG 22003·22P02·22007·22008 과 같은 문구
+        "-5111|숫자 범위를 넘는 값이 있습니다",
+        "-5074|컬럼 타입에 맞지 않는 형식의 값이 있습니다",
+        "-5113|올바르지 않거나 허용 범위를 벗어난 날짜·시간 값이 있습니다",
+        "-5114|올바르지 않거나 허용 범위를 벗어난 날짜·시간 값이 있습니다",
         "-99999|데이터베이스가 SQL 실행을 거부했습니다"
       })
   void tiberoError_classifiesKnownCodesLikePg(int code, String expected) {
@@ -262,6 +329,31 @@ class PipelineSqlErrorMessagesTest {
     assertThat(msg).startsWith("SQL 실행 실패: ").contains(expected);
     // 원문은 실행기가 준 저장소 메시지 그대로 — 구분 줄 뒤에 둔다(PG 판과 같은 모양).
     assertThat(msg).endsWith("\n원인: JDBC" + code + ":raw");
+  }
+
+  /** 측정한 Tibero 데이터 오류 코드는 PG SQLState 와 같은 안내 문장·상태값으로 옮겨진다(WD-261). */
+  @ParameterizedTest
+  @CsvSource({"-5111,22003", "-5074,22P02", "-5113,22007", "-5114,22008"})
+  void tiberoError_dataErrorCodes_mapToPgSqlStateAndSameGuide(int code, String sqlState) {
+    assertThat(PipelineSqlErrorMessages.tiberoSqlState(code)).isEqualTo(sqlState);
+    assertThat(
+            PipelineSqlErrorMessages.describeTiberoError(
+                PipelineSqlErrorMessages.EXECUTION_PREFIX,
+                new DbError(code, "JDBC" + code + ":raw"),
+                null))
+        .isEqualTo(
+            "SQL 실행 실패: "
+                + PipelineSqlErrorMessages.guide(pg(sqlState))
+                + "\n원인: JDBC"
+                + code
+                + ":raw");
+  }
+
+  /** 측정하지 않은 Oracle 양수 코드(ORA-01722·01438·01861 등)는 데이터 오류로 추측하지 않는다. */
+  @ParameterizedTest
+  @CsvSource({"1722", "1438", "1861", "1830", "1843"})
+  void tiberoError_unmeasuredOracleDataCodes_stayGeneric(int code) {
+    assertThat(PipelineSqlErrorMessages.tiberoSqlState(code)).isEqualTo("XX000");
   }
 
   /** PG 판과 같은 안내 문장을 그대로 쓴다 — 두 판의 문구가 갈라지지 않게. */

@@ -147,7 +147,8 @@ public final class PipelineSqlErrorMessages {
    *
    * <p>안내 문장은 PG 판과 <b>같은 문장</b>을 쓴다 — Tibero 코드를 같은 뜻의 SQLState 로 옮겨 {@link #guide} 에 넘긴다(문구가 두 벌로
    * 갈리지 않게). 코드 묶음은 {@link TiberoDialect} 것만 쓴다: 고유 위반(·다중 행 INSERT 키 겹침)→23505, MERGE 원본 키
-   * 중복→21000, NOT NULL→23502, 값 너무 큼→22001, 테이블 없음→42P01. 모르는 코드는 일반 안내다(코드를 추측해 늘리지 않는다).
+   * 중복→21000, NOT NULL→23502, 값 너무 큼→22001, 숫자 형식→22P02, 숫자 범위(정밀도)→22003, 날짜 형식→22007, 날짜
+   * 범위→22008(WD-261, 실서버 측정 2026-10-27), 테이블 없음→42P01. 모르는 코드는 일반 안내다(코드를 추측해 늘리지 않는다).
    *
    * <p>원문은 저장소 메시지 그대로({@code JDBC-10007:...}). 실행기가 사용자 SQL 을 감싼 내부 문장을 메시지에 싣지 않으므로 걷어낼 것이 없다.
    * {@code err} 가 없으면(검증 거부·연결 실패·시간 초과처럼 DB 오류가 아니면) 실행기 문구를 그대로 쓴다 — 그 문구는 이미 한국어 안내다.
@@ -247,6 +248,19 @@ public final class PipelineSqlErrorMessages {
     if (TiberoDialect.VALUE_TOO_LARGE.contains(code)) {
       return "22001";
     }
+    // 데이터 오류(SQLState 22 계열) — PG 판과 같은 안내가 나오게 같은 상태값으로 옮긴다. 코드는 실서버 측정값만 쓴다(2026-10-27).
+    if (TiberoDialect.NUMBER_OVERFLOW.contains(code)) {
+      return "22003";
+    }
+    if (TiberoDialect.INVALID_NUMBER.contains(code)) {
+      return "22P02";
+    }
+    if (TiberoDialect.INVALID_DATETIME.contains(code)) {
+      return "22007";
+    }
+    if (TiberoDialect.DATETIME_OUT_OF_RANGE.contains(code)) {
+      return "22008";
+    }
     if (TiberoDialect.NotFound.TABLE.hasCode(code)) {
       return "42P01";
     }
@@ -294,6 +308,12 @@ public final class PipelineSqlErrorMessages {
    * 실행기(firehub-executor) SQL 실행 실패 문구. 구조화 오류({@code pg_error})가 있으면 {@link #describe(String,
    * PgError)} 와 같은 문구다. 없으면(검증 거부처럼 PG 오류가 아니거나, 구조화 필드를 보내지 않는 구버전 실행기) 오류 문자열을 그대로 쓰되 내부 SQL 이
    * 실리는 위치 표시 줄만 걷어낸다 — 안내를 추측해 붙이지 않는다(검증 거부 문구는 이미 한국어 안내다).
+   *
+   * <p><b>시간 초과(WD-261 §5.3).</b> 실행기는 우리가 건 문장 제한에 걸린 실패(본문 「실행 시간이 N초를 넘어 취소했습니다.」·선행 문장 「기존 출력
+   * 정리(선행 문장)가 N초 안에 끝나지 않아 취소했습니다.」)를 db-executor 와 같은 값으로 — {@code pg_error}·{@code db_error} 없이
+   * — 보낸다. 그래서 여기서는 따로 가르지 않고 아래 폴백으로 그 한국어 문구가 그대로 화면에 간다({@link #describeTiberoError} 의 {@code
+   * err == null} 규칙과 같다). 문구 모양으로 시간 초과를 알아보지 않는다. {@code pg_error}(57014)가 있으면 실행기가 관리자 취소 등 제한 전
+   * 취소로 판정한 것이라 일반 안내 + 원문이다.
    */
   public static String describeExecutorError(String prefix, PgError pg, String error) {
     if (pg != null && pg.sqlState() != null) {

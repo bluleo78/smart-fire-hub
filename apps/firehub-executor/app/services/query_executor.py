@@ -4,7 +4,7 @@ import logging
 import re
 import time
 import weakref
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import psycopg2
 from pydantic import TypeAdapter
@@ -162,13 +162,55 @@ def sqlstate(exc: BaseException) -> str | None:
     return code if isinstance(code, str) else None
 
 
-def is_statement_timeout(exc: BaseException) -> bool:
-    """우리가 건 statement_timeout 에 걸린 취소인가(SQLState 57014 + 원문 ``statement timeout``).
+# 시간 초과 판정의 허용 오차(초, WD-261 §5.2). 경과 시간은 실행기 쪽 시계로 재므로 서버의 문장 시작·취소 시각과 수 밀리초 어긋난다 —
+# 그만큼 제한보다 조금 일찍 잡혀도 시간 초과로 본다. 0.5초는 계획에서 정한 값이다.
+STATEMENT_TIMEOUT_TOLERANCE_SECONDS = 0.5
 
-    57014 는 관리자 ``pg_cancel_backend``(원문 ``user request``) 같은 다른 취소에서도 나므로, 「N초 초과」 한국어 문구는 이때만 쓴다
-    (WD-259 리뷰 M-5). 그 밖의 취소는 원문을 그대로 두고, api 가 ``pg_error`` 로 「시간 제한을 넘거나 취소되어」로 번역한다.
+
+def is_statement_timeout(exc: BaseException, started_at: float, limit_seconds: float) -> bool:
+    """우리가 건 statement_timeout 에 걸린 취소인가(WD-261 §5.2).
+
+    57014(query_canceled) 이면서 **오류를 낸 그 문장**이 그 문장에 건 제한 − 허용 오차 이상 돌았으면 시간 초과다. 57014 는 관리자
+    ``pg_cancel_backend`` 같은 다른 취소에서도 나고 PG 는 둘을 가르는 코드를 주지 않는다 — 예전처럼 원문의 영어 ``statement timeout``
+    으로 가르면 서버 언어 설정(lc_messages)에 따라 판정이 바뀌므로 문구는 보지 않고 경과 시간만 본다. 제한보다 일찍 끝난 57014 는 관리자
+    취소로 보고 호출부가 원문을 둔다. 남는 한계: 관리자가 정확히 제한 시각 근처에 취소하면 시간 초과로 보인다.
+
+    ``started_at`` 은 그 문장을 보내기 직전의 ``time.monotonic()``, ``limit_seconds`` 는 그 문장에 실제로 건 제한(초)이다 — 적재는 페이지
+    (문장)마다, 선행 문장은 그 문장에 건 남은 예산이다.
     """
-    return sqlstate(exc) == "57014" and "statement timeout" in str(exc)
+    if sqlstate(exc) != "57014":
+        return False
+    return time.monotonic() - started_at >= limit_seconds - STATEMENT_TIMEOUT_TOLERANCE_SECONDS
+
+
+class RunningStatement:
+    """지금(또는 마지막으로 실패한) 제한 걸린 문장의 시작 시각·제한 — 57014 가 「그 문장의 시간 초과」인지 가르는 데 쓴다(WD-261 §5.2).
+
+    문장을 보내기 직전에 시각을 적고, 성공하면 지운다. 그래서 예외가 났을 때 남아 있는 값은 오류를 낸 바로 그 문장의 것이고, 제한을 거는
+    ``SET LOCAL`` 처럼 판정 대상이 아닌 문장에서 난 오류에는 값이 없다(시간 초과로 보지 않는다).
+
+    제한을 거는 ``SET LOCAL`` 은 ``run``/``execute`` 밖에서 보낸다 — 그래야 ``SET LOCAL`` 자체의 오류가 시간 초과로 잡히지 않는다.
+    ``/execute/sql``(선행 문장·본문)과 ``/execute/load``(페이지마다) 가 같이 쓴다 — 시각은 :func:`is_statement_timeout` 과 같은
+    시계(이 모듈의 ``time.monotonic``)로 잰다.
+    """
+
+    def __init__(self) -> None:
+        self.started_at: Optional[float] = None
+        self.limit_seconds = 0.0
+
+    def run(self, limit_seconds: float, statement: Callable[..., Any], *args: Any) -> None:
+        """``statement(*args)`` 한 번이 문장 하나다 — 그 앞뒤로 시작 시각을 적고 지운다."""
+        self.started_at = time.monotonic()
+        self.limit_seconds = limit_seconds
+        statement(*args)
+        self.started_at = None
+
+    def execute(self, cursor, limit_seconds: float, *args: Any) -> None:
+        """``cursor.execute(*args)`` 를 문장 하나로 잰다."""
+        self.run(limit_seconds, cursor.execute, *args)
+
+    def timed_out(self, exc: BaseException) -> bool:
+        return self.started_at is not None and is_statement_timeout(exc, self.started_at, self.limit_seconds)
 
 
 def _is_user_sql_runtime_error(exc: BaseException) -> bool:

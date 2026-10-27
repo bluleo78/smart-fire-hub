@@ -249,6 +249,43 @@ class ExecutorContractVectorsTest {
   }
 
   /**
+   * 시간 초과 응답의 구조화 오류 벡터(WD-261): {@code expectedTimeoutStructuredErrorsNull} 이 참인 예시는 시간 초과 응답에서
+   * {@code db_error} 가 null 이다 — 시간 초과는 DB 가 거부한 오류가 아니라 실행기가 판정한 실패라 {@code error} 문구만 싣는다(api 는
+   * 구조화 오류가 없으면 그 문구를 그대로 보여 준다). 러너가 실제로 이렇게 돌려주는지는 SqlRunnerTest 가 보고, 여기서는 컨트롤러가 그 응답을 {@code
+   * db_error: null} 키 그대로 직렬화하는지 본다. Python 실행기 테스트도 같은 필드를 읽는다.
+   */
+  @Test
+  void timeoutVectors_dbErrorIsNullInResponse() throws Exception {
+    stubRunners();
+    int checked = 0;
+    for (JsonNode ex : FIXTURE.get("endpoints").get("sql").get("examples")) {
+      if (!ex.path("expectedTimeoutStructuredErrorsNull").asBoolean(false)
+          || (ex.has("backend") && !ex.get("backend").asText().equals("db-executor"))) {
+        continue;
+      }
+      String message = ex.get("expectedPreStatementTimeoutMessage").asText();
+      when(sqlRunner.run(any(), anyString(), any(), any(Deadline.class), any()))
+          .thenReturn(SqlExecuteResponse.failure(message, null, "시간 초과로 취소하고 롤백함"));
+      String body =
+          mvc.perform(
+                  post("/execute/sql")
+                      .header("Authorization", "Internal ctl-token")
+                      .contentType(MediaType.APPLICATION_JSON)
+                      .content(OM.writeValueAsString(ex.get("request"))))
+              .andReturn()
+              .getResponse()
+              .getContentAsString();
+      JsonNode res = OM.readTree(body);
+      assertThat(res.get("success").asBoolean()).as(ex.get("name").asText()).isFalse();
+      assertThat(res.get("error").asText()).isEqualTo(message);
+      assertThat(res.has("db_error")).as("db_error 키는 응답에 있고").isTrue();
+      assertThat(res.get("db_error").isNull()).as("값은 null 이다").isTrue();
+      checked++;
+    }
+    assertThat(checked).isGreaterThanOrEqualTo(1);
+  }
+
+  /**
    * Tibero 기본 적재 제한 벡터(리뷰 I-5): {@code timeout_seconds} 없는 적재의 요청 전체 기한이 {@code
    * expectedDeadlineSeconds} (app.load.timeout-seconds 기본 1800)다. Python 실행기 테스트도 같은 값을 자기 기본값과
    * 대조한다.

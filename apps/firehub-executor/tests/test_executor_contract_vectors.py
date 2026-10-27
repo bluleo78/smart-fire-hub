@@ -14,6 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.conftest import PgError
+
 _FIXTURE = (
     Path(__file__).resolve().parents[2]
     / "firehub-api/src/test/resources/fixtures/executor-db-contract-vectors.json"
@@ -56,12 +58,13 @@ def _post(client, headers, name, body, fail):
     gate = MagicMock()
     gate.peek.return_value = SimpleNamespace(backend="POSTGRESQL")
     cm = _conn_cm(_cursor(fail))
-    # load 는 psycopg2 execute_values 가 모의 커서로는 동작하지 않아 insert_batch 자체를 대역으로 둔다(성공/실패만 흉내).
-    insert = patch(
-        "app.services.load_executor.insert_batch", side_effect=_PgError("syntax error") if fail else None
+    # load 는 psycopg2 의 문장 조립·execute_values 가 모의 커서로는 동작하지 않아 조립·페이지 실행 도우미를 대역으로 둔다(성공/실패만 흉내).
+    page = patch(
+        "app.services.load_executor.execute_insert_page", side_effect=_PgError("syntax error") if fail else None
     )
     with patch("app.routers.store_gate.get_store_client", return_value=gate), \
-            patch(f"app.routers.{name}.get_connection", cm), insert:
+            patch(f"app.routers.{name}.get_connection", cm), \
+            patch("app.services.load_executor.build_insert_query", return_value="INSERT"), page:
         return client.post(path, json=body, headers=headers)
 
 
@@ -92,7 +95,8 @@ def test_default_timeout_vectors_apply_to_pg_body(test_client, mock_auth_header,
     gate.peek.return_value = SimpleNamespace(backend="POSTGRESQL")
     with patch("app.routers.store_gate.get_store_client", return_value=gate), \
             patch(f"app.routers.{name}.get_connection", _conn_cm(cur)), \
-            patch("app.services.load_executor.insert_batch"):
+            patch("app.services.load_executor.build_insert_query", return_value="INSERT"), \
+            patch("app.services.load_executor.execute_insert_page"):
         resp = test_client.post(_ENDPOINTS[name]["path"], json=ex["request"], headers=mock_auth_header)
     assert resp.status_code == 200 and resp.json()["success"] is True
     assert [call.args[0] for call in cur.execute.call_args_list][0] == (
@@ -183,15 +187,24 @@ def test_pre_statement_cap_vector_matches_python_default():
         assert ex["expectedPreStatementTimeoutSeconds"] == default
 
 
-def test_pre_statement_timeout_vector_message_is_what_python_returns(test_client, mock_auth_header):
-    # 선행 문장이 제한에 걸리면(57014) 응답 error 가 벡터의 문구와 글자까지 같다. 같은 벡터를 db-executor 테스트도 SqlRunner 문구와 대조한다.
-    cancel = type("Cancel", (Exception,), {"pgcode": "57014"})
+def test_pre_statement_timeout_vector_message_is_what_python_returns(test_client, mock_auth_header, fake_clock):
+    # 선행 문장이 제한에 걸리면(57014 + 그 문장에 건 남은 예산만큼 경과) 응답 error 가 벡터의 문구와 글자까지 같다. 같은 벡터를 db-executor
+    # 테스트도 SqlRunner 문구와 대조한다. 구조화 오류는 db-executor 의 시간 초과 응답처럼 비운다(db_error null, WD-261 — 벡터 notes).
     vectors = _pre_statement_vectors()
     assert vectors
+
     for ex in vectors:
         cur = _cursor(False)
-        # 실행 순서: SET LOCAL, 잠금, SET LOCAL, DELETE(여기서 제한 도달)
-        cur.execute.side_effect = [None, None, None, cancel("canceled")]
+        # 실행 순서: SET LOCAL, 잠금, SET LOCAL, DELETE. DELETE 가 그 문장에 건 남은 예산(앞 문장이 0초라 전체 상한)만큼 돌고 취소된다.
+        calls = []
+
+        def execute(*_args, budget=ex["expectedPreStatementTimeoutSeconds"]):
+            calls.append(_args)
+            if len(calls) == 4:
+                fake_clock.advance(budget)
+                raise PgError("canceled", "57014")
+
+        cur.execute.side_effect = execute
         gate = MagicMock()
         gate.peek.return_value = SimpleNamespace(backend="POSTGRESQL")
         with patch("app.routers.store_gate.get_store_client", return_value=gate), \
@@ -201,3 +214,6 @@ def test_pre_statement_timeout_vector_message_is_what_python_returns(test_client
             ).json()
         assert data["success"] is False
         assert data["error"] == ex["expectedPreStatementTimeoutMessage"]
+        # 시간 초과는 DB 가 거부한 오류가 아니라 실행기가 판정한 실패라 구조화 오류가 없다 — 벡터 필드로 고정(notes 문장이 아니라).
+        assert ex["expectedTimeoutStructuredErrorsNull"] is True
+        assert data["db_error"] is None and data["pg_error"] is None

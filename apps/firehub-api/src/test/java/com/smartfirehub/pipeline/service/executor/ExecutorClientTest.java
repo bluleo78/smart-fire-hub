@@ -9,6 +9,7 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.pipeline.service.PipelineSqlErrorMessages;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
@@ -248,6 +249,38 @@ class ExecutorClientTest {
 
     assertThat(result.error()).isEqualTo("boom");
     assertThat(result.pgError()).isNull();
+  }
+
+  /**
+   * 실행기 시간 초과 응답(WD-261) — 구조화 오류 없이(pg_error·db_error null) 한국어 문구만 온다. 받은 그대로 러너의 실패 문구 변환({@code
+   * PgStepDialect#translateExecutorFailure} 가 부르는 {@link
+   * PipelineSqlErrorMessages#describeExecutorError})을 거치면 「50초」 문구가 화면 문구에 남는다.
+   *
+   * <p>api 쪽 계약 고정이다 — 실행기가 시간 초과 때 구조화 오류를 실제로 비우는지의 회귀 방어는 executor(Python) 테스트가 맡는다.
+   */
+  @Test
+  void executeSql_timeoutResponse_keepsExecutorKoreanSecondsInStepMessage() {
+    wireMock.stubFor(
+        post(urlEqualTo("/execute/sql"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        """
+                        {"success": false, "rows": null, "columns": null, "row_count": 0,
+                         "execution_log": "", "error": "실행 시간이 50초를 넘어 취소했습니다.",
+                         "pg_error": null, "db_error": null}
+                        """)));
+
+    ExecutorClient.SqlExecuteResult result = executorClient().executeSql("INSERT INTO t SELECT 1");
+
+    assertThat(result.pgError()).isNull();
+    assertThat(result.dbError()).isNull();
+    assertThat(
+            PipelineSqlErrorMessages.describeExecutorError(
+                PipelineSqlErrorMessages.EXECUTION_PREFIX, result.pgError(), result.error()))
+        .isEqualTo("SQL 실행 실패: 실행 시간이 50초를 넘어 취소했습니다.");
   }
 
   @Test

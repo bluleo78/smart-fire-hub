@@ -6,6 +6,7 @@ from app.services.query_executor import detect_statement_type
 from app.config import Settings
 from app.services import sql_executor
 from app.schemas.responses import SqlExecuteResponse
+from tests.conftest import PgError
 
 
 def execute_sql(*args, **kwargs):
@@ -414,37 +415,42 @@ def _ms(set_local_sql: str) -> int:
     return int(set_local_sql.rsplit("=", 1)[1])
 
 
-class _FakeClock:
-    """``time.monotonic`` 대역 — 호출할 때마다 ``step`` 초씩 흐른다(첫 호출은 0)."""
-
-    def __init__(self, step: float):
-        self.step = step
-        self.now = -step
-
-    def __call__(self) -> float:
-        self.now += self.step
-        return self.now
+BODY = 'INSERT INTO "data"."out" ("a") SELECT 1'
 
 
-class _Cancel57014(Exception):
-    """문장 제한 취소 대역 — SQLState 57014 만 있으면 된다(이 태스크의 판정은 SQLState 뿐이다)."""
+def _script(clock, steps):
+    """``cursor.execute`` 대역 — 나가는 문장 순서대로 ``steps`` 를 하나씩 쓴다. 각 항목은 None(즉시 성공) 또는 (흐를 초, 낼 예외 또는 None).
 
-    pgcode = "57014"
+    문장 실행 중에 흐른 시간을 시계에 더해, 판정이 「그 문장의 경과 시간」을 보는지 정확히 시험한다.
+    """
+    it = iter(steps)
+
+    def run(*_args, **_kwargs):
+        step = next(it, None)
+        if step is None:
+            return None
+        seconds, exc = step
+        clock.advance(seconds)
+        if exc is not None:
+            raise exc
+        return None
+
+    return run
 
 
 def test_pre_statement_cap_default_is_1800():
     assert PRE_CAP == 1800
 
 
-def test_pre_statements_get_budget_before_each():
+def test_pre_statements_get_budget_before_each(fake_clock):
     # 선행 문장 2개 — 각 선행 문장 직전에 SET LOCAL 이 실행되고, 값은 남은 예산이라 뒤로 갈수록 작아진다.
     # 본문 직전에는 본문 제한(기본 50초)으로 다시 건다.
+    fake_clock.step = 10
     cursor = MagicMock()
     cursor.rowcount = 1
     conn = make_conn(cursor)
 
-    with patch("app.services.sql_executor.time.monotonic", _FakeClock(step=10)):
-        result = execute_sql('INSERT INTO "data"."out" ("a") SELECT 1', conn, pre_statements=TWO_PRE)
+    result = execute_sql(BODY, conn, pre_statements=TWO_PRE)
 
     assert result.success
     executed = [c.args[0] for c in cursor.execute.call_args_list]
@@ -452,82 +458,126 @@ def test_pre_statements_get_budget_before_each():
     assert [e.startswith("SET LOCAL") for e in executed] == [
         True, False, True, False, True, False, True, False, True, False,
     ]
+    # 시계는 부를 때마다 10초 흐른다: 예산 시작 10 → (남은 시간 계산 20, 문장 시작 30) → (40, 50) → (60, 70) → (80, 90).
+    # 걸린 값은 각 계산 시점의 남은 예산(1800 - 경과) 그대로다.
     pre_limits = [_ms(e) for e in executed[:-2] if e.startswith("SET LOCAL")]
-    assert len(pre_limits) == 4
-    assert pre_limits[0] <= PRE_CAP * 1000
-    # 시계가 앞으로만 가므로 남은 예산은 줄기만 한다(두 번째 선행 문장의 값 < 첫 번째).
-    assert pre_limits == sorted(pre_limits, reverse=True) and pre_limits[2] < pre_limits[0]
+    assert pre_limits == [1790_000, 1770_000, 1750_000, 1730_000]
     assert executed[-2] == "SET LOCAL statement_timeout = 50000"
     conn.commit.assert_called_once()
 
 
-def test_pre_statement_timeout_returns_korean_message():
-    # 선행 문장에서 57014(제한 도달) → 응답 error 가 db-executor 와 같은 문구, 본문은 실행되지 않고 롤백한다.
+def test_pre_statement_timeout_returns_korean_message(fake_clock):
+    # 선행 문장(비우기 DELETE)이 자기에게 건 남은 예산만큼 돌고 57014 → db-executor 와 같은 문구, 본문은 실행되지 않고 롤백한다.
+    # 구조화 오류는 싣지 않는다(db_error·pg_error 없음) — db-executor 의 선행 시간 초과 응답과 같은 값이고, api 는 구조화 오류가 없으면
+    # 실행기 문구를 그대로 보여 준다(WD-261 §5.3).
     cursor = MagicMock()
-    # 첫 SET LOCAL, 잠금, 두 번째 SET LOCAL 은 통과하고 비우기 DELETE 가 57014.
-    cursor.execute.side_effect = [None, None, None, _Cancel57014("canceling statement due to statement timeout")]
+    # 첫 SET LOCAL, 잠금, 두 번째 SET LOCAL 은 통과하고 비우기 DELETE 가 1800초 돌다 57014.
+    cursor.execute.side_effect = _script(fake_clock, [
+        None, None, None, (1800, PgError("canceling statement due to statement timeout", "57014")),
+    ])
     conn = make_conn(cursor)
 
-    result = execute_sql('INSERT INTO "data"."out" ("a") SELECT 1', conn, pre_statements=TWO_PRE)
+    result = execute_sql(BODY, conn, pre_statements=TWO_PRE)
 
     assert result.success is False
     assert result.error == "기존 출력 정리(선행 문장)가 1800초 안에 끝나지 않아 취소했습니다."
-    assert result.db_error.message == result.error
-    assert result.db_error.sql_state == "57014"
+    assert result.db_error is None and result.pg_error is None
     executed = [c.args[0] for c in cursor.execute.call_args_list]
-    assert 'INSERT INTO "data"."out" ("a") SELECT 1' not in executed
+    assert BODY not in executed
     conn.rollback.assert_called_once()
     conn.commit.assert_not_called()
 
 
-def test_pre_statement_message_uses_configured_cap():
+def test_pre_statement_timeout_judged_against_remaining_budget(fake_clock):
+    # 잠금에서 1000초 기다렸으면 비우기에는 남은 800초만 걸린다 — 비우기가 800초 만에 57014 면 시간 초과다(전체 상한 1800초와 대조하면
+    # 관리자 취소로 잘못 보인다).
     cursor = MagicMock()
-    cursor.execute.side_effect = [None, _Cancel57014("x")]
+    cursor.execute.side_effect = _script(fake_clock, [
+        None, (1000, None), None, (800, PgError("x", "57014")),
+    ])
     conn = make_conn(cursor)
 
-    result = execute_sql(
-        'INSERT INTO "data"."out" ("a") SELECT 1', conn, pre_statements=TWO_PRE,
-        pre_statement_timeout_seconds=600,
-    )
+    result = execute_sql(BODY, conn, pre_statements=TWO_PRE)
+
+    executed = [c.args[0] for c in cursor.execute.call_args_list]
+    assert executed[2] == f"SET LOCAL statement_timeout = {800 * 1000}"
+    assert result.error == "기존 출력 정리(선행 문장)가 1800초 안에 끝나지 않아 취소했습니다."
+    assert result.db_error is None and result.pg_error is None
+
+
+def test_pre_statement_admin_cancel_keeps_original(fake_clock):
+    # 선행 문장이 자기 제한보다 일찍 57014 로 끝나면 관리자 취소다 — 선행 시간 초과 문구로 바꾸지 않고 원문·구조화 오류를 둔다.
+    cursor = MagicMock()
+    cursor.execute.side_effect = _script(fake_clock, [
+        None, (5, PgError("canceling statement due to user request", "57014")),
+    ])
+    conn = make_conn(cursor)
+
+    result = execute_sql(BODY, conn, pre_statements=TWO_PRE)
+
+    assert result.success is False
+    assert result.error == "canceling statement due to user request"
+    assert result.pg_error.sql_state == "57014"
+    assert result.db_error.sql_state == "57014"
+    conn.rollback.assert_called_once()
+
+
+def test_pre_statement_message_uses_configured_cap(fake_clock):
+    cursor = MagicMock()
+    cursor.execute.side_effect = _script(fake_clock, [None, (600, PgError("x", "57014"))])
+    conn = make_conn(cursor)
+
+    result = execute_sql(BODY, conn, pre_statements=TWO_PRE, pre_statement_timeout_seconds=600)
 
     assert result.error == "기존 출력 정리(선행 문장)가 600초 안에 끝나지 않아 취소했습니다."
 
 
-def test_pre_statement_budget_exhausted_before_next():
+def test_pre_statement_budget_exhausted_before_next(fake_clock):
     # 남은 예산이 0 이하이면 다음 선행 문장을 보내지 않고(0 은 PG 에서 '제한 없음' 이라 SET LOCAL 도 걸 수 없다) 같은 문구로 실패한다.
+    # 응답 값은 57014 시간 초과와 같다(db_error·pg_error 없음) — 두 선행 실패 경로와 db-executor 가 같은 값을 낸다.
     cursor = MagicMock()
+    # 잠금이 (취소에 반응하지 않고) 2000초 만에 성공으로 끝났다 → 비우기 직전 남은 예산이 없다.
+    cursor.execute.side_effect = _script(fake_clock, [None, (2000, None)])
     conn = make_conn(cursor)
 
-    # 시계: 시작 0 → 첫 arm 1000초(남은 800) → 두 번째 arm 에서 이미 2000초(예산 소진).
-    ticks = iter([0.0, 1000.0, 2000.0, 2000.0, 2000.0])
-    with patch("app.services.sql_executor.time.monotonic", lambda: next(ticks)):
-        result = execute_sql(
-            'INSERT INTO "data"."out" ("a") SELECT 1', conn,
-            pre_statements=TWO_PRE, pre_statement_timeout_seconds=1800,
-        )
+    result = execute_sql(BODY, conn, pre_statements=TWO_PRE, pre_statement_timeout_seconds=1800)
 
     assert result.success is False
     assert result.error == "기존 출력 정리(선행 문장)가 1800초 안에 끝나지 않아 취소했습니다."
+    assert result.db_error is None and result.pg_error is None
     executed = [c.args[0] for c in cursor.execute.call_args_list]
     # 첫 SET LOCAL 과 잠금만 나가고, 그 뒤 문장(두 번째 SET LOCAL·DELETE·본문)은 보내지 않는다.
-    assert executed == [f"SET LOCAL statement_timeout = {800 * 1000}", LOCK_SQL]
+    assert executed == [f"SET LOCAL statement_timeout = {1800 * 1000}", LOCK_SQL]
     conn.rollback.assert_called_once()
     conn.commit.assert_not_called()
 
 
-def test_body_timeout_is_not_reported_as_pre_statement_timeout():
+def test_body_timeout_is_not_reported_as_pre_statement_timeout(fake_clock):
     # 본문에서 난 57014 는 기존 본문 문구(WD-259)를 유지한다 — 선행 문구는 선행 문장 단계에서만.
     cursor = MagicMock()
-    cursor.execute.side_effect = [
-        None, None, None, None, None, _Cancel57014("canceling statement due to statement timeout"),
-    ]
+    cursor.execute.side_effect = _script(fake_clock, [
+        None, None, None, None, None, (50, PgError("canceling statement due to statement timeout", "57014")),
+    ])
     conn = make_conn(cursor)
 
-    result = execute_sql(
-        'INSERT INTO "data"."out" ("a") SELECT 1', conn, pre_statements=['DELETE FROM "data"."out"']
-    )
+    result = execute_sql(BODY, conn, pre_statements=['DELETE FROM "data"."out"'])
 
     assert result.error == "실행 시간이 50초를 넘어 취소했습니다."
+    assert result.db_error is None and result.pg_error is None
+
+
+def test_body_timeout_judged_against_body_limit_not_pre_time(fake_clock):
+    # 선행 문장이 오래 걸렸어도 본문은 자기 제한(120초)과 자기 경과 시간으로 판정한다 — 본문이 10초 만에 57014 면 관리자 취소다.
+    cursor = MagicMock()
+    cursor.execute.side_effect = _script(fake_clock, [
+        None, (900, None), None, (500, None), None, (10, PgError("canceling statement due to user request", "57014")),
+    ])
+    conn = make_conn(cursor)
+
+    result = execute_sql(BODY, conn, pre_statements=['DELETE FROM "data"."out"'], timeout_seconds=120)
+
+    assert result.error == "canceling statement due to user request"
+    assert result.pg_error.sql_state == "57014"
 
 
 def test_set_local_statement_timeout_accepts_fractional_seconds_and_never_zero():
