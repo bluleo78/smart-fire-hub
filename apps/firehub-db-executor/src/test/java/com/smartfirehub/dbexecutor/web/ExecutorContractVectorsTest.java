@@ -223,6 +223,32 @@ class ExecutorContractVectorsTest {
   }
 
   /**
+   * 선행 문장 상한 벡터(WD-262): {@code expectedPreStatementTimeoutSeconds} 는 db-executor 의 {@code
+   * app.sql.pre-statement-timeout-seconds} 기본값과 같고, {@code expectedPreStatementTimeoutMessage} 는
+   * {@link SqlRunner#preTimeoutMessage} 와 글자까지 같다. Python 실행기 테스트도 같은 벡터를 자기 기본값·실제 응답 문구와 대조한다 —
+   * 어느 한쪽만 바뀌면 여기서 깨진다.
+   */
+  @Test
+  void preStatementTimeoutVectors_matchRunnerCapAndMessage() {
+    int checked = 0;
+    for (JsonNode ex : FIXTURE.get("endpoints").get("sql").get("examples")) {
+      if (!ex.has("expectedPreStatementTimeoutSeconds")
+          || (ex.has("backend") && !ex.get("backend").asText().equals("db-executor"))) {
+        continue;
+      }
+      int seconds = timeouts.sql().preStatementTimeoutSeconds();
+      assertThat(seconds)
+          .as(ex.get("name").asText())
+          .isEqualTo(ex.get("expectedPreStatementTimeoutSeconds").asInt());
+      assertThat(SqlRunner.preTimeoutMessage(seconds))
+          .as(ex.get("name").asText())
+          .isEqualTo(ex.get("expectedPreStatementTimeoutMessage").asText());
+      checked++;
+    }
+    assertThat(checked).isGreaterThanOrEqualTo(1);
+  }
+
+  /**
    * Tibero 기본 적재 제한 벡터(리뷰 I-5): {@code timeout_seconds} 없는 적재의 요청 전체 기한이 {@code
    * expectedDeadlineSeconds} (app.load.timeout-seconds 기본 1800)다. Python 실행기 테스트도 같은 값을 자기 기본값과
    * 대조한다.

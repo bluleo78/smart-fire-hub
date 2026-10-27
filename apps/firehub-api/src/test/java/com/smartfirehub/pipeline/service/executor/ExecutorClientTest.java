@@ -3,12 +3,18 @@ package com.smartfirehub.pipeline.service.executor;
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.assertj.core.api.Assertions.*;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -52,17 +58,136 @@ class ExecutorClientTest {
 
   private ExecutorClient executorClient() {
     // 운영과 같은 기본 한도를 쓴다 — 256KB 초과 회귀 가드가 실제 기본값을 지키도록(#761).
+    return client(
+        ExecutorClient.DEFAULT_MAX_RESPONSE_BYTES,
+        ExecutorClient.DEFAULT_PRE_STATEMENT_TIMEOUT_SECONDS);
+  }
+
+  /** 응답 바이트 한도·선행 상한만 바꿔 끼운 클라이언트(Python 시간 제한은 기본 1800초). 생성자 직접 호출은 여기 한 곳이다. */
+  private ExecutorClient client(int maxResponseBytes, int preStatementTimeoutSeconds) {
     return new ExecutorClient(
         WebClient.builder(),
         "http://localhost:" + wireMock.port(),
         "test-token",
-        ExecutorClient.DEFAULT_MAX_RESPONSE_BYTES,
-        1800);
+        maxResponseBytes,
+        1800,
+        preStatementTimeoutSeconds);
   }
 
   // -------------------------------------------------------------------------
   // executeSql
   // -------------------------------------------------------------------------
+
+  private ExecutorClient clientWithPreStatementCap(int preStatementTimeoutSeconds) {
+    return client(ExecutorClient.DEFAULT_MAX_RESPONSE_BYTES, preStatementTimeoutSeconds);
+  }
+
+  /** WD-262: 선행 문장이 있으면 HTTP 대기 = 60초 + 선행 상한(설정값). 실행기의 선행 합계 상한만큼 더 기다린다. */
+  @Test
+  void sqlWait_withPreStatements_addsCap() {
+    ExecutorClient client = clientWithPreStatementCap(1800);
+
+    assertThat(client.sqlWait(List.of("DELETE FROM \"S\".\"T\"")))
+        .isEqualTo(Duration.ofSeconds(60 + 1800));
+    // 상한은 설정값을 따른다(실행기 EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS 와 같은 값으로 둔다).
+    assertThat(clientWithPreStatementCap(600).sqlWait(List.of("DELETE FROM \"S\".\"T\"")))
+        .isEqualTo(Duration.ofSeconds(660));
+  }
+
+  /**
+   * api 의 선행 문장 상한 기본값이 두 실행기와 공유하는 계약 벡터({@code expectedPreStatementTimeoutSeconds})와 같다.
+   *
+   * <p>왜: 이 값이 실행기 쪽보다 작으면 큰 출력을 비우는 동안 api 가 먼저 포기하고, 계약 벡터만 고치고 api 기본값을 두면 조용히 어긋난다. 기본값은 생성자
+   * {@code @Value} 기본값이 쓰는 상수({@link ExecutorClient#DEFAULT_PRE_STATEMENT_TIMEOUT_SECONDS})와
+   * application.yml 의 환경변수 기본값 두 곳에 있어 둘 다 대조한다.
+   */
+  @Test
+  void preStatementTimeoutDefaults_matchContractVector() throws Exception {
+    ObjectMapper mapper = new ObjectMapper();
+    JsonNode vectors;
+    try (var in =
+        getClass()
+            .getClassLoader()
+            .getResourceAsStream("fixtures/executor-db-contract-vectors.json")) {
+      assertThat(in).as("계약 벡터 파일").isNotNull();
+      vectors = mapper.readTree(in);
+    }
+    Integer expected = null;
+    for (JsonNode example : vectors.path("endpoints").path("sql").path("examples")) {
+      if (example.has("expectedPreStatementTimeoutSeconds")) {
+        expected = example.get("expectedPreStatementTimeoutSeconds").asInt();
+      }
+    }
+    assertThat(expected).as("벡터의 expectedPreStatementTimeoutSeconds").isNotNull();
+
+    // 1) 생성자 @Value 기본값이 쓰는 상수
+    assertThat(ExecutorClient.DEFAULT_PRE_STATEMENT_TIMEOUT_SECONDS)
+        .as("ExecutorClient @Value 기본값 상수")
+        .isEqualTo(expected);
+
+    // 2) application.yml 의 EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS 기본값
+    String yml;
+    try (var in = getClass().getClassLoader().getResourceAsStream("application.yml")) {
+      assertThat(in).as("application.yml").isNotNull();
+      yml = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+    }
+    assertThat(defaultOf(yml, "EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS"))
+        .as("application.yml 기본값")
+        .isEqualTo(expected);
+  }
+
+  /** {@code ${name:기본값}} 꼴에서 숫자 기본값을 꺼낸다. 없으면 null. */
+  private static Integer defaultOf(String text, String name) {
+    Matcher m = Pattern.compile("\\$\\{" + name + ":(\\d+)\\}").matcher(text);
+    return m.find() ? Integer.valueOf(m.group(1)) : null;
+  }
+
+  /** 선행 문장이 비었거나 null 이면 예전과 같이 60초다. */
+  @Test
+  void sqlWait_withoutPreStatements_is60s() {
+    ExecutorClient client = clientWithPreStatementCap(1800);
+
+    assertThat(client.sqlWait(List.of())).isEqualTo(Duration.ofSeconds(60));
+    assertThat(client.sqlWait(null)).isEqualTo(Duration.ofSeconds(60));
+  }
+
+  /** 1 미만은 기동을 거부한다(0 이하로 두면 선행 문장 요청도 60초만 기다린다). */
+  @Test
+  void preStatementTimeout_belowOne_rejected() {
+    assertThatThrownBy(() -> clientWithPreStatementCap(0))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("app.executor.pre-statement-timeout-seconds");
+    assertThatThrownBy(() -> clientWithPreStatementCap(-5))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(clientWithPreStatementCap(1)).isNotNull();
+  }
+
+  /** 선행 문장이 있는 요청은 실제로도 기본 60초를 넘겨 기다린다(여기서는 상한을 줄여 확인하지 않고 배선만 본다). */
+  @Test
+  void executeSql_withPreStatements_sendsPreStatementsAndSucceeds() {
+    wireMock.stubFor(
+        post(urlEqualTo("/execute/sql"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "{\"success\":true,\"rows\":null,\"columns\":null,\"row_count\":1,"
+                            + "\"execution_log\":\"1 row(s) affected\",\"error\":null}")));
+
+    var result =
+        clientWithPreStatementCap(1800)
+            .executeSql("INSERT INTO t SELECT 1", List.of("DELETE FROM \"S\".\"T\""));
+
+    assertThat(result.success()).isTrue();
+    // 선행 문장이 요청 본문(preStatements, camelCase)에 순서대로 실렸는지 — 대기 연장만 하고 문장을 빠뜨리면 비우기 없이 적재된다.
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/execute/sql"))
+            .withRequestBody(matchingJsonPath("$.query", equalTo("INSERT INTO t SELECT 1")))
+            .withRequestBody(
+                matchingJsonPath("$.preStatements[0]", equalTo("DELETE FROM \"S\".\"T\"")))
+            .withRequestBody(matchingJsonPath("$.preStatements.length()", equalTo("1"))));
+  }
 
   /**
    * 실행기가 PG 오류의 구조화 필드(pg_error, snake_case)를 보내면 그대로 받는다(WD-111) — 러너가 이 SQLState 로 한국어 안내를 고른다.
@@ -617,12 +742,7 @@ class ExecutorClientTest {
   }
 
   private ExecutorClient smallLimitClient(int maxResponseBytes) {
-    return new ExecutorClient(
-        WebClient.builder(),
-        "http://localhost:" + wireMock.port(),
-        "test-token",
-        maxResponseBytes,
-        1800);
+    return client(maxResponseBytes, ExecutorClient.DEFAULT_PRE_STATEMENT_TIMEOUT_SECONDS);
   }
 
   /** 행 수 n, md5 텍스트 컬럼 수 cols 인 executor /execute/query 성공 응답 JSON 을 만든다. */

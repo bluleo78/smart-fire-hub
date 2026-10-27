@@ -30,4 +30,5 @@ async def execute_sql(
         return sql_executor.execute_sql(
             request.query, conn, request.pre_statements, request.timeout_seconds,
             default_timeout_seconds=settings.sql_statement_timeout_seconds,
+            pre_statement_timeout_seconds=settings.sql_pre_statement_timeout_seconds,
         )

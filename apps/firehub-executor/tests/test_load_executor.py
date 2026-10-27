@@ -27,6 +27,10 @@ def _load(*args, **kwargs):
 
 def _sql(*args, **kwargs):
     kwargs.setdefault("default_timeout_seconds", SQL_DEFAULT_TIMEOUT)
+    kwargs.setdefault(
+        "pre_statement_timeout_seconds",
+        Settings.model_fields["sql_pre_statement_timeout_seconds"].default,
+    )
     return sql_executor.execute_sql(*args, **kwargs)
 
 

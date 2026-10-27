@@ -39,7 +39,8 @@ class SqlExecuteRequest(TenantScopedRequest):
     pre_statements: List[str] = Field(default_factory=list, alias="preStatements")
     # 요청별 시간 제한(초, 선택). 있으면 이 요청의 트랜잭션에 SET LOCAL statement_timeout 으로 적용한다(긴 SQL 용, WD-77).
     # 주의: PG statement_timeout 은 문장 단위 제한이다 — Python 실행기에서는 문장 단위 제한, db-executor 는 요청 전체 기한.
-    # 선행 문장이 여러 개면 각 문장마다 이 시간이 다시 주어진다.
+    # 이 값은 본문에만 걸린다. 선행 문장(잠금·비우기)은 이 값을 받지 않고 별도 합계 예산을 받는다
+    # (Settings.sql_pre_statement_timeout_seconds, 기본 1800초 — 첫 선행 문장 시작부터 재서 문장 직전마다 남은 시간을 건다, WD-262).
     # 없으면 기존 동작 그대로. 0 이하는 PG 에서 '제한 없음' 이 되어 의도와 반대라 422 로 거부한다(db-executor 도 거부).
     timeout_seconds: Optional[int] = Field(default=None, gt=0, strict=True)
 

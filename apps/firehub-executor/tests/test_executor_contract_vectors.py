@@ -163,3 +163,41 @@ def test_probe_tibero_refused(test_client, mock_auth_header):
     assert data["error"] == store_gate.PROBE_UNSUPPORTED
     assert data["db_error"]["message"] == store_gate.PROBE_UNSUPPORTED
     conn.assert_not_called()
+
+
+def _pre_statement_vectors():
+    return [
+        ex for ex in _ENDPOINTS["sql"]["examples"]
+        if "expectedPreStatementTimeoutSeconds" in ex and ex.get("backend") in (None, "python")
+    ]
+
+
+def test_pre_statement_cap_vector_matches_python_default():
+    # WD-262: 「선행 문장 상한 기본 1800초」— db-executor 는 같은 벡터를 자기 설정과 대조하고, Python 실행기는 자기 설정 기본값과 대조한다.
+    from app.config import Settings
+
+    vectors = _pre_statement_vectors()
+    assert vectors, "선행 문장 상한 벡터가 없다"
+    for ex in vectors:
+        default = Settings.model_fields["sql_pre_statement_timeout_seconds"].default
+        assert ex["expectedPreStatementTimeoutSeconds"] == default
+
+
+def test_pre_statement_timeout_vector_message_is_what_python_returns(test_client, mock_auth_header):
+    # 선행 문장이 제한에 걸리면(57014) 응답 error 가 벡터의 문구와 글자까지 같다. 같은 벡터를 db-executor 테스트도 SqlRunner 문구와 대조한다.
+    cancel = type("Cancel", (Exception,), {"pgcode": "57014"})
+    vectors = _pre_statement_vectors()
+    assert vectors
+    for ex in vectors:
+        cur = _cursor(False)
+        # 실행 순서: SET LOCAL, 잠금, SET LOCAL, DELETE(여기서 제한 도달)
+        cur.execute.side_effect = [None, None, None, cancel("canceled")]
+        gate = MagicMock()
+        gate.peek.return_value = SimpleNamespace(backend="POSTGRESQL")
+        with patch("app.routers.store_gate.get_store_client", return_value=gate), \
+                patch("app.routers.sql.get_connection", _conn_cm(cur)):
+            data = test_client.post(
+                _ENDPOINTS["sql"]["path"], json=ex["request"], headers=mock_auth_header
+            ).json()
+        assert data["success"] is False
+        assert data["error"] == ex["expectedPreStatementTimeoutMessage"]

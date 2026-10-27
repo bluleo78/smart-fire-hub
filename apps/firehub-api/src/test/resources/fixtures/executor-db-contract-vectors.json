@@ -53,7 +53,7 @@
         "error",
         "db_error"
       ],
-      "notes": "params 는 db-executor 가 받기만 하고 무시한다(Tibero 문장은 api 가 값을 인라인한다). 알 수 없는 필드는 무시. timeout_seconds(선택)는 요청별 시간 제한(초)이다: 없으면 각 실행기의 기본 SQL 문장 제한 50초, 0 이하는 거부한다. db-executor 는 기본 전체 기한 55초를 별도로 두며 요청값은 app.load.timeout-seconds 로 자른다. Python 실행기는 SET LOCAL statement_timeout 으로 적용한다. 두 실행기 모두 timeout_seconds(또는 기본 사용자 제한)는 본문에만 적용한다(본문 시작부터). 선행 문장은 별도 상한(db-executor app.sql.pre-statement-timeout-seconds, Python 실행기는 제한 없음).",
+      "notes": "params 는 db-executor 가 받기만 하고 무시한다(Tibero 문장은 api 가 값을 인라인한다). 알 수 없는 필드는 무시. timeout_seconds(선택)는 요청별 시간 제한(초)이다: 없으면 각 실행기의 기본 SQL 문장 제한 50초, 0 이하는 거부한다. db-executor 는 기본 전체 기한 55초를 별도로 두며 요청값은 app.load.timeout-seconds 로 자른다. Python 실행기는 SET LOCAL statement_timeout 으로 적용한다. 두 실행기 모두 timeout_seconds(또는 기본 사용자 제한)는 본문에만 적용한다(본문 시작부터). 선행 문장은 별도 합계 상한(기본 1800초)을 받는다: db-executor 는 app.sql.pre-statement-timeout-seconds(요청 도착부터), Python 실행기는 EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS(첫 선행 문장 시작부터, 문장 직전마다 남은 시간을 SET LOCAL statement_timeout 으로 건다)이며 api 는 app.executor.pre-statement-timeout-seconds / app.db-executor.pre-statement-timeout-seconds 로 같은 값을 HTTP 대기에 더한다. 상한을 넘기면 두 실행기 모두 expectedPreStatementTimeoutMessage 와 같은 문구로 실패한다(WD-262). 로컬 실행기 비활성 경로(api SqlScriptExecutor)만 제한이 없다.",
       "examples": [
         {
           "name": "본문만",
@@ -114,6 +114,19 @@
             "timeout_seconds": 120
           },
           "expectSuccess": true
+        },
+        {
+          "name": "선행 문장 상한 1800초",
+          "request": {
+            "tenantId": 1,
+            "query": "INSERT INTO t SELECT 1 FROM DUAL",
+            "preStatements": [
+              "DELETE FROM \"data\".\"t\""
+            ]
+          },
+          "expectSuccess": true,
+          "expectedPreStatementTimeoutSeconds": 1800,
+          "expectedPreStatementTimeoutMessage": "기존 출력 정리(선행 문장)가 1800초 안에 끝나지 않아 취소했습니다."
         },
         {
           "name": "timeout_seconds 0 거부",

@@ -101,6 +101,10 @@ app:
     internal-token: ${EXECUTOR_INTERNAL_TOKEN:dev-executor-token}
     # 실행기 Python 실행 시간 제한(초) — 실행기 EXECUTOR_PYTHON_TIMEOUT 과 같은 값. Tibero 스크립트 토큰 만료(이 값 + 60초)에 쓴다(WD-78).
     python-timeout-seconds: ${EXECUTOR_PYTHON_TIMEOUT:1800}
+    # 선행 문장(REPLACE 출력 잠금·비우기 DELETE) 상한(초) — Python 실행기 EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS 와 같은 값이어야 한다(WD-262).
+    # 실행기는 사용자 시간 제한을 본문에만 걸고 선행 문장에는 이 합계 상한을 걸므로, 선행 문장이 있는 /execute/sql 요청은 HTTP 대기를 이만큼 늘린다.
+    # 1 미만이면 기동을 거부한다. 실행기 비활성(로컬 SqlScriptExecutor) 경로는 이 제한을 받지 않는다.
+    pre-statement-timeout-seconds: ${EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS:1800}
   db-executor:
     # Tibero 저장소 테넌트의 SQL 단계를 실행하는 firehub-db-executor 주소(WD-77).
     # 인증은 아래 db-executor.internal-token 이다 — Python 실행기의 executor.internal-token 과 값이 달라야 한다(같으면 api 기동 실패).

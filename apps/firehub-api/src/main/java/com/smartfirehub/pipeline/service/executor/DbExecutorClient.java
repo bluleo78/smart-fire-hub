@@ -190,7 +190,7 @@ public class DbExecutorClient {
    * 단계를 실패로 적은 뒤 실행기가 커밋할 수 있다.
    */
   Duration sqlWait(List<String> preStatements) {
-    return plusPreStatementTimeout(sqlTimeout, preStatements);
+    return ExecutorWaits.sqlWait(sqlTimeout, preStatementTimeout, preStatements);
   }
 
   /**
@@ -198,13 +198,10 @@ public class DbExecutorClient {
    * 와 같은 이유).
    */
   Duration sqlWait(List<String> preStatements, int timeoutSeconds) {
-    return plusPreStatementTimeout(
-        Duration.ofSeconds(timeoutSeconds + RESPONSE_GRACE_SECONDS), preStatements);
-  }
-
-  /** 선행 문장이 하나라도 있으면 선행 상한을 더한다(null·빈 목록은 그대로). */
-  private Duration plusPreStatementTimeout(Duration base, List<String> preStatements) {
-    return preStatements == null || preStatements.isEmpty() ? base : base.plus(preStatementTimeout);
+    return ExecutorWaits.sqlWait(
+        Duration.ofSeconds(timeoutSeconds + RESPONSE_GRACE_SECONDS),
+        preStatementTimeout,
+        preStatements);
   }
 
   /** 시간 제한은 1 이상이어야 한다(실행기가 0 이하를 거부하므로 네트워크로 보내기 전에 막는다). */

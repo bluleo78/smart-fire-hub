@@ -34,7 +34,18 @@ def test_pg_statement_timeout_defaults_load_from_environment(monkeypatch):
     assert s.load_statement_timeout_seconds == 90
 
 
-@pytest.mark.parametrize("field", ["sql_statement_timeout_seconds", "load_statement_timeout_seconds"])
+def test_pre_statement_timeout_defaults_to_1800_and_loads_from_environment(monkeypatch):
+    # WD-262: 선행 문장 합계 상한 — 기본 1800초, EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS 로 조정한다.
+    monkeypatch.delenv("EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS", raising=False)
+    assert get_test_settings(_env_file=None).sql_pre_statement_timeout_seconds == 1800
+    monkeypatch.setenv("EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS", "600")
+    assert get_test_settings(_env_file=None).sql_pre_statement_timeout_seconds == 600
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["sql_statement_timeout_seconds", "load_statement_timeout_seconds", "sql_pre_statement_timeout_seconds"],
+)
 def test_pg_statement_timeout_config_rejects_zero(field):
     # 0밀리초는 PG 에서 제한 해제이므로 잘못된 설정을 기동 전에 거부한다.
     with pytest.raises(ValidationError):

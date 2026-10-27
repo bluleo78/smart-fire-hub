@@ -104,6 +104,12 @@ public class SqlScriptExecutor {
    * 이 검증 하나로 "시작 문자열 + 세미콜론 없음"만 보던 이전 형태보다, API 서버가 만들지 않은 임의의 DELETE(WHERE 절 포함·다른 스키마 대상 등)를 테넌트
    * 파이프라인 롤 권한으로 실행할 길을 막는다.
    *
+   * <p><b>시간 제한 없음(WD-262, 스펙 §4.2).</b> 이 실행기 비활성 로컬 경로는 선행 문장에 합계 상한을 걸지 않는다. 실행기 경로(Python
+   * {@code EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS}, db-executor {@code
+   * app.sql.pre-statement-timeout-seconds}, api 쪽 {@code
+   * app.executor.pre-statement-timeout-seconds})만 선행 상한을 가진다 — 이 경로는 개발·소규모 환경용이고 본문도 별도 문장 제한을 받지
+   * 않는다.
+   *
    * @param preStatements 본 스크립트보다 먼저 실행할 문장 목록(순서 보존). 없으면 빈 목록.
    * @param scriptContent 본 SQL 스크립트
    */

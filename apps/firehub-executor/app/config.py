@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     # PG 문장 단위 제한. 요청에 timeout_seconds 가 없으면 api 의 SQL 응답 대기(60초)보다 먼저 본문을 취소한다.
     # 기본값은 여기 한 곳뿐이다 — 서비스 함수는 기본값을 갖지 않고 라우터가 이 설정값을 넘긴다.
     sql_statement_timeout_seconds: int = Field(50, gt=0)
+    # 선행 문장(REPLACE 의 출력 잠금·비우기 DELETE) **합계** 시간 상한(WD-262). 선행 문장은 사용자 시간 제한(timeout_seconds)을 받지
+    # 않고 이 예산을 받는다 — 첫 선행 문장 시작부터 재서 문장마다 남은 시간을 statement_timeout 으로 건다. db-executor 의
+    # app.sql.pre-statement-timeout-seconds(기본 1800)와 같은 의미·같은 기본값이며, api 의 app.executor.pre-statement-timeout-seconds
+    # (api 가 선행 문장이 있는 요청의 HTTP 대기를 이만큼 늘린다)와 **같은 값**이어야 한다. 0 은 PG 에서 '제한 없음' 이라 1 이상만 받는다.
+    sql_pre_statement_timeout_seconds: int = Field(1800, gt=0)
     # 적재는 execute_values 의 각 페이지 문장에 이 제한을 건다(db-executor 적재 기본 1800초와 맞춤).
     load_statement_timeout_seconds: int = Field(1800, gt=0)
 

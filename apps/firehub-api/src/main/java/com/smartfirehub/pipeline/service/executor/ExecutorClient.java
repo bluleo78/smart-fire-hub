@@ -46,18 +46,51 @@ public class ExecutorClient {
   /** Python 실행 요청의 HTTP 대기 한도 — 실행기 시간 제한 + {@link #PYTHON_HTTP_TIMEOUT_MARGIN_SECONDS}. */
   private final Duration pythonTimeout;
 
+  /** {@code /execute/sql} 기본 HTTP 대기 — 실행기의 본문 문장 제한(기본 50초)에 여유 10초. */
+  static final Duration SQL_TIMEOUT = Duration.ofSeconds(60);
+
+  /**
+   * 선행 문장(REPLACE 출력 잠금·비우기 DELETE)이 있는 {@code /execute/sql} 요청이 더 기다리는 시간 — Python 실행기의 선행
+   * 상한({@code EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS})과 같은 값이어야 한다(WD-262).
+   */
+  private final Duration preStatementTimeout;
+
+  /**
+   * 선행 문장 상한 기본값(초) — Python 실행기 {@code EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS} 기본값·계약 벡터
+   * {@code expectedPreStatementTimeoutSeconds} 와 같다(WD-262). 생성자 {@code @Value} 기본값이 이 상수를 쓰므로 테스트는
+   * 이 상수만 벡터와 대조한다.
+   */
+  static final int DEFAULT_PRE_STATEMENT_TIMEOUT_SECONDS = 1800;
+
+  /**
+   * @param preStatementTimeoutSeconds 선행 문장 상한({@code app.executor.pre-statement-timeout-seconds},
+   *     기본 1800) — Python 실행기 {@code EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS} 와 같은 값이어야 한다. 1
+   *     미만이면 기동을 거부한다.
+   */
   public ExecutorClient(
       WebClient.Builder webClientBuilder,
       @Value("${app.executor.base-url:http://localhost:8000}") String executorBaseUrl,
       @Value("${app.executor.internal-token:dev-executor-token}") String executorToken,
       @Value("${app.executor.max-response-bytes:" + DEFAULT_MAX_RESPONSE_BYTES + "}")
           int maxResponseBytes,
-      @Value("${app.executor.python-timeout-seconds:1800}") long pythonTimeoutSeconds) {
+      @Value("${app.executor.python-timeout-seconds:1800}") long pythonTimeoutSeconds,
+      @Value(
+              "${app.executor.pre-statement-timeout-seconds:"
+                  + DEFAULT_PRE_STATEMENT_TIMEOUT_SECONDS
+                  + "}")
+          int preStatementTimeoutSeconds) {
     if (maxResponseBytes <= 0) {
       // -1(무제한)·0 은 메모리 보호를 없애거나 모든 응답을 실패시킨다 — 설정 실수를 기동 시점에 드러낸다.
       throw new IllegalArgumentException(
           "app.executor.max-response-bytes 는 양수여야 합니다: " + maxResponseBytes);
     }
+    if (preStatementTimeoutSeconds < 1) {
+      // 0 이하로 두면 선행 문장이 있는 요청도 60초만 기다려, 큰 출력을 비우는 동안 api 가 먼저 포기한다 — 설정 실수를 기동 시점에 드러낸다.
+      throw new IllegalArgumentException(
+          "app.executor.pre-statement-timeout-seconds 는 1 이상이어야 합니다: "
+              + preStatementTimeoutSeconds);
+    }
+    this.preStatementTimeout = Duration.ofSeconds(preStatementTimeoutSeconds);
     this.maxResponseBytes = maxResponseBytes;
     // 실행기 시간 제한을 늘리면 API 의 대기도 같이 늘어난다 — 따로 고정하면 실행기가 아직 도는데 API 가 먼저 끊는다.
     this.pythonTimeout =
@@ -180,7 +213,7 @@ public class ExecutorClient {
   }
 
   /**
-   * SQL 실행 요청. POST /execute/sql Timeout: 60s
+   * SQL 실행 요청. POST /execute/sql Timeout: 60s, 선행 문장이 있으면 60s + 선행 상한({@link #sqlWait(List)})
    *
    * <p><b>선행 문장(preStatements)이란.</b> Task 4 — REPLACE 전략의 SQL 스텝은 "출력 비우기(DELETE) + INSERT"를 한
    * 트랜잭션으로 묶어야 한다. 따로 요청을 두 번 보내면(비우기 커밋 → INSERT 별도 요청) INSERT 가 실패했을 때 출력 테이블이 <b>빈 채로</b> 남는다(원래
@@ -203,8 +236,22 @@ public class ExecutorClient {
                 .bodyValue(withTenant(Map.of("query", query, "preStatements", preStatements)))
                 .retrieve()
                 .bodyToMono(SqlExecuteResult.class)
-                .timeout(Duration.ofSeconds(60))
+                .timeout(sqlWait(preStatements))
                 .block());
+  }
+
+  /**
+   * {@code /execute/sql} 의 HTTP 대기: 60초, 선행 문장이 있으면 + 선행 상한(WD-262). {@code
+   * DbExecutorClient#sqlWait} 와 같은 규칙({@link ExecutorWaits#sqlWait})이다.
+   *
+   * <p>왜: Python 실행기는 선행 문장(출력 잠금·비우기 DELETE)에 별도 합계 상한(기본 1800초)을 주고 본문에는 본문 제한(기본 50초)을 따로 준다.
+   * 실행기가 끝나는 최악 시점은 「선행 상한 + 본문 제한」이므로 api 의 대기를 그만큼 늘리지 않으면 큰 출력을 비우는 동안 api 가 먼저 포기해 단계를 실패로 적은 뒤
+   * 실행기가 커밋할 수 있다.
+   *
+   * <p>로컬 실행기 비활성 경로({@code SqlScriptExecutor})는 이 한도를 받지 않는다(제한 없음).
+   */
+  Duration sqlWait(List<String> preStatements) {
+    return ExecutorWaits.sqlWait(SQL_TIMEOUT, preStatementTimeout, preStatements);
   }
 
   /** API_CALL 실행 요청. POST /execute/api-call Timeout: 3660s (1시간 + 60초 버퍼) */

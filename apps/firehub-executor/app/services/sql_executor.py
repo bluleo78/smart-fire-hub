@@ -1,7 +1,12 @@
+import time
 from typing import Optional
 
 from app.schemas.responses import PgErrorInfo, SqlExecuteResponse, db_error_of
-from app.services.db_utils import set_local_statement_timeout, statement_timeout_message
+from app.services.db_utils import (
+    pre_statement_timeout_message,
+    set_local_statement_timeout,
+    statement_timeout_message,
+)
 from app.services.query_executor import detect_statement_type, sqlstate
 from app.validators.sql_validator import (
     SqlValidationError,
@@ -14,12 +19,40 @@ from app.validators.sql_validator import (
 OUTPUT_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))"
 
 
+class PreStatementBudgetExhausted(Exception):
+    """선행 문장 합계 예산이 다음 문장을 보내기 전에 이미 바닥났다(WD-262) — 문장을 보내지 않고 실패로 끝낸다."""
+
+
+def is_pre_statement_timeout(exc: BaseException) -> bool:
+    """선행 문장 단계에서 난 실패가 「선행 시간 초과」인가.
+
+    지금은 「선행 문장 단계에서 난 57014(문장 제한 취소) = 선행 시간 초과」로 본다(호출부가 선행 단계에서만 이 함수를 부른다).
+    WD-262 후속 작업이 이 판정을 경과 시간 기반(시작 시각·상한과 대조)으로 바꾼다 — 판정을 이 한 곳에 모아 둔 이유다.
+    """
+    return sqlstate(exc) == "57014"
+
+
+def arm_pre_statement_budget(cursor, started_at: float, budget_seconds: int) -> None:
+    """선행 문장 하나를 보내기 직전에 남은 예산을 ``statement_timeout`` 으로 건다. 예산이 소진됐으면 문장을 보내지 않고 예외를 낸다.
+
+    남은 시간은 ``budget_seconds - (지금 - started_at)`` 이다(``time.monotonic`` — 시스템 시계 조정에 흔들리지 않는다).
+    0 이하이면 SET LOCAL 도 걸지 않는다: PG 에서 0 은 「제한 없음」이라 소진된 예산이 오히려 무제한이 되기 때문이다.
+    """
+    remaining = budget_seconds - (time.monotonic() - started_at)
+    if remaining <= 0:
+        raise PreStatementBudgetExhausted()
+    set_local_statement_timeout(cursor, remaining)
+
+
 def execute_sql(
     query: str, conn, pre_statements=(), timeout_seconds: Optional[int] = None,
-    *, default_timeout_seconds: int,
+    *, default_timeout_seconds: int, pre_statement_timeout_seconds: int,
 ) -> SqlExecuteResponse:
     """``default_timeout_seconds`` 는 요청에 제한이 없을 때 쓸 값 — 기본값은 ``Settings.sql_statement_timeout_seconds``
-    한 곳뿐이라 여기서는 기본값을 두지 않고 라우터가 설정값을 넘긴다."""
+    한 곳뿐이라 여기서는 기본값을 두지 않고 라우터가 설정값을 넘긴다.
+
+    ``pre_statement_timeout_seconds`` 는 선행 문장 **전체** 합계 상한(WD-262, ``Settings.sql_pre_statement_timeout_seconds``) —
+    같은 이유로 라우터가 넘긴다. 사용자 시간 제한(``timeout_seconds``)은 본문에만 걸린다."""
     # 본 쿼리와 선행 문장(pre-statement) 모두 실행 전에 검증한다.
     # pre-statement 는 화이트리스트 기반 validate_pre_statement 로 본 쿼리보다 엄격하게 검사한다.
     try:
@@ -46,11 +79,17 @@ def execute_sql(
     # 요청별 값 또는 기본 제한(WD-259) — 한 번만 정해 SET LOCAL 과 시간 초과 안내 문구가 같은 값을 쓴다(최종 리뷰).
     effective_timeout = timeout_seconds if timeout_seconds is not None else default_timeout_seconds
 
+    # 선행 문장 단계에 있는가 — 이 단계에서 난 57014 만 「선행 시간 초과」로 본다(is_pre_statement_timeout).
+    in_pre_phase = False
     try:
         with conn.cursor() as cursor:
             # 선행 문장(예: 출력 비우기 DELETE)과 본 쿼리를 같은 트랜잭션에서 실행한다.
             # 본 쿼리가 실패하면 아래 except 에서 rollback 하므로 선행 문장도 함께 취소된다 —
             # 이것이 "비우기와 쓰기를 원자적으로 만든다"는 이번 기능의 핵심이다.
+            # 선행 문장 합계 예산(WD-262): 첫 선행 문장 시작부터 monotonic 으로 재고, 문장을 보내기 직전마다 남은 시간을
+            # statement_timeout 으로 건다. db-executor SqlRunner 의 「선행 상한」과 같은 의미다(대형 출력의 DELETE 가 끝없이 도는 것을 막는다).
+            pre_started_at = time.monotonic() if pre_statements else 0.0
+            in_pre_phase = bool(pre_statements)
             for stmt in pre_statements:
                 # 출력 테이블 단위 직렬화(#731). 비우기(DELETE) **직전에, 별도 문장으로** 이 테이블의
                 # advisory 잠금을 잡는다. 같은 출력에 "비우기 + 적재"를 하는 두 실행이 겹치면
@@ -60,10 +99,16 @@ def execute_sql(
                 # DELETE 와 같은 문장에서 기다리면 안 된다: 스냅샷이 문장 시작 시점에 잡히기 때문에
                 # 대기가 풀려도 옛 스냅샷으로 지운다.
                 # 키·문장은 API 의 SqlScriptExecutor.OUTPUT_LOCK_SQL 과 같아야 한다.
+                # 잠금 대기도 선행 시간이다 — 잠금과 비우기를 각각 보내기 직전에 남은 예산을 다시 건다(잠금에서 오래 기다린 만큼
+                # 비우기가 쓸 수 있는 시간이 줄어야 합계가 상한을 넘지 않는다).
+                arm_pre_statement_budget(cursor, pre_started_at, pre_statement_timeout_seconds)
                 cursor.execute(OUTPUT_LOCK_SQL, (output_lock_key(stmt),))
+                arm_pre_statement_budget(cursor, pre_started_at, pre_statement_timeout_seconds)
                 cursor.execute(stmt)
-            # 요청별 값 또는 기본 제한(WD-259). 선행 문장(잠금·비우기)은 사용자 제한을 받지 않고 본문만 받는다 — db-executor 와
-            # 같은 의미다(스펙 §6.2). 그래서 선행 문장 루프 뒤, 본문 직전에 건다. 기본값이 늘 있으므로 언제나 건다(리뷰 M-4).
+            in_pre_phase = False
+            # 요청별 값 또는 기본 제한(WD-259). 선행 문장(잠금·비우기)은 사용자 제한을 받지 않고 위의 선행 예산을 받으며, 본문만 이
+            # 제한을 받는다 — db-executor 와 같은 의미다(스펙 §6.2). 그래서 선행 문장 루프 뒤, 본문 직전에 다시 건다(앞서 건 선행
+            # 예산의 남은 시간이 본문에 남지 않게). 기본값이 늘 있으므로 언제나 건다(리뷰 M-4).
             set_local_statement_timeout(cursor, effective_timeout)
             cursor.execute(query)
             if is_select:
@@ -92,8 +137,13 @@ def execute_sql(
     except Exception as exc:
         conn.rollback()
         state = sqlstate(exc)
-        # 우리가 건 문장 제한에 걸린 본문만 드라이버 영문 대신 초 단위 한국어 안내를 준다. 관리자 취소 등 다른 57014 는 원문을 둔다.
-        message = statement_timeout_message(exc, "실행", effective_timeout)
+        if isinstance(exc, PreStatementBudgetExhausted) or (in_pre_phase and is_pre_statement_timeout(exc)):
+            # 선행 문장이 합계 상한을 넘겼다(예산 소진으로 다음 문장을 못 보냈거나 선행 문장이 제한에 걸림) — 본문은 실행되지 않았고
+            # 위 rollback 으로 선행 문장도 취소됐다. 문구는 db-executor 와 같다.
+            message = pre_statement_timeout_message(pre_statement_timeout_seconds)
+        else:
+            # 우리가 건 문장 제한에 걸린 본문만 드라이버 영문 대신 초 단위 한국어 안내를 준다. 관리자 취소 등 다른 57014 는 원문을 둔다.
+            message = statement_timeout_message(exc, "실행", effective_timeout)
         return SqlExecuteResponse(
             success=False,
             rows=None,
