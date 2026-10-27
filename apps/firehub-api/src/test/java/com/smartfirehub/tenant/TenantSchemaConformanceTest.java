@@ -350,6 +350,8 @@ class TenantSchemaConformanceTest extends IntegrationTestBase {
    *       않는다.
    *   <li>{@code outbox_tenant_ids} (V106) — 배경 스레드가 "어느 테넌트를 돌지" 를 먼저 알아야 컨텍스트를 열 수 있다(닭과 달걀). 노출은
    *       정수 목록뿐이다.
+   *   <li>{@code proactive_active_execution_tenant_ids} (V149) — {@code outbox_tenant_ids} 와 같은 이유로
+   *       프로액티브 정리기가 돌 테넌트를 먼저 알아야 한다. 노출은 정수 목록뿐이다.
    *   <li>{@code resolve_slack_workspace_tenant_by_team_id} (V106) — permitAll Slack 웹훅. {@code
    *       SlackWorkspaceTenantResolver} javadoc 에 전제 두 가지가 적혀 있다.
    * </ul>
@@ -360,6 +362,7 @@ class TenantSchemaConformanceTest extends IntegrationTestBase {
           "resolve_trigger_tenant_by_webhook_id",
           "provision_tenant_defaults",
           "outbox_tenant_ids",
+          "proactive_active_execution_tenant_ids",
           "resolve_slack_workspace_tenant_by_team_id",
           // V123: 증분 처리 책갈피 후보값 계산용. search_path 고정 + PUBLIC EXECUTE 회수 + app_tenant
           // 에만 명시 GRANT — 다른 definer 함수와 같은 최소권한 설계다.

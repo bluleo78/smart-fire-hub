@@ -120,6 +120,12 @@ public class ProactiveJobExecution extends TableImpl<ProactiveJobExecutionRecord
      */
     public final TableField<ProactiveJobExecutionRecord, Long> SECURITY_LEVEL_ID = createField(DSL.name("security_level_id"), SQLDataType.BIGINT, this, "");
 
+    /**
+     * The column <code>public.proactive_job_execution.heartbeat_at</code>. 마지막
+     * 하트비트 시각(UTC). 오래된 활성 실행을 api 재시작으로 중단된 실행으로 정리한다(WD-258)
+     */
+    public final TableField<ProactiveJobExecutionRecord, LocalDateTime> HEARTBEAT_AT = createField(DSL.name("heartbeat_at"), SQLDataType.LOCALDATETIME(6), this, "마지막 하트비트 시각(UTC). 오래된 활성 실행을 api 재시작으로 중단된 실행으로 정리한다(WD-258)");
+
     private ProactiveJobExecution(Name alias, Table<ProactiveJobExecutionRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }
@@ -191,7 +197,7 @@ public class ProactiveJobExecution extends TableImpl<ProactiveJobExecutionRecord
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_PROACTIVE_EXECUTION_JOB, Indexes.IDX_PROACTIVE_JOB_EXECUTION_SECURITY_LEVEL);
+        return Arrays.asList(Indexes.IDX_PROACTIVE_EXECUTION_ACTIVE_TENANT, Indexes.IDX_PROACTIVE_EXECUTION_JOB, Indexes.IDX_PROACTIVE_JOB_EXECUTION_SECURITY_LEVEL);
     }
 
     @Override

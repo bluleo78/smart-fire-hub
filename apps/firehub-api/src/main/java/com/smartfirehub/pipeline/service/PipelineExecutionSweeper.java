@@ -1,5 +1,6 @@
 package com.smartfirehub.pipeline.service;
 
+import com.smartfirehub.global.execution.ExecutionMessages;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
@@ -9,7 +10,6 @@ import com.smartfirehub.pipeline.repository.PipelineRepository;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
@@ -25,9 +25,6 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 public class PipelineExecutionSweeper {
-
-  /** 중단 실행의 오류 문구(실행·단계 공통). */
-  public static final String INTERRUPTED_MESSAGE = "api 가 재시작되어 실행이 중단되었습니다";
 
   private final PipelineExecutionRepository executionRepository;
   private final PipelineRepository pipelineRepository;
@@ -70,17 +67,15 @@ public class PipelineExecutionSweeper {
     LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
     LocalDateTime threshold = now.minus(staleAfter);
     int closed = 0;
-    // 레지스트리는 테넌트 한 번의 정리에 한 번만 찍는다 — 행마다 복사하지 않는다.
-    Map<Long, Long> live = registry.snapshot();
     for (StaleExecution stale : executionRepository.findStaleExecutions(tenantId, threshold)) {
       // 이 인스턴스가 쥔 실행은 하트비트가 밀렸을 뿐 살아 있다 — 건드리지 않는다.
-      if (live.containsKey(stale.executionId())) {
+      if (registry.isRegistered(stale.executionId())) {
         continue;
       }
       // 실행 FAILED + 단계 닫기를 한 트랜잭션으로 — 조건부 쓰기라 그 사이 마감·취소됐거나 다른 인스턴스 정리기가 먼저 닫았으면 false 이고 아무것도 바꾸지
       // 않으며 이벤트도 내지 않는다. 이벤트 발행은 커밋 뒤(이 호출이 돌아온 뒤)다.
       if (!executionRepository.failInterruptedAndCloseSteps(
-          stale.executionId(), now, INTERRUPTED_MESSAGE)) {
+          stale.executionId(), now, ExecutionMessages.INTERRUPTED)) {
         continue;
       }
       Long createdBy = pipelineRepository.findCreatedByIdById(stale.pipelineId()).orElse(null);

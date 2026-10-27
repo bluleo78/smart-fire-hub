@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.service.NotificationDispatcher;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
+import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
@@ -64,6 +65,7 @@ public class ProactiveJobAsyncRunner {
   private final ProactiveReportLevelRecorder levelRecorder;
   // 이상 탐지 실행이면 이상을 일으킨 지표 SQL 의 등급을 리포트 등급에 넣는다(WD-198)
   private final MetricSqlAccessChecker metricSqlAccessChecker;
+  private final ProactiveExecutionRegistry executionRegistry;
 
   /** 워크스페이스(테넌트)가 정지돼 실행하지 않은 사유(WD-174). 실행 이력의 오류 메시지로 남는다. */
   public static final String REASON_TENANT_SUSPENDED = "워크스페이스가 정지되어 실행하지 않았습니다";
@@ -120,177 +122,254 @@ public class ProactiveJobAsyncRunner {
             ? runningJobs.computeIfAbsent(jobId, k -> new AtomicBoolean(false))
             : new AtomicBoolean(false);
 
-    Long executionId = executionRepository.create(jobId);
-    executionRepository.updateStatus(executionId, "RUNNING", ProactiveTime.nowUtc(), null);
-
-    // finally 에서 실행 시도 기록에 쓰려고 try 밖에 둔다 — 잡을 읽기 전에 실패하면 null 로 남는다.
+    // finally 에서 등록 해제·실행 시도 기록에 쓰려고 try 밖에 둔다 — 생성 전·잡을 읽기 전에 실패하면 null 로 남는다.
+    Long executionId = null;
     ProactiveJobResponse job = null;
+    // 바깥 try 의 finally 하나가 모든 경로(생성·등록 실패 포함)의 슬롯 해제·등록 해제를 맡는다(리뷰 M-10). 생성·등록은 안쪽 catch 밖에 둔다 —
+    // 그 실패는 실행 행에 FAILED 를 쓰지 않고 원래 예외 그대로 올라간다. 생성만 되고 등록이 안 된 행은 하트비트가 없어 정리기가 stale-after 뒤
+    // FAILED 로 닫는다.
     try {
-      job =
-          proactiveJobRepository
-              .findById(jobId, userId)
-              .orElseThrow(() -> new ProactiveJobException("Job을 찾을 수 없습니다: " + jobId));
-
-      // 작업 주인 자격 재확인(WD-166) — 컨텍스트 수집·AI 호출·전달보다 먼저 본다. 예약·이상 탐지·지금 실행이 모두 이 지점을 지난다.
-      // 주인이 정지·제거됐거나 스마트 작업 권한을 잃었으면 리포트를 만들지도 보내지도 않고 실행 이력에 사유만 남긴다. 예외를 던지지 않고
-      // log.info 한 줄로 끝내는 이유: 매분 예약 작업이면 실행마다 스택이 쌓여 로그가 폭주하고, 이것은 결함이 아니라 예정된 건너뜀이다.
-      // 작업 enabled·스케줄은 그대로 둔다 — 주인을 복구하면 다음 실행부터 저절로 다시 돈다. finally 의 recordAttempt 는 그대로 돈다.
-      // 워크스페이스 정지 확인(WD-174) — 주인 자격(WD-166)보다 먼저 본다. 주인 자격 판정은 테넌트가 ACTIVE 인지도 함께 봐서, 여기서 거르지
-      // 않으면 정지 워크스페이스의 실행이 「작업 주인이 정지됐거나…」라는 틀린 사유로 남는다. 예약·이상 탐지 경로는 이보다 앞(발화 시점)에서 실행 행
-      // 없이 조용히 건너뛰므로, 여기까지 오는 것은 정지 직후 아직 유효한 토큰으로 누른 「지금 실행」과 경합뿐이다 — 사람이 누른 실행이므로 사유를
-      // 실행 이력에 한 번 남긴다. finally 가 실행 슬롯을 풀므로 정지를 해제한 뒤 「이미 실행 중」으로 막히지 않는다.
-      long tenantId = TenantContext.require("스마트 작업 실행 워크스페이스 상태 확인");
-      if (!tenantRepository.isActive(tenantId)) {
-        log.info("Proactive job {} skipped: tenant {} is not active", jobId, tenantId);
-        executionRepository.updateError(executionId, REASON_TENANT_SUSPENDED);
-        return;
-      }
-
-      var ineligible = ownerEligibility.findIneligibilityReason(job.userId());
-      if (ineligible.isPresent()) {
-        log.info(
-            "Proactive job {} skipped: owner {} ineligible ({})",
-            jobId,
-            job.userId(),
-            ineligible.get());
-        executionRepository.updateError(executionId, ineligible.get());
-        return;
-      }
-
-      // 컨텍스트 수집
-      // 컨텍스트는 작업 소유자 자격으로 거른다(보안 등급 — 볼 수 없는 데이터셋 이름이 리포트에 실리지 않게).
-      // 이상 탐지 실행이면 감지된 이상도 싣는다(WD-171)
-      // 리포트 등급(WD-198): 컨텍스트에 싣는 api 내부 읽기(이전 리포트 본문·이상 탐지 지표 값)를 이 실행에 묶는다 — 범위 안에서 알린 등급은 그
-      // 자리에서 실행 행에 기록된다. 이상 탐지 지표 값은 폴러(실행 밖)가 읽었으므로 지표 SQL 을 작성자 자격으로 다시 판정해 그 등급을 넣는다.
-      final ProactiveJobResponse runJob = job;
-      String context =
-          levelRecorder.runInExecution(
-              executionId,
-              userId,
-              () -> {
-                if (anomaly == null) {
-                  return contextCollector.collectContext(runJob.config(), jobId, userId);
-                }
-                metricSqlAccessChecker.noteMetricLevel(runJob.config(), anomaly.metricId(), userId);
-                return contextCollector.collectContext(runJob.config(), jobId, userId, anomaly);
-              });
-
-      // 템플릿 조회 (templateId가 있으면 sections/style 포함)
-      // 작업 소유자가 쓸 수 있는 양식(기본·본인)만 읽는다(WD-163) — 수정 전에 남의 양식이 연결된 작업도 그 양식 내용을 계속 끌어 쓰지 않게,
-      // 삭제된 양식과 같이 기본 형식으로 돌아간다.
-      Map<String, Object> template = null;
-      if (job.templateId() != null) {
-        var tmpl = reportTemplateRepository.findVisibleTo(job.templateId(), userId);
-        if (tmpl.isPresent()) {
-          var t = tmpl.get();
-          template = new HashMap<>();
-          template.put("sections", t.sections());
-          template.put("output_format", "structured");
-          if (t.style() != null) {
-            template.put("style", t.style());
-          }
+      executionId = executionRepository.create(jobId);
+      // 행 생성 직후 등록한다. 오래 막히는 AI 호출 동안 별도 스케줄러가 이 ID의 하트비트를 유지한다.
+      executionRegistry.register(executionId, TenantContext.require("프로액티브 실행 등록"));
+      try {
+        if (lostRace(
+            executionRepository.updateStatus(executionId, "RUNNING", ProactiveTime.nowUtc(), null),
+            "시작",
+            executionId)) {
+          return;
         }
-      }
+        job =
+            proactiveJobRepository
+                .findById(jobId, userId)
+                .orElseThrow(() -> new ProactiveJobException("Job을 찾을 수 없습니다: " + jobId));
 
-      // AI 설정 조회.
-      // 배경 잡이지만 TenantScopedRunner 가 테넌트 컨텍스트를 세워 두므로 **그 잡 소유 테넌트의**
-      // 자격증명으로 해석된다. resolve() 가 던지는 UnknownAgentTypeException 은 여기서 잡지
-      // 않는다 — 아래 바깥의 catch(Exception e) 가 FAILED 로 기록하고 실행을 끝낸다. 조용히 빈
-      // 자격증명으로 계속 진행하면 6b1c6383 과 같은 모양의 과금 혼입이 재발한다.
-      //
-      // 예전에는 여기에 유형별 switch 가 있어 평면 문자열을 풀어냈는데, 그 매핑이 채팅·분류와
-      // 따로 유지되는 세 번째 사본이었다(이슈 #695). 이제 자격증명을 그대로 클라이언트에 넘기고
-      // 필드 조립은 AiCredential.applyTo() 하나가 맡는다.
-      //
-      // 자격증명 자체가 불완전하면 모델 검사보다 **먼저** 막는다 — 순서가 뒤집히면 providerId/
-      // baseUrl 이 비어 있는 테넌트에게 "모델을 다시 선택하세요"라는 엉뚱한 안내가 나간다(리뷰 3b).
-      AiCredential credential = aiCredentialService.resolve().requireComplete();
-
-      // 모델은 그것을 실제로 쓰는 유형(opencode)에서만 조회한다(Supplier) — sdk/cli/cli-api 는
-      // 모델을 보낸 적이 없고 ai-agent 라우트의 고정 기본값을 쓴다(비용 차이가 있는 의도된 gap).
-      // ai.model 은 테넌트 값 → 코드 기본값으로 항상 해석된다(SettingsService.getValue).
-      String opencodeModel =
-          credential.modelToSend(() -> settingsService.getValue("ai.model").orElseThrow());
-      // 모델 접두사 가드(이슈 #695) — 채팅·분류에는 있었으나 이 경로에만 없어서, ai.model 이 낡은
-      // opencode 테넌트의 잡은 ai-agent 안쪽에서 원인 불명으로 실패했다. 모델을 보내지 않는
-      // 유형에서는 null 이 넘어가 no-op 이다(세 경로 같은 검사·같은 문구).
-      credential.requireModelUsable(opencodeModel);
-
-      // AI 실행
-      ProactiveResult result =
-          aiClient.execute(
-              userId,
-              job.prompt(),
-              context,
-              credential,
-              opencodeModel,
-              template,
-              job.config(),
+        // 작업 주인 자격 재확인(WD-166) — 컨텍스트 수집·AI 호출·전달보다 먼저 본다. 예약·이상 탐지·지금 실행이 모두 이 지점을 지난다.
+        // 주인이 정지·제거됐거나 스마트 작업 권한을 잃었으면 리포트를 만들지도 보내지도 않고 실행 이력에 사유만 남긴다. 예외를 던지지 않고
+        // log.info 한 줄로 끝내는 이유: 매분 예약 작업이면 실행마다 스택이 쌓여 로그가 폭주하고, 이것은 결함이 아니라 예정된 건너뜀이다.
+        // 작업 enabled·스케줄은 그대로 둔다 — 주인을 복구하면 다음 실행부터 저절로 다시 돈다. finally 의 recordAttempt 는 그대로 돈다.
+        // 워크스페이스 정지 확인(WD-174) — 주인 자격(WD-166)보다 먼저 본다. 주인 자격 판정은 테넌트가 ACTIVE 인지도 함께 봐서, 여기서 거르지
+        // 않으면 정지 워크스페이스의 실행이 「작업 주인이 정지됐거나…」라는 틀린 사유로 남는다. 예약·이상 탐지 경로는 이보다 앞(발화 시점)에서 실행 행
+        // 없이 조용히 건너뛰므로, 여기까지 오는 것은 정지 직후 아직 유효한 토큰으로 누른 「지금 실행」과 경합뿐이다 — 사람이 누른 실행이므로 사유를
+        // 실행 이력에 한 번 남긴다. finally 가 실행 슬롯을 풀므로 정지를 해제한 뒤 「이미 실행 중」으로 막히지 않는다.
+        long tenantId = TenantContext.require("스마트 작업 실행 워크스페이스 상태 확인");
+        if (!tenantRepository.isActive(tenantId)) {
+          log.info("Proactive job {} skipped: tenant {} is not active", jobId, tenantId);
+          lostRace(
+              executionRepository.updateError(executionId, REASON_TENANT_SUSPENDED),
+              "상태 갱신",
               executionId);
-
-      // 발송 전 결과 검증 (이슈 #350) — 내용이 없거나 본문이 에이전트 실패 메시지인 결과를
-      // COMPLETED로 기록하면 오류 원문이 그대로 CHAT/EMAIL로 나간다. 검증 실패 시 예외를 던져
-      // 아래 catch에서 FAILED로 기록하게 하고, DeliveryChannel 발송은 아예 수행하지 않는다.
-      var rejection = ProactiveResultValidator.findRejectionReason(result);
-      if (rejection.isPresent()) {
-        // 내부 사유(오류 원문 포함 가능)는 로그에만 남기고, 저장·노출 메시지는 번역된 문구를 쓴다.
-        log.error("Proactive job {} produced an undeliverable result: {}", jobId, rejection.get());
-        throw new ProactiveJobException(ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
-      }
-
-      // 결과 저장
-      Map<String, Object> resultMap = objectMapper.convertValue(result, new TypeReference<>() {});
-      executionRepository.updateResult(executionId, "COMPLETED", resultMap, ProactiveTime.nowUtc());
-
-      // DeliveryChannel 호출 (config.channels 필터링)
-      List<String> configChannels = ProactiveConfigParser.getChannelTypes(job.config());
-      // notification.outbox.enabled=true → 새 Dispatcher 경로 (비동기 Outbox + Worker).
-      // false → 기존 직접 호출 경로 유지 (회귀 안전, Stage 1 마이그레이션 중).
-      List<String> deliveredChannels = new ArrayList<>();
-      if (notificationOutboxEnabled) {
-        try {
-          com.smartfirehub.notification.NotificationRequest notifRequest =
-              ProactiveJobNotificationMapper.toRequest(job, executionId, result);
-          notificationDispatcher.enqueue(notifRequest);
-          // Outbox 경로에서는 즉시 발송 전이라 deliveredChannels를 확정할 수 없음.
-          // 실제 성공 채널 집계는 outbox status aggregation view(Task 13 이후)로 대체.
-          for (String t : configChannels) deliveredChannels.add(t);
-        } catch (Exception e) {
-          log.warn(
-              "NotificationDispatcher enqueue failed for job {}: {}", jobId, e.getMessage(), e);
+          return;
         }
-      } else {
-        for (DeliveryChannel channel : deliveryChannels) {
-          if (configChannels.isEmpty() || configChannels.contains(channel.type())) {
-            try {
-              channel.deliver(job, executionId, result);
-              deliveredChannels.add(channel.type());
-            } catch (Exception e) {
-              log.warn(
-                  "DeliveryChannel {} failed for job {}: {}",
-                  channel.type(),
-                  jobId,
-                  e.getMessage());
+
+        var ineligible = ownerEligibility.findIneligibilityReason(job.userId());
+        if (ineligible.isPresent()) {
+          log.info(
+              "Proactive job {} skipped: owner {} ineligible ({})",
+              jobId,
+              job.userId(),
+              ineligible.get());
+          lostRace(
+              executionRepository.updateError(executionId, ineligible.get()), "상태 갱신", executionId);
+          return;
+        }
+
+        // 컨텍스트 수집
+        // 컨텍스트는 작업 소유자 자격으로 거른다(보안 등급 — 볼 수 없는 데이터셋 이름이 리포트에 실리지 않게).
+        // 이상 탐지 실행이면 감지된 이상도 싣는다(WD-171)
+        // 리포트 등급(WD-198): 컨텍스트에 싣는 api 내부 읽기(이전 리포트 본문·이상 탐지 지표 값)를 이 실행에 묶는다 — 범위 안에서 알린 등급은 그
+        // 자리에서 실행 행에 기록된다. 이상 탐지 지표 값은 폴러(실행 밖)가 읽었으므로 지표 SQL 을 작성자 자격으로 다시 판정해 그 등급을 넣는다.
+        final ProactiveJobResponse runJob = job;
+        String context =
+            levelRecorder.runInExecution(
+                executionId,
+                userId,
+                () -> {
+                  if (anomaly == null) {
+                    return contextCollector.collectContext(runJob.config(), jobId, userId);
+                  }
+                  metricSqlAccessChecker.noteMetricLevel(
+                      runJob.config(), anomaly.metricId(), userId);
+                  return contextCollector.collectContext(runJob.config(), jobId, userId, anomaly);
+                });
+
+        // 템플릿 조회 (templateId가 있으면 sections/style 포함)
+        // 작업 소유자가 쓸 수 있는 양식(기본·본인)만 읽는다(WD-163) — 수정 전에 남의 양식이 연결된 작업도 그 양식 내용을 계속 끌어 쓰지 않게,
+        // 삭제된 양식과 같이 기본 형식으로 돌아간다.
+        Map<String, Object> template = null;
+        if (job.templateId() != null) {
+          var tmpl = reportTemplateRepository.findVisibleTo(job.templateId(), userId);
+          if (tmpl.isPresent()) {
+            var t = tmpl.get();
+            template = new HashMap<>();
+            template.put("sections", t.sections());
+            template.put("output_format", "structured");
+            if (t.style() != null) {
+              template.put("style", t.style());
             }
           }
         }
+
+        // AI 설정 조회.
+        // 배경 잡이지만 TenantScopedRunner 가 테넌트 컨텍스트를 세워 두므로 **그 잡 소유 테넌트의**
+        // 자격증명으로 해석된다. resolve() 가 던지는 UnknownAgentTypeException 은 여기서 잡지
+        // 않는다 — 아래 바깥의 catch(Exception e) 가 FAILED 로 기록하고 실행을 끝낸다. 조용히 빈
+        // 자격증명으로 계속 진행하면 6b1c6383 과 같은 모양의 과금 혼입이 재발한다.
+        //
+        // 예전에는 여기에 유형별 switch 가 있어 평면 문자열을 풀어냈는데, 그 매핑이 채팅·분류와
+        // 따로 유지되는 세 번째 사본이었다(이슈 #695). 이제 자격증명을 그대로 클라이언트에 넘기고
+        // 필드 조립은 AiCredential.applyTo() 하나가 맡는다.
+        //
+        // 자격증명 자체가 불완전하면 모델 검사보다 **먼저** 막는다 — 순서가 뒤집히면 providerId/
+        // baseUrl 이 비어 있는 테넌트에게 "모델을 다시 선택하세요"라는 엉뚱한 안내가 나간다(리뷰 3b).
+        AiCredential credential = aiCredentialService.resolve().requireComplete();
+
+        // 모델은 그것을 실제로 쓰는 유형(opencode)에서만 조회한다(Supplier) — sdk/cli/cli-api 는
+        // 모델을 보낸 적이 없고 ai-agent 라우트의 고정 기본값을 쓴다(비용 차이가 있는 의도된 gap).
+        // ai.model 은 테넌트 값 → 코드 기본값으로 항상 해석된다(SettingsService.getValue).
+        String opencodeModel =
+            credential.modelToSend(() -> settingsService.getValue("ai.model").orElseThrow());
+        // 모델 접두사 가드(이슈 #695) — 채팅·분류에는 있었으나 이 경로에만 없어서, ai.model 이 낡은
+        // opencode 테넌트의 잡은 ai-agent 안쪽에서 원인 불명으로 실패했다. 모델을 보내지 않는
+        // 유형에서는 null 이 넘어가 no-op 이다(세 경로 같은 검사·같은 문구).
+        credential.requireModelUsable(opencodeModel);
+
+        // AI 실행
+        ProactiveResult result =
+            aiClient.execute(
+                userId,
+                job.prompt(),
+                context,
+                credential,
+                opencodeModel,
+                template,
+                job.config(),
+                executionId);
+
+        // 발송 전 결과 검증 (이슈 #350) — 내용이 없거나 본문이 에이전트 실패 메시지인 결과를
+        // COMPLETED로 기록하면 오류 원문이 그대로 CHAT/EMAIL로 나간다. 검증 실패 시 예외를 던져
+        // 아래 catch에서 FAILED로 기록하게 하고, DeliveryChannel 발송은 아예 수행하지 않는다.
+        var rejection = ProactiveResultValidator.findRejectionReason(result);
+        if (rejection.isPresent()) {
+          // 내부 사유(오류 원문 포함 가능)는 로그에만 남기고, 저장·노출 메시지는 번역된 문구를 쓴다.
+          log.error(
+              "Proactive job {} produced an undeliverable result: {}", jobId, rejection.get());
+          throw new ProactiveJobException(ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
+        }
+
+        // 결과 저장
+        Map<String, Object> resultMap = objectMapper.convertValue(result, new TypeReference<>() {});
+        // 정리기가 먼저 닫았으면 이 결과를 배달해서는 안 된다. DB의 FAILED 와 실제 알림이 갈라진다.
+        if (lostRace(
+            executionRepository.updateResult(
+                executionId, "COMPLETED", resultMap, ProactiveTime.nowUtc()),
+            "완료",
+            executionId)) {
+          return;
+        }
+
+        // DeliveryChannel 호출 (config.channels 필터링)
+        List<String> configChannels = ProactiveConfigParser.getChannelTypes(job.config());
+        // notification.outbox.enabled=true → 새 Dispatcher 경로 (비동기 Outbox + Worker).
+        // false → 기존 직접 호출 경로 유지 (회귀 안전, Stage 1 마이그레이션 중).
+        List<String> deliveredChannels = new ArrayList<>();
+        if (notificationOutboxEnabled) {
+          try {
+            com.smartfirehub.notification.NotificationRequest notifRequest =
+                ProactiveJobNotificationMapper.toRequest(job, executionId, result);
+            notificationDispatcher.enqueue(notifRequest);
+            // Outbox 경로에서는 즉시 발송 전이라 deliveredChannels를 확정할 수 없음.
+            // 실제 성공 채널 집계는 outbox status aggregation view(Task 13 이후)로 대체.
+            for (String t : configChannels) deliveredChannels.add(t);
+          } catch (Exception e) {
+            log.warn(
+                "NotificationDispatcher enqueue failed for job {}: {}", jobId, e.getMessage(), e);
+          }
+        } else {
+          for (DeliveryChannel channel : deliveryChannels) {
+            if (configChannels.isEmpty() || configChannels.contains(channel.type())) {
+              try {
+                channel.deliver(job, executionId, result);
+                deliveredChannels.add(channel.type());
+              } catch (Exception e) {
+                log.warn(
+                    "DeliveryChannel {} failed for job {}: {}",
+                    channel.type(),
+                    jobId,
+                    e.getMessage());
+              }
+            }
+          }
+        }
+
+        // 실제 전달된 채널 목록을 DB에 저장
+        if (!deliveredChannels.isEmpty()) {
+          executionRepository.updateDeliveredChannels(executionId, deliveredChannels);
+        }
+
+        log.info("Proactive job {} executed successfully", jobId);
+
+      } catch (Exception e) {
+        log.error("Proactive job {} execution failed", jobId, e);
+        if (!executionRepository.updateError(executionId, e.getMessage())) {
+          logFailureNotRecorded(executionId, e);
+        }
+        throw new ProactiveJobException("Job 실행 실패: " + e.getMessage(), e);
       }
-
-      // 실제 전달된 채널 목록을 DB에 저장
-      if (!deliveredChannels.isEmpty()) {
-        executionRepository.updateDeliveredChannels(executionId, deliveredChannels);
-      }
-
-      log.info("Proactive job {} executed successfully", jobId);
-
-    } catch (Exception e) {
-      log.error("Proactive job {} execution failed", jobId, e);
-      executionRepository.updateError(executionId, e.getMessage());
-      throw new ProactiveJobException("Job 실행 실패: " + e.getMessage(), e);
     } finally {
       if (job != null) recordAttempt(jobId, job);
+      if (executionId != null) executionRegistry.unregister(executionId);
       running.set(false);
     }
+  }
+
+  /**
+   * 조건부 상태 갱신({@code PENDING}·{@code RUNNING} 일 때만)이 0행이면 경합 패배 경고를 남기고 true — 정리기·다른 경로가 먼저 닫은
+   * 실행이다. 갱신 결과 확인과 경고 문구를 호출부마다 되풀이하지 않게 한 곳에 둔다.
+   *
+   * @param stage 경고에 넣을 단계 이름(시작·상태 갱신·완료)
+   */
+  private static boolean lostRace(boolean updated, String stage, Long executionId) {
+    if (!updated) {
+      log.warn("프로액티브 실행 {} 경합 패배: execution={}", stage, executionId);
+    }
+    return !updated;
+  }
+
+  /**
+   * 실패 기록(조건부 {@code updateError}, PENDING·RUNNING 일 때만)이 0행일 때 현재 상태를 보고 로그를 가른다(WD-258 최종 리뷰).
+   *
+   * <ul>
+   *   <li>이미 COMPLETED — 완료를 기록한 뒤 뒤 단계(예: {@code updateDeliveredChannels})가 실패한 것이다. 정리기와의 경합이
+   *       아니므로 「경합」이라 적지 않고 원래 예외를 ERROR 로 남긴다.
+   *   <li>그 밖(정리기가 FAILED 로 닫음 등) — 기존처럼 경합 패배 경고.
+   * </ul>
+   *
+   * <p>어느 경우든 상태는 덮어쓰지 않는다(정리된 행 보호). 상태 조회 자체가 실패해도 원래 예외를 가리지 않게 경고만 남긴다.
+   */
+  private void logFailureNotRecorded(Long executionId, Exception cause) {
+    String status;
+    try {
+      status =
+          executionRepository
+              .findById(executionId)
+              .map(ProactiveJobExecutionResponse::status)
+              .orElse(null);
+    } catch (RuntimeException lookupFailure) {
+      log.warn(
+          "프로액티브 실행 실패를 기록하지 못했고 현재 상태도 확인하지 못했습니다: execution={} 원인={}",
+          executionId,
+          lookupFailure.getMessage());
+      return;
+    }
+    if ("COMPLETED".equals(status)) {
+      log.error(
+          "프로액티브 실행은 이미 COMPLETED 로 기록됐으나 뒤 단계에서 실패했습니다 — 상태는 그대로 둡니다: execution={}",
+          executionId,
+          cause);
+      return;
+    }
+    log.warn("프로액티브 실행 실패 경합 패배: execution={} 현재 상태={}", executionId, status);
   }
 
   /**

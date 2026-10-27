@@ -1,13 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
-import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.execution.TenantHeartbeat;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -38,22 +32,10 @@ public class PipelineHeartbeatService {
       fixedDelayString = "${app.pipeline.heartbeat-interval:PT1M}",
       initialDelayString = "${app.pipeline.heartbeat-interval:PT1M}")
   public void beat() {
-    Map<Long, Long> snapshot = registry.snapshot();
-    if (snapshot.isEmpty()) {
-      return;
-    }
-    Map<Long, List<Long>> byTenant = new TreeMap<>();
-    snapshot.forEach(
-        (executionId, tenantId) ->
-            byTenant.computeIfAbsent(tenantId, k -> new ArrayList<>()).add(executionId));
-    LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-    byTenant.forEach(
-        (tenantId, ids) -> {
-          try {
-            TenantContext.runScoped(tenantId, () -> executionRepository.touchHeartbeat(ids, now));
-          } catch (Exception e) {
-            log.warn("파이프라인 하트비트 갱신 실패 (tenant={}, executions={})", tenantId, ids, e);
-          }
-        });
+    TenantHeartbeat.beat(
+        registry,
+        executionRepository::touchHeartbeat,
+        (tenantId, ids, e) ->
+            log.warn("파이프라인 하트비트 갱신 실패 (tenant={}, executions={})", tenantId, ids, e));
   }
 }

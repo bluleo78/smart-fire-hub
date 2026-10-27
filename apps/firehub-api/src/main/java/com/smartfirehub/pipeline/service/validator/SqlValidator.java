@@ -407,6 +407,9 @@ public class SqlValidator {
           "provision_tenant_defaults",
           "resolve_slack_workspace_tenant_by_team_id",
           "outbox_tenant_ids",
+          // V149: 프로액티브 정리기가 활성 실행이 있는 테넌트만 돌려고 쓰는 SECURITY DEFINER(outbox_tenant_ids 와 같은 모양).
+          // 사용자 SQL 이 부를 이유가 없다 — 차단한다.
+          "proactive_active_execution_tenant_ids",
           // V123: 증분 처리 책갈피 후보값(가장 오래된 활성 트랜잭션 시작 시각) 계산용 SECURITY DEFINER.
           // IncrementalCursorService 가 DSLContext 로 직접 호출하는 전용 경로이지, 사용자 파이프라인
           // SQL 스텝이 호출할 이유가 없다(카탈로그 열람과 마찬가지로 애드혹 SQL 경로에서 미한정 허용할

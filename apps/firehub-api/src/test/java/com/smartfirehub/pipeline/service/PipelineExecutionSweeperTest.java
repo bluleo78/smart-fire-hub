@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 
+import com.smartfirehub.global.execution.ExecutionMessages;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.dto.NotificationEvent;
 import com.smartfirehub.notification.service.SseEmitterRegistry;
@@ -172,7 +173,7 @@ class PipelineExecutionSweeperTest extends IntegrationTestBase {
                     .from(PIPELINE_EXECUTION)
                     .where(PIPELINE_EXECUTION.ID.eq(stale))
                     .fetchOne(PIPELINE_EXECUTION.ERROR_MESSAGE));
-    assertThat(message).isEqualTo(PipelineExecutionSweeper.INTERRUPTED_MESSAGE);
+    assertThat(message).isEqualTo(ExecutionMessages.INTERRUPTED);
     // 실행 중이던 단계는 FAILED, 시작 못 한 단계는 SKIPPED.
     assertThat(stepStatusesOf(stale)).containsExactly("FAILED", "SKIPPED");
 

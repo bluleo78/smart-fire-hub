@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
@@ -60,6 +61,16 @@ public class ProactiveJobExecutionRepository {
       field(name("proactive_job_execution", "result"), JSONB.class);
   private static final Field<LocalDateTime> PJE_CREATED_AT =
       field(name("proactive_job_execution", "created_at"), LocalDateTime.class);
+  private static final Field<LocalDateTime> PJE_HEARTBEAT_AT =
+      field(name("proactive_job_execution", "heartbeat_at"), LocalDateTime.class);
+  private static final Field<Long> PJE_TENANT_ID =
+      field(name("proactive_job_execution", "tenant_id"), Long.class);
+
+  /**
+   * 아직 닫히지 않은 실행(PENDING·RUNNING) 조건. 조건부 상태 갱신·하트비트·정리 조회가 같은 「활성」 정의를 쓰게 한 곳에 둔다 — PJE_STATUS 뒤에
+   * 선언해야 클래스 초기화 때 null 이 아니다.
+   */
+  private static final Condition ACTIVE = PJE_STATUS.in("PENDING", "RUNNING");
 
   /** 실제 전달된 채널 목록 (쉼표 구분 문자열, 예: "CHAT,EMAIL") */
   private static final Field<String> PJE_DELIVERED_CHANNELS =
@@ -73,7 +84,8 @@ public class ProactiveJobExecutionRepository {
    * 응답 배지·열람 판정용 등급 조인(LEFT JOIN — 등급 없는 실행도 나온다). 별칭을 두는 이유: 같은 쿼리의 다른 조인과 이름이 겹치지 않게 한다. 등급
    * 이름·순서(rank)는 지금 값을 읽는다 — 순서 변경 뒤에도 데이터셋 판정과 같은 기준으로 비교된다.
    */
-  private static final SecurityLevel PJE_SL = com.smartfirehub.jooq.Tables.SECURITY_LEVEL.as("pje_sl");
+  private static final SecurityLevel PJE_SL =
+      com.smartfirehub.jooq.Tables.SECURITY_LEVEL.as("pje_sl");
 
   // 리포트 목록 조회용 — 잡 소유자 검증과 잡 이름 표기를 위해 proactive_job 을 조인한다
   private static final Table<?> PROACTIVE_JOB = table(name("proactive_job"));
@@ -85,19 +97,22 @@ public class ProactiveJobExecutionRepository {
     return dsl.insertInto(PROACTIVE_JOB_EXECUTION)
         .set(PJE_JOB_ID, jobId)
         .set(PJE_STATUS, "PENDING")
+        // 생성과 등록 사이 정리기가 돌아도 새 실행을 고아로 보지 않도록 즉시 하트비트를 남긴다.
+        .set(PJE_HEARTBEAT_AT, ProactiveTime.nowUtc())
         .returning(PJE_ID)
         .fetchOne(r -> r.get(PJE_ID));
   }
 
-  public void updateStatus(
+  public boolean updateStatus(
       Long id, String status, LocalDateTime startedAt, LocalDateTime completedAt) {
     var query = dsl.update(PROACTIVE_JOB_EXECUTION).set(PJE_STATUS, status);
     if (startedAt != null) query = query.set(PJE_STARTED_AT, startedAt);
     if (completedAt != null) query = query.set(PJE_COMPLETED_AT, completedAt);
-    query.where(PJE_ID.eq(id)).execute();
+    // 생성 직후 러너가 멈춘 사이 정리기가 닫았다면 RUNNING 으로 되살리지 않는다.
+    return query.where(PJE_ID.eq(id)).and(ACTIVE).execute() == 1;
   }
 
-  public void updateResult(
+  public boolean updateResult(
       Long id, String status, Map<String, Object> result, LocalDateTime completedAt) {
     try {
       String resultJson = result != null ? objectMapper.writeValueAsString(result) : null;
@@ -106,32 +121,68 @@ public class ProactiveJobExecutionRepository {
               .set(PJE_STATUS, status)
               .set(PJE_COMPLETED_AT, completedAt);
       if (resultJson != null) query = query.set(PJE_RESULT, JSONB.valueOf(resultJson));
-      query.where(PJE_ID.eq(id)).execute();
+      // 정리기가 먼저 FAILED 로 닫은 실행의 결과와 상태를 되살리지 않는다.
+      return query.where(PJE_ID.eq(id)).and(ACTIVE).execute() == 1;
     } catch (Exception e) {
       throw new RuntimeException("Failed to serialize result", e);
     }
   }
 
-  public void updateError(Long id, String errorMessage) {
-    dsl.update(PROACTIVE_JOB_EXECUTION)
-        .set(PJE_STATUS, "FAILED")
-        .set(PJE_ERROR_MESSAGE, errorMessage)
-        .set(PJE_COMPLETED_AT, ProactiveTime.nowUtc())
-        .where(PJE_ID.eq(id))
+  public boolean updateError(Long id, String errorMessage) {
+    return dsl.update(PROACTIVE_JOB_EXECUTION)
+            .set(PJE_STATUS, "FAILED")
+            .set(PJE_ERROR_MESSAGE, errorMessage)
+            .set(PJE_COMPLETED_AT, ProactiveTime.nowUtc())
+            .where(PJE_ID.eq(id))
+            .and(ACTIVE)
+            .execute()
+        == 1;
+  }
+
+  /** 등록된 활성 실행만 하트비트를 갱신한다. RLS 때문에 호출자는 테넌트 컨텍스트 안에 있어야 한다. */
+  public int touchHeartbeat(Collection<Long> executionIds, LocalDateTime now) {
+    if (executionIds == null || executionIds.isEmpty()) return 0;
+    return dsl.update(PROACTIVE_JOB_EXECUTION)
+        .set(PJE_HEARTBEAT_AT, now)
+        .where(PJE_ID.in(executionIds))
+        .and(ACTIVE)
         .execute();
+  }
+
+  /**
+   * 활성(PENDING·RUNNING) 실행이 있는 테넌트 id 목록(WD-258) — 정리기가 매분 모든 테넌트를 돌지 않고 이 목록만 돈다. V149 의 SECURITY
+   * DEFINER 함수({@code outbox_tenant_ids} 와 같은 모양)라 테넌트 컨텍스트 없이도 RLS 를 넘어 정수 목록만 받는다. 실제 정리는 호출자가
+   * 테넌트마다 컨텍스트를 연 뒤 RLS 아래서 한다. 실행 표에서 유도하므로 정지된 워크스페이스의 고아 실행도 빠지지 않는다.
+   *
+   * <p>반환은 완전히 구체화된 리스트다 — 호출자({@code sweep}, 트랜잭션 없음)가 이 메서드를 마친 뒤 테넌트별로 새 트랜잭션을 열어야 각자의 GUC 가
+   * 들어간다.
+   */
+  public List<Long> tenantIdsWithActiveExecutions() {
+    return dsl.fetch("select * from proactive_active_execution_tenant_ids()").into(Long.class);
+  }
+
+  /** 오래된 활성 실행 ID만 조회한다. 완료·실패 행과 다른 테넌트 행은 제외한다. */
+  public List<Long> findStaleExecutions(long tenantId, LocalDateTime threshold) {
+    return dsl.select(PJE_ID)
+        .from(PROACTIVE_JOB_EXECUTION)
+        .where(PJE_TENANT_ID.eq(tenantId))
+        .and(ACTIVE)
+        .and(coalesce(PJE_HEARTBEAT_AT, PJE_STARTED_AT, PJE_CREATED_AT).lt(threshold))
+        .fetch(PJE_ID);
   }
 
   public List<ProactiveJobExecutionResponse> findByJobId(Long jobId, int limit, int offset) {
     return dsl.select(
-            withLevel(PJE_ID,
-            PJE_JOB_ID,
-            PJE_STATUS,
-            PJE_STARTED_AT,
-            PJE_COMPLETED_AT,
-            PJE_ERROR_MESSAGE,
-            PJE_RESULT,
-            PJE_DELIVERED_CHANNELS,
-            PJE_CREATED_AT))
+            withLevel(
+                PJE_ID,
+                PJE_JOB_ID,
+                PJE_STATUS,
+                PJE_STARTED_AT,
+                PJE_COMPLETED_AT,
+                PJE_ERROR_MESSAGE,
+                PJE_RESULT,
+                PJE_DELIVERED_CHANNELS,
+                PJE_CREATED_AT))
         .from(PROACTIVE_JOB_EXECUTION)
         .leftJoin(PJE_SL)
         .on(PJE_SL.ID.eq(PJE_SECURITY_LEVEL_ID))
@@ -151,14 +202,15 @@ public class ProactiveJobExecutionRepository {
   public List<ProactiveJobExecutionSummaryResponse> findSummariesByJobId(
       Long jobId, int limit, int offset) {
     return dsl.select(
-            withLevel(PJE_ID,
-            PJE_JOB_ID,
-            PJE_STATUS,
-            PJE_STARTED_AT,
-            PJE_COMPLETED_AT,
-            PJE_ERROR_MESSAGE,
-            PJE_DELIVERED_CHANNELS,
-            PJE_CREATED_AT))
+            withLevel(
+                PJE_ID,
+                PJE_JOB_ID,
+                PJE_STATUS,
+                PJE_STARTED_AT,
+                PJE_COMPLETED_AT,
+                PJE_ERROR_MESSAGE,
+                PJE_DELIVERED_CHANNELS,
+                PJE_CREATED_AT))
         .from(PROACTIVE_JOB_EXECUTION)
         .leftJoin(PJE_SL)
         .on(PJE_SL.ID.eq(PJE_SECURITY_LEVEL_ID))
@@ -182,14 +234,15 @@ public class ProactiveJobExecutionRepository {
     Map<Long, ProactiveJobExecutionResponse> latest = new HashMap<>();
     if (jobIds.isEmpty()) return latest;
     dsl.select(
-            withLevel(PJE_ID,
-            PJE_JOB_ID,
-            PJE_STATUS,
-            PJE_STARTED_AT,
-            PJE_COMPLETED_AT,
-            PJE_ERROR_MESSAGE,
-            PJE_DELIVERED_CHANNELS,
-            PJE_CREATED_AT))
+            withLevel(
+                PJE_ID,
+                PJE_JOB_ID,
+                PJE_STATUS,
+                PJE_STARTED_AT,
+                PJE_COMPLETED_AT,
+                PJE_ERROR_MESSAGE,
+                PJE_DELIVERED_CHANNELS,
+                PJE_CREATED_AT))
         .distinctOn(PJE_JOB_ID)
         .from(PROACTIVE_JOB_EXECUTION)
         .leftJoin(PJE_SL)
@@ -217,15 +270,16 @@ public class ProactiveJobExecutionRepository {
 
   public Optional<ProactiveJobExecutionResponse> findById(Long id) {
     return dsl.select(
-            withLevel(PJE_ID,
-            PJE_JOB_ID,
-            PJE_STATUS,
-            PJE_STARTED_AT,
-            PJE_COMPLETED_AT,
-            PJE_ERROR_MESSAGE,
-            PJE_RESULT,
-            PJE_DELIVERED_CHANNELS,
-            PJE_CREATED_AT))
+            withLevel(
+                PJE_ID,
+                PJE_JOB_ID,
+                PJE_STATUS,
+                PJE_STARTED_AT,
+                PJE_COMPLETED_AT,
+                PJE_ERROR_MESSAGE,
+                PJE_RESULT,
+                PJE_DELIVERED_CHANNELS,
+                PJE_CREATED_AT))
         .from(PROACTIVE_JOB_EXECUTION)
         .leftJoin(PJE_SL)
         .on(PJE_SL.ID.eq(PJE_SECURITY_LEVEL_ID))
@@ -340,11 +394,11 @@ public class ProactiveJobExecutionRepository {
   }
 
   /**
-   * 리포트 등급을 올린다(WD-198) — 지금 등급이 없거나 rank 가 더 낮을 때만 바꾼다(「가장 높은 등급」만 남는다). 한 문장 UPDATE 라 동시
-   * 기록끼리 낮은 값으로 덮어쓰지 않는다.
+   * 리포트 등급을 올린다(WD-198) — 지금 등급이 없거나 rank 가 더 낮을 때만 바꾼다(「가장 높은 등급」만 남는다). 한 문장 UPDATE 라 동시 기록끼리 낮은
+   * 값으로 덮어쓰지 않는다.
    *
-   * <p>헤더 위조 방지 조건(대행 요청 경로, {@code runningSince != null}): 실행의 작업 작성자가 {@code ownerUserId} 이고, 요청 시작 시점에
-   * 진행 중이었던 실행(지금 RUNNING 이거나 그 이후에 끝남)일 때만 갱신한다. 조건에 안 맞으면 0행 — 호출부는 조용히 무시한다. 실행기 내부
+   * <p>헤더 위조 방지 조건(대행 요청 경로, {@code runningSince != null}): 실행의 작업 작성자가 {@code ownerUserId} 이고, 요청
+   * 시작 시점에 진행 중이었던 실행(지금 RUNNING 이거나 그 이후에 끝남)일 때만 갱신한다. 조건에 안 맞으면 0행 — 호출부는 조용히 무시한다. 실행기 내부
    * 경로({@code runningSince == null})도 작성자 조건은 그대로 건다.
    *
    * <p>다른 테넌트의 등급 id 는 RLS 로 security_level 이 보이지 않아 rank 비교가 NULL → 갱신되지 않는다(복합 FK 도 거부한다).
@@ -370,9 +424,7 @@ public class ProactiveJobExecutionRepository {
         .where(PJE_ID.eq(executionId))
         .and(newRank.isNotNull())
         .and(PJE_SECURITY_LEVEL_ID.isNull().or(curRank.lt(newRank)))
-        .and(
-            PJE_JOB_ID.in(
-                select(PJ_ID).from(PROACTIVE_JOB).where(PJ_USER_ID.eq(ownerUserId))))
+        .and(PJE_JOB_ID.in(select(PJ_ID).from(PROACTIVE_JOB).where(PJ_USER_ID.eq(ownerUserId))))
         .and(running)
         .execute();
   }

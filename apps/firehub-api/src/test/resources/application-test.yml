@@ -58,6 +58,10 @@ app:
     master-key: dGVzdC1lbmNyeXB0aW9uLWtleS0zMmJ5dGVzLWhlcmU=
   cors:
     allowed-origins: http://localhost:5173
+  proactive:
+    # 통합 테스트와 스케줄러가 경합하지 않도록 직접 beat()/sweepTenant() 를 호출한다.
+    heartbeat-interval: P1D
+    stale-sweep-interval: P1D
   pipeline:
     # 스케줄러가 통합 테스트와 경합하지 않게 간격을 길게 한다(초기 지연도 같은 값) — 테스트는 beat()/sweepTenant() 를 직접 부른다.
     heartbeat-interval: P1D

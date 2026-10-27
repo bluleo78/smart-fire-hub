@@ -177,6 +177,22 @@ public class ProactiveJobExecutionRecord extends UpdatableRecordImpl<ProactiveJo
         return (Long) get(10);
     }
 
+    /**
+     * Setter for <code>public.proactive_job_execution.heartbeat_at</code>. 마지막
+     * 하트비트 시각(UTC). 오래된 활성 실행을 api 재시작으로 중단된 실행으로 정리한다(WD-258)
+     */
+    public void setHeartbeatAt(LocalDateTime value) {
+        set(11, value);
+    }
+
+    /**
+     * Getter for <code>public.proactive_job_execution.heartbeat_at</code>. 마지막
+     * 하트비트 시각(UTC). 오래된 활성 실행을 api 재시작으로 중단된 실행으로 정리한다(WD-258)
+     */
+    public LocalDateTime getHeartbeatAt() {
+        return (LocalDateTime) get(11);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -200,7 +216,7 @@ public class ProactiveJobExecutionRecord extends UpdatableRecordImpl<ProactiveJo
     /**
      * Create a detached, initialised ProactiveJobExecutionRecord
      */
-    public ProactiveJobExecutionRecord(Long id, Long jobId, String status, LocalDateTime startedAt, LocalDateTime completedAt, String errorMessage, JSONB result, LocalDateTime createdAt, String deliveredChannels, Long tenantId, Long securityLevelId) {
+    public ProactiveJobExecutionRecord(Long id, Long jobId, String status, LocalDateTime startedAt, LocalDateTime completedAt, String errorMessage, JSONB result, LocalDateTime createdAt, String deliveredChannels, Long tenantId, Long securityLevelId, LocalDateTime heartbeatAt) {
         super(ProactiveJobExecution.PROACTIVE_JOB_EXECUTION);
 
         setId(id);
@@ -214,6 +230,7 @@ public class ProactiveJobExecutionRecord extends UpdatableRecordImpl<ProactiveJo
         setDeliveredChannels(deliveredChannels);
         setTenantId(tenantId);
         setSecurityLevelId(securityLevelId);
+        setHeartbeatAt(heartbeatAt);
         resetChangedOnNotNull();
     }
 }

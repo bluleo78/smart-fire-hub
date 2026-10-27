@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.service.NotificationDispatcher;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
+import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
@@ -27,6 +28,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,6 +62,7 @@ class ProactiveJobAsyncRunnerTest {
   @Mock DeliveryChannel chatChannel;
   @Mock TenantRepository tenantRepository;
   @Mock MetricSqlAccessChecker metricSqlAccessChecker;
+  private final ProactiveExecutionRegistry executionRegistry = new ProactiveExecutionRegistry();
 
   /** 실행 테넌트(WD-174 워크스페이스 정지 확인이 컨텍스트에서 읽는다). */
   private static final long TENANT_ID = 1L;
@@ -72,6 +76,43 @@ class ProactiveJobAsyncRunnerTest {
   @AfterEach
   void clearTenant() {
     TenantContext.clear();
+    // 성공·실패·건너뜀·경합 패배 어느 경로든 실행이 끝나면 등록부에서 빠져야 한다 — 남으면 하트비트가 계속 돌아 정리기가 영영 닫지 못한다(리뷰 I-6).
+    assertThat(executionRegistry.snapshot()).as("실행 종료 뒤 등록 해제").isEmpty();
+  }
+
+  /**
+   * 행 생성이나 등록이 실패해도 사전에 잡은 실행 슬롯(runningJobs)이 풀려야 한다 — 안 풀리면 그 잡은 다시 실행할 수 없다(리뷰 M-10). 등록은 테넌트
+   * 컨텍스트가 없으면 던진다.
+   */
+  @Test
+  void 등록이_실패해도_실행_슬롯을_푼다() {
+    ConcurrentHashMap<Long, AtomicBoolean> slots = new ConcurrentHashMap<>();
+    slots.put(JOB_ID, new AtomicBoolean(true));
+    runner.setRunningJobs(slots);
+    TenantContext.clear();
+    // 잡 조회까지 가지 않는 경로라 공통 스텁을 지운다(엄격 스텁의 미사용 경고 방지).
+    reset(proactiveJobRepository);
+
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+        .isInstanceOf(RuntimeException.class);
+
+    assertThat(slots.get(JOB_ID).get()).isFalse();
+  }
+
+  /** 실행 행 생성이 실패해도 실행 슬롯을 푼다(리뷰 M-10). */
+  @Test
+  void 실행_행_생성이_실패해도_실행_슬롯을_푼다() {
+    ConcurrentHashMap<Long, AtomicBoolean> slots = new ConcurrentHashMap<>();
+    slots.put(JOB_ID, new AtomicBoolean(true));
+    runner.setRunningJobs(slots);
+    // 행 생성에서 멈추는 경로라 공통 스텁을 지우고 생성 실패만 둔다(엄격 스텁의 미사용 경고 방지).
+    reset(proactiveJobRepository, executionRepository);
+    when(executionRepository.create(JOB_ID)).thenThrow(new IllegalStateException("db down"));
+
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(slots.get(JOB_ID).get()).isFalse();
   }
 
   @BeforeEach
@@ -94,7 +135,8 @@ class ProactiveJobAsyncRunnerTest {
             ownerEligibility,
             tenantRepository,
             new ProactiveReportLevelRecorder(executionRepository),
-            metricSqlAccessChecker);
+            metricSqlAccessChecker,
+            executionRegistry);
     // 운영에서는 스케줄러·요청이 테넌트 컨텍스트를 세운 채 실행기를 부른다 — 기본은 ACTIVE 워크스페이스(WD-174)
     TenantContext.set(TENANT_ID);
     lenient().when(tenantRepository.isActive(TENANT_ID)).thenReturn(true);
@@ -122,6 +164,13 @@ class ProactiveJobAsyncRunnerTest {
             null);
     when(proactiveJobRepository.findById(JOB_ID, USER_ID)).thenReturn(Optional.of(job));
     when(executionRepository.create(JOB_ID)).thenReturn(EXECUTION_ID);
+    lenient()
+        .when(executionRepository.updateStatus(eq(EXECUTION_ID), eq("RUNNING"), any(), isNull()))
+        .thenReturn(true);
+    lenient()
+        .when(executionRepository.updateResult(eq(EXECUTION_ID), eq("COMPLETED"), any(), any()))
+        .thenReturn(true);
+    lenient().when(executionRepository.updateError(eq(EXECUTION_ID), anyString())).thenReturn(true);
     // 이상 탐지 실행(WD-171)은 4인자 수집을 쓰므로 이 기본 스텁을 쓰지 않는다 — lenient
     lenient().when(contextCollector.collectContext(any(), eq(JOB_ID), any())).thenReturn("{}");
   }
@@ -156,7 +205,8 @@ class ProactiveJobAsyncRunnerTest {
             credentialCaptor.capture(),
             modelCaptor.capture(),
             any(),
-            any(), any());
+            any(),
+            any());
 
     assertThat(credentialCaptor.getValue()).isEqualTo(credential);
     assertThat(modelCaptor.getValue()).isEqualTo("openai/gpt-4o");
@@ -218,7 +268,14 @@ class ProactiveJobAsyncRunnerTest {
     ArgumentCaptor<Map<String, Object>> templateCaptor = ArgumentCaptor.forClass(Map.class);
     verify(aiClient, times(2))
         .execute(
-            eq(USER_ID), anyString(), anyString(), any(), any(), templateCaptor.capture(), any(), any());
+            eq(USER_ID),
+            anyString(),
+            anyString(),
+            any(),
+            any(),
+            templateCaptor.capture(),
+            any(),
+            any());
     assertThat(templateCaptor.getAllValues().get(0)).isNull();
     assertThat(templateCaptor.getAllValues().get(1)).containsEntry("style", "formal");
     // 소유자 범위 없이 id 로만 읽는 경로는 쓰지 않는다
@@ -387,12 +444,14 @@ class ProactiveJobAsyncRunnerTest {
   @Test
   void sdk_자격증명이면_모델을_보내지_않는다() {
     when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-anthropic"));
-    when(aiClient.execute(eq(USER_ID), anyString(), anyString(), any(), isNull(), any(), any(), any()))
+    when(aiClient.execute(
+            eq(USER_ID), anyString(), anyString(), any(), isNull(), any(), any(), any()))
         .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
 
     runner.executeJob(JOB_ID, USER_ID);
 
-    verify(aiClient).execute(eq(USER_ID), anyString(), anyString(), any(), isNull(), any(), any(), any());
+    verify(aiClient)
+        .execute(eq(USER_ID), anyString(), anyString(), any(), isNull(), any(), any(), any());
   }
 
   /**
@@ -475,5 +534,136 @@ class ProactiveJobAsyncRunnerTest {
     verify(ownerEligibility).findIneligibilityReason(USER_ID);
     verify(executionRepository).updateResult(eq(EXECUTION_ID), eq("COMPLETED"), any(), any());
     verify(chatChannel).deliver(any(), eq(EXECUTION_ID), any());
+  }
+
+  /** 정리기가 먼저 FAILED 로 닫았다면 늦은 AI 결과를 사용자에게 발송하지 않는다(WD-258). */
+  @Test
+  void 정리기와_경합에서_진_결과는_전달하지_않는다() {
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-test"));
+    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenAnswer(
+            ignored -> {
+              assertThat(executionRegistry.snapshot()).containsEntry(EXECUTION_ID, TENANT_ID);
+              return new ProactiveResult("리포트", List.of(), null, null, "요약 내용");
+            });
+    when(executionRepository.updateResult(eq(EXECUTION_ID), eq("COMPLETED"), any(), any()))
+        .thenReturn(false);
+
+    runner.executeJob(JOB_ID, USER_ID);
+
+    verify(chatChannel, never()).deliver(any(), any(), any());
+    verifyNoInteractions(notificationDispatcher);
+    assertThat(executionRegistry.snapshot()).isEmpty();
+  }
+
+  // ---------- 실패 기록이 0행일 때의 로그 구분(WD-258 최종 리뷰) ----------
+
+  /** 러너 로거의 로그를 모으는 수집기를 붙인다(상위 전파는 끈다 — 스택이 콘솔로 새지 않게). */
+  private ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>
+      captureRunnerLogs() {
+    ch.qos.logback.classic.Logger logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(ProactiveJobAsyncRunner.class);
+    ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+        new ch.qos.logback.core.read.ListAppender<>();
+    appender.start();
+    logger.setAdditive(false);
+    logger.addAppender(appender);
+    return appender;
+  }
+
+  private static void releaseRunnerLogs(
+      ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender) {
+    ch.qos.logback.classic.Logger logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(ProactiveJobAsyncRunner.class);
+    logger.detachAppender(appender);
+    logger.setAdditive(true);
+  }
+
+  private static ProactiveJobExecutionResponse executionWithStatus(String status) {
+    return new ProactiveJobExecutionResponse(
+        EXECUTION_ID, JOB_ID, status, null, null, null, null, null, null, null);
+  }
+
+  /**
+   * 이미 COMPLETED 로 기록된 뒤 뒤 단계(전달 채널 기록)가 실패하면 조건부 실패 기록은 0행이다 — 이것은 정리기와의 경합이 아니므로 「경합」이라 적지 않고 원래
+   * 예외를 ERROR 로 남긴다. 상태는 덮어쓰지 않는다(조건부 갱신 그대로).
+   */
+  @Test
+  void 완료_뒤_뒤단계_실패는_경합이_아니라_ERROR로_남긴다() {
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-test"));
+    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(new ProactiveResult("리포트", List.of(), null, null, "요약 내용"));
+    RuntimeException deliveredFailure = new IllegalStateException("전달 채널 기록 실패");
+    doThrow(deliveredFailure)
+        .when(executionRepository)
+        .updateDeliveredChannels(eq(EXECUTION_ID), any());
+    when(executionRepository.updateError(eq(EXECUTION_ID), anyString())).thenReturn(false);
+    when(executionRepository.findById(EXECUTION_ID))
+        .thenReturn(Optional.of(executionWithStatus("COMPLETED")));
+    var logs = captureRunnerLogs();
+    try {
+      assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+          .isInstanceOf(ProactiveJobException.class);
+
+      assertThat(logs.list)
+          .noneMatch(e -> e.getFormattedMessage().contains("경합"))
+          .anySatisfy(
+              e -> {
+                assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.ERROR);
+                assertThat(e.getFormattedMessage()).contains("COMPLETED").contains("뒤 단계");
+                assertThat(e.getThrowableProxy()).isNotNull();
+                assertThat(e.getThrowableProxy().getMessage()).isEqualTo("전달 채널 기록 실패");
+              });
+      // 상태는 덮어쓰지 않는다 — 완료 기록 한 번뿐이고 FAILED 로 바꾸는 갱신이 없다.
+      verify(executionRepository, times(1)).updateResult(any(), any(), any(), any());
+      verify(executionRepository, never()).updateStatus(any(), eq("FAILED"), any(), any());
+    } finally {
+      releaseRunnerLogs(logs);
+    }
+  }
+
+  /** 정리기가 먼저 FAILED 로 닫아 실패 기록이 0행이면 기존처럼 「경합 패배」 경고다. */
+  @Test
+  void 정리기가_먼저_닫았으면_실패_기록_0행은_경합_패배_경고다() {
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-test"));
+    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenThrow(new IllegalStateException("AI 실패"));
+    when(executionRepository.updateError(eq(EXECUTION_ID), anyString())).thenReturn(false);
+    when(executionRepository.findById(EXECUTION_ID))
+        .thenReturn(Optional.of(executionWithStatus("FAILED")));
+    var logs = captureRunnerLogs();
+    try {
+      assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+          .isInstanceOf(ProactiveJobException.class);
+
+      assertThat(logs.list)
+          .anySatisfy(
+              e -> {
+                assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
+                assertThat(e.getFormattedMessage()).contains("경합 패배").contains("FAILED");
+              });
+    } finally {
+      releaseRunnerLogs(logs);
+    }
+  }
+
+  /** 현재 상태 조회마저 실패해도 원래 예외를 가리지 않는다 — 원래 예외로 재포장해 던진다. */
+  @Test
+  void 실패_기록_0행_뒤_상태_조회가_실패해도_원래_예외로_끝난다() {
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-test"));
+    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenThrow(new IllegalStateException("AI 실패"));
+    when(executionRepository.updateError(eq(EXECUTION_ID), anyString())).thenReturn(false);
+    when(executionRepository.findById(EXECUTION_ID)).thenThrow(new IllegalStateException("DB 끊김"));
+    var logs = captureRunnerLogs();
+    try {
+      assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+          .isInstanceOf(ProactiveJobException.class)
+          .hasMessageContaining("AI 실패");
+    } finally {
+      releaseRunnerLogs(logs);
+    }
   }
 }

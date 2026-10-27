@@ -69,6 +69,7 @@ import com.smartfirehub.jooq.tables.PostgisSrs;
 import com.smartfirehub.jooq.tables.PostgisSrsAll;
 import com.smartfirehub.jooq.tables.PostgisSrsCodes;
 import com.smartfirehub.jooq.tables.PostgisSrsSearch;
+import com.smartfirehub.jooq.tables.ProactiveActiveExecutionTenantIds;
 import com.smartfirehub.jooq.tables.ProactiveJob;
 import com.smartfirehub.jooq.tables.ProactiveJobExecution;
 import com.smartfirehub.jooq.tables.ProactiveMessage;
@@ -104,6 +105,7 @@ import com.smartfirehub.jooq.tables.records.PostgisSrsAllRecord;
 import com.smartfirehub.jooq.tables.records.PostgisSrsCodesRecord;
 import com.smartfirehub.jooq.tables.records.PostgisSrsRecord;
 import com.smartfirehub.jooq.tables.records.PostgisSrsSearchRecord;
+import com.smartfirehub.jooq.tables.records.ProactiveActiveExecutionTenantIdsRecord;
 import com.smartfirehub.jooq.tables.records.ResolveSlackWorkspaceTenantByTeamIdRecord;
 import com.smartfirehub.jooq.tables.records.ResolveTriggerTenantByTokenHashRecord;
 import com.smartfirehub.jooq.tables.records.ResolveTriggerTenantByWebhookIdRecord;
@@ -628,6 +630,29 @@ public class Public extends SchemaImpl {
     }
 
     /**
+     * The table <code>public.proactive_active_execution_tenant_ids</code>.
+     */
+    public final ProactiveActiveExecutionTenantIds PROACTIVE_ACTIVE_EXECUTION_TENANT_IDS = ProactiveActiveExecutionTenantIds.PROACTIVE_ACTIVE_EXECUTION_TENANT_IDS;
+
+    /**
+     * Call <code>public.proactive_active_execution_tenant_ids</code>.
+     */
+    public static Result<ProactiveActiveExecutionTenantIdsRecord> PROACTIVE_ACTIVE_EXECUTION_TENANT_IDS(
+          Configuration configuration
+    ) {
+        return configuration.dsl().selectFrom(com.smartfirehub.jooq.tables.ProactiveActiveExecutionTenantIds.PROACTIVE_ACTIVE_EXECUTION_TENANT_IDS.call(
+        )).fetch();
+    }
+
+    /**
+     * Get <code>public.proactive_active_execution_tenant_ids</code> as a table.
+     */
+    public static ProactiveActiveExecutionTenantIds PROACTIVE_ACTIVE_EXECUTION_TENANT_IDS() {
+        return com.smartfirehub.jooq.tables.ProactiveActiveExecutionTenantIds.PROACTIVE_ACTIVE_EXECUTION_TENANT_IDS.call(
+        );
+    }
+
+    /**
      * The table <code>public.proactive_job</code>.
      */
     public final ProactiveJob PROACTIVE_JOB = ProactiveJob.PROACTIVE_JOB;
@@ -1088,6 +1113,7 @@ public class Public extends SchemaImpl {
             PostgisSrsAll.POSTGIS_SRS_ALL,
             PostgisSrsCodes.POSTGIS_SRS_CODES,
             PostgisSrsSearch.POSTGIS_SRS_SEARCH,
+            ProactiveActiveExecutionTenantIds.PROACTIVE_ACTIVE_EXECUTION_TENANT_IDS,
             ProactiveJob.PROACTIVE_JOB,
             ProactiveJobExecution.PROACTIVE_JOB_EXECUTION,
             ProactiveMessage.PROACTIVE_MESSAGE,
