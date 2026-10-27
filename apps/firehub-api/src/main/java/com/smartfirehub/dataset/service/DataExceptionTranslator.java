@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.service;
 
 import java.sql.SQLException;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.postgresql.util.PSQLException;
@@ -85,6 +86,18 @@ public final class DataExceptionTranslator {
    * <p>제약 이름으로 도메인 오류를 고르는 쓰기 지점(필드명·보안 등급 이름 중복)과 전역 무결성 처리기(외래 키 방향)가 함께 쓴다.
    */
   public static ServerErrorMessage findServerError(Throwable e) {
+    SQLException found = findSqlException(e, DataExceptionTranslator::hasServerError);
+    return found != null ? ((PSQLException) found).getServerErrorMessage() : null;
+  }
+
+  /**
+   * 원인 체인(getCause)과 각 SQLException 의 연쇄 예외(getNextException)를 걸으며 {@code matches} 를 만족하는 첫
+   * SQLException 을 찾는다(없으면 null). 두 방향 모두 {@link #MAX_DEPTH} 까지만 걷는다 — 순환 체인에서도 끝난다.
+   *
+   * <p>이 클래스의 탐색들과 파이프라인 PYTHON 스텝의 적재 실패 문구({@code PythonStepErrorMessages.loadFailed} — Tibero 벤더
+   * 코드를 SQLState 로 바꿔 본다)가 같은 걷기·깊이 상한을 쓰도록 한 곳에 둔다.
+   */
+  public static SQLException findSqlException(Throwable e, Predicate<SQLException> matches) {
     Throwable t = e;
     for (int i = 0; t != null && i < MAX_DEPTH; i++, t = t.getCause()) {
       if (!(t instanceof SQLException se)) {
@@ -92,12 +105,23 @@ public final class DataExceptionTranslator {
       }
       SQLException cur = se;
       for (int j = 0; cur != null && j < MAX_DEPTH; j++, cur = cur.getNextException()) {
-        if (cur instanceof PSQLException pe && pe.getServerErrorMessage() != null) {
-          return pe.getServerErrorMessage();
+        if (matches.test(cur)) {
+          return cur;
         }
       }
     }
     return null;
+  }
+
+  /** 서버 구조화 오류를 가진 PostgreSQL 예외인가. */
+  private static boolean hasServerError(SQLException e) {
+    return e instanceof PSQLException pe && pe.getServerErrorMessage() != null;
+  }
+
+  /** SQLState 클래스 22(data exception)인가. */
+  private static boolean isDataError(SQLException e) {
+    String state = e.getSQLState();
+    return state != null && state.startsWith("22");
   }
 
   /**
@@ -105,26 +129,10 @@ public final class DataExceptionTranslator {
    * 가진 {@link PSQLException} 을 우선한다 — 바깥 BatchUpdateException 도 같은 SQLState 를 달고 오지만 컬럼·원문 메시지가 없다.
    */
   private static SQLException findDataException(Throwable e) {
-    SQLException fallback = null;
-    Throwable t = e;
-    for (int i = 0; t != null && i < MAX_DEPTH; i++, t = t.getCause()) {
-      if (!(t instanceof SQLException se)) {
-        continue;
-      }
-      SQLException cur = se;
-      for (int j = 0; cur != null && j < MAX_DEPTH; j++, cur = cur.getNextException()) {
-        String state = cur.getSQLState();
-        if (state == null || !state.startsWith("22")) {
-          continue;
-        }
-        if (cur instanceof PSQLException pe && pe.getServerErrorMessage() != null) {
-          return pe;
-        }
-        if (fallback == null) {
-          fallback = cur;
-        }
-      }
-    }
-    return fallback;
+    // 서버 구조화 오류를 가진 22xxx 를 먼저 찾고, 없으면 처음 만난 22xxx 로 물러선다(오류 경로라 두 번 걸어도 된다).
+    SQLException structured = findSqlException(e, x -> isDataError(x) && hasServerError(x));
+    return structured != null
+        ? structured
+        : findSqlException(e, DataExceptionTranslator::isDataError);
   }
 }

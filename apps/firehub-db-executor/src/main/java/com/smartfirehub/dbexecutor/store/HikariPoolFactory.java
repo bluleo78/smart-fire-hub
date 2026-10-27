@@ -37,12 +37,6 @@ public class HikariPoolFactory implements Function<StoreDescriptor, DataSource> 
   /** 슬롯 풀 유휴 커넥션 수명(ms). Hikari 의 최솟값(10초)보다 크고, 스크립트가 읽기를 마친 뒤 슬롯 세션이 오래 남지 않을 만큼 짧게 둔다. */
   static final long SLOT_IDLE_TIMEOUT_MS = 30_000;
 
-  /**
-   * 슬롯 풀 크기(Ruling 17). 슬롯은 실행이 아니라 등급마다 하나라, 같은 테넌트에서 같은 등급 Python 단계가 동시에 돌면 같은 (테넌트, 슬롯) 풀을 나눠
-   * 쓴다 — 1 이면 둘째가 반드시 기다리다 실패한다. 작게 3 으로 두고 넘치면 짧게 기다린 뒤 「동시 조회가 많다」로 끝낸다.
-   */
-  static final int SLOT_POOL_SIZE = 3;
-
   /** 슬롯 풀 대여 대기(ms). 요청 스레드를 오래 쥐지 않게 짧게 둔다(OWNER·RO 풀은 10초 그대로). */
   static final long SLOT_CONNECTION_TIMEOUT_MS = 3_000;
 
@@ -51,18 +45,21 @@ public class HikariPoolFactory implements Function<StoreDescriptor, DataSource> 
    * CURRENT_SCHEMA} 를 테넌트 소유 스키마로 바꾼다 — 스크립트가 스키마 없이 쓴 테이블 이름이 슬롯 계정 자신의 (빈) 스키마가 아니라 테넌트 테이블을
    * 가리키게.
    *
-   * <p>풀 크기 {@link #SLOT_POOL_SIZE}, 대여 대기 {@link #SLOT_CONNECTION_TIMEOUT_MS}, 최소 유휴 0, 유휴 {@link
-   * #SLOT_IDLE_TIMEOUT_MS} — 스크립트 읽기는 짧고 드물어 세션을 쥐고 있을 이유가 없다. 최소 유휴가 크기보다 작아야 Hikari 가 유휴 수명을
-   * 적용하므로 0 으로 둔다.
+   * <p>풀 크기는 설정값({@code app.pool.slot-max-size}, 기본 3 — Ruling 17: 슬롯은 실행이 아니라 등급마다 하나라 같은 등급
+   * Python 단계가 동시에 돌면 같은 (테넌트, 슬롯) 풀을 나눠 쓰므로 1 이면 둘째가 반드시 기다리다 실패한다), 대여 대기 {@link
+   * #SLOT_CONNECTION_TIMEOUT_MS}, 최소 유휴 0, 유휴 {@link #SLOT_IDLE_TIMEOUT_MS} — 스크립트 읽기는 짧고 드물어 세션을
+   * 쥐고 있을 이유가 없다. 최소 유휴가 크기보다 작아야 Hikari 가 유휴 수명을 적용하므로 0 으로 둔다.
+   *
+   * @param maxSize (테넌트, 슬롯) 풀의 커넥션 상한 — 설정값을 그대로 Hikari 에 전달한다
    */
-  public static BiFunction<StoreDescriptor, Integer, DataSource> forSlots() {
+  public static BiFunction<StoreDescriptor, Integer, DataSource> forSlots(int maxSize) {
     return (d, slot) -> {
       StoreDescriptor.Account a = d.slot(slot);
       HikariDataSource ds =
           base(
               d,
               a,
-              SLOT_POOL_SIZE,
+              maxSize,
               SLOT_CONNECTION_TIMEOUT_MS,
               TiberoSession.slotSessionInitSql(d.tenantId(), d.schema()));
       ds.setMinimumIdle(0);

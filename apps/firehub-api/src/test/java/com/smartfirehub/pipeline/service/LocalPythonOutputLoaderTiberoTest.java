@@ -17,11 +17,13 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.jdbc.UncategorizedSQLException;
 import org.springframework.transaction.PlatformTransactionManager;
 
 /**
@@ -147,6 +149,22 @@ class LocalPythonOutputLoaderTiberoTest {
         .isInstanceOf(ScriptExecutionException.class)
         // 원문(Tibero 오류 문장)은 로그에만 — PG 경로와 같은 일반 안내 문구다(WD-211).
         .hasMessage(PythonStepErrorMessages.PREFIX + PythonStepErrorMessages.LOAD_FAILED_MESSAGE);
+  }
+
+  /** Tibero JDBC 길이 오류는 PG 데이터 오류와 같은 적재 안내를 내며 원문을 노출하지 않는다. */
+  @Test
+  void loadStaging_tiberoValueTooLarge_usesDataErrorMessage() {
+    doThrow(
+            new UncategorizedSQLException(
+                "insert",
+                "INSERT INTO SECRET",
+                new SQLException("JDBC-11048 secret", null, -11048)))
+        .when(rowService)
+        .insertTempBatch(anyString(), anyList(), anyList(), any());
+
+    assertThatThrownBy(() -> loader.loadStaging(STG, "[{\"a\": 1}]", null))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage(PythonStepErrorMessages.loadDataError("글자 수 제한을 넘는 값이 있습니다"));
   }
 
   @Test

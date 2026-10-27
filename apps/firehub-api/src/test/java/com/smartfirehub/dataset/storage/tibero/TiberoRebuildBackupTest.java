@@ -51,6 +51,7 @@ class TiberoRebuildBackupTest {
     // 상태: 원래 이름은 비고 보관본이 같은 OBJECT_ID 로 있으며 딸린 객체가 보관 기준 이름이다.
     assertThat(f.tables).containsOnlyKeys(BP).containsEntry(BP, 77L);
     assertThat(f.sequences).containsExactly(TiberoNames.sequenceName(S, B));
+    assertThat(f.idDefaults).containsEntry(BP, TiberoNames.sequenceName(S, B));
     assertThat(f.indexes)
         .containsOnlyKeys(
             TiberoNames.indexName(S, B, "NAME"),
@@ -60,6 +61,43 @@ class TiberoRebuildBackupTest {
     assertThat(f.checks).containsOnlyKeys(TiberoNames.checkConstraintName(S, B, "FLAG"));
     assertThat(f.triggers).isEmpty();
     assertThat(f.comments).containsEntry(BP, "genia-rebuild:" + FP);
+  }
+
+  /**
+   * 시퀀스가 없는 테이블도 보관된다 — 없는 시퀀스를 가리키는 DEFAULT MODIFY 는 실서버에서 ALTER 시점에 JDBC-8034 로 거부되므로(리뷰 M-1,
+   * {@code TiberoWave5ProbeTest.modifyDefaultToMissingSequence}) 재바인딩을 건너뛰어야 한다.
+   */
+  @Test
+  void moveToBackup_withoutSequence_skipsRebind() throws Exception {
+    FakeTibero f = new FakeTibero();
+    f.seed(T, 77L);
+    f.sequences.clear();
+    f.idDefaults.clear();
+
+    assertThat(TiberoRebuildBackup.moveToBackup(f.connection(), S, T, FP)).isEqualTo(77L);
+
+    assertThat(f.tables).containsOnlyKeys(BP);
+    assertThat(f.log).noneMatch(sql -> sql.contains(" MODIFY (\"ID\" DEFAULT "));
+  }
+
+  /**
+   * 옛 모양(ID 기본값 없음) 테이블을 보관하다 뒤 단계가 실패해도, 트리거 되돌리기(UPDATE 전용 트리거 재생성)보다 ID 기본값이 먼저 있어야 한다 (리뷰 M-3,
+   * 스펙 §5.1 「ID 기본값 → 트리거」). 그래서 첫 단계 앞에서 원래 시퀀스로 기본값을 둔다.
+   */
+  @Test
+  void moveToBackup_legacyWithoutDefault_bindsDefaultBeforeTriggerUndo() {
+    FakeTibero f = new FakeTibero();
+    f.seed(T, 77L);
+    f.idDefaults.remove(TP);
+    f.failOn = sql -> sql.startsWith("ALTER TABLE") && sql.contains(" RENAME TO ");
+
+    assertThatThrownBy(() -> TiberoRebuildBackup.moveToBackup(f.connection(), S, T, FP))
+        .isInstanceOf(SQLException.class);
+
+    assertThat(f.idDefaults).containsEntry(TP, TiberoNames.sequenceName(S, T));
+    int bind = indexOf(f, TiberoDdlSql.setIdDefault(S, T));
+    assertThat(bind).isZero();
+    assertThat(bind).isLessThan(indexOf(f, "CREATE OR REPLACE TRIGGER"));
   }
 
   @Test
@@ -135,6 +173,7 @@ class TiberoRebuildBackupTest {
 
     assertThat(f.tables).containsOnlyKeys(TP);
     assertThat(f.sequences).containsExactly(TiberoNames.sequenceName(S, T));
+    assertThat(f.idDefaults).containsEntry(TP, TiberoNames.sequenceName(S, T));
   }
 
   @Test
@@ -175,6 +214,7 @@ class TiberoRebuildBackupTest {
 
     assertThat(f.tables).containsOnlyKeys(TP).containsEntry(TP, 77L);
     assertThat(f.sequences).containsExactly(TiberoNames.sequenceName(S, T));
+    assertThat(f.idDefaults).containsEntry(TP, TiberoNames.sequenceName(S, T));
     assertThat(f.indexes)
         .containsOnlyKeys(
             TiberoNames.indexName(S, T, "NAME"),
@@ -184,6 +224,44 @@ class TiberoRebuildBackupTest {
     assertThat(f.checks).containsOnlyKeys(TiberoNames.checkConstraintName(S, T, "FLAG"));
     assertThat(f.comments).isEmpty();
     assertThat(indexOf(f, "DROP TABLE")).isLessThan(indexOf(f, "ALTER TABLE \"GENIA_T5\".\"" + BP));
+  }
+
+  /** 보관 시퀀스가 없으면 복원은 테이블 이름만 되돌리고 없는 시퀀스로 DEFAULT 를 묶으려 하지 않는다(리뷰 M-1). */
+  @Test
+  void restore_withoutBackupSequence_restoresWithoutRebind() throws Exception {
+    FakeTibero f = backedUp(77L, "genia-rebuild:" + FP);
+    f.sequences.clear();
+    f.idDefaults.clear();
+
+    TiberoRebuildBackup.restore(f.connection(), S, T, 77L);
+
+    assertThat(f.tables).containsOnlyKeys(TP).containsEntry(TP, 77L);
+    assertThat(f.log).noneMatch(sql -> sql.contains(" MODIFY (\"ID\" DEFAULT "));
+  }
+
+  /** 원래·보관 시퀀스가 모두 없는 테이블의 맞춤은 매번 실패하지 않고 NONE 이다(리뷰 M-1). */
+  @Test
+  void reconcile_noSequencesAtAll_isNoneWithoutRebind() throws Exception {
+    FakeTibero f = new FakeTibero();
+    f.seed(T, 77L);
+    f.sequences.clear();
+    f.idDefaults.clear();
+
+    assertThat(TiberoRebuildBackup.reconcile(f.connection(), S, T, FP))
+        .isEqualTo(RebuildBackupState.NONE);
+    assertThat(f.log).noneMatch(sql -> sql.contains(" MODIFY (\"ID\" DEFAULT "));
+  }
+
+  /** 복원 중 시퀀스 이름만 되돌린 뒤 중단돼도 다음 맞춤이 ID 기본값 참조를 고친다. */
+  @Test
+  void reconcile_originalSequenceRestoredButDefaultStale_repairsDefault() throws Exception {
+    FakeTibero f = new FakeTibero();
+    f.seed(T, 77L);
+    f.idDefaults.put(TP, TiberoNames.sequenceName(S, B));
+
+    assertThat(TiberoRebuildBackup.reconcile(f.connection(), S, T, FP))
+        .isEqualTo(RebuildBackupState.NONE);
+    assertThat(f.idDefaults).containsEntry(TP, TiberoNames.sequenceName(S, T));
   }
 
   @Test

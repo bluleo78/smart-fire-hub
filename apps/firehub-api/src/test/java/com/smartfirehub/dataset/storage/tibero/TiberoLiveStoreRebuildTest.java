@@ -207,4 +207,79 @@ class TiberoLiveStoreRebuildTest extends IntegrationTestBase {
     assertThat(triggerEnabled()).isTrue();
     assertThat(tableStore.reconcileRebuildBackup(T, FP)).isEqualTo(RebuildBackupState.NONE);
   }
+
+  /** 한 객체의 마지막 DDL 시각(초 단위 문자열) — 두 번째 보장이 DDL 을 다시 실행하지 않았는지 보는 데 쓴다. */
+  private String lastDdlTime(String objectName) {
+    return query(
+            "SELECT TO_CHAR(LAST_DDL_TIME, 'YYYYMMDDHH24MISS') FROM USER_OBJECTS WHERE OBJECT_NAME = '"
+                + objectName
+                + "'")
+        .get(0);
+  }
+
+  /**
+   * 옛 모양 테이블(ID 기본값 없음 + {@code BEFORE INSERT OR UPDATE} 트리거, 데이터 있음)을 저장소의 {@code
+   * ensureRowTriggers} 로 올린다(WD-233 리뷰 I-2, 스펙 §8 「옛 모양 테이블 올리기 한 번」). 올린 뒤 ID 기본값이 현재 시퀀스를 가리키고,
+   * 트리거가 UPDATE 전용이 되고, 사용자 INSERT 의 ID 가 이어서 채워지고, 사용자 UPDATE 가 갱신 시각을 옮겨야 한다. 두 번째 호출은 판정만 하고 DDL
+   * 을 다시 실행하지 않는다 (테이블·트리거의 {@code LAST_DDL_TIME} 이 그대로).
+   */
+  @Test
+  void legacyShapeTable_upgradedByEnsureRowTriggers_once() throws Exception {
+    String t = "ptmp_9_legacy";
+    String tbl = TiberoNames.table(schema(), t);
+    String trigger = TiberoNames.triggerName(schema(), t);
+    for (String sql : TiberoLiveTriggerTest.legacyCreateTable(schema(), t, oldColumns())) {
+      exec(sql);
+    }
+    exec(TiberoLiveTriggerTest.legacyRowTrigger(schema(), t));
+    exec("INSERT INTO " + tbl + " (\"NAME\") VALUES ('old1')");
+    exec("INSERT INTO " + tbl + " (\"NAME\") VALUES ('old2')");
+    assertThat(
+            query(
+                "SELECT TRIGGERING_EVENT FROM USER_TRIGGERS WHERE TRIGGER_NAME = '"
+                    + trigger
+                    + "'"))
+        .containsExactly("INSERT OR UPDATE");
+
+    tableStore.ensureRowTriggers(List.of(t));
+
+    // 판정 두 개가 모두 참이어야 다음 쓰기부터 DDL 없이 지나간다.
+    boolean defaultBound =
+        connections.<Boolean>withDdl(
+            env.tenantId, c -> TiberoCatalog.idDefaultUsesSequence(c, schema(), t));
+    String event =
+        connections.<String>withDdl(
+            env.tenantId,
+            c -> TiberoCatalog.enabledTriggerEvents(c, List.of(trigger)).get(trigger));
+    assertThat(defaultBound).as("ID 기본값이 현재 시퀀스").isTrue();
+    assertThat(TiberoCatalog.classify(event))
+        .as("UPDATE 전용 트리거")
+        .isEqualTo(TiberoCatalog.TriggerShape.CURRENT);
+    assertThat(
+            query(
+                "SELECT TRIGGERING_EVENT FROM USER_TRIGGERS WHERE TRIGGER_NAME = '"
+                    + trigger
+                    + "'"))
+        .containsExactly("UPDATE");
+
+    // 사용자 INSERT: 트리거 대신 기본값이 ID 를 이어서 채운다(옛 행 1·2 다음 3).
+    exec("INSERT INTO " + tbl + " (\"NAME\") VALUES ('new1')");
+    assertThat(query("SELECT \"ID\" FROM " + tbl + " ORDER BY 1")).containsExactly("1", "2", "3");
+    // 사용자 UPDATE: 옛 시각을 직접 넣어도 트리거가 현재 시각으로 덮는다.
+    exec(
+        "UPDATE "
+            + tbl
+            + " SET \"_UPDATED_AT\" = TIMESTAMP '2000-01-01 00:00:00' WHERE \"ID\" = 1");
+    assertThat(query("SELECT TO_CHAR(\"_UPDATED_AT\", 'YYYY') FROM " + tbl + " WHERE \"ID\" = 1"))
+        .allSatisfy(y -> assertThat(Integer.parseInt(y)).isGreaterThanOrEqualTo(2026));
+
+    // 멱등: 두 번째 보장은 DDL 을 실행하지 않는다 — LAST_DDL_TIME 은 초 단위라 1초 넘게 기다린 뒤 비교한다.
+    String tableDdl = lastDdlTime(TiberoNames.physical(t));
+    String triggerDdl = lastDdlTime(trigger);
+    Thread.sleep(1_200);
+    tableStore.ensureRowTriggers(List.of(t));
+    assertThat(lastDdlTime(TiberoNames.physical(t))).as("테이블 DDL 시각").isEqualTo(tableDdl);
+    assertThat(lastDdlTime(trigger)).as("트리거 DDL 시각").isEqualTo(triggerDdl);
+    System.out.println("PROBE wave5_legacy_upgrade_idempotent: SUPPORTED");
+  }
 }

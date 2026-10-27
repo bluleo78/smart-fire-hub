@@ -11,6 +11,7 @@ import com.smartfirehub.dbexecutor.config.DbExecutorProperties;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -35,14 +36,19 @@ class StoreDescriptorClientTest {
 
   private HttpServer server;
   private final AtomicInteger hits = new AtomicInteger();
+  private final AtomicInteger epochHits = new AtomicInteger();
+  private final AtomicReference<String> epochBody =
+      new AtomicReference<>("{\"scriptTokenEpoch\":4}");
   private final AtomicInteger status = new AtomicInteger(200);
   private final AtomicReference<String> body = new AtomicReference<>(TIBERO_JSON);
   private final AtomicReference<String> lastAuth = new AtomicReference<>();
   private final AtomicReference<String> lastUri = new AtomicReference<>();
   private volatile long delayMs = 0;
 
-  /** 응답을 만드는 동안 시계를 이만큼 앞으로 돌린다(조회 시작~도착 사이 경과 재현). */
-  private volatile long clockAdvanceDuringFetchNanos = 0;
+  /** 세대 창구 지연 — {@link #slowEpochTenant} 경로에만 건다(다른 테넌트가 막히지 않는지 보려고). */
+  private volatile long epochDelayMs = 0;
+
+  private volatile long slowEpochTenant = -1;
 
   private final AtomicLong clock = new AtomicLong(0);
   private StoreDescriptorClient client;
@@ -54,6 +60,23 @@ class StoreDescriptorClientTest {
     server.createContext(
         "/internal/executor/tenants/",
         ex -> {
+          if (ex.getRequestURI().getPath().endsWith("/script-token-epoch")) {
+            epochHits.incrementAndGet();
+            if (epochDelayMs > 0
+                && ex.getRequestURI().getPath().contains("/tenants/" + slowEpochTenant + "/")) {
+              try {
+                Thread.sleep(epochDelayMs);
+              } catch (InterruptedException ignored) {
+              }
+            }
+            lastAuth.set(ex.getRequestHeaders().getFirst("Authorization"));
+            lastUri.set(ex.getRequestURI().toString());
+            byte[] payload = epochBody.get().getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(status.get(), payload.length);
+            ex.getResponseBody().write(payload);
+            ex.close();
+            return;
+          }
           hits.incrementAndGet();
           lastAuth.set(ex.getRequestHeaders().getFirst("Authorization"));
           lastUri.set(ex.getRequestURI().toString());
@@ -63,7 +86,6 @@ class StoreDescriptorClientTest {
             }
           } catch (InterruptedException ignored) {
           }
-          clock.addAndGet(clockAdvanceDuringFetchNanos);
           byte[] b = body.get().getBytes(StandardCharsets.UTF_8);
           ex.getResponseHeaders().add("Content-Type", "application/json");
           ex.sendResponseHeaders(status.get(), b.length);
@@ -88,6 +110,126 @@ class StoreDescriptorClientTest {
   @AfterEach
   void stop() {
     server.stop(0);
+  }
+
+  /** 세대만 5초마다 확인해도 접속 기술자 캐시(60초)는 다시 읽지 않는다. */
+  @Test
+  void scriptTokenEpoch_refreshesIndependentlyOfDescriptor() {
+    client.get(7);
+    assertThat(client.getScriptTokenEpoch(7, Duration.ofSeconds(10))).isEqualTo(4L);
+    assertThat(lastUri.get()).isEqualTo("/internal/executor/tenants/7/script-token-epoch");
+    assertThat(lastAuth.get()).isEqualTo("Internal tok");
+    epochBody.set("{\"scriptTokenEpoch\":5}");
+    clock.addAndGet(Duration.ofSeconds(4).toNanos());
+    assertThat(client.getScriptTokenEpoch(7, Duration.ofSeconds(10))).isEqualTo(4L);
+    clock.addAndGet(Duration.ofSeconds(2).toNanos());
+    assertThat(client.getScriptTokenEpoch(7, Duration.ofSeconds(10))).isEqualTo(5L);
+    assertThat(epochHits.get()).isEqualTo(2);
+    assertThat(hits.get()).isEqualTo(1);
+  }
+
+  @Test
+  void scriptTokenEpoch_nullFailsClosed() {
+    epochBody.set("{\"scriptTokenEpoch\":null}");
+    assertThatThrownBy(() -> client.getScriptTokenEpoch(7, Duration.ofSeconds(10)))
+        .isInstanceOf(StoreUnavailableException.class);
+  }
+
+  /**
+   * 리뷰 I-4: 세대를 한 번 캐시한 뒤 5초가 지나 다음 조회가 실패하면(503·음수·정수 아님·소수) 옛 값을 내주지 않고 거부한다. 실패는 캐시하지 않아 매번 다시
+   * 묻고(epochHits 증가), 정상 응답이 오면 새 값이 나온다.
+   */
+  @Test
+  void scriptTokenEpoch_expiredCacheThenFailure_throwsAndDoesNotServeStale() {
+    Duration budget = Duration.ofSeconds(10);
+    assertThat(client.getScriptTokenEpoch(7, budget)).isEqualTo(4L);
+    clock.addAndGet(Duration.ofSeconds(6).toNanos());
+    int before = epochHits.get();
+
+    status.set(503);
+    assertThatThrownBy(() -> client.getScriptTokenEpoch(7, budget))
+        .isInstanceOf(StoreUnavailableException.class);
+    status.set(200);
+    for (String bad :
+        List.of(
+            "{\"scriptTokenEpoch\":-1}",
+            "{\"scriptTokenEpoch\":\"4\"}",
+            "{\"scriptTokenEpoch\":1.5}")) {
+      epochBody.set(bad);
+      assertThatThrownBy(() -> client.getScriptTokenEpoch(7, budget))
+          .as(bad)
+          .isInstanceOf(StoreUnavailableException.class);
+    }
+    assertThat(epochHits.get()).as("실패는 캐시하지 않는다").isEqualTo(before + 4);
+
+    epochBody.set("{\"scriptTokenEpoch\":5}");
+    assertThat(client.getScriptTokenEpoch(7, budget)).isEqualTo(5L);
+  }
+
+  /** 리뷰 I-4: 만료된 캐시 뒤 연결 실패도 옛 값 없이 거부한다. */
+  @Test
+  void scriptTokenEpoch_expiredCacheThenConnectionFailure_throws() {
+    assertThat(client.getScriptTokenEpoch(7, Duration.ofSeconds(10))).isEqualTo(4L);
+    clock.addAndGet(Duration.ofSeconds(6).toNanos());
+    server.stop(0);
+    assertThatThrownBy(() -> client.getScriptTokenEpoch(7, Duration.ofSeconds(10)))
+        .isInstanceOf(StoreUnavailableException.class);
+  }
+
+  /** 리뷰 I-3: 같은 테넌트의 진행 중 세대 조회를 기다리는 쪽도 자기 남은 시간까지만 기다린다(잠금 안에서 원격 호출을 기다리지 않는다). */
+  @Test
+  void scriptTokenEpoch_waiterOnInflight_respectsItsOwnBudget() throws Exception {
+    slowEpochTenant = 7;
+    epochDelayMs = 1_500;
+    ExecutorService pool = Executors.newSingleThreadExecutor();
+    Future<Long> leader = pool.submit(() -> client.getScriptTokenEpoch(7, Duration.ofSeconds(10)));
+    Thread.sleep(200); // 선행 조회가 진행 중이 되게
+    long start = System.nanoTime();
+    assertThatThrownBy(() -> client.getScriptTokenEpoch(7, Duration.ofMillis(200)))
+        .isInstanceOf(StoreUnavailableException.class)
+        .hasMessage("테넌트 저장소 정보를 가져오지 못했습니다(시간 초과).");
+    assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofMillis(1_000));
+    assertThat(leader.get()).isEqualTo(4L);
+    assertThat(epochHits.get()).as("같은 테넌트는 원격 조회 하나를 같이 쓴다").isEqualTo(1);
+    pool.shutdown();
+  }
+
+  /**
+   * 리뷰 I-3: 한 테넌트의 느린 세대 조회가 다른 테넌트를 막지 않는다. 1 과 17 은 기본 크기(16) 맵에서 같은 칸이라 {@code compute} 잠금이면
+   * 막힌다.
+   */
+  @Test
+  void scriptTokenEpoch_slowTenantDoesNotBlockOtherTenant() throws Exception {
+    slowEpochTenant = 1;
+    epochDelayMs = 1_500;
+    ExecutorService pool = Executors.newSingleThreadExecutor();
+    Future<Long> slow = pool.submit(() -> client.getScriptTokenEpoch(1, Duration.ofSeconds(10)));
+    Thread.sleep(200);
+    long start = System.nanoTime();
+    assertThat(client.getScriptTokenEpoch(17, Duration.ofSeconds(10))).isEqualTo(4L);
+    assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofMillis(800));
+    assertThat(slow.get()).isEqualTo(4L);
+    pool.shutdown();
+  }
+
+  /** 리뷰 M-9: 세대 조회 실패는 401 로만 보이므로 db-executor 로그에 사유(비밀 없음)를 WARN 으로 남긴다. */
+  @Test
+  void scriptTokenEpoch_failure_logsReasonWithoutSecrets() {
+    status.set(503);
+    try (LogCapture logs = LogCapture.of(StoreDescriptorClient.class)) {
+      assertThatThrownBy(() -> client.getScriptTokenEpoch(7, Duration.ofSeconds(10)))
+          .isInstanceOf(StoreUnavailableException.class);
+      assertThat(logs.events())
+          .singleElement()
+          .satisfies(
+              e -> {
+                assertThat(e.getLevel()).isEqualTo(Level.WARN);
+                assertThat(e.getFormattedMessage())
+                    .contains("tenant=7")
+                    .contains("503")
+                    .doesNotContain("Internal ");
+              });
+    }
   }
 
   @Test
@@ -142,58 +284,6 @@ class StoreDescriptorClientTest {
     assertThat(d.slot(1)).isNull();
     assertThat(d.scriptTokenEpoch()).isEqualTo(4L);
     assertThat(d.toString()).doesNotContain(slotPassword);
-  }
-
-  /** 스크립트 요청은 5초보다 오래된 캐시를 쓰지 않는다(Ruling 16) — 일반 요청은 TTL(60초) 동안 그대로 캐시를 쓴다. */
-  @Test
-  void maxAge_refetchesOlderCacheOnlyForThatCall() {
-    client.get(7);
-    assertThat(hits.get()).isEqualTo(1);
-
-    clock.addAndGet(4_000_000_000L); // 4초 경과 — 5초 이내라 캐시 사용
-    client.get(7, java.time.Duration.ofSeconds(10), java.time.Duration.ofSeconds(5));
-    assertThat(hits.get()).isEqualTo(1);
-
-    clock.addAndGet(2_000_000_000L); // 6초 경과 — 스크립트 요청은 새로 받는다
-    client.get(7, java.time.Duration.ofSeconds(10), java.time.Duration.ofSeconds(5));
-    assertThat(hits.get()).isEqualTo(2);
-
-    // 새로 받은 값이 캐시를 갱신했으므로 일반 요청은 다시 원격 호출하지 않는다.
-    client.get(7);
-    assertThat(hits.get()).isEqualTo(2);
-  }
-
-  /** 신선도는 조회를 <b>시작한</b> 시각부터 잰다(Ruling 18) — 응답이 늦게 와도 그만큼 낡은 것으로 본다. */
-  @Test
-  void maxAge_measuredFromFetchStart() {
-    // 응답을 만드는 동안 시계를 6초 앞으로 — 받은 시각 기준이면 0초, 시작 시각 기준이면 6초 낡았다.
-    clockAdvanceDuringFetchNanos = 6_000_000_000L;
-    client.get(7);
-    clockAdvanceDuringFetchNanos = 0;
-    assertThat(hits.get()).isEqualTo(1);
-
-    client.get(7, java.time.Duration.ofSeconds(10), java.time.Duration.ofSeconds(5));
-    assertThat(hits.get()).isEqualTo(2);
-  }
-
-  /** 최대 나이가 있으면 그보다 일찍 시작한 진행 중 조회에는 합류하지 않고 따로 받는다(Ruling 18). 최근에 시작한 조회에는 합류한다. */
-  @Test
-  void maxAge_doesNotJoinInflightFetchStartedTooEarly() throws Exception {
-    delayMs = 600;
-    ExecutorService pool = Executors.newSingleThreadExecutor();
-    Future<StoreDescriptor> slow = pool.submit(() -> client.get(7));
-    // 첫 조회가 시작될 때까지 기다린다(서버에 닿음).
-    long until = System.currentTimeMillis() + 5_000;
-    while (hits.get() == 0 && System.currentTimeMillis() < until) {
-      Thread.onSpinWait();
-    }
-    assertThat(hits.get()).isEqualTo(1);
-    clock.addAndGet(6_000_000_000L); // 진행 중 조회는 6초 전에 시작한 셈
-    delayMs = 0;
-    client.get(7, java.time.Duration.ofSeconds(10), java.time.Duration.ofSeconds(5));
-    assertThat(hits.get()).as("오래된 진행 중 조회에 합류하지 않고 따로 받았다").isEqualTo(2);
-    slow.get();
-    pool.shutdown();
   }
 
   /** ro 가 없는 응답(아직 RO 계정 미생성)도 완전한 기술자다 — 파이프라인 경로는 RO 없이 동작한다. */
@@ -380,11 +470,10 @@ class StoreDescriptorClientTest {
   void slowFetch_failsWithinBudget_notCached() {
     delayMs = 2_000;
     long start = System.nanoTime();
-    assertThatThrownBy(() -> client.get(7, java.time.Duration.ofMillis(300)))
+    assertThatThrownBy(() -> client.get(7, Duration.ofMillis(300)))
         .isInstanceOf(StoreUnavailableException.class)
         .hasMessage("테넌트 저장소 정보를 가져오지 못했습니다(시간 초과).");
-    assertThat(java.time.Duration.ofNanos(System.nanoTime() - start))
-        .isLessThan(java.time.Duration.ofMillis(1_500));
+    assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofMillis(1_500));
     delayMs = 0;
     assertThat(client.get(7).tenantId()).isEqualTo(7);
   }
@@ -397,18 +486,17 @@ class StoreDescriptorClientTest {
     Future<StoreDescriptor> leader = pool.submit(() -> client.get(7));
     Thread.sleep(200); // 선행 조회가 진행 중이 되게
     long start = System.nanoTime();
-    assertThatThrownBy(() -> client.get(7, java.time.Duration.ofMillis(200)))
+    assertThatThrownBy(() -> client.get(7, Duration.ofMillis(200)))
         .isInstanceOf(StoreUnavailableException.class)
         .hasMessage("테넌트 저장소 정보를 가져오지 못했습니다(시간 초과).");
-    assertThat(java.time.Duration.ofNanos(System.nanoTime() - start))
-        .isLessThan(java.time.Duration.ofMillis(1_000));
+    assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofMillis(1_000));
     assertThat(leader.get().tenantId()).isEqualTo(7);
     pool.shutdown();
   }
 
   @Test
   void noBudgetLeft_failsWithoutRemoteCall() {
-    assertThatThrownBy(() -> client.get(7, java.time.Duration.ZERO))
+    assertThatThrownBy(() -> client.get(7, Duration.ZERO))
         .isInstanceOf(StoreUnavailableException.class)
         .hasMessage("테넌트 저장소 정보를 가져오지 못했습니다(시간 초과).");
     assertThat(hits.get()).isZero();

@@ -35,6 +35,13 @@ public class ExecutorDataStoreDescriptorService {
     this.encryption = encryption;
   }
 
+  /** 스크립트 자격 검사용 세대만 읽는다. 계정 행 조회와 비밀번호 복호화는 이 경로에 필요하지 않다. */
+  public long scriptTokenEpoch(long tenantId) {
+    return repository.findScriptTokenEpoch(tenantId)
+        .orElseThrow(() -> new CodedApiException(
+            HttpStatus.NOT_FOUND, "DATA_STORE_NOT_FOUND", "데이터셋 저장소를 찾지 못했습니다"));
+  }
+
   /**
    * 백엔드 종류와 테넌트만 담은 기술자를 낸다 — Python 실행기용(스펙 §3.4). Tibero 여도 계정을 읽거나 복호화하지 않으므로 비밀·접속 정보가 담기지 않는다.
    * READY 여부는 보지 않는다: Python 실행기는 Tibero 테넌트를 어차피 종류만으로 거부하고, 준비 상태 안내는 db-executor 몫이다.

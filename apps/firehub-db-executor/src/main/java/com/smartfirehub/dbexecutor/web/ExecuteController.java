@@ -25,7 +25,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.time.Duration;
 import java.util.Map;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -54,9 +53,6 @@ public class ExecuteController {
 
   /** NDJSON 응답 형식(두 실행기 같은 값, 계약 벡터 {@code query.streaming.contentType}). */
   static final String NDJSON = "application/x-ndjson";
-
-  /** 스크립트 요청이 쓰는 기술자의 최대 나이(Ruling 16) — 등급 변경이 올린 토큰 세대를 캐시 TTL(60초) 동안 놓치지 않게. */
-  static final Duration SCRIPT_DESCRIPTOR_MAX_AGE = Duration.ofSeconds(5);
 
   private static final int MAX_SLOT = 10;
 
@@ -115,7 +111,6 @@ public class ExecuteController {
       return withDescriptor(
           req.tenantId(),
           deadline,
-          null,
           reason -> SqlExecuteResponse.failure(reason, null, "저장소 정보 조회 실패로 실행하지 않았습니다."),
           d -> sqlRunner.run(d, req.query(), req.preStatements(), deadline, requested));
     }
@@ -148,24 +143,14 @@ public class ExecuteController {
   /**
    * 기한 안에서 기술자를 얻어 {@code work} 를 하고, 못 얻으면(StoreUnavailableException) 실행하지 않고 {@code unavailable}
    * 응답을 돌려준다. 여섯 창구가 같은 try/catch 를 되풀이하지 않게 한 곳에 둔다. 예외 타입 E 는 람다가 던지는 것으로 추론된다(JSON 창구는
-   * RuntimeException — 검사 예외가 새지 않는다).
-   *
-   * @param maxAge 캐시 최대 나이 — 스크립트 토큰 요청만 준다(Ruling 16). null 이면 기존 TTL 조회({@code get(id, budget)})를
-   *     그대로 부른다.
+   * RuntimeException — 검사 예외가 새지 않는다). 모든 창구가 일반 TTL 캐시를 쓴다 — 스크립트 토큰의 신선도는 별도 세대 창구가 맡는다.
    */
   private <R, E extends Exception> R withDescriptor(
-      long tenantId,
-      Deadline deadline,
-      Duration maxAge,
-      Unavailable<R, E> unavailable,
-      DescriptorWork<R, E> work)
+      long tenantId, Deadline deadline, Unavailable<R, E> unavailable, DescriptorWork<R, E> work)
       throws E {
     StoreDescriptor d;
     try {
-      d =
-          maxAge == null
-              ? descriptors.get(tenantId, deadline.remaining())
-              : descriptors.get(tenantId, deadline.remaining(), maxAge);
+      d = descriptors.get(tenantId, deadline.remaining());
     } catch (StoreUnavailableException e) {
       return unavailable.respond(e.getMessage());
     }
@@ -186,7 +171,6 @@ public class ExecuteController {
       return withDescriptor(
           req.tenantId(),
           deadline,
-          null,
           reason -> LoadResponse.failure(reason, null),
           d -> loadRunner.load(d, req.table(), req.rows(), req.columnTypeMap(), deadline));
     }
@@ -202,7 +186,6 @@ public class ExecuteController {
       return withDescriptor(
           req.tenantId(),
           deadline,
-          null,
           reason -> ProbeResponse.failure(reason, null),
           d -> probeRunner.probe(d, req.query(), deadline));
     }
@@ -218,8 +201,8 @@ public class ExecuteController {
    * </ul>
    *
    * <p>스크립트 토큰 요청({@code Authorization: Script}, 필터가 서명·만료를 확인해 속성으로 넘김)은 슬롯 스트리밍만 할 수 있다. 본문에
-   * readSlot·stream:true 가 없거나 본문의 테넌트·슬롯이 토큰과 다르면 401, 기술자의 스크립트 토큰 세대보다 낮은 토큰도 401 이다. 이 확인은 다른
-   * 어떤 분기보다 먼저 한다 — 스크립트 토큰이 RO 분석 조회로 새지 않게.
+   * readSlot·stream:true 가 없거나 본문의 테넌트·슬롯이 토큰과 다르면 401, 스크립트 토큰 세대보다 낮은 토큰도 401 이다(세대 조회 자체의 실패는
+   * 기술자 실패와 같은 NDJSON 실패 줄). 이 확인은 다른 어떤 분기보다 먼저 한다 — 스크립트 토큰이 RO 분석 조회로 새지 않게.
    *
    * <p>스트리밍은 응답 스트림에 직접 쓴다(요청 스레드, 결과를 모으지 않음). 비동기 MVC 를 쓰지 않아 컨테이너의 비동기 시간 제한(30초)·공유 실행기에 묶이지
    * 않고, 기한은 {@link Deadline}(스크립트 토큰은 만료까지, 내부 토큰은 {@code app.load.timeout-seconds})이 지킨다.
@@ -253,7 +236,6 @@ public class ExecuteController {
         return withDescriptor(
             req.tenantId(),
             deadline,
-            null,
             reason -> reject(true, reason, res),
             d -> {
               stream(d, req.readSlot(), req.query(), deadline, res);
@@ -265,7 +247,6 @@ public class ExecuteController {
       return withDescriptor(
           req.tenantId(),
           deadline,
-          null,
           reason -> QueryResponse.failure(reason, null),
           d -> queryRunner.run(d, req.query(), req.maxRows(), deadline));
     }
@@ -296,8 +277,8 @@ public class ExecuteController {
   }
 
   /**
-   * 스크립트 토큰 요청(WD-78, 스펙 §3.4). 토큰의 테넌트·슬롯이 이긴다 — 본문 값은 같아야만 받는다. 순서: 본문 확인(401) → 형식 확인 → 신선한
-   * 기술자(5초 이내) → 세대 확인(401) → 스트리밍. 기한은 토큰 만료까지다.
+   * 스크립트 토큰 요청(WD-78, 스펙 §3.4). 토큰의 테넌트·슬롯이 이긴다 — 본문 값은 같아야만 받는다. 순서: 본문 확인(401) → 형식 확인 → 세대 조회(5초
+   * 캐시, 실패는 NDJSON 실패 줄) → 세대 확인(401) → 기술자(일반 TTL) → 스트리밍. 기한은 토큰 만료까지다.
    */
   private Object scriptQuery(QueryRequest req, ScriptToken.Claims claims, HttpServletResponse res)
       throws IOException {
@@ -317,17 +298,24 @@ public class ExecuteController {
       return reject(true, READ_ONLY_REQUIRED, res);
     }
     try (Deadline deadline = new Deadline(secondsUntil(claims.expiresAt()))) {
+      long epoch;
+      try {
+        epoch = descriptors.getScriptTokenEpoch(claims.tenantId(), deadline.remaining());
+      } catch (StoreUnavailableException e) {
+        // 세대 조회 자체의 실패(api 재시작·시간 초과·5xx·404)는 토큰 문제가 아니다 — 401 이면 스크립트 쪽이 토큰을 의심하게 되므로
+        // 「기술자를 얻지 못함」과 같은 거부(NDJSON 실패 줄, 같은 사유 문구)로 돌려준다. 실행은 하지 않는다(fail-closed, 최종 리뷰).
+        return reject(true, e.getMessage(), res);
+      }
+      // 401 은 토큰이 낡았을 때만 — 세대가 토큰보다 높을 때. 세대를 얻지 못하면 위에서 이미 거부했다(fail-closed).
+      if (claims.epoch() < epoch) {
+        InternalTokenFilter.unauthorized(res);
+        return null;
+      }
       return withDescriptor(
           claims.tenantId(),
           deadline,
-          SCRIPT_DESCRIPTOR_MAX_AGE,
           reason -> reject(true, reason, res),
           d -> {
-            // 등급 변경이 세대를 올린 뒤의 옛 토큰은 거부한다(Ruling 15·16). 세대를 모르면(null) 막는다(fail-closed).
-            if (d.scriptTokenEpoch() == null || claims.epoch() < d.scriptTokenEpoch()) {
-              InternalTokenFilter.unauthorized(res);
-              return null;
-            }
             stream(d, claims.slot(), req.query(), deadline, res);
             return null;
           });

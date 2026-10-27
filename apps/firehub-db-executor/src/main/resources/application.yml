@@ -26,13 +26,14 @@ app:
   script-token-key: ${DB_EXECUTOR_SCRIPT_TOKEN_KEY:}
   api-base-url: ${DB_EXECUTOR_API_BASE_URL:http://api:8080}
   descriptor-ttl-seconds: 60
-  # 최악의 동시 세션 수 = max-pools × (max-size + read-only-max-size) + slot-max-pools × 3 = 8 × (4 + 2) + 8 × 3 = 72
+  # 최악의 동시 세션 수 = max-pools × (max-size + read-only-max-size) + slot-max-pools × slot-max-size = 8 × (4 + 2) + 8 × 3 = 72
   # — 외부 DB 세션 한도 안이어야 한다. 슬롯 풀(WD-78)은 (테넌트, 슬롯)마다 커넥션 최대 3개(대기 3초, Ruling 17), 유휴 30초 뒤 닫힌다.
   pool:
     max-pools: 8
     max-size: 4
     read-only-max-size: 2
     slot-max-pools: 8
+    slot-max-size: ${DB_EXECUTOR_SLOT_MAX_SIZE:3}
   # 시간 제한(스펙 §4.3-4) — api 호출 제한(/execute/sql 60초, /execute/probe 35초)보다 짧아야 한다.
   # sql 의 문장·전체 제한은 사용자 본문에만 건다. REPLACE 선행 문장(출력 잠금·비우기 DELETE)은 기존 출력 행 수에 비례해 오래 걸리므로
   # 별도 상한(pre-statement-timeout-seconds, 요청 도착부터·문장마다)을 받는다 — api 의 app.db-executor.pre-statement-timeout-seconds 와

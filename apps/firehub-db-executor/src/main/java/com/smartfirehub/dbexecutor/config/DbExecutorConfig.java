@@ -22,10 +22,11 @@ public class DbExecutorConfig {
         props.pool().maxPools());
   }
 
-  /** 슬롯 계정 풀(/execute/query + readSlot 스트리밍, WD-78) — 키 (테넌트, 슬롯), 풀당 커넥션 1. */
+  /** 슬롯 계정 풀(/execute/query + readSlot 스트리밍, WD-78) — 키 (테넌트, 슬롯), 설정된 크기를 쓴다. */
   @Bean("slotPools")
   public TenantPools slotPools(DbExecutorProperties props) {
-    return TenantPools.forSlots(HikariPoolFactory.forSlots(), props.pool().slotMaxPools());
+    return TenantPools.forSlots(
+        HikariPoolFactory.forSlots(props.pool().slotMaxSize()), props.pool().slotMaxPools());
   }
 
   /** 읽기 전용 계정 풀(/execute/query). */

@@ -196,6 +196,13 @@ class TiberoLiveRebuildTest {
     assertThat(TiberoCatalog.tableComment(o, owner, TiberoNames.physical(backup)))
         .isEqualTo("genia-rebuild:" + FP1);
 
+    // 시퀀스 이름을 바꾸면 Tibero 는 ID DEFAULT 의 옛 이름을 자동 갱신하지 않는다. 보관본도 INSERT 가 가능해야 복원 중간 상태가 안전하다.
+    String backupTable = TiberoNames.table(owner, backup);
+    run(o, "INSERT INTO " + backupTable + " (\"NAME\", \"CODE\") VALUES ('probe', 'probe')");
+    assertThat(column(o, "SELECT \"ID\" FROM " + backupTable + " WHERE \"NAME\" = 'probe'"))
+        .hasSize(1);
+    run(o, "DELETE FROM " + backupTable + " WHERE \"NAME\" = 'probe'");
+
     // 같은 이름·다른 열로 만들어도 색인·시퀀스·제약 이름이 부딪치지 않는다.
     createNew(o, owner, t);
     long newOid = oid(o, owner, t);
@@ -216,7 +223,8 @@ class TiberoLiveRebuildTest {
                     + "' AND COLUMN_NAME = 'OTHER'"))
         .containsExactly("0");
 
-    // 트리거는 호출자가 다시 만든다 — 만든 뒤 INSERT 가 시퀀스로 ID 를 채운다. 값은 캐시 폐기로 건너뛸 수 있으므로 "이전 최대보다 크고 유일" 만 본다.
+    // ID 는 복원이 원래 시퀀스 이름으로 다시 묶은 열 기본값이 채운다(트리거는 UPDATE 전용이라 INSERT 에 관여하지 않는다). 이 테스트가 restore
+    // 재바인딩을 실서버로 고정하는 근거다. 트리거는 호출자가 다시 만든다. 값은 캐시 폐기로 건너뛸 수 있으므로 "이전 최대보다 크고 유일" 만 본다.
     run(o, TiberoDdlSql.createRowTrigger(owner, t));
     run(o, "INSERT INTO " + tbl + " (\"NAME\", \"CODE\") VALUES ('n4', 'c4')");
     run(o, "INSERT INTO " + tbl + " (\"NAME\", \"CODE\") VALUES ('n5', 'c5')");

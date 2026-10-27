@@ -6,12 +6,15 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Tibero 카탈로그 뷰({@code ALL_TAB_COLUMNS}·{@code ALL_CONSTRAINTS}·{@code ALL_IND_COLUMNS}·{@code
@@ -143,7 +146,7 @@ public final class TiberoCatalog {
 
   /** OWNER 세션 소유 트리거의 상태 조회({@code USER_TRIGGERS}). 바인드: 트리거 이름 {@code n} 개(대문자). */
   static String triggerStatusQuery(int n) {
-    return "SELECT TRIGGER_NAME, STATUS FROM USER_TRIGGERS WHERE TRIGGER_NAME IN ("
+    return "SELECT TRIGGER_NAME, STATUS, TRIGGERING_EVENT FROM USER_TRIGGERS WHERE TRIGGER_NAME IN ("
         + String.join(", ", java.util.Collections.nCopies(n, "?"))
         + ")";
   }
@@ -160,14 +163,45 @@ public final class TiberoCatalog {
   }
 
   /**
-   * 주어진 트리거 중 OWNER 세션에 있고 켜진({@code STATUS} 가 ENABLED, 대소문자 무시) 것의 이름들. DISABLED 등은 없는 것으로 본다. 이름이
-   * 없으면 질의하지 않는다. 한 문장의 읽기·쓰기 대상 수만큼이라 IN 목록 한도(1000)에 닿지 않는다.
+   * 행 트리거의 모양(WD-233) — 켜진 트리거의 {@code TRIGGERING_EVENT} 로 가린다.
+   *
+   * <ul>
+   *   <li>{@code CURRENT}: UPDATE 전용(현행) — 더 할 일이 없다.
+   *   <li>{@code LEGACY}: 옛 INSERT+UPDATE 트리거(WD-233 이전) — ID 기본값이 선 뒤 UPDATE 전용으로 바꾼다.
+   *   <li>{@code MISSING}: 없음·꺼짐, 또는 알 수 없는 표기(INSERT 전용 등) — 새로 만든다.
+   * </ul>
    */
-  static java.util.Set<String> enabledTriggers(
-      Connection conn, java.util.Collection<String> triggerNames) throws SQLException {
-    java.util.Set<String> enabled = new java.util.TreeSet<>();
+  enum TriggerShape {
+    CURRENT,
+    LEGACY,
+    MISSING
+  }
+
+  /**
+   * 켜진 트리거의 {@code TRIGGERING_EVENT}({@code null} = 없음·꺼짐)를 {@link TriggerShape} 로 한 번에 분류한다. 표기
+   * 차이(앞뒤 공백·대소문자·{@code UPDATE OF ...} 같은 꼬리)에 흔들리지 않게 「UPDATE·INSERT 를 포함하는가」로 본다 — 정확히 일치만 보면
+   * 표기가 조금만 달라도 쓰기마다 트리거 DDL 이 반복된다(리뷰 I-2). UPDATE 를 포함하지 않는 표기는 모두 {@code MISSING} 이다.
+   */
+  static TriggerShape classify(String event) {
+    if (event == null) {
+      return TriggerShape.MISSING;
+    }
+    String e = event.trim().toUpperCase(Locale.ROOT);
+    if (!e.contains("UPDATE")) {
+      return TriggerShape.MISSING;
+    }
+    return e.contains("INSERT") ? TriggerShape.LEGACY : TriggerShape.CURRENT;
+  }
+
+  /**
+   * 켜진 트리거의 이름 → {@code TRIGGERING_EVENT}. 이름이 없으면 질의하지 않는다. 저장소의 보장 경로는 이것 하나로 새 트리거와 옛 트리거를 함께
+   * 가린다(질의 한 번).
+   */
+  static Map<String, String> enabledTriggerEvents(Connection conn, Collection<String> triggerNames)
+      throws SQLException {
+    Map<String, String> events = new TreeMap<>();
     if (triggerNames.isEmpty()) {
-      return enabled;
+      return events;
     }
     try (PreparedStatement ps = conn.prepareStatement(triggerStatusQuery(triggerNames.size()))) {
       int i = 1;
@@ -177,12 +211,57 @@ public final class TiberoCatalog {
       try (ResultSet rs = ps.executeQuery()) {
         while (rs.next()) {
           if ("ENABLED".equalsIgnoreCase(rs.getString(2))) {
-            enabled.add(rs.getString(1));
+            events.put(rs.getString(1), rs.getString(3));
           }
         }
       }
     }
-    return enabled;
+    return events;
+  }
+
+  /** ID 기본값이 이 테이블의 현재 시퀀스를 가리키는지 확인한다. 이름 바꾸기 뒤에는 옛 시퀀스 참조가 남을 수 있다. */
+  static boolean idDefaultUsesSequence(Connection conn, String schema, String table)
+      throws SQLException {
+    try (PreparedStatement ps =
+        conn.prepareStatement(
+            "SELECT DATA_DEFAULT FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ? AND COLUMN_NAME = 'ID'")) {
+      ps.setString(1, TiberoNames.physical(table));
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) {
+          return false;
+        }
+        String expression = rs.getString(1);
+        return expression != null
+            && expression.toUpperCase(Locale.ROOT).contains(TiberoNames.sequenceName(schema, table))
+            && expression.toUpperCase(Locale.ROOT).contains("NEXTVAL");
+      }
+    }
+  }
+
+  /**
+   * ID 기본값을 이 테이블의 현재 시퀀스에 묶는다(멱등) — 이미 묶여 있으면 아무것도 하지 않고, 아니면 시퀀스가 있을 때만 {@code MODIFY ID DEFAULT}
+   * 를 실행한다. 기본값이 현재 시퀀스를 가리키게 됐으면(이미 그렇거나 방금 설정) true, 시퀀스가 없어 묶지 못했으면 false.
+   *
+   * <p>재생성 보관·복원·맞춤과 저장소의 트리거 보장이 흩어져 반복하던 「시퀀스가 있고 DEFAULT 가 그걸 안 가리키면 재바인딩」 판정을 한 곳에 둔다. 시퀀스가 없으면
+   * 묶지 않는 이유: 없는 시퀀스로의 MODIFY 는 ALTER 시점에 JDBC-8034 로 거부된다(리뷰 M-1, 실서버 탐침). 순서는 기본값 확인이 먼저다 — 흔한
+   * 경로(이미 묶임)에서 시퀀스 조회를 하지 않는다. DDL 실패는 그대로 던진다(삼킬지는 호출자가 정한다). 반드시 OWNER 세션에서 부른다({@code
+   * USER_TAB_COLUMNS}).
+   *
+   * <p>보관·복원처럼 시퀀스 이름 바꾸기를 <b>계획한</b> 뒤의 무조건 재바인딩은 이 도우미를 쓰지 않는다 — 계획 시점엔 새 이름의 시퀀스가 아직 없어 이 판정이
+   * 건너뛰어 버린다.
+   */
+  static boolean rebindIdDefaultIfNeeded(Connection conn, String schema, String table)
+      throws SQLException {
+    if (idDefaultUsesSequence(conn, schema, table)) {
+      return true;
+    }
+    if (objectId(conn, schema, TiberoNames.sequenceName(schema, table), "SEQUENCE") == null) {
+      return false;
+    }
+    try (Statement st = conn.createStatement()) {
+      st.execute(TiberoDdlSql.setIdDefault(schema, table));
+    }
+    return true;
   }
 
   /** OWNER 세션이 소유한 테이블 이름 조회({@code USER_TABLES}). 바인드: (테이블 한정 시) 테이블 물리 이름. */

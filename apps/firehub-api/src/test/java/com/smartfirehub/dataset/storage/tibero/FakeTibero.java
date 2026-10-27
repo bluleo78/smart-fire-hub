@@ -37,6 +37,7 @@ final class FakeTibero {
   final Map<String, Long> tables = new LinkedHashMap<>();
   final Map<String, String> comments = new LinkedHashMap<>();
   final Set<String> sequences = new LinkedHashSet<>();
+  final Map<String, String> idDefaults = new LinkedHashMap<>(); // 테이블 → DEFAULT 가 참조하는 시퀀스
   final Map<String, String> triggers = new LinkedHashMap<>(); // 트리거 → 테이블
   final Map<String, String[]> indexes = new LinkedHashMap<>(); // 색인 → {테이블, 컬럼}
   final Map<String, String[]> checks = new LinkedHashMap<>(); // 제약 → {테이블, 컬럼}
@@ -51,6 +52,7 @@ final class FakeTibero {
     String p = TiberoNames.physical(table);
     tables.put(p, oid);
     sequences.add(TiberoNames.sequenceName(schema, table));
+    idDefaults.put(p, TiberoNames.sequenceName(schema, table));
     triggers.put(TiberoNames.triggerName(schema, table), p);
     indexes.put(TiberoNames.indexName(schema, table, "NAME"), new String[] {p, "NAME"});
     indexes.put(
@@ -132,9 +134,14 @@ final class FakeTibero {
           (n, tc) -> {
             if (tc[0].equals(b.get(1))) rows.add(new Object[] {n, tc[1]});
           });
-    } else if (sql.startsWith("SELECT TRIGGER_NAME, STATUS FROM USER_TRIGGERS")) {
+    } else if (sql.contains("DATA_DEFAULT FROM USER_TAB_COLUMNS")) {
+      String sequence = idDefaults.get(b.get(0));
+      if (tables.containsKey(b.get(0))) {
+        rows.add(new Object[] {sequence == null ? null : "\"" + schema + "\".\"" + sequence + "\".NEXTVAL"});
+      }
+    } else if (sql.startsWith("SELECT TRIGGER_NAME, STATUS, TRIGGERING_EVENT FROM USER_TRIGGERS")) {
       for (Object name : b) {
-        if (triggers.containsKey((String) name)) rows.add(new Object[] {name, "ENABLED"});
+        if (triggers.containsKey((String) name)) rows.add(new Object[] {name, "ENABLED", "UPDATE"});
       }
     } else if (sql.equals(TiberoCatalog.checkConstraintColumnsQuery())) {
       checks.forEach(
@@ -202,6 +209,7 @@ final class FakeTibero {
       String to = q.get(2);
       require(tables.containsKey(from) && !tables.containsKey(to));
       tables.put(to, tables.remove(from));
+      if (idDefaults.containsKey(from)) idDefaults.put(to, idDefaults.remove(from));
       if (comments.containsKey(from)) comments.put(to, comments.remove(from));
       indexes.values().forEach(tc -> tc[0] = tc[0].equals(from) ? to : tc[0]);
       checks.values().forEach(tc -> tc[0] = tc[0].equals(from) ? to : tc[0]);
@@ -216,10 +224,15 @@ final class FakeTibero {
       triggers.put(q.get(1), q.get(3));
     } else if (sql.startsWith("DROP TRIGGER")) {
       require(triggers.remove(q.get(1)) != null);
+    } else if (sql.startsWith("ALTER TABLE") && sql.contains(" MODIFY (\"ID\" DEFAULT ")) {
+      // 시퀀스 rename 은 기존 DEFAULT 를 자동 갱신하지 않는다. 명시적 MODIFY 만 참조를 바꾼다.
+      require(tables.containsKey(q.get(1)) && sequences.contains(q.get(4)));
+      idDefaults.put(q.get(1), q.get(4));
     } else if (sql.startsWith("DROP TABLE")) {
       String name = q.get(1);
       require(tables.remove(name) != null);
       comments.remove(name);
+      idDefaults.remove(name);
       indexes.values().removeIf(tc -> tc[0].equals(name));
       checks.values().removeIf(tc -> tc[0].equals(name));
       triggers.values().removeIf(tbl -> tbl.equals(name));
@@ -231,6 +244,8 @@ final class FakeTibero {
     } else if (sql.startsWith("CREATE TABLE ")) {
       require(!tables.containsKey(q.get(1)));
       tables.put(q.get(1), nextOid++);
+      // 최근 DDL 의 ID 기본값은 테이블 전용 시퀀스를 참조한다.
+      idDefaults.put(q.get(1), TiberoNames.sequenceName(schema, q.get(1)));
     } else if (sql.startsWith("CREATE INDEX ") || sql.startsWith("CREATE UNIQUE INDEX ")) {
       require(!indexes.containsKey(q.get(1)) && tables.containsKey(q.get(3)));
       indexes.put(q.get(1), new String[] {q.get(3), q.get(4)});
@@ -256,6 +271,7 @@ final class FakeTibero {
     Set<String> all = new LinkedHashSet<>();
     tables.forEach((n, oid) -> all.add("T:" + n + "#" + oid));
     sequences.forEach(n -> all.add("Q:" + n));
+    idDefaults.forEach((table, sequence) -> all.add("D:" + table + "@" + sequence));
     triggers.forEach((n, t) -> all.add("G:" + n + "@" + t));
     indexes.forEach((n, tc) -> all.add("I:" + n + "@" + tc[0]));
     checks.forEach((n, tc) -> all.add("C:" + n + "@" + tc[0]));

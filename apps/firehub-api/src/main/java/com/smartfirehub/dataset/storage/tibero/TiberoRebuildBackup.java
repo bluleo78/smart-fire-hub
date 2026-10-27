@@ -73,6 +73,9 @@ public final class TiberoRebuildBackup {
     if (oid == null) {
       throw new IllegalStateException("재생성할 테이블 '" + tableName + "' 이 없습니다");
     }
+    // 옛 모양(ID 기본값 없음) 테이블이면 첫 단계 전에 원래 시퀀스로 기본값을 둔다 — 뒤 단계가 실패해 트리거 DROP 을 되돌릴 때 UPDATE 전용
+    // 트리거가 기본값보다 먼저 살아나 INSERT 의 ID 가 비는 틈을 없앤다(리뷰 M-3, 스펙 §5.1 「ID 기본값 → 트리거」).
+    TiberoCatalog.rebindIdDefaultIfNeeded(c, schema, tableName);
     List<Step> steps = new ArrayList<>();
     // 존재할 때만 지운다 — 권한이 없어 만들지 못한 테넌트도 있다. 실패하면 같은 정의로 다시 만든다(최선 노력).
     if (TiberoCatalog.objectId(c, schema, triggerPhysical(schema, tableName), "TRIGGER") != null) {
@@ -81,18 +84,37 @@ public final class TiberoRebuildBackup {
               "DROP TRIGGER " + qualified(schema, triggerPhysical(schema, tableName)),
               TiberoDdlSql.createRowTrigger(schema, tableName)));
     }
-    steps.addAll(sequenceSteps(c, schema, tableName, backup));
+    List<Step> sequenceRename = sequenceSteps(c, schema, tableName, backup);
+    steps.addAll(sequenceRename);
     steps.addAll(companionSteps(c, schema, tableName, tableName, backup));
     steps.add(
         new Step(
             renameTableSql(schema, tableName, backup), renameTableSql(schema, backup, tableName)));
+    // Tibero 는 시퀀스 이름을 바꿔도 열 DEFAULT 식의 이름을 고치지 않는다. 테이블과 시퀀스를 모두 옮긴 뒤 새 이름에 묶는다.
+    // 원래 시퀀스가 없었으면(계획 시점 판단 — 보관 시퀀스는 아직 없다) 묶지 않는다: 없는 시퀀스로의 MODIFY 는 ALTER 시점에 JDBC-8034 로
+    // 거부된다(리뷰 M-1, 실서버 탐침).
+    if (!sequenceRename.isEmpty()) {
+      steps.add(new Step(TiberoDdlSql.setIdDefault(schema, backup), null));
+    }
     if (hasFingerprint) {
       steps.add(
           new Step(
               commentSql(schema, backup, COMMENT_PREFIX + metaFingerprint),
               commentSql(schema, backup, "")));
     }
-    runWithUndo(c, steps);
+    try {
+      runWithUndo(c, steps);
+    } catch (SQLException | RuntimeException e) {
+      // 뒤 단계 실패로 이름을 되돌렸다면 기본값도 원래 시퀀스를 보게 복구한다.
+      try {
+        if (TiberoCatalog.objectId(c, schema, TiberoNames.physical(tableName), "TABLE") != null) {
+          TiberoCatalog.rebindIdDefaultIfNeeded(c, schema, tableName);
+        }
+      } catch (SQLException | RuntimeException repair) {
+        e.addSuppressed(repair);
+      }
+      throw e;
+    }
     return oid;
   }
 
@@ -118,7 +140,13 @@ public final class TiberoRebuildBackup {
       execute(c, TiberoDdlSql.dropSequence(schema, tableName));
     }
     execute(c, renameTableSql(schema, backup, tableName));
-    runAll(c, sequenceSteps(c, schema, backup, tableName));
+    List<Step> sequenceRename = sequenceSteps(c, schema, backup, tableName);
+    runAll(c, sequenceRename);
+    // 시퀀스 이름 복원만으로는 DEFAULT 가 보관 시퀀스를 계속 가리켜 다음 INSERT 가 실패한다. 보관 시퀀스가 없었으면 묶을 대상이 없어
+    // 건너뛴다(없는 시퀀스로의 MODIFY 는 ALTER 시점에 거부된다 — 리뷰 M-1).
+    if (!sequenceRename.isEmpty()) {
+      execute(c, TiberoDdlSql.setIdDefault(schema, tableName));
+    }
     runAll(c, companionSteps(c, schema, tableName, backup, tableName));
     execute(c, commentSql(schema, tableName, ""));
   }
@@ -196,12 +224,15 @@ public final class TiberoRebuildBackup {
                 != null;
         if (!originalSeq) {
           // 테이블 이름을 바꾸기 전에 죽음 — 보관 이름으로 바뀐 시퀀스를 되돌린다.
+          // 보관 시퀀스도 없으면(두 시퀀스가 모두 없음) 되돌릴 것이 없다 — 아래 확인도 원래 시퀀스가 없어 건너뛴다(리뷰 M-1).
           runAll(c, sequenceSteps(c, schema, backup, tableName));
         } else if (TiberoCatalog.objectId(c, schema, sequencePhysical(schema, backup), "SEQUENCE")
             != null) {
           // 보관 테이블이 없는데 보관 시퀀스가 남음 — drop() 이 DROP TABLE 과 DROP SEQUENCE 사이에서 죽은 고아다.
           execute(c, TiberoDdlSql.dropSequence(schema, backup));
         }
+        // 복원 중 시퀀스 이름만 되돌리고 중단되면 DEFAULT 식은 보관 이름을 계속 가리킨다.
+        TiberoCatalog.rebindIdDefaultIfNeeded(c, schema, tableName);
       }
     }
     if (backupOid != null) {

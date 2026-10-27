@@ -231,8 +231,9 @@ public final class PipelineSqlErrorMessages {
 
   /**
    * Tibero 오류 코드를 같은 뜻의 PostgreSQL SQLState 로 옮긴다 — 안내 문장을 PG 판과 공유하기 위한 대응표다. 모르면 분류 밖 상태값(일반 안내).
+   * 같은 패키지(이 클래스·{@code PythonStepErrorMessages})에서만 쓰므로 패키지 전용으로 둔다.
    */
-  private static String tiberoSqlState(int code) {
+  static String tiberoSqlState(int code) {
     if (TiberoDialect.UNIQUE_VIOLATION.contains(code)
         || TiberoDialect.MULTI_INSERT_DUPLICATE.contains(code)) {
       return "23505";

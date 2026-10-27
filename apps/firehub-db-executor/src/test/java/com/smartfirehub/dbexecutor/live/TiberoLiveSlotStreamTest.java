@@ -57,7 +57,8 @@ class TiberoLiveSlotStreamTest {
   @BeforeAll
   void setUp() throws Exception {
     account = TiberoLiveAccount.open();
-    slotPools = TenantPools.forSlots(HikariPoolFactory.forSlots(), 8);
+    // 운영 기본 슬롯 풀 크기(app.pool.slot-max-size 기본 3)와 같게 둔다.
+    slotPools = TenantPools.forSlots(HikariPoolFactory.forSlots(3), 8);
     // 슬롯 풀이 세션을 쥐고 있으면 DROP USER 가 거절되므로 먼저 닫는다.
     account.closeBeforeDrop(slotPools::closeAll);
     account.createSlot(SLOT);

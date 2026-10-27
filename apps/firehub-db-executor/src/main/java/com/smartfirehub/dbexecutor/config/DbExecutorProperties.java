@@ -100,29 +100,36 @@ public record DbExecutorProperties(
   /**
    * 풀 한도. 테넌트마다 풀이 생긴다. OWNER 풀({@code /execute/sql}·probe)과 읽기 전용 풀({@code /execute/query},
    * WD-76)은 서로 다른 풀 묶음이고 각각 {@code maxPools} 개까지 유지한다. 슬롯 풀(WD-78, 스크립트 슬롯 조회)은 (테넌트, 슬롯)마다 크기
-   * 3(Ruling 17)이고 전체 {@code slotMaxPools} 개까지 유지한다. 그래서 최악의 동시 세션 수는 {@code maxPools × (maxSize +
-   * readOnlyMaxSize) + slotMaxPools × 3} 이다(기본값 8 × (4 + 2) + 8 × 3 = 72). 이 값이 외부 DB 세션 한도를 넘지 않게
-   * 작게 잡는다({@code maxPools}·{@code maxSize} 는 api 와 같은 값). 대여 중인 풀이 퇴역하면 잠시 넘을 수 있다({@code
-   * TenantPools}).
+   * {@code slotMaxSize} 이고 전체 {@code slotMaxPools} 개까지 유지한다. 그래서 최악의 동시 세션 수는 {@code maxPools ×
+   * (maxSize + readOnlyMaxSize) + slotMaxPools × slotMaxSize} 이다(기본값 8 × (4 + 2) + 8 × 3 = 72). 이
+   * 값이 외부 DB 세션 한도를 넘지 않게 작게 잡는다({@code maxPools}·{@code maxSize} 는 api 와 같은 값). 대여 중인 풀이 퇴역하면 잠시
+   * 넘을 수 있다({@code TenantPools}).
    *
    * @param maxPools 동시에 유지할 풀 수(넘으면 LRU 로 닫음)
    * @param maxSize 풀당 최대 커넥션(OWNER 풀)
    * @param readOnlyMaxSize 읽기 전용(분석 조회) 풀당 최대 커넥션 — 조회는 짧고 동시성이 낮아 작게 둔다
-   * @param slotMaxPools 슬롯 풀(크기 3, Ruling 17) 전체 상한 — 전 테넌트·전 슬롯 합계
+   * @param slotMaxPools 슬롯 풀 전체 상한 — 전 테넌트·전 슬롯 합계(풀마다 크기는 {@code slotMaxSize})
+   * @param slotMaxSize 슬롯 풀당 최대 커넥션 — 기본 3(Ruling 17), env {@code DB_EXECUTOR_SLOT_MAX_SIZE}, 1 이상
    */
   public record Pool(
       @DefaultValue("8") int maxPools,
       @DefaultValue("4") int maxSize,
       @DefaultValue("2") int readOnlyMaxSize,
-      @DefaultValue("8") int slotMaxPools) {
+      @DefaultValue("8") int slotMaxPools,
+      @DefaultValue("3") int slotMaxSize) {
 
     /** 설정 바인딩이 쓰는 주 생성자(생성자가 둘이라 바인딩 대상을 명시한다). */
     @ConstructorBinding
-    public Pool {}
+    public Pool {
+      // 0 이하면 첫 슬롯 조회 때 Hikari 가 예외를 낸다 — 실행 중이 아니라 기동(바인딩) 시점에 막는다(리뷰 M-7).
+      if (slotMaxSize < 1) {
+        throw new IllegalArgumentException("app.pool.slot-max-size 는 1 이상이어야 합니다: " + slotMaxSize);
+      }
+    }
 
-    /** 슬롯 풀 상한을 기본값(8)으로 두는 편의 생성자(코드·테스트에서 직접 만들 때). */
+    /** 슬롯 풀 상한(8)·크기(3)를 기본값으로 두는 편의 생성자(코드·테스트에서 직접 만들 때). */
     public Pool(int maxPools, int maxSize, int readOnlyMaxSize) {
-      this(maxPools, maxSize, readOnlyMaxSize, 8);
+      this(maxPools, maxSize, readOnlyMaxSize, 8, 3);
     }
   }
 }

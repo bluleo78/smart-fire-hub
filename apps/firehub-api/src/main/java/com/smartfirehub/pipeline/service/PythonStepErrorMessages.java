@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.dataset.service.DataExceptionTranslator;
+import java.sql.SQLException;
 
 /**
  * PYTHON 스텝의 적재 실패·타임아웃·예기치 못한 오류를 사용자에게 보일 한국어 문구(WD-211).
@@ -77,6 +78,20 @@ public final class PythonStepErrorMessages {
    */
   static String loadFailed(Throwable e) {
     String reason = DataExceptionTranslator.describe(e);
+    if (reason == null) {
+      // Tibero JDBC 는 SQLState 22 대신 벤더 코드를 준다. 파이프라인 SQL 오류와 같은 대응표를 거쳐 사유만 노출한다. 사슬 걷기·깊이 상한은
+      // DataExceptionTranslator 와 공용이다.
+      SQLException tiberoDataError =
+          DataExceptionTranslator.findSqlException(
+              e, x -> PipelineSqlErrorMessages.tiberoSqlState(x.getErrorCode()).startsWith("22"));
+      if (tiberoDataError != null) {
+        reason =
+            DataExceptionTranslator.describeDataError(
+                PipelineSqlErrorMessages.tiberoSqlState(tiberoDataError.getErrorCode()),
+                null,
+                null);
+      }
+    }
     return reason != null ? loadDataError(reason) : PREFIX + LOAD_FAILED_MESSAGE;
   }
 

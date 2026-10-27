@@ -35,7 +35,9 @@ class TiberoDdlSqlTest {
             "CREATE SEQUENCE \"GENIA_T5\".\""
                 + TiberoNames.sequenceName(S, "t")
                 + "\" START WITH 1 INCREMENT BY 1 NOCACHE",
-            "CREATE TABLE \"GENIA_T5\".\"T\" (\"ID\" NUMBER(19) PRIMARY KEY, \"IMPORT_ID\""
+            "CREATE TABLE \"GENIA_T5\".\"T\" (\"ID\" NUMBER(19) DEFAULT \"GENIA_T5\".\""
+                + TiberoNames.sequenceName(S, "t")
+                + "\".NEXTVAL PRIMARY KEY, \"IMPORT_ID\""
                 + " NUMBER(19), \"NAME\" VARCHAR2(4000), \"QTY\" NUMBER(19), \"ACTIVE\" NUMBER(1)"
                 + " CONSTRAINT \""
                 + TiberoNames.checkConstraintName(S, "t", "active")
@@ -248,7 +250,9 @@ class TiberoDdlSqlTest {
             "CREATE SEQUENCE \"GENIA_T5\".\""
                 + TiberoNames.sequenceName(S, "dst")
                 + "\" START WITH 1 INCREMENT BY 1 NOCACHE",
-            "CREATE TABLE \"GENIA_T5\".\"DST\" (\"ID\" NUMBER(19) PRIMARY KEY, \"IMPORT_ID\""
+            "CREATE TABLE \"GENIA_T5\".\"DST\" (\"ID\" NUMBER(19) DEFAULT \"GENIA_T5\".\""
+                + TiberoNames.sequenceName(S, "dst")
+                + "\".NEXTVAL PRIMARY KEY, \"IMPORT_ID\""
                 + " NUMBER(19), \"A\" VARCHAR2(4000) NOT NULL, \"B\" NUMBER(19), \"C\" NUMBER(1)"
                 + " CONSTRAINT \""
                 + TiberoNames.checkConstraintName(S, "dst", "c")
@@ -308,21 +312,17 @@ class TiberoDdlSqlTest {
         .contains("TO_CHAR(\"X\", 'FM999999999999990.000000') AS VAL");
   }
 
-  /** 행 트리거 DDL: ID 가 비었을 때만 시퀀스, UPDATE 면 _UPDATED_AT 갱신(WD-77). 이름·인용이 실서버에서 확인한 형태다. */
+  /** 행 트리거 DDL: INSERT 는 ID 기본값이 맡고 UPDATE 만 _UPDATED_AT 을 갱신한다. */
   @Test
   void createRowTrigger_exactStatement() {
-    String seq = TiberoNames.sequenceName("GENIA_T5", "orders");
     String trg = TiberoNames.triggerName("GENIA_T5", "orders");
     assertThat(TiberoDdlSql.createRowTrigger("GENIA_T5", "orders"))
         .isEqualTo(
             "CREATE OR REPLACE TRIGGER \"GENIA_T5\".\""
                 + trg
-                + "\" BEFORE INSERT OR UPDATE ON \"GENIA_T5\".\"ORDERS\" FOR EACH ROW\n"
+                + "\" BEFORE UPDATE ON \"GENIA_T5\".\"ORDERS\" FOR EACH ROW\n"
                 + "BEGIN\n"
-                + "  IF INSERTING AND :NEW.\"ID\" IS NULL THEN :NEW.\"ID\" := \"GENIA_T5\".\""
-                + seq
-                + "\".NEXTVAL; END IF;\n"
-                + "  IF UPDATING THEN :NEW.\"_UPDATED_AT\" := SYSTIMESTAMP; END IF;\n"
+                + "  :NEW.\"_UPDATED_AT\" := SYSTIMESTAMP;\n"
                 + "END;");
   }
 

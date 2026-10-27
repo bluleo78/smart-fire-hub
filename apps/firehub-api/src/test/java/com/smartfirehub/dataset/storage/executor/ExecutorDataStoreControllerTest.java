@@ -90,6 +90,29 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
     return http.send(b.GET().build(), HttpResponse.BodyHandlers.ofString());
   }
 
+  /** 세대 창구는 전체 기술자와 같은 내부 토큰을 요구하지만 비밀번호는 반환하지 않는다. */
+  private HttpResponse<String> getEpoch(long id, String authorization) throws Exception {
+    HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://localhost:" + port
+        + "/internal/executor/tenants/" + id + "/script-token-epoch"));
+    if (authorization != null) {
+      b.header("Authorization", authorization);
+    }
+    return http.send(b.GET().build(), HttpResponse.BodyHandlers.ofString());
+  }
+
+  @Test
+  void scriptTokenEpoch_requiresDbExecutorTokenAndReturnsOnlyEpoch() throws Exception {
+    long id = newTibero(TenantDataStoreStatus.READY);
+    repository.incrementScriptTokenEpoch(id);
+
+    assertThat(getEpoch(id, null).statusCode()).isEqualTo(401);
+    assertThat(getEpoch(id, "Internal " + executorToken).statusCode()).isEqualTo(401);
+    HttpResponse<String> res = getEpoch(id, "Internal " + token);
+    assertThat(res.statusCode()).isEqualTo(200);
+    assertThat(res.body()).isEqualTo("{\"scriptTokenEpoch\":1}");
+    assertThat(res.headers().firstValue("Cache-Control").orElse("")).contains("no-store");
+  }
+
   private long newTibero(TenantDataStoreStatus status) {
     String slug = "ex-" + UUID.randomUUID().toString().substring(0, 8);
     tenantId = tenantRepository.insertTenant(slug, "기술자 테스트 " + slug);

@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -107,9 +108,8 @@ class ExecuteControllerSlotTest {
   @BeforeEach
   void setUp() throws Exception {
     validToken = token(7, 3, 2, inTenMinutes());
-    when(descriptors.get(anyLong(), any(Duration.class), any(Duration.class)))
-        .thenReturn(descriptor(2L));
     when(descriptors.get(anyLong(), any(Duration.class))).thenReturn(descriptor(2L));
+    when(descriptors.getScriptTokenEpoch(anyLong(), any(Duration.class))).thenReturn(2L);
     // 스트리머는 고정 NDJSON 두 줄을 쓴다(형식 자체는 SlotQueryRunnerTest 가 본다).
     doAnswer(
         inv -> {
@@ -150,8 +150,9 @@ class ExecuteControllerSlotTest {
         eq("SELECT a FROM t"),
         any(Deadline.class),
         any(OutputStream.class));
-    // 스크립트 요청은 5초보다 오래된 기술자를 쓰지 않는다(Ruling 16).
-    verify(descriptors).get(eq(7L), any(Duration.class), eq(Duration.ofSeconds(5)));
+    // 스크립트 요청은 세대만 5초 신선도로 확인하고 기술자는 일반 TTL 캐시를 쓴다.
+    verify(descriptors).getScriptTokenEpoch(eq(7L), any(Duration.class));
+    verify(descriptors).get(eq(7L), any(Duration.class));
     verifyNoInteractions(queryRunner);
   }
 
@@ -203,24 +204,45 @@ class ExecuteControllerSlotTest {
     verifyNoInteractions(slotQueryRunner, descriptors);
   }
 
-  /** 기술자의 세대보다 낮은 토큰은 401(등급 변경 뒤 옛 토큰), 같거나 높으면 통과. 세대를 모르면(null) 막는다. */
+  /** 별도 세대 창구의 값보다 낮은 토큰은 401, 같거나 높으면 통과한다(세대를 얻지 못한 경우는 아래 실패 테스트 — 예외로 거부). */
   @Test
   void scriptToken_epochBelowDescriptor_401() throws Exception {
-    when(descriptors.get(eq(7L), any(Duration.class), any(Duration.class)))
-        .thenReturn(descriptor(3L));
+    when(descriptors.getScriptTokenEpoch(eq(7L), any(Duration.class))).thenReturn(3L);
     assertThat(post("/execute/query", "Script " + validToken, STREAM_BODY).getStatus())
         .isEqualTo(401);
 
-    when(descriptors.get(eq(7L), any(Duration.class), any(Duration.class)))
-        .thenReturn(descriptor(null));
-    assertThat(post("/execute/query", "Script " + validToken, STREAM_BODY).getStatus())
-        .isEqualTo(401);
     verifyNoInteractions(slotQueryRunner);
 
-    when(descriptors.get(eq(7L), any(Duration.class), any(Duration.class)))
-        .thenReturn(descriptor(1L));
+    when(descriptors.getScriptTokenEpoch(eq(7L), any(Duration.class))).thenReturn(1L);
     assertThat(post("/execute/query", "Script " + validToken, STREAM_BODY).getStatus())
         .isEqualTo(200);
+  }
+
+  /**
+   * 세대 조회 자체가 실패하면(api 재시작·시간 초과·5xx·404) 토큰 문제가 아니므로 401 이 아니라 「기술자를 얻지 못함」과 같은 거부(NDJSON 실패 줄 하나,
+   * 200)로 답한다 — 기술자도 묻지 않고 실행하지 않는다(fail-closed). 401 은 세대가 토큰보다 높을 때만이다(최종 리뷰).
+   */
+  @Test
+  void scriptToken_epochLookupFailure_sameRejectionAsDescriptorFailure_noExecution()
+      throws Exception {
+    for (String status : new String[] {"503", "404", "시간 초과", "연결 실패"}) {
+      clearInvocations(descriptors);
+      when(descriptors.getScriptTokenEpoch(eq(7L), any(Duration.class)))
+          .thenThrow(new StoreUnavailableException(status));
+
+      MockHttpServletResponse res = post("/execute/query", "Script " + validToken, STREAM_BODY);
+
+      assertThat(res.getStatus()).as(status).isEqualTo(200);
+      assertThat(res.getContentType()).as(status).isEqualTo("application/x-ndjson");
+      assertThat(res.getContentAsString(StandardCharsets.UTF_8))
+          .as(status)
+          .isEqualTo(
+              "{\"success\":false,\"error\":\"테넌트 저장소 정보를 가져오지 못했습니다("
+                  + status
+                  + ").\",\"db_error\":null}\n");
+      verify(descriptors, never()).get(anyLong(), any(Duration.class));
+    }
+    verifyNoInteractions(slotQueryRunner);
   }
 
   @Test
@@ -233,7 +255,7 @@ class ExecuteControllerSlotTest {
   /** 기술자를 못 얻으면 NDJSON 실패 줄 하나(200)로 끝난다 — 스트리밍 요청의 응답 모양을 지킨다. */
   @Test
   void scriptToken_descriptorFailure_singleFailureLine() throws Exception {
-    when(descriptors.get(eq(7L), any(Duration.class), any(Duration.class)))
+    when(descriptors.get(eq(7L), any(Duration.class)))
         .thenThrow(new StoreUnavailableException("503"));
 
     MockHttpServletResponse res = post("/execute/query", "Script " + validToken, STREAM_BODY);
@@ -346,7 +368,6 @@ class ExecuteControllerSlotTest {
     verify(slotQueryRunner).stream(
         any(), eq(3), eq("SELECT a FROM t"), any(Deadline.class), any(OutputStream.class));
     verify(descriptors).get(eq(7L), any(Duration.class));
-    verify(descriptors, never()).get(anyLong(), any(Duration.class), any(Duration.class));
     verifyNoInteractions(queryRunner);
   }
 

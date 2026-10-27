@@ -104,7 +104,10 @@ public final class TiberoDdlSql {
             + " START WITH 1 INCREMENT BY 1 NOCACHE");
 
     StringBuilder ddl = new StringBuilder("CREATE TABLE " + qt + " (");
-    ddl.append("\"ID\" NUMBER(19) PRIMARY KEY, \"IMPORT_ID\" NUMBER(19)");
+    // 사용자 INSERT 는 열 기본값으로 ID 를 얻는다. 적재 경로의 명시적 ID 는 그대로 우선한다.
+    ddl.append("\"ID\" NUMBER(19) DEFAULT ")
+        .append(qualified(schema, TiberoNames.sequenceName(schema, table)))
+        .append(".NEXTVAL PRIMARY KEY, \"IMPORT_ID\" NUMBER(19)");
     for (DatasetColumnRequest c : columns) {
       ddl.append(", ").append(columnDefinition(schema, table, c));
     }
@@ -130,27 +133,21 @@ public final class TiberoDdlSql {
     return out;
   }
 
-  /**
-   * 행 트리거 한 개(WD-77): INSERT 때 {@code ID} 가 비었으면 테이블 전용 시퀀스에서 채우고, UPDATE 때 {@code _UPDATED_AT} 을
-   * 갱신한다.
-   *
-   * <p>PG 는 bigserial·트리거가 이 일을 하지만 Tibero 테이블에는 기본값이 없어, 사용자가 쓴 INSERT 가 ID 를 못 채우고 UPDATE 가 갱신
-   * 시각을 못 옮긴다. {@code ID} 가 이미 있으면 건드리지 않으므로 ID 를 직접 넣는 기존 적재 경로(옮기기·스테이징·{@code
-   * TiberoDmlSql.insert})는 시퀀스를 두 번 쓰지 않는다. 실서버(Tibero 7)에서 확인한 문법이다. 컬럼 {@code DEFAULT
-   * 시퀀스.NEXTVAL} 도 지원되지만 {@code _UPDATED_AT} 에는 트리거가 어차피 필요해 하나로 묶었다.
-   */
+  /** 기존 테이블의 ID 기본값을 추가한다. INSERT 트리거를 바꾸기 전에 실행해야 쓰기 공백이 없다. */
+  public static String setIdDefault(String schema, String table) {
+    return "ALTER TABLE " + TiberoNames.table(schema, table) + " MODIFY (\"ID\" DEFAULT "
+        + qualified(schema, TiberoNames.sequenceName(schema, table)) + ".NEXTVAL)";
+  }
+
+  /** UPDATE 때만 갱신 시각을 옮긴다. INSERT 의 ID 는 열 기본값이 담당해 행 트리거 비용을 없앤다. */
   public static String createRowTrigger(String schema, String table) {
-    String seq = qualified(schema, TiberoNames.sequenceName(schema, table));
     return "CREATE OR REPLACE TRIGGER "
         + qualified(schema, TiberoNames.triggerName(schema, table))
-        + " BEFORE INSERT OR UPDATE ON "
+        + " BEFORE UPDATE ON "
         + TiberoNames.table(schema, table)
         + " FOR EACH ROW\n"
         + "BEGIN\n"
-        + "  IF INSERTING AND :NEW.\"ID\" IS NULL THEN :NEW.\"ID\" := "
-        + seq
-        + ".NEXTVAL; END IF;\n"
-        + "  IF UPDATING THEN :NEW.\"_UPDATED_AT\" := SYSTIMESTAMP; END IF;\n"
+        + "  :NEW.\"_UPDATED_AT\" := SYSTIMESTAMP;\n"
         + "END;";
   }
 

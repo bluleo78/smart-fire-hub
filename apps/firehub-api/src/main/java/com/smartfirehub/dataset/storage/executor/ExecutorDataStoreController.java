@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.storage.executor;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.security.InternalTokens;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -95,8 +96,7 @@ public class ExecutorDataStoreController {
     // 설정 토큰이 둘 다 비면 아무 요청도 인증할 수 없으므로 모든 요청을 503 으로 거부한다.
     if (executorToken.isBlank() && token.isBlank()) {
       log.error("executor 내부 토큰이 비어 있어 저장소 기술자 제공을 거부한다");
-      throw new CodedApiException(
-          HttpStatus.SERVICE_UNAVAILABLE, TOKEN_NOT_CONFIGURED_CODE, "executor 내부 토큰이 설정되지 않았습니다");
+      throw tokenNotConfigured("executor 내부 토큰이 설정되지 않았습니다");
     }
     if (InternalTokens.matches(authHeader, executorToken)) {
       // Python 실행기: 종류만. include=ro 도 무시한다(비밀을 낼 수 없는 토큰이다).
@@ -105,7 +105,7 @@ public class ExecutorDataStoreController {
       return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(kind);
     }
     if (!InternalTokens.matches(authHeader, token)) {
-      return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+      return unauthorized();
     }
     // 기본 토큰이면 비밀이 없는 PG 기술자만 내고, 비밀번호가 담길 Tibero 는 서비스가 복호화 전에 거부한다.
     Set<String> includes = includes(include);
@@ -118,6 +118,36 @@ public class ExecutorDataStoreController {
     log.info("executor 저장소 기술자 제공: tenant={}, backend={}", tenantId, descriptor.backend());
     // 평문 비밀번호가 중간 캐시에 남지 않게 한다.
     return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(descriptor);
+  }
+
+  /** db-executor 가 스크립트 토큰 세대만 짧은 주기로 확인한다. 같은 내부 토큰을 요구하고 비밀은 내지 않는다. */
+  @GetMapping("/internal/executor/tenants/{tenantId}/script-token-epoch")
+  public ResponseEntity<Map<String, Long>> scriptTokenEpoch(
+      @RequestHeader(value = "Authorization", required = false) String authHeader,
+      @PathVariable long tenantId) {
+    if (token.isBlank()) {
+      throw tokenNotConfigured("db-executor 내부 토큰이 설정되지 않았습니다");
+    }
+    if (!InternalTokens.matches(authHeader, token)) {
+      return unauthorized();
+    }
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(Map.of("scriptTokenEpoch", service.scriptTokenEpoch(tenantId)));
+  }
+
+  /**
+   * 설정 토큰이 비어 인증할 수 없을 때의 503 — 두 창구가 같은 코드로 거부한다. 「비었다」의 기준은 창구마다 다르다(기술자: 두 토큰 모두, 세대:
+   * db-executor 토큰)라 판정은 호출부에 두고 응답 모양만 여기서 만든다.
+   */
+  private static CodedApiException tokenNotConfigured(String message) {
+    return new CodedApiException(
+        HttpStatus.SERVICE_UNAVAILABLE, TOKEN_NOT_CONFIGURED_CODE, message);
+  }
+
+  /** 토큰 불일치 401(본문 없음) — 두 창구 공용. */
+  private static <T> ResponseEntity<T> unauthorized() {
+    return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
   }
 
   /**

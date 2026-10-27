@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreFeatureUnsupportedException;
 import com.smartfirehub.dataset.storage.DataTableStore;
 import com.smartfirehub.dataset.storage.external.ExternalStoreConnections;
+import com.smartfirehub.dataset.storage.tibero.TiberoCatalog.TriggerShape;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.pythonread.TiberoPythonReadGrantSync;
@@ -612,10 +613,11 @@ public class TiberoDataTableStore implements DataTableStore {
         return;
       }
       String trigger = TiberoNames.triggerName(schema, tableName);
-      if (TiberoCatalog.enabledTriggers(conn, List.of(trigger)).contains(trigger)) {
-        return;
+      String event = TiberoCatalog.enabledTriggerEvents(conn, List.of(trigger)).get(trigger);
+      // 쓰기 경로({@link #ensureRowTriggers})와 같은 판정 — 새 모양이면 끝, 옛 모양은 ID 기본값이 선 뒤에만 교체.
+      if (needsTriggerDdl(conn, schema, tableName, TiberoCatalog.classify(event))) {
+        createRowTriggerQuietly(conn, schema, tableName);
       }
-      createRowTriggerQuietly(conn, schema, tableName);
     } catch (SQLException | RuntimeException e) {
       log.warn("Tibero 재생성 보관 뒤 행 트리거 확인 실패 — 트리거 없이 진행합니다: {}", tableName, e);
     }
@@ -931,7 +933,11 @@ public class TiberoDataTableStore implements DataTableStore {
    * <p>권한은 없는 트리거가 하나라도 있을 때만 확인하고, 없으면 아무것도 만들지 않은 채 422 로 거부한다. 생성 도중 실패하면 그 앞 테이블의 트리거는 이미 만들어진
    * 채 예외가 올라간다(테이블마다 차례로 보장하던 때와 같다). 같은 테이블이 여러 번 들어와도(대소문자 차이 포함) 한 번만 다룬다.
    *
-   * @throws DataStoreFeatureUnsupportedException 없는 트리거가 있고 만들 권한이 없을 때
+   * <p>옛 INSERT+UPDATE 트리거(WD-233 이전)는 ID 기본값이 선 뒤 권한이 있으면 UPDATE 전용으로 바꾸고, 권한이 없으면 경고만 남기고 그대로 쓴다
+   * — ID 기본값을 먼저 두므로 옛 트리거로도 동작이 맞다(리뷰 M-2). 기본값 설정이 동시 쓰기로 실패하면 옛 트리거로 계속한다({@link
+   * #needsTriggerDdl}).
+   *
+   * @throws DataStoreFeatureUnsupportedException 없는(또는 꺼진) 트리거가 있고 만들 권한이 없을 때
    */
   @Override
   public void ensureRowTriggers(Collection<String> tableNames) {
@@ -948,15 +954,28 @@ public class TiberoDataTableStore implements DataTableStore {
     connections.withDdl(
         tenantId,
         conn -> {
-          Set<String> enabled = TiberoCatalog.enabledTriggers(conn, byTrigger.keySet());
-          List<String> missing = new ArrayList<>();
-          byTrigger.forEach(
-              (trigger, table) -> {
-                if (!enabled.contains(trigger)) {
-                  missing.add(table);
-                }
-              });
-          if (!missing.isEmpty() && !createRowTriggersIfPermitted(conn, schema, missing)) {
+          // 상태 질의는 한 번, 맨 먼저 — 이벤트 표기로 새(UPDATE 전용)·옛(INSERT OR UPDATE) 트리거를 함께 가린다. 새 모양 테이블은 여기서
+          // 끝나므로 흔한 경로의 카탈로그 조회 수는 WD-233 이전과 같다(최종 리뷰).
+          Map<String, String> events = TiberoCatalog.enabledTriggerEvents(conn, byTrigger.keySet());
+          // 트리거 DDL 이 필요한 테이블(없음·꺼짐 + ID 기본값이 선 옛 모양). 원래 순서를 지킨다.
+          List<String> toCreate = new ArrayList<>();
+          boolean anyMissing = false;
+          for (Map.Entry<String, String> e : byTrigger.entrySet()) {
+            TriggerShape shape = TiberoCatalog.classify(events.get(e.getKey()));
+            if (needsTriggerDdl(conn, schema, e.getValue(), shape)) {
+              toCreate.add(e.getValue());
+              anyMissing |= shape != TriggerShape.LEGACY;
+            }
+          }
+          if (!toCreate.isEmpty() && !createRowTriggersIfPermitted(conn, schema, toCreate)) {
+            // 권한이 없어도 옛 트리거가 켜져 있으면 그대로 쓴다(리뷰 M-2 Ruling) — ID 기본값을 뒀으므로 옛 트리거의 INSERT 분기는
+            // ID 가 비었을 때만 채워 기능상 같다. 트리거가 아예 없거나 꺼진 테이블이 하나라도 있으면 기존처럼 422.
+            if (!anyMissing) {
+              log.warn(
+                  "Tibero OWNER 에 CREATE TRIGGER 권한이 없어 옛 행 트리거(INSERT OR UPDATE)를 교체하지 못했습니다 — 그대로 씁니다: {}",
+                  toCreate);
+              return null;
+            }
             throw new DataStoreFeatureUnsupportedException(
                 TiberoTriggerPrivilege.missingPrivilegeMessage(tenantId));
           }
@@ -997,6 +1016,41 @@ public class TiberoDataTableStore implements DataTableStore {
       TiberoErrors.runIgnoring(conn, TiberoDdlSql.createRowTrigger(schema, table));
     }
     return true;
+  }
+
+  /**
+   * 행 트리거 모양({@link TiberoCatalog#classify} 로 한 번 분류한 값)을 보고 이 테이블에 행 트리거 DDL 이 필요한지 정한다. 필요하면 그 전에
+   * ID 기본값을 둔다 — 쓰기 보장({@link #ensureRowTriggers})과 재생성 맞춤의 조용한 보장이 같은 판정을 쓴다.
+   *
+   * <ul>
+   *   <li><b>{@code CURRENT}(UPDATE 전용)</b>: 아무것도 묻지 않고 false. 새 모양 테이블의 ID 기본값은 생성 DDL 과 보관·복원
+   *       재바인딩({@link TiberoRebuildBackup})이 책임지므로 쓰기마다 {@code USER_TAB_COLUMNS} 를 다시 볼 필요가 없다 — 흔한
+   *       경로의 조회 수를 WD-233 이전과 같게 둔다(최종 리뷰).
+   *   <li><b>{@code LEGACY}(INSERT OR UPDATE)</b>: ID 기본값이 <b>실제로 선 뒤에만</b> true(교체). 기본값 DDL 이 다른
+   *       세션의 행 잠금(resource busy 등)으로 실패하거나 시퀀스가 없어 둘 수 없으면 경고만 남기고 false — 옛 트리거가 ID 를 채우므로 쓰기를 막지
+   *       않고, 다음 호출에서 다시 시도한다. 기본값 없이 옛 트리거를 UPDATE 전용으로 바꾸면 INSERT 의 ID 가 빈다.
+   *   <li><b>{@code MISSING}(없음·꺼짐·알 수 없는 표기)</b>: 기존대로 ID 기본값을 둔 뒤(실패는 그대로 던진다) true. 시퀀스가 없어 기본값을
+   *       못 둬도 트리거는 만든다.
+   * </ul>
+   */
+  private boolean needsTriggerDdl(Connection conn, String schema, String table, TriggerShape shape)
+      throws SQLException {
+    if (shape == TriggerShape.CURRENT) {
+      return false;
+    }
+    if (shape == TriggerShape.MISSING) {
+      TiberoCatalog.rebindIdDefaultIfNeeded(conn, schema, table);
+      return true;
+    }
+    try {
+      if (TiberoCatalog.rebindIdDefaultIfNeeded(conn, schema, table)) {
+        return true;
+      }
+      log.warn("Tibero 옛 행 트리거 테이블에 ID 기본값을 둘 시퀀스가 없어 옛 트리거를 그대로 씁니다: {}", table);
+    } catch (SQLException | RuntimeException e) {
+      log.warn("Tibero 옛 행 트리거 테이블의 ID 기본값 설정 실패 — 옛 트리거로 계속하고 다음에 다시 시도합니다: {}", table, e);
+    }
+    return false;
   }
 
   /**
