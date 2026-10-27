@@ -11,8 +11,23 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.config import Settings
 from app.routers import store_gate
 from app.services import load_executor, sql_executor
+
+# 서비스 함수는 기본 제한을 갖지 않는다(기본값은 Settings 한 곳) — 단위 테스트는 라우터처럼 설정 기본값을 넘긴다.
+SQL_DEFAULT_TIMEOUT = Settings.model_fields["sql_statement_timeout_seconds"].default
+LOAD_DEFAULT_TIMEOUT = Settings.model_fields["load_statement_timeout_seconds"].default
+
+
+def _load(*args, **kwargs):
+    kwargs.setdefault("default_timeout_seconds", LOAD_DEFAULT_TIMEOUT)
+    return load_executor.execute_load(*args, **kwargs)
+
+
+def _sql(*args, **kwargs):
+    kwargs.setdefault("default_timeout_seconds", SQL_DEFAULT_TIMEOUT)
+    return sql_executor.execute_sql(*args, **kwargs)
 
 
 class _PgError(Exception):
@@ -41,7 +56,7 @@ def test_load_inserts_rows_and_commits():
     conn, _ = _conn()
     rows = [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}]
     with patch("app.services.load_executor.insert_batch") as ins:
-        res = load_executor.execute_load("rtmp_ab12", rows, None, conn)
+        res = _load("rtmp_ab12", rows, None, conn)
     assert res.success is True and res.rows_loaded == 2
     assert res.error is None and res.db_error is None
     ins.assert_called_once_with(conn, "rtmp_ab12", rows)
@@ -54,7 +69,7 @@ def test_load_applies_column_type_map():
     rows = [{"n": "42", "d": "2024-03-05", "t": "2024-03-05T01:02:03", "m": "1.5", "f": "yes"}]
     types = {"n": "INTEGER", "d": "DATE", "t": "TIMESTAMP", "m": "DECIMAL", "f": "BOOLEAN"}
     with patch("app.services.load_executor.insert_batch") as ins:
-        load_executor.execute_load("out_tbl", rows, types, conn)
+        _load("out_tbl", rows, types, conn)
     row = ins.call_args.args[2][0]
     assert row == {
         "n": 42,
@@ -68,7 +83,7 @@ def test_load_applies_column_type_map():
 def test_load_fills_missing_keys_with_none_in_first_seen_order():
     conn, _ = _conn()
     with patch("app.services.load_executor.insert_batch") as ins:
-        res = load_executor.execute_load("t1", [{"a": 1}, {"b": "x"}], None, conn)
+        res = _load("t1", [{"a": 1}, {"b": "x"}], None, conn)
     assert res.success is True
     assert ins.call_args.args[2] == [{"a": 1, "b": None}, {"a": None, "b": "x"}]
 
@@ -76,7 +91,7 @@ def test_load_fills_missing_keys_with_none_in_first_seen_order():
 def test_load_empty_rows_is_success_without_touching_db():
     conn, _ = _conn()
     with patch("app.services.load_executor.insert_batch") as ins:
-        res = load_executor.execute_load("t1", [], None, conn)
+        res = _load("t1", [], None, conn)
     assert res.success is True and res.rows_loaded == 0
     ins.assert_not_called()
     conn.commit.assert_not_called()
@@ -89,7 +104,7 @@ def test_load_empty_rows_is_success_without_touching_db():
 def test_load_rejects_bad_table_before_any_sql(table):
     conn, _ = _conn()
     with patch("app.services.load_executor.insert_batch") as ins:
-        res = load_executor.execute_load(table, [{"a": 1}], None, conn)
+        res = _load(table, [{"a": 1}], None, conn)
     assert res.success is False and res.error == load_executor.BAD_TABLE
     assert res.db_error.message == load_executor.BAD_TABLE and res.db_error.sql_state is None
     ins.assert_not_called()
@@ -100,7 +115,7 @@ def test_load_rejects_bad_table_before_any_sql(table):
 def test_load_rejects_bad_column(col):
     conn, _ = _conn()
     with patch("app.services.load_executor.insert_batch") as ins:
-        res = load_executor.execute_load("t1", [{col: 1}], None, conn)
+        res = _load("t1", [{col: 1}], None, conn)
     assert res.success is False and res.error == load_executor.BAD_COLUMN
     ins.assert_not_called()
 
@@ -109,7 +124,7 @@ def test_load_rejects_bad_column(col):
 def test_load_non_dict_or_empty_row_is_failure_not_exception(bad_rows):
     conn, _ = _conn()
     with patch("app.services.load_executor.insert_batch") as ins:
-        res = load_executor.execute_load("t1", bad_rows, None, conn)
+        res = _load("t1", bad_rows, None, conn)
     assert res.success is False and res.rows_loaded == 0
     assert res.db_error.message == res.error
     ins.assert_not_called()
@@ -121,7 +136,7 @@ def test_load_conversion_error_is_failure_not_exception():
     with patch("app.services.load_executor.insert_batch"), patch(
         "app.services.load_executor._apply_type_conversion", side_effect=RuntimeError("변환 폭발")
     ):
-        res = load_executor.execute_load("t1", [{"a": 1}], {"a": "INTEGER"}, conn)
+        res = _load("t1", [{"a": 1}], {"a": "INTEGER"}, conn)
     assert res.success is False and "변환 폭발" in res.error
     assert res.db_error is not None
 
@@ -130,7 +145,7 @@ def test_load_rollback_failure_does_not_mask_original_error():
     conn, _ = _conn()
     conn.rollback.side_effect = RuntimeError("연결 끊김")
     with patch("app.services.load_executor.insert_batch", side_effect=_PgError("duplicate key")):
-        res = load_executor.execute_load("t1", [{"a": 1}], None, conn)
+        res = _load("t1", [{"a": 1}], None, conn)
     assert res.success is False and "duplicate key" in res.error
     assert res.db_error.sql_state == "23505"
 
@@ -138,7 +153,7 @@ def test_load_rollback_failure_does_not_mask_original_error():
 def test_load_failure_rolls_back_with_db_error():
     conn, _ = _conn()
     with patch("app.services.load_executor.insert_batch", side_effect=_PgError("duplicate key")):
-        res = load_executor.execute_load("t1", [{"a": 1}], None, conn)
+        res = _load("t1", [{"a": 1}], None, conn)
     assert res.success is False and res.rows_loaded == 0
     assert "duplicate key" in res.error
     assert res.db_error.code == 0 and res.db_error.sql_state == "23505"
@@ -153,15 +168,22 @@ def test_load_timeout_sets_local_statement_timeout_before_insert():
     with patch(
         "app.services.load_executor.insert_batch", side_effect=lambda *a: order.append("INSERT")
     ):
-        load_executor.execute_load("t1", [{"a": 1}], None, conn, timeout_seconds=90)
+        _load("t1", [{"a": 1}], None, conn, timeout_seconds=90)
     assert order == ["SET LOCAL statement_timeout = 90000", "INSERT"]
 
 
-def test_load_without_timeout_sets_nothing():
+def test_load_without_timeout_uses_1800_second_default():
     conn, cur = _conn()
     with patch("app.services.load_executor.insert_batch"):
-        load_executor.execute_load("t1", [{"a": 1}], None, conn)
-    cur.execute.assert_not_called()
+        _load("t1", [{"a": 1}], None, conn)
+    assert _executed(cur) == ["SET LOCAL statement_timeout = 1800000"]
+
+
+def test_load_uses_configured_default_when_request_has_no_timeout():
+    conn, cur = _conn()
+    with patch("app.services.load_executor.insert_batch"):
+        _load("t1", [{"a": 1}], None, conn, default_timeout_seconds=7)
+    assert _executed(cur) == ["SET LOCAL statement_timeout = 7000"]
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +193,7 @@ def test_load_without_timeout_sets_nothing():
 def test_sql_timeout_seconds_sets_local_statement_timeout_first():
     conn, cur = _conn()
     cur.rowcount = 1
-    res = sql_executor.execute_sql(
+    res = _sql(
         "INSERT INTO t SELECT 1", conn, [], timeout_seconds=120
     )
     assert res.success is True
@@ -179,11 +201,64 @@ def test_sql_timeout_seconds_sets_local_statement_timeout_first():
     assert _executed(cur)[1] == "INSERT INTO t SELECT 1"
 
 
-def test_sql_without_timeout_seconds_unchanged():
+def test_sql_without_timeout_seconds_uses_50_second_default():
     conn, cur = _conn()
     cur.rowcount = 1
-    sql_executor.execute_sql("INSERT INTO t SELECT 1", conn, [])
-    assert _executed(cur) == ["INSERT INTO t SELECT 1"]
+    _sql("INSERT INTO t SELECT 1", conn, [])
+    assert _executed(cur) == ["SET LOCAL statement_timeout = 50000", "INSERT INTO t SELECT 1"]
+
+
+def test_sql_uses_configured_default_when_request_has_no_timeout():
+    conn, cur = _conn()
+    _sql("INSERT INTO t SELECT 1", conn, default_timeout_seconds=7)
+    assert _executed(cur) == ["SET LOCAL statement_timeout = 7000", "INSERT INTO t SELECT 1"]
+
+
+class _PgTimeout(Exception):
+    """PG 문장 제한 오류의 SQLState 를 재현한다."""
+
+    pgcode = "57014"
+
+
+def test_sql_pg_timeout_returns_korean_message_and_rolls_back():
+    conn, cur = _conn()
+    cur.execute.side_effect = [None, _PgTimeout("canceling statement due to statement timeout")]
+    res = _sql("INSERT INTO t SELECT 1", conn)
+    assert res.success is False
+    assert res.error == "실행 시간이 50초를 넘어 취소했습니다."
+    assert res.db_error.sql_state == "57014"
+    assert res.db_error.message == res.error
+    conn.rollback.assert_called_once()
+
+
+def test_load_pg_timeout_returns_korean_message_and_rolls_back():
+    conn, _ = _conn()
+    with patch("app.services.load_executor.insert_batch", side_effect=_PgTimeout("canceling statement due to statement timeout")):
+        res = _load("t1", [{"a": 1}], None, conn)
+    assert res.success is False
+    assert res.error == "적재 시간이 1800초를 넘어 취소했습니다."
+    assert res.db_error.sql_state == "57014"
+    assert res.db_error.message == res.error
+    conn.rollback.assert_called_once()
+
+
+def test_sql_pg_user_cancel_keeps_original_message():
+    # 57014 는 관리자 취소(pg_cancel_backend)에서도 난다 — 그때는 「N초 초과」가 아니라 원문을 그대로 둔다(리뷰 M-5).
+    conn, cur = _conn()
+    cur.execute.side_effect = [None, _PgTimeout("canceling statement due to user request")]
+    res = _sql("INSERT INTO t SELECT 1", conn)
+    assert res.success is False
+    assert res.error == "canceling statement due to user request"
+    assert res.db_error.sql_state == "57014"
+
+
+def test_load_pg_user_cancel_keeps_original_message():
+    conn, _ = _conn()
+    with patch("app.services.load_executor.insert_batch", side_effect=_PgTimeout("canceling statement due to user request")):
+        res = _load("t1", [{"a": 1}], None, conn)
+    assert res.success is False
+    assert res.error == "canceling statement due to user request"
+    assert res.db_error.sql_state == "57014"
 
 
 # ---------------------------------------------------------------------------

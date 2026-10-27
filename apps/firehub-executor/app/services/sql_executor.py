@@ -1,6 +1,7 @@
 from typing import Optional
 
 from app.schemas.responses import PgErrorInfo, SqlExecuteResponse, db_error_of
+from app.services.db_utils import set_local_statement_timeout, statement_timeout_message
 from app.services.query_executor import detect_statement_type, sqlstate
 from app.validators.sql_validator import (
     SqlValidationError,
@@ -14,8 +15,11 @@ OUTPUT_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))"
 
 
 def execute_sql(
-    query: str, conn, pre_statements=(), timeout_seconds: Optional[int] = None
+    query: str, conn, pre_statements=(), timeout_seconds: Optional[int] = None,
+    *, default_timeout_seconds: int,
 ) -> SqlExecuteResponse:
+    """``default_timeout_seconds`` 는 요청에 제한이 없을 때 쓸 값 — 기본값은 ``Settings.sql_statement_timeout_seconds``
+    한 곳뿐이라 여기서는 기본값을 두지 않고 라우터가 설정값을 넘긴다."""
     # 본 쿼리와 선행 문장(pre-statement) 모두 실행 전에 검증한다.
     # pre-statement 는 화이트리스트 기반 validate_pre_statement 로 본 쿼리보다 엄격하게 검사한다.
     try:
@@ -39,6 +43,8 @@ def execute_sql(
     # 문 종류는 애널리틱스와 같은 분류기(앞 주석은 어휘 인지로 걷음)로 정한다(WD-93) — 예전엔 WITH 로 시작하면 읽기로 봐서 CTE DML 이
     # 실패하거나(no results to fetch) 커밋 없이 끝났다. 분류기가 틀려도 커밋 쪽으로만 틀린다.
     is_select = not pre_statements and detect_statement_type(query) == "SELECT"
+    # 요청별 값 또는 기본 제한(WD-259) — 한 번만 정해 SET LOCAL 과 시간 초과 안내 문구가 같은 값을 쓴다(최종 리뷰).
+    effective_timeout = timeout_seconds if timeout_seconds is not None else default_timeout_seconds
 
     try:
         with conn.cursor() as cursor:
@@ -56,12 +62,9 @@ def execute_sql(
                 # 키·문장은 API 의 SqlScriptExecutor.OUTPUT_LOCK_SQL 과 같아야 한다.
                 cursor.execute(OUTPUT_LOCK_SQL, (output_lock_key(stmt),))
                 cursor.execute(stmt)
-            if timeout_seconds is not None:
-                # 요청별 시간 제한(WD-77, WD-236): 이 트랜잭션에만 걸리는 statement_timeout(밀리초). 선행 문장(잠금·비우기)은
-                # 사용자 제한을 받지 않고 본문만 받는다 — db-executor 와 같은 의미다(스펙 §6.2). 그래서 선행 문장 루프 뒤,
-                # 본문 직전에 건다. SET 은 값을 바인딩하지 못하므로 검증된 정수(요청 스키마가 1 이상 정수만 받는다)를 int() 로
-                # 한 번 더 고정해 문장에 넣는다. LOCAL 이라 커밋·롤백 때 풀려 풀에 반납된 연결로 새지 않는다. 없으면 건너뛴다.
-                cursor.execute(f"SET LOCAL statement_timeout = {int(timeout_seconds) * 1000}")
+            # 요청별 값 또는 기본 제한(WD-259). 선행 문장(잠금·비우기)은 사용자 제한을 받지 않고 본문만 받는다 — db-executor 와
+            # 같은 의미다(스펙 §6.2). 그래서 선행 문장 루프 뒤, 본문 직전에 건다. 기본값이 늘 있으므로 언제나 건다(리뷰 M-4).
+            set_local_statement_timeout(cursor, effective_timeout)
             cursor.execute(query)
             if is_select:
                 columns = [desc[0] for desc in cursor.description] if cursor.description else []
@@ -88,15 +91,18 @@ def execute_sql(
                 )
     except Exception as exc:
         conn.rollback()
+        state = sqlstate(exc)
+        # 우리가 건 문장 제한에 걸린 본문만 드라이버 영문 대신 초 단위 한국어 안내를 준다. 관리자 취소 등 다른 57014 는 원문을 둔다.
+        message = statement_timeout_message(exc, "실행", effective_timeout)
         return SqlExecuteResponse(
             success=False,
             rows=None,
             columns=None,
             row_count=0,
             execution_log="",
-            error=str(exc),
+            error=message,
             pg_error=pg_error_info(exc),
-            db_error=db_error_of(str(exc), sqlstate(exc)),
+            db_error=db_error_of(message, state),
         )
 
 

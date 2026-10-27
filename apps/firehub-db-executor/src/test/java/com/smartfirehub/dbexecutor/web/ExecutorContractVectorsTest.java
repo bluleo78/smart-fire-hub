@@ -4,11 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.sql.Deadline;
 import com.smartfirehub.dbexecutor.sql.LoadRunner;
 import com.smartfirehub.dbexecutor.sql.ProbeRunner;
@@ -30,6 +33,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -52,6 +56,7 @@ class ExecutorContractVectorsTest {
           1L, "TIBERO", "h", 8629, "tb", "GENIA_T1", new StoreDescriptor.Account("u", "p"), null);
 
   @Autowired MockMvc mvc;
+  @Autowired ExecutionTimeouts timeouts;
   @MockitoBean StoreDescriptorClient descriptors;
   @MockitoBean SqlRunner sqlRunner;
   @MockitoBean ProbeRunner probeRunner;
@@ -174,9 +179,8 @@ class ExecutorContractVectorsTest {
             .contentType(MediaType.APPLICATION_JSON)
             .content(OM.writeValueAsString(ex.get("request"))));
 
-    org.mockito.ArgumentCaptor<Deadline> deadline =
-        org.mockito.ArgumentCaptor.forClass(Deadline.class);
-    org.mockito.Mockito.verify(sqlRunner)
+    ArgumentCaptor<Deadline> deadline = ArgumentCaptor.forClass(Deadline.class);
+    verify(sqlRunner)
         .run(
             any(),
             anyString(),
@@ -184,6 +188,68 @@ class ExecutorContractVectorsTest {
             deadline.capture(),
             org.mockito.ArgumentMatchers.eq(requested));
     assertThat(deadline.getValue().totalSeconds()).isEqualTo(1800 + requested);
+  }
+
+  /**
+   * 기본 제한 벡터(WD-259, 스펙 §4.2 「두 실행기 테스트가 벡터 사례를 읽는다」, 리뷰 I-5): {@code timeout_seconds} 없는 SQL 은 본문
+   * 문장 제한이 {@code expectedStatementTimeoutMs} 다. 컨트롤러는 요청값이 없으면 러너에 null 을 넘기고 러너가 {@code
+   * app.sql.statement-timeout-seconds} 를 쓰므로, 넘어간 값(null 이면 그 설정값)을 벡터와 대조한다 — 설정 기본값이 바뀌면 여기서 깨진다.
+   */
+  @Test
+  void defaultSqlStatementTimeoutVectors_matchRunnerLimit() throws Exception {
+    stubRunners();
+    int checked = 0;
+    for (JsonNode ex : FIXTURE.get("endpoints").get("sql").get("examples")) {
+      if (!ex.has("expectedStatementTimeoutMs")
+          || (ex.has("backend") && !ex.get("backend").asText().equals("db-executor"))) {
+        continue;
+      }
+      clearInvocations(sqlRunner);
+      mvc.perform(
+          post("/execute/sql")
+              .header("Authorization", "Internal ctl-token")
+              .contentType(MediaType.APPLICATION_JSON)
+              .content(OM.writeValueAsString(ex.get("request"))));
+      ArgumentCaptor<Integer> requested = ArgumentCaptor.forClass(Integer.class);
+      verify(sqlRunner).run(any(), anyString(), any(), any(Deadline.class), requested.capture());
+      Integer passed = requested.getValue();
+      int effectiveSeconds = passed != null ? passed : timeouts.sql().statementTimeoutSeconds();
+      assertThat(effectiveSeconds * 1000L)
+          .as(ex.get("name").asText())
+          .isEqualTo(ex.get("expectedStatementTimeoutMs").asLong());
+      checked++;
+    }
+    assertThat(checked).isGreaterThanOrEqualTo(1);
+  }
+
+  /**
+   * Tibero 기본 적재 제한 벡터(리뷰 I-5): {@code timeout_seconds} 없는 적재의 요청 전체 기한이 {@code
+   * expectedDeadlineSeconds} (app.load.timeout-seconds 기본 1800)다. Python 실행기 테스트도 같은 값을 자기 기본값과
+   * 대조한다.
+   */
+  @Test
+  void defaultLoadDeadlineVectors_matchLoadRunnerDeadline() throws Exception {
+    stubRunners();
+    int checked = 0;
+    for (JsonNode ex : FIXTURE.get("endpoints").get("load").get("examples")) {
+      if (!ex.has("expectedDeadlineSeconds")
+          || !ex.path("backend").asText("").equals("db-executor")) {
+        continue;
+      }
+      clearInvocations(loadRunner);
+      mvc.perform(
+          post("/execute/load")
+              .header("Authorization", "Internal ctl-token")
+              .contentType(MediaType.APPLICATION_JSON)
+              .content(OM.writeValueAsString(ex.get("request"))));
+      ArgumentCaptor<Deadline> deadline = ArgumentCaptor.forClass(Deadline.class);
+      verify(loadRunner).load(any(), anyString(), any(), any(), deadline.capture());
+      assertThat(deadline.getValue().totalSeconds())
+          .as(ex.get("name").asText())
+          .isEqualTo(ex.get("expectedDeadlineSeconds").asInt());
+      checked++;
+    }
+    assertThat(checked).isGreaterThanOrEqualTo(1);
   }
 
   @Test

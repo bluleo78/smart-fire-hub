@@ -76,6 +76,44 @@ def test_vectors_loaded():
     assert set(_ENDPOINTS) >= {"sql", "query", "probe", "load"}
 
 
+@pytest.mark.parametrize(
+    "name,ex",
+    [
+        pytest.param(name, ex, id=f"{name}-{ex['name']}")
+        for name in ("sql", "load")
+        for ex in _ENDPOINTS[name]["examples"]
+        if "expectedStatementTimeoutMs" in ex and ex.get("backend") in (None, "python")
+    ],
+)
+def test_default_timeout_vectors_apply_to_pg_body(test_client, mock_auth_header, name, ex):
+    # 벡터의 기대값은 실제 PG 경계로 나가는 SET LOCAL 문장에 대조한다.
+    cur = _cursor(False)
+    gate = MagicMock()
+    gate.peek.return_value = SimpleNamespace(backend="POSTGRESQL")
+    with patch("app.routers.store_gate.get_store_client", return_value=gate), \
+            patch(f"app.routers.{name}.get_connection", _conn_cm(cur)), \
+            patch("app.services.load_executor.insert_batch"):
+        resp = test_client.post(_ENDPOINTS[name]["path"], json=ex["request"], headers=mock_auth_header)
+    assert resp.status_code == 200 and resp.json()["success"] is True
+    assert [call.args[0] for call in cur.execute.call_args_list][0] == (
+        f"SET LOCAL statement_timeout = {ex['expectedStatementTimeoutMs']}"
+    )
+
+
+def test_tibero_default_load_deadline_vector_matches_python_default():
+    # 리뷰 I-5: 「값이 없으면 두 실행기 모두 기본 1800초」— db-executor 는 이 벡터의 expectedDeadlineSeconds 를 실제 기한과 대조하고,
+    # Python 실행기는 같은 값이 자기 기본 적재 제한(설정 기본값)과 같은지 본다. 어느 한쪽 기본값만 바뀌면 여기서 깨진다.
+    from app.config import Settings
+
+    vectors = [
+        ex for ex in _ENDPOINTS["load"]["examples"]
+        if ex.get("backend") == "db-executor" and "expectedDeadlineSeconds" in ex
+    ]
+    assert vectors, "Tibero 기본 적재 제한 벡터가 없다"
+    for ex in vectors:
+        assert ex["expectedDeadlineSeconds"] == Settings.model_fields["load_statement_timeout_seconds"].default
+
+
 @pytest.mark.parametrize("name,ex", list(_cases()))
 def test_examples(test_client, mock_auth_header, name, ex):
     resp = _post(test_client, mock_auth_header, name, ex["request"], fail=False)

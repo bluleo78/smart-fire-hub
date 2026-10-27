@@ -3,8 +3,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.query_executor import detect_statement_type
-from app.services.sql_executor import execute_sql
+from app.config import Settings
+from app.services import sql_executor
 from app.schemas.responses import SqlExecuteResponse
+
+
+def execute_sql(*args, **kwargs):
+    """서비스 함수는 기본 제한을 갖지 않는다(기본값은 Settings 한 곳) — 라우터처럼 설정 기본값을 넘긴다."""
+    kwargs.setdefault(
+        "default_timeout_seconds", Settings.model_fields["sql_statement_timeout_seconds"].default
+    )
+    return sql_executor.execute_sql(*args, **kwargs)
 
 
 def make_conn(cursor_mock):
@@ -88,6 +97,7 @@ def test_pre_statements_run_before_query_in_same_transaction():
     executed = [c.args[0] for c in cursor.execute.call_args_list]
     assert executed[1:] == [
         'DELETE FROM "data"."out"',
+        "SET LOCAL statement_timeout = 50000",
         'INSERT INTO "data"."out" ("a") SELECT 1',
     ]
     conn.commit.assert_called_once()
@@ -119,6 +129,7 @@ def test_no_lock_without_pre_statements():
     execute_sql('INSERT INTO "data"."out" ("a") SELECT 1', conn)
 
     assert [c.args[0] for c in cursor.execute.call_args_list] == [
+        "SET LOCAL statement_timeout = 50000",
         'INSERT INTO "data"."out" ("a") SELECT 1'
     ]
 
@@ -142,6 +153,7 @@ def test_user_dml_update_with_pre_statement_locks_clears_then_commits_once():
     assert [c.args[0] for c in cursor.execute.call_args_list] == [
         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
         'DELETE FROM "data"."out"',
+        "SET LOCAL statement_timeout = 50000",
         'UPDATE "data"."out" SET "a" = 1',
     ]
     cursor.fetchall.assert_not_called()

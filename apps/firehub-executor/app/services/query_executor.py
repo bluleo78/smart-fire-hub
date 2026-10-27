@@ -162,6 +162,15 @@ def sqlstate(exc: BaseException) -> str | None:
     return code if isinstance(code, str) else None
 
 
+def is_statement_timeout(exc: BaseException) -> bool:
+    """우리가 건 statement_timeout 에 걸린 취소인가(SQLState 57014 + 원문 ``statement timeout``).
+
+    57014 는 관리자 ``pg_cancel_backend``(원문 ``user request``) 같은 다른 취소에서도 나므로, 「N초 초과」 한국어 문구는 이때만 쓴다
+    (WD-259 리뷰 M-5). 그 밖의 취소는 원문을 그대로 두고, api 가 ``pg_error`` 로 「시간 제한을 넘거나 취소되어」로 번역한다.
+    """
+    return sqlstate(exc) == "57014" and "statement timeout" in str(exc)
+
+
 def _is_user_sql_runtime_error(exc: BaseException) -> bool:
     """사용자 SQL 실행 중에 난 오류라서 geometry 래핑 재시도로 결과가 바뀌지 않는 경우 True(#779)."""
     code = sqlstate(exc)

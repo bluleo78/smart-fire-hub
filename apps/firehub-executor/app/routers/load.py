@@ -24,5 +24,6 @@ async def execute_load_endpoint(
     # 요청의 테넌트 롤로 연다 — 적재도 그 테넌트가 쓸 수 있는 스키마의 테이블만 대상이어야 한다.
     with get_connection(request.tenant_id, settings) as conn:
         return load_executor.execute_load(
-            request.table, request.rows, request.column_type_map, conn, request.timeout_seconds
+            request.table, request.rows, request.column_type_map, conn, request.timeout_seconds,
+            default_timeout_seconds=settings.load_statement_timeout_seconds,
         )

@@ -28,5 +28,6 @@ async def execute_sql(
     # 요청 본문(tenantId)을 알아야 접속 주체가 정해지기 때문이다(app/dependencies.py 주석 참고).
     with get_connection(request.tenant_id, settings) as conn:
         return sql_executor.execute_sql(
-            request.query, conn, request.pre_statements, request.timeout_seconds
+            request.query, conn, request.pre_statements, request.timeout_seconds,
+            default_timeout_seconds=settings.sql_statement_timeout_seconds,
         )

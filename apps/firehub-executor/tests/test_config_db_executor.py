@@ -2,6 +2,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from app.config import Settings
 from app.db.backends import backend_for
@@ -22,6 +23,22 @@ def test_db_executor_settings_default_to_unset(monkeypatch):
     monkeypatch.delenv("EXECUTOR_DB_EXECUTOR_LOAD_TOKEN", raising=False)
     s = get_test_settings(_env_file=None)
     assert s.db_executor_base_url == "" and s.db_executor_load_token == ""
+
+
+def test_pg_statement_timeout_defaults_load_from_environment(monkeypatch):
+    # 운영자가 두 PG 문장 제한을 독립적으로 조정할 수 있어야 한다.
+    monkeypatch.setenv("EXECUTOR_SQL_STATEMENT_TIMEOUT_SECONDS", "42")
+    monkeypatch.setenv("EXECUTOR_LOAD_STATEMENT_TIMEOUT_SECONDS", "90")
+    s = get_test_settings(_env_file=None)
+    assert s.sql_statement_timeout_seconds == 42
+    assert s.load_statement_timeout_seconds == 90
+
+
+@pytest.mark.parametrize("field", ["sql_statement_timeout_seconds", "load_statement_timeout_seconds"])
+def test_pg_statement_timeout_config_rejects_zero(field):
+    # 0밀리초는 PG 에서 제한 해제이므로 잘못된 설정을 기동 전에 거부한다.
+    with pytest.raises(ValidationError):
+        get_test_settings(_env_file=None, **{field: 0})
 
 
 def test_tibero_odbc_settings_are_gone():

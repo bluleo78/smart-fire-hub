@@ -10,7 +10,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from app.schemas.responses import LoadResponse, db_error_of
-from app.services.db_utils import insert_batch
+from app.services.db_utils import insert_batch, set_local_statement_timeout, statement_timeout_message
 from app.services.python_executor import _apply_type_conversion
 from app.services.query_executor import sqlstate
 
@@ -56,32 +56,40 @@ def execute_load(
     column_type_map: Optional[dict],
     conn,
     timeout_seconds: Optional[int] = None,
+    *,
+    default_timeout_seconds: int,
 ) -> LoadResponse:
-    """검증 → (선택) 문장 제한 → 타입 변환 → 배치 INSERT → 커밋. 오류는 예외가 아니라 ``success=False`` 로 돌려준다.
+    """검증 → 문장 제한 → 타입 변환 → 배치 INSERT → 커밋. 오류는 예외가 아니라 ``success=False`` 로 돌려준다.
 
     ``conn`` 은 테넌트 롤로 연 연결이고 ``search_path`` 가 테넌트 스키마라, 이름 하나만 인용해 넣으면 그 스키마의 테이블이다.
+    ``default_timeout_seconds`` 는 요청에 제한이 없을 때 쓸 값 — 기본값은 ``Settings.load_statement_timeout_seconds`` 한 곳뿐이라
+    라우터가 설정값을 넘긴다.
     """
     if not _valid_name(table):
         return _failure(BAD_TABLE)
     if not rows:
         return LoadResponse(success=True, rows_loaded=0)
+    # 요청별 값 또는 기본값 — 한 번만 정해 SET LOCAL 과 시간 초과 안내 문구가 같은 값을 쓴다(최종 리뷰).
+    effective_timeout = timeout_seconds if timeout_seconds is not None else default_timeout_seconds
     try:
         # 행 모양 검증·타입 변환도 try 안에서 한다 — 어긋난 입력이 500 이 아니라 success=false + db_error 가 되게.
         normalized = _normalize(rows)
         if normalized is None:
             return _failure(BAD_COLUMN)
         _apply_type_conversion(normalized, column_type_map)
-        if timeout_seconds is not None:
-            # 이 트랜잭션에만 걸리는 문장 제한(밀리초) — /execute/sql 과 같은 방식. 값은 요청 스키마가 1 이상 정수로 보증한다.
-            # 주의: execute_values 는 페이지(문장) 단위로 실행하므로 이 제한은 문장 단위다(요청 전체 기한이 아니다).
-            with conn.cursor() as cur:
-                cur.execute(f"SET LOCAL statement_timeout = {int(timeout_seconds) * 1000}")
+        # 요청별 값 또는 기본값을 트랜잭션 문장 제한으로 건다 — /execute/sql 과 같은 도우미. 기본값이 늘 있으므로 언제나 건다(리뷰 M-4).
+        # 주의: execute_values 는 페이지(문장) 단위로 실행하므로 이 제한은 문장 단위다(요청 전체 기한이 아니다).
+        with conn.cursor() as cur:
+            set_local_statement_timeout(cur, effective_timeout)
         insert_batch(conn, table, normalized)
         conn.commit()
         return LoadResponse(success=True, rows_loaded=len(normalized))
     except Exception as exc:
         _rollback_quietly(conn)
-        return _failure(str(exc), sqlstate(exc))
+        state = sqlstate(exc)
+        # 우리가 건 문장 제한에 걸린 경우만 Tibero 적재와 같은 뜻의 한국어 문구로 돌려준다. 관리자 취소 등 다른 57014 는 원문을 둔다.
+        message = statement_timeout_message(exc, "적재", effective_timeout)
+        return _failure(message, state)
 
 
 def _rollback_quietly(conn) -> None:

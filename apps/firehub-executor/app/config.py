@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
@@ -35,6 +36,12 @@ class Settings(BaseSettings):
     # Python execution
     python_timeout: int = 1800
     python_packages_dir: str = "/usr/local/lib/python3.11/dist-packages"
+
+    # PG 문장 단위 제한. 요청에 timeout_seconds 가 없으면 api 의 SQL 응답 대기(60초)보다 먼저 본문을 취소한다.
+    # 기본값은 여기 한 곳뿐이다 — 서비스 함수는 기본값을 갖지 않고 라우터가 이 설정값을 넘긴다.
+    sql_statement_timeout_seconds: int = Field(50, gt=0)
+    # 적재는 execute_values 의 각 페이지 문장에 이 제한을 건다(db-executor 적재 기본 1800초와 맞춤).
+    load_statement_timeout_seconds: int = Field(1800, gt=0)
 
     # Connection pool — 레거시 공유 롤(pipeline_executor) 풀. 현재는 readiness 프로브 전용이며
     # 실행 경로는 전부 테넌트별 풀을 쓴다. 이 풀과 레거시 롤은 P3-b2 에서 함께 은퇴한다.
