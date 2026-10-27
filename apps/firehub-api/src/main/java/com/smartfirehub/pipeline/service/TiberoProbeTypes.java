@@ -23,7 +23,7 @@ import java.util.Locale;
  * 그래서 precision 이 없거나 0 이거나 최대(38) 이상이면 맨 NUMBER 다. 알려진 차이: {@code COUNT(*)} 는 PG 에서 INTEGER 지만
  * 여기서는 DECIMAL 이다.
  */
-final class TiberoProbeTypes {
+public final class TiberoProbeTypes {
 
   /** Tibero NUMBER 최대 정밀도 — 식 결과가 이 값(scale 0)으로 보고되면 선언된 정수 열이 아니라 식이다. */
   private static final int MAX_NUMBER_PRECISION = 38;
@@ -35,7 +35,7 @@ final class TiberoProbeTypes {
    *
    * @return 앱 타입 — 어디에도 해당하지 않으면 TEXT
    */
-  static String toAppType(ProbeColumn c) {
+  public static String toAppType(ProbeColumn c) {
     String type = c.typeName() == null ? "" : c.typeName().toUpperCase(Locale.ROOT);
     // TIMESTAMP 는 DATE 보다 먼저 본다 — "TIMESTAMP WITH TIME ZONE" 같은 이름이 모두 TIMESTAMP 로 시작한다.
     if (type.startsWith("TIMESTAMP")) {

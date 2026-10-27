@@ -308,16 +308,15 @@ public class TriggerEventService {
    * 트랜잭션에 넣으면 그 동안 커넥션을 점유하고 실패 의미도 바뀐다.
    */
   private DatasetProbe probeDatasets(List<Long> datasetIds) {
-    DatasetProbe probe;
-    if (pipelineDataSchema.isTibero()) {
-      // Tibero: 이름만 트랜잭션 안에서 읽고, Tibero 질의(행 수)는 PG 트랜잭션 밖에서 실행한다.
-      Map<Long, String> tableNames =
-          transactionTemplate.execute(status -> readTableNames(datasetIds));
-      probe = tableNames == null ? null : countRows(tableNames);
-    } else {
-      // PG: 이름과 행 수를 같은 트랜잭션에서 센다.
-      probe = transactionTemplate.execute(status -> countRows(readTableNames(datasetIds)));
-    }
+    // PG: 이름과 행 수를 같은 트랜잭션에서 센다. Tibero: 이름만 트랜잭션 안에서 읽고, Tibero 질의(행 수)는 PG 트랜잭션 밖에서 실행한다.
+    // 이름 조회 트랜잭션이 결과를 못 내면(null) 행 수를 세지 않고 null 로 둔다.
+    DatasetProbe probe =
+        StoreTransactions.loadThenExecute(
+            pipelineDataSchema,
+            transactionTemplate,
+            transactionTemplate,
+            () -> readTableNames(datasetIds),
+            tableNames -> tableNames == null ? null : countRows(tableNames));
     // 판정할 수 없는 회차(null)는 모두 "있지만 못 읽음"으로 둔다 — 존재를 비우면 diffSnapshots 가 전부 삭제로 보고 감시 목록에서 빼 트리거를 끈다.
     return probe == null ? new DatasetProbe(new HashSet<>(datasetIds), Map.of()) : probe;
   }

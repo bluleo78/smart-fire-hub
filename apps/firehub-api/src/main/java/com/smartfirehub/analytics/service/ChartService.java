@@ -13,6 +13,7 @@ import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
+import com.smartfirehub.pipeline.service.StoreTransactions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
@@ -196,16 +197,16 @@ public class ChartService {
    * have access to the chart (owner or shared).
    */
   public ChartDataResponse getChartData(Long id, Long userId) {
-    if (!pipelineDataSchema.isTibero()) {
-      // PG 테넌트: 기존과 같이 세 단계를 readOnly 트랜잭션 하나에서 차례로 실행한다.
-      return readOnlyTx.execute(
-          status -> assembleChartData(executeChart(loadChart(id, userId), userId)));
-    }
+    // PG 테넌트: 세 단계를 readOnly 트랜잭션 하나에서 차례로 실행한다.
     // Tibero 실행(최대 35초) 동안 PG 연결을 쥐지 않으려고 구간을 나눈다(WD-207).
     // 1) RLS GUC 가 필요한 차트·SQL 조회만 readOnly 트랜잭션, 2) 판정·실행은 트랜잭션 밖(판정은 자체 트랜잭션 리포지토리를 쓴다),
     // 3) 응답 조립은 DB 읽기가 없어 템플릿이 필요 없다.
-    ChartLoad load = readOnlyTx.execute(status -> loadChart(id, userId));
-    return assembleChartData(executeChart(load, userId));
+    return StoreTransactions.loadThenExecute(
+        pipelineDataSchema,
+        readOnlyTx,
+        readOnlyTx,
+        () -> loadChart(id, userId),
+        load -> assembleChartData(executeChart(load, userId)));
   }
 
   /** 1단계에서 읽은 차트 응답과 저장 쿼리 SQL 원문. */

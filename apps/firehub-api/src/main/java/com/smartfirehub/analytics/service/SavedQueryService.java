@@ -13,6 +13,7 @@ import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
+import com.smartfirehub.pipeline.service.StoreTransactions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -215,15 +216,16 @@ public class SavedQueryService {
    * 재실행 내보내기를 할 수 있게(code-review 4). 기록은 실행 시점 SQL 스냅샷·실행자 소유다.
    */
   public AnalyticsQueryResponse executeById(Long id, int maxRows, boolean readOnly, Long userId) {
-    if (!pipelineDataSchema.isTibero()) {
-      // PG 테넌트: 기존과 같이 조회·실행·기록 부착 전체를 쓰기 트랜잭션 하나로 실행한다.
-      return tx.execute(status -> runSavedQuery(getById(id, userId), maxRows, readOnly, userId));
-    }
+    // PG 테넌트: 조회·실행·기록 부착 전체를 쓰기 트랜잭션 하나로 실행한다.
     // Tibero 실행(최대 35초) 동안 PG 연결을 쥐지 않으려고 구간을 나눈다(WD-207).
     // 1) RLS GUC 가 필요한 저장 쿼리 조회만 readOnly 트랜잭션으로, 2) 실행·기록 부착은 트랜잭션 밖에서
     //    (attachRun 은 자체 트랜잭션 리포지토리다).
-    SavedQueryResponse query = readOnlyTx.execute(status -> getById(id, userId));
-    return runSavedQuery(query, maxRows, readOnly, userId);
+    return StoreTransactions.loadThenExecute(
+        pipelineDataSchema,
+        tx,
+        readOnlyTx,
+        () -> getById(id, userId),
+        query -> runSavedQuery(query, maxRows, readOnly, userId));
   }
 
   /** 조회해 둔 저장 쿼리를 실행하고 실행 기록을 붙인다. 트랜잭션 구간은 호출자(executeById)가 정한다. */

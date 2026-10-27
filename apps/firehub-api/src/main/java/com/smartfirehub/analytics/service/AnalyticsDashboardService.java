@@ -21,6 +21,7 @@ import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
+import com.smartfirehub.pipeline.service.StoreTransactions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
@@ -195,19 +196,18 @@ public class AnalyticsDashboardService {
   }
 
   public DashboardDataResponse getDashboardData(Long dashboardId, Long userId) {
-    if (!pipelineDataSchema.isTibero()) {
-      // PG 테넌트: 기존과 같이 세 단계를 readOnly 트랜잭션 하나에서 차례로 실행한다.
-      return readOnlyTx.execute(
-          status ->
-              assembleDashboard(
-                  executeDashboard(loadDashboard(dashboardId, userId), userId), userId));
-    }
+    // PG 테넌트: 세 단계를 readOnly 트랜잭션 하나에서 차례로 실행한다.
     // Tibero 실행(위젯마다 최대 35초) 동안 PG 연결을 쥐지 않으려고 구간을 나눈다(WD-207).
     // 1) RLS GUC 가 필요한 위젯·대시보드·SQL 조회는 readOnly 트랜잭션, 2) 판정·캐시·실행은 트랜잭션 밖(캐시 로더의 실행도 밖에서 돈다),
     // 3) 위젯별 차트 조회·응답 조립은 다시 readOnly 트랜잭션.
-    DashboardLoad load = readOnlyTx.execute(status -> loadDashboard(dashboardId, userId));
-    DashboardExecution exec = executeDashboard(load, userId);
-    return readOnlyTx.execute(status -> assembleDashboard(exec, userId));
+    return StoreTransactions.loadExecuteThen(
+        pipelineDataSchema,
+        readOnlyTx,
+        readOnlyTx,
+        () -> loadDashboard(dashboardId, userId),
+        load -> executeDashboard(load, userId),
+        readOnlyTx,
+        exec -> assembleDashboard(exec, userId));
   }
 
   /** 1단계 결과 — 대시보드, 위젯 상한을 적용한 위젯, 차트→저장 쿼리, 저장 쿼리→SQL 원문(미리 읽어 2단계가 DB 를 안 읽게 한다). */

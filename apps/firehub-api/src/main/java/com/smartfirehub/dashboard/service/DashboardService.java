@@ -14,6 +14,7 @@ import com.smartfirehub.dashboard.dto.SystemHealthResponse.PipelineHealth;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
+import com.smartfirehub.pipeline.service.StoreTransactions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -248,11 +249,12 @@ public class DashboardService {
    * 갇히므로, 자격 해석만 짧은 readOnly 트랜잭션에서 하고 나머지 구간은 {@link #getSystemHealth(Clearance)} 가 나눈다.
    */
   public SystemHealthResponse getSystemHealth() {
-    if (!pipelineDataSchema.isTibero()) {
-      return readOnlyTx.execute(status -> getSystemHealth(clearanceResolver.current()));
-    }
-    Clearance viewer = readOnlyTx.execute(status -> clearanceResolver.current());
-    return getSystemHealth(viewer);
+    return StoreTransactions.loadThenExecute(
+        pipelineDataSchema,
+        readOnlyTx,
+        readOnlyTx,
+        clearanceResolver::current,
+        this::getSystemHealth);
   }
 
   /**
@@ -262,15 +264,12 @@ public class DashboardService {
    * 저장소로 하며, PG 는 같은 트랜잭션 안에서, Tibero 는 네트워크 너머 질의라 PG 커넥션을 쥐지 않도록 트랜잭션 밖에서 한다.
    */
   public SystemHealthResponse getSystemHealth(Clearance viewer) {
-    if (!pipelineDataSchema.isTibero()) {
-      return readOnlyTx.execute(
-          status -> {
-            HealthRead read = readHealth(viewer);
-            return read.withEmpty(countEmptyDatasets(read.tableNames()));
-          });
-    }
-    HealthRead read = readOnlyTx.execute(status -> readHealth(viewer));
-    return read.withEmpty(countEmptyDatasets(read.tableNames()));
+    return StoreTransactions.loadThenExecute(
+        pipelineDataSchema,
+        readOnlyTx,
+        readOnlyTx,
+        () -> readHealth(viewer),
+        read -> read.withEmpty(countEmptyDatasets(read.tableNames())));
   }
 
   /**

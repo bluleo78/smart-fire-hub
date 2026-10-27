@@ -13,11 +13,7 @@ import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.dataset.storage.TenantDataStoreRepository;
-import com.smartfirehub.dataset.storage.tibero.TiberoNames;
-import com.smartfirehub.dataset.storage.tibero.TiberoPipelineSql;
-import com.smartfirehub.dataset.storage.tibero.TiberoSqlLexer;
 import com.smartfirehub.global.security.PermissionChecker;
-import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.LoadStrategy;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.dto.StepCursor;
@@ -34,6 +30,11 @@ import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ScriptTokenIssuer;
+import com.smartfirehub.pipeline.service.step.PgStepDialect;
+import com.smartfirehub.pipeline.service.step.SqlOutputColumns;
+import com.smartfirehub.pipeline.service.step.SqlStepRun;
+import com.smartfirehub.pipeline.service.step.StepDialect;
+import com.smartfirehub.pipeline.service.step.TiberoStepDialect;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -52,16 +53,15 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.function.ToLongFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -509,7 +509,10 @@ public class PipelineAsyncRunner {
       // Tibero 저장소 테넌트 판정(WD-77, 스펙 §5.1) — 이 스텝에서 한 번만 묻는다(테넌트 백엔드는 생성 후 불변이다). 모든 스텝 종류가
       // Tibero 에서 열렸다(Python 은 WD-78) — 종류별 분기가 이 값으로 Tibero 경로(db-executor·스테이징·조회 도우미)를 고른다.
       DataStoreBackend backend = pipelineDataSchema.backend();
-      boolean tiberoTenant = backend == DataStoreBackend.TIBERO;
+      // 백엔드별로 갈리는 분기(후보 시각·비우기 문장·행 트리거·스크립트 토큰·스테이징 판정·로컬 Python·Tibero SQL 실행 본체·PG 래핑 SQL
+      // 조립/실패 번역)는 방언이 맡는다(WD-231). PG 싱크(탐침·실행) 호출만 보안 불변식(SqlGateArchitectureTest) 때문에 이 메서드에 남아,
+      // SQL 분기 두 곳(TEMP 탐침·실행)이 방언 타입으로 갈린다.
+      StepDialect dialect = dialectFor(backend);
 
       // WD-30: 러너 TEMP 의 쓰기 후 허용 목록 확정 계획(출력 등급 처리가 채운다 — 허용 목록 필요 입력이 없거나 출력이 전부 교체되지 않으면 null).
       PipelineSecurityGate.OutputAllowlistPlan allowlistPlan = null;
@@ -618,10 +621,7 @@ public class PipelineAsyncRunner {
           // 트랜잭션에서 잡고(PG 시계와 섞지 않는다) 플레이스홀더도 Tibero 서버 벽시계로 변환하는 식으로 치환한다. 후보를 SQL
           // 실행 전에 잡는다는 불변식은 두 방언이 같다. 책갈피 저장(advanceCursor)은 PG timestamptz 그대로이고 값만 Tibero
           // 시계다.
-          stepCursorCandidate =
-              tiberoTenant
-                  ? tiberoIncrementalCursor.captureCandidate()
-                  : incrementalCursorService.captureCandidate();
+          stepCursorCandidate = dialect.captureIncrementalCandidate();
           sql = LastRunAtPlaceholder.substitute(sql, injected, backend);
           // 소스 테이블의 백필(_updated_at 컬럼+트리거) 완료 여부를 여기서 따로 확인하지 않는다.
           // V124 백필은 락을 못 잡은 테이블을 건너뛸 수 있지만, 그 결과는 fail-closed 다:
@@ -681,10 +681,11 @@ public class PipelineAsyncRunner {
           // 걸려 실행이 항상 실패한다(#645). 자동 생성 경로에서만 예약어 컬럼명을 자동으로
           // 별칭 처리(rename-on-conflict)해 우회한다 — 사용자가 명시적으로 짓는 다른 스텝 타입의
           // 출력 컬럼명 검증은 그대로 유지한다.
-          if (tiberoTenant) {
+          if (dialect instanceof TiberoStepDialect tiberoDialect) {
             // Tibero 는 db-executor probe 로 컬럼·타입을 얻는다(PG probe 는 쓰지 않는다). 같은 결과를 아래 적재에서 다시 쓴다.
-            tiberoProbe = probeTibero(sql);
-            probedColumns = tiberoResultColumns(tiberoProbe);
+            // PG 탐침(sqlColumnProbe)은 보안 불변식 때문에 방언이 아니라 이 메서드에 남아, 그래서 여기서 방언 타입으로 갈린다.
+            tiberoProbe = tiberoDialect.probeTibero(sql);
+            probedColumns = tiberoDialect.tiberoResultColumns(tiberoProbe);
           } else {
             probedColumns = sqlColumnProbe.columnsWithTypes(sql);
           }
@@ -744,7 +745,7 @@ public class PipelineAsyncRunner {
           if (outputTableName != null) {
             // Tibero 는 같은 계약의 Tibero 판 비우기 문장 — db-executor 가 선행문 형식을 다시 검사하고 대상 테이블을 먼저 잠근 뒤 같은
             // 트랜잭션에서 실행한다(#731/#735 와 같은 직렬화·원자성).
-            preStatements.add(outputClearStatement(tiberoTenant, outputTableName));
+            preStatements.add(dialect.outputClearStatement(outputTableName));
           }
         }
 
@@ -766,7 +767,7 @@ public class PipelineAsyncRunner {
           // Tibero 는 REPLACE 와 같은 Tibero 판 비우기 문장 — db-executor 선행문 규칙(PreStatementRule)은 이 형식만 받고
           // 대상 테이블을 먼저
           // 잠근다. PG 형식(OutputClearStatement)을 보내면 실행기가 거부한다.
-          preStatements.add(outputClearStatement(tiberoTenant, outputTableName));
+          preStatements.add(dialect.outputClearStatement(outputTableName));
         }
 
         // 출력 등급(판단 사항 5·스펙 §4.5): SELECT 는 러너가 붙이는 래퍼의 INSERT 대상이 판정 문자열에 없으므로 여기서 본다 — 러너가
@@ -796,130 +797,57 @@ public class PipelineAsyncRunner {
           pipelineSecurityGate.propagateToWriteTargets(access, runAs);
         }
 
-        if (tiberoTenant && !isSelect) {
-          // 사용자 DML 이 기대는 행 트리거를 실행 직전에 보장한다 — 보안 게이트·출력 등급 처리가 끝난 뒤라 거부된 SQL 은 DDL 을 만들지 않는다.
-          ensureTiberoRowTriggers(sql);
-        }
-        if (tiberoTenant && incrementalStep) {
-          // 증분은 _UPDATED_AT 이 UPDATE 때도 움직여야 맞다 — 출력·입력 테이블 트리거를 실행 전에 보장하고, 못 하면 실행하지 않는다.
-          ensureTiberoIncrementalTriggers(sql, outputTableName);
-        }
-        if (tiberoTenant) {
+        // Tibero 행 트리거 보장(사용자 DML·증분) — 보안 게이트·출력 등급 처리가 끝난 뒤라 거부된 SQL 은 DDL 을 만들지 않는다. PG 는 무동작.
+        dialect.prepareSqlExecution(sql, isSelect, incrementalStep, outputTableName);
+        SqlStepRun sqlRun =
+            new SqlStepRun(
+                sql,
+                preStatements,
+                isSelect,
+                outputTableName,
+                outputDatasetId,
+                isMerge,
+                tempDatasetAutoCreated,
+                tiberoProbe);
+        // 남는 백엔드 분기(WD-231, 의도적): Tibero 는 실행 본체 전체를 방언이 맡지만, PG 싱크
+        // (ExecutorClient.executeSql·SqlScriptExecutor.execute·SqlColumnProbe.columnsWithTypes)는
+        // SqlGateArchitectureTest 가 보안 판정(checkStepSqlForRun)과 같은 이 메서드 안에서만 부르게 강제한다 —
+        // 방언·람다·도우미로 옮기면 판정과 실행이 갈라진다. 그래서 PG 는 싱크가 아닌 조립·번역만 방언에 맡기고
+        // 싱크는 여기서 직접 부른다.
+        if (dialect instanceof TiberoStepDialect tiberoDialect) {
           // Tibero 테넌트: 컬럼 탐지·실행 모두 db-executor 로만 한다. executorEnabled 와 무관하고 PG 실행기로
-          // 폴백하지 않는다(스펙 §3). 여기까지 오면 검증·보안 게이트·출력 등급 처리가 이미 끝났다(사용자 SQL 은 게이트 통과 뒤에만 실행된다 — probe
-          // 포함).
-          executionLog =
-              executeTiberoSqlStep(
-                  sql,
-                  preStatements,
-                  isSelect,
-                  outputTableName,
-                  outputDatasetId,
-                  isMerge,
-                  tempDatasetAutoCreated,
-                  tiberoProbe,
-                  cancel);
+          // 폴백하지 않는다(스펙 §3). 여기까지 오면 검증·보안 게이트·출력 등급 처리가 이미 끝났다(사용자 SQL 은 게이트 통과 뒤에만
+          // 실행된다 — probe 포함).
+          executionLog = tiberoDialect.executeSql(sqlRun, cancel);
         } else if (isSelect && outputTableName != null && outputDatasetId != null) {
-          // SELECT 자동 적재: 컬럼 추출 → 매칭 → INSERT INTO ... SELECT 래핑
-          // 이번 실행에서 임시 데이터셋을 자동 생성/재사용한 경우에만 위와 동일한 규칙으로 예약어
-          // 컬럼명을 별칭 처리한다 — 임시 데이터셋에 실제로 저장된 컬럼명(id_1 등)과 정확히
-          // 매칭되어야 하기 때문이다. 사용자가 직접 지정한 기존 출력 데이터셋에는 이 별칭 처리를
-          // 적용하지 않는다 — 그 데이터셋의 "id" 컬럼은 예약어 충돌이 아니라 사용자가 실제로
-          // 만든 정상 컬럼일 수 있다(#645).
+          PgStepDialect pgDialect = (PgStepDialect) dialect;
+          // SELECT 자동 적재: 컬럼 추출 → 매칭 → INSERT INTO ... SELECT 래핑(매칭·래핑은 PG 방언이 한다).
           // 위 자동 생성 블록이 이미 probe 했으면 그 결과를 그대로 쓴다(이름은 ColumnInfo 에서 뽑는다).
           if (probedColumns == null) {
             probedColumns = sqlColumnProbe.columnsWithTypes(sql);
           }
-          List<String> rawSelectColumns = probedColumns.stream().map(ColumnInfo::name).toList();
-          List<String> selectColumns =
-              tempDatasetAutoCreated
-                  ? renameReservedColumnNames(rawSelectColumns)
-                  : rawSelectColumns;
-
-          // 출력 데이터셋의 컬럼은 **하나도 빼지 않는다**. 특히 is_primary_key 컬럼을 제외하면 안 된다
-          // (#684). 이 경로는 대상 목록만 좁히고 SELECT 식 목록은 그대로 두기 때문에, 대상에서 한
-          // 컬럼이라도 빠지면 식 개수가 어긋나 PostgreSQL 이 INSERT has more expressions than target
-          // columns 로 거부한다 — 2026-09-17 운영 장애가 정확히 이것이다.
-          //
-          // 예전에는 여기서 !col.isPrimaryKey() 로 걸렀다. "PK 는 시스템이 채우는 대리키"라는 가정이
-          // 었는데 이 스키마에서는 성립하지 않는다:
-          //  - 물리 PK 는 DataTableService 가 id BIGSERIAL PRIMARY KEY 로 **따로** 만든다.
-          //  - id/import_id/created_at 은 시스템 예약어라 dataset_column 에 애초에 들어올 수 없다.
-          //  - is_primary_key 가 붙은 컬럼은 평범한 NOT NULL 컬럼 + PK 유니크 인덱스(이름은
-          //    ux_<table>_pk, REPLACE·긴 이름이면 다를 수 있다 — WD-103)일 뿐이고 기본값도 없다
-          //    — 즉 대리키가 아니라 **사용자가 값을 넣어야 하는 업무 키**다.
-          // 그래서 빼면 개수 불일치로 실패하고, SELECT 에서도 빼면 이번엔 NOT NULL 위반이 난다.
-          // 어느 쪽으로도 성공할 수 없었다.
-          // 출력 데이터셋 컬럼 메타데이터는 여기서 한 번만 읽는다 — 아래 MERGE 분기의 PK 목록도 같은
-          // 목록에서 뽑는다(같은 스텝 실행 안에서 두 번 읽을 이유가 없다).
-          List<DatasetColumnResponse> outputColumns =
-              columnRepository.findByDatasetId(outputDatasetId);
-          List<String> matchedColumns =
-              matchOutputColumns(selectColumns, selectColumns, outputColumnNames(outputColumns));
-
-          // 출력 테이블은 현재 테넌트의 데이터 스키마에 있다 — 스키마명을 직접 적지 않고
-          // DataSchema.qualify 로 조립한다(테이블명 인용·따옴표 이중화까지 그쪽이 책임진다).
-          String wrappedSql;
-          List<String> mergePkColumns = List.of();
-          if (isMerge) {
-            // MERGE 는 출력 데이터셋의 기존 PK(PK 유니크 인덱스 — 이름은 ux_<table>_pk 이거나
-            // REPLACE·긴 이름이면 다를 수 있다, dataset_column.is_primary_key 로 기록됨)를 그대로
-            // 재사용한다 — 사용자가 별도로 병합 키를 고르지 않는다. 저장 시점
-            // (PipelineService.saveSteps)에 PK 존재가 이미 검증됐지만, 저장 이후 데이터셋 스키마가
-            // 바뀌었을 수 있어(컬럼 삭제 등) 실행 시점에도 다시 확인한다 — 조용히 APPEND 로 격하되면
-            // 안 되므로 여기서 명확히 실패시킨다.
-            mergePkColumns = requireMergePk(outputColumns);
-            wrappedSql =
-                MergeSqlBuilder.build(
-                    DataSchema.qualify(outputTableName), matchedColumns, mergePkColumns, sql);
-          } else {
-            String columnList =
-                matchedColumns.stream()
-                    .map(col -> "\"" + col + "\"")
-                    .collect(Collectors.joining(", "));
-            wrappedSql =
-                "INSERT INTO "
-                    + DataSchema.qualify(outputTableName)
-                    + " ("
-                    + columnList
-                    + ") "
-                    + sql;
-          }
+          PgStepDialect.WrappedSelect wrapped = pgDialect.wrapSelect(sqlRun, probedColumns);
 
           // 취소 체크포인트(WD-153) — SQL 실행 직전. 아직 출력에 아무것도 쓰지 않았다(REPLACE 비우기도 이 문장과 같은 트랜잭션이다).
           cancel.checkpoint(0, false);
           if (executorEnabled) {
-            var result = executorClient.executeSql(wrappedSql, preStatements);
+            var result = executorClient.executeSql(wrapped.sql(), preStatements);
             if (!result.success()) {
-              String translated =
-                  isMerge
-                      ? PipelineSqlErrorMessages.describeMergeError(
-                          result.pgError(), result.error(), mergePkColumns)
-                      : null;
-              if (translated != null) {
-                throw new ScriptExecutionException(translated);
-              }
-              throw new ScriptExecutionException(
-                  PipelineSqlErrorMessages.describeExecutorError(
-                      PipelineSqlErrorMessages.EXECUTION_PREFIX, result.pgError(), result.error()));
+              // MERGE 면 원본 키 중복 등을 PK 이름으로 안내하고, 아니면 공통 실행 실패 문구다(번역은 방언).
+              throw pgDialect.translateExecutorFailure(
+                  result.pgError(), result.error(), wrapped.mergePkColumns());
             }
             executionLog = result.executionLog();
           } else {
             try {
-              executionLog = sqlExecutor.execute(preStatements, wrappedSql);
+              executionLog = sqlExecutor.execute(preStatements, wrapped.sql());
             } catch (ScriptExecutionException e) {
-              String translated =
-                  isMerge
-                      ? PipelineSqlErrorMessages.describeMergeError(
-                          PipelineSqlErrorMessages.pgErrorOf(e), e.getMessage(), mergePkColumns)
-                      : null;
-              if (translated != null) {
-                throw new ScriptExecutionException(translated, e);
-              }
-              throw e;
+              // 번역할 MERGE 오류가 아니면 방언이 같은 예외를 그대로 돌려준다(예전 rethrow 와 같다).
+              throw pgDialect.translateLocalFailure(e, wrapped.mergePkColumns());
             }
           }
         } else {
+          PgStepDialect pgDialect = (PgStepDialect) dialect;
           // 기존 INSERT/UPDATE/DELETE는 그대로 실행한다. REPLACE 면 preStatements 에 출력 비우기
           // DELETE 가 들어 있어 사용자 DML 과 같은 트랜잭션·같은 출력 잠금 아래에서 실행된다(#735).
           // APPEND/MERGE 면 빈 목록이다(증분 전체 재생성 DELETE 는 isSelect 게이트가 걸려 여기로 오지
@@ -929,9 +857,7 @@ public class PipelineAsyncRunner {
           if (executorEnabled) {
             var result = executorClient.executeSql(sql, preStatements);
             if (!result.success()) {
-              throw new ScriptExecutionException(
-                  PipelineSqlErrorMessages.describeExecutorError(
-                      PipelineSqlErrorMessages.EXECUTION_PREFIX, result.pgError(), result.error()));
+              throw pgDialect.translateExecutorFailure(result.pgError(), result.error(), null);
             }
             executionLog = result.executionLog();
           } else {
@@ -1014,15 +940,13 @@ public class PipelineAsyncRunner {
         // prepareForRun 이 등급 변경을 반영하며 세대를 올릴 수 있으므로(GRANT 전에 올림) 세대는 그 뒤에 읽어야 새 토큰이 거부되지 않는다.
         // 발급 실패는 스테이징을 만들기 전·실행 전에 단계를 멈춘다(fail-closed). PG 는 토큰이 없다(요청 본문 불변).
         final String scriptToken =
-            tiberoTenant
-                ? issueScriptToken(
-                    pyTenantId,
-                    readSlot,
-                    executorEnabled
-                        ? Duration.ofSeconds(
-                            executorPythonTimeoutSeconds + PYTHON_TOKEN_TTL_MARGIN_SECONDS)
-                        : LOCAL_PYTHON_TOKEN_TTL)
-                : null;
+            dialect.issueScriptToken(
+                pyTenantId,
+                readSlot,
+                executorEnabled
+                    ? Duration.ofSeconds(
+                        executorPythonTimeoutSeconds + PYTHON_TOKEN_TTL_MARGIN_SECONDS)
+                    : LOCAL_PYTHON_TOKEN_TTL);
 
         if (outputDatasetId == null) {
           log.warn("Python 스텝 '{}': 출력 데이터셋이 지정되지 않았습니다. 결과가 저장되지 않습니다.", step.name());
@@ -1043,8 +967,8 @@ public class PipelineAsyncRunner {
           // 없는 값을 REPLACE 로 폴백하지만, 이 경로의 맞바꿈은 "명시적으로 REPLACE 라고 적힌" 경우에만
           // 탄다(예전부터의 동작, 바꾸지 않는다).
           boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy) && pyOutputTable != null;
-          // Tibero 는 APPEND 도 스테이징을 거친다(tiberoAppendStaged 참고). PG APPEND 는 예전처럼 출력에 직접 적재한다.
-          boolean tiberoAppend = tiberoAppendStaged(tiberoTenant, isReplace, pyOutputTable);
+          // Tibero 는 APPEND 도 스테이징을 거친다(StepDialect#stagesAppend 참고). PG APPEND 는 예전처럼 출력에 직접 적재한다.
+          boolean tiberoAppend = dialect.stagesAppend(isReplace, pyOutputTable);
           boolean staged = isReplace || tiberoAppend;
           executionLog =
               loadPythonOutput(
@@ -1094,15 +1018,13 @@ public class PipelineAsyncRunner {
           // 테이블이 있으면 stderr, 없으면 stdout+stderr(executor 와 동일). REPLACE 판정은 예전 로컬
           // 경로 그대로 해석된 전략(알 수 없는 값 → REPLACE 폴백)을 쓴다.
           boolean isReplace = strategy != LoadStrategy.APPEND && pyOutputTable != null;
-          // Tibero 는 APPEND 도 스테이징 적재 후 옮긴다(실행기 켠 경로와 같다 — tiberoAppendStaged 참고).
-          boolean tiberoAppend = tiberoAppendStaged(tiberoTenant, isReplace, pyOutputTable);
+          // Tibero 는 APPEND 도 스테이징 적재 후 옮긴다(실행기 켠 경로와 같다 — StepDialect#stagesAppend 참고).
+          boolean tiberoAppend = dialect.stagesAppend(isReplace, pyOutputTable);
           // 취소 체크포인트(WD-153) — 스크립트 실행 직전.
           cancel.checkpoint(0, false);
           // Tibero 자식은 PG 슬롯 롤이 아니라 조회 도우미 환경(db-executor 주소·스크립트 토큰)으로 띄운다.
           PythonScriptExecutor.RunResult run =
-              tiberoTenant
-                  ? pythonExecutor.runTibero(step.scriptContent(), scriptToken)
-                  : pythonExecutor.run(step.scriptContent(), readSlot);
+              dialect.runLocalPython(step.scriptContent(), readSlot, scriptToken);
           String outputText = pyOutputTable != null ? run.stderr() : run.stdout() + run.stderr();
           if (!run.succeeded()) {
             throw pythonRunFailure(
@@ -1125,12 +1047,9 @@ public class PipelineAsyncRunner {
                         targetTable ->
                             new PythonLoad(
                                 outputText,
-                                // Tibero 대상은 언제나 스테이징이다 — PG 트랜잭션 없이 스테이징 창구로 넣는다.
-                                tiberoTenant
-                                    ? localPythonOutputLoader.loadStaging(
-                                        targetTable, run.stdout(), pyColumnTypes)
-                                    : localPythonOutputLoader.load(
-                                        targetTable, run.stdout(), pyColumnTypes)));
+                                // Tibero 대상은 언제나 스테이징이다 — PG 트랜잭션 없이 스테이징 창구로 넣는다(방언이 고른다).
+                                dialect.loadLocalPythonOutput(
+                                    targetTable, run.stdout(), pyColumnTypes)));
             // REPLACE 는 출력 테이블 세션 잠금 아래에서 임시 테이블 생성 → 적재 → 맞바꿈을 한다(#735).
             // 임시 테이블 이름은 WD-151 부터 실행마다 달라 임시 테이블 충돌만 놓고 보면 이 잠금이 없어도 되지만, 예전 동작(같은 출력의 로컬
             // REPLACE 끼리, 그리고 SQL 스텝의 비우기+적재와 직렬화 — 잠금 키가 같다)을 바꾸지 않으려고 그대로 둔다. 스크립트 실행(읽기
@@ -1138,7 +1057,7 @@ public class PipelineAsyncRunner {
             // Tibero 는 이 잠금을 잡지 않는다 — 잠금의 목적(같은 출력의 PG SQL 비우기+적재와의 직렬화)이 Tibero 에는 없고(Tibero SQL
             // 단계는 이
             // 키를 잡지 않는다), 잡으면 Tibero 작업 내내 PG 풀 연결만 쥔다. 원자성은 스테이징 + 옮기기(한 Tibero 트랜잭션)가 맡는다.
-            boolean takePgLock = isReplace && !tiberoTenant;
+            boolean takePgLock = dialect.takesOutputSessionLock(isReplace);
             executionLog =
                 (takePgLock ? outputTableSessionLock.callLocked(pyOutputTable, load) : load.get())
                     .log();
@@ -1208,50 +1127,44 @@ public class PipelineAsyncRunner {
           // PYTHON 블록과 같은 이유로 enum(strategy)이 아니라 원본 문자열을 본다 — 알 수 없는 값의
           // REPLACE 폴백을 맞바꿈 경로까지 끌고 오면 동작이 바뀐다.
           boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy) && outputTableName != null;
-          // 이번 실행 전용 임시 테이블(WD-151) — 이름이 실행마다 달라 같은 출력에 겹친 실행과 생성·적재·정리가 서로 닿지 않는다. 실행기에는 이
-          // 이름을 그대로 적재 대상으로 넘긴다(실행기는 임시 테이블 이름을 스스로 만들지 않는다).
-          // Tibero 는 REPLACE 뿐 아니라 APPEND 도 스테이징을 거친다(tiberoAppendStaged 참고). PG 의 APPEND 는 그대로 출력에
-          // 직접
-          // 적재한다(finishAppend 는 PG 에서 예외다 — 부르지 않는다).
-          boolean tiberoAppend = tiberoAppendStaged(tiberoTenant, isReplace, outputTableName);
+          // 이번 실행 전용 임시 테이블(WD-151) — 이름이 실행마다 달라 같은 출력에 겹친 실행과
+          // 생성·적재·정리가 서로 닿지 않는다. 실행기에는 이 이름을 그대로 적재 대상으로 넘긴다(실행기는
+          // 임시 테이블 이름을 스스로 만들지 않는다).
+          // Tibero 는 REPLACE 뿐 아니라 APPEND 도 스테이징을 거친다(StepDialect#stagesAppend 참고).
+          // PG 의 APPEND 는 그대로 출력에 직접 적재한다(finishAppend 는 PG 에서 예외다 — 부르지 않는다).
+          // 생성 → 적재 → 마무리(finishReplace/finishAppend) → 실패 시 스테이징 삭제는 PYTHON 과 같은
+          // runStaged 가 맡는다. 빈 결과 가드는 finishReplace 가 단독으로 갖는다(#685) — API 가 0행을 돌려주면
+          // 맞바꾸지 않고 임시 테이블만 버려 원본을 지킨다. 예전에는 여기서 swapTable 을 바로 불러 빈 테이블이
+          // 원본을 덮었다(같은 결함이 아직 터지지 않은 상태였다).
+          boolean tiberoAppend = dialect.stagesAppend(isReplace, outputTableName);
           boolean useStaging = isReplace || tiberoAppend;
-          String tempTable = useStaging ? dataTableService.createTempTable(outputTableName) : null;
-          String targetTable = useStaging ? tempTable : outputTableName;
-          try {
-            Map<String, Object> request =
-                buildApiCallExecutorRequest(
-                    apiCallConfig, targetTable, decryptedAuth, columnTypeMap, apiConn);
-            // 취소 체크포인트(WD-153) — 실행기 호출 직전. 실행기 안의 페이지·재시도는 이 API 가 들여다볼 수 없어 호출 직전·직후만 본다.
-            cancel.checkpoint(0, useStaging);
-            var result = executorClient.executeApiCall(request);
-            if (!result.success()) {
-              throw new ScriptExecutionException("API_CALL 실행 실패: " + result.error());
-            }
-            // 취소 체크포인트(WD-153) — 실행기 호출 직후·맞바꿈 전. REPLACE 면 아래 catch 가 임시 테이블을 버려 원본을 지키고, APPEND 면
-            // 이미
-            // 넣은 행이 남는다.
-            cancel.checkpoint(useStaging ? 0 : result.rowsLoaded(), useStaging);
-            if (isReplace) {
-              // 빈 결과 가드는 finishReplace 가 단독으로 갖는다(#685) — API 가 0행을 돌려주면
-              // 맞바꾸지 않고 임시 테이블만 버려 원본을 지킨다. 예전에는 여기서 swapTable 을 바로
-              // 불러 빈 테이블이 원본을 덮었다(같은 결함이 아직 터지지 않은 상태였다).
-              dataTableService.finishReplace(outputTableName, tempTable, result.rowsLoaded());
-            } else if (tiberoAppend) {
-              // 스테이징의 행을 출력에 한 트랜잭션으로 옮긴다(0행이면 스테이징만 버린다). 옮기기가 커밋된 뒤 스테이징 DROP 실패는 저장소가 삼킨다.
-              dataTableService.finishAppend(outputTableName, tempTable, result.rowsLoaded());
-            }
-            executionLog = result.executionLog();
-          } catch (Exception e) {
-            if (useStaging) {
-              try {
-                dataTableService.dropTempTable(outputTableName, tempTable);
-              } catch (Exception dropEx) {
-                log.warn(
-                    "Failed to drop temp table after API call failure: {}", dropEx.getMessage());
-              }
-            }
-            throw e;
-          }
+          final ApiConnectionResponse apiConnFinal = apiConn;
+          final Map<String, String> apiAuth = decryptedAuth;
+          final Map<String, String> apiColumnTypes = columnTypeMap;
+          executionLog =
+              runStaged(
+                      outputTableName,
+                      isReplace,
+                      tiberoAppend,
+                      "Failed to drop temp table after API call failure: {}",
+                      targetTable -> {
+                        Map<String, Object> request =
+                            buildApiCallExecutorRequest(
+                                apiCallConfig, targetTable, apiAuth, apiColumnTypes, apiConnFinal);
+                        // 취소 체크포인트(WD-153) — 실행기 호출 직전. 실행기 안의 페이지·재시도는 이 API 가 들여다볼 수 없어 호출
+                        // 직전·직후만 본다.
+                        cancel.checkpoint(0, useStaging);
+                        var result = executorClient.executeApiCall(request);
+                        if (!result.success()) {
+                          throw new ScriptExecutionException("API_CALL 실행 실패: " + result.error());
+                        }
+                        // 취소 체크포인트(WD-153) — 실행기 호출 직후·맞바꿈 전. 스테이징이면 runStaged 의 실패 정리가 임시
+                        // 테이블을 버려 원본을 지키고, PG APPEND 면 이미 넣은 행이 남는다.
+                        cancel.checkpoint(useStaging ? 0 : result.rowsLoaded(), useStaging);
+                        return result;
+                      },
+                      ExecutorClient.ApiCallExecuteResult::rowsLoaded)
+                  .executionLog();
         } else {
           ApiCallExecutor.ApiCallResult result =
               apiCallExecutor.execute(
@@ -1520,22 +1433,11 @@ public class PipelineAsyncRunner {
   }
 
   /**
-   * Tibero 테넌트의 APPEND 적재가 스테이징을 거치는가(WD-77·WD-78, 스펙 §3.3) — PYTHON(실행기 켬/끔)·API_CALL 세 경로가 같은 조건을
-   * 쓴다.
-   *
-   * <p>실행기 적재는 db-executor 요청 하나가 Tibero 트랜잭션 하나라, 여러 요청(페이지·청크)을 출력에 직접 넣으면 중간 실패가 일부 행을 남긴다. 그래서
-   * Tibero 는 APPEND 도 스테이징에 모은 뒤 옮기기 한 번으로 전부 반영 또는 전부 취소한다. REPLACE 는 원래 스테이징을 거치므로 여기서 세지 않고, 출력
-   * 테이블이 없으면 적재할 것이 없다.
-   *
-   * @param isReplace 경로별로 해석한 REPLACE 여부(경로마다 해석 규칙이 달라 호출자가 넘긴다)
+   * Tibero 결과 컬럼이 따옴표 소문자·대소문자 섞인 이름이라 적재 대상으로 쓸 수 없을 때의 안내(이름은 뒤에 붙인다). 쓰는 곳은 {@link
+   * TiberoStepDialect} 로 옮겼고(WD-231), 기존 러너 테스트가 이 이름으로 문구를 확인하므로 별칭만 남긴다.
    */
-  private static boolean tiberoAppendStaged(
-      boolean tiberoTenant, boolean isReplace, String outputTable) {
-    return tiberoTenant && !isReplace && outputTable != null;
-  }
-
-  /** Tibero 결과 컬럼이 따옴표 소문자·대소문자 섞인 이름이라 적재 대상으로 쓸 수 없을 때의 안내(이름은 뒤에 붙인다). */
-  static final String TIBERO_QUOTED_RESULT_COLUMN_PREFIX = "Tibero 결과 컬럼 이름은 따옴표 없는 별칭으로 써 주세요(";
+  static final String TIBERO_QUOTED_RESULT_COLUMN_PREFIX =
+      TiberoStepDialect.QUOTED_RESULT_COLUMN_PREFIX;
 
   /**
    * 증분({{last_run_at}}) 자동 생성 스텝의 SELECT 열이 바뀌었는데 변경분만 읽는 실행일 때의 실패 문구(WD-222). 임시 데이터셋을 새 열로 다시
@@ -1546,302 +1448,12 @@ public class PipelineAsyncRunner {
           + " 실행하세요.";
 
   /**
-   * Tibero 증분 스텝의 출력 테이블과 읽는(입력) 테이블 전부에 행 트리거({@code _UPDATED_AT} 갱신)를 보장한다(WD-77 Task 10).
-   *
-   * <p>트리거가 없으면 UPDATE 로 바뀐 행의 {@code _UPDATED_AT} 이 움직이지 않아 증분이 그 변경을 영영 못 읽는다 — 새로 여는 기능이라 사용자
-   * UPDATE 와 달리 <b>fail-closed</b> 다: 권한이 없으면 Task 8 의 운영자 안내({@link
-   * com.smartfirehub.dataset.storage.DataStoreFeatureUnsupportedException})로, 그 밖의 오류도 그대로 올려 실행 전에
-   * 단계를 실패시킨다. 입력 테이블은 검증기가 AST 로 뽑은 읽기 대상(테넌트 스키마·CTE·DUAL 제외)이고, 출력과 같은 테이블이 입력에도 있으면 한 번만 보장한다.
-   * 이름은 물리(대문자) 이름으로 맞춰 중복을 접는다.
-   */
-  private void ensureTiberoIncrementalTriggers(String sql, String outputTableName) {
-    Set<String> tables = new LinkedHashSet<>();
-    if (outputTableName != null) {
-      tables.add(TiberoNames.physical(outputTableName));
-    }
-    for (SqlValidator.TableName read :
-        pipelineDataSchema.validator().referencedTables(sql).reads()) {
-      tables.add(TiberoNames.physical(read.name()));
-    }
-    // 상태 확인·생성을 한 접속에서 묶는다. 하나라도 못 보장하면 예외로 실행 전에 멈춘다(fail-closed).
-    dataTableService.ensureRowTriggers(List.copyOf(tables));
-  }
-
-  /**
-   * Tibero 사용자 DML 의 쓰기 대상 테이블에 행 트리거(ID·_UPDATED_AT)를 보장한다(WD-77).
-   *
-   * <p>INSERT 는 트리거가 {@code ID} 를 채우므로 필수다 — 권한이 없으면 Task 8 의 운영자 안내(422)로 실행 전에 실패하고 조용히 건너뛰지 않는다.
-   * UPDATE 는 트리거가 {@code _UPDATED_AT} 만 갱신하고 이 단계 이전에도 허용되던 문장이라, 권한이 없다고 새로 막지 않고 경고만 남긴 채
-   * 진행한다(운영자가 권한을 줄 때까지 갱신 시각이 움직이지 않는다). DELETE 는 트리거가 필요 없다. 쓰기 대상은 검증기가 AST 로 뽑으며 테넌트 스키마 밖 대상은
-   * 앞선 검증이 이미 거부했다. 검증을 통과한 SQL 이라 따옴표·주석이 닫혀 있어 어휘 분석기가 예외를 던지지 않는다.
-   */
-  private void ensureTiberoRowTriggers(String sql) {
-    String keyword = TiberoSqlLexer.firstKeyword(sql);
-    boolean insert = "INSERT".equals(keyword);
-    boolean update = "UPDATE".equals(keyword);
-    if (!insert && !update) {
-      return;
-    }
-    List<String> targets =
-        pipelineDataSchema.validator().referencedTables(sql).writes().stream()
-            .map(SqlValidator.TableName::name)
-            .toList();
-    if (targets.isEmpty()) {
-      return;
-    }
-    if (insert) {
-      dataTableService.ensureRowTriggers(targets);
-      return;
-    }
-    try {
-      dataTableService.ensureRowTriggers(targets);
-    } catch (RuntimeException e) {
-      // 권한 부족뿐 아니라 접속·DDL 오류도 UPDATE 를 막지 않는다(이전부터 허용되던 문장) — 원인은 스택 없이 클래스·메시지만 남긴다.
-      // UPDATE 의 쓰기 대상은 한 테이블이라 테이블마다 따로 보장하던 때와 결과가 같다.
-      log.warn(
-          "Tibero 행 트리거를 보장하지 못해 트리거 없이 UPDATE 를 실행합니다(_UPDATED_AT 이 갱신되지 않음): {} — {}: {}",
-          targets,
-          e.getClass().getSimpleName(),
-          e.getMessage());
-    }
-  }
-
-  /**
-   * Tibero 테넌트 SQL 스텝을 db-executor 로 실행한다(WD-77, 스펙 §5.1·§5.2). 호출 전에 검증·보안 게이트·출력 등급 처리가 끝나 있어야
-   * 한다.
-   *
-   * <p>SELECT 적재는 PG 경로와 같은 순서다: 결과 컬럼 탐지(probe) → 출력 데이터셋 컬럼과 맞춤 → 적재 문장 생성({@link
-   * TiberoPipelineSql}) → 실행. 사용자 DML 은 문장을 그대로 보낸다. 두 경우 모두 REPLACE 비우기 선행문을 같은 요청(같은 트랜잭션)으로 보낸다.
-   *
-   * <p>실행기가 돌려준 실패(HTTP 200 + success=false)는 Tibero 오류 코드로 번역한 문구의 {@link
-   * ScriptExecutionException} 이 된다. 실행기에 닿지 못한 경우는 {@link DbExecutorClient} 가 이미 연결 실패 문구로 던진다.
-   *
-   * @param sql 검증·게이트를 통과한 사용자 SQL(참조 치환 후)
-   * @param preStatements 본 문장과 같은 트랜잭션으로 보낼 선행문(REPLACE 비우기)
-   * @param isSelect 검증기가 판정한 조회문인지(아니면 사용자 DML)
-   * @param outputTableName 출력 테이블 메타데이터 이름(없으면 null)
-   * @param outputDatasetId 출력 데이터셋 id(SELECT 적재면 필수 — 없는 경우는 호출 전에 거부됐다)
-   * @param isMerge MERGE 적재인지
-   * @param renameReserved 출력이 러너 자동 생성 TEMP 인지 — 그렇다면 TEMP 컬럼이 예약어 별칭({@code id} → {@code id_1})으로
-   *     만들어졌으므로 적재 대상 이름에도 같은 별칭을 쓴다(원본 열은 탐지된 이름 그대로 읽는다)
-   * @param probed TEMP 생성 때 이미 탐지한 결과(없으면 null — 여기서 탐지한다)
-   * @param cancel 협조적 취소 확인(WD-153) — 실행 요청 직전에 확인한다
-   * @return 실행 로그
-   */
-  private String executeTiberoSqlStep(
-      String sql,
-      List<String> preStatements,
-      boolean isSelect,
-      String outputTableName,
-      Long outputDatasetId,
-      boolean isMerge,
-      boolean renameReserved,
-      DbExecutorClient.ProbeResult probed,
-      ExecutionCancelCheck cancel) {
-    if (!isSelect) {
-      // 사용자 DML — 문장을 그대로 보낸다(REPLACE 면 비우기 선행문이 같은 트랜잭션으로 함께 간다).
-      return runOnDbExecutor(sql, preStatements, null, cancel);
-    }
-    if (outputTableName == null) {
-      // 출력 데이터셋 테이블 이름을 찾지 못했다(삭제 중 등). PG 경로는 이때 SELECT 를 그대로 실행하지만 결과를 쓸 곳이 없다 — Tibero 는
-      // 실행하지 않고 실패시킨다.
-      throw new ScriptExecutionException("출력 데이터셋의 테이블을 찾을 수 없습니다.");
-    }
-
-    // 결과 컬럼 탐지 — 실행기가 WHERE 1 = 0 으로 감싸 행 없이 실행한다. 실패 문구 접두는 PG 와 같은
-    // PROBE_PREFIX 다(#682 규칙이 이 접두를 본다). TEMP 생성에서 이미 탐지했으면 재사용한다.
-    DbExecutorClient.ProbeResult probe = probed != null ? probed : probeTibero(sql);
-    List<DatasetColumnResponse> outputColumns = columnRepository.findByDatasetId(outputDatasetId);
-    TiberoColumnMatch match = matchTiberoColumns(probe.columns(), outputColumns, renameReserved);
-    List<String> matchedColumns = match.targets();
-
-    String schema = pipelineDataSchema.current();
-    if (!isMerge) {
-      return runOnDbExecutor(
-          TiberoPipelineSql.insertSelect(
-              schema, outputTableName, matchedColumns, match.sources(), sql),
-          preStatements,
-          null,
-          cancel);
-    }
-    // PG 경로와 같이 출력 데이터셋의 기존 PK 를 병합 키로 쓴다 — 저장 이후 스키마가 바뀌었을 수 있어 실행 시점에 다시 확인한다.
-    List<String> mergePkColumns = requireMergePk(outputColumns);
-    return runOnDbExecutor(
-        TiberoPipelineSql.mergeSelect(schema, outputTableName, matchedColumns, mergePkColumns, sql),
-        preStatements,
-        mergePkColumns,
-        cancel);
-  }
-
-  /**
-   * Tibero 결과 컬럼을 출력 데이터셋 컬럼과 맞춘 결과 — 같은 위치의 {@code targets}(메타데이터 이름)와 {@code sources}(탐지된 원래 이름,
-   * 적재 문장이 {@code src."<이름>"} 으로 읽는다).
-   */
-  private record TiberoColumnMatch(List<String> targets, List<String> sources) {}
-
-  /**
-   * Tibero 결과 컬럼을 출력 데이터셋 컬럼과 맞춘다 — PG 경로와 같은 규칙(데이터셋 컬럼을 하나도 빼지 않고, 결과에 있는 것만 대상). 시스템
-   * 컬럼(ID·_UPDATED_AT·IMPORT_ID)은 데이터셋 사용자 컬럼이 아니므로 여기서 자연히 빠지고, ID·_UPDATED_AT 은 적재 문장이
-   * 시퀀스·SYSTIMESTAMP 로 채운다.
-   *
-   * @param probed 실행기가 탐지한 결과 컬럼(이름은 바꾸지 않고 온다 — 따옴표 없는 별칭은 Tibero 가 대문자로 접어 돌려준다)
-   * @param renameReserved 러너 자동 생성 TEMP 면 TEMP 만들 때와 같은 예약어 별칭을 대상 이름에 적용한다(PG 의 {@code
-   *     renameReservedColumnNames} 와 같다). 탐지 컬럼 이름이 하나라도 쓸 수 없는 형태면 TEMP 생성 단계에서 이미 실패했으므로 목록 길이가
-   *     같다
-   * @return 적재 대상 컬럼(메타데이터 이름)과 그 원본 열 이름
-   */
-  private static TiberoColumnMatch matchTiberoColumns(
-      List<DbExecutorClient.ProbeColumn> probed,
-      List<DatasetColumnResponse> outputColumns,
-      boolean renameReserved) {
-    List<String> probedNames = probed.stream().map(DbExecutorClient.ProbeColumn::name).toList();
-    Set<String> outputColumnNames = outputColumnNames(outputColumns);
-    List<String> selectColumns = new ArrayList<>();
-    List<String> sourceNames = new ArrayList<>();
-    for (String name : probedNames) {
-      String normalized = normalizeTiberoResultColumn(name);
-      if (normalized != null) {
-        selectColumns.add(normalized);
-        sourceNames.add(name);
-      } else if (name != null && outputColumnNames.contains(name.toLowerCase(Locale.ROOT))) {
-        // 따옴표 소문자·대소문자 섞인 별칭(AS "amount", AS "Amount")은 출력 컬럼을 노린 이름이지만 Tibero 에서는 쓴 그대로라,
-        // 적재 문장의 src."AMOUNT" 참조와 맞지 않는다. 조용히 빼면 그 컬럼이 비어(NULL) 적재되므로 맞춤 계산보다 먼저 안내하고 실패시킨다.
-        throw new ScriptExecutionException(TIBERO_QUOTED_RESULT_COLUMN_PREFIX + name + ").");
-      }
-    }
-    List<String> targetNames =
-        renameReserved ? renameReservedColumnNames(selectColumns) : selectColumns;
-    // 실패 안내에는 사용자가 쓴 그대로의(탐지된) 이름을 보여 준다.
-    List<String> matched = matchOutputColumns(targetNames, probedNames, outputColumnNames);
-    List<String> matchedSources = new ArrayList<>();
-    for (int i = 0; i < targetNames.size(); i++) {
-      if (outputColumnNames.contains(targetNames.get(i))) {
-        matchedSources.add(sourceNames.get(i));
-      }
-    }
-    return new TiberoColumnMatch(matched, matchedSources);
-  }
-
-  /**
-   * Tibero 결과 컬럼을 db-executor 로 탐지한다. 실패하면 PG 와 같은 접두({@link
-   * PipelineSqlErrorMessages#PROBE_PREFIX})의 번역 문구로 단계를 실패시킨다.
-   */
-  private DbExecutorClient.ProbeResult probeTibero(String sql) {
-    DbExecutorClient.ProbeResult probe = dbExecutorClient.probe(sql);
-    if (!probe.success()) {
-      throw new ScriptExecutionException(
-          PipelineSqlErrorMessages.describeTiberoError(
-              PipelineSqlErrorMessages.PROBE_PREFIX, probe.dbError(), probe.error()));
-    }
-    return probe;
-  }
-
-  /**
-   * Tibero probe 결과를 임시 데이터셋 컬럼(메타데이터 이름·앱 타입)으로 바꾼다 — 이름은 {@link #normalizeTiberoResultColumn},
-   * 타입은 {@link TiberoProbeTypes}. 따옴표 소문자·대소문자 섞인 별칭은 적재 문장이 읽을 수 없으므로 TEMP 를 만들기 전에 안내하고 실패시킨다.
-   */
-  private static List<ColumnInfo> tiberoResultColumns(DbExecutorClient.ProbeResult probe) {
-    List<ColumnInfo> columns = new ArrayList<>();
-    for (DbExecutorClient.ProbeColumn c : probe.columns()) {
-      String normalized = normalizeTiberoResultColumn(c.name());
-      if (normalized == null) {
-        throw new ScriptExecutionException(TIBERO_QUOTED_RESULT_COLUMN_PREFIX + c.name() + ").");
-      }
-      columns.add(new ColumnInfo(normalized, TiberoProbeTypes.toAppType(c)));
-    }
-    return columns;
-  }
-
-  /** 출력 데이터셋 컬럼 이름 집합(메타데이터 이름). */
-  private static Set<String> outputColumnNames(List<DatasetColumnResponse> outputColumns) {
-    return outputColumns.stream()
-        .map(DatasetColumnResponse::columnName)
-        .collect(Collectors.toSet());
-  }
-
-  /**
-   * SELECT 결과 컬럼 중 출력 데이터셋에 있는 것만 적재 대상으로 고른다(PG·Tibero 공용). 하나도 없으면 무엇을 맞춰야 하는지 안내하고 실패시킨다.
-   *
-   * @param selectColumns 맞춤에 쓸 결과 컬럼(메타데이터 이름)
-   * @param shownColumns 실패 안내에 보여 줄 결과 컬럼(PG 는 맞춤 이름 그대로, Tibero 는 탐지된 원래 이름)
-   */
-  private static List<String> matchOutputColumns(
-      List<String> selectColumns, List<String> shownColumns, Set<String> outputColumnNames) {
-    List<String> matchedColumns =
-        selectColumns.stream().filter(outputColumnNames::contains).toList();
-    if (matchedColumns.isEmpty()) {
-      throw new ScriptExecutionException(
-          "SELECT 결과 컬럼이 출력 데이터셋의 컬럼과 일치하지 않습니다. "
-              + "SELECT alias를 출력 테이블 컬럼명과 맞춰주세요. "
-              + "SELECT 컬럼: "
-              + shownColumns
-              + ", 출력 테이블 컬럼: "
-              + outputColumnNames);
-    }
-    return matchedColumns;
-  }
-
-  /**
-   * MERGE 병합 키 = 출력 데이터셋의 기존 PK 컬럼(PG·Tibero 공용). 저장 시점에 검증됐어도 이후 스키마가 바뀌었을 수 있어(컬럼 삭제 등) 실행 시점에 다시
-   * 확인한다 — 조용히 APPEND 로 격하되면 안 되므로 없으면 명확히 실패시킨다.
-   */
-  private static List<String> requireMergePk(List<DatasetColumnResponse> outputColumns) {
-    List<String> pk =
-        outputColumns.stream()
-            .filter(DatasetColumnResponse::isPrimaryKey)
-            .map(DatasetColumnResponse::columnName)
-            .toList();
-    if (pk.isEmpty()) {
-      throw new ScriptExecutionException("MERGE 에는 출력 데이터셋 PK 컬럼이 필요합니다(데이터셋 스키마가 변경되었는지 확인하세요).");
-    }
-    return pk;
-  }
-
-  /**
-   * db-executor 로 문장을 실행하고 실패 응답을 한국어 문구로 바꾼다.
-   *
-   * @param mergePkColumns MERGE 적재면 출력 PK(원본 키 중복 안내용), 아니면 null
-   * @param cancel 협조적 취소 확인(WD-153)
-   */
-  private String runOnDbExecutor(
-      String query,
-      List<String> preStatements,
-      List<String> mergePkColumns,
-      ExecutionCancelCheck cancel) {
-    // 취소 체크포인트(WD-153) — PG 경로와 같이 실행 직전. 아직 출력에 아무것도 쓰지 않았다(REPLACE 비우기도 이 요청과 같은 트랜잭션이다).
-    cancel.checkpoint(0, false);
-    ExecutorClient.SqlExecuteResult result = dbExecutorClient.executeSql(query, preStatements);
-    if (!result.success()) {
-      String translated =
-          mergePkColumns != null
-              ? PipelineSqlErrorMessages.describeTiberoMergeError(
-                  result.dbError(), result.error(), mergePkColumns)
-              : null;
-      throw new ScriptExecutionException(
-          translated != null
-              ? translated
-              : PipelineSqlErrorMessages.describeTiberoError(
-                  PipelineSqlErrorMessages.EXECUTION_PREFIX, result.dbError(), result.error()));
-    }
-    return result.executionLog();
-  }
-
-  /**
-   * Tibero 결과 컬럼 이름(실행기가 바꾸지 않고 보낸 원래 이름)을 메타데이터 이름으로 바꾼다. 맞춤에 쓸 수 없으면 null.
-   *
-   * <ul>
-   *   <li>전부 대문자 — Tibero 가 따옴표 없는 별칭을 대문자로 접은 것이다. 소문자로 바꿔 메타데이터(소문자) 컬럼과 맞춘다. 적재 문장의 {@code
-   *       src."AMOUNT"} 참조가 이 물리 이름과 같다.
-   *   <li>그 밖(따옴표 소문자 {@code "amount"}·대소문자 섞임 {@code "Mixed"}) — 사용자가 따옴표로 지은 다른 이름이라 맞춤에 쓰지 않는다.
-   *       쓰면 적재 문장이 대문자 물리 이름을 참조해 "알 수 없는 식별자"로 실패한다. 실행기가 예전처럼 소문자로 바꿔 보내면 {@code AS "amount"} 와
-   *       {@code AS amount} 를 가를 수 없어서, 실행기는 원래 이름을 보내고 여기서만 정규화한다.
-   * </ul>
+   * Tibero 결과 컬럼 이름을 메타데이터 이름으로 바꾼다 — 본문과 「왜」는 {@link
+   * TiberoStepDialect#normalizeTiberoResultColumn} 으로 옮겼다(WD-231). 맞춤 계산도 방언으로 옮겼고, 기존 러너 테스트가 이
+   * 이름을 직접 부르므로 위임만 남긴다.
    */
   static String normalizeTiberoResultColumn(String name) {
-    if (name == null || !name.equals(name.toUpperCase(Locale.ROOT))) {
-      return null;
-    }
-    return name.toLowerCase(Locale.ROOT);
+    return TiberoStepDialect.normalizeTiberoResultColumn(name);
   }
 
   /**
@@ -1949,17 +1561,6 @@ public class PipelineAsyncRunner {
     return temp;
   }
 
-  /**
-   * SQL 스텝 출력 비우기 선행문 — 본 문장과 같은 트랜잭션에서 실행돼 실패하면 함께 롤백된다(#731/#735). Tibero 는 db-executor 선행문
-   * 규칙({@code PreStatementRule})이 받는 Tibero 판 형식만 보내야 하고(PG 형식은 거부된다), PG 는 예전 형식 그대로다. REPLACE
-   * 비우기와 증분 전체 재구축이 같은 문장을 쓰므로 한 곳에서 만든다(코드리뷰 6).
-   */
-  private String outputClearStatement(boolean tiberoTenant, String outputTableName) {
-    return tiberoTenant
-        ? TiberoPipelineSql.deleteAll(pipelineDataSchema.current(), outputTableName)
-        : OutputClearStatement.deleteAll(outputTableName);
-  }
-
   /** PYTHON 적재 결과 — 실행 로그와 적재 행 수(REPLACE 맞바꿈 여부 판단 재료). */
   private record PythonLoad(String log, long rowsLoaded) {}
 
@@ -1977,25 +1578,63 @@ public class PipelineAsyncRunner {
       boolean isReplace,
       boolean tiberoAppend,
       Function<String, PythonLoad> load) {
-    if (!isReplace && !tiberoAppend) {
-      return load.apply(outputTable);
+    return runStaged(
+        outputTable,
+        isReplace,
+        tiberoAppend,
+        "Failed to drop temp table after Python execution failure: {}",
+        load,
+        PythonLoad::rowsLoaded);
+  }
+
+  /**
+   * 「스테이징 만들기 → 적재 → 마무리(finishReplace/finishAppend) → 실패 시 스테이징 삭제」 반복을 한 곳에 모은 도우미(WD-231) —
+   * PYTHON({@link #loadPythonOutput}, 실행기 켬/끔)과 API_CALL(실행기 켬)이 같이 쓴다. 두 곳이 거의 같은 코드를 따로 갖고 있어 한쪽만
+   * 고쳐지는 일이 생겼다.
+   *
+   * <p>REPLACE 면 이번 실행 전용 임시 테이블({@link DataTableService#createTempTable}, WD-151)을 만들고 그 이름으로
+   * {@code body} 를 부른 뒤 적재 행 수로 맞바꿈 여부를 {@link DataTableService#finishReplace} 에 맡긴다(0행이면 원본 유지 —
+   * 판단은 거기 단독, #685). 스테이징 APPEND({@code stagesAppend}, Tibero)는 {@link
+   * DataTableService#finishAppend} 로 옮긴다. 둘 다 아니면(PG APPEND·출력 없음) 스테이징 없이 출력 테이블(없으면 null)로 바로
+   * 부른다.
+   *
+   * <p><b>잡는 예외는 넓은 쪽({@link Exception}, 예전 API_CALL 블록과 같다)이다.</b> 예전 PYTHON 경로는 {@link
+   * RuntimeException} 만 잡았지만 새로 잡히는 예외는 없다 — try 본문({@code body}·finishReplace/finishAppend)이 검사
+   * 예외를 선언하지 않아(본문이 {@link Function} 으로 컴파일되고, {@code throw e} 가 throws 절 없이 정확한 재던지기로 컴파일되는 것이 그
+   * 증거다) 실제로 잡히는 것은 RuntimeException 뿐이다. 넓게 잡는 쪽이 혹시 모를 몰래 던진 검사 예외에도 스테이징을 지운다. 실패하면 스테이징을 지우고(그
+   * 실패는 경로별 문구로 경고만 남긴다) 원래 예외를 그대로 다시 던진다 — 원본은 그대로다.
+   *
+   * @param stagesAppend APPEND 도 스테이징을 거치는가(호출자가 방언에 물어 넘긴다 — REPLACE 해석은 경로마다 달라 호출자가 한다)
+   * @param dropFailureLog 스테이징 삭제 실패 경고 문구(경로별로 예전 문구 그대로, {@code {}} 자리에 사유)
+   * @param body 적재 대상 테이블 이름(스테이징·출력·null)을 받아 적재하고 결과를 돌려준다
+   * @param rowsLoaded 결과에서 적재 행 수를 꺼낸다(맞바꿈·옮기기 판단 재료)
+   */
+  private <T> T runStaged(
+      String outputTable,
+      boolean isReplace,
+      boolean stagesAppend,
+      String dropFailureLog,
+      Function<String, T> body,
+      ToLongFunction<T> rowsLoaded) {
+    if (!isReplace && !stagesAppend) {
+      return body.apply(outputTable);
     }
     String tempTable = dataTableService.createTempTable(outputTable);
     try {
-      PythonLoad result = load.apply(tempTable);
+      T result = body.apply(tempTable);
       if (isReplace) {
-        dataTableService.finishReplace(outputTable, tempTable, result.rowsLoaded());
+        dataTableService.finishReplace(outputTable, tempTable, rowsLoaded.applyAsLong(result));
       } else {
         // 스테이징의 행을 출력에 한 Tibero 트랜잭션으로 옮긴다(0행이면 스테이징만 버린다).
-        dataTableService.finishAppend(outputTable, tempTable, result.rowsLoaded());
+        // 옮기기가 커밋된 뒤 스테이징 DROP 실패는 저장소가 삼킨다.
+        dataTableService.finishAppend(outputTable, tempTable, rowsLoaded.applyAsLong(result));
       }
       return result;
-    } catch (RuntimeException e) {
+    } catch (Exception e) {
       try {
         dataTableService.dropTempTable(outputTable, tempTable);
       } catch (Exception dropEx) {
-        log.warn(
-            "Failed to drop temp table after Python execution failure: {}", dropEx.getMessage());
+        log.warn(dropFailureLog, dropEx.getMessage());
       }
       throw e;
     }
@@ -2294,26 +1933,27 @@ public class PipelineAsyncRunner {
   }
 
   /**
-   * Tibero PYTHON 의 스크립트 토큰을 발급한다(WD-78). 세대({@code script_token_epoch})는 {@code prepareForRun} 뒤에
-   * 읽어야 한다 — 호출부 참조. 세대가 없거나(테넌트 저장소 행 없음) 발급하지 못하면(서명 키 미설정 등) 한국어 문구로 단계를 실패시킨다(fail-closed). 토큰은
-   * 로그하지 않는다.
+   * 백엔드에 맞는 스텝 방언을 만든다(WD-231, 스펙 §3.2). 스프링 빈이 아니다 — 러너가 자기 협력 객체로 스텝마다 만들고(생성자 호출만이라 가볍다), 러너
+   * 생성자·필드 목록은 그대로다. 테넌트 백엔드는 생성 후 불변이라 스텝 안에서 같은 방언(이 메서드가 만든 하나)을 쓴다.
+   *
+   * <p>Tibero 전용 열 탐침·SQL 실행 본체와 PG 래핑 조립·실패 번역은 {@link StepDialect} 인터페이스에 없는 공개 메서드라, {@code
+   * executeStep} 의 SQL 분기가 구체 타입으로 갈라 부른다 — PG 싱크가 보안 불변식 때문에 그 메서드에 남아 있어서다.
    */
-  private String issueScriptToken(long tenantId, int readSlot, Duration ttl) {
-    long epoch =
-        tenantDataStoreRepository
-            .findScriptTokenEpoch(tenantId)
-            .orElseThrow(
-                () ->
-                    new ScriptExecutionException(
-                        "Tibero 저장소 정보에서 스크립트 토큰 세대를 찾지 못해 Python 단계를 실행할 수 없습니다."));
-    try {
-      return scriptTokenIssuer.issue(tenantId, readSlot, epoch, ttl);
-    } catch (IllegalStateException | IllegalArgumentException e) {
-      // 발급기 문구는 설정 키·환경 변수 이름을 담는다 — 스텝 오류(사용자 화면)에는 일반 안내만 싣고 자세한 사유는 서버 WARN 로그로 남긴다(코드리뷰 3).
-      // 발급기 문구에는 키·토큰 값이 없어 로그에 남겨도 된다.
-      log.warn("Tibero PYTHON 스크립트 토큰 발급 실패: tenantId={} — {}", tenantId, e.getMessage());
-      throw new ScriptExecutionException(PythonScriptExecutor.TIBERO_SETUP_MISSING, e);
+  private StepDialect dialectFor(DataStoreBackend backend) {
+    if (backend == DataStoreBackend.TIBERO) {
+      return new TiberoStepDialect(
+          pipelineDataSchema,
+          dataTableService,
+          tiberoIncrementalCursor,
+          dbExecutorClient,
+          scriptTokenIssuer,
+          tenantDataStoreRepository,
+          pythonExecutor,
+          localPythonOutputLoader,
+          columnRepository);
     }
+    return new PgStepDialect(
+        incrementalCursorService, pythonExecutor, localPythonOutputLoader, columnRepository);
   }
 
   /**
@@ -2328,56 +1968,6 @@ public class PipelineAsyncRunner {
           "실행 중 보안 등급 구성이 바뀌어 Python 읽기 연결을 끊었습니다. 다시 실행하세요. — " + message);
     }
     return new ScriptExecutionException(message);
-  }
-
-  /**
-   * SELECT 결과 컬럼명 중 시스템 예약어(id/import_id/created_at/_updated_at)와 충돌하는 이름을 자동으로 안전한 이름으로 바꾼다(#645).
-   *
-   * <p>{@code SELECT * FROM {{#N}}}처럼 이전 스텝(또는 실제 데이터셋)의 출력을 그대로 재사용하면, 모든 데이터셋 물리 테이블이 자동으로 갖는 시스템
-   * 컬럼(id/created_at 등)이 결과 컬럼에 그대로 섞여 들어온다. 이를 새 임시 데이터셋의 "사용자 컬럼"으로 그대로 저장하려 하면 {@code
-   * DataTableService}의 예약어 가드에 걸려 항상 실패한다. 그 가드는 사용자가 신규 데이터셋을 만들 때 컬럼명을 직접 예약어로 짓는 것을 막기 위한 것이라 이
-   * 자동 패스스루 시나리오에는 부적합하므로, 여기서는 충돌하는 컬럼명에 순번 접미사를 붙여 자동으로 별칭 처리한다 (예: {@code id} → {@code id_1},
-   * {@code _updated_at} → {@code updated_at_1}).
-   *
-   * <p><b>선행 밑줄을 반드시 떼고 접미사를 붙인다(코드리뷰 HIGH).</b> {@code DataTableService.validateName} 은 컬럼명마다
-   * {@code ^[a-z][a-z0-9_]*$} 를 요구한다 — 밑줄로 시작하는 이름은 거부다. 그래서 {@code _updated_at} 을 단순히 {@code
-   * _updated_at_1} 로 바꾸면 여전히 무효라 임시 데이터셋 생성이 {@code InvalidTableNameException} 으로 실패한다. V124 백필이
-   * <b>모든</b> 데이터셋 테이블에 {@code _updated_at} 을 추가했으므로 {@code SELECT *} 스텝은 100% 이 경로를 탄다. 대소문자도 함께
-   * 정규화한다 — 검증 정규식이 소문자만 허용하기 때문이다.
-   *
-   * <p>목록의 <b>개수와 순서는 절대 바꾸지 않는다</b> — 같은 목록이 뒤에서 INSERT 대상 컬럼 매칭에 그대로 재사용되므로, 한 컬럼이라도 빠지면 SELECT 식
-   * 목록과 어긋나 실행이 깨진다.
-   *
-   * @param names SELECT 결과 컬럼명 목록 (순서 보존 필요 — INSERT 매칭에 그대로 재사용됨)
-   * @return 예약어 충돌이 해소된 컬럼명 목록 (같은 순서, 같은 개수)
-   */
-  private static List<String> renameReservedColumnNames(List<String> names) {
-    Set<String> used = new HashSet<>(names);
-    List<String> result = new ArrayList<>();
-    for (String name : names) {
-      String candidate = name;
-      // 예약 컬럼 집합은 DataTableService 와 공유한다 — 따로 복사해 두면 시스템 컬럼이 하나 늘었을 때
-      // 이쪽만 조용히 낡는다(실제로 _updated_at 이 그렇게 추가됐다).
-      if (DataTableService.SYSTEM_COLUMNS.contains(name.toLowerCase())) {
-        // 접미사를 붙일 기반 이름 — 선행 밑줄 제거 + 소문자화로 항상 ^[a-z][a-z0-9_]*$ 를 만족시킨다.
-        // (예약어 집합이 전부 영문자로 시작하므로 밑줄을 떼면 반드시 [a-z] 로 시작한다. 그래도
-        // 방어적으로 빈 문자열이면 "col" 로 대체한다.)
-        String base = name.toLowerCase().replaceFirst("^_+", "");
-        if (base.isEmpty()) {
-          base = "col";
-        }
-        int suffix = 1;
-        candidate = base + "_" + suffix;
-        // 사용자 컬럼에 이미 그 이름이 있으면 번호를 올려 충돌을 피한다(원래 이름 집합 + 이미 만든 별칭).
-        while (used.contains(candidate)) {
-          suffix++;
-          candidate = base + "_" + suffix;
-        }
-      }
-      used.add(candidate);
-      result.add(candidate);
-    }
-    return result;
   }
 
   /**
@@ -2400,10 +1990,13 @@ public class PipelineAsyncRunner {
     }
   }
 
-  /** {@link #renameReservedColumnNames(List)}의 {@link ColumnInfo} 목록 버전 (타입 정보는 그대로 보존). */
+  /**
+   * {@link SqlOutputColumns#renameReservedColumnNames(List)}의 {@link ColumnInfo} 목록 버전 (타입 정보는 그대로
+   * 보존).
+   */
   private static List<ColumnInfo> renameReservedColumns(List<ColumnInfo> columns) {
     List<String> renamedNames =
-        renameReservedColumnNames(columns.stream().map(ColumnInfo::name).toList());
+        SqlOutputColumns.renameReservedColumnNames(columns.stream().map(ColumnInfo::name).toList());
     List<ColumnInfo> result = new ArrayList<>();
     for (int i = 0; i < columns.size(); i++) {
       result.add(new ColumnInfo(renamedNames.get(i), columns.get(i).appType()));

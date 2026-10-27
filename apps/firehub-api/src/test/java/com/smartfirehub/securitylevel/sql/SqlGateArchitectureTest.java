@@ -11,8 +11,10 @@ import com.smartfirehub.pipeline.service.PipelineSecurityGate;
 import com.smartfirehub.pipeline.service.SqlColumnProbe;
 import com.smartfirehub.pipeline.service.SqlScriptExecutor;
 import com.smartfirehub.pipeline.service.TiberoIncrementalCursor;
+import com.smartfirehub.pipeline.service.executor.DbExecutorBulkMover;
 import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.pipeline.service.step.TiberoStepDialect;
 import com.tngtech.archunit.core.domain.JavaAccess;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaCodeUnit;
@@ -48,6 +50,11 @@ import org.junit.jupiter.api.Test;
  * PipelineSecurityGate#checkStepSqlForRun})도 부르는지 별도 규칙({@code
  * runnerMethodsThatRunUserSql_judgeRunAsUser})이 고정한다. 순서(판정이 실행보다 먼저)는 ArchUnit 으로 볼 수 없어
  * PipelineSqlAccessTest(통합)가 맡는다.
+ *
+ * <p>Tibero 파이프라인 싱크(db-executor 로 SQL 을 보내는 지점)는 두 층으로 묶는다 — {@link DbExecutorClient} 의 SQL 전송
+ * 메서드는 방언과 대량 이동기만, 방언의 실행·탐침 메서드는 러너만 부른다. 방언({@link TiberoStepDialect})이 다음 저장소의 확장 지점이라, 새 호출자가
+ * 방언·싱크를 직접 불러 러너의 실행 주체 판정을 우회하기 쉽기 때문이다. 별도 클래스로 두지 않고 여기에 둔 이유: 프로덕션 클래스 그래프를 두 번째로 가져오면 스위트 힙
+ * 부담이 커진다({@link #PROD} 주석).
  */
 class SqlGateArchitectureTest {
 
@@ -257,6 +264,38 @@ class SqlGateArchitectureTest {
         .haveFullyQualifiedName("com.smartfirehub.pipeline.service.VerbatimSql")
         .should(onlyBeAccessedBy(SqlScriptExecutor.class, SqlColumnProbe.class))
         .allowEmptyShould(false)
+        .check(PROD);
+  }
+
+  /**
+   * db-executor 로 SQL 을 보내는 두 메서드({@code executeSql}·{@code probe}) — Tibero 방언과 대량 이동기만.
+   * DbExecutorClient 자신은 {@code executeSql} 오버로드 위임 때문에 허용한다.
+   */
+  @Test
+  void dbExecutorSqlSinks_onlyFromTiberoDialectAndBulkMover() {
+    methods()
+        .that()
+        .areDeclaredIn(DbExecutorClient.class)
+        .and()
+        .haveNameMatching("executeSql|probe")
+        .should(
+            onlyBeAccessedBy(
+                TiberoStepDialect.class, DbExecutorBulkMover.class, DbExecutorClient.class))
+        .check(PROD);
+  }
+
+  /**
+   * Tibero 방언의 SQL 실행 본체와 열 탐침 — 러너만. TiberoStepDialect 자신은 {@code executeSql} 안에서 {@code
+   * probeTibero} 를 부르는 자기 호출 때문에 허용한다.
+   */
+  @Test
+  void tiberoDialectSinks_onlyFromRunner() {
+    methods()
+        .that()
+        .areDeclaredIn(TiberoStepDialect.class)
+        .and()
+        .haveNameMatching("executeSql|probeTibero")
+        .should(onlyBeAccessedBy(PipelineAsyncRunner.class, TiberoStepDialect.class))
         .check(PROD);
   }
 
