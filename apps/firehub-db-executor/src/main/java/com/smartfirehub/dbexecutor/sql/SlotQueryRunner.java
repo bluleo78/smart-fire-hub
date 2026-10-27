@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
+import com.smartfirehub.dbexecutor.store.StoreUnavailableException;
 import com.smartfirehub.dbexecutor.store.TenantPools;
 import com.smartfirehub.dbexecutor.web.dto.DbError;
 import java.io.BufferedOutputStream;
@@ -15,6 +16,7 @@ import java.sql.SQLTimeoutException;
 import java.sql.Statement;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
@@ -106,19 +108,53 @@ public class SlotQueryRunner {
     buffered.flush();
   }
 
+  /** 슬롯 계정이 있는 기술자, 또는 (찾지 못했을 때) 마지막 실패 줄 — 둘 중 하나만 채워진다. */
+  private record SlotLookup(StoreDescriptor descriptor, Map<String, Object> failure) {}
+
+  /**
+   * 요청 슬롯의 계정이 있는 기술자를 돌려준다. 캐시된 기술자에 있으면 그대로, 없으면 한 번 새로 받아 다시 확인한다.
+   *
+   * <p>WD-263: 슬롯 계정을 막 만든 직후면 캐시된 기술자(TTL 60초)에 아직 슬롯이 없다. 강제 갱신이 무효화를 겸하고 동시 요청은 원격 조회 하나로 묶인다.
+   * 요청당 한 번뿐이라(다시 없으면 바로 실패) 반복되지 않는다. 응답 첫 줄을 쓰기 전에 부르므로 이미 보낸 줄을 다시 보내는 일도 없다.
+   */
+  private SlotLookup descriptorWithSlot(StoreDescriptor cached, int slot, Deadline deadline) {
+    if (cached.slot(slot) != null) {
+      return new SlotLookup(cached, null);
+    }
+    StoreDescriptor fresh;
+    try {
+      fresh = descriptors.refresh(cached.tenantId(), deadline.remaining());
+    } catch (StoreUnavailableException e) {
+      // 새로 받지 못했다 — 슬롯이 없다고 단정할 수 없으니 컨트롤러의 기술자 조회 실패와 같은 문구로 거부한다.
+      return new SlotLookup(null, failure(e.getMessage(), null));
+    }
+    if (fresh.slot(slot) == null) {
+      return new SlotLookup(null, failure(NO_SLOT_ACCOUNT, null));
+    }
+    return new SlotLookup(fresh, null);
+  }
+
   /** 실행하고 마지막 줄을 돌려준다. 클라이언트가 끊었으면 null(더 쓸 곳이 없다). */
   private Map<String, Object> run(
-      StoreDescriptor d, int slot, String query, Deadline deadline, OutputStream out) {
-    String body;
+      StoreDescriptor cached, int slot, String query, Deadline deadline, OutputStream out) {
+    StoreDescriptor d;
+    String sql;
     try {
-      body = QueryRunner.validatedQuery(query, d.schema());
+      // 검증은 원격 조회 없이 먼저 한다 — 거부될 문장 때문에 기술자를 새로 받지 않게.
+      String body = QueryRunner.validatedQuery(query, cached.schema());
+      SlotLookup lookup = descriptorWithSlot(cached, slot, deadline);
+      if (lookup.failure() != null) {
+        return lookup.failure();
+      }
+      d = lookup.descriptor();
+      // 새로 받은 기술자의 스키마가 다르면 그 스키마로 다시 검증한다 — 검증 기준과 실행 기술자를 어긋나게 두지 않는다. 같으면 검증 결과도 같으므로
+      // (검증은 문장·스키마만 보는 순수 함수) 다시 하지 않는다.
+      sql =
+          Objects.equals(d.schema(), cached.schema())
+              ? body
+              : QueryRunner.validatedQuery(query, d.schema());
     } catch (TiberoSqlGuard.Rejected e) {
       return failure(e.getMessage(), null);
-    }
-    if (d.slot(slot) == null) {
-      // 캐시된 기술자에 슬롯이 없으면 그 뒤 슬롯 계정이 준비돼도 TTL 동안 계속 거부된다 — 다음 요청이 새로 받게 지운다.
-      descriptors.invalidate(d.tenantId());
-      return failure(NO_SLOT_ACCOUNT, null);
     }
     String timeout = QueryRunner.timeoutMessage(deadline.totalSeconds());
     LeasedExecution execution =
@@ -133,7 +169,7 @@ public class SlotQueryRunner {
           try {
             rows =
                 deadline.execute(
-                    c, deadline.totalSeconds(), st -> streamRows(st, body, deadline, out));
+                    c, deadline.totalSeconds(), st -> streamRows(st, sql, deadline, out));
           } catch (ClientGone e) {
             // 끊김: 문장은 streamRows 가 취소했다. 트랜잭션을 닫고(try-with-resources 가 커넥션을 반납) 더 쓰지 않는다.
             LeasedExecution.rollbackQuietly(c);

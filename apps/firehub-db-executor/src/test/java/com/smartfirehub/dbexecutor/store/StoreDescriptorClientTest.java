@@ -12,11 +12,19 @@ import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -50,6 +58,18 @@ class StoreDescriptorClientTest {
 
   private volatile long slowEpochTenant = -1;
 
+  /**
+   * 기술자 요청 문(WD-263) — 도착한 요청은 큐에서 문 하나를 꺼내 열릴 때까지 응답을 미룬다(큐가 비면 바로 응답). 잠자기 대신 문으로 순서를 고정해 테스트를
+   * 결정적으로 만든다.
+   */
+  private final LinkedBlockingQueue<CountDownLatch> gates = new LinkedBlockingQueue<>();
+
+  /** 만든 문 전부 — 테스트가 끝나면 모두 연다. */
+  private final List<CountDownLatch> allGates = new CopyOnWriteArrayList<>();
+
+  /** 기술자 요청이 도착할 때마다 하나씩 풀린다 — 「원격 조회가 진행 중」이 된 것을 기다리는 데 쓴다. */
+  private final Semaphore entered = new Semaphore(0);
+
   private final AtomicLong clock = new AtomicLong(0);
   private StoreDescriptorClient client;
 
@@ -80,15 +100,22 @@ class StoreDescriptorClientTest {
           hits.incrementAndGet();
           lastAuth.set(ex.getRequestHeaders().getFirst("Authorization"));
           lastUri.set(ex.getRequestURI().toString());
+          // 응답 본문·상태는 요청이 <b>도착한 시점</b> 값으로 정한다 — 「무효화 전에 시작된 조회는 옛 값을 받는다」를 재현하려고.
+          byte[] b = body.get().getBytes(StandardCharsets.UTF_8);
+          int st = status.get();
+          entered.release();
+          CountDownLatch gate = gates.poll();
           try {
+            if (gate != null) {
+              gate.await();
+            }
             if (delayMs > 0) {
               Thread.sleep(delayMs);
             }
           } catch (InterruptedException ignored) {
           }
-          byte[] b = body.get().getBytes(StandardCharsets.UTF_8);
           ex.getResponseHeaders().add("Content-Type", "application/json");
-          ex.sendResponseHeaders(status.get(), b.length);
+          ex.sendResponseHeaders(st, b.length);
           ex.getResponseBody().write(b);
           ex.close();
         });
@@ -109,6 +136,8 @@ class StoreDescriptorClientTest {
 
   @AfterEach
   void stop() {
+    // 실패한 테스트가 닫힌 문을 남겨도 서버 스레드가 영원히 막히지 않게 모두 연다.
+    allGates.forEach(CountDownLatch::countDown);
     server.stop(0);
   }
 
@@ -298,7 +327,7 @@ class StoreDescriptorClientTest {
     delayMs = 300;
     ExecutorService pool = Executors.newFixedThreadPool(10);
     CountDownLatch go = new CountDownLatch(1);
-    List<Future<StoreDescriptor>> fs = new java.util.ArrayList<>();
+    List<Future<StoreDescriptor>> fs = new ArrayList<>();
     for (int i = 0; i < 10; i++) {
       fs.add(
           pool.submit(
@@ -446,7 +475,7 @@ class StoreDescriptorClientTest {
             clock::get);
     delayMs = 300;
     ExecutorService pool = Executors.newFixedThreadPool(2);
-    List<Future<Object>> fs = new java.util.ArrayList<>();
+    List<Future<Object>> fs = new ArrayList<>();
     for (int i = 0; i < 2; i++) {
       fs.add(
           pool.submit(
@@ -460,7 +489,7 @@ class StoreDescriptorClientTest {
               }));
     }
     for (Future<Object> f : fs) {
-      assertThat(f.get(5, java.util.concurrent.TimeUnit.SECONDS)).isInstanceOf(Error.class);
+      assertThat(f.get(5, TimeUnit.SECONDS)).isInstanceOf(Error.class);
     }
     pool.shutdown();
   }
@@ -517,5 +546,222 @@ class StoreDescriptorClientTest {
   void toString_masksPassword() {
     StoreDescriptor d = client.get(7);
     assertThat(d.toString()).doesNotContain(PASSWORD).contains("password=****");
+  }
+
+  // ---- WD-263: 강제 갱신(refresh)·세대 ----
+
+  /** 슬롯 계정 S2 가 생긴 뒤의 기술자 응답(그 전 응답은 {@link #TIBERO_JSON} — 슬롯 없음). */
+  private static final String WITH_SLOT_JSON =
+      TIBERO_JSON.replace(
+          "\"extra\":1",
+          "\"slots\":[{\"slot\":2,\"username\":\"GENIA_T7_S2\",\"password\":\"s\"}]");
+
+  private static final Duration REFRESH_WAIT = Duration.ofSeconds(3);
+
+  /** 다음 기술자 요청 하나를 붙잡아 둘 문을 건다. */
+  private CountDownLatch holdNextRequest() {
+    CountDownLatch gate = new CountDownLatch(1);
+    allGates.add(gate);
+    gates.add(gate);
+    return gate;
+  }
+
+  /** 기술자 요청 하나가 서버에 도착할 때까지 기다린다(원격 조회가 진행 중이 됨). */
+  private void awaitRequestEntered() throws InterruptedException {
+    assertThat(entered.tryAcquire(5, TimeUnit.SECONDS)).as("요청 도착").isTrue();
+  }
+
+  /** 별도 스레드에서 시작한 작업 — 결과(task)와, 대기 상태를 볼 스레드(thread). */
+  private record Started<T>(Thread thread, FutureTask<T> task) {}
+
+  /** 별도 스레드에서 실행한다 — 상태(대기 중인지)를 볼 수 있게 스레드를 직접 만든다. */
+  private static <T> Started<T> startThread(Callable<T> work) {
+    FutureTask<T> task = new FutureTask<>(work);
+    Thread t = new Thread(task);
+    t.start();
+    return new Started<>(t, task);
+  }
+
+  /** 스레드들이 모두 진행 중 조회의 future 를 기다리며 멈출 때까지(TIMED_WAITING) 기다린다 — 문을 열기 전에 합류를 확정한다. */
+  private static void awaitParked(List<Thread> threads) throws InterruptedException {
+    long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    for (Thread t : threads) {
+      while (t.getState() != Thread.State.TIMED_WAITING) {
+        assertThat(System.nanoTime()).as("합류 대기: " + t.getState()).isLessThan(until);
+        Thread.sleep(2);
+      }
+    }
+  }
+
+  /**
+   * 무효화 전에 시작된 진행 중 조회에는 refresh 가 합류하지 않는다 — 합류하면 옛 값(슬롯 없음)을 받는다. 옛 조회는 문에 막혀 있으므로 합류했다면 refresh
+   * 는 시간 초과로 끝난다. 옛 조회가 늦게 끝나도 refresh 가 넣은 새 값을 덮지 않는다.
+   */
+  @Test
+  void refresh_doesNotJoinInflightStartedBeforeInvalidate() throws Exception {
+    CountDownLatch gate = holdNextRequest();
+    FutureTask<StoreDescriptor> old = startThread(() -> client.get(7)).task();
+    awaitRequestEntered();
+
+    client.invalidate(7);
+    body.set(WITH_SLOT_JSON);
+    StoreDescriptor refreshed = client.refresh(7, REFRESH_WAIT);
+
+    assertThat(refreshed.slot(2)).as("무효화 이후 시작한 조회의 결과").isNotNull();
+    assertThat(hits.get()).isEqualTo(2);
+
+    gate.countDown();
+    assertThat(old.get(5, TimeUnit.SECONDS).slot(2)).as("옛 조회의 호출자는 옛 값").isNull();
+    assertThat(client.get(7).slot(2)).as("옛 조회가 캐시를 덮지 않았다").isNotNull();
+    assertThat(hits.get()).isEqualTo(2);
+  }
+
+  /**
+   * 무효화 전에 시작된 <b>강제 갱신</b>에도 합류하지 않는다(세대가 달라졌으므로) — 합류하면 문에 막힌 옛 강제 갱신을 기다리다 시간 초과로 끝난다. 옛 강제 갱신이
+   * 늦게 끝나도 캐시를 덮지 않는다.
+   */
+  @Test
+  void refresh_doesNotJoinRefreshStartedBeforeInvalidate() throws Exception {
+    CountDownLatch gate = holdNextRequest();
+    FutureTask<StoreDescriptor> old = startThread(() -> client.refresh(7, REFRESH_WAIT)).task();
+    awaitRequestEntered();
+
+    client.invalidate(7);
+    body.set(WITH_SLOT_JSON);
+    StoreDescriptor refreshed = client.refresh(7, REFRESH_WAIT);
+
+    assertThat(refreshed.slot(2)).as("무효화 이후 시작한 조회의 결과").isNotNull();
+    assertThat(hits.get()).isEqualTo(2);
+
+    gate.countDown();
+    assertThat(old.get(5, TimeUnit.SECONDS).slot(2)).as("옛 강제 갱신의 호출자는 옛 값").isNull();
+    assertThat(client.get(7).slot(2)).as("옛 강제 갱신이 캐시를 덮지 않았다").isNotNull();
+    assertThat(hits.get()).isEqualTo(2);
+  }
+
+  /** 무효화 전에 시작돼 무효화 뒤에 끝난 조회는 캐시에 넣지 않는다 — 다음 조회가 새로 받는다(LeasedExecution 의 무효화도 같다). */
+  @Test
+  void staleInflight_doesNotOverwriteCacheAfterInvalidate() throws Exception {
+    CountDownLatch gate = holdNextRequest();
+    FutureTask<StoreDescriptor> old = startThread(() -> client.get(7)).task();
+    awaitRequestEntered();
+
+    client.invalidate(7);
+    body.set(WITH_SLOT_JSON);
+    gate.countDown();
+
+    assertThat(old.get(5, TimeUnit.SECONDS).slot(2)).isNull();
+    assertThat(client.get(7).slot(2)).as("옛 결과가 캐시에 남지 않아 새로 받았다").isNotNull();
+    assertThat(hits.get()).isEqualTo(2);
+  }
+
+  /**
+   * 같은 테넌트의 동시 refresh 는 원격 조회 하나로 묶는다 — 첫 refresh 의 조회가 진행 중일 때 온 refresh 들은 그 조회에 합류한다(각자 무효화해서
+   * 서로의 조회를 버리지 않는다). 결과는 캐시에도 들어간다.
+   */
+  @Test
+  void concurrentRefresh_singleRemoteFetch() throws Exception {
+    assertThat(client.get(7).slot(2)).isNull(); // 슬롯 없는 옛 기술자가 캐시돼 있다.
+    body.set(WITH_SLOT_JSON);
+    CountDownLatch gate = holdNextRequest();
+    FutureTask<StoreDescriptor> leader = startThread(() -> client.refresh(7, REFRESH_WAIT)).task();
+    awaitRequestEntered();
+
+    List<Thread> joiners = new ArrayList<>();
+    List<FutureTask<StoreDescriptor>> joined = new ArrayList<>();
+    for (int i = 0; i < 5; i++) {
+      Started<StoreDescriptor> joiner = startThread(() -> client.refresh(7, REFRESH_WAIT));
+      joiners.add(joiner.thread());
+      joined.add(joiner.task());
+    }
+    awaitParked(joiners);
+    gate.countDown();
+
+    assertThat(leader.get(5, TimeUnit.SECONDS).slot(2)).isNotNull();
+    for (FutureTask<StoreDescriptor> f : joined) {
+      assertThat(f.get(5, TimeUnit.SECONDS).slot(2)).isNotNull();
+    }
+    assertThat(hits.get()).as("처음 get 1 + refresh 묶음 1").isEqualTo(2);
+    assertThat(client.get(7).slot(2)).isNotNull();
+    assertThat(hits.get()).as("refresh 결과가 캐시됐다").isEqualTo(2);
+  }
+
+  /** refresh 는 신선한 캐시가 있어도 새로 받는다(옛 기술자가 캐시돼 있을 때 쓰는 길이다). */
+  @Test
+  void refresh_bypassesFreshCache_andCachesResult() {
+    assertThat(client.get(7).slot(2)).isNull();
+    body.set(WITH_SLOT_JSON);
+
+    assertThat(client.refresh(7, REFRESH_WAIT).slot(2)).isNotNull();
+    assertThat(client.get(7).slot(2)).isNotNull();
+    assertThat(hits.get()).isEqualTo(2);
+  }
+
+  /** 진행 중인 refresh 에 get 도 합류한다 — refresh 가 옛 조회 표시를 갈아 끼워 다음 get 들이 새 조회를 같이 기다린다. */
+  @Test
+  void get_joinsInflightRefresh() throws Exception {
+    CountDownLatch gate = holdNextRequest();
+    FutureTask<StoreDescriptor> leader = startThread(() -> client.refresh(7, REFRESH_WAIT)).task();
+    awaitRequestEntered();
+    Started<StoreDescriptor> getter = startThread(() -> client.get(7, REFRESH_WAIT));
+    awaitParked(List.of(getter.thread()));
+    gate.countDown();
+
+    assertThat(leader.get(5, TimeUnit.SECONDS).tenantId()).isEqualTo(7);
+    assertThat(getter.task().get(5, TimeUnit.SECONDS).tenantId()).isEqualTo(7);
+    assertThat(hits.get()).isEqualTo(1);
+  }
+
+  /**
+   * refresh 의 원격 조회가 실패하면 맡은 쪽과 합류한 쪽 모두 예외로 깨어나고(영원히 막히지 않음), 진행 표시가 남지 않아 다음 refresh 는 새로 조회한다.
+   * 실패는 캐시하지 않는다.
+   */
+  @Test
+  void refreshFailure_releasesWaiters_noStuckInflight() throws Exception {
+    status.set(503);
+    CountDownLatch gate = holdNextRequest();
+    FutureTask<StoreDescriptor> leader = startThread(() -> client.refresh(7, REFRESH_WAIT)).task();
+    awaitRequestEntered();
+    Started<StoreDescriptor> joiner = startThread(() -> client.refresh(7, REFRESH_WAIT));
+    awaitParked(List.of(joiner.thread()));
+    gate.countDown();
+
+    for (FutureTask<StoreDescriptor> f : List.of(leader, joiner.task())) {
+      assertThatThrownBy(() -> f.get(5, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .cause()
+          .isInstanceOf(StoreUnavailableException.class)
+          .hasMessage("테넌트 저장소 정보를 가져오지 못했습니다(503).");
+    }
+    assertThat(hits.get()).isEqualTo(1);
+
+    status.set(200);
+    assertThat(client.refresh(7, REFRESH_WAIT).tenantId()).isEqualTo(7);
+    assertThat(hits.get()).as("멈춘 진행 표시 없이 새로 조회").isEqualTo(2);
+  }
+
+  /** refresh 의 조회가 진행 중일 때 무효화가 오면(로그인 실패 등) 그 결과는 호출자에게만 주고 캐시에 넣지 않는다. */
+  @Test
+  void invalidateDuringRefresh_resultNotCached() throws Exception {
+    CountDownLatch gate = holdNextRequest();
+    FutureTask<StoreDescriptor> leader = startThread(() -> client.refresh(7, REFRESH_WAIT)).task();
+    awaitRequestEntered();
+    client.invalidate(7);
+    gate.countDown();
+
+    assertThat(leader.get(5, TimeUnit.SECONDS).tenantId()).isEqualTo(7);
+    client.get(7);
+    assertThat(hits.get()).as("무효화 전에 보낸 조회 결과는 캐시되지 않았다").isEqualTo(2);
+  }
+
+  /** 남은 시간이 없으면 원격 조회 없이 시간 초과로 거부하고, 캐시도 건드리지 않는다. */
+  @Test
+  void refresh_noBudgetLeft_failsWithoutRemoteCallOrInvalidation() {
+    client.get(7);
+    assertThatThrownBy(() -> client.refresh(7, Duration.ZERO))
+        .isInstanceOf(StoreUnavailableException.class)
+        .hasMessage("테넌트 저장소 정보를 가져오지 못했습니다(시간 초과).");
+    client.get(7);
+    assertThat(hits.get()).isEqualTo(1);
   }
 }

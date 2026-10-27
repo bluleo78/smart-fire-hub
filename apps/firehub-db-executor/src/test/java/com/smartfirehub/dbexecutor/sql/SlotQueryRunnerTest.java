@@ -1,12 +1,16 @@
 package com.smartfirehub.dbexecutor.sql;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -16,6 +20,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.LogCapture;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
+import com.smartfirehub.dbexecutor.store.StoreUnavailableException;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -26,9 +31,11 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -205,14 +212,123 @@ class SlotQueryRunnerTest {
     assertThat(db.events).isEmpty();
   }
 
+  /** 슬롯 계정이 하나도 없는 같은 테넌트 기술자 — 슬롯 계정을 만들기 전에 캐시된 옛 기술자를 흉내 낸다(WD-263). */
+  static final StoreDescriptor NO_SLOT_DESCRIPTOR =
+      new StoreDescriptor(
+          5L,
+          "TIBERO",
+          "10.0.0.1",
+          8629,
+          "tibero",
+          "GENIA_T5",
+          new StoreDescriptor.Account("GENIA_T5", "pw-secret"),
+          new StoreDescriptor.Account("GENIA_T5_RO", "ro-secret"),
+          List.of(),
+          3L);
+
+  /**
+   * WD-263: 기술자에 슬롯이 없으면 새로 받아(refresh) 다시 확인한다 — 새로 받아도 없으면 지금처럼 {@code NO_SLOT_ACCOUNT}. 커넥션은 빌리지
+   * 않는다. (스펙이 「무효화하고 바로 실패」에서 「한 번 새로 받아 확인」으로 동작을 바꿨다.)
+   */
   @Test
-  void missingSlotAccount_failsAndInvalidatesDescriptor() throws Exception {
+  void missingSlotAccount_failsWhenStillMissingAfterRefresh() throws Exception {
+    when(descriptors.refresh(eq(5L), any(Duration.class))).thenReturn(SLOT_DESCRIPTOR);
+
     List<JsonNode> lines = stream(SLOT_DESCRIPTOR, 7, "SELECT 1 FROM DUAL", 30);
 
     assertThat(lines).hasSize(1);
     assertThat(lines.get(0).get("error").asText()).isEqualTo(SlotQueryRunner.NO_SLOT_ACCOUNT);
-    verify(descriptors).invalidate(5L);
+    verify(descriptors).refresh(eq(5L), any(Duration.class));
     assertThat(db.factoryCalls.get()).isZero();
+  }
+
+  /**
+   * WD-263: 새 슬롯 계정을 만든 직후(캐시된 기술자에 아직 슬롯이 없음) 한 번 새로 받은 기술자로 정상 실행한다. 재조회는 스트리밍 첫 줄을 쓰기 전에 끝난다 —
+   * 이미 보낸 줄을 다시 보내지 않게.
+   */
+  @Test
+  void missingSlot_refreshesOnce_thenSucceeds() throws Exception {
+    AtomicBoolean refreshed = new AtomicBoolean();
+    when(descriptors.refresh(eq(5L), any(Duration.class)))
+        .thenAnswer(
+            inv -> {
+              refreshed.set(true);
+              return SLOT_DESCRIPTOR;
+            });
+    db.resultSet = idRows(2, 0, new AtomicInteger());
+    AtomicBoolean wroteBeforeRefresh = new AtomicBoolean();
+    ByteArrayOutputStream sink = new ByteArrayOutputStream();
+    OutputStream out =
+        new OutputStream() {
+          @Override
+          public void write(int b) {
+            // 예외로 알리면 끊김으로 처리되므로 표시만 남긴다.
+            if (!refreshed.get()) {
+              wroteBeforeRefresh.set(true);
+            }
+            sink.write(b);
+          }
+        };
+
+    try (Deadline deadline = new Deadline(30)) {
+      runner.stream(NO_SLOT_DESCRIPTOR, 2, "SELECT id FROM t", deadline, out);
+    }
+    List<JsonNode> lines = lines(sink.toString(StandardCharsets.UTF_8));
+
+    assertThat(wroteBeforeRefresh).as("재조회는 첫 줄보다 먼저 끝난다").isFalse();
+    assertThat(lines).hasSize(1 + 2 + 1);
+    assertThat(lines.get(0).toString()).isEqualTo("{\"columns\":[\"id\"]}");
+    assertThat(lines.get(lines.size() - 1).toString())
+        .isEqualTo("{\"success\":true,\"row_count\":2}");
+    // 새로 받은 기술자의 슬롯 계정(S2)으로 빌렸다 — 옛 기술자에는 S2 가 없어 빌릴 수 없다.
+    assertThat(db.slotFactorySlots).containsExactly(2);
+    verify(descriptors, times(1)).refresh(eq(5L), any(Duration.class));
+    // 강제 갱신이 무효화를 겸한다 — 따로 무효화하면 동시 요청의 재조회가 한 번으로 묶이지 않는다.
+    verify(descriptors, never()).invalidate(anyLong());
+  }
+
+  /** WD-263: 새로 받아도 슬롯이 없으면 실패하고, 재조회는 요청당 한 번뿐이다(무한 반복 없음). */
+  @Test
+  void missingSlot_stillMissingAfterRefresh_failsWithoutSecondRefresh() throws Exception {
+    when(descriptors.refresh(eq(5L), any(Duration.class))).thenReturn(NO_SLOT_DESCRIPTOR);
+
+    List<JsonNode> lines = stream(NO_SLOT_DESCRIPTOR, 2, "SELECT id FROM t", 30);
+
+    assertThat(lines).hasSize(1);
+    assertThat(lines.get(0).get("success").asBoolean()).isFalse();
+    assertThat(lines.get(0).get("error").asText()).isEqualTo(SlotQueryRunner.NO_SLOT_ACCOUNT);
+    verify(descriptors, times(1)).refresh(eq(5L), any(Duration.class));
+    verifyNoMoreInteractions(descriptors);
+    assertThat(db.factoryCalls.get()).isZero();
+  }
+
+  /**
+   * WD-263: 재조회 자체가 실패하면(api 503·시간 초과) 「기술자를 얻지 못함」 문구로 실패 줄 하나를 쓴다 — 컨트롤러의 기술자 조회 실패와 같은 문구다. 슬롯이
+   * 없다고 단정할 수 없으니 {@code NO_SLOT_ACCOUNT} 가 아니다(내가 정한 것).
+   */
+  @Test
+  void missingSlot_refreshFails_storeUnavailableLine() throws Exception {
+    when(descriptors.refresh(eq(5L), any(Duration.class)))
+        .thenThrow(new StoreUnavailableException("503"));
+
+    List<JsonNode> lines = stream(NO_SLOT_DESCRIPTOR, 2, "SELECT id FROM t", 30);
+
+    assertThat(lines).hasSize(1);
+    assertThat(lines.get(0).get("success").asBoolean()).isFalse();
+    assertThat(lines.get(0).get("error").asText()).isEqualTo("테넌트 저장소 정보를 가져오지 못했습니다(503).");
+    assertThat(lines.get(0).has("db_error")).isTrue();
+    verify(descriptors, times(1)).refresh(eq(5L), any(Duration.class));
+    assertThat(db.factoryCalls.get()).isZero();
+  }
+
+  /** 슬롯이 있으면 재조회하지 않는다 — 정상 요청마다 기술자를 새로 받지 않는다(스펙 실패 조건). */
+  @Test
+  void slotPresent_noRefresh() throws Exception {
+    db.resultSet = idRows(1, 0, new AtomicInteger());
+
+    stream("SELECT id FROM t");
+
+    verify(descriptors, never()).refresh(anyLong(), any(Duration.class));
   }
 
   @Test

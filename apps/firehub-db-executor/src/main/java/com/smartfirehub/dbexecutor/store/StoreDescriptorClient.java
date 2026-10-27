@@ -36,6 +36,11 @@ import org.springframework.stereotype.Component;
  *       실패하지 않게.
  *   <li>스크립트 토큰 세대는 별도 경량 창구에서 5초 동안만 캐시한다. 접속 기술자는 일반 TTL(60초)을 유지한다.
  *   <li>요청 범위: 언제나 {@code ?include=ro,slots} 로 받는다(RO·슬롯 계정 포함). 한 캐시를 모든 경로가 같이 쓰기 위해서다.
+ *   <li>세대(WD-263): 기술자 캐시의 테넌트 칸은 「세대 번호」를 같이 들고 있고 무효화·강제 갱신마다 1 씩 올라간다. 원격 조회는 요청을 보내기 <b>전에</b>
+ *       세대를 읽고, 결과를 캐시에 넣을 때 그 세대가 아직 현재 세대일 때만 넣는다 — 무효화 전에 보낸 조회가 늦게 끝나 옛 값으로 캐시를 덮지 않게. 세대는 캐시 칸
+ *       안에 있어(무효화는 칸을 지우지 않고 「값 없음 + 다음 세대」 표지로 바꾼다) 테넌트별 자료 구조를 따로 두지 않는다.
+ *   <li>강제 갱신({@link #refresh}): 무효화 이후에 시작된 조회의 결과를 돌려준다(새 슬롯 계정 직후 재확인용). 동시 강제 갱신은 원격 조회 하나로
+ *       묶는다.
  * </ul>
  */
 @Component
@@ -45,9 +50,26 @@ public class StoreDescriptorClient {
 
   /**
    * 캐시 항목(기술자·세대 공용). {@code fetchedAtNanos} 는 그 값을 받으려고 원격 조회를 <b>시작한</b> 시각이다 — 기술자 캐시는 늦게 끝난 옛
-   * 조회가 더 새로 시작한 조회의 결과를 덮지 않게 갱신({@code cache.merge})이 이 시각으로 순서를 가린다.
+   * 조회가 더 새로 시작한 조회의 결과를 덮지 않게 갱신({@code cache.compute})이 이 시각으로 순서를 가린다. {@code generation} 은 기술자
+   * 캐시의 세대 번호다(클래스 설명 — 세대 캐시는 늘 0).
    */
-  private record Cached<T>(T value, long fetchedAtNanos, long expiresAtNanos) {}
+  private record Cached<T>(T value, long fetchedAtNanos, long expiresAtNanos, long generation) {
+
+    /**
+     * 무효화 표지 — 값은 없고(신선한 값으로 보이지 않음) 세대만 다음 번호로 올린다. 칸을 지우지 않는 이유: 지우면 세대가 0 으로 돌아가 무효화 전에 시작된
+     * 조회(세대 0)가 캐시를 다시 채울 수 있다.
+     */
+    static <T> Cached<T> invalidated(long generation) {
+      return new Cached<>(null, Long.MIN_VALUE, Long.MIN_VALUE, generation);
+    }
+  }
+
+  /**
+   * 진행 중인 원격 조회 하나. {@code refresh} 는 강제 갱신이 시작한 조회인지, {@code generation} 은 그 강제 갱신이 올린 세대다(일반 조회는
+   * 0 — 강제 갱신의 합류 판단에만 쓴다). 진행 표시를 지울 때는 맵의 {@code remove(key, value)} 로 <b>자기 것</b>만 지운다 — future
+   * 는 조회마다 새로 만들고 동일성으로 비교되므로, 갈아 끼워진 뒤의 새 표시를 옛 조회가 지우지 않는다.
+   */
+  private record Flight<T>(CompletableFuture<T> future, long generation, boolean refresh) {}
 
   /** 원격 조회 한 번 — 남은 대기 시간({@code waitNanos}) 안에 값을 얻어 자기 캐시에 넣고 돌려준다. */
   @FunctionalInterface
@@ -82,13 +104,16 @@ public class StoreDescriptorClient {
   private final ConcurrentHashMap<Long, Cached<StoreDescriptor>> cache = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Long, Cached<Long>> epochCache = new ConcurrentHashMap<>();
 
-  /** 진행 중인 테넌트별 기술자 조회 — 같은 테넌트의 동시 요청은 이 future 하나를 각자 남은 시간까지만 기다린다. */
-  private final ConcurrentHashMap<Long, CompletableFuture<StoreDescriptor>> inflight =
+  /**
+   * 진행 중인 테넌트별 기술자 조회 — 같은 테넌트의 동시 요청은 이 future 하나를 각자 남은 시간까지만 기다린다. 잠금 순서: {@link #refresh} 는 이
+   * 맵의 {@code compute} 안에서 {@link #cache} 의 {@code compute} 를 부른다. 반대로 {@link #cache} 칸을 잡은 채 이 맵을
+   * 건드리는 코드는 두지 않는다(교착 방지). 두 맵의 람다 안에서는 원격 호출을 하지 않는다.
+   */
+  private final ConcurrentHashMap<Long, Flight<StoreDescriptor>> inflight =
       new ConcurrentHashMap<>();
 
-  /** 진행 중인 테넌트별 세대 조회 — 같은 테넌트의 동시 요청은 이 future 하나를 각자 남은 시간까지만 기다린다. */
-  private final ConcurrentHashMap<Long, CompletableFuture<Long>> epochInflight =
-      new ConcurrentHashMap<>();
+  /** 진행 중인 테넌트별 세대 조회 — 같은 테넌트의 동시 요청은 이 future 하나를 각자 남은 시간까지만 기다린다(세대 번호는 쓰지 않는다). */
+  private final ConcurrentHashMap<Long, Flight<Long>> epochInflight = new ConcurrentHashMap<>();
 
   @Autowired
   public StoreDescriptorClient(DbExecutorProperties props, ObjectMapper mapper) {
@@ -121,10 +146,75 @@ public class StoreDescriptorClient {
     return singleFlight(tenantId, budget, cache, inflight, this::fetch);
   }
 
-  /** 이 테넌트의 캐시된 기술자를 버린다 — 다음 요청이 api 에서 새로 받아 온다(비밀번호 교체 직후 로그인 실패 대응). */
+  /**
+   * 무효화 이후에 시작된 원격 조회 결과를 돌려준다. 그 전에 시작된 진행 중 조회에는 합류하지 않고, 그 결과가 늦게 끝나도 캐시를 덮지 않는다. 동시 호출은 한 번으로
+   * 묶는다(WD-263 — 새 슬롯 계정을 만든 직후 캐시된 옛 기술자에 슬롯이 없을 때 한 번 다시 받는 길).
+   *
+   * <p>무효화를 겸한다 — 호출자가 따로 {@link #invalidate} 를 부르지 않는다. 따로 부르면 동시 요청 A·B 에서 B 의 무효화가 A 의 진행 중 강제
+   * 갱신을 「옛 조회」로 만들어 원격 조회가 요청 수만큼 늘어난다. 합류·시작 판단은 {@code inflight.compute} 한 번 안에서 원자적으로 한다.
+   *
+   * <ul>
+   *   <li>현재 세대를 올린 강제 갱신이 진행 중이면 합류한다. 안전한 이유: 호출자가 들고 있는 옛 기술자는 그 세대 증가 전에 캐시에서 읽었거나(합류할 조회는 증가
+   *       뒤에 시작됐다), 그 강제 갱신이 갈아 끼운 더 오래된 조회에서 받았다 — 어느 쪽이든 합류할 조회가 더 늦게 시작했다.
+   *   <li>아니면(진행 중 조회가 없거나, 일반 조회거나, 그 뒤 다른 무효화로 세대가 바뀜) 세대를 올리고(무효화) 자기 조회를 진행 표시로 갈아 끼운다. 갈아 끼워진
+   *       옛 조회는 계속 돌아 자기 대기자에게 결과를 주지만, 세대가 맞지 않아 캐시에는 못 넣는다.
+   * </ul>
+   *
+   * <p>캐시를 다시 확인하지 않는다 — 신선한 캐시 값이 바로 다시 확인하려는 옛 값일 수 있다. 조회가 끝난 뒤 늦게 온 강제 갱신은 원격 조회를 한 번 더 한다(스펙
+   * §6.2 가 받아들인 비용, 쿨다운 없음).
+   *
+   * <p>진행 표시를 건 뒤 {@code fetch} 가 세대를 읽기 전에 다른 {@link #invalidate} 가 끼면, 뒤이은 {@code refresh} 는 그
+   * 표시에 합류하지 못하고 원격 조회가 하나 더 생긴다(정확성 문제는 없다 — 비용만 한 번 더 든다).
+   *
+   * @param wait 요청 기한까지 남은 시간({@link #MAX_FETCH} 와 짧은 쪽까지 기다린다)
+   * @throws StoreUnavailableException 못 얻었거나 남은 시간 안에 끝나지 않았을 때 — {@link #get(long, Duration)} 과 같다
+   */
+  public StoreDescriptor refresh(long tenantId, Duration wait) {
+    long waitNanos = Math.min(wait.toNanos(), MAX_FETCH.toNanos());
+    if (waitNanos <= 0) {
+      // 남은 시간이 없으면 캐시도 건드리지 않고 거부한다(무효화만 하고 못 받아 오면 다음 요청까지 손해).
+      throw new StoreUnavailableException(TIMED_OUT);
+    }
+    CompletableFuture<StoreDescriptor> mine = new CompletableFuture<>();
+    Flight<StoreDescriptor> flight =
+        inflight.compute(
+            tenantId,
+            (k, existing) -> {
+              if (existing != null
+                  && existing.refresh()
+                  && existing.generation() == generation(k)) {
+                return existing;
+              }
+              // 람다 안에서는 세대만 올린다(cache 칸 잠금은 짧다) — 원격 호출은 밖에서.
+              return new Flight<>(mine, advanceGeneration(k), true);
+            });
+    if (flight.future() != mine) {
+      return await(flight.future(), waitNanos);
+    }
+    return lead(tenantId, waitNanos, flight, inflight, this::fetch);
+  }
+
+  /**
+   * 이 테넌트의 캐시된 기술자를 버린다 — 다음 요청이 api 에서 새로 받아 온다(비밀번호 교체 직후 로그인 실패 대응). 세대를 올리므로 지금 진행 중인 조회가 늦게
+   * 끝나도 옛 값을 캐시에 다시 넣지 못한다(WD-263).
+   */
   public void invalidate(long tenantId) {
-    cache.remove(tenantId);
+    advanceGeneration(tenantId);
     epochCache.remove(tenantId);
+  }
+
+  /** 기술자 캐시 칸의 현재 세대(칸이 없으면 0). */
+  private long generation(long tenantId) {
+    Cached<StoreDescriptor> c = cache.get(tenantId);
+    return c == null ? 0L : c.generation();
+  }
+
+  /** 세대를 하나 올리고 캐시 값을 버린다(칸 잠금 안에서 원자적으로) — 올린 세대를 돌려준다. */
+  private long advanceGeneration(long tenantId) {
+    return cache
+        .compute(
+            tenantId, (k, old) -> Cached.invalidated((old == null ? 0L : old.generation()) + 1))
+        .generation();
   }
 
   /**
@@ -151,7 +241,7 @@ public class StoreDescriptorClient {
       long tenantId,
       Duration budget,
       ConcurrentHashMap<Long, Cached<T>> cacheMap,
-      ConcurrentHashMap<Long, CompletableFuture<T>> inflightMap,
+      ConcurrentHashMap<Long, Flight<T>> inflightMap,
       Fetcher<T> fetcher) {
     T hit = fresh(cacheMap, tenantId);
     if (hit != null) {
@@ -161,20 +251,41 @@ public class StoreDescriptorClient {
     if (waitNanos <= 0) {
       throw new StoreUnavailableException(TIMED_OUT);
     }
-    CompletableFuture<T> mine = new CompletableFuture<>();
-    CompletableFuture<T> existing = inflightMap.putIfAbsent(tenantId, mine);
+    // 일반 조회는 어떤 진행 중 조회에든 합류한다(강제 갱신이 시작한 것 포함) — 기존 동작.
+    Flight<T> mine = new Flight<>(new CompletableFuture<>(), 0L, false);
+    Flight<T> existing = inflightMap.putIfAbsent(tenantId, mine);
     if (existing != null) {
-      return await(existing, waitNanos);
+      return await(existing.future(), waitNanos);
     }
+    return lead(
+        tenantId,
+        waitNanos,
+        mine,
+        inflightMap,
+        (id, wait) -> {
+          // 선행 조회가 방금 끝나 캐시를 채웠을 수 있다(경합) — 다시 확인.
+          T again = fresh(cacheMap, id);
+          return again != null ? again : fetcher.fetch(id, wait);
+        });
+  }
+
+  /**
+   * 진행 표시를 맡은 쪽의 원격 조회. 성공·실패 어느 쪽이든 future 를 반드시 끝내고(대기자가 영원히 막히지 않게) 자기 진행 표시만 지운다 — 강제 갱신이 이미 갈아
+   * 끼웠으면 그 새 표시는 남긴다.
+   */
+  private static <T> T lead(
+      long tenantId,
+      long waitNanos,
+      Flight<T> mine,
+      ConcurrentHashMap<Long, Flight<T>> inflightMap,
+      Fetcher<T> fetcher) {
     try {
-      // 선행 조회가 방금 끝나 캐시를 채웠을 수 있다(경합) — 다시 확인.
-      T again = fresh(cacheMap, tenantId);
-      T result = again != null ? again : fetcher.fetch(tenantId, waitNanos);
-      mine.complete(result);
+      T result = fetcher.fetch(tenantId, waitNanos);
+      mine.future().complete(result);
       return result;
     } catch (RuntimeException | Error e) {
       // Error 까지 잡아 대기자를 반드시 깨운다(안 그러면 join 이 영원히 막힌다).
-      mine.completeExceptionally(e);
+      mine.future().completeExceptionally(e);
       throw e;
     } finally {
       inflightMap.remove(tenantId, mine);
@@ -184,7 +295,8 @@ public class StoreDescriptorClient {
   /** 아직 만료되지 않은 캐시 값(없으면 null). */
   private <T> T fresh(ConcurrentHashMap<Long, Cached<T>> cacheMap, long tenantId) {
     Cached<T> c = cacheMap.get(tenantId);
-    if (c != null && nanoClock.getAsLong() < c.expiresAtNanos()) {
+    // 무효화 표지(값 없음)는 신선한 값이 아니다.
+    if (c != null && c.value() != null && nanoClock.getAsLong() < c.expiresAtNanos()) {
       return c.value();
     }
     return null;
@@ -212,7 +324,8 @@ public class StoreDescriptorClient {
       log.warn("{} 조회 실패 — 스크립트 요청을 거부합니다 tenant={} 사유=응답 형식 오류", EPOCH_LABEL, tenantId);
       throw new StoreUnavailableException("응답 형식 오류");
     }
-    epochCache.put(tenantId, new Cached<>(value, started, started + EPOCH_TTL.toNanos()));
+    // 세대 캐시는 세대 번호를 쓰지 않는다(0) — 무효화는 칸을 그냥 지운다.
+    epochCache.put(tenantId, new Cached<>(value, started, started + EPOCH_TTL.toNanos(), 0L));
     return value;
   }
 
@@ -303,10 +416,16 @@ public class StoreDescriptorClient {
     return res;
   }
 
-  /** 원격 기술자 조회. 응답을 검증해 캐시에 넣는다(시작 시각이 늦은 조회의 결과를 남긴다). */
+  /**
+   * 원격 기술자 조회. 응답을 검증해 캐시에 넣는다 — 시작 세대가 아직 현재 세대일 때만, 그리고 시작 시각이 늦은 조회의 결과를 남긴다. 캐시에 못 넣어도 받은 값은 이
+   * 조회를 기다린 호출자에게 돌려준다(그들에게는 충분히 새 값이다).
+   */
   private StoreDescriptor fetch(long tenantId, long waitNanos) {
     // 신선도 기준 시각 — 요청을 보내기 전에 잰다(Cached 설명).
     long startedNanos = nanoClock.getAsLong();
+    // 시작 세대도 요청을 보내기 전에 읽는다: 그 뒤의 무효화는 모두 세대를 올리므로 아래 쓰기 확인에서 걸러진다(보낸 뒤에 읽으면 그 사이 무효화를
+    // 놓친다). 강제 갱신이 올린 세대 다음에 또 무효화가 있었다면 여기서 더 높은 세대를 읽는데, 요청은 그 무효화 뒤에 나가므로 그래도 맞다.
+    long startGeneration = generation(tenantId);
     HttpResponse<String> res =
         send(
             "/internal/executor/tenants/" + tenantId + "/data-store?include=ro,slots",
@@ -330,10 +449,22 @@ public class StoreDescriptorClient {
       throw new StoreUnavailableException("응답 형식 오류");
     }
     Cached<StoreDescriptor> fetched =
-        new Cached<>(d, startedNanos, nanoClock.getAsLong() + ttlNanos);
-    // 늦게 끝난 옛 조회가 더 새로 시작한 조회의 결과를 덮지 않게 시작 시각이 늦은 쪽을 남긴다.
-    cache.merge(
-        tenantId, fetched, (old, neu) -> neu.fetchedAtNanos() >= old.fetchedAtNanos() ? neu : old);
+        new Cached<>(d, startedNanos, nanoClock.getAsLong() + ttlNanos, startGeneration);
+    // 칸 잠금 안에서 확인하고 쓴다 — 확인과 쓰기 사이에 무효화가 끼어들 수 없다.
+    cache.compute(
+        tenantId,
+        (k, old) -> {
+          long current = old == null ? 0L : old.generation();
+          if (current != startGeneration) {
+            // 시작한 뒤 무효화(또는 강제 갱신)가 있었다 — 옛 조회 결과로 캐시를 덮지 않는다.
+            return old;
+          }
+          // 같은 세대 안에서는 늦게 끝난 옛 조회가 더 새로 시작한 조회의 결과를 덮지 않게 시작 시각이 늦은 쪽을 남긴다.
+          if (old != null && old.value() != null && old.fetchedAtNanos() > startedNanos) {
+            return old;
+          }
+          return fetched;
+        });
     return d;
   }
 }
