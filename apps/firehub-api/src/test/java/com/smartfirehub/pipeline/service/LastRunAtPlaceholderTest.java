@@ -59,7 +59,7 @@ class LastRunAtPlaceholderTest {
   private static String tiberoExpr(String utc) {
     return "CAST(TIMESTAMP '"
         + utc
-        + " +00:00' AT TIME ZONE TO_CHAR(SYSTIMESTAMP, 'TZH:TZM') AS TIMESTAMP)";
+        + " +00:00' AT TIME ZONE TO_CHAR(SYSTIMESTAMP, 'TZR') AS TIMESTAMP)";
   }
 
   /**
@@ -82,6 +82,21 @@ class LastRunAtPlaceholderTest {
     OffsetDateTime v = OffsetDateTime.of(2026, 9, 19, 10, 0, 0, 5_000, ZoneOffset.ofHours(9));
     assertThat(LastRunAtPlaceholder.substitute("x >= {{last_run_at}}", v, DataStoreBackend.TIBERO))
         .isEqualTo("x >= " + tiberoExpr("2026-09-19 01:00:00.000005"));
+  }
+
+  /**
+   * 서머타임(WD-234): 현재 오프셋({@code TZH:TZM})으로 옮기면 지난 실행이 전환 전·이번 실행이 전환 후일 때 1시간 어긋난다. 서버 지역
+   * 시간대({@code TZR})로 옮기면 서버가 그 책갈피 순간의 오프셋을 쓴다(지역 이름이면 서머타임 반영, 오프셋 문자열 서버면 지금과 같음 — 실서버 확인). 시간대
+   * 있는 값은 리터럴에만 쓰고 열에는 쓰지 않는다(색인 TSTZ 열 결함과 무관).
+   */
+  @Test
+  void tibero는_현재_오프셋이_아니라_서버_지역_시간대로_옮긴다() {
+    OffsetDateTime v = OffsetDateTime.of(2026, 3, 8, 6, 30, 0, 0, ZoneOffset.UTC);
+    String out = LastRunAtPlaceholder.substitute("{{last_run_at}}", v, DataStoreBackend.TIBERO);
+    assertThat(out)
+        .startsWith("CAST(TIMESTAMP '2026-03-08 06:30:00.000000 +00:00' AT TIME ZONE ")
+        .contains("TO_CHAR(SYSTIMESTAMP, 'TZR')")
+        .doesNotContain("TZH");
   }
 
   @Test

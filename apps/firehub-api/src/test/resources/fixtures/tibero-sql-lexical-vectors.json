@@ -681,7 +681,7 @@
   "guardDivergence": [
     {
       "name": "incremental cursor statement: api guard rejects, db-executor guard allows (Ruling 11)",
-      "sql": "SELECT TO_CHAR(LEAST(SYSTIMESTAMP, NVL(FROM_TZ(CAST(MIN(START_TIME) AS TIMESTAMP), TO_CHAR(SYSTIMESTAMP, 'TZH:TZM')), SYSTIMESTAMP)) AT TIME ZONE '+00:00', 'YYYY-MM-DD HH24:MI:SS.FF6') AS CANDIDATE FROM SYS._VT_TRANSACTION",
+      "sql": "SELECT TO_CHAR(LEAST(SYSTIMESTAMP, NVL(FROM_TZ(CAST(MIN(START_TIME) AS TIMESTAMP), TO_CHAR(SYSTIMESTAMP, 'TZR')), SYSTIMESTAMP)) AT TIME ZONE '+00:00', 'YYYY-MM-DD HH24:MI:SS.FF6') AS CANDIDATE FROM SYS._VT_TRANSACTION",
       "tenantSchema": "GENIA_T5",
       "apiAllowed": false,
       "dbExecutorAllowed": true

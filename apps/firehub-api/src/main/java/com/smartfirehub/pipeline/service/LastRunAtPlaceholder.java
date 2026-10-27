@@ -68,9 +68,15 @@ public final class LastRunAtPlaceholder {
    * <p><b>Tibero:</b> {@code _UPDATED_AT} 은 시간대 없는 TIMESTAMP 이고 {@code SYSTIMESTAMP} 대입으로 채워지므로
    * <b>Tibero 서버의 벽시계</b>를 담는다(서버 시간대가 UTC 라는 보장은 없다). 책갈피는 실제 시각(instant)이라, 서버 시계 기준으로 바꾼 값과 비교해야
    * 한다. 그래서 리터럴이 아니라 <b>서버에서 변환하는 식</b>을 넣는다: {@code CAST(TIMESTAMP '<UTC 시각> +00:00' AT TIME ZONE
-   * TO_CHAR(SYSTIMESTAMP,'TZH:TZM') AS TIMESTAMP)} — 서버 오프셋으로 옮긴 벽시계를 시간대 없이 얻는다. 어떤 서버 시간대·세션
-   * 시간대에서도 맞다(실서버에서 세션 Asia/Seoul·UTC·America/New_York 모두 같은 값을 확인). 시간대 있는 값을 열과 직접 비교하면 세션 시간대로
-   * 열을 해석해 어긋나므로(세션 서울에서 0행) 반드시 이 변환을 거친다. 마이크로초 아래는 버린다(더 이른 값이라 {@code >=} 경계에서 안전하다).
+   * TO_CHAR(SYSTIMESTAMP,'TZR') AS TIMESTAMP)} — 서버 <b>지역 시간대</b>로 옮긴 그 순간의 벽시계를 시간대 없이 얻는다. 어떤 서버
+   * 시간대·세션 시간대에서도 맞다(실서버에서 세션 Asia/Seoul·UTC·America/New_York 모두 같은 값을 확인). 시간대 있는 값을 열과 직접 비교하면 세션
+   * 시간대로 열을 해석해 어긋나므로(세션 서울에서 0행) 반드시 이 변환을 거친다. 마이크로초 아래는 버린다(더 이른 값이라 {@code >=} 경계에서 안전하다).
+   *
+   * <p><b>서머타임(WD-234):</b> 예전에는 서버의 <b>현재</b> 오프셋({@code TZH:TZM})으로 옮겨, 지난 실행이 전환 전이고 이번 실행이 전환
+   * 후면 1시간 어긋났다(봄 전환에서 행을 놓침). 지역 이름({@code TZR})으로 옮기면 책갈피 순간의 오프셋을 쓴다. 오프셋 문자열을 주는 서버에서는 예전과 같다.
+   * 남는 한계: 가을 전환 때 열의 벽시계가 1시간 되돌아가는 구간의 일부 행은 여전히 놓칠 수 있다(저장 쪽 문제 — 서머타임 없는 서버는 해당 없음). 열을 TSTZ 로
+   * 바꾸는 근본 수정은 색인 있는 TSTZ 열의 Tibero 결함 때문에 하지 않는다(설계 §6.2 변경). {@code AT TIME ZONE} 은 리터럴에만 쓰고 열에는
+   * 쓰지 않으며, 열은 시간대 없는 TIMESTAMP 라 그 결함과 무관하다.
    *
    * @param value 책갈피 값. {@code null} 이면 PG 는 {@code '-infinity'::timestamptz}, Tibero 는 {@code
    *     TIMESTAMP '0001-01-01 00:00:00.000000'}(어떤 시간대에서도 어떤 행보다 이르다 — 전체 읽기).
@@ -93,11 +99,11 @@ public final class LastRunAtPlaceholder {
     if (value == null) {
       return TIBERO_MINIMUM;
     }
-    // 열이 서버 벽시계라서, UTC 로 표현한 instant 를 서버 오프셋으로 옮긴 뒤 시간대를 떼어 비교한다(Ruling 13).
+    // 열이 서버 벽시계라서, UTC 로 표현한 instant 를 서버 지역 시간대로 옮긴 뒤 시간대를 떼어 비교한다(Ruling 13, WD-234).
     return "CAST(TIMESTAMP '"
         + value.withOffsetSameInstant(ZoneOffset.UTC).format(TiberoTimestamps.UTC_MICROS)
         + " +00:00' AT TIME ZONE "
-        + TiberoTimestamps.SERVER_OFFSET_SQL
+        + TiberoTimestamps.SERVER_ZONE_SQL
         + " AS TIMESTAMP)";
   }
 }

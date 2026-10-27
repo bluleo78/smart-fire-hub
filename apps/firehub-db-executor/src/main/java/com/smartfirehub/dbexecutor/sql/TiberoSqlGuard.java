@@ -245,11 +245,12 @@ public final class TiberoSqlGuard {
    * <b>하나(집계값)</b>를 볼 수 있다. 다른 테넌트의 행·세션·SQL 은 아니며, 증분 커서가 필요로 하는 값이라 받아들였다.
    *
    * <p>api {@code TiberoIncrementalCursor.CANDIDATE_SQL} 의 거울이다. 두 값이 어긋나지 않도록 api 테스트 리소스 {@code
-   * fixtures/tibero-cursor-candidate.json} 을 양쪽 테스트가 대조한다.
+   * fixtures/tibero-cursor-candidate.json} 을 양쪽 테스트가 대조한다. 서버 시간대는 지역 이름({@code TZR})으로 붙인다(WD-234
+   * — 서머타임 전환을 가로지른 트랜잭션도 맞게).
    */
   public static final String CURSOR_CANDIDATE_SQL =
       "SELECT TO_CHAR(LEAST(SYSTIMESTAMP, NVL(FROM_TZ(CAST(MIN(START_TIME) AS TIMESTAMP),"
-          + " TO_CHAR(SYSTIMESTAMP, 'TZH:TZM')), SYSTIMESTAMP)) AT TIME ZONE '+00:00',"
+          + " TO_CHAR(SYSTIMESTAMP, 'TZR')), SYSTIMESTAMP)) AT TIME ZONE '+00:00',"
           + " 'YYYY-MM-DD HH24:MI:SS.FF6') AS CANDIDATE FROM SYS._VT_TRANSACTION";
 
   /** 사용자 SQL 이 건드리면 안 되는 인스턴스 전체 트랜잭션 테이블 이름(따옴표·한정 여부와 무관하게 단어로 찾는다). */

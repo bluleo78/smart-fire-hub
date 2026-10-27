@@ -26,8 +26,10 @@ import org.springframework.stereotype.Service;
  * <ul>
  *   <li>공개 동의어 {@code V$TRANSACTION} 은 일반 계정에서 풀리지 않는다(JDBC-8033). 고정 테이블 {@code
  *       SYS._VT_TRANSACTION} 을 읽는다 (db-executor 가드가 이 이름 하나만 허용한다).
- *   <li>{@code START_TIME} 은 DATE(초 단위, 서버 시계)다. 초 아래가 잘려 더 이른 값이 되므로 후보가 이르게 잡힐 뿐 안전하다. 서버 오프셋은
- *       {@code TO_CHAR(SYSTIMESTAMP, 'TZH:TZM')} 로 붙여(서버 시간대 가정 없이) UTC 로 바꾼다.
+ *   <li>{@code START_TIME} 은 DATE(초 단위, 서버 시계)다. 초 아래가 잘려 더 이른 값이 되므로 후보가 이르게 잡힐 뿐 안전하다. 서버 <b>지역
+ *       시간대</b>를 {@code TO_CHAR(SYSTIMESTAMP, 'TZR')} 로 붙여(서버 시간대 가정 없이) UTC 로 바꾼다(WD-234). 지역 이름이면
+ *       그 시작 시각의 오프셋을 써서, 서머타임 전환을 가로질러 열려 있던 트랜잭션도 맞게 바뀐다(예전 현재 오프셋 {@code TZH:TZM} 은 1시간 어긋났다).
+ *       오프셋 문자열({@code +09:00})을 주는 서버에서도 {@code FROM_TZ} 가 받는다(실서버 확인).
  *   <li>결과는 문자열({@code YYYY-MM-DD HH24:MI:SS.FF6}, UTC)로 받는다 — 시간대 있는 타입의 JSON 직렬화 형식에 기대지 않는다.
  * </ul>
  */
@@ -38,7 +40,7 @@ public class TiberoIncrementalCursor {
   /** 후보 조회 문장. db-executor 실서버 테스트(TiberoLiveCursorTest)가 같은 문장으로 검증한다. */
   static final String CANDIDATE_SQL =
       "SELECT TO_CHAR(LEAST(SYSTIMESTAMP, NVL(FROM_TZ(CAST(MIN(START_TIME) AS TIMESTAMP), "
-          + TiberoTimestamps.SERVER_OFFSET_SQL
+          + TiberoTimestamps.SERVER_ZONE_SQL
           + "), SYSTIMESTAMP)) AT TIME ZONE '+00:00',"
           + " 'YYYY-MM-DD HH24:MI:SS.FF6') AS CANDIDATE FROM SYS._VT_TRANSACTION";
 

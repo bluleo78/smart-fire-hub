@@ -177,7 +177,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
         INCREMENTAL_SELECT.replace(
             "{{last_run_at}}",
             "CAST(TIMESTAMP '2026-10-24 01:02:03.123456 +00:00' AT TIME ZONE"
-                + " TO_CHAR(SYSTIMESTAMP, 'TZH:TZM') AS TIMESTAMP)");
+                + " TO_CHAR(SYSTIMESTAMP, 'TZR') AS TIMESTAMP)");
     assertThat(sent.query())
         .isEqualTo(
             TiberoPipelineSql.mergeSelect(

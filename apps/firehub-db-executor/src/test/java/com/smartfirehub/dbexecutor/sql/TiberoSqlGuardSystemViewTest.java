@@ -127,10 +127,20 @@ class TiberoSqlGuardSystemViewTest {
         .isInstanceOf(TiberoSqlGuard.Rejected.class);
   }
 
+  /** 옛 후보 문장(현재 오프셋 TZH:TZM, WD-234 전)은 더는 일치가 아니다 — 지역 시간대(TZR) 문장 하나만 허용한다. */
+  @Test
+  void previousOffsetVariant_isRejected() {
+    assertThat(CURSOR).contains("TO_CHAR(SYSTIMESTAMP, 'TZR')");
+    String old = CURSOR.replace("'TZR'", "'TZH:TZM'");
+    assertThat(TiberoSqlGuard.isCursorCandidateQuery(old)).isFalse();
+    assertThatThrownBy(() -> TiberoSqlGuard.requireAllowedStatement(old))
+        .isInstanceOf(TiberoSqlGuard.Rejected.class);
+  }
+
   /** 대체 따옴표 q'[..]' 로 리터럴을 바꾼 변형은 일치가 아니다. */
   @Test
   void alternativeQuotingVariant_isRejected() {
-    String variant = CURSOR.replace("'TZH:TZM'", "q'[TZH:TZM]'");
+    String variant = CURSOR.replace("'TZR'", "q'[TZR]'");
     assertThat(TiberoSqlGuard.isCursorCandidateQuery(variant)).isFalse();
     assertThatThrownBy(() -> TiberoSqlGuard.requireAllowedStatement(variant))
         .isInstanceOf(TiberoSqlGuard.Rejected.class);
