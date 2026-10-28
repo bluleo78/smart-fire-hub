@@ -33,9 +33,10 @@ function isFileAccepted(file: File, accept: string): boolean {
 
 export function FileUploadZone({
   onFileSelect,
-  accept = '.csv,.xlsx,.xlsb',
+  // 서버가 읽을 수 있는 형식(CSV·XLSX·XLS·XLSB)과 맞춘다 — '.xls' 는 끝맺음 비교라 '.xlsx' 와 겹치지 않는다
+  accept = '.csv,.xlsx,.xls,.xlsb',
   disabled,
-  rejectionMessage = 'CSV, XLSX, 또는 XLSB 파일만 지원합니다.',
+  rejectionMessage = 'CSV, XLSX, XLS 또는 XLSB 파일만 지원합니다.',
   promptText = 'CSV 또는 Excel 파일을 드래그하세요',
 }: FileUploadZoneProps) {
   const [isDragOver, setIsDragOver] = useState(false);

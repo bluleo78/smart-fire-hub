@@ -495,4 +495,149 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
         .contains("3행 'dt' 컬럼 - 같은 열에 일/월/연도와 월/일/연도 형식이 섞여 있습니다")
         .contains("31/12/2026(1행, 일/월/연도)");
   }
+
+  // ---------------------------------------------------------------------
+  // 시트 고르기 (WD-253) — 임포트 잡이 미리보기에서 고른 시트를 그대로 읽는다
+  // ---------------------------------------------------------------------
+
+  @Autowired private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
+  /** 숨긴 첫 시트 「숨김」(h 1행)과 보이는 「데이터」(d1·d2 2행)로 된 xlsx 를 임시 파일로 쓴다. */
+  private Path writeHiddenFirstXlsx() throws Exception {
+    try (org.apache.poi.xssf.usermodel.XSSFWorkbook wb =
+            new org.apache.poi.xssf.usermodel.XSSFWorkbook();
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+      var hidden = wb.createSheet("숨김");
+      hidden.createRow(0).createCell(0).setCellValue("name");
+      hidden.getRow(0).createCell(1).setCellValue("amount");
+      hidden.createRow(1).createCell(0).setCellValue("h");
+      hidden.getRow(1).createCell(1).setCellValue(1);
+      var data = wb.createSheet("데이터");
+      data.createRow(0).createCell(0).setCellValue("name");
+      data.getRow(0).createCell(1).setCellValue("amount");
+      data.createRow(1).createCell(0).setCellValue("d1");
+      data.getRow(1).createCell(1).setCellValue(10);
+      data.createRow(2).createCell(0).setCellValue("d2");
+      data.getRow(2).createCell(1).setCellValue(20);
+      hidden.setSelected(false);
+      wb.setActiveSheet(1);
+      wb.setSelectedTab(1);
+      wb.setSheetHidden(0, true);
+      wb.write(out);
+      Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-test");
+      Files.createDirectories(tempDir);
+      Path file = Files.createTempFile(tempDir, "process-sheets-", ".xlsx");
+      Files.write(file, out.toByteArray());
+      return file;
+    }
+  }
+
+  /** importFile 처럼 ParseOptions 를 ObjectMapper 로 JSON 파일에 써서 잡에 넘긴다 — 직렬화 왕복까지 검증한다. */
+  private Path writeParseOptions(com.smartfirehub.dataimport.dto.ParseOptions opts)
+      throws Exception {
+    Path file =
+        Files.createTempFile(
+            Path.of(System.getProperty("java.io.tmpdir"), "firehub-test"), "parseopts-", ".json");
+    Files.writeString(file, objectMapper.writeValueAsString(opts));
+    return file;
+  }
+
+  private void runXlsxImport(String jobId, Long datasetId, Path xlsx, String parseOptsPath)
+      throws Exception {
+    dataImportService.processImport(
+        jobId,
+        datasetId,
+        xlsx.toString(),
+        "",
+        parseOptsPath,
+        "sheets.xlsx",
+        Files.size(xlsx),
+        "XLSX",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "APPEND",
+        1L);
+  }
+
+  private List<String> storedNames(String tableName) {
+    return dsl.fetch("SELECT name FROM data.\"" + tableName + "\" ORDER BY name")
+        .getValues("name", String.class);
+  }
+
+  @Test
+  void xlsx_defaultImportsFirstVisibleSheet_notHiddenFirstSheet() throws Exception {
+    String tableName = "process_sheet_default";
+    Long datasetId = createDatasetWithBigintColumn(tableName);
+    runXlsxImport("process-sheet-default", datasetId, writeHiddenFirstXlsx(), "");
+
+    Mockito.verify(asyncJobService, Mockito.never())
+        .failJob(Mockito.anyString(), Mockito.anyString());
+    assertThat(storedNames(tableName)).containsExactly("d1", "d2");
+  }
+
+  @Test
+  void xlsx_selectedSheetFromParseOptions_isImported() throws Exception {
+    String tableName = "process_sheet_selected";
+    Long datasetId = createDatasetWithBigintColumn(tableName);
+    Path opts =
+        writeParseOptions(
+            new com.smartfirehub.dataimport.dto.ParseOptions(",", "AUTO", true, 0, "숨김"));
+    runXlsxImport("process-sheet-selected", datasetId, writeHiddenFirstXlsx(), opts.toString());
+
+    Mockito.verify(asyncJobService, Mockito.never())
+        .failJob(Mockito.anyString(), Mockito.anyString());
+    assertThat(storedNames(tableName)).containsExactly("h");
+  }
+
+  @Test
+  void xlsx_unknownSheet_failsJobWithKoreanMessage_noRowsInserted() throws Exception {
+    String tableName = "process_sheet_unknown";
+    Long datasetId = createDatasetWithBigintColumn(tableName);
+    Path opts =
+        writeParseOptions(
+            new com.smartfirehub.dataimport.dto.ParseOptions(",", "AUTO", true, 0, "없음"));
+    runXlsxImport("process-sheet-unknown", datasetId, writeHiddenFirstXlsx(), opts.toString());
+
+    assertThat(countRows(tableName)).isZero();
+    ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+    Mockito.verify(asyncJobService).failJob(Mockito.eq("process-sheet-unknown"), msg.capture());
+    assertThat(msg.getValue()).isEqualTo("'없음' 시트를 찾을 수 없습니다. 파일에 있는 시트: 숨김(숨김), 데이터");
+  }
+
+  /**
+   * 잡이 파싱 옵션 파일을 읽지 못하면(깨진 JSON·사라진 파일) 기본값으로 이어 가지 않고 한국어 사유로 실패해야 한다 — 기본값으로 읽으면 사용자가 고른 시트 대신 첫
+   * 번째 보이는 시트가 조용히 적재된다(코드 리뷰 반영). 실패는 감사 로그에도 남는다.
+   */
+  @Test
+  void unreadableParseOptions_failsJobInKorean_insteadOfDefaults() throws Exception {
+    String tableName = "process_sheet_badopts";
+    Long datasetId = createDatasetWithBigintColumn(tableName);
+    Path badOpts =
+        Files.createTempFile(
+            Path.of(System.getProperty("java.io.tmpdir"), "firehub-test"), "parseopts-", ".json");
+    Files.writeString(badOpts, "{not json");
+    runXlsxImport("process-sheet-badopts", datasetId, writeHiddenFirstXlsx(), badOpts.toString());
+
+    assertThat(countRows(tableName)).isZero();
+    ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+    Mockito.verify(asyncJobService).failJob(Mockito.eq("process-sheet-badopts"), msg.capture());
+    assertThat(msg.getValue()).isEqualTo(DataImportService.PARSE_OPTIONS_UNREADABLE);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT result FROM audit_log WHERE resource_id = ? AND action_type ="
+                    + " 'IMPORT' ORDER BY id DESC LIMIT 1",
+                String.valueOf(datasetId)))
+        .hasToString("FAILURE");
+
+    // 옵션 파일 자체가 없을 때도 같다
+    Mockito.clearInvocations(asyncJobService);
+    Path missing = badOpts.resolveSibling("missing-" + System.nanoTime() + ".json");
+    runXlsxImport(
+        "process-sheet-missingopts", datasetId, writeHiddenFirstXlsx(), missing.toString());
+    Mockito.verify(asyncJobService)
+        .failJob("process-sheet-missingopts", DataImportService.PARSE_OPTIONS_UNREADABLE);
+    assertThat(countRows(tableName)).isZero();
+  }
 }

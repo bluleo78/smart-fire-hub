@@ -434,6 +434,80 @@ describe('FireHubApiClient', () => {
       expect(result).toEqual(mockResp);
     });
 
+    // WD-253: 엑셀 시트 선택 — sheetName 이 있으면 multipart 필드로 보내고, 없거나 빈 값이면 아예 보내지 않는다
+    // (보내지 않아야 백엔드가 첫 번째 보이는 시트를 기본으로 고른다).
+    it('previewImport sends sheetName form field when given (WD-253)', async () => {
+      mockFileDownload(21, 'book.xlsx');
+      const mockResp = {
+        fileHeaders: ['a'],
+        sampleRows: [],
+        suggestedMappings: [],
+        totalRows: 0,
+        sheetName: 'Sheet2',
+        sheets: [
+          { name: 'Sheet1', hidden: true },
+          { name: 'Sheet2', hidden: false },
+        ],
+      };
+      let captured = '';
+      nock(BASE_URL)
+        .post('/datasets/7/imports/preview', (body) => {
+          captured = typeof body === 'string' ? body : '';
+          return true;
+        })
+        .reply(200, mockResp);
+
+      const result = await client.previewImport(7, 21, { sheetName: 'Sheet2' });
+      expect(captured).toMatch(/name="sheetName"\r\n\r\nSheet2\r\n/);
+      expect(result.sheetName).toBe('Sheet2');
+      expect(result.sheets).toEqual(mockResp.sheets);
+    });
+
+    it.each([
+      ['omitted', undefined],
+      ['empty', ''],
+      ['blank', '   '],
+    ])('previewImport does not send sheetName when %s (WD-253)', async (_label, sheetName) => {
+      mockFileDownload(22, 'book.xlsx');
+      let captured = '';
+      nock(BASE_URL)
+        .post('/datasets/7/imports/preview', (body) => {
+          captured = typeof body === 'string' ? body : '';
+          return true;
+        })
+        .reply(200, { fileHeaders: [], sampleRows: [], suggestedMappings: [], totalRows: 0 });
+
+      await client.previewImport(
+        7,
+        22,
+        sheetName === undefined ? { hasHeader: true } : { sheetName },
+      );
+      expect(captured).toContain('name="file"');
+      expect(captured).not.toContain('name="sheetName"');
+    });
+
+    it('validateImport and startImport also send sheetName (WD-253)', async () => {
+      mockFileDownload(23, 'book.xlsx');
+      mockFileDownload(23, 'book.xlsx');
+      const bodies: string[] = [];
+      const capture = (body: unknown) => {
+        bodies.push(typeof body === 'string' ? body : '');
+        return true;
+      };
+      nock(BASE_URL)
+        .post('/datasets/7/imports/validate', capture)
+        .reply(200, { totalRows: 1, validRows: 1, errorRows: 0, errors: [] });
+      nock(BASE_URL)
+        .post('/datasets/7/imports', capture)
+        .reply(201, { jobId: 'job-x', status: 'PENDING' });
+
+      const mappings = [{ fileColumn: 'a', datasetColumn: 'col_a' }];
+      await client.validateImport(7, 23, mappings, { sheetName: 'Sheet2' });
+      await client.startImport(7, 23, { mappings, parseOptions: { sheetName: 'Sheet2' } });
+      expect(bodies).toHaveLength(2);
+      for (const b of bodies) expect(b).toMatch(/name="sheetName"\r\n\r\nSheet2\r\n/);
+    });
+
     it('validateImport POSTs multipart with mappings JSON to /datasets/:id/imports/validate', async () => {
       mockFileDownload(12, 'data.csv');
 

@@ -71,6 +71,7 @@ class ExcelStreamingParserTest {
     List<List<String>> rows = new ArrayList<>();
     ExcelStreamingParser.parse(
         new ByteArrayInputStream(data),
+        null,
         (idx, cells) -> {
           rows.add(cells);
           return true;
@@ -88,6 +89,7 @@ class ExcelStreamingParserTest {
     List<List<String>> rows = new ArrayList<>();
     ExcelStreamingParser.parse(
         new ByteArrayInputStream(data),
+        null,
         (idx, cells) -> {
           rows.add(cells);
           return false; // first row만 받고 종료
@@ -103,6 +105,7 @@ class ExcelStreamingParserTest {
     List<List<String>> rows = new ArrayList<>();
     ExcelStreamingParser.parse(
         new ByteArrayInputStream(data),
+        null,
         (idx, cells) -> {
           rows.add(cells);
           return true;
@@ -122,6 +125,7 @@ class ExcelStreamingParserTest {
       List<List<String>> rows = new ArrayList<>();
       ExcelStreamingParser.parse(
           new ByteArrayInputStream(out.toByteArray()),
+          null,
           (idx, cells) -> {
             rows.add(cells);
             return true;
@@ -155,6 +159,7 @@ class ExcelStreamingParserTest {
     java.util.List<java.util.List<String>> rows = new java.util.ArrayList<>();
     ExcelStreamingParser.parse(
         new java.io.ByteArrayInputStream(data),
+        null,
         (idx, cells) -> {
           rows.add(cells);
           return true;
@@ -172,6 +177,7 @@ class ExcelStreamingParserTest {
     java.util.List<java.util.List<String>> rows = new java.util.ArrayList<>();
     ExcelStreamingParser.parse(
         new java.io.ByteArrayInputStream(data),
+        null,
         (idx, cells) -> {
           rows.add(cells);
           return false;
@@ -204,6 +210,7 @@ class ExcelStreamingParserTest {
     java.util.List<java.util.List<String>> rows = new java.util.ArrayList<>();
     ExcelStreamingParser.parse(
         new java.io.ByteArrayInputStream(data),
+        null,
         (idx, cells) -> {
           rows.add(cells);
           return true;
@@ -238,6 +245,7 @@ class ExcelStreamingParserTest {
     java.util.List<java.util.List<String>> rows = new java.util.ArrayList<>();
     ExcelStreamingParser.parse(
         new java.io.ByteArrayInputStream(data),
+        null,
         (idx, cells) -> {
           rows.add(cells);
           return true;
@@ -267,6 +275,7 @@ class ExcelStreamingParserTest {
     java.util.List<java.util.List<String>> rows = new java.util.ArrayList<>();
     ExcelStreamingParser.parse(
         new java.io.ByteArrayInputStream(data),
+        null,
         (idx, cells) -> {
           rows.add(cells);
           return true;
@@ -369,6 +378,7 @@ class ExcelStreamingParserTest {
       List<List<String>> rows = new ArrayList<>();
       ExcelStreamingParser.parse(
           new FileInputStream(fixture),
+          null,
           (idx, cells) -> {
             rows.add(cells);
             return true;
@@ -397,6 +407,7 @@ class ExcelStreamingParserTest {
     List<List<String>> rows = new ArrayList<>();
     ExcelStreamingParser.parse(
         fixture,
+        null,
         (idx, cells) -> {
           rows.add(cells);
           return false; // 첫 행만 받고 즉시 중단
@@ -421,6 +432,7 @@ class ExcelStreamingParserTest {
     List<List<String>> rows = new ArrayList<>();
     ExcelStreamingParser.parse(
         file,
+        null,
         (idx, cells) -> {
           rows.add(cells);
           return true;
@@ -452,6 +464,7 @@ class ExcelStreamingParserTest {
               () ->
                   ExcelStreamingParser.parse(
                       f,
+                      null,
                       (idx, cells) -> {
                         throw boom;
                       }))
@@ -528,6 +541,7 @@ class ExcelStreamingParserTest {
     List<List<String>> rows = new ArrayList<>();
     ExcelStreamingParser.parse(
         new ByteArrayInputStream(data),
+        null,
         (idx, cells) -> {
           rows.add(cells);
           return true;
@@ -650,5 +664,454 @@ class ExcelStreamingParserTest {
     c.setCellStyle(date);
     List<List<String>> rows = parseAll(write(wb));
     assertThat(rows.get(1)).containsExactly("2025-01-21");
+  }
+
+  // ---------------------------------------------------------------------
+  // 시트 고르기 (WD-253) — 기본은 첫 번째 보이는 시트, 이름을 주면 그 시트
+  // ---------------------------------------------------------------------
+
+  /**
+   * 시트마다 헤더 "sheet" 와 값 한 행(시트 이름)을 넣은 워크북을 만든다. 읽은 값으로 어느 시트를 읽었는지 확인한다.
+   *
+   * <p>엑셀은 활성(선택된) 시트를 숨길 수 없으므로, 첫 번째 보이는 시트를 활성·선택 탭으로 옮긴 뒤 숨긴다.
+   */
+  private static byte[] multiSheet(
+      Workbook wb, List<String> names, List<org.apache.poi.ss.usermodel.SheetVisibility> vis)
+      throws Exception {
+    for (String n : names) {
+      Sheet s = wb.createSheet(n);
+      s.createRow(0).createCell(0).setCellValue("sheet");
+      s.createRow(1).createCell(0).setCellValue(n);
+    }
+    int firstVisible = vis.indexOf(org.apache.poi.ss.usermodel.SheetVisibility.VISIBLE);
+    if (firstVisible >= 0) {
+      wb.getSheetAt(0).setSelected(false);
+      wb.setActiveSheet(firstVisible);
+      wb.setSelectedTab(firstVisible);
+    }
+    for (int i = 0; i < vis.size(); i++) {
+      wb.setSheetVisibility(i, vis.get(i));
+    }
+    return write(wb);
+  }
+
+  private static final org.apache.poi.ss.usermodel.SheetVisibility VISIBLE =
+      org.apache.poi.ss.usermodel.SheetVisibility.VISIBLE;
+  private static final org.apache.poi.ss.usermodel.SheetVisibility HIDDEN =
+      org.apache.poi.ss.usermodel.SheetVisibility.HIDDEN;
+  private static final org.apache.poi.ss.usermodel.SheetVisibility VERY_HIDDEN =
+      org.apache.poi.ss.usermodel.SheetVisibility.VERY_HIDDEN;
+
+  /** xlsx·xls 두 형식으로 같은 시트 구성을 만든다. */
+  private static List<byte[]> bothFormats(
+      List<String> names, List<org.apache.poi.ss.usermodel.SheetVisibility> vis) throws Exception {
+    return List.of(
+        multiSheet(new XSSFWorkbook(), names, vis),
+        multiSheet(new org.apache.poi.hssf.usermodel.HSSFWorkbook(), names, vis));
+  }
+
+  /** 지정한 시트(null = 기본)를 읽어 데이터 행의 첫 값(= 읽은 시트 이름)을 돌려준다. */
+  private static String readSheetMarker(byte[] data, String sheetName) throws Exception {
+    List<List<String>> rows = new ArrayList<>();
+    ExcelStreamingParser.parse(
+        new ByteArrayInputStream(data),
+        sheetName,
+        (idx, cells) -> {
+          rows.add(cells);
+          return true;
+        });
+    assertThat(rows).hasSize(2);
+    assertThat(rows.get(0)).containsExactly("sheet");
+    return rows.get(1).get(0);
+  }
+
+  private static File toFile(File dir, byte[] data) throws Exception {
+    File f = File.createTempFile("sheets-", ".bin", dir);
+    java.nio.file.Files.write(f.toPath(), data);
+    return f;
+  }
+
+  @Test
+  void default_skips_hidden_first_sheet_for_xlsx_and_xls() throws Exception {
+    // 예전엔 숨긴 첫 시트를 읽었다 — 화면에 보이는 첫 시트를 읽어야 한다
+    for (byte[] data : bothFormats(List.of("숨김", "데이터"), List.of(HIDDEN, VISIBLE))) {
+      assertThat(readSheetMarker(data, null)).isEqualTo("데이터");
+    }
+  }
+
+  @Test
+  void default_skips_very_hidden_sheets_for_xlsx_and_xls() throws Exception {
+    for (byte[] data :
+        bothFormats(
+            List.of("VH", "H", "보임", "뒤"), List.of(VERY_HIDDEN, HIDDEN, VISIBLE, VISIBLE))) {
+      assertThat(readSheetMarker(data, null)).isEqualTo("보임");
+    }
+  }
+
+  @Test
+  void explicit_sheet_name_reads_that_sheet_even_if_hidden() throws Exception {
+    for (byte[] data : bothFormats(List.of("첫째", "숨김", "셋째"), List.of(VISIBLE, HIDDEN, VISIBLE))) {
+      assertThat(readSheetMarker(data, "숨김")).isEqualTo("숨김");
+      assertThat(readSheetMarker(data, "셋째")).isEqualTo("셋째");
+      // 엑셀 시트 이름은 대소문자를 구별하지 않는다 — 앞뒤 공백도 무시한다
+      assertThat(readSheetMarker(data, " 첫째 ")).isEqualTo("첫째");
+    }
+  }
+
+  @Test
+  void sheet_name_match_is_case_insensitive() throws Exception {
+    for (byte[] data : bothFormats(List.of("Data", "Other"), List.of(VISIBLE, VISIBLE))) {
+      assertThat(readSheetMarker(data, "other")).isEqualTo("Other");
+    }
+  }
+
+  @Test
+  void unknown_sheet_name_fails_with_korean_message_listing_sheets() throws Exception {
+    for (byte[] data : bothFormats(List.of("숨김", "데이터"), List.of(HIDDEN, VISIBLE))) {
+      assertThatThrownBy(() -> readSheetMarker(data, "없는시트"))
+          .isInstanceOf(com.smartfirehub.dataimport.exception.ExcelSheetSelectionException.class)
+          .isInstanceOf(com.smartfirehub.dataimport.exception.FileUnreadableException.class)
+          .hasMessage("'없는시트' 시트를 찾을 수 없습니다. 파일에 있는 시트: 숨김(숨김), 데이터");
+    }
+  }
+
+  @Test
+  void all_hidden_without_sheet_name_fails_but_explicit_name_works() throws Exception {
+    for (byte[] data : bothFormats(List.of("A", "B"), List.of(HIDDEN, VERY_HIDDEN))) {
+      assertThatThrownBy(() -> readSheetMarker(data, null))
+          .isInstanceOf(com.smartfirehub.dataimport.exception.ExcelSheetSelectionException.class)
+          .hasMessageStartingWith("보이는 시트가 없습니다.")
+          .hasMessageEndingWith("파일에 있는 시트: A(숨김), B(숨김)");
+      assertThat(readSheetMarker(data, "B")).isEqualTo("B");
+    }
+  }
+
+  @Test
+  void describe_sheets_lists_sheets_in_tab_order_with_hidden_flags(@TempDir File dir)
+      throws Exception {
+    for (byte[] data :
+        bothFormats(
+            List.of("숨김", "보임1", "매우숨김", "보임2"), List.of(HIDDEN, VISIBLE, VERY_HIDDEN, VISIBLE))) {
+      File f = toFile(dir, data);
+      ExcelStreamingParser.SheetSelection sel = ExcelStreamingParser.describeSheets(f, null);
+      assertThat(sel.sheets())
+          .containsExactly(
+              new com.smartfirehub.dataimport.dto.ExcelSheetInfo("숨김", true),
+              new com.smartfirehub.dataimport.dto.ExcelSheetInfo("보임1", false),
+              new com.smartfirehub.dataimport.dto.ExcelSheetInfo("매우숨김", true),
+              new com.smartfirehub.dataimport.dto.ExcelSheetInfo("보임2", false));
+      assertThat(sel.selectedName()).isEqualTo("보임1");
+      assertThat(ExcelStreamingParser.describeSheets(f, "매우숨김").selectedName()).isEqualTo("매우숨김");
+      assertThatThrownBy(() -> ExcelStreamingParser.describeSheets(f, "nope"))
+          .isInstanceOf(com.smartfirehub.dataimport.exception.ExcelSheetSelectionException.class);
+    }
+  }
+
+  @Test
+  void describe_sheets_of_corrupt_file_is_korean_unreadable_error(@TempDir File dir)
+      throws Exception {
+    File f = toFile(dir, "not an excel file".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    assertThatThrownBy(() -> ExcelStreamingParser.describeSheets(f, null))
+        .isInstanceOf(com.smartfirehub.dataimport.exception.FileUnreadableException.class)
+        .hasMessage(com.smartfirehub.dataimport.exception.FileUnreadableException.EXCEL_UNREADABLE);
+  }
+
+  /** 시트 고르기 규칙 검증용 시트 목록 항목 — 형식별 위치(relId·substream)는 고르기에 쓰이지 않아 비워 둔다. */
+  private static ExcelStreamingParser.SheetEntry entry(String name, boolean hidden) {
+    return new ExcelStreamingParser.SheetEntry(name, hidden, null, -1);
+  }
+
+  @Test
+  void resolve_sheet_index_rules() {
+    var a = entry("A", true);
+    var b = entry("B", false);
+    assertThat(ExcelStreamingParser.resolveSheetIndex(List.of(a, b), null)).isEqualTo(1);
+    assertThat(ExcelStreamingParser.resolveSheetIndex(List.of(a, b), "A")).isZero();
+    // 워크시트가 하나도 없으면 읽을 행이 없을 뿐 오류는 아니다(예전 동작 유지)
+    assertThat(ExcelStreamingParser.resolveSheetIndex(List.of(), null)).isEqualTo(-1);
+    // 너무 긴 이름은 잘라서 되풀이한다
+    assertThatThrownBy(() -> ExcelStreamingParser.resolveSheetIndex(List.of(b), "x".repeat(100)))
+        .hasMessageStartingWith("'" + "x".repeat(31) + "…' 시트를 찾을 수 없습니다.");
+  }
+
+  // ---- XLSB: POI 로 .xlsb 를 쓸 수 없어 workbook.bin 레코드를 직접 만들어 시트 목록 해석을 검증한다 ----
+
+  /** BIFF12 레코드 하나(가변 길이 레코드 번호 + 가변 길이 크기 + 데이터)를 쓴다. */
+  private static void xlsbRecord(ByteArrayOutputStream out, int id, byte[] data) {
+    if (id < 0x80) {
+      out.write(id);
+    } else {
+      out.write((id & 0x7F) | 0x80);
+      out.write(id >> 7);
+    }
+    int len = data.length;
+    do {
+      int b = len & 0x7F;
+      len >>= 7;
+      out.write(len > 0 ? b | 0x80 : b);
+    } while (len > 0);
+    out.writeBytes(data);
+  }
+
+  /** BrtBundleSh 데이터: hsState · iTabID · strRelID(null 이면 0xFFFFFFFF) · strName. */
+  private static byte[] bundleSheet(int state, int tabId, String relId, String name) {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    out.writeBytes(le(state));
+    out.writeBytes(le(tabId));
+    if (relId == null) {
+      out.writeBytes(le(0xFFFFFFFF));
+    } else {
+      out.writeBytes(le(relId.length()));
+      out.writeBytes(relId.getBytes(java.nio.charset.StandardCharsets.UTF_16LE));
+    }
+    out.writeBytes(le(name.length()));
+    out.writeBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_16LE));
+    return out.toByteArray();
+  }
+
+  private static byte[] le(int v) {
+    byte[] b = new byte[4];
+    org.apache.poi.util.LittleEndian.putInt(b, 0, v);
+    return b;
+  }
+
+  @Test
+  void xlsb_workbook_records_give_sheet_order_hidden_flags_and_1904() throws Exception {
+    ByteArrayOutputStream wb = new ByteArrayOutputStream();
+    xlsbRecord(wb, 131, new byte[0]); // BrtBeginBook
+    xlsbRecord(wb, 153, le(1)); // BrtWbProp — f1904
+    xlsbRecord(wb, 143, new byte[0]); // BrtBeginBundleShs
+    xlsbRecord(wb, 156, bundleSheet(1, 1, "rId1", "숨김"));
+    xlsbRecord(wb, 156, bundleSheet(0, 2, "rId2", "데이터"));
+    xlsbRecord(wb, 156, bundleSheet(2, 3, "rId3", "매우숨김"));
+    xlsbRecord(wb, 156, bundleSheet(0, 4, null, "관계없음")); // r:id 없는 시트는 뺀다
+    xlsbRecord(wb, 156, bundleSheet(0, 5, "rId5", "차트")); // 워크시트가 아닌 관계는 뺀다
+    xlsbRecord(wb, 144, new byte[0]); // BrtEndBundleShs — 여기서 멈춘다
+    xlsbRecord(wb, 156, new byte[] {1, 2}); // 멈춘 뒤의 깨진 레코드는 읽지 않는다
+
+    ExcelStreamingParser.WorkbookInfo info =
+        ExcelStreamingParser.readXlsbWorkbookRecords(
+            new ByteArrayInputStream(wb.toByteArray()), relId -> !"rId5".equals(relId));
+
+    assertThat(info.date1904()).isTrue();
+    assertThat(info.sheets())
+        .extracting(
+            ExcelStreamingParser.SheetEntry::name,
+            ExcelStreamingParser.SheetEntry::hidden,
+            ExcelStreamingParser.SheetEntry::relId)
+        .containsExactly(
+            org.assertj.core.groups.Tuple.tuple("숨김", true, "rId1"),
+            org.assertj.core.groups.Tuple.tuple("데이터", false, "rId2"),
+            org.assertj.core.groups.Tuple.tuple("매우숨김", true, "rId3"));
+  }
+
+  /**
+   * 시트 정의가 깨지면 파싱 오류다. 그 앞에서 읽은 1904 날짜 체계는 오류에 담겨, 첫 시트로 떨어지는 대체 경로가 날짜를 1,462일 당기지 않는다(PR #792
+   * 리뷰).
+   */
+  @Test
+  void xlsb_truncated_bundle_sheet_record_is_a_parse_error_keeping_1904() {
+    ByteArrayOutputStream wb = new ByteArrayOutputStream();
+    xlsbRecord(wb, 153, le(1)); // BrtWbProp — f1904
+    byte[] broken = bundleSheet(0, 1, "rId1", "데이터");
+    xlsbRecord(wb, 156, java.util.Arrays.copyOf(broken, broken.length - 4));
+    assertThatThrownBy(
+            () ->
+                ExcelStreamingParser.readXlsbWorkbookRecords(
+                    new ByteArrayInputStream(wb.toByteArray()), relId -> true))
+        .isInstanceOfSatisfying(
+            ExcelStreamingParser.XlsbWorkbookUnreadableException.class,
+            e -> assertThat(e.date1904()).isTrue())
+        .hasCauseInstanceOf(org.apache.poi.xssf.binary.XSSFBParseException.class);
+  }
+
+  // ---- 이름 비교·오류 문구 (코드 리뷰 반영) ----
+
+  @Test
+  void loose_match_trims_both_names_and_rejects_ambiguous_matches() {
+    var dataWithSpace = entry("Data ", false);
+    var other = entry("Other", false);
+    // 시트 이름 쪽 공백도 빼고 비교한다 — 'Data' 로 'Data ' 시트를 찾는다
+    assertThat(ExcelStreamingParser.resolveSheetIndex(List.of(other, dataWithSpace), "Data"))
+        .isEqualTo(1);
+    // 느슨한 비교에 두 시트가 걸리면 어느 쪽인지 단정하지 않는다
+    var data = entry("Data", false);
+    assertThatThrownBy(
+            () -> ExcelStreamingParser.resolveSheetIndex(List.of(data, dataWithSpace), "DATA"))
+        .isInstanceOf(com.smartfirehub.dataimport.exception.ExcelSheetSelectionException.class)
+        .hasMessage(
+            "'DATA' 과(와) 이름이 같은 시트가 여러 개입니다(공백·대소문자 차이). 정확한 시트 이름을 지정해 주세요. 파일에 있는 시트: Data,"
+                + " Data ");
+    // 정확히 같은 이름이 있으면 그 시트다(모호하지 않다)
+    assertThat(ExcelStreamingParser.resolveSheetIndex(List.of(data, dataWithSpace), "Data "))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void trailing_space_sheet_name_is_found_in_real_xlsx() throws Exception {
+    byte[] data =
+        multiSheet(new XSSFWorkbook(), List.of("Data ", "Other"), List.of(VISIBLE, VISIBLE));
+    assertThat(readSheetMarker(data, "data")).isEqualTo("Data ");
+  }
+
+  @Test
+  void error_message_lists_at_most_20_sheets() {
+    List<ExcelStreamingParser.SheetEntry> many = new ArrayList<>();
+    for (int i = 1; i <= 25; i++) {
+      many.add(entry("S" + i, false));
+    }
+    assertThatThrownBy(() -> ExcelStreamingParser.resolveSheetIndex(many, "없음"))
+        .hasMessageEndingWith("S19, S20 외 5개")
+        .hasMessageContaining("파일에 있는 시트: S1, S2,")
+        .satisfies(e -> assertThat(e.getMessage()).doesNotContain("S21"));
+  }
+
+  // ---- XLSB 실파일: POI 가 .xlsb 를 쓰지 못해 OPC 컨테이너를 직접 짠다 ----
+
+  /** 문자열 셀만 있는 시트 레코드(행 0: "sheet", 행 1: marker). 스타일이 필요 없는 BrtCellSt 만 쓴다. */
+  private static byte[] xlsbSheetBin(String marker) {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    String[] values = {"sheet", marker};
+    for (int row = 0; row < values.length; row++) {
+      byte[] rowHdr = new byte[17];
+      org.apache.poi.util.LittleEndian.putInt(rowHdr, 0, row);
+      xlsbRecord(out, 0, rowHdr); // BrtRowHdr
+      ByteArrayOutputStream cell = new ByteArrayOutputStream();
+      cell.writeBytes(le(0)); // 열 0
+      cell.writeBytes(le(0)); // 스타일 0 + 플래그
+      cell.writeBytes(le(values[row].length()));
+      cell.writeBytes(values[row].getBytes(java.nio.charset.StandardCharsets.UTF_16LE));
+      xlsbRecord(out, 6, cell.toByteArray()); // BrtCellSt
+    }
+    xlsbRecord(out, 146, new byte[0]); // BrtEndSheetData
+    return out.toByteArray();
+  }
+
+  /**
+   * .xlsb 컨테이너를 만든다. 시트 i(0부터)는 관계 rId{i+1} → worksheets/sheet{i+1}.bin 이고 값 행은 markers[i] 다.
+   *
+   * @param workbookBin workbook.bin 레코드(시트 정의 포함)
+   */
+  private static byte[] buildXlsb(byte[] workbookBin, List<String> markers) throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(bytes)) {
+      java.util.function.BiConsumer<String, byte[]> put =
+          (name, data) -> {
+            try {
+              zip.putNextEntry(new java.util.zip.ZipEntry(name));
+              zip.write(data);
+              zip.closeEntry();
+            } catch (java.io.IOException e) {
+              throw new java.io.UncheckedIOException(e);
+            }
+          };
+      put.accept(
+          "[Content_Types].xml",
+          ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types"
+               + " xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default"
+               + " Extension=\"rels\""
+               + " ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default"
+               + " Extension=\"bin\" ContentType=\"application/vnd.ms-excel.worksheet\"/><Override"
+               + " PartName=\"/xl/workbook.bin\""
+               + " ContentType=\"application/vnd.ms-excel.sheet.binary.macroEnabled.main\"/>"
+               + "</Types>")
+              .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      put.accept(
+          "_rels/.rels",
+          ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships"
+               + " xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship"
+               + " Id=\"rId1\""
+               + " Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\""
+               + " Target=\"xl/workbook.bin\"/></Relationships>")
+              .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      StringBuilder rels =
+          new StringBuilder(
+              "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships"
+                  + " xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">");
+      for (int i = 0; i < markers.size(); i++) {
+        rels.append("<Relationship Id=\"rId")
+            .append(i + 1)
+            .append(
+                "\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\""
+                    + " Target=\"worksheets/sheet")
+            .append(i + 1)
+            .append(".bin\"/>");
+        put.accept("xl/worksheets/sheet" + (i + 1) + ".bin", xlsbSheetBin(markers.get(i)));
+      }
+      rels.append("</Relationships>");
+      put.accept(
+          "xl/_rels/workbook.bin.rels",
+          rels.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      put.accept("xl/workbook.bin", workbookBin);
+    }
+    return bytes.toByteArray();
+  }
+
+  @Test
+  void xlsb_file_default_skips_hidden_sheet_and_explicit_name_reads_it(@TempDir File dir)
+      throws Exception {
+    ByteArrayOutputStream wb = new ByteArrayOutputStream();
+    xlsbRecord(wb, 143, new byte[0]);
+    xlsbRecord(wb, 156, bundleSheet(1, 1, "rId1", "숨김"));
+    xlsbRecord(wb, 156, bundleSheet(0, 2, "rId2", "데이터"));
+    xlsbRecord(wb, 144, new byte[0]);
+    byte[] xlsb = buildXlsb(wb.toByteArray(), List.of("숨김", "데이터"));
+
+    assertThat(readSheetMarker(xlsb, null)).isEqualTo("데이터");
+    assertThat(readSheetMarker(xlsb, "숨김")).isEqualTo("숨김");
+    ExcelStreamingParser.SheetSelection sel =
+        ExcelStreamingParser.describeSheets(toFile(dir, xlsb), null);
+    assertThat(sel.selectedName()).isEqualTo("데이터");
+    assertThat(sel.sheets())
+        .containsExactly(
+            new com.smartfirehub.dataimport.dto.ExcelSheetInfo("숨김", true),
+            new com.smartfirehub.dataimport.dto.ExcelSheetInfo("데이터", false));
+  }
+
+  /**
+   * 옛 베타 엑셀이 쓴 시트 정의(앞 8바이트가 더 붙은 BrtBundleSh)라 이 파서의 시트 목록 해석이 실패하는 xlsb. POI 의 시트 반복자는 이 형식을 읽는다.
+   * 시트 「첫째」 하나이고 값은 1열(머리 "sheet", 값 "첫째")이다. 가져오기 서비스 테스트도 같은 파일을 쓴다.
+   */
+  static byte[] xlsbWithUnreadableSheetList() throws Exception {
+    ByteArrayOutputStream beta = new ByteArrayOutputStream();
+    beta.writeBytes(new byte[8]); // 베타 형식의 알 수 없는 8바이트(iTabID 자리가 0 이라 POI 가 옛 형식으로 다시 읽는다)
+    beta.writeBytes(le(1)); // iTabID
+    beta.writeBytes(le(4));
+    beta.writeBytes("rId1".getBytes(java.nio.charset.StandardCharsets.UTF_16LE));
+    beta.writeBytes(le(2));
+    beta.writeBytes("첫째".getBytes(java.nio.charset.StandardCharsets.UTF_16LE));
+    ByteArrayOutputStream wb = new ByteArrayOutputStream();
+    xlsbRecord(wb, 156, beta.toByteArray());
+    return buildXlsb(wb.toByteArray(), List.of("첫째"));
+  }
+
+  /**
+   * 시트 목록이 깨진 xlsb 는 시트를 지정하지 않으면 예전처럼 첫 시트를 가져와야 한다(이 기능 전에 가져와지던 파일의 회귀 방지). 미리보기가 돌려준 그 첫 시트
+   * 이름을 다시 지정해도(화면·AI 가 검증·가져오기에 되돌려 보낸다) 같은 시트를 읽어야 한다(PR #792 리뷰). 다른 이름은 고를 수 없다는 한국어 오류다.
+   */
+  @Test
+  void xlsb_with_unreadable_sheet_list_falls_back_to_first_sheet(@TempDir File dir)
+      throws Exception {
+    byte[] xlsb = xlsbWithUnreadableSheetList();
+
+    assertThat(readSheetMarker(xlsb, null)).isEqualTo("첫째");
+    ExcelStreamingParser.SheetSelection sel =
+        ExcelStreamingParser.describeSheets(toFile(dir, xlsb), null);
+    assertThat(sel.selectedName()).isEqualTo("첫째");
+    assertThat(sel.sheets())
+        .containsExactly(new com.smartfirehub.dataimport.dto.ExcelSheetInfo("첫째", false));
+
+    // 미리보기가 돌려준 이름 그대로 다시 고르면 같은 시트다
+    assertThat(ExcelStreamingParser.describeSheets(toFile(dir, xlsb), "첫째").selectedName())
+        .isEqualTo("첫째");
+    assertThat(readSheetMarker(xlsb, "첫째")).isEqualTo("첫째");
+
+    // 느슨하게만 같은 이름은 보이지 않는 다른 시트일 수 있어 받지 않는다
+    assertThatThrownBy(() -> readSheetMarker(xlsb, " 첫째 "))
+        .isInstanceOf(com.smartfirehub.dataimport.exception.ExcelSheetSelectionException.class);
+    assertThatThrownBy(() -> readSheetMarker(xlsb, "다른시트"))
+        .isInstanceOf(com.smartfirehub.dataimport.exception.ExcelSheetSelectionException.class)
+        .hasMessage(
+            "파일의 시트 목록을 읽을 수 없어 '다른시트' 시트를 고를 수 없습니다. 시트를 지정하지 않으면 첫 번째 시트를 가져옵니다.");
   }
 }

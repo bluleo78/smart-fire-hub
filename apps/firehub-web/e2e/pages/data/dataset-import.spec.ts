@@ -1,6 +1,7 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+import type { ImportPreviewResponse, ImportSheetInfo } from '../../../src/types/dataImport';
 import { createColumn, createDatasetDetail } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -338,7 +339,7 @@ test.describe('데이터셋 임포트 다이얼로그', () => {
 test.describe('FileUploadZone 파일 형식 검증 — #24 회귀 방지', () => {
   /**
    * 드래그 앤 드롭으로 지원하지 않는 파일을 떨어뜨렸을 때
-   * "CSV, XLSX, 또는 XLSB 파일만 지원합니다" 토스트가 뜨고, 파일이 선택되지 않음을 검증한다.
+   * "CSV, XLSX, XLS 또는 XLSB 파일만 지원합니다" 토스트가 뜨고, 파일이 선택되지 않음을 검증한다.
    */
   test('드래그 앤 드롭으로 .txt 파일 투하 시 에러 토스트가 표시되고 파일이 선택되지 않는다', async ({ authenticatedPage: page }) => {
     await setupImportMocks(page);
@@ -360,7 +361,7 @@ test.describe('FileUploadZone 파일 형식 검증 — #24 회귀 방지', () =>
     });
 
     // 에러 토스트가 표시된다
-    await expect(page.getByText('CSV, XLSX, 또는 XLSB 파일만 지원합니다')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('CSV, XLSX, XLS 또는 XLSB 파일만 지원합니다')).toBeVisible({ timeout: 5000 });
 
     // 잘못된 파일명이 드롭존에 표시되지 않는다 (setSelectedFile 이 호출되어선 안 됨)
     await expect(page.getByRole('dialog').getByText('document.txt')).not.toBeVisible();
@@ -383,7 +384,7 @@ test.describe('FileUploadZone 파일 형식 검증 — #24 회귀 방지', () =>
       zone.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
     });
 
-    await expect(page.getByText('CSV, XLSX, 또는 XLSB 파일만 지원합니다')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('CSV, XLSX, XLS 또는 XLSB 파일만 지원합니다')).toBeVisible({ timeout: 5000 });
     await expect(page.getByRole('dialog').getByText('report.pdf')).not.toBeVisible();
   });
 
@@ -402,7 +403,7 @@ test.describe('FileUploadZone 파일 형식 검증 — #24 회귀 방지', () =>
     await page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE);
 
     // 에러 토스트 없이 미리보기 단계(2단계)로 진행돼야 함
-    await expect(page.getByText('CSV, XLSX, 또는 XLSB 파일만 지원합니다')).not.toBeVisible();
+    await expect(page.getByText('CSV, XLSX, XLS 또는 XLSB 파일만 지원합니다')).not.toBeVisible();
     await expect(page.getByRole('dialog').getByRole('button', { name: '임포트' })).toBeVisible({ timeout: 10_000 });
   });
 });
@@ -1046,5 +1047,337 @@ test.describe('WD-205 — 같은 이름 열 헤더 거절', () => {
     await expect(page.getByText('미리보기 로드에 실패했습니다.')).not.toBeVisible();
     // 매핑 단계(검증 버튼)로 넘어가지 않는다
     await expect(page.getByRole('dialog').getByRole('button', { name: '검증' })).not.toBeVisible();
+  });
+});
+
+/**
+ * WD-253 — 엑셀 시트 선택.
+ * 서버는 기본으로 첫 번째 「보이는」 시트를 읽고, 미리보기 응답의 sheetName/sheets 로 무엇을 읽었는지 알려 준다.
+ * 화면은 시트가 여럿이면 「가져올 시트」 선택 상자를, 하나면 읽기 전용 한 줄을 보이고,
+ * 고른 시트를 미리보기·검증·임포트 요청의 멀티파트 필드 sheetName 으로 보낸다.
+ */
+test.describe('엑셀 시트 선택 (WD-253)', () => {
+  /** 숨김 시트가 앞에 있는 통합 문서 — 서버 기본 선택은 두 번째 「데이터」 시트 */
+  const MULTI_SHEETS: ImportSheetInfo[] = [
+    { name: '숨김시트', hidden: true },
+    { name: '데이터', hidden: false },
+  ];
+
+  /** 엑셀 미리보기 응답 — headers 로 시트마다 다른 파일 컬럼을 돌려준다 */
+  function createExcelPreviewResponse(
+    sheetName: string,
+    sheets: ImportSheetInfo[],
+    headers: string[] = ['id', 'name'],
+  ): ImportPreviewResponse {
+    return {
+      fileHeaders: headers,
+      sampleRows: [Object.fromEntries(headers.map((h) => [h, `${sheetName}-${h}`]))],
+      suggestedMappings: headers.map((h) => ({
+        fileColumn: h,
+        datasetColumn: h === 'id' || h === 'name' ? h : null,
+        matchType: h === 'id' || h === 'name' ? 'EXACT' : 'NONE',
+        confidence: h === 'id' || h === 'name' ? 1.0 : 0,
+      })),
+      totalRows: 1,
+      sheetName,
+      sheets,
+    };
+  }
+
+  /** 멀티파트 본문에서 sheetName 필드 값을 꺼낸다 — 없으면 null. 한글 값이라 버퍼를 UTF-8 로 읽는다 */
+  function readSheetNameField(request: import('@playwright/test').Request): string | null {
+    const body = request.postDataBuffer()?.toString('utf-8') ?? '';
+    const match = body.match(/name="sheetName"\r\n\r\n([^\r]*)\r\n/);
+    return match ? match[1] : null;
+  }
+
+  /**
+   * 미리보기 라우트 — 요청의 sheetName 필드에 따라 다른 응답을 준다(지정 없음 = 서버 기본 시트).
+   * 요청마다 보낸 sheetName 을 기록해 재호출 여부·payload 를 검증한다.
+   */
+  async function routeExcelPreview(
+    page: import('@playwright/test').Page,
+    respond: (sheetName: string | null) => { status: number; body: unknown },
+  ) {
+    const sentSheetNames: (string | null)[] = [];
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/imports/preview`,
+      (route) => {
+        const sheetName = readSheetNameField(route.request());
+        sentSheetNames.push(sheetName);
+        const { status, body } = respond(sheetName);
+        return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+      },
+    );
+    return sentSheetNames;
+  }
+
+  /** 다중 시트 기본 라우트 — 지정 없음/「데이터」는 id·name, 「숨김시트」는 id·name·memo 컬럼 */
+  function multiSheetResponder(sheetName: string | null) {
+    if (sheetName === '숨김시트') {
+      return { status: 200, body: createExcelPreviewResponse('숨김시트', MULTI_SHEETS, ['id', 'name', 'memo']) };
+    }
+    return { status: 200, body: createExcelPreviewResponse('데이터', MULTI_SHEETS) };
+  }
+
+  /** 엑셀 파일을 올려 2단계까지 진입한다 (백엔드는 모킹이므로 내용은 아무 바이트나 된다) */
+  async function uploadExcel(page: import('@playwright/test').Page) {
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview')),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles({
+        name: 'multi.xlsx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        buffer: Buffer.from('fake xlsx content'),
+      }),
+    ]);
+  }
+
+  test('시트가 여럿이면 「가져올 시트」 선택 상자에 서버가 고른 시트가 선택되고 숨김 시트는 (숨김)으로 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupImportMocks(page);
+    const sent = await routeExcelPreview(page, multiSheetResponder);
+    await uploadExcel(page);
+
+    // 처음 올릴 때는 시트를 지정하지 않는다 — 서버 기본(첫 번째 보이는 시트)에 맡긴다
+    expect(sent).toEqual([null]);
+
+    const sheetSelect = page.getByRole('dialog').getByRole('combobox', { name: '가져올 시트' });
+    await expect(sheetSelect).toBeVisible();
+    await expect(sheetSelect).toHaveText('데이터');
+
+    // 목록(포털로 렌더링)은 문서 순서대로, 숨김 시트에 「(숨김)」 꼬리표
+    await sheetSelect.click();
+    await expect(page.getByRole('option', { name: '숨김시트 (숨김)' })).toBeVisible();
+    await expect(page.getByRole('option', { name: '데이터', exact: true })).toBeVisible();
+  });
+
+  test('다른 시트를 고르면 sheetName 필드로 미리보기를 다시 받고 매핑·샘플이 새 시트 내용으로 바뀐다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupImportMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/validate`, createValidateResponse());
+    const sent = await routeExcelPreview(page, multiSheetResponder);
+    await uploadExcel(page);
+
+    const dialog = page.getByRole('dialog');
+    // 첫 시트(「데이터」)에는 memo 컬럼이 없다
+    await expect(dialog.getByRole('combobox', { name: 'id 컬럼을 매핑할 데이터셋 컬럼' })).toBeVisible();
+    await expect(dialog.getByRole('combobox', { name: 'memo 컬럼을 매핑할 데이터셋 컬럼' })).toHaveCount(0);
+
+    // 검증 결과는 시트를 바꾸면 지워져야 한다 — 먼저 검증해 결과를 띄워 둔다
+    await dialog.getByRole('button', { name: '검증' }).click();
+    await expect(dialog.getByText(/샘플 2행 검사 결과/)).toBeVisible();
+
+    const sheetSelect = dialog.getByRole('combobox', { name: '가져올 시트' });
+    await sheetSelect.click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview')),
+      page.getByRole('option', { name: '숨김시트 (숨김)' }).click(),
+    ]);
+
+    // 같은 파일로 다시 미리보기를 요청하며 멀티파트 필드 sheetName=숨김시트 를 보낸다
+    expect(sent).toEqual([null, '숨김시트']);
+    // 2단계에 머문 채 선택값·매핑 표·샘플이 두 번째 응답으로 바뀐다
+    await expect(sheetSelect).toHaveText('숨김시트 (숨김)');
+    await expect(dialog.getByRole('combobox', { name: 'memo 컬럼을 매핑할 데이터셋 컬럼' })).toBeVisible();
+    await expect(dialog.getByText('숨김시트-memo')).toBeVisible();
+    // 이전 시트 기준 검증 결과는 사라진다
+    await expect(dialog.getByText(/샘플 2행 검사 결과/)).toHaveCount(0);
+  });
+
+  test('시트 재미리보기가 실패하면 서버 문구를 보이고 이전 시트가 선택된 채 남는다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    const message = '시트를 읽을 수 없습니다: 숨김시트';
+    await routeExcelPreview(page, (sheetName) =>
+      sheetName === '숨김시트'
+        ? { status: 400, body: { status: 400, error: 'Bad Request', message, errors: null } }
+        : multiSheetResponder(sheetName),
+    );
+    await uploadExcel(page);
+
+    const dialog = page.getByRole('dialog');
+    const sheetSelect = dialog.getByRole('combobox', { name: '가져올 시트' });
+    await sheetSelect.click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 400),
+      page.getByRole('option', { name: '숨김시트 (숨김)' }).click(),
+    ]);
+
+    await expect(page.getByText(message)).toBeVisible({ timeout: 5000 });
+    // 이전 시트·매핑 그대로, 2단계 유지
+    await expect(sheetSelect).toHaveText('데이터');
+    await expect(dialog.getByRole('combobox', { name: 'memo 컬럼을 매핑할 데이터셋 컬럼' })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: '임포트' })).toBeVisible();
+  });
+
+  test('검증·임포트 요청에 마지막으로 고른 시트가 sheetName 필드로 실린다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    await routeExcelPreview(page, multiSheetResponder);
+    // 검증·임포트 요청의 sheetName 필드를 기록한다
+    const validateSheetNames: (string | null)[] = [];
+    const importSheetNames: (string | null)[] = [];
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/imports/validate`,
+      (route) => {
+        validateSheetNames.push(readSheetNameField(route.request()));
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createValidateResponse()) });
+      },
+    );
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/imports`,
+      (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        importSheetNames.push(readSheetNameField(route.request()));
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createImportStartResponse()) });
+      },
+    );
+    await uploadExcel(page);
+
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('combobox', { name: '가져올 시트' }).click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview')),
+      page.getByRole('option', { name: '숨김시트 (숨김)' }).click(),
+    ]);
+    await expect(dialog.getByRole('combobox', { name: '가져올 시트' })).toHaveText('숨김시트 (숨김)');
+
+    await dialog.getByRole('button', { name: '검증' }).click();
+    await expect(dialog.getByText(/샘플 2행 검사 결과/)).toBeVisible();
+    expect(validateSheetNames).toEqual(['숨김시트']);
+
+    const importBtn = dialog.getByRole('button', { name: '임포트' });
+    await expect(importBtn).toBeEnabled();
+    await importBtn.click();
+    await expect(dialog.getByText('임포트 완료')).toBeVisible({ timeout: 10_000 });
+    expect(importSheetNames).toEqual(['숨김시트']);
+  });
+
+  test('시트를 바꿔 미리보기를 다시 받는 동안 검증·임포트 버튼이 비활성화된다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    // 「숨김시트」 미리보기 응답을 테스트가 풀어 줄 때까지 붙잡아 둔다 — 재미리보기 진행 중 상태를 관찰하기 위해서다
+    let releaseHidden: () => void = () => {};
+    const hiddenGate = new Promise<void>((resolve) => {
+      releaseHidden = resolve;
+    });
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/imports/preview`,
+      async (route) => {
+        const { status, body } = multiSheetResponder(readSheetNameField(route.request()));
+        if (readSheetNameField(route.request()) === '숨김시트') await hiddenGate;
+        return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+      },
+    );
+    await uploadExcel(page);
+
+    const dialog = page.getByRole('dialog');
+    const validateBtn = dialog.getByRole('button', { name: '검증' });
+    const importBtn = dialog.getByRole('button', { name: '임포트' });
+    await expect(validateBtn).toBeEnabled();
+    await expect(importBtn).toBeEnabled();
+
+    await dialog.getByRole('combobox', { name: '가져올 시트' }).click();
+    await page.getByRole('option', { name: '숨김시트 (숨김)' }).click();
+
+    // 재미리보기 중: 바뀌기 전 시트·매핑으로 검증·임포트하지 못하게 막는다
+    await expect(validateBtn).toBeDisabled();
+    await expect(importBtn).toBeDisabled();
+
+    releaseHidden();
+    await expect(dialog.getByRole('combobox', { name: '가져올 시트' })).toHaveText('숨김시트 (숨김)');
+    await expect(validateBtn).toBeEnabled();
+    await expect(importBtn).toBeEnabled();
+  });
+
+  test('검증 중에는 시트 선택 상자를 잠가 이전 시트의 검증 결과가 새 시트 화면에 섞이지 않게 한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupImportMocks(page);
+    await routeExcelPreview(page, multiSheetResponder);
+    // 검증 응답을 붙잡아 두어 「검증 중」 상태를 유지한다
+    let releaseValidate: () => void = () => {};
+    const validateGate = new Promise<void>((resolve) => {
+      releaseValidate = resolve;
+    });
+    let validateCalls = 0;
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/imports/validate`,
+      async (route) => {
+        validateCalls++;
+        await validateGate;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createValidateResponse()) });
+      },
+    );
+    await uploadExcel(page);
+
+    const dialog = page.getByRole('dialog');
+    const selector = dialog.getByRole('combobox', { name: '가져올 시트' });
+    await expect(selector).toBeEnabled();
+    await dialog.getByRole('button', { name: '검증' }).click();
+    await expect.poll(() => validateCalls).toBe(1);
+
+    // 검증 중: 시트를 바꿀 수 없다
+    await expect(selector).toBeDisabled();
+
+    // 검증이 끝나면 다시 고를 수 있고, 결과는 그대로 「데이터」 시트 화면에 보인다
+    await Promise.all([page.waitForResponse((r) => r.url().includes('/imports/validate')), releaseValidate()]);
+    await expect(selector).toBeEnabled();
+    await expect(selector).toHaveText('데이터');
+    await expect(dialog.getByText(/샘플 2행 검사 결과/)).toBeVisible();
+  });
+
+  test('시트가 하나면 선택 상자 없이 「가져올 시트: Sheet1」 한 줄만 보인다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    await routeExcelPreview(page, () => ({
+      status: 200,
+      body: createExcelPreviewResponse('Sheet1', [{ name: 'Sheet1', hidden: false }]),
+    }));
+    await uploadExcel(page);
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('가져올 시트: Sheet1')).toBeVisible();
+    await expect(dialog.getByRole('combobox', { name: '가져올 시트' })).toHaveCount(0);
+  });
+
+  test('CSV(시트 정보 없음)는 시트 표시가 없고 검증·임포트 요청에 sheetName 필드가 없다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupImportMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, {
+      ...createPreviewResponse(),
+      sheetName: null,
+      sheets: null,
+    });
+    const importSheetNames: (string | null)[] = [];
+    let importBody = '';
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/imports`,
+      (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        importBody = route.request().postDataBuffer()?.toString('utf-8') ?? '';
+        importSheetNames.push(readSheetNameField(route.request()));
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createImportStartResponse()) });
+      },
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: '컬럼 매핑' })).toBeVisible();
+    await expect(dialog.getByText(/가져올 시트/)).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: '임포트' }).click();
+    await expect(dialog.getByText('임포트 완료')).toBeVisible({ timeout: 10_000 });
+    expect(importSheetNames).toEqual([null]);
+    expect(importBody).not.toContain('name="sheetName"');
   });
 });

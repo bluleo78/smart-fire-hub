@@ -12,6 +12,8 @@ interface ImportValidationSectionProps {
   hasUnmappedRequired: boolean;
   hasAnyMapping: boolean;
   isValidating: boolean;
+  /** 시트를 바꿔 미리보기를 다시 받는 중이면 검증을 막는다 — 바뀌기 전 시트·매핑으로 검증하지 않게 한다(WD-253) */
+  isPreviewing?: boolean;
   onValidate: () => void;
   onShowAllErrors: (show: boolean) => void;
 }
@@ -23,6 +25,7 @@ export function ImportValidationSection({
   hasUnmappedRequired,
   hasAnyMapping,
   isValidating,
+  isPreviewing = false,
   onValidate,
   onShowAllErrors,
 }: ImportValidationSectionProps) {
@@ -47,7 +50,7 @@ export function ImportValidationSection({
           variant="outline"
           size="sm"
           onClick={onValidate}
-          disabled={isValidating || hasUnmappedRequired || !hasAnyMapping}
+          disabled={isValidating || isPreviewing || hasUnmappedRequired || !hasAnyMapping}
         >
           {isValidating ? (
             <>

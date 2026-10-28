@@ -2788,6 +2788,10 @@
         "skipRows": {
           "description": "헤더 전 건너뛸 행 수. 기본값: 0",
           "type": "number"
+        },
+        "sheetName": {
+          "description": "엑셀에서 가져올 시트 이름. 생략하면 첫 번째 보이는(숨기지 않은) 시트. preview_csv 결과의 sheets 목록에서 고르고, validate_import·start_import 에도 같은 값을 넘긴다. CSV는 무시",
+          "type": "string"
         }
       },
       "required": [
@@ -4005,6 +4009,10 @@
         "skipRows": {
           "description": "헤더 전 건너뛸 행 수. 기본값: 0",
           "type": "number"
+        },
+        "sheetName": {
+          "description": "엑셀에서 가져올 시트 이름. 생략하면 첫 번째 보이는(숨기지 않은) 시트. preview_csv 결과의 sheets 목록에서 고르고, validate_import·start_import 에도 같은 값을 넘긴다. CSV는 무시",
+          "type": "string"
         }
       },
       "required": [
@@ -4702,6 +4710,10 @@
         "skipRows": {
           "description": "헤더 전 건너뛸 행 수. 기본값: 0",
           "type": "number"
+        },
+        "sheetName": {
+          "description": "엑셀에서 가져올 시트 이름. 생략하면 첫 번째 보이는(숨기지 않은) 시트. preview_csv 결과의 sheets 목록에서 고르고, validate_import·start_import 에도 같은 값을 넘긴다. CSV는 무시",
+          "type": "string"
         }
       },
       "required": [

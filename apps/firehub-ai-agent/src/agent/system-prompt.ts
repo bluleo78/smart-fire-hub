@@ -553,12 +553,14 @@ Read 도구로 파일을 읽을 수 있습니다.
 
 - **fileId 사용 (필수, refs #264)**: 데이터셋 임포트 관련 MCP 도구(\`preview_csv\` / \`validate_import\` / \`start_import\`)를 호출할 때는 안내문의 \`fileId\` 값을 그대로 인자로 넘긴다. fileId는 채팅에 첨부된 파일의 서버 식별자이며 로컬 경로와 별개다. 이 값을 추측하거나 임의로 부여하지 않는다.
 
+- **엑셀 시트 (WD-253)**: 엑셀 임포트는 \`sheetName\` 을 주지 않으면 첫 번째 보이는(숨기지 않은) 시트를 읽는다. \`preview_csv\` 응답의 \`sheets\`(시트 목록·숨김 여부)와 \`sheetName\`(읽은 시트)을 보고, 다른 시트가 필요하면 preview·validate·start 에 같은 \`sheetName\` 을 넘긴다.
+
 - 이미지·PDF: Read 도구로 직접 읽기
 - 텍스트·CSV: Read 도구로 읽되, 대용량은 offset/limit 활용
-- XLSX: Read 도구로 직접 읽을 수 없다. Bash 도구로 python3 openpyxl을 사용해 읽는다:
-  \`python3 -c "import openpyxl; wb=openpyxl.load_workbook('<경로>'); ws=wb.active; [print(','.join(str(c.value) if c.value is not None else '' for c in row)) for row in ws.iter_rows()]"\`
-  openpyxl 미설치 시 zipfile+xml.etree 대안:
-  \`python3 -c "import zipfile,xml.etree.ElementTree as ET; z=zipfile.ZipFile('<경로>'); ns='{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'; ss=[t.text for t in ET.fromstring(z.read('xl/sharedStrings.xml')).iter(ns+'t')] if 'xl/sharedStrings.xml' in z.namelist() else []; [print('\\t'.join((ss[int(c.findtext(ns+'v',0))] if c.get('t')=='s' else c.findtext(ns+'v','')) for c in row)) for row in ET.fromstring(z.read('xl/worksheets/sheet1.xml')).iter(ns+'row')]"\`
+- XLSX: Read 도구로 직접 읽을 수 없다. Bash 도구로 python3 openpyxl을 사용해 읽는다. 아래 명령은 임포트 도구와 같이 **첫 번째 보이는(숨기지 않은) 시트**를 읽는다(숨긴 시트·\`wb.active\`·\`sheet1.xml\` 은 기준이 아니다). 다른 시트는 openpyxl \`wb['<시트 이름>']\` 으로 읽는다:
+  \`python3 -c "import openpyxl; wb=openpyxl.load_workbook('<경로>'); ws=next(s for s in wb.worksheets if s.sheet_state=='visible'); [print(','.join(str(c.value) if c.value is not None else '' for c in row)) for row in ws.iter_rows()]"\`
+  openpyxl 미설치 시 zipfile+xml.etree 대안(첫 번째 보이는 시트를 workbook.xml → workbook.xml.rels 로 찾아 읽는다):
+  \`python3 -c "import zipfile,xml.etree.ElementTree as ET; z=zipfile.ZipFile('<경로>'); ns='{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'; ss=[t.text for t in ET.fromstring(z.read('xl/sharedStrings.xml')).iter(ns+'t')] if 'xl/sharedStrings.xml' in z.namelist() else []; rid='{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id'; sh=next(e for e in ET.fromstring(z.read('xl/workbook.xml')).iter(ns+'sheet') if e.get('state','visible')=='visible'); t=next(r.get('Target') for r in ET.fromstring(z.read('xl/_rels/workbook.xml.rels')) if r.get('Id')==sh.get(rid)); p=t[1:] if t.startswith('/') else 'xl/'+t; [print('\\t'.join((ss[int(c.findtext(ns+'v',0))] if c.get('t')=='s' else c.findtext(ns+'v','')) for c in row)) for row in ET.fromstring(z.read(p)).iter(ns+'row')]"\`
 - DOCX: Read 도구로 직접 읽을 수 없다. Bash 도구로 python3 zipfile+xml.etree를 사용해 텍스트를 추출한다:
   \`python3 -c "import zipfile, xml.etree.ElementTree as ET; z=zipfile.ZipFile('<경로>'); body=ET.fromstring(z.read('word/document.xml')); print('\\n'.join(t.text for t in body.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t') if t.text))"\`
 - **경로 제한 (필수, refs #262, #266)**: Read / Bash / Glob / Grep / LS 도구는 위 [첨부 파일] 섹션에 표시된 경로(또는 그 부모 디렉토리) 안에서만 사용한다. 시스템의 다른 경로(\`/etc\`, \`/home\` 외 디렉토리, \`.env\`, SSH 키 등) 또는 외부 네트워크 접근은 금지. Bash 호출 시에도 첨부 파일 경로 외 명령(예: \`rm\`, \`curl\`, \`ssh\`, \`cat /etc/...\`)은 사용하지 않는다.

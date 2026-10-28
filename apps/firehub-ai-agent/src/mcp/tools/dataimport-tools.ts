@@ -1,7 +1,7 @@
 import { z } from 'zod/v4';
 import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
-import type { AsyncJobStatusResponse } from '../api-client/dataimport-api.js';
+import type { AsyncJobStatusResponse, ImportParseOptions } from '../api-client/dataimport-api.js';
 
 /**
  * CSV/XLSX 임포트 관련 MCP 도구들. dataset-manager 서브에이전트가 대화형으로
@@ -11,33 +11,30 @@ import type { AsyncJobStatusResponse } from '../api-client/dataimport-api.js';
 // 공통 파스 옵션 스키마/타입 — 모든 도구(preview/validate/start)가 동일 옵션 셋을 공유하므로
 // 여기에서 한 번만 정의하고, 각 도구의 스키마·핸들러 인자 타입에서 재사용한다.
 const parseOptionsSchema = {
-  delimiter: z
-    .string()
-    .optional()
-    .describe('CSV 구분자 (",", "\\t", ";", "|"). 기본값: ","'),
+  delimiter: z.string().optional().describe('CSV 구분자 (",", "\\t", ";", "|"). 기본값: ","'),
   encoding: z
     .enum(['AUTO', 'UTF-8', 'EUC-KR', 'CP949'])
     .optional()
     .describe('파일 인코딩. 기본값: AUTO'),
   hasHeader: z.boolean().optional().describe('첫 행이 헤더인지 여부. 기본값: true'),
   skipRows: z.number().optional().describe('헤더 전 건너뛸 행 수. 기본값: 0'),
+  // WD-253: 엑셀 시트 선택. 미지정 시 첫 번째 보이는 시트 — preview/validate/start 에 같은 값을 넘겨야 같은 시트를 읽는다.
+  sheetName: z
+    .string()
+    .optional()
+    .describe(
+      '엑셀에서 가져올 시트 이름. 생략하면 첫 번째 보이는(숨기지 않은) 시트. preview_csv 결과의 sheets 목록에서 고르고, validate_import·start_import 에도 같은 값을 넘긴다. CSV는 무시',
+    ),
 } as const;
 
-// 위 parseOptionsSchema 와 동일한 필드 셋의 TS 타입.
-// z.infer 를 사용하면 const assertion 과 조합이 번거로우므로 수동으로 선언한다.
-type ParseOptionsArgs = {
-  delimiter?: string;
-  encoding?: 'AUTO' | 'UTF-8' | 'EUC-KR' | 'CP949';
-  hasHeader?: boolean;
-  skipRows?: number;
-};
+// 위 parseOptionsSchema 와 같은 필드 셋의 TS 타입 — API 클라이언트가 보내는 옵션 타입을 그대로 써서 두 곳이 어긋나지 않게 한다.
+type ParseOptionsArgs = ImportParseOptions;
 
 export function registerDataImportTools(
   apiClient: FireHubApiClient,
   safeTool: SafeToolFn,
   jsonResult: JsonResultFn,
 ) {
-
   // 매핑 엔트리 스키마. validate/start 에서 공통 사용.
   const mappingSchema = z
     .array(

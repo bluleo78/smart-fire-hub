@@ -9,16 +9,21 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 
 /**
- * CSV 파싱 옵션. 사용자가 명시적으로 인코딩을 지정하지 않으면 {@code AUTO}로 두고 {@link #detectEncoding(byte[])}가 BOM과
+ * 가져오기 파싱 옵션. 사용자가 명시적으로 인코딩을 지정하지 않으면 {@code AUTO}로 두고 {@link #detectEncoding(byte[])}가 BOM과
  * CharsetDecoder strict 검증을 통해 결정한다.
+ *
+ * <p>delimiter·encoding·hasHeader·skipRows 는 CSV 전용이고, sheetName 은 엑셀 전용이다(CSV 는 무시). 임포트 잡에는 이
+ * 레코드가 JSON 으로 직렬화돼 넘어가므로, 미리보기에서 고른 시트가 잡에서도 그대로 쓰인다(WD-253).
  */
 public record ParseOptions(
     String delimiter, // ",", "\t", ";", "|", or custom single char. Default ","
     String encoding, // "AUTO", "UTF-8", "UTF-16LE", "UTF-16BE", "EUC-KR", "CP949", "MS949". Default
     // "AUTO"
     boolean hasHeader, // Default true
-    int skipRows // Rows to skip before header. Default 0
-    ) implements Serializable {
+    int skipRows, // Rows to skip before header. Default 0
+    // 엑셀에서 읽을 시트 이름(WD-253). null 이면 첫 번째 보이는 시트. 숨긴 시트도 이름으로 지정하면 읽는다.
+    String sheetName)
+    implements Serializable {
 
   // MS949는 CP949의 표준 JVM 별칭이며 EUC-KR(부분집합)도 디코딩 가능하므로
   // 한국어 CSV의 AUTO 폴백 기본 라벨로 사용한다.
@@ -36,10 +41,17 @@ public record ParseOptions(
     if (!ALLOWED_ENCODINGS.contains(encoding)) {
       throw new IllegalArgumentException(UNSUPPORTED_ENCODING_MESSAGE);
     }
+    // 빈 값·공백만은 「지정 안 함」으로 본다 — 폼이 빈 문자열을 보내도 기본(첫 보이는 시트)으로 읽게 한다.
+    if (sheetName != null && sheetName.isBlank()) sheetName = null;
+  }
+
+  /** 시트를 지정하지 않는 생성자 — CSV 호출부와 기존 코드 호환(sheetName=null → 첫 번째 보이는 시트). */
+  public ParseOptions(String delimiter, String encoding, boolean hasHeader, int skipRows) {
+    this(delimiter, encoding, hasHeader, skipRows, null);
   }
 
   public static ParseOptions defaults() {
-    return new ParseOptions(",", "AUTO", true, 0);
+    return new ParseOptions(",", "AUTO", true, 0, null);
   }
 
   /**

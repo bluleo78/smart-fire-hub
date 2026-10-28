@@ -65,7 +65,7 @@ public class FileParserService {
       throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseHeadersCsvFromStream(inputStream, opts);
-      case "xlsx", "xls", "xlsb" -> parseHeadersExcel(inputStream);
+      case "xlsx", "xls", "xlsb" -> excelHeaders(excel(inputStream), opts);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -75,7 +75,7 @@ public class FileParserService {
       InputStream inputStream, String fileType, int maxRows, ParseOptions opts) throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseSampleRowsCsvFromStream(inputStream, maxRows, opts);
-      case "xlsx", "xls", "xlsb" -> parseSampleRowsExcel(inputStream, maxRows);
+      case "xlsx", "xls", "xlsb" -> excelRows(excel(inputStream), opts, maxRows);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -85,7 +85,7 @@ public class FileParserService {
       throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> countRowsCsvFromStream(inputStream, opts);
-      case "xlsx", "xls", "xlsb" -> countRowsExcel(inputStream);
+      case "xlsx", "xls", "xlsb" -> excelCount(excel(inputStream), opts);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -95,7 +95,7 @@ public class FileParserService {
       InputStream inputStream, String fileType, ParseOptions opts) throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseCsvFromStream(inputStream, opts);
-      case "xlsx", "xls", "xlsb" -> parseExcel(inputStream);
+      case "xlsx", "xls", "xlsb" -> excelRows(excel(inputStream), opts, Integer.MAX_VALUE);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -111,7 +111,8 @@ public class FileParserService {
    * CSV/XLSX 헤더를 파일 경로에서 파싱한다.
    *
    * <p>주의: Excel(xlsx/xls/xlsb)은 항상 첫 행을 헤더로 취급하며 {@code opts}의 hasHeader=false/skipRows는 적용되지
-   * 않는다(기존 Excel 파싱 동작과 동일). CSV만 두 옵션을 온전히 반영한다.
+   * 않는다(기존 Excel 파싱 동작과 동일). CSV만 두 옵션을 온전히 반영한다. Excel 은 {@code opts.sheetName()} 으로 읽을 시트만
+   * 고른다(WD-253).
    */
   public List<String> parseHeaders(Path file, String fileType, ParseOptions opts) throws Exception {
     return switch (fileType.toLowerCase()) {
@@ -120,7 +121,7 @@ public class FileParserService {
           yield guardCsv(() -> parseHeadersCsvFromStream(in, opts));
         }
       }
-      case "xlsx", "xls", "xlsb" -> parseHeadersExcelFile(file.toFile());
+      case "xlsx", "xls", "xlsb" -> excelHeaders(excel(file.toFile()), opts);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -138,7 +139,7 @@ public class FileParserService {
           yield guardCsv(() -> parseSampleRowsCsvFromStream(in, maxRows, opts));
         }
       }
-      case "xlsx", "xls", "xlsb" -> parseSampleRowsExcelFile(file.toFile(), maxRows);
+      case "xlsx", "xls", "xlsb" -> excelRows(excel(file.toFile()), opts, maxRows);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -155,7 +156,7 @@ public class FileParserService {
           yield guardCsv(() -> countRowsCsvFromStream(in, opts));
         }
       }
-      case "xlsx", "xls", "xlsb" -> countRowsExcelFile(file.toFile());
+      case "xlsx", "xls", "xlsb" -> excelCount(excel(file.toFile()), opts);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -173,7 +174,7 @@ public class FileParserService {
           yield guardCsv(() -> parseCsvFromStream(in, opts));
         }
       }
-      case "xlsx", "xls", "xlsb" -> parseExcelFile(file.toFile());
+      case "xlsx", "xls", "xlsb" -> excelRows(excel(file.toFile()), opts, Integer.MAX_VALUE);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -186,7 +187,7 @@ public class FileParserService {
    *
    * <p>CSV: {@link #buildCsvReaderFromStream}로 AUTO 인코딩까지 지원하는 리더를 얻어 skipRows를 건너뛴 뒤 readNext()
    * 루프로 행을 순회한다({@code readAll()} 금지). Excel: {@link ExcelStreamingParser#parse(java.io.File,
-   * ExcelStreamingParser.RowConsumer)} core 진입점(랜덤액세스)에 위임한다.
+   * String, ExcelStreamingParser.RowConsumer)} core 진입점(랜덤액세스)에 위임한다.
    *
    * <p>주의: Excel(xlsx/xls/xlsb)은 항상 첫 행을 헤더로 취급하며 {@code opts}의 hasHeader=false/skipRows는 적용되지
    * 않는다(기존 InputStream 기반 parseExcel/parseHeadersExcel과 동일한 동작이며 회귀가 아니다). CSV만 두 옵션을 온전히 반영하므로,
@@ -209,8 +210,8 @@ public class FileParserService {
           yield guardCsv(() -> parseStreamingCsvFromStream(in, opts, batchSize, onBatch));
         }
       }
-      // Excel 분기: opts(hasHeader/skipRows) 미사용 — 위 Javadoc 참고
-      case "xlsx", "xls", "xlsb" -> parseStreamingExcelFile(file.toFile(), batchSize, onBatch);
+      // Excel 분기: opts 중 sheetName 만 쓴다(hasHeader/skipRows 미사용) — 위 Javadoc 참고
+      case "xlsx", "xls", "xlsb" -> excelStreaming(excel(file.toFile()), opts, batchSize, onBatch);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -252,7 +253,8 @@ public class FileParserService {
       throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseCsvFromBytes(fileData, opts);
-      case "xlsx", "xls", "xlsb" -> parseExcel(new ByteArrayInputStream(fileData));
+      case "xlsx", "xls", "xlsb" ->
+          excelRows(excel(new ByteArrayInputStream(fileData)), opts, Integer.MAX_VALUE);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -261,7 +263,7 @@ public class FileParserService {
       throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseHeadersCsvFromBytes(fileData, opts);
-      case "xlsx", "xls", "xlsb" -> parseHeadersExcel(new ByteArrayInputStream(fileData));
+      case "xlsx", "xls", "xlsb" -> excelHeaders(excel(new ByteArrayInputStream(fileData)), opts);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -271,7 +273,7 @@ public class FileParserService {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseSampleRowsCsvFromBytes(fileData, maxRows, opts);
       case "xlsx", "xls", "xlsb" ->
-          parseSampleRowsExcel(new ByteArrayInputStream(fileData), maxRows);
+          excelRows(excel(new ByteArrayInputStream(fileData)), opts, maxRows);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -279,32 +281,31 @@ public class FileParserService {
   public int countRows(byte[] fileData, String fileType, ParseOptions opts) throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> countRowsCsvFromBytes(fileData, opts);
-      case "xlsx", "xls", "xlsb" -> countRowsExcel(new ByteArrayInputStream(fileData));
+      case "xlsx", "xls", "xlsb" -> excelCount(excel(new ByteArrayInputStream(fileData)), opts);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
 
   // -----------------------------------------------------------------------
-  // Excel (no ParseOptions — Excel handles encoding internally)
+  // Excel (인코딩은 엑셀이 스스로 처리 — ParseOptions 중 sheetName 만 의미가 있다)
   // -----------------------------------------------------------------------
 
   /**
-   * XLSX/XLS 파일 전체를 파싱하여 헤더-값 맵의 리스트로 반환한다.
+   * 엑셀 파일의 시트 목록과 실제로 읽을 시트를 알려 준다(WD-253). CSV 는 시트가 없어 {@link
+   * ExcelStreamingParser.SheetSelection#NONE}(둘 다 null) — 호출자가 null 분기 없이 그대로 응답에 담는다.
    *
-   * <p>첫 행을 헤더로 인식하고, 나머지 행을 {헤더: 값} 형태의 Map으로 누적한다. ExcelStreamingParser를 통해 DOM 없이 스트리밍 방식으로
-   * 처리한다.
+   * <p>미리보기 응답의 sheets/sheetName 에 쓴다. 행은 읽지 않고 워크북 머리만 읽는다. 선택 규칙이 파싱과 같아, 같은 {@code opts} 로 부른
+   * 헤더·샘플·행 수·임포트가 이 시트를 읽는다. 지정한 시트가 없거나 보이는 시트가 없으면 {@link
+   * com.smartfirehub.dataimport.exception.ExcelSheetSelectionException}(400).
    */
-  public List<Map<String, String>> parseExcel(InputStream inputStream) throws Exception {
-    final List<Map<String, String>> result = new ArrayList<>();
-    ExcelStreamingParser.parse(
-        inputStream,
-        excelDataRows(
-            null,
-            (headers, cells) -> {
-              result.add(toRowMap(headers, cells));
-              return true;
-            }));
-    return result;
+  public ExcelStreamingParser.SheetSelection describeSheets(
+      Path file, String fileType, ParseOptions opts) throws Exception {
+    return switch (fileType.toLowerCase()) {
+      case "csv" -> ExcelStreamingParser.SheetSelection.NONE;
+      case "xlsx", "xls", "xlsb" ->
+          ExcelStreamingParser.describeSheets(file.toFile(), opts.sheetName());
+      default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
+    };
   }
 
   // -----------------------------------------------------------------------
@@ -608,14 +609,32 @@ public class FileParserService {
   }
 
   // -----------------------------------------------------------------------
-  // Private Excel helpers (no ParseOptions)
+  // Private Excel helpers — 엑셀은 첫 행을 항상 헤더로 취급하고 ParseOptions 중 sheetName(읽을 시트, WD-253)만
+  // 쓴다(hasHeader=false/skipRows 미반영 — 기존 동작이며 회귀가 아니다. CSV 경로만 두 옵션을 지원한다).
+  // InputStream·File·byte[] 경로가 같은 helper 를 쓰도록 「어디서 읽는지」는 ExcelSource 로 넘긴다.
   // -----------------------------------------------------------------------
+
+  /** 엑셀 행을 어디서 읽는지(InputStream 또는 파일) 감춘 읽기 함수 — 헤더·샘플·행 수·전체·스트리밍 helper 를 경로마다 두 벌 두지 않으려고 쓴다. */
+  @FunctionalInterface
+  private interface ExcelSource {
+    void read(String sheetName, RowConsumer consumer) throws Exception;
+  }
+
+  /** InputStream 에서 읽는 엑셀 원본 — ExcelStreamingParser 가 임시 파일로 한 번 옮겨 랜덤액세스로 읽는다. */
+  private static ExcelSource excel(InputStream in) {
+    return (sheetName, consumer) -> ExcelStreamingParser.parse(in, sheetName, consumer);
+  }
+
+  /** 파일에서 바로 읽는 엑셀 원본 — 임시 파일 재복사(spill) 없이 core 진입점에 위임한다. */
+  private static ExcelSource excel(java.io.File file) {
+    return (sheetName, consumer) -> ExcelStreamingParser.parse(file, sheetName, consumer);
+  }
 
   /**
    * 엑셀 행 콜백의 공통 규칙: 첫 행 = 헤더, 그 뒤의 빈 행({@link #isBlankRow})은 건너뛰어 {@code skipped}(null 가능)에 세고, 데이터
    * 행만 {@code onRow(헤더, 셀)} 에 넘긴다(WD-255). onRow 가 false 를 돌려주면 파싱을 멈춘다.
    *
-   * <p>InputStream·File 경로의 전체·샘플·행 수·스트리밍이 모두 이 규칙을 지나 미리보기와 적재가 같은 행을 본다.
+   * <p>전체·샘플·행 수·스트리밍이 모두 이 규칙을 지나 미리보기와 적재가 같은 행을 본다.
    */
   private static RowConsumer excelDataRows(
       int[] skipped, BiPredicate<List<String>, List<String>> onRow) {
@@ -646,35 +665,33 @@ public class FileParserService {
   }
 
   /**
-   * XLSX/XLS 파일의 첫 행(헤더)만 파싱하여 반환한다.
+   * 엑셀의 첫 행(헤더)만 읽는다.
    *
-   * <p>첫 행 수신 직후 false를 반환해 파싱을 조기 종료한다(early-exit). 대용량 파일에서 불필요한 DOM 적재 없이 빠르게 헤더를 추출한다.
+   * <p>첫 행 수신 직후 false를 반환해 파싱을 조기 종료한다(early-exit). 대용량 파일에서도 헤더만 빠르게 얻는다.
    */
-  private List<String> parseHeadersExcel(InputStream inputStream) throws Exception {
+  private static List<String> excelHeaders(ExcelSource source, ParseOptions opts) throws Exception {
     @SuppressWarnings("unchecked")
     final List<String>[] headerHolder = new List[] {null};
-
-    ExcelStreamingParser.parse(
-        inputStream,
+    source.read(
+        opts.sheetName(),
         (idx, cells) -> {
           headerHolder[0] = new ArrayList<>(cells);
           FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
           return false; // 첫 행 후 즉시 중단
         });
-
     return headerHolder[0] != null ? headerHolder[0] : Collections.emptyList();
   }
 
   /**
-   * XLSX/XLS 파일에서 헤더를 포함하여 최대 maxRows개의 샘플 데이터 행을 파싱한다.
+   * 엑셀의 데이터 행을 최대 {@code maxRows} 개까지 {헤더: 값} Map 으로 읽는다. 전체를 읽을 땐 {@link Integer#MAX_VALUE}.
    *
-   * <p>결과가 maxRows에 도달하면 false를 반환하여 파싱을 조기 종료한다. 대용량 파일에서 미리보기 용도로 일부만 읽을 때 활용한다.
+   * <p>maxRows 에 닿으면 false 를 돌려 파싱을 조기 종료한다 — 미리보기 샘플이 파일 전체를 읽지 않게 한다.
    */
-  private List<Map<String, String>> parseSampleRowsExcel(InputStream inputStream, int maxRows)
-      throws Exception {
+  private static List<Map<String, String>> excelRows(
+      ExcelSource source, ParseOptions opts, int maxRows) throws Exception {
     final List<Map<String, String>> result = new ArrayList<>();
-    ExcelStreamingParser.parse(
-        inputStream,
+    source.read(
+        opts.sheetName(),
         excelDataRows(
             null,
             (headers, cells) -> {
@@ -685,14 +702,14 @@ public class FileParserService {
   }
 
   /**
-   * XLSX/XLS 파일의 데이터 행 수(헤더·빈 행 제외)를 반환한다.
+   * 엑셀의 데이터 행 수(헤더·빈 행 제외)를 센다.
    *
    * <p>Map 을 만들지 않고 데이터 행만 센다 — 미리보기 totalRows 가 실제 적재 행 수와 같아야 한다(WD-255).
    */
-  private int countRowsExcel(InputStream inputStream) throws Exception {
+  private static int excelCount(ExcelSource source, ParseOptions opts) throws Exception {
     final int[] counter = new int[] {0};
-    ExcelStreamingParser.parse(
-        inputStream,
+    source.read(
+        opts.sheetName(),
         excelDataRows(
             null,
             (headers, cells) -> {
@@ -700,93 +717,26 @@ public class FileParserService {
               return true;
             }));
     return counter[0];
-  }
-
-  // -----------------------------------------------------------------------
-  // Private Excel helpers — File 기반 (Path 오버로드/스트리밍용)
-  // ExcelStreamingParser.parse(File,...) core 진입점(랜덤액세스)에 직접 위임하여
-  // InputStream 오버로드가 겪는 임시 파일 재-spill을 피한다.
-  //
-  // 주의(ParseOptions 미적용): 아래 helper들은 모두 ParseOptions를 받지 않으며,
-  // 첫 행을 항상 헤더로 취급한다 — hasHeader=false/skipRows는 반영되지 않는다.
-  // 이는 기존 InputStream 기반 parseExcel/parseHeadersExcel(위)과 동일한 동작으로
-  // 회귀가 아니다. CSV 경로만 해당 옵션을 온전히 지원한다.
-  // -----------------------------------------------------------------------
-
-  /** XLSX/XLS/XLSB 파일의 첫 행(헤더)만 파일 경로에서 직접 파싱한다. */
-  private List<String> parseHeadersExcelFile(java.io.File file) throws Exception {
-    @SuppressWarnings("unchecked")
-    final List<String>[] headerHolder = new List[] {null};
-
-    ExcelStreamingParser.parse(
-        file,
-        (idx, cells) -> {
-          headerHolder[0] = new ArrayList<>(cells);
-          FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
-          return false; // 첫 행 후 즉시 중단
-        });
-
-    return headerHolder[0] != null ? headerHolder[0] : Collections.emptyList();
-  }
-
-  /** XLSX/XLS/XLSB 파일에서 헤더 포함 최대 maxRows개의 샘플 데이터 행을 파일 경로에서 직접 파싱한다. */
-  private List<Map<String, String>> parseSampleRowsExcelFile(java.io.File file, int maxRows)
-      throws Exception {
-    final List<Map<String, String>> result = new ArrayList<>();
-    ExcelStreamingParser.parse(
-        file,
-        excelDataRows(
-            null,
-            (headers, cells) -> {
-              result.add(toRowMap(headers, cells));
-              return result.size() < maxRows;
-            }));
-    return result;
-  }
-
-  /** XLSX/XLS/XLSB 파일의 데이터 행 수(헤더·빈 행 제외)를 파일 경로에서 직접 계산한다. */
-  private int countRowsExcelFile(java.io.File file) throws Exception {
-    final int[] counter = new int[] {0};
-    ExcelStreamingParser.parse(
-        file,
-        excelDataRows(
-            null,
-            (headers, cells) -> {
-              counter[0]++;
-              return true;
-            }));
-    return counter[0];
-  }
-
-  /** XLSX/XLS/XLSB 파일 전체를 파일 경로에서 직접 파싱하여 헤더-값 맵 리스트로 반환한다. */
-  private List<Map<String, String>> parseExcelFile(java.io.File file) throws Exception {
-    final List<Map<String, String>> result = new ArrayList<>();
-    ExcelStreamingParser.parse(
-        file,
-        excelDataRows(
-            null,
-            (headers, cells) -> {
-              result.add(toRowMap(headers, cells));
-              return true;
-            }));
-    return result;
   }
 
   /**
-   * XLSX/XLS/XLSB 파일을 batchSize 단위로 배치 콜백 스트리밍 파싱한다.
+   * 엑셀을 batchSize 단위로 배치 콜백 스트리밍 파싱한다.
    *
    * <p>첫 행을 헤더로 캡처하고, 이후 행을 배치에 누적하다가 batchSize에 도달하면 {@code onBatch}를 호출한 뒤 배치를 비운다. 전체 행을 순회한 뒤
    * 잔여 배치를 flush하고, 건너뛴 빈 행 수를 돌려준다(WD-255).
    */
-  private int parseStreamingExcelFile(
-      java.io.File file, int batchSize, Consumer<List<Map<String, String>>> onBatch)
+  private static int excelStreaming(
+      ExcelSource source,
+      ParseOptions opts,
+      int batchSize,
+      Consumer<List<Map<String, String>>> onBatch)
       throws Exception {
     @SuppressWarnings("unchecked")
     final List<Map<String, String>>[] batchHolder = new List[] {new ArrayList<>(batchSize)};
     final int[] skipped = {0};
 
-    ExcelStreamingParser.parse(
-        file,
+    source.read(
+        opts.sheetName(),
         excelDataRows(
             skipped,
             (headers, cells) -> {

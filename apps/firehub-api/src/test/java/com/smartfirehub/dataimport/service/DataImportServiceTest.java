@@ -153,14 +153,31 @@ class DataImportServiceTest extends IntegrationTestBase {
             testDatasetId, first, null, testUserId, "Test User", "127.0.0.1", "TestAgent");
     assertThat(started.status()).isEqualTo("PENDING");
 
-    // When/Then: 같은 데이터셋에 두 번째 임포트 → 409로 매핑되는 도메인 예외
+    // When/Then: 같은 데이터셋에 두 번째 임포트 → 409로 매핑되는 도메인 예외.
+    // 활성 잡 사전 확인이 먼저 막으므로 업로드 파일을 디스크에 쓰지도 않는다(WD-253 리뷰 반영).
     MockMultipartFile second =
-        new MockMultipartFile(
-            "file", "second.csv", "text/csv", csvContent.getBytes(StandardCharsets.UTF_8));
+        Mockito.spy(
+            new MockMultipartFile(
+                "file", "second.csv", "text/csv", csvContent.getBytes(StandardCharsets.UTF_8)));
     assertThatThrownBy(
             () ->
                 dataImportService.importFile(
                     testDatasetId, second, null, testUserId, "Test User", "127.0.0.1", "TestAgent"))
+        .isInstanceOf(ConcurrentImportException.class)
+        .hasMessageContaining("이미 진행 중인 임포트가 있습니다");
+    Mockito.verify(second, Mockito.never()).transferTo(Mockito.any(java.io.File.class));
+
+    // 사전 확인을 동시에 통과한 요청(경합)은 createJob 의 partial unique index 가 최종으로 막아 같은 409 가 된다.
+    Mockito.doReturn(false)
+        .when(asyncJobService)
+        .hasActiveJob("IMPORT", "dataset", String.valueOf(testDatasetId));
+    MockMultipartFile third =
+        new MockMultipartFile(
+            "file", "third.csv", "text/csv", csvContent.getBytes(StandardCharsets.UTF_8));
+    assertThatThrownBy(
+            () ->
+                dataImportService.importFile(
+                    testDatasetId, third, null, testUserId, "Test User", "127.0.0.1", "TestAgent"))
         .isInstanceOf(ConcurrentImportException.class)
         .hasMessageContaining("이미 진행 중인 임포트가 있습니다");
   }
@@ -247,6 +264,251 @@ class DataImportServiceTest extends IntegrationTestBase {
     // Then - 전체 파일이므로 전체 행수(3)를 정확히 계산한다
     assertThat(preview.fileHeaders()).containsExactly("name", "age", "email");
     assertThat(preview.totalRows()).isEqualTo(3);
+  }
+
+  /** 숨긴 첫 시트 「숨김」(헤더 hidden_col)과 보이는 「데이터」(헤더 name·age·email, 2행)로 된 xlsx 업로드 파일. */
+  private static MockMultipartFile hiddenFirstXlsxUpload() throws Exception {
+    try (org.apache.poi.xssf.usermodel.XSSFWorkbook wb =
+            new org.apache.poi.xssf.usermodel.XSSFWorkbook();
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      var hidden = wb.createSheet("숨김");
+      hidden.createRow(0).createCell(0).setCellValue("hidden_col");
+      hidden.createRow(1).createCell(0).setCellValue("x");
+      var data = wb.createSheet("데이터");
+      var h = data.createRow(0);
+      h.createCell(0).setCellValue("name");
+      h.createCell(1).setCellValue("age");
+      h.createCell(2).setCellValue("email");
+      data.createRow(1).createCell(0).setCellValue("Alice");
+      data.createRow(2).createCell(0).setCellValue("Bob");
+      hidden.setSelected(false);
+      wb.setActiveSheet(1);
+      wb.setSelectedTab(1);
+      wb.setSheetHidden(0, true);
+      wb.write(out);
+      return new MockMultipartFile(
+          "file",
+          "sheets.xlsx",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          out.toByteArray());
+    }
+  }
+
+  /** 엑셀 미리보기는 읽은 시트 이름과 시트 목록(숨김 여부 포함)을 알려 주고, 기본으로 첫 번째 보이는 시트를 읽는다(WD-253). */
+  @Test
+  void previewImport_xlsx_reportsSheetsAndReadsFirstVisibleSheet() throws Exception {
+    ImportPreviewResponse preview =
+        dataImportService.previewImport(testDatasetId, hiddenFirstXlsxUpload());
+
+    assertThat(preview.sheetName()).isEqualTo("데이터");
+    assertThat(preview.sheets())
+        .containsExactly(
+            new com.smartfirehub.dataimport.dto.ExcelSheetInfo("숨김", true),
+            new com.smartfirehub.dataimport.dto.ExcelSheetInfo("데이터", false));
+    assertThat(preview.fileHeaders()).containsExactly("name", "age", "email");
+    assertThat(preview.totalRows()).isEqualTo(2);
+  }
+
+  @Test
+  void previewImport_xlsx_withSheetName_readsThatSheet() throws Exception {
+    ImportPreviewResponse preview =
+        dataImportService.previewImport(
+            testDatasetId,
+            hiddenFirstXlsxUpload(),
+            new ParseOptions(",", "AUTO", true, 0, "숨김"),
+            false);
+
+    assertThat(preview.sheetName()).isEqualTo("숨김");
+    assertThat(preview.fileHeaders()).containsExactly("hidden_col");
+    assertThat(preview.sampleRows()).extracting(r -> r.get("hidden_col")).containsExactly("x");
+    assertThat(preview.totalRows()).isEqualTo(1);
+    assertThat(preview.sheets()).hasSize(2);
+  }
+
+  @Test
+  void previewAndValidate_xlsx_unknownSheet_isKorean400() throws Exception {
+    ParseOptions missing = new ParseOptions(",", "AUTO", true, 0, "없음");
+    assertThatThrownBy(
+            () ->
+                dataImportService.previewImport(
+                    testDatasetId, hiddenFirstXlsxUpload(), missing, false))
+        .isInstanceOf(UnsupportedFileTypeException.class)
+        .hasMessage("'없음' 시트를 찾을 수 없습니다. 파일에 있는 시트: 숨김(숨김), 데이터");
+    assertThatThrownBy(
+            () ->
+                dataImportService.validateImport(
+                    testDatasetId,
+                    hiddenFirstXlsxUpload(),
+                    List.of(new ColumnMappingEntry("name", "name")),
+                    missing))
+        .isInstanceOf(UnsupportedFileTypeException.class)
+        .hasMessageStartingWith("'없음' 시트를 찾을 수 없습니다.");
+  }
+
+  /**
+   * 가져오기 시작에서 지정한 시트가 없으면 잡을 만들기 전에 미리보기와 같은 한국어 400 으로 거절해야 한다 — 잡 행이 생기지 않으므로 다음 가져오기가 409 로 막히지
+   * 않는다(코드 리뷰 반영).
+   */
+  @Test
+  void importFile_xlsx_unknownSheet_rejectedBeforeJobIsCreated() throws Exception {
+    assertThatThrownBy(
+            () ->
+                dataImportService.importFile(
+                    testDatasetId,
+                    hiddenFirstXlsxUpload(),
+                    null,
+                    testUserId,
+                    "Test User",
+                    "127.0.0.1",
+                    "TestAgent",
+                    new ParseOptions(",", "AUTO", true, 0, "없음")))
+        .isInstanceOf(UnsupportedFileTypeException.class)
+        .hasMessage("'없음' 시트를 찾을 수 없습니다. 파일에 있는 시트: 숨김(숨김), 데이터");
+    Mockito.verify(asyncJobService, Mockito.never())
+        .createJob(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
+
+    // 있는 시트(숨긴 시트 포함)를 지정하면 정상적으로 잡이 시작된다
+    ImportStartResponse ok =
+        dataImportService.importFile(
+            testDatasetId,
+            hiddenFirstXlsxUpload(),
+            null,
+            testUserId,
+            "Test User",
+            "127.0.0.1",
+            "TestAgent",
+            new ParseOptions(",", "AUTO", true, 0, "숨김"));
+    assertThat(ok.status()).isEqualTo("PENDING");
+  }
+
+  /**
+   * 시트를 지정하지 않은 가져오기 시작도 잡을 만들기 전에 시트를 정한다 — 보이는 시트가 없는 통합 문서는 미리보기와 같은 한국어 400 으로 바로 끝나고 잡 행이 생기지
+   * 않는다(WD-253 리뷰 반영).
+   */
+  @Test
+  void importFile_xlsx_allSheetsHidden_rejectedBeforeJobIsCreated() throws Exception {
+    MockMultipartFile allHidden;
+    try (org.apache.poi.xssf.usermodel.XSSFWorkbook wb =
+            new org.apache.poi.xssf.usermodel.XSSFWorkbook();
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      wb.createSheet("A").createRow(0).createCell(0).setCellValue("name");
+      wb.createSheet("B").createRow(0).createCell(0).setCellValue("name");
+      wb.setSheetHidden(0, true);
+      wb.setSheetHidden(1, true);
+      wb.write(out);
+      allHidden =
+          new MockMultipartFile(
+              "file",
+              "hidden.xlsx",
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              out.toByteArray());
+    }
+    assertThatThrownBy(
+            () ->
+                dataImportService.importFile(
+                    testDatasetId,
+                    allHidden,
+                    null,
+                    testUserId,
+                    "Test User",
+                    "127.0.0.1",
+                    "TestAgent",
+                    ParseOptions.defaults()))
+        .isInstanceOf(UnsupportedFileTypeException.class)
+        .hasMessageStartingWith("보이는 시트가 없습니다.");
+    Mockito.verify(asyncJobService, Mockito.never())
+        .createJob(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
+  }
+
+  /**
+   * 시트 목록이 깨진 xlsb: 미리보기는 첫 시트로 떨어져 그 이름을 돌려주고, 화면·AI 는 그 이름을 검증·가져오기에 다시 보낸다. 그 이름으로 검증·가져오기가
+   * 되어야 한다 — 예전에 가져와지던 파일이 계속 가져와지게(PR #792 리뷰).
+   */
+  @Test
+  void corruptXlsb_previewSheetNameRoundTripsToValidateAndImport() throws Exception {
+    byte[] xlsb = ExcelStreamingParserTest.xlsbWithUnreadableSheetList();
+    java.util.function.Supplier<MockMultipartFile> upload =
+        () ->
+            new MockMultipartFile(
+                "file", "old.xlsb", "application/vnd.ms-excel.sheet.binary.macroEnabled.12", xlsb);
+
+    ImportPreviewResponse preview = dataImportService.previewImport(testDatasetId, upload.get());
+    assertThat(preview.sheetName()).isEqualTo("첫째");
+    assertThat(preview.fileHeaders()).containsExactly("sheet");
+
+    ParseOptions sameSheet = new ParseOptions(",", "AUTO", true, 0, preview.sheetName());
+    assertThat(
+            dataImportService.validateImport(
+                testDatasetId,
+                upload.get(),
+                List.of(new ColumnMappingEntry("sheet", "name")),
+                sameSheet))
+        .isNotNull();
+    ImportStartResponse started =
+        dataImportService.importFile(
+            testDatasetId,
+            upload.get(),
+            null,
+            testUserId,
+            "Test User",
+            "127.0.0.1",
+            "TestAgent",
+            sameSheet);
+    assertThat(started.status()).isEqualTo("PENDING");
+  }
+
+  /** 잡 생성이 중복(409) 밖의 이유로 실패해도 저장해 둔 업로드 파일을 tmp 에 남기지 않는다(PR #792 리뷰). */
+  @Test
+  void importFile_createJobFails_deletesSavedUpload() throws Exception {
+    java.nio.file.Path tempDir =
+        java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "firehub-imports");
+    java.nio.file.Files.createDirectories(tempDir);
+    java.util.Set<java.nio.file.Path> before;
+    try (var stream = java.nio.file.Files.list(tempDir)) {
+      before = stream.collect(java.util.stream.Collectors.toSet());
+    }
+    // 잡 생성 시점에 이번 호출이 저장한 파일을 잡아 두고 DB 오류처럼 실패시킨다
+    java.util.Set<java.nio.file.Path> savedDuringCall = new java.util.HashSet<>();
+    Mockito.doAnswer(
+            inv -> {
+              try (var stream = java.nio.file.Files.list(tempDir)) {
+                stream
+                    .filter(p -> !before.contains(p))
+                    .filter(p -> p.getFileName().toString().startsWith("import-"))
+                    .forEach(savedDuringCall::add);
+              }
+              throw new IllegalStateException("DB 연결 실패");
+            })
+        .when(asyncJobService)
+        .createJob(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
+
+    MockMultipartFile file =
+        new MockMultipartFile(
+            "file",
+            "test.csv",
+            "text/csv",
+            "name\nAlice\n".getBytes(StandardCharsets.UTF_8));
+    assertThatThrownBy(
+            () ->
+                dataImportService.importFile(
+                    testDatasetId, file, null, testUserId, "Test User", "127.0.0.1", "TestAgent"))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(savedDuringCall).isNotEmpty();
+    assertThat(savedDuringCall).allSatisfy(p -> assertThat(p).doesNotExist());
+  }
+
+  @Test
+  void previewImport_csv_hasNoSheetInfo() throws Exception {
+    MockMultipartFile file =
+        new MockMultipartFile(
+            "file", "t.csv", "text/csv", "name\nAlice\n".getBytes(StandardCharsets.UTF_8));
+    ImportPreviewResponse preview =
+        dataImportService.previewImport(
+            testDatasetId, file, new ParseOptions(",", "AUTO", true, 0, "무시됨"), false);
+    assertThat(preview.sheetName()).isNull();
+    assertThat(preview.sheets()).isNull();
+    assertThat(preview.fileHeaders()).containsExactly("name");
   }
 
   /**

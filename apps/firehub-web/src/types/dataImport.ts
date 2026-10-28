@@ -30,6 +30,16 @@ export interface ImportPreviewResponse {
   sampleRows: Record<string, string>[];
   suggestedMappings: ColumnMappingDto[];
   totalRows: number;
+  // 실제로 읽은 시트 이름 — 엑셀에서만 값이 있고 CSV 는 null (WD-253)
+  sheetName: string | null;
+  // 통합 문서의 모든 시트(문서 순서) — 시트 선택 목록용. CSV 는 null (WD-253)
+  sheets: ImportSheetInfo[] | null;
+}
+
+/** 엑셀 통합 문서의 시트 한 장 — 숨김 시트도 목록에 오며 hidden 으로 구분한다 (WD-253) */
+export interface ImportSheetInfo {
+  name: string;
+  hidden: boolean;
 }
 
 export interface ColumnMappingDto {

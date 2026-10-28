@@ -9,6 +9,7 @@ import { ImportMappingTable } from './ImportMappingTable';
 import { ImportModeSelector } from './ImportModeSelector';
 import { ImportProgressView } from './ImportProgressView';
 import { ImportSamplePreview } from './ImportSamplePreview';
+import { ImportSheetSelector } from './ImportSheetSelector';
 import { ImportValidationSection } from './ImportValidationSection';
 
 interface ImportMappingDialogProps {
@@ -67,6 +68,18 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
              * min-h-0: flex 자식 요소의 기본 min-height 제약을 해제해 올바른 스크롤이 되도록 한다.
              */}
             <div className="flex-1 overflow-y-auto overscroll-contain min-h-0 space-y-6 min-w-0">
+              {/*
+               * 엑셀이면 어느 시트를 가져오는지 맨 위에 보여 준다(WD-253). 시트를 바꿔 미리보기를 다시 받는 동안에도
+               * 아래 매핑 표를 언마운트하지 않는다 — 표가 다시 마운트되면 제목으로 포커스를 끌어가기 때문(#330).
+               */}
+              <ImportSheetSelector
+                sheets={previewData.sheets}
+                sheetName={previewData.sheetName}
+                // 검증 중에도 잠근다 — 검증 응답이 시트를 바꾼 뒤에 도착해 새 시트 화면에 이전 시트 결과가 섞이지 않게 한다
+                disabled={status.isPreviewing || status.isValidating}
+                onSheetChange={handlers.sheetChange}
+              />
+
               <ImportMappingTable
                 suggestedMappings={previewData.suggestedMappings}
                 mappings={mappings}
@@ -96,6 +109,7 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
                 hasUnmappedRequired={derived.hasUnmappedRequired}
                 hasAnyMapping={derived.hasAnyMapping}
                 isValidating={status.isValidating}
+                isPreviewing={status.isPreviewing}
                 onValidate={handlers.validate}
                 onShowAllErrors={setShowAllErrors}
               />
@@ -115,8 +129,10 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
                * !hasAnyMapping이면 임포트 불가 — 매핑된 컬럼이 0개인데 통과로 보이며 전부 NULL
                * 행이 생성되는 것을 방지 (#653). NOT NULL 컬럼이 없는 데이터셋에서는
                * hasUnmappedRequired만으로는 이 상태를 막지 못한다.
+               * isPreviewing이면 임포트 불가 — 시트를 바꿔 미리보기를 다시 받는 동안 누르면 바뀌기 전 시트·매핑으로
+               * 가져오기가 시작된다(WD-253).
                */}
-              <Button onClick={handlers.import} disabled={derived.hasUnmappedRequired || !derived.hasAnyMapping || status.isUploading || (validationResult !== null && validationResult.validRows === 0)}>
+              <Button onClick={handlers.import} disabled={derived.hasUnmappedRequired || !derived.hasAnyMapping || status.isUploading || status.isPreviewing || (validationResult !== null && validationResult.validRows === 0)}>
                 {status.isUploading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
