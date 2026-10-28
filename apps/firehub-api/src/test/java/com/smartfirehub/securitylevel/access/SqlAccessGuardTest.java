@@ -10,6 +10,7 @@ import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.pipeline.exception.TiberoUnqualifiedTableException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -681,7 +682,13 @@ class SqlAccessGuardTest extends IntegrationTestBase {
               "SELECT * FROM " + lower + "." + high + " JOIN " + name + " ON 1 = 1")) {
         assertThatThrownBy(() -> guard.checkSql(c, sql, SqlAccessMode.INTERACTIVE))
             .as(sql)
-            .isInstanceOf(UnsafeSqlException.class)
+            // WD-81 — 가드를 거쳐도 하위 타입이 보존돼야 지표 SQL 저장 선검사(MetricSqlAccessChecker)가 삼키지 않고 전파한다.
+            .isInstanceOf(TiberoUnqualifiedTableException.class)
+            .hasMessage(expected);
+        // requireSql 경로(저장 선검사가 실제로 부르는 메서드)도 같은 하위 타입을 그대로 던진다.
+        assertThatThrownBy(() -> guard.requireSql(c, sql, SqlAccessMode.INTERACTIVE))
+            .as(sql)
+            .isInstanceOf(TiberoUnqualifiedTableException.class)
             .hasMessage(expected);
       }
     }

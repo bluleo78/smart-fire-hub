@@ -695,6 +695,7 @@ public class DatasetAccessGuard {
     // Tibero 대화형(WD-76)은 읽기 전용 계정 세션에서 실행돼 미한정 이름이 테넌트 스키마로 해석되지 않는다. 이는 등급 거부가 아니라 문법
     // 요구라 403 이 아니라 실행 경로 검증기와 같은 문구의 UnsafeSqlException(400)으로 거부한다 — 숨김·허용 테이블에 똑같이 나오므로
     // 존재를 드러내지 않고, 감사(거부 기록)에도 남지 않는다(requireSql 은 판정 거부만 감사한다). 미한정 DUAL 은 통과.
+    // 던져지는 TiberoUnqualifiedTableException 하위 타입은 그대로 전파한다(지표 SQL 저장 선검사가 구분한다).
     if (tibero && mode == SqlAccessMode.INTERACTIVE) {
       tiberoValidator.requireQualifiedTables(exact);
     }

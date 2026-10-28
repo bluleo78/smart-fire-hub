@@ -2,6 +2,7 @@ package com.smartfirehub.proactive.service;
 
 import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.global.util.NormalizedSql;
+import com.smartfirehub.pipeline.exception.TiberoUnqualifiedTableException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -31,7 +32,9 @@ public class MetricSqlAccessChecker {
   private final AiHostingResolver aiHostingResolver;
 
   /**
-   * 생성·수정 시점 — 하나라도 거부면 403. 파싱 불가 SQL 은 여기서 막지 않는다(기존처럼 폴러가 건너뛴다 — 저장 계약 불변).
+   * 생성·수정 시점 — 하나라도 거부면 403. 파싱 불가 SQL 은 여기서 막지 않는다(기존처럼 폴러가 건너뛴다 — 저장 계약 불변). 단 Tibero 테넌트의 스키마 없는
+   * 테이블 이름({@link TiberoUnqualifiedTableException})은 파싱 불가가 아니라 고칠 수 있는 문법 요구라 400 으로 그대로
+   * 던진다(WD-81).
    *
    * <p>폴러가 실행할 문자열({@link NormalizedSql#of})을 판정한다 — 원문을 판정하면 판정 문자열과 실행 문자열이 갈라진다.
    */
@@ -62,6 +65,9 @@ public class MetricSqlAccessChecker {
             shareCall = aiHostingResolver.shareCall();
           }
           guard.requireAiForDatasets(clearance, touched, shareCall);
+        } catch (TiberoUnqualifiedTableException e) {
+          // 삼키지 않고 400 으로 전파 — 이유는 TiberoUnqualifiedTableException 클래스 Javadoc 참조.
+          throw e;
         } catch (SqlQueryException | UnsafeSqlException e) {
           // 파싱 불가 SQL — 폴러의 기존 검증(metricSqlValidator)이 실행 전에 건너뛴다.
         }
@@ -71,9 +77,9 @@ public class MetricSqlAccessChecker {
 
   /**
    * 이상 탐지로 시작된 실행의 리포트 등급에 그 지표 SQL 의 등급을 넣는다(WD-198). 지표 값은 폴러가 실행 밖에서 읽어 이상 이벤트로 넘기므로 그 읽기는 실행에
-   * 묶이지 않는다 — 대신 실행기 범위({@link ProactiveReportLevelRecorder#runInExecution}) 안에서 같은 SQL 을 작성자 자격으로 값 판정해
-   * 가드의 허용 지점이 등급을 알리게 한다. 판정만 하고 실행하지 않으며 감사도 남기지 않는다(checkSql). 거부·파싱 불가면 아무것도 남기지 않는다 — 폴러가 그
-   * 지표를 읽지 못했으므로 이벤트도 없었을 값이다.
+   * 묶이지 않는다 — 대신 실행기 범위({@link ProactiveReportLevelRecorder#runInExecution}) 안에서 같은 SQL 을 작성자 자격으로
+   * 값 판정해 가드의 허용 지점이 등급을 알리게 한다. 판정만 하고 실행하지 않으며 감사도 남기지 않는다(checkSql). 거부·파싱 불가면 아무것도 남기지 않는다 —
+   * 폴러가 그 지표를 읽지 못했으므로 이벤트도 없었을 값이다.
    */
   public void noteMetricLevel(Map<String, Object> config, String metricId, long userId) {
     if (metricId == null

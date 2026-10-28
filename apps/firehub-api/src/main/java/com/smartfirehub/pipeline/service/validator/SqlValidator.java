@@ -6,6 +6,7 @@ import com.smartfirehub.dataset.storage.tibero.TiberoSqlGuard;
 import com.smartfirehub.dataset.storage.tibero.TiberoSqlLexer;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.SqlValidationUtils;
+import com.smartfirehub.pipeline.exception.TiberoUnqualifiedTableException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.LastRunAtPlaceholder;
 import java.io.BufferedReader;
@@ -1178,7 +1179,9 @@ public class SqlValidator {
         if (tibero) {
           // Tibero 에서 따옴표 소문자("orders")는 대문자로 접히지 않아 다른(없는) 테이블이다 — PG 형식 안내가 틀리므로
           // 따옴표 없이 스키마를 소문자로 쓴 형식(genia_t5.orders)을 권한다.
-          throw new UnsafeSqlException(tiberoUnqualifiedTableMessage(allowedSchema, name));
+          // UnsafeSqlException 의 하위 타입 — 기존 catch·400 핸들러는 그대로이고, 지표 SQL 저장 선검사만 이 타입을 골라 전파한다.
+          throw new TiberoUnqualifiedTableException(
+              tiberoUnqualifiedTableMessage(allowedSchema, name));
         }
         throw new UnsafeSqlException(
             "테이블 참조에 스키마가 없습니다: '"
@@ -1385,6 +1388,8 @@ public class SqlValidator {
    * 미한정 이름을 막아야 하는데, 이는 등급 거부(403)가 아니라 문법 요구라 실행 경로의 검증기와 같은 400 문구여야 한다. 검사 대상은 validate 와 같은
    * 집합(CTE 이름 제외, DML 쓰기 대상 포함)이다.
    *
+   * @throws TiberoUnqualifiedTableException 미한정 이름(문구는 {@link #tiberoUnqualifiedTableMessage}) —
+   *     감싸거나 일반 {@link UnsafeSqlException} 으로 다시 던지지 말 것(지표 SQL 저장 선검사가 이 하위 타입으로 구분한다)
    * @throws IllegalStateException PG 검증기에서 부른 경우(PG 의 미한정 정책은 모드별로 다르다 — 이 메서드의 계약 밖)
    */
   public void requireQualifiedTables(String sql) {
@@ -1398,7 +1403,7 @@ public class SqlValidator {
         continue;
       }
       // 첫 미한정 이름에서 바로 거부한다
-      throw new UnsafeSqlException(
+      throw new TiberoUnqualifiedTableException(
           tiberoUnqualifiedTableMessage(allowedSchema(), stripQuotes(fqn)));
     }
   }

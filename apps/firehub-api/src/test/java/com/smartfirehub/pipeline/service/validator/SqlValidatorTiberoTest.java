@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.service.validator;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.pipeline.exception.TiberoUnqualifiedTableException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -462,9 +463,14 @@ class SqlValidatorTiberoTest {
             "WITH x AS (SELECT * FROM orders) SELECT * FROM x")) {
       assertThatThrownBy(() -> validator.requireQualifiedTables(sql))
           .as(sql)
-          .isInstanceOf(UnsafeSqlException.class)
+          // WD-81 — 지표 SQL 저장 선검사가 이 타입만 골라 전파하므로 하위 클래스여야 한다.
+          .isInstanceOf(TiberoUnqualifiedTableException.class)
           .hasMessage(ordersMessage);
     }
+    // validate 의 Tibero 미한정 규칙도 같은 하위 타입·같은 문구다.
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM orders"))
+        .isInstanceOf(TiberoUnqualifiedTableException.class)
+        .hasMessage(ordersMessage);
     // 인용 이름은 따옴표만 떼고 쓴 그대로 보여 준다(validate 와 같다).
     assertThatThrownBy(() -> validator.requireQualifiedTables("SELECT * FROM \"ORDERS\""))
         .hasMessage(SqlValidator.tiberoUnqualifiedTableMessage(SCHEMA, "ORDERS"));

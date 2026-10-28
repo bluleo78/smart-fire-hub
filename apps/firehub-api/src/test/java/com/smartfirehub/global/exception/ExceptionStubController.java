@@ -11,7 +11,9 @@ import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
+import com.smartfirehub.pipeline.exception.TiberoUnqualifiedTableException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
+import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.exception.SystemRoleModificationException;
 import com.smartfirehub.user.exception.UserNotFoundException;
@@ -215,6 +217,16 @@ public class ExceptionStubController {
   public void unsafeSql() {
     throw new com.smartfirehub.pipeline.exception.UnsafeSqlException(
         "허용되지 않는 스키마 참조: 'public.user'. data 스키마만 사용할 수 있습니다.");
+  }
+
+  /**
+   * Tibero 미한정 테이블 거부(UnsafeSqlException 하위 타입, WD-81)가 하위 클래스여도 별도 매핑 없이 handleUnsafeSql 의 400 으로
+   * 나가는지 고정하기 위한 스텁.
+   */
+  @GetMapping("/tibero-unqualified-table")
+  public void tiberoUnqualifiedTable() {
+    throw new TiberoUnqualifiedTableException(
+        SqlValidator.tiberoUnqualifiedTableMessage("GENIA_T5", "orders"));
   }
 
   @GetMapping("/unexpected-error")

@@ -15,6 +15,7 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
+import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -393,6 +394,22 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.status").value(400))
         .andExpect(jsonPath("$.error").value("Bad Request"))
         .andExpect(jsonPath("$.message").value(containsString("public.user")));
+  }
+
+  /**
+   * Tibero 미한정 테이블 거부(UnsafeSqlException 하위 타입, WD-81)는 하위 클래스여도 handleUnsafeSql 이 잡아 500 이 아니라 400
+   * + 원문 문구로 나간다 — 지표 SQL 저장 선검사가 이 예외를 전파하면 사용자는 이 응답을 받는다.
+   */
+  @Test
+  void tiberoUnqualifiedTable_returns400_withExactMessage() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/tibero-unqualified-table"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400))
+        .andExpect(jsonPath("$.error").value("Bad Request"))
+        .andExpect(
+            jsonPath("$.message")
+                .value(SqlValidator.tiberoUnqualifiedTableMessage("GENIA_T5", "orders")));
   }
 
   /**
