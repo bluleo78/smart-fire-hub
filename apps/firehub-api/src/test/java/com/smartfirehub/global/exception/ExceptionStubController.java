@@ -2,7 +2,6 @@ package com.smartfirehub.global.exception;
 
 import com.smartfirehub.ai.exception.AiSessionNotFoundException;
 import com.smartfirehub.auth.exception.AccountLockedException;
-import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
 import com.smartfirehub.auth.exception.UsernameAlreadyExistsException;
@@ -41,11 +40,6 @@ public class ExceptionStubController {
   @GetMapping("/username-exists")
   public void usernameExists() {
     throw new UsernameAlreadyExistsException("Username already exists");
-  }
-
-  @GetMapping("/email-exists")
-  public void emailExists() {
-    throw new EmailAlreadyExistsException("Email already exists");
   }
 
   @GetMapping("/invalid-credentials")

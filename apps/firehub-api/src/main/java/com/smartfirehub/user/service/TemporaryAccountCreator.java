@@ -1,6 +1,5 @@
 package com.smartfirehub.user.service;
 
-import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -29,14 +28,10 @@ public class TemporaryAccountCreator {
    * @param normalizedEmail 호출자가 trim + 소문자(Locale.ROOT)로 정규화한 이메일. username 으로도 쓴다
    * @param name 표시 이름(앞뒤 공백은 여기서 제거)
    * @param rawTemporaryPassword 평문 임시 비밀번호 — 해시만 저장하고 어디에도 남기지 않는다
-   * @throws EmailAlreadyExistsException 다른 계정이 이 이메일을 대소문자 무시로 이미 쓰고 있을 때
    */
   public UserResponse create(String normalizedEmail, String name, String rawTemporaryPassword) {
-    // username 은 없는데 다른 계정이 이 이메일을 쓰고 있으면 같은 사람의 두 번째 계정이 된다 — 거부.
-    // 대소문자 무시: 과거 계정의 이메일이 대소문자 섞여 저장돼 있어도 같은 사람으로 본다(WD-2 리뷰 지적 4).
-    if (userRepository.existsByEmailIgnoreCase(normalizedEmail)) {
-      throw new EmailAlreadyExistsException("이미 사용 중인 이메일입니다.");
-    }
+    // 아이디 중복은 호출자가 미리 거른다. 다른 계정의 프로필 이메일과 같은지는 보지 않는다 — 프로필 이메일은 소유 확인 없는 연락처라,
+    // 그것으로 막으면 아무 멤버나 남의 주소를 먼저 저장해 그 주인의 계정 생성을 막을 수 있었다 (WD-271).
     return userRepository.saveWithTemporaryPassword(
         normalizedEmail,
         normalizedEmail,

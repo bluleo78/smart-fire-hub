@@ -156,7 +156,7 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
         setError('email', { message: '이미 이 워크스페이스의 멤버입니다(정지됨)' }, { shouldFocus: true });
         return;
       }
-      // 그 밖의 409(이미 멤버, 다른 계정이 쓰는 이메일)는 모두 이메일 입력의 문제다.
+      // 그 밖의 409(이미 멤버)는 이메일 입력의 문제다. 다른 계정의 프로필 이메일과 같은 것은 막지 않는다(WD-271).
       if (response?.status === 409) {
         setError('email', { message: data?.message ?? '이미 이 워크스페이스의 멤버입니다' }, { shouldFocus: true });
         return;

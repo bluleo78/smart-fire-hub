@@ -209,7 +209,7 @@ public class User extends TableImpl<UserRecord> {
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_USER_EMAIL_UNIQUE, Indexes.IDX_USER_USERNAME);
+        return Arrays.asList(Indexes.IDX_USER_USERNAME);
     }
 
     @Override

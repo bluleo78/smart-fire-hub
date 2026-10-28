@@ -1,7 +1,6 @@
 package com.smartfirehub.user.service;
 
 import com.smartfirehub.audit.service.AuditLogService;
-import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
@@ -194,20 +193,10 @@ public class UserService {
 
   @Transactional
   public void updateProfile(Long userId, String name, String email) {
-    UserResponse user =
-        userRepository
-            .findById(userId)
-            .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
-
-    if (email != null && !email.equals(user.email())) {
-      if (userRepository.existsByEmailExcludingUser(email, userId)) {
-        // 웹은 서버 message 를 그대로 보여 주므로 사용자가 읽을 한국어 문구로 던진다 (WD-120) — 가입·멤버 추가의 「이미 사용 중인 이메일입니다.」에
-        // 다음 행동을 덧붙인다.
-        throw new EmailAlreadyExistsException("이미 사용 중인 이메일입니다. 다른 이메일을 입력하세요.");
-      }
+    // 프로필 이메일은 연락처라 다른 계정과 같아도 막지 않는다 — 이유는 TemporaryAccountCreator (WD-271).
+    if (!userRepository.update(userId, name, email)) {
+      throw new UserNotFoundException("User not found: " + userId);
     }
-
-    userRepository.update(userId, name, email);
   }
 
   /**

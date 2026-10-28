@@ -3,7 +3,6 @@ package com.smartfirehub.user.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
@@ -230,30 +229,24 @@ class MemberAddServiceTest extends IntegrationTestBase {
     assertThat(userRepository.findByUsernameIgnoreCase(email)).isEmpty();
   }
 
-  @Test
-  void addMember_emailUsedByAnotherUsername_conflict() {
-    long other = newMember(tenantB, "owner-of-email");
-    String email = "shared-" + System.nanoTime() + "@acme.io";
-    dsl.execute("update \"user\" set email = ? where id = ?", email, other);
-
-    assertThatThrownBy(() -> addInA(new AddMemberRequest(email, "x", TEMP, List.of())))
-        .isInstanceOf(EmailAlreadyExistsException.class);
-  }
-
   /**
-   * 리뷰 지적 4: 과거 계정의 이메일이 대소문자를 섞어 저장돼 있고(username 은 다른 값) 관리자가 소문자로 추가하면, 정확 일치 검사로는 못 잡아 같은 사람의 두
-   * 번째 계정이 생긴다. 대소문자 무시로 막아야 한다.
+   * 다른 워크스페이스 멤버가 그 주소를 프로필 이메일로 먼저 저장해 두었어도(아이디는 다른 값) 주소 주인을 새 계정으로 추가할 수 있다 (WD-271). 선점한 계정의
+   * 프로필 이메일은 그대로 둔다.
    */
   @Test
-  void addMember_emailUsedByAnotherUsername_mixedCase_conflict() {
-    long legacy = newMember(tenantB, "legacy-owner");
-    String stored = "Legacy-" + System.nanoTime() + "@Example.com";
-    dsl.execute("update \"user\" set email = ? where id = ?", stored, legacy);
+  void addMember_emailUsedAsAnotherProfileEmail_createsAccount() {
+    long squatter = newMember(tenantB, "squatter");
+    String stored = "Boss-" + System.nanoTime() + "@Example.com";
+    dsl.execute("update \"user\" set email = ? where id = ?", stored, squatter);
     String lower = stored.toLowerCase(java.util.Locale.ROOT);
 
-    assertThatThrownBy(() -> addInA(new AddMemberRequest(lower, "x", TEMP, List.of())))
-        .isInstanceOf(EmailAlreadyExistsException.class);
-    assertThat(userRepository.findByUsernameIgnoreCase(lower)).isEmpty();
+    AddMemberResponse res = addInA(new AddMemberRequest(lower, "주인", TEMP, List.of()));
+
+    assertThat(res.created()).isTrue();
+    var user = userRepository.findById(res.userId()).orElseThrow();
+    assertThat(user.username()).isEqualTo(lower);
+    assertThat(user.email()).isEqualTo(lower);
+    assertThat(userRepository.findById(squatter).orElseThrow().email()).isEqualTo(stored);
   }
 
   @Test
