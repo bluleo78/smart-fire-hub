@@ -67,33 +67,35 @@ public class AuthService {
 
   @Transactional
   public TokenResponse login(LoginRequest request) {
-    if (loginAttemptService.isBlocked(request.username())) {
+    // 대소문자·앞뒤 공백만 다른 입력도 같은 계정으로 본다(WD-269). 카운터 키도 이 값이라 대소문자별로 갈리지 않는다.
+    String username = userRepository.resolveLoginUsername(request.username());
+    if (loginAttemptService.isBlocked(username)) {
       // 과도한 로그인 실패로 계정이 잠긴 경우 한국어 메시지 반환
       throw new AccountLockedException("로그인 시도 횟수를 초과하였습니다. 잠시 후 다시 시도해 주세요.");
     }
 
     UserResponse user =
         userRepository
-            .findByUsername(request.username())
+            .findByUsername(username)
             .orElseThrow(
                 () -> {
-                  loginAttemptService.loginFailed(request.username());
+                  loginAttemptService.loginFailed(username);
                   // 사용자 존재 여부 노출 방지를 위해 동일한 메시지 반환
                   return new InvalidCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
                 });
 
     String storedPassword =
         userRepository
-            .findPasswordByUsername(request.username())
+            .findPasswordByUsername(username)
             .orElseThrow(
                 () -> {
-                  loginAttemptService.loginFailed(request.username());
+                  loginAttemptService.loginFailed(username);
                   // 사용자 존재 여부 노출 방지를 위해 동일한 메시지 반환
                   return new InvalidCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
                 });
 
     if (!passwordEncoder.matches(request.password(), storedPassword)) {
-      loginAttemptService.loginFailed(request.username());
+      loginAttemptService.loginFailed(username);
       throw new InvalidCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
     }
 
@@ -102,7 +104,7 @@ public class AuthService {
       throw new UserDeactivatedException("비활성화된 계정입니다.");
     }
 
-    loginAttemptService.loginSucceeded(request.username());
+    loginAttemptService.loginSucceeded(username);
 
     // 소속이 정확히 하나면 즉시 자동 선택해 테넌트 스코프 토큰을 바로 발급한다(선택 화면 생략).
     // 0개 또는 2개 이상이면 테넌트 미선택 토큰을 주고 클라이언트가 select-tenant 를 호출한다.

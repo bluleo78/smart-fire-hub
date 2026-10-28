@@ -114,6 +114,26 @@ public class UserRepository {
         .fetchOptional(this::mapToUserResponse);
   }
 
+  /**
+   * 로그인 입력을 저장된 username 으로 해석한다(WD-269). 찾지 못하면 소문자로 정규화한 입력을 돌려준다.
+   *
+   * <p>멤버 추가·운영자 계정 생성은 이메일을 소문자로 바꿔 username 으로 저장하는데, 사용자는 안내받은 대소문자 그대로 치거나 모바일이 첫 글자를 대문자로 바꾼다.
+   * 그래서 정확 일치를 먼저 보고(대소문자를 섞어 저장된 옛 계정 — 첫 가입자 등 — 은 그대로 로그인돼야 한다. 인덱스를 타는 조회라 대부분의 로그인은 여기서 끝난다),
+   * 없으면 {@link #findByUsernameIgnoreCase} 로 찾는다. 대소문자만 다른 계정이 여럿인 과거 데이터에서 멤버 추가와 <b>같은 계정</b>(id 가
+   * 작은 쪽)을 골라야, 멤버십이 붙은 계정과 로그인되는 계정이 갈리지 않는다.
+   *
+   * <p>찾지 못했을 때도 정규화한 값을 돌려주는 이유: 호출자가 로그인 시도 카운터 키로 쓴다. 입력 그대로 쓰면 대소문자만 바꿔 가며 잠금을 피할 수 있다.
+   */
+  public String resolveLoginUsername(String input) {
+    String trimmed = input.trim();
+    if (dsl.fetchExists(dsl.selectOne().from(USER).where(USER.USERNAME.eq(trimmed)))) {
+      return trimmed;
+    }
+    return findByUsernameIgnoreCase(trimmed)
+        .map(UserResponse::username)
+        .orElse(trimmed.toLowerCase(Locale.ROOT));
+  }
+
   public Optional<String> findPasswordByUsername(String username) {
     return dsl.select(USER.PASSWORD)
         .from(USER)
