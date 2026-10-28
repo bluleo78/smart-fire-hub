@@ -1,6 +1,7 @@
 package com.smartfirehub.auth.service;
 
 import com.smartfirehub.auth.exception.InvalidTokenException;
+import com.smartfirehub.auth.exception.RefreshTokenReusedException;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -25,16 +26,21 @@ public class RefreshTokenRotation {
    *
    * <p>이미 폐기된 토큰이 다시 오면 탈취를 의심해 <b>패밀리 전체</b>를 폐기한다. 회전 체인이 로그인마다 새로 시작되므로 패밀리 = 하나의 로그인 세션이다.
    *
+   * <p>같은 토큰으로 <b>동시에</b> 들어온 두 갱신 중 늦은 쪽(폐기 UPDATE 가 0행)은 거부만 하고 패밀리는 폐기하지 않는다. 둘 다 통과시키면 한 토큰에서
+   * 살아 있는 가지가 둘 생기고, 재사용으로 몰면 여러 탭이 부팅하며 동시에 갱신하는 정상 사용자의 세션까지 끊긴다.
+   *
+   * <p><b>호출자 계약</b>: 패밀리 폐기를 쓴 뒤 {@link RefreshTokenReusedException} 을 던진다. 호출자 트랜잭션이 이 예외로 롤백되면
+   * 폐기도 함께 사라져 탐지가 아무것도 막지 못하므로(WD-268), 호출자는 {@code @Transactional(noRollbackFor =
+   * RefreshTokenReusedException.class)} 여야 한다.
+   *
    * @param tokenHash {@link RefreshTokenHasher} 로 해시한 값
    * @return 이 토큰이 속한 패밀리 id
-   * @throws InvalidTokenException 재사용·폐기·미존재 — 어느 경우든 다시 로그인해야 한다
+   * @throws RefreshTokenReusedException 재사용 — 패밀리 전체를 폐기했다
+   * @throws InvalidTokenException 폐기·만료·미존재 — 어느 경우든 다시 로그인해야 한다
    */
   public UUID revokeAndGetFamily(String tokenHash) {
     if (refreshTokenRepository.isTokenRevoked(tokenHash)) {
-      refreshTokenRepository
-          .findFamilyIdByTokenHash(tokenHash)
-          .ifPresent(refreshTokenRepository::revokeByFamilyId);
-      throw new InvalidTokenException("이미 사용된 토큰입니다. 다시 로그인해 주세요.");
+      throw revokeFamily(tokenHash);
     }
     if (!refreshTokenRepository.existsValidToken(tokenHash)) {
       throw new InvalidTokenException("만료되었거나 폐기된 토큰입니다. 다시 로그인해 주세요.");
@@ -44,7 +50,18 @@ public class RefreshTokenRotation {
         refreshTokenRepository
             .findFamilyIdByTokenHash(tokenHash)
             .orElseThrow(() -> new InvalidTokenException("토큰 정보를 찾을 수 없습니다. 다시 로그인해 주세요."));
-    refreshTokenRepository.revokeByTokenHash(tokenHash);
+    if (!refreshTokenRepository.revokeByTokenHash(tokenHash)) {
+      // 위 검사와 이 UPDATE 사이에 같은 토큰의 다른 갱신이 먼저 회전했다. 먼저 끝난 쪽만 살린다.
+      throw new InvalidTokenException("만료되었거나 폐기된 토큰입니다. 다시 로그인해 주세요.");
+    }
     return familyId;
+  }
+
+  /** 재사용 대응: 토큰의 패밀리 전체를 폐기하고, 호출자가 던질 예외를 돌려준다. */
+  private RefreshTokenReusedException revokeFamily(String tokenHash) {
+    refreshTokenRepository
+        .findFamilyIdByTokenHash(tokenHash)
+        .ifPresent(refreshTokenRepository::revokeByFamilyId);
+    return new RefreshTokenReusedException();
   }
 }

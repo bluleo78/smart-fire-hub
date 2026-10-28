@@ -52,11 +52,19 @@ public class RefreshTokenRepository {
         .fetchOptional(FAMILY_ID);
   }
 
-  public void revokeByTokenHash(String tokenHash) {
-    dsl.update(REFRESH_TOKEN)
-        .set(REFRESH_TOKEN.REVOKED, true)
-        .where(REFRESH_TOKEN.TOKEN_HASH.eq(tokenHash))
-        .execute();
+  /**
+   * 아직 살아 있는 토큰 하나를 폐기한다.
+   *
+   * @return 이번 호출이 폐기했으면 true. 같은 토큰으로 동시에 들어온 다른 갱신이 먼저 폐기했다면(행 잠금을 기다린 뒤 {@code revoked=true} 를
+   *     보게 된다) false — 회전은 한 번만 성공해야 하므로 호출자는 이 갱신을 거부한다(WD-268).
+   */
+  public boolean revokeByTokenHash(String tokenHash) {
+    return dsl.update(REFRESH_TOKEN)
+            .set(REFRESH_TOKEN.REVOKED, true)
+            .where(REFRESH_TOKEN.TOKEN_HASH.eq(tokenHash))
+            .and(REFRESH_TOKEN.REVOKED.eq(false))
+            .execute()
+        > 0;
   }
 
   public void revokeByFamilyId(UUID familyId) {

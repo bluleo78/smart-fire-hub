@@ -4,6 +4,7 @@ import com.smartfirehub.auth.dto.LoginRequest;
 import com.smartfirehub.auth.exception.AccountLockedException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
+import com.smartfirehub.auth.exception.RefreshTokenReusedException;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.auth.service.LoginAttemptService;
 import com.smartfirehub.auth.service.RefreshTokenHasher;
@@ -89,7 +90,8 @@ public class PlatformAuthService {
    * 평면에 올라서는 승격 경로가 생긴다. (2) 재사용 탐지와 폐기 여부(테넌트 평면과 동일한 기계). (3) <b>롤 재검증</b> — 운영자에서 내려온 사용자는 갱신
    * 시점에 끊긴다. 액세스 토큰 만료(30분)까지는 지연 반영되며, 그것이 의도된 절충이다.
    */
-  @Transactional
+  // 재사용 탐지가 쓴 패밀리 폐기는 401 과 함께 커밋돼야 한다(WD-268, RefreshTokenRotation 호출자 계약).
+  @Transactional(noRollbackFor = RefreshTokenReusedException.class)
   public PlatformTokenResponse refresh(String rawRefreshToken) {
     if (!jwtTokenProvider.validateRefreshToken(rawRefreshToken)) {
       throw new InvalidTokenException("유효하지 않거나 만료된 토큰입니다.");

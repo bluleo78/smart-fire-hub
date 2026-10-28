@@ -7,6 +7,7 @@ import com.smartfirehub.auth.dto.TokenResponse;
 import com.smartfirehub.auth.exception.AccountLockedException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
+import com.smartfirehub.auth.exception.RefreshTokenReusedException;
 import com.smartfirehub.auth.exception.TenantAccessDeniedException;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.global.security.JwtProperties;
@@ -154,7 +155,8 @@ public class AuthService {
     return tokenResponse;
   }
 
-  @Transactional
+  // 재사용 탐지가 쓴 패밀리 폐기는 401 과 함께 커밋돼야 한다(WD-268, RefreshTokenRotation 호출자 계약).
+  @Transactional(noRollbackFor = RefreshTokenReusedException.class)
   public TokenResponse refresh(String rawRefreshToken) {
     if (!jwtTokenProvider.validateRefreshToken(rawRefreshToken)) {
       // 만료되었거나 유효하지 않은 리프레시 토큰 — 한국어 메시지 반환
