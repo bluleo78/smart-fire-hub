@@ -12,7 +12,11 @@ export interface AuthContextValue {
   isAuthenticated: boolean;
   login: (data: LoginFormData) => Promise<void>;
   signup: (data: SignupFormData) => Promise<void>;
-  logout: () => Promise<void>;
+  /**
+   * 세션을 끝내고 /login 으로 하드 리로드한다(WD-276). `notice` 는 리로드 뒤 로그인 화면에서 한 번 보일 안내다 —
+   * 리로드 전에 띄운 토스트는 사라지므로 로그아웃 이유를 알려야 할 때 쓴다.
+   */
+  logout: (options?: { notice?: string }) => Promise<void>;
   hasRole: (roleName: string) => boolean;
   isAdmin: boolean;
   refreshUser: () => Promise<void>;

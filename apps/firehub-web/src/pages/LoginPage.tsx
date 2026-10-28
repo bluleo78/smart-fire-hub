@@ -1,9 +1,10 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import axios from 'axios';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import type { Location } from 'react-router-dom';
 import { Link, Navigate, useLocation } from 'react-router-dom';
+import { toast } from 'sonner';
 
 import { BrandLogo } from '../components/BrandLogo';
 import { Button } from '../components/ui/button';
@@ -14,6 +15,7 @@ import { PasswordInput } from '../components/ui/password-input';
 import { useSignupStatus } from '../hooks/queries/useSignupStatus';
 import { useAuth } from '../hooks/useAuth';
 import { useBranding } from '../hooks/useBranding';
+import { takeLoginNotice } from '../lib/login-notice';
 import type { LoginFormData } from '../lib/validations/auth';
 import { loginSchema } from '../lib/validations/auth';
 import type { ErrorResponse } from '../types/auth';
@@ -25,6 +27,13 @@ export default function LoginPage() {
   const location = useLocation();
   // 공개 가입 열림 여부 — 열림이 확인될 때만 가입 링크를 그린다(WD-2)
   const signupStatus = useSignupStatus();
+
+  // 로그아웃이 맡겨 둔 안내(예: 비밀번호 변경 뒤 재로그인 필요)를 한 번 보인다 — 로그아웃은 하드 리로드라
+  // 그 전에 띄운 토스트가 사라지기 때문이다(WD-276)
+  useEffect(() => {
+    const notice = takeLoginNotice();
+    if (notice) toast.warning(notice);
+  }, []);
 
   const {
     register,

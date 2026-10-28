@@ -48,12 +48,6 @@ export default function ChangePasswordPage() {
   // 표식이 꺼진 사용자(이미 변경했거나 대상이 아님)가 주소로 들어오면 홈으로 돌려보낸다.
   if (!mustChangePassword) return <Navigate to="/" replace />;
 
-  /** 로그아웃 후 로그인 화면으로 — 변경 화면의 유일한 탈출 경로. */
-  const handleLogout = async () => {
-    await logout();
-    navigate('/login', { replace: true });
-  };
-
   const onSubmit = async (data: ChangePasswordFormData) => {
     try {
       await usersApi.changePassword({ currentPassword: data.currentPassword, newPassword: data.newPassword });
@@ -71,8 +65,8 @@ export default function ChangePasswordPage() {
       // 비밀번호는 이미 바뀌어 이 폼을 다시 제출하면 400 이다(데드엔드). refresh 가 실패했다면 세션을
       // 정리하고 새 비밀번호로 다시 로그인하게 보낸다. 변경 자체는 성공했으므로 error 가 아니라 비차단 경고(06 §D),
       // 문구는 토스트 규칙대로 한 문장·마침표 없음.
-      toast.warning('비밀번호가 변경되어 새 비밀번호로 다시 로그인해야 합니다');
-      await handleLogout();
+      // 로그아웃은 /login 하드 리로드라 여기서 띄운 토스트는 사라진다 — 로그인 화면에서 보이게 맡긴다(WD-276).
+      await logout({ notice: '비밀번호가 변경되어 새 비밀번호로 다시 로그인해야 합니다' });
       return;
     }
     toast.success('비밀번호가 변경되었습니다');
@@ -130,7 +124,8 @@ export default function ChangePasswordPage() {
           </form>
         </CardContent>
         <CardFooter className="flex justify-center">
-          <Button variant="link" type="button" onClick={() => void handleLogout()}>
+          {/* 변경 화면의 유일한 탈출 경로 — 로그인 화면 이동은 logout 이 하드 리로드로 한다(WD-276) */}
+          <Button variant="link" type="button" onClick={() => void logout()}>
             로그아웃
           </Button>
         </CardFooter>

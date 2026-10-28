@@ -1,6 +1,6 @@
 import { createTokenResponse, createUser } from '../../factories/auth.factory';
 import { mockApi } from '../../fixtures/api-mock';
-import { expect, MOCK_USER_DETAIL, test } from '../../fixtures/auth.fixture';
+import { expect, MOCK_USER_DETAIL, seedSessionOnce, test } from '../../fixtures/auth.fixture';
 
 /**
  * 첫 로그인 비밀번호 변경 강제(WD-2) — /change-password.
@@ -33,7 +33,7 @@ test.describe('비밀번호 변경 강제', () => {
   });
 
   test('변경 전에는 다른 주소로 들어가도 변경 화면으로 돌아온다', async ({ authMockedPage: page }) => {
-    await page.addInitScript(() => localStorage.setItem('hasSession', 'true'));
+    await seedSessionOnce(page);
     await mockApi(page, 'POST', '/api/v1/auth/refresh', PWC_TOKEN);
     await mockApi(page, 'GET', '/api/v1/auth/me', PWC_ME);
 
@@ -67,7 +67,7 @@ test.describe('비밀번호 변경 강제', () => {
   });
 
   test('멤버십 1개: 변경 성공 → refresh 로 표식이 꺼진 토큰을 받고 홈으로 바로 진입한다', async ({ authMockedPage: page }) => {
-    await page.addInitScript(() => localStorage.setItem('hasSession', 'true'));
+    await seedSessionOnce(page);
     let changed = false;
     await page.route((url) => url.pathname === '/api/v1/auth/refresh', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json',
@@ -89,7 +89,7 @@ test.describe('비밀번호 변경 강제', () => {
   });
 
   test('변경 성공 후 refresh 가 실패하면 경고 토스트와 함께 로그인 화면으로 보낸다', async ({ authMockedPage: page }) => {
-    await page.addInitScript(() => localStorage.setItem('hasSession', 'true'));
+    await seedSessionOnce(page);
     // 부팅 refresh(1회차)는 pwc 토큰으로 세션을 세우고, 변경 직후 refresh(2회차 이후)만 500 — 순서를 카운터로 고정.
     let refreshCount = 0;
     await page.route((url) => url.pathname === '/api/v1/auth/refresh', (route) => {
@@ -109,14 +109,16 @@ test.describe('비밀번호 변경 강제', () => {
     await page.getByRole('button', { name: '변경하고 계속' }).click();
 
     // 비밀번호는 이미 바뀌었으므로 같은 폼을 다시 내게 하지 않고(데드엔드) 세션을 정리해 로그인으로 보낸다.
-    await expect(page.getByText('비밀번호가 변경되어 새 비밀번호로 다시 로그인해야 합니다')).toBeVisible();
+    // 경고는 리로드 뒤 로그인 화면에서 보인다 — 로그아웃 전에 띄우면 리로드와 함께 사라진다(WD-276)
     await logout.waitForRequest();
     await expect(page).toHaveURL(/\/login$/);
+    await expect(page.getByLabel('아이디 (이메일)')).toBeVisible();
+    await expect(page.getByText('비밀번호가 변경되어 새 비밀번호로 다시 로그인해야 합니다')).toBeVisible();
     expect(refreshCount).toBeGreaterThanOrEqual(2);
   });
 
   test('멤버십 여러 개(테넌트 미선택): 변경 화면이 먼저, 성공 후 워크스페이스 선택 화면', async ({ authMockedPage: page }) => {
-    await page.addInitScript(() => localStorage.setItem('hasSession', 'true'));
+    await seedSessionOnce(page);
     const memberships = [
       { tenantId: 1, tenantSlug: 'a', tenantName: 'A 워크스페이스', role: 'MEMBER' },
       { tenantId: 2, tenantSlug: 'b', tenantName: 'B 워크스페이스', role: 'MEMBER' },
@@ -143,7 +145,7 @@ test.describe('비밀번호 변경 강제', () => {
   });
 
   test('검증: 확인 불일치·정책 위반·임시 비밀번호 재사용', async ({ authMockedPage: page }) => {
-    await page.addInitScript(() => localStorage.setItem('hasSession', 'true'));
+    await seedSessionOnce(page);
     await mockApi(page, 'POST', '/api/v1/auth/refresh', PWC_TOKEN);
     await mockApi(page, 'GET', '/api/v1/auth/me', PWC_ME);
     await page.goto('/change-password');
@@ -162,7 +164,7 @@ test.describe('비밀번호 변경 강제', () => {
   });
 
   test('현재 비밀번호가 틀리면 폼 상단에 서버 메시지를 보여 준다', async ({ authMockedPage: page }) => {
-    await page.addInitScript(() => localStorage.setItem('hasSession', 'true'));
+    await seedSessionOnce(page);
     await mockApi(page, 'POST', '/api/v1/auth/refresh', PWC_TOKEN);
     await mockApi(page, 'GET', '/api/v1/auth/me', PWC_ME);
     await mockApi(page, 'PUT', '/api/v1/users/me/password',
@@ -179,7 +181,7 @@ test.describe('비밀번호 변경 강제', () => {
   });
 
   test('접근성: 첫 필드 자동 포커스, Tab 순서 현재→새→확인→버튼→로그아웃, 자동완성·도움말 연결', async ({ authMockedPage: page }) => {
-    await page.addInitScript(() => localStorage.setItem('hasSession', 'true'));
+    await seedSessionOnce(page);
     await mockApi(page, 'POST', '/api/v1/auth/refresh', PWC_TOKEN);
     await mockApi(page, 'GET', '/api/v1/auth/me', PWC_ME);
     await page.goto('/change-password');
@@ -211,7 +213,7 @@ test.describe('비밀번호 변경 강제', () => {
   });
 
   test('로그아웃 링크는 세션을 끝내고 로그인 화면으로 보낸다', async ({ authMockedPage: page }) => {
-    await page.addInitScript(() => localStorage.setItem('hasSession', 'true'));
+    await seedSessionOnce(page);
     await mockApi(page, 'POST', '/api/v1/auth/refresh', PWC_TOKEN);
     await mockApi(page, 'GET', '/api/v1/auth/me', PWC_ME);
     const logout = await mockApi(page, 'POST', '/api/v1/auth/logout', null, { status: 204, capture: true });
@@ -221,5 +223,6 @@ test.describe('비밀번호 변경 강제', () => {
 
     await logout.waitForRequest();
     await expect(page).toHaveURL(/\/login$/);
+    await expect(page.getByLabel('아이디 (이메일)')).toBeVisible();
   });
 });

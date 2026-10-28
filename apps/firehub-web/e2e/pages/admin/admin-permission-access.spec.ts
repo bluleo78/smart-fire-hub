@@ -529,7 +529,7 @@ test.describe('로그아웃 후 다른 사용자 로그인', () => {
     await expect(page).toHaveURL(/\/$/);
     await expect(sidebarLink(page, '사용자 관리')).toBeVisible();
 
-    // 로그아웃 — 페이지를 다시 읽지 않으므로 react-query 캐시는 그대로 남는다.
+    // 로그아웃 — /login 으로 하드 리로드해 캐시를 비운다(WD-276). 권한이 캐시에 남지 않는지는 여기서도 그대로 본다.
     await page.getByText('관리자 A', { exact: true }).click();
     await page.getByRole('menuitem', { name: '로그아웃' }).click();
     await page.waitForURL('**/login');
