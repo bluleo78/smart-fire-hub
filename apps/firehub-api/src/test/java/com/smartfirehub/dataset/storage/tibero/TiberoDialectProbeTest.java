@@ -400,8 +400,9 @@ class TiberoDialectProbeTest {
   }
 
   /**
-   * 무결성 위반 코드(A2) — 커넥션 래퍼가 이 코드로 409 계열 Spring 예외를 고른다. 다르면 {@code TiberoDialect} 의 상수만 바꾼다.
-   * Tibero 실측: 중복 키 -10007, NOT NULL 삽입 -10005, NULL 있는 컬럼 NOT NULL 켜기 -7045, 길이 초과 -11048.
+   * 무결성 위반 코드(A2) — 커넥션 래퍼가 이 코드로 Spring 예외를 고른다(길이 초과는 전역 처리기에서 400 + 사유, 나머지 무결성 위반은 409). 다르면
+   * {@code TiberoDialect} 의 상수만 바꾼다. Tibero 실측: 중복 키 -10007, NOT NULL 삽입 -10005, NULL 있는 컬럼 NOT
+   * NULL 켜기 -7045, 길이 초과 -11048.
    */
   @Test
   void integrity_error_codes() {

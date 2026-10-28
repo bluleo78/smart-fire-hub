@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.service;
 
+import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
 import java.sql.SQLException;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
@@ -12,6 +13,9 @@ import org.postgresql.util.ServerErrorMessage;
  *
  * <p>DB 메시지 원문은 SQL 문·내부 테이블명·바인딩된 사용자 값을 담고 있어 노출하지 않는다 — SQLState 로 사유를 고르고, 서버 구조화 오류({@link
  * ServerErrorMessage})에서만 컬럼명·길이 상한을 읽는다. 앞뒤 문구(어떤 작업이 실패했는지)는 호출부가 붙인다.
+ *
+ * <p><b>Tibero(WD-266).</b> Tibero 데이터 오류는 SQLState 가 아니라 벤더 코드를 {@link TiberoDialect#sqlState} 로
+ * 옮겨 PG 와 같은 사유 문장을 고른다(근거는 {@code isTiberoDataError}).
  */
 public final class DataExceptionTranslator {
 
@@ -29,10 +33,24 @@ public final class DataExceptionTranslator {
    * <p>다중 행 INSERT 오류에는 행 번호가 없어 행은 특정하지 않는다.
    */
   public static String describe(Throwable e) {
-    SQLException dataError = findDataException(e);
-    if (dataError == null) {
-      return null;
+    // 탐색 순서(WD-266): ① 서버 구조화 오류가 있는 PG 22xxx → ② Tibero 벤더 코드 → ③ 일반 22xxx(오류 경로라 여러 번 걸어도 된다).
+    // ①이 먼저인 이유: 바깥 BatchUpdateException 도 같은 SQLState 를 달고 오지만 컬럼·원문 메시지가 없다.
+    // ②가 ③보다 먼저인 이유: Tibero 의 SQLState 는 PG 와 달라 ③이 먼저면 사유가 어긋난다(실측은 isTiberoDataError 참고).
+    SQLException structured = findSqlException(e, x -> isDataError(x) && hasServerError(x));
+    if (structured != null) {
+      return describeSqlStateError(structured);
     }
+    SQLException tibero = findSqlException(e, DataExceptionTranslator::isTiberoDataError);
+    if (tibero != null) {
+      // 드라이버 원문(사용자 값이 섞일 수 있다)은 쓰지 않고 코드로만 사유를 고른다.
+      return describeDataError(TiberoDialect.sqlState(tibero.getErrorCode()), null, null);
+    }
+    SQLException plain = findSqlException(e, DataExceptionTranslator::isDataError);
+    return plain != null ? describeSqlStateError(plain) : null;
+  }
+
+  /** SQLState 22xxx 예외 하나의 사유 문장 — 컬럼·길이 상한은 서버 구조화 오류에서만 읽는다. */
+  private static String describeSqlStateError(SQLException dataError) {
     // 바깥 예외 메시지에는 SQL 문과 사용자 값(예: 값 자체가 "character varying(10)")이 섞여 있어 서버 구조화 오류만 신뢰한다.
     ServerErrorMessage sem =
         dataError instanceof PSQLException pe ? pe.getServerErrorMessage() : null;
@@ -93,11 +111,8 @@ public final class DataExceptionTranslator {
   /**
    * 원인 체인(getCause)과 각 SQLException 의 연쇄 예외(getNextException)를 걸으며 {@code matches} 를 만족하는 첫
    * SQLException 을 찾는다(없으면 null). 두 방향 모두 {@link #MAX_DEPTH} 까지만 걷는다 — 순환 체인에서도 끝난다.
-   *
-   * <p>이 클래스의 탐색들과 파이프라인 PYTHON 스텝의 적재 실패 문구({@code PythonStepErrorMessages.loadFailed} — Tibero 벤더
-   * 코드를 SQLState 로 바꿔 본다)가 같은 걷기·깊이 상한을 쓰도록 한 곳에 둔다.
    */
-  public static SQLException findSqlException(Throwable e, Predicate<SQLException> matches) {
+  private static SQLException findSqlException(Throwable e, Predicate<SQLException> matches) {
     Throwable t = e;
     for (int i = 0; t != null && i < MAX_DEPTH; i++, t = t.getCause()) {
       if (!(t instanceof SQLException se)) {
@@ -125,14 +140,20 @@ public final class DataExceptionTranslator {
   }
 
   /**
-   * 원인 체인(getCause)과 각 SQLException 의 연쇄 예외(getNextException)에서 SQLState 22xxx 예외를 찾는다. 서버 구조화 오류를
-   * 가진 {@link PSQLException} 을 우선한다 — 바깥 BatchUpdateException 도 같은 SQLState 를 달고 오지만 컬럼·원문 메시지가 없다.
+   * Tibero 데이터 오류인가 — PG 드라이버 예외가 아니고, 벤더 코드가 대응표에서 SQLState 22 로 옮겨지는 SQLException. Tibero 드라이버는
+   * 자체 예외 클래스 없이 {@code java.sql.SQLException} 계열을 던지므로 "PG 예외가 아님" 을 신호로 쓴다. wrap 표지에 기대지 않는 이유:
+   * 커넥션 래퍼를 거치지 않은 예외(Python 적재 경로 등)에도 같은 판정이 필요하다.
+   *
+   * <p>왜 SQLState 가 아니라 벤더 코드인가: Tibero 의 SQLState 는 PG 와 다르다(실측 2026-10-28: -5111 은 22003 으로 같지만
+   * -5074 는 22 계열이 아닌 {@code ERRDT}, -5113·-5114 는 둘 다 22007 이라 PG 의 22008 과 갈린다). PG 드라이버
+   * 예외({@link PSQLException})는 제외한다 — pgjdbc 는 벤더 코드를 늘 0 으로 두고 0 은 분류 밖({@code XX000})이라 PG 결과는
+   * 바뀌지 않는다.
+   *
+   * <p>{@code getErrorCode()} 만 읽는다 — 메시지 태그({@code JDBC-5111:})만 달고 코드가 없는 예외는 사유가 없어(409) 된다. 실제
+   * 드라이버가 코드를 채워 주는 것은 실서버 탐침으로 확인했다.
    */
-  private static SQLException findDataException(Throwable e) {
-    // 서버 구조화 오류를 가진 22xxx 를 먼저 찾고, 없으면 처음 만난 22xxx 로 물러선다(오류 경로라 두 번 걸어도 된다).
-    SQLException structured = findSqlException(e, x -> isDataError(x) && hasServerError(x));
-    return structured != null
-        ? structured
-        : findSqlException(e, DataExceptionTranslator::isDataError);
+  private static boolean isTiberoDataError(SQLException e) {
+    return !(e instanceof PSQLException)
+        && TiberoDialect.sqlState(e.getErrorCode()).startsWith("22");
   }
 }

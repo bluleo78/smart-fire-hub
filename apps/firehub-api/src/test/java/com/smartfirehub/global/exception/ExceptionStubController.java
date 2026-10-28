@@ -17,6 +17,7 @@ import com.smartfirehub.role.exception.SystemRoleModificationException;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import java.sql.SQLException;
 import java.util.List;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.ServerErrorMessage;
@@ -174,6 +175,16 @@ public class ExceptionStubController {
     throw new DataIntegrityViolationException(
         "SQL [insert into data.\"secret_tbl\" (code) values (?)]; ERROR: " + kind,
         new PSQLException(new ServerErrorMessage(raw)));
+  }
+
+  /**
+   * Tibero 숫자 자릿수 초과(-5111) 를 감싼 무결성 위반 (WD-266) — Tibero 드라이버는 SQLState 대신 벤더 코드를 싣고, 원문에는 사용자 값이
+   * 섞일 수 있다(여기서는 "secret").
+   */
+  @GetMapping("/data-integrity-violation-tibero/number-overflow")
+  public void dataIntegrityViolationTiberoNumberOverflow() {
+    throw new DataIntegrityViolationException(
+        "Tibero; uncategorized SQLException", new SQLException("JDBC-5111: secret", null, -5111));
   }
 
   /**

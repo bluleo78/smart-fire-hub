@@ -16,6 +16,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.apiconnection.service.EncryptionService;
+import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.dataset.storage.DataStoreAccountRole;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreProvisionMode;
@@ -42,6 +43,8 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InOrder;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -784,6 +787,21 @@ class ExternalStoreConnectionsTest {
     // 코드가 비어 있어도 메시지의 JDBC-xxxx: 표기로 인식한다.
     assertThat(failWith(new SQLException("JDBC-10007:UNIQUE constraint violation")))
         .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+  }
+
+  /**
+   * (WD-266) Tibero 숫자·날짜 데이터 오류(실측 코드)도 무결성 위반으로 바꾼다 — 예전엔 UncategorizedSQLException(500)이었다. 바뀐
+   * 예외는 GlobalExceptionHandler 가 PG 와 같은 400 + 사유로 응답할 수 있어야 한다(사유가 null 이 아님).
+   */
+  @ParameterizedTest
+  @ValueSource(ints = {-5074, -5111, -5113, -5114})
+  void wrap_tiberoDataErrorCodes_becomeDataIntegrityViolation(int code) {
+    DataAccessException e =
+        ExternalStoreConnections.wrap(new SQLException("JDBC" + code + ":", null, code));
+    assertThat(e)
+        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class)
+        .isNotInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+    assertThat(DataExceptionTranslator.describe(e)).isNotNull();
   }
 
   @Test

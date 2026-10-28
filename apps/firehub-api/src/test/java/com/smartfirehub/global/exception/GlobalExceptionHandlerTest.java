@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
@@ -304,6 +305,24 @@ class GlobalExceptionHandlerTest {
         .andExpect(
             jsonPath("$.message")
                 .value("저장할 수 없는 값이 있어 처리하지 못했습니다: 'code' 컬럼에 글자 수 제한(최대 3자)을 넘는 값이 있습니다"));
+  }
+
+  /**
+   * (WD-266) Tibero 데이터 오류(벤더 코드 -5111, 숫자 자릿수 초과)도 PG 22003 과 같은 400 + 한국어 사유다. 드라이버 원문은 응답에 새지
+   * 않는다.
+   */
+  @Test
+  void tiberoNumberOverflow_returns400WithSameReasonAsPg() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/data-integrity-violation-tibero/number-overflow"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400))
+        .andExpect(
+            jsonPath("$.message")
+                .value(
+                    "저장할 수 없는 값이 있어 처리하지 못했습니다: "
+                        + DataExceptionTranslator.describeDataError("22003", null, null)))
+        .andExpect(jsonPath("$.message", not(containsString("secret"))));
   }
 
   /** (WD-98) 22xxx 가 아닌 제약조건 위반(중복 키 23505)은 400 이 아니라 409 중복 문구다(WD-99 부터 한국어). */

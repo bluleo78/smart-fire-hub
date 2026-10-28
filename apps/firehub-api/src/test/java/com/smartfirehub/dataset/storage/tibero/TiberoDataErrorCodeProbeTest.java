@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.storage.tibero;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -79,12 +80,24 @@ class TiberoDataErrorCodeProbeTest {
     void run() throws SQLException;
   }
 
-  /** {@code action} 이 낸 오류 코드를 {@code PROBE} 줄로 내고 돌려준다. 성공하면 실패시킨다(측정 대상 오류가 나지 않았다). */
+  /**
+   * {@code action} 이 낸 오류 코드·SQLState 를 {@code PROBE} 줄로 내고 코드를 돌려준다. 성공하면 실패시킨다(측정 대상 오류가 나지 않았다).
+   *
+   * <p>WD-266: 실제 드라이버 예외가 사유 번역기의 Tibero 판정(PG 예외 아님 + 벤더 코드 대응표)을 통과해 PG 와 같은 사유가 나오는지도 단언한다.
+   * SQLState 도 함께 출력해 둔다(실측 2026-10-28: -5111 22003, -5074 ERRDT, -5113·-5114 22007 — 판정은 SQLState
+   * 가 아니라 벤더 코드에 기댄다).
+   */
   private static int errorCodeOf(String name, SqlAction action) {
     try {
       action.run();
     } catch (SQLException e) {
       System.out.println("PROBE data_error_" + name + ": " + e.getErrorCode());
+      System.out.println("PROBE data_error_" + name + "_sqlstate: " + e.getSQLState());
+      assertThat(DataExceptionTranslator.describe(e))
+          .isNotNull()
+          .isEqualTo(
+              DataExceptionTranslator.describeDataError(
+                  TiberoDialect.sqlState(e.getErrorCode()), null, null));
       return e.getErrorCode();
     }
     throw new AssertionError(name + " 이 성공했다");

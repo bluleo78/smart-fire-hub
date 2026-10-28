@@ -164,7 +164,7 @@ public final class PipelineSqlErrorMessages {
     String raw =
         toUserSqlPosition(
             err.message() != null && !err.message().isBlank() ? err.message() : error);
-    String guide = guide(new PgError(tiberoSqlState(err.code()), raw, null, null, null));
+    String guide = guide(new PgError(TiberoDialect.sqlState(err.code()), raw, null, null, null));
     return prefix + ": " + guide + CAUSE_LABEL + nullToEmpty(raw);
   }
 
@@ -204,7 +204,7 @@ public final class PipelineSqlErrorMessages {
     if (!TiberoDialect.NotFound.TABLE.hasCode(code)) {
       return null;
     }
-    return guide(new PgError(tiberoSqlState(code), null, null, null, null));
+    return guide(new PgError(TiberoDialect.sqlState(code), null, null, null, null));
   }
 
   /**
@@ -228,46 +228,6 @@ public final class PipelineSqlErrorMessages {
       return missingTable + CAUSE_LABEL + raw;
     }
     return "Tibero 오류: " + raw;
-  }
-
-  /**
-   * Tibero 오류 코드를 같은 뜻의 PostgreSQL SQLState 로 옮긴다 — 안내 문장을 PG 판과 공유하기 위한 대응표다. 모르면 분류 밖 상태값(일반 안내).
-   * 같은 패키지(이 클래스·{@code PythonStepErrorMessages})에서만 쓰므로 패키지 전용으로 둔다.
-   */
-  static String tiberoSqlState(int code) {
-    if (TiberoDialect.UNIQUE_VIOLATION.contains(code)
-        || TiberoDialect.MULTI_INSERT_DUPLICATE.contains(code)) {
-      return "23505";
-    }
-    if (TiberoDialect.MERGE_SOURCE_DUPLICATE.contains(code)) {
-      return "21000";
-    }
-    if (TiberoDialect.NOT_NULL_INSERT.contains(code)) {
-      return "23502";
-    }
-    if (TiberoDialect.VALUE_TOO_LARGE.contains(code)) {
-      return "22001";
-    }
-    // 데이터 오류(SQLState 22 계열) — PG 판과 같은 안내가 나오게 같은 상태값으로 옮긴다. 코드는 실서버 측정값만 쓴다(2026-10-27).
-    if (TiberoDialect.NUMBER_OVERFLOW.contains(code)) {
-      return "22003";
-    }
-    if (TiberoDialect.INVALID_NUMBER.contains(code)) {
-      return "22P02";
-    }
-    if (TiberoDialect.INVALID_DATETIME.contains(code)) {
-      return "22007";
-    }
-    if (TiberoDialect.DATETIME_OUT_OF_RANGE.contains(code)) {
-      return "22008";
-    }
-    if (TiberoDialect.NotFound.TABLE.hasCode(code)) {
-      return "42P01";
-    }
-    if (TiberoDialect.STATEMENT_CANCELED.contains(code)) {
-      return "57014";
-    }
-    return "XX000";
   }
 
   /**

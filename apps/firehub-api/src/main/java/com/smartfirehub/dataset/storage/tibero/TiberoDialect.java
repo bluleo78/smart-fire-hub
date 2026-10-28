@@ -138,11 +138,64 @@ public final class TiberoDialect {
    */
   public static final Set<Integer> DATETIME_OUT_OF_RANGE = Set.of(-5114);
 
-  /** 무결성 위반으로 바꿀 오류 코드(중복 키 제외). */
+  /**
+   * 커넥션 래퍼의 번역기({@code ExternalStoreConnections})가 무결성 위반({@code
+   * DataIntegrityViolationException})으로 바꿀 오류 코드 — 중복 키를 뺀 무결성 위반(NOT NULL 삽입·NOT NULL 켜기 실패·길이
+   * 초과)과 숫자·날짜 데이터 오류(WD-266: {@link #INVALID_NUMBER}·{@link #NUMBER_OVERFLOW}·{@link
+   * #INVALID_DATETIME}·{@link #DATETIME_OUT_OF_RANGE}). 데이터 오류는 전역 처리기({@code
+   * GlobalExceptionHandler})가 PG 의 SQLState 22 와 같은 400 + 사유로 응답한다.
+   */
   public static final Set<Integer> INTEGRITY_VIOLATIONS =
-      Stream.of(NOT_NULL_INSERT, NOT_NULL_ENABLE_NULLS_FOUND, VALUE_TOO_LARGE)
+      Stream.of(
+              NOT_NULL_INSERT,
+              NOT_NULL_ENABLE_NULLS_FOUND,
+              VALUE_TOO_LARGE,
+              INVALID_NUMBER,
+              NUMBER_OVERFLOW,
+              INVALID_DATETIME,
+              DATETIME_OUT_OF_RANGE)
           .flatMap(Set::stream)
           .collect(Collectors.toUnmodifiableSet());
+
+  /**
+   * Tibero 오류 코드를 같은 뜻의 PostgreSQL SQLState 로 옮긴다 — 안내 문장·사유를 PG 판과 공유하기 위한 대응표다. 파이프라인 안내({@code
+   * PipelineSqlErrorMessages})와 데이터 오류 사유({@code DataExceptionTranslator})가 쓴다. 모르면 분류 밖 상태값 {@code
+   * "XX000"}(일반 안내)이다 — 코드를 추측해 늘리지 않는다.
+   */
+  public static String sqlState(int code) {
+    if (UNIQUE_VIOLATION.contains(code) || MULTI_INSERT_DUPLICATE.contains(code)) {
+      return "23505";
+    }
+    if (MERGE_SOURCE_DUPLICATE.contains(code)) {
+      return "21000";
+    }
+    if (NOT_NULL_INSERT.contains(code)) {
+      return "23502";
+    }
+    if (VALUE_TOO_LARGE.contains(code)) {
+      return "22001";
+    }
+    // 데이터 오류(SQLState 22 계열) — PG 판과 같은 안내가 나오게 같은 상태값으로 옮긴다. 코드는 실서버 측정값만 쓴다(2026-10-27).
+    if (NUMBER_OVERFLOW.contains(code)) {
+      return "22003";
+    }
+    if (INVALID_NUMBER.contains(code)) {
+      return "22P02";
+    }
+    if (INVALID_DATETIME.contains(code)) {
+      return "22007";
+    }
+    if (DATETIME_OUT_OF_RANGE.contains(code)) {
+      return "22008";
+    }
+    if (NotFound.TABLE.hasCode(code)) {
+      return "42P01";
+    }
+    if (STATEMENT_CANCELED.contains(code)) {
+      return "57014";
+    }
+    return "XX000";
+  }
 
   /** VARCHAR2 최대 바이트 길이. */
   public static final int MAX_VARCHAR = 4000;
@@ -331,7 +384,8 @@ public final class TiberoDialect {
    *
    * <p>VARCHAR(n) 은 PG 처럼 <b>문자</b> 수로 세도록 {@code VARCHAR2(n CHAR)} 로 만든다(바이트로 세면 한글 n 자가 들어가지
    * 않는다). TEXT 는 {@code VARCHAR2(4000)} — 바이트 한도라 UTF-8 한글로는 약 1333 자까지다. 넘는 값은 ORA-12899 로 거부되고
-   * 커넥션 래퍼가 {@code DataIntegrityViolationException}(409) 으로 바꾼다(500 이 아니다).
+   * 커넥션 래퍼가 {@code DataIntegrityViolationException} 으로 바꿔 전역 처리기({@code GlobalExceptionHandler})가
+   * 400 + 한국어 사유(글자 수 제한)로 응답한다(500 이 아니다).
    *
    * @param logicalType TEXT, VARCHAR, INTEGER, DECIMAL, BOOLEAN, DATE, TIMESTAMP, GEOMETRY
    * @param maxLength VARCHAR 길이(그 외 타입은 무시)

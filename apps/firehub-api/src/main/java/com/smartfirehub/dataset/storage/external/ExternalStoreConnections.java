@@ -413,8 +413,9 @@ public class ExternalStoreConnections {
    * {@link SQLException} 을 Spring 예외 계층으로 번역한다. SQL 문장·비밀이 메시지에 실리지 않도록 sql 인자는 null 로 두고 원인은 보존한다.
    * 번역기가 분류하지 못하면 {@link UncategorizedSQLException}.
    *
-   * <p>왜 번역하는가: 예전에는 늘 {@code UncategorizedSQLException} 이라 중복 키·NOT NULL 위반·길이 초과가 500 이 됐다. 번역하면
-   * {@code DataIntegrityViolationException}(→ GlobalExceptionHandler 409) 이 되고, {@code
+   * <p>왜 번역하는가: 예전에는 늘 {@code UncategorizedSQLException} 이라 중복 키·NOT NULL 위반·길이 초과·숫자·날짜 오류가 500 이
+   * 됐다. 번역하면 {@code DataIntegrityViolationException} 이 되어 GlobalExceptionHandler 가 PG 와 같이 응답한다 —
+   * 데이터 오류(길이 초과·숫자·날짜, PG 의 SQLState 22 에 해당)는 400 + 한국어 사유, 그 밖의 제약 위반(중복·NOT NULL)은 409. {@code
    * DatasetService} 의 NOT NULL 변경 실패 처리(친화 메시지)도 PG 와 똑같이 동작한다.
    */
   static DataAccessException wrap(SQLException e) {
@@ -423,10 +424,10 @@ public class ExternalStoreConnections {
   }
 
   /**
-   * Tibero 오류 번역기. 먼저 {@link TiberoDialect} 의 명시 매핑(중복 키·NOT NULL 삽입·NOT NULL 켜기 실패·길이 초과 — 코드 또는
-   * 메시지 표기)을 보고, 없으면 Spring 기본 {@code sql-error-codes.xml} 의 Oracle 항목(코드 표)을 쓴다. 그것도 못 하면 Spring
-   * 기본 대체 번역(SQLException 하위 타입 → SQLState) 을 탄다. 실서버의 Tibero 코드는 ORA 와 다른 음수 자체 코드라(-10007 등)
-   * Oracle 표로는 잡히지 않으므로 명시 매핑을 Oracle 표보다 앞에 둔다.
+   * Tibero 오류 번역기. 먼저 {@link TiberoDialect} 의 명시 매핑(중복 키·NOT NULL 삽입·NOT NULL 켜기 실패·길이 초과·숫자·날짜 데이터
+   * 오류 — 코드 또는 메시지 표기)을 보고, 없으면 Spring 기본 {@code sql-error-codes.xml} 의 Oracle 항목(코드 표)을 쓴다. 그것도 못
+   * 하면 Spring 기본 대체 번역(SQLException 하위 타입 → SQLState) 을 탄다. 실서버의 Tibero 코드는 ORA 와 다른 음수 자체
+   * 코드라(-10007 등) Oracle 표로는 잡히지 않으므로 명시 매핑을 Oracle 표보다 앞에 둔다.
    */
   private static final SQLErrorCodeSQLExceptionTranslator TRANSLATOR =
       new SQLErrorCodeSQLExceptionTranslator("Oracle") {
@@ -436,6 +437,7 @@ public class ExternalStoreConnections {
           if (TiberoErrors.hasAnyCode(ex, TiberoDialect.UNIQUE_VIOLATION)) {
             return new DuplicateKeyException(message, ex);
           }
+          // 숫자·날짜 데이터 오류(WD-266)도 이 집합에 있다 — PG 의 SQLState 22 처럼 전역 처리기가 400 + 사유로 응답하게 한다.
           if (TiberoErrors.hasAnyCode(ex, TiberoDialect.INTEGRITY_VIOLATIONS)) {
             return new DataIntegrityViolationException(message, ex);
           }

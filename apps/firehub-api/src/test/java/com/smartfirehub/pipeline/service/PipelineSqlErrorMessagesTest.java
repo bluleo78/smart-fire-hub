@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.DbError;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.PgError;
 import java.util.List;
@@ -335,7 +336,7 @@ class PipelineSqlErrorMessagesTest {
   @ParameterizedTest
   @CsvSource({"-5111,22003", "-5074,22P02", "-5113,22007", "-5114,22008"})
   void tiberoError_dataErrorCodes_mapToPgSqlStateAndSameGuide(int code, String sqlState) {
-    assertThat(PipelineSqlErrorMessages.tiberoSqlState(code)).isEqualTo(sqlState);
+    assertThat(TiberoDialect.sqlState(code)).isEqualTo(sqlState);
     assertThat(
             PipelineSqlErrorMessages.describeTiberoError(
                 PipelineSqlErrorMessages.EXECUTION_PREFIX,
@@ -353,7 +354,7 @@ class PipelineSqlErrorMessagesTest {
   @ParameterizedTest
   @CsvSource({"1722", "1438", "1861", "1830", "1843"})
   void tiberoError_unmeasuredOracleDataCodes_stayGeneric(int code) {
-    assertThat(PipelineSqlErrorMessages.tiberoSqlState(code)).isEqualTo("XX000");
+    assertThat(TiberoDialect.sqlState(code)).isEqualTo("XX000");
   }
 
   /** PG 판과 같은 안내 문장을 그대로 쓴다 — 두 판의 문구가 갈라지지 않게. */
