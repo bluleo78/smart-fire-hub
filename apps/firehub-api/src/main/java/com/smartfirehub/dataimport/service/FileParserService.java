@@ -18,6 +18,7 @@ import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.function.BiPredicate;
 import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -190,28 +191,28 @@ public class FileParserService {
    * <p>주의: Excel(xlsx/xls/xlsb)은 항상 첫 행을 헤더로 취급하며 {@code opts}의 hasHeader=false/skipRows는 적용되지
    * 않는다(기존 InputStream 기반 parseExcel/parseHeadersExcel과 동일한 동작이며 회귀가 아니다). CSV만 두 옵션을 온전히 반영하므로,
    * hasHeader=false나 skipRows에 의존하는 호출은 Excel 입력에 사용하지 말 것.
+   *
+   * <p>모든 셀이 비었거나 공백뿐인 데이터 행({@link #isBlankRow})은 배치에 넣지 않는다(WD-255).
+   *
+   * @return 건너뛴 빈 행 수 — 임포트 결과에 「빈 행 건너뜀」으로 보여 준다
    */
-  public void parseStreaming(
+  public int parseStreaming(
       Path file,
       String fileType,
       ParseOptions opts,
       int batchSize,
       Consumer<List<Map<String, String>>> onBatch)
       throws Exception {
-    switch (fileType.toLowerCase()) {
+    return switch (fileType.toLowerCase()) {
       case "csv" -> {
         try (InputStream in = Files.newInputStream(file)) {
-          guardCsv(
-              () -> {
-                parseStreamingCsvFromStream(in, opts, batchSize, onBatch);
-                return null;
-              });
+          yield guardCsv(() -> parseStreamingCsvFromStream(in, opts, batchSize, onBatch));
         }
       }
       // Excel 분기: opts(hasHeader/skipRows) 미사용 — 위 Javadoc 참고
       case "xlsx", "xls", "xlsb" -> parseStreamingExcelFile(file.toFile(), batchSize, onBatch);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
-    }
+    };
   }
 
   /** CSV 파싱 호출을 감싸는 함수형 인터페이스 — checked 예외를 그대로 던질 수 있게 한다. */
@@ -244,44 +245,7 @@ public class FileParserService {
       throws Exception {
     // WD-245: 스트림 경로 빌더를 함께 써 BOM 소비·AUTO 인코딩 감지를 다른 CSV 경로와 똑같이 적용한다(이전엔 AUTO 를 UTF-8 로 고정하고 BOM 을
     // 남겼다).
-    try (CSVReader reader = buildCsvReaderFromStream(inputStream, opts)) {
-      // skip rows before header
-      for (int s = 0; s < opts.skipRows(); s++) {
-        if (reader.readNext() == null) break;
-      }
-
-      List<String[]> allRows = reader.readAll();
-      if (allRows.isEmpty()) {
-        return Collections.emptyList();
-      }
-
-      String[] headers;
-      int dataStart;
-      if (opts.hasHeader()) {
-        headers = allRows.get(0);
-        FileHeaderValidator.requireDistinctNames(headers); // WD-205: 같은 이름 열 중복 거절
-        dataStart = 1;
-      } else {
-        // generate column_1, column_2, ... based on first row width
-        int colCount = allRows.get(0).length;
-        headers = new String[colCount];
-        for (int i = 0; i < colCount; i++) {
-          headers[i] = "column_" + (i + 1);
-        }
-        dataStart = 0;
-      }
-
-      List<Map<String, String>> result = new ArrayList<>();
-      for (int i = dataStart; i < allRows.size(); i++) {
-        String[] row = allRows.get(i);
-        Map<String, String> rowMap = new HashMap<>();
-        for (int j = 0; j < headers.length && j < row.length; j++) {
-          rowMap.put(headers[j], row[j]);
-        }
-        result.add(rowMap);
-      }
-      return result;
-    }
+    return parseCsvFromStream(inputStream, opts);
   }
 
   public List<Map<String, String>> parse(byte[] fileData, String fileType, ParseOptions opts)
@@ -331,36 +295,17 @@ public class FileParserService {
    * 처리한다.
    */
   public List<Map<String, String>> parseExcel(InputStream inputStream) throws Exception {
-    // 첫 행을 헤더로 캡처하기 위해 배열로 감싼다(람다 캡처 제약 우회)
-    @SuppressWarnings("unchecked")
-    final List<String>[] headerHolder = new List[] {null};
     final List<Map<String, String>> result = new ArrayList<>();
-
     ExcelStreamingParser.parse(
         inputStream,
-        (idx, cells) -> {
-          if (headerHolder[0] == null) {
-            // 첫 행 = 헤더
-            headerHolder[0] = new ArrayList<>(cells);
-            FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
-            return true;
-          }
-          List<String> headers = headerHolder[0];
-          Map<String, String> row = new HashMap<>();
-          for (int i = 0; i < headers.size(); i++) {
-            String value = i < cells.size() ? cells.get(i) : "";
-            row.put(headers.get(i), value);
-          }
-          result.add(row);
-          return true;
-        });
-
+        excelDataRows(
+            null,
+            (headers, cells) -> {
+              result.add(toRowMap(headers, cells));
+              return true;
+            }));
     return result;
   }
-
-  // -----------------------------------------------------------------------
-  // Private CSV helpers with ParseOptions
-  // -----------------------------------------------------------------------
 
   // -----------------------------------------------------------------------
   // Private CSV helpers with byte[] (supports AUTO encoding detection)
@@ -369,104 +314,30 @@ public class FileParserService {
   private List<Map<String, String>> parseCsvFromBytes(byte[] data, ParseOptions opts)
       throws Exception {
     try (CSVReader reader = buildCsvReaderFromBytes(data, opts)) {
-      for (int s = 0; s < opts.skipRows(); s++) {
-        if (reader.readNext() == null) break;
-      }
-      List<String[]> allRows = reader.readAll();
-      if (allRows.isEmpty()) return Collections.emptyList();
-      String[] headers;
-      int dataStart;
-      if (opts.hasHeader()) {
-        headers = allRows.get(0);
-        FileHeaderValidator.requireDistinctNames(headers); // WD-205: 같은 이름 열 중복 거절
-        dataStart = 1;
-      } else {
-        int colCount = allRows.get(0).length;
-        headers = new String[colCount];
-        for (int i = 0; i < colCount; i++) headers[i] = "column_" + (i + 1);
-        dataStart = 0;
-      }
-      List<Map<String, String>> result = new ArrayList<>();
-      for (int i = dataStart; i < allRows.size(); i++) {
-        String[] row = allRows.get(i);
-        Map<String, String> rowMap = new HashMap<>();
-        for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
-        result.add(rowMap);
-      }
-      return result;
+      skipLeadingRows(reader, opts);
+      return readRowMaps(reader, Integer.MAX_VALUE, opts);
     }
   }
 
   private List<String> parseHeadersCsvFromBytes(byte[] data, ParseOptions opts) throws Exception {
     try (CSVReader reader = buildCsvReaderFromBytes(data, opts)) {
-      for (int s = 0; s < opts.skipRows(); s++) {
-        if (reader.readNext() == null) return Collections.emptyList();
-      }
-      if (opts.hasHeader()) {
-        String[] headers = reader.readNext();
-        FileHeaderValidator.requireDistinctNames(headers); // WD-205
-        return headers != null ? Arrays.asList(headers) : Collections.emptyList();
-      } else {
-        String[] firstRow = reader.readNext();
-        if (firstRow == null) return Collections.emptyList();
-        List<String> headers = new ArrayList<>();
-        for (int i = 0; i < firstRow.length; i++) headers.add("column_" + (i + 1));
-        return headers;
-      }
+      skipLeadingRows(reader, opts);
+      return readHeaderNames(reader, opts);
     }
   }
 
   private List<Map<String, String>> parseSampleRowsCsvFromBytes(
       byte[] data, int maxRows, ParseOptions opts) throws Exception {
     try (CSVReader reader = buildCsvReaderFromBytes(data, opts)) {
-      for (int s = 0; s < opts.skipRows(); s++) {
-        if (reader.readNext() == null) return Collections.emptyList();
-      }
-      // readAll() 대신 readNextRecord() 반복으로 maxRows 개수만 읽어 메모리 최소화(#169)
-      String[] headers;
-      if (opts.hasHeader()) {
-        headers = reader.readNext();
-        if (headers == null) return Collections.emptyList();
-        FileHeaderValidator.requireDistinctNames(headers); // WD-205
-      } else {
-        String[] firstRow = reader.readNext();
-        if (firstRow == null) return Collections.emptyList();
-        int colCount = firstRow.length;
-        headers = new String[colCount];
-        for (int i = 0; i < colCount; i++) headers[i] = "column_" + (i + 1);
-        // 헤더가 없는 경우 첫 행도 데이터로 포함
-        Map<String, String> firstMap = new HashMap<>();
-        for (int j = 0; j < headers.length && j < firstRow.length; j++)
-          firstMap.put(headers[j], firstRow[j]);
-        List<Map<String, String>> result = new ArrayList<>();
-        result.add(firstMap);
-        String[] row;
-        while (result.size() < maxRows && (row = reader.readNext()) != null) {
-          Map<String, String> rowMap = new HashMap<>();
-          for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
-          result.add(rowMap);
-        }
-        return result;
-      }
-      List<Map<String, String>> result = new ArrayList<>();
-      String[] row;
-      while (result.size() < maxRows && (row = reader.readNext()) != null) {
-        Map<String, String> rowMap = new HashMap<>();
-        for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
-        result.add(rowMap);
-      }
-      return result;
+      skipLeadingRows(reader, opts);
+      return readRowMaps(reader, maxRows, opts);
     }
   }
 
   private int countRowsCsvFromBytes(byte[] data, ParseOptions opts) throws Exception {
     try (CSVReader reader = buildCsvReaderFromBytes(data, opts)) {
-      for (int s = 0; s < opts.skipRows(); s++) {
-        if (reader.readNext() == null) return 0;
-      }
-      List<String[]> allRows = reader.readAll();
-      if (allRows.isEmpty()) return 0;
-      return opts.hasHeader() ? Math.max(0, allRows.size() - 1) : allRows.size();
+      skipLeadingRows(reader, opts);
+      return countDataRows(reader, opts);
     }
   }
 
@@ -486,110 +357,31 @@ public class FileParserService {
   private List<Map<String, String>> parseCsvFromStream(InputStream inputStream, ParseOptions opts)
       throws Exception {
     try (CSVReader reader = buildCsvReaderFromStream(inputStream, opts)) {
-      for (int s = 0; s < opts.skipRows(); s++) {
-        if (reader.readNext() == null) break;
-      }
-      List<String[]> allRows = reader.readAll();
-      if (allRows.isEmpty()) return Collections.emptyList();
-      String[] headers;
-      int dataStart;
-      if (opts.hasHeader()) {
-        headers = allRows.get(0);
-        FileHeaderValidator.requireDistinctNames(headers); // WD-205: 같은 이름 열 중복 거절
-        dataStart = 1;
-      } else {
-        int colCount = allRows.get(0).length;
-        headers = new String[colCount];
-        for (int i = 0; i < colCount; i++) headers[i] = "column_" + (i + 1);
-        dataStart = 0;
-      }
-      List<Map<String, String>> result = new ArrayList<>();
-      for (int i = dataStart; i < allRows.size(); i++) {
-        String[] row = allRows.get(i);
-        Map<String, String> rowMap = new HashMap<>();
-        for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
-        result.add(rowMap);
-      }
-      return result;
+      skipLeadingRows(reader, opts);
+      return readRowMaps(reader, Integer.MAX_VALUE, opts);
     }
   }
 
   private List<String> parseHeadersCsvFromStream(InputStream inputStream, ParseOptions opts)
       throws Exception {
     try (CSVReader reader = buildCsvReaderFromStream(inputStream, opts)) {
-      for (int s = 0; s < opts.skipRows(); s++) {
-        if (reader.readNext() == null) return Collections.emptyList();
-      }
-      if (opts.hasHeader()) {
-        String[] headers = reader.readNext();
-        FileHeaderValidator.requireDistinctNames(headers); // WD-205
-        return headers != null ? Arrays.asList(headers) : Collections.emptyList();
-      } else {
-        String[] firstRow = reader.readNext();
-        if (firstRow == null) return Collections.emptyList();
-        List<String> headers = new ArrayList<>();
-        for (int i = 0; i < firstRow.length; i++) headers.add("column_" + (i + 1));
-        return headers;
-      }
+      skipLeadingRows(reader, opts);
+      return readHeaderNames(reader, opts);
     }
   }
 
   private List<Map<String, String>> parseSampleRowsCsvFromStream(
       InputStream inputStream, int maxRows, ParseOptions opts) throws Exception {
     try (CSVReader reader = buildCsvReaderFromStream(inputStream, opts)) {
-      for (int s = 0; s < opts.skipRows(); s++) {
-        if (reader.readNext() == null) return Collections.emptyList();
-      }
-      // readAll() 대신 readNextRecord() 반복으로 maxRows 개수만 읽어 메모리 최소화(#169)
-      String[] headers;
-      if (opts.hasHeader()) {
-        headers = reader.readNext();
-        if (headers == null) return Collections.emptyList();
-        FileHeaderValidator.requireDistinctNames(headers); // WD-205
-      } else {
-        String[] firstRow = reader.readNext();
-        if (firstRow == null) return Collections.emptyList();
-        int colCount = firstRow.length;
-        headers = new String[colCount];
-        for (int i = 0; i < colCount; i++) headers[i] = "column_" + (i + 1);
-        // 헤더가 없는 경우 첫 행도 데이터로 포함
-        Map<String, String> firstMap = new HashMap<>();
-        for (int j = 0; j < headers.length && j < firstRow.length; j++)
-          firstMap.put(headers[j], firstRow[j]);
-        List<Map<String, String>> result = new ArrayList<>();
-        result.add(firstMap);
-        String[] row;
-        while (result.size() < maxRows && (row = reader.readNext()) != null) {
-          Map<String, String> rowMap = new HashMap<>();
-          for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
-          result.add(rowMap);
-        }
-        return result;
-      }
-      List<Map<String, String>> result = new ArrayList<>();
-      String[] row;
-      while (result.size() < maxRows && (row = reader.readNext()) != null) {
-        Map<String, String> rowMap = new HashMap<>();
-        for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
-        result.add(rowMap);
-      }
-      return result;
+      skipLeadingRows(reader, opts);
+      return readRowMaps(reader, maxRows, opts);
     }
   }
 
   private int countRowsCsvFromStream(InputStream inputStream, ParseOptions opts) throws Exception {
     try (CSVReader reader = buildCsvReaderFromStream(inputStream, opts)) {
-      for (int s = 0; s < opts.skipRows(); s++) {
-        if (reader.readNext() == null) return 0;
-      }
-      // readAll() 대신 readNext() 반복으로 전체 행을 List<String[]>에 적재하지 않고 카운트만 수행
-      // (대용량 CSV, 예: 400MB 파일 전체를 메모리에 올리지 않기 위한 OOM 방지, #169 연장선)
-      int count = 0;
-      while (reader.readNext() != null) {
-        count++;
-      }
-      if (count == 0) return 0;
-      return opts.hasHeader() ? Math.max(0, count - 1) : count;
+      skipLeadingRows(reader, opts);
+      return countDataRows(reader, opts);
     }
   }
 
@@ -597,38 +389,26 @@ public class FileParserService {
    * CSV를 batchSize 단위로 배치 콜백 스트리밍 파싱한다. {@code readAll()}을 쓰지 않고 readNext()만 반복하므로 전체 파일 크기와 무관하게
    * 배치 하나 분량만 메모리에 유지한다.
    *
-   * <p>hasHeader=false인 경우 첫 행도 column_N 헤더로 Map을 만들어 데이터로 포함한다(기존 규칙과 동일).
+   * <p>hasHeader=false인 경우 첫 행도 column_N 헤더로 Map을 만들어 데이터로 포함한다(기존 규칙과 동일). 빈 행은 배치에 넣지 않고 그 수를
+   * 돌려준다(WD-255).
    */
-  private void parseStreamingCsvFromStream(
+  private int parseStreamingCsvFromStream(
       InputStream inputStream,
       ParseOptions opts,
       int batchSize,
       Consumer<List<Map<String, String>>> onBatch)
       throws Exception {
     try (CSVReader reader = buildCsvReaderFromStream(inputStream, opts)) {
-      for (int s = 0; s < opts.skipRows(); s++) {
-        if (reader.readNext() == null) return; // skipRows가 파일 범위를 넘으면 결과 없음
-      }
+      skipLeadingRows(reader, opts); // skipRows가 파일 범위를 넘으면 아래에서 결과 없음
+      int[] skipped = {0};
+      CsvHead head = readCsvHead(reader, opts, skipped);
+      if (head == null) return skipped[0]; // 헤더뿐이거나 빈 파일
 
-      String[] headerRow;
       List<Map<String, String>> batch = new ArrayList<>(batchSize);
-
-      if (opts.hasHeader()) {
-        headerRow = reader.readNext();
-        if (headerRow == null) return; // 헤더뿐이거나 빈 파일
-        FileHeaderValidator.requireDistinctNames(headerRow); // WD-205
-      } else {
-        // 첫 행으로 column_N 헤더를 합성하고, 첫 행 자체도 데이터로 포함
-        String[] firstRow = reader.readNext();
-        if (firstRow == null) return;
-        headerRow = new String[firstRow.length];
-        for (int i = 0; i < firstRow.length; i++) headerRow[i] = "column_" + (i + 1);
-        batch.add(toRowMap(headerRow, firstRow));
-      }
-
+      if (head.firstDataRow() != null) batch.add(toRowMap(head.headers(), head.firstDataRow()));
       String[] row;
-      while ((row = reader.readNext()) != null) {
-        batch.add(toRowMap(headerRow, row));
+      while ((row = readNextDataRow(reader, head.headers().length, skipped)) != null) {
+        batch.add(toRowMap(head.headers(), row));
         if (batch.size() >= batchSize) {
           onBatch.accept(batch);
           batch = new ArrayList<>(batchSize);
@@ -637,14 +417,127 @@ public class FileParserService {
       if (!batch.isEmpty()) {
         onBatch.accept(batch);
       }
+      return skipped[0];
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // CSV 공통 읽기 — 위 byte[]/InputStream 경로가 리더만 달리 만들어 같은 규칙으로 읽는다.
+  // 미리보기(헤더·샘플·전체 행 수)·검증·임포트가 모두 같은 행을 보게 하려는 것이다(WD-255).
+  // -----------------------------------------------------------------------
+
+  /** 헤더 앞 skipRows 줄을 물리 줄 그대로 건너뛴다(빈 줄도 한 줄로 센다). 파일이 먼저 끝나면 거기서 멈춘다. */
+  private static void skipLeadingRows(CSVReader reader, ParseOptions opts) throws Exception {
+    for (int s = 0; s < opts.skipRows(); s++) {
+      if (reader.readNext() == null) return;
+    }
+  }
+
+  /**
+   * 헤더와, 헤더 없는 파일이면 그 너비를 정한 첫 데이터 행.
+   *
+   * @param headers 열 이름(hasHeader=false 면 column_1, column_2, …)
+   * @param firstDataRow hasHeader=false 일 때 헤더 너비를 정하고 데이터로도 들어가는 첫 행. 헤더가 있으면 null
+   */
+  private record CsvHead(String[] headers, String[] firstDataRow) {}
+
+  /**
+   * skipRows 를 지난 리더에서 헤더를 정한다. 읽을 행이 없으면 null.
+   *
+   * <p>hasHeader=false 면 첫 <b>빈 행이 아닌</b> 행의 너비로 column_N 을 만든다 — 앞의 빈 줄 너비(1열)로 열이 정해지지 않게 한다. 헤더
+   * 행 자체는 빈 행이어도 거르지 않는다(헤더 판정은 범위 밖).
+   */
+  private static CsvHead readCsvHead(CSVReader reader, ParseOptions opts, int[] skipped)
+      throws Exception {
+    if (opts.hasHeader()) {
+      String[] headers = reader.readNext();
+      if (headers == null) return null;
+      FileHeaderValidator.requireDistinctNames(headers); // WD-205: 같은 이름 열 중복 거절
+      return new CsvHead(headers, null);
+    }
+    String[] firstRow = readNextDataRow(reader, Integer.MAX_VALUE, skipped);
+    if (firstRow == null) return null;
+    String[] headers = new String[firstRow.length];
+    for (int i = 0; i < firstRow.length; i++) headers[i] = "column_" + (i + 1);
+    return new CsvHead(headers, firstRow);
+  }
+
+  /**
+   * 다음 데이터 행을 읽되 빈 행({@link #isBlankRow})은 건너뛰고 {@code skipped}(null 가능)에 센다. 끝이면 null.
+   *
+   * @param width 헤더 열 수 — 그 뒤의 셀은 어차피 버려지므로 빈 행 판정에서도 보지 않는다(「,,x」 를 헤더 2열 파일에서 빈 행으로 본다)
+   */
+  private static String[] readNextDataRow(CSVReader reader, int width, int[] skipped)
+      throws Exception {
+    String[] row;
+    while ((row = reader.readNext()) != null) {
+      if (!isBlankRow(Arrays.asList(row), width)) return row;
+      if (skipped != null) skipped[0]++;
+    }
+    return null;
+  }
+
+  private static List<String> readHeaderNames(CSVReader reader, ParseOptions opts)
+      throws Exception {
+    CsvHead head = readCsvHead(reader, opts, null);
+    return head == null ? Collections.emptyList() : Arrays.asList(head.headers());
+  }
+
+  /**
+   * 데이터 행을 최대 maxRows 개 Map 으로 읽는다(전체는 {@link Integer#MAX_VALUE}). readAll() 대신 readNext() 반복으로 필요한
+   * 만큼만 읽어 메모리를 줄인다(#169). 빈 행은 maxRows 에 세지 않는다.
+   */
+  private static List<Map<String, String>> readRowMaps(
+      CSVReader reader, int maxRows, ParseOptions opts) throws Exception {
+    CsvHead head = readCsvHead(reader, opts, null);
+    if (head == null) return Collections.emptyList();
+    List<Map<String, String>> result = new ArrayList<>();
+    if (head.firstDataRow() != null) result.add(toRowMap(head.headers(), head.firstDataRow()));
+    String[] row;
+    while (result.size() < maxRows
+        && (row = readNextDataRow(reader, head.headers().length, null)) != null) {
+      result.add(toRowMap(head.headers(), row));
+    }
+    return result;
+  }
+
+  /**
+   * 데이터 행 수(헤더·빈 행 제외)를 센다. readAll() 대신 readNext() 반복으로 전체 행을 메모리에 올리지 않는다(대용량 CSV OOM 방지, #169
+   * 연장선).
+   */
+  private static int countDataRows(CSVReader reader, ParseOptions opts) throws Exception {
+    CsvHead head = readCsvHead(reader, opts, null);
+    if (head == null) return 0;
+    int count = head.firstDataRow() != null ? 1 : 0;
+    while (readNextDataRow(reader, head.headers().length, null) != null) count++;
+    return count;
   }
 
   /** header[]/row[]를 {헤더: 값} Map으로 변환하는 공통 헬퍼. */
   private static Map<String, String> toRowMap(String[] headers, String[] row) {
-    Map<String, String> rowMap = new HashMap<>();
+    Map<String, String> rowMap =
+        HashMap.newHashMap(headers.length); // 넓은 파일에서 행마다 rehash 하지 않게 미리 크기를 잡는다
     for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
     return rowMap;
+  }
+
+  // -----------------------------------------------------------------------
+  // 빈 행 판정 (WD-255)
+  // -----------------------------------------------------------------------
+
+  /**
+   * 앞 {@code width} 개 셀이 모두 비었거나 공백뿐인 행인지 본다(WD-255). CSV·엑셀이 같은 규칙을 쓴다.
+   *
+   * <p>CSV 의 빈 줄({@code [""]})·쉼표만 있는 줄({@code ["",""]}), 엑셀의 셀 없는 행(빈 {@code <row/>})·값 없는 서식 셀만
+   * 있는 행이 여기에 걸린다. 이런 행은 데이터가 아니라 파일 편집 흔적이라 미리보기 행 수·샘플·검증·적재에서 똑같이 뺀다 — 그대로 두면 모든 값이 NULL 인 행으로
+   * 적재된다. 헤더 너비 밖의 셀은 Map 에 들어가지 않으므로 보지 않는다.
+   */
+  static boolean isBlankRow(List<String> cells, int width) {
+    for (int i = 0; i < cells.size() && i < width; i++) {
+      String cell = cells.get(i);
+      if (cell != null && !cell.isBlank()) return false;
+    }
+    return true;
   }
 
   // -----------------------------------------------------------------------
@@ -719,6 +612,40 @@ public class FileParserService {
   // -----------------------------------------------------------------------
 
   /**
+   * 엑셀 행 콜백의 공통 규칙: 첫 행 = 헤더, 그 뒤의 빈 행({@link #isBlankRow})은 건너뛰어 {@code skipped}(null 가능)에 세고, 데이터
+   * 행만 {@code onRow(헤더, 셀)} 에 넘긴다(WD-255). onRow 가 false 를 돌려주면 파싱을 멈춘다.
+   *
+   * <p>InputStream·File 경로의 전체·샘플·행 수·스트리밍이 모두 이 규칙을 지나 미리보기와 적재가 같은 행을 본다.
+   */
+  private static RowConsumer excelDataRows(
+      int[] skipped, BiPredicate<List<String>, List<String>> onRow) {
+    @SuppressWarnings("unchecked")
+    final List<String>[] headerHolder = new List[] {null}; // 람다 캡처 제약 우회
+    return (idx, cells) -> {
+      if (headerHolder[0] == null) {
+        // 첫 행 = 헤더
+        headerHolder[0] = new ArrayList<>(cells);
+        FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
+        return true;
+      }
+      if (isBlankRow(cells, headerHolder[0].size())) {
+        if (skipped != null) skipped[0]++;
+        return true; // 빈 행은 건너뛰고 계속 읽는다(샘플 maxRows 에도 세지 않는다)
+      }
+      return onRow.test(headerHolder[0], cells);
+    };
+  }
+
+  /** 헤더 이름 목록과 셀 목록을 {헤더: 값} Map 으로 바꾼다. 셀이 모자라면 빈 문자열로 채운다. */
+  private static Map<String, String> toRowMap(List<String> headers, List<String> cells) {
+    Map<String, String> row = HashMap.newHashMap(headers.size());
+    for (int i = 0; i < headers.size(); i++) {
+      row.put(headers.get(i), i < cells.size() ? cells.get(i) : "");
+    }
+    return row;
+  }
+
+  /**
    * XLSX/XLS 파일의 첫 행(헤더)만 파싱하여 반환한다.
    *
    * <p>첫 행 수신 직후 false를 반환해 파싱을 조기 종료한다(early-exit). 대용량 파일에서 불필요한 DOM 적재 없이 빠르게 헤더를 추출한다.
@@ -745,49 +672,34 @@ public class FileParserService {
    */
   private List<Map<String, String>> parseSampleRowsExcel(InputStream inputStream, int maxRows)
       throws Exception {
-    @SuppressWarnings("unchecked")
-    final List<String>[] headerHolder = new List[] {null};
     final List<Map<String, String>> result = new ArrayList<>();
-
     ExcelStreamingParser.parse(
         inputStream,
-        (idx, cells) -> {
-          if (headerHolder[0] == null) {
-            // 첫 행 = 헤더
-            headerHolder[0] = new ArrayList<>(cells);
-            FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
-            return true;
-          }
-          List<String> headers = headerHolder[0];
-          Map<String, String> row = new HashMap<>();
-          for (int i = 0; i < headers.size(); i++) {
-            String value = i < cells.size() ? cells.get(i) : "";
-            row.put(headers.get(i), value);
-          }
-          result.add(row);
-          return result.size() < maxRows; // maxRows 도달 시 중단
-        });
-
+        excelDataRows(
+            null,
+            (headers, cells) -> {
+              result.add(toRowMap(headers, cells));
+              return result.size() < maxRows; // maxRows 도달 시 중단
+            }));
     return result;
   }
 
   /**
-   * XLSX/XLS 파일의 데이터 행 수(헤더 제외)를 반환한다.
+   * XLSX/XLS 파일의 데이터 행 수(헤더·빈 행 제외)를 반환한다.
    *
-   * <p>콜백으로 전체 행을 카운트한 뒤 헤더 1행을 빼서 반환한다. 기존 lastRowNum 기반 동작(0-based 인덱스 = 데이터 행 수)과 동등하다.
+   * <p>Map 을 만들지 않고 데이터 행만 센다 — 미리보기 totalRows 가 실제 적재 행 수와 같아야 한다(WD-255).
    */
   private int countRowsExcel(InputStream inputStream) throws Exception {
     final int[] counter = new int[] {0};
-
     ExcelStreamingParser.parse(
         inputStream,
-        (idx, cells) -> {
-          counter[0]++;
-          return true;
-        });
-
-    // 헤더 행 1개를 제외한 데이터 행 수 반환
-    return Math.max(0, counter[0] - 1);
+        excelDataRows(
+            null,
+            (headers, cells) -> {
+              counter[0]++;
+              return true;
+            }));
+    return counter[0];
   }
 
   // -----------------------------------------------------------------------
@@ -820,110 +732,75 @@ public class FileParserService {
   /** XLSX/XLS/XLSB 파일에서 헤더 포함 최대 maxRows개의 샘플 데이터 행을 파일 경로에서 직접 파싱한다. */
   private List<Map<String, String>> parseSampleRowsExcelFile(java.io.File file, int maxRows)
       throws Exception {
-    @SuppressWarnings("unchecked")
-    final List<String>[] headerHolder = new List[] {null};
     final List<Map<String, String>> result = new ArrayList<>();
-
     ExcelStreamingParser.parse(
         file,
-        (idx, cells) -> {
-          if (headerHolder[0] == null) {
-            headerHolder[0] = new ArrayList<>(cells);
-            FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
-            return true;
-          }
-          List<String> headers = headerHolder[0];
-          Map<String, String> row = new HashMap<>();
-          for (int i = 0; i < headers.size(); i++) {
-            String value = i < cells.size() ? cells.get(i) : "";
-            row.put(headers.get(i), value);
-          }
-          result.add(row);
-          return result.size() < maxRows;
-        });
-
+        excelDataRows(
+            null,
+            (headers, cells) -> {
+              result.add(toRowMap(headers, cells));
+              return result.size() < maxRows;
+            }));
     return result;
   }
 
-  /** XLSX/XLS/XLSB 파일의 데이터 행 수(헤더 제외)를 파일 경로에서 직접 계산한다. */
+  /** XLSX/XLS/XLSB 파일의 데이터 행 수(헤더·빈 행 제외)를 파일 경로에서 직접 계산한다. */
   private int countRowsExcelFile(java.io.File file) throws Exception {
     final int[] counter = new int[] {0};
-
     ExcelStreamingParser.parse(
         file,
-        (idx, cells) -> {
-          counter[0]++;
-          return true;
-        });
-
-    return Math.max(0, counter[0] - 1);
+        excelDataRows(
+            null,
+            (headers, cells) -> {
+              counter[0]++;
+              return true;
+            }));
+    return counter[0];
   }
 
   /** XLSX/XLS/XLSB 파일 전체를 파일 경로에서 직접 파싱하여 헤더-값 맵 리스트로 반환한다. */
   private List<Map<String, String>> parseExcelFile(java.io.File file) throws Exception {
-    @SuppressWarnings("unchecked")
-    final List<String>[] headerHolder = new List[] {null};
     final List<Map<String, String>> result = new ArrayList<>();
-
     ExcelStreamingParser.parse(
         file,
-        (idx, cells) -> {
-          if (headerHolder[0] == null) {
-            headerHolder[0] = new ArrayList<>(cells);
-            FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
-            return true;
-          }
-          List<String> headers = headerHolder[0];
-          Map<String, String> row = new HashMap<>();
-          for (int i = 0; i < headers.size(); i++) {
-            String value = i < cells.size() ? cells.get(i) : "";
-            row.put(headers.get(i), value);
-          }
-          result.add(row);
-          return true;
-        });
-
+        excelDataRows(
+            null,
+            (headers, cells) -> {
+              result.add(toRowMap(headers, cells));
+              return true;
+            }));
     return result;
   }
 
   /**
    * XLSX/XLS/XLSB 파일을 batchSize 단위로 배치 콜백 스트리밍 파싱한다.
    *
-   * <p>첫 행을 헤더로 캡처하고, 이후 행을 배치에 누적하다가 batchSize에 도달하면 {@code onBatch}를 호출한 뒤 배치를 비운다. RowConsumer는
-   * 항상 true를 반환해 전체 행을 순회하며, 파싱이 끝난 뒤 잔여 배치를 flush한다.
+   * <p>첫 행을 헤더로 캡처하고, 이후 행을 배치에 누적하다가 batchSize에 도달하면 {@code onBatch}를 호출한 뒤 배치를 비운다. 전체 행을 순회한 뒤
+   * 잔여 배치를 flush하고, 건너뛴 빈 행 수를 돌려준다(WD-255).
    */
-  private void parseStreamingExcelFile(
+  private int parseStreamingExcelFile(
       java.io.File file, int batchSize, Consumer<List<Map<String, String>>> onBatch)
       throws Exception {
     @SuppressWarnings("unchecked")
-    final List<String>[] headerHolder = new List[] {null};
     final List<Map<String, String>>[] batchHolder = new List[] {new ArrayList<>(batchSize)};
+    final int[] skipped = {0};
 
     ExcelStreamingParser.parse(
         file,
-        (idx, cells) -> {
-          if (headerHolder[0] == null) {
-            // 첫 행 = 헤더
-            headerHolder[0] = new ArrayList<>(cells);
-            FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
-            return true;
-          }
-          List<String> headers = headerHolder[0];
-          Map<String, String> row = new HashMap<>();
-          for (int i = 0; i < headers.size(); i++) {
-            String value = i < cells.size() ? cells.get(i) : "";
-            row.put(headers.get(i), value);
-          }
-          batchHolder[0].add(row);
-          if (batchHolder[0].size() >= batchSize) {
-            onBatch.accept(batchHolder[0]);
-            batchHolder[0] = new ArrayList<>(batchSize);
-          }
-          return true;
-        });
+        excelDataRows(
+            skipped,
+            (headers, cells) -> {
+              batchHolder[0].add(toRowMap(headers, cells));
+              if (batchHolder[0].size() >= batchSize) {
+                onBatch.accept(batchHolder[0]);
+                batchHolder[0] = new ArrayList<>(batchSize);
+              }
+              return true;
+            }));
 
     if (!batchHolder[0].isEmpty()) {
       onBatch.accept(batchHolder[0]);
     }
+    return skipped[0];
   }
 }

@@ -186,6 +186,65 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
         .failJob(Mockito.anyString(), Mockito.anyString());
   }
 
+  /**
+   * WD-255: CSV 의 빈 줄·쉼표만 있는 줄은 모든 값이 비어 있는 행으로 적재되지 않고 건너뛴다. 건너뛴 수는 잡 결과와 감사 로그의 skippedRows 로 남아
+   * 화면에 「빈 행 건너뜀」으로 보인다.
+   */
+  @Test
+  void append_skipsBlankAndCommaOnlyLines_reportsSkippedRows() throws Exception {
+    String tableName = "process_blank_rows_dataset";
+    Long datasetId = createDatasetWithBigintColumn(tableName);
+    Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-test");
+    Files.createDirectories(tempDir);
+    Path csv = Files.createTempFile(tempDir, "process-blank-", ".csv");
+    Files.writeString(csv, "name,amount\nUser1,1001\n\n,\nUser2,1002\n\n", StandardCharsets.UTF_8);
+
+    dataImportService.processImport(
+        "process-blank-job-id",
+        datasetId,
+        csv.toString(),
+        "",
+        "",
+        "process_blank.csv",
+        Files.size(csv),
+        "CSV",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "APPEND",
+        1L);
+
+    // 데이터 2행만 적재되고, 모든 값이 NULL 인 행은 없다
+    assertThat(countRows(tableName)).isEqualTo(2);
+    assertThat(
+            dsl.fetchCount(
+                dsl.select()
+                    .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", tableName)))
+                    .where(org.jooq.impl.DSL.field(org.jooq.impl.DSL.name("name")).isNull())))
+        .isZero();
+
+    // 잡 결과: 전체·성공은 데이터 행 기준, 건너뛴 빈 행 3개
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<java.util.Map<String, Object>> result =
+        ArgumentCaptor.forClass(java.util.Map.class);
+    Mockito.verify(asyncJobService)
+        .completeJob(Mockito.eq("process-blank-job-id"), result.capture());
+    assertThat(result.getValue())
+        .containsEntry("totalRows", 2)
+        .containsEntry("successRows", 2)
+        .containsEntry("skippedRows", 3);
+
+    // 감사 로그 metadata 에도 같은 값이 남는다
+    String metadata =
+        dsl.fetchValue(
+                "SELECT metadata->>'skippedRows' FROM audit_log WHERE resource_id = ? AND action_type"
+                    + " = 'IMPORT' ORDER BY id DESC LIMIT 1",
+                String.valueOf(datasetId))
+            .toString();
+    assertThat(metadata).isEqualTo("3");
+  }
+
   // ---- WD-160: 위치(GEOMETRY) 컬럼 임포트 ----
 
   private Long createGeometryDataset(String tableName) {

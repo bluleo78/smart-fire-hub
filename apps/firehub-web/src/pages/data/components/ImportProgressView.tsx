@@ -184,6 +184,10 @@ export function ImportProgressView({ progress, onClose, failedErrors }: ImportPr
             {progress.errorRows !== undefined && progress.errorRows > 0 && (
               <p>오류: <span className="text-destructive font-medium">{progress.errorRows.toLocaleString()}행</span></p>
             )}
+            {/* 빈 줄·쉼표만 있는 줄·엑셀 빈 행은 적재하지 않는다 — 전체 행 수와 파일 줄 수가 다른 이유를 알린다(WD-255) */}
+            {progress.skippedRows !== undefined && progress.skippedRows > 0 && (
+              <p>빈 행 건너뜀: {progress.skippedRows.toLocaleString()}행</p>
+            )}
           </div>
         </InlineBanner>
       )}

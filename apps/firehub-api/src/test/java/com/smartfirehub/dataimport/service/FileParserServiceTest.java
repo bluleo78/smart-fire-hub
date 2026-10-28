@@ -1529,4 +1529,158 @@ class FileParserServiceTest {
     assertThat(service.parseHeaders(file, "xlsx", ParseOptions.defaults()))
         .containsExactly("a", "b");
   }
+
+  // -----------------------------------------------------------------------
+  // WD-255: 빈 행(빈 줄·쉼표만 있는 줄·엑셀 빈 행)은 모든 경로에서 건너뛴다
+  // -----------------------------------------------------------------------
+
+  /** 데이터 2행 사이에 빈 줄·쉼표만 있는 줄·공백만 있는 줄이 끼고, 끝에도 빈 줄이 있는 CSV. 빈 행은 4개다. */
+  private static final String CSV_WITH_BLANKS = "id,name\n1,a\n\n,\n  , \n2,b\n\n";
+
+  @Test
+  void blankRows_csv_everyPathSkipsThem() throws Exception {
+    ParseOptions opts = ParseOptions.defaults();
+    byte[] bytes = toBytes(CSV_WITH_BLANKS);
+    Path file = writeCsvFile(CSV_WITH_BLANKS);
+
+    // byte[]·InputStream·Path 의 전체·샘플 파싱이 모두 데이터 2행만 돌려준다.
+    // 샘플은 빈 행을 maxRows 에 세지 않아 빈 행 3개를 지나 두 번째 데이터 행까지 온다.
+    for (List<Map<String, String>> rows :
+        List.of(
+            service.parse(bytes, "csv", opts),
+            service.parse(toStream(CSV_WITH_BLANKS), "csv", opts),
+            service.parseCSV(toStream(CSV_WITH_BLANKS), opts),
+            service.parse(file, "csv", opts),
+            service.parseSampleRows(bytes, "csv", 2, opts),
+            service.parseSampleRows(toStream(CSV_WITH_BLANKS), "csv", 2, opts),
+            service.parseSampleRows(file, "csv", 2, opts))) {
+      assertThat(rows).extracting(r -> r.get("id")).containsExactly("1", "2");
+    }
+
+    // 미리보기 행 수도 적재될 행 수와 같다
+    assertThat(service.countRows(bytes, "csv", opts)).isEqualTo(2);
+    assertThat(service.countRows(toStream(CSV_WITH_BLANKS), "csv", opts)).isEqualTo(2);
+    assertThat(service.countRows(file, "csv", opts)).isEqualTo(2);
+  }
+
+  @Test
+  void blankRows_csvStreaming_returnsSkippedCount() throws Exception {
+    Path file = writeCsvFile(CSV_WITH_BLANKS);
+    List<Map<String, String>> all = new ArrayList<>();
+
+    int skipped = service.parseStreaming(file, "csv", ParseOptions.defaults(), 100, all::addAll);
+
+    assertThat(all).extracting(r -> r.get("id")).containsExactly("1", "2");
+    assertThat(skipped).isEqualTo(4);
+  }
+
+  @Test
+  void blankRows_csvNoHeader_leadingBlankLineDoesNotDecideColumnCount() throws Exception {
+    // hasHeader=false: column_N 너비는 첫 「빈 행이 아닌」 행에서 정한다 — 앞의 빈 줄(1열)로 정하면 둘째 열을 잃는다
+    String csv = "\n1,a\n,\n2,b";
+    ParseOptions opts = new ParseOptions(",", "UTF-8", false, 0);
+    Path file = writeCsvFile(csv);
+
+    assertThat(service.parseHeaders(file, "csv", opts)).containsExactly("column_1", "column_2");
+    assertThat(service.parse(file, "csv", opts))
+        .containsExactly(
+            Map.of("column_1", "1", "column_2", "a"), Map.of("column_1", "2", "column_2", "b"));
+    assertThat(service.countRows(toBytes(csv), "csv", opts)).isEqualTo(2);
+    assertThat(service.parseSampleRows(toStream(csv), "csv", 5, opts)).hasSize(2);
+
+    List<Map<String, String>> all = new ArrayList<>();
+    assertThat(service.parseStreaming(file, "csv", opts, 100, all::addAll)).isEqualTo(2);
+    assertThat(all).hasSize(2);
+  }
+
+  @Test
+  void blankRows_csv_valuesOnlyBeyondHeaderWidthStillCountAsBlank() throws Exception {
+    // 헤더 2열 파일의 「,,x」: x 는 헤더 밖이라 Map 에 들어가지 않으므로 이 행도 모든 값이 빈 행이다
+    String csv = "id,name\n1,a\n,,x\n2,b";
+    Path file = writeCsvFile(csv);
+    List<Map<String, String>> all = new ArrayList<>();
+
+    assertThat(service.parseStreaming(file, "csv", ParseOptions.defaults(), 100, all::addAll))
+        .isEqualTo(1);
+    assertThat(all).extracting(r -> r.get("id")).containsExactly("1", "2");
+    assertThat(service.countRows(file, "csv", ParseOptions.defaults())).isEqualTo(2);
+  }
+
+  @Test
+  void blankRows_csvSkipRows_countsPhysicalLinesIncludingBlank() throws Exception {
+    // skipRows 는 물리 줄 그대로 센다 — 헤더 앞 빈 줄 1개를 skipRows=1 로 건너뛰면 그다음 줄이 헤더다
+    String csv = "\nname,age\nAlice,30\n\nBob,25";
+    ParseOptions opts = new ParseOptions(",", "UTF-8", true, 1);
+    Path file = writeCsvFile(csv);
+
+    assertThat(service.parseHeaders(file, "csv", opts)).containsExactly("name", "age");
+    assertThat(service.countRows(file, "csv", opts)).isEqualTo(2);
+  }
+
+  /**
+   * 헤더 + 데이터 2행 사이에 엑셀이 만드는 빈 행 세 가지를 끼운 워크북: 셀 없는 행({@code <row/>}), 값 없이 서식만 있는 셀의 행, 공백 문자열 셀의
+   * 행. 빈 행은 3개다.
+   */
+  private static byte[] buildWorkbookWithBlankRows(Workbook wb) throws Exception {
+    try (wb;
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      Sheet sheet = wb.createSheet("Sheet1");
+      CellStyle bold = wb.createCellStyle();
+      bold.setFont(wb.createFont());
+      bold.setBorderBottom(org.apache.poi.ss.usermodel.BorderStyle.THIN);
+      Row h = sheet.createRow(0);
+      h.createCell(0).setCellValue("id");
+      h.createCell(1).setCellValue("name");
+      Row r1 = sheet.createRow(1);
+      r1.createCell(0).setCellValue("1");
+      r1.createCell(1).setCellValue("a");
+      sheet.createRow(2); // 셀 없는 빈 행
+      Row styled = sheet.createRow(3); // 값 없이 서식만 있는 셀
+      styled.createCell(0).setCellStyle(bold);
+      styled.createCell(1).setCellStyle(bold);
+      sheet.createRow(4).createCell(0).setCellValue("   "); // 공백뿐인 셀
+      Row r2 = sheet.createRow(5);
+      r2.createCell(0).setCellValue("2");
+      r2.createCell(1).setCellValue("b");
+      wb.write(out);
+      return out.toByteArray();
+    }
+  }
+
+  @Test
+  void blankRows_xlsx_everyPathSkipsThem() throws Exception {
+    assertExcelSkipsBlankRows("xlsx", buildWorkbookWithBlankRows(new XSSFWorkbook()));
+  }
+
+  @Test
+  void blankRows_xls_everyPathSkipsThem() throws Exception {
+    assertExcelSkipsBlankRows("xls", buildWorkbookWithBlankRows(new HSSFWorkbook()));
+  }
+
+  /** 엑셀 전체·샘플·행 수·스트리밍(byte[]·Path)이 모두 데이터 2행만 보는지, 스트리밍이 건너뛴 수를 세는지 본다. */
+  private void assertExcelSkipsBlankRows(String type, byte[] data) throws Exception {
+    ParseOptions opts = ParseOptions.defaults();
+    Path file = writeFile(type, data);
+
+    assertThat(service.parse(data, type, opts))
+        .extracting(r -> r.get("id"))
+        .containsExactly("1", "2");
+    assertThat(service.parse(file, type, opts))
+        .extracting(r -> r.get("name"))
+        .containsExactly("a", "b");
+    assertThat(service.countRows(data, type, opts)).isEqualTo(2);
+    assertThat(service.countRows(file, type, opts)).isEqualTo(2);
+    assertThat(service.parseSampleRows(data, type, 2, opts))
+        .extracting(r -> r.get("id"))
+        .containsExactly("1", "2");
+    assertThat(service.parseSampleRows(file, type, 2, opts))
+        .extracting(r -> r.get("id"))
+        .containsExactly("1", "2");
+
+    List<Map<String, String>> all = new ArrayList<>();
+    int skipped = service.parseStreaming(file, type, opts, 100, all::addAll);
+    assertThat(all).extracting(r -> r.get("id")).containsExactly("1", "2");
+    // 셀 없는 행·서식만 있는 행·공백 셀 행 3개 모두 빈 행으로 센다
+    assertThat(skipped).isEqualTo(3);
+  }
 }

@@ -90,10 +90,11 @@ class DataImportServiceValidateTest extends IntegrationTestBase {
 
   @Test
   void validateImport_allInvalidSample_validRowsZero() throws Exception {
-    // given: 헤더만 있고 name(필수) 컬럼이 비어있는 300행 CSV — 전부 검증 실패
-    StringBuilder csv = new StringBuilder("name\n");
+    // given: name(필수) 컬럼이 비어있는 300행 CSV — 전부 검증 실패.
+    // 빈 줄은 빈 행으로 건너뛰므로(WD-255) 매핑하지 않는 memo 열에 값을 두어 「name 만 빈 행」을 만든다.
+    StringBuilder csv = new StringBuilder("name,memo\n");
     for (int i = 0; i < 300; i++) {
-      csv.append("\n");
+      csv.append(",m").append(i).append("\n");
     }
     MockMultipartFile file =
         new MockMultipartFile(
