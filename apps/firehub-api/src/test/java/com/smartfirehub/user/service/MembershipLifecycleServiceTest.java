@@ -320,8 +320,9 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
         .hasMessage("이 워크스페이스의 마지막 활성 ADMIN 은 정지하거나 제거할 수 없습니다");
     assertThatThrownBy(() -> inA(() -> userService.removeMember(admin, owner)))
         .isInstanceOf(IllegalStateException.class);
-    // 정지된 ADMIN 자체의 제거는 활성 ADMIN 수를 줄이지 않으므로 허용된다.
-    inA(() -> userService.removeMember(member, owner));
+    // 정지된 ADMIN 자체의 제거는 활성 ADMIN 수를 줄이지 않으므로 허용된다. ADMIN 멤버 제거는 ADMIN 만 할 수 있으므로(WD-277) ADMIN 이
+    // 빠진 owner 대신 admin 이 제거한다.
+    inA(() -> userService.removeMember(member, admin));
   }
 
   @Test

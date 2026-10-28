@@ -287,7 +287,8 @@ class UserServiceTest extends IntegrationTestBase {
         .set(USER_ROLE.ROLE_ID, adminRoleId)
         .execute();
 
-    // 비활성 ADMIN 계정 활성화 — 예외 없이 성공해야 함
+    // 비활성 ADMIN 계정 활성화 — 잠금 규칙에 걸리지 않고 성공해야 함. ADMIN 멤버 재활성은 ADMIN 만 할 수 있으므로(WD-277) 호출자도 ADMIN 으로 둔다.
+    TestUsers.grantRole(dsl, fixtureTransactionTemplate, callerId, DEFAULT_TEST_TENANT_ID, "ADMIN");
     userService.setUserActive(adminUserId, true, callerId);
 
     assertThat(
@@ -325,7 +326,8 @@ class UserServiceTest extends IntegrationTestBase {
         .set(USER_ROLE.ROLE_ID, adminRoleId)
         .execute();
 
-    // 2명의 활성 ADMIN 중 한 명 비활성화 — 예외 없이 성공해야 함
+    // 2명의 활성 ADMIN 중 한 명 비활성화 — 예외 없이 성공해야 함. ADMIN 멤버 정지는 ADMIN 만 할 수 있으므로(WD-277) 호출자도 ADMIN 으로 둔다.
+    TestUsers.grantRole(dsl, fixtureTransactionTemplate, callerId, DEFAULT_TEST_TENANT_ID, "ADMIN");
     userService.setUserActive(testUserId, false, callerId);
 
     assertThat(

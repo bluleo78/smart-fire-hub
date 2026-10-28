@@ -136,7 +136,8 @@ public class UserService {
 
   /**
    * 정지·제거 공통 잠금 방지 규칙. 서버가 최종 판정한다(웹의 비활성 버튼은 안내일 뿐). 순서: 자기 자신(400) → OWNER(409) → 마지막 활성
-   * ADMIN(409). 서버 가드인 이유: AI 에이전트가 자기 계정을 비활성화한 사고(#585)와 마지막 관리자 잠금(#146) 재발 방지.
+   * ADMIN(409) → 호출자 범위(403, WD-277 — {@link #assertMemberWithinCallerScope}). 서버 가드인 이유: AI 에이전트가 자기 계정을 비활성화한
+   * 사고(#585)와 마지막 관리자 잠금(#146) 재발 방지.
    */
   private void assertRemovable(
       Long userId, Long callerId, TenantMembership membership, long tenantId) {
@@ -149,6 +150,23 @@ public class UserService {
     if (isLastActiveAdmin(userId, membership, tenantId)) {
       throw new IllegalStateException("이 워크스페이스의 마지막 활성 ADMIN 은 정지하거나 제거할 수 없습니다");
     }
+    assertMemberWithinCallerScope(userId, callerId);
+  }
+
+  /**
+   * 정지·재활성·제거 대상의 역할이 호출자 범위 안인지(WD-277). 정지·제거는 대상 역할 전부의 회수, 재활성은 그 역할들을 되살리는 것과 같아 역할 변경과 같은
+   * 범위를 받는다 — {@code user:write} 위임자가 역할 변경으로는 막힌 ADMIN 무력화를 정지·제거로 우회했다. 기본 USER 역할은 빼는데, 멤버 추가와 같은
+   * 이유다: 모든 멤버의 기본값이라 검사하면 USER 권한을 일부 갖지 않은 위임자는 평범한 멤버도 정지·제거할 수 없다.
+   */
+  private void assertMemberWithinCallerScope(Long userId, Long callerId) {
+    Long userRoleId = userRoleId();
+    // role/user_role 은 RLS 대상이라 현재 테넌트(= 대상 워크스페이스)의 역할만 나온다.
+    List<Long> roleIds =
+        roleRepository.findByUserId(userId).stream()
+            .map(RoleResponse::id)
+            .filter(id -> !id.equals(userRoleId))
+            .toList();
+    roleGrantGuard.assertCanRemoveMember(callerId, roleIds);
   }
 
   /**
@@ -470,7 +488,9 @@ public class UserService {
     if (active == membership.isActive()) {
       return; // 이미 원하는 상태 — 감사 로그도 남기지 않는다
     }
-    if (!active) {
+    if (active) {
+      assertMemberWithinCallerScope(userId, callerId); // 잠금 규칙(자기·OWNER·마지막 ADMIN)은 정지에만, 범위는 재활성에도
+    } else {
       assertRemovable(userId, callerId, membership, tenantId);
     }
     membershipRepository.updateStatus(userId, tenantId, active ? "ACTIVE" : "SUSPENDED");

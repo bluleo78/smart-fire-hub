@@ -34,6 +34,9 @@ import org.springframework.stereotype.Component;
  *   <li>역할 권한 변경 — 새로 <b>추가</b>되는 권한은 호출자가 가진 것이어야 한다. 제거는 제한하지 않는다.
  *   <li>역할 삭제(WD-141) — 삭제는 "그 역할을 가진 모든 사람에게서 한꺼번에 회수" 이므로 회수와 같은 범위 검사를 받는다. {@code role:delete}
  *       만 위임받은 사용자가 자기보다 높은 권한·등급(또는 자기가 못 보는 데이터셋의 허용 목록)이 붙은 역할을 지워 모든 보유자에게서 빼앗을 수 있었다.
+ *   <li>멤버 정지·재활성·제거(WD-277) — 정지·제거는 "그 멤버가 이 워크스페이스에서 가진 역할 전부의 회수", 재활성은 그 역할들을 되살리는 것과
+ *       같으므로 대상의 역할(기본 USER 제외)에 같은 범위 검사를 한다. {@code user:write} 만 위임받은 사용자가 역할 변경으로는 막힌 ADMIN 무력화를
+ *       정지·제거로 할 수 있었다.
  * </ul>
  *
  * <p>서비스 계층(UserService·RoleService)에서 부르는 이유: REST 컨트롤러뿐 아니라 AI 에이전트(내부 토큰 + X-On-Behalf-Of)도 같은
@@ -50,26 +53,47 @@ public class RoleGrantGuard {
   static final String ALLOWLIST_SCOPE_MESSAGE = "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할은 부여하거나 회수할 수 없습니다";
   static final String DELETE_SCOPE_MESSAGE = "자신에게 없는 권한·등급을 가진 역할은 삭제할 수 없습니다";
   static final String DELETE_ALLOWLIST_MESSAGE = "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할은 삭제할 수 없습니다";
+  static final String MEMBER_ADMIN_MESSAGE = "시스템 ADMIN 역할을 가진 멤버는 ADMIN 만 정지·재활성하거나 제거할 수 있습니다";
+  static final String MEMBER_SCOPE_MESSAGE = "자신에게 없는 권한·등급의 역할을 가진 멤버는 정지·재활성하거나 제거할 수 없습니다";
+  static final String MEMBER_ALLOWLIST_MESSAGE =
+      "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할을 가진 멤버는 정지·재활성하거나 제거할 수 없습니다";
 
   /**
-   * 범위 위반 시 내보낼 오류 코드·메시지 묶음. 판정 규칙은 부여·회수와 삭제가 같고 "무엇을 하려다 막혔는지" 만 다르므로, 규칙은 한 곳({@link
-   * #assertWithinScope})에 두고 문구만 갈아 끼운다.
+   * 범위 위반 시 내보낼 오류 코드·메시지 묶음. 판정 규칙은 부여·회수·삭제·멤버 정지/제거가 같고 "무엇을 하려다 막혔는지" 만 다르므로, 규칙은 한
+   * 곳({@link #assertWithinScope})에 두고 문구만 갈아 끼운다.
    */
   private record ScopeErrors(
-      String scopeCode, String scopeMessage, String allowlistCode, String allowlistMessage) {}
+      String adminCode,
+      String adminMessage,
+      String scopeCode,
+      String scopeMessage,
+      String allowlistCode,
+      String allowlistMessage) {}
 
   private static final ScopeErrors GRANT_ERRORS =
       new ScopeErrors(
+          "SYSTEM_ADMIN_ROLE_ADMIN_ONLY",
+          ADMIN_ROLE_MESSAGE,
           "ROLE_GRANT_BEYOND_SCOPE",
           ROLE_SCOPE_MESSAGE,
           "ROLE_GRANT_ALLOWLIST_BEYOND_SCOPE",
           ALLOWLIST_SCOPE_MESSAGE);
   private static final ScopeErrors DELETE_ERRORS =
       new ScopeErrors(
+          "SYSTEM_ADMIN_ROLE_ADMIN_ONLY",
+          ADMIN_ROLE_MESSAGE,
           "ROLE_DELETE_BEYOND_SCOPE",
           DELETE_SCOPE_MESSAGE,
           "ROLE_DELETE_ALLOWLIST_BEYOND_SCOPE",
           DELETE_ALLOWLIST_MESSAGE);
+  private static final ScopeErrors MEMBER_REMOVE_ERRORS =
+      new ScopeErrors(
+          "MEMBER_ADMIN_ADMIN_ONLY",
+          MEMBER_ADMIN_MESSAGE,
+          "MEMBER_REMOVE_BEYOND_SCOPE",
+          MEMBER_SCOPE_MESSAGE,
+          "MEMBER_REMOVE_ALLOWLIST_BEYOND_SCOPE",
+          MEMBER_ALLOWLIST_MESSAGE);
 
   private final ClearanceResolver clearanceResolver;
   private final SecurityLevelRepository levelRepository;
@@ -103,7 +127,21 @@ public class RoleGrantGuard {
     assertWithinScope(callerId, Set.of(roleId), DELETE_ERRORS);
   }
 
-  /** 부여·회수·삭제 공통 범위 판정 본체 — 검사 순서와 fail-closed 규칙은 {@link #assertCanChangeRoles} 문서 참고. */
+  /**
+   * 멤버 정지·재활성·제거 범위 검사(WD-277). 정지·제거는 대상이 이 워크스페이스에서 가진 역할 전부를 한꺼번에 무력화하고 재활성은 되살리므로
+   * {@code targetRoleIds}(대상의 현재 역할 — 기본 USER 는 호출자가 뺀다)에 부여·회수와 같은 규칙을 적용하고, 거부 문구만 바꾼다. 자기 자신·OWNER·마지막
+   * 활성 ADMIN 잠금은 호출하는 {@code UserService} 가 먼저 판정한다.
+   *
+   * @throws CodedApiException 403 — 대상 역할 중 하나라도 호출자 범위를 벗어날 때
+   */
+  public void assertCanRemoveMember(long callerId, Collection<Long> targetRoleIds) {
+    if (targetRoleIds.isEmpty()) {
+      return; // 역할이 없는 멤버는 빼앗을 권한도 없다
+    }
+    assertWithinScope(callerId, targetRoleIds, MEMBER_REMOVE_ERRORS);
+  }
+
+  /** 부여·회수·삭제·멤버 정지/제거 공통 범위 판정 본체 — 검사 순서와 fail-closed 규칙은 {@link #assertCanChangeRoles} 문서 참고. */
   private void assertWithinScope(
       long callerId, Collection<Long> changedRoleIds, ScopeErrors errors) {
     Clearance caller = clearanceResolver.resolve(callerId);
@@ -115,12 +153,11 @@ public class RoleGrantGuard {
             .collect(Collectors.toMap(RoleLevel::roleId, Function.identity()));
 
     // ADMIN 은 별도 메시지로 먼저 거른다 — 다른 역할과 섞여 있어도 "왜 안 되는지" 가 정확히 보이게. 삭제 경로에서는 시스템 역할이 먼저 거부되므로
-    // 여기에 닿지 않는다(그래서 삭제 전용 문구를 따로 두지 않는다 — 방어선으로만 남는다).
+    // 여기에 닿지 않는다(삭제는 부여·회수 문구를 그대로 쓴다 — 방어선으로만 남는다).
     for (Long roleId : changedRoleIds) {
       RoleLevel role = roles.get(roleId);
       if (role != null && role.systemAdmin()) {
-        throw new CodedApiException(
-            HttpStatus.FORBIDDEN, "SYSTEM_ADMIN_ROLE_ADMIN_ONLY", ADMIN_ROLE_MESSAGE);
+        throw new CodedApiException(HttpStatus.FORBIDDEN, errors.adminCode(), errors.adminMessage());
       }
     }
 

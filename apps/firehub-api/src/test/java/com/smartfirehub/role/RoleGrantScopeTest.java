@@ -618,6 +618,106 @@ class RoleGrantScopeTest extends IntegrationTestBase {
     assertThat(roleExists(userRole)).isTrue();
   }
 
+  // ── WD-277: 멤버 정지·제거도 "그 멤버의 역할 전부 회수" 라 같은 범위를 받는다 ─────────────────
+
+  private static final String MEMBER_ADMIN_MESSAGE = "시스템 ADMIN 역할을 가진 멤버는 ADMIN 만 정지·재활성하거나 제거할 수 있습니다";
+  private static final String MEMBER_SCOPE_MESSAGE = "자신에게 없는 권한·등급의 역할을 가진 멤버는 정지·재활성하거나 제거할 수 없습니다";
+
+  /** 결함 재현: user:write 위임자가 ADMIN 멤버를 정지하면 403, 멤버십은 ACTIVE 그대로. */
+  @Test
+  void delegate_cannotSuspendAdminMember() throws Exception {
+    putActive(delegate, admin2, false)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.message").value(MEMBER_ADMIN_MESSAGE));
+
+    assertThat(membershipStatus(admin2)).isEqualTo("ACTIVE");
+  }
+
+  /** 결함 재현: user:write 위임자가 ADMIN 멤버를 제거하면 403, 멤버십·ADMIN 역할 그대로. */
+  @Test
+  void delegate_cannotRemoveAdminMember() throws Exception {
+    removeMembership(delegate, admin2)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.message").value(MEMBER_ADMIN_MESSAGE));
+
+    assertThat(membershipStatus(admin2)).isEqualTo("ACTIVE");
+    assertThat(roleIdsOf(admin2)).contains(adminRole);
+  }
+
+  /** 위임자에게 없는 권한의 역할을 가진 멤버도 정지·제거할 수 없다(ADMIN 이 아니어도). */
+  @Test
+  void delegate_cannotSuspendOrRemoveMemberWithRoleBeyondScope() throws Exception {
+    replaceRoles(target, lackingPermRole);
+
+    putActive(delegate, target, false)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.message").value(MEMBER_SCOPE_MESSAGE));
+    removeMembership(delegate, target)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.message").value(MEMBER_SCOPE_MESSAGE));
+
+    assertThat(membershipStatus(target)).isEqualTo("ACTIVE");
+  }
+
+  /** 위임자보다 열람 등급이 높은 역할을 가진 멤버도 정지할 수 없다(권한은 범위 안이어도). */
+  @Test
+  void delegate_cannotSuspendMemberWithHigherClearanceRole() throws Exception {
+    replaceRoles(target, highClearanceRole);
+
+    putActive(delegate, target, false)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.message").value(MEMBER_SCOPE_MESSAGE));
+
+    assertThat(membershipStatus(target)).isEqualTo("ACTIVE");
+  }
+
+  /** 범위 안 역할만 가진 멤버는 위임자가 정지·재활성·제거할 수 있다 — 위임 자체는 그대로 동작. */
+  @Test
+  void delegate_canSuspendReactivateAndRemoveMemberWithinScope() throws Exception {
+    replaceRoles(target, inScopeRole);
+
+    putActive(delegate, target, false).andExpect(status().isNoContent());
+    assertThat(membershipStatus(target)).isEqualTo("SUSPENDED");
+    putActive(delegate, target, true).andExpect(status().isNoContent());
+    assertThat(membershipStatus(target)).isEqualTo("ACTIVE");
+    removeMembership(delegate, target).andExpect(status().isNoContent());
+    assertThat(membershipStatus(target)).isNull();
+  }
+
+  /**
+   * 기본 USER 역할은 범위 검사에서 뺀다 — 모든 멤버가 갖는 기본값이라, 검사하면 USER 권한을 일부 갖지 않은 위임자는 평범한 멤버도 정지·제거할 수 없다
+   * (멤버 추가가 USER 를 빼는 것과 같은 이유).
+   */
+  @Test
+  void delegate_canSuspendAndRemoveMemberWithDefaultUserRole() throws Exception {
+    grant(target, inScopeRole); // target = USER(기본) + 범위 안 역할 — 위임자(DELEGATE 만)에게는 USER 의 권한이 없다
+
+    putActive(delegate, target, false).andExpect(status().isNoContent());
+    assertThat(membershipStatus(target)).isEqualTo("SUSPENDED");
+    removeMembership(delegate, target).andExpect(status().isNoContent());
+    assertThat(membershipStatus(target)).isNull();
+  }
+
+  /** 재활성도 대상의 역할을 되살리는 일이라 같은 범위를 받는다 — ADMIN 이 정지한 ADMIN 을 위임자가 되살릴 수 없다. */
+  @Test
+  void delegate_cannotReactivateSuspendedAdmin() throws Exception {
+    putActive(admin1, admin2, false).andExpect(status().isNoContent());
+
+    putActive(delegate, admin2, true)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.message").value(MEMBER_ADMIN_MESSAGE));
+
+    assertThat(membershipStatus(admin2)).isEqualTo("SUSPENDED");
+  }
+
+  /** 시스템 ADMIN 은 제한하지 않는다 — 다른 ADMIN 정지(마지막 ADMIN 이 아니므로)는 기존처럼 204. */
+  @Test
+  void admin_canStillSuspendAnotherAdmin() throws Exception {
+    putActive(admin1, admin2, false).andExpect(status().isNoContent());
+
+    assertThat(membershipStatus(admin2)).isEqualTo("SUSPENDED");
+  }
+
   // ── 요청 헬퍼 ─────────────────────────────────────────────────────────────────
 
   private String token(long userId) {
@@ -648,6 +748,19 @@ class RoleGrantScopeTest extends IntegrationTestBase {
                         "TempPass1x",
                         "roleIds",
                         Arrays.asList(roleIds)))));
+  }
+
+  private ResultActions putActive(long caller, long userId, boolean active) throws Exception {
+    return mockMvc.perform(
+        put("/api/v1/users/" + userId + "/active")
+            .header("Authorization", token(caller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(Map.of("active", active))));
+  }
+
+  private ResultActions removeMembership(long caller, long userId) throws Exception {
+    return mockMvc.perform(
+        delete("/api/v1/users/" + userId + "/membership").header("Authorization", token(caller)));
   }
 
   private ResultActions putPermissions(long caller, long roleId, String... codes) throws Exception {
@@ -825,6 +938,19 @@ class RoleGrantScopeTest extends IntegrationTestBase {
                 "insert into dataset_access_grant (dataset_id, user_id) values (?, ?)",
                 datasetId,
                 userId));
+  }
+
+  /** 테넌트 A 에서의 멤버십 상태(ACTIVE·SUSPENDED), 멤버십이 없으면 null. */
+  private String membershipStatus(long userId) {
+    return inTenantFixture(
+        tenantA,
+        () ->
+            dsl.fetchOptionalValue(
+                    "select status from membership where user_id = ? and tenant_id = ?",
+                    userId,
+                    tenantA)
+                .map(Object::toString)
+                .orElse(null));
   }
 
   private List<Long> roleIdsOf(long userId) {
