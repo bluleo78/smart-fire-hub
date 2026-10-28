@@ -172,3 +172,27 @@ playwright-cli -s=wl close
 - **Gradle 자원 누수**: 단언 실패가 0인데 전체 스위트 실패 목록이 매번 바뀌면 워커 JVM 커넥션 고갈이다 — `./gradlew --stop` 후 재실행.
 - **`.superpowers/` 는 추적, `docs/superpowers/` 는 ignore** — 커밋은 경로를 지정해 스테이징한다(`git add -A` 금지).
 - **pre-commit 훅**이 무관한 플레이크로 막히면 원인(실패 spec·로그)을 확인해 보고한다. 무관함이 명백할 때만 근거와 함께 `--no-verify`.
+
+## 7. 대기열 라벨
+
+다른 AI 에게 일을 넘길 때 아래 역할이면 특정 AI 를 담당으로 넣지 않고 그 라벨을 붙인다(`SKILL.md` 「이슈 만들기·담당 바꾸기」). 그 라벨로 도는 AI(`--queue "<라벨>"`) 중 할 일이 없는 AI 가 하나 가져간다. 표에 없는 역할은 설명을 보고 AI 를 고른다.
+
+| 역할 | 라벨 |
+|---|---|
+| 개발 일(구현·결함 수정) | `AI 개발팀` |
+
+## 8. PR (`process-issue.md` 9번·「PR 리뷰·머지」)
+
+- 원격은 **origin**(`https://github.com/bluleo78/smart-fire-hub.git`), PR 대상 브랜치는 `main`, 도구는 `gh`. gitlab 등 다른 원격에는 push 하지 않는다 — 사람이 origin main 을 받아 맞춘다.
+- 브랜치: `<커밋 타입>/<소문자 이슈 키>`(예: `fix/wd-272`, `feat/wd-300`).
+- PR 제목 `<이슈 키> <이슈 제목>`, 본문 첫 줄 `개발: <개발한 AI username>`. 머지 커밋 제목은 `merge: <이슈 키> <이슈 제목>`(`gh pr merge --merge` — 지금 main 이력 모양을 지킨다).
+- 브랜치 push 는 pre-push 훅(`.husky/pre-push`)을 거친다. 검토자는 origin/main 과 **충돌하는** 브랜치만 개발자에게 rebase 를 요청하고(검토자는 push 하지 않는다), 충돌 없이 main 이 앞서 있기만 한 브랜치는 그대로 머지한다.
+- 이 저장소에는 GitHub Actions CI 가 없다 — 검토자는 PR 본문의 테스트 결과(pre-push 게이트 통과·라이브 검증)를 확인하고 머지한다.
+- 머지는 **`--admin` 없이** `gh pr merge --merge …` 로만 한다(AI 들이 계정을 함께 쓰므로 보호 우회 금지).
+- 마이그레이션(`apps/firehub-api/src/main/resources/db/migration/`)이 든 PR 은 버전 번호(`V<n>__`)가 origin/main 의 마지막보다 큰지 확인한다 — 겹치면 개발자에게 번호를 올리고 `./gradlew generateJooq` 결과를 함께 커밋하라고 돌려보낸다(6절 jOOQ).
+
+## 9. 검토자
+
+개발한 PR 을 리뷰·머지하는 AI 팀장(`SKILL.md` 「검토자」). 비어 있으면 PR 을 사람이 리뷰·머지한다.
+
+- username: `teamleader@iacloud.kr`(AI 팀장)
