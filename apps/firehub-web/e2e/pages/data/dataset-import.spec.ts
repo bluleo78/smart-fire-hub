@@ -65,8 +65,12 @@ function createImportRecord() {
 
 /**
  * 데이터셋 상세 페이지 공통 API 모킹 + 임포트 관련 API 추가 모킹
+ * @param completedMetadata 진행 SSE 의 COMPLETED 이벤트 metadata — 결과 요약(전체/성공/오류/빈 행) 표시를 바꿔 볼 때 넘긴다
  */
-async function setupImportMocks(page: import('@playwright/test').Page) {
+async function setupImportMocks(
+  page: import('@playwright/test').Page,
+  completedMetadata: Record<string, number> = { totalRows: 2, processedRows: 2, successRows: 2, errorRows: 0 },
+) {
   // 데이터셋 상세 기본 모킹 (detail, data, stats, queries)
   await setupDatasetDetailMocks(page, DATASET_ID);
   // 임포트 이력 목록
@@ -80,7 +84,7 @@ async function setupImportMocks(page: import('@playwright/test').Page) {
         jobType: 'IMPORT',
         stage: 'COMPLETED',
         progress: 100,
-        metadata: { totalRows: 2, processedRows: 2, successRows: 2, errorRows: 0 },
+        metadata: completedMetadata,
         message: '임포트 완료',
         errorMessage: null,
       });
@@ -234,6 +238,41 @@ test.describe('데이터셋 임포트 다이얼로그', () => {
     // 3단계: 진행 화면 — SSE가 COMPLETED를 즉시 반환하므로 '임포트 완료' 메시지가 표시된다
     await expect(page.getByRole('dialog').getByText('임포트 완료')).toBeVisible({ timeout: 10_000 });
   });
+
+  // WD-255: 서버가 건너뛴 빈 행 수(skippedRows)를 결과에 보내면 완료 요약에 「빈 행 건너뜀」 줄이 나오고, 0 이면 나오지 않는다
+  for (const { skippedRows, shown } of [
+    { skippedRows: 3, shown: true },
+    { skippedRows: 0, shown: false },
+  ]) {
+    test(`임포트 완료 요약 — 건너뛴 빈 행 ${skippedRows}개${shown ? '를 보여 준다' : '면 줄을 숨긴다'}`, async ({
+      authenticatedPage: page,
+    }) => {
+      await setupImportMocks(page, { totalRows: 2, processedRows: 2, successRows: 2, errorRows: 0, skippedRows });
+      await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createPreviewResponse());
+      await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports`, createImportStartResponse());
+
+      await page.goto(`/data/datasets/${DATASET_ID}`);
+      await page.getByRole('tab', { name: '데이터' }).click();
+      await page.getByRole('button', { name: '임포트' }).first().click();
+      await Promise.all([
+        page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+        page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+      ]);
+      const importBtn = page.getByRole('dialog').getByRole('button', { name: '임포트' });
+      await expect(importBtn).toBeEnabled({ timeout: 10_000 });
+      await importBtn.click();
+
+      const dialog = page.getByRole('dialog');
+      await expect(dialog.getByText('임포트 완료')).toBeVisible({ timeout: 10_000 });
+      // 전체·성공은 데이터 행 기준 그대로
+      await expect(dialog.getByText('전체: 2행')).toBeVisible();
+      if (shown) {
+        await expect(dialog.getByText('빈 행 건너뜀: 3행')).toBeVisible();
+      } else {
+        await expect(dialog.getByText(/빈 행 건너뜀/)).toHaveCount(0);
+      }
+    });
+  }
 
   test('검증 버튼 클릭 시 validate API가 호출되고 검증 결과가 표시된다', async ({ authenticatedPage: page }) => {
     await setupImportMocks(page);

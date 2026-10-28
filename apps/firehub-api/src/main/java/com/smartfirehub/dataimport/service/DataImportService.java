@@ -608,10 +608,13 @@ public class DataImportService {
           };
 
       // Pass 1: 전량 검증. 첫 오류가 나오는 배치에서 ValidationAbortException으로 중단한다.
+      // 파서가 건너뛴 빈 행 수(WD-255)는 전량을 읽은 Pass1 값을 결과에 쓴다 — Pass2 도 같은 행을 건너뛴다.
       boolean validationPassed;
+      int skippedRowsFinal = 0;
       try {
-        fileParserService.parseStreaming(
-            path, fileTypeLower, parseOptionsFinal, BATCH_SIZE, validateBatch);
+        skippedRowsFinal =
+            fileParserService.parseStreaming(
+                path, fileTypeLower, parseOptionsFinal, BATCH_SIZE, validateBatch);
         validationPassed = errorCount[0] == 0;
       } catch (ValidationAbortException abort) {
         validationPassed = false;
@@ -901,6 +904,7 @@ public class DataImportService {
       metadata.put("totalRows", totalRowsFinal);
       metadata.put("successRows", validCountFinal);
       metadata.put("errorRows", errorCountFinal);
+      metadata.put("skippedRows", skippedRowsFinal); // WD-255: 건너뛴 빈 행 수
       if (errorJson != null) {
         metadata.put("errorDetails", errorJson);
       }
@@ -910,7 +914,8 @@ public class DataImportService {
           Map.of(
               "totalRows", totalRowsFinal,
               "successRows", validCountFinal,
-              "errorRows", errorCountFinal));
+              "errorRows", errorCountFinal,
+              "skippedRows", skippedRowsFinal));
 
       notificationService.notifyImportCompleted(
           userId, datasetId, datasetNameForNotification, true);
