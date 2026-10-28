@@ -32,6 +32,8 @@ import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Table;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -46,6 +48,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>인자 없는 형태에도 @Transactional 을 둔다 — 자기 호출은 프록시를 우회하므로 위임받는 쪽 어노테이션만으로는 트랜잭션(=RLS GUC)이 열리지 않는다.
  * 시스템 상태({@code getSystemHealth})만은 어노테이션 대신 readOnly 템플릿으로 구간을 직접 연다(WD-80) — Tibero 테넌트의 빈 테이블
  * 판정을 PG 트랜잭션 밖으로 빼야 해서다. 템플릿은 자기 호출에서도 그대로 동작한다.
+ *
+ * <p>파이프라인 가시성(WD-272) — 요청 경로는 조회자에게 파이프라인 조회 권한({@code pipeline:read})이 없으면 파이프라인 이름·실행 이력·개수를 싣지
+ * 않는다(개수 0, 목록 비움). 파이프라인 목록·실행 이력 API 가 403 인 사람에게 홈이 같은 정보를 보여 주지 않게 하려는 것이다. 비요청 경로 ({@link
+ * Clearance} 형태)는 요청 권한 목록이 없어 예전처럼 파이프라인을 싣는다.
  */
 @Service
 @RequiredArgsConstructor
@@ -136,6 +142,9 @@ public class DashboardService {
   private static final Field<LocalDateTime> PE_COMPLETED_AT =
       field(name("pipeline_execution", "completed_at"), LocalDateTime.class);
 
+  /** 홈에서 파이프라인 이름·실행 이력·개수를 볼 수 있는 권한(WD-272) — 파이프라인 목록·실행 이력 API 와 같은 코드다. */
+  private static final String PIPELINE_READ = "pipeline:read";
+
   // 홈 대시보드 스파크라인에 표시할 추이 일수 (#669 — 하드코딩 배열 대체)
   private static final int TREND_DAYS = 7;
 
@@ -153,13 +162,35 @@ public class DashboardService {
     return trend;
   }
 
+  /** 추이 집계 시작 시각 — 오늘 포함 최근 TREND_DAYS일의 첫날 0시. 파이프라인·데이터셋 추이가 같은 구간을 쓰게 한 곳에서 계산한다. */
+  private static LocalDateTime trendStart() {
+    return LocalDate.now().minusDays(TREND_DAYS - 1).atStartOfDay();
+  }
+
+  /**
+   * 요청 사용자가 파이프라인 조회 권한을 가졌는지(WD-272). 인증 주체의 권한 목록은 {@code PermissionInterceptor} 가
+   * {@code @RequirePermission} 을 검사할 때 보는 것과 같은 출처다 — 이 워크스페이스의 역할 권한이다.
+   */
+  private static boolean currentUserCanReadPipelines() {
+    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+    return auth != null
+        && auth.getAuthorities().stream().anyMatch(a -> PIPELINE_READ.equals(a.getAuthority()));
+  }
+
   @Transactional(readOnly = true)
   public DashboardStatsResponse getStats() {
-    return getStats(clearanceResolver.current());
+    return getStats(clearanceResolver.current(), currentUserCanReadPipelines());
   }
 
   @Transactional(readOnly = true)
   public DashboardStatsResponse getStats(Clearance viewer) {
+    return getStats(viewer, true);
+  }
+
+  /**
+   * @param includePipelines false 면 파이프라인 개수를 0, 최근 실행을 빈 목록으로 둔다 — 파이프라인 조회 권한이 없는 조회자(WD-272)
+   */
+  private DashboardStatsResponse getStats(Clearance viewer, boolean includePipelines) {
     // 조회자가 볼 수 있는 데이터셋만 센다·싣는다(보안 등급) — 숨김 데이터셋 개수·이름이 홈에서 새지 않게.
     Condition visible = datasetAccessGuard.visibleCondition(viewer);
 
@@ -182,12 +213,14 @@ public class DashboardService {
             .and(visible)
             .fetchOne(0, Long.class);
 
-    // Count total pipelines
-    long totalPipelines = dsl.selectCount().from(PIPELINE).fetchOne(0, Long.class);
+    // 파이프라인 개수 — 조회 권한이 없으면 세지 않는다(WD-272)
+    long totalPipelines =
+        includePipelines ? dsl.selectCount().from(PIPELINE).fetchOne(0, Long.class) : 0L;
 
-    // Count active pipelines
     long activePipelines =
-        dsl.selectCount().from(PIPELINE).where(P_IS_ACTIVE.eq(true)).fetchOne(0, Long.class);
+        includePipelines
+            ? dsl.selectCount().from(PIPELINE).where(P_IS_ACTIVE.eq(true)).fetchOne(0, Long.class)
+            : 0L;
 
     // Get recent imports from audit_log (top 5)
     Field<String> metadataFileName = field("audit_log.metadata->>'fileName'", String.class);
@@ -218,18 +251,21 @@ public class DashboardService {
                       r.get(AL_ACTION_TIME));
                 });
 
-    // Get recent executions (top 5)
-    List<RecentExecutionResponse> recentExecutions =
-        dsl.select(PE_ID, P_NAME, PE_STATUS, PE_CREATED_AT)
-            .from(PIPELINE_EXECUTION)
-            .join(PIPELINE)
-            .on(PE_PIPELINE_ID.eq(P_ID))
-            .orderBy(PE_CREATED_AT.desc())
-            .limit(5)
-            .fetch(
-                r ->
-                    new RecentExecutionResponse(
-                        r.get(PE_ID), r.get(P_NAME), r.get(PE_STATUS), r.get(PE_CREATED_AT)));
+    // 최근 실행(상위 5개) — 파이프라인 이름이 실리므로 조회 권한이 없으면 비운다(WD-272)
+    List<RecentExecutionResponse> recentExecutions = List.of();
+    if (includePipelines) {
+      recentExecutions =
+          dsl.select(PE_ID, P_NAME, PE_STATUS, PE_CREATED_AT)
+              .from(PIPELINE_EXECUTION)
+              .join(PIPELINE)
+              .on(PE_PIPELINE_ID.eq(P_ID))
+              .orderBy(PE_CREATED_AT.desc())
+              .limit(5)
+              .fetch(
+                  r ->
+                      new RecentExecutionResponse(
+                          r.get(PE_ID), r.get(P_NAME), r.get(PE_STATUS), r.get(PE_CREATED_AT)));
+    }
 
     return new DashboardStatsResponse(
         totalDatasets,
@@ -249,12 +285,14 @@ public class DashboardService {
    * 갇히므로, 자격 해석만 짧은 readOnly 트랜잭션에서 하고 나머지 구간은 {@link #getSystemHealth(Clearance)} 가 나눈다.
    */
   public SystemHealthResponse getSystemHealth() {
+    // 권한은 요청 스레드의 인증 주체에서 읽는다 — 구간을 나누기 전에 한 번만(WD-272)
+    boolean includePipelines = currentUserCanReadPipelines();
     return StoreTransactions.loadThenExecute(
         pipelineDataSchema,
         readOnlyTx,
         readOnlyTx,
         clearanceResolver::current,
-        this::getSystemHealth);
+        viewer -> getSystemHealth(viewer, includePipelines));
   }
 
   /**
@@ -264,11 +302,18 @@ public class DashboardService {
    * 저장소로 하며, PG 는 같은 트랜잭션 안에서, Tibero 는 네트워크 너머 질의라 PG 커넥션을 쥐지 않도록 트랜잭션 밖에서 한다.
    */
   public SystemHealthResponse getSystemHealth(Clearance viewer) {
+    return getSystemHealth(viewer, true);
+  }
+
+  /**
+   * @param includePipelines false 면 파이프라인 건강도를 모두 0 으로 둔다 — 파이프라인 조회 권한이 없는 조회자(WD-272)
+   */
+  private SystemHealthResponse getSystemHealth(Clearance viewer, boolean includePipelines) {
     return StoreTransactions.loadThenExecute(
         pipelineDataSchema,
         readOnlyTx,
         readOnlyTx,
-        () -> readHealth(viewer),
+        () -> readHealth(viewer, includePipelines),
         read -> read.withEmpty(countEmptyDatasets(read.tableNames())));
   }
 
@@ -298,8 +343,17 @@ public class DashboardService {
   }
 
   /** RLS 대상 테이블을 읽어 시스템 상태 조각을 모은다. readOnly 트랜잭션 안에서 불러야 한다. */
-  private HealthRead readHealth(Clearance viewer) {
-    // ---- Pipeline health ----
+  private HealthRead readHealth(Clearance viewer, boolean includePipelines) {
+    // ---- Pipeline health ---- 조회 권한이 없으면 세지 않고 0 으로 둔다(WD-272)
+    PipelineHealth pipelineHealth =
+        includePipelines
+            ? readPipelineHealth()
+            : new PipelineHealth(0, 0, 0, 0, 0, fillTrendDays(Map.of()));
+    return readDatasetHealth(viewer, pipelineHealth);
+  }
+
+  /** 파이프라인 건강도(개수·최근 실행 상태·7일 추이)를 읽는다. readOnly 트랜잭션 안에서 불러야 한다. */
+  private PipelineHealth readPipelineHealth() {
     // Count all pipelines
     int totalPipelines = dsl.selectCount().from(PIPELINE).fetchOne(0, int.class);
 
@@ -343,7 +397,7 @@ public class DashboardService {
     if (healthyPipelines < 0) healthyPipelines = 0;
 
     // ---- Pipeline trend (최근 7일 일자별 실행 건수, #669) ----
-    LocalDateTime trendFrom = LocalDate.now().minusDays(TREND_DAYS - 1).atStartOfDay();
+    LocalDateTime trendFrom = trendStart();
     Field<LocalDate> execDay = field("CAST({0} AS date)", LocalDate.class, PE_CREATED_AT);
     Map<LocalDate, Integer> pipelineCountsByDay =
         dsl.select(execDay, count())
@@ -353,15 +407,17 @@ public class DashboardService {
             .fetchMap(r -> r.get(execDay), r -> r.get(1, Integer.class));
     List<Integer> pipelineTrend = fillTrendDays(pipelineCountsByDay);
 
-    PipelineHealth pipelineHealth =
-        new PipelineHealth(
-            totalPipelines,
-            healthyPipelines,
-            failingPipelines,
-            runningPipelines,
-            disabledPipelines,
-            pipelineTrend);
+    return new PipelineHealth(
+        totalPipelines,
+        healthyPipelines,
+        failingPipelines,
+        runningPipelines,
+        disabledPipelines,
+        pipelineTrend);
+  }
 
+  /** 데이터셋 건강도를 읽어 파이프라인 건강도와 함께 조각으로 묶는다. readOnly 트랜잭션 안에서 불러야 한다. */
+  private HealthRead readDatasetHealth(Clearance viewer, PipelineHealth pipelineHealth) {
     // ---- Dataset health ----
     // 데이터셋 건강도 개수는 조회자가 볼 수 있는 데이터셋만 집계한다(보안 등급 — 숨김 데이터셋 존재가 개수로 드러나지 않게).
     Condition visible = datasetAccessGuard.visibleCondition(viewer);
@@ -472,6 +528,7 @@ public class DashboardService {
             .fetch(D_TABLE_NAME);
 
     // ---- Dataset trend (최근 7일 일자별 임포트 이력 건수, #669) ----
+    LocalDateTime trendFrom = trendStart();
     Field<LocalDate> auditDay = field("CAST({0} AS date)", LocalDate.class, AL_ACTION_TIME);
     // 숨김 데이터셋의 이력은 추이에서 뺀다(볼 수 있는 것만 집계). 데이터셋 행이 없는 이력(삭제된 데이터셋)은 기존처럼 센다 —
     // 삭제된 데이터셋은 이름·존재를 드러낼 대상이 없다.
@@ -492,11 +549,19 @@ public class DashboardService {
 
   @Transactional(readOnly = true)
   public List<AttentionItemResponse> getAttentionItems() {
-    return getAttentionItems(clearanceResolver.current());
+    return getAttentionItems(clearanceResolver.current(), currentUserCanReadPipelines());
   }
 
   @Transactional(readOnly = true)
   public List<AttentionItemResponse> getAttentionItems(Clearance viewer) {
+    return getAttentionItems(viewer, true);
+  }
+
+  /**
+   * @param includePipelines false 면 파이프라인 실패 항목을 싣지 않는다 — 파이프라인 조회 권한이 없는 조회자(WD-272)
+   */
+  private List<AttentionItemResponse> getAttentionItems(
+      Clearance viewer, boolean includePipelines) {
     List<AttentionItemResponse> items = new ArrayList<>();
     // 임포트 실패 항목은 조회자가 볼 수 있는 데이터셋만(보안 등급 — 항목 제목에 데이터셋 이름이 실린다).
     Condition visible = datasetAccessGuard.visibleCondition(viewer);
@@ -506,40 +571,46 @@ public class DashboardService {
 
     // 1. Failed pipelines: active pipelines whose latest execution is FAILED
     // Get latest execution per pipeline
-    var failedPipelines =
-        dsl.select(
-                P_ID,
-                P_NAME,
-                field("last_exec.last_status", String.class),
-                field("last_exec.last_failed_at", LocalDateTime.class),
-                field("last_exec.last_success_at", LocalDateTime.class))
-            .from(PIPELINE)
-            .join(
-                dsl.select(
-                        PE_PIPELINE_ID.as("pid"),
-                        field(
-                                "MAX(CASE WHEN pipeline_execution.status = 'FAILED'"
-                                    + " THEN pipeline_execution.created_at END)",
-                                LocalDateTime.class)
-                            .as("last_failed_at"),
-                        field(
-                                "MAX(CASE WHEN pipeline_execution.status = 'COMPLETED'"
-                                    + " THEN pipeline_execution.created_at END)",
-                                LocalDateTime.class)
-                            .as("last_success_at"),
-                        field(
-                                "( SELECT pe3.status FROM pipeline_execution pe3"
-                                    + " WHERE pe3.pipeline_id = pipeline_execution.pipeline_id"
-                                    + " ORDER BY pe3.id DESC LIMIT 1 )",
-                                String.class)
-                            .as("last_status"))
-                    .from(PIPELINE_EXECUTION)
-                    .groupBy(PE_PIPELINE_ID)
-                    .asTable("last_exec"))
-            .on(P_ID.eq(field("last_exec.pid", Long.class)))
-            .where(
-                P_IS_ACTIVE.eq(true).and(field("last_exec.last_status", String.class).eq("FAILED")))
-            .fetch();
+    // 조회 권한이 없으면 파이프라인 이름이 실린 항목을 싣지 않는다 — 질의도 하지 않는다(WD-272)
+    List<? extends Record> failedPipelines = List.of();
+    if (includePipelines) {
+      failedPipelines =
+          dsl.select(
+                  P_ID,
+                  P_NAME,
+                  field("last_exec.last_status", String.class),
+                  field("last_exec.last_failed_at", LocalDateTime.class),
+                  field("last_exec.last_success_at", LocalDateTime.class))
+              .from(PIPELINE)
+              .join(
+                  dsl.select(
+                          PE_PIPELINE_ID.as("pid"),
+                          field(
+                                  "MAX(CASE WHEN pipeline_execution.status = 'FAILED'"
+                                      + " THEN pipeline_execution.created_at END)",
+                                  LocalDateTime.class)
+                              .as("last_failed_at"),
+                          field(
+                                  "MAX(CASE WHEN pipeline_execution.status = 'COMPLETED'"
+                                      + " THEN pipeline_execution.created_at END)",
+                                  LocalDateTime.class)
+                              .as("last_success_at"),
+                          field(
+                                  "( SELECT pe3.status FROM pipeline_execution pe3"
+                                      + " WHERE pe3.pipeline_id = pipeline_execution.pipeline_id"
+                                      + " ORDER BY pe3.id DESC LIMIT 1 )",
+                                  String.class)
+                              .as("last_status"))
+                      .from(PIPELINE_EXECUTION)
+                      .groupBy(PE_PIPELINE_ID)
+                      .asTable("last_exec"))
+              .on(P_ID.eq(field("last_exec.pid", Long.class)))
+              .where(
+                  P_IS_ACTIVE
+                      .eq(true)
+                      .and(field("last_exec.last_status", String.class).eq("FAILED")))
+              .fetch();
+    }
 
     for (Record r : failedPipelines) {
       Long pipelineId = r.get(P_ID);
@@ -612,12 +683,31 @@ public class DashboardService {
   @Transactional(readOnly = true)
   public ActivityFeedResponse getActivityFeed(
       String typeFilter, String severityFilter, int page, int size) {
-    return getActivityFeed(typeFilter, severityFilter, page, size, clearanceResolver.current());
+    return getActivityFeed(
+        typeFilter,
+        severityFilter,
+        page,
+        size,
+        clearanceResolver.current(),
+        currentUserCanReadPipelines());
   }
 
   @Transactional(readOnly = true)
   public ActivityFeedResponse getActivityFeed(
       String typeFilter, String severityFilter, int page, int size, Clearance viewer) {
+    return getActivityFeed(typeFilter, severityFilter, page, size, viewer, true);
+  }
+
+  /**
+   * @param includePipelines false 면 파이프라인 실행 이벤트를 싣지 않는다 — 파이프라인 조회 권한이 없는 조회자(WD-272)
+   */
+  private ActivityFeedResponse getActivityFeed(
+      String typeFilter,
+      String severityFilter,
+      int page,
+      int size,
+      Clearance viewer,
+      boolean includePipelines) {
 
     // Build activity items from two sources:
     // 1. pipeline_execution — pipeline events
@@ -627,21 +717,25 @@ public class DashboardService {
     List<ActivityItem> allItems = new ArrayList<>();
 
     // ---- Pipeline executions ----
-    var executions =
-        dsl.select(
-                PE_ID,
-                PE_PIPELINE_ID,
-                P_NAME,
-                PE_STATUS,
-                PE_CREATED_AT,
-                PE_COMPLETED_AT,
-                PE_STARTED_AT)
-            .from(PIPELINE_EXECUTION)
-            .join(PIPELINE)
-            .on(PE_PIPELINE_ID.eq(P_ID))
-            .orderBy(PE_CREATED_AT.desc())
-            .limit(500) // reasonable cap for feed building
-            .fetch();
+    // 조회 권한이 없으면 파이프라인 이름·실행 결과가 실린 이벤트를 싣지 않는다 — 질의도 하지 않는다(WD-272)
+    List<? extends Record> executions = List.of();
+    if (includePipelines) {
+      executions =
+          dsl.select(
+                  PE_ID,
+                  PE_PIPELINE_ID,
+                  P_NAME,
+                  PE_STATUS,
+                  PE_CREATED_AT,
+                  PE_COMPLETED_AT,
+                  PE_STARTED_AT)
+              .from(PIPELINE_EXECUTION)
+              .join(PIPELINE)
+              .on(PE_PIPELINE_ID.eq(P_ID))
+              .orderBy(PE_CREATED_AT.desc())
+              .limit(500) // reasonable cap for feed building
+              .fetch();
+    }
 
     // To determine if a FAILED pipeline has since been resolved (later COMPLETED execution exists)
     // Build map: pipeline_id -> last execution status

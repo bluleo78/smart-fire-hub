@@ -164,7 +164,8 @@ test.describe('홈 퀵 액션 — 데이터셋 생성 바로가기 (WD-144)', ()
     await grantDatasetPermissions(page, READ_ONLY);
     await gotoWithPermissions(page, '/');
     // 같은 퀵 액션 묶음의 다른 버튼이 그려진 뒤 판정 — 묶음이 안 그려져서 없는 것과 구분한다
-    await expect(page.getByRole('button', { name: /파이프라인 목록/ })).toBeVisible();
+    // (「파이프라인 목록」은 pipeline:read 가 있어야 보여 기준으로 쓰지 않는다 — WD-272)
+    await expect(page.getByRole('button', { name: /SQL 편집기/ })).toBeVisible();
     await nextFrame(page);
 
     await expect(page.getByRole('button', { name: /새 데이터셋/ })).toHaveCount(0);
@@ -173,7 +174,7 @@ test.describe('홈 퀵 액션 — 데이터셋 생성 바로가기 (WD-144)', ()
   test('dataset:write 가 있으면 같은 준비 후 「새 데이터셋」 퀵 액션이 보인다(대조군)', async ({ authenticatedPage: page }) => {
     await grantDatasetPermissions(page, WRITE_ONLY);
     await gotoWithPermissions(page, '/');
-    await expect(page.getByRole('button', { name: /파이프라인 목록/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /SQL 편집기/ })).toBeVisible();
     await nextFrame(page);
 
     await expect(page.getByRole('button', { name: /새 데이터셋/ })).toHaveCount(1);
