@@ -117,30 +117,34 @@ public class QueryRunner {
   }
 
   /**
-   * 검증 → RO 풀 대여 → 조회 → 롤백. 오류는 {@code success=false} 로 돌려준다.
+   * 검증 → (RO 없으면 한 번 재조회) → RO 풀 대여 → 조회 → 롤백. 오류는 {@code success=false} 로 돌려준다.
    *
    * @param maxRows 1..10000
    * @param deadline 요청 전체 기한(컨트롤러 도착 시점부터). 닫기는 호출자 몫이다.
    */
-  public QueryResponse run(StoreDescriptor d, String query, int maxRows, Deadline deadline) {
+  public QueryResponse run(StoreDescriptor cached, String query, int maxRows, Deadline deadline) {
     if (maxRows < 1 || maxRows > MAX_ROWS_LIMIT) {
       return QueryResponse.failure(BAD_REQUEST, null);
     }
-    String body;
+    DescriptorLookup.Resolved resolved;
     try {
-      body = validatedQuery(query, d.schema());
+      // RO 계정이 캐시에 없으면 한 번 새로 받아 확인한다(WD-264, 근거는 DescriptorLookup).
+      resolved =
+          DescriptorLookup.resolve(
+              descriptors, cached, query, d -> d.ro() != null, NO_RO_ACCOUNT, deadline);
     } catch (TiberoSqlGuard.Rejected e) {
       return QueryResponse.failure(e.getMessage(), null);
     }
-    if (d.ro() == null) {
-      // 캐시된 기술자에 RO 가 없으면 그 뒤 RO 계정이 준비돼도 TTL 동안 계속 거부된다 — 접속 실패 경로처럼 캐시를 지워 다음 요청이 새로 받게 한다.
-      descriptors.invalidate(d.tenantId());
-      return QueryResponse.failure(NO_RO_ACCOUNT, null);
+    if (resolved.failure() != null) {
+      return QueryResponse.failure(resolved.failure(), null);
     }
+    String sql = resolved.body();
+    // 실행 대상(재조회했으면 새 기술자, 아니면 캐시된 기술자).
+    StoreDescriptor target = resolved.descriptor();
 
     long startNanos = System.nanoTime();
     return execution.withLease(
-        d,
+        target,
         deadline,
         LeasedExecution.failures(timeoutMessage(timeoutSeconds), null, QueryResponse::failure),
         c -> {
@@ -150,7 +154,7 @@ public class QueryRunner {
                   timeoutSeconds,
                   st -> {
                     st.setMaxRows(maxRows);
-                    try (ResultSet rs = st.executeQuery(body)) {
+                    try (ResultSet rs = st.executeQuery(sql)) {
                       return SqlRunner.readRows(rs, true);
                     }
                   });

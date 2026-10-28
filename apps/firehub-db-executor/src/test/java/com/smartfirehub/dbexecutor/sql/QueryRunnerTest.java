@@ -1,18 +1,26 @@
 package com.smartfirehub.dbexecutor.sql;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
+import com.smartfirehub.dbexecutor.store.StoreUnavailableException;
 import com.smartfirehub.dbexecutor.web.dto.QueryResponse;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
@@ -161,27 +169,94 @@ class QueryRunnerTest {
     assertThat(res.dbError().message()).doesNotContain("ro-secret");
   }
 
-  @Test
-  void missingRoAccount_doesNotBorrow() {
+  /**
+   * {@link FakeJdbc#DESCRIPTOR} 와 같은 테넌트에서 스키마·RO 계정만 바꾼 기술자. {@code ro == null} 이면 RO 계정을 만들기 전에
+   * 캐시된 옛 기술자를 흉내 낸다(WD-264).
+   */
+  private static StoreDescriptor desc(String schema, StoreDescriptor.Account ro) {
     StoreDescriptor d = FakeJdbc.DESCRIPTOR;
-    StoreDescriptor noRo =
-        new StoreDescriptor(
-            d.tenantId(),
-            d.backend(),
-            d.host(),
-            d.port(),
-            d.database(),
-            d.schema(),
-            d.owner(),
-            null);
+    return new StoreDescriptor(
+        d.tenantId(), d.backend(), d.host(), d.port(), d.database(), schema, d.owner(), ro);
+  }
 
-    QueryResponse res = run(noRo, "SELECT 1 FROM DUAL", 10);
+  private static StoreDescriptor noRo() {
+    return desc(FakeJdbc.DESCRIPTOR.schema(), null);
+  }
+
+  /**
+   * WD-264: RO 계정을 막 만든 직후면 캐시된 기술자(TTL 60초)에 아직 RO 가 없다. 한 번 새로 받은(refresh) 기술자로 정상 실행한다. 강제 갱신이
+   * 무효화를 겸하므로 따로 invalidate 하지 않는다(동시 요청의 재조회가 한 번으로 묶이게).
+   */
+  @Test
+  void missingRo_refreshesOnce_thenSucceeds() throws SQLException {
+    when(descriptors.refresh(eq(5L), any(Duration.class))).thenReturn(FakeJdbc.DESCRIPTOR);
+    db.resultSet = rows(1);
+
+    QueryResponse res = run(noRo(), "SELECT amount FROM t", 10);
+
+    assertThat(res.success()).isTrue();
+    verify(descriptors, times(1)).refresh(eq(5L), any(Duration.class));
+    verify(descriptors, never()).invalidate(anyLong());
+    // 새로 받은 기술자의 RO 계정으로 빌렸다.
+    assertThat(db.factoryCalls.get()).isEqualTo(1);
+  }
+
+  /** WD-264: 새로 받아도 RO 가 없으면 실패하고, 재조회는 요청당 한 번뿐이다. 커넥션은 빌리지 않는다. */
+  @Test
+  void missingRo_stillMissingAfterRefresh_failsWithNoRoAccount() {
+    when(descriptors.refresh(eq(5L), any(Duration.class))).thenReturn(noRo());
+
+    QueryResponse res = run(noRo(), "SELECT 1 FROM DUAL", 10);
 
     assertThat(res.success()).isFalse();
     assertThat(res.error()).isEqualTo("Tibero 읽기 전용 계정이 준비되지 않았습니다.");
     assertThat(db.factoryCalls.get()).isZero();
-    // 캐시된 기술자를 지워, 그 뒤 준비된 RO 계정을 다음 요청이 TTL 을 기다리지 않고 받게 한다(F8).
-    org.mockito.Mockito.verify(descriptors).invalidate(5L);
+    verify(descriptors, times(1)).refresh(eq(5L), any(Duration.class));
+    verify(descriptors, never()).invalidate(anyLong());
+  }
+
+  /** WD-264: 재조회 자체가 실패하면 RO 가 없다고 단정하지 않고 「기술자를 얻지 못함」 문구를 그대로 돌려준다. */
+  @Test
+  void missingRo_refreshFails_returnsStoreUnavailableMessage() {
+    // 상태 문구는 StoreDescriptorClient.TIMED_OUT(패키지 전용)과 같은 값이다.
+    StoreUnavailableException unavailable = new StoreUnavailableException("시간 초과");
+    when(descriptors.refresh(eq(5L), any(Duration.class))).thenThrow(unavailable);
+
+    QueryResponse res = run(noRo(), "SELECT 1 FROM DUAL", 10);
+
+    assertThat(res.success()).isFalse();
+    assertThat(res.error()).isEqualTo(unavailable.getMessage());
+    assertThat(res.error()).isEqualTo("테넌트 저장소 정보를 가져오지 못했습니다(시간 초과).");
+    assertThat(db.factoryCalls.get()).isZero();
+    verify(descriptors, times(1)).refresh(eq(5L), any(Duration.class));
+  }
+
+  /** WD-264: 검증에서 거부될 문장 때문에 기술자를 새로 받지 않는다 — 거부 문구가 먼저, 재조회 0회. */
+  @Test
+  void missingRo_rejectedStatement_doesNotRefresh() {
+    QueryResponse res = run(noRo(), "DELETE FROM T", 10);
+
+    assertThat(res.success()).isFalse();
+    assertThat(res.error()).isEqualTo("Tibero 저장소의 분석 SQL 은 조회(SELECT·WITH)만 실행합니다.");
+    assertThat(db.factoryCalls.get()).isZero();
+    verify(descriptors, never()).refresh(anyLong(), any(Duration.class));
+  }
+
+  /**
+   * WD-264: 새로 받은 기술자의 스키마가 다르면 그 스키마로 다시 검증한다. 캐시 스키마(GENIA_T5)로 한정한 함수 호출은 캐시 기준으로는 통과하지만 새 스키마
+   * (GENIA_T6) 기준으로는 「다른 스키마 함수 호출」 로 거부된다.
+   */
+  @Test
+  void missingRo_refreshedSchemaDiffers_revalidatesAgainstNewSchema() {
+    StoreDescriptor freshOtherSchema = desc("GENIA_T6", FakeJdbc.DESCRIPTOR.ro());
+    when(descriptors.refresh(eq(5L), any(Duration.class))).thenReturn(freshOtherSchema);
+
+    QueryResponse res = run(noRo(), "SELECT GENIA_T5.F(1) FROM DUAL", 10);
+
+    assertThat(res.success()).isFalse();
+    assertThat(res.error()).isEqualTo("테넌트 스키마가 아닌 스키마(GENIA_T5)의 함수 호출은 허용되지 않습니다.");
+    assertThat(db.factoryCalls.get()).isZero();
+    verify(descriptors, times(1)).refresh(eq(5L), any(Duration.class));
   }
 
   /** RO 계정이 있으면(정상 경로) 기술자 캐시를 지우지 않는다. */
@@ -190,6 +265,7 @@ class QueryRunnerTest {
     db.resultSet = rows(1);
     assertThat(run("SELECT 1 FROM DUAL", 10).success()).isTrue();
     org.mockito.Mockito.verify(descriptors, org.mockito.Mockito.never()).invalidate(5L);
+    verify(descriptors, never()).refresh(anyLong(), any(Duration.class));
   }
 
   /**
