@@ -65,16 +65,62 @@ test.describe('로그인 페이지', () => {
     await expect(page).toHaveURL('/');
   });
 
+  test('비활성화된 계정은 고정 문구 대신 계정이 막혔다는 서버 안내를 보여 준다 (WD-278)', async ({ page }) => {
+    // 서버는 비밀번호가 맞을 때만 401 + code ACCOUNT_DEACTIVATED 와 계정 상태 문구를 준다 — 그 문구를 그대로 보여야 한다.
+    let capturedPayload: unknown;
+    await page.route(
+      (url) => url.pathname === '/api/v1/auth/login',
+      (route) => {
+        capturedPayload = route.request().postDataJSON();
+        return route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            status: 401,
+            error: 'Unauthorized',
+            message: '비활성화된 계정입니다. 관리자에게 문의하세요.',
+            code: 'ACCOUNT_DEACTIVATED',
+          }),
+        });
+      },
+    );
+    await mockApi(page, 'POST', '/api/v1/auth/refresh', {}, { status: 401 });
+
+    await page.goto('/login');
+    await page.getByLabel('아이디 (이메일)').fill('deactivated@example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill('CorrectPass123');
+    await page.getByRole('button', { name: '로그인' }).click();
+
+    // 입력값이 그대로 로그인 요청에 실린다
+    await expect.poll(() => capturedPayload).toEqual({ username: 'deactivated@example.com', password: 'CorrectPass123' });
+    // 계정이 막혔다는 안내가 보이고, 비밀번호를 의심하게 만드는 고정 문구는 보이지 않는다
+    await expect(page.getByText('비활성화된 계정입니다. 관리자에게 문의하세요.')).toBeVisible();
+    await expect(page.getByText('이메일 또는 비밀번호가 올바르지 않습니다.')).not.toBeVisible();
+    await expect(page).toHaveURL(/\/login/);
+  });
+
+  test('문구 없는 401 이면 기본 자격증명 오류 문구를 보여 준다', async ({ page }) => {
+    await mockApi(page, 'POST', '/api/v1/auth/login', { status: 401 }, { status: 401 });
+    await mockApi(page, 'POST', '/api/v1/auth/refresh', {}, { status: 401 });
+
+    await page.goto('/login');
+    await page.getByLabel('아이디 (이메일)').fill('wrong@example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill('wrongpassword');
+    await page.getByRole('button', { name: '로그인' }).click();
+
+    await expect(page.getByText('이메일 또는 비밀번호가 올바르지 않습니다.')).toBeVisible();
+  });
+
   test('로그인 실패 시 에러 메시지를 표시한다', async ({ page }) => {
     // authMockedPage 대신 plain page 사용
     // — authMockedPage는 /auth/refresh를 200으로 모킹하므로 인터셉터 우회 여부를 검증할 수 없음
     // 실제 브라우저 동작: /auth/login 401 → 인터셉터가 refresh를 시도하지 않고 catch 블록으로 전달
     // (client.ts에서 /auth/login, /auth/refresh URL은 refresh 시도를 스킵하도록 수정됨 — refs #31)
 
-    // /auth/login → 401 + 영문 메시지 (서버가 실제로 반환하는 형태)
+    // /auth/login → 401 + 서버의 자격증명 오류 문구 (AuthService 가 실제로 반환하는 형태)
     await mockApi(page, 'POST', '/api/v1/auth/login', {
       status: 401,
-      message: 'Invalid username or password',
+      message: '아이디 또는 비밀번호가 올바르지 않습니다.',
     }, { status: 401 });
 
     // /auth/refresh도 401로 모킹 — 인터셉터가 잘못 refresh를 시도해도 강제 리다이렉트가 발생하지 않음을 검증
@@ -89,12 +135,8 @@ test.describe('로그인 페이지', () => {
     // 로그인 버튼 클릭
     await page.getByRole('button', { name: '로그인' }).click();
 
-    // 401 응답 시 서버 영문 메시지 대신 한국어 고정 메시지가 표시되는지 확인
-    await expect(
-      page.getByText('이메일 또는 비밀번호가 올바르지 않습니다.'),
-    ).toBeVisible();
-    // 서버 영문 메시지가 그대로 노출되지 않는지 확인
-    await expect(page.getByText('Invalid username or password')).not.toBeVisible();
+    // 401 의 서버 문구를 그대로 보여 준다(WD-278 — 이유는 서버만 안다)
+    await expect(page.getByText('아이디 또는 비밀번호가 올바르지 않습니다.')).toBeVisible();
 
     // 여전히 로그인 페이지에 머물러 있는지 확인
     await expect(page).toHaveURL(/\/login/);

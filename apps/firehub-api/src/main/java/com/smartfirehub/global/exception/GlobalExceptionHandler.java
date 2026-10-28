@@ -40,7 +40,6 @@ import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.exception.SystemRoleModificationException;
-import com.smartfirehub.user.exception.UserDeactivatedException;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -337,13 +336,6 @@ public class GlobalExceptionHandler {
       SystemRoleModificationException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
     return ResponseEntity.badRequest().body(response);
-  }
-
-  @ExceptionHandler(UserDeactivatedException.class)
-  public ResponseEntity<ErrorResponse> handleUserDeactivated(
-      UserDeactivatedException ex, HttpServletRequest request) {
-    ErrorResponse response = buildError(HttpStatus.UNAUTHORIZED, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
   }
 
   @ExceptionHandler(DatasetNotFoundException.class)

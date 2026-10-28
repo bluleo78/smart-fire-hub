@@ -81,7 +81,7 @@ public class ExceptionStubControllerExtended {
 
   @GetMapping("/user-deactivated")
   public void userDeactivated() {
-    throw new UserDeactivatedException("User is deactivated");
+    throw new UserDeactivatedException();
   }
 
   @GetMapping("/category-not-found")

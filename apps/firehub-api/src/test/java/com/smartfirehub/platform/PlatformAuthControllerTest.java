@@ -4,11 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.auth.service.RefreshTokenHasher;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import com.smartfirehub.user.exception.UserDeactivatedException;
 import jakarta.servlet.http.Cookie;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
@@ -129,6 +131,26 @@ class PlatformAuthControllerTest extends IntegrationTestBase {
 
     assertThat(unknown.getStatus()).isEqualTo(wrongPassword.getStatus());
     assertThat(comparableBody(unknown)).isEqualTo(comparableBody(wrongPassword));
+  }
+
+  /**
+   * 비활성 운영자 계정은 <b>비밀번호가 맞을 때만</b> 계정이 막혔다고 알린다(WD-278) — 401 + code ACCOUNT_DEACTIVATED 와 관리자 문의
+   * 안내. 비밀번호가 틀리면 일반 자격증명 오류와 같아(코드 없음) 비밀번호를 모르는 사람에게는 계정 상태가 드러나지 않는다.
+   */
+  @Test
+  void login_deactivatedOperatorGetsCodeOnlyWithCorrectPassword() throws Exception {
+    String operator = createUser(true);
+    dsl.execute("UPDATE \"user\" SET is_active = false WHERE username = ?", operator);
+
+    MockHttpServletResponse correct = login(operator, PASSWORD);
+    MockHttpServletResponse wrong = login(operator, "wrong-password");
+
+    assertThat(correct.getStatus()).isEqualTo(401);
+    JsonNode body = objectMapper.readTree(correct.getContentAsString());
+    assertThat(body.get("code").asText()).isEqualTo(UserDeactivatedException.CODE);
+    assertThat(body.get("message").asText()).isEqualTo(UserDeactivatedException.MESSAGE);
+    assertThat(wrong.getStatus()).isEqualTo(401);
+    assertThat(objectMapper.readTree(wrong.getContentAsString()).has("code")).isFalse();
   }
 
   /**

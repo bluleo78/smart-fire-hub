@@ -71,7 +71,8 @@ public class PlatformAuthService {
       throw failed(request);
     }
     if (!user.isActive()) {
-      throw new UserDeactivatedException("비활성화된 계정입니다.");
+      // 테넌트 로그인과 같은 문구 — 비밀번호가 맞을 때만 알리고 할 일까지 적는다(WD-278)
+      throw new UserDeactivatedException();
     }
     // 운영자 자격. 여기서 갈리는 것이 이 서비스와 테넌트 로그인의 유일한 차이다.
     if (!platformRoleRepository.hasAnyPlatformRole(user.id())) {
@@ -108,7 +109,7 @@ public class PlatformAuthService {
             .findById(userId)
             .orElseThrow(() -> new InvalidTokenException("토큰에 해당하는 사용자를 찾을 수 없습니다. 다시 로그인해 주세요."));
     if (!user.isActive()) {
-      throw new UserDeactivatedException("비활성화된 계정입니다.");
+      throw new UserDeactivatedException();
     }
     if (!platformRoleRepository.hasAnyPlatformRole(userId)) {
       // 운영자 권한이 회수된 계정. 새 토큰을 주지 않는다.
