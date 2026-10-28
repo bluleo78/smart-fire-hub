@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from starlette.concurrency import run_in_threadpool
 
 from app.config import Settings, get_settings
-from app.db.connection import get_connection
+from app.db.connection import run_with_tenant_connection
 from app.dependencies import verify_internal_auth
 from app.routers.store_gate import backend_of, loader_for, require_output_table
 from app.schemas.requests import ApiCallExecuteRequest
@@ -33,5 +33,7 @@ async def execute_api_call(
         # Tibero: PG 커넥션을 열지 않고 행을 db-executor 로 원격 적재한다(WD-77). 블로킹 호출이라 스레드풀에서 돌린다.
         return await run_in_threadpool(api_call_executor.execute_api_call_remote, request, loader)
     # 적재 대상 테이블은 요청 테넌트의 스키마에 있다 → 그 테넌트 롤로 접속한 커넥션을 넘긴다.
-    with get_connection(request.tenant_id, settings) as conn:
-        return api_call_executor.execute_api_call(request, conn)
+    # HTTP 수집·적재와 커넥션 대기가 블로킹이라 대여부터 반납까지 스레드풀에서 돈다(WD-265, run_with_tenant_connection).
+    return await run_with_tenant_connection(
+        request.tenant_id, settings, lambda conn: api_call_executor.execute_api_call(request, conn)
+    )

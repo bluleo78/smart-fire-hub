@@ -33,18 +33,19 @@ async def execute_python(
             return python_executor.rejected_response(err)
         # 스크립트 실행·원격 적재 모두 블로킹이라 스레드풀에서 돌린다(api_call Tibero 경로와 같다).
         return await run_in_threadpool(
-            lambda: python_executor.execute_python_tibero(
-                request.script,
-                request.timeout,
-                settings,
-                tenant_id=request.tenant_id,
-                script_token=token,
-                loader=loader,
-                output_table=request.output_table,
-                column_type_map=request.column_type_map,
-            )
+            python_executor.execute_python_tibero,
+            request.script,
+            request.timeout,
+            settings,
+            tenant_id=request.tenant_id,
+            script_token=token,
+            loader=loader,
+            output_table=request.output_table,
+            column_type_map=request.column_type_map,
         )
-    return python_executor.execute_python(
+    # 스크립트 실행·적재가 블로킹이라 스레드풀에서 돌린다(WD-265, Tibero 분기와 같다).
+    return await run_in_threadpool(
+        python_executor.execute_python,
         request.script,
         request.timeout,
         settings,

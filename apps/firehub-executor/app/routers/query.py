@@ -4,7 +4,7 @@ from fastapi.responses import Response, StreamingResponse
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from app.config import Settings, get_settings
-from app.db.connection import get_connection
+from app.db.connection import run_with_tenant_connection
 from app.dependencies import verify_internal_auth
 from app.routers.store_gate import QUERY_UNSUPPORTED, unsupported_error
 from app.schemas.requests import QueryExecuteRequest
@@ -47,14 +47,18 @@ async def execute_query_endpoint(
         )
     if err:
         return QueryExecuteResponse(success=False, error=err, db_error=db_error_of(err))
-    with get_connection(request.tenant_id, settings) as conn:
-        return query_executor.execute_query(
+    # 비스트리밍 경로: 커넥션 대기와 쿼리 실행이 블로킹이라 대여부터 반납까지 스레드풀에서 돈다(WD-265, run_with_tenant_connection).
+    return await run_with_tenant_connection(
+        request.tenant_id,
+        settings,
+        lambda conn: query_executor.execute_query(
             request.query,
             request.max_rows,
             request.read_only,
             conn,
             tenant_id=request.tenant_id,
-        )
+        ),
+    )
 
 
 async def _closing_stream(gen):

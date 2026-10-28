@@ -63,7 +63,7 @@ def _post(client, headers, name, body, fail):
         "app.services.load_executor.execute_insert_page", side_effect=_PgError("syntax error") if fail else None
     )
     with patch("app.routers.store_gate.get_store_client", return_value=gate), \
-            patch(f"app.routers.{name}.get_connection", cm), \
+            patch("app.db.connection.get_connection", cm), \
             patch("app.services.load_executor.build_insert_query", return_value="INSERT"), page:
         return client.post(path, json=body, headers=headers)
 
@@ -94,7 +94,7 @@ def test_default_timeout_vectors_apply_to_pg_body(test_client, mock_auth_header,
     gate = MagicMock()
     gate.peek.return_value = SimpleNamespace(backend="POSTGRESQL")
     with patch("app.routers.store_gate.get_store_client", return_value=gate), \
-            patch(f"app.routers.{name}.get_connection", _conn_cm(cur)), \
+            patch("app.db.connection.get_connection", _conn_cm(cur)), \
             patch("app.services.load_executor.build_insert_query", return_value="INSERT"), \
             patch("app.services.load_executor.execute_insert_page"):
         resp = test_client.post(_ENDPOINTS[name]["path"], json=ex["request"], headers=mock_auth_header)
@@ -159,7 +159,7 @@ def test_probe_tibero_refused(test_client, mock_auth_header):
     gate.peek.return_value = SimpleNamespace(backend="TIBERO")
     conn = MagicMock()
     with patch("app.routers.store_gate.get_store_client", return_value=gate), \
-            patch("app.routers.probe.get_connection", conn):
+            patch("app.db.connection.get_connection", conn):
         data = test_client.post(
             "/execute/probe", json={"tenantId": 7, "query": "SELECT 1"}, headers=mock_auth_header
         ).json()
@@ -208,7 +208,7 @@ def test_pre_statement_timeout_vector_message_is_what_python_returns(test_client
         gate = MagicMock()
         gate.peek.return_value = SimpleNamespace(backend="POSTGRESQL")
         with patch("app.routers.store_gate.get_store_client", return_value=gate), \
-                patch("app.routers.sql.get_connection", _conn_cm(cur)):
+                patch("app.db.connection.get_connection", _conn_cm(cur)):
             data = test_client.post(
                 _ENDPOINTS["sql"]["path"], json=ex["request"], headers=mock_auth_header
             ).json()

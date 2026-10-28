@@ -374,7 +374,7 @@ def _conn_cm(conn):
 def test_route_load_pg_success(test_client, mock_auth_header):
     conn, cur = _conn()
     with patch("app.routers.store_gate.get_store_client", return_value=_gate("POSTGRESQL")), \
-            patch("app.routers.load.get_connection", _conn_cm(conn)), \
+            patch("app.db.connection.get_connection", _conn_cm(conn)), \
             _patch_insert() as ins:
         resp = test_client.post(
             "/execute/load",
@@ -396,7 +396,7 @@ def test_route_load_pg_success(test_client, mock_auth_header):
 def test_route_load_tibero_refused_without_opening_connection(test_client, mock_auth_header):
     opener = MagicMock()
     with patch("app.routers.store_gate.get_store_client", return_value=_gate("TIBERO")), \
-            patch("app.routers.load.get_connection", opener):
+            patch("app.db.connection.get_connection", opener):
         data = test_client.post(
             "/execute/load",
             json={"tenantId": 7, "table": "rtmp_ab12", "rows": [{"a": 1}]},
@@ -434,7 +434,7 @@ def test_route_sql_timeout_seconds_must_be_positive(test_client, mock_auth_heade
 def test_route_sql_passes_timeout_seconds_to_executor(test_client, mock_auth_header):
     conn, _ = _conn()
     with patch("app.routers.store_gate.get_store_client", return_value=_gate("POSTGRESQL")), \
-            patch("app.routers.sql.get_connection", _conn_cm(conn)), \
+            patch("app.db.connection.get_connection", _conn_cm(conn)), \
             patch("app.routers.sql.sql_executor.execute_sql") as ex:
         ex.return_value = sql_executor.SqlExecuteResponse(
             success=True, row_count=0, execution_log=""

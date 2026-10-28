@@ -908,7 +908,7 @@ def _post_api_call(test_client, headers, data_path, payload, insert_side_effect=
         "retry": {"max_retries": 0, "initial_backoff_ms": 0, "max_backoff_ms": 0},
     }
     with patch("app.routers.api_call.backend_of", new=AsyncMock(return_value=("POSTGRESQL", None))), patch(
-        "app.routers.api_call.get_connection", conn_cm
+        "app.db.connection.get_connection", conn_cm
     ), patch("app.services.api_call_executor.validate_url"), patch(
         "app.services.api_call_executor.httpx.Client", return_value=_patched_client([_json_response(payload)])
     ), patch("app.services.api_call_executor.insert_batch", side_effect=insert_side_effect) as mock_insert:

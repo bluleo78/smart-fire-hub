@@ -254,7 +254,7 @@ def test_route_streams_ndjson(test_client, mock_auth_header):
     conn = _Conn(named)
     with patch("app.routers.store_gate.get_store_client", return_value=_gate("POSTGRESQL")), \
             patch("app.services.query_executor.psycopg2.connect", return_value=conn), \
-            patch("app.routers.query.get_connection") as pooled:
+            patch("app.db.connection.get_connection") as pooled:
         resp = test_client.post("/execute/query", json=_STREAM_BODY, headers=mock_auth_header)
     assert resp.status_code == 200
     assert resp.headers["content-type"] == _STREAMING["contentType"]
@@ -292,7 +292,7 @@ def test_route_tibero_tenant_single_failure_line(test_client, mock_auth_header):
 def test_route_rejects_partial_or_invalid_slot_requests(test_client, mock_auth_header, body):
     with patch("app.routers.store_gate.get_store_client", return_value=_gate("POSTGRESQL")), \
             patch("app.services.query_executor.psycopg2.connect") as connect, \
-            patch("app.routers.query.get_connection") as pooled:
+            patch("app.db.connection.get_connection") as pooled:
         resp = test_client.post("/execute/query", json=body, headers=mock_auth_header)
     assert resp.status_code == 422
     connect.assert_not_called()

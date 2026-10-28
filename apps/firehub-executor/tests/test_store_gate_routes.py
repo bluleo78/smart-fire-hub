@@ -20,14 +20,14 @@ ROUTES = {
         path="/execute/query",
         body={"tenantId": 7, "query": "SELECT 1", "max_rows": 10, "read_only": True},
         message=store_gate.QUERY_UNSUPPORTED,
-        conn="app.routers.query.get_connection",
+        conn="app.db.connection.get_connection",
         service="app.routers.query.query_executor.execute_query",
     ),
     "sql": dict(
         path="/execute/sql",
         body={"tenantId": 7, "query": "SELECT 1"},
         message=store_gate.SQL_UNSUPPORTED,
-        conn="app.routers.sql.get_connection",
+        conn="app.db.connection.get_connection",
         service="app.routers.sql.sql_executor.execute_sql",
     ),
     "api-call": dict(
@@ -41,7 +41,7 @@ ROUTES = {
         },
         # Tibero 는 이 창구를 거부하지 않는다(원격 적재, WD-77 Task 6) — 조회 실패 거부 메시지만 쓴다.
         message=None,
-        conn="app.routers.api_call.get_connection",
+        conn="app.db.connection.get_connection",
         service="app.routers.api_call.api_call_executor.execute_api_call",
     ),
     "python": dict(
@@ -232,7 +232,7 @@ def test_tibero_api_call_goes_to_remote_load_not_pg(test_client, mock_auth_heade
     ret = ApiCallExecuteResponse(success=True, rows_loaded=5, total_pages=1)
     conn = MagicMock()
     with _gate_backend(kind="TIBERO"), patch(REMOTE_SERVICE, return_value=ret) as remote, \
-            patch(PG_SERVICE) as pg, patch("app.routers.api_call.get_connection", conn):
+            patch(PG_SERVICE) as pg, patch("app.db.connection.get_connection", conn):
         resp = test_client.post(
             "/execute/api-call", json=_api_call_body(output_table=STAGING), headers=mock_auth_header
         )
@@ -252,7 +252,7 @@ def test_tibero_api_call_goes_to_remote_load_not_pg(test_client, mock_auth_heade
 )
 def test_tibero_api_call_rejects_non_staging_output_table(test_client, mock_auth_header, bad):
     with _gate_backend(kind="TIBERO"), patch(REMOTE_SERVICE) as remote, patch(PG_SERVICE) as pg, \
-            patch("app.routers.api_call.get_connection") as conn:
+            patch("app.db.connection.get_connection") as conn:
         resp = test_client.post(
             "/execute/api-call", json=_api_call_body(output_table=bad), headers=mock_auth_header
         )
@@ -272,7 +272,7 @@ def test_postgres_api_call_never_builds_remote_loader_and_keeps_pg_names(test_cl
     conn_cm = MagicMock()
     with _gate_backend(kind="POSTGRESQL"), patch(PG_SERVICE, return_value=ret) as pg, \
             patch(REMOTE_SERVICE) as remote, patch("app.routers.store_gate.RemoteLoader") as loader_cls, \
-            patch("app.routers.api_call.get_connection", conn_cm):
+            patch("app.db.connection.get_connection", conn_cm):
         resp = test_client.post("/execute/api-call", json=_api_call_body(), headers=mock_auth_header)
     assert resp.status_code == 200 and resp.json()["rows_loaded"] == 1
     pg.assert_called_once()

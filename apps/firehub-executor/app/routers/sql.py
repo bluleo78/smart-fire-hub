@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.config import Settings, get_settings
-from app.db.connection import get_connection
+from app.db.connection import run_with_tenant_connection
 from app.dependencies import verify_internal_auth
 from app.routers.store_gate import SQL_UNSUPPORTED, unsupported_error
 from app.schemas.requests import SqlExecuteRequest
@@ -26,9 +26,13 @@ async def execute_sql(
         )
     # 커넥션은 요청의 테넌트 롤로 연다 — 의존성이 아니라 핸들러에서 여는 이유는
     # 요청 본문(tenantId)을 알아야 접속 주체가 정해지기 때문이다(app/dependencies.py 주석 참고).
-    with get_connection(request.tenant_id, settings) as conn:
-        return sql_executor.execute_sql(
+    # 커넥션 대기와 실행이 블로킹이라 대여부터 반납까지 스레드풀에서 돈다(WD-265, run_with_tenant_connection).
+    return await run_with_tenant_connection(
+        request.tenant_id,
+        settings,
+        lambda conn: sql_executor.execute_sql(
             request.query, conn, request.pre_statements, request.timeout_seconds,
             default_timeout_seconds=settings.sql_statement_timeout_seconds,
             pre_statement_timeout_seconds=settings.sql_pre_statement_timeout_seconds,
-        )
+        ),
+    )
