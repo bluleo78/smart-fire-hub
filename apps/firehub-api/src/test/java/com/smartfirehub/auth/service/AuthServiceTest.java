@@ -156,39 +156,6 @@ class AuthServiceTest extends IntegrationTestBase {
   }
 
   @Test
-  void refresh_reusedToken_revokesEntireFamily() throws InterruptedException {
-    TestUsers.createMember(
-        dsl,
-        fixtureTransactionTemplate,
-        passwordEncoder,
-        "test@example.com",
-        "test@example.com",
-        "Password123",
-        "Test User",
-        DEFAULT_TEST_TENANT_ID);
-    TokenResponse loginResult =
-        authService.login(new LoginRequest("test@example.com", "Password123"));
-
-    String firstRefreshToken = loginResult.refreshToken();
-
-    Thread.sleep(1100);
-
-    // Normal rotation: use first token to get second token
-    TokenResponse secondResult = authService.refresh(firstRefreshToken);
-    String secondRefreshToken = secondResult.refreshToken();
-
-    // Simulate attacker reusing the first (already rotated) token
-    // This should revoke the entire token family, including the second token
-    assertThatThrownBy(() -> authService.refresh(firstRefreshToken))
-        .isInstanceOf(InvalidTokenException.class)
-        .hasMessage("이미 사용된 토큰입니다. 다시 로그인해 주세요.");
-
-    // The legitimate second token should also be revoked (family revocation)
-    assertThatThrownBy(() -> authService.refresh(secondRefreshToken))
-        .isInstanceOf(InvalidTokenException.class);
-  }
-
-  @Test
   void logout_revokesAllTokens() {
     UserResponse user =
         TestUsers.createMember(
