@@ -31,6 +31,7 @@ import {
   useSystemHealth,
 } from '../hooks/queries/useDashboard';
 import { useDatasetPermissions, useDatasets } from '../hooks/queries/useDatasets';
+import { usePipelinePermissions } from '../hooks/queries/usePipelines';
 import { useAuth } from '../hooks/useAuth';
 import { getStatusBadgeVariant, getStatusLabel, timeAgo } from '../lib/formatters';
 
@@ -54,9 +55,18 @@ export default function HomePage() {
   const { data: datasetsData, isLoading: isDatasetsLoading } = useDatasets({ page: 0, size: 5 });
   // 데이터셋 생성 바로가기는 생성 권한(dataset:write)이 있을 때만 보인다 — 없으면 생성 화면이 권한 안내만 보이므로(WD-144)
   const { canWriteDataset } = useDatasetPermissions();
+  // 파이프라인 요약·바로가기·필터는 조회 권한(pipeline:read)이 있을 때만 보인다 — 없으면 파이프라인 화면이 권한 안내만 보이고,
+  // 서버도 홈 API 에서 파이프라인 정보를 빼고 보낸다(WD-272)
+  const {
+    canReadPipeline,
+    canExecutePipeline,
+    isLoading: isPermissionsLoading,
+  } = usePipelinePermissions();
 
   // 활동 피드: 필터 상태만 보관. 페이지는 useInfiniteQuery가 내부적으로 관리한다 (이슈 #226).
-  const [typeFilter, setTypeFilter] = useState('');
+  const [selectedTypeFilter, setTypeFilter] = useState('');
+  // 「파이프라인」 필터는 조회 권한이 있을 때만 있다 — 권한이 빠진 뒤 남은 선택값은 「전체」로 본다(WD-272)
+  const typeFilter = selectedTypeFilter === 'PIPELINE' && !canReadPipeline ? '' : selectedTypeFilter;
   const [severityFilter, setSeverityFilter] = useState('');
   const {
     data: activityFeedPages,
@@ -105,8 +115,8 @@ export default function HomePage() {
   const ph = health?.pipelineHealth;
   const dh = health?.datasetHealth;
 
-  // 전체 시스템에 문제가 없는지 판단
-  const hasNoIssues = ph && dh
+  // 전체 시스템에 문제가 없는지 판단 — 파이프라인을 볼 수 없으면 서버가 0 으로 보내 판단할 수 없으므로 표시하지 않는다(WD-272)
+  const hasNoIssues = canReadPipeline && ph && dh
     && ph.failing === 0 && dh.stale === 0 && dh.empty === 0
     && (!attentionItems || attentionItems.length === 0);
 
@@ -122,49 +132,54 @@ export default function HomePage() {
       {/* SR 네비게이션을 위한 sr-only 헤딩 — 시각 디자인은 유지 */}
       <section aria-labelledby="home-system-health-heading" className="rounded-lg border bg-card px-6 py-3">
         <h2 id="home-system-health-heading" className="sr-only">시스템 건강 상태</h2>
-        {isHealthLoading ? (
+        {/* 권한을 불러오는 동안도 스켈레톤 — 파이프라인 요약이 늦게 끼어들며 줄이 밀리지 않게(WD-272) */}
+        {isHealthLoading || isPermissionsLoading ? (
           <div className="flex gap-4">
             <Skeleton className="h-5 w-48" />
             <Skeleton className="h-5 w-48" />
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 [word-break:keep-all]">
-            {/* Pipeline summary */}
-            <button
-              className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
-              onClick={() => navigate('/pipelines')}
-            >
-              <GitBranch className="h-4 w-4 text-pipeline shrink-0" />
-              <span className="text-sm font-medium text-pipeline whitespace-nowrap">파이프라인</span>
-              {ph && ph.total > 0 ? (
-                <span className="flex items-center gap-1.5 text-sm tabular-nums">
-                  {ph.failing > 0 && (
-                    <span className="text-destructive font-semibold whitespace-nowrap">{ph.failing} 실패</span>
+            {/* Pipeline summary — 조회 권한이 있을 때만(WD-272) */}
+            {canReadPipeline && (
+              <>
+                <button
+                  className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
+                  onClick={() => navigate('/pipelines')}
+                >
+                  <GitBranch className="h-4 w-4 text-pipeline shrink-0" />
+                  <span className="text-sm font-medium text-pipeline whitespace-nowrap">파이프라인</span>
+                  {ph && ph.total > 0 ? (
+                    <span className="flex items-center gap-1.5 text-sm tabular-nums">
+                      {ph.failing > 0 && (
+                        <span className="text-destructive font-semibold whitespace-nowrap">{ph.failing} 실패</span>
+                      )}
+                      {ph.running > 0 && (
+                        <span className="text-info font-semibold whitespace-nowrap">{ph.running} 실행중</span>
+                      )}
+                      {ph.healthy > 0 && (
+                        <span className="text-success font-semibold whitespace-nowrap">{ph.healthy} 정상</span>
+                      )}
+                      {ph.disabled > 0 && (
+                        <span className="text-muted-foreground whitespace-nowrap">{ph.disabled} 비활성</span>
+                      )}
+                    </span>
+                  ) : (
+                    <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">0개</span>
                   )}
-                  {ph.running > 0 && (
-                    <span className="text-info font-semibold whitespace-nowrap">{ph.running} 실행중</span>
-                  )}
-                  {ph.healthy > 0 && (
-                    <span className="text-success font-semibold whitespace-nowrap">{ph.healthy} 정상</span>
-                  )}
-                  {ph.disabled > 0 && (
-                    <span className="text-muted-foreground whitespace-nowrap">{ph.disabled} 비활성</span>
-                  )}
-                </span>
-              ) : (
-                <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">0개</span>
-              )}
-              {/* #669: 하드코딩 배열 대신 백엔드가 계산한 최근 7일 실제 실행 추이(ph.trend) 사용 */}
-              <Sparkline
-                data={ph?.trend ?? []}
-                color="pipeline"
-                className="mt-1"
-                ariaLabel="최근 7일 파이프라인 실행 추이"
-                testId="pipeline-sparkline"
-              />
-            </button>
+                  {/* #669: 하드코딩 배열 대신 백엔드가 계산한 최근 7일 실제 실행 추이(ph.trend) 사용 */}
+                  <Sparkline
+                    data={ph?.trend ?? []}
+                    color="pipeline"
+                    className="mt-1"
+                    ariaLabel="최근 7일 파이프라인 실행 추이"
+                    testId="pipeline-sparkline"
+                  />
+                </button>
 
-            <div className="h-4 w-px bg-border" />
+                <div className="h-4 w-px bg-border" />
+              </>
+            )}
 
             {/* Dataset summary */}
             <button
@@ -298,10 +313,12 @@ export default function HomePage() {
             새 데이터셋
           </Button>
         )}
-        <Button variant="outline" size="sm" onClick={() => navigate('/pipelines')}>
-          <ListChecks className="h-4 w-4" />
-          파이프라인 목록
-        </Button>
+        {canReadPipeline && (
+          <Button variant="outline" size="sm" onClick={() => navigate('/pipelines')}>
+            <ListChecks className="h-4 w-4" />
+            파이프라인 목록
+          </Button>
+        )}
         <Button variant="outline" size="sm" onClick={() => navigate('/analytics/queries')}>
           <Terminal className="h-4 w-4" />
           SQL 편집기
@@ -464,7 +481,7 @@ export default function HomePage() {
           )}
 
           {/* 최근 실행 */}
-          {stats && stats.recentExecutions.length > 0 && (
+          {canReadPipeline && stats && stats.recentExecutions.length > 0 && (
             <Card className="py-2 gap-1 flex flex-col card-hover">
               <CardHeader className="px-3 pb-0">
                 <div className="flex items-center justify-between">
@@ -514,7 +531,8 @@ export default function HomePage() {
                 <span className="text-xs text-muted-foreground">유형</span>
                 {[
                   { label: '전체', value: '' },
-                  { label: '파이프라인', value: 'PIPELINE' },
+                  // 파이프라인 필터는 조회 권한이 있을 때만 — 없으면 서버가 파이프라인 이벤트를 싣지 않아 늘 빈 결과다(WD-272)
+                  ...(canReadPipeline ? [{ label: '파이프라인', value: 'PIPELINE' }] : []),
                   { label: '데이터셋', value: 'DATASET' },
                 ].map((opt) => (
                   <Button
@@ -615,9 +633,12 @@ export default function HomePage() {
               <div className="flex flex-col items-center gap-2 py-8 text-center">
                 <Activity className="h-8 w-8 text-muted-foreground/50" />
                 <p className="text-sm text-muted-foreground">활동 내역이 없습니다.</p>
-                <Button variant="outline" size="sm" onClick={() => navigate('/pipelines')}>
-                  파이프라인 실행하기
-                </Button>
+                {/* 파이프라인 목록(조회)으로 가서 실행하므로 조회·실행 권한이 모두 있을 때만 보인다(WD-272) */}
+                {canReadPipeline && canExecutePipeline && (
+                  <Button variant="outline" size="sm" onClick={() => navigate('/pipelines')}>
+                    파이프라인 실행하기
+                  </Button>
+                )}
               </div>
             )}
           </CardContent>

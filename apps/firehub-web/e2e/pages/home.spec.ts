@@ -1,6 +1,12 @@
+import type { Page } from '@playwright/test';
+
 import { mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
-import { grantDatasetPermissions } from '../fixtures/dataset.fixture';
+import { DATASET_WRITE_PERMISSIONS, grantDatasetPermissions } from '../fixtures/dataset.fixture';
+import { grantPipelinePermissions } from '../fixtures/pipeline.fixture';
+
+/** 홈의 파이프라인 요약·바로가기를 보는 권한(WD-272) — 조회 + 「파이프라인 실행하기」 빈 상태 버튼용 실행 */
+const HOME_PIPELINE_PERMISSIONS = ['pipeline:read', 'pipeline:execute'];
 
 /**
  * 홈 페이지 E2E 테스트
@@ -10,13 +16,19 @@ import { grantDatasetPermissions } from '../fixtures/dataset.fixture';
  */
 
 test.describe('홈 페이지', () => {
+  // 파이프라인 요약·바로가기·필터는 pipeline:read 가 있을 때만 보인다(WD-272) — 이 describe 는 그것들을 검증하므로 권한을 준다.
+  // 권한이 없는 경우는 아래 「홈 — 파이프라인 조회 권한 없음」 describe 가 검증한다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page, HOME_PIPELINE_PERMISSIONS);
+  });
+
   /**
    * 테스트 1: 기본 렌더링
    * - 로그인 후 홈('/')으로 이동하여 핵심 UI 요소가 표시되는지 확인한다
    */
   test('홈 페이지 기본 요소가 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 「새 데이터셋」 퀵 액션은 생성 권한(dataset:write)이 있을 때만 보인다(WD-144)
-    await grantDatasetPermissions(page);
+    await grantDatasetPermissions(page, [...DATASET_WRITE_PERMISSIONS, ...HOME_PIPELINE_PERMISSIONS]);
     // authenticatedPage는 이미 로그인 + setupHomeMocks가 완료된 상태이므로
     // '/'로 이동하면 대시보드가 정상 로드된다
     await page.goto('/');
@@ -180,7 +192,7 @@ test.describe('홈 페이지', () => {
    */
   test('퀵 액션 버튼 클릭 시 올바른 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     // 「새 데이터셋」 퀵 액션·생성 화면 진입은 생성 권한(dataset:write)이 필요하다(WD-144)
-    await grantDatasetPermissions(page);
+    await grantDatasetPermissions(page, [...DATASET_WRITE_PERMISSIONS, ...HOME_PIPELINE_PERMISSIONS]);
     await page.goto('/');
 
     // "새 데이터셋" → /data/datasets/new
@@ -702,5 +714,84 @@ test.describe('홈 페이지', () => {
 
     // 뷰포트 절반을 넘지 않아야 한다 — 넘으면 고정 픽셀 높이로 되돌아간 것이다.
     expect(height).toBeLessThanOrEqual(viewport / 2 + 1);
+  });
+});
+
+/**
+ * WD-272 — 파이프라인 조회 권한(pipeline:read)이 없는 일반 멤버의 홈.
+ * 서버는 이런 사용자에게 홈 API 에서 파이프라인 정보를 빼고 보내지만(개수 0·목록 비움), 화면도 파이프라인 요약·바로가기·필터를
+ * 그리지 않아야 한다 — 누르면 「파이프라인을 볼 권한이 없습니다」 화면으로 가기 때문이다. 응답에 파이프라인 정보가 섞여 와도(구버전 서버)
+ * 그리지 않는지 보려고 모킹 응답에는 파이프라인 데이터를 그대로 둔다.
+ */
+test.describe('홈 — 파이프라인 조회 권한 없음 (WD-272)', () => {
+  /** 권한 응답이 반영된 뒤 판정하도록 /auth/me/permissions 응답을 기다리며 이동한다(dataset-list-permissions.spec 과 같은 방식) */
+  async function gotoWithPermissions(page: Page, path: string) {
+    const permissionsLoaded = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/auth/me/permissions');
+    await page.goto(path);
+    await permissionsLoaded;
+  }
+
+  /** 데이터셋 조회만 있는 USER 와 같은 권한 묶음 */
+  const DATASET_ONLY = ['dataset:read', 'data:read'];
+
+  test('파이프라인 요약·「파이프라인 목록」·최근 실행 카드가 없고 데이터셋 요약은 남는다', async ({ authenticatedPage: page }) => {
+    await grantDatasetPermissions(page, DATASET_ONLY);
+    await mockApi(page, 'GET', '/api/v1/dashboard/stats', {
+      totalDatasets: 10,
+      sourceDatasets: 6,
+      derivedDatasets: 4,
+      totalPipelines: 1,
+      activePipelines: 1,
+      recentImports: [],
+      recentExecutions: [
+        { id: 1, pipelineName: '인사 급여 비밀 집계 파이프라인', status: 'COMPLETED', createdAt: '2026-10-28T10:00:00' },
+      ],
+    });
+    await gotoWithPermissions(page, '/');
+
+    // 같은 상태바의 데이터셋 요약·같은 퀵 액션 묶음의 SQL 편집기가 그려진 뒤 판정 — 묶음이 안 그려져서 없는 것과 구분한다
+    await expect(page.getByRole('button', { name: /데이터셋 .* 최신/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /SQL 편집기/ })).toBeVisible();
+
+    await expect(page.getByRole('button', { name: /파이프라인 .* 실패/ })).toHaveCount(0);
+    await expect(page.getByTestId('pipeline-sparkline')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /파이프라인 목록/ })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: '최근 실행' })).toHaveCount(0);
+    await expect(page.getByText('인사 급여 비밀 집계 파이프라인')).toHaveCount(0);
+  });
+
+  test('활동 피드 「유형」 필터에 「파이프라인」이 없고, 빈 상태에 「파이프라인 실행하기」가 없다', async ({ authenticatedPage: page }) => {
+    await grantDatasetPermissions(page, DATASET_ONLY);
+    await gotoWithPermissions(page, '/');
+
+    await expect(page.getByText('활동 내역이 없습니다.')).toBeVisible();
+    // 같은 필터 묶음의 「데이터셋」 버튼이 그려진 뒤 판정
+    await expect(page.getByRole('button', { name: '데이터셋', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '파이프라인', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '파이프라인 실행하기' })).toHaveCount(0);
+  });
+
+  test('파이프라인을 볼 수 없으면 데이터셋이 모두 정상이어도 「모든 시스템 정상」을 띄우지 않는다', async ({ authenticatedPage: page }) => {
+    await grantDatasetPermissions(page, DATASET_ONLY);
+    // 서버는 권한 없는 사용자에게 파이프라인 건강도를 0 으로 보낸다 — 실패 파이프라인이 있어도 0 이라 「정상」 판단 근거가 될 수 없다
+    await mockApi(page, 'GET', '/api/v1/dashboard/health', {
+      pipelineHealth: { total: 0, healthy: 0, failing: 0, running: 0, disabled: 0, trend: [0, 0, 0, 0, 0, 0, 0] },
+      datasetHealth: { total: 10, fresh: 10, stale: 0, empty: 0, trend: [1, 2, 1, 1, 2, 1, 2] },
+    });
+    await mockApi(page, 'GET', '/api/v1/dashboard/attention', []);
+    await page.goto('/');
+
+    await expect(page.getByRole('button', { name: /데이터셋 .* 최신/ })).toBeVisible();
+    await expect(page.getByText('모든 시스템 정상')).toHaveCount(0);
+  });
+
+  test('조회만 있고 실행 권한이 없으면 「파이프라인 목록」은 보이지만 「파이프라인 실행하기」는 없다', async ({ authenticatedPage: page }) => {
+    await grantDatasetPermissions(page, [...DATASET_ONLY, 'pipeline:read']);
+    await page.goto('/');
+
+    await expect(page.getByRole('button', { name: /파이프라인 목록/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: '파이프라인', exact: true })).toBeVisible();
+    await expect(page.getByText('활동 내역이 없습니다.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '파이프라인 실행하기' })).toHaveCount(0);
   });
 });

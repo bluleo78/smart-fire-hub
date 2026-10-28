@@ -19,6 +19,8 @@ import { useMyPermissions } from './useMyPermissions';
 export function usePipelinePermissions() {
   const { permissions, isLoading } = useMyPermissions();
   return {
+    /** 파이프라인 목록·상세·실행 이력 조회(GET /pipelines…) — pipeline:read. 홈의 파이프라인 요약·바로가기도 이것으로 가린다(WD-272) */
+    canReadPipeline: permissions.has('pipeline:read'),
     /** 「수정」(PUT /pipelines/{id})·증분 처리 재생성 예약/취소(POST·DELETE .../full-rebuild) — pipeline:write */
     canWritePipeline: permissions.has('pipeline:write'),
     /** 목록 행 삭제(DELETE /pipelines/{id}) — pipeline:delete. 「파이프라인 추가」·/pipelines/new 진입은 canWritePipeline(POST /pipelines 가 pipeline:write) */

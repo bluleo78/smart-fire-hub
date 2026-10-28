@@ -61,7 +61,12 @@ class DashboardHealthTest extends IntegrationTestBase {
     org.springframework.security.core.context.SecurityContextHolder.getContext()
         .setAuthentication(
             new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
-                testUserId, null, List.of()));
+                testUserId,
+                null,
+                // 파이프라인 항목을 검증하므로 pipeline:read 를 준다 — 없으면 홈은 파이프라인을 싣지 않는다(WD-272)
+                List.of(
+                    new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                        "pipeline:read"))));
 
     // ---- Pipelines ----
 
