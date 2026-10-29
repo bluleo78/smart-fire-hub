@@ -3116,7 +3116,7 @@
     }
   },
   "set_user_roles": {
-    "description": "사용자에게 역할을 할당합니다. roleIds 배열로 기존 역할이 전부 교체됩니다. 빈 배열이면 모든 역할이 제거됩니다.",
+    "description": "사용자에게 역할을 할당합니다. roleIds 배열로 기존 역할이 전부 교체됩니다. 빈 배열이면 모든 역할이 제거됩니다. 자기 자신·워크스페이스 소유자·마지막 활성 ADMIN 에게서 ADMIN 을 빼는 요청은 서버가 거부합니다(400/409).",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

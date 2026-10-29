@@ -379,10 +379,11 @@ public class UserService {
   /**
    * 사용자 역할 전체 교체.
    *
-   * <p>잠금 방지 두 가지(서버가 최종 판정):
+   * <p>잠금 방지 세 가지(서버가 최종 판정, 이 순서로 — 정지·제거의 {@link #assertRemovable} 과 같은 순서):
    *
    * <ol>
    *   <li>자기 자신의 ADMIN 제거 금지(#57) — 400.
+   *   <li>워크스페이스 소유자(OWNER)의 ADMIN 제거 금지(WD-282) — 409. 정지·제거를 막는 이유와 같다(소유자가 관리 화면에서 잠김).
    *   <li>이 테넌트의 마지막 활성 ADMIN 에게서 ADMIN 제거 금지(#785) — 409. 정지·제거의 {@link #assertRemovable} 과 같은
    *       규칙({@link #isLastActiveAdmin})이다. 역할 회수도 "활성 ADMIN 수를 줄이는" 변경이기 때문이다.
    * </ol>
@@ -394,7 +395,7 @@ public class UserService {
    *
    * <p>역할 범위(WD-116): 실제로 추가·제거되는 역할(현재와 요청의 대칭차)은 호출자 범위 안이어야 한다({@link RoleGrantGuard}) — {@code
    * role:assign} 만 위임받은 사용자가 자기에게 ADMIN 을 붙이거나 다른 관리자의 ADMIN 을 떼던 결함의 수정이다. 위 잠금 방지 판정 <b>뒤에</b> 두는
-   * 이유: 기존 400/409 계약을 그대로 유지하고(자기 ADMIN 제거·마지막 ADMIN), 동시 상호 강등에서 진 쪽이 지금처럼 409 를 받게 하기 위해서다.
+   * 이유: 기존 400/409 계약을 그대로 유지하고(자기 ADMIN 제거·소유자·마지막 ADMIN), 동시 상호 강등에서 진 쪽이 지금처럼 409 를 받게 하기 위해서다.
    *
    * <p>감사(WD-117): 실제로 역할이 바뀌었으면 ROLE_ASSIGN 감사에 변경 전/후 역할 이름과 추가·제거분을 남긴다 — 누가 ADMIN 을 줬는지 추적할 수
    * 있어야 한다. 전/후는 요청 id 가 아니라 교체 전/후 실제 저장 상태로 계산하고, 차이가 없으면 setUserActive 의 무변경 규칙처럼 기록하지 않는다.
@@ -416,6 +417,11 @@ public class UserService {
     if (removesAdmin && userId.equals(callerId)) {
       // 자기 잠금(self-lockout) 방지 (#57) — 기존 400 계약 유지
       throw new IllegalArgumentException("자신의 ADMIN 역할은 제거할 수 없습니다");
+    }
+    if (removesAdmin && membership.isOwner()) {
+      // 소유자 잠금 방지(WD-282) — 정지·제거를 막는 이유(assertRemovable)와 같다. ADMIN 을 빼면 소유자는 이 워크스페이스의 관리 화면과
+      // 자기 역할 복구(role:assign)를 잃는데, 다른 ADMIN 이 남아 있으면 마지막 ADMIN 보호는 통과한다. 소유권 이전이 생기기 전까지 막는다.
+      throw new IllegalStateException("워크스페이스 소유자의 ADMIN 역할은 뺄 수 없습니다");
     }
     if (removesAdmin && isLastActiveAdmin(userId, membership, tenantId)) {
       throw new IllegalStateException("이 워크스페이스의 마지막 활성 ADMIN 에게서 ADMIN 역할을 뺄 수 없습니다");
