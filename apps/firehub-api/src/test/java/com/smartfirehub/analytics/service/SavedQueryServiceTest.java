@@ -490,4 +490,97 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     var rawOpt = savedQueryRepository.findRawByIdUnrestricted(Long.MAX_VALUE);
     assertThat(rawOpt).isEmpty();
   }
+
+  // =========================================================================
+  // 저장 시점 SQL 열람 판정 (WD-409)
+  // =========================================================================
+
+  /** 데이터셋을 만들고 보안 등급을 '민감'으로 올려 USER 기본 자격(내부)으로는 볼 수 없게 한다. */
+  private DatasetDetailResponse createHiddenDataset(String name, String tableName) {
+    DatasetDetailResponse ds = createDataset(name, tableName);
+    dsl.execute(
+        "update dataset set security_level_id = (select id from security_level where name = '민감')"
+            + " where id = ?",
+        ds.id());
+    return ds;
+  }
+
+  private long countSavedQueries() {
+    return dsl.fetchOne("select count(*) from saved_query").get(0, Long.class);
+  }
+
+  @Test
+  void create_referencingHiddenTable_forbiddenAndNotSaved() {
+    DatasetDetailResponse ds = createHiddenDataset("Hidden DS", "wd409_hidden");
+    long before = countSavedQueries();
+
+    assertThatThrownBy(
+            () ->
+                createQuery("Hidden", "SELECT * FROM " + ds.tableName(), null, false, ownerUserId))
+        .isInstanceOfSatisfying(
+            com.smartfirehub.global.exception.CodedApiException.class,
+            e -> {
+              assertThat(e.status()).isEqualTo(HttpStatus.FORBIDDEN);
+              assertThat(e.code()).isEqualTo("DATASET_SQL_ACCESS_DENIED");
+            });
+    assertThat(countSavedQueries()).isEqualTo(before);
+  }
+
+  @Test
+  void create_referencingVisibleDatasetTable_success() {
+    DatasetDetailResponse ds = createDataset("Visible DS", "wd409_visible");
+
+    SavedQueryResponse r =
+        createQuery("Visible", "SELECT * FROM " + ds.tableName(), null, false, ownerUserId);
+
+    assertThat(r.id()).isNotNull();
+  }
+
+  @Test
+  void create_unparseableSql_stillSaved() {
+    SavedQueryResponse r = createQuery("Broken", "SELEC broken", null, false, ownerUserId);
+
+    assertThat(r.sqlText()).isEqualTo("SELEC broken");
+  }
+
+  @Test
+  void update_sqlChangedToHiddenTable_forbiddenAndUnchanged() {
+    DatasetDetailResponse ds = createHiddenDataset("Hidden DS2", "wd409_hidden2");
+    SavedQueryResponse created = createQuery("Q", "SELECT 1", null, false, ownerUserId);
+
+    assertThatThrownBy(
+            () ->
+                savedQueryService.update(
+                    created.id(),
+                    new UpdateSavedQueryRequest(
+                        null, null, "SELECT * FROM " + ds.tableName(), null, null, null),
+                    ownerUserId))
+        .isInstanceOfSatisfying(
+            com.smartfirehub.global.exception.CodedApiException.class,
+            e -> assertThat(e.status()).isEqualTo(HttpStatus.FORBIDDEN));
+    assertThat(savedQueryService.getById(created.id(), ownerUserId).sqlText())
+        .isEqualTo("SELECT 1");
+  }
+
+  @Test
+  void update_metadataOnly_withLegacyDeniedSql_allowed() {
+    DatasetDetailResponse ds = createHiddenDataset("Hidden DS3", "wd409_hidden3");
+    String legacySql = "SELECT * FROM " + ds.tableName();
+    // 옛 데이터 — 리포지토리로 직접 넣어 저장 시점 판정을 우회한다.
+    Long id =
+        savedQueryRepository.insert(
+            new CreateSavedQueryRequest("Legacy", null, legacySql, null, null, false), ownerUserId);
+
+    SavedQueryResponse renamed =
+        savedQueryService.update(
+            id, new UpdateSavedQueryRequest("Renamed", null, null, null, null, null), ownerUserId);
+    SavedQueryResponse sameSql =
+        savedQueryService.update(
+            id,
+            new UpdateSavedQueryRequest("Renamed2", null, legacySql, null, null, null),
+            ownerUserId);
+
+    assertThat(renamed.name()).isEqualTo("Renamed");
+    assertThat(sameSql.name()).isEqualTo("Renamed2");
+  }
 }

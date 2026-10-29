@@ -34,6 +34,7 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
   @Autowired private PasswordEncoder encoder;
   @Autowired private DatasetAccessGuard guard;
   @Autowired private ClearanceResolver clearanceResolver;
+  @Autowired private com.smartfirehub.securitylevel.ai.AiCallContext aiCallContext;
 
   private SecurityFixture fx;
   private final List<Long> datasets = new ArrayList<>();
@@ -398,5 +399,54 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
     assertThat(rows).hasSize(1);
     assertThat(rows.get(0).get("a", String.class)).isEqualTo("DATASET_REFS");
     assertThat(rows.get(0).get("resource_id", String.class)).isEqualTo(String.valueOf(hidden));
+  }
+
+  /** 민감 데이터셋을 볼 수 있는(기밀 자격) 사용자와 그 표 이름 — AI 정책(외부 호스팅 불허)에는 걸린다. */
+  private record SaveGateFixture(Clearance viewer, String sql) {}
+
+  private SaveGateFixture saveGateFixture() {
+    long high = user("기밀", false);
+    String table = "g_sv_" + System.nanoTime();
+    datasets.add(fx.createDatasetRow(table, fx.levelId("민감"), creatorId));
+    return new SaveGateFixture(clearanceResolver.resolve(high), "SELECT * FROM " + table);
+  }
+
+  /** WD-409: AI 대행 호출 중이어도 저장 시점 판정(INTERACTIVE_SAVE)은 AI 정책으로 막지 않는다 — 저장은 LLM 으로 행을 보내지 않는다. */
+  @Test
+  void requireSql_interactiveSave_underAiCall_skipsAiPolicy() {
+    SaveGateFixture f = saveGateFixture();
+    AiCall external = new AiCall(ProviderHosting.EXTERNAL, false);
+
+    // 같은 조건에서 INTERACTIVE 는 AI 정책으로 막힌다(테스트가 공허하지 않음을 보인다).
+    assertThatThrownBy(
+            () ->
+                aiCallContext.callWith(
+                    external,
+                    () -> guard.requireSql(f.viewer(), f.sql(), SqlAccessMode.INTERACTIVE)))
+        .isInstanceOf(PolicyBlockedException.class);
+
+    aiCallContext.callWith(
+        external, () -> guard.requireSql(f.viewer(), f.sql(), SqlAccessMode.INTERACTIVE_SAVE));
+  }
+
+  /** WD-409: 저장 시점 판정은 리포트 등급 기록(noteRead)을 하지 않는다 — INTERACTIVE 는 같은 조건에서 기록한다. */
+  @Test
+  void requireSql_interactiveSave_doesNotNoteReportLevel() {
+    SaveGateFixture f = saveGateFixture();
+    String levelsAttr =
+        com.smartfirehub.proactive.service.ProactiveReportLevelRecorder.class.getName() + ".levels";
+    var request = new org.springframework.mock.web.MockHttpServletRequest();
+    com.smartfirehub.proactive.service.ProactiveReportLevelRecorder.markRequest(request, "1", 1L);
+    var attrs = new org.springframework.web.context.request.ServletRequestAttributes(request);
+    org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(attrs);
+    try {
+      guard.requireSql(f.viewer(), f.sql(), SqlAccessMode.INTERACTIVE_SAVE);
+      assertThat(request.getAttribute(levelsAttr)).isNull();
+
+      guard.requireSql(f.viewer(), f.sql(), SqlAccessMode.INTERACTIVE);
+      assertThat(request.getAttribute(levelsAttr)).isNotNull();
+    } finally {
+      org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
+    }
   }
 }

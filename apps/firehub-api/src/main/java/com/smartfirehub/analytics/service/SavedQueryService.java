@@ -10,13 +10,18 @@ import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
+import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.util.NormalizedSql;
+import com.smartfirehub.pipeline.exception.TiberoUnqualifiedTableException;
+import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.StoreTransactions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.SqlAccessMode;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.util.List;
 import java.util.Objects;
@@ -95,10 +100,32 @@ public class SavedQueryService {
     if (req.datasetId() != null) {
       datasetAccessGuard.requireView(viewer, req.datasetId());
     }
+    // SQL 이 참조하는 표도 작성자가 볼 수 있어야 한다(WD-409) — insert 전에 판정해 거부되면 행이 생기지 않는다.
+    requireSqlSavable(viewer, req.sqlText());
     Long id = savedQueryRepository.insert(req, userId);
     return savedQueryRepository
         .findById(id, userId, datasetNameVisible(viewer))
         .orElseThrow(() -> SavedQueryNotFoundException.reloadFailed());
+  }
+
+  /**
+   * 저장 시점 SQL 열람 판정(WD-409) — 실행 관문과 같은 판정을 작성자 자격으로 미리 해서, 저장은 201 인데 실행은 403 인 불일치를 없앤다({@link
+   * SqlAccessMode#INTERACTIVE_SAVE}). 실행할 문자열({@link NormalizedSql#of})을 판정해야 판정과 실행이 갈라지지 않는다. 거부는
+   * 403, Tibero 스키마 없는 테이블은 400, 그 밖의 파싱 불가·빈 SQL 은 기존 저장 계약대로 삼킨다(실행 관문이 막는다).
+   */
+  private void requireSqlSavable(Clearance viewer, String sqlText) {
+    if (sqlText == null) {
+      return;
+    }
+    try {
+      datasetAccessGuard.requireSql(
+          viewer, NormalizedSql.of(sqlText).text(), SqlAccessMode.INTERACTIVE_SAVE);
+    } catch (TiberoUnqualifiedTableException e) {
+      // UnsafeSqlException 의 하위 타입이라 먼저 잡아 삼키지 않고 400 으로 전파한다.
+      throw e;
+    } catch (SqlQueryException | UnsafeSqlException e) {
+      // 파싱 불가 SQL — 저장은 허용하고 실행 관문이 막는다(저장 계약 불변).
+    }
   }
 
   /** Get a single saved query — owner or any shared query. */
@@ -130,8 +157,15 @@ public class SavedQueryService {
       datasetAccessGuard.requireView(viewer, req.datasetId());
     }
 
+    // SQL 을 바꾸는 저장만 판정한다(WD-409) — 이름·설명·폴더·공유만 바꾸거나 같은 SQL 을 되돌려 보내는 저장은 자격을 잃은 소유자도
+    // 할 수 있어야 한다(datasetId 판정과 같은 원칙). 공유 쿼리 보호 검사보다 먼저 두어도 둘 다 DB 쓰기 전이다.
+    boolean sqlChanged = req.sqlText() != null && !req.sqlText().equals(existing.sqlText());
+    if (sqlChanged) {
+      requireSqlSavable(viewer, req.sqlText());
+    }
+
     // Protect shared query SQL if other users' charts reference it
-    if (req.sqlText() != null && !req.sqlText().equals(existing.sqlText()) && existing.isShared()) {
+    if (sqlChanged && existing.isShared()) {
       long otherChartCount = savedQueryRepository.countOtherUserCharts(id, userId);
       if (otherChartCount > 0) {
         throw new ResponseStatusException(

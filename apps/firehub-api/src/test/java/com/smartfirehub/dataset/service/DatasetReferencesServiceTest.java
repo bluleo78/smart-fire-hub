@@ -10,6 +10,7 @@ import com.smartfirehub.analytics.dto.CreateDashboardRequest;
 import com.smartfirehub.analytics.dto.CreateSavedQueryRequest;
 import com.smartfirehub.analytics.dto.DashboardResponse;
 import com.smartfirehub.analytics.dto.SavedQueryResponse;
+import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.analytics.service.AnalyticsDashboardService;
 import com.smartfirehub.analytics.service.ChartService;
 import com.smartfirehub.analytics.service.SavedQueryService;
@@ -48,6 +49,7 @@ class DatasetReferencesServiceTest extends IntegrationTestBase {
   @Autowired private PipelineService pipelineService;
   @Autowired private TriggerService triggerService;
   @Autowired private SavedQueryService savedQueryService;
+  @Autowired private SavedQueryRepository savedQueryRepository;
   @Autowired private ChartService chartService;
   @Autowired private AnalyticsDashboardService dashboardService;
   @Autowired private DSLContext dsl;
@@ -320,13 +322,15 @@ class DatasetReferencesServiceTest extends IntegrationTestBase {
   /** {@link #dashboardWithQuery} 의 소유자·공유 여부 지정판 — 대시보드 가시성(본인 소유 또는 공유) 검증용. */
   private DashboardResponse dashboardWithQueryBy(
       Long ownerId, boolean shared, String dashboardName, String sql, Long datasetId) {
-    SavedQueryResponse q =
-        savedQueryService.create(
+    // 참조 탐지는 저장 시점 판정(WD-409)과 무관하다 — 판정이 막는 SQL(데이터셋이 아닌 표·다른 스키마)도 판정 이전에 저장된 행으로
+    // 남아 있을 수 있으므로 리포지토리로 직접 넣는다.
+    Long queryId =
+        savedQueryRepository.insert(
             new CreateSavedQueryRequest(dashboardName + " Q", null, sql, datasetId, "test", false),
             ownerId);
     var chart =
         chartService.create(
-            new CreateChartRequest(dashboardName + " C", null, q.id(), "BAR", Map.of(), false),
+            new CreateChartRequest(dashboardName + " C", null, queryId, "BAR", Map.of(), false),
             ownerId);
     DashboardResponse dashboard =
         dashboardService.create(

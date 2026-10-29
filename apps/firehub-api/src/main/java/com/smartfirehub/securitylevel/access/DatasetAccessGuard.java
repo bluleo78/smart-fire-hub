@@ -619,7 +619,7 @@ public class DatasetAccessGuard {
       // 대화형(애드혹·데이터셋 /query·메트릭)은 SQL, 파이프라인 저장·실행은 PIPELINE 으로 구분해 남긴다.
       auditDenial(
           c,
-          mode == SqlAccessMode.INTERACTIVE ? AccessDenialAction.SQL : AccessDenialAction.PIPELINE,
+          mode.interactiveRules() ? AccessDenialAction.SQL : AccessDenialAction.PIPELINE,
           v.denial());
       throw new CodedApiException(HttpStatus.FORBIDDEN, v.result().code(), v.result().message());
     }
@@ -687,7 +687,7 @@ public class DatasetAccessGuard {
     SqlValidator.ReferencedTables refs;
     if (tibero) {
       refs = tiberoValidator.referencedTables(exact);
-    } else if (mode == SqlAccessMode.INTERACTIVE) {
+    } else if (mode.interactiveRules()) {
       refs = sqlParser.referencedTables(exact);
     } else {
       refs = pipelineDataSchema.validator().referencedTables(exact);
@@ -696,7 +696,7 @@ public class DatasetAccessGuard {
     // 요구라 403 이 아니라 실행 경로 검증기와 같은 문구의 UnsafeSqlException(400)으로 거부한다 — 숨김·허용 테이블에 똑같이 나오므로
     // 존재를 드러내지 않고, 감사(거부 기록)에도 남지 않는다(requireSql 은 판정 거부만 감사한다). 미한정 DUAL 은 통과.
     // 던져지는 TiberoUnqualifiedTableException 하위 타입은 그대로 전파한다(지표 SQL 저장 선검사가 구분한다).
-    if (tibero && mode == SqlAccessMode.INTERACTIVE) {
+    if (tibero && mode.interactiveRules()) {
       tiberoValidator.requireQualifiedTables(exact);
     }
     String dataSchema = tibero ? pipelineDataSchema.current() : DataSchema.current();
@@ -733,6 +733,7 @@ public class DatasetAccessGuard {
     // 2-1) AI 대행 대화형 SQL(MCP 쿼리·차트·대시보드 위젯): 결과가 LLM 으로 가므로 읽기·쓰기 대상 전부 AI(+SHARE). VIEW 를 전부 통과한
     //      뒤에만 오므로 숨김 테이블은 위의 구분 불가 거부가 먼저다(존재 은닉). 파이프라인 모드는 제외 — 파이프라인 SQL 은 LLM 으로 가지 않고,
     //      AI_CLASSIFY 는 분류 공급자 호스팅으로 호출부가 따로 판정한다.
+    // INTERACTIVE_SAVE(저장 쿼리 저장, WD-409)는 의도적으로 제외한다 — 저장은 데이터를 읽지 않아 LLM 으로 가는 행이 없다.
     if (mode == SqlAccessMode.INTERACTIVE) {
       Optional<AiCall> ai = aiCallContext.current();
       if (ai.isPresent()) {
@@ -770,9 +771,7 @@ public class DatasetAccessGuard {
       exportAllowed &= decide(c, f, DatasetAction.EXPORT, null).allowed();
       // 4) 쓰기 하향 금지(스펙 §4.1)는 대화형 SQL 만. 파이프라인 실행은 게이트가 쓰기 대상을 자동 상향한다(§4.5), 저장은 VIEW 만
       //    본다(판단 사항 4). VIEW 를 모두 통과한 뒤에만 오는 분기라 메시지의 등급 이름은 사용자가 이미 볼 수 있는 정보다.
-      if (mode == SqlAccessMode.INTERACTIVE
-          && effective != null
-          && f.level().rank() < effective.rank()) {
+      if (mode.interactiveRules() && effective != null && f.level().rank() < effective.rank()) {
         return new SqlVerdict(
             SqlAccessResult.denied(
                 SQL_WRITE_DOWNGRADE_CODE, "'" + effective.name() + "' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다"),
@@ -781,6 +780,7 @@ public class DatasetAccessGuard {
     }
     // 대화형 SQL(MCP 쿼리·분석 쿼리·차트·대시보드 위젯·데이터셋 /query)은 결과 행이 호출자에게 간다 — 스마트 작업 실행 중이면 읽기·쓰기 대상
     // (RETURNING 으로 쓰기 대상 행도 돌려줄 수 있다) 전부의 등급을 리포트 등급에 넣는다(WD-198). 파이프라인 모드는 결과가 호출자에게 가지 않는다.
+    // INTERACTIVE_SAVE(저장 쿼리 저장, WD-409)는 의도적으로 제외한다 — 읽은 데이터가 없으니 리포트 등급을 올리지 않는다.
     if (mode == SqlAccessMode.INTERACTIVE) {
       for (String name : all) {
         reportLevelRecorder.noteRead(facts.get(name).level());
@@ -839,7 +839,7 @@ public class DatasetAccessGuard {
       // 대화형(WD-76)의 미한정 이름은 judgeSql 이 requireQualifiedTables 로 먼저 400 으로 막는다. 여기는 그 검사와 이 루프의 대상
       // 집합이 어긋날 때를 위한 백스톱이다(fail-closed, 위 DUAL 만 예외) — 미한정 이름이 판정에 들어가면 판정이 본 테이블(GENIA_T{id}.X)과
       // 읽기 전용 세션이 해석하는 테이블이 다르다. 파이프라인 모드는 OWNER 세션이라 미한정 이름이 테넌트 스키마로 해석되므로 그대로 둔다.
-      if (t.schema() == null && mode == SqlAccessMode.INTERACTIVE) {
+      if (t.schema() == null && mode.interactiveRules()) {
         return deniedVerdict("SQL_OTHER_SCHEMA", null, t.name());
       }
       metadataName = t.name().toLowerCase(Locale.ROOT);
