@@ -59,6 +59,19 @@ public class AuditLogRepository {
 
   private static final Field<Long> AL_TENANT_ID = field(name("audit_log", "tenant_id"), Long.class);
 
+  /**
+   * audit_log.resource_id(VARCHAR)를 데이터셋 id 와 비교하려고 BIGINT 로 바꾼 식. 단순 CAST 는 숫자가 아닌 값이나 BIGINT 를 넘는
+   * 긴 숫자에서 오류를 내 목록 전체가 실패하므로, 18자리 이하 숫자만 바꾸고 나머지는 NULL 로 둔다. 대시보드 활동 피드도 이 식을 쓴다.
+   */
+  public static final Field<Long> AL_RESOURCE_ID_AS_LONG =
+      field(
+          "CASE WHEN audit_log.resource_id ~ '^[0-9]{1,18}$'"
+              + " THEN audit_log.resource_id::BIGINT ELSE NULL END",
+          Long.class);
+
+  private static final Table<?> DATASET = table(name("dataset"));
+  private static final Field<Long> D_ID = field(name("dataset", "id"), Long.class);
+
   /** metadata 의 대상 아이디(운영자 계정 조치가 남긴다). 괄호로 연산 우선순위를 명시한다. */
   private static final Field<String> AL_TARGET_USERNAME =
       field("({0} ->> 'targetUsername')", String.class, AL_METADATA);
@@ -175,6 +188,8 @@ public class AuditLogRepository {
    * @param endDate 날짜 범위 종료 (inclusive, null이면 무제한)
    * @param page 페이지 번호 (0부터)
    * @param size 페이지 크기
+   * @param datasetVisible 데이터셋 열람 조건({@code "dataset"} 테이블 기준). null 이면 모든 행을 본다(ADMIN). 값이 있으면
+   *     데이터셋 행은 그 조건을 만족하는 데이터셋의 행만 남기고, 지금 없는(삭제된) 데이터셋의 행은 뺀다(WD-289)
    */
   public PageResponse<AuditLogResponse> findAll(
       String search,
@@ -185,8 +200,24 @@ public class AuditLogRepository {
       LocalDateTime startDate,
       LocalDateTime endDate,
       int page,
-      int size) {
+      int size,
+      Condition datasetVisible) {
     Condition condition = noCondition();
+
+    // WD-289: 볼 수 없는 데이터셋의 행은 이름·테이블명·접근자를 드러내므로 목록에서 뺀다. 지금 있는 데이터셋 중 열람 조건을 만족하는 것만
+    // 남기므로, 삭제된 데이터셋의 지난 기록은 등급을 알 수 없어 ADMIN 에게만 보인다. 데이터셋이 아닌 행은 그대로다.
+    if (datasetVisible != null) {
+      condition =
+          condition.and(
+              AL_RESOURCE
+                  .isDistinctFrom("dataset")
+                  .or(
+                      exists(
+                          selectOne()
+                              .from(DATASET)
+                              .where(D_ID.eq(AL_RESOURCE_ID_AS_LONG))
+                              .and(datasetVisible))));
+    }
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search.trim());
