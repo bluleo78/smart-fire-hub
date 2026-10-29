@@ -214,6 +214,8 @@ export interface CreateProactiveJobRequest {
   timezone?: string;
   triggerType?: TriggerType;
   config?: Record<string, unknown>;
+  /** 생략하면 서버 기본값(활성). 복제처럼 예약을 바로 걸면 안 되는 생성은 false 로 보낸다 (WD-300) */
+  enabled?: boolean;
 }
 
 export interface UpdateProactiveJobRequest {

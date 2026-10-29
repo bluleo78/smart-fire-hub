@@ -195,7 +195,8 @@ test.describe('스마트 작업 목록 페이지', () => {
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
     // useCloneProactiveJob 은 proactiveApi.createJob(POST /proactive/jobs) 를 호출한다
-    const clonedJob = createJob({ id: 2, name: '잡 1 (복사본)' });
+    // 서버는 enabled=false 로 만든 복사본을 돌려준다 — 이동한 상세에서 「비활성」으로 보여야 한다 (WD-300)
+    const clonedJob = createJob({ id: 2, name: '잡 1 (복사본)', enabled: false });
     const cloneCapture = await mockApi(
       page,
       'POST',
@@ -216,6 +217,11 @@ test.describe('스마트 작업 목록 페이지', () => {
     // POST API 호출 확인 — 이름에 "(복사본)" 포함
     const req = await cloneCapture.waitForRequest();
     expect((req.payload as { name?: string })?.name).toContain('복사본');
+    // 원본이 활성이어도 복사본은 꺼진 채로 만든다 — 같은 시각·수신자로 바로 예약되지 않게 (WD-300)
+    expect(req.payload).toMatchObject({ enabled: false });
+    await expect(page.getByText('"잡 1 (복사본)" 작업을 꺼진 상태로 복제했습니다. 확인한 뒤 작업 목록에서 켜세요.')).toBeVisible();
+    await expect(page).toHaveURL(/\/ai-insights\/jobs\/2/);
+    await expect(page.getByText('비활성', { exact: true }).first()).toBeVisible();
   });
 
   test('작업명과 채널 정보가 세로로 분리되어 표시된다 (레이아웃 회귀 #5)', async ({ authenticatedPage: page }) => {
