@@ -372,8 +372,27 @@ public class UserService {
       throw new IllegalArgumentException("새 비밀번호는 현재 비밀번호와 달라야 합니다");
     }
 
+    // 임시 비밀번호(첫 로그인 강제 변경)를 바꾼 것인지 — 변경 전 표식으로 판단한다(updatePassword 가 표식을 끈다).
+    UserResponse user =
+        userRepository
+            .findById(userId)
+            .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
+    boolean temporary = user.mustChangePassword();
     userRepository.updatePassword(userId, passwordEncoder.encode(newPassword));
     refreshTokenRepository.revokeAllByUserId(userId);
+    // 계정 탈취 뒤 비밀번호를 바꾼 시점을 추적할 수 있게 남긴다(WD-290). 테넌트는 요청의 현재 테넌트(GUC 기본값)다.
+    auditLogService.log(
+        userId,
+        user.username(),
+        "PASSWORD_CHANGE",
+        "user",
+        String.valueOf(userId),
+        temporary ? "임시 비밀번호 변경" : "비밀번호 변경",
+        null,
+        null,
+        "SUCCESS",
+        null,
+        Map.of("temporaryPassword", temporary));
   }
 
   /**

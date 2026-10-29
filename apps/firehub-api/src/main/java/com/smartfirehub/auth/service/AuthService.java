@@ -1,5 +1,7 @@
 package com.smartfirehub.auth.service;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.auth.dto.LoginRequest;
 import com.smartfirehub.auth.dto.SignupRequest;
@@ -13,24 +15,32 @@ import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.util.ClientIpExtractor;
 import com.smartfirehub.tenant.dto.MembershipResponse;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserDeactivatedException;
 import com.smartfirehub.user.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AuthService {
 
   private final UserRepository userRepository;
@@ -44,6 +54,7 @@ public class AuthService {
   private final SignupTransaction signupTransaction;
   private final CurrentTransactionTenant currentTransactionTenant;
   private final RefreshTokenRotation refreshTokenRotation;
+  private final PlatformTransactionManager transactionManager;
 
   /**
    * 회원가입.
@@ -66,41 +77,48 @@ public class AuthService {
     return !userRepository.existsAnyUser();
   }
 
-  @Transactional
+  /**
+   * 로그인.
+   *
+   * <p>실패 예외(잠금·자격 증명 불일치·비활성)에서는 롤백하지 않는다(WD-290) — 실패 감사 행을 이 트랜잭션에 쓰고 401/403 과 함께 커밋해야
+   * 하기 때문이다. 실패 경로에서 이 트랜잭션이 쓰는 것은 감사 행뿐이다(실패 카운터는 {@link LoginAttemptService} 가 자기 트랜잭션으로 쓴다).
+   */
+  @Transactional(
+      noRollbackFor = {
+        AccountLockedException.class,
+        InvalidCredentialsException.class,
+        UserDeactivatedException.class
+      })
   public TokenResponse login(LoginRequest request) {
     // 대소문자·앞뒤 공백만 다른 입력도 같은 계정으로 본다(WD-269). 카운터 키도 이 값이라 대소문자별로 갈리지 않는다.
     String username = userRepository.resolveLoginUsername(request.username());
     if (loginAttemptService.isBlocked(username)) {
+      auditLockedLoginRejection(username);
       // 과도한 로그인 실패로 계정이 잠긴 경우 한국어 메시지 반환
       throw new AccountLockedException("로그인 시도 횟수를 초과하였습니다. 잠시 후 다시 시도해 주세요.");
     }
 
-    UserResponse user =
-        userRepository
-            .findByUsername(username)
-            .orElseThrow(
-                () -> {
-                  loginAttemptService.loginFailed(username);
-                  // 사용자 존재 여부 노출 방지를 위해 동일한 메시지 반환
-                  return new InvalidCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
-                });
-
-    String storedPassword =
-        userRepository
-            .findPasswordByUsername(username)
-            .orElseThrow(
-                () -> {
-                  loginAttemptService.loginFailed(username);
-                  // 사용자 존재 여부 노출 방지를 위해 동일한 메시지 반환
-                  return new InvalidCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
-                });
-
-    if (!passwordEncoder.matches(request.password(), storedPassword)) {
+    UserResponse user = userRepository.findByUsername(username).orElse(null);
+    if (user == null) {
       loginAttemptService.loginFailed(username);
+      auditLoginFailure(username, null, LoginFailure.UNKNOWN_USER);
+      // 사용자 존재 여부 노출 방지를 위해 동일한 메시지 반환
+      throw new InvalidCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
+    }
+
+    String storedPassword = userRepository.findPasswordByUsername(username).orElse(null);
+    if (storedPassword == null || !passwordEncoder.matches(request.password(), storedPassword)) {
+      boolean justLocked = loginAttemptService.loginFailed(username);
+      auditLoginFailure(username, user, LoginFailure.BAD_PASSWORD);
+      if (justLocked) {
+        auditAccountLocked(user);
+      }
+      // 사용자 존재 여부 노출 방지를 위해 동일한 메시지 반환
       throw new InvalidCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
     }
 
     if (!user.isActive()) {
+      auditLoginFailure(username, user, LoginFailure.DEACTIVATED);
       // 비밀번호가 맞을 때만 알린다 — 계정 존재 여부는 드러나지 않는다. 사용자가 할 일(관리자 문의)까지 적는다(WD-278).
       throw new UserDeactivatedException();
     }
@@ -135,8 +153,8 @@ public class AuthService {
     // 로그인 성공이 확정되고 토큰까지 발급된 뒤 마지막에 일어나므로, 남은 문장에 GUC 가 붙어도
     // 영향을 받는 조회가 없다.
     //
-    // 활성 테넌트가 확정되지 않은 로그인(멤버십 0개 또는 2개 이상)과, 테넌트 해석 이전에 기록되는
-    // 로그인 실패 감사 행은 설계상 NULL 테넌트로 남는다 — 어느 테넌트의 사건인지 알 수 없기 때문이다.
+    // 활성 테넌트가 확정되지 않은 로그인(멤버십 0개 또는 2개 이상)은 설계상 NULL 테넌트로 남는다 — 어느
+    // 테넌트의 사건인지 알 수 없기 때문이다. 로그인 실패 감사 행도 같은 규칙을 따른다(applySoleTenant).
     String[] requestInfo = extractRequestInfo();
     if (activeTenantId != null) {
       currentTransactionTenant.apply(activeTenantId);
@@ -340,17 +358,124 @@ public class AuthService {
     refreshTokenRepository.save(userId, tokenHash, expiresAt, familyId);
   }
 
+  /** 로그인 실패 사유 — 감사 행의 설명과 {@code metadata.reason} 에 쓴다(WD-290). */
+  private enum LoginFailure {
+    UNKNOWN_USER("없는 아이디"),
+    BAD_PASSWORD("비밀번호 불일치"),
+    LOCKED("잠긴 계정"),
+    DEACTIVATED("비활성 계정");
+
+    private final String label;
+
+    LoginFailure(String label) {
+      this.label = label;
+    }
+  }
+
+  /**
+   * 잠긴 계정의 로그인 거부 기록을 같은 아이디당 1분에 1건으로 합친다. 잠긴 동안에는 실패 카운터가 더 오르지 않아, 합치지 않으면 요청마다 감사 행이
+   * 끝없이 쌓인다({@code SecurityAuditRecorder} 의 거부 감사와 같은 1분 창). 키는 감사 행과 같이 50자로 자른 아이디라 메모리가 묶인다. 인스턴스
+   * 메모리 기준이라 다중 인스턴스면 인스턴스 수만큼 남을 수 있다.
+   */
+  private final Cache<String, Boolean> recentLockedRejections =
+      Caffeine.newBuilder().expireAfterWrite(Duration.ofMinutes(1)).maximumSize(100_000).build();
+
+  /** 잠금 상태에서 거부한 로그인을 남긴다(아이디당 1분에 1건). 없는 아이디도 카운터가 쌓이면 잠기므로 사용자가 없을 수 있다. */
+  private void auditLockedLoginRejection(String username) {
+    String key = AuditLogService.truncate(username, AuditLogService.USERNAME_MAX);
+    if (recentLockedRejections.asMap().putIfAbsent(key, Boolean.TRUE) != null) {
+      return;
+    }
+    UserResponse user = userRepository.findByUsername(username).orElse(null);
+    if (!auditLoginFailure(username, user, LoginFailure.LOCKED)) {
+      recentLockedRejections.invalidate(key); // 못 남겼으면 다음 거부가 다시 시도하게 한다
+    }
+  }
+
+  /**
+   * 로그인 실패 감사 행(LOGIN + FAILURE). 없는 아이디면 입력한 아이디를 그대로 남긴다(길이는 감사 서비스가 자른다) — 무차별 대입 대상 추적용.
+   * 테넌트도 여기서 심는다 — 바로 뒤에 같은 트랜잭션에서 쓰는 잠금 행도 이 테넌트를 따른다.
+   */
+  private boolean auditLoginFailure(String username, UserResponse user, LoginFailure reason) {
+    applySoleTenant(user);
+    return writeAccountAudit(
+        user,
+        user != null ? user.username() : username,
+        "LOGIN",
+        "로그인 실패 — " + reason.label,
+        "FAILURE",
+        Map.of("reason", reason.name()));
+  }
+
+  /**
+   * 로그인 연속 실패로 계정이 잠기는 순간을 남긴다. 계정이 있을 때만 — 없는 아이디의 잠금은 그 아이디의 실패 행들로 충분하다. 바로 앞의
+   * {@link #auditLoginFailure} 가 심은 테넌트를 따른다.
+   */
+  private void auditAccountLocked(UserResponse user) {
+    writeAccountAudit(
+        user,
+        user.username(),
+        "ACCOUNT_LOCKED",
+        "로그인 " + LoginAttemptService.MAX_ATTEMPTS + "회 연속 실패로 계정 잠금",
+        "SUCCESS",
+        null);
+  }
+
+  /**
+   * 로그인 트랜잭션에 계정 사건 감사 행의 테넌트를 심는다. 로그인 성공 행과 같은 규칙이다 — 활성 멤버십이 정확히 하나면 그 테넌트, 0개·2개 이상이거나
+   * 없는 아이디면 심지 않아 NULL 테넌트(운영자 콘솔 감사 로그에서 보인다).
+   */
+  private void applySoleTenant(UserResponse user) {
+    if (user != null) {
+      MembershipResponse.soleActiveTenant(membershipRepository.findActiveByUser(user.id()))
+          .ifPresent(currentTransactionTenant::apply);
+    }
+  }
+
+  /**
+   * 계정 사건 감사 행을 로그인 트랜잭션 안의 저장점(NESTED)에서 쓴다. 감사는 판정이 아니라 기록이라 실패해도 로그인 응답(401/403)을 바꾸지 않는다 —
+   * PG 는 실패한 문장이 트랜잭션 전체를 깨뜨리므로 try/catch 만으로는 부족하고, 저장점까지 되돌려야 이어서 커밋할 수 있다.
+   *
+   * @return 남겼으면 true
+   */
+  private boolean writeAccountAudit(
+      UserResponse user,
+      String username,
+      String actionType,
+      String description,
+      String result,
+      Object metadata) {
+    String[] requestInfo = extractRequestInfo();
+    TransactionTemplate savepoint = new TransactionTemplate(transactionManager);
+    savepoint.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
+    try {
+      savepoint.executeWithoutResult(
+          s ->
+              auditLogService.log(
+                  user != null ? user.id() : null,
+                  username,
+                  actionType,
+                  "auth",
+                  null,
+                  description,
+                  requestInfo[0],
+                  requestInfo[1],
+                  result,
+                  null,
+                  metadata));
+      return true;
+    } catch (RuntimeException e) {
+      log.warn("{} 감사 기록 실패 — 로그인 응답은 그대로 둔다: {}", actionType, username, e);
+      return false;
+    }
+  }
+
   /** HTTP 요청 컨텍스트에서 IP와 User-Agent를 추출한다. 감사 로그에 사용 */
   private String[] extractRequestInfo() {
     var attrs = RequestContextHolder.getRequestAttributes();
     if (attrs instanceof ServletRequestAttributes sra) {
       HttpServletRequest req = sra.getRequest();
-      String forwarded = req.getHeader("X-Forwarded-For");
-      String ip =
-          (forwarded != null && !forwarded.isBlank())
-              ? forwarded.split(",")[0].trim()
-              : req.getRemoteAddr();
-      return new String[] {ip, req.getHeader("User-Agent")};
+      return new String[] {ClientIpExtractor.extract(req), req.getHeader("User-Agent")};
     }
     return new String[] {null, null};
   }

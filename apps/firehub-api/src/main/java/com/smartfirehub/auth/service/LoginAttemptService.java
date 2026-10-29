@@ -14,13 +14,18 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class LoginAttemptService {
 
-  private static final int MAX_ATTEMPTS = 5;
+  static final int MAX_ATTEMPTS = 5;
 
   private final LoginAttemptRepository repository;
 
-  /** 로그인 실패 시 카운터 1 증가. */
-  public void loginFailed(String username) {
-    repository.incrementAttempts(username);
+  /**
+   * 로그인 실패 시 카운터 1 증가. 증가 뒤 카운터가 {@link #MAX_ATTEMPTS} 이상이면 true — 호출자는 이 실패 직전에 {@link #isBlocked} 가
+   * 거짓임을 확인했으므로, 이 실패로 계정이 막 잠겼다는 뜻이다(잠금 감사, WD-290). 정확히 같음으로 보지 않는 이유: 만료된 행은 카운터가 0 으로 돌아가지
+   * 않고 이어 오르므로(INCREMENT_SQL), 잠금이 풀린 뒤의 첫 실패는 6 이상에서 다시 잠근다. 잠금 직전(카운터 4)에 실패 요청이 동시에 여럿 들어오면
+   * 모두 true 를 받아 잠금 감사가 그 수만큼 남을 수 있다 — 빠뜨리는 것보다 낫다고 본다.
+   */
+  public boolean loginFailed(String username) {
+    return repository.incrementAttempts(username) >= MAX_ATTEMPTS;
   }
 
   /** 로그인 성공 시 카운터 제거. */

@@ -35,6 +35,9 @@ const ACTION_LABELS: Record<string, string> = {
   TENANT_ACTIVATE: '테넌트 활성화',
   LOGIN: '로그인',
   LOGOUT: '로그아웃',
+  // WD-290: 워크스페이스가 하나로 정해지지 않는 계정의 잠금·비밀번호 변경도 여기 남는다(없는 아이디는 로그인 실패 행만).
+  ACCOUNT_LOCKED: '계정 잠금',
+  PASSWORD_CHANGE: '비밀번호 변경',
 };
 
 /**

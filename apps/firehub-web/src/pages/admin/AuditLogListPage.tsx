@@ -55,6 +55,10 @@ const GENERAL_ACTION_TYPES = [
   { value: 'DELETE', label: '삭제' },
   { value: 'LOGIN', label: '로그인' },
   { value: 'LOGOUT', label: '로그아웃' },
+  // WD-290: 로그인 연속 실패로 인한 계정 잠금(AuthService)·비밀번호 변경(UserService.changePassword).
+  // 로그인 실패는 별도 액션이 아니라 LOGIN + 결과 FAILURE(metadata.reason)로 남는다.
+  { value: 'ACCOUNT_LOCKED', label: '계정 잠금' },
+  { value: 'PASSWORD_CHANGE', label: '비밀번호 변경' },
   { value: 'IMPORT', label: '임포트' },
   { value: 'EXECUTE', label: '실행' },
   // WD-153: 파이프라인 실행 취소(PipelineExecutionService 취소 요청) 감사 기록
