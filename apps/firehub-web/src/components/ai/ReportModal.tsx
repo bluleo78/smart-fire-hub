@@ -55,6 +55,8 @@ interface ReportModalProps {
 export default function ReportModal({ open, onClose, jobId, executionId }: ReportModalProps) {
   const navigate = useNavigate();
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  /** 마크다운 폴백 본문 — HTML 리포트가 없을 때 이 영역만 인쇄한다(WD-343) */
+  const contentRef = useRef<HTMLDivElement>(null);
 
   // HTML 리포트 조회 — 모달이 열려 있고 유효한 ID일 때만 fetch
   const { data: htmlResponse, isLoading: htmlLoading, error: htmlError } = useQuery({
@@ -76,6 +78,7 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
     jobId,
     executionId,
     iframeRef,
+    contentRef,
   });
 
   // 실행 상세 페이지로 이동 — 모달을 닫고 navigate
@@ -94,7 +97,7 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
     if (sections.length === 0) return null;
 
     return (
-      <div className="p-6 space-y-6 overflow-auto h-full">
+      <div ref={contentRef} className="p-6 space-y-6 overflow-auto h-full">
         {sections.map((section) => (
           <div key={section.key}>
             <h3 className="text-sm font-semibold text-foreground mb-2">{section.label}</h3>
@@ -139,6 +142,7 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
               variant="ghost"
               size="icon"
               onClick={handlePrint}
+              disabled={isLoading}
               title="인쇄"
               className="h-8 w-8"
             >
