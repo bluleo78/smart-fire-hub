@@ -95,6 +95,32 @@ class RoleServiceTest extends IntegrationTestBase {
     assertThat(updated.description()).isEqualTo("Updated moderator");
   }
 
+  /** WD-279: 이름을 다른 역할(시스템 역할 포함)의 이름으로 바꾸면 생성과 같은 「이미 존재하는 역할 이름」으로 거부하고 바꾸지 않는다. */
+  @Test
+  void updateRole_nameOfAnotherRole_throwsAndKeepsName() {
+    RoleResponse created = roleService.createRole("MODERATOR", "Moderator", callerId);
+    roleService.createRole("EDITOR", "Editor", callerId);
+
+    assertThatThrownBy(() -> roleService.updateRole(created.id(), "ADMIN", "가짜", callerId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("이미 존재하는 역할 이름입니다");
+    assertThatThrownBy(() -> roleService.updateRole(created.id(), "EDITOR", "중복", callerId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("이미 존재하는 역할 이름입니다");
+
+    assertThat(roleService.getRoleById(created.id()).name()).isEqualTo("MODERATOR");
+  }
+
+  /** WD-279: 이름은 그대로 두고 설명만 바꾸면 자기 이름과의 중복으로 막지 않는다. */
+  @Test
+  void updateRole_sameName_descriptionOnly_succeeds() {
+    RoleResponse created = roleService.createRole("MODERATOR", "Moderator", callerId);
+
+    roleService.updateRole(created.id(), "MODERATOR", "설명만 바꿈", callerId);
+
+    assertThat(roleService.getRoleById(created.id()).description()).isEqualTo("설명만 바꿈");
+  }
+
   @Test
   void updateRole_systemRole_throwsException() {
     Long adminRoleId =

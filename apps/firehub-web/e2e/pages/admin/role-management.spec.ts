@@ -392,6 +392,60 @@ test.describe('역할 관리 페이지', () => {
     await expect(page.getByText('역할 정보가 업데이트되었습니다.')).toBeVisible({ timeout: 3000 });
   });
 
+  test('끝 공백이 붙어 저장된 옛 역할은 설명만 고쳐도 공백을 잘라 저장된다 (WD-279)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleDetailMocks(page, 3, false);
+    // 서버가 이름 규칙을 검사하기 전에 저장된 비정상 이름 — 입력란에서는 끝 공백이 보이지 않는다
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/roles/3',
+      createRoleDetail({ id: 3, name: 'EDITOR ', description: '편집자 역할', isSystem: false }),
+    );
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/roles/3', {}, { capture: true });
+
+    await page.goto('/admin/roles/3');
+    const descInput = page.getByLabel('설명');
+    await descInput.clear();
+    await descInput.fill('설명만 고침');
+    await saveRoleInfo(page);
+
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: 'EDITOR', description: '설명만 고침' });
+    await expect(page.getByText('역할 이름은 대문자, 숫자, 밑줄만 허용됩니다')).toHaveCount(0);
+    await expect(page.getByText('역할 정보가 업데이트되었습니다.')).toBeVisible();
+    // 입력란도 잘린 이름으로 맞춰져, 저장 직후 나가도 「저장하지 않은 변경사항」 경고가 뜨지 않는다(WD-119 회귀 방지)
+    await expect(page.getByLabel('역할 이름')).toHaveValue('EDITOR');
+    await setupRoleListMocks(page);
+    await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+    await expect(page).toHaveURL(/\/admin\/roles$/);
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  });
+
+  test('시스템 역할과 같은 이름으로 바꾸면 서버의 중복 안내가 보인다 (WD-279)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleDetailMocks(page, 3, false);
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/roles/3',
+      { status: 400, message: '이미 존재하는 역할 이름입니다: ADMIN' },
+      { status: 400, capture: true },
+    );
+
+    await page.goto('/admin/roles/3');
+    const nameInput = page.getByLabel('역할 이름');
+    await nameInput.clear();
+    await nameInput.fill('ADMIN ');
+    await saveRoleInfo(page);
+
+    // 끝 공백은 잘라 보내 서버의 이름 규칙이 아닌 중복 검사에 걸린다
+    expect((await updateCapture.waitForRequest()).payload).toMatchObject({ name: 'ADMIN' });
+    await expect(page.getByText('이미 존재하는 역할 이름입니다: ADMIN')).toBeVisible();
+  });
+
   test('역할 정보 로드 실패 시 에러 토스트가 표시된다', async ({ authenticatedPage: page }) => {
     // 역할 API 500 에러 → fetchData catch 분기 (lines 61-62)
     await mockApi(page, 'GET', '/api/v1/roles/1', { message: '서버 오류' }, { status: 500 });

@@ -169,6 +169,11 @@ export default function RoleDetailPage() {
       form.reset(saved, { keepValues: true });
       for (const key of ['name', 'description'] as const) {
         const current = form.getValues(key) ?? '';
+        // 이름은 스키마가 앞뒤 공백을 잘라 보낸다(WD-279) — 입력란에 남은 공백만 다르면 더 고친 게 아니므로 잘린 값으로 맞춘다.
+        if (key === 'name' && current.trim() === saved.name) {
+          form.setValue('name', saved.name);
+          continue;
+        }
         if (current !== saved[key]) form.setValue(key, current, { shouldDirty: true });
       }
       toast.success('역할 정보가 업데이트되었습니다.');
