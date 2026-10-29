@@ -17,13 +17,18 @@ import { toggleYAxisColumn } from './chart-missing-columns';
 interface AxisConfigPanelProps {
   chartType: ChartType;
   columns: string[];
+  /**
+   * 숫자 컬럼(WD-354) — 히트맵 가중치 목록은 이 컬럼만 보인다. 문자 컬럼을 고르면 모든 가중치가 0 이 되어
+   * 히트맵이 사라졌다. 넘기지 않으면 예전처럼 모든 컬럼을 보인다.
+   */
+  numericColumns?: string[];
   config: ChartConfig;
   onChange: (config: ChartConfig) => void;
 }
 
 const NO_COLUMN = '__none__';
 
-export function AxisConfigPanel({ chartType, columns, config, onChange }: AxisConfigPanelProps) {
+export function AxisConfigPanel({ chartType, columns, numericColumns, config, onChange }: AxisConfigPanelProps) {
   // 접근성: 라벨↔컨트롤 연결용 id 접두사 (#432).
   // 하드코딩하지 않는 이유 — 이 패널은 차트 타입별로 다시 마운트되고,
   // 향후 여러 곳(대시보드 위젯 편집 등)에서 동시에 열릴 수 있어 id 가 실제로 충돌한다.
@@ -35,6 +40,16 @@ export function AxisConfigPanel({ chartType, columns, config, onChange }: AxisCo
   const isPieOrDonut = chartType === 'PIE' || chartType === 'DONUT';
   const isMap = chartType === 'MAP';
   const isCandlestick = chartType === 'CANDLESTICK';
+
+  // 히트맵 가중치 후보 — 공간 컬럼을 빼고, 숫자 컬럼 목록이 있으면 숫자 컬럼만(WD-354).
+  // 이미 문자 컬럼을 골라 둔 저장 차트는 그 값도 목록에 남겨 선택 상자가 비어 보이지 않게 하고 안내 문구를 띄운다.
+  const weightIsNonNumeric =
+    !!config.weightColumn && !!numericColumns && !numericColumns.includes(config.weightColumn);
+  const weightOptions = columns.filter(
+    (col) =>
+      col !== config.spatialColumn &&
+      (!numericColumns || numericColumns.includes(col) || col === config.weightColumn),
+  );
   const isHeatmap = chartType === 'HEATMAP';
 
   if (isHeatmap) {
@@ -307,19 +322,23 @@ export function AxisConfigPanel({ chartType, columns, config, onChange }: AxisCo
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={NO_COLUMN}>없음 — 균등 가중치</SelectItem>
-                {columns
-                  .filter((col) => col !== config.spatialColumn)
-                  .map((col) => (
-                    <SelectItem key={col} value={col}>
-                      {col}
-                    </SelectItem>
-                  ))}
+                {weightOptions.map((col) => (
+                  <SelectItem key={col} value={col}>
+                    {col}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             {/* 도움말 문구를 aria-describedby 로 컨트롤에 연결한다 (#432, §J). */}
             <p id={`${baseId}-weight-help`} className="text-xs text-muted-foreground">
-              값이 클수록 해당 위치의 밀도 기여가 커집니다.
+              숫자 컬럼만 고를 수 있습니다. 가장 작은 값부터 가장 큰 값까지의 상대 크기로, 값이 클수록 해당 위치의 밀도 기여가 커집니다.
             </p>
+            {/* 예전에 문자 컬럼을 골라 저장한 차트 — 무엇이 문제인지 알리고 숫자 컬럼을 고르게 한다(WD-354) */}
+            {weightIsNonNumeric && (
+              <p className="text-xs text-destructive" role="alert">
+                「{config.weightColumn}」은(는) 숫자 컬럼이 아니라 가중치로 쓸 수 없어 균등 가중치로 그립니다. 숫자 컬럼을 고르세요.
+              </p>
+            )}
           </div>
         )}
       </div>

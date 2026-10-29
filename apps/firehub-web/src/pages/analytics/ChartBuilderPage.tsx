@@ -1,5 +1,5 @@
 import { ArrowLeft, BarChart2, Download, FileImage, FileType,LayoutDashboard,Loader2, Lock, Play,Save } from 'lucide-react';
-import { useCallback,useEffect, useId, useRef, useState } from 'react';
+import { useCallback,useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -8,6 +8,7 @@ import { findMissingChartColumns } from '../../components/analytics/chart-missin
 import { ChartConfigWithheldNotice } from '../../components/analytics/ChartConfigWithheldNotice';
 import { ChartRenderer } from '../../components/analytics/ChartRenderer';
 import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector';
+import { isNumericColumn, isWeightColumn } from '../../components/analytics/numeric-columns';
 import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
 import {
   AlertDialog,
@@ -97,11 +98,7 @@ function recommendChartType(
   const geoCols = columns.filter((col) => isGeoJsonColumn(col, rows));
   if (geoCols.length > 0) return 'MAP';
 
-  const isNumeric = (col: string): boolean => {
-    const sample = rows.slice(0, 20).map((r) => r[col]);
-    const nums = sample.filter((v) => v != null && !isNaN(Number(v)));
-    return nums.length / sample.length > 0.7;
-  };
+  const isNumeric = (col: string): boolean => isNumericColumn(col, rows);
 
   const isDate = (col: string): boolean => {
     const sample = rows.slice(0, 10).map((r) => r[col]);
@@ -158,11 +155,7 @@ function buildDefaultConfig(
     return { xAxis: '', yAxis: [], spatialColumn: spatialCol };
   }
 
-  const isNumeric = (col: string): boolean => {
-    const sample = rows.slice(0, 20).map((r) => r[col]);
-    const nums = sample.filter((v) => v != null && !isNaN(Number(v)));
-    return nums.length / sample.length > 0.7;
-  };
+  const isNumeric = (col: string): boolean => isNumericColumn(col, rows);
 
   const numericCols = columns.filter(isNumeric);
   const nonNumericCols = columns.filter((c) => !isNumeric(c));
@@ -468,6 +461,11 @@ export default function ChartBuilderPage() {
   });
   const [queryColumns, setQueryColumns] = useState<string[]>([]);
   const [queryRows, setQueryRows] = useState<Record<string, unknown>[]>([]);
+  // 숫자 컬럼 — 히트맵 가중치 목록에 숫자 컬럼만 보이게 한다(WD-354). 문자 컬럼을 고르면 히트맵이 사라졌다.
+  const numericQueryColumns = useMemo(
+    () => queryColumns.filter((col) => isWeightColumn(col, queryRows)),
+    [queryColumns, queryRows],
+  );
   // 결과가 행 상한(1000행)에 닿았는지(서버 truncated) — 받은 행이 전부인 것처럼 보이지 않게 안내한다(WD-320).
   // 서버는 「상한만큼 받았음」으로 표시하므로(정확히 1000행·LIMIT ≥ 1000 도 포함) 「더 있을 수 있음」으로 안내한다.
   const [queryTruncated, setQueryTruncated] = useState(false);
@@ -1026,6 +1024,7 @@ export default function ChartBuilderPage() {
                   <AxisConfigPanel
                     chartType={chartType}
                     columns={queryColumns}
+                    numericColumns={numericQueryColumns}
                     config={config}
                     onChange={handleConfigChange}
                   />
