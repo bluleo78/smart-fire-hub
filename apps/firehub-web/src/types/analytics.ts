@@ -111,6 +111,12 @@ export type ChartType =
   | 'HISTOGRAM' | 'BOXPLOT' | 'HEATMAP' | 'TREEMAP' | 'FUNNEL'
   | 'RADAR' | 'WATERFALL' | 'GAUGE' | 'CANDLESTICK';
 
+/**
+ * 대시보드 자동 새로고침 주기 상한(초) — 24시간(WD-327, 서버 CreateDashboardRequest.MAX_AUTO_REFRESH_SECONDS 와 같다).
+ * 상한이 없으면 약 24.8일(2^31 ms)을 넘는 값에서 브라우저 타이머 지연이 32비트로 감겨 0 이 되어, 위젯 데이터를 쉬지 않고 다시 요청했다.
+ */
+export const MAX_AUTO_REFRESH_SECONDS = 86_400;
+
 /** 차트 타입 → 한국어 레이블 매핑. 단일 원본으로 InlineChartWidget, ChartListPage 등에서 공유. */
 export const CHART_TYPE_LABELS: Record<ChartType, string> = {
   BAR: '막대 차트', LINE: '꺾은선 차트', AREA: '영역 차트',

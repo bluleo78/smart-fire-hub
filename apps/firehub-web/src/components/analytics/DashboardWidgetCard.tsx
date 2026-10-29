@@ -4,7 +4,7 @@ import { useCallback, useRef } from 'react';
 import { useChart, useChartData } from '../../hooks/queries/useAnalytics';
 import { useWidgetVisibility } from '../../hooks/useWidgetVisibility';
 import { handleApiError } from '../../lib/api-error';
-import type { ChartDataResponse, DashboardWidget } from '../../types/analytics';
+import { type ChartDataResponse, type DashboardWidget, MAX_AUTO_REFRESH_SECONDS } from '../../types/analytics';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Separator } from '../ui/separator';
@@ -175,8 +175,13 @@ export function DashboardWidgetCard({
   const title = inaccessible ? INACCESSIBLE_TITLE : (widget.chartName ?? '');
 
   // 대시보드 자동 새로고침 주기를 위젯 단건 쿼리의 refetchInterval 로 적용한다(기존 자동 새로고침 경로 유지)
-  const refetchInterval =
-    autoRefreshSeconds && autoRefreshSeconds > 0 ? autoRefreshSeconds * 1000 : undefined;
+  // 상한 전에 저장된 큰 값(예: 2500000초)도 24시간으로 줄여 쓴다(WD-327) — 그대로 넘기면 지터까지 곱한 지연이 브라우저 타이머 한도(2^31 ms)를
+  // 넘어 0 으로 감기고, 위젯이 쉬지 않고 재조회한다. 신선도 바도 같은 값을 써야 실제 주기와 어긋나지 않는다.
+  const refreshSeconds =
+    autoRefreshSeconds && autoRefreshSeconds > 0
+      ? Math.min(autoRefreshSeconds, MAX_AUTO_REFRESH_SECONDS)
+      : undefined;
+  const refetchInterval = refreshSeconds ? refreshSeconds * 1000 : undefined;
 
   const {
     data: chartData,
@@ -242,7 +247,7 @@ export function DashboardWidgetCard({
           dataUpdatedAt={dataUpdatedAt}
           isFetching={dataFetching}
           isError={dataError}
-          refreshSeconds={autoRefreshSeconds ?? undefined}
+          refreshSeconds={refreshSeconds}
           onRefresh={handleRefresh}
         />
       )}
