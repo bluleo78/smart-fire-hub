@@ -15,6 +15,7 @@ import java.sql.SQLTimeoutException;
 import java.sql.Statement;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
@@ -135,7 +136,14 @@ public class SlotQueryRunner {
         d,
         deadline,
         // 슬롯 풀 고갈만 접속 실패와 구분한다(Ruling 17).
-        LeasedExecution.failures(timeout, SLOT_BUSY, SlotQueryRunner::failure),
+        // DB 오류가 있으면 error 문구만 사용자용으로 고친다 — db_error 는 api 가 번역하므로 원문 그대로 둔다(WD-410).
+        LeasedExecution.failures(
+            timeout,
+            SLOT_BUSY,
+            (message, err) ->
+                failure(
+                    err == null ? message : scriptErrorMessage(err, message, d.owner().username()),
+                    err)),
         c -> {
           long rows;
           try {
@@ -154,6 +162,40 @@ public class SlotQueryRunner {
           ok.put("row_count", rows);
           return ok;
         });
+  }
+
+  /**
+   * 드라이버가 위치 표기 뒤에 붙이는 {@code " of null"}(소스 이름이 없을 때) — 위치 접미사 자리에 있을 때만 지운다. 문구 아무 데나 지우면 사용자 SQL
+   * 의 따옴표 리터럴처럼 원문에 들어 있는 같은 글자까지 사라진다.
+   */
+  private static final Pattern POSITION_OF_NULL =
+      Pattern.compile("(at line \\d+, column \\d+) of null");
+
+  /** 테이블 없음 안내 뒤에 정리한 원문을 붙일 때의 구분 머리말. */
+  private static final String CAUSE_LABEL = "\n원인: ";
+
+  /**
+   * 슬롯 조회 실패 줄의 {@code error} 문구(WD-410) — Python {@code genia_db} 가 이 문구를 그대로 사용자에게 올린다.
+   *
+   * <p>드라이버가 붙이는 {@code " of null"} 을 지우고, 테이블 없음 코드(Tibero {@code -8033}, Oracle 호환 {@code 942})면
+   * 안내를 앞에 둔다. 「권한 없음」으로 단정하지 않는다 — 단정하면 다른 테넌트에 그 표가 있다는 사실이 드러난다. 그 밖의 코드는 정리한 원문만 쓴다. {@code
+   * db_error} 는 api 가 번역하므로 호출부가 원문 그대로 둔다(바꾸면 안내가 두 번 붙는다).
+   *
+   * @param error DB 오류(코드)
+   * @param rawMessage 실행기가 정리한 드라이버 원문(null 이면 빈 문자열)
+   * @param ownerSchema 이 워크스페이스의 소유 계정(스키마) 이름 — 안내에 넣는다
+   */
+  static String scriptErrorMessage(DbError error, String rawMessage, String ownerSchema) {
+    String cleaned =
+        rawMessage == null ? "" : POSITION_OF_NULL.matcher(rawMessage).replaceAll("$1");
+    if (error.code() == -8033 || error.code() == 942) {
+      return "SQL 에서 참조한 테이블이 없거나, 이 워크스페이스 스키마("
+          + ownerSchema
+          + ") 밖의 테이블이라 읽을 수 없습니다. 테이블 이름과 스키마 한정자를 확인하세요."
+          + CAUSE_LABEL
+          + cleaned;
+    }
+    return cleaned;
   }
 
   /** 문장을 실행해 컬럼 줄과 행 줄을 쓴다. 쓰기 실패면 문장을 취소하고 {@link ClientGone} 을 던진다. */

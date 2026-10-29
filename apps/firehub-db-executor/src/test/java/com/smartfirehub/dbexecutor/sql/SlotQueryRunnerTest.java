@@ -21,6 +21,7 @@ import com.smartfirehub.dbexecutor.LogCapture;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
 import com.smartfirehub.dbexecutor.store.StoreUnavailableException;
+import com.smartfirehub.dbexecutor.web.dto.DbError;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -427,5 +428,76 @@ class SlotQueryRunnerTest {
     assertThat(lines.get(0).get("error").asText()).isEqualTo(SlotQueryRunner.SLOT_BUSY);
     assertThat(SlotQueryRunner.SLOT_BUSY).isEqualTo("같은 등급 슬롯의 동시 조회가 많습니다 — 잠시 후 다시 실행하세요");
     verify(descriptors, never()).invalidate(anyLong());
+  }
+
+  private static final String RAW_8033 =
+      "JDBC-8033:Specified schema object was not found.\nat line 1, column 34 of null:";
+
+  /** 테이블 없음(-8033)이면 스키마 안내가 앞에 붙고 원문에서 " of null" 이 빠진다(WD-410). */
+  @Test
+  void missingTable_addsSchemaGuide_andStripsOfNull() {
+    String msg =
+        SlotQueryRunner.scriptErrorMessage(
+            new DbError(-8033, "42000", RAW_8033), RAW_8033, "GENIA_T5");
+
+    assertThat(msg)
+        .isEqualTo(
+            "SQL 에서 참조한 테이블이 없거나, 이 워크스페이스 스키마(GENIA_T5) 밖의 테이블이라 읽을 수 없습니다."
+                + " 테이블 이름과 스키마 한정자를 확인하세요.\n원인: JDBC-8033:Specified schema object was not found.\n"
+                + "at line 1, column 34:");
+  }
+
+  /** Oracle 호환 코드 942 도 같은 안내로 시작한다. */
+  @Test
+  void oracleMissingTableCode942_sameGuide() {
+    String msg =
+        SlotQueryRunner.scriptErrorMessage(
+            new DbError(942, "42000", "ORA-00942"), "ORA-00942", "GENIA_T5");
+
+    assertThat(msg).startsWith("SQL 에서 참조한 테이블이 없거나, 이 워크스페이스 스키마(GENIA_T5)");
+    assertThat(msg).endsWith("\n원인: ORA-00942");
+  }
+
+  /** 그 밖의 코드는 안내 없이 " of null" 만 뺀다. */
+  @Test
+  void otherCodes_onlyStripOfNull() {
+    String raw = "JDBC-8026:Syntax error.\nat line 1, column 8 of null:";
+
+    assertThat(
+            SlotQueryRunner.scriptErrorMessage(new DbError(-8026, "42000", raw), raw, "GENIA_T5"))
+        .isEqualTo("JDBC-8026:Syntax error.\nat line 1, column 8:");
+  }
+
+  /** " of null" 은 위치 접미사(at line N, column M 뒤)일 때만 지운다 — 원문 다른 자리의 같은 글자는 남긴다. */
+  @Test
+  void ofNullOutsidePositionSuffix_isPreserved() {
+    String raw = "JDBC-8026:Syntax error near 'kind of null'.\nat line 1, column 8 of null:";
+
+    assertThat(
+            SlotQueryRunner.scriptErrorMessage(new DbError(-8026, "42000", raw), raw, "GENIA_T5"))
+        .isEqualTo("JDBC-8026:Syntax error near 'kind of null'.\nat line 1, column 8:");
+  }
+
+  /** 실행 경로: error 는 안내 문구, db_error.message 는 원문(" of null" 포함) 그대로. */
+  @Test
+  void missingTable_executionPath_errorRewritten_dbErrorRaw() throws Exception {
+    ResultSet rs = mock(ResultSet.class);
+    ResultSetMetaData md = mock(ResultSetMetaData.class);
+    when(rs.getMetaData()).thenReturn(md);
+    when(md.getColumnCount()).thenReturn(1);
+    when(md.getColumnLabel(1)).thenReturn("ID");
+    when(md.getColumnType(1)).thenReturn(Types.NUMERIC);
+    when(rs.next()).thenThrow(new SQLException(RAW_8033, "42000", -8033));
+    db.resultSet = rs;
+
+    List<JsonNode> lines = stream("SELECT id FROM t");
+
+    JsonNode last = lines.get(lines.size() - 1);
+    assertThat(last.get("success").asBoolean()).isFalse();
+    assertThat(last.get("error").asText())
+        .startsWith("SQL 에서 참조한 테이블이 없거나, 이 워크스페이스 스키마(GENIA_T5)")
+        .doesNotContain(" of null");
+    assertThat(last.get("db_error").get("code").asInt()).isEqualTo(-8033);
+    assertThat(last.get("db_error").get("message").asText()).isEqualTo(RAW_8033);
   }
 }
