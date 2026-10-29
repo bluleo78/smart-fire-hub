@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     nsjail_rlimit_as: int = 512
     nsjail_rlimit_nproc: int = 64
     nsjail_path: str = "/usr/sbin/nsjail"
+    # 샌드박스 안 스크립트를 돌릴 uid/gid(WD-408). nsjail 이 안·밖 모두 이 값으로 매핑한다 — 매핑이 없으면 안의 uid 0 이 실행기
+    # 컨테이너 root 가 된다. 65534 는 nobody/nogroup 이다. 실행별 폴더(샌드박스 /tmp)도 이 소유로 바꾼다.
+    nsjail_sandbox_uid: int = 65534
+    nsjail_sandbox_gid: int = 65534
 
     # Python execution
     python_timeout: int = 1800

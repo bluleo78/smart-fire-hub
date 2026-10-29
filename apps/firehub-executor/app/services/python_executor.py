@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -104,6 +105,7 @@ def execute_python(
     return _run_script(
         script,
         effective_timeout,
+        settings=settings,
         command=command,
         output_table=output_table,
         column_type_map=column_type_map,
@@ -136,6 +138,7 @@ def _run_script(
     script: str,
     effective_timeout: int,
     *,
+    settings: Settings,
     command: Callable[[str], Tuple[List[str], Optional[Dict[str, str]]]],
     output_table: Optional[str],
     column_type_map: Optional[dict],
@@ -143,7 +146,7 @@ def _run_script(
     load_failure: Callable[[Exception], Tuple[str, Optional[Any]]] = None,
     redact: Callable[[Optional[str]], Optional[str]] = _no_redact,
 ) -> PythonExecuteResponse:
-    """PG·Tibero 경로가 함께 쓰는 스크립트 실행 뼈대 — 임시 파일, 실행, 시간 초과 kill, stdout JSON 적재, 응답, 정리.
+    """PG·Tibero 경로가 함께 쓰는 스크립트 실행 뼈대 — 실행별 폴더, 실행, 시간 초과 kill, stdout JSON 적재, 응답, 정리.
 
     두 경로가 각자 같은 뼈대를 들고 있으면 한쪽만 고쳐져 동작이 조용히 갈린다. 경로마다 다른 것만 주입한다.
     - ``command(script_path)``: 실행할 명령과 환경. 환경이 None 이면 ``env`` 인자 없이 실행한다(PG nsjail 경로, 기존 그대로).
@@ -152,17 +155,31 @@ def _run_script(
     - ``load_failure(e)``: 적재 예외를 (사용자 문구, pg_error) 로 바꾼다. 기본은 PG 규칙(WD-211 — 원문은 로그에만, 문구는
       ``LOAD_FAILED_MESSAGE``, PG 데이터 오류는 pg_error 로 api 가 사유를 만든다).
     - ``redact``: 실행 로그·오류에서 비밀을 지운다(Tibero 는 스크립트 토큰, PG 는 그대로). 시간 초과 문구는 고정이라 지우지 않는다.
+    - ``settings``: 실행별 폴더 소유자를 이 뼈대가 직접 정한다(``_sandbox_owner``) — 호출부마다 넘기게 두면 한쪽이 빠뜨렸을 때
+      그 경로만 운영에서 샌드박스가 뜨지 못한다. nsjail 비활성 개발 경로는 chown 하지 않는다(root 가 아닌 맥 개발 환경에서 실패한다).
+    실행마다 전용 폴더(``pyrun-*``)를 만들어 스크립트를 그 안 ``script.py`` 에 쓴다(WD-408). nsjail 은 이 폴더만 샌드박스 ``/tmp`` 로
+    붙이므로 동시에 도는 다른 실행의 스크립트가 보이지 않는다. 폴더는 실행이 어떻게 끝나든(성공·실패·시간 초과·실행기 예외) ``finally``
+    에서 통째로 지운다 — 스크립트가 /tmp 에 남긴 파일도 함께 사라진다.
     출력 규칙은 두 경로가 같다: 출력 테이블이 있으면 stderr, 없으면 stdout+stderr.
     """
     if load_failure is None:
         load_failure = _pg_load_failure
-    script_path = None
+    run_dir = None
     start = time.perf_counter()
 
     try:
-        with tempfile.NamedTemporaryFile(suffix=".py", dir="/tmp", delete=False) as tmp:
-            script_path = tmp.name
-            tmp.write(script.encode())
+        # 실행별 폴더(mkdtemp 는 0700). 스크립트는 0644 로 쓴다 — 샌드박스 uid(65534)가 /script.py 로 읽어야 하는데,
+        # 예전 NamedTemporaryFile 은 0600 root 소유라 비루트 샌드박스가 읽지 못한다.
+        run_dir = tempfile.mkdtemp(prefix="pyrun-", dir="/tmp")
+        script_path = os.path.join(run_dir, "script.py")
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(script)
+        os.chmod(script_path, 0o644)
+        owner = _sandbox_owner(settings)
+        if owner is not None:
+            # 폴더는 샌드박스 /tmp 가 되므로 샌드박스 uid 만 쓸 수 있게 넘긴다(mkdtemp 의 0700 그대로). 스크립트 파일은 root 소유 그대로
+            # 둔다 — /script.py 는 읽기 전용으로 붙고, /tmp/script.py 로 보이는 사본을 지우거나 고쳐도 이 실행 안에서만의 일이다.
+            os.chown(run_dir, *owner)
 
         cmd, env = command(script_path)
         run_kwargs: Dict[str, Any] = {"capture_output": True, "text": True, "timeout": effective_timeout}
@@ -266,11 +283,21 @@ def _run_script(
         )
 
     finally:
-        if script_path:
+        if run_dir:
+            # 시간 초과로 kill 한 직후에도 지운다. 남은 파일이 샌드박스 uid 소유여도 실행기(root)가 지울 수 있다.
+            # 지우기 실패는 응답을 바꾸지 않되 조용히 넘기지 않는다 — 폴더에는 테넌트 스크립트·데이터가 남아 있어서 새는 걸 알아야
+            # 한다. 로그에는 경로만 남긴다(스크립트 내용은 싣지 않는다).
             try:
-                os.unlink(script_path)
-            except Exception:
-                pass
+                shutil.rmtree(run_dir)
+            except OSError as e:
+                logger.warning("Python 실행별 폴더를 지우지 못했습니다: path=%s error=%s", run_dir, e)
+
+
+def _sandbox_owner(settings: Settings) -> Optional[Tuple[int, int]]:
+    """실행별 폴더를 넘겨줄 (uid, gid) — nsjail 경로에서만. 비활성 개발 경로는 uid 를 바꾸지 않는다(None)."""
+    if not settings.nsjail_enabled:
+        return None
+    return settings.nsjail_sandbox_uid, settings.nsjail_sandbox_gid
 
 
 def _nsjail_base_cmd(settings: Settings, script_path: str) -> List[str]:
@@ -278,7 +305,11 @@ def _nsjail_base_cmd(settings: Settings, script_path: str) -> List[str]:
 
     환경 변수(접속 정보)만 경로마다 다르고, 시간·메모리·프로세스 제한, /proc 차단, 읽기 전용 마운트, 패키지 경로는 같아야 한다 —
     두 경로가 각자 조립하면 한쪽만 바뀌어 격리 수준이 조용히 갈린다.
+    ``script_path`` 는 실행별 폴더(``_run_script`` 가 만든다) 안 파일이고, 그 폴더가 샌드박스 ``/tmp`` 로 붙는다.
+    끝에 두 경로 공통 ``--env``(네이티브 스레드 수 상한)를 붙인다 — 경로별 ``--env`` 는 그 뒤에 호출부가 더한다.
     """
+    run_dir = os.path.dirname(script_path)
+    uid, gid = settings.nsjail_sandbox_uid, settings.nsjail_sandbox_gid
     cmd = [
         settings.nsjail_path, "--mode", "o",
         "--time_limit", str(settings.nsjail_time_limit),
@@ -292,9 +323,16 @@ def _nsjail_base_cmd(settings: Settings, script_path: str) -> List[str]:
         # 오류 메시지가 원인을 전혀 담지 못한다 — 2026-09-18 운영에서 AppArmor 가 mount 를
         # 막아 샌드박스가 뜨지 못했는데, 로그만으로는 알 수 없어 파드에 직접 들어가
         # 같은 명령을 재현해야 했다. --quiet 는 ERROR 를 남긴다.
-        # 대가는 nsjail 이 매 실행 남기는 UID/GID 경고 두 줄이 스텝 로그에 섞이는 것인데,
-        # 재현 불가능한 실패보다 알아볼 수 있는 상수 잡음이 낫다.
         "--quiet",
+        # 샌드박스 안 uid/gid 를 바깥도 같은 비루트 값(기본 65534)으로 매핑한다(WD-408). 형식은 inside:outside:count 다 —
+        # 한 값(-u 65534)만 주면 바깥이 호출자 uid(실행기 root, 0)가 되어 붙인 경로에 root 권한이 그대로 남는다.
+        # 매핑이 없던 시절엔 안의 uid 0 이 바깥 root 였고, nsjail 이 그걸 매 실행 logParams() 경고 두 줄로 남겼다.
+        # 비루트라 --rlimit_nproc 가 실제로 걸린다. 실행마다 새 user namespace 이고 커널 5.14+ 는 NPROC 를 user namespace 별
+        # ucounts 로 세므로 한도는 실행별이다 — 운영 노드(Ubuntu 24.04, 커널 6.8)가 여기에 해당한다. 실측은 개발 VM(커널 7.0)에서 했다:
+        # 한 실행은 64번째 스레드에서 막히고, 4개 동시(각 30스레드, 합계 124)는 모두 떴다. 5.14 미만 커널이면 uid 전역으로 셀 수 있다.
+        # 이 매핑은 0700 실행별 폴더(65534 소유) 안 스크립트를 -R 로 붙이는 데도 필요하다 — 매핑이 없으면 nsjail 이 그 폴더를 못 연다.
+        "-u", f"{uid}:{uid}:1",
+        "-g", f"{gid}:{gid}:1",
         "-R", "/usr",
         "-R", "/lib",
     ]
@@ -306,8 +344,16 @@ def _nsjail_base_cmd(settings: Settings, script_path: str) -> List[str]:
         "-R", "/etc/hosts",
         "-R", "/etc/ssl",
         "-R", f"{settings.python_packages_dir}:/opt/python-packages",
-        "-B", "/tmp",
+        # 샌드박스 /tmp 는 이 실행 전용 폴더뿐이다(WD-408). 예전 -B /tmp 는 실행기 /tmp 전체를 쓰기 가능으로 붙여, 동시에 도는
+        # 다른 테넌트의 스크립트 파일을 읽고 고칠 수 있었다.
+        "-B", f"{run_dir}:/tmp",
         "-R", f"{script_path}:/script.py",
+        # numpy/pandas 의 BLAS·OpenMP 스레드 풀은 import 때 CPU 수만큼 스레드를 만든다. 샌드박스가 비루트(WD-408)라
+        # --rlimit_nproc(기본 64)가 실제로 걸리므로, 64코어 이상 온프레미스 노드에서는 import 만으로 pthread_create EAGAIN 이 난다.
+        # 실행당 4개로 묶는다(운영 16코어 노드에서도 4개면 작은 계산에 충분하다).
+        "--env", "OPENBLAS_NUM_THREADS=4",
+        "--env", "OMP_NUM_THREADS=4",
+        "--env", "MKL_NUM_THREADS=4",
     ]
     return cmd
 
@@ -460,6 +506,7 @@ def execute_python_tibero(
     return _run_script(
         script,
         effective_timeout,
+        settings=settings,
         command=command,
         output_table=output_table,
         column_type_map=column_type_map,

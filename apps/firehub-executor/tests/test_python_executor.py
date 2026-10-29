@@ -1,3 +1,5 @@
+import os
+import shutil
 import subprocess
 from unittest.mock import MagicMock, patch
 
@@ -35,6 +37,14 @@ def make_settings(**kwargs) -> Settings:
     return Settings.model_construct(**defaults)
 
 
+@pytest.fixture(autouse=True)
+def fake_chown():
+    """nsjail 활성 경로는 실행별 폴더를 샌드박스 uid(65534) 소유로 바꾼다(WD-408). 테스트는 root 가 아니라 chown 이 실패하므로
+    가짜로 바꾸고, 호출 인자는 이 대역으로 확인한다."""
+    with patch("app.services.python_executor.os.chown") as mock_chown:
+        yield mock_chown
+
+
 def make_completed_process(stdout="", stderr="", returncode=0):
     proc = MagicMock()
     proc.stdout = stdout
@@ -48,8 +58,7 @@ def make_completed_process(stdout="", stderr="", returncode=0):
 # ---------------------------------------------------------------------------
 def test_simple_print_success():
     settings = make_settings(nsjail_enabled=False)
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.return_value = make_completed_process(stdout="hello\n", returncode=0)
         result = execute_python("print('hello')", None, settings, tenant_id=1, read_slot=2)
 
@@ -65,8 +74,7 @@ def test_simple_print_success():
 # ---------------------------------------------------------------------------
 def test_script_failure_nonzero_exit():
     settings = make_settings(nsjail_enabled=False)
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.return_value = make_completed_process(
             stdout="", stderr="NameError: name 'x' is not defined", returncode=1
         )
@@ -87,8 +95,7 @@ def test_timeout_handling():
     timeout_exc = subprocess.TimeoutExpired(cmd=["python3"], timeout=5)
     timeout_exc.process = mock_proc
 
-    with patch("app.services.python_executor.subprocess.run", side_effect=timeout_exc), \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run", side_effect=timeout_exc):
         result = execute_python("import time; time.sleep(999)", 5, settings, tenant_id=1, read_slot=2)
 
     assert result.success is False
@@ -103,8 +110,7 @@ def test_timeout_handling():
 # ---------------------------------------------------------------------------
 def test_nsjail_command_construction():
     settings = make_settings(nsjail_enabled=True)
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.return_value = make_completed_process(stdout="ok\n", returncode=0)
         execute_python("print('ok')", None, settings, tenant_id=1, read_slot=2)
 
@@ -128,8 +134,7 @@ def test_nsjail_command_construction():
 # ---------------------------------------------------------------------------
 def test_fallback_mode_no_nsjail():
     settings = make_settings(nsjail_enabled=False)
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.return_value = make_completed_process(stdout="", returncode=0)
         execute_python("pass", None, settings, tenant_id=1, read_slot=2)
 
@@ -143,8 +148,7 @@ def test_fallback_mode_no_nsjail():
 # ---------------------------------------------------------------------------
 def test_fallback_env_isolation():
     settings = make_settings(nsjail_enabled=False)
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.return_value = make_completed_process(stdout="", returncode=0)
         execute_python("pass", None, settings, tenant_id=1, read_slot=2)
 
@@ -173,8 +177,7 @@ def test_fallback_env_isolation():
 # ---------------------------------------------------------------------------
 def test_nsjail_env_no_discrete_credentials():
     settings = make_settings(nsjail_enabled=True)
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.return_value = make_completed_process(stdout="ok\n", returncode=0)
         execute_python("print('ok')", None, settings, tenant_id=1, read_slot=2)
 
@@ -207,8 +210,7 @@ EXPECTED_TENANT_2_URL = (
 
 def test_fallback_env_uses_read_slot_role_credentials():
     settings = make_settings(nsjail_enabled=False)
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.return_value = make_completed_process(stdout="", returncode=0)
         execute_python("pass", None, settings, tenant_id=2, read_slot=2)
 
@@ -223,8 +225,7 @@ def test_fallback_env_uses_read_slot_role_credentials():
 
 def test_nsjail_env_uses_read_slot_role_credentials():
     settings = make_settings(nsjail_enabled=True)
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.return_value = make_completed_process(stdout="ok\n", returncode=0)
         execute_python("print('ok')", None, settings, tenant_id=2, read_slot=2)
 
@@ -245,8 +246,7 @@ def test_both_branches_inject_identical_db_url():
     urls = {}
     for nsjail in (False, True):
         settings = make_settings(nsjail_enabled=nsjail)
-        with patch("app.services.python_executor.subprocess.run") as mock_run, \
-             patch("app.services.python_executor.os.unlink"):
+        with patch("app.services.python_executor.subprocess.run") as mock_run:
             mock_run.return_value = make_completed_process(stdout="", returncode=0)
             execute_python("pass", None, settings, tenant_id=7, read_slot=2)
         if nsjail:
@@ -296,8 +296,7 @@ def test_script_env_never_contains_tenant_executor_role():
     """스크립트에 넘기는 어떤 값에도 테넌트 실행 롤이 없다(fail-closed — 폴백 금지 고정)."""
     for nsjail in (False, True):
         settings = make_settings(nsjail_enabled=nsjail)
-        with patch("app.services.python_executor.subprocess.run") as mock_run, \
-             patch("app.services.python_executor.os.unlink"):
+        with patch("app.services.python_executor.subprocess.run") as mock_run:
             mock_run.return_value = make_completed_process(stdout="", returncode=0)
             execute_python("pass", None, settings, tenant_id=3, read_slot=5)
         blob = repr(mock_run.call_args)
@@ -310,7 +309,6 @@ def test_stdout_rows_still_loaded_with_tenant_role_connection():
     settings = make_settings(nsjail_enabled=False)
     mock_conn = MagicMock()
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"), \
          patch("app.services.python_executor.insert_batch") as mock_insert, \
          patch("app.services.python_executor.get_connection") as mock_get_conn:
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
@@ -325,32 +323,98 @@ def test_stdout_rows_still_loaded_with_tenant_role_connection():
 
 
 # ---------------------------------------------------------------------------
-# test_temp_file_cleanup
+# 실행별 폴더 정리(WD-408) — 성공·비 0 종료·시간 초과·실행기 예외 모두 폴더째 지운다
 # ---------------------------------------------------------------------------
-def test_temp_file_cleanup():
-    settings = make_settings(nsjail_enabled=False)
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink") as mock_unlink:
-        mock_run.return_value = make_completed_process(stdout="", returncode=0)
-        execute_python("pass", None, settings, tenant_id=1, read_slot=2)
-
-    mock_unlink.assert_called_once()
-    path_arg = mock_unlink.call_args[0][0]
-    assert path_arg.startswith("/tmp/")
-    assert path_arg.endswith(".py")
+def _host_script_path(cmd):
+    """실행 명령에서 바깥(실행기) 스크립트 경로를 꺼낸다 — nsjail 은 ``-R <경로>:/script.py``, 개발 경로는 마지막 인자다."""
+    for part in cmd:
+        if part.endswith(":/script.py"):
+            return part[: -len(":/script.py")]
+    return cmd[-1]
 
 
-# ---------------------------------------------------------------------------
-# test_temp_file_cleanup_on_exception
-# ---------------------------------------------------------------------------
-def test_temp_file_cleanup_on_exception():
-    settings = make_settings(nsjail_enabled=False)
-    with patch("app.services.python_executor.subprocess.run", side_effect=RuntimeError("boom")), \
-         patch("app.services.python_executor.os.unlink") as mock_unlink:
-        result = execute_python("pass", None, settings, tenant_id=1, read_slot=2)
+def _has_pair(cmd, flag, value):
+    """명령에 ``flag value`` 가 연속 인자로 있는지."""
+    return any(cmd[i] == flag and cmd[i + 1] == value for i in range(len(cmd) - 1))
 
-    assert result.success is False
-    mock_unlink.assert_called_once()
+
+def _tmp_bind_dir(cmd):
+    """nsjail 명령의 ``-B`` 가 정확히 하나이고 ``<폴더>:/tmp`` 모양인지 확인한 뒤 그 바깥 폴더를 돌려준다.
+
+    하나뿐이어야 한다 — 맨 ``-B /tmp``(실행기 /tmp 전체)가 섞이면 다른 실행의 스크립트를 읽고 고칠 수 있다.
+    """
+    binds = [cmd[i + 1] for i in range(len(cmd) - 1) if cmd[i] == "-B"]
+    assert len(binds) == 1 and binds[0].endswith(":/tmp"), binds
+    return binds[0][: -len(":/tmp")]
+
+
+def _run_capturing_script_path(settings, side_effect, chown=None):
+    """subprocess.run 을 대역으로 바꿔 실행 중에 받은 스크립트 경로·폴더 상태를 기록하고 돌린다."""
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        script_path = _host_script_path(cmd)
+        seen["script_path"] = script_path
+        seen["mode"] = os.stat(script_path).st_mode & 0o777
+        seen["dir_mode"] = os.stat(os.path.dirname(script_path)).st_mode & 0o777
+        # 샌드박스가 뜨기 **전에** 폴더 소유자가 바뀌어 있어야 한다(사후 assert_called 로는 순서를 못 본다).
+        seen["chowned_before_run"] = chown.called if chown is not None else None
+        with open(script_path) as f:
+            seen["content"] = f.read()
+        if isinstance(side_effect, BaseException):
+            raise side_effect
+        return side_effect
+
+    with patch("app.services.python_executor.subprocess.run", side_effect=fake_run):
+        result = execute_python("print('x')", 5, settings, tenant_id=1, read_slot=2)
+    return result, seen
+
+
+@pytest.mark.parametrize("nsjail_enabled", [False, True], ids=["dev", "nsjail"])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        make_completed_process(stdout="ok\n", returncode=0),
+        make_completed_process(stderr="NameError", returncode=1),
+        subprocess.TimeoutExpired(cmd=["python3"], timeout=5),
+        RuntimeError("boom"),
+    ],
+    ids=["success", "nonzero", "timeout", "executor-error"],
+)
+def test_run_dir_removed_after_success_failure_and_timeout(outcome, nsjail_enabled, fake_chown):
+    """nsjail 경로(chown 이 끼는 경로)와 개발 경로 모두, 실행이 어떻게 끝나든 실행별 폴더를 지운다.
+
+    nsjail 경로는 샌드박스를 띄우기 **전에** 폴더를 샌드박스 uid/gid(65534) 소유로 넘기고, 개발 경로는 chown 하지 않는다(맥 개발
+    환경에서 chown 이 실패한다).
+    """
+    result, seen = _run_capturing_script_path(make_settings(nsjail_enabled=nsjail_enabled), outcome, chown=fake_chown)
+
+    assert seen["content"] == "print('x')"
+    run_dir = os.path.dirname(seen["script_path"])
+    assert not os.path.exists(run_dir), "실행이 어떻게 끝나든 실행별 폴더는 남지 않는다"
+    if nsjail_enabled:
+        assert seen["chowned_before_run"] is True
+        fake_chown.assert_called_once_with(run_dir, 65534, 65534)
+        # 폴더는 mkdtemp 가 만든 0700 그대로다 — 샌드박스 uid 말고는 다른 실행·사용자가 들어오지 못하게 하는 불변식이고,
+        # 누가 폴더를 넓게(예: 0o755/0o777) 바꾸는 회귀를 잡는다.
+        assert seen["dir_mode"] == 0o700
+    else:
+        fake_chown.assert_not_called()
+    if isinstance(outcome, BaseException):
+        assert result.success is False
+
+
+def test_script_written_inside_private_run_dir():
+    _, first = _run_capturing_script_path(make_settings(nsjail_enabled=False), make_completed_process())
+    _, second = _run_capturing_script_path(make_settings(nsjail_enabled=False), make_completed_process())
+
+    for seen in (first, second):
+        run_dir = os.path.dirname(seen["script_path"])
+        assert os.path.basename(run_dir).startswith("pyrun-")
+        assert seen["script_path"] == os.path.join(run_dir, "script.py")
+        # 샌드박스 uid(65534)가 읽을 수 있어야 한다 — NamedTemporaryFile 의 0600 root 파일은 못 읽는다.
+        assert seen["mode"] == 0o644
+    assert os.path.dirname(first["script_path"]) != os.path.dirname(second["script_path"])
 
 
 # ---------------------------------------------------------------------------
@@ -358,8 +422,7 @@ def test_temp_file_cleanup_on_exception():
 # ---------------------------------------------------------------------------
 def test_execution_time_measurement():
     settings = make_settings(nsjail_enabled=False)
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.return_value = make_completed_process(stdout="", returncode=0)
         result = execute_python("pass", None, settings, tenant_id=1, read_slot=2)
 
@@ -376,7 +439,6 @@ def test_stdout_json_auto_insert():
     mock_conn = MagicMock()
 
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"), \
          patch("app.services.python_executor.insert_batch") as mock_insert, \
          patch("app.services.python_executor.get_connection") as mock_get_conn:
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
@@ -410,7 +472,6 @@ def _run_with_output_table(stdout, stderr=""):
     """출력 테이블이 있는 실행 — 적재 커넥션·insert_batch 호출 여부를 함께 돌려준다."""
     settings = make_settings(nsjail_enabled=False)
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"), \
          patch("app.services.python_executor.insert_batch") as mock_insert, \
          patch("app.services.python_executor.get_connection") as mock_get_conn:
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -481,8 +542,7 @@ def test_stdout_valid_json_but_not_rows_keeps_zero_rows(stdout):
 def test_stdout_not_json_without_output_table_is_not_checked():
     # 출력 테이블이 없는 스텝은 지금처럼 stdout 을 검사하지 않는다
     settings = make_settings(nsjail_enabled=False)
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.return_value = make_completed_process(stdout=DEBUG_THEN_JSON_STDOUT, returncode=0)
         result = execute_python("...", None, settings, tenant_id=1, read_slot=2)
 
@@ -498,8 +558,7 @@ def test_stdout_json_no_output_table():
     settings = make_settings(nsjail_enabled=False)
     rows_json = '[{"id": 1}]'
 
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.return_value = make_completed_process(stdout=rows_json, returncode=0)
         result = execute_python("print('[...]')", None, settings, tenant_id=1, read_slot=2)
 
@@ -517,7 +576,6 @@ def test_stderr_as_execution_log():
     mock_conn = MagicMock()
 
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"), \
          patch("app.services.python_executor.insert_batch"), \
          patch("app.services.python_executor.get_connection") as mock_get_conn:
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
@@ -543,8 +601,7 @@ def test_stderr_as_execution_log():
 def test_script_failure_no_insert():
     settings = make_settings(nsjail_enabled=False)
 
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.return_value = make_completed_process(
             stdout='[{"id": 1}]',
             stderr="SyntaxError: invalid syntax",
@@ -566,7 +623,6 @@ def test_insert_failure_returns_error():
     settings = make_settings(nsjail_enabled=False)
 
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"), \
          patch("app.services.python_executor.insert_batch", side_effect=Exception("relation does not exist")), \
          patch("app.services.python_executor.get_connection") as mock_get_conn:
         mock_conn = MagicMock()
@@ -600,7 +656,6 @@ def _run_load(stdout, column_type_map=None, insert_side_effect=None):
     """출력 테이블·컬럼 타입 맵이 있는 실행 — 적재 커넥션·insert_batch 목을 함께 돌려준다."""
     settings = make_settings(nsjail_enabled=False)
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"), \
          patch("app.services.python_executor.insert_batch", side_effect=insert_side_effect) as mock_insert, \
          patch("app.services.python_executor.get_connection") as mock_get_conn:
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -677,8 +732,7 @@ def test_db_data_error_sends_pg_error_without_raw_sql():
 
 def test_unexpected_error_keeps_traceback_out_of_user_message():
     settings = make_settings(nsjail_enabled=False)
-    with patch("app.services.python_executor.subprocess.run", side_effect=OSError("disk exploded")), \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run", side_effect=OSError("disk exploded")):
         result = execute_python("print(1)", None, settings, tenant_id=1, read_slot=2)
 
     assert result.success is False
@@ -728,8 +782,7 @@ def test_parse_stdout_json_non_dict_items():
 # ---------------------------------------------------------------------------
 def test_nsjail_keeps_error_level_diagnostics():
     settings = make_settings(nsjail_enabled=True)
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.return_value = make_completed_process(stdout="ok\n", returncode=0)
         execute_python("print('ok')", None, settings, tenant_id=1, read_slot=2)
 
@@ -739,6 +792,54 @@ def test_nsjail_keeps_error_level_diagnostics():
         "AppArmor 가 mount 를 막은 장애에서 로그만으로 원인을 알 수 없었다"
     )
     assert "--quiet" in cmd
+
+
+# ---------------------------------------------------------------------------
+# 비루트 매핑·실행별 /tmp(WD-408)
+#   매핑이 없으면 샌드박스 uid 0 이 컨테이너 root 로 매핑된다. 한 값(-u 65534)만 주면 바깥이 호출자 uid(0)라 그대로다.
+#   -B /tmp 는 실행기 /tmp 전체(동시에 도는 다른 테넌트 스크립트 포함)를 쓰기 가능으로 붙였다.
+# ---------------------------------------------------------------------------
+def _nsjail_cmd(settings=None):
+    settings = settings or make_settings(nsjail_enabled=True)
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
+        mock_run.return_value = make_completed_process(stdout="ok\n", returncode=0)
+        execute_python("print('ok')", None, settings, tenant_id=1, read_slot=2)
+    return mock_run.call_args[0][0]
+
+
+def test_nsjail_cmd_maps_sandbox_to_unprivileged_uid():
+    cmd = _nsjail_cmd()
+    assert _has_pair(cmd, "-u", "65534:65534:1")
+    assert _has_pair(cmd, "-g", "65534:65534:1")
+
+
+def test_nsjail_cmd_binds_only_run_dir_as_tmp():
+    cmd = _nsjail_cmd()
+    run_dir = _tmp_bind_dir(cmd)
+    assert os.path.basename(run_dir).startswith("pyrun-")
+    # /script.py 는 그 폴더 안 파일을 읽기 전용으로 붙인다.
+    assert _has_pair(cmd, "-R", f"{os.path.join(run_dir, 'script.py')}:/script.py")
+
+
+def test_run_dir_removal_failure_is_logged_not_raised(caplog):
+    """폴더 정리 실패는 실행 결과를 바꾸지 않지만 경로를 담은 WARN 로그를 남긴다(테넌트 스크립트·데이터가 남았다는 신호)."""
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["run_dir"] = os.path.dirname(_host_script_path(cmd))
+        return make_completed_process(stdout="ok\n")
+
+    with patch("app.services.python_executor.subprocess.run", side_effect=fake_run), \
+         patch("app.services.python_executor.shutil.rmtree", side_effect=PermissionError("denied")), \
+         caplog.at_level("WARNING", logger="app.services.python_executor"):
+        result = execute_python("print('SECRET-SCRIPT-BODY')", None, make_settings(), tenant_id=1, read_slot=2)
+
+    assert result.success is True
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any(seen["run_dir"] in m for m in warnings)
+    assert not any("SECRET-SCRIPT-BODY" in m for m in warnings)
+    # 실제 폴더는 대역 때문에 남았으므로 테스트가 치운다.
+    shutil.rmtree(seen["run_dir"], ignore_errors=True)
 
 
 # ===========================================================================
@@ -784,7 +885,6 @@ def _run_tibero(settings, *, stdout="", stderr="", returncode=0, loader=None, **
     """PG 전용 경로(슬롯 롤 URL·스키마·PG 연결)를 부르면 실패하도록 막고 Tibero 경로를 돌린다."""
     loader = loader or _RecordingLoader()
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"), \
          patch("app.services.python_executor.resolve_read_db_url", side_effect=AssertionError("PG 슬롯 롤 금지")), \
          patch("app.services.python_executor.resolve_schema", side_effect=AssertionError("PG 스키마 금지")), \
          patch("app.services.python_executor.get_connection", side_effect=AssertionError("PG 연결 금지")):
@@ -833,17 +933,48 @@ def test_tibero_nsjail_base_args_match_pg_path():
     """두 경로가 같은 샌드박스 바닥(--env 앞까지)을 쓴다 — 한쪽만 바뀌면 격리 수준이 갈린다."""
     settings = make_tibero_settings(nsjail_enabled=True)
     _, tibero_run, _ = _run_tibero(settings)
-    with patch("app.services.python_executor.subprocess.run") as pg_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as pg_run:
         pg_run.return_value = make_completed_process(stdout="", returncode=0)
         execute_python("print(1)", None, settings, tenant_id=4, read_slot=3)
     t_cmd, p_cmd = tibero_run.call_args.args[0], pg_run.call_args.args[0]
 
-    # 임시 스크립트 경로는 실행마다 다르므로 그 마운트 인자는 빼고 비교한다.
+    # 실행별 폴더(/tmp 로 붙는 폴더·그 안 스크립트)는 실행마다 다르므로 그 마운트 인자는 빼고 비교한다.
     def strip(c):
-        return [x for x in c[: c.index("--env")] if not x.endswith(":/script.py")]
+        return [x for x in c[: c.index("--env")] if not x.endswith((":/script.py", ":/tmp"))]
 
     assert strip(t_cmd) == strip(p_cmd)
+
+
+_BLAS_THREAD_ENV = ["OPENBLAS_NUM_THREADS=4", "OMP_NUM_THREADS=4", "MKL_NUM_THREADS=4"]
+
+
+def test_both_nsjail_paths_cap_native_thread_pools():
+    """BLAS·OpenMP 스레드 상한은 PG·Tibero 두 경로 모두에 들어간다 — 비루트라 nproc 64 가 걸려 다코어 노드에서 import 가 죽는다."""
+    pg_cmd = _nsjail_cmd()
+    _, tibero_run, _ = _run_tibero(make_tibero_settings(nsjail_enabled=True))
+    for cmd in (pg_cmd, tibero_run.call_args.args[0]):
+        env_values = [cmd[i + 1] for i, part in enumerate(cmd) if part == "--env"]
+        for value in _BLAS_THREAD_ENV:
+            assert value in env_values
+
+
+def test_tibero_nsjail_run_dir_owned_by_sandbox_and_mapped(fake_chown):
+    """Tibero 경로도 실행별 폴더를 65534 소유로 넘기고, 같은 비루트 매핑·실행별 /tmp 를 쓴다(WD-408 리뷰 I-1).
+
+    소유자 결정은 공용 실행 뼈대(``_run_script``)에 있지만, PG 테스트만 있으면 Tibero 경로가 그 뼈대를 벗어나도 녹색이다. 그러면
+    폴더가 root 소유 0700 으로 남아 nsjail 이 /script.py 를 붙이지 못하고(매핑된 65534 가 폴더를 못 연다) 운영의 모든 Tibero
+    Python 스텝이 실패한다.
+    """
+    result, mock_run, _ = _run_tibero(make_tibero_settings(nsjail_enabled=True))
+    assert result.success is True
+    cmd = mock_run.call_args.args[0]
+
+    run_dir = _tmp_bind_dir(cmd)
+    assert os.path.basename(run_dir).startswith("pyrun-")
+    fake_chown.assert_called_once_with(run_dir, 65534, 65534)
+    assert _has_pair(cmd, "-u", "65534:65534:1") and _has_pair(cmd, "-g", "65534:65534:1")
+    assert _has_pair(cmd, "-R", f"{os.path.join(run_dir, 'script.py')}:/script.py")
+    assert not os.path.exists(run_dir)
 
 
 @pytest.mark.parametrize("token", [None, "", "   "])
@@ -935,8 +1066,7 @@ def test_tibero_token_is_redacted_from_captured_output_and_error():
 
 def test_tibero_timeout_message_has_no_token():
     settings = make_tibero_settings(nsjail_enabled=True)
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.TimeoutExpired(cmd=["nsjail"], timeout=5)
         result = execute_python_tibero(
             "x", 5, settings, tenant_id=4, script_token=SCRIPT_TOKEN, loader=_RecordingLoader()
@@ -949,8 +1079,7 @@ def test_tibero_timeout_message_has_no_token():
 
 def test_tibero_unexpected_error_traceback_is_redacted():
     settings = make_tibero_settings()
-    with patch("app.services.python_executor.subprocess.run") as mock_run, \
-         patch("app.services.python_executor.os.unlink"):
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
         mock_run.side_effect = RuntimeError(f"boom {SCRIPT_TOKEN}")
         result = execute_python_tibero(
             "x", None, settings, tenant_id=4, script_token=SCRIPT_TOKEN, loader=_RecordingLoader()
