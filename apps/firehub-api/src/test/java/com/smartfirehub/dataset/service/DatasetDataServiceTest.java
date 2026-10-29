@@ -749,6 +749,55 @@ class DatasetDataServiceTest extends IntegrationTestBase {
         .doesNotContain("Unrecognized", "Source", "token");
   }
 
+  /**
+   * 예외(WD-340): WGS84 범위 밖 좌표는 저장하지 않는다 — 점·다각형 꼭짓점·Feature·GeometryCollection 안까지 모두 본다. 저장되면 지도
+   * 탭이 경계 계산 오류로 상세 화면 전체를 깨뜨렸다.
+   */
+  @Test
+  void addRow_geometryType_outOfRangeCoordinates_rejectedInKorean() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd340_geom_range", "geom", "GEOMETRY", null, true);
+
+    List<String> invalid =
+        List.of(
+            "{\"type\":\"Point\",\"coordinates\":[999,999]}",
+            "{\"type\":\"Point\",\"coordinates\":[400,37]}",
+            // geometries 키를 덧붙여도 Point 의 좌표 검사를 건너뛰지 않는다
+            "{\"type\":\"Point\",\"coordinates\":[999,999],\"geometries\":[]}",
+            "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,91],[0,0]]]}",
+            "{\"type\":\"Feature\",\"properties\":{},"
+                + "\"geometry\":{\"type\":\"Point\",\"coordinates\":[127,-90.5]}}",
+            "{\"type\":\"GeometryCollection\",\"geometries\":["
+                + "{\"type\":\"Point\",\"coordinates\":[127,37]},"
+                + "{\"type\":\"LineString\",\"coordinates\":[[0,0],[-181,0]]}]}");
+    for (String geoJson : invalid) {
+      assertThatThrownBy(
+              () ->
+                  datasetDataService.addRow(
+                      dataset.id(), new RowDataRequest(Map.of("geom", geoJson))))
+          .as(geoJson)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage(
+              "입력값을 확인하세요: 'geom' 필드: 좌표 범위를 벗어났습니다."
+                  + " 경도는 -180~180, 위도는 -90~90 사이여야 합니다 (WGS84, [경도, 위도] 순서)");
+    }
+  }
+
+  /** 정상(WD-340): 경계값(경도 ±180·위도 ±90)은 범위 안이라 저장된다. */
+  @Test
+  void addRow_geometryType_boundaryCoordinates_success() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd340_geom_edge", "geom", "GEOMETRY", null, true);
+
+    RowDataResponse row =
+        datasetDataService.addRow(
+            dataset.id(),
+            new RowDataRequest(
+                Map.of("geom", "{\"type\":\"LineString\",\"coordinates\":[[-180,-90],[180,90]]}")));
+
+    assertThat(row.data().get("geom")).isNotNull();
+  }
+
   /** 예외: GEOMETRY 타입 — coordinates 필드 없으면 IllegalArgumentException */
   @Test
   void addRow_geometryType_missingCoordinates_throwsIllegalArgument() {

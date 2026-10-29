@@ -1,5 +1,6 @@
 import type maplibregl from 'maplibre-gl';
 
+import { geometryPositions, isValidPosition } from '@/lib/geo-utils';
 import type { GeoJsonFeatureCollection } from '@/types/dataset';
 
 /**
@@ -10,11 +11,11 @@ export function fitMapToData(map: maplibregl.Map, data: GeoJsonFeatureCollection
   if (data.features.length === 0) return;
   let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
 
+  // 그릴 수 없는 도형은 toFeatureCollection 이 이미 뺀다(WD-340). 다른 경로로 들어온 범위 밖 위치가 있어도
+  // maplibre 가 경계 계산에서 예외(Invalid LngLat)를 던져 화면 전체가 깨지지 않게 유효한 좌표만 쓴다 — 점·히트맵 모드 공통.
   for (const feature of data.features) {
-    const geom = feature.geometry as { type: string; coordinates: unknown };
-    if (!geom || !geom.coordinates) continue;
-    const coords = flattenCoordinates(geom.type, geom.coordinates);
-    for (const [lon, lat] of coords) {
+    const positions = (geometryPositions(feature.geometry) ?? []).filter(isValidPosition) as [number, number][];
+    for (const [lon, lat] of positions) {
       if (lon < minLon) minLon = lon;
       if (lat < minLat) minLat = lat;
       if (lon > maxLon) maxLon = lon;
@@ -28,17 +29,4 @@ export function fitMapToData(map: maplibregl.Map, data: GeoJsonFeatureCollection
   } else {
     map.fitBounds([[minLon, minLat], [maxLon, maxLat]], { padding: 60, maxZoom: 15 });
   }
-}
-
-/** geometry 종류별 좌표 배열을 [lon, lat] 목록으로 펼친다. */
-function flattenCoordinates(geomType: string, coords: unknown): [number, number][] {
-  if (geomType === 'Point') return [coords as [number, number]];
-  if (geomType === 'LineString' || geomType === 'MultiPoint') return coords as [number, number][];
-  if (geomType === 'Polygon' || geomType === 'MultiLineString') {
-    return (coords as [number, number][][]).flat();
-  }
-  if (geomType === 'MultiPolygon') {
-    return (coords as [number, number][][][]).flat(2);
-  }
-  return [];
 }

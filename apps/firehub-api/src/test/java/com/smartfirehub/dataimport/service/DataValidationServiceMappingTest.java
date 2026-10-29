@@ -81,6 +81,26 @@ class DataValidationServiceMappingTest {
         .doesNotContain("Unrecognized", "Source");
   }
 
+  /** WD-340: 임포트도 행 추가와 같이 WGS84 범위 밖 좌표(위도 95·경도 400)를 검증 단계에서 거부한다. */
+  @Test
+  void convertValue_geometryOutOfRange_rejectedInKorean() throws Exception {
+    assertThatThrownBy(
+            () -> service.convertValue("{\"type\":\"Point\",\"coordinates\":[127,95]}", "GEOMETRY"))
+        .hasMessageStartingWith("좌표 범위를 벗어났습니다");
+    assertThatThrownBy(
+            () -> service.convertValue("{\"type\":\"Point\",\"coordinates\":[400,37]}", "GEOMETRY"))
+        .hasMessageStartingWith("좌표 범위를 벗어났습니다");
+    // 숫자가 아닌 좌표는 범위 검사를 피하지 못하게 형식 오류로 거부한다
+    assertThatThrownBy(
+            () ->
+                service.convertValue(
+                    "{\"type\":\"Point\",\"coordinates\":[127,\"999\"]}", "GEOMETRY"))
+        .hasMessageStartingWith("GeoJSON 형식이 아닙니다");
+    // 경계값(북극점)은 그대로 통과한다
+    assertThat(service.convertValue("{\"type\":\"Point\",\"coordinates\":[127,90]}", "GEOMETRY"))
+        .isEqualTo("{\"type\":\"Point\",\"coordinates\":[127,90]}");
+  }
+
   // -----------------------------------------------------------------------
   // convertValue — unknown data type
   // -----------------------------------------------------------------------
