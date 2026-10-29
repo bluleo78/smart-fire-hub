@@ -23,6 +23,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -265,6 +266,48 @@ public class PipelineSecurityGate {
           DatasetAccessGuard.SQL_ACCESS_DENIED_CODE,
           DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
     }
+  }
+
+  /** 볼 수 없는 자동 생성 임시 데이터셋 때문에 파이프라인 삭제·스텝 교체를 거부할 때의 코드(WD-310). */
+  public static final String HIDDEN_TEMP_DATASET_CODE = "PIPELINE_HIDDEN_TEMP_DATASET";
+
+  /** 위 거부의 안내 문구 — 볼 수 없는 데이터셋의 이름·개수는 드러내지 않는다. */
+  public static final String HIDDEN_TEMP_DATASET_MESSAGE =
+      "볼 수 없는 임시 데이터셋이 함께 지워져야 해서 처리할 수 없습니다 — 관리자에게 요청하세요";
+
+  /**
+   * 호출자가 볼(VIEW) 수 없는 데이터셋 수(WD-310 — 삭제 확인 창이 미리 알리는 데 쓴다). 판정은 실행 때의 {@link
+   * #requireOutputVisible} 과 같은 열람 등급·허용 목록 기준이다.
+   */
+  public int hiddenCount(Long userId, Collection<Long> datasetIds) {
+    if (datasetIds.isEmpty()) {
+      return 0;
+    }
+    return guard.viewDenials(clearance(userId), datasetIds).size();
+  }
+
+  /**
+   * 파이프라인 삭제·스텝 교체가 함께 지울 자동 생성 임시 데이터셋을 호출자가 모두 볼 수 있어야 한다(WD-310). 실행 때 「볼 수 없는 출력은 비울 수 없다」
+   * ({@link #requireOutputVisible})와 같은 원칙이다 — 없으면 {@code pipeline:delete}·{@code pipeline:write}
+   * 만으로 볼 수 없는 기밀 데이터셋(테이블·행 전부)을 지울 수 있다. 하나라도 못 보면 아무것도 지우지 않고 403 으로 거부한다(일부만 남기면 주인 없는 기밀 테이블이
+   * 남는다). 실제 사유는 감사에만 남긴다(첫 거부 하나).
+   */
+  public void requireAutoTempsDeletable(Long userId, Collection<Long> tempIds) {
+    if (tempIds.isEmpty()) {
+      return;
+    }
+    Clearance c = clearance(userId);
+    Map<Long, Decision> denials = guard.viewDenials(c, tempIds);
+    if (denials.isEmpty()) {
+      return;
+    }
+    Map.Entry<Long, Decision> first = denials.entrySet().iterator().next();
+    guard.auditDenial(
+        c,
+        AccessDenialAction.PIPELINE,
+        new DatasetAccessGuard.DenialDetail(first.getValue().reasonCode(), first.getKey(), null));
+    throw new CodedApiException(
+        HttpStatus.FORBIDDEN, HIDDEN_TEMP_DATASET_CODE, HIDDEN_TEMP_DATASET_MESSAGE);
   }
 
   /**

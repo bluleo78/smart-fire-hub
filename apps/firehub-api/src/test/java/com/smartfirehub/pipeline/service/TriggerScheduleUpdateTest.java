@@ -79,7 +79,7 @@ class TriggerScheduleUpdateTest extends IntegrationTestBase {
         // 이미 지워졌으면 무시한다.
       }
     }
-    pipelineService.deletePipeline(pipelineId);
+    pipelineService.deletePipelineUnchecked(pipelineId);
     awaitSecurityAudit();
     TenantRlsTestSupport.deleteUser(dsl, userId);
   }

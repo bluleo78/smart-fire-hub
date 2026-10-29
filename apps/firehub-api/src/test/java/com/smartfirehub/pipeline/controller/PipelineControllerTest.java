@@ -188,19 +188,22 @@ class PipelineControllerTest {
         .perform(delete("/api/v1/pipelines/1").header("Authorization", "Bearer test-token"))
         .andExpect(status().isNoContent());
 
-    verify(pipelineService).deletePipeline(1L);
+    // 호출자를 함께 넘겨 볼 수 없는 임시 데이터셋 판정을 받게 한다(WD-310)
+    verify(pipelineService).deletePipeline(eq(1L), anyLong());
   }
 
   /** 삭제 영향 조회(WD-170) — 함께 지워질 자동 생성 임시 데이터셋 개수를 그대로 내보낸다. */
   @Test
   void getDeleteImpact_withPermission_returnsTempDatasetCount() throws Exception {
-    when(pipelineService.getDeleteImpact(1L)).thenReturn(new PipelineDeleteImpactResponse(2));
+    when(pipelineService.getDeleteImpact(eq(1L), anyLong()))
+        .thenReturn(new PipelineDeleteImpactResponse(2, true));
 
     mockMvc
         .perform(
             get("/api/v1/pipelines/1/delete-impact").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.tempDatasetCount").value(2));
+        .andExpect(jsonPath("$.tempDatasetCount").value(2))
+        .andExpect(jsonPath("$.hasHiddenTempDatasets").value(true));
   }
 
   @Test

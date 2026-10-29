@@ -153,7 +153,7 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
     // (각 테스트가 마지막 실행을 반드시 기다리므로 여기서는 메타데이터만 정리하면 된다.)
     if (pipelineId != null) {
       try {
-        pipelineService.deletePipeline(pipelineId);
+        pipelineService.deletePipelineUnchecked(pipelineId);
       } catch (Exception ignored) {
         // 정리 실패가 본 검증 결과를 가리지 않게 한다.
       }
@@ -838,7 +838,7 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
     } finally {
       // 파이프라인이 이 데이터셋을 출력으로 참조하므로 먼저 지운다(tearDown 은 이미 지워진 파이프라인을 무시한다).
       try {
-        pipelineService.deletePipeline(pipelineId);
+        pipelineService.deletePipelineUnchecked(pipelineId);
         pipelineId = null;
       } catch (Exception ignored) {
         // 정리 실패가 본 검증 결과를 가리지 않게 한다.

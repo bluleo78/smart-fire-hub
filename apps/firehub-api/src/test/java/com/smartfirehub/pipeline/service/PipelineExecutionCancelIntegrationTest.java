@@ -125,7 +125,7 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
   void tearDown() {
     TenantRlsTestSupport.cleanupAll(
         () -> {
-          if (pipelineId != null) pipelineService.deletePipeline(pipelineId);
+          if (pipelineId != null) pipelineService.deletePipelineUnchecked(pipelineId);
         },
         () -> datasetService.deleteDataset(outDatasetId),
         () -> {
@@ -288,7 +288,7 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
           .isInstanceOf(PipelineNotFoundException.class)
           .hasMessage("실행 기록을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
     } finally {
-      pipelineService.deletePipeline(otherPipelineId);
+      pipelineService.deletePipelineUnchecked(otherPipelineId);
     }
     assertThat(pipelineService.getExecutionById(pipelineId, executionId).status())
         .isEqualTo("PENDING");

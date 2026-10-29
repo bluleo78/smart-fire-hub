@@ -95,7 +95,7 @@ class AiPipelineExecutionErrorTest extends IntegrationTestBase {
                       .fetch(DATASET.ID));
       temps.forEach(this::deleteQuietly);
       try {
-        pipelineService.deletePipeline(p);
+        pipelineService.deletePipelineUnchecked(p);
       } catch (Exception ignored) {
         // 정리 실패는 다음 정리에 맡긴다.
       }

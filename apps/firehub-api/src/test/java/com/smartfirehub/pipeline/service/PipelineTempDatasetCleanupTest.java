@@ -83,7 +83,7 @@ class PipelineTempDatasetCleanupTest extends IntegrationTestBase {
     String table = tableNameOf(tempId);
     assertThat(tableExists(table)).as("삭제 전 물리 테이블").isTrue();
 
-    pipelineService.deletePipeline(p.id());
+    pipelineService.deletePipelineUnchecked(p.id());
 
     assertThat(datasetExists(tempId)).as("TEMP 메타데이터").isFalse();
     assertThat(columnCount(tempId)).as("TEMP 컬럼 메타").isZero();
@@ -108,7 +108,7 @@ class PipelineTempDatasetCleanupTest extends IntegrationTestBase {
     assertThat(outputOf(stepId)).as("고정된 출력").isEqualTo(tempId);
     String table = tableNameOf(tempId);
 
-    pipelineService.deletePipeline(p.id());
+    pipelineService.deletePipelineUnchecked(p.id());
 
     assertThat(datasetExists(tempId)).isFalse();
     assertThat(tableExists(table)).isFalse();
@@ -182,12 +182,12 @@ class PipelineTempDatasetCleanupTest extends IntegrationTestBase {
         tempId,
         b.steps().get(0).id());
     assertThat(outputOf(b.steps().get(0).id())).isEqualTo(tempId);
-    assertThat(pipelineService.getDeleteImpact(a.id()).tempDatasetCount())
+    assertThat(pipelineService.getDeleteImpact(a.id(), userId).tempDatasetCount())
         .as("보호되는 TEMP 는 영향 개수에서 빠진다")
         .isZero();
     String table = tableNameOf(tempId);
 
-    pipelineService.deletePipeline(a.id());
+    pipelineService.deletePipelineUnchecked(a.id());
 
     assertThat(datasetExists(tempId)).as("다른 파이프라인 출력 TEMP 메타").isTrue();
     assertThat(tableExists(table)).as("다른 파이프라인 출력 TEMP 물리 테이블").isTrue();
@@ -218,7 +218,7 @@ class PipelineTempDatasetCleanupTest extends IntegrationTestBase {
     Long readerStepId = b.steps().get(0).id();
     assertThat(inputCount(readerStepId, tempId)).isEqualTo(1);
 
-    pipelineService.deletePipeline(a.id());
+    pipelineService.deletePipelineUnchecked(a.id());
 
     assertThat(datasetExists(tempId)).isFalse();
     assertThat(inputCount(readerStepId, tempId)).as("입력 연결은 CASCADE 로 함께 사라진다").isZero();
@@ -232,17 +232,19 @@ class PipelineTempDatasetCleanupTest extends IntegrationTestBase {
   void getDeleteImpact_countsTempsThatWouldBeDeleted() {
     PipelineDetailResponse p =
         createPipeline("wd170 영향", List.of(sqlStep("하나", null), sqlStep("둘", null)));
-    assertThat(pipelineService.getDeleteImpact(p.id()).tempDatasetCount()).as("TEMP 없음").isZero();
+    assertThat(pipelineService.getDeleteImpact(p.id(), userId).tempDatasetCount())
+        .as("TEMP 없음")
+        .isZero();
 
     createTemp(p, stepIdByName(p, "하나"), "하나");
     createTemp(p, stepIdByName(p, "둘"), "둘");
 
-    assertThat(pipelineService.getDeleteImpact(p.id()).tempDatasetCount()).isEqualTo(2);
+    assertThat(pipelineService.getDeleteImpact(p.id(), userId).tempDatasetCount()).isEqualTo(2);
   }
 
   @Test
   void getDeleteImpact_unknownPipeline_throwsNotFound() {
-    assertThatThrownBy(() -> pipelineService.getDeleteImpact(-1L))
+    assertThatThrownBy(() -> pipelineService.getDeleteImpact(-1L, userId))
         .isInstanceOf(PipelineNotFoundException.class);
   }
 
