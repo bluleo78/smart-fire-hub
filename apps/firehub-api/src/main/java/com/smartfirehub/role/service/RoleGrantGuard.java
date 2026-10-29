@@ -58,6 +58,10 @@ public class RoleGrantGuard {
   static final String PERMISSIONS_EDIT_SCOPE_MESSAGE = "자신에게 없는 권한·등급을 가진 역할의 권한은 바꿀 수 없습니다";
   static final String PERMISSIONS_EDIT_ALLOWLIST_MESSAGE =
       "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할의 권한은 바꿀 수 없습니다";
+  static final String EDIT_ADMIN_MESSAGE = "시스템 ADMIN 역할은 ADMIN 만 바꿀 수 있습니다";
+  static final String EDIT_SCOPE_MESSAGE = "자신에게 없는 권한·등급을 가진 역할은 이름·설명을 바꿀 수 없습니다";
+  static final String EDIT_ALLOWLIST_MESSAGE =
+      "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할은 이름·설명을 바꿀 수 없습니다";
   static final String MEMBER_ADMIN_MESSAGE = "시스템 ADMIN 역할을 가진 멤버는 ADMIN 만 정지·재활성하거나 제거할 수 있습니다";
   static final String MEMBER_SCOPE_MESSAGE = "자신에게 없는 권한·등급의 역할을 가진 멤버는 정지·재활성하거나 제거할 수 없습니다";
   static final String MEMBER_ALLOWLIST_MESSAGE =
@@ -100,6 +104,14 @@ public class RoleGrantGuard {
           PERMISSIONS_EDIT_SCOPE_MESSAGE,
           "ROLE_PERMISSIONS_ALLOWLIST_BEYOND_SCOPE",
           PERMISSIONS_EDIT_ALLOWLIST_MESSAGE);
+  private static final ScopeErrors EDIT_ERRORS =
+      new ScopeErrors(
+          "SYSTEM_ADMIN_ROLE_ADMIN_ONLY",
+          EDIT_ADMIN_MESSAGE,
+          "ROLE_EDIT_BEYOND_SCOPE",
+          EDIT_SCOPE_MESSAGE,
+          "ROLE_EDIT_ALLOWLIST_BEYOND_SCOPE",
+          EDIT_ALLOWLIST_MESSAGE);
   private static final ScopeErrors MEMBER_REMOVE_ERRORS =
       new ScopeErrors(
           "MEMBER_ADMIN_ADMIN_ONLY",
@@ -151,6 +163,18 @@ public class RoleGrantGuard {
    */
   public void assertCanEditRolePermissions(long callerId, long roleId) {
     assertWithinScope(callerId, Set.of(roleId), PERMISSIONS_EDIT_ERRORS);
+  }
+
+  /**
+   * 역할 이름·설명 수정 범위 검사(WD-284). 이름·설명은 관리자가 "이 역할을 누구에게 줘도 되는지" 판단하는 근거라, 범위 밖 역할의 이름을
+   * 「손님용 읽기 전용」처럼 바꾸면 관리자를 속여 상위 권한을 퍼뜨리게 할 수 있다. 그래서 삭제와 같은 규칙(시스템 ADMIN → 열람 등급 → 권한
+   * 부분집합 → 허용 목록)을 적용하고 거부 문구만 "이름·설명" 으로 바꾼다. 시스템 역할·역할 없음은 호출하는 {@link RoleService#updateRole}
+   * 가 먼저 판정한다.
+   *
+   * @throws CodedApiException 403 — 역할이 호출자 범위를 벗어날 때
+   */
+  public void assertCanEditRole(long callerId, long roleId) {
+    assertWithinScope(callerId, Set.of(roleId), EDIT_ERRORS);
   }
 
   /**

@@ -86,6 +86,7 @@ class RoleServiceTest extends IntegrationTestBase {
 
   @Test
   void updateRole_success() {
+    makeCallerAdmin(); // 이름·설명 수정도 범위 가드(WD-284)를 탄다
     RoleResponse created = roleService.createRole("MODERATOR", "Moderator", callerId);
 
     roleService.updateRole(created.id(), "MOD", "Updated moderator", callerId);
@@ -98,6 +99,7 @@ class RoleServiceTest extends IntegrationTestBase {
   /** WD-279: 이름을 다른 역할(시스템 역할 포함)의 이름으로 바꾸면 생성과 같은 「이미 존재하는 역할 이름」으로 거부하고 바꾸지 않는다. */
   @Test
   void updateRole_nameOfAnotherRole_throwsAndKeepsName() {
+    makeCallerAdmin(); // 이름·설명 수정도 범위 가드(WD-284)를 탄다
     RoleResponse created = roleService.createRole("MODERATOR", "Moderator", callerId);
     roleService.createRole("EDITOR", "Editor", callerId);
 
@@ -114,6 +116,7 @@ class RoleServiceTest extends IntegrationTestBase {
   /** WD-279: 이름은 그대로 두고 설명만 바꾸면 자기 이름과의 중복으로 막지 않는다. */
   @Test
   void updateRole_sameName_descriptionOnly_succeeds() {
+    makeCallerAdmin(); // 이름·설명 수정도 범위 가드(WD-284)를 탄다
     RoleResponse created = roleService.createRole("MODERATOR", "Moderator", callerId);
 
     roleService.updateRole(created.id(), "MODERATOR", "설명만 바꿈", callerId);

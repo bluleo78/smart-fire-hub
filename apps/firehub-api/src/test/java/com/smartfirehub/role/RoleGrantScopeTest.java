@@ -17,6 +17,7 @@ import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -672,6 +673,109 @@ class RoleGrantScopeTest extends IntegrationTestBase {
     assertThat(roleExists(userRole)).isTrue();
   }
 
+  // ── 역할 이름·설명 수정(PUT /roles/{id}, WD-284) ─────────────────────────────────
+
+  private static final String EDIT_SCOPE_MESSAGE = "자신에게 없는 권한·등급을 가진 역할은 이름·설명을 바꿀 수 없습니다";
+  private static final String EDIT_ALLOWLIST_MESSAGE =
+      "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할은 이름·설명을 바꿀 수 없습니다";
+
+  /** 결함 재현: role:write 위임자가 자기보다 등급이 높은 역할을 「손님용 읽기 전용」으로 바꾸면 403 — 이름·설명은 그대로(수정 전에는 204). */
+  @Test
+  void writer_cannotRenameRoleWithHigherClearance() throws Exception {
+    putRole(writer, highClearanceRole, "GUEST_READONLY", "외부 손님용 읽기 전용(권한 거의 없음)")
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ROLE_EDIT_BEYOND_SCOPE"))
+        .andExpect(jsonPath("$.message").value(EDIT_SCOPE_MESSAGE));
+
+    assertThat(roleNameAndDescription(highClearanceRole)).containsExactly("HIGH_CLEARANCE", null);
+  }
+
+  /** 자기에게 없는 권한을 가진 역할도 이름·설명을 바꿀 수 없다(등급은 범위 안이어도). */
+  @Test
+  void writer_cannotEditRoleWithPermissionTheyLack() throws Exception {
+    putRole(writer, lackingPermRole, "LACKING_PERM", "아무 권한 없음")
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ROLE_EDIT_BEYOND_SCOPE"));
+
+    assertThat(roleNameAndDescription(lackingPermRole)).containsExactly("LACKING_PERM", null);
+  }
+
+  /** 자기가 열람할 수 없는 기밀 데이터셋 허용 목록에 붙은 역할도 이름·설명을 바꿀 수 없다. */
+  @Test
+  void editor_cannotEditRoleOnAllowlistTheyCannotView() throws Exception {
+    setUpAllowlistScenario();
+    long role = createRole("ACL_EDITOR", "기밀", "role:read", "role:write", "dataset:read");
+    long aclEditor = member("acl-editor");
+    replaceRoles(aclEditor, role);
+
+    putRole(aclEditor, listedRole, "LISTED_X", "바뀐 설명")
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ROLE_EDIT_ALLOWLIST_BEYOND_SCOPE"))
+        .andExpect(jsonPath("$.message").value(EDIT_ALLOWLIST_MESSAGE));
+  }
+
+  /** 범위 안의 역할은 이름·설명을 바꿀 수 있다(과잉 차단 방지). */
+  @Test
+  void writer_canEditInScopeRole() throws Exception {
+    putRole(writer, inScopeRole, "IN_SCOPE_RENAMED", "새 설명").andExpect(status().isNoContent());
+
+    assertThat(roleNameAndDescription(inScopeRole)).containsExactly("IN_SCOPE_RENAMED", "새 설명");
+  }
+
+  /** 같은 값으로 다시 저장(화면의 무변경 저장)은 범위 밖 역할이어도 막지 않는다 — 바뀌는 것이 없으니 속일 것도 없다. */
+  @Test
+  void writer_unchangedSaveOfOutOfScopeRole_isNoop() throws Exception {
+    putRole(writer, highClearanceRole, "HIGH_CLEARANCE", null).andExpect(status().isNoContent());
+
+    assertThat(roleNameAndDescription(highClearanceRole)).containsExactly("HIGH_CLEARANCE", null);
+  }
+
+  /** 설명이 빈 문자열로 저장된 역할을 화면이 그대로 저장하면(빈 설명 → null 전송) 변경 없음으로 본다 — 범위 밖이어도 403 이 아니다. */
+  @Test
+  void writer_unchangedSaveWithEmptyDescription_isNoop() throws Exception {
+    inTenantFixture(
+        tenantA,
+        () -> dsl.execute("update role set description = '' where id = ?", highClearanceRole));
+
+    putRole(writer, highClearanceRole, "HIGH_CLEARANCE", null).andExpect(status().isNoContent());
+
+    assertThat(roleNameAndDescription(highClearanceRole)).containsExactly("HIGH_CLEARANCE", "");
+  }
+
+  /** 다른 역할이 쓰는 이름으로 바꾸면 DB 오류 대신 400 「이미 존재하는 역할 이름입니다」, 이름은 그대로. */
+  @Test
+  void writer_renameToExistingName_isBadRequest() throws Exception {
+    putRole(writer, inScopeRole, "WRITER", "겹치는 이름")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("이미 존재하는 역할 이름입니다: WRITER"));
+
+    assertThat(roleNameAndDescription(inScopeRole)).containsExactly("IN_SCOPE", null);
+  }
+
+  /** 결함 재현: 시스템 역할은 설명도 바꿀 수 없다 — 위임자든 ADMIN 이든 400, 설명은 그대로(수정 전에는 204). */
+  @Test
+  void systemRoleDescription_cannotBeChangedByAnyone() throws Exception {
+    List<String> before = roleNameAndDescription(adminRole);
+
+    putRole(writer, adminRole, "ADMIN", "사용하지 않는 옛 역할(부여 금지)")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("시스템 역할의 이름·설명은 바꿀 수 없습니다: ADMIN"));
+    putRole(admin1, adminRole, "ADMIN", "사용하지 않는 옛 역할(부여 금지)").andExpect(status().isBadRequest());
+    putRole(admin1, userRole, "USER", "바뀐 설명").andExpect(status().isBadRequest());
+
+    assertThat(roleNameAndDescription(adminRole)).isEqualTo(before);
+  }
+
+  /** 시스템 ADMIN 은 범위 제한 없이 사용자 정의 역할의 이름·설명을 바꾼다. */
+  @Test
+  void admin_canEditAnyCustomRole() throws Exception {
+    putRole(admin1, highClearanceRole, "HIGH_CLEARANCE_X", "관리자가 바꿈")
+        .andExpect(status().isNoContent());
+
+    assertThat(roleNameAndDescription(highClearanceRole))
+        .containsExactly("HIGH_CLEARANCE_X", "관리자가 바꿈");
+  }
+
   // ── WD-277: 멤버 정지·제거도 "그 멤버의 역할 전부 회수" 라 같은 범위를 받는다 ─────────────────
 
   private static final String MEMBER_ADMIN_MESSAGE = "시스템 ADMIN 역할을 가진 멤버는 ADMIN 만 정지·재활성하거나 제거할 수 있습니다";
@@ -835,6 +939,29 @@ class RoleGrantScopeTest extends IntegrationTestBase {
   private ResultActions deleteRole(long caller, long roleId) throws Exception {
     return mockMvc.perform(
         delete("/api/v1/roles/" + roleId).header("Authorization", token(caller)));
+  }
+
+  /** PUT /roles/{id} — 이름·설명 수정(WD-284). 설명이 null 이면 JSON 에 null 로 보낸다. */
+  private ResultActions putRole(long caller, long roleId, String name, String description)
+      throws Exception {
+    Map<String, Object> body = new HashMap<>();
+    body.put("name", name);
+    body.put("description", description);
+    return mockMvc.perform(
+        put("/api/v1/roles/" + roleId)
+            .header("Authorization", token(caller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(body)));
+  }
+
+  /** 역할의 [이름, 설명] — 거부 뒤 그대로인지 확인한다. */
+  private List<String> roleNameAndDescription(long roleId) {
+    return inTenantFixture(
+        tenantA,
+        () -> {
+          var r = dsl.fetchOne("select name, description from role where id = ?", roleId);
+          return Arrays.asList(r.get(0, String.class), r.get(1, String.class));
+        });
   }
 
   /** 데이터셋 하위 경로 — DatasetAccessInterceptor 가 VIEW(등급 + 허용 목록)를 강제하므로 열람 가능 여부를 그대로 드러낸다. */
