@@ -727,7 +727,7 @@ export default function StepConfigPanel({
               id={dependenciesLabelId}
               className="flex items-center gap-2 text-sm leading-none font-medium select-none"
             >
-              의존성 (읽기 전용)
+              의존성
             </span>
             <div className="space-y-1" role="group" aria-labelledby={dependenciesLabelId}>
               {step.dependsOnTempIds.length === 0 ? (
@@ -735,16 +735,38 @@ export default function StepConfigPanel({
               ) : (
                 step.dependsOnTempIds.map((depId) => {
                   const depStep = state.steps.find((s) => s.tempId === depId);
+                  // 화면 글자와 버튼 이름이 같은 대상을 가리키도록 한 번만 정한다
+                  const depName = depStep ? depStep.name || '(이름 없음)' : '(알 수 없음)';
                   return (
-                    <p key={depId} className="text-sm">
-                      → {depStep?.name ?? '(알 수 없음)'}
-                    </p>
+                    <div key={depId} className="flex items-center justify-between gap-2 text-sm">
+                      <span className="min-w-0 truncate">→ {depName}</span>
+                      {/* 캔버스 연결선을 집기 어려운 모바일·키보드 사용자도 여기서 끊을 수 있다(WD-346) */}
+                      {!readOnly && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 shrink-0 px-2 text-xs text-muted-foreground hover:text-destructive"
+                          aria-label={`${depName} 연결 끊기`}
+                          onClick={() =>
+                            dispatch({
+                              type: 'REMOVE_EDGE',
+                              payload: { sourceTempId: depId, targetTempId: step.tempId },
+                            })
+                          }
+                        >
+                          연결 끊기
+                        </Button>
+                      )}
+                    </div>
                   );
                 })
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              캔버스에서 엣지 연결로 관리됩니다
+              {readOnly
+                ? '앞 스텝의 출력이 이 스텝의 입력이 됩니다'
+                : '캔버스에서 스텝 오른쪽 점을 끌어 잇고, 연결선을 눌러 Delete 키나 「연결 끊기」로 끊습니다'}
             </p>
           </div>
 
