@@ -30,6 +30,9 @@ public class HikariPoolFactory implements Function<StoreDescriptor, DataSource> 
     // 계정이 없는 기술자는 TenantPools.fingerprint 가 풀 생성 전에 이미 거부한다(여기서는 null 이 아님).
     StoreDescriptor.Account a = account.apply(d);
     HikariDataSource ds = base(d, a, maxSize, 10_000, TiberoSession.SESSION_INIT_SQL);
+    // 유휴 커넥션을 미리 채워 두지 않는다(WD-449, 슬롯 풀과 같은 이유) — 기본값(=최대 크기)이면 자격이 무효가 된 테넌트(정지 후 계정 삭제) 풀이
+    // 몇 초마다 끝없이 재접속해 외부 DB 에 로그인 실패를 쌓는다.
+    ds.setMinimumIdle(0);
     ds.setIdleTimeout(600_000);
     return ds;
   }

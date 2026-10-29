@@ -105,16 +105,27 @@ public class TenantDataStoreRepository {
   }
 
   /**
-   * 지정한 백엔드의 READY 저장소를 가진 테넌트 id(오름차순). 배경 작업(고아 스테이징 정리 등)이 외부 저장소 테넌트만 순회할 때 쓴다 — PENDING 저장소는
-   * 풀을 만들 수 없으므로 제외한다.
+   * 지정한 백엔드의 READY 저장소를 가진 <b>ACTIVE</b> 테넌트 id(오름차순). 배경 작업(고아 스테이징 정리 등)이 외부 저장소 테넌트만 순회할 때 쓴다 —
+   * PENDING 저장소는 풀을 만들 수 없으므로 제외한다.
+   *
+   * <p>정지된 테넌트도 뺀다(WD-449). 플랫폼에는 테넌트 삭제가 없어 정지가 끝 상태이고, 정지 뒤 외부 DB 계정을 지우는 일이 흔하다 — 저장소 행은 READY 로
+   * 남으므로 이 조건이 없으면 배경 작업이 30분마다 지워진 계정으로 접속하다 실패하고 외부 DB 에 로그인 실패를 쌓는다. PG 스윕({@code
+   * forEachActiveTenant})도 ACTIVE 만 돈다.
    */
   public List<Long> findReadyTenantIds(DataStoreBackend backend) {
-    return dsl.select(TENANT_ID)
+    // tenant 와 조인하면 status 가 양쪽에 있으므로 열을 테이블 이름으로 한정한다.
+    Field<Long> storeTenantId = field(name("tenant_data_store", "tenant_id"), Long.class);
+    return dsl.select(storeTenantId)
         .from(STORE)
-        .where(BACKEND.eq(backend.name()))
-        .and(STATUS.eq(TenantDataStoreStatus.READY.name()))
-        .orderBy(TENANT_ID)
-        .fetch(TENANT_ID);
+        .join(table(name("public", "tenant")))
+        .on(field(name("tenant", "id"), Long.class).eq(storeTenantId))
+        .where(field(name("tenant_data_store", "backend"), String.class).eq(backend.name()))
+        .and(
+            field(name("tenant_data_store", "status"), String.class)
+                .eq(TenantDataStoreStatus.READY.name()))
+        .and(field(name("tenant", "status"), String.class).eq("ACTIVE"))
+        .orderBy(storeTenantId)
+        .fetch(storeTenantId);
   }
 
   /** 테넌트의 계정 목록. 역할 선언 순서(OWNER, RO, S1..S10)로 돌려준다 — 문자열 정렬이면 S10 이 S2 앞에 온다. */

@@ -37,6 +37,9 @@ public class ExternalStorePoolFactory {
     ds.setUsername(username);
     ds.setPassword(password);
     ds.setMaximumPoolSize(4);
+    // 유휴 커넥션을 미리 채워 두지 않는다(WD-449). 기본값(=최대 크기)이면 Hikari 가 쓰이지 않는 풀도 4개를 채우려 계속 접속하고, 정지 후 계정이
+    // 지워진 테넌트처럼 자격이 무효가 되면 몇 초마다 끝없이 재시도해 외부 DB 에 로그인 실패를 쌓는다. 쓰인 커넥션은 idleTimeout 까지 재사용된다.
+    ds.setMinimumIdle(0);
     ds.setConnectionTimeout(10_000);
     ds.setIdleTimeout(600_000);
     ds.setConnectionTestQuery(TiberoDialect.VALIDATION_QUERY);

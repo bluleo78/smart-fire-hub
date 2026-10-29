@@ -82,6 +82,21 @@ class TenantDataStoreRepositoryTest extends IntegrationTestBase {
     assertThat(repository.findReadyTenantIds(DataStoreBackend.MYSQL)).doesNotContain(id);
   }
 
+  /**
+   * 정지된 테넌트는 저장소가 READY 여도 빠진다(WD-449) — 정지 뒤 외부 DB 계정을 지우면 배경 작업이 지워진 계정으로 계속 접속하다 실패했다.
+   */
+  @Test
+  void findReadyTenantIds_excludesSuspendedTenant() {
+    long id = newTenant();
+    repository.insert(row(id), accounts(id, "enc-"));
+    repository.updateStatus(id, TenantDataStoreStatus.READY);
+    assertThat(repository.findReadyTenantIds(DataStoreBackend.TIBERO)).contains(id);
+
+    dsl.execute("update tenant set status = 'SUSPENDED' where id = ?", id);
+
+    assertThat(repository.findReadyTenantIds(DataStoreBackend.TIBERO)).doesNotContain(id);
+  }
+
   @Test
   void findBackend_returnsEmptyWhenNoRow() {
     long id = newTenant();
