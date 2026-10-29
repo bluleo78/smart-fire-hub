@@ -61,9 +61,7 @@ public class RoleService {
   /** 역할 생성. 성공하면 ROLE_CREATE 감사(행위자 = callerId)를 남긴다. */
   @Transactional
   public RoleResponse createRole(String name, String description, Long callerId) {
-    if (roleRepository.existsByName(name)) {
-      throw new IllegalArgumentException("이미 존재하는 역할 이름입니다: " + name);
-    }
+    assertNameAvailable(name);
     RoleResponse created = roleRepository.save(name, description);
     audit(
         callerId,
@@ -72,6 +70,13 @@ public class RoleService {
         "역할 생성: " + created.name(),
         roleSnapshot(created.name(), created.description()));
     return created;
+  }
+
+  /** 같은 이름의 역할이 이미 있으면 생성·수정 모두 같은 문구의 400 으로 거부한다(WD-279). */
+  private void assertNameAvailable(String name) {
+    if (roleRepository.existsByName(name)) {
+      throw new IllegalArgumentException("이미 존재하는 역할 이름입니다: " + name);
+    }
   }
 
   /**
@@ -90,6 +95,11 @@ public class RoleService {
     if (role.isSystem() && !role.name().equals(name)) {
       throw new SystemRoleModificationException(
           "Cannot change name of system role: " + role.name());
+    }
+    // 이름을 바꿀 때만 생성과 같은 중복 검사를 한다(WD-279) — 그대로 두고 설명만 바꾸는 저장을 자기 이름과의 중복으로 막지 않기 위해서다.
+    // DB 유니크 제약도 있지만 그 409 는 「이미 같은 값이 있어…」라 어느 칸이 문제인지 알 수 없어, 생성과 같은 문구로 먼저 안내한다.
+    if (!role.name().equals(name)) {
+      assertNameAvailable(name);
     }
 
     roleRepository.update(id, name, description);

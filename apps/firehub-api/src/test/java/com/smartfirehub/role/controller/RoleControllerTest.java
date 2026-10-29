@@ -1,5 +1,8 @@
 package com.smartfirehub.role.controller;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -19,6 +22,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -119,6 +124,27 @@ class RoleControllerTest {
         .andExpect(status().isNoContent());
 
     verify(roleService).updateRole(3L, "MOD", "Updated moderator", 1L);
+  }
+
+  /**
+   * WD-279: 이름 수정도 생성과 같은 이름 규칙(대문자·숫자·밑줄)을 서버에서 검사한다. 한글·공백·소문자와, 시스템 역할 이름 뒤에 공백만 붙인 「ADMIN 」
+   * 「USER 」 처럼 목록에서 시스템 역할과 똑같이 보이는 이름은 400 으로 거부되고 서비스까지 가지 않는다.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {"qa267 tmp ", "멤버 관리자 ", "ADMIN ", "USER ", " ADMIN", "admin", "Mod"})
+  void updateRole_nameBreakingRule_returnsBadRequest(String name) throws Exception {
+    mockAuthentication("role:write");
+
+    mockMvc
+        .perform(
+            put("/api/v1/roles/3")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new UpdateRoleRequest(name, "임시"))))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().string(containsString("역할 이름은 대문자, 숫자, 밑줄만 허용됩니다")));
+
+    verify(roleService, never()).updateRole(any(), any(), any(), any());
   }
 
   @Test
