@@ -86,74 +86,111 @@ PW_PORT=6151 pnpm exec playwright test           # E2E (기본 5051 — 다른 �
 ## 4. 격리 라이브 스택
 
 다른 세션의 dev 스택(5xxx 포트, 개발 DB)과 완전히 분리된 스택을 띄워 실제 브라우저·HTTP 로 검증한다.
-**항상 `LIVE_STACK_NAME=work-loop` 를 붙여 실행한다.**
+**항상 `LIVE_STACK_NAME=work-loop` 를 붙여 실행한다.** 이 컴퓨터의 다른 AI 도 각자의 클론에서 같은 명령을 쓰지만,
+스크립트가 클론마다 다른 이름·포트를 골라 서로 섞이지 않는다.
 
 ```bash
-LIVE_STACK_NAME=work-loop scripts/work-loop-stack.sh up        # 기동 (+ 테스트 계정 시드)
-LIVE_STACK_NAME=work-loop scripts/work-loop-stack.sh status    # 서비스별 헬스(비정상이면 종료코드 1)
-LIVE_STACK_NAME=work-loop scripts/work-loop-stack.sh down      # 정리(컨테이너·볼륨까지 삭제)
+LIVE_STACK_NAME=work-loop scripts/work-loop-stack.sh up        # 기동 (+ 테스트 계정 시드). 마지막에 STACK_ID·URL 출력
+LIVE_STACK_NAME=work-loop scripts/work-loop-stack.sh status    # 내 스택 헬스(비정상이면 종료코드 1) + 공유 바탕 헬스·다른 저장소 DB/버킷
+LIVE_STACK_NAME=work-loop scripts/work-loop-stack.sh down      # 정리(내 프로세스·내 DB·내 버킷까지 삭제. 공유 바탕은 그대로)
 LIVE_STACK_NAME=work-loop scripts/work-loop-stack.sh seed      # 테스트 계정 재확인(멱등)
 LIVE_STACK_NAME=work-loop scripts/work-loop-stack.sh logs      # 로그 파일 목록
 ```
 - 마지막 인자로 워크트리 경로를 줄 수 있다(기본 = 스크립트가 속한 저장소 루트). 이슈 워크트리에서 그 워크트리의 스크립트를 실행하면 된다.
-- 옵션: `--with-admin`(admin 콘솔도 기동), `--with-neo4j`(GraphRAG Neo4j 기동), `--skip-build`(직전 빌드 재사용 — 코드를 바꿨으면 쓰지 말 것), `--keep-data`(down 시 볼륨 유지).
+- 옵션: `--with-admin`(admin 콘솔도 기동), `--with-neo4j`(GraphRAG Neo4j 기동), `--own-db`(공유 Postgres 대신 전용 컨테이너 — 아래),
+  `--skip-build`(직전 빌드 재사용 — 코드를 바꿨으면 쓰지 말 것), `--keep-data`(down 시 내 DB·버킷·볼륨 유지).
 - `up` 은 매번 `./gradlew clean bootJar` 로 깨끗이 빌드한 jar(사본)를 실행하고, ai-agent 도 `pnpm build` 후 `node dist/index.js` 로 띄운다(watch/bootRun 의 stale 코드 위험 제거).
-- DB 는 빈 격리 볼륨에서 시작해 api 기동 시 Flyway 가 전체 마이그레이션(현재 V137까지)을 적용한다. 개발/운영 데이터는 복사하지 않는다.
-- 이미 떠 있거나 포트가 쓰이고 있으면 **아무것도 죽이지 않고 실패**한다. 기동 중 실패하면 이 스택이 띄운 것만 정리한다.
-- 상태·로그: `<메인 저장소>/.work-loop/state/stack-work-loop/` (`stack.env`=pgid·포트, `logs/*.log`). 소요 시간: 첫 up 1~3분(이미지 빌드·Gradle), 이후 30초 안팎.
+- DB 는 빈 DB 에서 시작해 api 기동 시 Flyway 가 전체 마이그레이션(현재 V137까지)을 적용한다. 개발/운영 데이터는 복사하지 않는다.
+- 이미 떠 있거나 직접 준 포트(`WL_*_PORT`)·공유 바탕 포트가 남에게 쓰이고 있으면 **아무것도 죽이지 않고 실패**한다. 기동 중 실패하면 이 스택이 띄운 것만 정리한다.
 
-### 서비스 URL·포트 (모두 127.0.0.1 바인드, `WL_*_PORT` 환경변수로 변경 가능)
+### 상태·로그·이름 규칙
 
-| 서비스 | URL | 헬스 체크 |
+- 상태·로그: `<메인 저장소>/.work-loop/state/stack-work-loop/` (`stack.env`=STACK_ID·DB 이름·버킷·포트·pgid, `logs/*.log`).
+  소요 시간: 첫 up 1~3분(이미지 빌드·Gradle), 이후 30초 안팎.
+- **STACK_ID** = `work-loop-<메인 저장소 절대경로 sha1 앞 8자>` — 클론마다 다르다. up·status 마지막 줄에 나온다.
+- **공유 바탕**: PostgreSQL 과 MinIO 는 메모리를 아끼려고 컴퓨터에 하나만 띄워 모든 클론이 함께 쓴다
+  (compose project `work-loop-shared`, 파일 `scripts/work-loop/compose.shared.yml`). 없으면 첫 up 이 띄우고, 이후 up 은 재사용한다.
+  어떤 저장소의 down 도 공유 바탕을 내리지 않는다.
+- **내 DB** = `smartfirehub_<STACK_ID sha1 앞 8자>`, **내 버킷** = `firehub-<같은 8자>` — up 이 만들고(`CREATE DATABASE`·`mc mb`), down 이 지운다.
+  `--keep-data` 로 down 하면 다음 up 이 그 DB·버킷을 재사용한다. 그 밖에 남아 있는 것은 up 이 지우고 새로 만든다.
+  보관한 데이터를 버리려면 상태가 없는 채로 보통 `down` 을 한 번 더 한다. 롤은 클러스터 전역이라 지우지 않는다.
+- down 이 「공유 바탕이 healthy 가 아니라 … 지우지 못했다」로 실패하면 `stack.env` 가 남는다(프로세스는 이미 정리) — 공유 바탕이 돌아온 뒤 down 을 다시 한다.
+- **`--own-db`**: 이 저장소만 전용 PostgreSQL 컨테이너(compose project = STACK_ID, 포트는 6433 부터 고름)를 쓴다. 공유 서버가 고장 났을 때,
+  또는 클러스터 전역 상태(롤 정의·비밀번호, `ALTER SYSTEM`)를 바꾸는 검증일 때만 쓴다. MinIO 는 그래도 공유 바탕을 쓴다.
+  이미지는 공유 서버와 같은 `work-loop-firehub-postgres:local` 을 재사용하므로 `docker/postgres/Dockerfile` 변경 검증에는 맞지 않는다.
+- `공용 락 대기 중`·`api 기동 락 대기 중` 로그는 다른 클론이 기동 중이라는 뜻이다 — 기다리면 된다. 락·소유 기록·롤 고정의 자세한 규칙은
+  `scripts/work-loop-stack.sh` 머리 주석에 있다.
+- 공유 바탕을 내리는 것은 사람만 한다: `scripts/work-loop-stack.sh shared-down` — 다른 저장소 DB·버킷이 남아 있으면 목록을 보이고 거부하며,
+  공유 db·minio 가 healthy 가 아니어서 목록을 읽을 수 없을 때도 거부한다. `--force` 일 때만 내린다(볼륨까지 삭제, `--keep-data` 면 유지).
+- 옛 방식(compose project `work-loop`, `work-loop-db-1` 등)이 남아 있으면 up 은 경고만 하고 지우지 않는다. 그것이 공유 포트(6432·6900·6901)를
+  잡고 있으면 up 이 실패한다 — 그 스택을 쓰는 세션이 끝났는지 확인한 뒤 `docker compose -p work-loop down -v` 로 정리한다.
+
+### 서비스 URL·포트 (모두 127.0.0.1 바인드)
+
+내 서비스 포트는 **up 이 고른다** — 아래 기본값부터 +1 씩 올려 빈 포트를 쓴다. 실제 값은 `status` 출력 또는 `stack.env` 로 확인한다.
+`WL_API_PORT` 등을 직접 주면 그 값을 그대로 쓴다(쓰는 중이면 실패).
+
+| 서비스 | 포트 | 헬스 체크 |
 |---|---|---|
-| web | http://localhost:6173 | `GET /` 200 (`/api` → 6010 프록시) |
-| api | http://localhost:6010/api/v1 | `GET /api/v1/auth/signup-status` 200 |
-| ai-agent | http://localhost:6020/agent | `GET /agent/health` 200 |
-| admin (`--with-admin`) | http://localhost:6050 | `GET /` 200 (`/api` → 6010 프록시) |
-| PostgreSQL | 127.0.0.1:6432, db `smartfirehub`, 소유자 `app/app`(런타임 롤 `app_tenant/app_tenant`) | `docker exec work-loop-db-1 psql -U app -d smartfirehub` |
-| MinIO | S3 127.0.0.1:6900, 콘솔 6901 (`minioadmin/minioadmin`, 버킷 `firehub-files`) | `/minio/health/live` |
-| Neo4j (`--with-neo4j`) | http 6474, bolt 6687 (`neo4j/firehub-graph-dev`) | |
+| web | `$WL_WEB_PORT` (6173 부터) | `GET /` 200 (`/api` → 내 api 프록시) |
+| api | `$WL_API_PORT` (6010 부터), `/api/v1` | `GET /api/v1/auth/signup-status` 200 |
+| ai-agent | `$WL_AGENT_PORT` (6020 부터), `/agent` | `GET /agent/health` 200 |
+| admin (`--with-admin`) | `$WL_ADMIN_PORT` (6050 부터) | `GET /` 200 |
+| Neo4j (`--with-neo4j`) | `$WL_NEO4J_HTTP_PORT`·`$WL_NEO4J_BOLT_PORT` (6474·6687 부터, `neo4j/firehub-graph-dev`) | |
+| PostgreSQL (공유) | **6432 고정**, db `$WL_DB_NAME`, 소유자 `app/app`(런타임 롤 `app_tenant/app_tenant`) | `docker exec work-loop-shared-db-1 psql -U app -d $WL_DB_NAME` |
+| MinIO (공유) | **S3 6900 · 콘솔 6901 고정** (`minioadmin/minioadmin`, 버킷 `$WL_BUCKET`) | `/minio/health/live` |
 
-격리 방식: docker compose project `work-loop`(파일 `scripts/work-loop/compose.yml`, 명명 볼륨), api 는 명령행 인자로
-DB·Flyway·파이프라인 URL, JobRunr 대시보드 비활성, agent URL·내부 토큰, CORS, MinIO 엔드포인트를 전부 격리값으로 덮어쓴다.
-JWT 서명키는 up 마다 새로 만들어 격리 스택 토큰이 개발 api(5010)에서 통하지 않는다. web/admin 은 `scripts/work-loop/vite.*.config.mts`
-래퍼로 `/api` 프록시 대상만 격리 api 로 바꾼다(앱의 vite.config.ts 는 무변경).
+포트·이름 읽기(다른 명령 전에 한 번):
+```bash
+# 메인 저장소의 stack.env — 어느 워크트리에서든 같은 파일을 가리킨다
+. "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.work-loop/state/stack-work-loop/stack.env"
+echo "$STACK_ID web=$WL_WEB_PORT api=$WL_API_PORT db=$WL_DB_NAME bucket=$WL_BUCKET"
+docker exec -it work-loop-shared-db-1 psql -U app -d "$WL_DB_NAME"                    # 내 DB 만 본다(--own-db 면 ${STACK_ID}-db-1)
+```
+
+격리 방식: api 는 명령행 인자로 DB·Flyway·파이프라인 URL(내 DB), 롤 비밀번호 설정, JobRunr 대시보드 비활성, agent URL·내부 토큰(STACK_ID 별),
+CORS(고른 web·admin 포트), MinIO 엔드포인트·버킷을 전부 격리값으로 덮어쓴다. JWT 서명키는 up 마다 새로 만들어 격리 스택 토큰이
+개발 api(5010)·다른 클론 스택에서 통하지 않는다. web/admin 은 `scripts/work-loop/vite.*.config.mts` 래퍼로 `/api` 프록시 대상만 내 api 로 바꾼다
+(앱의 vite.config.ts 는 무변경). ai-agent·web·admin 은 DB·버킷 이름을 직접 쓰지 않는다(api 경유, 파일은 api 가 준 presigned URL).
 
 ### 테스트 로그인 계정
 
 - **`workloop@example.com` / `WorkLoop1234`** (이름 `Work Loop`)
 - 빈 DB 의 첫 가입자라 기본 테넌트(`Default Workspace`)의 ADMIN 이며, 시드가 플랫폼 `SUPER_ADMIN` 도 부여해 admin 콘솔 로그인도 된다.
 - 로그인 실패를 반복하면 로그인 잠금 카운터가 올라간다 — 틀린 비밀번호로 루프 돌리지 말 것.
-- API 직접 호출 예:
+- API 직접 호출 예(먼저 위처럼 `stack.env` 를 읽는다):
   ```bash
   T=$(curl -s -H 'Content-Type: application/json' -d '{"username":"workloop@example.com","password":"WorkLoop1234"}' \
-      http://localhost:6010/api/v1/auth/login | python3 -c 'import sys,json;print(json.load(sys.stdin)["accessToken"])')
-  curl -H "Authorization: Bearer $T" http://localhost:6010/api/v1/auth/me
+      "http://localhost:$WL_API_PORT/api/v1/auth/login" | python3 -c 'import sys,json;print(json.load(sys.stdin)["accessToken"])')
+  curl -H "Authorization: Bearer $T" "http://localhost:$WL_API_PORT/api/v1/auth/me"
   ```
 - AI 챗: ai-agent 는 자격 없이도 기동하지만 챗 응답에는 테넌트 AI 설정(설정 › AI 에이전트)에 실제 토큰/키 저장이 필요하다.
   자격이 필요한 검증은 사람 확인 대상으로 남긴다.
 
 ### 브라우저 검증
 
-`playwright-cli` 를 **이름 있는 세션**으로 쓴다(다른 세션 브라우저를 건드리지 않도록 `kill-all` 금지, 끝나면 그 세션만 `close`).
+`playwright-cli` 를 **내 STACK_ID 로 이름 붙인 세션**(`-s=wl-$STACK_ID`)으로 쓴다 — 다른 클론의 세션 브라우저를 건드리지 않도록 `kill-all` 금지,
+끝나면 그 세션만 `close`.
 ```bash
-playwright-cli -s=wl open http://localhost:6173/login
-playwright-cli -s=wl snapshot                      # ref 확인
-playwright-cli -s=wl fill <이메일 ref> workloop@example.com
-playwright-cli -s=wl fill <비밀번호 ref> WorkLoop1234
-playwright-cli -s=wl click <로그인 ref>
-playwright-cli -s=wl screenshot
-playwright-cli -s=wl close
+playwright-cli -s=wl-$STACK_ID open "http://localhost:$WL_WEB_PORT/login"
+playwright-cli -s=wl-$STACK_ID snapshot                      # ref 확인
+playwright-cli -s=wl-$STACK_ID fill <이메일 ref> workloop@example.com
+playwright-cli -s=wl-$STACK_ID fill <비밀번호 ref> WorkLoop1234
+playwright-cli -s=wl-$STACK_ID click <로그인 ref>
+playwright-cli -s=wl-$STACK_ID screenshot
+playwright-cli -s=wl-$STACK_ID close
 ```
 스크린샷은 `test-results/exploratory/<기능>/<timestamp>/screenshots/` 에 둔다.
 
 ## 5. 건드리면 안 되는 포트·프로세스·DB
 
-다른 세션(사람의 dev 스택, 로컬 운영 배포)이 쓴다. 죽이거나, 재시작하거나, 데이터를 바꾸지 않는다.
+다른 세션(사람의 dev 스택, 로컬 운영 배포, 다른 클론의 라이브 스택)이 쓴다. 죽이거나, 재시작하거나, 데이터를 바꾸지 않는다.
 
 - **dev 포트**: 5010(api), 5040(JobRunr 대시보드), 5020(ai-agent), 5030(channel), 5050(admin), 5173(web), 5051(admin E2E)
 - **dev 컨테이너/DB**: `smart-fire-hub-db-1`(5432, `smartfirehub`), `db-test`(5433), MinIO 9000/9001, Neo4j 7474/7687 — 루트 `docker-compose.yml` 의 `smart-fire-hub` project 전체
 - **로컬 운영 배포**: `smart-fire-hub-prod-*` 컨테이너 전부(web 8888, admin 8889, prod DB·Neo4j·MinIO)
+- **공유 바탕의 다른 저장소 것**: `work-loop-shared` 의 내 것이 아닌 DB(`smartfirehub_*`)·버킷(`firehub-*`) — `status` 의 「다른 저장소」 목록. 공유 바탕 자체를 재시작·down 하지 않는다(`shared-down` 은 사람만).
+- **다른 클론의 라이브 스택**: 내 STACK_ID 가 아닌 `work-loop-*` compose project(전용 DB·Neo4j)와 그 포트, 옛 방식 project `work-loop`
 - **기타**: 6768(Orca), `buildx_buildkit_*`
 - 금지 명령: `pnpm dev` / `pnpm dev:full`(5xxx 포트를 `lsof | kill -9` 로 죽인다), `pnpm db:up|db:down|db:reset`, `docker compose down`(project 미지정),
   `playwright-cli kill-all`, 메인 체크아웃(`/Users/bluleo78/git/smart-fire-hub`)에서 브랜치 변경·파일 수정
