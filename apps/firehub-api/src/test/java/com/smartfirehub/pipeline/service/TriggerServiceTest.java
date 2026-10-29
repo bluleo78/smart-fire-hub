@@ -446,7 +446,7 @@ class TriggerServiceTest extends IntegrationTestBase {
   @Test
   void getTriggers_deletedPipeline_throwsPipelineNotFound() {
     // 열린 상세 화면에서 다른 사람이 지운 뒤 다시 불러오는 경우 — 방금 삭제한 id 도 404.
-    pipelineService.deletePipeline(pipelineId2);
+    pipelineService.deletePipelineUnchecked(pipelineId2);
     assertThatThrownBy(() -> triggerService.getTriggers(pipelineId2))
         .isInstanceOf(PipelineNotFoundException.class);
     assertThatThrownBy(() -> triggerService.getTriggerEvents(pipelineId2, 20))

@@ -108,7 +108,7 @@ class PipelineSelectJudgmentIntegrationTest extends IntegrationTestBase {
   void tearDown() {
     // 파이프라인 실행이 감사 로그를 남기므로 user 정리(TestUsers.cleanup)는 마지막이다(FK). 단계마다 독립 실행한다.
     TenantRlsTestSupport.cleanupAll(
-        () -> pipelineService.deletePipeline(pipelineId),
+        () -> pipelineService.deletePipelineUnchecked(pipelineId),
         () -> datasetService.deleteDataset(outDatasetId),
         () -> datasetService.deleteDataset(srcDatasetId),
         () -> TestUsers.cleanup(dsl, fixtureTransactionTemplate, userId, DEFAULT_TEST_TENANT_ID));

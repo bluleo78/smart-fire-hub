@@ -97,7 +97,7 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
   void tearDown() {
     // 파이프라인 삭제가 이제 그 TEMP 까지 지운다. 실행이 감사 로그를 남기므로 user 정리는 마지막이다(FK).
     TenantRlsTestSupport.cleanupAll(
-        () -> pipelinesToCleanup.forEach(pipelineService::deletePipeline),
+        () -> pipelinesToCleanup.forEach(pipelineService::deletePipelineUnchecked),
         () -> datasetService.deleteDataset(srcDatasetId),
         () -> TestUsers.cleanup(dsl, fixtureTransactionTemplate, userId, DEFAULT_TEST_TENANT_ID));
   }
@@ -113,7 +113,7 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     assertThat(tableExists(firstTable)).isTrue();
 
     // 2) 파이프라인을 지우면 TEMP 메타·물리 테이블이 함께 사라진다.
-    pipelineService.deletePipeline(firstId);
+    pipelineService.deletePipelineUnchecked(firstId);
     assertThat(datasetExists(firstTemp)).as("옛 TEMP 메타").isFalse();
     assertThat(tableExists(firstTable)).as("옛 TEMP 물리 테이블").isFalse();
 
@@ -473,7 +473,7 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
         pipelineId, temp, "code, label, amount", null, "code", "label", "amount");
 
     plantBackup(table);
-    pipelineService.deletePipeline(pipelineId);
+    pipelineService.deletePipelineUnchecked(pipelineId);
     pipelinesToCleanup.remove(pipelineId);
     assertThat(
             inTenantFixture(

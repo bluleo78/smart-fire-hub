@@ -243,7 +243,7 @@ class TriggerChainCycleValidationTest extends IntegrationTestBase {
     // 결함: 없는 파이프라인 id 를 선행으로 생성하면 201·활성이었다 — 영원히 발화하지 않는 트리거가 생겼다.
     Long b = pipeline("B");
     Long gone = pipeline("Gone");
-    pipelineService.deletePipeline(gone);
+    pipelineService.deletePipelineUnchecked(gone);
 
     assertThatThrownBy(() -> chain(b, gone))
         .isInstanceOf(IllegalArgumentException.class)
@@ -288,7 +288,7 @@ class TriggerChainCycleValidationTest extends IntegrationTestBase {
     // 선행이 있으면 표시 없음.
     assertThat(triggerService.getTriggerById(ba).upstreamMissing()).isFalse();
 
-    pipelineService.deletePipeline(a);
+    pipelineService.deletePipelineUnchecked(a);
 
     // 서버가 자동으로 끈 트리거는 목록·단건 조회에서 이유(선행 없음)를 함께 내려 준다.
     TriggerResponse listed =
@@ -343,7 +343,7 @@ class TriggerChainCycleValidationTest extends IntegrationTestBase {
     Long b = pipeline("B");
     Long ba = chain(b, a);
     Long gone = pipeline("Gone");
-    pipelineService.deletePipeline(gone);
+    pipelineService.deletePipelineUnchecked(gone);
 
     assertThatThrownBy(
             () ->
@@ -358,7 +358,7 @@ class TriggerChainCycleValidationTest extends IntegrationTestBase {
     // 결함 이전에 없는 선행으로 켜진 채 남은 트리거(운영 잔존분)도 표시로 드러나야 한다 — 켜짐 여부와 무관하게 계산한다.
     Long b = pipeline("B");
     Long gone = pipeline("Gone");
-    pipelineService.deletePipeline(gone);
+    pipelineService.deletePipelineUnchecked(gone);
     Long legacy = insertChainTrigger(b, gone);
 
     TriggerResponse listed =
@@ -534,7 +534,7 @@ class TriggerChainCycleValidationTest extends IntegrationTestBase {
   private void cleanupCommitted(List<Long> pipelineIds) {
     awaitSecurityAudit();
     TenantRlsTestSupport.cleanupAll(
-        () -> pipelineIds.forEach(pipelineService::deletePipeline),
+        () -> pipelineIds.forEach(pipelineService::deletePipelineUnchecked),
         () -> TestUsers.cleanup(dsl, fixtureTransactionTemplate, userId, DEFAULT_TEST_TENANT_ID));
   }
 

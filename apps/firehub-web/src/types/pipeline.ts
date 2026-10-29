@@ -216,7 +216,10 @@ export interface TriggerEventResponse {
  * 다른 파이프라인 스텝이 출력으로 쓰고 있어 남는 임시 데이터셋은 세지 않는다(서버의 실제 삭제와 같은 판정).
  */
 export interface PipelineDeleteImpact {
+  /** 함께 지워질 개수 — 내가 볼 수 없는 것은 세지 않는다(WD-310) */
   tempDatasetCount: number;
+  /** 내가 볼 수 없는 임시 데이터셋이 함께 지워질 대상에 있으면 true — 서버가 삭제를 403 으로 거부한다(WD-310) */
+  hasHiddenTempDatasets: boolean;
 }
 
 export interface CreateTriggerRequest {

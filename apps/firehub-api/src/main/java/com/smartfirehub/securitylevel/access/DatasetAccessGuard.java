@@ -27,6 +27,7 @@ import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
 import com.smartfirehub.securitylevel.service.SecurityAuditRecorder.AccessKind;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -297,6 +298,25 @@ public class DatasetAccessGuard {
       return Decision.deny("LEVEL_UNKNOWN", null, null);
     }
     return decide(c, f, action, hosting);
+  }
+
+  /**
+   * 여러 데이터셋의 열람(VIEW) 판정을 한 번의 조회로 하고, 거부된 것만 입력 순서대로 돌려준다(WD-310 — 파이프라인 삭제가 함께 지울 임시 데이터셋을 미리 판정할
+   * 때 id 마다 조회하지 않게). 없는 데이터셋은 {@link #check} 와 같이 LEVEL_UNKNOWN 거부다.
+   */
+  public Map<Long, Decision> viewDenials(Clearance c, Collection<Long> datasetIds) {
+    if (datasetIds.isEmpty()) {
+      return Map.of();
+    }
+    Map<Long, AccessFacts> facts = accessRepository.findFactsByDatasetIds(datasetIds, c);
+    Map<Long, Decision> denied = new LinkedHashMap<>();
+    for (Long id : datasetIds) {
+      Decision d = viewDecision(c, facts.get(id));
+      if (!d.allowed()) {
+        denied.put(id, d);
+      }
+    }
+    return denied;
   }
 
   /** 이미 읽은 사실로 판정(SQL 경로가 여러 데이터셋을 한 번에 읽은 뒤 쓴다). */

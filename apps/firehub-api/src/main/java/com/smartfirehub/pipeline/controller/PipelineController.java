@@ -65,8 +65,9 @@ public class PipelineController {
 
   @DeleteMapping("/{id}")
   @RequirePermission("pipeline:delete")
-  public ResponseEntity<Void> deletePipeline(@PathVariable Long id) {
-    pipelineService.deletePipeline(id);
+  public ResponseEntity<Void> deletePipeline(@PathVariable Long id, Authentication authentication) {
+    // 볼 수 없는 임시 데이터셋이 있으면 서비스가 403 으로 거부한다(WD-310) — 호출자를 넘긴다.
+    pipelineService.deletePipeline(id, (Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 
@@ -76,8 +77,10 @@ public class PipelineController {
    */
   @GetMapping("/{id}/delete-impact")
   @RequirePermission("pipeline:read")
-  public ResponseEntity<PipelineDeleteImpactResponse> getDeleteImpact(@PathVariable Long id) {
-    return ResponseEntity.ok(pipelineService.getDeleteImpact(id));
+  public ResponseEntity<PipelineDeleteImpactResponse> getDeleteImpact(
+      @PathVariable Long id, Authentication authentication) {
+    return ResponseEntity.ok(
+        pipelineService.getDeleteImpact(id, (Long) authentication.getPrincipal()));
   }
 
   @PostMapping("/{id}/execute")

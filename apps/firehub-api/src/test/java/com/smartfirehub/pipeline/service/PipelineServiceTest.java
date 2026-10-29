@@ -620,7 +620,7 @@ class PipelineServiceTest extends IntegrationTestBase {
     Long pipelineId = created.id();
 
     // When
-    pipelineService.deletePipeline(pipelineId);
+    pipelineService.deletePipelineUnchecked(pipelineId);
 
     // Then
     // WD-226: 지운 파이프라인은 내부 id 없는 한국어 문구로 404 — 이 문구가 토스트·AI 챗에 그대로 실린다

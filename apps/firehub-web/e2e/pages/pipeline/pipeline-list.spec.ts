@@ -180,6 +180,31 @@ test.describe('파이프라인 목록 페이지', () => {
     }
   });
 
+  test('볼 수 없는 임시 데이터셋이 함께 지워질 대상에 있으면 안내하고 삭제 버튼을 막는다 (WD-310)', async ({ authenticatedPage: page }) => {
+    await setupPipelineMocks(page, 2);
+    // 서버는 볼 수 있는 것만 세고(1개) 숨긴 것이 있다는 사실만 알린다 — 삭제하면 403 이다.
+    await mockPipelineDeleteImpact(page, 1, 200, true);
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/pipelines/1', null, { capture: true });
+
+    await page.goto('/pipelines');
+    const impactRequest = page.waitForRequest((req) => new URL(req.url()).pathname === '/api/v1/pipelines/1/delete-impact');
+    await page.getByRole('button', { name: '삭제' }).first().click();
+    await impactRequest;
+
+    const dialog = page.getByRole('alertdialog');
+    const impact = dialog.getByTestId('pipeline-delete-impact');
+    await expect(impact).toContainText('볼 수 없는 임시 데이터셋이 있어 삭제할 수 없습니다');
+    await expect(impact).toContainText('관리자에게 삭제를 요청하세요');
+    // 숨긴 개수·「함께 삭제됩니다」 안내는 보이지 않는다
+    await expect(dialog).not.toContainText('함께 삭제됩니다');
+    if (process.env.WD310_SHOT_DIR) {
+      await page.screenshot({ path: `${process.env.WD310_SHOT_DIR}/delete-dialog-hidden-temp.png`, animations: 'disabled' });
+    }
+    // 삭제 버튼은 꺼져 있고, 삭제 요청은 가지 않는다
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeDisabled();
+    expect(deleteCapture.requests).toHaveLength(0);
+  });
+
   test('삭제 영향 조회가 실패하면 경고를 보이고 삭제는 허용한다 (WD-170)', async ({ authenticatedPage: page }) => {
     await setupPipelineMocks(page, 2);
     await mockPipelineDeleteImpact(page, 0, 500);

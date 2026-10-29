@@ -2,6 +2,7 @@ package com.smartfirehub.securitylevel;
 
 import static com.smartfirehub.jooq.Tables.DATASET;
 import static com.smartfirehub.jooq.Tables.DATASET_ACCESS_GRANT;
+import static com.smartfirehub.jooq.Tables.PIPELINE;
 import static com.smartfirehub.jooq.Tables.PIPELINE_STEP;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -14,8 +15,10 @@ import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
+import com.smartfirehub.pipeline.dto.PipelineDeleteImpactResponse;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.TriggerType;
+import com.smartfirehub.pipeline.dto.UpdatePipelineRequest;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.service.PipelineExecutionService;
 import com.smartfirehub.pipeline.service.PipelineSecurityGate;
@@ -39,6 +42,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -221,7 +225,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
             }
           });
       try {
-        pipelineService.deletePipeline(p);
+        pipelineService.deletePipelineUnchecked(p);
       } catch (Exception ignored) {
         // 정리 실패는 다음 정리에 맡긴다.
       }
@@ -802,7 +806,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
         pythonUserAt("공개"));
     // 정리: 이제 스텝이 TEMP 를 출력으로 참조하므로(tearDown 은 TEMP 를 먼저 지운다) 파이프라인을 먼저 지운다. 파이프라인 삭제가 그
     // 스텝이 만든 자동 생성 TEMP 도 함께 지운다(WD-170) — 따로 지울 TEMP 가 남지 않는다.
-    pipelineService.deletePipeline(p);
+    pipelineService.deletePipelineUnchecked(p);
     pipelines.remove(Long.valueOf(p));
   }
 
@@ -1562,6 +1566,107 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
                     .DATASET_ID
                     .eq(datasetId)
                     .and(DATASET_ACCESS_GRANT.ROLE_ID.eq(roleId))));
+  }
+
+  // ---- WD-310: 볼 수 없는 자동 생성 임시 데이터셋은 파이프라인 삭제·스텝 교체로 지울 수 없다 ----
+
+  /** 민감 입력을 읽는 스텝 하나짜리 파이프라인을 실행해 TEMP 를 민감으로 올린다 — 그 TEMP id 를 돌려준다. */
+  private long runSensitiveTemp(long runner, long p) throws Exception {
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    long temp =
+        inTenantFixture(
+            () ->
+                dsl.select(DATASET.ID)
+                    .from(DATASET)
+                    .where(DATASET.TABLE_NAME.like("ptmp\\_" + p + "\\_s1%"))
+                    .fetchSingle(DATASET.ID));
+    assertThat(levelOf(temp)).isEqualTo(fx.levelId("민감"));
+    return temp;
+  }
+
+  private boolean datasetExists(long id) {
+    return inTenantFixture(() -> dsl.fetchExists(DATASET, DATASET.ID.eq(id)));
+  }
+
+  private static void assertHiddenTempDenied(ThrowingCallable call) {
+    assertThatThrownBy(call)
+        .isInstanceOf(CodedApiException.class)
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo(PipelineSecurityGate.HIDDEN_TEMP_DATASET_CODE);
+  }
+
+  /**
+   * 볼 수 없는(민감) TEMP 가 있으면 낮은 등급 사용자의 파이프라인 삭제는 403 이고 아무것도 지우지 않는다. 확인 창 조회는 숨긴 것을 세지 않고 「숨김 있음」만
+   * 알린다. 볼 수 있는 사용자는 지금처럼 함께 지운다.
+   */
+  @Test
+  void deletePipeline_hiddenTemp_deniesLowUserAndKeepsEverything_allowsViewer() throws Exception {
+    long runner = userAt("민감");
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(secTable), null, null, null)));
+    long temp = runSensitiveTemp(runner, p);
+    long low = userAt("공개");
+
+    assertThat(pipelineService.getDeleteImpact(p, low))
+        .isEqualTo(new PipelineDeleteImpactResponse(0, true));
+    assertHiddenTempDenied(() -> pipelineService.deletePipeline(p, low));
+    // 거부는 아무것도 바꾸지 않는다 — 파이프라인·TEMP 행·테이블 모두 남는다.
+    assertThat(inTenantFixture(() -> dsl.fetchExists(PIPELINE, PIPELINE.ID.eq(p)))).isTrue();
+    assertThat(datasetExists(temp)).isTrue();
+    String tempTable =
+        inTenantFixture(
+            () ->
+                dsl.select(DATASET.TABLE_NAME)
+                    .from(DATASET)
+                    .where(DATASET.ID.eq(temp))
+                    .fetchSingle(DATASET.TABLE_NAME));
+    assertThat(rowCount(tempTable)).isEqualTo(1);
+
+    assertThat(pipelineService.getDeleteImpact(p, runner))
+        .isEqualTo(new PipelineDeleteImpactResponse(1, false));
+    pipelineService.deletePipeline(p, runner);
+    assertThat(datasetExists(temp)).isFalse();
+  }
+
+  /** 스텝 교체(PUT)로 볼 수 없는 TEMP 를 만든 스텝을 빼면 403 이고 저장 전체가 되돌아간다 — 스텝·TEMP 가 그대로다. */
+  @Test
+  void updatePipeline_removingStepWithHiddenTemp_deniesLowUserAndRollsBack() throws Exception {
+    long runner = userAt("민감");
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(secTable), null, null, null)));
+    long temp = runSensitiveTemp(runner, p);
+    long low = userAt("공개");
+    List<PipelineStepRequest> replaced =
+        List.of(
+            new PipelineStepRequest(
+                "s2", null, "SQL", "SELECT v FROM " + qualified(pubTable), null, null, null));
+
+    assertHiddenTempDenied(
+        () ->
+            pipelineService.updatePipeline(
+                p, new UpdatePipelineRequest("PA " + m + " 교체", null, null, replaced), low));
+    assertThat(datasetExists(temp)).isTrue();
+    assertThat(
+            inTenantFixture(
+                () ->
+                    dsl.select(PIPELINE_STEP.NAME)
+                        .from(PIPELINE_STEP)
+                        .where(PIPELINE_STEP.PIPELINE_ID.eq(p))
+                        .fetch(PIPELINE_STEP.NAME)))
+        .containsExactly("s1");
+
+    // 볼 수 있는 편집자는 지금처럼 교체하고, 빠진 스텝의 TEMP 도 함께 지운다.
+    pipelineService.updatePipeline(
+        p, new UpdatePipelineRequest("PA " + m + " 교체", null, null, replaced), runner);
+    assertThat(datasetExists(temp)).isFalse();
   }
 
   private String qualified(String table) {

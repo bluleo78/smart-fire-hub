@@ -120,7 +120,7 @@ class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
   void tearDown() {
     for (Long pipelineId : pipelineIds) {
       try {
-        pipelineService.deletePipeline(pipelineId);
+        pipelineService.deletePipelineUnchecked(pipelineId);
       } catch (Exception ignored) {
         // 정리 실패가 본 검증 결과를 가리지 않게 한다.
       }

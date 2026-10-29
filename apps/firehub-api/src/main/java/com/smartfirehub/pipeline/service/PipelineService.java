@@ -773,7 +773,11 @@ public class PipelineService {
       // 7) 뺀 스텝이 만든 자동 생성 임시 데이터셋을 지운다(WD-170). 그대로 두면 연결만 끊긴 채 남아, 같은 이름의 스텝을 다시 넣으면
       // 러너가 새 임시 데이터셋을 만들려다 이름(ptmp_<파이프라인 id>_<스텝>) 충돌로 매번 실패한다. 저장(5)이 끝난 뒤에 하는 이유: 같은 저장에서
       // 남는·새 스텝이 그 임시 데이터셋을 출력으로 넘겨받을 수 있다(왕복 보존 출력) — 저장 후 상태로 출력 참조를 봐야 한다.
-      deleteAutoTempDatasets(removedStepTempIds, removedIds);
+      // 지울 임시 데이터셋을 편집자가 모두 볼 수 있어야 한다(WD-310) — 못 보면 403 으로 저장 전체가 되돌아간다(같은 트랜잭션).
+      // 판정한 목록을 그대로 지운다(판정과 삭제가 다른 목록을 보지 않게).
+      AutoTempDeletion temps = planAutoTempDeletion(removedStepTempIds, removedIds);
+      pipelineSecurityGate.requireAutoTempsDeletable(userId, temps.deletable());
+      deleteAutoTempDatasets(temps);
     }
   }
 
@@ -802,22 +806,36 @@ public class PipelineService {
    *
    * <p>출력 참조 판정을 먼저 해서 걸러 낸다. 데이터셋 삭제의 출력 참조 거부(DatasetInUseException)는 합류한 트랜잭션을 롤백 전용으로 만들어 잡아도
    * 커밋이 실패하므로, 거부에 기대지 않고 미리 거른다(그 거부는 안전망으로만 남는다). 데이터셋 소유자·보안 등급 확인은 하지 않는다 — 파이프라인을 지울 수 있는 사람이면
-   * 그 파이프라인이 만든 임시 데이터셋도 지워져야 한다.
+   * 그 파이프라인이 만든 임시 데이터셋도 지워져야 한다. 단 호출자가 볼 수 없는 것이 있으면 사용자 요청 경로가 먼저 거부한다(WD-310 — {@link
+   * PipelineSecurityGate#requireAutoTempsDeletable}).
+   *
+   * <p>{@link #planAutoTempDeletion} 이 고른(사용자 경로면 판정까지 마친) 목록을 그대로 지운다 — 여기서 다시 고르지 않는다(판정과 삭제가 다른
+   * 목록을 보지 않게).
    */
-  private void deleteAutoTempDatasets(List<Long> tempIds, Collection<Long> excludedStepIds) {
-    if (tempIds.isEmpty()) {
-      return;
-    }
-    List<Long> deletable = selectDeletableAutoTemps(tempIds, excludedStepIds);
-    for (Long tempId : deletable) {
+  private void deleteAutoTempDatasets(AutoTempDeletion temps) {
+    for (Long tempId : temps.deletable()) {
       tempDatasetService.deleteTempDataset(tempId);
     }
-    if (deletable.size() < tempIds.size()) {
+    if (temps.deletable().size() < temps.candidates().size()) {
       log.info(
           "Kept {} auto temp dataset(s) still used as output by other steps: {}",
-          tempIds.size() - deletable.size(),
-          tempIds.stream().filter(t -> !deletable.contains(t)).toList());
+          temps.candidates().size() - temps.deletable().size(),
+          temps.candidates().stream().filter(t -> !temps.deletable().contains(t)).toList());
     }
+  }
+
+  /**
+   * 지울 자동 생성 임시 데이터셋 계획(WD-310) — 후보 전체와 그중 실제로 지울 것(다른 스텝이 출력으로 쓰지 않는 것).
+   *
+   * @param candidates 스텝이 만든 임시 데이터셋 후보 전체(남긴 것을 기록하는 데 쓴다)
+   * @param deletable 지울 것 — 사용자 경로는 이 목록을 판정한 뒤 그대로 지운다
+   */
+  private record AutoTempDeletion(List<Long> candidates, List<Long> deletable) {}
+
+  /** 후보에서 지울 것을 골라 계획으로 묶는다 — 판정·삭제·삭제 영향 조회가 같은 선택을 쓴다. */
+  private AutoTempDeletion planAutoTempDeletion(
+      List<Long> tempIds, Collection<Long> excludedStepIds) {
+    return new AutoTempDeletion(tempIds, selectDeletableAutoTemps(tempIds, excludedStepIds));
   }
 
   /**
@@ -827,11 +845,11 @@ public class PipelineService {
    * @throws PipelineNotFoundException 파이프라인이 없을 때
    */
   @Transactional(readOnly = true)
-  public PipelineDeleteImpactResponse getDeleteImpact(Long id) {
-    pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
-    List<Long> stepIds = stepRepository.findStepIdsByPipelineId(id);
-    List<Long> tempIds = stepRepository.findAutoTempDatasetIdsByStepIds(stepIds);
-    return new PipelineDeleteImpactResponse(selectDeletableAutoTemps(tempIds, stepIds).size());
+  public PipelineDeleteImpactResponse getDeleteImpact(Long id, Long userId) {
+    List<Long> deletable = planPipelineDeletion(id).deletable();
+    // 볼 수 없는 것이 있으면 삭제가 403 이다(WD-310) — 확인 창이 미리 막도록 알리고, 개수에는 볼 수 있는 것만 센다(숨긴 개수를 드러내지 않게).
+    int hidden = pipelineSecurityGate.hiddenCount(userId, deletable);
+    return new PipelineDeleteImpactResponse(deletable.size() - hidden, hidden > 0);
   }
 
   /**
@@ -1196,11 +1214,39 @@ public class PipelineService {
     }
   }
 
+  /**
+   * 사용자 요청의 파이프라인 삭제(WD-310) — 함께 지워질 자동 생성 임시 데이터셋을 호출자가 모두 볼 수 있을 때만 지운다. 하나라도 못 보면 아무것도 바꾸지 않고
+   * 403 {@link PipelineSecurityGate#HIDDEN_TEMP_DATASET_CODE}.
+   */
   @Transactional
-  public void deletePipeline(Long id) {
-    // Verify pipeline exists
-    pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
+  public void deletePipeline(Long id, Long userId) {
+    AutoTempDeletion temps = planPipelineDeletion(id);
+    // 볼 수 없는 임시 데이터셋이 있으면 무엇이든 바꾸기 전에 거부한다(WD-310). 판정한 목록을 그대로 지운다.
+    pipelineSecurityGate.requireAutoTempsDeletable(userId, temps.deletable());
+    deletePipeline(id, temps);
+  }
 
+  /**
+   * 호출자 판정 없이 파이프라인과 그 자동 생성 임시 데이터셋을 지운다 — 테스트 정리처럼 사용자 요청이 아닌 경로 전용이다. 사용자 요청은 반드시 {@link
+   * #deletePipeline(Long, Long)} 로 들어온다(WD-310).
+   */
+  @Transactional
+  public void deletePipelineUnchecked(Long id) {
+    deletePipeline(id, planPipelineDeletion(id));
+  }
+
+  /**
+   * 파이프라인이 있는지 확인하고 함께 지울 자동 생성 임시 데이터셋을 고른다. 스텝을 지우기 전에 모아 둔다(WD-170) — 스텝을 지우면
+   * source_pipeline_step_id 가 SET NULL(V36)이 되어 찾을 수 없다. 다른 파이프라인 스텝이 출력으로 쓰는 것은 남긴다(이 파이프라인 스텝은 곧
+   * 지워지므로 참조로 세지 않는다).
+   */
+  private AutoTempDeletion planPipelineDeletion(Long id) {
+    pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
+    List<Long> stepIds = stepRepository.findStepIdsByPipelineId(id);
+    return planAutoTempDeletion(stepRepository.findAutoTempDatasetIdsByStepIds(stepIds), stepIds);
+  }
+
+  private void deletePipeline(Long id, AutoTempDeletion temps) {
     // Disable chain triggers that reference this pipeline as upstream
     // 꺼진 이유(선행 삭제)는 따로 저장하지 않는다 — 트리거 조회가 선행 존재를 계산해 upstreamMissing 으로 내려 주고, 다시 켜기·저장은
     // TriggerService 가 거부한다(WD-218).
@@ -1209,17 +1255,12 @@ public class PipelineService {
       log.info("Disabled {} chain triggers referencing pipeline {}", disabled, id);
     }
 
-    // 스텝이 만든 자동 생성 임시 데이터셋을 스텝 삭제 전에 모아 둔다(WD-170) — 스텝을 지우면 source_pipeline_step_id 가
-    // SET NULL(V36)이 되어 찾을 수 없다.
-    List<Long> stepIds = stepRepository.findStepIdsByPipelineId(id);
-    List<Long> tempIds = stepRepository.findAutoTempDatasetIdsByStepIds(stepIds);
-
     // Delete steps (cascade deletes inputs and dependencies)
     stepRepository.deleteByPipelineId(id);
 
     // 임시 데이터셋은 스텝 다음에 지운다(WD-170) — 스텝이 자기 임시 데이터셋을 출력(output_dataset_id, FK RESTRICT)으로 들고 있을
-    // 수 있어 먼저 지우면 걸린다. 다른 파이프라인 스텝이 출력으로 쓰는 것은 남긴다. 같은 트랜잭션이라 실패하면 전부 되돌아간다.
-    deleteAutoTempDatasets(tempIds, stepIds);
+    // 수 있어 먼저 지우면 걸린다. 같은 트랜잭션이라 실패하면 전부 되돌아간다.
+    deleteAutoTempDatasets(temps);
 
     // Delete pipeline
     pipelineRepository.deleteById(id);

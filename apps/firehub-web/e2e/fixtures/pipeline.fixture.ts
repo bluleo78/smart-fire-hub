@@ -65,9 +65,15 @@ const PIPELINE_DELETE_IMPACT_PATH = /^\/api\/v1\/pipelines\/\d+\/delete-impact$/
  * 나중에 등록한 route 가 우선하므로, 목록 셋업의 기본값(0개)을 테스트에서 다시 불러 덮어쓸 수 있다.
  * @param tempDatasetCount - 함께 지워질 자동 생성 임시 데이터셋 개수(기본값: 0)
  * @param status - 응답 상태(실패 경로 검증용)
+ * @param hasHiddenTempDatasets - 내가 볼 수 없는 임시 데이터셋이 함께 지워질 대상에 있는가(WD-310, 기본값: false)
  */
-export async function mockPipelineDeleteImpact(page: Page, tempDatasetCount = 0, status = 200) {
-  const impact: PipelineDeleteImpact = { tempDatasetCount };
+export async function mockPipelineDeleteImpact(
+  page: Page,
+  tempDatasetCount = 0,
+  status = 200,
+  hasHiddenTempDatasets = false,
+) {
+  const impact: PipelineDeleteImpact = { tempDatasetCount, hasHiddenTempDatasets };
   await page.route(
     (url) => PIPELINE_DELETE_IMPACT_PATH.test(url.pathname),
     (route) => {
