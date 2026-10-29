@@ -615,19 +615,24 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
         .isEqualTo(1);
   }
 
-  /** 아이디는 다르지만 다른 계정의 이메일과 (대소문자 무시) 같으면 409 — 같은 사람의 두 번째 계정을 막는다. */
+  /**
+   * 아이디가 다른 계정의 프로필 이메일과 (대소문자 무시) 같아도 계정이 만들어진다 — 프로필 이메일은 연락처일 뿐이라 선점으로 막지 않는다 (WD-271).
+   */
   @Test
-  void create_emailUsedByOtherUsername_409() throws Exception {
+  void create_emailUsedAsOtherProfileEmail_201() throws Exception {
     String email = marker + "-mail@example.com";
     long other =
         TenantRlsTestSupport.insertUserWithPassword(dsl, marker + "-legacyname", "{noop}x");
     users.add(other);
     dsl.execute("update \"user\" set email = ? where id = ?", email.toUpperCase(), other);
 
-    createAccount(createBody(email, "중복메일", "Temp1234ab"), operatorToken)
-        .andExpect(status().isConflict())
-        .andExpect(jsonPath("$.code").value("ACCOUNT_ALREADY_EXISTS"));
-    assertThat(userIdByUsername(email)).isNull();
+    createAccount(createBody(email, "주인", "Temp1234ab"), operatorToken)
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.username").value(email))
+        .andExpect(jsonPath("$.email").value(email));
+    Long created = userIdByUsername(email);
+    assertThat(created).isNotNull();
+    users.add(created);
   }
 
   /** Bean Validation: 이메일 형식·비밀번호 정책 위반은 400 + 필드별 오류, 계정은 생기지 않는다. */

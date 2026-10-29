@@ -4,7 +4,6 @@ import static com.smartfirehub.jooq.Tables.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -164,8 +163,12 @@ class UserServiceTest extends IntegrationTestBase {
     assertThat(updated.email()).isEqualTo("new@example.com");
   }
 
+  /**
+   * 프로필 이메일은 연락처일 뿐 아이디가 아니므로 다른 계정과 같아도 저장된다 (WD-271). 유일성을 걸면 아무 멤버나 남의 주소를 먼저 저장해 그 주소 주인의
+   * 계정 생성을 막을 수 있었다.
+   */
   @Test
-  void updateProfile_emailConflict_throwsException() {
+  void updateProfile_emailUsedByAnotherAccount_isSaved() {
     dsl.insertInto(USER)
         .set(USER.USERNAME, "otheruser@example.com")
         .set(USER.PASSWORD, "password")
@@ -173,10 +176,9 @@ class UserServiceTest extends IntegrationTestBase {
         .set(USER.EMAIL, "taken@example.com")
         .execute();
 
-    assertThatThrownBy(() -> userService.updateProfile(testUserId, "New Name", "taken@example.com"))
-        .isInstanceOf(EmailAlreadyExistsException.class)
-        // 화면에 그대로 보이는 문구라 영어 원문·남의 이메일 노출 없이 한국어 안내여야 한다 (WD-120)
-        .hasMessage("이미 사용 중인 이메일입니다. 다른 이메일을 입력하세요.");
+    userService.updateProfile(testUserId, "New Name", "taken@example.com");
+
+    assertThat(userService.getUserById(testUserId).email()).isEqualTo("taken@example.com");
   }
 
   @Test

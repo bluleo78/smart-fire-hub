@@ -152,28 +152,6 @@ public class UserRepository {
     return dsl.fetchExists(dsl.selectOne().from(USER).where(USER.USERNAME.eq(username)));
   }
 
-  public boolean existsByEmail(String email) {
-    return dsl.fetchExists(dsl.selectOne().from(USER).where(USER.EMAIL.eq(email)));
-  }
-
-  /**
-   * 이메일 대소문자 무시 존재 검사 — 멤버 추가 전용(WD-2 리뷰 지적 4).
-   *
-   * <p>과거 계정은 이메일을 대소문자 섞어 저장했을 수 있다(username 은 다른 값). 정확 일치만 보면 관리자가 소문자로 추가할 때 같은 사람의 두 번째 계정이
-   * 생긴다. 가입 경로({@code existsByEmail})는 의미를 바꾸지 않으려 별도 메서드로 둔다.
-   *
-   * @param email 소문자로 정규화된 이메일
-   */
-  public boolean existsByEmailIgnoreCase(String email) {
-    return dsl.fetchExists(
-        dsl.selectOne().from(USER).where(lower(USER.EMAIL).eq(email.toLowerCase(Locale.ROOT))));
-  }
-
-  public boolean existsByEmailExcludingUser(String email, Long excludeUserId) {
-    return dsl.fetchExists(
-        dsl.selectOne().from(USER).where(USER.EMAIL.eq(email).and(USER.ID.ne(excludeUserId))));
-  }
-
   /**
    * 사용자가 한 명이라도 있는지 (테넌트 무관, 전역).
    *
@@ -305,13 +283,15 @@ public class UserRepository {
     return dsl.select(count()).from(USER).where(condition).fetchOne(0, Long.class);
   }
 
-  public void update(Long id, String name, String email) {
-    dsl.update(USER)
-        .set(USER.NAME, name)
-        .set(USER.EMAIL, email)
-        .set(USER.UPDATED_AT, LocalDateTime.now())
-        .where(USER.ID.eq(id))
-        .execute();
+  /** 이름·프로필 이메일을 바꾼다. 해당 사용자가 없어 바뀐 행이 없으면 false — 존재 확인을 따로 조회하지 않으려고 결과로 돌려준다. */
+  public boolean update(Long id, String name, String email) {
+    return dsl.update(USER)
+            .set(USER.NAME, name)
+            .set(USER.EMAIL, email)
+            .set(USER.UPDATED_AT, LocalDateTime.now())
+            .where(USER.ID.eq(id))
+            .execute()
+        > 0;
   }
 
   /** 비밀번호를 바꾸고, 임시 비밀번호 표식도 내린다(본인 변경이 유일한 호출처). */

@@ -57,16 +57,6 @@ class GlobalExceptionHandlerTest {
   }
 
   @Test
-  void emailAlreadyExists_returns409() throws Exception {
-    mockMvc
-        .perform(get("/test/exception/email-exists"))
-        .andExpect(status().isConflict())
-        .andExpect(jsonPath("$.status").value(409))
-        .andExpect(jsonPath("$.error").value("Conflict"))
-        .andExpect(jsonPath("$.message").value("Email already exists"));
-  }
-
-  @Test
   void invalidCredentials_returns401() throws Exception {
     mockMvc
         .perform(get("/test/exception/invalid-credentials"))

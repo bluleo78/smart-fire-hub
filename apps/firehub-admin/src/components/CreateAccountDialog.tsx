@@ -115,11 +115,11 @@ function CreateAccountDialogBody({
     } catch (error) {
       const response = axios.isAxiosError(error) ? error.response : undefined;
       const body = response?.data as ErrorResponse | undefined;
-      // 같은 아이디·이메일의 계정이 이미 있다 — 이메일 입력의 문제다. 기존 계정은 서버가 건드리지 않았다.
+      // 이 이메일을 아이디로 쓰는 계정이 이미 있다 — 이메일 입력의 문제다. 기존 계정은 서버가 건드리지 않았다.
       if (response?.status === 409) {
         setError(
           'email',
-          { message: body?.message ?? '이미 같은 아이디 또는 이메일의 계정이 있습니다' },
+          { message: body?.message ?? '이미 이 이메일을 아이디로 쓰는 계정이 있습니다' },
           { shouldFocus: true },
         );
         return;

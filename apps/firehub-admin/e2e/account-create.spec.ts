@@ -67,7 +67,7 @@ test.describe('계정 생성 (WD-46)', () => {
       page,
       'POST',
       '/api/platform/accounts',
-      { status: 409, error: 'Conflict', message: '이미 같은 아이디 또는 이메일의 계정이 있습니다', code: 'ACCOUNT_ALREADY_EXISTS' },
+      { status: 409, error: 'Conflict', message: '이미 이 이메일을 아이디로 쓰는 계정이 있습니다', code: 'ACCOUNT_ALREADY_EXISTS' },
       { status: 409 },
     );
     await page.goto('/accounts');
@@ -78,7 +78,7 @@ test.describe('계정 생성 (WD-46)', () => {
     await dialog.getByRole('button', { name: '계정 생성' }).click();
 
     const email = dialog.getByLabel('이메일(로그인 아이디)');
-    await expect(dialog.getByText('이미 같은 아이디 또는 이메일의 계정이 있습니다')).toBeVisible();
+    await expect(dialog.getByText('이미 이 이메일을 아이디로 쓰는 계정이 있습니다')).toBeVisible();
     await expect(email).toHaveAttribute('aria-invalid', 'true');
     await expect(email).toHaveAttribute('aria-describedby', 'account-email-error');
     await expect(email).toBeFocused();

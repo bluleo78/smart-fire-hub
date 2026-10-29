@@ -1,7 +1,6 @@
 package com.smartfirehub.auth.service;
 
 import com.smartfirehub.auth.dto.SignupRequest;
-import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.exception.UsernameAlreadyExistsException;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.role.exception.RoleNotFoundException;
@@ -35,7 +34,7 @@ public class SignupTransaction {
    * 공개 가입 — 시스템 첫 사용자(부트스트랩) 전용(WD-2).
    *
    * <p>순서가 중요하다. (1) advisory lock 으로 동시 첫 가입을 직렬화하고 (2) 사용자가 이미 있으면 즉시 403 SIGNUP_DISABLED.
-   * 아이디·이메일 중복 검사를 그 <b>뒤</b>에 두는 이유: 앞에 두면 닫힌 가입에서도 "이미 사용 중인 아이디" 409 가 나와 계정 존재 여부가 새어 나간다. 이후
+   * 아이디 중복 검사를 그 <b>뒤</b>에 두는 이유: 앞에 두면 닫힌 가입에서도 "이미 사용 중인 아이디" 409 가 나와 계정 존재 여부가 새어 나간다. 이후
    * 사용자는 워크스페이스 관리자가 멤버 추가로 만든다.
    */
   @Transactional
@@ -50,12 +49,6 @@ public class SignupTransaction {
     if (userRepository.existsByUsername(request.username())) {
       // 사용자에게 한국어 메시지 반환 — 영문 원문 메시지 노출 방지
       throw new UsernameAlreadyExistsException("이미 사용 중인 아이디입니다.");
-    }
-    if (request.email() != null
-        && !request.email().isBlank()
-        && userRepository.existsByEmail(request.email())) {
-      // 사용자에게 한국어 메시지 반환 — 영문 원문 메시지 노출 방지
-      throw new EmailAlreadyExistsException("이미 사용 중인 이메일입니다.");
     }
 
     String encodedPassword = passwordEncoder.encode(request.password());

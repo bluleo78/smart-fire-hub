@@ -227,7 +227,6 @@ public class Indexes {
     public static final Index IDX_UPLOADED_FILES_EXPIRES_AT = Internal.createIndex(DSL.name("idx_uploaded_files_expires_at"), UploadedFiles.UPLOADED_FILES, new OrderField[] { UploadedFiles.UPLOADED_FILES.EXPIRES_AT }, false);
     public static final Index IDX_UPLOADED_FILES_TENANT = Internal.createIndex(DSL.name("idx_uploaded_files_tenant"), UploadedFiles.UPLOADED_FILES, new OrderField[] { UploadedFiles.UPLOADED_FILES.TENANT_ID }, false);
     public static final Index IDX_UPLOADED_FILES_UPLOADED_BY = Internal.createIndex(DSL.name("idx_uploaded_files_uploaded_by"), UploadedFiles.UPLOADED_FILES, new OrderField[] { UploadedFiles.UPLOADED_FILES.UPLOADED_BY }, false);
-    public static final Index IDX_USER_EMAIL_UNIQUE = Internal.createIndex(DSL.name("idx_user_email_unique"), User.USER, new OrderField[] { User.USER.EMAIL }, true);
     public static final Index IDX_USER_ROLE_ROLE_ID = Internal.createIndex(DSL.name("idx_user_role_role_id"), UserRole.USER_ROLE, new OrderField[] { UserRole.USER_ROLE.ROLE_ID }, false);
     public static final Index IDX_USER_ROLE_TENANT = Internal.createIndex(DSL.name("idx_user_role_tenant"), UserRole.USER_ROLE, new OrderField[] { UserRole.USER_ROLE.TENANT_ID }, false);
     public static final Index IDX_USER_USERNAME = Internal.createIndex(DSL.name("idx_user_username"), User.USER, new OrderField[] { User.USER.USERNAME }, false);

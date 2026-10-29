@@ -1,6 +1,5 @@
 package com.smartfirehub.platform.service;
 
-import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
@@ -106,21 +105,22 @@ public class PlatformAccountService {
    * 소속 없는 새 계정 생성(WD-46) — 공개 가입이 닫힌 뒤(WD-2) 계정이 없는 사람을 테넌트 Owner 로 세울 수단.
    *
    * <p>규칙은 멤버 추가와 같다({@link TemporaryAccountCreator}): username = 소문자 이메일, 임시 비밀번호 해시, 첫 로그인 변경 강제.
-   * 멤버십은 만들지 않는다. 이미 있으면(아이디 또는 이메일, 대소문자 무시) 409 {@code ACCOUNT_ALREADY_EXISTS} — 기존 계정은 건드리지 않는다
+   * 멤버십은 만들지 않는다. 같은 아이디가 이미 있으면(대소문자 무시) 409 {@code ACCOUNT_ALREADY_EXISTS} — 기존 계정은 건드리지 않는다
    * (비밀번호를 덮어쓰면 남의 계정을 가로채는 경로가 된다). 감사는 같은 트랜잭션에 남긴다.
    */
   @Transactional
   public PlatformAccountResponse create(CreatePlatformAccountRequest request, long operatorId) {
     String email = request.email().trim().toLowerCase(Locale.ROOT);
-    // 아이디 검사를 따로 하는 이유: 공용 생성기는 이메일만 본다(멤버 추가는 아이디 일치를 "기존 계정 추가" 로 쓰므로 거기서 미리 걸렀다).
+    // 아이디 중복은 공용 생성기가 보지 않으므로 여기서 거른다(멤버 추가는 아이디 일치를 "기존 계정 추가" 로 쓰므로 거기서 따로 거른다).
+    // 다른 계정의 프로필 이메일과 같은 것은 막지 않는다 (WD-271).
     if (userRepository.findByUsernameIgnoreCase(email).isPresent()) {
       throw accountAlreadyExists();
     }
     UserResponse created;
     try {
       created = temporaryAccountCreator.create(email, request.name(), request.temporaryPassword());
-    } catch (EmailAlreadyExistsException | DuplicateKeyException e) {
-      // 이메일 중복(사전 검사) 과 동시 요청의 유니크 제약 위반을 같은 409 로 번역한다 — 영어 무결성 오류를 노출하지 않는다.
+    } catch (DuplicateKeyException e) {
+      // 동시 요청이 같은 아이디로 먼저 만든 경우의 유니크 제약 위반을 409 로 번역한다 — 영어 무결성 오류를 노출하지 않는다.
       // 런타임 예외라 @Transactional 이 롤백한다(부분 생성 없음).
       throw accountAlreadyExists();
     }
@@ -139,7 +139,7 @@ public class PlatformAccountService {
 
   private static CodedApiException accountAlreadyExists() {
     return new CodedApiException(
-        HttpStatus.CONFLICT, "ACCOUNT_ALREADY_EXISTS", "이미 같은 아이디 또는 이메일의 계정이 있습니다");
+        HttpStatus.CONFLICT, "ACCOUNT_ALREADY_EXISTS", "이미 이 이메일을 아이디로 쓰는 계정이 있습니다");
   }
 
   /** 전역 계정 재활성화. 폐기된 refresh 세션은 되살리지 않는다 — 사용자는 다시 로그인한다. */

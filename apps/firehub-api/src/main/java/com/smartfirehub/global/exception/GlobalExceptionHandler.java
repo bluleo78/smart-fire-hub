@@ -8,7 +8,6 @@ import com.smartfirehub.apiconnection.exception.ApiConnectionException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.auth.exception.AccountLockedException;
-import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
 import com.smartfirehub.auth.exception.TenantAccessDeniedException;
@@ -130,13 +129,6 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(UsernameAlreadyExistsException.class)
   public ResponseEntity<ErrorResponse> handleUsernameAlreadyExists(
       UsernameAlreadyExistsException ex, HttpServletRequest request) {
-    ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
-  }
-
-  @ExceptionHandler(EmailAlreadyExistsException.class)
-  public ResponseEntity<ErrorResponse> handleEmailAlreadyExists(
-      EmailAlreadyExistsException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }

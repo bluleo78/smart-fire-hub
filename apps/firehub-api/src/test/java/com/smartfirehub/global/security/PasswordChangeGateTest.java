@@ -236,17 +236,18 @@ class PasswordChangeGateTest extends IntegrationTestBase {
                   .contentType(MediaType.APPLICATION_JSON)
                   .content("{\"name\":\"바뀐이름\",\"email\":\"" + username + "\"}"))
           .andExpect(status().isNoContent());
-      // 다른 사용자의 이메일로는 바꿀 수 없다(본인 외 계정에 영향 불가).
+      // 다른 사용자와 같은 이메일로도 바꿀 수 있지만(프로필 이메일은 연락처일 뿐 — WD-271) 바뀌는 것은 본인 계정뿐이다.
       mockMvc
           .perform(
               put("/api/v1/users/me")
                   .header("Authorization", noTenant)
                   .contentType(MediaType.APPLICATION_JSON)
-                  .content("{\"name\":\"x\",\"email\":\"" + other + "\"}"))
-          .andExpect(status().isConflict());
+                  .content("{\"name\":\"바뀐이름\",\"email\":\"" + other + "\"}"))
+          .andExpect(status().isNoContent());
 
       var me = userRepository.findById(userId).orElseThrow();
       assertThat(me.name()).isEqualTo("바뀐이름");
+      assertThat(me.email()).isEqualTo(other);
       assertThat(me.mustChangePassword()).isFalse();
       assertThat(
               passwordEncoder.matches(
@@ -258,6 +259,7 @@ class PasswordChangeGateTest extends IntegrationTestBase {
                   "Other1Pass", userRepository.findPasswordById(otherId).orElseThrow()))
           .isTrue();
       assertThat(userRepository.findById(otherId).orElseThrow().name()).isEqualTo("Other");
+      assertThat(userRepository.findById(otherId).orElseThrow().email()).isEqualTo(other);
     } finally {
       TenantContext.set(DEFAULT_TEST_TENANT_ID);
       TestUsers.cleanup(dsl, fixtureTransactionTemplate, otherId, DEFAULT_TEST_TENANT_ID);
