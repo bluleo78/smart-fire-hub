@@ -202,4 +202,57 @@ test.describe('데이터 탭 스크롤 구조', () => {
       `thead 높이=${result!.theadHeight}px — scroll-pt 값이 이보다 작으면 행이 가려진다`
     ).toBeGreaterThanOrEqual(result!.theadBottom - 1);
   });
+
+  /**
+   * 모바일 회귀 가드(WD-336).
+   *
+   * 표가 「남는 높이」만 받는 구조라, 모바일에서 머리 영역(제목·배지·버튼 줄바꿈·두 줄 탭·툴바)이 화면을 거의
+   * 차지하면 표 스크롤 영역이 49px(375×667)·226px(390×844)까지 줄어 행이 보이지 않았다. 표에 최소 높이를 둬서
+   * 공간이 모자라면 main 이 스크롤돼 머리 영역이 위로 지나가고, 표는 늘 몇 줄 이상을 보여야 한다.
+   * 모킹 화면은 실제보다 머리 영역이 짧으므로, 머리 영역을 실제 측정값(약 590px)만큼 늘려 재현한다.
+   */
+  for (const vp of [
+    { width: 375, height: 667 },
+    { width: 390, height: 844 },
+  ]) {
+    test(`모바일 ${vp.width}×${vp.height} — 머리 영역이 커도 표가 행 여러 줄 높이를 지키고, 페이지를 내리면 표 전체가 화면에 들어온다 (WD-336)`, async ({
+      authenticatedPage: page,
+    }) => {
+      await page.setViewportSize(vp);
+      await setupMocks(page);
+      await page.goto('/data/datasets/1?tab=data');
+      await expect(page.getByText('행 1', { exact: true })).toBeVisible();
+
+      const measured = await page.evaluate(() => {
+        const main = document.querySelector('main')!;
+        const scroller = document.querySelector('main thead')!.closest('table')!.parentElement!;
+        // 실제 데이터셋 화면의 머리 영역 높이(약 590px)를 재현 — 표가 들어 있지 않은 첫 덩어리(브레드크럼·제목)를 늘린다
+        const head = main.querySelector<HTMLElement>('nav[aria-label]')?.parentElement;
+        if (head) head.style.minHeight = '560px';
+        return new Promise<{ scrollerHeight: number; mainOverflow: number; bottomAfterScroll: number; vh: number }>(
+          (resolve) =>
+            requestAnimationFrame(() => {
+              const scrollerHeight = scroller.clientHeight;
+              const mainOverflow = main.scrollHeight - main.clientHeight;
+              main.scrollTop = main.scrollHeight;
+              requestAnimationFrame(() =>
+                resolve({
+                  scrollerHeight,
+                  mainOverflow,
+                  bottomAfterScroll: scroller.getBoundingClientRect().bottom,
+                  vh: window.innerHeight,
+                }),
+              );
+            }),
+        );
+      });
+
+      // 표 스크롤 영역이 최소 높이(20rem=320px, 테두리 제외)를 지킨다 — 수정 전에는 49px·226px
+      expect(measured.scrollerHeight).toBeGreaterThanOrEqual(300);
+      // 공간이 모자라므로 main 이 스크롤된다(머리 영역이 위로 지나갈 수 있다)
+      expect(measured.mainOverflow).toBeGreaterThan(0);
+      // 끝까지 내리면 표 아래 끝이 화면 안에 들어온다
+      expect(measured.bottomAfterScroll).toBeLessThanOrEqual(measured.vh);
+    });
+  }
 });

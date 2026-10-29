@@ -251,8 +251,12 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
         </Card>
       ) : columns.length > 0 && allRows.length > 0 ? (
         /* 바깥은 테두리·클리핑만 담당한다. 이전의 `overflow-x-auto`는 안쪽 div가 100% 폭 블록이라
-           절대 발동하지 않는 죽은 코드였다(테이블을 3000px로 강제해도 outerOverflowX=0). */
-        <div ref={containerRef} className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border">
+           절대 발동하지 않는 죽은 코드였다(테이블을 3000px로 강제해도 outerOverflowX=0).
+           min-h-80(20rem): 남는 높이만 받는 구조라 모바일처럼 위쪽 머리 영역이 화면을 거의 차지하면 표가 0 근처로
+           줄었다(WD-336). 표에 최소 높이를 두어, 공간이 모자랄 때는 main 이 스크롤돼 머리 영역이 위로 지나가고
+           표는 행 몇 줄 이상을 늘 보여 준다. 넉넉한 화면(데스크톱)에서는 남는 높이가 이보다 커서 지금처럼 main 이
+           넘치지 않는다(이중 스크롤 없음). */
+        <div ref={containerRef} className="flex min-h-80 flex-1 flex-col overflow-hidden rounded-md border">
           {/*
             scroll-pt-14(56px): sticky thead 뒤로 행이 숨지 않도록(가상 스크롤의 scrollToIndex 포함).
             이 표의 헤더는 정렬 버튼 + 값 분포 바가 겹쳐 실측 54px다 — 다른 표(약 36px)보다 두꺼워서
