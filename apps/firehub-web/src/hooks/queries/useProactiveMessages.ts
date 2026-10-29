@@ -181,6 +181,14 @@ export function useExecuteProactiveJob() {
   });
 }
 
+/**
+ * 복제 성공 안내 — 복사본은 꺼진 채 만들어지므로(WD-300) 켜는 곳(상세에서는 켤 수 없고 목록의 스위치)을 함께 알린다.
+ * 상세·목록 두 화면이 같은 문구를 쓰도록 한곳에 둔다. 예약·이상 탐지 모두 꺼져 있으므로 「예약」으로 한정하지 않는다.
+ */
+export function cloneSuccessMessage(name: string) {
+  return `"${name}" 작업을 꺼진 상태로 복제했습니다. 확인한 뒤 작업 목록에서 켜세요.`;
+}
+
 export function useCloneProactiveJob() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -195,6 +203,9 @@ export function useCloneProactiveJob() {
         // 트리거였어도 복사본은 조용히 스케줄 트리거로 바뀌는 문제가 있었다 (#655 관련 수정)
         triggerType: job.triggerType,
         config: job.config,
+        // 복사본은 원본 상태와 상관없이 늘 꺼진 채로 만든다 — 기본값(활성)으로 만들면 원본과 같은 시각·같은
+        // 수신자로 곧바로 예약돼, 편집하다 취소한 복제 한 번으로 같은 리포트가 두 번 발송된다 (WD-300)
+        enabled: false,
       }).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });

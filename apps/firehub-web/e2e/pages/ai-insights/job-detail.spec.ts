@@ -710,11 +710,11 @@ test.describe('스마트 작업 상세 페이지', () => {
       page,
       'POST',
       '/api/v1/proactive/jobs',
-      createJob({ id: 99, name: '매일 현황 리포트 (복사본)' }),
+      createJob({ id: 99, name: '매일 현황 리포트 (복사본)', enabled: false }),
       { capture: true },
     );
     // 복제 후 새 작업 상세 페이지로 이동하므로 해당 API도 모킹
-    await mockApi(page, 'GET', '/api/v1/proactive/jobs/99', createJob({ id: 99, name: '매일 현황 리포트 (복사본)' }));
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/99', createJob({ id: 99, name: '매일 현황 리포트 (복사본)', enabled: false }));
     await mockApi(page, 'GET', '/api/v1/proactive/jobs/99/executions', []);
     await mockApi(page, 'GET', '/api/v1/proactive/jobs/99/anomaly-events', []);
 
@@ -725,10 +725,14 @@ test.describe('스마트 작업 상세 페이지', () => {
 
     // POST /api/v1/proactive/jobs API가 호출되었는지 확인 (복사본 이름 포함)
     const req = await cloneCapture.waitForRequest();
-    expect(req.payload).toMatchObject({ name: '매일 현황 리포트 (복사본)' });
+    // 복사본은 늘 비활성으로 만든다(WD-300) — 기본값(활성)이면 원본과 같은 수신자에게 두 번 예약된다
+    expect(req.payload).toMatchObject({ name: '매일 현황 리포트 (복사본)', enabled: false });
+    await expect(page.getByText('"매일 현황 리포트 (복사본)" 작업을 꺼진 상태로 복제했습니다. 확인한 뒤 작업 목록에서 켜세요.')).toBeVisible();
 
     // 새 작업 상세 페이지(id=99)로 이동 확인
     await expect(page).toHaveURL(/\/ai-insights\/jobs\/99/);
+    // 서버가 돌려준 꺼진 복사본이 상세 머리에 「비활성」으로 보인다
+    await expect(page.getByText('비활성', { exact: true }).first()).toBeVisible();
   });
 
   test('개요 탭 — triggerType ANOMALY 작업에 "이상 탐지" 배지가 표시된다', async ({ authenticatedPage: page }) => {

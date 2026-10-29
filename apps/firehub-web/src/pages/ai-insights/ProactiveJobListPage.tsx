@@ -21,7 +21,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { useCanWriteProactive,useCloneProactiveJob, useDisableProactiveJob, useExecuteProactiveJob, useProactiveJobs, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
+import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useDisableProactiveJob, useExecuteProactiveJob, useProactiveJobs, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { handleApiError, isForbiddenError } from '@/lib/api-error';
 import { cronToLabel } from '@/lib/cron-label';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
@@ -108,7 +108,7 @@ export default function ProactiveJobListPage() {
     e.stopPropagation();
     cloneMutation.mutate(job, {
       onSuccess: (created) => {
-        toast.success(`"${created.name}" 작업이 복제되었습니다.`);
+        toast.success(cloneSuccessMessage(created.name));
         navigate(`/ai-insights/jobs/${created.id}?tab=overview`);
       },
       onError: (err) => handleApiError(err, '작업 복제에 실패했습니다.'),
