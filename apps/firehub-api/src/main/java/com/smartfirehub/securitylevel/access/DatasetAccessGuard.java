@@ -312,6 +312,11 @@ public class DatasetAccessGuard {
             hosting));
   }
 
+  /** 지금 요청이 AI 대행·AI 범위 문맥인지 — 그 문맥이면 {@link #visibleCondition(Clearance)} 가 등급 AI 정책까지 건다. */
+  public boolean inAiCall() {
+    return aiCallContext.current().isPresent();
+  }
+
   /**
    * 현재 사용자 + DatasetRepository 관례({@code "dataset"."id"}, {@code "dataset"."security_level_id"}).
    */

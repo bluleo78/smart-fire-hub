@@ -12,6 +12,8 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -37,6 +39,11 @@ class AuditLogControllerTest {
 
   @MockitoBean private AuditLogService auditLogService;
 
+  /** 컨트롤러가 요청 사용자의 열람 자격을 서비스로 넘기는지(WD-289) 보려고 고정 자격을 돌려준다. */
+  @MockitoBean private ClearanceResolver clearanceResolver;
+
+  private static final Clearance VIEWER = new Clearance(1L, 1L, 1, Set.of(), false, Set.of());
+
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
 
   @MockitoBean private JwtProperties jwtProperties;
@@ -47,6 +54,7 @@ class AuditLogControllerTest {
     when(jwtTokenProvider.parseAccessToken("valid-token"))
         .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null, false)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of(permissions));
+    when(clearanceResolver.current()).thenReturn(VIEWER);
   }
 
   @Test
@@ -68,7 +76,7 @@ class AuditLogControllerTest {
             null,
             null);
     PageResponse<AuditLogResponse> page = new PageResponse<>(List.of(log), 0, 20, 1, 1);
-    when(auditLogService.getAuditLogs(null, null, null, null, null, null, null, 0, 20))
+    when(auditLogService.getAuditLogs(VIEWER, null, null, null, null, null, null, null, 0, 20))
         .thenReturn(page);
 
     mockMvc
@@ -86,7 +94,7 @@ class AuditLogControllerTest {
     mockAuthentication("audit:read");
     PageResponse<AuditLogResponse> page = new PageResponse<>(List.of(), 0, 20, 0, 0);
     when(auditLogService.getAuditLogs(
-            "admin", null, "CREATE", "dataset", "SUCCESS", null, null, 0, 20))
+            VIEWER, "admin", null, "CREATE", "dataset", "SUCCESS", null, null, 0, 20))
         .thenReturn(page);
 
     mockMvc
@@ -106,7 +114,7 @@ class AuditLogControllerTest {
   void getAuditLogs_withPagination_passesPageParams() throws Exception {
     mockAuthentication("audit:read");
     PageResponse<AuditLogResponse> page = new PageResponse<>(List.of(), 2, 10, 50, 5);
-    when(auditLogService.getAuditLogs(null, null, null, null, null, null, null, 2, 10))
+    when(auditLogService.getAuditLogs(VIEWER, null, null, null, null, null, null, null, 2, 10))
         .thenReturn(page);
 
     mockMvc
@@ -141,7 +149,7 @@ class AuditLogControllerTest {
             null,
             "{\"rows\":100}");
     PageResponse<AuditLogResponse> page = new PageResponse<>(List.of(log), 0, 20, 1, 1);
-    when(auditLogService.getAuditLogs(null, null, null, null, null, null, null, 0, 20))
+    when(auditLogService.getAuditLogs(VIEWER, null, null, null, null, null, null, null, 0, 20))
         .thenReturn(page);
 
     mockMvc
@@ -155,7 +163,7 @@ class AuditLogControllerTest {
   void getAuditLogs_withUserIdFilter_passesUserIdParam() throws Exception {
     mockAuthentication("audit:read");
     PageResponse<AuditLogResponse> page = new PageResponse<>(List.of(), 0, 20, 0, 0);
-    when(auditLogService.getAuditLogs(null, 42L, null, null, null, null, null, 0, 20))
+    when(auditLogService.getAuditLogs(VIEWER, null, 42L, null, null, null, null, null, 0, 20))
         .thenReturn(page);
 
     mockMvc

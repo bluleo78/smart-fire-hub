@@ -5,6 +5,7 @@ import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.audit.time.AuditTimes;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import java.time.ZoneId;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 public class AuditLogController {
 
   private final AuditLogService auditLogService;
+  private final ClearanceResolver clearanceResolver;
 
   /**
    * 감사 로그 목록 조회
@@ -41,6 +43,7 @@ public class AuditLogController {
     ZoneId storage = AuditTimes.storageZone();
     PageResponse<AuditLogResponse> logs =
         auditLogService.getAuditLogs(
+            clearanceResolver.current(),
             search,
             userId,
             actionType,
