@@ -206,9 +206,9 @@ export default function UserDetailPage() {
 
   if (!user) return null;
 
-  // 정지·제거 잠금 사유(자기 자신/OWNER/마지막 활성 ADMIN) — 표시용 안내이며 최종 판정은 서버
-  const suspendLock = memberLockReason(user, currentUser?.id, '정지');
-  const removeLock = memberLockReason(user, currentUser?.id, '제거');
+  // 정지·제거 잠금 사유(자기 자신/OWNER/마지막 활성 ADMIN/비 ADMIN 이 ADMIN 대상 — WD-277) — 표시용 안내이며 최종 판정은 서버
+  const suspendLock = memberLockReason(user, currentUser?.id, '정지', isCallerAdmin);
+  const removeLock = memberLockReason(user, currentUser?.id, '제거', isCallerAdmin);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">

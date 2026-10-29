@@ -152,6 +152,39 @@ test.describe('사용자 관리 — user:read', () => {
     await expect(page.getByRole('checkbox', { name: /EDITOR/ })).toBeEnabled();
   });
 
+  test('멤버 관리만 위임받은 비 ADMIN 은 ADMIN 멤버를 정지·제거할 수 없다 — 잠금과 이유가 보인다 (WD-277)', async ({ authenticatedPage: page }) => {
+    await grant(page, ['user:read', 'user:write']);
+    await mockApi(page, 'GET', '/api/v1/roles', ROLES_WITH_EDITOR);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/users/6',
+      createUserDetail({
+        id: 6,
+        username: 'user6',
+        roles: [createRole(), createRole({ id: 2, name: 'ADMIN', description: '시스템 관리자', isSystem: true })],
+      }),
+    );
+
+    await gotoWithPermissions(page, '/admin/users/6');
+    await expect(page.getByRole('button', { name: '제거' })).toBeDisabled();
+    await expect(page.getByRole('switch', { name: '이 워크스페이스에서 활성' })).toBeDisabled();
+    await expect(page.getByTestId('suspend-lock-trigger')).toHaveAccessibleName(
+      '시스템 ADMIN 역할을 가진 멤버는 ADMIN 만 정지할 수 있습니다',
+    );
+    await page.getByTestId('remove-lock-trigger').focus();
+    await expect(page.getByRole('tooltip')).toHaveText('시스템 ADMIN 역할을 가진 멤버는 ADMIN 만 제거할 수 있습니다');
+  });
+
+  test('멤버 관리 위임자도 ADMIN 이 아닌 멤버는 그대로 정지·제거할 수 있다(대조군, WD-277)', async ({ authenticatedPage: page }) => {
+    await grant(page, ['user:read', 'user:write']);
+    await setupUserDetailMocks(page, 5);
+
+    await gotoWithPermissions(page, '/admin/users/5');
+    await expect(page.getByRole('button', { name: '제거' })).toBeEnabled();
+    await expect(page.getByRole('switch', { name: '이 워크스페이스에서 활성' })).toBeEnabled();
+  });
+
   test('ADMIN 은 사용자 상세에서 시스템 ADMIN 역할을 그대로 고를 수 있다(대조군)', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupUserDetailMocks(page, 5);
