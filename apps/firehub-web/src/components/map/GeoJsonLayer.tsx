@@ -3,6 +3,8 @@ import { useEffect, useRef } from 'react';
 
 import type { GeoJsonFeature, GeoJsonFeatureCollection } from '@/types/dataset';
 
+import { fitMapToData } from './fit-to-data';
+
 const SOURCE_ID = 'geojson-layer-source';
 const LAYER_POINT = 'geojson-layer-point';
 const LAYER_LINE = 'geojson-layer-line';
@@ -13,42 +15,6 @@ interface GeoJsonLayerProps {
   map: maplibregl.Map;
   data: GeoJsonFeatureCollection;
   onFeatureClick?: (feature: GeoJsonFeature) => void;
-}
-
-function fitBounds(map: maplibregl.Map, data: GeoJsonFeatureCollection) {
-  if (data.features.length === 0) return;
-  let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
-
-  for (const feature of data.features) {
-    const geom = feature.geometry as { type: string; coordinates: unknown };
-    if (!geom || !geom.coordinates) continue;
-    const coords = flattenCoordinates(geom.type, geom.coordinates);
-    for (const [lon, lat] of coords) {
-      if (lon < minLon) minLon = lon;
-      if (lat < minLat) minLat = lat;
-      if (lon > maxLon) maxLon = lon;
-      if (lat > maxLat) maxLat = lat;
-    }
-  }
-
-  if (minLon === Infinity) return;
-  if (minLon === maxLon && minLat === maxLat) {
-    map.flyTo({ center: [minLon, minLat], zoom: 13 });
-  } else {
-    map.fitBounds([[minLon, minLat], [maxLon, maxLat]], { padding: 60, maxZoom: 15 });
-  }
-}
-
-function flattenCoordinates(geomType: string, coords: unknown): [number, number][] {
-  if (geomType === 'Point') return [coords as [number, number]];
-  if (geomType === 'LineString' || geomType === 'MultiPoint') return coords as [number, number][];
-  if (geomType === 'Polygon' || geomType === 'MultiLineString') {
-    return (coords as [number, number][][]).flat();
-  }
-  if (geomType === 'MultiPolygon') {
-    return (coords as [number, number][][][]).flat(2);
-  }
-  return [];
 }
 
 function addLayers(map: maplibregl.Map) {
@@ -127,7 +93,7 @@ export function GeoJsonLayer({ map, data, onFeatureClick }: GeoJsonLayerProps) {
       addLayers(map);
       const src = map.getSource(SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
       if (src) src.setData(data as unknown as Parameters<typeof src.setData>[0]);
-      fitBounds(map, data);
+      fitMapToData(map, data);
     }
 
     if (map.isStyleLoaded()) {

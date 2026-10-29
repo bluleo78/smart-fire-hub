@@ -6,7 +6,7 @@
  * - 저장 payload 에 mapDisplayMode/weightColumn 포함
  * - 50k 행 초과 시 경고 배지 노출
  */
-import { createQueryResult } from '../../factories/analytics.factory';
+import { createChart, createQueryResult } from '../../factories/analytics.factory';
 import { setupNewChartBuilderMocks } from '../../fixtures/analytics.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -158,4 +158,43 @@ test.describe('차트 빌더 — MAP 히트맵 sub-mode', () => {
     await expect(page.getByTestId('heatmap-row-warning')).toBeVisible();
     await expect(page.getByTestId('heatmap-row-warning')).toContainText('50,001');
   });
+
+  /**
+   * WD-348: 히트맵 모드도 점 모드처럼 데이터 위치로 지도를 맞춘다.
+   * 예전엔 히트맵만 범위 맞춤이 없어 기본 위치(서울)에 머물렀고, 부산 데이터는 「1행 기준」인데 빈 지도로 보였다.
+   */
+  test('히트맵 모드로 저장된 차트를 열면 서울 밖 데이터(부산)로 지도가 이동한다 (WD-348)', async ({ authenticatedPage: page }) => {
+    // 지도 스타일은 빈 스타일로 대신한다 — 외부 타일 서버에 기대지 않고 지도 load 이벤트만 일으킨다
+    await page.route('https://tiles.openfreemap.org/styles/**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ version: 8, sources: {}, layers: [] }) }),
+    );
+    // 처음부터 히트맵 모드인 저장 차트 — 점 모드를 거치지 않아야 히트맵 자체의 범위 맞춤을 확인할 수 있다
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/charts/34',
+      createChart({ id: 34, chartType: 'MAP', config: { xAxis: '', yAxis: [], spatialColumn: 'geom', mapDisplayMode: 'heatmap' } }),
+    );
+    await setupNewChartBuilderMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/queries/1/execute',
+      createQueryResult({
+        columns: ['id', 'geom'],
+        rows: [{ id: 1, geom: { type: 'Point', coordinates: [129.07, 35.18] } }],
+        totalRows: 1,
+      }),
+    );
+
+    await page.goto('/analytics/charts/34');
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+    await expect(page.getByRole('tab', { name: '히트맵' })).toHaveAttribute('data-state', 'active');
+
+    // 지도 중심이 기본값(서울 127.00,37.50)이 아니라 부산 좌표로 옮겨져야 한다
+    await expect(page.locator('[data-map-center]').first()).toHaveAttribute('data-map-center', '129.07,35.18', {
+      timeout: 15_000,
+    });
+  });
 });
+

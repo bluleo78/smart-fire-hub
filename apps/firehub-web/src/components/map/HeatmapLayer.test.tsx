@@ -18,6 +18,8 @@ interface MockMap {
   on: ReturnType<typeof vi.fn>;
   off: ReturnType<typeof vi.fn>;
   isStyleLoaded: ReturnType<typeof vi.fn>;
+  flyTo: ReturnType<typeof vi.fn>;
+  fitBounds: ReturnType<typeof vi.fn>;
 }
 
 function createMockMap(): MockMap {
@@ -34,6 +36,8 @@ function createMockMap(): MockMap {
     on: vi.fn(),
     off: vi.fn(),
     isStyleLoaded: vi.fn(() => true),
+    flyTo: vi.fn(),
+    fitBounds: vi.fn(),
   };
 }
 
@@ -85,5 +89,41 @@ describe('HeatmapLayer', () => {
 
     expect(map.removeLayer).toHaveBeenCalledWith('heatmap-lyr');
     expect(map.removeSource).toHaveBeenCalledWith('heatmap-src');
+  });
+
+  // WD-348: 히트맵도 점 모드처럼 데이터 범위로 지도를 맞춘다 — 예전엔 기본 위치(서울)에 머물러 부산 데이터가 빈 지도로 보였다.
+  describe('데이터 범위 맞춤 (WD-348)', () => {
+    const busan = {
+      type: 'FeatureCollection' as const,
+      features: [{ type: 'Feature' as const, geometry: { type: 'Point', coordinates: [129.07, 35.18] }, properties: {} }],
+    };
+
+    it('점 하나면 그 위치로 이동한다', () => {
+      const map = createMockMap();
+      render(<HeatmapLayer map={map as never} data={busan as never} />);
+      expect(map.flyTo).toHaveBeenCalledWith({ center: [129.07, 35.18], zoom: 13 });
+    });
+
+    it('점이 여럿이면 모두 감싸는 영역으로 맞춘다', () => {
+      const map = createMockMap();
+      const two = {
+        type: 'FeatureCollection' as const,
+        features: [
+          { type: 'Feature' as const, geometry: { type: 'Point', coordinates: [126.97, 37.56] }, properties: {} },
+          { type: 'Feature' as const, geometry: { type: 'Point', coordinates: [129.07, 35.18] }, properties: {} },
+        ],
+      };
+      render(<HeatmapLayer map={map as never} data={two as never} />);
+      expect(map.fitBounds).toHaveBeenCalledWith([[126.97, 35.18], [129.07, 37.56]], { padding: 60, maxZoom: 15 });
+    });
+
+    it('데이터가 바뀌면 새 범위로 다시 맞춘다', () => {
+      const map = createMockMap();
+      const { rerender } = render(<HeatmapLayer map={map as never} data={emptyFc} />);
+      expect(map.flyTo).not.toHaveBeenCalled();
+      expect(map.fitBounds).not.toHaveBeenCalled();
+      rerender(<HeatmapLayer map={map as never} data={busan as never} />);
+      expect(map.flyTo).toHaveBeenCalledWith({ center: [129.07, 35.18], zoom: 13 });
+    });
   });
 });
