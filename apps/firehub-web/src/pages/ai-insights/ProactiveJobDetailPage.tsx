@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import axios from 'axios';
 import { Activity, ArrowLeft, Copy } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -19,10 +20,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useDeleteProactiveJob, useDisableProactiveJob, useExecuteProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
+import { useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useCreateProactiveTemplate, useDeleteProactiveJob, useDeleteProactiveTemplate, useDisableProactiveJob, useExecuteProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError, isForbiddenError } from '@/lib/api-error';
-import { type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
+import { goalTemplateName, type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
 
 import { OwnerIneligibleBadge } from './components/OwnerIneligibleBadge';
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
@@ -146,6 +147,11 @@ export default function ProactiveJobDetailPage() {
   });
 
   const createMutation = useCreateProactiveJob();
+  // 목표 기반 작업은 섹션 구성을 리포트 양식으로 먼저 저장한 뒤 연결한다(WD-297). 작업 생성이 실패하면 방금 만든 양식을 지운다.
+  const createTemplateMutation = useCreateProactiveTemplate();
+  const deleteTemplateMutation = useDeleteProactiveTemplate();
+  // 양식 저장을 기다리는 동안 isSaving 이 버튼에 반영되기 전 두 번째 클릭으로 양식·작업이 두 번 만들어지지 않게 막는다(#49 와 같은 이유).
+  const isCreatingRef = useRef(false);
   const updateMutation = useUpdateProactiveJob();
   const deleteMutation = useDeleteProactiveJob();
   const disableMutation = useDisableProactiveJob();
@@ -202,7 +208,8 @@ export default function ProactiveJobDetailPage() {
     }
   };
 
-  const handleSave = form.handleSubmit(async (values) => {
+  // handleSubmit 을 렌더 중이 아니라 클릭 때 부른다 — 콜백이 isCreatingRef 를 읽기 때문이다(react-hooks/refs).
+  const handleSave = (e?: React.BaseSyntheticEvent) => form.handleSubmit(async (values) => {
     const payload = {
       name: values.name,
       prompt: values.prompt,
@@ -214,7 +221,25 @@ export default function ProactiveJobDetailPage() {
     };
 
     if (isNew) {
-      createMutation.mutate(payload, {
+      if (isCreatingRef.current) return;
+      isCreatingRef.current = true;
+      // 목표 기반 구성이 있으면 먼저 「<작업 이름> 양식」으로 저장해 그 양식을 작업에 연결한다(WD-297, 사람 결정 A안).
+      let goalTemplateId: number | null = null;
+      if (values.generatedSections?.length) {
+        try {
+          const template = await createTemplateMutation.mutateAsync({
+            name: goalTemplateName(values.name),
+            description: `목표 기반 작업 「${values.name}」의 질문으로 만든 양식`,
+            sections: values.generatedSections,
+          });
+          goalTemplateId = template.id;
+        } catch (err) {
+          isCreatingRef.current = false;
+          handleApiError(err, '리포트 양식 저장에 실패해 작업을 만들지 않았습니다.');
+          return;
+        }
+      }
+      createMutation.mutate(goalTemplateId == null ? payload : { ...payload, templateId: goalTemplateId }, {
         onSuccess: (created) => {
           toast.success('작업이 생성되었습니다.');
           // 저장 성공 → dirty 해제 후 신규 작업 상세로 이동 (이슈 #59)
@@ -222,7 +247,15 @@ export default function ProactiveJobDetailPage() {
           setIsEditing(false);
           navigate(`/ai-insights/jobs/${created.id}`);
         },
-        onError: (err) => handleApiError(err, '작업 생성에 실패했습니다.'),
+        onSettled: () => {
+          isCreatingRef.current = false;
+        },
+        onError: (err) => {
+          // 서버가 거절한 경우에만 작업 없이 남는 양식을 지운다(삭제 실패는 사용자 오류 안내가 먼저라 조용히 넘긴다).
+          // 응답 없는 실패(시간 초과·연결 끊김)는 서버가 작업을 이미 만들었을 수 있어 지우지 않는다 — 지우면 그 작업의 양식이 끊긴다(ON DELETE SET NULL).
+          if (goalTemplateId != null && axios.isAxiosError(err) && err.response) deleteTemplateMutation.mutate(goalTemplateId);
+          handleApiError(err, '작업 생성에 실패했습니다.');
+        },
       });
     } else {
       // 「기본 (선택 안 함)」을 고르면 templateId 가 null 이 되는데, 서버는 null 을 "바꾸지 않음"으로 받는다.
@@ -240,7 +273,7 @@ export default function ProactiveJobDetailPage() {
         },
       );
     }
-  });
+  })(e);
 
   const handleDelete = () => {
     if (!job) return;
@@ -291,7 +324,7 @@ export default function ProactiveJobDetailPage() {
     });
   };
 
-  const isSaving = createMutation.isPending || updateMutation.isPending;
+  const isSaving = createMutation.isPending || updateMutation.isPending || createTemplateMutation.isPending;
   // 더블클릭 중복 실행 방지용 ref — disabled 상태 전파 지연 대응 (#49)
   const isExecutingRef = useRef(false);
 

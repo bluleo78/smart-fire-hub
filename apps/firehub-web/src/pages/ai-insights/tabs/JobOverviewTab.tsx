@@ -30,7 +30,7 @@ import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
 import { formatNextRun,getNextRunDate } from '@/lib/next-run';
 import { TIMEZONE_OPTIONS } from '@/lib/timezone-data';
-import type { ProactiveJobFormValues } from '@/lib/validations/proactive-job';
+import { goalTemplateName, type ProactiveJobFormValues } from '@/lib/validations/proactive-job';
 
 import ChannelRecipientEditor from '../components/ChannelRecipientEditor';
 import { SectionPreview } from '../components/SectionPreview';
@@ -126,6 +126,8 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
 
     const sections = generateAutoTemplate(businessQuestion.trim());
     setAutoSections(sections);
+    // 미리보기 구성을 폼에 둬 「생성」 때 리포트 양식으로 저장·연결되게 한다(WD-297) — 전에는 미리보기에만 쓰고 버려 「기본 형식」이 됐다.
+    setValue('generatedSections', sections);
     setIsGenerating(false);
     setPreviewOpen(true);
 
@@ -136,7 +138,9 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
     if (!watch('name')) {
       // Generate a name from the question (first 30 chars)
       const autoName = businessQuestion.trim().slice(0, 30) + (businessQuestion.trim().length > 30 ? '...' : '');
-      setValue('name', autoName);
+      // shouldValidate: true — 위 prompt 검증 시점엔 이름이 비어 폼이 invalid 로 판정되므로, 이름을 채운 뒤 다시 검증해야
+      // 자동 채운 이름만으로도 "생성"이 활성화된다(WD-297).
+      setValue('name', autoName, { shouldValidate: true });
     }
     // Clear template selection since we're using auto-generated structure
     setValue('templateId', null);
@@ -317,6 +321,9 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
               // 값이 그대로 남아있어, 초기화하지 않으면 "목표 기반" 모드에서 비즈니스 질문/템플릿
               // 생성 없이도 이전 "직접 설정" 모드의 stale한 prompt가 그대로 제출되는 문제가 있었다 (#523).
               setValue('prompt', '', { shouldValidate: true });
+              // 목표 기반 구성도 같은 이유로 비운다 — 「직접 설정」으로 돌아가 만든 작업에 양식이 몰래 붙지 않게(WD-297).
+              setValue('generatedSections', null);
+              setAutoSections(null);
               markDirty();
             }}
             className="flex gap-4"
@@ -337,7 +344,7 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
           <p className="text-xs text-muted-foreground">
             {creationMode === 'manual'
               ? '템플릿과 프롬프트를 직접 구성합니다.'
-              : '비즈니스 질문을 입력하면 AI가 리포트 템플릿을 자동으로 생성합니다.'}
+              : '비즈니스 질문을 바탕으로 리포트 기본 섹션 구성을 만듭니다. 작업을 생성하면 이 구성이 리포트 양식으로 함께 저장됩니다.'}
           </p>
         </div>
       )}
@@ -352,7 +359,15 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
               rows={3}
               placeholder="예: 이번 달 매출 하락의 원인을 분석하고 싶습니다"
               value={businessQuestion}
-              onChange={(e) => setBusinessQuestion(e.target.value)}
+              onChange={(e) => {
+                setBusinessQuestion(e.target.value);
+                // 만든 뒤 질문을 고치면 이전 질문의 구성·프롬프트가 양식으로 저장되지 않게 비운다 — 다시 「템플릿 자동 생성」을 눌러야 한다(WD-297).
+                if (autoSections) {
+                  setAutoSections(null);
+                  setValue('generatedSections', null);
+                  setValue('prompt', '', { shouldValidate: true });
+                }
+              }}
             />
           </div>
 
@@ -392,6 +407,10 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
                 <div className="rounded-lg border p-3 mt-2 bg-background">
                   <SectionPreview sections={autoSections} />
                 </div>
+                {/* 생성 때 무엇이 저장되는지 미리 알린다(WD-297) — 양식 목록에서 나중에 고칠 수 있다. */}
+                <p className="mt-2 text-xs text-muted-foreground">
+                  작업을 생성하면 이 구성이 리포트 양식 「{goalTemplateName(watch('name') ?? '')}」(으)로 저장되어 연결됩니다.
+                </p>
               </CollapsibleContent>
             </Collapsible>
           )}
