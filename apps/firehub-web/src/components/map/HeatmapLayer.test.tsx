@@ -5,6 +5,7 @@
 import { render } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { HEAT_WEIGHT_PROP, WEIGHT_MIN } from './heatmap-weight';
 import { HeatmapLayer } from './HeatmapLayer';
 
 interface MockMap {
@@ -20,18 +21,22 @@ interface MockMap {
   isStyleLoaded: ReturnType<typeof vi.fn>;
   flyTo: ReturnType<typeof vi.fn>;
   fitBounds: ReturnType<typeof vi.fn>;
+  /** getSource 가 돌려주는 GeoJSON source 의 setData — 데이터 갱신 검증용 */
+  __source: { setData: ReturnType<typeof vi.fn> };
 }
 
 function createMockMap(): MockMap {
   const sources = new Map<string, unknown>();
   const layers = new Map<string, unknown>();
+  const source = { setData: vi.fn() };
   return {
+    __source: source,
     addSource: vi.fn((id: string, src: unknown) => { sources.set(id, src); }),
     addLayer: vi.fn((lyr: { id: string }) => { layers.set(lyr.id, lyr); }),
     removeLayer: vi.fn((id: string) => { layers.delete(id); }),
     removeSource: vi.fn((id: string) => { sources.delete(id); }),
     getLayer: vi.fn((id: string) => layers.get(id)),
-    getSource: vi.fn((id: string) => sources.get(id)),
+    getSource: vi.fn((id: string) => (sources.has(id) ? source : undefined)),
     setPaintProperty: vi.fn(),
     on: vi.fn(),
     off: vi.fn(),
@@ -58,28 +63,34 @@ describe('HeatmapLayer', () => {
     }));
   });
 
-  it('weightProperty 미지정 시 heatmap-weight 가 상수 1 이다', () => {
-    const map = createMockMap();
-    render(<HeatmapLayer map={map as never} data={emptyFc} />);
-
-    const layerArg = map.addLayer.mock.calls[0][0] as {
-      paint: Record<string, unknown>;
-    };
-    expect(layerArg.paint['heatmap-weight']).toBe(1);
-  });
-
-  it('weightProperty 지정 시 heatmap-weight 가 to-number expression 이다', () => {
+  // WD-354: 원값 대신 데이터에 미리 정규화해 실은 가중치 속성을 읽는다
+  it('heatmap-weight 는 정규화 가중치 속성을 읽는다', () => {
     const map = createMockMap();
     render(<HeatmapLayer map={map as never} data={emptyFc} weightProperty="cnt" />);
 
     const layerArg = map.addLayer.mock.calls[0][0] as {
       paint: Record<string, unknown>;
     };
-    expect(layerArg.paint['heatmap-weight']).toEqual([
-      'to-number',
-      ['get', 'cnt'],
-      0,
-    ]);
+    expect(layerArg.paint['heatmap-weight']).toEqual(['get', HEAT_WEIGHT_PROP]);
+  });
+
+  it('source 에 최솟값~최댓값으로 정규화한 가중치를 싣고, 가중치 컬럼을 바꾸면 다시 보낸다', () => {
+    const map = createMockMap();
+    const fc = {
+      type: 'FeatureCollection' as const,
+      features: [1, 100000].map((big, i) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point', coordinates: [127 + i, 37.5] },
+        properties: { big, tiny: [0.0001, 0.04][i] },
+      })),
+    };
+    const { rerender } = render(<HeatmapLayer map={map as never} data={fc} weightProperty="big" />);
+    const added = map.addSource.mock.calls[0][1] as { data: typeof fc };
+    expect(added.data.features.map((f) => f.properties[HEAT_WEIGHT_PROP as 'big'])).toEqual([WEIGHT_MIN, 1]);
+
+    rerender(<HeatmapLayer map={map as never} data={fc} weightProperty="tiny" />);
+    const sent = map.__source.setData.mock.calls.at(-1)?.[0] as typeof fc;
+    expect(sent.features.map((f) => f.properties[HEAT_WEIGHT_PROP as 'tiny'])).toEqual([WEIGHT_MIN, 1]);
   });
 
   it('언마운트 시 layer 와 source 를 제거한다', () => {

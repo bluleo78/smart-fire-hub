@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 
 import { FeaturePopup } from '@/components/map/FeaturePopup';
 import { GeoJsonLayer } from '@/components/map/GeoJsonLayer';
+import { weightRange } from '@/components/map/heatmap-weight';
 import { HeatmapLayer } from '@/components/map/HeatmapLayer';
 import { MapView } from '@/components/map/MapView';
 import { toFeatureCollection } from '@/lib/geo-utils';
@@ -72,6 +73,10 @@ export function MapChartView({ config, data, height }: MapChartViewProps) {
 
   const isHeatmap = config.mapDisplayMode === 'heatmap';
   const showRowWarning = isHeatmap && data.length > HEATMAP_ROW_WARN;
+  // 가중치 컬럼에 숫자 값이 하나도 없으면(문자 컬럼) 균등 가중치로 그린다 — 그 사실을 알린다(WD-354).
+  // 예전에는 모든 가중치가 0 이 되어 「N행 기준」인데 히트맵이 통째로 사라졌고 안내도 없었다.
+  const weightIgnored =
+    isHeatmap && !!config.weightColumn && weightRange(featureCollection, config.weightColumn) === null;
 
   return (
     <div className="relative rounded-lg overflow-hidden" style={{ height: height ?? '100%' }}>
@@ -97,6 +102,15 @@ export function MapChartView({ config, data, height }: MapChartViewProps) {
             />
           </>
         )
+      )}
+      {weightIgnored && (
+        <div
+          className="absolute top-2 left-2 z-10 max-w-[80%] rounded-md bg-yellow-100/90 text-yellow-900 px-2 py-1 text-xs shadow"
+          role="status"
+          data-testid="heatmap-weight-ignored"
+        >
+          가중치 컬럼 「{config.weightColumn}」에 숫자 값이 없어 균등 가중치로 표시합니다
+        </div>
       )}
       {showRowWarning && (
         <div

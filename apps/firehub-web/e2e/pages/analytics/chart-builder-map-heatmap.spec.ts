@@ -196,5 +196,90 @@ test.describe('차트 빌더 — MAP 히트맵 sub-mode', () => {
       timeout: 15_000,
     });
   });
+  /**
+   * WD-354: 가중치 목록에는 숫자 컬럼만 보인다. 예전엔 문자 컬럼(name)도 나와 고르면 모든 가중치가 0 이 되어 히트맵이 사라졌다.
+   */
+  test('가중치 컬럼 목록에는 숫자 컬럼만 보인다 (WD-354)', async ({ authenticatedPage: page }) => {
+    await setupNewChartBuilderMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/queries/1/execute',
+      createQueryResult({
+        columns: ['id', 'name', 'cnt', 'ratio', 'geom'],
+        rows: [
+          // ratio 는 DECIMAL 처럼 문자열로 오고 한 행은 비어 있다 — 그래도 숫자 컬럼이다
+          { id: 1, name: 'A', cnt: 3, ratio: '0.0001', geom: { type: 'Point', coordinates: [127.0, 37.5] } },
+          { id: 2, name: 'B', cnt: 7, ratio: null, geom: { type: 'Point', coordinates: [128.0, 37.6] } },
+        ],
+        totalRows: 2,
+      }),
+    );
+
+    await page.goto('/analytics/charts/new');
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '저장 쿼리 1' }).click();
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+    await page.getByRole('button', { name: '지도' }).click();
+    await page.getByRole('combobox', { name: '공간 컬럼' }).click();
+    await page.getByRole('option', { name: 'geom' }).click();
+    await page.getByRole('tab', { name: '히트맵' }).click();
+
+    await page.getByRole('combobox', { name: '가중치 컬럼' }).click();
+    await expect(page.getByRole('option')).toHaveText(['없음 — 균등 가중치', 'id', 'cnt', 'ratio']);
+    await page.getByRole('option', { name: 'ratio' }).click();
+    await expect(page.getByRole('combobox', { name: '가중치 컬럼' })).toHaveText('ratio');
+    await expect(page.getByText('숫자 컬럼만 고를 수 있습니다.')).toBeVisible();
+    await expect(page.getByTestId('heatmap-weight-ignored')).toHaveCount(0);
+  });
+
+  /**
+   * WD-354: 예전에 문자 컬럼을 가중치로 골라 저장한 차트 — 히트맵이 사라지지 않고 균등 가중치로 그린다고 알리며,
+   * 설정 칸에서는 숫자 컬럼을 고르라고 안내한다.
+   */
+  test('문자 컬럼을 가중치로 저장한 차트는 균등 가중치로 그린다고 안내한다 (WD-354)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.route('https://tiles.openfreemap.org/styles/**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ version: 8, sources: {}, layers: [] }) }),
+    );
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/charts/36',
+      createChart({
+        id: 36,
+        chartType: 'MAP',
+        config: { xAxis: '', yAxis: [], spatialColumn: 'geom', mapDisplayMode: 'heatmap', weightColumn: 'label' },
+      }),
+    );
+    await setupNewChartBuilderMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/queries/1/execute',
+      createQueryResult({
+        columns: ['id', 'label', 'geom'],
+        rows: [
+          { id: 1, label: '가', geom: { type: 'Point', coordinates: [127.0, 37.5] } },
+          { id: 2, label: '나', geom: { type: 'Point', coordinates: [127.01, 37.5] } },
+        ],
+        totalRows: 2,
+      }),
+    );
+
+    await page.goto('/analytics/charts/36');
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+    await expect(page.getByRole('tab', { name: '히트맵' })).toHaveAttribute('data-state', 'active');
+
+    await expect(page.getByTestId('heatmap-weight-ignored')).toHaveText(
+      '가중치 컬럼 「label」에 숫자 값이 없어 균등 가중치로 표시합니다',
+    );
+    await expect(page.getByRole('alert').filter({ hasText: '숫자 컬럼이 아니라' })).toContainText(
+      '「label」은(는) 숫자 컬럼이 아니라 가중치로 쓸 수 없어 균등 가중치로 그립니다. 숫자 컬럼을 고르세요.',
+    );
+    // 저장된 선택은 선택 상자에 그대로 보인다(빈 상자로 보이지 않게)
+    await expect(page.getByRole('combobox', { name: '가중치 컬럼' })).toHaveText('label');
+  });
 });
 
