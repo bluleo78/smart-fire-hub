@@ -44,7 +44,8 @@ public class ProactiveContextCollector {
    * 리포트 컨텍스트 수집.
    *
    * @param ownerUserId 작업 소유자 — 홈 대시보드 데이터(데이터셋 이름·개수·활동)를 이 사용자 자격으로 거른다(보안 등급). 비동기 러너에는 요청 사용자가
-   *     없어 명시해야 한다(없으면 "아무것도 못 봄"으로 데이터셋 항목이 전부 빠진다). 소유자 미상(null)이면 아무것도 못 보는 자격(fail-closed)
+   *     없어 명시해야 한다(없으면 "아무것도 못 봄"으로 데이터셋 항목이 전부 빠진다). 소유자 미상(null)이면 아무것도 못 보는 자격(fail-closed).
+   *     파이프라인 이름·실행 이력·개수도 이 소유자에게 파이프라인 조회 권한(pipeline:read)이 있을 때만 싣는다(WD-361 — 홈과 같은 기준)
    */
   public String collectContext(Map<String, Object> config, Long jobId, Long ownerUserId) {
     return collectContext(config, jobId, ownerUserId, null);
