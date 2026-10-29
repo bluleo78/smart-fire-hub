@@ -59,14 +59,13 @@ export default function LoginPage() {
       await login(data);
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.data) {
-        // 401 응답은 서버 영문 메시지 대신 한국어 고정 메시지로 교체
-        // (서버가 "Invalid username or password" 영문 메시지를 반환하기 때문)
-        if (error.response.status === 401) {
-          setServerError('이메일 또는 비밀번호가 올바르지 않습니다.');
-        } else {
-          const errData = error.response.data as ErrorResponse;
-          setServerError(errData.message || '로그인에 실패했습니다.');
-        }
+        // 서버 문구를 그대로 보여 준다 — 자격증명 오류·비활성 계정(WD-278) 등 401 의 이유는 서버만 안다. 예전에는 401 을
+        // 고정 문구로 덮어 비활성 계정도 「비밀번호가 틀렸다」로 보여, 비밀번호를 의심해 다시 시도하다 잠금까지 갔다.
+        // 운영자 콘솔 로그인과 같은 규칙. 문구가 없을 때만 상태별 기본 문구를 쓴다.
+        const errData = error.response.data as ErrorResponse;
+        const fallback =
+          error.response.status === 401 ? '이메일 또는 비밀번호가 올바르지 않습니다.' : '로그인에 실패했습니다.';
+        setServerError(errData.message || fallback);
       } else {
         setServerError('로그인에 실패했습니다.');
       }

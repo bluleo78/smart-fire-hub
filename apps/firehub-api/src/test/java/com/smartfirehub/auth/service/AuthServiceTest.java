@@ -176,6 +176,46 @@ class AuthServiceTest extends IntegrationTestBase {
         .isInstanceOf(InvalidTokenException.class);
   }
 
+  /** 비활성 계정 + 맞는 비밀번호 → 계정이 막혔다고 알린다(WD-278). 화면은 이 예외의 코드로 자격증명 오류와 구분한다. */
+  @Test
+  void login_deactivatedUser_correctPassword_throwsDeactivated() {
+    UserResponse user =
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "test@example.com",
+            "test@example.com",
+            "Password123",
+            "Test User",
+            DEFAULT_TEST_TENANT_ID);
+    userRepository.setActive(user.id(), false);
+
+    assertThatThrownBy(() -> authService.login(new LoginRequest("test@example.com", "Password123")))
+        .isInstanceOf(UserDeactivatedException.class)
+        .hasMessage(UserDeactivatedException.MESSAGE);
+  }
+
+  /** 비활성 계정이어도 비밀번호가 틀리면 일반 자격증명 오류 — 비밀번호를 모르는 사람에게 계정 상태를 드러내지 않는다(WD-278). */
+  @Test
+  void login_deactivatedUser_wrongPassword_throwsInvalidCredentials() {
+    UserResponse user =
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "test@example.com",
+            "test@example.com",
+            "Password123",
+            "Test User",
+            DEFAULT_TEST_TENANT_ID);
+    userRepository.setActive(user.id(), false);
+
+    assertThatThrownBy(
+            () -> authService.login(new LoginRequest("test@example.com", "wrongpassword")))
+        .isInstanceOf(InvalidCredentialsException.class);
+  }
+
   @Test
   void refresh_deactivatedUser_throws() {
     UserResponse user =
@@ -195,7 +235,7 @@ class AuthServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> authService.refresh(loginResult.refreshToken()))
         .isInstanceOf(UserDeactivatedException.class)
-        .hasMessage("비활성화된 계정입니다.");
+        .hasMessage(UserDeactivatedException.MESSAGE);
   }
 
   @Test

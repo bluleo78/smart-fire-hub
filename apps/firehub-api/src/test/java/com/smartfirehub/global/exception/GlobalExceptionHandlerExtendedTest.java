@@ -11,6 +11,7 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.user.exception.UserDeactivatedException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -126,7 +127,9 @@ class GlobalExceptionHandlerExtendedTest {
     mockMvc
         .perform(get("/test/exception2/user-deactivated"))
         .andExpect(status().isUnauthorized())
-        .andExpect(jsonPath("$.status").value(401));
+        .andExpect(jsonPath("$.status").value(401))
+        // 자격증명 오류와 구분하는 코드(WD-278)
+        .andExpect(jsonPath("$.code").value(UserDeactivatedException.CODE));
   }
 
   @Test

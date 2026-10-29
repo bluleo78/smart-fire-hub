@@ -101,8 +101,8 @@ public class AuthService {
     }
 
     if (!user.isActive()) {
-      // 비활성화된 계정 접근 시 한국어 메시지 반환
-      throw new UserDeactivatedException("비활성화된 계정입니다.");
+      // 비밀번호가 맞을 때만 알린다 — 계정 존재 여부는 드러나지 않는다. 사용자가 할 일(관리자 문의)까지 적는다(WD-278).
+      throw new UserDeactivatedException();
     }
 
     loginAttemptService.loginSucceeded(username);
@@ -182,8 +182,8 @@ public class AuthService {
             .orElseThrow(() -> new InvalidTokenException("토큰에 해당하는 사용자를 찾을 수 없습니다. 다시 로그인해 주세요."));
 
     if (!user.isActive()) {
-      // 비활성화된 계정으로 토큰 갱신 시도 — 한국어 메시지 반환
-      throw new UserDeactivatedException("비활성화된 계정입니다.");
+      // 비활성화된 계정으로 토큰 갱신 시도 — 로그인과 같은 문구·코드(WD-278)
+      throw new UserDeactivatedException();
     }
 
     // 갱신 시 활성 테넌트를 유지하되 멤버십/테넌트 상태를 재검증한다. 정지됐으면 테넌트 미선택으로
@@ -264,7 +264,7 @@ public class AuthService {
             .orElseThrow(() -> new InvalidTokenException("사용자를 찾을 수 없습니다. 다시 로그인해 주세요."));
 
     if (!user.isActive()) {
-      throw new UserDeactivatedException("비활성화된 계정입니다.");
+      throw new UserDeactivatedException();
     }
 
     // 테넌트 전환 시 새 리프레시 토큰 패밀리를 시작한다(이전 패밀리와 섞이지 않게).
