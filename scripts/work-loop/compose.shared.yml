@@ -1,0 +1,56 @@
+# work-loop 격리 라이브 스택의 「공유 바탕」(compose) — 컴퓨터에 하나만 띄워 모든 저장소(클론)가 함께 쓴다.
+# - 에이전트 서버는 메모리가 부족하다. 무거운 PostgreSQL·MinIO 는 컴퓨터에 하나만 두고,
+#   저장소마다 DB(smartfirehub_<해시>)·버킷(firehub-<해시>)만 따로 만든다(scripts/work-loop-stack.sh).
+# - project 이름은 스크립트가 -p 로 준다(기본 work-loop-shared, 시험용으로 WL_SHARED_PROJECT 로 바꿀 수 있다).
+# - 포트는 고정(기본 Postgres 6432, MinIO 6900·6901)이고 127.0.0.1 에만 바인드한다.
+# - 이 컨테이너는 어떤 저장소의 down 도 내리지 않는다. 내리는 것은 사람용 `shared-down` 뿐이다.
+# - 이미 떠 있으면 스크립트가 `up --no-recreate` 로만 다뤄, 클론마다 이 파일이 조금 달라도 재생성(=모두의 접속 끊김)되지 않는다.
+services:
+  db:
+    # 이미지 하나로 공유 서버·--own-db 를 함께 쓴다(시험 project 도 같은 이미지를 재사용해 다시 빌드하지 않는다).
+    image: work-loop-firehub-postgres:local
+    build:
+      context: ../..
+      dockerfile: docker/postgres/Dockerfile
+    # 저장소마다 api 하나가 Hikari·테넌트 풀·JobRunr 로 수십 개 접속을 쓴다 — 여러 저장소가 함께 쓰므로 넉넉히.
+    command: ["postgres", "-c", "max_connections=400"]
+    environment:
+      # 저장소 DB 는 스크립트가 CREATE DATABASE 로 만든다. 관리 접속은 postgres DB 로 한다.
+      POSTGRES_DB: postgres
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    ports:
+      - "127.0.0.1:${WL_SHARED_PG_PORT:-6432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # TCP(-h 127.0.0.1)로 확인한다 — 첫 기동의 initdb 단계는 유닉스 소켓만 여는 임시 서버를 띄웠다 내리는데,
+      # 소켓으로 확인하면 그 임시 서버를 healthy 로 보고 곧 「database system is shutting down」 에 부딪힌다.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U app -d postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # FILE 데이터셋용 S3 호환 스토리지 — api 의 기본 MinIO(9000, 개발 세션 소유)를 건드리지 않도록 별도로 띄운다.
+  minio:
+    image: minio/minio:RELEASE.2025-04-08T15-41-24Z
+    command: server /data --console-address ":9001"
+    ports:
+      - "127.0.0.1:${WL_SHARED_S3_PORT:-6900}:9000"
+      - "127.0.0.1:${WL_SHARED_CONSOLE_PORT:-6901}:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      # 저장소마다 web 포트가 달라(up 이 고른다) 출처를 하나로 고정할 수 없다. 127.0.0.1 에만 바인드하므로 * 로 연다.
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  pgdata:
+  miniodata:
