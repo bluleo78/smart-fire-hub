@@ -218,18 +218,25 @@ playwright-cli -s=wl-$STACK_ID close
 |---|---|
 | 개발 일(구현·결함 수정) | `AI 개발팀` |
 
-## 8. PR (`process-issue.md` 9번·「PR 리뷰·머지」)
+## 8. PR — 기차(개발자 통합 브랜치) 흐름 (`process-issue.md` 9번·「PR 리뷰·머지」, WD-460)
 
+- **기차: 켜짐** — 이 저장소의 기본 PR 경로는 기차다(흐름은 work-loop 스킬, WP-1216). 아래는 WD 고유 값이다.
 - 원격은 **origin**(`https://github.com/bluleo78/smart-fire-hub.git`), PR 대상 브랜치는 `main`, 도구는 `gh`. gitlab 등 다른 원격에는 push 하지 않는다 — 사람이 origin main 을 받아 맞춘다.
-- 브랜치: `<커밋 타입>/<소문자 이슈 키>`(예: `fix/wd-272`, `feat/wd-300`).
-- PR 제목 `<이슈 키> <이슈 제목>`, 본문 첫 줄 `개발: <개발한 AI username>`. 머지 커밋 제목은 `merge: <이슈 키> <이슈 제목>`(`gh pr merge --merge` — 지금 main 이력 모양을 지킨다).
-- 브랜치 push 는 pre-push 훅(`.husky/pre-push`)을 거친다. 검토자는 origin/main 과 **충돌하는** 브랜치만 개발자에게 rebase 를 요청하고(검토자는 push 하지 않는다), 충돌 없이 main 이 앞서 있기만 한 브랜치는 그대로 머지한다.
-- 이 저장소에는 GitHub Actions CI 가 없다 — 검토자는 PR 본문의 테스트 결과(pre-push 게이트 통과·라이브 검증)를 확인하고 머지한다.
-- 머지는 **`--admin` 없이** `gh pr merge --merge …` 로만 한다(AI 들이 계정을 함께 쓰므로 보호 우회 금지).
-- 마이그레이션(`apps/firehub-api/src/main/resources/db/migration/`)이 든 PR 은 버전 번호(`V<n>__`)가 origin/main 의 마지막보다 큰지 확인한다 — 겹치면 개발자에게 번호를 올리고 `./gradlew generateJooq` 결과를 함께 커밋하라고 돌려보낸다(6절 jOOQ).
+- **feature 브랜치**: `<커밋 타입>/<소문자 이슈 키>`(예: `fix/wd-272`) — main 에서 따서 개발하고 3절의 바뀐 범위 테스트·4절 라이브 검증까지 끝낸다. **push 하지 않는다.** 커밋 훅(`.husky/pre-commit`)은 그대로 돈다.
+- **통합 브랜치(기차)**: `integ/<AI 이름>-<번호>`(예: `integ/developer1-12`) — 끝난 feature 를 이슈당 커밋 하나로 스쿼시해 쌓는다. 커밋 제목은 컨벤션(`fix(web): … (WD-354)`)대로 끝에 `(<이슈 키>)`.
+- **마이그레이션 번호**: 경로 `apps/firehub-api/src/main/resources/db/migration/`. 쌓을 때 `V<n>__` 가 기차 안 다른 이슈·origin/main 의 마지막과 겹치면 쌓기를 멈추고 번호를 올린 뒤 `cd apps/firehub-api && ./gradlew generateJooq` 결과(`src/main/generated/`)를 같은 이슈 커밋에 함께 넣는다(6절 jOOQ).
+- **출발**: 내 앞 통합 PR 이 main 에 머지됐거나 처음일 때만 — 최신 origin/main 으로 리베이스 → push(pre-push 게이트) → PR.
+  - pre-push(`.husky/pre-push`)는 늘 전체 게이트(E2E 전체 + gradle 풀 회귀)를 돈다. feature 브랜치를 push 하지 않으므로 게이트는 **기차마다 한 번**만 돈다. pre-push 자체는 바꾸지 않는다.
+  - PR 제목 `통합 <키1>·<키2>·…`(예: `통합 WD-353·WD-354`), 본문 첫 줄 `개발: <개발한 AI username>`, 이어서 이슈마다 요약·바뀐 범위 테스트·라이브 검증 근거, 마지막에 pre-push 게이트 결과.
+- **게이트 실패·반려**: 같은 통합 브랜치에 수정 커밋을 더한다(제목 끝에 고친 이슈 키). 빼고 다시 만들지 않는다.
+- **리베이스**: 출발 전 기차는 main 이 움직일 때마다, 출발한 PR 은 main 과 **충돌할 때만**(리베이스하면 게이트를 다시 돌아야 한다).
+- 이 저장소에는 GitHub Actions CI 가 없다 — 검토자는 PR 본문의 pre-push 게이트 결과·라이브 검증을 보고 머지한다.
 
 ## 9. 검토자
 
-개발한 PR 을 리뷰·머지하는 AI 팀장(`SKILL.md` 「검토자」). 비어 있으면 PR 을 사람이 리뷰·머지한다.
+개발한 통합 PR 을 리뷰·머지하는 AI 팀장(`SKILL.md` 「검토자」). 비어 있으면 PR 을 사람이 리뷰·머지한다.
 
 - username: `teamleader@iacloud.kr`(AI 팀장)
+- 통합 PR 을 **이슈 단위로** 리뷰한다(이슈 커밋 하나씩). 본문의 pre-push 게이트 통과, 마이그레이션 번호(origin/main 마지막보다 큰지·기차 안에서 겹치지 않는지, `src/main/generated/` 동반), main 과 충돌 여부를 확인한다.
+- 하나라도 문제면 **PR 전체를 반려**하고 어느 이슈가 왜 문제인지 적는다 — 개발자가 같은 PR 에 수정 커밋을 더한다. 검토자는 push 하지 않는다.
+- 통과하면 **`--admin` 없이** `gh pr merge --merge`(지금 main 이력 모양 — 머지 커밋 제목 `merge: 통합 <키들>`). 실린 이슈마다 「<커밋> 머지 — 검토 대기」(REVIEW)로 올린다.
