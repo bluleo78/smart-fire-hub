@@ -327,7 +327,7 @@ export function registerAnalyticsTools(
         name: z.string().describe('대시보드 이름'),
         description: z.string().optional().describe('대시보드 설명'),
         isShared: z.boolean().optional().describe('다른 사용자와 공유 여부 (기본 false)'),
-        autoRefreshSeconds: z.number().optional().describe('자동 새로고침 간격(초). null이면 비활성'),
+        autoRefreshSeconds: z.number().int().min(5).max(86400).optional().describe('자동 새로고침 간격(초), 5~86400(24시간). null이면 비활성'),
       },
       async (args: { name: string; description?: string; isShared?: boolean; autoRefreshSeconds?: number }) => {
         const result = await apiClient.createDashboard(args);

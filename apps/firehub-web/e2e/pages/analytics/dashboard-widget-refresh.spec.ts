@@ -193,4 +193,23 @@ test.describe('대시보드 위젯 — 데이터 조회·새로고침 (#778)', (
     await expect(cardA.getByText('auto-a')).toBeVisible({ timeout: 10_000 });
     expect(a.count).toBeGreaterThanOrEqual(2);
   });
+
+  test('상한 전에 저장된 아주 긴 주기(2500000초)여도 위젯 데이터를 쉬지 않고 다시 요청하지 않는다 (WD-327)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 2500000초 × 1000 × 지터는 브라우저 타이머 한도(2^31 ms)를 넘어 0 으로 감겨, 5초에 수백 번 재조회했다.
+    // 이제 24시간으로 줄여 쓰므로 첫 조회 1회 뒤로는 요청이 없어야 한다.
+    await setupDashboard(page, { autoRefreshSeconds: 2_500_000 });
+    const a = await routeChartData(page, 1, [{ body: rowsBody(chartA, 'long-a') }]);
+    const b = await routeChartData(page, 2, [{ body: rowsBody(chartB, 'long-b') }]);
+
+    await page.goto('/analytics/dashboards/1');
+    await expect(card(page, '위젯 A').getByText('long-a')).toBeVisible();
+    await expect(card(page, '위젯 B').getByText('long-b')).toBeVisible();
+
+    // 넘친 타이머는 지연 0 으로 응답이 오자마자 다시 요청하므로 1초면 수십 번 쌓인다 — 짧은 고정 대기로 그 구간을 지켜본다
+    await page.waitForTimeout(1000);
+    expect(a.count).toBe(1);
+    expect(b.count).toBe(1);
+  });
 });

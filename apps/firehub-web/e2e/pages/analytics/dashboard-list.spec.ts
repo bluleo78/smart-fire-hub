@@ -345,6 +345,39 @@ test.describe('대시보드 목록 페이지', () => {
     expect(putCapture.requests.length).toBe(0);
   });
 
+  test('자동 새로고침이 24시간(86400초)을 넘으면 저장을 막고, 86400초는 그대로 저장한다 (WD-327)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 상한이 없을 때 2500000초 같은 값이 저장되면 브라우저 타이머가 넘쳐 위젯 데이터를 쉬지 않고 다시 요청했다.
+    const dashboard = createDashboardListItem({ id: 1, name: '상한 대시보드', autoRefreshSeconds: null });
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', createPageResponse([dashboard]));
+    const putCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/analytics/dashboards/1',
+      { ...dashboard, autoRefreshSeconds: 86400 },
+      { capture: true },
+    );
+
+    await page.goto('/analytics/dashboards');
+    await page.getByRole('row', { name: /상한 대시보드/ }).getByLabel('설정').click();
+    const dialog = page.getByRole('dialog', { name: '대시보드 설정' });
+    await expect(dialog).toBeVisible();
+
+    // 상한 + 1 → 안내가 뜨고 창은 그대로, 저장 요청은 가지 않는다
+    await page.getByLabel('자동 새로고침 (초)').fill('86401');
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByText('자동 새로고침은 86400초(24시간) 이하로 입력해 주세요.')).toBeVisible();
+    await expect(dialog).toBeVisible();
+    expect(putCapture.requests.length).toBe(0);
+
+    // 상한 값 그대로 → 저장 요청에 86400 이 실린다
+    await page.getByLabel('자동 새로고침 (초)').fill('86400');
+    await page.getByRole('button', { name: '저장' }).click();
+    const req = await putCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ autoRefreshSeconds: 86400 });
+  });
+
   test('공유됨 탭 전환 시 sharedOnly 파라미터가 API 에 전달된다', async ({ authenticatedPage: page }) => {
     const tabCalls: string[] = [];
     await page.route(

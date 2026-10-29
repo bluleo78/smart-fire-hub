@@ -121,6 +121,42 @@ class AnalyticsDashboardControllerTest {
         .andExpect(status().isUnauthorized());
   }
 
+  /**
+   * WD-327: 자동 새로고침 상한 24시간 — 넘으면 400 과 안내 문구, 서비스는 부르지 않는다. 상한 값 그대로는 허용한다. 상한이 없으면 브라우저 타이머가
+   * 넘쳐 위젯 데이터를 쉬지 않고 다시 요청했다.
+   */
+  @Test
+  void createDashboard_autoRefreshOverMax_returns400() throws Exception {
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/dashboards")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreateDashboardRequest("대시보드", null, false, 2_500_000))))
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.errors.autoRefreshSeconds")
+                .value(CreateDashboardRequest.AUTO_REFRESH_MAX_MESSAGE));
+    verify(dashboardService, never()).create(any(), anyLong());
+  }
+
+  @Test
+  void createDashboard_autoRefreshAtMax_returnsCreated() throws Exception {
+    when(dashboardService.create(any(CreateDashboardRequest.class), anyLong()))
+        .thenReturn(sampleDashboard());
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/dashboards")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreateDashboardRequest("대시보드", null, false, 86_400))))
+        .andExpect(status().isCreated());
+  }
+
   // ── GET /api/v1/analytics/dashboards/{id} ──────────────────────────────────
 
   @Test
@@ -195,6 +231,22 @@ class AnalyticsDashboardControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(1));
+  }
+
+  /** WD-327: 수정도 같은 상한 — 넘으면 400, 서비스는 부르지 않는다. */
+  @Test
+  void updateDashboard_autoRefreshOverMax_returns400() throws Exception {
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/dashboards/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"autoRefreshSeconds\":86401}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.errors.autoRefreshSeconds")
+                .value(CreateDashboardRequest.AUTO_REFRESH_MAX_MESSAGE));
+    verify(dashboardService, never()).update(anyLong(), any(), anyLong());
   }
 
   // ── DELETE /api/v1/analytics/dashboards/{id} ───────────────────────────────

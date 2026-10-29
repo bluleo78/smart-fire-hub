@@ -368,8 +368,10 @@
           "type": "boolean"
         },
         "autoRefreshSeconds": {
-          "description": "자동 새로고침 간격(초). null이면 비활성",
-          "type": "number"
+          "description": "자동 새로고침 간격(초), 5~86400(24시간). null이면 비활성",
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 86400
         }
       },
       "required": [

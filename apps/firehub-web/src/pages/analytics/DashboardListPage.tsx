@@ -51,11 +51,12 @@ import { handleApiError } from '../../lib/api-error';
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
-import type { CreateDashboardRequest, DashboardListItem } from '../../types/analytics';
+import { type CreateDashboardRequest, type DashboardListItem, MAX_AUTO_REFRESH_SECONDS } from '../../types/analytics';
 
 /**
  * "자동 새로고침 (초)" 입력 문자열을 검증한다.
  * 빈 문자열은 "수동"(null)으로 취급하고, 정수가 아니거나 5 미만이면 에러를 반환한다.
+ * 24시간(86400초)을 넘으면 서버가 거부하므로 저장 전에 같은 문구로 막는다(WD-327).
  * 기존 parseInt(autoRefresh, 10)는 "5.5" 같은 소수점 입력을 조용히 "5"로 잘라
  * 사용자에게 알림 없이 다른 값이 저장되는 문제가 있었다(#568).
  */
@@ -65,6 +66,9 @@ function parseAutoRefreshInput(raw: string): { value: number | null } | { error:
   const num = Number(trimmed);
   if (Number.isNaN(num) || !Number.isInteger(num) || num < 5) {
     return { error: '자동 새로고침은 5 이상의 정수(초)로 입력해 주세요.' };
+  }
+  if (num > MAX_AUTO_REFRESH_SECONDS) {
+    return { error: `자동 새로고침은 ${MAX_AUTO_REFRESH_SECONDS}초(${MAX_AUTO_REFRESH_SECONDS / 3600}시간) 이하로 입력해 주세요.` };
   }
   return { value: num };
 }
@@ -153,6 +157,7 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
               value={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.value)}
               min={5}
+              max={MAX_AUTO_REFRESH_SECONDS}
               step={1}
             />
           </div>
@@ -276,6 +281,7 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
               value={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.value)}
               min={5}
+              max={MAX_AUTO_REFRESH_SECONDS}
               step={1}
             />
           </div>
