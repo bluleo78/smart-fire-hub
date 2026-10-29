@@ -57,6 +57,10 @@ class RoleGrantScopeTest extends IntegrationTestBase {
   private static final String DELETE_SCOPE_MESSAGE = "자신에게 없는 권한·등급을 가진 역할은 삭제할 수 없습니다";
   private static final String DELETE_ALLOWLIST_MESSAGE =
       "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할은 삭제할 수 없습니다";
+  private static final String PERMISSIONS_EDIT_SCOPE_MESSAGE =
+      "자신에게 없는 권한·등급을 가진 역할의 권한은 바꿀 수 없습니다";
+  private static final String PERMISSIONS_EDIT_ALLOWLIST_MESSAGE =
+      "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할의 권한은 바꿀 수 없습니다";
 
   @Autowired private MockMvc mockMvc;
   @Autowired private DSLContext dsl;
@@ -476,24 +480,74 @@ class RoleGrantScopeTest extends IntegrationTestBase {
   }
 
   /**
-   * 자기가 가진 권한은 추가할 수 있고, 제거는 제한하지 않는다 — 자기에게 없는 권한(audit:read)도 제거는 된다. 이미 붙어 있는 남의 권한을 그대로 두는 교체도
-   * "추가" 가 아니므로 통과한다.
+   * 범위 안의 역할(권한·등급 모두 자기 범위)에는 자기가 가진 권한을 추가하고, 어떤 권한이든 뺄 수 있다(과잉 차단 방지). 범위 안 역할의 권한은 모두 자기
+   * 것이므로 "뺄 수 있는 권한" 도 자기 범위 안이다.
    */
   @Test
-  void writer_canAddHeldPermission_andRemoveAny() throws Exception {
-    // 유지(audit:read, 자기에게 없음) + 추가(dataset:read, 보유) → 허용
-    putPermissions(writer, lackingPermRole, "audit:read", "dataset:read")
+  void writer_canAddHeldPermission_andRemoveFromInScopeRole() throws Exception {
+    putPermissions(writer, inScopeRole, "role:read", "dataset:read")
         .andExpect(status().isNoContent());
-    assertThat(permissionCodesOf(lackingPermRole))
-        .containsExactlyInAnyOrder("audit:read", "dataset:read");
+    assertThat(permissionCodesOf(inScopeRole))
+        .containsExactlyInAnyOrder("role:read", "dataset:read");
 
-    // 제거(audit:read) → 허용
-    putPermissions(writer, lackingPermRole, "dataset:read").andExpect(status().isNoContent());
-    assertThat(permissionCodesOf(lackingPermRole)).containsExactly("dataset:read");
+    putPermissions(writer, inScopeRole, "dataset:read").andExpect(status().isNoContent());
+    assertThat(permissionCodesOf(inScopeRole)).containsExactly("dataset:read");
 
-    // 전부 제거 → 허용
-    putPermissions(writer, lackingPermRole).andExpect(status().isNoContent());
-    assertThat(permissionCodesOf(lackingPermRole)).isEmpty();
+    putPermissions(writer, inScopeRole).andExpect(status().isNoContent());
+    assertThat(permissionCodesOf(inScopeRole)).isEmpty();
+  }
+
+  /**
+   * 결함 재현(WD-285): role:write 위임자가 자기에게 없는 권한을 가진 역할의 권한을 빼면 403 — 삭제(WD-141)와 같은 범위 검사다. 수정 전에는 전부 빼기가
+   * 204 였다. 자기가 가진 권한만 추가하는 것도 범위 밖 역할이면 막힌다(이슈 기대 — 추가·제거 모두 403).
+   */
+  @Test
+  void writer_cannotChangePermissionsOfRoleWithPermissionTheyLack() throws Exception {
+    putPermissions(writer, lackingPermRole)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ROLE_PERMISSIONS_BEYOND_SCOPE"))
+        .andExpect(jsonPath("$.message").value(PERMISSIONS_EDIT_SCOPE_MESSAGE));
+    putPermissions(writer, lackingPermRole, "audit:read", "dataset:read")
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ROLE_PERMISSIONS_BEYOND_SCOPE"));
+
+    assertThat(permissionCodesOf(lackingPermRole)).containsExactly("audit:read");
+  }
+
+  /** 자기보다 열람 등급이 높은 역할도 권한이 범위 안이어도 빼거나 더할 수 없다(CR7 등급 보호와 같은 이유). */
+  @Test
+  void writer_cannotChangePermissionsOfHigherClearanceRole() throws Exception {
+    putPermissions(writer, highClearanceRole)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ROLE_PERMISSIONS_BEYOND_SCOPE"));
+    putPermissions(writer, highClearanceRole, "role:read", "dataset:read")
+        .andExpect(status().isForbidden());
+
+    assertThat(permissionCodesOf(highClearanceRole)).containsExactly("role:read");
+  }
+
+  /** 자기가 열람할 수 없는 기밀 데이터셋 허용 목록에 붙은 역할의 권한도 바꿀 수 없다(삭제와 같은 허용 목록 검사). */
+  @Test
+  void writer_cannotChangePermissionsOfRoleOnAllowlistTheyCannotView() throws Exception {
+    setUpAllowlistScenario();
+    long role = createRole("ACL_WRITER", "기밀", "role:read", "role:write", "dataset:read");
+    long aclWriter = member("acl-writer");
+    replaceRoles(aclWriter, role);
+
+    putPermissions(aclWriter, listedRole)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ROLE_PERMISSIONS_ALLOWLIST_BEYOND_SCOPE"))
+        .andExpect(jsonPath("$.message").value(PERMISSIONS_EDIT_ALLOWLIST_MESSAGE));
+
+    assertThat(permissionCodesOf(listedRole)).containsExactly("dataset:read");
+  }
+
+  /** 범위 밖 역할이어도 아무것도 바꾸지 않는 저장은 막지 않는다 — 판정할 변경이 없다. */
+  @Test
+  void writer_unchangedSaveOfOutOfScopeRole_isAllowed() throws Exception {
+    putPermissions(writer, lackingPermRole, "audit:read").andExpect(status().isNoContent());
+
+    assertThat(permissionCodesOf(lackingPermRole)).containsExactly("audit:read");
   }
 
   /** 시스템 ADMIN 은 권한 추가에 제한이 없다. */

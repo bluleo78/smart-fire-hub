@@ -128,12 +128,21 @@ export default function RoleDetailPage() {
   // 체크박스로 그릴 권한 — 전체 목록을 읽었으면 그것, 아니면 이 역할이 가진 권한만.
   const allPermissions = useMemo(() => catalog ?? role?.permissions ?? [], [catalog, role]);
 
-  // 새로 붙일 수 없는 권한(WD-116 RoleGrantGuard) — ADMIN 이 아니면 자기에게 없는 권한은 역할에 추가할 수 없다(빼는 것은 자유).
-  // 서버는 「저장된 권한 대비 새로 늘어난 것」만 보므로, 이미 저장돼 있던 권한은 이번 편집에서 뺐다가 다시 체크해도 막지 않는다.
-  const savedPermissionIds = useMemo(() => new Set(role?.permissions.map(p => p.id) ?? []), [role]);
-  const isAddLocked = (perm: PermissionResponse) =>
-    !isCallerAdmin && !myPermissions.has(perm.code) && !savedPermissionIds.has(perm.id);
-  const hasAddLocked = canEditPermissions && allPermissions.some(isAddLocked);
+  // 범위 밖 역할(WD-285) — ADMIN 이 아닌데 이 역할에 자기에게 없는 권한이 붙어 있으면, 서버는 이 역할의 권한 추가·제거를 모두 403 으로 막는다
+  // (제거는 보유자 모두에게서의 회수라 삭제와 같은 범위 검사). 화면에서 미리 잠가 「빼 보니 거부」를 겪지 않게 한다. 등급·허용 목록으로 범위 밖인
+  // 경우는 화면이 판정할 근거가 없어 서버 403 문구(토스트)로 안내한다.
+  const isScopeLocked =
+    canEditPermissions && !isCallerAdmin && !!role && role.permissions.some(p => !myPermissions.has(p.code));
+  // 새로 붙일 수 없는 권한(WD-116 RoleGrantGuard) — ADMIN 이 아니면 자기에게 없는 권한은 역할에 추가할 수 없다. 범위 안 역할은 붙은 권한이
+  // 모두 자기 것이라 「이미 저장된 권한」 예외를 따로 둘 필요가 없다.
+  const isAddLocked = (perm: PermissionResponse) => !isCallerAdmin && !myPermissions.has(perm.code);
+  const hasAddLocked = canEditPermissions && !isScopeLocked && allPermissions.some(isAddLocked);
+  // 체크박스가 잠긴 이유(설명 요소 id) — 없으면 잠기지 않는다. disabled 와 aria-describedby 가 같은 판정을 쓰게 한 곳에 둔다.
+  const lockHintId = (perm: PermissionResponse) => {
+    if (!canEditPermissions) return undefined;
+    if (isScopeLocked) return 'perm-scope-lock-hint';
+    return isAddLocked(perm) ? 'perm-add-lock-hint' : undefined;
+  };
 
   const permissionsByCategory = useMemo(() => {
     const grouped: Record<string, PermissionResponse[]> = {};
@@ -332,6 +341,11 @@ export default function RoleDetailPage() {
           <CardTitle>권한 할당</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
+          {isScopeLocked && (
+            <p id="perm-scope-lock-hint" className="text-[13px] text-muted-foreground">
+              자신에게 없는 권한을 가진 역할이라 권한을 바꿀 수 없습니다
+            </p>
+          )}
           {hasAddLocked && (
             <p id="perm-add-lock-hint" className="text-[13px] text-muted-foreground">
               자신에게 없는 권한은 추가할 수 없습니다
@@ -350,8 +364,8 @@ export default function RoleDetailPage() {
                       id={`perm-${perm.id}`}
                       checked={selectedPermissionIds.includes(perm.id)}
                       onCheckedChange={(checked) => handlePermissionToggle(perm.id, checked === true)}
-                      disabled={role.isSystem || !canEditPermissions || isAddLocked(perm)}
-                      aria-describedby={canEditPermissions && isAddLocked(perm) ? 'perm-add-lock-hint' : undefined}
+                      disabled={role.isSystem || !canEditPermissions || lockHintId(perm) !== undefined}
+                      aria-describedby={lockHintId(perm)}
                     />
                     <Label htmlFor={`perm-${perm.id}`} className="text-sm">
                       {perm.code}
@@ -377,7 +391,10 @@ export default function RoleDetailPage() {
           )}
           {/* 권한 저장은 role:write + 전체 목록(permission:read)이 있을 때만(WD-121) — 없으면 가진 권한만 읽기 전용으로 보인다. */}
           {canEditPermissions && (
-            <Button onClick={handleSavePermissionsClick} disabled={isSavingPermissions || role.isSystem}>
+            <Button
+              onClick={handleSavePermissionsClick}
+              disabled={isSavingPermissions || role.isSystem || isScopeLocked}
+            >
               {isSavingPermissions ? '저장 중...' : '권한 저장'}
             </Button>
           )}

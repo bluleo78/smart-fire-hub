@@ -309,8 +309,9 @@ test.describe('역할 관리 — role:read', () => {
   test('role:write·role:delete·permission:read 가 있으면 편집 진입점이 보이고 권한 저장이 PUT 된다', async ({
     authenticatedPage: page,
   }) => {
-    // 호출자는 PIPELINE_READ 만 갖고 ADMIN_ACCESS 는 없다 — 자기에게 없는 권한은 역할에 붙일 수 없다(WD-116).
-    await grant(page, ['role:read', 'role:write', 'role:delete', 'permission:read', 'PIPELINE_READ']);
+    // 호출자는 역할 3 의 권한(DATASET_READ·DATASET_WRITE)과 PIPELINE_READ 를 갖고 ADMIN_ACCESS 는 없다 — 역할은 범위 안이라
+    // 편집할 수 있지만(WD-285), 자기에게 없는 권한은 역할에 붙일 수 없다(WD-116).
+    await grant(page, ['role:read', 'role:write', 'role:delete', 'permission:read', 'DATASET_READ', 'DATASET_WRITE', 'PIPELINE_READ']);
     await setupRoleListMocks(page);
     await setupRoleDetailMocks(page, 3, false);
     await setupSecurityLevelMocks(page);
@@ -327,15 +328,74 @@ test.describe('역할 관리 — role:read', () => {
     await expect(page.getByLabel('역할 이름')).toBeEnabled();
     // 전체 목록(5개)이 보인다.
     await expect(page.getByRole('checkbox')).toHaveCount(5);
-    // 갖지 않은 권한(ADMIN_ACCESS)은 추가할 수 없게 잠기고 이유가 보인다. 이미 붙어 있던 권한(DATASET_READ)은 호출자에게 없어도 뺄 수 있다.
+    // 갖지 않은 권한(ADMIN_ACCESS)은 추가할 수 없게 잠기고 이유가 보인다. 역할에 붙은 권한은 뺄 수 있다.
     await expect(page.getByRole('checkbox', { name: 'ADMIN_ACCESS' })).toBeDisabled();
     await expect(page.getByText('자신에게 없는 권한은 추가할 수 없습니다')).toBeVisible();
+    await expect(page.getByText('자신에게 없는 권한을 가진 역할이라 권한을 바꿀 수 없습니다')).toHaveCount(0);
     await expect(page.getByRole('checkbox', { name: 'DATASET_READ' })).toBeEnabled();
     await page.getByRole('checkbox', { name: 'PIPELINE_READ' }).check();
     await page.getByRole('checkbox', { name: 'DATASET_WRITE' }).uncheck();
     await expect(page.getByTestId('role-clearance-card').getByRole('button', { name: '저장' })).toBeVisible();
     await page.getByRole('button', { name: '권한 저장' }).click();
     expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1, 3] });
+  });
+
+  test('자신에게 없는 권한을 가진 역할은 권한 체크박스·저장이 모두 잠기고 이유가 보인다(WD-285)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 역할 3 은 DATASET_READ·DATASET_WRITE 를 갖는데 호출자에게는 DATASET_WRITE 가 없다 — 서버는 이 역할의 권한 추가·제거를 모두 403 으로 막는다.
+    await grant(page, ['role:read', 'role:write', 'permission:read', 'DATASET_READ', 'PIPELINE_READ']);
+    await setupRoleDetailMocks(page, 3, false);
+    await setupSecurityLevelMocks(page);
+    await mockApi(page, 'GET', '/api/v1/roles/3/clearance', { roleId: 3, securityLevelId: 2, userCount: 14, fixed: false });
+    const put = await mockApi(page, 'PUT', '/api/v1/roles/3/permissions', {}, { capture: true });
+
+    await gotoWithPermissions(page, '/admin/roles/3');
+    await expect(page.getByRole('checkbox')).toHaveCount(5);
+    const hint = page.getByText('자신에게 없는 권한을 가진 역할이라 권한을 바꿀 수 없습니다');
+    await expect(hint).toBeVisible();
+    // 붙어 있는 권한은 체크된 채, 호출자가 가진 PIPELINE_READ 도 잠기고 잠금 이유를 가리킨다. 추가 잠금 문구와 겹쳐 보이지 않는다.
+    for (const name of ['DATASET_READ', 'DATASET_WRITE', 'PIPELINE_READ', 'ADMIN_ACCESS']) {
+      await expect(page.getByRole('checkbox', { name })).toBeDisabled();
+    }
+    await expect(page.getByRole('checkbox', { name: 'DATASET_WRITE' })).toBeChecked();
+    await expect(page.getByRole('checkbox', { name: 'DATASET_WRITE' })).toHaveAttribute(
+      'aria-describedby',
+      'perm-scope-lock-hint',
+    );
+    await expect(page.getByText('자신에게 없는 권한은 추가할 수 없습니다')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '권한 저장' })).toBeDisabled();
+    await nextFrame(page);
+    expect(put.requests).toHaveLength(0);
+  });
+
+  test('등급 등 화면이 모르는 이유로 서버가 권한 변경을 거부하면 그 사유를 토스트로 보인다(WD-285)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 권한으로는 범위 안이라 화면은 잠그지 않지만, 역할 열람 등급이 호출자보다 높아 서버가 403 을 돌려준다.
+    await grant(page, ['role:read', 'role:write', 'permission:read', 'DATASET_READ', 'DATASET_WRITE']);
+    await setupRoleDetailMocks(page, 3, false);
+    await setupSecurityLevelMocks(page);
+    await mockApi(page, 'GET', '/api/v1/roles/3/clearance', { roleId: 3, securityLevelId: 2, userCount: 14, fixed: false });
+    const put = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/roles/3/permissions',
+      {
+        status: 403,
+        error: 'Forbidden',
+        code: 'ROLE_PERMISSIONS_BEYOND_SCOPE',
+        message: '자신에게 없는 권한·등급을 가진 역할의 권한은 바꿀 수 없습니다',
+      },
+      { status: 403, capture: true },
+    );
+
+    await gotoWithPermissions(page, '/admin/roles/3');
+    await page.getByRole('checkbox', { name: 'DATASET_WRITE' }).uncheck();
+    await page.getByRole('button', { name: '권한 저장' }).click();
+    expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1] });
+    await expect(page.getByText('자신에게 없는 권한·등급을 가진 역할의 권한은 바꿀 수 없습니다')).toBeVisible();
+    await expect(page.getByText('권한이 저장되었습니다.')).toHaveCount(0);
   });
 
   test('ADMIN 은 역할 상세에서 어떤 권한이든 추가할 수 있다(대조군)', async ({ authenticatedPage: page }) => {
