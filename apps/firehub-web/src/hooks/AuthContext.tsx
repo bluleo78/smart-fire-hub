@@ -2,17 +2,16 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { authApi } from '../api/auth';
-import { setAccessToken } from '../api/client';
+import { AUTH_FLAG_KEY, endSessionAndReloadToLogin, getAccessToken, setAccessToken } from '../api/client';
 import type { TenantSessionState } from '../api/tenant-session';
 import { subscribeTenantSession } from '../api/tenant-session';
 import { usersApi } from '../api/users';
+import { setLoginNotice } from '../lib/login-notice';
 import type { LoginFormData, SignupFormData } from '../lib/validations/auth';
 import type { TokenResponse, UserResponse } from '../types/auth';
 import type { RoleResponse } from '../types/role';
 import type { MembershipResponse } from '../types/tenant';
 import { AuthContext } from './auth-context-value';
-
-const AUTH_FLAG_KEY = 'hasSession';
 
 // React StrictMode(dev)에서 useEffect가 두 번 실행되어 refresh API가 중복 호출되는 것을 방지.
 // 동시 호출 시 동일한 Promise를 반환하여 실제 HTTP 요청은 한 번만 발생한다.
@@ -135,17 +134,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // `storage` 이벤트는 변경을 일으킨 탭 자신에게는 발생하지 않고 다른 탭에서만 발생하므로,
   // 여기서 초기화가 일어난다면 그 원인은 항상 "다른 탭의 로그아웃"이다. 액세스 토큰은
   // 탭마다 별도의 JS 메모리에 있어 이 통지 없이는 만료(최대 30분) 전까지 계속 인증된 것처럼
-  // 동작한다. ProtectedRoute 가 `isAuthenticated`를 보고 `/login`으로 리다이렉트하므로
-  // 여기서는 로컬 상태만 비우면 충분하다.
+  // 동작한다. 토큰을 버리고 로그인 화면으로 하드 리로드한다 — 상태만 비우면 ProtectedRoute 가
+  // 지금 주소를 딥링크로 남기고 캐시도 그대로라, 이 탭에서 다음 사람이 로그인하면 앞 사람 화면이 보인다(WD-276).
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== AUTH_FLAG_KEY || event.newValue !== null) return;
-      setAccessToken(null);
-      setUser(null);
-      setRoles([]);
-      setActiveTenantId(null);
-      setTenantOptions([]);
-      setMustChangePassword(false);
+      // 다른 탭의 로그아웃도 로그아웃이다 — 이 탭의 캐시·돌아갈 주소도 남기지 않는다(WD-276).
+      // 토큰이 없는 탭(로그인·가입 화면 등)은 버릴 것이 없으니 리로드하지 않는다 — 입력 중인 폼을 지우지 않게.
+      if (getAccessToken() !== null) endSessionAndReloadToLogin();
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
@@ -195,18 +191,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await login({ username: data.username, password: data.password });
   }, [login]);
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (options?: { notice?: string }) => {
     try {
       await authApi.logout();
-    } finally {
-      setAccessToken(null);
-      localStorage.removeItem(AUTH_FLAG_KEY);
-      setUser(null);
-      setRoles([]);
-      setActiveTenantId(null);
-      setTenantOptions([]);
-      setMustChangePassword(false);
+    } catch {
+      // 서버 로그아웃이 실패해도(네트워크 등) 이 브라우저의 세션은 끝낸다 — 리로드가 곧 화면을 바꾸므로 오류를 다시 던지지 않는다
     }
+    if (options?.notice) setLoginNotice(options.notice);
+    // 앞 사람의 캐시·돌아갈 주소를 다음 사람에게 남기지 않는다(WD-276). 사용자·테넌트 상태는 비우지 않는다 —
+    // 비우면 리로드 전에 ProtectedRoute 가 지금 주소를 딥링크로 실어 /login 으로 먼저 보내, 화면이 두 번 바뀐다.
+    endSessionAndReloadToLogin();
   }, []);
 
   const hasRole = useCallback((roleName: string) => {

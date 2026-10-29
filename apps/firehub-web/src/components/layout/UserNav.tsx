@@ -58,11 +58,6 @@ export function UserNav({ collapsed = false }: UserNavProps) {
     return null;
   }
 
-  const handleLogout = async () => {
-    await logout();
-    navigate('/login');
-  };
-
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -183,7 +178,7 @@ export function UserNav({ collapsed = false }: UserNavProps) {
           </div>
         </div>
         <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onClick={handleLogout}>
+        <DropdownMenuItem variant="destructive" onClick={() => void logout()}>
           <LogOut />
           로그아웃
         </DropdownMenuItem>

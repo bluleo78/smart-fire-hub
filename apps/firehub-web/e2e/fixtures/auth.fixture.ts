@@ -92,12 +92,20 @@ async function setupAuthMocks(page: Page) {
  * addInitScript로 페이지 로드 전에 플래그를 주입하면, 앱이 마운트될 때 refresh 모킹을
  * 통해 토큰을 획득하여 UI 로그인 플로우 없이 인증 상태 진입이 가능하다.
  */
-async function enterAuthenticatedState(page: Page) {
+export async function seedSessionOnce(page: Page) {
   await page.addInitScript(() => {
+    // 탭(sessionStorage)마다 처음 한 번만 심는다 — 로그아웃은 플래그를 지우고 /login 으로 하드 리로드하므로(WD-276),
+    // 매 로드마다 다시 심으면 리로드 뒤 다시 로그인된 상태가 되어 로그아웃을 검증할 수 없다.
+    if (sessionStorage.getItem('e2eSessionSeeded')) return;
+    sessionStorage.setItem('e2eSessionSeeded', 'true');
     localStorage.setItem('hasSession', 'true');
   });
+}
+
+async function enterAuthenticatedState(page: Page) {
+  await seedSessionOnce(page);
   // addInitScript는 모든 navigation에 적용되므로 별도 이동 불필요.
-  // 각 테스트가 자신의 타겟 페이지로 이동할 때 hasSession 플래그가 주입된다.
+  // 각 테스트가 자신의 타겟 페이지로 처음 이동할 때 hasSession 플래그가 주입된다.
 }
 
 /** 커스텀 fixture 타입 정의 */

@@ -13,6 +13,26 @@ export function getAccessToken(): string | null {
   return accessToken;
 }
 
+/** 로그인 세션 표식 — 이 값이 있을 때만 부팅 refresh 를 시도하고, 지우면 다른 탭이 storage 이벤트로 로그아웃을 안다(#565). */
+export const AUTH_FLAG_KEY = 'hasSession';
+
+/**
+ * 세션을 끝내고 로그인 화면으로 **하드 리로드**한다 — 로그아웃·다른 탭 로그아웃·refresh 실패가 모두 이 길로 간다(WD-276).
+ *
+ * <p>상태만 비우고 라우터로 보내면 두 가지가 남는다 — ① react-query 캐시(staleTime 30초 동안 재요청 없이
+ * 그려진다)라 같은 브라우저에서 다음 사람이 로그인하면 앞 사람이 받아 둔 데이터(권한 없는 화면 포함)가
+ * 보이고, ② ProtectedRoute 가 로그아웃 순간의 주소를 딥링크(state.from, #675)로 실어 보내 다음 사람이
+ * 앞 사람이 보던 화면으로 바로 이동한다. 워크스페이스 전환(AuthProvider 의 selectTenant)과 같은
+ * 이유로 리로드 한 번이 캐시·401 재시도 큐·열린 SSE·history state 를 전부 비운다.
+ */
+export function endSessionAndReloadToLogin() {
+  accessToken = null;
+  localStorage.removeItem(AUTH_FLAG_KEY);
+  // replace — 로그아웃 직전 화면을 history 에 남기지 않는다. 남기면 다음 사람이 「뒤로」로 그 주소를 다시 열어
+  // 딥링크로 되살리거나 bfcache 로 앞 사람 화면을 그대로 복원할 수 있다.
+  window.location.replace('/login');
+}
+
 export const client = axios.create({
   baseURL: '/api/v1',
   headers: {
@@ -105,9 +125,7 @@ client.interceptors.response.use(
         return client(originalRequest);
       } catch (refreshError) {
         processQueue(refreshError, null);
-        setAccessToken(null);
-        localStorage.removeItem('hasSession');
-        window.location.href = '/login';
+        endSessionAndReloadToLogin();
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;
