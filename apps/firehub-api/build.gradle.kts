@@ -81,7 +81,7 @@ dependencies {
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
     // Tibero JDBC 드라이버 — Maven Central 에 없고 라이선스상 저장소에 커밋하지 않는다(*.jar 는 gitignore).
-    // 개발자가 apps/firehub-api/libs/ 에 tibero*.jar 를 직접 넣으면 런타임 클래스패스에 포함된다.
+    // apps/firehub-api/libs/ 에 커밋된 Tibero JDBC(tibero*.jar)를 런타임 클래스패스에 포함한다.
     // libs 폴더가 없거나 비어 있어도 fileTree 는 빈 집합이라 빌드·테스트는 그대로 동작한다.
     runtimeOnly(fileTree("libs") { include("tibero*.jar") })
     // PG driver — implementation 으로 둬서 OutboxListenerLoop가 PGConnection을 직접 사용할 수 있음

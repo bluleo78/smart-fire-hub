@@ -23,7 +23,7 @@ dependencies {
     // HikariCP 직접 사용 — spring-boot-starter-jdbc 를 쓰지 않아 DataSource 자동 구성이 끼어들지 않는다(메타 DB 없음).
     implementation("com.zaxxer:HikariCP")
     // Tibero JDBC 드라이버 — Maven Central 에 없고 라이선스상 저장소에 커밋하지 않는다(*.jar 는 gitignore).
-    // 개발자가 apps/firehub-db-executor/libs/ 에 tibero*.jar 를 직접 넣으면 런타임 클래스패스에 포함된다.
+    // apps/firehub-db-executor/libs/ 에 커밋된 Tibero JDBC(tibero*.jar)를 런타임 클래스패스에 포함한다.
     // libs 가 비어 있어도 fileTree 는 빈 집합이라 빌드·테스트는 동작한다(health 는 DOWN).
     runtimeOnly(fileTree("libs") { include("tibero*.jar") })
 

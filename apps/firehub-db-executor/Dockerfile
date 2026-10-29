@@ -5,7 +5,7 @@ ENV GRADLE_OPTS="-Xmx512m"
 
 WORKDIR /app
 
-# 의존성 캐시를 위해 빌드 설정을 먼저 복사한다. libs/ 에는 Tibero 드라이버 jar 가 (있으면) 들어 있다 — 비어 있어도 빌드는 성공한다.
+# 의존성 캐시를 위해 빌드 설정을 먼저 복사한다. libs/ 에는 저장소에 커밋된 Tibero 드라이버 jar 가 들어 있다.
 COPY gradle/ gradle/
 COPY gradlew build.gradle.kts settings.gradle.kts ./
 COPY libs/ libs/

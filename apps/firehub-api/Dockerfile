@@ -6,7 +6,7 @@ ENV GRADLE_OPTS="-Xmx512m"
 WORKDIR /app
 
 # Copy Gradle wrapper and build config (for dependency caching)
-# libs/ 에는 Tibero JDBC jar 가 (있으면) 들어 있다 — build.gradle.kts 가 libs/tibero*.jar 를 fileTree 로 얹는다.
+# libs/ 에는 저장소에 커밋된 Tibero JDBC jar 가 들어 있다 — build.gradle.kts 가 libs/tibero*.jar 를 fileTree 로 얹는다.
 # 비어 있어도(.gitkeep 만) 빌드는 성공한다. 의존성 해석 전에 두어야 캐시 레이어와 bootJar 가 같은 classpath 를 본다.
 COPY gradle/ gradle/
 COPY gradlew build.gradle.kts settings.gradle.kts lombok.config ./

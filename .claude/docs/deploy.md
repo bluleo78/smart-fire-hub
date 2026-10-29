@@ -605,11 +605,10 @@ Tibero 테넌트의 파이프라인 SQL 단계는 api 가 새 서비스 `db-exec
 - **배포 순서**: **api 먼저, 그다음 db-executor.** api 가 `DB_EXECUTOR_BASE_URL`(기본 `http://db-executor:8090`)로 db-executor 를 부르고, db-executor 는 시작 후 api 의 기술자 엔드포인트를 쓴다. 새 db-executor 는 기술자를 `?include=ro,slots`(읽기 전용 계정 + 스크립트 슬롯 계정 S1..S10)로 조회하는데, 이 값을 아는 것은 새 api 뿐이다 — 옛 api 는 `include` 가 정확히 `ro` 일 때만 읽기 전용 계정을 실으므로 `ro,slots` 에는 읽기 전용·슬롯 계정을 모두 싣지 않아 분석 조회와 Python 단계의 `genia_db` 조회가 실패한다. 그래서 새 api 가 먼저 떠 있어야 한다.
 - **토큰(필수, 범위별 3종)**: `DB_EXECUTOR_INTERNAL_TOKEN`(api ↔ db-executor 전 창구·기술자 조회, api 와 db-executor 가 같은 값), `DB_EXECUTOR_LOAD_TOKEN`(Python executor 의 `EXECUTOR_DB_EXECUTOR_LOAD_TOKEN` 과 같은 값, `/execute/load` 만 허용), `DB_EXECUTOR_SCRIPT_TOKEN_KEY`(스크립트 1회용 토큰 서명 키 — 지금 쓰인다: Tibero Python 단계마다 api 가 이 키로 슬롯 조회 토큰을 서명하고 db-executor 가 같은 키로 검증한다, WD-78). 서명 키는 **32바이트 이상 임의 값**이고 **api 와 db-executor 에 같은 값**을 넣는다 — db-executor 는 32바이트보다 짧으면 기동하지 않고, api 는 짧은 키로 토큰을 발급하지 않는다. 두 쪽 값이 다르면 스크립트 조회가 모두 401 이 된다. 새 비밀값이라 `docker-compose.prod.yml` 은 `${VAR:?… is required}` 로 필수 처리하고 `.env.example` 은 세 값을 비워 둔다(예: `openssl rand -base64 48` 로 만든다). 내부 토큰은 Python executor 토큰(`EXECUTOR_INTERNAL_TOKEN`)과 **달라야** 하고, 적재 토큰은 내부 토큰과 달라야 한다(같으면 기동 실패). 알려진 기본값이나 `change-me` 로 시작하는 예시 값이면 db-executor 는 기동하지 않고 api 는 Tibero 기술자 조회를 503 으로 거부한다.
 - **환경 변수**: db-executor 는 `DB_EXECUTOR_API_BASE_URL`(기본 `http://api:8080`), api 는 `DB_EXECUTOR_BASE_URL`(기본 `http://db-executor:8090`). 서비스명·포트가 기본과 같으면 명시하지 않아도 된다.
-- **JDBC jar 반입(커밋 금지)**: api 이미지는 예전에 `libs/` 를 복사하지 않아 **운영 api 이미지에 Tibero JDBC 가 없었다.** 이제 api·db-executor 두 Dockerfile 모두 `COPY libs/ libs/` 를 하고, gradle 이 `libs/tibero*.jar` 를 classpath 에 얹는다. **이미지를 빌드하는 컴퓨터**의 아래 두 폴더에 공식 jar(예: `tibero7-jdbc-17.jar`)를 둔다.
-  - `apps/firehub-api/libs/`
-  - `apps/firehub-db-executor/libs/`
-  - `*.jar` 는 `.gitignore` 로 무시되고 `libs/.gitkeep` 만 추적된다. 폴더가 비어 있어도 빌드는 성공하지만 이미지에 드라이버가 없다(아래 확인 필수).
-  - 재배포 라이선스는 운영자가 확인할 사항이다(이 저장소는 jar 를 커밋하지 않는다).
+- **JDBC jar(저장소에 포함)**: api·db-executor 두 Dockerfile 모두 `COPY libs/ libs/` 를 하고, gradle 이 `libs/tibero*.jar` 를 classpath 에 얹는다. 공식 jar `tibero7-jdbc-17.jar`(Tibero 7.2, JDK 17용)를 아래 두 폴더에 커밋해 두었으므로, 저장소를 받은 어느 컴퓨터에서 빌드해도 이미지에 드라이버가 들어간다.
+  - `apps/firehub-api/libs/tibero7-jdbc-17.jar`
+  - `apps/firehub-db-executor/libs/tibero7-jdbc-17.jar`
+  - Maven Central 에 없는 드라이버라 저장소에 둔다. `.gitignore` 는 `libs/tibero*.jar` 만 예외로 추적한다 — 드라이버를 바꿀 때는 두 폴더를 같은 파일로 함께 바꾼다.
 - **이미지 확인**: 빌드한 이미지에 jar 가 들어갔는지 본다. 이미지의 jar 는 `/app/app.jar` 이고 안쪽 `BOOT-INF/lib/` 에 있어야 한다.
 
   ```bash

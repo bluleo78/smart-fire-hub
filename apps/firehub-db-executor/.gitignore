@@ -1,5 +1,6 @@
 build/
 .gradle/
-# Tibero JDBC 드라이버는 라이선스상 커밋하지 않는다(디렉터리만 .gitkeep 으로 유지).
+# libs/ 에는 Tibero JDBC 드라이버만 커밋한다 — Maven Central 에 없어 어느 컴퓨터에서든 이미지에 드라이버가 들어가게 한다.
 libs/*.jar
 !libs/.gitkeep
+!libs/tibero*.jar

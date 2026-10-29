@@ -11,6 +11,9 @@ snapshots/
 
 # Gradle Wrapper (keep wrapper jar tracked)
 !**/gradle/wrapper/gradle-wrapper.jar
+# Tibero JDBC 드라이버 — Maven Central 에 없어 저장소에 둔다. 어느 컴퓨터에서 받아도 api·db-executor 이미지에 드라이버가 들어가게 한다.
+!apps/firehub-api/libs/tibero*.jar
+!apps/firehub-db-executor/libs/tibero*.jar
 
 # Node / Frontend
 node_modules/
