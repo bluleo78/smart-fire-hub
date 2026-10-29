@@ -326,6 +326,24 @@ class SavedQueryControllerTest {
         .andExpect(jsonPath("$.id").value(1));
   }
 
+  /** 공백만 있는 SQL·이름으로 덮어쓰면 400 이고 서비스까지 가지 않는다 — 생략(null)은 변경 없음이라 허용된다. */
+  @Test
+  void updateQuery_blankSqlOrName_returnsBadRequest() throws Exception {
+    for (UpdateSavedQueryRequest request :
+        List.of(
+            new UpdateSavedQueryRequest(null, null, "   ", null, null, null),
+            new UpdateSavedQueryRequest(" \n", null, null, null, null, null))) {
+      mockMvc
+          .perform(
+              put("/api/v1/analytics/queries/1")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(request)))
+          .andExpect(status().isBadRequest());
+    }
+    verify(savedQueryService, never()).update(anyLong(), any(), anyLong());
+  }
+
   // ── DELETE /api/v1/analytics/queries/{id} ──────────────────────────────────
 
   @Test
