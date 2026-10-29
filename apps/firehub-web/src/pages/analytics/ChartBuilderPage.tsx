@@ -468,6 +468,9 @@ export default function ChartBuilderPage() {
   });
   const [queryColumns, setQueryColumns] = useState<string[]>([]);
   const [queryRows, setQueryRows] = useState<Record<string, unknown>[]>([]);
+  // 결과가 행 상한(1000행)에 닿았는지(서버 truncated) — 받은 행이 전부인 것처럼 보이지 않게 안내한다(WD-320).
+  // 서버는 「상한만큼 받았음」으로 표시하므로(정확히 1000행·LIMIT ≥ 1000 도 포함) 「더 있을 수 있음」으로 안내한다.
+  const [queryTruncated, setQueryTruncated] = useState(false);
   // 마지막 실행 결과의 조회자 기준 내보내기 가능(S4) — 차트 이미지도 원본 데이터를 담으므로 같은 정책을 따른다.
   // 서버가 true 를 준 경우만 허용(fail-closed).
   const [exportAllowed, setExportAllowed] = useState(false);
@@ -581,8 +584,11 @@ export default function ChartBuilderPage() {
       }
       setQueryColumns(result.columns);
       setQueryRows(result.rows);
+      setQueryTruncated(result.truncated);
       setExportAllowed(result.exportAllowed === true);
-      toast.success(`${result.rows.length}행 로드됨 (${result.executionTimeMs}ms)`);
+      toast.success(
+        `${result.truncated ? `상위 ${result.rows.length}행까지` : `${result.rows.length}행`} 로드됨 (${result.executionTimeMs}ms)`,
+      );
 
       // Auto-recommend chart type and config only for new charts
       if (isNew) {
@@ -619,6 +625,7 @@ export default function ChartBuilderPage() {
     setSelectedQueryId(nextId);
     setQueryColumns([]);
     setQueryRows([]);
+    setQueryTruncated(false);
     setExportAllowed(false);
   };
 
@@ -977,7 +984,9 @@ export default function ChartBuilderPage() {
               )}
               {queryColumns.length > 0 && (
                 <p className="text-xs text-muted-foreground">
-                  {queryColumns.length}개 컬럼, {queryRows.length}개 행 로드됨
+                  {queryTruncated
+                    ? `${queryColumns.length}개 컬럼, 상위 ${queryRows.length}개 행 로드됨 (행 상한 — 결과가 더 있을 수 있음)`
+                    : `${queryColumns.length}개 컬럼, ${queryRows.length}개 행 로드됨`}
                 </p>
               )}
             </CardContent>
@@ -1034,7 +1043,7 @@ export default function ChartBuilderPage() {
               <CardTitle className="text-sm">미리보기</CardTitle>
               {queryRows.length > 0 && (
                 <span className="text-xs text-muted-foreground">
-                  {queryRows.length}행 기준
+                  {queryTruncated ? `상위 ${queryRows.length}행 기준` : `${queryRows.length}행 기준`}
                 </span>
               )}
             </div>
