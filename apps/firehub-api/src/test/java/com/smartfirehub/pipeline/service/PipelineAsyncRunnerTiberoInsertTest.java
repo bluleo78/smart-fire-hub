@@ -130,6 +130,8 @@ class PipelineAsyncRunnerTiberoInsertTest {
     TenantContext.set(TENANT_ID);
     lenient().when(dataStoreResolver.currentBackend()).thenReturn(DataStoreBackend.TIBERO);
     // 보안 게이트 판정 자체는 PipelineSqlAccessTest 등 통합 테스트 몫이다 — 여기서는 통과(목 기본값)로 두고 라우팅만 본다.
+    // 사용자 SQL 판정 기본값(WD-426) — 아무 데이터셋도 참조하지 않는 허용 결과. 판정 결과를 쓰는 테스트는 자기 스텁으로 덮어쓴다.
+    RunnerSqlAccessStubs.allowSqlWithoutDatasetsByDefault(pipelineSecurityGate);
     lenient()
         .when(pipelineSecurityGate.runAs(any()))
         .thenAnswer(

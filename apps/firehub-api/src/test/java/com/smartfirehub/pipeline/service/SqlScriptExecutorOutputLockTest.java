@@ -131,4 +131,83 @@ class SqlScriptExecutorOutputLockTest extends IntegrationTestBase {
       dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(src));
     }
   }
+
+  /**
+   * 자기 출력을 읽어 다시 채우는 REPLACE(WD-426) 두 건이 겹쳐도 차례로 적용된다 — 잠금 전용 선행 문장이 전체 비우기와 같은 출력 잠금(#731)을 본
+   * 문장보다 <b>먼저, 별도 문장으로</b> 잡기 때문에 뒤 실행의 본 문장 스냅숏은 앞 실행이 커밋한 뒤에 잡혀 앞 실행의 결과를 읽는다.
+   *
+   * <p><b>겹침을 만드는 방법.</b> 테스트 커넥션이 출력 테이블에 ACCESS EXCLUSIVE 잠금을 쥔 동안 두 실행을 띄운다. 한 실행은 출력 잠금을 잡은 뒤
+   * 잠금 전용 문장({@code DELETE … WHERE false})에서 테이블 잠금을 기다리고, 다른 실행은 출력 잠금(advisory)을 기다린다. 둘 다 대기 중인
+   * 것을 {@code pg_locks} 로 확인한 뒤 관문을 연다.
+   *
+   * <p><b>잠금이 없으면 실패한다.</b> 두 본 문장이 같은 옛 스냅숏(2행)을 읽어 각자 넣고, 뒤 실행의 DELETE 는 앞 실행이 넣은 행을 보지 못해 — 출력이
+   * 4행이 되거나 PK 유니크 인덱스에서 23505 로 실패한다. 잠금이 있으면 2행이 두 번 변환된다('a++', 'b++'). 출력에는 PK(code)가 있다.
+   */
+  @Test
+  void 같은_출력을_스스로_읽는_REPLACE_두_건이_겹쳐도_차례로_적용된다() throws Exception {
+    String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+    String out = "p426_out_" + suffix;
+    dataTableService.createTable(
+        out,
+        List.of(
+            new DatasetColumnRequest("code", "code", "TEXT", null, false, false, null, true),
+            new DatasetColumnRequest("name", "name", "TEXT", null, true, false, null, false)));
+
+    ExecutorService pool = Executors.newFixedThreadPool(2);
+    try {
+      dsl.execute(
+          "INSERT INTO "
+              + DataSchema.qualify(out)
+              + " (code, name) VALUES ('K1', 'a'), ('K2', 'b')");
+      Callable<String> reloadRun =
+          () ->
+              TenantContext.runScopedGet(
+                  DEFAULT_TEST_TENANT_ID,
+                  () ->
+                      sqlScriptExecutor.execute(
+                          List.of(OutputClearStatement.lockOnly(out)),
+                          OutputClearStatement.reloadFromOwnOutput(
+                              out,
+                              List.of("code", "name"),
+                              "SELECT code, name || '+' AS name FROM " + DataSchema.qualify(out))));
+
+      List<Future<String>> runs = new ArrayList<>();
+      dsl.transaction(
+          cfg -> {
+            cfg.dsl()
+                .execute("LOCK TABLE " + DataSchema.qualify(out) + " IN ACCESS EXCLUSIVE MODE");
+            runs.add(pool.submit(reloadRun));
+            runs.add(pool.submit(reloadRun));
+
+            // 위 테스트와 같은 이유로 pg_locks 만 본다(통계 뷰는 트랜잭션 안에서 스냅숏으로 고정된다).
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+            int waiting = 0;
+            while (System.nanoTime() < deadline) {
+              waiting =
+                  cfg.dsl()
+                      .fetchOne(
+                          "SELECT count(DISTINCT pid) FROM pg_locks"
+                              + " WHERE NOT granted AND pid <> pg_backend_pid()")
+                      .get(0, Integer.class);
+              if (waiting >= 2) {
+                break;
+              }
+              Thread.sleep(50);
+            }
+            assertThat(waiting).as("두 실행이 모두 잠금 대기 중이어야 겹침이 성립한다").isEqualTo(2);
+          });
+
+      for (Future<String> run : runs) {
+        assertThat(run.get(30, TimeUnit.SECONDS)).isEqualTo("SQL executed successfully");
+      }
+      // 두 실행이 차례로 적용됐다 — 행 수는 그대로이고, 뒤 실행이 앞 실행의 결과를 읽어 한 번 더 변환했다.
+      assertThat(
+              dsl.fetch("SELECT name FROM " + DataSchema.qualify(out) + " ORDER BY code")
+                  .getValues(0, String.class))
+          .containsExactly("a++", "b++");
+    } finally {
+      pool.shutdownNow();
+      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(out));
+    }
+  }
 }

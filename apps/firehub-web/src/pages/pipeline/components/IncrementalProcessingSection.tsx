@@ -57,6 +57,9 @@ export function IncrementalProcessingSection({
   // fullRebuildMode(REBUILD_OUTPUT/READ_ALL) 별 문구를 이 한 곳에서만 결정한다.
   // 버튼 라벨·대기 문구·다이얼로그 설명이 각자 분기하면, 한쪽만 고치고 나머지를 빠뜨려
   // "출력을 지운다/안 지운다"는 서로 다른 약속을 화면에 동시에 노출할 위험이 있다.
+  // caveat: 확인 창 설명 안(설명 아래 줄)에 늘 함께 보이는 주의 한 줄(없으면 null). REBUILD_OUTPUT 은 출력을 먼저 비운 뒤 SQL 을 실행하므로,
+  // SQL 이 출력 자신을 읽으면 빈 출력을 읽는다(WD-426) — 이미 있는 행을 거르는 NOT IN·NOT EXISTS 는 그래서 처음부터 다시 채워진다.
+  // 서버는 이 동작을 막지 않으므로(중복 제거 패턴에 맞다) 예약 전에 알린다. READ_ALL 은 출력을 지우지 않아 해당이 없다.
   const copy =
     fullRebuildMode === 'READ_ALL'
       ? {
@@ -69,6 +72,7 @@ export function IncrementalProcessingSection({
               로드 전략(교체/추가/병합)에 따라 반영됩니다.
             </>
           ),
+          caveat: null,
         }
       : {
           reserveLabel: '처음부터 다시 만들기',
@@ -80,6 +84,8 @@ export function IncrementalProcessingSection({
               사라집니다.
             </>
           ),
+          caveat:
+            '이 스텝의 SQL이 출력 데이터셋 자신을 읽으면, 출력을 먼저 비운 뒤 읽습니다(이미 있는 행을 거르는 NOT IN·NOT EXISTS는 처음부터 다시 채워집니다).',
         };
 
   return (
@@ -145,7 +151,12 @@ export function IncrementalProcessingSection({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{copy.reserveLabel}</AlertDialogTitle>
-            <AlertDialogDescription>{copy.description}</AlertDialogDescription>
+            {/* 주의 문구는 설명 안에 둔다 — 다이얼로그의 aria-describedby 가 설명 요소 하나만 가리키므로, 밖에 두면 스크린 리더가
+                예약 전 이 주의를 읽지 않는다. 설명은 <p> 로 그려지므로 줄바꿈 블록은 <span> 으로 만든다(p 안 p 금지). */}
+            <AlertDialogDescription>
+              {copy.description}
+              {copy.caveat && <span className="mt-2 block">{copy.caveat}</span>}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>

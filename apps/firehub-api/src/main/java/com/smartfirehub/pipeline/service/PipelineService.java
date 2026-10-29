@@ -145,7 +145,7 @@ public class PipelineService {
     PipelineResponse pipeline =
         pipelineRepository.save(request.name(), request.description(), userId);
 
-    // Save steps — 새 파이프라인이므로 요청에 스텝 id 가 와도 무시하고 전부 새로 만든다(existingStepIds = 전부 null).
+    // Save steps — 새 파이프라인이므로 요청에 스텝 id 가 와도 무시하고 전부 새로 만든다(existingSteps = 전부 null).
     saveSteps(pipeline.id(), request.steps(), userId, Set.of(), Set.of(), null);
 
     // Return full detail
@@ -160,7 +160,8 @@ public class PipelineService {
    *     건너뛴다(왕복 보존, 아래 SQL·AI_CLASSIFY 출력 판정 참고). 새 파이프라인은 빈 집합
    * @param previouslySavedInputIds 이 파이프라인에 저장 전부터 있던 입력 데이터셋 id — SQL·PYTHON·API_CALL 입력의 같은 왕복 보존
    *     규칙(WD-21)
-   * @param existingStepIds 요청 순서대로, 제자리 갱신할 기존 스텝 id(새 스텝은 null) — WD-108. null 이면 전부 새 스텝(생성 경로)
+   * @param existingSteps 요청 순서대로, 제자리 갱신할 기존 스텝(새 스텝은 null) — WD-108. null 이면 전부 새 스텝(생성 경로). 저장 전
+   *     값은 WD-426 자기 출력 판정이 "바뀐 스텝만" 거부하는 데도 쓴다
    */
   private void saveSteps(
       Long pipelineId,
@@ -168,10 +169,15 @@ public class PipelineService {
       Long editorUserId,
       Set<Long> previouslySavedOutputIds,
       Set<Long> previouslySavedInputIds,
-      List<Long> existingStepIds) {
+      List<PipelineStepResponse> existingSteps) {
     if (stepRequests == null || stepRequests.isEmpty()) {
       return;
     }
+    // 스텝마다 같은 값을 다시 만들지 않게 루프 밖에서 한 번만 꺼낸다(WD-426 자기 출력 판정용). 백엔드 해석은 테넌트 컨텍스트를
+    // 요구하므로 SQL 스텝이 있을 때만 한다 — SQL 스텝 검증은 어차피 같은 해석을 거치고, 다른 유형만 있는 저장은 예전처럼 건드리지 않는다.
+    boolean anySqlStep = stepRequests.stream().anyMatch(r -> "SQL".equals(r.scriptType()));
+    SqlValidator sqlValidator = anySqlStep ? pipelineDataSchema.validator() : null;
+    boolean tiberoBackend = anySqlStep && pipelineDataSchema.backend() == DataStoreBackend.TIBERO;
 
     // Step 1: Save all steps and build name -> stepId map
     Map<String, Long> stepNameToId = new HashMap<>();
@@ -191,6 +197,9 @@ public class PipelineService {
 
     for (int i = 0; i < stepRequests.size(); i++) {
       PipelineStepRequest stepRequest = stepRequests.get(i);
+      // 짝지은 기존 스텝(새 스텝이면 null) — 제자리 갱신 id·자기 TEMP 판정·WD-426 "바뀐 스텝만" 판정이 함께 쓴다.
+      PipelineStepResponse storedStep = existingSteps != null ? existingSteps.get(i) : null;
+      Long existingStepId = storedStep != null ? storedStep.id() : null;
 
       // WD-176: 참조할 API 연결이 현재 워크스페이스에서 보여야 한다. 외래키 검사는 RLS 를 우회해 다른 워크스페이스의 연결 번호도 통과시켜,
       // 남의 연결을 참조로 저장(그 워크스페이스는 참조 0건으로 보이는데 삭제가 영영 409)하거나 저장 성공/FK 409 차이로 번호 존재를 떠볼 수
@@ -275,8 +284,7 @@ public class PipelineService {
       // TEMP 를 넘겨받는 경우 등, WD-170)는 덮어쓸 소유자가 없으므로 허용한다.
       Long outputId = stepRequest.outputDatasetId();
       if (outputId != null && tempOwnerByDatasetId.containsKey(outputId)) {
-        Long ownStepId = existingStepIds != null ? existingStepIds.get(i) : null;
-        if (!tempOwnerByDatasetId.get(outputId).equals(ownStepId)) {
+        if (!tempOwnerByDatasetId.get(outputId).equals(existingStepId)) {
           throw new IllegalArgumentException(
               stepError(stepRequest.name(), FOREIGN_TEMP_OUTPUT_MESSAGE));
         }
@@ -302,12 +310,17 @@ public class PipelineService {
       // MERGE 검증이 쓴다)을 한 번에 한다. {{#N}} 스텝 참조는 유효한 SQL 문법이 아니므로, 실행 시점과 동일하게 먼저 더미
       // 테이블 참조로 치환한 뒤 검증한다 — 그렇지 않으면 UI가 권장하는 표준 사용법이 저장 단계에서 항상 파싱 실패로 거부된다 (#643).
       boolean sqlStepIsQuery = false;
+      // 사용자 SQL 만의 참조 판정(WD-426) — 아래 출력 방식이 정해진 뒤 REPLACE 자기 출력 판정에 쓴다. 판정한 문자열도 남겨 둔다.
+      SqlAccessResult sqlAccess = null;
+      String substituted =
+          "SQL".equals(stepRequest.scriptType())
+              ? substituteForValidation(stepRequest.scriptContent())
+              : null;
       if ("SQL".equals(stepRequest.scriptType())) {
-        String substituted = substituteForValidation(stepRequest.scriptContent());
-        sqlStepIsQuery = validateAndJudgeQuery(substituted);
+        sqlStepIsQuery = validateAndJudgeQuery(sqlValidator, substituted);
         // 보안 등급(S2): 편집자가 볼 수 없는 데이터셋을 참조하는 스텝은 저장할 수 없다(스펙 §4.2 5행). 검증한 바로 그
         // 문자열을 판정한다(가드 계약). {{#N}} 더미는 판정에서 빠지고 실행 시점에 실제 테이블로 판정된다(판단 사항 4).
-        pipelineSecurityGate.checkStepSqlForSave(editorUserId, substituted);
+        sqlAccess = pipelineSecurityGate.checkStepSqlForSave(editorUserId, substituted);
       }
 
       // 출력 방식 검증 — 문자열로만 저장되던 값을 enum 으로 고정한다(알 수 없는 값이 REPLACE 로 조용히 폴백되던 경로 차단).
@@ -327,6 +340,23 @@ public class PipelineService {
         throw new IllegalArgumentException(
             "{{last_run_at}} 은 REPLACE 와 함께 쓸 수 없습니다(매 실행 출력이 변경분만 남습니다). MERGE 를 사용하세요: "
                 + stepRequest.name());
+      }
+      // REPLACE 가 비울 출력을 SQL 이 스스로 읽거나 고치는가(WD-426, 규칙은 OutputSelfReference — 실행 시점도 같은 판정으로 2차
+      // 방어한다). 새 스텝이거나 SQL·출력 방식·출력이 바뀐 스텝만 본다 — 규칙 전에 저장된 스텝이 그대로 남았다고 다른 스텝만 고친 저장까지
+      // 막으면 파이프라인을 고칠 수 없다(그대로 남은 스텝은 실행 시점 판정이 출력을 지우지 않고 실패시킨다).
+      if (sqlAccess != null
+          && ls == LoadStrategy.REPLACE
+          && !sameSelfReferenceInputs(storedStep, stepRequest, ls)) {
+        OutputSelfReference.Plan selfReference =
+            OutputSelfReference.plan(
+                sqlStepIsQuery,
+                tiberoBackend,
+                sqlAccess,
+                () -> sqlValidator.isUpdateOrDelete(substituted),
+                stepRequest.outputDatasetId());
+        if (selfReference.rejected()) {
+          throw new IllegalArgumentException(selfReference.message() + ": " + stepRequest.name());
+        }
       }
 
       if (ls == LoadStrategy.MERGE) {
@@ -357,7 +387,6 @@ public class PipelineService {
 
       // Save step — 기존 스텝이면 id 를 유지한 채 제자리 갱신하고(과거 실행 기록·러너 TEMP 연결 유지, WD-108), 새 스텝만 INSERT 한다.
       // 검증은 위에서 두 경우 모두 똑같이 끝났다.
-      Long existingStepId = existingStepIds != null ? existingStepIds.get(i) : null;
       Long stepId;
       if (existingStepId != null) {
         stepRepository.updateStep(pipelineId, existingStepId, stepRequest, i);
@@ -433,17 +462,45 @@ public class PipelineService {
   }
 
   /**
+   * 저장된 스텝이 WD-426 자기 출력 판정의 입력(스크립트 유형·SQL·출력 방식·출력)을 이번 요청과 똑같이 갖고 있는가. 같으면 그 판정 규칙이 생기기 전에 저장된
+   * 스텝이 그대로 남은 것이므로 저장에서 다시 막지 않는다(다른 스텝만 고친 저장이 막히지 않게) — 실행 시점 판정이 여전히 막는다.
+   *
+   * <p>출력은 저장값으로 비교한다: 자동 생성 스텝의 조회 응답은 러너 TEMP id 를 채워 주지만(coalesce) 요청은 같은 스텝의 소유 TEMP 를 null 로
+   * 정규화해 오므로(normalizeOwnedTempOutputs), 자동 생성이면 저장값을 null 로 본다.
+   *
+   * <p>출력 방식은 러너와 같은 해석({@link LoadStrategy#parse} — 대소문자 무시, 해석 불가면 REPLACE)으로 비교한다. 저장값에는 레거시
+   * 소문자({@code "replace"})가 남아 있을 수 있어 문자열로 비교하면 같은 방식을 "바뀜"으로 본다.
+   *
+   * @param stored 짝지은 기존 스텝(새 스텝이면 null — 늘 "바뀜")
+   * @param strategy 요청의 출력 방식(이미 해석한 값)
+   */
+  private static boolean sameSelfReferenceInputs(
+      PipelineStepResponse stored, PipelineStepRequest request, LoadStrategy strategy) {
+    if (stored == null) {
+      return false;
+    }
+    Long storedOutput = stored.outputAutoGenerated() ? null : stored.outputDatasetId();
+    LoadStrategy storedStrategy =
+        LoadStrategy.parse(stored.loadStrategy()).orElse(LoadStrategy.REPLACE);
+    return java.util.Objects.equals(stored.scriptType(), request.scriptType())
+        && java.util.Objects.equals(stored.scriptContent(), request.scriptContent())
+        && storedStrategy == strategy
+        && java.util.Objects.equals(storedOutput, request.outputDatasetId());
+  }
+
+  /**
    * SQL 을 검증하고, 실행 시점(PipelineAsyncRunner)이 내릴 것과 <b>똑같은</b> "조회인가" 판정을 돌려준다. 검증에 실패하면 {@link
    * UnsafeSqlException} 을 던진다(저장 거부) — 판정 불가를 DML 로 보고 넘어가는 경로가 없다.
    *
    * <p>판정은 러너와 같은 {@link SqlValidator#validate} 의 반환값(파싱한 AST 의 문장 종류)이다(WD-93). 두 시점의 판단이 갈리면 저장은
    * 조회로 통과했는데 실행은 DML 로 보고 다르게 도는(또는 상세 조회가 실제와 다른 전체 재생성 모드를 보여주는) 결함이 생긴다.
    *
+   * @param validator {@code pipelineDataSchema.validator()} — 러너(PipelineAsyncRunner)와 같은 검증기라
+   *     저장·실행 판정이 갈리지 않는다. 스텝 저장 루프는 한 번 꺼낸 것을 넘긴다(Tibero 는 꺼낼 때마다 새로 만든다)
    * @param substituted {@link #substituteStepReferencesForValidation} 을 거친 SQL — 러너도 치환한 문자열을 검증한다
    */
-  private boolean validateAndJudgeQuery(String substituted) {
-    // 러너(PipelineAsyncRunner)와 같은 PipelineDataSchema.validator() 라 저장·실행 판정이 갈리지 않는다.
-    return pipelineDataSchema.validator().validate(substituted) == SqlValidator.StatementKind.QUERY;
+  private static boolean validateAndJudgeQuery(SqlValidator validator, String substituted) {
+    return validator.validate(substituted) == SqlValidator.StatementKind.QUERY;
   }
 
   /**
@@ -452,7 +509,8 @@ public class PipelineService {
    */
   private boolean judgeQueryOrFalse(String scriptContent) {
     try {
-      return validateAndJudgeQuery(substituteForValidation(scriptContent));
+      return validateAndJudgeQuery(
+          pipelineDataSchema.validator(), substituteForValidation(scriptContent));
     } catch (UnsafeSqlException e) {
       return false;
     }
@@ -673,8 +731,7 @@ public class PipelineService {
       }
 
       // 5) 검증 + 제자리 갱신/새로 저장 + 입력·의존 재연결.
-      saveSteps(
-          id, steps, userId, previouslySavedOutputIds, previouslySavedInputIds, matchedStepIds);
+      saveSteps(id, steps, userId, previouslySavedOutputIds, previouslySavedInputIds, matchedSteps);
 
       // 6) 남은 스텝의 증분 책갈피 이월 규칙. 스텝 행이 그대로라 책갈피도 그대로 남아 있으므로 "버려야 할 때"만 되돌린다.
       //

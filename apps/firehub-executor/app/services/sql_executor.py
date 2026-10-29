@@ -13,6 +13,7 @@ from app.validators.sql_validator import (
     output_lock_key,
     validate,
     validate_pre_statement,
+    validate_pre_statement_pairing,
 )
 
 # 출력 테이블 단위 직렬화 잠금 문장(#731) — 트랜잭션 범위 advisory 잠금. 키는 선행 문장에 적힌 한정 이름("<스키마>"."<테이블>").
@@ -69,6 +70,8 @@ def execute_sql(
         validate(query)
         for stmt in pre_statements:
             validate_pre_statement(stmt)
+        # 잠금 전용 선행 문장과 자기 출력 다시 채우기 문장은 서로의 짝으로만 받는다(WD-426) — 형태 검사를 지난 뒤 조합을 본다.
+        validate_pre_statement_pairing(query, pre_statements)
     except SqlValidationError as exc:
         return _failed(str(exc), db_error=db_error_of(str(exc)))
 

@@ -1445,6 +1445,22 @@ public class SqlValidator {
   }
 
   /**
+   * 이미 있는 행을 고치는 문장(UPDATE·DELETE, WITH … 로 시작해도 본문 기준)인가 — INSERT·SELECT 는 false(WD-426).
+   *
+   * <p>{@link #referencedTables} 는 INSERT 대상과 UPDATE/DELETE 대상을 같은 쓰기 집합에 넣는다. 출력 비우기(REPLACE) 뒤에
+   * 도는 사용자 DML 이 출력을 INSERT 로 채우는 것은 정상이지만 UPDATE/DELETE 로 고치면 비워진 테이블을 고쳐 늘 0행이 되므로, 둘을 가를 때 쓴다.
+   * 파싱 실패는 {@link #referencedTables} 와 같이 UnsafeSqlException 이다.
+   *
+   * <p>최상위 문장만 본다 — CTE 안의 UPDATE/DELETE({@code WITH x AS (UPDATE …) …})는 JSqlParser 5.0 이 파싱하지 못해
+   * {@link #validate} 가 먼저 거부하므로 여기까지 오지 않는다(SqlValidatorReferencedTablesTest 가 고정). 파서가 그 구문을 읽기
+   * 시작하면 그 테스트가 깨져 이 판정도 중첩 DML 로 넓히라고 알린다.
+   */
+  public boolean isUpdateOrDelete(String sql) {
+    Statement statement = parseSingleStatement(sql);
+    return statement instanceof Update || statement instanceof Delete;
+  }
+
+  /**
    * 쓰기 대상 테이블 노드(동일성 집합) — INSERT/UPDATE/DELETE 대상과 SELECT INTO 대상. validate·unqualifiedTableNames·
    * referencedTables 가 공유한다: 이 노드들은 같은 이름의 CTE 가 스코프에 있어도 CTE 로 제외하지 않는다(PG 는 DML 대상을 CTE 로 해석하지
    * 않는다). 세 경로가 다른 규칙을 쓰면 검증은 통과하고 판정은 다른 테이블을 보는 틈이 생긴다.

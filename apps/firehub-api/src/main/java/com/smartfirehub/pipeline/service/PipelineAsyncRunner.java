@@ -526,10 +526,12 @@ public class PipelineAsyncRunner {
       // TEMP(source_pipeline_step_id =
       // 스텝 id)와 같으면 미지정과 똑같이 취급해, 실행마다 결과 열과 TEMP 스키마를 비교하고 다르면 다시 만든다(ensureStepTemp). 다른 스텝·
       // 다른 파이프라인의 TEMP 는 source_pipeline_step_id 가 달라 여기에 걸리지 않는다 — 그대로 명시 출력이다(WD-224 와 독립).
+      // 이 스텝의 기존 TEMP 는 처음 필요할 때 한 번만 찾는다 — 소유 판정·자기 출력 판정(WD-426)·TEMP 준비(ensureStepTemp)가 같은 결과를
+      // 쓰고, 필요 없는 스텝(출력 미지정 DML 등)은 찾지 않는다.
+      final Supplier<Optional<Long>> existingStepTemp =
+          once(() -> tempDatasetService.findExistingTempDataset(step.id()));
       final boolean ownedTempOutput =
-          outputDatasetId == null
-              || outputDatasetId.equals(
-                  tempDatasetService.findExistingTempDataset(step.id()).orElse(null));
+          outputDatasetId == null || outputDatasetId.equals(existingStepTemp.get().orElse(null));
 
       String outputTableName = null;
       if (outputDatasetId != null) {
@@ -651,9 +653,34 @@ public class PipelineAsyncRunner {
         // 실행 주체 자격은 이 스텝에서 한 번만 계산해 이 스텝의 모든 판정(입력·TEMP 삭제 전·출력)에 쓴다.
         PipelineSecurityGate.RunAs runAs = pipelineSecurityGate.runAs(userId);
         // 선언 입력(inputDatasetIds)도 전파 입력이다(스펙 §4.5) — 판정 문자열(sql)과 별개로 VIEW 판정 후 등급만 합친다.
+        // 사용자 SQL 만의 판정(sqlAccess)은 아래 자기 출력 판정(WD-426)이 따로 쓴다 — 선언 입력은 SQL 이 읽지 않으면 비워도 잃는 것이 없다.
+        SqlAccessResult sqlAccess = pipelineSecurityGate.checkStepSqlForRun(runAs, sql);
         SqlAccessResult access =
-            pipelineSecurityGate.mergeDeclaredInputs(
-                runAs, pipelineSecurityGate.checkStepSqlForRun(runAs, sql), step.inputDatasetIds());
+            pipelineSecurityGate.mergeDeclaredInputs(runAs, sqlAccess, step.inputDatasetIds());
+        // REPLACE 가 비울 출력을 사용자 SQL 이 스스로 읽거나 고치는가(WD-426, 판정 규칙은 OutputSelfReference) — 저장 검증의 2차
+        // 방어다(저장 뒤 출력 변경·{{#N}} 이 같은 출력을 가리킴·레거시 행). TEMP 준비·probe 보다 먼저 한 번만 판정해, 거부된 스텝은
+        // 아무것도 만들거나 지우지 않는다. 비울 출력은 명시 출력, 또는 소유 TEMP 로 가는 SELECT 면 아래 TEMP 준비가 재사용할 기존
+        // TEMP 다(다시 만들어도 같은 id — 없으면 새 빈 TEMP 라 읽을 것이 없다).
+        OutputSelfReference.Plan selfReference = OutputSelfReference.Plan.AS_IS;
+        if (strategy == LoadStrategy.REPLACE) {
+          Long clearTarget =
+              isSelect && ownedTempOutput ? existingStepTemp.get().orElse(null) : outputDatasetId;
+          String judgedSql = sql;
+          selfReference =
+              OutputSelfReference.plan(
+                  isSelect,
+                  dialect instanceof TiberoStepDialect,
+                  sqlAccess,
+                  () -> pipelineDataSchema.validator().isUpdateOrDelete(judgedSql),
+                  clearTarget);
+          if (selfReference.rejected()) {
+            throw new ScriptExecutionException(selfReference.message() + ".");
+          }
+        }
+        // 자기 출력 다시 채우기 — 비우기는 본 문장 안(PgStepDialect.wrapSelect),
+        // 선행 문장은 OutputClearStatement#lockOnly 다(PG 전용 — Tibero 는 위에서 거부된다).
+        boolean reloadFromOwnOutput =
+            selfReference == OutputSelfReference.Plan.RELOAD_FROM_OWN_OUTPUT;
         // 이번 실행에서 SQL 스텝 출력을 위해 임시 데이터셋을 자동 생성/재사용했는지 여부.
         // 예약어 컬럼명 별칭 처리(renameReservedColumn*)는 이 경로에서만 적용해야 한다 — 사용자가
         // 명시적으로 지정한 기존 데이터셋(outputDatasetId가 원래부터 있던 경우)은 실제로 "id"라는
@@ -698,16 +725,23 @@ public class PipelineAsyncRunner {
           // 증분 스텝이 변경분만 읽는 실행이면 열이 바뀐 TEMP 를 다시 만들지 않는다(WD-222) — 다시 만든 TEMP 는 비어 있는데 이번 SQL 은
           // 책갈피 이후 변경분만 채우고 책갈피까지 전진해, 그 전 행이 조용히 영영 빠진다. 전체 재생성 예약 뒤 실행하면(-infinity + 출력 비우기)
           // 정상으로 다시 채워진다 — 그 안내와 함께 실패시킨다.
+          // TEMP 자신을 읽는 실행(WD-426)도 같다 — SELF_READ_TEMP_SCHEMA_CHANGED_MESSAGE. 증분 스텝은 REPLACE 가
+          // 아니라 둘이 함께 오지 않는다.
+          String rebuildRefusal =
+              incrementalPartialRead
+                  ? INCREMENTAL_TEMP_SCHEMA_CHANGED_MESSAGE
+                  : reloadFromOwnOutput ? SELF_READ_TEMP_SCHEMA_CHANGED_MESSAGE : null;
           StepTemp temp =
               ensureStepTemp(
                   step,
+                  existingStepTemp.get(),
                   selectColumns,
                   pipelineId,
                   pipelineName,
                   userId,
                   runAs,
                   "",
-                  !incrementalPartialRead);
+                  rebuildRefusal);
           tempDatasetFresh = temp.fresh();
           tempRebuild = temp.rebuild();
           outputDatasetId = temp.datasetId();
@@ -744,8 +778,12 @@ public class PipelineAsyncRunner {
         if (strategy == LoadStrategy.REPLACE) {
           if (outputTableName != null) {
             // Tibero 는 같은 계약의 Tibero 판 비우기 문장 — db-executor 가 선행문 형식을 다시 검사하고 대상 테이블을 먼저 잠근 뒤 같은
-            // 트랜잭션에서 실행한다(#731/#735 와 같은 직렬화·원자성).
-            preStatements.add(dialect.outputClearStatement(outputTableName));
+            // 트랜잭션에서 실행한다(#731/#735 와 같은 직렬화·원자성). 자기 출력 다시 채우기는
+            // OutputClearStatement#lockOnly(WD-426).
+            preStatements.add(
+                reloadFromOwnOutput
+                    ? OutputClearStatement.lockOnly(outputTableName)
+                    : dialect.outputClearStatement(outputTableName));
           }
         }
 
@@ -826,7 +864,8 @@ public class PipelineAsyncRunner {
           if (probedColumns == null) {
             probedColumns = sqlColumnProbe.columnsWithTypes(sql);
           }
-          PgStepDialect.WrappedSelect wrapped = pgDialect.wrapSelect(sqlRun, probedColumns);
+          PgStepDialect.WrappedSelect wrapped =
+              pgDialect.wrapSelect(sqlRun, probedColumns, reloadFromOwnOutput);
 
           // 취소 체크포인트(WD-153) — SQL 실행 직전. 아직 출력에 아무것도 쓰지 않았다(REPLACE 비우기도 이 문장과 같은 트랜잭션이다).
           cancel.checkpoint(0, false);
@@ -895,7 +934,14 @@ public class PipelineAsyncRunner {
                     .toList();
             StepTemp pyTemp =
                 ensureStepTemp(
-                    step, pythonColumns, pipelineId, pipelineName, userId, pyRunAs, "Python ");
+                    step,
+                    existingStepTemp.get(),
+                    pythonColumns,
+                    pipelineId,
+                    pipelineName,
+                    userId,
+                    pyRunAs,
+                    "Python ");
             pyTempFresh = pyTemp.fresh();
             tempRebuild = pyTemp.rebuild();
             outputDatasetId = pyTemp.datasetId();
@@ -1093,7 +1139,14 @@ public class PipelineAsyncRunner {
           List<ColumnInfo> apiColumns = inferApiCallColumns(apiCallConfig);
           StepTemp apiTemp =
               ensureUnpropagatedStepTemp(
-                  step, apiColumns, pipelineId, pipelineName, userId, apiRunAs, "API_CALL ");
+                  step,
+                  existingStepTemp.get(),
+                  apiColumns,
+                  pipelineId,
+                  pipelineName,
+                  userId,
+                  apiRunAs,
+                  "API_CALL ");
           outputDatasetId = apiTemp.datasetId();
           tempRebuild = apiTemp.rebuild();
           outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
@@ -1246,7 +1299,14 @@ public class PipelineAsyncRunner {
           List<ColumnInfo> aiColumns = buildAiClassifyColumns(aiClassifyConfig);
           StepTemp temp =
               ensureStepTemp(
-                  step, aiColumns, pipelineId, pipelineName, userId, aiRunAs, "AI_CLASSIFY ");
+                  step,
+                  existingStepTemp.get(),
+                  aiColumns,
+                  pipelineId,
+                  pipelineName,
+                  userId,
+                  aiRunAs,
+                  "AI_CLASSIFY ");
           aiTempFresh = temp.fresh();
           tempRebuild = temp.rebuild();
           outputDatasetId = temp.datasetId();
@@ -1448,12 +1508,39 @@ public class PipelineAsyncRunner {
           + " 실행하세요.";
 
   /**
+   * 교체(REPLACE) SELECT 가 이 스텝의 러너 TEMP 자신을 읽는데 결과 열이 바뀐 실행의 실패 문구(WD-426). TEMP 를 새 열로 다시 만들면 SQL 이
+   * 다시 만든 빈 테이블을 읽어 기존 행이 모두 사라지므로, 다시 만들기 전에(아무것도 지우기 전에) 실패시키고 할 일을 안내한다.
+   */
+  static final String SELF_READ_TEMP_SCHEMA_CHANGED_MESSAGE =
+      "교체(REPLACE) 스텝의 SQL 이 이 스텝의 임시 출력 데이터셋 자신을 읽는데 결과 열이 바뀌어, 임시 데이터셋을 다시 만들어야 합니다. 다시 만든 빈"
+          + " 테이블을 읽으면 기존 행이 모두 사라지므로 실행하지 않았습니다(출력은 그대로입니다). 결과 열을 이전과 같게 두거나, 열을 바꾸는 동안에는 SQL"
+          + " 이 자기 출력을 읽지 않게 하거나, 새 열 구성의 출력 데이터셋을 따로 지정한 뒤 다시 실행하세요.";
+
+  /**
    * Tibero 결과 컬럼 이름을 메타데이터 이름으로 바꾼다 — 본문과 「왜」는 {@link
    * TiberoStepDialect#normalizeTiberoResultColumn} 으로 옮겼다(WD-231). 맞춤 계산도 방언으로 옮겼고, 기존 러너 테스트가 이
    * 이름을 직접 부르므로 위임만 남긴다.
    */
   static String normalizeTiberoResultColumn(String name) {
     return TiberoStepDialect.normalizeTiberoResultColumn(name);
+  }
+
+  /**
+   * 처음 부를 때 한 번만 계산하고 그 뒤로는 같은 값을 돌려준다 — 한 스텝 실행 안의 지역 값 전용(스레드 간 공유하지 않는다). 계산 결과는 null 이 아니어야
+   * 한다(null 이면 다음에 다시 계산한다).
+   */
+  private static <T> Supplier<T> once(Supplier<T> compute) {
+    return new Supplier<>() {
+      private T value;
+
+      @Override
+      public T get() {
+        if (value == null) {
+          value = compute.get();
+        }
+        return value;
+      }
+    };
   }
 
   /**
@@ -1471,36 +1558,42 @@ public class PipelineAsyncRunner {
    * TEMP 만 보므로, 여기서 막지 않으면 볼 수 없는 실행 주체(B)가 이전 실행 주체(A)의 결과 TEMP 를 통째로 지운다. 삭제·재생성 경로를 두 스텝 타입이 이 한
    * 곳으로 지나가게 해, 판정을 빠뜨린 복사본이 생기지 않게 한다. 사용자 SQL 을 실행하는 probe 는 여기서 부르지 않는다(호출자가 실행 주체 판정 뒤에 부른다).
    *
+   * @param existingTemp 이 스텝의 기존 러너 TEMP({@code executeStep} 이 한 번 찾은 결과 — 여기서 다시 찾지 않는다)
    * @param logLabel 로그 문구의 스텝 종류 접두("" 또는 "AI_CLASSIFY ")
    */
   private StepTemp ensureStepTemp(
       PipelineStepResponse step,
+      Optional<Long> existingTemp,
       List<ColumnInfo> columns,
       Long pipelineId,
       String pipelineName,
       Long userId,
       PipelineSecurityGate.RunAs runAs,
       String logLabel) {
-    return ensureStepTemp(step, columns, pipelineId, pipelineName, userId, runAs, logLabel, true);
+    return ensureStepTemp(
+        step, existingTemp, columns, pipelineId, pipelineName, userId, runAs, logLabel, null);
   }
 
   /**
-   * {@link #ensureStepTemp} 본체 — {@code allowRebuild=false} 면 열이 바뀐 TEMP 를 다시 만들지 않고, 아무것도 지우기 전에
-   * 전체 재생성 예약 안내로 실패한다(WD-222: 증분 스텝이 변경분만 읽는 실행에서 빈 TEMP 에 변경분만 채워지는 조용한 누락을 막는다).
+   * {@link #ensureStepTemp} 본체 — {@code rebuildRefusal} 이 있으면 열이 바뀐 TEMP 를 다시 만들지 않고, 아무것도 지우기 전에 그
+   * 안내로 실패한다. 다시 만든 빈 TEMP 가 조용한 누락이 되는 실행이 쓴다: 증분 스텝이 변경분만 읽는 실행(WD-222 — 빈 TEMP 에 변경분만 채워진다)과
+   * REPLACE SELECT 가 TEMP 자신을 읽는 실행(WD-426 — 빈 TEMP 를 읽는다).
+   *
+   * @param rebuildRefusal 다시 만들기를 거부할 때의 실패 문구(null 이면 다시 만든다)
    */
   private StepTemp ensureStepTemp(
       PipelineStepResponse step,
+      Optional<Long> existingTemp,
       List<ColumnInfo> columns,
       Long pipelineId,
       String pipelineName,
       Long userId,
       PipelineSecurityGate.RunAs runAs,
       String logLabel,
-      boolean allowRebuild) {
+      String rebuildRefusal) {
     Long stepId = step.id();
-    Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
-    if (existingDatasetId.isPresent()) {
-      Long dsId = existingDatasetId.get();
+    if (existingTemp.isPresent()) {
+      Long dsId = existingTemp.get();
       // 크래시로 남은 재생성 보관본을 먼저 맞춘다(WD-256) — Tibero 는 재생성 DDL 이 PG 트랜잭션 밖이라, 이전 실행이 마무리 전에 멈췄으면 메타와
       // 물리 테이블이 어긋난 채 남을 수 있다. 맞춘 뒤의 메타로 스키마를 비교해야 재사용·재생성 판단이 맞다. PG 는 아무것도 하지 않는다.
       tempDatasetService.reconcileTempDataset(dsId);
@@ -1508,8 +1601,8 @@ public class PipelineAsyncRunner {
         log.info("Reusing existing temp dataset {} for {}step {}", dsId, logLabel, step.name());
         return new StepTemp(dsId, false, null);
       }
-      if (!allowRebuild) {
-        throw new ScriptExecutionException(INCREMENTAL_TEMP_SCHEMA_CHANGED_MESSAGE);
+      if (rebuildRefusal != null) {
+        throw new ScriptExecutionException(rebuildRefusal);
       }
       // 새 컬럼을 옛 TEMP 를 비우기 전에 검증한다 — 비운 뒤 생성이 실패하면 이전 출력이 사라진다.
       tempDatasetService.validateColumnsForNewTemp(columns);
@@ -1547,6 +1640,7 @@ public class PipelineAsyncRunner {
    */
   private StepTemp ensureUnpropagatedStepTemp(
       PipelineStepResponse step,
+      Optional<Long> existingTemp,
       List<ColumnInfo> columns,
       Long pipelineId,
       String pipelineName,
@@ -1554,7 +1648,8 @@ public class PipelineAsyncRunner {
       PipelineSecurityGate.RunAs runAs,
       String logLabel) {
     StepTemp temp =
-        ensureStepTemp(step, columns, pipelineId, pipelineName, userId, runAs, logLabel);
+        ensureStepTemp(
+            step, existingTemp, columns, pipelineId, pipelineName, userId, runAs, logLabel);
     if (!temp.fresh()) {
       pipelineSecurityGate.requireOutputVisible(temp.datasetId(), runAs);
     }

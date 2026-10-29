@@ -16,7 +16,6 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * PostgreSQL 테넌트의 스텝 실행 방언(WD-231). 러너가 예전에 {@code tiberoTenant} 불리언으로 가르던 PG 쪽 분기 본문을 그대로 옮겼다 — 동작
@@ -60,10 +59,16 @@ public class PgStepDialect implements StepDialect {
    * SELECT 자동 적재: 결과 컬럼을 출력 데이터셋 컬럼과 맞춘 뒤 {@code INSERT INTO ... SELECT}(또는 MERGE)로 감싼다. 싱크(탐침·실행)는
    * 부르지 않는다 — 탐침 결과는 러너가 판정 메서드 안에서 얻어 넘긴다.
    *
+   * <p>{@code reloadFromOwnOutput} 이면 비우기를 본 문장 안에 넣어 사용자 SELECT 가 비우기 전 출력을 읽게 한다(WD-426, {@link
+   * OutputClearStatement#reloadFromOwnOutput}) — 러너는 그때 선행 문장으로 {@link
+   * OutputClearStatement#lockOnly} 만 보낸다. 컬럼 매칭·TEMP 예약어 별칭은 두 형태가 같고 마지막 문장 조립만 갈린다.
+   *
    * @param run 실행 입력(sql·출력 테이블/데이터셋·MERGE 여부·자동 생성 TEMP 여부를 쓴다)
    * @param probedColumns 러너가 {@code SqlColumnProbe} 로 얻은 결과 컬럼(null 아님)
+   * @param reloadFromOwnOutput REPLACE 이고 사용자 SELECT 가 출력 자신을 읽는가(MERGE 와 함께 오지 않는다)
    */
-  public WrappedSelect wrapSelect(SqlStepRun run, List<ColumnInfo> probedColumns) {
+  public WrappedSelect wrapSelect(
+      SqlStepRun run, List<ColumnInfo> probedColumns, boolean reloadFromOwnOutput) {
     // 이번 실행에서 임시 데이터셋을 자동 생성/재사용한 경우에만 TEMP 생성 때와 동일한 규칙으로 예약어
     // 컬럼명을 별칭 처리한다 — 임시 데이터셋에 실제로 저장된 컬럼명(id_1 등)과 정확히
     // 매칭되어야 하기 때문이다. 사용자가 직접 지정한 기존 출력 데이터셋에는 이 별칭 처리를
@@ -113,8 +118,14 @@ public class PgStepDialect implements StepDialect {
               DataSchema.qualify(outputTableName), matchedColumns, mergePkColumns, run.sql()),
           mergePkColumns);
     }
-    String columnList =
-        matchedColumns.stream().map(col -> "\"" + col + "\"").collect(Collectors.joining(", "));
+    if (reloadFromOwnOutput) {
+      // 자기 출력을 읽는 REPLACE — 비우기·읽기·적재를 한 스냅숏의 한 문장으로(형태·이유는 OutputClearStatement 가 문서화한다).
+      return new WrappedSelect(
+          OutputClearStatement.reloadFromOwnOutput(outputTableName, matchedColumns, run.sql()),
+          null);
+    }
+    // 컬럼 인용은 MERGE·자기 출력 다시 채우기와 같은 한 규칙(큰따옴표 이중화)을 쓴다.
+    String columnList = SqlOutputColumns.quotedColumnList(matchedColumns);
     return new WrappedSelect(
         "INSERT INTO " + DataSchema.qualify(outputTableName) + " (" + columnList + ") " + run.sql(),
         null);
