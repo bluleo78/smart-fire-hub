@@ -1,4 +1,6 @@
-import { createMessage } from '../../factories/ai-insight.factory';
+import type { Page } from '@playwright/test';
+
+import { createJobExecution, createMessage } from '../../factories/ai-insight.factory';
 import { setupNotificationPanelMocks } from '../../fixtures/ai-insight.fixture';
 import { setupJobListMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
@@ -115,5 +117,89 @@ test.describe('AI 알림 패널', () => {
     await expect(page.getByText('내용이 없습니다.')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '리포트 보기' })).toHaveCount(0);
     await expect(page.getByTestId('report-owner-only-notice')).toHaveCount(0);
+  });
+  /**
+   * WD-350: 리포트 창은 포털로 패널 밖(body 아래)에 그려진다. 예전에는 창 안의 mousedown 을 패널 바깥 클릭으로 봐
+   * 패널과 창이 함께 닫혀, 마우스로 누른 PDF·새 탭·실행 상세 보기가 실행되지 않았다(키보드 Enter 만 동작).
+   */
+  test.describe('알림 패널에서 연 리포트 창 — 마우스 조작 (WD-350)', () => {
+    async function openReportModal(page: Page) {
+      await setupNotificationPanelMocks(page, [
+        createMessage({ jobId: 1, executionId: 3, title: '마크다운 리포트', read: false }),
+      ]);
+      await setupJobListMocks(page);
+      await mockApi(
+        page,
+        'GET',
+        '/api/v1/proactive/jobs/1/executions/3',
+        createJobExecution({ id: 3, jobId: 1, status: 'COMPLETED', result: { summary: '이번 주 화재 출동 12건' } }),
+      );
+      await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/3/html', null);
+
+      await page.goto('/ai-insights/jobs');
+      await page.getByRole('button', { name: /AI 인사이트 알림/ }).click();
+      await page.getByRole('button', { name: /마크다운 리포트/ }).click();
+      await page.getByRole('button', { name: '리포트 보기' }).click();
+      const modal = page.getByRole('dialog', { name: /리포트 #3/ });
+      await expect(modal.getByText('이번 주 화재 출동 12건')).toBeVisible();
+      return modal;
+    }
+
+    test('창 안 여백을 눌러도 창과 알림 패널이 그대로 남는다', async ({ authenticatedPage: page }) => {
+      const modal = await openReportModal(page);
+      await modal.getByText('이번 주 화재 출동 12건').click();
+
+      await expect(modal).toBeVisible();
+      // 리포트 창이 열린 동안 패널은 aria-hidden(모달 밖)이라 역할로 찾지 않고 화면에 남았는지만 본다
+      await expect(page.locator('[role="dialog"][aria-label="AI 인사이트 알림"]')).toBeVisible();
+    });
+
+    test('창 밖(패널도 아닌 곳)을 누르면 알림 패널이 닫힌다 — 바깥 클릭 닫기는 그대로', async ({ authenticatedPage: page }) => {
+      await setupNotificationPanelMocks(page, [createMessage({ jobId: 1, executionId: 3, title: '마크다운 리포트', read: false })]);
+      await setupJobListMocks(page);
+      await page.goto('/ai-insights/jobs');
+      await page.getByRole('button', { name: /AI 인사이트 알림/ }).click();
+      const panel = page.getByRole('dialog', { name: 'AI 인사이트 알림' });
+      await expect(panel).toBeVisible();
+
+      await page.mouse.click(5, 400);
+
+      await expect(panel).toHaveCount(0);
+    });
+
+    test('「PDF 다운로드」를 마우스로 누르면 PDF 를 요청하고 창은 열린 채다', async ({ authenticatedPage: page }) => {
+      const modal = await openReportModal(page);
+      const pdf = await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/3/pdf', '%PDF-1.4', {
+        capture: true,
+        headers: { 'Content-Type': 'application/pdf' },
+      });
+      const download = page.waitForEvent('download');
+
+      await modal.getByRole('button', { name: 'PDF 다운로드' }).click();
+
+      // 요청만이 아니라 실제 내려받기까지 일어난다
+      expect((await download).suggestedFilename()).toBe('report-3.pdf');
+      expect(pdf.requests).toHaveLength(1);
+      await expect(modal).toBeVisible();
+    });
+
+    test('「새 탭에서 열기」를 마우스로 누르면 리포트 뷰어가 새 탭으로 열린다', async ({ authenticatedPage: page }) => {
+      const modal = await openReportModal(page);
+      const popup = page.context().waitForEvent('page');
+
+      await modal.getByRole('link', { name: '새 탭에서 열기' }).click();
+
+      const tab = await popup;
+      expect(new URL(tab.url()).pathname).toBe('/ai-insights/jobs/1/executions/3/report');
+      await tab.close();
+    });
+
+    test('「실행 상세 보기」를 마우스로 누르면 실행 상세로 이동한다', async ({ authenticatedPage: page }) => {
+      const modal = await openReportModal(page);
+
+      await modal.getByRole('button', { name: /실행 상세 보기/ }).click();
+
+      await expect(page).toHaveURL(/\/ai-insights\/jobs\/1\/executions\/3$/);
+    });
   });
 });

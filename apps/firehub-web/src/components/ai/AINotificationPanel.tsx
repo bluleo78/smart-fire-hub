@@ -273,7 +273,13 @@ interface AINotificationPanelProps {
 export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelProps) {
   const [visible, setVisible] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<ProactiveMessage | null>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
+  /**
+   * 이번 mousedown 이 패널의 React 트리 안에서 났는지 — 리포트 창(Radix Dialog)은 포털로 body 아래에 그려져
+   * DOM 상 패널 밖이라 contains 로는 바깥 클릭이 된다. 그러면 창 안 버튼의 mousedown 에 패널과 창이 함께
+   * 언마운트돼 뒤이은 click(PDF·새 탭·상세 보기)이 실행되지 않았다(WD-350). React 합성 이벤트는 포털을 거쳐
+   * 패널로 전파되므로, 패널 루트의 캡처 핸들러가 먼저 표시하고 document 리스너가 그 표시를 본다.
+   */
+  const pointerInsideRef = useRef(false);
 
   // #351: 한 페이지 크기만큼씩 늘려가며 더 불러온다. 예전에는 50건 고정이라
   // 미읽음이 50건을 넘으면 나머지에 도달할 UI 경로가 아예 없었다.
@@ -327,10 +333,10 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
 
   // Close on outside click
   useEffect(() => {
-    function handleMouseDown(e: MouseEvent) {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        onClose();
-      }
+    function handleMouseDown() {
+      const inside = pointerInsideRef.current;
+      pointerInsideRef.current = false;
+      if (!inside) onClose();
     }
     document.addEventListener('mousedown', handleMouseDown);
     return () => document.removeEventListener('mousedown', handleMouseDown);
@@ -347,7 +353,9 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
 
   return (
     <div
-      ref={panelRef}
+      onMouseDownCapture={() => {
+        pointerInsideRef.current = true;
+      }}
       role="dialog"
       aria-label="AI 인사이트 알림"
       aria-modal="false"
