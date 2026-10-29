@@ -42,6 +42,13 @@ export function MapView({ className, onMapReady }: MapViewProps) {
       if (onMapReady) onMapReady(map);
     });
 
+    // 현재 지도 중심을 DOM data attribute 로 노출 — 데이터 범위 맞춤(WD-348)을 E2E 가 확인하는 신호(data-map-style 과 같은 방식)
+    const container = containerRef.current;
+    map.on('moveend', () => {
+      const { lng, lat } = map.getCenter();
+      container.dataset.mapCenter = `${lng.toFixed(2)},${lat.toFixed(2)}`;
+    });
+
     mapRef.current = map;
 
     // ResizeObserver for responsive layout

@@ -3,6 +3,8 @@ import { useEffect } from 'react';
 
 import type { GeoJsonFeatureCollection } from '@/types/dataset';
 
+import { fitMapToData } from './fit-to-data';
+
 /**
  * maplibre native heatmap layer 마운트 컴포넌트.
  *
@@ -86,12 +88,14 @@ export function HeatmapLayer({ map, data, weightProperty }: HeatmapLayerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map]);
 
-  // data 변경 시 source 만 갱신
+  // data 변경 시 source 를 갱신하고 지도를 데이터 범위로 맞춘다 — 점 모드(GeoJsonLayer)와 같은 동작(WD-348).
+  // 맞추지 않으면 기본 위치(서울)에 머물러, 서울 밖 데이터는 행이 있는데도 빈 지도로 보였다.
   useEffect(() => {
     const src = map.getSource(SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     if (src && typeof src.setData === 'function') {
       src.setData(data as never);
     }
+    fitMapToData(map, data);
   }, [map, data]);
 
   // weightProperty 변경 시 paint 만 갱신
