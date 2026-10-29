@@ -262,4 +262,45 @@ test.describe('플랫폼 감사 로그 (WD-4)', () => {
     await expect(page.getByRole('heading', { name: '감사 로그' })).toBeVisible(); // ProtectedRoute deniedTitle
     await expect(page.getByText('이 작업을 수행할 권한이 없습니다.')).toBeVisible();
   });
+  test('계정 사건 행(WD-290): 로그인 실패·계정 잠금·비밀번호 변경이 한글 라벨로 보이고 필터로 조회된다', async ({ authenticatedPage: page }) => {
+    // 워크스페이스가 하나로 정해지지 않는 계정(없는 아이디 포함)의 사건은 테넌트 없는 행이라 운영자 콘솔에 남는다.
+    const capture = await mockApi(page, 'GET', PATH, createAuditPage([
+      createAuditLog({
+        id: 801,
+        username: 'ghost@example.com',
+        actionType: 'LOGIN',
+        resource: 'auth',
+        description: '로그인 실패 — 없는 아이디',
+        result: 'FAILURE',
+        metadata: { reason: 'UNKNOWN_USER' },
+      }),
+      createAuditLog({
+        id: 802,
+        username: 'multi@example.com',
+        actionType: 'ACCOUNT_LOCKED',
+        resource: 'auth',
+        description: '로그인 5회 연속 실패로 계정 잠금',
+      }),
+      createAuditLog({
+        id: 803,
+        username: 'changer@example.com',
+        actionType: 'PASSWORD_CHANGE',
+        resource: 'user',
+        description: '비밀번호 변경',
+      }),
+    ]), { capture: true });
+    await page.goto('/audit-logs');
+
+    const rowOf = (text: string) =>
+      page.getByRole('table', { name: '플랫폼 감사 로그' }).getByRole('row').filter({ hasText: text });
+    await expect(rowOf('로그인 실패 — 없는 아이디').getByRole('cell').nth(2)).toHaveText('로그인');
+    await expect(rowOf('계정 잠금').getByRole('cell').nth(2)).toHaveText('계정 잠금');
+    await expect(rowOf('changer@example.com').getByRole('cell').nth(2)).toHaveText('비밀번호 변경');
+    await expect(page.getByText('ACCOUNT_LOCKED')).toHaveCount(0);
+    await expect(page.getByText('PASSWORD_CHANGE')).toHaveCount(0);
+
+    await page.getByRole('combobox', { name: '액션' }).click();
+    await page.getByRole('option', { name: '계정 잠금' }).click();
+    await expect.poll(() => capture.requests.at(-1)?.searchParams.get('actionType')).toBe('ACCOUNT_LOCKED');
+  });
 });

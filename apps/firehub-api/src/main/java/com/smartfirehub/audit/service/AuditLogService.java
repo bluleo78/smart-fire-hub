@@ -42,18 +42,34 @@ public class AuditLogService {
       }
     }
 
+    // 컬럼 길이를 넘는 값은 잘라 넣는다(WD-290) — 인증 없이 들어오는 값(로그인 실패의 아이디, X-Forwarded-For)도 감사에 실리므로,
+    // 길이 초과로 INSERT 가 실패해 요청 자체가 500 으로 바뀌지 않게 한다.
     return auditLogRepository.save(
         userId,
-        username,
+        truncate(username, USERNAME_MAX),
         actionType,
         resource,
-        resourceId,
+        truncate(resourceId, RESOURCE_ID_MAX),
         description,
-        ipAddress,
+        truncate(ipAddress, IP_ADDRESS_MAX),
         userAgent,
         result,
         errorMessage,
         metadataJsonb);
+  }
+
+  /** audit_log.username 길이(VARCHAR(50)). */
+  public static final int USERNAME_MAX = 50;
+
+  /** audit_log.resource_id 길이(VARCHAR(100)). */
+  private static final int RESOURCE_ID_MAX = 100;
+
+  /** audit_log.ip_address 길이(VARCHAR(45)). */
+  private static final int IP_ADDRESS_MAX = 45;
+
+  /** 감사 컬럼 길이에 맞춰 자른다(null 은 그대로). */
+  public static String truncate(String value, int max) {
+    return value == null || value.length() <= max ? value : value.substring(0, max);
   }
 
   @Transactional(readOnly = true)
