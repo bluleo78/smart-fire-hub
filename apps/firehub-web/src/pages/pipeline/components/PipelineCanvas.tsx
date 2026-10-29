@@ -7,13 +7,13 @@ import {
   MarkerType,
   type NodeMouseHandler,
   type OnConnect,
-  type OnEdgesDelete,
+  type OnEdgesChange,
   type OnNodeDrag,
   ReactFlow,
 } from '@xyflow/react';
 import { LayoutGrid, Pencil,Plus } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import { useCallback,useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import type { ExecutionDetailResponse } from '@/types/pipeline';
@@ -22,6 +22,14 @@ import type { EditorAction,PipelineEditorState } from '../hooks/usePipelineEdito
 import { findStepExecution } from '../utils/step-execution';
 import { AddStepEdge } from './AddStepEdge';
 import { StepNode, type StepNodeData, type StepNodeType } from './StepNode';
+
+/** 선택된 연결선 id 와, 그 선택을 만든 때의 steps·모드(이것이 바뀌면 선택은 무효) */
+interface EdgeSelection {
+  steps: PipelineEditorState['steps'];
+  readOnly: boolean;
+  ids: ReadonlySet<string>;
+}
+const NO_EDGES: ReadonlySet<string> = new Set();
 
 interface PipelineCanvasProps {
   state: PipelineEditorState;
@@ -91,6 +99,44 @@ export function PipelineCanvas({
     })),
   [state.steps, state.selectedStepId, state.validationErrors, outgoingSet, executionData, readOnly, dispatch]);
 
+  /**
+   * 선택된 연결선 — 엣지를 state.steps 에서 매 렌더 새로 만들기 때문에 React Flow 의 선택 변경을
+   * 여기서 들고 있어야 선택이 유지된다. 선택이 없으면 Backspace·Delete 로 지울 대상도 없다(WD-346).
+   * 선택은 그때의 steps 에 묶어 둔다 — 연결을 끊거나 스텝을 바꾸면 steps 가 새로 만들어져 선택이 저절로 풀리므로,
+   * 같은 id 의 연결을 다시 이었을 때 옛 선택이 살아나 다음 Delete 에 지워지는 일이 없다.
+   */
+  const [edgeSelection, setEdgeSelection] = useState<EdgeSelection>({ steps: state.steps, readOnly, ids: NO_EDGES });
+  /** 지금 steps·모드에서 만든 선택만 살아 있다 — 끊기·스텝 변경·모드 전환 뒤의 옛 선택은 버린다 */
+  const liveIds = (sel: EdgeSelection) =>
+    !readOnly && sel.steps === state.steps && sel.readOnly === readOnly ? sel.ids : NO_EDGES;
+  const selectedEdgeIds = liveIds(edgeSelection);
+
+  // 이미 비어 있으면 그대로 둬 엣지를 다시 만들지 않는다(노드·빈 곳 클릭마다 불린다)
+  const clearEdgeSelection = () => {
+    if (selectedEdgeIds.size > 0) setEdgeSelection({ steps: state.steps, readOnly, ids: NO_EDGES });
+  };
+
+  const onEdgesChange: OnEdgesChange = (changes) => {
+    const selectChanges = changes.filter((c) => c.type === 'select');
+    if (selectChanges.length === 0) return;
+    setEdgeSelection((prev) => {
+      const ids = new Set(liveIds(prev));
+      for (const c of selectChanges) {
+        if (c.selected) ids.add(c.id);
+        else ids.delete(c.id);
+      }
+      return { steps: state.steps, readOnly, ids };
+    });
+  };
+
+  /** 연결 끊기 — 연결선의 「연결 끊기」 버튼과 키보드 삭제가 같은 동작을 쓴다 */
+  const onRemoveEdge = useCallback(
+    (sourceId: string, targetId: string) => {
+      dispatch({ type: 'REMOVE_EDGE', payload: { sourceTempId: sourceId, targetTempId: targetId } });
+    },
+    [dispatch],
+  );
+
   const onInsertBetween = useCallback(
     (sourceId: string, targetId: string) => {
       dispatch({ type: 'INSERT_STEP_BETWEEN', payload: { sourceTempId: sourceId, targetTempId: targetId } });
@@ -105,7 +151,8 @@ export function PipelineCanvas({
         source: depTempId,
         target: step.tempId,
         type: 'addStep',
-        data: { readOnly, onInsertBetween },
+        data: { readOnly, onInsertBetween, onRemoveEdge },
+        selected: selectedEdgeIds.has(`${depTempId}-${step.tempId}`),
         animated:
           findStepExecution(
             executionData?.stepExecutions,
@@ -113,10 +160,11 @@ export function PipelineCanvas({
           )?.status === 'RUNNING',
       })),
     ),
-  [state.steps, executionData, readOnly, onInsertBetween]);
+  [state.steps, executionData, readOnly, onInsertBetween, onRemoveEdge, selectedEdgeIds]);
 
   const onNodeClick: NodeMouseHandler = (_event, node) => {
     // SELECT_STEP is allowed in readOnly mode (non-destructive, enables ExecutionStepPanel)
+    clearEdgeSelection();
     dispatch({ type: 'SELECT_STEP', payload: { tempId: node.id } });
   };
 
@@ -137,14 +185,17 @@ export function PipelineCanvas({
     });
   };
 
-  const onEdgesDelete: OnEdgesDelete = (deletedEdges) => {
-    if (readOnly) return;
-    for (const edge of deletedEdges) {
-      dispatch({
-        type: 'REMOVE_EDGE',
-        payload: { sourceTempId: edge.source, targetTempId: edge.target },
-      });
-    }
+  /**
+   * 선택된 연결선을 Backspace·Delete 로 끊는다. React Flow 의 deleteKeyCode 는 문서 전체 키를 들어
+   * 설정 패널의 버튼에 포커스가 있을 때도 연결이 지워지므로, 캔버스 안에서 누른 키만 처리한다.
+   */
+  const handleCanvasKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (readOnly || (e.key !== 'Backspace' && e.key !== 'Delete')) return;
+    if ((e.target as HTMLElement).closest('input, textarea, [contenteditable="true"]')) return;
+    const targets = edges.filter((edge) => edge.selected);
+    if (targets.length === 0) return;
+    e.preventDefault();
+    for (const edge of targets) onRemoveEdge(edge.source, edge.target);
   };
 
   const handleAddStep = () => {
@@ -183,7 +234,7 @@ export function PipelineCanvas({
   }
 
   return (
-    <div className="relative h-full w-full [&_.react-flow]:text-sm">
+    <div className="relative h-full w-full [&_.react-flow]:text-sm" onKeyDown={handleCanvasKeyDown}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -193,8 +244,12 @@ export function PipelineCanvas({
         onNodeClick={onNodeClick}
         onNodeDragStop={onNodeDragStop}
         onConnect={onConnect}
-        onEdgesDelete={onEdgesDelete}
-        onPaneClick={() => dispatch({ type: 'SELECT_STEP', payload: { tempId: null } })}
+        onEdgesChange={onEdgesChange}
+        deleteKeyCode={null}
+        onPaneClick={() => {
+          clearEdgeSelection();
+          dispatch({ type: 'SELECT_STEP', payload: { tempId: null } });
+        }}
         nodesDraggable={!readOnly}
         nodesConnectable={!readOnly}
         elementsSelectable={!readOnly}
