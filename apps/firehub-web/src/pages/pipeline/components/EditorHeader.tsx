@@ -84,7 +84,10 @@ export function EditorHeader({
   }
 
   return (
-    <header className="h-14 border-b flex items-center px-4 gap-3">
+    // 모바일(375~430px)에서도 버튼이 화면 안에 들어오게 한다(WD-342) — 바깥 편집기 영역이 overflow-hidden 이라
+    // 머리글이 넘치면 「저장」·「수정」이 잘려 누를 수 없었다. 좁은 화면에서는 이름 칸이 줄어들고 버튼은 아이콘만 보인다
+    // (글자는 sr-only 로 남겨 스크린리더·접근 이름은 그대로).
+    <header className="h-14 border-b flex items-center px-2 gap-2 sm:px-4 sm:gap-3">
       {/* Back button */}
       <Link to="/pipelines">
         <Button variant="ghost" size="icon" aria-label="파이프라인 목록으로">
@@ -93,9 +96,9 @@ export function EditorHeader({
       </Link>
 
       {/* Pipeline name */}
-      <div className="flex flex-col justify-center">
+      <div className="flex min-w-0 flex-col justify-center">
         {readOnly ? (
-          <span className="font-semibold text-lg min-w-[200px] max-w-[400px] truncate">
+          <span className="font-semibold text-lg min-w-0 sm:min-w-[200px] max-w-[400px] truncate">
             {state.name || '파이프라인 이름'}
           </span>
         ) : (
@@ -112,7 +115,7 @@ export function EditorHeader({
             }}
             placeholder="파이프라인 이름"
             maxLength={100}
-            className="font-semibold text-lg border-transparent hover:border-input focus:border-input min-w-[200px] max-w-[400px] h-8 px-2"
+            className="font-semibold text-lg border-transparent hover:border-input focus:border-input min-w-0 sm:min-w-[200px] max-w-[400px] h-8 px-2"
           />
         )}
         {state.isDirty && (
@@ -138,7 +141,7 @@ export function EditorHeader({
           aria-label="같은 입력으로 다시 실행"
         >
           <RotateCcw className="h-4 w-4" />
-          재실행
+          <span className="sr-only sm:not-sr-only">재실행</span>
         </Button>
       )}
 
@@ -154,7 +157,9 @@ export function EditorHeader({
           onClick={onCancelExecution}
         >
           <Ban className="h-4 w-4" />
-          {cancelState === 'requested' ? '취소 요청됨' : isCancelling ? '취소 중…' : '실행 취소'}
+          <span className="sr-only sm:not-sr-only">
+            {cancelState === 'requested' ? '취소 요청됨' : isCancelling ? '취소 중…' : '실행 취소'}
+          </span>
         </Button>
       )}
 
@@ -170,7 +175,7 @@ export function EditorHeader({
                   onClick={handleExecuteClick}
                 >
                   <Play className="h-4 w-4" />
-                  실행
+                  <span className="sr-only sm:not-sr-only">실행</span>
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
@@ -195,7 +200,7 @@ export function EditorHeader({
               onClick={onExecute}
             >
               <Play className="h-4 w-4" />
-              실행
+              <span className="sr-only sm:not-sr-only">실행</span>
             </Button>
           )}
         </>
@@ -205,7 +210,7 @@ export function EditorHeader({
       {!isEditing && !isExecutionMode && pipelineId !== null && canWritePipeline && (
         <Button variant="outline" onClick={onEdit}>
           <Pencil className="h-4 w-4" />
-          수정
+          <span className="sr-only sm:not-sr-only">수정</span>
         </Button>
       )}
 
@@ -218,14 +223,14 @@ export function EditorHeader({
             disabled={isSaving}
           >
             <X className="h-4 w-4" />
-            취소
+            <span className="sr-only sm:not-sr-only">취소</span>
           </Button>
           <Button
             onClick={onSave}
             disabled={!state.isDirty || isSaving}
           >
             <Save className="h-4 w-4" />
-            저장
+            <span className="sr-only sm:not-sr-only">저장</span>
           </Button>
         </>
       )}
