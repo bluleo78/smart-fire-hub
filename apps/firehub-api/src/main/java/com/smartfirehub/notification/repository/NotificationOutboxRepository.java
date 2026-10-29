@@ -79,8 +79,16 @@ public interface NotificationOutboxRepository {
   /** 관측 — olderThan 보다 오래된 PENDING 행 목록 (admin stuck 조회). 최대 200건. */
   List<NotificationOutboxRow> findStuckPending(Instant olderThan);
 
-  /** 관리자 수동 재투입. PENDING으로 되돌리고 attempt_count=0, next_attempt_at=now. */
-  void requeueForRetry(long id);
+  /**
+   * 관리자 수동 재투입. PENDING으로 되돌리고 next_attempt_at=now. attempt_count 는 영구 실패 행만 0 으로 되돌린다(대기 행은 남은 시도
+   * 횟수를 그대로 둔다 — 되돌릴 때마다 0 이면 최대 시도 제한이 풀린다).
+   *
+   * <p>영구 실패(PERMANENT_FAILURE)와 묶인 대기(PENDING) 행만 되돌린다(WD-433). 이미 보낸(SENT)·취소한(CANCELLED) 알림을
+   * 되돌리면 같은 알림이 한 번 더 나가고, 보내는 중(SENDING) 행을 되돌리면 워커가 보내는 동안 다른 워커가 또 가져가 두 번 나갈 수 있다.
+   *
+   * @return 되돌린 행 수(0 이면 없는 id, 다른 테넌트의 행, 또는 되돌릴 수 없는 상태)
+   */
+  int requeueForRetry(long id);
 
   /** SENT 행 중 cutoff 이전을 삭제. 반환=삭제 행 수. */
   int deleteSentOlderThan(Instant cutoff);

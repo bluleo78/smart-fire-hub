@@ -8,6 +8,8 @@ import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
@@ -31,6 +33,9 @@ class NotificationOutboxRepositoryIntegrationTest extends IntegrationTestBase {
   @Autowired private DSLContext dsl;
 
   private long tenantId;
+
+  /** 재투입 시험에서 id → 상관 id (리포지토리에 id 조회가 없어 상관 id 로 다시 읽는다). */
+  private final Map<Long, UUID> corrById = new HashMap<>();
 
   @BeforeEach
   void createScratchTenant() {
@@ -159,6 +164,84 @@ class NotificationOutboxRepositoryIntegrationTest extends IntegrationTestBase {
     int reclaimed = repo.reclaimZombies(Instant.now().plusSeconds(60)); // 강제 cutoff 미래
     assertThat(reclaimed).isGreaterThanOrEqualTo(1);
     assertThat(repo.findByCorrelation(corr).get(0).status()).isEqualTo("PENDING");
+  }
+
+  /**
+   * WD-433: 수동 재투입은 영구 실패·대기 행만 되돌린다. 이미 보낸(SENT)·취소한(CANCELLED) 행을 되돌리면 같은 알림이 한 번 더 나가고, 보내는
+   * 중(SENDING) 행을 되돌리면 두 워커가 같은 행을 보낼 수 있다 — 그런 행은 0행이고 상태가 그대로다.
+   */
+  @Test
+  void requeueForRetry_onlyPermanentFailureOrPending() {
+    long failedId = insertRow("failed");
+    repo.markPermanentFailure(failedId, "TEST", "boom");
+
+    long sentId = insertRow("sent");
+    repo.markSent(sentId, "ext-1");
+
+    UUID sendingCorr = UUID.randomUUID();
+    repo.insertIfAbsent(sampleRow("key-requeue-sending-" + sendingCorr, sendingCorr));
+    inTenantFixture(tenantId, () -> TenantRlsTestSupport.makeOutboxRowDue(dsl, sendingCorr));
+    long sendingId =
+        repo.claimDue(10_000, "i-requeue", tenantId).stream()
+            .filter(r -> sendingCorr.equals(r.correlationId()))
+            .findFirst()
+            .orElseThrow()
+            .id();
+    corrById.put(sendingId, sendingCorr);
+
+    assertThat(repo.requeueForRetry(failedId)).isEqualTo(1);
+    var failed = rowById(failedId);
+    assertThat(failed.status()).isEqualTo("PENDING");
+    assertThat(failed.attemptCount()).isZero();
+
+    // 백오프 중인 대기 행은 다음 시도만 당기고 시도 횟수는 그대로 — 되돌릴 때마다 최대 시도 제한이 풀리지 않게.
+    long backoffId = insertRow("backoff");
+    repo.rescheduleTransient(backoffId, 3, Instant.now().plusSeconds(3600), "slow");
+    assertThat(repo.requeueForRetry(backoffId)).isEqualTo(1);
+    var backoff = rowById(backoffId);
+    assertThat(backoff.attemptCount()).isEqualTo(3);
+    assertThat(backoff.nextAttemptAt()).isBefore(Instant.now().plusSeconds(60));
+
+    assertThat(repo.requeueForRetry(sentId)).isZero();
+    assertThat(rowById(sentId).status()).isEqualTo("SENT");
+
+    assertThat(repo.requeueForRetry(sendingId)).isZero();
+    assertThat(rowById(sendingId).status()).isEqualTo("SENDING");
+
+    assertThat(repo.requeueForRetry(Long.MAX_VALUE)).as("없는 id").isZero();
+  }
+
+  /**
+   * WD-433: 관리 API 는 워크스페이스 관리자 권한(notification:admin)으로 열리므로 다른 워크스페이스의 알림을 id 로 다시 보낼 수 없어야 한다 —
+   * 리포지토리 트랜잭션이 심는 테넌트 GUC(RLS)가 그 경계다. 정체 목록 쪽 경계는
+   * ChannelDomainRlsTest#findStuckPendingIsScopedByPolicy 가 지킨다.
+   */
+  @Test
+  void requeueForRetry_cannotTouchOtherTenantRow() {
+    long id = insertRow("tenant");
+    repo.markPermanentFailure(id, "TEST", "boom");
+
+    long otherTenant = TenantRlsTestSupport.createActiveTenant(dsl, "outbox-other");
+    try {
+      assertThat(TenantContext.runScopedGet(otherTenant, () -> repo.requeueForRetry(id))).isZero();
+    } finally {
+      TenantRlsTestSupport.deleteTenants(dsl, otherTenant);
+    }
+    assertThat(rowById(id).status()).isEqualTo("PERMANENT_FAILURE");
+  }
+
+  /** 재투입 시험용 행 하나를 넣고 id 를 돌려준다. 행은 상관 id 로 다시 찾을 수 있다({@link #rowById}). */
+  private long insertRow(String label) {
+    UUID corr = UUID.randomUUID();
+    repo.insertIfAbsent(sampleRow("key-requeue-" + label + "-" + corr, corr));
+    long id = repo.findByCorrelation(corr).get(0).id();
+    corrById.put(id, corr);
+    return id;
+  }
+
+  /** {@link #insertRow}·claimDue 로 얻은 id 의 현재 행. */
+  private NotificationOutboxRepository.NotificationOutboxRow rowById(long id) {
+    return repo.findByCorrelation(corrById.get(id)).get(0);
   }
 
   private NotificationOutboxRepository.NotificationOutboxRow sampleRow(String key, UUID corr) {
