@@ -1,4 +1,4 @@
-import { createJob, createJobExecution, createTemplates } from '../../factories/ai-insight.factory';
+import { createJob, createJobExecution, createTemplate, createTemplates } from '../../factories/ai-insight.factory';
 import { createDataset } from '../../factories/dataset.factory';
 import {
   mockProactivePermissions,
@@ -149,6 +149,8 @@ test.describe('스마트 작업 상세 페이지', () => {
       createJob({ id: 99, name: '이번 달 매출 하락 원인 분석' }),
       { capture: true },
     );
+    // 목표 기반 생성은 섹션 구성을 리포트 양식으로 먼저 저장한다(WD-297)
+    await mockApi(page, 'POST', '/api/v1/proactive/templates', createTemplate({ id: 77 }));
 
     await page.goto('/ai-insights/jobs/new');
 
@@ -182,6 +184,164 @@ test.describe('스마트 작업 상세 페이지', () => {
     const payload = req.payload as { prompt: string };
     expect(payload.prompt).toBe('이번 달 매출 하락 원인 분석');
     expect(payload.prompt).not.toContain('테스트 프롬프트 내용 재현용입니다');
+  });
+
+  test('새 작업 폼 — 이름을 비운 채 "목표 기반"으로 템플릿을 자동 생성하면 자동 채운 이름만으로 바로 생성되고, 미리보기 구성이 리포트 양식으로 저장·연결된다 (WD-297)', async ({ authenticatedPage: page }) => {
+    await setupNewJobMocks(page);
+    const templateCapture = await mockApi(page, 'POST', '/api/v1/proactive/templates', createTemplate({ id: 77 }), {
+      capture: true,
+    });
+    const createCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/jobs',
+      createJob({ id: 98, name: '지난주 대비 화재 건수 변화는?' }),
+      { capture: true },
+    );
+
+    await page.goto('/ai-insights/jobs/new');
+
+    // 이름을 입력하지 않고 바로 목표 기반 모드로 질문 → 템플릿 자동 생성
+    await page.locator('#mode-goal').click();
+    await page.getByLabel('비즈니스 질문').fill('지난주 대비 화재 건수 변화는?');
+    await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
+
+    // 이름 칸이 질문으로 채워지고, 다른 입력 없이 "생성"이 활성화되어야 한다(수정 전에는 비활성으로 남았다)
+    await expect(page.locator('#job-name')).toHaveValue('지난주 대비 화재 건수 변화는?');
+    // 무엇이 저장되는지 미리 안내한다
+    await expect(
+      page.getByText('작업을 생성하면 이 구성이 리포트 양식 「지난주 대비 화재 건수 변화는? 양식」(으)로 저장되어 연결됩니다.'),
+    ).toBeVisible();
+    const createBtn = page.getByRole('button', { name: '생성', exact: true });
+    await expect(createBtn).toBeEnabled();
+
+    await createBtn.click();
+
+    // 1) 미리보기의 4개 섹션이 「<작업 이름> 양식」으로 먼저 저장된다
+    const templateReq = await templateCapture.waitForRequest();
+    const templatePayload = templateReq.payload as { name: string; sections: { key: string; label: string }[] };
+    expect(templatePayload.name).toBe('지난주 대비 화재 건수 변화는? 양식');
+    expect(templatePayload.sections.map((sec) => sec.label)).toEqual(['요약', '상세 분석', '주요 지표', '권고사항']);
+
+    // 2) 작업은 그 양식(id 77)을 연결해 만들어진다(수정 전에는 templateId 없이 「기본 형식」)
+    const req = await createCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      name: '지난주 대비 화재 건수 변화는?',
+      prompt: '지난주 대비 화재 건수 변화는?',
+      templateId: 77,
+    });
+    await expect(page).toHaveURL('/ai-insights/jobs/98');
+  });
+
+  test('목표 기반 — 리포트 양식 저장이 실패하면 작업을 만들지 않고 사유를 알린다 (WD-297)', async ({ authenticatedPage: page }) => {
+    await setupNewJobMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/templates',
+      { status: 500, message: '양식 저장 중 오류' },
+      { status: 500 },
+    );
+    const createCapture = await mockApi(page, 'POST', '/api/v1/proactive/jobs', createJob({ id: 98 }), {
+      capture: true,
+    });
+
+    await page.goto('/ai-insights/jobs/new');
+    await page.locator('#mode-goal').click();
+    await page.getByLabel('비즈니스 질문').fill('주간 화재 추이');
+    await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
+    await page.getByRole('button', { name: '생성', exact: true }).click();
+
+    await expect(page.getByText('양식 저장 중 오류')).toBeVisible();
+    expect(createCapture.requests).toHaveLength(0);
+    await expect(page).toHaveURL('/ai-insights/jobs/new');
+  });
+
+  test('목표 기반 — 작업 생성이 실패하면 방금 저장한 리포트 양식을 지운다 (WD-297)', async ({ authenticatedPage: page }) => {
+    await setupNewJobMocks(page);
+    await mockApi(page, 'POST', '/api/v1/proactive/templates', createTemplate({ id: 77 }));
+    await mockApi(page, 'POST', '/api/v1/proactive/jobs', { status: 400, message: '작업 생성 거부' }, { status: 400 });
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/proactive/templates/77', null, { capture: true });
+
+    await page.goto('/ai-insights/jobs/new');
+    await page.locator('#mode-goal').click();
+    await page.getByLabel('비즈니스 질문').fill('주간 화재 추이');
+    await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
+    await page.getByRole('button', { name: '생성', exact: true }).click();
+
+    await expect(page.getByText('작업 생성 거부')).toBeVisible();
+    await deleteCapture.waitForRequest();
+    expect(deleteCapture.requests).toHaveLength(1);
+  });
+
+  test('목표 기반으로 구성을 만든 뒤 「직접 설정」으로 돌아가 만들면 양식을 저장하지 않는다 (WD-297)', async ({ authenticatedPage: page }) => {
+    await setupNewJobMocks(page);
+    const templateCapture = await mockApi(page, 'POST', '/api/v1/proactive/templates', createTemplate({ id: 77 }), {
+      capture: true,
+    });
+    const createCapture = await mockApi(page, 'POST', '/api/v1/proactive/jobs', createJob({ id: 98 }), {
+      capture: true,
+    });
+
+    await page.goto('/ai-insights/jobs/new');
+    await page.locator('#mode-goal').click();
+    await page.getByLabel('비즈니스 질문').fill('주간 화재 추이');
+    await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
+    // 구성이 만들어진 뒤(미리보기가 보인 뒤) 모드를 바꾼다 — 생성 중 전환은 이 테스트의 관심사가 아니다
+    await expect(page.getByText('자동 생성된 템플릿 (4개 섹션)')).toBeVisible();
+
+    await page.locator('#mode-manual').click();
+    await page.locator('#job-prompt').fill('직접 쓴 프롬프트');
+    await page.getByRole('button', { name: '생성', exact: true }).click();
+
+    const req = await createCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ prompt: '직접 쓴 프롬프트', templateId: null });
+    expect(templateCapture.requests).toHaveLength(0);
+  });
+
+  test('목표 기반 — 작업 생성 요청이 응답 없이 끊기면 서버가 이미 만들었을 수 있어 양식을 지우지 않는다 (WD-297)', async ({ authenticatedPage: page }) => {
+    await setupNewJobMocks(page);
+    await mockApi(page, 'POST', '/api/v1/proactive/templates', createTemplate({ id: 77 }));
+    // 작업 생성 요청은 연결이 끊긴 것처럼 응답 없이 실패시킨다
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/jobs',
+      (route) => (route.request().method() === 'POST' ? route.abort('connectionreset') : route.fallback()),
+    );
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/proactive/templates/77', null, { capture: true });
+
+    await page.goto('/ai-insights/jobs/new');
+    await page.locator('#mode-goal').click();
+    await page.getByLabel('비즈니스 질문').fill('주간 화재 추이');
+    await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
+    await page.getByRole('button', { name: '생성', exact: true }).click();
+
+    await expect(page.getByText('작업 생성에 실패했습니다.')).toBeVisible();
+    expect(deleteCapture.requests).toHaveLength(0);
+  });
+
+  test('목표 기반 — 구성을 만든 뒤 질문을 고치거나 모드를 오가면 이전 구성은 버려지고 다시 만들어야 생성할 수 있다 (WD-297)', async ({ authenticatedPage: page }) => {
+    await setupNewJobMocks(page);
+    await page.goto('/ai-insights/jobs/new');
+    await page.locator('#mode-goal').click();
+    const preview = page.getByText('자동 생성된 템플릿 (4개 섹션)');
+    const createBtn = page.getByRole('button', { name: '생성', exact: true });
+
+    // 1) 「직접 설정」으로 갔다 돌아오면 미리보기도 비워진다(구성은 이미 비워졌으므로 안내가 남으면 거짓이다)
+    await page.getByLabel('비즈니스 질문').fill('주간 화재 추이');
+    await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
+    await expect(preview).toBeVisible();
+    await page.locator('#mode-manual').click();
+    await page.locator('#mode-goal').click();
+    await expect(preview).toBeHidden();
+    await expect(createBtn).toBeDisabled();
+
+    // 2) 만든 뒤 질문을 고치면 이전 질문의 구성으로 저장되지 않게 미리보기가 사라지고 생성이 막힌다
+    await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
+    await expect(preview).toBeVisible();
+    await expect(createBtn).toBeEnabled();
+    await page.getByLabel('비즈니스 질문').fill('월간 화재 추이');
+    await expect(preview).toBeHidden();
+    await expect(createBtn).toBeDisabled();
   });
 
   test('목록으로 버튼 클릭 시 작업 목록 페이지로 이동한다', async ({ authenticatedPage: page }) => {
