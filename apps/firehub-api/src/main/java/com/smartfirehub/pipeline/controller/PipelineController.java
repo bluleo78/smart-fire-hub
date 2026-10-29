@@ -54,13 +54,14 @@ public class PipelineController {
 
   @PutMapping("/{id}")
   @RequirePermission("pipeline:write")
-  public ResponseEntity<Void> updatePipeline(
+  public ResponseEntity<UpdatePipelineResponse> updatePipeline(
       @PathVariable Long id,
       @Valid @RequestBody UpdatePipelineRequest request,
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
-    pipelineService.updatePipeline(id, request, userId);
-    return ResponseEntity.noContent().build();
+    // 새 수정 시각을 돌려준다 — 웹이 다음 저장의 낙관적 잠금 기준으로 쓴다(WD-353).
+    return ResponseEntity.ok(
+        new UpdatePipelineResponse(pipelineService.updatePipeline(id, request, userId)));
   }
 
   @DeleteMapping("/{id}")

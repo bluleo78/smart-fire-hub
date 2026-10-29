@@ -4,7 +4,7 @@ CancelExecutionResponse,
 CreatePipelineRequest,
 CreateTriggerRequest, ExecutionDetailResponse,
 PipelineDeleteImpact,
-PipelineDetailResponse, PipelineExecutionResponse,   PipelineResponse, TriggerEventResponse,   TriggerResponse,   UpdatePipelineRequest, UpdateTriggerRequest,
+PipelineDetailResponse, PipelineExecutionResponse,   PipelineResponse, TriggerEventResponse,   TriggerResponse,   UpdatePipelineRequest, UpdatePipelineResponse, UpdateTriggerRequest,
 } from '../types/pipeline';
 import { client } from './client';
 
@@ -19,7 +19,7 @@ export const pipelinesApi = {
   createPipeline: (data: CreatePipelineRequest) =>
     client.post<PipelineDetailResponse>('/pipelines', data),
   updatePipeline: (id: number, data: UpdatePipelineRequest) =>
-    client.put(`/pipelines/${id}`, data),
+    client.put<UpdatePipelineResponse>(`/pipelines/${id}`, data),
   deletePipeline: (id: number) =>
     client.delete(`/pipelines/${id}`),
   /**

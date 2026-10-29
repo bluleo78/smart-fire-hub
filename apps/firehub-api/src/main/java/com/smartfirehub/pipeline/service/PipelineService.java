@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.PipelineInactiveException;
@@ -30,6 +31,7 @@ import com.smartfirehub.securitylevel.ai.AiCall;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.user.repository.UserRepository;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -650,10 +652,28 @@ public class PipelineService {
     stepRepository.setFullRebuildPending(stepId, pending);
   }
 
+  /** 편집 충돌 안내 문구(WD-353) — 웹은 코드로 충돌 창을 띄우고, 코드를 모르는 호출부(AI 도구 등)는 이 문구를 그대로 보인다. */
+  static final String EDIT_CONFLICT_MESSAGE =
+      "이 파이프라인은 편집을 시작한 뒤 다른 곳에서 변경되었습니다. 다시 불러온 뒤 저장하세요.";
+
+  /**
+   * 파이프라인을 고친다.
+   *
+   * @return 새로 저장된 수정 시각 — 웹이 다음 저장의 기준 버전으로 쓴다(WD-353). 돌려주지 않으면 저장 직후 재조회가 오기 전에 다시 고쳐 저장할 때 자기
+   *     저장과 충돌한다.
+   */
   @Transactional
-  public void updatePipeline(Long id, UpdatePipelineRequest request, Long userId) {
-    // Verify pipeline exists
-    pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
+  public LocalDateTime updatePipeline(Long id, UpdatePipelineRequest request, Long userId) {
+    // 존재 확인 + 낙관적 잠금(WD-353). 행 잠금을 잡고 수정 시각을 읽어 편집 기준 버전과 비교한다 — 이름 중복·DAG 검증보다
+    // 먼저 하는 이유: 낡은 화면에서 저장하면 낡은 내용으로 계산한 검증 오류 대신 "다른 곳에서 바뀌었다"를 먼저 알려야 한다.
+    // 잠금은 이 트랜잭션 끝까지 유지되어 동시에 들어온 두 저장이 같은 버전으로 둘 다 통과하지 못한다.
+    LocalDateTime currentUpdatedAt =
+        pipelineRepository
+            .lockUpdatedAtById(id)
+            .orElseThrow(PipelineNotFoundException::new)
+            .value1();
+    EditConflictException.check(
+        request.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
 
     // 이름 변경 시 중복 검사 — 다른 파이프라인에 동일 이름이 있으면 409 반환 (#181)
     if (request.name() != null) {
@@ -669,8 +689,9 @@ public class PipelineService {
     }
 
     // Update pipeline metadata
-    pipelineRepository.update(
-        id, request.name(), request.description(), request.isActive(), userId);
+    LocalDateTime savedUpdatedAt =
+        pipelineRepository.update(
+            id, request.name(), request.description(), request.isActive(), userId);
 
     // 스텝 전체 교체 계약(요청이 스텝 목록 전체를 담는다)은 그대로지만, 저장 방식은 제자리 갱신이다(WD-108).
     // 예전에는 스텝을 전부 지우고 새 id 로 다시 만들었다 — pipeline_step_execution.step_id 가 ON DELETE CASCADE(V3)라
@@ -779,6 +800,7 @@ public class PipelineService {
       pipelineSecurityGate.requireAutoTempsDeletable(userId, temps.deletable());
       deleteAutoTempDatasets(temps);
     }
+    return savedUpdatedAt;
   }
 
   /**

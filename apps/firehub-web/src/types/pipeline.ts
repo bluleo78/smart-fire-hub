@@ -101,6 +101,16 @@ export interface UpdatePipelineRequest {
   description?: string;
   isActive?: boolean;
   steps: PipelineStepRequest[];
+  /**
+   * 편집을 시작할 때 읽은 상세의 updatedAt(WD-353 낙관적 잠금) — 서버 값과 다르면 409 EDIT_CONFLICT.
+   * 서버가 준 문자열을 그대로 보낸다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다). 빼면 비교하지 않는다(덮어쓰기).
+   */
+  expectedUpdatedAt?: string | null;
+}
+
+/** 파이프라인 수정 응답 — 새 updatedAt 을 다음 저장의 기준 버전으로 쓴다(WD-353). */
+export interface UpdatePipelineResponse {
+  updatedAt: string | null;
 }
 
 export interface PipelineExecutionResponse {

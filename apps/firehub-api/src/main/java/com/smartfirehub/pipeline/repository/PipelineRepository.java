@@ -12,6 +12,7 @@ import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
+import org.jooq.Record1;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -162,7 +163,14 @@ public class PipelineRepository {
         record.get(P_CREATED_AT));
   }
 
-  public void update(Long id, String name, String description, Boolean isActive, Long updatedBy) {
+  /**
+   * 메타데이터를 고치고 새로 저장된 수정 시각을 돌려준다(WD-353).
+   *
+   * <p>Java 의 now() 가 아니라 DB 에 저장된 값(RETURNING)을 돌려준다 — PG timestamp 는 마이크로초로 반올림하므로 now() 를 그대로 돌려주면
+   * 다음 저장의 기준 버전이 저장값과 어긋나 자기 저장과 충돌한다.
+   */
+  public LocalDateTime update(
+      Long id, String name, String description, Boolean isActive, Long updatedBy) {
     var query =
         dsl.update(PIPELINE)
             .set(P_NAME, name)
@@ -174,7 +182,7 @@ public class PipelineRepository {
       query = query.set(P_IS_ACTIVE, isActive);
     }
 
-    query.where(P_ID.eq(id)).execute();
+    return query.where(P_ID.eq(id)).returning(P_UPDATED_AT).fetchOne(P_UPDATED_AT);
   }
 
   public void deleteById(Long id) {
@@ -218,6 +226,17 @@ public class PipelineRepository {
         .from(PIPELINE)
         .where(P_ID.eq(id))
         .fetchOptional(r -> r.get(P_UPDATED_AT));
+  }
+
+  /**
+   * 수정 시각을 행 잠금(FOR UPDATE)과 함께 읽는다 — 낙관적 잠금 비교용(WD-353).
+   *
+   * <p>잠금 없이 읽고 비교하면 동시에 들어온 두 저장이 같은 값을 읽어 둘 다 통과한다. 잠금을 잡으면 나중 저장은 앞 저장이 커밋될 때까지 기다렸다가 바뀐
+   * 값을 읽어 충돌로 거부된다. 행이 없으면 빈 값, 행은 있는데 수정 시각이 비어 있으면(nullable 컬럼) 값이 null 인 레코드다 — 둘을 구분해야
+   * 수정 시각이 빈 옛 행을 "없음"(404)으로 잘못 거부하지 않는다.
+   */
+  public Optional<Record1<LocalDateTime>> lockUpdatedAtById(Long id) {
+    return dsl.select(P_UPDATED_AT).from(PIPELINE).where(P_ID.eq(id)).forUpdate().fetchOptional();
   }
 
   public Optional<Long> findUpdatedByById(Long id) {

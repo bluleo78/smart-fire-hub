@@ -128,3 +128,18 @@ export function isGraphReadRestricted(error: unknown): boolean {
     (error.response.data as ErrorResponse | undefined)?.code === GRAPH_READ_RESTRICTED_CODE
   );
 }
+
+/** 편집 충돌 코드(WD-353) — api EditConflictException.CODE 와 같은 값. */
+const EDIT_CONFLICT_CODE = 'EDIT_CONFLICT';
+
+/**
+ * 편집 충돌(409 + code) 인가(WD-353) — 편집을 시작한 뒤 다른 사람·다른 탭이 먼저 저장했다.
+ * 같은 409 인 이름 중복과 코드로 구분한다 — 충돌이면 토스트 대신 EditConflictDialog(다시 불러오기 / 덮어쓰기)를 띄운다.
+ */
+export function isEditConflict(error: unknown): boolean {
+  return (
+    axios.isAxiosError(error) &&
+    error.response?.status === 409 &&
+    (error.response.data as ErrorResponse | undefined)?.code === EDIT_CONFLICT_CODE
+  );
+}
