@@ -8,6 +8,7 @@ import {
   testChannel,
   updateChannelPreference,
 } from '../../api/channels';
+import { useMyPermissions } from './useMyPermissions';
 
 /** 채널 설정 쿼리 키 */
 const QUERY_KEY = ['channel-settings'] as const;
@@ -81,3 +82,13 @@ export function useLinkSlackUserMutation() {
     },
   });
 }
+
+/**
+ * 워크스페이스 알림 관리(notification:admin)를 할 수 있는가 (WD-433). Slack 워크스페이스 설치(연동/재연결) 버튼 노출에 쓴다.
+ * 최종 판정은 서버(/oauth/slack/auth-url) — 화면은 눌러도 403 만 뜰 버튼을 감추는 데만 쓴다.
+ */
+export function useCanAdminNotifications() {
+  const { permissions, isLoading } = useMyPermissions();
+  return { canAdmin: permissions.has('notification:admin'), isLoading };
+}
+

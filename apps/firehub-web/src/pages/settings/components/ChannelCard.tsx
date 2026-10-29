@@ -31,6 +31,7 @@ import {
   TooltipTrigger,
 } from '../../../components/ui/tooltip';
 import {
+  useCanAdminNotifications,
   useDisconnectChannelMutation,
   useLinkSlackUserMutation,
   useTestChannelMutation,
@@ -165,6 +166,36 @@ export function ChannelCard({ setting }: ChannelCardProps) {
   const disconnect = useDisconnectChannelMutation();
   const testSend = useTestChannelMutation();
   const linkSlackUser = useLinkSlackUserMutation();
+  const { canAdmin: canAdminNotifications, isLoading: permissionsLoading } =
+    useCanAdminNotifications();
+
+  /**
+   * Slack 연동/재연결 버튼은 워크스페이스에 Slack 봇을 설치하는 OAuth 라 서버가 notification:admin 으로만 허락한다(WD-433).
+   * 권한이 없는 사람에게 버튼을 보여 주면 눌러도 403 토스트만 뜨므로, 버튼 대신 관리자에게 요청하라는 안내를 보인다.
+   * 권한을 읽는 동안 Slack 은 둘 다 그리지 않는다(버튼·안내가 번갈아 깜빡이지 않게). 카카오는 사용자 개인 연동이라 권한과 무관하게 그대로다.
+   */
+  const oauthNeedsAdmin = channel === 'SLACK';
+  const canStartOAuth = !oauthNeedsAdmin || canAdminNotifications;
+  const slackWorkspaceInstalled = channel === 'SLACK' && workspaceId != null;
+  /**
+   * Slack 회원 ID 연동 UI(#234)를 보일지: 워크스페이스가 설치돼 있고 내가 미연결일 때. 재인증 필요(연결 해제·만료 이력)여도 관리자가
+   * 아니면 여기로 다시 붙는다 — 재연결 OAuth 는 워크스페이스 설치라 관리자만 할 수 있어(WD-433), 연결을 해제한 일반 사용자가 다시 붙을
+   * 길이 회원 ID 연동뿐이다(서버 link-user 는 해제된 연동도 다시 활성화한다). 권한을 읽는 동안에는 재인증 필요 쪽을 정하지 않는다.
+   */
+  const showSlackLinkUser =
+    slackWorkspaceInstalled &&
+    !connected &&
+    (!needsReauth || (!permissionsLoading && !canAdminNotifications));
+  /**
+   * 연동/재연결 자리를 그릴지: 미연결·재인증 필요이고 시작 URL 이 있을 때. 회원 ID 연동을 보이거나, SLACK 워크스페이스가 이미 설치돼 있고
+   * 재인증이 아니면(OAuth 가 끝난 상태) 그리지 않는다. 권한을 읽는 동안의 Slack 도 그리지 않는다.
+   */
+  const showOAuthAction =
+    (!connected || needsReauth) &&
+    oauthStartUrl != null &&
+    !showSlackLinkUser &&
+    !(slackWorkspaceInstalled && !needsReauth) &&
+    !(oauthNeedsAdmin && permissionsLoading);
 
   // Slack 사용자 ID 입력값 — SLACK 카드에서만 사용. 패턴 검증은 제출 시 수행한다.
   const [slackUserIdInput, setSlackUserIdInput] = useState('');
@@ -340,20 +371,20 @@ export function ChannelCard({ setting }: ChannelCardProps) {
         {isOAuthChannel && (
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2 flex-wrap">
-              {/*
-                미연결 or 재인증 필요: 연동/재연결 버튼.
-                단, SLACK의 경우 워크스페이스가 이미 설치되어 workspaceId가 있고 needsReauth가 아니면 (#234)
-                "워크스페이스 OAuth"는 완료된 상태이므로 OAuth 버튼 대신 사용자 매핑 UI를 보여줘야 한다.
-              */}
-              {(!connected || needsReauth) &&
-                oauthStartUrl &&
-                !(channel === 'SLACK' && workspaceId != null && !needsReauth) && (
+              {/* 미연결 or 재인증 필요: 연동/재연결 버튼 — 권한이 없으면 관리자 안내(showOAuthAction 주석 참조) */}
+              {showOAuthAction &&
+                (canStartOAuth ? (
                   <OAuthConnectButton
                     channel={channel}
                     oauthStartUrl={oauthStartUrl}
                     reauth={needsReauth}
                   />
-                )}
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Slack 워크스페이스 {needsReauth ? '재연결' : '연동'}은 관리자만 할 수 있습니다. 관리자에게
+                    요청하세요.
+                  </p>
+                ))}
 
               {/* 연결됨 + 재인증 불필요: 연결 해제 버튼 */}
               {connected && !needsReauth && (
@@ -383,11 +414,11 @@ export function ChannelCard({ setting }: ChannelCardProps) {
 
             {/*
               Slack 사용자 ID 매핑 UI (#234) — 워크스페이스는 설치되었으나 user_channel_binding이 없는 상태.
-              - 표시 조건: SLACK 채널 + 미연결 + 재인증 아님 + workspaceId 존재
+              - 표시 조건: showSlackLinkUser 주석 참조(관리자가 아니면 연결 해제 뒤에도 여기로 다시 붙는다, WD-433)
               - 입력 → POST /api/v1/oauth/slack/link-user → 백엔드가 DM ping 시도 + binding 생성
               - 성공 시 채널 목록 invalidate → "연결됨" 상태로 전환
             */}
-            {channel === 'SLACK' && !connected && !needsReauth && workspaceId != null && (
+            {showSlackLinkUser && (
               <div className="rounded-md border border-border bg-muted/40 p-3 space-y-2">
                 <div className="space-y-1">
                   <p className="text-xs font-medium">Slack 회원 ID 연동</p>

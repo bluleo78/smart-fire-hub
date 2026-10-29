@@ -1,5 +1,6 @@
 package com.smartfirehub.notification.auth.controller;
 
+import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.auth.OAuthStateService;
@@ -9,7 +10,6 @@ import java.util.Map;
 import java.util.Optional;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -43,11 +43,13 @@ public class SlackOAuthController {
    * <p>팝업은 Bearer 헤더를 전달할 수 없으므로, 프론트엔드가 이 엔드포인트를 먼저 호출하여 실제 Slack 인증 URL을 받은 뒤 해당 URL을 팝업으로 직접 연다.
    * client_id가 미설정된 경우 빈 OAuth URL이 생성되어 반드시 실패하므로, 400을 반환하여 사전에 차단한다.
    *
+   * <p>워크스페이스에 Slack 봇을 설치하는 일이라 {@code notification:admin}(V151, WD-433)이 있어야 한다.
+   *
    * @param authentication Spring Security 인증 객체 (principal = userId Long)
    * @return {"url": "https://slack.com/oauth/v2/authorize?..."} 또는 400 (자격증명 미설정)
    */
   @GetMapping("/auth-url")
-  @PreAuthorize("hasRole('ADMIN')")
+  @RequirePermission("notification:admin")
   public ResponseEntity<Map<String, String>> authUrl(Authentication authentication) {
     // OAuth 자격증명 미설정 시 빈 client_id로 OAuth 흐름이 시작되는 것을 사전 차단
     if (!slackOAuthService.isConfigured()) {

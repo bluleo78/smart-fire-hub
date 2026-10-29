@@ -198,10 +198,15 @@ class NotificationOutboxRepositoryImpl implements NotificationOutboxRepository {
   }
 
   @Override
-  public void requeueForRetry(long id) {
-    dsl.update(NOTIFICATION_OUTBOX)
+  public int requeueForRetry(long id) {
+    return dsl.update(NOTIFICATION_OUTBOX)
         .set(NOTIFICATION_OUTBOX.STATUS, "PENDING")
-        .set(NOTIFICATION_OUTBOX.ATTEMPT_COUNT, 0)
+        // 시도 횟수는 영구 실패만 새로 시작한다 — 백오프 중인 PENDING 을 되돌릴 때마다 0 으로 만들면 최대 시도 제한이 풀려
+        // 실패하는 외부 채널을 끝없이 다시 두드린다. PENDING 은 다음 시도 시각만 지금으로 당긴다.
+        .set(
+            NOTIFICATION_OUTBOX.ATTEMPT_COUNT,
+            DSL.when(NOTIFICATION_OUTBOX.STATUS.eq("PERMANENT_FAILURE"), DSL.inline(0))
+                .otherwise(NOTIFICATION_OUTBOX.ATTEMPT_COUNT))
         .set(NOTIFICATION_OUTBOX.NEXT_ATTEMPT_AT, OffsetDateTime.now(ZoneOffset.UTC))
         .setNull(NOTIFICATION_OUTBOX.CLAIMED_AT)
         .setNull(NOTIFICATION_OUTBOX.CLAIMED_BY)
@@ -209,6 +214,8 @@ class NotificationOutboxRepositoryImpl implements NotificationOutboxRepository {
         .setNull(NOTIFICATION_OUTBOX.LAST_ERROR_AT)
         .setNull(NOTIFICATION_OUTBOX.PERMANENT_FAILURE_REASON)
         .where(NOTIFICATION_OUTBOX.ID.eq(id))
+        // 상태 조건은 인터페이스 javadoc 참조 — 끝난 알림·보내는 중인 알림은 되돌리지 않는다(WD-433).
+        .and(NOTIFICATION_OUTBOX.STATUS.in("PERMANENT_FAILURE", "PENDING"))
         .execute();
   }
 

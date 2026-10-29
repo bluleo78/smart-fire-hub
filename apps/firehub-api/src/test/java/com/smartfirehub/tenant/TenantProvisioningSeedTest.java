@@ -12,6 +12,8 @@ import java.util.List;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -115,11 +117,13 @@ class TenantProvisioningSeedTest extends IntegrationTestBase {
   }
 
   /**
-   * WD-199: 새 워크스페이스의 시스템 ADMIN 역할도 분석 자산 관리 권한(analytics:admin)을 받는다. V144 는 이미 있는 테넌트에만 부여하고, 이후
-   * 테넌트는 프로비저닝이 기본 테넌트의 시스템 역할 권한을 복제해서 받는다 — 함수를 다시 정의하지 않은 근거를 여기서 확인한다.
+   * WD-199·WD-433: 새 워크스페이스의 시스템 ADMIN 역할도 분석 자산 관리 권한(analytics:admin, V144)과 알림 관리 권한
+   * (notification:admin, V151)을 받는다. 두 마이그레이션은 이미 있는 테넌트에만 부여하고, 이후 테넌트는 프로비저닝이 기본 테넌트의 시스템 역할 권한을
+   * 복제해서 받는다 — 함수를 다시 정의하지 않은 근거를 여기서 확인한다.
    */
-  @Test
-  void provisionDefaults_systemAdminGetsAnalyticsAdmin() {
+  @ParameterizedTest
+  @ValueSource(strings = {"analytics:admin", "notification:admin"})
+  void provisionDefaults_systemAdminGetsAdminPermission(String code) {
     long tenantId = createTenantRow();
     try {
       tenantProvisioningService.provisionDefaults(tenantId);
@@ -142,9 +146,7 @@ class TenantProvisioningSeedTest extends IntegrationTestBase {
                           .where(field(name("role", "tenant_id"), Long.class).eq(tenantId))
                           .and(field(name("role", "name"), String.class).eq("ADMIN"))
                           .and(field(name("role", "is_system"), Boolean.class).isTrue())
-                          .and(
-                              field(name("permission", "code"), String.class)
-                                  .eq("analytics:admin"))));
+                          .and(field(name("permission", "code"), String.class).eq(code))));
       assertThat(count).isEqualTo(1);
     } finally {
       TenantRlsTestSupport.deleteProvisionedTenantCascade(dsl, tx, tenantId);

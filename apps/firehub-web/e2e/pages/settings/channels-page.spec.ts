@@ -49,9 +49,11 @@ const MOCK_CHANNEL_SETTINGS: ChannelSetting[] = [
 
 /**
  * 채널 설정 API 모킹 헬퍼
+ * @param permissions - 내 권한 코드. Slack 연동/재연결 버튼은 notification:admin 이 있어야 보인다(WD-433). 생략하면 픽스처 기본값(없음).
  */
-async function setupChannelMocks(page: Parameters<typeof mockApi>[0]) {
+async function setupChannelMocks(page: Parameters<typeof mockApi>[0], permissions?: string[]) {
   await mockApi(page, 'GET', '/api/v1/channels/settings', MOCK_CHANNEL_SETTINGS);
+  if (permissions) await mockApi(page, 'GET', '/api/v1/auth/me/permissions', permissions);
 }
 
 /**
@@ -169,7 +171,8 @@ test.describe('채널 설정 페이지', () => {
   test('SLACK needsReauth 상태 — "재연결" 버튼과 주황 배지가 표시된다', async ({
     authenticatedPage: page,
   }) => {
-    await setupChannelMocks(page);
+    // Slack 재연결은 워크스페이스 설치 OAuth 라 notification:admin 이 있어야 버튼이 보인다(WD-433).
+    await setupChannelMocks(page, ['notification:admin']);
     await page.goto('/settings/channels');
 
     // Slack 카드 확인
@@ -180,6 +183,88 @@ test.describe('채널 설정 페이지', () => {
 
     // "재연결" 버튼 확인
     await expect(page.getByRole('button', { name: '재연결' })).toBeVisible();
+  });
+
+  /**
+   * WD-433: Slack 연동/재연결(auth-url)은 서버가 notification:admin 으로만 허락한다. 권한이 없는 사람에게 버튼을 보이면
+   * 눌러도 403 토스트만 뜨므로, 버튼 대신 관리자에게 요청하라는 안내가 보여야 한다.
+   * 카카오는 사용자 개인 연동이라 같은 권한 없이도 「연동하기」가 그대로 보인다.
+   */
+  test('SLACK 재연결 — notification:admin 이 없으면 버튼 대신 관리자 안내가 보인다 (WD-433)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChannelMocks(page);
+    await page.goto('/settings/channels');
+
+    const slackCard = page.locator('[data-slot="card"]', { hasText: 'Slack' }).first();
+    await expect(slackCard.getByText('재인증 필요')).toBeVisible();
+    await expect(
+      slackCard.getByText('Slack 워크스페이스 재연결은 관리자만 할 수 있습니다. 관리자에게 요청하세요.'),
+    ).toBeVisible();
+    await expect(slackCard.getByRole('button', { name: '재연결' })).toHaveCount(0);
+    // 카카오 개인 연동은 권한과 무관하게 그대로다.
+    const kakaoCard = page.locator('[data-slot="card"]', { hasText: '카카오 알림톡' }).first();
+    await expect(kakaoCard.getByRole('button', { name: '연동하기' })).toBeVisible();
+  });
+
+  test('SLACK 미설치 — notification:admin 이 없으면 「연동」 안내, 있으면 「연동하기」 버튼 (WD-433)', async ({
+    authenticatedPage: page,
+  }) => {
+    const notInstalled: ChannelSetting[] = MOCK_CHANNEL_SETTINGS.map((s) =>
+      s.channel === 'SLACK' ? { ...s, connected: false, needsReauth: false, workspaceId: null } : s,
+    );
+    await mockApi(page, 'GET', '/api/v1/channels/settings', notInstalled);
+    await page.goto('/settings/channels');
+
+    const slackCard = page.locator('[data-slot="card"]', { hasText: 'Slack' }).first();
+    await expect(
+      slackCard.getByText('Slack 워크스페이스 연동은 관리자만 할 수 있습니다. 관리자에게 요청하세요.'),
+    ).toBeVisible();
+    await expect(slackCard.getByRole('button', { name: '연동하기' })).toHaveCount(0);
+
+    // 권한이 생기면(관리자) 같은 상태에서 버튼이 보인다 — 다시 읽어 권한 쿼리를 새로 받는다.
+    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['notification:admin']);
+    await page.reload();
+    await expect(slackCard.getByRole('button', { name: '연동하기' })).toBeVisible();
+    await expect(slackCard.getByText('관리자만 할 수 있습니다')).toHaveCount(0);
+  });
+
+  /**
+   * WD-433: 연결을 해제한 일반 사용자(REVOKED 이력 → needsReauth, 워크스페이스는 설치됨)는 재연결 OAuth(관리자 전용) 대신 회원 ID 연동으로
+   * 다시 붙는다. 관리자는 같은 상태에서 그대로 「재연결」 버튼을 본다.
+   */
+  test('SLACK 연결 해제 뒤 — 일반 사용자는 회원 ID 연동, 관리자는 재연결 버튼 (WD-433)', async ({
+    authenticatedPage: page,
+  }) => {
+    const revoked: ChannelSetting[] = MOCK_CHANNEL_SETTINGS.map((s) =>
+      s.channel === 'SLACK' ? { ...s, connected: false, needsReauth: true, workspaceId: 5 } : s,
+    );
+    await mockApi(page, 'GET', '/api/v1/channels/settings', revoked);
+    const linkCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/oauth/slack/link-user',
+      {},
+      { capture: true, status: 204 },
+    );
+    await page.goto('/settings/channels');
+
+    const slackCard = page.locator('[data-slot="card"]', { hasText: 'Slack' }).first();
+    await expect(slackCard.getByText('Slack 회원 ID 연동')).toBeVisible();
+    await expect(slackCard.getByRole('button', { name: '재연결' })).toHaveCount(0);
+    await expect(slackCard.getByText('관리자만 할 수 있습니다')).toHaveCount(0);
+
+    // 회원 ID 를 넣어 연동하면 설치된 워크스페이스 id 로 link-user 를 부른다.
+    await slackCard.getByLabel('Slack 회원 ID').fill('u0123456789');
+    await slackCard.getByRole('button', { name: '연동 확인 DM 받기' }).click();
+    const req = await linkCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ workspaceId: 5, slackUserId: 'U0123456789' });
+
+    // 관리자는 같은 상태에서 재연결(워크스페이스 OAuth)을 그대로 본다.
+    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['notification:admin']);
+    await page.reload();
+    await expect(slackCard.getByRole('button', { name: '재연결' })).toBeVisible();
+    await expect(slackCard.getByText('Slack 회원 ID 연동')).toHaveCount(0);
   });
 
   test('CHAT 토글은 비활성화(disabled) 상태다', async ({ authenticatedPage: page }) => {
@@ -433,6 +518,8 @@ test.describe('채널 설정 페이지', () => {
       { message: 'Slack OAuth 설정이 완료되지 않았습니다. 관리자에게 문의하세요.' },
       { status: 400 },
     );
+    // 재연결 버튼은 notification:admin 이 있어야 보인다(WD-433).
+    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['notification:admin']);
 
     await page.goto('/settings/channels');
     await expect(page.getByText('Slack', { exact: true })).toBeVisible();
