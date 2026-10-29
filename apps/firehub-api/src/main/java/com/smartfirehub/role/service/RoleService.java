@@ -82,6 +82,8 @@ public class RoleService {
   /**
    * 역할 이름·설명 수정. 성공하면 ROLE_UPDATE 감사에 변경 전/후 값을 남긴다.
    *
+   * <p>판정 순서는 역할 없음(404) → 변경 없음(아무것도 하지 않음) → 시스템 역할(400) → 범위(403, WD-284) → 이름 중복(400) 이다.
+   *
    * <p>이름·설명이 둘 다 그대로면 감사를 남기지 않는다 — 멤버십 정지/재활성의 "이미 원하는 상태면 기록 없음" 규칙과 같다. 화면은 저장 버튼을 누를 때마다 같은
    * 값으로 PUT 할 수 있어, 기록하면 실제 변경과 구분되지 않는 잡음 행이 쌓인다.
    */
@@ -92,9 +94,25 @@ public class RoleService {
             .findById(id)
             .orElseThrow(() -> new RoleNotFoundException("Role not found: " + id));
 
-    if (role.isSystem() && !role.name().equals(name)) {
+    // 설명은 빈 문자열과 null 을 같게 본다 — 화면은 빈 설명을 보내지 않고(undefined → null), API·AI 로 만든 역할은 "" 로 저장될 수 있다.
+    if (Objects.equals(role.name(), name)
+        && Objects.equals(blankToNull(role.description()), blankToNull(description))) {
+      return; // 실제 변경 없음 — 쓰기·범위 판정·감사 모두 생략(화면이 같은 값으로 다시 저장해도 막히지 않게)
+    }
+
+    // WD-284: 시스템 역할(ADMIN·USER)은 이름뿐 아니라 설명도 바꿀 수 없다 — 화면은 두 칸을 모두 잠그는데 서버가 설명을 받아 주면, 위임자가
+    // ADMIN 설명을 「사용하지 않는 옛 역할」로 바꿔 관리자를 속일 수 있다.
+    if (role.isSystem()) {
       throw new SystemRoleModificationException(
-          "Cannot change name of system role: " + role.name());
+          "시스템 역할의 이름·설명은 바꿀 수 없습니다: " + role.name());
+    }
+
+    // WD-284: role:write 만 위임받은 사용자가 자기보다 높은 역할의 이름·설명을 바꿔 관리자를 속이지 못하게 — 삭제와 같은 범위 검사를 쓰기 전에 한다.
+    roleGrantGuard.assertCanEditRole(callerId, id);
+
+    // 다른 역할이 쓰는 이름으로 바꾸면 DB 유일 제약 오류 대신 생성과 같은 400 안내를 준다.
+    if (!role.name().equals(name) && roleRepository.existsByName(name)) {
+      throw new IllegalArgumentException("이미 존재하는 역할 이름입니다: " + name);
     }
     // 이름을 바꿀 때만 생성과 같은 중복 검사를 한다(WD-279) — 그대로 두고 설명만 바꾸는 저장을 자기 이름과의 중복으로 막지 않기 위해서다.
     // DB 유니크 제약도 있지만 그 409 는 「이미 같은 값이 있어…」라 어느 칸이 문제인지 알 수 없어, 생성과 같은 문구로 먼저 안내한다.
@@ -103,9 +121,6 @@ public class RoleService {
     }
 
     roleRepository.update(id, name, description);
-    if (Objects.equals(role.name(), name) && Objects.equals(role.description(), description)) {
-      return; // 실제 변경 없음 — 감사 생략
-    }
     Map<String, Object> metadata = new LinkedHashMap<>();
     metadata.put("before", roleSnapshot(role.name(), role.description()));
     metadata.put("after", roleSnapshot(name, description));
@@ -242,5 +257,10 @@ public class RoleService {
         "SUCCESS",
         null,
         metadata);
+  }
+
+  /** 빈 문자열(공백만 포함)을 null 로 — 설명의 "없음" 표현을 하나로 맞춰 비교한다. */
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
   }
 }
