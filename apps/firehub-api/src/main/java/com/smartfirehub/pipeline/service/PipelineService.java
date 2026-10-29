@@ -968,18 +968,11 @@ public class PipelineService {
     if (config.outputColumns() == null || config.outputColumns().isEmpty()) {
       throw new IllegalArgumentException(stepError(stepName, "출력 컬럼을 최소 1개 정의하세요"));
     }
-    boolean autoOutput = step.outputDatasetId() == null;
-    Set<String> seenNames = new java.util.HashSet<>();
+    validateOutputColumnNames(
+        stepName,
+        config.outputColumns().stream().map(AiClassifyConfig.OutputColumn::name).toList(),
+        step.outputDatasetId() == null);
     for (AiClassifyConfig.OutputColumn col : config.outputColumns()) {
-      String name = col.name() == null ? "" : col.name();
-      if (name.isBlank()) {
-        throw new IllegalArgumentException(
-            stepError(stepName, OUTPUT_COLUMN_NAME_REQUIRED_MESSAGE));
-      }
-      rejectInvalidColumnName(stepName, name, autoOutput);
-      if (!seenNames.add(name)) {
-        throw new IllegalArgumentException(stepError(stepName, "출력 컬럼 이름이 중복됩니다: " + name));
-      }
       if (col.type() == null || !VALID_OUTPUT_COLUMN_TYPES.contains(col.type())) {
         throw new IllegalArgumentException(
             stepError(stepName, "출력 컬럼 타입은 다음 중 하나여야 합니다: " + VALID_OUTPUT_COLUMN_TYPES));
@@ -1059,15 +1052,48 @@ public class PipelineService {
         + "이(가) 입력 데이터셋에 없습니다. 입력 컬럼 필터에서 다시 고르세요";
   }
 
+  /**
+   * PYTHON 출력 컬럼 정의 검증. 타입은 늘, 이름은 출력을 자동 생성할 때만 본다(WD-352) — 자동 생성이면 이 이름으로 TEMP 를 만드는데,
+   * 예전에는 이름을 보지 않아 형식이 틀리거나 겹친 이름이 저장되고 실행 시점에야 영어 원문({@code Invalid name: my col. Must match …})
+   * 또는 「이미 있는 필드명입니다」로 실패했다. 편집기도 자동 생성일 때만 컬럼 정의를 보여 주므로, 출력을 지정한 스텝의 남은 정의는 막지 않는다.
+   * 규칙·문구는 AI_CLASSIFY 출력 컬럼과 같다.
+   */
   private void validatePythonStep(PipelineStepRequest step) {
     PythonStepConfig config =
         objectMapper.convertValue(step.pythonConfig(), PythonStepConfig.class);
     if (config.outputColumns() != null) {
+      // AI_CLASSIFY 와 달리 출력 지정 시에는 정의를 쓰지 않으므로 이름 검사를 통째로 건너뛴다(자동 생성일 때만 — 예약어도 막는다)
+      if (step.outputDatasetId() == null) {
+        validateOutputColumnNames(
+            step.name(),
+            config.outputColumns().stream().map(PythonStepConfig.OutputColumn::name).toList(),
+            true);
+      }
       for (PythonStepConfig.OutputColumn col : config.outputColumns()) {
         if (col.type() == null || !VALID_OUTPUT_COLUMN_TYPES.contains(col.type().toUpperCase())) {
           throw new IllegalArgumentException(
               stepError(step.name(), "출력 컬럼 타입은 다음 중 하나여야 합니다: " + VALID_OUTPUT_COLUMN_TYPES));
         }
+      }
+    }
+  }
+
+  /**
+   * 출력 컬럼 이름 검증 — 빈 이름·예약어(자동 생성 시)·형식·길이·중복. AI_CLASSIFY·PYTHON 이 같은 규칙·문구를 쓴다(WD-352 — 화면의
+   * validateOutputColumns 와 같다).
+   */
+  private static void validateOutputColumnNames(
+      String stepName, List<String> names, boolean autoOutput) {
+    Set<String> seenNames = new java.util.HashSet<>();
+    for (String raw : names) {
+      String name = raw == null ? "" : raw;
+      if (name.isBlank()) {
+        throw new IllegalArgumentException(
+            stepError(stepName, OUTPUT_COLUMN_NAME_REQUIRED_MESSAGE));
+      }
+      rejectInvalidColumnName(stepName, name, autoOutput);
+      if (!seenNames.add(name)) {
+        throw new IllegalArgumentException(stepError(stepName, "출력 컬럼 이름이 중복됩니다: " + name));
       }
     }
   }
@@ -1170,6 +1196,12 @@ public class PipelineService {
     }
     if (!DataTableNames.isValid(name)) {
       throw new IllegalArgumentException(stepError(stepName, INVALID_COLUMN_NAME_MESSAGE + name));
+    }
+    // 63자를 넘으면 TEMP 생성·적재가 실행 시점에 실패한다 — 저장 시점에 같은 상한으로 막는다(WD-352, 화면 문구와 같다)
+    if (name.length() > DataTableService.MAX_COLUMN_NAME_LENGTH) {
+      throw new IllegalArgumentException(
+          stepError(
+              stepName, "칼럼명은 " + DataTableService.MAX_COLUMN_NAME_LENGTH + "자 이하여야 합니다"));
     }
   }
 

@@ -10,8 +10,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { columnNameLengthError } from '@/lib/validations/dataset';
 
+import {
+  OUTPUT_COLUMN_NAME_REQUIRED_MESSAGE,
+  pythonOutputColumnNameField,
+  validatePythonOutputColumns,
+} from '../hooks/stepColumnValidation';
 import { InlineFieldError } from './InlineFieldError';
 
 const COLUMN_TYPES = ['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP'];
@@ -25,31 +29,30 @@ interface PythonOutputColumnsProps {
   columns: OutputColumn[];
   onChange: (columns: OutputColumn[]) => void;
   readOnly?: boolean;
-}
-
-function getColumnError(col: OutputColumn, index: number, all: OutputColumn[]): string | undefined {
-  if (col.name === '') return undefined; // 빈 이름은 별도 처리 안 함 (저장 시 검증)
-  if (!/^[a-z][a-z0-9_]*$/.test(col.name)) {
-    return '소문자, 숫자, 밑줄(_)만 사용 가능하며 소문자로 시작해야 합니다';
-  }
-  const lengthError = columnNameLengthError(col.name);
-  if (lengthError) return lengthError;
-  const duplicate = all.findIndex((c, i) => i !== index && c.name === col.name);
-  if (duplicate !== -1) {
-    return '중복된 컬럼명입니다';
-  }
-  return undefined;
+  /** 저장 시 검증 오류 조회(WD-352) — 빈 이름·예약어처럼 입력 중에는 보이지 않는 오류를 행 아래에 보인다. 키는 pythonOutputColumnNameField */
+  fieldError?: (field: string) => string | undefined;
 }
 
 export default function PythonOutputColumns({
   columns,
   onChange,
   readOnly = false,
+  fieldError,
 }: PythonOutputColumnsProps) {
-  const errors = useMemo(
-    () => columns.map((col, i) => getColumnError(col, i, columns)),
-    [columns],
-  );
+  // 입력 중 검사 — 저장 시 검증(validatePythonOutputColumns)을 그대로 돌려 규칙(형식·길이·예약어·중복)이 갈라지지 않게 한다.
+  // 빈 이름은 막 추가한 행이 바로 빨갛지 않게 저장 시에만 알린다.
+  const liveErrors = useMemo(() => {
+    const byField = new Map<string, string>();
+    for (const e of validatePythonOutputColumns(columns)) {
+      if (e.message !== OUTPUT_COLUMN_NAME_REQUIRED_MESSAGE) byField.set(e.field, e.message);
+    }
+    return byField;
+  }, [columns]);
+  // 저장 시 검증 오류가 있으면 그것을 먼저 보인다(행당 오류 자리 하나)
+  const errors = columns.map((_, i) => {
+    const field = pythonOutputColumnNameField(i);
+    return fieldError?.(field) ?? liveErrors.get(field);
+  });
 
   const hasErrors = errors.some((e) => e !== undefined);
 

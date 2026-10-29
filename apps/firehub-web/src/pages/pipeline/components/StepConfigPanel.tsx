@@ -610,6 +610,7 @@ export default function StepConfigPanel({
                     })
                   }
                   readOnly={readOnly}
+                  fieldError={getFieldError}
                 />
               </Suspense>
             </>

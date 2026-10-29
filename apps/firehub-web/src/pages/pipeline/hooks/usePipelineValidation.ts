@@ -10,7 +10,7 @@ import { editorPipelineSchema } from '@/lib/validations/pipeline';
 import type { DatasetResponse } from '@/types/dataset';
 
 import type { EditorAction, PipelineEditorState, ValidationError } from './pipelineEditorReducer';
-import { validateAiOutputColumns, validateApiFieldMappings } from './stepColumnValidation';
+import { validateAiOutputColumns, validateApiFieldMappings, validatePythonOutputColumns } from './stepColumnValidation';
 
 /**
  * API_CALL 스텝의 지정 출력 데이터셋 컬럼 이름을 가져온다(WD-154 — 대상 컬럼 존재 검사용).
@@ -116,17 +116,12 @@ export function usePipelineValidation(
         }
       }
 
-      // PYTHON 스텝 출력 컬럼 이름 빈값 검증
-      // pythonConfig.outputColumns 중 name.trim() === '' 인 항목이 있으면 저장을 차단한다
-      if (step.scriptType === 'PYTHON') {
-        const cols = step.pythonConfig?.outputColumns ?? [];
-        const hasBlankName = cols.some((col) => !col.name.trim());
-        if (hasBlankName) {
-          errors.push({
-            stepTempId: step.tempId,
-            field: 'pythonConfig.outputColumns.name',
-            message: '출력 컬럼명을 입력하세요',
-          });
+      // PYTHON 스텝 출력 컬럼 이름 검증(WD-352) — 컬럼 정의는 출력을 자동 생성할 때만 쓰이고 편집기도 그때만 보이므로 그때만 검사한다.
+      // 이 이름으로 TEMP 를 만드니 빈 이름·형식·길이·중복·예약어를 행 아래에 안내하고 저장을 막는다. 예전에는 빈 이름만 막아
+      // 나머지는 실행 시점에 영어 원문 오류(`Invalid name: my col. …`)로 실패했다.
+      if (step.scriptType === 'PYTHON' && step.outputDatasetId == null) {
+        for (const e of validatePythonOutputColumns(step.pythonConfig?.outputColumns)) {
+          errors.push({ stepTempId: step.tempId, ...e });
         }
       }
 
