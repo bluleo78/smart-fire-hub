@@ -163,8 +163,9 @@ public class RoleService {
    * 모두 없으면 감사를 남기지 않는다(멤버십 정지/재활성과 같은 무변경 규칙).
    *
    * <p>권한 범위(WD-116): 새로 <b>추가</b>되는 권한은 호출자가 가진 것이어야 한다({@link RoleGrantGuard}) — {@code
-   * role:write} 만 가진 사용자가 자기 역할에 아무 권한이나 붙여 권한을 올리던 결함의 수정이다. 제거는 제한하지 않는다. 판정은 쓰기 <b>전에</b> 한다 —
-   * 쓰고 나서 보면 호출자가 자기 역할에 방금 붙인 권한이 "이미 가진 권한" 으로 보여 검사가 무력해진다.
+   * role:write} 만 가진 사용자가 자기 역할에 아무 권한이나 붙여 권한을 올리던 결함의 수정이다. 그리고 권한이 실제로 바뀌면(추가든 제거든) 역할 자체가
+   * 삭제와 같은 범위 안이어야 한다(WD-285) — 범위 밖 상위 역할의 권한을 전부 빼 보유자를 무력화하던 결함의 수정이다. 판정은 쓰기 <b>전에</b> 한다 —
+   * 쓰고 나서 보면 호출자가 자기 역할에 방금 붙인 권한이 "이미 가진 권한" 으로, 다 뺀 역할이 "빈 권한(범위 안)" 으로 보여 검사가 무력해진다.
    */
   @Transactional
   public void setRolePermissions(Long roleId, List<Long> permissionIds, Long callerId) {
@@ -181,8 +182,13 @@ public class RoleService {
     }
 
     TreeSet<String> before = permissionCodes(roleId);
-    Set<String> adding = new HashSet<>(permissionRepository.findCodesByIds(permissionIds));
+    Set<String> requested = new HashSet<>(permissionRepository.findCodesByIds(permissionIds));
+    Set<String> adding = new HashSet<>(requested);
     adding.removeAll(before);
+    // 권한이 실제로 바뀔 때만 역할 범위를 본다(WD-285 — 이유는 assertCanEditRolePermissions 문서). 변경 없는 저장은 판정할 것이 없다.
+    if (!requested.equals(before)) {
+      roleGrantGuard.assertCanEditRolePermissions(callerId, roleId);
+    }
     roleGrantGuard.assertCanAddPermissions(callerId, adding);
     roleRepository.setPermissions(roleId, permissionIds);
     TreeSet<String> after = permissionCodes(roleId);
