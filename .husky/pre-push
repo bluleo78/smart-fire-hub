@@ -1,2 +1,2 @@
-# husky 디스패치 — 실제 로직은 scripts/husky/pre-push.sh 참조 (#257)
-exec ./scripts/husky/pre-push.sh
+# husky 디스패치 — 실제 로직은 scripts/husky/pre-push.sh 참조 (#257). 원격 이름($1)과 push 정보(stdin)를 그대로 넘긴다(WD-459).
+exec ./scripts/husky/pre-push.sh "$@"

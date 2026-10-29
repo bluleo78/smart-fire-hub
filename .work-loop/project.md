@@ -80,8 +80,24 @@ PW_PORT=6151 pnpm exec playwright test           # E2E (기본 5051 — 다른 �
 ### 기타
 - firehub-channel: `cd apps/firehub-channel && pnpm test`
 - firehub-executor: `cd apps/firehub-executor && pnpm test` (pytest)
-- 커밋 시 pre-commit 훅(`scripts/husky/pre-commit.sh`)이 lint-staged + 전체 typecheck + 변경 영역별 E2E + `gradlew test` 를 돌린다.
-  web 공유 영역(components/api/lib/…, vite/playwright 설정 등)을 바꾸면 전체 E2E 가 돈다.
+
+### 커밋 훅·push 게이트 (WD-459)
+- **커밋 훅**(`scripts/husky/pre-commit.sh`): lint-staged → (코드 변경이 있으면) 전체 typecheck → web 변경 영역별 E2E → api 변경분 gradle.
+  - 문서만(`scripts/husky/noncode.sh` — `docs/`·루트 `.md`·`README/CLAUDE/AGENTS.md`·`.claude/`·`.work-loop/`) 바꾸면 모두 건너뛴다. `apps/` 아래 다른 `.md` 는 코드다.
+  - web 공유 영역(components/api/lib/hooks/types, `e2e/`, 설정)을 바꾸면 전체 E2E, 도메인(`src/pages/<d>/`)만 바꾸면 `@smoke` + 그 도메인 spec.
+  - gradle 은 api 를 바꿨을 때만 — 바뀐 테스트 클래스와 이름 규칙(`Foo*Test`·`Foo*Tests`·`Foo*IT`) 매칭 테스트만, 없으면 `compileTestJava`. 전체는 push 게이트.
+  - 훅 파일을 바꾸면 판정 테스트 `pnpm test:hooks` 가 먼저 돈다.
+- **push 게이트**(`pnpm test:full` = `scripts/husky/full-regression.sh`, pre-push 가 부른다): web E2E 전체(preview) → api `gradlew test` 전체(JaCoCo 끔).
+  - **범위**: origin/main 과 갈라진 뒤 바꾼 코드가 `apps/firehub-web` 뿐이면 gradle 을 건너뛴다(웹 E2E 는 API 를 모킹). 그 밖은 전체. 첫 줄 `[full-regression] 범위: …` 에 찍힌다. `FULL_REGRESSION_SCOPE=full pnpm test:full` 이면 전체 강제.
+  - **통과 기록**: 끝까지 통과하고 작업 트리가 커밋과 같으면 그 트리를 git common dir 의 `firehub-prepush-verified-trees` 에 기록한다(모든 워크트리 공유).
+  - **pre-push 생략**: 새 커밋 없음·삭제·비코드만·이미 통과한 트리(필요 범위를 덮을 때)면 회귀를 건너뛴다 — `[pre-push] 회귀 생략 — …`.
+  - **미리 돌리기**: 커밋한 상태에서 `pnpm test:full` 을 bg-job 으로 띄우면, 통과한 뒤의 `git push` 는 회귀 없이 끝난다. 지금 HEAD 트리가 기록됐는지는 워크트리에서 `sh -c '. scripts/husky/noncode.sh && . scripts/husky/gate-scope.sh && . scripts/husky/verified-trees.sh && is_verified_head'`(성공이면 기록됨 — 다시 돌리지 않는다). rebase 하면 트리가 바뀌어 다시 돌아야 한다.
+  - 게이트는 저장소 전역 락(`firehub-test-gate.lock`)으로 한 번에 하나만 돈다 — 락 파일을 지우거나 다른 세션의 게이트를 끝내지 않는다.
+
+### 커밋 훅으로 충분한 것 (`process-issue.md` 9번 「돌릴지부터 판단」)
+push 게이트가 커밋 훅보다 더 돌리는 것은 web E2E 전체와 api gradle 전체다. 브랜치가 바꾼 파일이 모두 아래에 들면 게이트를 돌리지 않고 근거를 PR 에 남긴다.
+- 비코드(`noncode.sh` 규칙) — 문서·`.work-loop/`·`.claude/`. pre-push 도 스스로 건너뛴다.
+- 그 밖의 코드 변경은 게이트를 돈다(다른 앱만 바꾼 변경을 게이트에서 빼는 것은 아직 없다).
 
 ## 4. 격리 라이브 스택
 
