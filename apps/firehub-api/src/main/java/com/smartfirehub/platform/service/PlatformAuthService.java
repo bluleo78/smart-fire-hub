@@ -57,29 +57,28 @@ public class PlatformAuthService {
    */
   @Transactional
   public PlatformTokenResponse login(LoginRequest request) {
-    if (loginAttemptService.isBlocked(request.username())) {
+    // 대소문자·앞뒤 공백만 다른 입력도 같은 계정으로 본다(WD-269, 테넌트 평면과 대칭).
+    String username = userRepository.resolveLoginUsername(request.username());
+    if (loginAttemptService.isBlocked(username)) {
       throw new AccountLockedException("로그인 시도 횟수를 초과하였습니다. 잠시 후 다시 시도해 주세요.");
     }
 
-    UserResponse user =
-        userRepository.findByUsername(request.username()).orElseThrow(() -> failed(request));
+    UserResponse user = userRepository.findByUsername(username).orElseThrow(() -> failed(username));
     String storedPassword =
-        userRepository
-            .findPasswordByUsername(request.username())
-            .orElseThrow(() -> failed(request));
+        userRepository.findPasswordByUsername(username).orElseThrow(() -> failed(username));
 
     if (!passwordEncoder.matches(request.password(), storedPassword)) {
-      throw failed(request);
+      throw failed(username);
     }
     if (!user.isActive()) {
       throw new UserDeactivatedException("비활성화된 계정입니다.");
     }
     // 운영자 자격. 여기서 갈리는 것이 이 서비스와 테넌트 로그인의 유일한 차이다.
     if (!platformRoleRepository.hasAnyPlatformRole(user.id())) {
-      throw failed(request);
+      throw failed(username);
     }
 
-    loginAttemptService.loginSucceeded(request.username());
+    loginAttemptService.loginSucceeded(username);
     return issue(user.id(), user.username(), UUID.randomUUID());
   }
 
@@ -171,8 +170,8 @@ public class PlatformAuthService {
   }
 
   /** 실패 카운터를 올리고 열거 방지용 공통 예외를 만든다. */
-  private InvalidCredentialsException failed(LoginRequest request) {
-    loginAttemptService.loginFailed(request.username());
+  private InvalidCredentialsException failed(String username) {
+    loginAttemptService.loginFailed(username);
     return new InvalidCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
   }
 }

@@ -10,6 +10,7 @@ import com.smartfirehub.auth.service.RefreshTokenHasher;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import jakarta.servlet.http.Cookie;
+import java.util.Locale;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -100,6 +101,17 @@ class PlatformAuthControllerTest extends IntegrationTestBase {
     assertThat(response.getContentAsString()).contains("accessToken", "platform:tenant:create");
     // 리프레시 토큰은 본문에 실리지 않는다(쿠키 전용).
     assertThat(response.getContentAsString()).contains("\"refreshToken\":null");
+  }
+
+  /** 아이디를 대문자로 바꿔 입력해도 같은 운영자 계정으로 로그인된다(WD-269, 테넌트 평면과 대칭). */
+  @Test
+  void login_ignoresUsernameCase() throws Exception {
+    String username = createUser(true);
+
+    MockHttpServletResponse response = login(username.toUpperCase(Locale.ROOT), PASSWORD);
+
+    assertThat(response.getStatus()).isEqualTo(200);
+    assertThat(response.getContentAsString()).contains("accessToken");
   }
 
   /**

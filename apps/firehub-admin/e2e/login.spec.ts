@@ -30,6 +30,18 @@ test.describe('운영자 로그인', () => {
     await expect(page).toHaveURL('/tenants');
   });
 
+  // WD-269: 모바일 자동 대문자·자동 수정으로 아이디가 바뀌어 로그인에 실패하지 않게 한다.
+  test('아이디 입력칸은 자동 대문자·자동 수정·맞춤법 검사를 끈다', async ({
+    authMockedPage: page,
+  }) => {
+    await page.goto('/login');
+
+    const username = page.getByLabel('아이디');
+    await expect(username).toHaveAttribute('autocapitalize', 'none');
+    await expect(username).toHaveAttribute('autocorrect', 'off');
+    await expect(username).toHaveAttribute('spellcheck', 'false');
+  });
+
   test('401 은 자격증명 오류와 같은 문구를 보여준다 (D-1)', async ({ page }) => {
     // 플랫폼 롤이 없는 유효 사용자도 서버가 같은 401 을 준다 — 화면도 구별하지 않아야 한다.
     await mockApi(

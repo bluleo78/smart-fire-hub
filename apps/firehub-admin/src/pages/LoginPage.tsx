@@ -74,6 +74,10 @@ export default function LoginPage() {
                 <Input
                   id="username"
                   autoComplete="username"
+                  // 모바일이 첫 글자를 대문자로 바꾸거나 자동 수정하지 않게 한다(WD-269).
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   disabled={isSubmitting}
                   {...register('username')}
                 />

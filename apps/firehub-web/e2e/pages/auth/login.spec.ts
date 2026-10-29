@@ -202,6 +202,40 @@ test.describe('로그인 페이지', () => {
     );
   });
 
+  // WD-269: 모바일 자동 대문자·자동 수정으로 아이디가 바뀌어 로그인에 실패하지 않게 한다.
+  test('아이디 입력칸은 자동 대문자·자동 수정·맞춤법 검사를 끈다', async ({
+    authMockedPage: page,
+  }) => {
+    await page.goto('/login');
+
+    const username = page.getByLabel('아이디 (이메일)');
+    await expect(username).toHaveAttribute('autocapitalize', 'none');
+    await expect(username).toHaveAttribute('autocorrect', 'off');
+    await expect(username).toHaveAttribute('spellcheck', 'false');
+  });
+
+  // WD-269: 대소문자를 섞어 입력해도 클라이언트가 바꾸지 않고 그대로 보낸다 — 대소문자 정규화는 서버 몫이다.
+  test('대소문자를 섞은 아이디도 입력 그대로 로그인 요청에 실린다', async ({
+    authMockedPage: page,
+  }) => {
+    await page.goto('/login');
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/auth/login',
+      createTokenResponse(),
+      { capture: true },
+    );
+
+    await page.getByLabel('아이디 (이메일)').fill('QA267.Kim@Example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill('testpassword123');
+    await page.getByRole('button', { name: '로그인' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ username: 'QA267.Kim@Example.com' });
+    await page.waitForURL('/');
+  });
+
   // #78: 비밀번호 표시/숨김 토글 동작 검증
   test('비밀번호 토글 버튼 클릭 시 type이 password ↔ text 로 전환된다', async ({
     authMockedPage: page,

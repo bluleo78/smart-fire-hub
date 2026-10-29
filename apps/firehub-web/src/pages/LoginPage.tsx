@@ -86,6 +86,10 @@ export default function LoginPage() {
                 type="text"
                 placeholder="email@example.com"
                 autoComplete="username"
+                // 모바일이 첫 글자를 대문자로 바꾸거나 자동 수정하지 않게 한다(WD-269). 서버도 대소문자를 무시하지만 입력이 바뀌지 않는 편이 덜 헷갈린다.
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 {...register('username')}
               />
               {errors.username && (
