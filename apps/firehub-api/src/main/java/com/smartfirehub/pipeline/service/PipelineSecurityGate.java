@@ -74,9 +74,10 @@ public class PipelineSecurityGate {
    * 4) — 실행 시점에 실제 ptmp 테이블로 치환된 SQL 로 전부 판정된다.
    *
    * @param substitutedSql SqlValidator 가 검증한 바로 그 문자열(더미 치환본)
+   * @return 판정 결과 — 저장 검증이 「REPLACE 가 자기 출력을 읽거나 고침」(WD-426) 판정에 읽기·쓰기 데이터셋 id 를 쓴다
    */
-  public void checkStepSqlForSave(Long editorUserId, String substitutedSql) {
-    guard.requireSql(clearance(editorUserId), substitutedSql, SqlAccessMode.PIPELINE_SAVE);
+  public SqlAccessResult checkStepSqlForSave(Long editorUserId, String substitutedSql) {
+    return guard.requireSql(clearance(editorUserId), substitutedSql, SqlAccessMode.PIPELINE_SAVE);
   }
 
   /**

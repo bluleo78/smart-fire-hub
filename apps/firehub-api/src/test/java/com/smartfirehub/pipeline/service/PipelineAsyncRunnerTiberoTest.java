@@ -44,12 +44,14 @@ import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.securitylevel.pythonread.PythonReadGrants;
 import java.sql.Types;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -141,6 +143,8 @@ class PipelineAsyncRunnerTiberoTest {
     TenantContext.set(TENANT_ID);
     lenient().when(dataStoreResolver.currentBackend()).thenReturn(DataStoreBackend.TIBERO);
     // 보안 게이트 판정 자체는 PipelineSqlAccessTest 등 통합 테스트 몫이다 — 여기서는 통과(목 기본값)로 두고 라우팅만 본다.
+    // 사용자 SQL 판정 기본값(WD-426) — 아무 데이터셋도 참조하지 않는 허용 결과. 판정 결과를 쓰는 테스트는 자기 스텁으로 덮어쓴다.
+    RunnerSqlAccessStubs.allowSqlWithoutDatasetsByDefault(pipelineSecurityGate);
     lenient()
         .when(pipelineSecurityGate.runAs(any()))
         .thenAnswer(
@@ -221,6 +225,71 @@ class PipelineAsyncRunnerTiberoTest {
     // MERGE 는 출력을 비우지 않는다(PG 와 같은 계약).
     assertThat(sent.preStatements()).isEmpty();
     verifyNoPgExecution();
+  }
+
+  // ── REPLACE 가 자기 출력을 읽음(WD-426) ─────────────────────────────────────────────────
+
+  /** 보안 판정이 사용자 SQL 이 출력 자신을 읽는다고 본 결과(읽기 = 출력). */
+  private void stubSqlReadsOutput(Long outputId) {
+    when(pipelineSecurityGate.checkStepSqlForRun(any(), any()))
+        .thenReturn(new SqlAccessResult(true, null, null, null, Set.of(outputId), Set.of(), true));
+  }
+
+  /**
+   * Tibero 에는 비우기 전 출력을 읽는 한 문장 형태가 없고 db-executor 선행문 규칙도 잠금 전용 형태를 받지 않는다 — 출력 자신을 읽는 SELECT +
+   * REPLACE 는 저장 검증을 우회해 와도 실행 전에 실패한다. db-executor 에는 probe·실행 어느 요청도 가지 않는다(새 선행문 형태가 Tibero 로 가는
+   * 일이 없다).
+   */
+  @Test
+  void tiberoSelectReplace_readingItsOwnOutput_failsBeforeAnyDbExecutorCall() {
+    stubSqlReadsOutput(OUTPUT_ID);
+
+    String status =
+        run(
+            sqlStep("SELECT amount + 1 AS amount FROM genia_t5.orders", OUTPUT_ID, "REPLACE"),
+            false);
+
+    assertThat(status).isEqualTo("FAILED");
+    assertThat(failureMessage())
+        .startsWith("Tibero 저장소에서는 교체(REPLACE) 스텝의 SQL 이 출력 데이터셋 자신을 읽거나 고칠 수 없습니다")
+        .endsWith(".");
+    verifyNoInteractions(dbExecutorClient);
+    verifyNoPgExecution();
+  }
+
+  /**
+   * 출력 미지정(러너 TEMP) SELECT 가 이 스텝의 기존 TEMP 를 읽어도 같다 — 거부가 TEMP 준비(맞춤·재생성·생성)와 probe 보다 먼저라 아무것도
+   * 만들거나 지우지 않는다.
+   */
+  @Test
+  void tiberoSelectReplace_readingItsOwnTemp_failsBeforeTempPreparationAndProbe() {
+    Long tempId = 33L;
+    stubSqlReadsOutput(tempId);
+    when(tempDatasetService.findExistingTempDataset(100L)).thenReturn(Optional.of(tempId));
+
+    String status =
+        run(sqlStep("SELECT amount FROM genia_t5.pipeline_tmp_s1", null, "REPLACE"), false);
+
+    assertThat(status).isEqualTo("FAILED");
+    assertThat(failureMessage()).startsWith("Tibero 저장소에서는 교체(REPLACE)");
+    verify(tempDatasetService, never()).reconcileTempDataset(any());
+    verify(tempDatasetService, never()).hasSchemaChanged(any(), any());
+    verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
+    verifyNoInteractions(dbExecutorClient);
+  }
+
+  /** Tibero 사용자 DML 이 출력 자신을 고쳐도 같은 Tibero 문구로 실행 전에 실패한다. */
+  @Test
+  void tiberoDmlReplace_updatingItsOwnOutput_failsBeforeAnyDbExecutorCall() {
+    when(pipelineSecurityGate.checkStepSqlForRun(any(), any()))
+        .thenReturn(new SqlAccessResult(true, null, null, null, Set.of(), Set.of(OUTPUT_ID), true));
+
+    String status =
+        run(sqlStep("UPDATE genia_t5.orders SET amount = 0", OUTPUT_ID, "REPLACE"), false);
+
+    assertThat(status).isEqualTo("FAILED");
+    assertThat(failureMessage()).startsWith("Tibero 저장소에서는 교체(REPLACE)");
+    verifyNoInteractions(dbExecutorClient);
   }
 
   /**

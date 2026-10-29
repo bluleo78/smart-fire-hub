@@ -219,6 +219,14 @@ test.describe('파이프라인 SQL 스텝 증분 처리', () => {
     const dialog = page.getByRole('alertdialog');
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText(/모든 행을 지우고/)).toBeVisible();
+    // WD-426: 출력을 비운 뒤 SQL 을 실행한다는 주의 — SQL 이 출력 자신을 읽는지와 상관없이 늘 보인다.
+    await expect(
+      dialog.getByText(
+        '이 스텝의 SQL이 출력 데이터셋 자신을 읽으면, 출력을 먼저 비운 뒤 읽습니다(이미 있는 행을 거르는 NOT IN·NOT EXISTS는 처음부터 다시 채워집니다).',
+      ),
+    ).toBeVisible();
+    // 주의는 설명 안에 있어 다이얼로그의 접근 가능한 설명(aria-describedby)으로도 읽힌다.
+    await expect(dialog).toHaveAccessibleDescription(/출력을 먼저 비운 뒤 읽습니다/);
     await dialog.getByRole('button', { name: '예약' }).click();
 
     const postReq = await reservePost.waitForRequest();
@@ -319,6 +327,8 @@ test.describe('파이프라인 SQL 스텝 증분 처리', () => {
     // 출력이 지워지지 않는다는 문구가 있어야 하고, REBUILD_OUTPUT의 "모든 행을 지우고" 약속이 섞여 들어오면 안 된다
     await expect(dialog.getByText(/지워지지 않으며/)).toBeVisible();
     await expect(dialog.getByText(/모든 행을 지우고/)).not.toBeVisible();
+    // 출력을 비우지 않으므로 「먼저 비운 뒤 읽는다」 주의(WD-426)도 없다.
+    await expect(dialog.getByText(/출력을 먼저 비운 뒤 읽습니다/)).not.toBeVisible();
   });
 
   /**

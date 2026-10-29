@@ -129,6 +129,67 @@ def test_output_lock_key_is_scoped_to_tenant_schema():
     assert [c.args[1] for c in lock_calls] == [('"data_t7"."out"',)]
 
 
+def test_lock_only_pre_statement_locks_then_runs_reload_statement():
+    # 자기 출력 다시 채우기(WD-426) — 잠금 전용 선행 문장도 전체 비우기와 같은 키로 잠금을 **먼저, 별도 문장으로** 잡고(#731),
+    # 그 문장 자체(아무 행도 지우지 않는 DELETE … WHERE false)를 실행한 뒤 본 문장(비우기를 안에 품은 한 문장)을 실행·커밋한다.
+    # 본 문장은 데이터 변경 CTE 지만 블록리스트 검증만 받으므로 통과한다 — 문장은 API OutputClearStatement.reloadFromOwnOutput 이
+    # 만드는 그대로다(OutputClearStatementTest 가 같은 형태를 고정). CTE 이름에 차단 키워드(예: reLOAD)가 섞이면 여기서 거부된다.
+    cursor = MagicMock()
+    cursor.rowcount = 2
+    conn = make_conn(cursor)
+    reload = (
+        'WITH "_fh_self_src" AS (\nSELECT code, name FROM data."out"\n), "_fh_self_clear" AS '
+        '(DELETE FROM data."out" RETURNING 1) INSERT INTO data."out" ("code", "name") '
+        'SELECT * FROM "_fh_self_src" WHERE (SELECT count(*) FROM "_fh_self_clear") >= 0'
+    )
+
+    result = execute_sql(reload, conn, pre_statements=['DELETE FROM "data"."out" WHERE false'])
+
+    assert result.success
+    assert result.row_count == 2
+    executed = [c.args for c in cursor.execute.call_args_list if not c.args[0].startswith("SET LOCAL")]
+    assert executed == [
+        (LOCK_SQL, ('"data"."out"',)),
+        ('DELETE FROM "data"."out" WHERE false',),
+        (reload,),
+    ]
+    cursor.fetchall.assert_not_called()
+    conn.commit.assert_called_once()
+
+
+def test_lock_only_pre_statement_with_ordinary_insert_is_rejected_before_execution():
+    # 반대쪽 짝(WD-426) — 잠금 전용 선행 문장이 다시 채우기가 아닌 일반 INSERT 와 오면 REPLACE 인데 출력이 비워지지 않는다.
+    # 잠금도 선행 문장도 본문도 보내지 않고 실패한다.
+    cursor = MagicMock()
+    conn = make_conn(cursor)
+
+    result = execute_sql(
+        'INSERT INTO "data"."out" ("a") SELECT 1', conn, pre_statements=['DELETE FROM "data"."out" WHERE false']
+    )
+
+    assert not result.success
+    assert "잠금 전용 선행 문장은 같은 출력을 다시 채우는 문장과만" in result.error
+    cursor.execute.assert_not_called()
+    conn.commit.assert_not_called()
+
+
+def test_reload_statement_without_lock_only_pre_statement_is_rejected_before_execution():
+    # 다시 채우기 문장이 잠금 없이(선행 문장 없음) 오면 겹친 실행이 행을 중복으로 넣는다(#731) — 아무것도 보내지 않고 실패한다.
+    cursor = MagicMock()
+    conn = make_conn(cursor)
+    reload = (
+        'WITH "_fh_self_src" AS (\nSELECT code, name FROM data."out"\n), "_fh_self_clear" AS '
+        '(DELETE FROM data."out" RETURNING 1) INSERT INTO data."out" ("code", "name") '
+        'SELECT * FROM "_fh_self_src" WHERE (SELECT count(*) FROM "_fh_self_clear") >= 0'
+    )
+
+    result = execute_sql(reload, conn)
+
+    assert not result.success
+    assert "같은 출력의 잠금 전용 선행 문장" in result.error
+    cursor.execute.assert_not_called()
+
+
 def test_no_lock_without_pre_statements():
     # 선행 문장이 없는 실행(APPEND·MERGE)은 잠금을 잡지 않는다. 사용자가 직접 쓴 DML 도 REPLACE 면
     # API 가 출력 비우기 선행 문장을 함께 보내므로(#735) 위 선행 문장 테스트와 같은 경로를 탄다.

@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.global.util.SqlLexicalMask;
+import com.smartfirehub.pipeline.service.step.SqlOutputColumns;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -36,7 +37,7 @@ public final class MergeSqlBuilder {
         throw new IllegalArgumentException("MERGE 키 컬럼이 SELECT 결과에 없습니다: " + pk);
       }
     }
-    String cols = quoteJoin(insertColumns, "");
+    String cols = SqlOutputColumns.quotedColumnList(insertColumns);
     String keys = quoteJoin(pkColumns, "");
     List<String> nonKeys = insertColumns.stream().filter(c -> !pkColumns.contains(c)).toList();
 
@@ -84,8 +85,9 @@ public final class MergeSqlBuilder {
     return sql.toString();
   }
 
+  /** 인용 규칙은 적재 문장 공용 {@link SqlOutputColumns#quotedIdentifier} 하나를 쓴다(WD-426). */
   private static String q(String col) {
-    return "\"" + col.replace("\"", "\"\"") + "\"";
+    return SqlOutputColumns.quotedIdentifier(col);
   }
 
   private static String quoteJoin(List<String> cols, String prefix) {

@@ -35,6 +35,7 @@ import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.securitylevel.pythonread.PythonReadAccessException;
 import com.smartfirehub.securitylevel.pythonread.PythonReadGrants;
@@ -43,6 +44,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -134,6 +136,8 @@ class PipelineAsyncRunnerTest {
     // 읽기 슬롯을 준비한다(WD-29). 목 기본값(null RunAs)이면 역참조에서 끊기므로 빈 자격의 RunAs 를 기본으로
     // 둔다 — 특정 RunAs 가 필요한 테스트는 자기 스텁으로 덮어쓴다. 쓰지 않는 테스트가 있어 lenient.
     // 슬롯 준비는 기본 성공(슬롯 2).
+    // 사용자 SQL 판정 기본값(WD-426) — 아무 데이터셋도 참조하지 않는 허용 결과. 판정 결과를 쓰는 테스트는 자기 스텁으로 덮어쓴다.
+    RunnerSqlAccessStubs.allowSqlWithoutDatasetsByDefault(pipelineSecurityGate);
     lenient()
         .when(pipelineSecurityGate.runAs(any()))
         .thenAnswer(
@@ -1376,7 +1380,8 @@ class PipelineAsyncRunnerTest {
     ArgumentCaptor<List<String>> preStatementsCaptor = ArgumentCaptor.forClass(List.class);
     verify(executorClient).executeSql(startsWith("INSERT INTO"), preStatementsCaptor.capture());
     // 리터럴로 못박는다 — firehub-executor 의 선행 문장 화이트리스트 정규식
-    // (^DELETE FROM "(data|data_t\d+)"\."[a-z0-9_]+"$) 이 요구하는 형태(스키마·테이블 양쪽 인용)와
+    // (^DELETE FROM "(data|data_t\d+)"\."[a-z0-9_]+"( WHERE false)?$ — 접미사는 WD-426 잠금 전용) 이 요구하는
+    // 형태(스키마·테이블 양쪽 인용)와
     // 정확히 같은지, OutputClearStatement 를 거치지 않고 독립적으로 확인한다.
     assertThat(preStatementsCaptor.getValue())
         .containsExactly("DELETE FROM \"data\".\"" + outputTable + "\"");
@@ -1463,6 +1468,193 @@ class PipelineAsyncRunnerTest {
     verify(sqlExecutor)
         .execute(
             eq(List.of("DELETE FROM \"data\".\"" + outputTable + "\"")), startsWith("INSERT INTO"));
+  }
+
+  // ------------------------------------------------------------------ //
+  // WD-426 — REPLACE SQL 이 자기 출력을 읽거나 고침
+  // ------------------------------------------------------------------ //
+
+  /** 보안 판정이 본 사용자 SQL 의 읽기·쓰기 데이터셋 — 자기 출력 판정(OutputSelfReference)의 입력. */
+  private void stubSqlAccess(Set<Long> reads, Set<Long> writes) {
+    when(pipelineSecurityGate.checkStepSqlForRun(any(), any()))
+        .thenReturn(new SqlAccessResult(true, null, null, null, reads, writes, true));
+  }
+
+  /**
+   * PG SELECT + REPLACE 가 출력 자신을 읽으면 비우기를 선행 문장이 아니라 본 문장 안에서 한다 — 선행 문장은 같은 출력 잠금만 잡는 잠금 전용
+   * 문장(#731 키 유지), 본 문장은 비우기 전 출력을 읽어 다시 채우는 한 문장이다(실행기 켠·끈 경로 모두).
+   */
+  @Test
+  void REPLACE_SELECT_가_자기_출력을_읽으면_잠금_전용_선행문과_다시_채우기_한_문장을_보낸다() {
+    Long outputDatasetId = 426L;
+    String outputTable = "out426";
+    String selectSql = "SELECT id, name || '+' AS name FROM data.\"out426\"";
+    PipelineStepResponse step = replaceStep(4260L, "SQL", selectSql, outputDatasetId);
+    stubSqlAccess(Set.of(outputDatasetId), Set.of());
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of(outputTable));
+    when(columnRepository.findByDatasetId(outputDatasetId))
+        .thenReturn(List.of(col("id", false), col("name", false)));
+    stubProbeColumns("id", "name");
+    when(executorClient.executeSql(anyString(), anyList()))
+        .thenReturn(
+            new ExecutorClient.SqlExecuteResult(
+                true, List.of(), List.of(), 2, "2 row(s) affected", null, null, null));
+    when(sqlExecutor.execute(anyList(), anyString())).thenReturn("SQL executed successfully");
+
+    assertThat(runner.executeStep(4261L, step, 42L, "TestPipeline", 1L, true))
+        .isEqualTo("COMPLETED");
+    assertThat(runner.executeStep(4262L, step, 42L, "TestPipeline", 1L, false))
+        .isEqualTo("COMPLETED");
+
+    // 잠금 전용 선행문 — 리터럴로 못박는다(firehub-executor 의 선행문 정규식이 받는 정확한 형태, 잠금 키는 전체 비우기와 같다).
+    List<String> lockOnly = List.of("DELETE FROM \"data\".\"out426\" WHERE false");
+    String reload =
+        "WITH \"_fh_self_src\" AS (\n"
+            + selectSql
+            + "\n), \"_fh_self_clear\" AS (DELETE FROM data.\"out426\" RETURNING 1)"
+            + " INSERT INTO data.\"out426\" (\"id\", \"name\") SELECT * FROM \"_fh_self_src\""
+            + " WHERE (SELECT count(*) FROM \"_fh_self_clear\") >= 0";
+    verify(executorClient).executeSql(eq(reload), eq(lockOnly));
+    verify(sqlExecutor).execute(eq(lockOnly), eq(reload));
+  }
+
+  /**
+   * 출력을 읽지 않는 REPLACE SELECT 는 지금 경로 그대로다(전체 비우기 선행문 + INSERT … SELECT) — 선언 입력에 출력이 있어도 SQL 이 읽지
+   * 않으면 같다.
+   */
+  @Test
+  void REPLACE_SELECT_가_자기_출력을_읽지_않으면_예전처럼_비우기_선행문을_보낸다() {
+    Long outputDatasetId = 427L;
+    String selectSql = "SELECT id, name FROM data.\"source\"";
+    PipelineStepResponse step = replaceStep(4270L, "SQL", selectSql, outputDatasetId);
+    stubSqlAccess(Set.of(999L), Set.of());
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out427"));
+    when(columnRepository.findByDatasetId(outputDatasetId))
+        .thenReturn(List.of(col("id", false), col("name", false)));
+    stubProbeColumns("id", "name");
+    when(executorClient.executeSql(anyString(), anyList()))
+        .thenReturn(
+            new ExecutorClient.SqlExecuteResult(
+                true, List.of(), List.of(), 2, "2 row(s) affected", null, null, null));
+
+    assertThat(runner.executeStep(4271L, step, 42L, "TestPipeline", 1L, true))
+        .isEqualTo("COMPLETED");
+    verify(executorClient)
+        .executeSql(
+            eq("INSERT INTO data.\"out427\" (\"id\", \"name\") " + selectSql),
+            eq(List.of("DELETE FROM \"data\".\"out427\"")));
+  }
+
+  /**
+   * PG 사용자 DML + REPLACE 가 출력을 읽거나(INSERT … SELECT FROM 출력) UPDATE 로 고치면 실행 전에 실패한다 — 사용자 문장은 고쳐 쓸
+   * 수 없다. 실행기·로컬 실행기·probe 어느 것도 부르지 않아 출력이 그대로 남는다. 출력을 INSERT 대상으로만 쓰면(쓰기 집합) 통과한다.
+   */
+  @Test
+  void REPLACE_사용자_DML_이_자기_출력을_읽거나_고치면_실행_전에_실패한다() {
+    Long outputDatasetId = 428L;
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out428"));
+
+    stubSqlAccess(Set.of(outputDatasetId), Set.of(outputDatasetId));
+    String insertSelf = "INSERT INTO data.\"out428\" (val) SELECT val FROM data.\"out428\"";
+    assertThat(
+            runner.executeStep(
+                4281L,
+                replaceStep(4280L, "SQL", insertSelf, outputDatasetId),
+                42L,
+                "TestPipeline",
+                1L,
+                true))
+        .isEqualTo("FAILED");
+
+    stubSqlAccess(Set.of(), Set.of(outputDatasetId));
+    String updateSelf = "UPDATE data.\"out428\" SET val = val + 1";
+    assertThat(
+            runner.executeStep(
+                4282L,
+                replaceStep(4280L, "SQL", updateSelf, outputDatasetId),
+                42L,
+                "TestPipeline",
+                1L,
+                true))
+        .isEqualTo("FAILED");
+
+    ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository, times(2))
+        .updateStepExecution(
+            anyLong(), eq("FAILED"), isNull(), isNull(), error.capture(), isNull(), any());
+    assertThat(error.getAllValues())
+        .allSatisfy(
+            message ->
+                assertThat(message)
+                    .startsWith(
+                        "교체(REPLACE) 스텝의 INSERT·UPDATE·DELETE 문은 출력 데이터셋 자신을 읽거나 고칠 수 없습니다"));
+    verifyNoInteractions(executorClient, sqlExecutor, sqlColumnProbe);
+  }
+
+  /**
+   * 출력 미지정(이 스텝 소유 TEMP) REPLACE SELECT 가 그 TEMP 자신을 읽으면, TEMP 준비 전에 정한 기존 TEMP 로 판정해 잠금 전용 선행문 +
+   * 다시 채우기 한 문장을 보낸다. 기존 TEMP 는 한 번만 찾는다 — 실행 전 판정과 TEMP 준비가 같은 조회 결과를 쓴다.
+   */
+  @Test
+  void 출력_미지정_REPLACE_SELECT_가_자기_TEMP_를_읽으면_TEMP_를_비우기_전_데이터로_다시_채운다() {
+    Long stepId = 4290L;
+    Long tempId = 429L;
+    String selectSql = "SELECT code, name || '+' AS name FROM data.\"ptmp_429\"";
+    PipelineStepResponse step =
+        stepResponse(stepId, "self-temp", "SQL", selectSql, null, List.of());
+    stubSqlAccess(Set.of(tempId), Set.of());
+    stubProbeColumns("code", "name");
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(tempId));
+    when(tempDatasetService.hasSchemaChanged(eq(tempId), any())).thenReturn(false);
+    when(datasetRepository.findTableNameById(tempId)).thenReturn(Optional.of("ptmp_429"));
+    when(columnRepository.findByDatasetId(tempId))
+        .thenReturn(List.of(col("code", false), col("name", false)));
+    when(sqlExecutor.execute(anyList(), anyString())).thenReturn("SQL executed successfully");
+
+    assertThat(runner.executeStep(4291L, step, 42L, "TestPipeline", 1L, false))
+        .isEqualTo("COMPLETED");
+
+    verify(sqlExecutor)
+        .execute(
+            eq(List.of("DELETE FROM \"data\".\"ptmp_429\" WHERE false")),
+            eq(
+                "WITH \"_fh_self_src\" AS (\n"
+                    + selectSql
+                    + "\n), \"_fh_self_clear\" AS (DELETE FROM data.\"ptmp_429\" RETURNING 1)"
+                    + " INSERT INTO data.\"ptmp_429\" (\"code\", \"name\") SELECT * FROM"
+                    + " \"_fh_self_src\" WHERE (SELECT count(*) FROM \"_fh_self_clear\") >= 0"));
+    verify(tempDatasetService, times(1)).findExistingTempDataset(stepId);
+    verify(tempDatasetService, never()).rebuildTempDataset(any(), any());
+  }
+
+  /**
+   * 위와 같은 TEMP 자기 읽기인데 결과 열이 바뀌면, TEMP 를 다시 만들기 <b>전에</b> 실패한다 — 다시 만든 빈 TEMP 를 읽으면 기존 행이 모두 사라진다.
+   * 새 열 검증·재생성·생성·실행 어느 것도 하지 않아 TEMP 가 그대로 남고, 할 일을 알려 주는 문구로 실패한다.
+   */
+  @Test
+  void REPLACE_SELECT_가_자기_TEMP_를_읽는데_결과_열이_바뀌면_다시_만들기_전에_실패한다() {
+    Long stepId = 4300L;
+    Long tempId = 430L;
+    String selectSql = "SELECT code, name, 'x' AS extra FROM data.\"ptmp_430\"";
+    PipelineStepResponse step =
+        stepResponse(stepId, "self-temp-changed", "SQL", selectSql, null, List.of());
+    stubSqlAccess(Set.of(tempId), Set.of());
+    stubProbeColumns("code", "name", "extra");
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(tempId));
+    when(tempDatasetService.hasSchemaChanged(eq(tempId), any())).thenReturn(true);
+
+    assertThat(runner.executeStep(4301L, step, 42L, "TestPipeline", 1L, false)).isEqualTo("FAILED");
+
+    ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository)
+        .updateStepExecution(
+            anyLong(), eq("FAILED"), isNull(), isNull(), error.capture(), isNull(), any());
+    assertThat(error.getValue())
+        .isEqualTo(PipelineAsyncRunner.SELF_READ_TEMP_SCHEMA_CHANGED_MESSAGE);
+    verify(tempDatasetService, never()).validateColumnsForNewTemp(any());
+    verify(tempDatasetService, never()).rebuildTempDataset(any(), any());
+    verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
+    verifyNoInteractions(executorClient, sqlExecutor);
   }
 
   // ------------------------------------------------------------------ //

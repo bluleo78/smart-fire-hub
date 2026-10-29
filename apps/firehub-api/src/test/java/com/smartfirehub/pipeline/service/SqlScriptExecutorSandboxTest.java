@@ -424,4 +424,168 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
       dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
     }
   }
+
+  // ── WD-426: 잠금 전용 선행 문장과 자기 출력 다시 채우기 문장(실행기 끈 로컬 경로) ─────────────────────────────
+
+  /** PK(업무 키, ux_<table>_pk 유니크 인덱스)가 있는 출력 테이블 — 다시 채우기 문장이 옛 행과 키가 부딪히지 않는지까지 본다. */
+  private String createKeyedOutput(String prefix) {
+    String table = prefix + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+    dataTableService.createTable(
+        table,
+        List.of(
+            new DatasetColumnRequest("code", "code", "TEXT", null, false, false, null, true),
+            new DatasetColumnRequest("name", "name", "TEXT", null, true, false, null, false)));
+    dsl.execute(
+        "INSERT INTO "
+            + DataSchema.qualify(table)
+            + " (code, name) VALUES ('K1', 'a'), ('K2', 'b')");
+    return table;
+  }
+
+  private List<String> namesOf(String table) {
+    return dsl.fetch("SELECT name FROM " + DataSchema.qualify(table) + " ORDER BY code")
+        .getValues(0, String.class);
+  }
+
+  /**
+   * 자기 출력 다시 채우기 — 잠금 전용 선행 문장 + 한 문장이 비우기 전 출력을 읽어 다시 채운다(PK 출력이어도 23505 없이). 실행기 끈 경로의 검증기는 데이터
+   * 변경 CTE 를 통째로 파싱하지 못하므로 정확한 형태를 확인하고 안쪽 SELECT 만 검증한다.
+   */
+  @Test
+  void 자기_출력_다시_채우기_문장은_비우기_전_출력을_읽어_다시_채운다() {
+    String table = createKeyedOutput("wd426_reload_");
+    try {
+      sqlScriptExecutor.execute(
+          List.of(OutputClearStatement.lockOnly(table)),
+          OutputClearStatement.reloadFromOwnOutput(
+              table,
+              List.of("code", "name"),
+              "SELECT code, name || '+' AS name FROM " + DataSchema.qualify(table)));
+
+      assertThat(namesOf(table)).containsExactly("a+", "b+");
+    } finally {
+      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
+    }
+  }
+
+  /**
+   * 다시 채우기 문장은 같은 출력의 잠금 전용 선행 문장과만 실행한다 — 잠금이 없거나(#731 직렬화가 빠진다) 다른 테이블이면, 안쪽이 조회문이 아니면(검증기가 안쪽만
+   * 보므로) 아무것도 실행하지 않고 거부한다.
+   */
+  @Test
+  void 다시_채우기_문장은_같은_출력의_잠금_전용_선행문과_조회문_안쪽만_받는다() {
+    String table = createKeyedOutput("wd426_reload_guard_");
+    String reload =
+        OutputClearStatement.reloadFromOwnOutput(
+            table, List.of("code", "name"), "SELECT code, name FROM " + DataSchema.qualify(table));
+    try {
+      assertThatThrownBy(() -> sqlScriptExecutor.execute(List.of(), reload))
+          .isInstanceOf(ScriptExecutionException.class)
+          .hasMessageContaining("잠금 전용 선행 문장");
+      assertThatThrownBy(
+              () ->
+                  sqlScriptExecutor.execute(List.of(OutputClearStatement.deleteAll(table)), reload))
+          .isInstanceOf(ScriptExecutionException.class);
+      assertThatThrownBy(
+              () ->
+                  sqlScriptExecutor.execute(
+                      List.of(OutputClearStatement.lockOnly(table + "_other")), reload))
+          .isInstanceOf(ScriptExecutionException.class);
+      String dmlInside =
+          OutputClearStatement.reloadFromOwnOutput(
+              table,
+              List.of("code", "name"),
+              "DELETE FROM " + DataSchema.qualify(table) + " RETURNING code, name");
+      assertThatThrownBy(
+              () ->
+                  sqlScriptExecutor.execute(
+                      List.of(OutputClearStatement.lockOnly(table)), dmlInside))
+          .isInstanceOf(ScriptExecutionException.class)
+          .hasMessageContaining("조회문");
+
+      assertThat(namesOf(table)).as("거부된 문장은 아무것도 바꾸지 않는다").containsExactly("a", "b");
+    } finally {
+      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
+    }
+  }
+
+  /**
+   * 반대쪽 짝 — 잠금 전용 선행 문장은 같은 출력을 다시 채우는 문장과만 실행한다. 일반 INSERT·UPDATE 와 오면(REPLACE 인데 출력이 비워지지 않아 이전
+   * 출력에 새 결과가 덧붙는다), 전체 비우기와 섞여 와도, 다른 출력을 다시 채우는 문장과 와도 아무것도 실행하지 않고 거부한다.
+   */
+  @Test
+  void 잠금_전용_선행문은_같은_출력의_다시_채우기_문장과만_받는다() {
+    String table = createKeyedOutput("wd426_lock_pair_");
+    String other = createKeyedOutput("wd426_lock_pair_other_");
+    String lockOnly = OutputClearStatement.lockOnly(table);
+    String insert = "INSERT INTO " + DataSchema.qualify(table) + " (code, name) VALUES ('K3', 'c')";
+    String update = "UPDATE " + DataSchema.qualify(table) + " SET name = name || '+'";
+    try {
+      for (String body : List.of(insert, update)) {
+        assertThatThrownBy(() -> sqlScriptExecutor.execute(List.of(lockOnly), body))
+            .as(body)
+            .isInstanceOf(ScriptExecutionException.class)
+            .hasMessageContaining("잠금 전용 선행 문장은 같은 출력을 다시 채우는 문장과만");
+      }
+      assertThatThrownBy(
+              () ->
+                  sqlScriptExecutor.execute(
+                      List.of(OutputClearStatement.deleteAll(table), lockOnly), insert))
+          .isInstanceOf(ScriptExecutionException.class)
+          .hasMessageContaining("잠금 전용 선행 문장은 같은 출력을 다시 채우는 문장과만");
+      String reloadOther =
+          OutputClearStatement.reloadFromOwnOutput(
+              other,
+              List.of("code", "name"),
+              "SELECT code, name FROM " + DataSchema.qualify(other));
+      assertThatThrownBy(() -> sqlScriptExecutor.execute(List.of(lockOnly), reloadOther))
+          .isInstanceOf(ScriptExecutionException.class)
+          .hasMessageContaining("같은 출력의 잠금 전용 선행 문장");
+
+      assertThat(namesOf(table)).as("거부된 조합은 아무것도 바꾸지 않는다").containsExactly("a", "b");
+      assertThat(namesOf(other)).containsExactly("a", "b");
+    } finally {
+      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
+      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(other));
+    }
+  }
+
+  /**
+   * 잠금 전용 선행 문장은 아무 행도 지우지 않는다 — 함께 온 다시 채우기 문장이 비우기 전 출력을 그대로 읽는다(지웠다면 빈 결과가 남는다). 접미사가 정확히 "
+   * WHERE false" 가 아닌 변형은 짝과 무관하게 형태 검사에서 본 스크립트 실행 전에 거부한다.
+   */
+  @Test
+  void 잠금_전용_선행문은_행을_지우지_않고_변형은_거부된다() {
+    String table = createKeyedOutput("wd426_lock_only_");
+    String base = OutputClearStatement.deleteAll(table);
+    String insert = "INSERT INTO " + DataSchema.qualify(table) + " (code, name) VALUES ('K3', 'c')";
+    try {
+      sqlScriptExecutor.execute(
+          List.of(OutputClearStatement.lockOnly(table)),
+          OutputClearStatement.reloadFromOwnOutput(
+              table,
+              List.of("code", "name"),
+              "SELECT code, name FROM "
+                  + DataSchema.qualify(table)
+                  + " UNION ALL SELECT 'K3', 'c'"));
+      assertThat(namesOf(table)).containsExactly("a", "b", "c");
+
+      for (String variant :
+          List.of(
+              base + " WHERE false OR true",
+              base + " WHERE 1=1",
+              base + " WHERE FALSE",
+              base + " WHERE false;DELETE FROM " + DataSchema.qualify(table),
+              base + " WHERE false\n",
+              base + " WHERE false WHERE false")) {
+        assertThatThrownBy(() -> sqlScriptExecutor.execute(List.of(variant), insert))
+            .as(variant)
+            .isInstanceOf(ScriptExecutionException.class)
+            .hasMessageContaining("허용되지 않은 선행 문장");
+      }
+      assertThat(namesOf(table)).as("거부된 변형은 실행되지 않는다").containsExactly("a", "b", "c");
+    } finally {
+      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
+    }
+  }
 }

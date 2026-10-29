@@ -332,6 +332,70 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
     assertThat(nameOf(outTable, "K1")).isEqualTo("keep-1");
   }
 
+  /** 출력 지정 하나짜리 SQL 스텝으로 이 파이프라인을 바꿔 저장한다(정식 저장 API — 저장 검증을 거친다). */
+  private void saveSingleStep(String sql, String loadStrategy) {
+    pipelineService.updatePipeline(
+        pipelineId,
+        new UpdatePipelineRequest(
+            "Inc Pipeline " + suffix,
+            "WD-426",
+            null,
+            List.of(
+                new PipelineStepRequest(
+                    STEP_NAME, "self", "SQL", sql, outDatasetId, null, null, loadStrategy))),
+        userId);
+  }
+
+  /**
+   * 이슈 재현(WD-426) — REPLACE SELECT 가 출력 자신을 읽으면 비우기 <b>전</b> 출력을 읽는다. 예전에는 비우기 선행 문장 뒤라 빈 테이블을 읽어
+   * 0행인 채 「완료」로 끝나 기존 데이터가 조용히 사라졌다.
+   *
+   * <p>출력에는 PK(code, ux_<table>_pk 유니크 인덱스)가 있다 — 비우기를 본 문장 안 참조하지 않는 CTE 로만 두면 PostgreSQL 이 INSERT 뒤에
+   * 실행해 옛 행과 키가 부딪혀(23505) 실패했다(실측). 두 번 돌려 두 번째도 첫 실행 결과(비우기 전)를 읽는지, 행이 늘거나 줄지 않는지 본다. 실행기 끈 로컬
+   * 경로(SqlScriptExecutor — 테스트 프로필)로 돈다.
+   */
+  @Test
+  void REPLACE_SELECT_가_자기_출력을_읽으면_비우기_전_데이터를_읽어_다시_채운다() {
+    dsl.execute(
+        "INSERT INTO "
+            + DataSchema.qualify(outTable)
+            + " (code, name) SELECT 'K' || i, 'keep-' || i FROM generate_series(1, 50) AS i");
+    saveSingleStep(
+        "SELECT code, name || '+1' AS name FROM " + DataSchema.qualify(outTable) + " -- 끝 주석",
+        "REPLACE");
+
+    runAndWait("COMPLETED");
+    assertThat(outCount()).as("행이 그대로 50행 — 비운 테이블을 읽어 0행이 되지 않는다").isEqualTo(50);
+    assertThat(nameOf(outTable, "K1")).isEqualTo("keep-1+1");
+    assertThat(nameOf(outTable, "K50")).isEqualTo("keep-50+1");
+
+    runAndWait("COMPLETED");
+    assertThat(outCount()).as("두 번째 실행도 중복·누락 없이 50행").isEqualTo(50);
+    assertThat(nameOf(outTable, "K1")).as("두 번째 실행은 첫 실행 결과를 읽는다").isEqualTo("keep-1+1+1");
+  }
+
+  /**
+   * 실행 시점 2차 방어(WD-426) — 저장 검증을 거치지 않고 SQL 이 바뀐 REPLACE 사용자 DML(레거시 행·직접 수정)이 출력 자신을 고치면, 비운 테이블을
+   * 고쳐 0행으로 「완료」되는 대신 비우기 전에 실패하고 출력은 그대로 남는다.
+   */
+  @Test
+  void REPLACE_사용자_DML_이_자기_출력을_고치면_실행_전에_실패하고_출력이_남는다() {
+    dsl.execute(
+        "INSERT INTO "
+            + DataSchema.qualify(outTable)
+            + " (code, name) SELECT 'K' || i, 'keep-' || i FROM generate_series(1, 5) AS i");
+    saveSingleStep("SELECT code, name FROM " + DataSchema.qualify(srcTable), "REPLACE");
+    // 저장 검증을 우회해 출력을 고치는 DML 로 바꾼다(저장 API 는 이 조합을 거부한다).
+    replaceStepSql("UPDATE " + DataSchema.qualify(outTable) + " SET name = name || '+1'");
+
+    Long executionId = runAndWait("FAILED");
+
+    assertThat(stepErrorMessage(executionId))
+        .contains("교체(REPLACE) 스텝의 INSERT·UPDATE·DELETE 문은 출력 데이터셋 자신을 읽거나 고칠 수 없습니다");
+    assertThat(outCount()).as("거부된 실행은 출력을 비우지 않는다").isEqualTo(5);
+    assertThat(nameOf(outTable, "K1")).isEqualTo("keep-1");
+  }
+
   // ------------------------------------------------------------------ //
   // 시나리오 4: 늦은 커밋 — candidate 규칙과 >= 경계
   // ------------------------------------------------------------------ //
@@ -871,6 +935,25 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
                         + " WHERE execution_id = ?",
                     executionId)
                 .get(0, OffsetDateTime.class));
+  }
+
+  /** 저장 검증을 거치지 않고 스텝 SQL 만 바꾼다 — 실행 시점 방어를 직접 확인하기 위한 레거시 행 흉내(WD-426). */
+  private void replaceStepSql(String sql) {
+    Long id = stepId();
+    inTenantFixture(
+        () -> {
+          dsl.execute("UPDATE pipeline_step SET script_content = ? WHERE id = ?", sql, id);
+        });
+  }
+
+  /** 해당 실행의 스텝 오류 문구. */
+  private String stepErrorMessage(Long executionId) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne(
+                    "SELECT error_message FROM pipeline_step_execution WHERE execution_id = ?",
+                    executionId)
+                .get(0, String.class));
   }
 
   private int outCount() {

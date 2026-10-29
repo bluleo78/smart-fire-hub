@@ -157,6 +157,8 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
         runner, "tempDatasetService", realTempDatasetService);
     TenantContext.set(TENANT_ID);
     lenient().when(dataStoreResolver.currentBackend()).thenReturn(DataStoreBackend.TIBERO);
+    // 사용자 SQL 판정 기본값(WD-426) — 아무 데이터셋도 참조하지 않는 허용 결과. 판정 결과를 쓰는 테스트는 자기 스텁으로 덮어쓴다.
+    RunnerSqlAccessStubs.allowSqlWithoutDatasetsByDefault(pipelineSecurityGate);
     lenient()
         .when(pipelineSecurityGate.runAs(any()))
         .thenAnswer(

@@ -435,7 +435,8 @@ class StepDialectTest {
             "SELECT a, z FROM s", List.of(), true, OUT_TABLE, OUT_ID, false, false, null);
 
     PgStepDialect.WrappedSelect wrapped =
-        pg.wrapSelect(run, List.of(new ColumnInfo("a", "TEXT"), new ColumnInfo("z", "TEXT")));
+        pg.wrapSelect(
+            run, List.of(new ColumnInfo("a", "TEXT"), new ColumnInfo("z", "TEXT")), false);
 
     assertThat(wrapped.sql())
         .isEqualTo("INSERT INTO " + DataSchema.qualify(OUT_TABLE) + " (\"a\") SELECT a, z FROM s");
@@ -450,7 +451,8 @@ class StepDialectTest {
         new SqlStepRun("SELECT k, v FROM s", List.of(), true, OUT_TABLE, OUT_ID, true, false, null);
 
     PgStepDialect.WrappedSelect wrapped =
-        pg.wrapSelect(run, List.of(new ColumnInfo("k", "TEXT"), new ColumnInfo("v", "TEXT")));
+        pg.wrapSelect(
+            run, List.of(new ColumnInfo("k", "TEXT"), new ColumnInfo("v", "TEXT")), false);
 
     assertThat(wrapped.sql())
         .isEqualTo(
@@ -470,7 +472,8 @@ class StepDialectTest {
         new SqlStepRun("SELECT * FROM s", List.of(), true, OUT_TABLE, OUT_ID, false, true, null);
 
     PgStepDialect.WrappedSelect wrapped =
-        pg.wrapSelect(run, List.of(new ColumnInfo("id", "BIGINT"), new ColumnInfo("v", "TEXT")));
+        pg.wrapSelect(
+            run, List.of(new ColumnInfo("id", "BIGINT"), new ColumnInfo("v", "TEXT")), false);
 
     // 러너가 만든 TEMP 는 예약어 별칭(id → id_1)으로 만들어졌으므로 적재 대상도 같은 별칭이다.
     assertThat(wrapped.sql())
@@ -487,9 +490,9 @@ class StepDialectTest {
         new SqlStepRun("SELECT v FROM s", List.of(), true, OUT_TABLE, OUT_ID, true, false, null);
 
     // 열 맞춤이 먼저다 — 맞는 열이 없으면 PK 안내가 아니라 열 불일치 안내로 실패한다.
-    assertThatThrownBy(() -> pg.wrapSelect(noMatch, List.of(new ColumnInfo("z", "TEXT"))))
+    assertThatThrownBy(() -> pg.wrapSelect(noMatch, List.of(new ColumnInfo("z", "TEXT")), false))
         .hasMessageStartingWith("SELECT 결과 컬럼이 출력 데이터셋의 컬럼과 일치하지 않습니다.");
-    assertThatThrownBy(() -> pg.wrapSelect(noPk, List.of(new ColumnInfo("v", "TEXT"))))
+    assertThatThrownBy(() -> pg.wrapSelect(noPk, List.of(new ColumnInfo("v", "TEXT")), false))
         .hasMessageStartingWith("MERGE 에는 출력 데이터셋 PK 컬럼이 필요합니다");
   }
 

@@ -19,6 +19,22 @@ public final class SqlOutputColumns {
 
   private SqlOutputColumns() {}
 
+  /** PG 인용 식별자({@code "a"}) — 큰따옴표는 이중화한다. 출력 적재 문장을 만드는 모든 곳이 이 한 규칙을 쓴다(WD-426). */
+  public static String quotedIdentifier(String column) {
+    return "\"" + column.replace("\"", "\"\"") + "\"";
+  }
+
+  /**
+   * 컬럼 이름들을 PG 인용 식별자 목록({@code "a", "b"})으로 만든다. 적재 대상 컬럼 목록을 만드는 세 곳(MERGE 의 {@code
+   * MergeSqlBuilder}, {@link PgStepDialect} 의 INSERT … SELECT, 자기 출력 다시 채우기의 {@code
+   * OutputClearStatement})이 함께 쓴다 — 한 곳만 이스케이프를 빠뜨리면 같은 컬럼이 경로마다 다르게 인용된다(WD-426).
+   */
+  public static String quotedColumnList(List<String> columns) {
+    return columns.stream()
+        .map(SqlOutputColumns::quotedIdentifier)
+        .collect(Collectors.joining(", "));
+  }
+
   /** 출력 데이터셋 컬럼 이름 집합(메타데이터 이름). */
   public static Set<String> outputColumnNames(List<DatasetColumnResponse> outputColumns) {
     return outputColumns.stream()

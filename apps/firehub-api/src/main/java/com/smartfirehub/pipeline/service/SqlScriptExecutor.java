@@ -6,6 +6,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.util.List;
+import java.util.Optional;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -55,9 +56,13 @@ public class SqlScriptExecutor {
   /**
    * {@link #OUTPUT_LOCK_SQL} 에 바인딩할 키 — 검증을 통과한 선행 문장이 가리키는 대상을 <b>적힌 그대로</b> ({@code
    * "<스키마>"."<테이블>"}) 쓴다. 스키마명을 여기서 다시 조립하지 않으므로 선행 문장과 잠금 대상이 어긋날 수 없다.
+   *
+   * <p>잠금 전용 형태({@link OutputClearStatement#lockOnly}, WD-426)는 접미사 {@link
+   * OutputClearStatement#LOCK_ONLY_SUFFIX} 를 떼고 같은 키를 쓴다 — 전체 비우기 실행과 자기 출력 다시 채우기 실행이 같은 출력에서 서로
+   * 배타여야 하기 때문이다(firehub-executor output_lock_key 와 같은 규칙).
    */
   static String outputLockKey(String preStatement) {
-    return preStatement.substring(CLEAR_VERB.length());
+    return OutputClearStatement.stripLockOnly(preStatement.substring(CLEAR_VERB.length()));
   }
 
   /**
@@ -102,7 +107,8 @@ public class SqlScriptExecutor {
    * 걸리므로, 이 계약을 별도 정규식 리터럴로 하드코딩하지 않는다. 테이블명 부분은 {@link #PRE_STATEMENT_TABLE_PATTERN} 으로 확인한다 —
    * {@code DataTableService.validateName} 이 기존 {@code truncateTable} 경로에서 하던 것과 같은 방어를 이 경로에도 되살린다.
    * 이 검증 하나로 "시작 문자열 + 세미콜론 없음"만 보던 이전 형태보다, API 서버가 만들지 않은 임의의 DELETE(WHERE 절 포함·다른 스키마 대상 등)를 테넌트
-   * 파이프라인 롤 권한으로 실행할 길을 막는다.
+   * 파이프라인 롤 권한으로 실행할 길을 막는다. 예외는 하나 — 그 형태 뒤에 정확히 {@code " WHERE false"} 만 붙은 잠금 전용 문장({@link
+   * OutputClearStatement#lockOnly}, WD-426)이다. 아무 행도 지우지 않고 같은 출력 잠금만 잡는다.
    *
    * <p><b>시간 제한 없음(WD-262, 스펙 §4.2).</b> 이 실행기 비활성 로컬 경로는 선행 문장에 합계 상한을 걸지 않는다. 실행기 경로(Python
    * {@code EXECUTOR_SQL_PRE_STATEMENT_TIMEOUT_SECONDS}, db-executor {@code
@@ -114,20 +120,37 @@ public class SqlScriptExecutor {
    * @param scriptContent 본 SQL 스크립트
    */
   public String execute(List<String> preStatements, String scriptContent) {
-    // 심층 방어: 실행 전 검증
-    sqlValidator.validate(scriptContent);
     // 선행 문장은 DataSchema.current() 로 얻은 "현재 테넌트 스키마" 를 대상으로 하는 DELETE 전체
-    // 삭제문 하나만 허용한다 — WHERE 절도, 다른 스키마도, 세미콜론으로 이어붙인 두 번째 문장도
-    // 이 접두어·패턴 조합을 통과할 수 없다.
+    // 삭제문과, 그 뒤에 정확히 " WHERE false" 만 붙은 잠금 전용 문장(WD-426)만 허용한다 — 다른 WHERE 절도, 다른 스키마도,
+    // 세미콜론으로 이어붙인 두 번째 문장도 이 접두어·접미사·패턴 조합을 통과할 수 없다(접미사는 한 번만 뗀다).
+    // 형태 검사를 본문·짝 검사보다 먼저 한다 — 형태가 틀린 선행문은 짝이 맞든 아니든 같은 문구로 거부된다.
     String expectedPrefix = "DELETE FROM \"" + DataSchema.current() + "\".\"";
     for (String preStatement : preStatements) {
       if (preStatement == null
           || !preStatement.startsWith(expectedPrefix)
           || !PRE_STATEMENT_TABLE_PATTERN
-              .matcher(preStatement.substring(expectedPrefix.length()))
+              .matcher(
+                  OutputClearStatement.stripLockOnly(
+                      preStatement.substring(expectedPrefix.length())))
               .matches()) {
         throw new ScriptExecutionException("허용되지 않은 선행 문장입니다: " + preStatement);
       }
+    }
+
+    // 심층 방어: 실행 전 검증. 자기 출력 다시 채우기 문장(WD-426)은 데이터 변경 CTE 라 검증기(JSqlParser 5.0)가 통째로 파싱하지 못한다 —
+    // 러너가 만든 정확한 형태인지 확인하고 안쪽 사용자 SELECT 만 검증한다. 그 밖의 문장은 예전처럼 통째로 검증한다.
+    // 잠금 전용 선행문과 다시 채우기 문장은 서로의 짝으로만 받는다(양방향) — 다시 채우기 문장은 같은 출력의 잠금 전용 선행문 하나와만,
+    // 잠금 전용 선행문은 같은 출력을 다시 채우는 문장과만 온다. 잠금 전용 선행문이 일반 INSERT·DML 과 오면 REPLACE 인데 출력이 비워지지
+    // 않아 이전 출력에 새 결과가 덧붙는다(행 중복) — 러너는 그렇게 보내지 않지만 이 경로가 다시 확인한다.
+    Optional<OutputClearStatement.ReloadParts> reload =
+        OutputClearStatement.reloadSourceOf(scriptContent);
+    if (reload.isPresent()) {
+      requireReloadOfLockedOutput(reload.get(), preStatements);
+    } else {
+      if (preStatements.stream().anyMatch(OutputClearStatement::isLockOnly)) {
+        throw new ScriptExecutionException("잠금 전용 선행 문장은 같은 출력을 다시 채우는 문장과만 함께 실행할 수 있습니다.");
+      }
+      sqlValidator.validate(scriptContent);
     }
 
     long tenantId = TenantContext.require("파이프라인 SQL 실행");
@@ -186,6 +209,20 @@ public class SqlScriptExecutor {
       // (러너가 감싼 INSERT INTO … / MERGE …)를 "SQL [...]" 로 메아리하므로 쓰지 않는다.
       throw new ScriptExecutionException(
           PipelineSqlErrorMessages.describe(PipelineSqlErrorMessages.EXECUTION_PREFIX, e), e);
+    }
+  }
+
+  /**
+   * 자기 출력 다시 채우기 문장(WD-426)의 실행 조건 — 안쪽 사용자 SQL 은 조회문(SELECT)이어야 하고, 선행 문장은 같은 출력의 잠금 전용 문장 하나여야
+   * 한다. 잠금이 없으면 같은 출력에 겹친 두 실행이 같은 옛 행을 읽어 각자 넣어 행이 중복된다(#731) — 러너가 늘 함께 보내지만 이 경로가 그 계약을 다시 확인한다.
+   */
+  private void requireReloadOfLockedOutput(
+      OutputClearStatement.ReloadParts reload, List<String> preStatements) {
+    if (sqlValidator.validate(reload.selectSql()) != SqlValidator.StatementKind.QUERY) {
+      throw new ScriptExecutionException("출력 다시 채우기 문장의 안쪽 SQL 은 조회문(SELECT)이어야 합니다.");
+    }
+    if (!preStatements.equals(List.of(OutputClearStatement.lockOnly(reload.tableName())))) {
+      throw new ScriptExecutionException("출력 다시 채우기 문장에는 같은 출력의 잠금 전용 선행 문장이 하나 있어야 합니다.");
     }
   }
 }

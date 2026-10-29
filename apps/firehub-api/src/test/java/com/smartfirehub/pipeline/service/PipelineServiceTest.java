@@ -1263,6 +1263,278 @@ class PipelineServiceTest extends IntegrationTestBase {
         .hasMessageContaining("MERGE");
   }
 
+  // --- REPLACE 출력을 SQL 이 스스로 읽거나 고침(WD-426) ---
+
+  /** 출력 지정 하나짜리 SQL 스텝으로 파이프라인을 만든다(이름은 테스트마다 달리). */
+  private PipelineDetailResponse createSingleSqlStep(
+      String pipelineName, String sql, Long output, String loadStrategy) {
+    return pipelineService.createPipeline(
+        new CreatePipelineRequest(
+            pipelineName,
+            "WD-426",
+            List.of(
+                new PipelineStepRequest(
+                    "self", null, "SQL", sql, output, null, null, loadStrategy))),
+        testUserId);
+  }
+
+  /**
+   * 이슈 재현 경로가 이제 저장된다 — PG SELECT + REPLACE 가 출력 자신을 읽으면 러너가 비우기를 본 문장 안으로 옮겨 비우기 전 데이터를 읽는다(실행 결과는
+   * PipelineIncrementalIntegrationTest 가 확인한다). PK 출력(기본 적재 방식 = REPLACE)도 같다.
+   */
+  @Test
+  void createPipeline_replaceSelectReadingItsOwnOutput_isSaved() {
+    assertThat(
+            createSingleSqlStep(
+                    "WD426 self select",
+                    "SELECT col1 || 'x' AS col1 FROM data.output_dataset",
+                    outputDatasetId,
+                    "REPLACE")
+                .steps())
+        .hasSize(1);
+    assertThat(
+            createSingleSqlStep(
+                    "WD426 self select pk",
+                    "SELECT code, name || 'x' AS name FROM data.pk_output_dataset",
+                    pkOutputDatasetId,
+                    null)
+                .steps())
+        .hasSize(1);
+  }
+
+  /** 출력을 직접 UPDATE 하는 DML — 적재 방식을 비우면 기본값 REPLACE 라 비운 테이블을 고쳐 0행이 된다(이슈 댓글 재현). 대안을 안내한다. */
+  @Test
+  void createPipeline_defaultReplaceUpdatingItsOwnOutput_isRejected() {
+    assertThatThrownBy(
+            () ->
+                createSingleSqlStep(
+                    "WD426 self update",
+                    "UPDATE data.output_dataset SET col1 = 'U' WHERE col1 = 'a'",
+                    outputDatasetId,
+                    null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("교체(REPLACE) 스텝의 INSERT·UPDATE·DELETE 문은 출력 데이터셋 자신을 읽거나 고칠 수 없습니다")
+        .hasMessageContaining("SELECT 문으로 바꾸세요")
+        .hasMessageEndingWith(": self");
+  }
+
+  /** 출력을 DELETE 로 고치는 REPLACE DML 도 비운 테이블을 고친다. */
+  @Test
+  void createPipeline_replaceDeletingFromItsOwnOutput_isRejected() {
+    assertThatThrownBy(
+            () ->
+                createSingleSqlStep(
+                    "WD426 self delete",
+                    "DELETE FROM data.output_dataset WHERE col1 = 'a'",
+                    outputDatasetId,
+                    "REPLACE"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("교체(REPLACE) 스텝의 INSERT·UPDATE·DELETE 문은");
+  }
+
+  /** INSERT … SELECT … FROM 출력 자신도 비운 테이블을 읽는다 — 사용자 DML 은 고쳐 쓸 수 없어 거부한다(SELECT 문으로 바꾸면 저장된다). */
+  @Test
+  void createPipeline_replaceInsertSelectFromItsOwnOutput_isRejected() {
+    assertThatThrownBy(
+            () ->
+                createSingleSqlStep(
+                    "WD426 self insert",
+                    "INSERT INTO data.output_dataset (col1) SELECT col1 FROM data.output_dataset",
+                    outputDatasetId,
+                    "REPLACE"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("교체(REPLACE) 스텝의 INSERT·UPDATE·DELETE 문은");
+  }
+
+  /**
+   * CTE 안에 숨긴 UPDATE 로 출력을 고치는 문장 — 데이터 변경 CTE 는 검증기(JSqlParser 5.0)가 파싱하지 못해 자기 출력 판정 전에 검증에서 거부된다
+   * (400). 파서가 이 구문을 파싱하기 시작하면 SqlValidatorReferencedTablesTest 가 먼저 깨져 쓰기 대상 수집을 넓히라고 알린다.
+   */
+  @Test
+  void createPipeline_replaceUpdatingItsOwnOutputInsideCte_isRejected() {
+    assertThatThrownBy(
+            () ->
+                createSingleSqlStep(
+                    "WD426 self cte update",
+                    "WITH x AS (UPDATE data.output_dataset SET col1 = 'U' RETURNING col1)"
+                        + " SELECT col1 FROM x",
+                    outputDatasetId,
+                    "REPLACE"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /**
+   * 이 규칙 전에 저장된(레거시) 자기 출력 UPDATE REPLACE 스텝이 그대로 남은 파이프라인도 다른 스텝만 고친 저장은 된다 — 판정은 새 스텝이거나 SQL·출력
+   * 방식·출력이 바뀐 스텝만 본다(그대로 남은 스텝은 실행 시점 판정이 실패시킨다). 그 스텝의 SQL 을 고치면 다시 판정해 거부한다.
+   */
+  @Test
+  void updatePipeline_unchangedLegacySelfUpdatingReplaceStep_doesNotBlockEditingAnotherStep() {
+    assertLegacySelfUpdatingStepDoesNotBlockOtherEdits("WD426 legacy", "REPLACE");
+  }
+
+  /**
+   * 저장값이 레거시 소문자 {@code "replace"} 여도 같다 — 출력 방식은 러너와 같은 해석(대소문자 무시)으로 비교하므로, 화면이 대문자 {@code
+   * "REPLACE"} 로 되돌려 보내도 "바뀐 스텝"으로 보지 않는다.
+   */
+  @Test
+  void
+      updatePipeline_unchangedLegacyStepWithLowercaseStoredReplace_doesNotBlockEditingAnotherStep() {
+    assertLegacySelfUpdatingStepDoesNotBlockOtherEdits("WD426 legacy lower", "replace");
+  }
+
+  /**
+   * 자기 출력 UPDATE 레거시 스텝(출력 방식 저장값 {@code storedStrategy})을 DB 에 직접 만들고, 그 스텝을 그대로 되돌려 보낸 채 다른 스텝만
+   * 고친 저장은 통과하고 그 스텝의 SQL 을 고친 저장은 거부되는지 본다. 요청의 출력 방식은 화면처럼 대문자 {@code "REPLACE"} 다.
+   */
+  private void assertLegacySelfUpdatingStepDoesNotBlockOtherEdits(
+      String pipelineName, String storedStrategy) {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                pipelineName,
+                "WD-426",
+                List.of(
+                    new PipelineStepRequest(
+                        "legacy",
+                        null,
+                        "SQL",
+                        "INSERT INTO data.output_dataset (col1) SELECT col1 FROM data.input_dataset",
+                        outputDatasetId,
+                        null,
+                        null,
+                        "REPLACE"),
+                    new PipelineStepRequest(
+                        "other",
+                        null,
+                        "SQL",
+                        "SELECT col1 FROM data.input_dataset",
+                        null,
+                        null,
+                        null,
+                        "REPLACE"))),
+            testUserId);
+    // 규칙 전에 저장된 행을 흉내 낸다 — 저장 검증을 거치지 않고 자기 출력 UPDATE(와 저장값 그대로의 출력 방식)로 바꿔 둔다.
+    String legacySql = "UPDATE data.output_dataset SET col1 = 'U' WHERE col1 = 'a'";
+    dsl.update(PIPELINE_STEP)
+        .set(PIPELINE_STEP.SCRIPT_CONTENT, legacySql)
+        .set(PIPELINE_STEP.LOAD_STRATEGY, storedStrategy)
+        .where(PIPELINE_STEP.PIPELINE_ID.eq(created.id()).and(PIPELINE_STEP.NAME.eq("legacy")))
+        .execute();
+    Long legacyId =
+        created.steps().stream()
+            .filter(s -> s.name().equals("legacy"))
+            .findFirst()
+            .orElseThrow()
+            .id();
+    Long otherId =
+        created.steps().stream()
+            .filter(s -> s.name().equals("other"))
+            .findFirst()
+            .orElseThrow()
+            .id();
+    java.util.function.Function<String, PipelineStepRequest> legacyWith =
+        sql ->
+            new PipelineStepRequest(
+                "legacy",
+                null,
+                "SQL",
+                sql,
+                outputDatasetId,
+                List.of(),
+                List.of(),
+                "REPLACE",
+                null,
+                null,
+                null,
+                null,
+                legacyId);
+    PipelineStepRequest otherEdited =
+        new PipelineStepRequest(
+            "other",
+            null,
+            "SQL",
+            "SELECT col1 || 'x' AS col1 FROM data.input_dataset",
+            null,
+            List.of(),
+            List.of(),
+            "REPLACE",
+            null,
+            null,
+            null,
+            null,
+            otherId);
+
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            pipelineName, "WD-426", true, List.of(legacyWith.apply(legacySql), otherEdited)),
+        testUserId);
+
+    assertThat(
+            dsl.select(PIPELINE_STEP.SCRIPT_CONTENT)
+                .from(PIPELINE_STEP)
+                .where(PIPELINE_STEP.ID.eq(otherId))
+                .fetchOne(PIPELINE_STEP.SCRIPT_CONTENT))
+        .isEqualTo("SELECT col1 || 'x' AS col1 FROM data.input_dataset");
+    assertThatThrownBy(
+            () ->
+                pipelineService.updatePipeline(
+                    created.id(),
+                    new UpdatePipelineRequest(
+                        pipelineName,
+                        "WD-426",
+                        true,
+                        List.of(
+                            legacyWith.apply(
+                                "UPDATE data.output_dataset SET col1 = 'V' WHERE col1 = 'a'"),
+                            otherEdited)),
+                    testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("교체(REPLACE) 스텝의 INSERT·UPDATE·DELETE 문은")
+        .hasMessageEndingWith(": legacy");
+  }
+
+  /** 막지 않는 것 — 비운 뒤 다른 테이블에서 출력으로 INSERT 하는 REPLACE 사용자 DML 은 정상 사용법이다. */
+  @Test
+  void createPipeline_replaceInsertIntoOutputFromAnotherTable_isSaved() {
+    PipelineDetailResponse created =
+        createSingleSqlStep(
+            "WD426 insert other",
+            "INSERT INTO data.output_dataset (col1) SELECT col1 FROM data.input_dataset",
+            outputDatasetId,
+            "REPLACE");
+    assertThat(created.steps()).hasSize(1);
+  }
+
+  /** 막지 않는 것 — MERGE·APPEND 는 출력을 비우지 않으므로 자기 출력을 읽어도 기존 행이 남는다. 사용자 DML APPEND 도 같다. */
+  @Test
+  void createPipeline_mergeAndAppendReadingItsOwnOutput_areSaved() {
+    assertThat(
+            createSingleSqlStep(
+                    "WD426 self merge",
+                    "SELECT code, name || 'x' AS name FROM data.pk_output_dataset",
+                    pkOutputDatasetId,
+                    "MERGE")
+                .steps())
+        .hasSize(1);
+    assertThat(
+            createSingleSqlStep(
+                    "WD426 self append",
+                    "SELECT col1 FROM data.output_dataset",
+                    outputDatasetId,
+                    "APPEND")
+                .steps())
+        .hasSize(1);
+    assertThat(
+            createSingleSqlStep(
+                    "WD426 self dml append",
+                    "UPDATE data.output_dataset SET col1 = 'U' WHERE col1 = 'a'",
+                    outputDatasetId,
+                    "APPEND")
+                .steps())
+        .hasSize(1);
+  }
+
   @Test
   void createPipeline_incrementalWithAppend_isSaved() {
     List<PipelineStepRequest> steps =
