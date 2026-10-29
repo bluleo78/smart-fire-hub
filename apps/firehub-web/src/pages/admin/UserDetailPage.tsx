@@ -37,7 +37,7 @@ import type { RoleResponse } from '../../types/role';
 import type { UserDetailResponse } from '../../types/user';
 import { AccountDisabledBadge } from './components/AccountDisabledBadge';
 import { MemberDangerZone } from './components/MemberDangerZone';
-import { memberLockReason } from './components/memberLockReason';
+import { memberLockReason, roleLockReason } from './components/memberLockReason';
 
 export default function UserDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -358,16 +358,15 @@ export default function UserDetailPage() {
                 // 자기 자신의 ADMIN 역할 제거 차단 (#57)
                 const isSelf = currentUser?.id === Number(id);
                 const isOwnAdminRole = isSelf && role.name === 'ADMIN';
-                // 시스템 ADMIN 역할은 ADMIN 만 부여·회수할 수 있다(WD-116 RoleGrantGuard) — 위임받은 역할 관리자에게는
-                // 붙이는 것도 떼는 것도 잠근다. 열어 두면 저장 시점에야 403 을 받는다.
-                const adminOnlyLocked = !isCallerAdmin && role.isSystem && role.name === 'ADMIN';
+                // 시스템 ADMIN 은 ADMIN 만(WD-116), 소유자의 ADMIN 은 뺄 수 없음(WD-282) — 열어 두면 저장 시점에야 403/409 를 받는다.
+                const lockReason = roleLockReason(role, user, isCallerAdmin);
                 return (
                 <div key={role.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <Checkbox
                     id={`role-${role.id}`}
                     checked={selectedRoleIds.includes(role.id)}
-                    disabled={isOwnAdminRole || adminOnlyLocked}
-                    aria-describedby={adminOnlyLocked ? `role-${role.id}-lock` : undefined}
+                    disabled={isOwnAdminRole || lockReason !== null}
+                    aria-describedby={lockReason ? `role-${role.id}-lock` : undefined}
                     onCheckedChange={(checked) => handleRoleToggle(role.id, checked === true)}
                   />
                   <Label htmlFor={`role-${role.id}`} className="flex items-center gap-2">
@@ -379,10 +378,10 @@ export default function UserDetailPage() {
                   {role.description && (
                     <span className="text-sm text-muted-foreground">{role.description}</span>
                   )}
-                  {adminOnlyLocked && (
+                  {lockReason && (
                     // 한 줄을 다 쓰고(basis-full) 체크박스 폭+간격(pl-7)만큼 들여 역할 이름과 왼쪽을 맞춘다(역할 상세 범위 안내와 같은 배치).
                     <span id={`role-${role.id}-lock`} className="basis-full pl-7 text-xs text-muted-foreground">
-                      시스템 ADMIN 역할은 ADMIN 만 부여하거나 회수할 수 있습니다
+                      {lockReason}
                     </span>
                   )}
                 </div>

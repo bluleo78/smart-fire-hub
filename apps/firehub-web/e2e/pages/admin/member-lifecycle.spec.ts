@@ -185,3 +185,60 @@ test.describe('멤버십 정지·제거', () => {
     expect(await toast.innerText()).not.toMatch(/\b5\b/);
   });
 });
+
+/**
+ * WD-282: 소유자의 ADMIN 은 역할 할당에서도 뺄 수 없다(서버 409, 정지·제거 잠금과 같은 이유). 지금 ADMIN 을 가진 소유자만 잠그고,
+ * 이미 ADMIN 이 빠진 소유자에게는 다시 붙일 수 있어야 한다.
+ */
+test.describe('소유자 ADMIN 역할 잠금 (WD-282)', () => {
+  const ROLES = [
+    createRole({ id: 1, name: 'USER', isSystem: true }),
+    createRole({ id: 2, name: 'ADMIN', isSystem: true }),
+    createRole({ id: 3, name: 'EDITOR', isSystem: false }),
+  ];
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page); // 호출자 = ADMIN(id 2) — 시스템 ADMIN 잠금(WD-116)과 섞이지 않게
+    await mockApi(page, 'GET', '/api/v1/roles', ROLES);
+  });
+
+  test('ADMIN 을 가진 소유자는 ADMIN 체크가 잠기고 이유가 보이며, 다른 역할을 바꿔 저장하면 ADMIN 은 그대로 전송된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/users/5',
+      createUserDetail({ id: 5, membershipRole: 'OWNER', roles: [ROLES[0], ROLES[1]] }));
+    const put = await mockApi(page, 'PUT', '/api/v1/users/5/roles', {}, { capture: true });
+    await page.goto('/admin/users/5');
+
+    const adminBox = page.getByRole('checkbox', { name: /ADMIN/ });
+    await expect(adminBox).toBeChecked();
+    await expect(adminBox).toBeDisabled();
+    await expect(adminBox).toHaveAccessibleDescription('워크스페이스 소유자의 ADMIN 역할은 뺄 수 없습니다');
+
+    await page.getByRole('checkbox', { name: /EDITOR/ }).check();
+    await page.getByRole('button', { name: '역할 저장' }).click();
+    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 2, 3] });
+  });
+
+  test('ADMIN 이 이미 빠진 소유자에게는 ADMIN 을 다시 붙일 수 있다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/users/5',
+      createUserDetail({ id: 5, membershipRole: 'OWNER', roles: [ROLES[0]] }));
+    const put = await mockApi(page, 'PUT', '/api/v1/users/5/roles', {}, { capture: true });
+    await page.goto('/admin/users/5');
+
+    const adminBox = page.getByRole('checkbox', { name: /ADMIN/ });
+    await expect(adminBox).toBeEnabled();
+    await expect(page.getByText('워크스페이스 소유자의 ADMIN 역할은 뺄 수 없습니다')).toHaveCount(0);
+    await adminBox.check();
+    await page.getByRole('button', { name: '역할 저장' }).click();
+    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 2] });
+  });
+
+  test('소유자가 아닌 ADMIN 멤버의 ADMIN 체크는 잠기지 않는다(대조군)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/users/5',
+      createUserDetail({ id: 5, membershipRole: 'MEMBER', roles: [ROLES[0], ROLES[1]] }));
+    await page.goto('/admin/users/5');
+
+    await expect(page.getByRole('checkbox', { name: /ADMIN/ })).toBeEnabled();
+  });
+});

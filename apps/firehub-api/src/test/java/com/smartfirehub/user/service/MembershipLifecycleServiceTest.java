@@ -302,6 +302,31 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
         .isInstanceOf(IllegalStateException.class);
   }
 
+  /**
+   * WD-282: 소유자에게서 ADMIN 을 빼는 역할 변경도 정지·제거와 같은 이유(소유자가 관리 화면에서 잠김)로 409 로 거부한다. 다른 ADMIN 이 남아 있어
+   * 마지막 ADMIN 보호를 통과하는 경우다. ADMIN 을 유지한 채 다른 역할을 바꾸는 것은 막지 않는다.
+   */
+  @Test
+  void owner_adminRoleRemoval_rejected_otherRoleChangesAllowed() {
+    long adminRole = roleIdInA("ADMIN");
+    long userRole = roleIdInA("USER");
+
+    assertThatThrownBy(() -> inA(() -> userService.setUserRoles(owner, List.of(userRole), admin)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("워크스페이스 소유자의 ADMIN 역할은 뺄 수 없습니다");
+    assertThat(inTenantFixture(tenantA, () -> userRepository.hasAdminRole(owner)))
+        .as("거절되면 ADMIN 이 그대로 남는다")
+        .isTrue();
+
+    inA(() -> userService.setUserRoles(owner, List.of(adminRole, userRole), admin));
+    assertThat(inTenantFixture(tenantA, () -> userRepository.hasAdminRole(owner))).isTrue();
+
+    // 소유자 본인이 자기 ADMIN 을 빼면 자기 잠금 규칙(#57)이 먼저다 — 기존 400 계약 유지(판정 순서: 자기 → 소유자 → 마지막 ADMIN).
+    assertThatThrownBy(() -> inA(() -> userService.setUserRoles(owner, List.of(userRole), owner)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("자신의 ADMIN 역할은 제거할 수 없습니다");
+  }
+
   @Test
   void lastActiveAdmin_rejected_whenOtherAdminSuspendedInThisTenant() {
     // owner 의 ADMIN 을 빼서 A 의 ADMIN 을 admin 하나로 만든 뒤, 다른 ADMIN(member 에 부여) 을 정지 상태로 둔다.

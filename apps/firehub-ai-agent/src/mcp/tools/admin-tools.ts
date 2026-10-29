@@ -41,7 +41,7 @@ export function registerAdminTools(
 
     safeTool(
       'set_user_roles',
-      '사용자에게 역할을 할당합니다. roleIds 배열로 기존 역할이 전부 교체됩니다. 빈 배열이면 모든 역할이 제거됩니다.',
+      '사용자에게 역할을 할당합니다. roleIds 배열로 기존 역할이 전부 교체됩니다. 빈 배열이면 모든 역할이 제거됩니다. 자기 자신·워크스페이스 소유자·마지막 활성 ADMIN 에게서 ADMIN 을 빼는 요청은 서버가 거부합니다(400/409).',
       {
         userId: z.number().describe('사용자 ID'),
         roleIds: z.array(z.number()).describe('할당할 역할 ID 목록 (기존 역할 전부 교체)'),
