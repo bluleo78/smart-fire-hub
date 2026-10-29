@@ -16,8 +16,13 @@ import com.smartfirehub.pipeline.dto.StepCursor;
 import com.smartfirehub.pipeline.dto.UpdatePipelineRequest;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PostgresTestContainer;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -846,24 +851,40 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
     }
   }
 
-  /** 다른 세션이 원천 테이블의 관계 잠금을 계속 쥐고 있을 때까지(= 앞 실행의 본 문장이 원천을 읽는 중) 기다린다. */
-  private void awaitSourceReadInProgress() throws InterruptedException {
-    String rel = DataSchema.qualify(srcTable);
+  /**
+   * 앞 실행의 본 문장(느린 계열 곱이 든 원천 읽기)이 실제로 실행 중일 때까지 기다린다.
+   *
+   * <p>원천 테이블 잠금(pg_locks)으로 보면 안 된다 — 관계 잠금은 트랜잭션 끝까지 남아, 같은 트랜잭션의 컬럼 probe(LIMIT 0)가 잡은 잠금도 "읽는
+   * 중"으로 보인다. 전체 테스트처럼 부하가 크면 probe 와 본 문장 사이가 길어져 새 행이 본 문장 스냅샷보다 먼저 들어가 앞 실행에도 보였다(간헐 실패: NEW1 이
+   * 두 번 적재). 그래서 본 문장이 active 이고 시작한 지 300ms 가 넘었는지를 본다(LIMIT 0 probe 는 곧 끝난다). READ COMMITTED 의 문장
+   * 스냅샷은 실행 시작 때 잡히므로, 이때 넣은 행은 앞 실행에 보이지 않는다.
+   *
+   * <p>다른 롤 세션의 상태·문장은 슈퍼유저만 볼 수 있어 테스트 풀(app_tenant)이 아니라 컨테이너 소유자 계정으로 따로 붙는다(SecurityEventsTest
+   * 와 같은 방식).
+   */
+  private void awaitSourceReadInProgress() throws Exception {
     long deadline = System.currentTimeMillis() + 30_000;
-    int consecutive = 0;
-    while (System.currentTimeMillis() < deadline) {
-      Integer held =
-          dsl.fetchOne(
-                  "SELECT count(*) FROM pg_locks WHERE locktype = 'relation' AND granted"
-                      + " AND relation = to_regclass(?) AND pid <> pg_backend_pid()",
-                  rel)
-              .get(0, Integer.class);
-      // 컬럼 probe(LIMIT 0)도 잠깐 잠금을 잡으므로, 연속으로 보일 때만 본 문장으로 본다.
-      consecutive = held > 0 ? consecutive + 1 : 0;
-      if (consecutive >= 4) {
-        return;
+    try (Connection watcher =
+            DriverManager.getConnection(
+                PostgresTestContainer.INSTANCE.getJdbcUrl(),
+                PostgresTestContainer.INSTANCE.getUsername(),
+                PostgresTestContainer.INSTANCE.getPassword());
+        PreparedStatement ps =
+            watcher.prepareStatement(
+                "SELECT exists (SELECT 1 FROM pg_stat_activity WHERE datname = current_database()"
+                    + " AND state = 'active' AND pid <> pg_backend_pid()"
+                    + " AND query LIKE '%generate_series(1, 12000)%'"
+                    + " AND query NOT ILIKE '%limit 0%'"
+                    + " AND now() - query_start > interval '300 milliseconds')")) {
+      while (System.currentTimeMillis() < deadline) {
+        try (ResultSet rs = ps.executeQuery()) {
+          rs.next();
+          if (rs.getBoolean(1)) {
+            return;
+          }
+        }
+        Thread.sleep(100);
       }
-      Thread.sleep(100);
     }
     throw new IllegalStateException("앞 실행의 원천 읽기를 관측하지 못했습니다");
   }
