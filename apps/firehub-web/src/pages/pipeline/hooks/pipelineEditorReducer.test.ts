@@ -245,6 +245,15 @@ describe('pipelineEditorReducer', () => {
       expect(next.pipelineId).toBe(7);
       expect(next.isDirty).toBe(false);
     });
+
+    // WD-353 — 저장 응답의 새 버전이 다음 저장의 기준이 된다(재조회를 기다리면 자기 저장과 충돌)
+    it('updatedAt 이 오면 기준 버전을 그 값으로 바꾸고, 없으면 기존 기준을 둔다', () => {
+      state = { ...state, pipelineId: 7, isDirty: true, baseUpdatedAt: 'v1' };
+      expect(dispatch(state, { type: 'MARK_SAVED', payload: { updatedAt: 'v2' } }).baseUpdatedAt).toBe('v2');
+      expect(dispatch(state, { type: 'MARK_SAVED', payload: { updatedAt: null } }).baseUpdatedAt).toBeNull();
+      expect(dispatch(state, { type: 'MARK_SAVED', payload: { pipelineId: 7 } }).baseUpdatedAt).toBe('v1');
+      expect(dispatch(state, { type: 'MARK_SAVED' }).baseUpdatedAt).toBe('v1');
+    });
   });
 
   describe('SET_VALIDATION_ERRORS', () => {
@@ -483,6 +492,25 @@ describe('pipelineEditorReducer', () => {
       const dirty: PipelineEditorState = { ...snapshotWith('my-edit'), isDirty: true };
       const next = dispatch(dirty, { type: 'SYNC_FROM_SERVER', payload: snapshotWith('server') });
       expect(next).toBe(dirty);
+    });
+
+    // WD-353 — 화면을 바꾸지 않은 재조회가 기준 버전만 최신으로 넘기면 다른 탭의 저장을 조용히 덮어쓴다
+    it('미저장 변경이 있으면 재조회의 새 버전도 받지 않는다 — 기준은 편집을 시작한 버전', () => {
+      const dirty: PipelineEditorState = { ...snapshotWith('my-edit'), isDirty: true, baseUpdatedAt: 'v1' };
+      const next = dispatch(dirty, {
+        type: 'SYNC_FROM_SERVER',
+        payload: { ...snapshotWith('server'), baseUpdatedAt: 'v2' },
+      });
+      expect(next.baseUpdatedAt).toBe('v1');
+    });
+
+    it('미저장 변경이 없으면 재조회의 새 버전을 기준으로 삼는다', () => {
+      const clean: PipelineEditorState = { ...snapshotWith('old'), baseUpdatedAt: 'v1' };
+      const next = dispatch(clean, {
+        type: 'SYNC_FROM_SERVER',
+        payload: { ...snapshotWith('server'), baseUpdatedAt: 'v2' },
+      });
+      expect(next.baseUpdatedAt).toBe('v2');
     });
 
     it('미저장 변경이 없으면 서버 상태를 반영하고, 선택된 스텝은 이름으로 다시 찾아 유지한다', () => {

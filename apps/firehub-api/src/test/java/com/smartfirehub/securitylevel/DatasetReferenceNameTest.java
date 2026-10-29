@@ -244,7 +244,7 @@ class DatasetReferenceNameTest extends IntegrationTestBase {
             put("/api/v1/pipelines/" + p),
             lowToken,
             pipelineBody("v2 by low", List.of(sqlStep("s1-renamed", hiddenId))));
-    assertThat(resave.getStatus()).as(resave.getContentAsString()).isEqualTo(204);
+    assertThat(resave.getStatus()).as(resave.getContentAsString()).isEqualTo(200);
     assertThat(step(p, highToken).get("outputDatasetId").asLong()).isEqualTo(hiddenId);
 
     // 새로 지정하는 숨김 출력과 없는 출력은 같은 거부.
@@ -276,7 +276,7 @@ class DatasetReferenceNameTest extends IntegrationTestBase {
             put("/api/v1/pipelines/" + p),
             highToken,
             pipelineBody("v4", List.of(sqlStep("s1", hidden2Id))));
-    assertThat(highNew.getStatus()).as(highNew.getContentAsString()).isEqualTo(204);
+    assertThat(highNew.getStatus()).as(highNew.getContentAsString()).isEqualTo(200);
   }
 
   private static Map<String, Object> sqlStepWithInputs(String name, List<Long> inputs) {
@@ -363,7 +363,7 @@ class DatasetReferenceNameTest extends IntegrationTestBase {
             put("/api/v1/pipelines/" + p),
             lowToken,
             pipelineBody("in2", List.of(sqlStepWithInputs("s1", List.of(hiddenId, visibleId)))));
-    assertThat(resend.getStatus()).as(resend.getContentAsString()).isEqualTo(204);
+    assertThat(resend.getStatus()).as(resend.getContentAsString()).isEqualTo(200);
     assertThat(step(p, highToken).get("inputDatasetIds").toString())
         .contains(String.valueOf(hiddenId));
 
@@ -388,7 +388,7 @@ class DatasetReferenceNameTest extends IntegrationTestBase {
             lowToken,
             pipelineBody(
                 "in4", List.of(sqlStepWithInputs("s1", List.of(hiddenId, visibleId, visible2)))));
-    assertThat(addVisible.getStatus()).as(addVisible.getContentAsString()).isEqualTo(204);
+    assertThat(addVisible.getStatus()).as(addVisible.getContentAsString()).isEqualTo(200);
   }
 
   /**

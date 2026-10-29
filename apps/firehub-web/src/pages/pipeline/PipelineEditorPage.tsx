@@ -3,6 +3,7 @@ import { useEffect, useMemo,useRef, useState } from 'react';
 import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { EditConflictDialog } from '@/components/EditConflictDialog';
 import { Breadcrumb } from '@/components/layout/Breadcrumb';
 import { DurationText } from '@/components/pipeline/DurationText';
 import {
@@ -78,7 +79,20 @@ export default function PipelineEditorPage() {
     }
   }
 
-  const { state, dispatch, save, loadFromApi, cancelEdit, isSaving } = usePipelineEditor(pipelineId);
+  const {
+    state,
+    dispatch,
+    save,
+    overwrite,
+    reloadLatest,
+    editConflict,
+    dismissEditConflict,
+    loadFromApi,
+    cancelEdit,
+    isSaving,
+  } = usePipelineEditor(pipelineId);
+  // 편집 충돌 창의 「다시 불러오기」 진행 중 — 저장 중(isSaving)과 함께 창의 버튼을 막는다
+  const [isReloading, setIsReloading] = useState(false);
 
   // isError: 존재하지 않는 파이프라인 ID(404 등) 접근 시 에러 상태를 감지한다.
   const { data: pipelineData, isLoading: pipelineLoading, isError: pipelineError } = usePipeline(pipelineId!);
@@ -122,6 +136,24 @@ export default function PipelineEditorPage() {
   const handleSave = async () => {
     const ok = await save();
     if (ok) setIsEditing(false);
+  };
+
+  /** 편집 충돌(WD-353) — 「내 변경으로 덮어쓰기」: 기준 버전 없이 다시 저장하고, 성공하면 보기 모드로 돌아간다 */
+  const handleOverwrite = async () => {
+    const ok = await overwrite();
+    if (ok) setIsEditing(false);
+  };
+
+  /** 편집 충돌(WD-353) — 「다시 불러오기」: 최신 내용으로 바꾸고 내 변경을 버린다. 편집 모드는 유지해 이어 고칠 수 있게 한다 */
+  const handleReloadLatest = async () => {
+    setIsReloading(true);
+    try {
+      await reloadLatest();
+    } catch (error) {
+      handleApiError(error, '최신 내용을 불러오지 못했습니다.');
+    } finally {
+      setIsReloading(false);
+    }
   };
 
   /**
@@ -298,6 +330,17 @@ export default function PipelineEditorPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/* 편집 충돌 안내 창(WD-353) — 저장이 409 EDIT_CONFLICT 로 거부되면 뜬다 */}
+      <EditConflictDialog
+        open={editConflict}
+        onOpenChange={(open) => {
+          if (!open) dismissEditConflict();
+        }}
+        resourceLabel="파이프라인"
+        onReload={handleReloadLatest}
+        onOverwrite={handleOverwrite}
+        pending={isSaving || isReloading}
+      />
       {/* 실행 취소 확인 창(WD-153) — 행 클릭 이동과 섞이지 않도록 목록 밖 페이지 수준에 하나만 둔다 */}
       <CancelExecutionDialog
         open={cancelTargetExecId !== null}

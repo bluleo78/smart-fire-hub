@@ -53,6 +53,14 @@ export interface PipelineEditorState {
   selectedStepId: string | null;
   isDirty: boolean;
   validationErrors: ValidationError[];
+  /**
+   * 지금 화면 내용의 기준 버전 — 그 내용을 불러온(또는 저장한) 시점의 서버 updatedAt(WD-353 낙관적 잠금).
+   * 저장할 때 expectedUpdatedAt 으로 보내 그 사이 다른 곳에서 저장됐으면 409 로 막는다.
+   * 상세 재조회 값(pipelineData.updatedAt)을 그대로 쓰면 안 된다: 미저장 변경이 있을 때 재조회는 화면을 바꾸지 않으므로
+   * 기준만 최신으로 넘어가 다른 탭의 저장을 조용히 덮어쓴다. 그래서 화면 내용과 함께 바뀌도록 편집기 상태에 둔다.
+   * 서버 문자열 그대로 둔다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다). null 이면 비교하지 않는다(새 파이프라인).
+   */
+  baseUpdatedAt: string | null;
 }
 
 // === 액션 타입 ===
@@ -70,7 +78,8 @@ export type EditorAction =
   | { type: 'UPDATE_NODE_POSITION'; payload: { tempId: string; position: { x: number; y: number } } }
   | { type: 'AUTO_LAYOUT' }
   | { type: 'LOAD_FROM_API'; payload: PipelineDetailResponse }
-  | { type: 'MARK_SAVED'; payload?: { pipelineId: number } }
+  // updatedAt: 저장 응답의 새 버전(WD-353) — 재조회를 기다리지 않고 다음 저장의 기준으로 쓴다
+  | { type: 'MARK_SAVED'; payload?: { pipelineId?: number; updatedAt?: string | null } }
   // 취소 기준(마지막으로 서버와 일치했던 상태)으로 무조건 되돌린다 — 편집 취소용 (#742)
   | { type: 'RESTORE_SNAPSHOT'; payload: PipelineEditorState }
   // 서버에서 다시 불러온 상태를 반영하되, 미저장 변경이 있으면 무시한다 — 재조회용 (#742)
@@ -88,6 +97,7 @@ export const initialState: PipelineEditorState = {
   selectedStepId: null,
   isDirty: false,
   validationErrors: [],
+  baseUpdatedAt: null,
 };
 
 // === 헬퍼 ===
@@ -185,6 +195,7 @@ export function buildStateFromDetail(detail: PipelineDetailResponse): PipelineEd
     selectedStepId: null,
     isDirty: false,
     validationErrors: [],
+    baseUpdatedAt: detail.updatedAt,
   };
 
   return applyAutoLayout(newState);
@@ -381,6 +392,11 @@ export function pipelineEditorReducer(
         isDirty: false,
         validationErrors: [],
         pipelineId: action.payload?.pipelineId ?? state.pipelineId,
+        // 응답에 버전이 없으면(update 가 아닌 create 등) 기존 값을 둔다 — create 는 상세 이동 후 재조회가 채운다
+        baseUpdatedAt:
+          action.payload && 'updatedAt' in action.payload
+            ? (action.payload.updatedAt ?? null)
+            : state.baseUpdatedAt,
       };
 
     case 'RESTORE_SNAPSHOT':
