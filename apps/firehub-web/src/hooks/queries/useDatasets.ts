@@ -249,9 +249,14 @@ export function useImport(datasetId: number, importId: number) {
 
 export function useUploadFile(datasetId: number) {
   const queryClient = useQueryClient();
-  return useMutation<ImportStartResponse, unknown, { file: File; mappings?: ColumnMappingEntry[]; importMode?: ImportMode }>({
-    mutationFn: ({ file, mappings, importMode }) =>
-      dataImportsApi.uploadFile(datasetId, file, mappings, importMode).then(r => r.data),
+  // sheetName: 엑셀에서 가져올 시트(WD-253) — 미지정이면 서버가 첫 번째 보이는 시트를 쓴다
+  return useMutation<
+    ImportStartResponse,
+    unknown,
+    { file: File; mappings?: ColumnMappingEntry[]; importMode?: ImportMode; sheetName?: string | null }
+  >({
+    mutationFn: ({ file, mappings, importMode, sheetName }) =>
+      dataImportsApi.uploadFile(datasetId, file, mappings, importMode, sheetName).then(r => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['datasets', datasetId, 'imports'] });
       queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
@@ -259,16 +264,19 @@ export function useUploadFile(datasetId: number) {
   });
 }
 
+/** 임포트 미리보기 — sheetName 을 주면 그 시트를, 없으면 서버 기본(첫 번째 보이는 시트)을 읽는다 (WD-253) */
 export function usePreviewImport(datasetId: number) {
   return useMutation({
-    mutationFn: (file: File) => dataImportsApi.previewImport(datasetId, file).then(r => r.data),
+    mutationFn: ({ file, sheetName }: { file: File; sheetName?: string | null }) =>
+      dataImportsApi.previewImport(datasetId, file, sheetName).then(r => r.data),
   });
 }
 
+/** 임포트 사전 검증 — 미리보기에서 고른 시트(sheetName)를 그대로 검사한다 (WD-253) */
 export function useValidateImport(datasetId: number) {
   return useMutation({
-    mutationFn: ({ file, mappings }: { file: File; mappings: ColumnMappingEntry[] }) =>
-      dataImportsApi.validateImport(datasetId, file, mappings).then(r => r.data),
+    mutationFn: ({ file, mappings, sheetName }: { file: File; mappings: ColumnMappingEntry[]; sheetName?: string | null }) =>
+      dataImportsApi.validateImport(datasetId, file, mappings, sheetName).then(r => r.data),
   });
 }
 

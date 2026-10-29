@@ -17,6 +17,10 @@ public class FileUnreadableException extends UnsupportedFileTypeException {
   /** CSV 구문이 깨진 경우(닫히지 않은 따옴표 등)의 안내 문구. */
   public static final String CSV_UNREADABLE = "CSV 파일을 읽을 수 없습니다. 따옴표·구분자 등 파일 형식이 올바른지 확인해 주세요.";
 
+  /**
+   * @param userMessage 화면에 그대로 보일 한국어 안내
+   * @param cause 로그용 원인 예외. 파일 형식 문제가 아닌 사용자 선택 오류(시트 없음 등, WD-253)는 null 일 수 있다
+   */
   public FileUnreadableException(String userMessage, Throwable cause) {
     super(userMessage);
     initCause(cause);

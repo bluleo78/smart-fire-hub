@@ -41,6 +41,8 @@ interface UseImportDialogReturn {
   failedErrors: ValidationErrorDetail[] | null;
   handlers: {
     fileSelect: (file: File) => void;
+    /** 엑셀의 다른 시트를 골라 미리보기를 다시 받는다 (WD-253) */
+    sheetChange: (sheetName: string) => void;
     mappingChange: (fileColumn: string, datasetColumn: string | null) => void;
     validate: () => void;
     import: () => void;
@@ -139,20 +141,56 @@ export function useImportDialog({
     }
   }, [previewData]);
 
-  const handleFileSelect = async (file: File) => {
-    setSelectedFile(file);
+  /**
+   * 미리보기를 받아 화면에 반영한다 — 파일을 처음 올릴 때와 시트를 바꿀 때(WD-253)가 함께 쓴다.
+   * 서버가 성공 상태로 빈 본문을 돌려주면(예전 IOException 처리 결함, WD-204) 화면이 비므로, 미리보기 내용(파일 컬럼 목록)이
+   * 없으면 반영하지 않고 오류로 안내한다. 실패하면 previewData 가 그대로라 이전 미리보기(·선택 시트)가 남는다.
+   * @returns 반영했으면 true
+   */
+  const loadPreview = async (
+    file: File,
+    sheetName: string | undefined,
+    messages: { empty: string; failed: string }
+  ): Promise<boolean> => {
     try {
-      const preview = await previewImport.mutateAsync(file);
-      // 서버가 성공 상태로 빈 본문을 돌려주면(예전 IOException 처리 결함, WD-204) 2단계가 빈 화면이 된다.
-      // 미리보기 내용(파일 컬럼 목록)이 없으면 다음 단계로 넘어가지 않고 오류로 안내한다.
+      const preview = await previewImport.mutateAsync({ file, sheetName });
       if (!preview || !Array.isArray(preview.fileHeaders)) {
-        toast.error('파일 내용을 읽지 못했습니다. 파일을 확인한 뒤 다시 올려 주세요.');
-        return;
+        toast.error(messages.empty);
+        return false;
       }
       setPreviewData(preview);
-      setStep(2);
+      return true;
     } catch (error) {
-      handleApiError(error, '미리보기 로드에 실패했습니다.');
+      handleApiError(error, messages.failed);
+      return false;
+    }
+  };
+
+  const handleFileSelect = async (file: File) => {
+    setSelectedFile(file);
+    // 처음 올릴 때는 시트를 지정하지 않는다 — 서버가 첫 번째 보이는 시트를 골라 응답의 sheetName 으로 알려 준다
+    const loaded = await loadPreview(file, undefined, {
+      empty: '파일 내용을 읽지 못했습니다. 파일을 확인한 뒤 다시 올려 주세요.',
+      failed: '미리보기 로드에 실패했습니다.',
+    });
+    if (loaded) setStep(2);
+  };
+
+  /**
+   * 시트 선택 변경(WD-253) — 같은 파일로 고른 시트의 미리보기를 다시 받아 매핑·샘플을 갈아 끼운다.
+   * 2단계는 그대로 두고(setStep 호출 안 함) 내용만 바꾼다. 매핑은 previewData 효과가 새 추천값으로 초기화한다.
+   * 검증 중에는 선택 상자가 잠겨 있어(ImportMappingDialog) 늦게 온 이전 시트의 검증 결과가 새 시트 화면에 섞이지 않는다.
+   */
+  const handleSheetChange = async (sheetName: string) => {
+    if (!selectedFile || sheetName === previewData?.sheetName) return;
+    const loaded = await loadPreview(selectedFile, sheetName, {
+      empty: '시트 내용을 읽지 못했습니다. 다른 시트를 고르거나 파일을 확인해 주세요.',
+      failed: '시트 미리보기 로드에 실패했습니다.',
+    });
+    if (loaded) {
+      // 검증 결과는 이전 시트 기준이라 더는 맞지 않는다
+      setValidationResult(null);
+      setShowAllErrors(false);
     }
   };
 
@@ -174,7 +212,12 @@ export function useImportDialog({
       return;
     }
     try {
-      const result = await validateImport.mutateAsync({ file: selectedFile, mappings });
+      // 마지막 미리보기에서 읽은 시트를 그대로 검증한다(엑셀만 값이 있음, CSV 는 null 이라 생략됨)
+      const result = await validateImport.mutateAsync({
+        file: selectedFile,
+        mappings,
+        sheetName: previewData?.sheetName,
+      });
       setValidationResult(result);
       // 사전 검증 완료 토스트 — 샘플 검사임을 명시
       if (result.errorRows === 0) {
@@ -190,7 +233,13 @@ export function useImportDialog({
   const handleImport = async () => {
     if (!selectedFile) return;
     try {
-      const result = await uploadFile.mutateAsync({ file: selectedFile, mappings, importMode });
+      // 미리보기·검증과 같은 시트를 가져오도록 마지막 미리보기의 sheetName 을 함께 보낸다 (WD-253)
+      const result = await uploadFile.mutateAsync({
+        file: selectedFile,
+        mappings,
+        importMode,
+        sheetName: previewData?.sheetName,
+      });
       setJobId(result.jobId);
       setStep(3);
     } catch (error) {
@@ -247,6 +296,7 @@ export function useImportDialog({
     failedErrors,
     handlers: {
       fileSelect: handleFileSelect,
+      sheetChange: handleSheetChange,
       mappingChange: handleMappingChange,
       validate: handleValidate,
       import: handleImport,

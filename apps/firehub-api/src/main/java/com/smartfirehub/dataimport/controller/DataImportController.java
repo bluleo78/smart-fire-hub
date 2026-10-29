@@ -41,9 +41,12 @@ public class DataImportController {
       @RequestParam(defaultValue = "AUTO") String encoding,
       @RequestParam(defaultValue = "true") boolean hasHeader,
       @RequestParam(defaultValue = "0") int skipRows,
-      @RequestParam(defaultValue = "false") boolean partial)
+      @RequestParam(defaultValue = "false") boolean partial,
+      // 엑셀에서 읽을 시트 이름(WD-253). 없으면 첫 번째 보이는 시트. CSV 는 무시한다.
+      @RequestParam(required = false) String sheetName)
       throws Exception {
-    ParseOptions parseOptions = new ParseOptions(delimiter, encoding, hasHeader, skipRows);
+    ParseOptions parseOptions =
+        new ParseOptions(delimiter, encoding, hasHeader, skipRows, sheetName);
     // partial=true: 프론트가 대용량 CSV의 앞부분만 잘라 전송한 경우. 파일 끝이 잘려 있어
     // 전체 행수 계산(countRows)을 건너뛴다. (프론트 dataImports.previewImport 참고)
     return ResponseEntity.ok(importService.previewImport(datasetId, file, parseOptions, partial));
@@ -60,13 +63,16 @@ public class DataImportController {
       @RequestParam(defaultValue = ",") String delimiter,
       @RequestParam(defaultValue = "AUTO") String encoding,
       @RequestParam(defaultValue = "true") boolean hasHeader,
-      @RequestParam(defaultValue = "0") int skipRows)
+      @RequestParam(defaultValue = "0") int skipRows,
+      // 미리보기에서 고른 시트와 같은 시트를 검사한다(WD-253)
+      @RequestParam(required = false) String sheetName)
       throws Exception {
     List<ColumnMappingEntry> mappings = parseMappings(mappingsJson);
     if (mappings == null) {
       throw new IllegalArgumentException(MISSING_MAPPINGS_MESSAGE);
     }
-    ParseOptions parseOptions = new ParseOptions(delimiter, encoding, hasHeader, skipRows);
+    ParseOptions parseOptions =
+        new ParseOptions(delimiter, encoding, hasHeader, skipRows, sheetName);
     return ResponseEntity.ok(importService.validateImport(datasetId, file, mappings, parseOptions));
   }
 
@@ -81,6 +87,8 @@ public class DataImportController {
       @RequestParam(defaultValue = "true") boolean hasHeader,
       @RequestParam(defaultValue = "0") int skipRows,
       @RequestParam(defaultValue = "APPEND") String importMode,
+      // 미리보기에서 고른 시트(WD-253). ParseOptions 에 실려 임포트 잡까지 그대로 전달된다.
+      @RequestParam(required = false) String sheetName,
       HttpServletRequest request,
       Authentication authentication)
       throws Exception {
@@ -94,7 +102,8 @@ public class DataImportController {
     ImportMode resolvedImportMode = parseImportMode(importMode);
     List<ColumnMappingEntry> mappings = parseMappings(mappingsJson);
 
-    ParseOptions parseOptions = new ParseOptions(delimiter, encoding, hasHeader, skipRows);
+    ParseOptions parseOptions =
+        new ParseOptions(delimiter, encoding, hasHeader, skipRows, sheetName);
     ImportStartResponse response =
         importService.importFile(
             datasetId,

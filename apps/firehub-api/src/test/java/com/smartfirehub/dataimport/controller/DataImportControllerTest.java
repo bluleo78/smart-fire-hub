@@ -167,6 +167,61 @@ class DataImportControllerTest {
   }
 
   /**
+   * WD-253: 미리보기·사전 검증·가져오기가 모두 multipart 폼 필드 sheetName 을 ParseOptions 에 실어 서비스로 넘긴다 — 임포트 잡은 이
+   * ParseOptions 를 그대로 받아 같은 시트를 읽는다. 빈 값은 「지정 안 함」(null)이다.
+   */
+  @Test
+  void sheetName_formField_reachesParseOptions_onPreviewValidateAndImport() throws Exception {
+    when(importService.previewImport(anyLong(), any(), any(), anyBoolean()))
+        .thenReturn(
+            new ImportPreviewResponse(List.of(), List.of(), List.of(), 0, "데이터", List.of()));
+    when(importService.validateImport(anyLong(), any(), any(), any())).thenReturn(null);
+    when(importService.importFile(
+            anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), any()))
+        .thenReturn(new ImportStartResponse("job-1", "PENDING"));
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/preview")
+                .file(csvFile())
+                .param("sheetName", "숨김")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.sheetName").value("데이터"));
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/validate")
+                .file(csvFile())
+                .param("mappings", "[]")
+                .param("sheetName", "숨김")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk());
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports")
+                .file(csvFile())
+                .param("sheetName", "숨김")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isCreated());
+
+    ArgumentCaptor<com.smartfirehub.dataimport.dto.ParseOptions> preview =
+        ArgumentCaptor.forClass(com.smartfirehub.dataimport.dto.ParseOptions.class);
+    verify(importService).previewImport(eq(1L), any(), preview.capture(), anyBoolean());
+    assertThat(preview.getValue().sheetName()).isEqualTo("숨김");
+
+    ArgumentCaptor<com.smartfirehub.dataimport.dto.ParseOptions> validate =
+        ArgumentCaptor.forClass(com.smartfirehub.dataimport.dto.ParseOptions.class);
+    verify(importService).validateImport(eq(1L), any(), any(), validate.capture());
+    assertThat(validate.getValue().sheetName()).isEqualTo("숨김");
+
+    ArgumentCaptor<com.smartfirehub.dataimport.dto.ParseOptions> imported =
+        ArgumentCaptor.forClass(com.smartfirehub.dataimport.dto.ParseOptions.class);
+    verify(importService)
+        .importFile(eq(1L), any(), any(), eq(1L), any(), any(), any(), imported.capture(), any());
+    assertThat(imported.getValue().sheetName()).isEqualTo("숨김");
+  }
+
+  /**
    * 미리보기에서 파서가 파일을 읽지 못하면 400 + 한국어 안내가 나가야 한다(WD-204). 예전엔 엑셀이 아닌 .xlsx 가 빈 200 으로 나가 화면이 빈 2단계로
    * 넘어갔고, 손상된 OOXML 은 POI 영문 메시지가 토스트에 보였다.
    */

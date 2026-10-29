@@ -76,6 +76,38 @@ describe('DataImport MCP Tools', () => {
     });
   });
 
+  // WD-253: sheetName 은 공통 파스 옵션이라 세 도구 모두 api 클라이언트까지 그대로 전달돼야 한다.
+  describe('sheetName 전달 (WD-253)', () => {
+    it('preview_csv / validate_import / start_import 가 sheetName 을 parse options 로 넘긴다', async () => {
+      (client.previewImport as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (client.validateImport as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (client.startImport as ReturnType<typeof vi.fn>).mockResolvedValue({ jobId: 'j' });
+      const mappings = [{ fileColumn: 'a', datasetColumn: 'col_a' }];
+
+      await invokeTool(server, 'preview_csv', { datasetId: 7, fileId: 11, sheetName: '매출' });
+      await invokeTool(server, 'validate_import', {
+        datasetId: 7,
+        fileId: 11,
+        mappings,
+        sheetName: '매출',
+      });
+      await invokeTool(server, 'start_import', {
+        datasetId: 7,
+        fileId: 11,
+        mappings,
+        sheetName: '매출',
+      });
+
+      expect(client.previewImport).toHaveBeenCalledWith(7, 11, { sheetName: '매출' });
+      expect(client.validateImport).toHaveBeenCalledWith(7, 11, mappings, { sheetName: '매출' });
+      expect(client.startImport).toHaveBeenCalledWith(7, 11, {
+        mappings,
+        importMode: undefined,
+        parseOptions: { sheetName: '매출' },
+      });
+    });
+  });
+
   describe('validate_import', () => {
     it('calls apiClient.validateImport with mappings extracted from args', async () => {
       const mockResp = { totalRows: 3, validRows: 2, errorRows: 1, errors: [] };

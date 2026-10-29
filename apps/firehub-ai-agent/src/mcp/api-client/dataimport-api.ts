@@ -19,6 +19,9 @@ export interface ImportParseOptions {
   encoding?: 'AUTO' | 'UTF-8' | 'EUC-KR' | 'CP949';
   hasHeader?: boolean;
   skipRows?: number;
+  // 엑셀에서 읽을 시트 이름(WD-253). 생략하면 백엔드가 첫 번째 보이는(숨기지 않은) 시트를 읽는다.
+  // CSV 는 무시된다.
+  sheetName?: string;
 }
 
 /**
@@ -43,6 +46,10 @@ export interface ImportPreviewResponse {
   sampleRows: Array<Record<string, string>>;
   suggestedMappings: ColumnMappingSuggestion[];
   totalRows: number;
+  /** 실제로 읽은 시트 이름(WD-253). CSV 면 null. */
+  sheetName: string | null;
+  /** 통합 문서의 시트 목록(통합 문서 순서, 숨김 여부 포함). CSV 면 null. */
+  sheets: Array<{ name: string; hidden: boolean }> | null;
 }
 
 /** 백엔드 ValidationErrorDetail 미러. */
@@ -145,6 +152,10 @@ function buildImportFormData(
   if (parseOptions?.hasHeader !== undefined)
     form.append('hasHeader', String(parseOptions.hasHeader));
   if (parseOptions?.skipRows !== undefined) form.append('skipRows', String(parseOptions.skipRows));
+  // 빈 문자열·공백만 있는 값은 "지정 안 함"으로 보고 보내지 않는다 — 백엔드가 첫 번째 보이는 시트를 고르게 둔다.
+  // 시트 이름 자체에는 앞뒤 공백이 있을 수 있어 값은 다듬지 않고 그대로 보낸다(WD-253).
+  if (parseOptions?.sheetName !== undefined && parseOptions.sheetName.trim() !== '')
+    form.append('sheetName', parseOptions.sheetName);
 
   for (const [k, v] of Object.entries(extra)) {
     form.append(k, v);

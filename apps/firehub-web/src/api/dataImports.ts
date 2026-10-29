@@ -28,8 +28,24 @@ async function sliceCsvHead(file: File, maxBytes: number): Promise<Blob> {
   return file.slice(0, end);
 }
 
+/**
+ * 엑셀에서 읽을 시트 이름을 폼 필드로 붙인다(WD-253). 값이 없으면 생략해 서버가 첫 번째 보이는 시트를 고르게 한다.
+ * CSV 는 서버가 이 필드를 무시하지만, 호출부는 엑셀일 때만 값을 넘긴다.
+ */
+function appendSheetName(formData: FormData, sheetName?: string | null) {
+  if (sheetName) {
+    formData.append('sheetName', sheetName);
+  }
+}
+
 export const dataImportsApi = {
-  uploadFile: (datasetId: number, file: File, mappings?: ColumnMappingEntry[], importMode?: string) => {
+  uploadFile: (
+    datasetId: number,
+    file: File,
+    mappings?: ColumnMappingEntry[],
+    importMode?: string,
+    sheetName?: string | null,
+  ) => {
     const formData = new FormData();
     formData.append('file', file);
     if (mappings) {
@@ -38,11 +54,12 @@ export const dataImportsApi = {
     if (importMode) {
       formData.append('importMode', importMode);
     }
+    appendSheetName(formData, sheetName);
     return client.post<ImportStartResponse>(`/datasets/${datasetId}/imports`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  previewImport: async (datasetId: number, file: File) => {
+  previewImport: async (datasetId: number, file: File, sheetName?: string | null) => {
     // 대용량 CSV는 앞부분만 잘라 전송해 413을 회피한다. XLSX/XLS는 잘라 보낼 수 없어 전체 전송.
     const payload = isCsvFile(file) ? await sliceCsvHead(file, PREVIEW_MAX_BYTES) : file;
     // 일부만 보낸 경우 partial=true로 알려 서버가 전체 행수 계산(countRows)을 건너뛰게 한다.
@@ -50,15 +67,17 @@ export const dataImportsApi = {
     const formData = new FormData();
     // 파일명을 유지해 서버의 확장자 기반 파일 타입 판별을 보존한다.
     formData.append('file', payload, file.name);
+    appendSheetName(formData, sheetName);
     const url = `/datasets/${datasetId}/imports/preview${partial ? '?partial=true' : ''}`;
     return client.post<ImportPreviewResponse>(url, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  validateImport: (datasetId: number, file: File, mappings: ColumnMappingEntry[]) => {
+  validateImport: (datasetId: number, file: File, mappings: ColumnMappingEntry[], sheetName?: string | null) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('mappings', JSON.stringify(mappings));
+    appendSheetName(formData, sheetName);
     return client.post<ImportValidateResponse>(`/datasets/${datasetId}/imports/validate`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });

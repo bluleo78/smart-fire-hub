@@ -715,14 +715,15 @@ class FileParserServiceTest {
   }
 
   // -----------------------------------------------------------------------
-  // parseExcel(InputStream) — direct call
+  // parse(InputStream, "xlsx", defaults) — 엑셀 전체 파싱
   // -----------------------------------------------------------------------
 
   @Test
   void parseExcel_withHeaderAndRows_returnsDataRows() throws Exception {
     byte[] data = buildXlsx();
 
-    List<Map<String, String>> rows = service.parseExcel(new ByteArrayInputStream(data));
+    List<Map<String, String>> rows =
+        service.parse(new ByteArrayInputStream(data), "xlsx", ParseOptions.defaults());
 
     assertThat(rows).hasSize(2);
     assertThat(rows.get(0))
@@ -735,7 +736,8 @@ class FileParserServiceTest {
   void parseExcel_emptyWorkbook_returnsEmpty() throws Exception {
     byte[] data = buildEmptyXlsx();
 
-    List<Map<String, String>> rows = service.parseExcel(new ByteArrayInputStream(data));
+    List<Map<String, String>> rows =
+        service.parse(new ByteArrayInputStream(data), "xlsx", ParseOptions.defaults());
 
     assertThat(rows).isEmpty();
   }
@@ -1452,7 +1454,7 @@ class FileParserServiceTest {
       assertThatThrownBy(
               () -> service.parseSampleRows(new ByteArrayInputStream(bytes), type, 5, opts))
           .isExactlyInstanceOf(InvalidFileHeaderException.class);
-      assertThatThrownBy(() -> service.parseExcel(new ByteArrayInputStream(bytes)))
+      assertThatThrownBy(() -> service.parse(new ByteArrayInputStream(bytes), type, opts))
           .isExactlyInstanceOf(InvalidFileHeaderException.class);
     }
   }
@@ -1682,5 +1684,121 @@ class FileParserServiceTest {
     assertThat(all).extracting(r -> r.get("id")).containsExactly("1", "2");
     // 셀 없는 행·서식만 있는 행·공백 셀 행 3개 모두 빈 행으로 센다
     assertThat(skipped).isEqualTo(3);
+  }
+
+  // ---------------------------------------------------------------------
+  // 시트 고르기 (WD-253) — 모든 엑셀 경로가 ParseOptions.sheetName 을 따른다
+  // ---------------------------------------------------------------------
+
+  /**
+   * 숨긴 첫 시트(헤더 hidden_col, 데이터 1행)와 보이는 둘째 시트(헤더 col, 데이터 2행)로 된 워크북. 헤더·행 수가 달라 어느 시트를 읽었는지 바로
+   * 드러난다.
+   */
+  private static byte[] hiddenFirstWorkbook(Workbook wb) throws Exception {
+    try (wb;
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      Sheet hidden = wb.createSheet("숨김");
+      hidden.createRow(0).createCell(0).setCellValue("hidden_col");
+      hidden.createRow(1).createCell(0).setCellValue("h1");
+      Sheet data = wb.createSheet("데이터");
+      data.createRow(0).createCell(0).setCellValue("col");
+      data.createRow(1).createCell(0).setCellValue("d1");
+      data.createRow(2).createCell(0).setCellValue("d2");
+      // 엑셀은 활성 시트를 숨길 수 없다 — 보이는 시트를 활성으로 옮긴 뒤 첫 시트를 숨긴다
+      hidden.setSelected(false);
+      wb.setActiveSheet(1);
+      wb.setSelectedTab(1);
+      wb.setSheetHidden(0, true);
+      wb.write(out);
+      return out.toByteArray();
+    }
+  }
+
+  private static final ParseOptions HIDDEN_SHEET = new ParseOptions(",", "AUTO", true, 0, "숨김");
+
+  @Test
+  void excel_pathOverloads_defaultToVisibleSheet_andFollowSheetName() throws Exception {
+    for (String type : List.of("xlsx", "xls")) {
+      byte[] data =
+          hiddenFirstWorkbook("xlsx".equals(type) ? new XSSFWorkbook() : new HSSFWorkbook());
+      Path file = tempDir.resolve("sheets-" + System.nanoTime() + "." + type);
+      Files.write(file, data);
+      ParseOptions defaults = ParseOptions.defaults();
+
+      // 기본: 숨긴 첫 시트가 아니라 보이는 「데이터」 시트
+      assertThat(service.parseHeaders(file, type, defaults)).containsExactly("col");
+      assertThat(service.parseSampleRows(file, type, 5, defaults))
+          .extracting(r -> r.get("col"))
+          .containsExactly("d1", "d2");
+      assertThat(service.countRows(file, type, defaults)).isEqualTo(2);
+      assertThat(service.parse(file, type, defaults)).hasSize(2);
+      List<Map<String, String>> streamed = new ArrayList<>();
+      service.parseStreaming(file, type, defaults, 10, streamed::addAll);
+      assertThat(streamed).extracting(r -> r.get("col")).containsExactly("d1", "d2");
+
+      // sheetName 지정: 숨긴 시트도 읽는다
+      assertThat(service.parseHeaders(file, type, HIDDEN_SHEET)).containsExactly("hidden_col");
+      assertThat(service.parseSampleRows(file, type, 5, HIDDEN_SHEET))
+          .extracting(r -> r.get("hidden_col"))
+          .containsExactly("h1");
+      assertThat(service.countRows(file, type, HIDDEN_SHEET)).isEqualTo(1);
+      assertThat(service.parse(file, type, HIDDEN_SHEET)).hasSize(1);
+      List<Map<String, String>> streamedHidden = new ArrayList<>();
+      service.parseStreaming(file, type, HIDDEN_SHEET, 10, streamedHidden::addAll);
+      assertThat(streamedHidden).extracting(r -> r.get("hidden_col")).containsExactly("h1");
+
+      // 시트 목록과 선택
+      var sel = service.describeSheets(file, type, defaults);
+      assertThat(sel.selectedName()).isEqualTo("데이터");
+      assertThat(sel.sheets())
+          .containsExactly(
+              new com.smartfirehub.dataimport.dto.ExcelSheetInfo("숨김", true),
+              new com.smartfirehub.dataimport.dto.ExcelSheetInfo("데이터", false));
+      assertThat(service.describeSheets(file, type, HIDDEN_SHEET).selectedName()).isEqualTo("숨김");
+    }
+  }
+
+  @Test
+  void excel_streamAndBytesOverloads_followSheetName() throws Exception {
+    byte[] data = hiddenFirstWorkbook(new XSSFWorkbook());
+    ParseOptions defaults = ParseOptions.defaults();
+
+    assertThat(service.parseHeaders(new ByteArrayInputStream(data), "xlsx", defaults))
+        .containsExactly("col");
+    assertThat(service.parseHeaders(new ByteArrayInputStream(data), "xlsx", HIDDEN_SHEET))
+        .containsExactly("hidden_col");
+    assertThat(service.parseSampleRows(new ByteArrayInputStream(data), "xlsx", 5, HIDDEN_SHEET))
+        .hasSize(1);
+    assertThat(service.countRows(new ByteArrayInputStream(data), "xlsx", HIDDEN_SHEET))
+        .isEqualTo(1);
+    assertThat(service.parse(new ByteArrayInputStream(data), "xlsx", HIDDEN_SHEET)).hasSize(1);
+
+    assertThat(service.parseHeaders(data, "xlsx", defaults)).containsExactly("col");
+    assertThat(service.parseHeaders(data, "xlsx", HIDDEN_SHEET)).containsExactly("hidden_col");
+    assertThat(service.parseSampleRows(data, "xlsx", 5, HIDDEN_SHEET)).hasSize(1);
+    assertThat(service.countRows(data, "xlsx", HIDDEN_SHEET)).isEqualTo(1);
+    assertThat(service.parse(data, "xlsx", HIDDEN_SHEET)).hasSize(1);
+    assertThat(service.parse(new ByteArrayInputStream(data), "xlsx", defaults)).hasSize(2);
+  }
+
+  @Test
+  void excel_unknownSheetName_isKorean400Error_andCsvIgnoresSheetName() throws Exception {
+    Path file = writeXlsxFile(hiddenFirstWorkbook(new XSSFWorkbook()));
+    ParseOptions missing = new ParseOptions(",", "AUTO", true, 0, "없음");
+    assertThatThrownBy(() -> service.parseHeaders(file, "xlsx", missing))
+        .isInstanceOf(UnsupportedFileTypeException.class) // 전역 핸들러가 400 으로 바꾸는 타입
+        .hasMessage("'없음' 시트를 찾을 수 없습니다. 파일에 있는 시트: 숨김(숨김), 데이터");
+
+    Path csv = writeCsvFile("a,b\n1,2\n");
+    assertThat(service.parseHeaders(csv, "csv", missing)).containsExactly("a", "b");
+    assertThat(service.describeSheets(csv, "csv", missing))
+        .isSameAs(ExcelStreamingParser.SheetSelection.NONE);
+  }
+
+  @Test
+  void parseOptions_blankSheetName_meansDefault() {
+    assertThat(new ParseOptions(",", "AUTO", true, 0, "  ").sheetName()).isNull();
+    assertThat(new ParseOptions(",", "AUTO", true, 0).sheetName()).isNull();
+    assertThat(ParseOptions.defaults().sheetName()).isNull();
   }
 }

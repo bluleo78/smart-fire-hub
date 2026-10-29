@@ -8,6 +8,7 @@ import com.smartfirehub.dataimport.dto.*;
 import com.smartfirehub.dataimport.exception.ConcurrentImportException;
 import com.smartfirehub.dataimport.exception.FileUnreadableException;
 import com.smartfirehub.dataimport.exception.ImportNotFoundException;
+import com.smartfirehub.dataimport.exception.ImportProcessingException;
 import com.smartfirehub.dataimport.exception.InvalidFileHeaderException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
@@ -131,6 +132,12 @@ public class DataImportService {
     try {
       file.transferTo(tempFile.toFile());
 
+      // 엑셀이면 시트 목록과 읽을 시트(기본: 첫 번째 보이는 시트)를 먼저 정한다(WD-253). 지정한 시트가 없거나 보이는 시트가 없으면 여기서
+      // 400 으로 끝난다. CSV 는 SheetSelection.NONE(둘 다 null). 아래 헤더·샘플·행 수도 같은 parseOptions(sheetName)로
+      // 같은 규칙을 거쳐 이 시트를 읽는다.
+      ExcelStreamingParser.SheetSelection sheetSelection =
+          fileParserService.describeSheets(tempFile, fileType, parseOptions);
+
       List<String> headers = fileParserService.parseHeaders(tempFile, fileType, parseOptions);
 
       // 엑셀 오류 셀은 파서가 검증용 표식으로 넘긴다 — 미리보기에는 엑셀이 보여 주는 모양(#DIV/0!)으로 바꿔 보인다(WD-252).
@@ -149,7 +156,13 @@ public class DataImportService {
       List<ColumnMappingDto> suggestedMappings =
           columnMappingService.suggestMappings(headers, columns);
 
-      return new ImportPreviewResponse(headers, sampleRows, suggestedMappings, totalRows);
+      return new ImportPreviewResponse(
+          headers,
+          sampleRows,
+          suggestedMappings,
+          totalRows,
+          sheetSelection.selectedName(),
+          sheetSelection.sheets());
     } finally {
       // 미리보기 완료 후 임시 파일 정리 — 누적 방지
       Files.deleteIfExists(tempFile);
@@ -324,14 +337,39 @@ public class DataImportService {
     String safeFileName =
         originalFilename.length() > 255 ? originalFilename.substring(0, 255) : originalFilename;
 
-    // Create async job — partial unique index enforces one active import per dataset atomically
+    // 이미 진행 중인 가져오기가 있으면 업로드 전체를 디스크에 쓰기 전에 바로 409 로 끝낸다. 여기서 통과해도 동시에 들어온 요청은
+    // 아래 createJob 의 partial unique index 가 최종으로 막는다(이 확인은 큰 파일을 헛되이 저장하지 않으려는 빠른 길일 뿐이다).
+    String datasetKey = String.valueOf(datasetId);
+    if (asyncJobService.hasActiveJob("IMPORT", "dataset", datasetKey)) {
+      throw new ConcurrentImportException(CONCURRENT_IMPORT_MESSAGE);
+    }
+
+    // Save file to temp location for Jobrunr processing
+    // 잡 행을 만들기 전에 저장한다 — 아래 시트 사전 확인(WD-253)이 파일을 읽어야 하고, 잡 행을 만든 뒤 400 으로 끝나면
+    // 활성 잡이 남아 이 데이터셋의 다음 가져오기가 모두 409 로 막힌다.
+    Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-imports");
+    Files.createDirectories(tempDir);
+    Path tempFile = Files.createTempFile(tempDir, "import-", "." + fileType);
+
+    // 저장·시트 확인·잡 생성이 실패하면 잡이 없으니 저장한 파일은 쓰일 일이 없다 — 아래 catch 에서 지운다(업로드 크기만 한 파일이 tmp 에
+    // 쌓이지 않게).
     String jobId;
     try {
+      file.transferTo(tempFile.toFile());
+
+      // 엑셀이면 잡을 만들기 전에 읽을 시트를 정한다(WD-253) — 시트를 지정했든(없는 이름) 안 했든(보이는 시트 없음) 미리보기와 같은
+      // 한국어 400 으로 바로 돌려준다. 잡으로 넘기면 「진행 중」 잡이 잠깐 생겼다가 실패로 끝나 화면·AI 가 실패 이유를 잡 상태에서 따로
+      // 찾아야 한다. 워크북 머리만 읽어 싸다.
+      if (!"csv".equals(fileType)) {
+        fileParserService.describeSheets(tempFile, fileType, parseOptions);
+      }
+
+      // Create async job — partial unique index enforces one active import per dataset atomically
       jobId =
           asyncJobService.createJob(
               "IMPORT",
               "dataset",
-              String.valueOf(datasetId),
+              datasetKey,
               userId,
               Map.of(
                   "fileName",
@@ -343,16 +381,14 @@ public class DataImportService {
                   "importMode",
                   importMode.name()));
     } catch (DataIntegrityViolationException e) {
+      Files.deleteIfExists(tempFile);
       // 409 응답 메시지. 프론트가 자체 한국어 문구를 쓰긴 하지만, API를 직접 쓰는 경로(ai-agent·외부 호출)에도
       // 그대로 노출되므로 저장소의 한국어 예외 메시지 관행에 맞춘다(#309).
-      throw new ConcurrentImportException("이미 진행 중인 임포트가 있습니다. 완료된 뒤 다시 시도해 주세요.");
+      throw new ConcurrentImportException(CONCURRENT_IMPORT_MESSAGE);
+    } catch (Exception e) {
+      Files.deleteIfExists(tempFile);
+      throw e;
     }
-
-    // Save file to temp location for Jobrunr processing
-    Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-imports");
-    Files.createDirectories(tempDir);
-    Path tempFile = Files.createTempFile(tempDir, "import-", "." + fileType);
-    file.transferTo(tempFile.toFile());
 
     // Extract to local variables for Jobrunr lambda serialization
     String filePath = tempFile.toString();
@@ -484,13 +520,15 @@ public class DataImportService {
           jobId, "PARSING", 10, "Parsing file...", Map.of("totalRows", 0, "processedRows", 0));
 
       // Load parse options
+      // 옵션 파일을 읽지 못하면 기본값으로 이어 가지 않고 잡을 실패시킨다(WD-253) — 기본값으로 읽으면 사용자가 고른 시트·인코딩·구분자
+      // 대신 다른 데이터가 조용히 적재된다. 아래 catch 경로가 실패 처리·알림·감사 로그를 남긴다. 경로가 비었으면(옵션 없이 시작) 기본값이 맞다.
       ParseOptions parseOptions = ParseOptions.defaults();
       if (parseOptsPath != null && !parseOptsPath.isEmpty()) {
         try {
           String optsJson = Files.readString(Path.of(parseOptsPath));
           parseOptions = objectMapper.readValue(optsJson, ParseOptions.class);
         } catch (Exception e) {
-          log.warn("Failed to read parse options from {}, using defaults", parseOptsPath, e);
+          throw new ImportProcessingException(PARSE_OPTIONS_UNREADABLE, e);
         }
       }
 
@@ -1140,7 +1178,18 @@ public class DataImportService {
     return "";
   }
 
+  /** 같은 데이터셋에 진행 중인 가져오기가 있을 때의 409 메시지 — 사전 확인과 createJob 제약 위반 두 곳이 같은 문구를 쓴다. */
+  static final String CONCURRENT_IMPORT_MESSAGE = "이미 진행 중인 임포트가 있습니다. 완료된 뒤 다시 시도해 주세요.";
+
+  /** 임포트 잡이 파싱 옵션 파일을 읽지 못했을 때의 실패 사유(WD-253). */
+  static final String PARSE_OPTIONS_UNREADABLE =
+      "가져오기 설정(구분자·인코딩·시트 등)을 읽지 못해 가져오기를 중단했습니다. 파일을 다시 올려 가져오기를 다시 시작해 주세요.";
+
   private String toUserFriendlyMessage(Exception e) {
+    // 잡이 스스로 실패 사유를 정한 경우(옵션 파일을 읽지 못함 등, WD-253)는 그 한국어 문구를 그대로 쓴다.
+    if (e instanceof ImportProcessingException processing) {
+      return processing.getMessage();
+    }
     // 파서가 파일을 읽지 못한 경우(엑셀 아님·손상·암호·깨진 CSV)는 파서가 이미 사용자용 한국어 문구를 실어 두었다 — 그대로 쓴다(WD-204).
     // REPLACE 경로는 트랜잭션 람다가 예외를 감쌀 수 있어 원인 체인까지 본다.
     for (Throwable cur = e; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
