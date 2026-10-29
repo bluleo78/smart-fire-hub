@@ -52,6 +52,9 @@ public final class GeoJsonValues {
   static final String FEATURE_WITHOUT_GEOMETRY_MESSAGE =
       "Feature 에 geometry 가 없습니다. 위치가 없으면 값을 비워 두세요";
 
+  static final String OUT_OF_RANGE_MESSAGE =
+      "좌표 범위를 벗어났습니다. 경도는 -180~180, 위도는 -90~90 사이여야 합니다 (WGS84, [경도, 위도] 순서)";
+
   /** 화면에 되돌려 보여 줄 type 값 길이 상한 — 사용자가 넣은 긴 문자열이 오류 문구를 덮지 않게 자른다. */
   private static final int MAX_SHOWN_TYPE_LENGTH = 40;
 
@@ -136,6 +139,53 @@ public final class GeoJsonValues {
       }
     } else if (!node.has("coordinates")) {
       throw new IllegalArgumentException("GeoJSON 에 coordinates 항목이 없습니다");
+    }
+    validateCoordinateRange(node);
+  }
+
+  /**
+   * 모든 좌표가 WGS84 범위(경도 -180~180, 위도 -90~90, 경계 포함) 안인지 검사한다(WD-340).
+   *
+   * <p>PostGIS 는 SRID 4326 이어도 범위 밖 좌표(POINT(999 999))를 그대로 저장하고, 지도는 그 좌표로 경계를 잡다가 오류로 화면 전체가
+   * 깨지거나(위도) 경도를 360 으로 감아 엉뚱한 곳에 그린다(경도). 그래서 저장 전에 막는다. GeometryCollection 은 안의 geometry 마다, 나머지는
+   * coordinates 의 중첩 배열을 끝까지 내려가 위치([경도, 위도, …])를 본다.
+   */
+  private static void validateCoordinateRange(JsonNode geometry) {
+    // geometries 키가 아니라 type 으로 가른다 — Point 에 빈 geometries 를 붙여 범위 검사를 피하지 못하게.
+    if ("GeometryCollection".equals(typeOf(geometry))) {
+      for (JsonNode child : geometry.get("geometries")) {
+        if (child.isObject()) {
+          validateCoordinateRange(child);
+        }
+      }
+      return;
+    }
+    checkPositions(geometry.get("coordinates"));
+  }
+
+  /**
+   * coordinates 배열을 재귀로 내려가 위치(배열이 아닌 원소로 된 배열)마다 경도·위도 범위를 검사한다.
+   *
+   * <p>위치의 경도·위도가 숫자가 아니면(예: {@code [127,"999"]}) 형식 오류로 거부한다 — PostGIS 가 문자열을 숫자로 읽어 범위 밖 값이 검사를
+   * 건너뛰고 저장되지 않게.
+   */
+  private static void checkPositions(JsonNode coords) {
+    if (coords == null || !coords.isArray() || coords.isEmpty()) {
+      return;
+    }
+    if (!coords.get(0).isArray()) {
+      if (coords.size() < 2 || !coords.get(0).isNumber() || !coords.get(1).isNumber()) {
+        throw new IllegalArgumentException(INVALID_FORMAT_MESSAGE);
+      }
+      double lon = coords.get(0).asDouble();
+      double lat = coords.get(1).asDouble();
+      if (lon < -180 || lon > 180 || lat < -90 || lat > 90) {
+        throw new IllegalArgumentException(OUT_OF_RANGE_MESSAGE);
+      }
+      return;
+    }
+    for (JsonNode child : coords) {
+      checkPositions(child);
     }
   }
 }

@@ -39,6 +39,12 @@ export function DatasetMapTab({ dataset, datasetId }: DatasetMapTabProps) {
     return toFeatureCollection(rows, geometryColumn);
   }, [rows, geometryColumn]);
 
+  // 위치 값은 있지만 지도에 그릴 수 없어 빠진 행(형식 오류·좌표 범위 밖) 수 — 표시 건수와 지도가 어긋나 보이지 않게 함께 안내한다(WD-340)
+  const skippedCount = useMemo(() => {
+    if (!geometryColumn) return 0;
+    return rows.filter((row) => row[geometryColumn] != null).length - featureCollection.features.length;
+  }, [rows, geometryColumn, featureCollection]);
+
   const handleMapReady = useCallback((map: maplibregl.Map) => {
     setMapInstance(map);
   }, []);
@@ -103,6 +109,7 @@ export function DatasetMapTab({ dataset, datasetId }: DatasetMapTabProps) {
 
       <p className="text-xs text-muted-foreground">
         지도: <a href="https://openfreemap.org" target="_blank" rel="noopener noreferrer" className="underline">OpenFreeMap</a> &middot; 데이터: {featureCollection.features.length.toLocaleString()}건 표시
+        {skippedCount > 0 && ` (위치를 그릴 수 없는 ${skippedCount.toLocaleString()}건 제외)`}
       </p>
     </div>
   );

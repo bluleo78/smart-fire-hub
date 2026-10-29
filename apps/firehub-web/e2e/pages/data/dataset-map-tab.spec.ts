@@ -234,4 +234,59 @@ test.describe('데이터셋 상세 — 지도 탭', () => {
     // 핵심 회귀 검증: 다크 모드에서 liberty 가 호출되면 안 됨 — DARK_STYLE ≠ LIGHT_STYLE
     expect(styleUrls.some((u) => u.includes('/styles/liberty'))).toBe(false);
   });
+  // 회귀 가드(WD-340): 범위 밖 좌표(POINT(999 999))가 섞여 있어도 그 도형만 건너뛰고 지도 탭이 깨지지 않는다.
+  // 수정 전에는 maplibre fitBounds 가 「Invalid LngLat latitude value」를 던져 상세 화면 전체가 오류 경계 화면이 됐다.
+  test('지도 탭: 범위 밖 좌표 행이 섞여 있어도 화면이 깨지지 않고 나머지 도형으로 경계를 잡는다 (WD-340)', async ({
+    authenticatedPage: page,
+  }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    page.on('console', (m) => {
+      if (m.type() === 'error') errors.push(m.text());
+    });
+    let styleRequested = false;
+    await page.route('https://tiles.openfreemap.org/styles/**', (route) => {
+      styleRequested = true;
+      void route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ version: 8, sources: {}, layers: [] }),
+      });
+    });
+    await setupMocks(page, 2, detailWithGeometry);
+    // 나중에 등록한 라우트가 이긴다 — 정상 점 2개 + 범위 밖 점 1개
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/2/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: detailWithGeometry.columns,
+            rows: [
+              { _id: 1, id: 1, geom: '{"type":"Point","coordinates":[126.97,37.56]}' },
+              { _id: 2, id: 2, geom: '{"type":"Point","coordinates":[999,999]}' },
+              { _id: 3, id: 3, geom: '{"type":"Point","coordinates":[129.07,35.18]}' },
+            ],
+            page: 0,
+            size: 2000,
+            totalElements: 3,
+            totalPages: 1,
+          }),
+        }),
+    );
+
+    await page.goto('/data/datasets/2');
+    await page.getByRole('tab', { name: '지도' }).click();
+    await expect(page.locator('[data-map-style]').first()).toBeVisible();
+    await expect.poll(() => styleRequested).toBe(true);
+    // 스타일 로드 뒤 setup(fitBounds)이 도는 시간을 준다
+    await page.waitForTimeout(1000);
+
+    // 범위 밖 행 1건은 빠지고 2건만 그린다는 것을 표시 건수로 안내한다
+    await expect(page.getByText(/데이터: 2건 표시/)).toContainText('위치를 그릴 수 없는 1건 제외');
+    await expect(page.getByText('페이지를 불러오는 중 문제가 발생했습니다')).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: '지도' })).toHaveAttribute('data-state', 'active');
+    expect(errors.filter((e) => e.includes('Invalid LngLat'))).toEqual([]);
+  });
 });
