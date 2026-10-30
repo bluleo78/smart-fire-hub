@@ -1270,4 +1270,25 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect(page.getByRole('alert').filter({ hasText: 'limit 은 1~200 사이여야 합니다.' })).toBeVisible();
     await expect(page.getByText('트리거 이벤트가 없습니다.')).toHaveCount(0);
   });
+
+  /**
+   * 회귀 테스트 (WD-406): 모바일 폭(375px)에서 트리거 카드가 화면 밖으로 넘쳐 오른쪽 ⋯ 메뉴가 잘리면 편집·삭제를 할 수 없다.
+   * 긴 이름·cron 설명이 있어도 ⋯ 버튼이 화면 안에 있고 눌러서 메뉴를 열 수 있는지 확인한다.
+   */
+  test('모바일 폭 — 긴 이름 트리거도 ⋯ 메뉴가 화면 안에 보이고 열린다 (WD-406)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    const longName = '매일 아침 운영 데이터 적재 후 집계 파이프라인을 다시 돌리는 아주 긴 이름의 스케줄 트리거';
+    await setupTriggerTabMocks(page, {
+      triggers: [createTrigger({ id: 30, name: longName, triggerType: 'SCHEDULE', nextFireTime: '2026-09-13T09:00:00Z' })],
+    });
+    await gotoTriggerTab(page);
+
+    const menuButton = page.getByRole('button', { name: `트리거 "${longName}" 작업` });
+    await expect(menuButton).toBeInViewport({ ratio: 1 });
+    const box = await menuButton.boundingBox();
+    expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+
+    await menuButton.click();
+    await expect(page.getByRole('menuitem', { name: '편집' })).toBeVisible();
+  });
 });
