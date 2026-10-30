@@ -15,7 +15,6 @@ import org.jooq.Record;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -33,7 +32,8 @@ class ApiConnectionHealthCheckSchedulerTest {
   @Mock ApiConnectionService connectionService;
   @Mock TenantScopedRunner tenantScopedRunner;
 
-  @InjectMocks ApiConnectionHealthCheckScheduler scheduler;
+  /** 주기 실행을 끈 채(테스트 프로필과 같다, WD-451) 만든다 — runOnce() 직접 호출은 꺼져 있어도 돈다. */
+  ApiConnectionHealthCheckScheduler scheduler;
 
   /**
    * 이 단위 테스트는 스케줄러의 라우팅 로직만 보므로 테넌트 순회는 1건으로 단순화한다. 실제 다중 테넌트 순회 검증은 {@code
@@ -42,6 +42,32 @@ class ApiConnectionHealthCheckSchedulerTest {
   @BeforeEach
   void stubSingleTenantIteration() {
     TenantScopedRunnerStubs.stubSingleTenantIteration(tenantScopedRunner, 1L);
+    scheduler =
+        new ApiConnectionHealthCheckScheduler(repository, connectionService, tenantScopedRunner, false);
+  }
+
+  /** 주기 실행이 꺼져 있으면 10분 주기 진입점은 아무것도 하지 않는다(WD-451 — 테스트 프로필이 끈다). */
+  @Test
+  void scheduledRun_disabled_doesNothing() {
+    // 공통 순회 스텁을 쓰지 않는 유일한 경우다 — 엄격 스텁 검사가 「쓰지 않은 스텁」으로 실패하지 않게 비운다
+    reset(tenantScopedRunner);
+
+    scheduler.scheduledRun();
+
+    verifyNoInteractions(tenantScopedRunner, repository, connectionService);
+  }
+
+  /** 주기 실행이 켜져 있으면(운영 기본값) 진입점이 runOnce 와 같이 대상을 점검한다. */
+  @Test
+  void scheduledRun_enabled_checksTargets() {
+    when(repository.findHealthCheckable()).thenReturn(List.of());
+
+    new ApiConnectionHealthCheckScheduler(repository, connectionService, tenantScopedRunner, true)
+        .scheduledRun();
+
+    // 테넌트 순회를 거쳐야 RLS 범위가 서서 대상이 보인다(클래스 주석) — 순회를 건너뛰는 회귀를 막는다
+    verify(tenantScopedRunner).forEachActiveTenant(any());
+    verify(repository).findHealthCheckable();
   }
 
   // 테스트용 jOOQ Record 헬퍼 필드

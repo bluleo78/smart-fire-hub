@@ -50,6 +50,11 @@ app:
   login-attempts:
     cleanup:
       enabled: false
+  api-connection:
+    health-check:
+      # 10분 주기 점검을 끈다(WD-451) — 공유 컨텍스트에서 다른 테스트가 만든 연결의 상태를 바꿔 알림·감사 단언이 흔들린다.
+      # 테스트는 ApiConnectionHealthCheckScheduler.runOnce() 를 직접 부른다.
+      scheduled-enabled: false
   jwt:
     secret: dGhpcyBpcyBhIHZlcnkgbG9uZyBzZWNyZXQga2V5IGZvciBIUzI1NiBhbGdvcml0aG0gdGhhdCBpcyBhdCBsZWFzdCAyNTYgYml0cw==
     access-expiration: 1800000
