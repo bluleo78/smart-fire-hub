@@ -55,6 +55,55 @@ test.describe('역할 관리 페이지', () => {
     await expect(rows.filter({ hasText: 'EDITOR' }).getByText('사용자 정의')).toBeVisible();
   });
 
+  /** WD-286: 역할 행은 마우스 클릭으로만 열렸다 — 역할 이름 링크로 키보드(Tab·Enter)만으로 상세에 들어간다. */
+  test('키보드만으로 「역할 추가」 다음 Tab 으로 역할 이름 링크에 닿고 Enter 로 상세를 연다 (WD-286)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    await setupRoleDetailMocks(page, 3, false);
+    await page.goto('/admin/roles');
+
+    // 표의 행·칸 의미는 그대로다 — 헤더 1행 + 데이터 3행, 이름 칸 안에 링크가 있다.
+    await expect(page.getByRole('row')).toHaveCount(4);
+    const userLink = page.getByRole('link', { name: 'USER', exact: true });
+    const adminLink = page.getByRole('link', { name: 'ADMIN', exact: true });
+    const editorLink = page.getByRole('link', { name: 'EDITOR', exact: true });
+    await expect(editorLink).toHaveAttribute('href', '/admin/roles/3');
+
+    // 「역할 추가」에서 Tab 을 누르면 표의 첫 역할 링크로 간다(예전에는 본문을 지나 사이드바로 갔다).
+    await page.getByRole('button', { name: '역할 추가' }).focus();
+    await page.keyboard.press('Tab');
+    await expect(userLink).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(adminLink).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(editorLink).toBeFocused();
+
+    // Enter 로 그 역할의 상세가 열린다.
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/admin\/roles\/3$/);
+    await expect(page.getByRole('heading', { name: '역할 상세' })).toBeVisible();
+  });
+
+  test('역할 행을 마우스로 눌러도 상세가 열리고, 행 안 삭제 버튼은 상세로 이동하지 않는다 (WD-286)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    await setupRoleDetailMocks(page, 3, false);
+    await page.goto('/admin/roles');
+
+    // 삭제 버튼은 확인 창만 연다 — 행 이동으로 번지지 않는다.
+    await page.getByRole('button', { name: 'EDITOR 역할 삭제' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('alertdialog')).toBeHidden();
+    await expect(page).toHaveURL(/\/admin\/roles$/);
+
+    // 이름 밖의 칸(설명)을 눌러도 예전처럼 행 클릭으로 상세가 열린다.
+    await page.getByRole('row').filter({ hasText: 'EDITOR' }).getByText('사용자 정의').click();
+    await expect(page).toHaveURL(/\/admin\/roles\/3$/);
+  });
+
   test('역할 추가 버튼 클릭 시 생성 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {
     await setupRoleListMocks(page);
 

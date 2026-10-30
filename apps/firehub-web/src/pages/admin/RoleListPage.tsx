@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
@@ -235,7 +235,18 @@ export default function RoleListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors row-hover"
                   onClick={() => navigate(`/admin/roles/${role.id}`)}
                 >
-                  <TableCell className="font-medium">{role.name}</TableCell>
+                  <TableCell className="font-medium">
+                    {/* 키보드 접근성(WD-286): 행 클릭은 마우스로만 열리므로 역할 이름을 상세 링크로 둔다 — Tab 으로 닿고
+                        Enter 로 열린다. 행에 role="button" 을 주면 표의 행·칸 의미가 사라져 링크로 한다.
+                        클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
+                    <Link
+                      to={`/admin/roles/${role.id}`}
+                      className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {role.name}
+                    </Link>
+                  </TableCell>
                   <TableCell>
                     {role.isSystem ? (
                       <Badge variant="outline">시스템</Badge>
