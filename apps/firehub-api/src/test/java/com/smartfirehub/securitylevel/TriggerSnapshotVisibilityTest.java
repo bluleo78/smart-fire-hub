@@ -80,13 +80,15 @@ class TriggerSnapshotVisibilityTest extends IntegrationTestBase {
                   .returning(PIPELINE.ID)
                   .fetchOne()
                   .getId();
-          // 폴러가 남기는 상태 그대로 — 감시 데이터셋별 실제 행 수 + 마지막 확인 시각
+          // 폴러가 남기는 상태 그대로 — 감시 데이터셋별 실제 행 수·변경 카운터 + 마지막 확인 시각
           String state =
               "{\"lastSnapshot\":{\""
                   + hiddenId
                   + "\":3,\""
                   + visibleId
-                  + "\":2},\"lastCheckedAt\":\"2026-10-22T09:00:00\"}";
+                  + "\":2},\"lastChangeSnapshot\":{\""
+                  + hiddenId
+                  + "\":17},\"lastCheckedAt\":\"2026-10-22T09:00:00\"}";
           triggerId =
               dsl.insertInto(PIPELINE_TRIGGER)
                   .set(PIPELINE_TRIGGER.PIPELINE_ID, pipelineId)
@@ -176,11 +178,14 @@ class TriggerSnapshotVisibilityTest extends IntegrationTestBase {
       JsonNode state = list.get(0).path("triggerState");
       // 숨김 데이터셋 행 수(3)가 담긴 내부 스냅숏은 누구에게도 나가지 않는다
       assertThat(state.has("lastSnapshot")).isFalse();
+      // 숨김 데이터셋의 변경 활동을 드러내는 변경 카운터 스냅숏(WD-399)도 나가지 않는다
+      assertThat(state.has("lastChangeSnapshot")).isFalse();
       // 나머지 상태는 그대로 — 스냅숏만 뺐다는 대조
       assertThat(state.path("lastCheckedAt").asText()).isEqualTo("2026-10-22T09:00:00");
 
       JsonNode one = getJson("/api/v1/pipelines/" + pipelineId + "/triggers/" + triggerId, token);
       assertThat(one.path("triggerState").has("lastSnapshot")).isFalse();
+      assertThat(one.path("triggerState").has("lastChangeSnapshot")).isFalse();
     }
   }
 

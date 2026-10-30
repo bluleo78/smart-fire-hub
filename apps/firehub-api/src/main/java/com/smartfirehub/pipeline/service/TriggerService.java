@@ -615,8 +615,12 @@ public class TriggerService {
   /** 데이터 변경 트리거 이벤트 detail 의 변경 데이터셋 id 목록 키({@code TriggerEventService} 가 쓴다). */
   private static final String CHANGED_DATASETS = "changedDatasets";
 
-  /** 데이터 변경 트리거 폴러의 내부 상태 키 — 감시 데이터셋별 행 수({@code TriggerEventService}). */
-  private static final String POLL_SNAPSHOT = "lastSnapshot";
+  /**
+   * 데이터 변경 트리거 폴러의 내부 상태 키 — 감시 데이터셋별 행 수와 누적 변경 카운터(WD-399, {@code TriggerEventService}). 둘 다 볼 수
+   * 없는 데이터셋의 크기·변경 활동을 드러내므로 응답에서 뺀다.
+   */
+  private static final List<String> POLL_SNAPSHOTS =
+      List.of("lastSnapshot", "lastChangeSnapshot", "lastRelationSnapshot");
 
   /** 웹훅 config 의 저장 암호문 키 — 응답에서 빼고, 수정 시 DB 값을 유지한다(WD-220). */
   private static final String WEBHOOK_SECRET_ENCRYPTED = "secretEncrypted";
@@ -712,18 +716,19 @@ public class TriggerService {
   }
 
   /**
-   * 조회 응답에서 데이터 변경 폴러의 행 수 스냅숏을 뺀다(WD-161).
+   * 조회 응답에서 데이터 변경 폴러의 행 수·변경 카운터 스냅숏을 뺀다(WD-161, WD-399).
    *
    * <p>{@code triggerState.lastSnapshot} 은 {@code {데이터셋id: 행 수}} 로, 폴러가 다음 확인 때 비교하려고 남기는 내부 상태다.
    * 조회자의 등급과 상관없이 실제 행 수를 담고 있어, 볼 수 없는(상위 등급) 데이터셋의 행 수와 그 변화를 트리거 조회로 지켜볼 수 있었다 — 데이터셋 행 수 API 는
    * 같은 사용자에게 404 다. 화면·AI 어디서도 이 값을 쓰지 않으므로 조회자와 상관없이 응답에서 뺀다(저장된 상태는 그대로라 폴링 동작은 바뀌지 않는다).
    */
   private static TriggerResponse withoutPollSnapshot(TriggerResponse r) {
-    if (r.triggerState() == null || !r.triggerState().containsKey(POLL_SNAPSHOT)) {
+    if (r.triggerState() == null
+        || POLL_SNAPSHOTS.stream().noneMatch(r.triggerState()::containsKey)) {
       return r;
     }
     Map<String, Object> state = new HashMap<>(r.triggerState());
-    state.remove(POLL_SNAPSHOT);
+    POLL_SNAPSHOTS.forEach(state::remove);
     return new TriggerResponse(
         r.id(),
         r.pipelineId(),

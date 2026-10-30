@@ -91,6 +91,28 @@ public interface DataRowStore {
   Map<String, Long> rowCounts(Collection<String> tableNames);
 
   /**
+   * 테이블별 누적 변경 카운터(WD-399). DATASET_CHANGE 트리거 폴러가 행 수와 함께 비교해, 행 수가 그대로인 변경(업서트로 값 수정, 행 편집, 같은 주기
+   * 안의 삭제+추가)도 감지한다.
+   *
+   * <p>{@link #rowCounts} 와 같이 셀 수 없는 테이블은 빠지고 예외를 던지지 않는다. 카운터를 제공하지 않는 백엔드(Tibero)는 빈 결과를 돌려주고,
+   * 폴러는 그 백엔드에서 행 수만 비교한다.
+   *
+   * @param tableNames 메타데이터 테이블 이름(소문자)
+   * @return {테이블 이름 → 변경 카운터}. 읽은 테이블만 담긴다
+   */
+  default Map<String, ChangeCounter> changeCounters(Collection<String> tableNames) {
+    return Map.of();
+  }
+
+  /**
+   * 테이블 하나의 변경 카운터(WD-399).
+   *
+   * @param relationId 테이블 실체의 식별자(PG 는 OID). 테이블을 지우고 새로 만들어 같은 이름으로 바꿔 넣으면(REPLACE 맞바꿈) 달라진다
+   * @param counter 같은 실체 안에서 행이 추가·수정·삭제될 때마다 커지는 누적 수. 통계 초기화·크래시 복구로 0 부터 다시 셀 수 있다
+   */
+  record ChangeCounter(long relationId, long counter) {}
+
+  /**
    * 행이 하나도 없는 테이블 이름을 돌려준다(WD-80). 시스템 상태의 "빈 데이터셋 수"가 쓴다.
    *
    * <p>판정하지 못한 테이블(없음·오류)은 빠지고, 이 메서드는 예외를 던지지 않는다 — 판정 실패를 "비어 있음"으로 세지 않기 위해서다.
