@@ -8,6 +8,7 @@ import com.smartfirehub.dashboard.dto.ActivityFeedResponse.ActivityItem;
 import com.smartfirehub.dashboard.dto.AttentionItemResponse;
 import com.smartfirehub.dashboard.dto.DashboardStatsResponse;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse.PipelineHealth;
+import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -28,8 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 홈 대시보드의 파이프라인 가시성(WD-272) — 파이프라인 조회 권한(pipeline:read)이 없는 조회자에게 홈 API 4개가 파이프라인 이름·실행 결과·개수를 싣지
  * 않는지 검증한다. 파이프라인 목록·실행 이력 API 는 같은 사람에게 403 이므로 홈도 같은 정보를 보여 주면 안 된다.
  *
- * <p>데이터셋 항목은 권한과 무관하게 그대로 실리는지, 권한이 있으면 파이프라인이 예전처럼 실리는지, 비요청 경로(Clearance 형태 — proactive 리포트)는
- * 바뀌지 않았는지도 함께 본다. 각 테스트는 @Transactional 로 롤백된다.
+ * <p>데이터셋 항목은 권한과 무관하게 그대로 실리는지, 권한이 있으면 파이프라인이 예전처럼 실리는지, 비요청 경로(Clearance 형태 — 스마트 작업 리포트)도 자격
+ * 주인의 권한으로 같은 판정을 하는지(WD-361) 함께 본다. 각 테스트는 @Transactional 로 롤백된다.
  */
 @Transactional
 class DashboardPipelineVisibilityTest extends IntegrationTestBase {
@@ -221,10 +222,42 @@ class DashboardPipelineVisibilityTest extends IntegrationTestBase {
     assertThat(all.items()).extracting(ActivityItem::title).anyMatch(t -> t.contains(pipelineName));
   }
 
-  /** 비요청 경로(Clearance 형태 — proactive 리포트 컨텍스트)는 요청 권한 목록이 없어 예전처럼 파이프라인을 싣는다. */
+  /**
+   * 비요청 경로(Clearance 형태 — 스마트 작업 리포트 컨텍스트)도 자격 주인에게 pipeline:read 가 없으면 파이프라인을 싣지 않는다(WD-361). USER
+   * 역할에는 그 권한이 없다 — 예전에는 권한과 무관하게 실렸다.
+   */
   @Test
-  void clearanceVariant_unchanged_includesPipelines() {
+  void clearanceVariant_withoutPipelineRead_hidesPipelines() {
     var viewer = clearanceResolver.resolve(userId);
+    assertThat(viewer.permissions()).doesNotContain("pipeline:read");
+
+    DashboardStatsResponse stats = dashboardService.getStats(viewer);
+    assertThat(stats.totalPipelines()).isZero();
+    assertThat(stats.recentExecutions()).isEmpty();
+    assertThat(stats.recentImports()).extracting("datasetName").contains(datasetName);
+    PipelineHealth ph = dashboardService.getSystemHealth(viewer).pipelineHealth();
+    assertThat(List.of(ph.total(), ph.healthy(), ph.failing(), ph.running(), ph.disabled()))
+        .containsOnly(0);
+    assertThat(dashboardService.getAttentionItems(viewer))
+        .extracting(AttentionItemResponse::title)
+        .noneMatch(t -> t.contains(pipelineName));
+    assertThat(dashboardService.getActivityFeed(null, null, 0, 100, viewer).items())
+        .extracting(ActivityItem::title)
+        .noneMatch(t -> t.contains(pipelineName));
+  }
+
+  /** 비요청 경로: 자격 주인에게 pipeline:read 가 있으면 예전처럼 파이프라인을 싣는다. */
+  @Test
+  void clearanceVariant_withPipelineRead_includesPipelines() {
+    var base = clearanceResolver.resolve(userId);
+    var viewer =
+        new Clearance(
+            base.userId(),
+            base.tenantId(),
+            base.rank(),
+            base.roleIds(),
+            base.tenantAdmin(),
+            java.util.Set.of("dataset:read", "pipeline:read"));
 
     assertThat(dashboardService.getStats(viewer).recentExecutions())
         .extracting("pipelineName")
@@ -237,5 +270,16 @@ class DashboardPipelineVisibilityTest extends IntegrationTestBase {
     assertThat(dashboardService.getActivityFeed(null, null, 0, 100, viewer).items())
         .extracting(ActivityItem::title)
         .anyMatch(t -> t.contains(pipelineName));
+  }
+
+  /** 주인 미상 자격(Clearance.none — 소유자 없는 작업)은 권한이 없어 파이프라인을 싣지 않는다(fail-closed). */
+  @Test
+  void clearanceVariant_none_hidesPipelines() {
+    var viewer = Clearance.none(-1L, DEFAULT_TEST_TENANT_ID);
+
+    assertThat(dashboardService.getStats(viewer).recentExecutions()).isEmpty();
+    assertThat(dashboardService.getAttentionItems(viewer))
+        .extracting(AttentionItemResponse::title)
+        .noneMatch(t -> t.contains(pipelineName));
   }
 }

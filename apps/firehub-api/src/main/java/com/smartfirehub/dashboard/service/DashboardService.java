@@ -51,8 +51,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 판정을 PG 트랜잭션 밖으로 빼야 해서다. 템플릿은 자기 호출에서도 그대로 동작한다.
  *
  * <p>파이프라인 가시성(WD-272) — 요청 경로는 조회자에게 파이프라인 조회 권한({@code pipeline:read})이 없으면 파이프라인 이름·실행 이력·개수를 싣지
- * 않는다(개수 0, 목록 비움). 파이프라인 목록·실행 이력 API 가 403 인 사람에게 홈이 같은 정보를 보여 주지 않게 하려는 것이다. 비요청 경로 ({@link
- * Clearance} 형태)는 요청 권한 목록이 없어 예전처럼 파이프라인을 싣는다.
+ * 않는다(개수 0, 목록 비움). 파이프라인 목록·실행 이력 API 가 403 인 사람에게 홈이 같은 정보를 보여 주지 않게 하려는 것이다. 비요청 경로({@link
+ * Clearance} 형태 — 스마트 작업 리포트 컨텍스트)는 그 자격에 실린 권한 목록(작업 주인의 워크스페이스 권한)으로 같은 판정을 한다(WD-361). 주인 미상
+ * 자격({@link Clearance#none})은 권한이 없어 파이프라인을 싣지 않는다.
  */
 @Service
 @RequiredArgsConstructor
@@ -166,6 +167,15 @@ public class DashboardService {
         && auth.getAuthorities().stream().anyMatch(a -> PIPELINE_READ.equals(a.getAuthority()));
   }
 
+  /**
+   * 명시 자격의 주인이 파이프라인 조회 권한을 가졌는지(WD-361). 자격의 권한 목록은 {@code ClearanceResolver} 가 인터셉터와 같은 출처
+   * ({@code PermissionService.getUserPermissions})에서 채운다 — 요청 경로의 {@link
+   * #currentUserCanReadPipelines()} 와 같은 기준이다.
+   */
+  private static boolean canReadPipelines(Clearance viewer) {
+    return viewer.permissions().contains(PIPELINE_READ);
+  }
+
   @Transactional(readOnly = true)
   public DashboardStatsResponse getStats() {
     return getStats(clearanceResolver.current(), currentUserCanReadPipelines());
@@ -173,7 +183,7 @@ public class DashboardService {
 
   @Transactional(readOnly = true)
   public DashboardStatsResponse getStats(Clearance viewer) {
-    return getStats(viewer, true);
+    return getStats(viewer, canReadPipelines(viewer));
   }
 
   /**
@@ -291,7 +301,7 @@ public class DashboardService {
    * 저장소로 하며, PG 는 같은 트랜잭션 안에서, Tibero 는 네트워크 너머 질의라 PG 커넥션을 쥐지 않도록 트랜잭션 밖에서 한다.
    */
   public SystemHealthResponse getSystemHealth(Clearance viewer) {
-    return getSystemHealth(viewer, true);
+    return getSystemHealth(viewer, canReadPipelines(viewer));
   }
 
   /**
@@ -543,7 +553,7 @@ public class DashboardService {
 
   @Transactional(readOnly = true)
   public List<AttentionItemResponse> getAttentionItems(Clearance viewer) {
-    return getAttentionItems(viewer, true);
+    return getAttentionItems(viewer, canReadPipelines(viewer));
   }
 
   /**
@@ -684,7 +694,8 @@ public class DashboardService {
   @Transactional(readOnly = true)
   public ActivityFeedResponse getActivityFeed(
       String typeFilter, String severityFilter, int page, int size, Clearance viewer) {
-    return getActivityFeed(typeFilter, severityFilter, page, size, viewer, true);
+    return getActivityFeed(
+        typeFilter, severityFilter, page, size, viewer, canReadPipelines(viewer));
   }
 
   /**
