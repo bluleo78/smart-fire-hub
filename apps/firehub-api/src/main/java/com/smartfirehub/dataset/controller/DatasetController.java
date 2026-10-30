@@ -140,8 +140,12 @@ public class DatasetController {
   @PostMapping("/{id}/columns")
   @RequirePermission("dataset:write")
   public ResponseEntity<DatasetColumnResponse> addColumn(
-      @PathVariable Long id, @Valid @RequestBody AddColumnRequest request) {
-    DatasetColumnResponse column = datasetService.addColumn(id, request);
+      @PathVariable Long id,
+      @Valid @RequestBody AddColumnRequest request,
+      Authentication authentication) {
+    // 변경 감사(WD-463)의 행위자로 남기기 위해 요청 사용자를 넘긴다.
+    DatasetColumnResponse column =
+        datasetService.addColumn(id, request, (Long) authentication.getPrincipal());
     return ResponseEntity.status(HttpStatus.CREATED).body(column);
   }
 
@@ -150,15 +154,19 @@ public class DatasetController {
   public ResponseEntity<Void> updateColumn(
       @PathVariable Long id,
       @PathVariable Long columnId,
-      @Valid @RequestBody UpdateColumnRequest request) {
-    datasetService.updateColumn(id, columnId, request);
+      @Valid @RequestBody UpdateColumnRequest request,
+      Authentication authentication) {
+    // 변경 감사(WD-463)의 행위자로 남기기 위해 요청 사용자를 넘긴다.
+    datasetService.updateColumn(id, columnId, request, (Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 
   @DeleteMapping("/{id}/columns/{columnId}")
   @RequirePermission("dataset:write")
-  public ResponseEntity<Void> deleteColumn(@PathVariable Long id, @PathVariable Long columnId) {
-    datasetService.deleteColumn(id, columnId);
+  public ResponseEntity<Void> deleteColumn(
+      @PathVariable Long id, @PathVariable Long columnId, Authentication authentication) {
+    // 변경 감사(WD-463)의 행위자로 남기기 위해 요청 사용자를 넘긴다.
+    datasetService.deleteColumn(id, columnId, (Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 
@@ -167,16 +175,22 @@ public class DatasetController {
   @PutMapping("/{id}/primary-keys")
   @RequirePermission("dataset:write")
   public ResponseEntity<Void> updatePrimaryKeys(
-      @PathVariable Long id, @RequestBody UpdatePrimaryKeysRequest request) {
-    datasetService.updatePrimaryKeys(id, request.columnIds());
+      @PathVariable Long id,
+      @RequestBody UpdatePrimaryKeysRequest request,
+      Authentication authentication) {
+    // 변경 감사(WD-463)의 행위자로 남기기 위해 요청 사용자를 넘긴다.
+    datasetService.updatePrimaryKeys(id, request.columnIds(), (Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 
   @PutMapping("/{id}/columns/reorder")
   @RequirePermission("dataset:write")
   public ResponseEntity<Void> reorderColumns(
-      @PathVariable Long id, @RequestBody ReorderColumnsRequest request) {
-    datasetService.reorderColumns(id, request);
+      @PathVariable Long id,
+      @RequestBody ReorderColumnsRequest request,
+      Authentication authentication) {
+    // 변경 감사(WD-463)의 행위자로 남기기 위해 요청 사용자를 넘긴다.
+    datasetService.reorderColumns(id, request, (Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 
@@ -190,14 +204,19 @@ public class DatasetController {
   @PostMapping("/{id}/data/delete")
   @RequirePermission("data:delete")
   public ResponseEntity<DataDeleteResponse> deleteDataRows(
-      @PathVariable Long id, @RequestBody DataDeleteRequest request) {
+      @PathVariable Long id,
+      @RequestBody DataDeleteRequest request,
+      Authentication authentication) {
     if (request.rowIds() == null || request.rowIds().isEmpty()) {
       return ResponseEntity.badRequest().build();
     }
     if (request.rowIds().size() > 1000) {
       return ResponseEntity.badRequest().build();
     }
-    DataDeleteResponse response = datasetDataService.deleteDataRows(id, request.rowIds());
+    // 변경 감사(WD-463)의 행위자로 남기기 위해 요청 사용자를 넘긴다.
+    DataDeleteResponse response =
+        datasetDataService.deleteDataRows(
+            id, request.rowIds(), (Long) authentication.getPrincipal());
     return ResponseEntity.ok(response);
   }
 
@@ -327,8 +346,10 @@ public class DatasetController {
 
   @DeleteMapping("/{id}/tags/{tagName}")
   @RequirePermission("dataset:write")
-  public ResponseEntity<Void> deleteTag(@PathVariable Long id, @PathVariable String tagName) {
-    datasetTagService.deleteTag(id, tagName);
+  public ResponseEntity<Void> deleteTag(
+      @PathVariable Long id, @PathVariable String tagName, Authentication authentication) {
+    // 변경 감사(WD-463)의 행위자로 남기기 위해 요청 사용자를 넘긴다.
+    datasetTagService.deleteTag(id, tagName, (Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 
@@ -389,8 +410,12 @@ public class DatasetController {
   @PostMapping("/{id}/data/rows")
   @RequirePermission("data:import")
   public ResponseEntity<RowDataResponse> addRow(
-      @PathVariable Long id, @Valid @RequestBody RowDataRequest request) {
-    RowDataResponse response = datasetDataService.addRow(id, request);
+      @PathVariable Long id,
+      @Valid @RequestBody RowDataRequest request,
+      Authentication authentication) {
+    // 변경 감사(WD-463)의 행위자로 남기기 위해 요청 사용자를 넘긴다.
+    RowDataResponse response =
+        datasetDataService.addRow(id, request, (Long) authentication.getPrincipal());
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
 
@@ -405,8 +430,12 @@ public class DatasetController {
   @PutMapping("/{id}/data/rows/{rowId}")
   @RequirePermission("data:import")
   public ResponseEntity<Void> updateRow(
-      @PathVariable Long id, @PathVariable Long rowId, @Valid @RequestBody RowDataRequest request) {
-    datasetDataService.updateRow(id, rowId, request);
+      @PathVariable Long id,
+      @PathVariable Long rowId,
+      @Valid @RequestBody RowDataRequest request,
+      Authentication authentication) {
+    // 변경 감사(WD-463)의 행위자로 남기기 위해 요청 사용자를 넘긴다.
+    datasetDataService.updateRow(id, rowId, request, (Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 

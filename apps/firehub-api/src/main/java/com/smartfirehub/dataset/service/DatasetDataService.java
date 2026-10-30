@@ -58,6 +58,9 @@ public class DatasetDataService {
   /** 테넌트 저장소 판정 — Tibero 인지에 따라 실행 구간을 나눈다. */
   private final PipelineDataSchema pipelineDataSchema;
 
+  /** 데이터 탭 행 추가·수정·일괄 삭제 감사 기록(WD-463). */
+  private final DatasetAuditRecorder datasetAuditRecorder;
+
   // DOCUMENT 데이터셋은 data.<table> 동적 테이블이 없고 데이터가 document_chunk 에 저장된다.
   private static final String DOCUMENT_TYPE = "DOCUMENT";
   // FILE(오브젝트) 데이터셋도 개별 파일이 MinIO 에 저장되어 data.<table> 동적 테이블이 없다.
@@ -132,12 +135,32 @@ public class DatasetDataService {
     return new BatchRowDataResponse(validatedRows.size());
   }
 
+  /** 행위자 없는 내부·테스트 경로 — 감사는 행위자 "system" 으로 남는다. 사용자 요청은 userId 를 받는 오버로드로 들어온다. */
   @Transactional
   public DataDeleteResponse deleteDataRows(Long datasetId, List<Long> rowIds) {
+    return deleteDataRows(datasetId, rowIds, null);
+  }
+
+  /**
+   * 행을 일괄 삭제하고, 지운 행이 있으면 요청 한 건당 감사 한 행(WD-463, ROWS_DELETE)을 남긴다. metadata 에는 지운 개수와 요청한 내부 행 id
+   * 앞 {@value DatasetAuditRecorder#MAX_ROW_IDS}개만 싣는다 — 행 값은 싣지 않는다.
+   */
+  @Transactional
+  public DataDeleteResponse deleteDataRows(Long datasetId, List<Long> rowIds, Long userId) {
     DatasetResponse dataset =
         datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "행 삭제");
     int deletedCount = dataTableRowService.deleteRows(dataset.tableName(), rowIds);
+    if (deletedCount > 0) {
+      datasetAuditRecorder.record(
+          userId,
+          "DELETE",
+          datasetId,
+          dataset.name(),
+          "ROWS_DELETE",
+          "행 일괄 삭제: " + dataset.name() + " (" + deletedCount + "건)",
+          Map.of("count", deletedCount, "rowIds", DatasetAuditRecorder.cappedRowIds(rowIds)));
+    }
     return new DataDeleteResponse(deletedCount);
   }
 
@@ -261,8 +284,15 @@ public class DatasetDataService {
     return new PageResponse<>(content, page, size, totalElements, totalPages);
   }
 
+  /** 행위자 없는 내부·테스트 경로 — 감사는 행위자 "system" 으로 남는다. 사용자 요청은 userId 를 받는 오버로드로 들어온다. */
   @Transactional
   public RowDataResponse addRow(Long datasetId, RowDataRequest request) {
+    return addRow(datasetId, request, null);
+  }
+
+  /** 행을 추가하고, 성공하면 감사(WD-463, ROW_ADD)를 남긴다 — 새 내부 행 id 와 값을 넣은 필드 이름만 싣는다. */
+  @Transactional
+  public RowDataResponse addRow(Long datasetId, RowDataRequest request, Long userId) {
     DatasetResponse dataset =
         datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "행 추가");
@@ -295,6 +325,17 @@ public class DatasetDataService {
       data.put(entry.getKey(), entry.getValue());
     }
 
+    // 감사(WD-463) — 검증·INSERT 가 끝난 뒤. 값은 싣지 않고 요청에 들어 있던 필드 이름만 싣는다.
+    List<String> filledFields = columnNames.stream().filter(request.data()::containsKey).toList();
+    datasetAuditRecorder.record(
+        userId,
+        "UPDATE",
+        datasetId,
+        dataset.name(),
+        "ROW_ADD",
+        "행 추가: " + dataset.name() + " (행 ID " + newId + ")",
+        Map.of("count", 1, "rowIds", List.of(newId), "changedFields", filledFields));
+
     return new RowDataResponse(newId, data, createdAt);
   }
 
@@ -324,8 +365,18 @@ public class DatasetDataService {
     return new BatchRowDataResponse(validatedRows.size());
   }
 
+  /** 행위자 없는 내부·테스트 경로 — 감사는 행위자 "system" 으로 남는다. 사용자 요청은 userId 를 받는 오버로드로 들어온다. */
   @Transactional
   public void updateRow(Long datasetId, Long rowId, RowDataRequest request) {
+    updateRow(datasetId, rowId, request, null);
+  }
+
+  /**
+   * 행을 부분 수정하고, 성공하면 감사(WD-463, ROW_UPDATE)를 남긴다. 웹 편집 창은 바뀐 칸만 보내므로 요청에 든 필드 이름을 바뀐 항목으로 싣는다 — 값은
+   * 싣지 않는다. 바꿀 필드가 없는 요청(쓰기 없음)과 없는 행(404)은 남기지 않는다.
+   */
+  @Transactional
+  public void updateRow(Long datasetId, Long rowId, RowDataRequest request, Long userId) {
     DatasetResponse dataset =
         datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "행 수정");
@@ -359,6 +410,21 @@ public class DatasetDataService {
         validateAndConvertRowData(requestedColumnDefs, requestedData, request.data().keySet());
     dataTableRowService.updateRow(
         dataset.tableName(), rowId, requestedColumns, validatedData, columnTypes);
+
+    datasetAuditRecorder.record(
+        userId,
+        "UPDATE",
+        datasetId,
+        dataset.name(),
+        "ROW_UPDATE",
+        "행 수정: "
+            + dataset.name()
+            + " (행 ID "
+            + rowId
+            + ", 바뀐 항목: "
+            + String.join("·", requestedColumns)
+            + ")",
+        Map.of("count", 1, "rowIds", List.of(rowId), "changedFields", requestedColumns));
   }
 
   @Transactional(readOnly = true)
