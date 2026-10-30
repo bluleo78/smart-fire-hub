@@ -302,6 +302,17 @@ class DashboardHealthTest extends IntegrationTestBase {
         .set(AUDIT_LOG.ACTION_TIME, LocalDateTime.now())
         .execute();
 
+    // 행 편집 감사(WD-463)처럼 임포트가 아닌 데이터셋 감사 행은 추이에 세지 않는다
+    dsl.insertInto(AUDIT_LOG)
+        .set(AUDIT_LOG.USER_ID, testUserId)
+        .set(AUDIT_LOG.USERNAME, "dashtest")
+        .set(AUDIT_LOG.ACTION_TYPE, "UPDATE")
+        .set(AUDIT_LOG.RESOURCE, "dataset")
+        .set(AUDIT_LOG.RESOURCE_ID, freshDatasetId.toString())
+        .set(AUDIT_LOG.RESULT, "SUCCESS")
+        .set(AUDIT_LOG.ACTION_TIME, LocalDateTime.now())
+        .execute();
+
     SystemHealthResponse after = dashboardService.getSystemHealth();
 
     // 마지막 원소(오늘)의 카운트가 늘어나야 한다 — 고정 배열이라면 절대 변하지 않는다

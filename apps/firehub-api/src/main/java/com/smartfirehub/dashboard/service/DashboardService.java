@@ -531,12 +531,18 @@ public class DashboardService {
     Field<LocalDate> auditDay = field("CAST({0} AS date)", LocalDate.class, AL_ACTION_TIME);
     // 숨김 데이터셋의 이력은 추이에서 뺀다(볼 수 있는 것만 집계). 데이터셋 행이 없는 이력(삭제된 데이터셋)은 기존처럼 센다 —
     // 삭제된 데이터셋은 이름·존재를 드러낼 대상이 없다.
+    // 임포트(IMPORT)만 센다 — 데이터셋 정보·필드·행 편집도 resource=dataset 으로 감사에 남으므로(WD-463) 모두 세면 행 편집
+    // 한 번마다 추이가 올라간다.
     Map<LocalDate, Integer> datasetCountsByDay =
         dsl.select(auditDay, count())
             .from(AUDIT_LOG)
             .leftJoin(DATASET)
             .on(AL_RESOURCE_ID_AS_LONG.eq(D_ID))
-            .where(AL_RESOURCE.eq("dataset").and(AL_ACTION_TIME.greaterOrEqual(trendFrom)))
+            .where(
+                AL_RESOURCE
+                    .eq("dataset")
+                    .and(AL_ACTION_TYPE.eq("IMPORT"))
+                    .and(AL_ACTION_TIME.greaterOrEqual(trendFrom)))
             .and(D_ID.isNull().or(visible))
             .groupBy(auditDay)
             .fetchMap(r -> r.get(auditDay), r -> r.get(1, Integer.class));

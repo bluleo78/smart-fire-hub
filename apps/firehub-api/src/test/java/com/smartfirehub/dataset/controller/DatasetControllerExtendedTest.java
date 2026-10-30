@@ -125,7 +125,7 @@ class DatasetControllerExtendedTest {
   void addColumn_returnsCreated() throws Exception {
     AddColumnRequest req =
         new AddColumnRequest("new_col", "New Col", "TEXT", null, true, false, null);
-    when(datasetService.addColumn(eq(1L), any())).thenReturn(sampleColumnResponse());
+    when(datasetService.addColumn(eq(1L), any(), anyLong())).thenReturn(sampleColumnResponse());
 
     mockMvc
         .perform(
@@ -141,7 +141,7 @@ class DatasetControllerExtendedTest {
   void updateColumn_returnsNoContent() throws Exception {
     UpdateColumnRequest req =
         new UpdateColumnRequest(null, "New Display", null, null, null, null, null);
-    doNothing().when(datasetService).updateColumn(anyLong(), anyLong(), any());
+    doNothing().when(datasetService).updateColumn(anyLong(), anyLong(), any(), anyLong());
 
     mockMvc
         .perform(
@@ -154,7 +154,7 @@ class DatasetControllerExtendedTest {
 
   @Test
   void deleteColumn_returnsNoContent() throws Exception {
-    doNothing().when(datasetService).deleteColumn(anyLong(), anyLong());
+    doNothing().when(datasetService).deleteColumn(anyLong(), anyLong(), anyLong());
 
     mockMvc
         .perform(
@@ -165,7 +165,7 @@ class DatasetControllerExtendedTest {
   @Test
   void reorderColumns_returnsNoContent() throws Exception {
     ReorderColumnsRequest req = new ReorderColumnsRequest(List.of(2L, 1L, 3L));
-    doNothing().when(datasetService).reorderColumns(anyLong(), any());
+    doNothing().when(datasetService).reorderColumns(anyLong(), any(), anyLong());
 
     mockMvc
         .perform(
@@ -194,7 +194,8 @@ class DatasetControllerExtendedTest {
   @Test
   void deleteDataRows_validIds_returnsOk() throws Exception {
     DataDeleteRequest req = new DataDeleteRequest(List.of(1L, 2L, 3L));
-    when(datasetDataService.deleteDataRows(anyLong(), any())).thenReturn(new DataDeleteResponse(3));
+    when(datasetDataService.deleteDataRows(anyLong(), any(), anyLong()))
+        .thenReturn(new DataDeleteResponse(3));
 
     mockMvc
         .perform(
@@ -426,7 +427,7 @@ class DatasetControllerExtendedTest {
 
   @Test
   void deleteTag_returnsNoContent() throws Exception {
-    doNothing().when(datasetTagService).deleteTag(anyLong(), anyString());
+    doNothing().when(datasetTagService).deleteTag(anyLong(), anyString(), anyLong());
 
     mockMvc
         .perform(
@@ -440,7 +441,7 @@ class DatasetControllerExtendedTest {
     org.mockito.Mockito.doThrow(
             new com.smartfirehub.dataset.exception.DatasetTagNotFoundException())
         .when(datasetTagService)
-        .deleteTag(anyLong(), anyString());
+        .deleteTag(anyLong(), anyString(), anyLong());
 
     mockMvc
         .perform(
@@ -591,7 +592,7 @@ class DatasetControllerExtendedTest {
   void addRow_returnsCreated() throws Exception {
     RowDataRequest req = new RowDataRequest(Map.of("name", "Alice"));
     RowDataResponse resp = new RowDataResponse(1L, Map.of("name", "Alice"), LocalDateTime.now());
-    when(datasetDataService.addRow(anyLong(), any())).thenReturn(resp);
+    when(datasetDataService.addRow(anyLong(), any(), anyLong())).thenReturn(resp);
 
     mockMvc
         .perform(
@@ -621,7 +622,7 @@ class DatasetControllerExtendedTest {
   @Test
   void updateRow_returnsNoContent() throws Exception {
     RowDataRequest req = new RowDataRequest(Map.of("name", "Carol"));
-    doNothing().when(datasetDataService).updateRow(anyLong(), anyLong(), any());
+    doNothing().when(datasetDataService).updateRow(anyLong(), anyLong(), any(), anyLong());
 
     mockMvc
         .perform(
@@ -729,7 +730,7 @@ class DatasetControllerExtendedTest {
     // 행 추가 응답도 RowDataResponse 라 같은 규칙을 따른다.
     RowDataRequest req = new RowDataRequest(Map.of("big_decimal", "123456789012.123456"));
     RowDataResponse resp = new RowDataResponse(8L, precisionRow(), LocalDateTime.now());
-    when(datasetDataService.addRow(anyLong(), any())).thenReturn(resp);
+    when(datasetDataService.addRow(anyLong(), any(), anyLong())).thenReturn(resp);
 
     mockMvc
         .perform(

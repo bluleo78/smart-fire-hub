@@ -83,7 +83,9 @@ class DatasetDataServiceTxTest extends IntegrationTestBase {
             mock(ClearanceResolver.class),
             history,
             new TransactionTemplate(transactionManager),
-            schema);
+            schema,
+            // 이 테스트는 SQL 실행 구간만 본다 — 행 변경 감사(WD-463)는 호출되지 않는다.
+            mock(DatasetAuditRecorder.class));
     return new Setup(service, executor, history, execTx, saveTx);
   }
 

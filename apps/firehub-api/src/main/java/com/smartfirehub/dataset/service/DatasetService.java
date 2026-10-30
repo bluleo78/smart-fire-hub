@@ -47,7 +47,10 @@ import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
@@ -193,6 +196,9 @@ public class DatasetService {
 
   /** 테넌트 방언(PG/Tibero)별 SQL 파서·데이터 스키마 — 사용처 SQL 대조에 쓴다(WD-206). */
   private final PipelineDataSchema pipelineDataSchema;
+
+  /** 데이터셋 정보·상태·필드 변경 감사 기록(WD-463). */
+  private final DatasetAuditRecorder datasetAuditRecorder;
 
   /** 파이프라인 전용 출처 필드를 일반 생성 경로에서 보냈을 때의 오류 코드. */
   public static final String ORIGIN_RESERVED_CODE = "DATASET_ORIGIN_RESERVED";
@@ -688,6 +694,52 @@ public class DatasetService {
 
     // 이름/설명/카테고리 변경 반영
     reindexSearch(id);
+
+    // 감사(WD-463) — 검증·저장이 모두 끝난 뒤 같은 트랜잭션에서 남긴다.
+    auditDatasetUpdate(userId, current);
+  }
+
+  /** 데이터셋 정보 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-463). */
+  private static final Map<String, String> DATASET_FIELD_LABELS =
+      Map.of("name", "이름", "description", "설명", "category", "카테고리");
+
+  /**
+   * 데이터셋 정보 수정 감사(WD-463). 저장 전 값과 저장 후 다시 읽은 값을 비교해 바뀐 항목 <b>이름</b>만 남긴다 — 요청이 아니라 저장값끼리 비교하는 이유:
+   * 수정은 전체 교체라 웹이 바뀌지 않은 칸도 함께 보내므로, 요청과 비교하면 그대로인 항목까지 바뀐 것으로 센다. 설명은 null 과 빈 문자열을 같게 본다(화면에서는 둘
+   * 다 「설명 없음」). 바뀐 것이 없으면 남기지 않는다. 설명 본문은 싣지 않는다.
+   */
+  private void auditDatasetUpdate(Long userId, DatasetResponse before) {
+    DatasetResponse after =
+        datasetRepository.findById(before.id()).orElseThrow(DatasetNotFoundException::new);
+    List<String> changed = new ArrayList<>();
+    if (!Objects.equals(before.name(), after.name())) changed.add("name");
+    if (!Objects.equals(blankToNull(before.description()), blankToNull(after.description()))) {
+      changed.add("description");
+    }
+    if (!Objects.equals(categoryIdOf(before), categoryIdOf(after))) changed.add("category");
+    if (changed.isEmpty()) {
+      return; // 실제 변경 없음 — 감사 생략
+    }
+    datasetAuditRecorder.record(
+        userId,
+        "UPDATE",
+        after.id(),
+        after.name(),
+        "DATASET_UPDATE",
+        "데이터셋 수정: "
+            + after.name()
+            + " (바뀐 항목: "
+            + DatasetAuditRecorder.changedLabels(changed, DATASET_FIELD_LABELS)
+            + ")",
+        Map.of("changedFields", changed));
+  }
+
+  private static String blankToNull(String value) {
+    return value == null || value.isEmpty() ? null : value;
+  }
+
+  private static Long categoryIdOf(DatasetResponse dataset) {
+    return dataset.category() == null ? null : dataset.category().id();
   }
 
   @Transactional
@@ -751,8 +803,15 @@ public class DatasetService {
     }
   }
 
+  /** 행위자 없는 내부·테스트 경로 — 감사는 행위자 "system" 으로 남는다. 사용자 요청은 userId 를 받는 오버로드로 들어온다. */
   @Transactional
   public DatasetColumnResponse addColumn(Long datasetId, AddColumnRequest request) {
+    return addColumn(datasetId, request, null);
+  }
+
+  /** 필드를 추가하고, 성공하면 감사(WD-463, FIELD_ADD)를 남긴다. */
+  @Transactional
+  public DatasetColumnResponse addColumn(Long datasetId, AddColumnRequest request, Long userId) {
     DatasetResponse dataset =
         datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "컬럼 관리");
@@ -815,11 +874,29 @@ public class DatasetService {
     // 컬럼 추가 반영
     reindexSearch(datasetId);
 
+    // 감사(WD-463) — 검증·DDL 이 모두 끝난 뒤. 필드 이름만 싣는다(표시 이름·설명 본문은 싣지 않음).
+    datasetAuditRecorder.record(
+        userId,
+        "UPDATE",
+        datasetId,
+        dataset.name(),
+        "FIELD_ADD",
+        "필드 추가: " + dataset.name() + "." + column.columnName(),
+        Map.of("columnId", column.id(), "columnName", column.columnName()));
+
     return column;
   }
 
+  /** 행위자 없는 내부·테스트 경로 — 감사는 행위자 "system" 으로 남는다. 사용자 요청은 userId 를 받는 오버로드로 들어온다. */
   @Transactional
   public void updateColumn(Long datasetId, Long columnId, UpdateColumnRequest request) {
+    updateColumn(datasetId, columnId, request, null);
+  }
+
+  /** 필드를 수정하고, 실제로 바뀐 항목이 있으면 감사(WD-463, FIELD_UPDATE)를 남긴다. */
+  @Transactional
+  public void updateColumn(
+      Long datasetId, Long columnId, UpdateColumnRequest request, Long userId) {
     DatasetResponse dataset =
         datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "컬럼 관리");
@@ -1028,6 +1105,63 @@ public class DatasetService {
 
     // 컬럼명/표시명/타입 등 변경 반영 (PK 플래그만 바뀌어도 무해)
     reindexSearch(datasetId);
+
+    // 감사(WD-463) — 저장 전(column)과 저장 후 다시 읽은 값을 비교해 바뀐 항목 이름만 남긴다.
+    auditColumnUpdate(userId, dataset, column);
+  }
+
+  /** 필드 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-463). */
+  private static final Map<String, String> COLUMN_FIELD_LABELS =
+      Map.of(
+          "columnName", "필드명",
+          "displayName", "표시 이름",
+          "dataType", "데이터 타입",
+          "maxLength", "길이",
+          "isNullable", "NULL 허용",
+          "isIndexed", "인덱스",
+          "description", "설명",
+          "isPrimaryKey", "기본 키");
+
+  /**
+   * 필드 수정 감사(WD-463). 저장값끼리 비교해 바뀐 항목 <b>이름</b>만 모은다 — 웹은 편집 폼의 칸을 함께 보내므로 요청과 비교하면 그대로인 항목도 센다. 바뀐
+   * 것이 없으면 남기지 않는다. 표시 이름·설명 본문은 싣지 않고, 설명에는 바뀐 뒤의 필드 이름을 쓴다.
+   */
+  private void auditColumnUpdate(
+      Long userId, DatasetResponse dataset, DatasetColumnResponse before) {
+    DatasetColumnResponse after = columnRepository.findById(before.id()).orElse(null);
+    if (after == null) {
+      return;
+    }
+    List<String> changed = new ArrayList<>();
+    if (!Objects.equals(before.columnName(), after.columnName())) changed.add("columnName");
+    if (!Objects.equals(blankToNull(before.displayName()), blankToNull(after.displayName()))) {
+      changed.add("displayName");
+    }
+    if (!Objects.equals(before.dataType(), after.dataType())) changed.add("dataType");
+    if (!Objects.equals(before.maxLength(), after.maxLength())) changed.add("maxLength");
+    if (before.isNullable() != after.isNullable()) changed.add("isNullable");
+    if (before.isIndexed() != after.isIndexed()) changed.add("isIndexed");
+    if (!Objects.equals(blankToNull(before.description()), blankToNull(after.description()))) {
+      changed.add("description");
+    }
+    if (before.isPrimaryKey() != after.isPrimaryKey()) changed.add("isPrimaryKey");
+    if (changed.isEmpty()) {
+      return; // 실제 변경 없음 — 감사 생략
+    }
+    datasetAuditRecorder.record(
+        userId,
+        "UPDATE",
+        dataset.id(),
+        dataset.name(),
+        "FIELD_UPDATE",
+        "필드 수정: "
+            + dataset.name()
+            + "."
+            + after.columnName()
+            + " (바뀐 항목: "
+            + DatasetAuditRecorder.changedLabels(changed, COLUMN_FIELD_LABELS)
+            + ")",
+        Map.of("columnId", after.id(), "columnName", after.columnName(), "changedFields", changed));
   }
 
   /**
@@ -1043,8 +1177,15 @@ public class DatasetService {
    *   <li>unique index 재생성
    * </ol>
    */
+  /** 행위자 없는 내부·테스트 경로 — 감사는 행위자 "system" 으로 남는다. 사용자 요청은 userId 를 받는 오버로드로 들어온다. */
   @Transactional
   public void updatePrimaryKeys(Long datasetId, List<Long> requestedPkIds) {
+    updatePrimaryKeys(datasetId, requestedPkIds, null);
+  }
+
+  /** 기본 키 필드 집합을 바꾸고, 집합이 실제로 바뀌면 감사(WD-463, PRIMARY_KEY_CHANGE)를 남긴다. */
+  @Transactional
+  public void updatePrimaryKeys(Long datasetId, List<Long> requestedPkIds, Long userId) {
     DatasetResponse dataset =
         datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "기본키 변경");
@@ -1088,10 +1229,35 @@ public class DatasetService {
 
     columnRepository.updatePrimaryKeys(datasetId, pkIds);
     dataTableService.recreatePrimaryKeyIndex(dataset.tableName(), pkColumnNames);
+
+    // 감사(WD-463) — 기본 키 필드 집합이 실제로 바뀐 경우만. 필드 이름만 싣는다(PK 값은 실제 데이터라 싣지 않음).
+    Set<String> beforePk =
+        allColumns.stream()
+            .filter(DatasetColumnResponse::isPrimaryKey)
+            .map(DatasetColumnResponse::columnName)
+            .collect(java.util.stream.Collectors.toSet());
+    if (!beforePk.equals(new java.util.HashSet<>(pkColumnNames))) {
+      String fields = pkColumnNames.isEmpty() ? "없음" : String.join("·", pkColumnNames);
+      datasetAuditRecorder.record(
+          userId,
+          "UPDATE",
+          datasetId,
+          dataset.name(),
+          "PRIMARY_KEY_CHANGE",
+          "기본 키 변경: " + dataset.name() + " (기본 키: " + fields + ")",
+          Map.of("primaryKeyColumns", pkColumnNames, "changedFields", List.of("isPrimaryKey")));
+    }
   }
 
+  /** 행위자 없는 내부·테스트 경로 — 감사는 행위자 "system" 으로 남는다. 사용자 요청은 userId 를 받는 오버로드로 들어온다. */
   @Transactional
   public void deleteColumn(Long datasetId, Long columnId) {
+    deleteColumn(datasetId, columnId, null);
+  }
+
+  /** 필드를 삭제하고, 성공하면 감사(WD-463, FIELD_DELETE)를 남긴다 — 그 필드의 데이터가 사라지므로 action 은 DELETE. */
+  @Transactional
+  public void deleteColumn(Long datasetId, Long columnId, Long userId) {
     DatasetResponse dataset =
         datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "컬럼 관리");
@@ -1148,11 +1314,29 @@ public class DatasetService {
 
     // 컬럼 삭제 반영 (데이터셋은 남으므로 인덱스 갱신)
     reindexSearch(datasetId);
+
+    // 감사(WD-463) — 행이 사라졌으므로 지우기 전에 읽어 둔 필드 이름으로 남긴다.
+    datasetAuditRecorder.record(
+        userId,
+        "DELETE",
+        datasetId,
+        dataset.name(),
+        "FIELD_DELETE",
+        "필드 삭제: " + dataset.name() + "." + column.columnName(),
+        Map.of("columnId", column.id(), "columnName", column.columnName()));
   }
 
+  /** 행위자 없는 내부·테스트 경로 — 감사는 행위자 "system" 으로 남는다. 사용자 요청은 userId 를 받는 오버로드로 들어온다. */
   @Transactional
   public void reorderColumns(Long datasetId, ReorderColumnsRequest request) {
-    datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
+    reorderColumns(datasetId, request, null);
+  }
+
+  /** 필드 순서를 바꾸고, 순서가 실제로 바뀌면 감사(WD-463, FIELD_REORDER)를 남긴다. */
+  @Transactional
+  public void reorderColumns(Long datasetId, ReorderColumnsRequest request, Long userId) {
+    DatasetResponse dataset =
+        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
 
     List<DatasetColumnResponse> existingColumns = columnRepository.findByDatasetId(datasetId);
     Set<Long> existingIds =
@@ -1169,6 +1353,19 @@ public class DatasetService {
     }
 
     columnRepository.updateOrders(datasetId, request.columnIds());
+
+    // 감사(WD-463) — 기존 순서(findByDatasetId 는 순서대로 읽는다)와 같으면 바뀐 것이 없어 남기지 않는다.
+    List<Long> beforeOrder = existingColumns.stream().map(DatasetColumnResponse::id).toList();
+    if (!beforeOrder.equals(request.columnIds())) {
+      datasetAuditRecorder.record(
+          userId,
+          "UPDATE",
+          datasetId,
+          dataset.name(),
+          "FIELD_REORDER",
+          "필드 순서 변경: " + dataset.name(),
+          Map.of("changedFields", List.of("columnOrder")));
+    }
   }
 
   // =========================================================================
@@ -1431,10 +1628,50 @@ public class DatasetService {
           "Invalid status. Must be one of: NONE, CERTIFIED, DEPRECATED");
     }
 
-    datasetRepository.findById(id).orElseThrow(() -> new DatasetNotFoundException());
+    DatasetResponse before =
+        datasetRepository.findById(id).orElseThrow(() -> new DatasetNotFoundException());
 
     datasetRepository.updateStatus(id, request.status(), request.note(), userId);
+    auditStatusChange(userId, before, request);
     return getDatasetById(id, userId);
+  }
+
+  /** 데이터셋 상태 값 → 설명용 라벨(WD-463). 웹 목록 필터의 라벨과 같다. */
+  private static final Map<String, String> STATUS_LABELS =
+      Map.of("NONE", "없음", "CERTIFIED", "인증됨", "DEPRECATED", "사용 중단");
+
+  /**
+   * 데이터셋 상태 변경 감사(WD-463, STATUS_CHANGE). 상태나 상태 메모가 실제로 바뀐 경우만 남긴다. 상태는 정해진
+   * 값(NONE·CERTIFIED·DEPRECATED)이라 이전·이후 값을 싣고, 상태 메모는 자유 입력 글이라 「바뀌었다」는 항목 이름만 싣는다.
+   */
+  private void auditStatusChange(Long userId, DatasetResponse before, UpdateStatusRequest request) {
+    String beforeStatus = before.status() == null ? "NONE" : before.status();
+    List<String> changed = new ArrayList<>();
+    if (!beforeStatus.equals(request.status())) changed.add("status");
+    if (!Objects.equals(blankToNull(before.statusNote()), blankToNull(request.note()))) {
+      changed.add("statusNote");
+    }
+    if (changed.isEmpty()) {
+      return; // 실제 변경 없음 — 감사 생략
+    }
+    String detail =
+        changed.contains("status")
+            ? STATUS_LABELS.getOrDefault(beforeStatus, beforeStatus)
+                + " → "
+                + STATUS_LABELS.getOrDefault(request.status(), request.status())
+            : "바뀐 항목: 상태 메모";
+    Map<String, Object> extra = new LinkedHashMap<>();
+    extra.put("previousStatus", beforeStatus);
+    extra.put("status", request.status());
+    extra.put("changedFields", changed);
+    datasetAuditRecorder.record(
+        userId,
+        "STATUS_CHANGE",
+        before.id(),
+        before.name(),
+        "STATUS_CHANGE",
+        "데이터셋 상태 변경: " + before.name() + " (" + detail + ")",
+        extra);
   }
 
   // =========================================================================
