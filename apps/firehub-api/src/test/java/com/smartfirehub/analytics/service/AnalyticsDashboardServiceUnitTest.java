@@ -66,7 +66,8 @@ class AnalyticsDashboardServiceUnitTest {
             clearanceResolver,
             guardedSqlExecutor,
             mock(PipelineDataSchema.class),
-            TransactionTemplateConfig.readOnly(mock(PlatformTransactionManager.class)));
+            TransactionTemplateConfig.readOnly(mock(PlatformTransactionManager.class)),
+            mock(AnalyticsAuditRecorder.class));
   }
 
   /**

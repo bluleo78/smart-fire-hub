@@ -124,7 +124,8 @@ class ChartDashboardTxTest extends IntegrationTestBase {
             resolver,
             mock(AnalyticsDashboardRepository.class),
             schema(tibero),
-            TransactionTemplateConfig.readOnly(transactionManager));
+            TransactionTemplateConfig.readOnly(transactionManager),
+            mock(AnalyticsAuditRecorder.class));
     return new ChartSetup(service, readTx, readOnly, execTx);
   }
 
@@ -248,7 +249,8 @@ class ChartDashboardTxTest extends IntegrationTestBase {
             resolver,
             mock(GuardedSqlExecutor.class),
             schema(tibero),
-            TransactionTemplateConfig.readOnly(transactionManager));
+            TransactionTemplateConfig.readOnly(transactionManager),
+            mock(AnalyticsAuditRecorder.class));
     return new DashSetup(service, metaTx, metaReadOnly, execTx);
   }
 

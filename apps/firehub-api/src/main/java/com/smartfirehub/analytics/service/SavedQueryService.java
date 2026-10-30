@@ -25,7 +25,9 @@ import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
@@ -67,6 +69,21 @@ public class SavedQueryService {
   @Qualifier(TransactionTemplateConfig.READ_ONLY)
   private final TransactionTemplate readOnlyTx;
 
+  /** 작성자 본인의 생성·수정·삭제·공유 변경 감사(WD-464). */
+  private final AnalyticsAuditRecorder auditRecorder;
+
+  /**
+   * 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-464). 공유 여부는 따로 STATUS_CHANGE 로 남기므로 여기 없다. 값(SQL 본문·설명·폴더 이름·데이터셋)은
+   * 감사에 싣지 않고 키만 남긴다.
+   */
+  private static final Map<String, String> AUDIT_FIELD_LABELS =
+      Map.of(
+          "name", "이름",
+          "description", "설명",
+          "sqlText", "SQL",
+          "datasetId", "연결 데이터셋",
+          "folder", "폴더");
+
   /**
    * 응답의 연결 데이터셋 이름 가시성(보안 등급, 스펙 §2.5) — 조회자가 볼 수 없는 데이터셋은 이름만 null, datasetId 는 유지(웹 편집기가 PUT 으로
    * 되돌려 보내는 참조를 지우지 않게).
@@ -105,9 +122,14 @@ public class SavedQueryService {
     // SQL 이 참조하는 표도 작성자가 볼 수 있어야 한다(WD-409) — insert 전에 판정해 거부되면 행이 생기지 않는다.
     requireSqlSavable(viewer, req.sqlText());
     Long id = savedQueryRepository.insert(req, userId);
-    return savedQueryRepository
-        .findById(id, userId, datasetNameVisible(viewer))
-        .orElseThrow(() -> SavedQueryNotFoundException.reloadFailed());
+    SavedQueryResponse created =
+        savedQueryRepository
+            .findById(id, userId, datasetNameVisible(viewer))
+            .orElseThrow(() -> SavedQueryNotFoundException.reloadFailed());
+    // 감사(WD-464) — 판정·저장이 모두 끝난 뒤 같은 트랜잭션에서 남긴다. 이름·공유 여부만 싣고 SQL 은 싣지 않는다.
+    auditRecorder.created(
+        userId, AnalyticsAssetKind.QUERY, id, created.name(), created.isShared(), null);
+    return created;
   }
 
   /**
@@ -167,6 +189,12 @@ public class SavedQueryService {
             .orElseThrow(() -> new SavedQueryNotFoundException())
             .value1();
     EditConflictException.check(req.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
+    // 감사 비교용 저장 전 값(WD-464) — 행 잠금 뒤에 다시 읽는다. 잠금 전 값은 기준 버전 없이 들어온 저장(AI 도구)과 동시 저장이 겹치면
+    // 남의 변경이 이 저장의 바뀐 항목으로 잡힌다.
+    SavedQueryResponse auditBefore =
+        savedQueryRepository
+            .findByIdForOwner(id, userId, DSL.trueCondition())
+            .orElseThrow(() -> new SavedQueryNotFoundException());
 
     // 연결 데이터셋을 바꾸는 경우만 판정한다(create 와 같은 404) — 웹 편집기가 기존 값(편집자가 자격을 잃은 숨김 id 포함)을 그대로 되돌려
     // 보내는 저장은 막지 않는다(왕복 보존).
@@ -191,22 +219,48 @@ public class SavedQueryService {
     }
 
     savedQueryRepository.update(id, req, userId);
-    return savedQueryRepository
-        .findByIdForOwner(id, userId, datasetNameVisible(viewer))
-        .orElseThrow(() -> new SavedQueryNotFoundException());
+    SavedQueryResponse updated =
+        savedQueryRepository
+            .findByIdForOwner(id, userId, datasetNameVisible(viewer))
+            .orElseThrow(() -> new SavedQueryNotFoundException());
+    auditUpdate(userId, auditBefore, updated);
+    return updated;
+  }
+
+  /**
+   * 수정 감사(WD-464). 저장 전후 DB 값을 비교해 바뀐 항목 이름만 모은다 — 공유 외 항목은 UPDATE 1행, 공유 여부는 STATUS_CHANGE 1행. 둘 다
+   * 바뀌지 않았으면(같은 값을 되돌려 보낸 저장) 아무것도 남기지 않는다. 연결 데이터셋 이름(datasetName)은 조회자 가시성에 따라 달라지는 표시값이라 비교하지 않고
+   * datasetId 로 본다.
+   */
+  private void auditUpdate(Long userId, SavedQueryResponse before, SavedQueryResponse after) {
+    List<String> changed = new ArrayList<>();
+    if (!Objects.equals(before.name(), after.name())) changed.add("name");
+    if (!Objects.equals(before.description(), after.description())) changed.add("description");
+    if (!Objects.equals(before.sqlText(), after.sqlText())) changed.add("sqlText");
+    if (!Objects.equals(before.datasetId(), after.datasetId())) changed.add("datasetId");
+    if (!Objects.equals(before.folder(), after.folder())) changed.add("folder");
+    auditRecorder.updated(
+        userId, AnalyticsAssetKind.QUERY, after.id(), after.name(), changed, AUDIT_FIELD_LABELS);
+    if (before.isShared() != after.isShared()) {
+      auditRecorder.shareChanged(
+          userId, AnalyticsAssetKind.QUERY, after.id(), after.name(), after.isShared(), null, null);
+    }
   }
 
   /** Delete a saved query (owner only). CASCADE removes linked charts and widgets. */
   @Transactional
   public void delete(Long id, Long userId) {
-    // Verify ownership first — 소유 확인만 하고 응답을 쓰지 않으므로 이름 가시성 조건은 필요 없다.
-    savedQueryRepository
-        .findByIdForOwner(id, userId, DSL.trueCondition())
-        .orElseThrow(() -> new SavedQueryNotFoundException());
+    // Verify ownership first — 응답을 쓰지 않으므로 이름 가시성 조건은 필요 없다. 감사에 남길 이름·공유 여부는 지우기 전에 읽어 둔다(WD-464).
+    SavedQueryResponse target =
+        savedQueryRepository
+            .findByIdForOwner(id, userId, DSL.trueCondition())
+            .orElseThrow(() -> new SavedQueryNotFoundException());
     boolean deleted = savedQueryRepository.deleteById(id, userId);
     if (!deleted) {
       throw new SavedQueryNotFoundException();
     }
+    // 감사(WD-464) — CASCADE 로 함께 사라지는 차트·위젯은 따로 남기지 않는다(관리자 삭제 감사와 같은 단위).
+    auditRecorder.deleted(userId, AnalyticsAssetKind.QUERY, id, target.name(), target.isShared());
   }
 
   /**
@@ -257,9 +311,19 @@ public class SavedQueryService {
             false);
 
     Long newId = savedQueryRepository.insert(cloneReq, userId);
-    return savedQueryRepository
-        .findById(newId, userId, datasetNameVisible(userId))
-        .orElseThrow(() -> SavedQueryNotFoundException.cloneReloadFailed());
+    SavedQueryResponse cloned =
+        savedQueryRepository
+            .findById(newId, userId, datasetNameVisible(userId))
+            .orElseThrow(() -> SavedQueryNotFoundException.cloneReloadFailed());
+    // 감사(WD-464) — 복제도 새 쿼리를 만드는 생성이다. 원본은 id 만 싣는다(남의 공유 쿼리일 수 있다).
+    auditRecorder.created(
+        userId,
+        AnalyticsAssetKind.QUERY,
+        newId,
+        cloned.name(),
+        cloned.isShared(),
+        Map.of("clonedFrom", id));
+    return cloned;
   }
 
   /**

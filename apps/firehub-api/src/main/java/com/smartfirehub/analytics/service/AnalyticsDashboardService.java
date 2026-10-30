@@ -32,6 +32,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
@@ -71,6 +72,13 @@ public class AnalyticsDashboardService {
   @Qualifier(TransactionTemplateConfig.READ_ONLY)
   private final TransactionTemplate readOnlyTx;
 
+  /** 작성자 본인의 생성·수정·삭제·공유 변경 감사(WD-464). */
+  private final AnalyticsAuditRecorder auditRecorder;
+
+  /** 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-464). 공유 여부는 따로 STATUS_CHANGE 로 남기므로 여기 없다. */
+  private static final Map<String, String> AUDIT_FIELD_LABELS =
+      Map.of("name", "이름", "description", "설명", "autoRefreshSeconds", "자동 새로고침");
+
   /**
    * 대시보드 결과 캐시 키 — 저장 쿼리 id 와 <b>그 요청에서 판정한 SQL 원문</b>. id 만 키로 쓰면 소유자가 SQL 을 바꾼 뒤(TTL 60초 안) 새 SQL
    * 로 판정을 통과한 조회자가 옛 SQL(판정받지 않은 테이블)의 결과를 캐시 히트로 받는다. 원문이 같으면 정규화본(판정·실행 문자열)도 같다 — 정규화는 결정적이다.
@@ -96,9 +104,15 @@ public class AnalyticsDashboardService {
   public DashboardResponse create(CreateDashboardRequest req, Long userId) {
     Long id = dashboardRepository.insert(req, userId);
     List<DashboardResponse.DashboardWidgetResponse> widgets = viewerWidgets(id, userId);
-    return dashboardRepository
-        .findById(id, userId, widgets)
-        .orElseThrow(() -> DashboardNotFoundException.reloadFailed());
+    DashboardResponse created =
+        dashboardRepository
+            .findById(id, userId, widgets)
+            .orElseThrow(() -> DashboardNotFoundException.reloadFailed());
+    // 감사(WD-464) — 저장이 끝난 뒤 같은 트랜잭션에서 남긴다.
+    // 이 행(CREATE·dashboard)은 홈 활동 피드에 싣지 않는다(DashboardService 참고).
+    auditRecorder.created(
+        userId, AnalyticsAssetKind.DASHBOARD, id, created.name(), created.isShared(), null);
+    return created;
   }
 
   // RLS 가 걸린 dashboard/dashboard_widget 을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
@@ -133,18 +147,60 @@ public class AnalyticsDashboardService {
             .orElseThrow(() -> new DashboardNotFoundException())
             .value1();
     EditConflictException.check(req.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
+    // 감사 비교용 저장 전 값(WD-464) — 행 잠금 뒤에 다시 읽는다. 잠금 전 값은 기준 버전 없이 들어온 저장(AI 도구)과 동시 저장이 겹치면
+    // 남의 변경이 이 저장의 바뀐 항목으로 잡힌다.
+    DashboardResponse before =
+        dashboardRepository
+            .findByIdForOwner(id, userId)
+            .orElseThrow(() -> new DashboardNotFoundException());
     dashboardRepository.update(id, req, userId);
 
     // 대시보드를 공유하면 위젯이 쓰는 차트·쿼리 중 요청자 본인 것만 함께 공유한다(WD-194).
     // 웹 설정 창은 이름만 바꿔도 isShared 를 늘 보내므로, 재저장마다 이 경로를 탄다.
+    DashboardResponse after =
+        dashboardRepository
+            .findByIdForOwner(id, userId)
+            .orElseThrow(() -> new DashboardNotFoundException());
+    // 감사(WD-464) — 대시보드 자신의 변경을 먼저 남기고, 공유에 딸려 함께 공유된 차트·쿼리는 아래 공유 처리에서 남긴다.
+    auditUpdate(userId, before, after);
     if (Boolean.TRUE.equals(req.isShared())) {
-      shareOwnedWidgetResources(id, userId);
+      shareOwnedWidgetResources(id, after.name(), userId);
     }
 
     List<DashboardResponse.DashboardWidgetResponse> widgets = viewerWidgets(id, userId);
     return dashboardRepository
         .findById(id, userId, widgets)
         .orElseThrow(() -> new DashboardNotFoundException());
+  }
+
+  /**
+   * 대시보드 설정 수정 감사(WD-464). 저장 전후 DB 값을 비교해 바뀐 항목 이름만 모은다 — 공유 외 항목은 UPDATE 1행, 공유 여부는 STATUS_CHANGE
+   * 1행. 웹 설정 창은 이름만 바꿔도 모든 항목을 보내므로, 요청이 아니라 저장된 값으로 비교해야 바뀌지 않은 항목이 기록되지 않는다.
+   */
+  private void auditUpdate(Long userId, DashboardResponse before, DashboardResponse after) {
+    List<String> changed = new ArrayList<>();
+    if (!Objects.equals(before.name(), after.name())) changed.add("name");
+    if (!Objects.equals(before.description(), after.description())) changed.add("description");
+    if (!Objects.equals(before.autoRefreshSeconds(), after.autoRefreshSeconds())) {
+      changed.add("autoRefreshSeconds");
+    }
+    auditRecorder.updated(
+        userId,
+        AnalyticsAssetKind.DASHBOARD,
+        after.id(),
+        after.name(),
+        changed,
+        AUDIT_FIELD_LABELS);
+    if (before.isShared() != after.isShared()) {
+      auditRecorder.shareChanged(
+          userId,
+          AnalyticsAssetKind.DASHBOARD,
+          after.id(),
+          after.name(),
+          after.isShared(),
+          null,
+          null);
+    }
   }
 
   /**
@@ -157,8 +213,13 @@ public class AnalyticsDashboardService {
    * 가시성을 따로 보지 않으므로(차트 가시성 + 보안 등급 판정만 본다) 이 제한으로 공유 대시보드 표시가 달라지지 않는다.
    *
    * <p>위젯 추가({@link #addWidget}) 시에도 대시보드가 공유 상태면 이 메서드를 그대로 쓴다(WD-195).
+   *
+   * <p>이번에 실제로 비공개 → 공유로 바뀐 차트·쿼리마다 공유 켜기 감사를 남긴다(WD-464) — 작성자가 차트·쿼리 화면에서 직접 바꾸지 않았어도 공유 범위가 넓어진
+   * 것이라, 감사의 공유 변경 기록에서 빠지면 「언제부터 공유됐나」를 추적할 수 없다. 이미 공유된 것은 남기지 않는다(재저장마다 이 경로를 탄다).
+   *
+   * @param dashboardName 감사 설명에 쓰는 대시보드 이름
    */
-  private void shareOwnedWidgetResources(Long dashboardId, Long userId) {
+  private void shareOwnedWidgetResources(Long dashboardId, String dashboardName, Long userId) {
     List<Long> chartIds =
         widgetRepository.findByDashboardId(dashboardId).stream()
             .map(DashboardResponse.DashboardWidgetResponse::chartId)
@@ -167,10 +228,30 @@ public class AnalyticsDashboardService {
     if (chartIds.isEmpty()) {
       return;
     }
-    chartRepository.shareCharts(chartIds, userId);
+    Map<Long, String> sharedCharts = chartRepository.shareCharts(chartIds, userId);
     // 쿼리는 남의 차트가 쓰는 것까지 모으되, 리포지토리가 쿼리 작성자로 다시 거른다 — 남의 차트가 내 쿼리를 쓰면 내 쿼리는 공유된다.
     List<Long> savedQueryIds = chartRepository.findSavedQueryIdsByChartIds(chartIds);
-    savedQueryRepository.shareQueries(savedQueryIds, userId);
+    Map<Long, String> sharedQueries = savedQueryRepository.shareQueries(savedQueryIds, userId);
+    sharedCharts.forEach(
+        (chartId, chartName) ->
+            auditRecorder.shareChanged(
+                userId,
+                AnalyticsAssetKind.CHART,
+                chartId,
+                chartName,
+                true,
+                dashboardId,
+                dashboardName));
+    sharedQueries.forEach(
+        (queryId, queryName) ->
+            auditRecorder.shareChanged(
+                userId,
+                AnalyticsAssetKind.QUERY,
+                queryId,
+                queryName,
+                true,
+                dashboardId,
+                dashboardName));
   }
 
   /**
@@ -204,13 +285,18 @@ public class AnalyticsDashboardService {
 
   @Transactional
   public void delete(Long id, Long userId) {
-    dashboardRepository
-        .findByIdForOwner(id, userId)
-        .orElseThrow(() -> new DashboardNotFoundException());
+    // 감사에 남길 이름·공유 여부는 지우기 전에 읽어 둔다(WD-464).
+    DashboardResponse target =
+        dashboardRepository
+            .findByIdForOwner(id, userId)
+            .orElseThrow(() -> new DashboardNotFoundException());
     boolean deleted = dashboardRepository.deleteById(id, userId);
     if (!deleted) {
       throw new DashboardNotFoundException();
     }
+    // 감사(WD-464) — CASCADE 로 함께 사라지는 위젯은 따로 남기지 않는다(관리자 삭제 감사와 같은 단위).
+    auditRecorder.deleted(
+        userId, AnalyticsAssetKind.DASHBOARD, id, target.name(), target.isShared());
   }
 
   public DashboardDataResponse getDashboardData(Long dashboardId, Long userId) {
@@ -401,7 +487,7 @@ public class AnalyticsDashboardService {
     // 예전에는 update() 에만 있어, 공유 대시보드에 비공개 차트를 넣으면 다른 사람 화면에서 그 위젯만 깨졌고 주인은 설정 창을 한 번 더
     // 저장해야 했다. 남의 차트는 여기서도 공유로 바꾸지 않는다 — 남이 공유한 차트만 위젯으로 넣을 수 있어 추가 시점에는 이미 공유 상태다.
     if (dashboard.isShared()) {
-      shareOwnedWidgetResources(dashboardId, userId);
+      shareOwnedWidgetResources(dashboardId, dashboard.name(), userId);
     }
     return getById(dashboardId, userId);
   }

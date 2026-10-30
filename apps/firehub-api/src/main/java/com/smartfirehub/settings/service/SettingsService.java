@@ -11,9 +11,11 @@ import com.smartfirehub.settings.repository.SettingsRepository;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import jakarta.mail.internet.AddressException;
 import jakarta.mail.internet.InternetAddress;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -38,6 +40,8 @@ public class SettingsService {
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
   private final TenantSettingsRepository tenantSettingsRepository;
+  // AI 설정·SMTP 설정 변경 감사(WD-465) — 저장과 같은 트랜잭션에서 남긴다.
+  private final SettingsAuditRecorder auditRecorder;
 
   /** 프리픽스에 속한 플랫폼 행 중 플랫폼 평면이 있는 키만. 테넌트 네임스페이스({@code "ai"}·{@code "smtp"})면 조회 자체를 생략한다. */
   private List<SettingResponse> platformRows(String prefix) {
@@ -332,9 +336,48 @@ public class SettingsService {
     validateSmtpFromAddress(payload);
     Map<String, String> toWrite = encryptSecrets(payload);
 
+    // 감사용 변경 판정(WD-465)은 쓰기 전에 저장된 값과 비교해 모은다. 마스크 센티널은 이미
+    // 떨어졌으므로 "안 고친 비밀번호"가 변경으로 잡히지 않는다. 키 순서는 감사 문구가 요청마다
+    // 흔들리지 않게 정렬한다.
+    boolean smtpExisted = SettingsOverridePolicy.smtpKeys().stream().anyMatch(this::hasTenantValue);
+    List<String> aiChanged = new ArrayList<>();
+    List<String> smtpChanged = new ArrayList<>();
+    payload.keySet().stream()
+        .sorted()
+        .filter(key -> !Objects.equals(currentValueForAudit(key), payload.get(key)))
+        .forEach(key -> (key.startsWith("smtp.") ? smtpChanged : aiChanged).add(key));
+
     // 저장 대상은 **여기서만** 정한다 — 쓰기까지 공유 헬퍼에 넣으면 두 평면이 저장 대상에서
     // 갈라질 때 조용히 어긋난다(플랫폼은 system_settings, 테넌트는 tenant_settings).
     toWrite.forEach((key, value) -> tenantSettingsRepository.upsert(key, value, userId));
+
+    // 한 요청에 AI·SMTP 키가 섞여 오면 묶음별로 한 행씩 남긴다(바뀐 것이 없는 묶음은 기록하지 않는다).
+    auditRecorder.aiSettingsUpdated(userId, aiChanged);
+    auditRecorder.smtpSaved(userId, !smtpExisted, smtpChanged);
+  }
+
+  /** 이 키에 현재 테넌트 저장 행이 있는가(감사용 — SMTP 첫 등록 판정). */
+  private boolean hasTenantValue(String key) {
+    return tenantValue(key).isPresent();
+  }
+
+  /**
+   * 감사 비교용 현재 값(평문). 테넌트 값이 있으면 그 값(비밀은 복호화), 없으면 코드 기본값(AI 동작 키), 그것도 없으면 빈 문자열(SMTP 미설정 = 빈 칸과
+   * 같다). 기본값과 같은 값을 처음 저장하는 것은 실효 값이 바뀌지 않으므로 변경이 아니다.
+   *
+   * <p>저장된 비밀을 복호화할 수 없으면(손상) null 을 돌려 무조건 "변경"으로 본다 — 이번 저장이 손상된 값을 덮어쓰는 것이기 때문이다. 평문은 비교에만 쓰고
+   * 감사에는 키 이름만 싣는다.
+   */
+  private String currentValueForAudit(String key) {
+    Optional<String> stored = tenantValue(key);
+    if (stored.isEmpty()) {
+      return Objects.requireNonNullElse(AiBehaviorDefaults.defaultOf(key), "");
+    }
+    try {
+      return decryptIfSecret(key, stored.get());
+    } catch (RuntimeException e) {
+      return null;
+    }
   }
 
   /**
@@ -348,9 +391,13 @@ public class SettingsService {
    * 테이블이라 GUC 가 트랜잭션이 열릴 때만 주입된다 ({@link #updateSettings} javadoc 과 같은 이유).
    */
   @Transactional
-  public void clearSmtpSettings() {
+  public void clearSmtpSettings(Long userId) {
+    // 지우기 전에 실제로 저장돼 있던 키를 모은다 — 이미 미설정이면 해제 감사를 남기지 않는다(WD-465).
+    List<String> cleared =
+        SettingsOverridePolicy.smtpKeys().stream().sorted().filter(this::hasTenantValue).toList();
     // 6키를 한 문장으로 지운다 — 키마다 DELETE 를 보내면 왕복만 늘고 원자성은 트랜잭션이 이미 준다.
     tenantSettingsRepository.deleteAll(SettingsOverridePolicy.smtpKeys());
+    auditRecorder.smtpDeleted(userId, cleared);
   }
 
   /**

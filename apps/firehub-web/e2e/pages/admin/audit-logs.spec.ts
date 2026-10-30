@@ -553,7 +553,8 @@ test.describe('감사 로그 페이지', () => {
   /**
    * 이슈 #109 회귀 (524eaae): RESOURCES 상수에 'auth' 누락으로 로그인/로그아웃 행의 리소스 컬럼이
    * 영문 'auth' 그대로 노출되었다. 백엔드(AuthService/ApiConnectionNotifier 등)가 실제 사용 중인
-   * 모든 resource enum(auth/system/api_connection)이 한글 라벨로 매핑되는지 검증.
+   * 모든 resource enum(auth/api_connection)이 한글 라벨로 매핑되는지 검증. system 은 서버가 resource 로 남기지 않아
+   * 목록에서 뺐으므로(WD-465) 실제 기록되는 ai_credential 로 바꿔 검증한다.
    * - 액션 enum 측은 DATA_EXPORT/STATUS_CHANGE 보강분도 함께 검증.
    */
   test('백엔드에서 사용하는 모든 리소스/액션 enum이 한글 라벨로 매핑된다 (#109 회귀)', async ({ authenticatedPage: page }) => {
@@ -563,7 +564,7 @@ test.describe('감사 로그 페이지', () => {
       '/api/v1/admin/audit-logs',
       createPageResponse([
         createAuditLog({ id: 1, username: 'admin', actionType: 'LOGIN', resource: 'auth', description: 'desc-row1' }),
-        createAuditLog({ id: 2, username: 'admin', actionType: 'STATUS_CHANGE', resource: 'system', description: 'desc-row2' }),
+        createAuditLog({ id: 2, username: 'admin', actionType: 'STATUS_CHANGE', resource: 'ai_credential', description: 'desc-row2' }),
         createAuditLog({ id: 3, username: 'admin', actionType: 'CREATE', resource: 'api_connection', description: 'desc-row3' }),
         createAuditLog({ id: 4, username: 'admin', actionType: 'DATA_EXPORT', resource: 'dataset', description: 'desc-row4' }),
         createAuditLog({ id: 5, username: 'admin', actionType: 'ONTOLOGY_STATUS_CHANGE', resource: 'ontology', description: 'desc-row5' }),
@@ -576,10 +577,10 @@ test.describe('감사 로그 페이지', () => {
     await expect(row1.getByRole('cell', { name: '로그인', exact: true })).toBeVisible();
     await expect(row1.getByRole('cell', { name: '인증', exact: true })).toBeVisible();
 
-    // 행 2: STATUS_CHANGE → '상태 변경', system → '시스템'
+    // 행 2: STATUS_CHANGE → '상태 변경', ai_credential → 'AI 자격증명'
     const row2 = page.getByRole('row').nth(2);
     await expect(row2.getByRole('cell', { name: '상태 변경', exact: true })).toBeVisible();
-    await expect(row2.getByRole('cell', { name: '시스템', exact: true })).toBeVisible();
+    await expect(row2.getByRole('cell', { name: 'AI 자격증명', exact: true })).toBeVisible();
 
     // 행 3: api_connection → 'API 연결'
     const row3 = page.getByRole('row').nth(3);

@@ -146,7 +146,7 @@ class OpencodeProbeServiceTest {
     // 읽는지를 검증하는 것이지 암호화 알고리즘을 재검증하는 것이 아니다.
     when(encryption.decrypt(anyString()))
         .thenAnswer(inv -> ((String) inv.getArgument(0)).replaceFirst("^enc:", ""));
-    return new AiCredentialService(tenantRepo, encryption);
+    return new AiCredentialService(tenantRepo, encryption, mock(SettingsAuditRecorder.class));
   }
 
   /**
@@ -160,7 +160,7 @@ class OpencodeProbeServiceTest {
     rawByKey.forEach((key, raw) -> when(tenantRepo.findValue(key)).thenReturn(Optional.of(raw)));
     when(encryption.decrypt(anyString()))
         .thenAnswer(inv -> ((String) inv.getArgument(0)).replaceFirst("^enc:", ""));
-    return new AiCredentialService(tenantRepo, encryption);
+    return new AiCredentialService(tenantRepo, encryption, mock(SettingsAuditRecorder.class));
   }
 
   // ---------------------------------------------------------------------

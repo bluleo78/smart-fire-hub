@@ -81,7 +81,8 @@ class DatasetCategoryControllerTest {
   @Test
   void createCategory_withPermission_returnsCreated() throws Exception {
     CategoryRequest request = new CategoryRequest("공간데이터", "공간 관련 데이터셋");
-    when(categoryService.createCategory(anyString(), anyString())).thenReturn(sampleCategory());
+    when(categoryService.createCategory(anyString(), anyString(), any()))
+        .thenReturn(sampleCategory());
 
     mockMvc
         .perform(
@@ -119,7 +120,7 @@ class DatasetCategoryControllerTest {
   /** POST /dataset-categories — 이름 중복이면 409 와 한국어 문구(영어 원문·받은 이름 없음)를 그대로 내보낸다(WD-241). */
   @Test
   void createCategory_duplicateName_returnsConflictWithKoreanMessage() throws Exception {
-    when(categoryService.createCategory(anyString(), anyString()))
+    when(categoryService.createCategory(anyString(), anyString(), any()))
         .thenThrow(DuplicateDatasetNameException.categoryName());
 
     mockMvc
@@ -138,7 +139,7 @@ class DatasetCategoryControllerTest {
     String message = "카테고리 이름에 줄바꿈·탭 같은 제어 문자를 쓸 수 없습니다.";
     doThrow(new IllegalArgumentException(message))
         .when(categoryService)
-        .updateCategory(eq(1L), anyString(), anyString());
+        .updateCategory(eq(1L), anyString(), anyString(), any());
 
     mockMvc
         .perform(

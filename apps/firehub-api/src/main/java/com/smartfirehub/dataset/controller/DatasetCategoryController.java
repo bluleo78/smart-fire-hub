@@ -9,6 +9,7 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -28,24 +29,29 @@ public class DatasetCategoryController {
   @PostMapping
   @RequirePermission("dataset:write")
   public ResponseEntity<CategoryResponse> createCategory(
-      @Valid @RequestBody CategoryRequest request) {
+      @Valid @RequestBody CategoryRequest request, Authentication authentication) {
+    // 행위자는 감사 기록용(WD-464)
+    Long userId = (Long) authentication.getPrincipal();
     CategoryResponse category =
-        categoryService.createCategory(request.name(), request.description());
+        categoryService.createCategory(request.name(), request.description(), userId);
     return ResponseEntity.status(HttpStatus.CREATED).body(category);
   }
 
   @PutMapping("/{id}")
   @RequirePermission("dataset:write")
   public ResponseEntity<Void> updateCategory(
-      @PathVariable Long id, @Valid @RequestBody CategoryRequest request) {
-    categoryService.updateCategory(id, request.name(), request.description());
+      @PathVariable Long id,
+      @Valid @RequestBody CategoryRequest request,
+      Authentication authentication) {
+    categoryService.updateCategory(
+        id, request.name(), request.description(), (Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 
   @DeleteMapping("/{id}")
   @RequirePermission("dataset:delete")
-  public ResponseEntity<Void> deleteCategory(@PathVariable Long id) {
-    categoryService.deleteCategory(id);
+  public ResponseEntity<Void> deleteCategory(@PathVariable Long id, Authentication authentication) {
+    categoryService.deleteCategory(id, (Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 }

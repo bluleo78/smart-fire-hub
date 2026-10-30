@@ -19,9 +19,11 @@ import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.jooq.impl.DSL;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -50,6 +52,16 @@ public class ChartService {
    */
   @Qualifier(TransactionTemplateConfig.READ_ONLY)
   private final TransactionTemplate readOnlyTx;
+
+  /** 작성자 본인의 생성·수정·삭제·공유 변경 감사(WD-464). */
+  private final AnalyticsAuditRecorder auditRecorder;
+
+  /**
+   * 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-464). 공유 여부는 따로 STATUS_CHANGE 로 남기므로 여기 없다. 차트 설정(config)은 무엇이 바뀌었든
+   * "config" 하나로만 남긴다 — 설정 값(원본 컬럼명 등)은 감사에 싣지 않는다.
+   */
+  private static final Map<String, String> AUDIT_FIELD_LABELS =
+      Map.of("name", "이름", "description", "설명", "chartType", "차트 종류", "config", "차트 설정");
 
   /** List charts with optional filters and pagination. */
   // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
@@ -87,11 +99,14 @@ public class ChartService {
       }
     }
     Long id = chartRepository.insert(req, userId);
-    return withholdDenied(
+    ChartResponse created =
         chartRepository
             .findById(id, userId)
-            .orElseThrow(() -> ChartNotFoundException.reloadFailed()),
-        userId);
+            .orElseThrow(() -> ChartNotFoundException.reloadFailed());
+    // 감사(WD-464) — 검증·저장이 끝난 뒤 같은 트랜잭션에서 남긴다. 이름·공유 여부만 싣고 설정 값은 싣지 않는다.
+    auditRecorder.created(
+        userId, AnalyticsAssetKind.CHART, id, created.name(), created.isShared(), null);
+    return withholdDenied(created, userId);
   }
 
   /** Get a single chart — owner or any shared chart. */
@@ -128,6 +143,12 @@ public class ChartService {
             .orElseThrow(() -> new ChartNotFoundException())
             .value1();
     EditConflictException.check(req.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
+    // 감사 비교용 저장 전 값(WD-464) — 행 잠금 뒤에 다시 읽는다. 잠금 전 값은 기준 버전 없이 들어온 저장(AI 도구)과 동시 저장이 겹치면
+    // 남의 변경이 이 저장의 바뀐 항목으로 잡힌다.
+    ChartResponse auditBefore =
+        chartRepository
+            .findByIdForOwner(id, userId)
+            .orElseThrow(() -> new ChartNotFoundException());
     String effectiveType = req.chartType() != null ? req.chartType() : existing.chartType();
     java.util.Map<String, Object> effectiveConfig =
         req.config() != null ? req.config() : existing.config();
@@ -138,21 +159,49 @@ public class ChartService {
       }
     }
     chartRepository.update(id, req, userId);
-    return withholdDenied(
+    // 감사 비교는 가리기(withholdDenied) 전 원본으로 한다 — 가린 응답은 config 가 null 이라 바뀌지 않은 설정이 바뀐 것으로 보인다(WD-464).
+    ChartResponse updated =
         chartRepository
             .findByIdForOwner(id, userId)
-            .orElseThrow(() -> new ChartNotFoundException()),
-        userId);
+            .orElseThrow(() -> new ChartNotFoundException());
+    auditUpdate(userId, auditBefore, updated);
+    return withholdDenied(updated, userId);
+  }
+
+  /**
+   * 수정 감사(WD-464). 저장 전후 DB 값을 비교해 바뀐 항목 이름만 모은다 — 공유 외 항목은 UPDATE 1행, 공유 여부는 STATUS_CHANGE 1행. 둘 다
+   * 바뀌지 않았으면 아무것도 남기지 않는다. config 는 DB 에서 다시 읽은 JSON 끼리 비교한다(요청 값과 비교하면 숫자 타입·키 순서 차이로 오탐한다).
+   */
+  private void auditUpdate(Long userId, ChartResponse before, ChartResponse after) {
+    List<String> changed = new ArrayList<>();
+    if (!Objects.equals(before.name(), after.name())) changed.add("name");
+    if (!Objects.equals(before.description(), after.description())) {
+      changed.add("description");
+    }
+    if (!Objects.equals(before.chartType(), after.chartType())) changed.add("chartType");
+    if (!Objects.equals(before.config(), after.config())) changed.add("config");
+    auditRecorder.updated(
+        userId, AnalyticsAssetKind.CHART, after.id(), after.name(), changed, AUDIT_FIELD_LABELS);
+    if (before.isShared() != after.isShared()) {
+      auditRecorder.shareChanged(
+          userId, AnalyticsAssetKind.CHART, after.id(), after.name(), after.isShared(), null, null);
+    }
   }
 
   /** Delete a chart (owner only). */
   @Transactional
   public void delete(Long id, Long userId) {
-    chartRepository.findByIdForOwner(id, userId).orElseThrow(() -> new ChartNotFoundException());
+    // 감사에 남길 이름·공유 여부는 지우기 전에 읽어 둔다(WD-464).
+    ChartResponse target =
+        chartRepository
+            .findByIdForOwner(id, userId)
+            .orElseThrow(() -> new ChartNotFoundException());
     boolean deleted = chartRepository.deleteById(id, userId);
     if (!deleted) {
       throw new ChartNotFoundException();
     }
+    // 감사(WD-464) — CASCADE 로 함께 사라지는 위젯은 따로 남기지 않는다(관리자 삭제 감사와 같은 단위).
+    auditRecorder.deleted(userId, AnalyticsAssetKind.CHART, id, target.name(), target.isShared());
   }
 
   /**

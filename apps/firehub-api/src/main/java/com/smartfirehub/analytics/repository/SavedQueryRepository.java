@@ -10,7 +10,9 @@ import com.smartfirehub.global.util.LikePatternUtils;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
@@ -273,12 +275,17 @@ public class SavedQueryRepository {
    * <p>대시보드 공유 시 위젯 차트가 쓰는 쿼리를 함께 공유하는 용도다. 차트 주인이 아니라 <b>쿼리 주인</b>으로 거른다 — 내 차트가 남의 쿼리(만들 때는 공유였다가
    * 주인이 비공개로 되돌린 것)를 쓰는 경우에도 그 쿼리는 주인만 공유할 수 있어야 하기 때문이다.
    */
-  public void shareQueries(List<Long> queryIds, Long ownerId) {
-    if (queryIds.isEmpty()) return;
+  public Map<Long, String> shareQueries(List<Long> queryIds, Long ownerId) {
+    // 이미 공유된 쿼리는 건드리지 않고, 이번에 실제로 공유로 바뀐 쿼리의 id → 이름을 돌려준다 — 호출자가 공유 켜기 감사를 남긴다(WD-464).
+    if (queryIds.isEmpty()) return Map.of();
+    Map<Long, String> flipped = new TreeMap<>();
     dsl.update(SQ)
         .set(SQ_IS_SHARED, true)
-        .where(SQ_ID.in(queryIds).and(SQ_CREATED_BY.eq(ownerId)))
-        .execute();
+        .where(SQ_ID.in(queryIds).and(SQ_CREATED_BY.eq(ownerId)).and(SQ_IS_SHARED.isFalse()))
+        .returning(SQ_ID, SQ_NAME)
+        .fetch()
+        .forEach(r -> flipped.put(r.get(SQ_ID), r.get(SQ_NAME)));
+    return flipped;
   }
 
   public Long insert(CreateSavedQueryRequest req, Long userId) {

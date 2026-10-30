@@ -9,7 +9,10 @@ import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +22,16 @@ import org.springframework.transaction.annotation.Transactional;
 public class ReportTemplateService {
 
   private final ReportTemplateRepository reportTemplateRepository;
+
+  /** 작성자 본인의 생성·수정·삭제 감사(WD-464). */
+  private final ProactiveAuditRecorder auditRecorder;
+
+  /**
+   * 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-464). 섹션은 무엇이 바뀌었든(추가·삭제·순서·내용) "sections" 하나로만 남긴다 — 섹션 내용·스타일 값은
+   * 감사에 싣지 않는다.
+   */
+  private static final Map<String, String> AUDIT_FIELD_LABELS =
+      Map.of("name", "이름", "description", "설명", "sections", "섹션", "style", "스타일");
 
   /**
    * 리포트 양식 목록을 요약 정보(섹션 전체 JSONB 제외)로 page/size 페이지네이션 조회한다(#632). AI
@@ -43,9 +56,19 @@ public class ReportTemplateService {
     Long id =
         reportTemplateRepository.create(
             request.name(), request.description(), request.sections(), request.style(), userId);
-    return reportTemplateRepository
-        .findById(id)
-        .orElseThrow(() -> new ProactiveJobException("템플릿 생성 실패"));
+    ReportTemplateResponse created =
+        reportTemplateRepository
+            .findById(id)
+            .orElseThrow(() -> new ProactiveJobException("템플릿 생성 실패"));
+    // 감사(WD-464) — 저장이 끝난 뒤 같은 트랜잭션에서 남긴다. 이름만 싣고 섹션 내용은 싣지 않는다.
+    auditRecorder.created(
+        userId,
+        ProactiveAuditRecorder.RESOURCE_TEMPLATE,
+        ProactiveAuditRecorder.LABEL_TEMPLATE,
+        id,
+        created.name(),
+        null);
+    return created;
   }
 
   /** 편집 충돌 안내 문구(WD-364) — 웹은 코드로 충돌 창을 띄우고, 코드를 모르는 호출부(AI 도구 등)는 이 문구를 그대로 보인다. */
@@ -72,8 +95,35 @@ public class ReportTemplateService {
             .value1();
     EditConflictException.check(
         request.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
-    return reportTemplateRepository.update(
-        id, userId, request.name(), request.description(), request.sections(), request.style());
+    // 감사 비교용 저장 전 값(WD-464) — 행 잠금 뒤에 다시 읽어, 기준 버전 없이 들어온 저장(AI 도구)도 동시 저장의 값이 섞이지 않게 한다.
+    ReportTemplateResponse before = reportTemplateRepository.findById(id).orElse(template);
+    LocalDateTime savedUpdatedAt =
+        reportTemplateRepository.update(
+            id, userId, request.name(), request.description(), request.sections(), request.style());
+    // 감사(WD-464) — 저장 전 값과 저장 후 다시 읽은 값을 비교한다.
+    reportTemplateRepository.findById(id).ifPresent(after -> auditUpdate(userId, before, after));
+    return savedUpdatedAt;
+  }
+
+  /**
+   * 양식 수정 감사(WD-464). 저장 전후 DB 값을 비교해 바뀐 항목 이름만 모은다 — 바뀐 항목이 없으면 남기지 않는다. 섹션은 DB 에서 다시 읽은 JSON 끼리
+   * 비교한다(요청 값과 비교하면 숫자 타입 차이로 오탐한다).
+   */
+  private void auditUpdate(
+      Long userId, ReportTemplateResponse before, ReportTemplateResponse after) {
+    List<String> changed = new ArrayList<>();
+    if (!Objects.equals(before.name(), after.name())) changed.add("name");
+    if (!Objects.equals(before.description(), after.description())) changed.add("description");
+    if (!Objects.equals(before.sections(), after.sections())) changed.add("sections");
+    if (!Objects.equals(before.style(), after.style())) changed.add("style");
+    auditRecorder.updated(
+        userId,
+        ProactiveAuditRecorder.RESOURCE_TEMPLATE,
+        ProactiveAuditRecorder.LABEL_TEMPLATE,
+        after.id(),
+        after.name(),
+        changed,
+        AUDIT_FIELD_LABELS);
   }
 
   @Transactional
@@ -83,5 +133,12 @@ public class ReportTemplateService {
       throw new ProactiveJobException("빌트인 템플릿은 삭제할 수 없습니다");
     }
     reportTemplateRepository.delete(id, userId);
+    // 감사(WD-464) — 이름은 지우기 전에 읽은 값(위 getTemplate)을 쓴다.
+    auditRecorder.deleted(
+        userId,
+        ProactiveAuditRecorder.RESOURCE_TEMPLATE,
+        ProactiveAuditRecorder.LABEL_TEMPLATE,
+        id,
+        template.name());
   }
 }

@@ -160,7 +160,7 @@ class SmtpSettingsTenantOnlyTest extends IntegrationTestBase {
     // 전제: 6키가 실제로 저장됐다.
     assertThat(tenantRows()).containsOnlyKeys(all.keySet());
 
-    settingsService.clearSmtpSettings();
+    settingsService.clearSmtpSettings(null);
 
     assertThat(tenantRows()).isEmpty();
     assertThat(settingsService.getSmtpConfig()).isEmpty();
@@ -172,7 +172,7 @@ class SmtpSettingsTenantOnlyTest extends IntegrationTestBase {
     PLANTED.forEach((key, value) -> assertThat(rawSystemSettingValue(dsl, key)).isEqualTo(value));
 
     // 멱등 — 이미 미설정이어도 예외가 없다.
-    settingsService.clearSmtpSettings();
+    settingsService.clearSmtpSettings(null);
     assertThat(tenantRows()).isEmpty();
   }
 
@@ -188,7 +188,7 @@ class SmtpSettingsTenantOnlyTest extends IntegrationTestBase {
 
       TenantContext.set(testTenant);
       settingsService.updateSettings(Map.of("smtp.host", "mine.example.com"), null);
-      settingsService.clearSmtpSettings();
+      settingsService.clearSmtpSettings(null);
       assertThat(tenantRows()).isEmpty();
 
       TenantContext.set(other);

@@ -101,8 +101,9 @@ public class AiClassifyCredentialController {
   /** 설정 해제 — 두 키를 함께 지운다. 이미 미설정이어도 204(멱등). */
   @DeleteMapping
   @RequirePermission("ai:settings")
-  public ResponseEntity<Void> delete() {
-    aiCredentialService.clearClassify();
+  public ResponseEntity<Void> delete(Authentication authentication) {
+    // 행위자는 해제 감사(WD-465)에 남긴다.
+    aiCredentialService.clearClassify((Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 

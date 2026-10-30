@@ -284,6 +284,10 @@ public final class TenantRlsTestSupport {
    * 넣지 않았다(RLS 대상이 아니고 TTL 만료 삭제 경로가 따로 있어 채널 cascade 의 일부로 보기 어렵다). 그 결과 "스크래치 테넌트에서 OAuth state 를
    * issue/consume 하는" 테스트가 teardown 에서 {@code 23503} 으로 터진다 — 문제는 cascade 가 아니라 <b>테넌트 teardown</b>
    * 이므로 여기서 막는 것이 맞다. {@code where tenant_id = ?} 로 좁히므로 지우는 대상은 인자로 받은 테넌트의 행뿐이다.
+   *
+   * <p><b>그 테넌트의 {@code audit_log} 도 함께 지운다(WD-465).</b> AI·SMTP 설정 저장이 감사 행을 남기게 되면서, 스크래치 테넌트에 설정을
+   * 저장하는 테스트가 teardown 에서 {@code fk_audit_log_tenant}({@code 23503}) 로 터진다. 사라지는 픽스처 테넌트의 감사 행은 남길
+   * 이유가 없고, {@code where tenant_id = ?} 로 좁혀 인자로 받은 테넌트의 행만 지운다.
    */
   public static void deleteTenants(DSLContext dsl, Long... tenantIds) {
     for (Long id : tenantIds) {
@@ -296,6 +300,7 @@ public final class TenantRlsTestSupport {
             t -> {
               t.execute("delete from dataset_access_grant where tenant_id = ?", id);
               t.execute("delete from security_level where tenant_id = ?", id);
+              t.execute("delete from audit_log where tenant_id = ?", id);
             });
         dsl.deleteFrom(TENANT).where(field(name("id"), Long.class).eq(id)).execute();
       }

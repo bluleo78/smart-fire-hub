@@ -631,7 +631,7 @@ class AiCredentialServiceTest extends IntegrationTestBase {
         .isEqualTo("oat-classify");
 
     // 분류를 해제해도 채팅은 그대로다.
-    service.clearClassify();
+    service.clearClassify(USER);
     assertThat(((AiCredential.Cli) service.resolve()).oauthToken()).isEqualTo("oat-chat");
     assertThat(rawTenant(AiCredentialSlot.CLASSIFY.key())).isEmpty();
     assertThat(rawTenant(AiCredentialSlot.CLASSIFY_MODEL_KEY)).isEmpty();
@@ -679,8 +679,8 @@ class AiCredentialServiceTest extends IntegrationTestBase {
 
   @Test
   void clearClassify_는_멱등이다() {
-    service.clearClassify();
-    service.clearClassify();
+    service.clearClassify(USER);
+    service.clearClassify(USER);
     assertThat(service.readClassify().configured()).isFalse();
     assertThat(service.readClassify().model()).isEmpty();
   }
@@ -723,7 +723,7 @@ class AiCredentialServiceTest extends IntegrationTestBase {
         .isTrue();
     assertThat(
             AiCredentialService.class
-                .getMethod("clearClassify")
+                .getMethod("clearClassify", Long.class)
                 .isAnnotationPresent(Transactional.class))
         .isTrue();
   }

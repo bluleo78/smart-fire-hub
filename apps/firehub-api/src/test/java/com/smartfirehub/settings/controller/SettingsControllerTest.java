@@ -1,5 +1,6 @@
 package com.smartfirehub.settings.controller;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -142,7 +143,7 @@ class SettingsControllerTest {
 
     // verify 로 호출 자체를 고정한다. 204 만 단언하면 핸들러에서 서비스 호출을 통째로 지워도
     // (=기능이 컨트롤러에서 사라져도) 통과한다.
-    verify(settingsService).clearSmtpSettings();
+    verify(settingsService).clearSmtpSettings(1L);
   }
 
   /**
@@ -160,7 +161,7 @@ class SettingsControllerTest {
     mockMvc
         .perform(delete("/api/v1/settings/smtp").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isForbidden());
-    verify(settingsService, never()).clearSmtpSettings();
+    verify(settingsService, never()).clearSmtpSettings(any());
   }
 
   /**

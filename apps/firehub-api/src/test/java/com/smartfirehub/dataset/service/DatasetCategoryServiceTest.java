@@ -61,8 +61,8 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   @Test
   void getAllCategories_withData_returnsAllSortedById() {
     // Given: ID 순 정렬 확인을 위해 두 개 생성
-    categoryService.createCategory("Beta Category", "두 번째 카테고리");
-    categoryService.createCategory("Alpha Category", "첫 번째 카테고리");
+    categoryService.createCategory("Beta Category", "두 번째 카테고리", testUserId);
+    categoryService.createCategory("Alpha Category", "첫 번째 카테고리", testUserId);
 
     // When
     List<CategoryResponse> result = categoryService.getAllCategories();
@@ -79,7 +79,7 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   @Test
   void getCategoryById_existing_returnsCategory() {
     // Given
-    CategoryResponse created = categoryService.createCategory("Test Cat", "설명");
+    CategoryResponse created = categoryService.createCategory("Test Cat", "설명", testUserId);
 
     // When
     CategoryResponse found = categoryService.getCategoryById(created.id());
@@ -106,7 +106,8 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   @Test
   void createCategory_success_persisted() {
     // When
-    CategoryResponse created = categoryService.createCategory("New Category", "카테고리 설명");
+    CategoryResponse created =
+        categoryService.createCategory("New Category", "카테고리 설명", testUserId);
 
     // Then: 반환값 검증
     assertThat(created.id()).isNotNull();
@@ -125,10 +126,11 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   @Test
   void createCategory_duplicateName_throwsDuplicateDatasetNameException() {
     // Given
-    categoryService.createCategory("Duplicate Name", "첫 번째 생성");
+    categoryService.createCategory("Duplicate Name", "첫 번째 생성", testUserId);
 
     // When/Then: 동일 이름으로 다시 생성 시 예외 발생
-    assertThatThrownBy(() -> categoryService.createCategory("Duplicate Name", "두 번째 생성"))
+    assertThatThrownBy(
+            () -> categoryService.createCategory("Duplicate Name", "두 번째 생성", testUserId))
         .isInstanceOf(DuplicateDatasetNameException.class)
         // WD-241: 영어 「Category name already exists: …」 대신 웹 화면과 같은 한국어 문구
         .hasMessage(DuplicateDatasetNameException.CATEGORY_NAME_MESSAGE);
@@ -141,10 +143,10 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   @Test
   void updateCategory_success_nameAndDescriptionChanged() {
     // Given
-    CategoryResponse created = categoryService.createCategory("Original", "원래 설명");
+    CategoryResponse created = categoryService.createCategory("Original", "원래 설명", testUserId);
 
     // When
-    categoryService.updateCategory(created.id(), "Updated", "수정된 설명");
+    categoryService.updateCategory(created.id(), "Updated", "수정된 설명", testUserId);
 
     // Then
     CategoryResponse updated = categoryService.getCategoryById(created.id());
@@ -155,10 +157,10 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   @Test
   void updateCategory_sameNameSelf_doesNotThrow() {
     // Given: 자기 자신의 이름으로 업데이트하는 경우 예외가 발생하지 않아야 한다
-    CategoryResponse created = categoryService.createCategory("Same Name", "설명");
+    CategoryResponse created = categoryService.createCategory("Same Name", "설명", testUserId);
 
     // When/Then: 자신의 이름 그대로 업데이트 → 정상 처리
-    categoryService.updateCategory(created.id(), "Same Name", "수정된 설명만 변경");
+    categoryService.updateCategory(created.id(), "Same Name", "수정된 설명만 변경", testUserId);
 
     CategoryResponse updated = categoryService.getCategoryById(created.id());
     assertThat(updated.description()).isEqualTo("수정된 설명만 변경");
@@ -167,11 +169,12 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   @Test
   void updateCategory_duplicateNameOtherCategory_throwsDuplicateDatasetNameException() {
     // Given: 서로 다른 두 카테고리 생성
-    categoryService.createCategory("Category A", "A 설명");
-    CategoryResponse catB = categoryService.createCategory("Category B", "B 설명");
+    categoryService.createCategory("Category A", "A 설명", testUserId);
+    CategoryResponse catB = categoryService.createCategory("Category B", "B 설명", testUserId);
 
     // When/Then: B를 A의 이름으로 수정하면 중복 예외 발생
-    assertThatThrownBy(() -> categoryService.updateCategory(catB.id(), "Category A", "새 설명"))
+    assertThatThrownBy(
+            () -> categoryService.updateCategory(catB.id(), "Category A", "새 설명", testUserId))
         .isInstanceOf(DuplicateDatasetNameException.class)
         .hasMessage(DuplicateDatasetNameException.CATEGORY_NAME_MESSAGE);
   }
@@ -179,7 +182,7 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   @Test
   void updateCategory_notFound_throwsCategoryNotFoundException() {
     // When/Then
-    assertThatThrownBy(() -> categoryService.updateCategory(999999L, "이름", "설명"))
+    assertThatThrownBy(() -> categoryService.updateCategory(999999L, "이름", "설명", testUserId))
         .isInstanceOf(CategoryNotFoundException.class)
         // WD-240: 영어 「Category not found: N」 대신 한국어·번호 없는 문구
         .hasMessage("카테고리를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
@@ -192,10 +195,10 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   @Test
   void deleteCategory_existing_removedFromDb() {
     // Given
-    CategoryResponse created = categoryService.createCategory("To Delete", "삭제 대상");
+    CategoryResponse created = categoryService.createCategory("To Delete", "삭제 대상", testUserId);
 
     // When
-    categoryService.deleteCategory(created.id());
+    categoryService.deleteCategory(created.id(), testUserId);
 
     // Then: DB에서 삭제 확인
     Long count =
@@ -209,7 +212,7 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   @Test
   void deleteCategory_notFound_throwsCategoryNotFoundException() {
     // When/Then
-    assertThatThrownBy(() -> categoryService.deleteCategory(999999L))
+    assertThatThrownBy(() -> categoryService.deleteCategory(999999L, testUserId))
         .isInstanceOf(CategoryNotFoundException.class)
         // WD-240: 영어 「Category not found: N」 대신 한국어·번호 없는 문구
         .hasMessage("카테고리를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.");
@@ -222,7 +225,7 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   @Test
   void deleteCategory_withExistingDataset_throwsCategoryInUseExceptionWithKoreanMessage() {
     // Given: 카테고리를 참조하는 데이터셋 생성
-    CategoryResponse category = categoryService.createCategory("In Use Category", "설명");
+    CategoryResponse category = categoryService.createCategory("In Use Category", "설명", testUserId);
     List<DatasetColumnRequest> columns =
         List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, false, true, "Name column"));
     CreateDatasetRequest request =
@@ -238,13 +241,15 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
     datasetService.createDataset(request, testUserId);
 
     // When/Then: 삭제 시 한국어 메시지의 CategoryInUseException 발생
-    assertThatThrownBy(() -> categoryService.deleteCategory(category.id()))
+    assertThatThrownBy(() -> categoryService.deleteCategory(category.id(), testUserId))
         .isInstanceOf(CategoryInUseException.class)
         .hasMessage(DatasetCategoryService.CATEGORY_IN_USE_MESSAGE);
 
     // Then: 카테고리는 삭제되지 않고 그대로 남아있어야 한다
     CategoryResponse stillExists = categoryService.getCategoryById(category.id());
     assertThat(stillExists.id()).isEqualTo(category.id());
+    // 거부된 삭제는 감사를 남기지 않는다(WD-464)
+    assertThat(categoryAudits()).extracting(r -> r.get(0, String.class)).containsExactly("CREATE");
   }
 
   // =========================================================================
@@ -254,7 +259,7 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   /** 앞뒤 공백(전각 공백 포함)이 든 이름은 걷어 낸 값으로 저장된다. */
   @Test
   void createCategory_paddedName_storedTrimmed() {
-    CategoryResponse created = categoryService.createCategory("  행정 \u3000", "설명");
+    CategoryResponse created = categoryService.createCategory("  행정 \u3000", "설명", testUserId);
 
     assertThat(created.name()).isEqualTo("행정");
     assertThat(
@@ -265,12 +270,12 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   /** 대소문자·앞뒤 공백만 다른 이름은 같은 이름으로 보고 생성을 거부한다. */
   @Test
   void createCategory_caseOrSpaceVariant_rejectedAsDuplicate() {
-    categoryService.createCategory("Admin", "첫 번째");
+    categoryService.createCategory("Admin", "첫 번째", testUserId);
 
-    assertThatThrownBy(() -> categoryService.createCategory("admin", "대소문자만 다름"))
+    assertThatThrownBy(() -> categoryService.createCategory("admin", "대소문자만 다름", testUserId))
         .isInstanceOf(DuplicateDatasetNameException.class)
         .hasMessage("이미 사용 중인 카테고리 이름입니다.");
-    assertThatThrownBy(() -> categoryService.createCategory("  ADMIN  ", "공백·대소문자"))
+    assertThatThrownBy(() -> categoryService.createCategory("  ADMIN  ", "공백·대소문자", testUserId))
         .isInstanceOf(DuplicateDatasetNameException.class)
         .hasMessage("이미 사용 중인 카테고리 이름입니다.");
     assertThat(dsl.fetchCount(DATASET_CATEGORY)).isEqualTo(1);
@@ -281,7 +286,7 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   void createCategory_matchesLegacyPaddedName_rejected() {
     insertRawCategory(" 행정 ");
 
-    assertThatThrownBy(() -> categoryService.createCategory("행정", "설명"))
+    assertThatThrownBy(() -> categoryService.createCategory("행정", "설명", testUserId))
         .isInstanceOf(DuplicateDatasetNameException.class)
         .hasMessage(DuplicateDatasetNameException.CATEGORY_NAME_MESSAGE);
   }
@@ -289,10 +294,11 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   /** 다른 카테고리 이름과 대소문자·공백만 다르게 수정하면 거부한다. */
   @Test
   void updateCategory_caseOrSpaceVariantOfOther_rejected() {
-    categoryService.createCategory("Category A", "A");
-    CategoryResponse catB = categoryService.createCategory("Category B", "B");
+    categoryService.createCategory("Category A", "A", testUserId);
+    CategoryResponse catB = categoryService.createCategory("Category B", "B", testUserId);
 
-    assertThatThrownBy(() -> categoryService.updateCategory(catB.id(), " category a ", "새 설명"))
+    assertThatThrownBy(
+            () -> categoryService.updateCategory(catB.id(), " category a ", "새 설명", testUserId))
         .isInstanceOf(DuplicateDatasetNameException.class)
         .hasMessage(DuplicateDatasetNameException.CATEGORY_NAME_MESSAGE);
     assertThat(categoryService.getCategoryById(catB.id()).name()).isEqualTo("Category B");
@@ -306,7 +312,7 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   void updateCategory_selfWithSpaceDifference_allowedAndTrimmed() {
     Long id = insertRawCategory(" 행정 ");
 
-    categoryService.updateCategory(id, "행정", "설명만 수정");
+    categoryService.updateCategory(id, "행정", "설명만 수정", testUserId);
 
     CategoryResponse updated = categoryService.getCategoryById(id);
     assertThat(updated.name()).isEqualTo("행정");
@@ -316,9 +322,9 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   /** 자기 이름의 대소문자만 바꾸는 수정은 허용한다. */
   @Test
   void updateCategory_selfCaseChange_allowed() {
-    CategoryResponse created = categoryService.createCategory("admin", "설명");
+    CategoryResponse created = categoryService.createCategory("admin", "설명", testUserId);
 
-    categoryService.updateCategory(created.id(), "Admin", "설명");
+    categoryService.updateCategory(created.id(), "Admin", "설명", testUserId);
 
     assertThat(categoryService.getCategoryById(created.id()).name()).isEqualTo("Admin");
   }
@@ -327,16 +333,17 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   @Test
   void createAndUpdateCategory_controlCharacters_rejected() {
     String message = "카테고리 이름에 줄바꿈·탭 같은 제어 문자를 쓸 수 없습니다.";
-    assertThatThrownBy(() -> categoryService.createCategory("행\n정", "설명"))
+    assertThatThrownBy(() -> categoryService.createCategory("행\n정", "설명", testUserId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(message);
-    assertThatThrownBy(() -> categoryService.createCategory("행정\t", "설명"))
+    assertThatThrownBy(() -> categoryService.createCategory("행정\t", "설명", testUserId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(message);
     assertThat(dsl.fetchCount(DATASET_CATEGORY)).isZero();
 
-    CategoryResponse created = categoryService.createCategory("행정", "설명");
-    assertThatThrownBy(() -> categoryService.updateCategory(created.id(), "행정\r\n", "설명"))
+    CategoryResponse created = categoryService.createCategory("행정", "설명", testUserId);
+    assertThatThrownBy(
+            () -> categoryService.updateCategory(created.id(), "행정\r\n", "설명", testUserId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(message);
     assertThat(categoryService.getCategoryById(created.id()).name()).isEqualTo("행정");
@@ -345,9 +352,80 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   /** 공백(전각 공백 포함)만 있는 이름은 요청 검증과 같은 「필수」 문구로 거부한다 — @NotBlank 는 전각 공백을 공백으로 보지 않는다. */
   @Test
   void createCategory_onlyWideSpaces_rejectedAsBlank() {
-    assertThatThrownBy(() -> categoryService.createCategory("\u3000 \u3000", "설명"))
+    assertThatThrownBy(() -> categoryService.createCategory("\u3000 \u3000", "설명", testUserId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("카테고리 이름은 필수입니다.");
+  }
+
+  // =========================================================================
+  // 감사(WD-464)
+  // =========================================================================
+
+  /** 이 테스트 사용자의 카테고리 감사 행(action, resource_id, description, metadata) — 기록 순. */
+  private List<org.jooq.Record> categoryAudits() {
+    return List.copyOf(
+        dsl.fetch(
+            "SELECT action_type, resource_id, description, metadata::text FROM audit_log"
+                + " WHERE user_id = ? AND resource = 'dataset_category' ORDER BY id",
+            testUserId));
+  }
+
+  /** 생성·수정·삭제가 한 행씩 남고, 설명 본문 값은 설명·metadata 에 실리지 않는다. */
+  @Test
+  void audit_createUpdateDelete_recordedWithoutDescriptionValue() {
+    String marker = "MARKER_WD464_SECRET";
+    CategoryResponse created = categoryService.createCategory("감사 카테고리", marker, testUserId);
+    categoryService.updateCategory(created.id(), "감사 카테고리2", marker + "2", testUserId);
+    categoryService.deleteCategory(created.id(), testUserId);
+
+    List<org.jooq.Record> rows = categoryAudits();
+    assertThat(rows)
+        .extracting(r -> r.get(0, String.class))
+        .containsExactly("CREATE", "UPDATE", "DELETE");
+    assertThat(rows)
+        .extracting(r -> r.get(1, String.class))
+        .containsOnly(String.valueOf(created.id()));
+    assertThat(rows)
+        .extracting(r -> r.get(2, String.class))
+        .containsExactly(
+            "카테고리 생성: 감사 카테고리", "카테고리 수정: 감사 카테고리2 (바뀐 항목: 이름·설명)", "카테고리 삭제: 감사 카테고리2");
+    assertThat(rows.get(1).get(3, String.class))
+        .contains("\"changedFields\": [\"name\", \"description\"]");
+    for (org.jooq.Record r : rows) {
+      assertThat(r.get(2, String.class)).doesNotContain(marker);
+      assertThat(r.get(3, String.class)).doesNotContain(marker);
+    }
+  }
+
+  /** 같은 값을 다시 저장하면(웹 편집창이 이름을 trim 해 그대로 보냄) 감사를 남기지 않는다. */
+  @Test
+  void audit_saveWithSameValues_writesNothing() {
+    CategoryResponse created = categoryService.createCategory("그대로", "설명", testUserId);
+    categoryService.updateCategory(created.id(), " 그대로 ", "설명", testUserId);
+
+    assertThat(categoryAudits()).extracting(r -> r.get(0, String.class)).containsExactly("CREATE");
+  }
+
+  /** 거부된 요청(이름 중복 409·없는 카테고리 404·제어 문자 400)은 감사를 남기지 않는다. */
+  @Test
+  void audit_rejectedRequests_writeNothing() {
+    categoryService.createCategory("A", "설명", testUserId);
+    CategoryResponse b = categoryService.createCategory("B", "설명", testUserId);
+
+    assertThatThrownBy(() -> categoryService.createCategory("a", "중복", testUserId))
+        .isInstanceOf(DuplicateDatasetNameException.class);
+    assertThatThrownBy(() -> categoryService.updateCategory(b.id(), "A", "중복", testUserId))
+        .isInstanceOf(DuplicateDatasetNameException.class);
+    assertThatThrownBy(() -> categoryService.updateCategory(999999L, "x", "x", testUserId))
+        .isInstanceOf(CategoryNotFoundException.class);
+    assertThatThrownBy(() -> categoryService.deleteCategory(999999L, testUserId))
+        .isInstanceOf(CategoryNotFoundException.class);
+    assertThatThrownBy(() -> categoryService.updateCategory(b.id(), "B\n", "설명", testUserId))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    assertThat(categoryAudits())
+        .extracting(r -> r.get(0, String.class))
+        .containsExactly("CREATE", "CREATE");
   }
 
   /** 서비스 검사를 거치지 않은 옛 데이터를 흉내 내려고 이름을 그대로 넣는다(tenant_id 는 GUC 기본값). */

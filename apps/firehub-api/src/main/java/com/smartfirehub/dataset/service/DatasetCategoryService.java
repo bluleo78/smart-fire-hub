@@ -7,7 +7,9 @@ import com.smartfirehub.dataset.exception.CategoryInUseException;
 import com.smartfirehub.dataset.exception.CategoryNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.dataset.repository.DatasetCategoryRepository;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -21,6 +23,9 @@ public class DatasetCategoryService {
 
   private final DatasetCategoryRepository categoryRepository;
   private final DSLContext dsl;
+
+  /** 카테고리 생성·수정·삭제 감사(WD-464). */
+  private final DatasetCategoryAuditRecorder auditRecorder;
 
   // RLS 가 걸린 dataset_category 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
@@ -46,19 +51,34 @@ public class DatasetCategoryService {
   /** 카테고리 이름 최대 길이(dataset_category.name VARCHAR(50)) — CategoryRequest 의 @Size 와 같다. */
   private static final int NAME_MAX_LENGTH = 50;
 
+  /**
+   * 카테고리를 만든다.
+   *
+   * @param userId 행위자 — 감사 기록용(WD-464)
+   */
   @Transactional
-  public CategoryResponse createCategory(String name, String description) {
+  public CategoryResponse createCategory(String name, String description, Long userId) {
     String normalized = normalizeName(name);
     // 중복은 앞뒤 공백·대소문자를 무시하고 본다(WD-241) — 「 행정 」·「Admin」/「admin」이 별개로 쌓이지 않게.
     if (categoryRepository.existsByName(normalized)) {
       throw DuplicateDatasetNameException.categoryName();
     }
-    return translateNameRace(() -> categoryRepository.save(normalized, description));
+    CategoryResponse created =
+        translateNameRace(() -> categoryRepository.save(normalized, description));
+    // 감사(WD-464) — 저장이 끝난 뒤 같은 트랜잭션에서 남긴다(이름 충돌 409 면 남지 않는다).
+    auditRecorder.created(userId, created.id(), created.name());
+    return created;
   }
 
+  /**
+   * 카테고리 이름·설명을 고친다.
+   *
+   * @param userId 행위자 — 감사 기록용(WD-464)
+   */
   @Transactional
-  public void updateCategory(Long id, String name, String description) {
-    categoryRepository.findById(id).orElseThrow(() -> new CategoryNotFoundException());
+  public void updateCategory(Long id, String name, String description, Long userId) {
+    CategoryResponse before =
+        categoryRepository.findById(id).orElseThrow(() -> new CategoryNotFoundException());
     String normalized = normalizeName(name);
 
     // 자기 자신을 제외한 다른 카테고리에 같은 이름(앞뒤 공백·대소문자 무시)이 있는지 확인한다. 자기 자신은 빼므로, 공백 든 옛 이름을
@@ -72,6 +92,15 @@ public class DatasetCategoryService {
           categoryRepository.update(id, normalized, description);
           return null;
         });
+
+    // 감사(WD-464) — 저장 전후 DB 값을 비교해 바뀐 항목 이름만 남긴다. 같은 값을 다시 저장하면 남기지 않는다(앞뒤 공백만 다른 옛 이름을 정리한 저장은
+    // 이름이 실제로 바뀌었으므로 남긴다).
+    CategoryResponse after =
+        categoryRepository.findById(id).orElseThrow(() -> new CategoryNotFoundException());
+    List<String> changed = new ArrayList<>();
+    if (!Objects.equals(before.name(), after.name())) changed.add("name");
+    if (!Objects.equals(before.description(), after.description())) changed.add("description");
+    auditRecorder.updated(userId, id, after.name(), changed);
   }
 
   /**
@@ -120,9 +149,15 @@ public class DatasetCategoryService {
   static final String CATEGORY_IN_USE_MESSAGE =
       "이 카테고리를 사용 중인 데이터셋이 있어 삭제할 수 없습니다. 목록에 보이지 않는 데이터셋이 연결되어 있을 수 있으니 관리자에게 문의하세요.";
 
+  /**
+   * 카테고리를 지운다 — 데이터셋이 연결돼 있으면 409.
+   *
+   * @param userId 행위자 — 감사 기록용(WD-464)
+   */
   @Transactional
-  public void deleteCategory(Long id) {
-    categoryRepository.findById(id).orElseThrow(() -> new CategoryNotFoundException());
+  public void deleteCategory(Long id, Long userId) {
+    CategoryResponse target =
+        categoryRepository.findById(id).orElseThrow(() -> new CategoryNotFoundException());
 
     // Check if any datasets reference this category
     var DATASET = table(name("dataset"));
@@ -140,5 +175,7 @@ public class DatasetCategoryService {
     }
 
     categoryRepository.deleteById(id);
+    // 감사(WD-464) — 이름은 지우기 전에 읽은 값을 쓴다.
+    auditRecorder.deleted(userId, id, target.name());
   }
 }
