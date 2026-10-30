@@ -6,6 +6,7 @@ import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.permission.dto.PermissionResponse;
 import com.smartfirehub.permission.repository.PermissionRepository;
 import com.smartfirehub.role.dto.RoleDetailResponse;
+import com.smartfirehub.role.dto.RoleGrantBlockResponse;
 import com.smartfirehub.role.dto.RoleResponse;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.exception.SystemRoleModificationException;
@@ -46,6 +47,17 @@ public class RoleService {
   @Transactional(readOnly = true)
   public List<RoleResponse> getAllRoles() {
     return roleRepository.findAll();
+  }
+
+  /**
+   * 호출자가 부여할 수 없는 역할과 그 까닭(WD-291). 멤버 추가 화면이 범위 밖 역할 체크박스를 미리 잠그는 데 쓴다 — 판정은 실제 부여와 같은 {@link
+   * RoleGrantGuard} 가 한다.
+   */
+  @Transactional(readOnly = true)
+  public List<RoleGrantBlockResponse> getGrantBlockedRoles(long callerId) {
+    return roleGrantGuard.findGrantBlockedRoles(callerId).stream()
+        .map(b -> new RoleGrantBlockResponse(b.roleId(), b.code(), b.message()))
+        .toList();
   }
 
   @Transactional(readOnly = true)

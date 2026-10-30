@@ -7,7 +7,11 @@ import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository.RoleLevel;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
@@ -221,31 +225,102 @@ public class RoleGrantGuard {
     assertWithinScope(clearanceResolver.resolve(callerId), changedRoleIds, errors);
   }
 
-  /** {@link #assertWithinScope(long, Collection, ScopeErrors)} 의 이미 해석한 자격 버전 — 판정 본체. */
+  /**
+   * {@link #assertWithinScope(long, Collection, ScopeErrors)} 의 이미 해석한 자격 버전 — 위반이 있으면 종류 순서대로 하나를
+   * 던진다.
+   */
   private void assertWithinScope(
       Clearance caller, Collection<Long> changedRoleIds, ScopeErrors errors) {
     if (caller.tenantAdmin()) {
       return; // 시스템 ADMIN 은 제한하지 않는다(잠금 방지 규칙은 UserService 가 따로 본다)
     }
-    Map<Long, RoleLevel> roles =
-        levelRepository.findRoleLevels().stream()
-            .collect(Collectors.toMap(RoleLevel::roleId, Function.identity()));
-
+    Map<Long, Violation> violations =
+        classify(caller, changedRoleIds, levelRepository.findRoleLevels());
     // ADMIN 은 별도 메시지로 먼저 거른다 — 다른 역할과 섞여 있어도 "왜 안 되는지" 가 정확히 보이게. 삭제 경로에서는 시스템 역할이 먼저 거부되므로
     // 여기에 닿지 않는다(삭제는 부여·회수 문구를 그대로 쓴다 — 방어선으로만 남는다).
-    for (Long roleId : changedRoleIds) {
+    if (violations.containsValue(Violation.ADMIN)) {
+      throw new CodedApiException(HttpStatus.FORBIDDEN, errors.adminCode(), errors.adminMessage());
+    }
+    if (violations.containsValue(Violation.SCOPE)) {
+      throw new CodedApiException(HttpStatus.FORBIDDEN, errors.scopeCode(), errors.scopeMessage());
+    }
+    if (violations.containsValue(Violation.ALLOWLIST)) {
+      throw new CodedApiException(
+          HttpStatus.FORBIDDEN, errors.allowlistCode(), errors.allowlistMessage());
+    }
+  }
+
+  /** 역할 하나가 호출자 범위를 벗어난 까닭 — 거부 문구의 우선순위(ADMIN → 등급·권한 → 허용 목록) 순서로 둔다. */
+  private enum Violation {
+    ADMIN,
+    SCOPE,
+    ALLOWLIST
+  }
+
+  /**
+   * 호출자(ADMIN 아님)가 부여할 수 없는 역할 목록(WD-291). 멤버 추가 화면이 범위 밖 역할을 미리 잠그고 까닭을 보이게 하려고, 실제 부여 때의 {@link
+   * #assertCanChangeRoles} 와 같은 판정({@link #classify})을 현재 테넌트의 모든 역할에 돌린다 — 화면이 기준을 따로 흉내 내면 서버와
+   * 어긋난다. 시스템 ADMIN 호출자는 막히는 역할이 없으므로 빈 목록이다.
+   */
+  public List<GrantBlock> findGrantBlockedRoles(long callerId) {
+    Clearance caller = clearanceResolver.resolve(callerId);
+    if (caller.tenantAdmin()) {
+      return List.of();
+    }
+    List<RoleLevel> levels = levelRepository.findRoleLevels();
+    List<Long> roleIds = levels.stream().map(RoleLevel::roleId).toList();
+    List<GrantBlock> blocked = new ArrayList<>();
+    classify(caller, roleIds, levels)
+        .forEach(
+            (roleId, violation) ->
+                blocked.add(
+                    switch (violation) {
+                      case ADMIN ->
+                          new GrantBlock(
+                              roleId, GRANT_ERRORS.adminCode(), GRANT_ERRORS.adminMessage());
+                      case SCOPE ->
+                          new GrantBlock(
+                              roleId, GRANT_ERRORS.scopeCode(), GRANT_ERRORS.scopeMessage());
+                      case ALLOWLIST ->
+                          new GrantBlock(
+                              roleId,
+                              GRANT_ERRORS.allowlistCode(),
+                              GRANT_ERRORS.allowlistMessage());
+                    }));
+    blocked.sort(Comparator.comparingLong(GrantBlock::roleId));
+    return blocked;
+  }
+
+  /** 부여할 수 없는 역할 하나와 그 까닭(실제 부여 시 받을 403 의 코드·문구와 같다). */
+  public record GrantBlock(long roleId, String code, String message) {}
+
+  /**
+   * 판정 본체(호출자는 ADMIN 아님): 범위를 벗어난 역할마다 첫 번째 위반 종류를 돌려준다. 범위 안 역할은 맵에 없다. {@code roleLevels} 는
+   * 현재 테넌트 역할 등급 — 목록 조회가 이미 읽은 것을 다시 읽지 않게 받는다. 검사 순서·fail-closed 규칙은
+   * {@link #assertCanChangeRoles} 문서 참고.
+   */
+  private Map<Long, Violation> classify(
+      Clearance caller, Collection<Long> roleIds, List<RoleLevel> roleLevels) {
+    Map<Long, RoleLevel> roles =
+        roleLevels.stream()
+            .collect(Collectors.toMap(RoleLevel::roleId, Function.identity()));
+    Map<Long, Integer> rankById = levelRepository.rankById();
+    // 역할들의 권한을 한 번에 읽는다(역할마다 조회하면 N+1).
+    Map<Long, Set<String>> codesByRole = permissionRepository.findCodesByRoleIds(roleIds);
+    // WD-140: 역할에 붙은 허용 항목도 "나눠 주는 열람 자격" 이다. 허용 목록 필요 등급 데이터셋의 항목 중 호출자 자신이 열람 판정(VIEW — 등급 +
+    // 허용 목록)에서 볼 수 없는 것이 하나라도 있으면 거부한다. 받는 사람은 다른 역할로 등급을 가질 수 있으므로 "허용 목록에 있음" 만으로는 부족하다 —
+    // 호출자가 못 보는 데이터를 남이 보게 만들 수 있다. 역할 전체를 한 번에 조회한다(데이터셋·역할마다 묻지 않는다). 호출자는 여기서 ADMIN 이
+    // 아니므로 admin_bypass 우회는 성립하지 않는다(조건식은 열람 판정과 같은 모양을 그대로 쓴다).
+    Set<Long> allowlistBlocked =
+        accessRepository.findRoleIdsWithAllowlistNotViewable(roleIds, caller);
+
+    Map<Long, Violation> violations = new HashMap<>();
+    for (Long roleId : roleIds) {
       RoleLevel role = roles.get(roleId);
       if (role != null && role.systemAdmin()) {
-        throw new CodedApiException(
-            HttpStatus.FORBIDDEN, errors.adminCode(), errors.adminMessage());
+        violations.put(roleId, Violation.ADMIN);
+        continue;
       }
-    }
-
-    Map<Long, Integer> rankById = levelRepository.rankById();
-    // 바뀌는 역할들의 권한을 한 번에 읽는다(역할마다 조회하면 N+1).
-    Map<Long, Set<String>> codesByRole = permissionRepository.findCodesByRoleIds(changedRoleIds);
-    for (Long roleId : changedRoleIds) {
-      RoleLevel role = roles.get(roleId);
       // 등급을 알 수 없으면(역할 없음·등급 누락) 최상위보다 높은 것으로 본다 — fail-closed. 없는·다른 테넌트 역할은 권한 맵에도 키가 없어
       // 빈 집합(= 권한 검사 통과)이 되므로, 거부는 반드시 이 등급 판정이 맡는다.
       int roleRank =
@@ -254,19 +329,12 @@ public class RoleGrantGuard {
               : rankById.getOrDefault(role.levelId(), Integer.MAX_VALUE);
       if (roleRank > caller.rank()
           || !caller.permissions().containsAll(codesByRole.getOrDefault(roleId, Set.of()))) {
-        throw new CodedApiException(
-            HttpStatus.FORBIDDEN, errors.scopeCode(), errors.scopeMessage());
+        violations.put(roleId, Violation.SCOPE);
+      } else if (allowlistBlocked.contains(roleId)) {
+        violations.put(roleId, Violation.ALLOWLIST);
       }
     }
-
-    // WD-140: 역할에 붙은 허용 항목도 "나눠 주는 열람 자격" 이다. 허용 목록 필요 등급 데이터셋의 항목 중 호출자 자신이 열람 판정(VIEW — 등급 +
-    // 허용 목록)에서 볼 수 없는 것이 하나라도 있으면 거부한다. 받는 사람은 다른 역할로 등급을 가질 수 있으므로 "허용 목록에 있음" 만으로는 부족하다 —
-    // 호출자가 못 보는 데이터를 남이 보게 만들 수 있다. 바뀌는 역할 전체를 한 번에 조회한다(데이터셋·역할마다 묻지 않는다). 호출자는 여기서 ADMIN 이
-    // 아니므로 admin_bypass 우회는 성립하지 않는다(조건식은 열람 판정과 같은 모양을 그대로 쓴다).
-    if (!accessRepository.findRoleIdsWithAllowlistNotViewable(changedRoleIds, caller).isEmpty()) {
-      throw new CodedApiException(
-          HttpStatus.FORBIDDEN, errors.allowlistCode(), errors.allowlistMessage());
-    }
+    return violations;
   }
 
   /**

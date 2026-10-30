@@ -344,6 +344,81 @@ class RoleGrantScopeTest extends IntegrationTestBase {
         .isFalse();
   }
 
+  // ── 부여할 수 없는 역할 목록(GET /roles/grant-blocked, WD-291) ───────────────────────────
+
+  /**
+   * 위임자에게는 ADMIN·권한 초과·등급 초과 역할이 실제 부여 때와 같은 코드·문구로 나오고, 범위 안 역할은 나오지 않는다. 멤버 추가 화면은 이 목록으로 체크박스를
+   * 잠그므로, 목록과 실제 부여 판정이 어긋나면 안 된다.
+   */
+  @Test
+  void grantBlocked_delegate_listsOutOfScopeRolesWithGrantErrors() throws Exception {
+    Map<Long, List<String>> blocked = grantBlocked(delegate);
+
+    assertThat(blocked.get(adminRole))
+        .containsExactly("SYSTEM_ADMIN_ROLE_ADMIN_ONLY", ADMIN_ROLE_MESSAGE);
+    assertThat(blocked.get(lackingPermRole))
+        .containsExactly("ROLE_GRANT_BEYOND_SCOPE", ROLE_SCOPE_MESSAGE);
+    assertThat(blocked.get(highClearanceRole))
+        .containsExactly("ROLE_GRANT_BEYOND_SCOPE", ROLE_SCOPE_MESSAGE);
+    assertThat(blocked.get(writerRole))
+        .containsExactly("ROLE_GRANT_BEYOND_SCOPE", ROLE_SCOPE_MESSAGE);
+    assertThat(blocked).doesNotContainKeys(inScopeRole, delegateRole);
+  }
+
+  /**
+   * 목록은 실제 부여 판정과 같다: 테넌트의 모든 역할(기본 USER 제외)에 대해 「목록에 있음 ⇔ 부여하면 403」. 화면이 목록만 믿고 잠그므로 기준이 갈리면 열린
+   * 체크박스가 추가 시점에 실패하거나, 줄 수 있는 역할이 잠긴다.
+   */
+  @Test
+  void grantBlocked_matchesActualGrantDecision() throws Exception {
+    Map<Long, List<String>> blocked = grantBlocked(delegate);
+    List<Long> roleIds =
+        inTenantFixture(
+            tenantA,
+            () ->
+                dsl.fetch("select id from role where name <> 'USER'").stream()
+                    .map(r -> ((Number) r.get(0)).longValue())
+                    .toList());
+
+    for (long roleId : roleIds) {
+      ResultActions result = putRoles(delegate, target, userRole, roleId);
+      if (blocked.containsKey(roleId)) {
+        result
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value(blocked.get(roleId).get(0)));
+      } else {
+        result.andExpect(status().isNoContent());
+        putRoles(delegate, target, userRole).andExpect(status().isNoContent());
+      }
+    }
+  }
+
+  /** 허용 목록 판정(WD-140)도 목록에 들어간다 — 허용 목록 필요 데이터셋의 항목이 붙은 역할만, 허용 목록 전용 코드로. */
+  @Test
+  void grantBlocked_includesAllowlistRolesTheCallerCannotView() throws Exception {
+    setUpAllowlistScenario();
+
+    Map<Long, List<String>> blocked = grantBlocked(aclDelegate);
+
+    assertThat(blocked.get(listedRole))
+        .containsExactly("ROLE_GRANT_ALLOWLIST_BEYOND_SCOPE", ALLOWLIST_SCOPE_MESSAGE);
+    assertThat(blocked).doesNotContainKey(sensitiveListedRole);
+  }
+
+  /** 시스템 ADMIN 은 막히는 역할이 없다 — 빈 목록. */
+  @Test
+  void grantBlocked_admin_isEmpty() throws Exception {
+    assertThat(grantBlocked(admin1)).isEmpty();
+  }
+
+  /** 부여 권한(role:assign)이 없으면 목록도 볼 수 없다. */
+  @Test
+  void grantBlocked_withoutRoleAssign_isForbidden() throws Exception {
+    mockMvc
+        .perform(get("/api/v1/roles/grant-blocked").header("Authorization", token(writer)))
+        .andExpect(status().isForbidden());
+  }
+
   /** 위임자 본인이 허용 목록에 직접 올라 있으면 부여할 수 있다(과잉 차단 방지). */
   @Test
   void delegate_onAllowlistDirectly_canGrantListedRole() throws Exception {
@@ -967,6 +1042,24 @@ class RoleGrantScopeTest extends IntegrationTestBase {
                         "TempPass1x",
                         "roleIds",
                         Arrays.asList(roleIds)))));
+  }
+
+  /** GET /roles/grant-blocked — 역할 id → [code, message]. */
+  private Map<Long, List<String>> grantBlocked(long caller) throws Exception {
+    String body =
+        mockMvc
+            .perform(get("/api/v1/roles/grant-blocked").header("Authorization", token(caller)))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    Map<Long, List<String>> result = new HashMap<>();
+    for (var node : objectMapper.readTree(body)) {
+      result.put(
+          node.get("roleId").asLong(),
+          List.of(node.get("code").asText(), node.get("message").asText()));
+    }
+    return result;
   }
 
   private ResultActions putActive(long caller, long userId, boolean active) throws Exception {
