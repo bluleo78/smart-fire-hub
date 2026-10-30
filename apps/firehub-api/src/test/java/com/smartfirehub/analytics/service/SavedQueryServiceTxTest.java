@@ -93,7 +93,8 @@ class SavedQueryServiceTxTest extends IntegrationTestBase {
             mock(AnalyticsDashboardRepository.class),
             new TransactionTemplate(transactionManager),
             schema,
-            TransactionTemplateConfig.readOnly(transactionManager));
+            TransactionTemplateConfig.readOnly(transactionManager),
+            mock(AnalyticsAuditRecorder.class));
     return new Setup(service, readTx, execTx);
   }
 

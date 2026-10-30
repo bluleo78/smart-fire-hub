@@ -139,7 +139,8 @@ const ROLE_ACTION_TYPES = [
 
 /**
  * 스마트 작업 관리 액션(WD-192) — ProactiveJobAdminService(proactive:admin)가 남의 작업을 끄거나 삭제할 때 남긴다.
- * - resource=proactive_job, resourceId=작업 id. 작성자 본인의 끄기·삭제는 감사 대상이 아니다(관리 행위만 기록).
+ * - resource=proactive_job, resourceId=작업 id. 작성자 본인의 생성·수정·켜기/끄기·삭제는 같은 resource 에 일반 액션
+ *   (CREATE/UPDATE/STATUS_CHANGE/DELETE)으로 남는다(WD-464) — 리소스 필터 「스마트 작업」 하나로 함께 보인다.
  */
 const PROACTIVE_ADMIN_ACTION_TYPES = [
   { value: 'PROACTIVE_JOB_ADMIN_DISABLE', label: '스마트 작업 관리자 끄기' },
@@ -148,7 +149,8 @@ const PROACTIVE_ADMIN_ACTION_TYPES = [
 
 /**
  * 분석 자산 관리 액션(WD-199) — AnalyticsAdminService(analytics:admin)가 남의 대시보드·차트·저장 쿼리를 공유 해제하거나 삭제할 때 남긴다.
- * - resource=dashboard/chart/saved_query, resourceId=자산 id. 작성자 본인의 공유 변경·삭제는 감사 대상이 아니다(관리 행위만 기록).
+ * - resource=dashboard/chart/saved_query, resourceId=자산 id. 작성자 본인의 생성·수정·공유 켜기/끄기·삭제는 같은 resource 에
+ *   일반 액션(CREATE/UPDATE/STATUS_CHANGE/DELETE)으로 남는다(WD-464).
  */
 const ANALYTICS_ADMIN_ACTION_TYPES = [
   { value: 'ANALYTICS_DASHBOARD_ADMIN_UNSHARE', label: '대시보드 관리자 공유 해제' },
@@ -279,6 +281,8 @@ function roleChangeSummaryParts(log: AuditLogResponse): string[] {
  *   query_result(QueryResultExportService — 쿼리 결과 서버 내보내기, resourceId=실행 기록 ID)도 사용 중이다.
  * - pipeline_trigger(TriggerService — 트리거 생성·수정·켜기/끄기·삭제, resourceId=트리거 ID, metadata.pipelineId 로 소속 파이프라인)도
  *   사용 중이다(WD-462).
+ * - report_template(ReportTemplateService — 리포트 양식 생성·수정·삭제, resourceId=양식 ID)·dataset_category
+ *   (DatasetCategoryService — 카테고리 생성·수정·삭제, resourceId=카테고리 ID)도 사용 중이다(WD-464).
  * - 신규 action/resource 추가 시 apps/firehub-api 에서 `auditLogService.log(`·`audit.record(` 호출부 전수를 대조한다.
  *   운영자 평면 감사(tenant·TENANT_*·플랫폼 계정 조치)는 tenant_id 가 NULL 이라 이 화면(테넌트 감사)에는 나오지 않는다.
  */
@@ -299,12 +303,16 @@ const RESOURCES = [
   { value: 'query_result', label: '쿼리 결과' },
   // HostingChangeAuditor.RESOURCE — resourceId 는 슬롯 이름(CHAT/CLASSIFY/EMBEDDING)이다(WD-49).
   { value: 'ai_provider_hosting', label: 'AI 호스팅 위치' },
-  // ProactiveJobAdminService.AUDIT_RESOURCE — 관리자 끄기·삭제(WD-192)
+  // ProactiveJobAdminService.AUDIT_RESOURCE — 관리자 끄기·삭제(WD-192)·작성자 생성·수정·켜기/끄기·삭제(WD-464)
   { value: 'proactive_job', label: '스마트 작업' },
-  // AnalyticsAssetKind.table() — 관리자 공유 해제·삭제(WD-199)
+  // AnalyticsAssetKind.table() — 관리자 공유 해제·삭제(WD-199)·작성자 생성·수정·공유 켜기/끄기·삭제(WD-464)
   { value: 'dashboard', label: '대시보드' },
   { value: 'chart', label: '차트' },
   { value: 'saved_query', label: '저장 쿼리' },
+  // ProactiveAuditRecorder.RESOURCE_TEMPLATE — 리포트 양식 생성·수정·삭제(WD-464)
+  { value: 'report_template', label: '리포트 양식' },
+  // DatasetCategoryAuditRecorder.RESOURCE_CATEGORY — 데이터셋 카테고리 생성·수정·삭제(WD-464)
+  { value: 'dataset_category', label: '데이터셋 카테고리' },
 ];
 
 /** 결과 필터 옵션 목록 */

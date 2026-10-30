@@ -70,6 +70,7 @@ PII 마스킹 규칙은 메인 SYSTEM_PROMPT L5 정의를 단일 source 로 한�
 | `EXECUTE` | 파이프라인/작업 실행 |
 | `IMPORT` | 데이터 임포트 |
 | `EXPORT` | 데이터 익스포트 |
+| `STATUS_CHANGE` | 켜기/끄기·공유 켜기/끄기 같은 상태 전환 (metadata.changedFields 로 무엇이 바뀌었는지 구분) |
 
 ## 알려진 resource 값
 
@@ -81,7 +82,14 @@ PII 마스킹 규칙은 메인 SYSTEM_PROMPT L5 정의를 단일 source 로 한�
 | `trigger` | 파이프라인 트리거 |
 | `role` | 역할 |
 | `api_connection` | API 연결 |
-| `dashboard` | 대시보드 |
+| `dashboard` | 분석 대시보드 |
+| `chart` | 차트 |
+| `saved_query` | 저장 쿼리 |
+| `proactive_job` | 스마트 작업 |
+| `report_template` | 리포트 양식 |
+| `dataset_category` | 데이터셋 카테고리 |
+
+수정(UPDATE)·상태 전환(STATUS_CHANGE) 행의 metadata 에는 바뀐 항목 **이름**만(`changedFields`) 있고 바뀐 값(SQL·프롬프트·설정 등)은 없다 — 값을 추측해 답하지 않는다.
 
 ## 이상 탐지 패턴
 

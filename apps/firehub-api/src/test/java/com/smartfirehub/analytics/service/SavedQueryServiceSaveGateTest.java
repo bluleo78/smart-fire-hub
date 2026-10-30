@@ -44,7 +44,18 @@ class SavedQueryServiceSaveGateTest {
     when(guard.visibleCondition(viewer)).thenReturn(DSL.trueCondition());
     // 판정과 무관한 협력자는 쓰이지 않으므로 null.
     service =
-        new SavedQueryService(repo, null, resolver, guard, null, null, null, null, null, null);
+        new SavedQueryService(
+            repo,
+            null,
+            resolver,
+            guard,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            mock(AnalyticsAuditRecorder.class));
   }
 
   private CreateSavedQueryRequest req(String sql) {

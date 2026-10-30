@@ -33,8 +33,10 @@ import com.smartfirehub.user.repository.UserRepository;
 import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -72,6 +74,22 @@ public class ProactiveJobService {
   private final ClearanceResolver clearanceResolver;
   // 스마트 작업 실행 중 AI 가 이전 리포트 본문을 읽으면 그 등급도 새 리포트 등급에 넣는다(WD-198)
   private final ProactiveReportLevelRecorder levelRecorder;
+  // 작성자 본인의 생성·수정·삭제·켜기/끄기 감사(WD-464)
+  private final ProactiveAuditRecorder auditRecorder;
+
+  /**
+   * 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-464). 켜기/끄기는 따로 STATUS_CHANGE 로 남기므로 여기 없다. 프롬프트·cron·설정(전달
+   * 채널·수신자·메트릭 SQL) 값은 감사에 싣지 않고 키만 남긴다 — config 는 무엇이 바뀌었든 "config" 하나다.
+   */
+  private static final Map<String, String> AUDIT_FIELD_LABELS =
+      Map.of(
+          "name", "이름",
+          "prompt", "프롬프트",
+          "templateId", "리포트 양식",
+          "cronExpression", "실행 주기",
+          "timezone", "시간대",
+          "triggerType", "실행 방식",
+          "config", "전달·탐지 설정");
 
   /** 리포트 등급이 작성자의 현재 등급보다 높아 열 수 없을 때의 코드(WD-198). 웹이 이 코드로 안내 화면을 고른다. */
   public static final String REPORT_LEVEL_BLOCKED_CODE = "REPORT_SECURITY_LEVEL_BLOCKED";
@@ -98,7 +116,8 @@ public class ProactiveJobService {
       ProactiveOwnerEligibility ownerEligibility,
       TenantRepository tenantRepository,
       ClearanceResolver clearanceResolver,
-      ProactiveReportLevelRecorder levelRecorder) {
+      ProactiveReportLevelRecorder levelRecorder,
+      ProactiveAuditRecorder auditRecorder) {
     this.proactiveJobRepository = proactiveJobRepository;
     this.executionRepository = executionRepository;
     this.schedulerService = schedulerService;
@@ -112,6 +131,7 @@ public class ProactiveJobService {
     this.tenantRepository = tenantRepository;
     this.clearanceResolver = clearanceResolver;
     this.levelRecorder = levelRecorder;
+    this.auditRecorder = auditRecorder;
     // asyncRunner가 runningJobs 맵을 공유하여 슬롯 해제가 동일한 맵에 반영되도록 한다
     asyncRunner.setRunningJobs(this.runningJobs);
   }
@@ -262,6 +282,14 @@ public class ProactiveJobService {
         && !job.cronExpression().isBlank()) {
       schedulerService.registerSchedule(job.id(), job.cronExpression(), job.timezone());
     }
+    // 감사(WD-464) — 검증·저장이 끝난 뒤 같은 트랜잭션에서 남긴다. 이름·켜짐 여부만 싣고 프롬프트·설정은 싣지 않는다.
+    auditRecorder.created(
+        userId,
+        ProactiveAuditRecorder.RESOURCE_JOB,
+        ProactiveAuditRecorder.LABEL_JOB,
+        job.id(),
+        job.name(),
+        Map.of("enabled", Boolean.TRUE.equals(job.enabled())));
     return withOwnerEligibility(List.of(job), userId).get(0);
   }
 
@@ -293,6 +321,8 @@ public class ProactiveJobService {
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
     requireUsableTemplate(request.templateId(), userId);
+    // 감사 비교용 저장 전 값(WD-464) — 행 잠금 뒤에 읽어 동시 저장의 값이 섞이지 않는다.
+    ProactiveJobResponse before = proactiveJobRepository.findById(id, userId).orElse(null);
 
     LocalDateTime savedUpdatedAt =
         proactiveJobRepository.update(
@@ -311,7 +341,42 @@ public class ProactiveJobService {
     if (updated != null) {
       schedulerService.rescheduleJob(updated);
     }
+    if (before != null && updated != null) {
+      auditJobUpdate(userId, before, updated);
+    }
     return savedUpdatedAt;
+  }
+
+  /**
+   * 작업 수정 감사(WD-464). 저장 전후 DB 값을 비교해 바뀐 항목 이름만 모은다 — 켜기 외 항목은 UPDATE 1행, 켜기/끄기는 STATUS_CHANGE 1행.
+   * 목록의 켜기 토글(enabled 만 보내는 PUT)은 STATUS_CHANGE 1행만 남는다. 아무것도 바뀌지 않았으면 남기지 않는다. 템플릿 이름·다음 실행 시각처럼
+   * 저장의 부수 효과나 표시값은 비교하지 않는다.
+   */
+  private void auditJobUpdate(
+      Long userId, ProactiveJobResponse before, ProactiveJobResponse after) {
+    List<String> changed = new ArrayList<>();
+    if (!Objects.equals(before.name(), after.name())) changed.add("name");
+    if (!Objects.equals(before.prompt(), after.prompt())) changed.add("prompt");
+    if (!Objects.equals(before.templateId(), after.templateId())) changed.add("templateId");
+    if (!Objects.equals(before.cronExpression(), after.cronExpression())) {
+      changed.add("cronExpression");
+    }
+    if (!Objects.equals(before.timezone(), after.timezone())) changed.add("timezone");
+    if (!Objects.equals(before.triggerType(), after.triggerType())) changed.add("triggerType");
+    if (!Objects.equals(before.config(), after.config())) changed.add("config");
+    auditRecorder.updated(
+        userId,
+        ProactiveAuditRecorder.RESOURCE_JOB,
+        ProactiveAuditRecorder.LABEL_JOB,
+        after.id(),
+        after.name(),
+        changed,
+        AUDIT_FIELD_LABELS);
+    boolean wasEnabled = Boolean.TRUE.equals(before.enabled());
+    boolean isEnabled = Boolean.TRUE.equals(after.enabled());
+    if (wasEnabled != isEnabled) {
+      auditRecorder.jobEnabledChanged(userId, after.id(), after.name(), isEnabled);
+    }
   }
 
   @Transactional
@@ -319,8 +384,20 @@ public class ProactiveJobService {
     // 소유자 확인을 스케줄 해제보다 먼저 한다 (WD-165) — 예전엔 남의 삭제 요청이 행은 못 지우면서(204) 주인 작업의 예약 실행만 해제해, 작업은
     // 「켜짐」으로 남은 채 서버 재시작 전까지 돌지 않았다.
     requireOwnJob(id, userId);
+    // 감사에 남길 이름은 지우기 전에 읽어 둔다(WD-464). 바로 위에서 소유자 확인을 했으므로 있다.
+    ProactiveJobResponse target =
+        proactiveJobRepository
+            .findById(id, userId)
+            .orElseThrow(
+                () -> new ProactiveJobNotFoundException("Proactive Job을 찾을 수 없습니다: " + id));
     schedulerService.unregisterSchedule(id);
     proactiveJobRepository.delete(id, userId);
+    auditRecorder.deleted(
+        userId,
+        ProactiveAuditRecorder.RESOURCE_JOB,
+        ProactiveAuditRecorder.LABEL_JOB,
+        id,
+        target.name());
   }
 
   /**
@@ -351,6 +428,10 @@ public class ProactiveJobService {
         schedulerService.registerSchedule(job.id(), job.cronExpression(), job.timezone());
       } else {
         schedulerService.unregisterSchedule(id);
+      }
+      // 감사(WD-464) — 실제로 켜짐 상태가 바뀐 경우만 남긴다(이미 꺼진 작업 끄기는 무동작이라 남기지 않는다).
+      if (Boolean.TRUE.equals(job.enabled()) != enabled) {
+        auditRecorder.jobEnabledChanged(userId, id, job.name(), enabled);
       }
     }
   }

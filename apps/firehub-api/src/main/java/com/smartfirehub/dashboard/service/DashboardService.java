@@ -717,7 +717,7 @@ public class DashboardService {
 
     // Build activity items from two sources:
     // 1. pipeline_execution — pipeline events
-    // 2. audit_log — import events + dataset/dashboard creation events
+    // 2. audit_log — import events + dataset creation events
     // Unresolved (failing) pipelines are pinned to top via isResolved=false + sort
 
     List<ActivityItem> allItems = new ArrayList<>();
@@ -797,6 +797,9 @@ public class DashboardService {
     }
 
     // ---- Audit log events (imports + dataset creation) ----
+    // 분석 대시보드 생성(CREATE·dashboard) 행은 싣지 않는다(WD-464). 그 행은 작성자 본인 변경 감사로 남기 시작했는데,
+    // 피드는 조회자 가시성을 보지 않아 비공개 대시보드를 만든 사실이 모든 사람 피드에 「대시보드 생성됨」으로 보이고
+    // 이동할 화면도 없다. 예전 dashboard 분기는 그 행을 쓰는 곳이 없던 죽은 경로였다.
     var auditItems =
         dsl.select(
                 AL_ID,
@@ -811,11 +814,10 @@ public class DashboardService {
             .from(AUDIT_LOG)
             .leftJoin(DATASET)
             .on(AL_RESOURCE.eq("dataset").and(AL_RESOURCE_ID_AS_LONG.eq(D_ID)))
-            .where(
-                AL_ACTION_TYPE.in("IMPORT", "CREATE").and(AL_RESOURCE.in("dataset", "dashboard")))
+            .where(AL_ACTION_TYPE.in("IMPORT", "CREATE").and(AL_RESOURCE.eq("dataset")))
             // 보안 등급: 조회자가 볼 수 없는 데이터셋 유래 활동은 뺀다. ON 이 아니라 WHERE 에 둔다 — ON 에 두면 숨김 행이
             // "dataset #id" 로 남아 id 가 새고, 자바 후처리면 LIMIT 500 이 볼 수 있는 행을 먼저 잘라 낸다. 데이터셋 행이
-            // 없는 이력(삭제된 데이터셋·대시보드 이벤트)은 D_ID 가 null 이라 기존처럼 남는다.
+            // 없는 이력(삭제된 데이터셋)은 D_ID 가 null 이라 기존처럼 남는다.
             .and(D_ID.isNull().or(datasetAccessGuard.visibleCondition(viewer)))
             .orderBy(AL_ACTION_TIME.desc())
             .limit(500)
@@ -848,12 +850,6 @@ public class DashboardService {
         title = "데이터셋 '" + entityName + "' 생성됨";
         description = "";
         entityType = "DATASET";
-      } else if ("CREATE".equals(actionType) && "dashboard".equals(resource)) {
-        eventType = "DASHBOARD_CREATED";
-        severity = "INFO";
-        title = "대시보드 생성됨";
-        description = "";
-        entityType = "DASHBOARD";
       } else {
         continue;
       }
@@ -888,9 +884,7 @@ public class DashboardService {
                             || (typeFilter.equalsIgnoreCase("DATASET")
                                 && "DATASET".equals(entityType))
                             || (typeFilter.equalsIgnoreCase("IMPORT")
-                                && item.eventType().startsWith("IMPORT"))
-                            || (typeFilter.equalsIgnoreCase("DASHBOARD")
-                                && "DASHBOARD".equals(entityType));
+                                && item.eventType().startsWith("IMPORT"));
                     if (!matches) return false;
                   }
                   if (severityFilter != null

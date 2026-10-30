@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
@@ -327,13 +328,20 @@ public class ChartRepository {
    *
    * <p>대시보드를 공유할 때 위젯 차트를 함께 공유하는 용도다. 남이 만든 차트는 그 주인만 공유 여부를 정할 수 있으므로 작성자 조건 없이 바꾸면 남이 비공개로 되돌린
    * 차트가 내 대시보드 저장 한 번으로 주인 모르게 다시 공유된다. 그래서 소유자 인자를 필수로 받는다.
+   *
+   * <p>이미 공유된 차트는 건드리지 않고, 이번에 실제로 비공개 → 공유로 바뀐 차트의 id → 이름을 돌려준다 — 호출자가 그 차트마다 공유 켜기 감사를 남긴다
+   * (WD-464). 결과는 true → true 갱신을 빼도 같다(공유 여부 외 컬럼은 바꾸지 않는다).
    */
-  public void shareCharts(List<Long> chartIds, Long ownerId) {
-    if (chartIds.isEmpty()) return;
+  public Map<Long, String> shareCharts(List<Long> chartIds, Long ownerId) {
+    if (chartIds.isEmpty()) return Map.of();
+    Map<Long, String> flipped = new TreeMap<>();
     dsl.update(C)
         .set(C_IS_SHARED, true)
-        .where(C_ID.in(chartIds).and(C_CREATED_BY.eq(ownerId)))
-        .execute();
+        .where(C_ID.in(chartIds).and(C_CREATED_BY.eq(ownerId)).and(C_IS_SHARED.isFalse()))
+        .returning(C_ID, C_NAME)
+        .fetch()
+        .forEach(r -> flipped.put(r.get(C_ID), r.get(C_NAME)));
+    return flipped;
   }
 
   /**

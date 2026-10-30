@@ -382,7 +382,7 @@ class DashboardStatsServiceTest extends IntegrationTestBase {
         .set(AUDIT_LOG.ACTION_TIME, LocalDateTime.now().minusMinutes(5))
         .execute();
 
-    // 정상 완료 — DASHBOARD_CREATED 이벤트가 feed에 포함되어야 함
+    // 정상 완료 — dashboard 행은 피드 질의에서 빠지므로(WD-464) 예외 없이 끝나기만 하면 된다
     assertThatNoException().isThrownBy(() -> dashboardService.getActivityFeed(null, null, 0, 50));
   }
 
@@ -437,9 +437,12 @@ class DashboardStatsServiceTest extends IntegrationTestBase {
   // getActivityFeed() — dashboard CREATE 이벤트 검증
   // ======================================================================
 
-  /** dashboard CREATE 이벤트가 activity feed에 DASHBOARD_CREATED 타입으로 포함되는지 검증. */
+  /**
+   * dashboard CREATE 감사 행은 activity feed 에 싣지 않는다(WD-464). 분석 대시보드 작성자 감사가 이 행을 남기기 시작했는데, 피드는 조회자
+   * 가시성을 보지 않아 비공개 대시보드 생성이 모든 사람 피드에 보이게 된다.
+   */
   @Test
-  void getActivityFeed_dashboardCreateEvent_appearsInFeed() {
+  void getActivityFeed_dashboardCreateEvent_isNotInFeed() {
     // dashboard CREATE audit_log (resource_id는 유효한 숫자)
     dsl.insertInto(AUDIT_LOG)
         .set(AUDIT_LOG.USER_ID, testUserId)
@@ -455,7 +458,7 @@ class DashboardStatsServiceTest extends IntegrationTestBase {
 
     boolean hasDashboardCreated =
         feed.items().stream().anyMatch(i -> "DASHBOARD_CREATED".equals(i.eventType()));
-    assertThat(hasDashboardCreated).isTrue();
+    assertThat(hasDashboardCreated).isFalse();
   }
 
   /** dataset CREATE 이벤트가 activity feed에 DATASET_CREATED 타입으로 포함되는지 검증. */
