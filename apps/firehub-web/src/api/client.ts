@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 import type { TokenResponse } from '../types/auth';
+import { withCrossTabRefreshLock } from './refresh-lock';
 import { publishTenantSession } from './tenant-session';
 
 let accessToken: string | null = null;
@@ -96,9 +97,12 @@ client.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const { data } = await axios.post<TokenResponse>('/api/v1/auth/refresh', null, {
-          withCredentials: true,
-        });
+        // 다른 탭의 갱신과 겹치지 않게 탭 사이 잠금 안에서 보낸다(WD-438) — 겹치면 진 쪽 401 이 모든 탭 로그아웃이 된다.
+        const { data } = await withCrossTabRefreshLock(() =>
+          axios.post<TokenResponse>('/api/v1/auth/refresh', null, {
+            withCredentials: true,
+          }),
+        );
         const newAccessToken = data.accessToken;
         const newTenantId = data.activeTenantId ?? null;
 
