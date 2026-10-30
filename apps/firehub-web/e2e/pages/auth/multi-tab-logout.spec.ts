@@ -67,6 +67,9 @@ test.describe('다중 탭 로그아웃 동기화', () => {
  * 그 401 이 `hasSession` 삭제(로그아웃 신호)가 되어 모든 탭이 로그인 화면으로 갔다. 수정 뒤에는 탭 사이 잠금으로
  * 갱신이 차례로 나가 뒤 탭이 회전된 쿠키로 성공한다.
  */
+/** 로그인한 탭의 머리글 사용자 메뉴(이름·이메일) 버튼. */
+const userMenu = (page: Page) => page.getByRole('button', { name: /테스트 사용자 test@example\.com/ });
+
 test.describe('다중 탭 동시 갱신 (WD-438)', () => {
   /** 인증·홈 화면 모킹 — 갱신(/auth/refresh)은 컨텍스트 단의 회전 모의가 받도록 페이지 단에서는 걸지 않는다. */
   async function setupPageMocks(page: Page) {
@@ -110,7 +113,9 @@ test.describe('다중 탭 동시 갱신 (WD-438)', () => {
     await tab0.goto('/login');
     await tab0.evaluate(() => localStorage.setItem('hasSession', 'true'));
     await tab0.goto('/');
-    await expect(tab0.getByText('테스트 사용자')).toBeVisible();
+    // 로그인 상태 표식은 머리글 사용자 메뉴 버튼으로 본다 — 텍스트로 찾으면 홈 인사말(「환영합니다, 테스트 사용자님!」)이 먼저 그려진
+    // 순간 두 요소에 걸려 strict mode 오류로 가끔 실패한다(부하 중 재현).
+    await expect(userMenu(tab0)).toBeVisible();
 
     // 탭 두 개를 같은 순간에 연다(탭 복원·여러 링크 열기와 같은 상황)
     const tab1 = await context.newPage();
@@ -119,7 +124,7 @@ test.describe('다중 탭 동시 갱신 (WD-438)', () => {
     await Promise.all([tab1.goto('/'), tab2.goto('/')]);
 
     for (const tab of [tab1, tab2]) {
-      await expect(tab.getByText('테스트 사용자')).toBeVisible();
+      await expect(userMenu(tab)).toBeVisible();
     }
     // 갱신은 모두 성공해야 한다 — 401 이 하나라도 있으면 그 탭이 로그아웃 신호를 퍼뜨린다
     expect(statuses).toEqual([200, 200, 200]);
