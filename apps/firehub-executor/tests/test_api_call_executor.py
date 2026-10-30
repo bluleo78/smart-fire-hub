@@ -18,12 +18,19 @@ from app.services.api_call_executor import (
     ApiCallException,
     _apply_auth,
     _convert_value,
+    _resolve_mapping,
     _has_next_page,
     _parse_and_map,
     execute_api_call,
 )
 from app.services.db_utils import insert_batch
+from app.services.value_conversion import ConversionFailed
 from app.validators.ssrf_protection import SsrfException
+
+
+def _conv(value, fm):
+    """매핑을 실행기와 같이 풀어(_resolve_mapping) 값 하나를 변환한다."""
+    return _convert_value(value, _resolve_mapping(fm))
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +120,163 @@ def test_single_page_empty_result():
     assert result.success is True
     assert result.rows_loaded == 0
     conn.commit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# WD-431: 값 변환 실패는 None 이 아니라 스텝 실패(롤백) — Java JsonResponseParser 와 같은 문구
+# ---------------------------------------------------------------------------
+
+def test_conversion_error_on_later_page_fails_and_rolls_back():
+    # 둘째 페이지 첫 행(전체 3번째)의 값이 정수가 아니다 — 첫 페이지를 이미 넣었어도 커밋하지 않고 롤백한다(전부 반영 또는 전부 취소).
+    req = make_request(
+        pagination=PaginationConfig(type="OFFSET", page_size=2, offset_param="offset", limit_param="limit"),
+        field_mappings=[
+            FieldMapping(source_field="id", target_column="id_col", data_type="INTEGER"),
+            FieldMapping(source_field="name", target_column="name", data_type="TEXT"),
+        ],
+    )
+    conn, _ = make_conn()
+    responses = [
+        {"items": [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]},
+        {"items": [{"id": "not-a-number", "name": "C"}, {"id": 4, "name": "D"}]},
+    ]
+
+    with patch("app.services.api_call_executor.validate_url"):
+        with patch("app.services.api_call_executor._do_request", side_effect=responses):
+            with patch("app.services.api_call_executor.insert_batch") as mock_insert:
+                result = execute_api_call(req, conn)
+
+    assert result.success is False
+    assert result.error == (
+        "응답 데이터의 3번째 행 'id' 필드 값 'not-a-number' 을(를) 'id_col' 컬럼의 정수(INTEGER)로 변환할 수 없습니다"
+        " — 필드 매핑의 타입·형식을 확인하세요"
+    )
+    assert mock_insert.call_count == 1  # 첫 페이지만 — 둘째 페이지는 변환 단계에서 멈춘다
+    conn.rollback.assert_called_once()
+    conn.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "dtype, raw, expected",
+    [
+        ("DECIMAL", "1,2x", "필드 값 '1,2x' 을(를) 'c' 컬럼의 소수(DECIMAL)로 변환할 수 없습니다"),
+        ("DATE", "2024-13-40", "필드 값 '2024-13-40' 을(를) 'c' 컬럼의 날짜(DATE)로 변환할 수 없습니다"),
+        ("TIMESTAMP", "nope", "필드 값 'nope' 을(를) 'c' 컬럼의 날짜시간(TIMESTAMP)으로 변환할 수 없습니다"),
+        ("BOOLEAN", "Y", "필드 값 'Y' 을(를) 'c' 컬럼의 참/거짓(BOOLEAN)으로 변환할 수 없습니다(허용 값: true/false/1/0/yes/no)"),
+        ("BOOLEAN", "예", "필드 값 '예' 을(를)"),
+        ("INTEGER", True, "필드 값 'True' 을(를) 'c' 컬럼의 정수(INTEGER)로"),
+        ("INTEGER", "y" * 60, "필드 값 '" + "y" * 50 + "…' 을(를)"),
+    ],
+)
+def test_parse_and_map_conversion_error_raises_instead_of_none(dtype, raw, expected):
+    body = {"d": [{"v": raw}]}
+    with pytest.raises(ApiCallException) as exc:
+        _parse_and_map(body, "$.d", [FieldMapping(source_field="v", target_column="c", data_type=dtype)], None)
+    assert str(exc.value).startswith("응답 데이터의 1번째 행 'v' ")
+    assert expected in str(exc.value)
+    assert str(exc.value).endswith(" — 필드 매핑의 타입·형식을 확인하세요")
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [("yes", True), ("FALSE", False), ("0", False), ("no", False), (True, True), (1, True), (0, False),
+     ("", None), (None, None)],
+)
+def test_convert_boolean_strict_tokens_blank_is_null(raw, expected):
+    assert _conv(raw, _fm("f", "c", "BOOLEAN")) is expected
+
+
+def test_convert_blank_numeric_is_null():
+    assert _conv(" ", _fm("f", "c", "INTEGER")) is None
+    assert _conv("", _fm("f", "c", "DATE")) is None
+    assert _conv("", _fm("f", "c", "TEXT")) == ""
+
+
+def test_row_number_counts_non_object_items_like_java():
+    # 객체가 아닌 원소도 행 번호에 센다 — Java JsonResponseParser 와 같은 번호(WD-431)
+    body = {"d": [{"v": 1}, "junk", {"v": "x"}]}
+    with pytest.raises(ApiCallException, match="응답 데이터의 3번째 행 'v' 필드 값 'x'"):
+        _parse_and_map(body, "$.d", [FieldMapping(source_field="v", target_column="c", data_type="INTEGER")], None)
+
+
+def test_column_type_map_wins_over_mapping_type_like_java():
+    # 출력 컬럼 타입이 매핑 타입보다 먼저다(Java 경로와 같다) — 그래서 Tibero 적재기가 다시 변환할 필요가 없다
+    rows, _ = _parse_and_map(
+        {"d": [{"v": "7"}]}, "$.d", [FieldMapping(source_field="v", target_column="c", data_type="TEXT")], {"c": "INTEGER"}
+    )
+    assert rows == [{"c": 7}]
+
+
+@pytest.mark.parametrize("raw, expected", [(3.0, 3), ("3.0", 3), ("1e2", 100), (" 7 ", 7), ("1,234", None)])
+def test_integer_accepts_integral_float_forms(raw, expected):
+    fm = _fm("f", "c", "INTEGER", number_format="comma_separated") if raw == "1,234" else _fm("f", "c", "INTEGER")
+    assert _conv(raw, fm) == (1234 if expected is None else expected)
+
+
+@pytest.mark.parametrize("raw", [1.5, "1.5", 1e20, "1e20", "abc", True])
+def test_integer_rejects_fraction_and_out_of_range(raw):
+    with pytest.raises(ConversionFailed):
+        _conv(raw, _fm("f", "c", "INTEGER"))
+
+
+def test_bad_date_format_is_a_config_error_not_a_value_error():
+    fm = FieldMapping(source_field="when", target_column="c", data_type="DATE", date_format="%Q")
+    with pytest.raises(ApiCallException) as exc:
+        _parse_and_map({"d": [{"when": "2024-01-01"}]}, "$.d", [fm], None)
+    assert str(exc.value) == "'when' 필드 매핑의 날짜 형식 '%Q' 이(가) 올바르지 않습니다 — 필드 매핑 설정을 확인하세요"
+
+
+@pytest.mark.parametrize(
+    "fmt", ["%d/%m/%Y", "%Y%m%d", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S %Z", "%I:%M %p %d %b %Y", "%Y-%m-%d %H:%M:%S.%f", "%j/%Y", "%c"]
+)
+def test_valid_date_formats_pass_the_upfront_format_check(fmt):
+    # 날짜 형식은 행 루프 전에 한 번 검증한다(WD-431) — 올바른 형식이 설정 오류로 잘못 걸리지 않아야 한다
+    for dtype in ("DATE", "TIMESTAMP"):
+        _resolve_mapping(FieldMapping(source_field="w", target_column="c", data_type=dtype, date_format=fmt))
+
+
+def test_bad_timezone_is_a_config_error_not_ignored():
+    # 예전엔 잘못된 시간대를 조용히 무시했다 — Java 경로와 같이 설정 오류로 실패한다(WD-431)
+    fm = FieldMapping(source_field="ts", target_column="c", data_type="TIMESTAMP", source_timezone="Mars/Phobos")
+    with pytest.raises(ApiCallException) as exc:
+        _parse_and_map({"d": [{"ts": "2024-01-01T00:00:00"}]}, "$.d", [fm], None)
+    assert str(exc.value) == "'ts' 필드 매핑의 시간대 'Mars/Phobos' 이(가) 올바르지 않습니다 — 필드 매핑 설정을 확인하세요"
+
+
+def test_date_value_mismatch_with_valid_format_is_a_value_error():
+    fm = FieldMapping(source_field="when", target_column="c", data_type="DATE", date_format="%d/%m/%Y")
+    with pytest.raises(ApiCallException, match="필드 값 '2024-01-01' 을\\(를\\) 'c' 컬럼의 날짜\\(DATE\\)로"):
+        _parse_and_map({"d": [{"when": "2024-01-01"}]}, "$.d", [fm], None)
+
+
+def test_remote_and_pg_paths_report_the_same_conversion_message():
+    # Tibero(원격 적재) 경로도 PG 경로와 같은 API_CALL 문구·전체 행 번호로 실패한다 — 적재기가 PYTHON 문구로 다시 변환하지 않는다
+    from app.services.api_call_executor import execute_api_call_remote
+
+    def make():
+        return make_request(
+            output_table=STAGING,
+            pagination=PaginationConfig(type="OFFSET", page_size=2, offset_param="offset", limit_param="limit"),
+            column_type_map={"id": "INTEGER", "name": "TEXT"},
+        )
+
+    pages = [{"items": [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]}, {"items": [{"id": 3.5, "name": "C"}]}]
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("app.services.api_call_executor._do_request", side_effect=list(pages)), \
+            patch("app.services.api_call_executor.insert_batch"):
+        pg = execute_api_call(make(), make_conn()[0])
+    loader = MagicMock()
+    loader.load.side_effect = lambda tenant, table, rows, types: len(rows)
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("app.services.api_call_executor._do_request", side_effect=list(pages)):
+        remote = execute_api_call_remote(make(), loader)
+    expected = (
+        "응답 데이터의 3번째 행 'id' 필드 값 '3.5' 을(를) 'id' 컬럼의 정수(INTEGER)로 변환할 수 없습니다"
+        " — 필드 매핑의 타입·형식을 확인하세요"
+    )
+    assert pg.success is False and remote.success is False
+    assert pg.error == expected
+    assert remote.error == expected
 
 
 # ---------------------------------------------------------------------------
@@ -255,70 +419,70 @@ def _fm(source_field, target_column, data_type, **kwargs) -> FieldMapping:
 
 def test_convert_text():
     fm = _fm("f", "c", "TEXT")
-    assert _convert_value(123, fm) == "123"
-    assert _convert_value("hello", fm) == "hello"
+    assert _conv(123, fm) == "123"
+    assert _conv("hello", fm) == "hello"
 
 
 def test_convert_integer():
     fm = _fm("f", "c", "INTEGER")
-    assert _convert_value("42", fm) == 42
-    assert _convert_value(42, fm) == 42
+    assert _conv("42", fm) == 42
+    assert _conv(42, fm) == 42
 
 
 def test_convert_decimal():
     fm = _fm("f", "c", "DECIMAL")
-    assert _convert_value("3.14", fm) == Decimal("3.14")
+    assert _conv("3.14", fm) == Decimal("3.14")
 
 
 def test_convert_boolean_true_variants():
     fm = _fm("f", "c", "BOOLEAN")
-    assert _convert_value("true", fm) is True
-    assert _convert_value("1", fm) is True
-    assert _convert_value("yes", fm) is True
-    assert _convert_value(True, fm) is True
+    assert _conv("true", fm) is True
+    assert _conv("1", fm) is True
+    assert _conv("yes", fm) is True
+    assert _conv(True, fm) is True
 
 
 def test_convert_boolean_false_variants():
     fm = _fm("f", "c", "BOOLEAN")
-    assert _convert_value("false", fm) is False
-    assert _convert_value("0", fm) is False
-    assert _convert_value(False, fm) is False
+    assert _conv("false", fm) is False
+    assert _conv("0", fm) is False
+    assert _conv(False, fm) is False
 
 
 def test_convert_date_iso():
     fm = _fm("f", "c", "DATE")
-    result = _convert_value("2024-03-15", fm)
+    result = _conv("2024-03-15", fm)
     assert result == date(2024, 3, 15)
 
 
 def test_convert_date_with_format():
     fm = _fm("f", "c", "DATE", date_format="%d/%m/%Y")
-    result = _convert_value("15/03/2024", fm)
+    result = _conv("15/03/2024", fm)
     assert result == date(2024, 3, 15)
 
 
 def test_convert_timestamp_iso():
     fm = _fm("f", "c", "TIMESTAMP")
-    result = _convert_value("2024-03-15T10:30:00", fm)
+    result = _conv("2024-03-15T10:30:00", fm)
     assert isinstance(result, datetime)
     assert result.year == 2024
 
 
 def test_convert_timestamp_with_timezone_to_utc():
     fm = _fm("f", "c", "TIMESTAMP", source_timezone="America/New_York")
-    result = _convert_value("2024-03-15T10:30:00", fm)
+    result = _conv("2024-03-15T10:30:00", fm)
     assert isinstance(result, datetime)
     assert result.tzinfo is None  # stripped after UTC conversion
 
 
 def test_convert_geometry():
     fm = _fm("f", "c", "GEOMETRY")
-    assert _convert_value("POINT(0 0)", fm) == "POINT(0 0)"
+    assert _conv("POINT(0 0)", fm) == "POINT(0 0)"
 
 
 def test_convert_none_returns_none():
     fm = _fm("f", "c", "INTEGER")
-    assert _convert_value(None, fm) is None
+    assert _conv(None, fm) is None
 
 
 # ---------------------------------------------------------------------------
@@ -327,12 +491,12 @@ def test_convert_none_returns_none():
 
 def test_integer_comma_separated():
     fm = _fm("f", "c", "INTEGER", number_format="comma_separated")
-    assert _convert_value("1,234,567", fm) == 1234567
+    assert _conv("1,234,567", fm) == 1234567
 
 
 def test_decimal_comma_separated():
     fm = _fm("f", "c", "DECIMAL", number_format="comma_separated")
-    assert _convert_value("1,234.56", fm) == Decimal("1234.56")
+    assert _conv("1,234.56", fm) == Decimal("1234.56")
 
 
 # ---------------------------------------------------------------------------
@@ -519,7 +683,7 @@ def test_parse_and_map_basic():
         FieldMapping(source_field="id", target_column="user_id", data_type="INTEGER"),
         FieldMapping(source_field="name", target_column="user_name", data_type="TEXT"),
     ]
-    rows = _parse_and_map(body, "$.data", mappings, None)
+    rows, _ = _parse_and_map(body, "$.data", mappings, None)
     assert len(rows) == 2
     assert rows[0] == {"user_id": 1, "user_name": "Alice"}
     assert rows[1] == {"user_id": 2, "user_name": "Bob"}
@@ -528,7 +692,7 @@ def test_parse_and_map_basic():
 def test_parse_and_map_empty_path():
     body = [{"id": 1}]
     mappings = [FieldMapping(source_field="id", target_column="id", data_type="INTEGER")]
-    rows = _parse_and_map(body, "$", mappings, None)
+    rows, _ = _parse_and_map(body, "$", mappings, None)
     assert len(rows) == 1
     assert rows[0] == {"id": 1}
 
@@ -539,7 +703,7 @@ def test_parse_and_map_missing_field_returns_none():
         FieldMapping(source_field="id", target_column="id", data_type="INTEGER"),
         FieldMapping(source_field="missing", target_column="col", data_type="TEXT"),
     ]
-    rows = _parse_and_map(body, "$.items", mappings, None)
+    rows, _ = _parse_and_map(body, "$.items", mappings, None)
     assert rows[0]["col"] is None
 
 
@@ -1007,6 +1171,7 @@ def test_remote_single_page_loads_through_loader_without_pg_connection():
             patch("app.services.api_call_executor.insert_batch") as pg_insert:
         result = execute_api_call_remote(req, loader)
     assert result.success is True and result.rows_loaded == 2 and result.total_pages == 1
+    # 행은 _parse_and_map 이 이미 변환했다(WD-431) — 적재기는 직렬화만 한다
     loader.load.assert_called_once_with(
         1, STAGING, [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}], {"id": "INTEGER", "name": "TEXT"}
     )

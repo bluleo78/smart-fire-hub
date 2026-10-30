@@ -92,7 +92,7 @@ public class ApiCallPreviewService {
       String effectiveDataPath =
           (request.dataPath() == null || request.dataPath().isBlank()) ? "$" : request.dataPath();
       List<Map<String, Object>> allRows =
-          jsonResponseParser.parseAndMap(responseBody, effectiveDataPath, fieldMappings, null);
+          jsonResponseParser.parseAndMap(responseBody, effectiveDataPath, fieldMappings, null, 0);
 
       List<String> columns =
           request.fieldMappings() != null

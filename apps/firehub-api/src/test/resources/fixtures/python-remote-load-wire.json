@@ -1,11 +1,11 @@
 {
-  "_doc": "Python 실행기 원격 적재(RemoteLoader, WD-77 Task 6)의 요청 본문 고정 사례. input 은 API 응답·스크립트 stdout 에서 올 법한 원시 값(문자열 숫자·빈 문자열·변환 불가 값), wire 는 RemoteLoader 가 변환·직렬화해 db-executor POST /execute/load 에 싣는 값이다. Python 테스트(test_remote_load.py)가 input → wire 를 고정하고, db-executor 실서버 테스트(TiberoLiveLoadTest)가 wire 를 그대로 적재해 값을 확인한다. 변환 불가 값·숫자/날짜 빈 문자열은 None 이 되어 db-executor 의 fail-closed 에 걸리지 않는다. 컬럼 이름은 실서버 테스트 스테이징(ID_KEY·AMOUNT·NAME·FLAG·D·TS)과 같다.",
+  "_doc": "Python 실행기 원격 적재(RemoteLoader, WD-77 Task 6)의 요청 본문 고정 사례. input 은 API 응답·스크립트 stdout 에서 올 법한 원시 값(문자열 숫자·빈 문자열·NaN·null), wire 는 RemoteLoader 가 변환·직렬화해 db-executor POST /execute/load 에 싣는 값이다. Python 테스트(test_remote_load.py)가 input → wire 를 고정하고, db-executor 실서버 테스트(TiberoLiveLoadTest)가 wire 를 그대로 적재해 값을 확인한다. 숫자/날짜 빈 문자열·NaN 은 None 이 되어 db-executor 의 fail-closed 에 걸리지 않는다. 변환 불가 값(abc·2024-13-40 등)은 WD-431 부터 None 이 아니라 행·키·값을 짚는 오류로 스텝을 실패시키므로(아무것도 보내지 않는다) 이 사례에 넣지 않는다. 컬럼 이름은 실서버 테스트 스테이징(ID_KEY·AMOUNT·NAME·FLAG·D·TS)과 같다.",
   "rawColumnTypes": {"id_key": "INTEGER", "amount": "FLOAT", "name": "STRING", "flag": "BOOLEAN", "d": "DATE", "ts": "DATETIME"},
   "wireColumnTypes": {"id_key": "INTEGER", "amount": "DECIMAL", "name": "TEXT", "flag": "BOOLEAN", "d": "DATE", "ts": "TIMESTAMP"},
   "input": [
     {"id_key": " 7 ", "amount": "12.5", "name": "alpha", "flag": "yes", "d": "2024-03-05", "ts": "2024-03-05T10:02:03+09:00"},
-    {"id_key": "2", "amount": "", "name": "", "flag": "", "d": "", "ts": ""},
-    {"id_key": "abc", "amount": "NaN", "name": null, "flag": null, "d": "2024-13-40", "ts": "not-a-time"}
+    {"id_key": "2", "amount": "", "name": "", "flag": "no", "d": "", "ts": ""},
+    {"id_key": null, "amount": "NaN", "name": null, "flag": null, "d": null, "ts": null}
   ],
   "wire": [
     {"id_key": 7, "amount": "12.5", "name": "alpha", "flag": true, "d": "2024-03-05", "ts": "2024-03-05T10:02:03+09:00"},

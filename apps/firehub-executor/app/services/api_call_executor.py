@@ -5,7 +5,7 @@ import random
 import time
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -18,6 +18,7 @@ from app.db.backends.remote import RemoteLoadBackend, RemoteLoadError, require_s
 from app.schemas.requests import ApiCallExecuteRequest, FieldMapping
 from app.schemas.responses import ApiCallExecuteResponse
 from app.services import api_call_errors as errors
+from app.services import value_conversion as vc
 from app.services.api_call_errors import RetryableApiCallError
 from app.services.db_utils import insert_batch
 from app.services.query_key_encoding import encode_query_key
@@ -84,6 +85,7 @@ def execute_api_call_remote(request: ApiCallExecuteRequest, loader: RemoteLoadBa
     def write_remote(rows: List[Dict[str, Any]]) -> None:
         # RemoteLoader 는 응답의 적재 행 수가 보낸 행 수와 다르면 RemoteLoadError 를 올린다 — 돌아오면 len(rows) 행이 들어간 것이라
         # 반환값을 따로 세지 않는다.
+        # 행은 _parse_and_map 이 이미 변환·검증했다(WD-431) — 적재기는 직렬화만 한다.
         loader.load(request.tenant_id, request.output_table, rows, request.column_type_map)
 
     try:
@@ -146,6 +148,8 @@ def _fetch_and_write_pages(
 
     total_rows = 0
     total_pages = 0
+    # 지금까지 받은 응답 원소 수(객체가 아닌 원소 포함) — 변환 실패 문구의 행 번호를 페이지를 넘어 이어 센다(WD-431, Java 와 같은 번호).
+    total_items = 0
     log_lines: List[str] = []
 
     # 2. Pagination
@@ -171,12 +175,15 @@ def _fetch_and_write_pages(
                 pag_params[pag.limit_param] = str(page_size)
 
             response_body = _execute_request(request, pag_params)
-            rows = _parse_and_map(
+            # 변환 실패 문구의 행 번호가 페이지를 넘어 이어지도록 지금까지 받은 응답 원소 수를 넘긴다(WD-431).
+            rows, item_count = _parse_and_map(
                 response_body,
                 request.data_path,
                 request.field_mappings,
                 request.column_type_map,
+                row_offset=total_items,
             )
+            total_items += item_count
 
             # Extract total count (first page only)
             if total_count is None and pag.total_path:
@@ -208,7 +215,7 @@ def _fetch_and_write_pages(
     else:
         # Single request (NONE or unknown pagination type)
         response_body = _execute_request(request, {})
-        rows = _parse_and_map(
+        rows, _ = _parse_and_map(
             response_body,
             request.data_path,
             request.field_mappings,
@@ -438,28 +445,74 @@ def _apply_auth(
 # JSON parsing + field mapping
 # ---------------------------------------------------------------------------
 
+class _ResolvedMapping(NamedTuple):
+    """행 루프 전에 한 번 푼 필드 매핑 — 대문자 값 타입과 원본 시간대(없으면 None). 날짜 형식은 검증만 해 두고 매핑의 것을 쓴다."""
+
+    fm: FieldMapping
+    upper_type: str
+    zone: Optional[ZoneInfo]
+
+
+# 날짜 형식 검증용 표본 시각 — 형식으로 써 본 문자열을 같은 형식으로 다시 읽어 형식 문자열 자체의 오류를 가린다(%Z 를 위해 UTC).
+_FORMAT_PROBE = datetime(2000, 1, 2, 3, 4, 5, 6, tzinfo=timezone.utc)
+
+
+def _resolve_mapping(fm: FieldMapping, column_type_map: Optional[dict] = None) -> _ResolvedMapping:
+    """값 타입(출력 컬럼 타입 우선, 없으면 매핑의 data_type — Java 경로와 같다)을 정하고 날짜 형식·시간대 설정을 검증한다.
+
+    잘못된 날짜 형식·시간대는 값 변환 실패가 아니라 설정 오류(``ApiCallException``)다(WD-431, Java 와 같은 문구).
+    """
+    upper = ((column_type_map or {}).get(fm.target_column) or fm.data_type or "TEXT").upper()
+    temporal = upper in ("DATE", "TIMESTAMP", "DATETIME")
+    if temporal and fm.date_format:
+        try:
+            datetime.strptime(_FORMAT_PROBE.strftime(fm.date_format), fm.date_format)
+        except ValueError:
+            raise ApiCallException(errors.invalid_date_format_message(fm.source_field, fm.date_format)) from None
+    zone = None
+    if upper in ("TIMESTAMP", "DATETIME") and fm.source_timezone:
+        try:
+            zone = ZoneInfo(fm.source_timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ApiCallException(errors.invalid_timezone_message(fm.source_field, fm.source_timezone)) from None
+    return _ResolvedMapping(fm, upper, zone)
+
+
 def _parse_and_map(
     response_body: Any,
     data_path: str,
     field_mappings: List[FieldMapping],
     column_type_map: Optional[dict],
-) -> List[Dict[str, Any]]:
-    """Extract items from response using jsonpath, map fields."""
+    row_offset: int = 0,
+) -> Tuple[List[Dict[str, Any]], int]:
+    """응답에서 데이터 경로의 항목을 꺼내 필드 매핑대로 행을 만든다. 돌려주는 값: (행 목록, 응답 원소 수 — 다음 페이지의 ``row_offset``).
+
+    값을 바꿀 수 없으면 행·필드·값·타입을 짚는 ``ApiCallException`` 으로 실패한다(WD-431, 규칙은 ``value_conversion``). 행 번호는 응답
+    원소 순번(1부터, ``row_offset`` 다음부터 — 객체가 아닌 원소도 센다, Java 와 같다).
+    """
     items = _extract_data(response_body, data_path)
     if not items:
-        return []
+        return [], 0
+    resolved = [_resolve_mapping(fm, column_type_map) for fm in field_mappings]
 
     rows: List[Dict[str, Any]] = []
-    for item in items:
+    for index, item in enumerate(items, start=row_offset + 1):
         if not isinstance(item, dict):
             continue
         row: Dict[str, Any] = {}
-        for fm in field_mappings:
+        for rm in resolved:
+            fm = rm.fm
             raw_value = item.get(fm.source_field)
-            converted = _convert_value(raw_value, fm)
-            row[fm.target_column] = converted
+            try:
+                row[fm.target_column] = _convert_value(raw_value, rm)
+            except vc.ConversionFailed:
+                raise ApiCallException(
+                    errors.value_conversion_message(
+                        index, fm.source_field, fm.target_column, str(raw_value), rm.upper_type
+                    )
+                ) from None
         rows.append(row)
-    return rows
+    return rows, len(items)
 
 
 def _extract_data(response_body: Any, data_path: str) -> List[Any]:
@@ -631,22 +684,24 @@ def _read_path_safe(response_body: Any, path: str) -> Any:
     return None
 
 
-def _convert_value(value: Any, fm: FieldMapping) -> Any:
-    """Convert a raw value to the target data type specified in FieldMapping."""
+def _convert_value(value: Any, rm: _ResolvedMapping) -> Any:
+    """값 하나를 매핑 타입으로 바꾼다. 바꿀 수 없으면 ``value_conversion.ConversionFailed``(행·필드는 ``_parse_and_map`` 이 붙인다)."""
     if value is None:
         return None
-
-    data_type = (fm.data_type or "TEXT").upper()
+    fm = rm.fm
+    data_type = rm.upper_type
+    if vc.is_blank_null(value, data_type):
+        return None
 
     try:
         if data_type in ("TEXT", "VARCHAR", "STRING"):
             return str(value)
 
         if data_type == "INTEGER":
-            str_val = str(value)
-            if fm.number_format and "comma_separated" in fm.number_format.lower():
-                str_val = str_val.replace(",", "")
-            return int(str_val.strip())
+            # 64비트 정수만 — 정수 값인 실수 표기(3.0·"1e2")는 받고 소수부·범위 밖은 실패(WD-431, Java 와 같은 규칙).
+            if isinstance(value, str) and fm.number_format and "comma_separated" in fm.number_format.lower():
+                value = value.replace(",", "")
+            return vc.to_int_strict(value)
 
         if data_type in ("DECIMAL", "NUMERIC", "FLOAT", "DOUBLE"):
             str_val = str(value)
@@ -655,10 +710,8 @@ def _convert_value(value: Any, fm: FieldMapping) -> Any:
             return Decimal(str_val.strip())
 
         if data_type == "BOOLEAN":
-            if isinstance(value, bool):
-                return value
-            str_val = str(value).strip().lower()
-            return str_val in ("true", "1", "yes")
+            # true/false/1/0/yes/no 만 받는다(WD-431) — 예전엔 그 밖의 값('Y'·'예' 등)이 조용히 거짓이었다.
+            return vc.to_boolean_strict(value)
 
         if data_type == "DATE":
             if isinstance(value, date):
@@ -670,6 +723,7 @@ def _convert_value(value: Any, fm: FieldMapping) -> Any:
             return date.fromisoformat(str_val)
 
         if data_type in ("TIMESTAMP", "DATETIME"):
+            zone = rm.zone
             if isinstance(value, datetime):
                 dt = value
             else:
@@ -681,12 +735,8 @@ def _convert_value(value: Any, fm: FieldMapping) -> Any:
                     dt = datetime.fromisoformat(str_val.replace("Z", "+00:00"))
 
             # Convert to UTC
-            if fm.source_timezone and dt.tzinfo is None:
-                try:
-                    tz = ZoneInfo(fm.source_timezone)
-                    dt = dt.replace(tzinfo=tz)
-                except ZoneInfoNotFoundError:
-                    pass
+            if zone is not None and dt.tzinfo is None:
+                dt = dt.replace(tzinfo=zone)
             if dt.tzinfo is not None:
                 dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
             return dt
@@ -698,11 +748,9 @@ def _convert_value(value: Any, fm: FieldMapping) -> Any:
         return value
 
     except (ValueError, InvalidOperation, TypeError) as e:
-        logger.warning(
-            "Type conversion failed for field '%s' value=%r type=%s: %s",
-            fm.source_field, value, data_type, e,
-        )
-        return None
+        # 원인(파서 영어 원문)은 사용자 문구에 싣지 않고 로그(debug)에만 남긴다. 행·필드는 _parse_and_map 이 붙인다.
+        logger.debug("Type conversion failed for field '%s' type=%s: %s", fm.source_field, data_type, e)
+        raise vc.ConversionFailed() from e
 
 
 # ---------------------------------------------------------------------------

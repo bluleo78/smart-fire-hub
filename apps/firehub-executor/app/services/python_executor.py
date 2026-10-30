@@ -10,13 +10,14 @@ import time
 import traceback
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import AbstractSet, Any, Callable, Dict, List, Optional, Tuple
 
 from app.config import Settings
 from app.db.connection import get_connection
 from app.schemas.responses import PythonExecuteResponse
 from app.services.db_utils import insert_batch
 from app.services.sql_executor import pg_error_info
+from app.services import value_conversion as vc
 from app.tenant import resolve_read_db_url, resolve_schema
 
 logger = logging.getLogger(__name__)
@@ -93,8 +94,8 @@ def execute_python(
         return cmd, None
 
     def load_rows(rows: List[Dict[str, Any]]) -> int:
-        """stdout JSON 행을 타입 변환해 테넌트 롤 연결로 출력 테이블에 넣는다."""
-        _apply_type_conversion(rows, column_type_map)
+        """stdout JSON 행(``_run_script`` 가 이미 타입 변환·검증함)을 테넌트 롤 연결로 출력 테이블에 넣는다."""
+        # 타입 변환은 _run_script 가 DB 에 닿기 전에 모든 행에 대해 이미 했다(WD-431) — 변환 실패면 여기까지 오지 않는다.
         # 적재도 테넌트 롤로 — 스크립트가 남의 스키마에 쓰지 못하게 한다.
         with get_connection(tenant_id, settings) as conn:
             insert_batch(conn, output_table, rows)
@@ -145,6 +146,7 @@ def _run_script(
     load_rows: Callable[[List[Dict[str, Any]]], int],
     load_failure: Callable[[Exception], Tuple[str, Optional[Any]]] = None,
     redact: Callable[[Optional[str]], Optional[str]] = _no_redact,
+    skip_conversion_keys: AbstractSet[str] = frozenset(),
 ) -> PythonExecuteResponse:
     """PG·Tibero 경로가 함께 쓰는 스크립트 실행 뼈대 — 실행별 폴더, 실행, 시간 초과 kill, stdout JSON 적재, 응답, 정리.
 
@@ -155,6 +157,8 @@ def _run_script(
     - ``load_failure(e)``: 적재 예외를 (사용자 문구, pg_error) 로 바꾼다. 기본은 PG 규칙(WD-211 — 원문은 로그에만, 문구는
       ``LOAD_FAILED_MESSAGE``, PG 데이터 오류는 pg_error 로 api 가 사유를 만든다).
     - ``redact``: 실행 로그·오류에서 비밀을 지운다(Tibero 는 스크립트 토큰, PG 는 그대로). 시간 초과 문구는 고정이라 지우지 않는다.
+    - ``skip_conversion_keys``: 적재하지 않을 키(Tibero 는 적재기가 빼는 시스템 컬럼) — 타입 변환·검증 대상에서 뺀다(WD-431). PG 는
+      시스템 컬럼도 그대로 적재하므로 비어 있다.
     - ``settings``: 실행별 폴더 소유자를 이 뼈대가 직접 정한다(``_sandbox_owner``) — 호출부마다 넘기게 두면 한쪽이 빠뜨렸을 때
       그 경로만 운영에서 샌드박스가 뜨지 못한다. nsjail 비활성 개발 경로는 chown 하지 않는다(root 가 아닌 맥 개발 환경에서 실패한다).
     실행마다 전용 폴더(``pyrun-*``)를 만들어 스크립트를 그 안 ``script.py`` 에 쓴다(WD-408). nsjail 은 이 폴더만 샌드박스 ``/tmp`` 로
@@ -215,6 +219,8 @@ def _run_script(
                     _require_rows_are_objects(rows)
                     _require_known_columns(rows[0], column_type_map)
                     _require_first_row_keys(rows)
+                    # 값 타입 변환·검증도 적재 전에 모든 행에 제자리로 한다(WD-431) — 실패하면 아무것도 적재하지 않는다.
+                    _apply_type_conversion(rows, column_type_map, skip_keys=skip_conversion_keys)
                 except OutputRowsError as e:
                     return PythonExecuteResponse(
                         success=False,
@@ -445,10 +451,10 @@ def execute_python_tibero(
     - 토큰은 nsjail 명령줄에 값으로 싣지 않는다(``--env GENIA_DB_TOKEN`` 이름만, 값은 nsjail 프로세스 환경). 명령줄은 ``ps`` 와
       ``TimeoutExpired`` 문구로 새어 나갈 수 있다. 실행 로그·오류에서도 토큰 문자열을 지운다.
     - stdout JSON 출력은 PG 연결이 아니라 ``loader``(``RemoteLoader``)로 db-executor ``/execute/load`` 에 보낸다. 대상은 api 가 만든
-      스테이징(``STG_<24HEX>``)뿐이고, 출력 테이블 반영(옮기기)은 api 가 한 Tibero 트랜잭션으로 한다. 값 변환·직렬화는 ``loader`` 가
-      api_call 과 같은 경로(``_apply_type_conversion`` → ``to_wire_value``)로 하므로 여기서는 원시 행을 넘긴다.
+      스테이징(``STG_<24HEX>``)뿐이고, 출력 테이블 반영(옮기기)은 api 가 한 Tibero 트랜잭션으로 한다. 값 타입 변환·검증은 PG 와 같이
+      ``_run_script`` 가 적재 전에 모든 행에 한다(WD-431). ``loader`` 는 시스템 키 빼기·직렬화(``to_wire_value``)만 한다.
 
-    ``loader`` 는 호출자(라우터)가 만든다 — ``app.db.backends.remote`` 가 이 모듈의 변환 함수를 가져다 쓰므로 여기서 가져오면 순환 import 다.
+    ``loader`` 는 호출자(라우터)가 만든다.
     토큰 누락·출력 대상 스테이징 이름 검사는 라우터가 스크립트를 띄우기 전에 한다(``store_gate.require_output_table``). 여기서는 토큰의
     테넌트가 요청 테넌트와 다르거나(빈 토큰 포함) db-executor 주소가 없으면 스크립트를 띄우지 않고 실패한다(fail-closed). 스테이징이 아닌
     이름은 원격 적재기도 다시 거부한다.
@@ -513,6 +519,8 @@ def execute_python_tibero(
         load_rows=load_rows,
         load_failure=_tibero_load_failure,
         redact=lambda text: _redact(text, token),
+        # 적재기가 빼는 시스템 컬럼 키는 적재하지 않으므로 변환·검증하지 않는다(WD-431).
+        skip_conversion_keys=_SYSTEM_COLUMN_KEYS,
     )
 
 
@@ -542,6 +550,13 @@ ROW_NOT_OBJECT_MESSAGE = "출력 JSON 의 {row}번째 행이 객체가 아닙니
 
 # N번째(1부터) 행에 첫 행의 키가 없을 때 — 적재 컬럼은 첫 행의 키로 정해진다.
 ROW_MISSING_KEY_MESSAGE = "출력 JSON 의 {row}번째 행에 첫 행의 키 '{key}' 가 없습니다. 모든 행에 첫 행과 같은 키를 넣어 주세요."
+
+# N번째(1부터) 행의 값을 출력 데이터셋 컬럼 타입으로 바꿀 수 없을 때(WD-431 — 예전엔 조용히 None 이었다).
+# value 는 str(값)을 value_conversion.excerpt 로 자른 것, target·hint 는 value_conversion.target·hint.
+VALUE_CONVERSION_MESSAGE = (
+    "출력 JSON 의 {row}번째 행 '{key}' 값 '{value}' 을(를) {target} 변환할 수 없습니다{hint}."
+    " 출력 데이터셋 컬럼 타입에 맞는 값으로 출력해 주세요."
+)
 
 # 그 밖의 적재 실패(원문은 로그에만).
 LOAD_FAILED_MESSAGE = "출력 결과를 데이터셋에 적재하지 못했습니다. 출력 JSON 의 키와 값 형식을 확인해 주세요."
@@ -630,39 +645,68 @@ def _parse_stdout_json(stdout: str) -> Optional[List[Dict[str, Any]]]:
 # Type conversion
 # ---------------------------------------------------------------------------
 
-def _apply_type_conversion(rows: List[Dict[str, Any]], column_type_map: Optional[dict]) -> None:
-    """In-place type conversion for rows based on column_type_map."""
+def _apply_type_conversion(
+    rows: List[Dict[str, Any]],
+    column_type_map: Optional[dict],
+    skip_keys: AbstractSet[str] = frozenset(),
+) -> None:
+    """column_type_map 에 따라 행 값을 제자리 변환한다. ``skip_keys`` 에 든 키(적재하지 않을 키)는 건드리지 않는다.
+
+    바꿀 수 없는 값이 있으면 첫 번째 것(행 순서 → 행 안의 키 순서)의 행 번호(1부터)·키·값·타입을 짚는 ``ValueConversionError`` 를
+    던진다(WD-431). API 로컬 경로(LocalPythonOutputLoader.applyTypeConversion)와 같은 규칙·같은 문구다.
+    """
     if not column_type_map:
         return
-    for row in rows:
+    for i, row in enumerate(rows, start=1):
         for col, val in row.items():
-            if val is None:
+            if val is None or col in skip_keys:
                 continue
             dtype = column_type_map.get(col)
             if not dtype:
                 continue
-            row[col] = _convert_single(val, dtype)
+            try:
+                row[col] = _convert_single(val, dtype)
+            except vc.ConversionFailed:
+                raise ValueConversionError(
+                    VALUE_CONVERSION_MESSAGE.format(
+                        row=i,
+                        key=col,
+                        value=vc.excerpt(str(val)),
+                        target=vc.target(dtype),
+                        hint=vc.hint(dtype),
+                    )
+                ) from None
+
+
+class ValueConversionError(OutputRowsError):
+    """출력 값을 컬럼 타입으로 바꿀 수 없음(WD-431) — 메시지가 곧 사용자 문구다. 적재 전에 나므로 DB 는 건드리지 않았다."""
 
 
 def _convert_single(value: Any, dtype: str) -> Any:
-    """Convert a single value to the target data type."""
+    """값 하나를 대상 타입으로 바꾼다. 알 수 없는 타입은 그대로.
+
+    숫자·불리언·날짜 타입의 빈 문자열(공백뿐 포함)은 None(NULL — 데이터 임포트와 같은 규칙, 예전에도 None 이었다). 바꿀 수 없는 값은
+    ``value_conversion.ConversionFailed``(WD-431 — 예전엔 경고 로그 후 None). 행·키는 ``_apply_type_conversion`` 이 붙인다.
+    """
     if value is None:
         return None
     dtype_upper = dtype.upper()
+    if vc.is_blank_null(value, dtype_upper):
+        return None
     try:
         if dtype_upper in ("TEXT", "VARCHAR", "STRING"):
             return str(value)
 
         if dtype_upper == "INTEGER":
-            return int(str(value).strip())
+            # 64비트 정수만 — 정수 값인 실수 표기(3.0·"1e2")는 받고, 소수부(1.5)·범위 밖(1e20)은 실패(WD-431, API 와 같은 규칙).
+            return vc.to_int_strict(value)
 
         if dtype_upper in ("DECIMAL", "NUMERIC", "FLOAT", "DOUBLE"):
             return Decimal(str(value).strip())
 
         if dtype_upper == "BOOLEAN":
-            if isinstance(value, bool):
-                return value
-            return str(value).strip().lower() in ("true", "1", "yes")
+            # true/false/1/0/yes/no 만 받는다(WD-431) — 예전엔 그 밖의 값('Y'·'예' 등)이 조용히 거짓이었다.
+            return vc.to_boolean_strict(value)
 
         if dtype_upper == "DATE":
             if isinstance(value, date):
@@ -678,7 +722,7 @@ def _convert_single(value: Any, dtype: str) -> Any:
         return value
 
     except (ValueError, InvalidOperation, TypeError) as e:
-        logger.warning("Type conversion failed for value=%r dtype=%s: %s", value, dtype, e)
-        return None
+        # 원인(파서 영어 원문)은 사용자 문구에 싣지 않는다 — 문구는 행·키·값·타입만으로 충분하다.
+        raise vc.ConversionFailed() from e
 
 

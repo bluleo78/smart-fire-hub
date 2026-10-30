@@ -4,7 +4,9 @@ import com.jayway.jsonpath.InvalidJsonException;
 import com.jayway.jsonpath.InvalidPathException;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.PathNotFoundException;
+import com.smartfirehub.pipeline.service.ValueConversion;
 import java.math.BigDecimal;
+import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -13,6 +15,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,17 +28,22 @@ public class JsonResponseParser {
    * Parses a JSON response string, extracts an array at the given JSONPath, and maps each element
    * to a row according to the provided field mappings.
    *
+   * <p>값을 컬럼 타입으로 바꿀 수 없으면 행·필드·값·타입을 짚는 {@link ApiCallException} 으로 실패한다(WD-431, 규칙은 {@link
+   * ValueConversion}). DB 에 쓰기 전에 페이지 전체를 변환하므로 실패한 페이지는 한 행도 적재되지 않는다.
+   *
    * @param jsonResponse raw JSON string
    * @param dataPath JSONPath expression to the data array (e.g. "$.data.items")
    * @param fieldMappings column mapping rules
+   * @param rowOffset 앞 페이지까지 받은 응답 항목 수 — 실패 문구의 행 번호가 페이지를 넘어 이어지게 한다(단건 호출은 0)
    * @return list of mapped rows ready for insertBatch
-   * @throws ApiCallException if the dataPath is not found
+   * @throws ApiCallException if the dataPath is not found, 매핑 설정이 잘못됐거나 값을 변환할 수 없을 때
    */
   public List<Map<String, Object>> parseAndMap(
       String jsonResponse,
       String dataPath,
       List<ApiCallConfig.FieldMapping> fieldMappings,
-      Map<String, String> columnTypeMap) {
+      Map<String, String> columnTypeMap,
+      int rowOffset) {
 
     // JSON 이 아닌 응답(HTML 오류 페이지·평문·빈 본문)을 먼저 걸러 낸다(WD-150). jayway 의 기본 파서(json-smart)는 관대해서
     // HTML 을 문자열 하나로 읽어 버리고, 그러면 「데이터 경로를 찾을 수 없습니다」나 0행 성공처럼 원인과 다른 결과가 나온다.
@@ -72,87 +80,107 @@ public class JsonResponseParser {
       rawList = List.of(extracted);
     }
 
+    // 매핑별 타입·날짜 형식·시간대는 행마다가 아니라 한 번만 풀어 둔다 — 잘못된 설정은 여기서 설정 오류로 알린다(WD-431).
+    // 항목이 없으면 값 변환이 없으므로 예전처럼 설정을 검사하지 않는다.
+    List<ResolvedMapping> resolved =
+        rawList.isEmpty() ? List.of() : resolve(fieldMappings, columnTypeMap);
     List<Map<String, Object>> result = new ArrayList<>(rawList.size());
-    int skipped = 0;
-
-    for (Object item : rawList) {
-      try {
-        Map<String, Object> row = mapItem(item, fieldMappings, columnTypeMap);
-        result.add(row);
-      } catch (Exception e) {
-        skipped++;
-        log.warn("Skipping row due to conversion error: {}", e.getMessage());
-      }
+    for (int i = 0; i < rawList.size(); i++) {
+      // 행 번호는 응답 항목 순번(1부터, 앞 페이지 다음부터)이다(WD-431).
+      result.add(mapItem(rawList.get(i), resolved, rowOffset + i + 1));
     }
-
-    if (skipped > 0) {
-      log.warn(
-          "Skipped {} rows due to type conversion errors (total extracted: {})",
-          skipped,
-          rawList.size());
-    }
-
     return result;
   }
 
+  /** 필드 매핑 하나를 행 루프 전에 푼 결과 — 대문자 타입(없으면 null), 날짜 형식(없으면 null), 원본 시간대. */
+  private record ResolvedMapping(
+      ApiCallConfig.FieldMapping mapping,
+      String upperType,
+      DateTimeFormatter formatter,
+      ZoneId zone) {}
+
+  /** 데이터셋 컬럼 타입을 우선하고(없으면 매핑의 dataType), DATE·TIMESTAMP 의 형식·시간대를 검증해 둔다. */
+  private static List<ResolvedMapping> resolve(
+      List<ApiCallConfig.FieldMapping> fieldMappings, Map<String, String> columnTypeMap) {
+    List<ResolvedMapping> out = new ArrayList<>(fieldMappings.size());
+    for (ApiCallConfig.FieldMapping mapping : fieldMappings) {
+      String type =
+          columnTypeMap != null
+              ? columnTypeMap.getOrDefault(mapping.targetColumn(), mapping.dataType())
+              : mapping.dataType();
+      String upper = type == null ? null : type.toUpperCase(Locale.ROOT);
+      boolean temporal = "DATE".equals(upper) || "TIMESTAMP".equals(upper);
+      DateTimeFormatter formatter = temporal ? formatter(mapping) : null;
+      ZoneId zone = "TIMESTAMP".equals(upper) ? sourceZone(mapping) : UTC;
+      out.add(new ResolvedMapping(mapping, upper, formatter, zone));
+    }
+    return out;
+  }
+
   @SuppressWarnings("unchecked")
-  private Map<String, Object> mapItem(
-      Object item,
-      List<ApiCallConfig.FieldMapping> fieldMappings,
-      Map<String, String> columnTypeMap) {
+  private Map<String, Object> mapItem(Object item, List<ResolvedMapping> resolved, int rowNumber) {
     Map<String, Object> sourceMap =
         item instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
     Map<String, Object> row = new LinkedHashMap<>();
 
-    for (ApiCallConfig.FieldMapping mapping : fieldMappings) {
+    for (ResolvedMapping rm : resolved) {
+      ApiCallConfig.FieldMapping mapping = rm.mapping();
       Object rawValue = sourceMap.get(mapping.sourceField());
-      // Use actual column type from dataset metadata; fall back to mapping.dataType() for backward
-      // compat
-      String resolvedType =
-          columnTypeMap != null
-              ? columnTypeMap.getOrDefault(mapping.targetColumn(), mapping.dataType())
-              : mapping.dataType();
-      Object converted = convertValue(rawValue, resolvedType, mapping);
-      row.put(mapping.targetColumn(), converted);
+      try {
+        row.put(mapping.targetColumn(), convertValue(rawValue, rm));
+      } catch (ValueConversion.Failed e) {
+        // 원문(영어) 예외는 로그에만 남기고, 사용자에게는 행·필드·값·타입을 짚는 한국어 문구를 보인다.
+        log.debug("API 응답 값 변환 실패: row={} field={}", rowNumber, mapping.sourceField(), e);
+        throw new ApiCallException(
+            ApiCallErrorMessages.valueConversion(
+                rowNumber,
+                mapping.sourceField(),
+                mapping.targetColumn(),
+                ValueConversion.pyStr(rawValue),
+                rm.upperType()),
+            e);
+      }
     }
 
     return row;
   }
 
-  private Object convertValue(
-      Object rawValue, String dataType, ApiCallConfig.FieldMapping mapping) {
-    if (rawValue == null) {
-      return null;
-    }
-
-    if (dataType == null) {
-      // No type info available — preserve Jackson's native types (Integer, Long, Double, Boolean,
-      // String)
-      // so JDBC can correctly bind them to PostgreSQL column types.
+  /** 값 하나를 컬럼 타입으로 바꾼다. 파서 예외는 {@link ValueConversion.Failed} 로 바꿔 던진다(호출부는 그것만 잡는다). */
+  private Object convertValue(Object rawValue, ResolvedMapping rm) {
+    String upper = rm.upperType();
+    if (rawValue == null || upper == null) {
+      // 타입 정보가 없으면 Jackson 의 원래 타입(Integer·Long·Double·Boolean·String)을 그대로 둬 JDBC 가 바인딩하게 한다.
       return rawValue;
     }
-
-    return switch (dataType.toUpperCase()) {
-      case "TEXT", "VARCHAR" -> rawValue.toString();
-      case "INTEGER" -> toLong(rawValue, mapping);
-      case "DECIMAL" -> toBigDecimal(rawValue, mapping);
-      case "BOOLEAN" -> toBoolean(rawValue);
-      case "DATE" -> toLocalDate(rawValue, mapping);
-      case "TIMESTAMP" -> toLocalDateTime(rawValue, mapping);
-      case "GEOMETRY" -> rawValue instanceof String ? rawValue : rawValue.toString();
-      default -> rawValue;
-    };
+    if (ValueConversion.isBlankNull(rawValue, upper)) {
+      return null;
+    }
+    ApiCallConfig.FieldMapping mapping = rm.mapping();
+    try {
+      return switch (upper) {
+        case "TEXT", "VARCHAR" -> rawValue.toString();
+        case "INTEGER" -> toLong(rawValue, mapping);
+        case "DECIMAL" -> toBigDecimal(rawValue, mapping);
+        case "BOOLEAN" -> ValueConversion.toBooleanStrict(rawValue);
+        case "DATE" -> toLocalDate(rawValue, rm);
+        case "TIMESTAMP" -> toLocalDateTime(rawValue, rm);
+        case "GEOMETRY" -> rawValue instanceof String ? rawValue : rawValue.toString();
+        default -> rawValue;
+      };
+    } catch (NumberFormatException | ArithmeticException | DateTimeException e) {
+      // NumberFormatException(BigDecimal), DateTimeParseException(날짜) 등 — 값 변환 실패로 통일한다.
+      throw new ValueConversion.Failed(e);
+    }
   }
 
+  /**
+   * 64비트 정수로 바꾼다 — 규칙은 {@link ValueConversion#toLongStrict}(WD-431). comma_separated 면 쉼표를 먼저 뺀다.
+   */
   private Long toLong(Object value, ApiCallConfig.FieldMapping mapping) {
-    if (value instanceof Number n) {
-      return n.longValue();
+    if (value instanceof String s && "comma_separated".equalsIgnoreCase(mapping.numberFormat())) {
+      value = s.replace(",", "");
     }
-    String s = value.toString();
-    if ("comma_separated".equalsIgnoreCase(mapping.numberFormat())) {
-      s = s.replace(",", "");
-    }
-    return Long.parseLong(s.strip());
+    return ValueConversion.toLongStrict(value);
   }
 
   private BigDecimal toBigDecimal(Object value, ApiCallConfig.FieldMapping mapping) {
@@ -166,53 +194,64 @@ public class JsonResponseParser {
     return new BigDecimal(s.strip());
   }
 
-  private Boolean toBoolean(Object value) {
-    if (value instanceof Boolean b) {
-      return b;
+  /** 필드 매핑의 날짜 형식(없으면 null). 패턴 자체가 잘못됐으면 값 변환 실패가 아니라 설정 오류로 알린다(WD-431). */
+  private static DateTimeFormatter formatter(ApiCallConfig.FieldMapping mapping) {
+    String fmt = mapping.dateFormat();
+    if (fmt == null || fmt.isBlank()) {
+      return null;
     }
-    String s = value.toString().toLowerCase();
-    return "true".equals(s) || "1".equals(s) || "yes".equals(s);
+    try {
+      return DateTimeFormatter.ofPattern(fmt);
+    } catch (IllegalArgumentException e) {
+      throw new ApiCallException(
+          ApiCallErrorMessages.invalidDateFormat(mapping.sourceField(), fmt), e);
+    }
   }
 
-  private LocalDate toLocalDate(Object value, ApiCallConfig.FieldMapping mapping) {
-    String s = value.toString();
-    String fmt = mapping.dateFormat();
-    if (fmt != null && !fmt.isBlank()) {
-      return LocalDate.parse(s, DateTimeFormatter.ofPattern(fmt));
-    }
-    return LocalDate.parse(s);
-  }
-
-  private LocalDateTime toLocalDateTime(Object value, ApiCallConfig.FieldMapping mapping) {
-    String s = value.toString();
-    String fmt = mapping.dateFormat();
-
-    // Determine timezone: field-level override takes priority, then parent
+  /** 필드 매핑의 원본 시간대(없으면 UTC). 잘못된 시간대는 설정 오류로 알린다(WD-431). */
+  private static ZoneId sourceZone(ApiCallConfig.FieldMapping mapping) {
     String tzStr = mapping.sourceTimezone();
-    ZoneId zone = (tzStr != null && !tzStr.isBlank()) ? ZoneId.of(tzStr) : ZoneId.of("UTC");
+    if (tzStr == null || tzStr.isBlank()) {
+      return UTC;
+    }
+    try {
+      return ZoneId.of(tzStr);
+    } catch (DateTimeException e) {
+      throw new ApiCallException(
+          ApiCallErrorMessages.invalidTimezone(mapping.sourceField(), tzStr), e);
+    }
+  }
 
-    if (fmt != null && !fmt.isBlank()) {
-      DateTimeFormatter formatter = DateTimeFormatter.ofPattern(fmt);
+  private static final ZoneId UTC = ZoneId.of("UTC");
+
+  private LocalDate toLocalDate(Object value, ResolvedMapping rm) {
+    String s = value.toString();
+    return rm.formatter() != null ? LocalDate.parse(s, rm.formatter()) : LocalDate.parse(s);
+  }
+
+  private LocalDateTime toLocalDateTime(Object value, ResolvedMapping rm) {
+    String s = value.toString();
+    DateTimeFormatter formatter = rm.formatter();
+
+    if (formatter != null) {
       try {
         // Try parsing as ZonedDateTime first (if format includes zone)
-        ZonedDateTime zdt = ZonedDateTime.parse(s, formatter);
-        return zdt.withZoneSameInstant(ZoneId.of("UTC")).toLocalDateTime();
+        return ZonedDateTime.parse(s, formatter).withZoneSameInstant(UTC).toLocalDateTime();
       } catch (Exception ignored) {
         // Fall through to LocalDateTime parse
       }
       LocalDateTime ldt = LocalDateTime.parse(s, formatter);
-      return ZonedDateTime.of(ldt, zone).withZoneSameInstant(ZoneId.of("UTC")).toLocalDateTime();
+      return ZonedDateTime.of(ldt, rm.zone()).withZoneSameInstant(UTC).toLocalDateTime();
     }
 
     // No format specified — try ISO formats
     try {
-      ZonedDateTime zdt = ZonedDateTime.parse(s);
-      return zdt.withZoneSameInstant(ZoneId.of("UTC")).toLocalDateTime();
+      return ZonedDateTime.parse(s).withZoneSameInstant(UTC).toLocalDateTime();
     } catch (Exception ignored) {
       // Fall through
     }
     LocalDateTime ldt = LocalDateTime.parse(s);
-    return ZonedDateTime.of(ldt, zone).withZoneSameInstant(ZoneId.of("UTC")).toLocalDateTime();
+    return ZonedDateTime.of(ldt, rm.zone()).withZoneSameInstant(UTC).toLocalDateTime();
   }
 
   /**

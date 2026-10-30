@@ -1,5 +1,6 @@
 package com.smartfirehub.pipeline.service.executor;
 
+import com.smartfirehub.pipeline.service.ValueConversion;
 import java.math.BigDecimal;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
@@ -124,6 +125,49 @@ public final class ApiCallErrorMessages {
    */
   public static String dataPathInvalid(String dataPath) {
     return "데이터 경로(JSONPath) 형식이 올바르지 않습니다: " + dataPath + " — 예: $.data.items";
+  }
+
+  /**
+   * 응답 값을 출력 컬럼 타입으로 바꿀 수 없을 때(WD-431 — 예전엔 그 행을 조용히 건너뛰고 스텝은 「완료」였다). Python 실행기 {@code
+   * api_call_errors.value_conversion_message} 와 같은 문장이다.
+   *
+   * @param rowNumber 응답 데이터에서의 행 번호(1부터, 페이지를 넘어 이어 센다)
+   * @param field 응답 필드 이름(매핑의 sourceField)
+   * @param column 출력 컬럼 이름(매핑의 targetColumn)
+   * @param valueText 값의 Python {@code str()} 표기(자르기 전 — 여기서 {@link ValueConversion#excerpt} 로 자른다)
+   * @param dtype 출력 컬럼 타입
+   */
+  public static String valueConversion(
+      int rowNumber, String field, String column, String valueText, String dtype) {
+    return "응답 데이터의 "
+        + rowNumber
+        + "번째 행 '"
+        + field
+        + "' 필드 값 '"
+        + ValueConversion.excerpt(valueText)
+        + "' 을(를) '"
+        + column
+        + "' 컬럼의 "
+        + ValueConversion.target(dtype)
+        + " 변환할 수 없습니다"
+        + ValueConversion.hint(dtype)
+        + " — 필드 매핑의 타입·형식을 확인하세요";
+  }
+
+  /**
+   * 필드 매핑의 날짜 형식 패턴이 잘못됐을 때(WD-431) — 값 변환 실패와 구분한다. Python 실행기 {@code
+   * api_call_errors.invalid_date_format_message} 와 같은 문장이다.
+   */
+  public static String invalidDateFormat(String field, String pattern) {
+    return "'" + field + "' 필드 매핑의 날짜 형식 '" + pattern + "' 이(가) 올바르지 않습니다 — 필드 매핑 설정을 확인하세요";
+  }
+
+  /**
+   * 필드 매핑의 원본 시간대가 잘못됐을 때(WD-431) — 예전엔 Java 경로는 행을 건너뛰고 Python 실행기는 조용히 무시했다. Python 실행기 {@code
+   * api_call_errors.invalid_timezone_message} 와 같은 문장이다.
+   */
+  public static String invalidTimezone(String field, String timezone) {
+    return "'" + field + "' 필드 매핑의 시간대 '" + timezone + "' 이(가) 올바르지 않습니다 — 필드 매핑 설정을 확인하세요";
   }
 
   public static String interrupted() {

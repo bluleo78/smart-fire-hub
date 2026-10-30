@@ -307,7 +307,7 @@ class TiberoLiveLoadTest {
       assertThat(rs.getInt(4)).isEqualTo(1);
       assertThat(rs.getString(5)).isEqualTo("2024-03-05");
       assertThat(rs.getString(6)).isEqualTo("2024-03-05 01:02:03");
-      // 둘째 행: 빈 값은 None → NULL(빈 문자열 TEXT 는 Tibero 에서 NULL 로 저장된다), BOOLEAN 빈 값은 거짓(0).
+      // 둘째 행: 빈 값은 None → NULL(빈 문자열 TEXT 는 Tibero 에서 NULL 로 저장된다), BOOLEAN "no" 는 거짓(0).
       assertThat(rs.next()).isTrue();
       assertThat(rs.getLong(1)).isEqualTo(2);
       assertThat(rs.getBigDecimal(2)).isNull();
@@ -315,7 +315,7 @@ class TiberoLiveLoadTest {
       assertThat(rs.getInt(4)).isZero();
       assertThat(rs.getString(5)).isNull();
       assertThat(rs.getString(6)).isNull();
-      // 셋째 행: 변환 불가 값은 전부 NULL.
+      // 셋째 행: null·NaN 은 전부 NULL(변환 불가 값은 WD-431 부터 Python 실행기가 스텝을 실패시켜 여기 오지 않는다).
       assertThat(rs.next()).isTrue();
       rs.getLong(1);
       assertThat(rs.wasNull()).isTrue();

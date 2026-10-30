@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -9,9 +10,11 @@ from app.config import Settings
 from app.tenant import TenantResolutionError
 from app.services.python_executor import (
     StdoutNotJsonError,
+    _convert_single,
     _parse_stdout_json,
     execute_python,
 )
+from app.services.value_conversion import ConversionFailed
 
 
 def make_settings(**kwargs) -> Settings:
@@ -706,6 +709,98 @@ def test_row_missing_first_row_key_reports_row_number():
     mock_insert.assert_not_called()
 
 
+# ---------------------------------------------------------------------------
+# WD-431: 값 변환 실패 — API 로컬 경로(LocalPythonOutputLoaderTest)와 같은 입력·같은 문구(러너 접두 없이)
+# ---------------------------------------------------------------------------
+
+
+def test_value_conversion_failure_reports_row_key_value_type():
+    # 예전엔 경고 로그 후 None 으로 넣고 「완료」였다 — 이제 적재 전에(커넥션도 열지 않고) 실패한다
+    result, mock_get_conn, mock_insert = _run_load(
+        '[{"name": "a", "n": 1}, {"name": "b", "n": 2}, {"name": "c", "n": "not-a-number"}]',
+        {"name": "TEXT", "n": "INTEGER"},
+    )
+
+    assert result.success is False
+    assert result.rows_loaded == 0
+    assert result.error == (
+        "출력 JSON 의 3번째 행 'n' 값 'not-a-number' 을(를) 정수(INTEGER)로 변환할 수 없습니다."
+        " 출력 데이터셋 컬럼 타입에 맞는 값으로 출력해 주세요."
+    )
+    assert result.pg_error is None
+    mock_get_conn.assert_not_called()
+    mock_insert.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "dtype, json_value, expected",
+    [
+        ("DECIMAL", '"1,2x"', "'v' 값 '1,2x' 을(를) 소수(DECIMAL)로 변환할 수 없습니다."),
+        ("DATE", '"2024-13-40"', "'v' 값 '2024-13-40' 을(를) 날짜(DATE)로 변환할 수 없습니다."),
+        ("TIMESTAMP", '"nope"', "'v' 값 'nope' 을(를) 날짜시간(TIMESTAMP)으로 변환할 수 없습니다."),
+        ("BOOLEAN", '"예"', "'v' 값 '예' 을(를) 참/거짓(BOOLEAN)으로 변환할 수 없습니다(허용 값: true/false/1/0/yes/no)."),
+        ("BOOLEAN", '"Y"', "'v' 값 'Y' 을(를) 참/거짓(BOOLEAN)으로"),
+        # 값은 str() 표기 — API 로컬 경로의 pyStr 과 같은 글자
+        ("INTEGER", "true", "'v' 값 'True' 을(를) 정수(INTEGER)로"),
+        ("INTEGER", "1.5", "'v' 값 '1.5' 을(를) 정수(INTEGER)로"),
+    ],
+)
+def test_value_conversion_failure_messages_per_type(dtype, json_value, expected):
+    result, mock_get_conn, _ = _run_load('[{"v": ' + json_value + "}]", {"v": dtype})
+    assert result.success is False
+    assert result.error.startswith("출력 JSON 의 1번째 행 ")
+    assert expected in result.error
+    mock_get_conn.assert_not_called()
+
+
+def test_value_conversion_failure_truncates_long_value():
+    long_value = "x" * 49 + "\U0001F600" + "TAIL"
+    result, _, _ = _run_load(json.dumps([{"v": long_value}]), {"v": "INTEGER"})
+    assert "'v' 값 '" + "x" * 49 + "\U0001F600…' 을(를)" in result.error
+    assert "TAIL" not in result.error
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [("yes", True), (" TRUE ", True), ("1", True), (1, True), (1.0, True), (True, True),
+     ("false", False), ("0", False), ("no", False), (0, False), (False, False), ("", None), ("  ", None)],
+)
+def test_boolean_accepts_only_known_tokens_and_blank_is_null(raw, expected):
+    # WD-431: true/false/1/0/yes/no·JSON 불리언·숫자 1/0 만 받고, 빈 문자열은 None(예전엔 거짓)
+    assert _convert_single(raw, "BOOLEAN") is expected
+
+
+@pytest.mark.parametrize("raw", ["Y", "N", "예", "아니오", 2, -1, float("nan")])
+def test_boolean_unknown_values_fail_instead_of_false(raw):
+    with pytest.raises(ConversionFailed):
+        _convert_single(raw, "BOOLEAN")
+
+
+@pytest.mark.parametrize("dtype", ["INTEGER", "DECIMAL", "NUMERIC", "DATE", "TIMESTAMP", "DATETIME"])
+def test_blank_string_is_null_for_non_text_types(dtype):
+    assert _convert_single("", dtype) is None
+    assert _convert_single("  ", dtype) is None
+    assert _convert_single("", "TEXT") == ""
+
+
+@pytest.mark.parametrize("raw, expected", [(3.0, 3), ("3.0", 3), ("1e2", 100), (1e2, 100), (" +1_000 ", 1000), (7, 7)])
+def test_integer_accepts_integral_float_forms(raw, expected):
+    # WD-431: 정수 값인 실수 표기는 받는다(API 로컬 경로 ValueConversion.toLongStrict 와 같은 규칙)
+    assert _convert_single(raw, "INTEGER") == expected
+
+
+@pytest.mark.parametrize("raw", [1.5, "1.5", 1e20, "1e20", 2 ** 63, "9223372036854775808", True, "1e999999999", "nan"])
+def test_integer_rejects_fraction_and_out_of_range(raw):
+    with pytest.raises(ConversionFailed):
+        _convert_single(raw, "INTEGER")
+
+
+def test_json_null_stays_null_not_an_error():
+    result, _, mock_insert = _run_load('[{"n": null, "b": null}]', {"n": "INTEGER", "b": "BOOLEAN"})
+    assert result.success is True
+    assert mock_insert.call_args[0][2] == [{"n": None, "b": None}]
+
+
 class _FakePgError(Exception):
     """psycopg2 오류 흉내 — pg_error_info 는 pgcode·diag 속성으로만 판별한다."""
 
@@ -1026,9 +1121,34 @@ def test_tibero_stdout_rows_go_to_remote_loader_with_staging_table():
     assert result.success is True
     assert result.rows_loaded == 2
     assert result.output == "log line\n"  # 출력 테이블이 있으면 stderr 만(PG 와 같은 규칙)
-    # 원시 행 그대로 넘긴다 — 변환·직렬화·시스템 키 빼기는 RemoteLoader(to_wire_rows)가 청크마다 한다.
-    assert loader.calls == [(4, STG, [{"a": "1"}, {"a": "2"}], ctm)]
+    # 타입 변환은 적재 전에 _run_script 가 모든 행에 한다(WD-431) — 적재기는 변환된 행을 받아 시스템 키 빼기·직렬화만 한다.
+    assert loader.calls == [(4, STG, [{"a": 1}, {"a": 2}], ctm)]
     assert loader.drop_keys == [frozenset({"id", "import_id", "created_at", "_updated_at"})]
+
+
+def test_tibero_system_column_keys_are_not_converted():
+    # WD-431: 적재기가 빼는 시스템 컬럼 키는 적재하지 않으므로 변환·검증하지 않는다 — 타입 맵에 있어도 실패하지 않는다
+    ctm = {"a": "INTEGER", "id": "INTEGER"}
+    result, _, loader = _run_tibero(
+        make_tibero_settings(),
+        stdout='[{"a": "1", "id": "not-a-number"}]',
+        output_table=STG,
+        column_type_map=ctm,
+    )
+    assert result.success is True
+    assert loader.calls[0][2] == [{"a": 1, "id": "not-a-number"}]
+
+
+def test_tibero_conversion_failure_uses_python_wording_and_sends_nothing():
+    result, _, loader = _run_tibero(
+        make_tibero_settings(),
+        stdout='[{"a": 1}, {"a": 1.5}]',
+        output_table=STG,
+        column_type_map={"a": "INTEGER"},
+    )
+    assert result.success is False
+    assert result.error.startswith("출력 JSON 의 2번째 행 'a' 값 '1.5' 을(를) 정수(INTEGER)로 변환할 수 없습니다.")
+    assert loader.calls == []
 
 
 def test_tibero_no_output_table_does_not_load():

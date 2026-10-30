@@ -111,17 +111,16 @@ class LocalPythonOutputLoaderTiberoTest {
   }
 
   @Test
-  void loadStaging_integerBeyond64Bits_staysExactBigInteger_knownDifferenceFromRemote() {
-    // M4(알려진 차이): 64비트를 넘는 INTEGER 는 로컬에서 정확한 BigInteger 로 바인딩된다(물리 컬럼 NUMBER(19) 를 넘으면 Tibero 오류).
-    // 원격 경로는 db-executor LoadValues 가 longValueExact 로 요청 전체를 실패시킨다(2ba6f765) — 두 경로 모두 값을 바꿔 저장하지
-    // 않는다.
-    // 차이는 Long.MAX_VALUE 초과 ~ NUMBER(19) 상한 사이 값이 로컬에서는 저장되고 원격에서는 실패한다는 것뿐이다.
-    loader.loadStaging(STG, "[{\"n\": \"12345678901234567890\"}]", Map.of("n", "INTEGER"));
-
-    ArgumentCaptor<List<Map<String, Object>>> captor = rowsCaptor();
-    verify(rowService).insertTempBatch(eq(STG), anyList(), captor.capture(), isNull());
-    assertThat(captor.getValue().get(0).get("n"))
-        .isEqualTo(new java.math.BigInteger("12345678901234567890"));
+  void loadStaging_integerBeyond64Bits_failsBeforeLoad_likeRemote() {
+    // WD-431: 64비트를 넘는 INTEGER 는 변환 단계에서 행·키를 짚는 오류로 실패한다 — 예전엔 로컬은 BigInteger 로 바인딩하고 원격은
+    // db-executor 가 요청 전체를 실패시켜 두 경로가 갈렸다(M4 알려진 차이). 이제 두 경로 모두 적재 전에 같은 규칙으로 실패한다.
+    assertThatThrownBy(
+            () ->
+                loader.loadStaging(
+                    STG, "[{\"n\": \"12345678901234567890\"}]", Map.of("n", "INTEGER")))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessageContaining("1번째 행 'n' 값 '12345678901234567890' 을(를) 정수(INTEGER)로 변환할 수 없습니다");
+    verifyNoInteractions(rowService);
   }
 
   @Test

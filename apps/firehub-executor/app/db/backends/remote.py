@@ -2,9 +2,8 @@
 
 ``DbBackend`` 처럼 연결(``connection()``)을 빌려주지 않는다. 연결 없는 계약(``RemoteLoadBackend``)만 만족한다.
 
-**값 변환 순서(결정 4).** db-executor 는 변환 불가 값과 숫자·날짜 타입의 빈 문자열을 요청 전체 실패로 처리한다(fail-closed).
-그 대가로 Python 실행기가 보내기 *전에* 값을 변환한다: 기존 ``python_executor._apply_type_conversion`` 이 변환에 실패한 값을
-None 으로 만들고, 이 모듈의 직렬화가 JSON 으로 만든다. 직렬화 형태는 공유 벡터(``tibero-bind-vectors.json``)의 입력 형태다.
+**값 변환은 호출자 몫.** 호출자(PYTHON·API_CALL 스텝)가 보내기 전에 값을 변환·검증한다(WD-431 — 규칙은 ``value_conversion``).
+이 모듈은 직렬화만 한다. 직렬화 형태는 공유 벡터(``tibero-bind-vectors.json``)의 입력 형태다.
 """
 from __future__ import annotations
 
@@ -20,7 +19,7 @@ from typing import AbstractSet, Any, Dict, List, Optional, Protocol
 import httpx
 
 from app.config import Settings
-from app.services.python_executor import _apply_type_conversion
+from app.services import value_conversion as vc
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +34,6 @@ _TYPE_ALIASES = {
     "DOUBLE": "DECIMAL",
     "DATETIME": "TIMESTAMP",
 }
-# 빈 문자열이 db-executor 에서 요청 전체 실패가 되는 타입(벡터 expectFailure). 변환을 거치지 않은 빈 값도 None 으로 보낸다.
-_NULL_ON_BLANK = {"INTEGER", "DECIMAL", "DATE", "TIMESTAMP"}
-
 _PREFIX = "Tibero 적재(db-executor)"
 
 # ``/execute/load`` 한 번에 보내는 최대 행 수(최종 리뷰 I3). db-executor 는 요청 본문을 Jackson 목록과 변환 배열로 두 번 메모리에 올리고
@@ -108,7 +104,8 @@ def to_wire_value(value: Any, app_type: Optional[str]) -> Any:
     if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, str):
-        if kind in _NULL_ON_BLANK and not value.strip():
+        # 숫자·불리언·날짜 타입의 빈 문자열은 db-executor 가 거부하므로 None 으로 보낸다(value_conversion 규칙).
+        if vc.is_blank_null(value, kind):
             return None
         return value
     if isinstance(value, (int,)):
@@ -123,17 +120,12 @@ def to_wire_rows(
     column_type_map: Optional[dict],
     drop_keys: AbstractSet[str] = frozenset(),
 ) -> List[Dict[str, Any]]:
-    """행 목록을 **복사해** 기존 Python 변환을 적용하고 JSON 값으로 직렬화한다(입력 행은 바꾸지 않는다).
-
-    ``drop_keys`` 가 있으면 복사하면서 그 키를 뺀다(변환 전에 — 뺄 키는 변환하지 않는다). 없으면 기존처럼 ``dict(row)`` 로 복사한다.
-    """
-    if drop_keys:
-        copied = [{k: v for k, v in row.items() if k not in drop_keys} for row in rows]
-    else:
-        copied = [dict(row) for row in rows]
-    _apply_type_conversion(copied, column_type_map)
+    """변환이 끝난 행 목록을 JSON 값으로 직렬화한 **사본**을 돌려준다(입력 행은 바꾸지 않는다). ``drop_keys`` 의 키는 뺀다."""
     types = column_type_map or {}
-    return [{col: to_wire_value(val, types.get(col)) for col, val in row.items()} for row in copied]
+    return [
+        {col: to_wire_value(val, types.get(col)) for col, val in row.items() if col not in drop_keys}
+        for row in rows
+    ]
 
 
 class RemoteLoader:
@@ -175,6 +167,8 @@ class RemoteLoader:
         drop_keys: AbstractSet[str] = frozenset(),
     ) -> int:
         """rows 를 스테이징 ``table`` 에 적재하고 적재 행 수(전 청크 합)를 돌려준다.
+
+        행은 호출자가 이미 타입 변환한 것이다 — 여기서는 직렬화만 한다(WD-431).
 
         ``drop_keys`` 에 든 키는 청크마다 행을 복사할 때 뺀다(Python Tibero 출력의 시스템 컬럼, WD-78) — 호출자가 전체 결과의 사본을
         따로 만들지 않게. 비어 있으면(api-call) 행을 그대로 복사한다.
