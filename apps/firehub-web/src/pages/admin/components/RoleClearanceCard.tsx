@@ -30,15 +30,19 @@ import { cumulativeDescription } from '../../../lib/security-level';
  * ① 저장 후 최상위 열람 역할이 0개가 되면 저장 비활성+배너, ② 본인 자격이 내려가면 확인 다이얼로그.
  * 시스템 ADMIN(fixed)은 편집 불가 — 최상위 고정 표시만 한다.
  * role:write 가 없으면(canEdit=false) 현재 등급만 읽기 전용으로 보인다 — 미리보기·저장 모두 서버가 role:write 로 막는다(WD-121).
+ * 범위 밖 역할(scopeLockReason — 자기에게 없는 권한이 붙은 역할)은 권한 카드처럼 라디오·저장을 잠그고 이유를 보인다(WD-444).
  */
 export function RoleClearanceCard({
   roleId,
   canEdit,
+  scopeLockReason,
   onDirtyChange,
 }: {
   roleId: number;
   /** 등급을 바꿀 수 있는가(role:write). false 면 라디오를 잠그고 저장 버튼을 숨긴다. */
   canEdit: boolean;
+  /** 이 역할의 등급을 바꿀 수 없는 이유(WD-444) — 있으면 라디오를 잠그고 저장 버튼을 숨긴 채 이 문구를 보인다. 서버도 같은 이유로 403 을 돌려준다. */
+  scopeLockReason?: string;
   /** 미저장 등급 선택 여부가 바뀔 때 알린다 — 역할 상세의 이탈 경고가 이 카드의 변경도 알 수 있게(WD-118). */
   onDirtyChange?: (dirty: boolean) => void;
 }) {
@@ -52,6 +56,8 @@ export function RoleClearanceCard({
   const [confirmOpen, setConfirmOpen] = useState(false);
   // 라디오 라벨-입력 연결용 id 접두(09-form-patterns §J — 반복 행은 `${baseId}-${id}`).
   const baseId = useId();
+  // 등급을 실제로 바꿀 수 있는가 — role:write 가 있어도 범위 밖 역할이면 잠근다(WD-444).
+  const editable = canEdit && !scopeLockReason;
 
   const current = clearance ? String(clearance.securityLevelId) : '';
   const selected = draft ?? current;
@@ -124,8 +130,9 @@ export function RoleClearanceCard({
             <RadioGroup
               value={selected}
               onValueChange={setDraft}
-              disabled={!canEdit}
+              disabled={!editable}
               aria-label="데이터 열람 등급"
+              aria-describedby={canEdit && scopeLockReason ? `${baseId}-scope-lock` : undefined}
               className="gap-3"
             >
               {levels.map((l, i) => (
@@ -141,11 +148,16 @@ export function RoleClearanceCard({
             <p className="text-sm text-muted-foreground">
               {`이 역할 사용자 ${clearance.userCount}명. 여러 역할이 있으면 가장 높은 등급이 적용됩니다.`}
             </p>
+            {canEdit && scopeLockReason && (
+              <p id={`${baseId}-scope-lock`} className="text-[13px] text-muted-foreground">
+                {scopeLockReason}
+              </p>
+            )}
             {blocked && (
               <InlineBanner variant="warning">최상위 등급을 열람할 수 있는 역할이 최소 1개 필요합니다.</InlineBanner>
             )}
             {changed && preview.isError && <p className="text-sm text-destructive">{previewErrorMessage}</p>}
-            {canEdit && (
+            {editable && (
               <div className="flex justify-end">
                 <Button
                   disabled={!changed || !previewData || blocked || save.isPending}

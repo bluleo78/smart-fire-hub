@@ -141,6 +141,10 @@ export default function RoleDetailPage() {
   // 경우는 화면이 판정할 근거가 없어 서버 403 문구(토스트)로 안내한다.
   const isScopeLocked =
     canEditPermissions && !isCallerAdmin && !!role && role.permissions.some(p => !myPermissions.has(p.code));
+  // 열람 등급도 같은 범위 검사를 받는다(WD-444) — 권한 목록(permission:read) 없이 role:write 만 있어도 등급 카드는 편집할 수 있으므로
+  // 판정은 역할이 가진 권한(role.permissions)만으로 한다. 등급·허용 목록으로 범위 밖인 경우는 서버 403 문구(미리보기·저장)로 안내한다.
+  const isClearanceScopeLocked =
+    canWriteRole && !isCallerAdmin && !!role && role.permissions.some(p => !myPermissions.has(p.code));
   // 새로 붙일 수 없는 권한(WD-116 RoleGrantGuard) — ADMIN 이 아니면 자기에게 없는 권한은 역할에 추가할 수 없다. 범위 안 역할은 붙은 권한이
   // 모두 자기 것이라 「이미 저장된 권한」 예외를 따로 둘 필요가 없다.
   const isAddLocked = (perm: PermissionResponse) => !isCallerAdmin && !myPermissions.has(perm.code);
@@ -333,7 +337,12 @@ export default function RoleDetailPage() {
       </Card>
 
       {/* 데이터 열람 등급 — 권한과 성격이 달라 별도 Card·별도 저장(목업 s3) */}
-      <RoleClearanceCard roleId={role.id} canEdit={canWriteRole} onDirtyChange={setClearanceDirty} />
+      <RoleClearanceCard
+        roleId={role.id}
+        canEdit={canWriteRole}
+        scopeLockReason={isClearanceScopeLocked ? '자신에게 없는 권한을 가진 역할이라 열람 등급을 바꿀 수 없습니다' : undefined}
+        onDirtyChange={setClearanceDirty}
+      />
 
       <Separator />
 
