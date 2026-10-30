@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { cn } from '../../lib/utils';
 import { AIChatPanel } from './AIChatPanel';
 import { useAI } from './AIProvider';
@@ -14,25 +15,6 @@ const KEY_STEP = 16;
 const MOBILE_MQ = '(max-width: 1023px)';
 
 /**
- * 현재 뷰포트가 모바일 너비인지 반응형으로 감지한다.
- * matchMedia 리스너로 리사이즈 시 자동 갱신.
- */
-function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia(MOBILE_MQ).matches
-  );
-
-  useEffect(() => {
-    const mql = window.matchMedia(MOBILE_MQ);
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mql.addEventListener('change', handler);
-    return () => mql.removeEventListener('change', handler);
-  }, []);
-
-  return isMobile;
-}
-
-/**
  * AI 사이드 패널 컴포넌트.
  *
  * - 데스크탑(lg 이상): flex row 내 고정 너비 패널로 표시. 좌측 핸들로 너비 조절 가능.
@@ -41,7 +23,8 @@ function useIsMobile(): boolean {
  */
 export function AISidePanel() {
   const { isOpen } = useAI();
-  const isMobile = useIsMobile();
+  // 뷰포트가 모바일 너비인지 — 공용 미디어 쿼리 훅으로 리사이즈 시 자동 갱신(WD-372)
+  const isMobile = useMediaQuery(MOBILE_MQ);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const isDragging = useRef(false);
   const startX = useRef(0);

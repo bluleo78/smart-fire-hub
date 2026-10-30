@@ -2,6 +2,8 @@ import { X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import type { TypePalette } from '@/lib/ontology-colors';
 import type { GraphEdge, GraphNode } from '@/types/ontology';
 
@@ -28,6 +30,10 @@ const DEFAULT_WIDTH = 320;
 // 키보드(화살표) 1회 조작당 변화량(px) — 드래그와 달리 이산 조작이므로 체감 가능한 단위로 잡는다(#332).
 const KEY_STEP = 16;
 
+// (WD-372) Tailwind md(768px) 이상만 그래프 옆 도킹 패널로 둔다. 그보다 좁으면 320px 고정 패널이
+// 화면 밖으로 밀려나 「닫기」·관계 버튼에 닿을 수 없었으므로, 화면 폭에 맞춘 모달(Dialog)로 띄운다.
+const DOCKED_MQ = '(min-width: 768px)';
+
 /** 폭을 허용 범위로 clamp. */
 const clampWidth = (w: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, w));
 
@@ -43,6 +49,8 @@ export default function NodeDetailDrawer({
   palette,
 }: Props) {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
+  // (WD-372) 도킹 가능 폭인지 — matchMedia가 없는 단위 테스트 환경은 기존 도킹 배치를 기본값으로 한다.
+  const docked = useMediaQuery(DOCKED_MQ, true);
   // 드래그 시작점(clientX)과 시작 폭을 보관 — null이면 드래그 중 아님.
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
@@ -118,6 +126,72 @@ export default function NodeDetailDrawer({
       <span>{nameOf(k)}</span>
     );
 
+  // 본문(헤더·속성·관계 목록) — 도킹 패널과 모바일 모달이 같은 내용을 쓴다(WD-372).
+  // 모달에서는 제목이 Radix DialogTitle이어야 스크린리더가 대화상자 이름으로 읽으므로 제목 요소만 바꿔 끼운다.
+  const renderBody = (Heading: typeof DialogTitle | 'h3') => (
+    <div className="p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="h-3 w-3 rounded-full" style={{ background: palette.color(node.type) }} />
+          <Heading className="text-sm font-semibold">{node.type}</Heading>
+        </div>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="닫기">
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+      <div className="mb-2 text-sm">{node.name}</div>
+      <div className="mb-3 break-all text-xs text-muted-foreground">{node.key}</div>
+      <div className="mb-3 text-xs text-muted-foreground">출처 청크 {node.sourceChunkCount}개</div>
+      {/* schemaVersion이 없는 노드(스탬프 도입 이전 레거시 적재)는 아무것도 표시하지 않는다 —
+          "값 없음"을 0이나 구버전으로 오인하지 않기 위함. */}
+      {node.schemaVersion != null && (
+        <div
+          className={
+            currentSchemaVersion != null && node.schemaVersion < currentSchemaVersion
+              ? 'mb-3 text-xs text-destructive'
+              : 'mb-3 text-xs text-muted-foreground'
+          }
+          data-testid="node-schema-version"
+        >
+          적재 시점 스키마 v{node.schemaVersion}
+          {currentSchemaVersion != null && node.schemaVersion < currentSchemaVersion && '(구버전)'}
+        </div>
+      )}
+      <div className="mb-1 text-xs font-medium uppercase text-muted-foreground">관계</div>
+      <ul className="space-y-1 text-xs">
+        {outgoing.map((e, i) => (
+          <li key={`o${i}`} className="flex items-center gap-1">
+            <span className="text-muted-foreground">→ {e.type} →</span> {target(e.objectKey)}
+          </li>
+        ))}
+        {incoming.map((e, i) => (
+          <li key={`i${i}`} className="flex items-center gap-1">
+            <span className="text-muted-foreground">← {e.type} ←</span> {target(e.subjectKey)}
+          </li>
+        ))}
+        {outgoing.length + incoming.length === 0 && <li className="text-muted-foreground">관계 없음</li>}
+      </ul>
+    </div>
+  );
+
+  // (WD-372) 좁은 화면: 화면 폭에 맞춘 모달로 띄운다. Radix Dialog가 바깥 탭·Esc 닫기와 포커스 가두기/복원을
+  // 처리하고, 포털로 렌더되므로 그래프 캔버스는 폭을 빼앗기지 않는다. 리사이즈 핸들은 의미가 없어 두지 않는다.
+  if (!docked) {
+    return (
+      <Dialog open onOpenChange={(open) => !open && onClose()}>
+        <DialogContent
+          showCloseButton={false}
+          className="max-h-[85dvh] gap-0 overflow-y-auto p-0"
+          data-testid="node-detail-drawer"
+        >
+          {/* 시각적 설명은 본문이 대신하므로 보조기기용 설명만 둔다(Radix aria-describedby 경고 방지). */}
+          <DialogDescription className="sr-only">선택한 노드의 속성과 인접 관계</DialogDescription>
+          {renderBody(DialogTitle)}
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   return (
     <aside
       className="relative shrink-0 overflow-y-auto border-l bg-background"
@@ -139,49 +213,7 @@ export default function NodeDetailDrawer({
         aria-valuemax={MAX_WIDTH}
         data-testid="node-detail-resize-handle"
       />
-      <div className="p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="h-3 w-3 rounded-full" style={{ background: palette.color(node.type) }} />
-            <h3 className="text-sm font-semibold">{node.type}</h3>
-          </div>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="닫기">
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-        <div className="mb-2 text-sm">{node.name}</div>
-        <div className="mb-3 break-all text-xs text-muted-foreground">{node.key}</div>
-        <div className="mb-3 text-xs text-muted-foreground">출처 청크 {node.sourceChunkCount}개</div>
-        {/* schemaVersion이 없는 노드(스탬프 도입 이전 레거시 적재)는 아무것도 표시하지 않는다 —
-            "값 없음"을 0이나 구버전으로 오인하지 않기 위함. */}
-        {node.schemaVersion != null && (
-          <div
-            className={
-              currentSchemaVersion != null && node.schemaVersion < currentSchemaVersion
-                ? 'mb-3 text-xs text-destructive'
-                : 'mb-3 text-xs text-muted-foreground'
-            }
-            data-testid="node-schema-version"
-          >
-            적재 시점 스키마 v{node.schemaVersion}
-            {currentSchemaVersion != null && node.schemaVersion < currentSchemaVersion && '(구버전)'}
-          </div>
-        )}
-        <div className="mb-1 text-xs font-medium uppercase text-muted-foreground">관계</div>
-        <ul className="space-y-1 text-xs">
-          {outgoing.map((e, i) => (
-            <li key={`o${i}`} className="flex items-center gap-1">
-              <span className="text-muted-foreground">→ {e.type} →</span> {target(e.objectKey)}
-            </li>
-          ))}
-          {incoming.map((e, i) => (
-            <li key={`i${i}`} className="flex items-center gap-1">
-              <span className="text-muted-foreground">← {e.type} ←</span> {target(e.subjectKey)}
-            </li>
-          ))}
-          {outgoing.length + incoming.length === 0 && <li className="text-muted-foreground">관계 없음</li>}
-        </ul>
-      </div>
+      {renderBody('h3')}
     </aside>
   );
 }

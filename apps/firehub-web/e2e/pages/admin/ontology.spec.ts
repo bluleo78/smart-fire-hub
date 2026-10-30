@@ -1309,3 +1309,132 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
     expect(await renderedWidth()).toBe(260);
   });
 });
+
+/**
+ * WD-372 회귀: 폰 폭(390·375)에서 노드 상세가 320px 고정 도킹 패널이라 화면 밖으로 밀려나
+ * 「닫기」·관계 버튼에 닿을 수 없었고, 빈 곳을 탭해도 닫히지 않았다.
+ * 이제 md(768px) 미만에서는 화면 폭에 맞춘 모달로 뜨고(바깥 탭·Esc·닫기로 닫힘),
+ * 그래프 캔버스는 폭을 빼앗기지 않는다. 데스크톱은 기존 도킹 패널을 유지한다.
+ */
+test.describe('지식그래프 노드 상세 — 좁은 화면 오버레이 (WD-372)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  // cy 인스턴스에 프로그래매틱 tap을 보내 노드를 선택한다(캔버스 좌표 클릭은 레이아웃이 비결정적이라 쓰지 않는다).
+  const tapNode = (page: Page, key: string) =>
+    page.evaluate((k) => {
+      (window as unknown as { __ontologyCy: { $(sel: string): { emit(e: string): void } } }).__ontologyCy
+        .$(`#${k}`)
+        .emit('tap');
+    }, key);
+
+  // 그래프 탐색 화면을 주어진 폭으로 열고 노드 렌더까지 기다린다.
+  async function openExplore(page: Page, viewport: { width: number; height: number }) {
+    await page.setViewportSize(viewport);
+    const graph = createOntologyGraph();
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/explore');
+    await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', String(graph.nodes.length));
+    return graph;
+  }
+
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 375, height: 667 },
+  ]) {
+    test(`${viewport.width}px: 노드 상세가 화면 안에 모달로 뜨고 「닫기」로 닫힌다`, async ({
+      authenticatedPage: page,
+    }) => {
+      const graph = await openExplore(page, viewport);
+      const building = graph.nodes.find((n) => n.type === 'Building')!;
+      const graphBefore = await page.getByTestId('instance-graph').boundingBox();
+
+      await tapNode(page, building.key);
+
+      // 모달(role=dialog)로 뜨고 이름이 대화상자 제목(노드 타입)으로 노출된다.
+      const drawer = page.getByTestId('node-detail-drawer');
+      await expect(drawer).toBeVisible();
+      await expect(page.getByRole('dialog', { name: 'Building' })).toBeVisible();
+      await expect(drawer).toContainText(building.name);
+      // 좁은 화면에서는 폭 조절 핸들이 의미 없어 두지 않는다.
+      await expect(page.getByTestId('node-detail-resize-handle')).toHaveCount(0);
+
+      // 상세 전체가 뷰포트 안에 들어와야 한다(이전엔 x+width가 화면 밖으로 270px 넘게 나갔다).
+      const box = (await drawer.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+      expect(box.y).toBeGreaterThanOrEqual(0);
+      expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+
+      // 그래프 캔버스는 상세가 열려도 폭을 잃지 않는다(이전엔 도킹 패널에 밀려 줄었다).
+      const graphAfter = (await page.getByTestId('instance-graph').boundingBox())!;
+      expect(Math.round(graphAfter.width)).toBe(Math.round(graphBefore!.width));
+
+      // 「닫기」 버튼이 화면 안에 있고 실제로 눌러서 닫힌다.
+      const close = drawer.getByRole('button', { name: '닫기' });
+      await expect(close).toBeInViewport();
+      await close.click();
+      await expect(drawer).toHaveCount(0);
+    });
+  }
+
+  test('390px: 관계 항목을 누르면 모달 안에서 인접 노드로 이동한다', async ({ authenticatedPage: page }) => {
+    const graph = await openExplore(page, { width: 390, height: 844 });
+    const building = graph.nodes.find((n) => n.type === 'Building')!;
+    await tapNode(page, building.key);
+
+    const drawer = page.getByTestId('node-detail-drawer');
+    // 나가는 관계 HAS_EQUIPMENT → 스프링클러설비 버튼이 화면 안에서 눌린다.
+    const relation = drawer.getByRole('button', { name: '스프링클러설비' });
+    await expect(relation).toBeInViewport();
+    await relation.click();
+    // 같은 모달이 Equipment 노드 상세로 바뀐다.
+    await expect(page.getByRole('dialog', { name: 'Equipment' })).toBeVisible();
+    await expect(drawer).toContainText('스프링클러설비');
+  });
+
+  test('390px: Esc와 바깥(빈 영역) 탭으로 닫힌다', async ({ authenticatedPage: page }) => {
+    const graph = await openExplore(page, { width: 390, height: 844 });
+    const building = graph.nodes.find((n) => n.type === 'Building')!;
+    const drawer = page.getByTestId('node-detail-drawer');
+
+    // Esc 닫기
+    await tapNode(page, building.key);
+    await expect(drawer).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(drawer).toHaveCount(0);
+
+    // 바깥 탭 닫기 — 모달 위쪽 여백(오버레이)을 누른다.
+    await tapNode(page, building.key);
+    await expect(drawer).toBeVisible();
+    const box = (await drawer.boundingBox())!;
+    expect(box.y).toBeGreaterThan(10);
+    await page.mouse.click(195, Math.floor(box.y / 2));
+    await expect(drawer).toHaveCount(0);
+  });
+
+  test('1440px: 데스크톱은 기존처럼 그래프 옆 도킹 패널로 뜬다', async ({ authenticatedPage: page }) => {
+    const graph = await openExplore(page, { width: 1440, height: 900 });
+    const building = graph.nodes.find((n) => n.type === 'Building')!;
+    const graphBefore = (await page.getByTestId('instance-graph').boundingBox())!;
+
+    await tapNode(page, building.key);
+
+    const drawer = page.getByTestId('node-detail-drawer');
+    await expect(drawer).toBeVisible();
+    // 모달이 아니라 도킹 패널(aside) — 폭 조절 핸들과 기본 폭 320px을 유지한다.
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(await drawer.evaluate((el) => el.tagName)).toBe('ASIDE');
+    await expect(page.getByTestId('node-detail-resize-handle')).toHaveAttribute('aria-valuenow', '320');
+    // 도킹이므로 그래프 캔버스가 패널 폭만큼 줄고, 패널은 화면 안에 있다.
+    const graphAfter = (await page.getByTestId('instance-graph').boundingBox())!;
+    expect(graphAfter.width).toBeLessThan(graphBefore.width);
+    const box = (await drawer.boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(1440);
+
+    // 관계 링크로 인접 노드 이동도 그대로 동작한다.
+    await drawer.getByRole('button', { name: '스프링클러설비' }).click();
+    await expect(drawer.getByRole('heading', { name: 'Equipment' })).toBeVisible();
+  });
+});
