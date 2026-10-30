@@ -1,7 +1,7 @@
-import { RESERVED_COLUMN_NAME_MESSAGE, SYSTEM_COLUMN_NAMES } from '@/lib/validations/dataset';
+import { columnNameLengthError, RESERVED_COLUMN_NAME_MESSAGE, SYSTEM_COLUMN_NAMES } from '@/lib/validations/dataset';
 
 /**
- * 스텝 출력 컬럼(API_CALL 응답 필드 매핑·AI_CLASSIFY 출력 컬럼) 저장 시점 검증 (WD-154).
+ * 스텝 출력 컬럼(API_CALL 응답 필드 매핑·AI_CLASSIFY·PYTHON 출력 컬럼) 저장 시점 검증 (WD-154, PYTHON 은 WD-352).
  *
  * 예전에는 빈 매핑 행·빈 출력 컬럼 이름·출력 데이터셋에 없는 대상 컬럼이 그대로 저장되고, 실행 시점에야
  * 영어 원문 오류(`Invalid name: . Must match …`, `bad SQL grammar [INSERT INTO …]`)로 실패했다.
@@ -36,18 +36,21 @@ export const mappingSourceField = (i: number) => `apiConfig.fieldMappings.${i}.s
 export const mappingTargetField = (i: number) => `apiConfig.fieldMappings.${i}.targetColumn`;
 /** AI_CLASSIFY 출력 컬럼 이름 오류 키 */
 export const aiOutputColumnNameField = (i: number) => `aiConfig.outputColumns.${i}.name`;
+/** PYTHON 출력 컬럼 이름 오류 키(WD-352) */
+export const pythonOutputColumnNameField = (i: number) => `pythonConfig.outputColumns.${i}.name`;
 
 const isSystemColumn = (name: string) =>
   (SYSTEM_COLUMN_NAMES as readonly string[]).includes(name.toLowerCase());
 
 /**
- * 컬럼 이름의 예약어·형식 검사. 예약어는 출력을 자동 생성(TEMP)할 때만 막는다 — TEMP 생성이 예약어를 거부하기 때문이다.
+ * 컬럼 이름의 예약어·형식·길이 검사. 예약어는 출력을 자동 생성(TEMP)할 때만 막는다 — TEMP 생성이 예약어를 거부하기 때문이다.
  * 지정 출력 데이터셋에는 id 등 시스템 컬럼이 물리적으로 있어 적재할 수 있다(서버 rejectInvalidColumnName 과 같은 규칙).
  */
-function columnNameError(name: string, autoOutput: boolean): string | undefined {
+export function columnNameError(name: string, autoOutput: boolean): string | undefined {
   if (autoOutput && isSystemColumn(name)) return RESERVED_COLUMN_NAME_MESSAGE;
   if (!COLUMN_NAME_PATTERN.test(name)) return invalidColumnNameMessage(name);
-  return undefined;
+  // 63자를 넘으면 TEMP 생성이 실행 시점에 거부한다 — 저장 전에 같은 상한으로 막는다(WD-352)
+  return columnNameLengthError(name);
 }
 
 function asText(value: unknown): string {
@@ -106,27 +109,47 @@ export function validateApiFieldMappings(
   return errors;
 }
 
-/** AI_CLASSIFY 출력 컬럼 이름 검증 — 빈 이름·예약어(자동 생성 시)·형식·중복. 컬럼이 0개인 경우는 호출부의 기존 검사가 맡는다. */
-export function validateAiOutputColumns(columns: unknown, autoOutput: boolean): StepFieldError[] {
+/**
+ * 출력 컬럼 이름 검증 — 빈 이름·예약어(자동 생성 시)·형식·중복. 행마다 첫 번째 오류 하나만 돌려준다.
+ * AI_CLASSIFY·PYTHON 출력 컬럼이 같은 규칙을 쓴다 — 둘 다 이 이름으로 TEMP 를 만들어 실행 시점에 같은 이유로 실패했다.
+ *
+ * @param fieldOf 행 번호 → 오류 조회 키(스텝 종류마다 설정 경로가 다르다)
+ */
+function validateOutputColumns(
+  columns: unknown,
+  autoOutput: boolean,
+  fieldOf: (i: number) => string,
+): StepFieldError[] {
   if (!Array.isArray(columns)) return [];
   const errors: StepFieldError[] = [];
   const seen = new Set<string>();
   columns.forEach((raw, i) => {
     const name = asText(((raw ?? {}) as Record<string, unknown>).name);
     if (!name.trim()) {
-      errors.push({ field: aiOutputColumnNameField(i), message: OUTPUT_COLUMN_NAME_REQUIRED_MESSAGE });
+      errors.push({ field: fieldOf(i), message: OUTPUT_COLUMN_NAME_REQUIRED_MESSAGE });
       return;
     }
     const nameError = columnNameError(name, autoOutput);
     if (nameError) {
-      errors.push({ field: aiOutputColumnNameField(i), message: nameError });
+      errors.push({ field: fieldOf(i), message: nameError });
       return;
     }
     if (seen.has(name)) {
-      errors.push({ field: aiOutputColumnNameField(i), message: duplicateOutputColumnMessage(name) });
+      errors.push({ field: fieldOf(i), message: duplicateOutputColumnMessage(name) });
       return;
     }
     seen.add(name);
   });
   return errors;
 }
+
+/** AI_CLASSIFY 출력 컬럼 이름 검증. 컬럼이 0개인 경우는 호출부의 기존 검사가 맡는다. */
+export const validateAiOutputColumns = (columns: unknown, autoOutput: boolean) =>
+  validateOutputColumns(columns, autoOutput, aiOutputColumnNameField);
+
+/**
+ * PYTHON 출력 컬럼 이름 검증(WD-352). 출력 컬럼 정의는 출력을 자동 생성할 때만 쓰이므로(편집기도 그때만 보인다) 호출부는
+ * 자동 생성 스텝에만 부른다 — 그래서 예약어도 늘 막는다.
+ */
+export const validatePythonOutputColumns = (columns: unknown) =>
+  validateOutputColumns(columns, true, pythonOutputColumnNameField);

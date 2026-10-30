@@ -26,7 +26,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * WD-154 — 스텝 출력 컬럼(API_CALL 응답 필드 매핑·AI_CLASSIFY 출력 컬럼) 저장 시점 검증.
+ * WD-154 — 스텝 출력 컬럼(API_CALL 응답 필드 매핑·AI_CLASSIFY 출력 컬럼) 저장 시점 검증. WD-352 에서 PYTHON 출력 컬럼(자동 생성 출력)도 더했다.
  *
  * <p>예전에는 빈 매핑 행·빈 출력 컬럼 이름·출력 데이터셋에 없는 대상 컬럼이 모두 저장에 성공하고, 실행 시점에야 영어 원문 오류({@code Invalid name: .
  * Must match …}, {@code bad SQL grammar [INSERT INTO …]})로 실패했다. 각 규칙을 생성·수정 두 경로에서 같은 한국어 문구(스텝 이름
@@ -125,8 +125,25 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
         null);
   }
 
-  private static Map<String, Object> aiColumn(String name) {
+  private static Map<String, Object> outputColumn(String name) {
     return Map.of("name", name, "type", "TEXT");
+  }
+
+  /** PYTHON 스텝(WD-352) — outputId 가 null 이면 출력 컬럼 정의로 TEMP 를 자동 생성한다. 출력 컬럼 모양은 AI 분류와 같다(name·type). */
+  private static PipelineStepRequest pythonStep(Long outputId, List<Map<String, Object>> outputColumns) {
+    return new PipelineStepRequest(
+        "파이썬",
+        null,
+        "PYTHON",
+        "import json\nprint(json.dumps([{\"val\": 1}]))",
+        outputId,
+        null,
+        null,
+        "REPLACE",
+        null,
+        null,
+        Map.of("outputColumns", outputColumns),
+        null);
   }
 
   /** 거부돼야 하는 스텝 + 기대 문구. 출력 지정 여부는 OUT 표식(실제 id 는 setUp 이후에만 알 수 있다)으로 넘긴다. */
@@ -160,16 +177,36 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
             "스텝 'API 호출': 출력 데이터셋에 없는 컬럼입니다: no_such_col"),
         Arguments.of(
             "AI 출력 컬럼 이름 빈칸",
-            aiStep(List.of(aiColumn("label"), aiColumn(""))),
+            aiStep(List.of(outputColumn("label"), outputColumn(""))),
             "스텝 'AI 분류': 출력 컬럼 이름을 입력하세요"),
         Arguments.of(
             "AI 출력 컬럼 이름 형식 위반",
-            aiStep(List.of(aiColumn("Label"))),
+            aiStep(List.of(outputColumn("Label"))),
             "스텝 'AI 분류': 컬럼 이름은 영문 소문자로 시작하고 영문 소문자·숫자·밑줄만 쓸 수 있습니다: Label"),
         Arguments.of(
             "AI 출력 컬럼 이름 중복",
-            aiStep(List.of(aiColumn("label"), aiColumn("label"))),
-            "스텝 'AI 분류': 출력 컬럼 이름이 중복됩니다: label"));
+            aiStep(List.of(outputColumn("label"), outputColumn("label"))),
+            "스텝 'AI 분류': 출력 컬럼 이름이 중복됩니다: label"),
+        Arguments.of(
+            "Python 출력 컬럼 이름 빈칸",
+            pythonStep(null, List.of(outputColumn("val"), outputColumn(" "))),
+            "스텝 '파이썬': 출력 컬럼 이름을 입력하세요"),
+        Arguments.of(
+            "Python 출력 컬럼 이름 형식 위반",
+            pythonStep(null, List.of(outputColumn("val"), outputColumn("my col"))),
+            "스텝 '파이썬': 컬럼 이름은 영문 소문자로 시작하고 영문 소문자·숫자·밑줄만 쓸 수 있습니다: my col"),
+        Arguments.of(
+            "Python 출력 컬럼 이름 중복",
+            pythonStep(null, List.of(outputColumn("val"), outputColumn("val"))),
+            "스텝 '파이썬': 출력 컬럼 이름이 중복됩니다: val"),
+        Arguments.of(
+            "Python 출력 컬럼 이름 64자",
+            pythonStep(null, List.of(outputColumn("a".repeat(64)))),
+            "스텝 '파이썬': 칼럼명은 63자 이하여야 합니다"),
+        Arguments.of(
+            "Python 출력 컬럼 예약어",
+            pythonStep(null, List.of(outputColumn("created_at"))),
+            "스텝 '파이썬': 컬럼명 'created_at'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)"));
   }
 
   /** OUT 표식을 실제 출력 데이터셋 id 로 바꾼다. */
@@ -279,6 +316,35 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
     PipelineDetailResponse created =
         pipelineService.createPipeline(
             new CreatePipelineRequest("WD154 매핑 없음", null, List.of(apiStep(outputId, List.of()))),
+            userId);
+    assertThat(created.steps()).hasSize(1);
+  }
+
+  /** PYTHON 자동 생성 출력의 올바른 컬럼 정의는 저장된다(WD-352). */
+  @Test
+  void create_pythonAutoOutputWithValidColumns_succeeds() {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "WD352 파이썬",
+                null,
+                List.of(pythonStep(null, List.of(outputColumn("val"), outputColumn("score_1"))))),
+            userId);
+    assertThat(created.steps()).hasSize(1);
+  }
+
+  /**
+   * 출력을 지정한 PYTHON 스텝은 컬럼 정의를 쓰지 않는다(편집기도 숨긴다) — 남아 있는 정의의 이름은 막지 않는다(WD-352). 막으면 화면에서 고칠 수
+   * 없는 오류로 저장이 막힌다.
+   */
+  @Test
+  void create_pythonExplicitOutputIgnoresColumnNames_succeeds() {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "WD352 파이썬 지정",
+                null,
+                List.of(pythonStep(outputId, List.of(outputColumn("my col"), outputColumn("my col"))))),
             userId);
     assertThat(created.steps()).hasSize(1);
   }

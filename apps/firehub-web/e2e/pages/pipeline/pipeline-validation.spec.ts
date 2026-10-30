@@ -315,6 +315,82 @@ test.describe('usePipelineValidation — PYTHON 스텝 출력 컬럼 검증', ()
   });
 });
 
+/**
+ * WD-352 — PYTHON 출력 컬럼 이름도 형식·중복·예약어를 저장 전에 막는다.
+ * 예전에는 빈 이름만 막아 `my col`·같은 이름 두 개가 저장되고, 실행해야 영어 원문(`Invalid name: my col. …`)으로 실패했다.
+ */
+test.describe('PYTHON 출력 컬럼 이름 검증 (WD-352)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
+  /** 새 파이프라인에 PYTHON 스텝을 만들고 출력 컬럼 이름들을 넣는다(출력 데이터셋은 기본값 「자동 생성」) */
+  async function fillPythonStep(page: import('@playwright/test').Page, names: string[]) {
+    await page.goto('/pipelines/new');
+    await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('파이썬 컬럼 검증');
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+    await page.locator('#step-name').fill('파이썬');
+    await page.getByRole('combobox').first().click();
+    await page.getByRole('option', { name: /Python/ }).click();
+    const cm = page.locator('.cm-content').first();
+    await cm.click();
+    await page.keyboard.type('print(1)');
+    const section = page.getByRole('region', { name: '출력 컬럼 정의' });
+    for (const [i, name] of names.entries()) {
+      await section.getByRole('button', { name: '출력 컬럼 추가' }).click();
+      await section.locator(`#python-col-name-${i}`).fill(name);
+    }
+    return section;
+  }
+
+  test('형식 위반·중복·예약어 이름은 행 아래에 한국어로 안내하고 저장하지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    const captureCreate = await mockApi(page, 'POST', '/api/v1/pipelines', {}, { capture: true });
+
+    const section = await fillPythonStep(page, ['val', 'val', 'my col', 'created_at']);
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    await expect(page.getByText(/입력 오류/).first()).toBeVisible({ timeout: 5000 });
+    // 행마다 해당 오류가 그 입력칸에 연결돼 보인다
+    await expect(section.locator('#python-col-error-1')).toHaveText('출력 컬럼 이름이 중복됩니다: val');
+    await expect(section.locator('#python-col-error-2')).toHaveText(
+      '컬럼 이름은 영문 소문자로 시작하고 영문 소문자·숫자·밑줄만 쓸 수 있습니다: my col',
+    );
+    await expect(section.locator('#python-col-error-3')).toContainText('시스템 예약어라 쓸 수 없는 이름입니다');
+    await expect(section.locator('#python-col-name-3')).toHaveAttribute('aria-invalid', 'true');
+    expect(captureCreate.requests.length).toBe(0);
+  });
+
+  test('이름을 고치면 오류가 사라지고 고친 컬럼 정의로 저장된다', async ({ authenticatedPage: page }) => {
+    await setupNewEditorMocks(page);
+    const captureCreate = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 99, name: '파이썬 컬럼 검증', description: '', steps: [], createdAt: '2024-01-01T00:00:00Z' },
+      { capture: true },
+    );
+
+    const section = await fillPythonStep(page, ['val', 'val']);
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await expect(section.locator('#python-col-error-1')).toHaveText('출력 컬럼 이름이 중복됩니다: val');
+    expect(captureCreate.requests.length).toBe(0);
+
+    await section.locator('#python-col-name-1').fill('val2');
+    await expect(section.locator('#python-col-error-1')).toHaveCount(0);
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    await expect.poll(() => captureCreate.requests.length, { timeout: 8000 }).toBe(1);
+    const payload = captureCreate.lastRequest()?.payload as {
+      steps: Array<{ pythonConfig?: { outputColumns: Array<{ name: string }> } }>;
+    };
+    expect(payload.steps[0].pythonConfig?.outputColumns.map((c) => c.name)).toEqual(['val', 'val2']);
+  });
+});
+
 test.describe('usePipelineValidation — AI_CLASSIFY 스텝 검증', () => {
   // 추가·삭제·생성 경로·실행·수정 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 파이프라인 권한을 준다.
   test.beforeEach(async ({ authenticatedPage: page }) => {

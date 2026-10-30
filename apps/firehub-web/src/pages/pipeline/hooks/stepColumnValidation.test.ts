@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { RESERVED_COLUMN_NAME_MESSAGE } from '@/lib/validations/dataset';
+import { COLUMN_NAME_MAX_MESSAGE, RESERVED_COLUMN_NAME_MESSAGE } from '@/lib/validations/dataset';
 
 import {
   aiOutputColumnNameField,
@@ -9,10 +9,12 @@ import {
   mappingSourceField,
   mappingTargetField,
   OUTPUT_COLUMN_NAME_REQUIRED_MESSAGE,
+  pythonOutputColumnNameField,
   SOURCE_FIELD_REQUIRED_MESSAGE,
   TARGET_COLUMN_REQUIRED_MESSAGE,
   validateAiOutputColumns,
   validateApiFieldMappings,
+  validatePythonOutputColumns,
 } from './stepColumnValidation';
 
 // WD-154 — 스텝 출력 컬럼 저장 시점 검증 규칙(서버 PipelineService 와 같은 규칙·문장)
@@ -95,5 +97,36 @@ describe('validateAiOutputColumns', () => {
       { field: aiOutputColumnNameField(2), message: '출력 컬럼 이름이 중복됩니다: x' },
       { field: aiOutputColumnNameField(3), message: RESERVED_COLUMN_NAME_MESSAGE },
     ]);
+  });
+});
+
+// WD-352 — PYTHON 출력 컬럼도 AI 분류와 같은 규칙(자동 생성 출력 전용이라 예약어는 늘 막는다)
+describe('validatePythonOutputColumns', () => {
+  const c = (name: string) => ({ name, type: 'TEXT' });
+
+  it('정상 이름은 오류가 없다', () => {
+    expect(validatePythonOutputColumns([c('val'), c('score_1')])).toEqual([]);
+  });
+
+  it('빈 이름·형식 위반·중복·예약어를 PYTHON 오류 키로 알린다', () => {
+    expect(validatePythonOutputColumns([c(' '), c('my col'), c('val'), c('val'), c('id')])).toEqual([
+      { field: pythonOutputColumnNameField(0), message: OUTPUT_COLUMN_NAME_REQUIRED_MESSAGE },
+      {
+        field: pythonOutputColumnNameField(1),
+        message: '컬럼 이름은 영문 소문자로 시작하고 영문 소문자·숫자·밑줄만 쓸 수 있습니다: my col',
+      },
+      { field: pythonOutputColumnNameField(3), message: '출력 컬럼 이름이 중복됩니다: val' },
+      { field: pythonOutputColumnNameField(4), message: RESERVED_COLUMN_NAME_MESSAGE },
+    ]);
+  });
+
+  it('63자를 넘는 이름은 길이 상한을 알린다', () => {
+    expect(validatePythonOutputColumns([c('a'.repeat(64))])).toEqual([
+      { field: pythonOutputColumnNameField(0), message: COLUMN_NAME_MAX_MESSAGE },
+    ]);
+  });
+
+  it('배열이 아니면(설정 없음) 검사하지 않는다', () => {
+    expect(validatePythonOutputColumns(undefined)).toEqual([]);
   });
 });
