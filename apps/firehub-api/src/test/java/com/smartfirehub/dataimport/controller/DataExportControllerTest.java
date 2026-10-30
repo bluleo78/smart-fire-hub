@@ -1,5 +1,6 @@
 package com.smartfirehub.dataimport.controller;
 
+import static com.smartfirehub.support.AsyncMvc.completeAsync;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -212,8 +213,10 @@ class DataExportControllerTest {
             1L);
     when(asyncJobService.getJobStatus("job-xyz", 1L)).thenReturn(job);
 
-    mockMvc
-        .perform(get("/api/v1/exports/job-xyz/file").header("Authorization", "Bearer valid-token"))
+    // StreamingResponseBody 는 비동기라 전송 완료까지 받은 뒤 임시 파일을 지운다(WD-443).
+    completeAsync(
+            mockMvc,
+            get("/api/v1/exports/job-xyz/file").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         // ASCII 이름은 수정 전과 같은 헤더(호환)
         .andExpect(
@@ -278,8 +281,9 @@ class DataExportControllerTest {
     when(asyncJobService.getJobStatus("job-ko", 1L)).thenReturn(job);
 
     try {
-      mockMvc
-          .perform(get("/api/v1/exports/job-ko/file").header("Authorization", "Bearer valid-token"))
+      completeAsync(
+              mockMvc,
+              get("/api/v1/exports/job-ko/file").header("Authorization", "Bearer valid-token"))
           .andExpect(status().isOk())
           .andExpect(
               header()

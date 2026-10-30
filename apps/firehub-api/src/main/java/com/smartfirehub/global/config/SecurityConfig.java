@@ -12,6 +12,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
+import org.springframework.security.config.ObjectPostProcessor;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -19,6 +20,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.HeaderWriterFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -42,7 +44,19 @@ public class SecurityConfig {
                     .contentTypeOptions(Customizer.withDefaults())
                     .frameOptions(frame -> frame.deny())
                     .httpStrictTransportSecurity(
-                        hsts -> hsts.includeSubDomains(true).maxAgeInSeconds(31536000)))
+                        hsts -> hsts.includeSubDomains(true).maxAgeInSeconds(31536000))
+                    // WD-443 — 보안 헤더를 요청 처리 전에 요청 스레드에서 한 번만 쓴다(eager). 기본(lazy)은
+                    // 비동기 응답(StreamingResponseBody·SseEmitter)에서 executor 의 커밋과 요청 스레드의 finally 가
+                    // 같은 헤더 맵을 동시에 쓴다. 트레이드오프: 기본 Cache-Control(no-cache, no-store)이 늘 먼저 실려,
+                    // 캐시 가능한 정책(max-age·304)이 필요한 엔드포인트는 그 경로의 기본 cache-control writer 를 꺼야 한다.
+                    .addObjectPostProcessor(
+                        new ObjectPostProcessor<HeaderWriterFilter>() {
+                          @Override
+                          public <O extends HeaderWriterFilter> O postProcess(O filter) {
+                            filter.setShouldWriteHeadersEagerly(true);
+                            return filter;
+                          }
+                        }))
         .sessionManagement(
             session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(
