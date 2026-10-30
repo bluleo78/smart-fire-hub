@@ -458,26 +458,40 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     // 편집 모드 진입
     await page.getByRole('button', { name: '편집' }).click();
 
+    // 리사이즈 대상 위젯 셀(.react-grid-item) — 드래그 중 생기는 placeholder 셀과 구분하려고 차트명으로 좁힌다
+    const gridItem = page.locator('.react-grid-item', { hasText: '테스트 차트' });
     // 리사이즈 핸들(우측 하단)을 드래그하여 위젯 폭을 줄인다
-    const handle = page.locator('.react-resizable-handle-se').first();
+    const handle = gridItem.locator('.react-resizable-handle-se');
     await expect(handle).toBeVisible({ timeout: 5000 });
+    // hover는 요소가 안정(연속 프레임에서 위치 불변)될 때까지 기다린다 — 편집 모드 진입 직후
+    // 컨테이너 폭 측정(useContainerWidth)으로 그리드가 다시 그려지며 핸들이 이동하는 도중에
+    // 좌표를 읽으면 mouse.down이 핸들을 빗나가 리사이즈 자체가 시작되지 않는다(WD-468).
+    await handle.hover();
     const box = await handle.boundingBox();
-    if (!box) throw new Error('리사이즈 핸들의 bounding box를 가져오지 못했습니다.');
+    const itemBox = await gridItem.boundingBox();
+    if (!box || !itemBox) throw new Error('리사이즈 핸들/위젯의 bounding box를 가져오지 못했습니다.');
+    const initialWidth = itemBox.width;
+    // 위젯 셀의 현재 렌더 폭 — 아래 두 관찰 지점에서 함께 쓴다
+    const renderedWidth = async () => (await gridItem.boundingBox())?.width ?? initialWidth;
     const startX = box.x + box.width / 2;
     const startY = box.y + box.height / 2;
 
     await page.mouse.move(startX, startY);
     await page.mouse.down();
-    // 여러 단계로 나누어 점진적으로 이동해야 react-resizable이 드래그로 인식한다.
-    // 한 번에 크게 이동하면(특히 워커 병렬 실행으로 CPU 경합이 있을 때) 중간 mousemove
-    // 이벤트가 유실되어 리사이즈가 시작되지 않는 경우가 있어(flaky), 여러 지점을 거치고
-    // 매 이동마다 소폭 대기하여 안정적으로 리사이즈가 인식되도록 한다.
+    // 여러 지점을 거쳐 점진적으로 이동해야 react-resizable이 드래그로 인식한다.
     for (let offset = 30; offset <= 300; offset += 30) {
       await page.mouse.move(startX - offset, startY, { steps: 3 });
-      await page.waitForTimeout(30);
     }
-    await page.waitForTimeout(100);
+    // 마우스를 놓기 전에 위젯 셀의 실제 렌더 폭이 줄어든 것을 확인한다.
+    // react-grid-layout의 onResizeStop은 마지막으로 렌더된 레이아웃(layoutRef)으로 최종 레이아웃을 확정하는데,
+    // 부하 시 mousemove로 예약된 리렌더가 끝나기 전에 mouseup이 처리되면 원래 폭(6)으로 확정되어
+    // onLayoutChange가 호출되지 않는다. 고정 대기 대신 렌더 결과를 관찰해 결정적으로 만든다(WD-468).
+    await expect.poll(renderedWidth).toBeLessThan(initialWidth - 100);
     await page.mouse.up();
+
+    // 리사이즈 종료(resizing 클래스 해제) 후에도 줄어든 폭이 유지되는지 확인 — onLayoutChange로 확정된 상태
+    await expect(gridItem).not.toHaveClass(/\bresizing\b/);
+    await expect.poll(renderedWidth).toBeLessThan(initialWidth - 50);
 
     // "완료" 클릭 → handleSaveEdit이 서버에 PUT 요청
     await page.getByRole('button', { name: '완료' }).click();
