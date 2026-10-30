@@ -274,7 +274,10 @@ class HomeDatasetVisibilityTest extends IntegrationTestBase {
               dsl.execute(
                   "update dataset set created_at = now() - interval '48 hours' where id = ?",
                   staleHidden));
-      audit("UPDATE", staleHidden, "SUCCESS"); // trend 는 resource='dataset' 인 모든 오늘 이력을 센다
+      // trend 는 오늘의 데이터셋 임포트(IMPORT) 이력만 센다(WD-463 — 편집 감사는 세지 않는다). stale 데이터셋에 임포트를 남기면
+      // stale 이 아니게 되므로, 임포트 이력은 별도의 숨김 데이터셋에 남긴다.
+      long trendHidden = dataset(m + "_hidden_trend", "민감");
+      audit("IMPORT", trendHidden, "SUCCESS");
 
       JsonNode lowAfter = getJson("/api/v1/dashboard/health", lowToken).get("datasetHealth");
       JsonNode highAfter = getJson("/api/v1/dashboard/health", highToken).get("datasetHealth");
