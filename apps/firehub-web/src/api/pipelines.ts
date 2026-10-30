@@ -56,8 +56,9 @@ export const pipelinesApi = {
     client.put(`/pipelines/${pipelineId}/triggers/${triggerId}`, data),
   deleteTrigger: (pipelineId: number, triggerId: number) =>
     client.delete(`/pipelines/${pipelineId}/triggers/${triggerId}`),
-  toggleTrigger: (pipelineId: number, triggerId: number) =>
-    client.patch(`/pipelines/${pipelineId}/triggers/${triggerId}/toggle`),
+  // 원하는 상태(enabled)를 실어 보낸다 — 서버가 현재 값을 뒤집으면 옛 화면에서 누른 요청이 반대로 적용된다(WD-435).
+  toggleTrigger: (pipelineId: number, triggerId: number, enabled: boolean) =>
+    client.patch(`/pipelines/${pipelineId}/triggers/${triggerId}/toggle`, { enabled }),
   getTriggerEvents: (pipelineId: number, limit?: number) =>
     client.get<TriggerEventResponse[]>(`/pipelines/${pipelineId}/trigger-events`, { params: { limit } }),
 

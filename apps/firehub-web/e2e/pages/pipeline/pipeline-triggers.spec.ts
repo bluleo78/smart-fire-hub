@@ -597,11 +597,13 @@ test.describe('파이프라인 트리거 탭', () => {
     await setupTriggerTabMocks(page, { triggers: [existing] });
 
     let toggleCalled = false;
+    let togglePayload: unknown;
     await page.route(
       (url) => url.pathname === '/api/v1/pipelines/1/triggers/8/toggle',
       (route) => {
         if (route.request().method() === 'PATCH') {
           toggleCalled = true;
+          togglePayload = route.request().postDataJSON();
           return route.fulfill({
             status: 200,
             contentType: 'application/json',
@@ -619,6 +621,35 @@ test.describe('파이프라인 트리거 탭', () => {
     await page.getByRole('menuitem', { name: /비활성화|활성화/ }).click();
 
     await expect.poll(() => toggleCalled).toBe(true);
+    // WD-435: 켜진 트리거의 「비활성화」는 원하는 상태(enabled=false)를 실어 보낸다.
+    expect(togglePayload).toEqual({ enabled: false });
+  });
+
+  test('옛 화면에서 꺼진 것으로 보이는 트리거를 「활성화」하면 enabled=true 를 보내고 활성화 토스트가 뜬다 (WD-435)', async ({ authenticatedPage: page }) => {
+    // 화면은 「비활성」을 보고 있다 — 그사이 서버에서 이미 켜졌어도 요청은 「켜라」여야 한다(예전엔 서버가 값을 뒤집어 꺼졌다).
+    const existing = createTrigger({ id: 8, name: '켤 대상', isEnabled: false });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+
+    let togglePayload: unknown;
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1/triggers/8/toggle',
+      (route) => {
+        if (route.request().method() === 'PATCH') {
+          togglePayload = route.request().postDataJSON();
+          return route.fulfill({ status: 204 });
+        }
+        return route.fallback();
+      },
+    );
+
+    await gotoTriggerTab(page);
+
+    await expect(page.getByText('켤 대상')).toBeVisible();
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '활성화', exact: true }).click();
+
+    await expect.poll(() => togglePayload).toEqual({ enabled: true });
+    await expect(page.getByText('트리거 "켤 대상"이 활성화되었습니다.')).toBeVisible();
   });
 
   test('트리거 이름 미입력 시 유효성 에러가 표시된다', async ({ authenticatedPage: page }) => {
@@ -1269,5 +1300,26 @@ test.describe('파이프라인 트리거 탭', () => {
 
     await expect(page.getByRole('alert').filter({ hasText: 'limit 은 1~200 사이여야 합니다.' })).toBeVisible();
     await expect(page.getByText('트리거 이벤트가 없습니다.')).toHaveCount(0);
+  });
+
+  /**
+   * 회귀 테스트 (WD-406): 모바일 폭(375px)에서 트리거 카드가 화면 밖으로 넘쳐 오른쪽 ⋯ 메뉴가 잘리면 편집·삭제를 할 수 없다.
+   * 긴 이름·cron 설명이 있어도 ⋯ 버튼이 화면 안에 있고 눌러서 메뉴를 열 수 있는지 확인한다.
+   */
+  test('모바일 폭 — 긴 이름 트리거도 ⋯ 메뉴가 화면 안에 보이고 열린다 (WD-406)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    const longName = '매일 아침 운영 데이터 적재 후 집계 파이프라인을 다시 돌리는 아주 긴 이름의 스케줄 트리거';
+    await setupTriggerTabMocks(page, {
+      triggers: [createTrigger({ id: 30, name: longName, triggerType: 'SCHEDULE', nextFireTime: '2026-09-13T09:00:00Z' })],
+    });
+    await gotoTriggerTab(page);
+
+    const menuButton = page.getByRole('button', { name: `트리거 "${longName}" 작업` });
+    await expect(menuButton).toBeInViewport({ ratio: 1 });
+    const box = await menuButton.boundingBox();
+    expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+
+    await menuButton.click();
+    await expect(page.getByRole('menuitem', { name: '편집' })).toBeVisible();
   });
 });

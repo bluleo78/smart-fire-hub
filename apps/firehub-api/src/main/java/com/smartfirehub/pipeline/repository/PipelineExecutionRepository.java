@@ -184,6 +184,25 @@ public class PipelineExecutionRepository {
   }
 
   /**
+   * 스텝을 모두 돈 실행의 최종 상태(COMPLETED·FAILED)를 쓴다 — <b>취소 요청이 없을 때만</b>(WD-411). 마지막 스텝이 문장을 실행하는 동안 들어온
+   * 취소 요청은 그 뒤 체크포인트가 없어 놓쳤고, 실행이 COMPLETED 로 끝나 연쇄 트리거가 하위를 돌렸다. 확인과 쓰기를 한 조건부 UPDATE 로 묶어, 러너의
+   * 마지막 확인과 쓰기 사이에 취소가 들어와도 빠지지 않게 한다.
+   *
+   * @return 반영됐으면 true. 취소 요청이 있거나 이미 끝난 실행이면 false — 호출부가 취소 마감으로 넘긴다(조건부라 이미 끝난 실행엔 무동작)
+   */
+  public boolean finishUnlessCancelRequested(
+      Long executionId, String status, LocalDateTime completedAt) {
+    return dsl.update(PIPELINE_EXECUTION)
+            .set(PE_STATUS, status)
+            .set(PE_COMPLETED_AT, completedAt)
+            .where(PE_ID.eq(executionId))
+            .and(PE_STATUS.in(ACTIVE_STATUSES))
+            .and(PE_CANCEL_REQUESTED_AT.isNull())
+            .execute()
+        == 1;
+  }
+
+  /**
    * 살아 있는 실행들의 하트비트를 갱신한다(WD-230). 끝난 실행은 건드리지 않는다 — 중단 정리로 이미 FAILED 가 된 실행의 하트비트가 되살아나 정리 판정을 흐리지
    * 않게 한다.
    *

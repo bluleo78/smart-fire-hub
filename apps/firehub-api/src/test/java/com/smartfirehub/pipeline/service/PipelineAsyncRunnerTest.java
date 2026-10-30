@@ -157,6 +157,10 @@ class PipelineAsyncRunnerTest {
     lenient()
         .when(executionRepository.cancelAndSkipPendingSteps(anyLong(), any()))
         .thenReturn(true);
+    // 최종 상태(COMPLETED·FAILED) 쓰기도 기본적으로 이긴다(WD-411: 취소 요청이 없을 때만 쓰는 조건부 쓰기).
+    lenient()
+        .when(executionRepository.finishUnlessCancelRequested(anyLong(), anyString(), any()))
+        .thenReturn(true);
     // 임시 테이블 생성은 이번 실행 전용 이름을 돌려준다(WD-151) — 러너가 그 이름을 적재 대상·마무리·정리에 그대로 넘기는지 단언하려고
     // 출력별로 정해진 가짜 이름(runTemp)을 쓴다. 쓰지 않는 테스트가 있어 lenient.
     lenient()
@@ -232,7 +236,7 @@ class PipelineAsyncRunnerTest {
     // then: 실행 레코드 RUNNING → COMPLETED 갱신
     verify(executionRepository).updateExecutionStatus(eq(executionId), eq("RUNNING"), any(), any());
     verify(executionRepository)
-        .updateExecutionStatus(eq(executionId), eq("COMPLETED"), any(), any());
+        .finishUnlessCancelRequested(eq(executionId), eq("COMPLETED"), any());
 
     // 완료 이벤트 발행
     ArgumentCaptor<PipelineCompletedEvent> eventCaptor =
@@ -4307,7 +4311,7 @@ class PipelineAsyncRunnerTest {
     // 남은 스텝 SKIPPED + 실행 CANCELLED 는 한 트랜잭션 메서드 하나로 쓴다(WD-230)
     verify(executionRepository).cancelAndSkipPendingSteps(eq(executionId), any());
     verify(executionRepository, never())
-        .updateExecutionStatus(eq(executionId), eq("COMPLETED"), any(), any());
+        .finishUnlessCancelRequested(eq(executionId), eq("COMPLETED"), any());
     // 취소된 실행은 완료 이벤트를 발행하지 않는다 — PIPELINE_CHAIN(ANY 포함)·완료 알림이 발화하지 않는다.
     verify(applicationEventPublisher, never()).publishEvent(any());
   }
@@ -4323,7 +4327,7 @@ class PipelineAsyncRunnerTest {
     PipelineStepResponse s1 =
         stepResponse(1101L, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", null, List.of());
     when(sqlExecutor.execute(anyList(), anyString())).thenReturn("ok");
-    when(executionRepository.updateExecutionStatus(eq(executionId), eq("COMPLETED"), any(), any()))
+    when(executionRepository.finishUnlessCancelRequested(eq(executionId), eq("COMPLETED"), any()))
         .thenReturn(false);
 
     runner.executeAsync(
@@ -4336,6 +4340,56 @@ class PipelineAsyncRunnerTest {
         false);
 
     verify(applicationEventPublisher, never()).publishEvent(any());
+    // 진 이유가 취소 요청일 수 있어 취소 마감으로 넘긴다(WD-411) — 정리기가 먼저 마감했으면 조건부라 무동작이다.
+    verify(executionRepository).cancelAndSkipPendingSteps(eq(executionId), any());
+  }
+
+  /**
+   * 마지막 스텝 실행 중 취소(WD-411): 스텝은 끝까지 돌아 COMPLETED 지만 최종 쓰기가 취소 요청으로 지면, 실행은 CANCELLED 로 마감하고 완료
+   * 이벤트(연쇄 트리거·완료 알림)를 내지 않는다.
+   */
+  @Test
+  void executeAsync_마지막_스텝_중_취소되면_CANCELLED_로_마감하고_이벤트를_내지_않는다() {
+    Long pipelineId = 15L, executionId = 150L, userId = 10L;
+    PipelineStepResponse s1 =
+        stepResponse(1501L, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", null, List.of());
+    when(sqlExecutor.execute(anyList(), anyString())).thenReturn("ok");
+    // 체크포인트는 모두 지났다(시작·스텝 전·SQL 직전 false) — 취소는 문장이 도는 동안 들어와 최종 쓰기의 조건에서 걸린다.
+    when(executionRepository.isStopRequested(executionId)).thenReturn(false);
+    when(executionRepository.finishUnlessCancelRequested(eq(executionId), eq("COMPLETED"), any()))
+        .thenReturn(false);
+
+    runner.executeAsync(
+        pipelineId,
+        executionId,
+        List.of(s1),
+        Map.of(1501L, List.of()),
+        Map.of(1501L, 1601L),
+        userId,
+        false);
+
+    verify(sqlExecutor, times(1)).execute(anyList(), anyString());
+    verify(executionRepository)
+        .updateStepExecution(eq(1601L), eq("COMPLETED"), any(), any(), any(), any(), any());
+    verify(executionRepository).cancelAndSkipPendingSteps(eq(executionId), any());
+    verify(applicationEventPublisher, never()).publishEvent(any());
+  }
+
+  /** 취소 요청 뒤 예외로 끝난 실행(WD-411)도 FAILED·실패 이벤트가 아니라 CANCELLED 로 마감한다 — 실패 조건 연쇄가 돌지 않는다. */
+  @Test
+  void executeAsync_취소_요청_뒤_예외로_끝나면_FAILED_대신_CANCELLED_로_마감한다() {
+    Long pipelineId = 16L, executionId = 160L, userId = 10L;
+    doThrow(new RuntimeException("DB error"))
+        .when(executionRepository)
+        .updateExecutionStatus(eq(executionId), eq("RUNNING"), any(), any());
+    when(executionRepository.isStopRequested(executionId)).thenReturn(true);
+
+    runner.executeAsync(pipelineId, executionId, List.of(), Map.of(), Map.of(), userId, false);
+
+    verify(executionRepository).cancelAndSkipPendingSteps(eq(executionId), any());
+    verify(executionRepository, never())
+        .updateExecutionStatus(eq(executionId), eq("FAILED"), any(), any(), any());
+    verify(applicationEventPublisher, never()).publishEvent(any());
   }
 
   /** 스텝 실패로 최종 FAILED 쓰기가 지면 이벤트를 내지 않는다. */
@@ -4343,7 +4397,7 @@ class PipelineAsyncRunnerTest {
   void executeAsync_최종_쓰기가_지면_FAILED_이벤트를_내지_않는다() {
     Long pipelineId = 12L, executionId = 120L, userId = 10L;
     PipelineStepResponse s1 = stepResponse(1102L, "s1", "SQL", "BAD SQL", null, List.of());
-    when(executionRepository.updateExecutionStatus(eq(executionId), eq("FAILED"), any(), any()))
+    when(executionRepository.finishUnlessCancelRequested(eq(executionId), eq("FAILED"), any()))
         .thenReturn(false);
 
     runner.executeAsync(
@@ -4355,7 +4409,7 @@ class PipelineAsyncRunnerTest {
         userId,
         false);
 
-    verify(executionRepository).updateExecutionStatus(eq(executionId), eq("FAILED"), any(), any());
+    verify(executionRepository).finishUnlessCancelRequested(eq(executionId), eq("FAILED"), any());
     verify(applicationEventPublisher, never()).publishEvent(any());
   }
 

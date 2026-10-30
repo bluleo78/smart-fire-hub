@@ -179,6 +179,23 @@ class TriggerControllerTest {
   }
 
   @Test
+  void toggleTrigger_withDesiredState_setsThatStateInsteadOfFlipping() throws Exception {
+    // WD-435: 옛 화면은 「비활성」을 보고 「활성화」를 누를 수 있다 — 서버가 이미 켜진 값을 뒤집으면 꺼진다.
+    // 본문의 원하는 상태(enabled=true)를 그대로 넘겨야 한다.
+    when(triggerService.getTriggerById(1L, 10L)).thenReturn(sampleTrigger());
+
+    mockMvc
+        .perform(
+            patch("/api/v1/pipelines/1/triggers/10/toggle")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\":true}"))
+        .andExpect(status().isNoContent());
+
+    verify(triggerService).toggleTrigger(1L, 10L, true, 1L);
+  }
+
+  @Test
   void getTriggers_missingPipeline_returnsNotFound() throws Exception {
     // 없는(또는 삭제된) 파이프라인이면 빈 목록이 아니라 404 와 한국어 문구(WD-244).
     when(triggerService.getTriggers(999999L)).thenThrow(new PipelineNotFoundException());

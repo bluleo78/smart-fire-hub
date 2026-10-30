@@ -99,7 +99,8 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
 
   const handleToggle = async (trigger: TriggerResponse) => {
     try {
-      await toggleTrigger.mutateAsync(trigger.id);
+      // 화면이 본 상태의 반대를 원하는 상태로 보낸다(WD-435) — 그사이 다른 사람이 이미 바꿨어도 누른 대로 설정되고, 토스트도 그 결과와 맞는다.
+      await toggleTrigger.mutateAsync({ triggerId: trigger.id, enabled: !trigger.isEnabled });
       toast.success(
         trigger.isEnabled
           ? `트리거 "${trigger.name}"${iGa(trigger.name)} 비활성화되었습니다.`
@@ -156,17 +157,20 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
             </p>
           </div>
         ) : (
-          <div className="grid gap-3">
+          // 열을 minmax(0,1fr) 하나로 고정한다(WD-406) — 열 지정이 없으면 암시적 열이 카드 내용의 최소 폭(이름·배지·⋯ 버튼)만큼 커져
+          // 휴대폰 폭에서 카드가 목록보다 넓어지고, 오른쪽 끝의 ⋯ 메뉴 버튼이 잘려 누를 수 없었다.
+          <div className="grid grid-cols-1 gap-3">
             {triggers.map((trigger) => (
               <Card key={trigger.id}>
-                <CardContent className="flex items-center justify-between p-4">
+                <CardContent className="flex items-center justify-between gap-2 p-4">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="shrink-0 text-muted-foreground">
                       {getTriggerIcon(trigger.triggerType)}
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-sm truncate">{trigger.name}</span>
+                        {/* min-w-0 — flex 항목의 기본 최소 폭(내용 폭) 때문에 truncate 가 듣지 않고 긴 이름이 배지를 밀어내지 않게(WD-406) */}
+                        <span className="font-medium text-sm truncate min-w-0">{trigger.name}</span>
                         <Badge variant="outline" className="text-xs shrink-0">
                           {getTriggerTypeLabel(trigger.triggerType)}
                         </Badge>
