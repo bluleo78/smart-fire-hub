@@ -10,6 +10,7 @@ import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.dto.TriggerType;
 import com.smartfirehub.pipeline.dto.UpdateTriggerRequest;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
+import com.smartfirehub.proactive.util.ProactiveCron;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.time.Instant;
@@ -261,6 +262,65 @@ class TriggerScheduleUpdateTest extends IntegrationTestBase {
 
     assertThat(triggerService.getTriggerById(id).isEnabled()).isFalse();
     assertThat(schedulerService.isScheduled(id)).isFalse();
+  }
+
+  /** WD-366 — 1분보다 잦은 cron(매초)은 생성·수정 모두 400 이고, 수정이면 옛 값·스케줄이 그대로 남아야 한다. */
+  @Test
+  void tooFrequentCron_isRejectedOnCreateAndUpdate() {
+    String expected = ProactiveCron.TOO_FREQUENT_MESSAGE + ": * * * * * *";
+    assertThatThrownBy(
+            () ->
+                triggerService.createTrigger(
+                    pipelineId,
+                    new CreateTriggerRequest(
+                        "매초", TriggerType.SCHEDULE, null, Map.of("cron", "* * * * * *")),
+                    userId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(expected);
+
+    TriggerResponse created = createSchedule("0 3 * * *");
+    TriggerResponse before = triggerService.getTriggerById(created.id());
+    Future<?> oldFuture = scheduledFuture(created.id());
+
+    assertThatThrownBy(
+            () ->
+                triggerService.updateTrigger(
+                    created.id(),
+                    new UpdateTriggerRequest("매초", null, null, Map.of("cron", "* * * * * *")),
+                    userId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(expected);
+
+    assertThat(triggerService.getTriggerById(created.id()).config()).isEqualTo(before.config());
+    assertThat(scheduledFuture(created.id())).isSameAs(oldFuture);
+
+    // 매분(5필드 "* * * * *" → 초 0)은 최소 간격과 같아 저장된다
+    assertThat(createSchedule("* * * * *").config().get("cron")).isEqualTo("0 * * * * *");
+  }
+
+  /**
+   * WD-366 — 검증 전에 매초로 저장된 옛 행은 재기동·토글로 다시 걸리지 않는다. 스케줄 등록 자체가 거부하고(재기동은 트리거마다 예외를 잡는다),
+   * 켜기는 커밋 전에 400 이다.
+   */
+  @Test
+  void storedTooFrequentRow_isNotRegisteredAndCannotBeEnabled() {
+    TriggerResponse created = createSchedule("0 3 * * *");
+    Map<String, Object> perSecond =
+        Map.of("cron", "* * * * * *", "timezone", "UTC", "concurrencyPolicy", "ALLOW");
+    triggerRepository.update(
+        created.id(), new UpdateTriggerRequest("매일새벽", null, null, perSecond), userId);
+    schedulerService.unregisterSchedule(created.id());
+
+    assertThatThrownBy(() -> schedulerService.registerSchedule(created.id(), perSecond))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageStartingWith(ProactiveCron.TOO_FREQUENT_MESSAGE);
+    assertThat(schedulerService.isScheduled(created.id())).isFalse();
+
+    triggerService.toggleTrigger(created.id(), false);
+    assertThatThrownBy(() -> triggerService.toggleTrigger(created.id(), true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageStartingWith(ProactiveCron.TOO_FREQUENT_MESSAGE);
+    assertThat(schedulerService.isScheduled(created.id())).isFalse();
   }
 
   /** 문법은 맞지만 다음 실행 시각이 없는 cron(2월 30일)은 생성·수정 모두 400 이고, 수정이면 옛 값·스케줄이 그대로 남아야 한다. */

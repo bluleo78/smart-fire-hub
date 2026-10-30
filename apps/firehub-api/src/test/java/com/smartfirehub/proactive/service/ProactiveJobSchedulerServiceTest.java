@@ -2,10 +2,13 @@ package com.smartfirehub.proactive.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
+import com.smartfirehub.proactive.exception.ProactiveJobException;
+import com.smartfirehub.proactive.util.ProactiveCron;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -291,5 +294,31 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
     // 다시 켜면 재계산되어야 한다
     proactiveJobService.toggleJob(created.id(), testUserId, true);
     assertThat(readNextExecuteAt(created.id())).isNotNull();
+  }
+
+  @Test
+  @DisplayName("매초로 저장된 옛 잡은 스케줄에 걸리지 않고, 다시 켜기는 400 이다 (WD-366)")
+  void storedTooFrequentJob_isNotRegisteredAndCannotBeEnabled() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            new CreateProactiveJobRequest(
+                "매초 옛 잡", "프롬프트", null, "0 0 9 * * *", "Asia/Seoul", true, null, Map.of()),
+            testUserId);
+    // 검증 전에 저장된 행을 흉내 낸다 — 저장 검증을 거치지 않게 DB 를 직접 덮는다
+    dsl.update(DSL.table(DSL.name("proactive_job")))
+        .set(DSL.field(DSL.name("cron_expression"), String.class), "* * * * * *")
+        .where(DSL.field(DSL.name("id"), Long.class).eq(created.id()))
+        .execute();
+
+    // 재기동·재예약 경로: 등록하지 않고 옛 스케줄도 내린다
+    schedulerService.registerSchedule(created.id(), "* * * * * *", "Asia/Seoul");
+    assertThat(schedulerService.isScheduled(created.id())).isFalse();
+    assertThat(readNextExecuteAt(created.id())).isNull();
+
+    proactiveJobService.toggleJob(created.id(), testUserId, false);
+    assertThatThrownBy(() -> proactiveJobService.toggleJob(created.id(), testUserId, true))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageStartingWith(ProactiveCron.TOO_FREQUENT_MESSAGE);
+    assertThat(schedulerService.isScheduled(created.id())).isFalse();
   }
 }

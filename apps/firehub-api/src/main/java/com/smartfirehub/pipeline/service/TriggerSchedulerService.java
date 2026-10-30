@@ -155,6 +155,12 @@ public class TriggerSchedulerService {
     final String cronExpression =
         ProactiveCron.normalize(rawCron == null ? null : rawCron.toString());
     final String timezone = String.valueOf(config.getOrDefault("timezone", "Asia/Seoul"));
+    // 1분보다 잦은 주기는 걸지 않는다(WD-366) — 저장 검증 전에 매초로 저장된 행이 재기동·토글로 다시 걸려 끝없이 재실행되지 않게.
+    // 재기동 경로(reloadAllSchedules)는 트리거마다 예외를 잡아 다른 트리거 등록을 막지 않는다.
+    String tooFrequent = ProactiveCron.describeTooFrequent(cronExpression);
+    if (tooFrequent != null) {
+      throw new IllegalArgumentException(tooFrequent + ": " + cronExpression);
+    }
     final CronTrigger cronTrigger;
     try {
       cronTrigger = new CronTrigger(cronExpression, ZoneId.of(timezone));

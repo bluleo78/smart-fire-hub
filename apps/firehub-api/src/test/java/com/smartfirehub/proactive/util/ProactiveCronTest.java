@@ -105,4 +105,22 @@ class ProactiveCronTest {
     // 6필드로 넣으면 맨 앞은 초 칸이다
     assertThat(ProactiveCron.describeInvalid("70 0 9 * * *")).startsWith("「초」 칸의 값 \"70\"");
   }
+
+  /** WD-366 — 초 칸이 숫자 하나가 아니면(매초·N초마다·여러 초) 1분보다 잦으므로 거부 문구를 낸다. */
+  @Test
+  @DisplayName("1분보다 잦은 cron 은 거부 문구, 분 단위 이상은 통과")
+  void describeTooFrequent() {
+    for (String tooFrequent :
+        new String[] {"* * * * * *", "*/10 * * * * *", "0,30 * * * * *", "0-5 * * * * *"}) {
+      assertThat(ProactiveCron.describeTooFrequent(tooFrequent))
+          .as(tooFrequent)
+          .isEqualTo(ProactiveCron.TOO_FREQUENT_MESSAGE);
+    }
+    for (String ok : new String[] {"* * * * *", "0 * * * * *", "30 */5 * * * *", "0 9 * * *"}) {
+      assertThat(ProactiveCron.describeTooFrequent(ok)).as(ok).isNull();
+    }
+    // 비었거나 칸 수가 틀린 식은 형식 검사의 몫이라 여기서는 판정하지 않는다
+    assertThat(ProactiveCron.describeTooFrequent(null)).isNull();
+    assertThat(ProactiveCron.describeTooFrequent("* *")).isNull();
+  }
 }

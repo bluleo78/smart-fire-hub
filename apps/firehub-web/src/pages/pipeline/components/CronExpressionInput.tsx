@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { cronTooFrequentMessage } from '@/lib/cron-frequency';
 
 const TIMEZONES = [
   'Asia/Seoul',
@@ -61,7 +62,8 @@ export default function CronExpressionInput({
     if (!value.trim()) return { description: '', parseError: null as string | null };
     try {
       const desc = cronstrue.toString(value, { locale: 'ko', use24HourTimeFormat: true });
-      return { description: desc, parseError: null as string | null };
+      // 형식은 맞아도 1분보다 잦은 주기(매초 등)는 저장할 수 없다고 입력 중에 바로 알린다(WD-366)
+      return { description: desc, parseError: cronTooFrequentMessage(value) ?? null };
     } catch {
       return { description: '', parseError: '유효하지 않은 cron 표현식입니다' };
     }

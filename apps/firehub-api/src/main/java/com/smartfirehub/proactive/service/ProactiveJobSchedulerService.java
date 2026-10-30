@@ -138,6 +138,11 @@ public class ProactiveJobSchedulerService {
                 existing.cancel(false);
               }
               String tz = timezone != null && !timezone.isBlank() ? timezone : "Asia/Seoul";
+              // 1분보다 잦은 주기는 걸지 않는다(WD-366) — 저장 검증 전에 매초로 저장된 잡이 재기동·재예약으로 다시 걸리지 않게.
+              if (ProactiveCron.describeTooFrequent(cronExpression) != null) {
+                log.warn("Skip too-frequent proactive job {} (cron '{}')", jobId, cronExpression);
+                return null;
+              }
               try {
                 // CronTrigger 는 6필드만 수용하는데 DB에는 5필드(Unix 표준)와 6필드가 섞여 있다(#347).
                 // 원시 문자열을 그대로 넘기면 5필드 레거시 잡이 등록에 실패해 enabled=true 인 채로

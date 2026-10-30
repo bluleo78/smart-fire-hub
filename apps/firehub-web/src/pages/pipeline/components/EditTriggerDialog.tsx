@@ -1,5 +1,4 @@
 import axios from 'axios';
-import cronstrue from 'cronstrue/i18n';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -11,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useAllPipelines, useUpdateTrigger } from '@/hooks/queries/usePipelines';
+import { cronInputError } from '@/lib/cron-frequency';
 import { iGa } from '@/lib/utils';
 import type { ErrorResponse } from '@/types/auth';
 import type { TriggerResponse } from '@/types/pipeline';
@@ -88,16 +88,14 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger }: E
     }
     if (trigger.triggerType === 'SCHEDULE') {
       const c = config as { cron: string };
-      // AddTriggerDialog와 동일하게 cronstrue로 형식까지 검증한다 (#641) —
+      // AddTriggerDialog와 동일하게 형식까지 검증한다 (#641) —
       // 빈 값만 체크하면 문법적으로 잘못된 Cron이 그대로 저장되어 스케줄러가 실행할 수 없다.
       if (!c.cron?.trim()) {
         errors.cron = 'Cron 표현식을 입력하세요';
       } else {
-        try {
-          cronstrue.toString(c.cron, { locale: 'ko' });
-        } catch {
-          errors.cron = '유효하지 않은 Cron 표현식입니다';
-        }
+        // 형식·1분보다 잦은 주기(WD-366)를 공용 검사로 — 서버도 같은 규칙으로 거부한다
+        const cronError = cronInputError(c.cron);
+        if (cronError) errors.cron = cronError;
       }
     }
     if (trigger.triggerType === 'PIPELINE_CHAIN') {

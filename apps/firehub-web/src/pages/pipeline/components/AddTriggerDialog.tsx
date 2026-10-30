@@ -1,5 +1,4 @@
 import axios from 'axios';
-import cronstrue from 'cronstrue/i18n';
 import { ArrowLeft,Clock, Code, Database, Globe, Link, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -10,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useCreateTrigger } from '@/hooks/queries/usePipelines';
+import { cronInputError } from '@/lib/cron-frequency';
 import { iGa } from '@/lib/utils';
 import type { ErrorResponse } from '@/types/auth';
 import type { TriggerResponse,TriggerType } from '@/types/pipeline';
@@ -110,11 +110,9 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
       if (!c.cron?.trim()) {
         errors.cron = 'Cron 표현식을 입력하세요';
       } else {
-        try {
-          cronstrue.toString(c.cron, { locale: 'ko' });
-        } catch {
-          errors.cron = '유효하지 않은 Cron 표현식입니다';
-        }
+        // 형식·1분보다 잦은 주기(WD-366)를 공용 검사로 — 서버도 같은 규칙으로 거부한다
+        const cronError = cronInputError(c.cron);
+        if (cronError) errors.cron = cronError;
       }
     }
     if (selectedType === 'PIPELINE_CHAIN') {

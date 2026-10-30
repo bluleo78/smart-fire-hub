@@ -21,6 +21,7 @@ import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.service.delivery.DeliveryChannel;
+import com.smartfirehub.proactive.util.ProactiveCron;
 import com.smartfirehub.proactive.util.ProactiveTime;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.time.LocalDateTime;
@@ -422,6 +423,26 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         .hasMessage(
             "유효하지 않은 cron 표현식입니다: \"61 * * * *\" — 「분」 칸의 값 \"61\" 이(가) 올바르지 않습니다 (허용 범위 0~59)")
         .hasMessageNotContaining("0 61");
+  }
+
+  /** WD-366 — 1분보다 잦은 cron(매초)은 파이프라인 트리거와 같은 문구로 400 이다. */
+  @Test
+  void createJob_withTooFrequentCron_isRejected() {
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.createJob(
+                    new CreateProactiveJobRequest(
+                        "매초",
+                        "프롬프트",
+                        null,
+                        "* * * * * *",
+                        "Asia/Seoul",
+                        true,
+                        null,
+                        Map.of("channels", List.of("CHAT"))),
+                    testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessage(ProactiveCron.TOO_FREQUENT_MESSAGE + ": \"* * * * * *\"");
   }
 
   /** 존재하지 않는 IANA timezone 으로 생성을 시도하면 ProactiveJobException(→400) 이 발생해야 한다 (#221). */

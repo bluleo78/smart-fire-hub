@@ -1201,6 +1201,11 @@ public class TriggerService {
     if (!CronExpression.isValidExpression(normalizedCron)) {
       throw new IllegalArgumentException("유효하지 않은 cron 표현식입니다: " + cron);
     }
+    // 1분보다 잦은 주기(매초 등)는 파이프라인을 끝없이 재실행시키므로 저장·켜기 전에 거부한다(WD-366).
+    String tooFrequent = ProactiveCron.describeTooFrequent(normalizedCron);
+    if (tooFrequent != null) {
+      throw new IllegalArgumentException(tooFrequent + ": " + cron);
+    }
     config.put("cron", normalizedCron);
     // 키가 없거나 null 이면 기본값을 채운다 — null 이 그대로 저장되면 등록 시 "null" 시간대로 실패한다.
     if (config.get("timezone") == null) {
