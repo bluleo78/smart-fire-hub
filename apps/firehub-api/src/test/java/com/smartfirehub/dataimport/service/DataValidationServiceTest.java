@@ -111,6 +111,37 @@ class DataValidationServiceTest {
     assertThat(((BigDecimal) result).compareTo(new BigDecimal("1234.56"))).isZero();
   }
 
+  /** 천 단위 자리가 아닌 쉼표는 지우지 않고 형식 오류로 막는다(WD-370) — 예전에는 「1,2,3」→123, 「12,34」→1234 로 저장됐다. */
+  @Test
+  void convertValue_integer_misplacedComma_rejected() {
+    for (String v : new String[] {"1,2,3", "12,34", "1,0000", ",123", "123,", "1,,000"}) {
+      assertThatThrownBy(() -> service.convertValue(v, "INTEGER"))
+          .as(v)
+          .hasMessage("정수 형식이 아닙니다: " + v + DataValidationService.COMMA_FORMAT_HINT);
+    }
+  }
+
+  /** 소수 쉼표(「12,5」 = 12.5)를 지워 125(10배)로 저장하지 않는다(WD-370). 소수부의 쉼표도 막는다. */
+  @Test
+  void convertValue_decimal_misplacedComma_rejected() {
+    for (String v : new String[] {"12,5", "1,2,3", "1,234.5,6", "0,5"}) {
+      assertThatThrownBy(() -> service.convertValue(v, "DECIMAL"))
+          .as(v)
+          .hasMessage("소수 형식이 아닙니다: " + v + DataValidationService.COMMA_FORMAT_HINT);
+    }
+  }
+
+  /** 올바른 천 단위 쉼표는 여러 묶음·부호가 있어도 그대로 받는다. */
+  @Test
+  void convertValue_validThousandsGroups_parsed() throws Exception {
+    assertThat(service.convertValue("1,000", "INTEGER")).isEqualTo(1000L);
+    assertThat(service.convertValue("-1,234,567", "INTEGER")).isEqualTo(-1234567L);
+    assertThat(((BigDecimal) service.convertValue("12,345,678.9", "DECIMAL")))
+        .isEqualByComparingTo("12345678.9");
+    assertThat(((BigDecimal) service.convertValue("+1,000.", "DECIMAL")))
+        .isEqualByComparingTo("1000");
+  }
+
   // -----------------------------------------------------------------------
   // convertValue — BOOLEAN
   // -----------------------------------------------------------------------
