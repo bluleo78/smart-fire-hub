@@ -296,7 +296,7 @@ class PipelineExecutionServiceTest {
     // when
     service.executePipeline(pipelineId, userId);
 
-    // then: 감사 로그 기록됨
+    // then: 감사 로그 기록됨 — 설명에 실행 번호, metadata 에 실행 id·시작 주체(MANUAL)가 실린다(WD-462)
     verify(auditLogService)
         .log(
             eq(userId),
@@ -304,12 +304,50 @@ class PipelineExecutionServiceTest {
             eq("EXECUTE"),
             eq("pipeline"),
             eq(String.valueOf(pipelineId)),
-            contains("AuditPipeline"),
+            eq("파이프라인 실행: AuditPipeline (실행 #95)"),
             any(),
             any(),
             eq("SUCCESS"),
             any(),
-            any());
+            argThat(
+                (Object m) ->
+                    m instanceof java.util.Map<?, ?> map
+                        && Long.valueOf(95L).equals(map.get("executionId"))
+                        && "MANUAL".equals(map.get("triggeredBy"))
+                        && map.containsKey("triggerId")
+                        && map.get("triggerId") == null));
+  }
+
+  @Test
+  void executePipeline_triggerRun_auditRecordsTriggerKind() {
+    // 트리거 실행은 트리거 유형·트리거 id 가 metadata 에 남아 수동 실행과 구분된다(WD-462)
+    Long pipelineId = 7L;
+    Long userId = 10L;
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of());
+    when(executionRepository.createExecution(pipelineId, userId, "PIPELINE_CHAIN", 33L))
+        .thenReturn(120L);
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("Downstream"));
+
+    service.executePipeline(pipelineId, userId, "PIPELINE_CHAIN", 33L);
+
+    verify(auditLogService)
+        .log(
+            eq(userId),
+            any(),
+            eq("EXECUTE"),
+            eq("pipeline"),
+            eq(String.valueOf(pipelineId)),
+            eq("파이프라인 실행: Downstream (실행 #120)"),
+            any(),
+            any(),
+            eq("SUCCESS"),
+            any(),
+            argThat(
+                (Object m) ->
+                    m instanceof java.util.Map<?, ?> map
+                        && Long.valueOf(120L).equals(map.get("executionId"))
+                        && "PIPELINE_CHAIN".equals(map.get("triggeredBy"))
+                        && Long.valueOf(33L).equals(map.get("triggerId"))));
   }
 
   // ------------------------------------------------------------------ //

@@ -116,6 +116,8 @@ public class TriggerService {
   private final TenantRepository tenantRepository;
   // 웹훅 시크릿 암호화·복호화(WD-220) — 공개 기본 키 대신 WEBHOOK_SECRET_KEY 또는 마스터키 파생 키를 쓰고, 옛 암호문은 레거시 키로 푼다
   private final WebhookSecretCipher webhookSecretCipher;
+  // 트리거 생성·수정·켜기/끄기·삭제 감사 기록(WD-462)
+  private final PipelineAuditRecorder auditRecorder;
 
   public TriggerService(
       TriggerRepository triggerRepository,
@@ -129,6 +131,7 @@ public class TriggerService {
       MemberEligibility memberEligibility,
       TriggerCreatorSkipNotifier creatorSkipNotifier,
       TenantRepository tenantRepository,
+      PipelineAuditRecorder auditRecorder,
       @Value("${app.encryption.master-key}") String encryptionMasterKey) {
     this.triggerRepository = triggerRepository;
     this.triggerEventRepository = triggerEventRepository;
@@ -141,6 +144,7 @@ public class TriggerService {
     this.memberEligibility = memberEligibility;
     this.creatorSkipNotifier = creatorSkipNotifier;
     this.tenantRepository = tenantRepository;
+    this.auditRecorder = auditRecorder;
     // WEBHOOK_SECRET_KEY 는 예전부터 환경변수로만 읽었다 — 같은 이름을 그대로 존중한다(설정한 배포의 옛 암호문 호환).
     this.webhookSecretCipher =
         new WebhookSecretCipher(System.getenv("WEBHOOK_SECRET_KEY"), encryptionMasterKey);
@@ -273,6 +277,10 @@ public class TriggerService {
 
     TriggerResponse response =
         triggerRepository.findById(triggerId).orElseThrow(TriggerNotFoundException::new);
+
+    // 감사(WD-462) — 설정 검증·저장이 모두 끝난 뒤 같은 트랜잭션에서 남긴다. config(토큰 해시·웹훅 시크릿 포함)는 싣지 않는다.
+    auditTrigger(userId, "CREATE", response, "트리거 생성: " + response.name(), null);
+
     // 생성 응답도 조회 응답과 같은 마스킹을 거친다(WD-220) — 웹훅 암호문이 생성 직후 응답으로 새지 않게.
     response = toPublic(response);
 
@@ -410,22 +418,34 @@ public class TriggerService {
             }
           });
     }
+
+    // 감사(WD-462) — 저장 전(existing)과 저장 후 다시 읽은 값을 비교해 바뀐 항목 이름만 남긴다.
+    auditTriggerUpdate(userId, existing);
   }
 
   /** 경로의 파이프라인에 속한 트리거만 지운다(WD-228). 없거나 다른 파이프라인의 트리거면 404. */
   @Transactional
-  public void deleteTrigger(Long pipelineId, Long triggerId) {
+  public void deleteTrigger(Long pipelineId, Long triggerId, Long userId) {
     requireTriggerInPipeline(pipelineId, triggerId);
-    deleteTrigger(triggerId);
+    deleteTriggerAs(triggerId, userId);
   }
 
-  /** 트리거 id 만으로 지운다 — 소속 파이프라인을 확인하지 않는다. */
+  /**
+   * 트리거 id 만으로 지운다 — 소속 파이프라인을 확인하지 않고 행위자도 없다(사용자 요청이 아닌 내부·테스트 경로). 감사는 행위자 "system" 으로 남는다. 사용자
+   * 요청은 {@link #deleteTrigger(Long, Long, Long)} 로 들어온다.
+   */
   @Transactional
   public void deleteTrigger(Long triggerId) {
+    deleteTriggerAs(triggerId, null);
+  }
+
+  /** 트리거 삭제 본체. 성공하면 DELETE 감사를 남긴다(WD-462) — 행이 사라지므로 이름·유형을 지우기 전에 읽어 둔 값으로 남긴다. */
+  private void deleteTriggerAs(Long triggerId, Long userId) {
     TriggerResponse existing =
         triggerRepository.findById(triggerId).orElseThrow(TriggerNotFoundException::new);
 
     triggerRepository.delete(triggerId);
+    auditTrigger(userId, "DELETE", existing, "트리거 삭제: " + existing.name(), null);
 
     // Unregister schedule after commit
     if ("SCHEDULE".equals(existing.triggerType())) {
@@ -441,14 +461,22 @@ public class TriggerService {
 
   /** 경로의 파이프라인에 속한 트리거만 켜고 끈다(WD-228). 없거나 다른 파이프라인의 트리거면 404. */
   @Transactional
-  public void toggleTrigger(Long pipelineId, Long triggerId, boolean enabled) {
+  public void toggleTrigger(Long pipelineId, Long triggerId, boolean enabled, Long userId) {
     requireTriggerInPipeline(pipelineId, triggerId);
-    toggleTrigger(triggerId, enabled);
+    toggleTriggerAs(triggerId, enabled, userId);
   }
 
-  /** 트리거 id 만으로 켜고 끈다 — 소속 파이프라인을 확인하지 않는다. */
+  /**
+   * 트리거 id 만으로 켜고 끈다 — 소속 파이프라인을 확인하지 않고 행위자도 없다(사용자 요청이 아닌 내부·테스트 경로). 감사는 행위자 "system" 으로 남는다.
+   * 사용자 요청은 {@link #toggleTrigger(Long, Long, boolean, Long)} 로 들어온다.
+   */
   @Transactional
   public void toggleTrigger(Long triggerId, boolean enabled) {
+    toggleTriggerAs(triggerId, enabled, null);
+  }
+
+  /** 켜기/끄기 본체. 상태가 실제로 바뀌면 STATUS_CHANGE 감사를 남긴다(WD-462). */
+  private void toggleTriggerAs(Long triggerId, boolean enabled, Long userId) {
     TriggerResponse existing =
         triggerRepository.findById(triggerId).orElseThrow(TriggerNotFoundException::new);
 
@@ -483,6 +511,16 @@ public class TriggerService {
     if (enablesDatasetChange) {
       // 다시 켠 트리거는 직전 기준선이 없는 것으로 본다 — 꺼진 동안의 변경으로 켜자마자 발화하지 않게(WD-221).
       triggerRepository.clearPollSnapshot(triggerId);
+    }
+
+    // 감사(WD-462) — 켜기/끄기 검증(연쇄 순환·선행 존재·cron·감시 목록)을 모두 지난 뒤에만 남는다. 이미 그 상태면 바뀐 것이 없어 남기지 않는다.
+    if (existing.isEnabled() != enabled) {
+      auditTrigger(
+          userId,
+          "STATUS_CHANGE",
+          existing,
+          (enabled ? "트리거 켜기: " : "트리거 끄기: ") + existing.name(),
+          Map.of("enabled", enabled));
     }
 
     // Update scheduler after commit
@@ -604,6 +642,102 @@ public class TriggerService {
   /** limit 범위 밖일 때의 400 문구(WD-244). */
   static final String TRIGGER_EVENT_LIMIT_MESSAGE =
       "limit 은 1~" + MAX_TRIGGER_EVENT_LIMIT + " 사이여야 합니다.";
+
+  /**
+   * 수정 감사에서 비교하지 않는 config 키(WD-462) — 서버 소유 키(웹훅 시크릿 암호문·웹훅 id·API 토큰 해시)·응답 전용 표시·저장하지 않는 평문 키·폴러
+   * 내부 상태다. 사용자가 바꾸는 설정이 아니고, 이름이라도 시크릿 관련 항목을 "바뀐 항목"으로 드러낼 이유가 없다.
+   */
+  private static final Set<String> AUDIT_IGNORED_CONFIG_KEYS =
+      Set.of(
+          "secretEncrypted",
+          "hasSecret",
+          "secret",
+          "webhookId",
+          "tokenHash",
+          "rawToken",
+          "lastSnapshot",
+          "changedDatasets");
+
+  /** 트리거 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-462). 없는 키는 키 그대로 쓴다. */
+  private static final Map<String, String> AUDIT_FIELD_LABELS =
+      Map.ofEntries(
+          Map.entry("name", "이름"),
+          Map.entry("description", "설명"),
+          Map.entry("isEnabled", "사용 여부"),
+          Map.entry("cron", "실행 주기"),
+          Map.entry("timezone", "시간대"),
+          Map.entry("concurrencyPolicy", "동시 실행 정책"),
+          Map.entry("allowedIps", "허용 IP"),
+          Map.entry("upstreamPipelineId", "선행 파이프라인"),
+          Map.entry("condition", "실행 조건"),
+          Map.entry("datasetIds", "감시 데이터셋"),
+          Map.entry("pollingIntervalSeconds", "확인 주기"),
+          Map.entry("debounceSeconds", "대기 시간"));
+
+  /**
+   * 트리거 수정 감사(WD-462). 저장 전 값과 저장 후 다시 읽은 값을 비교해 바뀐 항목 <b>이름</b>만 모은다 — 이름·설명·사용 여부 다음에 config 키를
+   * 이름순으로. 요청이 아니라 저장값끼리 비교하는 이유: 웹은 config 를 통째로 보내고 서버가 cron 등을 정규화하므로, 요청과 비교하면 바뀌지 않은 항목까지 바뀐
+   * 것으로 센다. 바뀐 항목이 없으면 남기지 않는다(ROLE_UPDATE·API 연결 수정과 같은 규칙). config 값은 싣지 않는다.
+   */
+  private void auditTriggerUpdate(Long userId, TriggerResponse before) {
+    TriggerResponse after =
+        triggerRepository.findById(before.id()).orElseThrow(TriggerNotFoundException::new);
+    List<String> changed = new ArrayList<>();
+    if (!Objects.equals(before.name(), after.name())) changed.add("name");
+    if (!Objects.equals(before.description(), after.description())) changed.add("description");
+    if (before.isEnabled() != after.isEnabled()) changed.add("isEnabled");
+    Map<String, Object> beforeConfig = before.config() == null ? Map.of() : before.config();
+    Map<String, Object> afterConfig = after.config() == null ? Map.of() : after.config();
+    Set<String> keys = new TreeSet<>(beforeConfig.keySet());
+    keys.addAll(afterConfig.keySet());
+    for (String key : keys) {
+      if (!AUDIT_IGNORED_CONFIG_KEYS.contains(key)
+          && !Objects.equals(beforeConfig.get(key), afterConfig.get(key))) {
+        changed.add(key);
+      }
+    }
+    if (changed.isEmpty()) {
+      return; // 실제 변경 없음 — 감사 생략
+    }
+    auditTrigger(
+        userId,
+        "UPDATE",
+        after,
+        "트리거 수정: "
+            + after.name()
+            + " (바뀐 항목: "
+            + PipelineAuditRecorder.changedLabels(changed, AUDIT_FIELD_LABELS)
+            + ")",
+        Map.of("changedFields", changed));
+  }
+
+  /**
+   * 트리거 감사 공통(WD-462, resource = pipeline_trigger, resourceId = 트리거 id). metadata 에는 트리거 이름·유형·소속
+   * 파이프라인(id·이름)을 싣고 동작별 항목({@code extra})을 덧붙인다. config 는 싣지 않는다.
+   */
+  private void auditTrigger(
+      Long userId,
+      String action,
+      TriggerResponse trigger,
+      String description,
+      Map<String, Object> extra) {
+    Map<String, Object> metadata = new LinkedHashMap<>();
+    metadata.put("name", trigger.name());
+    metadata.put("triggerType", trigger.triggerType());
+    metadata.put("pipelineId", trigger.pipelineId());
+    metadata.put(
+        "pipelineName", pipelineRepository.findNameById(trigger.pipelineId()).orElse(null));
+    if (extra != null) {
+      metadata.putAll(extra);
+    }
+    auditRecorder.record(
+        userId,
+        action,
+        PipelineAuditRecorder.RESOURCE_TRIGGER,
+        trigger.id(),
+        description,
+        metadata);
+  }
 
   /** 경로의 파이프라인이 (지금 테넌트에) 있는지 확인한다 — RLS 로 다른 테넌트의 파이프라인도 "없음"이다. 없으면 404(WD-244). */
   private void requirePipelineExists(Long pipelineId) {

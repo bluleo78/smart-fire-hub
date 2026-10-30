@@ -131,7 +131,7 @@ class TriggerControllerTest {
             delete("/api/v1/pipelines/1/triggers/10").header("Authorization", "Bearer test-token"))
         .andExpect(status().isNoContent());
 
-    verify(triggerService).deleteTrigger(1L, 10L);
+    verify(triggerService).deleteTrigger(1L, 10L, 1L);
   }
 
   @Test
@@ -175,7 +175,7 @@ class TriggerControllerTest {
         .andExpect(status().isNoContent());
 
     // 켜져 있던 트리거이므로 같은 파이프라인 범위에서 끄기로 바뀐다.
-    verify(triggerService).toggleTrigger(1L, 10L, false);
+    verify(triggerService).toggleTrigger(1L, 10L, false, 1L);
   }
 
   @Test

@@ -392,14 +392,14 @@ class TriggerServiceTest extends IntegrationTestBase {
   void deleteTrigger_otherPipeline_throwsNotFoundAndKeepsTrigger() {
     TriggerResponse created = createScheduleTriggerOnPipeline1();
 
-    assertThatThrownBy(() -> triggerService.deleteTrigger(pipelineId2, created.id()))
+    assertThatThrownBy(() -> triggerService.deleteTrigger(pipelineId2, created.id(), testUserId))
         .isInstanceOf(TriggerNotFoundException.class);
     assertThat(triggerService.getTriggers(pipelineId))
         .extracting(TriggerResponse::id)
         .contains(created.id());
 
     // 맞는 파이프라인이면 지워진다.
-    triggerService.deleteTrigger(pipelineId, created.id());
+    triggerService.deleteTrigger(pipelineId, created.id(), testUserId);
     assertThat(triggerService.getTriggers(pipelineId))
         .extracting(TriggerResponse::id)
         .doesNotContain(created.id());
@@ -409,12 +409,13 @@ class TriggerServiceTest extends IntegrationTestBase {
   void toggleTrigger_otherPipeline_throwsNotFoundAndKeepsState() {
     TriggerResponse created = createScheduleTriggerOnPipeline1();
 
-    assertThatThrownBy(() -> triggerService.toggleTrigger(pipelineId2, created.id(), false))
+    assertThatThrownBy(
+            () -> triggerService.toggleTrigger(pipelineId2, created.id(), false, testUserId))
         .isInstanceOf(TriggerNotFoundException.class);
     assertThat(triggerService.getTriggerById(created.id()).isEnabled()).isTrue();
 
     // 맞는 파이프라인이면 꺼진다.
-    triggerService.toggleTrigger(pipelineId, created.id(), false);
+    triggerService.toggleTrigger(pipelineId, created.id(), false, testUserId);
     assertThat(triggerService.getTriggerById(created.id()).isEnabled()).isFalse();
   }
 

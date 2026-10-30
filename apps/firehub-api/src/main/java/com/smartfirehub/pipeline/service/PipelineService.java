@@ -114,6 +114,16 @@ public class PipelineService {
   /** 스텝이 참조하는 API 연결이 현재 워크스페이스에서 보이는지 판정(WD-176) — RLS 가 걸린 조회다. */
   private final ApiConnectionReader apiConnectionReader;
 
+  /** 파이프라인 생성·수정·삭제 감사 기록(WD-462). */
+  private final PipelineAuditRecorder auditRecorder;
+
+  /**
+   * 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-462). 스텝은 무엇이 바뀌었든(추가·삭제·순서·SQL·설정) "steps" 하나로만 남긴다 — 코드·설정 값은 감사에
+   * 싣지 않는다.
+   */
+  private static final Map<String, String> AUDIT_FIELD_LABELS =
+      Map.of("name", "이름", "description", "설명", "isActive", "활성 여부", "steps", "스텝");
+
   /**
    * 원문 오류를 볼 수 없는 조회자에게 스텝·실행 오류 대신 보여 주는 고정 문구(WD-27). 원문(PG 오류)에는 숨김 테이블명·행 값이 실릴 수 있어 일부만 지우지 않고
    * 통째로 바꾼다. 판정 근거가 없어 가린 경우(숨김 데이터셋이 실제로 없을 수도 있음)에도 사실과 어긋나지 않도록 중립 문구로 둔다.
@@ -149,6 +159,16 @@ public class PipelineService {
 
     // Save steps — 새 파이프라인이므로 요청에 스텝 id 가 와도 무시하고 전부 새로 만든다(existingSteps = 전부 null).
     saveSteps(pipeline.id(), request.steps(), userId, Set.of(), Set.of(), null);
+
+    // 감사(WD-462) — 검증·저장이 모두 끝난 뒤 같은 트랜잭션에서 남긴다(스텝 검증 거부면 남지 않는다). 이름·스텝 수만 싣고 스텝 코드는 싣지 않는다.
+    int stepCount = request.steps() == null ? 0 : request.steps().size();
+    auditRecorder.record(
+        userId,
+        "CREATE",
+        PipelineAuditRecorder.RESOURCE_PIPELINE,
+        pipeline.id(),
+        "파이프라인 생성: " + request.name(),
+        pipelineSnapshot(request.name(), stepCount));
 
     // Return full detail
     return getPipelineById(pipeline.id());
@@ -676,6 +696,11 @@ public class PipelineService {
     EditConflictException.check(
         request.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
 
+    // 감사용 저장 전 값(WD-462) — 요청이 아니라 저장값끼리 비교해야 "값이 같은 필드를 다시 보낸 저장"을 바뀐 것으로 세지 않는다(웹은 늘 전체를 보낸다).
+    PipelineResponse beforeAudit =
+        pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
+    List<List<Object>> stepsBeforeAudit = null;
+
     // 이름 변경 시 중복 검사 — 다른 파이프라인에 동일 이름이 있으면 409 반환 (#181)
     if (request.name() != null) {
       String currentName = pipelineRepository.findNameById(id).orElse(null);
@@ -701,6 +726,7 @@ public class PipelineService {
     // 남는다).
     if (request.steps() != null) {
       List<PipelineStepResponse> existingSteps = stepRepository.findByPipelineId(id);
+      stepsBeforeAudit = auditStepProjection(existingSteps);
       // 왕복 보존용 기존 출력·입력 id — 이름이 아니라 파이프라인 전체 집합으로 비교한다(스텝 이름을 바꿔도 같은 출력을
       // 되돌려 보내는 저장이 막히지 않게). 웹은 해석된 출력(TEMP 폴백 포함)을 되돌려 보내므로 해석된 값을 쓴다.
       Set<Long> previouslySavedOutputIds = new java.util.HashSet<>();
@@ -801,7 +827,90 @@ public class PipelineService {
       pipelineSecurityGate.requireAutoTempsDeletable(userId, temps.deletable());
       deleteAutoTempDatasets(temps);
     }
+
+    // 감사(WD-462) — 모든 검증·저장(위 7 의 403 판정 포함)이 끝난 뒤에 남긴다. 그 전에 거부되면 같은 트랜잭션이라 남지 않는다.
+    auditPipelineUpdate(userId, id, beforeAudit, stepsBeforeAudit);
     return savedUpdatedAt;
+  }
+
+  /**
+   * 수정 감사(WD-462). 저장 전 값과 저장 후 다시 읽은 값을 비교해 바뀐 항목 이름만 모은다 — 바뀐 항목이 없으면 남기지 않는다(ROLE_UPDATE·API 연결
+   * 수정과 같은 규칙).
+   *
+   * <p>metadata: {@code name}(저장 후 이름), {@code changedFields}(name·description·isActive·steps 중 바뀐
+   * 키). 스텝 SQL·Python 코드·API/AI 설정 값은 싣지 않는다.
+   *
+   * @param stepsBefore 저장 전 스텝 투영 — 스텝을 보내지 않은 수정(null)은 스텝을 비교하지 않는다
+   */
+  private void auditPipelineUpdate(
+      Long userId, Long id, PipelineResponse before, List<List<Object>> stepsBefore) {
+    PipelineResponse after =
+        pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
+    List<String> changed = new ArrayList<>();
+    if (!java.util.Objects.equals(before.name(), after.name())) changed.add("name");
+    if (!java.util.Objects.equals(before.description(), after.description())) {
+      changed.add("description");
+    }
+    if (before.isActive() != after.isActive()) changed.add("isActive");
+    if (stepsBefore != null
+        && !stepsBefore.equals(auditStepProjection(stepRepository.findByPipelineId(id)))) {
+      changed.add("steps");
+    }
+    if (changed.isEmpty()) {
+      return; // 실제 변경 없음 — 감사 생략
+    }
+    Map<String, Object> metadata = new java.util.LinkedHashMap<>();
+    metadata.put("name", after.name());
+    metadata.put("changedFields", changed);
+    auditRecorder.record(
+        userId,
+        "UPDATE",
+        PipelineAuditRecorder.RESOURCE_PIPELINE,
+        id,
+        "파이프라인 수정: "
+            + after.name()
+            + " (바뀐 항목: "
+            + PipelineAuditRecorder.changedLabels(changed, AUDIT_FIELD_LABELS)
+            + ")",
+        metadata);
+  }
+
+  /**
+   * 스텝 "변경 여부" 판정용 투영(WD-462) — 저장되는 내용만 순서대로 담는다. 스텝 id(제자리 갱신이라 같은 스텝은 유지되지만 비교 대상이 아님)·증분
+   * 책갈피·재생성 예약(저장의 부수 효과)·출력 이름(가시성에 따라 달라짐)은 뺀다. 입력·의존 목록은 조회 순서가 정해져 있지 않아 정렬한다. 값은 비교에만 쓰고 감사에
+   * 싣지 않는다.
+   */
+  private static List<List<Object>> auditStepProjection(List<PipelineStepResponse> steps) {
+    return steps.stream()
+        .map(
+            s ->
+                java.util.Arrays.<Object>asList(
+                    s.name(),
+                    s.description(),
+                    s.scriptType(),
+                    s.scriptContent(),
+                    s.outputDatasetId(),
+                    s.inputDatasetIds() == null
+                        ? List.of()
+                        : s.inputDatasetIds().stream().sorted().toList(),
+                    s.dependsOnStepNames() == null
+                        ? List.of()
+                        : s.dependsOnStepNames().stream().sorted().toList(),
+                    s.stepOrder(),
+                    s.loadStrategy(),
+                    s.apiConfig(),
+                    s.aiConfig(),
+                    s.pythonConfig(),
+                    s.apiConnectionId()))
+        .toList();
+  }
+
+  /** 생성·삭제 감사 metadata(WD-462) — 이름·스텝 수만. */
+  private static Map<String, Object> pipelineSnapshot(String pipelineName, int stepCount) {
+    Map<String, Object> snapshot = new java.util.LinkedHashMap<>();
+    snapshot.put("name", pipelineName);
+    snapshot.put("stepCount", stepCount);
+    return snapshot;
   }
 
   /**
@@ -1309,7 +1418,19 @@ public class PipelineService {
     AutoTempDeletion temps = planPipelineDeletion(id);
     // 볼 수 없는 임시 데이터셋이 있으면 무엇이든 바꾸기 전에 거부한다(WD-310). 판정한 목록을 그대로 지운다.
     pipelineSecurityGate.requireAutoTempsDeletable(userId, temps.deletable());
+    // 행이 사라지므로 감사에 남길 이름·스텝 수를 지우기 전에 읽어 둔다(WD-462). planPipelineDeletion 이 이미 존재를 확인했다.
+    PipelineResponse target =
+        pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
     deletePipeline(id, temps);
+    // 감사(WD-462) — 삭제와 같은 트랜잭션이라 삭제가 실패하면 함께 롤백된다. 테스트 정리용 deletePipelineUnchecked 는 사용자 요청이 아니라
+    // 남기지 않는다.
+    auditRecorder.record(
+        userId,
+        "DELETE",
+        PipelineAuditRecorder.RESOURCE_PIPELINE,
+        id,
+        "파이프라인 삭제: " + target.name(),
+        pipelineSnapshot(target.name(), target.stepCount()));
   }
 
   /**
