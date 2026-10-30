@@ -95,6 +95,10 @@ public class PipelineAsyncRunner {
   private final PipelineStepRepository stepRepository;
   private final PipelineExecutionRepository executionRepository;
   private final PipelineExecutionRegistry executionRegistry;
+
+  /** 테넌트별 동시 실행 관문 — 러너가 끝나면 자리를 돌려줘 기다리던 다음 실행이 시작된다(WD-439). */
+  private final PipelineTenantAdmission tenantAdmission;
+
   private final PipelineRepository pipelineRepository;
   private final DataTableService dataTableService;
   private final DataTableRowService dataTableRowService;
@@ -210,6 +214,8 @@ public class PipelineAsyncRunner {
     } finally {
       // 어떤 경로로 끝나도(정상·실패·취소·마감 경합 패배·예상 밖 예외) 등록부에서 뺀다 — 안 빼면 하트비트가 끝난 실행을 계속 갱신한다(WD-230).
       executionRegistry.unregister(executionId);
+      // 관문 자리도 같은 지점에서 돌려준다 — 어떤 종료 경로든 자리가 새지 않아야 그 테넌트의 대기 실행이 멈추지 않는다(WD-439).
+      tenantAdmission.release(executionId);
     }
   }
 

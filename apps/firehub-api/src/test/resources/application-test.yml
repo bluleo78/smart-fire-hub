@@ -87,6 +87,10 @@ app:
       max-pools: 3
       max-size: 1
       idle-timeout-ms: 600000
+    # 테스트는 실행기를 끄고 연결 풀이 1개라 기본값이면 관문이 1개로 묶인다 — 실행을 겹쳐 돌리는 기존 테스트의 동작을 바꾸지 않게 끄고, 관문 테스트만
+    # 따로 켠다(PipelineTenantAdmissionIntegrationTest, WD-439).
+    tenant-concurrency:
+      max-running: 0
   executor:
     enabled: false  # tests use direct execution
     # 테스트는 기본 토큰으로 저장소 기술자 엔드포인트를 호출한다. 다른 프로필에는 두지 않는다.

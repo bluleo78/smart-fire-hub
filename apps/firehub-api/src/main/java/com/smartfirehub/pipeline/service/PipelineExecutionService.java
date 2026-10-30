@@ -2,9 +2,11 @@ package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.transaction.AfterCommitRunner;
 import com.smartfirehub.pipeline.dto.CancelExecutionResponse;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
+import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.ExecutionAlreadyFinishedException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
@@ -12,6 +14,8 @@ import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.user.repository.UserRepository;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -21,6 +25,7 @@ import java.util.Map;
 import java.util.Queue;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -46,6 +51,8 @@ public class PipelineExecutionService {
   private final AuditLogService auditLogService;
   private final UserRepository userRepository;
   private final PipelineExecutionRegistry executionRegistry;
+  private final PipelineTenantAdmission tenantAdmission;
+  private final ApplicationEventPublisher eventPublisher;
 
   @Value("${app.executor.enabled:false}")
   private boolean executorEnabled;
@@ -57,12 +64,16 @@ public class PipelineExecutionService {
       PipelineAsyncRunner asyncRunner,
       UserRepository userRepository,
       AuditLogService auditLogService,
-      PipelineExecutionRegistry executionRegistry) {
+      PipelineExecutionRegistry executionRegistry,
+      PipelineTenantAdmission tenantAdmission,
+      ApplicationEventPublisher eventPublisher) {
     this.stepRepository = stepRepository;
     this.executionRepository = executionRepository;
     this.pipelineRepository = pipelineRepository;
     this.asyncRunner = asyncRunner;
     this.executionRegistry = executionRegistry;
+    this.tenantAdmission = tenantAdmission;
+    this.eventPublisher = eventPublisher;
     this.userRepository = userRepository;
     this.auditLogService = auditLogService;
   }
@@ -149,9 +160,10 @@ public class PipelineExecutionService {
   }
 
   /**
-   * 실행을 이 인스턴스 등록부에 올린 뒤 비동기 러너에 제출한다(WD-230). 등록부에 있는 동안 하트비트가 갱신되고 정리기가 건너뛴다. 제출이 예외(풀 포화로 인한
-   * {@code TaskRejectedException} 포함)를 던지면 러너가 영영 시작하지 않으므로 등록을 되돌리고 다시 던진다 — 안 그러면 하트비트가 죽은 실행을 계속
-   * 살려 둔다.
+   * 실행을 이 인스턴스 등록부에 올린 뒤 테넌트 관문을 거쳐 비동기 러너에 제출한다(WD-230, WD-439). 등록부에 있는 동안 하트비트가 갱신되고 정리기가 건너뛴다 —
+   * 관문 대기열에서 PENDING 으로 기다리는 실행도 마찬가지다. 곧바로 한 제출이 예외(풀 포화로 인한 {@code TaskRejectedException} 포함)를
+   * 던지면 러너가 영영 시작하지 않으므로 등록을 되돌리고 다시 던진다 — 안 그러면 하트비트가 죽은 실행을 계속 살려 둔다. 대기열에서 대기 한도를 넘기면 던질 호출자가
+   * 없으므로 실행을 실패로 닫는다({@link #closeWaiting}).
    */
   private void submitRegistered(
       Long pipelineId,
@@ -160,20 +172,55 @@ public class PipelineExecutionService {
       Map<Long, List<Long>> stepDependencyMap,
       Map<Long, Long> stepIdToStepExecId,
       Long userId) {
-    executionRegistry.register(executionId, TenantContext.require("파이프라인 실행 등록"));
+    long tenantId = TenantContext.require("파이프라인 실행 등록");
+    executionRegistry.register(executionId, tenantId);
+    // 대기열에서 나중에 제출될 때는 다른 테넌트·컨텍스트 없는 스레드(러너 종료·정리 주기)에서 불릴 수 있어, 러너로 넘어갈 테넌트를 직접 정한다.
+    Runnable dispatch =
+        () ->
+            TenantContext.runScoped(
+                tenantId,
+                () ->
+                    asyncRunner.executeAsync(
+                        pipelineId,
+                        executionId,
+                        steps,
+                        stepDependencyMap,
+                        stepIdToStepExecId,
+                        userId,
+                        executorEnabled));
     try {
-      asyncRunner.executeAsync(
-          pipelineId,
-          executionId,
-          steps,
-          stepDependencyMap,
-          stepIdToStepExecId,
-          userId,
-          executorEnabled);
+      tenantAdmission.admit(
+          tenantId, executionId, dispatch, () -> closeWaiting(tenantId, pipelineId, executionId));
     } catch (RuntimeException | Error e) {
       executionRegistry.unregister(executionId);
       throw e;
     }
+  }
+
+  /**
+   * 관문 대기열에서 시작하지 못한 실행을 실패로 닫는다(WD-439) — 실행 FAILED·스텝 닫기를 한 트랜잭션의 조건부 쓰기로 하고(그 사이 취소됐거나 정리기가 먼저
+   * 닫았으면 아무것도 바꾸지 않는다), 등록부에서 빼고, 이겼을 때만 실패 이벤트를 내 실패 알림·실패 연쇄가 다른 실패와 똑같이 돈다.
+   */
+  private void closeWaiting(long tenantId, Long pipelineId, Long executionId) {
+    TenantContext.runScoped(
+        tenantId,
+        () -> {
+          try {
+            if (!executionRepository.failInterruptedAndCloseSteps(
+                executionId,
+                LocalDateTime.now(ZoneOffset.UTC),
+                PipelineTenantAdmission.WAIT_TIMEOUT_MESSAGE)) {
+              return;
+            }
+            Long createdBy = pipelineRepository.findCreatedByIdById(pipelineId).orElse(null);
+            eventPublisher.publishEvent(
+                new PipelineCompletedEvent(pipelineId, executionId, "FAILED", createdBy));
+            log.warn(
+                "대기 한도를 넘긴 파이프라인 실행을 실패로 닫았습니다: execution={}, tenant={}", executionId, tenantId);
+          } finally {
+            executionRegistry.unregister(executionId);
+          }
+        });
   }
 
   /**
@@ -251,7 +298,8 @@ public class PipelineExecutionService {
     // 파이프라인 실행 감사 로그 (#60/#92). 실행 번호를 설명에 넣고(취소 기록과 같은 「(실행 #N)」 형식) 무엇이 실행을 시작했는지를
     // metadata 에 남긴다(WD-462) — 트리거 실행은 트리거를 만든 사람 이름으로 남으므로, 이 값이 없으면 사람이 누른 실행과 예약·연쇄 실행이
     // 감사 화면에서 똑같아 보인다. triggeredBy 는 실행 기록(pipeline_execution.triggered_by)에 저장한 값 그대로다
-    // (MANUAL 또는 트리거 유형 SCHEDULE·API·PIPELINE_CHAIN·WEBHOOK·DATASET_CHANGE). triggerId 는 수동 실행이면 null.
+    // (MANUAL 또는 트리거 유형 SCHEDULE·API·PIPELINE_CHAIN·WEBHOOK·DATASET_CHANGE). triggerId 는 수동 실행이면
+    // null.
     String pipelineNameForLog = pipelineRepository.findNameById(pipelineId).orElse("Pipeline");
     // audit_log.username 은 NOT NULL 이라 다른 감사 호출부처럼 "unknown" 으로 채운다.
     String usernameForLog =
@@ -302,6 +350,17 @@ public class PipelineExecutionService {
         executionRepository
             .requestCancel(executionId, userId)
             .orElseThrow(ExecutionAlreadyFinishedException::new);
+
+    // 관문 대기열에서 기다리던 실행이 취소로 닫혔으면 대기열·등록부에서 뺀다(WD-439) — 안 빼면 자리가 날 때까지 등록부에 남아 하트비트를 받는다. 커밋 뒤에
+    // 해야 취소가 되돌려진 실행을 대기열에서 잃지 않는다. 이미 러너에 넘어간 실행은 대기열에 없어 아무 일도 없다(러너가 취소를 보고 끝낸다).
+    if ("CANCELLED".equals(result.status())) {
+      AfterCommitRunner.run(
+          () -> {
+            if (tenantAdmission.forget(executionId)) {
+              executionRegistry.unregister(executionId);
+            }
+          });
+    }
 
     // 실행 감사 로그와 짝을 맞춘다 — 누가 언제 어떤 실행을 멈췄는지 감사 화면에서 보이게.
     String pipelineNameForLog = pipelineRepository.findNameById(ownerPipelineId).orElse("Pipeline");

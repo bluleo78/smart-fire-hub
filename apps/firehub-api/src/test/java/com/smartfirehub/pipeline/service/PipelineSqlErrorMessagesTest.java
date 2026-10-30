@@ -67,6 +67,39 @@ class PipelineSqlErrorMessagesTest {
   }
 
   /** 권한 오류 안내는 SQL 을 고치라고 하지 않는다(#682 — 올바른 스키마 한정자를 떼는 사고). */
+  /** 연결 풀에서 연결을 얻지 못한 실패(Hikari 대기 시간 초과 — jOOQ 가 감싸 던진다)는 내부 풀 이름·영어 원문 대신 한국어 안내만 남긴다(WD-439). */
+  @Test
+  void connectionUnavailable_showsKoreanGuideWithoutPoolName() {
+    Exception hikari =
+        new org.jooq.exception.DataAccessException(
+            "Error getting connection from data source HikariDataSource (pipeline-tenant-1-pool)",
+            new java.sql.SQLTransientConnectionException(
+                "pipeline-tenant-1-pool - Connection is not available, request timed out after"
+                    + " 30012ms (total=2, active=2, idle=0, waiting=1)"));
+
+    String message =
+        PipelineSqlErrorMessages.describe(PipelineSqlErrorMessages.EXECUTION_PREFIX, hikari);
+
+    assertThat(message)
+        .isEqualTo("SQL 실행 실패: 동시에 실행 중인 파이프라인이 많아 데이터베이스 연결을 얻지 못했습니다. 잠시 뒤 다시 실행하세요")
+        .doesNotContain("pipeline-tenant")
+        .doesNotContain("Connection is not available");
+  }
+
+  /** 같은 예외형이라도 DB 에 닿지 못한 실패(원인 예외가 붙음)는 동시 실행 탓으로 바꾸지 않고 원문을 남긴다. */
+  @Test
+  void connectionRefused_keepsRawCause() {
+    Exception refused =
+        new java.sql.SQLTransientConnectionException(
+            "pipeline-tenant-1-pool - Connection is not available, request timed out after 30000ms",
+            new java.net.ConnectException("Connection refused"));
+
+    assertThat(
+            PipelineSqlErrorMessages.describe(PipelineSqlErrorMessages.EXECUTION_PREFIX, refused))
+        .doesNotContain("동시에 실행 중인")
+        .contains("Connection refused");
+  }
+
   @Test
   void permissionDenied_doesNotTellUserToFixSql() {
     assertThat(PipelineSqlErrorMessages.guide(pg("42501"))).doesNotContain("SQL 을 고쳐");

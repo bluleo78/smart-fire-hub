@@ -5,6 +5,7 @@ import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
 import com.smartfirehub.dataset.storage.tibero.TiberoErrors;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.DbError;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.PgError;
+import java.sql.SQLTransientConnectionException;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -47,6 +48,13 @@ public final class PipelineSqlErrorMessages {
   /** 안내와 원문 사이 구분 — 웹은 저장 문구를 그대로 보여 주므로 줄을 나눠 원문이 안내와 섞여 읽히지 않게 한다. */
   private static final String CAUSE_LABEL = "\n원인: ";
 
+  /**
+   * 연결 풀에서 연결을 얻지 못했을 때(Hikari {@code Connection is not available, request timed out}) 의
+   * 안내(WD-439). 원문에는 내부 풀 이름·풀 통계만 있어 사용자가 고칠 것이 없으므로 원문을 붙이지 않는다.
+   */
+  static final String CONNECTION_UNAVAILABLE_GUIDE =
+      "동시에 실행 중인 파이프라인이 많아 데이터베이스 연결을 얻지 못했습니다. 잠시 뒤 다시 실행하세요";
+
   /** 분류하지 못한 SQLState 의 안내. */
   private static final String GENERIC_GUIDE = "데이터베이스가 SQL 실행을 거부했습니다. 아래 원인을 확인해 SQL 을 고쳐 주세요.";
 
@@ -75,7 +83,29 @@ public final class PipelineSqlErrorMessages {
     if (pg != null) {
       return describe(prefix, pg);
     }
+    if (isConnectionUnavailable(e)) {
+      return prefix + ": " + CONNECTION_UNAVAILABLE_GUIDE;
+    }
     return prefix + ": " + rootCauseMessage(e);
+  }
+
+  /**
+   * 원인 사슬에 풀의 연결 대기 시간 초과(Hikari 가 {@link SQLTransientConnectionException} 에 「Connection is not
+   * available」로 던진다)가 있는가. 같은 예외형이라도 DB 에 닿지 못한 실패(연결 거부 등 — Hikari 는 원인 예외를 붙인다)는 동시 실행 탓이 아니므로
+   * 원문을 그대로 보이게 여기서 빼낸다.
+   */
+  private static boolean isConnectionUnavailable(Throwable e) {
+    // rootCauseMessage 와 같은 깊이 상한 — 원인이 서로를 가리키는 사슬에서도 끝난다.
+    Throwable t = e;
+    for (int i = 0; t != null && i < 16; i++, t = t.getCause()) {
+      if (t instanceof SQLTransientConnectionException
+          && t.getCause() == null
+          && t.getMessage() != null
+          && t.getMessage().contains("Connection is not available")) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

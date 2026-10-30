@@ -100,6 +100,12 @@ app:
       max-pools: ${PIPELINE_TENANT_POOL_MAX_POOLS:8}
       max-size: ${PIPELINE_TENANT_POOL_MAX_SIZE:2}
       idle-timeout-ms: ${PIPELINE_TENANT_POOL_IDLE_TIMEOUT_MS:600000}
+    # 워크스페이스별 동시 실행 상한(WD-439, PipelineTenantAdmission). 넘는 실행은 PENDING 으로 기다렸다가 차례로 시작하고, max-wait 를 넘기면 실패한다.
+    # max-running 을 비우면(-1) 실행기를 끈 구성은 위 tenant-pool.max-size, 켠 구성은 0(제한 없음 — SQL 이 실행기 슬롯에서 돈다). 0 은 관문을 끈다.
+    tenant-concurrency:
+      max-running: ${PIPELINE_TENANT_MAX_RUNNING:-1}
+      max-wait: ${PIPELINE_TENANT_MAX_WAIT:PT30M}
+      check-interval: ${PIPELINE_TENANT_WAIT_CHECK_INTERVAL:PT30S}
   executor:
     enabled: true
     base-url: ${EXECUTOR_BASE_URL:http://localhost:8000}
