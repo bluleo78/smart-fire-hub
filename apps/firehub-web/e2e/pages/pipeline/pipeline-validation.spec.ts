@@ -546,4 +546,61 @@ test.describe('usePipelineValidation — API_CALL 스텝 URL 검증', () => {
     await page.waitForTimeout(500);
     expect(captureCreate.requests.length).toBe(0);
   });
+
+  /**
+   * WD-362: OFFSET 페이지 크기가 1~10000 정수가 아니면(-5) 입력 아래에 범위 문구를 보이고 저장을 막는다.
+   * 0 이하 페이지 크기는 실행기가 외부 API 를 끝없이 다시 부르게 하던 값이다. 고치면 문구가 사라진다.
+   */
+  test('API_CALL OFFSET 페이지 크기가 범위 밖이면 입력 아래에 안내하고 저장이 차단된다 (WD-362)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [],
+      page: 0,
+      size: 1000,
+      totalElements: 0,
+      totalPages: 0,
+    });
+    await mockApi(page, 'GET', '/api/v1/api-connections/selectable', []);
+    // 저장 차단 검증용 POST 캡처
+    const captureCreate = await mockApi(page, 'POST', '/api/v1/pipelines', {}, { capture: true });
+
+    await page.goto('/pipelines/new');
+    await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('페이지 크기 검증');
+
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+    await page.locator('#step-name').fill('API 스텝');
+    await page.getByRole('combobox').first().click();
+    await page.getByRole('option', { name: 'API 호출' }).click();
+    await expect(page.getByText('기본 설정')).toBeVisible({ timeout: 10000 });
+
+    // URL 은 채워 URL 오류가 아닌 페이지 크기 오류로만 막히게 한다
+    await page.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/v1/data');
+
+    // 접힌 「페이지네이션」 절을 펴고 유형 → Offset, 페이지 크기 -5
+    await page.getByRole('button', { name: '페이지네이션' }).click();
+    await page.getByRole('combobox', { name: '유형', exact: true }).click();
+    await page.getByRole('option', { name: 'Offset' }).click();
+    const pageSize = page.getByLabel('페이지 크기');
+    await expect(pageSize).toHaveValue('100');
+    await expect(page.getByText('1~10000건')).toBeVisible();
+    await pageSize.fill('-5');
+
+    // 입력 즉시 범위 문구와 aria-invalid 표시
+    const message = '페이지 크기는 1~10000 사이의 정수여야 합니다';
+    await expect(page.getByText(message)).toBeVisible();
+    await expect(pageSize).toHaveAttribute('aria-invalid', 'true');
+
+    // 저장 시도 → 클라이언트 검증으로 차단, POST 없음
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await expect(page.getByText(/입력 오류/).first()).toBeVisible({ timeout: 5000 });
+    await page.waitForTimeout(500);
+    expect(captureCreate.requests.length).toBe(0);
+
+    // 범위 안 값으로 고치면 문구가 사라진다
+    await pageSize.fill('50');
+    await expect(page.getByText(message)).toHaveCount(0);
+    await expect(pageSize).not.toHaveAttribute('aria-invalid', 'true');
+  });
 });

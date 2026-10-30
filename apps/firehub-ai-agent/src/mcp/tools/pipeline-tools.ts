@@ -118,7 +118,8 @@ export function registerPipelineTools(
                   pagination: z
                     .object({
                       type: z.enum(['OFFSET']).describe('페이지네이션 유형'),
-                      pageSize: z.number().describe('페이지 크기'),
+                      // 서버 저장 검증과 같은 범위(WD-362) — 범위 밖 값은 저장이 400 으로 거절된다
+                      pageSize: z.number().int().min(1).max(10_000).describe('페이지 크기 (1~10000 정수)'),
                       offsetParam: z.string().optional().describe('오프셋 파라미터명'),
                       limitParam: z.string().optional().describe('리밋 파라미터명'),
                       totalPath: z.string().optional().describe('전체 수 JSONPath'),

@@ -1110,3 +1110,38 @@ def test_remote_refuses_non_staging_output_table_without_any_call(bad):
     assert result.success is False and "STG_" in result.error
     fetch.assert_not_called()
     loader.load.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# WD-362 — 1 미만 페이지 크기 보정
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad", [-5, 0])
+def test_offset_pagination_non_positive_page_size_falls_back_to_default(bad):
+    """저장 검증 전에 저장된 0·음수 페이지 크기는 기본값(100)으로 보정해 끝없이 요청하지 않는다(WD-362).
+
+    보정 전에는 「받은 행 수 < 페이지 크기」가 결코 참이 아니라 offset 0, -5, -10… 으로 MAX_PAGES 까지 요청했다.
+    """
+    req = make_request(
+        pagination=PaginationConfig(
+            type="OFFSET",
+            page_size=bad,
+            offset_param="offset",
+            limit_param="limit",
+        )
+    )
+    conn, cursor = make_conn()
+    # API 가 limit 를 무시하고 같은 2행을 준다 — 기본값 100 보다 적으니 첫 페이지에서 멈춰야 한다
+    body = {"items": [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]}
+
+    with (
+        patch("app.services.api_call_executor.validate_url"),
+        patch("app.services.api_call_executor._do_request", return_value=body) as do_request,
+        patch("app.services.api_call_executor.insert_batch"),
+    ):
+        result = execute_api_call(req, conn)
+
+    assert result.success is True
+    assert do_request.call_count == 1
+    # 첫 요청의 limit 도 기본값으로 보낸다
+    assert do_request.call_args.kwargs["query_params"]["limit"] == "100"

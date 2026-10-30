@@ -153,7 +153,12 @@ def _fetch_and_write_pages(
 
     if pagination_type == "OFFSET":
         pag = request.pagination
-        page_size = pag.page_size or DEFAULT_PAGE_SIZE
+        # 1 미만 페이지 크기는 「다음 페이지 없음」(받은 행 수 < 페이지 크기)이 결코 참이 되지 않아 MAX_PAGES·최대 실행 시간까지
+        # 음수 offset 으로 외부 API 를 반복 호출한다 — 저장 검증(WD-362) 전에 저장된 값도 있으니 기본값으로 보정한다.
+        page_size = pag.page_size if pag.page_size and pag.page_size > 0 else DEFAULT_PAGE_SIZE
+        if pag.page_size is not None and page_size != pag.page_size:
+            # 보정은 외부 API 에 나가는 limit 를 바꾸므로 조용히 넘기지 않고 남긴다
+            logger.warning("OFFSET 페이지 크기 %s 은 1 미만이라 기본값 %s 로 보정합니다", pag.page_size, DEFAULT_PAGE_SIZE)
         offset = 0
         total_count: Optional[int] = None
 

@@ -44,7 +44,13 @@ import { useApiConnectionsSelectable } from '@/hooks/queries/useApiConnections';
 import { cn } from '@/lib/utils';
 import { columnNameLengthError } from '@/lib/validations/dataset';
 
-import { mappingRowField, mappingSourceField, mappingTargetField } from '../hooks/stepColumnValidation';
+import {
+  API_PAGE_SIZE_RANGE,
+  apiPageSizeError,
+  mappingRowField,
+  mappingSourceField,
+  mappingTargetField,
+} from '../hooks/stepColumnValidation';
 import ApiCallPreview from './ApiCallPreview';
 import { InlineFieldError } from './InlineFieldError';
 
@@ -324,6 +330,8 @@ export default function ApiCallStepConfig({
   const body = getConfig<string>(apiConfig, 'body', '');
   const inlineAuth = getConfig<InlineAuth>(apiConfig, 'inlineAuth', { authType: 'NONE' });
   const pagination = getConfig<Pagination>(apiConfig, 'pagination', { type: 'NONE' });
+  // 페이지 크기 범위 오류 — 저장 검증(usePipelineValidation)과 같은 함수라 입력 중에도 같은 문구를 바로 보인다(WD-362)
+  const pageSizeError = apiPageSizeError(pagination);
   const retry = getConfig<RetryConfig>(apiConfig, 'retry', {
     maxRetries: 3,
     initialBackoffMs: 1000,
@@ -809,12 +817,25 @@ export default function ApiCallStepConfig({
                     id={`${baseId}-page-size`}
                     className="h-7 text-xs"
                     type="number"
+                    min={API_PAGE_SIZE_RANGE.min}
+                    max={API_PAGE_SIZE_RANGE.max}
+                    step={1}
                     value={pagination.pageSize ?? 100}
                     disabled={readOnly}
+                    aria-invalid={pageSizeError ? true : undefined}
+                    aria-describedby={pageSizeError ? `${baseId}-page-size-error` : `${baseId}-page-size-hint`}
                     onChange={(e) =>
                       handlePaginationChange({ pageSize: Number(e.target.value) })
                     }
                   />
+                  {/* 범위 밖 값은 고치지 않고 안내만 한다 — 외부 API limit 로 그대로 나가는 값이라 조용히 바꾸지 않는다(WD-362) */}
+                  {pageSizeError ? (
+                    <InlineFieldError id={`${baseId}-page-size-error`} message={pageSizeError} />
+                  ) : (
+                    <p id={`${baseId}-page-size-hint`} className="text-[11px] text-muted-foreground">
+                      {API_PAGE_SIZE_RANGE.min}~{API_PAGE_SIZE_RANGE.max}건
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-1">
                   <Label htmlFor={`${baseId}-total-path`} className="text-xs">총 건수 경로</Label>

@@ -4,6 +4,8 @@ import { COLUMN_NAME_MAX_MESSAGE, RESERVED_COLUMN_NAME_MESSAGE } from '@/lib/val
 
 import {
   aiOutputColumnNameField,
+  API_PAGE_SIZE_MESSAGE,
+  apiPageSizeError,
   EMPTY_MAPPING_ROW_MESSAGE,
   mappingRowField,
   mappingSourceField,
@@ -128,5 +130,28 @@ describe('validatePythonOutputColumns', () => {
 
   it('배열이 아니면(설정 없음) 검사하지 않는다', () => {
     expect(validatePythonOutputColumns(undefined)).toEqual([]);
+  });
+});
+
+// WD-362 — OFFSET 페이지 크기 범위(1~10000 정수, 서버 PipelineService 와 같은 규칙·문장)
+describe('apiPageSizeError', () => {
+  const offset = (pageSize: unknown) => ({ type: 'OFFSET', pageSize });
+
+  it('범위 안의 정수와 경계값은 오류가 없다', () => {
+    expect(apiPageSizeError(offset(1))).toBeUndefined();
+    expect(apiPageSizeError(offset(100))).toBeUndefined();
+    expect(apiPageSizeError(offset(10_000))).toBeUndefined();
+  });
+
+  it('0 이하·상한 초과·소수·숫자 아님은 범위 문구를 낸다', () => {
+    for (const bad of [-5, 0, 10_001, 2.5, 'abc', Number.NaN]) {
+      expect(apiPageSizeError(offset(bad))).toBe(API_PAGE_SIZE_MESSAGE);
+    }
+  });
+
+  it('OFFSET 이 아니거나 페이지 크기가 비어 있으면 검사하지 않는다', () => {
+    expect(apiPageSizeError({ type: 'NONE', pageSize: -5 })).toBeUndefined();
+    expect(apiPageSizeError(offset(undefined))).toBeUndefined();
+    expect(apiPageSizeError(undefined)).toBeUndefined();
   });
 });

@@ -244,4 +244,33 @@ describe('Pipeline MCP Tools', () => {
       expect(result.isError).toBe(true);
     });
   });
+
+  // WD-362 — 페이지 크기는 서버 저장 검증과 같은 1~10000 정수만 받는다(0 이하는 실행기가 외부 API 를 끝없이 부르던 값)
+  describe('API_CALL pagination.pageSize zod 파싱', () => {
+    const argsWithPageSize = (pageSize: unknown) => ({
+      name: 'API 파이프라인',
+      steps: [
+        {
+          name: 'api',
+          scriptType: 'API_CALL',
+          apiConfig: {
+            method: 'GET',
+            customUrl: 'https://api.example.com',
+            dataPath: '$.items',
+            pagination: { type: 'OFFSET', pageSize },
+          },
+        },
+      ],
+    });
+
+    it.each([1, 100, 10_000])('pageSize=%s 는 통과한다', (pageSize) => {
+      const schema = getInputSchema(server, 'create_pipeline');
+      expect(schema.safeParse(argsWithPageSize(pageSize)).success).toBe(true);
+    });
+
+    it.each([-5, 0, 10_001, 2.5])('pageSize=%s 는 거절된다', (pageSize) => {
+      const schema = getInputSchema(server, 'create_pipeline');
+      expect(schema.safeParse(argsWithPageSize(pageSize)).success).toBe(false);
+    });
+  });
 });
