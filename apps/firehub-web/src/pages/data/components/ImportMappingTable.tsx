@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 import type { ColumnMappingDto,ColumnMappingEntry } from '../../../types/dataImport';
 import type { DatasetColumnResponse } from '../../../types/dataset';
+import { fileColumnLabel, isBlankColumnName, mappingAt } from '../hooks/useImportDialog';
 
 interface ImportMappingTableProps {
   suggestedMappings: ColumnMappingDto[];
@@ -14,8 +15,11 @@ interface ImportMappingTableProps {
   hasUnmappedRequired: boolean;
   hasAnyMapping: boolean;
   unmappedRequired: DatasetColumnResponse[];
-  getAvailableDatasetColumns: (fileColumn: string) => DatasetColumnResponse[];
-  onMappingChange: (fileColumn: string, datasetColumn: string | null) => void;
+  /** index: 파일 열 위치(0부터). 이름이 같은 빈 열이 여럿일 수 있어 이름 대신 위치로 행을 가리킨다 (WD-369) */
+  getAvailableDatasetColumns: (index: number) => DatasetColumnResponse[];
+  /** 파일 열 위치별로 매핑할 수 없는 빈 이름 열인지 — 그 행의 선택 상자를 잠그고 안내한다 (WD-369) */
+  unmappableColumns?: boolean[];
+  onMappingChange: (index: number, datasetColumn: string | null) => void;
 }
 
 function getMatchTypeBadge(matchType: string) {
@@ -37,8 +41,10 @@ export function ImportMappingTable({
   hasAnyMapping,
   unmappedRequired,
   getAvailableDatasetColumns,
+  unmappableColumns = [],
   onMappingChange,
 }: ImportMappingTableProps) {
+  const blankColumnsLocked = unmappableColumns.some(Boolean);
   // 파일 업로드(1단계) → 컬럼 매핑(2단계)은 다이얼로그 내용이 통째로 교체되는데, 포커스는 다이얼로그
   // 컨테이너에 그대로 남아 스크린리더 사용자에게는 아무 일도 없던 것과 구별되지 않는다.
   // 이 표가 마운트되는 시점 = 2단계 진입이므로 새 단계의 제목으로 포커스를 옮겨 맥락을 알린다(#330).
@@ -67,6 +73,13 @@ export function ImportMappingTable({
           </p>
         </InlineBanner>
       )}
+      {/* 이름 없는 열이 여럿이면 서버가 어느 열 값인지 구분하지 못하므로 그 열들은 가져오지 않는다고 알린다. 끝 빈 열이 흔한
+          엑셀 CSV 에서도 보이므로 경고가 아닌 안내 문구로 쓴다 (WD-369) */}
+      {blankColumnsLocked && (
+        <p className="text-xs text-muted-foreground">
+          이름 없는 열이 여러 개라 그 열들은 가져오지 않습니다. 가져오려면 열 이름을 넣은 뒤 다시 올려 주세요.
+        </p>
+      )}
       <div className="rounded-md border">
         <Table className="table-fixed">
           <TableHeader>
@@ -78,23 +91,27 @@ export function ImportMappingTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {suggestedMappings.map((suggestion) => {
-              const currentMapping = mappings.find((m) => m.fileColumn === suggestion.fileColumn);
-              const availableColumns = getAvailableDatasetColumns(suggestion.fileColumn);
+            {suggestedMappings.map((suggestion, index) => {
+              // 매핑 상태는 suggestedMappings 와 같은 순서라 위치로 고른다. 키도 위치로 둬 이름이 같은(빈) 열끼리 겹치지 않게 한다 (WD-369)
+              const currentMapping = mappingAt(mappings, index, suggestion.fileColumn);
+              const availableColumns = getAvailableDatasetColumns(index);
+              const label = fileColumnLabel(suggestion.fileColumn, index);
+              const locked = unmappableColumns[index] ?? false;
               return (
-                <TableRow key={suggestion.fileColumn}>
-                  <TableCell className="text-xs font-medium px-2 py-1.5 truncate">
-                    {suggestion.fileColumn}
+                <TableRow key={index}>
+                  <TableCell
+                    className={`text-xs font-medium px-2 py-1.5 truncate${isBlankColumnName(suggestion.fileColumn) ? ' text-muted-foreground' : ''}`}
+                  >
+                    {label}
                   </TableCell>
                   <TableCell className="px-0 py-1.5">
                     <ArrowRight className="h-3 w-3 text-muted-foreground" />
                   </TableCell>
                   <TableCell className="px-2 py-1.5">
                     <Select
-                      value={currentMapping?.datasetColumn || '__none__'}
-                      onValueChange={(value) =>
-                        onMappingChange(suggestion.fileColumn, value === '__none__' ? null : value)
-                      }
+                      value={locked ? '__none__' : currentMapping?.datasetColumn || '__none__'}
+                      disabled={locked}
+                      onValueChange={(value) => onMappingChange(index, value === '__none__' ? null : value)}
                     >
                       {/*
                        * Radix Select은 role/aria-expanded는 붙여주지만 접근 가능한 이름은 만들지 않는다.
@@ -103,7 +120,8 @@ export function ImportMappingTable({
                        */}
                       <SelectTrigger
                         className="h-8 text-xs w-full"
-                        aria-label={`${suggestion.fileColumn} 컬럼을 매핑할 데이터셋 컬럼`}
+                        aria-label={`${label} 컬럼을 매핑할 데이터셋 컬럼`}
+                        title={locked ? '이름 없는 열이 여러 개라 가져올 수 없습니다' : undefined}
                       >
                         <SelectValue placeholder="매핑 안 함" />
                       </SelectTrigger>

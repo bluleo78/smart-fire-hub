@@ -962,4 +962,168 @@ class DataValidationServiceTest {
     assertThatThrownBy(() -> service.convertValue("01/02/2026 10:00:00", "DATE"))
         .hasMessageContaining("날짜 형식이 아닙니다");
   }
+
+  // -----------------------------------------------------------------------
+  // 달력에 없는 날짜·시각 (WD-379)
+  //
+  // 기본 SMART 해석기는 2026-02-30 을 2월 28일로, 24:00:00 을 다음 날 0시로 바꿔 「검증 성공」 뒤 다른 값을 저장했다.
+  // 행 추가 API 처럼 거부해야 하고, 형식 오류와 구분되는 「달력에 없는」 사유로 알려야 한다.
+  // -----------------------------------------------------------------------
+
+  @Test
+  void date_nonexistentCalendarDates_areRejectedNotClamped() {
+    for (String value :
+        List.of("2026-02-30", "2026-02-29", "2026-04-31", "2026/04/31", "20260230")) {
+      assertThatThrownBy(() -> service.convertValue(value, "DATE"))
+          .as(value)
+          .hasMessageContaining(DataValidationService.NONEXISTENT_DATE_MESSAGE + value);
+    }
+  }
+
+  @Test
+  void date_midnightDateTimeWith24Hour_isRejectedNotRolledToNextDay() {
+    // 예전엔 2026-03-02 로 바뀌어 DATE 열에 저장됐다
+    assertThatThrownBy(() -> service.convertValue("2026-03-01 24:00:00", "DATE"))
+        .hasMessageContaining(
+            DataValidationService.NONEXISTENT_DATE_MESSAGE + "2026-03-01 24:00:00");
+  }
+
+  @Test
+  void date_leapDayAndValidFormats_stillAccepted() throws Exception {
+    // 윤년 2월 29일은 있는 날짜
+    assertThat(service.convertValue("2024-02-29", "DATE")).isEqualTo(LocalDate.of(2024, 2, 29));
+    assertThat(service.convertValue("2024/02/29", "DATE")).isEqualTo(LocalDate.of(2024, 2, 29));
+    assertThat(service.convertValue("20240229", "DATE")).isEqualTo(LocalDate.of(2024, 2, 29));
+    assertThat(service.convertValue("2026-04-30", "DATE")).isEqualTo(LocalDate.of(2026, 4, 30));
+    assertThat(service.convertValue("2026-12-31", "DATE")).isEqualTo(LocalDate.of(2026, 12, 31));
+    // 자정 날짜시각(ISO·엑셀 파서 출력 모양)은 날짜로 받는다
+    assertThat(service.convertValue("2026-05-10T00:00", "DATE"))
+        .isEqualTo(LocalDate.of(2026, 5, 10));
+    assertThat(service.convertValue("2026-05-10 00:00:00", "DATE"))
+        .isEqualTo(LocalDate.of(2026, 5, 10));
+  }
+
+  @Test
+  void timestamp_nonexistentCalendarValues_areRejectedNotClampedOrRolled() {
+    for (String value :
+        List.of(
+            "2026-02-30 10:00:00",
+            "2026-02-29 10:00:00",
+            "2026/04/31 10:00:00",
+            "2026-02-30T10:00:00",
+            "20260230100000",
+            "2026-03-01 24:00:00",
+            "2026-03-01T24:00:00",
+            "20260301240000",
+            // 날짜만 있는 값을 자정으로 받는 경로(#516)도 같은 규칙
+            "2026-02-30",
+            "2026-04-31",
+            "20260230")) {
+      assertThatThrownBy(() -> service.convertValue(value, "TIMESTAMP"))
+          .as(value)
+          .hasMessageContaining(DataValidationService.NONEXISTENT_DATE_MESSAGE + value);
+    }
+  }
+
+  @Test
+  void timestamp_validValuesInAllAcceptedFormats_stillAccepted() throws Exception {
+    LocalDateTime expected = LocalDateTime.of(2024, 2, 29, 23, 59, 59);
+    for (String value :
+        List.of(
+            "2024-02-29 23:59:59",
+            "2024/02/29 23:59:59",
+            "2024-02-29T23:59:59",
+            "20240229235959",
+            "29/02/2024 23:59:59")) {
+      assertThat(service.convertValue(value, "TIMESTAMP")).as(value).isEqualTo(expected);
+    }
+    assertThat(service.convertValue("2024-02-29 23:59:59.123456", "TIMESTAMP"))
+        .isEqualTo(LocalDateTime.of(2024, 2, 29, 23, 59, 59, 123_456_000));
+    assertThat(service.convertValue("2024-02-29T23:59", "TIMESTAMP"))
+        .isEqualTo(LocalDateTime.of(2024, 2, 29, 23, 59));
+    assertThat(service.convertValue("20240229", "TIMESTAMP"))
+        .isEqualTo(LocalDateTime.of(2024, 2, 29, 0, 0));
+  }
+
+  @Test
+  void timestamp_offsetIsoValue_isRejectedWithZoneLessIsoInAllowedFormats() {
+    // 시간대가 붙은 값은 받지 않되, 허용 형식 안내가 「시간대 없는 ISO」임을 밝혀야 한다
+    for (String value : List.of("2026-03-01T10:00:00Z", "2026-03-01T10:00:00+09:00")) {
+      assertThatThrownBy(() -> service.convertValue(value, "TIMESTAMP"))
+          .as(value)
+          .hasMessageContaining("날짜시간 형식이 아닙니다: " + value)
+          .hasMessageContaining("ISO(시간대 없이, 예: 2026-03-01T10:00:00)");
+    }
+  }
+
+  @Test
+  void nonexistentDate_isReportedAsCellErrorOnImportPath_andNeverInserted() {
+    // 임포트 검증(매핑 경로)에서 칸 단위 오류로 잡히고, 삽입 변환(toRows)도 같은 변환을 써서 조용히 넣지 않는다
+    DatasetColumnResponse dt = col("dt", "DATE", true);
+    var err = validateCell(service, dt, "2026-02-30").error();
+    assertThat(err).isNotNull();
+    assertThat(err.error())
+        .startsWith(DataValidationService.NONEXISTENT_DATE_MESSAGE + "2026-02-30");
+
+    Map<String, String> row = new HashMap<>();
+    row.put("dt", "2026-02-30");
+    assertThatThrownBy(() -> service.toRows(List.of(row), List.of(dt), null))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void dayMonthLeading_nonexistentDate_usesSameWordingAsYearLeading() {
+    // 값 모양이 달라도 같은 결함이면 같은 문구 — 일·월 앞 형식은 해석 순서만 덧붙인다(WD-379)
+    assertThatThrownBy(() -> service.convertValue("30/02/2026", "DATE"))
+        .hasMessage(DataValidationService.nonexistentDateMessage("30/02/2026", "일/월/연도"));
+    assertThatThrownBy(() -> service.convertValue("2026-02-30", "DATE"))
+        .hasMessage(DataValidationService.nonexistentDateMessage("2026-02-30", null));
+  }
+
+  @Test
+  void yearZeroAndNegativeYears_areRejectedAsFormatError() {
+    // uuuu 는 0년·음수 연도를 읽지만 예전 yyyy 는 거부했고 PG 범위 밖이라 INSERT 에서 실패한다(WD-379)
+    for (String value : List.of("0000-01-01", "-2026-01-01", "00000101", "0000/01/01")) {
+      assertThatThrownBy(() -> service.convertValue(value, "DATE"))
+          .as(value)
+          .hasMessageContaining("날짜 형식이 아닙니다: " + value);
+      assertThatThrownBy(() -> service.convertValue(value, "TIMESTAMP"))
+          .as(value)
+          .hasMessageContaining("날짜시간 형식이 아닙니다: " + value);
+    }
+    for (String value : List.of("0000-01-01 10:00:00", "-2026-01-01T10:00:00", "00000101100000")) {
+      assertThatThrownBy(() -> service.convertValue(value, "TIMESTAMP"))
+          .as(value)
+          .hasMessageContaining("날짜시간 형식이 아닙니다: " + value);
+    }
+  }
+
+  @Test
+  void implausibleFields_areFormatErrorNotNonexistentDate() {
+    // 8·14자리 아무 숫자(56월)나 13월은 「존재하지 않는 날짜」가 아니라 형식 오류다(WD-379)
+    for (String value : List.of("12345678", "2026-13-01", "2026-00-10", "2026-01-32")) {
+      assertThatThrownBy(() -> service.convertValue(value, "DATE"))
+          .as(value)
+          .hasMessageContaining("날짜 형식이 아닙니다: " + value);
+      assertThatThrownBy(() -> service.convertValue(value, "TIMESTAMP"))
+          .as(value)
+          .hasMessageContaining("날짜시간 형식이 아닙니다: " + value);
+    }
+    for (String value : List.of("12345678901234", "2026-03-01 25:00:00", "2026-03-01T23:59:60")) {
+      assertThatThrownBy(() -> service.convertValue(value, "TIMESTAMP"))
+          .as(value)
+          .hasMessageContaining("날짜시간 형식이 아닙니다: " + value);
+    }
+  }
+
+  @Test
+  void date_realDateWithOutOfRangeTime_isFormatErrorNotNonexistentDate() {
+    // 날짜는 있는 날인데 시각이 범위 밖이면 달력 문구가 아닌 기존 형식 오류로 알린다(WD-379)
+    for (String value :
+        List.of("2026-03-01 25:00:00", "2026-03-01T23:59:60", "2026-03-01 24:30:00")) {
+      assertThatThrownBy(() -> service.convertValue(value, "DATE"))
+          .as(value)
+          .hasMessageContaining("날짜 형식이 아닙니다: " + value);
+    }
+  }
 }

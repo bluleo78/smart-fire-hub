@@ -6,13 +6,17 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.service.ColumnPhysicalType;
 import com.smartfirehub.dataset.service.GeoJsonValues;
 import java.math.BigDecimal;
+import java.text.ParsePosition;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.DateTimeParseException;
+import java.time.format.ResolverStyle;
 import java.time.temporal.ChronoField;
+import java.time.temporal.TemporalAccessor;
+import java.time.temporal.TemporalQuery;
 import java.util.*;
 import java.util.HashSet;
 import java.util.regex.Pattern;
@@ -21,29 +25,33 @@ import org.springframework.stereotype.Service;
 @Service
 public class DataValidationService {
 
+  // 모든 날짜·시각 형식은 STRICT 해석기로 만든다(WD-379) — 기본 SMART 해석기는 2026-02-30·2026-04-31 을 그달 말일로,
+  // 24:00:00 을 다음 날 0시로 바꿔 「검증 성공」 뒤 다른 값을 저장했다(행 추가 API 는 같은 값을 거부). STRICT 에서 yyyy 는
+  // 연대(era) 없이는 해석되지 않으므로 연도는 uuuu 로 쓴다.
   private static final List<DateTimeFormatter> DATE_FORMATTERS =
       List.of(
-          DateTimeFormatter.ofPattern("yyyy-MM-dd"),
-          DateTimeFormatter.ofPattern("yyyy/MM/dd"),
+          strict("uuuu-MM-dd"),
+          strict("uuuu/MM/dd"),
           // 일·월이 앞 두 칸인 형식(dd/MM/yyyy·MM/dd/yyyy 등)은 여기서 다루지 않는다 — 형식 목록을 순서대로 시도해 첫 성공을 쓰면
           // 01/02/2026 은 2월 1일, 12/31/2026 은 12월 31일로 같은 열 안에서 행마다 해석이 갈렸다(WD-246). 열 단위로 순서를
           // 정하는 parseDayMonthLeading 이 맡는다.
           // 구분자 없는 8자리 yyyyMMdd(예: 20200316) — 공공/레거시 CSV에 흔한 형식
-          DateTimeFormatter.ofPattern("yyyyMMdd"));
+          strict("uuuuMMdd"));
 
   private static final List<DateTimeFormatter> TIMESTAMP_FORMATTERS =
       List.of(
           DateTimeFormatter.ISO_LOCAL_DATE_TIME,
           // 소수 초(.123·.123456)는 있어도 없어도 된다 — 내보낸 CSV(WD-159)·PG 텍스트 원문 모양을 그대로 다시 임포트할 수 있게
           new DateTimeFormatterBuilder()
-              .appendPattern("yyyy-MM-dd HH:mm:ss")
+              .appendPattern("uuuu-MM-dd HH:mm:ss")
               .optionalStart()
               .appendFraction(ChronoField.NANO_OF_SECOND, 1, 9, true)
               .optionalEnd()
-              .toFormatter(),
-          DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"),
+              .toFormatter()
+              .withResolverStyle(ResolverStyle.STRICT),
+          strict("uuuu/MM/dd HH:mm:ss"),
           // dd-MM-yyyy HH:mm:ss·dd/MM/yyyy HH:mm:ss 는 parseDayMonthLeading 이 열 단위 순서로 해석한다(WD-246).
-          DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
+          strict("uuuuMMddHHmmss"));
 
   // 필수값 누락 사유 문구. validate()가 요약 문자열을 조립할 때 이 값과 동일한지 비교해 문구를 분기하므로,
   // 리터럴을 여러 곳에 흩뿌리지 않고 상수 하나로 묶어 두 곳이 어긋나지 않게 한다.
@@ -51,9 +59,102 @@ public class DataValidationService {
 
   /** DATE 열이 자정이면 날짜로 받는 날짜시각 형식(ISO 와 엑셀 파서 출력 모양). */
   private static final List<DateTimeFormatter> MIDNIGHT_DATE_TIME_FORMATTERS =
-      List.of(
-          DateTimeFormatter.ISO_LOCAL_DATE_TIME,
-          DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+      List.of(DateTimeFormatter.ISO_LOCAL_DATE_TIME, strict("uuuu-MM-dd HH:mm:ss"));
+
+  /**
+   * 형식은 맞지만 달력에 없는 날짜·시각(2월 30일·평년 2월 29일·24:00:00 등) 사유 머리말(WD-379). 일·월이 앞에 오는 형식
+   * (parseDayMonthLeading)과 연도가 앞에 오는 형식이 같은 결함에 같은 문구를 쓰도록 한곳에 둔다.
+   */
+  static final String NONEXISTENT_DATE_MESSAGE = "존재하지 않는 날짜입니다: ";
+
+  /** 존재하지 않는 날짜 사유의 확인 안내(WD-379). */
+  static final String NONEXISTENT_DATE_HINT = "그 달의 날수·윤년과 시각 범위(00:00:00~23:59:59)를 확인해 주세요";
+
+  /**
+   * 존재하지 않는 날짜 사유 문구를 만든다(WD-379).
+   *
+   * @param interpretation 일·월 순서를 열 단위로 정해 해석했다면 그 순서(예: 「일/월/연도」), 아니면 null
+   */
+  static String nonexistentDateMessage(String value, String interpretation) {
+    return NONEXISTENT_DATE_MESSAGE
+        + value
+        + " ("
+        + (interpretation != null ? interpretation + "로 해석 — " : "")
+        + NONEXISTENT_DATE_HINT
+        + ")";
+  }
+
+  /** 패턴을 STRICT 해석기로 만든다(WD-379) — 없는 날짜·시각을 보정하지 않고 파싱 실패로 돌려준다. */
+  private static DateTimeFormatter strict(String pattern) {
+    return DateTimeFormatter.ofPattern(pattern).withResolverStyle(ResolverStyle.STRICT);
+  }
+
+  /**
+   * 값 하나의 날짜·시각 파싱 시도 상태(WD-379). 형식 목록을 도는 첫 시도에서 「칸 값은 그럴듯한데 달력에 없는」 실패가 있었는지 기록해, 오류 문구를 고를 때 다시
+   * 파싱하지 않는다.
+   */
+  private static final class CalendarParseAttempt {
+    private boolean nonexistent;
+  }
+
+  /**
+   * 형식 목록을 순서대로 시도해 첫 성공 값을 돌려준다(WD-379). 모두 실패하면 null.
+   *
+   * <p>먼저 해석 없이(parseUnresolved) 글자 모양과 칸 값 범위를 본다 — 연도 1~9999·월 1~12·일 1~31·시 0~24·분/초 0~59 를 벗어나면
+   * 그 형식이 아닌 것으로 친다. uuuu 는 0년·음수 연도(-2026)도 읽지만 예전 yyyy(연대 연도)는 거부했고 PG 범위 밖이라 INSERT 에서 실패하므로 형식
+   * 오류로 막는다. 칸 값이 범위 안인데 STRICT 해석이 실패하면(그 달 날수 초과·평년 2월 29일·24:00) 「존재하지 않는 날짜」로 기록한다 —
+   * 「12345678」(56월) 같은 숫자는 날짜가 아니라 형식 오류로 알려야 하기 때문이다.
+   */
+  private static <T> T parseStrict(
+      String value,
+      List<DateTimeFormatter> formatters,
+      TemporalQuery<T> query,
+      CalendarParseAttempt attempt) {
+    for (DateTimeFormatter formatter : formatters) {
+      ParsePosition position = new ParsePosition(0);
+      TemporalAccessor raw = formatter.parseUnresolved(value, position);
+      if (raw == null
+          || position.getErrorIndex() >= 0
+          || position.getIndex() != value.length()
+          || !hasPlausibleFields(raw)) {
+        continue;
+      }
+      try {
+        return formatter.parse(value, query);
+      } catch (DateTimeParseException e) {
+        attempt.nonexistent = true;
+      }
+    }
+    return null;
+  }
+
+  /** 해석 전 칸 값이 각 칸의 범위 안인지(WD-379). 24시는 24:00:00 정각일 때만 「달력에 없는 시각」 후보로 본다. */
+  private static boolean hasPlausibleFields(TemporalAccessor raw) {
+    boolean plausible =
+        inRange(raw, ChronoField.YEAR, 1, 9999)
+            && inRange(raw, ChronoField.MONTH_OF_YEAR, 1, 12)
+            && inRange(raw, ChronoField.DAY_OF_MONTH, 1, 31)
+            && inRange(raw, ChronoField.HOUR_OF_DAY, 0, 24)
+            && inRange(raw, ChronoField.MINUTE_OF_HOUR, 0, 59)
+            && inRange(raw, ChronoField.SECOND_OF_MINUTE, 0, 59);
+    if (plausible
+        && raw.isSupported(ChronoField.HOUR_OF_DAY)
+        && raw.getLong(ChronoField.HOUR_OF_DAY) == 24) {
+      return inRange(raw, ChronoField.MINUTE_OF_HOUR, 0, 0)
+          && inRange(raw, ChronoField.SECOND_OF_MINUTE, 0, 0)
+          && inRange(raw, ChronoField.NANO_OF_SECOND, 0, 0);
+    }
+    return plausible;
+  }
+
+  /** 칸이 없으면 통과, 있으면 [min, max] 안인지. */
+  private static boolean inRange(TemporalAccessor raw, ChronoField field, long min, long max) {
+    if (!raw.isSupported(field)) {
+      return true;
+    }
+    long v = raw.getLong(field);
+    return v >= min && v <= max;
+  }
 
   /**
    * 날짜 없이 시각만 있는 값(예: 12:00:00). 엑셀 h:mm 서식 셀(일련값 &lt; 1)을 파서가 이렇게 읽는다 — 예전엔 1899-12-31 가짜 날짜가 붙어
@@ -317,38 +418,33 @@ public class DataValidationService {
         LocalDateTime dayMonth =
             parseDayMonthLeading(value, false, columnName, dateOrders, rowIndex);
         LocalDate date = dayMonth != null ? dayMonth.toLocalDate() : null;
-        for (DateTimeFormatter formatter :
-            date != null ? List.<DateTimeFormatter>of() : DATE_FORMATTERS) {
-          try {
-            date = LocalDate.parse(value, formatter);
-            break;
-          } catch (DateTimeParseException ignored) {
-          }
+        CalendarParseAttempt attempt = new CalendarParseAttempt();
+        if (date == null) {
+          date = parseStrict(value, DATE_FORMATTERS, LocalDate::from, attempt);
         }
         // 자정 날짜시각은 날짜만 있는 값으로 받는다 — ISO 형식("2026-05-10T00:00", CSV·예전 파서 출력)과, 엑셀 파서
         // (LegacyExcelDataFormatter)가 날짜시각 서식 셀을 읽은 "2026-05-10 00:00:00" 모두. 내보낸 Excel(WD-159)을 고쳐
-        // 다시
-        // 임포트할 때와 사용자가 만든 날짜 셀 파일 모두에 해당한다. 자정이 아닌 시각은 날짜로 자르면 값이 바뀌므로 그대로 거부한다.
-        for (DateTimeFormatter formatter :
-            date != null ? List.<DateTimeFormatter>of() : MIDNIGHT_DATE_TIME_FORMATTERS) {
-          try {
-            LocalDateTime dateTime = LocalDateTime.parse(value, formatter);
-            if (!dateTime.toLocalTime().equals(LocalTime.MIDNIGHT)) {
-              // 엑셀 날짜 서식 셀은 날짜만 보여도 시각 소수가 숨어 있을 수 있다 — 왜 거부되는지 알 수 있게 시각을 짚어 준다.
-              throw new Exception(
-                  "날짜에 시각("
-                      + dateTime.toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
-                      + ")이 들어 있어 날짜 열에 저장하면 값이 바뀝니다: "
-                      + value
-                      + " (엑셀 셀이 날짜만 보여도 시각이 숨어 있을 수 있습니다 — 시각을 지우거나 날짜시간 열로 가져와 주세요)");
-            }
-            date = dateTime.toLocalDate();
-            break;
-          } catch (DateTimeParseException ignored) {
+        // 다시 임포트할 때와 사용자가 만든 날짜 셀 파일 모두에 해당한다. 자정이 아닌 시각은 날짜로 자르면 값이 바뀌므로 그대로 거부한다.
+        if (date == null) {
+          LocalDateTime dateTime =
+              parseStrict(value, MIDNIGHT_DATE_TIME_FORMATTERS, LocalDateTime::from, attempt);
+          if (dateTime != null && !dateTime.toLocalTime().equals(LocalTime.MIDNIGHT)) {
+            // 엑셀 날짜 서식 셀은 날짜만 보여도 시각 소수가 숨어 있을 수 있다 — 왜 거부되는지 알 수 있게 시각을 짚어 준다.
+            throw new Exception(
+                "날짜에 시각("
+                    + dateTime.toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                    + ")이 들어 있어 날짜 열에 저장하면 값이 바뀝니다: "
+                    + value
+                    + " (엑셀 셀이 날짜만 보여도 시각이 숨어 있을 수 있습니다 — 시각을 지우거나 날짜시간 열로 가져와 주세요)");
           }
+          date = dateTime != null ? dateTime.toLocalDate() : null;
         }
         if (date == null && TIME_ONLY.matcher(value).matches()) {
           throw new Exception(TIME_ONLY_MESSAGE + value);
+        }
+        // 형식·칸 값은 맞는데 달력에 없는 값(2026-02-30, 2026-03-01 24:00:00 등)은 형식 오류와 구분해 알린다(WD-379).
+        if (date == null && attempt.nonexistent) {
+          throw new Exception(nonexistentDateMessage(value, null));
         }
         if (date == null) {
           throw new Exception(
@@ -364,34 +460,32 @@ public class DataValidationService {
         // 날짜만 있으면 일/월→월/일 순 첫 성공이라 TIMESTAMP 열에서도 행마다 해석이 갈렸다(WD-246).
         LocalDateTime timestamp =
             parseDayMonthLeading(value, true, columnName, dateOrders, rowIndex);
-        for (DateTimeFormatter formatter :
-            timestamp != null ? List.<DateTimeFormatter>of() : TIMESTAMP_FORMATTERS) {
-          try {
-            timestamp = LocalDateTime.parse(value, formatter);
-            break;
-          } catch (DateTimeParseException ignored) {
-          }
+        CalendarParseAttempt attempt = new CalendarParseAttempt();
+        if (timestamp == null) {
+          timestamp = parseStrict(value, TIMESTAMP_FORMATTERS, LocalDateTime::from, attempt);
         }
         // 시간부까지 요구하는 TIMESTAMP_FORMATTERS로 실패하면, DATE_FORMATTERS(날짜만)로 재시도해
         // 자정 시각(00:00:00)을 붙인다. CSV/Excel 내보내기에서 TIMESTAMP 컬럼에 날짜만 채워 넣는
         // 경우가 흔한데, DATE 컬럼보다 더 엄격하게 거부하는 것은 실사용과 어긋난다(#516).
         if (timestamp == null) {
-          for (DateTimeFormatter formatter : DATE_FORMATTERS) {
-            try {
-              timestamp = LocalDate.parse(value, formatter).atStartOfDay();
-              break;
-            } catch (DateTimeParseException ignored) {
-            }
-          }
+          LocalDate dateOnly = parseStrict(value, DATE_FORMATTERS, LocalDate::from, attempt);
+          timestamp = dateOnly != null ? dateOnly.atStartOfDay() : null;
         }
         if (timestamp == null && TIME_ONLY.matcher(value).matches()) {
           throw new Exception(TIME_ONLY_MESSAGE + value);
         }
+        // 형식·칸 값은 맞는데 달력에 없는 값(2026-02-30 10:00:00, 24:00:00 등)은 형식 오류와 구분해 알린다(WD-379).
+        if (timestamp == null && attempt.nonexistent) {
+          throw new Exception(nonexistentDateMessage(value, null));
+        }
         if (timestamp == null) {
+          // 시간대가 붙은 ISO 값(…Z, …+09:00)은 받지 않는다 — TIMESTAMP 열은 시간대가 없어 어느 기준으로 바꿀지 모호하다.
+          // 예전 문구는 「ISO 형식」이라고만 적어 이런 값도 되는 것처럼 읽혔으므로 시간대 없는 모양을 예로 밝힌다(WD-379).
           throw new Exception(
               "날짜시간 형식이 아닙니다: "
                   + value
-                  + " (허용 형식: yyyy-MM-dd HH:mm:ss, yyyyMMddHHmmss, ISO 형식, dd/MM/yyyy HH:mm:ss,"
+                  + " (허용 형식: yyyy-MM-dd HH:mm:ss, yyyy/MM/dd HH:mm:ss, yyyyMMddHHmmss,"
+                  + " ISO(시간대 없이, 예: 2026-03-01T10:00:00), dd/MM/yyyy HH:mm:ss,"
                   + " MM/dd/yyyy HH:mm:ss, yyyy-MM-dd 등 날짜만 있는 형식)");
         }
         yield timestamp;
@@ -453,7 +547,8 @@ public class DataValidationService {
                       Integer.parseInt(m.group(6)),
                       Integer.parseInt(m.group(7))));
     } catch (java.time.DateTimeException e) {
-      throw new Exception("존재하지 않는 날짜입니다: " + value + " (" + order.label + "로 해석)");
+      // 연도가 앞에 오는 형식과 같은 문구를 쓴다 — 같은 결함이 값 모양에 따라 다른 말로 나오지 않게(WD-379).
+      throw new Exception(nonexistentDateMessage(value, order.label));
     }
     // 실제로 있는 날짜일 때만 열 순서의 근거로 남긴다 — 잘못된 값이 열 순서를 정하지 않게.
     if (evidence != null) {

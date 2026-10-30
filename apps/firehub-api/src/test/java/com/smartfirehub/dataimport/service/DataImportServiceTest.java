@@ -17,6 +17,7 @@ import com.smartfirehub.dataimport.dto.ParseOptions;
 import com.smartfirehub.dataimport.exception.ConcurrentImportException;
 import com.smartfirehub.dataimport.exception.FileUnreadableException;
 import com.smartfirehub.dataimport.exception.ImportNotFoundException;
+import com.smartfirehub.dataimport.exception.InvalidFileHeaderException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
@@ -496,6 +497,125 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     assertThat(savedDuringCall).isNotEmpty();
     assertThat(savedDuringCall).allSatisfy(p -> assertThat(p).doesNotExist());
+  }
+
+  // ── WD-369: 이름이 빈 열이 둘 이상이면 그 열은 매핑할 수 없다 ─────────────────────────
+
+  /** 빈 이름 열 둘(1·2번째) + name 열. 행 Map 에서 빈 이름 키("")가 겹친다(WD-369). */
+  private static MockMultipartFile twoBlankHeaderCsv() {
+    return new MockMultipartFile(
+        "file", "blank2.csv", "text/csv", ",,name\nx1,x2,Alice\n".getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static final String TWO_BLANK_MESSAGE =
+      "이름이 비어 있는 열이 2개라 어느 열을 가져올지 구분할 수 없습니다 (1·2번째 열). 열 이름을 넣은 뒤 다시 올려 주세요.";
+
+  /** 빈 이름 열 둘 중 하나를 매핑하면 사전 검증이 400(InvalidFileHeaderException) + 한국어 사유로 거절된다(WD-369). */
+  @Test
+  void validateImport_twoBlankHeaders_mappingBlankColumn_rejectedInKorean() {
+    List<ColumnMappingEntry> mappings =
+        java.util.Arrays.asList(
+            new ColumnMappingEntry("", "email"),
+            new ColumnMappingEntry("", null),
+            new ColumnMappingEntry("name", "name"));
+
+    assertThatThrownBy(
+            () -> dataImportService.validateImport(testDatasetId, twoBlankHeaderCsv(), mappings))
+        .isInstanceOf(InvalidFileHeaderException.class)
+        .hasMessage(TWO_BLANK_MESSAGE);
+  }
+
+  /** 가져오기 시작도 같은 규칙으로 잡을 만들기 전에 거절한다 — 「진행 중」 잡이 남지 않는다(WD-369). */
+  @Test
+  void importFile_twoBlankHeaders_mappingBlankColumn_rejectedBeforeJobIsCreated() {
+    List<ColumnMappingEntry> mappings =
+        java.util.Arrays.asList(
+            new ColumnMappingEntry("", null),
+            new ColumnMappingEntry("", "email"),
+            new ColumnMappingEntry("name", "name"));
+
+    assertThatThrownBy(
+            () ->
+                dataImportService.importFile(
+                    testDatasetId,
+                    twoBlankHeaderCsv(),
+                    mappings,
+                    testUserId,
+                    "Test User",
+                    "127.0.0.1",
+                    "TestAgent"))
+        .isInstanceOf(InvalidFileHeaderException.class)
+        .hasMessage(TWO_BLANK_MESSAGE);
+    Mockito.verify(asyncJobService, Mockito.never())
+        .createJob(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
+  }
+
+  /** 빈 이름 열이 둘 이상이어도 매핑하지 않으면 파일은 그대로 받는다(끝 빈 열 파일 회귀 방지, WD-369). */
+  @Test
+  void twoBlankHeaders_unmapped_validateAndImportSucceed() throws Exception {
+    List<ColumnMappingEntry> mappings =
+        java.util.Arrays.asList(
+            new ColumnMappingEntry("", null),
+            new ColumnMappingEntry("", null),
+            new ColumnMappingEntry("name", "name"));
+
+    ImportValidateResponse res =
+        dataImportService.validateImport(testDatasetId, twoBlankHeaderCsv(), mappings);
+    assertThat(res.validRows()).isEqualTo(1);
+    assertThat(res.errorRows()).isZero();
+
+    ImportStartResponse started =
+        dataImportService.importFile(
+            testDatasetId,
+            twoBlankHeaderCsv(),
+            mappings,
+            testUserId,
+            "Test User",
+            "127.0.0.1",
+            "TestAgent");
+    assertThat(started.status()).isEqualTo("PENDING");
+  }
+
+  /** 빈 이름 열이 하나뿐이면 키가 겹치지 않으므로 매핑할 수 있다(WD-369). */
+  @Test
+  void singleBlankHeader_mapped_validateAndImportSucceed() throws Exception {
+    MockMultipartFile file =
+        new MockMultipartFile(
+            "file",
+            "blank1.csv",
+            "text/csv",
+            "name,\nAlice,a@x.com\n".getBytes(StandardCharsets.UTF_8));
+    List<ColumnMappingEntry> mappings =
+        List.of(new ColumnMappingEntry("name", "name"), new ColumnMappingEntry("", "email"));
+
+    ImportValidateResponse res = dataImportService.validateImport(testDatasetId, file, mappings);
+    assertThat(res.validRows()).isEqualTo(1);
+    assertThat(res.errorRows()).isZero();
+
+    ImportStartResponse started =
+        dataImportService.importFile(
+            testDatasetId, file, mappings, testUserId, "Test User", "127.0.0.1", "TestAgent");
+    assertThat(started.status()).isEqualTo("PENDING");
+  }
+
+  /** 빈 이름이라도 글자가 다르면("" 와 " ") 행 Map 키가 겹치지 않으므로 매핑할 수 있다(WD-369). */
+  @Test
+  void blankHeadersWithDifferentRawNames_mapped_validateSucceeds() throws Exception {
+    MockMultipartFile file =
+        new MockMultipartFile(
+            "file",
+            "blank-space.csv",
+            "text/csv",
+            ", ,name\na@x.com,x2,Alice\n".getBytes(StandardCharsets.UTF_8));
+    List<ColumnMappingEntry> mappings =
+        java.util.Arrays.asList(
+            new ColumnMappingEntry("", "email"),
+            new ColumnMappingEntry(" ", null),
+            new ColumnMappingEntry("name", "name"));
+
+    ImportValidateResponse res = dataImportService.validateImport(testDatasetId, file, mappings);
+    assertThat(res.validRows()).isEqualTo(1);
+    assertThat(res.errorRows()).isZero();
   }
 
   @Test

@@ -87,6 +87,7 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
                 hasAnyMapping={derived.hasAnyMapping}
                 unmappedRequired={derived.unmappedRequired}
                 getAvailableDatasetColumns={derived.getAvailableDatasetColumns}
+                unmappableColumns={derived.unmappableColumns}
                 onMappingChange={handlers.mappingChange}
               />
 
