@@ -21,7 +21,7 @@ import { Label } from '../../../components/ui/label';
 import { RadioGroup, RadioGroupItem } from '../../../components/ui/radio-group';
 import { SecurityLevelBadge } from '../../../components/ui/SecurityLevelBadge';
 import { useRoleClearance, useSecurityLevels } from '../../../hooks/queries/useSecurityLevels';
-import { extractApiError, handleApiError } from '../../../lib/api-error';
+import { extractApiError, handleApiError, isNotFoundError } from '../../../lib/api-error';
 import { cumulativeDescription } from '../../../lib/security-level';
 
 /**
@@ -37,6 +37,7 @@ export function RoleClearanceCard({
   canEdit,
   scopeLockReason,
   onDirtyChange,
+  onRoleNotFound,
 }: {
   roleId: number;
   /** 등급을 바꿀 수 있는가(role:write). false 면 라디오를 잠그고 저장 버튼을 숨긴다. */
@@ -45,6 +46,11 @@ export function RoleClearanceCard({
   scopeLockReason?: string;
   /** 미저장 등급 선택 여부가 바뀔 때 알린다 — 역할 상세의 이탈 경고가 이 카드의 변경도 알 수 있게(WD-118). */
   onDirtyChange?: (dirty: boolean) => void;
+  /**
+   * 역할이 그새 삭제돼 미리보기·저장이 404 일 때 부르는 콜백(WD-287) — 부모(역할 상세)가 안내 후 목록으로 돌아간다.
+   * 주지 않으면 다른 실패처럼 이 카드 안에서 문구만 보인다.
+   */
+  onRoleNotFound?: (error: unknown) => void;
 }) {
   const qc = useQueryClient();
   const { data: clearance } = useRoleClearance(roleId);
@@ -80,6 +86,12 @@ export function RoleClearanceCard({
     retry: false,
   });
 
+  // 미리보기가 404 면 역할이 삭제된 것이다 — 저장은 미리보기 성공 전엔 막혀 있어, 등급을 고르는 순간이 삭제를 처음 만나는 지점이다(WD-287).
+  // 죽은 화면에 오류 문구만 남기지 않고 부모에 알려 목록으로 돌아가게 한다.
+  useEffect(() => {
+    if (onRoleNotFound && isNotFoundError(preview.error)) onRoleNotFound(preview.error);
+  }, [preview.error, onRoleNotFound]);
+
   const save = useMutation({
     mutationFn: () => securityLevelsApi.setRoleClearance(roleId, Number(selected)),
     onSuccess: async () => {
@@ -96,7 +108,14 @@ export function RoleClearanceCard({
       });
       setDraft(null);
     },
-    onError: (e) => handleApiError(e, '열람 등급 저장에 실패했습니다.'),
+    onError: (e) => {
+      // 그새 삭제된 역할이면 부모가 안내 후 목록으로 돌아간다(WD-287).
+      if (onRoleNotFound && isNotFoundError(e)) {
+        onRoleNotFound(e);
+        return;
+      }
+      handleApiError(e, '열람 등급 저장에 실패했습니다.');
+    },
   });
 
   if (!clearance || levels.length === 0) return null;

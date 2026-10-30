@@ -11,7 +11,7 @@ import { InlineBanner } from '@/components/ui/inline-banner';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useRoleClearance } from '@/hooks/queries/useSecurityLevels';
-import { extractApiError, handleApiError } from '@/lib/api-error';
+import { extractApiError, handleApiError, isNotFoundError } from '@/lib/api-error';
 import { iGa } from '@/lib/utils';
 
 import { rolesApi } from '../../api/roles';
@@ -163,6 +163,8 @@ export default function RoleListPage() {
       fetchRoles();
     } catch (error) {
       handleApiError(error, '역할 삭제에 실패했습니다.');
+      // 이미 다른 곳에서 삭제된 역할(404)이면 서버의 「…이미 삭제되었을 수 있습니다.」 안내 뒤 목록을 다시 읽어 남은 행을 지운다(WD-287).
+      if (isNotFoundError(error)) fetchRoles();
     }
   };
 

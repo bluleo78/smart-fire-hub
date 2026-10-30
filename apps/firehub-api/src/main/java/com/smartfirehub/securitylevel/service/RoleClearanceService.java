@@ -155,7 +155,7 @@ public class RoleClearanceService {
   private RoleRecord requireRole(long roleId) {
     var r = dsl.selectFrom(ROLE).where(ROLE.ID.eq(roleId)).fetchOne();
     if (r == null) {
-      throw new RoleNotFoundException("Role not found: " + roleId);
+      throw new RoleNotFoundException();
     }
     return r;
   }

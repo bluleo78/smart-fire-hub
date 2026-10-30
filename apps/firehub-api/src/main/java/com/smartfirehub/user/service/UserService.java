@@ -349,7 +349,7 @@ public class UserService {
   private Long userRoleId() {
     return roleRepository
         .findByName("USER")
-        .orElseThrow(() -> new RoleNotFoundException("System role not found: USER"))
+        .orElseThrow(() -> RoleNotFoundException.systemRole("USER"))
         .id();
   }
 
