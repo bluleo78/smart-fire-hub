@@ -85,6 +85,7 @@ class PipelineAsyncRunnerTiberoApiCallTest {
   @Mock PipelineStepRepository stepRepository;
   @Mock PipelineExecutionRepository executionRepository;
   @Mock PipelineExecutionRegistry executionRegistry;
+  @Mock PipelineTenantAdmission tenantAdmission;
   @Mock PipelineRepository pipelineRepository;
   @Mock DataTableService dataTableService;
   @Mock DataTableRowService dataTableRowService;

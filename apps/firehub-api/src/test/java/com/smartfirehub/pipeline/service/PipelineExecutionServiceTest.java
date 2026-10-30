@@ -15,6 +15,8 @@ import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.user.repository.UserRepository;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
@@ -24,7 +26,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.task.TaskRejectedException;
 
 /**
@@ -43,6 +47,12 @@ class PipelineExecutionServiceTest {
   @Mock PipelineAsyncRunner asyncRunner;
   @Mock AuditLogService auditLogService;
   @Mock UserRepository userRepository;
+  @Mock ApplicationEventPublisher eventPublisher;
+
+  /** 관문은 끈 채(상한 0) 진짜 객체로 둔다 — 곧바로 제출하는 예전 경로를 그대로 검증한다(WD-439). */
+  @Spy
+  PipelineTenantAdmission tenantAdmission =
+      new PipelineTenantAdmission(0, Duration.ofMinutes(30), Clock.systemUTC());
 
   @InjectMocks PipelineExecutionService service;
 
