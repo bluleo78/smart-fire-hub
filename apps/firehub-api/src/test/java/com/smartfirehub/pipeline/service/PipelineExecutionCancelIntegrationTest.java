@@ -57,8 +57,8 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>끝난 실행 → 409, 다른 테넌트·다른 파이프라인 → 404
  * </ul>
  *
- * <p>테스트 트랜잭션은 끈다 — 실행은 {@code @Async} 라 별도 스레드·커넥션에서 돈다(PipelineStepErrorMessageIntegrationTest 와 같은
- * 이유). 외부 API 는 WireMock 이고, SSRF 검사(DNS 로 localhost 차단)는 목으로 우회한다. 실행기는 test 프로필에서 꺼져 있어 로컬
+ * <p>테스트 트랜잭션은 끈다 — 실행은 {@code @Async} 라 별도 스레드·커넥션에서 돈다(PipelineStepErrorMessageIntegrationTest 와
+ * 같은 이유). 외부 API 는 WireMock 이고, SSRF 검사(DNS 로 localhost 차단)는 목으로 우회한다. 실행기는 test 프로필에서 꺼져 있어 로컬
  * ApiCallExecutor 경로(페이지 사이 체크포인트)를 탄다.
  */
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -166,12 +166,14 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
         .isEqualTo(PipelineExecutionCancelledException.SKIPPED_BY_CANCEL_MESSAGE);
 
     // 원본 데이터가 그대로다 — 맞바꾸지 않았다.
-    List<String> names = dsl.fetch("SELECT name FROM " + out() + " ORDER BY name").getValues(0, String.class);
+    List<String> names =
+        dsl.fetch("SELECT name FROM " + out() + " ORDER BY name").getValues(0, String.class);
     assertThat(names).containsExactly("orig1", "orig2");
     // 이번 실행의 스테이징 임시 테이블(rtmp_<hex>_<md5(출력)>)이 남지 않았다.
     assertThat(leftoverTempTables()).isZero();
     // 남은 페이지는 요청하지 않았다(3페이지째 이후 없음).
-    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/items")).withQueryParam("offset", equalTo("4")));
+    wireMock.verify(
+        0, getRequestedFor(urlPathEqualTo("/items")).withQueryParam("offset", equalTo("4")));
   }
 
   /** APPEND 도중 취소: 넣은 행은 남고, 스텝 기록의 N 이 실제 출력 행 수와 같다. */
@@ -195,7 +197,48 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
     Matcher m = Pattern.compile("취소 전까지 (\\d+)행 적재됨").matcher(fetch.error());
     assertThat(m.find()).as("스텝 기록: %s", fetch.error()).isTrue();
     assertThat(Integer.parseInt(m.group(1))).isEqualTo(actual);
-    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/items")).withQueryParam("offset", equalTo("4")));
+    wireMock.verify(
+        0, getRequestedFor(urlPathEqualTo("/items")).withQueryParam("offset", equalTo("4")));
+  }
+
+  /**
+   * 마지막 스텝이 문장을 실행하는 중에 취소(WD-411): 그 뒤로 체크포인트가 없어 예전엔 실행이 COMPLETED 로 끝나 연쇄 트리거가 하위를 돌렸다. 이미 시작한
+   * 문장의 결과는 그대로 두고(스텝 COMPLETED), 실행은 CANCELLED 로 마감해야 한다 — 연쇄·완료 알림은 CANCELLED 로는 발화하지 않는다.
+   */
+  @Test
+  void 마지막_스텝_실행_중에_취소하면_스텝은_완료여도_실행은_CANCELLED_로_끝난다() {
+    PipelineStepRequest slow =
+        new PipelineStepRequest(
+            // 몇 초 걸리는 문장(pg_sleep 은 SQL 검증이 막는다 — 이슈 재현과 같은 generate_series).
+            "slow",
+            "느린 마지막 스텝",
+            "SQL",
+            "SELECT count(*)::text AS name FROM generate_series(1, 80000000) g",
+            null,
+            null,
+            List.of(),
+            "REPLACE");
+    pipelineId =
+        pipelineService
+            .createPipeline(
+                new CreatePipelineRequest("WD411 Pipeline " + suffix, "마지막 스텝 취소", List.of(slow)),
+                userId)
+            .id();
+
+    Long executionId = executionService.executePipeline(pipelineId, userId);
+    // 스텝 안의 「SQL 실행 직전」 체크포인트(RUNNING 기록 직후 수 ms 안)를 지나 문장이 돌기 시작한 뒤에 취소한다 — 그 전이면 체크포인트가 잡아
+    // 스텝도 CANCELLED 다. 문장 본문은 실행 롤로 돌아 pg_stat_activity 의 질의 문구가 이 연결에는 가려지므로 시간으로 기다린다(문장은 수 초).
+    awaitStepRunning(executionId, "slow");
+    sleep(1_000);
+    CancelExecutionResponse accepted =
+        pipelineService.cancelExecution(pipelineId, executionId, userId);
+    assertThat(accepted.status()).isEqualTo("RUNNING");
+
+    ExecutionDetailResponse detail = awaitTerminal(executionId);
+    assertThat(detail.status()).isEqualTo("CANCELLED");
+    assertThat(detail.cancelRequestedAt()).isNotNull();
+    // 이미 시작한 문장은 끝까지 돌았다 — 스텝 기록은 그대로 완료다(확인 창 안내와 같다).
+    assertThat(stepRows(executionId).get("slow").status()).isEqualTo("COMPLETED");
   }
 
   // ------------------------------------------------------------------ //
@@ -213,7 +256,8 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
     Map<Long, Long> stepExecIds = new HashMap<>();
     Map<Long, List<Long>> deps = new HashMap<>();
     for (PipelineStepResponse s : steps) {
-      stepExecIds.put(s.id(), executionRepository.createStepExecution(executionId, s.id(), s.name()));
+      stepExecIds.put(
+          s.id(), executionRepository.createStepExecution(executionId, s.id(), s.name()));
       deps.put(s.id(), List.of());
     }
 
@@ -381,6 +425,19 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
       sleep(50);
     }
     throw new IllegalStateException("API 첫 페이지 요청이 오지 않았다: execution " + executionId);
+  }
+
+  /** 이름이 {@code stepName} 인 스텝이 RUNNING 이 될 때까지 기다린다. */
+  private void awaitStepRunning(Long executionId, String stepName) {
+    long deadline = System.currentTimeMillis() + 30_000;
+    while (System.currentTimeMillis() < deadline) {
+      StepRow row = stepRows(executionId).get(stepName);
+      if (row != null && "RUNNING".equals(row.status())) {
+        return;
+      }
+      sleep(50);
+    }
+    throw new IllegalStateException("스텝이 시작되지 않았다: " + stepName);
   }
 
   /** 종료 상태(COMPLETED/FAILED/CANCELLED)까지 기다린다. */

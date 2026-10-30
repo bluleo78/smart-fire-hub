@@ -182,9 +182,9 @@ public class PipelineAsyncRunner {
    * @param stepIdToStepExecId 스텝 ID → 스텝 실행 레코드 ID 매핑
    *     <p><b>트랜잭션 경계(P2-b Task 5)</b>: 이 메서드는 의도적으로 {@code @Transactional} 이 아니다. 파이프라인 실행은 수 분이
    *     걸릴 수 있어 전체를 한 트랜잭션으로 감싸면 커넥션을 그만큼 점유한다. 상태 갱신({@code updateExecutionStatus}/{@code
-   *     updateStepExecution})은 모두 <b>단일 행 쓰기</b>이고 여러 건이 함께 커밋돼야 하는 불변식이 없으므로(스텝 상태는 각각 독립, 최종 상태는
-   *     스텝 종료 후 한 번), 리포지토리의 클래스 레벨 {@code @Transactional} 이 여는 짧은 트랜잭션으로 충분하다 — 그 트랜잭션이 곧 RLS GUC
-   *     공급 지점이다.
+   *     updateStepExecution}, 최종 상태는 취소 요청이 없을 때만 쓰는 {@code finishUnlessCancelRequested} — WD-411)은
+   *     모두 <b>단일 행 쓰기</b>이고 여러 건이 함께 커밋돼야 하는 불변식이 없으므로(스텝 상태는 각각 독립, 최종 상태는 스텝 종료 후 한 번), 리포지토리의
+   *     클래스 레벨 {@code @Transactional} 이 여는 짧은 트랜잭션으로 충분하다 — 그 트랜잭션이 곧 RLS GUC 공급 지점이다.
    * @param userId 실행 주체 ID — 수동은 요청자, 트리거는 트리거 생성자. Python/AI 권한 체크와 SQL 스텝 보안 등급
    *     판정(PipelineSecurityGate)에 쓴다
    * @param executorEnabled 외부 실행기 활성화 여부
@@ -320,12 +320,15 @@ public class PipelineAsyncRunner {
         finalStatus = "COMPLETED"; // 일부 스킵됐지만 실패 없음
       }
 
+      // 취소 요청이 없을 때만 최종 상태를 쓴다(WD-411) — 마지막 스텝이 문장을 실행하는 중에 들어온 취소는 스텝 사이 체크포인트가 더 없어
+      // 놓쳤고, COMPLETED 로 끝나 연쇄 트리거가 하위 파이프라인을 돌렸다. 이미 반영된 스텝 결과는 그대로 두고 실행만 CANCELLED 로 마감한다.
       boolean won =
-          executionRepository.updateExecutionStatus(
-              executionId, finalStatus, null, LocalDateTime.now(ZoneOffset.UTC));
+          executionRepository.finishUnlessCancelRequested(
+              executionId, finalStatus, LocalDateTime.now(ZoneOffset.UTC));
       if (!won) {
-        // 마감 경합에서 졌다 — 정리기 등이 먼저 마감했다. 이벤트를 내면 중단된 실행이 정상 완료로 체인·알림을 일으킨다.
-        log.info("Pipeline execution {} 이미 마감된 실행 — 완료 이벤트 생략", executionId);
+        // 취소 요청이 있었거나(→ 취소 마감) 정리기 등이 먼저 마감했다(→ finishCancelled 가 조건부라 무동작). 어느 쪽이든 완료 이벤트를
+        // 내지 않는다 — 내면 멈춘·중단된 실행이 정상 완료로 체인·알림을 일으킨다.
+        finishCancelled(executionId);
         return;
       }
       log.info("Pipeline execution {} completed with status: {}", executionId, finalStatus);
@@ -340,6 +343,13 @@ public class PipelineAsyncRunner {
     } catch (Exception e) {
       // 취소 예외가 스텝 밖까지 올라온 경우(방어) — 실패가 아니라 취소로 마감한다.
       if (PipelineExecutionCancelledException.findIn(e) != null) {
+        finishCancelled(executionId);
+        return;
+      }
+      // 취소를 요청한 뒤 예외로 끝난 실행도 FAILED 로 마감하지 않는다(WD-411) — FAILED 이벤트는 조건이 실패·항상인 연쇄 트리거와 실패
+      // 알림을 일으켜, 사용자가 멈춘 흐름의 하위가 돈다.
+      if (isStopRequestedQuietly(cancel)) {
+        log.warn("Pipeline execution {} 취소 요청 뒤 예외로 끝남 — 취소로 마감", executionId, e);
         finishCancelled(executionId);
         return;
       }
@@ -358,6 +368,16 @@ public class PipelineAsyncRunner {
       // 실패 이벤트 발행
       applicationEventPublisher.publishEvent(
           new PipelineCompletedEvent(pipelineId, executionId, "FAILED", pipelineCreatedBy));
+    }
+  }
+
+  /** 예외 경로에서 쓰는 중지 확인 — 확인마저 실패하면(DB 장애 등) 중지 요청이 없는 것으로 보고 원래대로 FAILED 로 마감한다. */
+  private boolean isStopRequestedQuietly(ExecutionCancelCheck cancel) {
+    try {
+      return cancel.isCancelRequested();
+    } catch (RuntimeException ex) {
+      log.warn("중지 요청 확인 실패 — FAILED 로 마감합니다", ex);
+      return false;
     }
   }
 
