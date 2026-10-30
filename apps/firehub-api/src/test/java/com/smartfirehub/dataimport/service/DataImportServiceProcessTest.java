@@ -402,6 +402,48 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
         .isEqualTo("파일에 같은 이름의 열이 있습니다: name (1·2번째 열). 열 이름을 고친 뒤 다시 올려 주세요.");
   }
 
+  @Test
+  void twoBlankHeaders_mappedBlankColumn_jobFailsInKorean_noRowsInserted() throws Exception {
+    // WD-369: 빈 이름 열이 둘인 파일에서 빈 열을 매핑한 채 잡으로 바로 들어와도(시작 요청 검사를 거치지 않은 경로) 마지막 빈 열 값이
+    // 조용히 저장되지 않고, 잡이 한국어 사유로 실패해야 한다.
+    String tableName = "process_blank_header_dataset";
+    Long datasetId = createDatasetWithBigintColumn(tableName);
+    Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-test");
+    Files.createDirectories(tempDir);
+    Path csv = Files.createTempFile(tempDir, "process-blank-header-", ".csv");
+    Files.writeString(csv, ",,amount\n서울,부산,1\n", StandardCharsets.UTF_8);
+    Path mappings = Files.createTempFile(tempDir, "process-blank-mappings-", ".json");
+    Files.writeString(
+        mappings,
+        "[{\"fileColumn\":\"\",\"datasetColumn\":\"name\"},"
+            + "{\"fileColumn\":\"\",\"datasetColumn\":null},"
+            + "{\"fileColumn\":\"amount\",\"datasetColumn\":\"amount\"}]",
+        StandardCharsets.UTF_8);
+
+    dataImportService.processImport(
+        "process-blank-header-job-id",
+        datasetId,
+        csv.toString(),
+        mappings.toString(),
+        "",
+        "blank_header.csv",
+        Files.size(csv),
+        "CSV",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "APPEND",
+        1L);
+
+    assertThat(countRows(tableName)).isZero();
+    ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+    Mockito.verify(asyncJobService)
+        .failJob(Mockito.eq("process-blank-header-job-id"), msg.capture());
+    assertThat(msg.getValue())
+        .isEqualTo("이름이 비어 있는 열이 2개라 어느 열을 가져올지 구분할 수 없습니다 (1·2번째 열). 열 이름을 넣은 뒤 다시 올려 주세요.");
+  }
+
   // ---- WD-246: 일·월이 앞에 오는 날짜를 열 단위로 한 가지 순서로 해석 ----
 
   private Long createDateDataset(String tableName) {

@@ -19,6 +19,44 @@ import type {
 } from '../../../types/dataImport';
 import type { DatasetColumnResponse } from '../../../types/dataset';
 
+/**
+ * 파일 열 이름이 비었는지 본다(WD-369). 화면 표기용 — BOM(U+FEFF)과 앞뒤 공백을 걷어낸 뒤 비면 빈 이름으로 보인다.
+ */
+export function isBlankColumnName(name: string | null | undefined): boolean {
+  if (!name) return true;
+  return name.replace(/^\uFEFF/, '').trim() === '';
+}
+
+/**
+ * 이름이 빈 열을 화면에 보일 이름(WD-369). 빈 이름 열이 여럿이면 표에서 서로 구분되지 않으므로 파일 속 위치(1부터)를 붙인다.
+ */
+export function fileColumnLabel(name: string, index: number): string {
+  return isBlankColumnName(name) ? `(이름 없음) ${index + 1}번째 열` : name;
+}
+
+/**
+ * 열마다 매핑할 수 없는 빈 이름 열인지(WD-369). 서버는 행을 「다듬지 않은 열 이름 → 값」으로 읽어, 글자까지 같은 빈 이름 열이 둘 이상이면 값이
+ * 서로 덮어써진다(매핑하면 서버가 400 으로 거절한다). 같은 이름의 빈 열이 하나뿐이면 겹치지 않아 매핑할 수 있다.
+ */
+export function unmappableBlankColumns(fileColumns: string[]): boolean[] {
+  const counts = new Map<string, number>();
+  for (const c of fileColumns) counts.set(c, (counts.get(c) ?? 0) + 1);
+  return fileColumns.map((c) => isBlankColumnName(c) && (counts.get(c) ?? 0) >= 2);
+}
+
+/**
+ * index 위치의 매핑을 돌려준다(WD-369). 시트를 바꾼 직후처럼 매핑 상태가 아직 이전 미리보기 것이면 같은 위치라도 다른 열이므로, 열 이름이 맞을 때만
+ * 돌려준다.
+ */
+export function mappingAt(
+  mappings: ColumnMappingEntry[],
+  index: number,
+  fileColumn: string | undefined
+): ColumnMappingEntry | undefined {
+  const m = mappings[index];
+  return m && m.fileColumn === fileColumn ? m : undefined;
+}
+
 interface UseImportDialogOptions {
   datasetId: number;
   datasetColumns: DatasetColumnResponse[];
@@ -43,7 +81,8 @@ interface UseImportDialogReturn {
     fileSelect: (file: File) => void;
     /** 엑셀의 다른 시트를 골라 미리보기를 다시 받는다 (WD-253) */
     sheetChange: (sheetName: string) => void;
-    mappingChange: (fileColumn: string, datasetColumn: string | null) => void;
+    /** index: 파일 열 위치(0부터) — 이름이 같은(빈) 열이 여럿이어도 한 행만 바뀌게 위치로 고른다 (WD-369) */
+    mappingChange: (index: number, datasetColumn: string | null) => void;
     validate: () => void;
     import: () => void;
     close: () => void;
@@ -54,7 +93,9 @@ interface UseImportDialogReturn {
     hasUnmappedRequired: boolean;
     hasAnyMapping: boolean;
     hasPrimaryKey: boolean;
-    getAvailableDatasetColumns: (fileColumn: string) => DatasetColumnResponse[];
+    getAvailableDatasetColumns: (index: number) => DatasetColumnResponse[];
+    /** 파일 열 위치별로 매핑할 수 없는 빈 이름 열인지 (WD-369) */
+    unmappableColumns: boolean[];
     displayedErrors: ValidationErrorDetail[];
   };
   status: {
@@ -132,9 +173,11 @@ export function useImportDialog({
   // Initialize mappings from preview data
   useEffect(() => {
     if (previewData) {
-      const initialMappings: ColumnMappingEntry[] = previewData.suggestedMappings.map((sm) => ({
+      // 매핑할 수 없는 빈 이름 열은 추천이 있더라도 미매핑으로 시작한다 — 서버가 매핑을 거절하기 때문이다 (WD-369)
+      const unmappable = unmappableBlankColumns(previewData.suggestedMappings.map((sm) => sm.fileColumn));
+      const initialMappings: ColumnMappingEntry[] = previewData.suggestedMappings.map((sm, i) => ({
         fileColumn: sm.fileColumn,
-        datasetColumn: sm.datasetColumn,
+        datasetColumn: unmappable[i] ? null : sm.datasetColumn,
       }));
       // eslint-disable-next-line react-hooks/set-state-in-effect -- sync derived state from preview
       setMappings(initialMappings);
@@ -194,10 +237,23 @@ export function useImportDialog({
     }
   };
 
-  const handleMappingChange = (fileColumn: string, datasetColumn: string | null) => {
-    setMappings((prev) =>
-      prev.map((m) => (m.fileColumn === fileColumn ? { ...m, datasetColumn } : m))
-    );
+  // 매핑할 수 없는 빈 이름 열 표시는 미리보기가 바뀔 때만 다시 센다 (WD-369)
+  const unmappableColumns = useMemo(
+    () => unmappableBlankColumns((previewData?.suggestedMappings ?? []).map((sm) => sm.fileColumn)),
+    [previewData]
+  );
+
+  // 매핑은 suggestedMappings(=파일 열)와 같은 순서라 위치로 바꾼다. 이름으로 찾으면 이름이 같은 빈 열들이 함께 바뀐다 (WD-369)
+  const handleMappingChange = (index: number, datasetColumn: string | null) => {
+    setMappings((prev) => {
+      const target = prev[index];
+      if (!target) return prev;
+      // 매핑할 수 없는 빈 이름 열 — 선택 상자가 잠겨 있지만 상태로도 막아 둔다 (WD-369)
+      if (datasetColumn !== null && unmappableColumns[index]) {
+        return prev;
+      }
+      return prev.map((m, i) => (i === index ? { ...m, datasetColumn } : m));
+    });
     setValidationResult(null);
   };
 
@@ -267,15 +323,17 @@ export function useImportDialog({
   const hasAnyMapping = mappings.some((m) => m.datasetColumn !== null);
   const hasPrimaryKey = datasetColumns.some((col) => col.isPrimaryKey);
 
-  const getAvailableDatasetColumns = (currentFileColumn: string): DatasetColumnResponse[] => {
-    const currentMapping = mappings.find((m) => m.fileColumn === currentFileColumn);
+  // 위치(index)로 현재 행을 고른다 — 이름이 같은 빈 열끼리 서로의 선택을 「자기 것」으로 보지 않게 한다 (WD-369)
+  const getAvailableDatasetColumns = (index: number): DatasetColumnResponse[] => {
+    const currentMapping = mappingAt(mappings, index, previewData?.suggestedMappings[index]?.fileColumn);
     const usedColumns = mappings
-      .filter((m) => m.fileColumn !== currentFileColumn && m.datasetColumn !== null)
+      .filter((m, i) => i !== index && m.datasetColumn !== null)
       .map((m) => m.datasetColumn);
     return datasetColumns.filter(
       (col) => !usedColumns.includes(col.columnName) || col.columnName === currentMapping?.datasetColumn
     );
   };
+
 
   const displayedErrors = showAllErrors
     ? validationResult?.errors || []
@@ -309,6 +367,7 @@ export function useImportDialog({
       hasAnyMapping,
       hasPrimaryKey,
       getAvailableDatasetColumns,
+      unmappableColumns,
       displayedErrors,
     },
     status: {

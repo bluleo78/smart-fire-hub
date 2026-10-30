@@ -1,11 +1,13 @@
 package com.smartfirehub.dataimport.service;
 
+import com.smartfirehub.dataimport.dto.ColumnMappingEntry;
 import com.smartfirehub.dataimport.exception.InvalidFileHeaderException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -20,6 +22,10 @@ import java.util.stream.Collectors;
  *
  * <p>이름이 빈 열은 몇 개든 검사하지 않고 기존 동작을 유지한다. 엑셀 CSV 내보내기에서 흔한 끝 빈 열({@code a,b,,})을 거절하면 회귀가 더 크고, 빈 이름
  * 열은 기본이 미매핑이라 겹쳐도 피해가 작기 때문이다.
+ *
+ * <p>다만 빈 이름 열이 둘 이상인 파일에서 그중 하나를 매핑하면, 행 Map 에서 빈 이름 키가 서로 덮어써 마지막 빈 열 값이 조용히 저장된다(WD-369). 그래서 파일
+ * 자체는 받되, 빈 이름 열이 둘 이상이면 그 열들을 매핑하는 요청만 {@link #requireMappableBlankColumns}로 거절한다. 빈 이름 열이 하나뿐이면
+ * 키가 겹치지 않으므로 그대로 매핑할 수 있다.
  */
 final class FileHeaderValidator {
 
@@ -61,6 +67,55 @@ final class FileHeaderValidator {
 
     throw new InvalidFileHeaderException(
         "파일에 같은 이름의 열이 있습니다: " + String.join(", ", duplicated) + ". 열 이름을 고친 뒤 다시 올려 주세요.");
+  }
+
+  /**
+   * 매핑 목록에 「이름이 빈 파일 열 → 데이터셋 컬럼」이 하나라도 있는지 본다(WD-369). 헤더를 다시 읽는 비용(엑셀은 통합 문서를 다시 연다)을 이런 매핑이 있을
+   * 때만 치르도록 호출부가 먼저 거르는 데 쓴다.
+   */
+  static boolean mapsBlankColumn(List<ColumnMappingEntry> mappings) {
+    if (mappings == null) return false;
+    return mappings.stream().anyMatch(FileHeaderValidator::isMappedBlank);
+  }
+
+  /**
+   * 빈 이름 파일 열을 데이터셋 컬럼에 매핑한 항목인지(WD-369). 검증·적재({@link DataValidationService})와 같이 datasetColumn 이 있으면
+   * 매핑된 것이다.
+   */
+  private static boolean isMappedBlank(ColumnMappingEntry m) {
+    return m != null && m.datasetColumn() != null && normalize(m.fileColumn()).isEmpty();
+  }
+
+  /**
+   * 이름이 빈 열이 둘 이상인 파일에서 빈 이름 열을 매핑하면 {@link InvalidFileHeaderException}(400)을 던진다(WD-369).
+   *
+   * <p>행은 「헤더 이름 → 값」 Map 이라 이름이 같은 빈 열들이 같은 키("")를 나눠 쓰고, 마지막 빈 열 값만 남는다. 어느 빈 열을 가리킨 매핑인지 서버가
+   * 구분할 수 없으므로 경고 없이 엉뚱한 값이 저장되지 않게 거절한다. 매핑한 빈 열과 키가 같은 열이 하나뿐이거나, 빈 이름 열을 매핑하지 않았으면 통과한다(끝 빈
+   * 열 {@code a,b,,} 파일은 계속 받는다).
+   */
+  static void requireMappableBlankColumns(List<String> headers, List<ColumnMappingEntry> mappings) {
+    if (headers == null || mappings == null) return;
+
+    for (ColumnMappingEntry m : mappings) {
+      if (!isMappedBlank(m)) continue;
+      // 행 Map 의 키는 다듬지 않은 헤더 그대로다. 그래서 매핑한 빈 열과 글자까지 같은 헤더가 둘 이상일 때만 값이 덮어써진다
+      // ("" 와 " " 는 다른 키라 겹치지 않는다).
+      List<Integer> sameKeyColumns = new ArrayList<>();
+      for (int i = 0; i < headers.size(); i++) {
+        if (Objects.equals(headers.get(i), m.fileColumn())) sameKeyColumns.add(i + 1);
+      }
+      if (sameKeyColumns.size() >= 2) throw blankColumnsConflict(sameKeyColumns);
+    }
+  }
+
+  /** 겹치는 빈 이름 열 번호(1부터)로 사용자에게 보일 거절 사유를 만든다(WD-369). */
+  private static InvalidFileHeaderException blankColumnsConflict(List<Integer> blankColumns) {
+    return new InvalidFileHeaderException(
+        "이름이 비어 있는 열이 "
+            + blankColumns.size()
+            + "개라 어느 열을 가져올지 구분할 수 없습니다 ("
+            + joinColumns(blankColumns)
+            + "번째 열). 열 이름을 넣은 뒤 다시 올려 주세요.");
   }
 
   /**

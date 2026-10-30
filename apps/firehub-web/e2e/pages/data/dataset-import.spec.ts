@@ -1051,6 +1051,134 @@ test.describe('WD-205 — 같은 이름 열 헤더 거절', () => {
 });
 
 /**
+ * WD-369 — 이름이 빈 열이 여럿인 파일.
+ * 서버는 행을 「열 이름 → 값」으로 읽어 빈 이름 열 값이 서로 덮어써지므로, 빈 이름 열이 둘 이상이면 그 열들은 매핑할 수 없다.
+ * 화면은 그 열들의 선택 상자를 잠그고 안내를 보이며, 매핑 상태·React 키를 위치로 다뤄 한 행을 바꿔도 다른 빈 열이 따라 바뀌지 않아야 한다.
+ */
+test.describe('WD-369 — 이름 없는 열이 여럿인 파일', () => {
+  const HINT = '이름 없는 열이 여러 개라 그 열들은 가져오지 않습니다. 가져오려면 열 이름을 넣은 뒤 다시 올려 주세요.';
+
+  /** fileHeaders 그대로 미리보기를 돌려준다(추천 매핑은 모두 미매핑) */
+  function createBlankHeaderPreview(fileHeaders: string[]): ImportPreviewResponse {
+    return {
+      fileHeaders,
+      sampleRows: [Object.fromEntries(fileHeaders.map((h, i) => [h, `v${i + 1}`]))],
+      suggestedMappings: fileHeaders.map((h) => ({ fileColumn: h, datasetColumn: null, matchType: 'NONE', confidence: 0 })),
+      totalRows: 1,
+    } as ImportPreviewResponse;
+  }
+
+  /** 검증 요청의 mappings 필드(JSON)를 읽는다 */
+  function readMappingsField(request: import('@playwright/test').Request): { fileColumn: string; datasetColumn: string | null }[] {
+    const body = request.postDataBuffer()?.toString('utf-8') ?? '';
+    const match = body.match(/name="mappings"\r\n\r\n([^\r]*)\r\n/);
+    return match ? JSON.parse(match[1]) : [];
+  }
+
+  /** 필수(NOT NULL) 컬럼이 없는 데이터셋 — 한 열만 매핑해도 검증이 열리고, 선택지에 필수 표시(*)가 붙지 않는다 */
+  async function setupNullableDatasetMocks(page: import('@playwright/test').Page) {
+    const detail = createDatasetDetail({
+      id: DATASET_ID,
+      columns: [
+        createColumn({ id: 1, columnName: 'region', displayName: '지역', isPrimaryKey: false, isNullable: true }),
+        createColumn({ id: 2, columnName: 'cnt', displayName: '건수', isPrimaryKey: false, isNullable: true, columnOrder: 1 }),
+      ],
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}`, detail);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/data`, {
+      columns: detail.columns,
+      rows: [],
+      page: 0,
+      size: 20,
+      totalElements: 0,
+      totalPages: 0,
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/stats`, []);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/queries`, createPageResponse([]));
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, []);
+  }
+
+  async function openWithPreview(page: import('@playwright/test').Page, fileHeaders: string[]) {
+    await setupNullableDatasetMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createBlankHeaderPreview(fileHeaders));
+    const sentMappings: { fileColumn: string; datasetColumn: string | null }[][] = [];
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/imports/validate`,
+      (route) => {
+        sentMappings.push(readMappingsField(route.request()));
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createValidateResponse()) });
+      },
+    );
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+    return sentMappings;
+  }
+
+  test('빈 이름 열이 둘이면 그 열들의 선택 상자가 잠기고 안내가 보이며, 이름 있는 열은 매핑할 수 있다', async ({
+    authenticatedPage: page,
+  }) => {
+    const sentMappings = await openWithPreview(page, ['', '', 'amount']);
+    const dialog = page.getByRole('dialog');
+
+    await expect(dialog.getByText(HINT)).toBeVisible();
+    const blank1 = dialog.getByRole('combobox', { name: '(이름 없음) 1번째 열 컬럼을 매핑할 데이터셋 컬럼' });
+    const blank2 = dialog.getByRole('combobox', { name: '(이름 없음) 2번째 열 컬럼을 매핑할 데이터셋 컬럼' });
+    await expect(blank1).toBeDisabled();
+    await expect(blank2).toBeDisabled();
+
+    // 이름 있는 열은 그대로 매핑할 수 있다
+    const amount = dialog.getByRole('combobox', { name: 'amount 컬럼을 매핑할 데이터셋 컬럼' });
+    await expect(amount).toBeEnabled();
+    await amount.click();
+    await page.getByRole('option', { name: '건수' }).click();
+    await expect(amount).toHaveText('건수');
+    // 다른 행 매핑이 빈 열 행으로 번지지 않는다
+    await expect(blank1).toHaveText('매핑 안 함');
+    await expect(blank2).toHaveText('매핑 안 함');
+
+    // 검증 요청에 빈 이름 열은 미매핑으로만 실린다 — 서버가 400 으로 거절할 매핑을 보내지 않는다
+    await dialog.getByRole('button', { name: '검증' }).click();
+    await expect.poll(() => sentMappings.length).toBe(1);
+    expect(sentMappings[0]).toEqual([
+      { fileColumn: '', datasetColumn: null },
+      { fileColumn: '', datasetColumn: null },
+      { fileColumn: 'amount', datasetColumn: 'cnt' },
+    ]);
+  });
+
+  test('빈 이름 열이 하나뿐이면 잠기지 않고 매핑할 수 있다', async ({ authenticatedPage: page }) => {
+    const sentMappings = await openWithPreview(page, ['amount', '']);
+    const dialog = page.getByRole('dialog');
+
+    await expect(dialog.getByText(HINT)).not.toBeVisible();
+    const blank = dialog.getByRole('combobox', { name: '(이름 없음) 2번째 열 컬럼을 매핑할 데이터셋 컬럼' });
+    await expect(blank).toBeEnabled();
+    await blank.click();
+    await page.getByRole('option', { name: '건수' }).click();
+    await expect(blank).toHaveText('건수');
+    // 같은 데이터셋 컬럼은 다른 행 선택지에서 빠진다 — 위치 기준 비교라 빈 이름 행의 선택이 amount 행에 「자기 것」으로 보이지 않는다
+    const amount = dialog.getByRole('combobox', { name: 'amount 컬럼을 매핑할 데이터셋 컬럼' });
+    await expect(amount).toHaveText('매핑 안 함');
+    await amount.click();
+    await expect(page.getByRole('option', { name: '지역' })).toBeVisible();
+    await expect(page.getByRole('option', { name: '건수' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    await dialog.getByRole('button', { name: '검증' }).click();
+    await expect.poll(() => sentMappings.length).toBe(1);
+    expect(sentMappings[0]).toEqual([
+      { fileColumn: 'amount', datasetColumn: null },
+      { fileColumn: '', datasetColumn: 'cnt' },
+    ]);
+  });
+});
+
+/**
  * WD-253 — 엑셀 시트 선택.
  * 서버는 기본으로 첫 번째 「보이는」 시트를 읽고, 미리보기 응답의 sheetName/sheets 로 무엇을 읽었는지 알려 준다.
  * 화면은 시트가 여럿이면 「가져올 시트」 선택 상자를, 하나면 읽기 전용 한 줄을 보이고,

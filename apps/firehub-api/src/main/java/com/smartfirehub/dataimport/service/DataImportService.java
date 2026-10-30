@@ -222,6 +222,9 @@ public class DataImportService {
     try {
       file.transferTo(tempFile.toFile());
 
+      // 이름이 같은 빈 열 여럿 중 하나를 매핑했으면 값이 서로 덮어써지므로 400 으로 거절한다(WD-369).
+      requireMappableBlankColumns(tempFile, fileType, parseOptions, mappings);
+
       List<Map<String, String>> sample =
           fileParserService.parseSampleRows(
               tempFile, fileType, SAMPLE_VALIDATION_ROWS, parseOptions);
@@ -363,6 +366,10 @@ public class DataImportService {
       if (!"csv".equals(fileType)) {
         fileParserService.describeSheets(tempFile, fileType, parseOptions);
       }
+
+      // 같은 규칙을 잡을 만들기 전에 확인한다(WD-369) — 잡으로 넘기면 「진행 중」 잡이 생겼다가 실패로 끝나 사유를 잡 상태에서 따로 찾아야
+      // 한다. 여기서 던지면 아래 catch 가 저장한 파일을 지운다.
+      requireMappableBlankColumns(tempFile, fileType, parseOptions, mappings);
 
       // Create async job — partial unique index enforces one active import per dataset atomically
       jobId =
@@ -556,6 +563,10 @@ public class DataImportService {
       }
       boolean hasMappings = mappings != null && !mappings.isEmpty();
       List<ColumnMappingEntry> mappingsFinal = mappings;
+
+      // 시작 요청(importFile)이 이미 거르지만, 잡 페이로드로 바로 들어온 매핑도 같은 규칙을 따르게 한 번 더 확인한다(WD-369). 던지면 아래
+      // catch 가 InvalidFileHeaderException 의 한국어 메시지를 실패 사유로 남긴다.
+      requireMappableBlankColumns(path, fileTypeLower, parseOptionsFinal, mappings);
 
       ImportMode importMode =
           ImportMode.valueOf(
@@ -1176,6 +1187,18 @@ public class DataImportService {
       return filename.substring(lastDot + 1).toLowerCase();
     }
     return "";
+  }
+
+  /**
+   * 이름이 같은 빈 열 여럿 중 하나를 매핑한 요청이면 {@link InvalidFileHeaderException}(400)을 던진다(WD-369). 헤더를 다시 읽는 비용(엑셀은
+   * 통합 문서를 다시 연다)은 빈 이름 열을 매핑했을 때만 치른다.
+   */
+  private void requireMappableBlankColumns(
+      Path file, String fileType, ParseOptions parseOptions, List<ColumnMappingEntry> mappings)
+      throws Exception {
+    if (!FileHeaderValidator.mapsBlankColumn(mappings)) return;
+    FileHeaderValidator.requireMappableBlankColumns(
+        fileParserService.parseHeaders(file, fileType, parseOptions), mappings);
   }
 
   /** 같은 데이터셋에 진행 중인 가져오기가 있을 때의 409 메시지 — 사전 확인과 createJob 제약 위반 두 곳이 같은 문구를 쓴다. */
