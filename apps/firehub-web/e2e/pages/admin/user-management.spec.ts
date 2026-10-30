@@ -115,6 +115,87 @@ test.describe('사용자 관리 페이지', () => {
     await expect(searchInput).toHaveValue('사용자');
   });
 
+  /** WD-283: 2페이지에서 상세에 다녀와도(뒤로) 2페이지로 돌아온다 — 페이지가 주소 쿼리에 남는다. */
+  test('2페이지에서 사용자 상세에 다녀오면 2페이지로 돌아온다 (WD-283)', async ({ authenticatedPage: page }) => {
+    const users = Array.from({ length: 10 }, (_, i) =>
+      createUser({ id: i + 1, name: `사용자 ${i + 1}`, username: `user${i + 1}`, email: `user${i + 1}@example.com` }),
+    );
+    const capture = await mockApi(page, 'GET', '/api/v1/users', createPageResponse(users, { totalElements: 23 }), { capture: true });
+    await setupUserDetailMocks(page, 1);
+
+    await page.goto('/admin/users');
+    await page.getByRole('button', { name: '2 페이지' }).click();
+    await expect(page).toHaveURL(/[?&]page=1(&|$)/);
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('page')).toBe('1');
+
+    await page.getByRole('cell', { name: '사용자 1', exact: true }).click();
+    await expect(page).toHaveURL(/\/admin\/users\/1$/);
+    await page.goBack();
+
+    // 돌아온 목록은 다시 2페이지(page=1)를 요청하고 페이지 버튼도 2페이지다
+    await expect(page).toHaveURL(/\/admin\/users\?page=1$/);
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('page')).toBe('1');
+    await expect(page.getByRole('button', { name: '2 페이지' })).toHaveAttribute('aria-current', 'page');
+  });
+
+  /** WD-283: 상세 화면의 「목록으로 돌아가기」 버튼도 보던 페이지·검색어로 돌아간다. */
+  test('상세의 목록으로 돌아가기 버튼도 보던 페이지·검색어로 돌아간다 (WD-283)', async ({ authenticatedPage: page }) => {
+    const users = Array.from({ length: 10 }, (_, i) =>
+      createUser({ id: i + 1, name: `사용자 ${i + 1}`, username: `user${i + 1}`, email: `user${i + 1}@example.com` }),
+    );
+    const capture = await mockApi(page, 'GET', '/api/v1/users', createPageResponse(users, { totalElements: 23 }), { capture: true });
+    await setupUserDetailMocks(page, 1);
+
+    await page.goto('/admin/users?q=%EC%82%AC%EC%9A%A9%EC%9E%90&page=1');
+    await expect(page.getByPlaceholder('이름 또는 아이디로 검색...')).toHaveValue('사용자');
+    await page.getByRole('cell', { name: '사용자 1', exact: true }).click();
+    await expect(page).toHaveURL(/\/admin\/users\/1$/);
+
+    await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+    await expect(page).toHaveURL(/\/admin\/users\?q=%EC%82%AC%EC%9A%A9%EC%9E%90&page=1$/);
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('page')).toBe('1');
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('search')).toBe('사용자');
+  });
+
+  /** WD-283: 범위 밖 페이지 주소(멤버가 줄어든 뒤 돌아옴)는 빈 목록 대신 마지막 페이지로 옮긴다. */
+  test('범위 밖 페이지 주소는 마지막 페이지로 옮겨진다 (WD-283)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/users', createPageResponse(
+      [createUser({ id: 1, name: '사용자 1', username: 'user1', email: 'user1@example.com' })],
+      { totalElements: 1 },
+    ));
+
+    await page.goto('/admin/users?page=4');
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect(page.getByRole('cell', { name: '사용자 1', exact: true })).toBeVisible();
+  });
+
+  /** WD-283: 검색 결과에서 상세에 다녀와도 검색어와 결과가 남는다. */
+  test('검색 결과에서 사용자 상세에 다녀오면 검색어가 그대로 남는다 (WD-283)', async ({ authenticatedPage: page }) => {
+    const capture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/users',
+      createPageResponse([createUser({ id: 1, name: '사용자 1', username: 'user1', email: 'user1@example.com' })]),
+      { capture: true },
+    );
+    await setupUserDetailMocks(page, 1);
+
+    await page.goto('/admin/users');
+    const searchInput = page.getByPlaceholder('이름 또는 아이디로 검색...');
+    await searchInput.fill('더블');
+    await expect(page).toHaveURL(/[?&]q=%EB%8D%94%EB%B8%94/);
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('search')).toBe('더블');
+
+    await page.getByRole('cell', { name: '사용자 1', exact: true }).click();
+    await expect(page).toHaveURL(/\/admin\/users\/1$/);
+    await page.goBack();
+
+    await expect(searchInput).toHaveValue('더블');
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('search')).toBe('더블');
+    // 복원된 검색어가 페이지를 첫 페이지로 되돌리는 재검색을 일으키지 않는다(page 파라미터 없음 = 0)
+    await expect(page).toHaveURL(/\/admin\/users\?q=%EB%8D%94%EB%B8%94$/);
+  });
+
   test('사용자 행 클릭 시 상세 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     await setupUserListMocks(page, 3);
     // 상세 페이지 API 미리 모킹

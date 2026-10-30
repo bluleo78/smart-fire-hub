@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { ArrowLeft, UserX } from 'lucide-react';
 import { useEffect,useId,useMemo,useState } from 'react';
-import { useNavigate,useParams } from 'react-router-dom';
+import { useLocation, useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { rolesApi } from '../../api/roles';
@@ -43,6 +43,9 @@ import { memberLockReason, roleLockReason } from './components/memberLockReason'
 export default function UserDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // 목록에서 넘겨준 그 목록의 page·검색어(?page=·?q=) — 돌아갈 때 보던 위치로 간다(WD-283). 주소로 바로 들어오면 없다.
+  const listSearch = (useLocation().state as { listSearch?: string } | null)?.listSearch ?? '';
+  const listPath = `/admin/users${listSearch === '?' ? '' : listSearch}`;
   const queryClient = useQueryClient();
   const { user: currentUser, isAdmin: isCallerAdmin } = useAuth();
   // 화면 안 조작은 서버가 막는 권한 코드로만 노출한다(WD-121) — 서버에 관리자 우회가 없으므로 역할 이름은 보지 않는다.
@@ -89,14 +92,14 @@ export default function UserDetailPage() {
         setInitialRoleIds(roleIds);
       } catch {
         toast.error('사용자 정보를 불러오는데 실패했습니다.');
-        navigate('/admin/users');
+        navigate(listPath);
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchData();
-  }, [id, navigate, canAssignRoles]);
+  }, [id, navigate, canAssignRoles, listPath]);
 
   const handleRoleToggle = (roleId: number, checked: boolean) => {
     setSelectedRoleIds(prev =>
@@ -233,7 +236,7 @@ export default function UserDetailPage() {
       <div className="flex items-center gap-4">
         {/* 사용자 목록으로 돌아가는 뒤로가기 버튼 — 접근성 보강 (#102)
             (#636) navigate() 직접 호출 대신 requestNavigate 사용 — dirty 상태면 이탈 가드 다이얼로그를 띄운다 */}
-        <Button variant="ghost" size="icon" onClick={() => requestNavigate('/admin/users')} aria-label="목록으로 돌아가기" title="목록으로 돌아가기">
+        <Button variant="ghost" size="icon" onClick={() => requestNavigate(listPath)} aria-label="목록으로 돌아가기" title="목록으로 돌아가기">
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">사용자 상세</h1>
@@ -460,7 +463,7 @@ export default function UserDetailPage() {
               // 이동 전에 목록 캐시를 무효화해 제거된 멤버가 30초간 남아 보이지 않게 한다
               await queryClient.invalidateQueries({ queryKey: ['users'] });
               toast.success('워크스페이스에서 제거되었습니다');
-              navigate('/admin/users');
+              navigate(listPath);
             } catch (error) {
               handleApiError(error, '제거하지 못했습니다');
             }
