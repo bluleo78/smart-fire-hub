@@ -79,7 +79,7 @@ PII 마스킹 규칙은 메인 SYSTEM_PROMPT L5 정의를 단일 source 로 한�
 | `dataset` | 데이터셋 |
 | `pipeline` | 파이프라인 |
 | `user` | 사용자 계정 |
-| `trigger` | 파이프라인 트리거 |
+| `pipeline_trigger` | 파이프라인 트리거 (resourceId=트리거 ID, metadata.pipelineId 로 소속 파이프라인) |
 | `role` | 역할 |
 | `api_connection` | API 연결 |
 | `dashboard` | 분석 대시보드 |
