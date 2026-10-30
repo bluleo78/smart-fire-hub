@@ -118,6 +118,67 @@ test.describe('프로필 페이지', () => {
     await expect(page.getByText(/프로필 업데이트에 실패|서버 오류/).first()).toBeVisible({ timeout: 5000 });
   });
 
+  /** WD-275: 공백만 있는 이름은 이름 칸 아래 「이름을 입력하세요」로 막고 저장 요청을 보내지 않는다. */
+  test('이름에 공백만 넣으면 이름 칸에 오류가 뜨고 저장 요청이 나가지 않는다 (WD-275)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    let apiCalled = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/users/me' && !url.pathname.includes('password'),
+      (route) => {
+        if (route.request().method() === 'PUT') {
+          apiCalled = true;
+          return route.fulfill({ status: 204 });
+        }
+        return route.fallback();
+      },
+    );
+
+    await expect(page.locator('#profile-name')).toBeVisible({ timeout: 5000 });
+    await page.locator('#profile-name').fill('   ');
+    await page.getByRole('button', { name: '저장' }).first().click();
+
+    await expect(page.locator('#profile-name-error')).toHaveText('이름을 입력하세요');
+    expect(apiCalled).toBe(false);
+  });
+
+  /** WD-275: 이름 앞뒤 공백은 잘라서 저장 요청에 싣는다. */
+  test('이름 앞뒤 공백은 잘려서 저장 요청에 실린다 (WD-275)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    const capture = await mockApi(page, 'PUT', '/api/v1/users/me', {}, { capture: true });
+
+    await expect(page.locator('#profile-name')).toBeVisible({ timeout: 5000 });
+    await page.locator('#profile-name').fill('  모바일 테스터  ');
+    await page.getByRole('button', { name: '저장' }).first().click();
+
+    const captured = await capture.waitForRequest();
+    expect(captured.payload).toMatchObject({ name: '모바일 테스터' });
+  });
+
+  /** WD-275: 서버 검증 400 의 이름 오류는 폼 아래가 아니라 이름 칸 아래에 붙는다. */
+  test('서버가 이름 검증 오류(400)를 주면 이름 칸 아래에 표시된다 (WD-275)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    await page.route(
+      (url) => url.pathname === '/api/v1/users/me' && !url.pathname.includes('password'),
+      (route) => {
+        if (route.request().method() === 'PUT') {
+          return route.fulfill({
+            status: 400,
+            contentType: 'application/json',
+            body: JSON.stringify({ status: 400, error: 'Bad Request', message: 'Validation failed', errors: { name: '이름을 입력하세요' } }),
+          });
+        }
+        return route.fallback();
+      },
+    );
+
+    await expect(page.locator('#profile-name')).toBeVisible({ timeout: 5000 });
+    await page.locator('#profile-name').fill('정상 이름');
+    await page.getByRole('button', { name: '저장' }).first().click();
+
+    await expect(page.locator('#profile-name-error')).toHaveText('이름을 입력하세요');
+    await expect(page.getByText('Validation failed')).toHaveCount(0);
+  });
+
   /**
    * 비밀번호 변경 성공 → PUT /api/v1/users/me/password → toast.success + 폼 초기화
    */

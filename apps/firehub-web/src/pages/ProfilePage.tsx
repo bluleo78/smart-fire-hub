@@ -58,10 +58,12 @@ export default function ProfilePage() {
       await refreshUser();
       toast.success('프로필이 업데이트되었습니다.');
     } catch (error) {
+      // 검증 400 은 해당 입력 아래로 — 이름 오류가 이메일 칸 밑 폼 오류로 보이던 문제 (WD-275)
+      if (applyFieldErrors(error, profileForm.setError, Object.keys(updateProfileSchema.shape))) return;
+      // 필드 errors 없이 온 "Validation failed" 영문 메시지는 한국어로 대체 (#72)
       const msg = extractApiError(error, '');
-      // 서버의 "Validation failed" 영문 메시지를 한국어로 대체 (#72)
       profileForm.setError('root', {
-        message: (msg && msg !== 'Validation failed') ? msg : '입력값을 확인하세요.',
+        message: msg && msg !== 'Validation failed' ? msg : '입력값을 확인하세요.',
       });
     }
   };

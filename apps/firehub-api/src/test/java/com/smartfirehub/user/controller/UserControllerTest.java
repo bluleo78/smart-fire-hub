@@ -138,6 +138,39 @@ class UserControllerTest {
     verify(userService).updateProfile(1L, name50, "new@example.com");
   }
 
+  /** WD-275: 공백만 있는 이름은 한국어 문구의 이름 칸 오류(400)로 막고 저장하지 않는다. */
+  @Test
+  void updateMe_blankName_returnsBadRequestWithKoreanMessage() throws Exception {
+    mockAuthentication();
+
+    mockMvc
+        .perform(
+            put("/api/v1/users/me")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"   \",\"email\":\"new@example.com\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value("이름을 입력하세요"));
+
+    verify(userService, never()).updateProfile(any(), any(), any());
+  }
+
+  /** WD-275: 이름 앞뒤 공백은 잘라서 저장한다. */
+  @Test
+  void updateMe_nameWithSurroundingSpaces_savesStripped() throws Exception {
+    mockAuthentication();
+
+    mockMvc
+        .perform(
+            put("/api/v1/users/me")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"  모바일 테스터  \",\"email\":\"new@example.com\"}"))
+        .andExpect(status().isNoContent());
+
+    verify(userService).updateProfile(1L, "모바일 테스터", "new@example.com");
+  }
+
   /** 비밀번호 변경도 인증만 요구한다(WD-2) — 권한 0·테넌트 미선택 토큰으로도 204. */
   @Test
   void changePassword_authenticated_returnsNoContent() throws Exception {
