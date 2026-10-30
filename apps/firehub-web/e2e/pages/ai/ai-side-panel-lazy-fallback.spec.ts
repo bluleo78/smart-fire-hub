@@ -12,8 +12,16 @@
 
 import { expect, test } from '../../fixtures/auth.fixture';
 
-/** Vite dev 서버가 lazy import에 내려주는 모듈 경로 — 쿼리(?t=, ?v=)가 붙을 수 있어 접두 일치로 잡는다. */
-const isSidePanelModule = (url: URL) => url.pathname.endsWith('/src/components/ai/AISidePanel.tsx');
+/**
+ * AISidePanel lazy 청크 요청 — 서버 모드마다 경로가 다르다.
+ * - dev: 원본 모듈 경로(쿼리 ?t=, ?v= 가 붙을 수 있어 pathname 으로 본다)
+ * - preview(커밋 훅·push 게이트의 전체 E2E): 번들 청크 `/assets/AISidePanel-<해시>.js`
+ * dev 경로만 잡던 때는 preview 에서 아무것도 붙잡지 못해, 청크가 첫 확인보다 늦게 오기만 바라는 경주가 되었고
+ * 부하로 청크가 먼저 오면 재시도까지 실패했다(WD-452). 이 청크는 index 의 동적 import 로만 불러오므로 붙잡아도 다른 화면은 막히지 않는다.
+ */
+const isSidePanelModule = (url: URL) =>
+  url.pathname.endsWith('/src/components/ai/AISidePanel.tsx') ||
+  /\/assets\/AISidePanel-[\w-]+\.js$/.test(url.pathname);
 
 /** <main>의 실제 폭(px). */
 const mainWidth = (page: import('@playwright/test').Page) =>
