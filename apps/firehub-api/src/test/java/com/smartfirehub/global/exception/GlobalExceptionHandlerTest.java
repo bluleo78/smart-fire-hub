@@ -248,6 +248,23 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.message", not(containsString("ck_dataset_status"))));
   }
 
+  /** (WD-400) 기본 보안 등급이 없어 등급 열이 NULL 이 된 삽입은 일반 무결성 문구 대신 고칠 곳을 알려 주고, 원문(열·테이블 이름)은 싣지 않는다. */
+  @Test
+  void dataIntegrityViolation_missingDefaultSecurityLevel_explainsCause() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/data-integrity-violation-pg/not-null/level"))
+        .andExpect(status().isConflict())
+        .andExpect(
+            jsonPath("$.message").value("기본 보안 등급이 없어 저장할 수 없습니다. 설정 › 데이터 보안에서 기본 등급을 지정하세요"))
+        .andExpect(jsonPath("$.message", not(containsString("security_level_id"))));
+
+    // 다른 열의 NOT NULL 위반은 메시지·행 값에 security_level_id 가 섞여도 일반 문구다.
+    mockMvc
+        .perform(get("/test/exception/data-integrity-violation-pg/not-null/other-column"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("데이터 무결성 오류로 저장할 수 없습니다"));
+  }
+
   /**
    * (WD-99) 외래 키 위반은 방향에 따라 문구가 다르다 — 삭제 쪽(다른 곳에서 참조 중)과 삽입·수정 쪽(연결 대상 없음)을 한 문구로 쓰면 한쪽에서 반대 뜻이 된다.
    * 판별할 수 없으면 중립 문구다. 어느 경우에도 테이블·제약 이름 원문은 응답에 없다.

@@ -164,12 +164,22 @@ public class SecurityLevelService {
     return new AllowlistImpactResponse(allowlistSeeder.datasetsWithoutAllowlist(levelId).size());
   }
 
-  /** 기본 등급 교체 — 테넌트당 기본은 정확히 1개(기존 기본을 끄고 새로 켠다). */
+  /**
+   * 기본 등급 교체 — 테넌트당 기본은 정확히 1개(기존 기본을 끄고 새로 켠다).
+   *
+   * <p>삭제와 같은 등급 정의 잠금을 먼저 잡는다(WD-400). 잠그지 않으면 같은 등급의 삭제와 겹칠 때 삭제는 아직 커밋되지 않은 기본 지정을 못 보고 지우고, 기본
+   * 지정은 지워진 등급에 0 행을 켜 기존 기본만 끈 채 성공해 기본 등급이 하나도 없어진다(그 뒤 데이터셋·역할 생성이 모두 실패). 잠근 뒤에는 둘이 차례로 돌아, 먼저
+   * 지정되면 삭제가 「기본 등급은 삭제할 수 없습니다」로, 먼저 지워지면 지정이 404 로 거부된다.
+   */
   @Transactional
   public void setDefault(long id, long actor) {
+    repository.lockTenantLevelDefinitions(TenantContext.require("등급 정의 변경 잠금"));
     LevelPolicy previous = repository.findDefault().orElse(null);
     require(id);
-    repository.setDefault(id);
+    // 잠금 아래에서는 require 를 지난 등급이 사라질 수 없지만, 켠 행이 없으면 기존 기본만 끈 채 커밋되지 않게 롤백한다(방어).
+    if (repository.setDefault(id) == 0) {
+      throw levelNotFound();
+    }
     Map<String, Object> meta = new HashMap<>();
     meta.put("previousDefaultLevelId", previous == null ? null : previous.id());
     audit.record(
@@ -403,11 +413,11 @@ public class SecurityLevelService {
   }
 
   private LevelPolicy require(long id) {
-    return repository
-        .findById(id)
-        .orElseThrow(
-            () ->
-                new CodedApiException(
-                    HttpStatus.NOT_FOUND, "SECURITY_LEVEL_NOT_FOUND", "보안 등급을 찾을 수 없습니다."));
+    return repository.findById(id).orElseThrow(SecurityLevelService::levelNotFound);
+  }
+
+  private static CodedApiException levelNotFound() {
+    return new CodedApiException(
+        HttpStatus.NOT_FOUND, "SECURITY_LEVEL_NOT_FOUND", "보안 등급을 찾을 수 없습니다.");
   }
 }

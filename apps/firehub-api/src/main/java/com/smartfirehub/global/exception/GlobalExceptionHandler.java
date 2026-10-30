@@ -50,6 +50,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.postgresql.util.ServerErrorMessage;
 import org.slf4j.MDC;
@@ -179,7 +180,9 @@ public class GlobalExceptionHandler {
     // 분류(중복/외래 키/체크)는 원인 메시지로 판정하고, 사용자 문구는 원문 없이 고정한다. 외래 키는 방향(삭제·연결)을 서버 구조화
     // 오류까지 보고 가린다.
     String message = "데이터 무결성 오류로 저장할 수 없습니다";
-    if (ex.getCause() != null) {
+    if (isMissingDefaultSecurityLevel(DataExceptionTranslator.findServerError(ex))) {
+      message = "기본 보안 등급이 없어 저장할 수 없습니다. 설정 › 데이터 보안에서 기본 등급을 지정하세요";
+    } else if (ex.getCause() != null) {
       String causeMsg = ex.getCause().getMessage();
       if (causeMsg != null && causeMsg.contains("duplicate key")) {
         message = "이미 같은 값이 있어 저장할 수 없습니다";
@@ -189,11 +192,26 @@ public class GlobalExceptionHandler {
       } else if (causeMsg != null && causeMsg.contains("check constraint")) {
         message = "입력값이 제약 조건을 만족하지 않습니다";
       }
-      // 위 셋 중 어디에도 분류되지 않는 원인은 기본 문구 그대로다 — causeMsg 를 붙이면 스키마 정보가 샌다.
+      // 위 분류 어디에도 들지 않는 원인은 기본 문구 그대로다 — causeMsg 를 붙이면 스키마 정보가 샌다.
     }
     ErrorResponse response = buildError(HttpStatus.CONFLICT, message, null, request);
     return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }
+
+  /**
+   * 등급 열 NOT NULL 위반(23502)인지 — 데이터셋·역할의 등급 열 기본값은 테넌트의 기본 보안 등급이라, 기본 등급이 없으면 NULL 이 들어가 여기에
+   * 걸린다(WD-400). 일반 무결성 문구로는 원인을 알 수 없어 고칠 곳을 알려 준다. 원문 메시지가 아니라 서버 구조화 오류의 SQLState·열 이름으로 가린다 —
+   * 문구 대조는 서버 언어 설정에 따라 빗나가고, 메시지에 실린 SQL·행 값에 열 이름이 섞여 다른 위반까지 잡을 수 있다.
+   */
+  private static boolean isMissingDefaultSecurityLevel(ServerErrorMessage serverError) {
+    return serverError != null
+        && "23502".equals(serverError.getSQLState())
+        && SECURITY_LEVEL_COLUMNS.contains(serverError.getColumn());
+  }
+
+  /** 기본값이 테넌트 기본 보안 등급인 열(V133 — dataset.security_level_id, role.max_security_level_id). */
+  private static final Set<String> SECURITY_LEVEL_COLUMNS =
+      Set.of("security_level_id", "max_security_level_id");
 
   /**
    * 외래 키 위반(23503)의 방향을 가려 문구를 고른다(WD-99). 한 문구로는 한 방향에서 반대 뜻이 된다.

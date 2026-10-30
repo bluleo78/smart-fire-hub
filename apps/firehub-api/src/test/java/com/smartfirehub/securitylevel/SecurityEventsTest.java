@@ -358,6 +358,145 @@ class SecurityEventsTest extends IntegrationTestBase {
     assertThat(levelEvents()).hasSize(1);
   }
 
+  /**
+   * 기본 지정 ∥ 삭제(WD-400) — 같은 등급 X 를 A 가 기본으로 지정하는 트랜잭션을 연 채 멈추고 B 가 X 를 지우면, B 는 등급 정의 잠금에서 기다렸다가 A
+   * 가 커밋한 뒤 「기본 등급은 삭제할 수 없습니다」로 거부되고 기본은 X 하나다. 변이: setDefault 의 잠금을 지우면 B 는 미커밋 기본 지정을 못 보고 X 를
+   * 지워 기본 등급이 0개가 된다(코드·기본 수 단언 실패).
+   */
+  @Test
+  void concurrentSetDefaultThenDelete_deleteRejected_exactlyOneDefault() throws Exception {
+    long x = asTenant(() -> securityLevelService.create(req("경합기본X", false), actor)).id();
+    Throwable bError =
+        raceWhileAHolds(
+            () -> securityLevelService.setDefault(x, actor),
+            () -> securityLevelService.delete(x, moveTo(levelId("공개")), actor));
+
+    assertThat(bError)
+        .isInstanceOf(CodedApiException.class)
+        .satisfies(
+            e ->
+                assertThat(((CodedApiException) e).code())
+                    .isEqualTo("SECURITY_LEVEL_DEFAULT_UNDELETABLE"));
+    assertThat(defaultLevelIds()).containsExactly(x);
+  }
+
+  /**
+   * 삭제 ∥ 기본 지정(WD-400) — A 가 X 를 지우는 트랜잭션을 연 채 멈추고 B 가 X 를 기본으로 지정하면, B 는 잠금에서 기다렸다가 A 커밋 뒤 404 로
+   * 거부되고 원래 기본이 그대로 남는다. 잠금과 「켠 행 0 이면 404」 방어가 각각 이 경우를 막는다 — 둘 다 지우면 B 는 지워진 X 에 0 행을 켜고 기존 기본만 끈
+   * 채 성공한다(잠금만 지우면 B 는 X 행 잠금에서 기다렸다 0 행 → 404 로 롤백된다).
+   */
+  @Test
+  void concurrentDeleteThenSetDefault_setDefaultNotFound_originalDefaultKept() throws Exception {
+    List<Long> before = defaultLevelIds();
+    long x = asTenant(() -> securityLevelService.create(req("경합삭제X", false), actor)).id();
+    Throwable bError =
+        raceWhileAHolds(
+            () -> securityLevelService.delete(x, moveTo(before.get(0)), actor),
+            () -> securityLevelService.setDefault(x, actor));
+
+    assertThat(bError)
+        .isInstanceOf(CodedApiException.class)
+        .satisfies(
+            e -> assertThat(((CodedApiException) e).code()).isEqualTo("SECURITY_LEVEL_NOT_FOUND"));
+    assertThat(defaultLevelIds()).hasSize(1).isEqualTo(before);
+  }
+
+  /**
+   * A 의 작업을 트랜잭션 안에서 끝낸 뒤 커밋하지 않고 멈추고, B 의 작업이 잠금 대기에 들어간 것을 pg_stat_activity 로 확인한 다음 A 를 커밋한다. A
+   * 는 성공해야 하고, B 가 던진 예외(없으면 null)를 돌려준다.
+   */
+  private Throwable raceWhileAHolds(Runnable aWork, Runnable bWork) throws Exception {
+    TransactionTemplate tt = new TransactionTemplate(txManager);
+    CountDownLatch aDone = new CountDownLatch(1);
+    CountDownLatch releaseA = new CountDownLatch(1);
+    AtomicReference<Throwable> aError = new AtomicReference<>();
+    AtomicReference<Throwable> bError = new AtomicReference<>();
+    Thread a =
+        new Thread(
+            () -> {
+              try {
+                TenantContext.runScoped(
+                    tenantId,
+                    () ->
+                        tt.executeWithoutResult(
+                            status -> {
+                              aWork.run();
+                              aDone.countDown();
+                              try {
+                                releaseA.await(30, TimeUnit.SECONDS);
+                              } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                              }
+                            }));
+              } catch (Throwable e) {
+                aError.set(e);
+                aDone.countDown();
+              }
+            });
+    Thread b =
+        new Thread(
+            () -> {
+              try {
+                asTenant(bWork);
+              } catch (Throwable e) {
+                bError.set(e);
+              }
+            });
+    a.start();
+    try {
+      assertThat(aDone.await(30, TimeUnit.SECONDS)).isTrue();
+      assertThat(aError.get()).isNull();
+      b.start();
+      // B 가 잠금(advisory, 또는 — 변이 시 — A 가 고친 등급 행의 행 잠금) 대기에 들어갈 때까지 기다린다. 변이에서 B 가 기다리지 않고 끝나면
+      // 결과 단언이 잡는다.
+      long deadline = System.currentTimeMillis() + 15_000;
+      boolean bWaiting = false;
+      try (Connection watcher =
+              DriverManager.getConnection(
+                  PostgresTestContainer.INSTANCE.getJdbcUrl(),
+                  PostgresTestContainer.INSTANCE.getUsername(),
+                  PostgresTestContainer.INSTANCE.getPassword());
+          PreparedStatement ps =
+              watcher.prepareStatement(
+                  "select exists (select 1 from pg_stat_activity where datname = current_database()"
+                      + " and wait_event_type = 'Lock' and (query ilike '%pg_advisory_xact_lock%'"
+                      + " or query ilike '%security_level%'))")) {
+        while (!bWaiting && b.isAlive() && System.currentTimeMillis() < deadline) {
+          try (ResultSet rs = ps.executeQuery()) {
+            rs.next();
+            bWaiting = rs.getBoolean(1);
+          }
+          if (!bWaiting) {
+            Thread.sleep(50);
+          }
+        }
+      }
+      // B 가 기다리지 않고 끝났다면 A 커밋 뒤 차례로 돈 것이라 경합을 확인한 것이 아니다.
+      assertThat(bWaiting).as("전제: B 가 A 커밋을 기다린다").isTrue();
+    } finally {
+      releaseA.countDown();
+      a.join(30_000);
+      b.join(30_000);
+    }
+    assertThat(aError.get()).isNull();
+    return bError.get();
+  }
+
+  /** 새로 만든 최상위 등급은 시스템 ADMIN 역할이 따라 올라와 「사용 중」이다 — 지우려면 옮길 등급과 하향 사유가 필요하다. */
+  private static DeleteSecurityLevelRequest moveTo(long levelId) {
+    return new DeleteSecurityLevelRequest(levelId, "경합 테스트용 등급 정리");
+  }
+
+  /** 이 테넌트에서 기본(is_default) 표시가 켜진 등급 id. */
+  private List<Long> defaultLevelIds() {
+    return asTenant(
+        () ->
+            levelRepository.findAll().stream()
+                .filter(LevelPolicy::isDefault)
+                .map(LevelPolicy::id)
+                .toList());
+  }
+
   /** allowlist_required 만 바꾼 수정도 UPDATED 1건 — 구독자(C)는 허용 목록 등급 여부로 슬롯 범위를 다시 계산한다. */
   @Test
   void levelUpdate_allowlistOnly_publishesUpdatedOnce() {
