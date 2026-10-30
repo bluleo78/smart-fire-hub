@@ -112,6 +112,57 @@ export function createOntologyGraph(overrides?: Partial<GraphData>): GraphData {
   return { nodes, edges, ...overrides };
 }
 
+/**
+ * (WD-378) 대형 인스턴스 그래프 — 운영 지식그래프와 같은 타입 비율·관계 모양을 축소/확대해 만든다.
+ *
+ * scale=1이면 운영 신고 규모(노드 3,071 = Incident 1530·Damage 765·Building 306·Equipment 190·
+ * Cause 153·Regulation 127, 관계 약 5,100)이고, 회귀 테스트는 scale을 낮춰 수 초 안에 돌게 한다.
+ * 관계는 CORE_ONTOLOGY 트리플(OCCURRED_AT·CAUSED_BY·RESULTED_IN·HAS_EQUIPMENT·GOVERNED_BY)을 따라
+ * 타입을 가로질러 건다 — 같은 타입끼리만 이어진 그래프는 묶기 레이아웃이 일을 거의 안 해 부하가 재현되지 않는다.
+ * 원인(Cause) 선택은 고정 시드 LCG로 섞어, 실행마다 같은 그래프가 나오게(측정 재현성) 한다.
+ */
+export function createLargeOntologyGraph(scale = 1): GraphData {
+  const counts: Array<[string, number]> = [
+    ['Incident', 1530],
+    ['Damage', 765],
+    ['Building', 306],
+    ['Equipment', 190],
+    ['Cause', 153],
+    ['Regulation', 127],
+  ];
+  const keysByType = new Map<string, string[]>();
+  const nodes: GraphNode[] = [];
+  for (const [type, base] of counts) {
+    const n = Math.max(1, Math.round(base * scale));
+    const keys: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const key = `${type.toLowerCase()}:${i}`;
+      keys.push(key);
+      nodes.push({ key, type, name: `${type} ${i}`, sourceChunkCount: 1, schemaVersion: 1, ontologyId: 1 });
+    }
+    keysByType.set(type, keys);
+  }
+  const k = (type: string) => keysByType.get(type) ?? [];
+  let seed = 378;
+  const rand = (len: number) => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed % len;
+  };
+  const edges: GraphData['edges'] = [];
+  k('Incident').forEach((key, i) => {
+    edges.push({ subjectKey: key, type: 'RESULTED_IN', objectKey: k('Damage')[i % k('Damage').length] });
+    edges.push({ subjectKey: key, type: 'OCCURRED_AT', objectKey: k('Building')[i % k('Building').length] });
+    edges.push({ subjectKey: key, type: 'CAUSED_BY', objectKey: k('Cause')[rand(k('Cause').length)] });
+  });
+  k('Building').forEach((key, i) =>
+    edges.push({ subjectKey: key, type: 'HAS_EQUIPMENT', objectKey: k('Equipment')[i % k('Equipment').length] }),
+  );
+  k('Equipment').forEach((key, i) =>
+    edges.push({ subjectKey: key, type: 'GOVERNED_BY', objectKey: k('Regulation')[i % k('Regulation').length] }),
+  );
+  return { nodes, edges };
+}
+
 // 요소 단위 편집(S2) 뮤테이션 응답 모킹 — EntityInspector(Task 4)의 PATCH/POST/DELETE 엔드포인트가
 // 돌려주는 형태(src/types/ontology.ts 참고). schemaVersion 기본값 2는 createOntologySchema()의
 // 초기 스키마 버전(1)에서 한 번 증가한 값 — useOntologyElementMutations의 낙관적 갱신 로직이
