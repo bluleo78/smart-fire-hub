@@ -152,13 +152,16 @@ public class SecurityLevelRepository {
         .execute();
   }
 
-  /** 기본 등급 교체 — 부분 UNIQUE 때문에 기존 기본을 먼저 끈다(같은 트랜잭션). */
-  public void setDefault(long id) {
+  /**
+   * 기본 등급 교체 — 부분 UNIQUE 때문에 기존 기본을 먼저 끈다(같은 트랜잭션). 켠 행 수를 돌려준다 — 0 이면 등급이 없어 기본이 하나도 없게 되므로 호출자가
+   * 롤백해야 한다(WD-400).
+   */
+  public int setDefault(long id) {
     dsl.update(SECURITY_LEVEL)
         .set(SECURITY_LEVEL.IS_DEFAULT, false)
         .where(SECURITY_LEVEL.IS_DEFAULT.isTrue())
         .execute();
-    dsl.update(SECURITY_LEVEL)
+    return dsl.update(SECURITY_LEVEL)
         .set(SECURITY_LEVEL.IS_DEFAULT, true)
         .where(SECURITY_LEVEL.ID.eq(id))
         .execute();

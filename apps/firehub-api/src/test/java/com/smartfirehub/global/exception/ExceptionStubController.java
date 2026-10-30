@@ -197,6 +197,25 @@ public class ExceptionStubController {
                     + " referenced from table \"pipeline_step\".\0nfk_y\0")));
   }
 
+  /**
+   * 기본 보안 등급이 없어 등급 열 기본값이 NULL 이 된 삽입(WD-400) — PostgreSQL 구조화 오류(SQLState 23502, 열 이름)를 싣는다.
+   * {@code other-column} 은 같은 NOT NULL 위반이지만 다른 열이고 메시지·행 값에 security_level_id 가 섞인 대조군이다.
+   */
+  @GetMapping("/data-integrity-violation-pg/not-null/{kind}")
+  public void dataIntegrityViolationPgNotNull(@PathVariable String kind) {
+    String column = "other-column".equals(kind) ? "name" : "security_level_id";
+    throw new DataIntegrityViolationException(
+        "SQL [insert into dataset (name, security_level_id) ...]; ERROR: not null",
+        new PSQLException(
+            new ServerErrorMessage(
+                "SERROR\0C23502\0Mnull value in column \""
+                    + column
+                    + "\" of relation \"dataset\" violates not-null constraint\0DFailing row"
+                    + " contains (security_level_id).\0tdataset\0c"
+                    + column
+                    + "\0")));
+  }
+
   @GetMapping("/account-locked")
   public void accountLocked() {
     throw new AccountLockedException("Too many failed login attempts. Please try again later.");
