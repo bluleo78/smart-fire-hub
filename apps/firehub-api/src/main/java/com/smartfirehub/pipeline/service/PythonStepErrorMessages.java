@@ -11,11 +11,11 @@ import com.smartfirehub.dataset.service.DataExceptionTranslator;
  *
  * <p><b>두 경로가 같은 문구다.</b> 실행기 켠 경로(apps/firehub-executor {@code app/services/python_executor.py} 의
  * {@code UNKNOWN_COLUMN_MESSAGE}·{@code ROW_NOT_OBJECT_MESSAGE}·{@code
- * ROW_MISSING_KEY_MESSAGE}·{@code LOAD_FAILED_MESSAGE}·{@code TIMEOUT_MESSAGE}·{@code
- * UNEXPECTED_ERROR_MESSAGE})와 글자 단위로 같아야 한다 — 같은 스크립트가 두 경로에서 같은 오류를 보이게 하려는 것이다. 실행기 경로는 러너가
- * executor 오류 앞에 {@link #PREFIX} 를 붙이고, 로컬 경로는 러너가 예외를 감싸지 않으므로 여기 함수들이 접두까지 붙인다. 한쪽 문구를 바꾸면 다른 쪽도
- * 함께 바꾼다. 데이터 오류(SQLState 22) 사유 문장은 executor 가 {@code pg_error} 필드만 보내고 이 API 가 {@link
- * DataExceptionTranslator#describeDataError} 로 만든다(번역 규칙이 두 벌로 갈리지 않게).
+ * ROW_MISSING_KEY_MESSAGE}·{@code VALUE_CONVERSION_MESSAGE}·{@code LOAD_FAILED_MESSAGE}·{@code
+ * TIMEOUT_MESSAGE}·{@code UNEXPECTED_ERROR_MESSAGE})와 글자 단위로 같아야 한다 — 같은 스크립트가 두 경로에서 같은 오류를 보이게
+ * 하려는 것이다. 실행기 경로는 러너가 executor 오류 앞에 {@link #PREFIX} 를 붙이고, 로컬 경로는 러너가 예외를 감싸지 않으므로 여기 함수들이 접두까지
+ * 붙인다. 한쪽 문구를 바꾸면 다른 쪽도 함께 바꾼다. 데이터 오류(SQLState 22) 사유 문장은 executor 가 {@code pg_error} 필드만 보내고 이
+ * API 가 {@link DataExceptionTranslator#describeDataError} 로 만든다(번역 규칙이 두 벌로 갈리지 않게).
  *
  * <p>사용자 스크립트 자체의 오류(비정상 종료 시 stderr traceback)와 WD-210 의 JSON 아님 문구({@code
  * LocalPythonOutputLoader#NOT_JSON_MESSAGE})는 이 클래스 범위가 아니다 — 앞의 것은 사용자가 고칠 정보라 그대로 보인다.
@@ -36,6 +36,14 @@ public final class PythonStepErrorMessages {
   /** N번째(1부터) 행에 첫 행의 키가 없을 때 — 적재 컬럼은 첫 행의 키로 정해진다. 인자: 행 번호, 키. */
   static final String ROW_MISSING_KEY_MESSAGE =
       "출력 JSON 의 %d번째 행에 첫 행의 키 '%s' 가 없습니다. 모든 행에 첫 행과 같은 키를 넣어 주세요.";
+
+  /**
+   * N번째(1부터) 행의 값을 출력 데이터셋 컬럼 타입으로 바꿀 수 없을 때(WD-431 — 예전엔 조용히 NULL 이었다). 인자: 행 번호, 키, 값(Python
+   * {@code str()} 표기, {@link ValueConversion#excerpt} 로 자름), 대상({@link ValueConversion#target}),
+   * 덧붙임 안내({@link ValueConversion#hint}).
+   */
+  static final String VALUE_CONVERSION_MESSAGE =
+      "출력 JSON 의 %d번째 행 '%s' 값 '%s' 을(를) %s 변환할 수 없습니다%s. 출력 데이터셋 컬럼 타입에 맞는 값으로 출력해 주세요.";
 
   /** DB 데이터 오류(SQLState 22)로 적재가 실패했을 때. 인자: {@link DataExceptionTranslator} 사유 문장. */
   static final String LOAD_DATA_ERROR_MESSAGE =
@@ -69,6 +77,22 @@ public final class PythonStepErrorMessages {
    */
   static String rowMissingKey(int rowNumber, String key) {
     return PREFIX + String.format(ROW_MISSING_KEY_MESSAGE, rowNumber, key);
+  }
+
+  /**
+   * @param rowNumber 1부터 세는 행 번호
+   * @param valueText 값의 Python {@code str()} 표기(자르기 전)
+   * @param dtype 출력 데이터셋 컬럼 타입
+   */
+  static String valueConversion(int rowNumber, String key, String valueText, String dtype) {
+    return PREFIX
+        + String.format(
+            VALUE_CONVERSION_MESSAGE,
+            rowNumber,
+            key,
+            ValueConversion.excerpt(valueText),
+            ValueConversion.target(dtype),
+            ValueConversion.hint(dtype));
   }
 
   /**

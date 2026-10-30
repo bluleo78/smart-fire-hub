@@ -161,10 +161,15 @@ public class ApiCallExecutor {
                   isReplace ? 0 : totalRows,
                   isReplace);
 
-          // Parse data
+          // Parse data — 변환 실패 문구의 행 번호가 페이지를 넘어 이어지도록 지금까지 받은 응답 원소 수를 넘긴다(WD-431). 이 경로는
+          // 원소마다 한 행을 만들므로(객체가 아닌 원소도 모든 칸 NULL 행) totalRows 가 곧 원소 수다 — Python 실행기도 원소 수로 센다.
           List<Map<String, Object>> rows =
               jsonResponseParser.parseAndMap(
-                  responseBody, config.dataPath(), config.fieldMappings(), columnTypeMap);
+                  responseBody,
+                  config.dataPath(),
+                  config.fieldMappings(),
+                  columnTypeMap,
+                  totalRows);
 
           // Extract totalCount from response if configured (only needed on first page)
           if (totalCount == null && pag.totalPath() != null && !pag.totalPath().isBlank()) {
@@ -229,7 +234,7 @@ public class ApiCallExecutor {
                 isReplace);
         List<Map<String, Object>> rows =
             jsonResponseParser.parseAndMap(
-                responseBody, config.dataPath(), config.fieldMappings(), columnTypeMap);
+                responseBody, config.dataPath(), config.fieldMappings(), columnTypeMap, 0);
 
         if (!rows.isEmpty()) {
           List<String> columns = extractColumns(rows);

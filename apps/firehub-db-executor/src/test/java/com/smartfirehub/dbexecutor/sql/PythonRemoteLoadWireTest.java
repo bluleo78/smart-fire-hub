@@ -60,7 +60,7 @@ class PythonRemoteLoadWireTest {
     // +09:00 은 UTC 로 환산된다.
     assertThat(first.get("ts")).isEqualTo(LocalDateTime.of(2024, 3, 5, 1, 2, 3));
 
-    // 둘째 행: 빈 값에서 온 None 은 NULL 그대로, TEXT 빈 문자열은 그대로, BOOLEAN false.
+    // 둘째 행: 빈 값에서 온 None 은 NULL 그대로, TEXT 빈 문자열은 그대로, BOOLEAN "no" 는 false.
     Map<String, Object> second = coerceRow(wire.get(1), types);
     assertThat(second.get("id_key")).isEqualTo(2L);
     assertThat(second.get("amount")).isNull();
@@ -69,7 +69,7 @@ class PythonRemoteLoadWireTest {
     assertThat(second.get("d")).isNull();
     assertThat(second.get("ts")).isNull();
 
-    // 셋째 행: 변환 불가 값이었던 것은 전부 NULL.
+    // 셋째 행: null·NaN 에서 온 값은 전부 NULL.
     Map<String, Object> third = coerceRow(wire.get(2), types);
     assertThat(third.values()).containsOnlyNulls();
   }

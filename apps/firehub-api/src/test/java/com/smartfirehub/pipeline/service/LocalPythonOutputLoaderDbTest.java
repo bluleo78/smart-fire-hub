@@ -120,6 +120,37 @@ class LocalPythonOutputLoaderDbTest extends IntegrationTestBase {
   }
 
   /**
+   * WD-431: 실제 DB 에서 — 값 하나라도 컬럼 타입으로 바꿀 수 없으면 행·키·값·타입을 짚는 문구로 적재 전에 실패하고, 앞 행(변환되는 행)도 넣지 않아 이미
+   * 있던 행이 그대로다(예전엔 그 칸을 NULL 로 넣고 성공했다). 불리언 'Y' 도 거짓이 아니라 실패다.
+   */
+  @Test
+  void conversionFailure_failsWithoutTouchingExistingRows() {
+    createTable("local_py_conv", List.of(col("k", "INTEGER"), col("b", "BOOLEAN")));
+    Map<String, String> types = Map.of("k", "INTEGER", "b", "BOOLEAN");
+    assertThat(loader.load("local_py_conv", "[{\"k\":1,\"b\":\"yes\"},{\"k\":2,\"b\":0}]", types))
+        .isEqualTo(2);
+
+    assertThatThrownBy(
+            () ->
+                loader.load(
+                    "local_py_conv", "[{\"k\":3,\"b\":true},{\"k\":\"x\",\"b\":false}]", types))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage(
+            "Python 실행 실패: 출력 JSON 의 2번째 행 'k' 값 'x' 을(를) 정수(INTEGER)로 변환할 수 없습니다."
+                + " 출력 데이터셋 컬럼 타입에 맞는 값으로 출력해 주세요.");
+    assertThatThrownBy(() -> loader.load("local_py_conv", "[{\"k\":4,\"b\":\"Y\"}]", types))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessageContaining("참/거짓(BOOLEAN)으로 변환할 수 없습니다(허용 값: true/false/1/0/yes/no)");
+    assertThat(
+            dsl.fetch(
+                    "SELECT k || ':' || b FROM "
+                        + DataSchema.qualify("local_py_conv")
+                        + " ORDER BY k")
+                .getValues(0, String.class))
+        .containsExactly("1:true", "2:false");
+  }
+
+  /**
    * WD-211: 실제 DB 에서 — 데이터셋에 없는 키는 적재 전에 그 키를 짚는 한국어 문구로 실패하고 이미 있던 행은 그대로다(예전엔 jOOQ bad SQL
    * grammar 원문에 내부 스키마·INSERT 가 실렸다). VARCHAR 길이 초과(22001)는 DataExceptionTranslator 사유(길이 — PG 는 이
    * 오류에 컬럼을 싣지 않는다)로 안내하고 SQL 원문은 싣지 않는다.

@@ -1973,6 +1973,51 @@ class PipelineAsyncRunnerTest {
     verify(dataTableRowService, never()).truncateTable(anyString());
   }
 
+  /**
+   * WD-431: 로컬 PYTHON + REPLACE 에서 출력 값을 컬럼 타입으로 바꿀 수 없으면 스텝이 실패하고 그 문구(행·키·값·타입)가 스텝 오류로 기록되며 원본은
+   * 맞바꾸지 않는다 — 예전엔 그 칸을 NULL 로 넣고 「완료」라 기존 데이터가 NULL 섞인 데이터로 바뀌었다. 적재기는 실제 변환을 태운다(변환이 DB 접근 전에
+   * 실패하므로 목의 빈 필드에 닿지 않는다). 임시 테이블은 버린다.
+   */
+  @Test
+  void 실행기_꺼진_PYTHON_REPLACE_값_변환이_안되면_실패하고_원본을_맞바꾸지_않는다() {
+    Long outputDatasetId = 744L;
+    Long userId = 1L;
+    PipelineStepResponse step = replaceStep(7440L, "PYTHON", "print('x')", outputDatasetId);
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out_cv"));
+    when(columnRepository.findByDatasetId(outputDatasetId))
+        .thenReturn(
+            List.of(
+                new DatasetColumnResponse(
+                    null, "n", null, "INTEGER", null, true, false, null, 0, false)));
+    when(pythonExecutor.run("print('x')", 2))
+        .thenReturn(
+            new PythonScriptExecutor.RunResult(
+                0, "[{\"n\": 1}, {\"n\": 2}, {\"n\": \"not-a-number\"}]", ""));
+    when(outputTableSessionLock.callLocked(eq("out_cv"), any()))
+        .thenAnswer(inv -> inv.<java.util.function.Supplier<?>>getArgument(1).get());
+    when(localPythonOutputLoader.load(eq(runTemp("out_cv")), anyString(), any()))
+        .thenCallRealMethod();
+
+    String status = runner.executeStep(7441L, step, 74L, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(7441L),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            eq(
+                "Python 실행 실패: 출력 JSON 의 3번째 행 'n' 값 'not-a-number' 을(를) 정수(INTEGER)로 변환할 수 없습니다."
+                    + " 출력 데이터셋 컬럼 타입에 맞는 값으로 출력해 주세요."),
+            isNull(),
+            any());
+    verify(dataTableService).dropTempTable("out_cv", runTemp("out_cv"));
+    verify(dataTableService, never()).finishReplace(anyString(), anyString(), anyLong());
+    verify(dataTableRowService, never()).insertBatch(anyString(), anyList(), anyList(), anyMap());
+  }
+
   /** 출력 없는 로컬 PYTHON 은 적재하지 않고, 실행 로그는 stdout+stderr 다(executor 와 같은 규칙). */
   @Test
   void 실행기_꺼진_PYTHON_출력없음은_stdout과_stderr를_로그로_남긴다() {

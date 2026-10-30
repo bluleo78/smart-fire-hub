@@ -38,17 +38,32 @@ class LocalPythonOutputLoaderTest {
     return LocalPythonOutputLoader.convertSingle(value, dtype);
   }
 
+  /** 바꿀 수 없는 값 — WD-431 부터 null 이 아니라 변환 실패(행·키는 applyTypeConversion 이 붙인다). */
+  private static void fails(Object value, String dtype) {
+    assertThatThrownBy(() -> c(value, dtype))
+        .as(value + " → " + dtype)
+        .isInstanceOf(ValueConversion.Failed.class);
+  }
+
   @Test
   void integer_matchesPythonInt() {
     assertThat(c("42", "INTEGER")).isEqualTo(42L);
     assertThat(c(" +1_000 ", "INTEGER")).isEqualTo(1000L);
     assertThat(c(42, "integer")).as("타입 이름은 대소문자 무시").isEqualTo(42L);
-    // int("1.0")·int("True") 는 ValueError → None(오류 아님)
-    assertThat(c("1.0", "INTEGER")).isNull();
-    assertThat(c(1.0d, "INTEGER")).isNull();
-    assertThat(c(true, "INTEGER")).isNull();
-    assertThat(c(new BigInteger("12345678901234567890"), "INTEGER"))
-        .isEqualTo(new BigInteger("12345678901234567890"));
+    // WD-431: 정수 값인 실수 표기는 받는다(3.0·"3.0"·"1e2") — 실행기 value_conversion.to_int_strict 와 같은 규칙
+    assertThat(c("1.0", "INTEGER")).isEqualTo(1L);
+    assertThat(c(1.0d, "INTEGER")).isEqualTo(1L);
+    assertThat(c("1e2", "INTEGER")).isEqualTo(100L);
+    assertThat(c(1e2d, "INTEGER")).isEqualTo(100L);
+    // 소수부·64비트 범위 밖·불리언은 변환 실패(예전엔 None, 64비트 초과는 BigInteger 로 통과했다)
+    fails("1.5", "INTEGER");
+    fails(1.5d, "INTEGER");
+    fails(1e20d, "INTEGER");
+    fails("9223372036854775808", "INTEGER");
+    fails(new BigInteger("12345678901234567890"), "INTEGER");
+    fails("1e999999999", "INTEGER");
+    fails(true, "INTEGER");
+    assertThat(c(Long.MAX_VALUE, "INTEGER")).isEqualTo(Long.MAX_VALUE);
   }
 
   @Test
@@ -58,14 +73,14 @@ class LocalPythonOutputLoaderTest {
     assertThat(c(1e-05d, "NUMERIC")).isEqualTo(new BigDecimal("0.00001"));
     assertThat(c(1e16d, "FLOAT")).isEqualTo(new BigDecimal("1E+16"));
     assertThat(c("1_000.5", "DOUBLE")).isEqualTo(new BigDecimal("1000.5"));
-    assertThat(c("abc", "DECIMAL")).isNull();
-    assertThat(c(true, "DECIMAL")).isNull();
+    fails("abc", "DECIMAL");
+    fails(true, "DECIMAL");
   }
 
   /**
    * 비유한수: executor 는 Decimal(str(v)) 로 NaN/Infinity 를 만들고 psycopg2 가 그 전부를 'NaN'::numeric 으로
-   * 보낸다(CR6) — 로컬 경로도 Double.NaN 을 넘겨 NUMERIC 에 NaN 이 들어가게 한다. Python 이 거부하는 철자(infinit·nan.5)는
-   * None.
+   * 보낸다(CR6) — 로컬 경로도 Double.NaN 을 넘겨 NUMERIC 에 NaN 이 들어가게 한다. Python 이 거부하는 철자(infinit·nan.5)는 변환
+   * 실패(WD-431).
    */
   @Test
   void decimal_nonFinite_becomesNaNLikePsycopg2() {
@@ -75,21 +90,101 @@ class LocalPythonOutputLoaderTest {
     for (String s : List.of("NaN", " -nan ", "Infinity", "-inf", "inFINity", "sNaN5", "nan1_0")) {
       assertThat(c(s, "DOUBLE")).as(s).isEqualTo(Double.NaN);
     }
-    assertThat(c("infinit", "DECIMAL")).isNull();
-    assertThat(c("nan.5", "DECIMAL")).isNull();
+    fails("infinit", "DECIMAL");
+    fails("nan.5", "DECIMAL");
     // INTEGER·TEXT 는 그대로 Python 규칙: int('nan') 은 ValueError, str(nan) 은 'nan'
-    assertThat(c(Double.NaN, "INTEGER")).isNull();
+    fails(Double.NaN, "INTEGER");
     assertThat(c(Double.POSITIVE_INFINITY, "TEXT")).isEqualTo("inf");
   }
 
+  /** WD-431: true/false/1/0/yes/no(대소문자·공백 무시)와 JSON 불리언·숫자 1/0 만 받는다 — 그 밖의 값은 거짓이 아니라 변환 실패. */
   @Test
-  void boolean_matchesPythonTruthTable() {
+  void boolean_acceptsOnlyKnownTokens() {
     assertThat(c(true, "BOOLEAN")).isEqualTo(true);
+    assertThat(c(false, "BOOLEAN")).isEqualTo(false);
     assertThat(c("Yes", "BOOLEAN")).isEqualTo(true);
+    assertThat(c(" TRUE ", "BOOLEAN")).isEqualTo(true);
+    assertThat(c("yes", "BOOLEAN")).isEqualTo(true);
+    assertThat(c("1", "BOOLEAN")).isEqualTo(true);
     assertThat(c(1, "BOOLEAN")).isEqualTo(true);
-    // str(1.0) == "1.0" 는 진리표에 없다
-    assertThat(c(1.0d, "BOOLEAN")).isEqualTo(false);
+    assertThat(c(1.0d, "BOOLEAN")).as("값이 1 과 같은 실수").isEqualTo(true);
+    assertThat(c("false", "BOOLEAN")).isEqualTo(false);
+    assertThat(c("0", "BOOLEAN")).isEqualTo(false);
+    assertThat(c(0, "BOOLEAN")).isEqualTo(false);
     assertThat(c("no", "BOOLEAN")).isEqualTo(false);
+    fails("Y", "BOOLEAN");
+    fails("예", "BOOLEAN");
+    fails("N", "BOOLEAN");
+    fails(2, "BOOLEAN");
+    fails(Double.NaN, "BOOLEAN");
+  }
+
+  /** WD-431: 숫자·불리언·날짜 타입의 빈 문자열(공백뿐 포함)은 NULL(데이터 임포트와 같은 규칙), 텍스트는 그대로. */
+  @Test
+  void blankString_isNullForNonTextTypes() {
+    for (String t : List.of("INTEGER", "DECIMAL", "NUMERIC", "BOOLEAN", "DATE", "TIMESTAMP")) {
+      assertThat(c("", t)).as(t).isNull();
+      assertThat(c("  ", t)).as(t).isNull();
+    }
+    assertThat(c("", "TEXT")).isEqualTo("");
+  }
+
+  /**
+   * WD-431: 바꿀 수 없는 값은 적재 전에 행 번호(1부터)·키·값·타입을 짚는 한국어 문구로 실패한다 — 예전엔 경고 로그 후 NULL 로 넣고 「완료」였다. 문구는
+   * executor(test_python_executor.py 의 test_value_conversion_failure_reports_row_key_value_type)와
+   * 같은 입력에 대해 글자 단위로 같고, 러너 접두가 붙는다. DB 는 건드리지 않는다.
+   */
+  @Test
+  void conversionFailure_failsBeforeInsertWithRowKeyValueType() {
+    DataTableRowService rowService = mock(DataTableRowService.class);
+    String stdout =
+        "[{\"name\": \"a\", \"n\": 1}, {\"name\": \"b\", \"n\": 2},"
+            + " {\"name\": \"c\", \"n\": \"not-a-number\"}]";
+    assertThatThrownBy(
+            () -> loaderWith(rowService).load("t", stdout, Map.of("name", "TEXT", "n", "INTEGER")))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage(
+            "Python 실행 실패: 출력 JSON 의 3번째 행 'n' 값 'not-a-number' 을(를) 정수(INTEGER)로 변환할 수 없습니다."
+                + " 출력 데이터셋 컬럼 타입에 맞는 값으로 출력해 주세요.");
+    verifyNoInteractions(rowService);
+  }
+
+  /** WD-431: 소수·날짜·날짜시간·불리언 실패 문구 — 타입 라벨은 데이터 임포트와 같고, 불리언은 허용 값을 덧붙인다. */
+  @Test
+  void conversionFailure_messagesPerType() {
+    assertThat(convertFailure("DECIMAL", "\"1,2x\""))
+        .isEqualTo(
+            "Python 실행 실패: 출력 JSON 의 1번째 행 'v' 값 '1,2x' 을(를) 소수(DECIMAL)로 변환할 수 없습니다."
+                + " 출력 데이터셋 컬럼 타입에 맞는 값으로 출력해 주세요.");
+    assertThat(convertFailure("DATE", "\"2024-13-40\""))
+        .contains("'v' 값 '2024-13-40' 을(를) 날짜(DATE)로 변환할 수 없습니다.");
+    assertThat(convertFailure("TIMESTAMP", "\"nope\""))
+        .contains("'v' 값 'nope' 을(를) 날짜시간(TIMESTAMP)으로 변환할 수 없습니다.");
+    assertThat(convertFailure("BOOLEAN", "\"예\""))
+        .contains("'v' 값 '예' 을(를) 참/거짓(BOOLEAN)으로 변환할 수 없습니다(허용 값: true/false/1/0/yes/no).");
+    // 값은 Python str() 표기로 인용한다(실행기 켠 경로와 같은 글자)
+    assertThat(convertFailure("INTEGER", "true")).contains("'v' 값 'True' 을(를) 정수(INTEGER)로");
+    assertThat(convertFailure("INTEGER", "1.5")).contains("'v' 값 '1.5' 을(를) 정수(INTEGER)로");
+  }
+
+  /** WD-431: 긴 값은 50 코드 포인트로 잘라 「…」을 붙인다(사용자 데이터가 길게 실리지 않게). */
+  @Test
+  void conversionFailure_truncatesLongValue() {
+    String longValue = "x".repeat(49) + "\uD83D\uDE00" + "TAIL";
+    String message = convertFailure("INTEGER", "\"" + longValue + "\"");
+    assertThat(message)
+        .contains("'v' 값 '" + "x".repeat(49) + "\uD83D\uDE00…' 을(를)")
+        .doesNotContain("TAIL");
+  }
+
+  private static String convertFailure(String dtype, String jsonValue) {
+    try {
+      loaderWith(mock(DataTableRowService.class))
+          .load("t", "[{\"v\": " + jsonValue + "}]", Map.of("v", dtype));
+    } catch (ScriptExecutionException e) {
+      return e.getMessage();
+    }
+    throw new AssertionError("변환 실패가 나야 한다: " + dtype + " " + jsonValue);
   }
 
   @Test
@@ -97,8 +192,8 @@ class LocalPythonOutputLoaderTest {
     assertThat(c("2024-02-29", "DATE")).isEqualTo(LocalDate.of(2024, 2, 29));
     assertThat(c("20240301", "DATE")).isEqualTo(LocalDate.of(2024, 3, 1));
     assertThat(c("2024-W01-1", "DATE")).isEqualTo(LocalDate.of(2024, 1, 1));
-    assertThat(c("2023-02-29", "DATE")).isNull();
-    assertThat(c("2024-01-01T00:00", "DATE")).isNull();
+    fails("2023-02-29", "DATE");
+    fails("2024-01-01T00:00", "DATE");
   }
 
   @Test
@@ -113,7 +208,7 @@ class LocalPythonOutputLoaderTest {
     assertThat(c("2024-01-02T03:04+09:00", "TIMESTAMP"))
         .isEqualTo(OffsetDateTime.of(2024, 1, 2, 3, 4, 0, 0, ZoneOffset.ofHours(9)));
     assertThat(c("2024-01-02", "TIMESTAMP")).isEqualTo(LocalDateTime.of(2024, 1, 2, 0, 0));
-    assertThat(c("nope", "TIMESTAMP")).isNull();
+    fails("nope", "TIMESTAMP");
   }
 
   @Test
@@ -329,7 +424,6 @@ class LocalPythonOutputLoaderTest {
     assertThat(PythonStepErrorMessages.timeout(300))
         .isEqualTo("Python 실행 실패: 실행 시간 제한(300초)을 넘어 스크립트를 중단했습니다.");
     assertThat(PythonStepErrorMessages.unexpectedError())
-        .isEqualTo(
-            "Python 실행 실패: 스크립트 실행 중 예기치 못한 오류가 발생했습니다. 잠시 후 다시 실행하고, 계속되면 관리자에게 문의해 주세요.");
+        .isEqualTo("Python 실행 실패: 스크립트 실행 중 예기치 못한 오류가 발생했습니다. 잠시 후 다시 실행하고, 계속되면 관리자에게 문의해 주세요.");
   }
 }

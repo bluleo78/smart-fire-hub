@@ -18,16 +18,16 @@ import java.util.Locale;
  *
  * <ol>
  *   <li>{@link #coerce}: JSON 값 + 앱 타입 → Java 값. api {@code JsonResponseParser#convertValue} 와 같다 —
- *       INTEGER→Long, DECIMAL→BigDecimal, BOOLEAN→true/1/yes, DATE→LocalDate, TIMESTAMP→UTC 기준
- *       LocalDateTime(타임존이 있으면 UTC 로 환산, 없으면 UTC 로 간주), TEXT·VARCHAR→문자열. 타입이 없거나 모르면 원시 값을 보존한다.
+ *       INTEGER→Long, DECIMAL→BigDecimal, BOOLEAN→true/false/1/0/yes/no, DATE→LocalDate,
+ *       TIMESTAMP→UTC 기준 LocalDateTime(타임존이 있으면 UTC 로 환산, 없으면 UTC 로 간주), TEXT·VARCHAR→문자열. 타입이 없거나
+ *       모르면 원시 값을 보존한다.
  *   <li>{@link #bind}: Java 값 → PreparedStatement. api {@code TiberoValues#bind} 와 같다 — null→{@code
  *       setNull(NULL)}, Boolean→1/0, LocalDate→setDate, LocalDateTime→setTimestamp, 그 외 setObject.
  * </ol>
  *
- * <p><b>api 와 다른 점(의도된 차이)</b>: api 로컬 모드는 변환에 실패한 행을 조용히 건너뛰지만, db-executor 는 fail-closed 로 {@link
- * InvalidValue} 를 던져 요청 전체를 실패시킨다. Python 실행기가 원격 적재(Task 6) 전에 값을 먼저 변환하므로 변환 불가 값이 여기 도달하면 버그이고,
- * 행을 빼면 적재가 일부만 되기 때문이다. 빈 문자열도 같다 — api 는 INTEGER·DECIMAL·DATE·TIMESTAMP 의 빈 문자열을 NULL 로 바꾸지 않고 행을
- * 건너뛰므로(현행 동작) 여기서도 실패이고, TEXT 는 그대로, BOOLEAN 은 거짓이다. 공유 벡터의 {@code expectFailure} 가 고정한다.
+ * <p><b>변환 실패</b>: 바꿀 수 없는 값은 {@link InvalidValue} 로 요청 전체를 실패시킨다(fail-closed — 행을 빼면 일부만 적재된다). 값
+ * 규칙(불리언 true/false/1/0/yes/no, 빈 문자열 처리 등)은 api {@code ValueConversion} 을 따른다(WD-431). 호출자가 먼저 변환해
+ * 보내므로 여기서 실패하면 버그이며, 공유 벡터의 {@code expectFailure} 가 고정한다.
  */
 final class LoadValues {
 
@@ -53,16 +53,22 @@ final class LoadValues {
     try {
       return switch (appType.toUpperCase(Locale.ROOT)) {
         case "TEXT", "VARCHAR" -> raw.toString();
-        // longValue() 는 64비트 초과 정수·소수를 조용히 다른 값으로 바꾼다 — 정확히 long 인 값만 받는다(fail-closed).
+        // longValue() 는 64비트 초과 정수·소수를 조용히 다른 값으로 바꾼다 — 정확히 long 인 값만 받는다(fail-closed). 정수 값인
+        // 실수 표기("3.0"·"1e2")는 받는다(WD-431 — api ValueConversion#toLongStrict 와 같은 규칙).
         case "INTEGER" ->
             raw instanceof Number n
                 ? (Object) new BigDecimal(n.toString()).longValueExact()
-                : Long.parseLong(raw.toString().strip());
+                : toLongExact(raw.toString().strip());
         case "DECIMAL" ->
             raw instanceof Number n
                 ? new BigDecimal(n.toString())
                 : new BigDecimal(raw.toString().strip());
-        case "BOOLEAN" -> raw instanceof Boolean ? raw : toBoolean(raw.toString());
+        // 불리언의 빈 문자열(공백뿐 포함)은 NULL — api·Python 실행기의 빈 문자열 규칙과 같다(WD-431). 숫자·날짜의 빈 문자열은
+        // 실행기가 None 으로 바꿔 보내므로 여기서는 예전처럼 실패로 둔다(공유 벡터 expectFailure).
+        case "BOOLEAN" ->
+            raw instanceof Boolean
+                ? raw
+                : (raw instanceof String s && s.isBlank() ? null : toBoolean(raw));
         case "DATE" -> LocalDate.parse(raw.toString());
         case "TIMESTAMP" -> toUtcLocalDateTime(raw.toString());
         case "GEOMETRY" -> raw instanceof String ? raw : raw.toString();
@@ -73,9 +79,39 @@ final class LoadValues {
     }
   }
 
-  private static Boolean toBoolean(String s) {
-    String v = s.toLowerCase(Locale.ROOT);
-    return v.equals("true") || v.equals("1") || v.equals("yes");
+  /** 정수 문자열 → long. 정수 표기가 아니면 십진수로 읽어 소수부 없이 long 범위일 때만 받는다("3.0"·"1e2"). */
+  private static long toLongExact(String s) {
+    try {
+      return Long.parseLong(s);
+    } catch (NumberFormatException e) {
+      return new BigDecimal(s).longValueExact();
+    }
+  }
+
+  /**
+   * 불리언 해석 — 숫자는 1·0 만, 문자열은 true/false/1/0/yes/no(대소문자·앞뒤 공백 무시)만 받는다(WD-431). 그 밖의 값('Y'·'예' 등)은
+   * 거짓이 아니라 {@link InvalidValue}. <b>규칙의 기준</b>은 api {@code ValueConversion#parseBoolean}(과 Python
+   * 실행기 {@code value_conversion.parse_boolean})이다 — 모듈이 달라 여기 따로 두지만 허용 값을 바꾸면 함께 바꾼다.
+   */
+  private static Boolean toBoolean(Object raw) {
+    if (raw instanceof Number n) {
+      // 1.0 처럼 값이 1·0 과 같으면 받는다. NaN·무한대는 BigDecimal 이 NumberFormatException 으로 거부한다(→
+      // InvalidValue).
+      BigDecimal d = new BigDecimal(n.toString());
+      if (d.compareTo(BigDecimal.ONE) == 0) {
+        return true;
+      }
+      if (d.signum() == 0) {
+        return false;
+      }
+      throw new NumberFormatException("not a boolean number");
+    }
+    String v = raw.toString().strip().toLowerCase(Locale.ROOT);
+    return switch (v) {
+      case "true", "1", "yes" -> true;
+      case "false", "0", "no" -> false;
+      default -> throw new NumberFormatException("not a boolean token");
+    };
   }
 
   /** 타임존이 있으면 UTC 로 환산하고, 없으면 UTC 로 간주한다(api JsonResponseParser 기본). */

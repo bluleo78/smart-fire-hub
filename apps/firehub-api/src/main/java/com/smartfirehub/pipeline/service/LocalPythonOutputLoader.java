@@ -8,7 +8,6 @@ import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.storage.DataTableStore;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.time.DateTimeException;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -21,6 +20,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.ResolverStyle;
 import java.time.temporal.IsoFields;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -55,7 +55,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       행의 여분 키는 무시.
  *   <li>첫 행의 키가 출력 데이터셋 컬럼(시스템 컬럼 제외)에 없으면 적재 전에 실패한다(WD-211) — 예전엔 DB 가 거부한 INSERT 원문(내부 SQL·스키마)이
  *       그대로 보였다.
- *   <li>타입 변환 실패는 오류가 아니라 null(Python 쪽이 경고 로그 후 None).
+ *   <li>값 변환 규칙은 {@link ValueConversion}(WD-431) — 바꿀 수 없는 값은 적재 전에 행·키·값·타입을 짚어 실패한다({@link
+ *       PythonStepErrorMessages#VALUE_CONVERSION_MESSAGE}).
  *   <li>모든 행을 한 트랜잭션으로 적재한다(executor 는 한 커넥션에서 마지막에 한 번 commit).
  * </ul>
  */
@@ -247,10 +248,7 @@ public class LocalPythonOutputLoader {
    * Tibero 스테이징에 바인딩할 수 있게 값을 바꾼다 — 실행기 켠 경로({@code remote.to_wire_value} → db-executor {@code
    * LoadValues})와 같은 결과가 목표다. 불리언은 두 경로 모두 Boolean 으로 남아 1/0 으로 바인딩된다(같다).
    *
-   * <p><b>알려진 차이</b>: 64비트를 넘는 INTEGER 는 로컬에서 정확한 {@code BigInteger} 로 바인딩되고(물리 컬럼 범위를 넘으면 Tibero
-   * 오류), 원격 경로는 db-executor {@code LoadValues} 가 {@code longValueExact} 로 바꿔 요청 전체를 실패시킨다(값을 바꿔
-   * 저장하지 않는다 — 2ba6f765). 그래서 {@code Long.MAX_VALUE} 초과 ~ NUMBER(19) 상한 사이 값은 로컬에서는 저장되고 원격에서는
-   * 실패한다. 두 경로 모두 값을 조용히 바꾸지 않으므로 맞추지 않는다. 그 밖의 미세한 차이(변환 실패 처리 등)는 PG 경로와의 기존 차이를 따른다.
+   * <p>64비트를 넘는 INTEGER 는 이 단계 전에 변환에서 실패한다({@link ValueConversion#toLongStrict}, WD-431).
    *
    * <ul>
    *   <li>오프셋 시각 → <b>UTC</b> {@link LocalDateTime}. db-executor 는 오프셋 시각을 UTC 로 환산해 저장한다(공용 벡터
@@ -378,24 +376,11 @@ public class LocalPythonOutputLoader {
   // ---------------------------------------------------------------------------
 
   /**
-   * 컬럼 타입 맵에 따라 행 값을 제자리 변환한다. 맵이 비면 아무것도 하지 않는다. 그 뒤 첫 행의 키가 모든 행에 있는지 확인해, 빠진 행이 있으면 행 번호와 키를 짚는
-   * {@link OutputRowsException} 을 던진다(WD-211 — 예전엔 원본의 {@code row[c]} KeyError 처럼 영어 원문이었다).
+   * 첫 행의 키가 모든 행에 있는지 확인한 뒤(WD-211) 컬럼 타입 맵에 따라 행 값을 제자리 변환한다(WD-431). 키 확인 → 변환 순서는 실행기({@code
+   * _run_script})와 같다. 첫 번째 변환 실패(행 순서 → 키 순서)를 행 번호·키·값·타입을 짚는 {@link OutputRowsException} 으로 던진다
+   * — DB 에 닿기 전이라 아무것도 적재하지 않는다.
    */
   static void applyTypeConversion(List<Map<String, Object>> rows, Map<String, String> typeMap) {
-    if (typeMap != null && !typeMap.isEmpty()) {
-      for (Map<String, Object> row : rows) {
-        for (Map.Entry<String, Object> e : row.entrySet()) {
-          if (e.getValue() == null) {
-            continue;
-          }
-          String dtype = typeMap.get(e.getKey());
-          if (dtype == null || dtype.isEmpty()) {
-            continue;
-          }
-          e.setValue(convertSingle(e.getValue(), dtype));
-        }
-      }
-    }
     Set<String> columns = rows.get(0).keySet();
     for (int i = 0; i < rows.size(); i++) {
       for (String column : columns) {
@@ -405,10 +390,37 @@ public class LocalPythonOutputLoader {
         }
       }
     }
+    if (typeMap == null || typeMap.isEmpty()) {
+      return;
+    }
+    // 컬럼별 대문자 타입을 한 번만 만든다(행마다 다시 바꾸지 않게).
+    Map<String, String> upperTypes = new HashMap<>();
+    typeMap.forEach(
+        (column, type) -> {
+          if (type != null && !type.isEmpty()) {
+            upperTypes.put(column, type.toUpperCase(Locale.ROOT));
+          }
+        });
+    for (int i = 0; i < rows.size(); i++) {
+      for (Map.Entry<String, Object> e : rows.get(i).entrySet()) {
+        if (e.getValue() == null) {
+          continue;
+        }
+        String dtype = upperTypes.get(e.getKey());
+        if (dtype == null) {
+          continue;
+        }
+        try {
+          e.setValue(convert(e.getValue(), dtype));
+        } catch (ValueConversion.Failed failed) {
+          // 값은 Python str() 표기로 인용한다 — 실행기 켠 경로와 문구가 글자 단위로 같아야 한다.
+          throw new OutputRowsException(
+              PythonStepErrorMessages.valueConversion(
+                  i + 1, e.getKey(), ValueConversion.pyStr(e.getValue()), dtype));
+        }
+      }
+    }
   }
-
-  /** Python 의 int() 문자열 문법(부호·밑줄 구분자). */
-  private static final Pattern PY_INT = Pattern.compile("[+-]?[0-9](?:_?[0-9])*");
 
   /** Python Decimal() 문자열 문법 중 유한수(부호·밑줄·지수). */
   private static final Pattern PY_DECIMAL =
@@ -423,27 +435,30 @@ public class LocalPythonOutputLoader {
       Pattern.compile(
           "[+-]?(?:inf(?:inity)?|s?nan(?:[0-9](?:_?[0-9])*)?)", Pattern.CASE_INSENSITIVE);
 
-  /** 값 하나를 대상 타입으로 바꾼다. 실패하면 null(원본과 같이 경고만). 알 수 없는 타입은 그대로. */
+  /**
+   * 값 하나를 대상 타입(대소문자 무시)으로 바꾼다. 알 수 없는 타입은 그대로. 규칙은 {@link ValueConversion}(WD-431).
+   *
+   * @throws ValueConversion.Failed 바꿀 수 없는 값 — 행·키는 {@link #applyTypeConversion} 이 붙인다
+   */
   static Object convertSingle(Object value, String dtype) {
-    if (value == null) {
+    return value == null ? null : convert(value, dtype.toUpperCase(Locale.ROOT));
+  }
+
+  /** {@link #convertSingle} 본체 — {@code upper} 는 대문자 타입 이름. */
+  private static Object convert(Object value, String upper) {
+    if (ValueConversion.isBlankNull(value, upper)) {
       return null;
     }
-    String upper = dtype.toUpperCase(Locale.ROOT);
     try {
       switch (upper) {
         case "TEXT", "VARCHAR", "STRING" -> {
-          return pyStr(value);
+          return ValueConversion.pyStr(value);
         }
         case "INTEGER" -> {
-          String s = pyStr(value).strip();
-          if (!PY_INT.matcher(s).matches()) {
-            throw new NumberFormatException("invalid literal for int(): '" + s + "'");
-          }
-          BigInteger n = new BigInteger(s.replace("_", ""));
-          return n.bitLength() < 64 ? (Object) n.longValue() : n;
+          return ValueConversion.toLongStrict(value);
         }
         case "DECIMAL", "NUMERIC", "FLOAT", "DOUBLE" -> {
-          String s = pyStr(value).strip();
+          String s = ValueConversion.pyStr(value).strip();
           // executor 는 Decimal('nan'/'inf'...) 를 만들고 psycopg2 는 비유한 Decimal 을 부호·종류와 무관하게 전부
           // 'NaN'::numeric 으로 보낸다(Infinity 도 NaN — psycopg2 2.9 실측). 같은 결과가 되도록 NaN 을 넘긴다
           // (float8 NaN 이 NUMERIC 컬럼에 대입 캐스트되어 NaN). BigDecimal 은 NaN 을 표현하지 못한다.
@@ -456,125 +471,22 @@ public class LocalPythonOutputLoader {
           return new BigDecimal(s.replace("_", ""));
         }
         case "BOOLEAN" -> {
-          if (value instanceof Boolean b) {
-            return b;
-          }
-          String s = pyStr(value).strip().toLowerCase(Locale.ROOT);
-          return s.equals("true") || s.equals("1") || s.equals("yes");
+          return ValueConversion.toBooleanStrict(value);
         }
         case "DATE" -> {
-          return parseIsoDate(pyStr(value).strip());
+          return parseIsoDate(ValueConversion.pyStr(value).strip());
         }
         case "TIMESTAMP", "DATETIME" -> {
-          return parseIsoDateTime(pyStr(value).strip().replace("Z", "+00:00"));
+          return parseIsoDateTime(ValueConversion.pyStr(value).strip().replace("Z", "+00:00"));
         }
         default -> {
           return value;
         }
       }
     } catch (NumberFormatException | ArithmeticException | DateTimeException e) {
-      log.warn("Type conversion failed for value={} dtype={}: {}", value, dtype, e.getMessage());
-      return null;
+      // 원인(파서 영어 원문)은 사용자 문구에 싣지 않는다 — 문구는 행·키·값·타입만으로 충분하다.
+      throw new ValueConversion.Failed();
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Python str() 재현 — 변환은 str(value) 를 거치므로 JSON 값의 Python 표기가 결과를 정한다
-  // ---------------------------------------------------------------------------
-
-  /**
-   * JSON 에서 온 값의 Python {@code str()} 표기. bool 은 {@code True/False}, 실수는 Python {@code repr}(최단
-   * 표기·지수 규칙), 중첩 객체·배열은 Python {@code repr}({@code {'a': 1}}).
-   */
-  static String pyStr(Object value) {
-    if (value instanceof String s) {
-      return s;
-    }
-    return pyRepr(value);
-  }
-
-  private static String pyRepr(Object value) {
-    if (value == null) {
-      return "None";
-    }
-    if (value instanceof String s) {
-      return pyStringRepr(s);
-    }
-    if (value instanceof Boolean b) {
-      return b ? "True" : "False";
-    }
-    if (value instanceof Double d) {
-      return pyFloatRepr(d);
-    }
-    if (value instanceof Float f) {
-      return pyFloatRepr(f.doubleValue());
-    }
-    if (value instanceof BigDecimal bd) {
-      return pyFloatRepr(bd.doubleValue());
-    }
-    if (value instanceof Map<?, ?> map) {
-      return map.entrySet().stream()
-          .map(e -> pyRepr(e.getKey()) + ": " + pyRepr(e.getValue()))
-          .collect(Collectors.joining(", ", "{", "}"));
-    }
-    if (value instanceof List<?> list) {
-      return list.stream()
-          .map(LocalPythonOutputLoader::pyRepr)
-          .collect(Collectors.joining(", ", "[", "]"));
-    }
-    // Integer·Long·BigInteger
-    return value.toString();
-  }
-
-  /** Python 문자열 repr — 작은따옴표 우선, 작은따옴표만 들어 있으면 큰따옴표. 흔한 이스케이프만 재현한다. */
-  private static String pyStringRepr(String s) {
-    char quote = s.indexOf('\'') >= 0 && s.indexOf('"') < 0 ? '"' : '\'';
-    StringBuilder out = new StringBuilder().append(quote);
-    for (char c : s.toCharArray()) {
-      switch (c) {
-        case '\\' -> out.append("\\\\");
-        case '\n' -> out.append("\\n");
-        case '\r' -> out.append("\\r");
-        case '\t' -> out.append("\\t");
-        default -> {
-          if (c == quote) {
-            out.append('\\').append(c);
-          } else if (c < 0x20 || c == 0x7f) {
-            out.append(String.format("\\x%02x", (int) c));
-          } else {
-            out.append(c);
-          }
-        }
-      }
-    }
-    return out.append(quote).toString();
-  }
-
-  /**
-   * Python float repr: 최단 왕복 자릿수(Java 19+ {@link Double#toString} 과 같은 자릿수), 십진 지수가 -4 이상 16 미만이면
-   * 고정 소수점(최소 ".0"), 아니면 {@code 1.5e+16}·{@code 1e-05} 꼴.
-   */
-  static String pyFloatRepr(double d) {
-    if (Double.isNaN(d)) {
-      return "nan";
-    }
-    if (Double.isInfinite(d)) {
-      return d > 0 ? "inf" : "-inf";
-    }
-    if (d == 0) {
-      return (1 / d < 0) ? "-0.0" : "0.0";
-    }
-    BigDecimal bd = new BigDecimal(Double.toString(d)).stripTrailingZeros();
-    String sign = bd.signum() < 0 ? "-" : "";
-    String digits = bd.unscaledValue().abs().toString();
-    int exp10 = digits.length() - 1 - bd.scale();
-    if (exp10 >= -4 && exp10 < 16) {
-      String plain = bd.abs().toPlainString();
-      return sign + (plain.contains(".") ? plain : plain + ".0");
-    }
-    String mantissa = digits.length() > 1 ? digits.charAt(0) + "." + digits.substring(1) : digits;
-    String exp = String.format("%02d", Math.abs(exp10));
-    return sign + mantissa + "e" + (exp10 < 0 ? "-" : "+") + exp;
   }
 
   // ---------------------------------------------------------------------------

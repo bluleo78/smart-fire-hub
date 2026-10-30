@@ -1038,7 +1038,10 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(values(out)).containsExactly("old");
   }
 
-  /** 타입 있는 컬럼: executor 와 같은 변환(INTEGER·DECIMAL·BOOLEAN·DATE·TIMESTAMP)으로 적재된다. 변환 실패 값은 NULL. */
+  /**
+   * 타입 있는 컬럼: executor 와 같은 변환(INTEGER·DECIMAL·BOOLEAN·DATE·TIMESTAMP)으로 적재된다. null 은 NULL 로, 변환할 수 없는 값은
+   * NULL 로 적재하지 않고 스텝을 실패시켜 원본을 남긴다(WD-431).
+   */
   @Test
   void run_localPython_typedColumns_areConvertedLikeExecutor() throws Exception {
     String out = m + "_pyty";
@@ -1072,7 +1075,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     String json =
         "[{\"n\": \"9000000000\", \"d\": 1.5, \"b\": \"yes\", \"dt\": \"2024-02-29\","
             + " \"ts\": \"2024-01-02 03:04:05\"},"
-            + " {\"n\": \"1.0\", \"d\": \"x\", \"b\": 0, \"dt\": \"nope\", \"ts\": \"nope\"}]";
+            + " {\"n\": \"1.0\", \"d\": null, \"b\": 0, \"dt\": null, \"ts\": null}]";
     long p = pipeline(user, List.of(pythonJsonStep(outId, json, "REPLACE")));
 
     assertThat(waitForEnd(executionService.executePipeline(p, user))).isEqualTo("COMPLETED");
@@ -1082,7 +1085,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
                 dsl.fetch(
                     "SELECT n, d, b, dt, ts FROM "
                         + DataSchema.qualify(out)
-                        + " ORDER BY n NULLS LAST"));
+                        + " ORDER BY n DESC"));
     assertThat(rows).hasSize(2);
     assertThat(rows.get(0).get("n", Long.class))
         .as("BIGINT 범위 — ?::integer 캐스트면 넘친다")
@@ -1093,12 +1096,22 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
         .isEqualTo(java.time.LocalDate.of(2024, 2, 29));
     assertThat(rows.get(0).get("ts", java.time.LocalDateTime.class))
         .isEqualTo(java.time.LocalDateTime.of(2024, 1, 2, 3, 4, 5));
-    // 변환 실패 → NULL(오류 아님), BOOLEAN 0 → false
-    assertThat(rows.get(1).get("n")).isNull();
+    // 정수로 떨어지는 "1.0" → 1, null → NULL, BOOLEAN 0 → false
+    assertThat(rows.get(1).get("n", Long.class)).isEqualTo(1L);
     assertThat(rows.get(1).get("d")).isNull();
     assertThat(rows.get(1).get("b", Boolean.class)).isFalse();
     assertThat(rows.get(1).get("dt")).isNull();
     assertThat(rows.get(1).get("ts")).isNull();
+
+    // 변환할 수 없는 값("x" → DECIMAL)은 NULL 로 적재하지 않고 스텝 실패, REPLACE 원본 2행 유지
+    long bad =
+        pipeline(
+            user,
+            List.of(
+                pythonJsonStep(
+                    outId, "[{\"n\": 1, \"d\": \"x\", \"b\": true}]", "REPLACE")));
+    assertThat(waitForEnd(executionService.executePipeline(bad, user))).isEqualTo("FAILED");
+    assertThat(rowCount(out)).isEqualTo(2);
   }
 
   private String tableNameOf(long datasetId) {

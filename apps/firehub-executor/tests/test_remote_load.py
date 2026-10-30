@@ -1,8 +1,9 @@
 """Python 실행기의 db-executor 원격 적재(RemoteLoader) 테스트 (WD-77 Task 6).
 
-핵심 계약: RemoteLoader 는 값을 **먼저 변환**(기존 ``_apply_type_conversion``)한 뒤 JSON 으로 직렬화해 db-executor
-``POST /execute/load`` 로 보낸다. db-executor 는 변환 불가 값·빈 문자열(숫자·날짜)을 요청 전체 실패로 처리하므로(결정 4),
-변환 실패는 None 이 되어 도달해야 한다. 직렬화 형태는 공유 벡터(tibero-bind-vectors.json)가 받아들이는 입력 형태여야 한다.
+핵심 계약: 호출자(PYTHON 스텝)가 값을 ``_apply_type_conversion`` 으로 먼저 변환하고(변환 불가 값이면 ``ValueConversionError`` —
+WD-431), RemoteLoader 는 JSON 으로 직렬화만 해 db-executor ``POST /execute/load`` 로 보낸다. db-executor 는 변환 불가 값·빈
+문자열(숫자·날짜)을 요청 전체 실패로 처리하므로 빈 문자열은 None 이 되어 도달해야 한다. 직렬화 형태는 공유 벡터
+(tibero-bind-vectors.json)가 받아들이는 입력 형태여야 한다.
 """
 from __future__ import annotations
 
@@ -15,6 +16,9 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
+import copy
+
+from app.services.python_executor import ValueConversionError, _apply_type_conversion
 from app.db.backends.remote import (
     RemoteLoadError,
     RemoteLoader,
@@ -55,6 +59,18 @@ def _client(handler):
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
+def _converted(rows, types):
+    """PYTHON 스텝처럼 적재 전에 행 사본을 변환한다(_run_script 가 RemoteLoader 에 넘기기 전에 하는 일)."""
+    rows = copy.deepcopy(rows)
+    _apply_type_conversion(rows, types)
+    return rows
+
+
+def _convert_then_wire(rows, types):
+    """변환 → 직렬화 — PYTHON 스텝의 원격 적재 경로가 보내는 본문."""
+    return to_wire_rows(_converted(rows, types), types)
+
+
 # ---------------------------------------------------------------------------
 # 직렬화 — 변환된 값이 벡터가 받는 JSON 형태가 되는가
 # ---------------------------------------------------------------------------
@@ -92,7 +108,7 @@ def test_converted_values_roundtrip_through_existing_conversion():
     types = {"n": "INTEGER", "d": "DECIMAL", "dt": "DATE", "ts": "TIMESTAMP", "b": "BOOLEAN", "t": "TEXT"}
     rows = [{"n": " 7 ", "d": "12345678901234567890.123456", "dt": "2024-03-05",
              "ts": "2024-03-05T01:02:03", "b": "yes", "t": 123}]
-    wire = to_wire_rows(rows, types)
+    wire = _convert_then_wire(rows, types)
     assert wire == [{"n": 7, "d": "12345678901234567890.123456", "dt": "2024-03-05",
                      "ts": "2024-03-05T01:02:03", "b": True, "t": "123"}]
     for col, app_type in types.items():
@@ -103,29 +119,35 @@ def test_converted_values_roundtrip_through_existing_conversion():
 
 @pytest.mark.parametrize("app_type, raw", [(r["appType"], r["json"]) for r in VECTORS["expectFailure"]])
 def test_expect_failure_inputs_never_reach_db_executor(app_type, raw):
-    # 벡터 expectFailure(변환 불가·빈 문자열)는 db-executor 가 요청 전체를 실패시킨다 → 원격 경로는 None 으로 보낸다.
-    [row] = to_wire_rows([{"c": raw}], {"c": app_type})
-    assert row["c"] is None
-    assert not _rejected(app_type, row["c"])
+    # 벡터 expectFailure 는 db-executor 가 요청 전체를 실패시킨다 → 원격 경로는 빈 문자열이면 None 으로 보내고, 변환 불가 값이면 보내기 전에
+    # 행·키·값을 짚는 오류로 실패한다(WD-431 — 예전엔 None 으로 보내 「완료」였다).
+    if isinstance(raw, str) and not raw.strip():
+        [row] = _convert_then_wire([{"c": raw}], {"c": app_type})
+        assert row["c"] is None
+        assert not _rejected(app_type, row["c"])
+    else:
+        with pytest.raises(ValueConversionError, match="출력 JSON 의 1번째 행 'c' 값"):
+            _convert_then_wire([{"c": raw}], {"c": app_type})
 
 
 @pytest.mark.parametrize("app_type", ["INTEGER", "DECIMAL", "DATE", "TIMESTAMP", "NUMERIC", "FLOAT", "DOUBLE", "DATETIME"])
 def test_empty_or_blank_string_becomes_none_for_numeric_and_date_types(app_type):
     # 기존 변환이 빈 문자열을 None 으로 만든다. 변환을 거치지 않은 값(타입 미지정 등)도 직렬화가 막는다.
-    assert to_wire_rows([{"c": ""}], {"c": app_type}) == [{"c": None}]
+    assert _convert_then_wire([{"c": ""}], {"c": app_type}) == [{"c": None}]
     assert to_wire_value("  ", app_type) is None
 
 
-def test_boolean_empty_string_is_false_like_vectors():
-    # 벡터: BOOLEAN 빈 문자열은 거짓으로 바인딩된다 — 변환 결과 False(db-executor 가 받는 형태).
-    assert to_wire_rows([{"c": ""}], {"c": "BOOLEAN"}) == [{"c": False}]
+def test_boolean_empty_string_is_none():
+    # WD-431: BOOLEAN 빈 문자열은 거짓이 아니라 None(NULL — 데이터 임포트와 같은 규칙). db-executor 는 빈 문자열을 거부하므로 None 으로 보낸다.
+    assert _convert_then_wire([{"c": ""}], {"c": "BOOLEAN"}) == [{"c": None}]
+    assert to_wire_value(" ", "BOOLEAN") is None
 
 
 def test_non_finite_decimal_is_none_not_a_request_failure():
     # Decimal("NaN")·"Infinity" 는 기존 변환을 통과하지만 db-executor BigDecimal 이 거부 → None.
     assert to_wire_value(Decimal("NaN"), "DECIMAL") is None
     assert to_wire_value(Decimal("Infinity"), "DECIMAL") is None
-    assert to_wire_rows([{"c": "NaN"}], {"c": "DECIMAL"}) == [{"c": None}]
+    assert _convert_then_wire([{"c": "NaN"}], {"c": "DECIMAL"}) == [{"c": None}]
 
 
 def test_datetime_in_date_column_is_cut_to_a_date():
@@ -147,8 +169,8 @@ def test_column_type_names_are_normalised_for_db_executor():
         return httpx.Response(200, json={"success": True, "rows_loaded": 1})
 
     loader = RemoteLoader(_settings(), client=_client(handler))
-    loader.load(7, STAGING, [{"a": "1.5", "b": "2024-03-05T01:02:03Z", "c": 1}],
-                {"a": "FLOAT", "b": "DATETIME", "c": "STRING"})
+    types = {"a": "FLOAT", "b": "DATETIME", "c": "STRING"}
+    loader.load(7, STAGING, _converted([{"a": "1.5", "b": "2024-03-05T01:02:03Z", "c": 1}], types), types)
     assert captured["body"]["column_type_map"] == {"a": "DECIMAL", "b": "TIMESTAMP", "c": "TEXT"}
     assert captured["body"]["rows"] == [{"a": "1.5", "b": "2024-03-05T01:02:03+00:00", "c": "1"}]
 
@@ -411,7 +433,7 @@ def test_success_requires_rows_loaded_equal_to_rows_sent(body):
 
 
 def test_wire_fixture_matches_what_remote_loader_sends():
-    # 공유 사례(python-remote-load-wire.json): 원시 입력 → RemoteLoader 가 db-executor 로 보내는 본문. 같은 사례를
+    # 공유 사례(python-remote-load-wire.json): 원시 입력 → 변환(PYTHON 스텝) → RemoteLoader 가 db-executor 로 보내는 본문. 같은 사례를
     # db-executor 실서버 테스트(TiberoLiveLoadTest)가 그대로 적재해 값까지 확인한다.
     fixture = json.loads(
         (
@@ -426,6 +448,6 @@ def test_wire_fixture_matches_what_remote_loader_sends():
         return httpx.Response(200, json={"success": True, "rows_loaded": len(captured["body"]["rows"])})
 
     loader = RemoteLoader(_settings(), client=_client(handler))
-    loader.load(7, STAGING, fixture["input"], fixture["rawColumnTypes"])
+    loader.load(7, STAGING, _converted(fixture["input"], fixture["rawColumnTypes"]), fixture["rawColumnTypes"])
     assert captured["body"]["rows"] == fixture["wire"]
     assert captured["body"]["column_type_map"] == fixture["wireColumnTypes"]

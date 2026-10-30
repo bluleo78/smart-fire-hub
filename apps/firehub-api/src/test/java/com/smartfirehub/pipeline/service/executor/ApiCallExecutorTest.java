@@ -717,24 +717,27 @@ class ApiCallExecutorTest {
   @Test
   void parseAndMap_dataPathRules_matchPythonExecutor() {
     // 빈 배열 매치는 0행 정상, 단일 객체는 1행, JSON null 은 0행(예전에는 NPE), 와일드카드 뒤가 비면 0행
-    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.data.items", WD212_MAPPING, null)).hasSize(2);
-    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.data.empty", WD212_MAPPING, null)).isEmpty();
-    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.data.single", WD212_MAPPING, null))
+    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.data.items", WD212_MAPPING, null, 0))
+        .hasSize(2);
+    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.data.empty", WD212_MAPPING, null, 0))
+        .isEmpty();
+    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.data.single", WD212_MAPPING, null, 0))
         .containsExactly(Map.of("id", 3));
-    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.data.nul", WD212_MAPPING, null)).isEmpty();
-    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.list[*]", WD212_MAPPING, null)).hasSize(2);
-    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.list[*].zz", WD212_MAPPING, null)).isEmpty();
+    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.data.nul", WD212_MAPPING, null, 0)).isEmpty();
+    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.list[*]", WD212_MAPPING, null, 0)).hasSize(2);
+    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.list[*].zz", WD212_MAPPING, null, 0))
+        .isEmpty();
   }
 
   @Test
   void parseAndMap_pathNotFound_andSyntaxError_areKorean() {
     for (String path : List.of("$.data.missing", "$.list[5]", "$.data.items.id", "$.missing[*]")) {
-      assertThatThrownBy(() -> jsonParser.parseAndMap(WD212_JSON, path, WD212_MAPPING, null))
+      assertThatThrownBy(() -> jsonParser.parseAndMap(WD212_JSON, path, WD212_MAPPING, null, 0))
           .isInstanceOf(ApiCallException.class)
           .hasMessage("응답에서 데이터 경로를 찾을 수 없습니다: " + path);
     }
     // 문법 오류 — 예전에는 jayway 영어 원문(InvalidPathException)이 그대로 스텝 오류가 됐다
-    assertThatThrownBy(() -> jsonParser.parseAndMap(WD212_JSON, "$..", WD212_MAPPING, null))
+    assertThatThrownBy(() -> jsonParser.parseAndMap(WD212_JSON, "$..", WD212_MAPPING, null, 0))
         .isInstanceOf(ApiCallException.class)
         .hasMessage("데이터 경로(JSONPath) 형식이 올바르지 않습니다: $.. — 예: $.data.items");
   }
@@ -980,6 +983,184 @@ class ApiCallExecutorTest {
 
     // swap must NOT be called
     verify(dataTableService, never()).swapTable(any(), any());
+  }
+
+  // -------------------------------------------------------------------------
+  // WD-431: 값 변환 실패는 행을 건너뛰지 않고 스텝을 실패시킨다
+  // -------------------------------------------------------------------------
+
+  /**
+   * REPLACE + 페이지네이션에서 둘째 페이지의 값이 컬럼 타입으로 바뀌지 않으면 스텝이 실패하고(예전엔 그 행만 건너뛰고 「완료」), 임시 테이블을 버려 맞바꾸지 않는다
+   * — 기존 데이터가 남는다. 행 번호는 페이지를 넘어 이어 센다(둘째 페이지 첫 행 = 3번째).
+   */
+  @Test
+  void execute_replace_conversionErrorOnLaterPage_failsAndDropsTempTable() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/api/conv"))
+            .withQueryParam("offset", equalTo("0"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "{\"items\":[{\"name\":\"A\",\"age\":1},{\"name\":\"B\",\"age\":2}]}")));
+    wireMock.stubFor(
+        get(urlPathEqualTo("/api/conv"))
+            .withQueryParam("offset", equalTo("2"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "{\"items\":[{\"name\":\"C\",\"age\":\"not-a-number\"},{\"name\":\"D\",\"age\":4}]}")));
+    ApiCallConfig config =
+        new ApiCallConfig(
+            baseUrl() + "/api/conv",
+            "GET",
+            null,
+            null,
+            null,
+            "JSON",
+            "$.items",
+            List.of(
+                new ApiCallConfig.FieldMapping("name", "name", "TEXT", null, null, null),
+                new ApiCallConfig.FieldMapping("age", "age_col", "INTEGER", null, null, null)),
+            "UTC",
+            new ApiCallConfig.PaginationConfig("OFFSET", 2, "offset", "limit", null),
+            new ApiCallConfig.RetryConfig(0, 100, 1000),
+            5000,
+            60000,
+            100,
+            null,
+            null,
+            null,
+            null);
+    String runTemp = DataTableService.newTempTableName("conv_table");
+    when(dataTableService.createTempTable("conv_table")).thenReturn(runTemp);
+
+    assertThatThrownBy(() -> executor.execute(config, "conv_table", null, "REPLACE", null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(
+            "응답 데이터의 3번째 행 'age' 필드 값 'not-a-number' 을(를) 'age_col' 컬럼의 정수(INTEGER)로 변환할 수 없습니다"
+                + " — 필드 매핑의 타입·형식을 확인하세요");
+
+    verify(dataTableService).dropTempTable("conv_table", runTemp);
+    verify(dataTableService, never()).finishReplace(anyString(), anyString(), anyLong());
+  }
+
+  /** 정수·소수·날짜·일시 변환 실패는 ApiCallException(행 건너뛰기 아님) — 행 번호는 1부터, 값은 Python str() 표기로 50자에서 자른다. */
+  @Test
+  void parseAndMap_conversionErrors_failWithKoreanMessage() {
+    assertThatThrownBy(() -> parseOne("DECIMAL", "\"1,2x\""))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(
+            "응답 데이터의 1번째 행 'v' 필드 값 '1,2x' 을(를) 'c' 컬럼의 소수(DECIMAL)로 변환할 수 없습니다"
+                + " — 필드 매핑의 타입·형식을 확인하세요");
+    assertThatThrownBy(() -> parseOne("DATE", "\"2024-13-40\""))
+        .hasMessageContaining("'2024-13-40' 을(를) 'c' 컬럼의 날짜(DATE)로 변환할 수 없습니다");
+    assertThatThrownBy(() -> parseOne("TIMESTAMP", "\"nope\""))
+        .hasMessageContaining("'nope' 을(를) 'c' 컬럼의 날짜시간(TIMESTAMP)으로 변환할 수 없습니다");
+    assertThatThrownBy(() -> parseOne("INTEGER", "true")).hasMessageContaining("필드 값 'True' 을(를)");
+    String longValue = "y".repeat(60);
+    assertThatThrownBy(() -> parseOne("INTEGER", "\"" + longValue + "\""))
+        .hasMessageContaining("필드 값 '" + "y".repeat(50) + "…' 을(를)");
+  }
+
+  /** 불리언은 true/false/1/0/yes/no·JSON 불리언·숫자 1/0 만 받는다 — 'Y'·'예' 는 거짓이 아니라 실패. 빈 문자열·null 은 NULL. */
+  @Test
+  void parseAndMap_boolean_strictTokens_blankIsNull() {
+    assertThat(parseOne("BOOLEAN", "\"yes\"")).isEqualTo(true);
+    assertThat(parseOne("BOOLEAN", "\"FALSE\"")).isEqualTo(false);
+    assertThat(parseOne("BOOLEAN", "\"0\"")).isEqualTo(false);
+    assertThat(parseOne("BOOLEAN", "\"no\"")).isEqualTo(false);
+    assertThat(parseOne("BOOLEAN", "true")).isEqualTo(true);
+    assertThat(parseOne("BOOLEAN", "1")).isEqualTo(true);
+    assertThat(parseOne("BOOLEAN", "0")).isEqualTo(false);
+    assertThat(parseOne("BOOLEAN", "\"\"")).isNull();
+    assertThat(parseOne("BOOLEAN", "null")).isNull();
+    assertThat(parseOne("INTEGER", "\" \"")).isNull();
+    assertThatThrownBy(() -> parseOne("BOOLEAN", "\"Y\""))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(
+            "응답 데이터의 1번째 행 'v' 필드 값 'Y' 을(를) 'c' 컬럼의 참/거짓(BOOLEAN)으로 변환할 수 없습니다"
+                + "(허용 값: true/false/1/0/yes/no) — 필드 매핑의 타입·형식을 확인하세요");
+    assertThatThrownBy(() -> parseOne("BOOLEAN", "\"예\"")).isInstanceOf(ApiCallException.class);
+  }
+
+  /**
+   * WD-431: INTEGER 는 정수 값인 실수 표기(3.0·"3.0"·1e2)를 받고, 소수부(1.5)·64비트 범위 밖(1e20)은 변환 실패다 — 예전엔
+   * longValue() 로 1.5 → 1 처럼 조용히 잘랐다.
+   */
+  @Test
+  void parseAndMap_integer_acceptsIntegralFloats_rejectsFractionAndOverflow() {
+    assertThat(parseOne("INTEGER", "3.0")).isEqualTo(3L);
+    assertThat(parseOne("INTEGER", "\"3.0\"")).isEqualTo(3L);
+    assertThat(parseOne("INTEGER", "1e2")).isEqualTo(100L);
+    assertThat(parseOne("INTEGER", "\" 7 \"")).isEqualTo(7L);
+    assertThatThrownBy(() -> parseOne("INTEGER", "1.5"))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessageContaining("필드 값 '1.5' 을(를) 'c' 컬럼의 정수(INTEGER)로 변환할 수 없습니다");
+    assertThatThrownBy(() -> parseOne("INTEGER", "1e20"))
+        .hasMessageContaining("필드 값 '1e+20' 을(를) 'c' 컬럼의 정수(INTEGER)로");
+    assertThatThrownBy(() -> parseOne("INTEGER", "\"9223372036854775808\""))
+        .isInstanceOf(ApiCallException.class);
+  }
+
+  /** WD-431: 행 번호는 객체가 아닌 원소도 센다 — Python 실행기와 같은 번호. */
+  @Test
+  void parseAndMap_rowNumberCountsNonObjectItems() {
+    assertThatThrownBy(
+            () ->
+                jsonParser.parseAndMap(
+                    "{\"d\":[{\"v\":1},\"junk\",{\"v\":\"x\"}]}",
+                    "$.d",
+                    List.of(new ApiCallConfig.FieldMapping("v", "c", "INTEGER", null, null, null)),
+                    null,
+                    0))
+        .hasMessageStartingWith("응답 데이터의 3번째 행 'v' 필드 값 'x'");
+  }
+
+  /**
+   * WD-431: 매핑 설정 오류(잘못된 날짜 형식 패턴·시간대)는 값 변환 실패가 아니라 설정 오류 문구다 — 예전엔 행이 모두 건너뛰어져 0행 완료였다. Python
+   * 실행기와 같은 문장이다.
+   */
+  @Test
+  void parseAndMap_badDateFormatOrTimezone_isConfigError() {
+    assertThatThrownBy(
+            () ->
+                jsonParser.parseAndMap(
+                    "{\"d\":[{\"when\":\"2024-01-01\"}]}",
+                    "$.d",
+                    List.of(new ApiCallConfig.FieldMapping("when", "c", "DATE", "bbb", null, null)),
+                    null,
+                    0))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage("'when' 필드 매핑의 날짜 형식 'bbb' 이(가) 올바르지 않습니다 — 필드 매핑 설정을 확인하세요");
+    assertThatThrownBy(
+            () ->
+                jsonParser.parseAndMap(
+                    "{\"d\":[{\"ts\":\"2024-01-01T00:00:00\"}]}",
+                    "$.d",
+                    List.of(
+                        new ApiCallConfig.FieldMapping(
+                            "ts", "c", "TIMESTAMP", null, null, "Mars/Phobos")),
+                    null,
+                    0))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage("'ts' 필드 매핑의 시간대 'Mars/Phobos' 이(가) 올바르지 않습니다 — 필드 매핑 설정을 확인하세요");
+  }
+
+  /** {"d":[{"v": json}]} 를 v→c(dtype) 매핑으로 파싱해 c 값 하나를 돌려준다. */
+  private Object parseOne(String dtype, String json) {
+    List<Map<String, Object>> rows =
+        jsonParser.parseAndMap(
+            "{\"d\":[{\"v\":" + json + "}]}",
+            "$.d",
+            List.of(new ApiCallConfig.FieldMapping("v", "c", dtype, null, null, null)),
+            null,
+            0);
+    assertThat(rows).hasSize(1);
+    return rows.get(0).get("c");
   }
 
   // -------------------------------------------------------------------------

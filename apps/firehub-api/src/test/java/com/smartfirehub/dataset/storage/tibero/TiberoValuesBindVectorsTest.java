@@ -1,12 +1,14 @@
 package com.smartfirehub.dataset.storage.tibero;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
+import com.smartfirehub.pipeline.service.executor.ApiCallException;
 import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
 import java.io.IOException;
 import java.io.InputStream;
@@ -39,7 +41,9 @@ class TiberoValuesBindVectorsTest {
     }
   }
 
-  /** 벡터 하나를 API 수집 응답처럼 JsonResponseParser 에 넣어 변환된 행 목록을 돌려준다(변환 실패 행은 api 가 건너뛴다). */
+  /**
+   * 벡터 하나를 API 수집 응답처럼 JsonResponseParser 에 넣어 변환된 행 목록을 돌려준다(변환 실패면 ApiCallException — WD-431).
+   */
   private static List<Map<String, Object>> parsed(JsonNode vector) throws Exception {
     String appType = vector.get("appType").isNull() ? null : vector.get("appType").asText();
     // 벡터의 json 값을 {"d":[{"v": <json>}]} 로 감싸 API 수집 응답처럼 넣는다(JSON null 도 그대로 전달).
@@ -52,7 +56,8 @@ class TiberoValuesBindVectorsTest {
             OM.writeValueAsString(root),
             "$.d",
             List.of(new ApiCallConfig.FieldMapping("v", "c", appType, null, null, null)),
-            null);
+            null,
+            0);
   }
 
   /** 벡터 하나를 api 경로(JsonResponseParser → TiberoValues.bind)에 태워 PreparedStatement 호출을 기록한다. */
@@ -85,13 +90,28 @@ class TiberoValuesBindVectorsTest {
     }
   }
 
-  /** 변환할 수 없는 입력: api 로컬 모드는 그 행을 건너뛴다(결과 행 0개) — db-executor 는 같은 입력에서 요청 전체를 실패시킨다. */
+  /**
+   * db-executor 가 거부하는 입력: api 로컬 모드는 빈 문자열이 아니면 행을 건너뛰지 않고 스텝을 실패시킨다(WD-431 — 예전엔 조용히 건너뛰었다).
+   * 숫자·불리언·날짜 타입의 빈 문자열은 NULL 로 둔다(데이터 임포트와 같은 규칙 — db-executor 에는 Python 실행기가 None 으로 보낸다).
+   */
   @Test
-  void expectFailure_apiSkipsTheRow() throws Exception {
+  void expectFailure_apiFailsTheStep_orNullsBlank() throws Exception {
     JsonNode cases = FIXTURE.get("expectFailure");
     assertThat(cases.size()).isGreaterThanOrEqualTo(4);
     for (JsonNode c : cases) {
-      assertThat(parsed(c)).as(c.get("name").asText() + " 은 행이 건너뛰어진다").isEmpty();
+      String label = c.get("name").asText();
+      JsonNode json = c.get("json");
+      if (json.isTextual() && json.asText().isBlank()) {
+        List<Map<String, Object>> rows = parsed(c);
+        assertThat(rows).as(label + " 은 행이 남는다").hasSize(1);
+        assertThat(rows.get(0).get("c")).as(label + " 은 NULL").isNull();
+      } else {
+        assertThatThrownBy(() -> parsed(c))
+            .as(label + " 은 스텝 실패")
+            .isInstanceOf(ApiCallException.class)
+            .hasMessageContaining("응답 데이터의 1번째 행 'v' 필드 값")
+            .hasMessageContaining("변환할 수 없습니다");
+      }
     }
   }
 

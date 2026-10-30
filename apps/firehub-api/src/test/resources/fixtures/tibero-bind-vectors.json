@@ -1,11 +1,15 @@
 {
-  "_doc": "Tibero 적재 값 변환·바인딩 고정 벡터(WD-77 Task 3). 현행 api 동작의 사진이다: 입력(appType, json) → api JsonResponseParser 가 만드는 Java 값 → TiberoValues.bind 가 PreparedStatement 에 거는 호출. db-executor LoadValues 가 같은 입력에서 같은 호출을 내야 한다(TiberoBindVectorsParityTest). appType 이 null 이면 타입 힌트 없음(원시 값 보존). expected.method 는 PreparedStatement 메서드, arg 는 둘째 인자의 toString, argClass 는 setObject 일 때만(값의 Java 클래스). setNull 의 arg 는 SQL 타입 정수(Types.NULL=0). TIMESTAMP 는 타임존이 없으면 UTC 로 보고, 있으면 UTC 로 환산한다(api JsonResponseParser 기본). 변환 실패 규칙(차이 기록): api 로컬 모드(JsonResponseParser)는 변환에 실패한 행을 조용히 건너뛰지만, db-executor 는 fail-closed 로 요청 전체를 실패시킨다(expectFailure). Python 실행기가 원격 적재(Task 6) 전에 값을 먼저 변환하므로 변환 불가 값이 db-executor 에 도달하면 버그다. 빈 문자열은 TEXT·VARCHAR 는 그대로, BOOLEAN 은 거짓(0)으로 바인딩되고, INTEGER·DECIMAL·DATE·TIMESTAMP 는 api 가 NULL 로 바꾸지 않고 행을 건너뛰므로(현행 동작) expectFailure 에 둔다.",
+  "_doc": "Tibero 적재 값 변환·바인딩 고정 벡터(WD-77 Task 3). 현행 api 동작의 사진이다: 입력(appType, json) → api JsonResponseParser 가 만드는 Java 값 → TiberoValues.bind 가 PreparedStatement 에 거는 호출. db-executor LoadValues 가 같은 입력에서 같은 호출을 내야 한다(TiberoBindVectorsParityTest). appType 이 null 이면 타입 힌트 없음(원시 값 보존). expected.method 는 PreparedStatement 메서드, arg 는 둘째 인자의 toString, argClass 는 setObject 일 때만(값의 Java 클래스). setNull 의 arg 는 SQL 타입 정수(Types.NULL=0). TIMESTAMP 는 타임존이 없으면 UTC 로 보고, 있으면 UTC 로 환산한다(api JsonResponseParser 기본). 변환 실패 규칙(WD-431): 바꿀 수 없는 값은 api 로컬 모드(JsonResponseParser)가 행·필드·값·타입을 짚는 오류로 스텝을 실패시키고(예전엔 행을 조용히 건너뛰었다), db-executor 는 fail-closed 로 요청 전체를 실패시킨다(expectFailure). 불리언은 true/false/1/0/yes/no 만 받는다(예전엔 그 밖의 값이 거짓). Python 실행기가 원격 적재(Task 6) 전에 값을 먼저 변환하므로 변환 불가 값이 db-executor 에 도달하면 버그다. 빈 문자열은 TEXT·VARCHAR 는 그대로, BOOLEAN 은 세 곳 모두 NULL 이고, INTEGER·DECIMAL·DATE·TIMESTAMP 는 api·Python 실행기가 NULL 로 바꾼다(데이터 임포트와 같은 규칙) — db-executor 에 그대로 오면 실패라 expectFailure 에 둔다(api 쪽 테스트는 빈 문자열이면 NULL 을 확인한다). INTEGER 는 정수 값인 실수 표기(3.0·1e2)를 받고 소수부·64비트 범위 밖은 실패다.",
   "bindings": [
     {"name": "불리언 true", "appType": "BOOLEAN", "json": true, "expected": {"method": "setInt", "arg": "1"}},
     {"name": "불리언 false", "appType": "BOOLEAN", "json": false, "expected": {"method": "setInt", "arg": "0"}},
     {"name": "불리언 문자열 yes", "appType": "BOOLEAN", "json": "yes", "expected": {"method": "setInt", "arg": "1"}},
     {"name": "불리언 문자열 0", "appType": "BOOLEAN", "json": "0", "expected": {"method": "setInt", "arg": "0"}},
-    {"name": "불리언 알 수 없는 문자열은 거짓", "appType": "BOOLEAN", "json": "N", "expected": {"method": "setInt", "arg": "0"}},
+    {"name": "불리언 문자열 no", "appType": "BOOLEAN", "json": "no", "expected": {"method": "setInt", "arg": "0"}},
+    {"name": "불리언 숫자 1", "appType": "BOOLEAN", "json": 1, "expected": {"method": "setInt", "arg": "1"}},
+    {"name": "불리언 빈 문자열은 NULL", "appType": "BOOLEAN", "json": "", "expected": {"method": "setNull", "arg": "0"}},
+    {"name": "정수 값인 실수 표기", "appType": "INTEGER", "json": "3.0", "expected": {"method": "setObject", "arg": "3", "argClass": "java.lang.Long"}},
+    {"name": "정수 값인 JSON 실수", "appType": "INTEGER", "json": 1e2, "expected": {"method": "setObject", "arg": "100", "argClass": "java.lang.Long"}},
     {"name": "정수 JSON 숫자", "appType": "INTEGER", "json": 7, "expected": {"method": "setObject", "arg": "7", "argClass": "java.lang.Long"}},
     {"name": "정수 공백 문자열", "appType": "INTEGER", "json": " 42 ", "expected": {"method": "setObject", "arg": "42", "argClass": "java.lang.Long"}},
     {"name": "정수 큰 문자열", "appType": "INTEGER", "json": "9007199254740993", "expected": {"method": "setObject", "arg": "9007199254740993", "argClass": "java.lang.Long"}},
@@ -21,7 +25,6 @@
     {"name": "텍스트 빈 문자열은 그대로", "appType": "TEXT", "json": "", "expected": {"method": "setObject", "arg": "", "argClass": "java.lang.String"}},
     {"name": "텍스트 숫자는 문자열로", "appType": "VARCHAR", "json": 123, "expected": {"method": "setObject", "arg": "123", "argClass": "java.lang.String"}},
     {"name": "지오메트리는 문자열 그대로", "appType": "GEOMETRY", "json": "POINT(1 2)", "expected": {"method": "setObject", "arg": "POINT(1 2)", "argClass": "java.lang.String"}},
-    {"name": "불리언 빈 문자열은 거짓", "appType": "BOOLEAN", "json": "", "expected": {"method": "setInt", "arg": "0"}},
     {"name": "NULL 정수", "appType": "INTEGER", "json": null, "expected": {"method": "setNull", "arg": "0"}},
     {"name": "NULL 소수", "appType": "DECIMAL", "json": null, "expected": {"method": "setNull", "arg": "0"}},
     {"name": "NULL 날짜", "appType": "DATE", "json": null, "expected": {"method": "setNull", "arg": "0"}},
@@ -35,7 +38,7 @@
     {"name": "타입 없음 불리언은 0/1", "appType": null, "json": true, "expected": {"method": "setInt", "arg": "1"}},
     {"name": "모르는 타입은 그대로", "appType": "FOO", "json": "x", "expected": {"method": "setObject", "arg": "x", "argClass": "java.lang.String"}}
   ],
-  "_expectFailure": "변환할 수 없는 입력. api 로컬 모드는 그 행을 건너뛰고(결과 행 0개), db-executor LoadValues 는 InvalidValue 로 요청 전체를 실패시킨다(위 _doc 의 차이 기록).",
+  "_expectFailure": "db-executor LoadValues 가 InvalidValue 로 요청 전체를 실패시키는 입력. api 로컬 모드는 빈 문자열이 아니면 스텝을 실패시키고(ApiCallException), 빈 문자열이면 NULL 로 둔다(위 _doc, WD-431).",
   "expectFailure": [
     {"name": "정수 문자열 아님", "appType": "INTEGER", "json": "abc"},
     {"name": "정수 빈 문자열", "appType": "INTEGER", "json": ""},
@@ -44,7 +47,12 @@
     {"name": "날짜 범위 밖", "appType": "DATE", "json": "2024-13-40"},
     {"name": "날짜 빈 문자열", "appType": "DATE", "json": ""},
     {"name": "일시 형식 오류", "appType": "TIMESTAMP", "json": "not-a-time"},
-    {"name": "일시 빈 문자열", "appType": "TIMESTAMP", "json": ""}
+    {"name": "일시 빈 문자열", "appType": "TIMESTAMP", "json": ""},
+    {"name": "불리언 알 수 없는 문자열", "appType": "BOOLEAN", "json": "N"},
+    {"name": "불리언 한글", "appType": "BOOLEAN", "json": "예"},
+    {"name": "불리언 숫자 2", "appType": "BOOLEAN", "json": 2},
+    {"name": "정수 소수부", "appType": "INTEGER", "json": 1.5},
+    {"name": "정수 범위 밖", "appType": "INTEGER", "json": 1e20}
   ],
   "_columnNames": "적재 대상 컬럼 이름: 앱 이름(소문자) → TiberoNames.physical 대문자 변환(Locale.ROOT).",
   "columnNames": [

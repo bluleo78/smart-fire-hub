@@ -21,6 +21,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from app.services import value_conversion
+
 # 자유 문장 안의 URL 에서 쿼리·프래그먼트·userinfo 를 지우는 패턴 — 분류하지 못한 원문을 쓸 때의 마지막 방어선.
 _URL_QUERY_IN_TEXT = re.compile(r"(?i)(https?://[^\s?#\"'<>]*)[?#][^\s\"'<>]*")
 _URL_USERINFO_IN_TEXT = re.compile(r"(?i)(https?://)[^\s/@\"'<>]+@")
@@ -122,6 +124,28 @@ def data_path_invalid_message(data_path: str) -> str:
     파서 원문(영어, 라이브러리마다 다름)은 싣지 않는다 — Java(jayway)와 Python(jsonpath_ng)의 원문이 달라 두 경로 문구가 갈린다.
     """
     return f"데이터 경로(JSONPath) 형식이 올바르지 않습니다: {data_path} — 예: $.data.items"
+
+
+def value_conversion_message(row: int, field: str, column: str, value_text: str, dtype: str) -> str:
+    """응답 값을 출력 컬럼 타입으로 바꿀 수 없을 때(WD-431 — 예전엔 None 으로 넣고 「완료」였다).
+
+    Java ``ApiCallErrorMessages.valueConversion`` 과 같은 문장이다. ``value_text`` 는 str(값)(자르기 전 — 여기서 자른다), 행 번호는
+    응답 데이터 안의 위치(1부터, 페이지를 넘어 이어 센다).
+    """
+    return (
+        f"응답 데이터의 {row}번째 행 '{field}' 필드 값 '{value_conversion.excerpt(value_text)}' 을(를) '{column}' 컬럼의 "
+        f"{value_conversion.target(dtype)} 변환할 수 없습니다{value_conversion.hint(dtype)} — 필드 매핑의 타입·형식을 확인하세요"
+    )
+
+
+def invalid_date_format_message(field: str, pattern: str) -> str:
+    """필드 매핑의 날짜 형식이 잘못됐을 때(WD-431) — 값 변환 실패와 구분한다. Java ``ApiCallErrorMessages.invalidDateFormat`` 과 같은 문장."""
+    return f"'{field}' 필드 매핑의 날짜 형식 '{pattern}' 이(가) 올바르지 않습니다 — 필드 매핑 설정을 확인하세요"
+
+
+def invalid_timezone_message(field: str, tz: str) -> str:
+    """필드 매핑의 원본 시간대가 잘못됐을 때(WD-431 — 예전엔 조용히 무시했다). Java ``ApiCallErrorMessages.invalidTimezone`` 과 같은 문장."""
+    return f"'{field}' 필드 매핑의 시간대 '{tz}' 이(가) 올바르지 않습니다 — 필드 매핑 설정을 확인하세요"
 
 
 def load_failed_message() -> str:
