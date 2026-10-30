@@ -1,6 +1,7 @@
 package com.smartfirehub.securitylevel;
 
 import static com.smartfirehub.jooq.Tables.DATASET;
+import static com.smartfirehub.support.AsyncMvc.completeAsync;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -264,8 +265,9 @@ class DataExportPolicyTest extends IntegrationTestBase {
                 jobId,
                 Map.of(
                     "filePath", file.toString(), "filename", "x.csv", "contentType", "text/csv")));
-    mockMvc
-        .perform(get("/api/v1/exports/" + jobId + "/file").header("Authorization", token(u)))
+    // StreamingResponseBody 는 비동기라 전송 완료까지 받는다(WD-443).
+    completeAsync(
+            mockMvc, get("/api/v1/exports/" + jobId + "/file").header("Authorization", token(u)))
         .andExpect(status().isOk());
 
     setLevel(ds, "기밀");

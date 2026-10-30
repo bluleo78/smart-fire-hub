@@ -12,8 +12,9 @@ import { usePipelineDeleteImpact } from '@/hooks/queries/usePipelines';
  *   (분석 쿼리·차트 WD-86, 데이터셋 WD-143 삭제 확인 창과 같은 결정).
  * - ready: 결과 있음 → 함께 지워질 임시 데이터셋이 있으면 빨간 상자, 없으면 지금과 같은 일반 확인 창
  * - blocked: 내가 볼 수 없는 임시 데이터셋이 함께 지워질 대상에 있음 → 서버가 삭제를 403 으로 거부하므로 안내하고 삭제를 막는다(WD-310)
+ * - running: 대기·실행 중 실행이 있음 → 서버가 삭제를 409 로 거부하므로 안내하고 삭제를 막는다(WD-437). 서버 판정 순서(409 가 403 보다 먼저)와 맞춰 먼저 본다.
  */
-type Status = 'loading' | 'error' | 'ready' | 'blocked';
+type Status = 'loading' | 'error' | 'ready' | 'blocked' | 'running';
 
 /** 빨간 안내 상자 — 디자인 시스템 06 인라인 배너의 destructive variant(되돌릴 수 없는 함께 삭제). WD-86 과 같은 구성. */
 function ImpactBanner({ title, children }: { title: string; children?: ReactNode }) {
@@ -42,9 +43,11 @@ function ImpactDetails({ pipelineId, onStatus }: { pipelineId: number; onStatus:
     ? 'loading'
     : isError
       ? 'error'
-      : data?.hasHiddenTempDatasets
-        ? 'blocked'
-        : 'ready';
+      : data && data.activeExecution !== 'NONE'
+        ? 'running'
+        : data?.hasHiddenTempDatasets
+          ? 'blocked'
+          : 'ready';
 
   useEffect(() => onStatus(status), [status, onStatus]);
   useEffect(() => () => onStatus('loading'), [onStatus]);
@@ -61,6 +64,17 @@ function ImpactDetails({ pipelineId, onStatus }: { pipelineId: number; onStatus:
         <ImpactBanner title="함께 삭제되는 항목을 불러오지 못했습니다">
           이 파이프라인이 자동 생성한 임시 데이터셋이 있다면 함께 삭제됩니다.
         </ImpactBanner>
+      );
+    case 'running':
+      // 서버 409 문구(PipelineExecutionActiveException)와 같은 문장 — 취소가 이미 진행 중이면 다시 취소하라고 하지 않고 기다리라고 한다.
+      return (
+        <ImpactBanner
+          title={
+            data?.activeExecution === 'CANCELLING'
+              ? '실행 취소가 진행 중입니다. 취소가 끝난 뒤 다시 삭제하세요'
+              : '실행 중에는 삭제할 수 없습니다. 실행을 취소한 뒤 삭제하세요'
+          }
+        />
       );
     case 'blocked':
       // 숨긴 데이터셋의 이름·개수는 서버가 주지 않는다 — 삭제할 수 없다는 것과 누구에게 요청할지만 알린다.
@@ -98,7 +112,7 @@ export function PipelineDeleteConfirmDialog({ pipelineId, itemName, onConfirm, t
       onConfirm={onConfirm}
       trigger={trigger}
       details={<ImpactDetails pipelineId={pipelineId} onStatus={setStatus} />}
-      confirmDisabled={status === 'loading' || status === 'blocked'}
+      confirmDisabled={status === 'loading' || status === 'blocked' || status === 'running'}
     />
   );
 }

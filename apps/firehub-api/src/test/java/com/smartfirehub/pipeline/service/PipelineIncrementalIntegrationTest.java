@@ -859,6 +859,15 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
    * 두 번 적재). 그래서 본 문장이 active 이고 시작한 지 300ms 가 넘었는지를 본다(LIMIT 0 probe 는 곧 끝난다). READ COMMITTED 의 문장
    * 스냅샷은 실행 시작 때 잡히므로, 이때 넣은 행은 앞 실행에 보이지 않는다.
    *
+   * <p>여기에 {@code backend_xmin IS NOT NULL} 도 함께 본다(WD-442) — query_start 는 파싱·계획 "전"에 찍히므로, 고부하로 그
+   * 세션이 300ms 넘게 CPU 를 못 받으면 시간 조건만으로는 스냅샷 전일 수 있다. READ COMMITTED 에서 문장 사이에는 스냅샷이 풀려 xmin 이 비므로, 본
+   * 문장이 active 인데 xmin 이 있으면 그 문장의 스냅샷이 이미 잡혔다는 뜻이다.
+   *
+   * <p>제품 쪽 판정(WD-442): 책갈피 후보는 SQL 실행 전에 {@code min(지금, 열린 트랜잭션 시작 시각)} 으로 잡고 다음 실행은 {@code >=} 로
+   * 읽는 설계라(V123, PipelineAsyncRunner 증분 블록), 후보 시각과 본 문장 스냅샷 사이에 커밋된 행은 직렬 실행에서도 두 실행에 모두 보인다(MERGE
+   * 가 흡수하는 의도된 at-least-once). 겹친 실행 직렬화(advisory 잠금)는 책갈피 읽기 전에 잡아 전진 뒤 풀어 결함이 없다. 그래서 새 행은 반드시 본
+   * 문장 스냅샷 "뒤"에 넣어야 하고, 예전 간헐 실패(NEW1 두 번)는 이 관측이 너무 일렀던 탓이다.
+   *
    * <p>다른 롤 세션의 상태·문장은 슈퍼유저만 볼 수 있어 테스트 풀(app_tenant)이 아니라 컨테이너 소유자 계정으로 따로 붙는다(SecurityEventsTest
    * 와 같은 방식).
    */
@@ -875,6 +884,7 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
                     + " AND state = 'active' AND pid <> pg_backend_pid()"
                     + " AND query LIKE '%generate_series(1, 12000)%'"
                     + " AND query NOT ILIKE '%limit 0%'"
+                    + " AND backend_xmin IS NOT NULL"
                     + " AND now() - query_start > interval '300 milliseconds')")) {
       while (System.currentTimeMillis() < deadline) {
         try (ResultSet rs = ps.executeQuery()) {

@@ -66,14 +66,16 @@ const PIPELINE_DELETE_IMPACT_PATH = /^\/api\/v1\/pipelines\/\d+\/delete-impact$/
  * @param tempDatasetCount - 함께 지워질 자동 생성 임시 데이터셋 개수(기본값: 0)
  * @param status - 응답 상태(실패 경로 검증용)
  * @param hasHiddenTempDatasets - 내가 볼 수 없는 임시 데이터셋이 함께 지워질 대상에 있는가(WD-310, 기본값: false)
+ * @param activeExecution - 진행 중 실행 상태(WD-437): NONE(기본값)·ACTIVE(취소 요청 없음)·CANCELLING(모두 취소 요청 중)
  */
 export async function mockPipelineDeleteImpact(
   page: Page,
   tempDatasetCount = 0,
   status = 200,
   hasHiddenTempDatasets = false,
+  activeExecution: PipelineDeleteImpact['activeExecution'] = 'NONE',
 ) {
-  const impact: PipelineDeleteImpact = { tempDatasetCount, hasHiddenTempDatasets };
+  const impact: PipelineDeleteImpact = { tempDatasetCount, hasHiddenTempDatasets, activeExecution };
   await page.route(
     (url) => PIPELINE_DELETE_IMPACT_PATH.test(url.pathname),
     (route) => {

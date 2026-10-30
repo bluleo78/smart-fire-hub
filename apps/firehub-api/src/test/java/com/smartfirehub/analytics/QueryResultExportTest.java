@@ -1,11 +1,10 @@
 package com.smartfirehub.analytics;
 
 import static com.smartfirehub.jooq.Tables.DATASET;
+import static com.smartfirehub.support.AsyncMvc.completeAsync;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -110,13 +109,26 @@ class QueryResultExportTest extends IntegrationTestBase {
     return om.readValue(json, Map.class);
   }
 
+  private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder exportRequest(
+      String runId, long uid) {
+    return post("/api/v1/analytics/queries/runs/" + runId + "/export")
+        .header("Authorization", token(uid))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content("{\"format\":\"CSV\"}");
+  }
+
   private org.springframework.test.web.servlet.ResultActions exportRun(String runId, long uid)
       throws Exception {
-    return mockMvc.perform(
-        post("/api/v1/analytics/queries/runs/" + runId + "/export")
-            .header("Authorization", token(uid))
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"format\":\"CSV\"}"));
+    return mockMvc.perform(exportRequest(runId, uid));
+  }
+
+  /** 내보내기 성공 경로를 비동기 전송 완료까지 받아 CSV 본문을 돌려준다(WD-443 — AsyncMvc 참고). */
+  private String exportCsv(String runId, long uid) throws Exception {
+    return completeAsync(mockMvc, exportRequest(runId, uid))
+        .andExpect(status().isOk())
+        .andReturn()
+        .getResponse()
+        .getContentAsString();
   }
 
   private org.springframework.test.web.servlet.ResultActions exportCheck(long uid, String sql)
@@ -162,15 +174,7 @@ class QueryResultExportTest extends IntegrationTestBase {
     assertThat(r.get("exportAllowed")).isEqualTo(true);
     String runId = (String) r.get("runId");
     assertThat(runId).isNotBlank();
-    // StreamingResponseBody 는 비동기 응답이라 asyncDispatch 로 본문을 끝까지 받는다.
-    var started = exportRun(runId, u).andExpect(request().asyncStarted()).andReturn();
-    String csv =
-        mockMvc
-            .perform(asyncDispatch(started))
-            .andExpect(status().isOk())
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
+    String csv = exportCsv(runId, u);
     assertThat(csv).contains(VALUE);
     // 성공 감사는 이 테넌트로 남는다 — 서비스에 트랜잭션이 없으므로 tenant_id 가 NULL 이면 테넌트 감사 화면에서 빠진다(회귀 고정).
     Long tenant =
@@ -198,7 +202,8 @@ class QueryResultExportTest extends IntegrationTestBase {
           .andExpect(jsonPath("$.message").value(NOT_FOUND_MESSAGE));
     }
     // 소유자 본인은 같은 id 로 내보낼 수 있다 — 위 404 가 id 자체의 문제가 아님을 보인다.
-    exportRun(runId, owner).andExpect(status().isOk());
+    String csv = exportCsv(runId, owner);
+    assertThat(csv).contains(VALUE);
   }
 
   /** 실행 뒤 등급이 오르면 내보내기 시점 판정으로 막힌다 — 저장된 플래그를 믿지 않는다. */
@@ -365,14 +370,7 @@ class QueryResultExportTest extends IntegrationTestBase {
     String runId = (String) r.get("runId");
     assertThat(runId).isNotBlank();
 
-    var started = exportRun(runId, u).andExpect(request().asyncStarted()).andReturn();
-    String csv =
-        mockMvc
-            .perform(asyncDispatch(started))
-            .andExpect(status().isOk())
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
+    String csv = exportCsv(runId, u);
     assertThat(csv).contains(VALUE);
   }
 
@@ -493,8 +491,7 @@ class QueryResultExportTest extends IntegrationTestBase {
   void exportDelivered_leavesOneAccessSuccess() throws Exception {
     setLevel("민감");
     long u = userAt("민감", "analytics:read", "data:export", "data:export_restricted");
-    var started = exportRun(seedRun(u), u).andExpect(request().asyncStarted()).andReturn();
-    mockMvc.perform(asyncDispatch(started)).andExpect(status().isOk());
+    exportCsv(seedRun(u), u);
     assertThat(accessRows(u)).isEqualTo(1);
   }
 }

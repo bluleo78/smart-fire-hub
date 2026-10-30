@@ -5,7 +5,9 @@ import static org.jooq.impl.DSL.*;
 import com.smartfirehub.pipeline.dto.ExecutionDetailResponse;
 import com.smartfirehub.pipeline.dto.PipelineExecutionResponse;
 import com.smartfirehub.pipeline.dto.StepExecutionResponse;
+import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
+import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Collection;
@@ -16,6 +18,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
+import org.postgresql.util.ServerErrorMessage;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -139,8 +143,20 @@ public class PipelineExecutionRepository {
       query = query.set(PE_TRIGGER_ID, triggerId);
     }
 
-    return query.returning(PE_ID).fetchOne(r -> r.get(PE_ID));
+    try {
+      return query.returning(PE_ID).fetchOne(r -> r.get(PE_ID));
+    } catch (DataIntegrityViolationException e) {
+      // 파이프라인이 그 사이 삭제됐으면(WD-437 — 경쟁 정리는 PipelineRepository#lockById 참고) FK 위반 대신 404 로 알린다.
+      ServerErrorMessage err = DataExceptionTranslator.findServerError(e);
+      if (err != null && PIPELINE_FK_CONSTRAINT.equals(err.getConstraint())) {
+        throw new PipelineNotFoundException();
+      }
+      throw e;
+    }
   }
+
+  /** pipeline_execution.pipeline_id → pipeline(id) FK 이름(V3 기본 이름). */
+  private static final String PIPELINE_FK_CONSTRAINT = "pipeline_execution_pipeline_id_fkey";
 
   public boolean updateExecutionStatus(
       Long executionId, String status, LocalDateTime startedAt, LocalDateTime completedAt) {
@@ -294,15 +310,55 @@ public class PipelineExecutionRepository {
   }
 
   /**
-   * 러너가 멈춰야 하는가(WD-230) — 취소 요청이 있거나, 실행이 더는 PENDING/RUNNING 이 아니면(중단 정리로 FAILED 등) true. 행이 없으면
-   * false.
+   * 러너가 멈춰야 하는가(WD-230) — 취소 요청이 있거나, 실행이 더는 PENDING/RUNNING 이 아니면(중단 정리로 FAILED 등) true.
+   *
+   * <p>행이 없어도 true 다(WD-437 — fail-closed): 실행 행이 사라진 러너(파이프라인 삭제 CASCADE 등)가 기록 없이 출력 데이터셋을 바꾸지 않게
+   * 멈춘다. 러너는 실행 행 커밋 뒤에만 시작하고(afterCommit) 같은 테넌트 컨텍스트로 돌므로 정상 실행에서는 늘 행이 보인다. 사용자 취소와 구분되도록
+   * 경고 로그를 남긴다(러너는 첫 true 에서 멈추므로 실행당 한 번). 행이 사라진 실행의 마감 쓰기는 모두 조건부 UPDATE 라 무동작으로 끝난다.
    */
   public boolean isStopRequested(long executionId) {
-    return dsl.fetchExists(
-        dsl.selectOne()
+    var row =
+        dsl.select(PE_STATUS, PE_CANCEL_REQUESTED_AT)
             .from(PIPELINE_EXECUTION)
             .where(PE_ID.eq(executionId))
-            .and(PE_CANCEL_REQUESTED_AT.isNotNull().or(PE_STATUS.notIn(ACTIVE_STATUSES))));
+            .fetchOptional();
+    if (row.isEmpty()) {
+      log.warn("Pipeline execution {} 실행 행이 없어 중지합니다(삭제되었거나 보이지 않음 — 사용자 취소 아님)", executionId);
+      return true;
+    }
+    return row.get().get(PE_CANCEL_REQUESTED_AT) != null
+        || !ACTIVE_STATUSES.contains(row.get().get(PE_STATUS));
+  }
+
+  /** 파이프라인의 진행 중 실행 상태(WD-437 — 삭제 거부 판정·삭제 확인 창 안내). */
+  public enum ActiveExecutionState {
+    /** 진행 중(PENDING/RUNNING) 실행이 없다 — 지울 수 있다. */
+    NONE,
+    /** 취소 요청이 없는 진행 중 실행이 있다. */
+    ACTIVE,
+    /** 진행 중 실행이 모두 취소를 요청한 상태다 — 러너가 다음 체크포인트에서 마감할 때까지 기다린다. */
+    CANCELLING
+  }
+
+  /**
+   * 파이프라인에 아직 끝나지 않은(PENDING/RUNNING) 실행이 있는지와 그 상태(WD-437). 취소를 요청했지만 러너가 아직 체크포인트에 닿지 않은 RUNNING
+   * 실행도 진행 중으로 센다 — 체크포인트 전까지는 출력을 바꿀 수 있다. 다만 안내 문구가 달라야 하므로(「취소 진행 중」) 따로 구분한다.
+   */
+  public ActiveExecutionState findActiveExecutionState(long pipelineId) {
+    var counts =
+        dsl.select(
+                count(),
+                count().filterWhere(PE_CANCEL_REQUESTED_AT.isNull()))
+            .from(PIPELINE_EXECUTION)
+            .where(PE_PIPELINE_ID.eq(pipelineId))
+            .and(PE_STATUS.in(ACTIVE_STATUSES))
+            .fetchOne();
+    int active = counts.value1();
+    int notCancelling = counts.value2();
+    if (active == 0) {
+      return ActiveExecutionState.NONE;
+    }
+    return notCancelling > 0 ? ActiveExecutionState.ACTIVE : ActiveExecutionState.CANCELLING;
   }
 
   /** 취소 요청 결과 — 마감 후 상태({@code CANCELLED}=대기 중이라 즉시 마감, {@code RUNNING}=요청만 기록)와 첫 요청 시각. */
