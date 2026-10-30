@@ -230,7 +230,8 @@ class UserControllerTest {
   @Test
   void setUserRoles_withPermission_returnsNoContent() throws Exception {
     mockAuthentication("role:assign");
-    SetRolesRequest request = new SetRolesRequest(List.of(1L, 2L));
+    // 화면이 본 역할 목록(WD-440)도 서비스까지 그대로 넘어가야 한다.
+    SetRolesRequest request = new SetRolesRequest(List.of(1L, 2L), List.of(2L));
 
     mockMvc
         .perform(
@@ -240,7 +241,7 @@ class UserControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isNoContent());
 
-    verify(userService).setUserRoles(eq(2L), eq(List.of(1L, 2L)), any());
+    verify(userService).setUserRoles(eq(2L), eq(List.of(1L, 2L)), eq(List.of(2L)), any());
   }
 
   @Test

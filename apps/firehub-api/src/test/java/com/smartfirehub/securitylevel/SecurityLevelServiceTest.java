@@ -9,15 +9,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetAction;
+import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.access.LevelPolicy.AiPolicy;
 import com.smartfirehub.securitylevel.access.LevelPolicy.ExportPolicy;
 import com.smartfirehub.securitylevel.access.LevelPolicy.SharePolicy;
 import com.smartfirehub.securitylevel.dto.DeleteSecurityLevelRequest;
+import com.smartfirehub.securitylevel.dto.SecurityLevelBaseline;
 import com.smartfirehub.securitylevel.dto.SecurityLevelRequest;
 import com.smartfirehub.securitylevel.dto.SecurityLevelResponse;
 import com.smartfirehub.securitylevel.dto.SecurityLevelUsage;
@@ -110,6 +113,59 @@ class SecurityLevelServiceTest extends IntegrationTestBase {
   protected static SecurityLevelRequest req(String name) {
     return new SecurityLevelRequest(
         name, false, false, ExportPolicy.ALLOW, AiPolicy.ALL, SharePolicy.ALLOW, false, null);
+  }
+
+  /** WD-440: 옛 화면에서 이름만 바꿔 저장해도, 그사이 다른 관리자가 강화한 정책(내보내기·AI 차단)이 풀리지 않는다. */
+  @Test
+  void update_staleExpected_isRejectedAndKeepsTightenedPolicy() {
+    long target = levelId("민감");
+    LevelPolicy loaded = asTenant(() -> levelRepository.findById(target).orElseThrow());
+    SecurityLevelBaseline screenSaw =
+        new SecurityLevelBaseline(
+            loaded.name(),
+            loaded.allowlistRequired(),
+            loaded.adminBypass(),
+            loaded.exportPolicy(),
+            loaded.aiPolicy(),
+            loaded.sharePolicy(),
+            loaded.auditAccess());
+
+    // 다른 관리자가 내보내기·AI 전송을 차단으로 강화
+    asTenant(
+        () ->
+            service.update(
+                target,
+                new SecurityLevelRequest(
+                    loaded.name(),
+                    loaded.allowlistRequired(),
+                    loaded.adminBypass(),
+                    ExportPolicy.DENY,
+                    AiPolicy.DENY,
+                    loaded.sharePolicy(),
+                    loaded.auditAccess(),
+                    null,
+                    screenSaw),
+                actor));
+
+    // 옛 화면: 이름만 바꾸고 나머지는 처음 읽은 값 그대로 저장 → 거부
+    SecurityLevelRequest staleRename =
+        new SecurityLevelRequest(
+            "민감R",
+            loaded.allowlistRequired(),
+            loaded.adminBypass(),
+            loaded.exportPolicy(),
+            loaded.aiPolicy(),
+            loaded.sharePolicy(),
+            loaded.auditAccess(),
+            null,
+            screenSaw);
+    assertThatThrownBy(() -> asTenant(() -> service.update(target, staleRename, actor)))
+        .isInstanceOf(EditConflictException.class)
+        .hasMessage(SecurityLevelService.EDIT_CONFLICT_MESSAGE);
+    LevelPolicy now = asTenant(() -> levelRepository.findById(target).orElseThrow());
+    assertThat(now.name()).isEqualTo(loaded.name());
+    assertThat(now.exportPolicy()).isEqualTo(ExportPolicy.DENY);
+    assertThat(now.aiPolicy()).isEqualTo(AiPolicy.DENY);
   }
 
   /** 등급 상한 10(스펙 §4.1, WD-29) — 슬롯 롤이 10개뿐이라 11번째 등급은 PYTHON 에서 표현할 수 없다. */
@@ -291,8 +347,8 @@ class SecurityLevelServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * WD-198: 리포트(스마트 작업 실행)만 가리키는 등급도 「사용 중」이다 — 옮길 등급 없이 지우면 거부, 옮기면 리포트 등급도 함께 옮겨진다(지워서 등급
-   * 없음=열림이 되지 않고, 복합 FK 위반 500 도 나지 않는다).
+   * WD-198: 리포트(스마트 작업 실행)만 가리키는 등급도 「사용 중」이다 — 옮길 등급 없이 지우면 거부, 옮기면 리포트 등급도 함께 옮겨진다(지워서 등급 없음=열림이
+   * 되지 않고, 복합 FK 위반 500 도 나지 않는다).
    */
   @Test
   void delete_levelUsedOnlyByReport_requiresReassign_andMovesReport() {
@@ -320,10 +376,12 @@ class SecurityLevelServiceTest extends IntegrationTestBase {
               () ->
                   asTenant(
                       () ->
-                          service.delete(sensitive, new DeleteSecurityLevelRequest(null, null), actor)))
+                          service.delete(
+                              sensitive, new DeleteSecurityLevelRequest(null, null), actor)))
           .extracting(e -> ((CodedApiException) e).code())
           .isEqualTo("SECURITY_LEVEL_REASSIGN_REQUIRED");
-      asTenant(() -> service.delete(sensitive, new DeleteSecurityLevelRequest(secret, null), actor));
+      asTenant(
+          () -> service.delete(sensitive, new DeleteSecurityLevelRequest(secret, null), actor));
       Long moved =
           inTenantFixture(
               tenantId,

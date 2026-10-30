@@ -131,7 +131,7 @@ test.describe('사용자 관리 — user:read', () => {
     // 사용자 정의 역할은 고를 수 있고, 저장하면 그대로 PUT 된다.
     await page.getByRole('checkbox', { name: /EDITOR/ }).check();
     await page.getByRole('button', { name: '역할 저장' }).click();
-    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 3] });
+    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 3], expectedRoleIds: [1] });
   });
 
   test('비 ADMIN 은 대상이 가진 시스템 ADMIN 역할도 뗄 수 없다', async ({ authenticatedPage: page }) => {
@@ -196,7 +196,7 @@ test.describe('사용자 관리 — user:read', () => {
     await expect(page.getByText(ADMIN_ROLE_LOCK_HINT)).toHaveCount(0);
     await page.getByRole('checkbox', { name: /ADMIN/ }).check();
     await page.getByRole('button', { name: '역할 저장' }).click();
-    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 2] });
+    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 2], expectedRoleIds: [1] });
   });
 
   test('비 ADMIN 의 멤버 추가 창에서도 시스템 ADMIN 역할은 잠겨 있다', async ({ authenticatedPage: page }) => {
@@ -337,7 +337,7 @@ test.describe('역할 관리 — role:read', () => {
     await page.getByRole('checkbox', { name: 'DATASET_WRITE' }).uncheck();
     await expect(page.getByTestId('role-clearance-card').getByRole('button', { name: '저장' })).toBeVisible();
     await page.getByRole('button', { name: '권한 저장' }).click();
-    expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1, 3] });
+    expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1, 3], expectedPermissionIds: [1, 2] });
   });
 
   test('자신에게 없는 권한을 가진 역할은 권한 체크박스·저장이 모두 잠기고 이유가 보인다(WD-285)', async ({
@@ -393,7 +393,7 @@ test.describe('역할 관리 — role:read', () => {
     await gotoWithPermissions(page, '/admin/roles/3');
     await page.getByRole('checkbox', { name: 'DATASET_WRITE' }).uncheck();
     await page.getByRole('button', { name: '권한 저장' }).click();
-    expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1] });
+    expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1], expectedPermissionIds: [1, 2] });
     await expect(page.getByText('자신에게 없는 권한·등급을 가진 역할의 권한은 바꿀 수 없습니다')).toBeVisible();
     await expect(page.getByText('권한이 저장되었습니다.')).toHaveCount(0);
   });
@@ -411,7 +411,7 @@ test.describe('역할 관리 — role:read', () => {
     await expect(page.getByText('자신에게 없는 권한은 추가할 수 없습니다')).toHaveCount(0);
     await page.getByRole('checkbox', { name: 'ADMIN_ACCESS' }).check();
     await page.getByRole('button', { name: '권한 저장' }).click();
-    expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1, 2, 5] });
+    expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1, 2, 5], expectedPermissionIds: [1, 2] });
   });
 
   test('role:read 가 없으면 메뉴가 없고 직접 URL 은 권한 안내를 보인다', async ({ authenticatedPage: page }) => {

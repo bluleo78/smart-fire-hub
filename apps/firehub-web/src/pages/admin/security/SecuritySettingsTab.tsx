@@ -5,6 +5,7 @@ import { useId, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { securityLevelsApi } from '../../../api/security-levels';
+import { EditConflictDialog } from '../../../components/EditConflictDialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,7 +40,7 @@ import {
   useSecurityLevels,
   useSecurityLevelUsage,
 } from '../../../hooks/queries/useSecurityLevels';
-import { handleApiError } from '../../../lib/api-error';
+import { handleApiError, isEditConflict } from '../../../lib/api-error';
 import type {
   ReorderPreview,
   SecurityLevel,
@@ -118,16 +119,23 @@ export default function SecuritySettingsTab() {
   const invalidate = () =>
     qc.invalidateQueries({ queryKey: ['security-levels'] });
 
+  // 등급 저장이 편집 충돌(409 EDIT_CONFLICT)로 거부된 요청(WD-440) — 그사이 다른 관리자가 이 등급을 바꿨다. 덮어쓰기는 이 요청을 기준 없이 다시 보낸다.
+  const [conflict, setConflict] = useState<{ id: number; req: SecurityLevelRequest } | null>(null);
+  // 「다시 불러오기」 때 그 등급 행을 새로 그려(키 변경) 편집 중이던 폼을 버리고 최신 값으로 시작하게 한다.
+  const [rowResets, setRowResets] = useState<Record<number, number>>({});
+
   const save = useMutation({
     mutationFn: ({ id, req }: { id: number; req: SecurityLevelRequest }) =>
       securityLevelsApi.update(id, req),
     onSuccess: (_d, { id }) => {
       toast.success('보안 등급을 저장했습니다');
       setNameError(String(id));
+      setConflict(null);
       void invalidate();
     },
-    onError: (e, { id }) => {
-      if (isNameDuplicate(e)) setNameError(String(id), NAME_DUPLICATE_MESSAGE);
+    onError: (e, vars) => {
+      if (isEditConflict(e)) setConflict(vars);
+      else if (isNameDuplicate(e)) setNameError(String(vars.id), NAME_DUPLICATE_MESSAGE);
       else handleApiError(e, '보안 등급 저장에 실패했습니다.');
     },
   });
@@ -271,7 +279,7 @@ export default function SecuritySettingsTab() {
             if (!level) return null;
             return (
               <SecurityLevelRow
-                key={level.id}
+                key={`${level.id}-${rowResets[level.id] ?? 0}`}
                 level={level}
                 usage={usageById.get(level.id)}
                 isFirst={i === 0}
@@ -289,6 +297,26 @@ export default function SecuritySettingsTab() {
           })}
         </CardContent>
       </Card>
+
+      {/* 등급 저장 편집 충돌 안내(WD-440) — 다시 불러오기는 최신 값으로 그 행을 새로 그리고, 덮어쓰기는 기준 없이 다시 저장한다 */}
+      <EditConflictDialog
+        open={!!conflict}
+        onOpenChange={(o) => !o && setConflict(null)}
+        resourceLabel="보안 등급"
+        pending={save.isPending}
+        onReload={() => {
+          if (!conflict) return;
+          const { id } = conflict;
+          void invalidate().then(() => {
+            setRowResets((r) => ({ ...r, [id]: (r[id] ?? 0) + 1 }));
+            setConflict(null);
+          });
+        }}
+        onOverwrite={() => {
+          if (!conflict) return;
+          save.mutate({ id: conflict.id, req: { ...conflict.req, expected: undefined } });
+        }}
+      />
 
       {/* 허용 목록 켜기 확인 */}
       <AlertDialog

@@ -17,9 +17,36 @@ import { Switch } from '../../../components/ui/switch';
 import { toRequest } from '../../../lib/security-level';
 import type {
   SecurityLevel,
+  SecurityLevelBaseline,
   SecurityLevelRequest,
   SecurityLevelUsage,
 } from '../../../types/security-level';
+
+/** 화면이 바꿀 수 있는 정책 필드만 비교한다(WD-440 편집 기준 판정용). */
+function sameLevelValues(a: SecurityLevelRequest, b: SecurityLevelRequest): boolean {
+  return (
+    a.name === b.name &&
+    a.allowlistRequired === b.allowlistRequired &&
+    a.adminBypass === b.adminBypass &&
+    a.exportPolicy === b.exportPolicy &&
+    a.aiPolicy === b.aiPolicy &&
+    a.sharePolicy === b.sharePolicy &&
+    a.auditAccess === b.auditAccess
+  );
+}
+
+/** 편집 기준 값만 뽑는다 — 서버 SecurityLevelBaseline 과 같은 일곱 필드. */
+function toBaseline(r: SecurityLevelRequest): SecurityLevelBaseline {
+  return {
+    name: r.name,
+    allowlistRequired: r.allowlistRequired,
+    adminBypass: r.adminBypass,
+    exportPolicy: r.exportPolicy,
+    aiPolicy: r.aiPolicy,
+    sharePolicy: r.sharePolicy,
+    auditAccess: r.auditAccess,
+  };
+}
 
 interface Props {
   level: SecurityLevel;
@@ -103,6 +130,24 @@ export function SecurityLevelRow({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<SecurityLevelRequest>(() => toRequest(level));
+  // 편집 기준 값(WD-440) — 저장 때 함께 보내 그사이 다른 관리자가 바꿨으면 서버가 409 로 거부한다. 폼처럼 처음 읽은 값으로 시작한다.
+  const [baseline, setBaseline] = useState<SecurityLevelRequest>(() => toRequest(level));
+  const [prevLevel, setPrevLevel] = useState(level);
+  if (prevLevel !== level) {
+    // 서버 목록을 다시 읽어 등급 값이 바뀌었을 때 기준을 맞춘다(렌더 중 상태 조정 — effect 로 한 번 더 그리지 않게).
+    // - 새 값이 지금 폼과 같으면(방금 이 폼을 저장했다) 그 값이 새 기준이다.
+    // - 폼을 고치지 않았으면(폼 = 기준) 다른 관리자의 변경을 폼과 기준에 그대로 받아들인다.
+    // - 고치는 중이면 둘 다 그대로 둔다 — 저장할 때 옛 기준이 서버와 달라 충돌 안내가 뜬다.
+    setPrevLevel(level);
+    const next = toRequest(level);
+    const normalizedForm = { ...form, name: form.name.trim(), adminBypass: form.allowlistRequired && form.adminBypass };
+    if (sameLevelValues(next, normalizedForm)) {
+      setBaseline(next);
+    } else if (sameLevelValues(form, baseline)) {
+      setForm(next);
+      setBaseline(next);
+    }
+  }
   const set = <K extends keyof SecurityLevelRequest>(
     k: K,
     v: SecurityLevelRequest[K],
@@ -282,6 +327,7 @@ export function SecurityLevelRow({
                     ...form,
                     name: form.name.trim(),
                     adminBypass: form.allowlistRequired && form.adminBypass,
+                    expected: toBaseline(baseline),
                   },
                   level.allowlistRequired,
                 )

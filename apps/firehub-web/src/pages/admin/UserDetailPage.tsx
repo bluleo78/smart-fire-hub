@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 
 import { rolesApi } from '../../api/roles';
 import { usersApi } from '../../api/users';
+import { EditConflictDialog } from '../../components/EditConflictDialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,7 +31,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAuth } from '../../hooks/useAuth';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { handleApiError } from '../../lib/api-error';
+import { handleApiError, isEditConflict } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
 import type { ErrorResponse } from '../../types/auth';
 import type { RoleResponse } from '../../types/role';
@@ -65,6 +66,8 @@ export default function UserDetailPage() {
   const [isDeactivateDialogOpen, setIsDeactivateDialogOpen] = useState(false);
   // 역할 전체 해제 확인 다이얼로그 표시 상태 — "역할 저장" 시점에 선택된 역할이 0개일 때만 열린다 (#512)
   const [isClearRolesDialogOpen, setIsClearRolesDialogOpen] = useState(false);
+  // 역할 저장이 편집 충돌(409 EDIT_CONFLICT)로 거부됐는가 — 그사이 다른 관리자가 이 사용자의 역할을 바꿨다(WD-440)
+  const [isRolesConflictOpen, setIsRolesConflictOpen] = useState(false);
   // 접근성: 활성 상태 스위치의 라벨↔컨트롤 연결용 id (#432). 조기 return 이 아래에 있으므로 훅 구간에서 호출.
   const activeSwitchId = useId();
 
@@ -126,19 +129,34 @@ export default function UserDetailPage() {
     void handleSaveRoles();
   };
 
-  const handleSaveRoles = async () => {
+  /** 서버의 최신 사용자·역할로 화면을 다시 맞춘다 — 저장 뒤와 충돌 안내의 「다시 불러오기」가 쓴다(이때 내 체크 변경은 버린다). */
+  const reloadUserRoles = async (userId: number) => {
+    const { data: updatedUser } = await usersApi.getUserById(userId);
+    setUser(updatedUser);
+    const roleIds = updatedUser.roles.map(r => r.id);
+    setSelectedRoleIds(roleIds);
+    setInitialRoleIds(roleIds);
+  };
+
+  /**
+   * 역할 저장. 화면이 처음 읽은 역할 목록(initialRoleIds)을 기준으로 함께 보내, 그사이 다른 관리자가 역할을 바꿨으면 서버가 409 로 거부한다(WD-440) —
+   * 예전엔 옛 화면에서 다른 역할 하나를 더해 저장하면 회수된 ADMIN 이 경고 없이 다시 붙었다. overwrite 는 충돌 안내의 「내 변경으로 덮어쓰기」다.
+   */
+  const handleSaveRoles = async (overwrite = false) => {
     if (!user) return;
     setIsSavingRoles(true);
     try {
-      await usersApi.setUserRoles(user.id, { roleIds: selectedRoleIds });
-      const { data: updatedUser } = await usersApi.getUserById(user.id);
-      setUser(updatedUser);
-      const roleIds = updatedUser.roles.map(r => r.id);
-      setSelectedRoleIds(roleIds);
-      setInitialRoleIds(roleIds);
+      await usersApi.setUserRoles(user.id, {
+        roleIds: selectedRoleIds,
+        ...(overwrite ? {} : { expectedRoleIds: initialRoleIds }),
+      });
+      await reloadUserRoles(user.id);
+      setIsRolesConflictOpen(false);
       toast.success('역할이 저장되었습니다.');
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
+      if (isEditConflict(error)) {
+        setIsRolesConflictOpen(true);
+      } else if (axios.isAxiosError(error) && error.response?.data) {
         const errData = error.response.data as ErrorResponse;
         toast.error(errData.message || '역할 저장에 실패했습니다.');
       } else {
@@ -322,6 +340,21 @@ export default function UserDetailPage() {
       )}
 
       <Separator />
+
+      {/* 역할 저장 편집 충돌 안내(WD-440) — 다시 불러오기는 최신 역할로 체크를 되돌리고, 덮어쓰기는 기준 없이 다시 저장한다 */}
+      <EditConflictDialog
+        open={isRolesConflictOpen}
+        onOpenChange={setIsRolesConflictOpen}
+        resourceLabel="사용자의 역할"
+        pending={isSavingRoles}
+        onReload={() => {
+          if (!user) return;
+          void reloadUserRoles(user.id)
+            .then(() => setIsRolesConflictOpen(false))
+            .catch(() => toast.error('사용자 정보를 불러오는데 실패했습니다.'));
+        }}
+        onOverwrite={() => void handleSaveRoles(true)}
+      />
 
       {/* 역할 전체 해제 확인 AlertDialog — "역할 저장" 시점에 선택된 역할이 0개일 때만 표시된다 (#512) */}
       <AlertDialog open={isClearRolesDialogOpen} onOpenChange={setIsClearRolesDialogOpen}>

@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 
 import { permissionsApi } from '../../api/permissions';
 import { rolesApi } from '../../api/roles';
+import { EditConflictDialog } from '../../components/EditConflictDialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,6 +30,7 @@ import { Skeleton } from '../../components/ui/skeleton';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAuth } from '../../hooks/useAuth';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
+import { isEditConflict } from '../../lib/api-error';
 import type { UpdateRoleFormData } from '../../lib/validations/role';
 import { updateRoleSchema } from '../../lib/validations/role';
 import type { ErrorResponse } from '../../types/auth';
@@ -63,6 +65,11 @@ export default function RoleDetailPage() {
   // 전체 권한 목록. null = 읽지 않음(permission:read 없음) — 이때는 이 역할이 가진 권한만 읽기 전용으로 보인다.
   const [catalog, setCatalog] = useState<PermissionResponse[] | null>(null);
   const [selectedPermissionIds, setSelectedPermissionIds] = useState<number[]>([]);
+  // 권한 편집의 기준 목록(WD-440) — 불러올 때·권한을 저장할 때만 바뀐다. 이름 저장 등으로 role 을 다시 읽어도 바꾸지 않아야,
+  // 그사이 다른 관리자가 회수한 권한을 옛 체크 상태가 「기준과 같다」로 통과시켜 되살리지 않는다.
+  const [permissionBaselineIds, setPermissionBaselineIds] = useState<number[]>([]);
+  // 권한 저장이 편집 충돌(409 EDIT_CONFLICT)로 거부됐는가(WD-440)
+  const [isPermissionsConflictOpen, setIsPermissionsConflictOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingRole, setIsSavingRole] = useState(false);
   const [isSavingPermissions, setIsSavingPermissions] = useState(false);
@@ -110,6 +117,7 @@ export default function RoleDetailPage() {
         setRole(roleRes.data);
         setCatalog(permRes?.data ?? null);
         setSelectedPermissionIds(roleRes.data.permissions.map(p => p.id));
+        setPermissionBaselineIds(roleRes.data.permissions.map(p => p.id));
         form.reset({
           name: roleRes.data.name,
           description: roleRes.data.description ?? '',
@@ -218,17 +226,34 @@ export default function RoleDetailPage() {
     void handleSavePermissions();
   };
 
-  const handleSavePermissions = async () => {
+  /** 서버의 최신 역할·권한으로 체크를 다시 맞춘다 — 권한 저장 뒤와 충돌 안내의 「다시 불러오기」가 쓴다(내 체크 변경은 버린다). */
+  const reloadPermissions = async (roleId: number) => {
+    const { data: updatedRole } = await rolesApi.getRoleById(roleId);
+    setRole(updatedRole);
+    const ids = updatedRole.permissions.map(p => p.id);
+    setSelectedPermissionIds(ids);
+    setPermissionBaselineIds(ids);
+  };
+
+  /**
+   * 권한 저장. 기준 목록을 함께 보내 그사이 다른 관리자가 권한을 바꿨으면 서버가 409 로 거부한다(WD-440) — 예전엔 옛 화면에서 권한 하나를 더해
+   * 저장하면 회수된 권한이 경고 없이 되살아났다. overwrite 는 충돌 안내의 「내 변경으로 덮어쓰기」다.
+   */
+  const handleSavePermissions = async (overwrite = false) => {
     if (!role) return;
     setIsSavingPermissions(true);
     try {
-      await rolesApi.setPermissions(role.id, { permissionIds: selectedPermissionIds });
-      const { data: updatedRole } = await rolesApi.getRoleById(role.id);
-      setRole(updatedRole);
-      setSelectedPermissionIds(updatedRole.permissions.map(p => p.id));
+      await rolesApi.setPermissions(role.id, {
+        permissionIds: selectedPermissionIds,
+        ...(overwrite ? {} : { expectedPermissionIds: permissionBaselineIds }),
+      });
+      await reloadPermissions(role.id);
+      setIsPermissionsConflictOpen(false);
       toast.success('권한이 저장되었습니다.');
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
+      if (isEditConflict(error)) {
+        setIsPermissionsConflictOpen(true);
+      } else if (axios.isAxiosError(error) && error.response?.data) {
         const errData = error.response.data as ErrorResponse;
         toast.error(errData.message || '권한 저장에 실패했습니다.');
       } else {
@@ -313,6 +338,21 @@ export default function RoleDetailPage() {
       <Separator />
 
       {/* 권한 전체 해제 확인 AlertDialog — "권한 저장" 시점에 선택된 권한이 0개일 때만 표시된다 (#567) */}
+      {/* 권한 저장 편집 충돌 안내(WD-440) — 다시 불러오기는 최신 권한으로 체크를 되돌리고, 덮어쓰기는 기준 없이 다시 저장한다 */}
+      <EditConflictDialog
+        open={isPermissionsConflictOpen}
+        onOpenChange={setIsPermissionsConflictOpen}
+        resourceLabel="역할의 권한"
+        pending={isSavingPermissions}
+        onReload={() => {
+          if (!role) return;
+          void reloadPermissions(role.id)
+            .then(() => setIsPermissionsConflictOpen(false))
+            .catch(() => toast.error('역할 정보를 불러오는데 실패했습니다.'));
+        }}
+        onOverwrite={() => void handleSavePermissions(true)}
+      />
+
       <AlertDialog open={isClearPermissionsDialogOpen} onOpenChange={setIsClearPermissionsDialogOpen}>
         <AlertDialogContent size="sm">
           <AlertDialogHeader>

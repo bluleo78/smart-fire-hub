@@ -32,4 +32,6 @@ export interface UpdateRoleRequest {
 
 export interface SetPermissionsRequest {
   permissionIds: number[];
+  /** 화면이 편집을 시작할 때 읽은 권한 목록(WD-440) — 서버 값과 다르면 409 EDIT_CONFLICT. 빼면 비교하지 않는다(덮어쓰기). */
+  expectedPermissionIds?: number[];
 }

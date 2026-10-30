@@ -43,7 +43,12 @@ export interface SecurityLevelRequest {
   sharePolicy: SharePolicy;
   auditAccess: boolean;
   seedAllowlistFromViewers?: boolean;
+  /** 수정 때 편집을 시작하며 읽은 등급 값(WD-440) — 서버 값과 다르면 409 EDIT_CONFLICT. 빼면 비교하지 않는다(추가·덮어쓰기). */
+  expected?: SecurityLevelBaseline;
 }
+
+/** 등급 편집 기준 값 — 화면이 바꿀 수 있는 정책 필드만(WD-440). */
+export type SecurityLevelBaseline = Omit<SecurityLevelRequest, 'seedAllowlistFromViewers' | 'expected'>;
 
 export interface ReorderPreview {
   roles: { roleId: number; roleName: string; datasetDelta: number }[];

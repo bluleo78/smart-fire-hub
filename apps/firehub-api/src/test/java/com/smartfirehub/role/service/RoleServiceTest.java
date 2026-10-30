@@ -4,6 +4,7 @@ import static com.smartfirehub.jooq.Tables.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.role.dto.RoleDetailResponse;
 import com.smartfirehub.role.dto.RoleResponse;
 import com.smartfirehub.role.exception.RoleNotFoundException;
@@ -187,6 +188,37 @@ class RoleServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> roleService.setRolePermissions(adminRoleId, permissionIds, callerId))
         .isInstanceOf(SystemRoleModificationException.class)
         .hasMessageContaining("Cannot modify permissions of system role");
+  }
+
+  @Test
+  void setRolePermissions_staleExpected_isRejectedAndKeepsRevokedPermissionRevoked() {
+    // WD-440: 화면을 연 뒤 다른 관리자가 권한 하나를 회수했다 — 옛 화면이 본 목록(회수 전)으로 저장하면 409, 회수된 권한은 되살아나지 않는다.
+    makeCallerAdmin();
+    RoleResponse role = roleService.createRole("STALE_ROLE", "동시 편집", callerId);
+    List<Long> userPerms =
+        dsl.select(PERMISSION.ID)
+            .from(PERMISSION)
+            .where(PERMISSION.CATEGORY.eq("user"))
+            .orderBy(PERMISSION.ID)
+            .fetch(PERMISSION.ID);
+    assertThat(userPerms).hasSizeGreaterThanOrEqualTo(2);
+    roleService.setRolePermissions(role.id(), userPerms, callerId);
+    List<Long> screenSaw = userPerms; // 옛 화면이 본 목록
+
+    // 다른 관리자가 첫 권한을 회수
+    List<Long> afterRevoke = userPerms.subList(1, userPerms.size());
+    roleService.setRolePermissions(role.id(), afterRevoke, userPerms, callerId);
+
+    // 옛 화면: 본 목록 그대로 저장(회수된 권한 포함) → 거부
+    assertThatThrownBy(
+            () -> roleService.setRolePermissions(role.id(), screenSaw, screenSaw, callerId))
+        .isInstanceOf(EditConflictException.class)
+        .hasMessage(RoleService.PERMISSIONS_EDIT_CONFLICT_MESSAGE);
+    assertThat(roleService.getRoleById(role.id()).permissions()).hasSize(afterRevoke.size());
+
+    // 기준 없이(「내 변경으로 덮어쓰기」) 보내면 예전처럼 저장된다
+    roleService.setRolePermissions(role.id(), screenSaw, null, callerId);
+    assertThat(roleService.getRoleById(role.id()).permissions()).hasSize(userPerms.size());
   }
 
   /** 행위자를 기본 테넌트 ADMIN 으로 만든다(범위 가드 WD-116/WD-141 를 통과시키기 위해 — 테스트 트랜잭션과 함께 롤백). */
