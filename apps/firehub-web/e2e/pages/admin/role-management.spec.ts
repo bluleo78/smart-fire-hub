@@ -684,7 +684,7 @@ test.describe('역할 관리 페이지', () => {
       await pipelineRead.click();
       await mockApi(page, 'GET', '/api/v1/roles/3', saved);
       await page.getByRole('button', { name: '권한 저장' }).click();
-      expect((await saveCapture.waitForRequest()).payload).toEqual({ permissionIds: [1, 2, 3] });
+      expect((await saveCapture.waitForRequest()).payload).toEqual({ permissionIds: [1, 2, 3], expectedPermissionIds: [1, 2] });
       await expect(page.getByText('권한이 저장되었습니다.')).toBeVisible();
       await expect(pipelineRead).toBeChecked();
 

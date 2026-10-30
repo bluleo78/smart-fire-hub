@@ -7,6 +7,7 @@ import static com.smartfirehub.jooq.Tables.USER_ROLE;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.jooq.tables.records.RoleRecord;
 import com.smartfirehub.role.exception.RoleNotFoundException;
+import com.smartfirehub.role.service.RoleGrantGuard;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
@@ -30,6 +31,7 @@ public class RoleClearanceService {
   private final SecurityLevelRepository levelRepository;
   private final DatasetAccessGuard guard;
   private final SecurityAuditRecorder audit;
+  private final RoleGrantGuard roleGrantGuard;
 
   /** 역할 편집 화면용 현재 자격 조회. */
   @Transactional(readOnly = true)
@@ -47,6 +49,8 @@ public class RoleClearanceService {
   @Transactional(readOnly = true)
   public ClearancePreviewResponse preview(long roleId, long levelId, Clearance caller) {
     requireRole(roleId);
+    // 저장과 같은 범위 검사(WD-444) — 바꿀 수 없는 역할이면 영향 수를 보이기 전에 이유를 알린다(화면은 이 사유를 고르는 즉시 보인다).
+    roleGrantGuard.assertCanEditRoleClearance(caller, roleId);
     Map<Long, Integer> rankById = levelRepository.rankById();
     Integer newRoleRank = rankById.get(levelId);
     if (newRoleRank == null) {
@@ -94,6 +98,9 @@ public class RoleClearanceService {
           "CLEARANCE_ABOVE_OWN",
           "본인 열람 등급보다 높은 등급의 역할은 변경할 수 없고, 그보다 높은 등급을 역할에 지정할 수도 없습니다.");
     }
+    // 역할 자체가 호출자 범위 안이어야 한다(WD-444) — 등급 숫자만 보면 자기에게 없는 권한·볼 수 없는 허용 목록이 붙은 역할의 등급을 낮춰
+    // 그 보유자들의 열람을 줄일 수 있었다. 권한 변경·삭제와 같은 RoleGrantGuard 규칙을 쓴다.
+    roleGrantGuard.assertCanEditRoleClearance(caller, roleId);
     if (topLevelRoleCountAfter(roleId, levelId, levelRepository.rankById()) == 0) {
       throw new CodedApiException(
           HttpStatus.CONFLICT, "TOP_LEVEL_ROLE_REQUIRED", "최상위 등급을 열람할 수 있는 역할이 최소 1개 필요합니다.");

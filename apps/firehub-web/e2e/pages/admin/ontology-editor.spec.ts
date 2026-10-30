@@ -557,12 +557,18 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
   }) => {
     await openInspector(page, 4); // Damage.피해액(id=1)
 
-    // "속성 추가"를 지연 응답으로 눌러 addingProperty=true 상태를 유지한다.
+    // "속성 추가" 응답을 손으로 붙잡아 addingProperty=true 상태를 삭제가 끝날 때까지 유지한다(WD-467).
+    // 예전에는 500ms 지연에 기대어, 부하가 높아 삭제 확인까지 500ms 를 넘기면 추가가 먼저 끝나 버튼이 다시
+    // 켜지고 포커스가 정상적으로 그 버튼으로 가 테스트가 가끔 실패했다.
+    let releaseAdd: () => void = () => {};
+    const addReleased = new Promise<void>((resolve) => {
+      releaseAdd = resolve;
+    });
     await page.route(
       (url) => url.pathname === '/api/v1/ontology/1/entity-types/4/properties',
       async (route) => {
         if (route.request().method() !== 'POST') return route.fallback();
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await addReleased;
         return route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -581,12 +587,19 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
     await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
     await expect(page.getByTestId('property-row-1')).toHaveCount(0);
 
-    const activeElement = await page.evaluate(() => ({
-      tag: document.activeElement?.tagName,
-      text: document.activeElement?.textContent,
-    }));
-    expect(activeElement).toEqual({ tag: 'LABEL', text: '속성' });
+    // 포커스 복귀는 삭제 응답 처리 뒤 렌더에서 일어나므로 한 번 읽지 않고 맞을 때까지 기다린다.
+    await expect
+      .poll(() =>
+        page.evaluate(() => ({
+          tag: document.activeElement?.tagName,
+          text: document.activeElement?.textContent,
+        })),
+      )
+      .toEqual({ tag: 'LABEL', text: '속성' });
+    // 삭제가 끝날 때까지 추가가 진행 중이었음을 확인한 뒤에 추가 응답을 보낸다.
+    await expect(addButton).toBeDisabled();
 
+    releaseAdd();
     await expect(addButton).toBeEnabled();
   });
 

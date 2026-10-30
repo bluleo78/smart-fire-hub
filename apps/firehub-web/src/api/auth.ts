@@ -1,11 +1,13 @@
 import type { LoginRequest, SignupRequest, TokenResponse, UserResponse } from '../types/auth';
 import type { MembershipResponse } from '../types/tenant';
 import { client } from './client';
+import { withCrossTabRefreshLock } from './refresh-lock';
 
 export const authApi = {
   signup: (data: SignupRequest) => client.post<UserResponse>('/auth/signup', data),
   login: (data: LoginRequest) => client.post<TokenResponse>('/auth/login', data),
-  refresh: () => client.post<TokenResponse>('/auth/refresh'),
+  // 탭 사이 잠금 안에서 갱신한다(WD-438) — 여러 탭이 동시에 부팅해도 회전된 쿠키로 차례로 갱신한다.
+  refresh: () => withCrossTabRefreshLock(() => client.post<TokenResponse>('/auth/refresh')),
   logout: () => client.post<void>('/auth/logout'),
   me: () => client.get<UserResponse>('/auth/me'),
   /**

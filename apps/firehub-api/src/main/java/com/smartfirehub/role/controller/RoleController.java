@@ -71,7 +71,8 @@ public class RoleController {
       @PathVariable Long id,
       @Valid @RequestBody SetPermissionsRequest request) {
     Long callerId = (Long) authentication.getPrincipal();
-    roleService.setRolePermissions(id, request.permissionIds(), callerId);
+    roleService.setRolePermissions(
+        id, request.permissionIds(), request.expectedPermissionIds(), callerId);
     return ResponseEntity.noContent().build();
   }
 }

@@ -62,6 +62,9 @@ class RoleGrantScopeTest extends IntegrationTestBase {
       "자신에게 없는 권한·등급을 가진 역할의 권한은 바꿀 수 없습니다";
   private static final String PERMISSIONS_EDIT_ALLOWLIST_MESSAGE =
       "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할의 권한은 바꿀 수 없습니다";
+  private static final String CLEARANCE_SCOPE_MESSAGE = "자신에게 없는 권한·등급을 가진 역할은 열람 등급을 바꿀 수 없습니다";
+  private static final String CLEARANCE_ALLOWLIST_MESSAGE =
+      "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할은 열람 등급을 바꿀 수 없습니다";
 
   @Autowired private MockMvc mockMvc;
   @Autowired private DSLContext dsl;
@@ -481,8 +484,8 @@ class RoleGrantScopeTest extends IntegrationTestBase {
   }
 
   /**
-   * 범위 안의 역할(권한·등급 모두 자기 범위)에는 자기가 가진 권한을 추가하고, 어떤 권한이든 뺄 수 있다(과잉 차단 방지). 범위 안 역할의 권한은 모두 자기
-   * 것이므로 "뺄 수 있는 권한" 도 자기 범위 안이다.
+   * 범위 안의 역할(권한·등급 모두 자기 범위)에는 자기가 가진 권한을 추가하고, 어떤 권한이든 뺄 수 있다(과잉 차단 방지). 범위 안 역할의 권한은 모두 자기 것이므로
+   * "뺄 수 있는 권한" 도 자기 범위 안이다.
    */
   @Test
   void writer_canAddHeldPermission_andRemoveFromInScopeRole() throws Exception {
@@ -499,8 +502,8 @@ class RoleGrantScopeTest extends IntegrationTestBase {
   }
 
   /**
-   * 결함 재현(WD-285): role:write 위임자가 자기에게 없는 권한을 가진 역할의 권한을 빼면 403 — 삭제(WD-141)와 같은 범위 검사다. 수정 전에는 전부 빼기가
-   * 204 였다. 자기가 가진 권한만 추가하는 것도 범위 밖 역할이면 막힌다(이슈 기대 — 추가·제거 모두 403).
+   * 결함 재현(WD-285): role:write 위임자가 자기에게 없는 권한을 가진 역할의 권한을 빼면 403 — 삭제(WD-141)와 같은 범위 검사다. 수정 전에는 전부
+   * 빼기가 204 였다. 자기가 가진 권한만 추가하는 것도 범위 밖 역할이면 막힌다(이슈 기대 — 추가·제거 모두 403).
    */
   @Test
   void writer_cannotChangePermissionsOfRoleWithPermissionTheyLack() throws Exception {
@@ -541,6 +544,62 @@ class RoleGrantScopeTest extends IntegrationTestBase {
         .andExpect(jsonPath("$.message").value(PERMISSIONS_EDIT_ALLOWLIST_MESSAGE));
 
     assertThat(permissionCodesOf(listedRole)).containsExactly("dataset:read");
+  }
+
+  // ── WD-444: 역할 열람 등급 변경도 권한 변경·삭제와 같은 범위 검사를 받는다 ─────────────────
+
+  /**
+   * 결함 재현(WD-444): role:write 위임자가 자기에게 없는 권한(audit:read)을 가진 역할의 열람 등급을 낮추면 403. 수정 전에는 등급 숫자만 비교해
+   * 204 가 나고 등급이 「공개」로 바뀌었다 — 권한 빼기(WD-285)로 막힌 일을 등급 쪽으로 할 수 있었다. 영향 미리보기도 같은 이유로 거부한다.
+   */
+  @Test
+  void writer_cannotChangeClearanceOfRoleWithPermissionTheyLack() throws Exception {
+    long internal = levelIdOf("내부");
+    clearance(writer, lackingPermRole, levelIdOf("공개"), false)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ROLE_CLEARANCE_BEYOND_SCOPE"))
+        .andExpect(jsonPath("$.message").value(CLEARANCE_SCOPE_MESSAGE));
+    clearance(writer, lackingPermRole, levelIdOf("공개"), true)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ROLE_CLEARANCE_BEYOND_SCOPE"));
+
+    assertThat(clearanceLevelOf(lackingPermRole)).isEqualTo(internal);
+  }
+
+  /** 범위 안 역할(권한·등급·허용 목록 모두 자기 범위)의 열람 등급은 그대로 바꿀 수 있다(과잉 차단 방지). */
+  @Test
+  void writer_canChangeClearanceOfInScopeRole() throws Exception {
+    long open = levelIdOf("공개");
+    clearance(writer, inScopeRole, open, true).andExpect(status().isOk());
+    clearance(writer, inScopeRole, open, false).andExpect(status().isNoContent());
+
+    assertThat(clearanceLevelOf(inScopeRole)).isEqualTo(open);
+  }
+
+  /** 자기가 열람할 수 없는 기밀 데이터셋 허용 목록에 붙은 역할의 열람 등급도 바꿀 수 없다(권한 변경과 같은 허용 목록 검사). */
+  @Test
+  void writer_cannotChangeClearanceOfRoleOnAllowlistTheyCannotView() throws Exception {
+    setUpAllowlistScenario();
+    long role = createRole("ACL_CLEARANCE_WRITER", "기밀", "role:read", "role:write", "dataset:read");
+    long aclWriter = member("acl-clearance-writer");
+    replaceRoles(aclWriter, role);
+    long before = clearanceLevelOf(listedRole);
+
+    clearance(aclWriter, listedRole, levelIdOf("내부"), false)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ROLE_CLEARANCE_ALLOWLIST_BEYOND_SCOPE"))
+        .andExpect(jsonPath("$.message").value(CLEARANCE_ALLOWLIST_MESSAGE));
+
+    assertThat(clearanceLevelOf(listedRole)).isEqualTo(before);
+  }
+
+  /** 시스템 ADMIN 은 범위 밖 역할의 열람 등급도 바꿀 수 있다. */
+  @Test
+  void admin_canChangeClearanceOfAnyRole() throws Exception {
+    long open = levelIdOf("공개");
+    clearance(admin1, lackingPermRole, open, false).andExpect(status().isNoContent());
+
+    assertThat(clearanceLevelOf(lackingPermRole)).isEqualTo(open);
   }
 
   /** 범위 밖 역할이어도 아무것도 바꾸지 않는 저장은 막지 않는다 — 판정할 변경이 없다. */
@@ -778,8 +837,10 @@ class RoleGrantScopeTest extends IntegrationTestBase {
 
   // ── WD-277: 멤버 정지·제거도 "그 멤버의 역할 전부 회수" 라 같은 범위를 받는다 ─────────────────
 
-  private static final String MEMBER_ADMIN_MESSAGE = "시스템 ADMIN 역할을 가진 멤버는 ADMIN 만 정지·재활성하거나 제거할 수 있습니다";
-  private static final String MEMBER_SCOPE_MESSAGE = "자신에게 없는 권한·등급의 역할을 가진 멤버는 정지·재활성하거나 제거할 수 없습니다";
+  private static final String MEMBER_ADMIN_MESSAGE =
+      "시스템 ADMIN 역할을 가진 멤버는 ADMIN 만 정지·재활성하거나 제거할 수 있습니다";
+  private static final String MEMBER_SCOPE_MESSAGE =
+      "자신에게 없는 권한·등급의 역할을 가진 멤버는 정지·재활성하거나 제거할 수 없습니다";
 
   /** 결함 재현: user:write 위임자가 ADMIN 멤버를 정지하면 403, 멤버십은 ACTIVE 그대로. */
   @Test
@@ -843,8 +904,8 @@ class RoleGrantScopeTest extends IntegrationTestBase {
   }
 
   /**
-   * 기본 USER 역할은 범위 검사에서 뺀다 — 모든 멤버가 갖는 기본값이라, 검사하면 USER 권한을 일부 갖지 않은 위임자는 평범한 멤버도 정지·제거할 수 없다
-   * (멤버 추가가 USER 를 빼는 것과 같은 이유).
+   * 기본 USER 역할은 범위 검사에서 뺀다 — 모든 멤버가 갖는 기본값이라, 검사하면 USER 권한을 일부 갖지 않은 위임자는 평범한 멤버도 정지·제거할 수 없다 (멤버
+   * 추가가 USER 를 빼는 것과 같은 이유).
    */
   @Test
   void delegate_canSuspendAndRemoveMemberWithDefaultUserRole() throws Exception {
@@ -1140,6 +1201,36 @@ class RoleGrantScopeTest extends IntegrationTestBase {
         () ->
             dsl.fetch("select role_id from user_role where user_id = ? order by role_id", userId)
                 .getValues(0, Long.class));
+  }
+
+  /** 역할 열람 등급 저장(PUT) 또는 영향 미리보기(POST preview) 요청. */
+  private ResultActions clearance(long caller, long roleId, long levelId, boolean preview)
+      throws Exception {
+    String path = "/api/v1/roles/" + roleId + "/clearance" + (preview ? "/preview" : "");
+    var builder = preview ? post(path) : put(path);
+    return mockMvc.perform(
+        builder
+            .header("Authorization", token(caller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(Map.of("securityLevelId", levelId))));
+  }
+
+  /** 테넌트 A 의 보안 등급 id(이름으로). */
+  private long levelIdOf(String name) {
+    return inTenantFixture(
+        tenantA,
+        () ->
+            ((Number) dsl.fetchValue("select id from security_level where name = ?", name))
+                .longValue());
+  }
+
+  /** 역할의 현재 열람 등급 id. */
+  private long clearanceLevelOf(long roleId) {
+    return inTenantFixture(
+        tenantA,
+        () ->
+            ((Number) dsl.fetchValue("select max_security_level_id from role where id = ?", roleId))
+                .longValue());
   }
 
   private List<String> permissionCodesOf(long roleId) {

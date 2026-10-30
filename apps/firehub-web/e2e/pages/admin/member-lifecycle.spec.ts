@@ -217,7 +217,7 @@ test.describe('소유자 ADMIN 역할 잠금 (WD-282)', () => {
 
     await page.getByRole('checkbox', { name: /EDITOR/ }).check();
     await page.getByRole('button', { name: '역할 저장' }).click();
-    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 2, 3] });
+    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 2, 3], expectedRoleIds: [1, 2] });
   });
 
   test('ADMIN 이 이미 빠진 소유자에게는 ADMIN 을 다시 붙일 수 있다', async ({ authenticatedPage: page }) => {
@@ -231,7 +231,7 @@ test.describe('소유자 ADMIN 역할 잠금 (WD-282)', () => {
     await expect(page.getByText('워크스페이스 소유자의 ADMIN 역할은 뺄 수 없습니다')).toHaveCount(0);
     await adminBox.check();
     await page.getByRole('button', { name: '역할 저장' }).click();
-    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 2] });
+    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 2], expectedRoleIds: [1] });
   });
 
   test('소유자가 아닌 ADMIN 멤버의 ADMIN 체크는 잠기지 않는다(대조군)', async ({ authenticatedPage: page }) => {

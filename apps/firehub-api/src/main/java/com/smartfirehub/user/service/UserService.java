@@ -4,6 +4,7 @@ import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.role.dto.RoleResponse;
@@ -137,8 +138,8 @@ public class UserService {
 
   /**
    * 정지·제거 공통 잠금 방지 규칙. 서버가 최종 판정한다(웹의 비활성 버튼은 안내일 뿐). 순서: 자기 자신(400) → OWNER(409) → 마지막 활성
-   * ADMIN(409) → 호출자 범위(403, WD-277 — {@link #assertMemberWithinCallerScope}). 서버 가드인 이유: AI 에이전트가 자기 계정을 비활성화한
-   * 사고(#585)와 마지막 관리자 잠금(#146) 재발 방지.
+   * ADMIN(409) → 호출자 범위(403, WD-277 — {@link #assertMemberWithinCallerScope}). 서버 가드인 이유: AI 에이전트가
+   * 자기 계정을 비활성화한 사고(#585)와 마지막 관리자 잠금(#146) 재발 방지.
    */
   private void assertRemovable(
       Long userId, Long callerId, TenantMembership membership, long tenantId) {
@@ -155,8 +156,8 @@ public class UserService {
   }
 
   /**
-   * 정지·재활성·제거 대상의 역할이 호출자 범위 안인지(WD-277). 정지·제거는 대상 역할 전부의 회수, 재활성은 그 역할들을 되살리는 것과 같아 역할 변경과 같은
-   * 범위를 받는다 — {@code user:write} 위임자가 역할 변경으로는 막힌 ADMIN 무력화를 정지·제거로 우회했다. 기본 USER 역할은 빼는데, 멤버 추가와 같은
+   * 정지·재활성·제거 대상의 역할이 호출자 범위 안인지(WD-277). 정지·제거는 대상 역할 전부의 회수, 재활성은 그 역할들을 되살리는 것과 같아 역할 변경과 같은 범위를
+   * 받는다 — {@code user:write} 위임자가 역할 변경으로는 막힌 ADMIN 무력화를 정지·제거로 우회했다. 기본 USER 역할은 빼는데, 멤버 추가와 같은
    * 이유다: 모든 멤버의 기본값이라 검사하면 USER 권한을 일부 갖지 않은 위임자는 평범한 멤버도 정지·제거할 수 없다.
    */
   private void assertMemberWithinCallerScope(Long userId, Long callerId) {
@@ -455,11 +456,38 @@ public class UserService {
    */
   @Transactional
   public void setUserRoles(Long userId, List<Long> roleIds, Long callerId) {
+    setUserRoles(userId, roleIds, null, callerId);
+  }
+
+  /** 사용자 역할 동시 편집 충돌 안내(WD-440) — 화면 문구는 웹 EditConflictDialog 가 그리고, 이 문구는 기준 없이 부르는 쪽에 보인다. */
+  public static final String ROLES_EDIT_CONFLICT_MESSAGE =
+      "다른 관리자가 이 사용자의 역할을 바꿨습니다. 새로 불러온 뒤 다시 저장하세요.";
+
+  /**
+   * 화면이 본 역할 목록({@code expectedRoleIds})을 함께 받아, 서버의 지금 역할과 다르면 409 EDIT_CONFLICT 로 거부한다(WD-440).
+   *
+   * <p>역할 저장은 목록 전체 교체라, 새로고침하지 않은 화면에서 다른 역할 하나를 더해 저장하면 그사이 다른 관리자가 회수한 ADMIN 이 경고 없이 되살아났다. 비교는
+   * 아래 테넌트 잠금을 잡은 뒤 읽은 값으로 해, 비교와 교체 사이에 다른 변경이 끼어들 틈이 없다. 나머지 규칙은 {@link #setUserRoles(Long, List,
+   * Long)} 문서와 같다.
+   */
+  @Transactional
+  public void setUserRoles(
+      Long userId, List<Long> roleIds, List<Long> expectedRoleIds, Long callerId) {
     long tenantId = TenantContext.require("역할 변경");
     userRepository.acquireMemberAdminGuardLock(tenantId);
     // 남의 테넌트 사용자에게 역할을 부여/회수할 수 없다. 존재 확인을 멤버십 확인으로 대체한다.
     TenantMembership membership = requireTenantMember(userId);
     List<Long> requested = roleIds == null ? List.of() : roleIds;
+    // 동시 편집 확인(WD-440) — 잠금 뒤에 읽은 지금 역할과 화면이 본 역할이 다르면 다른 판정보다 먼저 거부한다.
+    if (expectedRoleIds != null) {
+      Set<Long> current =
+          roleRepository.findByUserId(userId).stream()
+              .map(RoleResponse::id)
+              .collect(Collectors.toSet());
+      if (!current.equals(new HashSet<>(expectedRoleIds))) {
+        throw new EditConflictException(ROLES_EDIT_CONFLICT_MESSAGE);
+      }
+    }
 
     // 이번 변경이 대상의 ADMIN 을 빼는가 — 지금 ADMIN 이고, 요청 목록에 이 테넌트 ADMIN id 가 없을 때.
     Long adminRoleId = roleRepository.findByName("ADMIN").map(RoleResponse::id).orElse(null);

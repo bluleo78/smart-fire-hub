@@ -2,6 +2,7 @@ package com.smartfirehub.role.service;
 
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.permission.dto.PermissionResponse;
 import com.smartfirehub.permission.repository.PermissionRepository;
 import com.smartfirehub.role.dto.RoleDetailResponse;
@@ -103,8 +104,7 @@ public class RoleService {
     // WD-284: 시스템 역할(ADMIN·USER)은 이름뿐 아니라 설명도 바꿀 수 없다 — 화면은 두 칸을 모두 잠그는데 서버가 설명을 받아 주면, 위임자가
     // ADMIN 설명을 「사용하지 않는 옛 역할」로 바꿔 관리자를 속일 수 있다.
     if (role.isSystem()) {
-      throw new SystemRoleModificationException(
-          "시스템 역할의 이름·설명은 바꿀 수 없습니다: " + role.name());
+      throw new SystemRoleModificationException("시스템 역할의 이름·설명은 바꿀 수 없습니다: " + role.name());
     }
 
     // WD-284: role:write 만 위임받은 사용자가 자기보다 높은 역할의 이름·설명을 바꿔 관리자를 속이지 못하게 — 삭제와 같은 범위 검사를 쓰기 전에 한다.
@@ -178,12 +178,29 @@ public class RoleService {
    * 모두 없으면 감사를 남기지 않는다(멤버십 정지/재활성과 같은 무변경 규칙).
    *
    * <p>권한 범위(WD-116): 새로 <b>추가</b>되는 권한은 호출자가 가진 것이어야 한다({@link RoleGrantGuard}) — {@code
-   * role:write} 만 가진 사용자가 자기 역할에 아무 권한이나 붙여 권한을 올리던 결함의 수정이다. 그리고 권한이 실제로 바뀌면(추가든 제거든) 역할 자체가
-   * 삭제와 같은 범위 안이어야 한다(WD-285) — 범위 밖 상위 역할의 권한을 전부 빼 보유자를 무력화하던 결함의 수정이다. 판정은 쓰기 <b>전에</b> 한다 —
-   * 쓰고 나서 보면 호출자가 자기 역할에 방금 붙인 권한이 "이미 가진 권한" 으로, 다 뺀 역할이 "빈 권한(범위 안)" 으로 보여 검사가 무력해진다.
+   * role:write} 만 가진 사용자가 자기 역할에 아무 권한이나 붙여 권한을 올리던 결함의 수정이다. 그리고 권한이 실제로 바뀌면(추가든 제거든) 역할 자체가 삭제와
+   * 같은 범위 안이어야 한다(WD-285) — 범위 밖 상위 역할의 권한을 전부 빼 보유자를 무력화하던 결함의 수정이다. 판정은 쓰기 <b>전에</b> 한다 — 쓰고 나서
+   * 보면 호출자가 자기 역할에 방금 붙인 권한이 "이미 가진 권한" 으로, 다 뺀 역할이 "빈 권한(범위 안)" 으로 보여 검사가 무력해진다.
    */
   @Transactional
   public void setRolePermissions(Long roleId, List<Long> permissionIds, Long callerId) {
+    setRolePermissions(roleId, permissionIds, null, callerId);
+  }
+
+  /** 역할 권한 동시 편집 충돌 안내(WD-440). */
+  public static final String PERMISSIONS_EDIT_CONFLICT_MESSAGE =
+      "다른 관리자가 이 역할의 권한을 바꿨습니다. 새로 불러온 뒤 다시 저장하세요.";
+
+  /**
+   * 화면이 본 권한 목록({@code expectedPermissionIds})을 함께 받아, 서버의 지금 권한과 다르면 409 EDIT_CONFLICT 로
+   * 거부한다(WD-440).
+   *
+   * <p>권한 저장은 목록 전체 교체라, 새로고침하지 않은 화면에서 다른 권한 하나를 더해 저장하면 그사이 회수한 권한이 경고 없이 되살아났다. 비교는 역할 행 잠금을 잡은
+   * 뒤 읽은 값으로 한다. 나머지 규칙은 {@link #setRolePermissions(Long, List, Long)} 문서와 같다.
+   */
+  @Transactional
+  public void setRolePermissions(
+      Long roleId, List<Long> permissionIds, List<Long> expectedPermissionIds, Long callerId) {
     // 동시 교체가 같은 "변경 전"을 읽어 감사 차이가 틀어지지 않게 역할 단위로 직렬화한다.
     roleRepository.lockById(roleId);
     RoleResponse role =
@@ -197,6 +214,12 @@ public class RoleService {
     }
 
     TreeSet<String> before = permissionCodes(roleId);
+    // 동시 편집 확인(WD-440) — 잠금 뒤에 읽은 지금 권한과 화면이 본 권한이 다르면 범위 판정보다 먼저 거부한다.
+    if (expectedPermissionIds != null
+        && !before.equals(
+            new TreeSet<>(permissionRepository.findCodesByIds(expectedPermissionIds)))) {
+      throw new EditConflictException(PERMISSIONS_EDIT_CONFLICT_MESSAGE);
+    }
     Set<String> requested = new HashSet<>(permissionRepository.findCodesByIds(permissionIds));
     Set<String> adding = new HashSet<>(requested);
     adding.removeAll(before);

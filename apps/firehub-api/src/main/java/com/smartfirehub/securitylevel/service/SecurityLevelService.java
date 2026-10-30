@@ -2,6 +2,7 @@ package com.smartfirehub.securitylevel.service;
 
 import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -35,6 +36,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class SecurityLevelService {
+
+  /** 등급 동시 편집 충돌 안내(WD-440). */
+  public static final String EDIT_CONFLICT_MESSAGE = "다른 관리자가 이 보안 등급을 바꿨습니다. 새로 불러온 뒤 다시 저장하세요.";
 
   /** 하향 사유 최소 길이(스펙 §4.7). DatasetSecurityService 도 같은 값을 쓴다. */
   public static final int MIN_DOWNGRADE_REASON = 10;
@@ -132,7 +136,13 @@ public class SecurityLevelService {
 
   @Transactional
   public SecurityLevelResponse update(long id, SecurityLevelRequest req, long actor) {
+    // 등급 정의 잠금을 잡고 읽은 값으로 비교해야 비교와 저장 사이에 다른 관리자의 수정이 끼어들지 않는다(WD-440).
+    repository.lockTenantLevelDefinitions(TenantContext.require("등급 정의 변경 잠금"));
     LevelPolicy before = require(id);
+    // 옛 화면의 저장이 그사이 다른 관리자가 강화한 정책(내보내기·AI 전송 차단 등)을 경고 없이 되돌리지 않게, 화면이 본 값과 지금 값이 다르면 거부한다.
+    if (req.expected() != null && !req.expected().matches(before)) {
+      throw new EditConflictException(EDIT_CONFLICT_MESSAGE);
+    }
     rejectDuplicateName(req.name(), id);
     withNameDuplicateAs409(
         () -> {

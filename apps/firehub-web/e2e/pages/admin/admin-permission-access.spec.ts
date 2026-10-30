@@ -131,7 +131,7 @@ test.describe('사용자 관리 — user:read', () => {
     // 사용자 정의 역할은 고를 수 있고, 저장하면 그대로 PUT 된다.
     await page.getByRole('checkbox', { name: /EDITOR/ }).check();
     await page.getByRole('button', { name: '역할 저장' }).click();
-    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 3] });
+    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 3], expectedRoleIds: [1] });
   });
 
   test('비 ADMIN 은 대상이 가진 시스템 ADMIN 역할도 뗄 수 없다', async ({ authenticatedPage: page }) => {
@@ -196,7 +196,7 @@ test.describe('사용자 관리 — user:read', () => {
     await expect(page.getByText(ADMIN_ROLE_LOCK_HINT)).toHaveCount(0);
     await page.getByRole('checkbox', { name: /ADMIN/ }).check();
     await page.getByRole('button', { name: '역할 저장' }).click();
-    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 2] });
+    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 2], expectedRoleIds: [1] });
   });
 
   test('비 ADMIN 의 멤버 추가 창에서도 시스템 ADMIN 역할은 잠겨 있다', async ({ authenticatedPage: page }) => {
@@ -337,7 +337,7 @@ test.describe('역할 관리 — role:read', () => {
     await page.getByRole('checkbox', { name: 'DATASET_WRITE' }).uncheck();
     await expect(page.getByTestId('role-clearance-card').getByRole('button', { name: '저장' })).toBeVisible();
     await page.getByRole('button', { name: '권한 저장' }).click();
-    expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1, 3] });
+    expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1, 3], expectedPermissionIds: [1, 2] });
   });
 
   test('자신에게 없는 권한을 가진 역할은 권한 체크박스·저장이 모두 잠기고 이유가 보인다(WD-285)', async ({
@@ -369,6 +369,82 @@ test.describe('역할 관리 — role:read', () => {
     expect(put.requests).toHaveLength(0);
   });
 
+  test('자신에게 없는 권한을 가진 역할은 열람 등급 라디오도 잠기고 이유가 보이며 저장 버튼이 없다(WD-444)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 역할 3 은 DATASET_WRITE 를 갖는데 호출자에게는 없다 — 서버는 이 역할의 등급 변경을 403 ROLE_CLEARANCE_BEYOND_SCOPE 로 막는다.
+    // 권한 목록(permission:read) 없이 role:write 만 있어도 등급 카드는 편집 대상이라, 판정은 역할이 가진 권한만으로 한다.
+    await grant(page, ['role:read', 'role:write', 'DATASET_READ']);
+    await setupRoleDetailMocks(page, 3, false);
+    await setupSecurityLevelMocks(page);
+    await mockApi(page, 'GET', '/api/v1/roles/3/clearance', { roleId: 3, securityLevelId: 2, userCount: 14, fixed: false });
+    const preview = await mockApi(page, 'POST', '/api/v1/roles/3/clearance/preview', {}, { capture: true });
+    const put = await mockApi(page, 'PUT', '/api/v1/roles/3/clearance', {}, { capture: true });
+
+    await gotoWithPermissions(page, '/admin/roles/3');
+    const card = page.getByTestId('role-clearance-card');
+    const hint = card.getByText('자신에게 없는 권한을 가진 역할이라 열람 등급을 바꿀 수 없습니다');
+    await expect(hint).toBeVisible();
+    const group = card.getByRole('radiogroup', { name: '데이터 열람 등급' });
+    await expect(group).toHaveAttribute('aria-describedby', (await hint.getAttribute('id'))!);
+    for (const name of ['공개', '내부', '민감', '기밀']) {
+      await expect(card.getByRole('radio', { name })).toBeDisabled();
+    }
+    await expect(card.getByRole('radio', { name: '내부' })).toBeChecked();
+    await expect(card.getByRole('button', { name: '저장' })).toHaveCount(0);
+    await nextFrame(page);
+    expect(preview.requests).toHaveLength(0);
+    expect(put.requests).toHaveLength(0);
+  });
+
+  test('범위 안 역할의 열람 등급은 그대로 고르고 저장할 수 있다(WD-444 대조군)', async ({ authenticatedPage: page }) => {
+    // 역할 3 의 권한(DATASET_READ·DATASET_WRITE)을 호출자가 모두 가진다 — 잠금 문구 없이 저장된다.
+    await grant(page, ['role:read', 'role:write', 'DATASET_READ', 'DATASET_WRITE']);
+    await setupRoleDetailMocks(page, 3, false);
+    await setupSecurityLevelMocks(page);
+    await mockApi(page, 'GET', '/api/v1/roles/3/clearance', { roleId: 3, securityLevelId: 2, userCount: 14, fixed: false });
+    await mockApi(page, 'POST', '/api/v1/roles/3/clearance/preview', {
+      callerLostDatasetCount: 0,
+      topLevelRoleCountAfter: 1,
+      roleUserCount: 14,
+    });
+    const put = await mockApi(page, 'PUT', '/api/v1/roles/3/clearance', {}, { capture: true });
+
+    await gotoWithPermissions(page, '/admin/roles/3');
+    const card = page.getByTestId('role-clearance-card');
+    await expect(card.getByRole('radio', { name: '공개' })).toBeEnabled();
+    await expect(card.getByText('열람 등급을 바꿀 수 없습니다', { exact: false })).toHaveCount(0);
+    await card.getByRole('radio', { name: '공개' }).check();
+    await card.getByRole('button', { name: '저장' }).click();
+    expect((await put.waitForRequest()).payload).toEqual({ securityLevelId: 1 });
+  });
+
+  test('허용 목록 등 화면이 모르는 이유로 범위 밖이면 등급을 고르는 즉시 서버 사유가 보이고 저장할 수 없다(WD-444)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 권한으로는 범위 안이라 화면은 잠그지 않지만, 호출자가 볼 수 없는 데이터셋 허용 목록이 붙은 역할이라 서버가 미리보기부터 403 을 돌려준다.
+    await grant(page, ['role:read', 'role:write', 'DATASET_READ', 'DATASET_WRITE']);
+    await setupRoleDetailMocks(page, 3, false);
+    await setupSecurityLevelMocks(page);
+    await mockApi(page, 'GET', '/api/v1/roles/3/clearance', { roleId: 3, securityLevelId: 2, userCount: 14, fixed: false });
+    const message = '자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할은 열람 등급을 바꿀 수 없습니다';
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/roles/3/clearance/preview',
+      { status: 403, error: 'Forbidden', code: 'ROLE_CLEARANCE_ALLOWLIST_BEYOND_SCOPE', message },
+      { status: 403 },
+    );
+    const put = await mockApi(page, 'PUT', '/api/v1/roles/3/clearance', {}, { capture: true });
+
+    await gotoWithPermissions(page, '/admin/roles/3');
+    const card = page.getByTestId('role-clearance-card');
+    await card.getByRole('radio', { name: '공개' }).check();
+    await expect(card.getByText(message)).toBeVisible();
+    await expect(card.getByRole('button', { name: '저장' })).toBeDisabled();
+    expect(put.requests).toHaveLength(0);
+  });
+
   test('등급 등 화면이 모르는 이유로 서버가 권한 변경을 거부하면 그 사유를 토스트로 보인다(WD-285)', async ({
     authenticatedPage: page,
   }) => {
@@ -393,7 +469,7 @@ test.describe('역할 관리 — role:read', () => {
     await gotoWithPermissions(page, '/admin/roles/3');
     await page.getByRole('checkbox', { name: 'DATASET_WRITE' }).uncheck();
     await page.getByRole('button', { name: '권한 저장' }).click();
-    expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1] });
+    expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1], expectedPermissionIds: [1, 2] });
     await expect(page.getByText('자신에게 없는 권한·등급을 가진 역할의 권한은 바꿀 수 없습니다')).toBeVisible();
     await expect(page.getByText('권한이 저장되었습니다.')).toHaveCount(0);
   });
@@ -411,7 +487,7 @@ test.describe('역할 관리 — role:read', () => {
     await expect(page.getByText('자신에게 없는 권한은 추가할 수 없습니다')).toHaveCount(0);
     await page.getByRole('checkbox', { name: 'ADMIN_ACCESS' }).check();
     await page.getByRole('button', { name: '권한 저장' }).click();
-    expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1, 2, 5] });
+    expect((await put.waitForRequest()).payload).toEqual({ permissionIds: [1, 2, 5], expectedPermissionIds: [1, 2] });
   });
 
   test('role:read 가 없으면 메뉴가 없고 직접 URL 은 권한 안내를 보인다', async ({ authenticatedPage: page }) => {

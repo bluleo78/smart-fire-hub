@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
@@ -164,8 +165,8 @@ class UserServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 프로필 이메일은 연락처일 뿐 아이디가 아니므로 다른 계정과 같아도 저장된다 (WD-271). 유일성을 걸면 아무 멤버나 남의 주소를 먼저 저장해 그 주소 주인의
-   * 계정 생성을 막을 수 있었다.
+   * 프로필 이메일은 연락처일 뿐 아이디가 아니므로 다른 계정과 같아도 저장된다 (WD-271). 유일성을 걸면 아무 멤버나 남의 주소를 먼저 저장해 그 주소 주인의 계정
+   * 생성을 막을 수 있었다.
    */
   @Test
   void updateProfile_emailUsedByAnotherAccount_isSaved() {
@@ -212,6 +213,32 @@ class UserServiceTest extends IntegrationTestBase {
 
     UserDetailResponse detail = userService.getUserById(testUserId);
     assertThat(detail.roles()).hasSize(2);
+  }
+
+  @Test
+  void setUserRoles_staleExpected_isRejectedAndRevokedAdminStaysRevoked() {
+    // WD-440: 화면을 연 뒤 다른 관리자가 ADMIN 을 회수했다 — 옛 화면이 본 목록(ADMIN 포함)을 기준으로 저장하면 409, ADMIN 은 되살아나지
+    // 않는다.
+    Long adminRoleId =
+        dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("ADMIN")).fetchOne(ROLE.ID);
+    Long userRoleId = dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("USER")).fetchOne(ROLE.ID);
+    TestUsers.grantRole(dsl, fixtureTransactionTemplate, callerId, DEFAULT_TEST_TENANT_ID, "ADMIN");
+    userService.setUserRoles(testUserId, List.of(adminRoleId, userRoleId), callerId);
+    List<Long> screenSaw = List.of(adminRoleId, userRoleId);
+
+    // 다른 관리자의 ADMIN 회수(그 화면은 최신 목록을 기준으로 보낸다)
+    userService.setUserRoles(testUserId, List.of(userRoleId), screenSaw, callerId);
+
+    // 옛 화면: ADMIN 이 체크된 채 저장 → 거부
+    assertThatThrownBy(() -> userService.setUserRoles(testUserId, screenSaw, screenSaw, callerId))
+        .isInstanceOf(EditConflictException.class)
+        .hasMessage(UserService.ROLES_EDIT_CONFLICT_MESSAGE);
+    assertThat(userService.getUserById(testUserId).roles())
+        .extracting(r -> r.name())
+        .containsExactly("USER");
+
+    // 최신 목록을 기준으로 보내면 저장된다(순서 무관)
+    userService.setUserRoles(testUserId, List.of(userRoleId), List.of(userRoleId), callerId);
   }
 
   @Test
@@ -289,7 +316,8 @@ class UserServiceTest extends IntegrationTestBase {
         .set(USER_ROLE.ROLE_ID, adminRoleId)
         .execute();
 
-    // 비활성 ADMIN 계정 활성화 — 잠금 규칙에 걸리지 않고 성공해야 함. ADMIN 멤버 재활성은 ADMIN 만 할 수 있으므로(WD-277) 호출자도 ADMIN 으로 둔다.
+    // 비활성 ADMIN 계정 활성화 — 잠금 규칙에 걸리지 않고 성공해야 함. ADMIN 멤버 재활성은 ADMIN 만 할 수 있으므로(WD-277) 호출자도 ADMIN 으로
+    // 둔다.
     TestUsers.grantRole(dsl, fixtureTransactionTemplate, callerId, DEFAULT_TEST_TENANT_ID, "ADMIN");
     userService.setUserActive(adminUserId, true, callerId);
 
@@ -328,7 +356,8 @@ class UserServiceTest extends IntegrationTestBase {
         .set(USER_ROLE.ROLE_ID, adminRoleId)
         .execute();
 
-    // 2명의 활성 ADMIN 중 한 명 비활성화 — 예외 없이 성공해야 함. ADMIN 멤버 정지는 ADMIN 만 할 수 있으므로(WD-277) 호출자도 ADMIN 으로 둔다.
+    // 2명의 활성 ADMIN 중 한 명 비활성화 — 예외 없이 성공해야 함. ADMIN 멤버 정지는 ADMIN 만 할 수 있으므로(WD-277) 호출자도 ADMIN 으로
+    // 둔다.
     TestUsers.grantRole(dsl, fixtureTransactionTemplate, callerId, DEFAULT_TEST_TENANT_ID, "ADMIN");
     userService.setUserActive(testUserId, false, callerId);
 

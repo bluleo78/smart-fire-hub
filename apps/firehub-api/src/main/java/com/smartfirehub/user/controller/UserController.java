@@ -121,7 +121,7 @@ public class UserController {
       @PathVariable Long id,
       @Valid @RequestBody SetRolesRequest request) {
     Long callerId = (Long) authentication.getPrincipal();
-    userService.setUserRoles(id, request.roleIds(), callerId);
+    userService.setUserRoles(id, request.roleIds(), request.expectedRoleIds(), callerId);
     return ResponseEntity.noContent().build();
   }
 
