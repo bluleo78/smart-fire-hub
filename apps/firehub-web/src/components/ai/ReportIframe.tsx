@@ -2,13 +2,17 @@
  * ReportIframe — HTML 리포트를 안전하게 렌더링하는 공통 iframe 컴포넌트.
  *
  * 세 곳에서 재사용: 실행 상세 페이지, 리포트 모달, ReportViewerPage.
- * sandbox="allow-same-origin"으로 스크립트 실행을 차단하되 인쇄 접근은 허용한다.
+ * sandbox 에 allow-scripts 를 주지 않아 리포트 안의 스크립트는 실행되지 않는다.
+ * allow-same-origin 은 부모가 contentWindow.print()·문서 높이를 읽기 위해, allow-modals 는 그 print() 가
+ * 인쇄 창을 띄우기 위해 필요하다 — Chromium 은 allow-modals 가 없으면 sandbox 문서의 print() 를 조용히 무시한다(WD-343).
+ * 스크립트가 막혀 있어 리포트 스스로 alert·print 를 부를 수는 없다.
  *
  * autoHeight가 true이면 iframe load 후 내부 문서 높이에 맞춰 자동 조절한다.
  * false(기본)이면 부모 컨테이너의 h-full을 따른다 (모달, ReportViewerPage 등).
  */
 import { forwardRef, useCallback, useImperativeHandle, useRef } from 'react';
 
+import { REPORT_IFRAME_SANDBOX } from '@/hooks/useReportActions';
 import { cn } from '@/lib/utils';
 
 interface ReportIframeProps {
@@ -41,7 +45,7 @@ const ReportIframe = forwardRef<HTMLIFrameElement, ReportIframeProps>(
       <iframe
         ref={innerRef}
         srcDoc={html}
-        sandbox="allow-same-origin"
+        sandbox={REPORT_IFRAME_SANDBOX}
         title="리포트"
         className={cn('w-full border-0', autoHeight ? '' : 'h-full', className)}
         onLoad={handleLoad}

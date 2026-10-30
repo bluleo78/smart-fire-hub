@@ -74,4 +74,38 @@ test.describe('리포트 뷰어 페이지', () => {
     // 잘못된 파라미터이므로 리포트 조회 API가 호출되지 않아야 한다
     expect(apiCalled).toBe(false);
   });
+  // 회귀 가드(WD-343): 리포트 iframe 은 스크립트를 막는 sandbox 지만 allow-modals 가 있어야 부모가 부른 print() 가
+  // 무시되지 않는다. 수정 전에는 콘솔에 「Ignored call to 'print()'… 'allow-modals' keyword is not set」만 찍히고 인쇄 창이 뜨지 않았다.
+  test('인쇄를 누르면 리포트 iframe 의 print() 가 무시되지 않는다 (WD-343)', async ({ authenticatedPage: page }) => {
+    const ignored: string[] = [];
+    page.on('console', (m) => {
+      if (m.text().includes("Ignored call to 'print()'")) ignored.push(m.text());
+    });
+    await setupReportViewerMocks(page, 1, 1, '<html><body><h1>리포트 본문</h1></body></html>');
+
+    await page.goto('/ai-insights/jobs/1/executions/1/report');
+    const frame = page.locator('iframe[title="리포트"]');
+    await expect(frame.contentFrame().getByRole('heading', { name: '리포트 본문' })).toBeVisible();
+    // 스크립트는 계속 막고(allow-scripts 없음) 인쇄만 허용한다
+    const sandbox = await frame.getAttribute('sandbox');
+    expect(sandbox?.split(' ').sort()).toEqual(['allow-modals', 'allow-same-origin']);
+
+    // iframe 문서의 print 호출을 기록한다(헤드리스에서도 실제 인쇄 창 대신 호출 여부로 확인)
+    await frame.evaluate((el: HTMLIFrameElement) => {
+      const win = el.contentWindow as Window & { __printed?: number };
+      const original = win.print.bind(win);
+      win.__printed = 0;
+      // 실제 print 를 먼저 불러야 sandbox 가 막을 때 콘솔 경고가 남는다 — 그 뒤 횟수를 센다
+      win.print = () => {
+        original();
+        win.__printed = (win.__printed ?? 0) + 1;
+      };
+    });
+    await page.getByRole('button', { name: '인쇄' }).click();
+
+    await expect
+      .poll(() => frame.evaluate((el: HTMLIFrameElement) => (el.contentWindow as Window & { __printed?: number }).__printed))
+      .toBe(1);
+    expect(ignored).toEqual([]);
+  });
 });

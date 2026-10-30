@@ -201,5 +201,47 @@ test.describe('AI 알림 패널', () => {
 
       await expect(page).toHaveURL(/\/ai-insights\/jobs\/1\/executions\/3$/);
     });
+
+    /**
+     * WD-343: HTML 리포트가 없는 실행(마크다운 폴백)의 리포트 창에서 「인쇄」는 앱 화면 전체(window.print)가 아니라
+     * 리포트 본문만 담은 임시 문서를 인쇄한다. WD-350 으로 창 안 마우스 클릭이 동작하므로 마우스로 누른다.
+     */
+    test('마크다운 폴백 리포트의 인쇄는 앱 화면이 아니라 본문만 인쇄한다 (WD-343)', async ({ authenticatedPage: page }) => {
+      // 모든 프레임의 print 를 가로채 기록한다(실제 인쇄 창은 띄우지 않는다) — 최상위 창이면 앱 화면 인쇄,
+      // 하위 프레임(인쇄용 임시 iframe)이면 그 문서 본문을 최상위 창에 남긴다. addInitScript 는 srcdoc 프레임에도 실행된다.
+      await page.addInitScript(() => {
+        type Rec = Window & { __windowPrinted?: number; __printDocs?: string[] };
+        const top = window.top as Rec;
+        if (window === window.top) {
+          top.__windowPrinted = 0;
+          top.__printDocs = [];
+        }
+        window.print = () => {
+          if (window === window.top) {
+            top.__windowPrinted! += 1;
+          } else {
+            const el = window.frameElement;
+            top.__printDocs?.push(`${el?.getAttribute('sandbox')}|${document.body?.innerHTML ?? ''}`);
+          }
+        };
+      });
+      const modal = await openReportModal(page);
+
+      await modal.getByRole('button', { name: '인쇄' }).click();
+
+      type PrintRec = Window & { __windowPrinted?: number; __printDocs?: string[] };
+      await expect.poll(() => page.evaluate(() => (window as PrintRec).__printDocs ?? [])).toHaveLength(1);
+      const { docs, windowPrinted } = await page.evaluate(() => {
+        const w = window as PrintRec;
+        return { docs: w.__printDocs ?? [], windowPrinted: w.__windowPrinted };
+      });
+      const [doc] = docs;
+      // 스크립트 차단 sandbox + 리포트 본문만(사이드바·알림 패널 문구 없음)
+      expect(doc.startsWith('allow-same-origin allow-modals|')).toBe(true);
+      expect(doc).toContain('이번 주 화재 출동 12건');
+      expect(doc).not.toContain('AI 인사이트 알림');
+      expect(windowPrinted).toBe(0);
+      await expect(modal).toBeVisible();
+    });
   });
 });
