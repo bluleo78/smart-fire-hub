@@ -72,6 +72,8 @@ class TriggerEventCleanupServiceTest extends IntegrationTestBase {
   void cleanup() {
     // pipeline 을 지우면 트리거·이벤트가 FK CASCADE 로 사라진다. RLS 대상이라 트랜잭션 안에서.
     inTenantTx(() -> dsl.deleteFrom(PIPELINE).where(PIPELINE.ID.eq(pipelineId)).execute());
+    // 파이프라인·트리거 생성 감사(WD-462)가 이 사용자를 행위자로 남긴다 — audit_log.user_id 는 "user" FK 라 먼저 지운다(RLS 대상).
+    inTenantTx(() -> dsl.deleteFrom(AUDIT_LOG).where(AUDIT_LOG.USER_ID.eq(testUserId)).execute());
     dsl.deleteFrom(USER).where(USER.ID.eq(testUserId)).execute();
   }
 

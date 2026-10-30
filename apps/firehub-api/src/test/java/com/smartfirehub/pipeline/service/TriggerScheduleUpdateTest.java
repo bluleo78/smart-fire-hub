@@ -82,6 +82,18 @@ class TriggerScheduleUpdateTest extends IntegrationTestBase {
     }
     pipelineService.deletePipelineUnchecked(pipelineId);
     awaitSecurityAudit();
+    // 파이프라인·트리거 변경 감사(WD-462) — 행위자 행은 "user" FK 라 사용자보다 먼저, 행위자 없는 정리 경로(deleteTrigger(id))가 남긴
+    // system 행은 이 테스트 트리거 것만 지운다(RLS 대상이라 테넌트 트랜잭션 안에서).
+    inTenantFixture(
+        () -> {
+          dsl.execute("delete from audit_log where user_id = ?", userId);
+          for (Long id : createdTriggerIds) {
+            dsl.execute(
+                "delete from audit_log where user_id is null and resource = 'pipeline_trigger'"
+                    + " and resource_id = ?",
+                String.valueOf(id));
+          }
+        });
     TenantRlsTestSupport.deleteUser(dsl, userId);
   }
 

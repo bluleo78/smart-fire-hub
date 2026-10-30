@@ -277,6 +277,8 @@ function roleChangeSummaryParts(log: AuditLogResponse): string[] {
  *   resourceId=대상 사용자 ID)도 사용 중이다(WD-117).
  * - security_level(SecurityLevelService — 등급 정의 생성·수정·삭제·순서·기본 등급),
  *   query_result(QueryResultExportService — 쿼리 결과 서버 내보내기, resourceId=실행 기록 ID)도 사용 중이다.
+ * - pipeline_trigger(TriggerService — 트리거 생성·수정·켜기/끄기·삭제, resourceId=트리거 ID, metadata.pipelineId 로 소속 파이프라인)도
+ *   사용 중이다(WD-462).
  * - 신규 action/resource 추가 시 apps/firehub-api 에서 `auditLogService.log(`·`audit.record(` 호출부 전수를 대조한다.
  *   운영자 평면 감사(tenant·TENANT_*·플랫폼 계정 조치)는 tenant_id 가 NULL 이라 이 화면(테넌트 감사)에는 나오지 않는다.
  */
@@ -285,7 +287,10 @@ const RESOURCES = [
   { value: 'user', label: '사용자' },
   { value: 'role', label: '역할' },
   { value: 'dataset', label: '데이터셋' },
+  // PipelineService(생성·수정·삭제, WD-462)·PipelineExecutionService(실행·취소) — resourceId=파이프라인 ID
   { value: 'pipeline', label: '파이프라인' },
+  // TriggerService(트리거 생성·수정·켜기/끄기 STATUS_CHANGE·삭제, WD-462) — 테이블 이름 관례, resourceId=트리거 ID
+  { value: 'pipeline_trigger', label: '트리거' },
   { value: 'data_import', label: '데이터 임포트' },
   { value: 'api_connection', label: 'API 연결' },
   { value: 'system', label: '시스템' },

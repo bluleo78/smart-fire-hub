@@ -14,6 +14,7 @@ import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -247,21 +248,30 @@ public class PipelineExecutionService {
           userId);
     }
 
-    // 파이프라인 실행 감사 로그 (#60/#92)
+    // 파이프라인 실행 감사 로그 (#60/#92). 실행 번호를 설명에 넣고(취소 기록과 같은 「(실행 #N)」 형식) 무엇이 실행을 시작했는지를
+    // metadata 에 남긴다(WD-462) — 트리거 실행은 트리거를 만든 사람 이름으로 남으므로, 이 값이 없으면 사람이 누른 실행과 예약·연쇄 실행이
+    // 감사 화면에서 똑같아 보인다. triggeredBy 는 실행 기록(pipeline_execution.triggered_by)에 저장한 값 그대로다
+    // (MANUAL 또는 트리거 유형 SCHEDULE·API·PIPELINE_CHAIN·WEBHOOK·DATASET_CHANGE). triggerId 는 수동 실행이면 null.
     String pipelineNameForLog = pipelineRepository.findNameById(pipelineId).orElse("Pipeline");
-    String usernameForLog = userRepository.findById(userId).map(u -> u.username()).orElse(null);
+    // audit_log.username 은 NOT NULL 이라 다른 감사 호출부처럼 "unknown" 으로 채운다.
+    String usernameForLog =
+        userRepository.findById(userId).map(u -> u.username()).orElse("unknown");
+    Map<String, Object> executeMetadata = new LinkedHashMap<>();
+    executeMetadata.put("executionId", executionId);
+    executeMetadata.put("triggeredBy", triggeredBy);
+    executeMetadata.put("triggerId", triggerId);
     auditLogService.log(
         userId,
         usernameForLog,
         "EXECUTE",
         "pipeline",
         String.valueOf(pipelineId),
-        "파이프라인 실행: " + pipelineNameForLog,
+        "파이프라인 실행: " + pipelineNameForLog + " (실행 #" + executionId + ")",
         null,
         null,
         "SUCCESS",
         null,
-        null);
+        executeMetadata);
 
     return executionId;
   }
@@ -295,7 +305,8 @@ public class PipelineExecutionService {
 
     // 실행 감사 로그와 짝을 맞춘다 — 누가 언제 어떤 실행을 멈췄는지 감사 화면에서 보이게.
     String pipelineNameForLog = pipelineRepository.findNameById(ownerPipelineId).orElse("Pipeline");
-    String usernameForLog = userRepository.findById(userId).map(u -> u.username()).orElse(null);
+    String usernameForLog =
+        userRepository.findById(userId).map(u -> u.username()).orElse("unknown");
     auditLogService.log(
         userId,
         usernameForLog,
