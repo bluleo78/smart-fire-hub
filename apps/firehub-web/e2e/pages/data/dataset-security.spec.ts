@@ -275,6 +275,108 @@ test.describe('데이터셋 상세 — 보안', () => {
     await expect(dialog).toHaveCount(0);
   });
 
+  /**
+   * WD-292 — 열람은 「열람 등급 ≥ 데이터셋 등급」 + 허용 목록이다. 다이얼로그 설명은 등급 조건을 밝히고, 후보마다 열람 등급을 보이며,
+   * 등급이 모자란 대상을 고르면 경고한다(추가는 막지 않는다 — 등급을 올리기 전 미리 등록 허용).
+   */
+  test('허용 목록 추가 — 등급 부족 대상은 경고, 충분한 대상은 경고 없음, 추가는 허용', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setup(page, '기밀');
+    await mockApi(page, 'GET', '/api/v1/datasets/1/access-grants', [
+      { id: 11, type: 'ROLE', subjectId: 5, subjectName: '인사팀', grantedByName: '양동희', grantedAt: '2026-10-07T10:00:00',
+        subjectClearance: { levelId: 4, levelName: '기밀', rank: 4 }, sufficientClearance: true },
+    ]);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/access-grants/candidates', {
+      users: [
+        { id: 99, name: '김OO', email: 'kim1@example.com', clearance: { levelId: 2, levelName: '내부', rank: 2 }, sufficientClearance: false },
+        { id: 100, name: '박OO', email: 'park@example.com', clearance: null, sufficientClearance: false },
+      ],
+      roles: [
+        { id: 3, name: 'USER', clearance: { levelId: 2, levelName: '내부', rank: 2 }, sufficientClearance: false },
+        { id: 5, name: '인사팀', clearance: { levelId: 4, levelName: '기밀', rank: 4 }, sufficientClearance: true },
+      ],
+    });
+    const post = await mockApi(
+      page, 'POST', '/api/v1/datasets/1/access-grants',
+      { id: 41, type: 'ROLE', subjectId: 3, subjectName: 'USER', grantedByName: '관리자', grantedAt: '2026-10-08T10:00:00',
+        subjectClearance: { levelId: 2, levelName: '내부', rank: 2 }, sufficientClearance: false },
+      { capture: true },
+    );
+    await page.goto('/data/datasets/1?tab=security');
+    await page.getByRole('button', { name: '추가', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '허용 목록 추가' });
+    // 설명은 허용 목록만으로 볼 수 있다고 말하지 않고 등급 조건을 데이터셋 등급 이름과 함께 밝힌다
+    await expect(dialog).toContainText(
+      '이 데이터셋을 볼 수 있게 할 역할 또는 사용자를 추가합니다. 열람 등급이 데이터셋 등급(기밀) 이상인 대상만 실제로 볼 수 있습니다.',
+    );
+    await expect(dialog).not.toContainText('이 데이터셋을 볼 수 있는 역할 또는 사용자를 추가합니다.');
+    const warning = dialog.getByTestId('grant-insufficient-clearance');
+
+    // 등급 충분한 역할 — 후보에 등급이 보이고 경고 없음
+    await dialog.getByRole('combobox', { name: '대상' }).click();
+    await expect(page.getByRole('option', { name: 'USER · 열람 등급 내부 (등급 부족)' })).toBeVisible();
+    await page.getByRole('option', { name: '인사팀 · 열람 등급 기밀' }).click();
+    await expect(warning).toHaveCount(0);
+
+    // 등급 부족 역할 — 경고 문장(현재 등급·데이터셋 등급·고칠 방법)
+    await dialog.getByRole('combobox', { name: '대상' }).click();
+    await page.getByRole('option', { name: 'USER · 열람 등급 내부 (등급 부족)' }).click();
+    await expect(warning).toHaveText(
+      'USER 역할의 열람 등급은 「내부」라 허용 목록에 있어도 이 역할만으로는 이 데이터셋(「기밀」)을 볼 수 없습니다. 역할의 열람 등급을 「기밀」 이상으로 올려야 합니다.',
+    );
+
+    // 사용자 유형 — 유효 열람 등급이 부족한 사용자, 역할이 없는 사용자 각각의 경고
+    await dialog.getByRole('combobox', { name: '유형' }).click();
+    await page.getByRole('option', { name: '사용자' }).click();
+    await expect(warning).toHaveCount(0); // 유형을 바꾸면 대상 선택이 비워지고 경고도 사라진다
+    await dialog.getByRole('combobox', { name: '대상' }).click();
+    await page.getByRole('option', { name: '김OO (kim1@example.com) · 열람 등급 내부 (등급 부족)' }).click();
+    await expect(warning).toHaveText(
+      '김OO 님의 열람 등급은 「내부」라 허용 목록에 있어도 이 데이터셋(「기밀」)을 볼 수 없습니다. 보유 역할 중 하나의 열람 등급을 「기밀」 이상으로 올려야 합니다.',
+    );
+    await dialog.getByRole('combobox', { name: '대상' }).click();
+    await page.getByRole('option', { name: '박OO (park@example.com) · 열람 등급 없음 (등급 부족)' }).click();
+    await expect(warning).toContainText('박OO 님은 열람 등급이 있는 역할이 없어');
+
+    // 경고가 있어도 추가는 막지 않는다 — 역할로 돌아가 등급 부족 역할을 추가하면 roleId 로 POST
+    await dialog.getByRole('combobox', { name: '유형' }).click();
+    await page.getByRole('option', { name: '역할' }).click();
+    await dialog.getByRole('combobox', { name: '대상' }).click();
+    await page.getByRole('option', { name: 'USER · 열람 등급 내부 (등급 부족)' }).click();
+    await expect(dialog.getByRole('button', { name: '추가' })).toBeEnabled();
+    await dialog.getByRole('button', { name: '추가' }).click();
+    expect((await post.waitForRequest()).payload).toEqual({ roleId: 3 });
+    await expect(dialog).toHaveCount(0);
+  });
+
+  /** WD-292 — 대상 열람 등급이 데이터셋 등급보다 낮은 허용 항목은 표에 글자 배지로 「볼 수 없음」을 표시한다(색만으로 알리지 않는다). */
+  test('허용 목록 표 — 등급 부족 항목에만 「등급 부족 — 볼 수 없음」 배지', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setup(page, '기밀');
+    await mockApi(page, 'GET', '/api/v1/datasets/1/access-grants', [
+      { id: 11, type: 'ROLE', subjectId: 5, subjectName: '인사팀', grantedByName: '양동희', grantedAt: '2026-10-07T10:00:00',
+        subjectClearance: { levelId: 4, levelName: '기밀', rank: 4 }, sufficientClearance: true },
+      { id: 12, type: 'ROLE', subjectId: 3, subjectName: 'USER', grantedByName: '양동희', grantedAt: '2026-10-07T10:01:00',
+        subjectClearance: { levelId: 2, levelName: '내부', rank: 2 }, sufficientClearance: false },
+      { id: 13, type: 'USER', subjectId: 99, subjectName: '김OO', grantedByName: '양동희', grantedAt: '2026-10-07T10:02:00',
+        subjectClearance: { levelId: 2, levelName: '내부', rank: 2 }, sufficientClearance: false },
+      // 이전 서버 응답(필드 없음)은 판단하지 않는다 — 배지 없음
+      { id: 14, type: 'USER', subjectId: 98, subjectName: '이OO', grantedByName: '양동희', grantedAt: '2026-10-07T10:03:00' },
+    ]);
+    await page.goto('/data/datasets/1?tab=security');
+    const rows = page.getByRole('row');
+    const badge = '등급 부족 — 볼 수 없음';
+    await expect(rows.filter({ hasText: 'USER' }).filter({ hasText: '역할' })).toContainText(badge);
+    await expect(rows.filter({ hasText: '김OO' })).toContainText(badge);
+    await expect(rows.filter({ hasText: '인사팀' })).not.toContainText(badge);
+    await expect(rows.filter({ hasText: '이OO' })).not.toContainText(badge);
+    await expect(page.getByText(badge)).toHaveCount(2);
+    // 보충 설명 — 역할 항목은 「이 역할만으로는」(같은 사람이 등급 높은 다른 역할로 볼 수 있다)
+    await expect(rows.filter({ hasText: '김OO' }).getByText(badge)).toHaveAttribute(
+      'title', '열람 등급(내부)이 데이터셋 등급(기밀)보다 낮아 볼 수 없습니다.',
+    );
+  });
+
   test('문서형 데이터셋에도 보안 탭이 있다', async ({ authenticatedPage: page }) => {
     await setup(page, '내부');
     await mockApi(page, 'GET', '/api/v1/datasets/1', createDatasetDetail({ id: 1, storageType: 'DOCUMENT', securityLevel: createLevelSummary('내부') }));
