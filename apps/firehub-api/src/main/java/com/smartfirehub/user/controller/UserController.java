@@ -81,6 +81,9 @@ public class UserController {
       @RequestParam(required = false) String search,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size) {
+    // WD-293: 감사 로그·데이터셋 목록과 같이 page ≥ 0, 1 ≤ size ≤ 100 으로 보정한다(상한 없음·size=0·음수 오류 방지).
+    page = Math.max(0, page);
+    size = Math.max(1, Math.min(size, 100));
     PageResponse<UserListResponse> users = userService.getUsers(search, page, size);
     return ResponseEntity.ok(users);
   }

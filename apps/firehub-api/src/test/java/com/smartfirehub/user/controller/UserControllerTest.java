@@ -311,6 +311,29 @@ class UserControllerTest {
     verify(userService).setUserActive(eq(2L), eq(false), any());
   }
 
+  /** WD-293: 사용자 목록도 page ≥ 0, 1 ≤ size ≤ 100 으로 보정해 서비스에 넘긴다(상한 없음·size=0·음수 오류 방지). */
+  @Test
+  void getUsers_clampsPageAndSize() throws Exception {
+    mockAuthentication("user:read");
+    when(userService.getUsers(any(), anyInt(), anyInt()))
+        .thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
+
+    mockMvc
+        .perform(
+            get("/api/v1/users").param("size", "100000").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk());
+    mockMvc
+        .perform(
+            get("/api/v1/users")
+                .param("page", "-1")
+                .param("size", "0")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk());
+
+    verify(userService).getUsers(null, 0, 100);
+    verify(userService).getUsers(null, 0, 1);
+  }
+
   @Test
   void getUsers_unauthenticated_returnsUnauthorized() throws Exception {
     mockMvc.perform(get("/api/v1/users")).andExpect(status().isUnauthorized());

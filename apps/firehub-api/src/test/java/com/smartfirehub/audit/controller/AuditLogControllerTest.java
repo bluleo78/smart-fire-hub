@@ -1,5 +1,7 @@
 package com.smartfirehub.audit.controller;
 
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -87,6 +89,47 @@ class AuditLogControllerTest {
         .andExpect(jsonPath("$.content[0].resource").value("dataset"))
         .andExpect(jsonPath("$.content[0].result").value("SUCCESS"))
         .andExpect(jsonPath("$.totalElements").value(1));
+  }
+
+  /**
+   * WD-293: page·size 는 다른 목록과 같이 page ≥ 0, 1 ≤ size ≤ 100 으로 보정해 서비스에 넘긴다 — 상한이 없으면 감사 로그 전체를 한 응답으로
+   * 돌려주고, size=0 은 totalPages 가 int 최댓값, 음수는 엉뚱한 「저장할 수 없는 값」 400 이었다.
+   */
+  @Test
+  void getAuditLogs_clampsPageAndSize() throws Exception {
+    mockAuthentication("audit:read");
+    PageResponse<AuditLogResponse> empty = new PageResponse<>(List.of(), 0, 100, 0, 0);
+    when(auditLogService.getAuditLogs(VIEWER, null, null, null, null, null, null, null, 0, 100))
+        .thenReturn(empty);
+    when(auditLogService.getAuditLogs(VIEWER, null, null, null, null, null, null, null, 0, 1))
+        .thenReturn(new PageResponse<>(List.of(), 0, 1, 0, 0));
+
+    mockMvc
+        .perform(
+            get("/api/v1/admin/audit-logs")
+                .param("size", "100000")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.size").value(100));
+    mockMvc
+        .perform(
+            get("/api/v1/admin/audit-logs")
+                .param("page", "-1")
+                .param("size", "0")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.size").value(1));
+    mockMvc
+        .perform(
+            get("/api/v1/admin/audit-logs")
+                .param("size", "-1")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk());
+
+    verify(auditLogService)
+        .getAuditLogs(VIEWER, null, null, null, null, null, null, null, 0, 100);
+    verify(auditLogService, times(2))
+        .getAuditLogs(VIEWER, null, null, null, null, null, null, null, 0, 1);
   }
 
   @Test
