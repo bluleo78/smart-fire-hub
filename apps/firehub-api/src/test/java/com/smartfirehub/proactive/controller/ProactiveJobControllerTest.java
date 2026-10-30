@@ -176,13 +176,15 @@ class ProactiveJobControllerTest {
         .andExpect(status().isBadRequest());
   }
 
+  /** 수정은 200 + 새 수정 시각 — 웹이 다음 저장의 낙관적 잠금 기준으로 쓴다(WD-364, 예전에는 204). */
   @Test
-  void updateJob_withNullConfig_returnsNoContent() throws Exception {
+  void updateJob_withNullConfig_returnsSavedUpdatedAt() throws Exception {
     mockAuth("proactive:write");
     // config=null 분기 — ProactiveConfigParser를 타지 않는 경로
     UpdateProactiveJobRequest req =
         new UpdateProactiveJobRequest("new-name", null, null, null, null, null, null, null);
-    doNothing().when(proactiveJobService).updateJob(eq(10L), any(), eq(1L));
+    when(proactiveJobService.updateJob(eq(10L), any(), eq(1L)))
+        .thenReturn(LocalDateTime.of(2026, 10, 30, 10, 0, 0, 123_456_000));
 
     mockMvc
         .perform(
@@ -190,14 +192,15 @@ class ProactiveJobControllerTest {
                 .header("Authorization", "Bearer valid-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
-        .andExpect(status().isNoContent());
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.updatedAt").value("2026-10-30T10:00:00.123456"));
   }
 
   /** [WD-136] 화면이 보내는 {@code templateId:null, clearTemplate:true} JSON 이 해제 플래그로 서비스에 전달된다. */
   @Test
   void updateJob_clearTemplateJson_passesFlagToService() throws Exception {
     mockAuth("proactive:write");
-    doNothing().when(proactiveJobService).updateJob(eq(10L), any(), eq(1L));
+    when(proactiveJobService.updateJob(eq(10L), any(), eq(1L))).thenReturn(LocalDateTime.now());
 
     mockMvc
         .perform(
@@ -205,7 +208,7 @@ class ProactiveJobControllerTest {
                 .header("Authorization", "Bearer valid-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"name\":\"n\",\"templateId\":null,\"clearTemplate\":true}"))
-        .andExpect(status().isNoContent());
+        .andExpect(status().isOk());
 
     ArgumentCaptor<UpdateProactiveJobRequest> captor =
         ArgumentCaptor.forClass(UpdateProactiveJobRequest.class);
@@ -215,13 +218,13 @@ class ProactiveJobControllerTest {
   }
 
   @Test
-  void updateJob_withConfig_returnsNoContent() throws Exception {
+  void updateJob_withConfig_returnsOk() throws Exception {
     mockAuth("proactive:write");
     Map<String, Object> config = new HashMap<>();
     config.put("channels", List.of());
     UpdateProactiveJobRequest req =
         new UpdateProactiveJobRequest(null, null, null, null, null, null, null, config);
-    doNothing().when(proactiveJobService).updateJob(eq(10L), any(), eq(1L));
+    when(proactiveJobService.updateJob(eq(10L), any(), eq(1L))).thenReturn(LocalDateTime.now());
 
     mockMvc
         .perform(
@@ -229,7 +232,7 @@ class ProactiveJobControllerTest {
                 .header("Authorization", "Bearer valid-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
-        .andExpect(status().isNoContent());
+        .andExpect(status().isOk());
   }
 
   @Test

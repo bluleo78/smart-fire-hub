@@ -149,12 +149,14 @@ class ReportTemplateControllerTest {
         .andExpect(jsonPath("$.id").value(5));
   }
 
+  /** 수정은 200 + 새 수정 시각 — 웹이 다음 저장의 낙관적 잠금 기준으로 쓴다(WD-364, 예전에는 204). */
   @Test
-  void updateTemplate_returnsNoContent() throws Exception {
+  void updateTemplate_returnsSavedUpdatedAt() throws Exception {
     mockAuth("proactive:write");
     UpdateReportTemplateRequest req =
         new UpdateReportTemplateRequest("Updated Name", null, null, null);
-    doNothing().when(reportTemplateService).updateTemplate(eq(5L), any(), eq(1L));
+    when(reportTemplateService.updateTemplate(eq(5L), any(), eq(1L)))
+        .thenReturn(LocalDateTime.of(2026, 10, 30, 10, 0, 0, 123_456_000));
 
     mockMvc
         .perform(
@@ -162,12 +164,13 @@ class ReportTemplateControllerTest {
                 .header("Authorization", "Bearer valid-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
-        .andExpect(status().isNoContent());
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.updatedAt").value("2026-10-30T10:00:00.123456"));
   }
 
   /**
    * 이슈 #200 회귀 테스트 — PUT 엔드포인트에 빈 이름 전송 시 400 반환 검증. UpdateReportTemplateRequest.name 에 @NotBlank
-   * 검증이 없으면 204를 반환하여 빈 이름으로 저장된다.
+   * 검증이 없으면 성공(200)을 반환하여 빈 이름으로 저장된다.
    */
   @Test
   void updateTemplate_emptyName_returns400() throws Exception {

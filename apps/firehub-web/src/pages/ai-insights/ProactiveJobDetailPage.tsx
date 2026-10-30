@@ -6,6 +6,7 @@ import { useForm } from 'react-hook-form';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { EditConflictDialog } from '@/components/EditConflictDialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,9 +21,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useCreateProactiveTemplate, useDeleteProactiveJob, useDeleteProactiveTemplate, useDisableProactiveJob, useExecuteProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
+import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useCreateProactiveTemplate, useDeleteProactiveJob, useDeleteProactiveTemplate, useDisableProactiveJob, useExecuteProactiveJob, useFetchLatestProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { handleApiError, isForbiddenError } from '@/lib/api-error';
+import { handleApiError, isEditConflict, isForbiddenError } from '@/lib/api-error';
 import { goalTemplateName, type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
 
 import { OwnerIneligibleBadge } from './components/OwnerIneligibleBadge';
@@ -153,6 +154,21 @@ export default function ProactiveJobDetailPage() {
   // 양식 저장을 기다리는 동안 isSaving 이 버튼에 반영되기 전 두 번째 클릭으로 양식·작업이 두 번 만들어지지 않게 막는다(#49 와 같은 이유).
   const isCreatingRef = useRef(false);
   const updateMutation = useUpdateProactiveJob();
+  const fetchLatestJob = useFetchLatestProactiveJob();
+  // 마지막 저장이 편집 충돌로 거부됐는가 — 참이면 EditConflictDialog 를 띄운다(WD-364)
+  const [editConflict, setEditConflict] = useState(false);
+  // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
+  const [isReloading, setIsReloading] = useState(false);
+  /**
+   * 저장의 기준 버전(WD-364 낙관적 잠금) — 서버 값과 다르면 409 EDIT_CONFLICT. 서버 문자열 그대로 보낸다(Date 로 바꾸면 마이크로초가 잘린다).
+   *
+   * 다른 편집 화면과 달리 조회 값(job.updatedAt)을 그대로 쓴다. 이 폼은 react-hook-form 의 values 로 채워져, 조회 결과의 폼 필드가
+   * 하나라도 바뀌면 폼 내용이 그 값으로 다시 채워진다 — 내용과 기준이 함께 바뀐다. 폼 필드가 그대로인 재조회(실행 상태 폴링, 켜기·끄기 등
+   * 보내지 않는 필드만 바뀐 경우)는 기준만 넘어가지만, 그때 저장하는 필드는 다른 곳에서 바뀌지 않았으므로 덮어써 잃는 변경이 없다.
+   * 편집 시작 시점에 고정하면 오히려 내 「끄기」나 폴링 뒤 저장이 자기 변경과 충돌한다. 저장 직후 재조회 전에는 훅이 캐시의 updatedAt 을
+   * 응답 값으로 바꿔 둔다(useUpdateProactiveJob).
+   */
+  const baseUpdatedAt = job?.updatedAt ?? null;
   const deleteMutation = useDeleteProactiveJob();
   const disableMutation = useDisableProactiveJob();
   const executeMutation = useExecuteProactiveJob();
@@ -209,7 +225,8 @@ export default function ProactiveJobDetailPage() {
   };
 
   // handleSubmit 을 렌더 중이 아니라 클릭 때 부른다 — 콜백이 isCreatingRef 를 읽기 때문이다(react-hooks/refs).
-  const handleSave = (e?: React.BaseSyntheticEvent) => form.handleSubmit(async (values) => {
+  /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
+  const submitJob = (force: boolean) => (e?: React.BaseSyntheticEvent) => form.handleSubmit(async (values) => {
     const payload = {
       name: values.name,
       prompt: values.prompt,
@@ -261,19 +278,55 @@ export default function ProactiveJobDetailPage() {
       // 「기본 (선택 안 함)」을 고르면 templateId 가 null 이 되는데, 서버는 null 을 "바꾸지 않음"으로 받는다.
       // 해제 의도를 clearTemplate 로 함께 보내야 옛 템플릿이 남지 않는다 (WD-136).
       updateMutation.mutate(
-        { id: jobId, data: { ...payload, clearTemplate: payload.templateId == null } },
+        {
+          id: jobId,
+          data: {
+            ...payload,
+            clearTemplate: payload.templateId == null,
+            // 편집 기준 버전(WD-364) — 그 사이 다른 곳에서 저장됐으면 서버가 409 EDIT_CONFLICT 로 거부한다
+            ...(force ? {} : { expectedUpdatedAt: baseUpdatedAt }),
+          },
+        },
         {
           onSuccess: () => {
+            setEditConflict(false);
             toast.success('작업이 저장되었습니다.');
             // 저장 성공 → dirty 해제 후 읽기 모드로 복귀 (이슈 #59)
             setIsDirty(false);
             setIsEditing(false);
           },
-          onError: (err) => handleApiError(err, '작업 저장에 실패했습니다.'),
+          onError: (err) => {
+            // 편집 충돌은 토스트 대신 안내 창으로 — 사용자가 다시 불러올지 덮어쓸지 고른다(WD-364)
+            if (isEditConflict(err)) {
+              setEditConflict(true);
+              return;
+            }
+            handleApiError(err, '작업 저장에 실패했습니다.');
+          },
         },
       );
     }
   })(e);
+  const handleSave = submitJob(false);
+
+  /**
+   * 편집 충돌의 「다시 불러오기」(WD-364) — 최신 작업을 서버에서 새로 받아 폼을 그것으로 바꾸고 내 변경을 버린다.
+   * 캐시 갱신만으로는 폼 필드가 같을 때 폼이 다시 채워지지 않아(내 변경이 남는다) 직접 reset 한다. 편집 모드는 유지한다.
+   */
+  const handleReloadLatest = async () => {
+    if (!jobId) return;
+    setIsReloading(true);
+    try {
+      const latest = await fetchLatestJob(jobId);
+      form.reset(buildDefaultValues(latest));
+      setIsDirty(false);
+      setEditConflict(false);
+    } catch (err) {
+      handleApiError(err, '최신 내용을 불러오지 못했습니다.');
+    } finally {
+      setIsReloading(false);
+    }
+  };
 
   const handleDelete = () => {
     if (!job) return;
@@ -572,6 +625,17 @@ export default function ProactiveJobDetailPage() {
         이탈 확인 다이얼로그 — 뒤로가기/취소 클릭 시 dirty면 표시 (이슈 #59)
         취소 시 머무름, 확인 시 변경사항 버리고 이탈/취소 동작 실행
       */}
+      {/* 편집 충돌 안내 창(WD-364) — 저장이 409 EDIT_CONFLICT 로 거부되면 뜬다 */}
+      <EditConflictDialog
+        open={editConflict}
+        onOpenChange={(open) => {
+          if (!open) setEditConflict(false);
+        }}
+        resourceLabel="작업"
+        onReload={handleReloadLatest}
+        onOverwrite={() => submitJob(true)()}
+        pending={isSaving || isReloading}
+      />
       <AlertDialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

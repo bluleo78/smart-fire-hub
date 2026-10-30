@@ -1,8 +1,10 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, BarChart2, Download, FileImage, FileType,LayoutDashboard,Loader2, Lock, Play,Save } from 'lucide-react';
 import { useCallback,useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { analyticsApi } from '../../api/analytics';
 import { AxisConfigPanel } from '../../components/analytics/AxisConfigPanel';
 import { findMissingChartColumns } from '../../components/analytics/chart-missing-columns';
 import { ChartConfigWithheldNotice } from '../../components/analytics/ChartConfigWithheldNotice';
@@ -10,6 +12,7 @@ import { ChartRenderer } from '../../components/analytics/ChartRenderer';
 import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector';
 import { isNumericColumn, isWeightColumn } from '../../components/analytics/numeric-columns';
 import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
+import { EditConflictDialog } from '../../components/EditConflictDialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -59,14 +62,14 @@ import {
   useUpdateChart,
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
-import { handleApiError } from '../../lib/api-error';
+import { handleApiError, isEditConflict } from '../../lib/api-error';
 import {
   exportChartAsPng,
   exportChartAsSvg,
   findChartSvg,
   sanitizeFilename,
 } from '../../lib/chart-export';
-import type { ChartConfig,ChartType } from '../../types/analytics';
+import type { Chart, ChartConfig,ChartType } from '../../types/analytics';
 
 // ============================================================
 // Auto chart type recommendation
@@ -503,6 +506,19 @@ export default function ChartBuilderPage() {
   const executeQuery = useExecuteSavedQuery();
   const createChart = useCreateChart();
   const updateChart = useUpdateChart();
+  const queryClient = useQueryClient();
+
+  /**
+   * 지금 화면 내용의 기준 버전 — 그 내용을 불러온(또는 저장한) 시점의 서버 updatedAt(WD-364 낙관적 잠금).
+   * 저장할 때 expectedUpdatedAt 으로 보내 그 사이 다른 곳에서 저장됐으면 서버가 409 EDIT_CONFLICT 로 거부한다.
+   * 화면 내용을 서버 값으로 채우는 곳(applyChart)에서만 함께 바꾼다 — 내용과 기준이 어긋나면 다른 탭의 저장을 조용히 덮어쓴다.
+   * 서버 문자열 그대로 둔다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다).
+   */
+  const [baseUpdatedAt, setBaseUpdatedAt] = useState<string | null>(null);
+  // 마지막 저장이 편집 충돌로 거부됐는가 — 참이면 EditConflictDialog 를 띄운다
+  const [editConflict, setEditConflict] = useState(false);
+  // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
+  const [isReloading, setIsReloading] = useState(false);
 
   // 사용자 상호작용 후 변경 여부 추적
   // - 초기 로드(existingChart로부터 setState)는 변경으로 간주하지 않기 위해 핸들러에서 명시적으로 markDirty()를 호출
@@ -518,22 +534,26 @@ export default function ChartBuilderPage() {
   // 차트 PNG/SVG 다운로드용 — 미리보기 컨테이너 ref. recharts/nivo SVG 추출에 사용 (이슈 #74).
   const previewContainerRef = useRef<HTMLDivElement | null>(null);
 
+  /** 서버 차트로 화면 내용과 기준 버전을 함께 채운다 — 초기 로드·재조회·충돌 후 「다시 불러오기」가 같은 길을 쓴다 */
+  const applyChart = useCallback((chart: Chart) => {
+    setSelectedQueryId(chart.savedQueryId);
+    setChartType(chart.chartType);
+    // 가려진 차트는 config 가 null 이다 — 기본 config 를 그대로 둬 렌더러가 null 에서 깨지지 않게 한다(WD-31②).
+    if (chart.config) setConfig(chart.config);
+    setSaveForm({
+      name: chart.name,
+      description: chart.description ?? '',
+      isShared: chart.isShared,
+    });
+    setBaseUpdatedAt(chart.updatedAt);
+    // 서버 내용으로 채운 직후는 dirty가 아님
+    setIsDirty(false);
+  }, []);
+
   // Load existing chart into state
   useEffect(() => {
-    if (existingChart) {
-      setSelectedQueryId(existingChart.savedQueryId);
-      setChartType(existingChart.chartType);
-      // 가려진 차트는 config 가 null 이다 — 기본 config 를 그대로 둬 렌더러가 null 에서 깨지지 않게 한다(WD-31②).
-      if (existingChart.config) setConfig(existingChart.config);
-      setSaveForm({
-        name: existingChart.name,
-        description: existingChart.description ?? '',
-        isShared: existingChart.isShared,
-      });
-      // 초기 로드는 dirty가 아님
-      setIsDirty(false);
-    }
-  }, [existingChart]);
+    if (existingChart) applyChart(existingChart);
+  }, [existingChart, applyChart]);
 
   // 브라우저 탭 닫기·새로고침 시 이탈 경고 (PipelineEditorPage와 동일 패턴)
   useEffect(() => {
@@ -667,7 +687,8 @@ export default function ChartBuilderPage() {
     }
   };
 
-  const handleSave = async () => {
+  /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
+  const handleSave = async (force = false) => {
     if (!saveForm.name.trim()) return;
     if (!selectedQueryId) {
       toast.error('쿼리를 선택하세요.');
@@ -751,27 +772,63 @@ export default function ChartBuilderPage() {
         setIsDirty(false);
         navigate(`/analytics/charts/${created.id}`, { replace: true });
       } else {
-        await updateChart.mutateAsync({
+        // 편집 기준 버전(WD-364) — 그 사이 다른 곳에서 저장됐으면 서버가 409 EDIT_CONFLICT 로 거부한다. 덮어쓰기는 빼고 보낸다.
+        const version = force ? {} : { expectedUpdatedAt: baseUpdatedAt };
+        const saved = await updateChart.mutateAsync({
           id: chartId!,
           // 가려진 차트는 이름·설명·공유만 보낸다 — config·chartType 을 빼야 서버의 기존 설정이 덮어써지지 않는다(WD-31②).
           data: configWithheld
             // 설명은 지웠어도 빈 문자열로 보낸다 — undefined 면 필드가 빠져 서버가 "변경 없음"으로 보고 옛 설명을 남긴다(WD-197).
-            ? { name: saveForm.name, description: saveForm.description, isShared: saveForm.isShared }
+            ? { name: saveForm.name, description: saveForm.description, isShared: saveForm.isShared, ...version }
             : {
                 name: saveForm.name,
                 description: saveForm.description,
                 chartType,
                 config,
                 isShared: saveForm.isShared,
+                ...version,
               },
         });
+        // 새 버전을 바로 기준으로 삼는다 — 재조회를 기다리면 그 사이 다시 저장할 때 자기 저장과 충돌한다.
+        // 응답에 버전이 없으면(옛 서버·모킹) null — 다음 저장은 비교 없이 나간다(자기 충돌보다 안전한 쪽)
+        setBaseUpdatedAt(saved?.updatedAt ?? null);
+        setEditConflict(false);
         toast.success('차트가 수정되었습니다.');
         setSaveDialogOpen(false);
         // 수정 성공 → dirty 해제 (페이지 이동은 없음)
         setIsDirty(false);
       }
     } catch (error) {
+      // 편집 충돌은 토스트 대신 안내 창으로 — 사용자가 다시 불러올지 덮어쓸지 고른다(WD-364)
+      if (isEditConflict(error)) {
+        setEditConflict(true);
+        return;
+      }
       handleApiError(error, '차트 저장에 실패했습니다.');
+    }
+  };
+
+  /**
+   * 편집 충돌의 「다시 불러오기」(WD-364) — 최신 차트를 서버에서 새로 받아 화면을 그것으로 바꾸고 내 변경을 버린다.
+   * 캐시의 차트가 재조회 결과와 같으면(구조 공유로 같은 참조) 로드 effect 가 다시 돌지 않으므로 applyChart 로 직접 채운다.
+   * 저장 창은 닫는다 — 화면에서 최신 내용을 확인한 뒤 다시 저장하게 한다.
+   */
+  const handleReloadLatest = async () => {
+    if (!chartId) return;
+    setIsReloading(true);
+    try {
+      const latest = await queryClient.fetchQuery({
+        queryKey: ['analytics', 'charts', chartId],
+        queryFn: () => analyticsApi.getChart(chartId).then((r) => r.data),
+        staleTime: 0,
+      });
+      applyChart(latest);
+      setEditConflict(false);
+      setSaveDialogOpen(false);
+    } catch (error) {
+      handleApiError(error, '최신 내용을 불러오지 못했습니다.');
+    } finally {
+      setIsReloading(false);
     }
   };
 
@@ -1102,10 +1159,22 @@ export default function ChartBuilderPage() {
         onDescriptionChange={(v) => setSaveForm((p) => ({ ...p, description: v }))}
         isShared={saveForm.isShared}
         onIsSharedChange={(v) => setSaveForm((p) => ({ ...p, isShared: v }))}
-        onSave={handleSave}
+        onSave={() => handleSave()}
         isSaving={isSaving}
         isEdit={!isNew}
         configWithheld={configWithheld}
+      />
+
+      {/* 편집 충돌 안내 창(WD-364) — 저장이 409 EDIT_CONFLICT 로 거부되면 저장 창 위에 뜬다 */}
+      <EditConflictDialog
+        open={editConflict}
+        onOpenChange={(open) => {
+          if (!open) setEditConflict(false);
+        }}
+        resourceLabel="차트"
+        onReload={handleReloadLatest}
+        onOverwrite={() => handleSave(true)}
+        pending={isSaving || isReloading}
       />
 
       {/*
