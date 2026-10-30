@@ -219,6 +219,7 @@ public class PipelineService {
         // 응답 필드 매핑의 빈 행·형식·중복은 데이터를 보지 않는 검사라 보안 판정 전에 둔다(WD-154). 출력 데이터셋에 컬럼이 있는지는
         // 아래 출력 판정 뒤에 본다(존재 오라클 방지).
         validateApiCallFieldMappings(stepRequest);
+        validateApiCallPagination(stepRequest);
       }
 
       // Validate AI_CLASSIFY step requirements
@@ -1201,6 +1202,37 @@ public class PipelineService {
             stepError(stepName, "대상 컬럼이 중복됩니다: " + row.targetColumn()));
       }
     }
+  }
+
+  /** API_CALL OFFSET 페이지네이션 페이지 크기 허용 범위(WD-362) — 화면 PAGE_SIZE_RANGE 와 같다. */
+  static final int MIN_PAGE_SIZE = 1;
+
+  static final int MAX_PAGE_SIZE = 10_000;
+
+  static final String PAGE_SIZE_RANGE_MESSAGE =
+      "페이지 크기는 " + MIN_PAGE_SIZE + "~" + MAX_PAGE_SIZE + " 사이의 정수여야 합니다";
+
+  /**
+   * API_CALL OFFSET 페이지네이션의 페이지 크기 검증(WD-362) — 비어 있으면 실행기 기본값(100)을 쓰므로 허용하고, 값이 있으면 1~10000 의
+   * 정수만 받는다.
+   *
+   * <p>왜 저장에서 막나: 0 이하 페이지 크기는 실행기의 「다음 페이지 없음」 판정(받은 행 수 &lt; 페이지 크기)이 결코 참이 되지 않아, 총 건수
+   * 경로가 없으면 offset 을 0, -5, -10… 으로 줄이며 최대 1만 페이지·최대 실행 시간까지 외부 API 를 반복 호출했다.
+   */
+  private static void validateApiCallPagination(PipelineStepRequest step) {
+    if (!(step.apiConfig().get("pagination") instanceof Map<?, ?> pagination)) {
+      return;
+    }
+    if (!(pagination.get("type") instanceof String type) || !"OFFSET".equalsIgnoreCase(type)) {
+      return;
+    }
+    // 정수 범위 검사는 트리거 설정과 같은 해석을 쓴다 — 비어 있으면 통과(실행기 기본값), 소수·숫자 아님·범위 밖은 400.
+    DatasetChangeTriggerConfig.requireSecondsInRange(
+        pagination.get("pageSize"),
+        MIN_PAGE_SIZE,
+        MIN_PAGE_SIZE,
+        MAX_PAGE_SIZE,
+        stepError(step.name(), PAGE_SIZE_RANGE_MESSAGE));
   }
 
   /**

@@ -101,7 +101,7 @@
 - 또는 inlineAuth: 직접 인증 정보 (일회성)
 
 **페이지네이션**:
-- pagination: { type: "OFFSET", pageSize: N, offsetParam, limitParam, totalPath }
+- pagination: { type: "OFFSET", pageSize: N(1~10000 정수), offsetParam, limitParam, totalPath }
 
 **예시 1 — 저장된 연결 사용 (apiConnectionId + path)**:
 ```json

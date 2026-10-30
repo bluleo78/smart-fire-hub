@@ -153,3 +153,25 @@ export const validateAiOutputColumns = (columns: unknown, autoOutput: boolean) =
  */
 export const validatePythonOutputColumns = (columns: unknown) =>
   validateOutputColumns(columns, true, pythonOutputColumnNameField);
+
+/** API_CALL OFFSET 페이지네이션의 페이지 크기 허용 범위(WD-362) — 서버 PipelineService.MIN/MAX_PAGE_SIZE 와 같다. */
+export const API_PAGE_SIZE_RANGE = { min: 1, max: 10_000 } as const;
+export const API_PAGE_SIZE_FIELD = 'apiConfig.pagination.pageSize';
+export const API_PAGE_SIZE_MESSAGE = `페이지 크기는 ${API_PAGE_SIZE_RANGE.min}~${API_PAGE_SIZE_RANGE.max} 사이의 정수여야 합니다`;
+
+/**
+ * API_CALL 페이지 크기 오류 문구(WD-362) — OFFSET 이 아니거나 비어 있으면(실행기 기본값 100) 없음.
+ * 0 이하 페이지 크기는 실행기의 「다음 페이지 없음」 판정이 참이 되지 않아 외부 API 를 끝없이 다시 호출하므로 저장 전에 막는다.
+ * 재시도·타임아웃처럼 입력 즉시 고치지 않는 이유: 페이지 크기는 외부 API 의 limit 로 그대로 나가 조용히 바꾸면 사용자가 모른다.
+ */
+export function apiPageSizeError(pagination: unknown): string | undefined {
+  const pag = (pagination ?? {}) as Record<string, unknown>;
+  if (asText(pag.type).toUpperCase() !== 'OFFSET' || pag.pageSize == null) return undefined;
+  const size = pag.pageSize;
+  const valid =
+    typeof size === 'number' &&
+    Number.isInteger(size) &&
+    size >= API_PAGE_SIZE_RANGE.min &&
+    size <= API_PAGE_SIZE_RANGE.max;
+  return valid ? undefined : API_PAGE_SIZE_MESSAGE;
+}

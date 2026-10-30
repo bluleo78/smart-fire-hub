@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { TemplateSection } from '@/api/proactive';
+import { cronTooFrequentMessage } from '@/lib/cron-frequency';
 
 export const channelConfigSchema = z.object({
   type: z.enum(['CHAT', 'EMAIL', 'KAKAO', 'SLACK']),
@@ -50,6 +51,11 @@ export const proactiveJobSchema = z
         message: '실행 주기를 설정하세요',
         path: ['cronExpression'],
       });
+    }
+    // 1분보다 잦은 주기(매초 등)는 서버가 거부한다 — 저장 전에 같은 문구로 막는다(WD-366)
+    const tooFrequent = data.triggerType !== 'ANOMALY' ? cronTooFrequentMessage(data.cronExpression) : undefined;
+    if (tooFrequent) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: tooFrequent, path: ['cronExpression'] });
     }
   });
 

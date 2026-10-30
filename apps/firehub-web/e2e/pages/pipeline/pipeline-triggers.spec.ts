@@ -348,6 +348,50 @@ test.describe('파이프라인 트리거 탭', () => {
   });
 
   /**
+   * WD-366: 매초(`* * * * * *`)처럼 1분보다 잦은 cron 은 입력 중 안내되고 저장(PUT)이 막힌다.
+   * 형식은 맞아 예전엔 「1초마다」로 풀어 보여 주고 그대로 저장돼 파이프라인이 끊임없이 재실행됐다. 매분으로 고치면 저장된다.
+   */
+  test('트리거 편집 — 1분보다 잦은 cron 은 안내되고 저장이 차단된다 (WD-366)', async ({
+    authenticatedPage: page,
+  }) => {
+    const existing = createTrigger({
+      id: 5,
+      name: '기존 스케줄',
+      triggerType: 'SCHEDULE',
+      config: { cron: '0 9 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' },
+    });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1/triggers/5', existing, {
+      capture: true,
+    });
+
+    await gotoTriggerTab(page);
+    await expect(page.getByText('기존 스케줄')).toBeVisible();
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+    await expect(page.getByRole('dialog').getByText('트리거 편집')).toBeVisible();
+
+    const message = /실행 주기는 1분보다 짧게 할 수 없습니다/;
+    const cronInput = page.locator('input[placeholder*="* * *"]').first();
+    await cronInput.fill('* * * * * *');
+
+    // 입력 중 바로 안내, 저장 시도해도 PUT 없음
+    await expect(page.getByRole('dialog').getByText(message)).toBeVisible();
+    await expect(cronInput).toHaveAttribute('aria-invalid', 'true');
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByRole('dialog').getByText(message)).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(updateCapture.requests).toHaveLength(0);
+
+    // 매분(초 칸 숫자 하나)으로 고치면 안내가 사라지고 그 값으로 저장된다
+    await cronInput.fill('0 * * * * *');
+    await expect(page.getByRole('dialog').getByText(message)).toHaveCount(0);
+    await page.getByRole('button', { name: '저장' }).click();
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ config: { cron: '0 * * * * *' } });
+  });
+
+  /**
    * 회귀 방지 테스트 (#638의 stale-error 처리가 EditTriggerDialog에서도 동작하는지 확인)
    * 잘못된 cron으로 1차 저장 실패 후 값을 올바르게 고치면, 재제출 없이도
    * stale하게 남아있던 오류 문구가 즉시 사라져야 한다.

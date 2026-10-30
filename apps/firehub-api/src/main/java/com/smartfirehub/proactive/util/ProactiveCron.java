@@ -33,6 +33,24 @@ public final class ProactiveCron {
     return trimmed.split("\\s+").length == 5 ? "0 " + trimmed : trimmed;
   }
 
+  /** 1분보다 잦은 실행 주기 거부 문구(WD-366) — 웹 cron-frequency.ts 의 CRON_TOO_FREQUENT_MESSAGE 와 같다. */
+  public static final String TOO_FREQUENT_MESSAGE =
+      "실행 주기는 1분보다 짧게 할 수 없습니다 — 「초」 칸에는 숫자 하나만 쓸 수 있습니다 (예: 0 * * * * * → 매분)";
+
+  /**
+   * 1분에 한 번보다 자주 실행되는 cron 이면 거부 문구를, 아니면 {@code null} 을 돌려준다(WD-366).
+   *
+   * <p>파이프라인 트리거·스마트 작업은 데이터 가공·리포트라 초 단위로 돌 이유가 없는데, 「* * * * * *」(매초)처럼 저장되면 실행이 끝나자마자
+   * 다음이 이어져 실행 이력과 스케줄러 자원을 끝없이 쓴다. 분 이상 칸은 아무리 잦아도 1분 간격이 최소이므로 초 칸 하나만 보면 된다 — 초 칸이 숫자
+   * 하나(5필드는 정규화로 "0")면 1분에 최대 한 번이다. 형식이 틀린 식은 여기서 판정하지 않는다(형식 검사가 먼저 거른다).
+   */
+  public static String describeTooFrequent(String cronExpression) {
+    if (cronExpression == null || cronExpression.isBlank()) return null;
+    String[] fields = normalize(cronExpression).split("\\s+");
+    if (fields.length != 6) return null;
+    return fields[0].matches("\\d+") ? null : TOO_FREQUENT_MESSAGE;
+  }
+
   /** 5필드(화면 안내 기준) 칸 이름과 허용 범위. 6필드면 앞에 초 칸이 하나 더 붙는다. */
   private static final String[] FIELD_NAMES = {"분", "시", "일", "월", "요일"};
 

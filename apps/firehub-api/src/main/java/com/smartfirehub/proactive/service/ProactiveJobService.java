@@ -144,6 +144,11 @@ public class ProactiveJobService {
         throw new ProactiveJobException(
             "유효하지 않은 cron 표현식입니다: \"" + cronExpression.trim() + "\" — " + reason);
       }
+      // 파이프라인 트리거와 같은 최소 실행 간격(1분) — 매초 리포트 생성이 끝없이 이어지지 않게 한다(WD-366).
+      String tooFrequent = ProactiveCron.describeTooFrequent(cronExpression);
+      if (tooFrequent != null) {
+        throw new ProactiveJobException(tooFrequent + ": \"" + cronExpression.trim() + "\"");
+      }
     }
     if (timezone != null && !timezone.isBlank()) {
       try {
@@ -311,9 +316,14 @@ public class ProactiveJobService {
 
   @Transactional
   public void toggleJob(Long id, Long userId, boolean enabled) {
+    // 켜기만 바뀌므로(cron·시간대 그대로) 한 번 읽은 잡으로 검증·재등록한다.
+    ProactiveJobResponse job = proactiveJobRepository.findById(id, userId).orElse(null);
+    if (enabled && job != null) {
+      // 켜기 전에 저장된 cron 을 저장 때와 같은 규칙으로 확인한다(WD-366) — 매초처럼 너무 잦은 옛 잡을 다시 켜지 못하게 400 으로 알린다.
+      validateCronAndTimezone(job.cronExpression(), job.timezone());
+    }
     proactiveJobRepository.update(
         id, userId, null, null, null, false, null, null, enabled, null, null);
-    ProactiveJobResponse job = proactiveJobRepository.findById(id, userId).orElse(null);
     if (job != null) {
       if (enabled && job.cronExpression() != null && !job.cronExpression().isBlank()) {
         schedulerService.registerSchedule(job.id(), job.cronExpression(), job.timezone());

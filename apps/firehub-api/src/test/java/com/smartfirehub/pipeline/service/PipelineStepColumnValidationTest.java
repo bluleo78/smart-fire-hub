@@ -13,6 +13,7 @@ import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.UpdatePipelineRequest;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -108,6 +110,28 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
         null);
   }
 
+  /** API_CALL 스텝 + OFFSET 페이지네이션(WD-362) — pageSize 가 null 이면 키를 넣지 않는다(실행기 기본값). */
+  private static PipelineStepRequest apiStepWithPageSize(Object pageSize) {
+    Map<String, Object> pagination = new HashMap<>();
+    pagination.put("type", "OFFSET");
+    if (pageSize != null) {
+      pagination.put("pageSize", pageSize);
+    }
+    return new PipelineStepRequest(
+        "API 호출",
+        null,
+        "API_CALL",
+        null,
+        null,
+        null,
+        null,
+        "REPLACE",
+        Map.of("customUrl", "https://example.com/items", "method", "GET", "pagination", pagination),
+        null,
+        null,
+        null);
+  }
+
   /** AI_CLASSIFY 스텝 — 출력 자동 생성(TEMP), 입력 없음(입력 판정과 무관하게 출력 컬럼 검증만 본다). */
   private static PipelineStepRequest aiStep(List<Map<String, Object>> outputColumns) {
     return new PipelineStepRequest(
@@ -149,8 +173,33 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
   /** 거부돼야 하는 스텝 + 기대 문구. 출력 지정 여부는 OUT 표식(실제 id 는 setUp 이후에만 알 수 있다)으로 넘긴다. */
   private static final Long OUT = -1L;
 
+  /** WD-362 페이지 크기 범위 오류 문구(API 스텝 이름 'API 호출'). */
+  private static final String PAGE_SIZE_ERROR =
+      "스텝 'API 호출': 페이지 크기는 1~10000 사이의 정수여야 합니다";
+
   static Stream<Arguments> rejectedSteps() {
     return Stream.of(
+        // WD-362 — 0 이하 페이지 크기는 실행기가 끝없이 다음 페이지를 요청한다
+        Arguments.of(
+            "페이지 크기 음수",
+            apiStepWithPageSize(-5),
+            PAGE_SIZE_ERROR),
+        Arguments.of(
+            "페이지 크기 0",
+            apiStepWithPageSize(0),
+            PAGE_SIZE_ERROR),
+        Arguments.of(
+            "페이지 크기 상한 초과",
+            apiStepWithPageSize(10_001),
+            PAGE_SIZE_ERROR),
+        Arguments.of(
+            "페이지 크기 소수",
+            apiStepWithPageSize(2.5),
+            PAGE_SIZE_ERROR),
+        Arguments.of(
+            "페이지 크기 문자열",
+            apiStepWithPageSize("abc"),
+            PAGE_SIZE_ERROR),
         Arguments.of(
             "빈 매핑 행",
             apiStep(null, List.of(mapping("a", "a"), mapping("", ""))),
@@ -333,6 +382,18 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
     assertThat(created.steps()).hasSize(1);
   }
 
+  /** 페이지 크기 경계값(1·10000)은 저장된다(WD-362). */
+  @ParameterizedTest(name = "페이지 크기 {0} 저장")
+  @ValueSource(ints = {1, 10_000})
+  void create_pageSizeBoundary_succeeds(int pageSize) {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "WD362 페이지 크기", null, List.of(apiStepWithPageSize(pageSize))),
+            userId);
+    assertThat(created.steps()).hasSize(1);
+  }
+
   /**
    * 출력을 지정한 PYTHON 스텝은 컬럼 정의를 쓰지 않는다(편집기도 숨긴다) — 남아 있는 정의의 이름은 막지 않는다(WD-352). 막으면 화면에서 고칠 수
    * 없는 오류로 저장이 막힌다.
@@ -345,6 +406,16 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
                 "WD352 파이썬 지정",
                 null,
                 List.of(pythonStep(outputId, List.of(outputColumn("my col"), outputColumn("my col"))))),
+            userId);
+    assertThat(created.steps()).hasSize(1);
+  }
+
+  /** 페이지 크기를 비우면 실행기 기본값(100)을 쓰므로 저장된다(WD-362). */
+  @Test
+  void create_pageSizeEmpty_succeeds() {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest("WD362 페이지 크기 비움", null, List.of(apiStepWithPageSize(null))),
             userId);
     assertThat(created.steps()).hasSize(1);
   }

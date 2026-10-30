@@ -10,7 +10,13 @@ import { editorPipelineSchema } from '@/lib/validations/pipeline';
 import type { DatasetResponse } from '@/types/dataset';
 
 import type { EditorAction, PipelineEditorState, ValidationError } from './pipelineEditorReducer';
-import { validateAiOutputColumns, validateApiFieldMappings, validatePythonOutputColumns } from './stepColumnValidation';
+import {
+  API_PAGE_SIZE_FIELD,
+  apiPageSizeError,
+  validateAiOutputColumns,
+  validateApiFieldMappings,
+  validatePythonOutputColumns,
+} from './stepColumnValidation';
 
 /**
  * API_CALL 스텝의 지정 출력 데이터셋 컬럼 이름을 가져온다(WD-154 — 대상 컬럼 존재 검사용).
@@ -98,6 +104,12 @@ export function usePipelineValidation(
             : null;
         for (const e of validateApiFieldMappings(mappings, step.outputDatasetId == null, outputColumns)) {
           errors.push({ stepTempId: step.tempId, ...e });
+        }
+
+        // 페이지 크기(WD-362) — 0 이하·소수·상한 초과는 실행기가 외부 API 를 끝없이(최대 1만 번) 다시 호출하게 하므로 저장을 막는다
+        const pageSizeMessage = apiPageSizeError(cfg?.['pagination']);
+        if (pageSizeMessage) {
+          errors.push({ stepTempId: step.tempId, field: API_PAGE_SIZE_FIELD, message: pageSizeMessage });
         }
       }
 
