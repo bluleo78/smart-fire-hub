@@ -480,6 +480,11 @@ public class TriggerService {
     TriggerResponse existing =
         triggerRepository.findById(triggerId).orElseThrow(TriggerNotFoundException::new);
 
+    // 이미 원하는 상태면 무동작이다(WD-435) — 옛 화면에서 같은 요청을 다시 보내도 상태·스케줄·감시 기준선을 건드리지 않는다.
+    if (existing.isEnabled() == enabled) {
+      return;
+    }
+
     // 꺼져 있던 연쇄 트리거를 켜면 그 순간 연쇄 간선이 생긴다 — 꺼진 동안 반대 방향 연쇄가 추가됐을 수 있으므로 여기서도
     // 순환·길이를 검사한다(WD-106). 꺼진 트리거는 순환 계산에서 빠지므로 생성·수정 검사만으로는 이 경로가 비어 있었다.
     if (enabled && "PIPELINE_CHAIN".equals(existing.triggerType())) {

@@ -597,11 +597,13 @@ test.describe('파이프라인 트리거 탭', () => {
     await setupTriggerTabMocks(page, { triggers: [existing] });
 
     let toggleCalled = false;
+    let togglePayload: unknown;
     await page.route(
       (url) => url.pathname === '/api/v1/pipelines/1/triggers/8/toggle',
       (route) => {
         if (route.request().method() === 'PATCH') {
           toggleCalled = true;
+          togglePayload = route.request().postDataJSON();
           return route.fulfill({
             status: 200,
             contentType: 'application/json',
@@ -619,6 +621,35 @@ test.describe('파이프라인 트리거 탭', () => {
     await page.getByRole('menuitem', { name: /비활성화|활성화/ }).click();
 
     await expect.poll(() => toggleCalled).toBe(true);
+    // WD-435: 켜진 트리거의 「비활성화」는 원하는 상태(enabled=false)를 실어 보낸다.
+    expect(togglePayload).toEqual({ enabled: false });
+  });
+
+  test('옛 화면에서 꺼진 것으로 보이는 트리거를 「활성화」하면 enabled=true 를 보내고 활성화 토스트가 뜬다 (WD-435)', async ({ authenticatedPage: page }) => {
+    // 화면은 「비활성」을 보고 있다 — 그사이 서버에서 이미 켜졌어도 요청은 「켜라」여야 한다(예전엔 서버가 값을 뒤집어 꺼졌다).
+    const existing = createTrigger({ id: 8, name: '켤 대상', isEnabled: false });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+
+    let togglePayload: unknown;
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1/triggers/8/toggle',
+      (route) => {
+        if (route.request().method() === 'PATCH') {
+          togglePayload = route.request().postDataJSON();
+          return route.fulfill({ status: 204 });
+        }
+        return route.fallback();
+      },
+    );
+
+    await gotoTriggerTab(page);
+
+    await expect(page.getByText('켤 대상')).toBeVisible();
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '활성화', exact: true }).click();
+
+    await expect.poll(() => togglePayload).toEqual({ enabled: true });
+    await expect(page.getByText('트리거 "켤 대상"이 활성화되었습니다.')).toBeVisible();
   });
 
   test('트리거 이름 미입력 시 유효성 에러가 표시된다', async ({ authenticatedPage: page }) => {

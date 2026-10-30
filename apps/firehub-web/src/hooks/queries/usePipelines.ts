@@ -276,8 +276,9 @@ export function useDeleteTrigger(pipelineId: number) {
 export function useToggleTrigger(pipelineId: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (triggerId: number) =>
-      pipelinesApi.toggleTrigger(pipelineId, triggerId),
+    // enabled = 사용자가 고른 상태(WD-435). 서버는 이 값으로 설정하고, 이미 그 상태면 그대로 둔다.
+    mutationFn: ({ triggerId, enabled }: { triggerId: number; enabled: boolean }) =>
+      pipelinesApi.toggleTrigger(pipelineId, triggerId, enabled),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['triggers', pipelineId] });
     },

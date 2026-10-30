@@ -99,7 +99,8 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
 
   const handleToggle = async (trigger: TriggerResponse) => {
     try {
-      await toggleTrigger.mutateAsync(trigger.id);
+      // 화면이 본 상태의 반대를 원하는 상태로 보낸다(WD-435) — 그사이 다른 사람이 이미 바꿨어도 누른 대로 설정되고, 토스트도 그 결과와 맞는다.
+      await toggleTrigger.mutateAsync({ triggerId: trigger.id, enabled: !trigger.isEnabled });
       toast.success(
         trigger.isEnabled
           ? `트리거 "${trigger.name}"${iGa(trigger.name)} 비활성화되었습니다.`

@@ -420,6 +420,21 @@ class TriggerServiceTest extends IntegrationTestBase {
   }
 
   @Test
+  void toggleTrigger_sameStateTwice_keepsRequestedState() {
+    // WD-435: 다른 사람이 이미 끈 트리거를 옛 화면에서 다시 「비활성화」해도 꺼진 채여야 한다(예전엔 다시 켜졌다).
+    TriggerResponse created = createScheduleTriggerOnPipeline1();
+
+    triggerService.toggleTrigger(pipelineId, created.id(), false, testUserId);
+    triggerService.toggleTrigger(pipelineId, created.id(), false, testUserId);
+    assertThat(triggerService.getTriggerById(created.id()).isEnabled()).isFalse();
+
+    // 활성화도 같다 — 이미 켜진 트리거를 다시 켜도 켜진 채다.
+    triggerService.toggleTrigger(pipelineId, created.id(), true, testUserId);
+    triggerService.toggleTrigger(pipelineId, created.id(), true, testUserId);
+    assertThat(triggerService.getTriggerById(created.id()).isEnabled()).isTrue();
+  }
+
+  @Test
   void createTrigger_missingPipeline_throwsPipelineNotFound() {
     // 예전엔 FK 위반으로 409 「연결할 항목을 찾을 수 없습니다」가 났다 — 이제는 파이프라인 없음 404.
     assertThatThrownBy(

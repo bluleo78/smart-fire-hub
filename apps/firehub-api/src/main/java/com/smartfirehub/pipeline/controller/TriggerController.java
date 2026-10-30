@@ -68,12 +68,19 @@ public class TriggerController {
   @PatchMapping("/{triggerId}/toggle")
   @RequirePermission("trigger:write")
   public ResponseEntity<Void> toggleTrigger(
-      @PathVariable Long pipelineId, @PathVariable Long triggerId, Authentication authentication) {
+      @PathVariable Long pipelineId,
+      @PathVariable Long triggerId,
+      @RequestBody(required = false) ToggleTriggerRequest request,
+      Authentication authentication) {
     // 경로의 파이프라인 소속인 트리거만 다룬다 — 다른 파이프라인의 트리거는 없는 트리거와 같은 404(WD-228).
     TriggerResponse existing = triggerService.getTriggerById(pipelineId, triggerId);
+    // 본문의 원하는 상태로 설정한다(WD-435). 현재 값을 뒤집으면 옛 화면의 「비활성화」가 다른 사람이 이미 끈 트리거를 다시 켠다.
+    // 본문이 없는 옛 호출만 예전처럼 뒤집는다.
+    boolean enabled =
+        request != null && request.enabled() != null ? request.enabled() : !existing.isEnabled();
     // 켜기/끄기 감사(WD-462)의 행위자로 남기기 위해 요청 사용자를 넘긴다.
     triggerService.toggleTrigger(
-        pipelineId, triggerId, !existing.isEnabled(), (Long) authentication.getPrincipal());
+        pipelineId, triggerId, enabled, (Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 
