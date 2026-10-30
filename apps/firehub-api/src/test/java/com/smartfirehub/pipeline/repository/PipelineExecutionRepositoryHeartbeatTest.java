@@ -455,9 +455,8 @@ class PipelineExecutionRepositoryHeartbeatTest extends IntegrationTestBase {
         .isTrue();
     assertThat(TenantContext.runScopedGet(tenantA, () -> repository.isStopRequested(finished)))
         .isTrue();
-    // 행이 없으면 false.
-    assertThat(TenantContext.runScopedGet(tenantA, () -> repository.isStopRequested(-1L)))
-        .isFalse();
+    // 행이 없으면 true(WD-437) — 파이프라인 삭제 등으로 실행 행이 사라진 러너는 멈춘다.
+    assertThat(TenantContext.runScopedGet(tenantA, () -> repository.isStopRequested(-1L))).isTrue();
   }
 
   // ---------- updateStepExecution 게이트 ----------

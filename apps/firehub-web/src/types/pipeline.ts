@@ -230,6 +230,11 @@ export interface PipelineDeleteImpact {
   tempDatasetCount: number;
   /** 내가 볼 수 없는 임시 데이터셋이 함께 지워질 대상에 있으면 true — 서버가 삭제를 403 으로 거부한다(WD-310) */
   hasHiddenTempDatasets: boolean;
+  /**
+   * 진행 중(대기·실행 중) 실행 상태(WD-437) — NONE 이 아니면 서버가 삭제를 409 로 거부한다.
+   * CANCELLING 은 진행 중 실행이 모두 이미 취소를 요청한 상태(「취소 진행 중」 안내).
+   */
+  activeExecution: 'NONE' | 'ACTIVE' | 'CANCELLING';
 }
 
 export interface CreateTriggerRequest {

@@ -1,5 +1,7 @@
 package com.smartfirehub.pipeline.dto;
 
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveExecutionState;
+
 /**
  * 파이프라인 삭제 영향(WD-170) — 삭제 확인 창이 「자동 생성된 임시 데이터셋 N개도 함께 삭제됩니다」를 보여 주는 데 쓴다.
  *
@@ -7,5 +9,8 @@ package com.smartfirehub.pipeline.dto;
  *     않는다(실제 삭제와 같은 판정). 호출자가 볼 수 없는 것도 세지 않는다(WD-310 — 숨긴 개수를 드러내지 않게).
  * @param hasHiddenTempDatasets 호출자가 볼 수 없는 임시 데이터셋이 함께 지워질 대상에 있는가(WD-310). true 면 삭제가 403 이라 확인 창이
  *     삭제를 막고 안내한다.
+ * @param activeExecution 진행 중(PENDING/RUNNING) 실행 상태(WD-437) — NONE 이 아니면 삭제가 409 라 확인 창이 삭제를 막고 안내한다.
+ *     CANCELLING 은 진행 중 실행이 모두 이미 취소를 요청한 상태다(「취소 진행 중」 안내).
  */
-public record PipelineDeleteImpactResponse(int tempDatasetCount, boolean hasHiddenTempDatasets) {}
+public record PipelineDeleteImpactResponse(
+    int tempDatasetCount, boolean hasHiddenTempDatasets, ActiveExecutionState activeExecution) {}

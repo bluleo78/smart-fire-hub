@@ -12,7 +12,6 @@ import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
-import org.jooq.Record1;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -228,15 +227,27 @@ public class PipelineRepository {
         .fetchOptional(r -> r.get(P_UPDATED_AT));
   }
 
+  /** 행 잠금으로 읽은 파이프라인 — 이름(삭제 감사용)과 수정 시각(낙관적 잠금 비교용, nullable 컬럼이라 null 일 수 있다). */
+  public record LockedPipeline(String name, LocalDateTime updatedAt) {}
+
   /**
-   * 수정 시각을 행 잠금(FOR UPDATE)과 함께 읽는다 — 낙관적 잠금 비교용(WD-353).
+   * 파이프라인 행을 FOR UPDATE 로 잠그고 읽는다. 행이 없으면 빈 값 — 수정·삭제 경로의 존재 확인(404)이다. 잠금은 호출 트랜잭션 끝까지 유지된다.
    *
-   * <p>잠금 없이 읽고 비교하면 동시에 들어온 두 저장이 같은 값을 읽어 둘 다 통과한다. 잠금을 잡으면 나중 저장은 앞 저장이 커밋될 때까지 기다렸다가 바뀐
-   * 값을 읽어 충돌로 거부된다. 행이 없으면 빈 값, 행은 있는데 수정 시각이 비어 있으면(nullable 컬럼) 값이 null 인 레코드다 — 둘을 구분해야
-   * 수정 시각이 빈 옛 행을 "없음"(404)으로 잘못 거부하지 않는다.
+   * <ul>
+   *   <li>수정(WD-353): 잠금 없이 수정 시각을 읽고 비교하면 동시에 들어온 두 저장이 같은 값을 읽어 둘 다 통과한다. 잠그면 나중 저장은 앞 저장의 커밋을
+   *       기다렸다가 바뀐 값을 읽어 충돌로 거부된다. 수정 시각이 빈 옛 행도 행은 있으므로 "없음"으로 거부하지 않는다.
+   *   <li>삭제와 실행 생성의 경쟁(WD-437): 실행 행 INSERT 는 FK 검사로 이 행에 FOR KEY SHARE 를 잡는데, 그것이 FOR UPDATE 와 충돌한다. 그래서
+   *       삭제가 잠근 뒤 진행 중 실행을 판정하면 (1) 실행 생성이 먼저면 그 커밋을 기다렸다가 새 실행을 보고 409, (2) 삭제가 먼저면 실행 INSERT 가 삭제
+   *       커밋까지 기다린 뒤 FK 위반으로 실패해 404 로 바뀐다(PipelineExecutionRepository#createExecution) — 어느 순서든 판정과 삭제 사이에 실행이
+   *       끼어들지 못한다.
+   * </ul>
    */
-  public Optional<Record1<LocalDateTime>> lockUpdatedAtById(Long id) {
-    return dsl.select(P_UPDATED_AT).from(PIPELINE).where(P_ID.eq(id)).forUpdate().fetchOptional();
+  public Optional<LockedPipeline> lockById(Long id) {
+    return dsl.select(P_NAME, P_UPDATED_AT)
+        .from(PIPELINE)
+        .where(P_ID.eq(id))
+        .forUpdate()
+        .fetchOptional(r -> new LockedPipeline(r.get(P_NAME), r.get(P_UPDATED_AT)));
   }
 
   public Optional<Long> findUpdatedByById(Long id) {

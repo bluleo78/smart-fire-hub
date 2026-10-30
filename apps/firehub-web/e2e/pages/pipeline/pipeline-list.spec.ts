@@ -220,6 +220,57 @@ test.describe('파이프라인 목록 페이지', () => {
     expect(req.url.pathname).toBe('/api/v1/pipelines/1');
   });
 
+  /**
+   * WD-437: 실행 중(대기·실행 중 실행이 있는) 파이프라인은 서버가 409 로 삭제를 거부한다.
+   * 화면은 서버 안내 문구를 오류 토스트로 보이고, 삭제 성공을 알리지 않으며, 파이프라인은 목록에 남는다.
+   */
+  test('실행 중이라 삭제가 거부되면(409) 서버 안내 문구를 보이고 목록에 남긴다 (WD-437)', async ({ authenticatedPage: page }) => {
+    const message = '실행 중에는 삭제할 수 없습니다. 실행을 취소한 뒤 삭제하세요';
+    await setupPipelineMocks(page, 2);
+    const deleteCapture = await mockApi(
+      page,
+      'DELETE',
+      '/api/v1/pipelines/1',
+      { status: 409, error: 'Conflict', message },
+      { status: 409, capture: true },
+    );
+
+    await page.goto('/pipelines');
+    await page.getByRole('button', { name: '삭제' }).first().click();
+    const dialog = page.getByRole('alertdialog');
+    await dialog.getByRole('button', { name: '삭제' }).click();
+
+    await deleteCapture.waitForRequest();
+    // 서버 문구가 토스트로 보이고, 성공 토스트는 없다.
+    await expect(page.getByText(message)).toBeVisible();
+    await expect(page.getByText(/삭제되었습니다/)).toHaveCount(0);
+    // 파이프라인은 목록에 그대로 남는다.
+    await expect(page.getByRole('cell', { name: '파이프라인 1', exact: true })).toBeVisible();
+  });
+
+  /**
+   * WD-437: 삭제 영향 조회가 진행 중 실행을 알리면 확인 창이 미리 안내하고 삭제 버튼을 막는다(서버 409 를 겪기 전에).
+   * 취소가 이미 진행 중이면 다시 취소하라고 하지 않고 기다리라는 문구를 보인다.
+   */
+  for (const [state, title] of [
+    ['ACTIVE', '실행 중에는 삭제할 수 없습니다. 실행을 취소한 뒤 삭제하세요'],
+    ['CANCELLING', '실행 취소가 진행 중입니다. 취소가 끝난 뒤 다시 삭제하세요'],
+  ] as const) {
+    test(`진행 중 실행이 있으면(${state}) 확인 창이 안내하고 삭제 버튼을 막는다 (WD-437)`, async ({ authenticatedPage: page }) => {
+      await setupPipelineMocks(page, 2);
+      await mockPipelineDeleteImpact(page, 0, 200, false, state);
+      const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/pipelines/1', null, { capture: true });
+
+      await page.goto('/pipelines');
+      await page.getByRole('button', { name: '삭제' }).first().click();
+
+      const dialog = page.getByRole('alertdialog');
+      await expect(dialog.getByTestId('pipeline-delete-impact')).toContainText(title);
+      await expect(dialog.getByRole('button', { name: '삭제' })).toBeDisabled();
+      expect(deleteCapture.requests).toHaveLength(0);
+    });
+  }
+
   test('마지막 페이지의 유일한 항목을 삭제하면 이전 페이지로 이동해 남은 항목을 보여준다 (#549)', async ({ authenticatedPage: page }) => {
     // 총 11건 → size=10 기준 2페이지. 삭제 후 프론트가 page를 보정하지 않으면
     // 서버에 더 이상 존재하지 않는 page=1을 그대로 요청해 "결과 없음"으로 오표시된다.

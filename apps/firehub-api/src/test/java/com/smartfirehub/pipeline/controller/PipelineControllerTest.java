@@ -192,18 +192,39 @@ class PipelineControllerTest {
     verify(pipelineService).deletePipeline(eq(1L), anyLong());
   }
 
+  /** 진행 중 실행이 있으면 삭제를 409 와 한국어 안내 문구로 거부한다(WD-437). */
+  @Test
+  void deletePipeline_withActiveExecution_returnsConflictWithMessage() throws Exception {
+    org.mockito.Mockito.doThrow(
+            new com.smartfirehub.pipeline.exception.PipelineExecutionActiveException(false))
+        .when(pipelineService)
+        .deletePipeline(eq(1L), anyLong());
+
+    mockMvc
+        .perform(delete("/api/v1/pipelines/1").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("실행 중에는 삭제할 수 없습니다. 실행을 취소한 뒤 삭제하세요"))
+        .andExpect(jsonPath("$.code").value("PIPELINE_EXECUTION_ACTIVE"));
+  }
+
   /** 삭제 영향 조회(WD-170) — 함께 지워질 자동 생성 임시 데이터셋 개수를 그대로 내보낸다. */
   @Test
   void getDeleteImpact_withPermission_returnsTempDatasetCount() throws Exception {
     when(pipelineService.getDeleteImpact(eq(1L), anyLong()))
-        .thenReturn(new PipelineDeleteImpactResponse(2, true));
+        .thenReturn(new PipelineDeleteImpactResponse(
+                2,
+                true,
+                com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveExecutionState
+                    .ACTIVE));
 
     mockMvc
         .perform(
             get("/api/v1/pipelines/1/delete-impact").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.tempDatasetCount").value(2))
-        .andExpect(jsonPath("$.hasHiddenTempDatasets").value(true));
+        .andExpect(jsonPath("$.hasHiddenTempDatasets").value(true))
+        // 진행 중 실행 안내(WD-437) — 확인 창이 삭제를 막는 데 쓴다.
+        .andExpect(jsonPath("$.activeExecution").value("ACTIVE"));
   }
 
   @Test

@@ -11,6 +11,8 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.*;
+import com.smartfirehub.pipeline.exception.PipelineExecutionActiveException;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveExecutionState;
 import com.smartfirehub.pipeline.exception.PipelineInactiveException;
 import com.smartfirehub.pipeline.exception.PipelineNameConflictException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
@@ -689,10 +691,7 @@ public class PipelineService {
     // 먼저 하는 이유: 낡은 화면에서 저장하면 낡은 내용으로 계산한 검증 오류 대신 "다른 곳에서 바뀌었다"를 먼저 알려야 한다.
     // 잠금은 이 트랜잭션 끝까지 유지되어 동시에 들어온 두 저장이 같은 버전으로 둘 다 통과하지 못한다.
     LocalDateTime currentUpdatedAt =
-        pipelineRepository
-            .lockUpdatedAtById(id)
-            .orElseThrow(PipelineNotFoundException::new)
-            .value1();
+        pipelineRepository.lockById(id).orElseThrow(PipelineNotFoundException::new).updatedAt();
     EditConflictException.check(
         request.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
 
@@ -978,10 +977,16 @@ public class PipelineService {
    */
   @Transactional(readOnly = true)
   public PipelineDeleteImpactResponse getDeleteImpact(Long id, Long userId) {
-    List<Long> deletable = planPipelineDeletion(id).deletable();
+    // 조회 전용 트랜잭션이라 행 잠금(lockById)을 쓸 수 없고 스텝 목록만으로는 "없음"과 "스텝 0개"를 가릴 수 없어, 존재는 여기서 한 번 본다.
+    if (!pipelineRepository.existsById(id)) {
+      throw new PipelineNotFoundException();
+    }
+    List<Long> deletable = planPipelineDeletion(id).temps().deletable();
     // 볼 수 없는 것이 있으면 삭제가 403 이다(WD-310) — 확인 창이 미리 막도록 알리고, 개수에는 볼 수 있는 것만 센다(숨긴 개수를 드러내지 않게).
     int hidden = pipelineSecurityGate.hiddenCount(userId, deletable);
-    return new PipelineDeleteImpactResponse(deletable.size() - hidden, hidden > 0);
+    // 진행 중 실행이 있으면 삭제가 409 다(WD-437) — 확인 창이 미리 막고 안내하도록 알린다. 실제 판정은 삭제 시점에 잠금과 함께 다시 한다.
+    return new PipelineDeleteImpactResponse(
+        deletable.size() - hidden, hidden > 0, executionRepository.findActiveExecutionState(id));
   }
 
   /**
@@ -1415,13 +1420,19 @@ public class PipelineService {
    */
   @Transactional
   public void deletePipeline(Long id, Long userId) {
-    AutoTempDeletion temps = planPipelineDeletion(id);
+    // 실행 중 삭제 거부(WD-437) — 대기·실행 중 실행이 있으면 지우지 않는다. 지우면 실행 기록이 CASCADE 로 사라지고 이미 시작한 러너가 출력 데이터셋을
+    // 기록 없이 바꾸기 때문이다. 판정은 행 잠금 뒤에 한다 — 실행 생성과의 경쟁 정리는 PipelineRepository#lockById 참고.
+    // 잠금이 이 경로의 존재 확인(404)이고, 잠근 행의 이름을 감사에 쓴다(WD-462 — 행이 곧 사라진다).
+    String name = pipelineRepository.lockById(id).orElseThrow(PipelineNotFoundException::new).name();
+    ActiveExecutionState active = executionRepository.findActiveExecutionState(id);
+    if (active != ActiveExecutionState.NONE) {
+      // 진행 중 실행이 모두 이미 취소 요청 상태면 「취소 진행 중」으로 안내한다 — 다시 취소하라고 하면 헛걸음이다.
+      throw new PipelineExecutionActiveException(active == ActiveExecutionState.CANCELLING);
+    }
+    PipelineDeletionPlan plan = planPipelineDeletion(id);
     // 볼 수 없는 임시 데이터셋이 있으면 무엇이든 바꾸기 전에 거부한다(WD-310). 판정한 목록을 그대로 지운다.
-    pipelineSecurityGate.requireAutoTempsDeletable(userId, temps.deletable());
-    // 행이 사라지므로 감사에 남길 이름·스텝 수를 지우기 전에 읽어 둔다(WD-462). planPipelineDeletion 이 이미 존재를 확인했다.
-    PipelineResponse target =
-        pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
-    deletePipeline(id, temps);
+    pipelineSecurityGate.requireAutoTempsDeletable(userId, plan.temps().deletable());
+    deletePipeline(id, plan.temps());
     // 감사(WD-462) — 삭제와 같은 트랜잭션이라 삭제가 실패하면 함께 롤백된다. 테스트 정리용 deletePipelineUnchecked 는 사용자 요청이 아니라
     // 남기지 않는다.
     auditRecorder.record(
@@ -1429,8 +1440,8 @@ public class PipelineService {
         "DELETE",
         PipelineAuditRecorder.RESOURCE_PIPELINE,
         id,
-        "파이프라인 삭제: " + target.name(),
-        pipelineSnapshot(target.name(), target.stepCount()));
+        "파이프라인 삭제: " + name,
+        pipelineSnapshot(name, plan.stepCount()));
   }
 
   /**
@@ -1439,18 +1450,25 @@ public class PipelineService {
    */
   @Transactional
   public void deletePipelineUnchecked(Long id) {
-    deletePipeline(id, planPipelineDeletion(id));
+    // 진행 중 실행 판정(WD-437)을 하지 않는다 — 테스트 정리는 끝나지 않은 픽스처 실행(러너 없이 넣은 PENDING 등)이 남은 채로도 지워야 한다.
+    // 존재 확인은 사용자 삭제와 같은 행 잠금으로 한다.
+    pipelineRepository.lockById(id).orElseThrow(PipelineNotFoundException::new);
+    deletePipeline(id, planPipelineDeletion(id).temps());
   }
 
+  /** 삭제 계획 — 함께 지울 자동 생성 임시 데이터셋과 감사에 남길 스텝 수(WD-437: 존재 확인은 호출부가 한 번만 한다). */
+  private record PipelineDeletionPlan(AutoTempDeletion temps, int stepCount) {}
+
   /**
-   * 파이프라인이 있는지 확인하고 함께 지울 자동 생성 임시 데이터셋을 고른다. 스텝을 지우기 전에 모아 둔다(WD-170) — 스텝을 지우면
-   * source_pipeline_step_id 가 SET NULL(V36)이 되어 찾을 수 없다. 다른 파이프라인 스텝이 출력으로 쓰는 것은 남긴다(이 파이프라인 스텝은 곧
-   * 지워지므로 참조로 세지 않는다).
+   * 함께 지울 자동 생성 임시 데이터셋을 고른다. 스텝을 지우기 전에 모아 둔다(WD-170) — 스텝을 지우면 source_pipeline_step_id 가 SET
+   * NULL(V36)이 되어 찾을 수 없다. 다른 파이프라인 스텝이 출력으로 쓰는 것은 남긴다(이 파이프라인 스텝은 곧 지워지므로 참조로 세지 않는다). 파이프라인
+   * 존재는 호출부가 이미 확인했다(WD-437 — 404 경로를 하나로).
    */
-  private AutoTempDeletion planPipelineDeletion(Long id) {
-    pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
+  private PipelineDeletionPlan planPipelineDeletion(Long id) {
     List<Long> stepIds = stepRepository.findStepIdsByPipelineId(id);
-    return planAutoTempDeletion(stepRepository.findAutoTempDatasetIdsByStepIds(stepIds), stepIds);
+    return new PipelineDeletionPlan(
+        planAutoTempDeletion(stepRepository.findAutoTempDatasetIdsByStepIds(stepIds), stepIds),
+        stepIds.size());
   }
 
   private void deletePipeline(Long id, AutoTempDeletion temps) {

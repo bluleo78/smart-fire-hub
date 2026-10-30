@@ -16,6 +16,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
 import com.smartfirehub.pipeline.dto.PipelineDeleteImpactResponse;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveExecutionState;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.TriggerType;
 import com.smartfirehub.pipeline.dto.UpdatePipelineRequest;
@@ -1625,7 +1626,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     long low = userAt("공개");
 
     assertThat(pipelineService.getDeleteImpact(p, low))
-        .isEqualTo(new PipelineDeleteImpactResponse(0, true));
+        .isEqualTo(new PipelineDeleteImpactResponse(0, true, ActiveExecutionState.NONE));
     assertHiddenTempDenied(() -> pipelineService.deletePipeline(p, low));
     // 거부는 아무것도 바꾸지 않는다 — 파이프라인·TEMP 행·테이블 모두 남는다.
     assertThat(inTenantFixture(() -> dsl.fetchExists(PIPELINE, PIPELINE.ID.eq(p)))).isTrue();
@@ -1640,7 +1641,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(rowCount(tempTable)).isEqualTo(1);
 
     assertThat(pipelineService.getDeleteImpact(p, runner))
-        .isEqualTo(new PipelineDeleteImpactResponse(1, false));
+        .isEqualTo(new PipelineDeleteImpactResponse(1, false, ActiveExecutionState.NONE));
     pipelineService.deletePipeline(p, runner);
     assertThat(datasetExists(temp)).isFalse();
   }
