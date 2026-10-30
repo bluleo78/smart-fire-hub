@@ -62,8 +62,9 @@ public class SettingsController {
    */
   @DeleteMapping("/smtp")
   @RequirePermission("ai:settings")
-  public ResponseEntity<Void> clearSmtpSettings() {
-    settingsService.clearSmtpSettings();
+  public ResponseEntity<Void> clearSmtpSettings(Authentication authentication) {
+    // 행위자는 해제 감사(WD-465)에 남긴다.
+    settingsService.clearSmtpSettings((Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 

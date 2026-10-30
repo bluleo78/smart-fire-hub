@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.notification.Channel;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.DeliveryResult;
@@ -38,6 +39,7 @@ class ChannelSettingsServiceTest {
   @Mock private UserRepository userRepository;
   @Mock private ChannelRegistry channelRegistry;
   @Mock private SlackWorkspaceRepository slackWorkspaceRepo;
+  @Mock private AuditLogService auditLogService;
   @Mock private Channel emailChannel;
 
   private ChannelSettingsService service;
@@ -48,7 +50,12 @@ class ChannelSettingsServiceTest {
   void setUp() {
     service =
         new ChannelSettingsService(
-            bindingRepo, preferenceRepo, userRepository, channelRegistry, slackWorkspaceRepo);
+            bindingRepo,
+            preferenceRepo,
+            userRepository,
+            channelRegistry,
+            slackWorkspaceRepo,
+            auditLogService);
   }
 
   /** 채널이 비활성화(enabled=false)면 binding/이메일 조회 이전에 즉시 실패 응답을 반환해야 한다. */

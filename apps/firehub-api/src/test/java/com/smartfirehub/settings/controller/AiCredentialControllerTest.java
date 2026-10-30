@@ -84,6 +84,8 @@ class AiCredentialControllerTest extends IntegrationTestBase {
 
     for (Long userId : createdUserIds) {
       inTenantFixture(() -> dsl.execute("delete from user_role where user_id = ?", userId));
+      // 자격증명 저장·해제 감사 행(WD-465)이 user_id FK 로 사용자 삭제를 막으므로 먼저 지운다.
+      inTenantFixture(() -> dsl.execute("delete from audit_log where user_id = ?", userId));
       TenantRlsTestSupport.deleteMembership(dsl, userId);
       TenantRlsTestSupport.deleteUser(dsl, userId);
     }

@@ -187,8 +187,12 @@ PII 마스킹 규칙은 메인 SYSTEM_PROMPT L5 정의를 단일 source 로 한�
 | `proactive_job` | 스마트 작업 |
 | `report_template` | 리포트 양식 |
 | `dataset_category` | 데이터셋 카테고리 |
+| `ai_credential` | AI 자격증명 (resourceId=CHAT/CLASSIFY 슬롯, 키 값은 없음) |
+| `ai_settings` | AI 설정 (모델·시스템 프롬프트·턴 등) |
+| `smtp_settings` | SMTP 메일 서버 설정 |
+| `user_channel_preference` | 알림 채널 사용 켜기/끄기 (resourceId=EMAIL/KAKAO/SLACK) |
 
-수정(UPDATE)·상태 전환(STATUS_CHANGE) 행의 metadata 에는 바뀐 항목 **이름**만(`changedFields`) 있고 바뀐 값(SQL·프롬프트·설정 등)은 없다 — 값을 추측해 답하지 않는다.
+수정(UPDATE)·상태 전환(STATUS_CHANGE) 행의 metadata 에는 바뀐 항목 **이름**만(`changedFields`) 있고 바뀐 값(SQL·프롬프트·설정·API 키·비밀번호 등)은 없다 — 값을 추측해 답하지 않는다.
 
 ## 이상 탐지 패턴
 

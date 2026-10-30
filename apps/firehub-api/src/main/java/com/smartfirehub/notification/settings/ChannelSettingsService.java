@@ -1,5 +1,6 @@
 package com.smartfirehub.notification.settings;
 
+import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.DeliveryContext;
 import com.smartfirehub.notification.DeliveryResult;
@@ -12,15 +13,18 @@ import com.smartfirehub.notification.repository.UserChannelPreferenceRepository;
 import com.smartfirehub.notification.service.ChannelRegistry;
 import com.smartfirehub.notification.settings.dto.ChannelSettingResponse;
 import com.smartfirehub.notification.settings.dto.ChannelTestResult;
+import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 사용자 채널 설정 조회·변경 서비스.
@@ -42,6 +46,8 @@ public class ChannelSettingsService {
   private final UserRepository userRepository;
   private final ChannelRegistry channelRegistry;
   private final SlackWorkspaceRepository slackWorkspaceRepo;
+  // 채널 사용 켜기/끄기 감사(WD-465).
+  private final AuditLogService auditLogService;
 
   /** 화이트라벨링용 브랜드명. 채널 테스트 알림 페이로드 제목에 사용한다. 배포처별 APP_BRANDING_NAME으로 주입. */
   @Value("${app.branding.name:Smart Fire Hub}")
@@ -52,12 +58,14 @@ public class ChannelSettingsService {
       UserChannelPreferenceRepository preferenceRepo,
       UserRepository userRepository,
       ChannelRegistry channelRegistry,
-      SlackWorkspaceRepository slackWorkspaceRepo) {
+      SlackWorkspaceRepository slackWorkspaceRepo,
+      AuditLogService auditLogService) {
     this.bindingRepo = bindingRepo;
     this.preferenceRepo = preferenceRepo;
     this.userRepository = userRepository;
     this.channelRegistry = channelRegistry;
     this.slackWorkspaceRepo = slackWorkspaceRepo;
+    this.auditLogService = auditLogService;
   }
 
   /**
@@ -179,17 +187,63 @@ public class ChannelSettingsService {
   /**
    * 채널 알림 수신 여부 변경.
    *
+   * <p>값이 실제로 바뀐 경우에만 감사 1행(STATUS_CHANGE)을 같은 트랜잭션에서 남긴다(WD-465) — 이미 같은 상태로 바꾸는 요청은 아무것도 바꾸지 않았고,
+   * 거부된 요청(CHAT 400)은 쓰기 전에 끊긴다.
+   *
    * @param userId 대상 사용자 ID
    * @param channelType 변경할 채널
    * @param enabled 활성화 여부
    * @throws IllegalArgumentException CHAT 채널은 변경 불가
    */
+  @Transactional
   public void updatePreference(long userId, ChannelType channelType, boolean enabled) {
     // CHAT은 안전망 채널 — DB CHECK 제약으로도 막히지만 명시적 400 반환
     if (channelType == ChannelType.CHAT) {
       throw new IllegalArgumentException("CHAT 채널은 항상 활성 상태이며 변경할 수 없습니다.");
     }
+    boolean before = preferenceRepo.isEnabled(userId, channelType);
     preferenceRepo.setEnabled(userId, channelType, enabled);
+    if (before != enabled) {
+      auditPreferenceChange(userId, channelType, enabled);
+    }
+  }
+
+  /**
+   * 알림 채널 사용 켜기/끄기 감사 — 「알림 채널 사용 끄기: 이메일」. resource 는 테이블 이름 {@code user_channel_preference}
+   * (AnalyticsAssetKind.table()·proactive_job 과 같은 관례), resourceId 는 채널 이름(EMAIL/KAKAO/SLACK — 대상
+   * 사용자는 감사 행의 user_id 와 같다). 켜기/끄기는 다른 도메인의 토글과 같은 STATUS_CHANGE 로 남긴다. 테넌트는 요청의 현재 테넌트(GUC 기본값)다.
+   */
+  private void auditPreferenceChange(long userId, ChannelType channelType, boolean enabled) {
+    String actorName =
+        userRepository.findById(userId).map(UserResponse::username).orElse("unknown");
+    String label = channelLabel(channelType);
+    Map<String, Object> metadata = new LinkedHashMap<>();
+    metadata.put("name", label);
+    metadata.put("channel", channelType.name());
+    metadata.put("changedFields", List.of("enabled"));
+    metadata.put("enabled", enabled);
+    auditLogService.log(
+        userId,
+        actorName,
+        "STATUS_CHANGE",
+        "user_channel_preference",
+        channelType.name(),
+        (enabled ? "알림 채널 사용 켜기: " : "알림 채널 사용 끄기: ") + label,
+        null,
+        null,
+        "SUCCESS",
+        null,
+        metadata);
+  }
+
+  /** 감사 설명용 채널 이름. */
+  private static String channelLabel(ChannelType channelType) {
+    return switch (channelType) {
+      case CHAT -> "웹 알림";
+      case EMAIL -> "이메일";
+      case KAKAO -> "카카오톡";
+      case SLACK -> "슬랙";
+    };
   }
 
   /**

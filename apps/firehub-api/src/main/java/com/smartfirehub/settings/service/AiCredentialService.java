@@ -14,8 +14,12 @@ import com.smartfirehub.settings.model.AiCredentialDocument;
 import com.smartfirehub.settings.model.AiCredentialSlot;
 import com.smartfirehub.settings.model.UnknownAgentTypeException;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.UnaryOperator;
@@ -119,6 +123,8 @@ public class AiCredentialService {
 
   private final TenantSettingsRepository tenantSettingsRepository;
   private final EncryptionService encryptionService;
+  // 등록·수정·삭제 감사(WD-465) — 저장과 같은 트랜잭션에서 남겨 거부된 요청은 기록되지 않게 한다.
+  private final SettingsAuditRecorder auditRecorder;
 
   // payload 값(Map<String,Object>) ↔ JsonNode 변환에 쓴다. AiCredentialDocument 내부 MAPPER 와
   // 별개 인스턴스다 — 그 클래스의 상수는 private 이고, 여기서 하는 일(POJO↔트리 변환)은 커스텀
@@ -181,7 +187,11 @@ public class AiCredentialService {
     return new AiCredentialView(doc.agentType(), payload, secretFieldNames, configured);
   }
 
-  /** 채팅 슬롯 저장 — 기존 호출처(채팅 PUT) 진입점. */
+  /**
+   * 채팅 슬롯 저장 — 기존 호출처(채팅 PUT) 진입점. 아래 슬롯 버전을 같은 객체 안에서 부르므로(프록시를 지나지 않는다) 트랜잭션 경계를 여기에도 둔다 — 그래야
+   * 저장과 감사 행이 함께 커밋·롤백된다(WD-465).
+   */
+  @Transactional
   public void save(AiCredentialUpsert req, Long userId) {
     save(AiCredentialSlot.CHAT, req, userId);
   }
@@ -216,16 +226,96 @@ public class AiCredentialService {
    * #requireUsableSecret} 참고). 비밀 없이 저장되면 화면은 "설정됨"이라 말하는데 실제 호출은 비밀이 없어 실패하거나, 더 나쁘게는 ai-agent
    * 컨테이너의 ambient 키로 과금되는 오귀속이 생긴다 — 이 규칙이 막으려는 사고(6b1c6383)의 한 경로다.
    */
+  @Transactional
   public void save(AiCredentialSlot slot, AiCredentialUpsert req, Long userId) {
-    AiCredentialDocument doc = mergeForSave(slot, req);
-    tenantSettingsRepository.upsert(slot.key(), doc.toJson(), userId);
+    Merged merged = mergeForSave(slot, req);
+    tenantSettingsRepository.upsert(slot.key(), merged.doc().toJson(), userId);
+    // 저장이 끝난 뒤 저장 전후 문서를 비교해 감사한다(WD-465) — 검증에서 던진 요청은 여기까지 오지 않는다.
+    auditSave(userId, slot, merged, List.of());
+  }
+
+  /**
+   * 저장 감사(WD-465). 저장 전 행이 없었으면(손상돼 읽을 수 없던 행 포함) 등록, 있었으면 바뀐 항목 이름을 모아 수정으로 남긴다 — 바뀐 것이 없으면 기록하지
+   * 않는다.
+   *
+   * @param extraChanged 문서 밖에서 함께 바뀐 항목(분류 모델) — 등록이면 무시한다
+   */
+  private void auditSave(
+      Long userId, AiCredentialSlot slot, Merged merged, List<String> extraChanged) {
+    String agentType = merged.doc().agentType();
+    if (merged.before() == null) {
+      auditRecorder.credentialCreated(userId, slot, agentType);
+      return;
+    }
+    List<String> changed =
+        new ArrayList<>(changedFields(merged.before(), snapshot(merged.doc(), slot.key())));
+    changed.addAll(extraChanged);
+    auditRecorder.credentialUpdated(userId, slot, agentType, changed);
+  }
+
+  /**
+   * 병합 결과와 병합 <b>전</b> 문서의 감사용 투영. {@code before} 가 null 이면 기존 행이 없었다(= 등록). 병합은 기존 문서를 그 자리에서
+   * 고치므로(payload·secret mutate) 비교할 이전 상태는 병합 전에 떠 둬야 한다.
+   */
+  private record Merged(AiCredentialDocument doc, Snapshot before) {}
+
+  /**
+   * 감사 비교용 문서 투영 — 유형, payload 사본, 비밀 평문(값이 있는 것만). 비밀 평문은 <b>이름별 변경 여부 판정에만</b> 쓰고 감사에는 이름만 싣는다.
+   * 암호문끼리 비교하지 않는 이유: 암호화마다 IV 가 달라 같은 키를 다시 보내도 암호문이 바뀌므로 매 저장이 "변경"으로 잡힌다.
+   */
+  private record Snapshot(String agentType, JsonNode payload, Map<String, String> secrets) {}
+
+  /** 문서의 현재 상태를 감사 비교용으로 뜬다. 복호화는 관용 경로를 쓴다 — 손상된 옛 암호문이 저장(과 감사)을 막지 않게 한다. */
+  private Snapshot snapshot(AiCredentialDocument doc, String key) {
+    Map<String, String> secrets = new HashMap<>();
+    for (String name : doc.secretNames(cipher -> decryptOrEmptyLenient(cipher, key))) {
+      secrets.put(name, decryptOrEmptyLenient(doc.secretCipher(name), key));
+    }
+    return new Snapshot(doc.agentType(), doc.payload().deepCopy(), secrets);
+  }
+
+  /**
+   * 두 투영에서 바뀐 항목 이름을 모은다 — 유형({@code agentType}), payload 키, 비밀 이름 순. 호스팅은 생략 = 외부(EXTERNAL)로 맞춰
+   * 비교한다 — 전송 대상 변경 때 병합이 생략된 선언을 EXTERNAL 로 명시해 넣는데, 원래도 외부였다면 바뀐 것이 아니다.
+   */
+  private static List<String> changedFields(Snapshot before, Snapshot after) {
+    List<String> changed = new ArrayList<>();
+    if (!before.agentType().equals(after.agentType())) {
+      changed.add("agentType");
+    }
+    Set<String> payloadKeys = new LinkedHashSet<>();
+    before.payload().fieldNames().forEachRemaining(payloadKeys::add);
+    after.payload().fieldNames().forEachRemaining(payloadKeys::add);
+    for (String key : payloadKeys) {
+      if (!Objects.equals(
+          payloadValue(before.payload(), key), payloadValue(after.payload(), key))) {
+        changed.add(key);
+      }
+    }
+    Set<String> secretNames = new LinkedHashSet<>(before.secrets().keySet());
+    secretNames.addAll(after.secrets().keySet());
+    for (String name : secretNames) {
+      if (!before.secrets().getOrDefault(name, "").equals(after.secrets().getOrDefault(name, ""))) {
+        changed.add(name);
+      }
+    }
+    return changed;
+  }
+
+  /** 비교용 payload 값. 호스팅 생략은 외부 선언과 같게 본다(위 javadoc). */
+  private static JsonNode payloadValue(JsonNode payload, String key) {
+    JsonNode value = payload.get(key);
+    if (HOSTING_FIELD.equals(key) && (value == null || value.isNull())) {
+      return MAPPER.getNodeFactory().textNode(ProviderHosting.EXTERNAL.name());
+    }
+    return value;
   }
 
   /**
    * 요청을 검증하고 기존 문서와 병합한 결과를 돌려준다 — <b>아직 쓰지 않는다</b>. 채팅 저장과 분류 묶음 저장이 같은 병합 규칙(생략 secret=유지, ""=삭제,
    * 유형 변경=새 문서, 비밀 필수)을 공유하되, 분류 쪽은 모델 검사를 끝낸 뒤 두 키를 한 트랜잭션에서 쓰기 위해 분리했다.
    */
-  private AiCredentialDocument mergeForSave(AiCredentialSlot slot, AiCredentialUpsert req) {
+  private Merged mergeForSave(AiCredentialSlot slot, AiCredentialUpsert req) {
     validate(req);
 
     // 손상된 JSON(파싱 실패)을 만나도 "행이 없다"와 똑같이 취급한다(보안 리뷰 Fix7) — typeChanged
@@ -237,6 +327,8 @@ public class AiCredentialService {
     AiCredentialDocument existing =
         existingRaw.flatMap(raw -> tryParse(raw, slot.key(), "PUT")).orElse(null);
     boolean typeChanged = existing == null || !req.agentType().equals(existing.agentType());
+    // 감사 비교용 이전 상태 — 아래 병합이 existing 을 그 자리에서 고치기 전에 떠 둔다(WD-465).
+    Snapshot before = existing == null ? null : snapshot(existing, slot.key());
     AiCredentialDocument doc = typeChanged ? AiCredentialDocument.empty(req.agentType()) : existing;
 
     // 요청에 있는 키만 덮어쓴다 — removeAll() 을 하지 않는다. 유형이 바뀐 경우는 doc 이 이미
@@ -260,7 +352,7 @@ public class AiCredentialService {
     // 호스팅 값도 병합 결과로 검사한다 — 같은 유형에서 생략하면 기존 값이 유지되므로 요청만 보면 안 된다.
     validateHosting(doc);
     requireUsableSecret(doc, slot.key());
-    return doc;
+    return new Merged(doc, before);
   }
 
   /**
@@ -519,20 +611,43 @@ public class AiCredentialService {
       throw new IllegalArgumentException(MSG_CLASSIFY_MODEL_REQUIRED);
     }
     String trimmedModel = model.trim();
-    AiCredentialDocument doc = mergeForSave(AiCredentialSlot.CLASSIFY, req);
+    // 감사용 이전 모델 — 모델은 자격증명 문서 밖 별도 키라 문서 비교에 잡히지 않는다(WD-465).
+    String modelBefore = readTenantRaw(AiCredentialSlot.CLASSIFY_MODEL_KEY).orElse("");
+    Merged merged = mergeForSave(AiCredentialSlot.CLASSIFY, req);
+    AiCredentialDocument doc = merged.doc();
     String problem = opencodeModelProblem(doc, trimmedModel);
     if (problem != null) {
       throw new IllegalArgumentException(problem);
     }
     tenantSettingsRepository.upsert(AiCredentialSlot.CLASSIFY.key(), doc.toJson(), userId);
     tenantSettingsRepository.upsert(AiCredentialSlot.CLASSIFY_MODEL_KEY, trimmedModel, userId);
+    auditSave(
+        userId,
+        AiCredentialSlot.CLASSIFY,
+        merged,
+        modelBefore.equals(trimmedModel) ? List.of() : List.of("model"));
   }
 
-  /** 분류 전용 묶음을 함께 지운다(= 채팅 설정 사용으로 복귀). 없어도 성공(멱등). */
+  /**
+   * 분류 전용 묶음을 함께 지운다(= 채팅 설정 사용으로 복귀). 없어도 성공(멱등). 실제로 지운 행이 있을 때만 삭제 감사를 남긴다(WD-465) — 이미 미설정인 해제는
+   * 아무것도 바꾸지 않았다.
+   *
+   * @param userId 행위자(감사용)
+   */
   @Transactional
-  public void clearClassify() {
+  public void clearClassify(Long userId) {
+    Optional<String> raw = readTenantRaw(AiCredentialSlot.CLASSIFY.key());
+    boolean hadModel = readTenantRaw(AiCredentialSlot.CLASSIFY_MODEL_KEY).isPresent();
     tenantSettingsRepository.delete(AiCredentialSlot.CLASSIFY.key());
     tenantSettingsRepository.delete(AiCredentialSlot.CLASSIFY_MODEL_KEY);
+    if (raw.isPresent() || hadModel) {
+      // 유형은 지우기 전 문서에서 읽는다 — 손상돼 읽을 수 없으면 빈 문자열.
+      String agentType =
+          raw.flatMap(r -> tryParse(r, AiCredentialSlot.CLASSIFY.key(), "DELETE"))
+              .map(AiCredentialDocument::agentType)
+              .orElse("");
+      auditRecorder.credentialDeleted(userId, AiCredentialSlot.CLASSIFY, agentType);
+    }
   }
 
   /**

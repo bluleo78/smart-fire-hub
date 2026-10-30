@@ -19,12 +19,14 @@ import com.smartfirehub.user.dto.UserListResponse;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import com.smartfirehub.user.repository.UserRepository;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -209,12 +211,44 @@ public class UserService {
         .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
   }
 
+  /**
+   * 내 프로필(이름·이메일) 수정. 실제로 바뀐 항목이 있으면 같은 트랜잭션에서 감사 1행(resource=user, UPDATE)을 남긴다(WD-465).
+   *
+   * <p>감사에는 바뀐 항목의 <b>이름</b>(name·email)만 싣고 새 이름·이메일 값은 싣지 않는다 — 감사 화면은 audit:read 만 있으면 볼 수 있다.
+   * 같은 값으로 다시 저장하면 기록하지 않고, 없는 사용자(404)는 쓰기 전에 끊겨 기록이 남지 않는다. 테넌트를 고르지 않은 토큰이면 감사 행의 tenant_id 가 비어
+   * 테넌트 감사 화면에는 보이지 않는다(비밀번호 변경 감사와 같다).
+   */
   @Transactional
   public void updateProfile(Long userId, String name, String email) {
+    UserResponse before =
+        userRepository
+            .findById(userId)
+            .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
     // 프로필 이메일은 연락처라 다른 계정과 같아도 막지 않는다 — 이유는 TemporaryAccountCreator (WD-271).
     if (!userRepository.update(userId, name, email)) {
       throw new UserNotFoundException("User not found: " + userId);
     }
+    List<String> changedFields = new ArrayList<>();
+    if (!Objects.equals(before.name(), name)) {
+      changedFields.add("name");
+    }
+    if (!Objects.equals(before.email(), email)) {
+      changedFields.add("email");
+    }
+    if (changedFields.isEmpty()) {
+      return; // 실제 변경 없음 — 감사 생략
+    }
+    String labels =
+        String.join("·", changedFields.stream().map(f -> "name".equals(f) ? "이름" : "이메일").toList());
+    Map<String, Object> metadata = new LinkedHashMap<>();
+    metadata.put("name", before.username());
+    metadata.put("changedFields", List.copyOf(changedFields));
+    audit(
+        userId,
+        "UPDATE",
+        userId,
+        "프로필 수정: " + before.username() + " (바뀐 항목: " + labels + ")",
+        metadata);
   }
 
   /**

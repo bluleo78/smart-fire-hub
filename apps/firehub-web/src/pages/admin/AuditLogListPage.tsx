@@ -273,8 +273,11 @@ function roleChangeSummaryParts(log: AuditLogResponse): string[] {
 /**
  * 리소스 유형 옵션 목록
  * - 백엔드 호출부(AuthService/PipelineExecutionService/DatasetService/DataImportService/DataExportService/ApiConnectionNotifier)에서
- *   실제 사용 중인 resource 값 전수: auth/system/api_connection/pipeline/dataset (data_import는 dataimport 도메인에서 dataset으로 기록).
- * - #109 회귀: auth/system/api_connection 매핑 누락으로 영문 raw 값 노출되던 문제 해소.
+ *   실제 사용 중인 resource 값: auth/api_connection/pipeline/dataset.
+ * - 「데이터 임포트」(data_import)·「시스템」(system)은 뺐다(WD-465). 서버 어디에서도 그 값으로 기록하지 않는다 — 임포트는
+ *   DataImportService 가 resource=dataset·action=IMPORT 로 남기고(옛 data_import 테이블도 V7 이 dataset 으로 옮겼다),
+ *   "system" 은 행위자 없는 경로의 username 일 뿐 resource 값이 아니다. 고르면 항상 빈 목록이 나와 기록이 없는 것처럼 보였다.
+ * - #109 회귀: auth/api_connection 매핑 누락으로 영문 raw 값 노출되던 문제 해소.
  * - role(RoleService — 역할 생성·수정·삭제·권한 교체, resourceId=역할 ID)·user(UserService — 멤버 관리·역할 교체 ROLE_ASSIGN,
  *   resourceId=대상 사용자 ID)도 사용 중이다(WD-117).
  * - security_level(SecurityLevelService — 등급 정의 생성·수정·삭제·순서·기본 등급),
@@ -295,9 +298,7 @@ const RESOURCES = [
   { value: 'pipeline', label: '파이프라인' },
   // TriggerService(트리거 생성·수정·켜기/끄기 STATUS_CHANGE·삭제, WD-462) — 테이블 이름 관례, resourceId=트리거 ID
   { value: 'pipeline_trigger', label: '트리거' },
-  { value: 'data_import', label: '데이터 임포트' },
   { value: 'api_connection', label: 'API 연결' },
-  { value: 'system', label: '시스템' },
   { value: 'ontology', label: '지식 모델' },
   { value: 'security_level', label: '보안 등급' },
   { value: 'query_result', label: '쿼리 결과' },
@@ -313,6 +314,13 @@ const RESOURCES = [
   { value: 'report_template', label: '리포트 양식' },
   // DatasetCategoryAuditRecorder.RESOURCE_CATEGORY — 데이터셋 카테고리 생성·수정·삭제(WD-464)
   { value: 'dataset_category', label: '데이터셋 카테고리' },
+  // SettingsAuditRecorder — AI 자격증명 등록·수정·삭제(resourceId=슬롯 CHAT/CLASSIFY), AI 설정(모델·시스템 프롬프트·턴 등)
+  // 수정, SMTP 설정 등록·수정·삭제(WD-465). 바뀐 항목 이름(metadata.changedFields)만 있고 키·비밀번호·프롬프트 값은 없다.
+  { value: 'ai_credential', label: 'AI 자격증명' },
+  { value: 'ai_settings', label: 'AI 설정' },
+  { value: 'smtp_settings', label: 'SMTP 설정' },
+  // ChannelSettingsService — 알림 채널 사용 켜기/끄기(STATUS_CHANGE, resourceId=채널 EMAIL/KAKAO/SLACK)(WD-465)
+  { value: 'user_channel_preference', label: '알림 채널 설정' },
 ];
 
 /** 결과 필터 옵션 목록 */
