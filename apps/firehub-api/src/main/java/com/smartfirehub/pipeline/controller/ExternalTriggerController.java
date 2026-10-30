@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.controller;
 
 import com.smartfirehub.global.dto.ErrorResponse;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.util.ClientIpExtractor;
 import com.smartfirehub.pipeline.dto.TriggerFireResult;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.repository.TriggerTenantResolver;
@@ -39,6 +40,9 @@ public class ExternalTriggerController {
 
   private final TriggerService triggerService;
   private final TriggerTenantResolver triggerTenantResolver;
+
+  /** 신뢰 프록시 기준 클라이언트 IP 추출기(WD-402) — 허용 IP 검사와 trigger_event sourceIp 에 같은 값을 쓴다. */
+  private final ClientIpExtractor clientIpExtractor;
 
   /** API trigger: authenticate via SHA-256 token hash matching. */
   @PostMapping("/api/{token}")
@@ -290,11 +294,11 @@ public class ExternalTriggerController {
                 request.getRequestURI()));
   }
 
+  /**
+   * 요청자 IP. X-Forwarded-For 맨 앞 값을 그대로 믿으면 헤더 한 줄로 허용 IP 검사를 우회할 수 있어(WD-402), 신뢰 프록시를 거쳐 온 경우에만
+   * 헤더를 오른쪽부터 읽는 {@link ClientIpExtractor} 에 맡긴다.
+   */
   private String getClientIp(HttpServletRequest request) {
-    String xForwardedFor = request.getHeader("X-Forwarded-For");
-    if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
-      return xForwardedFor.split(",")[0].trim();
-    }
-    return request.getRemoteAddr();
+    return clientIpExtractor.extract(request);
   }
 }

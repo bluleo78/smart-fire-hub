@@ -509,6 +509,141 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
         .andExpect(jsonPath("$.status").value("triggered"));
   }
 
+  /** 허용 IP 가 203.0.113.0/24 인 API 트리거를 만들고 원본 토큰을 돌려준다(WD-402 테스트용). */
+  private String createIpRestrictedApiTrigger(String name) {
+    TriggerResponse trigger =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest(
+                name, TriggerType.API, null, Map.of("allowedIps", List.of("203.0.113.0/24"))),
+            testUserId);
+    return (String) trigger.config().get("rawToken");
+  }
+
+  /** 회귀 테스트(WD-402): 프록시가 아닌 곳에서 X-Forwarded-For 에 허용 IP 를 적어 보내도 헤더를 무시하고 403 이다. */
+  @Test
+  void apiTrigger_spoofedForwardedForFromUntrustedRemote_returnsForbidden() throws Exception {
+    String rawToken = createIpRestrictedApiTrigger("XFF 위조 직접 접속");
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}")
+                .header("X-Forwarded-For", "203.0.113.5")
+                .with(
+                    req -> {
+                      req.setRemoteAddr("198.51.100.9"); // 신뢰 프록시가 아닌 직접 접속
+                      return req;
+                    }))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.message").value("IP not allowed"));
+  }
+
+  /** WD-402: 신뢰 프록시(루프백 nginx)를 거쳐 실제 허용 IP 에서 온 요청은 헤더의 실제 주소로 판정해 통과한다. */
+  @Test
+  void apiTrigger_allowedIpThroughTrustedProxy_returnsOk() throws Exception {
+    String rawToken = createIpRestrictedApiTrigger("XFF 신뢰 프록시 허용");
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}")
+                .header("X-Forwarded-For", "203.0.113.5")
+                .with(
+                    req -> {
+                      req.setRemoteAddr("127.0.0.1");
+                      return req;
+                    }))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("triggered"));
+  }
+
+  /**
+   * 회귀 테스트(WD-402): 클라이언트가 허용 IP 를 앞에 끼워 보내면 nginx 는 그 뒤에 실제 주소를 덧붙인다({@code 허용IP, 실제IP}). 오른쪽의 실제
+   * 주소로 판정해 403 이다.
+   */
+  @Test
+  void apiTrigger_spoofedPrefixThroughTrustedProxy_returnsForbidden() throws Exception {
+    String rawToken = createIpRestrictedApiTrigger("XFF 위조 프록시 경유");
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}")
+                .header("X-Forwarded-For", "203.0.113.5, 198.51.100.9")
+                .with(
+                    req -> {
+                      req.setRemoteAddr("127.0.0.1");
+                      return req;
+                    }))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.message").value("IP not allowed"));
+  }
+
+  /**
+   * 회귀 테스트(WD-402): 내부망 공격자(10.9.9.9)가 허용된 사내 IP(10.1.2.3)를 헤더에 적으면 nginx 가 {@code 10.1.2.3,
+   * 10.9.9.9} 로 만든다. 전부 사설(신뢰) 대역이어도 맨 왼쪽이 아니라 맨 오른쪽(실제 접속 주소)으로 판정해 403 이다.
+   */
+  @Test
+  void apiTrigger_intranetSpoofThroughTrustedProxy_returnsForbidden() throws Exception {
+    TriggerResponse trigger =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest(
+                "XFF 내부망 위조", TriggerType.API, null, Map.of("allowedIps", List.of("10.1.2.3/32"))),
+            testUserId);
+    String rawToken = (String) trigger.config().get("rawToken");
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}")
+                .header("X-Forwarded-For", "10.1.2.3, 10.9.9.9")
+                .with(
+                    req -> {
+                      req.setRemoteAddr("172.18.0.3"); // nginx 컨테이너
+                      return req;
+                    }))
+        .andExpect(status().isForbidden());
+
+    // 같은 트리거에 실제 10.1.2.3 이 nginx 를 거쳐 오면 통과한다(정상 사내 호출은 깨지지 않는다)
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}")
+                .header("X-Forwarded-For", "10.1.2.3")
+                .with(
+                    req -> {
+                      req.setRemoteAddr("172.18.0.3");
+                      return req;
+                    }))
+        .andExpect(status().isOk());
+  }
+
+  /** WD-402: 신뢰 프록시 뒤에서 해석되지 않는 값이 오면 허용 목록과 맞지 않아 403 이다(우회 불가). */
+  @Test
+  void apiTrigger_garbageForwardedForThroughTrustedProxy_returnsForbidden() throws Exception {
+    String rawToken = createIpRestrictedApiTrigger("XFF 쓰레기 값");
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}")
+                .header("X-Forwarded-For", "203.0.113.5, not-an-ip")
+                .with(
+                    req -> {
+                      req.setRemoteAddr("127.0.0.1");
+                      return req;
+                    }))
+        .andExpect(status().isForbidden());
+  }
+
   @Test
   void webhookTrigger_withSecret_missingSignature_returnsUnauthorized() throws Exception {
     TriggerResponse trigger =

@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.service;
 import com.smartfirehub.global.exception.CryptoException;
 import com.smartfirehub.global.security.MemberEligibility;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.util.IpCidr;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
@@ -17,8 +18,6 @@ import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetAction;
 import com.smartfirehub.tenant.repository.TenantRepository;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -1328,37 +1327,25 @@ public class TriggerService {
   }
 
   /**
-   * sourceIp가 cidrEntry(예: "192.168.1.0/24" 또는 단순 IP "192.168.1.5")에 속하는지 판단한다. 바이트 레벨 비트 마스크 연산으로
-   * 정확하게 비교한다.
+   * sourceIp가 cidrEntry(예: "192.168.1.0/24" 또는 단순 IP "192.168.1.5")에 속하는지 판단한다. 비트 마스크 비교는 신뢰 프록시
+   * 판정과 같은 {@link IpCidr} 를 쓴다(WD-402).
    */
-  private boolean isIpInCidr(String sourceIp, String cidrEntry) throws UnknownHostException {
+  private boolean isIpInCidr(String sourceIp, String cidrEntry) {
+    // sourceIp 는 X-Forwarded-For 에서 온 값일 수 있다 — 숫자 리터럴이 아니면(DNS 조회 없이) 어떤 항목과도 맞지 않는다(WD-402).
+    // 실제 접속 주소(Tomcat remoteAddr·nginx 가 덧붙인 주소)는 항상 정규 리터럴이므로, 이 검사로 막히는 것은 위조 값뿐이다.
+    var sourceAddr = IpCidr.parseLiteral(sourceIp);
+    if (sourceAddr.isEmpty()) {
+      return false;
+    }
     if (!cidrEntry.contains("/")) {
-      // 단순 IP 비교
+      // 단일 주소는 /32·/128 대역으로 비교한다(WD-402) — IPv6 축약·전개 표기가 같은 주소로 맞는다
+      // (예: 2001:db8::1 과 2001:db8:0:0:0:0:0:1). 항목이 숫자 리터럴이 아니면(호스트 이름, 앞자리 0 이 붙은 옛 형식 등)
+      // DNS 없이 예전처럼 문자열 그대로 비교한다.
+      if (IpCidr.parseLiteral(cidrEntry).isPresent()) {
+        return IpCidr.parse(cidrEntry).contains(sourceAddr.get());
+      }
       return sourceIp.equals(cidrEntry);
     }
-
-    int slashIdx = cidrEntry.indexOf('/');
-    String networkIpStr = cidrEntry.substring(0, slashIdx);
-    int prefix = Integer.parseInt(cidrEntry.substring(slashIdx + 1));
-
-    byte[] sourceBytes = InetAddress.getByName(sourceIp).getAddress();
-    byte[] networkBytes = InetAddress.getByName(networkIpStr).getAddress();
-
-    if (sourceBytes.length != networkBytes.length) return false;
-
-    // 비트 마스크로 네트워크 주소 범위 비교
-    int fullBytes = prefix / 8;
-    int remainBits = prefix % 8;
-
-    for (int i = 0; i < fullBytes; i++) {
-      if (sourceBytes[i] != networkBytes[i]) return false;
-    }
-
-    if (remainBits > 0 && fullBytes < sourceBytes.length) {
-      int mask = 0xFF & (0xFF << (8 - remainBits));
-      if ((sourceBytes[fullBytes] & mask) != (networkBytes[fullBytes] & mask)) return false;
-    }
-
-    return true;
+    return IpCidr.parse(cidrEntry).contains(sourceAddr.get());
   }
 }

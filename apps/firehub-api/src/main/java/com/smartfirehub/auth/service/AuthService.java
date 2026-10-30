@@ -56,6 +56,9 @@ public class AuthService {
   private final RefreshTokenRotation refreshTokenRotation;
   private final PlatformTransactionManager transactionManager;
 
+  /** 감사 IP 를 신뢰 프록시 기준으로 고른다(WD-402) — X-Forwarded-For 위조로 감사 IP 를 속이지 못하게. */
+  private final ClientIpExtractor clientIpExtractor;
+
   /**
    * 회원가입.
    *
@@ -475,7 +478,7 @@ public class AuthService {
     var attrs = RequestContextHolder.getRequestAttributes();
     if (attrs instanceof ServletRequestAttributes sra) {
       HttpServletRequest req = sra.getRequest();
-      return new String[] {ClientIpExtractor.extract(req), req.getHeader("User-Agent")};
+      return new String[] {clientIpExtractor.extract(req), req.getHeader("User-Agent")};
     }
     return new String[] {null, null};
   }

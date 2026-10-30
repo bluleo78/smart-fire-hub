@@ -5,6 +5,7 @@ import com.smartfirehub.dataimport.dto.ExportRequest;
 import com.smartfirehub.dataimport.dto.ExportResult;
 import com.smartfirehub.dataimport.service.DataExportService;
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.global.util.ClientIpExtractor;
 import com.smartfirehub.global.util.ContentDispositions;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.repository.AsyncJobRepository;
@@ -40,6 +41,9 @@ public class DataExportController {
   /** 비동기 내보내기 파일의 대상 데이터셋 조회(다운로드 시점 재판정용). */
   private final AsyncJobRepository asyncJobRepository;
 
+  /** 감사 IP 를 신뢰 프록시 기준으로 고른다(WD-402) — 프록시 뒤에서도 실제 클라이언트 IP 를, X-Forwarded-For 위조 없이 남긴다. */
+  private final ClientIpExtractor clientIpExtractor;
+
   @GetMapping("/datasets/{datasetId}/export/estimate")
   @RequirePermission("data:export")
   public ResponseEntity<ExportEstimate> estimateExport(
@@ -71,7 +75,8 @@ public class DataExportController {
     Long userId = (Long) authentication.getPrincipal();
     String username =
         userRepository.findById(userId).map(u -> u.name()).orElse(String.valueOf(userId));
-    String ipAddress = httpRequest.getRemoteAddr();
+    // 프록시 IP 가 아니라 실제 클라이언트 IP 를 감사에 남긴다(WD-402).
+    String ipAddress = clientIpExtractor.extract(httpRequest);
     String userAgent = httpRequest.getHeader("User-Agent");
 
     ExportResult result =

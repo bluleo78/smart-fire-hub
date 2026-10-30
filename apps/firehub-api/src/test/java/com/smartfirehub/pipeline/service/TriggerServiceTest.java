@@ -483,4 +483,26 @@ class TriggerServiceTest extends IntegrationTestBase {
           .hasMessage("limit 은 1~200 사이여야 합니다.");
     }
   }
+
+  /** WD-402: 단일 주소 항목은 /128 로 비교해 IPv6 축약·전개 표기가 같은 주소로 맞는다. */
+  @Test
+  void isIpAllowed_singleIpv6Entry_matchesAcrossNotations() {
+    assertThat(triggerService.isIpAllowed("2001:db8::1", List.of("2001:db8:0:0:0:0:0:1"))).isTrue();
+    assertThat(triggerService.isIpAllowed("2001:db8:0:0:0:0:0:1", List.of("2001:db8::1"))).isTrue();
+    assertThat(triggerService.isIpAllowed("2001:db8::2", List.of("2001:db8::1"))).isFalse();
+    assertThat(triggerService.isIpAllowed("10.0.0.1", List.of("10.0.0.1"))).isTrue();
+  }
+
+  /**
+   * WD-402: 숫자 리터럴이 아닌 옛 항목(앞자리 0·호스트 이름)은 DNS 없이 문자열 비교로만 남는다 — 정규 주소와는 맞지 않고, 같은 문자열을 헤더로 보내는 위조
+   * 값도 리터럴이 아니라 통과하지 못한다.
+   */
+  @Test
+  void isIpAllowed_nonLiteralEntryOrSource_neverMatchesBySpoofing() {
+    assertThat(triggerService.isIpAllowed("10.0.0.1", List.of("010.0.0.1"))).isFalse();
+    assertThat(triggerService.isIpAllowed("010.0.0.1", List.of("010.0.0.1"))).isFalse();
+    assertThat(triggerService.isIpAllowed("myhost", List.of("myhost"))).isFalse();
+    assertThat(triggerService.isIpAllowed("garbage", List.of("10.0.0.0/8"))).isFalse();
+    assertThat(triggerService.isIpAllowed("[2001:db8::7]", List.of("2001:db8::/32"))).isTrue();
+  }
 }
