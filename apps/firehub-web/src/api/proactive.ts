@@ -229,6 +229,16 @@ export interface UpdateProactiveJobRequest {
   enabled?: boolean;
   triggerType?: TriggerType;
   config?: Record<string, unknown>;
+  /**
+   * 편집을 시작할 때 읽은 상세의 updatedAt(WD-364 낙관적 잠금) — 서버 값과 다르면 409 EDIT_CONFLICT.
+   * 서버가 준 문자열을 그대로 보낸다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다). 빼면 비교하지 않는다(덮어쓰기).
+   */
+  expectedUpdatedAt?: string | null;
+}
+
+/** 스마트 작업 수정 응답 — 새 updatedAt 을 다음 저장의 기준 버전으로 쓴다(WD-364). */
+export interface UpdateProactiveJobResponse {
+  updatedAt: string | null;
 }
 
 export interface CreateReportTemplateRequest {
@@ -243,6 +253,16 @@ export interface UpdateReportTemplateRequest {
   description?: string;
   sections?: TemplateSection[];
   style?: string;
+  /**
+   * 편집을 시작할 때 읽은 상세의 updatedAt(WD-364 낙관적 잠금) — 서버 값과 다르면 409 EDIT_CONFLICT.
+   * 서버가 준 문자열을 그대로 보낸다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다). 빼면 비교하지 않는다(덮어쓰기).
+   */
+  expectedUpdatedAt?: string | null;
+}
+
+/** 리포트 양식 수정 응답 — 새 updatedAt 을 다음 저장의 기준 버전으로 쓴다(WD-364). */
+export interface UpdateReportTemplateResponse {
+  updatedAt: string | null;
 }
 
 /** 전역 리포트 목록의 행 1건. 본문(htmlContent)은 포함되지 않는다 — 뷰어에서 별도 조회한다. */
@@ -264,7 +284,8 @@ export const proactiveApi = {
   createJob: (data: CreateProactiveJobRequest) =>
     client.post<ProactiveJob>('/proactive/jobs', data),
   updateJob: (id: number, data: UpdateProactiveJobRequest) =>
-    client.put<ProactiveJob>(`/proactive/jobs/${id}`, data),
+    // 응답은 새 수정 시각뿐이다(WD-364) — 작업 전체가 필요하면 getJob 으로 다시 읽는다
+    client.put<UpdateProactiveJobResponse>(`/proactive/jobs/${id}`, data),
   deleteJob: (id: number) => client.delete(`/proactive/jobs/${id}`),
   /** 내 작업 끄기 — 쓰기 권한 없이 읽기 권한만으로 된다(WD-192). 켜기는 updateJob(쓰기 권한)으로만 한다. */
   disableJob: (id: number) => client.post(`/proactive/jobs/${id}/disable`),
@@ -315,7 +336,8 @@ export const proactiveApi = {
   createTemplate: (data: CreateReportTemplateRequest) =>
     client.post<ReportTemplate>('/proactive/templates', data),
   updateTemplate: (id: number, data: UpdateReportTemplateRequest) =>
-    client.put<ReportTemplate>(`/proactive/templates/${id}`, data),
+    // 응답은 새 수정 시각뿐이다(WD-364) — 예전 타입(ReportTemplate)은 실제 응답(204 빈 본문)과 맞지 않았다
+    client.put<UpdateReportTemplateResponse>(`/proactive/templates/${id}`, data),
   deleteTemplate: (id: number) =>
     client.delete(`/proactive/templates/${id}`),
 

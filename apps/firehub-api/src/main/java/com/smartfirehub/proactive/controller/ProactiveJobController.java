@@ -10,6 +10,7 @@ import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
+import com.smartfirehub.proactive.dto.UpdateProactiveJobResponse;
 import com.smartfirehub.proactive.repository.AnomalyEventRepository;
 import com.smartfirehub.proactive.service.PdfExportService;
 import com.smartfirehub.proactive.service.ProactiveJobService;
@@ -64,7 +65,7 @@ public class ProactiveJobController {
 
   @PutMapping("/{id}")
   @RequirePermission("proactive:write")
-  public ResponseEntity<Void> updateJob(
+  public ResponseEntity<UpdateProactiveJobResponse> updateJob(
       @PathVariable Long id,
       @RequestBody UpdateProactiveJobRequest request,
       Authentication authentication) {
@@ -76,8 +77,9 @@ public class ProactiveJobController {
           .flatMap(ch -> ch.recipientEmails().stream())
           .forEach(ProactiveConfigParser::validateEmail);
     }
-    proactiveJobService.updateJob(id, request, userId);
-    return ResponseEntity.noContent().build();
+    // 새 수정 시각을 돌려준다 — 웹이 다음 저장의 낙관적 잠금 기준으로 쓴다(WD-364). 예전에는 204 였다.
+    return ResponseEntity.ok(
+        new UpdateProactiveJobResponse(proactiveJobService.updateJob(id, request, userId)));
   }
 
   /**

@@ -16,6 +16,7 @@ import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
+import org.jooq.Record1;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -148,7 +149,30 @@ public class ReportTemplateRepository {
     }
   }
 
-  public void update(
+  /**
+   * 수정 시각을 행 잠금(FOR UPDATE)과 함께 읽는다 — 편집 충돌(낙관적 잠금) 비교용(WD-364, 파이프라인 WD-353 과 같은 방식).
+   *
+   * <p>잠금 없이 읽고 비교하면 동시에 들어온 두 저장이 같은 값을 읽어 둘 다 통과한다. 잠금을 잡으면 나중 저장은 앞 저장이 커밋될 때까지 기다렸다가 바뀐 값을 읽어
+   * 충돌로 거부된다. 소유자 확인을 마친 뒤에 부른다 — 먼저 부르면 남의 행에 대한 낡은 요청이 404 대신 409 를 받아 존재가 드러난다.
+   *
+   * <p>행이 없으면 빈 값, 행은 있는데 수정 시각이 비어 있으면(nullable 컬럼, V42) 값이 null 인 레코드다 — 둘을 구분해야 수정 시각이 빈 옛 행을
+   * "없음"으로 잘못 거부하지 않는다.
+   */
+  public Optional<Record1<LocalDateTime>> lockUpdatedAtById(Long id) {
+    return dsl.select(RT_UPDATED_AT)
+        .from(REPORT_TEMPLATE)
+        .where(RT_ID.eq(id))
+        .forUpdate()
+        .fetchOptional();
+  }
+
+  /**
+   * 양식을 고치고 새로 저장된 수정 시각을 돌려준다(WD-364).
+   *
+   * <p>Java 값이 아니라 DB 에 저장된 값(RETURNING)을 돌려준다 — PG timestamp 는 마이크로초로 반올림하므로 넣은 값을 그대로 돌려주면 다음 저장의
+   * 기준 버전이 저장값과 어긋나 자기 저장과 충돌한다. 고친 행이 없으면(남의 양식·빌트인) null.
+   */
+  public LocalDateTime update(
       Long id,
       Long userId,
       String name,
@@ -168,7 +192,10 @@ public class ReportTemplateRepository {
         step = step.set(RT_SECTIONS, JSONB.valueOf(sectionsJson));
       }
       if (style != null) step = step.set(RT_STYLE, blankToNull(style));
-      step.where(RT_ID.eq(id).and(RT_USER_ID.eq(userId))).execute();
+      return step.where(RT_ID.eq(id).and(RT_USER_ID.eq(userId)))
+          .returning(RT_UPDATED_AT)
+          .fetchOptional(RT_UPDATED_AT)
+          .orElse(null);
     } catch (Exception e) {
       throw new RuntimeException("Failed to serialize sections", e);
     }

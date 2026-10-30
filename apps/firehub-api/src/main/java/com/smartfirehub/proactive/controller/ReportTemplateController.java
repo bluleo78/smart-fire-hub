@@ -5,6 +5,7 @@ import com.smartfirehub.proactive.dto.CreateReportTemplateRequest;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
 import com.smartfirehub.proactive.dto.UpdateReportTemplateRequest;
+import com.smartfirehub.proactive.dto.UpdateReportTemplateResponse;
 import com.smartfirehub.proactive.service.ReportTemplateService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -57,13 +58,15 @@ public class ReportTemplateController {
 
   @PutMapping("/{id}")
   @RequirePermission("proactive:write")
-  public ResponseEntity<Void> updateTemplate(
+  public ResponseEntity<UpdateReportTemplateResponse> updateTemplate(
       @PathVariable Long id,
       @Valid @RequestBody UpdateReportTemplateRequest request,
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
-    reportTemplateService.updateTemplate(id, request, userId);
-    return ResponseEntity.noContent().build();
+    // 새 수정 시각을 돌려준다 — 웹이 다음 저장의 낙관적 잠금 기준으로 쓴다(WD-364). 예전에는 204 였다.
+    return ResponseEntity.ok(
+        new UpdateReportTemplateResponse(
+            reportTemplateService.updateTemplate(id, request, userId)));
   }
 
   @DeleteMapping("/{id}")

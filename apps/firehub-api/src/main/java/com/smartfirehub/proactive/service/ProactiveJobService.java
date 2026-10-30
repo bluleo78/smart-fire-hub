@@ -1,6 +1,7 @@
 package com.smartfirehub.proactive.service;
 
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.dto.NotificationEvent;
 import com.smartfirehub.notification.service.SseEmitterRegistry;
@@ -259,32 +260,53 @@ public class ProactiveJobService {
     return withOwnerEligibility(List.of(job), userId).get(0);
   }
 
+  /** 편집 충돌 안내 문구(WD-364) — 웹은 코드로 충돌 창을 띄우고, 코드를 모르는 호출부(AI 도구 등)는 이 문구를 그대로 보인다. */
+  static final String EDIT_CONFLICT_MESSAGE = "이 작업은 편집을 시작한 뒤 다른 곳에서 변경되었습니다. 다시 불러온 뒤 저장하세요.";
+
+  /**
+   * 작업을 고친다.
+   *
+   * @return 새로 저장된 수정 시각 — 웹이 다음 저장의 기준 버전으로 쓴다(WD-364). 돌려주지 않으면 저장 직후 재조회가 오기 전에 다시 고쳐 저장할 때 자기
+   *     저장과 충돌한다.
+   */
   @Transactional
-  public void updateJob(Long id, UpdateProactiveJobRequest request, Long userId) {
+  public LocalDateTime updateJob(Long id, UpdateProactiveJobRequest request, Long userId) {
     // 남의 작업·없는 작업은 404 — 저장소의 id+user_id 조건 UPDATE 는 0행이어도 조용히 지나가 204(무동작)가 나갔다 (WD-165)
     requireOwnJob(id, userId);
+    // 낙관적 잠금(WD-364) — 소유자 확인(404) 뒤에 한다: 먼저 하면 남의 작업에 대한 낡은 요청이 409 를 받아 존재가 드러난다.
+    // cron·메트릭 SQL·템플릿 검증보다 먼저 하는 이유: 낡은 화면에서 저장하면 낡은 내용으로 계산한 검증 오류 대신 "다른 곳에서 바뀌었다"를
+    // 먼저 알려야 한다. 행 잠금은 트랜잭션 끝까지 유지되어 동시 저장 둘이 같은 버전으로 통과하지 못한다.
+    LocalDateTime currentUpdatedAt =
+        proactiveJobRepository
+            .lockUpdatedAtById(id)
+            .orElseThrow(() -> new ProactiveJobNotFoundException("Proactive Job을 찾을 수 없습니다: " + id))
+            .value1();
+    EditConflictException.check(
+        request.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
     // 업데이트 요청에 포함된 cronExpression / timezone 도 동일하게 사전 검증한다 (#221).
     validateCronAndTimezone(request.cronExpression(), request.timezone());
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
     requireUsableTemplate(request.templateId(), userId);
 
-    proactiveJobRepository.update(
-        id,
-        userId,
-        request.name(),
-        request.prompt(),
-        request.templateId(),
-        Boolean.TRUE.equals(request.clearTemplate()),
-        request.cronExpression(),
-        request.timezone(),
-        request.enabled(),
-        request.triggerType(),
-        request.config());
+    LocalDateTime savedUpdatedAt =
+        proactiveJobRepository.update(
+            id,
+            userId,
+            request.name(),
+            request.prompt(),
+            request.templateId(),
+            Boolean.TRUE.equals(request.clearTemplate()),
+            request.cronExpression(),
+            request.timezone(),
+            request.enabled(),
+            request.triggerType(),
+            request.config());
     ProactiveJobResponse updated = proactiveJobRepository.findById(id, userId).orElse(null);
     if (updated != null) {
       schedulerService.rescheduleJob(updated);
     }
+    return savedUpdatedAt;
   }
 
   @Transactional

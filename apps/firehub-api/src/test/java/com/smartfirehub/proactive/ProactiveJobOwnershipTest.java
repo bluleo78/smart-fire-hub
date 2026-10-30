@@ -209,7 +209,8 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
     verify(schedulerService, never()).unregisterSchedule(jobId);
 
     // 양성 대조: 주인은 수정·삭제할 수 있다
-    assertThat(send(put(url), ownerToken, rename)).isEqualTo(204);
+    // 수정은 200 + 새 수정 시각(WD-364 — 예전에는 204)
+    assertThat(send(put(url), ownerToken, rename)).isEqualTo(200);
     assertThat(ownerJobName()).isEqualTo("덮어쓰기");
     assertThat(send(delete(url), ownerToken, null)).isEqualTo(204);
     verify(schedulerService, times(1)).unregisterSchedule(jobId);

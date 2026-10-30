@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import {
   LayoutDashboard,
   Pencil,
@@ -11,7 +12,9 @@ import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { analyticsApi } from '../../api/analytics';
 import { WorkspaceAnalyticsTable } from '../../components/analytics/WorkspaceAnalyticsTable';
+import { EditConflictDialog } from '../../components/EditConflictDialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
@@ -47,7 +50,7 @@ import {
   useUpdateDashboard,
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
-import { handleApiError } from '../../lib/api-error';
+import { handleApiError, isEditConflict } from '../../lib/api-error';
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
@@ -194,8 +197,19 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
     dashboard?.autoRefreshSeconds != null ? String(dashboard.autoRefreshSeconds) : '',
   );
   const updateDashboard = useUpdateDashboard();
+  const queryClient = useQueryClient();
   // isPending 비동기 반영 지연으로 인한 중복 제출 방지용 동기 가드 (CreateDashboardDialog와 동일 패턴, #546)
   const submittingRef = useRef(false);
+  /**
+   * 지금 폼 내용의 기준 버전 — 그 내용을 채운(창을 연 / 다시 불러온) 시점의 서버 updatedAt(WD-364 낙관적 잠금).
+   * 저장할 때 expectedUpdatedAt 으로 보내 그 사이 다른 곳에서 저장됐으면 서버가 409 EDIT_CONFLICT 로 거부한다.
+   * 서버 문자열 그대로 둔다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다).
+   */
+  const [baseUpdatedAt, setBaseUpdatedAt] = useState<string | null>(dashboard?.updatedAt ?? null);
+  // 마지막 저장이 편집 충돌로 거부됐는가 — 참이면 EditConflictDialog 를 설정 창 위에 띄운다
+  const [editConflict, setEditConflict] = useState(false);
+  // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
+  const [isReloading, setIsReloading] = useState(false);
 
   // dashboard prop 변경 시 폼 필드 초기화 (render-time 조정 패턴)
   // 취소 후 재오픈 시 부모가 동일 참조의 dashboard 객체를 다시 넘기므로
@@ -209,11 +223,15 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
     setDescription(dashboard.description ?? '');
     setIsShared(dashboard.isShared);
     setAutoRefresh(dashboard.autoRefreshSeconds != null ? String(dashboard.autoRefreshSeconds) : '');
+    // 폼을 채운 목록 행의 버전이 기준이다(WD-364)
+    setBaseUpdatedAt(dashboard.updatedAt);
+    setEditConflict(false);
   } else if (!dashboard && prevDashboard) {
     setPrevDashboard(null);
   }
 
-  const handleSubmit = async () => {
+  /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
+  const handleSubmit = async (force = false) => {
     if (!dashboard || !name.trim() || submittingRef.current) return;
     const parsedAutoRefresh = parseAutoRefreshInput(autoRefresh);
     if ('error' in parsedAutoRefresh) {
@@ -233,14 +251,50 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
           // 값을 지워 "수동"으로 되돌리는 요청임을 명시. 백엔드는 autoRefreshSeconds가 null이어도
           // 이 플래그가 없으면 "미제공(변경 없음)"으로 해석해 기존 값을 유지한다(#568).
           clearAutoRefresh: parsedAutoRefresh.value === null,
+          // 편집 기준 버전(WD-364) — 그 사이 다른 곳에서 저장됐으면 서버가 409 EDIT_CONFLICT 로 거부한다
+          ...(force ? {} : { expectedUpdatedAt: baseUpdatedAt }),
         },
       });
+      setEditConflict(false);
       toast.success(`대시보드 "${name}"${iGa(name)} 수정되었습니다.`);
       onClose();
     } catch (error) {
+      // 편집 충돌은 토스트 대신 안내 창으로 — 사용자가 다시 불러올지 덮어쓸지 고른다(WD-364)
+      if (isEditConflict(error)) {
+        setEditConflict(true);
+        return;
+      }
       handleApiError(error, '대시보드 수정에 실패했습니다.');
     } finally {
       submittingRef.current = false;
+    }
+  };
+
+  /**
+   * 편집 충돌의 「다시 불러오기」(WD-364) — 최신 대시보드를 서버에서 새로 받아 폼과 기준 버전을 그것으로 바꾸고 내 변경을 버린다.
+   * 목록 행은 낡았을 수 있어 상세를 읽는다. 설정 창은 열어 둔다 — 최신 값을 보고 이어 고칠 수 있게 한다.
+   */
+  const handleReloadLatest = async () => {
+    if (!dashboard) return;
+    setIsReloading(true);
+    try {
+      const latest = await queryClient.fetchQuery({
+        queryKey: ['analytics', 'dashboards', dashboard.id],
+        queryFn: () => analyticsApi.getDashboard(dashboard.id).then((r) => r.data),
+        staleTime: 0,
+      });
+      setName(latest.name);
+      setDescription(latest.description ?? '');
+      setIsShared(latest.isShared);
+      setAutoRefresh(latest.autoRefreshSeconds != null ? String(latest.autoRefreshSeconds) : '');
+      setBaseUpdatedAt(latest.updatedAt);
+      setEditConflict(false);
+      // 목록 행(이름·공개 여부)도 최신으로 맞춘다
+      queryClient.invalidateQueries({ queryKey: ['analytics', 'dashboards'] });
+    } catch (error) {
+      handleApiError(error, '최신 내용을 불러오지 못했습니다.');
+    } finally {
+      setIsReloading(false);
     }
   };
 
@@ -293,13 +347,24 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>취소</Button>
           <Button
-            onClick={handleSubmit}
+            onClick={() => handleSubmit()}
             disabled={!name.trim() || updateDashboard.isPending}
           >
             저장
           </Button>
         </DialogFooter>
       </DialogContent>
+      {/* 편집 충돌 안내 창(WD-364) — 저장이 409 EDIT_CONFLICT 로 거부되면 설정 창 위에 뜬다 */}
+      <EditConflictDialog
+        open={editConflict}
+        onOpenChange={(open) => {
+          if (!open) setEditConflict(false);
+        }}
+        resourceLabel="대시보드"
+        onReload={handleReloadLatest}
+        onOverwrite={() => handleSubmit(true)}
+        pending={updateDashboard.isPending || isReloading}
+      />
     </Dialog>
   );
 }

@@ -16,6 +16,7 @@ import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.Record1;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
@@ -292,6 +293,16 @@ public class SavedQueryRepository {
         .returning(SQ_ID)
         .fetchOne()
         .get(SQ_ID);
+  }
+
+  /**
+   * 수정 시각을 행 잠금(FOR UPDATE)과 함께 읽는다 — 편집 충돌(낙관적 잠금) 비교용(WD-364, 파이프라인 WD-353 과 같은 방식).
+   *
+   * <p>잠금 없이 읽고 비교하면 동시에 들어온 두 저장이 같은 값을 읽어 둘 다 통과한다. 잠금을 잡으면 나중 저장은 앞 저장이 커밋될 때까지 기다렸다가 바뀐 값을 읽어
+   * 충돌로 거부된다. 소유자 확인을 마친 뒤에 부른다 — 먼저 부르면 남의 행에 대한 낡은 요청이 404 대신 409 를 받아 존재가 드러난다.
+   */
+  public Optional<Record1<LocalDateTime>> lockUpdatedAtById(Long id) {
+    return dsl.select(SQ_UPDATED_AT).from(SQ).where(SQ_ID.eq(id)).forUpdate().fetchOptional();
   }
 
   public void update(Long id, UpdateSavedQueryRequest req, Long userId) {

@@ -50,6 +50,11 @@ export interface UpdateSavedQueryRequest {
   datasetId?: number | null;
   folder?: string | null;
   isShared?: boolean;
+  /**
+   * 편집을 시작할 때 읽은 상세의 updatedAt(WD-364 낙관적 잠금) — 서버 값과 다르면 409 EDIT_CONFLICT.
+   * 서버가 준 문자열을 그대로 보낸다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다). 빼면 비교하지 않는다(덮어쓰기).
+   */
+  expectedUpdatedAt?: string | null;
 }
 
 export interface AnalyticsQueryRequest {
@@ -250,6 +255,11 @@ export interface UpdateChartRequest {
   chartType?: ChartType;
   config?: ChartConfig;
   isShared?: boolean;
+  /**
+   * 편집을 시작할 때 읽은 상세의 updatedAt(WD-364 낙관적 잠금) — 서버 값과 다르면 409 EDIT_CONFLICT.
+   * 서버가 준 문자열을 그대로 보낸다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다). 빼면 비교하지 않는다(덮어쓰기).
+   */
+  expectedUpdatedAt?: string | null;
 }
 
 export interface ChartDataResponse {
@@ -331,6 +341,11 @@ export interface UpdateDashboardRequest {
   autoRefreshSeconds?: number | null;
   /** autoRefreshSeconds가 null일 때 "값 미제공"이 아니라 "명시적으로 지움(수동 전환)"임을 알리는 플래그 (#568) */
   clearAutoRefresh?: boolean;
+  /**
+   * 편집을 시작할 때 읽은 상세의 updatedAt(WD-364 낙관적 잠금) — 서버 값과 다르면 409 EDIT_CONFLICT.
+   * 서버가 준 문자열을 그대로 보낸다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다). 빼면 비교하지 않는다(덮어쓰기).
+   */
+  expectedUpdatedAt?: string | null;
 }
 
 export interface AddWidgetRequest {

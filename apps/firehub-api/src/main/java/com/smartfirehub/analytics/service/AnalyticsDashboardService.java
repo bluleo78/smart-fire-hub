@@ -20,11 +20,13 @@ import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
+import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.StoreTransactions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -110,11 +112,27 @@ public class AnalyticsDashboardService {
         .orElseThrow(() -> new DashboardNotFoundException());
   }
 
+  /** 편집 충돌 안내 문구(WD-364) — 웹은 코드로 충돌 창을 띄우고, 코드를 모르는 호출부는 이 문구를 그대로 보인다. */
+  static final String EDIT_CONFLICT_MESSAGE = "이 대시보드는 편집을 시작한 뒤 다른 곳에서 변경되었습니다. 다시 불러온 뒤 저장하세요.";
+
+  /**
+   * 대시보드 설정(이름·설명·공개·자동 새로고침)을 고친다.
+   *
+   * <p>응답의 {@code updatedAt} 은 저장 뒤 같은 트랜잭션에서 다시 읽은 DB 값이다 — 웹이 다음 저장의 기준 버전으로 쓴다(WD-364).
+   */
   @Transactional
   public DashboardResponse update(Long id, UpdateDashboardRequest req, Long userId) {
     dashboardRepository
         .findByIdForOwner(id, userId)
         .orElseThrow(() -> new DashboardNotFoundException());
+    // 낙관적 잠금(WD-364) — 소유자 확인(404) 뒤에 한다: 먼저 하면 남의 대시보드에 대한 낡은 요청이 409 를 받아 존재가 드러난다.
+    // 행 잠금은 트랜잭션 끝까지 유지되어 동시에 들어온 두 저장이 같은 버전으로 둘 다 통과하지 못한다.
+    LocalDateTime currentUpdatedAt =
+        dashboardRepository
+            .lockUpdatedAtById(id)
+            .orElseThrow(() -> new DashboardNotFoundException())
+            .value1();
+    EditConflictException.check(req.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
     dashboardRepository.update(id, req, userId);
 
     // 대시보드를 공유하면 위젯이 쓰는 차트·쿼리 중 요청자 본인 것만 함께 공유한다(WD-194).

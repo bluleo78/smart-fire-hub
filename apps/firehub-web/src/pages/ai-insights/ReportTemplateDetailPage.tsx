@@ -6,6 +6,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import type { ReportTemplate, ReportTemplateSummary } from '@/api/proactive';
+import { EditConflictDialog } from '@/components/EditConflictDialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,9 +32,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import { useCanWriteProactive,useCreateProactiveTemplate, useDeleteProactiveTemplate, useProactiveJobs, useProactiveTemplate, useProactiveTemplates, useUpdateProactiveTemplate } from '@/hooks/queries/useProactiveMessages';
+import { useCanWriteProactive,useCreateProactiveTemplate, useDeleteProactiveTemplate, useFetchLatestProactiveTemplate, useProactiveJobs, useProactiveTemplate, useProactiveTemplates, useUpdateProactiveTemplate } from '@/hooks/queries/useProactiveMessages';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { handleApiError, isForbiddenError } from '@/lib/api-error';
+import { handleApiError, isEditConflict, isForbiddenError } from '@/lib/api-error';
 import { parseUtcDate } from '@/lib/formatters';
 import { parseTemplateSections, validateSectionKeys } from '@/lib/template-section-types';
 import { type ReportTemplateFormValues, reportTemplateSchema } from '@/lib/validations/report-template';
@@ -119,6 +120,7 @@ export default function ReportTemplateDetailPage() {
   const createMutation = useCreateProactiveTemplate();
   const updateMutation = useUpdateProactiveTemplate();
   const deleteMutation = useDeleteProactiveTemplate();
+  const fetchLatestTemplate = useFetchLatestProactiveTemplate();
 
   const [isEditing, setIsEditing] = useState(isNew);
   const [structureJson, setStructureJson] = useState(DEFAULT_STRUCTURE);
@@ -140,9 +142,24 @@ export default function ReportTemplateDetailPage() {
   const tree = useSectionTree([]);
 
   // 이전 값 추적용 state (React 19 권장: 렌더링 중 state 조정 시 ref 대신 state 사용)
-  const [prevTemplate, setPrevTemplate] = useState(template);
+  // 초깃값을 지금 양식이 아니라 undefined 로 둔다(WD-364) — 상세 캐시가 있는 채로 다시 들어오면 첫 렌더의 양식이 초깃값과 같아
+  // 아래 동기화가 건너뛰어져, 섹션은 빈 채로·기준 버전은 null 로 남았다(저장이 비교 없이 섹션을 지우며 덮어씀).
+  const [prevTemplate, setPrevTemplate] = useState<ReportTemplate | undefined>(undefined);
   const [prevTreeSections, setPrevTreeSections] = useState(tree.sections);
   const [suppressTreeSync, setSuppressTreeSync] = useState(false);
+
+  /**
+   * 지금 화면 내용(섹션·스타일)의 기준 버전 — 그 내용을 채운(또는 저장한) 시점의 서버 updatedAt(WD-364 낙관적 잠금).
+   * 저장할 때 expectedUpdatedAt 으로 보내 그 사이 다른 곳에서 저장됐으면 서버가 409 EDIT_CONFLICT 로 거부한다.
+   * 섹션은 전체 교체라 이 장치가 없으면 나중 저장이 먼저 저장된 섹션을 통째로 되돌린다.
+   * 섹션을 서버 값으로 채우는 곳(아래 동기화·편집 취소·다시 불러오기)에서만 함께 바꾼다 — 편집 중 재조회는 섹션을 바꾸지 않으므로
+   * 기준도 넘기지 않는다. 서버 문자열 그대로 둔다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다).
+   */
+  const [baseUpdatedAt, setBaseUpdatedAt] = useState<string | null>(null);
+  // 마지막 저장이 편집 충돌로 거부됐는가 — 참이면 EditConflictDialog 를 띄운다
+  const [editConflict, setEditConflict] = useState(false);
+  // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
+  const [isReloading, setIsReloading] = useState(false);
 
   // mode: 'all' — onChange + onBlur + onSubmit 모든 시점에 유효성 검사를 수행한다.
   // 이름 필드를 Ctrl+A → Backspace로 지운 후에도 isValid가 즉시 false로 갱신되도록 'all'을 사용한다.
@@ -164,6 +181,7 @@ export default function ReportTemplateDetailPage() {
     setStructureJson(json);
     setStyleText(template.style ?? '');
     tree.setSections(sections);
+    setBaseUpdatedAt(template.updatedAt);
     // 초기 로드는 dirty가 아님 (이슈 #58)
     setIsDirty(false);
   }
@@ -233,7 +251,8 @@ export default function ReportTemplateDetailPage() {
     [activeTab, structureJson, tree],
   );
 
-  const handleSave = form.handleSubmit((values) => {
+  /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
+  const submitTemplate = (force: boolean) => form.handleSubmit((values) => {
     // JSON 탭 활성 시 현재 structureJson을 파싱하여 sections 반영 (#37)
     let resolvedSections = tree.sections;
     if (activeTab === 'json') {
@@ -274,19 +293,58 @@ export default function ReportTemplateDetailPage() {
       });
     } else {
       updateMutation.mutate(
-        { id: templateId, data: payload },
+        // 편집 기준 버전(WD-364) — 그 사이 다른 곳에서 저장됐으면 서버가 409 EDIT_CONFLICT 로 거부한다
+        { id: templateId, data: force ? payload : { ...payload, expectedUpdatedAt: baseUpdatedAt } },
         {
-          onSuccess: () => {
+          onSuccess: (res) => {
+            // 새 버전을 바로 기준으로 삼는다 — 재조회를 기다리면 그 사이 다시 고쳐 저장할 때 자기 저장과 충돌한다.
+            // 본문이 없으면(옛 서버·204 모킹) null — 다음 저장은 비교 없이 나간다(자기 충돌보다 안전한 쪽)
+            setBaseUpdatedAt(res?.updatedAt ?? null);
+            setEditConflict(false);
             toast.success('템플릿이 수정되었습니다.');
             // 수정 성공 → dirty 해제 후 읽기 모드로 복귀 (이슈 #58)
             setIsDirty(false);
             setIsEditing(false);
           },
-          onError: (err) => handleApiError(err, '템플릿 수정에 실패했습니다.'),
+          onError: (err) => {
+            // 편집 충돌은 토스트 대신 안내 창으로 — 사용자가 다시 불러올지 덮어쓸지 고른다(WD-364)
+            if (isEditConflict(err)) {
+              setEditConflict(true);
+              return;
+            }
+            handleApiError(err, '템플릿 수정에 실패했습니다.');
+          },
         },
       );
     }
   });
+  const handleSave = submitTemplate(false);
+
+  /**
+   * 편집 충돌의 「다시 불러오기」(WD-364) — 최신 양식을 서버에서 새로 받아 이름·설명·섹션·스타일·기준 버전을 그것으로 바꾸고 내 변경을 버린다.
+   * 편집 중에는 위 동기화가 섹션을 다시 채우지 않으므로 직접 채운다. 편집 모드는 유지해 이어 고칠 수 있게 한다.
+   */
+  const handleReloadLatest = async () => {
+    if (isNew) return;
+    setIsReloading(true);
+    try {
+      const latest = await fetchLatestTemplate(templateId);
+      form.reset({ name: latest.name, description: latest.description ?? '' });
+      const sections = Array.isArray(latest.sections) ? latest.sections : [];
+      setStructureJson(JSON.stringify({ sections, output_format: 'markdown' }, null, 2));
+      setStyleText(latest.style ?? '');
+      tree.setSections(sections);
+      setActiveTab('builder');
+      setPrevTemplate(latest);
+      setBaseUpdatedAt(latest.updatedAt);
+      setIsDirty(false);
+      setEditConflict(false);
+    } catch (error) {
+      handleApiError(error, '최신 내용을 불러오지 못했습니다.');
+    } finally {
+      setIsReloading(false);
+    }
+  };
 
   const handleDelete = () => {
     deleteMutation.mutate(templateId, {
@@ -327,6 +385,8 @@ export default function ReportTemplateDetailPage() {
       setStructureJson(json);
       setStyleText(template.style ?? '');
       tree.setSections(sections);
+      // 화면을 캐시의 양식으로 되돌렸으니 기준도 그 버전이다(WD-364)
+      setBaseUpdatedAt(template.updatedAt);
     }
     setActiveTab('builder');
     setIsEditing(false);
@@ -720,6 +780,17 @@ export default function ReportTemplateDetailPage() {
         이탈 확인 다이얼로그 — 뒤로가기/취소 클릭 시 dirty면 표시 (이슈 #58)
         취소 시 머무름, 확인 시 변경사항 버리고 이탈/취소 동작 실행
       */}
+      {/* 편집 충돌 안내 창(WD-364) — 저장이 409 EDIT_CONFLICT 로 거부되면 뜬다 */}
+      <EditConflictDialog
+        open={editConflict}
+        onOpenChange={(open) => {
+          if (!open) setEditConflict(false);
+        }}
+        resourceLabel="리포트 양식"
+        onReload={handleReloadLatest}
+        onOverwrite={() => submitTemplate(true)()}
+        pending={isSaving || isReloading}
+      />
       <AlertDialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

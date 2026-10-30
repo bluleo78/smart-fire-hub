@@ -5,6 +5,7 @@ import { searchKeymap } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView, keymap } from '@codemirror/view';
+import { useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import {
   ArrowLeft,
@@ -22,8 +23,10 @@ import { useCallback, useEffect, useMemo,useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { analyticsApi } from '../../api/analytics';
 import { exportsApi } from '../../api/exports';
 import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
+import { EditConflictDialog } from '../../components/EditConflictDialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import {
@@ -63,12 +66,12 @@ import {
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { extractApiError, handleApiError, handleApiErrorAsync } from '../../lib/api-error';
+import { extractApiError, handleApiError, handleApiErrorAsync, isEditConflict } from '../../lib/api-error';
 import { downloadBlob, filenameFromContentDisposition } from '../../lib/download';
 import { sqlRunShortcut } from '../../lib/sql-run-shortcut';
 import { RUN_SHORTCUT_LABEL } from '../../lib/sql-run-shortcut-label';
 import { cn } from '../../lib/utils';
-import type { AnalyticsQueryResult } from '../../types/analytics';
+import type { AnalyticsQueryResult, SavedQuery } from '../../types/analytics';
 import type { ExportFormat } from '../../types/export';
 import { qualifiedName } from './components/schema-explorer-utils';
 import { SchemaExplorer } from './components/SchemaExplorer';
@@ -469,6 +472,19 @@ export default function QueryEditorPage() {
   const createSavedQuery = useCreateSavedQuery();
   const updateSavedQuery = useUpdateSavedQuery();
   const savingRef = useRef(false);
+  const queryClient = useQueryClient();
+
+  /**
+   * 지금 편집기 내용의 기준 버전 — 그 내용을 불러온(또는 저장한) 시점의 서버 updatedAt(WD-364 낙관적 잠금).
+   * 저장할 때 expectedUpdatedAt 으로 보내 그 사이 다른 곳에서 저장됐으면 서버가 409 EDIT_CONFLICT 로 거부한다.
+   * 편집기 내용을 서버 값으로 채우는 곳(applySavedQuery)에서만 함께 바꾼다 — 내용과 기준이 어긋나면 다른 탭의 저장을 조용히 덮어쓴다.
+   * 서버 문자열 그대로 둔다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다).
+   */
+  const [baseUpdatedAt, setBaseUpdatedAt] = useState<string | null>(null);
+  // 마지막 저장이 편집 충돌로 거부됐는가 — 참이면 EditConflictDialog 를 저장 창 위에 띄운다
+  const [editConflict, setEditConflict] = useState(false);
+  // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
+  const [isReloading, setIsReloading] = useState(false);
 
   const folders = foldersData ?? [];
   const tables = schemaInfo?.tables ?? [];
@@ -485,22 +501,26 @@ export default function QueryEditorPage() {
     return map;
   }, [schemaInfo]);
 
+  /** 서버 쿼리로 편집기 내용과 기준 버전을 함께 채운다 — 초기 로드·재조회·충돌 후 「다시 불러오기」가 같은 길을 쓴다 */
+  const applySavedQuery = useCallback((query: SavedQuery) => {
+    // CodeMirror sync useEffect가 발화시킬 onChange를 무시하도록 플래그 세팅 (이슈 #57)
+    ignoreNextChangeRef.current = true;
+    setSql(query.sqlText);
+    setSaveForm({
+      name: query.name,
+      description: query.description ?? '',
+      folder: query.folder ?? '',
+      isShared: query.isShared,
+    });
+    setBaseUpdatedAt(query.updatedAt);
+    // 서버 내용으로 채운 직후는 dirty가 아님 (이슈 #57)
+    setIsDirty(false);
+  }, []);
+
   // Load saved query into editor when fetched
   useEffect(() => {
-    if (savedQuery && !initialSql) {
-      // CodeMirror sync useEffect가 발화시킬 onChange를 무시하도록 플래그 세팅 (이슈 #57)
-      ignoreNextChangeRef.current = true;
-      setSql(savedQuery.sqlText);
-      setSaveForm({
-        name: savedQuery.name,
-        description: savedQuery.description ?? '',
-        folder: savedQuery.folder ?? '',
-        isShared: savedQuery.isShared,
-      });
-      // 초기 로드는 dirty가 아님 (이슈 #57)
-      setIsDirty(false);
-    }
-  }, [savedQuery, initialSql]);
+    if (savedQuery && !initialSql) applySavedQuery(savedQuery);
+  }, [savedQuery, initialSql, applySavedQuery]);
 
   // SQL 텍스트 변경 핸들러 — CodeMirror onChange에 전달, 사용자 입력 시 dirty 마킹 (이슈 #57)
   // - ignoreNextChangeRef가 true면 외부 sync(초기 로드)로 인한 onChange이므로 dirty 마킹을 건너뛴다.
@@ -573,7 +593,8 @@ export default function QueryEditorPage() {
     setSaveDialogOpen(true);
   };
 
-  const handleSave = async () => {
+  /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
+  const handleSave = async (force = false) => {
     if (savingRef.current || !saveForm.name.trim()) return;
 
     // 클라이언트 측 SQL 빈값 검증 — 서버 400 이전에 인라인 오류를 표시하여 UX 개선 (이슈 #195)
@@ -600,7 +621,7 @@ export default function QueryEditorPage() {
         setIsDirty(false);
         navigate(`/analytics/queries/${created.id}`, { replace: true });
       } else {
-        await updateSavedQuery.mutateAsync({
+        const saved = await updateSavedQuery.mutateAsync({
           id: queryId!,
           data: {
             name: saveForm.name,
@@ -610,20 +631,56 @@ export default function QueryEditorPage() {
             sqlText: sql,
             folder: saveForm.folder,
             isShared: saveForm.isShared,
+            // 편집 기준 버전(WD-364) — 그 사이 다른 곳에서 저장됐으면 서버가 409 EDIT_CONFLICT 로 거부한다
+            ...(force ? {} : { expectedUpdatedAt: baseUpdatedAt }),
           },
         });
+        // 새 버전을 바로 기준으로 삼는다 — 재조회를 기다리면 그 사이 다시 저장할 때 자기 저장과 충돌한다.
+        // 응답에 버전이 없으면(옛 서버·모킹) null — 다음 저장은 비교 없이 나간다(자기 충돌보다 안전한 쪽)
+        setBaseUpdatedAt(saved?.updatedAt ?? null);
+        setEditConflict(false);
         toast.success('쿼리가 수정되었습니다.');
         setSaveDialogOpen(false);
         // 수정 성공 → dirty 해제 (페이지 이동은 없음) (이슈 #57)
         setIsDirty(false);
       }
     } catch (error) {
+      // 편집 충돌은 인라인 오류·토스트 대신 안내 창으로 — 사용자가 다시 불러올지 덮어쓸지 고른다(WD-364)
+      if (isEditConflict(error)) {
+        setEditConflict(true);
+        return;
+      }
       // API 오류 발생 시 다이얼로그 내에 인라인으로 오류 메시지를 표시한다 (이슈 #195)
       // toast만으로는 다이얼로그 내 사용자가 오류를 인지하기 어려우므로 saveError도 함께 설정
       setSaveError(extractApiError(error, '쿼리 저장에 실패했습니다.'));
       handleApiError(error, '쿼리 저장에 실패했습니다.');
     } finally {
       savingRef.current = false;
+    }
+  };
+
+  /**
+   * 편집 충돌의 「다시 불러오기」(WD-364) — 최신 쿼리를 서버에서 새로 받아 편집기를 그것으로 바꾸고 내 변경을 버린다.
+   * 캐시의 쿼리가 재조회 결과와 같으면(구조 공유로 같은 참조) 로드 effect 가 다시 돌지 않으므로 applySavedQuery 로 직접 채운다.
+   * 저장 창은 닫는다 — 편집기에서 최신 SQL 을 확인한 뒤 다시 저장하게 한다.
+   */
+  const handleReloadLatest = async () => {
+    if (!queryId) return;
+    setIsReloading(true);
+    try {
+      const latest = await queryClient.fetchQuery({
+        queryKey: ['analytics', 'queries', queryId],
+        queryFn: () => analyticsApi.getQuery(queryId).then((r) => r.data),
+        staleTime: 0,
+      });
+      applySavedQuery(latest);
+      setEditConflict(false);
+      setSaveError(null);
+      setSaveDialogOpen(false);
+    } catch (error) {
+      handleApiError(error, '최신 내용을 불러오지 못했습니다.');
+    } finally {
+      setIsReloading(false);
     }
   };
 
@@ -976,10 +1033,22 @@ export default function QueryEditorPage() {
         isShared={saveForm.isShared}
         onIsSharedChange={(v) => setSaveForm((p) => ({ ...p, isShared: v }))}
         folders={folders}
-        onSave={handleSave}
+        onSave={() => handleSave()}
         isSaving={isSaving}
         isEdit={!isNew}
         error={saveError}
+      />
+
+      {/* 편집 충돌 안내 창(WD-364) — 저장이 409 EDIT_CONFLICT 로 거부되면 저장 창 위에 뜬다 */}
+      <EditConflictDialog
+        open={editConflict}
+        onOpenChange={(open) => {
+          if (!open) setEditConflict(false);
+        }}
+        resourceLabel="쿼리"
+        onReload={handleReloadLatest}
+        onOverwrite={() => handleSave(true)}
+        pending={isSaving || isReloading}
       />
 
       {/* 미저장 변경사항 이탈 가드 다이얼로그 (#639) — useUnsavedChangesGuard가 렌더 */}

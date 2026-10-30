@@ -12,11 +12,13 @@ import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.StoreTransactions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -103,13 +105,29 @@ public class ChartService {
         userId);
   }
 
-  /** Update a chart (owner only). */
+  /** 편집 충돌 안내 문구(WD-364) — 웹은 코드로 충돌 창을 띄우고, 코드를 모르는 호출부는 이 문구를 그대로 보인다. */
+  static final String EDIT_CONFLICT_MESSAGE = "이 차트는 편집을 시작한 뒤 다른 곳에서 변경되었습니다. 다시 불러온 뒤 저장하세요.";
+
+  /**
+   * Update a chart (owner only).
+   *
+   * <p>응답의 {@code updatedAt} 은 저장 뒤 같은 트랜잭션에서 다시 읽은 DB 값이다 — 웹이 다음 저장의 기준 버전으로 쓴다(WD-364).
+   */
   @Transactional
   public ChartResponse update(Long id, UpdateChartRequest req, Long userId) {
     ChartResponse existing =
         chartRepository
             .findByIdForOwner(id, userId)
             .orElseThrow(() -> new ChartNotFoundException());
+    // 낙관적 잠금(WD-364) — 소유자 확인(404) 뒤에 한다: 먼저 하면 남의 차트에 대한 낡은 요청이 409 를 받아 존재가 드러난다.
+    // 행 잠금을 잡고 수정 시각을 읽어 편집 기준 버전과 비교한다. 잠금은 트랜잭션 끝까지 유지되어 동시 저장 둘이 같은 버전으로 통과하지 못한다.
+    // MAP 검증보다 먼저 하는 이유: 낡은 화면에서 저장하면 낡은 내용으로 계산한 검증 오류 대신 "다른 곳에서 바뀌었다"를 먼저 알려야 한다.
+    LocalDateTime currentUpdatedAt =
+        chartRepository
+            .lockUpdatedAtById(id)
+            .orElseThrow(() -> new ChartNotFoundException())
+            .value1();
+    EditConflictException.check(req.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
     String effectiveType = req.chartType() != null ? req.chartType() : existing.chartType();
     java.util.Map<String, Object> effectiveConfig =
         req.config() != null ? req.config() : existing.config();

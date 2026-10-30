@@ -1,4 +1,5 @@
 import { keepPreviousData,useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
+import { useCallback } from 'react';
 
 import type {
   CreateProactiveJobRequest,
@@ -89,6 +90,23 @@ export function useProactiveJob(id: number) {
   });
 }
 
+/**
+ * 편집 충돌의 「다시 불러오기」용(WD-364) — 캐시를 무시하고 최신 작업을 서버에서 받아 캐시도 그 값으로 바꾼다.
+ * 화면은 돌려받은 값으로 폼과 기준 버전을 직접 채운다(캐시 갱신만으로는 같은 내용일 때 폼이 다시 채워지지 않는다).
+ */
+export function useFetchLatestProactiveJob() {
+  const queryClient = useQueryClient();
+  return useCallback(
+    (id: number) =>
+      queryClient.fetchQuery({
+        queryKey: KEYS.job(id),
+        queryFn: () => proactiveApi.getJob(id).then((r) => r.data),
+        staleTime: 0,
+      }),
+    [queryClient],
+  );
+}
+
 export function useCreateProactiveJob() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -105,7 +123,13 @@ export function useUpdateProactiveJob() {
   return useMutation({
     mutationFn: ({ id, data }: { id: number; data: UpdateProactiveJobRequest }) =>
       proactiveApi.updateJob(id, data).then((r) => r.data),
-    onSuccess: (_data, variables) => {
+    onSuccess: (data, variables) => {
+      // 캐시의 수정 시각을 응답의 새 값으로 먼저 바꾼다(WD-364) — 상세 화면은 이 값을 다음 저장의 기준 버전으로 쓴다.
+      // 재조회가 끝나기 전에 다시 고쳐 저장하면 낡은 기준으로 자기 저장과 충돌한다. 본문이 없으면(옛 서버·모킹) 그대로 둔다.
+      const updatedAt = data?.updatedAt;
+      if (updatedAt) {
+        queryClient.setQueryData<ProactiveJob>(KEYS.job(variables.id), (old) => (old ? { ...old, updatedAt } : old));
+      }
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });
       queryClient.invalidateQueries({ queryKey: KEYS.job(variables.id) });
     },
@@ -359,6 +383,23 @@ export function useProactiveTemplate(id: number) {
     queryFn: () => proactiveApi.getTemplate(id).then((r) => r.data),
     enabled: !!id,
   });
+}
+
+/**
+ * 편집 충돌의 「다시 불러오기」용(WD-364) — 캐시를 무시하고 최신 양식을 서버에서 받아 캐시도 그 값으로 바꾼다.
+ * 화면은 돌려받은 값으로 폼·섹션·기준 버전을 직접 채운다(편집 중에는 캐시가 바뀌어도 섹션을 다시 채우지 않는다).
+ */
+export function useFetchLatestProactiveTemplate() {
+  const queryClient = useQueryClient();
+  return useCallback(
+    (id: number) =>
+      queryClient.fetchQuery({
+        queryKey: KEYS.template(id),
+        queryFn: () => proactiveApi.getTemplate(id).then((r) => r.data),
+        staleTime: 0,
+      }),
+    [queryClient],
+  );
 }
 
 export function useCreateProactiveTemplate() {
