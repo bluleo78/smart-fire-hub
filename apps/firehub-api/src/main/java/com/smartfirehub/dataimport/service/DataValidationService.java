@@ -67,6 +67,16 @@ public class DataValidationService {
   private static final Pattern INTEGER_LITERAL = Pattern.compile("[+-]?\\d+");
 
   /**
+   * 쉼표가 든 숫자 값의 정수부가 올바른 천 단위 묶음인지(WD-370) — 앞 1~3자리 뒤로 「,세 자리」가 이어져야 한다(예: {@code 1,000}·{@code
+   * 38,344}·{@code -1,234}). 소수부에는 쉼표가 올 수 없다.
+   */
+  private static final Pattern THOUSANDS_GROUPED =
+      Pattern.compile("[+-]?\\d{1,3}(,\\d{3})+(\\.\\d*)?");
+
+  /** 쉼표 위치가 천 단위가 아닌 숫자 값의 안내 — 어떻게 고치면 되는지 함께 알린다(WD-370). */
+  static final String COMMA_FORMAT_HINT = " (소수점은 마침표, 천 단위 쉼표는 3자리마다)";
+
+  /**
    * 일·월이 앞 두 칸이고 연도가 뒤에 오는 날짜(예: 31/12/2026, 12-31-2026, 1.2.2026)와 선택적 시각부(HH:mm:ss). 두 구분자는 같아야
    * 한다. 앞 두 칸 중 어느 쪽이 일인지는 값 하나로 알 수 없으므로 {@link DateOrderContext} 가 열 단위로 정한다(WD-246).
    */
@@ -224,6 +234,25 @@ public class DataValidationService {
   }
 
   /**
+   * 숫자 값에서 천 단위 쉼표만 지운다(WD-370). 쉼표가 없으면 그대로 돌려준다.
+   *
+   * <p>예전에는 쉼표를 자리와 상관없이 모두 지워 「12,5」(소수 쉼표)가 125, 「1,2,3」이 123 으로 「검증 성공」 뒤 저장됐다. 정수부가 올바른 3자리
+   * 묶음({@link #THOUSANDS_GROUPED})일 때만 지우고, 그 밖의 쉼표는 형식 오류로 알려 사용자가 원본을 고치게 한다.
+   *
+   * @param errorPrefix 형식 오류 문구 앞부분(정수·소수 칸별 기존 문구) — 뒤에 원래 값과 고치는 법을 붙인다
+   */
+  private static String stripThousandsSeparators(String value, String errorPrefix)
+      throws Exception {
+    if (value.indexOf(',') < 0) {
+      return value;
+    }
+    if (!THOUSANDS_GROUPED.matcher(value).matches()) {
+      throw new Exception(errorPrefix + value + COMMA_FORMAT_HINT);
+    }
+    return value.replace(",", "");
+  }
+
+  /**
    * 값 하나를 컬럼 타입으로 변환한다. 일·월이 앞에 오는 날짜는 {@code dateOrders} 의 열 순서로 해석하고, 이 값이 순서의 근거가 되면 기록한다.
    *
    * @param columnName 열 순서 판정 키(데이터셋 컬럼명)
@@ -256,8 +285,8 @@ public class DataValidationService {
     return switch (dataType) {
       case "TEXT", "VARCHAR" -> value;
       case "INTEGER" -> {
-        // 천단위 콤마(예: "38,344") 제거 후 파싱. 임포트 데이터에 흔한 형식.
-        String digits = value.replace(",", "");
+        // 천단위 콤마(예: "38,344")만 지우고 파싱한다 — 자리가 맞지 않는 쉼표("1,2,3")는 형식 오류(WD-370).
+        String digits = stripThousandsSeparators(value, "정수 형식이 아닙니다: ");
         if (!INTEGER_LITERAL.matcher(digits).matches()) {
           throw new Exception("정수 형식이 아닙니다: " + value);
         }
@@ -266,8 +295,9 @@ public class DataValidationService {
       }
       case "DECIMAL" -> {
         try {
-          // 천단위 콤마 제거 후 파싱(소수 구분자는 마침표 전제). BigDecimal 은 콤마를 못 받음.
-          yield new BigDecimal(value.replace(",", ""));
+          // 천단위 콤마만 지우고 파싱한다(소수 구분자는 마침표 전제). BigDecimal 은 콤마를 못 받음.
+          // 소수 쉼표("12,5")를 지우면 125 로 10배가 되므로 자리가 맞지 않는 쉼표는 형식 오류로 막는다(WD-370).
+          yield new BigDecimal(stripThousandsSeparators(value, "소수 형식이 아닙니다: "));
         } catch (NumberFormatException e) {
           throw new Exception("소수 형식이 아닙니다: " + value);
         }
