@@ -14,6 +14,7 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
 import com.smartfirehub.tenant.dto.MembershipResponse;
+import com.smartfirehub.tenant.dto.UnavailableWorkspace;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.dto.UserResponse;
 import java.util.List;
@@ -149,5 +150,144 @@ class TenantSelectionTest extends IntegrationTestBase {
         .extracting(MembershipResponse::tenantId)
         .contains(otherTenantId);
     assertThat(refreshed.memberships()).extracting(MembershipResponse::tenantId).doesNotContain(1L);
+  }
+
+  // ── WD-281: 정지된 워크스페이스를 로그인 응답에 사유와 함께 싣는다 ──────────────
+  // tenant 1(default) 자체는 정지하지 않는다 — JVM 공유 테스트 DB 라 다른 테스트가 깨진다. 워크스페이스 정지는 전용 테넌트를 새로 만들어
+  // 재현하고, 멤버십 정지는 이 테스트 전용 사용자의 tenant 1 멤버십만 바꾼다.
+
+  /** 테스트 전용 테넌트를 주어진 상태로 만들고 id 를 돌려준다. */
+  private Long insertTenant(String namePrefix, String status) {
+    return dsl.insertInto(table(name("tenant")))
+        .columns(field(name("slug")), field(name("name")), field(name("status")))
+        .values("wd281-" + System.nanoTime(), namePrefix, status)
+        .returning(field(name("id"), Long.class))
+        .fetchOne()
+        .get(0, Long.class);
+  }
+
+  /** 사용자를 테넌트에 주어진 상태의 MEMBER 로 넣는다. */
+  private void insertMembership(Long userId, Long tenantId, String status) {
+    dsl.insertInto(table(name("membership")))
+        .columns(
+            field(name("user_id")),
+            field(name("tenant_id")),
+            field(name("role")),
+            field(name("status")))
+        .values(userId, tenantId, "MEMBER", status)
+        .execute();
+  }
+
+  /** 이 사용자의 tenant 1 멤버십 상태를 바꾼다. */
+  private void setDefaultMembershipStatus(Long userId, String status) {
+    dsl.update(table(name("membership")))
+        .set(field(name("status"), String.class), status)
+        .where(field(name("user_id"), Long.class).eq(userId))
+        .and(field(name("tenant_id"), Long.class).eq(1L))
+        .execute();
+  }
+
+  /** 로그인 가능한 전용 사용자(tenant 1 ACTIVE 멤버)를 만든다. */
+  private UserResponse createLoginUser(String username, String password) {
+    return TestUsers.createMember(
+        dsl,
+        fixtureTransactionTemplate,
+        passwordEncoder,
+        username,
+        username,
+        password,
+        "정지안내테스트",
+        DEFAULT_TEST_TENANT_ID);
+  }
+
+  @Test
+  @DisplayName("WD-281: 유일한 멤버십이 정지되면 로그인 응답의 선택 목록은 비고 MEMBERSHIP_SUSPENDED 로 알린다")
+  void loginWithSuspendedMembershipListsMembershipSuspended() {
+    String username = "wd281-member-" + System.nanoTime() + "@example.com";
+    String password = "Password123!";
+    UserResponse user = createLoginUser(username, password);
+    setDefaultMembershipStatus(user.id(), "SUSPENDED");
+
+    TokenResponse result = authService.login(new LoginRequest(username, password));
+
+    assertThat(result.activeTenantId()).isNull();
+    assertThat(result.memberships()).isEmpty();
+    assertThat(result.unavailableWorkspaces())
+        .containsExactly(
+            new UnavailableWorkspace(
+                dsl.select(field(name("name"), String.class))
+                    .from(table(name("tenant")))
+                    .where(field(name("id"), Long.class).eq(1L))
+                    .fetchOne(0, String.class),
+                UnavailableWorkspace.Reason.MEMBERSHIP_SUSPENDED));
+  }
+
+  @Test
+  @DisplayName("WD-281: 워크스페이스가 정지되면 멤버십 상태와 무관하게 WORKSPACE_SUSPENDED 로 알린다")
+  void loginWithSuspendedTenantListsWorkspaceSuspended() {
+    String username = "wd281-tenant-" + System.nanoTime() + "@example.com";
+    String password = "Password123!";
+    UserResponse user = createLoginUser(username, password);
+    // 멤버십 ACTIVE + 테넌트 정지, 멤버십도 정지 + 테넌트 정지 — 둘 다 운영자가 풀어야 하므로 같은 사유다.
+    Long suspendedTenant = insertTenant("정지된 워크스페이스A", "SUSPENDED");
+    insertMembership(user.id(), suspendedTenant, "ACTIVE");
+    Long bothSuspended = insertTenant("정지된 워크스페이스B", "SUSPENDED");
+    insertMembership(user.id(), bothSuspended, "SUSPENDED");
+
+    TokenResponse result = authService.login(new LoginRequest(username, password));
+
+    // tenant 1 은 ACTIVE 그대로라 선택 목록에 남고(자동 선택), 정지된 두 곳만 사유와 함께 따로 온다.
+    assertThat(result.memberships()).extracting(MembershipResponse::tenantId).containsExactly(1L);
+    assertThat(result.unavailableWorkspaces())
+        .containsExactly(
+            new UnavailableWorkspace(
+                "정지된 워크스페이스A", UnavailableWorkspace.Reason.WORKSPACE_SUSPENDED),
+            new UnavailableWorkspace(
+                "정지된 워크스페이스B", UnavailableWorkspace.Reason.WORKSPACE_SUSPENDED));
+  }
+
+  @Test
+  @DisplayName("WD-281: ACTIVE 멤버십만 있으면 정지 목록은 비어 있다")
+  void loginWithOnlyActiveMembershipHasNoUnavailable() {
+    String username = "wd281-active-" + System.nanoTime() + "@example.com";
+    String password = "Password123!";
+    UserResponse user = createLoginUser(username, password);
+    insertMembership(user.id(), insertTenant("활성 워크스페이스", "ACTIVE"), "ACTIVE");
+
+    TokenResponse result = authService.login(new LoginRequest(username, password));
+
+    assertThat(result.memberships()).hasSize(2);
+    assertThat(result.unavailableWorkspaces()).isEmpty();
+    assertThat(membershipRepository.findUnavailableByUser(user.id())).isEmpty();
+  }
+
+  @Test
+  @DisplayName("WD-281: 세션 중 멤버십이 정지돼 refresh 가 강등할 때도 정지 사유를 함께 싣는다")
+  void refreshAfterSuspensionListsUnavailable() {
+    String username = "wd281-refresh-" + System.nanoTime() + "@example.com";
+    String password = "Password123!";
+    UserResponse user = createLoginUser(username, password);
+    TokenResponse loginResult = authService.login(new LoginRequest(username, password));
+    assertThat(loginResult.unavailableWorkspaces()).isEmpty();
+
+    setDefaultMembershipStatus(user.id(), "SUSPENDED");
+    TokenResponse refreshed = authService.refresh(loginResult.refreshToken());
+
+    assertThat(refreshed.activeTenantId()).isNull();
+    assertThat(refreshed.memberships()).isEmpty();
+    assertThat(refreshed.unavailableWorkspaces())
+        .extracting(UnavailableWorkspace::reason)
+        .containsExactly(UnavailableWorkspace.Reason.MEMBERSHIP_SUSPENDED);
+  }
+
+  @Test
+  @DisplayName("WD-281: 워크스페이스에서 제거(행 삭제)된 멤버십은 정지 목록에도 나오지 않는다")
+  void removedMembershipIsNotListed() {
+    Long userId = createFixtureUserId();
+    Long tenantId = insertTenant("제거된 워크스페이스", "ACTIVE");
+    insertMembership(userId, tenantId, "SUSPENDED");
+    membershipRepository.delete(userId, tenantId);
+
+    assertThat(membershipRepository.findUnavailableByUser(userId)).isEmpty();
   }
 }

@@ -113,6 +113,9 @@ client.interceptors.response.use(
         publishTenantSession({
           activeTenantId: newTenantId,
           memberships: data.memberships ?? [],
+          // 강등 직후 선택 화면이 정지 사유를 보여줄 수 있게 함께 흘린다(WD-281). 빠뜨리면 백그라운드
+          // refresh 가 컨텍스트의 목록을 비워 「참여 중인 워크스페이스가 없습니다」로 되돌아간다.
+          unavailableWorkspaces: data.unavailableWorkspaces ?? [],
         });
 
         // 강등됐다면 대기 중인 요청을 재시도하지 않는다. 테넌트 없는 토큰으로 보내면 GUC 가 비어

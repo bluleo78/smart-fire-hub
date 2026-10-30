@@ -35,6 +35,8 @@ export function createTokenResponse(overrides?: Partial<TokenResponse>): TokenRe
     ],
     // 비밀번호 변경 강제(WD-2)는 기본 꺼짐 — 강제 화면을 검증하는 테스트만 override 로 true 를 준다.
     mustChangePassword: false,
+    // 정지된 워크스페이스 없음이 기본값(WD-281) — 정지 안내를 검증하는 테스트만 override 로 준다.
+    unavailableWorkspaces: [],
     ...overrides,
   };
 }

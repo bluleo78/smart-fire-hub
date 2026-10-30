@@ -8,20 +8,35 @@
  * <p>라우트가 아니라 게이트에서 직접 렌더링한다({@link ProtectedRoute}) — 별도 경로로 두면
  * 사용자가 URL 로 우회 진입을 시도할 수 있고, "선택 안 된 상태로 앱에 들어와 있다" 는 순간이
  * 생긴다. 게이트에서 렌더하면 그 순간 자체가 없다.
+ *
+ * <p>정지 안내(WD-281): 멤버십이나 워크스페이스가 정지되면 선택 목록에서 빠진다. 그대로 두면
+ * 「초대받은 적 없음」과 구분되지 않아 사용자가 엉뚱하게 초대를 요청하므로, 토큰 응답의
+ * `unavailableWorkspaces` 로 정지 사유와 문의 상대(관리자/운영자)를 함께 알린다.
  */
-import { Building2, LogOut } from 'lucide-react';
+import { AlertTriangle, Building2, Info, LogOut } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { authApi } from '../api/auth';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
+import { InlineBanner } from '../components/ui/inline-banner';
 import { useAuth } from '../hooks/useAuth';
 import { useTenantSelection } from '../hooks/useTenantSelection';
 import { membershipRoleLabel } from '../lib/membership-role';
-import type { MembershipResponse } from '../types/tenant';
+import type { MembershipResponse, UnavailableWorkspace } from '../types/tenant';
+
+/**
+ * 정지 사유별 안내 문구(WD-281). 사유마다 사용자가 문의할 상대가 다르다 — 멤버십 정지는 그
+ * 워크스페이스의 관리자가, 워크스페이스 정지는 플랫폼 운영자가 풀 수 있다.
+ */
+function unavailableMessage({ tenantName, reason }: UnavailableWorkspace): string {
+  return reason === 'WORKSPACE_SUSPENDED'
+    ? `워크스페이스 「${tenantName}」 전체가 정지되었습니다. 운영자에게 문의하세요.`
+    : `워크스페이스 「${tenantName}」에서 이용이 정지되었습니다. 워크스페이스 관리자에게 문의하세요.`;
+}
 
 export function SelectTenantPage() {
-  const { tenantOptions, logout, user } = useAuth();
+  const { tenantOptions, unavailableWorkspaces, logout, user } = useAuth();
   // 컨텍스트의 목록이 비어 있을 때만 직접 조회한다. 정상 경로(로그인·refresh 응답)에서는 이미
   // 채워져 있으므로 요청이 나가지 않는다.
   const [fetched, setFetched] = useState<MembershipResponse[] | null>(null);
@@ -52,6 +67,16 @@ export function SelectTenantPage() {
 
         {isLoadingOptions ? (
           <p className="text-center text-sm text-muted-foreground">불러오는 중...</p>
+        ) : options.length === 0 && unavailableWorkspaces.length > 0 ? (
+          // 들어갈 수 있는 곳은 없지만 정지된 멤버십이 있다(WD-281) — 초대 요청 안내 대신 정지 사유와
+          // 문의 상대를 워크스페이스별로 알린다. 이름이 겹칠 수 있고 id 가 없어 인덱스를 key 로 쓴다.
+          <div className="space-y-2" data-testid="unavailable-workspaces">
+            {unavailableWorkspaces.map((workspace, index) => (
+              <InlineBanner key={index} variant="warning" icon={<AlertTriangle />}>
+                {unavailableMessage(workspace)}
+              </InlineBanner>
+            ))}
+          </div>
         ) : options.length === 0 ? (
           // 멤버십 0개 — 사용자가 스스로 해결할 수 없는 상태다. 운영자 초대가 필요하다는 것을
           // 분명히 알리고 로그아웃만 남긴다(재시도 버튼은 상태를 바꾸지 못한다).
@@ -96,6 +121,21 @@ export function SelectTenantPage() {
                 </CardContent>
               </Card>
             ))}
+            {/* 선택 가능한 곳이 있어도 정지된 곳이 조용히 사라지지 않게 목록 아래에 짧게 알린다(WD-281). */}
+            {unavailableWorkspaces.length > 0 && (
+              <InlineBanner
+                variant="info"
+                icon={<Info />}
+                title="이용할 수 없는 워크스페이스"
+                data-testid="unavailable-workspaces-note"
+              >
+                <ul className="space-y-1 text-muted-foreground">
+                  {unavailableWorkspaces.map((workspace, index) => (
+                    <li key={index}>{unavailableMessage(workspace)}</li>
+                  ))}
+                </ul>
+              </InlineBanner>
+            )}
           </div>
         )}
 

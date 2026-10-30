@@ -1,4 +1,4 @@
-import type { MembershipResponse } from './tenant';
+import type { MembershipResponse, UnavailableWorkspace } from './tenant';
 
 export interface SignupRequest {
   username: string;
@@ -39,6 +39,12 @@ export interface TokenResponse {
    * <p>`activeTenantId` 와 같은 이유로 **필수**다(읽기를 잊은 경로를 컴파일러가 짚게).
    */
   mustChangePassword: boolean;
+  /**
+   * 멤버십은 있지만 정지돼 들어갈 수 없는 워크스페이스(WD-281). 선택 화면이 「초대받은 적 없음」과
+   * 「정지됨」을 구분해 안내하는 데 쓴다. `memberships` 와 같이 `login`·`refresh` 만 채우고
+   * `select-tenant` 는 빈 배열이다.
+   */
+  unavailableWorkspaces: UnavailableWorkspace[];
 }
 
 export interface UserResponse {

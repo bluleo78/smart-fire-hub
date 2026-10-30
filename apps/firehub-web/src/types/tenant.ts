@@ -17,6 +17,24 @@ export interface MembershipResponse {
   role: string;
 }
 
+/**
+ * 멤버십은 있지만 정지돼 들어갈 수 없는 워크스페이스의 사유(WD-281). 백엔드 `UnavailableWorkspace.Reason`.
+ *
+ * - `MEMBERSHIP_SUSPENDED`: 워크스페이스는 운영 중, 이 사용자의 멤버십만 정지 → 워크스페이스 관리자에게 문의
+ * - `WORKSPACE_SUSPENDED`: 워크스페이스(테넌트) 자체가 정지 → 운영자에게 문의
+ */
+export type UnavailableWorkspaceReason = 'MEMBERSHIP_SUSPENDED' | 'WORKSPACE_SUSPENDED';
+
+/**
+ * 들어갈 수 없는 워크스페이스 한 건(WD-281). 백엔드 `tenant.dto.UnavailableWorkspace`.
+ *
+ * <p>선택할 수 없으므로 id 는 없다 — 안내 문구에 쓸 이름과 사유만 온다.
+ */
+export interface UnavailableWorkspace {
+  tenantName: string;
+  reason: UnavailableWorkspaceReason;
+}
+
 /** `POST /auth/select-tenant` 요청 본문. */
 export interface SelectTenantRequest {
   tenantId: number;

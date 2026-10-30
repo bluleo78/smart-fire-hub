@@ -12,13 +12,15 @@
  * 권한이 0개가 되어 **모든 API 가 403** 이 된다. UI 는 이유를 모른 채 빈 화면과 에러만 반복한다.
  * 이 채널이 있으면 그 순간 워크스페이스 선택 화면으로 되돌릴 수 있다.
  */
-import type { MembershipResponse } from '../types/tenant';
+import type { MembershipResponse, UnavailableWorkspace } from '../types/tenant';
 
 /** 토큰 한 개가 말해 주는 테넌트 상태. */
 export interface TenantSessionState {
   /** null = 테넌트 미선택(강등 포함). */
   activeTenantId: number | null;
   memberships: MembershipResponse[];
+  /** 정지돼 들어갈 수 없는 워크스페이스(WD-281). 구버전 응답·목에는 없을 수 있어 옵셔널이다. */
+  unavailableWorkspaces?: UnavailableWorkspace[];
 }
 
 type Listener = (state: TenantSessionState) => void;

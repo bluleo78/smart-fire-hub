@@ -50,6 +50,8 @@ export const MOCK_TOKEN_RESPONSE: TokenResponse = {
   memberships: [MOCK_MEMBERSHIP],
   // 비밀번호 변경 강제(WD-2) 꺼짐 — true 면 ProtectedRoute 가 /change-password 로 보낸다.
   mustChangePassword: false,
+  // 정지된 워크스페이스 없음(WD-281) — 정지 안내 화면은 select-tenant.spec 이 override 로 검증한다.
+  unavailableWorkspaces: [],
 };
 
 /** 모킹용 역할 정보 */

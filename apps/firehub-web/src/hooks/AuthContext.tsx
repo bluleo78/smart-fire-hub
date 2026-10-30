@@ -10,7 +10,7 @@ import { setLoginNotice } from '../lib/login-notice';
 import type { LoginFormData, SignupFormData } from '../lib/validations/auth';
 import type { TokenResponse, UserResponse } from '../types/auth';
 import type { RoleResponse } from '../types/role';
-import type { MembershipResponse } from '../types/tenant';
+import type { MembershipResponse, UnavailableWorkspace } from '../types/tenant';
 import { AuthContext } from './auth-context-value';
 
 // React StrictMode(dev)에서 useEffect가 두 번 실행되어 refresh API가 중복 호출되는 것을 방지.
@@ -31,6 +31,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 격리는 서버측 JWT + RLS 가 하고, 미러를 두면 "화면은 A, 토큰은 B" 상태를 만들 수 있다.
   const [activeTenantId, setActiveTenantId] = useState<number | null>(null);
   const [tenantOptions, setTenantOptions] = useState<MembershipResponse[]>([]);
+  // 정지돼 들어갈 수 없는 워크스페이스(WD-281). tenantOptions 와 같은 경로·같은 규칙(빈 배열도 그대로)으로 반영한다.
+  const [unavailableWorkspaces, setUnavailableWorkspaces] = useState<UnavailableWorkspace[]>([]);
   // 첫 로그인 비밀번호 변경 강제 표식(WD-2). 토큰 응답의 mustChangePassword 를 그대로 반영한다.
   const [mustChangePassword, setMustChangePassword] = useState(false);
 
@@ -54,6 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const applyTenantState = useCallback((state: TenantSessionState) => {
     setActiveTenantId(state.activeTenantId ?? null);
     setTenantOptions(state.memberships ?? []);
+    setUnavailableWorkspaces(state.unavailableWorkspaces ?? []);
   }, []);
 
   const fetchUserWithRoles = useCallback(async () => {
@@ -216,8 +219,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [fetchUserWithRoles]);
 
   const ctxValue = useMemo(
-    () => ({ user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, activeTenantId, tenantOptions, selectTenant, mustChangePassword, completePasswordChange }),
-    [user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, activeTenantId, tenantOptions, selectTenant, mustChangePassword, completePasswordChange]
+    () => ({ user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, activeTenantId, tenantOptions, unavailableWorkspaces, selectTenant, mustChangePassword, completePasswordChange }),
+    [user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, activeTenantId, tenantOptions, unavailableWorkspaces, selectTenant, mustChangePassword, completePasswordChange]
   );
 
   return (
