@@ -12,15 +12,28 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class PermissionService {
 
+  /**
+   * 플랫폼(운영자) 평면 전용 권한의 category(V82). 카탈로그는 두 평면이 함께 쓰지만, 이 권한은 테넌트 토큰으로는 쓸 수 없어 워크스페이스 역할에 넣어도 효과가
+   * 없다 — 워크스페이스 권한 목록에서 빼고 역할 권한 저장에서 거부한다(WD-280).
+   */
+  public static final String PLATFORM_CATEGORY = "platform";
+
   private final PermissionRepository permissionRepository;
 
+  /** 워크스페이스 역할에 넣을 수 있는 권한 전체 — 플랫폼 평면 권한은 뺀다(WD-280). */
   @Transactional(readOnly = true)
   public List<PermissionResponse> getAllPermissions() {
-    return permissionRepository.findAll();
+    return permissionRepository.findAll().stream()
+        .filter(p -> !PLATFORM_CATEGORY.equals(p.category()))
+        .toList();
   }
 
+  /** category 로 거른 워크스페이스 권한. platform 을 물어도 빈 목록이다(WD-280). */
   @Transactional(readOnly = true)
   public List<PermissionResponse> getPermissionsByCategory(String category) {
+    if (PLATFORM_CATEGORY.equals(category)) {
+      return List.of();
+    }
     return permissionRepository.findByCategory(category);
   }
 

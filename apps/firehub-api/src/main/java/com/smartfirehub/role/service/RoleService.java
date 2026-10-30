@@ -5,6 +5,7 @@ import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.permission.dto.PermissionResponse;
 import com.smartfirehub.permission.repository.PermissionRepository;
+import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.role.dto.RoleDetailResponse;
 import com.smartfirehub.role.dto.RoleResponse;
 import com.smartfirehub.role.exception.RoleNotFoundException;
@@ -211,6 +212,14 @@ public class RoleService {
     if (role.isSystem()) {
       throw new SystemRoleModificationException(
           "Cannot modify permissions of system role: " + role.name());
+    }
+
+    // 플랫폼(운영자) 평면 권한은 테넌트 토큰으로 쓸 수 없어 워크스페이스 역할에 넣어도 효과가 없다 — 저장된 것처럼 보이지 않게 거부한다(WD-280).
+    if (permissionRepository.existsInCategory(permissionIds, PermissionService.PLATFORM_CATEGORY)) {
+      throw new CodedApiException(
+          HttpStatus.BAD_REQUEST,
+          "PLATFORM_PERMISSION_NOT_ASSIGNABLE",
+          "운영자 전용 권한(테넌트 생성·조회·정지 등)은 워크스페이스 역할에 넣을 수 없습니다.");
     }
 
     TreeSet<String> before = permissionCodes(roleId);
