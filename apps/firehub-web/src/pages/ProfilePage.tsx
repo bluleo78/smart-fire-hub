@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
 import { FormField } from '@/components/ui/form-field';
-import { extractApiError } from '@/lib/api-error';
+import { applyFieldErrors, extractApiError } from '@/lib/api-error';
 
 import { usersApi } from '../api/users';
 import { Button } from '../components/ui/button';
@@ -76,11 +76,9 @@ export default function ProfilePage() {
       passwordForm.reset();
       toast.success('비밀번호가 변경되었습니다.');
     } catch (error) {
-      const msg = extractApiError(error, '');
-      // 서버의 "Validation failed" 영문 메시지를 한국어로 대체 (#72)
-      passwordForm.setError('root', {
-        message: (msg && msg !== 'Validation failed') ? msg : '현재 비밀번호가 올바르지 않습니다.',
-      });
+      // 검증 400 은 해당 입력 아래로 (WD-270). "Validation failed" 는 항상 필드 errors 와 함께 오므로 여기서 끝난다(#72 대체 불필요).
+      if (applyFieldErrors(error, passwordForm.setError, Object.keys(changePasswordSchema.shape))) return;
+      passwordForm.setError('root', { message: extractApiError(error, '현재 비밀번호가 올바르지 않습니다.') });
     }
   };
 
@@ -167,11 +165,19 @@ export default function ProfilePage() {
               htmlFor="new-password"
               error={passwordForm.formState.errors.newPassword?.message}
             >
+              {/* 강제 변경 화면과 같은 규칙 안내 (WD-270) */}
               <Input
                 id="new-password"
                 type="password"
+                aria-invalid={!!passwordForm.formState.errors.newPassword}
+                aria-describedby={
+                  passwordForm.formState.errors.newPassword ? 'new-password-help new-password-error' : 'new-password-help'
+                }
                 {...passwordForm.register('newPassword')}
               />
+              <p id="new-password-help" className="text-[13px] text-muted-foreground">
+                8~128자, 대·소문자·숫자 포함
+              </p>
             </FormField>
             <FormField
               label="비밀번호 확인"

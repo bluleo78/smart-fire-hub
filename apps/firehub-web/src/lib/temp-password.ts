@@ -8,6 +8,9 @@
 /** 서버 비밀번호 정책(가입·AddMemberRequest 와 동일): 소문자·대문자·숫자 각 1자 이상. 길이는 스키마가 따로 본다. */
 export const PASSWORD_POLICY = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/;
 
+/** 서버 비밀번호 길이 상한(PasswordRules.MAX_LENGTH) — 화면 스키마·입력 maxLength 가 함께 쓴다 (WD-270). */
+export const PASSWORD_MAX_LENGTH = 128;
+
 const LOWER = 'abcdefghijkmnpqrstuvwxyz'; // l·o 제외
 const UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // I·O 제외
 const DIGIT = '23456789'; // 0·1 제외

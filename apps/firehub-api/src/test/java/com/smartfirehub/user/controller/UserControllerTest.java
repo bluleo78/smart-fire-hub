@@ -174,6 +174,24 @@ class UserControllerTest {
         .andExpect(status().isUnauthorized());
   }
 
+  /** 새 비밀번호 129자는 400 + 한국어 필드 문구, 서비스 호출 없음 (WD-270). */
+  @Test
+  void changePassword_newPasswordTooLong_returnsKoreanFieldError() throws Exception {
+    mockAuthentication();
+    ChangePasswordRequest request =
+        new ChangePasswordRequest("oldPassword1", "Aa1" + "a".repeat(126));
+
+    mockMvc
+        .perform(
+            put("/api/v1/users/me/password")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.newPassword").value("새 비밀번호는 8~128자여야 합니다"));
+    verify(userService, never()).changePassword(anyLong(), any(), any());
+  }
+
   @Test
   void getUsers_withPermission_returnsList() throws Exception {
     mockAuthentication("user:read");

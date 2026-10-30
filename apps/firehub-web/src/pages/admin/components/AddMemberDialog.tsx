@@ -27,8 +27,8 @@ import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { Skeleton } from '../../../components/ui/skeleton';
 import { useAuth } from '../../../hooks/useAuth';
-import { extractApiError } from '../../../lib/api-error';
-import { generateTemporaryPassword } from '../../../lib/temp-password';
+import { applyFieldErrors, extractApiError } from '../../../lib/api-error';
+import { generateTemporaryPassword, PASSWORD_MAX_LENGTH } from '../../../lib/temp-password';
 import type { AddMemberFormData } from '../../../lib/validations/user';
 import { addMemberSchema } from '../../../lib/validations/user';
 import type { ErrorResponse } from '../../../types/auth';
@@ -161,13 +161,8 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
         setError('email', { message: data?.message ?? '이미 이 워크스페이스의 멤버입니다' }, { shouldFocus: true });
         return;
       }
-      // Bean Validation 400(코드 없음, 필드별 errors)은 해당 필드 아래로 돌려 준다.
-      if (data?.errors && Object.keys(data.errors).length > 0 && data.code == null) {
-        Object.entries(data.errors).forEach(([field, message]) => {
-          if (field === 'email' || field === 'name' || field === 'temporaryPassword') setError(field, { message });
-        });
-        return;
-      }
+      // 검증 400 은 해당 필드 아래로, 모르는 필드 문구는 폼 상단으로. roleIds 는 필드 오류를 그리지 않아 목록에서 뺀다.
+      if (applyFieldErrors(error, setError, ['email', 'name', 'temporaryPassword'])) return;
       // INVALID_ROLE·권한 부족·서버 오류 등은 폼 상단 오류로.
       setError('root', { message: extractApiError(error, '멤버를 추가하지 못했습니다') });
     }
@@ -309,7 +304,7 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
                     className="font-mono"
                     autoComplete="off"
                     spellCheck={false}
-                    maxLength={128}
+                    maxLength={PASSWORD_MAX_LENGTH}
                     aria-invalid={!!errors.temporaryPassword}
                     aria-describedby={
                       errors.temporaryPassword ? 'member-password-help member-password-error' : 'member-password-help'

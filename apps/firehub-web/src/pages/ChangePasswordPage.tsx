@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader } from '../c
 import { FormField } from '../components/ui/form-field';
 import { PasswordInput } from '../components/ui/password-input';
 import { useAuth } from '../hooks/useAuth';
-import { extractApiError } from '../lib/api-error';
+import { applyFieldErrors, extractApiError } from '../lib/api-error';
 import type { ChangePasswordFormData } from '../lib/validations/user';
 import { forcedPasswordChangeSchema } from '../lib/validations/user';
 
@@ -52,6 +52,8 @@ export default function ChangePasswordPage() {
     try {
       await usersApi.changePassword({ currentPassword: data.currentPassword, newPassword: data.newPassword });
     } catch (error) {
+      // 검증 400 은 해당 입력 아래로 (WD-270)
+      if (applyFieldErrors(error, setError, Object.keys(forcedPasswordChangeSchema.shape))) return;
       // 현재(임시) 비밀번호가 틀리면 서버가 400 + 메시지를 준다 — 폼 상단 alert 로 보인다.
       setError('root', { message: extractApiError(error, '현재 비밀번호가 올바르지 않습니다') });
       return;

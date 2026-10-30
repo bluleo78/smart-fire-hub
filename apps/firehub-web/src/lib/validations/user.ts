@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { PASSWORD_POLICY } from '../temp-password';
+import { PASSWORD_MAX_LENGTH, PASSWORD_POLICY } from '../temp-password';
 
 export const updateProfileSchema = z.object({
   // 이름은 1자 이상 50자 이하 — DB 컬럼(user.name VARCHAR(50))·멤버 추가 폼과 같은 상한 (WD-125).
@@ -15,6 +15,8 @@ export const changePasswordSchema = z.object({
   newPassword: z
     .string()
     .min(8, '새 비밀번호는 8자 이상이어야 합니다')
+    // 서버 ChangePasswordRequest 와 같은 상한 — 프로필·강제 변경 공용 (WD-270)
+    .max(PASSWORD_MAX_LENGTH, `새 비밀번호는 ${PASSWORD_MAX_LENGTH}자 이하여야 합니다`)
     .regex(PASSWORD_POLICY, '대문자, 소문자, 숫자를 모두 포함해야 합니다'),
   confirmPassword: z.string().min(1, '비밀번호 확인을 입력하세요'),
 }).refine(data => data.newPassword === data.confirmPassword, {
@@ -24,13 +26,9 @@ export const changePasswordSchema = z.object({
 
 /**
  * 강제 비밀번호 변경(WD-2) — 일반 변경 규칙 + "임시 비밀번호 재사용 금지".
- * 서버 정책 상한(128자)도 여기서 미리 막는다.
+ * 길이 상한은 changePasswordSchema 에서 물려받는다(WD-270).
  */
 export const forcedPasswordChangeSchema = changePasswordSchema
-  .refine((data) => data.newPassword.length <= 128, {
-    message: '새 비밀번호는 128자 이하여야 합니다',
-    path: ['newPassword'],
-  })
   .refine((data) => data.newPassword !== data.currentPassword, {
     message: '새 비밀번호는 임시 비밀번호와 달라야 합니다',
     path: ['newPassword'],
@@ -52,7 +50,7 @@ export const addMemberSchema = z.object({
   temporaryPassword: z
     .string()
     .min(8, '비밀번호는 8자 이상이어야 합니다')
-    .max(128, '비밀번호는 128자 이하여야 합니다')
+    .max(PASSWORD_MAX_LENGTH, `비밀번호는 ${PASSWORD_MAX_LENGTH}자 이하여야 합니다`)
     .regex(PASSWORD_POLICY, '대문자, 소문자, 숫자를 모두 포함해야 합니다'),
   roleIds: z.array(z.number()),
 });

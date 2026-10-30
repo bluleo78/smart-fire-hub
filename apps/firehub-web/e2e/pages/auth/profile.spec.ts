@@ -15,6 +15,16 @@ import type { UserDetailResponse } from '../../../src/types/user';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, MOCK_USER, test } from '../../fixtures/auth.fixture';
 
+/** 대·소문자·숫자를 모두 넣어 복잡도는 통과하고 길이(129자)만 위반하는 값 (WD-270) */
+const PASSWORD_129 = 'Aa1' + 'a'.repeat(126);
+/** ChangePasswordRequest 길이 위반 시 서버 400 응답 (WD-270) */
+const NEW_PASSWORD_SIZE_400 = {
+  status: 400,
+  error: 'Bad Request',
+  message: 'Validation failed',
+  errors: { newPassword: '새 비밀번호는 8~128자여야 합니다' },
+};
+
 test.describe('프로필 페이지', () => {
   /**
    * 프로필 페이지 기본 렌더링 — useEffect로 user 정보가 폼에 초기값으로 로드된다
@@ -316,5 +326,39 @@ test.describe('프로필 페이지', () => {
     });
     // 클라이언트에서 차단되어 서버 API가 호출되지 않아야 한다
     expect(passwordApiCalled).toBe(false);
+  });
+
+  /** 회귀 테스트 (WD-270): 129자는 제출 전에 새 비밀번호 아래에서 막히고 PUT 이 나가지 않는다. */
+  test('새 비밀번호 129자 → 새 비밀번호 아래 128자 상한 에러가 표시되고 API 호출이 안 된다 (WD-270)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    const pwCapture = await mockApi(page, 'PUT', '/api/v1/users/me/password', {}, { capture: true });
+
+    await expect(page.locator('#current-password')).toBeVisible({ timeout: 5000 });
+    // 강제 변경 화면과 같은 규칙 안내가 aria-describedby 로 연결돼 있어야 한다
+    await expect(page.locator('#new-password')).toHaveAccessibleDescription('8~128자, 대·소문자·숫자 포함');
+    await page.locator('#current-password').fill('OldPass123');
+    await page.locator('#new-password').fill(PASSWORD_129);
+    await page.locator('#confirm-password').fill(PASSWORD_129);
+
+    await page.getByRole('button', { name: '비밀번호 변경' }).click();
+
+    await expect(page.locator('#new-password-error')).toHaveText('새 비밀번호는 128자 이하여야 합니다', { timeout: 5000 });
+    expect(pwCapture.requests).toHaveLength(0);
+  });
+
+  /** 회귀 테스트 (WD-270): 서버 필드 errors 400 은 폼 상단이 아니라 해당 입력 아래에 표시한다. */
+  test('서버 필드 검증 오류(errors.newPassword) → 새 비밀번호 아래에 표시된다 (WD-270)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    await mockApi(page, 'PUT', '/api/v1/users/me/password', NEW_PASSWORD_SIZE_400, { status: 400 });
+
+    await expect(page.locator('#current-password')).toBeVisible({ timeout: 5000 });
+    await page.locator('#current-password').fill('OldPass123');
+    await page.locator('#new-password').fill('NewPass456');
+    await page.locator('#confirm-password').fill('NewPass456');
+    await page.getByRole('button', { name: '비밀번호 변경' }).click();
+
+    await expect(page.locator('#new-password-error')).toHaveText('새 비밀번호는 8~128자여야 합니다', { timeout: 5000 });
+    // 폼 상단 기본 문구로 떨어지지 않아야 한다
+    await expect(page.getByText('현재 비밀번호가 올바르지 않습니다.')).toHaveCount(0);
   });
 });

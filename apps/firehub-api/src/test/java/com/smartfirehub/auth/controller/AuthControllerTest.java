@@ -122,6 +122,24 @@ class AuthControllerTest {
     verify(authService, never()).signup(any());
   }
 
+  /** 비밀번호 129자는 400 + 한국어 필드 문구, 가입 시도 없음 (WD-270). */
+  @Test
+  void signup_passwordOver128_returnsKoreanFieldErrorWithoutSignup() throws Exception {
+    SignupRequest request =
+        new SignupRequest(
+            "test@example.com", "test@example.com", "Aa1" + "a".repeat(126), "Test User");
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/signup")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.password").value("비밀번호는 8~128자여야 합니다"));
+
+    verify(authService, never()).signup(any());
+  }
+
   @Test
   void signup_invalidEmail_returnsBadRequest() throws Exception {
     SignupRequest request = new SignupRequest("not-email", "not-email", "Password123", "Test User");

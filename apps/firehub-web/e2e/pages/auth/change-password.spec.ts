@@ -180,6 +180,27 @@ test.describe('비밀번호 변경 강제', () => {
     await expect(page).toHaveURL(/\/change-password$/);
   });
 
+  /** 회귀 테스트 (WD-270): 서버 필드 errors 400 은 폼 상단이 아니라 해당 입력 아래에 표시한다. */
+  test('서버 필드 검증 오류(errors.newPassword)는 새 비밀번호 아래에 보여 준다 (WD-270)', async ({ authMockedPage: page }) => {
+    await seedSessionOnce(page);
+    await mockApi(page, 'POST', '/api/v1/auth/refresh', PWC_TOKEN);
+    await mockApi(page, 'GET', '/api/v1/auth/me', PWC_ME);
+    await mockApi(page, 'PUT', '/api/v1/users/me/password',
+      { status: 400, error: 'Bad Request', message: 'Validation failed', errors: { newPassword: '새 비밀번호는 8~128자여야 합니다' } },
+      { status: 400 });
+    await page.goto('/change-password');
+
+    await page.getByLabel(CURRENT_PASSWORD).fill('TempPass1x');
+    await page.getByLabel(NEW_PASSWORD).fill('NewPass1x');
+    await page.getByLabel(CONFIRM_PASSWORD).fill('NewPass1x');
+    await page.getByRole('button', { name: '변경하고 계속' }).click();
+
+    await expect(page.locator('#new-password-error')).toHaveText('새 비밀번호는 8~128자여야 합니다');
+    // 폼 상단 alert 로 떨어지지 않는다
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(page).toHaveURL(/\/change-password$/);
+  });
+
   test('접근성: 첫 필드 자동 포커스, Tab 순서 현재→새→확인→버튼→로그아웃, 자동완성·도움말 연결', async ({ authMockedPage: page }) => {
     await seedSessionOnce(page);
     await mockApi(page, 'POST', '/api/v1/auth/refresh', PWC_TOKEN);
