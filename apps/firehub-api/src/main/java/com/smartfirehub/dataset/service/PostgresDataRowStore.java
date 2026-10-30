@@ -449,6 +449,41 @@ public class PostgresDataRowStore implements DataRowStore {
   }
 
   /**
+   * 테이블별 누적 변경 카운터 — {@code pg_stat_user_tables} 의 {@code n_tup_ins + n_tup_upd +
+   * n_tup_del}(WD-399). 업서트(ON CONFLICT DO UPDATE)·행 편집은 {@code n_tup_upd}, 같은 수의 삭제+추가는 {@code
+   * n_tup_ins}·{@code n_tup_del} 을 올려 행 수({@code n_live_tup})가 그대로여도 값이 바뀐다. 자동 ANALYZE 로 초기화되는
+   * {@code n_mod_since_analyze} 는 쓰지 않는다 — 변경이 없어도 값이 바뀌어 거짓 발화가 된다. TRUNCATE 는 이 카운터를 올리지 않지만 행 수가
+   * 바뀌므로 폴러가 행 수 비교로 잡는다. REPLACE 맞바꿈(원본 DROP 뒤 임시 테이블 RENAME)은 카운터가 새 테이블 기준으로 다시 세어지므로 테이블
+   * OID({@code relid})를 함께 돌려줘 폴러가 실체가 바뀐 것을 변경으로 본다.
+   *
+   * <p>schemaname·배열 바인딩·실패 처리는 {@link #rowCounts} 와 같다. 호출자의 트랜잭션에 그대로 참여한다.
+   */
+  @Override
+  public Map<String, ChangeCounter> changeCounters(Collection<String> tableNames) {
+    Map<String, ChangeCounter> result = new HashMap<>();
+    if (tableNames.isEmpty()) {
+      return result;
+    }
+    try {
+      for (Record r :
+          dsl.fetch(
+              "SELECT relname, relid, n_tup_ins + n_tup_upd + n_tup_del FROM pg_stat_user_tables WHERE"
+                  + " schemaname = ? AND relname = ANY(?)",
+              DataSchema.current(),
+              tableNames.toArray(String[]::new))) {
+        Long relationId = r.get(1, Long.class);
+        Long counter = r.get(2, Long.class);
+        if (relationId != null && counter != null) {
+          result.put(r.get(0, String.class), new ChangeCounter(relationId, counter));
+        }
+      }
+    } catch (Exception e) {
+      log.debug("Failed to get change counters for tables {}: {}", tableNames, e.getMessage());
+    }
+    return result;
+  }
+
+  /**
    * 통계상 행이 0 인 테이블 — 시스템 상태가 예전에 {@code dataset} 과 {@code pg_stat_user_tables} 를 조인해 세던 것과 같은
    * 의미다(WD-80). 통계 행이 없는 테이블(없는 테이블 포함)은 조인에서 빠지던 것처럼 결과에서 빠진다. 이름 목록은 배열 바인딩 하나로 넘긴다.
    *

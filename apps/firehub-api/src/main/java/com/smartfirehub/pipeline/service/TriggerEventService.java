@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.storage.DataRowStore;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
@@ -190,17 +191,33 @@ public class TriggerEventService {
     // 테이블, Tibero 네트워크 실패 등)를 삭제로 오인해 감시 목록에서 빼지 않기 위함이다(WD-221). 행 수는 테넌트 저장소 백엔드로 센다(WD-80).
     DatasetProbe probe = probeDatasets(datasetIds);
 
-    // Get last snapshot
-    Map<Long, Long> lastSnapshot = getLastSnapshot(state);
-
+    // 행 수와 변경 카운터를 각각 직전 기준선과 비교하고, 어느 한쪽이라도 바뀐 데이터셋을 변경으로 본다(WD-399). 행 수만 보면 업서트·행 편집처럼
+    // 행 수가 그대로인 변경을 놓치고, 카운터만 보면 카운터를 올리지 않는 TRUNCATE 교체를 놓친다. 카운터 기준선은 새 키에 둔다 — 같은 키에 다른
+    // 값을 넣으면 배포 직후 첫 폴링에서 모든 트리거가 한꺼번에 발화한다. 새 키는 기준선이 없어 첫 폴링에 기준선만 잡는다.
     SnapshotDiff diff =
-        diffSnapshots(datasetIds, probe.existing(), probe.rowCounts(), lastSnapshot);
-    List<Long> changedIds = diff.changedIds();
+        diffSnapshots(
+            datasetIds,
+            probe.existing(),
+            probe.rowCounts(),
+            getLastSnapshot(state, "lastSnapshot"));
+    CounterDiff counterDiff =
+        diffCounters(
+            datasetIds,
+            probe.existing(),
+            probe.changeCounters(),
+            getLastSnapshot(state, LAST_RELATION_SNAPSHOT),
+            getLastSnapshot(state, LAST_CHANGE_SNAPSHOT),
+            triggerRepository.findOutputDatasetIds(trigger.pipelineId()));
+    Set<Long> changedSet = new LinkedHashSet<>(diff.changedIds());
+    changedSet.addAll(counterDiff.changedIds());
+    List<Long> changedIds = List.copyOf(changedSet);
 
     // Update state regardless of changes
     Map<String, Object> updatedState = new HashMap<>(state);
     updatedState.put("lastCheckedAt", LocalDateTime.now().toString());
     updatedState.put("lastSnapshot", diff.nextSnapshot());
+    updatedState.put(LAST_RELATION_SNAPSHOT, counterDiff.nextRelations());
+    updatedState.put(LAST_CHANGE_SNAPSHOT, counterDiff.nextCounters());
 
     if (!changedIds.isEmpty()) {
       // Check debounce
@@ -245,20 +262,92 @@ public class TriggerEventService {
     }
   }
 
-  /** 감시 대상 조회 결과 — 지금 있는 데이터셋 id 와 그중 행 수를 읽은 것. */
-  record DatasetProbe(Set<Long> existing, Map<Long, Long> rowCounts) {}
+  /**
+   * 감시 대상 조회 결과 — 지금 있는 데이터셋 id 와 그중 행 수·누적 변경 카운터(WD-399)를 읽은 것. 카운터를 주지 않는 백엔드(Tibero)는 카운터가 비어
+   * 있다.
+   */
+  record DatasetProbe(
+      Set<Long> existing,
+      Map<Long, Long> rowCounts,
+      Map<Long, DataRowStore.ChangeCounter> changeCounters) {}
+
+  /** 폴러 상태의 변경 카운터 기준선 키 — {데이터셋 id → 누적 변경 수}(WD-399). */
+  static final String LAST_CHANGE_SNAPSHOT = "lastChangeSnapshot";
+
+  /** 폴러 상태의 테이블 실체 기준선 키 — {데이터셋 id → 테이블 OID}(WD-399). REPLACE 맞바꿈을 알아보는 데 쓴다. */
+  static final String LAST_RELATION_SNAPSHOT = "lastRelationSnapshot";
+
+  /**
+   * 변경 카운터 비교 결과(WD-399).
+   *
+   * @param changedIds 카운터로 변경이 확인된(=발화할) 데이터셋
+   * @param nextRelations 다음 폴링이 비교할 테이블 실체 기준선
+   * @param nextCounters 다음 폴링이 비교할 카운터 기준선
+   */
+  record CounterDiff(
+      List<Long> changedIds, Map<Long, Long> nextRelations, Map<Long, Long> nextCounters) {}
+
+  /**
+   * 감시 대상별로 직전 기준선과 지금 변경 카운터를 비교한다(WD-399). 순수 함수라 단위 테스트로 판정 규칙을 고정한다. 없는 데이터셋은 {@link
+   * #diffSnapshots} 가 감시 목록에서 빼므로 여기서는 기준선에서만 지운다.
+   *
+   * <ul>
+   *   <li>테이블 실체(OID)가 바뀌었으면 변경이다 — REPLACE 맞바꿈은 원본을 지우고 새 테이블을 들이므로 카운터가 새로 세어져 크기 비교로는 알 수 없다.
+   *   <li>같은 실체에서 카운터가 커졌으면 변경이다. 줄었으면 통계 초기화·크래시 복구로 0 부터 다시 센 것이라 기준선만 새로 잡는다 — 변경으로 보면 그 순간 모든
+   *       트리거가 한꺼번에 발화한다.
+   *   <li>직전 기준선이 없으면(배포 직후의 옛 상태·새 감시 대상·다시 켠 트리거) 기준선만 잡는다.
+   *   <li>카운터를 못 읽었으면 변경으로 보지 않고 직전 기준선을 그대로 둔다.
+   *   <li>이 트리거의 파이프라인이 쓰는 출력 데이터셋은 카운터로 판정하지 않는다(기준선은 갱신) — 파이프라인이 같은 행을 다시 써도 카운터가 올라, 자기 출력을
+   *       감시하는 파이프라인이 실행마다 자신을 다시 부르게 된다. 그런 데이터셋은 예전처럼 행 수로만 판정한다.
+   * </ul>
+   */
+  static CounterDiff diffCounters(
+      List<Long> watched,
+      Set<Long> existing,
+      Map<Long, DataRowStore.ChangeCounter> current,
+      Map<Long, Long> lastRelations,
+      Map<Long, Long> lastCounters,
+      Set<Long> ownOutputs) {
+    List<Long> changed = new ArrayList<>();
+    Map<Long, Long> nextRelations = new HashMap<>();
+    Map<Long, Long> nextCounters = new HashMap<>();
+    for (Long id : new LinkedHashSet<>(watched)) {
+      if (!existing.contains(id)) {
+        continue;
+      }
+      DataRowStore.ChangeCounter now = current.get(id);
+      Long beforeRelation = lastRelations.get(id);
+      Long beforeCounter = lastCounters.get(id);
+      if (now == null) {
+        if (beforeRelation != null && beforeCounter != null) {
+          nextRelations.put(id, beforeRelation);
+          nextCounters.put(id, beforeCounter);
+        }
+        continue;
+      }
+      nextRelations.put(id, now.relationId());
+      nextCounters.put(id, now.counter());
+      if (beforeRelation == null || beforeCounter == null || ownOutputs.contains(id)) {
+        continue;
+      }
+      if (now.relationId() != beforeRelation || now.counter() > beforeCounter) {
+        changed.add(id);
+      }
+    }
+    return new CounterDiff(changed, nextRelations, nextCounters);
+  }
 
   /**
    * 스냅숏 비교 결과.
    *
-   * @param changedIds 행 수가 직전 기준선과 달라진(=발화할) 데이터셋
+   * @param changedIds 값(행 수 또는 변경 카운터)이 직전 기준선과 달라진(=발화할) 데이터셋
    * @param nextSnapshot 다음 폴링이 비교할 기준선(있는 데이터셋만)
    * @param missingIds 더 이상 없는(삭제된) 감시 대상
    */
   record SnapshotDiff(List<Long> changedIds, Map<Long, Long> nextSnapshot, List<Long> missingIds) {}
 
   /**
-   * 감시 대상별로 직전 기준선과 지금 행 수를 비교한다(WD-221). 순수 함수라 단위 테스트로 판정 규칙을 고정한다.
+   * 감시 대상별로 직전 기준선과 지금 값(행 수 또는 변경 카운터 — WD-399)을 비교한다(WD-221). 순수 함수라 단위 테스트로 판정 규칙을 고정한다.
    *
    * <ul>
    *   <li>없는(삭제된) 데이터셋: 변경 판정에서 빼고 기준선에서도 지운다 — 예전엔 행 수 0 과 직전값을 비교해 매 주기 「변경」이 되어 같은 삭제 데이터셋으로
@@ -318,21 +407,29 @@ public class TriggerEventService {
             () -> readTableNames(datasetIds),
             tableNames -> tableNames == null ? null : countRows(tableNames));
     // 판정할 수 없는 회차(null)는 모두 "있지만 못 읽음"으로 둔다 — 존재를 비우면 diffSnapshots 가 전부 삭제로 보고 감시 목록에서 빼 트리거를 끈다.
-    return probe == null ? new DatasetProbe(new HashSet<>(datasetIds), Map.of()) : probe;
+    return probe == null ? new DatasetProbe(new HashSet<>(datasetIds), Map.of(), Map.of()) : probe;
   }
 
-  /** 테이블 이름으로 행 수를 세고 데이터셋별로 되돌린다. 트랜잭션 구간은 호출자(probeDatasets)가 정한다. */
+  /** 테이블 이름으로 행 수·변경 카운터를 읽고 데이터셋별로 되돌린다. 트랜잭션 구간은 호출자(probeDatasets)가 정한다. */
   private DatasetProbe countRows(Map<Long, String> tableNames) {
-    Map<String, Long> countsByTable = dataStoreResolver.rowStore().rowCounts(tableNames.values());
-    Map<Long, Long> counts = new HashMap<>();
+    DataRowStore rowStore = dataStoreResolver.rowStore();
+    // 이름이 있는 데이터셋이 "있는" 데이터셋이다 — 못 읽은 것은 각 값 맵에서만 빠진다.
+    return new DatasetProbe(
+        new HashSet<>(tableNames.keySet()),
+        byDataset(tableNames, rowStore.rowCounts(tableNames.values())),
+        byDataset(tableNames, rowStore.changeCounters(tableNames.values())));
+  }
+
+  /** {테이블 이름 → 값} 을 {데이터셋 id → 값} 으로 옮긴다. 값이 없는 테이블은 빠진다. */
+  private static <V> Map<Long, V> byDataset(Map<Long, String> tableNames, Map<String, V> byTable) {
+    Map<Long, V> result = new HashMap<>();
     for (Map.Entry<Long, String> e : tableNames.entrySet()) {
-      Long count = countsByTable.get(e.getValue());
-      if (count != null) {
-        counts.put(e.getKey(), count);
+      V value = byTable.get(e.getValue());
+      if (value != null) {
+        result.put(e.getKey(), value);
       }
     }
-    // 이름이 있는 데이터셋이 "있는" 데이터셋이다 — 행 수를 못 센 것은 counts 에서만 빠진다.
-    return new DatasetProbe(new HashSet<>(tableNames.keySet()), counts);
+    return result;
   }
 
   /** 데이터셋별 테이블 이름. 지워진 데이터셋(이름 없음)은 빠진다. 트랜잭션 안에서 부른다. */
@@ -345,12 +442,12 @@ public class TriggerEventService {
   }
 
   @SuppressWarnings("unchecked")
-  private Map<Long, Long> getLastSnapshot(Map<String, Object> state) {
-    if (!state.containsKey("lastSnapshot")) {
+  private Map<Long, Long> getLastSnapshot(Map<String, Object> state, String key) {
+    if (!state.containsKey(key)) {
       return Map.of();
     }
     try {
-      Map<String, Object> raw = (Map<String, Object>) state.get("lastSnapshot");
+      Map<String, Object> raw = (Map<String, Object>) state.get(key);
       Map<Long, Long> result = new HashMap<>();
       for (Map.Entry<String, Object> entry : raw.entrySet()) {
         result.put(Long.parseLong(entry.getKey()), ((Number) entry.getValue()).longValue());
