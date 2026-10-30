@@ -99,6 +99,9 @@ services:
       # 스크립트 1회용 토큰 서명 키 — db-executor 와 같은 .env 키(32바이트 이상 임의 값). api 가 Tibero Python 단계의 슬롯 조회
       # 토큰을 이 키로 서명하고 db-executor 가 검증한다(WD-78).
       DB_EXECUTOR_SCRIPT_TOKEN_KEY: ${DB_EXECUTOR_SCRIPT_TOKEN_KEY:?DB_EXECUTOR_SCRIPT_TOKEN_KEY is required}
+      # X-Forwarded-For 를 믿을 리버스 프록시 대역(WD-402, 쉼표 구분 CIDR). 비우면 루프백·사설망 전체를 믿는다.
+      # 운영자는 web/admin nginx 컨테이너 주소(고정 IP)나 그 전용 네트워크 대역으로 좁혀, 같은 내부망의 다른 컨테이너가 IP 를 위조하지 못하게 한다.
+      APP_TRUSTED_PROXIES: ${APP_TRUSTED_PROXIES:-}
     depends_on:
       db:
         condition: service_healthy

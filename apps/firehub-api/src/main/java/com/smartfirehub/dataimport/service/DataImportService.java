@@ -25,19 +25,28 @@ import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.notification.service.NotificationService;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jobrunr.jobs.annotations.Job;
 import org.jobrunr.scheduling.JobScheduler;
 import org.jooq.JSONB;
+import org.postgresql.util.PSQLException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
@@ -49,7 +58,8 @@ public class DataImportService {
 
   // previewImport/validateImport 스트리밍 파싱 시 배치 크기.
   // 배치 단위로 파싱+검증하여 전체 행을 한 번에 메모리에 적재하지 않는다(400MB xlsb preview/validate OOM 해소, #7).
-  private static final int BATCH_SIZE = 2000;
+  // 패키지 공개: 배치 경계를 넘는 파일을 만드는 테스트가 같은 값을 참조한다.
+  static final int BATCH_SIZE = 2000;
 
   // 사전 검증 샘플 크기 — 전량 검증(임포트 잡)이 아닌, 스키마/매핑 빠른 확인용 앞 N행.
   private static final int SAMPLE_VALIDATION_ROWS = 200;
@@ -770,24 +780,26 @@ public class DataImportService {
 
             switch (importMode) {
               case APPEND -> {
-                // NOTE: 검증(Pass1)이 삽입(Pass2) 전에 전량 완료되므로 "검증 실패로 인한" 부분 적재는
-                // 없다. 단 APPEND Pass2는 트랜잭션으로 감싸지 않는다(스트리밍 본질 — 대용량 파일을
-                // 메모리에 올리지 않기 위함). 따라서 "삽입 도중 DB 오류"가 나면 그 이전까지 커밋된
-                // 배치는 롤백되지 않고 남는다. 이는 REPLACE(PK 無)만 truncate+insert를 트랜잭션으로
-                // 감싼 것과의 차이이며, 기존 스트리밍 구조가 의도적으로 감수하는 trade-off다.
+                // 검증(Pass1)이 삽입(Pass2) 전에 전량 완료되므로 "검증 실패로 인한" 부분 적재는 없다.
+                // 삽입 도중 DB 오류(기본 키 충돌 등)로 인한 부분 적재는, 아래에서 삽입 스트림 전체를 하나의
+                // 트랜잭션으로 감싸 막는다(WD-386). 배치는 여전히 BATCH_SIZE 단위로 스트리밍해 넣으므로
+                // 대용량 파일을 메모리에 올리지 않는다 — 커밋만 마지막에 한 번 한다.
                 BiConsumer<Integer, Integer> wrapped =
                     (processed, total) -> {
                       int globalProcessed = base + processed;
                       int pct = 40 + (int) ((globalProcessed / (double) totalRowsForProgress) * 60);
-                      asyncJobService.updateProgress(
+                      // 긴 삽입 트랜잭션에 합류하지 않도록 진행률은 독립 커밋한다(WD-386).
+                      asyncJobService.updateProgressInNewTransaction(
                           jobId,
                           "INSERTING",
                           Math.min(pct, 100),
                           "Inserting data...",
                           Map.of("totalRows", totalRowsFinal, "processedRows", globalProcessed));
                     };
-                dataTableRowService.insertBatchWithProgress(
-                    dataset.tableName(), columnNames, rowMapsBatch, wrapped, columnTypes);
+                dataWrite(
+                    () ->
+                        dataTableRowService.insertBatchWithProgress(
+                            dataset.tableName(), columnNames, rowMapsBatch, wrapped, columnTypes));
                 outerProcessed[0] = base + rowMapsBatch.size();
               }
               case UPSERT -> {
@@ -829,8 +841,10 @@ public class DataImportService {
                           "Upserting data...",
                           Map.of("totalRows", totalRowsFinal, "processedRows", globalProcessed));
                     };
-                dataTableRowService.insertStagingBatchWithProgress(
-                    stagingTableFinal, columnNames, rowMapsBatch, wrapped);
+                dataWrite(
+                    () ->
+                        dataTableRowService.insertStagingBatchWithProgress(
+                            stagingTableFinal, columnNames, rowMapsBatch, wrapped));
                 outerProcessed[0] = base + rowMapsBatch.size();
               }
               case REPLACE -> {
@@ -838,7 +852,9 @@ public class DataImportService {
                     (processed, total) -> {
                       int globalProcessed = base + processed;
                       int pct = 40 + (int) ((globalProcessed / (double) totalRowsForProgress) * 60);
-                      asyncJobService.updateProgress(
+                      // PK 無 경로는 긴 삽입 트랜잭션 안이라 진행률을 독립 커밋한다(WD-386). PK 有 경로는 트랜잭션
+                      // 밖이라 새 트랜잭션을 열어도 결과가 같다.
+                      asyncJobService.updateProgressInNewTransaction(
                           jobId,
                           "INSERTING",
                           Math.min(pct, 100),
@@ -846,8 +862,10 @@ public class DataImportService {
                           Map.of("totalRows", totalRowsFinal, "processedRows", globalProcessed));
                     };
                 if (!pkColumns.isEmpty()) {
-                  dataTableRowService.insertStagingBatchWithProgress(
-                      stagingTableFinal, columnNames, rowMapsBatch, wrapped);
+                  dataWrite(
+                      () ->
+                          dataTableRowService.insertStagingBatchWithProgress(
+                              stagingTableFinal, columnNames, rowMapsBatch, wrapped));
                 } else {
                   // PK가 없으면 unique index가 없어 dedup이 불필요 — target에 직접 적재.
                   // lazy truncate: 유효 행이 처음 나올 때 1회만 truncate. 여기 도달했다는 것 자체가
@@ -857,18 +875,30 @@ public class DataImportService {
                     dataTableRowService.truncateTable(dataset.tableName());
                     replaceNoPkTruncated[0] = true;
                   }
-                  dataTableRowService.insertBatchWithProgress(
-                      dataset.tableName(), columnNames, rowMapsBatch, wrapped, columnTypes);
+                  dataWrite(
+                      () ->
+                          dataTableRowService.insertBatchWithProgress(
+                              dataset.tableName(),
+                              columnNames,
+                              rowMapsBatch,
+                              wrapped,
+                              columnTypes));
                 }
                 outerProcessed[0] = base + rowMapsBatch.size();
               }
             }
           };
 
-      // REPLACE(PK 無)만 truncate+insert 원자성이 필요하므로 삽입 스트림 전체를 트랜잭션으로 감싼다.
-      // 나머지 모드는 staging(별도 영구 테이블)에 배치 커밋하며 스트리밍하므로 트랜잭션이 불필요하다
-      // (하나의 거대한 트랜잭션으로 커넥션을 점유하면 스트리밍의 이점이 사라진다).
-      if (importMode == ImportMode.REPLACE && pkColumns.isEmpty()) {
+      // 대상 테이블에 바로 넣는 모드는 삽입 스트림 전체를 하나의 트랜잭션으로 감싸 전부-아니면-전무로 만든다.
+      // - REPLACE(PK 無): truncate + insert 가 원자적이어야 한다(중간 실패 시 기존 데이터 보존).
+      // - APPEND(WD-386): 배치마다 커밋하면 뒤쪽 배치에서 기본 키가 충돌(파일 안 중복·기존 행과 충돌)할 때 앞 배치만
+      //   남는 부분 적재가 생긴다. 한 트랜잭션이면 어떤 배치에서 실패해도 전부 롤백되어 대상 행 수가 그대로다.
+      //   staging 을 거치지 않는 이유: staging DDL 이 원본 타입을 온전히 옮기지 못해(알 수 없는 타입→TEXT 등)
+      //   INSERT … SELECT 가 실패할 수 있고, 모든 행을 두 번 쓰게 되기 때문이다.
+      // UPSERT·REPLACE(PK 有)는 staging(별도 영구 테이블)에 배치 커밋하며 스트리밍하고 target 반영은 promote 에서
+      // 원자적으로 하므로 스트림 전체 트랜잭션이 필요 없다.
+      if (importMode == ImportMode.APPEND
+          || (importMode == ImportMode.REPLACE && pkColumns.isEmpty())) {
         transactionTemplate.executeWithoutResult(
             status -> {
               try {
@@ -923,8 +953,10 @@ public class DataImportService {
         if (importMode == ImportMode.UPSERT) {
           log.info("UPSERT mode: promoting staging to target on PK columns {}", pkColumns);
           DataTableRowService.UpsertResult upsertResult =
-              dataTableRowService.promoteStagingToUpsert(
-                  stagingTableFinal, dataset.tableName(), columnNames, pkColumns, null);
+              dataWrite(
+                  () ->
+                      dataTableRowService.promoteStagingToUpsert(
+                          stagingTableFinal, dataset.tableName(), columnNames, pkColumns, null));
           log.info(
               "UPSERT mode: promoted — inserted={}, updated={}",
               upsertResult.inserted(),
@@ -933,8 +965,10 @@ public class DataImportService {
           log.info("REPLACE mode: promoting staging to target (truncate + insert) atomically");
           transactionTemplate.executeWithoutResult(
               status ->
-                  dataTableRowService.promoteStagingToReplace(
-                      stagingTableFinal, dataset.tableName(), columnNames, pkColumns));
+                  dataWrite(
+                      () ->
+                          dataTableRowService.promoteStagingToReplace(
+                              stagingTableFinal, dataset.tableName(), columnNames, pkColumns)));
         }
       }
 
@@ -1208,24 +1242,92 @@ public class DataImportService {
   static final String PARSE_OPTIONS_UNREADABLE =
       "가져오기 설정(구분자·인코딩·시트 등)을 읽지 못해 가져오기를 중단했습니다. 파일을 다시 올려 가져오기를 다시 시작해 주세요.";
 
-  private String toUserFriendlyMessage(Exception e) {
-    // 잡이 스스로 실패 사유를 정한 경우(옵션 파일을 읽지 못함 등, WD-253)는 그 한국어 문구를 그대로 쓴다.
+  /** 중복 키 실패 안내. 파일 안 중복·기존 데이터와의 충돌 두 경우를 함께 설명한다(WD-386). */
+  static final String DUPLICATE_KEY_MESSAGE =
+      "중복 데이터가 존재합니다. 파일 안에 같은 키 값이 반복되었거나 기존 데이터와 키 값이 겹칩니다."
+          + " '업서트(UPSERT)' 모드를 사용하면 기존 데이터를 업데이트할 수 있습니다.";
+
+  /** 진행 중 임포트를 하나로 묶는 async_job partial unique index 이름(V13 마이그레이션). */
+  private static final String ACTIVE_IMPORT_UNIQUE_INDEX = "idx_async_job_active_unique";
+
+  /** PostgreSQL 고유 제약 위반 SQLState. */
+  private static final String PG_UNIQUE_VIOLATION = "23505";
+
+  /**
+   * 데이터 행 쓰기(대상·staging 적재, promote)를 실행하고, 그 쓰기가 고유 제약 위반으로 실패하면 사용자 안내 문구를 실은 {@link
+   * ImportProcessingException} 으로 바꿔 던진다(WD-386).
+   *
+   * <p>중복 키 번역을 이 지점에서만 하는 이유: 원인 체인 어디에든 있는 DuplicateKeyException 을 「데이터 중복」으로 보면, 임포트
+   * 이력·async_job 같은 관리용 고유 인덱스 충돌까지 사용자 데이터 문제로 잘못 안내한다. 판정은 메시지 문구가 아니라 예외 타입(Tibero 저장소가 번역한
+   * Spring DuplicateKeyException)과 SQLState(PostgreSQL 23505)로 한다 — 메시지에는 사용자 값이 실릴 수 있다.
+   */
+  static void dataWrite(Runnable write) {
+    dataWrite(
+        () -> {
+          write.run();
+          return null;
+        });
+  }
+
+  /** 값을 돌려주는 데이터 행 쓰기용 {@link #dataWrite(Runnable)}. */
+  static <T> T dataWrite(Supplier<T> write) {
+    try {
+      return write.get();
+    } catch (RuntimeException e) {
+      if (findInChain(e, DataImportService::isUniqueViolation).isPresent()) {
+        throw new ImportProcessingException(DUPLICATE_KEY_MESSAGE, e);
+      }
+      throw e;
+    }
+  }
+
+  /** 고유 제약 위반 예외인지 — Spring DuplicateKeyException 또는 SQLState 23505 인 SQLException. */
+  private static boolean isUniqueViolation(Throwable t) {
+    return t instanceof DuplicateKeyException
+        || (t instanceof SQLException sql && PG_UNIQUE_VIOLATION.equals(sql.getSQLState()));
+  }
+
+  /** 진행 중 임포트 고유 인덱스 충돌인지 — PostgreSQL 서버 오류의 제약 이름만 본다(메시지 문구는 보지 않는다). */
+  private static boolean isActiveImportConflict(Throwable t) {
+    return t instanceof PSQLException pe
+        && pe.getServerErrorMessage() != null
+        && ACTIVE_IMPORT_UNIQUE_INDEX.equals(pe.getServerErrorMessage().getConstraint());
+  }
+
+  /**
+   * 원인 체인을 따라가며 조건에 맞는 첫 예외를 찾는다. 이미 본 예외로 돌아오면(자기 자신을 원인으로 둔 예외·순환 체인) 멈춘다 — 체인을 훑는 모든 판정이 이 한 곳의
+   * 종료 규칙을 쓴다.
+   */
+  static Optional<Throwable> findInChain(Throwable e, Predicate<Throwable> match) {
+    Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+    for (Throwable t = e; t != null && seen.add(t); t = t.getCause()) {
+      if (match.test(t)) {
+        return Optional.of(t);
+      }
+    }
+    return Optional.empty();
+  }
+
+  String toUserFriendlyMessage(Exception e) {
+    // 잡이 스스로 실패 사유를 정한 경우(옵션 파일을 읽지 못함·데이터 행 중복 키 등, WD-253·WD-386)는 그 한국어 문구를 그대로 쓴다.
     if (e instanceof ImportProcessingException processing) {
       return processing.getMessage();
     }
+    // 진행 중 임포트 고유 인덱스 충돌 — 제약 이름으로만 판정한다(메시지에는 사용자 데이터가 실릴 수 있다).
+    if (findInChain(e, DataImportService::isActiveImportConflict).isPresent()) {
+      return "이미 진행 중인 임포트가 있습니다. 완료 후 다시 시도해주세요.";
+    }
     // 파서가 파일을 읽지 못한 경우(엑셀 아님·손상·암호·깨진 CSV)는 파서가 이미 사용자용 한국어 문구를 실어 두었다 — 그대로 쓴다(WD-204).
-    // REPLACE 경로는 트랜잭션 람다가 예외를 감쌀 수 있어 원인 체인까지 본다.
-    for (Throwable cur = e; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
-      if (cur instanceof FileUnreadableException unreadable) {
-        return unreadable.getMessage();
-      }
+    // REPLACE·APPEND 경로는 트랜잭션 람다가 예외를 감쌀 수 있어 원인 체인까지 본다.
+    Optional<Throwable> unreadable = findInChain(e, t -> t instanceof FileUnreadableException);
+    if (unreadable.isPresent()) {
+      return unreadable.get().getMessage();
     }
     // 헤더 규칙 위반(같은 이름 열 중복, WD-205)은 파서가 만든 한국어 문구를 그대로 쓴다. 메시지에 열 이름이 들어가므로
     // 아래 문자열 매칭("Connection" 등)보다 먼저 판정해야 열 이름 때문에 엉뚱한 문구로 바뀌지 않는다. 래핑돼 올 수 있어 원인 체인을 훑는다.
-    for (Throwable t = e; t != null; t = t.getCause()) {
-      if (t instanceof InvalidFileHeaderException headerError) {
-        return headerError.getMessage();
-      }
+    Optional<Throwable> headerError = findInChain(e, t -> t instanceof InvalidFileHeaderException);
+    if (headerError.isPresent()) {
+      return headerError.get().getMessage();
     }
 
     // DB 단계 데이터 오류(SQLState 22xxx)는 원인 체인의 SQLState 로 먼저 판정한다 — 메시지 문자열 매칭(아래 "Connection" 등)은
@@ -1237,14 +1339,6 @@ public class DataImportService {
     }
 
     String msg = e.getMessage() != null ? e.getMessage() : "";
-
-    // Duplicate key (data table or async_job)
-    if (msg.contains("duplicate key value violates unique constraint")) {
-      if (msg.contains("idx_async_job_active_unique")) {
-        return "이미 진행 중인 임포트가 있습니다. 완료 후 다시 시도해주세요.";
-      }
-      return "중복 데이터가 존재합니다. '업서트(UPSERT)' 모드를 사용하면 기존 데이터를 업데이트할 수 있습니다.";
-    }
 
     // File not found / upload interrupted
     if (e instanceof java.nio.file.NoSuchFileException

@@ -3,6 +3,7 @@ package com.smartfirehub.dataimport.controller;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -20,6 +21,7 @@ import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.util.ClientIpExtractor;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.permission.service.PermissionService;
@@ -47,7 +49,7 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
  * query-result export) 각각의 성공 분기 및 핵심 buildContentDisposition 경로를 커버한다.
  */
 @WebMvcTest(DataExportController.class)
-@Import({SecurityConfig.class, JwtAuthenticationFilter.class})
+@Import({SecurityConfig.class, JwtAuthenticationFilter.class, ClientIpExtractor.class})
 class DataExportControllerTest {
 
   // WebMvcConfig 가 DatasetAccessInterceptor(→DatasetAccessGuard)를 등록하므로 슬라이스에도 빈이 있어야 한다.
@@ -133,6 +135,57 @@ class DataExportControllerTest {
                 .content(objectMapper.writeValueAsString(req)))
         .andExpect(status().isAccepted())
         .andExpect(jsonPath("$.jobId").value("job-123"));
+  }
+
+  /**
+   * 회귀 테스트(WD-402): 내보내기 감사 IP 는 신뢰 프록시 기준으로 고른다. 프록시(10.0.0.1)를 거치면 nginx 가 덧붙인 실제 주소를, 프록시가 아닌 직접
+   * 접속이면 X-Forwarded-For 를 무시하고 remoteAddr 를 넘긴다.
+   */
+  @Test
+  void exportDataset_auditIp_usesTrustedProxyRule() throws Exception {
+    mockAuth();
+    when(userRepository.findById(1L)).thenReturn(Optional.empty());
+    when(exportService.exportDataset(
+            eq(1L), any(ExportRequest.class), eq(1L), anyString(), anyString(), any()))
+        .thenReturn(ExportResult.async("job-ip"));
+    String body =
+        objectMapper.writeValueAsString(new ExportRequest(ExportFormat.CSV, null, null, null));
+
+    // 신뢰 프록시 경유 — 위조된 맨 앞 값이 아니라 실제 주소
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/export")
+                .header("Authorization", "Bearer valid-token")
+                .header("X-Forwarded-For", "203.0.113.5, 198.51.100.7")
+                .with(
+                    r -> {
+                      r.setRemoteAddr("10.0.0.1");
+                      return r;
+                    })
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isAccepted());
+    verify(exportService)
+        .exportDataset(
+            eq(1L), any(ExportRequest.class), eq(1L), anyString(), eq("198.51.100.7"), any());
+
+    // 직접 접속 — 헤더 무시
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/export")
+                .header("Authorization", "Bearer valid-token")
+                .header("X-Forwarded-For", "203.0.113.5")
+                .with(
+                    r -> {
+                      r.setRemoteAddr("198.51.100.42");
+                      return r;
+                    })
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isAccepted());
+    verify(exportService)
+        .exportDataset(
+            eq(1L), any(ExportRequest.class), eq(1L), anyString(), eq("198.51.100.42"), any());
   }
 
   @Test

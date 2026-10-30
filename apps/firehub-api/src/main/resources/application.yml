@@ -47,6 +47,11 @@ org:
       enabled: false
 
 app:
+  security:
+    # X-Forwarded-For 를 믿을 직전 홉(리버스 프록시) 대역, 쉼표로 구분한 CIDR(WD-402). 이 대역에서 들어온 요청만 헤더를 오른쪽부터 읽어
+    # 실제 클라이언트 IP 를 고른다 — 감사 IP·API 트리거 허용 IP 검사에 쓰인다. 비우면 ClientIpExtractor.DEFAULT_TRUSTED_PROXIES
+    # (루프백·사설망·링크 로컬)를 쓴다 — 기본 목록은 그 상수 하나에만 둔다.
+    trusted-proxies: ${APP_TRUSTED_PROXIES:}
   data-store:
     # Tibero 저장소 선택 허용 여부(WD-73). 구현 완료 전에는 운영에서 끈다.
     tibero-enabled: ${DATA_STORE_TIBERO_ENABLED:false}

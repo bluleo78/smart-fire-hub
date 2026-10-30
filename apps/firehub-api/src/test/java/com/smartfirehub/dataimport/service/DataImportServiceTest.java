@@ -422,8 +422,8 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 시트 목록이 깨진 xlsb: 미리보기는 첫 시트로 떨어져 그 이름을 돌려주고, 화면·AI 는 그 이름을 검증·가져오기에 다시 보낸다. 그 이름으로 검증·가져오기가
-   * 되어야 한다 — 예전에 가져와지던 파일이 계속 가져와지게(PR #792 리뷰).
+   * 시트 목록이 깨진 xlsb: 미리보기는 첫 시트로 떨어져 그 이름을 돌려주고, 화면·AI 는 그 이름을 검증·가져오기에 다시 보낸다. 그 이름으로 검증·가져오기가 되어야
+   * 한다 — 예전에 가져와지던 파일이 계속 가져와지게(PR #792 리뷰).
    */
   @Test
   void corruptXlsb_previewSheetNameRoundTripsToValidateAndImport() throws Exception {
@@ -485,10 +485,7 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     MockMultipartFile file =
         new MockMultipartFile(
-            "file",
-            "test.csv",
-            "text/csv",
-            "name\nAlice\n".getBytes(StandardCharsets.UTF_8));
+            "file", "test.csv", "text/csv", "name\nAlice\n".getBytes(StandardCharsets.UTF_8));
     assertThatThrownBy(
             () ->
                 dataImportService.importFile(
@@ -1256,19 +1253,29 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     List<String> statusesSeen = new ArrayList<>();
     List<Integer> processedRowsSeen = new ArrayList<>();
-    Mockito.doAnswer(
-            invocation -> {
-              String status = invocation.getArgument(1);
-              Map<String, Object> metadata = invocation.getArgument(4);
-              Object processed = metadata.get("processedRows");
-              if (processed instanceof Integer p) {
-                statusesSeen.add(status);
-                processedRowsSeen.add(p);
-              }
-              return invocation.callRealMethod();
-            })
+    org.mockito.stubbing.Answer<Object> recordProgress =
+        invocation -> {
+          String status = invocation.getArgument(1);
+          Map<String, Object> metadata = invocation.getArgument(4);
+          Object processed = metadata.get("processedRows");
+          if (processed instanceof Integer p) {
+            statusesSeen.add(status);
+            processedRowsSeen.add(p);
+          }
+          return invocation.callRealMethod();
+        };
+    Mockito.doAnswer(recordProgress)
         .when(asyncJobService)
         .updateProgress(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyInt(),
+            Mockito.anyString(),
+            Mockito.anyMap());
+    // APPEND 삽입 단계 진행률은 긴 삽입 트랜잭션과 독립 커밋하는 경로로 나간다(WD-386) — 같은 기록기로 함께 잡는다.
+    Mockito.doAnswer(recordProgress)
+        .when(asyncJobService)
+        .updateProgressInNewTransaction(
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyInt(),

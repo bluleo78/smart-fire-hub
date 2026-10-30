@@ -32,6 +32,9 @@ public class DataImportController {
   private final UserRepository userRepository;
   private final ObjectMapper objectMapper;
 
+  /** 감사 IP 를 신뢰 프록시 기준으로 고른다(WD-402) — X-Forwarded-For 위조로 감사 IP 를 속이지 못하게. */
+  private final ClientIpExtractor clientIpExtractor;
+
   @PostMapping("/imports/preview")
   @RequirePermission("data:import")
   public ResponseEntity<ImportPreviewResponse> previewImport(
@@ -95,8 +98,8 @@ public class DataImportController {
     Long userId = (Long) authentication.getPrincipal();
     String username =
         userRepository.findById(userId).map(user -> user.name()).orElse(String.valueOf(userId));
-    // 리버스 프록시 환경에서 실제 클라이언트 IP를 기록하기 위해 X-Forwarded-For 우선 확인 (이슈 #147)
-    String ipAddress = ClientIpExtractor.extract(request);
+    // 리버스 프록시 환경에서 실제 클라이언트 IP를 기록한다(이슈 #147). 헤더는 신뢰 프록시를 거쳐 온 경우에만 본다(WD-402).
+    String ipAddress = clientIpExtractor.extract(request);
     String userAgent = request.getHeader("User-Agent");
 
     ImportMode resolvedImportMode = parseImportMode(importMode);

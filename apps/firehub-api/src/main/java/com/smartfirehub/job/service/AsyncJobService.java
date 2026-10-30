@@ -19,6 +19,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -87,6 +88,31 @@ public class AsyncJobService {
    */
   public void updateProgress(
       String jobId, String stage, int progress, String message, Map<String, Object> metadata) {
+    updateProgress(jobId, stage, progress, message, metadata, false);
+  }
+
+  /**
+   * 진행률 갱신 — DB 쓰기를 <b>새 트랜잭션(REQUIRES_NEW)</b>에서 독립 커밋한다(WD-386).
+   *
+   * <p>임포트의 APPEND·REPLACE(PK 無)는 삽입 스트림 전체를 긴 트랜잭션 하나로 감싼다. 그 안에서 {@link #updateProgress} 를 부르면
+   * async_job 갱신이 바깥 트랜잭션에 합류해 커밋 전까지 보이지 않고 행 잠금도 계속 쥔다. 그러면 폴링 화면은 단계가 멈춘 것으로 보고, 30분 스테일
+   * 정리({@code AsyncJobCleanupService})는 잠금에 막히거나 끝내 성공할 임포트를 실패로 만든다. 그래서 진행률 쓰기만 따로 떼어 즉시 커밋한다.
+   *
+   * <p>쓰는 순간에만(스로틀 통과 시) 커넥션을 하나 더 빌린다 — 바깥 트랜잭션이 쥔 것과 합쳐 잡당 최대 2개다. SSE 브로드캐스트는 기존처럼 트랜잭션 밖이다.
+   */
+  public void updateProgressInNewTransaction(
+      String jobId, String stage, int progress, String message, Map<String, Object> metadata) {
+    updateProgress(jobId, stage, progress, message, metadata, true);
+  }
+
+  /** 진행률 갱신 공통 구현. independent 면 DB 쓰기를 REQUIRES_NEW 트랜잭션에서 한다. */
+  private void updateProgress(
+      String jobId,
+      String stage,
+      int progress,
+      String message,
+      Map<String, Object> metadata,
+      boolean independent) {
     // Always emit SSE
     Map<String, Object> event =
         buildEventPayload(jobId, null, stage, progress, message, metadata, null);
@@ -98,10 +124,26 @@ public class AsyncJobService {
     String prevStage = lastPersistedStage.get(jobId);
     boolean stageChanged = prevStage == null || !prevStage.equals(stage);
     if (stageChanged || count % DB_UPDATE_INTERVAL == 0) {
-      asyncJobRepository.updateStageAndProgress(
-          jobId, stage, progress, message, metadata != null ? metadata : Collections.emptyMap());
+      Map<String, Object> meta = metadata != null ? metadata : Collections.emptyMap();
+      if (independent) {
+        // 바깥 트랜잭션을 일시중단하고 새 물리 트랜잭션으로 쓰고 바로 커밋한다.
+        requiresNewTemplate()
+            .executeWithoutResult(
+                status ->
+                    asyncJobRepository.updateStageAndProgress(
+                        jobId, stage, progress, message, meta));
+      } else {
+        asyncJobRepository.updateStageAndProgress(jobId, stage, progress, message, meta);
+      }
       lastPersistedStage.put(jobId, stage);
     }
+  }
+
+  /** 기본 템플릿과 같은 트랜잭션 매니저를 쓰는 REQUIRES_NEW 템플릿. 스로틀된 쓰기에서만 불려 매번 만들어도 비용이 작다. */
+  private TransactionTemplate requiresNewTemplate() {
+    TransactionTemplate t = new TransactionTemplate(transactionTemplate.getTransactionManager());
+    t.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    return t;
   }
 
   /**

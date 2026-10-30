@@ -40,6 +40,9 @@ public class HostingChangeAuditor {
   private final AuditLogService auditLogService;
   private final UserRepository userRepository;
 
+  /** 감사 IP 를 신뢰 프록시 기준으로 고른다(WD-402) — X-Forwarded-For 위조로 감사 IP 를 속이지 못하게. */
+  private final ClientIpExtractor clientIpExtractor;
+
   /** {@code before != after} 일 때만 감사 1건. userId 가 없으면(시스템 경로) "system" 으로 남긴다 — 행을 떨구지 않는다. */
   public void recordIfChanged(
       Long userId, Slot slot, ProviderHosting before, ProviderHosting after) {
@@ -60,7 +63,7 @@ public class HostingChangeAuditor {
         RESOURCE,
         slot.name(),
         "AI 공급자 호스팅 선언 변경(" + slot.name() + "): " + before.name() + " → " + after.name(),
-        ClientIpExtractor.extract(request),
+        clientIpExtractor.extract(request),
         request == null ? null : request.getHeader("User-Agent"),
         "SUCCESS",
         null,

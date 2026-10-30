@@ -18,6 +18,7 @@ import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.util.ClientIpExtractor;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.user.dto.UserResponse;
@@ -39,7 +40,7 @@ import org.springframework.test.web.servlet.MockMvc;
 /** DataImportController WebMvcTest — 파일 임포트 미리보기/검증/임포트/이력 조회 엔드포인트 검증 */
 @SuppressWarnings("null")
 @WebMvcTest(DataImportController.class)
-@Import({SecurityConfig.class, JwtAuthenticationFilter.class})
+@Import({SecurityConfig.class, JwtAuthenticationFilter.class, ClientIpExtractor.class})
 class DataImportControllerTest {
 
   // WebMvcConfig 가 DatasetAccessInterceptor(→DatasetAccessGuard)를 등록하므로 슬라이스에도 빈이 있어야 한다.
@@ -90,8 +91,8 @@ class DataImportControllerTest {
   }
 
   /**
-   * POST /datasets/{id}/imports — X-Forwarded-For 헤더가 있으면 첫 번째 값을 ipAddress로 service에 전달한다 (이슈
-   * #147). 리버스 프록시 환경에서 실제 클라이언트 IP가 감사 로그에 기록되어야 한다.
+   * POST /datasets/{id}/imports — 신뢰 프록시(10.0.0.1)를 거친 X-Forwarded-For 는 실제 클라이언트 IP 를 ipAddress로
+   * service에 전달한다 (이슈 #147, WD-402). 리버스 프록시 환경에서 실제 클라이언트 IP가 감사 로그에 기록되어야 한다.
    */
   @Test
   void importFile_withXForwardedFor_passesClientIpToService() throws Exception {
@@ -125,6 +126,35 @@ class DataImportControllerTest {
             any(),
             eq(ImportMode.APPEND));
     assertThat(ipCaptor.getValue()).isEqualTo("203.0.113.5");
+  }
+
+  /**
+   * 회귀 테스트(WD-402): 신뢰 프록시가 아닌 곳에서 직접 보낸 X-Forwarded-For 는 무시하고 remoteAddr 를 감사 IP 로 넘긴다 — 헤더로 감사
+   * IP 를 위조하지 못한다.
+   */
+  @Test
+  void importFile_spoofedXForwardedForFromUntrustedRemote_passesRemoteAddr() throws Exception {
+    when(importService.importFile(
+            anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), any()))
+        .thenReturn(new ImportStartResponse("job-3", "PENDING"));
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports")
+                .file(csvFile())
+                .header("Authorization", "Bearer test-token")
+                .header("X-Forwarded-For", "203.0.113.5")
+                .with(
+                    req -> {
+                      req.setRemoteAddr("198.51.100.42"); // 프록시가 아닌 직접 접속
+                      return req;
+                    }))
+        .andExpect(status().isCreated());
+
+    ArgumentCaptor<String> ipCaptor = ArgumentCaptor.forClass(String.class);
+    verify(importService)
+        .importFile(eq(1L), any(), any(), eq(1L), any(), ipCaptor.capture(), any(), any(), any());
+    assertThat(ipCaptor.getValue()).isEqualTo("198.51.100.42");
   }
 
   /** POST /datasets/{id}/imports — X-Forwarded-For 헤더가 없으면 remoteAddr가 ipAddress로 전달된다 */
