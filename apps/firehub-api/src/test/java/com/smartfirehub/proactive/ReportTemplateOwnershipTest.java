@@ -182,4 +182,32 @@ class ReportTemplateOwnershipTest extends IntegrationTestBase {
     assertThat(json(send(get(url), ownerToken, null), 200).path("name").asText())
         .isEqualTo("주인_비공개양식");
   }
+
+  /**
+   * WD-298: API 로 보낸 깨진 섹션(중복 key·알 수 없는 type·빈 label)은 400 과 한국어 사유로 거절된다. 남의 양식에 보낸 깨진 수정은 검증보다
+   * 소유 확인이 먼저라 그대로 404 다 — 400 으로 답하면 양식이 있다는 것이 드러난다.
+   */
+  @Test
+  void invalidSections_are400WithKoreanReason_butSomeoneElsesTemplateStays404() throws Exception {
+    String badBody =
+        "{\"name\":\"깨진 양식\",\"sections\":[{\"key\":\"dup\",\"type\":\"text\",\"label\":\"하나\"},"
+            + "{\"key\":\"dup\",\"type\":\"nosuch\",\"label\":\"\"},{\"type\":\"cards\"}]}";
+    JsonNode created = json(send(post("/api/v1/proactive/templates"), ownerToken, badBody), 400);
+    assertThat(created.path("message").asText()).contains("섹션 Key가 중복되었습니다: \"dup\"");
+
+    String url = "/api/v1/proactive/templates/" + ownerTemplateId;
+    String badUpdate =
+        "{\"name\":\"주인_비공개양식\",\"sections\":[{\"key\":\"a\",\"type\":\"nosuch\",\"label\":\"첫째\"}]}";
+    JsonNode updated = json(send(put(url), ownerToken, badUpdate), 400);
+    assertThat(updated.path("message").asText()).contains("타입 \"nosuch\"은(는) 지원하지 않습니다");
+    assertThat(send(put(url), otherToken, badUpdate).getStatus()).isEqualTo(404);
+    // 거절된 수정은 저장되지 않았다
+    assertThat(
+            json(send(get(url), ownerToken, null), 200)
+                .path("sections")
+                .get(0)
+                .path("key")
+                .asText())
+        .isEqualTo("s");
+  }
 }

@@ -8,6 +8,7 @@ import com.smartfirehub.proactive.dto.UpdateReportTemplateRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
+import com.smartfirehub.proactive.util.ReportTemplateSectionValidator;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,6 +54,8 @@ public class ReportTemplateService {
 
   @Transactional
   public ReportTemplateResponse createTemplate(CreateReportTemplateRequest request, Long userId) {
+    // 섹션 검증(WD-298) — 화면 밖(API·AI 도구)에서 들어온 깨진 섹션을 저장 전에 400 으로 거절한다.
+    ReportTemplateSectionValidator.validate(request.sections());
     Long id =
         reportTemplateRepository.create(
             request.name(), request.description(), request.sections(), request.style(), userId);
@@ -86,6 +89,8 @@ public class ReportTemplateService {
     if (template.builtin()) {
       throw new ProactiveJobException("빌트인 템플릿은 수정할 수 없습니다");
     }
+    // 섹션 검증(WD-298) — 섹션을 바꾸는 요청만 검사한다(null 이면 기존 섹션 유지). 소유자·빌트인 확인 뒤라 남의 양식 존재를 드러내지 않는다.
+    ReportTemplateSectionValidator.validate(request.sections());
     // 낙관적 잠금(WD-364) — 소유자(404)·빌트인 확인 뒤에 한다: 먼저 하면 남의 양식에 대한 낡은 요청이 409 를 받아 존재가 드러난다.
     // 행 잠금을 잡고 수정 시각을 읽어 편집 기준 버전과 비교한다 — 잠금은 트랜잭션 끝까지 유지되어 동시 저장 둘이 같은 버전으로 통과하지 못한다.
     LocalDateTime currentUpdatedAt =
