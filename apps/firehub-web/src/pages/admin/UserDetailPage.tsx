@@ -1,7 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
 import { ArrowLeft, UserX } from 'lucide-react';
-import { useEffect,useId,useMemo,useState } from 'react';
+import { useCallback,useEffect,useId,useMemo,useState } from 'react';
 import { useLocation, useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -31,9 +30,14 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAuth } from '../../hooks/useAuth';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { handleApiError, isEditConflict } from '../../lib/api-error';
+import {
+  extractApiError,
+  handleApiError,
+  isEditConflict,
+  isMemberGoneError,
+  MEMBER_GONE_MESSAGE,
+} from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
-import type { ErrorResponse } from '../../types/auth';
 import type { RoleResponse } from '../../types/role';
 import type { UserDetailResponse } from '../../types/user';
 import { AccountDisabledBadge } from './components/AccountDisabledBadge';
@@ -74,6 +78,24 @@ export default function UserDetailPage() {
   // 접근성: 활성 상태 스위치의 라벨↔컨트롤 연결용 id (#432). 조기 return 이 아래에 있으므로 훅 구간에서 호출.
   const activeSwitchId = useId();
 
+  /**
+   * 열어 둔 사이 이 멤버가 워크스페이스에서 제거됐으면(404) 서버 안내를 띄우고 목록으로 돌아간다(WD-288) — 예전엔 영어 「User not found: 26」
+   * 토스트만 뜨고 제거된 멤버의 편집 화면이 그대로 남았다. 제거된 멤버라 남은 역할 변경은 저장할 곳이 없으므로 이탈 가드 없이 바로 이동한다.
+   * 그런 404 가 아니면 false 를 돌려 호출처가 원래 오류 처리를 이어 가게 한다. 진입 조회 effect 도 쓰므로 useCallback 으로 고정한다.
+   */
+  const leaveIfMemberGone = useCallback(
+    (error: unknown, toastId?: string): boolean => {
+      if (!isMemberGoneError(error)) return false;
+      toast.error(extractApiError(error, MEMBER_GONE_MESSAGE), { id: toastId });
+      // 목록 캐시(staleTime 30s)에 제거된 멤버가 남아 보이지 않게 한다
+      void queryClient.invalidateQueries({ queryKey: ['users'] });
+      // 들어온 목록(페이지·검색어)으로 돌아간다 — 「목록으로 돌아가기」와 같은 곳
+      navigate(listPath);
+      return true;
+    },
+    [queryClient, navigate, listPath],
+  );
+
   useEffect(() => {
     const fetchData = async () => {
       if (!id) return;
@@ -90,16 +112,21 @@ export default function UserDetailPage() {
         const roleIds = userRes.data.roles.map(r => r.id);
         setSelectedRoleIds(roleIds);
         setInitialRoleIds(roleIds);
-      } catch {
-        toast.error('사용자 정보를 불러오는데 실패했습니다.');
-        navigate(listPath);
+      } catch (error) {
+        // 없는(제거된) 멤버면 그 사실을 안내하고(WD-288), 그 밖의 실패는 일반 안내로 목록에 돌아간다.
+        // 조회가 겹쳐(개발 StrictMode 의 effect 두 번 실행 등) 실패해도 토스트는 하나만 보이게 id 를 준다.
+        const toastId = 'user-detail-load-failed';
+        if (!leaveIfMemberGone(error, toastId)) {
+          toast.error('사용자 정보를 불러오는데 실패했습니다.', { id: toastId });
+          navigate(listPath);
+        }
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchData();
-  }, [id, navigate, canAssignRoles, listPath]);
+  }, [id, navigate, canAssignRoles, listPath, leaveIfMemberGone]);
 
   const handleRoleToggle = (roleId: number, checked: boolean) => {
     setSelectedRoleIds(prev =>
@@ -153,17 +180,15 @@ export default function UserDetailPage() {
         roleIds: selectedRoleIds,
         ...(overwrite ? {} : { expectedRoleIds: initialRoleIds }),
       });
-      await reloadUserRoles(user.id);
       setIsRolesConflictOpen(false);
+      // 저장은 끝났으므로 다시 읽기 전에 알린다 — 그 사이 멤버가 제거돼 다시 읽기가 404 여도 저장된 사실은 보인다(WD-288)
       toast.success('역할이 저장되었습니다.');
+      await reloadUserRoles(user.id);
     } catch (error) {
       if (isEditConflict(error)) {
         setIsRolesConflictOpen(true);
-      } else if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        toast.error(errData.message || '역할 저장에 실패했습니다.');
-      } else {
-        toast.error('역할 저장에 실패했습니다.');
+      } else if (!leaveIfMemberGone(error)) {
+        handleApiError(error, '역할 저장에 실패했습니다.');
       }
     } finally {
       setIsSavingRoles(false);
@@ -189,7 +214,7 @@ export default function UserDetailPage() {
       await queryClient.invalidateQueries({ queryKey: ['users'] });
       toast.success(user.isActive ? '멤버십이 정지되었습니다' : '멤버십이 재활성화되었습니다');
     } catch (error) {
-      handleApiError(error, '상태 변경에 실패했습니다.');
+      if (!leaveIfMemberGone(error)) handleApiError(error, '상태 변경에 실패했습니다.');
     } finally {
       setIsTogglingActive(false);
     }
@@ -354,7 +379,10 @@ export default function UserDetailPage() {
           if (!user) return;
           void reloadUserRoles(user.id)
             .then(() => setIsRolesConflictOpen(false))
-            .catch(() => toast.error('사용자 정보를 불러오는데 실패했습니다.'));
+            .catch(error => {
+              // 그사이 제거된 멤버면 충돌 창째 목록으로 돌아간다(WD-288)
+              if (!leaveIfMemberGone(error)) toast.error('사용자 정보를 불러오는데 실패했습니다.');
+            });
         }}
         onOverwrite={() => void handleSaveRoles(true)}
       />
@@ -465,7 +493,7 @@ export default function UserDetailPage() {
               toast.success('워크스페이스에서 제거되었습니다');
               navigate(listPath);
             } catch (error) {
-              handleApiError(error, '제거하지 못했습니다');
+              if (!leaveIfMemberGone(error)) handleApiError(error, '제거하지 못했습니다');
             }
           }}
         />

@@ -59,7 +59,7 @@ public class ExceptionStubController {
 
   @GetMapping("/user-not-found")
   public void userNotFound() {
-    throw new UserNotFoundException("User not found");
+    throw new UserNotFoundException();
   }
 
   @GetMapping("/role-not-found")

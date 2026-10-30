@@ -8,6 +8,7 @@ import {
   GRAPH_READ_RESTRICTED_MESSAGE,
   handleApiError,
   isGraphReadRestricted,
+  isMemberGoneError,
 } from './api-error';
 
 // toast 는 부수효과만 확인한다 — 실제 sonner 렌더는 E2E 몫이다. vi.mock 은 호이스팅되므로 import 아래에 둬도
@@ -120,5 +121,16 @@ describe('applyFieldErrors — 서버 필드 오류를 폼 필드로 (WD-270)', 
     ).toBe(false);
     expect(applyFieldErrors(new Error('boom'), setError, FIELDS)).toBe(false);
     expect(setError).not.toHaveBeenCalled();
+  });
+});
+
+describe('isMemberGoneError (WD-288)', () => {
+  const err = (status: number, data: unknown) => ({ isAxiosError: true, response: { status, data } });
+
+  it('404 + USER_NOT_IN_WORKSPACE 만 참이다 — 다른 404 를 「제거된 멤버」로 오인하지 않는다', () => {
+    expect(isMemberGoneError(err(404, { code: 'USER_NOT_IN_WORKSPACE' }))).toBe(true);
+    expect(isMemberGoneError(err(404, { message: '역할을 찾을 수 없습니다' }))).toBe(false);
+    expect(isMemberGoneError(err(409, { code: 'USER_NOT_IN_WORKSPACE' }))).toBe(false);
+    expect(isMemberGoneError(new Error('x'))).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
-import { createUser } from '../../factories/auth.factory';
+import { MEMBER_GONE_MESSAGE, USER_NOT_IN_WORKSPACE_CODE } from '../../../src/lib/api-error';
+import { createUser, createUserDetail } from '../../factories/auth.factory';
 import {
   setupAdminAuth,
   setupUserDetailMocks,
@@ -626,6 +627,81 @@ test.describe('사용자 관리 페이지', () => {
 
       await expect(page.getByRole('alertdialog')).not.toBeVisible();
       await expect(page).toHaveURL(/\/admin\/users$/);
+    });
+  });
+
+  // WD-288: 열어 둔 사이 다른 관리자가 멤버를 제거하면 저장·정지 요청이 404 가 된다 — 영어 「User not found: N」 대신 서버의 한국어 안내를 띄우고 목록으로 돌아간다
+  test.describe('WD-288 — 그사이 제거된 멤버', () => {
+    // 서버 UserNotFoundException.notInWorkspace() 응답 — code 로 다른 404 와 가린다
+    const memberGoneBody = { status: 404, error: 'Not Found', message: MEMBER_GONE_MESSAGE, code: USER_NOT_IN_WORKSPACE_CODE };
+
+    test('역할 저장이 404 면 안내 토스트를 띄우고 사용자 목록으로 이동한다', async ({ authenticatedPage: page }) => {
+      await setupUserDetailMocks(page, 1);
+      await setupUserListMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/users/1/roles', memberGoneBody, {
+        status: 404,
+        capture: true,
+      });
+
+      await page.goto('/admin/users/1');
+      await page.getByRole('checkbox', { name: /ADMIN/ }).click();
+      await page.getByRole('button', { name: '역할 저장' }).click();
+
+      // 고른 역할(USER·ADMIN)이 그대로 요청에 실렸다
+      const req = await saveCapture.waitForRequest();
+      expect((req.payload as { roleIds: number[] }).roleIds.sort()).toEqual([1, 2]);
+      await expect(page.getByText(MEMBER_GONE_MESSAGE)).toBeVisible();
+      await expect(page).toHaveURL(/\/admin\/users$/);
+      // 역할을 바꾼 채였지만 제거된 멤버라 이탈 확인 창은 띄우지 않는다
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+    });
+
+    test('정지·재활성 요청이 404 면 안내 토스트를 띄우고 사용자 목록으로 이동한다', async ({ authenticatedPage: page }) => {
+      await setupUserDetailMocks(page, 1);
+      await setupUserListMocks(page);
+      // 비활성 사용자로 덮어 재활성(확인 창 없이 바로 요청) 경로를 탄다
+      await mockApi(page, 'GET', '/api/v1/users/1', createUserDetail({ id: 1, isActive: false }));
+      const activeCapture = await mockApi(page, 'PUT', '/api/v1/users/1/active', memberGoneBody, {
+        status: 404,
+        capture: true,
+      });
+
+      await page.goto('/admin/users/1');
+      await page.getByRole('switch').click();
+
+      const req = await activeCapture.waitForRequest();
+      expect(req.payload).toEqual({ active: true });
+      await expect(page.getByText(MEMBER_GONE_MESSAGE)).toBeVisible();
+      await expect(page).toHaveURL(/\/admin\/users$/);
+    });
+
+    test('상세 진입 때 이미 제거된 멤버면 일반 실패 대신 제거 안내를 띄운다', async ({ authenticatedPage: page }) => {
+      await setupUserDetailMocks(page, 1);
+      await setupUserListMocks(page);
+      await mockApi(page, 'GET', '/api/v1/users/1', memberGoneBody, { status: 404 });
+
+      await page.goto('/admin/users/1');
+
+      await expect(page.getByText(MEMBER_GONE_MESSAGE)).toBeVisible();
+      await expect(page).toHaveURL(/\/admin\/users$/);
+    });
+
+    test('멤버 제거 코드가 없는 다른 404 는 제거된 멤버로 보지 않고 화면에 머문다', async ({ authenticatedPage: page }) => {
+      await setupUserDetailMocks(page, 1);
+      await mockApi(
+        page,
+        'PUT',
+        '/api/v1/users/1/roles',
+        { status: 404, error: 'Not Found', message: '역할을 찾을 수 없습니다' },
+        { status: 404 },
+      );
+
+      await page.goto('/admin/users/1');
+      await page.getByRole('checkbox', { name: /ADMIN/ }).click();
+      await page.getByRole('button', { name: '역할 저장' }).click();
+
+      await expect(page.getByText('역할을 찾을 수 없습니다')).toBeVisible();
+      await expect(page).toHaveURL(/\/admin\/users\/1$/);
     });
   });
 });

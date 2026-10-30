@@ -117,6 +117,24 @@ export function isNotFoundError(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 404;
 }
 
+/** 워크스페이스 멤버가 아닌 사용자 404 의 코드(WD-288) — api UserNotFoundException.NOT_IN_WORKSPACE_CODE 와 같은 값. */
+export const USER_NOT_IN_WORKSPACE_CODE = 'USER_NOT_IN_WORKSPACE';
+
+/** 그 404 의 안내 문구(WD-288) — api UserNotFoundException.NOT_IN_WORKSPACE_MESSAGE 와 같다. 서버 message 가 없을 때의 대체 문구로 쓴다. */
+export const MEMBER_GONE_MESSAGE = '이 워크스페이스에서 찾을 수 없는 사용자입니다. 이미 제거되었을 수 있습니다.';
+
+/**
+ * 사용자 관리 대상이 이 워크스페이스의 멤버가 아니라는 404 인가(WD-288) — 열어 둔 사이 다른 관리자가 제거한 경우다.
+ * 상태 코드만 보지 않고 code 까지 봐서, 없는 경로·역할 같은 다른 404 를 「제거된 멤버」로 오인하지 않는다.
+ */
+export function isMemberGoneError(error: unknown): boolean {
+  return (
+    axios.isAxiosError(error) &&
+    error.response?.status === 404 &&
+    (error.response.data as ErrorResponse | undefined)?.code === USER_NOT_IN_WORKSPACE_CODE
+  );
+}
+
 /** 리포트 등급 차단 코드(WD-198) — api ProactiveJobService.REPORT_LEVEL_BLOCKED_CODE 와 같은 값. */
 const REPORT_LEVEL_BLOCKED_CODE = 'REPORT_SECURITY_LEVEL_BLOCKED';
 
