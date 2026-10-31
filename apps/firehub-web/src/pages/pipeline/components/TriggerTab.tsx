@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { Clock, Code, Database, Globe, Link, MoreHorizontal, Pencil, Plus, Power,Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import {
@@ -79,6 +79,16 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editTrigger, setEditTrigger] = useState<TriggerResponse | null>(null);
   const [deletingTrigger, setDeletingTrigger] = useState<TriggerResponse | null>(null);
+  // WD-407: ⋯ 메뉴 항목으로 편집·삭제 창을 열면 메뉴가 닫히며 항목이 사라져, 창을 닫을 때 Radix 가 포커스를 돌려줄 요소를 잃고
+  // body 로 떨어진다. 행마다 ⋯ 버튼을 기억해 두었다가 창이 닫힌 뒤 그 버튼으로 포커스를 돌려준다.
+  const menuButtonRefs = useRef(new Map<number, HTMLElement>());
+  const restoreFocusId = useRef<number | null>(null);
+  const restoreMenuFocus = (event: Event) => {
+    const el = restoreFocusId.current != null ? menuButtonRefs.current.get(restoreFocusId.current) : undefined;
+    if (!el) return;
+    event.preventDefault();
+    el.focus();
+  };
 
   const handleDelete = async () => {
     if (!deletingTrigger) return;
@@ -213,13 +223,22 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
                   {(canWriteTrigger || canDeleteTrigger) && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label={`트리거 "${trigger.name}" 작업`}>
+                        <Button
+                          ref={(el: HTMLButtonElement | null) => {
+                            if (el) menuButtonRefs.current.set(trigger.id, el);
+                            else menuButtonRefs.current.delete(trigger.id);
+                          }}
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0"
+                          aria-label={`트리거 "${trigger.name}" 작업`}
+                        >
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         {canWriteTrigger && (
-                          <DropdownMenuItem onClick={() => setEditTrigger(trigger)}>
+                          <DropdownMenuItem onClick={() => { restoreFocusId.current = trigger.id; setEditTrigger(trigger); }}>
                             <Pencil className="h-4 w-4" />
                             편집
                           </DropdownMenuItem>
@@ -239,7 +258,7 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
                         {canDeleteTrigger && (
                           <DropdownMenuItem
                             className="text-destructive"
-                            onClick={() => setDeletingTrigger(trigger)}
+                            onClick={() => { restoreFocusId.current = trigger.id; setDeletingTrigger(trigger); }}
                           >
                             <Trash2 className="h-4 w-4" />
                             삭제
@@ -279,12 +298,13 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
             onOpenChange={(open) => { if (!open) setEditTrigger(null); }}
             pipelineId={pipelineId}
             trigger={editTrigger}
+            onCloseAutoFocus={restoreMenuFocus}
           />
         )}
 
         {/* Delete confirmation */}
         <AlertDialog open={!!deletingTrigger} onOpenChange={(open) => { if (!open) setDeletingTrigger(null); }}>
-          <AlertDialogContent>
+          <AlertDialogContent onCloseAutoFocus={restoreMenuFocus}>
             <AlertDialogHeader>
               <AlertDialogTitle>트리거 삭제</AlertDialogTitle>
               <AlertDialogDescription>

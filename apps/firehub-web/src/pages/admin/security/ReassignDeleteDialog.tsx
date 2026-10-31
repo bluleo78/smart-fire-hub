@@ -34,19 +34,21 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   onConfirm: (reassignToLevelId: number | null, reason: string | null) => void;
   pending: boolean;
+  /** 창이 닫힌 뒤 포커스를 돌려줄 곳(WD-407) — ⋯ 메뉴 항목으로 열면 돌려받을 트리거 요소가 없다. */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 /**
  * 등급 삭제(목업 s1 ReassignDeleteDialog) — 사용 중이면 옮길 등급 필수, 하향이면 사유(10자 이상) 필수. 입력 완료 전 삭제 비활성.
  * 영향은 개수만(이름 비노출).
  */
-export function ReassignDeleteDialog({ level, open, onOpenChange, ...rest }: Props) {
+export function ReassignDeleteDialog({ level, open, onOpenChange, onCloseAutoFocus, ...rest }: Props) {
   if (!level) return null;
   // 입력(옮길 등급·사유)은 내부 폼이 갖는다 — DialogContent 는 닫히면 내용을 언마운트하므로 닫히는 모든 경로(X·ESC·취소·삭제 성공)
   // 뒤에 다시 열면 빈 입력으로 시작한다. 호출처의 key 와 이중 안전망.
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent aria-describedby="reassign-desc">
+      <DialogContent aria-describedby="reassign-desc" onCloseAutoFocus={onCloseAutoFocus}>
         <ReassignDeleteForm level={level} onCancel={() => onOpenChange(false)} {...rest} />
       </DialogContent>
     </Dialog>
@@ -62,7 +64,7 @@ function ReassignDeleteForm({
   onConfirm,
   pending,
   onCancel,
-}: Omit<Props, 'open' | 'onOpenChange'> & { level: SecurityLevel; onCancel: () => void }) {
+}: Omit<Props, 'open' | 'onOpenChange' | 'onCloseAutoFocus'> & { level: SecurityLevel; onCancel: () => void }) {
   const [target, setTarget] = useState<string>('');
   const [reason, setReason] = useState('');
   const usageReady = usageState === 'ready';
