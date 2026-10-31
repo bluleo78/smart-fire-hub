@@ -13,6 +13,7 @@ import type {
   Dashboard,
   DashboardDataResponse,
   DashboardListItem,
+  DashboardShareImpact,
   DashboardWidget,
   DeleteImpact,
   SavedQuery,
@@ -161,6 +162,10 @@ export const analyticsApi = {
 
   getDashboard: (id: number) =>
     client.get<Dashboard>(`/analytics/dashboards/${id}`),
+
+  /** 공유를 켜거나 끌 때 함께 영향받는 내 차트·저장 쿼리 개수(WD-325) — 소유자 설정 창 안내용 */
+  getDashboardShareImpact: (id: number, signal?: AbortSignal) =>
+    client.get<DashboardShareImpact>(`/analytics/dashboards/${id}/share-impact`, { signal }),
 
   updateDashboard: (id: number, data: UpdateDashboardRequest) =>
     client.put<Dashboard>(`/analytics/dashboards/${id}`, data),

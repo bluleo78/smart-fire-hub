@@ -313,6 +313,22 @@ public class SavedQueryRepository {
     return flipped;
   }
 
+  /**
+   * 주어진 저장 쿼리 중 {@code ownerId} 가 만든 것을 공유 여부별로 센다(WD-325) — [비공개 수, 공유 수]. {@link #shareQueries} 와
+   * 같은 대상(작성자 = 요청자)이다.
+   */
+  public int[] countOwnedBySharing(List<Long> queryIds, Long ownerId) {
+    if (queryIds.isEmpty()) return new int[] {0, 0};
+    int[] counts = {0, 0};
+    dsl.select(SQ_IS_SHARED, count())
+        .from(SQ)
+        .where(SQ_ID.in(queryIds).and(SQ_CREATED_BY.eq(ownerId)))
+        .groupBy(SQ_IS_SHARED)
+        .fetch()
+        .forEach(r -> counts[Boolean.TRUE.equals(r.value1()) ? 1 : 0] = r.value2());
+    return counts;
+  }
+
   public Long insert(CreateSavedQueryRequest req, Long userId) {
     return dsl.insertInto(SQ)
         .set(SQ_NAME, req.name())

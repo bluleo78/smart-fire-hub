@@ -184,6 +184,21 @@ export interface Chart {
 }
 
 /** 삭제 영향 범위 항목 — 조회자가 볼 수 있는 차트·대시보드의 id 와 이름(WD-86). */
+/**
+ * 대시보드 공유를 켜거나 끌 때 함께 영향받는 내 차트·저장 쿼리 개수(WD-325, GET /dashboards/{id}/share-impact).
+ * 공유를 켜면 위젯이 쓰는 내 비공개 차트·쿼리가 함께 공개되고, 꺼도 되돌리지 않는다 — 설정 창이 그 사실을 개수와 함께 안내한다.
+ */
+export interface DashboardShareImpact {
+  /** 공유를 켜면 새로 공개되는 내 차트 수 */
+  privateChartCount: number;
+  /** 공유를 켜면 새로 공개되는 내 저장 쿼리 수 */
+  privateQueryCount: number;
+  /** 공유를 꺼도 계속 공개로 남는 내 차트 수 */
+  sharedChartCount: number;
+  /** 공유를 꺼도 계속 공개로 남는 내 저장 쿼리 수 */
+  sharedQueryCount: number;
+}
+
 export interface DeleteImpactItem {
   id: number;
   name: string;

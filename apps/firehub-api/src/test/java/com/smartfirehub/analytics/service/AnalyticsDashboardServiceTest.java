@@ -8,9 +8,11 @@ import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.dto.CreateDashboardRequest;
 import com.smartfirehub.analytics.dto.CreateSavedQueryRequest;
 import com.smartfirehub.analytics.dto.DashboardResponse;
+import com.smartfirehub.analytics.dto.DashboardShareImpactResponse;
 import com.smartfirehub.analytics.dto.UpdateChartRequest;
 import com.smartfirehub.analytics.dto.UpdateDashboardRequest;
 import com.smartfirehub.analytics.dto.UpdateSavedQueryRequest;
+import com.smartfirehub.analytics.exception.DashboardNotFoundException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.ArrayList;
@@ -323,6 +325,49 @@ class AnalyticsDashboardServiceTest extends IntegrationTestBase {
     // Then: 내 차트는 공유되지만, 쿼리 주인이 아닌 owner 가 남의 쿼리를 공유로 바꾸지는 못한다
     assertThat(chartSharedInDb(myChart)).isTrue();
     assertThat(querySharedInDb(othersQuery)).isFalse();
+  }
+
+  // ── WD-325: 공유 스위치 안내용 영향 개수 ─────────────────────
+
+  @Test
+  void shareImpact_countsOnlyOwnResources_beforeAndAfterSharing() {
+    // Given: 내 비공개 차트 2개(같은 내 비공개 쿼리) + 내가 따로 공개한 차트 1개(공개 쿼리) + 남의 공유 차트(남의 비공개 쿼리)
+    Long myQuery = createQueryAs(ownerUserId, "내 쿼리", false);
+    Long myChartA = createChartAs(ownerUserId, "내 차트 A", myQuery, false);
+    Long myChartB = createChartAs(ownerUserId, "내 차트 B", myQuery, false);
+    Long mySharedQuery = createQueryAs(ownerUserId, "내 공개 쿼리", true);
+    Long mySharedChart = createChartAs(ownerUserId, "내 공개 차트", mySharedQuery, true);
+    Long othersQuery = createQueryAs(otherUserId, "남의 쿼리", false);
+    Long othersChart = createChartAs(otherUserId, "남의 차트", othersQuery, true);
+
+    DashboardResponse dashboard =
+        dashboardService.create(
+            new CreateDashboardRequest("영향 대시보드", null, false, null), ownerUserId);
+    List<Long> widgetCharts = List.of(myChartA, myChartB, mySharedChart, othersChart);
+    for (int i = 0; i < widgetCharts.size(); i++) {
+      dashboardService.addWidget(
+          dashboard.id(), new AddWidgetRequest(widgetCharts.get(i), 0, i * 2, 2, 2), ownerUserId);
+    }
+
+    // When/Then: 켜기 전 — 새로 공개될 내 차트 2·쿼리 1(두 차트가 같은 쿼리), 이미 공개인 내 차트 1·쿼리 1(남의 것은 세지 않음)
+    assertThat(dashboardService.getShareImpact(dashboard.id(), ownerUserId))
+        .isEqualTo(new DashboardShareImpactResponse(2, 1, 1, 1));
+
+    // 공유를 켠 뒤에는 모두 공개 — 끄면 계속 공개로 남는 내 차트 3·쿼리 2
+    dashboardService.update(
+        dashboard.id(), new UpdateDashboardRequest(null, null, true, null, null), ownerUserId);
+    assertThat(dashboardService.getShareImpact(dashboard.id(), ownerUserId))
+        .isEqualTo(new DashboardShareImpactResponse(0, 0, 3, 2));
+  }
+
+  @Test
+  void shareImpact_notOwner_throwsNotFound() {
+    // 공유 스위치는 소유자 설정 창에만 있다 — 남에게 주인의 비공개 차트 수를 드러내지 않는다
+    DashboardResponse dashboard =
+        dashboardService.create(
+            new CreateDashboardRequest("남의 대시보드", null, true, null), ownerUserId);
+    assertThatThrownBy(() -> dashboardService.getShareImpact(dashboard.id(), otherUserId))
+        .isInstanceOf(DashboardNotFoundException.class);
   }
 
   // ── WD-195: 공유 대시보드 위젯 추가 시 공유 + 볼 수 없는 차트 위젯은 이름을 가린다 ─────────────────────

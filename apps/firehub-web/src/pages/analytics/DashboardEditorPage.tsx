@@ -56,6 +56,12 @@ import {
 import { useIsOwner } from '../../hooks/useIsOwner';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError } from '../../lib/api-error';
+import {
+  applyKeyboardLayoutAction,
+  DASHBOARD_GRID_COLS,
+  describeLayoutItem,
+  type KeyboardLayoutAction,
+} from '../../lib/dashboard-layout-keyboard';
 import type { ChartListItem, DashboardWidget } from '../../types/analytics';
 
 /** 격자 한 행의 높이(px)와 위젯 간격(px) — 쌓기 보기도 같은 값으로 높이를 맞춘다. */
@@ -71,6 +77,7 @@ interface GridAreaProps {
   layouts: ResponsiveLayouts;
   onLayoutChange: (layout: readonly LayoutItem[], allLayouts: ResponsiveLayouts) => void;
   onRemove: (widgetId: number) => void;
+  onKeyboardLayout: (widgetId: number, action: KeyboardLayoutAction) => void;
   autoRefreshSeconds?: number | null;
 }
 
@@ -80,6 +87,7 @@ function GridArea({
   layouts,
   onLayoutChange,
   onRemove,
+  onKeyboardLayout,
   autoRefreshSeconds,
 }: GridAreaProps) {
   const { width, containerRef: gridRef } = useContainerWidth({ initialWidth: 1280 });
@@ -123,7 +131,7 @@ function GridArea({
           // "완료" 클릭 시 리사이즈 이전 값이 그대로 저장되는 버그가 있었다(#529).
           // 임계값을 0으로 두어 컨테이너 폭과 무관하게 항상 "lg"만 활성화되도록 고정한다.
           breakpoints={{ lg: 0 }}
-          cols={{ lg: 12 }}
+          cols={{ lg: DASHBOARD_GRID_COLS }}
           rowHeight={ROW_HEIGHT}
           dragConfig={{ enabled: isEditing, bounded: false, handle: '.drag-handle' }}
           resizeConfig={{ enabled: isEditing, handles: ['se'] }}
@@ -137,6 +145,7 @@ function GridArea({
                 widget={widget}
                 isEditing={isEditing}
                 onRemove={onRemove}
+                onKeyboardLayout={onKeyboardLayout}
                 autoRefreshSeconds={autoRefreshSeconds}
               />
             </div>
@@ -395,6 +404,29 @@ export default function DashboardEditorPage() {
     [isEditing, dashboard]
   );
 
+  // 키보드로 바꾼 위치·크기 안내(WD-324) — 화면 읽기 프로그램이 읽도록 aria-live 영역에 둔다
+  const [layoutAnnouncement, setLayoutAnnouncement] = useState('');
+
+  // 이동 손잡이 화살표 키(WD-324): 끌기와 같은 규칙(밀어내기·세로 압축)으로 lg 레이아웃만 바꾸고, 저장은 끌기처럼
+  // 「완료」 때 handleSaveEdit 이 한다. 바뀐 위치·크기를 알려 보지 않고도 결과를 알 수 있게 한다.
+  const handleKeyboardLayout = useCallback(
+    (widgetId: number, action: KeyboardLayoutAction) => {
+      if (!isEditing || !dashboard) return;
+      const id = String(widgetId);
+      const current =
+        (localLayouts.lg as LayoutItem[] | undefined) ??
+        widgetsToLayoutItems(editingWidgets ?? dashboard.widgets);
+      const next = applyKeyboardLayoutAction(current, id, action);
+      setLocalLayouts((prev) => ({ ...prev, lg: next }));
+      const item = next.find((l) => l.i === id);
+      const widget = (editingWidgets ?? dashboard.widgets).find((w) => w.id === widgetId);
+      if (item) {
+        setLayoutAnnouncement(describeLayoutItem(widget?.chartName ?? '위젯', item));
+      }
+    },
+    [isEditing, dashboard, localLayouts, editingWidgets]
+  );
+
   // 위젯 삭제 버튼 클릭 시: 즉시 삭제하지 않고 확인 다이얼로그를 표시한다.
   const handleRemoveWidget = useCallback(
     (widgetId: number) => {
@@ -480,6 +512,11 @@ export default function DashboardEditorPage() {
   const handleStartEdit = useCallback(() => {
     // 남의 대시보드는 편집 모드에 들어가지 않는다(버튼도 숨기지만 진입점을 한 곳에서 막아 둔다, WD-196)
     if (!dashboard || !canEdit) return;
+    // 전체화면은 대시보드 영역만 띄우므로, 문서 본문에 붙는 「차트 추가」·위젯 삭제 대화상자가 보이지 않고
+    // 클릭만 삼킨다 — 편집은 전체화면을 풀고 시작한다(WD-329). 상태는 fullscreenchange 가 맞춘다.
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+    }
     setEditingWidgets([...dashboard.widgets]);
     const items = widgetsToLayoutItems(dashboard.widgets);
     setLocalLayouts({ lg: items, md: items, sm: items });
@@ -712,19 +749,22 @@ export default function DashboardEditorPage() {
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void toggleFullscreen()}
-            title={isFullscreen ? '전체화면 종료' : '전체화면'}
-            className="h-8"
-          >
-            {isFullscreen ? (
-              <Minimize2 className="h-3.5 w-3.5" />
-            ) : (
-              <Maximize2 className="h-3.5 w-3.5" />
-            )}
-          </Button>
+          {/* 편집 중에는 전체화면을 막는다 — 전체화면 안에서는 편집 대화상자가 보이지 않는다(WD-329) */}
+          {!isEditing && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void toggleFullscreen()}
+              title={isFullscreen ? '전체화면 종료' : '전체화면'}
+              className="h-8"
+            >
+              {isFullscreen ? (
+                <Minimize2 className="h-3.5 w-3.5" />
+              ) : (
+                <Maximize2 className="h-3.5 w-3.5" />
+              )}
+            </Button>
+          )}
 
           {/* 편집 진입·차트 추가·완료·취소는 작성자에게만 보인다(WD-196) */}
           {!canEdit ? null : isEditing ? (
@@ -799,9 +839,14 @@ export default function DashboardEditorPage() {
             layouts={currentLayouts}
             onLayoutChange={handleLayoutChange}
             onRemove={handleRemoveWidget}
+            onKeyboardLayout={handleKeyboardLayout}
             autoRefreshSeconds={dashboard.autoRefreshSeconds}
           />
         )}
+        {/* 키보드 배치 조작 결과 안내(WD-324) — 보이지 않고 화면 읽기 프로그램만 읽는다 */}
+        <div role="status" aria-live="polite" className="sr-only" data-testid="dashboard-layout-announcement">
+          {isEditing ? layoutAnnouncement : ''}
+        </div>
       </div>
 
       {unsavedChangesDialog}

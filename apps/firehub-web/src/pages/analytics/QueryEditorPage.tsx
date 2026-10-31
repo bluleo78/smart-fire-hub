@@ -65,6 +65,7 @@ import {
   useUpdateSavedQuery,
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError, handleApiErrorAsync, isEditConflict } from '../../lib/api-error';
 import { downloadBlob, filenameFromContentDisposition } from '../../lib/download';
@@ -391,6 +392,9 @@ function SaveDialog({
  * 실행 기록(runId) 없는 결과의 내보내기 안내 — 애드혹·저장 쿼리 실행 모두 서버가 실행 기록을 남기지만(code-review 4), 구버전 응답 등
  * runId 가 없으면 서버로 보낼 근거가 없다. 서버 404(QUERY_RUN_NOT_FOUND) 문구와 같은 흐름으로 다시 실행을 안내한다.
  */
+/** 휴대폰 폭(Tailwind md 미만) — 테이블 목록을 접은 채로 시작하고 편집기 위에 쌓는 기준(WD-326) */
+const NARROW_MQ = '(max-width: 767px)';
+
 const QUERY_RUN_MISSING_MESSAGE = '실행 기록이 없습니다. 쿼리를 다시 실행한 뒤 내보내세요.';
 
 /** 서버 SQL 관문의 열람 거부 코드(DatasetAccessGuard) — 이 코드의 403 이면 화면의 이전 결과를 비운다. */
@@ -435,8 +439,11 @@ export default function QueryEditorPage() {
   });
   const editorViewRef = useRef<EditorView | null>(null);
 
-  // Sidebar panel
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // 테이블 목록 패널(WD-326) — 휴대폰 폭(md 미만)에서는 접은 채로 시작한다. 펼쳐 둔 채 시작하면 고정 폭 패널이
+  // SQL 편집기·결과를 100px 남짓으로 눌러 아무것도 읽을 수 없다. 사용자가 한 번 접거나 펼치면 그 선택을 따른다(null = 아직 안 고름).
+  const isNarrow = useMediaQuery(NARROW_MQ);
+  const [sidebarChoice, setSidebarChoice] = useState<boolean | null>(null);
+  const sidebarOpen = sidebarChoice ?? !isNarrow;
 
   // 사용자 상호작용 후 변경 여부 추적 (이슈 #57)
   // - 초기 로드(savedQuery로부터 setState)는 변경으로 간주하지 않기 위해 핸들러에서 명시적으로 markDirty()를 호출
@@ -887,12 +894,16 @@ export default function QueryEditorPage() {
       )}
 
       {/* Main area: sidebar + editor + results */}
-      <div className="flex flex-1 min-h-0 gap-3">
+      {/* 휴대폰 폭(md 미만)에서는 테이블 목록을 편집기 위에 쌓는다(WD-326) — 옆에 두면 편집기 칸이 화면 폭에서 패널 폭만큼 줄어든다 */}
+      <div className="flex flex-1 min-h-0 flex-col gap-3 md:flex-row">
         {/* Schema Explorer Sidebar */}
         <div
+          data-testid="query-schema-panel"
           className={cn(
             'border rounded-md bg-card flex flex-col overflow-hidden transition-all duration-200',
-            sidebarOpen ? 'w-56 shrink-0' : 'w-0 overflow-hidden border-0'
+            sidebarOpen
+              ? 'max-h-60 w-full shrink-0 md:max-h-none md:w-56'
+              : 'hidden md:flex md:w-0 md:border-0'
           )}
         >
           <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30 shrink-0">
@@ -916,7 +927,7 @@ export default function QueryEditorPage() {
               variant="ghost"
               size="sm"
               className="h-6 px-2 text-xs text-muted-foreground"
-              onClick={() => setSidebarOpen((v) => !v)}
+              onClick={() => setSidebarChoice(!sidebarOpen)}
             >
               {sidebarOpen ? (
                 <>
@@ -949,9 +960,11 @@ export default function QueryEditorPage() {
           {/* Results */}
           {result && (
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">결과</span>
+              {/* 좁은 화면에서는 배지·버튼 묶음이 다음 줄로 내려간다(WD-326) — 한 줄에 몰면 「결과」가 「결/과」로 쪼개지고
+                  「차트로 만들기」가 화면 밖으로 밀린다 */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium whitespace-nowrap">결과</span>
                   {!result.error && result.queryType === 'SELECT' && (
                     <>
                       <Badge variant="secondary" className="text-xs">
@@ -964,7 +977,7 @@ export default function QueryEditorPage() {
                     </>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {/* 내보내기 — 조회자 기준 정책 차단(exportAllowed !== true)이나 실행 기록 없음(runId 없음)이면 드롭다운 대신
                       비활성 버튼+사유 툴팁만 그린다(주 버튼 → 비활성, 스펙 §5-4). DropdownMenuTrigger 안쪽을 감싸면 트리거가
                       span 이 되어 동작이 꼬이므로 분기로 나눈다. */}

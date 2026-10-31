@@ -4,6 +4,7 @@ import com.smartfirehub.analytics.dto.AddWidgetRequest;
 import com.smartfirehub.analytics.dto.CreateDashboardRequest;
 import com.smartfirehub.analytics.dto.DashboardDataResponse;
 import com.smartfirehub.analytics.dto.DashboardResponse;
+import com.smartfirehub.analytics.dto.DashboardShareImpactResponse;
 import com.smartfirehub.analytics.dto.UpdateDashboardRequest;
 import com.smartfirehub.analytics.dto.UpdateWidgetLayoutRequest;
 import com.smartfirehub.analytics.dto.UpdateWidgetRequest;
@@ -74,6 +75,15 @@ public class AnalyticsDashboardController {
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     return ResponseEntity.ok(dashboardService.update(id, request, userId));
+  }
+
+  /** 공유를 켜거나 끌 때 함께 영향받는 내 차트·저장 쿼리 개수(WD-325) — 설정 창 공유 스위치 안내용, 소유자만. */
+  @GetMapping("/{id}/share-impact")
+  @RequirePermission("analytics:write")
+  public ResponseEntity<DashboardShareImpactResponse> getShareImpact(
+      @PathVariable Long id, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    return ResponseEntity.ok(dashboardService.getShareImpact(id, userId));
   }
 
   @DeleteMapping("/{id}")

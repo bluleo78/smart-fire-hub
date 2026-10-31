@@ -380,6 +380,22 @@ public class ChartRepository {
         dsl.select(C_ID).from(C).where(C_ID.in(chartIds).and(visibleTo(userId))).fetch(C_ID));
   }
 
+  /**
+   * 주어진 차트 중 {@code ownerId} 가 만든 것을 공유 여부별로 센다(WD-325) — [비공개 수, 공유 수]. 대시보드 공유 안내 문구가 {@link
+   * #shareCharts} 와 같은 대상(작성자 = 요청자)을 세도록 같은 조건을 쓴다.
+   */
+  public int[] countOwnedBySharing(List<Long> chartIds, Long ownerId) {
+    if (chartIds.isEmpty()) return new int[] {0, 0};
+    int[] counts = {0, 0};
+    dsl.select(C_IS_SHARED, count())
+        .from(C)
+        .where(C_ID.in(chartIds).and(C_CREATED_BY.eq(ownerId)))
+        .groupBy(C_IS_SHARED)
+        .fetch()
+        .forEach(r -> counts[Boolean.TRUE.equals(r.value1()) ? 1 : 0] = r.value2());
+    return counts;
+  }
+
   public List<Long> findSavedQueryIdsByChartIds(List<Long> chartIds) {
     if (chartIds.isEmpty()) return List.of();
     return dsl.selectDistinct(C_SAVED_QUERY_ID)
