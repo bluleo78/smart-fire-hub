@@ -6,6 +6,7 @@
 
 import type { Locator, Page } from '@playwright/test';
 
+import { createExecutionDetail, createStepExecution } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
@@ -119,5 +120,87 @@ test.describe('파이프라인 에디터 — 반응형 레이아웃 (refs #22)',
     await expect(editButton).toBeVisible();
     const box = await editButton.boundingBox();
     expect(box!.width).toBeGreaterThan(56);
+  });
+});
+
+/**
+ * WD-309: 실행 상세(모바일) — 고정 400px 「실행 정보」 패널이 390px 화면을 다 차지해 DAG 가 폭 0 으로 사라지고,
+ * 머리글 「재실행」 버튼이 오른쪽 밖으로 잘렸다. 좁은 화면에서는 DAG 를 위·패널을 아래로 쌓아 둘 다 보여야 한다.
+ */
+test.describe('파이프라인 실행 상세 — 모바일 레이아웃 (WD-309)', () => {
+  test('390px 에서 DAG 와 실행 정보 패널이 위아래로 쌓이고, DAG 스텝을 눌러 오류 상세를 볼 수 있으며, 재실행 버튼이 화면 안에 있다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setupPipelineEditorMocks(page, 1);
+    // 재실행 버튼은 pipeline:execute 권한이 있어야 보인다
+    await grantPipelinePermissions(page);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/pipelines/1/executions/2',
+      createExecutionDetail({
+        id: 2,
+        pipelineId: 1,
+        status: 'FAILED',
+        stepExecutions: [
+          createStepExecution({ id: 1, stepName: '데이터 추출', status: 'FAILED', errorMessage: '모바일 확인용 오류' }),
+          createStepExecution({ id: 2, stepId: 2, stepName: '데이터 변환', status: 'SKIPPED' }),
+        ],
+      }),
+    );
+
+    await page.goto('/pipelines/1/executions/2');
+    await expect(page.getByText('실행 정보')).toBeVisible();
+
+    // DAG 캔버스가 화면 폭 가까이 보인다(이전: 폭 0)
+    const flow = page.locator('.react-flow').first();
+    await expect(flow).toBeVisible();
+    const flowBox = (await flow.boundingBox())!;
+    expect(flowBox.width).toBeGreaterThan(300);
+    expect(flowBox.height).toBeGreaterThan(200);
+
+    // 패널은 DAG 아래에 전체 폭으로 쌓인다
+    const panelTitle = page.getByText('실행 정보');
+    const titleBox = (await panelTitle.boundingBox())!;
+    expect(titleBox.y).toBeGreaterThanOrEqual(flowBox.y + flowBox.height - 1);
+    expect(titleBox.x).toBeLessThan(flowBox.x + 40); // 패널이 DAG 와 같은 왼쪽에서 시작(전체 폭)
+
+    // 화면 전체가 옆으로 넘치지 않는다
+    const overflowX = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflowX).toBeLessThanOrEqual(0);
+
+    // 재실행 버튼이 화면 안에 있다
+    await expectInsideViewport(page, page.getByRole('button', { name: '같은 입력으로 다시 실행' }));
+
+    // DAG 의 스텝을 누르면 패널이 그 스텝의 오류 상세로 바뀐다
+    await page
+      .locator('.react-flow__node')
+      .filter({ has: page.getByText('데이터 추출', { exact: true }) })
+      .click();
+    await expect(page.getByText('오류 상세')).toBeVisible();
+    await page.getByText('모바일 확인용 오류').scrollIntoViewIfNeeded();
+    await expect(page.getByText('모바일 확인용 오류')).toBeInViewport();
+  });
+
+  test('1280px 에서는 패널이 DAG 오른쪽 400px 사이드패널로 남는다 (WD-309 회귀 방지)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupPipelineEditorMocks(page, 1);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/pipelines/1/executions/2',
+      createExecutionDetail({ id: 2, pipelineId: 1, status: 'FAILED', stepExecutions: [] }),
+    );
+
+    await page.goto('/pipelines/1/executions/2');
+    await expect(page.getByText('실행 정보')).toBeVisible();
+    const flowBox = (await page.locator('.react-flow').first().boundingBox())!;
+    const titleBox = (await page.getByText('실행 정보').boundingBox())!;
+    // 패널 제목이 DAG 오른쪽에 있고, 위아래로 쌓이지 않는다
+    expect(titleBox.x).toBeGreaterThanOrEqual(flowBox.x + flowBox.width - 1);
+    expect(titleBox.y).toBeLessThan(flowBox.y + flowBox.height);
   });
 });

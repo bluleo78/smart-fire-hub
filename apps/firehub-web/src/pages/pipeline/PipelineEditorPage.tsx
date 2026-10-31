@@ -447,9 +447,12 @@ export default function PipelineEditorPage() {
 
         <TabsContent value="executions" className="flex-1 overflow-hidden mt-0 border rounded-b-lg">
           {executionId && executionData ? (
-            /* 실행 상세 뷰: 캔버스 + 사이드패널 */
-            <div className="h-full flex min-h-0">
-              <div className="flex-1 min-w-0">
+            /*
+              실행 상세 뷰: 캔버스 + 사이드패널. lg+ 는 가로 배치, 좁은 화면(모바일)은 DAG 를 위(고정 높이)·패널을 아래로
+              쌓고 전체를 세로 스크롤한다 — 가로 배치면 400px 패널이 화면을 다 차지해 DAG 가 폭 0 이 되었다(WD-309).
+            */
+            <div className="h-full flex flex-col min-h-0 overflow-y-auto lg:flex-row lg:overflow-hidden">
+              <div className="h-[320px] shrink-0 min-w-0 lg:h-auto lg:flex-1 lg:shrink">
                 <PipelineCanvas
                   state={state}
                   dispatch={dispatch}
