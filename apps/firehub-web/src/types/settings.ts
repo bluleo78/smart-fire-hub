@@ -77,6 +77,8 @@ export interface AiCredentialProbeResponse {
   ok: boolean;
   models: string[];
   message: string | null;
+  /** 실패 종류(서버 `ProbeResult.Reason` 이름) — 구버전 서버 응답에는 없을 수 있다. */
+  reason?: string;
 }
 
 /**

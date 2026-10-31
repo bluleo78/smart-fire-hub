@@ -548,7 +548,14 @@ function OpencodeFields({ cred, idPrefix }: { cred: UseAiCredentialFormResult; i
           value={cred.payload.baseURL ?? ''}
           onChange={(e) => cred.setPayloadField('baseURL', e.target.value)}
           placeholder="https://api.openai.com/v1"
+          aria-invalid={cred.baseUrlError ? true : undefined}
+          aria-describedby={cred.baseUrlError ? `${idPrefix}-base-url-error` : undefined}
         />
+        {cred.baseUrlError && (
+          <p id={`${idPrefix}-base-url-error`} className="text-sm text-destructive">
+            {cred.baseUrlError}
+          </p>
+        )}
       </div>
 
       <div className="space-y-2">

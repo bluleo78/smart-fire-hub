@@ -162,4 +162,21 @@ class OpencodeCredentialValidationTest {
     assertThat(OpencodeCredentialValidation.checkModelMembership(null, List.of("gpt-4o")))
         .isEmpty();
   }
+
+  /**
+   * WD-319 — probe 응답 본문에 실패 종류(reason)가 실려, 화면이 오류를 기본 URL 칸/모델 칸 중 어디에 붙일지 문구 매칭 없이 정한다.
+   */
+  @Test
+  void probeBody_실패_종류_reason을_싣고_문구는_화면_용어를_쓴다() {
+    var result =
+        new com.smartfirehub.settings.service.OpencodeProbeService.ProbeResult(
+            false,
+            List.of(),
+            "기본 URL 형식이 올바르지 않습니다 — https:// 로 시작하는 올바른 주소를 입력하세요",
+            Reason.INVALID_URL);
+    Map<String, Object> body = OpencodeCredentialValidation.probeBody(result);
+    assertThat(body.get("ok")).isEqualTo(false);
+    assertThat(body.get("reason")).isEqualTo("INVALID_URL");
+    assertThat(body.get("message")).isEqualTo(result.message());
+  }
 }

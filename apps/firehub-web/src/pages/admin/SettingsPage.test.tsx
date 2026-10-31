@@ -132,6 +132,7 @@ function makeCred(overrides: Partial<UseAiCredentialFormResult> = {}): UseAiCred
     models: null,
     loadModels: vi.fn(),
     modelsError: null,
+    baseUrlError: null,
     canLoadModels: false,
     isLoadingModels: false,
     hasUnsavedInput: false,

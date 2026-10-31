@@ -178,6 +178,11 @@ export interface UseAiCredentialFormResult {
   loadModels: () => Promise<void>;
   modelsError: string | null;
   /**
+   * 모델 불러오기가 기본 URL 자체의 문제(형식·스킴·포트)로 실패했을 때의 안내 — 모델 칸이 아니라
+   * 「기본 URL」 칸 아래에 보여 준다(WD-319). 그 밖의 실패는 `modelsError` 로 간다.
+   */
+  baseUrlError: string | null;
+  /**
    * [모델 불러오기] 활성 조건 — 설계서 "화면" 절: "기본 URL 이 있고, 요청에 실을 키가 있거나
    * `secretFieldNames` 에 `apiKey` 가 있을 때".
    *
@@ -237,6 +242,9 @@ export interface UseAiCredentialFormResult {
   reload: () => Promise<void>;
 }
 
+/** 기본 URL 값 자체가 잘못돼 생기는 프로브 실패 종류 — 서버 `ProbeResult.Reason` 이름(WD-319). */
+const BASE_URL_PROBE_REASONS = new Set(['INVALID_URL', 'SCHEME_NOT_ALLOWED', 'PORT_NOT_ALLOWED']);
+
 /**
  * AI 자격증명(`ai.credential`) 전용 폼 상태 기계 — `useSettingsOverrideForm` 의 관용구(로드 →
  * 폼/원본 분리 → 변경분만 전송 → `staleNotice`)를 따르되, <b>비밀은 원본을 갖지 않는다</b>.
@@ -273,6 +281,7 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
   const [secretFieldNames, setSecretFieldNames] = useState<string[]>([]);
   const [models, setModels] = useState<string[] | null>(null);
   const [modelsError, setModelsError] = useState<string | null>(null);
+  const [baseUrlError, setBaseUrlError] = useState<string | null>(null);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [original, setOriginal] = useState<OriginalSnapshot>(EMPTY_ORIGINAL);
   const [hostingDemoted, setHostingDemoted] = useState(false);
@@ -296,6 +305,7 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     inFlightModelsSeqRef.current = null;
     setModels(null);
     setModelsError(null);
+    setBaseUrlError(null);
     setIsLoadingModels(false);
   }, []);
 
@@ -456,6 +466,7 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     const isCurrent = () => seq === modelsSeqRef.current;
     setIsLoadingModels(true);
     setModelsError(null);
+    setBaseUrlError(null);
     const body: AiCredentialProbeRequest = { baseURL: payload.baseURL ?? '' };
     const typedKey = (secretInputs.apiKey ?? '').trim();
     // 생략하면 서버가 테넌트 저장값을 재사용한다 — 타이핑한 값이 있을 때만 싣는다.
@@ -468,7 +479,10 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
       } else {
         // upstream 실패 — 응답은 200 + ok:false 로 온다(SMTP 연결 테스트 선례).
         setModels(null);
-        setModelsError(data.message ?? '모델 목록을 불러오지 못했습니다.');
+        const message = data.message ?? '모델 목록을 불러오지 못했습니다.';
+        // 기본 URL 값 자체가 문제인 실패는 그 칸 아래에 붙인다 — 모델 칸 아래에 뜨면 어느 칸을 고칠지 알 수 없다.
+        if (data.reason && BASE_URL_PROBE_REASONS.has(data.reason)) setBaseUrlError(message);
+        else setModelsError(message);
       }
     } catch (err) {
       // 옛 값의 실패를 새 입력 옆에 붙이지 않는다 — 성공 분기와 똑같이 걸러야 한다(#716 회귀 전례).
@@ -579,6 +593,7 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     models,
     loadModels,
     modelsError,
+    baseUrlError,
     canLoadModels,
     isLoadingModels,
     hasUnsavedInput,
