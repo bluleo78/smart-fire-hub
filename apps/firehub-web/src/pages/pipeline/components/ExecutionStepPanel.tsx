@@ -532,7 +532,11 @@ export function ExecutionStepPanel({
   };
 
   return (
-    <div className="w-[400px] border-l h-full flex flex-col overflow-hidden">
+    /*
+      lg+ 에서는 DAG 오른쪽 400px 사이드패널, 좁은 화면에서는 DAG 아래로 쌓이는 전체 폭 패널(WD-309).
+      고정 400px 이면 390px 화면에서 옆의 DAG 가 폭 0 으로 사라졌다. 좁은 화면에서는 높이를 내용만큼 두고 바깥이 스크롤한다.
+    */
+    <div className="w-full shrink-0 border-t flex flex-col lg:w-[400px] lg:h-full lg:border-l lg:border-t-0 lg:overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2 border-b shrink-0">
         <span className="text-sm font-medium truncate">
           {selectedStep?.name
