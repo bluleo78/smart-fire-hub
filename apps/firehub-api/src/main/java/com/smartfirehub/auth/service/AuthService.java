@@ -84,8 +84,8 @@ public class AuthService {
   /**
    * 로그인.
    *
-   * <p>실패 예외(잠금·자격 증명 불일치·비활성)에서는 롤백하지 않는다(WD-290) — 실패 감사 행을 이 트랜잭션에 쓰고 401/403 과 함께 커밋해야
-   * 하기 때문이다. 실패 경로에서 이 트랜잭션이 쓰는 것은 감사 행뿐이다(실패 카운터는 {@link LoginAttemptService} 가 자기 트랜잭션으로 쓴다).
+   * <p>실패 예외(잠금·자격 증명 불일치·비활성)에서는 롤백하지 않는다(WD-290) — 실패 감사 행을 이 트랜잭션에 쓰고 401/403 과 함께 커밋해야 하기 때문이다.
+   * 실패 경로에서 이 트랜잭션이 쓰는 것은 감사 행뿐이다(실패 카운터는 {@link LoginAttemptService} 가 자기 트랜잭션으로 쓴다).
    */
   @Transactional(
       noRollbackFor = {
@@ -238,7 +238,8 @@ public class AuthService {
 
   @Transactional
   public void logout(Long userId) {
-    refreshTokenRepository.revokeAllByUserId(userId);
+    // 웹 평면 토큰만 폐기한다(WD-314) — 사용자 단위 전체 폐기는 같은 사람의 운영자 콘솔 세션까지 끊었다.
+    refreshTokenRepository.revokeAllWebByUserId(userId);
     // 로그아웃 감사 로그 (#60/#92)
     userRepository
         .findById(userId)
@@ -392,8 +393,8 @@ public class AuthService {
   }
 
   /**
-   * 잠긴 계정의 로그인 거부 기록을 같은 아이디당 1분에 1건으로 합친다. 잠긴 동안에는 실패 카운터가 더 오르지 않아, 합치지 않으면 요청마다 감사 행이
-   * 끝없이 쌓인다({@code SecurityAuditRecorder} 의 거부 감사와 같은 1분 창). 키는 감사 행과 같이 50자로 자른 아이디라 메모리가 묶인다. 인스턴스
+   * 잠긴 계정의 로그인 거부 기록을 같은 아이디당 1분에 1건으로 합친다. 잠긴 동안에는 실패 카운터가 더 오르지 않아, 합치지 않으면 요청마다 감사 행이 끝없이
+   * 쌓인다({@code SecurityAuditRecorder} 의 거부 감사와 같은 1분 창). 키는 감사 행과 같이 50자로 자른 아이디라 메모리가 묶인다. 인스턴스
    * 메모리 기준이라 다중 인스턴스면 인스턴스 수만큼 남을 수 있다.
    */
   private final Cache<String, Boolean> recentLockedRejections =
@@ -412,8 +413,8 @@ public class AuthService {
   }
 
   /**
-   * 로그인 실패 감사 행(LOGIN + FAILURE). 없는 아이디면 입력한 아이디를 그대로 남긴다(길이는 감사 서비스가 자른다) — 무차별 대입 대상 추적용.
-   * 테넌트도 여기서 심는다 — 바로 뒤에 같은 트랜잭션에서 쓰는 잠금 행도 이 테넌트를 따른다.
+   * 로그인 실패 감사 행(LOGIN + FAILURE). 없는 아이디면 입력한 아이디를 그대로 남긴다(길이는 감사 서비스가 자른다) — 무차별 대입 대상 추적용. 테넌트도
+   * 여기서 심는다 — 바로 뒤에 같은 트랜잭션에서 쓰는 잠금 행도 이 테넌트를 따른다.
    */
   private boolean auditLoginFailure(String username, UserResponse user, LoginFailure reason) {
     applySoleTenant(user);
@@ -427,8 +428,8 @@ public class AuthService {
   }
 
   /**
-   * 로그인 연속 실패로 계정이 잠기는 순간을 남긴다. 계정이 있을 때만 — 없는 아이디의 잠금은 그 아이디의 실패 행들로 충분하다. 바로 앞의
-   * {@link #auditLoginFailure} 가 심은 테넌트를 따른다.
+   * 로그인 연속 실패로 계정이 잠기는 순간을 남긴다. 계정이 있을 때만 — 없는 아이디의 잠금은 그 아이디의 실패 행들로 충분하다. 바로 앞의 {@link
+   * #auditLoginFailure} 가 심은 테넌트를 따른다.
    */
   private void auditAccountLocked(UserResponse user) {
     writeAccountAudit(
@@ -441,8 +442,8 @@ public class AuthService {
   }
 
   /**
-   * 로그인 트랜잭션에 계정 사건 감사 행의 테넌트를 심는다. 로그인 성공 행과 같은 규칙이다 — 활성 멤버십이 정확히 하나면 그 테넌트, 0개·2개 이상이거나
-   * 없는 아이디면 심지 않아 NULL 테넌트(운영자 콘솔 감사 로그에서 보인다).
+   * 로그인 트랜잭션에 계정 사건 감사 행의 테넌트를 심는다. 로그인 성공 행과 같은 규칙이다 — 활성 멤버십이 정확히 하나면 그 테넌트, 0개·2개 이상이거나 없는 아이디면
+   * 심지 않아 NULL 테넌트(운영자 콘솔 감사 로그에서 보인다).
    */
   private void applySoleTenant(UserResponse user) {
     if (user != null) {
@@ -452,8 +453,8 @@ public class AuthService {
   }
 
   /**
-   * 계정 사건 감사 행을 로그인 트랜잭션 안의 저장점(NESTED)에서 쓴다. 감사는 판정이 아니라 기록이라 실패해도 로그인 응답(401/403)을 바꾸지 않는다 —
-   * PG 는 실패한 문장이 트랜잭션 전체를 깨뜨리므로 try/catch 만으로는 부족하고, 저장점까지 되돌려야 이어서 커밋할 수 있다.
+   * 계정 사건 감사 행을 로그인 트랜잭션 안의 저장점(NESTED)에서 쓴다. 감사는 판정이 아니라 기록이라 실패해도 로그인 응답(401/403)을 바꾸지 않는다 — PG 는
+   * 실패한 문장이 트랜잭션 전체를 깨뜨리므로 try/catch 만으로는 부족하고, 저장점까지 되돌려야 이어서 커밋할 수 있다.
    *
    * @return 남겼으면 true
    */

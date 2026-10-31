@@ -119,6 +119,20 @@ public class RefreshTokenRecord extends UpdatableRecordImpl<RefreshTokenRecord> 
         return (UUID) get(6);
     }
 
+    /**
+     * Setter for <code>public.refresh_token.plane</code>.
+     */
+    public void setPlane(String value) {
+        set(7, value);
+    }
+
+    /**
+     * Getter for <code>public.refresh_token.plane</code>.
+     */
+    public String getPlane() {
+        return (String) get(7);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -142,7 +156,7 @@ public class RefreshTokenRecord extends UpdatableRecordImpl<RefreshTokenRecord> 
     /**
      * Create a detached, initialised RefreshTokenRecord
      */
-    public RefreshTokenRecord(Long id, Long userId, String tokenHash, LocalDateTime expiresAt, Boolean revoked, LocalDateTime createdAt, UUID familyId) {
+    public RefreshTokenRecord(Long id, Long userId, String tokenHash, LocalDateTime expiresAt, Boolean revoked, LocalDateTime createdAt, UUID familyId, String plane) {
         super(RefreshToken.REFRESH_TOKEN);
 
         setId(id);
@@ -152,6 +166,7 @@ public class RefreshTokenRecord extends UpdatableRecordImpl<RefreshTokenRecord> 
         setRevoked(revoked);
         setCreatedAt(createdAt);
         setFamilyId(familyId);
+        setPlane(plane);
         resetChangedOnNotNull();
     }
 }

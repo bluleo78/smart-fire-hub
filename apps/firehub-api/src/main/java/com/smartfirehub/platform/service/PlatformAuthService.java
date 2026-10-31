@@ -129,7 +129,7 @@ public class PlatformAuthService {
    * 끊는다.
    *
    * <p>쿠키가 없으면 서버 측에 끊을 세션이 특정되지 않으므로 아무것도 폐기하지 않는다(컨트롤러가 쿠키를 지우고, 액세스 토큰은 만료로 사라진다). 평면별 전체 로그아웃이
-   * 필요해지면 {@code refresh_token} 에 평면 컬럼이 필요하다 — P7-b/c 백로그.
+   * 필요해지면 {@code refresh_token.plane}(V154, WD-314)으로 거를 수 있다 — 웹 로그아웃은 이미 웹 평면만 폐기한다.
    */
   @Transactional
   public void logout(String rawRefreshToken) {
@@ -160,7 +160,13 @@ public class PlatformAuthService {
 
     LocalDateTime expiresAt =
         LocalDateTime.now().plusSeconds(jwtProperties.refreshExpiration() / 1000);
-    refreshTokenRepository.save(userId, RefreshTokenHasher.hash(refreshToken), expiresAt, familyId);
+    // 운영자 평면으로 저장한다(WD-314) — 웹 로그아웃(웹 평면 폐기)이 이 세션을 끊지 않게.
+    refreshTokenRepository.save(
+        userId,
+        RefreshTokenHasher.hash(refreshToken),
+        expiresAt,
+        familyId,
+        RefreshTokenRepository.PLANE_PLATFORM);
 
     return new PlatformTokenResponse(
         accessToken,
