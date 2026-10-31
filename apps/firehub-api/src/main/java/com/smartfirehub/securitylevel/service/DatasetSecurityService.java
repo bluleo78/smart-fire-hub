@@ -107,6 +107,44 @@ public class DatasetSecurityService {
         "파이프라인 신규 임시 출력 등급 = 입력 최대 등급");
   }
 
+  /** 데이터셋의 자동 상향 시각 — 러너 TEMP 재생성 전 보관용(WD-302). 상향된 적이 없으면 null. */
+  @Transactional(readOnly = true)
+  public LocalDateTime currentAutoRaisedAt(long datasetId) {
+    return dsl.select(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT)
+        .from(DATASET)
+        .where(DATASET.ID.eq(datasetId))
+        .fetchOne(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT);
+  }
+
+  /**
+   * 러너가 TEMP 를 같은 id 로 재생성할 때 이전 실행의 자동 상향 표시를 지운다(WD-302). 재생성한 TEMP 는 「새로 만든 빈 TEMP」라 등급을 이번 입력으로
+   * 다시 정하는데({@link #assignNewPipelineTempLevel} — 낮추기 포함, 같으면 그대로), 옛 시각이 남으면 보안 탭이 낮아지거나 그대로인 등급을
+   * 「자동 상향되었습니다」로 안내한다. 수동 변경({@link #changeLevel})이 지우는 것과 같은 취지다.
+   */
+  @Transactional
+  public void clearAutoRaisedMarker(long datasetId) {
+    dsl.update(DATASET)
+        .set(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT, (LocalDateTime) null)
+        .where(DATASET.ID.eq(datasetId))
+        .execute();
+  }
+
+  /**
+   * 실패한 러너 TEMP 재생성을 되돌릴 때 재생성 전 자동 상향 시각을 되살린다(WD-302) — 이전 등급·행이 돌아오므로 그 등급이 자동 상향이었다는 안내도 함께
+   * 돌아와야 한다. 이번 실행 중에 게이트가 다시 상향해 시각이 찍혔으면 그 값을 둔다(더 최근 사실).
+   */
+  @Transactional
+  public void restoreAutoRaisedMarker(long datasetId, LocalDateTime previousAutoRaisedAt) {
+    if (previousAutoRaisedAt == null) {
+      return;
+    }
+    dsl.update(DATASET)
+        .set(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT, previousAutoRaisedAt)
+        .where(DATASET.ID.eq(datasetId))
+        .and(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT.isNull())
+        .execute();
+  }
+
   /** 데이터셋의 현재 보안 등급 id — 러너 TEMP 재생성 전 보관용(WD-238). */
   @Transactional(readOnly = true)
   public Long currentLevelId(long datasetId) {
