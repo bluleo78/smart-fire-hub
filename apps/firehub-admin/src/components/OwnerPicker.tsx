@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
-import { MAX_SEARCH_RESULTS, MIN_QUERY_LENGTH } from '@/lib/search-limits';
+import { MAX_QUERY_LENGTH, MAX_SEARCH_RESULTS, MIN_QUERY_LENGTH } from '@/lib/search-limits';
 import type { PlatformUserResponse } from '@/types/platform';
 
 interface OwnerPickerProps {
@@ -151,6 +151,8 @@ export function OwnerPicker({ value, onChange, error, canCreateAccount = false }
         aria-controls={listId}
         autoComplete="off"
         placeholder="이름 또는 이메일로 검색 (2자 이상)"
+        // 서버 상한을 넘기면 400 → 「검색 결과를 불러오지 못했습니다」로 장애처럼 보여 입력에서 막는다(WD-317).
+        maxLength={MAX_QUERY_LENGTH}
         value={keyword}
         onChange={(e) => setKeyword(e.target.value)}
       />

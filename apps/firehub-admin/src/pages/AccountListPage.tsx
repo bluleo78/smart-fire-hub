@@ -29,6 +29,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
 import { formatDateOnly } from '@/lib/formatters';
 import { isForbidden, serverMessage } from '@/lib/http-errors';
+import { MAX_QUERY_LENGTH } from '@/lib/search-limits';
 import type { PlatformAccountResponse } from '@/types/platform';
 
 /** 한 페이지 행 수 — 감사 로그·테넌트 목록과 같은 20. */
@@ -154,6 +155,7 @@ export default function AccountListPage() {
         <SearchInput
           placeholder="이메일·이름·아이디로 검색..."
           aria-label="계정 검색"
+          maxLength={MAX_QUERY_LENGTH}
           value={keyword}
           onChange={setKeyword}
         />

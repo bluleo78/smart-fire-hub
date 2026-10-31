@@ -14,6 +14,8 @@ interface SearchInputProps {
   value: string;
   onChange: (value: string) => void;
   className?: string;
+  /** 입력 길이 상한. 서버 검색어 상한과 맞춰 400 을 막을 때 쓴다(WD-317 — 운영자 콘솔에서만 더한 prop). */
+  maxLength?: number;
 }
 
 /**
@@ -27,7 +29,7 @@ interface SearchInputProps {
  * - 조합이 끝나면(`compositionend`) 최종 글자를 한 번에 부모에 전달한다.
  * - IME를 쓰지 않는 영문/숫자 입력은 기존과 동일하게 매 입력마다 즉시 전달된다.
  */
-export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel, value, onChange, className }: SearchInputProps) {
+export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel, value, onChange, className, maxLength }: SearchInputProps) {
   // 조합 중 표시되는 임시 글자를 담는 내부 상태. 부모 value와 분리해 IME 끊김을 방지한다.
   const [draft, setDraft] = useState(value);
   // 직전 렌더에서 받은 외부 value. 외부 value 변동을 렌더 중에 감지하기 위한 비교 기준.
@@ -78,6 +80,7 @@ export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel
         // placeholder는 VoiceOver/NVDA에서 accessible name으로 처리되지 않으므로 명시 필요.
         aria-label={ariaLabel ?? placeholder}
         value={draft}
+        maxLength={maxLength}
         onChange={handleChange}
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}

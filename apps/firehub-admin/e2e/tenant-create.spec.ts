@@ -106,6 +106,19 @@ test.describe('테넌트 생성', () => {
     await expect(page.getByText('박소유 · owner@example.com')).toBeVisible();
   });
 
+  test('Owner 검색어는 100자에서 막혀 서버 상한(400)을 넘기지 않는다 (WD-317)', async ({ authenticatedPage: page }) => {
+    const capture = await mockApi(page, 'GET', '/api/platform/users', [], { capture: true });
+    await page.goto('/tenants/new');
+
+    const owner = page.getByLabel('초기 Owner');
+    await owner.fill('가'.repeat(101));
+    // 입력란이 서버 상한(100자)에서 잘라 101자째는 들어가지 않는다.
+    await expect(owner).toHaveValue('가'.repeat(100));
+    const req = await capture.waitForRequest();
+    expect(req.searchParams.get('q')).toBe('가'.repeat(100));
+    await expect(page.getByText('검색 결과를 불러오지 못했습니다.')).toHaveCount(0);
+  });
+
   test('검색 결과가 없으면 안내 문구를 보여준다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/platform/users', []);
     await page.goto('/tenants/new');
