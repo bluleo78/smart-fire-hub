@@ -11,6 +11,8 @@ interface WidgetFreshnessBarProps {
   isError?: boolean;           // 마지막 새로고침(refetch)이 실패했는지 (#566)
   refreshSeconds?: number;     // dashboard autoRefreshSeconds
   onRefresh: () => void;       // manual refresh callback
+  /** 위젯(차트) 이름 — 새로고침 버튼 이름에 넣어 위젯마다 어느 차트의 버튼인지 구분되게 한다(WD-423). 없으면 「새로고침」 */
+  widgetName?: string;
 }
 
 export function WidgetFreshnessBar({
@@ -19,6 +21,7 @@ export function WidgetFreshnessBar({
   isError,
   refreshSeconds,
   onRefresh,
+  widgetName,
 }: WidgetFreshnessBarProps) {
   const [now, setNow] = useState(() => Date.now());
 
@@ -38,8 +41,9 @@ export function WidgetFreshnessBar({
   const isStale =
     staleThresholdMs !== null && elapsed !== null && elapsed >= staleThresholdMs;
 
+  // 인쇄(WD-424): 「N분 전」·새로고침 버튼은 종이에 의미가 없으므로 숨긴다 — 기준 시각은 대시보드 이름 아래 인쇄 시각 줄이 대신한다
   return (
-    <div className="flex items-center justify-between px-1 pt-0.5 gap-1">
+    <div className="flex items-center justify-between px-1 pt-0.5 gap-1 print:hidden">
       <div className="flex items-center gap-1 min-w-0">
         {isFetching ? (
           <Badge
@@ -82,17 +86,20 @@ export function WidgetFreshnessBar({
         )}
       </div>
 
+      {/* WD-423: 위젯마다 이름이 똑같은 「새로고침」이라 스크린리더·음성 제어로 어느 차트의 버튼인지 알 수 없었다 — 이름에 위젯 이름을 넣는다.
+          누르는 영역은 16px → 24px 로 넓히되, 위아래 음수 여백으로 바 높이(차트 영역)는 그대로 둔다. */}
       <Button
         variant="ghost"
         size="icon"
-        className="h-4 w-4 shrink-0 text-muted-foreground hover:text-foreground"
+        className="-my-1 size-6 shrink-0 text-muted-foreground hover:text-foreground"
         onClick={(e) => {
           e.stopPropagation();
           onRefresh();
         }}
         title="새로고침"
+        aria-label={widgetName ? `${widgetName} 새로고침` : '새로고침'}
       >
-        <RefreshCw className="h-2.5 w-2.5" />
+        <RefreshCw className="h-2.5 w-2.5" aria-hidden="true" />
       </Button>
     </div>
   );

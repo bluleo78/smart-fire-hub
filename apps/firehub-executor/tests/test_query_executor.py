@@ -242,7 +242,8 @@ def test_limit_auto_added():
 
     # Find the SELECT execution (not SET LOCAL / SAVEPOINT)
     select_calls = [s for s in executed_sqls if s.upper().startswith("SELECT") or "FROM" in s.upper()]
-    assert any("LIMIT 500" in s for s in select_calls), f"Expected LIMIT 500 in one of: {select_calls}"
+    # 잘림 판정용으로 상한+1 행을 읽는다(WD-454).
+    assert any("LIMIT 501" in s for s in select_calls), f"Expected LIMIT 501 in one of: {select_calls}"
 
 
 def test_limit_not_doubled():
@@ -606,18 +607,66 @@ def test_execution_time_measured():
     assert result.execution_time_ms >= 0
 
 
-def test_truncated_flag_when_rows_equal_max_rows():
-    """truncated=True when returned rows == max_rows."""
-    max_rows = 3
-    cursor = make_cursor(
-        description=[("id", 23, None, None, None, None, None)],
-        fetchall_return=[(1,), (2,), (3,)],  # exactly max_rows
-    )
+def _run_with_rows(query: str, max_rows: int, rows: list) -> tuple:
+    """DB 가 rows 를 돌려준다고 두고 execute_query 를 실행해 (결과, 실행된 사용자 SELECT 목록) 을 돌려준다."""
+    executed: list[str] = []
+    cursor = make_cursor(description=[("id", 23, None, None, None, None, None)], fetchall_return=rows)
+    cursor.execute.side_effect = lambda sql, *a, **k: executed.append(sql)
     conn = make_conn(cursor)
+    result = execute_query(query, max_rows=max_rows, read_only=False, conn=conn, tenant_id=1)
+    selects = [
+        s for s in executed
+        if not s.startswith(("SET ", "SAVEPOINT", "RELEASE", "ROLLBACK")) and "pg_type" not in s
+    ]
+    return result, selects
 
-    result = execute_query("SELECT id FROM t", max_rows=max_rows, read_only=False, conn=conn, tenant_id=1)
+
+def test_truncated_false_when_rows_exactly_max_rows():
+    """정확히 max_rows 행이면 잘린 것이 아니다 — 상한+1 행을 요청했는데 max_rows 행만 왔다(WD-454)."""
+    result, selects = _run_with_rows("SELECT id FROM t", 3, [(1,), (2,), (3,)])
+
+    assert selects == ["SELECT id FROM t\nLIMIT 4"]
+    assert result.truncated is False
+    assert result.row_count == 3
+
+
+def test_truncated_true_and_trimmed_when_rows_exceed_max_rows():
+    """상한+1 행이 오면 잘림이고, 응답은 max_rows 행으로 자른다(WD-454)."""
+    result, _ = _run_with_rows("SELECT id FROM t", 3, [(1,), (2,), (3,), (4,)])
 
     assert result.truncated is True
+    assert result.row_count == 3
+    assert result.rows == [{"id": 1}, {"id": 2}, {"id": 3}]
+
+
+def test_user_limit_equal_to_max_rows_is_not_truncated():
+    """사용자 LIMIT 3 = 상한 3 이면 사용자가 요청한 만큼이므로 잘림이 아니다(#749 존중 + WD-454)."""
+    result, selects = _run_with_rows("SELECT id FROM t LIMIT 3", 3, [(1,), (2,), (3,)])
+
+    assert selects == ["SELECT id FROM t LIMIT 3"]
+    assert result.truncated is False
+    assert result.row_count == 3
+
+
+def test_user_limit_above_max_rows_is_honored_and_not_truncated():
+    """사용자 LIMIT 이 상한보다 커도 존중한다(#749) — SQL·행 수를 그대로 두고, 서버가 자른 것이 아니므로 잘림이 아니다(WD-454)."""
+    # 값은 컬럼 타입 OID(23)와 겹치지 않게 고른다 — 목 커서가 pg_type 조회에도 같은 행을 돌려주기 때문이다.
+    result, selects = _run_with_rows("SELECT id FROM t LIMIT 50", 3, [(i,) for i in range(101, 151)])
+
+    assert selects == ["SELECT id FROM t LIMIT 50"]
+    assert result.truncated is False
+    assert result.row_count == 50
+
+
+def test_user_fetch_first_above_max_rows_is_honored_and_not_truncated():
+    """FETCH FIRST 도 사용자 제한이라 같은 규칙이다(#749, WD-454)."""
+    result, selects = _run_with_rows(
+        "SELECT id FROM t FETCH FIRST 5 ROWS ONLY", 3, [(i,) for i in range(101, 106)]
+    )
+
+    assert selects == ["SELECT id FROM t FETCH FIRST 5 ROWS ONLY"]
+    assert result.truncated is False
+    assert result.row_count == 5
 
 
 def test_truncated_flag_false_when_fewer_rows():
@@ -720,7 +769,8 @@ def test_trailing_comment_and_semicolon_do_not_swallow_limit(query):
     sqls = _capture_select_sql(query, max_rows=1)
     assert len(sqls) == 1, sqls
     sql = sqls[0]
-    assert sql.rstrip().endswith("LIMIT 1"), f"LIMIT 이 문장 끝에 오지 않는다: {sql!r}"
+    # max_rows=1 → 잘림 판정용 상한+1(WD-454)
+    assert sql.rstrip().endswith("LIMIT 2"), f"LIMIT 이 문장 끝에 오지 않는다: {sql!r}"
     assert "--" not in sql and "/*" not in sql and ";" not in sql, f"끝 주석/세미콜론이 남았다: {sql!r}"
 
 
@@ -739,7 +789,7 @@ def test_trailing_comment_and_semicolon_do_not_swallow_limit(query):
 def test_quoted_semicolons_and_comment_markers_are_preserved(query, expected_prefix):
     """따옴표·식별자·달러 인용 속 기호는 보존하고 진짜 끝 주석/세미콜론만 걷어낸다(#745/#746)."""
     sql = _capture_select_sql(query, max_rows=1)[0]
-    assert sql == f"{expected_prefix}\nLIMIT 1", sql
+    assert sql == f"{expected_prefix}\nLIMIT 2", sql  # max_rows=1 → 상한+1(WD-454)
 
 
 @pytest.mark.parametrize(
@@ -755,7 +805,7 @@ def test_quoted_semicolons_and_comment_markers_are_preserved(query, expected_pre
 def test_limit_in_comment_literal_or_subquery_does_not_bypass_max_rows(query):
     """주석·문자열·서브쿼리 속 LIMIT 은 최상위 LIMIT 이 아니므로 max_rows LIMIT 이 붙어야 한다(#745)."""
     sql = _capture_select_sql(query, max_rows=1)[0]
-    assert sql.endswith("\nLIMIT 1"), f"max_rows LIMIT 이 빠졌다: {sql!r}"
+    assert sql.endswith("\nLIMIT 2"), f"max_rows LIMIT 이 빠졌다: {sql!r}"  # 상한+1(WD-454)
 
 
 def test_comment_only_query_is_rejected_as_empty():
@@ -786,9 +836,10 @@ def test_fetch_first_is_respected_as_user_row_limit(query):
 @pytest.mark.parametrize(
     "query, expected",
     [
-        ("SELECT g FROM generate_series(1,5000) g LIMIT ALL", "SELECT g FROM generate_series(1,5000) g LIMIT 10"),
-        ("SELECT g FROM generate_series(1,5000) g limit all offset 5; -- c", "SELECT g FROM generate_series(1,5000) g limit 10 offset 5"),
-        ("SELECT g FROM generate_series(1,5000) g OFFSET 5 LIMIT NULL", "SELECT g FROM generate_series(1,5000) g OFFSET 5 LIMIT 10"),
+        # max_rows=10 → 잘림 판정용 상한+1 = 11(WD-454)
+        ("SELECT g FROM generate_series(1,5000) g LIMIT ALL", "SELECT g FROM generate_series(1,5000) g LIMIT 11"),
+        ("SELECT g FROM generate_series(1,5000) g limit all offset 5; -- c", "SELECT g FROM generate_series(1,5000) g limit 11 offset 5"),
+        ("SELECT g FROM generate_series(1,5000) g OFFSET 5 LIMIT NULL", "SELECT g FROM generate_series(1,5000) g OFFSET 5 LIMIT 11"),
     ],
 )
 def test_limit_all_is_replaced_by_max_rows(query, expected):

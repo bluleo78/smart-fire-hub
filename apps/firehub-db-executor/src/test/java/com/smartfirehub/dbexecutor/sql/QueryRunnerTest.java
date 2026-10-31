@@ -78,9 +78,10 @@ class QueryRunnerTest {
     return out;
   }
 
+  /** 상한+1 행이 읽히면 잘림이고 응답은 상한 행으로 자른다 — 드라이버에는 상한+1 을 건다(WD-454). */
   @Test
   void select_returnsRowsColumnsAndTruncated() throws SQLException {
-    db.resultSet = rows(3);
+    db.resultSet = rows(4);
 
     QueryResponse res = run("SELECT amount FROM t", 3);
 
@@ -90,8 +91,22 @@ class QueryRunnerTest {
     // ValueConverter.columnName 규칙: 대문자 별칭은 소문자로.
     assertThat(res.columns()).containsExactly("amount");
     assertThat(res.rows()).hasSize(3);
-    assertThat(db.maxRows).containsExactly(3);
+    assertThat(db.maxRows).containsExactly(4);
     assertThat(db.queryTimeouts).containsExactly(30);
+  }
+
+  /** 정확히 상한만큼인 결과는 잘린 것이 아니다(WD-454 — 예전엔 행 수 >= 상한이면 truncated 였다). */
+  @Test
+  void rowCountExactlyMaxRows_isNotTruncated() throws SQLException {
+    db.resultSet = rows(3);
+
+    QueryResponse res = run("SELECT amount FROM t", 3);
+
+    assertThat(res.success()).isTrue();
+    assertThat(res.rowCount()).isEqualTo(3);
+    assertThat(res.rows()).hasSize(3);
+    assertThat(res.truncated()).isFalse();
+    assertThat(db.maxRows).containsExactly(4);
   }
 
   @Test
@@ -103,7 +118,7 @@ class QueryRunnerTest {
     assertThat(res.success()).isTrue();
     assertThat(res.rowCount()).isEqualTo(3);
     assertThat(res.truncated()).isFalse();
-    assertThat(db.maxRows).containsExactly(5);
+    assertThat(db.maxRows).containsExactly(6);
   }
 
   @Test

@@ -471,7 +471,7 @@ export default function ChartBuilderPage() {
     [queryColumns, queryRows],
   );
   // 결과가 행 상한(1000행)에 닿았는지(서버 truncated) — 받은 행이 전부인 것처럼 보이지 않게 안내한다(WD-320).
-  // 서버는 「상한만큼 받았음」으로 표시하므로(정확히 1000행·LIMIT ≥ 1000 도 포함) 「더 있을 수 있음」으로 안내한다.
+  // 서버는 상한을 넘는 결과가 실제로 있을 때만 truncated 로 표시한다(WD-454 — 정확히 1000행이거나 사용자 LIMIT 1000 이면 false).
   const [queryTruncated, setQueryTruncated] = useState(false);
   // 마지막 실행 결과의 조회자 기준 내보내기 가능(S4) — 차트 이미지도 원본 데이터를 담으므로 같은 정책을 따른다.
   // 서버가 true 를 준 경우만 허용(fail-closed).

@@ -137,6 +137,7 @@ def _exec_geojson_wrapped(
     wrapped_sql = _build_geojson_wrapped_sql(clean_sql, column_metas)
     # 판정은 사용자 SQL 로 한다 — 래핑 CTE 안의 LIMIT 은 최상위가 아니라서
     # wrapped_sql 로 보면 항상 False 가 되어 주 경로와 규칙이 갈린다.
+    # max_rows 는 호출부가 넘긴 「읽을 행 수」(상한+1, WD-454)다.
     if not _has_limit(clean_sql):
         wrapped_sql = _add_limit(wrapped_sql, max_rows)
     cursor.execute(wrapped_sql)
@@ -724,7 +725,12 @@ def execute_query(
 
         if is_select:
             # 최상위 행 제한이 없거나 LIMIT ALL 이면 max_rows 를 적용한다(#749 — FETCH FIRST 도 사용자 제한).
-            sql_to_run = _apply_row_limit(clean_sql, max_rows)
+            # 서버가 상한을 붙일 때는 한 행 더(max_rows+1) 읽어 「상한을 넘는 결과가 있었는지」를 정확히 판정한다(WD-454) —
+            # 예전엔 정확히 max_rows 행인 결과도 잘린 것으로 표시했다. 사용자가 최상위 LIMIT/FETCH FIRST 를 직접 썼으면
+            # (#749 존중) SQL 은 그대로 실행되고 아래에서 자르지도, 잘림으로 표시하지도 않는다.
+            user_row_limit = _has_limit(clean_sql)
+            fetch_limit = max_rows + 1
+            sql_to_run = _apply_row_limit(clean_sql, fetch_limit)
 
             columns: List[str] = []
             rows: List[Dict[str, Any]] = []
@@ -752,7 +758,7 @@ def execute_query(
                     has_geom = any(is_geom for _, is_geom in column_metas)
 
                     if has_geom:
-                        columns, rows = _run_geojson_wrapped(cursor, clean_sql, column_metas, max_rows)
+                        columns, rows = _run_geojson_wrapped(cursor, clean_sql, column_metas, fetch_limit)
                         original_error = None
                     else:
                         raise original_error
@@ -774,7 +780,7 @@ def execute_query(
                         cursor.execute("ROLLBACK TO SAVEPOINT analytics_query")
                         cursor.execute("SAVEPOINT analytics_query")
                         # 컬럼 단위 격리 포함(#766) — 한 컬럼 실패가 다른 geometry 컬럼까지 raw 로 되돌리지 않는다.
-                        columns, rows = _run_geojson_wrapped(cursor, clean_sql, column_metas, max_rows)
+                        columns, rows = _run_geojson_wrapped(cursor, clean_sql, column_metas, fetch_limit)
                     except Exception as exc:
                         # 방어적 폴백: GeoJSON 변환 실패 시 원본 성공 결과를 유지한다
                         # (연결이 정상일 때. 연결 사망 등으로 아래 rollback 도 실패하면
@@ -788,7 +794,12 @@ def execute_query(
                         cursor.execute("SAVEPOINT analytics_query")
                         columns, rows = orig_columns, orig_rows
 
-            truncated = len(rows) >= max_rows
+            # 서버 상한을 붙였으면 판정용으로 한 행 더 읽었으므로 상한을 넘었을 때만 잘림이고, 응답에는 max_rows 행까지만
+            # 싣는다(WD-454). 사용자 제한이면 사용자가 요청한 행을 그대로 돌려주고 잘림이 아니다(서버가 자른 것이 아님).
+            # GeoJSON 재실행이 rows 를 바꿀 수 있으므로 판정은 최종 rows 로 한 번만 한다.
+            truncated = not user_row_limit and len(rows) > max_rows
+            if truncated:
+                rows = rows[:max_rows]
             cursor.execute("RELEASE SAVEPOINT analytics_query")
 
             elapsed_ms = int((time.perf_counter() - start) * 1000)

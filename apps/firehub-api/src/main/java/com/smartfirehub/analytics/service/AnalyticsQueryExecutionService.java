@@ -251,13 +251,18 @@ public class AnalyticsQueryExecutionService {
       if ("SELECT".equals(queryType)) {
         // 최상위 행 제한이 없거나 LIMIT ALL 이면 maxRows 를 적용한다(#749 — FETCH FIRST 도 사용자 제한으로
         // 존중하고, 서브쿼리·CTE·문자열 속 LIMIT 에는 속지 않는다 #750). executor 의 _apply_row_limit 과 같은 규칙.
-        String limitedSql = SqlLexicalMask.applyRowLimit(cleanSql, maxRows);
+        // 서버가 상한을 붙일 때는 한 행 더(maxRows+1) 읽어 「상한을 넘는 결과가 있었는지」를 정확히 판정한다(WD-454) —
+        // 예전엔 정확히 maxRows 행인 결과도 잘린 것으로 표시했다. 사용자가 최상위 LIMIT/FETCH FIRST 를 직접 썼으면(#749
+        // 존중) 서버 상한을 붙이지도 조이지도 않으므로 드라이버 maxRows 도 걸지 않고(0), 잘림도 아니다.
+        boolean userRowLimit = SqlLexicalMask.hasTopLevelRowLimit(cleanSql);
+        int fetchLimit = userRowLimit ? 0 : maxRows + 1;
+        String limitedSql = SqlLexicalMask.applyRowLimit(cleanSql, maxRows + 1);
 
         org.jooq.Result<?> result;
         try {
           // 정적 Statement 로 원문 그대로 실행한다(#753) — PreparedStatement 는 jsonb ? 연산자를 바인드
           // 자리로 오해한다. 실행 문자열 = 위에서 검증한 문자열 + 행 제한이다(AdhocSqlStatements 참고).
-          result = AdhocSqlStatements.fetch(dsl, limitedSql);
+          result = AdhocSqlStatements.fetch(dsl, limitedSql, fetchLimit);
         } catch (Exception fetchEx) {
           // jOOQ/JDBC may fail to read raw GEOMETRY/GEOGRAPHY binary data.
           // Rollback to savepoint, detect geometry columns via JDBC metadata, wrap with
@@ -282,9 +287,9 @@ public class AnalyticsQueryExecutionService {
           // 판정은 사용자 SQL 로 한다 — 래핑 CTE 안의 제한은 최상위가 아니다. LIMIT ALL 이면 안쪽은
           // 그대로 두고 바깥에 maxRows 를 붙인다(#749).
           if (!SqlLexicalMask.hasTopLevelRowLimit(cleanSql)) {
-            wrappedSql = wrappedSql + "\nLIMIT " + maxRows;
+            wrappedSql = wrappedSql + "\nLIMIT " + fetchLimit; // 판정용 +1 행(WD-454)
           }
-          result = AdhocSqlStatements.fetch(dsl, wrappedSql);
+          result = AdhocSqlStatements.fetch(dsl, wrappedSql, fetchLimit);
         }
 
         // 행을 컬럼 이름 키 Map 으로 담으므로 JOIN 의 id·region 처럼 이름이 겹치면 앞 값이 덮인다(WD-85).
@@ -305,15 +310,21 @@ public class AnalyticsQueryExecutionService {
           // 판정은 사용자 SQL 로 한다 — 래핑 CTE 안의 제한은 최상위가 아니다. LIMIT ALL 이면 안쪽은
           // 그대로 두고 바깥에 maxRows 를 붙인다(#749).
           if (!SqlLexicalMask.hasTopLevelRowLimit(cleanSql)) {
-            wrappedSql = wrappedSql + "\nLIMIT " + maxRows;
+            wrappedSql = wrappedSql + "\nLIMIT " + fetchLimit; // 판정용 +1 행(WD-454)
           }
-          result = AdhocSqlStatements.fetch(dsl, wrappedSql);
+          result = AdhocSqlStatements.fetch(dsl, wrappedSql, fetchLimit);
         }
 
         long executionTimeMs = System.currentTimeMillis() - startTime;
 
-        List<Map<String, Object>> rows = new ArrayList<>();
-        for (var record : result) {
+        // 서버 상한을 붙였으면 판정용으로 한 행 더 읽었으므로(WD-454) 상한을 넘었을 때만 잘림이고, 응답에는 maxRows 행까지만
+        // 싣는다. 사용자 제한이면 사용자가 요청한 행을 그대로 돌려주고 잘림이 아니다(서버가 자른 것이 아님).
+        // GeoJSON 재실행이 result 를 바꿀 수 있으므로 판정은 최종 result 로 한 번만 한다.
+        boolean truncated = !userRowLimit && result.size() > maxRows;
+        int returnedRows = userRowLimit ? result.size() : Math.min(result.size(), maxRows);
+        List<Map<String, Object>> rows = new ArrayList<>(returnedRows);
+        for (int r = 0; r < returnedRows; r++) {
+          var record = result.get(r);
           Map<String, Object> row = new HashMap<>();
           for (int i = 0; i < columns.size(); i++) {
             // jsonb/json/xml/interval 등 Jackson 이 못 쓰는 값은 PG 텍스트로 바꾼다(#756)
@@ -322,7 +333,7 @@ public class AnalyticsQueryExecutionService {
           rows.add(row);
         }
 
-        boolean truncated = rows.size() >= maxRows;
+        // totalRows 는 전체 결과 수(COUNT)가 아니라 응답에 실은 행 수다 — 상한을 넘었는지는 truncated 로만 알린다.
         response =
             new AnalyticsQueryResponse(
                 queryType,

@@ -56,7 +56,12 @@ import { handleApiError, isEditConflict } from '../../lib/api-error';
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
-import { type CreateDashboardRequest, type DashboardListItem, MAX_AUTO_REFRESH_SECONDS } from '../../types/analytics';
+import {
+  type CreateDashboardRequest,
+  type DashboardListItem,
+  MAX_AUTO_REFRESH_SECONDS,
+  MAX_DASHBOARD_DESCRIPTION_LENGTH,
+} from '../../types/analytics';
 
 /**
  * "자동 새로고침 (초)" 입력 문자열을 검증한다.
@@ -151,6 +156,8 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
+              // 서버 상한과 같은 길이까지만 입력받는다 — 넘으면 저장이 400 으로 거부된다(WD-425)
+              maxLength={MAX_DASHBOARD_DESCRIPTION_LENGTH}
             />
           </div>
           <div className="space-y-1.5">
@@ -332,6 +339,8 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
+              // 서버 상한과 같은 길이까지만 입력받는다 — 넘으면 저장이 400 으로 거부된다(WD-425)
+              maxLength={MAX_DASHBOARD_DESCRIPTION_LENGTH}
             />
           </div>
           <div className="space-y-1.5">

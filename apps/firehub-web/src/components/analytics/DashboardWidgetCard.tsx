@@ -124,7 +124,7 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching }: WidgetC
         )}
       </div>
       {/* 차트 데이터는 행 상한(1000행)까지만 실행된다 — 상한에 닿았으면(서버 truncated) 그린 것이 전부가 아닐 수 있음을 알린다
-          (WD-320, 쿼리 편집기 「상위 N행」과 같은 뜻). 서버는 정확히 상한만큼인 결과도 truncated 로 주므로 「있을 수 있음」으로 쓴다. */}
+          (WD-320, 쿼리 편집기 「상위 N행」과 같은 뜻). 서버는 상한을 넘는 결과가 실제로 있을 때만 truncated 로 준다(WD-454 — 상한+1 행으로 판정). */}
       {queryResult.truncated && (
         <p className="shrink-0 pt-1 text-xs text-muted-foreground">
           상위 {queryResult.rows.length}행까지만 표시 — 결과가 더 있을 수 있습니다
@@ -223,17 +223,19 @@ export function DashboardWidgetCard({
   };
 
   return (
-    <Card ref={containerRef} className="h-full py-2 gap-1 overflow-hidden flex flex-col">
+    // 인쇄(WD-424): 위젯 하나가 두 쪽으로 갈리지 않게 한다(쌓기 보기처럼 흐름 배치일 때 효과가 있다)
+    <Card ref={containerRef} className="h-full py-2 gap-1 overflow-hidden flex flex-col print:break-inside-avoid">
       <CardHeader className={`px-3 pb-0 ${isEditing ? 'drag-handle cursor-grab active:cursor-grabbing' : ''}`}>
         <div className="flex items-center justify-between gap-1">
           {/* 키보드 이동 손잡이(WD-324) — 머리글 끌기·모서리 크기 조절은 마우스로만 되므로, Tab 으로 닿는 버튼에서
               화살표로 옮기고 Shift+화살표로 크기를 바꾼다(WCAG 2.1.1·2.5.7). 머리글 안이라 마우스로 끌어도 그대로 끌린다. */}
+          {/* 편집용 손잡이·제거 버튼은 인쇄에서 숨긴다(WD-424) */}
           {isEditing && onKeyboardLayout && (
             <>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-5 w-5 shrink-0 text-muted-foreground rounded-sm"
+                className="h-5 w-5 shrink-0 text-muted-foreground rounded-sm print:hidden"
                 aria-label={`「${title}」 위젯 이동·크기 조절`}
                 aria-describedby={moveHelpId}
                 title="화살표: 이동 · Shift+화살표: 크기 조절"
@@ -246,12 +248,15 @@ export function DashboardWidgetCard({
               </span>
             </>
           )}
-          <CardTitle className="text-xs font-medium truncate flex-1 min-w-0">{title}</CardTitle>
+          {/* WD-423: 위젯 제목을 제목(heading)으로 둬 스크린리더의 제목 탐색으로 위젯 사이를 오갈 수 있게 한다(페이지 H1 = 대시보드 이름 아래 단계). */}
+          <CardTitle role="heading" aria-level={2} className="text-xs font-medium truncate flex-1 min-w-0">
+            {title}
+          </CardTitle>
           {isEditing && onRemove && (
             <Button
               variant="ghost"
               size="icon"
-              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-sm"
+              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-sm print:hidden"
               onClick={(e) => {
                 e.stopPropagation();
                 onRemove(widget.id);
@@ -286,6 +291,7 @@ export function DashboardWidgetCard({
           isError={dataError}
           refreshSeconds={refreshSeconds}
           onRefresh={handleRefresh}
+          widgetName={title}
         />
       )}
     </Card>

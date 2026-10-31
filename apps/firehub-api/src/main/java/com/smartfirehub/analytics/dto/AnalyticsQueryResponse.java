@@ -8,6 +8,9 @@ import java.util.Map;
 /**
  * 분석 쿼리 결과.
  *
+ * @param totalRows 응답에 실은 행 수(SELECT). 전체 결과 수(COUNT)가 아니다 — 행 상한을 넘었는지는 {@code truncated} 로 안다.
+ * @param truncated 서버가 붙인 행 상한(maxRows)에 결과가 잘렸는지. 실행기가 상한+1 행을 읽어 판정하므로 정확히 상한만큼인 결과는 false 다.
+ *     사용자가 최상위 LIMIT/FETCH FIRST 를 직접 쓴 결과는 서버가 자르지 않으므로(#749) 크기와 무관하게 false 다(WD-454).
  * @param exportAllowed 조회자 기준 내보내기 가능(EXPORT 정책 AND data:export). 애드혹·저장 쿼리 실행 응답에만 싣는다 — 대시보드 공유
  *     캐시에 들어가는 결과는 null(조회자별 값은 ChartDataResponse.exportAllowed, 설계 결정 5).
  * @param runId 애드혹 실행 기록 id(쿼리 결과 내보내기용, V136 analytics_query_run). 그 외 null.

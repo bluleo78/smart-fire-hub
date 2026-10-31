@@ -13,7 +13,11 @@ import java.time.LocalDateTime;
  */
 public record UpdateDashboardRequest(
     @Size(max = 200) String name,
-    String description,
+    // 상한은 생성과 같다(WD-425 — 이유는 CreateDashboardRequest.DESCRIPTION_MAX_LENGTH)
+    @Size(
+            max = CreateDashboardRequest.DESCRIPTION_MAX_LENGTH,
+            message = CreateDashboardRequest.DESCRIPTION_TOO_LONG_MESSAGE)
+        String description,
     Boolean isShared,
     // 상한은 생성과 같다(WD-327 — 이유는 CreateDashboardRequest.MAX_AUTO_REFRESH_SECONDS)
     @Min(5)

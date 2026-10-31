@@ -43,7 +43,7 @@ public class TiberoQueryService {
   /**
    * 실행 결과. {@code error != null} 이면 실패이며 나머지 값은 비어 있다.
    *
-   * @param truncated 행 수가 {@code maxRows} 에 닿았는지
+   * @param truncated 결과가 {@code maxRows} 행을 넘어 잘렸는지(실행기가 상한+1 행으로 판정, WD-454)
    * @param executionTimeMs 실행기 호출에 걸린 시간(검증 실패면 0)
    */
   public record Outcome(

@@ -348,6 +348,20 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
 
     assertThat(response.error()).isNull();
     assertThat(response.rows()).hasSize(20);
+    // 사용자 제한이 상한보다 커도 서버가 자른 것이 아니므로 잘림이 아니다(WD-454).
+    assertThat(response.truncated()).isFalse();
+  }
+
+  /** FETCH FIRST n 이 상한 이하면 사용자가 요청한 만큼이므로 잘림이 아니다(WD-454). */
+  @Test
+  void execute_fetchFirstBelowCap_isNotTruncated() {
+    AnalyticsQueryResponse response =
+        executionService.execute(
+            "SELECT g FROM generate_series(1,5000) g FETCH FIRST 10 ROWS ONLY", 10, true);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(10);
+    assertThat(response.truncated()).isFalse();
   }
 
   /** OFFSET … FETCH NEXT 조합도 사용자 제한이다(#749). */

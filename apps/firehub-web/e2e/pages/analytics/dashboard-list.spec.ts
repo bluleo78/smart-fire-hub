@@ -506,4 +506,23 @@ test.describe('대시보드 목록 페이지', () => {
     expect(tableBox?.width ?? 0).toBeLessThanOrEqual(viewportWidth);
     await expect(dataRow.getByLabel('삭제')).toBeVisible();
   });
+
+  test('대시보드 설명 입력란은 서버 상한(2,000자)까지만 입력받는다 (WD-425)', async ({ authenticatedPage: page }) => {
+    // 서버가 2,000자를 넘는 설명을 400 으로 거부하므로, 생성·설정 다이얼로그 모두 같은 길이에서 입력을 막아야 한다.
+    const dashboard = createDashboardListItem({ id: 1, name: '상한 확인 대시보드', description: '설명' });
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', createPageResponse([dashboard]));
+    await page.goto('/analytics/dashboards');
+
+    // 1) 새 대시보드 다이얼로그 — 입력란의 maxlength 가 서버 상한과 같다
+    await page.getByRole('button', { name: '새 대시보드' }).click();
+    const createDialog = page.getByRole('dialog', { name: '새 대시보드' });
+    await expect(createDialog.getByLabel('설명')).toHaveAttribute('maxlength', '2000');
+    await createDialog.getByRole('button', { name: '취소' }).click();
+    await expect(createDialog).not.toBeVisible();
+
+    // 2) 설정 다이얼로그 — 같은 상한
+    await page.getByRole('row', { name: /상한 확인 대시보드/ }).getByLabel('설정').click();
+    const editDialog = page.getByRole('dialog', { name: '대시보드 설정' });
+    await expect(editDialog.getByLabel('설명')).toHaveAttribute('maxlength', '2000');
+  });
 });

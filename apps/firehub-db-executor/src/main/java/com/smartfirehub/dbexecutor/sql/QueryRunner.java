@@ -6,6 +6,9 @@ import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
 import com.smartfirehub.dbexecutor.store.TenantPools;
 import com.smartfirehub.dbexecutor.web.dto.QueryResponse;
 import java.sql.ResultSet;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
@@ -22,9 +25,9 @@ import org.springframework.stereotype.Component;
  * <p>결과 컬럼 이름은 api PG 경로({@code ResultColumnNames.unique})와 같은 규칙으로 고유하게 만든다(WD-85 — JOIN 의 같은 이름
  * 컬럼 값 유실 방지).
  *
- * <p>행 상한은 {@code setMaxRows(maxRows)} 로 드라이버가 끊게 하고, 읽은 행 수가 {@code maxRows} 이상이면 {@code
- * truncated} 다. 읽기만 하지만 트랜잭션을 깨끗이 닫아 커넥션을 반납하려고 성공·실패 모두 ROLLBACK 한다. 대여·기한·실패 처리는 {@link
- * LeasedExecution} 을 쓴다.
+ * <p>행 상한은 {@code setMaxRows(maxRows + 1)} 로 드라이버가 끊게 하고, 한 행 더 읽혔으면(상한 초과) {@code truncated} 로 표시한
+ * 뒤 {@code maxRows} 행만 돌려준다(WD-454 — 정확히 {@code maxRows} 행인 결과는 잘린 것이 아니다). 읽기만 하지만 트랜잭션을 깨끗이 닫아
+ * 커넥션을 반납하려고 성공·실패 모두 ROLLBACK 한다. 대여·기한·실패 처리는 {@link LeasedExecution} 을 쓴다.
  */
 @Component
 public class QueryRunner {
@@ -153,19 +156,24 @@ public class QueryRunner {
                   c,
                   timeoutSeconds,
                   st -> {
-                    st.setMaxRows(maxRows);
+                    // 판정용으로 상한+1 행까지 읽는다(WD-454). maxRows 는 위에서 10000 이하로 검증했다.
+                    st.setMaxRows(maxRows + 1);
                     try (ResultSet rs = st.executeQuery(sql)) {
                       return SqlRunner.readRows(rs, true);
                     }
                   });
           // 읽기만 했지만 트랜잭션을 닫아 커넥션을 반납한다(실패 경로의 ROLLBACK 은 LeasedExecution 이 한다).
           LeasedExecution.rollbackQuietly(c);
+          // 상한을 넘어 한 행 더 읽혔으면 잘림이고, 응답에는 maxRows 행까지만 싣는다(WD-454).
+          boolean truncated = out.rowCount() > maxRows;
+          List<Map<String, Object>> rows =
+              truncated ? new ArrayList<>(out.rows().subList(0, maxRows)) : out.rows();
           return new QueryResponse(
               true,
               out.columns(),
-              out.rows(),
-              out.rowCount(),
-              out.rowCount() >= maxRows,
+              rows,
+              rows.size(),
+              truncated,
               "SELECT",
               0,
               (System.nanoTime() - startNanos) / 1_000_000L,

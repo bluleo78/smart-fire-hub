@@ -332,7 +332,7 @@ public class DbExecutorClient {
    * @param columns 결과 컬럼 이름(순서 보존)
    * @param rows 행(컬럼명 → 값)
    * @param rowCount 가져온 행 수
-   * @param truncated 행 수가 상한에 닿았는지
+   * @param truncated 결과가 상한을 넘어 잘렸는지(실행기가 상한+1 행으로 판정, WD-454)
    * @param error 실패 문구
    * @param dbError 실패가 DB 오류일 때의 코드·메시지(아니면 null)
    */

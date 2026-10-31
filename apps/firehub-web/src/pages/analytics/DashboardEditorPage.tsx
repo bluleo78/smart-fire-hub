@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { LayoutItem, ResponsiveLayouts } from 'react-grid-layout';
 import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
 import { useNavigate,useParams } from 'react-router-dom';
@@ -62,6 +63,7 @@ import {
   describeLayoutItem,
   type KeyboardLayoutAction,
 } from '../../lib/dashboard-layout-keyboard';
+import { formatDateTimeMinute } from '../../lib/formatters';
 import type { ChartListItem, DashboardWidget } from '../../types/analytics';
 
 /** 격자 한 행의 높이(px)와 위젯 간격(px) — 쌓기 보기도 같은 값으로 높이를 맞춘다. */
@@ -101,8 +103,9 @@ function GridArea({
     ? [...widgets].sort((a, b) => a.positionY - b.positionY || a.positionX - b.positionX)
     : widgets;
 
+  // 인쇄(WD-424): 편집 중 react-grid-layout 이 붙이는 모서리 크기 조절 손잡이는 종이에 의미가 없으므로 숨긴다
   return (
-    <div ref={gridRef}>
+    <div ref={gridRef} className="print:[&_.react-resizable-handle]:hidden">
       {stacked ? (
         <div className="flex flex-col gap-2" data-testid="dashboard-stacked">
           {ordered.map((widget) => (
@@ -153,6 +156,33 @@ function GridArea({
         </ResponsiveGridLayout>
       )}
     </div>
+  );
+}
+
+/** 지금 시각을 「YYYY-MM-DD HH:mm」로 — 인쇄 시각 표시용(WD-424) */
+function nowMinute(): string {
+  return formatDateTimeMinute(new Date().toISOString());
+}
+
+/**
+ * 인쇄 시각 줄(WD-424) — 화면에서는 숨고 인쇄(PDF 내보내기)에서만 대시보드 이름 아래에 보인다.
+ * 종이로 옮긴 위젯은 신선도 바(「N분 전」)가 없으므로 언제 기준의 숫자인지 이 줄로 알린다.
+ * 화면을 열어 둔 채 나중에 인쇄해도 실제 인쇄 시각이 찍히도록 beforeprint 에서 다시 잰다.
+ * flushSync — 인쇄 미리보기 배치 전에 새 시각이 DOM 에 반영되게 이벤트 안에서 바로 그린다.
+ */
+function PrintTimestamp() {
+  const [printedAt, setPrintedAt] = useState(nowMinute);
+
+  useEffect(() => {
+    const handleBeforePrint = () => flushSync(() => setPrintedAt(nowMinute()));
+    window.addEventListener('beforeprint', handleBeforePrint);
+    return () => window.removeEventListener('beforeprint', handleBeforePrint);
+  }, []);
+
+  return (
+    <p className="hidden print:block text-xs text-muted-foreground" data-testid="dashboard-print-time">
+      인쇄 시각: {printedAt}
+    </p>
   );
 }
 
@@ -674,8 +704,9 @@ export default function DashboardEditorPage() {
   const currentLayouts: ResponsiveLayouts = { ...localLayouts, lg: lgItems };
 
   return (
-    <div ref={containerRef} className="flex flex-col h-full min-h-0 bg-background">
-      {/* Toolbar */}
+    // 인쇄(WD-424): 화면 높이에 맞춘 h-full·flex 를 풀어 위젯 격자 전체가 종이에 이어서 찍히게 한다
+    <div ref={containerRef} className="flex flex-col h-full min-h-0 bg-background print:block print:h-auto">
+      {/* Toolbar — 인쇄에서는 이름·설명·인쇄 시각만 남기고 「←」·배지·조작 버튼은 숨긴다(WD-424) */}
       {/* 좁은 화면에서는 버튼 묶음이 다음 줄로 내려가 이름이 읽히고 「완료」·「편집 취소」가 화면 밖으로 밀리지 않는다(WD-321) */}
       <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b shrink-0 bg-background">
         <Button
@@ -686,21 +717,22 @@ export default function DashboardEditorPage() {
           title="목록으로 돌아가기"
           // 화면 안 「←」도 미저장 배치 확인을 거친다(WD-323) — navigate 직접 호출은 가드를 우회한다
           onClick={() => requestNavigate('/analytics/dashboards')}
-          className="h-8 w-8"
+          className="h-8 w-8 print:hidden"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
         </Button>
 
         <div className="flex-1 min-w-40">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <h1 className="text-lg font-semibold truncate min-w-0" title={dashboard.name}>
+            {/* 인쇄에서는 말줄임 없이 이름 전체를 줄바꿈해 보인다(WD-424) — 종이에서는 title 툴팁을 볼 수 없다 */}
+            <h1 className="text-lg font-semibold truncate min-w-0 print:whitespace-normal" title={dashboard.name}>
               {dashboard.name}
             </h1>
             {dashboard.isShared && (
-              <Badge variant="secondary" className="text-xs shrink-0">공유</Badge>
+              <Badge variant="secondary" className="text-xs shrink-0 print:hidden">공유</Badge>
             )}
             {dashboard.autoRefreshSeconds && (
-              <Badge variant="outline" className="text-xs gap-1 shrink-0">
+              <Badge variant="outline" className="text-xs gap-1 shrink-0 print:hidden">
                 <RefreshCw className="h-2.5 w-2.5" />
                 {dashboard.autoRefreshSeconds}초
               </Badge>
@@ -709,7 +741,7 @@ export default function DashboardEditorPage() {
             {!canEdit && (
               <Badge
                 variant="outline"
-                className="text-xs gap-1 shrink-0"
+                className="text-xs gap-1 shrink-0 print:hidden"
                 title={`${dashboard.createdByName}님이 공유한 대시보드입니다. 작성자만 고칠 수 있습니다.`}
                 data-testid="dashboard-readonly-badge"
               >
@@ -721,9 +753,10 @@ export default function DashboardEditorPage() {
           {dashboard.description && (
             <p className="text-xs text-muted-foreground truncate">{dashboard.description}</p>
           )}
+          <PrintTimestamp />
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-1.5 ml-auto">
+        <div className="flex flex-wrap items-center justify-end gap-1.5 ml-auto print:hidden">
           {/* 공유 (#99, #522) — 현재 URL을 클립보드에 복사하여 협업 시 빠른 링크 공유 지원.
               clipboard API 미지원 환경에서는 텍스트 영역 fallback.
               단, 백엔드(AnalyticsDashboardRepository.findById)는 소유자이거나
@@ -847,7 +880,8 @@ export default function DashboardEditorPage() {
       </div>
 
       {/* Grid — 편집 중에는 로컬 displayWidgets로 렌더링하여 즉시 UI 반영 */}
-      <div className="flex-1 overflow-auto p-3">
+      {/* 인쇄(WD-424): 스크롤 상자를 풀어 화면 밖 위젯까지 모두 찍히게 한다 */}
+      <div className="flex-1 overflow-auto p-3 print:overflow-visible">
         {displayWidgets.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
             <LayoutDashboard className="h-12 w-12 text-muted-foreground" />
