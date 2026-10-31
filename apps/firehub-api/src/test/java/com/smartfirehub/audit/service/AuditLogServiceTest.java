@@ -15,8 +15,11 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @Transactional
 class AuditLogServiceTest extends IntegrationTestBase {
@@ -283,5 +286,74 @@ class AuditLogServiceTest extends IntegrationTestBase {
     // admin 로그 2개(CREATE, UPDATE)만 반환되어야 함
     assertThat(result.content()).hasSize(2);
     assertThat(result.content()).allMatch(log -> log.userId().equals(adminId));
+  }
+
+  /**
+   * 회귀 테스트(WD-394): 호출처가 IP·User-Agent 를 넘기지 않아도 처리 중인 요청의 접속 주소·User-Agent 로 채운다 — 데이터셋·역할·멤버 등 감사
+   * 도우미가 null 을 넘겨 화면 IP 칸이 「-」였다.
+   */
+  @Test
+  void log_withoutIp_fillsFromCurrentRequest() {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.setRemoteAddr("198.51.100.7");
+    request.addHeader("User-Agent", "Firefox/1.0");
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+    try {
+      Long id =
+          auditLogService.log(
+              adminId, "admin", "DELETE", "dataset", "9", "데이터셋 삭제", null, null, "SUCCESS", null,
+              null);
+
+      AuditLogResponse saved = auditLogService.findById(id).orElseThrow();
+      assertThat(saved.ipAddress()).isEqualTo("198.51.100.7");
+      assertThat(saved.userAgent()).isEqualTo("Firefox/1.0");
+    } finally {
+      RequestContextHolder.resetRequestAttributes();
+    }
+  }
+
+  /** 호출처가 넘긴 IP(임포트·로그인처럼 직접 고른 값)는 요청 값으로 덮지 않고, 요청 밖(스케줄·비동기 잡)은 비운 채 남긴다(WD-394). */
+  @Test
+  void log_explicitIpKept_andNoRequestLeavesNull() {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.setRemoteAddr("198.51.100.7");
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+    Long explicit;
+    try {
+      explicit =
+          auditLogService.log(
+              adminId,
+              "admin",
+              "IMPORT",
+              "dataset",
+              "9",
+              "파일 임포트: a.csv",
+              "203.0.113.5",
+              "Chrome",
+              "SUCCESS",
+              null,
+              null);
+    } finally {
+      RequestContextHolder.resetRequestAttributes();
+    }
+    Long noRequest =
+        auditLogService.log(
+            null,
+            "system",
+            "EXECUTE",
+            "pipeline",
+            "3",
+            "파이프라인 실행",
+            null,
+            null,
+            "SUCCESS",
+            null,
+            null);
+
+    assertThat(auditLogService.findById(explicit).orElseThrow().ipAddress())
+        .isEqualTo("203.0.113.5");
+    AuditLogResponse scheduled = auditLogService.findById(noRequest).orElseThrow();
+    assertThat(scheduled.ipAddress()).isNull();
+    assertThat(scheduled.userAgent()).isNull();
   }
 }

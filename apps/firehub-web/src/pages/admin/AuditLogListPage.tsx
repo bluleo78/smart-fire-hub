@@ -759,7 +759,21 @@ export default function AuditLogListPage() {
                   onClick={() => handleRowClick(log)}
                 >
                   <TableCell className="whitespace-nowrap text-sm">
-                    {formatDateTime(log.actionTime)}
+                    {/* 키보드 접근성(WD-396): 행 클릭은 마우스로만 열리므로 일시 칸을 상세 버튼으로 둔다 — Tab 으로 닿고 Enter 로
+                        상세(메타데이터·오류 내용)를 연다. 누가·무엇을은 같은 행의 칸이 읽어 주므로 이름은 「일시 상세 보기」로 둔다.
+                        클릭은 행 onClick 과 겹쳐 두 번 열리지 않게 번지지 않게 막는다. */}
+                    <button
+                      type="button"
+                      aria-haspopup="dialog"
+                      aria-label={`${formatDateTime(log.actionTime)} 상세 보기`}
+                      className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRowClick(log);
+                      }}
+                    >
+                      {formatDateTime(log.actionTime)}
+                    </button>
                   </TableCell>
                   <TableCell className="font-medium">{log.username}</TableCell>
                   <TableCell>{formatAuditAction(log.actionType)}</TableCell>

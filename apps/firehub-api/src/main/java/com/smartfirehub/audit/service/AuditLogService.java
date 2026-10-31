@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.audit.repository.AuditLogRepository;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.util.ClientIpExtractor;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import jakarta.servlet.http.HttpServletRequest;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -14,6 +16,8 @@ import org.jooq.JSONB;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @Service
 @Slf4j
@@ -22,6 +26,7 @@ public class AuditLogService {
   private final AuditLogRepository auditLogRepository;
   private final ObjectMapper objectMapper;
   private final DatasetAccessGuard datasetAccessGuard;
+  private final ClientIpExtractor clientIpExtractor;
 
   /**
    * DatasetAccessGuard 는 @Lazy 로 받는다 — 가드가 SecurityAuditRecorder 를 거쳐 이 서비스를 기록용으로 쓰므로 바로 받으면 생성자
@@ -30,10 +35,12 @@ public class AuditLogService {
   public AuditLogService(
       AuditLogRepository auditLogRepository,
       ObjectMapper objectMapper,
-      @Lazy DatasetAccessGuard datasetAccessGuard) {
+      @Lazy DatasetAccessGuard datasetAccessGuard,
+      ClientIpExtractor clientIpExtractor) {
     this.auditLogRepository = auditLogRepository;
     this.objectMapper = objectMapper;
     this.datasetAccessGuard = datasetAccessGuard;
+    this.clientIpExtractor = clientIpExtractor;
   }
 
   public Long log(
@@ -57,6 +64,19 @@ public class AuditLogService {
       }
     }
 
+    // 호출처가 IP·User-Agent 를 넘기지 않았으면 지금 처리 중인 HTTP 요청에서 채운다(WD-394) — 데이터셋·API 연결·역할·멤버·보안 등급
+    // 감사 도우미 대부분이 null 을 넘겨, 로그인·임포트 밖의 사용자 행위는 IP 가 비어 있었다. 요청 밖(스케줄·비동기 잡)에서는 요청이 없어
+    // 그대로 비운다 — 그때는 사람의 접속 주소가 없다.
+    HttpServletRequest request = currentRequest();
+    if (request != null) {
+      if (ipAddress == null) {
+        ipAddress = clientIpExtractor.extract(request);
+      }
+      if (userAgent == null) {
+        userAgent = request.getHeader("User-Agent");
+      }
+    }
+
     // 컬럼 길이를 넘는 값은 잘라 넣는다(WD-290) — 인증 없이 들어오는 값(로그인 실패의 아이디, X-Forwarded-For)도 감사에 실리므로,
     // 길이 초과로 INSERT 가 실패해 요청 자체가 500 으로 바뀌지 않게 한다.
     return auditLogRepository.save(
@@ -71,6 +91,13 @@ public class AuditLogService {
         result,
         errorMessage,
         metadataJsonb);
+  }
+
+  /** 지금 스레드가 처리 중인 HTTP 요청(요청 밖 — 스케줄러·비동기 잡 — 이면 null). */
+  private static HttpServletRequest currentRequest() {
+    return RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs
+        ? attrs.getRequest()
+        : null;
   }
 
   /** audit_log.username 길이(VARCHAR(50)). */

@@ -1,6 +1,7 @@
 // Neo4j 드라이버 싱글턴 + 세션 팩토리 + 제약 부트스트랩.
 import { GraphReadableOntologyId } from './verified-ontology-id.js';
 import neo4j, { Driver, Session } from 'neo4j-driver';
+import { RESERVED_NODE_KEYS } from './reserved-node-keys.js';
 
 let driver: Driver | null = null;
 
@@ -59,6 +60,11 @@ export interface GraphNode {
   // 이 노드가 실제로 적재된 온톨로지 id. 스탬프 도입(#678) 이전 레거시 노드는 없어 undefined.
   // schema_version은 온톨로지별 독립 카운터라, ontologyId 없이는 "구버전" 판정이 불가능하다.
   ontologyId?: number;
+  // 표(데이터셋) 투영 노드의 출처 데이터셋 id(WD-382). 문서 노드는 청크(sourceChunkCount)로 출처를 갖고 이 값이 없다 —
+  // 표 노드는 청크가 늘 0개라, 이 값이 없으면 화면이 「출처 0」처럼 근거 없는 노드로 보였다.
+  sourceDatasetIds?: number[];
+  // 노드에 적재된 사용자 속성(예: 피해액) — 정체성·출처 예약 키는 뺀다(WD-382). 없으면 생략.
+  properties?: Record<string, string | number>;
 }
 export interface GraphEdge { subjectKey: string; type: string; objectKey: string; }
 export interface WholeGraph { nodes: GraphNode[]; edges: GraphEdge[]; }
@@ -68,6 +74,25 @@ export interface WholeGraph { nodes: GraphNode[]; edges: GraphEdge[]; }
 // 읽기측 방어가 없으면 과거 노드 하나 때문에 그래프 전체 조회가 TypeError로 실패한다.
 function toJsNumber(v: unknown): number {
   return neo4j.isInt(v) ? v.toNumber() : Number(v);
+}
+
+// 노드의 출처 데이터셋·사용자 속성을 화면용으로 정리한다(WD-382). 값이 없으면 키 자체를 넣지 않는다 — 노드 수만큼
+// 빈 배열·객체를 실어 그래프 전체 응답을 키우지 않으려는 것이다. 속성 값은 loader 가 문자열·수만 쓴다.
+function provenanceAndProperties(
+  sourceDatasetIds: unknown,
+  props: unknown,
+): Pick<GraphNode, 'sourceDatasetIds' | 'properties'> {
+  const out: Pick<GraphNode, 'sourceDatasetIds' | 'properties'> = {};
+  if (Array.isArray(sourceDatasetIds) && sourceDatasetIds.length > 0) {
+    out.sourceDatasetIds = sourceDatasetIds.map(toJsNumber);
+  }
+  if (props && typeof props === 'object') {
+    const entries = Object.entries(props as Record<string, unknown>)
+      .filter(([k, v]) => !RESERVED_NODE_KEYS.has(k) && (typeof v === 'string' || typeof v === 'number' || neo4j.isInt(v)))
+      .map(([k, v]) => [k, typeof v === 'string' ? v : toJsNumber(v)] as const);
+    if (entries.length > 0) out.properties = Object.fromEntries(entries);
+  }
+  return out;
 }
 
 // 한 온톨로지의 지식그래프를 1회 읽어 노드/엣지로 반환한다.
@@ -87,7 +112,7 @@ export async function readWholeGraph(ontologyId: GraphReadableOntologyId): Promi
       'MATCH (n:Entity) WHERE n.ontologyId = $ontologyId ' +
       'RETURN n.key AS key, n.type AS type, n.name AS name, ' +
       'size(coalesce(n.sourceChunkIds, [])) AS sourceChunkCount, n.schemaVersion AS schemaVersion, ' +
-      'n.ontologyId AS ontologyId',
+      'n.ontologyId AS ontologyId, n.sourceDatasetIds AS sourceDatasetIds, properties(n) AS props',
       params,
     );
     // 엣지는 양끝이 모두 스코프 안일 때만 — 한쪽만 걸면 남의 노드 key 가 엣지를 타고 노출된다.
@@ -108,6 +133,7 @@ export async function readWholeGraph(ontologyId: GraphReadableOntologyId): Promi
         // 레거시 노드는 속성이 없어 schemaVersion이 null → undefined로 정규화(0/구버전과 구분).
         ...(schemaVersion != null ? { schemaVersion: toJsNumber(schemaVersion) } : {}),
         ...(ontologyId != null ? { ontologyId: toJsNumber(ontologyId) } : {}),
+        ...provenanceAndProperties(r.get('sourceDatasetIds'), r.get('props')),
       };
     });
     const edges: GraphEdge[] = edgeRes.records.map((r) => ({

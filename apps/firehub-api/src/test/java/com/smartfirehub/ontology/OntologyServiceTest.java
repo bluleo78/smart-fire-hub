@@ -145,6 +145,31 @@ class OntologyServiceTest {
     assertThat(res.edges().get(0).objectKey()).isEqualTo("n2");
   }
 
+  // WD-382: 표 투영 노드의 출처 데이터셋 id·사용자 속성을 ai-agent 응답 그대로 전달한다. 문서 노드처럼 없으면 null 이고,
+  // 화면으로 내보낼 때도 그 필드를 빼 응답을 키우지 않는다.
+  @Test
+  void getGraph_는_표_투영_노드의_출처_데이터셋과_속성을_전달한다() throws Exception {
+    server.enqueue(
+        new MockResponse()
+            .setHeader("Content-Type", "application/json")
+            .setBody(
+                "{\"nodes\":[{\"key\":\"t1\",\"type\":\"Incident\",\"name\":\"표 화재\",\"sourceChunkCount\":0,"
+                    + "\"sourceDatasetIds\":[999,7],\"properties\":{\"피해액\":9077284,\"원인\":\"누전\"}},"
+                    + "{\"key\":\"d1\",\"type\":\"Incident\",\"name\":\"문서 화재\",\"sourceChunkCount\":2}],"
+                    + "\"edges\":[]}"));
+    GraphResponse res = service.getGraph(OWNED_ONTOLOGY_ID);
+    assertThat(res.nodes().get(0).sourceDatasetIds()).containsExactly(999L, 7L);
+    assertThat(res.nodes().get(0).properties())
+        .containsEntry("피해액", 9077284)
+        .containsEntry("원인", "누전");
+    assertThat(res.nodes().get(1).sourceDatasetIds()).isNull();
+    assertThat(res.nodes().get(1).properties()).isNull();
+    // 화면 응답 직렬화: 값이 없는 노드는 두 필드를 싣지 않는다
+    String json =
+        new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(res.nodes().get(1));
+    assertThat(json).doesNotContain("sourceDatasetIds").doesNotContain("properties");
+  }
+
   // K8s 회귀(운영에서 "그래프를 불러오지 못했습니다"): 실제 적재된 지식그래프 응답은 1.5MB 수준인데 WebClient 기본
   // maxInMemorySize는 256KB라 그 한도를 넘는 순간 DataBufferLimitException으로 터졌다.
   // 로컬(그래프가 작음)에서는 재현되지 않아 운영에서만 "그래프를 불러오지 못했습니다"가 났다.

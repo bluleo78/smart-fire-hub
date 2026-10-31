@@ -188,6 +188,18 @@ export function ImportProgressView({ progress, onClose, failedErrors }: ImportPr
             {progress.skippedRows !== undefined && progress.skippedRows > 0 && (
               <p>빈 행 건너뜀: {progress.skippedRows.toLocaleString()}행</p>
             )}
+            {/* 업서트는 실제로 추가·갱신된 행 수를 알린다 — 「성공」은 파일의 유효 행 수라 실제 반영 수와 다를 수 있다(WD-387) */}
+            {progress.insertedRows !== undefined && progress.updatedRows !== undefined && (
+              <p data-testid="import-upsert-counts">
+                반영: 추가 {progress.insertedRows.toLocaleString()}행 · 갱신 {progress.updatedRows.toLocaleString()}행
+              </p>
+            )}
+            {/* 같은 키가 파일에 여러 번 있으면 키마다 마지막 행만 반영한다(WD-387) */}
+            {progress.duplicateKeyRows !== undefined && progress.duplicateKeyRows > 0 && (
+              <p data-testid="import-duplicate-keys">
+                파일 안 같은 키 {progress.duplicateKeyRows.toLocaleString()}행은 건너뛰고 키마다 마지막 행만 반영했습니다
+              </p>
+            )}
           </div>
         </InlineBanner>
       )}

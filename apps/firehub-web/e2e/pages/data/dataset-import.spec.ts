@@ -275,6 +275,48 @@ test.describe('데이터셋 임포트 다이얼로그', () => {
     });
   }
 
+  // WD-387: 업서트·교체(PK)는 키마다 파일의 마지막 행만 반영한다 — 서버가 보낸 추가·갱신 수와 같은 키로 버린 행 수를 완료 요약에 보인다
+  for (const { name, meta, upsertLine, dupLine } of [
+    {
+      name: '업서트 — 추가·갱신과 같은 키로 건너뛴 행',
+      meta: { insertedRows: 1, updatedRows: 1, duplicateKeyRows: 1 },
+      upsertLine: '반영: 추가 1행 · 갱신 1행',
+      dupLine: '파일 안 같은 키 1행은 건너뛰고 키마다 마지막 행만 반영했습니다',
+    },
+    {
+      name: '교체 — 같은 키로 건너뛴 행만',
+      meta: { duplicateKeyRows: 2 },
+      upsertLine: null,
+      dupLine: '파일 안 같은 키 2행은 건너뛰고 키마다 마지막 행만 반영했습니다',
+    },
+    { name: '추가 — 반영 줄 없음', meta: {}, upsertLine: null, dupLine: null },
+  ]) {
+    test(`임포트 완료 요약 (WD-387) — ${name}`, async ({ authenticatedPage: page }) => {
+      await setupImportMocks(page, { totalRows: 3, processedRows: 3, successRows: 3, errorRows: 0, ...meta });
+      await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createPreviewResponse());
+      await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports`, createImportStartResponse());
+
+      await page.goto(`/data/datasets/${DATASET_ID}`);
+      await page.getByRole('tab', { name: '데이터' }).click();
+      await page.getByRole('button', { name: '임포트' }).first().click();
+      await Promise.all([
+        page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+        page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+      ]);
+      const importBtn = page.getByRole('dialog').getByRole('button', { name: '임포트' });
+      await expect(importBtn).toBeEnabled({ timeout: 10_000 });
+      await importBtn.click();
+
+      const dialog = page.getByRole('dialog');
+      await expect(dialog.getByText('임포트 완료')).toBeVisible({ timeout: 10_000 });
+      await expect(dialog.getByText('성공: 3행')).toBeVisible();
+      if (upsertLine) await expect(dialog.getByTestId('import-upsert-counts')).toHaveText(upsertLine);
+      else await expect(dialog.getByTestId('import-upsert-counts')).toHaveCount(0);
+      if (dupLine) await expect(dialog.getByTestId('import-duplicate-keys')).toHaveText(dupLine);
+      else await expect(dialog.getByTestId('import-duplicate-keys')).toHaveCount(0);
+    });
+  }
+
   test('검증 버튼 클릭 시 validate API가 호출되고 검증 결과가 표시된다', async ({ authenticatedPage: page }) => {
     await setupImportMocks(page);
     await mockApi(
@@ -694,6 +736,23 @@ test.describe('데이터셋 변경 이력 탭', () => {
     await expect(page.getByText('fire-incidents-sample.csv')).toBeVisible();
     await expect(page.getByText(/완료|COMPLETED/)).toBeVisible();
     await expect(page.getByText('testuser님이 데이터를 임포트했습니다')).toBeVisible();
+  });
+
+  // WD-387: 같은 키로 버린 행이 있는 업서트·교체 이력은 그 수를 알리고, 없는 이력엔 줄이 없다
+  test('같은 키로 건너뛴 행이 있는 임포트 이력은 그 행 수를 보인다 (WD-387)', async ({ authenticatedPage: page }) => {
+    await setupDatasetDetailMocks(page, DATASET_ID);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, [
+      { ...createImportRecord(), id: 2, fileName: 'rep_dup.csv', totalRows: 5, successRows: 5, duplicateKeyRows: 2 },
+      { ...createImportRecord(), id: 1, duplicateKeyRows: null },
+    ]);
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '이력' }).click();
+
+    await expect(page.getByText('rep_dup.csv')).toBeVisible();
+    const dup = page.getByTestId('import-history-duplicate-keys');
+    await expect(dup).toHaveCount(1);
+    await expect(dup).toHaveText('파일 안 같은 키 2행은 건너뛰고 키마다 마지막 행만 반영');
   });
 
   test('임포트 이력이 없으면 데이터셋 생성 이벤트만 표시된다', async ({ authenticatedPage: page }) => {

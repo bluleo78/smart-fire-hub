@@ -61,6 +61,9 @@ public class DataImportService {
   // 패키지 공개: 배치 경계를 넘는 파일을 만드는 테스트가 같은 값을 참조한다.
   static final int BATCH_SIZE = 2000;
 
+  // 임포트 감사 설명 머리말 — 다른 감사 기록(「데이터셋 생성: …」)처럼 한국어로 남긴다(WD-394).
+  static final String IMPORT_AUDIT_PREFIX = "파일 임포트: ";
+
   // 사전 검증 샘플 크기 — 전량 검증(임포트 잡)이 아닌, 스키마/매핑 빠른 확인용 앞 N행.
   private static final int SAMPLE_VALIDATION_ROWS = 200;
 
@@ -738,7 +741,7 @@ public class DataImportService {
             "IMPORT",
             "dataset",
             String.valueOf(datasetId),
-            "File import: " + fileName,
+            IMPORT_AUDIT_PREFIX + fileName,
             ipAddress,
             userAgent,
             "FAILURE",
@@ -926,7 +929,7 @@ public class DataImportService {
             "IMPORT",
             "dataset",
             String.valueOf(datasetId),
-            "File import: " + fileName,
+            IMPORT_AUDIT_PREFIX + fileName,
             ipAddress,
             userAgent,
             "FAILURE",
@@ -953,6 +956,11 @@ public class DataImportService {
       }
 
       // 스트림 중 staging에 적재된 내용을 target으로 promote (UPSERT / REPLACE with PK)
+      // promote 는 키마다 파일의 마지막 행만 남긴다(의도된 last-write-wins). 버려진 앞 행 수와 업서트의 추가·갱신 수를 결과·이력에
+      // 함께 남겨, 「성공 N행」(파일 유효 행 수)과 실제 반영 행 수가 왜 다른지 알 수 있게 한다(WD-387). PK 경로가 아니면 null.
+      Integer insertedRows = null;
+      Integer updatedRows = null;
+      Integer duplicateKeyRows = null;
       if (validCountFinal > 0) {
         if (importMode == ImportMode.UPSERT) {
           log.info("UPSERT mode: promoting staging to target on PK columns {}", pkColumns);
@@ -965,14 +973,23 @@ public class DataImportService {
               "UPSERT mode: promoted — inserted={}, updated={}",
               upsertResult.inserted(),
               upsertResult.updated());
+          insertedRows = upsertResult.inserted();
+          updatedRows = upsertResult.updated();
+          duplicateKeyRows =
+              Math.max(0, validCountFinal - upsertResult.inserted() - upsertResult.updated());
         } else if (importMode == ImportMode.REPLACE && !pkColumns.isEmpty()) {
           log.info("REPLACE mode: promoting staging to target (truncate + insert) atomically");
-          transactionTemplate.executeWithoutResult(
-              status ->
-                  dataWrite(
-                      () ->
-                          dataTableRowService.promoteStagingToReplace(
-                              stagingTableFinal, dataset.tableName(), columnNames, pkColumns)));
+          // 교체는 대상을 비운 뒤 넣으므로, 같은 트랜잭션에서 센 대상 행 수가 곧 반영된 행 수다
+          long replacedRows =
+              transactionTemplate.execute(
+                  status ->
+                      dataWrite(
+                          () -> {
+                            dataTableRowService.promoteStagingToReplace(
+                                stagingTableFinal, dataset.tableName(), columnNames, pkColumns);
+                            return dataTableRowService.countRows(dataset.tableName());
+                          }));
+          duplicateKeyRows = (int) Math.max(0, validCountFinal - replacedRows);
         }
       }
 
@@ -992,17 +1009,18 @@ public class DataImportService {
       metadata.put("successRows", validCountFinal);
       metadata.put("errorRows", errorCountFinal);
       metadata.put("skippedRows", skippedRowsFinal); // WD-255: 건너뛴 빈 행 수
+      putPkPromoteCounts(metadata, insertedRows, updatedRows, duplicateKeyRows); // WD-387
       if (errorJson != null) {
         metadata.put("errorDetails", errorJson);
       }
 
-      asyncJobService.completeJob(
-          jobId,
-          Map.of(
-              "totalRows", totalRowsFinal,
-              "successRows", validCountFinal,
-              "errorRows", errorCountFinal,
-              "skippedRows", skippedRowsFinal));
+      Map<String, Object> jobResult = new HashMap<>();
+      jobResult.put("totalRows", totalRowsFinal);
+      jobResult.put("successRows", validCountFinal);
+      jobResult.put("errorRows", errorCountFinal);
+      jobResult.put("skippedRows", skippedRowsFinal);
+      putPkPromoteCounts(jobResult, insertedRows, updatedRows, duplicateKeyRows); // WD-387
+      asyncJobService.completeJob(jobId, jobResult);
 
       notificationService.notifyImportCompleted(
           userId, datasetId, datasetNameForNotification, true);
@@ -1013,7 +1031,7 @@ public class DataImportService {
           "IMPORT",
           "dataset",
           String.valueOf(datasetId),
-          "File import: " + fileName,
+          IMPORT_AUDIT_PREFIX + fileName,
           ipAddress,
           userAgent,
           "SUCCESS",
@@ -1050,7 +1068,7 @@ public class DataImportService {
           "IMPORT",
           "dataset",
           String.valueOf(datasetId),
-          "File import: " + fileName,
+          IMPORT_AUDIT_PREFIX + fileName,
           ipAddress,
           userAgent,
           "FAILURE",
@@ -1161,12 +1179,27 @@ public class DataImportService {
         getMetaInteger(meta, "totalRows"),
         getMetaInteger(meta, "successRows"),
         getMetaInteger(meta, "errorRows"),
+        getMetaInteger(meta, "duplicateKeyRows"),
         meta.get("errorDetails"),
         auditLog.errorMessage(),
         auditLog.username(),
         null,
         auditLog.actionTime(),
         auditLog.actionTime());
+  }
+
+  /**
+   * 업서트·교체(PK) 반영 결과를 결과 맵에 넣는다(WD-387). 값이 없는 항목(PK 경로가 아니거나 교체의 추가·갱신)은 넣지 않는다 — 화면은 키가 있을 때만 그
+   * 줄을 보인다.
+   */
+  private static void putPkPromoteCounts(
+      Map<String, Object> target,
+      Integer insertedRows,
+      Integer updatedRows,
+      Integer duplicateKeyRows) {
+    if (insertedRows != null) target.put("insertedRows", insertedRows);
+    if (updatedRows != null) target.put("updatedRows", updatedRows);
+    if (duplicateKeyRows != null) target.put("duplicateKeyRows", duplicateKeyRows);
   }
 
   @SuppressWarnings("unchecked")

@@ -556,7 +556,7 @@ test.describe('API 연결 — apiconnection:read', () => {
     await sidebarLink(page, 'API 연결').click();
     await expect(page).toHaveURL(/\/admin\/api-connections$/);
     await expect(page.getByRole('heading', { level: 1, name: 'API 연결 관리' })).toBeVisible();
-    await expect(page.getByRole('cell', { name: '공공 데이터 API' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '공공 데이터 API', exact: true })).toBeVisible();
     // 읽기만 가능 — 새 연결·전체 갱신·삭제 진입점이 없다.
     await nextFrame(page);
     await expect(page.getByRole('button', { name: '새 연결' })).toHaveCount(0);
@@ -592,7 +592,7 @@ test.describe('API 연결 — apiconnection:read', () => {
     await setupApiConnectionDetailMocks(page, 1);
 
     await gotoWithPermissions(page, '/admin/api-connections');
-    await expect(page.getByRole('cell', { name: '공공 데이터 API' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '공공 데이터 API', exact: true })).toBeVisible();
     await nextFrame(page);
     await expect(page.getByRole('button', { name: '새 연결' })).toHaveCount(1);
     await expect(page.getByRole('button', { name: '전체 갱신' })).toHaveCount(1);
@@ -746,7 +746,7 @@ test.describe('ADMIN — 기존대로 전부', () => {
     await setupApiConnectionListMocks(page);
 
     await gotoWithPermissions(page, '/admin/api-connections');
-    await expect(page.getByRole('cell', { name: '공공 데이터 API' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '공공 데이터 API', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: '새 연결' })).toBeVisible();
     await expect(page.getByRole('button', { name: '전체 갱신' })).toBeVisible();
     await expect(page.getByRole('row', { name: /공공 데이터 API/ }).getByRole('button')).toHaveCount(1);

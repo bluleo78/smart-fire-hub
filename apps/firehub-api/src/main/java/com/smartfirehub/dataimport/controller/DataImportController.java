@@ -96,8 +96,9 @@ public class DataImportController {
       Authentication authentication)
       throws Exception {
     Long userId = (Long) authentication.getPrincipal();
+    // 감사 사용자 칸은 다른 기록과 같은 기준인 로그인 계정으로 남긴다(WD-394) — 표시 이름은 바뀌고 겹칠 수 있어, 계정 검색에서 임포트가 빠졌다.
     String username =
-        userRepository.findById(userId).map(user -> user.name()).orElse(String.valueOf(userId));
+        userRepository.findById(userId).map(user -> user.username()).orElse(String.valueOf(userId));
     // 리버스 프록시 환경에서 실제 클라이언트 IP를 기록한다(이슈 #147). 헤더는 신뢰 프록시를 거쳐 온 경우에만 본다(WD-402).
     String ipAddress = clientIpExtractor.extract(request);
     String userAgent = request.getHeader("User-Agent");

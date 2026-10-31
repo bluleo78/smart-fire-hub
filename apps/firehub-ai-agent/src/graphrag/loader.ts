@@ -6,6 +6,7 @@ import neo4j from 'neo4j-driver';
 import { affectedCount } from './graph-mutation-guard.js';
 import { ontologyIdParam } from './verified-ontology-id.js';
 import { getSession } from './neo4j-client.js';
+import { RESERVED_NODE_KEYS } from './reserved-node-keys.js';
 import { ResolvedGraph } from './resolver.js';
 
 // 노드 정체성 필드 — 속성명이 이 중 하나면 `SET n += props`가 정체성 필드를 덮어써 노드가 깨진다.
@@ -14,9 +15,8 @@ import { ResolvedGraph } from './resolver.js';
 // 두 provenance 필드(sourceChunkIds/sourceDatasetIds) 모두 방어 대상에 포함한다.
 // 그래프 노드 속성 중 사용자 입력과 충돌하면 안 되는 예약 키 — identity/provenance 필드.
 // entity-add.ts, property-mutation.ts도 이 상수를 그대로 재사용한다(로컬 복제 금지 — 드리프트 방지).
-export const RESERVED_NODE_KEYS = new Set([
-  'key', 'type', 'name', 'sourceChunkIds', 'sourceDatasetIds', 'schemaVersion', 'ontologyId',
-]);
+// 정의는 reserved-node-keys.ts(그래프 읽기와 함께 쓰려고 순환 import 없이 분리, WD-382).
+export { RESERVED_NODE_KEYS } from './reserved-node-keys.js';
 
 function sanitizeProperties(
   properties: Record<string, number | string> | undefined,
