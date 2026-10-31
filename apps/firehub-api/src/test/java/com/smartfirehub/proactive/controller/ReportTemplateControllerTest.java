@@ -25,6 +25,7 @@ import com.smartfirehub.proactive.dto.CreateReportTemplateRequest;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
 import com.smartfirehub.proactive.dto.UpdateReportTemplateRequest;
+import com.smartfirehub.proactive.service.ReportTemplateGenerationService;
 import com.smartfirehub.proactive.service.ReportTemplateService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.time.LocalDateTime;
@@ -54,6 +55,8 @@ class ReportTemplateControllerTest {
   @Autowired private ObjectMapper objectMapper;
 
   @MockitoBean private ReportTemplateService reportTemplateService;
+  // 컨트롤러가 섹션 생성 서비스(WD-455)도 주입받으므로 슬라이스에 빈이 있어야 한다.
+  @MockitoBean private ReportTemplateGenerationService reportTemplateGenerationService;
   @MockitoBean private PermissionService permissionService;
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
   @MockitoBean private JwtProperties jwtProperties;

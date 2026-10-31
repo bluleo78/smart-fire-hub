@@ -2,10 +2,13 @@ package com.smartfirehub.proactive.controller;
 
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.proactive.dto.CreateReportTemplateRequest;
+import com.smartfirehub.proactive.dto.GenerateReportTemplateRequest;
+import com.smartfirehub.proactive.dto.GenerateReportTemplateResponse;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
 import com.smartfirehub.proactive.dto.UpdateReportTemplateRequest;
 import com.smartfirehub.proactive.dto.UpdateReportTemplateResponse;
+import com.smartfirehub.proactive.service.ReportTemplateGenerationService;
 import com.smartfirehub.proactive.service.ReportTemplateService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -21,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 public class ReportTemplateController {
 
   private final ReportTemplateService reportTemplateService;
+  private final ReportTemplateGenerationService reportTemplateGenerationService;
 
   // 목록 조회는 요약 응답(섹션 전체 JSONB 제외) + page/size 파라미터를 지원한다(#632).
   // 응답은 기존과 동일하게 바로 배열이다(엔벨로프로 감싸지 않음) — firehub-web의 여러 화면과
@@ -54,6 +58,18 @@ public class ReportTemplateController {
     Long userId = (Long) authentication.getPrincipal();
     ReportTemplateResponse response = reportTemplateService.createTemplate(request, userId);
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
+  }
+
+  /**
+   * 목표 기반 섹션 구성 생성(WD-455) — 비즈니스 질문으로 AI 가 섹션 구성을 만들어 돌려준다. 저장하지 않는다(저장·연결은 WD-297 흐름). 권한은 양식 생성과
+   * 같다. AI 실패·규칙 위반 결과는 502 로 알려 화면이 고정 구성으로 대신하게 한다.
+   */
+  @PostMapping("/generate")
+  @RequirePermission("proactive:write")
+  public ResponseEntity<GenerateReportTemplateResponse> generateTemplate(
+      @Valid @RequestBody GenerateReportTemplateRequest request, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    return ResponseEntity.ok(reportTemplateGenerationService.generate(request.question(), userId));
   }
 
   @PutMapping("/{id}")

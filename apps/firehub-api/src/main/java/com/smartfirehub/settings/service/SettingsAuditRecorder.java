@@ -12,12 +12,13 @@ import org.springframework.stereotype.Component;
 
 /**
  * 워크스페이스 AI·메일 설정 변경 감사 기록(WD-465). AiCredentialService(자격증명 등록·수정·삭제)와 SettingsService(AI 동작
- * 설정·SMTP 설정 변경·삭제)가 성공 경로 끝에서 부른다. 자격증명·SMTP 는 데이터가 외부로 나가는 경로(어느 공급자·어느 메일 서버로 보내는가)를 바꾸는 행위라 누가
- * 언제 바꿨는지 남겨야 한다.
+ * 설정·SMTP 설정 변경·삭제), EmbeddingSettingsService(임베딩 설정 저장, WD-469)가 성공 경로 끝에서 부른다. 자격증명·SMTP 는 데이터가
+ * 외부로 나가는 경로(어느 공급자·어느 메일 서버로 보내는가)를 바꾸는 행위라 누가 언제 바꿨는지 남겨야 한다.
  *
  * <p><b>resource</b>: {@code ai_credential}(resourceId 는 슬롯 이름 CHAT/CLASSIFY — {@code
  * ai_provider_hosting} 과 같은 관례), {@code ai_settings}(resourceId {@code ai}), {@code
- * smtp_settings}(resourceId {@code smtp}). 설정은 워크스페이스에 하나뿐이라 id 대신 묶음 이름을 쓴다.
+ * smtp_settings}(resourceId {@code smtp}), {@code embedding_settings}(resourceId {@code embedding},
+ * WD-469). 설정은 워크스페이스에 하나뿐이라 id 대신 묶음 이름을 쓴다.
  *
  * <p><b>action</b>: 기존 값만 쓴다 — 처음 등록은 CREATE, 바뀐 항목이 있는 저장은 UPDATE, 해제는 DELETE.
  *
@@ -41,6 +42,18 @@ public class SettingsAuditRecorder {
 
   /** 워크스페이스 SMTP 설정 감사 resource. */
   public static final String RESOURCE_SMTP_SETTINGS = "smtp_settings";
+
+  /** 테넌트 임베딩 설정(공급자·모델·Base URL·API 키·호스팅) 감사 resource(WD-469). */
+  public static final String RESOURCE_EMBEDDING_SETTINGS = "embedding_settings";
+
+  /** 임베딩 설정 항목 이름 → 설명용 라벨(WD-469). */
+  private static final Map<String, String> EMBEDDING_LABELS =
+      Map.of(
+          "provider", "공급자",
+          "model", "모델",
+          "baseUrl", "기본 URL",
+          "apiKey", "API 키",
+          "hosting", "호스팅 위치");
 
   /** 자격증명 항목 이름 → 설명용 라벨. 라벨이 없는 이름(장래 payload 필드)은 이름 그대로 쓴다. */
   private static final Map<String, String> CREDENTIAL_LABELS =
@@ -176,6 +189,30 @@ public class SettingsAuditRecorder {
         "smtp",
         "SMTP 설정 삭제",
         settingsMetadata("SMTP 설정", clearedKeys));
+  }
+
+  /**
+   * 임베딩 설정 저장 감사(WD-469) — 처음 등록이면 「임베딩 설정 등록 (항목: 공급자·모델·기본 URL)」(CREATE), 아니면 「임베딩 설정 수정 (바뀐 항목:
+   * 모델·API 키)」(UPDATE). 바뀐 항목이 없으면 남기지 않는다. API 키 값은 싣지 않고 항목 이름만 싣는다.
+   *
+   * @param created 저장 전에 읽을 수 있는 임베딩 설정 문서가 없었는가(미설정·손상)
+   * @param changedFields 바뀐 항목 이름(provider·model·baseUrl·apiKey·hosting) — 값은 담지 않는다
+   */
+  public void embeddingSaved(Long userId, boolean created, List<String> changedFields) {
+    if (changedFields.isEmpty()) {
+      return; // 실제 변경 없음 — 감사 생략
+    }
+    String description =
+        created
+            ? "임베딩 설정 등록 (항목: " + labels(changedFields, EMBEDDING_LABELS) + ")"
+            : "임베딩 설정 수정 (바뀐 항목: " + labels(changedFields, EMBEDDING_LABELS) + ")";
+    record(
+        userId,
+        created ? "CREATE" : "UPDATE",
+        RESOURCE_EMBEDDING_SETTINGS,
+        "embedding",
+        description,
+        settingsMetadata("임베딩 설정", changedFields));
   }
 
   /** 슬롯 설명용 라벨. */

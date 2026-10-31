@@ -319,6 +319,9 @@ const RESOURCES = [
   { value: 'ai_credential', label: 'AI 자격증명' },
   { value: 'ai_settings', label: 'AI 설정' },
   { value: 'smtp_settings', label: 'SMTP 설정' },
+  // SettingsAuditRecorder.RESOURCE_EMBEDDING_SETTINGS — 임베딩 설정 등록·수정(resourceId=embedding, WD-469).
+  // 바뀐 항목 이름(provider·model·baseUrl·apiKey·hosting)만 있고 API 키 값은 없다.
+  { value: 'embedding_settings', label: '임베딩 설정' },
   // ChannelSettingsService — 알림 채널 사용 켜기/끄기(STATUS_CHANGE, resourceId=채널 EMAIL/KAKAO/SLACK)(WD-465)
   { value: 'user_channel_preference', label: '알림 채널 설정' },
 ];

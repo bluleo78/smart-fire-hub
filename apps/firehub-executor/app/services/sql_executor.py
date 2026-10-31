@@ -1,5 +1,6 @@
+import logging
 from time import monotonic
-from typing import Optional
+from typing import Callable, Optional
 
 from app.schemas.responses import DbErrorInfo, PgErrorInfo, SqlExecuteResponse, db_error_of
 from app.services.db_utils import (
@@ -15,6 +16,26 @@ from app.validators.sql_validator import (
     validate_pre_statement,
     validate_pre_statement_pairing,
 )
+
+logger = logging.getLogger(__name__)
+
+# 잠금 뒤 중지 확인으로 롤백했을 때의 응답 문구(WD-466). api 는 cancelled 로 판정하고 이 문구는 로그용이다.
+CANCELLED_MESSAGE = "파이프라인 실행이 취소되어 출력 잠금을 얻은 뒤 SQL 을 실행하지 않았습니다"
+
+
+class _StopRequested(Exception):
+    """출력 잠금을 얻은 뒤 파이프라인 중지 요청을 확인했다(WD-466) — 비우기·본문을 보내지 않고 롤백한다."""
+
+
+def _stop_requested_quietly(stop_requested: Callable[[], bool]) -> bool:
+    """중지 확인 — 확인마저 실패하면(api 장애 등) 중지 요청이 없는 것으로 보고 원래대로 실행한다(api 러너의 isStopRequestedQuietly 와
+    같은 판단: 확인 실패로 정상 실행을 실패시키지 않는다)."""
+    try:
+        return bool(stop_requested())
+    except Exception:  # noqa: BLE001 — 어떤 실패든 실행을 막지 않는다
+        logger.warning("파이프라인 중지 요청 확인 실패 — 그대로 실행합니다", exc_info=True)
+        return False
+
 
 # 출력 테이블 단위 직렬화 잠금 문장(#731) — 트랜잭션 범위 advisory 잠금. 키는 선행 문장에 적힌 한정 이름("<스키마>"."<테이블>").
 OUTPUT_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))"
@@ -58,12 +79,17 @@ def _failed(
 def execute_sql(
     query: str, conn, pre_statements=(), timeout_seconds: Optional[int] = None,
     *, default_timeout_seconds: int, pre_statement_timeout_seconds: int,
+    stop_requested: Optional[Callable[[], bool]] = None,
 ) -> SqlExecuteResponse:
     """``default_timeout_seconds`` 는 요청에 제한이 없을 때 쓸 값 — 기본값은 ``Settings.sql_statement_timeout_seconds``
     한 곳뿐이라 여기서는 기본값을 두지 않고 라우터가 설정값을 넘긴다.
 
     ``pre_statement_timeout_seconds`` 는 선행 문장 **전체** 합계 상한(WD-262, ``Settings.sql_pre_statement_timeout_seconds``) —
-    같은 이유로 라우터가 넘긴다. 사용자 시간 제한(``timeout_seconds``)은 본문에만 걸린다."""
+    같은 이유로 라우터가 넘긴다. 사용자 시간 제한(``timeout_seconds``)은 본문에만 걸린다.
+
+    ``stop_requested`` 는 파이프라인 중지 요청 확인(WD-466, 요청에 실행 id 가 있을 때 라우터가 넘긴다). 출력 잠금을 얻은 **직후**
+    부른다 — 잠금 대기는 api 러너의 「SQL 실행 직전」 체크포인트보다 뒤라 그 사이 들어온 취소를 api 가 볼 수 없었고, 잠금을 얻은 뒤
+    사용자 SQL 이 끝까지 돌아 출력을 다시 교체했다. 중지면 비우기·본문을 보내지 않고 롤백해 ``cancelled=True`` 로 답한다."""
     # 본 쿼리와 선행 문장(pre-statement) 모두 실행 전에 검증한다.
     # pre-statement 는 화이트리스트 기반 validate_pre_statement 로 본 쿼리보다 엄격하게 검사한다.
     try:
@@ -111,6 +137,9 @@ def execute_sql(
                 # 각 문장의 시간 초과 판정은 그 문장에 건 남은 예산과 그 문장의 경과 시간으로 한다(WD-261 §5.2).
                 limit = arm_pre_statement_budget(cursor, pre_started_at, pre_statement_timeout_seconds)
                 running.execute(cursor, limit, OUTPUT_LOCK_SQL, (output_lock_key(stmt),))
+                # 잠금 대기 중에 들어온 취소(WD-466) — 비우기·사용자 SQL 전에 확인한다. 중지면 아래 except 가 롤백한다(출력 그대로).
+                if stop_requested is not None and _stop_requested_quietly(stop_requested):
+                    raise _StopRequested()
                 limit = arm_pre_statement_budget(cursor, pre_started_at, pre_statement_timeout_seconds)
                 running.execute(cursor, limit, stmt)
             timeout_message = statement_timeout_message("실행", effective_timeout)
@@ -144,6 +173,12 @@ def execute_sql(
                 )
     except Exception as exc:
         conn.rollback()
+        if isinstance(exc, _StopRequested):
+            # 실패가 아니라 취소다 — 구조화 오류 없이 cancelled 만 싣는다(api 가 스텝을 CANCELLED 로 기록).
+            return SqlExecuteResponse(
+                success=False, rows=None, columns=None, row_count=0, execution_log="",
+                error=CANCELLED_MESSAGE, cancelled=True,
+            )
         if isinstance(exc, PreStatementBudgetExhausted) or running.timed_out(exc):
             # 우리가 건 제한에 걸렸다 — 선행 문장이면 합계 상한 초과(예산 소진으로 다음 문장을 못 보냈거나 선행 문장이 그 문장의 남은 예산만큼
             # 돌고 취소됨, 본문은 실행되지 않았고 위 rollback 으로 선행 문장도 취소됐다), 본문이면 본문 제한 초과다. 문구는 db-executor 와 같다.

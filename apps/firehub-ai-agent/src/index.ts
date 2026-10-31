@@ -6,6 +6,7 @@ import proactiveRouter from './routes/proactive.js';
 import chartRenderRouter from './routes/chart-render.js';
 import pdfRouter from './routes/pdf.js';
 import graphRouter from './routes/graph.js';
+import templateGenerateRouter from './routes/template-generate.js';
 import { DEFAULT_PORT } from './constants.js';
 
 dotenv.config({ path: '.env.local' });
@@ -21,6 +22,7 @@ app.use('/agent', proactiveRouter);
 app.use('/agent', chartRenderRouter);
 app.use('/agent', pdfRouter);
 app.use('/agent', graphRouter); // 온톨로지 시각화 읽기 엔드포인트
+app.use('/agent', templateGenerateRouter); // 목표 기반 리포트 양식 섹션 생성(WD-455)
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Unhandled error:', err);

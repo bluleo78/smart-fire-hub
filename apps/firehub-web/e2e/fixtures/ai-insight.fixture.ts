@@ -76,11 +76,20 @@ export async function setupJobDetailMocks(page: Page, jobId = 1) {
 
 /**
  * 새 작업 생성 페이지 API 모킹
- * - 템플릿 목록만 모킹한다 (새 잡이므로 잡 상세 불필요).
+ * - 템플릿 목록을 모킹한다 (새 잡이므로 잡 상세 불필요).
+ * - 목표 기반 섹션 구성 AI 생성(WD-455)은 기본으로 실패(502)시킨다 — 화면이 고정 4개 구성으로 대신하므로, 고정 구성을 전제로 한 기존
+ *   목표 기반 테스트가 그대로 결정적으로 돈다. AI 성공 경로를 볼 테스트는 이 뒤에 같은 경로를 다시 모킹한다(나중 등록이 우선).
  */
 export async function setupNewJobMocks(page: Page) {
   await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
   await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+  await mockApi(
+    page,
+    'POST',
+    '/api/v1/proactive/templates/generate',
+    { status: 502, message: 'AI 섹션 구성 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.' },
+    { status: 502 },
+  );
 }
 
 /**

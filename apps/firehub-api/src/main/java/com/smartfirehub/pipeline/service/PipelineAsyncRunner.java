@@ -236,7 +236,10 @@ public class PipelineAsyncRunner {
     // 협조적 취소 확인(WD-153) — 체크포인트마다 DB 의 취소 요청을 PK 로 읽는다. 여러 API 인스턴스 중 어디서 취소를 받아도 보이고, 실행기에는 인자로
     // 넘겨 페이지·배치·재시도 대기 사이에서도 같은 판정을 쓴다.
     // WD-230: 취소 요청뿐 아니라 실행이 외부에서 마감된 경우(중단 정리기가 FAILED 로 만듦)에도 다음 체크포인트에서 멈춘다.
-    ExecutionCancelCheck cancel = () -> executionRepository.isStopRequested(executionId);
+    // WD-466: 실행 id 를 실어 외부 실행기가 출력 잠금을 얻은 뒤 사용자 SQL 전에 같은 판정을 api 에 되물을 수 있게 한다.
+    ExecutionCancelCheck cancel =
+        ExecutionCancelCheck.of(
+            executionId, () -> executionRepository.isStopRequested(executionId));
 
     try {
       // 실행 상태를 RUNNING으로 업데이트. 조건부 쓰기다(끝나지 않은 실행만) — 대기 중에 취소돼 이미 CANCELLED 인 실행을 되살리지 않는다.
@@ -896,7 +899,13 @@ public class PipelineAsyncRunner {
           // 취소 체크포인트(WD-153) — SQL 실행 직전. 아직 출력에 아무것도 쓰지 않았다(REPLACE 비우기도 이 문장과 같은 트랜잭션이다).
           cancel.checkpoint(0, false);
           if (executorEnabled) {
-            var result = executorClient.executeSql(wrapped.sql(), preStatements);
+            // 실행 id 를 넘겨 실행기가 출력 잠금을 얻은 뒤 사용자 SQL 전에 취소를 되묻게 한다(WD-466 — 잠금 대기 중 취소).
+            var result =
+                executorClient.executeSql(wrapped.sql(), preStatements, cancel.executionId());
+            // 실행기가 잠금 뒤 취소를 확인해 롤백했다(WD-466) — 실패가 아니라 취소다. 출력은 손대지 않았다.
+            if (result.cancelled()) {
+              throw new PipelineExecutionCancelledException(0, false);
+            }
             if (!result.success()) {
               // MERGE 면 원본 키 중복 등을 PK 이름으로 안내하고, 아니면 공통 실행 실패 문구다(번역은 방언).
               throw pgDialect.translateExecutorFailure(
@@ -905,7 +914,8 @@ public class PipelineAsyncRunner {
             executionLog = result.executionLog();
           } else {
             try {
-              executionLog = sqlExecutor.execute(preStatements, wrapped.sql());
+              // 취소 확인을 넘겨 출력 잠금을 얻은 직후에도 취소를 확인하게 한다(WD-466 — 잠금 대기 중 취소).
+              executionLog = sqlExecutor.execute(preStatements, wrapped.sql(), cancel);
             } catch (ScriptExecutionException e) {
               // 번역할 MERGE 오류가 아니면 방언이 같은 예외를 그대로 돌려준다(예전 rethrow 와 같다).
               throw pgDialect.translateLocalFailure(e, wrapped.mergePkColumns());
@@ -920,13 +930,18 @@ public class PipelineAsyncRunner {
           // 취소 체크포인트(WD-153) — 사용자 DML 실행 직전.
           cancel.checkpoint(0, false);
           if (executorEnabled) {
-            var result = executorClient.executeSql(sql, preStatements);
+            // 잠금 대기 중 취소(WD-466) — 위 SELECT 적재 분기와 같다.
+            var result = executorClient.executeSql(sql, preStatements, cancel.executionId());
+            if (result.cancelled()) {
+              throw new PipelineExecutionCancelledException(0, false);
+            }
             if (!result.success()) {
               throw pgDialect.translateExecutorFailure(result.pgError(), result.error(), null);
             }
             executionLog = result.executionLog();
           } else {
-            executionLog = sqlExecutor.execute(preStatements, sql);
+            // 잠금 대기 중 취소(WD-466) — 위 SELECT 적재 분기와 같다.
+            executionLog = sqlExecutor.execute(preStatements, sql, cancel);
           }
         }
       } else if ("PYTHON".equals(step.scriptType())) {

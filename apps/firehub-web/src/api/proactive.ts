@@ -53,6 +53,11 @@ export interface TemplateSection {
   children?: TemplateSection[];  // 하위 섹션 (group 타입만)
 }
 
+/** 목표 기반 섹션 구성 생성 응답(WD-455) — 서버가 양식 섹션 검사(WD-298)를 통과시킨 구성만 담는다. */
+export interface GenerateTemplateResponse {
+  sections: TemplateSection[];
+}
+
 // === Anomaly Detection Types ===
 
 export type TriggerType = 'SCHEDULE' | 'ANOMALY' | 'BOTH';
@@ -340,6 +345,10 @@ export const proactiveApi = {
     client.put<UpdateReportTemplateResponse>(`/proactive/templates/${id}`, data),
   deleteTemplate: (id: number) =>
     client.delete(`/proactive/templates/${id}`),
+  // 목표 기반 섹션 구성 AI 생성(WD-455). 저장하지 않고 구성만 돌려준다 — 저장·연결은 작업 생성 때(WD-297).
+  // 화면이 무한정 멈추지 않게 상한을 둔다: 서버의 ai-agent 호출 상한(75초)보다 조금 길게 잡아 서버 쪽 사유가 먼저 오게 한다.
+  generateTemplate: (question: string) =>
+    client.post<GenerateTemplateResponse>('/proactive/templates/generate', { question }, { timeout: 90_000 }),
 
   // Executions
   downloadExecutionPdf: (jobId: number, executionId: number) =>

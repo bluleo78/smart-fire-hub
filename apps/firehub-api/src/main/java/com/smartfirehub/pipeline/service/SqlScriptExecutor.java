@@ -3,7 +3,9 @@ package com.smartfirehub.pipeline.service;
 import com.smartfirehub.global.config.TenantPipelineDataSourceRegistry;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
+import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.util.List;
 import java.util.Optional;
@@ -120,6 +122,22 @@ public class SqlScriptExecutor {
    * @param scriptContent 본 SQL 스크립트
    */
   public String execute(List<String> preStatements, String scriptContent) {
+    return execute(preStatements, scriptContent, ExecutionCancelCheck.NONE);
+  }
+
+  /**
+   * {@link #execute(List, String)} 에 <b>잠금 뒤 취소 확인</b>을 더한 판(WD-466) — 파이프라인 러너가 실행의 취소 확인을 넘겨 부른다.
+   *
+   * <p><b>왜 필요한가.</b> 출력 잠금({@link #OUTPUT_LOCK_SQL})은 이 트랜잭션의 첫 문장이라, 같은 출력을 쓰는 다른 실행이 잠금을 쥐고 있으면
+   * 여기서 기다린다. 러너의 「SQL 실행 직전」 체크포인트는 이 대기보다 앞이라 대기 중에 들어온 취소를 보지 못했고, 잠금을 얻은 뒤 사용자 SQL 을 끝까지 돌려 출력을
+   * 다시 교체했다. 그래서 잠금을 얻은 직후·비우기와 사용자 SQL 전에 취소를 다시 확인한다 — 취소면 {@link
+   * PipelineExecutionCancelledException} 을 트랜잭션 안에서 던져 롤백하므로 출력은 손대지 않은 채 남고 잠금도 풀린다. 러너는 이 예외로 스텝을
+   * CANCELLED 로 기록한다. 선행 문장이 없으면(APPEND·MERGE) 잠금도 대기도 없으므로 확인하지 않는다(러너 체크포인트로 충분하다).
+   *
+   * @param cancel 협조적 취소 확인 — 각 출력 잠금을 얻은 직후 확인한다
+   */
+  public String execute(
+      List<String> preStatements, String scriptContent, ExecutionCancelCheck cancel) {
     // 선행 문장은 DataSchema.current() 로 얻은 "현재 테넌트 스키마" 를 대상으로 하는 DELETE 전체
     // 삭제문과, 그 뒤에 정확히 " WHERE false" 만 붙은 잠금 전용 문장(WD-426)만 허용한다 — 다른 WHERE 절도, 다른 스키마도,
     // 세미콜론으로 이어붙인 두 번째 문장도 이 접두어·접미사·패턴 조합을 통과할 수 없다(접미사는 한 번만 뗀다).
@@ -192,6 +210,8 @@ public class SqlScriptExecutor {
                     // 출력 테이블 단위 직렬화(#731) — 비우기(DELETE) 전에 이 테이블의 advisory 잠금을
                     // 잡는다. 이유는 OUTPUT_LOCK_SQL 의 Javadoc 참조.
                     cfg.dsl().fetch(OUTPUT_LOCK_SQL, outputLockKey(preStatement));
+                    // 잠금 대기 중에 들어온 취소(WD-466) — 비우기·사용자 SQL 전에 확인한다. 던지면 이 트랜잭션이 롤백돼 출력은 그대로다.
+                    cancel.checkpoint(0, false);
                     cfg.dsl().execute(preStatement);
                   }
                   // 판정·검증한 문자열을 바이트 그대로 보낸다(최종 리뷰 I1 — 정적 Statement + JDBC 이스케이프 끔, jOOQ 템플릿
@@ -204,6 +224,12 @@ public class SqlScriptExecutor {
           });
       return "SQL executed successfully";
     } catch (Exception e) {
+      // 잠금 뒤 취소(WD-466)는 실패가 아니다 — 실행 실패 문구로 감싸지 않고 그대로 올려 러너가 CANCELLED 로 기록하게 한다.
+      PipelineExecutionCancelledException cancelled = PipelineExecutionCancelledException.findIn(e);
+      if (cancelled != null) {
+        log.info("SQL 스텝이 출력 잠금을 얻은 뒤 취소 요청을 확인해 롤백했습니다");
+        throw cancelled;
+      }
       log.error("SQL execution failed", e);
       // 저장 문구는 "SQL 실행 실패: 한국어 안내\n원인: PG 원문"(WD-111). e.getMessage() 는 jOOQ 가 실행한 SQL 전체
       // (러너가 감싼 INSERT INTO … / MERGE …)를 "SQL [...]" 로 메아리하므로 쓰지 않는다.

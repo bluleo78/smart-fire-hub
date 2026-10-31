@@ -22,10 +22,17 @@ import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
+import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,6 +42,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.junit.jupiter.api.AfterAll;
@@ -43,6 +51,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.util.AopTestUtils;
@@ -89,6 +99,13 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
   @MockitoSpyBean private SqlScriptExecutor sqlScriptExecutor;
 
   @Autowired private DSLContext dsl;
+  @Autowired private DataSource dataSource;
+
+  @LocalServerPort private int port;
+
+  @Value("${app.executor.internal-token}")
+  private String executorToken;
+
   @Autowired private DatasetService datasetService;
   @Autowired private PipelineService pipelineService;
   @Autowired private PipelineExecutionService executionService;
@@ -235,14 +252,28 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
             .id();
 
     // 문장 실행이 시작되는 순간(체크포인트 통과 뒤)을 잡는 래치 — 고정 시간 대기는 부하가 크면 체크포인트 통과 전에 취소해 스텝까지 CANCELLED 가 됐다.
+    // WD-466 부터 REPLACE 는 출력 잠금을 얻은 직후에도 취소를 확인하므로, 그 확인까지 지난 뒤에 래치를 연다(아니면 그 확인이 취소를 잡는다).
     CountDownLatch statementStarted = new CountDownLatch(1);
     org.mockito.Mockito.doAnswer(
             invocation -> {
-              statementStarted.countDown();
-              return invocation.callRealMethod();
+              if (invocation.getArgument(2) instanceof LatchingCancel) {
+                return invocation.callRealMethod();
+              }
+              List<String> pre = invocation.getArgument(0);
+              LatchingCancel wrapped =
+                  new LatchingCancel(invocation.getArgument(2), statementStarted);
+              // 선행 문장이 없으면 잠금 뒤 확인도 없다 — 바로 연다.
+              if (pre.isEmpty()) {
+                statementStarted.countDown();
+              }
+              return ((SqlScriptExecutor) invocation.getMock())
+                  .execute(pre, invocation.getArgument(1), wrapped);
             })
         .when(sqlScriptExecutor)
-        .execute(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.anyString());
+        .execute(
+            org.mockito.ArgumentMatchers.anyList(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any());
 
     Long executionId = executionService.executePipeline(pipelineId, userId);
     // 「SQL 실행 직전」 체크포인트를 지나 문장이 돌기 시작한 뒤에 취소한다 — 그 전이면 체크포인트가 잡아 스텝도 CANCELLED 다. 문장은 수 초 걸려
@@ -258,6 +289,119 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
     assertThat(detail.cancelRequestedAt()).isNotNull();
     // 이미 시작한 문장은 끝까지 돌았다 — 스텝 기록은 그대로 완료다(확인 창 안내와 같다).
     assertThat(stepRows(executionId).get("slow").status()).isEqualTo("COMPLETED");
+  }
+
+  /**
+   * 출력 잠금을 기다리는 동안 취소(WD-466): 같은 출력을 쓰는 앞 실행(여기서는 잠금을 쥔 연결로 흉내 낸다)이 끝나기를 기다리는 사이 들어온 취소는 러너의 「SQL
+   * 실행 직전」 체크포인트보다 뒤라 보이지 않았고, 잠금을 얻은 뒤 사용자 SQL 이 끝까지 돌아 출력을 다시 교체했다. 잠금을 얻은 직후 취소를 확인해 스텝·실행을
+   * CANCELLED 로 마감하고 출력은 앞 실행의 결과 그대로여야 한다.
+   */
+  @Test
+  void 출력_잠금_대기_중에_취소하면_잠금을_얻은_뒤_SQL_을_돌리지_않고_출력이_그대로다() throws Exception {
+    dsl.execute("INSERT INTO " + out() + " (name) VALUES ('from_a1'), ('from_a2')");
+    PipelineStepRequest replace =
+        new PipelineStepRequest(
+            "replace",
+            "출력 교체",
+            "SQL",
+            "SELECT 'from_b'::text AS name",
+            outDatasetId,
+            null,
+            List.of(),
+            "REPLACE");
+    pipelineId =
+        pipelineService
+            .createPipeline(
+                new CreatePipelineRequest(
+                    "WD466 Pipeline " + suffix, "잠금 대기 중 취소", List.of(replace)),
+                userId)
+            .id();
+
+    // 앞 실행 A 흉내 — 같은 키의 트랜잭션 범위 출력 잠금을 쥐고 놓지 않는다(러너·실행기와 같은 키 식).
+    String lockKey = SqlScriptExecutor.outputLockKey(OutputClearStatement.deleteAll(outTable));
+    try (Connection holder = dataSource.getConnection()) {
+      holder.setAutoCommit(false);
+      try (PreparedStatement ps = holder.prepareStatement(SqlScriptExecutor.OUTPUT_LOCK_SQL)) {
+        ps.setString(1, lockKey);
+        ps.execute();
+      }
+      try {
+        Long executionId = executionService.executePipeline(pipelineId, userId);
+        // 실행 B 가 출력 잠금을 기다리기 시작할 때까지 — 체크포인트를 지나 잠금 문장에서 막혔다.
+        awaitAdvisoryLockWaiter();
+
+        CancelExecutionResponse accepted =
+            pipelineService.cancelExecution(pipelineId, executionId, userId);
+        assertThat(accepted.status()).isEqualTo("RUNNING");
+
+        // 앞 실행이 끝난다(잠금 해제) — B 가 잠금을 얻는다.
+        holder.rollback();
+
+        ExecutionDetailResponse detail = awaitTerminal(executionId);
+        assertThat(detail.status()).isEqualTo("CANCELLED");
+        StepRow step = stepRows(executionId).get("replace");
+        assertThat(step.status()).isEqualTo("CANCELLED");
+        assertThat(step.error()).contains("출력 데이터는 바뀌지 않았습니다");
+      } finally {
+        holder.rollback();
+      }
+    }
+    // B 의 SQL 은 돌지 않았다 — 출력은 앞 실행의 결과 그대로다.
+    List<String> names =
+        dsl.fetch("SELECT name FROM " + out() + " ORDER BY name").getValues(0, String.class);
+    assertThat(names).containsExactly("from_a1", "from_a2");
+  }
+
+  /**
+   * 실행기 되묻기 엔드포인트(WD-466): Python 실행기가 출력 잠금을 얻은 뒤 사용자 SQL 전에 부른다. 실행기 토큰으로만 답하고, 취소 요청 전후의 판정이 러너와
+   * 같으며, 다른 테넌트로 물으면 실행이 보이지 않아 「중지」로 답한다(출력을 건드리지 않는 쪽).
+   */
+  @Test
+  void 실행기_중지_확인_엔드포인트는_취소_요청을_그대로_답한다() throws Exception {
+    createApiPipeline("APPEND");
+    Long executionId = executionRepository.createExecution(pipelineId, userId, "MANUAL", null);
+    inTenantFixture(
+        () ->
+            dsl.execute(
+                "UPDATE pipeline_execution SET status = 'RUNNING', started_at = now() WHERE id = ?",
+                executionId));
+
+    String auth = "Internal " + executorToken;
+    assertThat(getStopRequested(DEFAULT_TEST_TENANT_ID, executionId, "Internal wrong").statusCode())
+        .isEqualTo(401);
+    HttpResponse<String> before = getStopRequested(DEFAULT_TEST_TENANT_ID, executionId, auth);
+    assertThat(before.statusCode()).isEqualTo(200);
+    assertThat(before.body()).contains("\"stopRequested\":false");
+
+    pipelineService.cancelExecution(pipelineId, executionId, userId);
+    assertThat(getStopRequested(DEFAULT_TEST_TENANT_ID, executionId, auth).body())
+        .contains("\"stopRequested\":true");
+
+    // 다른 테넌트로 물으면 RLS 로 실행이 보이지 않는다 — 판정 규칙상 중지.
+    otherTenantId = TenantRlsTestSupport.createActiveTenant(dsl, "wd466");
+    Long fresh = executionRepository.createExecution(pipelineId, userId, "MANUAL", null);
+    assertThat(getStopRequested(DEFAULT_TEST_TENANT_ID, fresh, auth).body())
+        .contains("\"stopRequested\":false");
+    assertThat(getStopRequested(otherTenantId, fresh, auth).body())
+        .contains("\"stopRequested\":true");
+  }
+
+  private HttpResponse<String> getStopRequested(long tenantId, long executionId, String auth)
+      throws Exception {
+    HttpRequest req =
+        HttpRequest.newBuilder(
+                URI.create(
+                    "http://localhost:"
+                        + port
+                        + "/internal/executor/tenants/"
+                        + tenantId
+                        + "/pipeline-executions/"
+                        + executionId
+                        + "/stop-requested"))
+            .header("Authorization", auth)
+            .GET()
+            .build();
+    return HttpClient.newHttpClient().send(req, HttpResponse.BodyHandlers.ofString());
   }
 
   // ------------------------------------------------------------------ //
@@ -471,6 +615,36 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
       sleep(100);
     }
     throw new IllegalStateException("실행이 끝나지 않았다: " + detail);
+  }
+
+  /** 부여되지 않은(기다리는) advisory 잠금 요청이 생길 때까지 기다린다(WD-466 — 실행이 출력 잠금에서 막혔다는 신호). */
+  private void awaitAdvisoryLockWaiter() {
+    long deadline = System.currentTimeMillis() + 30_000;
+    while (System.currentTimeMillis() < deadline) {
+      if (dsl.fetchCount(
+              dsl.selectOne().from("pg_locks").where("locktype = 'advisory' AND NOT granted"))
+          > 0) {
+        return;
+      }
+      sleep(50);
+    }
+    throw new IllegalStateException("출력 잠금을 기다리는 실행이 없다");
+  }
+
+  /**
+   * 잠금 뒤 취소 확인이 지나간 순간을 알리는 취소 확인(WD-411 테스트용) — 실제 판정에 위임하고, 확인 결과가 「취소 아님」이면 래치를 연다. 그 뒤에 취소해야 이미
+   * 시작한 문장의 결과가 남는 경우를 재현한다.
+   */
+  private record LatchingCancel(ExecutionCancelCheck delegate, CountDownLatch latch)
+      implements ExecutionCancelCheck {
+    @Override
+    public boolean isCancelRequested() {
+      boolean requested = delegate.isCancelRequested();
+      if (!requested) {
+        latch.countDown();
+      }
+      return requested;
+    }
   }
 
   /** 래치가 열릴 때까지 최대 60초 기다린다 — 부하가 커도 문장이 시작은 한다. */

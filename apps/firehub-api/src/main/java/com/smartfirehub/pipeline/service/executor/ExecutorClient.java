@@ -228,12 +228,32 @@ public class ExecutorClient {
    * @param preStatements 본 쿼리보다 먼저, 같은 트랜잭션으로 실행할 문장 목록(순서 보존). 없으면 빈 목록.
    */
   public SqlExecuteResult executeSql(String query, List<String> preStatements) {
+    return executeSql(query, preStatements, null);
+  }
+
+  /**
+   * {@link #executeSql(String, List)} 에 파이프라인 실행 id 를 더한 판(WD-466).
+   *
+   * <p><b>왜.</b> 실행기는 선행 문장 앞에 출력 잠금을 잡고, 같은 출력을 쓰는 다른 실행이 끝날 때까지 기다린다. 그 대기 중에 들어온 취소는 api 러너의
+   * 「SQL 실행 직전」 체크포인트보다 뒤라 보이지 않았고, 잠금을 얻은 뒤 사용자 SQL 이 끝까지 돌아 출력을 다시 교체했다. 실행 id 를 실으면 실행기가 잠금을 얻은
+   * 직후 api({@code /internal/executor/tenants/{tenantId}/pipeline-executions/{id}/stop-requested})에
+   * 취소 여부를 되묻고, 취소면 롤백한 뒤 {@link SqlExecuteResult#cancelled()} 로 알린다.
+   *
+   * @param executionId 파이프라인 실행 id — null 이면 싣지 않는다(되묻지 않는다, 기존 동작)
+   */
+  public SqlExecuteResult executeSql(String query, List<String> preStatements, Long executionId) {
+    Map<String, Object> request = new LinkedHashMap<>();
+    request.put("query", query);
+    request.put("preStatements", preStatements);
+    if (executionId != null) {
+      request.put("executionId", executionId);
+    }
     return guardSize(
         () ->
             webClient
                 .post()
                 .uri("/execute/sql")
-                .bodyValue(withTenant(Map.of("query", query, "preStatements", preStatements)))
+                .bodyValue(withTenant(request))
                 .retrieve()
                 .bodyToMono(SqlExecuteResult.class)
                 .timeout(sqlWait(preStatements))
@@ -315,6 +335,8 @@ public class ExecutorClient {
    *     그때는 {@code error} 문자열만 쓴다.
    * @param dbError 실패가 Tibero 등 JDBC 저장소 오류일 때의 코드·메시지(firehub-db-executor 응답의 {@code db_error},
    *     WD-77). PG 실행기(firehub-executor)는 이 필드를 보내지 않으므로 PG 경로에서는 언제나 null 이다.
+   * @param cancelled 실행기가 출력 잠금을 얻은 뒤 파이프라인 취소 요청을 확인해 롤백했는가(WD-466) — true 면 출력은 손대지 않았고 러너는 스텝을
+   *     실패가 아니라 CANCELLED 로 기록한다. 실행 id 를 싣지 않은 요청·db-executor 응답에는 없어 false 다.
    */
   public record SqlExecuteResult(
       boolean success,
@@ -324,7 +346,25 @@ public class ExecutorClient {
       @JsonProperty("execution_log") String executionLog,
       String error,
       @JsonProperty("pg_error") PgError pgError,
-      @JsonProperty("db_error") DbError dbError) {}
+      @JsonProperty("db_error") DbError dbError,
+      boolean cancelled) {
+
+    /**
+     * 취소 표시가 없는 결과(기존 8필드 모양) — db-executor·테스트 등 취소를 되묻지 않는 경로가 쓴다. 응답에 {@code cancelled} 가 없으면
+     * 역직렬화도 false 다.
+     */
+    public SqlExecuteResult(
+        boolean success,
+        List<Map<String, Object>> rows,
+        List<String> columns,
+        int rowCount,
+        String executionLog,
+        String error,
+        PgError pgError,
+        DbError dbError) {
+      this(success, rows, columns, rowCount, executionLog, error, pgError, dbError, false);
+    }
+  }
 
   /**
    * JDBC 저장소(Tibero) 오류 — db-executor 가 문장 실행 중 난 {@code SQLException} 의 {@code getErrorCode()} 와

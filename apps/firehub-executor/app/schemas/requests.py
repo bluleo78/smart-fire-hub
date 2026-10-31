@@ -43,6 +43,9 @@ class SqlExecuteRequest(TenantScopedRequest):
     # (Settings.sql_pre_statement_timeout_seconds, 기본 1800초 — 첫 선행 문장 시작부터 재서 문장 직전마다 남은 시간을 건다, WD-262).
     # 없으면 기존 동작 그대로. 0 이하는 PG 에서 '제한 없음' 이 되어 의도와 반대라 422 로 거부한다(db-executor 도 거부).
     timeout_seconds: Optional[int] = Field(default=None, gt=0, strict=True)
+    # 파이프라인 실행 id(선택, WD-466). 있으면 출력 잠금을 얻은 직후·사용자 SQL 전에 api 에 이 실행의 중지 요청을 되묻고, 중지면
+    # 롤백한 뒤 cancelled=True 로 답한다 — 잠금 대기 중에 들어온 취소를 api 러너의 체크포인트가 볼 수 없어서다. 없으면 되묻지 않는다.
+    execution_id: Optional[int] = Field(default=None, alias="executionId", gt=0, strict=True)
 
 
 class PythonExecuteRequest(TenantScopedRequest):
