@@ -16,6 +16,7 @@ import com.smartfirehub.analytics.dto.UpdateWidgetLayoutRequest;
 import com.smartfirehub.analytics.dto.UpdateWidgetRequest;
 import com.smartfirehub.analytics.exception.ChartNotFoundException;
 import com.smartfirehub.analytics.exception.DashboardNotFoundException;
+import com.smartfirehub.analytics.exception.WidgetNotFoundException;
 import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
@@ -49,9 +50,6 @@ public class AnalyticsDashboardService {
   // 위젯 한도는 그리드 좌표 상한(DashboardGridLimits.MAX_POSITION_Y)의 근거이기도 해서 한 곳에 둔다(WD-193).
   private static final int MAX_WIDGETS_PER_DASHBOARD =
       DashboardGridLimits.MAX_WIDGETS_PER_DASHBOARD;
-
-  /** 이 대시보드에 없는 위젯을 단건 수정·삭제하려 할 때(400) — 테스트도 이 상수로 단언한다(WD-240). */
-  public static final String WIDGET_NOT_FOUND_MESSAGE = "위젯을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.";
 
   private final AnalyticsDashboardRepository dashboardRepository;
   private final DashboardWidgetRepository widgetRepository;
@@ -526,7 +524,7 @@ public class AnalyticsDashboardService {
         .findByIdForOwner(dashboardId, userId)
         .orElseThrow(() -> new DashboardNotFoundException());
 
-    widgetRepository.findById(widgetId, dashboardId).orElseThrow(() -> widgetNotFound());
+    widgetRepository.findById(widgetId, dashboardId).orElseThrow(WidgetNotFoundException::new);
 
     widgetRepository.update(widgetId, req);
     return getById(dashboardId, userId);
@@ -539,21 +537,10 @@ public class AnalyticsDashboardService {
         .orElseThrow(() -> new DashboardNotFoundException());
 
     boolean deleted = widgetRepository.deleteById(widgetId, dashboardId);
+    // WD-367: 다른 탭·사용자가 먼저 지운 위젯은 404 로 답한다 — 웹은 서버 목록을 다시 읽어 화면에서도 뺀다
     if (!deleted) {
-      throw widgetNotFound();
+      throw new WidgetNotFoundException();
     }
-  }
-
-  /**
-   * 이 대시보드에 없는 위젯 id 거절(400) — 단건 수정·삭제 공용.
-   *
-   * <p>WD-196: 영어 원문(「Widget not found: 1 in dashboard 3」)이 토스트로 그대로 보였다. 한국어로 바꾸고 대시보드 id 는 빼서, 일괄
-   * 배치 저장의 「이 대시보드에 없는 위젯이 포함되어 있습니다」와 같은 결로 맞춘다.
-   *
-   * <p>WD-240: 위젯 id 도 문구에서 뺐다 — 다른 not-found 문구(「…을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.」)와 형식을 맞춘다.
-   */
-  private static IllegalArgumentException widgetNotFound() {
-    return new IllegalArgumentException(WIDGET_NOT_FOUND_MESSAGE);
   }
 
   /**
@@ -563,8 +550,9 @@ public class AnalyticsDashboardService {
    * 크기를 바꿀 수 있었다. 이제 쓰기 전에 요청한 위젯 id 가 모두 이 대시보드 소속인지 먼저 확인하고, 하나라도 아니면 아무것도 쓰지 않고 전체를 거절한다(일부만
    * 반영하지 않는다).
    *
-   * <p>거절은 단건 수정·삭제({@code /widgets/{wId}})와 같은 400(IllegalArgumentException) 관례를 따른다. 없는 위젯 id 와
-   * 남의 대시보드 위젯 id 는 같은 문구로 응답해, 다른 대시보드에 그 위젯이 있는지 드러내지 않는다.
+   * <p>거절은 400(IllegalArgumentException)이다. 없는 위젯 id 와 남의 대시보드 위젯 id 는 같은 문구로 응답해, 다른 대시보드에 그 위젯이
+   * 있는지 드러내지 않는다. 단건 수정·삭제({@code /widgets/{wId}})는 WD-367 부터 404(WidgetNotFoundException)로 답하지만,
+   * 일괄 저장은 여러 위젯 중 일부가 잘못된 요청이라 400 을 유지한다(웹 편집 화면은 「완료」 때 단건 수정만 쓴다).
    */
   @Transactional
   public void updateWidgetLayout(Long dashboardId, UpdateWidgetLayoutRequest req, Long userId) {

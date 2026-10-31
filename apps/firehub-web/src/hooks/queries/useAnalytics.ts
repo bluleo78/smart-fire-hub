@@ -2,6 +2,7 @@ import { queryOptions,useInfiniteQuery,useMutation, useQueries, useQuery, useQue
 import { useState } from 'react';
 
 import { analyticsApi } from '../../api/analytics';
+import { isNotFoundError } from '../../lib/api-error';
 import { fetchAllPages } from '../../lib/fetch-all-pages';
 import type {
   AddWidgetRequest,
@@ -408,6 +409,13 @@ export function useAddWidget(dashboardId: number) {
       analyticsApi.addWidget(dashboardId, data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['analytics', 'dashboards', dashboardId] });
+    },
+    // WD-367: 다른 곳에서 지운 차트(404)면 차트 고르기 목록을 다시 읽어 그 차트를 뺀다 —
+    // 무한 스크롤 목록만 무효화한다(['analytics','charts'] 전체면 위젯마다 차트 데이터 쿼리까지 다시 돈다).
+    onError: (error) => {
+      if (isNotFoundError(error)) {
+        queryClient.invalidateQueries({ queryKey: ['analytics', 'charts', 'infinite'] });
+      }
     },
   });
 }

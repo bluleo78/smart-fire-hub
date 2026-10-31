@@ -4,6 +4,7 @@ import com.smartfirehub.ai.exception.AiSessionNotFoundException;
 import com.smartfirehub.analytics.exception.ChartNotFoundException;
 import com.smartfirehub.analytics.exception.DashboardNotFoundException;
 import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
+import com.smartfirehub.analytics.exception.WidgetNotFoundException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
@@ -709,6 +710,14 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(DashboardNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleDashboardNotFound(
       DashboardNotFoundException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  /** WD-367: 이 대시보드에 없는(다른 곳에서 먼저 지운) 위젯의 단건 수정·삭제 — 대시보드·차트와 같이 404. */
+  @ExceptionHandler(WidgetNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleWidgetNotFound(
+      WidgetNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
   }

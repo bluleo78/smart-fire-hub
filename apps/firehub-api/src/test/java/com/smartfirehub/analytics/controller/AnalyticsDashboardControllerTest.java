@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.dto.*;
+import com.smartfirehub.analytics.exception.WidgetNotFoundException;
 import com.smartfirehub.analytics.service.AnalyticsDashboardService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.dto.PageResponse;
@@ -340,6 +341,19 @@ class AnalyticsDashboardControllerTest {
         .andExpect(status().isNoContent());
 
     verify(dashboardService).removeWidget(1L, 2L, 1L);
+  }
+
+  // WD-367: 다른 탭·사용자가 먼저 지운 위젯 삭제는 400 이 아니라 404 + 한국어 사유로 답한다 — 웹은 404 를 보고 서버 목록을 다시 읽는다
+  @Test
+  void removeWidget_alreadyDeleted_returns404WithMessage() throws Exception {
+    doThrow(new WidgetNotFoundException()).when(dashboardService).removeWidget(1L, 2L, 1L);
+
+    mockMvc
+        .perform(
+            delete("/api/v1/analytics/dashboards/1/widgets/2")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value(WidgetNotFoundException.MESSAGE));
   }
 
   // ── PUT /api/v1/analytics/dashboards/{id}/widgets/layout ──────────────────

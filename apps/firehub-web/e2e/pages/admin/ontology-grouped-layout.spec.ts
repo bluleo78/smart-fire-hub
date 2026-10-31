@@ -316,3 +316,87 @@ test.describe('지식그래프 타입 묶기 레이아웃 (WD-378)', () => {
     expect(await layoutStops(page)).toBe(0);
   });
 });
+
+test.describe('지식그래프 타입 묶기 — 같은 관계 합치기 (WD-377)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  test('묶으면 타입 쌍 사이의 같은 관계는 한 줄로 합쳐 건수를 보이고, 메타노드 라벨에 노드 수가 붙는다', async ({
+    authenticatedPage: page,
+  }) => {
+    // Incident 12개가 Building 3개에 OCCURRED_AT(12건), 그중 5개가 Cause 2개에 CAUSED_BY(5건),
+    // Building 이 Incident 하나를 가리키는 반대 방향 관계 1건(다른 방향은 따로 남아야 한다).
+    const node = (key: string, type: string, name: string) => ({
+      key,
+      type,
+      name,
+      sourceChunkCount: 1,
+      schemaVersion: 1,
+      ontologyId: 1,
+    });
+    const incidents = Array.from({ length: 12 }, (_, i) => node(`inc-${i}`, 'Incident', `화재 ${i}`));
+    const buildings = Array.from({ length: 3 }, (_, i) => node(`bld-${i}`, 'Building', `건물 ${i}`));
+    const causes = Array.from({ length: 2 }, (_, i) => node(`cause-${i}`, 'Cause', `원인 ${i}`));
+    const graph: GraphData = {
+      nodes: [...incidents, ...buildings, ...causes],
+      edges: [
+        ...incidents.map((n, i) => ({ subjectKey: n.key, type: 'OCCURRED_AT', objectKey: buildings[i % 3].key })),
+        ...incidents.slice(0, 5).map((n, i) => ({ subjectKey: n.key, type: 'CAUSED_BY', objectKey: causes[i % 2].key })),
+        { subjectKey: buildings[0].key, type: 'HOSTED', objectKey: incidents[0].key },
+      ],
+    };
+    await openExplore(page, graph);
+    expect(await page.evaluate(() => (window as unknown as TestWindow).__ontologyCy.edges().length)).toBe(18);
+
+    await page.getByRole('button', { name: '타입 묶기' }).click();
+    await expect.poll(() => collapsedCount(page)).toBe(3);
+
+    const view = await page.evaluate(() => {
+      const cy = (window as unknown as TestWindow).__ontologyCy as unknown as {
+        edges(): { map<T>(f: (e: { data(k: string): unknown; source(): { id(): string }; target(): { id(): string } }) => T): T[] };
+        nodes(sel: string): { map<T>(f: (n: { data(k: string): string }) => T): T[] };
+      };
+      return {
+        edges: cy
+          .edges()
+          .map((e) => `${e.source().id()}>${e.target().id()}|${String(e.data('label'))}|${String(e.data('count') ?? 1)}`)
+          .sort(),
+        groupLabels: cy.nodes('[?isGroup]').map((n) => n.data('label')).sort(),
+      };
+    });
+    // 관계 이름·방향별로 한 줄씩, 라벨에 건수 — 18가닥이 3줄이 된다
+    expect(view.edges).toEqual([
+      'grp:Building>grp:Incident|HOSTED|1',
+      'grp:Incident>grp:Building|OCCURRED_AT (12)|12',
+      'grp:Incident>grp:Cause|CAUSED_BY (5)|5',
+    ]);
+    expect(view.groupLabels).toEqual(['Building (3)', 'Cause (2)', 'Incident (12)']);
+
+    // 메타노드 하나(Incident)를 펼치면 합친 관계가 되살아나 펼친 자식마다 이어지고, 다시 접으면 도로 합쳐진다
+    // (확장 큐 클릭과 같은 플러그인 API 를 부른다 — 캔버스라 큐 아이콘을 직접 누를 수 없다)
+    type EdgeView = { data(k: string): unknown };
+    const toggleIncident = (action: 'expand' | 'collapse') =>
+      page.evaluate((act) => {
+        const cy = (window as unknown as TestWindow).__ontologyCy as unknown as {
+          expandCollapse(get: 'get'): Record<'expand' | 'collapse', (n: unknown) => void>;
+          getElementById(id: string): unknown;
+          edges(): { map<T>(f: (e: EdgeView) => T): T[] };
+        };
+        cy.expandCollapse('get')[act](cy.getElementById('grp:Incident'));
+        return cy.edges().map((e) => String(e.data('label')));
+      }, action);
+    const expanded = await toggleIncident('expand');
+    expect(expanded).toHaveLength(18);
+    expect(expanded.filter((l) => l === 'OCCURRED_AT')).toHaveLength(12);
+    expect(expanded.filter((l) => l === 'CAUSED_BY')).toHaveLength(5);
+    expect(expanded.some((l) => l.includes('('))).toBe(false);
+    const recollapsed = await toggleIncident('collapse');
+    expect(recollapsed.sort()).toEqual(['CAUSED_BY (5)', 'HOSTED', 'OCCURRED_AT (12)']);
+
+    // 묶기를 끄면 개별 관계 18가닥과 원래 노드 이름이 돌아온다
+    await page.getByRole('button', { name: '타입 묶기' }).click();
+    await expect.poll(() => groupCount(page)).toBe(0);
+    expect(await page.evaluate(() => (window as unknown as TestWindow).__ontologyCy.edges().length)).toBe(18);
+  });
+});

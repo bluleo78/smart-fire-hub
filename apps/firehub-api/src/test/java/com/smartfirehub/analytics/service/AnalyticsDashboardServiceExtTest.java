@@ -13,6 +13,7 @@ import com.smartfirehub.analytics.dto.UpdateDashboardRequest;
 import com.smartfirehub.analytics.dto.UpdateWidgetLayoutRequest;
 import com.smartfirehub.analytics.dto.UpdateWidgetRequest;
 import com.smartfirehub.analytics.exception.DashboardNotFoundException;
+import com.smartfirehub.analytics.exception.WidgetNotFoundException;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
@@ -343,8 +344,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
             () ->
                 dashboardService.updateWidget(
                     dashboard.id(), 999999L, new UpdateWidgetRequest(0, 0, 4, 4), ownerUserId))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("위젯을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."); // WD-196·WD-240: 한국어·번호 없음
+        .isInstanceOf(WidgetNotFoundException.class) // WD-367: 400 이 아니라 404
+        .hasMessage(WidgetNotFoundException.MESSAGE); // WD-196·WD-240: 한국어·번호 없음
   }
 
   // =========================================================================
@@ -381,8 +382,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
             new CreateDashboardRequest("RemoveNone", null, false, null), ownerUserId);
 
     assertThatThrownBy(() -> dashboardService.removeWidget(dashboard.id(), 999999L, ownerUserId))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("위젯을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."); // WD-196·WD-240: 한국어·번호 없음
+        .isInstanceOf(WidgetNotFoundException.class) // WD-367: 400 이 아니라 404
+        .hasMessage(WidgetNotFoundException.MESSAGE); // WD-196·WD-240: 한국어·번호 없음
   }
 
   // =========================================================================

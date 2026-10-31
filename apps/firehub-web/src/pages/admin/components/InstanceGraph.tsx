@@ -157,8 +157,15 @@ function buildBundleSummary(nodes: GraphNode[], edges: GraphData['edges']) {
       source: p.source,
       target: p.target,
       label: `${[...p.relTypes].join(', ')} (${p.count.toLocaleString()})`,
+      // (WD-377) 묶기(compound) 화면의 합친 엣지와 같이 건수로 굵기를 정한다(스타일시트 edge[count])
+      count: p.count,
     })),
   };
+}
+
+// 타입 묶기 메타노드(요약 노드·compound 부모 공통) 데이터 — 라벨은 「타입 (노드 수)」, 윤곽선 색은 data(type)으로 고른다(WD-377).
+function groupNodeData(type: string, count: number, color: string) {
+  return { id: `grp:${type}`, label: `${type} (${count.toLocaleString()})`, type, isGroup: true, color };
 }
 
 // 캔버스에 보이는 실제 노드 좌표를 캐시에 담는다(묶기 부모 grp:* 자체는 제외).
@@ -188,8 +195,58 @@ function captureCanvasPositions(cy: cytoscape.Core, cache: Map<string, { x: numb
 function collapseAllGroups(cy: cytoscape.Core, api: ExpandCollapseApi | null) {
   if (!api) return;
   (cy.nodes() as unknown as { updateCompoundBounds(force?: boolean): void }).updateCompoundBounds(true);
-  api.collapseAll();
+  cy.scratch(BULK_COLLAPSE_SCRATCH, true);
+  try {
+    api.collapseAll();
+  } finally {
+    cy.scratch(BULK_COLLAPSE_SCRATCH, false);
+  }
+  mergeCollapsedEdges(cy);
 }
+
+// (WD-377) 접은 뒤 같은 (출발 메타노드, 관계 이름, 도착 메타노드) 엣지를 한 줄로 합친다.
+// expand-collapse 는 접힌 자식의 엣지를 하나씩 메타노드에 다시 이어 그려, 타입 쌍 사이에 같은 관계 곡선이 수십 가닥
+// 부채꼴로 퍼지고 관계 이름이 수십 번 겹쳐 찍혔다(밀집을 줄이려는 묶기의 목적과 반대). 한 가닥만 남기고 라벨에
+// 건수를 붙이며(요약 화면의 「관계 (N)」 형식과 같게), 굵기는 count 로 키운다(스타일시트 edge[count]).
+// 합쳐 뺀 엣지는 지우지 않고 남긴 엣지의 mergedEdges 에 보관한다 — 메타노드 하나를 펼치면(확장 큐)
+// unmergeAllEdges 가 되살려, 펼친 자식마다 원래 관계가 다시 이어진다(플러그인 repairEdges 는 메타 엣지만 옮긴다).
+// 플러그인 내장 groupEdgesOfSameTypeOnCollapse 는 건수 라벨이 없고, 노드를 펼칠 때 되살리지도 않아 쓰지 않는다.
+function mergeCollapsedEdges(cy: cytoscape.Core) {
+  const groups = new Map<string, cytoscape.EdgeCollection>();
+  cy.edges().forEach((e) => {
+    const key = `${e.source().id()}\u0000${e.data('label')}\u0000${e.target().id()}`;
+    // merge 는 제자리에 더해 그룹이 커져도 매번 새 컬렉션을 만들지 않는다
+    const group = groups.get(key);
+    if (group) group.merge(e);
+    else groups.set(key, cy.collection().merge(e));
+  });
+  cy.batch(() => {
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      const keep = group.first();
+      keep.data({
+        baseLabel: keep.data('label'),
+        label: `${keep.data('label')} (${group.length.toLocaleString()})`,
+        count: group.length,
+        mergedEdges: group.difference(keep).remove(),
+      });
+    }
+  });
+}
+
+// 합친 엣지를 모두 원래 엣지들로 되돌린다(mergeCollapsedEdges 의 반대). 메타노드 하나를 펼치거나 접기 직전에 부른다 —
+// 보관한 엣지의 양 끝은 합칠 당시의 노드라, 그 노드가 접히거나 펼쳐진 뒤에는 되살릴 수 없기 때문이다.
+function unmergeAllEdges(cy: cytoscape.Core) {
+  cy.batch(() => {
+    cy.edges('[count > 1]').forEach((e) => {
+      (e.data('mergedEdges') as cytoscape.Collection | undefined)?.restore();
+      e.data({ label: e.data('baseLabel'), count: undefined, baseLabel: undefined, mergedEdges: undefined });
+    });
+  });
+}
+
+// collapseAll 이 메타노드마다 접기 이벤트를 쏘는 동안에는 이벤트로 되돌리고 합치지 않는다 — 다 접은 뒤 한 번만 합친다.
+const BULK_COLLAPSE_SCRATCH = '_wd377BulkCollapse';
 
 // 캐시된 좌표가 없는(=새로 나타난) 노드의 힘-기반 리파인 시작점 — 원점 근처에 겹쳐 놓으면
 // 대칭을 못 깨고 뭉칠 수 있어, 노드 수에 비례해 넓게 흩뿌린다. 위 0.99처럼 euler의 겹침 가드만으로도
@@ -327,6 +384,13 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
       animate: false,
       undoable: false,
     });
+    // (WD-377) 확장 큐로 메타노드 하나를 펼치거나 다시 접을 때도 합친 관계를 되돌리고 다시 합친다(mergeCollapsedEdges 주석).
+    // 펼치거나 접기 직전에 모두 되돌리고, 끝나면 그때 화면 기준으로 다시 합친다(collapseAll 중에는 건너뛴다).
+    const singleToggle = (fn: (c: cytoscape.Core) => void) => () => {
+      if (!cy.scratch(BULK_COLLAPSE_SCRATCH)) fn(cy);
+    };
+    cy.on('expandcollapse.beforeexpand expandcollapse.beforecollapse', 'node', singleToggle(unmergeAllEdges));
+    cy.on('expandcollapse.afterexpand expandcollapse.aftercollapse', 'node', singleToggle(mergeCollapsedEdges));
     // 테스트/디버그용: canvas라 DOM 셀렉터가 없으므로 dev 서버와 E2E 빌드(preview 포함)에서만 cy를 노출한다(WD-257).
     if (import.meta.env.DEV || __E2E__) {
       (window as unknown as { __ontologyCy?: cytoscape.Core }).__ontologyCy = cy;
@@ -422,13 +486,7 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
           const { types, links } = buildBundleSummary(filteredNodes, filteredEdges);
           cy.add([
             ...types.map(({ type, count }) => ({
-              data: {
-                id: `grp:${type}`,
-                label: `${type} (${count.toLocaleString()})`,
-                type,
-                isGroup: true,
-                color: palette.color(type),
-              },
+              data: groupNodeData(type, count, palette.color(type)),
               position: bundlePositionsRef.current.get(`grp:${type}`) ?? { x: 0, y: 0 },
             })),
             ...links.map((l) => ({ data: l })),
@@ -436,11 +494,12 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
           return;
         }
         // 타입 묶기 ON: 화면에 존재하는 타입마다 compound 부모 노드를 만들고 각 노드에 parent를 부여한다.
-        const parents = grouped
-          ? [...new Set(filteredNodes.map((n) => n.type))].map((type) => ({
-              data: { id: `grp:${type}`, label: type, isGroup: true, color: palette.color(type) },
-            }))
-          : [];
+        // (WD-377) 접힌 메타노드 라벨에 안에 든 노드 수를 붙인다(groupNodeData) — 예전에는 타입 이름만 보여 몇 개가 묶였는지 알 수 없었다.
+        const typeCounts = new Map<string, number>();
+        if (grouped) for (const n of filteredNodes) typeCounts.set(n.type, (typeCounts.get(n.type) ?? 0) + 1);
+        const parents = [...typeCounts.entries()].map(([type, count]) => ({
+          data: groupNodeData(type, count, palette.color(type)),
+        }));
         const modeCache = grouped ? groupedPositionsRef.current : positionsRef.current;
         cy.add([
           ...parents,

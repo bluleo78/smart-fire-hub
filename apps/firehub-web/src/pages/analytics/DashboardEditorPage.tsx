@@ -55,7 +55,7 @@ import {
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { extractApiError, handleApiError } from '../../lib/api-error';
+import { extractApiError, handleApiError, isConflictError, isNotFoundError } from '../../lib/api-error';
 import {
   applyKeyboardLayoutAction,
   DASHBOARD_GRID_COLS,
@@ -316,6 +316,11 @@ export default function DashboardEditorPage() {
   const updateWidgetMutation = useUpdateWidget(dashboardId!);
 
   const [isEditing, setIsEditing] = useState(false);
+  // 비동기 재동기화가 끝났을 때 아직 편집 중인지 보려는 최신값(WD-367) — 그사이 「완료」·「편집 취소」로 편집이 끝났으면 편집 상태를 되살리지 않는다
+  const isEditingRef = useRef(false);
+  useEffect(() => {
+    isEditingRef.current = isEditing;
+  }, [isEditing]);
   // 「완료」 배치 저장 요청이 도는 중 — 두 번 눌러 같은 PUT 을 거듭 보내지 않게 버튼을 잠근다(WD-330)
   const [savingLayout, setSavingLayout] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -435,6 +440,29 @@ export default function DashboardEditorPage() {
     []
   );
 
+  /**
+   * 서버의 대시보드를 다시 읽어 편집 중 위젯 목록·배치를 맞춘다 — 위젯 추가 성공 뒤와, 추가·삭제가 서버 상태와 어긋나 실패했을 때 쓴다(WD-367).
+   * 이미 있던 위젯은 편집 중 배치를 그대로 두고(서버 값으로 다시 만들면 「완료」 전에 바꿔 둔 배치가 사라졌다 — WD-331),
+   * 서버에 새로 생긴 위젯은 더하고, 서버에서 없어진 위젯은 뺀다. 다시 읽기에 실패하면 null 을 돌려준다.
+   */
+  const syncEditingWithServer = useCallback(async (): Promise<DashboardWidget[] | null> => {
+    // 다시 읽기가 실패해도 refetch 결과의 data 는 직전 값이라, 오류면 맞추지 않는다(대시보드가 없어진 경우 등).
+    // 추가 성공 직후에는 useAddWidget 의 무효화가 이미 다시 읽는 중이라, 취소하고 새로 보내지 않고 그 결과를 기다린다.
+    const { data: updated, isError } = await refetch({ cancelRefetch: false });
+    if (isError || !updated) return null;
+    if (!isEditingRef.current) return updated.widgets;
+    setEditingWidgets(updated.widgets);
+    const serverIds = new Set(updated.widgets.map((w) => String(w.id)));
+    setLocalLayouts((prev) => {
+      const kept = ((prev.lg as LayoutItem[] | undefined) ?? []).filter((i) => serverIds.has(i.i));
+      const keptIds = new Set(kept.map((i) => i.i));
+      const added = widgetsToLayoutItems(updated.widgets).filter((i) => !keptIds.has(i.i));
+      const items = [...kept, ...added];
+      return { lg: items, md: items, sm: items };
+    });
+    return updated.widgets;
+  }, [refetch]);
+
   // 삭제 확인 다이얼로그에서 "삭제" 클릭 시: 즉시 서버에 DELETE 요청을 보낸다.
   // 위젯 추가(handleAddWidget)와 동일하게 즉시 서버 반영하여 동작 일관성을 유지한다.
   // 이전에는 로컬 상태에만 저장하고 "완료" 버튼 클릭 시 일괄 반영했으나,
@@ -455,9 +483,17 @@ export default function DashboardEditorPage() {
       });
       toast.success('위젯이 제거되었습니다.');
     } catch (error) {
-      handleApiError(error, '위젯 제거에 실패했습니다.');
+      // WD-367: 다른 탭·사용자가 먼저 지운 위젯이면(서버 404) 실패 토스트만 띄우고 끝내면 위젯이 화면에 남아 다시 눌러도 같은 오류가 되풀이됐다.
+      // 404 면 서버 목록을 다시 읽어 맞추고, 정말 서버에 없으면 「이미 삭제됨」으로 안내한다. 대시보드 자체가 없어진 404 는 다시 읽기도 실패해 원래 오류를 보인다.
+      // 404 가 아닌 실패(500·연결 끊김)는 서버 상태를 알 수 없으므로 원래 오류만 보인다.
+      const serverWidgets = isNotFoundError(error) ? await syncEditingWithServer() : null;
+      if (serverWidgets && !serverWidgets.some((w) => w.id === id)) {
+        toast.info('다른 곳에서 이미 삭제된 위젯이라 화면에서도 뺐습니다.');
+      } else {
+        handleApiError(error, '위젯 제거에 실패했습니다.');
+      }
     }
-  }, [deleteConfirmWidgetId, removeWidgetMutation]);
+  }, [deleteConfirmWidgetId, removeWidgetMutation, syncEditingWithServer]);
 
   const handleAddWidget = useCallback(
     async (chartId: number, chartType?: string) => {
@@ -485,25 +521,17 @@ export default function DashboardEditorPage() {
         });
         toast.success('차트가 대시보드에 추가되었습니다.');
         setAddWidgetOpen(false);
-        // 서버에서 최신 상태를 가져와 로컬 편집 목록 및 레이아웃 갱신
-        const { data: updated } = await refetch();
-        if (updated) {
-          setEditingWidgets(updated.widgets);
-          // 이미 있던 위젯은 편집 중 배치를 그대로 두고, 서버에 새로 생긴 위젯만 더한다 —
-          // 서버 값으로 레이아웃 전체를 다시 만들면 「완료」 전에 바꿔 둔 배치가 사라졌다(WD-331).
-          setLocalLayouts((prev) => {
-            const kept = (prev.lg as LayoutItem[] | undefined) ?? [];
-            const keptIds = new Set(kept.map((i) => i.i));
-            const added = widgetsToLayoutItems(updated.widgets).filter((i) => !keptIds.has(i.i));
-            const items = [...kept, ...added];
-            return { lg: items, md: items, sm: items };
-          });
-        }
+        await syncEditingWithServer();
       } catch (error) {
         handleApiError(error, '위젯 추가에 실패했습니다.');
+        // WD-367: 다른 탭에서 먼저 추가했거나(409) 차트가 지워졌으면(404) 화면이 서버와 어긋난 것이다 —
+        // 대시보드를 다시 읽어 그 위젯을 보인다(지워진 차트를 고르기 목록에서 빼는 것은 useAddWidget 의 onError 가 한다).
+        if (isConflictError(error) || isNotFoundError(error)) {
+          await syncEditingWithServer();
+        }
       }
     },
-    [dashboard, editingWidgets, localLayouts, addWidgetMutation, refetch]
+    [dashboard, editingWidgets, localLayouts, addWidgetMutation, syncEditingWithServer]
   );
 
   /**
@@ -590,12 +618,14 @@ export default function DashboardEditorPage() {
           ? '배치를 저장하지 못했습니다'
           : `위젯 ${changed.length}개 중 ${failed.length}개의 배치를 저장하지 못했습니다`;
       toast.error(`${what} — ${extractApiError(failed[0].reason, '잠시 후 다시 시도해 주세요.')}`);
+      // WD-367: 다른 곳에서 지운 위젯(404)이 섞였으면 서버 목록으로 맞춰 그 위젯을 빼 둔다 — 그대로 두면 「완료」가 같은 이유로 끝없이 실패했다
+      if (failed.some((r) => isNotFoundError(r.reason))) await syncEditingWithServer();
       return;
     }
 
     setEditingWidgets(null);
     setIsEditing(false);
-  }, [dashboard, editingWidgets, localLayouts, updateWidgetMutation]);
+  }, [dashboard, editingWidgets, localLayouts, updateWidgetMutation, syncEditingWithServer]);
 
   /**
    * 편집 모드에서 「완료」 전에 바꾼 배치가 있는지(WD-323). 배치·크기는 완료를 눌러야 서버에 가므로, 이 값이 참인 채로 다른 화면으로 가면
