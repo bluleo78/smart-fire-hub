@@ -376,6 +376,36 @@ test.describe('홈 페이지', () => {
   });
 
   /**
+   * 회귀: WD-296 — 파이프라인이 자동 생성한 임시(TEMP) 데이터셋은 「원본」이 아니라 「임시」로 보인다(데이터셋 목록과 같은 라벨).
+   * 예전에는 DERIVED 밖을 모두 「원본」으로 표시해, 홈만 보면 사용자가 올린 원본 데이터로 오해했다.
+   */
+  test('최근 데이터셋 — 임시 데이터셋은 「임시」, 원본·파생·문서는 각자 라벨로 보인다 (WD-296)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [
+        { id: 11, name: '급여 집계 > s1 (자동생성)', storageType: 'TABLE', originType: 'TEMP', createdAt: '2026-04-03T00:00:00' },
+        { id: 12, name: '소방서 위치 데이터', storageType: 'TABLE', originType: 'SOURCE', createdAt: '2026-04-02T00:00:00' },
+        { id: 13, name: '화재 발생 통계', storageType: 'TABLE', originType: 'DERIVED', createdAt: '2026-04-01T00:00:00' },
+        { id: 14, name: '점검 보고서', storageType: 'DOCUMENT', originType: 'SOURCE', createdAt: '2026-03-31T00:00:00' },
+      ],
+      page: 0,
+      size: 5,
+      totalElements: 4,
+      totalPages: 1,
+    });
+
+    await page.goto('/');
+
+    const row = (name: string) => page.getByRole('button').filter({ hasText: name });
+    await expect(row('급여 집계 > s1 (자동생성)')).toContainText('임시');
+    await expect(row('급여 집계 > s1 (자동생성)')).not.toContainText('원본');
+    await expect(row('소방서 위치 데이터')).toContainText('원본');
+    await expect(row('화재 발생 통계')).toContainText('파생');
+    await expect(row('점검 보고서')).toContainText('문서');
+  });
+
+  /**
    * 회귀: 이슈 #62 — 섹션 헤딩(h2/h3)이 SR 네비게이션을 위해 존재해야 한다
    * - 수정 전: <h1>홈</h1> 단 1개만 존재 → SR이 섹션 점프 불가
    * - 수정 후: 각 시각 섹션마다 h2/h3 존재 (시스템 건강 상태/주의 필요/퀵 액션/활동 피드 + 카드별 h3)

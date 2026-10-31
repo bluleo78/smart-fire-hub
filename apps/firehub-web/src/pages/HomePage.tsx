@@ -33,7 +33,7 @@ import {
 import { useDatasetPermissions, useDatasets } from '../hooks/queries/useDatasets';
 import { usePipelinePermissions } from '../hooks/queries/usePipelines';
 import { useAuth } from '../hooks/useAuth';
-import { getStatusBadgeVariant, getStatusLabel, timeAgo } from '../lib/formatters';
+import { getOriginTypeLabel, getStatusBadgeVariant, getStatusLabel, timeAgo } from '../lib/formatters';
 
 function ActivityIcon({ eventType }: { eventType: string }) {
   const t = eventType.toUpperCase();
@@ -426,7 +426,9 @@ export default function HomePage() {
                         <span className="text-sm truncate group-hover:text-foreground">{ds.name}</span>
                         <FreshnessBar lastUpdated={ds.createdAt} className="" />
                         <Badge variant="outline" className="shrink-0 text-xs px-1.5 py-0">
-                          {ds.storageType === 'DOCUMENT' ? '문서' : ds.originType === 'DERIVED' ? '파생' : '원본'}
+                          {/* 출처 라벨은 데이터셋 목록과 같은 매핑을 쓴다(WD-296) — 예전에는 DERIVED 밖을 모두 「원본」으로 보여
+                              파이프라인 자동 생성 임시(TEMP) 데이터셋이 사용자가 올린 원본처럼 보였다. */}
+                          {ds.storageType === 'DOCUMENT' ? '문서' : getOriginTypeLabel(ds.originType)}
                         </Badge>
                       </div>
                     </button>
