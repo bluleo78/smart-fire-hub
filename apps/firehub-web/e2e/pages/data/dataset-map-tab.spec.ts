@@ -342,4 +342,67 @@ test.describe('데이터셋 상세 — 지도 탭', () => {
     await expect(page.getByText('페이지를 불러오는 중 문제가 발생했습니다')).toHaveCount(0);
     expect(errors).toEqual([]);
   });
+
+  test('모바일 폭: 긴 값의 도형 정보 팝업이 지도 밖으로 잘리지 않는다 (WD-338)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.route('https://tiles.openfreemap.org/styles/**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ version: 8, sources: {}, layers: [] }),
+      }),
+    );
+    const detail = createDatasetDetail({
+      id: 2,
+      rowCount: 1,
+      columns: [
+        ...detailWithGeometry.columns,
+        createColumn({ id: 3, columnName: 'place', displayName: '장소', dataType: 'TEXT', isPrimaryKey: false, columnOrder: 2 }),
+      ],
+    });
+    await setupMocks(page, 2, detail);
+    const longPlace = '아주 긴 지점 이름 — 서울특별시 중구 세종대로 110 서울시청 본관 앞 광장 동쪽 출입구 옆 화단';
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/2/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: detail.columns,
+            rows: [
+              {
+                _id: 119,
+                id: 119,
+                place: longPlace,
+                geom: '{"type":"Polygon","coordinates":[[[126.975,37.565],[126.98,37.565],[126.98,37.568],[126.975,37.568],[126.975,37.565]]]}',
+              },
+            ],
+            page: 0,
+            size: 2000,
+            totalElements: 1,
+            totalPages: 1,
+          }),
+        }),
+    );
+
+    await page.goto('/data/datasets/2');
+    await page.getByRole('tab', { name: '지도' }).click();
+    const mapBox = page.locator('[data-map-style]').first();
+    await expect(mapBox).toBeVisible();
+    await expect(page.getByText(/데이터: 1건 표시/)).toBeVisible();
+    // 스타일 로드 뒤 fitBounds 로 도형이 지도 가운데를 채운다 — 가운데를 누르면 도형이 눌린다
+    await page.waitForTimeout(1500);
+    const box = (await mapBox.boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+
+    const popup = page.locator('.maplibregl-popup');
+    await expect(popup).toBeVisible();
+    await expect(popup).toContainText(longPlace);
+    // 가운데로 옮기는 애니메이션(300ms)이 끝난 뒤 팝업이 지도 영역 안에 있는지 본다
+    await page.waitForTimeout(600);
+    const p = (await popup.boundingBox())!;
+    expect(p.x).toBeGreaterThanOrEqual(box.x);
+    expect(p.x + p.width).toBeLessThanOrEqual(box.x + box.width + 0.5);
+  });
 });

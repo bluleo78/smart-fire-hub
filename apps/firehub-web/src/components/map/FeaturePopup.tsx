@@ -3,6 +3,8 @@ import { useEffect, useRef } from 'react';
 
 import type { GeoJsonFeature } from '@/types/dataset';
 
+import { extractLngLat, POPUP_MAX_WIDTH, popupMaxWidth } from './popup-geometry';
+
 interface FeaturePopupProps {
   map: maplibregl.Map;
   feature: GeoJsonFeature | null;
@@ -32,15 +34,23 @@ export function FeaturePopup({ map, feature, onClose }: FeaturePopupProps) {
     if (!lngLat) return;
 
     const html = buildPopupHtml(feature);
+    const mapWidth = map.getContainer().clientWidth;
 
     const popup = new maplibregl.Popup({
       closeButton: true,
-      maxWidth: '320px',
+      // 지도보다 넓은 팝업은 어느 방향으로 열어도 지도 밖으로 잘린다(WD-338) — 지도 폭에 맞춰 줄인다
+      maxWidth: `${popupMaxWidth(mapWidth)}px`,
       className: 'sfh-popup',
     })
       .setLngLat(lngLat)
       .setHTML(html)
       .addTo(map);
+
+    // 좁은 지도(모바일)에서는 팝업이 지도 폭의 절반보다 넓어, 도형이 가장자리에 있으면 왼쪽·오른쪽 어디로 열어도 잘린다.
+    // 누른 도형을 가운데로 옮기면 MapLibre 자동 앵커가 위·아래로 가운데 맞춰 열어 지도 안에 들어온다(WD-338).
+    if (mapWidth < POPUP_MAX_WIDTH * 2) {
+      map.easeTo({ center: lngLat, duration: 300 });
+    }
 
     popup.on('close', () => {
       if (onCloseRef.current) onCloseRef.current();
@@ -54,26 +64,6 @@ export function FeaturePopup({ map, feature, onClose }: FeaturePopupProps) {
     };
   }, [map, feature]);
 
-  return null;
-}
-
-function extractLngLat(geom: { type: string; coordinates: unknown }): [number, number] | null {
-  if (geom.type === 'Point') {
-    const [lng, lat] = geom.coordinates as [number, number];
-    return [lng, lat];
-  }
-  if (geom.type === 'LineString' || geom.type === 'MultiPoint') {
-    const coords = geom.coordinates as [number, number][];
-    return coords.length > 0 ? coords[0] : null;
-  }
-  if (geom.type === 'Polygon') {
-    const ring = (geom.coordinates as [number, number][][])[0];
-    return ring && ring.length > 0 ? ring[0] : null;
-  }
-  if (geom.type === 'MultiPolygon') {
-    const ring = ((geom.coordinates as [number, number][][][])[0] ?? [])[0];
-    return ring && ring.length > 0 ? ring[0] : null;
-  }
   return null;
 }
 
