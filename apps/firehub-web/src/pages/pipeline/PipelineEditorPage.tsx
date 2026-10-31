@@ -433,10 +433,15 @@ export default function PipelineEditorPage() {
           </TabsList>
         )}
 
-        {/* 모바일(375px)에서 캔버스 width=0px 붕괴 방지: 모바일은 세로 스택(flex-col), lg+ 에서 가로 배치(flex-row) */}
-        <TabsContent value="overview" className="flex-1 flex flex-col lg:flex-row min-h-0 mt-0 border rounded-b-lg">
-          {/* Canvas: 가로 배치 시 남은 너비, 세로 배치(모바일) 시 최소 300px 높이 확보 */}
-          <div className="flex-1 min-w-0 min-h-[300px]">
+        {/* 모바일(375px)에서 캔버스 width=0px 붕괴 방지: 모바일은 세로 스택(flex-col), lg+ 에서 가로 배치(flex-row).
+            좁은 화면에서는 실행 상세(WD-309)처럼 캔버스를 위(고정 높이)·설정 패널을 아래(내용 높이)로 쌓고 탭 전체를 세로 스크롤한다 —
+            캔버스가 남은 높이를 다 차지하면 패널이 화면 맨 아래 118px 에 갇혀 SQL·데이터셋 칸을 한두 줄씩만 보며 고쳐야 했다(WD-456). */}
+        <TabsContent
+          value="overview"
+          className="flex-1 flex flex-col min-h-0 overflow-y-auto lg:flex-row lg:overflow-hidden mt-0 border rounded-b-lg"
+        >
+          {/* Canvas: 가로 배치 시 남은 너비, 세로 배치(모바일) 시 320px 고정 높이 */}
+          <div className="h-[320px] shrink-0 min-w-0 lg:h-auto lg:flex-1 lg:shrink">
             <PipelineCanvas
               state={state}
               dispatch={dispatch}

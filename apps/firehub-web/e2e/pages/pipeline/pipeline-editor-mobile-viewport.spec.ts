@@ -204,3 +204,84 @@ test.describe('파이프라인 실행 상세 — 모바일 레이아웃 (WD-309)
     expect(titleBox.y).toBeLessThan(flowBox.y + flowBox.height);
   });
 });
+
+/**
+ * WD-456: 수정 모드(모바일)에서 스텝을 누르면 설정 패널이 캔버스 아래 118px 에 갇혀 SQL·데이터셋 칸을 한두 줄씩만 보며 고쳐야 했다.
+ * 좁은 화면에서는 캔버스를 고정 높이로 두고 패널을 내용 높이만큼 펼쳐 탭 전체가 스크롤해야 한다.
+ */
+test.describe('파이프라인 에디터 — 모바일 스텝 설정 패널 (WD-456)', () => {
+  test('375×667 수정 모드에서 스텝 패널이 안쪽 스크롤 없이 내용 높이만큼 펼쳐지고, 탭을 스크롤하면 패널 끝까지 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    await grantPipelinePermissions(page);
+    await setupPipelineEditorMocks(page, 1);
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정', exact: true }).click();
+    await page.locator('.react-flow__node').filter({ has: page.getByText('데이터 추출', { exact: true }) }).click();
+
+    const header = page.getByText(/^스텝 #1:/);
+    await expect(header).toBeVisible();
+    // 패널 = 머리글을 품은 가장 가까운 border-t 상자. 안쪽 스크롤 영역이 내용보다 작으면(예전 118px) 잘려 있는 것이다
+    const panel = header.locator('xpath=ancestor::div[contains(@class,"border-t")][1]');
+    const viewport = panel.locator('[data-radix-scroll-area-viewport]');
+    const { clientHeight, scrollHeight } = await viewport.evaluate((el) => ({
+      clientHeight: el.clientHeight,
+      scrollHeight: el.scrollHeight,
+    }));
+    expect(scrollHeight - clientHeight).toBeLessThanOrEqual(1);
+    expect(clientHeight).toBeGreaterThan(300);
+
+    // 탭(바깥)을 끝까지 내리면 패널의 마지막 칸이 화면 안에 들어온다
+    const lastField = panel.locator('label, [data-slot="label"]').last();
+    await lastField.scrollIntoViewIfNeeded();
+    await expect(lastField).toBeInViewport();
+    // 캔버스는 고정 높이(320px)로 남는다
+    const canvasBox = await page.locator('.react-flow').first().boundingBox();
+    expect(Math.round(canvasBox!.height)).toBe(320);
+  });
+
+  test('375px 에서 스텝 세 개를 「전체 보기」로 한 화면에 모두 담는다 (최소 배율)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    await grantPipelinePermissions(page);
+    await setupPipelineEditorMocks(page, 1);
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정', exact: true }).click();
+    // 툴바 「스텝 추가」는 마지막 스텝 오른쪽 280px 에 놓아 375px 화면 밖으로 나간다
+    await page.getByRole('button', { name: '스텝 추가', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.react-flow__node')).toHaveCount(3);
+    await page.getByRole('button', { name: '전체 보기' }).click();
+
+    const flow = (await page.locator('.react-flow').first().boundingBox())!;
+    for (const node of await page.locator('.react-flow__node').all()) {
+      await expect
+        .poll(async () => {
+          const b = (await node.boundingBox())!;
+          return b.x >= flow.x - 1 && b.x + b.width <= flow.x + flow.width + 1;
+        })
+        .toBe(true);
+    }
+  });
+
+  test('1280px 에서는 스텝 패널이 캔버스 오른쪽 400px 사이드패널로 남고 안에서 스크롤한다 (회귀 방지)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await grantPipelinePermissions(page);
+    await setupPipelineEditorMocks(page, 1);
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정', exact: true }).click();
+    await page.locator('.react-flow__node').filter({ has: page.getByText('데이터 추출', { exact: true }) }).click();
+
+    const header = page.getByText(/^스텝 #1:/);
+    await expect(header).toBeVisible();
+    const panel = header.locator('xpath=ancestor::div[contains(@class,"border-t")][1]');
+    const panelBox = (await panel.boundingBox())!;
+    expect(Math.round(panelBox.width)).toBe(400);
+    const flowBox = (await page.locator('.react-flow').first().boundingBox())!;
+    expect(panelBox.x).toBeGreaterThanOrEqual(flowBox.x + flowBox.width - 1);
+    // 패널이 화면 높이를 넘지 않는다(안쪽 스크롤)
+    expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(800 + 1);
+  });
+});

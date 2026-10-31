@@ -219,13 +219,13 @@ export default function StepConfigPanel({
 
   if (!step) {
     return (
-      /* 모바일: 전체 너비 + 상단 보더, lg+: 고정 400px 너비 + 좌측 보더 */
-      <div className="w-full border-t lg:w-[400px] lg:border-l lg:border-t-0 h-full flex flex-col overflow-hidden">
+      /* 모바일: 전체 너비 + 상단 보더, 높이는 내용만큼(바깥 탭이 스크롤 — WD-456), lg+: 고정 400px 너비 + 좌측 보더 + 안쪽 스크롤 */
+      <div className="w-full shrink-0 border-t flex flex-col lg:w-[400px] lg:h-full lg:border-l lg:border-t-0 lg:overflow-hidden">
         <div className="flex items-center px-4 py-3 border-b shrink-0">
           <span className="font-medium text-sm">파이프라인 정보</span>
         </div>
-        <div className="flex-1 min-h-0">
-          <ScrollArea className="h-full">
+        <div className="lg:flex-1 lg:min-h-0">
+          <ScrollArea className="lg:h-full">
             <div className="p-4 space-y-4">
               {/* Name — 헤더의 Input이 단일 편집 진입점. 우측 패널은 읽기 전용으로만 표시하여
                   Ctrl+A 등으로 두 Input이 동시에 dispatch하는 중복 문자열 버그(#32) 방지. */}
@@ -344,8 +344,8 @@ export default function StepConfigPanel({
   const outputDatasetIdError = getFieldError('outputDatasetId');
 
   return (
-    /* 모바일: 전체 너비 + 상단 보더, lg+: 고정 400px 너비 + 좌측 보더 */
-    <div className="w-full border-t lg:w-[400px] lg:border-l lg:border-t-0 h-full flex flex-col overflow-hidden">
+    /* 모바일: 전체 너비 + 상단 보더, 높이는 내용만큼(바깥 탭이 스크롤 — WD-456), lg+: 고정 400px 너비 + 좌측 보더 + 안쪽 스크롤 */
+    <div className="w-full shrink-0 border-t flex flex-col lg:w-[400px] lg:h-full lg:border-l lg:border-t-0 lg:overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
         <span className="font-medium text-sm truncate">스텝 #{stepNumber}: {step.name || '(이름 없음)'}</span>
@@ -354,9 +354,9 @@ export default function StepConfigPanel({
         </Button>
       </div>
 
-      {/* Scrollable content - constrained to remaining space */}
-      <div className="flex-1 min-h-0">
-        <ScrollArea className="h-full">
+      {/* Scrollable content - lg+ 에서는 남은 높이 안에서 스크롤, 모바일은 내용만큼 펼치고 바깥 탭이 스크롤(WD-456) */}
+      <div className="lg:flex-1 lg:min-h-0">
+        <ScrollArea className="lg:h-full">
           <div className="p-4 space-y-4 overflow-hidden">
 
           {/* Name */}
