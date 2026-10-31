@@ -1,5 +1,7 @@
 package com.smartfirehub.pipeline.controller;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.ErrorResponse;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.ClientIpExtractor;
@@ -9,6 +11,8 @@ import com.smartfirehub.pipeline.repository.TriggerTenantResolver;
 import com.smartfirehub.pipeline.service.TriggerService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +47,21 @@ public class ExternalTriggerController {
 
   /** 신뢰 프록시 기준 클라이언트 IP 추출기(WD-402) — 허용 IP 검사와 trigger_event sourceIp 에 같은 값을 쓴다. */
   private final ClientIpExtractor clientIpExtractor;
+
+  /** API 트리거 본문 크기를 재는 데 쓴다(WD-403). */
+  private final ObjectMapper objectMapper;
+
+  /**
+   * 트리거 이벤트(trigger_event.detail)에 본문을 그대로 남기는 상한(직렬화 바이트, WD-403). 본문은 실행에 쓰이지 않고 이벤트 기록으로만 남는데,
+   * 크기 검사 없이 5MB 본문이 그대로 쌓여 「트리거」 탭이 열 때마다 수십 MB 를 내려받았다. 넘으면 요약만 남긴다.
+   */
+  static final int MAX_STORED_PAYLOAD_BYTES = 16 * 1024;
+
+  /** 요약에 남길 최상위 키 수 상한(WD-403) — 키가 수만 개인 본문도 요약이 커지지 않게. */
+  static final int MAX_SUMMARY_KEYS = 50;
+
+  /** 요약에 남길 키 하나의 길이 상한(WD-403). */
+  static final int MAX_KEY_LENGTH = 100;
 
   /** API trigger: authenticate via SHA-256 token hash matching. */
   @PostMapping("/api/{token}")
@@ -118,13 +137,44 @@ public class ExternalTriggerController {
                   request.getRequestURI()));
     }
 
-    Map<String, Object> fireParams = params != null ? params : Map.of();
-    fireParams = new java.util.HashMap<>(fireParams);
+    Map<String, Object> fireParams = storablePayload(params != null ? params : Map.of());
     fireParams.put("sourceIp", sourceIp);
 
     // 켜짐 여부는 토큰·IP 검사를 통과한 뒤에 fireTrigger 가 판정한다 — 맞는 토큰과 허용된 IP 를 가진 호출자에게만 "꺼져 있음"이 드러난다.
     TriggerFireResult result = triggerService.fireTrigger(trigger.id(), fireParams);
     return toFireResponse(result, trigger);
+  }
+
+  /**
+   * 트리거 이벤트에 남길 본문을 만든다(WD-403). 상한 이하면 본문 그대로, 넘으면 크기·최상위 키 목록 요약만 남긴다 — 호출은 그대로 실행되므로 큰 본문을 보내던
+   * 연동이 깨지지 않고, 이벤트 테이블과 「트리거」 탭 응답 크기는 상한 안에 머문다(웹훅이 payloadSize 만 남기는 것과 같은 취지).
+   */
+  private Map<String, Object> storablePayload(Map<String, Object> params) {
+    int size;
+    try {
+      size = objectMapper.writeValueAsBytes(params).length;
+    } catch (JsonProcessingException e) {
+      // 받은 JSON 을 다시 직렬화하지 못하는 경우는 사실상 없지만, 실패해도 발화는 막지 않고 본문을 남기지 않는다
+      size = -1;
+    }
+    if (size >= 0 && size <= MAX_STORED_PAYLOAD_BYTES) {
+      return new HashMap<>(params);
+    }
+    List<String> keys = new ArrayList<>(params.keySet());
+    Map<String, Object> summary = new HashMap<>();
+    summary.put("payloadTruncated", true);
+    if (size >= 0) {
+      summary.put("payloadSize", size);
+    }
+    summary.put("payloadKeyCount", keys.size());
+    // 키 하나가 아주 길어도 요약이 커지지 않게 키마다 앞 100자만 남긴다
+    summary.put(
+        "payloadKeys",
+        keys.stream()
+            .limit(MAX_SUMMARY_KEYS)
+            .map(k -> k.length() > MAX_KEY_LENGTH ? k.substring(0, MAX_KEY_LENGTH) : k)
+            .toList());
+    return summary;
   }
 
   /** Webhook trigger: authenticate via optional HMAC-SHA256 signature. */

@@ -706,4 +706,70 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
     assertThat(eventsOf(triggerId))
         .anyMatch(e -> "SKIPPED".equals(e.eventType()) && reason.equals(e.detail().get("reason")));
   }
+
+  /**
+   * 회귀 테스트(WD-403): 상한(16KB)을 넘는 API 트리거 본문은 실행은 그대로 하되, 이벤트에는 본문 대신 크기·키 요약만 남긴다. 예전에는 5MB 본문이
+   * trigger_event.detail 에 그대로 쌓여 「트리거」 탭이 열 때마다 수십 MB 를 내려받았다.
+   */
+  @Test
+  @SuppressWarnings("unchecked")
+  void apiTrigger_largePayload_firesButStoresOnlySummary() throws Exception {
+    TriggerResponse trigger =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest("API Big", TriggerType.API, null, Map.of()),
+            testUserId);
+    String rawToken = (String) trigger.config().get("rawToken");
+    String big = "x".repeat(ExternalTriggerController.MAX_STORED_PAYLOAD_BYTES + 1);
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"note\":\"" + big + "\",\"kind\":\"bulk\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("triggered"));
+
+    TriggerEventResponse fired =
+        eventsOf(trigger.id()).stream()
+            .filter(e -> "FIRED".equals(e.eventType()))
+            .findFirst()
+            .orElseThrow();
+    Map<String, Object> detail = fired.detail();
+    assertThat(detail).doesNotContainKey("note");
+    assertThat(detail.get("payloadTruncated")).isEqualTo(true);
+    assertThat(((Number) detail.get("payloadSize")).intValue())
+        .isGreaterThan(ExternalTriggerController.MAX_STORED_PAYLOAD_BYTES);
+    assertThat(((Number) detail.get("payloadKeyCount")).intValue()).isEqualTo(2);
+    assertThat((List<Object>) detail.get("payloadKeys")).containsExactlyInAnyOrder("note", "kind");
+    // 호출 IP 는 요약이어도 남는다
+    assertThat(detail).containsKey("sourceIp");
+  }
+
+  /** 상한 이하 본문은 지금처럼 이벤트에 그대로 남는다(WD-403). */
+  @Test
+  void apiTrigger_smallPayload_storedAsIs() throws Exception {
+    TriggerResponse trigger =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest("API Small", TriggerType.API, null, Map.of()),
+            testUserId);
+    String rawToken = (String) trigger.config().get("rawToken");
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"orderId\":42}"))
+        .andExpect(status().isOk());
+
+    Map<String, Object> detail =
+        eventsOf(trigger.id()).stream()
+            .filter(e -> "FIRED".equals(e.eventType()))
+            .findFirst()
+            .orElseThrow()
+            .detail();
+    assertThat(((Number) detail.get("orderId")).intValue()).isEqualTo(42);
+    assertThat(detail).doesNotContainKey("payloadTruncated");
+  }
 }
