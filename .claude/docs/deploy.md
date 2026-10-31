@@ -6,7 +6,7 @@
 > `all` 정의는 **3곳**에서 동기화 필요: `scripts/deploy.sh`, `scripts/update.sh`, 본 문서.
 > 운영 docker-compose 서비스명이 빌드 키와 다른 경우(`channel` → `firehub-channel`)는 두 스크립트의 `prod_service_name()` 헬퍼가 흡수한다.
 > `db`, `minio`는 stateful/변경이 드문 서비스로 재기동 시 데이터·서비스 전체에 영향을 주므로 `all`에서 제외 — 각각 `./scripts/deploy.sh db`, `./scripts/deploy.sh minio`로 개별 배포만 가능.
-> `minio`는 **미러 이미지**(`ghcr.io/bluleo78/smart-fire-hub/minio` — MinIO 공식 공개 이미지 배포 중단으로 같은 릴리스를 옮겨 둠, arm64 전용)라 빌드/push 없이 `docker compose pull minio && docker compose up -d --force-recreate minio`만 수행한다 (`db`가 자체 Dockerfile로 빌드하는 것과 다름).
+> `minio`는 **public 이미지**(`cgr.dev/chainguard/minio:latest` — MinIO 공식 공개 이미지 배포 중단으로 Chainguard 빌드를 사용, latest 만 무료 제공이라 pull 시 버전이 오를 수 있음)라 빌드/push 없이 `docker compose pull minio && docker compose up -d --force-recreate minio`만 수행한다 (`db`가 자체 Dockerfile로 빌드하는 것과 다름).
 > `admin`(firehub-admin, 플랫폼 슈퍼관리자 콘솔)은 stateful은 아니지만 **권한상승 경로를 배포 수준에서도 분리**하는 설계 의도(참조: 멀티 테넌시 P7-c) 때문에 의도적으로 `all`에서 제외했다 — 항상 `./scripts/deploy.sh admin`으로 명시적으로만 배포한다.
 
 ## firehub-admin (플랫폼 슈퍼관리자 콘솔)
