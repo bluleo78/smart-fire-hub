@@ -81,7 +81,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
     dashboardService.create(new CreateDashboardRequest("Beta", null, false, null), ownerUserId);
 
     // When
-    PageResponse<DashboardResponse> result = dashboardService.list(null, null, ownerUserId, 0, 10);
+    PageResponse<DashboardResponse> result =
+        dashboardService.list(null, null, null, ownerUserId, 0, 10);
 
     // Then
     assertThat(result.content()).hasSizeGreaterThanOrEqualTo(2);
@@ -97,7 +98,7 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
         new CreateDashboardRequest("OtherDash", null, false, null), ownerUserId);
 
     PageResponse<DashboardResponse> result =
-        dashboardService.list("UniqueTitle123", null, ownerUserId, 0, 10);
+        dashboardService.list("UniqueTitle123", null, null, ownerUserId, 0, 10);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).name()).isEqualTo("UniqueTitle123");
@@ -108,10 +109,49 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
     dashboardService.create(
         new CreateDashboardRequest("PublicDash", null, true, null), ownerUserId);
 
-    PageResponse<DashboardResponse> result = dashboardService.list(null, null, otherUserId, 0, 10);
+    PageResponse<DashboardResponse> result =
+        dashboardService.list(null, null, null, otherUserId, 0, 10);
 
     List<String> names = result.content().stream().map(DashboardResponse::name).toList();
     assertThat(names).contains("PublicDash");
+  }
+
+  /** WD-328: mineOnly — 「내 대시보드」 탭은 내 비공유·내 공유 대시보드만, 남의 공유 대시보드는 빠지고 건수도 같다. */
+  @Test
+  void list_mineOnlyFilter_excludesOthersSharedDashboards() {
+    dashboardService.create(
+        new CreateDashboardRequest("MyPrivate", null, false, null), ownerUserId);
+    dashboardService.create(new CreateDashboardRequest("MyShared", null, true, null), ownerUserId);
+    dashboardService.create(
+        new CreateDashboardRequest("OtherShared", null, true, null), otherUserId);
+
+    PageResponse<DashboardResponse> result =
+        dashboardService.list(null, null, true, ownerUserId, 0, 10);
+
+    assertThat(result.content()).allMatch(d -> ownerUserId.equals(d.createdBy()));
+    List<String> names = result.content().stream().map(DashboardResponse::name).toList();
+    assertThat(names).contains("MyPrivate", "MyShared");
+    assertThat(names).doesNotContain("OtherShared");
+    // 건수(countAll)도 같은 범위 조건을 써서 목록과 어긋나지 않는다
+    assertThat(result.totalElements()).isEqualTo(result.content().size());
+  }
+
+  /** WD-328: mineOnly 없이 sharedOnly 만 주면 기존처럼 공유 대시보드(내 것 포함)만 나온다 — 「공유됨」 탭 회귀 방지. */
+  @Test
+  void list_sharedOnlyFilter_returnsSharedDashboardsIncludingMine() {
+    dashboardService.create(
+        new CreateDashboardRequest("MyPrivate", null, false, null), ownerUserId);
+    dashboardService.create(new CreateDashboardRequest("MyShared", null, true, null), ownerUserId);
+    dashboardService.create(
+        new CreateDashboardRequest("OtherShared", null, true, null), otherUserId);
+
+    PageResponse<DashboardResponse> result =
+        dashboardService.list(null, true, null, ownerUserId, 0, 10);
+
+    assertThat(result.content()).allMatch(DashboardResponse::isShared);
+    List<String> names = result.content().stream().map(DashboardResponse::name).toList();
+    assertThat(names).contains("MyShared", "OtherShared");
+    assertThat(names).doesNotContain("MyPrivate");
   }
 
   // =========================================================================

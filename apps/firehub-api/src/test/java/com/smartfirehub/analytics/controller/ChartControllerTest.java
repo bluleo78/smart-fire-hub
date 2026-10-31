@@ -3,6 +3,7 @@ package com.smartfirehub.analytics.controller;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -67,12 +68,31 @@ class ChartControllerTest {
   void listCharts_returnsPage() throws Exception {
     mockAuth("analytics:read");
     when(chartService.list(
-            any(), any(), any(), any(), anyLong(), any(Integer.class), any(Integer.class)))
+            any(), any(), any(), any(), any(), anyLong(), any(Integer.class), any(Integer.class)))
         .thenReturn(new PageResponse<>(List.of(), 0, 20, 0L, 0));
 
     mockMvc
         .perform(get("/api/v1/analytics/charts").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk());
+  }
+
+  /** WD-328: 「내 차트」 탭의 mineOnly=true 가 서비스까지 전달되고, sharedOnly 는 비어 있다. */
+  @Test
+  void listCharts_mineOnlyParam_passedToService() throws Exception {
+    mockAuth("analytics:read");
+    when(chartService.list(
+            any(), any(), any(), any(), any(), anyLong(), any(Integer.class), any(Integer.class)))
+        .thenReturn(new PageResponse<>(List.of(), 0, 20, 0L, 0));
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/charts")
+                .param("mineOnly", "true")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk());
+
+    verify(chartService)
+        .list(isNull(), isNull(), isNull(), isNull(), eq(true), eq(1L), eq(0), eq(20));
   }
 
   @Test

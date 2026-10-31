@@ -90,12 +90,14 @@ public class AnalyticsDashboardService {
       Caffeine.newBuilder().expireAfterWrite(60, TimeUnit.SECONDS).maximumSize(200).build();
 
   // RLS 가 걸린 dashboard 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  // mineOnly=true 면 내가 만든 대시보드만(「내 대시보드」 탭, WD-328), sharedOnly=true 면 공유 대시보드만,
+  // 둘 다 없으면 내 대시보드 + 공유 대시보드.
   @Transactional(readOnly = true)
   public com.smartfirehub.global.dto.PageResponse<DashboardResponse> list(
-      String search, Boolean sharedOnly, Long userId, int page, int size) {
+      String search, Boolean sharedOnly, Boolean mineOnly, Long userId, int page, int size) {
     List<DashboardResponse> content =
-        dashboardRepository.findAll(search, sharedOnly, userId, page, size);
-    long total = dashboardRepository.countAll(search, sharedOnly, userId);
+        dashboardRepository.findAll(search, sharedOnly, mineOnly, userId, page, size);
+    long total = dashboardRepository.countAll(search, sharedOnly, mineOnly, userId);
     int totalPages = (int) Math.ceil((double) total / size);
     return new com.smartfirehub.global.dto.PageResponse<>(content, page, size, total, totalPages);
   }

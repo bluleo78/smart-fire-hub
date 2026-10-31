@@ -91,6 +91,42 @@ test.describe('쿼리 목록 페이지', () => {
     expect(req.url.pathname).toBe('/api/v1/analytics/queries');
   });
 
+  test('「내 쿼리」 탭은 mineOnly=true 만, 「공유됨」 탭은 sharedOnly=true 만 API 에 전달된다 (WD-328)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 「내 쿼리」 탭이 필터 없이 부르면 서버가 남의 공유 쿼리까지 섞어 주므로 mineOnly=true 를 실어야 한다
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []);
+    const tabCalls: { mineOnly: string | null; sharedOnly: string | null }[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/queries',
+      (route) => {
+        const url = new URL(route.request().url());
+        tabCalls.push({
+          mineOnly: url.searchParams.get('mineOnly'),
+          sharedOnly: url.searchParams.get('sharedOnly'),
+        });
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse([])),
+        });
+      },
+    );
+
+    await page.goto('/analytics/queries');
+    await expect(page.getByRole('heading', { name: '저장된 쿼리' })).toBeVisible();
+
+    // 기본(「내 쿼리」) 탭: mineOnly=true, sharedOnly 없음
+    await expect.poll(() => tabCalls.length).toBeGreaterThan(0);
+    expect(tabCalls[0]).toEqual({ mineOnly: 'true', sharedOnly: null });
+
+    // 「공유됨」 탭: sharedOnly=true, mineOnly 없음 — 내 공유 쿼리도 포함되는 기존 동작 유지
+    const before = tabCalls.length;
+    await page.getByRole('tab', { name: '공유됨' }).click();
+    await expect.poll(() => tabCalls.length).toBeGreaterThan(before);
+    expect(tabCalls[tabCalls.length - 1]).toEqual({ mineOnly: null, sharedOnly: 'true' });
+  });
+
   test('삭제 버튼 클릭 시 확인 후 DELETE API가 호출된다', async ({ authenticatedPage: page }) => {
     await setupQueryListMocks(page, 2);
     await page.goto('/analytics/queries');
@@ -243,6 +279,70 @@ test.describe('쿼리 목록 페이지', () => {
     // API 재호출 확인 (folder 파라미터 포함)
     const req = await capture.waitForRequest();
     expect(req.url.searchParams.get('folder')).toBe('분석');
+  });
+
+  test('폴더 목록 요청도 탭 범위를 싣는다 — 「내 쿼리」는 mineOnly=true, 「공유됨」은 sharedOnly=true (WD-328)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 폴더 드롭다운이 목록과 다른 범위면 「내 쿼리」에서 남의 공유 쿼리에만 있는 폴더를 골라 늘 빈 결과가 된다
+    await mockApi(page, 'GET', '/api/v1/analytics/queries', createPageResponse([]));
+    const folderCalls: { mineOnly: string | null; sharedOnly: string | null }[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/queries/folders',
+      (route) => {
+        const url = new URL(route.request().url());
+        folderCalls.push({
+          mineOnly: url.searchParams.get('mineOnly'),
+          sharedOnly: url.searchParams.get('sharedOnly'),
+        });
+        return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+      },
+    );
+
+    await page.goto('/analytics/queries');
+    await expect(page.getByRole('heading', { name: '저장된 쿼리' })).toBeVisible();
+
+    await expect.poll(() => folderCalls.length).toBeGreaterThan(0);
+    expect(folderCalls[0]).toEqual({ mineOnly: 'true', sharedOnly: null });
+
+    const before = folderCalls.length;
+    await page.getByRole('tab', { name: '공유됨' }).click();
+    await expect.poll(() => folderCalls.length).toBeGreaterThan(before);
+    expect(folderCalls[folderCalls.length - 1]).toEqual({ mineOnly: null, sharedOnly: 'true' });
+  });
+
+  test('탭을 바꾸면 고른 폴더 필터가 풀린다 — 다른 탭 목록이 조용히 비지 않게 (WD-328)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/queries',
+      createPageResponse([createSavedQueryListItem({ id: 1, folder: '분석' })]),
+    );
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', ['분석', '보고서']);
+
+    await page.goto('/analytics/queries');
+    await expect(page.getByRole('heading', { name: '저장된 쿼리' })).toBeVisible();
+
+    // 「내 쿼리」 탭에서 폴더 선택
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '분석' }).click();
+    await expect(page.getByRole('combobox')).toHaveText('분석');
+
+    // 탭 전환 시 목록 요청에 folder 가 빠지고 드롭다운도 「전체 폴더」로 돌아온다
+    const capture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/queries',
+      createPageResponse([]),
+      { capture: true },
+    );
+    await page.getByRole('tab', { name: '공유됨' }).click();
+    const req = await capture.waitForRequest();
+    expect(req.url.searchParams.get('sharedOnly')).toBe('true');
+    expect(req.url.searchParams.get('folder')).toBeNull();
+    await expect(page.getByRole('combobox')).toHaveText('전체 폴더');
   });
 
   test('쿼리 이름 클릭 시 에디터 페이지로 이동한다', async ({ authenticatedPage: page }) => {

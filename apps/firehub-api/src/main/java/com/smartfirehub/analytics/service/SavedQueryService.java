@@ -97,15 +97,25 @@ public class SavedQueryService {
     return datasetAccessGuard.visibleCondition(viewer);
   }
 
-  /** List saved queries with optional filters and pagination. */
+  /**
+   * List saved queries with optional filters and pagination.
+   *
+   * <p>mineOnly=true 면 내가 만든 쿼리만(「내 쿼리」 탭, WD-328), sharedOnly=true 면 공유 쿼리만, 둘 다 없으면 내 쿼리 + 공유 쿼리.
+   */
   // RLS 가 걸린 saved_query 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
   public PageResponse<SavedQueryListResponse> list(
-      String search, String folder, Boolean sharedOnly, Long userId, int page, int size) {
+      String search,
+      String folder,
+      Boolean sharedOnly,
+      Boolean mineOnly,
+      Long userId,
+      int page,
+      int size) {
     List<SavedQueryListResponse> content =
         savedQueryRepository.findAll(
-            search, folder, sharedOnly, userId, page, size, datasetNameVisible(userId));
-    long total = savedQueryRepository.countAll(search, folder, sharedOnly, userId);
+            search, folder, sharedOnly, mineOnly, userId, page, size, datasetNameVisible(userId));
+    long total = savedQueryRepository.countAll(search, folder, sharedOnly, mineOnly, userId);
     int totalPages = (int) Math.ceil((double) total / size);
     return new PageResponse<>(content, page, size, total, totalPages);
   }
@@ -355,8 +365,9 @@ public class SavedQueryService {
 
   /** Get distinct folder names visible to the user. */
   // RLS 가 걸린 saved_query 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  // sharedOnly/mineOnly 는 목록(list)과 같은 탭 범위 — 탭에 없는 쿼리의 폴더를 드롭다운에 내지 않는다(WD-328).
   @Transactional(readOnly = true)
-  public List<String> getFolders(Long userId) {
-    return savedQueryRepository.findDistinctFolders(userId);
+  public List<String> getFolders(Boolean sharedOnly, Boolean mineOnly, Long userId) {
+    return savedQueryRepository.findDistinctFolders(sharedOnly, mineOnly, userId);
   }
 }

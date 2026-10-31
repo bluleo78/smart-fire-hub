@@ -394,7 +394,7 @@ class ChartDeniedTest extends IntegrationTestBase {
     ChartResponse one = chartService.getById(secChart, viewer);
     assertThat(one.config()).isNull();
     assertThat(one.configWithheld()).isTrue();
-    var page = chartService.list(null, null, null, null, viewer, 0, 200);
+    var page = chartService.list(null, null, null, null, null, viewer, 0, 200);
     ChartResponse listed =
         page.content().stream().filter(c -> c.id().equals(secChart)).findFirst().orElseThrow();
     assertThat(listed.config()).isNull();

@@ -47,10 +47,13 @@ export default function ChartListPage() {
   const size = 10;
 
   const sharedOnly = tab === 'shared';
+  // 「내 차트」 탭은 내가 만든 차트만 — 필터 없이 부르면 서버가 남의 공유 차트까지 섞어 준다(WD-328). 「공유됨」은 sharedOnly 그대로.
+  const mineOnly = tab === 'mine';
 
   const { data: chartsData, isLoading } = useCharts({
     search: search || undefined,
     sharedOnly: sharedOnly || undefined,
+    mineOnly: mineOnly || undefined,
     page,
     size,
   });

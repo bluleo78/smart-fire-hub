@@ -55,6 +55,8 @@ public class SavedQueryController {
       @RequestParam(required = false) String search,
       @RequestParam(required = false) String folder,
       @RequestParam(required = false) Boolean sharedOnly,
+      // 「내 …」 탭 전용 — 내가 만든 항목만(남의 공유 항목 제외, WD-328). 없으면 기존처럼 내 것 + 공유된 것
+      @RequestParam(required = false) Boolean mineOnly,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size,
       Authentication authentication) {
@@ -62,7 +64,7 @@ public class SavedQueryController {
     size = Math.max(1, Math.min(size, 100));
     Long userId = (Long) authentication.getPrincipal();
     return ResponseEntity.ok(
-        savedQueryService.list(search, folder, sharedOnly, userId, page, size));
+        savedQueryService.list(search, folder, sharedOnly, mineOnly, userId, page, size));
   }
 
   @PostMapping
@@ -87,9 +89,13 @@ public class SavedQueryController {
 
   @GetMapping("/folders")
   @RequirePermission("analytics:read")
-  public ResponseEntity<List<String>> getFolders(Authentication authentication) {
+  public ResponseEntity<List<String>> getFolders(
+      // 목록과 같은 탭 범위(WD-328) — 없으면 기존처럼 내 쿼리 + 공유 쿼리의 폴더
+      @RequestParam(required = false) Boolean sharedOnly,
+      @RequestParam(required = false) Boolean mineOnly,
+      Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
-    return ResponseEntity.ok(savedQueryService.getFolders(userId));
+    return ResponseEntity.ok(savedQueryService.getFolders(sharedOnly, mineOnly, userId));
   }
 
   @PostMapping("/execute")
