@@ -882,11 +882,16 @@ export default function ChartBuilderPage() {
           <ArrowLeft className="h-4 w-4" />
         </Button>
 
-        <div className="flex-1 min-w-0 flex flex-col">
+        {/* 좁은 화면(sm 미만)에서는 제목이 뒤로 가기 버튼 옆 한 줄을 모두 차지하고 버튼들은 다음 줄로 내려간다(WD-306) —
+            버튼과 한 줄을 나누면 차트 이름이 「QA…」처럼 두세 글자만 남았다. 3rem = 뒤로 가기 버튼(2.25rem) + 간격(0.75rem). */}
+        <div className="flex-1 basis-[calc(100%-3rem)] sm:basis-0 min-w-0 flex flex-col">
           {existingChart ? (
             /* 문서 개요에 페이지 heading 이 하나는 있어야 한다(02-typography §2.2, #433).
-               툴바 내 제목이라 시각 크기(text-lg)는 그대로 두고 태그만 h1 으로 올린다. */
-            <h1 className="text-lg font-semibold truncate">{existingChart.name}</h1>
+               툴바 내 제목이라 시각 크기(text-lg)는 그대로 두고 태그만 h1 으로 올린다.
+               그래도 잘리는 긴 이름은 마우스를 올리거나 길게 눌러 전체를 볼 수 있게 title 을 단다(WD-306). */
+            <h1 className="text-lg font-semibold truncate" title={existingChart.name}>
+              {existingChart.name}
+            </h1>
           ) : (
             <h1 className="text-lg font-semibold text-muted-foreground">새 차트</h1>
           )}
