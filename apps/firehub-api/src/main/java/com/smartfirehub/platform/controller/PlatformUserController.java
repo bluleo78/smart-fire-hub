@@ -32,11 +32,10 @@ public class PlatformUserController {
   /**
    * 이메일/이름 부분일치 검색. 하한 2자, 상한 100자, 결과 <b>최대 20건</b>.
    *
-   * <p>{@code q} 를 {@code required = false} 로 받는다 — {@code required = true}(기본값)이면 파라미터 부재 시 Spring
-   * 이 {@code MissingServletRequestParameterException} 을 던지는데, 이 코드베이스의 {@code
-   * GlobalExceptionHandler} 에는 그 예외 전용 핸들러가 없어 범용 {@code Exception} 핸들러로 떨어져 <b>500</b> 이 난다(실측).
-   * 대신 {@code null} 을 그대로 서비스에 넘기면 서비스의 하한 검사가 {@link IllegalArgumentException} 을 던지고, 그건 이미 전역
-   * 핸들러가 400 으로 바꾼다 — 새 핸들러를 추가하지 않고도 "파라미터를 잊은 호출"이 전 사용자 덤프로 성공하는 일을 막는다.
+   * <p>{@code q} 를 {@code required = false} 로 받아 {@code null} 을 그대로 서비스에 넘긴다 — 서비스의 하한 검사가 {@link
+   * IllegalArgumentException} 을 던지고 전역 핸들러가 400 으로 바꿔, "파라미터를 잊은 호출"이 전 사용자 덤프로 성공하는 일을 막는다.
+   * (예전에는 필수 파라미터 누락이 500 이 되어 이렇게 우회했다. 지금은 {@code MissingServletRequestParameterException} 도 400 이다
+   * — WD-405.)
    *
    * <p><b>이 API 를 쓰는 화면(Task 8, 테넌트 생성 Owner 검색)에 정적 안내가 필요하다</b>: 결과가 20건에서 그냥 잘리고 "더보기"/페이징이
    * 없으므로, 화면에 "최대 20건까지 표시됩니다. 찾는 사용자가 없으면 검색어를 더 구체적으로 입력하세요" 류의 문구를 넣어야 한다 — 그래야 운영자가 "결과 없음"과

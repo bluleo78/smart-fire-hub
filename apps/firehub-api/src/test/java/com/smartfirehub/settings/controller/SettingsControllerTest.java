@@ -100,6 +100,18 @@ class SettingsControllerTest {
    * simplify 리뷰가 그 흡수를 구조적 위험으로 지적해 경로를 {@code /overrides/{key}} 로 옮기자, 흡수가 사라지고 삭제된 엔드포인트가 다시 정직하게
    * 404 가 된다. 즉 <b>이 404 는 catch-all 이 없어졌다는 증거</b>이기도 하다.
    */
+  /** 필수 쿼리 파라미터(prefix)가 빠지면 500 이 아니라 400 + 빠진 이름으로 답한다(WD-405). */
+  @Test
+  void getSettings_withoutPrefix_returns400NamingMissingParam() throws Exception {
+    mockAuth("ai:settings");
+
+    mockMvc
+        .perform(get("/api/v1/settings").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.prefix").value("'prefix' 값이 필요합니다."));
+    verify(settingsService, never()).getResolvedByPrefix(any());
+  }
+
   @Test
   void getDecryptedAiApiKey_endpointRemoved_returnsNotFound() throws Exception {
     mockAuth("ai:settings");

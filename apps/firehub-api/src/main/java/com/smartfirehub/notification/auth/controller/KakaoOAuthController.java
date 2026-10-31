@@ -7,7 +7,6 @@ import com.smartfirehub.notification.auth.OAuthStateService;
 import com.smartfirehub.notification.repository.OAuthStateRepository.ConsumedState;
 import java.util.Map;
 import java.util.Optional;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -65,19 +64,33 @@ public class KakaoOAuthController {
    * tenant_id NOT NULL)이다. state 가 실어 온 테넌트(V106 [R7])를 되찾아 {@link TenantContext#runScopedGet} 으로
    * 컨텍스트를 세운다. 되찾지 못하면 <b>fail-closed</b> — {@code consume} 이 empty 를 돌려주고 아래 400 분기로 빠진다.
    *
-   * @param code Kakao에서 전달한 authorization_code
+   * @param code Kakao에서 전달한 authorization_code (동의를 취소하면 없다)
    * @param state CSRF 방어용 state (OAuthStateService.issue로 발급)
-   * @return 200 HTML (창 닫기 스크립트 포함) 또는 400 (유효하지 않은 state)
+   * @param error 제공자가 돌려보낸 오류 코드 (예: 동의 취소 access_denied) — 있으면 code 대신 온다
+   * @return 200 HTML (결과 알림·창 닫기 스크립트 포함) 또는 400 (유효하지 않은 state, code·state 누락)
    */
   @GetMapping("/callback")
   public ResponseEntity<String> callback(
-      @RequestParam("code") String code, @RequestParam("state") String state) {
+      @RequestParam(value = "code", required = false) String code,
+      @RequestParam(value = "state", required = false) String state,
+      @RequestParam(value = "error", required = false) String error) {
+    // 동의 화면에서 「취소」하면 제공자는 code 없이 error(access_denied)와 state 만 붙여 돌려보낸다(WD-405).
+    // 예전에는 code 가 필수라 500 JSON 이 팝업에 남았다. 안내 페이지로 바꾸고, 쓰기는 하지 않는다.
+    if (error != null) {
+      return OAuthCallbackPage.providerError(oAuthStateService, ChannelType.KAKAO, state, error);
+    }
+    if (code == null || state == null) {
+      return OAuthCallbackPage.badRequest(
+          ChannelType.KAKAO, "연결 요청이 올바르지 않습니다. 원래 화면에서 다시 시도해 주세요.");
+    }
     Optional<ConsumedState> consumed = oAuthStateService.consume(state);
     if (consumed.isEmpty()) {
-      return ResponseEntity.badRequest().body("유효하지 않거나 만료된 state입니다.");
+      return OAuthCallbackPage.badRequest(
+          ChannelType.KAKAO, "연결 요청이 만료됐거나 올바르지 않습니다. 원래 화면에서 다시 시도해 주세요.");
     }
     if (consumed.get().channelType() != ChannelType.KAKAO) {
-      return ResponseEntity.badRequest().body("잘못된 채널 타입의 state입니다.");
+      return OAuthCallbackPage.badRequest(
+          ChannelType.KAKAO, "다른 채널의 연결 요청입니다. 원래 화면에서 다시 시도해 주세요.");
     }
 
     long userId = consumed.get().userId();
@@ -95,12 +108,8 @@ public class KakaoOAuthController {
         () -> {
           kakaoOAuthService.completeAuthorization(userId, code);
 
-          return ResponseEntity.ok()
-              .contentType(MediaType.TEXT_HTML)
-              .body(
-                  "<html><body>카카오 연동 완료."
-                      + " 창을 닫아주세요."
-                      + "<script>window.close();</script></body></html>");
+          // 연동 완료 — 원래 화면에 알리고 팝업 창 닫기
+          return OAuthCallbackPage.connected(ChannelType.KAKAO, "카카오 연동 완료. 창을 닫아주세요.");
         });
   }
 }
