@@ -215,4 +215,110 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
         .isInstanceOf(ProactiveJobException.class)
         .hasMessageContaining("빌트인 템플릿은 수정할 수 없습니다");
   }
+
+  // ── WD-298: 섹션 서버 검증 — 화면 밖(API·AI 도구)에서 들어온 깨진 섹션을 400(ProactiveJobException)으로 거절 ──
+
+  private CreateReportTemplateRequest createWith(List<Map<String, Object>> sections) {
+    return new CreateReportTemplateRequest("WD-298 검증", null, sections, null);
+  }
+
+  /** 섹션 하나를 만든다 — Map.of 는 null 값을 못 넣어, 빠진 필드를 표현하려고 HashMap 을 쓴다. */
+  private static Map<String, Object> section(String key, String type, String label) {
+    Map<String, Object> m = new java.util.HashMap<>();
+    if (key != null) m.put("key", key);
+    if (type != null) m.put("type", type);
+    if (label != null) m.put("label", label);
+    return m;
+  }
+
+  @Test
+  void createTemplate_duplicateKey_rejectedWithKoreanReason() {
+    assertThatThrownBy(
+            () ->
+                reportTemplateService.createTemplate(
+                    createWith(List.of(section("dup", "text", "하나"), section("dup", "text", "둘"))),
+                    testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageContaining("섹션 Key가 중복되었습니다: \"dup\"");
+  }
+
+  @Test
+  void createTemplate_missingOrMalformedKey_rejected() {
+    assertThatThrownBy(
+            () ->
+                reportTemplateService.createTemplate(
+                    createWith(List.of(section(null, "cards", "카드"))), testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageContaining("섹션 Key가 없습니다");
+    assertThatThrownBy(
+            () ->
+                reportTemplateService.createTemplate(
+                    createWith(List.of(section("Bad-Key", "text", "이름"))), testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageContaining("섹션 Key \"Bad-Key\"가 올바르지 않습니다");
+  }
+
+  @Test
+  void createTemplate_unknownTypeOrBlankLabel_rejected() {
+    assertThatThrownBy(
+            () ->
+                reportTemplateService.createTemplate(
+                    createWith(List.of(section("a", "nosuch", "이름"))), testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageContaining("타입 \"nosuch\"은(는) 지원하지 않습니다");
+    assertThatThrownBy(
+            () ->
+                reportTemplateService.createTemplate(
+                    createWith(List.of(section("a", "text", "  "))), testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageContaining("이름(label)이 비어 있습니다");
+    assertThatThrownBy(
+            () ->
+                reportTemplateService.createTemplate(
+                    createWith(List.of(section("a", "chart", null))), testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageContaining("이름(label)이 비어 있습니다");
+  }
+
+  /** 하위(children) 섹션도 같은 규칙이고, 상위와 하위 사이의 key 중복도 잡는다. 정상 group·divider·type 생략은 저장된다. */
+  @Test
+  void createTemplate_nestedChildren_validatedAcrossTree() {
+    Map<String, Object> group = section("grp", "group", "묶음");
+    group.put("children", List.of(section("grp", "text", "하위")));
+    assertThatThrownBy(
+            () -> reportTemplateService.createTemplate(createWith(List.of(group)), testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageContaining("섹션 Key가 중복되었습니다: \"grp\" (grp 하위)");
+
+    Map<String, Object> okGroup = section("grp", "group", "묶음");
+    okGroup.put("children", List.of(section("child_1", "table", "표")));
+    ReportTemplateResponse created =
+        reportTemplateService.createTemplate(
+            createWith(
+                List.of(
+                    okGroup, section("line", "divider", "구분선"), section("plain", null, "타입 생략"))),
+            testUserId);
+    assertThat(created.sections()).hasSize(3);
+  }
+
+  @Test
+  void updateTemplate_invalidSections_rejectedAndOriginalKept() {
+    ReportTemplateResponse created =
+        reportTemplateService.createTemplate(
+            createWith(List.of(section("summary", "text", "요약"))), testUserId);
+
+    UpdateReportTemplateRequest bad =
+        new UpdateReportTemplateRequest(
+            "깨진 수정", null, List.of(section("a", "text", "첫째"), section("a", "nosuch", "")), null);
+    assertThatThrownBy(() -> reportTemplateService.updateTemplate(created.id(), bad, testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageContaining("섹션 Key가 중복되었습니다: \"a\"");
+
+    // 섹션을 보내지 않는 수정(null)은 검사 없이 기존 섹션을 유지한다.
+    reportTemplateService.updateTemplate(
+        created.id(), new UpdateReportTemplateRequest("이름만 수정", null, null, null), testUserId);
+    ReportTemplateResponse after = reportTemplateService.getTemplate(created.id(), testUserId);
+    assertThat(after.name()).isEqualTo("이름만 수정");
+    assertThat(after.sections()).hasSize(1);
+  }
 }

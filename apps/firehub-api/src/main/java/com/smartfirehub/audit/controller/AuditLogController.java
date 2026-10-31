@@ -38,6 +38,10 @@ public class AuditLogController {
       @RequestParam(required = false) String endDate,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size) {
+    // WD-293: 다른 목록과 같이 page ≥ 0, 1 ≤ size ≤ 100 으로 보정한다. 상한이 없으면 계속 쌓이는 감사 로그 전체를 한 응답으로 돌려주고,
+    // size=0 은 전체 페이지 수가 0 나누기로 int 최댓값이 되며, 음수는 DB OFFSET/LIMIT 오류가 엉뚱한 「저장할 수 없는 값」 400 으로 번역됐다.
+    page = Math.max(0, page);
+    size = Math.max(1, Math.min(size, 100));
     // userId 파라미터: 특정 사용자(user_id)로 정확히 일치 필터링.
     // free-text search 와 별도로 동작해 동명이인/오타 노이즈 없이 사용자별 활동 추적이 가능하다 (#89).
     ZoneId storage = AuditTimes.storageZone();

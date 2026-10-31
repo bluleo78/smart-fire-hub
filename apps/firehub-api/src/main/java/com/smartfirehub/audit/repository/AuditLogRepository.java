@@ -261,7 +261,7 @@ public class AuditLogRepository {
             .from(AUDIT_LOG)
             .where(condition)
             .orderBy(AL_ACTION_TIME.desc())
-            .offset(page * size)
+            .offset((long) page * size)
             .limit(size)
             .fetch(this::mapToResponse);
 

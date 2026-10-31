@@ -248,7 +248,7 @@ public class UserRepository {
         .where(condition)
         .orderBy(USER.ID.asc())
         .limit(size)
-        .offset(page * size)
+        .offset((long) page * size)
         .fetch(this::mapToUserResponse);
   }
 
