@@ -154,9 +154,27 @@ public class DbExecutorClient {
    * @throws ScriptExecutionException 주소 미설정·연결 실패·인증 실패·응답 시간 초과
    */
   public SqlExecuteResult executeSql(String query, List<String> preStatements) {
+    return executeSql(query, preStatements, (Long) null);
+  }
+
+  /**
+   * {@link #executeSql(String, List)} 에 파이프라인 실행 id 를 더한 판(WD-482, PG 실행기의 WD-466 과 같은 방식).
+   *
+   * <p><b>왜.</b> db-executor 는 선행 문장마다 {@code LOCK TABLE … IN EXCLUSIVE MODE} 로 출력 테이블을 잠그고, 같은 출력을
+   * 쓰는 다른 실행이 끝날 때까지 기다린다. 그 대기 중에 들어온 취소는 러너의 「SQL 실행 직전」 체크포인트보다 뒤라 보이지 않았고, 잠금을 얻은 뒤 사용자 SQL 이
+   * 끝까지 돌아 출력을 다시 교체했다. 실행 id 를 실으면 db-executor 가 잠금을 얻은 직후 api({@code
+   * /internal/executor/tenants/{tenantId}/pipeline-executions/{id}/stop-requested})에 취소 여부를 되묻고,
+   * 취소면 롤백한 뒤 {@link SqlExecuteResult#cancelled()} 로 알린다.
+   *
+   * @param executionId 파이프라인 실행 id — null 이면 싣지 않는다(되묻지 않는다, 기존 동작)
+   */
+  public SqlExecuteResult executeSql(String query, List<String> preStatements, Long executionId) {
     Map<String, Object> request = new LinkedHashMap<>();
     request.put("query", query);
     request.put("preStatements", preStatements == null ? List.of() : preStatements);
+    if (executionId != null) {
+      request.put("executionId", executionId);
+    }
     return post(
         "/execute/sql", withTenant(request), SqlExecuteResult.class, sqlWait(preStatements));
   }

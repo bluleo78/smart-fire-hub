@@ -591,4 +591,135 @@ class SqlRunnerTest {
       Thread.currentThread().interrupt();
     }
   }
+
+  // ── 잠금 대기 중 취소(WD-482) ─────────────────────────────────────────────────────────
+
+  private static final String DELETE_B = "DELETE FROM \"GENIA_T5\".\"ITEMS\"";
+  private static final String LOCK_B = "LOCK TABLE \"GENIA_T5\".\"ITEMS\" IN EXCLUSIVE MODE";
+
+  /** 중지 확인을 넘겨 실행한다(컨트롤러와 같은 요청 기한 계산). */
+  private SqlExecuteResponse runWithStop(
+      String query, List<String> preStatements, java.util.function.BooleanSupplier stop) {
+    ExecutionTimeouts.Sql sql = new ExecutionTimeouts.Sql(50, 55, 1800);
+    boolean hasPre = preStatements != null && !preStatements.isEmpty();
+    try (Deadline deadline = new Deadline(sql.requestSeconds(55, hasPre))) {
+      return runner(50, 55).run(FakeJdbc.DESCRIPTOR, query, preStatements, deadline, null, stop);
+    }
+  }
+
+  /** 잠금을 얻은 뒤 중지 요청이 보이면 비우기·본문을 보내지 않고 롤백해 cancelled 로 답한다 — 출력은 그대로다. */
+  @Test
+  void stopRequestedAfterLock_rollsBackWithoutDeleteOrBody() {
+    java.util.concurrent.atomic.AtomicInteger calls =
+        new java.util.concurrent.atomic.AtomicInteger();
+
+    SqlExecuteResponse res =
+        runWithStop(
+            INSERT,
+            List.of(DELETE),
+            () -> {
+              // 확인 시점에는 잠금만 실행됐다(비우기 전).
+              assertThat(db.events).containsExactly(LOCK);
+              calls.incrementAndGet();
+              return true;
+            });
+
+    assertThat(calls).hasValue(1);
+    assertThat(db.events).containsExactly(LOCK, "ROLLBACK");
+    assertThat(res.cancelled()).isTrue();
+    assertThat(res.success()).isFalse();
+    assertThat(res.error()).isEqualTo(SqlExecuteResponse.CANCELLED_MESSAGE);
+    assertThat(res.dbError()).isNull();
+  }
+
+  /** 중지 요청이 없으면 기존 순서 그대로 실행·커밋한다. */
+  @Test
+  void notStopped_proceedsAsBefore() {
+    SqlExecuteResponse res = runWithStop(INSERT, List.of(DELETE), () -> false);
+
+    assertThat(res.success()).isTrue();
+    assertThat(res.cancelled()).isFalse();
+    assertThat(db.events).containsExactly(LOCK, DELETE, INSERT, "COMMIT");
+  }
+
+  /** 확인이 실패하면(api 장애 등) 중지 아님으로 보고 그대로 실행한다(fail-open) — 경고만 남긴다. */
+  @Test
+  void stopCheckFailure_failsOpenAndProceeds() {
+    try (LogCapture logs = LogCapture.of(SqlRunner.class)) {
+      SqlExecuteResponse res =
+          runWithStop(
+              INSERT,
+              List.of(DELETE),
+              () -> {
+                throw new IllegalStateException("중지 요청 확인 응답 상태=503");
+              });
+
+      assertThat(res.success()).isTrue();
+      assertThat(res.cancelled()).isFalse();
+      assertThat(db.events).containsExactly(LOCK, DELETE, INSERT, "COMMIT");
+      assertThat(logs.events())
+          .singleElement()
+          .satisfies(e -> assertThat(e.getLevel()).isEqualTo(Level.WARN));
+    }
+  }
+
+  /** 선행 문장이 없으면 잠금도 대기도 없으므로 되묻지 않는다. */
+  @Test
+  void noPreStatements_neverChecksStop() {
+    SqlExecuteResponse res =
+        runWithStop(
+            INSERT,
+            List.of(),
+            () -> {
+              throw new AssertionError("선행 문장이 없으면 확인하지 않는다");
+            });
+
+    assertThat(res.success()).isTrue();
+    assertThat(db.events).containsExactly(INSERT, "COMMIT");
+  }
+
+  /** 선행 문장이 여럿이면 잠금마다 확인한다 — 두 번째 잠금 대기 중 취소도 본문 전에 잡는다. */
+  @Test
+  void stopCheckedAfterEachLock() {
+    java.util.concurrent.atomic.AtomicInteger calls =
+        new java.util.concurrent.atomic.AtomicInteger();
+
+    SqlExecuteResponse res =
+        runWithStop(INSERT, List.of(DELETE, DELETE_B), () -> calls.incrementAndGet() == 2);
+
+    assertThat(res.cancelled()).isTrue();
+    assertThat(db.events).containsExactly(LOCK, DELETE, LOCK_B, "ROLLBACK");
+  }
+
+  /** 공개 경로(실행 id): 클라이언트에 기술자의 테넌트와 실행 id 로 묻고, id 가 없거나 0 이하면 묻지 않는다. */
+  @Test
+  void executionId_resolvesStopCheckForDescriptorTenant() {
+    com.smartfirehub.dbexecutor.store.PipelineStopClient stopClient =
+        mock(com.smartfirehub.dbexecutor.store.PipelineStopClient.class);
+    when(stopClient.check(FakeJdbc.DESCRIPTOR.tenantId(), 42L)).thenReturn(() -> true);
+    SqlRunner withClient =
+        new SqlRunner(
+            db.pools, timeouts(new ExecutionTimeouts.Sql(50, 55, 1800)), descriptors, stopClient);
+
+    try (Deadline deadline = new Deadline(1855)) {
+      SqlExecuteResponse res =
+          withClient.run(FakeJdbc.DESCRIPTOR, INSERT, List.of(DELETE), deadline, null, 42L);
+      assertThat(res.cancelled()).isTrue();
+    }
+    db.events.clear();
+    try (Deadline deadline = new Deadline(1855)) {
+      assertThat(
+              withClient
+                  .run(FakeJdbc.DESCRIPTOR, INSERT, List.of(DELETE), deadline, null, (Long) null)
+                  .success())
+          .isTrue();
+      assertThat(
+              withClient
+                  .run(FakeJdbc.DESCRIPTOR, INSERT, List.of(DELETE), deadline, null, 0L)
+                  .success())
+          .isTrue();
+    }
+    verify(stopClient).check(FakeJdbc.DESCRIPTOR.tenantId(), 42L);
+    verify(stopClient, never()).check(anyLong(), eq(0L));
+  }
 }

@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
@@ -172,7 +173,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
     // 트리거 보장이 실행보다 먼저 — 트리거 없이 INSERT 가 나가면 ID 가 비어 실패한다.
     var order = inOrder(dataTableService, dbExecutorClient);
     order.verify(dataTableService).ensureRowTriggers(List.of("ORDERS"));
-    order.verify(dbExecutorClient).executeSql(eq(sql), anyList());
+    order.verify(dbExecutorClient).executeSql(eq(sql), anyList(), nullable(Long.class));
     verify(dbExecutorClient, never()).probe(anyString());
     verifyNoPgExecution();
   }
@@ -188,7 +189,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
 
     assertThat(status).isEqualTo("FAILED");
     assertThat(failureMessage()).isEqualTo(MISSING_PRIVILEGE);
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(dbExecutorClient, never()).executeSql(anyString(), anyList(), nullable(Long.class));
     verifyNoPgExecution();
   }
 
@@ -236,7 +237,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
 
     assertThat(status).isEqualTo("FAILED");
     assertThat(failureMessage()).isEqualTo("접속 불가");
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(dbExecutorClient, never()).executeSql(anyString(), anyList(), nullable(Long.class));
   }
 
   /** 따옴표 대상 이름도 검증기가 접은 물리 이름(대문자)으로 ensureRowTriggers 에 넘어간다. */
@@ -321,7 +322,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
   private SentSql captureSent() {
     ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<List<String>> pre = ArgumentCaptor.forClass(List.class);
-    verify(dbExecutorClient).executeSql(query.capture(), pre.capture());
+    verify(dbExecutorClient).executeSql(query.capture(), pre.capture(), nullable(Long.class));
     return new SentSql(query.getValue(), pre.getValue());
   }
 
@@ -353,7 +354,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
   }
 
   private void stubExecuteSuccess() {
-    when(dbExecutorClient.executeSql(anyString(), anyList()))
+    when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
         .thenReturn(
             new SqlExecuteResult(true, List.of(), List.of(), 2, "2 rows", null, null, null));
   }

@@ -89,7 +89,7 @@ class ExecutorContractVectorsTest {
   private void stubRunners() throws Exception {
     when(descriptors.get(org.mockito.ArgumentMatchers.anyLong(), any(Duration.class)))
         .thenReturn(D);
-    when(sqlRunner.run(any(), anyString(), any(), any(Deadline.class), any()))
+    when(sqlRunner.run(any(), anyString(), any(), any(Deadline.class), any(), any()))
         .thenReturn(new SqlExecuteResponse(true, null, null, 1, "로그", null, null));
     when(loadRunner.load(any(), anyString(), any(), any(), any(Deadline.class)))
         .thenReturn(new LoadResponse(true, 1, null, null));
@@ -186,7 +186,8 @@ class ExecutorContractVectorsTest {
             anyString(),
             any(),
             deadline.capture(),
-            org.mockito.ArgumentMatchers.eq(requested));
+            org.mockito.ArgumentMatchers.eq(requested),
+            any());
     assertThat(deadline.getValue().totalSeconds()).isEqualTo(1800 + requested);
   }
 
@@ -211,7 +212,8 @@ class ExecutorContractVectorsTest {
               .contentType(MediaType.APPLICATION_JSON)
               .content(OM.writeValueAsString(ex.get("request"))));
       ArgumentCaptor<Integer> requested = ArgumentCaptor.forClass(Integer.class);
-      verify(sqlRunner).run(any(), anyString(), any(), any(Deadline.class), requested.capture());
+      verify(sqlRunner)
+          .run(any(), anyString(), any(), any(Deadline.class), requested.capture(), any());
       Integer passed = requested.getValue();
       int effectiveSeconds = passed != null ? passed : timeouts.sql().statementTimeoutSeconds();
       assertThat(effectiveSeconds * 1000L)
@@ -264,7 +266,7 @@ class ExecutorContractVectorsTest {
         continue;
       }
       String message = ex.get("expectedPreStatementTimeoutMessage").asText();
-      when(sqlRunner.run(any(), anyString(), any(), any(Deadline.class), any()))
+      when(sqlRunner.run(any(), anyString(), any(), any(Deadline.class), any(), any()))
           .thenReturn(SqlExecuteResponse.failure(message, null, "시간 초과로 취소하고 롤백함"));
       String body =
           mvc.perform(

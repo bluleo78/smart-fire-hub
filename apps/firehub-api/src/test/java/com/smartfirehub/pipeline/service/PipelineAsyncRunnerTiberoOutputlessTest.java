@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -178,7 +179,7 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
     lenient().when(tmp.datasets().createPipelineTempDataset(any(), any())).thenReturn(created);
     lenient().when(tmp.repo().findBySourcePipelineStepId(STEP_ID)).thenReturn(Optional.empty());
     lenient()
-        .when(dbExecutorClient.executeSql(anyString(), anyList()))
+        .when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
         .thenReturn(
             new SqlExecuteResult(true, List.of(), List.of(), 2, "2 rows", null, null, null));
   }
@@ -217,7 +218,7 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
     verifyNoInteractions(sqlColumnProbe, executorClient, sqlExecutor);
     ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<List<String>> pre = captor();
-    verify(dbExecutorClient).executeSql(query.capture(), pre.capture());
+    verify(dbExecutorClient).executeSql(query.capture(), pre.capture(), nullable(Long.class));
     assertThat(query.getValue())
         .isEqualTo(
             TiberoPipelineSql.insertSelect(
@@ -245,7 +246,7 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
     verify(tmp.datasets(), never()).createPipelineTempDataset(any(), any());
     verify(tmp.datasets(), never()).deleteDataset(anyLong());
     verify(realTempDatasetService).hasSchemaChanged(eq(TEMP_ID), anyList());
-    verify(dbExecutorClient).executeSql(anyString(), anyList());
+    verify(dbExecutorClient).executeSql(anyString(), anyList(), nullable(Long.class));
     // 재사용 경로도 크래시 흔적 맞춤이 스키마 비교보다 먼저다(WD-256).
     org.mockito.InOrder order = org.mockito.Mockito.inOrder(realTempDatasetService);
     order.verify(realTempDatasetService).reconcileTempDataset(TEMP_ID);
@@ -272,7 +273,7 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
     assertThat(status).as(lastError).isEqualTo("COMPLETED");
     verify(tmp.datasets(), never()).deleteDataset(anyLong());
     verify(tmp.datasets(), never()).createPipelineTempDataset(any(), any());
-    verify(dbExecutorClient).executeSql(anyString(), anyList());
+    verify(dbExecutorClient).executeSql(anyString(), anyList(), nullable(Long.class));
     verify(realTempDatasetService).commitRebuild(rebuild);
     verify(realTempDatasetService, never()).rollbackRebuild(any(), anyLong());
     org.mockito.InOrder order = org.mockito.Mockito.inOrder(realTempDatasetService);
@@ -291,7 +292,7 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
     DatasetService.PipelineTempRebuild rebuild = rebuildOf();
     when(tmp.datasets().rebuildPipelineTempTable(eq(TEMP_ID), anyList())).thenReturn(rebuild);
     stubTempColumns("amount");
-    when(dbExecutorClient.executeSql(anyString(), anyList()))
+    when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
         .thenReturn(
             new SqlExecuteResult(false, List.of(), List.of(), 0, "", "0 으로 나눔", null, null));
 
@@ -312,7 +313,7 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
     org.mockito.InOrder order =
         org.mockito.Mockito.inOrder(realTempDatasetService, dbExecutorClient);
     order.verify(realTempDatasetService).reconcileTempDataset(TEMP_ID);
-    order.verify(dbExecutorClient).executeSql(anyString(), anyList());
+    order.verify(dbExecutorClient).executeSql(anyString(), anyList(), nullable(Long.class));
   }
 
   private static DatasetService.PipelineTempRebuild rebuildOf() {
@@ -334,7 +335,7 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
     assertThat(lastError).contains("30자를 넘을 수 없습니다");
     verify(tmp.datasets(), never()).deleteDataset(anyLong());
     verify(tmp.datasets(), never()).createPipelineTempDataset(any(), any());
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(dbExecutorClient, never()).executeSql(anyString(), anyList(), nullable(Long.class));
   }
 
   @Test
@@ -356,7 +357,7 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
             org.assertj.core.groups.Tuple.tuple("name", "TEXT"),
             org.assertj.core.groups.Tuple.tuple("updated_at_1", "TIMESTAMP"));
     ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
-    verify(dbExecutorClient).executeSql(query.capture(), anyList());
+    verify(dbExecutorClient).executeSql(query.capture(), anyList(), nullable(Long.class));
     // 대상은 별칭 이름, 읽기는 원본 열 이름(src."ID", src."_UPDATED_AT").
     assertThat(query.getValue())
         .contains("(\"ID\", \"ID_1\", \"NAME\", \"UPDATED_AT_1\", \"_UPDATED_AT\") SELECT")
@@ -389,7 +390,7 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
     assertThat(status).as(lastError).isEqualTo("COMPLETED");
     verify(tmp.datasets(), never()).createPipelineTempDataset(any(), any());
     ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
-    verify(dbExecutorClient).executeSql(query.capture(), anyList());
+    verify(dbExecutorClient).executeSql(query.capture(), anyList(), nullable(Long.class));
     assertThat(query.getValue())
         .contains("(\"ID\", \"ID_1\", \"NAME\", \"UPDATED_AT_1\", \"_UPDATED_AT\") SELECT")
         .contains("src.\"ID\", src.\"NAME\", src.\"_UPDATED_AT\", SYSTIMESTAMP");
@@ -403,7 +404,7 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
 
     assertThat(status).isEqualTo("FAILED");
     verify(tmp.datasets(), never()).createPipelineTempDataset(any(), any());
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(dbExecutorClient, never()).executeSql(anyString(), anyList(), nullable(Long.class));
   }
 
   @Test

@@ -1,6 +1,7 @@
 package com.smartfirehub.dbexecutor.sql;
 
 import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
+import com.smartfirehub.dbexecutor.store.PipelineStopClient;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
 import com.smartfirehub.dbexecutor.store.TenantPools;
@@ -15,6 +16,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
@@ -43,10 +48,16 @@ import org.springframework.stereotype.Component;
  *   <li>커넥션 대여(로그인) 실패: 그 테넌트의 기술자 캐시를 지우고 실패로 끝낸다 — 비밀번호가 바뀌었으면 다음 요청이 새 기술자로 풀을 다시 만든다(풀 고갈 대기 시간
  *       초과는 지우지 않는다). 대여·기한·실패 처리 뼈대는 {@link LeasedExecution} 이 ProbeRunner 와 함께 쓴다.
  *   <li>rows·columns 는 선행 문장이 없고 첫 키워드가 SELECT·WITH 일 때만 채운다.
+ *   <li>잠금 대기 중 취소(WD-482): 요청에 파이프라인 실행 id 가 있으면 각 출력 잠금을 얻은 <b>직후</b>·비우기와 본문 전에 api 에 중지 요청을
+ *       되묻는다({@link PipelineStopClient}). 중지면 ROLLBACK 하고 {@link SqlExecuteResponse#cancelled} 로
+ *       답한다(출력 그대로).
  * </ol>
  */
 @Component
 public class SqlRunner {
+
+  // 이름이 logger 인 이유: run 안의 실행 요약 목록(log)과 겹치지 않게.
+  private static final Logger logger = LoggerFactory.getLogger(SqlRunner.class);
 
   static final String EMPTY_QUERY = "실행할 SQL 이 비어 있습니다.";
 
@@ -57,13 +68,27 @@ public class SqlRunner {
 
   private final LeasedExecution execution;
 
+  /** 잠금 뒤 중지 요청 확인(WD-482). null 이면 되묻지 않는다(중지 확인이 필요 없는 테스트·라이브 조립). */
+  private final PipelineStopClient stopClient;
+
+  /** 중지 확인 없이 조립한다(테스트·라이브 테스트용 — 실행 id 가 와도 되묻지 않는다). */
   public SqlRunner(
       @Qualifier("tenantPools") TenantPools pools,
       ExecutionTimeouts timeouts,
       StoreDescriptorClient descriptors) {
+    this(pools, timeouts, descriptors, null);
+  }
+
+  @Autowired
+  public SqlRunner(
+      @Qualifier("tenantPools") TenantPools pools,
+      ExecutionTimeouts timeouts,
+      StoreDescriptorClient descriptors,
+      PipelineStopClient stopClient) {
     this.limits = timeouts.sql();
     this.preSeconds = limits.preStatementTimeoutSeconds();
     this.execution = new LeasedExecution(pools, descriptors);
+    this.stopClient = stopClient;
   }
 
   /** 전체 시간 초과 문구(기본 55초면 「실행 시간이 55초를 넘어 취소했습니다.」). */
@@ -117,6 +142,45 @@ public class SqlRunner {
       List<String> preStatements,
       Deadline deadline,
       Integer requestedSeconds) {
+    return run(d, query, preStatements, deadline, requestedSeconds, (BooleanSupplier) null);
+  }
+
+  /**
+   * {@link #run(StoreDescriptor, String, List, Deadline, Integer)} 에 파이프라인 실행 id 를 더한 판(WD-482) —
+   * 컨트롤러가 요청의 {@code executionId} 를 그대로 넘긴다.
+   *
+   * @param executionId 파이프라인 실행 id. 양수이고 중지 확인 클라이언트가 있으면 출력 잠금 직후 api 에 중지 요청을 되묻는다. null·0 이하면
+   *     되묻지 않는다(기존 동작)
+   */
+  public SqlExecuteResponse run(
+      StoreDescriptor d,
+      String query,
+      List<String> preStatements,
+      Deadline deadline,
+      Integer requestedSeconds,
+      Long executionId) {
+    BooleanSupplier stopRequested =
+        stopClient != null && executionId != null && executionId > 0
+            ? stopClient.check(d.tenantId(), executionId)
+            : null;
+    return run(d, query, preStatements, deadline, requestedSeconds, stopRequested);
+  }
+
+  /**
+   * 실행 본체.
+   *
+   * @param stopRequested 파이프라인 중지 요청 확인(WD-482, 없으면 null). 각 출력 잠금({@code LOCK TABLE})을 얻은
+   *     <b>직후</b> 부른다 — 잠금 대기는 api 러너의 「SQL 실행 직전」 체크포인트보다 뒤라 그 사이 들어온 취소를 api 가 볼 수 없었고, 잠금을 얻은 뒤
+   *     사용자 SQL 이 끝까지 돌아 출력을 다시 교체했다. 중지면 비우기·본문을 보내지 않고 ROLLBACK 해 {@link
+   *     SqlExecuteResponse#cancelled} 로 답한다.
+   */
+  SqlExecuteResponse run(
+      StoreDescriptor d,
+      String query,
+      List<String> preStatements,
+      Deadline deadline,
+      Integer requestedSeconds,
+      BooleanSupplier stopRequested) {
     int statementSeconds =
         requestedSeconds != null ? requestedSeconds : limits.statementTimeoutSeconds();
     int totalSeconds = requestedSeconds != null ? requestedSeconds : limits.totalTimeoutSeconds();
@@ -182,6 +246,12 @@ public class SqlRunner {
           try {
             for (int i = 0; i < pres.size(); i++) {
               update(c, deadline, preStatementSeconds(deadline, totalSeconds), locks.get(i));
+              // 잠금 대기 중에 들어온 취소(WD-482) — 비우기·본문 전에 확인한다. 중지면 되돌리고 끝낸다(출력 그대로, 잠금도 풀린다).
+              if (stopRequested != null && stopRequestedQuietly(stopRequested, d.tenantId())) {
+                LeasedExecution.rollbackQuietly(c);
+                log.add("선행 문장 " + (i + 1) + ": 출력 테이블을 잠근 뒤 파이프라인 취소 요청을 확인해 롤백함");
+                return SqlExecuteResponse.cancelled(String.join("\n", log));
+              }
               int deleted =
                   update(c, deadline, preStatementSeconds(deadline, totalSeconds), pres.get(i));
               log.add("선행 문장 " + (i + 1) + ": 출력 테이블을 잠그고 " + deleted + "행 삭제");
@@ -214,6 +284,20 @@ public class SqlRunner {
             }
           }
         });
+  }
+
+  /**
+   * 중지 확인 — 확인마저 실패하면(api 장애 등) 중지 요청이 없는 것으로 보고 원래대로 실행한다(api 러너의 isStopRequestedQuietly·Python
+   * 실행기와 같은 판단: 확인 실패로 정상 실행을 실패시키지 않는다).
+   */
+  private static boolean stopRequestedQuietly(BooleanSupplier stopRequested, long tenantId) {
+    try {
+      return stopRequested.getAsBoolean();
+    } catch (RuntimeException e) {
+      // 원인 메시지에는 비밀이 없다(PipelineStopClient 가 본문·토큰을 싣지 않는다).
+      logger.warn("파이프라인 중지 요청 확인 실패 — 그대로 실행합니다 tenant={} 원인={}", tenantId, e.getMessage());
+      return false;
+    }
   }
 
   /**

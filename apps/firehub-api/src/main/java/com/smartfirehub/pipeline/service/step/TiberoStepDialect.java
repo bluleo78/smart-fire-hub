@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.storage.TenantDataStoreRepository;
 import com.smartfirehub.dataset.storage.tibero.TiberoNames;
 import com.smartfirehub.dataset.storage.tibero.TiberoPipelineSql;
 import com.smartfirehub.dataset.storage.tibero.TiberoSqlLexer;
+import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.ColumnInfo;
 import com.smartfirehub.pipeline.service.LocalPythonOutputLoader;
@@ -199,7 +200,14 @@ public class TiberoStepDialect implements StepDialect {
       ExecutionCancelCheck cancel) {
     // 취소 체크포인트(WD-153) — PG 경로와 같이 실행 직전. 아직 출력에 아무것도 쓰지 않았다(REPLACE 비우기도 이 요청과 같은 트랜잭션이다).
     cancel.checkpoint(0, false);
-    ExecutorClient.SqlExecuteResult result = dbExecutorClient.executeSql(query, preStatements);
+    // 실행 id 를 넘겨 db-executor 가 출력 잠금(LOCK TABLE)을 얻은 뒤 사용자 SQL 전에 취소를 되묻게 한다(WD-482 — 잠금 대기 중 취소).
+    ExecutorClient.SqlExecuteResult result =
+        dbExecutorClient.executeSql(query, preStatements, cancel.executionId());
+    // db-executor 가 잠금 뒤 취소를 확인해 롤백했다(WD-482) — 실패가 아니라 취소다. 출력은 손대지 않았다. 취소 응답은 success=false 로
+    // 오므로 실패 번역보다 먼저 본다.
+    if (result.cancelled()) {
+      throw new PipelineExecutionCancelledException(0, false);
+    }
     if (!result.success()) {
       String translated =
           mergePkColumns != null

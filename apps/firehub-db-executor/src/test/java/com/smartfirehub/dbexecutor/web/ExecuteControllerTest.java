@@ -107,7 +107,7 @@ class ExecuteControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.success").value(false))
         .andExpect(jsonPath("$.error").value("테넌트 저장소 정보를 가져오지 못했습니다(503)."));
-    verify(sqlRunner, never()).run(any(), anyString(), any(), any(), any());
+    verify(sqlRunner, never()).run(any(), anyString(), any(), any(), any(), any());
     verify(probeRunner, never()).probe(any(), anyString(), any());
     verifyNoInteractions(pools);
   }
@@ -195,6 +195,7 @@ class ExecuteControllerTest {
             eq("INSERT x"),
             eq(List.of("DELETE FROM \"GENIA_T5\".\"T\"")),
             any(Deadline.class),
+            isNull(),
             isNull()))
         .thenReturn(
             new SqlExecuteResponse(
@@ -227,6 +228,24 @@ class ExecuteControllerTest {
                 org.assertj.core.api.Assertions.assertThat(
                         result.getResponse().getContentAsString())
                     .contains("\"amount\":0.0000001"));
+  }
+
+  /** 파이프라인 실행 id(WD-482)는 러너로 그대로 넘기고, 러너의 취소 응답은 cancelled=true 로 실린다. */
+  @Test
+  void sqlExecutionId_passedToRunner_andCancelledSerialized() throws Exception {
+    when(descriptors.get(eq(5L), any(Duration.class))).thenReturn(D);
+    when(sqlRunner.run(eq(D), anyString(), any(), any(Deadline.class), any(), eq(42L)))
+        .thenReturn(SqlExecuteResponse.cancelled("로그"));
+
+    mvc.perform(
+            post("/execute/sql")
+                .header("Authorization", AUTH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"tenantId\":5,\"query\":\"INSERT x\",\"executionId\":42}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(false))
+        .andExpect(jsonPath("$.cancelled").value(true))
+        .andExpect(jsonPath("$.error").value(SqlExecuteResponse.CANCELLED_MESSAGE));
   }
 
   @Test
@@ -266,7 +285,7 @@ class ExecuteControllerTest {
   @Test
   void sqlTimeoutSeconds_isCappedByLoadLimit_andPassedToRunner() throws Exception {
     when(descriptors.get(eq(5L), any(Duration.class))).thenReturn(D);
-    when(sqlRunner.run(eq(D), anyString(), any(), any(Deadline.class), any()))
+    when(sqlRunner.run(eq(D), anyString(), any(), any(Deadline.class), any(), any()))
         .thenReturn(new SqlExecuteResponse(true, null, null, 1, "로그", null, null));
 
     postSql("{\"tenantId\":5,\"query\":\"INSERT x\",\"timeout_seconds\":120}");
@@ -276,7 +295,7 @@ class ExecuteControllerTest {
     org.mockito.ArgumentCaptor<Integer> seconds =
         org.mockito.ArgumentCaptor.forClass(Integer.class);
     verify(sqlRunner, org.mockito.Mockito.times(3))
-        .run(eq(D), anyString(), any(), any(Deadline.class), seconds.capture());
+        .run(eq(D), anyString(), any(), any(Deadline.class), seconds.capture(), any());
     // 요청값은 app.load.timeout-seconds(1800) 로 자르고, 없으면 null(기존 50/55 그대로).
     org.assertj.core.api.Assertions.assertThat(seconds.getAllValues())
         .containsExactly(120, 1800, null);

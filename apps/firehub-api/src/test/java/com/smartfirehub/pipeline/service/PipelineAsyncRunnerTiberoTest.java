@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -37,6 +38,7 @@ import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.DbExecutorClient.ProbeColumn;
 import com.smartfirehub.pipeline.service.executor.DbExecutorClient.ProbeResult;
+import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.DbError;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.SqlExecuteResult;
@@ -331,7 +333,42 @@ class PipelineAsyncRunnerTiberoTest {
             () -> true);
 
     assertThat(status).isEqualTo("CANCELLED");
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(dbExecutorClient, never()).executeSql(anyString(), anyList(), nullable(Long.class));
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(STEP_EXEC_ID),
+            eq("CANCELLED"),
+            isNull(),
+            isNull(),
+            contains("출력 데이터는 바뀌지 않았습니다"),
+            isNull(),
+            any());
+    verifyNoPgExecution();
+  }
+
+  /**
+   * 잠금 대기 중 취소(WD-482): 러너는 실행 id 를 db-executor 에 넘기고, db-executor 가 출력 잠금(LOCK TABLE)을 얻은 뒤 취소를
+   * 확인해 롤백한 응답(cancelled=true)을 받으면 단계를 실패가 아니라 CANCELLED 로 기록한다 — 출력은 손대지 않았다.
+   */
+  @Test
+  void tiberoSqlStep_cancelledByDbExecutorAfterLock_recordsCancelled() {
+    String sql = "UPDATE genia_t5.orders SET amount = 0 WHERE amount < 0";
+    when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
+        .thenReturn(new SqlExecuteResult(false, null, null, 0, "", "취소", null, null, true));
+
+    String status =
+        runner.executeStep(
+            STEP_EXEC_ID,
+            sqlStep(sql, OUTPUT_ID, "REPLACE"),
+            PIPELINE_ID,
+            "P",
+            USER_ID,
+            false,
+            ExecutionCancelCheck.of(4242L, () -> false));
+
+    assertThat(status).isEqualTo("CANCELLED");
+    verify(dbExecutorClient)
+        .executeSql(eq(sql), eq(List.of("DELETE FROM \"GENIA_T5\".\"ORDERS\"")), eq(4242L));
     verify(executionRepository)
         .updateStepExecution(
             eq(STEP_EXEC_ID),
@@ -425,7 +462,7 @@ class PipelineAsyncRunnerTiberoTest {
 
     assertThat(status).isEqualTo("FAILED");
     assertThat(failureMessage()).isEqualTo("Tibero 결과 컬럼 이름은 따옴표 없는 별칭으로 써 주세요(amount).");
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(dbExecutorClient, never()).executeSql(anyString(), anyList(), nullable(Long.class));
   }
 
   /** 따옴표 소문자 별칭만 있어도 일반 "일치하지 않음" 문구가 아니라 같은 안내를 준다(맞춤 계산보다 먼저 본다). */
@@ -438,7 +475,7 @@ class PipelineAsyncRunnerTiberoTest {
 
     assertThat(status).isEqualTo("FAILED");
     assertThat(failureMessage()).isEqualTo("Tibero 결과 컬럼 이름은 따옴표 없는 별칭으로 써 주세요(amount).");
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(dbExecutorClient, never()).executeSql(anyString(), anyList(), nullable(Long.class));
   }
 
   /** 대소문자 섞인 따옴표 별칭({@code AS "Amount"})도 출력 컬럼을 노린 이름이면 NULL 로 조용히 빠지지 않게 같은 안내로 실패한다. */
@@ -457,7 +494,7 @@ class PipelineAsyncRunnerTiberoTest {
 
     assertThat(status).isEqualTo("FAILED");
     assertThat(failureMessage()).isEqualTo("Tibero 결과 컬럼 이름은 따옴표 없는 별칭으로 써 주세요(Amount).");
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(dbExecutorClient, never()).executeSql(anyString(), anyList(), nullable(Long.class));
   }
 
   @Test
@@ -479,7 +516,7 @@ class PipelineAsyncRunnerTiberoTest {
 
     assertThat(status).isEqualTo("FAILED");
     assertThat(failureMessage()).contains("SELECT 결과 컬럼이 출력 데이터셋의 컬럼과 일치하지 않습니다");
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(dbExecutorClient, never()).executeSql(anyString(), anyList(), nullable(Long.class));
   }
 
   // ── 증분 · 출력 없는 SELECT ────────────────────────────────────────────────
@@ -490,7 +527,7 @@ class PipelineAsyncRunnerTiberoTest {
   void tiberoExecuteFailure_uniqueViolation_translatedLikePg() {
     stubProbe("AMOUNT");
     stubOutputColumns(col("amount", false));
-    when(dbExecutorClient.executeSql(anyString(), anyList()))
+    when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
         .thenReturn(
             failure(
                 "JDBC-10007:UNIQUE constraint violation",
@@ -509,7 +546,7 @@ class PipelineAsyncRunnerTiberoTest {
   void tiberoMergeFailure_sourceDuplicateKey_namesPkLikePg() {
     stubProbe("K", "V");
     stubOutputColumns(col("k", true), col("v", false));
-    when(dbExecutorClient.executeSql(anyString(), anyList()))
+    when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
         .thenReturn(
             failure(
                 "JDBC-10021:Inconsistent set of rows in source tables.",
@@ -539,13 +576,13 @@ class PipelineAsyncRunnerTiberoTest {
     assertThat(failureMessage())
         .startsWith("SQL 컬럼 타입 분석 실패: SQL 에서 참조한 테이블이 없습니다.")
         .endsWith("\n원인: JDBC-8033:Specified schema object was not found.");
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(dbExecutorClient, never()).executeSql(anyString(), anyList(), nullable(Long.class));
   }
 
   /** 실행기에 닿지 못하면(주소 없음·연결 실패·401·시간 초과) 단계가 실패하고 PG 로 폴백하지 않는다(fail-closed). */
   @Test
   void tiberoDbExecutorUnreachable_stepFails_noPgFallback() {
-    when(dbExecutorClient.executeSql(anyString(), anyList()))
+    when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
         .thenThrow(new ScriptExecutionException(DbExecutorClient.CONNECT_FAILURE_MESSAGE));
 
     String status =
@@ -590,7 +627,7 @@ class PipelineAsyncRunnerTiberoTest {
   private SentSql captureSent() {
     ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<List<String>> pre = ArgumentCaptor.forClass(List.class);
-    verify(dbExecutorClient).executeSql(query.capture(), pre.capture());
+    verify(dbExecutorClient).executeSql(query.capture(), pre.capture(), nullable(Long.class));
     return new SentSql(query.getValue(), pre.getValue());
   }
 
@@ -622,7 +659,7 @@ class PipelineAsyncRunnerTiberoTest {
   }
 
   private void stubExecuteSuccess() {
-    when(dbExecutorClient.executeSql(anyString(), anyList()))
+    when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
         .thenReturn(
             new SqlExecuteResult(true, List.of(), List.of(), 2, "2 rows", null, null, null));
   }
