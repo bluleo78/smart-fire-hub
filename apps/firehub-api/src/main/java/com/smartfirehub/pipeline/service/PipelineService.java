@@ -611,6 +611,8 @@ public class PipelineService {
    *   <li>{@code {{last_run_at}}} + GROUP BY/집계/윈도우/DISTINCT — {@link
    *       SqlValidator#incrementalWarnings}
    *   <li>{@code {{last_run_at}}} + APPEND — 매 실행 바뀐 행이 추가로 한 번 더 쌓여 중복된다(MERGE 권장)
+   *   <li>{@code {{last_run_at}}} + MERGE/APPEND 가 자기 출력을 입력으로도 읽음 — 이 스텝이 쓴 행이 다음 실행에 다시 읽혀 변환이 거듭
+   *       적용된다({@link #readsOwnOutputIncrementally}, WD-432)
    * </ul>
    *
    * <p>{@code fullRebuildMode} 는 문자열 경고가 아니라 별도 필드로 노출한다 — 웹 UI(Task 8)가 문구를 파싱하지 않고도 "전체 재생성"(출력
@@ -637,11 +639,74 @@ public class PipelineService {
     if ("APPEND".equalsIgnoreCase(step.loadStrategy())) {
       warnings.add("APPEND 와 {{last_run_at}} 을 함께 쓰면 수정된 행이 한 줄 더 추가되어 중복됩니다. MERGE 를 권장합니다.");
     }
+    // 증분 스텝이 자기 출력을 입력으로도 읽으면 이 스텝이 쓴 행이 다음 실행에서 다시 「바뀐 행」으로 읽힌다(WD-432) — 경고만 붙인다.
+    if (readsOwnOutputIncrementally(step)) {
+      warnings.add(selfReadIncrementalWarning(step.outputDatasetName()));
+    }
     String fullRebuildMode =
         judgeQueryOrFalse(step.scriptContent())
             ? PipelineStepResponse.FULL_REBUILD_MODE_REBUILD_OUTPUT
             : PipelineStepResponse.FULL_REBUILD_MODE_READ_ALL;
     return step.withIncrementalMeta(warnings, fullRebuildMode);
+  }
+
+  /**
+   * 증분 스텝이 자기 출력 데이터셋을 입력으로도 읽는가(WD-432) — {@link #attachIncrementalMeta} 가 증분 스텝에만 부른다.
+   *
+   * <p>왜 위험한가: 러너는 책갈피 후보를 SQL 실행 <b>전</b>에 잡는다(PipelineAsyncRunner#captureIncrementalCandidate —
+   * 실행 중 커밋된 행을 놓치지 않으려는 의도된 설계라 바꾸지 않는다). 그래서 이 스텝이 이번 실행에 출력에 쓴 행은 {@code _updated_at} 이 다음 책갈피보다
+   * 늦어, 다음 실행의 {@code WHERE _updated_at >= {{last_run_at}}} 에 다시 걸린다. MERGE 면 같은 변환이 실행마다 거듭
+   * 적용되고({@code v || 'x'} → v1x → v1xx …), APPEND 면 방금 추가한 행이 다시 읽혀 실행마다 사본이 불어난다. 외부 변경 없이 조용히
+   * 일어나므로 저장을 막지는 않되 상세 조회 경고로 알린다(정당한 쓰임 — 예: 변환이 멱등인 경우 — 이 있을 수 있어 거부하지 않는다).
+   *
+   * <p>판정:
+   *
+   * <ul>
+   *   <li>적재 방식 MERGE·APPEND 만(대소문자 무시 — 실행기와 같은 해석). REPLACE+증분은 저장에서 이미 거부되고, REPLACE 가 자기 출력을 읽는
+   *       경우는 WD-426(OutputSelfReference) 이 따로 다룬다.
+   *   <li>선언 입력(inputDatasetIds)에 출력이 있으면 바로 해당 — 파싱·자격이 필요 없다.
+   *   <li>아니면 SQL 이 실제로 읽는 데이터셋 — WD-426 과 같이 테이블 이름이 아니라 보안 가드가 SQL 참조를 데이터셋 id 로 풀어 낸 읽기 집합으로
+   *       본다(PG·Tibero 이름 규칙을 가드가 맞춰 준다). 저장 판정과 같은 문자열({@link #substituteForValidation})·같은 모드다.
+   *       판정은 조회자 자격 기준이라, 조회자가 볼 수 없는 테이블을 함께 읽는 스텝(거부 결과)에서는 이 신호를 쓰지 않는다 — 존재를 드러내지 않는다. {@code
+   *       {{#N}}} 더미는 판정에서 빠지므로 스텝 참조로 자기 출력을 읽는 경우는 보지 않는다.
+   * </ul>
+   *
+   * <p>경고 계산이 상세 조회를 깨면 안 되므로 판정 실패(파싱 불가 등)는 "해당 없음"으로 본다.
+   */
+  private boolean readsOwnOutputIncrementally(PipelineStepResponse step) {
+    Long outputId = step.outputDatasetId();
+    if (outputId == null
+        || !("MERGE".equalsIgnoreCase(step.loadStrategy())
+            || "APPEND".equalsIgnoreCase(step.loadStrategy()))) {
+      return false;
+    }
+    if (step.inputDatasetIds() != null && step.inputDatasetIds().contains(outputId)) {
+      return true;
+    }
+    try {
+      SqlAccessResult access =
+          datasetAccessGuard.checkSql(
+              clearanceResolver.current(),
+              substituteForValidation(step.scriptContent()),
+              SqlAccessMode.PIPELINE_SAVE);
+      return access.allowed() && access.readDatasetIds().contains(outputId);
+    } catch (UnsafeSqlException e) {
+      // 파싱 불가 — 실행 시점 검증이 같은 이유로 실패하므로 경고할 일이 없다.
+      return false;
+    } catch (RuntimeException e) {
+      // 그 밖의 판정 실패(DB 오류 등) — 어드바이저리 경고 때문에 상세 조회를 실패시키지 않는다.
+      log.warn("증분 자기 출력 읽기 판정 실패 — 경고를 생략한다: stepId={}", step.id(), e);
+      return false;
+    }
+  }
+
+  /** {@link #readsOwnOutputIncrementally} 경고 문구(WD-432). 출력 이름을 볼 수 없으면(null) 이름 없이 쓴다. */
+  static String selfReadIncrementalWarning(String outputDatasetName) {
+    String target = outputDatasetName != null ? "(" + outputDatasetName + ")" : "";
+    return "{{last_run_at}} 을 쓰는 스텝이 자기 출력 데이터셋"
+        + target
+        + "을 입력으로도 읽습니다. 이 스텝이 쓴 행이 다음 실행에서 다시 「바뀐 행」으로 읽혀 같은 변환이 실행마다 거듭 적용되거나(MERGE) 행이"
+        + " 거듭 쌓일 수 있습니다(APPEND). 입력과 출력을 다른 데이터셋으로 나누거나 {{last_run_at}} 조건을 빼세요.";
   }
 
   /**

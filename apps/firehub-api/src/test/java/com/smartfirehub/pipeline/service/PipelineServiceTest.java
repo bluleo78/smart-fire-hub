@@ -2421,6 +2421,115 @@ class PipelineServiceTest extends IntegrationTestBase {
     assertThat(detail.steps().get(0).warnings()).isEmpty();
   }
 
+  // --- 증분 스텝이 자기 출력을 입력으로도 읽음(WD-432) ---
+
+  /** 자기 출력 읽기 경고의 고정 부분 — 문구 전체가 아니라 이 부분으로 판별한다. */
+  private static final String SELF_READ_WARNING = "자기 출력 데이터셋";
+
+  /** 증분 + 자기 출력(PK 출력)을 읽어 값을 바꾸는 SQL — 이슈 재현 모양(v → vx → vxx …). */
+  private static final String INCREMENTAL_SELF_READ_SQL =
+      "SELECT code, name || 'x' AS name FROM data.pk_output_dataset"
+          + " WHERE _updated_at >= {{last_run_at}}";
+
+  /** 단일 SQL 스텝 파이프라인을 만든다(WD-432 경고 테스트 공용). */
+  private PipelineDetailResponse createSelfReadStep(
+      String pipelineName, String sql, List<Long> inputs, String loadStrategy) {
+    return pipelineService.createPipeline(
+        new CreatePipelineRequest(
+            pipelineName,
+            "WD-432",
+            List.of(
+                new PipelineStepRequest(
+                    "stepA", "a", "SQL", sql, pkOutputDatasetId, inputs, null, loadStrategy))),
+        testUserId);
+  }
+
+  /** 인증 사용자로 상세를 읽는다 — SQL 이 읽는 데이터셋 판정은 조회자 자격으로 한다(미인증이면 거부돼 SQL 신호를 쓰지 않는다). */
+  private PipelineDetailResponse pipelineDetailAsUser(Long pipelineId) {
+    org.springframework.security.core.context.SecurityContextHolder.getContext()
+        .setAuthentication(
+            new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                testUserId, null, List.of()));
+    try {
+      return pipelineService.getPipelineById(pipelineId);
+    } finally {
+      org.springframework.security.core.context.SecurityContextHolder.clearContext();
+    }
+  }
+
+  /** 이슈 재현 — 증분 MERGE 가 SQL 로 자기 출력을 읽으면 출력 이름이 든 경고가 붙는다(저장은 막지 않는다). */
+  @Test
+  void 상세조회_증분_MERGE가_SQL로_자기출력을_읽으면_경고가_붙는다() {
+    PipelineDetailResponse created =
+        createSelfReadStep("WD432 merge self sql", INCREMENTAL_SELF_READ_SQL, null, "MERGE");
+
+    PipelineDetailResponse detail = pipelineDetailAsUser(created.id());
+
+    assertThat(detail.steps().get(0).warnings())
+        .containsExactly(PipelineService.selfReadIncrementalWarning("PK Output Dataset"));
+  }
+
+  /**
+   * 선언 입력에 출력이 있으면 SQL 판정 없이(미인증 조회도) 경고가 붙는다. 미인증 조회자는 출력 이름을 볼 수 없어(가시성 조건) 이름 없는 문구다 — 경고가
+   * 데이터셋 이름을 새지 않는다.
+   */
+  @Test
+  void 상세조회_증분_MERGE의_선언입력에_자기출력이_있으면_경고가_붙는다() {
+    PipelineDetailResponse created =
+        createSelfReadStep(
+            "WD432 merge self input", INCREMENTAL_SQL, List.of(pkOutputDatasetId), "MERGE");
+
+    PipelineDetailResponse detail = pipelineService.getPipelineById(created.id());
+
+    assertThat(detail.steps().get(0).outputDatasetName()).isNull();
+    assertThat(detail.steps().get(0).warnings())
+        .containsExactly(PipelineService.selfReadIncrementalWarning(null));
+    assertThat(PipelineService.selfReadIncrementalWarning(null)).contains(SELF_READ_WARNING);
+  }
+
+  /** APPEND 도 같다 — 방금 추가한 행이 다음 실행에 다시 읽혀 거듭 쌓인다. 기존 APPEND 중복 경고와 함께 나온다. */
+  @Test
+  void 상세조회_증분_APPEND가_자기출력을_읽으면_경고가_붙는다() {
+    PipelineDetailResponse created =
+        createSelfReadStep("WD432 append self sql", INCREMENTAL_SELF_READ_SQL, null, "APPEND");
+
+    PipelineDetailResponse detail = pipelineDetailAsUser(created.id());
+
+    assertThat(detail.steps().get(0).warnings())
+        .anySatisfy(w -> assertThat(w).contains(SELF_READ_WARNING))
+        .anySatisfy(w -> assertThat(w).contains("중복"));
+  }
+
+  /** 대조 — 같은 증분 MERGE 라도 입력이 다른 데이터셋이면 경고가 없다(SQL·선언 입력 모두 출력이 아님). */
+  @Test
+  void 상세조회_증분_MERGE가_다른_데이터셋을_읽으면_자기출력_경고가_없다() {
+    PipelineDetailResponse created =
+        createSelfReadStep(
+            "WD432 merge other input", INCREMENTAL_SQL, List.of(inputDatasetId), "MERGE");
+
+    PipelineDetailResponse detail = pipelineDetailAsUser(created.id());
+
+    assertThat(detail.steps().get(0).warnings()).isEmpty();
+  }
+
+  /**
+   * 대조 — {{last_run_at}} 이 없으면 경고하지 않는다. 매 실행 출력 전체를 다시 읽어 처리하는 것이 SQL 에 그대로 드러난 동작이라, "바뀐 행만
+   * 처리한다"고 기대한 증분 스텝이 자기가 쓴 행을 다시 「바뀐 행」으로 읽는 WD-432 의 숨은 재적용과 다르다.
+   */
+  @Test
+  void 상세조회_증분이_아닌_MERGE가_자기출력을_읽으면_경고가_없다() {
+    PipelineDetailResponse created =
+        createSelfReadStep(
+            "WD432 merge self full",
+            "SELECT code, name || 'x' AS name FROM data.pk_output_dataset",
+            List.of(pkOutputDatasetId),
+            "MERGE");
+
+    PipelineDetailResponse detail = pipelineDetailAsUser(created.id());
+
+    assertThat(detail.steps().get(0).warnings()).isEmpty();
+  }
+
   @Test
   void 전체재생성_예약과_취소가_책갈피_상태를_바꾼다() {
     PipelineDetailResponse created =
