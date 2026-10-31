@@ -1158,6 +1158,49 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
     );
   });
 
+  // 회귀 가드(WD-384): 모바일(390px)은 타입 필터 패널이 숨는데, 지식 모델에서 타입을 눌러 드릴다운하면 그 타입만 걸러진 채
+  // 필터 표시도 해제 수단도 없어 「노드 1개」만 있는 그래프처럼 보였다. 필터 칩과 「전체 보기」로 풀 수 있어야 한다.
+  test('모바일에서 드릴다운으로 걸린 타입 필터를 칩으로 알리고 「전체 보기」로 푼다 (WD-384)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    const schema = createOntologySchema();
+    await expect(page.getByTestId('schema-graph')).toHaveAttribute('data-node-count', String(schema.entities.length));
+    // 필터가 없으면 칩도 없다 — 이 폭에서는 타입 필터 패널도 숨겨져 있다
+    await expect(page.getByTestId('active-type-filter-chip')).toHaveCount(0);
+    await expect(page.getByTestId('type-filter-panel')).toBeHidden();
+
+    // 키보드 대체 목록으로 두 번째 타입(Building)을 드릴다운한다 — 캔버스 탭과 같은 drillDown 경로
+    const list = page.getByTestId('schema-graph-type-list');
+    await list.locator('[data-graph-item]').first().focus();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/knowledge-graph\/explore$/);
+    await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', '1');
+
+    // 걸린 필터가 칩으로 보이고, 「전체 보기」를 누르면 필터가 풀려 노드가 늘고 칩이 사라진다
+    const chip = page.getByTestId('active-type-filter-chip');
+    await expect(chip).toBeVisible();
+    await expect(chip).toContainText('Building 만 보는 중');
+    await chip.getByRole('button', { name: '전체 보기' }).click();
+    await expect(chip).toHaveCount(0);
+    await expect(page.getByTestId('instance-graph')).not.toHaveAttribute('data-node-count', '1');
+  });
+
+  // 데스크톱(sm 이상)은 왼쪽 패널에 눌린 칩이 보이므로 별도 칩을 두지 않는다.
+  test('데스크톱에서는 드릴다운 뒤에도 필터 칩을 따로 띄우지 않는다 (WD-384)', async ({ authenticatedPage: page }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    const list = page.getByTestId('schema-graph-type-list');
+    await list.locator('[data-graph-item]').first().focus();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', '1');
+    await expect(page.getByTestId('active-type-filter-chip')).toBeHidden();
+  });
+
   // (#411) 타입 필터 패널은 인스턴스 탭(그래프 탐색)에서만 동작하고 스키마 탭(지식 모델)에서는 칩
   // 상태만 바뀔 뿐 캔버스가 무반응이었다 — SchemaGraph가 activeTypes를 전혀 소비하지 않았기 때문.
   // 스키마 탭에서 칩을 꺼서 캔버스 노드/관계 수가 실제로 줄어드는지, 접근성 대체 목록(aria-label)도

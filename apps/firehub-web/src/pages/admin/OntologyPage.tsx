@@ -703,6 +703,27 @@ export default function OntologyPage() {
               showEditor && inspectorHasContent && !outlineExpanded && '@max-[640px]/kg-body:hidden',
             )}
           >
+            {/* 타입 필터가 걸려 있는데 필터 패널이 숨는 좁은 화면(sm=640px 미만, #414)에서는 걸린 필터를 알리고 풀 수단이 없었다 —
+                「지식 모델」에서 타입을 눌러(드릴다운) 넘어오면 그 타입만 걸러진 채 「노드 N개, 관계 0개」처럼만 보였다(WD-384).
+                그 폭에서만 캔버스 위에 칩과 「전체 보기」를 둔다. sm 이상은 왼쪽 패널에 눌린 칩이 보이므로 그대로 둔다. */}
+            {!showEditor && !graphRestricted && activeTypes.size > 0 && (
+              <div
+                className="absolute left-2 top-2 z-10 flex max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-full border bg-background/95 py-0.5 pl-3 pr-1 text-xs shadow-sm sm:hidden"
+                data-testid="active-type-filter-chip"
+              >
+                <span className="min-w-0 truncate">
+                  {activeTypes.size <= 2 ? [...activeTypes].join(', ') : `${activeTypes.size}개 타입`} 만 보는 중
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 shrink-0 rounded-full px-2 text-xs"
+                  onClick={() => setActiveTypes(new Set())}
+                >
+                  전체 보기
+                </Button>
+              </div>
+            )}
             <TabsContent value="schema" className="m-0 h-full">
               {/* 목록 게이트(renderOntologyListGate)를 먼저 통과해야 선택된 온톨로지의 스키마 상태를 본다. */}
               {renderOntologyListGate(
