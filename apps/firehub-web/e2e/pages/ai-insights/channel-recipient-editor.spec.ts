@@ -271,4 +271,81 @@ test.describe('ChannelRecipientEditor — 4채널 확장', () => {
       .config.channels;
     expect(channels.find((c) => c.type === 'CHAT')?.recipientUserIds).toEqual([42]);
   });
+  // WD-299: 외부 이메일 중복 검사가 대소문자를 구분했고, 「등록 사용자」로 고른 사람의 주소를 외부 이메일로 또 넣어도 막지 않아
+  // 같은 사람이 리포트를 두 번 받게 저장되고 「N명에게 전달됩니다」가 실제보다 많았다.
+  test.describe('이메일 수신자 중복 (WD-299)', () => {
+    const emailSection = (page: Page) =>
+      page.locator('div.rounded-lg.border').filter({ has: page.getByRole('checkbox', { name: '이메일' }) });
+
+    test.beforeEach(async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/jobs/recipients', [
+        { userId: 28, name: 'QA 저등급', email: 'qa267low@example.com' },
+      ]);
+    });
+
+    test('대소문자만 다른 주소와 등록 사용자의 주소는 외부 이메일로 더 넣을 수 없다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupAndNavigateToNotifyTab(page, {
+        config: {
+          channels: [
+            { type: 'CHAT', recipientUserIds: [], recipientEmails: [] },
+            { type: 'EMAIL', recipientUserIds: [28], recipientEmails: ['QA@Example.COM'] },
+          ],
+        },
+      });
+      const section = emailSection(page);
+      await expect(section.getByText('QA 저등급')).toBeVisible({ timeout: 5000 });
+      await expect(section.getByText('2명에게 전달됩니다')).toBeVisible();
+
+      const input = page.getByPlaceholder('이메일 입력 후 Enter');
+      // 대소문자만 다른 같은 주소
+      await input.fill('qa@example.com');
+      await input.press('Enter');
+      await expect(section.getByText('이미 추가된 이메일입니다')).toBeVisible();
+      await expect(input).toHaveValue('qa@example.com');
+
+      // 등록 사용자로 이미 고른 사람의 주소(대소문자도 다르게)
+      await input.fill('QA267LOW@example.com');
+      await input.press('Enter');
+      await expect(section.getByText('이미 수신자에 있습니다 — 등록 사용자로 선택된 주소입니다')).toBeVisible();
+
+      // 외부 이메일 태그는 처음 하나 그대로이고 받는 사람 수도 그대로다
+      const external = page.getByRole('group', { name: '외부 이메일' });
+      await expect(external.getByRole('button', { name: /제거$/ })).toHaveCount(1);
+      await expect(section.getByText('2명에게 전달됩니다')).toBeVisible();
+
+      // 다른 주소는 그대로 들어가고 받는 사람 수가 늘어난다
+      await input.fill('new@example.com');
+      await input.press('Enter');
+      await expect(external.getByText('new@example.com')).toBeVisible();
+      await expect(section.getByText('3명에게 전달됩니다')).toBeVisible();
+    });
+
+    test('이미 중복으로 저장된 작업은 실제 받는 사람 수로 센다', async ({ authenticatedPage: page }) => {
+      // 고치기 전에 저장된 config — 이슈 재현과 같은 모양
+      await setupAndNavigateToNotifyTab(page, {
+        config: {
+          channels: [
+            { type: 'CHAT', recipientUserIds: [], recipientEmails: [] },
+            {
+              type: 'EMAIL',
+              recipientUserIds: [28],
+              recipientEmails: [
+                'QA@Example.COM',
+                'qa@example.com',
+                'workloop@example.com',
+                'qa267low@example.com',
+              ],
+            },
+          ],
+        },
+      });
+      const section = emailSection(page);
+      await expect(section.getByText('QA 저등급')).toBeVisible({ timeout: 5000 });
+      // qa267low·qa@example.com·workloop — 3명(고치기 전에는 5명)
+      await expect(section.getByText('3명에게 전달됩니다')).toBeVisible();
+      await expect(section.locator('span').filter({ hasText: /^3$/ }).first()).toBeVisible();
+    });
+  });
 });

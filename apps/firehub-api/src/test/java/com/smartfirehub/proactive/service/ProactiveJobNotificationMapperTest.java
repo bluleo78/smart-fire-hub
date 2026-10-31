@@ -76,6 +76,28 @@ class ProactiveJobNotificationMapperTest {
     assertThat(req.recipients().get(1).requestedChannels()).containsExactly(ChannelType.EMAIL);
   }
 
+  /** 대소문자만 다른 외부 이메일은 한 사람이다 — 아웃박스 경로에서도 한 번만 보낸다(WD-299). */
+  @Test
+  void newFormat_caseOnlyDuplicateExternalEmails_mergedToOneRecipient() {
+    Map<String, Object> config =
+        Map.of(
+            "channels",
+            List.of(
+                Map.of(
+                    "type",
+                    "EMAIL",
+                    "recipientUserIds",
+                    List.of(10),
+                    "recipientEmails",
+                    List.of("QA@Example.COM", "qa@example.com"))));
+    ProactiveJobResponse job = sampleJob(config, 99L);
+
+    NotificationRequest req = ProactiveJobNotificationMapper.toRequest(job, 100L, sampleResult());
+
+    assertThat(req.recipients()).hasSize(2);
+    assertThat(req.recipients().get(1).externalAddressIfAny()).isEqualTo("QA@Example.COM");
+  }
+
   @Test
   void oldFormat_channelListOnly_defaultsToJobOwner() {
     // 구 형식: channels = ["CHAT", "EMAIL"]

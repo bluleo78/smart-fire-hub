@@ -3,6 +3,7 @@ import { type KeyboardEvent,useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { normalizeEmail } from '@/lib/email-recipients';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -10,9 +11,16 @@ interface EmailTagInputProps {
   emails: string[];
   onChange: (emails: string[]) => void;
   disabled?: boolean;
+  /** 「등록 사용자」로 이미 고른 사람의 주소 — 같은 사람에게 리포트가 두 번 가지 않게 외부 이메일로 다시 넣는 것을 막는다(WD-299) */
+  registeredEmails?: string[];
 }
 
-export default function EmailTagInput({ emails, onChange, disabled }: EmailTagInputProps) {
+export default function EmailTagInput({
+  emails,
+  onChange,
+  disabled,
+  registeredEmails = [],
+}: EmailTagInputProps) {
   const [inputValue, setInputValue] = useState('');
   const [error, setError] = useState('');
 
@@ -23,8 +31,14 @@ export default function EmailTagInput({ emails, onChange, disabled }: EmailTagIn
       setError('올바른 이메일 형식이 아닙니다');
       return;
     }
-    if (emails.includes(email)) {
+    // 대소문자만 다른 주소도 같은 받는 사람이다(WD-299)
+    const key = normalizeEmail(email);
+    if (emails.some((e) => normalizeEmail(e) === key)) {
       setError('이미 추가된 이메일입니다');
+      return;
+    }
+    if (registeredEmails.some((e) => normalizeEmail(e) === key)) {
+      setError('이미 수신자에 있습니다 — 등록 사용자로 선택된 주소입니다');
       return;
     }
     onChange([...emails, email]);
@@ -39,20 +53,21 @@ export default function EmailTagInput({ emails, onChange, disabled }: EmailTagIn
     }
   };
 
-  const handleRemove = (email: string) => {
-    onChange(emails.filter((e) => e !== email));
+  // 위치로 뺀다 — 고치기 전에 같은 주소가 두 번 저장된 작업에서도 하나씩 뺄 수 있게(WD-299)
+  const handleRemove = (index: number) => {
+    onChange(emails.filter((_, i) => i !== index));
   };
 
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5 min-h-8">
-        {emails.map((email) => (
-          <Badge key={email} variant="secondary" className="flex items-center gap-1 text-xs">
+        {emails.map((email, index) => (
+          <Badge key={`${index}-${email}`} variant="secondary" className="flex items-center gap-1 text-xs">
             {email}
             {!disabled && (
               <button
                 type="button"
-                onClick={() => handleRemove(email)}
+                onClick={() => handleRemove(index)}
                 className="ml-0.5 rounded-full hover:bg-muted"
                 aria-label={`${email} 제거`}
               >
