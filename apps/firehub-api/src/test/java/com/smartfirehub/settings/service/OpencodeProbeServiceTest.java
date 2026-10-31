@@ -333,6 +333,10 @@ class OpencodeProbeServiceTest {
     OpencodeProbeService service = guardedService();
     ProbeResultAssertHelper.assertBlocked(
         service.probe("https://", "k"), OpencodeProbeService.MSG_INVALID_URL, Reason.INVALID_URL);
+    // WD-319: 문구는 코드 필드 이름(baseUrl)이 아니라 화면 용어 「기본 URL」을 쓴다.
+    org.assertj.core.api.Assertions.assertThat(OpencodeProbeService.MSG_INVALID_URL)
+        .startsWith("기본 URL")
+        .doesNotContain("baseUrl");
   }
 
   /**

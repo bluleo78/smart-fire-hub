@@ -375,6 +375,58 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 미설정 �
   });
 
   /**
+   * WD-319 — 기본 URL 값 자체가 잘못돼 프로브가 실패하면(reason=INVALID_URL), 오류는 모델 칸이 아니라
+   * 「기본 URL」 칸 아래에 화면 용어로 붙는다. 그 밖의 실패(위 테스트)는 그대로 모델 칸 아래다.
+   */
+  test('기본 URL 형식 오류는 「기본 URL」 칸 아래에 뜨고 모델 칸에는 뜨지 않는다 (WD-319)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockAiCredential(
+      page,
+      createAiCredential({
+        agentType: 'opencode',
+        configured: true,
+        payload: { providerId: 'openai', baseURL: 'https://api.openai.com/v1' },
+        secretFieldNames: ['apiKey'],
+      }),
+    );
+    let captured: unknown;
+    await page.route(
+      (url) => url.pathname === '/api/v1/settings/ai-credential/probe',
+      (route) => {
+        captured = route.request().postDataJSON();
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            ok: false,
+            models: [],
+            message: '기본 URL 형식이 올바르지 않습니다 — https:// 로 시작하는 올바른 주소를 입력하세요',
+            reason: 'INVALID_URL',
+          }),
+        });
+      },
+    );
+
+    await page.goto('/admin/settings');
+    await page.getByLabel('기본 URL').fill('ftp://bad host');
+    await page.getByLabel('API 키').fill('sk-test');
+    await page.getByRole('button', { name: '모델 불러오기' }).click();
+
+    expect(captured).toMatchObject({ baseURL: 'ftp://bad host', apiKey: 'sk-test' });
+    const message = page.getByText('기본 URL 형식이 올바르지 않습니다', { exact: false });
+    await expect(message).toBeVisible();
+    // 오류 문구는 기본 URL 칸에 연결돼 있고, 모델 칸의 「직접 입력으로 전환」 오류 블록은 뜨지 않는다.
+    await expect(page.getByLabel('기본 URL')).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByLabel('기본 URL')).toHaveAccessibleDescription(/기본 URL 형식이 올바르지 않습니다/);
+    await expect(page.getByRole('button', { name: '직접 입력으로 전환' })).toHaveCount(0);
+
+    // 기본 URL 을 고치면 오류가 사라진다.
+    await page.getByLabel('기본 URL').fill('https://api.openai.com/v1');
+    await expect(message).toHaveCount(0);
+  });
+
+  /**
    * 보강 — 조회 실패는 <b>미설정과 다른 모양</b>이어야 한다(이 브랜치가 "네트워크 실패를 확신에
    * 찬 사실처럼 렌더"한 결함을 낸 전례가 있어 각별히 겨눈다). GET 500 은 `cred.loadFailed` 로
    * 떨어지고, 훅은 안전한 초기값(`configured:false, secretFieldNames:[]`)으로 주저앉는다 — 그

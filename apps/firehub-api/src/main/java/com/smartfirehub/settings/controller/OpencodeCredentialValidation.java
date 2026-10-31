@@ -158,6 +158,8 @@ public final class OpencodeCredentialValidation {
     body.put("ok", result.ok());
     body.put("models", result.models());
     body.put("message", result.message());
+    // 화면이 오류를 어느 칸(기본 URL/모델) 아래에 붙일지 정하는 분기용 값 — 문구를 매칭하지 않게 한다(WD-319).
+    body.put("reason", result.reason().name());
     return body;
   }
 }

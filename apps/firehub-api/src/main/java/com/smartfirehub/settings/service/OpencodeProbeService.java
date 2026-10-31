@@ -77,9 +77,9 @@ public class OpencodeProbeService {
   // ---- 실패 사유 메시지 — 각 가드/오류 종류마다 다른 문구를 낸다(테스트가 "어떤 가드가 막았는지"를
   // 구분할 수 있어야 한다는 요구, 아래 클래스 javadoc "실패를 구분한다" 참고). upstream 본문·
   // 상태 텍스트·apiKey 는 어느 문구에도 넣지 않는다.
-  static final String MSG_INVALID_URL = "baseUrl 형식이 올바르지 않습니다";
-  static final String MSG_SCHEME = "https 만 허용됩니다";
-  static final String MSG_PORT = "허용되지 않은 포트입니다";
+  static final String MSG_INVALID_URL = "기본 URL 형식이 올바르지 않습니다 — https:// 로 시작하는 올바른 주소를 입력하세요";
+  static final String MSG_SCHEME = "기본 URL 은 https 만 허용됩니다";
+  static final String MSG_PORT = "기본 URL 의 포트는 허용되지 않습니다";
   static final String MSG_UNRESOLVED_HOST = "호스트를 확인할 수 없습니다";
   static final String MSG_BLOCKED_ADDRESS = "허용되지 않은 대상 주소입니다";
   static final String MSG_REDIRECT = "리다이렉트는 따라가지 않습니다";
@@ -89,7 +89,7 @@ public class OpencodeProbeService {
   static final String MSG_PARSE = "공급자 응답을 해석할 수 없습니다";
   static final String MSG_TOO_LARGE = "공급자 응답이 너무 큽니다";
   static final String MSG_NO_STORED_KEY = "apiKey가 필요합니다 — 재사용할 테넌트 opencode 자격증명이 없습니다";
-  static final String MSG_BASE_URL_MISMATCH = "baseUrl이 저장된 값과 다릅니다 — apiKey를 함께 보내야 합니다";
+  static final String MSG_BASE_URL_MISMATCH = "기본 URL 이 저장된 값과 다릅니다 — API 키를 함께 보내야 합니다";
 
   private final AiCredentialService aiCredentialService;
   private final SsrfProtectionService ssrfProtectionService;

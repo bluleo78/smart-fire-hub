@@ -49,6 +49,7 @@ function makeCred(overrides: Partial<UseAiCredentialFormResult> = {}): UseAiCred
     models: null,
     loadModels: vi.fn(),
     modelsError: null,
+    baseUrlError: null,
     canLoadModels: true,
     isLoadingModels: false,
     hasUnsavedInput: false,
@@ -355,6 +356,7 @@ describe('OpencodeModelField — 모델 칸 4상태(설계서 §195)', () => {
       makeCred({
         models: null,
         modelsError: null,
+        baseUrlError: null,
         payload: { providerId: 'openai', baseURL: 'https://x', reasoningEffort: '' },
       }),
       'openai/gpt-4o',
@@ -449,6 +451,7 @@ describe('OpencodeModelField — 모델 칸 4상태(설계서 §195)', () => {
     const cred = makeCred({
       models: [],
       modelsError: null,
+      baseUrlError: null,
       payload: { providerId: 'openai', baseURL: 'https://x', reasoningEffort: '' },
     });
     const { onModelChange } = renderModel(cred, '');
