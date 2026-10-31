@@ -29,6 +29,10 @@ export interface GraphNode {
   // 이 노드가 실제로 적재된 온톨로지 id(#678). 스탬프 도입 이전 레거시 노드는 null —
   // NodeDetailDrawer가 "구버전" 판정 기준(schemaVersionByOntologyId)을 찾을 키로 쓴다.
   ontologyId: number | null;
+  // 표(데이터셋) 투영 노드의 출처 데이터셋 id(WD-382). 문서 노드는 청크로 출처를 가져 없다(응답에서 빠짐).
+  sourceDatasetIds?: number[];
+  // 노드에 적재된 사용자 속성(예: 피해액) — 정체성·출처 예약 키는 서버가 뺀다(WD-382). 없으면 응답에서 빠짐.
+  properties?: Record<string, string | number>;
 }
 export interface GraphEdge { subjectKey: string; type: string; objectKey: string; }
 export interface GraphData { nodes: GraphNode[]; edges: GraphEdge[]; }

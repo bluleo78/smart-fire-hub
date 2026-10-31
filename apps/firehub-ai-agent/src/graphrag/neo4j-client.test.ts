@@ -51,6 +51,34 @@ describe('readWholeGraph', () => {
     expect(closeMock).toHaveBeenCalled(); // 세션 정리
   });
 
+  // WD-382: 표 투영 노드는 출처 데이터셋 id 와 적재된 사용자 속성을 함께 돌려준다. 정체성·출처 예약 키는 속성에서 빼고,
+  // 값이 없으면 필드를 생략한다(문서 노드 응답 모양은 그대로).
+  it('출처 데이터셋 id·사용자 속성을 돌려주고 예약 키는 속성에서 뺀다', async () => {
+    runMock
+      .mockResolvedValueOnce({ records: [
+        rec({
+          key: 'incident:t', type: 'Incident', name: '표 화재', sourceChunkCount: int(0),
+          sourceDatasetIds: [int(999), int(7)],
+          props: {
+            key: 'incident:t', type: 'Incident', name: '표 화재', sourceDatasetIds: [int(999)],
+            schemaVersion: int(1), ontologyId: int(5), 피해액: int(9077284), 원인: '누전', 면적: 12.5,
+          },
+        }),
+        rec({ key: 'incident:d', type: 'Incident', name: '문서 화재', sourceChunkCount: int(2), sourceDatasetIds: null,
+          props: { key: 'incident:d', type: 'Incident', name: '문서 화재', sourceChunkIds: ['c1', 'c2'] } }),
+      ] })
+      .mockResolvedValueOnce({ records: [] });
+
+    const g = await readWholeGraph(5 as GraphReadableOntologyId);
+    expect(g.nodes[0].sourceDatasetIds).toEqual([999, 7]);
+    expect(g.nodes[0].properties).toEqual({ 피해액: 9077284, 원인: '누전', 면적: 12.5 });
+    // 문서 노드: 출처 데이터셋·사용자 속성이 없으면 필드 자체가 없다
+    expect(g.nodes[1]).toEqual({ key: 'incident:d', type: 'Incident', name: '문서 화재', sourceChunkCount: 2 });
+    // 그래프 조회가 두 값을 함께 읽는다
+    expect(runMock.mock.calls[0][0]).toContain('n.sourceDatasetIds AS sourceDatasetIds');
+    expect(runMock.mock.calls[0][0]).toContain('properties(n) AS props');
+  });
+
   // 5-4: schemaVersion이 있는 노드는 number로 변환해 포함하고, 스탬프 도입 이전 레거시 노드(속성
   // 없음 → null)는 필드 자체를 생략한다 — "0/구버전"과 "값 없음"을 UI가 혼동하지 않게 하는 계약.
   it('schemaVersion이 있으면 number로 포함하고, 없으면(레거시 노드) 필드를 생략한다', async () => {

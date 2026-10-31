@@ -1,8 +1,10 @@
 import { X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { useDataset } from '@/hooks/queries/useDatasets';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import type { TypePalette } from '@/lib/ontology-colors';
 import type { GraphEdge, GraphNode } from '@/types/ontology';
@@ -33,6 +35,29 @@ const KEY_STEP = 16;
 // (WD-372) Tailwind md(768px) 이상만 그래프 옆 도킹 패널로 둔다. 그보다 좁으면 320px 고정 패널이
 // 화면 밖으로 밀려나 「닫기」·관계 버튼에 닿을 수 없었으므로, 화면 폭에 맞춘 모달(Dialog)로 띄운다.
 const DOCKED_MQ = '(min-width: 768px)';
+
+/**
+ * 표(데이터셋) 투영 노드의 출처 — 「출처 데이터셋: 이름 외 n개」(WD-382).
+ * 표 투영에는 청크가 없어 예전엔 늘 「출처 청크 0개」로 보여 근거 없는 노드처럼 읽혔다. 첫 데이터셋 이름만 불러와 보이고
+ * (노드 하나에 데이터셋이 여럿일 수 있다), 이름을 못 읽으면(권한 없음·삭제됨) id 로 대신한다.
+ */
+function DatasetProvenance({ datasetIds }: { datasetIds: number[] }) {
+  const [firstId] = datasetIds;
+  const { data: dataset } = useDataset(firstId);
+  const rest = datasetIds.length - 1;
+  return (
+    <div className="mb-3 text-xs text-muted-foreground" data-testid="node-source-datasets">
+      출처 데이터셋:{' '}
+      <Link to={`/data/datasets/${firstId}`} className="text-primary hover:underline">
+        {dataset?.name ?? `데이터셋 #${firstId}`}
+      </Link>
+      {rest > 0 && ` 외 ${rest}개`}
+    </div>
+  );
+}
+
+/** 속성 값 표시 — 수는 자릿수 구분 쉼표를 넣어 읽기 쉽게 한다(예: 9,077,284). */
+const formatPropertyValue = (v: string | number) => (typeof v === 'number' ? v.toLocaleString('ko-KR') : v);
 
 /** 폭을 허용 범위로 clamp. */
 const clampWidth = (w: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, w));
@@ -110,6 +135,9 @@ export default function NodeDetailDrawer({
   // 이 노드가 주어(subject)/목적어(object)인 관계를 각각 수집한다.
   const outgoing = edges.filter((e) => e.subjectKey === node.key);
   const incoming = edges.filter((e) => e.objectKey === node.key);
+  // 출처 데이터셋·속성은 응답에 없을 수 있다(문서 노드·속성 없는 노드) — 빈 값으로 맞춰 아래 분기를 단순하게 둔다(WD-382)
+  const sourceDatasetIds = node.sourceDatasetIds ?? [];
+  const propertyEntries = Object.entries(node.properties ?? {});
   const nameOf = (k: string) => nodesByKey.get(k)?.name ?? k;
 
   // 관계 대상 렌더 — 그래프에 존재하는 노드면 클릭 이동 버튼, 아니면 plain text.
@@ -141,7 +169,11 @@ export default function NodeDetailDrawer({
       </div>
       <div className="mb-2 text-sm">{node.name}</div>
       <div className="mb-3 break-all text-xs text-muted-foreground">{node.key}</div>
-      <div className="mb-3 text-xs text-muted-foreground">출처 청크 {node.sourceChunkCount}개</div>
+      {/* 출처: 표 투영 노드는 데이터셋, 문서 노드는 청크 수(WD-382). 두 경로로 모두 적재된 노드는 둘 다 보인다. */}
+      {sourceDatasetIds.length > 0 && <DatasetProvenance datasetIds={sourceDatasetIds} />}
+      {(sourceDatasetIds.length === 0 || node.sourceChunkCount > 0) && (
+        <div className="mb-3 text-xs text-muted-foreground">출처 청크 {node.sourceChunkCount}개</div>
+      )}
       {/* schemaVersion이 없는 노드(스탬프 도입 이전 레거시 적재)는 아무것도 표시하지 않는다 —
           "값 없음"을 0이나 구버전으로 오인하지 않기 위함. */}
       {node.schemaVersion != null && (
@@ -156,6 +188,20 @@ export default function NodeDetailDrawer({
           적재 시점 스키마 v{node.schemaVersion}
           {currentSchemaVersion != null && node.schemaVersion < currentSchemaVersion && '(구버전)'}
         </div>
+      )}
+      {/* 노드에 적재된 속성(예: 피해액) — 예전엔 상세 어디에도 없었다(WD-382) */}
+      {propertyEntries.length > 0 && (
+        <>
+          <div className="mb-1 text-xs font-medium uppercase text-muted-foreground">속성</div>
+          <dl className="mb-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs" data-testid="node-properties">
+            {propertyEntries.map(([k, v]) => (
+              <div key={k} className="contents">
+                <dt className="text-muted-foreground">{k}</dt>
+                <dd className="break-all">{formatPropertyValue(v)}</dd>
+              </div>
+            ))}
+          </dl>
+        </>
       )}
       <div className="mb-1 text-xs font-medium uppercase text-muted-foreground">관계</div>
       <ul className="space-y-1 text-xs">
