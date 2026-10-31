@@ -25,7 +25,9 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -370,9 +372,20 @@ public class DataExportService {
     return types;
   }
 
+  /** 내보내기 파일 이름 날짜의 기준 시간대 — 작업·리포트 기본 시간대와 같은 Asia/Seoul(WD-383). */
+  static final ZoneId EXPORT_FILENAME_ZONE = ZoneId.of("Asia/Seoul");
+
+  /**
+   * 내보내기 파일 이름에 붙일 날짜(yyyyMMdd). JVM 시간대(운영 Docker 는 UTC)를 쓰면 한국 시간 0~9시에 내보낸 파일에 전날 날짜가 붙어(WD-383)
+   * Asia/Seoul 기준으로 만든다. 쿼리 결과 내보내기도 같은 규칙을 쓴다.
+   */
+  public static String exportDateStamp(Instant now) {
+    return LocalDate.ofInstant(now, EXPORT_FILENAME_ZONE).format(DateTimeFormatter.BASIC_ISO_DATE);
+  }
+
   private String buildFilename(String datasetName, ExportFormat format) {
     String sanitized = datasetName.replaceAll("[^a-zA-Z0-9가-힣._\\-]", "_");
-    String date = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
+    String date = exportDateStamp(Instant.now());
     return sanitized + "_export_" + date + "." + format.getExtension();
   }
 }

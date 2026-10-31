@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { filenameFromContentDisposition } from './download';
+import { filenameFromContentDisposition, localDateStamp } from './download';
 
 // 서버(SavedQueryController.exportRun 등)가 내려주는 Content-Disposition 형식: filename="안전문자" + filename*=UTF-8''퍼센트인코딩
 describe('filenameFromContentDisposition', () => {
@@ -28,5 +28,13 @@ describe('filenameFromContentDisposition', () => {
     expect(filenameFromContentDisposition("attachment; filename=\"ok.csv\"; filename*=UTF-8''%E0%A4%A", 'f')).toBe(
       'ok.csv',
     );
+  });
+});
+
+describe('localDateStamp', () => {
+  it('UTC 가 아니라 현지 날짜로 yyyyMMdd 를 만든다 (WD-383)', () => {
+    // 현지 시각 2026-10-29 03:15 — 한국 시간이면 UTC 로는 10-28 이지만 현지 날짜를 써야 한다
+    expect(localDateStamp(new Date(2026, 9, 29, 3, 15))).toBe('20261029');
+    expect(localDateStamp(new Date(2026, 0, 5, 23, 59))).toBe('20260105');
   });
 });

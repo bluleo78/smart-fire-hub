@@ -16,7 +16,7 @@ import {
 } from '../../../components/ui/dialog';
 import { Skeleton } from '../../../components/ui/skeleton';
 import { handleApiError, handleApiErrorAsync } from '../../../lib/api-error';
-import { downloadBlob } from '../../../lib/download';
+import { downloadBlob, localDateStamp } from '../../../lib/download';
 import { trackExportJob } from '../../../lib/export-job-tracking';
 import type { ExportFormat } from '../../../types/export';
 
@@ -130,7 +130,7 @@ export function ExportDialog({
         const response = await exportsApi.exportDataset(datasetId, request);
         const ext =
           format === 'CSV' ? 'csv' : format === 'EXCEL' ? 'xlsx' : 'geojson';
-        const filename = `${datasetName}_export_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.${ext}`;
+        const filename = `${datasetName}_export_${localDateStamp()}.${ext}`;
         downloadBlob(filename, response.data as Blob);
         toast.success('파일이 다운로드되었습니다.');
         onOpenChange(false);

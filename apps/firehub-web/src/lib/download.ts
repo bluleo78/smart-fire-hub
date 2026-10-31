@@ -33,3 +33,14 @@ export function filenameFromContentDisposition(header: string | null | undefined
   const name = (plain?.[1] ?? plain?.[2])?.trim();
   return name || fallback;
 }
+
+/**
+ * 내려받는 파일 이름에 붙일 날짜(yyyyMMdd)를 사용자 현지 날짜로 만든다(WD-383).
+ * toISOString 은 UTC 라 한국 시간 0~9시에는 전날 날짜가 붙었다.
+ */
+export function localDateStamp(date: Date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+}
