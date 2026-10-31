@@ -17,6 +17,7 @@ import {
 import { Label } from '../../../components/ui/label';
 import { handleApiError } from '../../../lib/api-error';
 import type { DatasetColumnResponse } from '../../../types/dataset';
+import { MergeLoadPkWarning } from './MergeLoadPkWarning';
 
 interface PrimaryKeysDialogProps {
   datasetId: number;
@@ -99,6 +100,11 @@ export function PrimaryKeysDialog({
             )}
           </DialogDescription>
         </DialogHeader>
+
+        {/* WD-441: 있던 기본 키를 모두 해제하려는 순간, 이 데이터셋에 병합 적재하는 파이프라인이 있으면 미리 알린다. */}
+        {selected.size === 0 && columns.some((c) => c.isPrimaryKey) && (
+          <MergeLoadPkWarning datasetId={datasetId} />
+        )}
 
         <div className="space-y-2">
           {columns.map((col) => {

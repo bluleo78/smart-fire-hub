@@ -40,6 +40,7 @@ import type { DatasetColumnResponse,DatasetDetailResponse } from '../../../types
 import { ColumnExpandedStats,NullProgressBar } from '../components/ColumnStats';
 import { DataTypeBadge } from '../components/DataTypeBadge';
 import { DescriptionCell } from '../components/DescriptionCell';
+import { MergeLoadPkWarning } from '../components/MergeLoadPkWarning';
 import { useColumnManager } from '../hooks/useColumnManager';
 
 const ColumnDialog = lazy(() =>
@@ -345,6 +346,12 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
               없습니다.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {/* WD-441: 마지막 기본 키 필드를 지우면 이 데이터셋에 병합 적재하는 파이프라인이 매 실행 실패한다 — 미리 알린다. */}
+          {deleteColumnOpen &&
+            selectedColumn?.isPrimaryKey &&
+            localColumns.filter((c) => c.isPrimaryKey).length === 1 && (
+              <MergeLoadPkWarning datasetId={datasetId} />
+            )}
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction onClick={handlers.deleteColumn} variant="destructive">

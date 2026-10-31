@@ -1470,6 +1470,26 @@ public class DatasetService {
                         r.get(field(name("pipeline", "id"), Long.class)),
                         r.get(field(name("pipeline", "name"), String.class))));
 
+    // 2-0. (WD-441) 이 데이터셋을 병합(MERGE) 적재 출력으로 쓰는 파이프라인 — 기본 키를 해제하면 매 실행 실패하는 대상이다.
+    //      pipelines 의 부분집합이라 totalCount 에는 더하지 않는다.
+    List<DatasetReferencesResponse.ReferenceItem> mergeOutputPipelines =
+        dsl.selectDistinct(
+                field(name("pipeline", "id"), Long.class),
+                field(name("pipeline", "name"), String.class))
+            .from(table(name("pipeline")))
+            .join(table(name("pipeline_step")))
+            .on(
+                field(name("pipeline_step", "pipeline_id"), Long.class)
+                    .eq(field(name("pipeline", "id"), Long.class)))
+            .where(field(name("pipeline_step", "output_dataset_id"), Long.class).eq(datasetId))
+            .and(field(name("pipeline_step", "load_strategy"), String.class).eq("MERGE"))
+            .orderBy(field(name("pipeline", "id"), Long.class))
+            .fetch(
+                r ->
+                    new DatasetReferencesResponse.ReferenceItem(
+                        r.get(field(name("pipeline", "id"), Long.class)),
+                        r.get(field(name("pipeline", "name"), String.class))));
+
     // 2-1. (WD-143) 선언 입력 없이 SQL 스텝 본문으로만 이 테이블을 읽는 파이프라인 — FK 결과와 id 로 합친다.
     List<DatasetReferencesResponse.ReferenceItem> pipelines =
         mergeById(pipelinesByFk, findPipelinesBySqlText(sqlScope, tableName));
@@ -1558,6 +1578,7 @@ public class DatasetService {
     return new DatasetReferencesResponse(
         datasetId,
         pipelines,
+        mergeOutputPipelines,
         dashboards,
         hiddenDashboardCount,
         proactiveJobs,
