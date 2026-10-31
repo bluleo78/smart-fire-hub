@@ -60,7 +60,8 @@ export type DataStoreFormData = z.infer<typeof dataStoreSchema>;
  * 어긋나면 클라이언트가 통과시킨 값이 서버 400 으로 떨어져 사용자가 이유 없이 막힌다.
  */
 export const createTenantSchema = z.object({
-  name: z.string().min(1, '이름을 입력하세요.').max(255, '이름은 255자 이하여야 합니다.'),
+  // 공백만 넣은 이름은 서버 @NotBlank 가 400 으로 거부한다 — 앞뒤 공백을 잘라 여기서 먼저 막는다(WD-311, 계정 생성 스키마와 같음).
+  name: z.string().trim().min(1, '이름을 입력하세요.').max(255, '이름은 255자 이하여야 합니다.'),
   slug: z
     .string()
     .min(1, '식별자는 소문자·숫자·하이픈만 사용할 수 있으며 소문자 또는 숫자로 시작해야 합니다.')
