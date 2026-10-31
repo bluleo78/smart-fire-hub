@@ -7,7 +7,7 @@ import { Link, Navigate } from 'react-router-dom';
 
 import { FormField } from '@/components/ui/form-field';
 import { Skeleton } from '@/components/ui/skeleton';
-import { extractApiError } from '@/lib/api-error';
+import { applyFieldErrors, extractApiError } from '@/lib/api-error';
 import type { ErrorResponse } from '@/types/auth';
 
 import { Button } from '../components/ui/button';
@@ -88,16 +88,8 @@ export default function SignupPage() {
         queryClient.setQueryData(['auth', 'signup-status'], { open: false });
         return;
       }
-      // 서버가 필드별 errors 맵을 반환하면 각 필드에 인라인으로 표시
-      if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        if (errData.errors && Object.keys(errData.errors).length > 0) {
-          Object.entries(errData.errors).forEach(([field, message]) => {
-            setError(field as keyof SignupFormData, { message });
-          });
-          return;
-        }
-      }
+      // 검증 400 은 해당 입력 아래로, 모르는 필드 문구는 errors.root 로 (WD-270)
+      if (applyFieldErrors(error, setError, Object.keys(signupSchema.shape))) return;
       setServerError(extractApiError(error, '회원가입에 실패했습니다.'));
     }
   };
@@ -176,8 +168,8 @@ export default function SignupPage() {
                 {...register('email')}
               />
             </FormField>
-            {serverError && (
-              <p className="text-sm text-destructive">{serverError}</p>
+            {(serverError || errors.root?.message) && (
+              <p className="text-sm text-destructive">{serverError || errors.root?.message}</p>
             )}
             <Button type="submit" className="w-full" disabled={isSubmitting}>
               {isSubmitting ? '회원가입 중...' : '회원가입'}

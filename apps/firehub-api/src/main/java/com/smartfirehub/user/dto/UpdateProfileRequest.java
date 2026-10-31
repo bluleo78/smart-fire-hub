@@ -9,4 +9,11 @@ import jakarta.validation.constraints.Size;
  * 으로 안내한다 (#26, WD-125: 예전 100자 상한은 51~100자를 통과시킨 뒤 DB 에서 거부됐다).
  */
 public record UpdateProfileRequest(
-    @NotBlank @Size(max = 50, message = "이름은 50자 이하여야 합니다") String name, @Email String email) {}
+    @NotBlank(message = "이름을 입력하세요") @Size(max = 50, message = "이름은 50자 이하여야 합니다") String name,
+    @Email String email) {
+
+  /** 이름 앞뒤 공백은 잘라서 검증·저장한다 — 화면 trim 을 우회한 요청도 「 홍길동 」이 그대로 저장되지 않게 (WD-275). */
+  public UpdateProfileRequest {
+    if (name != null) name = name.strip();
+  }
+}

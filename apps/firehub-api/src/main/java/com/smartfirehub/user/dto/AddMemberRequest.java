@@ -21,9 +21,10 @@ public record AddMemberRequest(
         String email,
     @NotBlank(message = "이름은 필수입니다") @Size(max = 50, message = "이름은 50자 이하여야 합니다") String name,
     @NotBlank(message = "임시 비밀번호는 필수입니다")
-        @Size(min = 8, max = 128, message = "비밀번호는 8~128자여야 합니다")
-        @Pattern(
-            regexp = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).+$",
-            message = "비밀번호는 대문자, 소문자, 숫자를 각각 1자 이상 포함해야 합니다")
+        @Size(
+            min = PasswordRules.MIN_LENGTH,
+            max = PasswordRules.MAX_LENGTH,
+            message = PasswordRules.SIZE_MESSAGE)
+        @Pattern(regexp = PasswordRules.PATTERN, message = PasswordRules.PATTERN_MESSAGE)
         String temporaryPassword,
     List<Long> roleIds) {}

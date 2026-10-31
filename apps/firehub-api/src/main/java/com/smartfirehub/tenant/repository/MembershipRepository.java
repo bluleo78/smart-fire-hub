@@ -6,6 +6,7 @@ import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.tenant.dto.MembershipResponse;
 import com.smartfirehub.tenant.dto.TenantMembership;
+import com.smartfirehub.tenant.dto.UnavailableWorkspace;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -62,6 +63,35 @@ public class MembershipRepository {
         .orderBy(T_ID)
         .fetch(
             r -> new MembershipResponse(r.get(T_ID), r.get(T_SLUG), r.get(T_NAME), r.get(M_ROLE)));
+  }
+
+  /**
+   * 멤버십 행은 있지만 지금 들어갈 수 없는 워크스페이스 목록(WD-281). {@link #findActiveByUser} 의 여집합이다.
+   *
+   * <p>왜: 선택 가능 목록에서 정지된 것이 조용히 빠지면 웹은 「초대받은 적 없음」과 구분하지 못한다. 로그인 응답에 사유를 함께 실어 선택 화면이 누구에게 문의할지
+   * 안내하게 한다.
+   *
+   * <p>사유: 테넌트가 ACTIVE 가 아니면 멤버십 상태와 무관하게 {@code WORKSPACE_SUSPENDED} — 멤버십을 되살려도 들어갈 수 없으니 운영자가
+   * 풀어야 한다. 그 외(테넌트 ACTIVE, 멤버십 비ACTIVE)는 {@code MEMBERSHIP_SUSPENDED}. 제거된 멤버는 행이 삭제되므로({@link
+   * #delete}) 자연히 포함되지 않는다.
+   *
+   * <p>RLS: {@link #findActiveByUser} 와 같이 전역 테이블만 읽어 테넌트 선택 전(로그인)에도 그대로 동작한다.
+   */
+  public List<UnavailableWorkspace> findUnavailableByUser(Long userId) {
+    return dsl.select(T_NAME, M_STATUS, T_STATUS)
+        .from(MEMBERSHIP)
+        .join(TENANT)
+        .on(T_ID.eq(M_TENANT_ID))
+        .where(M_USER_ID.eq(userId))
+        .and(M_STATUS.ne("ACTIVE").or(T_STATUS.ne("ACTIVE")))
+        .orderBy(T_ID)
+        .fetch(
+            r ->
+                new UnavailableWorkspace(
+                    r.get(T_NAME),
+                    "ACTIVE".equals(r.get(T_STATUS))
+                        ? UnavailableWorkspace.Reason.MEMBERSHIP_SUSPENDED
+                        : UnavailableWorkspace.Reason.WORKSPACE_SUSPENDED));
   }
 
   /** 해당 사용자가 그 테넌트의 ACTIVE 멤버이고 테넌트도 ACTIVE 인지. 테넌트 선택/갱신 시의 게이트. */

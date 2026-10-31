@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { PASSWORD_MAX_LENGTH, PASSWORD_POLICY } from '../temp-password';
+
 export const loginSchema = z.object({
   username: z.email("유효한 이메일 형식의 아이디를 입력하세요"),
   password: z.string().min(1, "비밀번호를 입력하세요"),
@@ -13,10 +15,9 @@ export const signupSchema = z
     password: z
       .string()
       .min(8, "비밀번호는 8자 이상이어야 합니다")
-      .regex(
-        /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/,
-        "비밀번호는 영문 대문자, 소문자, 숫자를 각각 하나 이상 포함해야 합니다",
-      ),
+      // 서버 SignupRequest 와 같은 상한 (WD-270)
+      .max(PASSWORD_MAX_LENGTH, `비밀번호는 ${PASSWORD_MAX_LENGTH}자 이하여야 합니다`)
+      .regex(PASSWORD_POLICY, "비밀번호는 영문 대문자, 소문자, 숫자를 각각 하나 이상 포함해야 합니다"),
     // 비밀번호 확인 필드: password와 일치해야 함 (refine에서 검증)
     confirmPassword: z.string().min(1, "비밀번호 확인을 입력하세요"),
     // 이름 필드: 1자 이상 50자 이하 — DB 컬럼(user.name VARCHAR(50))과 같은 상한 (WD-125)

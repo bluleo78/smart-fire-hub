@@ -7,7 +7,7 @@
  * 나타나므로 여기서는 그 응답을 모킹해 재현한다.
  */
 import type { TokenResponse } from '../../src/types/auth';
-import type { MembershipResponse } from '../../src/types/tenant';
+import type { MembershipResponse, UnavailableWorkspace } from '../../src/types/tenant';
 import { mockApi } from '../fixtures/api-mock';
 import { expect, MOCK_TOKEN_RESPONSE, test } from '../fixtures/auth.fixture';
 
@@ -25,9 +25,25 @@ const TENANT_B: MembershipResponse = {
 };
 
 /** 테넌트 미선택(또는 강등) 상태의 토큰 응답. */
-function tenantLessToken(memberships: MembershipResponse[]): TokenResponse {
-  return { ...MOCK_TOKEN_RESPONSE, activeTenantId: null, memberships };
+function tenantLessToken(
+  memberships: MembershipResponse[],
+  unavailableWorkspaces: UnavailableWorkspace[] = [],
+): TokenResponse {
+  return { ...MOCK_TOKEN_RESPONSE, activeTenantId: null, memberships, unavailableWorkspaces };
 }
+
+// WD-281: 멤버십은 있지만 정지돼 들어갈 수 없는 워크스페이스 — 사유별로 문의 상대가 다르다.
+const MEMBERSHIP_SUSPENDED: UnavailableWorkspace = {
+  tenantName: '감마 워크스페이스',
+  reason: 'MEMBERSHIP_SUSPENDED',
+};
+const WORKSPACE_SUSPENDED: UnavailableWorkspace = {
+  tenantName: '델타 워크스페이스',
+  reason: 'WORKSPACE_SUSPENDED',
+};
+const MEMBERSHIP_SUSPENDED_MESSAGE =
+  '워크스페이스 「감마 워크스페이스」에서 이용이 정지되었습니다. 워크스페이스 관리자에게 문의하세요.';
+const WORKSPACE_SUSPENDED_MESSAGE = '워크스페이스 「델타 워크스페이스」 전체가 정지되었습니다. 운영자에게 문의하세요.';
 
 test.describe('워크스페이스 선택 게이트', () => {
   // ST-01: 멤버십이 여럿이면 앱이 아니라 선택 화면이 뜬다. 이 게이트가 없으면 GUC 가 비어 있어
@@ -203,5 +219,71 @@ test.describe('워크스페이스 선택 게이트', () => {
     await page.goto('/');
 
     await expect(page.getByRole('heading', { name: '워크스페이스 선택' })).toBeHidden();
+  });
+
+  // ── WD-281: 정지된 워크스페이스가 「초대받은 적 없음」과 구분되어 안내된다 ──────────────
+
+  // ST-09: 들어갈 수 있는 곳이 없고 정지된 곳만 있으면 초대 안내 대신 사유별 문의 상대를 알린다.
+  test('ST-09: 정지된 워크스페이스만 있으면 초대 안내 대신 사유별 정지 안내를 보여준다 (WD-281)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', '/api/v1/auth/refresh', tenantLessToken([], [MEMBERSHIP_SUSPENDED, WORKSPACE_SUSPENDED]));
+    // 선택 목록이 비면 화면이 memberships 를 한 번 직접 조회한다 — 실제 서버처럼 빈 배열을 준다.
+    await mockApi(page, 'GET', '/api/v1/auth/memberships', []);
+
+    await page.goto('/');
+
+    await expect(page.getByRole('heading', { name: '워크스페이스 선택' })).toBeVisible();
+    const notices = page.getByTestId('unavailable-workspaces');
+    // 응답 순서대로, 사유별 문구(문의 상대 포함)가 그대로 렌더링된다.
+    await expect(notices.locator('[data-slot="inline-banner"]')).toHaveText([
+      MEMBERSHIP_SUSPENDED_MESSAGE,
+      WORKSPACE_SUSPENDED_MESSAGE,
+    ]);
+    // 「초대받은 적 없음」 안내는 나오지 않는다 — 이것이 WD-281 의 핵심 회귀 지점이다.
+    await expect(page.getByText('참여 중인 워크스페이스가 없습니다')).toHaveCount(0);
+    await expect(page.getByText(/초대를 요청하세요/)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '로그아웃' })).toBeVisible();
+  });
+
+  // ST-10: 선택 가능한 곳이 있으면 목록은 그대로 두고, 정지된 곳은 목록 아래 메모로 알린다.
+  test('ST-10: 선택 가능한 워크스페이스 아래에 정지된 워크스페이스를 함께 알린다 (WD-281)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', '/api/v1/auth/refresh', tenantLessToken([TENANT_A, TENANT_B], [WORKSPACE_SUSPENDED]));
+
+    await page.goto('/');
+
+    // 선택 가능한 카드는 그대로 두 개다.
+    await expect(page.getByRole('button', { name: `${TENANT_A.tenantName} 워크스페이스 선택` })).toBeVisible();
+    await expect(page.getByRole('button', { name: `${TENANT_B.tenantName} 워크스페이스 선택` })).toBeVisible();
+    // 정지된 곳은 선택 카드가 아니라 메모로만 나온다(눌러서 403 을 받는 데드엔드를 만들지 않는다).
+    await expect(page.getByRole('button', { name: `${WORKSPACE_SUSPENDED.tenantName} 워크스페이스 선택` })).toHaveCount(0);
+    const note = page.getByTestId('unavailable-workspaces-note');
+    await expect(note.getByText('이용할 수 없는 워크스페이스')).toBeVisible();
+    await expect(note.getByRole('listitem')).toHaveText([WORKSPACE_SUSPENDED_MESSAGE]);
+  });
+
+  // ST-11: 정지된 곳이 없으면 메모 자체를 그리지 않는다(빈 메모로 화면을 어지럽히지 않게).
+  test('ST-11: 정지된 워크스페이스가 없으면 안내 메모를 그리지 않는다 (WD-281)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', '/api/v1/auth/refresh', tenantLessToken([TENANT_A, TENANT_B]));
+
+    await page.goto('/');
+
+    await expect(page.getByText(TENANT_A.tenantName)).toBeVisible();
+    await expect(page.getByTestId('unavailable-workspaces-note')).toHaveCount(0);
+    await expect(page.getByTestId('unavailable-workspaces')).toHaveCount(0);
+  });
+
+  // ST-12: 로그인 응답의 정지 목록이 그대로 선택 화면까지 이어진다(부팅 refresh 가 아니라 login 경로).
+  test('ST-12: 로그인 응답에 정지된 멤버십만 있으면 로그인 직후 정지 안내가 보인다 (WD-281)', async ({ authMockedPage: page }) => {
+    await page.goto('/login');
+    // fixture 의 login 모킹을 덮어쓴다(나중에 등록한 route 가 우선).
+    await mockApi(page, 'POST', '/api/v1/auth/login', tenantLessToken([], [MEMBERSHIP_SUSPENDED]));
+    await mockApi(page, 'GET', '/api/v1/auth/memberships', []);
+
+    await page.getByLabel('아이디 (이메일)').fill('test@example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill('testpassword123');
+    await page.getByRole('button', { name: '로그인' }).click();
+
+    await expect(page.getByRole('heading', { name: '워크스페이스 선택' })).toBeVisible();
+    await expect(page.getByTestId('unavailable-workspaces')).toHaveText(MEMBERSHIP_SUSPENDED_MESSAGE);
+    await expect(page.getByText('참여 중인 워크스페이스가 없습니다')).toHaveCount(0);
   });
 });

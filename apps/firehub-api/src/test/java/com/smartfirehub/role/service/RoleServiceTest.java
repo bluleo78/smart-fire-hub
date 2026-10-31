@@ -4,6 +4,7 @@ import static com.smartfirehub.jooq.Tables.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.role.dto.RoleDetailResponse;
 import com.smartfirehub.role.dto.RoleResponse;
@@ -219,6 +220,27 @@ class RoleServiceTest extends IntegrationTestBase {
     // 기준 없이(「내 변경으로 덮어쓰기」) 보내면 예전처럼 저장된다
     roleService.setRolePermissions(role.id(), screenSaw, null, callerId);
     assertThat(roleService.getRoleById(role.id()).permissions()).hasSize(userPerms.size());
+  }
+
+  /** WD-280: 플랫폼(운영자) 평면 권한은 워크스페이스 역할에 넣을 수 없다 — 400 으로 거부하고 아무것도 저장하지 않는다. */
+  @Test
+  void setRolePermissions_platformPermission_rejectedAndNothingSaved() {
+    makeCallerAdmin();
+    RoleResponse customRole =
+        roleService.createRole("CUSTOM_ROLE", "Custom role for test", callerId);
+    List<Long> permissionIds =
+        dsl.select(PERMISSION.ID)
+            .from(PERMISSION)
+            .where(PERMISSION.CODE.in("user:read", "platform:tenant:read"))
+            .fetch(PERMISSION.ID);
+
+    assertThatThrownBy(
+            () -> roleService.setRolePermissions(customRole.id(), permissionIds, callerId))
+        .isInstanceOf(CodedApiException.class)
+        .hasMessageContaining("운영자 전용 권한")
+        .extracting("code")
+        .isEqualTo("PLATFORM_PERMISSION_NOT_ASSIGNABLE");
+    assertThat(roleService.getRoleById(customRole.id()).permissions()).isEmpty();
   }
 
   /** 행위자를 기본 테넌트 ADMIN 으로 만든다(범위 가드 WD-116/WD-141 를 통과시키기 위해 — 테스트 트랜잭션과 함께 롤백). */

@@ -17,6 +17,7 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.ClientIpExtractor;
 import com.smartfirehub.tenant.dto.MembershipResponse;
+import com.smartfirehub.tenant.dto.UnavailableWorkspace;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserDeactivatedException;
@@ -141,7 +142,9 @@ public class AuthService {
             activeTenantId,
             UUID.randomUUID(),
             memberships,
-            user.mustChangePassword());
+            user.mustChangePassword(),
+            // 정지된 워크스페이스도 사유와 함께 알린다 — 빼면 선택 화면이 「초대 없음」과 구분하지 못한다(WD-281).
+            membershipRepository.findUnavailableByUser(user.id()));
 
     // 로그인 감사 로그 (#60/#92).
     //
@@ -228,7 +231,9 @@ public class AuthService {
         activeTenantId,
         familyId,
         memberships,
-        user.mustChangePassword());
+        user.mustChangePassword(),
+        // 세션 중 정지돼 강등된 경우에도 선택 화면이 사유를 보여줄 수 있게 함께 싣는다(WD-281).
+        membershipRepository.findUnavailableByUser(user.id()));
   }
 
   @Transactional
@@ -292,7 +297,14 @@ public class AuthService {
     // pwc 를 여기서도 DB 값으로 싣는다 — 빠지면 "워크스페이스 선택" 이 비밀번호 변경 게이트 우회 구멍이
     // 된다(WD-2).
     return issueTokenPair(
-        userId, user.username(), tenantId, UUID.randomUUID(), List.of(), user.mustChangePassword());
+        userId,
+        user.username(),
+        tenantId,
+        UUID.randomUUID(),
+        List.of(),
+        user.mustChangePassword(),
+        // memberships 와 같이 이 경로는 목록을 싣지 않는다 — 웹은 응답 직후 하드 리로드해 refresh 로 다시 받는다(WD-281).
+        List.of());
   }
 
   /**
@@ -322,14 +334,16 @@ public class AuthService {
         tenantId,
         UUID.randomUUID(),
         membershipRepository.findActiveByUser(userId),
-        user.mustChangePassword());
+        user.mustChangePassword(),
+        membershipRepository.findUnavailableByUser(userId));
   }
 
   /**
    * 액세스/리프레시 토큰을 발급하고 리프레시 토큰을 저장한 뒤 응답을 만든다.
    *
    * <p>login/refresh/selectTenant 는 tenantId 산출 방식, familyId 를 새로 시작할지 재사용할지, memberships 를 실제 목록으로
-   * 채울지 비워둘지만 다르고 그 이후 처리(토큰 발급·저장·응답 조립)는 동일하므로 이 부분만 공유한다.
+   * 채울지 비워둘지만 다르고 그 이후 처리(토큰 발급·저장·응답 조립)는 동일하므로 이 부분만 공유한다. unavailableWorkspaces(WD-281)도
+   * memberships 와 같은 규칙으로 채우거나 비운다.
    */
   private TokenResponse issueTokenPair(
       Long userId,
@@ -337,7 +351,8 @@ public class AuthService {
       Long tenantId,
       UUID familyId,
       List<MembershipResponse> memberships,
-      boolean mustChangePassword) {
+      boolean mustChangePassword,
+      List<UnavailableWorkspace> unavailableWorkspaces) {
     String accessToken =
         jwtTokenProvider.generateAccessToken(userId, username, tenantId, mustChangePassword);
     String refreshToken = jwtTokenProvider.generateRefreshToken(userId, tenantId);
@@ -351,7 +366,8 @@ public class AuthService {
         jwtProperties.accessExpiration() / 1000,
         tenantId,
         memberships,
-        mustChangePassword);
+        mustChangePassword,
+        unavailableWorkspaces);
   }
 
   private void storeRefreshToken(Long userId, String refreshToken, UUID familyId) {

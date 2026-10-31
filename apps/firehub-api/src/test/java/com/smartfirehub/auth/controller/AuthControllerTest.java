@@ -22,9 +22,11 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.tenant.dto.UnavailableWorkspace;
 import com.smartfirehub.user.dto.UserResponse;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -122,6 +124,24 @@ class AuthControllerTest {
     verify(authService, never()).signup(any());
   }
 
+  /** 비밀번호 129자는 400 + 한국어 필드 문구, 가입 시도 없음 (WD-270). */
+  @Test
+  void signup_passwordOver128_returnsKoreanFieldErrorWithoutSignup() throws Exception {
+    SignupRequest request =
+        new SignupRequest(
+            "test@example.com", "test@example.com", "Aa1" + "a".repeat(126), "Test User");
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/signup")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.password").value("비밀번호는 8~128자여야 합니다"));
+
+    verify(authService, never()).signup(any());
+  }
+
   @Test
   void signup_invalidEmail_returnsBadRequest() throws Exception {
     SignupRequest request = new SignupRequest("not-email", "not-email", "Password123", "Test User");
@@ -153,6 +173,45 @@ class AuthControllerTest {
         .andExpect(jsonPath("$.refreshToken").doesNotExist())
         .andExpect(jsonPath("$.tokenType").value("Bearer"))
         .andExpect(header().exists("Set-Cookie"));
+  }
+
+  /**
+   * WD-281: 정지된 워크스페이스 목록이 응답 본문까지 사유와 함께 직렬화된다. withoutRefreshToken() 이 새 필드를 조용히 떨어뜨리지 않는지도 함께
+   * 지킨다.
+   */
+  @Test
+  void login_serializesUnavailableWorkspaces() throws Exception {
+    LoginRequest request = new LoginRequest("test@example.com", "Password123");
+    TokenResponse tokenResponse =
+        new TokenResponse(
+            "access-token",
+            "refresh-token",
+            "Bearer",
+            1800,
+            null,
+            List.of(),
+            false,
+            List.of(
+                new UnavailableWorkspace("정지된 팀", UnavailableWorkspace.Reason.MEMBERSHIP_SUSPENDED),
+                new UnavailableWorkspace(
+                    "닫힌 회사", UnavailableWorkspace.Reason.WORKSPACE_SUSPENDED)));
+
+    when(authService.login(any(LoginRequest.class))).thenReturn(tokenResponse);
+    when(jwtProperties.refreshExpiration()).thenReturn(604800000L);
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.memberships.length()").value(0))
+        .andExpect(jsonPath("$.unavailableWorkspaces.length()").value(2))
+        .andExpect(jsonPath("$.unavailableWorkspaces[0].tenantName").value("정지된 팀"))
+        .andExpect(jsonPath("$.unavailableWorkspaces[0].reason").value("MEMBERSHIP_SUSPENDED"))
+        .andExpect(jsonPath("$.unavailableWorkspaces[0].tenantId").doesNotExist())
+        .andExpect(jsonPath("$.unavailableWorkspaces[1].tenantName").value("닫힌 회사"))
+        .andExpect(jsonPath("$.unavailableWorkspaces[1].reason").value("WORKSPACE_SUSPENDED"));
   }
 
   @Test

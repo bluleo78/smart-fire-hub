@@ -86,6 +86,20 @@ public class PermissionRepository {
   }
 
   /**
+   * 주어진 권한 id 중 category 가 {@code category} 인 것이 하나라도 있는가 — 역할 권한 저장에서 플랫폼 권한을 거르기 위해 쓴다(WD-280).
+   */
+  public boolean existsInCategory(Collection<Long> ids, String category) {
+    if (ids.isEmpty()) {
+      return false;
+    }
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from(PERMISSION)
+            .where(PERMISSION.ID.in(ids))
+            .and(PERMISSION.CATEGORY.eq(category)));
+  }
+
+  /**
    * 여러 역할의 권한 코드를 한 번의 IN 질의로 모은다(역할 id → 코드 집합). 역할 부여 범위 검사가 바뀌는 역할마다 따로 조회하지 않게 하기 위해
    * 쓴다(WD-116).
    *

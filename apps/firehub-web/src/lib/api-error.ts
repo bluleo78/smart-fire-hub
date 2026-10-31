@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { FieldValues, Path, UseFormSetError } from 'react-hook-form';
 import { toast } from 'sonner';
 
 import type { ErrorResponse } from '@/types/auth';
@@ -60,6 +61,32 @@ export async function extractApiErrorAsync(
     return pickBestMessage(errData, fallback);
   }
   return fallback;
+}
+
+/**
+ * Bean Validation 400(code 없음, 필드별 errors)을 폼 필드 오류로 옮긴다 (WD-270).
+ *
+ * 폼 상단 오류 한 줄만으로는 어느 칸이 문제인지 알 수 없으므로, 폼이 아는 필드(fields)는 해당 입력 아래에 표시한다.
+ * 폼이 모르는 필드의 문구는 버리지 않고 root(폼 상단)로 모은다 — 서버 DTO 에 필드가 늘어도 문구가 조용히 사라지지 않게.
+ * code 가 있는 errors 는 화면 분기용 기계 값(#787)이라 건드리지 않는다.
+ *
+ * @returns 하나라도 setError 했으면 true — 호출부는 이때 자체 폴백 문구를 건너뛴다.
+ */
+export function applyFieldErrors<T extends FieldValues>(
+  error: unknown,
+  setError: UseFormSetError<T>,
+  fields: readonly string[],
+): boolean {
+  if (!axios.isAxiosError(error) || error.response?.status !== 400) return false;
+  const data = error.response.data as ErrorResponse | undefined;
+  if (!data?.errors || data.code != null) return false;
+
+  const entries = Object.entries(data.errors).filter(([, message]) => message);
+  const known = entries.filter(([field]) => fields.includes(field));
+  const unknownMessages = entries.filter(([field]) => !fields.includes(field)).map(([, message]) => message);
+  for (const [field, message] of known) setError(field as Path<T>, { message });
+  if (unknownMessages.length > 0) setError('root', { message: unknownMessages.join(' ') });
+  return entries.length > 0;
 }
 
 export function handleApiError(error: unknown, fallback: string): void {

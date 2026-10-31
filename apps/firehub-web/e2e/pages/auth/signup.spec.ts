@@ -201,6 +201,28 @@ test.describe('회원가입 페이지', () => {
     await expect(page).toHaveURL(/\/signup/);
   });
 
+  /** 회귀 테스트 (WD-270): 129자는 제출 전에 비밀번호 아래에서 막히고 POST 가 나가지 않는다. */
+  test('비밀번호 129자 → 비밀번호 아래 128자 상한 에러가 표시되고 API를 호출하지 않는다 (WD-270)', async ({
+    authMockedPage: page,
+  }) => {
+    const signupCapture = await mockApi(page, 'POST', '/api/v1/auth/signup', {}, { capture: true });
+
+    await page.goto('/signup');
+
+    // 대·소문자·숫자를 모두 넣어 복잡도 규칙은 통과시키고 길이만 위반한다
+    const tooLong = 'Aa1' + 'a'.repeat(126);
+    await page.getByLabel('아이디 (이메일)').fill('newtest3@example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill(tooLong);
+    await page.getByLabel('비밀번호 확인').fill(tooLong);
+    await page.getByLabel('이름').fill('테스트');
+
+    await page.getByRole('button', { name: '회원가입' }).click();
+
+    await expect(page.locator('#password-error')).toHaveText('비밀번호는 128자 이하여야 합니다');
+    expect(signupCapture.requests).toHaveLength(0);
+    await expect(page).toHaveURL(/\/signup/);
+  });
+
   test('로그인 링크 클릭 시 /login으로 이동한다', async ({ authMockedPage: page }) => {
     await page.goto('/signup');
 

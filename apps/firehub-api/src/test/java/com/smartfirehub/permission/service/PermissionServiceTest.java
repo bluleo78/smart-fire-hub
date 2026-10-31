@@ -3,6 +3,7 @@ package com.smartfirehub.permission.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.permission.dto.PermissionResponse;
+import com.smartfirehub.permission.repository.PermissionRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
@@ -24,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 class PermissionServiceTest extends IntegrationTestBase {
 
   @Autowired private PermissionService permissionService;
+  @Autowired private PermissionRepository permissionRepository;
   @Autowired private DSLContext dsl;
 
   /** 테스트 사용자 ID (ADMIN 역할 부여) */
@@ -116,7 +118,8 @@ class PermissionServiceTest extends IntegrationTestBase {
    */
   @Test
   void getAllPermissions_returnAllSeedPermissions() {
-    List<PermissionResponse> result = permissionService.getAllPermissions();
+    // 시드 전체는 카탈로그(리포지토리)로 센다 — 서비스는 워크스페이스 목록이라 플랫폼 권한을 뺀다(WD-280).
+    List<PermissionResponse> result = permissionRepository.findAll();
 
     assertThat(result).hasSize(47);
     assertThat(result)
@@ -133,6 +136,22 @@ class PermissionServiceTest extends IntegrationTestBase {
             "proactive:admin",
             "analytics:admin",
             "notification:admin");
+  }
+
+  /** WD-280: 워크스페이스 권한 목록에는 플랫폼(운영자) 평면 권한이 없다 — category 로 물어도 빈 목록이다. */
+  @Test
+  void getAllPermissions_excludesPlatformPermissions() {
+    List<PermissionResponse> result = permissionService.getAllPermissions();
+
+    long platformCount =
+        permissionRepository.findAll().stream()
+            .filter(p -> PermissionService.PLATFORM_CATEGORY.equals(p.category()))
+            .count();
+    assertThat(platformCount).isPositive();
+    assertThat(result).hasSize(permissionRepository.findAll().size() - (int) platformCount);
+    assertThat(result).extracting(PermissionResponse::category).doesNotContain("platform");
+    assertThat(result).extracting(PermissionResponse::code).contains("user:read");
+    assertThat(permissionService.getPermissionsByCategory("platform")).isEmpty();
   }
 
   /** 반환 목록은 id 오름차순으로 정렬되어야 한다. */

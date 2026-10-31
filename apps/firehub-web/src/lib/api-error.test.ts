@@ -2,6 +2,7 @@ import { toast } from 'sonner';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  applyFieldErrors,
   extractApiError,
   extractApiErrorAsync,
   GRAPH_READ_RESTRICTED_MESSAGE,
@@ -88,5 +89,36 @@ describe('isGraphReadRestricted', () => {
 
   it('제한 안내 문구 상수가 스펙 원문과 같다', () => {
     expect(GRAPH_READ_RESTRICTED_MESSAGE).toBe('이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 표시할 수 없습니다.');
+  });
+});
+
+describe('applyFieldErrors — 서버 필드 오류를 폼 필드로 (WD-270)', () => {
+  const FIELDS = ['currentPassword', 'newPassword'] as const;
+
+  it('아는 필드는 해당 필드에 setError 하고 true', () => {
+    const setError = vi.fn();
+    const err = axiosErrorWith({ status: 400, message: 'Validation failed', errors: { newPassword: '8~128자' } });
+    expect(applyFieldErrors(err, setError, FIELDS)).toBe(true);
+    expect(setError).toHaveBeenCalledTimes(1);
+    expect(setError).toHaveBeenCalledWith('newPassword', { message: '8~128자' });
+  });
+
+  it('모르는 필드 문구는 버리지 않고 root 로 모은다', () => {
+    const setError = vi.fn();
+    const err = axiosErrorWith({ status: 400, errors: { newPassword: 'A', extra: 'B', other: 'C' } });
+    expect(applyFieldErrors(err, setError, FIELDS)).toBe(true);
+    expect(setError).toHaveBeenCalledWith('newPassword', { message: 'A' });
+    expect(setError).toHaveBeenCalledWith('root', { message: 'B C' });
+  });
+
+  it('code 가 있는 errors(details)·errors 없음·400 아님·axios 아님은 건드리지 않고 false', () => {
+    const setError = vi.fn();
+    expect(applyFieldErrors(axiosErrorWith({ errors: { userId: '5' }, code: 'MEMBER_SUSPENDED' }), setError, FIELDS)).toBe(false);
+    expect(applyFieldErrors(axiosErrorWith({ message: '현재 비밀번호가 올바르지 않습니다' }), setError, FIELDS)).toBe(false);
+    expect(
+      applyFieldErrors({ isAxiosError: true, response: { status: 409, data: { errors: { newPassword: 'x' } } } }, setError, FIELDS),
+    ).toBe(false);
+    expect(applyFieldErrors(new Error('boom'), setError, FIELDS)).toBe(false);
+    expect(setError).not.toHaveBeenCalled();
   });
 });

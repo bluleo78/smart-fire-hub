@@ -3,7 +3,7 @@ import { createContext } from 'react';
 import type { LoginFormData, SignupFormData } from '../lib/validations/auth';
 import type { UserResponse } from '../types/auth';
 import type { RoleResponse } from '../types/role';
-import type { MembershipResponse } from '../types/tenant';
+import type { MembershipResponse, UnavailableWorkspace } from '../types/tenant';
 
 export interface AuthContextValue {
   user: UserResponse | null;
@@ -27,6 +27,11 @@ export interface AuthContextValue {
   activeTenantId: number | null;
   /** 선택/전환 UI 가 그릴 목록. */
   tenantOptions: MembershipResponse[];
+  /**
+   * 멤버십은 있지만 정지돼 들어갈 수 없는 워크스페이스(WD-281). 선택 화면이 정지 사유를 안내하는 데
+   * 쓴다 — 선택 목록에서 조용히 사라지면 「초대받은 적 없음」과 구분되지 않는다.
+   */
+  unavailableWorkspaces: UnavailableWorkspace[];
   /**
    * 실행 테넌트를 확정한다. 최초 선택과 전환이 같은 함수다.
    *
