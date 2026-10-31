@@ -40,7 +40,7 @@ class PlatformAuthControllerTest extends IntegrationTestBase {
   /**
    * 운영자 로그아웃은 <b>테넌트 세션을 끊지 않는다</b>.
    *
-   * <p>{@code refresh_token} 은 전역 테이블이고 평면 컬럼이 없다. 그래서 사용자 단위 폐기 ({@code revokeAllByUserId})를 쓰면
+   * <p>{@code refresh_token} 은 두 평면이 함께 쓰는 전역 테이블이다. 그래서 사용자 단위 폐기 ({@code revokeAllByUserId})를 쓰면
    * 운영자이면서 일반 사용자인 계정이 콘솔에서 로그아웃할 때 firehub-web 세션까지 끊긴다 — 쿠키를 평면별로 분리해 세션이 서로를 끊지 않게 만든 설계를 로그아웃이
    * 되돌리는 셈이다. 여기서는 같은 사용자로 두 평면에 로그인한 뒤 운영자만 로그아웃하고, <b>테넌트 리프레시가 여전히 동작하는지</b>로 판정한다(폐기 여부를 상태코드로
    * 직접 본다).
@@ -69,6 +69,42 @@ class PlatformAuthControllerTest extends IntegrationTestBase {
     assertThat(refreshTokenRepository.isTokenRevoked(RefreshTokenHasher.hash(tenantRefresh)))
         .as("테넌트 세션은 살아 있어야 한다 — 사용자 단위 폐기였다면 이것도 true 가 된다")
         .isFalse();
+  }
+
+  /**
+   * 반대 방향도 같다 — 웹(테넌트) 로그아웃은 <b>운영자 콘솔 세션을 끊지 않는다</b>(WD-314).
+   *
+   * <p>웹 로그아웃은 사용자 단위로 폐기하지만(한 기기 로그아웃 = 웹 전 기기 로그아웃), {@code refresh_token.plane}(V154)으로 웹 평면만
+   * 고른다. 예전에는 평면 구분이 없어 운영자 콘솔 리프레시까지 폐기돼, 콘솔을 새로고침하면 로그인 화면으로 튕겼다.
+   */
+  @Test
+  void tenantLogoutDoesNotKillPlatformSession() throws Exception {
+    String username = createUser(true);
+
+    MockHttpServletResponse tenantLogin = tenantLogin(username);
+    String tenantRefresh = cookieValue(tenantLogin, "refreshToken");
+    String tenantAccess = accessToken(tenantLogin);
+    String platformRefresh = cookieValue(login(username, PASSWORD), "platformRefreshToken");
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/logout")
+                .header("Authorization", "Bearer " + tenantAccess)
+                .cookie(new Cookie("refreshToken", tenantRefresh)))
+        .andExpect(status().isNoContent());
+
+    assertThat(refreshTokenRepository.isTokenRevoked(RefreshTokenHasher.hash(tenantRefresh)))
+        .as("웹 세션은 끊겼어야 한다")
+        .isTrue();
+    assertThat(refreshTokenRepository.isTokenRevoked(RefreshTokenHasher.hash(platformRefresh)))
+        .as("운영자 콘솔 세션은 살아 있어야 한다 — 평면 구분 없는 사용자 단위 폐기였다면 이것도 true 가 된다")
+        .isFalse();
+    // 실제로 콘솔이 갱신할 수 있는지까지 본다(새로고침 시나리오).
+    mockMvc
+        .perform(
+            post("/api/platform/auth/refresh")
+                .cookie(new Cookie("platformRefreshToken", platformRefresh)))
+        .andExpect(status().isOk());
   }
 
   /** 테넌트 평면 로그인(발급기 직접 호출이 아니라 실제 로그인). 두 평면 동시 로그인 상태를 만든다. */

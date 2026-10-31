@@ -16,6 +16,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
+import org.jooq.Check;
 import org.jooq.Condition;
 import org.jooq.Field;
 import org.jooq.ForeignKey;
@@ -36,6 +37,7 @@ import org.jooq.TableField;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
+import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -95,6 +97,11 @@ public class RefreshToken extends TableImpl<RefreshTokenRecord> {
      * The column <code>public.refresh_token.family_id</code>.
      */
     public final TableField<RefreshTokenRecord, UUID> FAMILY_ID = createField(DSL.name("family_id"), SQLDataType.UUID.nullable(false), this, "");
+
+    /**
+     * The column <code>public.refresh_token.plane</code>.
+     */
+    public final TableField<RefreshTokenRecord, String> PLANE = createField(DSL.name("plane"), SQLDataType.VARCHAR(16).nullable(false).defaultValue(DSL.field(DSL.raw("'WEB'::character varying"), SQLDataType.VARCHAR)), this, "");
 
     private RefreshToken(Name alias, Table<RefreshTokenRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
@@ -198,6 +205,13 @@ public class RefreshToken extends TableImpl<RefreshTokenRecord> {
             _user = new UserPath(this, Keys.REFRESH_TOKEN__REFRESH_TOKEN_USER_ID_FKEY, null);
 
         return _user;
+    }
+
+    @Override
+    public List<Check<RefreshTokenRecord>> getChecks() {
+        return Arrays.asList(
+            Internal.createCheck(this, DSL.name("chk_refresh_token_plane"), "(((plane)::text = ANY ((ARRAY['WEB'::character varying, 'PLATFORM'::character varying])::text[])))", true)
+        );
     }
 
     @Override
