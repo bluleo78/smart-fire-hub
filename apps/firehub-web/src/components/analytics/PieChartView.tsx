@@ -1,3 +1,4 @@
+import { AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
 import {
   Cell,
@@ -45,7 +46,14 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   const nameKey = xAxis;
 
   const isDonut = chartType === 'DONUT';
-  const categoryCount = data.length;
+
+  // WD-303: 파이·도넛은 전체에서 차지하는 비율을 그리는 차트라 음수를 표현할 수 없다. 음수를 그대로 넘기면 recharts 가
+  // 음수를 포함한 합계로 비율을 계산해 「인천 (135%)」처럼 100% 를 넘는 라벨을 내고 음수 조각을 다른 조각 위에 겹쳐 그린다.
+  // 음수 행은 그리기·비율 계산에서 빼고, 몇 개를 뺐는지 차트 위에 안내한다(빼고 말하지 않으면 합계를 잘못 읽는다).
+  const negativeCount = data.filter((row) => isNegative(row[valueKey])).length;
+  const pieData = negativeCount > 0 ? data.filter((row) => !isNegative(row[valueKey])) : data;
+
+  const categoryCount = pieData.length;
   // 카테고리가 많으면 조각 위 텍스트 라벨을 생략하고 범례로만 안내한다 (겹침 방지).
   const showSliceLabels = categoryCount <= LABEL_SUPPRESS_THRESHOLD;
 
@@ -68,7 +76,9 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
     ? Math.min(8 + legendRows * LEGEND_ROW_HEIGHT, legendMaxHeight)
     : 0;
   const showManyNotice = categoryCount > MANY_CATEGORY_THRESHOLD;
-  const noticeHeight = showManyNotice ? NOTICE_HEIGHT : 0;
+  const showNegativeNotice = negativeCount > 0;
+  // 안내 줄(음수 제외·많은 항목)마다 한 줄 높이를 파이 위쪽 여백으로 비워 둔다.
+  const noticeHeight = ((showManyNotice ? 1 : 0) + (showNegativeNotice ? 1 : 0)) * NOTICE_HEIGHT;
 
   // 라벨을 그릴 때는 조각 바깥으로 텍스트가 삐져나오므로 여백을 더 크게 잡는다.
   const labelMargin = showSliceLabels ? 40 : 16;
@@ -87,14 +97,23 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   return (
     // 안내 문구를 차트 위에 겹쳐 두기 위한 기준 상자 — 높이는 ResponsiveContainer 와 같게 둔다.
     <div className="relative w-full" style={{ height: height ?? '100%' }}>
-      {showManyNotice && (
-        // 한 줄로 자르고 포인터를 통과시킨다 — 좁은 위젯에서 여러 줄로 감겨 파이를 덮거나 조각 툴팁을 막지 않게.
-        <p
-          className="pointer-events-none absolute inset-x-0 top-0 z-10 truncate text-xs text-muted-foreground"
-          data-testid="pie-many-categories-notice"
-        >
-          항목이 {categoryCount.toLocaleString()}개라 파이 차트로 읽기 어렵습니다 — 막대 차트를 권장합니다.
-        </p>
+      {(showManyNotice || showNegativeNotice) && (
+        // 한 줄씩 자르고 포인터를 통과시킨다 — 좁은 위젯에서 여러 줄로 감겨 파이를 덮거나 조각 툴팁을 막지 않게.
+        // 계속 보이는 정적 안내라 role=alert 를 붙이지 않는다(ChartRenderer 의 컬럼 안내와 같은 판단).
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 text-xs text-muted-foreground">
+          {showNegativeNotice && (
+            // WD-303: 음수 행을 뺐다는 안내 — 빼고 말하지 않으면 비율·합계를 잘못 읽는다.
+            <p className="flex items-center gap-1 truncate" data-testid="pie-negative-notice">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+              음수 값 {negativeCount}개는 {isDonut ? '도넛' : '파이'} 차트에 표시되지 않습니다. 음수까지 보려면 막대 차트를 쓰세요.
+            </p>
+          )}
+          {showManyNotice && (
+            <p className="truncate" data-testid="pie-many-categories-notice">
+              항목이 {categoryCount.toLocaleString()}개라 파이 차트로 읽기 어렵습니다 — 막대 차트를 권장합니다.
+            </p>
+          )}
+        </div>
       )}
       <ResponsiveContainer
         width="100%"
@@ -104,7 +123,7 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
       >
         <PieChart margin={{ top: 8 + noticeHeight, right: 16, left: 0, bottom: 8 }}>
           <Pie
-            data={data}
+            data={pieData}
             dataKey={valueKey}
             nameKey={nameKey}
             cx="50%"
@@ -126,7 +145,7 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
             }
             labelLine={false}
           >
-            {data.map((_entry, index) => (
+            {pieData.map((_entry, index) => (
               <Cell key={`cell-${index}`} fill={palette[index % palette.length]} />
             ))}
           </Pie>
@@ -146,4 +165,11 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
       </ResponsiveContainer>
     </div>
   );
+}
+
+/** 값이 숫자로 읽히고 0보다 작은지 — DB 숫자는 문자열(NUMERIC)로 올 수 있어 Number 로 읽는다. 숫자가 아니면 음수로 보지 않는다. */
+function isNegative(value: unknown): boolean {
+  if (value === null || value === undefined || value === '') return false;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) && n < 0;
 }
