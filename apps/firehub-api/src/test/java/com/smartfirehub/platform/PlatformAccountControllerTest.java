@@ -479,9 +479,49 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
 
     deactivate(target);
 
+    // 권한 요청 안내가 아니라 계정 비활성 사유로 거부한다(WD-315) — 소유자도 「관리자에게 권한을 요청하세요」를 받던 회귀 방지
     mockMvc
         .perform(get("/api/v1/datasets").header("Authorization", "Bearer " + tenantToken))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ACCOUNT_DEACTIVATED"))
+        .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("계정이 비활성화")));
+  }
+
+  /**
+   * WD-315: 워크스페이스 멤버십이 정지된 사용자의 열린 화면 요청은 「권한을 요청하세요」가 아니라 멤버십 정지 사유(MEMBERSHIP_SUSPENDED)로 거부된다.
+   */
+  @Test
+  void suspendedMembership_alreadyIssuedToken_forbiddenWithSuspendedReason() throws Exception {
+    TestUsers.grantRole(dsl, fixtureTransactionTemplate, target, tenantId, "ADMIN");
+    String tenantToken =
+        jwtTokenProvider.generateAccessToken(target, marker + "-target@example.com", tenantId);
+    fixtureTransactionTemplate.executeWithoutResult(
+        tx ->
+            dsl.execute(
+                "UPDATE membership SET status = 'SUSPENDED' WHERE user_id = ? AND tenant_id = ?",
+                target,
+                tenantId));
+
+    mockMvc
+        .perform(get("/api/v1/datasets").header("Authorization", "Bearer " + tenantToken))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("MEMBERSHIP_SUSPENDED"))
+        .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("멤버십이 정지")));
+  }
+
+  /** WD-315 회귀 방지: 활성 계정·ACTIVE 멤버가 권한만 없으면 지금처럼 권한 요청 안내(코드 없음)를 받는다. */
+  @Test
+  void activeMemberWithoutPermission_keepsMissingPermissionMessage() throws Exception {
+    String tenantToken =
+        jwtTokenProvider.generateAccessToken(target, marker + "-target@example.com", tenantId);
+    mockMvc
+        // USER 역할에는 role:read 가 없다 — 역할 목록은 관리자 권한 API
+        .perform(get("/api/v1/roles").header("Authorization", "Bearer " + tenantToken))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").doesNotExist())
+        .andExpect(
+            jsonPath("$.message")
+                .value(org.hamcrest.Matchers.containsString("(필요 권한: role:read)")));
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -615,9 +655,7 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
         .isEqualTo(1);
   }
 
-  /**
-   * 아이디가 다른 계정의 프로필 이메일과 (대소문자 무시) 같아도 계정이 만들어진다 — 프로필 이메일은 연락처일 뿐이라 선점으로 막지 않는다 (WD-271).
-   */
+  /** 아이디가 다른 계정의 프로필 이메일과 (대소문자 무시) 같아도 계정이 만들어진다 — 프로필 이메일은 연락처일 뿐이라 선점으로 막지 않는다 (WD-271). */
   @Test
   void create_emailUsedAsOtherProfileEmail_201() throws Exception {
     String email = marker + "-mail@example.com";
