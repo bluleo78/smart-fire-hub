@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -148,6 +149,39 @@ class PdfExportServiceTest extends IntegrationTestBase {
 
     assertThat(text).contains("중복되면 안 되는 본문");
     assertThat(text.split("중복되면 안 되는 본문", -1)).hasSize(2); // 정확히 1회 등장
+  }
+
+  /**
+   * WD-344 — 머리 시각은 리포트(실행) 완료 시각을 작업 시간대로 찍고, 내려받을 때마다 바뀌지 않는다. 예전엔 PDF 를 만들 때의 현재 시각(JVM 시간대)이 찍혀
+   * 지난 리포트도 오늘 날짜로 보였다.
+   */
+  @Test
+  void generatePdf_header_shows_report_completed_time_in_job_timezone() throws Exception {
+    when(reportRenderUtils.buildTemplateSections(any())).thenReturn(new ArrayList<>());
+    when(reportRenderUtils.renderChartImages(anyList())).thenReturn(List.of());
+    ProactiveResult result =
+        new ProactiveResult("시각 리포트", List.of(), new ProactiveResult.Usage(1, 1, 2), null, null);
+    LocalDateTime completedAtUtc = LocalDateTime.of(2026, 10, 28, 13, 6, 18);
+
+    String first =
+        extractText(pdfExportService.generatePdf(result, "시각 Job", completedAtUtc, "Asia/Seoul"));
+    String second =
+        extractText(pdfExportService.generatePdf(result, "시각 Job", completedAtUtc, "Asia/Seoul"));
+
+    // UTC 13:06 → 서울 22:06, 두 번 받아도 같다
+    assertThat(first).contains("2026-10-28 22:06");
+    assertThat(second).contains("2026-10-28 22:06");
+  }
+
+  /** WD-344 — 시간대 변환·기본값. 작업 시간대가 없거나 잘못됐으면 작업 기본값(Asia/Seoul)으로 찍는다. */
+  @Test
+  void formatReportedAt_convertsUtcToJobTimezone() {
+    LocalDateTime utc = LocalDateTime.of(2026, 10, 28, 13, 6, 18);
+    assertThat(PdfExportService.formatReportedAt(utc, "Asia/Seoul")).isEqualTo("2026-10-28 22:06");
+    assertThat(PdfExportService.formatReportedAt(utc, "America/New_York"))
+        .isEqualTo("2026-10-28 09:06");
+    assertThat(PdfExportService.formatReportedAt(utc, null)).isEqualTo("2026-10-28 22:06");
+    assertThat(PdfExportService.formatReportedAt(utc, "Not/AZone")).isEqualTo("2026-10-28 22:06");
   }
 
   @Test
