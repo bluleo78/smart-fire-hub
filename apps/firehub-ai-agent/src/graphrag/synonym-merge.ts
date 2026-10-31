@@ -6,7 +6,7 @@ import { VerifiedOntologyId, ontologyIdParam } from './verified-ontology-id.js';
 import { EntityType, Ontology, entityTypeId } from './ontology.js';
 import { entityKey } from './resolver.js';
 import { pickCanonicalName } from './semantic-resolver.js';
-import { GraphTargetMissingError, affectedCount } from './graph-mutation-guard.js';
+import { GraphTargetMissingError, affectedCount, assertEntityTypeDefined } from './graph-mutation-guard.js';
 
 interface EntityRow { key: string; sourceChunkIds: number[]; }
 interface RelRow { type: string; otherKey: string; sourceChunkIds: number[]; }
@@ -36,6 +36,8 @@ function unionDedupe(a: number[], b: number[]): number[] {
 export async function mergeEntities(
   ontology: Ontology, ontologyId: VerifiedOntologyId, entityType: EntityType, nameA: string, nameB: string,
 ): Promise<void> {
+  // WD-429: 대기 중에 타입 이름이 바뀌었거나 삭제된 항목은 일반 Error(→ 502)가 아니라 사유가 담긴 409 로 거절한다.
+  assertEntityTypeDefined(ontology, entityType);
   const typeId = entityTypeId(ontology, entityType);
   const keyA = entityKey(typeId, nameA);
   const keyB = entityKey(typeId, nameB);

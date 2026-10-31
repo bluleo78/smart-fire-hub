@@ -8,6 +8,7 @@ import { getSession } from './neo4j-client.js';
 import { RESERVED_NODE_KEYS } from './loader.js';
 import { EntityType, Ontology, RelationType, entityTypeId } from './ontology.js';
 import { entityKey } from './resolver.js';
+import { assertEntityTypeDefined } from './graph-mutation-guard.js';
 
 function sanitizeProperties(properties?: Record<string, number | string>): Record<string, number | string> {
   if (!properties) return {};
@@ -23,6 +24,8 @@ export interface AddEntityInput {
 }
 
 export async function addEntity(ontology: Ontology, ontologyId: VerifiedOntologyId, input: AddEntityInput): Promise<void> {
+  // WD-429: 타입이 온톨로지에 없으면 entityTypeId() 의 일반 Error(→ 502 「잠시 후 다시 시도」)가 아니라 사유가 담긴 409 로 거절한다.
+  assertEntityTypeDefined(ontology, input.entityType);
   const key = entityKey(entityTypeId(ontology, input.entityType), input.name);
   const props = sanitizeProperties(input.properties);
   // plain JS number를 그대로 바인딩하면 Cypher FLOAT로 저장돼 읽기측 Integer 가정이 깨진다(#308).
