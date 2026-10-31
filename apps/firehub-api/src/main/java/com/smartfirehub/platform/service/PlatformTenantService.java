@@ -11,6 +11,7 @@ import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import com.smartfirehub.platform.exception.TenantNotFoundException;
 import com.smartfirehub.platform.repository.PlatformTenantRepository;
 import com.smartfirehub.platform.service.TenantDataStoreSetupService.SetupOutcome;
+import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -83,9 +84,17 @@ public class PlatformTenantService {
   public TenantCreatedResponse create(CreateTenantRequest request, long operatorId) {
     // 사용자 존재 확인은 기존 UserRepository 를 쓴다 — 같은 전역 테이블에 조회를 하나 더 만들면
     // 나중에 사용자 조회 규칙이 바뀔 때 이쪽만 남는다.
-    if (userRepository.findById(request.ownerUserId()).isEmpty()) {
-      // Owner 없는 테넌트는 아무도 들어갈 수 없다 — 만들기 전에 막는다.
-      throw new IllegalArgumentException("존재하지 않는 사용자입니다: " + request.ownerUserId());
+    UserResponse owner =
+        userRepository
+            .findById(request.ownerUserId())
+            // Owner 없는 테넌트는 아무도 들어갈 수 없다 — 만들기 전에 막는다.
+            .orElseThrow(
+                () -> new IllegalArgumentException("존재하지 않는 사용자입니다: " + request.ownerUserId()));
+    if (!owner.isActive()) {
+      // 비활성 계정은 로그인할 수 없다 — Owner 로 두면 아무도 들어갈 수 없는 테넌트가 만들어진다(WD-316).
+      // 화면의 Owner 검색은 비활성 계정을 빼지만, 고른 뒤 비활성화되는 경합·API 직접 호출은 서버만 막을 수 있다.
+      throw new IllegalArgumentException(
+          "비활성화된 계정은 초기 Owner 로 지정할 수 없습니다. 계정을 다시 활성화하거나 다른 사용자를 선택하세요: " + owner.username());
     }
     if (tenantRepository.slugExists(request.slug())) {
       // UNIQUE 위반을 500 으로 흘리지 않고 400 으로 알려준다.

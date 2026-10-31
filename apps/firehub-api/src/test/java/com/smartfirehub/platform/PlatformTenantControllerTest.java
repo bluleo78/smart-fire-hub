@@ -161,6 +161,19 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
     assertThat(tenantIdBySlugOrNull(slug)).isNull();
   }
 
+  /** 비활성 계정을 Owner 로 지정하면 400 이고 테넌트도 만들어지지 않는다(WD-316) — 아무도 들어갈 수 없는 테넌트가 생기지 않게. */
+  @Test
+  void createTenant_rejectsDeactivatedOwner() throws Exception {
+    String slug = "wd316-inactive-owner-" + System.nanoTime();
+    dsl.execute("update \"user\" set is_active = false where id = ?", ownerUserId);
+
+    MockHttpServletResponse response = createTenant(slug, ownerUserId);
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getContentAsString()).contains("비활성화된 계정은 초기 Owner 로 지정할 수 없습니다");
+    assertThat(tenantIdBySlugOrNull(slug)).isNull();
+  }
+
   /** slug 중복은 400 이다(UNIQUE 위반을 500 으로 흘리지 않는다). */
   @Test
   void createTenant_rejectsDuplicateSlug() throws Exception {
