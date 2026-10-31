@@ -9,6 +9,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  *   행이 영문 raw 대신 한글 라벨로 보이는지 검증한다.
  * - 리소스 필터에 서버가 그 값으로 남기는 기록이 없던 「데이터 임포트」(data_import)·「시스템」(system)이 빠지고,
  *   새 리소스가 resource 쿼리로 실리는지 검증한다.
+ * - 임베딩 설정 저장(embedding_settings, WD-469) 행도 같은 기준으로 한글 라벨·필터를 검증한다.
  */
 const CREDENTIAL_UPDATE = createAuditLog({
   id: 61,
@@ -37,6 +38,15 @@ const SMTP_DELETE = createAuditLog({
   description: 'SMTP 설정 삭제',
   metadata: { name: 'SMTP 설정', changedFields: ['smtp.host', 'smtp.password'] },
 });
+const EMBEDDING_UPDATE = createAuditLog({
+  id: 66,
+  username: 'embedadmin',
+  actionType: 'UPDATE',
+  resource: 'embedding_settings',
+  resourceId: 'embedding',
+  description: '임베딩 설정 수정 (바뀐 항목: 모델·API 키)',
+  metadata: { name: '임베딩 설정', changedFields: ['model', 'apiKey'] },
+});
 const CHANNEL_OFF = createAuditLog({
   id: 64,
   username: 'channeluser',
@@ -63,7 +73,14 @@ test.describe('감사 로그 — 설정·프로필 변경(WD-465)', () => {
       page,
       'GET',
       '/api/v1/admin/audit-logs',
-      createPageResponse([CREDENTIAL_UPDATE, AI_SETTINGS_UPDATE, SMTP_DELETE, CHANNEL_OFF, PROFILE_UPDATE]),
+      createPageResponse([
+        CREDENTIAL_UPDATE,
+        AI_SETTINGS_UPDATE,
+        SMTP_DELETE,
+        EMBEDDING_UPDATE,
+        CHANNEL_OFF,
+        PROFILE_UPDATE,
+      ]),
     );
   });
 
@@ -80,11 +97,12 @@ test.describe('감사 로그 — 설정·프로필 변경(WD-465)', () => {
     await expect(row('aiadmin').getByRole('cell', { name: 'AI 설정', exact: true })).toBeVisible();
     await expect(row('smtpadmin').getByRole('cell', { name: '삭제', exact: true })).toBeVisible();
     await expect(row('smtpadmin').getByRole('cell', { name: 'SMTP 설정', exact: true })).toBeVisible();
+    await expect(row('embedadmin').getByRole('cell', { name: '임베딩 설정', exact: true })).toBeVisible();
     await expect(row('channeluser').getByRole('cell', { name: '상태 변경', exact: true })).toBeVisible();
     await expect(row('channeluser').getByRole('cell', { name: '알림 채널 설정', exact: true })).toBeVisible();
     await expect(row('profileuser').getByRole('cell', { name: '사용자', exact: true })).toBeVisible();
     // 영문 raw 리소스 값은 보이지 않는다
-    for (const raw of ['ai_credential', 'ai_settings', 'smtp_settings', 'user_channel_preference']) {
+    for (const raw of ['ai_credential', 'ai_settings', 'smtp_settings', 'embedding_settings', 'user_channel_preference']) {
       await expect(page.getByRole('cell', { name: raw, exact: true })).toHaveCount(0);
     }
     expect(warnings).toEqual([]);
@@ -116,6 +134,7 @@ test.describe('감사 로그 — 설정·프로필 변경(WD-465)', () => {
     for (const [label, value] of [
       ['AI 설정', 'ai_settings'],
       ['SMTP 설정', 'smtp_settings'],
+      ['임베딩 설정', 'embedding_settings'],
       ['알림 채널 설정', 'user_channel_preference'],
     ] as const) {
       const req = page.waitForRequest(
@@ -138,6 +157,13 @@ test.describe('감사 로그 — 설정·프로필 변경(WD-465)', () => {
     await expect(dialog.getByText('AI 자격증명 수정: 채팅 (바뀐 항목: API 키)', { exact: true })).toBeVisible();
     await expect(dialog.getByText('AI 자격증명 (CHAT)', { exact: true })).toBeVisible();
     await expect(dialog.getByText(/"changedFields": \[/)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+
+    // 임베딩 설정(WD-469) — 바뀐 항목 이름만 있고 키 값은 없다.
+    await page.getByRole('row').filter({ hasText: 'embedadmin' }).click();
+    await expect(dialog.getByText('임베딩 설정 수정 (바뀐 항목: 모델·API 키)', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('임베딩 설정 (embedding)', { exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
 

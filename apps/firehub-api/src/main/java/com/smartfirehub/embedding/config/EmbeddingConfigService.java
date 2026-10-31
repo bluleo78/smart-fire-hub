@@ -10,6 +10,9 @@ import com.smartfirehub.embedding.config.dto.EmbeddingConfigView;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
@@ -191,6 +194,53 @@ public class EmbeddingConfigService {
             cipher,
             hosting.name()),
         userId);
+  }
+
+  /**
+   * 감사용 변경 항목 이름(WD-469). 저장 전 스냅샷과 이번에 저장한 값(초안·호스팅)을 비교해 바뀐 항목의 <b>이름</b>만 고정 순서(provider·model·
+   * baseUrl·apiKey·hosting)로 돌려준다 — 감사 문구가 요청마다 흔들리지 않게.
+   *
+   * <p>스냅샷이 없으면(미설정·손상) 빈 값 기준으로 비교해 처음 채워진 항목을 모은다. API 키는 암호문이 IV 때문에 늘 달라지므로 저장된 값을 복호화해
+   * <b>평문</b>으로 비교하고(복호화 실패 = 손상 값을 덮어쓰는 것이라 "바뀜"), 평문은 비교에만 쓰고 밖으로 내보내지 않는다. Base URL 은 옛 문서가
+   * 정규화되지 않았을 수 있어 {@link #targetChanged} 와 같은 규칙으로 양쪽을 정규화해 본다. 차원은 모델에서 따라 나오는 측정값이라 보지 않는다.
+   */
+  List<String> changedFieldsForAudit(
+      Optional<EmbeddingConfigDocument.Parsed> snapshot,
+      EmbeddingConfig saved,
+      ProviderHosting savedHosting) {
+    List<String> changed = new ArrayList<>();
+    if (snapshot.isEmpty()) {
+      // 첫 등록 — 채워진 항목만 싣는다(호스팅은 선언이 외부 기본값과 다를 때만).
+      changed.add("provider");
+      if (!saved.model().isBlank()) changed.add("model");
+      if (!saved.baseUrl().isBlank()) changed.add("baseUrl");
+      if (saved.apiKey() != null && !saved.apiKey().isBlank()) changed.add("apiKey");
+      if (savedHosting != ProviderHosting.EXTERNAL) changed.add("hosting");
+      return changed;
+    }
+    EmbeddingConfigDocument.Parsed before = snapshot.get();
+    if (before.provider() != saved.provider()) changed.add("provider");
+    if (!before.model().equals(saved.model())) changed.add("model");
+    if (!UrlUtils.normalizeBaseUrl(before.baseUrl().trim())
+        .equals(UrlUtils.normalizeBaseUrl(saved.baseUrl().trim()))) {
+      changed.add("baseUrl");
+    }
+    if (!Objects.equals(
+        storedApiKeyOrNull(before), Objects.requireNonNullElse(saved.apiKey(), ""))) {
+      changed.add("apiKey");
+    }
+    if (hostingOf(snapshot) != savedHosting) changed.add("hosting");
+    return changed;
+  }
+
+  /** 감사 비교용 저장된 키 평문(없으면 빈 문자열). 복호화할 수 없으면 null — 무조건 "바뀜"으로 본다. */
+  private String storedApiKeyOrNull(EmbeddingConfigDocument.Parsed p) {
+    if (p.apiKeyCipher().isBlank()) return "";
+    try {
+      return encryptionService.decrypt(p.apiKeyCipher());
+    } catch (RuntimeException e) {
+      return null;
+    }
   }
 
   // ---- 내부 ----

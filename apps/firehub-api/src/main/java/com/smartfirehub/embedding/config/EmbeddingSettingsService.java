@@ -17,6 +17,7 @@ import com.smartfirehub.securitylevel.ai.HostingDeclarationPolicy;
 import com.smartfirehub.securitylevel.ai.KnownPublicAiHosts;
 import com.smartfirehub.securitylevel.event.EmbeddingHostingChangedEvent;
 import com.smartfirehub.settings.service.AiCredentialService;
+import com.smartfirehub.settings.service.SettingsAuditRecorder;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -39,6 +40,8 @@ public class EmbeddingSettingsService {
   private final HostingDeclarationPolicy hostingPolicy;
   private final HostingChangeAuditor hostingChangeAuditor;
   private final ApplicationEventPublisher eventPublisher;
+  // 임베딩 설정 변경 감사(WD-469) — 공급자·모델·Base URL·API 키·호스팅 중 바뀐 항목 이름만 남긴다.
+  private final SettingsAuditRecorder settingsAuditRecorder;
 
   public EmbeddingConfigView view() {
     return configService.view();
@@ -76,6 +79,10 @@ public class EmbeddingSettingsService {
     EmbeddingConfig draft = configService.prepare(req, snapshot);
     EmbeddingDimension dimension = measure(draft);
     configService.store(draft, dimension, after, userId);
+    // 설정 변경 감사(WD-469)는 저장이 성공한 뒤에만 남긴다 — 거부(400/403)·probe 실패는 위에서 던져 여기까지 오지 않는다. 비교 기준은 처음 읽은
+    // 스냅샷이고, 바뀐 항목이 없으면(같은 값 재저장) 기록하지 않는다. 스냅샷이 없으면(미설정·손상) 처음 등록으로 본다.
+    settingsAuditRecorder.embeddingSaved(
+        userId, snapshot.isEmpty(), configService.changedFieldsForAudit(snapshot, draft, after));
     // 저장 성공 뒤에만 감사(R3) — 값이 같으면 기록하지 않는다. store 가 after 를 그대로 쓰므로 다시 읽지 않는다.
     hostingChangeAuditor.recordIfChanged(
         userId, HostingChangeAuditor.Slot.EMBEDDING, before, after);
