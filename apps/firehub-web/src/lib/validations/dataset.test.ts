@@ -142,3 +142,14 @@ describe('이름 안내 문구·예약어 (WD-99)', () => {
     expect(findDuplicateColumnIndexes(['id', 'id', 'code', 'code'])).toEqual([3]);
   });
 });
+
+/**
+ * 이름·설명 길이 한도 메시지 (WD-360) — 메시지 없는 max() 는 zod 영어 기본 문구를 화면에 그대로 낸다.
+ */
+describe('길이 한도 메시지는 한국어다 (WD-360)', () => {
+  it('데이터셋 이름 100자 초과는 한국어로 안내한다', () => {
+    const r = createDatasetSchema.safeParse({ name: '가'.repeat(101), tableName: 'ok_table', columns: [] });
+    const msgs = r.success ? [] : r.error.issues.filter((i) => i.path[0] === 'name').map((i) => i.message);
+    expect(msgs).toContain('이름은 100자 이하여야 합니다');
+  });
+});

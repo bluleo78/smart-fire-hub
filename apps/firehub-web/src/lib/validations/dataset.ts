@@ -60,7 +60,7 @@ export const datasetColumnSchema = z.object({
     .min(1, '칼럼명을 입력하세요')
     .max(MAX_COLUMN_NAME_LENGTH, COLUMN_NAME_MAX_MESSAGE)
     .regex(columnNameRegex, '영문 소문자, 숫자, 밑줄만 사용 가능합니다 (소문자로 시작)'),
-  displayName: z.string().max(100).optional().or(z.literal('')),
+  displayName: z.string().max(100, '표시 이름은 100자 이하여야 합니다').optional().or(z.literal('')),
   dataType: z.enum(['TEXT', 'VARCHAR', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP', 'GEOMETRY'], {
     message: '데이터 타입을 선택하세요',
   }),
@@ -105,7 +105,7 @@ export const createDatasetSchema = z.object({
 });
 
 export const updateDatasetSchema = z.object({
-  name: z.string().min(1, '데이터셋 이름을 입력하세요').max(100),
+  name: z.string().min(1, '데이터셋 이름을 입력하세요').max(100, '이름은 100자 이하여야 합니다'),
   description: z.string().optional().or(z.literal('')),
   categoryId: z.number().optional(),
 });
@@ -117,7 +117,7 @@ export const updateColumnSchema = z.object({
     .min(1, '칼럼명을 입력하세요')
     .max(MAX_COLUMN_NAME_LENGTH, COLUMN_NAME_MAX_MESSAGE)
     .regex(columnNameRegex, '영문 소문자, 숫자, 밑줄만 사용 가능합니다 (소문자로 시작)'),
-  displayName: z.string().max(100).optional().or(z.literal('')),
+  displayName: z.string().max(100, '표시 이름은 100자 이하여야 합니다').optional().or(z.literal('')),
   dataType: z.enum(['TEXT', 'VARCHAR', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP', 'GEOMETRY'], {
     message: '데이터 타입을 선택하세요',
   }),
@@ -136,7 +136,7 @@ export const updateColumnSchema = z.object({
 
 export const categorySchema = z.object({
   name: z.string().min(1, '카테고리 이름을 입력하세요').max(50, '이름은 50자 이하여야 합니다'),
-  description: z.string().max(255).optional().or(z.literal('')),
+  description: z.string().max(255, '설명은 255자 이하여야 합니다').optional().or(z.literal('')),
 });
 
 export type CreateDatasetFormData = z.infer<typeof createDatasetSchema>;

@@ -99,6 +99,26 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await expect(page.getByText('파이프라인 이름을 입력하세요')).toBeVisible();
   });
 
+  // 회귀 가드(WD-360): 이름 길이 한도에 메시지가 없어 zod 영어 기본 문구(「Too big: expected string to have <=100 characters」)가 그대로 떴다.
+  test('스텝 이름을 100자 넘게 입력하고 저장하면 한국어 안내가 뜨고 영어 원문은 보이지 않는다 (WD-360)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    await page.goto('/pipelines/new');
+    await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('긴 스텝 이름 파이프라인');
+
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    const stepNameInput = page.locator('#step-name');
+    await expect(stepNameInput).toBeVisible({ timeout: 10000 });
+    await stepNameInput.fill('가'.repeat(101));
+    await page.locator('#step-description').fill('설명');
+
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    await expect(page.getByText('스텝 이름은 100자 이하여야 합니다').first()).toBeVisible();
+    await expect(page.getByText(/Too big|expected string/)).toHaveCount(0);
+  });
+
   test('스텝 없이 저장 클릭 시 "최소 1개의 스텝" 에러가 표시된다', async ({
     authenticatedPage: page,
   }) => {
