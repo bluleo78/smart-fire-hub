@@ -203,12 +203,28 @@ public class ReviewItemRepository {
 
   /** 승인/거부 처리 — status·decided_by·decided_at 갱신. */
   public void updateStatus(long id, String status, long decidedBy) {
-    dsl.update(T)
-        .set(STATUS, status)
-        .set(DECIDED_BY, decidedBy)
-        .set(DECIDED_AT, LocalDateTime.now())
-        .where(ID.eq(id))
-        .execute();
+    // pending 일 때만 바꾼다 — 조건 없이 쓰면 동시에 들어온 승인·거부가 서로의 결정을 덮어썼다(WD-428).
+    // 정상 경로는 lockForDecision 으로 이미 직렬화돼 1행이다. 0행이면 다른 요청이 먼저 처리한 것이다.
+    int updated =
+        dsl.update(T)
+            .set(STATUS, status)
+            .set(DECIDED_BY, decidedBy)
+            .set(DECIDED_AT, LocalDateTime.now())
+            .where(ID.eq(id))
+            .and(STATUS.eq("pending"))
+            .execute();
+    if (updated == 0) {
+      throw new IllegalStateException("이미 다른 사용자가 처리한 항목입니다: " + id);
+    }
+  }
+
+  /**
+   * 검수 결정(승인·거부) 동안 항목 행을 잠근다(SELECT … FOR UPDATE, WD-428). 호출하는 쪽 트랜잭션이 끝날 때까지 같은 항목의 다른 결정은 이 줄에서
+   * 기다렸다가, 앞 결정이 커밋된 뒤 상태를 다시 읽어 409 로 막힌다. 예전에는 pending 확인과 상태 갱신 사이에 잠금이 없어, 승인이 그래프를 바꾸는 수백 ms
+   * 사이에 들어온 거부도 pending 으로 보고 「거부했습니다」를 돌려준 뒤 승인이 approved 로 덮어썼다.
+   */
+  public void lockForDecision(long id) {
+    dsl.select(ID).from(T).where(ID.eq(id)).forUpdate().fetch();
   }
 
   private ReviewItemRecord toRecord(org.jooq.Record r) {

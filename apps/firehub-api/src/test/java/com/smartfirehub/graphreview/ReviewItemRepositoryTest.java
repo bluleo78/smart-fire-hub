@@ -1,6 +1,7 @@
 package com.smartfirehub.graphreview;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
@@ -9,6 +10,9 @@ import com.smartfirehub.graphreview.dto.ReviewItemRecord;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
@@ -131,6 +135,89 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
         .anyMatch(r -> r.id().equals(id));
     assertThat(repo.findByStatus("rejected", null, null, null, DSL.trueCondition()))
         .noneMatch(r -> r.id().equals(id));
+  }
+
+  // ── 동시 결정(WD-428) ── 승인이 그래프를 바꾸는 사이에 들어온 거부가 pending 으로 보고 「거부했습니다」를 돌려준 뒤, 승인이 approved 로
+  // 덮어쓰던 문제. 상태 갱신은 pending 일 때만 되고, 결정 중에는 행을 잠가 뒤 요청이 앞 결정의 결과를 보게 한다.
+
+  @Test
+  void updateStatus_alreadyDecided_throwsAndKeepsFirstDecision() {
+    long userId = insertDecider();
+    long id = insertPendingSynonym();
+
+    repo.updateStatus(id, "approved", userId);
+
+    // 이미 approved 인 항목을 rejected 로 덮어쓰지 않는다 — 예전에는 조건 없는 UPDATE 라 성공했다.
+    assertThatThrownBy(() -> repo.updateStatus(id, "rejected", userId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("이미 다른 사용자가 처리한 항목");
+    assertThat(repo.findById(id).orElseThrow().status()).isEqualTo("approved");
+  }
+
+  @Test
+  void lockForDecision_blocksConcurrentDecisionUntilFirstCommits() throws Exception {
+    long userId = insertDecider();
+    long id = insertPendingSynonym();
+    CountDownLatch firstLocked = new CountDownLatch(1);
+
+    // 첫 결정(승인): 행을 잠근 채 그래프 변경에 걸리는 시간만큼 머문 뒤 approved 로 바꾸고 커밋한다.
+    CompletableFuture<Void> first =
+        CompletableFuture.runAsync(
+            () ->
+                TenantRlsTestSupport.runInTenantTransaction(
+                    tx,
+                    DEFAULT_TEST_TENANT_ID,
+                    () -> {
+                      repo.lockForDecision(id);
+                      firstLocked.countDown();
+                      sleep(600);
+                      repo.updateStatus(id, "approved", userId);
+                      return null;
+                    }));
+    assertThat(firstLocked.await(10, TimeUnit.SECONDS)).isTrue();
+
+    // 두 번째 결정(거부): 잠금에서 기다렸다가, 앞 결정이 커밋된 뒤의 상태(approved)를 본다 — pending 으로 보고 성공하지 않는다.
+    long started = System.nanoTime();
+    String seen =
+        CompletableFuture.supplyAsync(
+                () ->
+                    TenantRlsTestSupport.runInTenantTransaction(
+                        tx,
+                        DEFAULT_TEST_TENANT_ID,
+                        () -> {
+                          repo.lockForDecision(id);
+                          return repo.findById(id).orElseThrow().status();
+                        }))
+            .get(15, TimeUnit.SECONDS);
+    long waitedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+    first.get(15, TimeUnit.SECONDS);
+
+    assertThat(seen).isEqualTo("approved");
+    assertThat(waitedMs).isGreaterThanOrEqualTo(300);
+  }
+
+  private long insertDecider() {
+    return dsl.fetchOne(
+            "INSERT INTO \"user\"(username, password, name, email) VALUES ('testdecider','x','T','testdecider@example.com') RETURNING id")
+        .get(0, Long.class);
+  }
+
+  private long insertPendingSynonym() {
+    repo.upsertPending("synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "r", "{}");
+    return repo.findByStatus("pending", "synonym_merge", null, null, DSL.trueCondition()).stream()
+        .filter(r -> "TestCause|a|b".equals(dedupeKeyOf(r)))
+        .findFirst()
+        .orElseThrow()
+        .id();
+  }
+
+  private static void sleep(long ms) {
+    try {
+      Thread.sleep(ms);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(e);
+    }
   }
 
   // ── page/size(opt-in, #422) ── limit/offset 이 실제로 행 수를 제한하고, orderBy(CREATED_AT, ID) 2차

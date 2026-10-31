@@ -163,6 +163,29 @@ class ReviewItemServiceTest {
   }
 
   @Test
+  @DisplayName("승인·거부는 상태를 읽기 전에 항목 행을 잠근다 — 동시 결정이 서로를 덮어쓰지 않게(WD-428)")
+  void approveAndReject_lockRowBeforeReadingStatus() {
+    ReviewItemRecord pending =
+        record("synonym_merge", 99L, "{\"entityType\":\"Cause\",\"nameA\":\"a\",\"nameB\":\"b\"}");
+    when(repo.findById(1L))
+        .thenReturn(Optional.of(pending), Optional.of(withStatus(pending, "approved")));
+    service.approve(1L, null, 1L);
+    var approveOrder = Mockito.inOrder(repo, mutationClient);
+    approveOrder.verify(repo).lockForDecision(1L);
+    approveOrder.verify(repo).findById(1L);
+    approveOrder.verify(mutationClient).mergeEntities("Cause", "a", "b", 99L);
+    approveOrder.verify(repo).updateStatus(1L, "approved", 1L);
+
+    when(repo.findById(2L))
+        .thenReturn(Optional.of(pending), Optional.of(withStatus(pending, "rejected")));
+    service.reject(2L, 1L);
+    var rejectOrder = Mockito.inOrder(repo);
+    rejectOrder.verify(repo).lockForDecision(2L);
+    rejectOrder.verify(repo).findById(2L);
+    rejectOrder.verify(repo).updateStatus(2L, "rejected", 1L);
+  }
+
+  @Test
   @DisplayName("datasetId가 없는 동의어 승인은 ai-agent를 호출하지 않고 거부한다(#678 — 레거시 항목 보호)")
   void approve_synonym_withoutDatasetId_throwsBeforeCallingMutationClient() {
     ReviewItemRecord pending =
