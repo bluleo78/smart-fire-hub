@@ -71,6 +71,35 @@ test.describe('차트 빌더 페이지', () => {
     await expect(page.getByText('차트 타입')).toBeVisible();
   });
 
+  // 회귀 가드(WD-349): 선택된 차트 타입이 색으로만 보이면 화면 읽기 프로그램 사용자는 현재 타입을 알 수 없다.
+  // 버튼 묶음은 「차트 타입」 그룹이고, 선택된 버튼만 aria-pressed=true 여야 하며 타입을 바꾸면 선택이 옮겨 간다.
+  test('차트 타입 버튼은 선택 상태를 aria-pressed 로 알린다 (WD-349)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    await page.goto('/analytics/charts/new');
+
+    const group = page.getByRole('group', { name: '차트 타입' });
+    await expect(group.getByRole('button')).toHaveCount(17);
+    // 기본 타입은 막대 차트 — 나머지 16개는 눌리지 않은 상태
+    await expect(group.getByRole('button', { name: '막대 차트' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await expect(group.locator('button[aria-pressed="true"]')).toHaveCount(1);
+
+    await group.getByRole('button', { name: '선 차트' }).click();
+    await expect(group.getByRole('button', { name: '선 차트' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await expect(group.getByRole('button', { name: '막대 차트' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    await expect(group.locator('button[aria-pressed="true"]')).toHaveCount(1);
+  });
+
   test('데이터 소스(쿼리 선택) 패널이 표시된다', async ({ authenticatedPage: page }) => {
     await setupNewChartBuilderMocks(page);
 
