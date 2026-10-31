@@ -222,6 +222,8 @@ export function AIStatusChip() {
   const chipRef = useRef<HTMLDivElement>(null);
   /** 키보드(ArrowDown)로 연 드롭다운은 열리자마자 포커스를 받는다 — 호버로 연 때는 포커스를 빼앗지 않는다(WD-427) */
   const [focusDropdownOnOpen, setFocusDropdownOnOpen] = useState(false);
+  /** 알림 패널을 키보드로 닫은 뒤 포커스를 돌려줄 벨 버튼(WD-422) */
+  const bellButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     return () => {
@@ -428,6 +430,7 @@ export function AIStatusChip() {
       {/* Notification Bell — 완전 독립 영역 */}
       <div className="relative">
         <button
+          ref={bellButtonRef}
           type="button"
           className="relative flex items-center justify-center h-7 w-7 rounded-full hover:bg-muted/80 transition-colors"
           aria-label={unreadCount > 0 ? `안 읽은 AI 인사이트 ${unreadCount}개` : 'AI 인사이트 알림'}
@@ -452,7 +455,11 @@ export function AIStatusChip() {
         </button>
         {showNotificationPanel && (
           <AINotificationPanel
-            onClose={() => setShowNotificationPanel(false)}
+            onClose={(options) => {
+              setShowNotificationPanel(false);
+              // Esc·「닫기」로 닫으면 연 벨 버튼으로 포커스를 돌린다 — 패널 안 요소가 사라지며 body 로 떨어지지 않게(WD-422)
+              if (options?.restoreFocus) bellButtonRef.current?.focus();
+            }}
             onAskAI={(content) => {
               setShowNotificationPanel(false);
               if (!isOpen) {

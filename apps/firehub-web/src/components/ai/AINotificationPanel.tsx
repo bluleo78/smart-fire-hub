@@ -1,5 +1,5 @@
 import { Bell, Bot, CheckCheck, ChevronLeft, ExternalLink, MessageCircle, X } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -266,7 +266,12 @@ function DetailView({
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 interface AINotificationPanelProps {
-  onClose: () => void;
+  /**
+   * 패널을 닫는다. restoreFocus 가 true 면 연 쪽(벨 버튼)으로 포커스를 돌려 달라는 뜻이다(WD-422) —
+   * Esc·「닫기」처럼 키보드로 닫을 때는 패널 안 요소가 사라지며 포커스가 body 로 떨어지므로 되돌려야 하고,
+   * 바깥 클릭은 사용자가 이미 다른 곳을 눌렀으니 그 자리를 빼앗지 않는다.
+   */
+  onClose: (options?: { restoreFocus?: boolean }) => void;
   onAskAI: (content: string) => void;
 }
 
@@ -341,21 +346,34 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  // 열리면 포커스를 패널로 옮긴다(WD-422) — 벨 버튼에 머물러 있으면 키보드 사용자는 패널이 열린 줄도,
+  // 안으로 들어가려면 Tab 을 더 눌러야 하는 줄도 모른다. 패널 자체에 두어 스크린리더가 「AI 인사이트 알림」
+  // 대화상자를 읽고, 다음 Tab 이 패널의 첫 버튼으로 간다.
+  useEffect(() => {
+    panelRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  /** 상세에서 목록으로 — 상세의 버튼이 사라져 포커스가 body 로 떨어지지 않게 패널로 옮긴다(WD-422) */
+  const backToList = useCallback(() => {
+    setSelectedMessage(null);
+    panelRef.current?.focus({ preventScroll: true });
+  }, []);
+
   // Close on Escape
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         e.preventDefault();
         if (selectedMessage) {
-          setSelectedMessage(null);
+          backToList();
         } else {
-          onClose();
+          onClose({ restoreFocus: true });
         }
       }
     }
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, selectedMessage]);
+  }, [onClose, selectedMessage, backToList]);
 
   // Close on outside click
   useEffect(() => {
@@ -386,7 +404,9 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
       aria-label="AI 인사이트 알림"
       aria-modal="false"
       ref={panelRef}
-      className="absolute w-80 max-w-[calc(100vw-1rem)] h-[480px] rounded-xl border border-primary/30 bg-popover shadow-2xl backdrop-blur-xl overflow-hidden transition-[opacity,transform] duration-150 flex flex-col"
+      // 열릴 때 포커스를 받는 자리 — Tab 순서에는 넣지 않는다(WD-422)
+      tabIndex={-1}
+      className="absolute outline-none w-80 max-w-[calc(100vw-1rem)] h-[480px] rounded-xl border border-primary/30 bg-popover shadow-2xl backdrop-blur-xl overflow-hidden transition-[opacity,transform] duration-150 flex flex-col"
       style={{
         top: '100%',
         right: '50%',
@@ -401,9 +421,10 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
         // Detail view
         <DetailView
           message={selectedMessage}
-          onBack={() => setSelectedMessage(null)}
+          onBack={backToList}
           onAskAI={handleAskAI}
-          onClose={onClose}
+          // 리포트 창을 닫으며 패널도 닫는다 — 창 안 버튼이 사라져 포커스가 body 로 떨어지지 않게 벨로 돌린다(WD-422)
+          onClose={() => onClose({ restoreFocus: true })}
         />
       ) : (
         // List view
@@ -444,7 +465,7 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
               )}
               <button
                 type="button"
-                onClick={onClose}
+                onClick={() => onClose({ restoreFocus: true })}
                 className="flex items-center justify-center h-6 w-6 rounded hover:bg-muted/60 transition-colors text-muted-foreground"
                 aria-label="알림 패널 닫기"
               >
