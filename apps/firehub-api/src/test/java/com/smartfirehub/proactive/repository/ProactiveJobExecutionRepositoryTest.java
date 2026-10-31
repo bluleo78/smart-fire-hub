@@ -16,6 +16,7 @@ import com.smartfirehub.support.IntegrationTestBase;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -266,7 +267,9 @@ class ProactiveJobExecutionRepositoryTest extends IntegrationTestBase {
     Long active = repository.create(jobId);
     Long finished = repository.create(jobId);
     repository.updateError(finished, "끝남");
-    LocalDateTime beatAt = LocalDateTime.now(ZoneOffset.UTC).minusSeconds(5);
+    // DB timestamp 는 마이크로초까지만 저장한다 — 나노초 시계 환경에서도 비교가 맞도록 기준 시각을 마이크로초로 자른다(WD-474).
+    LocalDateTime beatAt =
+        LocalDateTime.now(ZoneOffset.UTC).minusSeconds(5).truncatedTo(ChronoUnit.MICROS);
 
     assertThat(repository.touchHeartbeat(List.of(active, finished), beatAt)).isEqualTo(1);
 
