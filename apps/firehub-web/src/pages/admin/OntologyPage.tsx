@@ -599,7 +599,9 @@ export default function OntologyPage() {
           {/* search-first: 검색을 캔버스 위 별도 줄이 아닌 툴바로 승격(인스턴스 탭에서만 의미 있음, WD-28). */}
           {showGraphTools && (
             <>
-              <SearchInput placeholder="이름 검색" value={search} onChange={setSearch} className="w-64" />
+              {/* 최소 폭(min-w-48)을 둬 좁은 화면에서는 온톨로지 선택 상자 옆에서 90px 로 줄지 않고 다음 줄로 내려간다(WD-373).
+                  다음 줄에서는 flex-1 로 넓어져(최대 max-w-sm) 검색어가 보인다. */}
+              <SearchInput placeholder="이름 검색" value={search} onChange={setSearch} className="min-w-48 md:w-64" />
               {/* 타입 묶기 토글 — 타입별 compound 번들로 접어 밀집을 줄인다. */}
               <Button
                 variant={grouped ? 'secondary' : 'ghost'}
