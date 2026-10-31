@@ -388,6 +388,48 @@ test.describe('감사 로그 페이지', () => {
   });
 
   /**
+   * WD-416: 높이가 잘려 스크롤되는 Metadata 상자는 키보드로도 닿는다.
+   * - Tab 으로 상자(이름 「변경 내용(Metadata)」)에 포커스가 가고, ↓·PageDown 으로 잘린 아래쪽이 보인다.
+   * - 창의 aria-describedby 는 존재하지 않는 id 를 가리키지 않는다(설명이 없으면 속성 자체가 없다).
+   */
+  test('상세 창의 Metadata 상자가 Tab 으로 포커스를 받아 키보드로 스크롤된다 (WD-416)', async ({ authenticatedPage: page }) => {
+    // 상자 높이(max-h-64 = 256px)를 넘기도록 항목을 길게 만든다.
+    const metadata = {
+      changedFields: Array.from({ length: 30 }, (_, i) => `field${i}`),
+      credentialsChanged: true,
+    };
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([createAuditLog({ id: 1, username: 'admin', metadata })]),
+    );
+    await page.goto('/admin/audit-logs');
+    await page.getByRole('row').nth(1).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    // 설명이 없는 창이 존재하지 않는 요소를 aria-describedby 로 가리키지 않는다.
+    await expect(dialog).not.toHaveAttribute('aria-describedby', /.+/);
+
+    const region = dialog.getByRole('region', { name: '변경 내용(Metadata)' });
+    await expect(region).toBeVisible();
+    // 잘려 있어야 이 테스트가 의미가 있다.
+    expect(await region.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+
+    // Tab 을 눌러 창 안을 돌면 상자에 포커스가 닿는다.
+    for (let i = 0; i < 4 && !(await region.evaluate((el) => el === document.activeElement)); i++) {
+      await page.keyboard.press('Tab');
+    }
+    await expect(region).toBeFocused();
+
+    // 화살표·PageDown 으로 내려 잘린 끝(credentialsChanged)을 본다.
+    await page.keyboard.press('PageDown');
+    await page.keyboard.press('End');
+    await expect.poll(() => region.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  });
+
+  /**
    * 이슈 #71: metadata 가 null/empty 인 경우 섹션 자체가 숨겨지는지 검증
    */
   test('metadata 가 null 인 경우 Metadata 섹션이 표시되지 않는다', async ({ authenticatedPage: page }) => {
