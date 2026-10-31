@@ -203,6 +203,15 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
     return <ArrowDown size={14} />;
   };
 
+  /**
+   * 머리글 th 의 aria-sort — 정렬 상태를 아이콘으로만 보이면 화면 읽기 프로그램이 알 수 없다(WD-337).
+   * 공용 SortableHeader(#80)와 같은 값(ascending·descending·none)을 쓴다. 이 표는 크기 조절·미니 차트 때문에 머리글을 직접 그린다.
+   */
+  const getAriaSort = (colName: string): 'ascending' | 'descending' | 'none' => {
+    if (!sort || sort.by !== colName) return 'none';
+    return sort.dir === 'ASC' ? 'ascending' : 'descending';
+  };
+
   const virtualItems = rowVirtualizer.getVirtualItems();
   const totalHeight = rowVirtualizer.getTotalSize();
 
@@ -288,6 +297,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                     return (
                       <th
                         key={key}
+                        aria-sort={getAriaSort(col.columnName ?? '')}
                         style={{
                           position: 'relative',
                           width: columnWidths[key] ?? 120,

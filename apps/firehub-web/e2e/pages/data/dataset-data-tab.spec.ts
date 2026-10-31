@@ -388,6 +388,40 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
     await expect.poll(() => sortCalls.find((c) => c.sortBy === 'name')?.sortDir).toBe('ASC');
   });
 
+  test('정렬 중인 머리글에 aria-sort 로 방향을 알리고, 나머지 머리글은 none 이다 (WD-337)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDataTabMocks(page);
+    // 데이터 조회는 정렬 파라미터와 무관하게 같은 두 행을 돌려준다 — 이 테스트는 머리글 상태만 본다
+    await mockApi(page, 'GET', '/api/v1/datasets/1/data', {
+      columns: datasetDetail.columns,
+      rows: [
+        { _id: 101, id: 1, name: 'Alice', amount: 10 },
+        { _id: 102, id: 2, name: 'Bob', amount: 20 },
+      ],
+      page: 0,
+      size: 50,
+      totalElements: 2,
+      totalPages: 1,
+    });
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await expect(page.getByRole('columnheader', { name: /이름/ })).toBeVisible();
+
+    const nameHeader = page.getByRole('columnheader', { name: /이름/ });
+    const idHeader = page.getByRole('columnheader', { name: /^ID/ });
+    // 정렬 전에는 모두 none
+    await expect(nameHeader).toHaveAttribute('aria-sort', 'none');
+    await expect(idHeader).toHaveAttribute('aria-sort', 'none');
+
+    // 한 번 → 오름차순, 두 번 → 내림차순. 다른 머리글은 none 그대로
+    await nameHeader.getByRole('button').click();
+    await expect(nameHeader).toHaveAttribute('aria-sort', 'ascending');
+    await expect(idHeader).toHaveAttribute('aria-sort', 'none');
+    await nameHeader.getByRole('button').click();
+    await expect(nameHeader).toHaveAttribute('aria-sort', 'descending');
+  });
+
   /**
    * 회귀 테스트(#82): 검색 필터 변경 시 선택된 행이 초기화되어야 한다.
    * - 보이지 않는 행이 선택 상태로 남아 있으면 "삭제" 클릭 시 의도치 않은 행까지 삭제될 수 있다.

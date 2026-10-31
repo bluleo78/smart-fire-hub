@@ -72,7 +72,9 @@ export default function ReportListTab() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>제목</TableHead>
+              {/* 제목 칸에 최소 폭을 둔다 — 없으면 좁은 화면에서 고정 폭 칸들에 밀려 40px 로 줄어 제목이 0px 이 됐다(WD-334).
+                  넘치는 폭은 바깥 상자의 가로 스크롤로 본다. */}
+              <TableHead className="min-w-[180px]">제목</TableHead>
               <TableHead className="w-[200px]">스마트 작업</TableHead>
               <TableHead className="w-[240px]">생성일</TableHead>
               {/* 아이콘 버튼 2개(각 h-8 + gap) 가 잘리지 않도록 고정 폭을 준다 —
@@ -95,14 +97,14 @@ export default function ReportListTab() {
                   }
                 >
                   {/* 제목 셀은 유동 폭 — 픽셀 고정 대신 셀 폭을 따라 truncate 되게 한다 */}
-                  <TableCell className="max-w-0">
+                  <TableCell className="max-w-0 min-w-[180px]">
                     <div className="flex items-center gap-2 min-w-0">
                       {/* 키보드 접근성(WD-335): 행 클릭은 마우스로만 열리므로 제목을 뷰어 링크로 둔다 — Tab 으로 닿고 Enter 로 열린다.
                           행에 role="button" 을 주면 표의 행·칸 의미가 사라져 링크로 한다(WD-286 역할 목록과 같음).
                           클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
                       <Link
                         to={`/ai-insights/jobs/${report.jobId}/executions/${report.executionId}/report`}
-                        className="text-sm font-medium truncate rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="text-sm font-medium truncate min-w-0 rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         onClick={(e) => e.stopPropagation()}
                       >
                         {report.title}
