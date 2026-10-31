@@ -54,6 +54,7 @@ import {
   useUpdateWidget,
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
+import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { handleApiError } from '../../lib/api-error';
 import type { ChartListItem, DashboardWidget } from '../../types/analytics';
 
@@ -528,6 +529,24 @@ export default function DashboardEditorPage() {
     setIsEditing(false);
   }, [dashboard, editingWidgets, localLayouts, updateWidgetMutation]);
 
+  /**
+   * 편집 모드에서 「완료」 전에 바꾼 배치가 있는지(WD-323). 배치·크기는 완료를 눌러야 서버에 가므로, 이 값이 참인 채로 다른 화면으로 가면
+   * 변경이 사라진다 — 다른 편집 화면처럼 이탈 확인을 띄운다. 위젯 추가·삭제는 즉시 서버에 반영되므로 세지 않는다.
+   * 서버 위젯 좌표와 로컬 lg 배치를 비교한다 — react-grid-layout 이 마운트 때 같은 값으로 onLayoutChange 를 부르므로 「호출 여부」로는 판단할 수 없다.
+   */
+  const layoutDirty = useMemo(() => {
+    if (!isEditing || !dashboard) return false;
+    const items = (localLayouts.lg as LayoutItem[] | undefined) ?? [];
+    return dashboard.widgets.some((w) => {
+      const item = items.find((i) => i.i === String(w.id));
+      return (
+        item !== undefined &&
+        (item.x !== w.positionX || item.y !== w.positionY || item.w !== w.width || item.h !== w.height)
+      );
+    });
+  }, [isEditing, dashboard, localLayouts]);
+  const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(layoutDirty);
+
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -564,7 +583,8 @@ export default function DashboardEditorPage() {
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => navigate('/analytics/dashboards')}
+          // 화면 안 「←」도 미저장 배치 확인을 거친다(WD-323) — navigate 직접 호출은 가드를 우회한다
+          onClick={() => requestNavigate('/analytics/dashboards')}
           className="h-8 w-8"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -747,6 +767,8 @@ export default function DashboardEditorPage() {
           />
         )}
       </div>
+
+      {unsavedChangesDialog}
 
       <AddWidgetDialog
         open={addWidgetOpen}
