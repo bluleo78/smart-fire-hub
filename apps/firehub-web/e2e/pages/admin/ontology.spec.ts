@@ -80,6 +80,24 @@ test.describe('지식그래프 시각화 페이지', () => {
     },
   );
 
+  // 회귀 가드(WD-373): 390 폭에서 「이름 검색」 칸이 온톨로지 선택 상자 옆에 붙어 90px(글자 영역 18px)로 줄어,
+  // 입력한 검색어가 한두 글자만 보였다. 이제 최소 폭을 넘지 않으면 다음 줄로 내려가 넓게 보인다.
+  test('모바일 폭(390)에서 「이름 검색」 칸이 줄지 않고 검색어가 보인다 (WD-373)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/explore');
+
+    const search = page.getByPlaceholder('이름 검색');
+    await expect(search).toBeVisible();
+    await search.fill('테헤란로 105');
+    const box = (await search.boundingBox())!;
+    // 예전엔 90px — 최소 폭(192px) 이상
+    expect(box.width).toBeGreaterThanOrEqual(190);
+    // 입력값이 칸 안에 다 들어간다(가로 스크롤로 잘리지 않음)
+    const overflow = await search.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
+  });
+
   test('노드 클릭(tap) 시 상세 드로어에 이름과 인접 관계가 표시된다', async ({
     authenticatedPage: page,
   }) => {

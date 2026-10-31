@@ -43,6 +43,26 @@ test.describe('API 연결 페이지', () => {
     await expect(rows.filter({ hasText: '내부 서비스 API' }).getByText('Bearer')).toBeVisible();
   });
 
+  // 회귀 가드(WD-356): 375 폭에서 「전체 갱신」「새 연결」 버튼이 제목을 밀어 「API 연결 관 / 리」처럼 음절 중간에서 끊겼다.
+  // 이제 제목은 한 줄(36px)로 남고, 자리가 모자라면 버튼 묶음이 제목 아래 줄로 내려간다.
+  test('모바일 폭(375)에서 제목이 쪼개지지 않고 버튼이 다음 줄로 내려간다 (WD-356)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 375, height: 700 });
+    await setupApiConnectionListMocks(page);
+    await page.goto('/admin/api-connections');
+
+    const heading = page.getByRole('heading', { name: 'API 연결 관리' });
+    await expect(heading).toBeVisible();
+    const h = (await heading.boundingBox())!;
+    // line-height 36px — 두 줄이면 72px
+    expect(h.height).toBeLessThanOrEqual(40);
+
+    const newButton = page.getByRole('button', { name: '새 연결' });
+    await expect(newButton).toBeVisible();
+    const b = (await newButton.boundingBox())!;
+    // 버튼이 화면 안에 있다(가로로 넘치지 않음)
+    expect(b.x + b.width).toBeLessThanOrEqual(375);
+  });
+
   test('빈 목록일 때 빈 상태 메시지를 표시한다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/api-connections', []);
     await page.goto('/admin/api-connections');

@@ -161,8 +161,9 @@ export function OpencodeModelField({
   // 컴포넌트가 모르는 별도 자원(동작 설정)이라서다. 여기서 또 그리면 "모델" 이 두 번 나온다.
   return (
     <div className="space-y-2">
-      <div className="flex gap-2 max-w-md items-start">
-        <div className="flex-1">{field}</div>
+      {/* 키 입력 줄과 같이 좁은 화면에서는 버튼을 아래 줄로 내려 모델 칸이 카드 폭을 쓰게 한다(WD-358) */}
+      <div className="flex flex-col gap-2 sm:flex-row max-w-md sm:items-start">
+        <div className="w-full sm:flex-1">{field}</div>
         <Button
           type="button"
           variant="outline"
@@ -170,7 +171,7 @@ export function OpencodeModelField({
           onClick={handleLoadModels}
           // 진행 중에는 잠근다(#721) — 막지 않으면 같은 프로브가 여러 번 나가고 진행 여부도 알 수 없다.
           disabled={!cred.canLoadModels || cred.isLoadingModels}
-          className="shrink-0"
+          className="shrink-0 self-start"
         >
           {cred.isLoadingModels ? '불러오는 중...' : '모델 불러오기'}
         </Button>
@@ -271,7 +272,8 @@ function secretHint(fieldName: string, cred: UseAiCredentialFormResult) {
 /** "자격증명" 범례를 단 fieldset 틀 — 실패·잠김·정상 세 상태가 같은 틀을 쓴다(간격만 다르다). */
 function CredentialShell({ className, children }: { className: string; children: ReactNode }) {
   return (
-    <fieldset className={`${className} rounded-md border p-4`}>
+    // 카드 여백 안에 한 번 더 들어가는 틀이라 좁은 화면에서는 안쪽 여백을 줄인다(WD-358)
+    <fieldset className={`${className} rounded-md border p-3 sm:p-4`}>
       <legend className="px-1 text-sm font-medium">자격증명</legend>
       {children}
     </fieldset>
@@ -442,11 +444,12 @@ function ClaudeFields({
       {showOauth && (
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-oauth-token`}>OAuth 토큰</Label>
-          <div className="flex gap-2 max-w-md">
+          {/* 좁은 화면(375)에서는 「인증 확인」을 입력 아래 줄로 내린다 — 한 줄이면 키 칸이 91px 로 줄어 8글자만 보였다(WD-358) */}
+          <div className="flex flex-col gap-2 sm:flex-row max-w-md">
             <Input
               id={`${idPrefix}-oauth-token`}
               type="password"
-              className="flex-1"
+              className="w-full sm:flex-1"
               value={cred.secretInputs.oauthToken ?? ''}
               onChange={(e) => cred.setSecretInput('oauthToken', e.target.value)}
               placeholder="sk-ant-oat01-..."
@@ -459,7 +462,7 @@ function ClaudeFields({
                 size="sm"
                 onClick={onVerifyAuth}
                 disabled={verifyDisabled}
-                className="shrink-0"
+                className="shrink-0 self-start"
               >
                 <ShieldCheck className="h-3.5 w-3.5" />
                 {isVerifying ? '검증 중...' : '인증 확인'}
@@ -476,11 +479,12 @@ function ClaudeFields({
       {showApiKey && (
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-api-key`}>API 키</Label>
-          <div className="flex gap-2 max-w-md">
+          {/* 좁은 화면(375)에서는 「인증 확인」을 입력 아래 줄로 내린다 — 한 줄이면 키 칸이 91px 로 줄어 8글자만 보였다(WD-358) */}
+          <div className="flex flex-col gap-2 sm:flex-row max-w-md">
             <Input
               id={`${idPrefix}-api-key`}
               type="password"
-              className="flex-1"
+              className="w-full sm:flex-1"
               value={cred.secretInputs.apiKey ?? ''}
               onChange={(e) => cred.setSecretInput('apiKey', e.target.value)}
               placeholder="sk-ant-..."
@@ -493,7 +497,7 @@ function ClaudeFields({
                 size="sm"
                 onClick={onVerifyAuth}
                 disabled={verifyDisabled}
-                className="shrink-0"
+                className="shrink-0 self-start"
               >
                 <ShieldCheck className="h-3.5 w-3.5" />
                 {isVerifying ? '검증 중...' : '인증 확인'}

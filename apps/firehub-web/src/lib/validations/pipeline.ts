@@ -1,7 +1,8 @@
+// 이름 길이 한도에는 한국어 메시지를 꼭 붙인다 — 없으면 zod 영어 기본 문구(「Too big: expected string…」)가 화면에 그대로 뜬다(WD-360).
 import { z } from 'zod';
 
 export const pipelineStepSchema = z.object({
-  name: z.string().min(1, '스텝 이름을 입력하세요').max(100),
+  name: z.string().min(1, '스텝 이름을 입력하세요').max(100, '스텝 이름은 100자 이하여야 합니다'),
   description: z.string().optional().or(z.literal('')),
   scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL', 'AI_CLASSIFY'], { message: '스크립트 타입을 선택하세요' }),
   scriptContent: z.string().optional().or(z.literal('')),
@@ -27,7 +28,7 @@ export const pipelineStepSchema = z.object({
 );
 
 export const createPipelineSchema = z.object({
-  name: z.string().min(1, '파이프라인 이름을 입력하세요').max(100),
+  name: z.string().min(1, '파이프라인 이름을 입력하세요').max(100, '파이프라인 이름은 100자 이하여야 합니다'),
   description: z.string().optional().or(z.literal('')),
   steps: z.array(pipelineStepSchema).min(1, '최소 1개의 스텝을 정의하세요'),
 });
@@ -37,7 +38,7 @@ export type PipelineStepFormData = z.infer<typeof pipelineStepSchema>;
 
 /** 에디터에서 save() 시 사용하는 검증 스키마 */
 export const editorStepSchema = z.object({
-  name: z.string().min(1, '스텝 이름을 입력하세요').max(100),
+  name: z.string().min(1, '스텝 이름을 입력하세요').max(100, '스텝 이름은 100자 이하여야 합니다'),
   description: z.string().optional().or(z.literal('')),
   scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL', 'AI_CLASSIFY'], { message: '스크립트 타입을 선택하세요' }),
   scriptContent: z.string().optional().or(z.literal('')),
@@ -64,7 +65,7 @@ export const editorStepSchema = z.object({
 );
 
 export const editorPipelineSchema = z.object({
-  name: z.string().min(1, '파이프라인 이름을 입력하세요').max(100),
+  name: z.string().min(1, '파이프라인 이름을 입력하세요').max(100, '파이프라인 이름은 100자 이하여야 합니다'),
   description: z.string().optional().or(z.literal('')),
   steps: z.array(editorStepSchema).min(1, '최소 1개의 스텝을 정의하세요'),
 });

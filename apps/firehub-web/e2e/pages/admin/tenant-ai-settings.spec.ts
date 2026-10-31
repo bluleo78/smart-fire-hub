@@ -127,6 +127,33 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 미설정 �
     expect(calls.deleteCount).toBe(0);
   });
 
+  /**
+   * 회귀 가드(WD-358): 375 폭에서 「인증 확인」 버튼이 키 입력과 한 줄에 붙어 OAuth 토큰·API 키 칸이 91px 로 줄었다.
+   * 이제 좁은 화면에서는 버튼이 입력 아래 줄로 내려가 키 칸이 자격증명 묶음 폭 대부분을 쓴다.
+   */
+  test('모바일 폭(375)에서 OAuth 토큰 칸이 넓게 보이고 「인증 확인」은 아래 줄에 있다 (WD-358)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    await mockAiCredential(
+      page,
+      createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['oauthToken'] }),
+    );
+    await mockAiAuthStatus(page, () => ({ valid: true, email: 'tenant@example.com' }));
+    await page.goto('/admin/settings');
+
+    const input = page.locator('#ai-cred-oauth-token');
+    await expect(input).toBeVisible();
+    const inputBox = (await input.boundingBox())!;
+    const groupBox = (await credentialGroup(page).boundingBox())!;
+    // 예전엔 91px — 묶음 안쪽 폭의 대부분(80% 이상)을 쓴다
+    expect(inputBox.width).toBeGreaterThan(groupBox.width * 0.8);
+
+    const verify = credentialGroup(page).getByRole('button', { name: '인증 확인' }).first();
+    const verifyBox = (await verify.boundingBox())!;
+    expect(verifyBox.y).toBeGreaterThanOrEqual(inputBox.y + inputBox.height);
+  });
+
   /** 설정된 테넌트(`configured:true`)에는 미설정 안내도, 옛 라디오도 없다. */
   test('설정됨(configured:true)이면 미설정 안내가 없고 저장된 비밀이 힌트로 보인다', async ({
     authenticatedPage: page,
