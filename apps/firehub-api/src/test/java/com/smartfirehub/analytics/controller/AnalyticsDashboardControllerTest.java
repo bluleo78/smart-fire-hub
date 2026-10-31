@@ -76,13 +76,30 @@ class AnalyticsDashboardControllerTest {
   void listDashboards_withPermission_returnsPage() throws Exception {
     PageResponse<DashboardResponse> page =
         new PageResponse<>(List.of(sampleDashboard()), 0, 20, 1L, 1);
-    when(dashboardService.list(any(), any(), anyLong(), anyInt(), anyInt())).thenReturn(page);
+    when(dashboardService.list(any(), any(), any(), anyLong(), anyInt(), anyInt()))
+        .thenReturn(page);
 
     mockMvc
         .perform(get("/api/v1/analytics/dashboards").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.content[0].id").value(1))
         .andExpect(jsonPath("$.totalElements").value(1));
+  }
+
+  /** WD-328: 「내 대시보드」 탭의 mineOnly=true 가 서비스까지 전달되고, sharedOnly 는 비어 있다. */
+  @Test
+  void listDashboards_mineOnlyParam_passedToService() throws Exception {
+    when(dashboardService.list(any(), any(), any(), anyLong(), anyInt(), anyInt()))
+        .thenReturn(new PageResponse<>(List.of(), 0, 20, 0L, 0));
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/dashboards")
+                .param("mineOnly", "true")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk());
+
+    verify(dashboardService).list(isNull(), isNull(), eq(true), eq(1L), eq(0), eq(20));
   }
 
   @Test

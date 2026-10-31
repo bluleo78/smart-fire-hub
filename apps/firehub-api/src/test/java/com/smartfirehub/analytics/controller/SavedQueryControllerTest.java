@@ -118,7 +118,7 @@ class SavedQueryControllerTest {
   void listQueries_withPermission_returnsPage() throws Exception {
     PageResponse<SavedQueryListResponse> page =
         new PageResponse<>(List.of(sampleListItem()), 0, 20, 1L, 1);
-    when(savedQueryService.list(any(), any(), any(), anyLong(), anyInt(), anyInt()))
+    when(savedQueryService.list(any(), any(), any(), any(), anyLong(), anyInt(), anyInt()))
         .thenReturn(page);
 
     mockMvc
@@ -126,6 +126,22 @@ class SavedQueryControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.content[0].id").value(1))
         .andExpect(jsonPath("$.totalElements").value(1));
+  }
+
+  /** WD-328: 「내 쿼리」 탭의 mineOnly=true 가 서비스까지 전달되고, sharedOnly 는 비어 있다. */
+  @Test
+  void listQueries_mineOnlyParam_passedToService() throws Exception {
+    when(savedQueryService.list(any(), any(), any(), any(), anyLong(), anyInt(), anyInt()))
+        .thenReturn(new PageResponse<>(List.of(), 0, 20, 0L, 0));
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/queries")
+                .param("mineOnly", "true")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk());
+
+    verify(savedQueryService).list(isNull(), isNull(), isNull(), eq(true), eq(1L), eq(0), eq(20));
   }
 
   @Test
@@ -254,7 +270,8 @@ class SavedQueryControllerTest {
 
   @Test
   void getFolders_withPermission_returnsList() throws Exception {
-    when(savedQueryService.getFolders(1L)).thenReturn(List.of("reports", "adhoc"));
+    when(savedQueryService.getFolders(isNull(), isNull(), eq(1L)))
+        .thenReturn(List.of("reports", "adhoc"));
 
     mockMvc
         .perform(
@@ -262,6 +279,22 @@ class SavedQueryControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0]").value("reports"))
         .andExpect(jsonPath("$[1]").value("adhoc"));
+  }
+
+  /** WD-328: 폴더 목록도 탭 범위를 받는다 — 「내 쿼리」 탭의 mineOnly=true 가 서비스까지 전달된다. */
+  @Test
+  void getFolders_mineOnlyParam_passedToService() throws Exception {
+    when(savedQueryService.getFolders(any(), any(), anyLong())).thenReturn(List.of("reports"));
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/queries/folders")
+                .param("mineOnly", "true")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0]").value("reports"));
+
+    verify(savedQueryService).getFolders(isNull(), eq(true), eq(1L));
   }
 
   // ── POST /api/v1/analytics/queries/execute ─────────────────────────────────

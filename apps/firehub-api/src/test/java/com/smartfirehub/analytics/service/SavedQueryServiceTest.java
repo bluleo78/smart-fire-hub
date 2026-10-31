@@ -389,7 +389,7 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     createQuery("Beta Query", "SELECT 2", null, false, ownerUserId);
 
     PageResponse<SavedQueryListResponse> result =
-        savedQueryService.list("Alpha", null, null, ownerUserId, 0, 10);
+        savedQueryService.list("Alpha", null, null, null, ownerUserId, 0, 10);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).name()).isEqualTo("Alpha Query");
@@ -401,7 +401,7 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     createQuery("Folder B Query", "SELECT 2", "folderB", false, ownerUserId);
 
     PageResponse<SavedQueryListResponse> result =
-        savedQueryService.list(null, "folderA", null, ownerUserId, 0, 10);
+        savedQueryService.list(null, "folderA", null, null, ownerUserId, 0, 10);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).folder()).isEqualTo("folderA");
@@ -414,7 +414,7 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     createQuery("Other Private", "SELECT 3", null, false, otherUserId);
 
     PageResponse<SavedQueryListResponse> result =
-        savedQueryService.list(null, null, null, ownerUserId, 0, 10);
+        savedQueryService.list(null, null, null, null, ownerUserId, 0, 10);
 
     List<String> names = result.content().stream().map(SavedQueryListResponse::name).toList();
     assertThat(names).contains("My Private", "Other Shared");
@@ -437,12 +437,30 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     createQuery("Other Shared", "SELECT 3", null, true, otherUserId);
 
     PageResponse<SavedQueryListResponse> result =
-        savedQueryService.list(null, null, true, ownerUserId, 0, 10);
+        savedQueryService.list(null, null, true, null, ownerUserId, 0, 10);
 
     assertThat(result.content()).allMatch(SavedQueryListResponse::isShared);
     List<String> names = result.content().stream().map(SavedQueryListResponse::name).toList();
     assertThat(names).contains("My Shared", "Other Shared");
     assertThat(names).doesNotContain("My Private");
+  }
+
+  /** WD-328: mineOnly — 「내 쿼리」 탭은 내 비공유·내 공유 쿼리만, 남의 공유 쿼리는 빠지고 건수도 같다. */
+  @Test
+  void list_mineOnlyFilter_excludesOthersSharedQueries() {
+    createQuery("My Private", "SELECT 1", null, false, ownerUserId);
+    createQuery("My Shared", "SELECT 2", null, true, ownerUserId);
+    createQuery("Other Shared", "SELECT 3", null, true, otherUserId);
+
+    PageResponse<SavedQueryListResponse> result =
+        savedQueryService.list(null, null, null, true, ownerUserId, 0, 10);
+
+    assertThat(result.content()).allMatch(q -> ownerUserId.equals(q.createdBy()));
+    List<String> names = result.content().stream().map(SavedQueryListResponse::name).toList();
+    assertThat(names).contains("My Private", "My Shared");
+    assertThat(names).doesNotContain("Other Shared");
+    // 건수(countAll)도 같은 범위 조건을 써서 목록과 어긋나지 않는다
+    assertThat(result.totalElements()).isEqualTo(result.content().size());
   }
 
   // =========================================================================
@@ -456,10 +474,36 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     createQuery("Q3", "SELECT 3", "dashboards", false, ownerUserId);
     createQuery("Q4", "SELECT 4", null, false, ownerUserId); // no folder
 
-    List<String> folders = savedQueryService.getFolders(ownerUserId);
+    List<String> folders = savedQueryService.getFolders(null, null, ownerUserId);
 
     assertThat(folders).containsExactlyInAnyOrder("reports", "dashboards");
     assertThat(folders).doesNotContainNull();
+  }
+
+  /** WD-328: mineOnly — 「내 쿼리」 탭의 폴더 목록은 내 쿼리의 폴더만, 남의 공유 쿼리에만 있는 폴더는 빠진다. */
+  @Test
+  void getFolders_mineOnly_excludesOthersSharedFolders() {
+    createQuery("My Private", "SELECT 1", "myPrivateFolder", false, ownerUserId);
+    createQuery("My Shared", "SELECT 2", "mySharedFolder", true, ownerUserId);
+    createQuery("Other Shared", "SELECT 3", "otherSharedFolder", true, otherUserId);
+
+    List<String> folders = savedQueryService.getFolders(null, true, ownerUserId);
+
+    assertThat(folders).contains("myPrivateFolder", "mySharedFolder");
+    assertThat(folders).doesNotContain("otherSharedFolder");
+  }
+
+  /** WD-328: sharedOnly — 「공유됨」 탭의 폴더 목록은 공유 쿼리(내 것 포함)의 폴더만, 내 비공유 쿼리의 폴더는 빠진다. */
+  @Test
+  void getFolders_sharedOnly_returnsOnlySharedQueryFolders() {
+    createQuery("My Private", "SELECT 1", "myPrivateFolder", false, ownerUserId);
+    createQuery("My Shared", "SELECT 2", "mySharedFolder", true, ownerUserId);
+    createQuery("Other Shared", "SELECT 3", "otherSharedFolder", true, otherUserId);
+
+    List<String> folders = savedQueryService.getFolders(true, null, ownerUserId);
+
+    assertThat(folders).contains("mySharedFolder", "otherSharedFolder");
+    assertThat(folders).doesNotContain("myPrivateFolder");
   }
 
   // =========================================================================

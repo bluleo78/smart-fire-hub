@@ -37,13 +37,16 @@ public class AnalyticsDashboardController {
   public ResponseEntity<PageResponse<DashboardResponse>> listDashboards(
       @RequestParam(required = false) String search,
       @RequestParam(required = false) Boolean sharedOnly,
+      // 「내 …」 탭 전용 — 내가 만든 항목만(남의 공유 항목 제외, WD-328). 없으면 기존처럼 내 것 + 공유된 것
+      @RequestParam(required = false) Boolean mineOnly,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size,
       Authentication authentication) {
     page = Math.max(0, page);
     size = Math.max(1, Math.min(size, 100));
     Long userId = (Long) authentication.getPrincipal();
-    return ResponseEntity.ok(dashboardService.list(search, sharedOnly, userId, page, size));
+    return ResponseEntity.ok(
+        dashboardService.list(search, sharedOnly, mineOnly, userId, page, size));
   }
 
   @PostMapping

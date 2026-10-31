@@ -378,13 +378,19 @@ test.describe('대시보드 목록 페이지', () => {
     expect(req.payload).toMatchObject({ autoRefreshSeconds: 86400 });
   });
 
-  test('공유됨 탭 전환 시 sharedOnly 파라미터가 API 에 전달된다', async ({ authenticatedPage: page }) => {
-    const tabCalls: string[] = [];
+  test('「내 대시보드」 탭은 mineOnly=true 만, 「공유됨」 탭은 sharedOnly=true 만 API 에 전달된다 (WD-328)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 「내 대시보드」 탭이 필터 없이 부르면 서버가 남의 공유 대시보드까지 섞어 주므로 mineOnly=true 를 실어야 한다
+    const tabCalls: { mineOnly: string | null; sharedOnly: string | null }[] = [];
     await page.route(
       (url) => url.pathname === '/api/v1/analytics/dashboards',
       (route) => {
         const url = new URL(route.request().url());
-        tabCalls.push(url.searchParams.get('sharedOnly') ?? '');
+        tabCalls.push({
+          mineOnly: url.searchParams.get('mineOnly'),
+          sharedOnly: url.searchParams.get('sharedOnly'),
+        });
         return route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -396,11 +402,15 @@ test.describe('대시보드 목록 페이지', () => {
     await page.goto('/analytics/dashboards');
     await expect(page.getByRole('heading', { name: '대시보드' })).toBeVisible();
 
-    // "공유됨" 탭 클릭
-    await page.getByRole('tab', { name: '공유됨' }).click();
+    // 기본(「내 대시보드」) 탭: mineOnly=true, sharedOnly 없음
+    await expect.poll(() => tabCalls.length).toBeGreaterThan(0);
+    expect(tabCalls[0]).toEqual({ mineOnly: 'true', sharedOnly: null });
 
-    await page.waitForTimeout(300);
-    expect(tabCalls.some((v) => v === 'true')).toBe(true);
+    // 「공유됨」 탭: sharedOnly=true, mineOnly 없음 — 내 공유 대시보드도 포함되는 기존 동작 유지
+    const before = tabCalls.length;
+    await page.getByRole('tab', { name: '공유됨' }).click();
+    await expect.poll(() => tabCalls.length).toBeGreaterThan(before);
+    expect(tabCalls[tabCalls.length - 1]).toEqual({ mineOnly: null, sharedOnly: 'true' });
   });
 
   test('설명을 지우고 저장하면 빈 문자열로 전송된다 (WD-197)', async ({ authenticatedPage: page }) => {

@@ -71,6 +71,37 @@ public class SavedQueryRepository {
   private static final Field<String> U_NAME_ALIAS =
       field(name("user", "name"), String.class).as("created_by_name");
 
+  /** 조회자에게 보이는 쿼리 — 본인 소유이거나 공유된 것. 차트·대시보드 저장소의 visibleTo 와 같은 규칙. */
+  private static Condition visibleTo(Long userId) {
+    return SQ_CREATED_BY.eq(userId).or(SQ_IS_SHARED.isTrue());
+  }
+
+  /**
+   * 목록·건수·폴더 목록이 함께 쓰는 소유/공유 범위 조건 (WD-328). 셋이 어긋나지 않도록 한 곳에 둔다.
+   *
+   * <ul>
+   *   <li>mineOnly=true — 내가 만든 쿼리만. 「내 쿼리」 탭에 남의 공유 쿼리가 섞이지 않게 한다
+   *   <li>sharedOnly=true — 공유된 쿼리만(내 공유 쿼리 포함). 「공유됨」 탭
+   *   <li>둘 다 true — 별도 의미를 만들지 않고 두 조건을 AND 로 결합(내가 만든 공유 쿼리)
+   *   <li>둘 다 없음 — 기존 {@link #visibleTo} 그대로(내 쿼리 + 공유된 쿼리). AI 에이전트 MCP 도구 등 다른 호출자 호환
+   * </ul>
+   */
+  private static Condition listScope(Boolean sharedOnly, Boolean mineOnly, Long userId) {
+    boolean shared = Boolean.TRUE.equals(sharedOnly);
+    boolean mine = Boolean.TRUE.equals(mineOnly);
+    if (!shared && !mine) {
+      return visibleTo(userId);
+    }
+    Condition scope = trueCondition();
+    if (shared) {
+      scope = scope.and(SQ_IS_SHARED.isTrue());
+    }
+    if (mine) {
+      scope = scope.and(SQ_CREATED_BY.eq(userId));
+    }
+    return scope;
+  }
+
   /**
    * 목록.
    *
@@ -82,6 +113,7 @@ public class SavedQueryRepository {
       String search,
       String folder,
       Boolean sharedOnly,
+      Boolean mineOnly,
       Long userId,
       int page,
       int size,
@@ -92,11 +124,7 @@ public class SavedQueryRepository {
 
     List<Condition> conditions = new ArrayList<>();
 
-    if (Boolean.TRUE.equals(sharedOnly)) {
-      conditions.add(SQ_IS_SHARED.isTrue());
-    } else {
-      conditions.add(SQ_CREATED_BY.eq(userId).or(SQ_IS_SHARED.isTrue()));
-    }
+    conditions.add(listScope(sharedOnly, mineOnly, userId));
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);
@@ -155,14 +183,11 @@ public class SavedQueryRepository {
     return result;
   }
 
-  public long countAll(String search, String folder, Boolean sharedOnly, Long userId) {
+  public long countAll(
+      String search, String folder, Boolean sharedOnly, Boolean mineOnly, Long userId) {
     List<Condition> conditions = new ArrayList<>();
 
-    if (Boolean.TRUE.equals(sharedOnly)) {
-      conditions.add(SQ_IS_SHARED.isTrue());
-    } else {
-      conditions.add(SQ_CREATED_BY.eq(userId).or(SQ_IS_SHARED.isTrue()));
-    }
+    conditions.add(listScope(sharedOnly, mineOnly, userId));
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);
@@ -335,10 +360,14 @@ public class SavedQueryRepository {
     return deleted > 0;
   }
 
-  public List<String> findDistinctFolders(Long userId) {
+  /**
+   * 폴더 필터 드롭다운용 폴더 이름 목록. 목록과 같은 {@link #listScope} 로 범위를 맞춘다(WD-328) — 「내 쿼리」 탭에서 남의 공유 쿼리에만 있는
+   * 폴더를 고르면 결과가 늘 비어 버리기 때문이다. 플래그가 없으면 기존처럼 내 쿼리 + 공유 쿼리의 폴더.
+   */
+  public List<String> findDistinctFolders(Boolean sharedOnly, Boolean mineOnly, Long userId) {
     return dsl.selectDistinct(SQ_FOLDER)
         .from(SQ)
-        .where(SQ_FOLDER.isNotNull().and(SQ_CREATED_BY.eq(userId).or(SQ_IS_SHARED.isTrue())))
+        .where(SQ_FOLDER.isNotNull().and(listScope(sharedOnly, mineOnly, userId)))
         .orderBy(SQ_FOLDER.asc())
         .fetch(SQ_FOLDER);
   }

@@ -25,6 +25,7 @@ export function useSavedQueries(params: {
   search?: string;
   folder?: string;
   sharedOnly?: boolean;
+  mineOnly?: boolean;
   page?: number;
   size?: number;
 }) {
@@ -139,10 +140,14 @@ export function useSchemaInfo() {
   return useQuery(schemaInfoQueryOptions);
 }
 
-export function useQueryFolders() {
+/**
+ * 저장 쿼리 폴더 목록. 쿼리 목록 페이지는 현재 탭 범위(sharedOnly/mineOnly)를 넘겨 그 탭에 있는 쿼리의 폴더만 받는다(WD-328).
+ * queryKey 에 params 를 넣어 탭마다 캐시를 나누고, ['analytics', 'folders'] 접두사는 유지해 저장·삭제 무효화에 함께 걸린다.
+ */
+export function useQueryFolders(params: { sharedOnly?: boolean; mineOnly?: boolean } = {}) {
   return useQuery({
-    queryKey: ['analytics', 'folders'],
-    queryFn: () => analyticsApi.getFolders().then((r) => r.data),
+    queryKey: ['analytics', 'folders', params],
+    queryFn: () => analyticsApi.getFolders(params).then((r) => r.data),
     staleTime: 5 * 60 * 1000,
   });
 }
@@ -155,6 +160,7 @@ export function useCharts(params: {
   search?: string;
   savedQueryId?: number;
   sharedOnly?: boolean;
+  mineOnly?: boolean;
   page?: number;
   size?: number;
 }) {
@@ -313,6 +319,7 @@ export function useDeleteImpact(kind: 'query' | 'chart', id: number, options?: {
 export function useDashboards(params: {
   search?: string;
   sharedOnly?: boolean;
+  mineOnly?: boolean;
   page?: number;
   size?: number;
 }) {

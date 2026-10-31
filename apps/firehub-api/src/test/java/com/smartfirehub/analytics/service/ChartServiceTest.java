@@ -384,10 +384,35 @@ class ChartServiceTest extends IntegrationTestBase {
             .get(DSL.field(DSL.name("chart", "id"), Long.class));
 
     PageResponse<ChartResponse> result =
-        chartService.list(null, null, null, null, ownerUserId, 0, 10);
+        chartService.list(null, null, null, null, null, ownerUserId, 0, 10);
 
     List<String> names = result.content().stream().map(ChartResponse::name).toList();
     assertThat(names).contains("My Private", "Other Shared Chart");
+  }
+
+  /** WD-328: mineOnly — 「내 차트」 탭은 내 비공유·내 공유 차트만, 남의 공유 차트는 빠지고 건수도 같다. */
+  @Test
+  void list_mineOnlyFilter_excludesOthersSharedCharts() {
+    createChart("My Private", false, ownerUserId);
+    createChart("My Shared", true, ownerUserId);
+    // 남의 공유 차트 — createChart 는 owner 의 저장 쿼리를 쓰므로 직접 삽입
+    dsl.insertInto(DSL.table(DSL.name("chart")))
+        .set(DSL.field(DSL.name("chart", "name"), String.class), "Other Shared Chart")
+        .set(DSL.field(DSL.name("chart", "saved_query_id"), Long.class), savedQueryId)
+        .set(DSL.field(DSL.name("chart", "chart_type"), String.class), "LINE")
+        .set(DSL.field(DSL.name("chart", "is_shared"), Boolean.class), true)
+        .set(DSL.field(DSL.name("chart", "created_by"), Long.class), otherUserId)
+        .execute();
+
+    PageResponse<ChartResponse> result =
+        chartService.list(null, null, null, null, true, ownerUserId, 0, 10);
+
+    assertThat(result.content()).allMatch(c -> ownerUserId.equals(c.createdBy()));
+    List<String> names = result.content().stream().map(ChartResponse::name).toList();
+    assertThat(names).contains("My Private", "My Shared");
+    assertThat(names).doesNotContain("Other Shared Chart");
+    // 건수(countAll)도 같은 범위 조건을 써서 목록과 어긋나지 않는다
+    assertThat(result.totalElements()).isEqualTo(result.content().size());
   }
 
   /** 정상: chartType 필터로 특정 타입 차트만 반환 */
@@ -405,7 +430,7 @@ class ChartServiceTest extends IntegrationTestBase {
         .execute();
 
     PageResponse<ChartResponse> result =
-        chartService.list(null, "BAR", null, null, ownerUserId, 0, 10);
+        chartService.list(null, "BAR", null, null, null, ownerUserId, 0, 10);
 
     assertThat(result.content()).allMatch(c -> "BAR".equals(c.chartType()));
     List<String> names = result.content().stream().map(ChartResponse::name).toList();
@@ -420,7 +445,7 @@ class ChartServiceTest extends IntegrationTestBase {
     createChart("Beta Chart", false, ownerUserId);
 
     PageResponse<ChartResponse> result =
-        chartService.list("Alpha", null, null, null, ownerUserId, 0, 10);
+        chartService.list("Alpha", null, null, null, null, ownerUserId, 0, 10);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).name()).isEqualTo("Alpha Chart");

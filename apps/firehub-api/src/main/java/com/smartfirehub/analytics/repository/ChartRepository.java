@@ -78,11 +78,38 @@ public class ChartRepository {
     return C_CREATED_BY.eq(userId).or(C_IS_SHARED.isTrue());
   }
 
+  /**
+   * 목록·건수가 함께 쓰는 소유/공유 범위 조건 (WD-328). 목록과 건수가 어긋나지 않도록 한 곳에 둔다.
+   *
+   * <ul>
+   *   <li>mineOnly=true — 내가 만든 차트만. 「내 차트」 탭에 남의 공유 차트가 섞이지 않게 한다
+   *   <li>sharedOnly=true — 공유된 차트만(내 공유 차트 포함). 「공유됨」 탭
+   *   <li>둘 다 true — 별도 의미를 만들지 않고 두 조건을 AND 로 결합(내가 만든 공유 차트)
+   *   <li>둘 다 없음 — 기존 {@link #visibleTo} 그대로. AI 에이전트 MCP 도구 등 다른 호출자 호환
+   * </ul>
+   */
+  private static Condition listScope(Boolean sharedOnly, Boolean mineOnly, Long userId) {
+    boolean shared = Boolean.TRUE.equals(sharedOnly);
+    boolean mine = Boolean.TRUE.equals(mineOnly);
+    if (!shared && !mine) {
+      return visibleTo(userId);
+    }
+    Condition scope = trueCondition();
+    if (shared) {
+      scope = scope.and(C_IS_SHARED.isTrue());
+    }
+    if (mine) {
+      scope = scope.and(C_CREATED_BY.eq(userId));
+    }
+    return scope;
+  }
+
   public List<ChartResponse> findAll(
       String search,
       String chartType,
       Long savedQueryId,
       Boolean sharedOnly,
+      Boolean mineOnly,
       Long userId,
       int page,
       int size) {
@@ -91,12 +118,8 @@ public class ChartRepository {
         dsl.selectCount().from(DW).where(DW_CHART_ID.eq(C_ID)).asField("dashboard_count");
 
     List<Condition> conditions = new ArrayList<>();
-    // sharedOnly=true이면 공유된 차트만, 아니면 내 차트 + 공유된 차트
-    if (Boolean.TRUE.equals(sharedOnly)) {
-      conditions.add(C_IS_SHARED.isTrue());
-    } else {
-      conditions.add(visibleTo(userId));
-    }
+    // 탭별 범위: mineOnly=내 차트만, sharedOnly=공유된 차트만, 둘 다 없으면 내 차트 + 공유된 차트
+    conditions.add(listScope(sharedOnly, mineOnly, userId));
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);
@@ -148,13 +171,14 @@ public class ChartRepository {
   }
 
   public long countAll(
-      String search, String chartType, Long savedQueryId, Boolean sharedOnly, Long userId) {
+      String search,
+      String chartType,
+      Long savedQueryId,
+      Boolean sharedOnly,
+      Boolean mineOnly,
+      Long userId) {
     List<Condition> conditions = new ArrayList<>();
-    if (Boolean.TRUE.equals(sharedOnly)) {
-      conditions.add(C_IS_SHARED.isTrue());
-    } else {
-      conditions.add(visibleTo(userId));
-    }
+    conditions.add(listScope(sharedOnly, mineOnly, userId));
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);

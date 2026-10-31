@@ -94,14 +94,36 @@ public class AnalyticsDashboardRepository {
                     r.value1(), r.value2(), Boolean.TRUE.equals(r.value3()), r.value4()));
   }
 
-  public List<DashboardResponse> findAll(
-      String search, Boolean sharedOnly, Long userId, int page, int size) {
-    List<Condition> conditions = new ArrayList<>();
-    if (Boolean.TRUE.equals(sharedOnly)) {
-      conditions.add(D_IS_SHARED.isTrue());
-    } else {
-      conditions.add(visibleTo(userId));
+  /**
+   * 목록·건수가 함께 쓰는 소유/공유 범위 조건 (WD-328). 목록과 건수가 어긋나지 않도록 한 곳에 둔다.
+   *
+   * <ul>
+   *   <li>mineOnly=true — 내가 만든 대시보드만. 「내 대시보드」 탭에 남의 공유 대시보드가 섞이지 않게 한다
+   *   <li>sharedOnly=true — 공유된 대시보드만(내 공유 대시보드 포함). 「공유됨」 탭
+   *   <li>둘 다 true — 별도 의미를 만들지 않고 두 조건을 AND 로 결합(내가 만든 공유 대시보드)
+   *   <li>둘 다 없음 — 기존 {@link #visibleTo} 그대로. AI 에이전트 MCP 도구 등 다른 호출자 호환
+   * </ul>
+   */
+  private static Condition listScope(Boolean sharedOnly, Boolean mineOnly, Long userId) {
+    boolean shared = Boolean.TRUE.equals(sharedOnly);
+    boolean mine = Boolean.TRUE.equals(mineOnly);
+    if (!shared && !mine) {
+      return visibleTo(userId);
     }
+    Condition scope = trueCondition();
+    if (shared) {
+      scope = scope.and(D_IS_SHARED.isTrue());
+    }
+    if (mine) {
+      scope = scope.and(D_CREATED_BY.eq(userId));
+    }
+    return scope;
+  }
+
+  public List<DashboardResponse> findAll(
+      String search, Boolean sharedOnly, Boolean mineOnly, Long userId, int page, int size) {
+    List<Condition> conditions = new ArrayList<>();
+    conditions.add(listScope(sharedOnly, mineOnly, userId));
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);
@@ -143,13 +165,9 @@ public class AnalyticsDashboardRepository {
     return result;
   }
 
-  public long countAll(String search, Boolean sharedOnly, Long userId) {
+  public long countAll(String search, Boolean sharedOnly, Boolean mineOnly, Long userId) {
     List<Condition> conditions = new ArrayList<>();
-    if (Boolean.TRUE.equals(sharedOnly)) {
-      conditions.add(D_IS_SHARED.isTrue());
-    } else {
-      conditions.add(visibleTo(userId));
-    }
+    conditions.add(listScope(sharedOnly, mineOnly, userId));
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);

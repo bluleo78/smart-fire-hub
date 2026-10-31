@@ -64,16 +64,23 @@ export default function QueryListPage() {
   const size = 10;
 
   const sharedOnly = tab === 'shared';
+  // 「내 쿼리」 탭은 내가 만든 쿼리만 — 필터 없이 부르면 서버가 남의 공유 쿼리까지 섞어 준다(WD-328). 「공유됨」은 sharedOnly 그대로.
+  const mineOnly = tab === 'mine';
 
   const { data: queriesData, isLoading } = useSavedQueries({
     search: search || undefined,
     folder: folder || undefined,
     sharedOnly: sharedOnly || undefined,
+    mineOnly: mineOnly || undefined,
     page,
     size,
   });
 
-  const { data: foldersData } = useQueryFolders();
+  // 폴더 드롭다운도 목록과 같은 탭 범위 — 「내 쿼리」에서 남의 공유 쿼리에만 있는 폴더를 고르면 늘 빈 결과가 된다(WD-328)
+  const { data: foldersData } = useQueryFolders({
+    sharedOnly: sharedOnly || undefined,
+    mineOnly: mineOnly || undefined,
+  });
   const deleteQuery = useDeleteSavedQuery();
   // 남이 공유한 쿼리 줄에서는 편집·삭제를 숨긴다 — 서버가 작성자 외 요청을 404 로 거절한다(WD-196). 실행·줄 클릭(보기)은 그대로.
   const isOwner = useIsOwner();

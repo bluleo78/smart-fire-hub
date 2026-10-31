@@ -406,6 +406,50 @@ test.describe('홈 페이지', () => {
   });
 
   /**
+   * 회귀: WD-332 — 모바일(390px)에서 최근 데이터셋에 긴 이름이 있으면 그리드 칸이 내용 최소 너비만큼 늘어나,
+   * 최근 대시보드·최근 데이터셋 카드가 화면보다 넓어지고 「전체 보기」·배지가 오른쪽에서 잘렸다.
+   * 카드는 화면 폭 안에 있고, 긴 이름은 말줄임되며, 본문이 가로로 스크롤되지 않아야 한다.
+   */
+  test('모바일 — 긴 데이터셋 이름이 있어도 최근 사용 카드가 화면 폭을 넘지 않는다 (WD-332)', async ({
+    authenticatedPage: page,
+  }) => {
+    const longName = '인사 급여 비밀 집계 파이프라인 > s1 (자동생성) 아주 긴 이름이 계속 이어지는 데이터셋';
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [{ id: 21, name: longName, storageType: 'TABLE', originType: 'TEMP', createdAt: '2026-04-03T00:00:00' }],
+      page: 0,
+      size: 5,
+      totalElements: 15,
+      totalPages: 3,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+
+    const viewportWidth = 390;
+    const datasetsCard = page.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name: '최근 데이터셋' }) });
+    const dashboardsCard = page.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name: '최근 대시보드' }) });
+    await expect(datasetsCard.getByText(longName)).toBeVisible();
+
+    // 두 카드의 오른쪽 끝이 화면 안에 있다(수정 전에는 약 38px 넘침)
+    for (const card of [datasetsCard, dashboardsCard]) {
+      const box = await card.boundingBox();
+      expect(box!.x + box!.width).toBeLessThanOrEqual(viewportWidth);
+    }
+    // 「전체 보기」 링크와 「임시」 배지가 화면 안에 다 보인다
+    for (const el of [datasetsCard.getByRole('link', { name: '전체 보기' }), datasetsCard.getByText('임시', { exact: true })]) {
+      const box = await el.boundingBox();
+      expect(box!.x + box!.width).toBeLessThanOrEqual(viewportWidth);
+    }
+    // 긴 이름은 말줄임돼 실제 글자 폭보다 좁게 그려진다
+    const nameEl = datasetsCard.getByText(longName);
+    const { scrollWidth, clientWidth } = await nameEl.evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }));
+    expect(scrollWidth).toBeGreaterThan(clientWidth);
+    // 본문(main)과 문서 전체 모두 가로로 스크롤되지 않는다
+    const overflow = await page.locator('main').evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewportWidth);
+  });
+
+  /**
    * 회귀: 이슈 #62 — 섹션 헤딩(h2/h3)이 SR 네비게이션을 위해 존재해야 한다
    * - 수정 전: <h1>홈</h1> 단 1개만 존재 → SR이 섹션 점프 불가
    * - 수정 후: 각 시각 섹션마다 h2/h3 존재 (시스템 건강 상태/주의 필요/퀵 액션/활동 피드 + 카드별 h3)

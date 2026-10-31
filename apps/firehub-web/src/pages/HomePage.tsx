@@ -329,14 +329,17 @@ export default function HomePage() {
         </Button>
       </section>
 
-      {/* ZONE 4 + ZONE 5 — 2컬럼 */}
-      <div className="grid gap-4 lg:grid-cols-5">
+      {/* ZONE 4 + ZONE 5 — 2컬럼
+          WD-332: 그리드 칸·카드의 기본 최소 너비(auto)는 내용(줄바꿈 안 되는 긴 이름)만큼이라, 모바일에서 카드가 화면보다
+          넓어져 「전체 보기」·시각·배지가 잘렸다. 바깥·안쪽 그리드 모두 grid-cols-1(minmax(0,1fr))로 칸 최소 너비를 0 으로 둬 칸 폭 안에
+          가두고 이름은 말줄임한다. 좁은 카드에서는 머리줄의 「총 N개·전체 보기」가 다음 줄로 내려간다. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         {/* ZONE 4 — 최근 사용 (좌측 3cols, 2x2 위젯 그리드) */}
-        <div className="lg:col-span-3 grid gap-4 sm:grid-cols-2">
+        <div className="lg:col-span-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
           {/* 최근 대시보드 */}
           <Card className="py-2 gap-1 flex flex-col card-hover">
             <CardHeader className="px-3 pb-0">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <LayoutDashboard className="h-4 w-4 text-muted-foreground" />
                   {/* h3: ZONE 4 위젯 그리드 내 하위 섹션 헤딩 */}
@@ -388,7 +391,7 @@ export default function HomePage() {
           {/* 최근 데이터셋 */}
           <Card className="py-2 gap-1 flex flex-col card-hover">
             <CardHeader className="px-3 pb-0">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Database className="h-4 w-4 text-muted-foreground" />
                   <h3 className="text-sm font-semibold m-0">최근 데이터셋</h3>
@@ -424,7 +427,7 @@ export default function HomePage() {
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-sm truncate group-hover:text-foreground">{ds.name}</span>
-                        <FreshnessBar lastUpdated={ds.createdAt} className="" />
+                        <FreshnessBar lastUpdated={ds.createdAt} className="shrink-0" />
                         <Badge variant="outline" className="shrink-0 text-xs px-1.5 py-0">
                           {/* 출처 라벨은 데이터셋 목록과 같은 매핑을 쓴다(WD-296) — 예전에는 DERIVED 밖을 모두 「원본」으로 보여
                               파이프라인 자동 생성 임시(TEMP) 데이터셋이 사용자가 올린 원본처럼 보였다. */}
@@ -598,7 +601,7 @@ export default function HomePage() {
                       <ActivityIcon eventType={item.eventType} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm leading-tight">{item.title}</p>
+                      <p className="text-sm leading-tight break-words">{item.title}</p>
                       {item.description && (
                         <p className="text-xs text-muted-foreground mt-0.5 truncate">{item.description}</p>
                       )}

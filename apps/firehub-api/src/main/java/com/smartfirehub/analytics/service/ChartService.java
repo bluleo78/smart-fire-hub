@@ -63,7 +63,11 @@ public class ChartService {
   private static final Map<String, String> AUDIT_FIELD_LABELS =
       Map.of("name", "이름", "description", "설명", "chartType", "차트 종류", "config", "차트 설정");
 
-  /** List charts with optional filters and pagination. */
+  /**
+   * List charts with optional filters and pagination.
+   *
+   * <p>mineOnly=true 면 내가 만든 차트만(「내 차트」 탭, WD-328), sharedOnly=true 면 공유 차트만, 둘 다 없으면 내 차트 + 공유 차트.
+   */
   // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
   public PageResponse<ChartResponse> list(
@@ -71,6 +75,7 @@ public class ChartService {
       String chartType,
       Long savedQueryId,
       Boolean sharedOnly,
+      Boolean mineOnly,
       Long userId,
       int page,
       int size) {
@@ -78,9 +83,10 @@ public class ChartService {
     List<ChartResponse> content =
         withholdDenied(
             chartRepository.findAll(
-                search, chartType, savedQueryId, sharedOnly, userId, page, size),
+                search, chartType, savedQueryId, sharedOnly, mineOnly, userId, page, size),
             userId);
-    long total = chartRepository.countAll(search, chartType, savedQueryId, sharedOnly, userId);
+    long total =
+        chartRepository.countAll(search, chartType, savedQueryId, sharedOnly, mineOnly, userId);
     int totalPages = (int) Math.ceil((double) total / size);
     return new PageResponse<>(content, page, size, total, totalPages);
   }

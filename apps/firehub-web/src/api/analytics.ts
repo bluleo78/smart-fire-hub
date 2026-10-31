@@ -38,6 +38,8 @@ export const analyticsApi = {
     search?: string;
     folder?: string;
     sharedOnly?: boolean;
+    /** 내가 만든 항목만(「내 …」 탭, WD-328). 없으면 내 것 + 공유된 것 */
+    mineOnly?: boolean;
     page?: number;
     size?: number;
   }) => client.get<PageResponse<SavedQueryListItem>>('/analytics/queries', { params }),
@@ -74,8 +76,9 @@ export const analyticsApi = {
   getSchema: () =>
     client.get<SchemaInfo>('/analytics/queries/schema'),
 
-  getFolders: () =>
-    client.get<string[]>('/analytics/queries/folders'),
+  /** 폴더 목록 — 목록과 같은 탭 범위(sharedOnly/mineOnly, WD-328)를 줄 수 있다. 없으면 내 쿼리 + 공유 쿼리의 폴더 */
+  getFolders: (params: { sharedOnly?: boolean; mineOnly?: boolean } = {}) =>
+    client.get<string[]>('/analytics/queries/folders', { params }),
 
   // ============================================================
   // Phase 2: Charts
@@ -85,6 +88,8 @@ export const analyticsApi = {
     search?: string;
     savedQueryId?: number;
     sharedOnly?: boolean;
+    /** 내가 만든 항목만(「내 …」 탭, WD-328). 없으면 내 것 + 공유된 것 */
+    mineOnly?: boolean;
     page?: number;
     size?: number;
   }) => client.get<PageResponse<ChartListItem>>('/analytics/charts', { params }),
@@ -145,6 +150,8 @@ export const analyticsApi = {
   listDashboards: (params: {
     search?: string;
     sharedOnly?: boolean;
+    /** 내가 만든 항목만(「내 …」 탭, WD-328). 없으면 내 것 + 공유된 것 */
+    mineOnly?: boolean;
     page?: number;
     size?: number;
   }) => client.get<PageResponse<DashboardListItem>>('/analytics/dashboards', { params }),
