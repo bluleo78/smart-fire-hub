@@ -132,10 +132,16 @@ public class ExternalTriggerController {
   public ResponseEntity<?> webhookTrigger(
       @PathVariable String webhookId,
       @RequestBody(required = false) String body,
-      @RequestHeader(value = "X-Hub-Signature", required = false) String signature,
+      @RequestHeader(value = "X-Hub-Signature", required = false) String legacySignature,
+      @RequestHeader(value = "X-Hub-Signature-256", required = false) String signature256,
       HttpServletRequest request) {
 
     String sourceIp = getClientIp(request);
+    // GitHub 는 X-Hub-Signature(sha1=…)와 X-Hub-Signature-256(sha256=…)을 함께 보낸다 — SHA-256 쪽이 있으면 그것을
+    // 쓴다(WD-404).
+    // 예전에는 X-Hub-Signature 만 읽어 sha1 값으로 검증해, 시크릿을 쓰는 GitHub 웹훅이 늘 401 이었다.
+    String signature =
+        signature256 != null && !signature256.isBlank() ? signature256 : legacySignature;
 
     // API 경로와 같은 이유로 여기서도 테넌트를 먼저 복원한다. 서명검증은 복호화를 위해 트리거 행을
     // 읽어야 하므로 반드시 컨텍스트 안(=RLS 아래)에서 돌아야 한다. 해석 실패는 기존과 동일한 404 다.

@@ -395,6 +395,69 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
         .andExpect(jsonPath("$.status").value("triggered"));
   }
 
+  /**
+   * WD-404: 화면 안내(「HMAC-SHA256」)대로 접두어 없이 hex 만, 또는 대문자 hex 로 보내도 같은 서명이면 통과한다. sha1 처럼 다른 알고리즘
+   * 접두어는 통과시키지 않는다.
+   */
+  @Test
+  void webhookTrigger_withSecret_hexWithoutPrefixOrUppercase_triggers_butSha1Rejected()
+      throws Exception {
+    TriggerResponse trigger = createSecretWebhook("Secure Webhook Bare Hex");
+    String webhookId = (String) trigger.config().get("webhookId");
+    String body = "{\"event\": \"wd404\"}";
+    String hex = sign(body).substring("sha256=".length());
+
+    for (String header : new String[] {hex, "SHA256=" + hex.toUpperCase()}) {
+      mockMvc
+          .perform(
+              post("/api/v1/triggers/webhook/" + webhookId)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .header("X-Hub-Signature", header)
+                  .content(body))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.status").value("triggered"));
+    }
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/webhook/" + webhookId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Hub-Signature", "sha1=" + hex)
+                .content(body))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.message").value("Invalid signature"));
+  }
+
+  /**
+   * WD-404: GitHub 는 X-Hub-Signature(sha1=…)와 X-Hub-Signature-256(sha256=…)을 함께 보낸다 — SHA-256 쪽으로
+   * 검증해 통과한다. X-Hub-Signature-256 만 보내도 통과한다.
+   */
+  @Test
+  void webhookTrigger_withSecret_githubStyleHeaders_triggers() throws Exception {
+    TriggerResponse trigger = createSecretWebhook("Secure Webhook GitHub Style");
+    String webhookId = (String) trigger.config().get("webhookId");
+    String body = "{\"event\": \"push\"}";
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/webhook/" + webhookId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Hub-Signature", "sha1=0123456789abcdef0123456789abcdef01234567")
+                .header("X-Hub-Signature-256", sign(body))
+                .content(body))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("triggered"));
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/webhook/" + webhookId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Hub-Signature-256", sign(body))
+                .content(body))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("triggered"));
+  }
+
   @Test
   void webhookTrigger_invalidWebhookId_returnsNotFound() throws Exception {
     mockMvc

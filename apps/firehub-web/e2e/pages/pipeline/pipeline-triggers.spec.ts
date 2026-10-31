@@ -1385,3 +1385,28 @@ test.describe('파이프라인 트리거 — 다음 실행 시간대 표기 (WD-
     await expect(dialog.getByText('1. 2026. 10. 29. 오전 1:30:00 (EDT)')).toBeVisible();
   });
 });
+
+/**
+ * WD-404: 웹훅 편집 창이 「X-Hub-Signature 헤더로 HMAC-SHA256」으로만 안내해 접두어·서명 대상을 알 수 없었다.
+ * 헤더 이름 둘, 값 형식(sha256= + hex, 접두어 생략 가능), GitHub 동작을 안내해야 한다.
+ */
+test.describe('WD-404 웹훅 서명 안내', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
+  test('웹훅 트리거 추가 창이 서명 헤더·값 형식·GitHub 동작을 안내한다', async ({ authenticatedPage: page }) => {
+    await setupTriggerTabMocks(page);
+    await gotoTriggerTab(page);
+
+    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /웹훅.*HTTP POST/ }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('X-Hub-Signature-256', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('X-Hub-Signature', { exact: true })).toBeVisible();
+    await expect(dialog.getByText(/요청 본문 원문을 시크릿으로 HMAC-SHA256 한 16진수/)).toBeVisible();
+    await expect(dialog.getByText(/sha256=5d41402abc4b2a76/)).toBeVisible();
+    await expect(dialog.getByText('GitHub 웹훅은 시크릿만 같게 넣으면 그대로 동작합니다.')).toBeVisible();
+  });
+});

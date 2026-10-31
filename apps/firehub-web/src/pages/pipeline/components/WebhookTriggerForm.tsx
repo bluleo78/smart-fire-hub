@@ -123,8 +123,21 @@ export default function WebhookTriggerForm({ config, onChange, isEditMode, error
         )}
       </div>
 
+      {/* 서명 형식을 정확히 알려 연동하는 쪽이 시행착오를 겪지 않게 한다 — 접두어·인코딩·서명 대상·GitHub 헤더 (WD-404) */}
       <div className="text-xs text-muted-foreground space-y-1">
-        <p>시크릿 키를 설정하면 수신 시 <code className="bg-muted px-1 rounded">X-Hub-Signature</code> 헤더로 HMAC-SHA256 서명을 검증합니다.</p>
+        <p>시크릿 키를 설정하면 수신 시 HMAC-SHA256 서명을 검증합니다.</p>
+        <ul className="list-disc pl-4 space-y-0.5">
+          <li>
+            헤더: <code className="bg-muted px-1 rounded">X-Hub-Signature-256</code> 또는{' '}
+            <code className="bg-muted px-1 rounded">X-Hub-Signature</code>
+          </li>
+          <li>
+            값: 요청 본문 원문을 시크릿으로 HMAC-SHA256 한 16진수 — 예{' '}
+            <code className="bg-muted px-1 rounded break-all">sha256=5d41402abc4b2a76…</code> (
+            <code className="bg-muted px-1 rounded">sha256=</code> 접두어는 생략 가능)
+          </li>
+          <li>GitHub 웹훅은 시크릿만 같게 넣으면 그대로 동작합니다.</li>
+        </ul>
       </div>
     </div>
   );
