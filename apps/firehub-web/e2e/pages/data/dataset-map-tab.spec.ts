@@ -289,4 +289,57 @@ test.describe('데이터셋 상세 — 지도 탭', () => {
     await expect(page.getByRole('tab', { name: '지도' })).toHaveAttribute('data-state', 'active');
     expect(errors.filter((e) => e.includes('Invalid LngLat'))).toEqual([]);
   });
+
+  // 회귀 가드(WD-341): GeometryCollection 행도 지도 탭의 그릴 수 있는 행으로 세고 오류 없이 그린다.
+  // (초기 경계 계산에 포함되는지는 fit-to-data.test.ts 단위 테스트가 좌표까지 검증한다.)
+  test('지도 탭: GeometryCollection 행도 표시 건수에 포함되고 화면이 깨지지 않는다 (WD-341)', async ({
+    authenticatedPage: page,
+  }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    let styleRequested = false;
+    await page.route('https://tiles.openfreemap.org/styles/**', (route) => {
+      styleRequested = true;
+      void route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ version: 8, sources: {}, layers: [] }),
+      });
+    });
+    await setupMocks(page, 2, detailWithGeometry);
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/2/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: detailWithGeometry.columns,
+            rows: [
+              { _id: 1, id: 1, geom: '{"type":"Point","coordinates":[126.97,37.56]}' },
+              { _id: 2, id: 2, geom: '{"type":"Point","coordinates":[129.07,35.18]}' },
+              {
+                _id: 3,
+                id: 3,
+                geom: '{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[-43.2,-22.9]},{"type":"LineString","coordinates":[[-46.6,-23.5],[-43.2,-22.9]]}]}',
+              },
+            ],
+            page: 0,
+            size: 2000,
+            totalElements: 3,
+            totalPages: 1,
+          }),
+        }),
+    );
+
+    await page.goto('/data/datasets/2');
+    await page.getByRole('tab', { name: '지도' }).click();
+    await expect(page.locator('[data-map-style]').first()).toBeVisible();
+    await expect.poll(() => styleRequested).toBe(true);
+    await page.waitForTimeout(1000);
+
+    await expect(page.getByText(/데이터: 3건 표시/)).toBeVisible();
+    await expect(page.getByText('페이지를 불러오는 중 문제가 발생했습니다')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
 });
