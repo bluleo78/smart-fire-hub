@@ -60,7 +60,7 @@ public class SignupTransaction {
     Long userRoleId =
         roleRepository
             .findByName("USER")
-            .orElseThrow(() -> new RoleNotFoundException("System role not found: USER"))
+            .orElseThrow(() -> RoleNotFoundException.systemRole("USER"))
             .id();
     userRepository.addRole(user.id(), userRoleId);
 
@@ -68,7 +68,7 @@ public class SignupTransaction {
     Long adminRoleId =
         roleRepository
             .findByName("ADMIN")
-            .orElseThrow(() -> new RoleNotFoundException("System role not found: ADMIN"))
+            .orElseThrow(() -> RoleNotFoundException.systemRole("ADMIN"))
             .id();
     userRepository.addRole(user.id(), adminRoleId);
 

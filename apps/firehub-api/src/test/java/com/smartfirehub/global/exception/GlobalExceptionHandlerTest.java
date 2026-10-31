@@ -104,7 +104,7 @@ class GlobalExceptionHandlerTest {
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.status").value(404))
         .andExpect(jsonPath("$.error").value("Not Found"))
-        .andExpect(jsonPath("$.message").value("Role not found"));
+        .andExpect(jsonPath("$.message").value("역할을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
   }
 
   @Test

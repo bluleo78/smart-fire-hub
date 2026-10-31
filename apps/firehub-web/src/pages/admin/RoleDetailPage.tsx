@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import axios from 'axios';
 import { ArrowLeft } from 'lucide-react';
-import { useEffect, useMemo,useState } from 'react';
+import { useCallback, useEffect, useMemo,useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -30,7 +30,7 @@ import { Skeleton } from '../../components/ui/skeleton';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAuth } from '../../hooks/useAuth';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { isEditConflict } from '../../lib/api-error';
+import { extractApiError, isEditConflict, isNotFoundError } from '../../lib/api-error';
 import type { UpdateRoleFormData } from '../../lib/validations/role';
 import { updateRoleSchema } from '../../lib/validations/role';
 import type { ErrorResponse } from '../../types/auth';
@@ -45,6 +45,11 @@ const PERMISSION_CATEGORY_LABELS: Record<string, string> = { security: '보안' 
  * 위험 경고 대신 등급 범위·허용 목록 등급 제약을 알린다.
  */
 const PYTHON_READ_NOTICE_PERMISSIONS = new Set(['pipeline:python_execute']);
+/**
+ * 역할이 없을 때(404) 안내 — 서버 RoleNotFoundException.MESSAGE 와 같은 문구(WD-287). 서버 message 를 먼저 쓰고,
+ * 본문이 비어 있을 때만 이 문구로 대신한다(TriggerTab 의 파이프라인 없음 안내와 같은 방식).
+ */
+const ROLE_NOT_FOUND_MESSAGE = '역할을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.';
 
 export default function RoleDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -103,6 +108,18 @@ export default function RoleDetailPage() {
     form.formState.isDirty || permissionsDirty || clearanceDirty,
   );
 
+  /**
+   * 열어 둔 역할이 다른 곳에서 삭제된 경우(404, WD-287) — 남은 화면에서 더 저장해도 계속 실패하므로 안내 후 역할 목록으로 돌아간다.
+   * 저장 실패 시점엔 폼이 dirty 라 requestNavigate 는 「저장하지 않은 변경사항」 확인을 띄운다 — 지킬 대상이 사라졌으니 navigate 로 바로 이동한다.
+   */
+  const handleRoleNotFound = useCallback(
+    (error: unknown) => {
+      toast.error(extractApiError(error, ROLE_NOT_FOUND_MESSAGE));
+      navigate('/admin/roles');
+    },
+    [navigate],
+  );
+
   useEffect(() => {
     const fetchData = async () => {
       if (!id) return;
@@ -122,7 +139,12 @@ export default function RoleDetailPage() {
           name: roleRes.data.name,
           description: roleRes.data.description ?? '',
         });
-      } catch {
+      } catch (error) {
+        // 없는(삭제된) 역할이면 「불러오지 못함」 대신 삭제됐을 수 있다고 알린다(WD-287). 그 밖의 실패는 일반 안내.
+        if (isNotFoundError(error)) {
+          handleRoleNotFound(error);
+          return;
+        }
         toast.error('역할 정보를 불러오는데 실패했습니다.');
         navigate('/admin/roles');
       } finally {
@@ -131,7 +153,7 @@ export default function RoleDetailPage() {
     };
 
     fetchData();
-  }, [id, navigate, form, canReadCatalog]);
+  }, [id, navigate, form, canReadCatalog, handleRoleNotFound]);
 
   // 체크박스로 그릴 권한 — 전체 목록을 읽었으면 그것, 아니면 이 역할이 가진 권한만.
   const allPermissions = useMemo(() => catalog ?? role?.permissions ?? [], [catalog, role]);
@@ -206,6 +228,11 @@ export default function RoleDetailPage() {
         setRole(prev => (prev ? { ...prev, name: data.name, description: data.description || null } : prev));
       }
     } catch (error) {
+      // 그새 삭제된 역할이면 입력란 아래 오류로 화면에 남기지 않고 목록으로 돌아간다(WD-287).
+      if (isNotFoundError(error)) {
+        handleRoleNotFound(error);
+        return;
+      }
       if (axios.isAxiosError(error) && error.response?.data) {
         const errData = error.response.data as ErrorResponse;
         setRoleError(errData.message || '역할 업데이트에 실패했습니다.');
@@ -255,6 +282,11 @@ export default function RoleDetailPage() {
       setIsPermissionsConflictOpen(false);
       toast.success('권한이 저장되었습니다.');
     } catch (error) {
+      // 그새 삭제된 역할이면 목록으로 돌아간다(WD-287).
+      if (isNotFoundError(error)) {
+        handleRoleNotFound(error);
+        return;
+      }
       if (isEditConflict(error)) {
         setIsPermissionsConflictOpen(true);
       } else if (axios.isAxiosError(error) && error.response?.data) {
@@ -342,6 +374,7 @@ export default function RoleDetailPage() {
         canEdit={canWriteRole}
         scopeLockReason={isClearanceScopeLocked ? '자신에게 없는 권한을 가진 역할이라 열람 등급을 바꿀 수 없습니다' : undefined}
         onDirtyChange={setClearanceDirty}
+        onRoleNotFound={handleRoleNotFound}
       />
 
       <Separator />

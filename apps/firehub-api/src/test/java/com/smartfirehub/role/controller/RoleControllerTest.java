@@ -2,6 +2,7 @@ package com.smartfirehub.role.controller;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -16,6 +17,7 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.dto.PermissionResponse;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.role.dto.*;
+import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.service.RoleService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.util.List;
@@ -91,6 +93,39 @@ class RoleControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.name").value("ADMIN"))
         .andExpect(jsonPath("$.permissions[0].code").value("user:read"));
+  }
+
+  /**
+   * WD-287: 열어 둔 역할이 다른 곳에서 삭제된 뒤의 조회·이름 저장·권한 저장은 404 로, 화면 토스트에 그대로 실리는 message 는 한국어이고 내부 id 를
+   * 싣지 않는다(예전 「Role not found: 10」).
+   */
+  @Test
+  void missingRole_returns404WithKoreanMessageWithoutId() throws Exception {
+    mockAuthentication("role:read", "role:write");
+    when(roleService.getRoleById(10L)).thenThrow(new RoleNotFoundException());
+    doThrow(new RoleNotFoundException()).when(roleService).updateRole(10L, "MOD", null, 1L);
+    doThrow(new RoleNotFoundException()).when(roleService).setRolePermissions(10L, List.of(1L), null, 1L);
+
+    mockMvc
+        .perform(get("/api/v1/roles/10").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("역할을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."));
+    mockMvc
+        .perform(
+            put("/api/v1/roles/10")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new UpdateRoleRequest("MOD", null))))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value(RoleNotFoundException.MESSAGE));
+    mockMvc
+        .perform(
+            put("/api/v1/roles/10/permissions")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new SetPermissionsRequest(List.of(1L), null))))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value(RoleNotFoundException.MESSAGE));
   }
 
   @Test

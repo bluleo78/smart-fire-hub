@@ -63,10 +63,7 @@ public class RoleService {
 
   @Transactional(readOnly = true)
   public RoleDetailResponse getRoleById(Long id) {
-    RoleResponse role =
-        roleRepository
-            .findById(id)
-            .orElseThrow(() -> new RoleNotFoundException("Role not found: " + id));
+    RoleResponse role = roleRepository.findById(id).orElseThrow(RoleNotFoundException::new);
     List<PermissionResponse> permissions = permissionRepository.findByRoleId(id);
     return new RoleDetailResponse(
         role.id(), role.name(), role.description(), role.isSystem(), permissions);
@@ -103,10 +100,7 @@ public class RoleService {
    */
   @Transactional
   public void updateRole(Long id, String name, String description, Long callerId) {
-    RoleResponse role =
-        roleRepository
-            .findById(id)
-            .orElseThrow(() -> new RoleNotFoundException("Role not found: " + id));
+    RoleResponse role = roleRepository.findById(id).orElseThrow(RoleNotFoundException::new);
 
     // 설명은 빈 문자열과 null 을 같게 본다 — 화면은 빈 설명을 보내지 않고(undefined → null), API·AI 로 만든 역할은 "" 로 저장될 수 있다.
     if (Objects.equals(role.name(), name)
@@ -151,10 +145,7 @@ public class RoleService {
    */
   @Transactional
   public void deleteRole(Long id, Long callerId) {
-    RoleResponse role =
-        roleRepository
-            .findById(id)
-            .orElseThrow(() -> new RoleNotFoundException("Role not found: " + id));
+    RoleResponse role = roleRepository.findById(id).orElseThrow(RoleNotFoundException::new);
 
     if (role.isSystem()) {
       throw new SystemRoleModificationException("Cannot delete system role: " + role.name());
@@ -216,10 +207,7 @@ public class RoleService {
       Long roleId, List<Long> permissionIds, List<Long> expectedPermissionIds, Long callerId) {
     // 동시 교체가 같은 "변경 전"을 읽어 감사 차이가 틀어지지 않게 역할 단위로 직렬화한다.
     roleRepository.lockById(roleId);
-    RoleResponse role =
-        roleRepository
-            .findById(roleId)
-            .orElseThrow(() -> new RoleNotFoundException("Role not found: " + roleId));
+    RoleResponse role = roleRepository.findById(roleId).orElseThrow(RoleNotFoundException::new);
 
     if (role.isSystem()) {
       throw new SystemRoleModificationException(

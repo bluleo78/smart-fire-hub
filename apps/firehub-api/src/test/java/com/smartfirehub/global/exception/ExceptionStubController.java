@@ -64,7 +64,7 @@ public class ExceptionStubController {
 
   @GetMapping("/role-not-found")
   public void roleNotFound() {
-    throw new RoleNotFoundException("Role not found");
+    throw new RoleNotFoundException();
   }
 
   @GetMapping("/dataset-not-found")

@@ -66,8 +66,25 @@ class RoleServiceTest extends IntegrationTestBase {
 
   @Test
   void getRoleById_notFound_throwsException() {
+    // WD-287: 404 문구는 화면 토스트에 그대로 실리므로 한국어이고 내부 id(999)를 싣지 않는다.
     assertThatThrownBy(() -> roleService.getRoleById(999L))
-        .isInstanceOf(RoleNotFoundException.class);
+        .isInstanceOf(RoleNotFoundException.class)
+        .hasMessage("역할을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.")
+        .hasMessageNotContaining("999");
+  }
+
+  /** WD-287: 열어 둔 역할이 삭제된 뒤의 이름·설명 저장, 권한 저장, 삭제도 같은 한국어 문구(id 없음)로 404 를 낸다. */
+  @Test
+  void updateDeleteSetPermissions_onMissingRole_throwKoreanMessageWithoutId() {
+    assertThatThrownBy(() -> roleService.updateRole(999L, "NEW", null, callerId))
+        .isInstanceOf(RoleNotFoundException.class)
+        .hasMessage(RoleNotFoundException.MESSAGE);
+    assertThatThrownBy(() -> roleService.setRolePermissions(999L, List.of(), callerId))
+        .isInstanceOf(RoleNotFoundException.class)
+        .hasMessage(RoleNotFoundException.MESSAGE);
+    assertThatThrownBy(() -> roleService.deleteRole(999L, callerId))
+        .isInstanceOf(RoleNotFoundException.class)
+        .hasMessage(RoleNotFoundException.MESSAGE);
   }
 
   @Test

@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.service.RoleService;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
@@ -63,6 +64,23 @@ class RoleClearanceServiceTest extends SecurityLevelServiceTest {
     assertThatThrownBy(() -> asTenant(() -> clearanceService.set(admin, levelId("공개"), caller())))
         .extracting(e -> ((CodedApiException) e).code())
         .isEqualTo("SYSTEM_ADMIN_CLEARANCE_FIXED");
+  }
+
+  /** WD-287: 삭제된 역할의 열람 등급 조회·미리보기·저장은 한국어 문구(내부 id 없음)의 404 다. */
+  @Test
+  void missingRole_throwsKoreanNotFoundWithoutId() {
+    long missing = 987_654L;
+    assertThatThrownBy(() -> asTenant(() -> clearanceService.get(missing)))
+        .isInstanceOf(RoleNotFoundException.class)
+        .hasMessage(RoleNotFoundException.MESSAGE);
+    assertThatThrownBy(
+            () -> asTenant(() -> clearanceService.preview(missing, levelId("공개"), caller())))
+        .isInstanceOf(RoleNotFoundException.class)
+        .hasMessage(RoleNotFoundException.MESSAGE);
+    assertThatThrownBy(() -> asTenant(() -> clearanceService.set(missing, levelId("공개"), caller())))
+        .isInstanceOf(RoleNotFoundException.class)
+        .hasMessage(RoleNotFoundException.MESSAGE)
+        .hasMessageNotContaining("987654");
   }
 
   @Test
