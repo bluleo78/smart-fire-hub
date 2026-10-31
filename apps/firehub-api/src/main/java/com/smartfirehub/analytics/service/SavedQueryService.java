@@ -293,6 +293,24 @@ public class SavedQueryService {
         charts, dashboardRepository.findImpactByChartIds(chartIds, userId));
   }
 
+  /** 저장 쿼리 이름 한도(DB varchar(200)) */
+  static final int NAME_MAX_LENGTH = 200;
+
+  private static final String CLONE_SUFFIX = " (복사본)";
+
+  /**
+   * 복제본 이름 — 원래 이름 뒤에 「 (복사본)」을 붙이되, 200자를 넘으면 접미사가 들어가도록 원래 이름 끝을 잘라 낸다(WD-430). 예전에는 194자를 넘는 이름의
+   * 쿼리를 복제하면 길이 오류(400)로 실패해, 공유받은 사람은 사본을 만들 방법이 없었다. 글자 수는 DB 와 같게 코드 포인트로 센다.
+   */
+  static String cloneName(String originalName) {
+    int room = NAME_MAX_LENGTH - CLONE_SUFFIX.length();
+    String base = originalName;
+    if (originalName.codePointCount(0, originalName.length()) > room) {
+      base = originalName.substring(0, originalName.offsetByCodePoints(0, room)).stripTrailing();
+    }
+    return base + CLONE_SUFFIX;
+  }
+
   /**
    * Clone a saved query. The clone is private (is_shared=false) and belongs to the requesting user.
    */
@@ -313,7 +331,7 @@ public class SavedQueryService {
     String originalName = raw.get("name", String.class);
     CreateSavedQueryRequest cloneReq =
         new CreateSavedQueryRequest(
-            originalName + " (복사본)",
+            cloneName(originalName),
             raw.get("description", String.class),
             raw.get("sql_text", String.class),
             raw.get("dataset_id", Long.class),

@@ -3,6 +3,7 @@ package com.smartfirehub.proactive.dto;
 import com.smartfirehub.global.validation.MaxJsonSize;
 import com.smartfirehub.proactive.validation.ReportSectionLimits;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -15,7 +16,9 @@ import java.util.Map;
  *     update_report_template 등 기존 호출부, "내 변경으로 덮어쓰기").
  */
 public record UpdateReportTemplateRequest(
-    @NotBlank(message = "템플릿 이름은 필수입니다.") String name,
+    // DB 한도(varchar(200))를 넘으면 500 이 났다 — 400 으로 이유를 알린다(WD-430)
+    @NotBlank(message = "템플릿 이름은 필수입니다.") @Size(max = 200, message = "이름은 200자 이내여야 합니다.")
+        String name,
     String description,
     // 섹션 상한은 생성과 같다(WD-425 — ReportSectionLimits, CreateReportTemplateRequest.SECTIONS_MAX_BYTES)
     @ReportSectionLimits

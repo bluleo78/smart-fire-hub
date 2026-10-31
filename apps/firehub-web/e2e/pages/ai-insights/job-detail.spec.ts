@@ -777,6 +777,34 @@ test.describe('스마트 작업 상세 페이지', () => {
     expect(req).toBeTruthy();
   });
 
+  // WD-430: 200자 이름은 「 (복사본)」을 붙이면 한도를 넘어 「작업 이름은 200자 이내」로 실패했다
+  test('이름이 200자인 작업을 복제하면 원래 이름을 잘라 200자 안의 「(복사본)」 이름으로 보낸다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupJobDetailMocks(page, 1);
+    const longName = '나'.repeat(200);
+    const clonedName = `${'나'.repeat(194)} (복사본)`;
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1, name: longName }));
+    const cloneCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/jobs',
+      createJob({ id: 98, name: clonedName, enabled: false }),
+      { capture: true },
+    );
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/98', createJob({ id: 98, name: clonedName, enabled: false }));
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/98/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/98/anomaly-events', []);
+
+    await page.goto('/ai-insights/jobs/1');
+    await page.getByRole('button', { name: '복제' }).click();
+
+    const req = await cloneCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: clonedName, enabled: false });
+    expect(Array.from((req.payload as { name: string }).name)).toHaveLength(200);
+    await expect(page).toHaveURL(/\/ai-insights\/jobs\/98/);
+  });
+
   test('작업 복제 — POST API 호출 및 새 작업으로 이동', async ({ authenticatedPage: page }) => {
     await setupJobDetailMocks(page, 1);
 
