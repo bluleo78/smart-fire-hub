@@ -223,17 +223,19 @@ export function DashboardWidgetCard({
   };
 
   return (
-    <Card ref={containerRef} className="h-full py-2 gap-1 overflow-hidden flex flex-col">
+    // 인쇄(WD-424): 위젯 하나가 두 쪽으로 갈리지 않게 한다(쌓기 보기처럼 흐름 배치일 때 효과가 있다)
+    <Card ref={containerRef} className="h-full py-2 gap-1 overflow-hidden flex flex-col print:break-inside-avoid">
       <CardHeader className={`px-3 pb-0 ${isEditing ? 'drag-handle cursor-grab active:cursor-grabbing' : ''}`}>
         <div className="flex items-center justify-between gap-1">
           {/* 키보드 이동 손잡이(WD-324) — 머리글 끌기·모서리 크기 조절은 마우스로만 되므로, Tab 으로 닿는 버튼에서
               화살표로 옮기고 Shift+화살표로 크기를 바꾼다(WCAG 2.1.1·2.5.7). 머리글 안이라 마우스로 끌어도 그대로 끌린다. */}
+          {/* 편집용 손잡이·제거 버튼은 인쇄에서 숨긴다(WD-424) */}
           {isEditing && onKeyboardLayout && (
             <>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-5 w-5 shrink-0 text-muted-foreground rounded-sm"
+                className="h-5 w-5 shrink-0 text-muted-foreground rounded-sm print:hidden"
                 aria-label={`「${title}」 위젯 이동·크기 조절`}
                 aria-describedby={moveHelpId}
                 title="화살표: 이동 · Shift+화살표: 크기 조절"
@@ -254,7 +256,7 @@ export function DashboardWidgetCard({
             <Button
               variant="ghost"
               size="icon"
-              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-sm"
+              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-sm print:hidden"
               onClick={(e) => {
                 e.stopPropagation();
                 onRemove(widget.id);

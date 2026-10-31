@@ -41,8 +41,9 @@ export function WidgetFreshnessBar({
   const isStale =
     staleThresholdMs !== null && elapsed !== null && elapsed >= staleThresholdMs;
 
+  // 인쇄(WD-424): 「N분 전」·새로고침 버튼은 종이에 의미가 없으므로 숨긴다 — 기준 시각은 대시보드 이름 아래 인쇄 시각 줄이 대신한다
   return (
-    <div className="flex items-center justify-between px-1 pt-0.5 gap-1">
+    <div className="flex items-center justify-between px-1 pt-0.5 gap-1 print:hidden">
       <div className="flex items-center gap-1 min-w-0">
         {isFetching ? (
           <Badge

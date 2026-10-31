@@ -305,8 +305,11 @@ function AppLayoutInner() {
      * 스크롤 범위가 실제와 어긋난다. 셸이 dvh를 쓰려면 안쪽 페이지가 vh 매직넘버로 자기 높이를
      * 재계산하지 않아야 한다(그러면 dvh < vh인 순간 페이지가 셸을 넘어 이중 스크롤이 된다).
      * 데이터 탭의 calc(100vh - 300px)를 flex로 걷어낸 뒤에야 이 줄이 안전해졌다.
+     *
+     * 인쇄(WD-424): 화면 높이(h-dvh)·overflow-hidden 을 풀어 본문이 한 화면 높이에서 잘리지 않고 여러 쪽으로 이어지게 하고,
+     * 사이드바·상단 칩·AI 패널 같은 앱 테두리는 아래 각 지점에서 print:hidden 으로 숨겨 페이지 내용만 인쇄되게 한다.
      */
-    <div className="flex h-dvh overflow-hidden">
+    <div className="flex h-dvh overflow-hidden print:block print:h-auto print:overflow-visible">
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div
@@ -315,11 +318,11 @@ function AppLayoutInner() {
         />
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar — 인쇄에서는 숨긴다(WD-424). 넓은 인쇄 폭에서 lg:static 사이드바가 메뉴·사용자 정보째 찍히고 본문을 오른쪽으로 밀었다 */}
       <aside
         className={cn(
           'fixed inset-y-0 left-0 z-50 border-r bg-background transition-[width,transform] duration-200',
-          'lg:static lg:translate-x-0',
+          'lg:static lg:translate-x-0 print:hidden',
           collapsed ? 'lg:w-[52px]' : 'lg:w-60',
           sidebarOpen ? 'translate-x-0 w-60' : '-translate-x-full'
         )}
@@ -462,12 +465,12 @@ function AppLayoutInner() {
       </aside>
 
       {/* Main content */}
-      <div className="flex flex-1 flex-col min-w-0 min-h-0">
-        {/* Mobile-only hamburger */}
+      <div className="flex flex-1 flex-col min-w-0 min-h-0 print:block">
+        {/* Mobile-only hamburger — 인쇄 폭이 좁으면(lg 미만) 찍히므로 인쇄에서 숨긴다(WD-424) */}
         <Button
           variant="ghost"
           size="icon"
-          className="fixed top-3 left-3 z-40 lg:hidden"
+          className="fixed top-3 left-3 z-40 lg:hidden print:hidden"
           aria-label={sidebarOpen ? '메뉴 닫기' : '메뉴 열기'}
           onClick={() => setSidebarOpen(!sidebarOpen)}
         >
@@ -483,15 +486,16 @@ function AppLayoutInner() {
             실제로 차지하고 불투명 배경·아래 선을 가져, 본문(main)은 이 줄 아래에서 시작하고 스크롤된다.
             고정 요소가 없는 lg 이상에서는 그리지 않는다. */}
         <div
-          className="h-12 shrink-0 border-b bg-background lg:hidden"
+          className="h-12 shrink-0 border-b bg-background lg:hidden print:hidden"
           data-testid="mobile-topbar"
           aria-hidden="true"
         />
 
         {/* Page content + AI panel */}
-        <div className="relative flex flex-1 min-h-0 bg-gradient-main">
-          {/* AI Status Chip — 전체 뷰포트 가로 중앙 */}
-          <div className="fixed top-2 left-0 right-0 z-30 flex justify-center pointer-events-none">
+        {/* 인쇄(WD-424): 블록으로 풀어 본문(main)이 종이 전체 폭을 쓴다 */}
+        <div className="relative flex flex-1 min-h-0 bg-gradient-main print:block">
+          {/* AI Status Chip — 전체 뷰포트 가로 중앙. 인쇄에서는 AI 칩·알림 종을 숨긴다(WD-424) */}
+          <div className="fixed top-2 left-0 right-0 z-30 flex justify-center pointer-events-none print:hidden">
             <div className="pointer-events-auto">
               <AIStatusChip />
             </div>
@@ -507,7 +511,8 @@ function AppLayoutInner() {
             </Suspense>
           ) : (
             // 모바일은 위에 상단 줄(h-12)이 따로 자리를 차지하므로 위 여백을 줄인다(lg 이상은 고정 칩 자리 pt-10 그대로).
-            <main ref={mainRef} className="flex-1 p-6 pt-10 max-lg:pt-2 overflow-auto min-w-0">
+            // 인쇄(WD-424): 칩 자리 여백·스크롤 상자를 없애 본문이 종이 왼쪽 위에서 시작하고 스크롤 밖 내용까지 모두 찍히게 한다.
+            <main ref={mainRef} className="flex-1 p-6 pt-10 max-lg:pt-2 overflow-auto min-w-0 print:p-0 print:overflow-visible">
               <Suspense fallback={<PageSkeleton />}>
                 <Outlet />
               </Suspense>
@@ -521,14 +526,18 @@ function AppLayoutInner() {
                fallback이 열림 여부와 무관하게 320px를 차지하면, lazy 청크가 도착하기 전까지 본문이
                320px 좁게 그려졌다가 도착 순간 넓어지는 레이아웃 시프트가 모든 라우트 첫 로드에서 생긴다.
                열린 상태의 자리 폭은 AISidePanel의 기본 폭(DEFAULT_WIDTH=380px)과 맞춰 교체 시 움직이지 않게 한다. */}
+          {/* 인쇄에서는 AI 사이드 패널을 숨긴다(WD-424) — 패널 컴포넌트를 고치지 않도록 감싸는 상자에서 숨긴다.
+              contents 라 화면 배치(flex 자식)는 그대로다. */}
           {aiMode === 'side' && (
-            <Suspense
-              fallback={
-                aiOpen ? <div className="hidden lg:block lg:w-[380px] shrink-0 border-l bg-background" /> : null
-              }
-            >
-              <AISidePanel />
-            </Suspense>
+            <div className="contents print:hidden">
+              <Suspense
+                fallback={
+                  aiOpen ? <div className="hidden lg:block lg:w-[380px] shrink-0 border-l bg-background" /> : null
+                }
+              >
+                <AISidePanel />
+              </Suspense>
+            </div>
           )}
         </div>
 
