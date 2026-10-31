@@ -31,8 +31,8 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByRole('columnheader', { name: '설명' })).toBeVisible();
 
     // 팩토리로 생성된 연결 목록 확인
-    await expect(page.getByRole('cell', { name: '공공 데이터 API' })).toBeVisible();
-    await expect(page.getByRole('cell', { name: '내부 서비스 API' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '공공 데이터 API', exact: true })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '내부 서비스 API', exact: true })).toBeVisible();
 
     // 행 개수 확인: 헤더 1행 + 데이터 2행 = 3행
     await expect(page.getByRole('row')).toHaveCount(3);
@@ -136,7 +136,7 @@ test.describe('API 연결 페이지', () => {
     await page.goto('/admin/api-connections');
 
     // 첫 번째 연결 이름 셀 클릭
-    await page.getByRole('cell', { name: '공공 데이터 API' }).click();
+    await page.getByRole('cell', { name: '공공 데이터 API', exact: true }).click();
 
     // 상세 페이지로 이동 확인
     await expect(page).toHaveURL(/\/admin\/api-connections\/1/);

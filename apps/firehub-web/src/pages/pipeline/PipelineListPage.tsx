@@ -156,7 +156,17 @@ export default function PipelineListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors row-hover"
                   onClick={() => navigate(`/pipelines/${pipeline.id}`)}
                 >
-                  <TableCell className="font-medium">{pipeline.name}</TableCell>
+                  <TableCell className="font-medium">
+                    {/* 키보드 접근성(WD-396): 행 클릭은 마우스로만 열리므로 이름을 상세 링크로 둔다 — Tab 으로 닿고 Enter 로
+                        열린다. 클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
+                    <Link
+                      to={`/pipelines/${pipeline.id}`}
+                      className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {pipeline.name}
+                    </Link>
+                  </TableCell>
                   <TableCell>
                     <StatusBadge type={pipeline.isActive ? 'active' : 'inactive'}>
                       {pipeline.isActive ? '활성' : '비활성'}

@@ -1,6 +1,6 @@
 import { CheckCircle2, Plus, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { apiConnectionsApi } from '@/api/api-connections';
@@ -472,7 +472,17 @@ export default function ApiConnectionListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors"
                   onClick={() => navigate(`/admin/api-connections/${conn.id}`)}
                 >
-                  <TableCell className="font-medium">{conn.name}</TableCell>
+                  <TableCell className="font-medium">
+                    {/* 키보드 접근성(WD-396): 행 클릭은 마우스로만 열리므로 이름을 상세 링크로 둔다 — Tab 으로 닿고 Enter 로
+                        열린다. 클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
+                    <Link
+                      to={`/admin/api-connections/${conn.id}`}
+                      className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {conn.name}
+                    </Link>
+                  </TableCell>
                   <TableCell>
                     <Badge variant={conn.authType === 'BEARER' ? 'default' : 'secondary'}>
                       {conn.authType === 'BEARER' ? 'Bearer' : 'API Key'}
@@ -497,7 +507,8 @@ export default function ApiConnectionListPage() {
                         extraDetail={`ID: ${conn.id} · ${conn.baseUrl}`}
                         onConfirm={() => handleDelete(conn.id, conn.name)}
                         trigger={
-                          <Button variant="outline" size="sm">
+                          // 아이콘뿐인 버튼이라 이름을 준다(WD-396) — 없으면 스크린리더가 이름 없는 「버튼」으로만 읽는다.
+                          <Button variant="outline" size="sm" aria-label={`${conn.name} 삭제`}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         }

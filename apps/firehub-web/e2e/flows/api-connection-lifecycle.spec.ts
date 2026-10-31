@@ -105,7 +105,7 @@ test.describe('API 연결 라이프사이클', () => {
     await page.getByRole('button', { name: '생성', exact: true }).click();
 
     // 5) 목록에 생성된 연결 표시 확인
-    await expect(page.getByRole('cell', { name: 'Make.com API' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: 'Make.com API', exact: true })).toBeVisible();
     await expect(page.getByText('https://api.make.com')).toBeVisible();
 
     // 6) 단건 조회 라우트 등록 — 상세 페이지 진입 전에 등록한다
@@ -125,7 +125,7 @@ test.describe('API 연결 라이프사이클', () => {
     });
 
     // 7) 연결 이름 셀 클릭 → 상세 페이지 이동
-    await page.getByRole('cell', { name: 'Make.com API' }).click();
+    await page.getByRole('cell', { name: 'Make.com API', exact: true }).click();
     await page.waitForURL(/\/admin\/api-connections\/\d+/);
 
     // 8) "지금 확인" 버튼 클릭 → POST /{id}/test 호출

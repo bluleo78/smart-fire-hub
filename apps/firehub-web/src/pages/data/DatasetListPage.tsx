@@ -1,6 +1,6 @@
 import { BarChart3, Download, Eye, History, Info, Plus, Star, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Badge } from '../../components/ui/badge';
@@ -267,11 +267,12 @@ export default function DatasetListPage() {
             <span>최근 접근</span>
           </div>
           <div className="flex overflow-x-auto gap-3 pb-2">
+            {/* 키보드 접근성(WD-396): 카드는 상세 링크다 — Tab 으로 닿고 Enter 로 열린다(예전엔 div onClick 이라 마우스로만 열렸다). */}
             {recents.map((recent) => (
-              <div
+              <Link
                 key={recent.id}
-                className="p-3 min-w-[200px] max-w-[250px] cursor-pointer hover:bg-accent/50 transition-colors flex-shrink-0 rounded-lg border bg-card shadow-sm"
-                onClick={() => navigate(`/data/datasets/${recent.id}`)}
+                to={`/data/datasets/${recent.id}`}
+                className="block p-3 min-w-[200px] max-w-[250px] cursor-pointer hover:bg-accent/50 transition-colors flex-shrink-0 rounded-lg border bg-card shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <p className="font-medium truncate">{recent.name}</p>
                 <p className="text-xs text-muted-foreground font-mono truncate mt-0.5">
@@ -280,7 +281,7 @@ export default function DatasetListPage() {
                 <p className="text-xs text-muted-foreground mt-1">
                   {formatRelativeTime(recent.accessedAt)}
                 </p>
-              </div>
+              </Link>
             ))}
           </div>
         </section>
@@ -379,27 +380,40 @@ export default function DatasetListPage() {
           </Button>
         </div>
 
-        {/* Category Chip Filter */}
-        <div className="flex gap-2 flex-wrap">
+        {/* Category Chip Filter — 칩은 button 이라 Tab·Enter 로 거른다(WD-396). 고른 칩은 색만이 아니라
+            aria-pressed 로 스크린리더에 알리고, 묶음 이름 「카테고리」로 무엇을 거르는 칩인지 읽힌다. */}
+        <div className="flex gap-2 flex-wrap" role="group" aria-label="카테고리">
           <Badge
+            asChild
             variant={categoryId === undefined ? 'default' : 'outline'}
             className="cursor-pointer hover:opacity-80 transition-opacity"
-            onClick={() => {
-              patchParams({ categoryId: null, page: null });
-            }}
           >
-            전체
+            <button
+              type="button"
+              aria-pressed={categoryId === undefined}
+              onClick={() => {
+                patchParams({ categoryId: null, page: null });
+              }}
+            >
+              전체
+            </button>
           </Badge>
           {categories.map((cat) => (
             <Badge
               key={cat.id}
+              asChild
               variant={categoryId === cat.id ? 'default' : 'outline'}
               className="cursor-pointer hover:opacity-80 transition-opacity"
-              onClick={() => {
-                patchParams({ categoryId: categoryId === cat.id ? null : cat.id, page: null });
-              }}
             >
-              {cat.name}
+              <button
+                type="button"
+                aria-pressed={categoryId === cat.id}
+                onClick={() => {
+                  patchParams({ categoryId: categoryId === cat.id ? null : cat.id, page: null });
+                }}
+              >
+                {cat.name}
+              </button>
             </Badge>
           ))}
         </div>
@@ -493,7 +507,15 @@ export default function DatasetListPage() {
                   {/* Name + status badge */}
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span>{dataset.name}</span>
+                      {/* 키보드 접근성(WD-396): 행 클릭은 마우스로만 열리므로 이름을 상세 링크로 둔다 — Tab 으로 닿고 Enter 로
+                          열린다(역할 목록 WD-286 과 같은 방식). 클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
+                      <Link
+                        to={`/data/datasets/${dataset.id}`}
+                        className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {dataset.name}
+                      </Link>
                       {dataset.status === 'CERTIFIED' && (
                         <Badge variant="success" className="text-xs">
                           ✓ Certified
