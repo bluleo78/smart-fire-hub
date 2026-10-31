@@ -19,6 +19,7 @@ import com.smartfirehub.permission.repository.PermissionRepository;
 import com.smartfirehub.platform.service.PlatformAccountService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.OpenedSseStreams;
+import com.smartfirehub.support.PausedTransactionRace;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
 import java.time.LocalDateTime;
@@ -190,6 +191,59 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
                 .getValues(0, String.class);
     assertThat(TenantRlsTestSupport.runInTenantTransaction(fixtureTransactionTemplate, null, read))
         .containsExactly("ACCOUNT_DEACTIVATE");
+  }
+
+  /**
+   * 동시 비활성화·재활성화는 실제로 바꾼 요청만 감사에 남는다(WD-322) — 운영자 둘이 같은 계정을 거의 동시에 조치해도 누가 바꿨는지 하나로 남는다. 뒤 요청이 앞
+   * 요청의 행 잠금에서 기다렸는지까지 단언해 경합 구간을 실제로 지났음을 보장한다.
+   */
+  @Test
+  void concurrentDeactivateAndReactivate_auditOnlyTheRequestThatChanged() throws Exception {
+    long secondOperator =
+        TenantRlsTestSupport.insertUserWithPassword(dsl, marker + "-ops2", "{noop}x");
+    users.add(secondOperator);
+    TenantRlsTestSupport.grantPlatformSuperAdmin(dsl, secondOperator);
+
+    var deactivate =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            null,
+            () -> accountService.deactivate(target, operator),
+            () -> {
+              accountService.deactivate(target, secondOperator);
+              return null;
+            });
+    assertThat(deactivate.secondBlocked()).as("뒤 요청이 앞 요청의 행 잠금에서 기다렸다").isTrue();
+    assertThat(deactivate.secondError()).as("뒤 요청은 무변화로 성공(204 와 같다)").isNull();
+    assertThat(active(target)).isFalse();
+    assertThat(accountAudits("ACCOUNT_DEACTIVATE")).containsExactly(operator);
+
+    var reactivate =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            null,
+            () -> accountService.reactivate(target, secondOperator),
+            () -> {
+              accountService.reactivate(target, operator);
+              return null;
+            });
+    assertThat(reactivate.secondBlocked()).isTrue();
+    assertThat(reactivate.secondError()).isNull();
+    assertThat(active(target)).isTrue();
+    assertThat(accountAudits("ACCOUNT_REACTIVATE")).containsExactly(secondOperator);
+  }
+
+  /** 대상 계정의 운영자 평면 감사(tenant NULL) 중 이 액션을 남긴 운영자 id 목록. */
+  private List<Long> accountAudits(String action) {
+    Supplier<List<Long>> read =
+        () ->
+            dsl.fetch(
+                    "select user_id from audit_log where resource_id = ? and action_type = ?"
+                        + " and tenant_id is null",
+                    String.valueOf(target),
+                    action)
+                .getValues(0, Long.class);
+    return TenantRlsTestSupport.runInTenantTransaction(fixtureTransactionTemplate, null, read);
   }
 
   /** Review Focus 3: 재활성화가 옛 refresh 세션을 되살리지 않는다(재사용 탐지로 거부 — 비활성 사유가 아니다). */

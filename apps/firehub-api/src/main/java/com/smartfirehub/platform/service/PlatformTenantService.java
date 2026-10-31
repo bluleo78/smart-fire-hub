@@ -191,8 +191,10 @@ public class PlatformTenantService {
   }
 
   /**
-   * 상태 스위치 + 감사(WD-12). updateStatus 는 같은 상태여도 1 을 돌려주므로 먼저 읽어 무변화면 아무것도 하지 않는다 — 같은 요청 재전송이 감사 로그를
-   * 부풀리지 않게(계정 조치와 같은 규칙).
+   * 상태 스위치 + 감사(WD-12). 무변화면 아무것도 하지 않는다 — 같은 요청 재전송이 감사 로그를 부풀리지 않게(계정 조치와 같은 규칙).
+   *
+   * <p>먼저 읽은 상태는 빠른 길일 뿐이다. 운영자 둘(또는 한 운영자의 연타)이 동시에 보내면 둘 다 옛 상태를 읽으므로, 실제로 바꾼 요청은 조건부 갱신의 바뀐 행 수로
+   * 가린다(WD-322) — 0 이면 다른 요청이 이미 바꾼 것이라 감사·후속 조치 없이 끝낸다.
    */
   private void changeStatus(
       long tenantId, String status, String action, String description, long operatorId) {
@@ -201,7 +203,9 @@ public class PlatformTenantService {
     if (status.equals(tenant.status())) {
       return;
     }
-    tenantRepository.updateStatus(tenantId, status);
+    if (tenantRepository.updateStatus(tenantId, status) == 0) {
+      return;
+    }
     auditRecorder.record(
         operatorId,
         action,

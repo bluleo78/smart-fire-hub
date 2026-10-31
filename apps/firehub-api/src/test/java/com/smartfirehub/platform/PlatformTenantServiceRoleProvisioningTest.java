@@ -173,6 +173,8 @@ class PlatformTenantServiceRoleProvisioningTest {
   @Test
   void activate_fromSuspended_ensuresPipelineRoles_afterAudit() {
     when(tenantRepository.findById(42L)).thenReturn(Optional.of(tenantIn("SUSPENDED")));
+    // 조건부 갱신(WD-322) — 실제로 상태가 바뀐 경우를 흉내 낸다(무변화면 0).
+    when(tenantRepository.updateStatus(eq(42L), anyString())).thenReturn(1);
 
     service.activate(42L, 1L);
 
@@ -191,6 +193,8 @@ class PlatformTenantServiceRoleProvisioningTest {
   @Test
   void activate_propagatesRoleProvisioningFailure() {
     when(tenantRepository.findById(42L)).thenReturn(Optional.of(tenantIn("SUSPENDED")));
+    // 조건부 갱신(WD-322) — 실제로 상태가 바뀐 경우를 흉내 낸다(무변화면 0).
+    when(tenantRepository.updateStatus(eq(42L), anyString())).thenReturn(1);
     Mockito.doThrow(new IllegalStateException("CREATE ROLE 실패"))
         .when(pipelineRoleProvisioner)
         .ensureRoleIfAutoProvisionEnabled(42L);
@@ -204,6 +208,8 @@ class PlatformTenantServiceRoleProvisioningTest {
   @Test
   void activate_whenAlreadyActive_andSuspend_doNotTouchRoleProvisioner() {
     when(tenantRepository.findById(42L)).thenReturn(Optional.of(tenantIn("ACTIVE")));
+    // 조건부 갱신(WD-322) — 실제로 상태가 바뀐 경우를 흉내 낸다(무변화면 0).
+    when(tenantRepository.updateStatus(eq(42L), anyString())).thenReturn(1);
     service.activate(42L, 1L);
     service.suspend(42L, 1L);
 
@@ -220,6 +226,8 @@ class PlatformTenantServiceRoleProvisioningTest {
   @Test
   void suspend_closesTenantStreams_activateDoesNot() {
     when(tenantRepository.findById(42L)).thenReturn(Optional.of(tenantIn("SUSPENDED")));
+    // 조건부 갱신(WD-322) — 실제로 상태가 바뀐 경우를 흉내 낸다(무변화면 0).
+    when(tenantRepository.updateStatus(eq(42L), anyString())).thenReturn(1);
     service.activate(42L, 1L);
     verifyNoInteractions(sseEmitterRegistry);
 
