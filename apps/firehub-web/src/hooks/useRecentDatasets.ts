@@ -84,10 +84,29 @@ export function useRecentDatasets() {
     setRecents(updated.slice(0, MAX_SHOWN));
   };
 
+  /**
+   * 서버에서 받은 현재 데이터셋 값으로 저장된 이름·테이블명을 고친다 — 다른 탭·다른 사람이 이름을 바꿔도
+   * 방문 당시 이름이 카드에 계속 남지 않게 (WD-390). 바뀐 것이 없으면 쓰지 않는다(렌더 반복 방지).
+   */
+  const syncRecents = (current: Pick<RecentDataset, 'id' | 'name' | 'tableName'>[]) => {
+    const byId = new Map(current.map((d) => [d.id, d]));
+    const stored = readFromStorage(key);
+    let changed = false;
+    const updated = stored.map((d) => {
+      const now = byId.get(d.id);
+      if (!now || (now.name === d.name && now.tableName === d.tableName)) return d;
+      changed = true;
+      return { ...d, name: now.name, tableName: now.tableName };
+    });
+    if (!changed) return;
+    writeToStorage(key, updated);
+    setRecents(updated.slice(0, MAX_SHOWN));
+  };
+
   const clearRecents = () => {
     writeToStorage(key, []);
     setRecents([]);
   };
 
-  return { recents, addRecent, removeRecent, clearRecents };
+  return { recents, addRecent, removeRecent, syncRecents, clearRecents };
 }

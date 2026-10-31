@@ -459,3 +459,74 @@ test.describe('데이터셋 목록 페이지', () => {
     await expect(page.locator('table tbody')).toBeFocused();
   });
 });
+
+/**
+ * WD-390: 「최근 접근」 카드는 방문 당시의 이름을 브라우저에 저장해 그렸다 — 지운 데이터셋이 남아 눌러도 오류만 나고,
+ * 바꾼 이름이 반영되지 않았다. 삭제 성공·상세 404 때 이력에서 빼고, 지금 목록에 있으면 서버의 현재 이름으로 보인다.
+ */
+test.describe('WD-390 최근 접근 — 지운·바뀐 데이터셋', () => {
+  const recentItem = (id: number, name: string, tableName: string) => ({
+    id,
+    name,
+    tableName,
+    accessedAt: new Date().toISOString(),
+  });
+  const readRecentIds = (page: import('@playwright/test').Page) =>
+    page.evaluate(() =>
+      (JSON.parse(localStorage.getItem('sfh-recent-datasets:1:1') ?? '[]') as { id: number }[]).map((d) => d.id),
+    );
+
+  test('목록에서 삭제에 성공하면 그 데이터셋 카드가 최근 접근에서 사라진다', async ({ authenticatedPage: page }) => {
+    await page.addInitScript((items) => {
+      localStorage.setItem('sfh-recent-datasets:1:1', JSON.stringify(items));
+    }, [recentItem(1, '데이터셋 1', 'dataset_1'), recentItem(2, '데이터셋 2', 'dataset_2')]);
+    await setupDatasetMocks(page);
+    await mockApi(page, 'DELETE', '/api/v1/datasets/1', {});
+    await page.goto('/data/datasets');
+
+    const recent = page.getByRole('region', { name: '최근 접근' });
+    await expect(recent.getByText('dataset_1', { exact: true })).toBeVisible();
+
+    await page.getByRole('row', { name: /데이터셋 1 / }).getByRole('button', { name: '삭제' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
+
+    await expect(recent.getByText('dataset_1', { exact: true })).toHaveCount(0);
+    await expect(recent.getByText('dataset_2', { exact: true })).toBeVisible();
+    await expect.poll(() => readRecentIds(page)).toEqual([2]);
+  });
+
+  test('카드를 눌러 상세가 404 를 받으면 목록으로 돌아오고 그 카드가 사라진다', async ({ authenticatedPage: page }) => {
+    await page.addInitScript((items) => {
+      localStorage.setItem('sfh-recent-datasets:1:1', JSON.stringify(items));
+    }, [recentItem(77, '지워진 데이터셋', 'gone_ds'), recentItem(2, '데이터셋 2', 'dataset_2')]);
+    await setupDatasetMocks(page);
+    await mockApi(page, 'GET', '/api/v1/datasets/77', { message: '데이터셋을 찾을 수 없습니다.' }, { status: 404 });
+    await page.goto('/data/datasets');
+
+    const recent = page.getByRole('region', { name: '최근 접근' });
+    await recent.getByText('지워진 데이터셋').click();
+
+    await expect(page.getByText('데이터셋을 찾을 수 없습니다.')).toBeVisible();
+    await expect(page).toHaveURL(/\/data\/datasets$/);
+    await expect(recent.getByText('지워진 데이터셋')).toHaveCount(0);
+    await expect.poll(() => readRecentIds(page)).toEqual([2]);
+  });
+
+  test('이름을 바꾼 데이터셋은 최근 접근 카드에도 지금 목록의 이름으로 보인다', async ({ authenticatedPage: page }) => {
+    // 저장된 이력은 옛 이름 — 목록 응답(createDatasets)의 id 3 은 「데이터셋 3」 이다
+    await page.addInitScript((items) => {
+      localStorage.setItem('sfh-recent-datasets:1:1', JSON.stringify(items));
+    }, [recentItem(3, '옛 이름', 'old_table')]);
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets');
+
+    const recent = page.getByRole('region', { name: '최근 접근' });
+    await expect(recent.getByText('데이터셋 3', { exact: true })).toBeVisible();
+    await expect(recent.getByText('dataset_3', { exact: true })).toBeVisible();
+    await expect(recent.getByText('옛 이름')).toHaveCount(0);
+    // 저장된 이력도 고쳐져, 목록을 받기 전(다음 방문 첫 화면)에도 옛 이름이 비치지 않는다
+    await expect
+      .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('sfh-recent-datasets:1:1') ?? '[]')[0]?.name))
+      .toBe('데이터셋 3');
+  });
+});

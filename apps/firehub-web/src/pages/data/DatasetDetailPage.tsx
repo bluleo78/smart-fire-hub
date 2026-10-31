@@ -1,4 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
 import {
   ArrowLeft,
   BarChart2,
@@ -128,7 +129,7 @@ export default function DatasetDetailPage() {
 
   // isError: 존재하지 않는 데이터셋 ID(404 등) 접근 시 에러 상태를 감지한다 (#96)
   // dataset을 먼저 선언하여 하위 탭 타입 판별(isDocument)·useEffect 의존성에 활용한다.
-  const { data: dataset, isLoading, isError: isFetchError } = useDataset(datasetId);
+  const { data: dataset, isLoading, isError: isFetchError, error: fetchError } = useDataset(datasetId);
   // 비숫자 ID(NaN)는 쿼리가 아예 실행되지 않아 isFetchError가 true가 되지 않으므로
   // isInvalidId를 합류시켜 기존 404 처리(리다이렉트) 로직을 그대로 재사용한다 (#543).
   const isError = isFetchError || isInvalidId;
@@ -188,7 +189,7 @@ export default function DatasetDetailPage() {
     setActiveTab(newTab);
   }, [searchParams, dataset, rowSearch]);
   const { data: categoriesData } = useCategories();
-  const { addRecent } = useRecentDatasets();
+  const { addRecent, removeRecent } = useRecentDatasets();
 
   const setFavorite = useSetFavorite();
   const updateStatus = useUpdateStatus(datasetId);
@@ -217,8 +218,14 @@ export default function DatasetDetailPage() {
   //   "찾을 수 없습니다" 안내 또는 toast.error + navigate를 이미 제공하고 있어 이를 일치시킨다.
   useEffect(() => {
     if (!isError) return;
+    // 지워졌거나 볼 수 없게 된(404) 데이터셋은 「최근 접근」에서도 뺀다 — 카드가 남아 눌러도 같은 오류만 반복되지 않게 (WD-390).
+    // 네트워크 오류 등 일시적 실패는 이력을 지우지 않는다.
+    if (axios.isAxiosError(fetchError) && fetchError.response?.status === 404) {
+      removeRecent(datasetId);
+    }
     toast.error('데이터셋을 찾을 수 없습니다.');
     navigate('/data/datasets');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- removeRecent 는 렌더마다 새로 만들어져 넣으면 반복 실행된다
   }, [isError, navigate]);
 
   useEffect(() => {
