@@ -6,6 +6,7 @@ import com.smartfirehub.notification.Payload;
 import com.smartfirehub.notification.Recipient;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
+import com.smartfirehub.proactive.service.delivery.EmailDeliveryChannel;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import com.smartfirehub.proactive.util.ProactiveConfigParser.ChannelConfig;
 import java.util.ArrayList;
@@ -52,7 +53,8 @@ public final class ProactiveJobNotificationMapper {
 
       // 외부 이메일 (EMAIL 채널에만 해당)
       if (channelType == ChannelType.EMAIL && cfg.recipientEmails() != null) {
-        for (String email : cfg.recipientEmails()) {
+        // 대소문자만 다른 같은 주소는 한 사람이다 — 같은 리포트를 두 번 보내지 않는다(WD-299)
+        for (String email : EmailDeliveryChannel.distinctAddresses(cfg.recipientEmails())) {
           externalRecipients.add(new Recipient(null, email, EnumSet.of(ChannelType.EMAIL)));
         }
       }

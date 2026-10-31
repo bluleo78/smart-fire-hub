@@ -13,7 +13,9 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
@@ -106,6 +108,10 @@ public class EmailDeliveryChannel implements DeliveryChannel {
 
       // 외부 이메일 추가
       toAddresses.addAll(cfg.recipientEmails());
+
+      // 같은 사람에게 같은 리포트가 여러 번 가지 않게 주소를 한 번씩만 남긴다(WD-299) — 메일 주소는 대소문자를 가리지 않으므로
+      // 「QA@Example.COM」과 「qa@example.com」, 등록 사용자 주소와 같은 외부 이메일은 한 사람이다. 먼저 나온 표기를 쓴다.
+      toAddresses = distinctAddresses(toAddresses);
     }
 
     boolean recipientsConfigured =
@@ -266,5 +272,22 @@ public class EmailDeliveryChannel implements DeliveryChannel {
     // 화이트라벨링: 템플릿 푸터의 브랜드명 표기에 사용
     ctx.setVariable("brandName", brandName);
     return templateEngine.process("proactive-report", ctx);
+  }
+
+  /**
+   * 대소문자를 가리지 않고 같은 주소를 하나로 합친다(WD-299). 순서는 처음 나온 순서, 표기는 처음 나온 것을 유지한다. 알림 아웃박스 경로({@code
+   * ProactiveJobNotificationMapper})의 외부 이메일도 같은 규칙으로 합친다.
+   *
+   * @param addresses 등록 사용자 주소와 외부 이메일을 이은 목록
+   * @return 받는 사람마다 한 번씩만 남긴 목록
+   */
+  public static List<String> distinctAddresses(List<String> addresses) {
+    Map<String, String> byKey = new LinkedHashMap<>();
+    for (String address : addresses) {
+      if (address == null || address.isBlank()) continue;
+      String trimmed = address.trim();
+      byKey.putIfAbsent(trimmed.toLowerCase(Locale.ROOT), trimmed);
+    }
+    return new ArrayList<>(byKey.values());
   }
 }

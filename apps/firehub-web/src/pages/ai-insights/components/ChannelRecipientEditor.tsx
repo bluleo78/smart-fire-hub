@@ -5,6 +5,8 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import UserCombobox from '@/components/UserCombobox';
+import { useRecipientsByIds } from '@/hooks/queries/useProactiveMessages';
+import { countEmailRecipients } from '@/lib/email-recipients';
 import type { ChannelConfigValues } from '@/lib/validations/proactive-job';
 
 import EmailTagInput from './EmailTagInput';
@@ -61,6 +63,12 @@ export default function ChannelRecipientEditor({
     channels.find((c) => c.type === type);
 
   const isEnabled = (type: ChannelConfigValues['type']) => !!getChannel(type);
+
+  // 이메일 채널에서 「등록 사용자」로 고른 사람의 주소 — 외부 이메일과의 중복을 막고 받는 사람 수를 바르게 세는 데 쓴다(WD-299).
+  // 조회가 끝나기 전에는 비어 있어 그 사이 넣은 같은 주소는 막지 못하지만, 서버가 발송할 때 한 번만 보낸다.
+  const emailUserIds = getChannel('EMAIL')?.recipientUserIds ?? [];
+  const { data: emailUsers } = useRecipientsByIds(emailUserIds);
+  const registeredEmails = (emailUsers ?? []).map((u) => u.email).filter(Boolean);
 
   /**
    * 채널 토글 — CHAT은 항상 켜져 있어야 하므로 비활성화 불가
@@ -145,6 +153,9 @@ export default function ChannelRecipientEditor({
     const channel = getChannel(type);
     const enabled = isEnabled(type);
     const { label, description, Icon } = CHANNEL_META[type];
+    const recipientCount = channel
+      ? countEmailRecipients(channel.recipientUserIds, channel.recipientEmails, registeredEmails)
+      : 0;
 
     return (
       <div className="rounded-lg border p-4">
@@ -159,9 +170,9 @@ export default function ChannelRecipientEditor({
             <Icon className="h-4 w-4" />
             {label}
           </Label>
-          {enabled && channel && (channel.recipientUserIds.length + channel.recipientEmails.length) > 0 && (
+          {enabled && channel && recipientCount > 0 && (
             <Badge variant="secondary" className="ml-1">
-              {channel.recipientUserIds.length + channel.recipientEmails.length}
+              {recipientCount}
             </Badge>
           )}
         </div>
@@ -171,9 +182,9 @@ export default function ChannelRecipientEditor({
         {enabled && channel && (
           <div className="mt-3 space-y-3">
             <p className="text-xs text-muted-foreground">
-              {channel.recipientUserIds.length + channel.recipientEmails.length === 0
+              {recipientCount === 0
                 ? '수신자를 지정하지 않으면 본인에게만 전달됩니다'
-                : `${channel.recipientUserIds.length + channel.recipientEmails.length}명에게 전달됩니다`}
+                : `${recipientCount}명에게 전달됩니다`}
             </p>
 
             {/* UserCombobox / EmailTagInput 은 id prop 을 받지 않는 복합 위젯이라
@@ -199,6 +210,7 @@ export default function ChannelRecipientEditor({
                 emails={channel.recipientEmails}
                 onChange={(emails) => updateChannel(type, { recipientEmails: emails })}
                 disabled={disabled}
+                registeredEmails={registeredEmails}
               />
             </div>
 

@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.service.delivery;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -304,5 +305,24 @@ class EmailDeliveryChannelTest {
     emailDeliveryChannel.deliver(job, 1L, makeResult());
 
     verify(pdfExportService, never()).generatePdf(any(), anyString());
+  }
+
+  /** 대소문자만 다른 외부 이메일은 한 사람이다 — 한 번만 보낸다(WD-299). 먼저 나온 표기를 쓴다. */
+  @Test
+  void distinctAddresses_mergesCaseOnlyDifferences() {
+    assertThat(
+            EmailDeliveryChannel.distinctAddresses(
+                List.of("QA@Example.COM", "qa@example.com", "workloop@example.com")))
+        .containsExactly("QA@Example.COM", "workloop@example.com");
+  }
+
+  /** 등록 사용자로 고른 사람의 주소를 외부 이메일로 또 넣어도 그 사람에게는 한 통만 간다(WD-299). */
+  @Test
+  void distinctAddresses_dropsExternalEmailSameAsRegisteredUser() {
+    // 등록 사용자 주소가 앞, 외부 이메일이 뒤 — deliver 가 잇는 순서 그대로
+    assertThat(
+            EmailDeliveryChannel.distinctAddresses(
+                List.of("qa267low@example.com", " QA267LOW@example.com ", "other@example.com", "")))
+        .containsExactly("qa267low@example.com", "other@example.com");
   }
 }
