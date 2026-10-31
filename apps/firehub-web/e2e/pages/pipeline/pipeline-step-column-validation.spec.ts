@@ -339,3 +339,93 @@ test.describe('스텝 출력 컬럼 저장 검증 (WD-154)', () => {
     expect(payload.steps[0].aiConfig.inputColumns).toEqual(['col1', 'id']);
   });
 });
+
+// WD-359 — 헤더·쿼리 파라미터 행: 같은 이름·이름 없는 행은 객체 설정으로 바뀔 때 조용히 버려졌다.
+test.describe('API 호출 스텝 헤더·쿼리 파라미터 행 저장 검증 (WD-359)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
+  /** 접힌 섹션(헤더·쿼리 파라미터)을 펼쳐 「추가」를 count 번 누른다 — 섹션 제목 버튼의 다음 형제 영역이 그 섹션 내용이다. */
+  async function addRows(page: Page, section: '헤더' | '쿼리 파라미터', count: number) {
+    await page.getByRole('button', { name: section, exact: true }).click();
+    for (let i = 0; i < count; i++) {
+      await page.getByRole('button', { name: '추가', exact: true }).last().click();
+    }
+  }
+
+  test('같은 이름 파라미터·이름 없는 파라미터는 저장을 막고 그 행 아래에 안내한다 — 고치면 저장된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const createCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      createPipelineDetail({ id: 99, steps: [] }),
+      { capture: true },
+    );
+    await openNewStep(page, 'API 호출');
+    await expect(page.getByText('기본 설정')).toBeVisible({ timeout: 10000 });
+    await page.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/items');
+
+    await addRows(page, '쿼리 파라미터', 3);
+    const names = page.getByPlaceholder('파라미터명');
+    const values = page.getByPlaceholder('값');
+    await names.nth(0).fill('tag');
+    await values.nth(0).fill('fire');
+    await names.nth(1).fill('tag');
+    await values.nth(1).fill('rescue');
+    // 3행: 이름은 비우고 값만 넣는다
+    await values.nth(2).fill('orphan');
+
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    await expect(page.getByText('입력 오류를 확인하세요.')).toBeVisible();
+    // 같은 이름은 뒤에 나온 2행에, 이름 없는 3행에는 이름 안내
+    await expect(page.getByRole('alert').filter({ hasText: '같은 이름의 파라미터가 있습니다' })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: '파라미터명을 입력하세요' })).toBeVisible();
+    await expect(names.nth(0)).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(names.nth(1)).toHaveAttribute('aria-invalid', 'true');
+    await expect(names.nth(2)).toHaveAttribute('aria-invalid', 'true');
+    await page.waitForTimeout(300);
+    expect(createCapture.requests).toHaveLength(0);
+
+    // 2행 이름을 바꾸고 3행에 이름을 채우면 오류가 사라지고 세 행이 모두 저장된다
+    await names.nth(1).fill('tag2');
+    await names.nth(2).fill('extra');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const req = await createCapture.waitForRequest();
+    const payload = req.payload as {
+      steps: Array<{ apiConfig: Record<string, unknown> }>;
+    };
+    expect(payload.steps[0].apiConfig.queryParams).toEqual({
+      tag: 'fire',
+      tag2: 'rescue',
+      extra: 'orphan',
+    });
+    // 화면 전용 행 목록 키는 서버로 보내지 않는다
+    expect(payload.steps[0].apiConfig).not.toHaveProperty('queryParamRows');
+    expect(payload.steps[0].apiConfig).not.toHaveProperty('headerRows');
+  });
+
+  test('헤더는 대소문자만 다른 같은 이름도 중복으로 막는다', async ({ authenticatedPage: page }) => {
+    const createCapture = await mockApi(page, 'POST', '/api/v1/pipelines', {}, { capture: true });
+    await openNewStep(page, 'API 호출');
+    await expect(page.getByText('기본 설정')).toBeVisible({ timeout: 10000 });
+    await page.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/items');
+
+    await addRows(page, '헤더', 2);
+    const names = page.getByPlaceholder('Content-Type');
+    await names.nth(0).fill('X-Token');
+    await page.getByPlaceholder('application/json').nth(0).fill('a');
+    await names.nth(1).fill('x-token');
+    await page.getByPlaceholder('application/json').nth(1).fill('b');
+
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    await expect(page.getByRole('alert').filter({ hasText: '같은 이름의 헤더가 있습니다' })).toBeVisible();
+    await expect(names.nth(1)).toHaveAttribute('aria-invalid', 'true');
+    await page.waitForTimeout(300);
+    expect(createCapture.requests).toHaveLength(0);
+  });
+});

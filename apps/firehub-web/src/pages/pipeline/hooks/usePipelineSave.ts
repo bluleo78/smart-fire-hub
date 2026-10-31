@@ -8,6 +8,7 @@ import { handleApiError, isEditConflict } from '@/lib/api-error';
 import type { PipelineStepRequest } from '@/types/pipeline';
 
 import type { EditorAction,PipelineEditorState } from './pipelineEditorReducer';
+import { stripKvRows } from './stepColumnValidation';
 
 interface UsePipelineSaveOptions {
   state: PipelineEditorState;
@@ -60,7 +61,7 @@ export function usePipelineSave({
         .map((tempId) => state.steps.find((s) => s.tempId === tempId)?.name.trim())
         .filter((name): name is string => !!name),
       loadStrategy: step.loadStrategy,
-      apiConfig: step.apiConfig,
+      apiConfig: stripKvRows(step.apiConfig),
       aiConfig: step.aiConfig,
       pythonConfig: step.pythonConfig,
       apiConnectionId: step.apiConnectionId,

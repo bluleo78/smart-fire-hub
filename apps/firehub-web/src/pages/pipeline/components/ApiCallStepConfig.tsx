@@ -47,6 +47,8 @@ import { columnNameLengthError } from '@/lib/validations/dataset';
 import {
   API_PAGE_SIZE_RANGE,
   apiPageSizeError,
+  KV_ROWS_KEYS,
+  kvRowField,
   mappingRowField,
   mappingSourceField,
   mappingTargetField,
@@ -176,6 +178,10 @@ interface KvEditorProps {
   readOnly: boolean;
   keyPlaceholder?: string;
   valuePlaceholder?: string;
+  /** 행 번호로 저장 검증 오류 문구를 조회한다 — 있으면 그 행 아래에 보인다(WD-359) */
+  rowError?: (i: number) => string | undefined;
+  /** 오류 문구 요소 id 접두사(입력의 aria-describedby 연결용) */
+  errorIdPrefix?: string;
 }
 
 function KvEditor({
@@ -184,6 +190,8 @@ function KvEditor({
   readOnly,
   keyPlaceholder = '키',
   valuePlaceholder = '값',
+  rowError,
+  errorIdPrefix = 'kv',
 }: KvEditorProps) {
   const handleAdd = () => onChange([...pairs, { key: '', value: '' }]);
   const handleRemove = (i: number) => onChange(pairs.filter((_, idx) => idx !== i));
@@ -194,13 +202,19 @@ function KvEditor({
 
   return (
     <div className="space-y-1.5">
-      {pairs.map((pair, i) => (
-        <div key={i} className="flex gap-1.5 items-center">
+      {pairs.map((pair, i) => {
+        const message = rowError?.(i);
+        const errorId = `${errorIdPrefix}-error-${i}`;
+        return (
+        <div key={i} className="space-y-0.5">
+        <div className="flex gap-1.5 items-center">
           <Input
             className="h-7 text-xs"
             placeholder={keyPlaceholder}
             value={pair.key}
             disabled={readOnly}
+            aria-invalid={message ? true : undefined}
+            aria-describedby={message ? errorId : undefined}
             onChange={(e) => handleChange(i, 'key', e.target.value)}
           />
           <Input
@@ -208,6 +222,8 @@ function KvEditor({
             placeholder={valuePlaceholder}
             value={pair.value}
             disabled={readOnly}
+            aria-invalid={message ? true : undefined}
+            aria-describedby={message ? errorId : undefined}
             onChange={(e) => handleChange(i, 'value', e.target.value)}
           />
           {!readOnly && (
@@ -221,7 +237,10 @@ function KvEditor({
             </Button>
           )}
         </div>
-      ))}
+        <InlineFieldError id={errorId} message={message} />
+        </div>
+        );
+      })}
       {!readOnly && (
         <Button variant="outline" size="sm" className="h-7 text-xs" onClick={handleAdd}>
           <Plus className="h-3 w-3" />
@@ -343,21 +362,27 @@ export default function ApiCallStepConfig({
   const headersRecord = getConfig<Record<string, string>>(apiConfig, 'headers', {});
   const queryParamsRecord = getConfig<Record<string, string>>(apiConfig, 'queryParams', {});
 
+  // 편집 중 행 목록은 화면 전용 키(headerRows·queryParamRows)로 설정에도 함께 둔다 — 같은 이름·이름 없는 행은 객체 설정(headers·queryParams)에
+  // 담기지 않아 조용히 버려지므로, 저장 전 검증(usePipelineValidation)이 이 목록을 보고 행 아래에 안내한다(WD-359).
+  // 스텝을 바꿨다 돌아와도 편집 중 행이 남도록 초기값도 이 키를 먼저 본다(없으면 서버 설정 객체에서 만든다).
+  const headerRows = getConfig<KvPair[] | undefined>(apiConfig, KV_ROWS_KEYS.headers, undefined);
+  const queryParamRows = getConfig<KvPair[] | undefined>(apiConfig, KV_ROWS_KEYS.queryParams, undefined);
   const [headerPairs, setHeaderPairs] = useState<KvPair[]>(() =>
-    recordToKvPairs(headersRecord),
+    Array.isArray(headerRows) ? headerRows : recordToKvPairs(headersRecord),
   );
   const [queryParamPairs, setQueryParamPairs] = useState<KvPair[]>(() =>
-    recordToKvPairs(queryParamsRecord),
+    Array.isArray(queryParamRows) ? queryParamRows : recordToKvPairs(queryParamsRecord),
   );
 
   const handleHeadersChange = (pairs: KvPair[]) => {
     setHeaderPairs(pairs);
-    update('headers', kvPairsToRecord(pairs));
+    // 한 번에 두 키를 바꾼다 — update 를 두 번 부르면 뒤 호출이 앞 호출의 변경을 덮는다
+    onChange({ ...apiConfig, headers: kvPairsToRecord(pairs), [KV_ROWS_KEYS.headers]: pairs });
   };
 
   const handleQueryParamsChange = (pairs: KvPair[]) => {
     setQueryParamPairs(pairs);
-    update('queryParams', kvPairsToRecord(pairs));
+    onChange({ ...apiConfig, queryParams: kvPairsToRecord(pairs), [KV_ROWS_KEYS.queryParams]: pairs });
   };
 
   /**
@@ -648,6 +673,8 @@ export default function ApiCallStepConfig({
           readOnly={readOnly}
           keyPlaceholder="Content-Type"
           valuePlaceholder="application/json"
+          rowError={(i) => fieldError?.(kvRowField('headers', i))}
+          errorIdPrefix={`${baseId}-header`}
         />
       </Section>
 
@@ -661,6 +688,8 @@ export default function ApiCallStepConfig({
           readOnly={readOnly}
           keyPlaceholder="파라미터명"
           valuePlaceholder="값"
+          rowError={(i) => fieldError?.(kvRowField('queryParams', i))}
+          errorIdPrefix={`${baseId}-query`}
         />
       </Section>
 
