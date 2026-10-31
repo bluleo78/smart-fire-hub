@@ -70,7 +70,7 @@ build_and_push() {
       docker buildx build --platform "$PLATFORM" -t "$REGISTRY/postgres:latest" -f docker/postgres/Dockerfile --push .
       ;;
     minio)
-      log "$app is a public image (minio/minio) — skip build/push, pull only"
+      log "$app is a mirrored image (ghcr.io/bluleo78/smart-fire-hub/minio, 공식 배포 중단) — skip build/push, pull only"
       ;;
     *)
       error "Unknown app: $app (valid: api, web, ai-agent, executor, db-executor, channel, admin, db, minio)"
