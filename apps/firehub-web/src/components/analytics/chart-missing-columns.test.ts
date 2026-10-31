@@ -68,11 +68,18 @@ describe('findMissingChartColumns — 타입별 검사 필드', () => {
     ).toEqual(['month', 'total']);
   });
 
-  it('SCATTER: xAxis·yAxis[0]·groupBy 를 검사하고 yAxis[1..] 은 무시한다', () => {
+  it('SCATTER: 그룹이 있으면 xAxis·yAxis[0]·groupBy, 없으면 xAxis 와 yAxis 전부를 검사한다(WD-308)', () => {
     expect(findMissingChartColumns('SCATTER', cfg({ xAxis: 'sum', yAxis: ['cnt'], groupBy: 'kind' }), COLUMNS)).toEqual(
       ['kind'],
     );
-    expect(findMissingChartColumns('SCATTER', cfg({ xAxis: 'sum', yAxis: ['cnt', 'stale'] }), COLUMNS)).toEqual([]);
+    // 그룹이 있으면 Y 첫 번째만 그리므로 나머지는 보지 않는다
+    expect(
+      findMissingChartColumns('SCATTER', cfg({ xAxis: 'sum', yAxis: ['cnt', 'stale'], groupBy: 'area' }), COLUMNS),
+    ).toEqual([]);
+    // 그룹이 없으면 Y축마다 계열을 그리므로 두 번째 Y 가 사라져도 알린다
+    expect(findMissingChartColumns('SCATTER', cfg({ xAxis: 'sum', yAxis: ['cnt', 'stale'] }), COLUMNS)).toEqual([
+      'stale',
+    ]);
   });
 
   it('MAP: spatialColumn 을 검사하고, 남은 xAxis/yAxis 와 colorByColumn 은 무시한다', () => {

@@ -148,6 +148,9 @@ function recommendChartType(
   return 'BAR';
 }
 
+/** X축도 숫자 축인 차트 타입 — 타입을 바꿀 때 문자 X축을 숫자 컬럼으로 바꾼다(WD-308) */
+const NUMERIC_X_AXIS_TYPES: ReadonlySet<ChartType> = new Set<ChartType>(['SCATTER', 'HISTOGRAM']);
+
 function buildDefaultConfig(
   columns: string[],
   rows: Record<string, unknown>[],
@@ -190,6 +193,12 @@ function buildDefaultConfig(
       yAxis: categoryCols[1] ? [categoryCols[1]] : [],
       valueColumn: numericCols[0],
     };
+  }
+
+  // SCATTER: 두 축 모두 숫자 축 — x=첫 수치 컬럼, y=나머지 수치 컬럼(최대 3) (WD-308).
+  // 숫자 컬럼이 없으면 첫 컬럼을 두고 미리보기가 「숫자 컬럼이어야 합니다」로 안내한다.
+  if (chartType === 'SCATTER') {
+    return { xAxis: numericCols[0] ?? columns[0] ?? '', yAxis: numericCols.slice(1, 4) };
   }
 
   // HISTOGRAM: x=수치 컬럼, yAxis 없음
@@ -628,6 +637,21 @@ export default function ChartBuilderPage() {
     const switchingToOrFromMap = type === 'MAP' || chartType === 'MAP';
     if (queryColumns.length > 0 && (!config.xAxis || switchingToOrFromMap)) {
       setConfig(buildDefaultConfig(queryColumns, queryRows, type));
+      return;
+    }
+    // 산점도·히스토그램은 X축도 숫자 축이다 — 다른 타입에서 고른 문자 X축(예: city)이 남으면 아무것도 그려지지 않으므로,
+    // 숫자 컬럼이 있으면 첫 숫자 컬럼으로 바꾼다(WD-308). 숫자 판단은 빈 값을 세지 않는 isWeightColumn 으로 — 드문드문 빈 측정값 컬럼을
+    // 문자로 오인해 바꾸지 않게. 숫자 컬럼이 없으면 그대로 두고 미리보기가 안내한다.
+    if (NUMERIC_X_AXIS_TYPES.has(type) && queryColumns.length > 0 && !isWeightColumn(config.xAxis, queryRows)) {
+      const numericCols = queryColumns.filter((col) => isWeightColumn(col, queryRows));
+      const numericX = numericCols[0];
+      if (numericX) {
+        // 산점도는 Y 도 숫자여야 한다 — X 로 옮긴 컬럼은 Y 에서 빼고, 그래서 Y 가 비면 다음 숫자 컬럼을 Y 로 둔다
+        const restY = config.yAxis.filter((col) => col !== numericX);
+        const yAxis =
+          type === 'SCATTER' && restY.length === 0 ? numericCols.slice(1, 2) : restY;
+        setConfig({ ...config, xAxis: numericX, yAxis });
+      }
     }
   };
 

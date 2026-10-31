@@ -78,6 +78,13 @@ describe('normalizeChartRows (WD-104)', () => {
     expect(hist).toEqual([{ score: 88.5 }]);
   });
 
+  it('산점도는 그룹이 없으면 Y축 전부를 숫자로 바꾼다 — Y마다 계열을 그린다(WD-308)', () => {
+    const rows = [{ x: '1', a: '2.5', b: '3' }];
+    expect(normalizeChartRows('SCATTER', { xAxis: 'x', yAxis: ['a', 'b'] }, ['x', 'a', 'b'], rows)).toEqual([
+      { x: 1, a: 2.5, b: 3 },
+    ]);
+  });
+
   it('TABLE 차트는 숫자 문자열을 바꾸지 않는다 — TableView 가 String(val) 로 그려 정밀도·앞자리 0 이 보존돼야 한다', () => {
     const rows = [{ code: '007', price: '123456789012.123456', big: '9007199254740993' }];
     const result = normalizeChartRows('TABLE', { xAxis: '', yAxis: [] }, ['code', 'price', 'big'], rows);
