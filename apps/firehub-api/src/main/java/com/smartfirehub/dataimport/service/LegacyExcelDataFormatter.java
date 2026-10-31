@@ -149,6 +149,17 @@ public class LegacyExcelDataFormatter extends DataFormatter {
     return s.indexOf('h') >= 0 || s.indexOf('s') >= 0 || s.contains("am/pm") || s.contains("a/p");
   }
 
+  /**
+   * 계산 결과(캐시 값)가 저장되지 않은 수식 셀의 표시 문자열(WD-380). openpyxl·pandas 등이 만든 xlsx 는 수식만 쓰고 결과를 저장하지 않는 일이
+   * 흔한데, 그대로 두면 빈 값(NULL)으로 들어가 값이 사라진 줄 모른다. 오류 셀 표식으로 감싸 헤더·검증의 오류 셀 경로가 함께 거부하게 한다.
+   */
+  public static final String NO_FORMULA_RESULT = "(수식 결과 없음)";
+
+  /** 결과 없는 수식 셀 표식. */
+  static String noFormulaResultCell() {
+    return errorCell(NO_FORMULA_RESULT);
+  }
+
   /** 엑셀 오류 셀 표식을 만든다. 알 수 없는 코드도 표식으로 감싸 검증에서 거부되게 한다. */
   static String errorCell(String code) {
     return ERROR_CELL_PREFIX + (code == null ? "" : code);

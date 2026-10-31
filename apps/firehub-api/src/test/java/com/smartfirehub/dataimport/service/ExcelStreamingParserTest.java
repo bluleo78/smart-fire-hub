@@ -583,6 +583,54 @@ class ExcelStreamingParserTest {
     assertCellTypesRow(rows.get(1));
   }
 
+  /**
+   * 계산 결과(캐시 값)가 없는 수식 셀은 빈 값이 아니라 「수식 결과 없음」 표식으로 읽는다(WD-380). openpyxl·pandas 가 만든 xlsx 처럼 <v> 가
+   * 없거나 t 없이 빈 <v/> 인 수식이다. 결과가 저장된 수식과, 엑셀이 빈 문자열 결과를 저장한 문자열 수식({@code t="str"} 의 빈 <v/>)은 그대로
+   * 둔다.
+   */
+  @Test
+  void xlsx_formula_without_cached_result_is_marked() throws Exception {
+    XSSFWorkbook wb = new XSSFWorkbook();
+    Sheet sheet = wb.createSheet("data");
+    Row h = sheet.createRow(0);
+    h.createCell(0).setCellValue("label");
+    h.createCell(1).setCellValue("n");
+    h.createCell(2).setCellValue("m");
+    // 1행: 결과가 저장된 수식
+    Row cached = sheet.createRow(1);
+    cached.createCell(0).setCellValue("cached");
+    var c = cached.createCell(1);
+    c.setCellFormula("10*2");
+    wb.getCreationHelper().createFormulaEvaluator().evaluateFormulaCell(c);
+    // 2행: <v> 가 아예 없는 수식(손으로 만든 파일)
+    Row noV = sheet.createRow(2);
+    noV.createCell(0).setCellValue("nocache");
+    noV.createCell(1).setCellFormula("1+1");
+    // 3행: t 없이 빈 <v/> 인 수식(openpyxl 이 쓰는 모양)
+    Row emptyV = sheet.createRow(3);
+    emptyV.createCell(0).setCellValue("openpyxl");
+    var e = (org.apache.poi.xssf.usermodel.XSSFCell) emptyV.createCell(1);
+    e.setCellFormula("1+1");
+    e.getCTCell().setV("");
+    // 4행: 빈 문자열 결과를 저장한 문자열 수식 — 정상 빈 값
+    Row emptyStr = sheet.createRow(4);
+    emptyStr.createCell(0).setCellValue("emptystr");
+    var es = (org.apache.poi.xssf.usermodel.XSSFCell) emptyStr.createCell(1);
+    es.setCellFormula("IF(TRUE,\"\",\"x\")");
+    es.getCTCell().setT(org.openxmlformats.schemas.spreadsheetml.x2006.main.STCellType.STR);
+    es.getCTCell().setV("");
+    // 5행: 앞 칸이 빈 채 마지막 칸에만 결과 없는 수식
+    sheet.createRow(5).createCell(2).setCellFormula("\"x\"&\"y\"");
+
+    List<List<String>> rows = parseAll(write(wb));
+    String marker = LegacyExcelDataFormatter.noFormulaResultCell();
+    assertThat(rows.get(1)).containsExactly("cached", "20");
+    assertThat(rows.get(2)).containsExactly("nocache", marker);
+    assertThat(rows.get(3)).containsExactly("openpyxl", marker);
+    assertThat(rows.get(4).get(1)).isEmpty();
+    assertThat(rows.get(5)).containsExactly("", "", marker);
+  }
+
   @Test
   void xls_cell_types_are_kept_as_excel_shows_them() throws Exception {
     org.apache.poi.hssf.usermodel.HSSFWorkbook wb =

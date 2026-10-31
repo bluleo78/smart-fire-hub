@@ -373,6 +373,10 @@ public class DataValidationService {
     // 엑셀 오류 셀(#DIV/0! 등)은 어떤 타입으로도 받지 않는다 — 예전엔 TEXT 열에 "ERROR:#DIV/0!" 글자로 저장됐다(WD-252).
     // 표식은 엑셀 파서만 만들고 NUL 을 품고 있어 CSV 값과 겹치지 않는다.
     String excelError = LegacyExcelDataFormatter.errorCodeOf(value);
+    if (LegacyExcelDataFormatter.NO_FORMULA_RESULT.equals(excelError)) {
+      // 결과 없는 수식 셀은 오류 값이 아니라 파일을 만든 도구가 결과를 저장하지 않은 것이다 — 고칠 방법을 따로 안내한다(WD-380)
+      throw new Exception("수식 결과가 저장되지 않은 셀입니다 — 엑셀에서 파일을 열어 저장한 뒤 다시 가져와 주세요");
+    }
     if (excelError != null) {
       throw new Exception(
           "엑셀 오류 값(" + excelError + ")은 가져올 수 없습니다 — 원본 파일에서 수식이나 값을 고친 뒤 다시 가져와 주세요");

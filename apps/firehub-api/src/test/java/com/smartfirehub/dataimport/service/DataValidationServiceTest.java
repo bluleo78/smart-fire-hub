@@ -792,6 +792,29 @@ class DataValidationServiceTest {
     assertThat(validateCell(service, col("err", "TEXT", true), "ERROR:#DIV/0!").error()).isNull();
   }
 
+  /** 계산 결과가 저장되지 않은 수식 셀 표식은 어떤 타입으로도 받지 않고, 고칠 방법을 행·열과 함께 알린다(WD-380). */
+  @Test
+  void noFormulaResultCell_isRejectedWithHowToFix() {
+    String marker = LegacyExcelDataFormatter.noFormulaResultCell();
+    for (String type : List.of("TEXT", "INTEGER", "DECIMAL", "DATE", "TIMESTAMP", "BOOLEAN")) {
+      assertThatThrownBy(() -> service.convertValue(marker, type))
+          .as(type)
+          .hasMessage("수식 결과가 저장되지 않은 셀입니다 — 엑셀에서 파일을 열어 저장한 뒤 다시 가져와 주세요");
+    }
+    Map<String, String> row = new HashMap<>();
+    row.put("n", marker);
+    DataValidationService.ValidationResult result =
+        service.validate(List.of(row), List.of(col("n", "DECIMAL", true)));
+    assertThat(result.errorCount()).isEqualTo(1);
+    assertThat(result.errors().get(0))
+        .startsWith("1행 'n' 컬럼")
+        .contains("수식 결과가 저장되지 않은 셀")
+        .doesNotContain("\u0000");
+    // 매핑 경로의 상세 값은 표식이 아니라 사람이 읽는 표시
+    ValidationErrorDetail detail = validateCell(service, col("n", "DECIMAL", true), marker).error();
+    assertThat(detail.value()).isEqualTo("(수식 결과 없음)");
+  }
+
   /** 엑셀 1e20 셀은 평문으로 읽혀 INTEGER 열에서 Long 최댓값으로 포화되지 않고 범위 오류가 난다. */
   @Test
   void convertValue_integer_excelHugeNumber_isRangeError() {
