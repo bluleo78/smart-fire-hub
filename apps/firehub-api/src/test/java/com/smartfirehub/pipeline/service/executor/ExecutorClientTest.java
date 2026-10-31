@@ -191,6 +191,48 @@ class ExecutorClientTest {
   }
 
   /**
+   * 실행 id 를 넘기면 본문에 executionId 로 싣고, 실행기의 잠금 뒤 취소 응답(cancelled=true)을 받는다(WD-466). 실행 id 가 없으면 키를
+   * 싣지 않고, cancelled 가 없는 응답은 false 다(구버전 실행기·db-executor 호환).
+   */
+  @Test
+  void executeSql_withExecutionId_sendsIdAndReadsCancelled() {
+    wireMock.stubFor(
+        post(urlEqualTo("/execute/sql"))
+            .withRequestBody(matchingJsonPath("$.executionId", equalTo("42")))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "{\"success\":false,\"rows\":null,\"columns\":null,\"row_count\":0,"
+                            + "\"execution_log\":\"\",\"error\":\"취소\",\"cancelled\":true}")));
+    wireMock.stubFor(
+        post(urlEqualTo("/execute/sql"))
+            .atPriority(10)
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "{\"success\":true,\"rows\":null,\"columns\":null,\"row_count\":1,"
+                            + "\"execution_log\":\"1 row(s) affected\",\"error\":null}")));
+
+    var cancelled =
+        executorClient()
+            .executeSql("INSERT INTO t SELECT 1", List.of("DELETE FROM \"S\".\"T\""), 42L);
+    assertThat(cancelled.cancelled()).isTrue();
+    assertThat(cancelled.success()).isFalse();
+
+    var plain = executorClient().executeSql("INSERT INTO t SELECT 1", List.of());
+    assertThat(plain.cancelled()).isFalse();
+    assertThat(plain.success()).isTrue();
+    wireMock.verify(
+        1,
+        postRequestedFor(urlEqualTo("/execute/sql"))
+            .withRequestBody(matchingJsonPath("$.executionId")));
+  }
+
+  /**
    * 실행기가 PG 오류의 구조화 필드(pg_error, snake_case)를 보내면 그대로 받는다(WD-111) — 러너가 이 SQLState 로 한국어 안내를 고른다.
    * 구조화 필드가 없는 응답(구버전 실행기)은 pgError=null 로 받아 오류 문자열만 쓴다.
    */

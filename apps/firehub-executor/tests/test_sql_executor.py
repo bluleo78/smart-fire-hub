@@ -662,3 +662,90 @@ def test_pre_statement_timeout_message_text_matches_db_executor():
         pre_statement_timeout_message(1800)
         == "기존 출력 정리(선행 문장)가 1800초 안에 끝나지 않아 취소했습니다."
     )
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# WD-466 — 출력 잠금을 얻은 직후 파이프라인 중지 요청 확인
+# ---------------------------------------------------------------------------------------------------------------
+
+
+def test_stop_requested_after_lock_rolls_back_without_clearing_or_running_body():
+    """잠금 대기 중에 취소된 실행: 잠금을 얻은 뒤 중지를 확인하면 비우기·본문을 보내지 않고 롤백해 cancelled 로 답한다(출력 그대로)."""
+    cursor = MagicMock()
+    conn = make_conn(cursor)
+
+    result = execute_sql(
+        'INSERT INTO "data"."out" ("a") SELECT 1',
+        conn,
+        pre_statements=['DELETE FROM "data"."out"'],
+        stop_requested=lambda: True,
+    )
+
+    assert result.cancelled is True
+    assert result.success is False
+    assert result.pg_error is None and result.db_error is None
+    executed = [c.args[0] for c in cursor.execute.call_args_list]
+    assert LOCK_SQL in executed
+    assert 'DELETE FROM "data"."out"' not in executed
+    assert 'INSERT INTO "data"."out" ("a") SELECT 1' not in executed
+    conn.rollback.assert_called_once()
+    conn.commit.assert_not_called()
+
+
+def test_stop_not_requested_after_lock_runs_normally():
+    """중지 요청이 없으면 확인은 잠금 직후 한 번이고 예전처럼 비우기·본문을 실행해 커밋한다."""
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    conn = make_conn(cursor)
+    calls = []
+
+    def stop():
+        # 확인 시점에는 잠금 문장이 이미 나갔고 비우기는 아직이다.
+        executed = [c.args[0] for c in cursor.execute.call_args_list]
+        calls.append(executed)
+        return False
+
+    result = execute_sql(
+        'INSERT INTO "data"."out" ("a") SELECT 1',
+        conn,
+        pre_statements=['DELETE FROM "data"."out"'],
+        stop_requested=stop,
+    )
+
+    assert result.success and result.cancelled is False
+    assert len(calls) == 1
+    assert calls[0][-1] == LOCK_SQL
+    conn.commit.assert_called_once()
+
+
+def test_stop_check_failure_is_fail_open():
+    """중지 확인이 실패하면(api 장애 등) 중지가 아닌 것으로 보고 그대로 실행한다 — 확인 실패로 정상 실행을 실패시키지 않는다."""
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    conn = make_conn(cursor)
+
+    def broken():
+        raise RuntimeError("api down")
+
+    result = execute_sql(
+        'INSERT INTO "data"."out" ("a") SELECT 1',
+        conn,
+        pre_statements=['DELETE FROM "data"."out"'],
+        stop_requested=broken,
+    )
+
+    assert result.success and result.cancelled is False
+    conn.commit.assert_called_once()
+
+
+def test_no_stop_check_without_pre_statements():
+    """선행 문장이 없으면 잠금도 대기도 없으므로 확인하지 않는다(api 러너 체크포인트로 충분하다)."""
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    conn = make_conn(cursor)
+    stop = MagicMock(return_value=True)
+
+    result = execute_sql('INSERT INTO "data"."out" ("a") SELECT 1', conn, stop_requested=stop)
+
+    assert result.success and result.cancelled is False
+    stop.assert_not_called()

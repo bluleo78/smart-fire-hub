@@ -328,7 +328,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
     verifyNoInteractions(tiberoIncrementalCursor, dbExecutorClient);
     verify(dataTableService, never()).ensureRowTriggers(any());
     ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
-    verify(sqlExecutor).execute(anyList(), sql.capture());
+    verify(sqlExecutor).execute(anyList(), sql.capture(), any());
     assertThat(sql.getValue()).contains("'2026-10-24T01:02:03.123456Z'::timestamptz");
   }
 

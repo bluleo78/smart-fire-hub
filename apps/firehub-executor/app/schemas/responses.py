@@ -78,6 +78,9 @@ class SqlExecuteResponse(BaseModel):
     pg_error: Optional[PgErrorInfo] = None
     # 실행기 공통 오류 구조(WD-77). 실패 때만 채우고 성공이면 None. pg_error 와 병존한다.
     db_error: Optional[DbErrorInfo] = None
+    # 출력 잠금을 얻은 뒤 파이프라인 중지 요청을 확인해 롤백했으면 True(WD-466) — 출력은 손대지 않았고 api 는 스텝을 실패가 아니라
+    # 취소로 기록한다. 실행 id 가 없는 요청에서는 언제나 False.
+    cancelled: bool = False
 
     # 파이프라인 SQL 스텝 SELECT 도 같은 연결 풀·같은 행 값을 내보내므로 같은 직렬화 경계를 둔다(#763).
     @field_serializer("rows")

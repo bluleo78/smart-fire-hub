@@ -306,7 +306,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
     verify(dataTableService, never()).ensureRowTriggers(any());
     verifyNoInteractions(dbExecutorClient);
     // PG 실행 경로(로컬 실행기)가 실제로 불렸다 — 이 테스트가 PG 경로를 지났다는 증거.
-    verify(sqlExecutor).execute(anyList(), anyString());
+    verify(sqlExecutor).execute(anyList(), anyString(), any());
   }
 
   // ── 도우미 ─────────────────────────────────────────────────────────────────────────
