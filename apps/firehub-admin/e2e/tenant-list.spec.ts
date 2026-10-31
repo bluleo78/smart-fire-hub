@@ -86,6 +86,38 @@ test.describe('테넌트 목록', () => {
     await expect(page.getByRole('cell', { name: '남부지사', exact: true })).toBeVisible();
   });
 
+  test('상태 필터로 0건이면 「조건에 맞는 테넌트가 없습니다」와 필터 초기화가 나온다 (WD-318)', async ({ authenticatedPage: page }) => {
+    // 정지된 테넌트가 없는 목록 — 「정지됨」을 고르면 0건이지만 테넌트가 없는 것은 아니다.
+    await mockApi(page, 'GET', '/api/platform/tenants', [TENANTS[0]]);
+    await page.goto('/tenants');
+
+    await page.getByLabel('상태 필터').click();
+    await page.getByRole('option', { name: '정지됨' }).click();
+
+    await expect(page.getByText('조건에 맞는 테넌트가 없습니다.')).toBeVisible();
+    await expect(page.getByText('등록된 테넌트가 없습니다.')).toHaveCount(0);
+    await page.getByRole('button', { name: '필터 초기화' }).click();
+    await expect(page.getByRole('button', { name: /상세 보기/ })).toHaveCount(1);
+    await expect(page.getByLabel('상태 필터')).toHaveText('전체');
+  });
+
+  test('검색어와 상태 필터가 함께 걸린 0건도 필터 초기화로 둘 다 되돌린다 (WD-318)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/tenants', TENANTS);
+    await page.goto('/tenants');
+
+    await page.getByLabel('상태 필터').click();
+    await page.getByRole('option', { name: '정지됨' }).click();
+    await page.getByPlaceholder('이름 또는 식별자로 검색...').fill('한빛');
+    await page.waitForTimeout(400);
+
+    // 「검색 초기화」만 주면 필터가 남아 여전히 비어 보이므로, 필터 결과 문구와 전체 초기화를 준다.
+    await expect(page.getByText('조건에 맞는 테넌트가 없습니다.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '검색 초기화' })).toHaveCount(0);
+    await page.getByRole('button', { name: '필터 초기화' }).click();
+    await expect(page.getByRole('button', { name: /상세 보기/ })).toHaveCount(2);
+    await expect(page.getByPlaceholder('이름 또는 식별자로 검색...')).toHaveValue('');
+  });
+
   test('행 전체가 상세 이동 액션이다 (클릭/Enter)', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/platform/tenants', TENANTS);
     await mockApi(page, 'GET', '/api/platform/tenants/1', TENANTS[0]);
