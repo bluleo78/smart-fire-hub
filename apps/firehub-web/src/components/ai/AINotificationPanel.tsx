@@ -1,5 +1,5 @@
 import { Bell, Bot, CheckCheck, ChevronLeft, ExternalLink, MessageCircle, X } from 'lucide-react';
-import { useEffect, useRef,useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -281,6 +281,32 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
    */
   const pointerInsideRef = useRef(false);
 
+  /**
+   * 패널을 화면 가장자리 안으로 밀어 넣는 가로 보정값(px) — 패널은 종 아이콘 가운데에 맞춰 놓이는데,
+   * 휴대폰 폭에서는 종이 오른쪽에 있어 320px 패널의 오른쪽 약 40px 가 화면 밖으로 나가 「닫기」·알림 시각이
+   * 잘렸다(WD-357). 종 기준 위치(offsetParent 중심)에서 패널이 놓일 자리를 계산해 좌우 여백 안으로 당긴다.
+   */
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [shiftX, setShiftX] = useState(0);
+  useLayoutEffect(() => {
+    const margin = 8; // 화면 가장자리와 띄울 최소 여백
+    function clampToViewport() {
+      const el = panelRef.current;
+      const anchor = el?.offsetParent;
+      if (!el || !anchor) return;
+      const anchorRect = anchor.getBoundingClientRect();
+      const width = el.offsetWidth;
+      // 보정 없이 종 가운데에 맞췄을 때의 왼쪽 끝
+      const naturalLeft = anchorRect.left + anchorRect.width / 2 - width / 2;
+      const maxLeft = window.innerWidth - margin - width;
+      const clampedLeft = Math.max(margin, Math.min(naturalLeft, maxLeft));
+      setShiftX(clampedLeft - naturalLeft);
+    }
+    clampToViewport();
+    window.addEventListener('resize', clampToViewport);
+    return () => window.removeEventListener('resize', clampToViewport);
+  }, []);
+
   // #351: 한 페이지 크기만큼씩 늘려가며 더 불러온다. 예전에는 50건 고정이라
   // 미읽음이 50건을 넘으면 나머지에 도달할 UI 경로가 아예 없었다.
   const [limit, setLimit] = useState(PAGE_SIZE);
@@ -359,11 +385,14 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
       role="dialog"
       aria-label="AI 인사이트 알림"
       aria-modal="false"
-      className="absolute w-80 h-[480px] rounded-xl border border-primary/30 bg-popover shadow-2xl backdrop-blur-xl overflow-hidden transition-all duration-150 flex flex-col"
+      ref={panelRef}
+      className="absolute w-80 max-w-[calc(100vw-1rem)] h-[480px] rounded-xl border border-primary/30 bg-popover shadow-2xl backdrop-blur-xl overflow-hidden transition-[opacity,transform] duration-150 flex flex-col"
       style={{
         top: '100%',
         right: '50%',
         transform: `translateX(50%) translateY(${visible ? '0' : '4px'})`,
+        // 가로 보정은 transform 이 아니라 margin 으로 — 열림 애니메이션(transform·opacity)이 보정까지 미끄러지듯 옮기지 않게
+        marginRight: -shiftX,
         marginTop: 8,
         opacity: visible ? 1 : 0,
       }}
