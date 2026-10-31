@@ -792,6 +792,29 @@ class DataValidationServiceTest {
     assertThat(validateCell(service, col("err", "TEXT", true), "ERROR:#DIV/0!").error()).isNull();
   }
 
+  /** 계산 결과가 저장되지 않은 수식 셀 표식은 어떤 타입으로도 받지 않고, 고칠 방법을 행·열과 함께 알린다(WD-380). */
+  @Test
+  void noFormulaResultCell_isRejectedWithHowToFix() {
+    String marker = LegacyExcelDataFormatter.noFormulaResultCell();
+    for (String type : List.of("TEXT", "INTEGER", "DECIMAL", "DATE", "TIMESTAMP", "BOOLEAN")) {
+      assertThatThrownBy(() -> service.convertValue(marker, type))
+          .as(type)
+          .hasMessage("수식 결과가 저장되지 않은 셀입니다 — 엑셀에서 파일을 열어 저장한 뒤 다시 가져와 주세요");
+    }
+    Map<String, String> row = new HashMap<>();
+    row.put("n", marker);
+    DataValidationService.ValidationResult result =
+        service.validate(List.of(row), List.of(col("n", "DECIMAL", true)));
+    assertThat(result.errorCount()).isEqualTo(1);
+    assertThat(result.errors().get(0))
+        .startsWith("1행 'n' 컬럼")
+        .contains("수식 결과가 저장되지 않은 셀")
+        .doesNotContain("\u0000");
+    // 매핑 경로의 상세 값은 표식이 아니라 사람이 읽는 표시
+    ValidationErrorDetail detail = validateCell(service, col("n", "DECIMAL", true), marker).error();
+    assertThat(detail.value()).isEqualTo("(수식 결과 없음)");
+  }
+
   /** 엑셀 1e20 셀은 평문으로 읽혀 INTEGER 열에서 Long 최댓값으로 포화되지 않고 범위 오류가 난다. */
   @Test
   void convertValue_integer_excelHugeNumber_isRangeError() {
@@ -1125,5 +1148,35 @@ class DataValidationServiceTest {
           .as(value)
           .hasMessageContaining("날짜 형식이 아닙니다: " + value);
     }
+  }
+
+  /**
+   * 소수점 아래 6자리를 넘는 소수 값은 임포트에서 반올림해 받되, 검증 결과에 그 수를 싣는다(WD-371) — 사용자가 「검증 성공」만 보고 다른 값이 저장된 줄 모르는
+   * 일을 막는다. 끝 0(1.2345670)·6자리 이하·무효 행의 값은 세지 않는다.
+   */
+  @Test
+  void decimal_valuesBeyondScale6_areCountedAsRounded() {
+    DatasetColumnResponse name = col("name", "VARCHAR", false);
+    DatasetColumnResponse price = col("price", "DECIMAL", true);
+    List<Map<String, String>> rows =
+        List.of(
+            Map.of("name", "SCALE", "price", "1.23456789"),
+            Map.of("name", "EXACT", "price", "1.234567"),
+            Map.of("name", "TRAIL", "price", "1.2345670"),
+            Map.of("name", "COMMA", "price", "1,234.5678901"),
+            Map.of("name", "", "price", "9.99999999"));
+
+    DataValidationService.ValidationResult plain = service.validate(rows, List.of(name, price));
+    assertThat(plain.validCount()).isEqualTo(4);
+    assertThat(plain.roundedDecimalCount()).isEqualTo(2);
+
+    List<ColumnMappingEntry> mappings =
+        List.of(new ColumnMappingEntry("name", "name"), new ColumnMappingEntry("price", "price"));
+    DataValidationService.ValidationResultWithDetails mapped =
+        service.validateWithMapping(rows, List.of(name, price), mappings);
+    assertThat(mapped.roundedDecimalCount()).isEqualTo(2);
+    // 반올림은 오류가 아니다 — 값은 저장값(scale 6)으로 정규화돼 넘어간다
+    assertThat(mapped.errors()).hasSize(1);
+    assertThat(mapped.validRows().get(0).get(1)).isEqualTo(new BigDecimal("1.234568"));
   }
 }

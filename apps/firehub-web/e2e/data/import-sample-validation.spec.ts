@@ -116,6 +116,43 @@ test.describe('임포트 사전 검증 — 샘플 200행', () => {
   });
 });
 
+/**
+ * 소수 칸 반올림 안내(WD-371) — 소수점 아래 6자리를 넘는 값은 임포트에서 거부하지 않고 6자리로 반올림해 저장한다.
+ * 「검증 성공」만 보고 다른 값이 저장된 줄 모르지 않게, 서버가 센 반올림 값 수를 검증 결과에 보인다. 0 이면 안내가 없다.
+ */
+test.describe('임포트 사전 검증 — 소수점 6자리 초과 반올림 안내 (WD-371)', () => {
+  async function validateWith(page: import('@playwright/test').Page, roundedDecimalValues: number | undefined) {
+    await setupBaseMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/validate`, {
+      sampleSize: 2,
+      validRows: 2,
+      errorRows: 0,
+      sampled: true,
+      errors: [],
+      ...(roundedDecimalValues === undefined ? {} : { roundedDecimalValues }),
+    });
+    await openImportDialogWithFile(page, 'id,price\n1,1.23456789\n2,2.5\n');
+    const validateBtn = page.getByRole('dialog').getByRole('button', { name: '검증' });
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/validate') && r.status() === 200),
+      validateBtn.click(),
+    ]);
+    await expect(page.getByText('검증 성공', { exact: true })).toBeVisible();
+  }
+
+  test('반올림될 값이 있으면 검증 성공과 함께 개수와 예시를 알린다', async ({ authenticatedPage: page }) => {
+    await validateWith(page, 1);
+    await expect(page.getByTestId('import-decimal-rounding')).toHaveText(
+      '소수점 아래 6자리를 넘는 값 1개는 6자리로 반올림해 저장됩니다 (예: 1.23456789 → 1.234568)',
+    );
+  });
+
+  test('반올림될 값이 없거나 이전 서버 응답(필드 없음)이면 안내가 없다', async ({ authenticatedPage: page }) => {
+    await validateWith(page, 0);
+    await expect(page.getByTestId('import-decimal-rounding')).toHaveCount(0);
+  });
+});
+
 test.describe('임포트 잡 실패 — VALIDATING 단계 fail-fast', () => {
   test('중간 불량 행 임포트 실행 시 검증 단계(VALIDATING)가 실패로 표시되고 삽입은 시작되지 않으며 오류 테이블이 렌더된다', async ({ authenticatedPage: page }) => {
     await setupDatasetDetailMocks(page, DATASET_ID);

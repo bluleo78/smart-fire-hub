@@ -274,6 +274,8 @@ public class DataValidationService {
       DateOrderContext dateOrders) {
     List<List<Object>> validRows = new ArrayList<>();
     List<String> errors = new ArrayList<>();
+    // 소수점 아래 6자리를 넘어 저장 때 반올림되는 값의 수 — 검증 결과로 알린다(WD-371)
+    RoundingTally rounding = new RoundingTally();
     int rowIndex = rowIndexBase;
 
     for (Map<String, String> row : rows) {
@@ -283,7 +285,8 @@ public class DataValidationService {
       // 공유한다 — 별도 인라인 변환 루프를 유지하면 두 경로가 갈라져 "검증 통과 == 값 변환 성공"이 어긋나는
       // 미묘한 버그(Task2 핵심 위험)가 생긴다. 에러는 기존과 동일한 "행/컬럼/사유" 구조의 String 메시지로 조립한다.
       List<ValidationErrorDetail> rowErrors = new ArrayList<>();
-      List<Object> convertedRow = convertRowOrNull(row, columns, rowIndex, rowErrors, dateOrders);
+      List<Object> convertedRow =
+          convertRowOrNull(row, columns, rowIndex, rowErrors, dateOrders, rounding);
 
       if (convertedRow != null) {
         validRows.add(convertedRow);
@@ -300,7 +303,8 @@ public class DataValidationService {
       }
     }
 
-    return new ValidationResult(validRows, errors, rows.size(), validRows.size(), errors.size());
+    return new ValidationResult(
+        validRows, errors, rows.size(), validRows.size(), errors.size(), rounding.count);
   }
 
   /** 컬럼 데이터타입이 DATE 또는 TIMESTAMP인지 판정한다. 무의미한 날짜없음 표식 정규화는 이 두 타입에 한정한다. */
@@ -369,6 +373,10 @@ public class DataValidationService {
     // 엑셀 오류 셀(#DIV/0! 등)은 어떤 타입으로도 받지 않는다 — 예전엔 TEXT 열에 "ERROR:#DIV/0!" 글자로 저장됐다(WD-252).
     // 표식은 엑셀 파서만 만들고 NUL 을 품고 있어 CSV 값과 겹치지 않는다.
     String excelError = LegacyExcelDataFormatter.errorCodeOf(value);
+    if (LegacyExcelDataFormatter.NO_FORMULA_RESULT.equals(excelError)) {
+      // 결과 없는 수식 셀은 오류 값이 아니라 파일을 만든 도구가 결과를 저장하지 않은 것이다 — 고칠 방법을 따로 안내한다(WD-380)
+      throw new Exception("수식 결과가 저장되지 않은 셀입니다 — 엑셀에서 파일을 열어 저장한 뒤 다시 가져와 주세요");
+    }
     if (excelError != null) {
       throw new Exception(
           "엑셀 오류 값(" + excelError + ")은 가져올 수 없습니다 — 원본 파일에서 수식이나 값을 고친 뒤 다시 가져와 주세요");
@@ -593,6 +601,8 @@ public class DataValidationService {
 
     List<List<Object>> validRows = new ArrayList<>();
     List<ValidationErrorDetail> errors = new ArrayList<>();
+    // 소수점 아래 6자리를 넘어 저장 때 반올림되는 값의 수 — 검증 결과로 알린다(WD-371)
+    RoundingTally rounding = new RoundingTally();
     int rowIndex = rowIndexBase;
 
     for (Map<String, String> row : rows) {
@@ -604,14 +614,14 @@ public class DataValidationService {
       // Pass1(검증)과 Pass2(삽입의 toRows)가 동일한 변환 로직(convertRowOrNull)을 호출한다 —
       // 두 벌로 갈라지면 "검증 통과 == 값 변환 성공"이 어긋나는 미묘한 버그가 생긴다(Task2 핵심 위험).
       List<Object> convertedRow =
-          convertRowOrNull(remappedRow, columns, rowIndex, errors, dateOrders);
+          convertRowOrNull(remappedRow, columns, rowIndex, errors, dateOrders, rounding);
       if (convertedRow != null) {
         validRows.add(convertedRow);
       }
     }
 
     return new ValidationResultWithDetails(
-        validRows, errors, rows.size(), validRows.size(), errors.size());
+        validRows, errors, rows.size(), validRows.size(), errors.size(), rounding.count);
   }
 
   /**
@@ -656,7 +666,7 @@ public class DataValidationService {
       rowIndex++;
       Map<String, String> effectiveRow = hasMappings ? remapRow(row, columnMapping) : row;
       List<Object> convertedRow =
-          convertRowOrNull(effectiveRow, columns, rowIndex, discardedErrors, dateOrders);
+          convertRowOrNull(effectiveRow, columns, rowIndex, discardedErrors, dateOrders, null);
       if (convertedRow == null) {
         // Pass1(검증)을 통과한 행이 Pass2(삽입)에서 변환 실패하는 것은 불변식 위반이다.
         // 조용히 빈 행을 삽입하면 데이터 정합성이 깨지므로 즉시 실패시킨다.
@@ -704,9 +714,11 @@ public class DataValidationService {
       List<DatasetColumnResponse> columns,
       int rowIndex,
       List<ValidationErrorDetail> errorSink,
-      DateOrderContext dateOrders) {
+      DateOrderContext dateOrders,
+      RoundingTally rounding) {
     List<Object> convertedRow = new ArrayList<>();
     boolean rowValid = true;
+    int roundedInRow = 0;
 
     for (DatasetColumnResponse column : columns) {
       String rawValue = row.get(column.columnName());
@@ -747,6 +759,9 @@ public class DataValidationService {
                     rawValue.trim(), column.dataType(), column.columnName(), dateOrders, rowIndex),
                 column.dataType(),
                 column.maxLength());
+        if (rawDecimalRounds(rawValue.trim(), column.dataType())) {
+          roundedInRow++;
+        }
         convertedRow.add(convertedValue);
       } catch (Exception e) {
         // 엑셀 오류 셀 표식은 사용자에게 엑셀이 보여 주는 모양(#DIV/0!)으로 돌려준다.
@@ -760,7 +775,33 @@ public class DataValidationService {
       }
     }
 
+    // 무효 행은 저장되지 않으므로 반올림 수에 넣지 않는다
+    if (rowValid && rounding != null) {
+      rounding.count += roundedInRow;
+    }
     return rowValid ? convertedRow : null;
+  }
+
+  /**
+   * 소수 칸 값이 저장 때 반올림되는가(WD-371) — 임포트는 파일 값(엑셀 계산값 0.333333333333333 등)을 받기 위해 NUMERIC(18,6) 에 맞춰
+   * 반올림해 저장한다(관대 모드, {@link ColumnPhysicalType#enforceLimits}). 다만 사용자가 모른 채 다른 값이 들어가지 않도록, 끝 0 을
+   * 뺀 소수부가 6자리를 넘는 값을 세어 검증 결과로 알린다. 변환·한도 검사를 이미 통과한 값에만 부른다.
+   */
+  private static boolean rawDecimalRounds(String value, String dataType) {
+    if (!"DECIMAL".equals(dataType)) {
+      return false;
+    }
+    try {
+      BigDecimal bd = new BigDecimal(value.replace(",", ""));
+      return bd.stripTrailingZeros().scale() > ColumnPhysicalType.DECIMAL_SCALE;
+    } catch (NumberFormatException e) {
+      return false;
+    }
+  }
+
+  /** 검증 한 번 동안 반올림될 소수 값의 수를 모으는 칸(WD-371). 삽입 변환(toRows)은 세지 않는다(null). */
+  private static final class RoundingTally {
+    int count;
   }
 
   public PkValidationResult validatePrimaryKeys(
@@ -856,12 +897,17 @@ public class DataValidationService {
       List<String> errors,
       int totalRows,
       int validCount,
-      int errorCount) {}
+      int errorCount,
+      int roundedDecimalCount) {}
 
+  /**
+   * 매핑 경로 검증 결과. {@code roundedDecimalCount} 는 유효 행 중 소수점 아래 6자리를 넘어 저장 때 반올림되는 소수 값의 수(WD-371).
+   */
   public record ValidationResultWithDetails(
       List<List<Object>> validRows,
       List<ValidationErrorDetail> errors,
       int totalRows,
       int validCount,
-      int errorCount) {}
+      int errorCount,
+      int roundedDecimalCount) {}
 }

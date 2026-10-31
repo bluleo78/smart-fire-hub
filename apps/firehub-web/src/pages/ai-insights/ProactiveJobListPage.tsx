@@ -22,7 +22,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useDisableProactiveJob, useExecuteProactiveJob, useProactiveJobs, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
-import { handleApiError, isForbiddenError } from '@/lib/api-error';
+import { extractApiError, handleApiError, isForbiddenError, isJobAlreadyRunning } from '@/lib/api-error';
 import { cronToLabel } from '@/lib/cron-label';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { parseUtcDate, timeAgo } from '@/lib/formatters';
@@ -126,7 +126,20 @@ export default function ProactiveJobListPage() {
           },
         });
       },
-      onError: () => toast.error('실행에 실패했습니다.'),
+      onError: (err) => {
+        // 이미 실행 중(409)이면 실패가 아니라 진행 중인 실행이 있다는 안내와 「실행 이력」 바로가기를 보인다(WD-368).
+        // 그 밖의 오류(권한 등)도 사유 없는 「실패」 대신 서버 안내를 보인다 — 상세 화면과 같게.
+        if (isJobAlreadyRunning(err)) {
+          toast.error(extractApiError(err, '이미 실행 중인 작업입니다.'), {
+            action: {
+              label: '실행 이력',
+              onClick: () => navigate(`/ai-insights/jobs/${job.id}?tab=executions`),
+            },
+          });
+          return;
+        }
+        handleApiError(err, '실행에 실패했습니다.');
+      },
     });
   };
 

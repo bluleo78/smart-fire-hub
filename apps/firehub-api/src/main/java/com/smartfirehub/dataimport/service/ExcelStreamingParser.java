@@ -502,14 +502,68 @@ public final class ExcelStreamingParser {
       this.rows = rows;
     }
 
+    // 결과 없는 수식 셀 감지(WD-380) — POI 는 수식 셀의 캐시 값(<v>)만 읽어, 값이 없으면 셀을 내보내지 않거나 빈 값으로 내보낸다.
+    /** 지금 읽는 셀의 참조(A1 형식). */
+    private String cellRef;
+
+    /** 지금 읽는 셀에 수식(<f>)이 있는지. */
+    private boolean cellHasFormula;
+
+    /** 지금 읽는 셀이 문자열 결과 수식({@code t="str"})인지 — 빈 문자열 결과(=IF(…,"",…))는 엑셀도 빈 <v/> 로 쓴다. */
+    private boolean cellIsStringFormula;
+
+    /** 지금 읽는 셀에 결과 값 요소(<v>·<is>)가 있는지. */
+    private boolean cellHasResultElement;
+
+    /** 지금 읽는 셀에 비어 있지 않은 결과 값이 있는지. */
+    private boolean cellHasResult;
+
+    /** 결과 값 요소(<v>·<is>) 안을 읽는 중인지. */
+    private boolean inResult;
+
     @Override
     public void startElement(
         String uri, String localName, String qName, org.xml.sax.Attributes attributes)
         throws SAXException {
       if ("c".equals(localName)) {
         rows.currentCellIsXssfError = "e".equals(attributes.getValue("t"));
+        cellRef = attributes.getValue("r");
+        cellIsStringFormula = "str".equals(attributes.getValue("t"));
+        cellHasFormula = false;
+        cellHasResultElement = false;
+        cellHasResult = false;
+      } else if ("f".equals(localName)) {
+        cellHasFormula = true;
+      } else if ("v".equals(localName) || "is".equals(localName)) {
+        inResult = true;
+        cellHasResultElement = true;
       }
       super.startElement(uri, localName, qName, attributes);
+    }
+
+    @Override
+    public void characters(char[] ch, int start, int length) throws SAXException {
+      if (inResult && length > 0) cellHasResult = true;
+      super.characters(ch, start, length);
+    }
+
+    @Override
+    public void endElement(String uri, String localName, String qName) throws SAXException {
+      super.endElement(uri, localName, qName);
+      if ("v".equals(localName) || "is".equals(localName)) {
+        inResult = false;
+      } else if ("c".equals(localName) && cellHasFormula && isMissingFormulaResult()) {
+        rows.markNoFormulaResult(cellRef);
+      }
+    }
+
+    /**
+     * 수식 셀에 결과가 없는지. <v> 가 아예 없거나(손으로 만든 파일 등), 빈 <v/> 인데 문자열 결과 수식이 아니면(openpyxl 은 t 없이 빈 <v/> 를
+     * 쓴다) 결과가 없는 것이다. 문자열 결과 수식의 빈 <v/> 는 엑셀이 빈 문자열 결과를 저장한 모양이라 정상 값으로 둔다.
+     */
+    private boolean isMissingFormulaResult() {
+      if (!cellHasResultElement) return true;
+      return !cellHasResult && !cellIsStringFormula;
     }
   }
 
@@ -800,6 +854,25 @@ public final class ExcelStreamingParser {
       }
       currentCellIsXssfError = false;
       currentRow.add(value == null ? "" : value);
+    }
+
+    /**
+     * 결과 없는 수식 셀을 표식으로 둔다(WD-380). POI 가 그 칸을 빈 값으로 이미 내보냈으면 그 자리를 바꾸고, 내보내지 않았으면 그 열에 새로 넣는다 — 검증이
+     * 「수식 결과가 저장되지 않은 셀」로 행·칸과 함께 거부한다.
+     */
+    void markNoFormulaResult(String cellReference) {
+      if (currentRow == null) return;
+      int colIdx =
+          cellReference == null ? currentRow.size() : new CellAddress(cellReference).getColumn();
+      String marker = LegacyExcelDataFormatter.noFormulaResultCell();
+      if (colIdx < currentRow.size()) {
+        currentRow.set(colIdx, marker);
+        return;
+      }
+      while (currentRow.size() < colIdx) {
+        currentRow.add("");
+      }
+      currentRow.add(marker);
     }
   }
 

@@ -547,7 +547,7 @@ public class ProactiveJobService {
   public void tryAcquireRunSlot(Long jobId) {
     AtomicBoolean running = runningJobs.computeIfAbsent(jobId, k -> new AtomicBoolean(false));
     if (!running.compareAndSet(false, true)) {
-      throw new ProactiveJobAlreadyRunningException("Job이 이미 실행 중입니다: " + jobId);
+      throw new ProactiveJobAlreadyRunningException();
     }
   }
 

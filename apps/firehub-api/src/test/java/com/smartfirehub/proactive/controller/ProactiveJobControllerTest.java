@@ -265,14 +265,17 @@ class ProactiveJobControllerTest {
   @Test
   void executeJob_whenAlreadyRunning_returnsConflict() throws Exception {
     mockAuth("proactive:write");
-    doThrow(new ProactiveJobAlreadyRunningException("Job이 이미 실행 중입니다: 10"))
+    doThrow(new ProactiveJobAlreadyRunningException())
         .when(proactiveJobService)
         .tryAcquireRunSlot(10L);
 
     mockMvc
         .perform(
             post("/api/v1/proactive/jobs/10/execute").header("Authorization", "Bearer valid-token"))
-        .andExpect(status().isConflict());
+        .andExpect(status().isConflict())
+        // 영어 용어·내부 번호 없는 한국어 안내와 화면이 구분할 코드(WD-368)
+        .andExpect(jsonPath("$.message").value("이미 실행 중인 작업입니다. 끝나면 실행 이력에서 결과를 확인하세요"))
+        .andExpect(jsonPath("$.code").value("PROACTIVE_JOB_ALREADY_RUNNING"));
   }
 
   @Test

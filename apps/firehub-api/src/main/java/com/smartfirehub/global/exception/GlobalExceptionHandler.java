@@ -754,7 +754,14 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(ProactiveJobAlreadyRunningException.class)
   public ResponseEntity<ErrorResponse> handleProactiveJobAlreadyRunning(
       ProactiveJobAlreadyRunningException ex, HttpServletRequest request) {
-    ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
+    // 코드를 실어 화면이 같은 409 인 다른 충돌과 구분해 「실행 이력」 바로가기를 붙일 수 있게 한다(WD-368)
+    ErrorResponse response =
+        buildError(
+            HttpStatus.CONFLICT,
+            ex.getMessage(),
+            null,
+            request,
+            ProactiveJobAlreadyRunningException.CODE);
     return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }
 

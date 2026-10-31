@@ -23,7 +23,7 @@ import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useCreateProactiveTemplate, useDeleteProactiveJob, useDeleteProactiveTemplate, useDisableProactiveJob, useExecuteProactiveJob, useFetchLatestProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { handleApiError, isEditConflict, isForbiddenError } from '@/lib/api-error';
+import { extractApiError, handleApiError, isEditConflict, isForbiddenError, isJobAlreadyRunning } from '@/lib/api-error';
 import { goalTemplateName, type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
 
 import { OwnerIneligibleBadge } from './components/OwnerIneligibleBadge';
@@ -361,7 +361,19 @@ export default function ProactiveJobDetailPage() {
           },
         });
       },
-      onError: (err) => handleApiError(err, '실행에 실패했습니다.'),
+      onError: (err) => {
+        // 이미 실행 중(409)이면 목록 화면과 같은 안내에 「실행 이력」 탭 바로가기를 붙인다(WD-368)
+        if (isJobAlreadyRunning(err)) {
+          toast.error(extractApiError(err, '이미 실행 중인 작업입니다.'), {
+            action: {
+              label: '실행 이력',
+              onClick: () => setSearchParams({ tab: 'executions' }),
+            },
+          });
+          return;
+        }
+        handleApiError(err, '실행에 실패했습니다.');
+      },
     });
   };
 
