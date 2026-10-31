@@ -220,14 +220,90 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
   }
 
   @Test
-  void execute_selectWithMaxRowsEqualToRowCount_truncatedTrue() {
-    // maxRows와 결과 행 수가 같으면 truncated=true (rows.size() >= maxRows)
-    // 3개 행이 있고 maxRows=3 → truncated=true
+  void execute_selectWithMaxRowsEqualToRowCount_notTruncated() {
+    // 결과가 정확히 maxRows 행이면 잘린 것이 아니다(WD-454 — 예전엔 rows.size() >= maxRows 로 true 였다).
+    // 3개 행이 있고 maxRows=3 → truncated=false, 3행 모두 반환
     AnalyticsQueryResponse response =
         executionService.execute("SELECT * FROM data.exec_ext_test", 3, false);
 
     assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(3);
+    assertThat(response.truncated()).isFalse();
+  }
+
+  // =========================================================================
+  // WD-454 — truncated 는 「상한을 넘는 결과가 실제로 있었는지」다(상한+1 행을 읽어 판정)
+  // =========================================================================
+
+  /** 사용자 LIMIT 없이 정확히 상한(1000)행 → 잘림 아님, 1000행 모두 반환. */
+  @Test
+  void execute_exactlyCapRowsWithoutUserLimit_notTruncated() {
+    AnalyticsQueryResponse response =
+        executionService.execute("SELECT g FROM generate_series(1,1000) g", 1000, true);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(1000);
+    assertThat(response.totalRows()).isEqualTo(1000);
+    assertThat(response.truncated()).isFalse();
+  }
+
+  /** 상한+1 행 → 잘림, 응답은 상한 행까지만. */
+  @Test
+  void execute_capPlusOneRows_truncatedWithCapRows() {
+    AnalyticsQueryResponse response =
+        executionService.execute("SELECT g FROM generate_series(1,1001) g", 1000, true);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(1000);
+    // totalRows 는 COUNT 가 아니라 응답에 실은 행 수다.
+    assertThat(response.totalRows()).isEqualTo(1000);
     assertThat(response.truncated()).isTrue();
+  }
+
+  /** 더 큰 결과에 사용자가 LIMIT 상한(1000)을 직접 썼다 → 요청한 만큼 받았으므로 잘림 아님. */
+  @Test
+  void execute_userLimitEqualToCapOnBiggerResult_notTruncated() {
+    AnalyticsQueryResponse response =
+        executionService.execute(
+            "SELECT g FROM generate_series(1,3000) g ORDER BY g LIMIT 1000", 1000, true);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(1000);
+    assertThat(response.truncated()).isFalse();
+  }
+
+  /** 사용자 LIMIT 이 상한보다 크면 존중한다(#749) — 3000행 모두 반환, 서버가 자르지 않았으므로 잘림 아님. */
+  @Test
+  void execute_userLimitAboveCapOnBiggerResult_honoredNotTruncated() {
+    AnalyticsQueryResponse response =
+        executionService.execute(
+            "SELECT g FROM generate_series(1,3000) g ORDER BY g LIMIT 5000", 1000, true);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(3000);
+    assertThat(response.truncated()).isFalse();
+  }
+
+  /** 사용자 LIMIT 이 상한보다 크지만 결과가 정확히 상한만큼 → 잘림 아님. */
+  @Test
+  void execute_userLimitAboveCapOnExactlyCapResult_notTruncated() {
+    AnalyticsQueryResponse response =
+        executionService.execute("SELECT g FROM generate_series(1,1000) g LIMIT 5000", 1000, true);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(1000);
+    assertThat(response.truncated()).isFalse();
+  }
+
+  /** 작은 결과 → 잘림 아님. */
+  @Test
+  void execute_smallResult_notTruncated() {
+    AnalyticsQueryResponse response =
+        executionService.execute("SELECT g FROM generate_series(1,50) g", 1000, true);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(50);
+    assertThat(response.truncated()).isFalse();
   }
 
   // =========================================================================

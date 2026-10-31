@@ -124,7 +124,7 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching }: WidgetC
         )}
       </div>
       {/* 차트 데이터는 행 상한(1000행)까지만 실행된다 — 상한에 닿았으면(서버 truncated) 그린 것이 전부가 아닐 수 있음을 알린다
-          (WD-320, 쿼리 편집기 「상위 N행」과 같은 뜻). 서버는 정확히 상한만큼인 결과도 truncated 로 주므로 「있을 수 있음」으로 쓴다. */}
+          (WD-320, 쿼리 편집기 「상위 N행」과 같은 뜻). 서버는 상한을 넘는 결과가 실제로 있을 때만 truncated 로 준다(WD-454 — 상한+1 행으로 판정). */}
       {queryResult.truncated && (
         <p className="shrink-0 pt-1 text-xs text-muted-foreground">
           상위 {queryResult.rows.length}행까지만 표시 — 결과가 더 있을 수 있습니다

@@ -252,7 +252,8 @@ public class GuardedSqlExecutor {
       throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
     }
     // Tibero 테넌트(WD-76)는 판정한 같은 문자열을 db-executor 읽기 전용 조회로 한 행만 읽는다 — PG executor 로 보내면 Tibero 데이터가
-    // 아닌 PG 를 읽는다. 폴러가 쓰는 결과 모양(QueryExecuteResult)으로 맞춘다: truncated 는 실행기가 정한 값(행 수 >= 1 이면 true),
+    // 아닌 PG 를 읽는다. 폴러가 쓰는 결과 모양(QueryExecuteResult)으로 맞춘다: truncated 는 실행기가 정한 값(1행 초과 시 true,
+    // WD-454),
     // 실패는 success=false + 사용자 문구(폴러는 rows 가 비어 건너뛴다). PG 폴백은 없다.
     if (tiberoQueryService.isTibero()) {
       return tiberoQueryService.run(sql, 1).toQueryExecuteResult();

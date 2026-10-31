@@ -33,10 +33,23 @@ public final class AdhocSqlStatements {
 
   /** SELECT 류를 정적 Statement 로 실행해 jOOQ {@link Result} 로 돌려준다. */
   public static Result<Record> fetch(DSLContext dsl, String sql) {
+    return fetch(dsl, sql, 0);
+  }
+
+  /**
+   * {@link #fetch(DSLContext, String)} 와 같되 드라이버가 최대 {@code maxRows} 행만 읽게 한다(0 = 제한 없음).
+   *
+   * <p>SQL 문자열은 바꾸지 않는다(판정 = 실행 유지). 서버가 행 상한을 붙인 조회에서 상한+1 행까지만 읽어 잘림 여부를 정확히 판정하는 안전장치다(WD-454).
+   * 사용자가 최상위 {@code LIMIT}/{@code FETCH FIRST} 를 직접 쓴 조회(#749 존중)에는 0 을 넘겨 조이지 않는다.
+   */
+  public static Result<Record> fetch(DSLContext dsl, String sql, int maxRows) {
     return dsl.connectionResult(
         conn -> {
           try (Statement st = conn.createStatement()) {
             st.setEscapeProcessing(false);
+            if (maxRows > 0) {
+              st.setMaxRows(maxRows);
+            }
             try (ResultSet rs = st.executeQuery(sql)) {
               // 다차원 배열은 jOOQ 가 1차원으로 읽다 null 로 잃으므로 가로채 중첩 리스트로 살린다(#757).
               // PostGIS 타입 이름은 커넥션 캐시 상태와 무관하게 한 표기로 고정해 jOOQ 가 늘 PGobject 로 읽게 한다(#759)

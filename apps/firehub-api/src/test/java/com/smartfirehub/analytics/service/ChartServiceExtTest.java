@@ -97,6 +97,79 @@ class ChartServiceExtTest extends IntegrationTestBase {
     assertThat(result.totalRows()).isGreaterThan(0);
   }
 
+  // ── WD-454: 차트 데이터·대시보드 위젯 경로(상한 1000행)의 truncated 는 상한을 넘었을 때만 true ──────
+
+  /** 차트의 저장 쿼리를 sql 로 만들고 getChartData 결과의 쿼리 응답을 돌려준다. */
+  private AnalyticsQueryResponse chartDataFor(String sql) {
+    SavedQueryResponse sq =
+        savedQueryService.create(
+            new CreateSavedQueryRequest("WD454 SQ", null, sql, null, null, false), ownerUserId);
+    ChartResponse chart =
+        chartService.create(
+            new CreateChartRequest("WD454 Chart", null, sq.id(), "LINE", Map.of(), false),
+            ownerUserId);
+    return chartService.getChartData(chart.id(), ownerUserId).queryResult();
+  }
+
+  @Test
+  void getChartData_exactlyCapRows_notTruncated() {
+    AnalyticsQueryResponse r = chartDataFor("SELECT g FROM generate_series(1,1000) g");
+
+    assertThat(r.error()).isNull();
+    assertThat(r.rows()).hasSize(1000);
+    assertThat(r.totalRows()).isEqualTo(1000);
+    assertThat(r.truncated()).isFalse();
+  }
+
+  @Test
+  void getChartData_overCapRows_truncatedWithCapRows() {
+    AnalyticsQueryResponse r = chartDataFor("SELECT g FROM generate_series(1,3000) g");
+
+    assertThat(r.error()).isNull();
+    assertThat(r.rows()).hasSize(1000);
+    assertThat(r.totalRows()).isEqualTo(1000);
+    assertThat(r.truncated()).isTrue();
+  }
+
+  @Test
+  void getChartData_userLimitEqualToCap_notTruncated() {
+    AnalyticsQueryResponse r = chartDataFor("SELECT g FROM generate_series(1,3000) g LIMIT 1000");
+
+    assertThat(r.rows()).hasSize(1000);
+    assertThat(r.truncated()).isFalse();
+  }
+
+  /** 사용자 LIMIT 이 상한보다 크면 존중한다(#749) — 서버가 자르지 않았으므로 잘림 아님. */
+  @Test
+  void getChartData_userLimitAboveCap_honoredNotTruncated() {
+    AnalyticsQueryResponse r = chartDataFor("SELECT g FROM generate_series(1,3000) g LIMIT 5000");
+
+    assertThat(r.rows()).hasSize(3000);
+    assertThat(r.truncated()).isFalse();
+  }
+
+  @Test
+  void getChartData_smallResult_notTruncated() {
+    AnalyticsQueryResponse r = chartDataFor("SELECT g FROM generate_series(1,50) g");
+
+    assertThat(r.rows()).hasSize(50);
+    assertThat(r.truncated()).isFalse();
+  }
+
+  /** 대시보드 위젯 캐시 채움 경로도 같은 규칙이다. */
+  @Test
+  void executeQueryForCache_exactlyCapRows_notTruncated_overCap_truncated() {
+    AnalyticsQueryResponse exact =
+        chartService.executeQueryForCache(viewer(), "SELECT g FROM generate_series(1,1000) g");
+    AnalyticsQueryResponse over =
+        chartService.executeQueryForCache(viewer(), "SELECT g FROM generate_series(1,1001) g");
+
+    assertThat(exact.rows()).hasSize(1000);
+    assertThat(exact.truncated()).isFalse();
+    assertThat(over.rows()).hasSize(1000);
+    assertThat(over.truncated()).isTrue();
+  }
+
   // ── create → ChartNotFoundException after insert (L51) — 간접 검증 ─────────
   // NOTE: insert 후 findById가 empty를 반환하는 상황은 DB 정합성 위반이므로
   // 직접 테스트 불가. 대신 정상 경로가 동작함을 검증한다.

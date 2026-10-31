@@ -11,7 +11,7 @@ import java.util.Map;
  * @param columns 정규화(소문자)된 컬럼명, 실패면 null
  * @param rows 결과 행(컬럼명 → 변환된 값), 실패면 null
  * @param rowCount 읽은 행 수, 실패면 0
- * @param truncated 행 수가 {@code maxRows} 에 닿았는지(더 있을 수 있음)
+ * @param truncated 결과가 {@code maxRows} 행을 넘어 잘렸는지(상한+1 행을 읽어 판정, WD-454)
  * @param queryType 문장 종류 — 이 창구는 조회만 받으므로 성공이면 SELECT, 실패면 UNKNOWN
  * @param affectedRows 영향 행 수 — 조회라 항상 0
  * @param executionTimeMs 실행 시간(ms)
