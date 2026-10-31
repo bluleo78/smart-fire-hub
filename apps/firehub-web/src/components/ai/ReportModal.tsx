@@ -116,10 +116,14 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="sm:max-w-5xl h-[85vh] flex flex-col p-0 gap-0" showCloseButton={false}>
         {/* 헤더 — 제목, 상태 뱃지, 시간, 액션 버튼 */}
-        <DialogHeader className="flex flex-row items-center justify-between px-6 py-4 border-b shrink-0 space-y-0">
-          <div className="flex items-center gap-3">
+        {/* WD-351: 좁은 폭(390·375)에서 버튼 묶음은 줄지 않고 제목 쪽만 줄어 「리포트 / #2」「1시간 / 전」처럼 단어 중간에서
+            쪼개졌다. 왼쪽 묶음에 min-w-0 을 두고 제목·배지는 줄지 않게(제목은 아주 긴 번호만 9rem 에서 말줄임), 덜 중요한
+            시각만 한 줄 말줄임(전체는 툴팁)하며, 버튼 묶음은 shrink-0 으로 고정한다.
+            휴대폰 폭에서는 좌우 여백을 줄여 제목 자리를 넓힌다. */}
+        <DialogHeader className="flex flex-row items-center justify-between gap-2 px-4 sm:px-6 py-4 border-b shrink-0 space-y-0">
+          <div className="flex min-w-0 items-center gap-2 overflow-hidden sm:gap-3">
             {/* 의도된 예외(#788): 배지·시간·아이콘 버튼과 한 줄에 놓이는 툴바형 헤더라 heading-card(20px) 대신 16px 를 유지한다 */}
-            <DialogTitle className="text-base font-semibold">
+            <DialogTitle className="max-w-[9rem] shrink-0 truncate text-base font-semibold">
               리포트 #{executionId}
             </DialogTitle>
             <DialogDescription className="sr-only">AI 프로액티브 작업의 리포트 내용을 확인합니다.</DialogDescription>
@@ -129,7 +133,7 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
                 <Badge variant={getStatusBadgeVariant(execution.status)}>
                   {getStatusLabel(execution.status)}
                 </Badge>
-                <span className="text-xs text-muted-foreground">
+                <span className="min-w-0 truncate text-xs text-muted-foreground" title={timeAgo(execution.startedAt)}>
                   {timeAgo(execution.startedAt)}
                 </span>
               </>
@@ -137,7 +141,7 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
           </div>
 
           {/* 액션 버튼 그룹 — 인쇄, PDF, 새 탭, 닫기 */}
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <Button
               variant="ghost"
               size="icon"
