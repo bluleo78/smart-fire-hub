@@ -243,5 +243,49 @@ test.describe('AI 알림 패널', () => {
       expect(windowPrinted).toBe(0);
       await expect(modal).toBeVisible();
     });
+
+    /**
+     * 회귀: WD-351 — 휴대폰 폭에서 버튼 묶음은 줄지 않고 제목 쪽만 줄어, 머리의 「리포트 #3」과 시각 「… 전」이
+     * 단어 중간에서 두 줄로 쪼개졌다. 제목·상태 배지·시각은 한 줄(한 줄 높이)이고 버튼 4개는 창 안에 다 보여야 한다.
+     * 자리가 모자라면 덜 중요한 시각만 말줄임되고 제목은 잘리지 않는다.
+     */
+    for (const width of [375, 390]) {
+      test(`휴대폰 폭(${width}px)에서 창 머리의 제목·상태·시각이 한 줄로 보이고 버튼이 창 안에 있다 (WD-351)`, async ({
+        authenticatedPage: page,
+      }) => {
+        await page.setViewportSize({ width, height: 800 });
+        const modal = await openReportModal(page);
+        const title = modal.getByRole('heading', { name: /리포트 #3/ });
+        const badge = modal.getByText('완료', { exact: true });
+        const time = modal.getByText(/^(\d+(분|시간|일)|방금) 전$/);
+
+        // 한 줄인지 — 글자 범위의 줄 상자(top 이 다른 것) 수를 센다. 줄바꿈되면 2 이상이 된다
+        for (const el of [title, badge, time]) {
+          await expect(el).toBeVisible();
+          const lines = await el.evaluate((node) => {
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
+          });
+          expect(lines).toBe(1);
+        }
+        // 시각은 말줄임되더라도 사라지지 않는다(폭 > 0)
+        expect((await time.boundingBox())!.width).toBeGreaterThan(0);
+        // 제목은 한 줄 그대로(말줄임 없이) 「리포트 #3」 전체가 보인다
+        expect(await title.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+
+        // 인쇄·PDF·새 탭·닫기 버튼이 모두 창 안(오른쪽 끝 이내)에 있다
+        const modalBox = (await modal.boundingBox())!;
+        const titleBox = (await title.boundingBox())!;
+        for (const name of ['인쇄', 'PDF 다운로드', '새 탭에서 열기', '닫기']) {
+          const button = modal.locator(`[title="${name}"]`);
+          await expect(button).toBeVisible();
+          const box = (await button.boundingBox())!;
+          expect(box.x + box.width).toBeLessThanOrEqual(modalBox.x + modalBox.width);
+          // 버튼이 제목 위에 겹치지 않는다
+          expect(box.x).toBeGreaterThanOrEqual(titleBox.x + titleBox.width);
+        }
+      });
+    }
   });
 });

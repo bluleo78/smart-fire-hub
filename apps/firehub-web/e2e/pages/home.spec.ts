@@ -682,6 +682,62 @@ test.describe('홈 페이지', () => {
     expect(pipelineReqs.some((r) => r.page === 0)).toBe(true);
   });
 
+  /**
+   * 회귀: WD-339 — 활동 피드 「유형」 버튼은 선택 여부를 색으로만, 「상태」 선택 상자는 이름 없이 노출돼
+   * 스크린리더 사용자가 무엇으로 걸렀는지 알 수 없었다. 그룹 이름·aria-pressed·콤보박스 이름을 확인하고,
+   * 이름으로 찾은 컨트롤로 실제 필터가 API 파라미터에 실리는지까지 본다.
+   */
+  test('활동 피드 필터 — 「유형」 그룹의 선택 상태(aria-pressed)와 「상태」 콤보박스 이름이 노출된다 (WD-339)', async ({
+    authenticatedPage: page,
+  }) => {
+    const captured: Array<{ type: string | null; severity: string | null }> = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/dashboard/activity',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const reqUrl = new URL(route.request().url());
+        captured.push({ type: reqUrl.searchParams.get('type'), severity: reqUrl.searchParams.get('severity') });
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ items: [], totalCount: 0, hasMore: false }),
+        });
+      },
+    );
+    await page.goto('/');
+
+    const typeGroup = page.getByRole('group', { name: '유형' });
+    const all = typeGroup.getByRole('button', { name: '전체', exact: true });
+    const pipeline = typeGroup.getByRole('button', { name: '파이프라인', exact: true });
+    const dataset = typeGroup.getByRole('button', { name: '데이터셋', exact: true });
+    // 처음에는 「전체」만 눌린 상태
+    await expect(all).toHaveAttribute('aria-pressed', 'true');
+    await expect(pipeline).toHaveAttribute('aria-pressed', 'false');
+    await expect(dataset).toHaveAttribute('aria-pressed', 'false');
+
+    // 「파이프라인」을 누르면 선택 상태가 옮겨 가고 type=PIPELINE 으로 다시 조회한다
+    await pipeline.click();
+    await expect(pipeline).toHaveAttribute('aria-pressed', 'true');
+    await expect(all).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => captured.some((r) => r.type === 'PIPELINE')).toBe(true);
+    // 이미 눌린 버튼을 다시 눌러도 선택은 그대로(한 가지만 고르는 그룹)
+    await pipeline.click();
+    await expect(pipeline).toHaveAttribute('aria-pressed', 'true');
+    // 「데이터셋」으로 바꾸면 선택이 옮겨 간다
+    await dataset.click();
+    await expect(dataset).toHaveAttribute('aria-pressed', 'true');
+    await expect(pipeline).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => captured.some((r) => r.type === 'DATASET')).toBe(true);
+
+    // 「상태」 콤보박스는 이름으로 찾을 수 있고, 고른 값이 severity 로 실린다
+    const severity = page.getByRole('combobox', { name: '상태' });
+    await expect(severity).toHaveText('전체');
+    await severity.click();
+    await page.getByRole('option', { name: '실패' }).click();
+    await expect(severity).toHaveText('실패');
+    await expect.poll(() => captured.some((r) => r.type === 'DATASET' && r.severity === 'CRITICAL')).toBe(true);
+  });
+
   test('풀리스트 위젯("최근 대시보드"/"최근 데이터셋")은 스크롤 컨테이너에 우측 패딩이 있다 (이슈 #225)', async ({ authenticatedPage: page }) => {
     // 다수 항목으로 오버라이드하여 스크롤 발생 조건 확보
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards', {
