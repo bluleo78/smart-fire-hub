@@ -188,3 +188,18 @@ export function isEditConflict(error: unknown): boolean {
     (error.response.data as ErrorResponse | undefined)?.code === EDIT_CONFLICT_CODE
   );
 }
+
+/** 스마트 작업 중복 실행 코드(WD-368) — api ProactiveJobAlreadyRunningException.CODE 와 같은 값. */
+const JOB_ALREADY_RUNNING_CODE = 'PROACTIVE_JOB_ALREADY_RUNNING';
+
+/**
+ * 스마트 작업이 이미 실행 중이라 「지금 실행」이 막혔는가(409 + code, WD-368).
+ * 목록·상세 화면이 같은 안내와 「실행 이력」 바로가기를 붙이려고 쓴다 — 실패가 아니라 진행 중인 실행이 있다는 뜻이다.
+ */
+export function isJobAlreadyRunning(error: unknown): boolean {
+  return (
+    axios.isAxiosError(error) &&
+    error.response?.status === 409 &&
+    (error.response.data as ErrorResponse | undefined)?.code === JOB_ALREADY_RUNNING_CODE
+  );
+}
