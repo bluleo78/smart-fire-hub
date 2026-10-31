@@ -60,8 +60,14 @@ export const datasetsApi = {
     client.post<DataDeleteResponse>(`/datasets/${datasetId}/data/delete`, { rowIds }),
   getDatasetStats: (datasetId: number) =>
     client.get<ColumnStatsResponse[]>(`/datasets/${datasetId}/stats`),
-  toggleFavorite: (id: number) =>
-    client.post<FavoriteToggleResponse>(`/datasets/${id}/favorite`),
+  /**
+   * 즐겨찾기를 원하는 상태로 맞춘다(추가 PUT / 해제 DELETE — 멱등, WD-388).
+   * 예전 토글(POST)은 화면이 최신이 아닐 때 누른 뜻과 반대로 뒤집었다.
+   */
+  setFavorite: (id: number, favorite: boolean) =>
+    favorite
+      ? client.put<FavoriteToggleResponse>(`/datasets/${id}/favorite`)
+      : client.delete<FavoriteToggleResponse>(`/datasets/${id}/favorite`),
   updateStatus: (id: number, data: UpdateStatusRequest) =>
     client.put(`/datasets/${id}/status`, data),
   addTag: (id: number, tagName: string) =>

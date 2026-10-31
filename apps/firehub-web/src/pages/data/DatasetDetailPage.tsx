@@ -43,8 +43,8 @@ import {
   useDataset,
   useDatasetPermissions,
   useRemoveTag,
+  useSetFavorite,
   useTags,
-  useToggleFavorite,
   useUpdateStatus,
 } from '../../hooks/queries/useDatasets';
 import { useDataStoreFeatures } from '../../hooks/queries/useDataStoreCapabilities';
@@ -190,7 +190,7 @@ export default function DatasetDetailPage() {
   const { data: categoriesData } = useCategories();
   const { addRecent } = useRecentDatasets();
 
-  const toggleFavorite = useToggleFavorite();
+  const setFavorite = useSetFavorite();
   const updateStatus = useUpdateStatus(datasetId);
   const addTag = useAddTag(datasetId);
   const removeTag = useRemoveTag(datasetId);
@@ -238,8 +238,9 @@ export default function DatasetDetailPage() {
   const handleToggleFavorite = async () => {
     if (!dataset) return;
     try {
-      await toggleFavorite.mutateAsync(dataset.id);
-      toast.success(dataset.isFavorite ? '즐겨찾기 해제되었습니다.' : '즐겨찾기에 추가되었습니다.');
+      // 화면에 보이는 반대 상태를 원하는 상태로 보내고, 안내는 서버가 돌려준 실제 결과로 고른다(WD-388)
+      const { favorited } = await setFavorite.mutateAsync({ id: dataset.id, favorite: !dataset.isFavorite });
+      toast.success(favorited ? '즐겨찾기에 추가되었습니다.' : '즐겨찾기 해제되었습니다.');
     } catch {
       toast.error('즐겨찾기 변경에 실패했습니다.');
     }

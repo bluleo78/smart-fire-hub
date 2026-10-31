@@ -31,7 +31,7 @@ import {
   useDatasetPermissions,
   useDatasets,
   useDeleteDataset,
-  useToggleFavorite,
+  useSetFavorite,
 } from '../../hooks/queries/useDatasets';
 import { useSecurityLevels } from '../../hooks/queries/useSecurityLevels';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
@@ -172,7 +172,7 @@ export default function DatasetListPage() {
   });
   const { data: levels } = useSecurityLevels();
   const deleteDataset = useDeleteDataset();
-  const toggleFavorite = useToggleFavorite();
+  const setFavorite = useSetFavorite();
   // 생성(POST, dataset:write)·삭제(DELETE, dataset:delete) 진입점 노출 — 조회 전용 사용자가 누르고 나서야 403 을 받지 않게 한다(WD-144).
   // 권한 조회 중에는 둘 다 false 라 버튼을 그리지 않는다(상세 화면 WD-139 와 같다).
   const { canWriteDataset, canDeleteDataset } = useDatasetPermissions();
@@ -231,8 +231,9 @@ export default function DatasetListPage() {
   const handleToggleFavorite = async (e: React.MouseEvent, id: number, name: string, isFavorite: boolean) => {
     e.stopPropagation();
     try {
-      await toggleFavorite.mutateAsync(id);
-      toast.success(isFavorite ? `"${name}" 즐겨찾기 해제` : `"${name}" 즐겨찾기 추가`);
+      // 화면에 보이는 반대 상태를 원하는 상태로 보내고, 안내는 서버가 돌려준 실제 결과로 고른다(WD-388)
+      const { favorited } = await setFavorite.mutateAsync({ id, favorite: !isFavorite });
+      toast.success(favorited ? `"${name}" 즐겨찾기 추가` : `"${name}" 즐겨찾기 해제`);
     } catch {
       toast.error('즐겨찾기 변경에 실패했습니다.');
     }

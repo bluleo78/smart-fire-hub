@@ -174,4 +174,58 @@ class DatasetFavoriteServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> datasetFavoriteService.toggleFavorite(-999L, userId1))
         .isInstanceOf(DatasetNotFoundException.class);
   }
+
+  // ── 원하는 상태로 맞추기(멱등, WD-388) ─────────────────────────────────────────
+
+  /** 다른 탭에서 이미 추가한 뒤 옛 화면에서 「추가」를 눌러도 해제되지 않고 추가 상태로 남는다(토글이면 해제됐다). */
+  @Test
+  void setFavorite_true_alreadyFavorited_staysFavorited() {
+    datasetFavoriteService.setFavorite(datasetId, userId1, true); // 탭 B 에서 추가
+    FavoriteToggleResponse response =
+        datasetFavoriteService.setFavorite(datasetId, userId1, true); // 옛 탭 A 에서 다시 「추가」
+
+    assertThat(response.favorited()).isTrue();
+    assertThat(isFavorite(userId1)).isTrue();
+  }
+
+  /** 이미 해제된 뒤 옛 화면에서 「해제」를 눌러도 다시 추가되지 않는다. */
+  @Test
+  void setFavorite_false_notFavorited_staysNotFavorited() {
+    FavoriteToggleResponse response = datasetFavoriteService.setFavorite(datasetId, userId1, false);
+
+    assertThat(response.favorited()).isFalse();
+    assertThat(isFavorite(userId1)).isFalse();
+  }
+
+  /** 추가 → 해제가 그대로 반영되고, 다른 사용자의 즐겨찾기는 건드리지 않는다. */
+  @Test
+  void setFavorite_addThenRemove_onlyAffectsThatUser() {
+    datasetFavoriteService.setFavorite(datasetId, userId1, true);
+    datasetFavoriteService.setFavorite(datasetId, userId2, true);
+    datasetFavoriteService.setFavorite(datasetId, userId1, false);
+
+    assertThat(isFavorite(userId1)).isFalse();
+    assertThat(isFavorite(userId2)).isTrue();
+  }
+
+  /** 없는 데이터셋이면 토글과 같이 DatasetNotFoundException. */
+  @Test
+  void setFavorite_missingDataset_throwsNotFound() {
+    assertThatThrownBy(() -> datasetFavoriteService.setFavorite(999_999_999L, userId1, true))
+        .isInstanceOf(DatasetNotFoundException.class);
+  }
+
+  private boolean isFavorite(Long userId) {
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("dataset_favorite")))
+            .where(
+                org.jooq.impl.DSL.field(org.jooq.impl.DSL.name("user_id"), Long.class).eq(userId))
+            .and(
+                org.jooq
+                    .impl
+                    .DSL
+                    .field(org.jooq.impl.DSL.name("dataset_id"), Long.class)
+                    .eq(datasetId)));
+  }
 }

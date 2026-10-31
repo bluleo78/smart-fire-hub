@@ -304,10 +304,12 @@ export function useDeleteCategory() {
   });
 }
 
-export function useToggleFavorite() {
+/** 즐겨찾기 추가·해제 — 원하는 상태(favorite)를 보내고, 응답의 favorited 가 실제 결과다(WD-388). */
+export function useSetFavorite() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) => datasetsApi.toggleFavorite(id).then(r => r.data),
+    mutationFn: ({ id, favorite }: { id: number; favorite: boolean }) =>
+      datasetsApi.setFavorite(id, favorite).then(r => r.data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['datasets'] }),
   });
 }

@@ -147,8 +147,8 @@ test.describe('데이터셋 목록 페이지', () => {
     const starBtn = page.getByRole('button', { name: '즐겨찾기 추가' }).first();
     await expect(starBtn).toBeVisible();
 
-    // 즐겨찾기 토글 API 캡처 모킹: POST /api/v1/datasets/1/favorite
-    const capture = await mockApi(page, 'POST', '/api/v1/datasets/1/favorite', {}, {
+    // 즐겨찾기 추가 API 캡처 모킹: 원하는 상태를 보내는 PUT /api/v1/datasets/1/favorite (WD-388 — 예전 토글 POST 대신)
+    const capture = await mockApi(page, 'PUT', '/api/v1/datasets/1/favorite', { favorited: true }, {
       capture: true,
     });
 
@@ -156,7 +156,7 @@ test.describe('데이터셋 목록 페이지', () => {
     await starBtn.click();
     const req = await capture.waitForRequest();
 
-    // POST 요청이 올바른 엔드포인트로 전달됐는지 확인
+    // PUT 요청이 올바른 엔드포인트로 전달됐는지 확인
     expect(req.url.pathname).toBe('/api/v1/datasets/1/favorite');
   });
 

@@ -318,6 +318,29 @@ class DatasetControllerExtendedTest {
         .andExpect(jsonPath("$.favorited").value(true));
   }
 
+  /** WD-388: 원하는 상태를 보내는 멱등 엔드포인트 — PUT 은 추가, DELETE 는 해제. */
+  @Test
+  void addFavorite_put_setsTrue() throws Exception {
+    when(datasetFavoriteService.setFavorite(1L, 1L, true))
+        .thenReturn(new FavoriteToggleResponse(true));
+
+    mockMvc
+        .perform(put("/api/v1/datasets/1/favorite").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.favorited").value(true));
+  }
+
+  @Test
+  void removeFavorite_delete_setsFalse() throws Exception {
+    when(datasetFavoriteService.setFavorite(1L, 1L, false))
+        .thenReturn(new FavoriteToggleResponse(false));
+
+    mockMvc
+        .perform(delete("/api/v1/datasets/1/favorite").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.favorited").value(false));
+  }
+
   // ── 태그 ──────────────────────────────────────────────────────────────────────
 
   @Test

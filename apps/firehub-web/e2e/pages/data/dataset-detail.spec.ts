@@ -152,12 +152,12 @@ test.describe('데이터셋 상세 페이지', () => {
   test('즐겨찾기 버튼이 렌더링된다', async ({ authenticatedPage: page }) => {
     await setupDetailPageMocks(page, 1);
 
-    // POST /api/v1/datasets/1/favorite 호출 캡처 — 버튼 클릭 시 API가 실제로 호출되는지 검증
+    // PUT /api/v1/datasets/1/favorite 호출 캡처 — 버튼 클릭 시 API가 실제로 호출되는지 검증(WD-388: 토글 POST 대신 원하는 상태)
     const favoriteCapture = await mockApi(
       page,
-      'POST',
+      'PUT',
       '/api/v1/datasets/1/favorite',
-      { id: 1, isFavorite: true },
+      { favorited: true },
       { capture: true },
     );
 
@@ -173,7 +173,7 @@ test.describe('데이터셋 상세 페이지', () => {
     // 즐겨찾기 버튼 클릭 후 API 호출 검증
     await favoriteBtn.click();
     const req = await favoriteCapture.waitForRequest();
-    // POST 요청이 올바른 엔드포인트로 전송되었는지 확인
+    // PUT 요청이 올바른 엔드포인트로 전송되었는지 확인
     expect(req.url.pathname).toBe('/api/v1/datasets/1/favorite');
   });
 
@@ -987,5 +987,55 @@ test.describe('데이터셋 상세 페이지', () => {
       await expect(page.getByRole('alertdialog')).not.toBeVisible();
       await expect(page).toHaveURL(/\/data\/datasets$/);
     });
+  });
+});
+
+/**
+ * 회귀 가드(WD-388): 즐겨찾기 API 가 토글이라, 다른 탭에서 이미 추가한 데이터셋을 옛 화면에서 「즐겨찾기 추가」하면
+ * 실제로는 해제되는데 클릭 전 화면 값으로 고른 「즐겨찾기에 추가되었습니다」가 떴다.
+ * 이제 원하는 상태를 PUT(추가)·DELETE(해제)로 보내고, 안내는 서버가 돌려준 실제 결과(favorited)로 고른다.
+ */
+test.describe('데이터셋 상세 — 즐겨찾기 원하는 상태 보내기 (WD-388)', () => {
+  test('빈 별을 누르면 PUT 으로 추가를 보내고, 서버 결과대로 안내한다', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+    const put = await mockApi(page, 'PUT', '/api/v1/datasets/1/favorite', { favorited: true }, { capture: true });
+    let toggled = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/favorite',
+      (route) => {
+        if (route.request().method() === 'POST') toggled = true; // 예전 토글 경로 — 불리면 안 된다
+        return route.fallback();
+      },
+    );
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('button', { name: '즐겨찾기 추가' }).click();
+    const req = await put.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/datasets/1/favorite');
+    await expect(page.getByText('즐겨찾기에 추가되었습니다.')).toBeVisible();
+    expect(toggled).toBe(false);
+  });
+
+  test('채워진 별을 누르면 DELETE 로 해제를 보내고, 서버 결과대로 안내한다', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+    // 화면은 즐겨찾기 상태로 보인다
+    await mockApi(page, 'GET', '/api/v1/datasets/1', createDatasetDetail({ id: 1, isFavorite: true }));
+    const del = await mockApi(page, 'DELETE', '/api/v1/datasets/1/favorite', { favorited: false }, { capture: true });
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('button', { name: '즐겨찾기 해제' }).click();
+    await del.waitForRequest();
+    await expect(page.getByText('즐겨찾기 해제되었습니다.')).toBeVisible();
+  });
+
+  test('안내 문구는 클릭 전 화면 값이 아니라 서버가 돌려준 결과를 따른다', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+    // 서버가 「추가」 요청에 해제 상태를 돌려주는 경우(다른 곳에서 바로 해제됨 등) — 화면은 서버 결과를 믿는다
+    await mockApi(page, 'PUT', '/api/v1/datasets/1/favorite', { favorited: false });
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('button', { name: '즐겨찾기 추가' }).click();
+    await expect(page.getByText('즐겨찾기 해제되었습니다.')).toBeVisible();
+    await expect(page.getByText('즐겨찾기에 추가되었습니다.')).toHaveCount(0);
   });
 });
