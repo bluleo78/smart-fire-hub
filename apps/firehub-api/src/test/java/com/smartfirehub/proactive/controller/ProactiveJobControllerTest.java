@@ -375,7 +375,8 @@ class ProactiveJobControllerTest {
             LocalDateTime.now(),
             null);
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
-    when(pdfExportService.generatePdf(any(), eq("daily-report"))).thenReturn(new byte[] {1, 2});
+    when(pdfExportService.generatePdf(any(), eq("daily-report"), any(), any()))
+        .thenReturn(new byte[] {1, 2});
 
     mockMvc
         .perform(
@@ -388,6 +389,41 @@ class ProactiveJobControllerTest {
                     "Content-Disposition",
                     "attachment; filename=\"______.pdf\"; filename*=UTF-8''"
                         + "%EC%9D%BC%EC%9D%BC_%EB%B3%B4%EA%B3%A0%EC%84%9C.pdf"));
+  }
+
+  /**
+   * WD-344 — PDF 머리 시각은 내려받은 순간이 아니라 실행 완료 시각이다. 컨트롤러가 실행의 completedAt(UTC)과 작업 시간대를 PDF 생성에 넘기는지
+   * 고정한다(예전엔 PdfExportService 가 매번 LocalDateTime.now() 를 찍었다).
+   */
+  @Test
+  void downloadExecutionPdf_passesExecutionCompletedAtAndJobTimezone() throws Exception {
+    mockAuth("proactive:read");
+    when(proactiveJobService.getJob(10L, 1L)).thenReturn(sampleJob());
+    LocalDateTime completedAt = LocalDateTime.of(2026, 10, 28, 13, 6, 18);
+    ProactiveJobExecutionResponse exec =
+        new ProactiveJobExecutionResponse(
+            99L,
+            10L,
+            "COMPLETED",
+            completedAt.minusMinutes(1),
+            completedAt,
+            null,
+            Map.of("title", "일일 보고서"),
+            null,
+            completedAt.minusMinutes(1),
+            null);
+    when(proactiveJobService.getExecution(99L)).thenReturn(exec);
+    when(pdfExportService.generatePdf(any(), eq("daily-report"), any(), any()))
+        .thenReturn(new byte[] {1, 2});
+
+    mockMvc
+        .perform(
+            get("/api/v1/proactive/jobs/10/executions/99/pdf")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk());
+
+    verify(pdfExportService)
+        .generatePdf(any(), eq("daily-report"), eq(completedAt), eq("Asia/Seoul"));
   }
 
   @Test

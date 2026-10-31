@@ -174,12 +174,16 @@ public class ProactiveJobController {
     Long userId = (Long) authentication.getPrincipal();
     ProactiveJobResponse job = proactiveJobService.getJob(jobId, userId);
     // PDF 는 내려받기라 열람 판정에 더해 리포트 등급의 내보내기 정책도 본다(WD-198)
-    ProactiveResult result = getValidatedResult(jobId, executionId, userId, true);
-    if (result == null) {
+    ProactiveJobExecutionResponse execution =
+        getValidatedExecution(jobId, executionId, userId, true);
+    if (execution == null) {
       return ResponseEntity.badRequest().build();
     }
+    ProactiveResult result = objectMapper.convertValue(execution.result(), ProactiveResult.class);
 
-    byte[] pdfBytes = pdfExportService.generatePdf(result, job.name());
+    // 머리 시각은 실행 완료 시각을 작업 시간대로 — 받을 때마다 바뀌지 않는다(WD-344)
+    byte[] pdfBytes =
+        pdfExportService.generatePdf(result, job.name(), execution.completedAt(), job.timezone());
 
     HttpHeaders headers = new HttpHeaders();
     headers.setContentType(MediaType.APPLICATION_PDF);
@@ -225,6 +229,16 @@ public class ProactiveJobController {
    */
   private ProactiveResult getValidatedResult(
       Long jobId, Long executionId, Long userId, boolean export) {
+    ProactiveJobExecutionResponse execution =
+        getValidatedExecution(jobId, executionId, userId, export);
+    return execution == null
+        ? null
+        : objectMapper.convertValue(execution.result(), ProactiveResult.class);
+  }
+
+  /** 소속·열람(또는 내보내기) 권한·완료 여부를 확인한 실행. 리포트로 쓸 수 없으면 null. */
+  private ProactiveJobExecutionResponse getValidatedExecution(
+      Long jobId, Long executionId, Long userId, boolean export) {
     ProactiveJobExecutionResponse execution = proactiveJobService.getExecution(executionId);
     if (!jobId.equals(execution.jobId())) {
       return null;
@@ -237,7 +251,7 @@ public class ProactiveJobController {
     if (!"COMPLETED".equals(execution.status()) || execution.result() == null) {
       return null;
     }
-    return objectMapper.convertValue(execution.result(), ProactiveResult.class);
+    return execution;
   }
 
   /**

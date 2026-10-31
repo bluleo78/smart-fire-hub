@@ -93,6 +93,37 @@ describe('HeatmapLayer', () => {
     expect(sent.features.map((f) => f.properties[HEAT_WEIGHT_PROP as 'tiny'])).toEqual([WEIGHT_MIN, 1]);
   });
 
+  // 회귀 가드(WD-355): 테마 전환(setStyle)으로 source·layer 가 지워지면 styledata 에서 다시 붙이는데,
+  // 예전엔 그 핸들러가 마운트 때의 데이터·가중치를 붙들어 바꾼 가중치가 처음 값으로 되돌아갔다.
+  it('스타일이 다시 로드되면 처음 값이 아니라 지금 가중치로 source 를 다시 붙인다 (WD-355)', () => {
+    const map = createMockMap();
+    const fc = {
+      type: 'FeatureCollection' as const,
+      features: [1, 2, 3].map((n, i) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point', coordinates: [127 + i, 37.5] },
+        properties: { even: 5, grow: n },
+      })),
+    };
+    // 처음엔 가중치 없음(균등) → 사용자가 grow 컬럼으로 바꾼다
+    const { rerender } = render(<HeatmapLayer map={map as never} data={fc} />);
+    rerender(<HeatmapLayer map={map as never} data={fc} weightProperty="grow" />);
+
+    // 테마 전환: 새 스타일이 source·layer 를 비운 뒤 styledata 를 낸다
+    (map.removeLayer as unknown as (id: string) => void)('heatmap-lyr');
+    (map.removeSource as unknown as (id: string) => void)('heatmap-src');
+    map.addSource.mockClear();
+    const onStyleData = map.on.mock.calls.find(([event]) => event === 'styledata')?.[1] as () => void;
+    onStyleData();
+
+    const readded = map.addSource.mock.calls[0][1] as { data: typeof fc };
+    const weights = readded.data.features.map((f) => f.properties[HEAT_WEIGHT_PROP as 'grow']);
+    // 균등 가중치(모두 같은 값)가 아니라 grow 로 정규화한 값 — 최솟값 행이 가장 작고 최댓값 행이 1
+    expect(weights[0]).toBe(WEIGHT_MIN);
+    expect(weights[2]).toBe(1);
+    expect(map.addLayer).toHaveBeenCalledTimes(2);
+  });
+
   it('언마운트 시 layer 와 source 를 제거한다', () => {
     const map = createMockMap();
     const { unmount } = render(<HeatmapLayer map={map as never} data={emptyFc} />);

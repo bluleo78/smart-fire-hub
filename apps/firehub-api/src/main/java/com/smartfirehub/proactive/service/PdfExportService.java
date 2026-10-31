@@ -2,9 +2,13 @@ package com.smartfirehub.proactive.service;
 
 import com.lowagie.text.pdf.BaseFont;
 import com.smartfirehub.proactive.dto.ProactiveResult;
+import com.smartfirehub.proactive.util.ProactiveTime;
 import java.io.ByteArrayOutputStream;
+import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +38,10 @@ public class PdfExportService {
 
   private static final DateTimeFormatter DISPLAY_FORMATTER =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+
+  /** 작업 시간대가 없거나 잘못됐을 때 쓰는 표시 시간대 — 작업 기본값(Asia/Seoul)과 같다 */
+  private static final ZoneId DEFAULT_ZONE = ZoneId.of("Asia/Seoul");
+
   private static final String FONT_PATH = "fonts/NanumGothic-Regular.ttf";
   private static final Duration PDF_TIMEOUT = Duration.ofSeconds(60);
 
@@ -71,6 +79,21 @@ public class PdfExportService {
    * Flying Saucer 경로를 사용한다.
    */
   public byte[] generatePdf(ProactiveResult result, String jobName) {
+    return generatePdf(result, jobName, null, null);
+  }
+
+  /**
+   * 리포트가 만들어진 시각을 머리에 찍어 PDF 를 만든다(WD-344).
+   *
+   * <p>예전에는 PDF 를 만들 때마다 {@code LocalDateTime.now()}(JVM 시간대)를 찍어, 지난 리포트를 받아도 내려받은 날짜가 찍히고 받을 때마다
+   * 바뀌었다. 이제 실행 완료 시각(DB 의 UTC 벽시계)을 작업 시간대로 바꿔 찍는다.
+   *
+   * @param reportedAtUtc 리포트(실행) 완료 시각, UTC. null 이면 지금(발송 직후처럼 지금이 곧 리포트 시각인 경로)
+   * @param timezone 작업 시간대(IANA). null·잘못된 값이면 Asia/Seoul
+   */
+  public byte[] generatePdf(
+      ProactiveResult result, String jobName, LocalDateTime reportedAtUtc, String timezone) {
+    String reportedAt = formatReportedAt(reportedAtUtc, timezone);
     if (result.htmlContent() != null && !result.htmlContent().isBlank()) {
       try {
         // Puppeteer 기반 HTML→PDF 변환 (CSS3, SVG, 한글 완벽 지원)
@@ -83,7 +106,21 @@ public class PdfExportService {
     }
 
     // 기존 경로: sections → Thymeleaf → Flying Saucer
-    return generatePdfViaFlyingSaucer(result, jobName);
+    return generatePdfViaFlyingSaucer(result, jobName, reportedAt);
+  }
+
+  /** UTC 벽시계 시각을 작업 시간대의 「yyyy-MM-dd HH:mm」로 바꾼다 — 서버 JVM 시간대와 무관하다. */
+  static String formatReportedAt(LocalDateTime reportedAtUtc, String timezone) {
+    LocalDateTime utc = reportedAtUtc != null ? reportedAtUtc : ProactiveTime.nowUtc();
+    ZoneId zone = DEFAULT_ZONE;
+    if (timezone != null && !timezone.isBlank()) {
+      try {
+        zone = ZoneId.of(timezone);
+      } catch (DateTimeException e) {
+        // 저장 시 검증하지만, 옛 값이 남아 있어도 PDF 는 만들어지게 기본 시간대로 찍는다
+      }
+    }
+    return utc.atOffset(ZoneOffset.UTC).atZoneSameInstant(zone).format(DISPLAY_FORMATTER);
   }
 
   /**
@@ -112,7 +149,8 @@ public class PdfExportService {
   }
 
   /** 기존 Flying Saucer 기반 PDF 생성 — sections → Thymeleaf → XHTML → PDF (하위 호환) */
-  private byte[] generatePdfViaFlyingSaucer(ProactiveResult result, String jobName) {
+  private byte[] generatePdfViaFlyingSaucer(
+      ProactiveResult result, String jobName, String reportedAt) {
     log.debug("PdfExportService: Flying Saucer sections→PDF (jobName={})", jobName);
 
     List<Map<String, Object>> templateSections =
@@ -136,7 +174,8 @@ public class PdfExportService {
     ctx.setVariable(
         "summary",
         summary != null && !summary.isBlank() ? reportRenderUtils.markdownToHtml(summary) : null);
-    ctx.setVariable("generatedAt", LocalDateTime.now().format(DISPLAY_FORMATTER));
+    // 머리 시각은 리포트가 만들어진 시각 — 내려받은 시각이 아니다(WD-344)
+    ctx.setVariable("generatedAt", reportedAt);
     ctx.setVariable("sections", templateSections);
     // 화이트라벨링: PDF 템플릿 푸터의 브랜드명 표기에 사용
     ctx.setVariable("brandName", brandName);

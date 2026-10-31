@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 
 import { proactiveApi } from '@/api/proactive';
 import { handleApiErrorAsync } from '@/lib/api-error';
-import { downloadBlob } from '@/lib/download';
+import { downloadBlob, filenameFromContentDisposition } from '@/lib/download';
 
 /**
  * 리포트 iframe sandbox — 스크립트는 막고(allow-scripts 없음) 부모의 print() 만 허용한다(WD-343).
@@ -55,7 +55,14 @@ function printHtml(bodyHtml: string): void {
 export async function downloadReportPdf(jobId: number, executionId: number): Promise<void> {
   try {
     const response = await proactiveApi.downloadExecutionPdf(jobId, executionId);
-    downloadBlob(`report-${executionId}.pdf`, response.data as Blob);
+    // 파일 이름은 서버가 정한다(Content-Disposition — 리포트 제목, WD-249 규칙). 실행 번호로 고정하면 받은 PDF 가 어떤 리포트인지
+    // 이름으로 알 수 없었다(WD-345). 헤더가 없을 때만 실행 번호 이름으로 대체한다 — 데이터·쿼리 내보내기와 같은 방식.
+    const disposition = response.headers['content-disposition'];
+    const filename = filenameFromContentDisposition(
+      typeof disposition === 'string' ? disposition : null,
+      `report-${executionId}.pdf`,
+    );
+    downloadBlob(filename, response.data as Blob);
   } catch (error) {
     // 서버 문구를 그대로 보인다(WD-198) — 리포트 등급 차단·등급 내보내기 정책 거부는 이유가 있는 403 이라 「실패」로만 뭉개면 다시 시도하게 된다.
     await handleApiErrorAsync(error, 'PDF 다운로드에 실패했습니다.');

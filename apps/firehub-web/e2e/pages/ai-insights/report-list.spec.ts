@@ -71,6 +71,37 @@ test.describe('리포트 목록', () => {
     await expect(page).toHaveURL(/\/ai-insights\/jobs\/3\/executions\/11\/report$/);
   });
 
+  test('PDF 는 서버가 준 파일 이름(리포트 제목)으로 저장되고, 헤더가 없을 때만 report-<실행번호>.pdf 다 (WD-345)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/reports', REPORTS);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [JOB]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    // 서버 규칙(WD-249): ASCII 대체 filename + UTF-8 filename*
+    const pdf = await mockApi(page, 'GET', '/api/v1/proactive/jobs/3/executions/11/pdf', '%PDF-1.4', {
+      capture: true,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition':
+          "attachment; filename=\"8__________.pdf\"; filename*=UTF-8''8%EC%9B%94_%ED%99%94%EC%9E%AC_%ED%86%B5%EA%B3%84_%EB%A6%AC%ED%8F%AC%ED%8A%B8.pdf",
+      },
+    });
+
+    await page.goto('/ai-insights/reports');
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'PDF 다운로드' }).click();
+    expect((await download).suggestedFilename()).toBe('8월_화재_통계_리포트.pdf');
+    expect(pdf.requests).toHaveLength(1);
+
+    // 헤더가 없으면 예전 이름으로 대체
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/3/executions/11/pdf', '%PDF-1.4', {
+      headers: { 'Content-Type': 'application/pdf' },
+    });
+    const fallback = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'PDF 다운로드' }).click();
+    expect((await fallback).suggestedFilename()).toBe('report-11.pdf');
+  });
+
   test('잡이 없으면 스마트 작업 생성을 유도하는 빈 상태를 보여준다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/proactive/reports', []);
     await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);

@@ -1,4 +1,6 @@
+import { createJob, createReport } from '../../factories/ai-insight.factory';
 import { setupReportViewerMocks } from '../../fixtures/ai-insight.fixture';
+import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
@@ -107,5 +109,44 @@ test.describe('리포트 뷰어 페이지', () => {
       .poll(() => frame.evaluate((el: HTMLIFrameElement) => (el.contentWindow as Window & { __printed?: number }).__printed))
       .toBe(1);
     expect(ignored).toEqual([]);
+  });
+
+  // 회귀 가드(WD-347): 이메일 「웹에서 보기」·리포트 창 「새 탭에서 열기」는 새 탭으로 열려 돌아갈 기록이 없다.
+  // 예전엔 「뒤로」가 navigate(-1) 뿐이라 눌러도 무반응(빈 탭에서 연 경우 about:blank 로 앱 이탈)이었다.
+  test('새 탭처럼 바로 연 리포트에서는 「리포트 목록」 버튼이 리포트 목록으로 보낸다 (WD-347)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupReportViewerMocks(page, 1, 1);
+    await mockApi(page, 'GET', '/api/v1/proactive/reports', [createReport()]);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: 3 })]);
+
+    await page.goto('/ai-insights/jobs/1/executions/1/report');
+
+    // 돌아갈 기록이 없으니 「뒤로」 대신 어디로 가는지 이름에 드러낸다
+    await expect(page.getByRole('button', { name: '뒤로' })).toHaveCount(0);
+    await page.getByRole('button', { name: '리포트 목록' }).click();
+
+    await expect(page).toHaveURL(/\/ai-insights\/reports$/);
+    await expect(page.getByText('8월 화재 통계 리포트')).toBeVisible();
+  });
+
+  test('앱 안에서 들어온 리포트의 「뒤로」는 들어온 화면으로 돌아간다 (WD-347)', async ({
+    authenticatedPage: page,
+  }) => {
+    const report = createReport();
+    await mockApi(page, 'GET', '/api/v1/proactive/reports', [report]);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: report.jobId })]);
+    await setupReportViewerMocks(page, report.jobId, report.executionId);
+
+    // 리포트 목록 → 행을 눌러 뷰어 진입(앱 안 이동이라 기록이 있다)
+    await page.goto('/ai-insights/reports?from=list');
+    await page.getByText(report.title).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/ai-insights/jobs/${report.jobId}/executions/${report.executionId}/report$`),
+    );
+
+    await page.getByRole('button', { name: '뒤로' }).click();
+    // 목록 경로로 새로 가는 게 아니라 기록 한 칸 뒤 — 들어온 주소(쿼리 포함) 그대로다
+    await expect(page).toHaveURL(/\/ai-insights\/reports\?from=list$/);
   });
 });
