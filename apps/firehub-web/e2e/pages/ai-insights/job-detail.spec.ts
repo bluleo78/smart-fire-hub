@@ -344,6 +344,82 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(createBtn).toBeDisabled();
   });
 
+  test('목표 기반 — 「템플릿 자동 생성」은 AI 가 만든 섹션 구성을 보여 주고, 그 구성이 리포트 양식으로 저장된다 (WD-455)', async ({ authenticatedPage: page }) => {
+    await setupNewJobMocks(page);
+    // setupNewJobMocks 의 기본 실패 모킹보다 나중에 등록해 성공 응답이 우선한다
+    const aiSections = [
+      { key: 'summary', type: 'text', label: '핵심 요약', instruction: '화재 건수 변화를 요약하세요.', required: true },
+      { key: 'weekly_compare', type: 'comparison', label: '전주 대비 변화', instruction: '지난주와 비교하세요.' },
+      { key: 'top_regions', type: 'table', label: '지역별 순위', instruction: '증가 지역을 표로 보여 주세요.' },
+      { key: 'actions', type: 'recommendation', label: '대응 권고', instruction: '조치를 제안하세요.' },
+      { key: 'risk_alert', type: 'alert', label: '위험 경보', instruction: '급증 지역을 경고하세요.' },
+    ];
+    const generateCapture = await mockApi(page, 'POST', '/api/v1/proactive/templates/generate', { sections: aiSections }, {
+      capture: true,
+    });
+    const templateCapture = await mockApi(page, 'POST', '/api/v1/proactive/templates', createTemplate({ id: 77 }), {
+      capture: true,
+    });
+    const createCapture = await mockApi(page, 'POST', '/api/v1/proactive/jobs', createJob({ id: 98 }), {
+      capture: true,
+    });
+
+    await page.goto('/ai-insights/jobs/new');
+    await page.locator('#mode-goal').click();
+    await page.getByLabel('비즈니스 질문').fill('지난주 대비 화재 건수 변화는?');
+    await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
+
+    // 1) 질문이 그대로 생성 API 로 간다
+    const generateReq = await generateCapture.waitForRequest();
+    expect(generateReq.payload).toEqual({ question: '지난주 대비 화재 건수 변화는?' });
+
+    // 2) AI 구성(5개)이 미리보기에 보이고, 실패 안내는 없다
+    await expect(page.getByText('자동 생성된 템플릿 (5개 섹션)')).toBeVisible();
+    await expect(page.getByText('전주 대비 변화')).toBeVisible();
+    await expect(page.getByText('위험 경보')).toBeVisible();
+    await expect(page.getByText('AI 생성에 실패해 기본 구성(4개 섹션)으로 만들었습니다.')).toHaveCount(0);
+
+    // 3) 생성하면 AI 구성 그대로 양식으로 저장되고 작업에 연결된다(WD-297 흐름 그대로)
+    await page.getByRole('button', { name: '생성', exact: true }).click();
+    const templateReq = await templateCapture.waitForRequest();
+    const templatePayload = templateReq.payload as { sections: { key: string; label: string }[] };
+    expect(templatePayload.sections.map((sec) => sec.key)).toEqual([
+      'summary',
+      'weekly_compare',
+      'top_regions',
+      'actions',
+      'risk_alert',
+    ]);
+    const req = await createCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ prompt: '지난주 대비 화재 건수 변화는?', templateId: 77 });
+  });
+
+  test('목표 기반 — AI 생성이 실패하면 고정 4개 구성으로 대신하고 그 사실을 알린다 (WD-455)', async ({ authenticatedPage: page }) => {
+    // setupNewJobMocks 가 생성 API 를 502 로 모킹한다
+    await setupNewJobMocks(page);
+    const templateCapture = await mockApi(page, 'POST', '/api/v1/proactive/templates', createTemplate({ id: 77 }), {
+      capture: true,
+    });
+    await mockApi(page, 'POST', '/api/v1/proactive/jobs', createJob({ id: 98 }));
+
+    await page.goto('/ai-insights/jobs/new');
+    await page.locator('#mode-goal').click();
+    await page.getByLabel('비즈니스 질문').fill('주간 화재 추이');
+    await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
+
+    // 고정 구성 미리보기 + 대체 안내
+    await expect(page.getByText('자동 생성된 템플릿 (4개 섹션)')).toBeVisible();
+    await expect(page.getByText('AI 생성에 실패해 기본 구성(4개 섹션)으로 만들었습니다.')).toBeVisible();
+
+    // 대체 구성으로도 작업을 만들 수 있고, 그 4개 섹션이 양식으로 저장된다
+    const createBtn = page.getByRole('button', { name: '생성', exact: true });
+    await expect(createBtn).toBeEnabled();
+    await createBtn.click();
+    const templateReq = await templateCapture.waitForRequest();
+    const templatePayload = templateReq.payload as { sections: { label: string }[] };
+    expect(templatePayload.sections.map((sec) => sec.label)).toEqual(['요약', '상세 분석', '주요 지표', '권고사항']);
+  });
+
   test('목록으로 버튼 클릭 시 작업 목록 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     await setupJobDetailMocks(page, 1);
     // 목록 페이지로 돌아갈 때 필요한 API 모킹

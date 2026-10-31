@@ -1,8 +1,8 @@
 import { ChevronDown, Sparkles } from 'lucide-react';
-import { useCallback, useId, useMemo, useState } from 'react';
+import { useCallback, useId, useMemo, useRef, useState } from 'react';
 import { type UseFormReturn } from 'react-hook-form';
 
-import type { ProactiveJob, ReportTemplateSummary, TemplateSection, TriggerType } from '@/api/proactive';
+import { proactiveApi, type ProactiveJob, type ReportTemplateSummary, type TemplateSection, type TriggerType } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -68,6 +68,13 @@ function ReadonlyCard({ label, value }: { label: string; value: React.ReactNode 
   );
 }
 
+/** AI 생성(WD-455)이 실패해 고정 구성으로 대신했을 때 보여 주는 안내. */
+const AI_FALLBACK_NOTICE = 'AI 생성에 실패해 기본 구성(4개 섹션)으로 만들었습니다.';
+
+/**
+ * 고정 4개 섹션 구성(요약·상세 분석·주요 지표·권고사항). WD-455 부터는 AI 생성(POST /proactive/templates/generate)이 실패했을 때의
+ * 대체 구성이다 — AI 를 쓸 수 없는 테넌트(자격증명 미설정 등)에서도 목표 기반 작업을 만들 수 있게 남겨 둔다.
+ */
 function generateAutoTemplate(question: string): TemplateSection[] {
   return [
     {
@@ -115,17 +122,44 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
   const [autoSections, setAutoSections] = useState<TemplateSection[] | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(true);
+  // AI 생성이 실패해 고정 구성으로 대신했는지(WD-455) — 사용자에게 그 사실을 알린다.
+  const [usedFallback, setUsedFallback] = useState(false);
+  // 생성 요청 차례 번호 — 응답을 기다리는 동안 질문을 고치거나 모드를 바꾸면 늦게 온 응답을 버린다(이전 질문의 구성이 되살아나지 않게).
+  const generationSeqRef = useRef(0);
+
+  /** 진행 중인 생성 응답을 무효로 하고 미리보기·안내를 비운다. 질문 수정·모드 전환 때 부른다. */
+  const discardGenerated = useCallback(() => {
+    generationSeqRef.current += 1;
+    setIsGenerating(false);
+    setAutoSections(null);
+    setUsedFallback(false);
+  }, []);
 
   const handleGenerateTemplate = useCallback(async () => {
-    if (!businessQuestion.trim()) return;
+    const question = businessQuestion.trim();
+    if (!question) return;
+    const seq = ++generationSeqRef.current;
     setIsGenerating(true);
     setAutoSections(null);
+    setUsedFallback(false);
 
-    // Simulate brief delay for UX feedback
-    await new Promise((r) => setTimeout(r, 600));
+    // AI 로 질문에 맞는 섹션 구성을 만든다(WD-455). 서버가 양식 섹션 검사(WD-298)를 통과한 구성만 돌려주므로 그대로 저장할 수 있다.
+    // 실패(AI 미설정·타임아웃·규칙 위반 등)하면 고정 4개 구성으로 대신하고 그 사실을 알린다 — 목표 기반 작업 생성 자체는 막지 않는다.
+    let sections: TemplateSection[];
+    let fallback = false;
+    try {
+      const { data } = await proactiveApi.generateTemplate(question);
+      if (!Array.isArray(data?.sections) || data.sections.length === 0) throw new Error('empty sections');
+      sections = data.sections;
+    } catch {
+      sections = generateAutoTemplate(question);
+      fallback = true;
+    }
+    // 기다리는 동안 질문을 고쳤거나 모드를 바꿨으면 이 응답은 버린다.
+    if (seq !== generationSeqRef.current) return;
 
-    const sections = generateAutoTemplate(businessQuestion.trim());
     setAutoSections(sections);
+    setUsedFallback(fallback);
     // 미리보기 구성을 폼에 둬 「생성」 때 리포트 양식으로 저장·연결되게 한다(WD-297) — 전에는 미리보기에만 쓰고 버려 「기본 형식」이 됐다.
     setValue('generatedSections', sections);
     setIsGenerating(false);
@@ -323,7 +357,7 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
               setValue('prompt', '', { shouldValidate: true });
               // 목표 기반 구성도 같은 이유로 비운다 — 「직접 설정」으로 돌아가 만든 작업에 양식이 몰래 붙지 않게(WD-297).
               setValue('generatedSections', null);
-              setAutoSections(null);
+              discardGenerated();
               markDirty();
             }}
             className="flex gap-4"
@@ -344,7 +378,7 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
           <p className="text-xs text-muted-foreground">
             {creationMode === 'manual'
               ? '템플릿과 프롬프트를 직접 구성합니다.'
-              : '비즈니스 질문을 바탕으로 리포트 기본 섹션 구성을 만듭니다. 작업을 생성하면 이 구성이 리포트 양식으로 함께 저장됩니다.'}
+              : 'AI가 비즈니스 질문에 맞는 리포트 섹션 구성을 만듭니다. 작업을 생성하면 이 구성이 리포트 양식으로 함께 저장됩니다.'}
           </p>
         </div>
       )}
@@ -364,8 +398,9 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
               onChange={(e) => {
                 setBusinessQuestion(e.target.value);
                 // 만든 뒤 질문을 고치면 이전 질문의 구성·프롬프트가 양식으로 저장되지 않게 비운다 — 다시 「템플릿 자동 생성」을 눌러야 한다(WD-297).
-                if (autoSections) {
-                  setAutoSections(null);
+                // 생성 중에 고쳐도 늦게 온 응답이 이전 질문의 구성을 채우지 않게 함께 무효로 한다(WD-455).
+                if (autoSections || isGenerating) {
+                  discardGenerated();
                   setValue('generatedSections', null);
                   setValue('prompt', '', { shouldValidate: true });
                 }
@@ -392,6 +427,11 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
               <Skeleton className="h-8 w-full" />
               <Skeleton className="h-8 w-3/4" />
             </div>
+          )}
+
+          {/* AI 생성 실패 → 고정 구성으로 대신했음을 알린다(WD-455) */}
+          {autoSections && !isGenerating && usedFallback && (
+            <InlineBanner variant="warning">{AI_FALLBACK_NOTICE}</InlineBanner>
           )}
 
           {/* 생성된 템플릿 프리뷰 */}
