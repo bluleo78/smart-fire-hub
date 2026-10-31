@@ -213,3 +213,45 @@ test.describe('대시보드 위젯 — 데이터 조회·새로고침 (#778)', (
     expect(b.count).toBe(1);
   });
 });
+
+/**
+ * 위젯 새로고침 버튼·제목 접근성 (WD-423)
+ * 결함: 위젯마다 버튼 이름이 똑같은 「새로고침」(16×16px)이고 위젯 제목이 제목 요소가 아니라, 스크린리더로 어느 차트의 버튼인지 알 수 없었다.
+ */
+test.describe('대시보드 위젯 — 새로고침 버튼 이름·크기와 제목 (WD-423)', () => {
+  test('위젯 새로고침 버튼은 위젯 이름을 담고 24px 이상이며, 누르면 그 위젯만 다시 조회한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDashboard(page);
+    const a = await routeChartData(page, 1, [{ body: rowsBody(chartA, 'a-1') }, { body: rowsBody(chartA, 'a-2') }]);
+    const b = await routeChartData(page, 2, [{ body: rowsBody(chartB, 'b-1') }]);
+    await page.goto('/analytics/dashboards/1');
+    await expect(card(page, '위젯 A').getByText('a-1')).toBeVisible();
+
+    // 위젯마다 이름이 다른 버튼이 하나씩 있다
+    const refreshA = page.getByRole('button', { name: '위젯 A 새로고침', exact: true });
+    await expect(refreshA).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '위젯 B 새로고침', exact: true })).toHaveCount(1);
+
+    // 누르는 영역이 24×24px 이상이다
+    const box = await refreshA.boundingBox();
+    expect(box?.width).toBeGreaterThanOrEqual(24);
+    expect(box?.height).toBeGreaterThanOrEqual(24);
+
+    // 이름으로 찾은 버튼이 실제로 그 위젯만 다시 조회한다
+    await refreshA.click();
+    await expect(card(page, '위젯 A').getByText('a-2')).toBeVisible();
+    expect(a.count).toBe(2);
+    expect(b.count).toBe(1);
+  });
+
+  test('위젯 제목은 대시보드 이름(H1) 아래 단계의 제목(heading level 2)이다', async ({ authenticatedPage: page }) => {
+    await setupDashboard(page);
+    await routeChartData(page, 1, [{ body: rowsBody(chartA, 'a-1') }]);
+    await routeChartData(page, 2, [{ body: rowsBody(chartB, 'b-1') }]);
+    await page.goto('/analytics/dashboards/1');
+
+    await expect(page.getByRole('heading', { level: 2, name: '위젯 A', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: '위젯 B', exact: true })).toBeVisible();
+  });
+});

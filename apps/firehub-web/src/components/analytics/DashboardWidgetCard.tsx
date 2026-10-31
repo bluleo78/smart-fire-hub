@@ -246,7 +246,10 @@ export function DashboardWidgetCard({
               </span>
             </>
           )}
-          <CardTitle className="text-xs font-medium truncate flex-1 min-w-0">{title}</CardTitle>
+          {/* WD-423: 위젯 제목을 제목(heading)으로 둬 스크린리더의 제목 탐색으로 위젯 사이를 오갈 수 있게 한다(페이지 H1 = 대시보드 이름 아래 단계). */}
+          <CardTitle role="heading" aria-level={2} className="text-xs font-medium truncate flex-1 min-w-0">
+            {title}
+          </CardTitle>
           {isEditing && onRemove && (
             <Button
               variant="ghost"
@@ -286,6 +289,7 @@ export function DashboardWidgetCard({
           isError={dataError}
           refreshSeconds={refreshSeconds}
           onRefresh={handleRefresh}
+          widgetName={title}
         />
       )}
     </Card>
