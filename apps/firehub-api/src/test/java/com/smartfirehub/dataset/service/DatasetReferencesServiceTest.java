@@ -103,10 +103,76 @@ class DatasetReferencesServiceTest extends IntegrationTestBase {
 
     assertThat(response.datasetId()).isEqualTo(targetDatasetId);
     assertThat(response.pipelines()).isEmpty();
+    assertThat(response.mergeOutputPipelines()).isEmpty();
     assertThat(response.dashboards()).isEmpty();
     assertThat(response.proactiveJobs()).isEmpty();
     assertThat(response.triggers()).isEmpty();
     assertThat(response.totalCount()).isZero();
+  }
+
+  /**
+   * WD-441: 기본 키를 해제하면 매 실행 실패하는 대상은 이 데이터셋을 「병합(MERGE) 적재 출력」으로 쓰는 파이프라인뿐이다. 같은 데이터셋을 REPLACE 로 쓰는
+   * 파이프라인·입력으로만 읽는 파이프라인은 mergeOutputPipelines 에 넣지 않는다(pipelines 에는 들어간다).
+   */
+  @Test
+  void getReferences_mergeOutputPipelines_listsOnlyMergeLoadsIntoTarget() {
+    PipelineDetailResponse mergePipeline =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "Merge Into Target",
+                "merge",
+                List.of(
+                    new PipelineStepRequest(
+                        "step1",
+                        "merge",
+                        "SQL",
+                        "SELECT 1",
+                        targetDatasetId,
+                        List.of(otherDatasetId),
+                        null))),
+            testUserId);
+    // 병합 저장은 출력 데이터셋에 기본 키가 있어야 통과하므로, 저장한 뒤 적재 방식만 MERGE 로 바꿔 상황을 만든다.
+    dsl.execute(
+        "update pipeline_step set load_strategy = 'MERGE' where pipeline_id = ?",
+        mergePipeline.id());
+
+    pipelineService.createPipeline(
+        new CreatePipelineRequest(
+            "Replace Into Target",
+            "replace",
+            List.of(
+                new PipelineStepRequest(
+                    "step1",
+                    "replace",
+                    "SQL",
+                    "SELECT 1",
+                    targetDatasetId,
+                    List.of(otherDatasetId),
+                    null))),
+        testUserId);
+    pipelineService.createPipeline(
+        new CreatePipelineRequest(
+            "Reads Target",
+            "input only",
+            List.of(
+                new PipelineStepRequest(
+                    "step1",
+                    "read",
+                    "SQL",
+                    "SELECT 1",
+                    otherDatasetId,
+                    List.of(targetDatasetId),
+                    null))),
+        testUserId);
+
+    DatasetReferencesResponse response = datasetService.getReferences(targetDatasetId, testUserId);
+
+    assertThat(response.mergeOutputPipelines())
+        .extracting(DatasetReferencesResponse.ReferenceItem::name)
+        .containsExactly("Merge Into Target");
+    // 부분집합이라 pipelines·totalCount 는 세 파이프라인을 그대로 센다.
+    assertThat(response.pipelines()).hasSize(3);
+    assertThat(response.totalCount()).isEqualTo(3);
   }
 
   @Test

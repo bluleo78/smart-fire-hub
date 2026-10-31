@@ -1,4 +1,9 @@
-import { createCategories, createColumn, createDatasetDetail } from '../../factories/dataset.factory';
+import {
+  createCategories,
+  createColumn,
+  createDatasetDetail,
+  createDatasetReferences,
+} from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
@@ -766,5 +771,97 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     await expect(nameRow.getByRole('button', { name: '컬럼 아래로 이동' })).toBeVisible();
     await expect(nameRow.getByRole('button', { name: '컬럼 편집' })).toBeVisible();
     await expect(nameRow.getByRole('button', { name: '컬럼 삭제' })).toBeVisible();
+  });
+
+  /**
+   * WD-441: 있던 기본 키를 모두 해제하거나 마지막 기본 키 필드를 지우면, 이 데이터셋에 병합(MERGE) 적재하는 파이프라인이 매 실행 실패한다.
+   * 그 파이프라인 이름을 미리 보여 준다(막지는 않는다). 병합 파이프라인이 없으면 경고를 그리지 않는다.
+   */
+  test.describe('기본 키 해제 — 병합 적재 파이프라인 안내 (WD-441)', () => {
+    const mergeRefs = createDatasetReferences({
+      datasetId: 5,
+      pipelines: [
+        { id: 37, name: '병합키삭제 파이프라인' },
+        { id: 21, name: '일일 병합' },
+        { id: 50, name: '읽기만 하는 파이프라인' },
+      ],
+      mergeOutputPipelines: [
+        { id: 37, name: '병합키삭제 파이프라인' },
+        { id: 21, name: '일일 병합' },
+      ],
+    });
+
+    async function openFieldsTab(page: import('@playwright/test').Page) {
+      await page.goto('/data/datasets/5');
+      await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+      await page.getByRole('tab', { name: '필드' }).click();
+      await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+    }
+
+    test('기본 키 일괄 설정 — 기본 키를 모두 해제하면 병합 파이프라인 이름이 경고로 뜬다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupMocks(page);
+      await mockApi(page, 'GET', '/api/v1/datasets/5/references', mergeRefs);
+      await openFieldsTab(page);
+
+      await page.getByRole('button', { name: /기본 키 설정/ }).click();
+      const dialog = page.getByRole('dialog', { name: /기본 키 일괄 설정/ });
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+      // 열었을 때(기본 키 id 가 체크된 상태)는 아직 경고가 없다.
+      await expect(dialog.getByTestId('merge-load-pk-warning')).toHaveCount(0);
+
+      await dialog.getByRole('checkbox', { name: /id 기본 키 토글/ }).click();
+      const warning = dialog.getByTestId('merge-load-pk-warning');
+      await expect(warning).toBeVisible();
+      await expect(warning).toContainText('병합 적재 파이프라인 2개');
+      await expect(warning.getByRole('link', { name: '병합키삭제 파이프라인' })).toHaveAttribute('href', '/pipelines/37');
+      await expect(warning.getByRole('link', { name: '일일 병합' })).toBeVisible();
+      // 병합 출력이 아니라 읽기만 하는 파이프라인은 이 경고에 넣지 않는다.
+      await expect(warning).not.toContainText('읽기만 하는 파이프라인');
+
+      // 다시 기본 키를 지정하면 경고가 사라진다.
+      await dialog.getByRole('checkbox', { name: /id 기본 키 토글/ }).click();
+      await expect(dialog.getByTestId('merge-load-pk-warning')).toHaveCount(0);
+    });
+
+    test('병합 적재 파이프라인이 없으면 기본 키를 모두 해제해도 경고가 없다', async ({ authenticatedPage: page }) => {
+      await setupMocks(page);
+      await mockApi(page, 'GET', '/api/v1/datasets/5/references', createDatasetReferences({ datasetId: 5 }));
+      await openFieldsTab(page);
+
+      await page.getByRole('button', { name: /기본 키 설정/ }).click();
+      const dialog = page.getByRole('dialog', { name: /기본 키 일괄 설정/ });
+      await dialog.getByRole('checkbox', { name: /id 기본 키 토글/ }).click();
+      await expect(dialog.getByRole('checkbox', { name: /id 기본 키 토글/ })).not.toBeChecked();
+      await expect(dialog.getByTestId('merge-load-pk-warning')).toHaveCount(0);
+    });
+
+    test('마지막 기본 키 필드를 지우는 확인 창에 병합 파이프라인 이름이 경고로 뜬다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupMocks(page);
+      await mockApi(page, 'GET', '/api/v1/datasets/5/references', mergeRefs);
+      await openFieldsTab(page);
+
+      const idRow = page.getByRole('row').filter({ has: page.getByText('ID', { exact: true }) });
+      await idRow.getByRole('button', { name: '컬럼 삭제' }).click();
+      const dialog = page.getByRole('alertdialog');
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+      await expect(dialog.getByTestId('merge-load-pk-warning')).toContainText('병합 적재 파이프라인 2개');
+      await expect(dialog.getByRole('link', { name: '일일 병합' })).toBeVisible();
+    });
+
+    test('기본 키가 아닌 필드를 지우는 확인 창에는 경고가 없다', async ({ authenticatedPage: page }) => {
+      await setupMocks(page);
+      await mockApi(page, 'GET', '/api/v1/datasets/5/references', mergeRefs);
+      await openFieldsTab(page);
+
+      const nameRow = page.getByRole('row').filter({ has: page.getByText('이름', { exact: true }) });
+      await nameRow.getByRole('button', { name: '컬럼 삭제' }).click();
+      const dialog = page.getByRole('alertdialog');
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+      await expect(dialog.getByTestId('merge-load-pk-warning')).toHaveCount(0);
+    });
   });
 });

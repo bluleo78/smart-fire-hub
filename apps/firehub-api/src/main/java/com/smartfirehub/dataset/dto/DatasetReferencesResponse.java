@@ -9,6 +9,9 @@ import java.util.List;
  * hiddenDashboardCount} 로 개수만 알린다(WD-143 — 분석 쿼리·차트 삭제 영향 WD-86 과 같은 선). 삭제의 영향은 가시성과 무관하므로 {@code
  * totalCount} 는 볼 수 없는 대시보드까지 센다.
  *
+ * @param mergeOutputPipelines 이 데이터셋을 병합(MERGE) 적재 출력으로 쓰는 파이프라인(WD-441) — {@code pipelines} 의
+ *     부분집합이라 {@code totalCount} 에는 더하지 않는다. 기본 키를 해제하면 이 파이프라인들이 매 실행 실패하므로 기본 키 변경 화면이 미리 알리는 데
+ *     쓴다.
  * @param dashboards 이 데이터셋을 쓰는 대시보드 중 조회자가 볼 수 있는 것
  * @param hiddenDashboardCount 이 데이터셋을 쓰는 대시보드 중 조회자가 볼 수 없는 것의 개수
  * @param totalCount 파이프라인 + 대시보드(볼 수 없는 것 포함) + 스마트 작업 + 트리거 수
@@ -16,6 +19,7 @@ import java.util.List;
 public record DatasetReferencesResponse(
     long datasetId,
     List<ReferenceItem> pipelines,
+    List<ReferenceItem> mergeOutputPipelines,
     List<ReferenceItem> dashboards,
     int hiddenDashboardCount,
     List<ReferenceItem> proactiveJobs,

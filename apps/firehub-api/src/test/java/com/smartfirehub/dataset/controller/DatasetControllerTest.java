@@ -277,6 +277,7 @@ class DatasetControllerTest {
         new DatasetReferencesResponse(
             1L,
             List.of(new DatasetReferencesResponse.ReferenceItem(10L, "Pipeline A")),
+            List.of(new DatasetReferencesResponse.ReferenceItem(10L, "Pipeline A")),
             List.of(new DatasetReferencesResponse.ReferenceItem(20L, "Dashboard B")),
             1,
             List.of(),
@@ -293,6 +294,7 @@ class DatasetControllerTest {
         .andExpect(jsonPath("$.datasetId").value(1))
         .andExpect(jsonPath("$.pipelines[0].id").value(10))
         .andExpect(jsonPath("$.pipelines[0].name").value("Pipeline A"))
+        .andExpect(jsonPath("$.mergeOutputPipelines[0].name").value("Pipeline A"))
         .andExpect(jsonPath("$.dashboards[0].id").value(20))
         .andExpect(jsonPath("$.dashboards[0].name").value("Dashboard B"))
         .andExpect(jsonPath("$.hiddenDashboardCount").value(1))

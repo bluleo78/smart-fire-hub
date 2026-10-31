@@ -305,6 +305,8 @@ export interface DatasetTriggerReferenceItem {
 export interface DatasetReferencesResponse {
   datasetId: number;
   pipelines: DatasetReferenceItem[];
+  /** 이 데이터셋을 병합(MERGE) 적재 출력으로 쓰는 파이프라인(WD-441) — pipelines 의 부분집합. 기본 키를 해제하면 매 실행 실패한다. */
+  mergeOutputPipelines: DatasetReferenceItem[];
   dashboards: DatasetReferenceItem[];
   hiddenDashboardCount: number;
   proactiveJobs: DatasetReferenceItem[];

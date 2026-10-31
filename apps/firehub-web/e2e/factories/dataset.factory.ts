@@ -143,6 +143,7 @@ export function createDatasetReferences(overrides?: Partial<DatasetReferencesRes
   const base: DatasetReferencesResponse = {
     datasetId: 1,
     pipelines: [],
+    mergeOutputPipelines: [],
     dashboards: [],
     hiddenDashboardCount: 0,
     proactiveJobs: [],
