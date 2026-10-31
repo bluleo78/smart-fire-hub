@@ -30,8 +30,8 @@ import { cronTooFrequentMessage } from '@/lib/cron-frequency';
 import { cronToLabel } from '@/lib/cron-label';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
-import { formatNextRun, timeZoneLabel } from '@/lib/next-run';
-import { TIMEZONE_OPTIONS } from '@/lib/timezone-data';
+import { formatNextRun } from '@/lib/next-run';
+import { describeTimezone, TIMEZONE_OPTIONS } from '@/lib/timezone-data';
 import { goalTemplateName, MAX_JOB_PROMPT_LENGTH, type ProactiveJobFormValues } from '@/lib/validations/proactive-job';
 
 import ChannelRecipientEditor from '../components/ChannelRecipientEditor';
@@ -201,10 +201,10 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
   const nextRunInfo = useMemo(() => {
     const nextDate = nextRunPreview.times[0];
     if (!nextDate) return null;
+    // 약어는 다음 실행 시각 기준으로 고른다(WD-417) — 서머타임 기간이면 EDT·AEDT 처럼 그때의 이름을 붙인다.
     return {
       text: formatNextRun(nextDate, timezone),
-      // 그 날짜에 실제로 쓰는 약어(EST/EDT 등) — 고정 표의 약어는 서머타임 기간을 구분하지 못한다
-      abbr: timeZoneLabel(nextDate, timezone),
+      abbr: describeTimezone(timezone, nextDate).abbr,
     };
   }, [nextRunPreview.times, timezone]);
 
@@ -628,11 +628,15 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
               <SelectValue placeholder="타임존 선택" />
             </SelectTrigger>
             <SelectContent>
-              {TIMEZONE_OPTIONS.map((tz) => (
-                <SelectItem key={tz.value} value={tz.value}>
-                  {tz.value} ({tz.abbr}, {tz.offset})
-                </SelectItem>
-              ))}
+              {/* 이름표는 지금 시각 기준 약어·시차다(WD-417) — 연중 고정 값이면 서머타임 기간에 한 시간 틀렸다. */}
+              {TIMEZONE_OPTIONS.map((tz) => {
+                const { abbr, offset } = describeTimezone(tz.value, new Date());
+                return (
+                  <SelectItem key={tz.value} value={tz.value}>
+                    {tz.value} ({abbr}, {offset})
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         </div>
