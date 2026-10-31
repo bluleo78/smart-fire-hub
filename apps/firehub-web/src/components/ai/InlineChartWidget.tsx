@@ -6,6 +6,8 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { toast } from 'sonner';
 
 import { analyticsApi } from '../../api/analytics';
+import { handleApiError } from '../../lib/api-error';
+import { normalizeChartConfig } from '../../lib/normalize-chart-config';
 import type { ChartConfig, ChartType } from '../../types/analytics';
 import { CHART_TYPE_LABELS } from '../../types/analytics';
 import { findMissingChartColumns } from '../analytics/chart-missing-columns';
@@ -97,7 +99,8 @@ function SaveDialog({ open, onOpenChange, sql, chartType, config }: SaveDialogPr
         description: description || undefined,
         savedQueryId,
         chartType,
-        config,
+        // AI 가 만든 config 는 타입이 어긋날 수 있다 — 서버 검사(WD-413)에 막히지 않게 화면과 같은 모양으로 맞춰 저장한다
+        config: normalizeChartConfig(config),
         isShared,
       });
       toast.success('차트가 저장되었습니다.', {
@@ -112,9 +115,8 @@ function SaveDialog({ open, onOpenChange, sql, chartType, config }: SaveDialogPr
       setDescription('');
       setIsShared(false);
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : '저장 중 오류가 발생했습니다.';
-      toast.error(message);
+      // 서버가 준 사유(예: 차트 설정 400)를 그대로 보인다
+      handleApiError(err, '저장 중 오류가 발생했습니다.');
     } finally {
       setSaving(false);
     }

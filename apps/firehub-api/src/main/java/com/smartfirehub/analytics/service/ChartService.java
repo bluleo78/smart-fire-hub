@@ -98,12 +98,9 @@ public class ChartService {
     savedQueryRepository
         .findById(req.savedQueryId(), userId, DSL.trueCondition())
         .orElseThrow(() -> new SavedQueryNotFoundException());
-    if ("MAP".equals(req.chartType())) {
-      Object spatialColumn = req.config() != null ? req.config().get("spatialColumn") : null;
-      if (spatialColumn == null || spatialColumn.toString().isBlank()) {
-        throw new IllegalArgumentException("MAP 차트는 config에 spatialColumn이 필요합니다");
-      }
-    }
+    // 종류·config 값 타입 검사(WD-413) — 잘못된 config 가 저장돼 편집 화면이 깨지거나 빈 차트가 되지 않게 400 으로 막는다.
+    ChartConfigValidator.validateType(req.chartType());
+    ChartConfigValidator.validateConfig(req.chartType(), req.config());
     Long id = chartRepository.insert(req, userId);
     ChartResponse created =
         chartRepository
@@ -158,7 +155,14 @@ public class ChartService {
     String effectiveType = req.chartType() != null ? req.chartType() : existing.chartType();
     java.util.Map<String, Object> effectiveConfig =
         req.config() != null ? req.config() : existing.config();
-    if ("MAP".equals(effectiveType)) {
+    // 종류·config 값 타입 검사(WD-413). 요청에 실린 것만 본다 — 이름만 바꾸는 저장이 예전에 저장된 잘못된 config 때문에 막히지 않게.
+    // MAP 의 spatialColumn 은 종류만 MAP 으로 바꾸는 경우도 지도를 그릴 수 없으므로 예전처럼 저장된 config 까지 본다.
+    if (req.chartType() != null) {
+      ChartConfigValidator.validateType(req.chartType());
+    }
+    if (req.config() != null) {
+      ChartConfigValidator.validateConfig(effectiveType, req.config());
+    } else if ("MAP".equals(effectiveType)) {
       Object spatialColumn = effectiveConfig != null ? effectiveConfig.get("spatialColumn") : null;
       if (spatialColumn == null || spatialColumn.toString().isBlank()) {
         throw new IllegalArgumentException("MAP 차트는 config에 spatialColumn이 필요합니다");

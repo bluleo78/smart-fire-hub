@@ -109,7 +109,7 @@ class ChartServiceTest extends IntegrationTestBase {
   private ChartResponse createChart(String name, boolean isShared, Long userId) {
     return chartService.create(
         new CreateChartRequest(
-            name, null, savedQueryId, "BAR", Map.of("xAxis", "col1", "yAxis", "col2"), isShared),
+            name, null, savedQueryId, "BAR", Map.of("xAxis", "col1", "yAxis", List.of("col2")), isShared),
         userId);
   }
 
