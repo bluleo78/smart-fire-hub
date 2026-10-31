@@ -414,13 +414,12 @@ export default function DashboardEditorPage() {
     try {
       await removeWidgetMutation.mutateAsync(id);
       // 서버 DELETE 성공 후 로컬 editingWidgets에서도 제거하여 UI 동기화
-      setEditingWidgets((prev) => {
-        if (!prev) return prev;
-        const next = prev.filter((w) => w.id !== id);
-        // 위젯 제거 후 레이아웃도 동기화
-        const items = widgetsToLayoutItems(next);
-        setLocalLayouts({ lg: items, md: items, sm: items });
-        return next;
+      setEditingWidgets((prev) => (prev ? prev.filter((w) => w.id !== id) : prev));
+      // 레이아웃은 편집 중 배치에서 지운 위젯만 뺀다 — 편집 시작 때 목록으로 다시 만들면
+      // 그 사이 바꿔 둔 다른 위젯의 크기·위치가 안내 없이 되돌아갔다(WD-331).
+      setLocalLayouts((prev) => {
+        const items = ((prev.lg as LayoutItem[] | undefined) ?? []).filter((i) => i.i !== String(id));
+        return { lg: items, md: items, sm: items };
       });
       toast.success('위젯이 제거되었습니다.');
     } catch (error) {
@@ -439,10 +438,9 @@ export default function DashboardEditorPage() {
         toast.error('이미 대시보드에 추가된 차트입니다.');
         return;
       }
-      const maxY = currentWidgets.reduce(
-        (acc, w) => Math.max(acc, w.positionY + w.height),
-        0
-      );
+      // 맨 아래 위치는 편집 중 배치(localLayouts) 기준 — 서버 좌표로 재면 크기를 늘려 둔 위젯과 겹친다(WD-331)
+      const editingItems = (localLayouts.lg as LayoutItem[] | undefined) ?? widgetsToLayoutItems(currentWidgets);
+      const maxY = editingItems.reduce((acc, i) => Math.max(acc, i.y + i.h), 0);
       // MAP 차트는 전체 폭, 큰 높이로 배치
       const isMapChart = chartType === 'MAP';
       try {
@@ -459,14 +457,21 @@ export default function DashboardEditorPage() {
         const { data: updated } = await refetch();
         if (updated) {
           setEditingWidgets(updated.widgets);
-          const items = widgetsToLayoutItems(updated.widgets);
-          setLocalLayouts({ lg: items, md: items, sm: items });
+          // 이미 있던 위젯은 편집 중 배치를 그대로 두고, 서버에 새로 생긴 위젯만 더한다 —
+          // 서버 값으로 레이아웃 전체를 다시 만들면 「완료」 전에 바꿔 둔 배치가 사라졌다(WD-331).
+          setLocalLayouts((prev) => {
+            const kept = (prev.lg as LayoutItem[] | undefined) ?? [];
+            const keptIds = new Set(kept.map((i) => i.i));
+            const added = widgetsToLayoutItems(updated.widgets).filter((i) => !keptIds.has(i.i));
+            const items = [...kept, ...added];
+            return { lg: items, md: items, sm: items };
+          });
         }
       } catch (error) {
         handleApiError(error, '위젯 추가에 실패했습니다.');
       }
     },
-    [dashboard, editingWidgets, addWidgetMutation, refetch]
+    [dashboard, editingWidgets, localLayouts, addWidgetMutation, refetch]
   );
 
   /**

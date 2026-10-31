@@ -1,6 +1,6 @@
 import { Download, Zap } from 'lucide-react';
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,8 +26,8 @@ import { ProactiveReadForbiddenNotice } from '../components/ProactiveReadForbidd
  * 생성된 리포트 목록 탭.
  *
  * 스마트 작업을 거치지 않고 리포트를 바로 찾을 수 있게 잡 횡단으로 나열한다.
- * 행 전체가 리포트 뷰어로 가는 단일 클릭 타겟이며, 잡 이름은 링크가 아닌 배지로만 표시한다
- * (행 안에 링크를 중첩하면 키보드 순회·스크린리더에서 목적지가 모호해진다).
+ * 행 전체가 리포트 뷰어로 가는 마우스 클릭 타겟이고, 키보드로는 제목 링크로 연다(WD-335).
+ * 잡 이름은 링크가 아닌 배지로만 표시한다 — 행 안에 목적지가 다른 링크가 둘이면 키보드 순회·스크린리더에서 모호해진다.
  */
 export default function ReportListTab() {
   const navigate = useNavigate();
@@ -97,7 +97,16 @@ export default function ReportListTab() {
                   {/* 제목 셀은 유동 폭 — 픽셀 고정 대신 셀 폭을 따라 truncate 되게 한다 */}
                   <TableCell className="max-w-0">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-sm font-medium truncate">{report.title}</span>
+                      {/* 키보드 접근성(WD-335): 행 클릭은 마우스로만 열리므로 제목을 뷰어 링크로 둔다 — Tab 으로 닿고 Enter 로 열린다.
+                          행에 role="button" 을 주면 표의 행·칸 의미가 사라져 링크로 한다(WD-286 역할 목록과 같음).
+                          클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
+                      <Link
+                        to={`/ai-insights/jobs/${report.jobId}/executions/${report.executionId}/report`}
+                        className="text-sm font-medium truncate rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {report.title}
+                      </Link>
                       {/* 리포트 등급 배지(WD-198) — 열 수 없는 등급이면 서버가 요약을 비워 보낸다 */}
                       {report.securityLevel && (
                         <SecurityLevelBadge level={report.securityLevel} className="shrink-0" />

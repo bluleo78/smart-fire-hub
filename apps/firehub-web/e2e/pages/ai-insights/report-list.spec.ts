@@ -45,6 +45,32 @@ test.describe('리포트 목록', () => {
     await expect(page).toHaveURL(/\/ai-insights\/jobs\/3\/executions\/11\/report/);
   });
 
+  test('키보드만으로 리포트를 열 수 있다 — Tab 으로 제목 링크에 닿고 Enter 로 뷰어가 열린다 (WD-335)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/reports', REPORTS);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [JOB]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/3', JOB);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/3/executions/11/html', '<h1>리포트 본문</h1>');
+
+    await page.goto('/ai-insights/reports');
+    const titleLink = page.getByRole('link', { name: '8월 화재 통계 리포트' });
+    await expect(titleLink).toHaveAttribute('href', '/ai-insights/jobs/3/executions/11/report');
+
+    // 「생성된 리포트」 탭에서 Tab 을 눌러 가며 제목 링크에 포커스가 닿는지 본다(예전엔 PDF 다운로드로 건너뛰었다)
+    await page.getByRole('tab', { name: '생성된 리포트' }).focus();
+    let reached = false;
+    for (let i = 0; i < 6 && !reached; i++) {
+      await page.keyboard.press('Tab');
+      reached = await titleLink.evaluate((el) => el === document.activeElement);
+    }
+    expect(reached).toBe(true);
+
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/ai-insights\/jobs\/3\/executions\/11\/report$/);
+  });
+
   test('잡이 없으면 스마트 작업 생성을 유도하는 빈 상태를 보여준다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/proactive/reports', []);
     await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
