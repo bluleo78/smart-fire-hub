@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useCreateProactiveTemplate, useDeleteProactiveJob, useDeleteProactiveTemplate, useDisableProactiveJob, useExecuteProactiveJob, useFetchLatestProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
+import { useEditModeFocus } from '@/hooks/useEditModeFocus';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError, isEditConflict, isForbiddenError, isJobAlreadyRunning } from '@/lib/api-error';
 import { goalTemplateName, type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
@@ -123,6 +124,8 @@ export default function ProactiveJobDetailPage() {
   const { canWrite, isLoading: isPermissionsLoading } = useCanWriteProactive();
 
   const [isEditing, setIsEditing] = useState(isNew);
+  // 「편집」으로 편집 폼이 열리면 첫 칸으로, 「취소」·「저장」 뒤에는 「편집」 버튼으로 포커스를 옮긴다(WD-415)
+  const { editButtonRef, editRegionRef } = useEditModeFocus(isEditing);
 
   // 사용자 상호작용 후 변경 여부 추적 (이슈 #59)
   // - 초기 로드(values 동기화)는 변경으로 간주하지 않기 위해 명시적으로 markDirty()를 호출
@@ -526,7 +529,7 @@ export default function ProactiveJobDetailPage() {
               >
                 지금 실행
               </Button>
-              <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
+              <Button ref={editButtonRef} variant="outline" size="sm" onClick={() => setIsEditing(true)}>
                 편집
               </Button>
               {/* 삭제 확인 다이얼로그 (#37) */}
@@ -594,7 +597,14 @@ export default function ProactiveJobDetailPage() {
       )}
 
       {/* 탭 */}
-      <Tabs value={activeTab} onValueChange={handleTabChange}>
+      {/* 편집 폼 영역 — 지금 보이는 탭의 첫 편집 칸으로 포커스를 옮긴다(WD-415) */}
+      <Tabs
+        ref={(el) => {
+          editRegionRef.current = el;
+        }}
+        value={activeTab}
+        onValueChange={handleTabChange}
+      >
         <TabsList>
           <TabsTrigger value="overview">개요</TabsTrigger>
           <TabsTrigger value="monitoring">

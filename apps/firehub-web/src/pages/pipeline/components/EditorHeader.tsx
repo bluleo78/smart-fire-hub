@@ -16,6 +16,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { usePipelinePermissions } from '@/hooks/queries/usePipelines';
+import { useEditModeFocus } from '@/hooks/useEditModeFocus';
 
 import type { EditorAction,PipelineEditorState } from '../hooks/usePipelineEditor';
 import type { ExecutionCancelState } from '../utils/execution-cancel';
@@ -68,6 +69,8 @@ export function EditorHeader({
   // 권한이 없으면 실행·재실행·실행 취소·수정 버튼을 숨긴다(WD-219) — 예전엔 조회 전용 사용자에게도 보여 눌러야 403 을 받았다.
   // 데이터셋 상세(WD-139)·API 연결 목록과 같은 숨김 방식. 서버 근거는 usePipelinePermissions 주석 참고.
   const { canExecutePipeline, canWritePipeline } = usePipelinePermissions();
+  // 「수정」으로 이름 칸이 편집 가능해지면 그 칸으로, 「취소」·「저장」 뒤에는 「수정」 버튼으로 포커스를 옮긴다(WD-415)
+  const { editButtonRef, editRegionRef } = useEditModeFocus(isEditing);
 
   function handleExecuteClick() {
     if (state.isDirty) {
@@ -96,7 +99,12 @@ export function EditorHeader({
       </Link>
 
       {/* Pipeline name */}
-      <div className="flex min-w-0 flex-col justify-center">
+      <div
+        ref={(el) => {
+          editRegionRef.current = el;
+        }}
+        className="flex min-w-0 flex-col justify-center"
+      >
         {readOnly ? (
           <span className="font-semibold text-lg min-w-0 sm:min-w-[200px] max-w-[400px] truncate">
             {state.name || '파이프라인 이름'}
@@ -208,7 +216,7 @@ export function EditorHeader({
 
       {/* 수정 버튼 — 조회 모드에서만 표시 (실행 상세에서는 숨김). pipeline:write 가 없으면 숨김(WD-219) */}
       {!isEditing && !isExecutionMode && pipelineId !== null && canWritePipeline && (
-        <Button variant="outline" onClick={onEdit}>
+        <Button ref={editButtonRef} variant="outline" onClick={onEdit}>
           <Pencil className="h-4 w-4" />
           <span className="sr-only sm:not-sr-only">수정</span>
         </Button>

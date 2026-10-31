@@ -894,6 +894,27 @@ test.describe('데이터셋 상세 페이지', () => {
    * DatasetInfoTab의 dirty 상태를 onDirtyChange로 부모에 끌어올려 mappingDirty와
    * OR 합산해 가드에 전달하도록 고쳤다 — 매핑 탭과 동일한 시나리오로 검증한다.
    */
+  /**
+   * WD-415: 「수정」·「취소」를 키보드로 누르면 누른 버튼이 사라지며 포커스가 body 로 떨어졌다.
+   * 이제 편집 폼이 열리면 첫 칸(데이터셋 이름)으로, 「취소」 뒤에는 다시 나타난 「수정」 버튼으로 간다.
+   */
+  test('「기본 정보」 수정·취소를 키보드로 누르면 포커스가 이름 칸과 「수정」 버튼으로 간다 (WD-415)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDetailPageMocks(page, 1);
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    const editButton = page.getByRole('button', { name: '수정' });
+    await editButton.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByLabel('데이터셋 이름 *')).toBeFocused();
+
+    await page.getByRole('button', { name: '취소' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(editButton).toBeFocused();
+  });
+
   test.describe('#635 기본 정보 인라인 편집 미저장 변경 — 이탈 가드', () => {
     test('설명을 수정하고 저장하지 않은 채 "목록으로 돌아가기" 클릭 시 이탈 확인 다이얼로그가 표시된다', async ({
       authenticatedPage: page,

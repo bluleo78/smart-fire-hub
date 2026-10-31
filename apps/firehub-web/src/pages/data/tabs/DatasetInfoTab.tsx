@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from '../../../components/ui/select';
 import { useDatasetPermissions, useUpdateDataset } from '../../../hooks/queries/useDatasets';
+import { useEditModeFocus } from '../../../hooks/useEditModeFocus';
 import { formatDate, formatRelativeTime, getOriginTypeLabel, getStorageTypeLabel } from '../../../lib/formatters';
 import type { UpdateDatasetFormData } from '../../../lib/validations/dataset';
 import { updateDatasetSchema } from '../../../lib/validations/dataset';
@@ -40,6 +41,8 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
   onDirtyChange,
 }: DatasetInfoTabProps) {
   const [isEditing, setIsEditing] = React.useState(false);
+  // 「수정」·「취소」·「저장」으로 폼과 보기가 바뀔 때 포커스를 첫 칸·「수정」 버튼으로 옮긴다(WD-415)
+  const { editButtonRef, editRegionRef } = useEditModeFocus(isEditing);
   const updateDataset = useUpdateDataset(datasetId);
   // 기본 정보 수정(PUT /datasets/{id})은 dataset:write — 없으면 「수정」을 숨겨 조회 전용으로 보인다 (WD-139)
   const { canWriteDataset } = useDatasetPermissions();
@@ -142,7 +145,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl leading-7 font-semibold">기본 정보</h2>
           {!isEditing && dataset.originType !== 'TEMP' && canWriteDataset && (
-            <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
+            <Button ref={editButtonRef} variant="outline" size="sm" onClick={() => setIsEditing(true)}>
               <Pencil className="h-4 w-4" />
               수정
             </Button>
@@ -155,7 +158,13 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
         )}
 
         {isEditing ? (
-          <form onSubmit={infoForm.handleSubmit(onInfoSubmit)} className="space-y-4">
+          <form
+            ref={(el) => {
+              editRegionRef.current = el;
+            }}
+            onSubmit={infoForm.handleSubmit(onInfoSubmit)}
+            className="space-y-4"
+          >
             <div className="space-y-2">
               <Label htmlFor="name">데이터셋 이름 *</Label>
               <Input id="name" {...infoForm.register('name')} />

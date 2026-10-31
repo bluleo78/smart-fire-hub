@@ -33,6 +33,7 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useCanWriteProactive,useCreateProactiveTemplate, useDeleteProactiveTemplate, useFetchLatestProactiveTemplate, useProactiveJobs, useProactiveTemplate, useProactiveTemplates, useUpdateProactiveTemplate } from '@/hooks/queries/useProactiveMessages';
+import { useEditModeFocus } from '@/hooks/useEditModeFocus';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError, isEditConflict, isForbiddenError } from '@/lib/api-error';
@@ -127,6 +128,8 @@ export default function ReportTemplateDetailPage() {
   const fetchLatestTemplate = useFetchLatestProactiveTemplate();
 
   const [isEditing, setIsEditing] = useState(isNew);
+  // 「편집」으로 편집 폼이 열리면 첫 칸으로, 「취소」·「저장」 뒤에는 「편집」 버튼으로 포커스를 옮긴다(WD-415)
+  const { editButtonRef, editRegionRef } = useEditModeFocus(isEditing);
   const [structureJson, setStructureJson] = useState(DEFAULT_STRUCTURE);
   const [styleText, setStyleText] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -549,7 +552,7 @@ export default function ReportTemplateDetailPage() {
               </Button>
               {!isBuiltin && (
                 <>
-                  <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
+                  <Button ref={editButtonRef} variant="outline" size="sm" onClick={() => setIsEditing(true)}>
                     <Pencil className="h-3.5 w-3.5" />
                     편집
                   </Button>
@@ -614,7 +617,11 @@ export default function ReportTemplateDetailPage() {
 
       {/* 이름/설명 편집 (편집 모드) */}
       {isEditing && (
-        <Card>
+        <Card
+          ref={(el) => {
+            editRegionRef.current = el;
+          }}
+        >
           <CardContent className="pt-6">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
