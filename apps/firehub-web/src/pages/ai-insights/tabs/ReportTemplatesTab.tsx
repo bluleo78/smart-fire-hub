@@ -1,6 +1,6 @@
 import { FileText, Plus } from 'lucide-react';
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -78,7 +78,17 @@ export default function ReportTemplatesTab() {
             >
               <CardHeader className="pb-2 flex-shrink-0">
                 <div className="flex items-start justify-between gap-2">
-                  <CardTitle className="text-sm font-medium">{t.name}</CardTitle>
+                  {/* 키보드 접근성(WD-335): 카드 클릭은 마우스로만 열리므로 이름을 양식 링크로 둔다 — Tab 으로 닿고 Enter 로 열린다.
+                    클릭은 카드 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
+                  <CardTitle className="text-sm font-medium">
+                    <Link
+                      to={`/ai-insights/templates/${t.id}`}
+                      className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {t.name}
+                    </Link>
+                  </CardTitle>
                   <Badge variant="secondary" className="shrink-0 text-xs">기본</Badge>
                 </div>
                 {t.description && (
@@ -156,7 +166,15 @@ export default function ReportTemplatesTab() {
                   >
                     <CardHeader className="pb-2 flex-shrink-0">
                       <div className="flex items-start justify-between gap-2">
-                        <CardTitle className="text-sm font-medium">{t.name}</CardTitle>
+                        <CardTitle className="text-sm font-medium">
+                          <Link
+                            to={`/ai-insights/templates/${t.id}`}
+                            className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {t.name}
+                          </Link>
+                        </CardTitle>
                       </div>
                       {t.description && (
                         <CardDescription className="text-xs line-clamp-2">{t.description}</CardDescription>

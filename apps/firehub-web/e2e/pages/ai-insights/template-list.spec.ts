@@ -44,6 +44,31 @@ test.describe('리포트 양식 목록 페이지', () => {
     await expect(page.getByText('주간 통계 리포트')).toBeVisible();
   });
 
+  test('키보드만으로 기본·커스텀 양식을 열 수 있다 — 이름이 링크라 Tab 으로 닿고 Enter 로 열린다 (WD-335)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTemplateListMocks(page);
+    await page.goto('/ai-insights/templates');
+
+    const builtin = page.getByRole('link', { name: '일일 현황 리포트' });
+    const custom = page.getByRole('link', { name: '주간 통계 리포트' });
+    await expect(builtin).toHaveAttribute('href', '/ai-insights/templates/1');
+    await expect(custom).toHaveAttribute('href', '/ai-insights/templates/2');
+
+    // 「리포트 양식」 탭에서 Tab 을 눌러 가며 기본 양식 이름 링크에 닿는다(예전엔 카드를 건너뛰었다)
+    await page.getByRole('tab', { name: '리포트 양식' }).focus();
+    let reached = false;
+    for (let i = 0; i < 6 && !reached; i++) {
+      await page.keyboard.press('Tab');
+      reached = await builtin.evaluate((el) => el === document.activeElement);
+    }
+    expect(reached).toBe(true);
+
+    await custom.focus();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/ai-insights\/templates\/2$/);
+  });
+
   test('커스텀 템플릿이 없을 때 빈 상태 메시지를 표시한다', async ({ authenticatedPage: page }) => {
     // 기본 템플릿만 있고 커스텀 없는 상태로 모킹
     await mockApi(page, 'GET', '/api/v1/proactive/templates', [
