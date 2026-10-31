@@ -57,7 +57,7 @@ class EmailChannelTest {
             DeliveryResult.PermanentFailure.class,
             pf -> {
               assertThat(pf.reason()).isEqualTo(PermanentFailureReason.UNRECOVERABLE);
-              assertThat(pf.details()).contains("SMTP 미설정").contains("워크스페이스 설정 › 이메일");
+              assertThat(pf.details()).contains("SMTP 서버가 설정되지 않았습니다").contains("관리 › 설정 › 이메일 탭");
             });
     verify(channelHttpClient, never()).send(any(), any(), any());
   }

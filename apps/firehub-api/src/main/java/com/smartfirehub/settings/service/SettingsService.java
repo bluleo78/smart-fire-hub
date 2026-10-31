@@ -676,8 +676,8 @@ public class SettingsService {
    * 실제 메일 발송이 쓰는 SMTP 접속 정보. <b>현재 워크스페이스가 저장한 값만</b> 읽고 비밀값을 <b>복호화</b>해서 돌려준다(#712: 테넌트 전용).
    *
    * <p><b>미설정이면 빈 맵이다.</b> 워크스페이스가 SMTP 를 등록하지 않았거나 테넌트 컨텍스트가 없는 호출이면 플랫폼 값으로 폴백하지 않는다 — 소비자({@code
-   * EmailChannel}·{@code EmailDeliveryChannel}· 연결 테스트)가 {@code smtp.host} 공백을 보고 "워크스페이스 설정 ›
-   * 이메일에서 등록하라"는 오류로 멈춘다. 옛 플랫폼 행이 {@code system_settings} 에 남아 있어도 읽지 않는다(V128 이 지운다).
+   * EmailChannel}·{@code EmailDeliveryChannel}· 연결 테스트)가 {@code smtp.host} 공백을 보고 "관리 › 설정 › 이메일
+   * 탭에서 등록하라"는 오류로 멈춘다. 옛 플랫폼 행이 {@code system_settings} 에 남아 있어도 읽지 않는다(V128 이 지운다).
    *
    * <p><b>화면용 읽기와 발송용 읽기는 요구가 정반대다.</b> {@link #getResolvedByPrefix} 는 같은 데이터를 <b>마스킹</b>해서
    * 내보내고(응답에 평문도 암호문도 실리면 안 된다), 이 메서드는 <b>복호화</b>해서 내보낸다(SMTP 인증에 평문이 필요하다). 그래서 마스킹 없는 해석 경로인

@@ -87,7 +87,8 @@ public class EmailDeliveryChannel implements DeliveryChannel {
     String host = smtp.getOrDefault("smtp.host", "");
     if (host.isBlank()) {
       throw new IllegalStateException(
-          "SMTP 미설정 — 이메일 리포트를 발송할 수 없습니다. 워크스페이스 설정 › 이메일에서 SMTP 서버를 등록하세요");
+          // 위치는 화면의 실제 메뉴 이름으로 안내한다(WD-304 — 「워크스페이스 설정」은 화면에 없는 이름이었다).
+          "SMTP 서버가 설정되지 않아 이메일 리포트를 발송할 수 없습니다. 관리 › 설정 › 이메일 탭에서 등록하세요");
     }
 
     // config에서 EMAIL 채널의 수신자 목록 구성 — 아래 try 밖에서 한다: 받을 사람이 없을 때의 예외(WD-172)가 바깥 catch 에

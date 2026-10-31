@@ -346,16 +346,15 @@ public class ChannelSettingsService {
     try {
       result = channelRegistry.get(channelType).deliver(ctx);
     } catch (RuntimeException e) {
-      return new ChannelTestResult(false, "테스트 발송 중 오류: " + e.getMessage());
+      return new ChannelTestResult(false, "예기치 않은 오류가 발생했습니다: " + e.getMessage());
     }
 
+    // 실패 사유만 돌려준다(WD-304) — 웹 토스트가 「테스트 발송 실패: 」를 앞에 붙이므로 여기서도 「발송 실패: 」를 붙이면 같은 말이 두 번 나온다.
     return switch (result) {
       case DeliveryResult.Sent ignored -> new ChannelTestResult(true, "테스트 메시지가 발송되었습니다.");
       case DeliveryResult.TransientFailure tf ->
-          new ChannelTestResult(
-              false, "발송 실패 (재시도 가능): " + friendlyTransientFailureReason(tf.reason()));
-      case DeliveryResult.PermanentFailure pf ->
-          new ChannelTestResult(false, "발송 실패: " + pf.details());
+          new ChannelTestResult(false, friendlyTransientFailureReason(tf.reason()));
+      case DeliveryResult.PermanentFailure pf -> new ChannelTestResult(false, pf.details());
     };
   }
 
