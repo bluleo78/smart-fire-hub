@@ -1,3 +1,4 @@
+import { normalizeChartConfig } from '../lib/normalize-chart-config';
 import type {
   AddWidgetRequest,
   AnalyticsAdminItem,
@@ -29,6 +30,12 @@ import { client } from './client';
 
 /** 삭제 영향 범위 조회 시간 제한 — 넘으면 조회 실패로 보고 경고만 남긴 채 삭제를 허용한다(조회가 삭제를 무한정 막지 않게). */
 export const DELETE_IMPACT_TIMEOUT_MS = 10_000;
+
+/** 차트 응답의 config 를 정규화한다 — 가려진 config(null, configWithheld)는 그대로 둔다(WD-413). */
+function withNormalizedChart<R extends { data: Chart }>(r: R): R {
+  if (r.data?.config) r.data = { ...r.data, config: normalizeChartConfig(r.data.config) };
+  return r;
+}
 
 export const analyticsApi = {
   // ============================================================
@@ -95,14 +102,15 @@ export const analyticsApi = {
     size?: number;
   }) => client.get<PageResponse<ChartListItem>>('/analytics/charts', { params }),
 
+  // 차트를 받는 응답은 config 를 화면이 가정하는 모양으로 맞춘다(WD-413) — 잘못 저장된 config 로 편집 화면이 깨지지 않게.
   createChart: (data: CreateChartRequest) =>
-    client.post<Chart>('/analytics/charts', data),
+    client.post<Chart>('/analytics/charts', data).then(withNormalizedChart),
 
   getChart: (id: number) =>
-    client.get<Chart>(`/analytics/charts/${id}`),
+    client.get<Chart>(`/analytics/charts/${id}`).then(withNormalizedChart),
 
   updateChart: (id: number, data: UpdateChartRequest) =>
-    client.put<Chart>(`/analytics/charts/${id}`, data),
+    client.put<Chart>(`/analytics/charts/${id}`, data).then(withNormalizedChart),
 
   deleteChart: (id: number) =>
     client.delete(`/analytics/charts/${id}`),
@@ -142,7 +150,11 @@ export const analyticsApi = {
     }),
 
   getChartData: (id: number) =>
-    client.get<ChartDataResponse>(`/analytics/charts/${id}/data`),
+    client.get<ChartDataResponse>(`/analytics/charts/${id}/data`).then((r) => {
+      // 대시보드 위젯이 그리는 config 도 같은 모양으로 맞춘다(WD-413)
+      if (r.data?.chart) r.data.chart = { ...r.data.chart, config: normalizeChartConfig(r.data.chart.config) };
+      return r;
+    }),
 
   // ============================================================
   // Phase 3: Dashboards

@@ -1,3 +1,4 @@
+import { normalizeChartConfig } from '../../lib/normalize-chart-config';
 import type { ChartConfig, ChartType } from '../../types/analytics';
 
 /**
@@ -8,7 +9,8 @@ import type { ChartConfig, ChartType } from '../../types/analytics';
  * 렌더러가 사본의 xAxis/yAxis 를 자동 추론 값으로 덮어쓰므로 원본을 건드리지 않게 항상 새 객체를 돌려준다.
  */
 export function normalizeYAxis(config: ChartConfig): ChartConfig {
-  return { ...config, yAxis: Array.isArray(config.yAxis) ? config.yAxis : [] };
+  // 타입이 틀린 값(문자열 yAxis·숫자 xAxis 등)까지 맞추는 저장 config 정규화를 그대로 쓴다(WD-413)
+  return normalizeChartConfig(config);
 }
 
 /**
