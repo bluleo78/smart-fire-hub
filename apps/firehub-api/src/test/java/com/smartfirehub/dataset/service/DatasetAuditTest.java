@@ -177,7 +177,10 @@ class DatasetAuditTest extends IntegrationTestBase {
                 String.valueOf(datasetId)));
   }
 
-  /** 정확히 한 행이 남았고 공통 항목(행위자·결과·IP 없음)이 맞으며 값이 새지 않았는지 보고 그 행을 돌려준다. */
+  /**
+   * 정확히 한 행이 남았고 공통 항목(행위자·결과·접속 주소)이 맞으며 값이 새지 않았는지 보고 그 행을 돌려준다. IP 는 서비스가 넘기지 않아도 감사 서비스가 처리 중인
+   * 요청의 접속 주소로 채운다(WD-394) — MockMvc 요청은 127.0.0.1 이다.
+   */
   private Record single(long mark, long datasetId, String action) throws Exception {
     List<Record> rows = auditsSince(mark, datasetId);
     assertThat(rows).hasSize(1);
@@ -186,7 +189,7 @@ class DatasetAuditTest extends IntegrationTestBase {
     assertThat(row.get("user_id", Long.class)).isEqualTo(editor);
     assertThat(row.get("username", String.class)).isEqualTo(editorName);
     assertThat(row.get("result", String.class)).isEqualTo("SUCCESS");
-    assertThat(row.get("ip_address", String.class)).isNull();
+    assertThat(row.get("ip_address", String.class)).isEqualTo("127.0.0.1");
     assertThat(row.get("description", String.class)).doesNotContain(MARKER);
     assertThat(row.get("metadata", String.class)).doesNotContain(MARKER);
     return row;
