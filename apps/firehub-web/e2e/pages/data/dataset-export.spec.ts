@@ -265,3 +265,46 @@ test.describe('데이터셋 상세 — 내보내기 다이얼로그', () => {
     await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3000 });
   });
 });
+
+/**
+ * 회귀 가드(WD-383): 동기 내보내기 파일 이름의 날짜가 toISOString(UTC)이라, 한국 시간 0~9시에 받으면 전날 날짜가 붙었다.
+ * 브라우저 시간대를 Asia/Seoul, 시각을 KST 2026-10-29 03:15(UTC 10-28 18:15)로 고정해 현지 날짜가 붙는지 본다.
+ */
+test.describe('데이터셋 상세 — 내보내기 파일 이름 날짜 (WD-383)', () => {
+  test.use({ timezoneId: 'Asia/Seoul' });
+
+  test('한국 시간 새벽에 내보내도 파일 이름에 오늘(현지) 날짜가 붙는다', async ({ authenticatedPage: page }) => {
+    // UTC 2026-10-28 18:15 = KST 10-29 03:15 (epoch ms — 서버 날짜 문자열이 아니다)
+    await page.clock.setFixedTime(Date.UTC(2026, 9, 28, 18, 15));
+    const detail = createDatasetDetail({
+      id: 1,
+      rowCount: 2,
+      columns: [createColumn({ id: 1, columnName: 'id', displayName: 'ID', dataType: 'INTEGER', isPrimaryKey: true })],
+    });
+    await mockApi(page, 'GET', '/api/v1/datasets/1', detail);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/1/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/stats', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/data', {
+      columns: detail.columns, rows: [{ id: 1 }], page: 0, size: 50, totalElements: 1, totalPages: 1,
+    });
+    await mockApi(page, 'GET', '/api/v1/datasets/1/export/estimate', {
+      rowCount: 1, async: false, hasGeometryColumn: false,
+      columns: [{ columnName: 'id', displayName: 'ID', isGeometry: false }],
+    });
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/export',
+      (route) => route.fulfill({ status: 200, contentType: 'text/csv', body: 'id\n1' }),
+    );
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '내보내기' }).click();
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('dialog').getByRole('button', { name: '내보내기' }).click();
+    const download = await downloadPromise;
+    // 예전엔 UTC 날짜 20261028 이 붙었다
+    expect(download.suggestedFilename()).toBe(`${detail.name}_export_20261029.csv`);
+  });
+});

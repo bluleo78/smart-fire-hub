@@ -32,8 +32,12 @@ public class DatasetTagRepository {
         .fetch(r -> r.get(DT_TAG_NAME));
   }
 
-  public void insert(Long datasetId, String tagName, Long userId) {
-    dsl.insertInto(DATASET_TAG)
+  /**
+   * 태그를 넣고 넣은 행 수를 돌려준다. 같은 데이터셋에 대소문자만 다른 태그가 이미 있으면(유일 인덱스
+   * (dataset_id, lower(tag_name)), V155) 넣지 않고 0 — 호출자는 0 이면 중복으로 본다(WD-389).
+   */
+  public int insert(Long datasetId, String tagName, Long userId) {
+    return dsl.insertInto(DATASET_TAG)
         .set(DT_DATASET_ID, datasetId)
         .set(DT_TAG_NAME, tagName)
         .set(DT_CREATED_BY, userId)

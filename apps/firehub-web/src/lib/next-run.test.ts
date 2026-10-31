@@ -3,7 +3,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { formatNextRun, formatNextRunShort, getNextRunDate } from './next-run';
+import { formatNextRun, formatNextRunShort, getNextRunDate, timeZoneLabel } from './next-run';
 
 describe('getNextRunDate', () => {
   it('유효한 cron은 Date 반환', () => {
@@ -50,5 +50,19 @@ describe('formatNextRunShort', () => {
     const result = formatNextRunShort(date, 'Asia/Seoul');
     expect(typeof result).toBe('string');
     expect(result).not.toMatch(/오늘|내일/);
+  });
+});
+
+describe('timeZoneLabel (WD-385)', () => {
+  it('서머타임 지역은 그 날짜의 약어를 준다', () => {
+    expect(timeZoneLabel(new Date(Date.UTC(2026, 9, 29, 5, 30)), 'America/New_York')).toBe('EDT');
+    expect(timeZoneLabel(new Date(Date.UTC(2026, 11, 29, 5, 30)), 'America/New_York')).toBe('EST');
+  });
+  it('오프셋만 주는 지역은 고정 약어 표의 약어를 쓴다', () => {
+    expect(timeZoneLabel(new Date(Date.UTC(2026, 9, 29, 5, 30)), 'Asia/Seoul')).toBe('KST');
+    expect(timeZoneLabel(new Date(Date.UTC(2026, 9, 29, 5, 30)), 'UTC')).toBe('UTC');
+  });
+  it('표에 없는 지역은 UTC 오프셋으로 보인다', () => {
+    expect(timeZoneLabel(new Date(Date.UTC(2026, 9, 29, 5, 30)), 'Asia/Kolkata')).toBe('UTC+5:30');
   });
 });

@@ -43,7 +43,7 @@ async function expectRowsRendered(page: Page) {
 
 test.describe('데이터셋 상세 — 조회 전용 사용자 (WD-139)', () => {
   test('헤더·정보 탭: 값은 보이고 복제·태그 추가/제거·수정은 없으며 즐겨찾기는 된다', async ({ authenticatedPage: page }) => {
-    const favorite = await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/favorite`, { isFavorite: true }, { capture: true });
+    const favorite = await mockApi(page, 'PUT', `/api/v1/datasets/${DATASET_ID}/favorite`, { favorited: true }, { capture: true });
     await openDetail(page, READ_ONLY);
 
     // 조회 값은 그대로 — 테이블명·태그·기본 정보

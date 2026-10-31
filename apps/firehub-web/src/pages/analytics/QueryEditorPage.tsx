@@ -68,7 +68,7 @@ import { useIsOwner } from '../../hooks/useIsOwner';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError, handleApiErrorAsync, isEditConflict } from '../../lib/api-error';
-import { downloadBlob, filenameFromContentDisposition } from '../../lib/download';
+import { downloadBlob, filenameFromContentDisposition, localDateStamp } from '../../lib/download';
 import { sqlRunShortcut } from '../../lib/sql-run-shortcut';
 import { RUN_SHORTCUT_LABEL } from '../../lib/sql-run-shortcut-label';
 import { cn } from '../../lib/utils';
@@ -731,7 +731,7 @@ export default function QueryEditorPage() {
       // 아니라 실제 파일 내용과 맞는다. 헤더가 없을 때만 같은 규칙의 이름을 화면 상태로 만든다.
       const ext = format === 'CSV' ? 'csv' : 'xlsx';
       const suffix = result.truncated ? `_상위${result.rows.length}행` : '';
-      const fallback = `query_result_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}${suffix}.${ext}`;
+      const fallback = `query_result_${localDateStamp()}${suffix}.${ext}`;
       const disposition = response.headers['content-disposition'];
       const filename = filenameFromContentDisposition(typeof disposition === 'string' ? disposition : null, fallback);
       downloadBlob(filename, response.data as Blob);

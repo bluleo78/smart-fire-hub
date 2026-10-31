@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cronTooFrequentMessage } from '@/lib/cron-frequency';
+import { timeZoneLabel } from '@/lib/next-run';
 
 const TIMEZONES = [
   'Asia/Seoul',
@@ -78,10 +79,10 @@ export default function CronExpressionInput({
       const times: string[] = [];
       for (let i = 0; i < 5; i++) {
         const next = interval.next();
-        times.push(
-          // eslint-disable-next-line no-restricted-syntax -- 서버 문자열이 아니라 cron 파서가 준 epoch 숫자다
-          new Date(next.getTime()).toLocaleString('ko-KR', { timeZone: timezone })
-        );
+        // eslint-disable-next-line no-restricted-syntax -- 서버 문자열이 아니라 cron 파서가 준 epoch 숫자다
+        const at = new Date(next.getTime());
+        // 트리거 시간대 기준 시각이라 그 시간대 이름을 붙인다 — 목록의 「다음 실행」(보는 사람 시간대)과 구분되게(WD-385)
+        times.push(`${at.toLocaleString('ko-KR', { timeZone: timezone })} (${timeZoneLabel(at, timezone)})`);
       }
       return times;
     } catch {

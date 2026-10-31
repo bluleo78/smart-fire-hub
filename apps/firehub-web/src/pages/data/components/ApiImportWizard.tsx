@@ -294,7 +294,7 @@ export function ApiImportWizard({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto overscroll-contain">
+      <DialogContent className="max-h-[90vh] overflow-y-auto overscroll-contain">
         <DialogHeader>
           <DialogTitle>API 가져오기 — {datasetName}</DialogTitle>
           <DialogDescription className="sr-only">외부 API를 통해 데이터셋에 데이터를 가져옵니다.</DialogDescription>
@@ -316,8 +316,10 @@ export function ApiImportWizard({
               >
                 {i + 1}
               </div>
+              {/* 좁은 화면에서는 4단계 이름이 한 줄에 다 들어가지 않아 「API 설/정」처럼 글자 중간에서 끊겼다(WD-375).
+                  sm 미만에서는 지금 단계 이름만 한 줄로 보이고, 나머지 단계는 번호만 보인다. */}
               <span
-                className={`text-xs ${i === step ? 'font-medium' : 'text-muted-foreground'}`}
+                className={`text-xs whitespace-nowrap ${i === step ? 'font-medium' : 'hidden sm:inline text-muted-foreground'}`}
               >
                 {label}
               </span>

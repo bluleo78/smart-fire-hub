@@ -153,7 +153,7 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger, onC
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto overscroll-contain" onCloseAutoFocus={onCloseAutoFocus}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto overscroll-contain" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             트리거 편집

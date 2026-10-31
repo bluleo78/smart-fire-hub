@@ -1067,4 +1067,109 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThat(meta.get("authType").asText()).isEqualTo("BEARER");
     assertThat(allAuditText(created.id())).doesNotContain(secret).doesNotContain("****");
   }
+
+  // ── WD-392: 인증 필드 검사 ──────────────────────────────────────────────
+
+  @Autowired private EncryptionService encryptionService;
+
+  private CreateApiConnectionRequest apiKeyReq(String name, Map<String, String> authConfig) {
+    return new CreateApiConnectionRequest(
+        name, null, "API_KEY", authConfig, "https://api.example.com", null);
+  }
+
+  /** 헤더 이름으로 쓸 수 없는 값(띄어쓰기·콜론·빈 값·예약 헤더)은 저장하지 않고 한국어 사유로 400 이다. */
+  @ParameterizedTest
+  @ValueSource(strings = {"X API Key", "X-Key:evil", " ", "Host", "content-length"})
+  void create_invalidHeaderName_isRejected(String headerName) {
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    apiKeyReq(
+                        "WD392 " + headerName.hashCode(),
+                        Map.of("placement", "header", "headerName", headerName, "apiKey", "abc")),
+                    testUserId))
+        .isInstanceOf(ApiConnectionException.class)
+        .hasMessageContaining("헤더 이름");
+  }
+
+  /** 키 값에 줄바꿈이 있거나 쿼리 파라미터 이름이 비면 거부한다 — 문구에 키 원문은 싣지 않는다. */
+  @Test
+  void create_lineBreakInKeyOrBlankParamName_isRejected() {
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    apiKeyReq(
+                        "WD392 newline",
+                        Map.of(
+                            "placement",
+                            "header",
+                            "headerName",
+                            "X-API-Key",
+                            "apiKey",
+                            "abc\r\nX-Evil: 1")),
+                    testUserId))
+        .isInstanceOf(ApiConnectionException.class)
+        .hasMessageContaining("줄바꿈")
+        .hasMessageNotContaining("abc");
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    apiKeyReq(
+                        "WD392 query",
+                        Map.of("placement", "query", "paramName", "", "apiKey", "abc")),
+                    testUserId))
+        .isInstanceOf(ApiConnectionException.class)
+        .hasMessageContaining("쿼리 파라미터 이름");
+  }
+
+  /** 정상 헤더 이름은 그대로 저장되고, Bearer 토큰 앞에 붙여 넣은 「Bearer 」 는 떼어 저장한다. */
+  @Test
+  void create_validHeaderAndBearerPrefix_areSavedNormalized() {
+    ApiConnectionResponse key =
+        apiConnectionService.create(
+            apiKeyReq(
+                "WD392 ok",
+                Map.of("placement", "header", "headerName", "X-API-Key", "apiKey", "abc")),
+            testUserId);
+    assertThat(apiConnectionService.getDecryptedAuthConfig(key.id()))
+        .containsEntry("headerName", "X-API-Key");
+
+    ApiConnectionResponse bearer =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "WD392 bearer",
+                null,
+                "BEARER",
+                Map.of("token", "Bearer abc123"),
+                "https://api.example.com",
+                null),
+            testUserId);
+    assertThat(apiConnectionService.getDecryptedAuthConfig(bearer.id()))
+        .containsEntry("token", "abc123");
+  }
+
+  /** 검사 전에 저장된 잘못된 헤더 이름으로 테스트하면 호출하지 않고 「연결하지 못했습니다」 대신 실제 원인을 보인다. */
+  @Test
+  void testConnection_storedInvalidHeaderName_reportsRealCause() throws Exception {
+    String encrypted =
+        encryptionService.encrypt(
+            objectMapper.writeValueAsString(
+                Map.of("placement", "header", "headerName", "X API Key", "apiKey", "abc")));
+    Long id =
+        tx.execute(
+            s ->
+                apiConnectionRepository.save(
+                    "WD392 legacy",
+                    null,
+                    "API_KEY",
+                    encrypted,
+                    testUserId,
+                    "https://api.example.com",
+                    null));
+
+    var result = apiConnectionService.testConnection(id);
+
+    assertThat(result.ok()).isFalse();
+    assertThat(result.errorMessage()).startsWith("헤더 이름이 올바르지 않습니다").doesNotContain("연결하지 못했습니다");
+  }
 }

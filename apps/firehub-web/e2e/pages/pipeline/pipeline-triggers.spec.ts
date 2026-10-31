@@ -1351,3 +1351,37 @@ test.describe('파이프라인 트리거 탭', () => {
     }
   });
 });
+
+/**
+ * 회귀 가드(WD-385): 트리거 시간대를 내 시간대와 다르게 두면, 같은 다음 실행이 목록(내 시간대 오후 2:30)과 편집 창 미리보기
+ * (트리거 시간대 오전 1:30)에서 시간대 표기 없이 달라 보였다. 이제 각 시각 뒤에 그 기준 시간대 이름을 붙인다.
+ */
+test.describe('파이프라인 트리거 — 다음 실행 시간대 표기 (WD-385)', () => {
+  test.use({ timezoneId: 'Asia/Seoul' });
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
+  test('목록은 내 시간대(KST), 편집 창 미리보기는 트리거 시간대(EDT)를 붙여 보인다', async ({ authenticatedPage: page }) => {
+    // 미리보기는 지금 시각 기준으로 계산하므로 시각을 고정한다 — UTC 2026-10-28 12:00(뉴욕 서머타임 기간)
+    await page.clock.setFixedTime(Date.UTC(2026, 9, 28, 12));
+    const trigger = createTrigger({
+      id: 7,
+      name: '뉴욕새벽',
+      description: '',
+      triggerType: 'SCHEDULE',
+      config: { cron: '0 30 1 * * *', timezone: 'America/New_York', concurrencyPolicy: 'SKIP' },
+      nextFireTime: '2026-10-29T05:30:00Z', // 뉴욕 01:30 EDT = 서울 14:30 KST
+    });
+    await setupTriggerTabMocks(page, { triggers: [trigger] });
+    await gotoTriggerTab(page);
+
+    await expect(page.getByText('다음 실행: 2026. 10. 29. 오후 2:30:00 (KST)')).toBeVisible();
+
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('1. 2026. 10. 29. 오전 1:30:00 (EDT)')).toBeVisible();
+  });
+});

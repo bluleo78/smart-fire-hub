@@ -1,4 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
 import {
   ArrowLeft,
   BarChart2,
@@ -43,8 +44,8 @@ import {
   useDataset,
   useDatasetPermissions,
   useRemoveTag,
+  useSetFavorite,
   useTags,
-  useToggleFavorite,
   useUpdateStatus,
 } from '../../hooks/queries/useDatasets';
 import { useDataStoreFeatures } from '../../hooks/queries/useDataStoreCapabilities';
@@ -128,7 +129,7 @@ export default function DatasetDetailPage() {
 
   // isError: 존재하지 않는 데이터셋 ID(404 등) 접근 시 에러 상태를 감지한다 (#96)
   // dataset을 먼저 선언하여 하위 탭 타입 판별(isDocument)·useEffect 의존성에 활용한다.
-  const { data: dataset, isLoading, isError: isFetchError } = useDataset(datasetId);
+  const { data: dataset, isLoading, isError: isFetchError, error: fetchError } = useDataset(datasetId);
   // 비숫자 ID(NaN)는 쿼리가 아예 실행되지 않아 isFetchError가 true가 되지 않으므로
   // isInvalidId를 합류시켜 기존 404 처리(리다이렉트) 로직을 그대로 재사용한다 (#543).
   const isError = isFetchError || isInvalidId;
@@ -188,9 +189,9 @@ export default function DatasetDetailPage() {
     setActiveTab(newTab);
   }, [searchParams, dataset, rowSearch]);
   const { data: categoriesData } = useCategories();
-  const { addRecent } = useRecentDatasets();
+  const { addRecent, removeRecent } = useRecentDatasets();
 
-  const toggleFavorite = useToggleFavorite();
+  const setFavorite = useSetFavorite();
   const updateStatus = useUpdateStatus(datasetId);
   const addTag = useAddTag(datasetId);
   const removeTag = useRemoveTag(datasetId);
@@ -217,8 +218,14 @@ export default function DatasetDetailPage() {
   //   "찾을 수 없습니다" 안내 또는 toast.error + navigate를 이미 제공하고 있어 이를 일치시킨다.
   useEffect(() => {
     if (!isError) return;
+    // 지워졌거나 볼 수 없게 된(404) 데이터셋은 「최근 접근」에서도 뺀다 — 카드가 남아 눌러도 같은 오류만 반복되지 않게 (WD-390).
+    // 네트워크 오류 등 일시적 실패는 이력을 지우지 않는다.
+    if (axios.isAxiosError(fetchError) && fetchError.response?.status === 404) {
+      removeRecent(datasetId);
+    }
     toast.error('데이터셋을 찾을 수 없습니다.');
     navigate('/data/datasets');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- removeRecent 는 렌더마다 새로 만들어져 넣으면 반복 실행된다
   }, [isError, navigate]);
 
   useEffect(() => {
@@ -238,8 +245,9 @@ export default function DatasetDetailPage() {
   const handleToggleFavorite = async () => {
     if (!dataset) return;
     try {
-      await toggleFavorite.mutateAsync(dataset.id);
-      toast.success(dataset.isFavorite ? '즐겨찾기 해제되었습니다.' : '즐겨찾기에 추가되었습니다.');
+      // 화면에 보이는 반대 상태를 원하는 상태로 보내고, 안내는 서버가 돌려준 실제 결과로 고른다(WD-388)
+      const { favorited } = await setFavorite.mutateAsync({ id: dataset.id, favorite: !dataset.isFavorite });
+      toast.success(favorited ? '즐겨찾기에 추가되었습니다.' : '즐겨찾기 해제되었습니다.');
     } catch {
       toast.error('즐겨찾기 변경에 실패했습니다.');
     }
@@ -269,7 +277,18 @@ export default function DatasetDetailPage() {
   const handleRemoveTag = async (tag: string) => {
     try {
       await removeTag.mutateAsync(tag);
-      toast.success(`태그 "${tag}" 제거`);
+      // 확인 창 대신 「되돌리기」를 둔다(WD-395) — 자주 하는 동작이라 매번 한 번 더 누르게 하지 않고, 잘못 누른 경우만 바로 되살린다.
+      toast.success(`태그 "${tag}" 제거`, {
+        action: {
+          label: '되돌리기',
+          onClick: () => {
+            addTag
+              .mutateAsync(tag)
+              .then(() => toast.success(`태그 "${tag}" 되돌림`))
+              .catch((error) => handleApiError(error, '태그를 되돌리지 못했습니다.'));
+          },
+        },
+      });
     } catch (error) {
       // 이미 지워진 태그면 서버의 「태그를 찾을 수 없습니다…」(404)를 그대로 보인다 (WD-242)
       handleApiError(error, '태그 제거에 실패했습니다.');
@@ -486,12 +505,16 @@ export default function DatasetDetailPage() {
                   {tag}
                   {/* 태그 제거도 dataset:write — 조회 전용이면 태그는 이름만 보인다 (WD-139) */}
                   {canWriteDataset && (
+                    // 이름에 태그를 넣어 스크린리더가 어느 태그인지 읽게 하고, 누르는 영역은 24×24px(WCAG 2.5.8)로 넓힌다 —
+                    // 아이콘은 12px 그대로 두고 음수 여백으로 칩 높이가 커지지 않게 한다 (WD-395)
                     <button
-                      className="ml-0.5 rounded-full hover:bg-muted-foreground/20 transition-colors"
+                      type="button"
+                      className="-my-1 -mr-1 inline-flex size-6 items-center justify-center rounded-full hover:bg-muted-foreground/20 transition-colors"
                       onClick={() => handleRemoveTag(tag)}
-                      title="태그 제거"
+                      aria-label={`${tag} 태그 제거`}
+                      title={`${tag} 태그 제거`}
                     >
-                      <X className="h-3 w-3" />
+                      <X className="h-3 w-3" aria-hidden="true" />
                     </button>
                   )}
                 </Badge>

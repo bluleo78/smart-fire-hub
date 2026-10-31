@@ -152,12 +152,12 @@ test.describe('데이터셋 상세 페이지', () => {
   test('즐겨찾기 버튼이 렌더링된다', async ({ authenticatedPage: page }) => {
     await setupDetailPageMocks(page, 1);
 
-    // POST /api/v1/datasets/1/favorite 호출 캡처 — 버튼 클릭 시 API가 실제로 호출되는지 검증
+    // PUT /api/v1/datasets/1/favorite 호출 캡처 — 버튼 클릭 시 API가 실제로 호출되는지 검증(WD-388: 토글 POST 대신 원하는 상태)
     const favoriteCapture = await mockApi(
       page,
-      'POST',
+      'PUT',
       '/api/v1/datasets/1/favorite',
-      { id: 1, isFavorite: true },
+      { favorited: true },
       { capture: true },
     );
 
@@ -173,7 +173,7 @@ test.describe('데이터셋 상세 페이지', () => {
     // 즐겨찾기 버튼 클릭 후 API 호출 검증
     await favoriteBtn.click();
     const req = await favoriteCapture.waitForRequest();
-    // POST 요청이 올바른 엔드포인트로 전송되었는지 확인
+    // PUT 요청이 올바른 엔드포인트로 전송되었는지 확인
     expect(req.url.pathname).toBe('/api/v1/datasets/1/favorite');
   });
 
@@ -987,5 +987,99 @@ test.describe('데이터셋 상세 페이지', () => {
       await expect(page.getByRole('alertdialog')).not.toBeVisible();
       await expect(page).toHaveURL(/\/data\/datasets$/);
     });
+  });
+});
+
+/**
+ * 회귀 가드(WD-388): 즐겨찾기 API 가 토글이라, 다른 탭에서 이미 추가한 데이터셋을 옛 화면에서 「즐겨찾기 추가」하면
+ * 실제로는 해제되는데 클릭 전 화면 값으로 고른 「즐겨찾기에 추가되었습니다」가 떴다.
+ * 이제 원하는 상태를 PUT(추가)·DELETE(해제)로 보내고, 안내는 서버가 돌려준 실제 결과(favorited)로 고른다.
+ */
+test.describe('데이터셋 상세 — 즐겨찾기 원하는 상태 보내기 (WD-388)', () => {
+  test('빈 별을 누르면 PUT 으로 추가를 보내고, 서버 결과대로 안내한다', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+    const put = await mockApi(page, 'PUT', '/api/v1/datasets/1/favorite', { favorited: true }, { capture: true });
+    let toggled = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/favorite',
+      (route) => {
+        if (route.request().method() === 'POST') toggled = true; // 예전 토글 경로 — 불리면 안 된다
+        return route.fallback();
+      },
+    );
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('button', { name: '즐겨찾기 추가' }).click();
+    const req = await put.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/datasets/1/favorite');
+    await expect(page.getByText('즐겨찾기에 추가되었습니다.')).toBeVisible();
+    expect(toggled).toBe(false);
+  });
+
+  test('채워진 별을 누르면 DELETE 로 해제를 보내고, 서버 결과대로 안내한다', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+    // 화면은 즐겨찾기 상태로 보인다
+    await mockApi(page, 'GET', '/api/v1/datasets/1', createDatasetDetail({ id: 1, isFavorite: true }));
+    const del = await mockApi(page, 'DELETE', '/api/v1/datasets/1/favorite', { favorited: false }, { capture: true });
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('button', { name: '즐겨찾기 해제' }).click();
+    await del.waitForRequest();
+    await expect(page.getByText('즐겨찾기 해제되었습니다.')).toBeVisible();
+  });
+
+  test('안내 문구는 클릭 전 화면 값이 아니라 서버가 돌려준 결과를 따른다', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+    // 서버가 「추가」 요청에 해제 상태를 돌려주는 경우(다른 곳에서 바로 해제됨 등) — 화면은 서버 결과를 믿는다
+    await mockApi(page, 'PUT', '/api/v1/datasets/1/favorite', { favorited: false });
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('button', { name: '즐겨찾기 추가' }).click();
+    await expect(page.getByText('즐겨찾기 해제되었습니다.')).toBeVisible();
+    await expect(page.getByText('즐겨찾기에 추가되었습니다.')).toHaveCount(0);
+  });
+});
+
+/**
+ * WD-395: 태그 「×」 — 이름이 모두 「태그 제거」라 어느 태그인지 읽을 수 없었고, 12px 로 작았으며, 잘못 눌러도 되살릴 길이 없었다.
+ */
+test.describe('WD-395 태그 제거 버튼', () => {
+  test('× 버튼 이름에 태그가 들어가고 누르는 영역이 24×24px 이상이다', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setupDetailPageMocks(page, 1);
+    await page.goto('/data/datasets/1');
+
+    // createDatasetDetail 의 태그는 「테스트」·「샘플」
+    const removeTest = page.getByRole('button', { name: '테스트 태그 제거', exact: true });
+    const removeSample = page.getByRole('button', { name: '샘플 태그 제거', exact: true });
+    await expect(removeTest).toBeVisible();
+    await expect(removeSample).toBeVisible();
+    for (const button of [removeTest, removeSample]) {
+      const box = await button.boundingBox();
+      expect(box?.width).toBeGreaterThanOrEqual(24);
+      expect(box?.height).toBeGreaterThanOrEqual(24);
+    }
+  });
+
+  test('제거 토스트의 「되돌리기」를 누르면 같은 태그를 다시 추가한다', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+    // 태그 이름은 경로에서 인코딩되므로 접두로 맞춘다
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/datasets/1/tags/'),
+      (route) =>
+        route.request().method() === 'DELETE'
+          ? route.fulfill({ status: 204, body: '' })
+          : route.fallback(),
+    );
+    const addCapture = await mockApi(page, 'POST', '/api/v1/datasets/1/tags', { id: 1, tags: ['테스트', '샘플'] }, { capture: true });
+    await page.goto('/data/datasets/1');
+
+    await page.getByRole('button', { name: '샘플 태그 제거', exact: true }).click();
+    await expect(page.getByText('태그 "샘플" 제거')).toBeVisible();
+
+    await page.getByRole('button', { name: '되돌리기' }).click();
+    const req = await addCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ tagName: '샘플' });
+    await expect(page.getByText('태그 "샘플" 되돌림')).toBeVisible();
   });
 });

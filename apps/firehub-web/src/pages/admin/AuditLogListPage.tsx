@@ -402,7 +402,7 @@ function AuditLogDetailDialog({
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       {/* WD-416: 이 창에는 설명 문구(DialogDescription)가 없다 — 기본 aria-describedby 가 없는 요소를 가리키지 않게 연결을 끊는다. */}
-      <DialogContent className="max-w-2xl" aria-describedby={undefined}>
+      <DialogContent aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>감사 로그 상세</DialogTitle>
         </DialogHeader>

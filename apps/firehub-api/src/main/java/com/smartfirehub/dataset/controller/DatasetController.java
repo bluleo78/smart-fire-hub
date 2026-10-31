@@ -310,6 +310,24 @@ public class DatasetController {
     return ResponseEntity.ok(response);
   }
 
+  /** 즐겨찾기 추가 — 이미 추가돼 있어도 추가 상태로 둔다(멱등, WD-388). 웹은 토글 대신 이것과 아래 DELETE 를 쓴다. */
+  @PutMapping("/{id}/favorite")
+  @RequirePermission("dataset:read")
+  public ResponseEntity<FavoriteToggleResponse> addFavorite(
+      @PathVariable Long id, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    return ResponseEntity.ok(datasetFavoriteService.setFavorite(id, userId, true));
+  }
+
+  /** 즐겨찾기 해제 — 이미 해제돼 있어도 해제 상태로 둔다(멱등, WD-388). */
+  @DeleteMapping("/{id}/favorite")
+  @RequirePermission("dataset:read")
+  public ResponseEntity<FavoriteToggleResponse> removeFavorite(
+      @PathVariable Long id, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    return ResponseEntity.ok(datasetFavoriteService.setFavorite(id, userId, false));
+  }
+
   // --- Phase 4-3: Tags ---
 
   @GetMapping("/tags")

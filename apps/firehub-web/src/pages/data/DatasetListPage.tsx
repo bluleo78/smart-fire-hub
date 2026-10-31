@@ -31,7 +31,7 @@ import {
   useDatasetPermissions,
   useDatasets,
   useDeleteDataset,
-  useToggleFavorite,
+  useSetFavorite,
 } from '../../hooks/queries/useDatasets';
 import { useSecurityLevels } from '../../hooks/queries/useSecurityLevels';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
@@ -172,11 +172,11 @@ export default function DatasetListPage() {
   });
   const { data: levels } = useSecurityLevels();
   const deleteDataset = useDeleteDataset();
-  const toggleFavorite = useToggleFavorite();
+  const setFavorite = useSetFavorite();
   // 생성(POST, dataset:write)·삭제(DELETE, dataset:delete) 진입점 노출 — 조회 전용 사용자가 누르고 나서야 403 을 받지 않게 한다(WD-144).
   // 권한 조회 중에는 둘 다 false 라 버튼을 그리지 않는다(상세 화면 WD-139 와 같다).
   const { canWriteDataset, canDeleteDataset } = useDatasetPermissions();
-  const { recents } = useRecentDatasets();
+  const { recents, removeRecent, syncRecents } = useRecentDatasets();
 
   const categories = categoriesData || [];
   const rawDatasets = datasetsData?.content || [];
@@ -196,6 +196,11 @@ export default function DatasetListPage() {
     });
     return sorted;
   }, [rawDatasets, sortKey, sortOrder]);
+  // 목록을 받으면 「최근 접근」에 저장된 옛 이름·테이블명을 서버의 현재 값으로 고친다 (WD-390)
+  useEffect(() => {
+    if (datasetsData?.content) syncRecents(datasetsData.content);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- syncRecents 는 렌더마다 새로 만들어진다. 목록 응답이 바뀔 때만 맞춘다
+  }, [datasetsData]);
   const totalPages = datasetsData?.totalPages || 0;
   const totalElements = datasetsData?.totalElements;
 
@@ -215,6 +220,8 @@ export default function DatasetListPage() {
   const handleDelete = async (id: number, name: string) => {
     try {
       await deleteDataset.mutateAsync(id);
+      // 지운 데이터셋 카드가 「최근 접근」에 남지 않게 뺀다 (WD-390)
+      removeRecent(id);
       // 현재 페이지의 마지막 항목을 삭제한 경우, 페이지를 앞으로 보정해
       // "검색 결과 없음" 오표시(#549)를 방지한다. page 는 URL 쿼리 파라미터라
       // setPage 대신 patchParams 로 갱신한다 (0 페이지는 파라미터 제거로 표현).
@@ -231,8 +238,9 @@ export default function DatasetListPage() {
   const handleToggleFavorite = async (e: React.MouseEvent, id: number, name: string, isFavorite: boolean) => {
     e.stopPropagation();
     try {
-      await toggleFavorite.mutateAsync(id);
-      toast.success(isFavorite ? `"${name}" 즐겨찾기 해제` : `"${name}" 즐겨찾기 추가`);
+      // 화면에 보이는 반대 상태를 원하는 상태로 보내고, 안내는 서버가 돌려준 실제 결과로 고른다(WD-388)
+      const { favorited } = await setFavorite.mutateAsync({ id, favorite: !isFavorite });
+      toast.success(favorited ? `"${name}" 즐겨찾기 추가` : `"${name}" 즐겨찾기 해제`);
     } catch {
       toast.error('즐겨찾기 변경에 실패했습니다.');
     }
@@ -253,7 +261,7 @@ export default function DatasetListPage() {
 
       {/* Recent Datasets */}
       {noFiltersActive && recents.length > 0 && (
-        <div className="space-y-2">
+        <section aria-label="최근 접근" className="space-y-2">
           <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <History className="h-4 w-4" />
             <span>최근 접근</span>
@@ -275,7 +283,7 @@ export default function DatasetListPage() {
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
       {/* Filters */}

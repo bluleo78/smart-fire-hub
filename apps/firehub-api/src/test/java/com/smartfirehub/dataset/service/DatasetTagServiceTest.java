@@ -9,6 +9,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DatasetTagNotFoundException;
+import com.smartfirehub.dataset.repository.DatasetTagRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
 import java.util.List;
@@ -31,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 class DatasetTagServiceTest extends IntegrationTestBase {
 
   @Autowired private DatasetTagService datasetTagService;
+  @Autowired private DatasetTagRepository tagRepository;
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
   @Autowired private PasswordEncoder encoder;
@@ -138,6 +140,29 @@ class DatasetTagServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> datasetTagService.addTag(datasetId, "test", testUserId))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("test");
+  }
+
+  /**
+   * WD-389: 서비스의 대소문자 무시 검사를 지나 동시에 들어온 변형(Fire 뒤 fire)도 DB 가 막아 하나만 남는다. 검사와 삽입 사이에 끼어든
+   * 요청을 흉내 내려고 검사 없이 저장소 삽입을 바로 부른다 — 0 을 돌려주고(서비스는 이때 409) 행은 처음 것 하나뿐이다.
+   */
+  @Test
+  void insert_caseVariantOfExistingTag_isRejectedByDb() {
+    datasetTagService.addTag(datasetId, "Fire", testUserId);
+
+    int inserted = tagRepository.insert(datasetId, "fire", testUserId);
+
+    assertThat(inserted).isZero();
+    assertThat(tagsOf(datasetId)).containsExactly("Fire");
+  }
+
+  /** WD-389: 대소문자 무시 유일은 데이터셋마다다 — 다른 데이터셋에는 같은 태그의 다른 표기를 넣을 수 있다. */
+  @Test
+  void insert_caseVariantOnOtherDataset_isAllowed() {
+    datasetTagService.addTag(datasetId, "Fire", testUserId);
+
+    assertThat(tagRepository.insert(datasetId2, "fire", testUserId)).isEqualTo(1);
+    assertThat(tagsOf(datasetId2)).containsExactly("fire");
   }
 
   /** 예외: 존재하지 않는 데이터셋 ID로 태그 추가 시 DatasetNotFoundException이 발생해야 한다. */

@@ -95,8 +95,11 @@ public class ApiConnectionService {
     String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
 
     // 저장값이 없으니 가린 값(****…)은 유지할 대상도 없다 — 그대로 저장되지 않게 거절한다(WD-179).
+    // 헤더·파라미터 이름과 값 줄바꿈을 저장 전에 검사한다(WD-392) — 쓸 수 없는 값이 저장돼 테스트가 네트워크 오류처럼 안내되지 않게.
     String encryptedConfig =
-        serializeAndEncrypt(resolveMaskedSecrets(request.authConfig(), null, false));
+        serializeAndEncrypt(
+            AuthConfigValidator.validateAndNormalize(
+                request.authType(), resolveMaskedSecrets(request.authConfig(), null, false)));
     Long id =
         repository.save(
             request.name(),
@@ -188,7 +191,11 @@ public class ApiConnectionService {
       // 조회 결과(maskedAuthConfig)를 그대로 되돌려 보낸 비밀 필드는 저장 원문으로 채운다(WD-179). authType 이 바뀌면 같은 이름의
       // 필드라도 뜻이 달라지므로 저장값을 쓰지 않는다 — 가린 값은 모두 거절된다.
       Map<String, String> stored = authTypeChanged ? null : reader.getDecryptedAuthConfig(id);
-      Map<String, String> resolved = resolveMaskedSecrets(request.authConfig(), stored, true);
+      // 검사는 바뀐 뒤의 인증 방식 기준이다(WD-392) — 방식을 바꾸지 않는 수정이면 저장된 방식으로 본다.
+      Map<String, String> resolved =
+          AuthConfigValidator.validateAndNormalize(
+              request.authType() != null ? request.authType() : currentAuthType,
+              resolveMaskedSecrets(request.authConfig(), stored, true));
       encryptedConfig = serializeAndEncrypt(resolved);
       if (!authTypeChanged) {
         // 비교는 메모리 안에서만 한다 — 값은 어디에도 남기지 않고 true/false 만 감사에 싣는다.
@@ -361,7 +368,8 @@ public class ApiConnectionService {
     // 저장 전 테스트도 가린 값(****…)을 인증 값으로 보내지 않는다 — 저장값이 없으니 유지할 것도 없다(WD-179).
     Map<String, String> rawConfig =
         request.authConfig() != null
-            ? resolveMaskedSecrets(request.authConfig(), null, false)
+            ? AuthConfigValidator.validateAndNormalize(
+                request.authType(), resolveMaskedSecrets(request.authConfig(), null, false))
             : Map.of();
     String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
     String normalizedPath = normalizeHealthCheckPath(request.healthCheckPath());
@@ -392,6 +400,13 @@ public class ApiConnectionService {
     String displayUrl = targetUrl;
 
     long start = System.currentTimeMillis();
+    // 이미 저장된 인증 값이 HTTP 요청에 쓸 수 없는 것이면(WD-392 전에 저장된 띄어쓰기 헤더 이름 등) 호출하지 않고 그 사유를 보인다 —
+    // 호출하면 클라이언트 예외가 「대상 서버에 연결하지 못했습니다」로 안내돼 주소·네트워크를 의심하게 된다.
+    String authProblem = AuthConfigValidator.describeProblem(authType, rawConfig);
+    if (authProblem != null) {
+      return new TestConnectionResponse(
+          false, null, 0L, authProblem, displayUrl, null, Map.of(), null);
+    }
     try {
       // 호출 직전 주소 검사(WD-178) — 내부망·로컬이면 SsrfException 으로 아래에서 DOWN 결과가 되고, 외부 호출은 한 건도 나가지 않는다.
       ssrfProtectionService.validateUrl(targetUrl);

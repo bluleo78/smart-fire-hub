@@ -11,8 +11,7 @@ import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import com.smartfirehub.user.repository.UserRepository;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -108,7 +107,7 @@ public class QueryResultExportService {
     // 결과가 행 상한으로 잘렸으면 파일 이름에 남긴다 — 파일만 봐도 전체가 아님을 알 수 있게(#658 웹 동작과 같은 규칙).
     String filename =
         "query_result_"
-            + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
+            + DataExportService.exportDateStamp(Instant.now())
             + (r.truncated() ? "_상위" + r.rows().size() + "행" : "")
             + "."
             + format.getExtension();
