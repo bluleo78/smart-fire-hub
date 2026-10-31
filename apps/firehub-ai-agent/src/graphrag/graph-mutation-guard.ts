@@ -5,6 +5,7 @@
 // 그래프에는 아무 것도 없고 항목은 인박스에서 사라져 되돌릴 방법이 없었다.
 // 따라서 각 mutation은 "MATCH가 대상을 바인딩했는가"를 RETURN count(...)로 확인하고,
 // 0이면 GraphTargetMissingError를 던져 상위(라우트 → firehub-api → UI)로 실패를 전파한다.
+import { isEntityType, type Ontology } from './ontology.js';
 
 /**
  * 승인 요청을 "지금 이 요청 그대로는 그래프에 반영할 수 없다"고 거절하는 상태의 상위 타입.
@@ -40,6 +41,23 @@ export class OntologyConformanceError extends GraphMutationRejectedError {
   constructor(message: string) {
     super(message);
     this.name = 'OntologyConformanceError';
+  }
+}
+
+/**
+ * 엔티티 타입이 지금 온톨로지에 정의돼 있는지 확인하고, 없으면 사유가 담긴 OntologyConformanceError 를 던진다(WD-429).
+ *
+ * <p>검수 항목(동의어·엔티티)은 타입을 "이름 문자열"로 들고 대기한다. 대기 중에 지식 모델에서 그 타입 이름을 바꾸거나
+ * 삭제했거나, 처음부터 온톨로지에 없는 타입으로 등록된 항목은 승인 때 타입 id 를 찾지 못한다. 예전에는
+ * entityTypeId() 의 일반 Error 가 그대로 올라가 라우트가 502 로 돌려 「잠시 후 다시 시도해 주세요」로 번역됐다 —
+ * 몇 번을 다시 해도 같은 실패인데 일시 장애처럼 보여 검수자가 원인(타입이 없음)을 알 수 없었다.
+ * 사람이 고칠 수 있는 요청 문제이므로 409 + 한국어 사유로 검수 UI 까지 전달한다.
+ */
+export function assertEntityTypeDefined(ontology: Ontology, type: string): void {
+  if (!isEntityType(ontology, type)) {
+    throw new OntologyConformanceError(
+      `지식 모델에 '${type}' 타입이 없습니다(이름이 바뀌었거나 삭제됨). 항목을 거부하거나 타입을 확인해 주세요.`,
+    );
   }
 }
 
