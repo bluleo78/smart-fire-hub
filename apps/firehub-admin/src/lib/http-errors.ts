@@ -44,6 +44,17 @@ export function serverMessage(error: unknown, statuses: number[] = [400]): strin
   return message ? message : undefined;
 }
 
+/**
+ * axios 400 에러에서 Bean Validation 필드 오류(`errors`: 필드 → 한국어 문구)를 뽑는다(WD-311).
+ * `message` 는 영어 기본값 「Validation failed」라 그대로 보이면 무엇을 고칠지 알 수 없다 —
+ * 화면은 이 맵으로 해당 칸에 문구를 단다. 필드 오류가 없으면 `undefined`.
+ */
+export function serverFieldErrors(error: unknown): Record<string, string> | undefined {
+  if (!axios.isAxiosError(error) || error.response?.status !== 400) return undefined;
+  const errors = (error.response?.data as ErrorResponse | undefined)?.errors;
+  return errors && Object.keys(errors).length > 0 ? errors : undefined;
+}
+
 /** axios 에러가 4xx 인지 판정한다. 재시도 정책(main.tsx)이 상태코드별로 결정을 내리는 데 쓴다. */
 export function isClientError(error: unknown): boolean {
   const status =

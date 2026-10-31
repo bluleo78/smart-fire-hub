@@ -248,6 +248,68 @@ test.describe('테넌트 생성', () => {
     await expect(page).toHaveURL('/tenants/new');
   });
 
+  test('이름에 공백만 넣으면 이름 칸에 안내하고 요청을 보내지 않는다(WD-311)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/users', [createPlatformUser({ id: 42 })]);
+    const capture = await mockApi(page, 'POST', '/api/platform/tenants', createTenant(), { capture: true });
+    await page.goto('/tenants/new');
+
+    await page.getByLabel('이름').fill('   ');
+    await page.getByLabel('식별자').fill('hanbit');
+    await page.getByLabel('초기 Owner').fill('박소');
+    await page.waitForTimeout(400);
+    await page.getByRole('option', { name: /박소유/ }).click();
+    await page.getByRole('button', { name: '테넌트 생성' }).click();
+
+    await expect(page.getByText('이름을 입력하세요.')).toBeVisible();
+    await expect(page.getByText('Validation failed')).toHaveCount(0);
+    expect(capture.requests).toHaveLength(0);
+  });
+
+  test('서버 필드 오류는 영어 message 대신 해당 칸에 한국어로 보인다(WD-311)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/users', [createPlatformUser({ id: 42 })]);
+    await mockApi(
+      page,
+      'POST',
+      '/api/platform/tenants',
+      { status: 400, error: 'Bad Request', message: 'Validation failed', errors: { name: '공백일 수 없습니다' } },
+      { status: 400 },
+    );
+    await page.goto('/tenants/new');
+
+    await page.getByLabel('이름').fill('한빛소방서');
+    await page.getByLabel('식별자').fill('hanbit');
+    await page.getByLabel('초기 Owner').fill('박소');
+    await page.waitForTimeout(400);
+    await page.getByRole('option', { name: /박소유/ }).click();
+    await page.getByRole('button', { name: '테넌트 생성' }).click();
+
+    await expect(page.getByText('공백일 수 없습니다')).toBeVisible();
+    await expect(page.getByText('Validation failed')).toHaveCount(0);
+  });
+
+  test('서버 오류 문구는 입력을 고치면 사라진다(WD-311)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/users', [createPlatformUser({ id: 42 })]);
+    await mockApi(
+      page,
+      'POST',
+      '/api/platform/tenants',
+      { status: 400, error: 'Bad Request', message: '이미 사용 중인 식별자입니다: hanbit' },
+      { status: 400 },
+    );
+    await page.goto('/tenants/new');
+
+    await page.getByLabel('이름').fill('한빛소방서');
+    await page.getByLabel('식별자').fill('hanbit');
+    await page.getByLabel('초기 Owner').fill('박소');
+    await page.waitForTimeout(400);
+    await page.getByRole('option', { name: /박소유/ }).click();
+    await page.getByRole('button', { name: '테넌트 생성' }).click();
+    await expect(page.getByText('이미 사용 중인 식별자입니다: hanbit')).toBeVisible();
+
+    await page.getByLabel('식별자').fill('hanbit-2');
+    await expect(page.getByText('이미 사용 중인 식별자입니다: hanbit')).toHaveCount(0);
+  });
+
   test('생성 권한이 없으면 폼 대신 권한 배너를 보여준다(M-1)', async ({ page }) => {
     await loginAs(page, ['platform:tenant:read']);
     const capture = await mockApi(page, 'POST', '/api/platform/tenants', createTenant(), { capture: true });

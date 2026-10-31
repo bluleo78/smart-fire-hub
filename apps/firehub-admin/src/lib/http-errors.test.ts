@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { serverMessage } from './http-errors';
+import { serverFieldErrors, serverMessage } from './http-errors';
 
 /** axios.isAxiosError 가 인정하는 최소 모양. */
 const axiosError = (status: number, message?: string) => ({
@@ -23,5 +23,25 @@ describe('serverMessage', () => {
 
   it('axios 에러가 아니면 undefined', () => {
     expect(serverMessage(new Error('x'), [400, 409])).toBeUndefined();
+  });
+});
+
+describe('serverFieldErrors (WD-311)', () => {
+  const withErrors = (status: number, errors?: Record<string, string>) => ({
+    isAxiosError: true,
+    response: { status, data: { status, error: 'x', message: 'Validation failed', errors } },
+  });
+
+  it('400 의 필드 오류 맵을 돌려준다', () => {
+    expect(serverFieldErrors(withErrors(400, { name: '공백일 수 없습니다' }))).toEqual({
+      name: '공백일 수 없습니다',
+    });
+  });
+
+  it('필드 오류가 없거나 400 이 아니면 undefined', () => {
+    expect(serverFieldErrors(withErrors(400))).toBeUndefined();
+    expect(serverFieldErrors(withErrors(400, {}))).toBeUndefined();
+    expect(serverFieldErrors(withErrors(422, { name: 'x' }))).toBeUndefined();
+    expect(serverFieldErrors(new Error('x'))).toBeUndefined();
   });
 });

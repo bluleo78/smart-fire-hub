@@ -60,6 +60,7 @@ export function createMember(overrides: Partial<TenantMemberResponse> = {}): Ten
     email: 'kim@example.com',
     role: 'OWNER',
     status: 'ACTIVE',
+    accountActive: true,
     ...overrides,
   };
 }

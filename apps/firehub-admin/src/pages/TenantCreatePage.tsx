@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -17,7 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/hooks/useAuth';
 import { DEFAULT_BACKEND } from '@/lib/data-store-labels';
-import { isForbidden, serverMessage } from '@/lib/http-errors';
+import { isForbidden, serverFieldErrors, serverMessage } from '@/lib/http-errors';
 import type { CreateTenantFormData } from '@/lib/validations/tenant';
 import { createTenantSchema } from '@/lib/validations/tenant';
 import type { CreateTenantRequest, PlatformUserResponse } from '@/types/platform';
@@ -63,8 +63,15 @@ export default function TenantCreatePage() {
     register,
     handleSubmit,
     setValue,
+    setError,
+    subscribe,
     formState: { errors },
   } = form;
+
+  // 서버 오류 문구는 그 제출에 대한 답이다 — 입력을 고치면 지운다(WD-311: 식별자를 고쳐도 옛 「이미 사용 중」이 남았다).
+  useEffect(() => {
+    return subscribe({ formState: { values: true }, callback: () => setServerFieldError(null) });
+  }, [subscribe]);
 
   /**
    * 픽커의 선택/해제를 표시 상태와 폼 값에 **동시에** 반영한다.
@@ -104,6 +111,21 @@ export default function TenantCreatePage() {
       navigate(`/tenants/${tenant.id}`, { replace: true });
     },
     onError: (error) => {
+      // Bean Validation 400 은 필드별 한국어 문구를 해당 칸에 단다(WD-311) — message(「Validation failed」)는 쓰지 않는다.
+      // 폼 칸이 없는 필드(dataStore.* 등)의 문구는 폼 아래 한 줄로 모아 보인다.
+      const fieldErrors = serverFieldErrors(error);
+      if (fieldErrors) {
+        const rest: string[] = [];
+        Object.entries(fieldErrors).forEach(([field, message]) => {
+          if (field === 'name' || field === 'slug' || field === 'ownerUserId') {
+            setError(field, { message }, { shouldFocus: true });
+          } else {
+            rest.push(message);
+          }
+        });
+        if (rest.length > 0) setServerFieldError(rest.join(' '));
+        return;
+      }
       // 422(DATA_STORE_PROVISIONING_FAILED)도 서버 문구를 그대로 보인다 — 접속 실패 사유를 프런트가 재현할 수 없다.
       const message = serverMessage(error, [400, 422]);
       if (message) {

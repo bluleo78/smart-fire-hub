@@ -1,3 +1,4 @@
+import { toPlotNumber } from '@/components/analytics/numeric-columns';
 import type { GeoJsonFeatureCollection } from '@/types/dataset';
 
 /**
@@ -18,15 +19,8 @@ export const HEAT_WEIGHT_PROP = '__fh_heat_weight';
  */
 export const WEIGHT_MIN = 0.1;
 
-/** 값을 가중치용 숫자로 읽는다 — 숫자이거나 숫자로만 된 문자열(DECIMAL 은 문자열로 온다)만, 나머지는 null */
-function toWeightNumber(value: unknown): number | null {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  if (typeof value === 'string' && value.trim() !== '') {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
+/** 값을 가중치용 숫자로 읽는다 — 산점도와 같은 규칙(numeric-columns.ts toPlotNumber) */
+const toWeightNumber = toPlotNumber;
 
 /** 가중치 컬럼의 숫자 값 범위. 숫자 값이 하나도 없으면 null(문자 컬럼 등) */
 export function weightRange(

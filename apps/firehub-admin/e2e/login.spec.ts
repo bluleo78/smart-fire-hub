@@ -63,17 +63,18 @@ test.describe('운영자 로그인', () => {
     await expect(page).toHaveURL('/login');
   });
 
-  test('잠금·비활성 계정은 서버 메시지를 그대로 보여준다', async ({ page }) => {
+  // 서버는 잠금을 429 로 준다(GlobalExceptionHandler.handleAccountLocked) — 예전 테스트는 401 로 흉내 내 잠금 안내가 깨진 것을 놓쳤다(WD-312).
+  test('잠긴 계정(429)은 서버 메시지를 그대로 보여준다 (WD-312)', async ({ page }) => {
     await mockApi(
       page,
       'POST',
       '/api/platform/auth/login',
       {
-        status: 401,
-        error: 'Unauthorized',
+        status: 429,
+        error: 'Too Many Requests',
         message: '로그인 시도 횟수를 초과하였습니다. 잠시 후 다시 시도해 주세요.',
       },
-      { status: 401 },
+      { status: 429 },
     );
     await page.goto('/login');
     await page.getByLabel('아이디').fill('ops@example.com');
@@ -83,6 +84,19 @@ test.describe('운영자 로그인', () => {
     await expect(
       page.getByText('로그인 시도 횟수를 초과하였습니다. 잠시 후 다시 시도해 주세요.'),
     ).toBeVisible();
+  });
+
+  test('본문 없는 429 도 잠금 안내를 보여준다 (WD-312)', async ({ page }) => {
+    await mockApi(page, 'POST', '/api/platform/auth/login', {}, { status: 429 });
+    await page.goto('/login');
+    await page.getByLabel('아이디').fill('ops@example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill('pw');
+    await page.getByRole('button', { name: '로그인' }).click();
+
+    await expect(
+      page.getByText('로그인 시도 횟수를 초과하였습니다. 잠시 후 다시 시도해 주세요.'),
+    ).toBeVisible();
+    await expect(page.getByText('로그인 요청에 실패했습니다.', { exact: false })).toHaveCount(0);
   });
 
   test('5xx 는 고정 문구로 대체한다', async ({ page }) => {

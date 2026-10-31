@@ -42,11 +42,18 @@ export default function LoginPage() {
       await login(data.username, data.password);
       navigate('/tenants', { replace: true });
     } catch (error) {
-      // 401 은 서버 메시지를 그대로 쓴다 — 자격증명 오류·계정 잠금·비활성이 모두 여기로 온다.
+      // 401(자격증명 오류·비활성)과 429(시도 횟수 초과로 계정 잠금, WD-312)는 서버 메시지를 그대로 쓴다 —
+      // 잠금을 고정 문구로 바꾸면 사용자가 잠긴 줄 모르고 서버 장애로 오해한다.
       // 5xx/네트워크만 고정 문구로 대체한다(서버 메시지가 없거나 내부 사정이라 쓸모없다).
-      if (axios.isAxiosError(error) && error.response?.status === 401) {
-        const message = (error.response.data as ErrorResponse | undefined)?.message;
-        setServerError(message ?? '아이디 또는 비밀번호가 올바르지 않습니다.');
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      if (axios.isAxiosError(error) && (status === 401 || status === 429)) {
+        const message = (error.response?.data as ErrorResponse | undefined)?.message;
+        setServerError(
+          message ??
+            (status === 429
+              ? '로그인 시도 횟수를 초과하였습니다. 잠시 후 다시 시도해 주세요.'
+              : '아이디 또는 비밀번호가 올바르지 않습니다.'),
+        );
       } else {
         setServerError('로그인 요청에 실패했습니다. 잠시 후 다시 시도해 주세요.');
       }

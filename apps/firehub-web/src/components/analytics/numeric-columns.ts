@@ -25,3 +25,16 @@ export function isWeightColumn(col: string, rows: Record<string, unknown>[]): bo
   }
   return seen;
 }
+
+/**
+ * 값을 숫자 축·가중치용 숫자로 읽는다 — 숫자이거나 숫자로만 된 문자열(서버는 DECIMAL 을 문자열로 보낸다)만, 나머지는 null.
+ * 공백뿐인 문자열·불리언은 Number() 가 0·1 로 바꿔 가짜 점이 되므로 받지 않는다. 산점도(WD-308)와 지도 히트맵 가중치(WD-354)가 함께 쓴다.
+ */
+export function toPlotNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}

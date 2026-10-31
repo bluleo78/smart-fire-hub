@@ -68,8 +68,8 @@ const USED_COLUMN_FIELDS: Record<ChartType, UsedColumnFields> = {
   WATERFALL: xAndFirstY,
   // 행(xAxis) / 열(yAxis[0]) / 셀 값(valueColumn)
   HEATMAP: (c) => [c.xAxis, c.yAxis[0], c.valueColumn],
-  // X·Y 한 쌍 + 선택적 그룹 컬럼
-  SCATTER: (c) => [c.xAxis, c.yAxis[0], c.groupBy],
+  // 그룹이 있으면 X·Y 첫 번째 + 그룹 컬럼(그룹이 계열), 없으면 X + Y축 전부(Y마다 계열 — WD-308)
+  SCATTER: (c) => (c.groupBy ? [c.xAxis, c.yAxis[0], c.groupBy] : [c.xAxis, ...c.yAxis]),
   // 지도: 공간 컬럼은 항상, 가중치는 밀도(heatmap) 모드에서만 읽는다.
   // colorByColumn 은 설정 UI 에만 있고 MapChartView 가 읽지 않으므로 검사하지 않는다.
   MAP: (c) => [c.spatialColumn, c.mapDisplayMode === 'heatmap' ? c.weightColumn : undefined],

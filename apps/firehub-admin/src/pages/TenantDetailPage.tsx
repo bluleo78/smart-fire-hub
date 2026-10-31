@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { tenantsApi } from '@/api/tenants';
+import { AccountDisabledBadge } from '@/components/AccountDisabledBadge';
 import { MembershipRoleBadge } from '@/components/MembershipRoleBadge';
 import { MembershipStatusBadge } from '@/components/MembershipStatusBadge';
 import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
@@ -271,7 +272,12 @@ export default function TenantDetailPage() {
                             <MembershipRoleBadge role={m.role} />
                           </TableCell>
                           <TableCell>
-                            <MembershipStatusBadge status={m.status} />
+                            {/* 멤버십 상태 옆에 전역 계정 비활성을 따로 단다(WD-313) — 비활성 계정이 「활성」 멤버로만 보이면
+                                로그인할 수 없는 사람을 정상 멤버로 오해한다(웹 사용자 관리 WD-3 와 같은 판단). */}
+                            <div className="flex flex-wrap items-center gap-1">
+                              <MembershipStatusBadge status={m.status} />
+                              {m.accountActive === false && <AccountDisabledBadge />}
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))

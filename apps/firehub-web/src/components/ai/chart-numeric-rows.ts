@@ -47,7 +47,8 @@ const VALUE_COLUMN_FIELDS: Record<ChartType, ValueColumnFields> = {
   WATERFALL: firstY,
   GAUGE: firstY,
   HEATMAP: (c) => [c.valueColumn],
-  SCATTER: (c) => [c.xAxis, c.yAxis[0]],
+  // 그룹이 없으면 Y축마다 계열을 그린다(WD-308) — 그 칸들도 같은 규칙으로 숫자로 바꾼다
+  SCATTER: (c) => (c.groupBy ? [c.xAxis, c.yAxis[0]] : [c.xAxis, ...c.yAxis]),
   HISTOGRAM: (c) => [c.xAxis],
   CANDLESTICK: (c) => [c.open, c.high, c.low, c.close],
   BOXPLOT: none,
