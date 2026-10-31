@@ -243,12 +243,14 @@ public class DataImportService {
       List<ValidationErrorDetail> errors;
       int validCount;
       int errorCount;
+      int roundedDecimalValues;
       if (mappings != null && !mappings.isEmpty()) {
         DataValidationService.ValidationResultWithDetails vr =
             validationService.validateWithMapping(sample, columns, mappings, 0);
         errors = vr.errors();
         validCount = vr.validCount();
         errorCount = vr.errorCount();
+        roundedDecimalValues = vr.roundedDecimalCount();
       } else {
         DataValidationService.ValidationResult vr = validationService.validate(sample, columns, 0);
         // ValidationResult.errors()는 List<String>이므로 상세 4필드로 매핑 불가 → 상세 없음 처리.
@@ -256,9 +258,11 @@ public class DataImportService {
         errors = List.of();
         validCount = vr.validCount();
         errorCount = vr.errorCount();
+        roundedDecimalValues = vr.roundedDecimalCount();
       }
 
-      return new ImportValidateResponse(sample.size(), validCount, errorCount, true, errors);
+      return new ImportValidateResponse(
+          sample.size(), validCount, errorCount, true, errors, roundedDecimalValues);
     } finally {
       // 검증 완료 후 임시 파일 정리 — 누적 방지
       Files.deleteIfExists(tempFile);
@@ -1224,8 +1228,8 @@ public class DataImportService {
   }
 
   /**
-   * 이름이 같은 빈 열 여럿 중 하나를 매핑한 요청이면 {@link InvalidFileHeaderException}(400)을 던진다(WD-369). 헤더를 다시 읽는 비용(엑셀은
-   * 통합 문서를 다시 연다)은 빈 이름 열을 매핑했을 때만 치른다.
+   * 이름이 같은 빈 열 여럿 중 하나를 매핑한 요청이면 {@link InvalidFileHeaderException}(400)을 던진다(WD-369). 헤더를 다시 읽는
+   * 비용(엑셀은 통합 문서를 다시 연다)은 빈 이름 열을 매핑했을 때만 치른다.
    */
   private void requireMappableBlankColumns(
       Path file, String fileType, ParseOptions parseOptions, List<ColumnMappingEntry> mappings)

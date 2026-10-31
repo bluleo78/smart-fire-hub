@@ -60,6 +60,8 @@ export interface ImportValidateResponse {
   errorRows: number; // 오류 상세(errors) 건수 — 실패 컬럼 단위이며 실패 행 수와 다를 수 있음
   sampled: boolean; // 항상 true — 전량이 아닌 샘플 검사임을 표기
   errors: ValidationErrorDetail[];
+  /** 샘플의 유효 행 중 소수점 아래 6자리를 넘어 저장 때 반올림될 소수 값의 수(WD-371). 이전 서버 응답에는 없다. */
+  roundedDecimalValues?: number;
 }
 
 export interface ValidationErrorDetail {

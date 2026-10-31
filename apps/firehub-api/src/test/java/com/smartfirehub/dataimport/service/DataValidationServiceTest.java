@@ -1126,4 +1126,34 @@ class DataValidationServiceTest {
           .hasMessageContaining("날짜 형식이 아닙니다: " + value);
     }
   }
+
+  /**
+   * 소수점 아래 6자리를 넘는 소수 값은 임포트에서 반올림해 받되, 검증 결과에 그 수를 싣는다(WD-371) — 사용자가 「검증 성공」만 보고 다른 값이 저장된 줄 모르는
+   * 일을 막는다. 끝 0(1.2345670)·6자리 이하·무효 행의 값은 세지 않는다.
+   */
+  @Test
+  void decimal_valuesBeyondScale6_areCountedAsRounded() {
+    DatasetColumnResponse name = col("name", "VARCHAR", false);
+    DatasetColumnResponse price = col("price", "DECIMAL", true);
+    List<Map<String, String>> rows =
+        List.of(
+            Map.of("name", "SCALE", "price", "1.23456789"),
+            Map.of("name", "EXACT", "price", "1.234567"),
+            Map.of("name", "TRAIL", "price", "1.2345670"),
+            Map.of("name", "COMMA", "price", "1,234.5678901"),
+            Map.of("name", "", "price", "9.99999999"));
+
+    DataValidationService.ValidationResult plain = service.validate(rows, List.of(name, price));
+    assertThat(plain.validCount()).isEqualTo(4);
+    assertThat(plain.roundedDecimalCount()).isEqualTo(2);
+
+    List<ColumnMappingEntry> mappings =
+        List.of(new ColumnMappingEntry("name", "name"), new ColumnMappingEntry("price", "price"));
+    DataValidationService.ValidationResultWithDetails mapped =
+        service.validateWithMapping(rows, List.of(name, price), mappings);
+    assertThat(mapped.roundedDecimalCount()).isEqualTo(2);
+    // 반올림은 오류가 아니다 — 값은 저장값(scale 6)으로 정규화돼 넘어간다
+    assertThat(mapped.errors()).hasSize(1);
+    assertThat(mapped.validRows().get(0).get(1)).isEqualTo(new BigDecimal("1.234568"));
+  }
 }

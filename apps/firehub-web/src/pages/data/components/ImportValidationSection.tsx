@@ -119,6 +119,14 @@ export function ImportValidationSection({
           <p className="text-sm text-muted-foreground">
             샘플 {validationResult.sampleSize.toLocaleString()}행 검사 결과 · 전체 데이터 검증은 임포트 시 수행됩니다
           </p>
+          {/* 소수 칸은 NUMERIC(18,6) 이라 소수점 아래 7자리부터는 반올림해 저장한다. 임포트는 엑셀 계산값을 받으려고 거부하지 않으므로,
+              「검증 성공」만 보고 다른 값이 저장된 줄 모르지 않게 미리 알린다(WD-371). */}
+          {(validationResult.roundedDecimalValues ?? 0) > 0 && (
+            <p className="text-sm text-warning" data-testid="import-decimal-rounding">
+              소수점 아래 6자리를 넘는 값 {validationResult.roundedDecimalValues!.toLocaleString()}개는 6자리로 반올림해 저장됩니다
+              (예: 1.23456789 → 1.234568)
+            </p>
+          )}
 
           {validationResult.errors.length > 0 && (
             <div className="space-y-2">
