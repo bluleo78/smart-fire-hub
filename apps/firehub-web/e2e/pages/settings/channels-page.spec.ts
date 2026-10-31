@@ -281,8 +281,10 @@ test.describe('채널 설정 페이지', () => {
     await setupChannelMocks(page);
     await page.goto('/settings/channels');
 
-    // EMAIL 카드에 displayAddress 표시
-    await expect(page.getByText('test@example.com')).toBeVisible();
+    // EMAIL 카드에 displayAddress 표시 — 카드 안으로 좁힌다(WD-481): 같은 주소가 사이드바 사용자 메뉴에도 있어, 페이지 전체로 찾으면
+    // 카드가 먼저 그려졌을 때 두 곳이 걸려 strict mode 위반으로 실패하고, 늦게 그려지면 사이드바만 보고 통과해 카드를 확인하지 못한다.
+    const emailCard = page.locator('[data-slot="card"]', { hasText: '이메일로 알림을 받습니다' }).first();
+    await expect(emailCard.getByText('test@example.com')).toBeVisible();
   });
 
   test('KAKAO 연결됨 상태 — "연결 해제" 버튼이 표시된다', async ({ authenticatedPage: page }) => {
