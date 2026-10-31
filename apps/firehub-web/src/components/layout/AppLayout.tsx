@@ -478,6 +478,16 @@ function AppLayoutInner() {
           )}
         </Button>
 
+        {/* 모바일 상단 줄(WD-397) — 메뉴 버튼·AI 상태 칩·알림 종은 position:fixed 로 떠 있어, 배경이 없으면 스크롤된 본문이
+            그 밑을 지나며 글자·버튼이 겹치고 겹친 자리를 누르면 엉뚱한 요소가 눌렸다. 이 줄이 그 높이(h-12=48px)를 흐름 안에서
+            실제로 차지하고 불투명 배경·아래 선을 가져, 본문(main)은 이 줄 아래에서 시작하고 스크롤된다.
+            고정 요소가 없는 lg 이상에서는 그리지 않는다. */}
+        <div
+          className="h-12 shrink-0 border-b bg-background lg:hidden"
+          data-testid="mobile-topbar"
+          aria-hidden="true"
+        />
+
         {/* Page content + AI panel */}
         <div className="relative flex flex-1 min-h-0 bg-gradient-main">
           {/* AI Status Chip — 전체 뷰포트 가로 중앙 */}
@@ -496,7 +506,8 @@ function AppLayoutInner() {
               <AIFullScreen />
             </Suspense>
           ) : (
-            <main ref={mainRef} className="flex-1 p-6 pt-10 overflow-auto min-w-0">
+            // 모바일은 위에 상단 줄(h-12)이 따로 자리를 차지하므로 위 여백을 줄인다(lg 이상은 고정 칩 자리 pt-10 그대로).
+            <main ref={mainRef} className="flex-1 p-6 pt-10 max-lg:pt-2 overflow-auto min-w-0">
               <Suspense fallback={<PageSkeleton />}>
                 <Outlet />
               </Suspense>
