@@ -29,6 +29,16 @@ test.describe('쿼리 에디터 페이지', () => {
 
   // 회귀 방지(#433): 툴바 제목이 <span> 이라 문서 개요에 heading 이 없던 결함.
   // 신규/기존 두 분기 모두 h1 을 정확히 1개만 내야 한다(중복 h1 도 회귀).
+  // WD-420: CodeMirror 의 실제 입력 요소(role=textbox)에 이름이 없어 스크린리더가 「편집 가능한 텍스트」로만 읽던 결함.
+  test('SQL 편집 칸이 이름 있는 textbox 로 노출된다 (WD-420)', async ({ authenticatedPage: page }) => {
+    await setupNewQueryEditorMocks(page);
+    await page.goto('/analytics/queries/new');
+
+    const editor = page.getByRole('textbox', { name: 'SQL 쿼리 편집' });
+    await expect(editor).toBeVisible();
+    await expect(editor).toHaveAttribute('aria-multiline', 'true');
+  });
+
   test('툴바 제목이 h1 heading 으로 렌더된다 (#433)', async ({ authenticatedPage: page }) => {
     await setupNewQueryEditorMocks(page);
     await page.goto('/analytics/queries/new');

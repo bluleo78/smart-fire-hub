@@ -704,6 +704,8 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
     await expect(page.getByText('Alice')).toBeVisible();
     await page.getByRole('button', { name: /SQL/ }).click();
 
+    // WD-420: 코드 편집 칸에 접근 가능한 이름이 있다.
+    await expect(page.getByRole('textbox', { name: '데이터셋 SQL 쿼리 편집' })).toBeVisible();
     await page.locator('.cm-content').click();
     await page.keyboard.type('SELECT price FROM t');
     await page.getByRole('button', { name: '실행' }).click();

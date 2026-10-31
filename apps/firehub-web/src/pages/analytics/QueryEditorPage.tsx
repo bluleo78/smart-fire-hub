@@ -116,6 +116,8 @@ function AnalyticsSqlEditor({
         oneDark,
         history(),
         autocompletion(),
+        // WD-420: 실제 입력 요소(.cm-content, role=textbox)에 이름이 없어 스크린리더가 「편집 가능한 텍스트」로만 읽는다.
+        EditorView.contentAttributes.of({ 'aria-label': 'SQL 쿼리 편집' }),
         // 실행 단축키 — 기본 키맵보다 우선해야 Mod-Enter 가 빈 줄 대신 실행된다(WD-87)
         sqlRunShortcut(() => onExecuteRef.current()),
         keymap.of([

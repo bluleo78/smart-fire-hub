@@ -33,6 +33,16 @@ interface ScriptEditorProps {
   insertTextRef?: React.MutableRefObject<((text: string) => void) | null>;
 }
 
+/**
+ * 편집 칸의 접근 가능한 이름(WD-420) — CodeMirror 의 실제 입력 요소(.cm-content, role=textbox)는 기본 이름이 없어
+ * 스크린리더가 「편집 가능한 텍스트」로만 읽는다. 스텝 유형(SQL·Python)을 이름에 담아 무엇을 쓰는 칸인지 알린다.
+ */
+function scriptEditorLabel(language: 'SQL' | 'PYTHON') {
+  return EditorView.contentAttributes.of({
+    'aria-label': language === 'SQL' ? 'SQL 스크립트 편집' : 'Python 스크립트 편집',
+  });
+}
+
 function buildStepRefTheme(isDark: boolean) {
   return EditorView.theme({
     '&': { minHeight: '200px', height: '100%', ...(isDark ? { backgroundColor: 'oklch(0.13 0.015 280)' } : {}) },
@@ -83,7 +93,8 @@ export default function ScriptEditor({ value, onChange, language, readOnly = fal
         history(),
         bracketMatching(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
-        languageCompartment.current.of(langExtension),
+        // 언어 확장과 이름을 한 칸막이에 두어, 스텝 유형이 바뀔 때 함께 바뀌게 한다(WD-420).
+        languageCompartment.current.of([langExtension, scriptEditorLabel(language)]),
         readOnlyCompartment.current.of([
           EditorView.editable.of(!readOnly),
           EditorState.readOnly.of(!!readOnly),
@@ -138,7 +149,7 @@ export default function ScriptEditor({ value, onChange, language, readOnly = fal
     const view = viewRef.current;
     if (!view) return;
     const langExtension = language === 'SQL' ? sql() : python();
-    view.dispatch({ effects: languageCompartment.current.reconfigure(langExtension) });
+    view.dispatch({ effects: languageCompartment.current.reconfigure([langExtension, scriptEditorLabel(language)]) });
   }, [language]);
 
   // Reconfigure readOnly when it changes
