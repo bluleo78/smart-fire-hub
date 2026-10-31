@@ -21,8 +21,11 @@ vi.mock('child_process', () => ({
 import { executeOpenCodeAgent } from './agent-opencode.js';
 import { readCliTranscript } from './agent-cli.js';
 
-/** 텍스트 한 줄을 내보낸 뒤 kill 될 때까지 멈춰 있는 가짜 opencode 자식(긴 응답 생성 중 상황). */
-function makeHangingChild() {
+/**
+ * 텍스트 한 줄을 내보낸 뒤 kill 될 때까지 멈춰 있는 가짜 opencode 자식(긴 응답 생성 중 상황).
+ * writeDelayMs 뒤에 그 줄을 쓴다 — 0 이면 spawn 이 돌아오기 전에 이미 써 둔다(제너레이터가 루프에 들어가기 전, WD-473).
+ */
+function makeHangingChild(writeDelayMs = 30) {
   const stdout = new PassThrough();
   const child = new EventEmitter() as EventEmitter & {
     stdout: PassThrough;
@@ -42,7 +45,7 @@ function makeHangingChild() {
     stdout.write(
       JSON.stringify({ sessionID: 'ses_abort', type: 'text', part: { type: 'text', text: '중단 전까지의 답' } }) + '\n',
     );
-  }, 30);
+  }, writeDelayMs);
   return child;
 }
 
@@ -88,6 +91,36 @@ describe('executeOpenCodeAgent — 명시적 취소 (WD-57)', () => {
       ['user', '긴 보고서를 써 줘'],
       ['assistant', '중단 전까지의 답'],
     ]);
+  });
+
+  /**
+   * 루프에 들어가기 전에 자식이 쓴 줄도 놓치지 않는다(WD-473).
+   * 예전에는 init yield·claimSession 뒤에야 줄 반복자를 꺼내, 그 사이 도착한 줄이 버려졌다 — 첫 응답이 사라져 중단도 못 하고
+   * 자식이 열린 채 요청이 끝나지 않았다(부하로 준비가 늦어지면 위 테스트가 5초 제한에 걸리던 원인). 줄을 spawn 직후 쓰고
+   * 소비자가 init 처리에 시간을 쓰게 해 그 구간을 결정적으로 만든다.
+   */
+  it('init 을 처리하는 사이(루프 전)에 자식이 쓴 줄도 받는다', { timeout: 2000 }, async () => {
+    const child = makeHangingChild(0);
+    spawnMock.mockReturnValue(child);
+    const controller = new AbortController();
+
+    const texts: string[] = [];
+    for await (const ev of executeOpenCodeAgent(
+      { message: '빠른 첫 응답', tenantId: 3, userId: 7, model: 'openai/gpt-4o', abortSignal: controller.signal },
+      CREDENTIALS,
+    )) {
+      // SSE 를 보내는 소비자처럼 init 에서 잠시 머문다 — 그동안 자식의 첫 줄이 이미 도착해 있다
+      if (ev.type === 'init') await new Promise((r) => setTimeout(r, 50));
+      if (ev.type === 'text') {
+        texts.push(String(ev.content));
+        controller.abort();
+      }
+    }
+    const env = (spawnMock.mock.calls.at(-1)![2] as { env?: Record<string, string> }).env;
+    if (env?.XDG_CONFIG_HOME) xdgDirs.push(env.XDG_CONFIG_HOME);
+
+    expect(texts).toEqual(['중단 전까지의 답']);
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
   });
 
   it('실행 준비 중(spawn 전)에 이미 취소됐으면 spawn 직후 바로 kill 한다(리스너만으로는 놓친다)', async () => {

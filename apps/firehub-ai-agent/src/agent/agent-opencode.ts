@@ -816,6 +816,10 @@ export async function* executeOpenCodeAgent(
   child.stderr?.on('data', (c: Buffer) => stderrChunks.push(c.toString()));
 
   const rl = createInterface({ input: child.stdout!, crlfDelay: Infinity });
+  // 줄 반복자는 rl 을 만들자마자 붙인다(WD-473). readline 은 반복자를 처음 꺼낼 때부터 'line' 을 모으므로, 아래 루프 전의
+  // init yield(소비자가 SSE 를 보내는 동안)·claimSession 사이에 자식이 쓴 줄은 반복자가 없어 버려진다. 첫 응답·종결 이벤트가
+  // 사라지면 자식은 열린 채 남아 요청이 끝나지 않는다.
+  const lines = rl[Symbol.asyncIterator]();
   // 종결 이벤트(정상 done 또는 안전장치가 낸 error)를 이미 보냈는지. finally 가 "결과 없이 종료"
   // error 를 덧붙일지 판단한다 — error 는 정확히 한 번만 나가야 한다(#711, agent-sdk.ts 참조).
   let sawTerminal = false;
@@ -838,7 +842,7 @@ export async function* executeOpenCodeAgent(
     yield { type: 'init', sessionId: firehubSessionId };
     // 세션 귀속 표식 — /agent/history 심층방어 게이트가 읽는다(session-owner.ts 참조).
     await claimSession(tenantId, firehubSessionId);
-    for await (const line of rl) {
+    for await (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       let parsedMsg: Record<string, unknown>;
