@@ -747,7 +747,12 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
 
     assertThat(statusChanges(same)).isEmpty();
     assertThat(statusChanges(first)).isEmpty();
-    assertThat(readStatus(first).get(AC_LAST_STATUS)).as("첫 점검도 상태는 저장된다").isEqualTo("UP");
+    // 부하 중 가끔 DOWN 으로 저장돼 실패했다(WD-477) — 원인(헬스 체크 5초 시간 초과인지 다른 오류인지)을 다시 났을 때 로그로 가를 수 있게
+    // 저장된 last_error 를 단언 설명에 싣는다(행은 한 번만 읽는다).
+    Record firstRow = readStatus(first);
+    assertThat(firstRow.get(AC_LAST_STATUS))
+        .as("첫 점검도 상태는 저장된다 — last_error=%s", firstRow.get(AC_LAST_ERROR))
+        .isEqualTo("UP");
   }
 
   /** 주기 점검이 먼저 전환을 보면 행위자는 시스템이다(user_id 없음, username=system). */
