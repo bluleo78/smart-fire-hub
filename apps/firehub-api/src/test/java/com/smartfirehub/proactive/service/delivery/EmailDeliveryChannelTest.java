@@ -89,7 +89,7 @@ class EmailDeliveryChannelTest {
    * 어긋나 있었다.
    *
    * <p><b>흔한 상태다.</b> #712 로 SMTP 가 워크스페이스 전용이 되어, 자기 SMTP 를 등록하지 않은 <b>모든 워크스페이스</b>가 여기를 지난다(플랫폼
-   * 폴백 없음). 그래서 예외 문구가 등록 위치 (워크스페이스 설정 › 이메일)를 안내하는지까지 본다.
+   * 폴백 없음). 그래서 예외 문구가 등록 위치 (관리 › 설정 › 이메일 탭)를 안내하는지까지 본다.
    */
   @Test
   void deliver_smtpNotConfigured_throwsSoRunnerDoesNotRecordDelivery() {
@@ -98,8 +98,8 @@ class EmailDeliveryChannelTest {
 
     assertThatThrownBy(() -> emailDeliveryChannel.deliver(job, 1L, makeResult()))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("SMTP 미설정")
-        .hasMessageContaining("워크스페이스 설정 › 이메일");
+        .hasMessageContaining("SMTP 서버가 설정되지 않아")
+        .hasMessageContaining("관리 › 설정 › 이메일 탭");
 
     // 던지기 전에 아무 일도 하지 않는다 — 수신자 조회조차 가지 않는다.
     verify(recipientResolver, never()).activeUsers(any());

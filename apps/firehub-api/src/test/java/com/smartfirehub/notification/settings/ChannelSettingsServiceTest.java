@@ -127,4 +127,37 @@ class ChannelSettingsServiceTest {
         .doesNotContain("Exception")
         .contains("연결할 수 없습니다");
   }
+
+  /**
+   * 영구 실패(SMTP 미설정 등)는 채널이 준 사유만 돌려준다 (WD-304). 웹 토스트가 「테스트 발송 실패: 」를 붙이므로 서버가 「발송 실패: 」를 또 붙이면
+   * 「테스트 발송 실패: 발송 실패: …」로 같은 말이 두 번 나왔다. 일시 실패도 같은 이유로 머리말 없이 안내 문구만 준다.
+   */
+  @Test
+  void testChannel_failures_returnReasonWithoutDuplicatedFailurePrefix() {
+    when(preferenceRepo.isEnabled(USER_ID, ChannelType.EMAIL)).thenReturn(true);
+    when(userRepository.findById(USER_ID))
+        .thenReturn(
+            Optional.of(
+                new UserResponse(USER_ID, "user1", "user@example.com", "User", true, null)));
+    lenient().when(channelRegistry.get(ChannelType.EMAIL)).thenReturn(emailChannel);
+    String smtpReason = "SMTP 서버가 설정되지 않았습니다 — 관리 › 설정 › 이메일 탭에서 등록하세요";
+    when(emailChannel.deliver(any()))
+        .thenReturn(
+            new DeliveryResult.PermanentFailure(
+                com.smartfirehub.notification.PermanentFailureReason.UNRECOVERABLE, smtpReason))
+        .thenReturn(
+            new DeliveryResult.TransientFailure(
+                com.smartfirehub.notification.TransientFailureReason.NETWORK_ERROR,
+                new RuntimeException("Connection refused")));
+
+    ChannelTestResult permanent = service.testChannel(USER_ID, ChannelType.EMAIL);
+    assertThat(permanent.success()).isFalse();
+    assertThat(permanent.message()).isEqualTo(smtpReason);
+
+    ChannelTestResult transientResult = service.testChannel(USER_ID, ChannelType.EMAIL);
+    assertThat(transientResult.success()).isFalse();
+    assertThat(transientResult.message())
+        .doesNotContain("발송 실패")
+        .isEqualTo("채널 서버에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.");
+  }
 }

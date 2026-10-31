@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 
 import { analyticsApi } from '../../api/analytics';
 import { AxisConfigPanel } from '../../components/analytics/AxisConfigPanel';
+import { BOXPLOT_REQUIRED_COLUMNS_LABEL, findMissingBoxplotStats } from '../../components/analytics/boxplot-stats';
 import { findMissingChartColumns } from '../../components/analytics/chart-missing-columns';
 import { ChartConfigWithheldNotice } from '../../components/analytics/ChartConfigWithheldNotice';
 import { ChartRenderer } from '../../components/analytics/ChartRenderer';
@@ -743,6 +744,17 @@ export default function ChartBuilderPage() {
         if (!config.xAxis) {
           toast.error('X축을 설정하세요.');
           return;
+        }
+        // WD-305: 박스 플롯은 통계 컬럼을 그대로 읽는다 — 없으면 0 으로 납작하게 그려진 차트가 저장되므로 막는다.
+        // 쿼리를 실행해 결과 컬럼을 알 때만 검사한다(위 없는 컬럼 검사와 같은 기준).
+        if (chartType === 'BOXPLOT' && queryColumns.length > 0) {
+          const missingStats = findMissingBoxplotStats(queryColumns);
+          if (missingStats.length > 0) {
+            toast.error(
+              `박스 플롯은 쿼리 결과에 ${BOXPLOT_REQUIRED_COLUMNS_LABEL} 컬럼이 있어야 저장할 수 있습니다. 없는 컬럼: ${missingStats.join(', ')}`,
+            );
+            return;
+          }
         }
       } else if (chartType === 'GAUGE') {
         // 게이지는 yAxis[0]만 필수
