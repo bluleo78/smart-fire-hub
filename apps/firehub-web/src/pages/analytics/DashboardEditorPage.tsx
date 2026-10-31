@@ -507,6 +507,11 @@ export default function DashboardEditorPage() {
   const handleStartEdit = useCallback(() => {
     // 남의 대시보드는 편집 모드에 들어가지 않는다(버튼도 숨기지만 진입점을 한 곳에서 막아 둔다, WD-196)
     if (!dashboard || !canEdit) return;
+    // 전체화면은 대시보드 영역만 띄우므로, 문서 본문에 붙는 「차트 추가」·위젯 삭제 대화상자가 보이지 않고
+    // 클릭만 삼킨다 — 편집은 전체화면을 풀고 시작한다(WD-329). 상태는 fullscreenchange 가 맞춘다.
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+    }
     setEditingWidgets([...dashboard.widgets]);
     const items = widgetsToLayoutItems(dashboard.widgets);
     setLocalLayouts({ lg: items, md: items, sm: items });
@@ -739,19 +744,22 @@ export default function DashboardEditorPage() {
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void toggleFullscreen()}
-            title={isFullscreen ? '전체화면 종료' : '전체화면'}
-            className="h-8"
-          >
-            {isFullscreen ? (
-              <Minimize2 className="h-3.5 w-3.5" />
-            ) : (
-              <Maximize2 className="h-3.5 w-3.5" />
-            )}
-          </Button>
+          {/* 편집 중에는 전체화면을 막는다 — 전체화면 안에서는 편집 대화상자가 보이지 않는다(WD-329) */}
+          {!isEditing && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void toggleFullscreen()}
+              title={isFullscreen ? '전체화면 종료' : '전체화면'}
+              className="h-8"
+            >
+              {isFullscreen ? (
+                <Minimize2 className="h-3.5 w-3.5" />
+              ) : (
+                <Maximize2 className="h-3.5 w-3.5" />
+              )}
+            </Button>
+          )}
 
           {/* 편집 진입·차트 추가·완료·취소는 작성자에게만 보인다(WD-196) */}
           {!canEdit ? null : isEditing ? (
