@@ -12,13 +12,14 @@ import {
   Upload,
   XCircle,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { FreshnessBar } from '../components/ui/freshness-bar';
+import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Separator } from '../components/ui/separator';
 import { Skeleton } from '../components/ui/skeleton';
@@ -68,6 +69,8 @@ export default function HomePage() {
   // 「파이프라인」 필터는 조회 권한이 있을 때만 있다 — 권한이 빠진 뒤 남은 선택값은 「전체」로 본다(WD-272)
   const typeFilter = selectedTypeFilter === 'PIPELINE' && !canReadPipeline ? '' : selectedTypeFilter;
   const [severityFilter, setSeverityFilter] = useState('');
+  // 활동 피드 필터의 이름 연결용 id — 하드코딩 id 는 충돌할 수 있어 useId 로 만든다(WD-339)
+  const activityFilterId = useId();
   const {
     data: activityFeedPages,
     isLoading: isActivityLoading,
@@ -532,8 +535,10 @@ export default function HomePage() {
             </div>
             {/* Filters */}
             <div className="flex flex-wrap items-center gap-3 pt-1">
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-muted-foreground">유형</span>
+              {/* WD-339: 유형 버튼은 그룹 이름 「유형」과 aria-pressed 로 선택 상태를 알린다 — 색만으로는 스크린리더가
+                  지금 어떤 유형으로 걸렀는지 알 수 없었다. */}
+              <div role="group" aria-labelledby={`${activityFilterId}-type`} className="flex items-center gap-1.5">
+                <span id={`${activityFilterId}-type`} className="text-xs text-muted-foreground">유형</span>
                 {[
                   { label: '전체', value: '' },
                   // 파이프라인 필터는 조회 권한이 있을 때만 — 없으면 서버가 파이프라인 이벤트를 싣지 않아 늘 빈 결과다(WD-272)
@@ -543,6 +548,7 @@ export default function HomePage() {
                   <Button
                     key={opt.value}
                     variant={typeFilter === opt.value ? 'default' : 'outline'}
+                    aria-pressed={typeFilter === opt.value}
                     size="sm"
                     className="h-6 text-xs px-2"
                     onClick={() => applyFilter(opt.value, severityFilter)}
@@ -552,12 +558,15 @@ export default function HomePage() {
                 ))}
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="text-xs text-muted-foreground">상태</span>
+                <Label htmlFor={`${activityFilterId}-severity`} className="text-xs font-normal text-muted-foreground">
+                  상태
+                </Label>
                 <Select
                   value={severityFilter || 'ALL'}
                   onValueChange={(v) => applyFilter(typeFilter, v === 'ALL' ? '' : v)}
                 >
-                  <SelectTrigger className="h-6 text-xs w-[80px] px-2">
+                  {/* WD-339: 옆 「상태」 레이블과 연결 — 없으면 이름 없는 콤보박스(값 「전체」만)로 읽혔다 */}
+                  <SelectTrigger id={`${activityFilterId}-severity`} className="h-6 text-xs w-[80px] px-2">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
