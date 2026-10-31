@@ -216,6 +216,12 @@ export function AIStatusChip() {
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const inputFocusedRef = useRef(false);
+  /** 칩과 드롭다운을 함께 감싸는 영역 — 포커스가 이 밖으로 나가면 드롭다운을 닫는다(WD-427) */
+  const chipAreaRef = useRef<HTMLDivElement>(null);
+  /** Esc 로 닫은 뒤 포커스를 돌려줄 칩(WD-427) */
+  const chipRef = useRef<HTMLDivElement>(null);
+  /** 키보드(ArrowDown)로 연 드롭다운은 열리자마자 포커스를 받는다 — 호버로 연 때는 포커스를 빼앗지 않는다(WD-427) */
+  const [focusDropdownOnOpen, setFocusDropdownOnOpen] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -239,7 +245,11 @@ export function AIStatusChip() {
       // 빠른 질문 입력창의 한글 조합 취소용 Escape 로는 닫지 않는다 (AIFullScreen 과 같은 기준)
       if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault();
+      // 포커스가 칩·드롭다운 안에 있었으면 칩으로 돌린다 — 드롭다운 안 요소가 사라지며 body 로 떨어지지 않게(WD-427).
+      // 호버로 열고 포커스는 본문에 있던 경우는 그 자리를 빼앗지 않는다.
+      const focusInside = chipAreaRef.current?.contains(document.activeElement) ?? false;
       setShowDropdown(false);
+      if (focusInside) chipRef.current?.focus();
     }
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
@@ -267,6 +277,26 @@ export function AIStatusChip() {
   const handleCloseDropdown = useCallback(() => {
     setShowDropdown(false);
   }, []);
+
+  /**
+   * 키보드로 드롭다운 열기(WD-427) — 예전에는 3초 호버로만 열려 키보드 사용자는 세션·토큰 사용량을 볼 수 없었다.
+   * Enter·Space 는 지금처럼 패널 모드 순환으로 두고(바꾸면 익숙한 동작이 달라진다), 아래 방향키로 연다.
+   */
+  const openDropdownByKeyboard = () => {
+    clearTimeout(hoverTimerRef.current);
+    clearTimeout(closeTimerRef.current);
+    setIsHovering(false);
+    setFocusDropdownOnOpen(true);
+    setShowDropdown(true);
+  };
+
+  /** 포커스가 칩·드롭다운 밖으로 나가면 닫는다 — Tab 으로 벗어났는데 드롭다운이 떠 있지 않게(WD-427) */
+  const handleChipAreaBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget as Node | null;
+    if (showDropdown && next && !e.currentTarget.contains(next)) {
+      setShowDropdown(false);
+    }
+  };
 
   const state = getChipState({ isStreaming, isThinking, isOpen, mode });
   const showProgressBar = state === 'streaming' || state === 'thinking';
@@ -328,11 +358,14 @@ export function AIStatusChip() {
     <div className="z-20 inline-flex items-center gap-1.5">
       {/* AI Status Chip — hover/click/dropdown 전용 */}
       <div
+        ref={chipAreaRef}
         className="relative inline-flex flex-col items-center"
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
+        onBlur={handleChipAreaBlur}
       >
         <div
+          ref={chipRef}
           className="relative overflow-hidden"
           role="button"
           tabIndex={0}
@@ -341,12 +374,17 @@ export function AIStatusChip() {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
               handleClick();
+            } else if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              openDropdownByKeyboard();
             }
           }}
           style={style}
           aria-label={`AI 상태: ${label}`}
-          aria-haspopup="true"
+          // 드롭다운은 세션 정보·빠른 질문 칸이 함께 있는 대화상자다(메뉴 항목만 있는 menu 가 아니다, WD-427)
+          aria-haspopup="dialog"
           aria-expanded={showDropdown}
+          aria-keyshortcuts="ArrowDown"
         >
           <ChipIcon state={state} />
           <span>{label}</span>
@@ -382,6 +420,7 @@ export function AIStatusChip() {
             currentSessionId={currentSessionId}
             inputFocusedRef={inputFocusedRef}
             onCloseDropdown={handleCloseDropdown}
+            autoFocus={focusDropdownOnOpen}
           />
         )}
       </div>

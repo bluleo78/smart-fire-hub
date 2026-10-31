@@ -220,8 +220,8 @@ test.describe('AIStatusChipDropdown — 3초 호버 후 드롭다운', () => {
     // 3초 타이머 대기 (3100ms)
     await page.waitForTimeout(3100);
 
-    // 드롭다운 메뉴가 나타나야 함 (role="menu", aria-label="AI 상태 및 제어")
-    await expect(page.getByRole('menu', { name: 'AI 상태 및 제어' })).toBeVisible();
+    // 드롭다운이 나타나야 함 (role="dialog", aria-label="AI 상태 및 제어" — WD-427 에서 menu → dialog)
+    await expect(page.getByRole('dialog', { name: 'AI 상태 및 제어' })).toBeVisible();
   });
 
   // floating 모드는 UI에서 일시 숨김 — 드롭다운 플로팅 버튼 스킵, 코드는 보존
@@ -233,8 +233,8 @@ test.describe('AIStatusChipDropdown — 3초 호버 후 드롭다운', () => {
 
     await chipLocator(page).hover();
     await page.waitForTimeout(3100);
-    await expect(page.getByRole('menu', { name: 'AI 상태 및 제어' })).toBeVisible();
-    await page.getByRole('menuitem', { name: '플로팅' }).click();
+    await expect(page.getByRole('dialog', { name: 'AI 상태 및 제어' })).toBeVisible();
+    await page.getByRole('dialog', { name: 'AI 상태 및 제어' }).getByRole('button', { name: '플로팅', exact: true }).click();
     await expect(chipLocator(page)).toBeVisible();
   });
 
@@ -253,10 +253,10 @@ test.describe('AIStatusChipDropdown — 3초 호버 후 드롭다운', () => {
     // 호버 → 드롭다운 표시
     await chipLocator(page).hover();
     await page.waitForTimeout(3100);
-    await expect(page.getByRole('menu', { name: 'AI 상태 및 제어' })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'AI 상태 및 제어' })).toBeVisible();
 
     // "사이드" 버튼 클릭 — isAIOpen=true 분기의 onModeChange('side') 호출
-    await page.getByRole('menuitem', { name: '사이드' }).click();
+    await page.getByRole('dialog', { name: 'AI 상태 및 제어' }).getByRole('button', { name: '사이드', exact: true }).click();
 
     // 패널이 여전히 열려 있어야 함
     await expect(chipLocator(page)).toBeVisible();
@@ -271,7 +271,7 @@ test.describe('AIStatusChipDropdown — 3초 호버 후 드롭다운', () => {
     // chip 호버 → 드롭다운 표시 (AI 패널 닫힌 상태)
     await chipLocator(page).hover();
     await page.waitForTimeout(3100);
-    await expect(page.getByRole('menu', { name: 'AI 상태 및 제어' })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'AI 상태 및 제어' })).toBeVisible();
 
     // QuickInput 입력란 확인 — placeholder "AI에게 질문하기..."
     const quickInput = page.getByPlaceholder('AI에게 질문하기...');
@@ -300,12 +300,74 @@ test.describe('AIStatusChipDropdown — 3초 호버 후 드롭다운', () => {
     // 호버 → 드롭다운 표시
     await chipLocator(page).hover();
     await page.waitForTimeout(3100);
-    await expect(page.getByRole('menu', { name: 'AI 상태 및 제어' })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'AI 상태 및 제어' })).toBeVisible();
 
     // "새 세션" 버튼 클릭 — onNewSession 콜백 호출
-    await page.getByRole('menuitem', { name: '새 세션' }).click();
+    await page.getByRole('dialog', { name: 'AI 상태 및 제어' }).getByRole('button', { name: '새 세션', exact: true }).click();
 
     // 새 세션 생성 후 패널이 여전히 열려 있어야 함
     await expect(chipLocator(page)).toBeVisible();
+  });
+});
+
+// WD-427: 드롭다운이 3초 호버로만 열려 키보드로는 열 수 없었고, Esc 로 닫으면 포커스가 body 로 사라졌으며,
+// Tab 으로 벗어나도 열린 채 남았다. 아래 방향키로 열고, Esc·포커스 이탈로 닫히는지 본다.
+test.describe('AIStatusChipDropdown — 키보드 (WD-427)', () => {
+  const dropdown = (page: import('@playwright/test').Page) =>
+    page.getByRole('dialog', { name: 'AI 상태 및 제어' });
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/ai/sessions', []);
+    await page.goto('/', { waitUntil: 'commit' });
+  });
+
+  test('칩에서 아래 방향키를 누르면 드롭다운이 열리고 포커스가 드롭다운으로 간다', async ({
+    authenticatedPage: page,
+  }) => {
+    const chip = chipLocator(page);
+    await expect(chip).toHaveAttribute('aria-haspopup', 'dialog');
+    await chip.focus();
+    await page.keyboard.press('ArrowDown');
+
+    await expect(dropdown(page)).toBeVisible();
+    await expect(chip).toHaveAttribute('aria-expanded', 'true');
+    await expect(dropdown(page)).toBeFocused();
+    // 키보드로만 볼 수 있게 된 세션 정보
+    await expect(dropdown(page).getByText('대화 수')).toBeVisible();
+    // 다음 Tab 은 드롭다운 안(빠른 질문 칸)으로 간다
+    await page.keyboard.press('Tab');
+    await expect(dropdown(page).getByPlaceholder('AI에게 질문하기...')).toBeFocused();
+  });
+
+  test('드롭다운 안에서 Esc 를 누르면 닫히고 포커스가 칩으로 돌아온다', async ({ authenticatedPage: page }) => {
+    const chip = chipLocator(page);
+    await chip.focus();
+    await page.keyboard.press('ArrowDown');
+    await dropdown(page).getByRole('button', { name: '사이드', exact: true }).focus();
+
+    await page.keyboard.press('Escape');
+    await expect(dropdown(page)).toBeHidden();
+    await expect(chip).toBeFocused();
+    await expect(chip).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  test('Tab 으로 드롭다운을 벗어나면 드롭다운이 닫힌다', async ({ authenticatedPage: page }) => {
+    const chip = chipLocator(page);
+    await chip.focus();
+    await page.keyboard.press('ArrowDown');
+    // 마지막 버튼 「세션 목록」에서 Tab — 다음은 머리글의 알림 벨이다
+    await dropdown(page).getByRole('button', { name: '세션 목록', exact: true }).focus();
+    await page.keyboard.press('Tab');
+
+    await expect(dropdown(page)).toBeHidden();
+    await expect(page.getByRole('button', { name: /AI 인사이트 알림|안 읽은 AI 인사이트/ }).first()).toBeFocused();
+  });
+
+  test('Enter 는 지금처럼 패널 모드를 바꾸고 드롭다운을 열지 않는다', async ({ authenticatedPage: page }) => {
+    const chip = chipLocator(page);
+    await chip.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('textbox').last()).toBeVisible({ timeout: 3000 });
+    await expect(dropdown(page)).toBeHidden();
   });
 });

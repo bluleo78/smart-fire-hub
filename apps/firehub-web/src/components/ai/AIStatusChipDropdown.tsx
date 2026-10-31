@@ -17,6 +17,8 @@ interface AIStatusChipDropdownProps {
   currentSessionId: string | null;
   inputFocusedRef: MutableRefObject<boolean>;
   onCloseDropdown: () => void;
+  /** 열리자마자 포커스를 받을지 — 키보드(ArrowDown)로 열었을 때만 true(WD-427) */
+  autoFocus?: boolean;
 }
 
 function StatusIndicator({ isStreaming, isThinking }: { isStreaming: boolean; isThinking: boolean }) {
@@ -87,7 +89,8 @@ function ActionButton({
       className={`flex flex-col items-center justify-center gap-1.5 rounded-lg p-2.5 text-xs transition-colors hover:bg-muted/60 ${
         highlighted ? 'border border-primary bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground'
       }`}
-      role="menuitem"
+      // 드롭다운이 menu 가 아닌 대화상자라 일반 버튼으로 둔다(WD-427). 현재 모드는 눌림 상태로 알린다.
+      aria-pressed={highlighted === undefined ? undefined : highlighted}
     >
       {icon}
       <span className="text-[11px]">{label}</span>
@@ -140,6 +143,8 @@ function QuickInput({
         type="button"
         onClick={handleSend}
         disabled={!value.trim()}
+        // 아이콘뿐이라 이름이 비어 있었다 — 키보드로 드롭다운에 들어오면 읽을 이름이 필요하다(WD-427)
+        aria-label="질문 보내기"
         className="flex items-center justify-center rounded-lg bg-primary/20 p-1.5 text-primary transition-colors hover:bg-primary/30 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -165,9 +170,15 @@ export function AIStatusChipDropdown({
   currentSessionId,
   inputFocusedRef,
   onCloseDropdown,
+  autoFocus = false,
 }: AIStatusChipDropdownProps) {
   const [visible, setVisible] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // 키보드로 열었으면 포커스를 드롭다운으로 옮긴다(WD-427) — 스크린리더가 「AI 상태 및 제어」를 읽고 다음 Tab 이 첫 칸으로 간다
+  useEffect(() => {
+    if (autoFocus) dropdownRef.current?.focus({ preventScroll: true });
+  }, [autoFocus]);
 
   // Animation: mount -> visible
   useEffect(() => {
@@ -183,9 +194,12 @@ export function AIStatusChipDropdown({
   return (
     <div
       ref={dropdownRef}
-      role="menu"
+      // 세션 정보·빠른 질문 칸·버튼이 섞인 영역이라 menu(화살표로 항목 이동) 대신 비모달 대화상자로 알린다(WD-427)
+      role="dialog"
+      aria-modal="false"
       aria-label="AI 상태 및 제어"
-      className="absolute w-80 rounded-xl border border-primary/30 bg-popover shadow-2xl backdrop-blur-xl transition-all duration-150"
+      tabIndex={-1}
+      className="absolute outline-none w-80 rounded-xl border border-primary/30 bg-popover shadow-2xl backdrop-blur-xl transition-all duration-150"
       style={{
         top: '100%',
         left: '50%',

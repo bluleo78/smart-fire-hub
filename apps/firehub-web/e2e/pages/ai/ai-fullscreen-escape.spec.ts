@@ -131,7 +131,7 @@ test.describe("AI 전체 화면 — Escape 로 사이드 패널 복귀 (WD-61)",
     );
     await chipLocator(page).hover();
     await page.clock.runFor(3_000);
-    const chipMenu = page.getByRole("menu", { name: "AI 상태 및 제어" });
+    const chipMenu = page.getByRole("dialog", { name: "AI 상태 및 제어" });
     await expect(chipMenu).toBeVisible();
 
     await page.keyboard.press("Escape");
