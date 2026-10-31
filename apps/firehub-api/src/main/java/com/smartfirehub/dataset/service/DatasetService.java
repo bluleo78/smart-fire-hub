@@ -234,8 +234,9 @@ public class DatasetService {
   }
 
   /**
-   * 러너 TEMP 재생성의 되돌리기 재료(WD-238) — 옛 테이블을 옮겨 둔 보관본 이름, 재생성 전 컬럼 메타 행 전체, 재생성 전 보안 등급. 스텝이 성공하면
-   * {@link #discardPipelineTempBackup}, 실패하면 {@link #restorePipelineTempTable} 에 넘긴다.
+   * 러너 TEMP 재생성의 되돌리기 재료(WD-238) — 옛 테이블을 옮겨 둔 보관본 이름, 재생성 전 컬럼 메타 행 전체, 재생성 전 보안 등급·자동 상향
+   * 시각(WD-302). 스텝이 성공하면 {@link #discardPipelineTempBackup}, 실패하면 {@link #restorePipelineTempTable}
+   * 에 넘긴다.
    */
   public record PipelineTempRebuild(
       long datasetId,
@@ -243,7 +244,27 @@ public class DatasetService {
       String backupTableName,
       long backupTableOid,
       List<org.jooq.Record> columnSnapshot,
-      Long previousLevelId) {}
+      Long previousLevelId,
+      java.time.LocalDateTime previousAutoRaisedAt) {
+
+    /** 자동 상향 시각이 없던 재생성 — WD-302 이전 호출 형태(테스트 등)를 그대로 둔다. */
+    public PipelineTempRebuild(
+        long datasetId,
+        String tableName,
+        String backupTableName,
+        long backupTableOid,
+        List<org.jooq.Record> columnSnapshot,
+        Long previousLevelId) {
+      this(
+          datasetId,
+          tableName,
+          backupTableName,
+          backupTableOid,
+          columnSnapshot,
+          previousLevelId,
+          null);
+    }
+  }
 
   /**
    * 파이프라인 러너 전용 — 스텝 소유 TEMP 의 물리 테이블과 컬럼을 새 열 구성으로 <b>같은 데이터셋 id 그대로</b> 다시 만든다(WD-222).
@@ -279,6 +300,8 @@ public class DatasetService {
     // 되돌리기 재료는 무엇이든 바꾸기 전에 읽는다.
     List<org.jooq.Record> columnSnapshot = columnRepository.snapshotByDatasetId(datasetId);
     Long previousLevelId = datasetSecurityService.currentLevelId(datasetId);
+    java.time.LocalDateTime previousAutoRaisedAt =
+        datasetSecurityService.currentAutoRaisedAt(datasetId);
     // 지문은 바꾸기 전 스냅숏으로 만든다 — 재생성이 커밋되면 컬럼 행 id 가 바뀌어 크래시 뒤 맞춤이 「커밋됨」을 가린다(WD-256).
     long backupTableOid =
         dataTableService.moveToRebuildBackup(
@@ -287,6 +310,9 @@ public class DatasetService {
     columnRepository.deleteByDatasetId(datasetId);
     withColumnNameUniqueAs409(() -> columnRepository.saveBatch(datasetId, columns));
     dataTableService.createTable(dataset.tableName(), columns);
+    // 새로 만든 빈 TEMP 에는 이전 실행의 자동 상향 표시를 남기지 않는다(WD-302). 남기면 이번 실행이 등급을 낮추거나 그대로 두어도 보안 탭이
+    // 옛 시각으로 「자동 상향되었습니다」를 안내한다. 이번 실행에서 실제로 상향되면 게이트가 다시 찍는다. 실패해 되돌리면 아래 복원이 되살린다.
+    datasetSecurityService.clearAutoRaisedMarker(datasetId);
     // 컬럼이 바뀌었으므로 검색 원문·임베딩도 갱신한다(생성 경로와 같은 규칙).
     reindexSearch(datasetId);
     return new PipelineTempRebuild(
@@ -295,7 +321,8 @@ public class DatasetService {
         backupTableName,
         backupTableOid,
         columnSnapshot,
-        previousLevelId);
+        previousLevelId,
+        previousAutoRaisedAt);
   }
 
   /**
@@ -315,6 +342,8 @@ public class DatasetService {
     columnRepository.restoreSnapshot(rebuild.datasetId(), rebuild.columnSnapshot());
     datasetSecurityService.restoreRebuiltPipelineTempLevel(
         rebuild.datasetId(), rebuild.previousLevelId(), runAsUserId);
+    datasetSecurityService.restoreAutoRaisedMarker(
+        rebuild.datasetId(), rebuild.previousAutoRaisedAt());
     // 컬럼이 되돌아갔으므로 검색 원문·임베딩도 다시 맞춘다.
     reindexSearch(rebuild.datasetId());
   }

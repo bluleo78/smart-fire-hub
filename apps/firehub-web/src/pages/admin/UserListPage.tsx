@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { SearchInput } from '@/components/ui/search-input';
 import { SimplePagination } from '@/components/ui/simple-pagination';
@@ -7,6 +7,7 @@ import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
 import { membershipRoleLabel } from '@/lib/membership-role';
+import { parseNonNegativeInt } from '@/lib/pagination';
 
 import { Badge } from '../../components/ui/badge';
 import {
@@ -26,21 +27,53 @@ export default function UserListPage() {
   const navigate = useNavigate();
   // 멤버 추가 버튼 노출(user:write)·역할 지정 가능 여부(role:assign) — 최종 판정은 서버(WD-2).
   const { permissions } = useMyPermissions();
-  const [search, setSearch] = useState('');
+  // 페이지·검색어는 주소 쿼리(?page=·?q=)를 단일 진실 소스로 둔다 — 상세에 다녀와도 보던 위치로 돌아오게(WD-283).
+  // 데이터셋 목록과 같은 규칙: 입력칸도 주소에 바로 묶고(로컬 상태와 어긋나지 않게), 조회만 디바운스한다.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const search = searchParams.get('q') ?? '';
+  // 손으로 고친 주소(?page=abc, -1)는 첫 페이지로 읽는다(WD-146 과 같은 처리)
+  const page = parseNonNegativeInt(searchParams.get('page'), 0);
   const debouncedSearch = useDebounceValue(search, 300);
-  const [page, setPage] = useState(0);
   const pageSize = 10;
 
+  /** 주소 쿼리 갱신 — 빈 값·첫 페이지는 키를 지워 주소를 깔끔히 두고, 기록을 쌓지 않게 replace 한다. */
+  const patchParams = useCallback(
+    (patch: { q?: string; page?: number }) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          for (const [key, value] of Object.entries(patch)) {
+            if (value === '' || value === 0) next.delete(key);
+            else if (value !== undefined) next.set(key, String(value));
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+  const setPage = (next: number) => patchParams({ page: next });
+
   const handleSearchChange = (value: string) => {
-    setSearch(value);
-    setPage(0);
+    patchParams({ q: value, page: 0 });
   };
+
+  /** 상세로 갈 때 지금 목록 주소(page·q)를 넘겨, 상세의 「목록으로 돌아가기」도 이 위치로 돌아오게 한다(WD-283). */
+  const openUser = (id: number) => navigate(`/admin/users/${id}`, { state: { listSearch: `?${searchParams.toString()}` } });
 
   const { data: users, isLoading, isError } = useUsers({
     search: debouncedSearch || undefined,
     page,
     size: pageSize,
   });
+
+  // 범위 밖 페이지(북마크·멤버가 줄어든 뒤 돌아옴)는 빈 목록을 「사용자가 없습니다」로 오해하지 않게 마지막 페이지로 옮긴다(데이터셋 목록 WD-146 과 같은 처리).
+  const pageOutOfRange = !!users && page > 0 && page >= Math.max(users.totalPages, 1);
+  useEffect(() => {
+    if (!pageOutOfRange || !users) return;
+    patchParams({ page: Math.max(users.totalPages - 1, 0) });
+  }, [pageOutOfRange, users, patchParams]);
 
   return (
     <div className="space-y-6">
@@ -73,7 +106,7 @@ export default function UserListPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
+            {isLoading || pageOutOfRange ? (
               <TableSkeletonRows columns={4} rows={5} />
             ) : isError ? (
               <TableRow>
@@ -90,9 +123,9 @@ export default function UserListPage() {
                   role="button"
                   aria-label={`사용자 ${u.name} 상세 보기`}
                   className="cursor-pointer hover:bg-muted/50 transition-colors row-hover"
-                  onClick={() => navigate(`/admin/users/${u.id}`)}
+                  onClick={() => openUser(u.id)}
                   // Enter/Space 키로 행 클릭과 동일한 네비게이션 동작 수행
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/admin/users/${u.id}`); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openUser(u.id); }}
                 >
                   {/* WD-15: 주 식별자(이름)만 굵게 — 보조 식별자(아이디)가 더 굵으면 시선이 역전된다(02 §4.1).
                       역할 라벨은 공용 매핑(lib/membership-role)으로 admin 콘솔과 같은 용어 "소유자". */}
@@ -119,7 +152,7 @@ export default function UserListPage() {
                 colSpan={4}
                 message="사용자가 없습니다."
                 searchKeyword={debouncedSearch || undefined}
-                onResetSearch={search ? () => { setSearch(''); setPage(0); } : undefined}
+                onResetSearch={search ? () => patchParams({ q: '', page: 0 }) : undefined}
               />
             )}
           </TableBody>

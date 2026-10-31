@@ -545,6 +545,46 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
   }
 
   /**
+   * 이전 실행에서 자동 상향된 TEMP 를 열 구성이 바뀐 실행이 같은 id 로 재생성하면 자동 상향 표시를 지운다(WD-302) — 이번 입력은 공개뿐이라 상향이 없는데 옛
+   * 시각이 남으면 보안 탭이 「'공개'(으)로 자동 상향되었습니다」로 안내한다. 러너 경로 전체(재생성 → 입력 등급 배정 → 실행)를 돈다.
+   */
+  @Test
+  void rebuildRun_clearsPreviousAutoRaiseMarker() {
+    Long pipelineId = createPipeline(sqlStep(STEP_NAME, "code, label", null, null));
+    pipelinesToCleanup.add(pipelineId);
+    assertThat(runAndWait(pipelineId)).isEqualTo("COMPLETED");
+    Long temp = tempIdOf(pipelineId);
+    setAutoRaisedAt(temp, java.time.LocalDateTime.now().minusDays(1)); // 이전 실행의 자동 상향 흔적
+
+    assertSelectChangeRuns(pipelineId, temp, "code", null, "code");
+
+    assertThat(autoRaisedAtOf(temp)).as("재생성한 TEMP 의 옛 자동 상향 표시").isNull();
+  }
+
+  /**
+   * 재생성 뒤 스텝이 실패해 되돌리면 재생성 전 자동 상향 시각도 되살린다(WD-302) — 이전 등급·행이 돌아오므로 그 등급이 자동 상향이었다는 안내도 함께 돌아와야
+   * 한다.
+   */
+  @Test
+  void restoreRebuild_bringsBackAutoRaiseMarker() {
+    Long pipelineId = createPipeline(sqlStep(STEP_NAME, "code, label", null, null));
+    pipelinesToCleanup.add(pipelineId);
+    assertThat(runAndWait(pipelineId)).isEqualTo("COMPLETED");
+    Long temp = tempIdOf(pipelineId);
+    java.time.LocalDateTime raisedAt =
+        java.time.LocalDateTime.of(2026, 10, 1, 9, 0, 0); // 마이크로초 절삭 차이 없게 고정값
+    setAutoRaisedAt(temp, raisedAt);
+
+    DatasetService.PipelineTempRebuild rebuild =
+        datasetService.rebuildPipelineTempTable(
+            temp, List.of(new DatasetColumnRequest("x", "x", "TEXT", null, true, false, null)));
+    assertThat(autoRaisedAtOf(temp)).as("재생성하면 지운다").isNull();
+
+    datasetService.restorePipelineTempTable(rebuild, userId);
+    assertThat(autoRaisedAtOf(temp)).as("되돌리면 되살린다").isEqualTo(raisedAt);
+  }
+
+  /**
    * 되돌리기는 이 실행이 옮긴 보관본(OID)일 때만 한다(WD-238) — 같은 TEMP 를 겹쳐 다시 만든 다른 실행이 보관본 이름에 자기 테이블을 두었으면, 되돌리기가
    * 그 테이블을 원래 이름으로 올리고 옛 열 메타를 써서 물리 열과 메타가 어긋난다. 보관본을 다른 테이블로 바꿔치기한 뒤 되돌리기가 거부되고 현재 테이블·메타가 그대로인지
    * 본다.
@@ -632,6 +672,23 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
                 "CREATE TABLE "
                     + DataSchema.qualify(DataTableService.rebuildBackupTableName(table))
                     + " (id BIGINT)"));
+  }
+
+  private void setAutoRaisedAt(Long datasetId, java.time.LocalDateTime at) {
+    inTenantFixture(
+        () ->
+            dsl.execute(
+                "UPDATE dataset SET security_level_auto_raised_at = ? WHERE id = ?",
+                at,
+                datasetId));
+  }
+
+  private java.time.LocalDateTime autoRaisedAtOf(Long datasetId) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne(
+                    "SELECT security_level_auto_raised_at FROM dataset WHERE id = ?", datasetId)
+                .get(0, java.time.LocalDateTime.class));
   }
 
   private void setLevel(Long datasetId, Long levelId) {
