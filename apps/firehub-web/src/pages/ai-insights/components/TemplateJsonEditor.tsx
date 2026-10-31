@@ -52,6 +52,8 @@ export function TemplateJsonEditor({ value, onChange, readonly = false }: Templa
       json(),
       oneDark,
       lineNumbers(),
+      // WD-420: 실제 입력 요소(.cm-content, role=textbox)에 이름이 없어 스크린리더가 「편집 가능한 텍스트」로만 읽는다.
+      EditorView.contentAttributes.of({ 'aria-label': readonly ? '양식 JSON (읽기 전용)' : '양식 JSON 편집' }),
       history(),
       keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
       EditorView.theme({

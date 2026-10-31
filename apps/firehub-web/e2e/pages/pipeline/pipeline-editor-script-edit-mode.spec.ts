@@ -44,6 +44,8 @@ test.describe('파이프라인 상세 — 스텝 패널을 연 뒤 수정 모드
       await page.locator('.react-flow__node').first().click();
       const editor = page.locator('.cm-content');
       await expect(editor).toHaveAttribute('contenteditable', 'false');
+      // WD-420: 코드 편집 칸에 스텝 유형을 담은 접근 가능한 이름이 있다.
+      await expect(editor).toHaveAttribute('aria-label', scriptType === 'SQL' ? 'SQL 스크립트 편집' : 'Python 스크립트 편집');
 
       // 2) 패널을 연 채로 수정 모드 전환 — 에디터는 재마운트되지 않고 편집 가능해진다
       await page.getByRole('button', { name: '수정' }).click();

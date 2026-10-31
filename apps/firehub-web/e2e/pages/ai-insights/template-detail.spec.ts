@@ -793,6 +793,8 @@ test.describe('리포트 템플릿 — 그룹 하위 섹션 Key 검증 및 삭�
     await page.getByRole('tab', { name: 'JSON' }).click();
     const editor = page.locator('.cm-content');
     await expect(editor).toBeVisible({ timeout: 10000 });
+    // WD-420: 코드 편집 칸에 접근 가능한 이름이 있다.
+    await expect(editor).toHaveAttribute('aria-label', '양식 JSON 편집');
     await editor.click();
     await page.keyboard.press('ControlOrMeta+a');
     await page.keyboard.press('Delete');
