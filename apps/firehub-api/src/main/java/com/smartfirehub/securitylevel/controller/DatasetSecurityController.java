@@ -41,11 +41,11 @@ public class DatasetSecurityController {
     return service.listGrants(id);
   }
 
-  /** 추가 후보(활성 멤버·역할 이름만). 리터럴 경로가 {grantId} 변수 경로보다 우선한다. */
+  /** 추가 후보(활성 멤버·역할 + 열람 등급·충족 여부, WD-292). 리터럴 경로가 {grantId} 변수 경로보다 우선한다. */
   @GetMapping("/access-grants/candidates")
   @RequirePermission("dataset:grant")
   public GrantCandidatesResponse candidates(@PathVariable Long id) {
-    return service.candidates();
+    return service.candidates(id);
   }
 
   @PostMapping("/access-grants")

@@ -2,6 +2,7 @@ package com.smartfirehub.securitylevel;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -96,5 +97,44 @@ class DatasetSecurityControllerTest extends IntegrationTestBase {
             get("/api/v1/datasets/" + ds + "/access-grants/candidates")
                 .header("Authorization", token()))
         .andExpect(status().isForbidden());
+  }
+
+  /**
+   * WD-292 — 후보·허용 목록 응답에 대상 열람 등급과 충족 여부가 JSON 필드로 실린다. 「기밀」 데이터셋에서 호출자 역할(기밀)은 충족, 기본 USER
+   * 역할(내부)만 가진 사용자 항목은 부족.
+   */
+  @Test
+  void candidatesAndGrants_carryClearanceFields() throws Exception {
+    long secret = fx.levelId("기밀");
+    long secretDs = fx.createDatasetRow("dsc_s_" + System.nanoTime(), secret, creator);
+    try {
+      roleId = fx.createRole("dsc_r_" + System.nanoTime(), secret, "dataset:read", "dataset:grant");
+      fx.assignRole(uid, roleId);
+      fx.grantRole(secretDs, roleId);
+      fx.grantUser(secretDs, creator); // creator 는 USER(내부) 역할만 가진다
+      mockMvc
+          .perform(
+              get("/api/v1/datasets/" + secretDs + "/access-grants/candidates")
+                  .header("Authorization", token()))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.roles[?(@.id == " + roleId + ")].clearance.levelName").value("기밀"))
+          .andExpect(jsonPath("$.roles[?(@.id == " + roleId + ")].sufficientClearance").value(true))
+          .andExpect(
+              jsonPath("$.users[?(@.id == " + creator + ")].clearance.levelName").value("내부"))
+          .andExpect(
+              jsonPath("$.users[?(@.id == " + creator + ")].sufficientClearance").value(false));
+      mockMvc
+          .perform(
+              get("/api/v1/datasets/" + secretDs + "/access-grants")
+                  .header("Authorization", token()))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$[?(@.type == 'ROLE')].subjectClearance.levelName").value("기밀"))
+          .andExpect(jsonPath("$[?(@.type == 'ROLE')].sufficientClearance").value(true))
+          .andExpect(jsonPath("$[?(@.type == 'USER')].subjectClearance.levelName").value("내부"))
+          .andExpect(jsonPath("$[?(@.type == 'USER')].sufficientClearance").value(false));
+    } finally {
+      TenantContext.set(DEFAULT_TEST_TENANT_ID);
+      fx.deleteDatasetRow(secretDs);
+    }
   }
 }

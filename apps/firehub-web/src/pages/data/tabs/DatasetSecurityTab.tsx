@@ -35,6 +35,19 @@ import type { AccessGrant } from '../../../types/security-level';
 import { AddAccessGrantDialog } from '../components/AddAccessGrantDialog';
 
 /**
+ * 등급 부족 허용 항목 배지의 보충 설명(WD-292). 역할 항목은 같은 사람이 등급 높은 다른 역할로 볼 수도 있어 「이 역할만으로는」이라고 한다.
+ */
+function insufficientGrantTitle(g: AccessGrant, levelName: string): string {
+  const current = g.subjectClearance?.levelName;
+  if (g.type === 'ROLE') {
+    return `역할 열람 등급${current ? `(${current})` : ''}이 데이터셋 등급(${levelName})보다 낮아 이 역할만으로는 볼 수 없습니다.`;
+  }
+  return current
+    ? `열람 등급(${current})이 데이터셋 등급(${levelName})보다 낮아 볼 수 없습니다.`
+    : `열람 등급이 있는 역할이 없어 볼 수 없습니다.`;
+}
+
+/**
  * 「보안」 탭(목업 s2) — "무엇이 제한되나 / 누가 볼 수 있나". 모든 데이터셋 유형(표·문서·파일) 공통.
  * 잠김 방지 규칙(마지막 항목 제거 불가·본인 제거 확인)은 서버가 강제하고, 여기서는 미리 막거나 확인을 받아 놀라지 않게 한다.
  */
@@ -150,7 +163,18 @@ export function DatasetSecurityTab({ dataset }: { dataset: DatasetDetailResponse
                 {grants.map((g) => (
                   <TableRow key={g.id}>
                     <TableCell>{g.type === 'ROLE' ? '역할' : '사용자'}</TableCell>
-                    <TableCell>{g.subjectName}</TableCell>
+                    <TableCell>
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
+                        {g.subjectName}
+                        {/* WD-292: 대상 열람 등급이 데이터셋 등급보다 낮으면 이 항목만으로는 볼 수 없다 — 색이 아닌 글자로 알린다.
+                            서버가 판정값을 주지 않으면(이전 응답) 표시하지 않는다. */}
+                        {g.sufficientClearance === false && (
+                          <Badge variant="warning" title={insufficientGrantTitle(g, level.name)}>
+                            등급 부족 — 볼 수 없음
+                          </Badge>
+                        )}
+                      </span>
+                    </TableCell>
                     <TableCell>{g.grantedByName ?? '-'}</TableCell>
                     <TableCell>{formatDateShort(g.grantedAt)}</TableCell>
                     <TableCell>
@@ -179,7 +203,7 @@ export function DatasetSecurityTab({ dataset }: { dataset: DatasetDetailResponse
       ) : (
         <p className="text-sm text-muted-foreground">{`열람 등급이 '${level.name}' 이상인 역할은 누구나 볼 수 있습니다.`}</p>
       )}
-      <AddAccessGrantDialog datasetId={dataset.id} open={addOpen} onOpenChange={setAddOpen} />
+      <AddAccessGrantDialog datasetId={dataset.id} level={level} open={addOpen} onOpenChange={setAddOpen} />
       <AlertDialog open={!!selfRemoval} onOpenChange={(o) => !o && setSelfRemoval(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

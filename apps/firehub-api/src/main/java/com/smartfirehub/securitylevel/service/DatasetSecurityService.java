@@ -15,10 +15,12 @@ import com.smartfirehub.securitylevel.dto.AccessGrantResponse;
 import com.smartfirehub.securitylevel.dto.AddAccessGrantRequest;
 import com.smartfirehub.securitylevel.dto.ChangeDatasetLevelRequest;
 import com.smartfirehub.securitylevel.dto.GrantCandidatesResponse;
+import com.smartfirehub.securitylevel.dto.SubjectClearance;
 import com.smartfirehub.securitylevel.event.DatasetSecurityLevelChangedEvent;
 import com.smartfirehub.securitylevel.repository.ActiveMembership;
 import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository;
 import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository.GrantSubject;
+import com.smartfirehub.securitylevel.repository.DatasetAccessRepository;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -44,6 +46,9 @@ public class DatasetSecurityService {
   private final SecurityAuditRecorder audit;
   private final SecurityLevelRepository levelRepository;
   private final DatasetAccessGuard guard;
+
+  /** 허용 목록 대상의 유효 열람 등급 계산용(WD-292) — 판정 경로(ClearanceResolver)와 같은 조인을 쓴다. */
+  private final DatasetAccessRepository accessRepository;
 
   /** 등급 변경 도메인 이벤트 발행기 — 후속 처리(PYTHON 슬롯 GRANT 동기화·외부 벡터 정리)를 이 서비스와 떼어 놓는다(공통 결정 R2: 발행은 B 소유). */
   private final ApplicationEventPublisher events;
@@ -417,17 +422,116 @@ public class DatasetSecurityService {
             TenantContext.require("등급 변경 이벤트"), datasetId, fromId, toId, cause));
   }
 
-  /** 허용 목록 조회(카드 표시용). */
+  /** 허용 목록 조회(카드 표시용). 항목마다 대상 열람 등급과 효과 여부를 싣는다(WD-292). */
   @Transactional(readOnly = true)
   public List<AccessGrantResponse> listGrants(long datasetId) {
-    return grantRepository.findByDataset(datasetId).stream()
-        .map(DatasetSecurityService::toResponse)
-        .toList();
+    var rows = grantRepository.findByDataset(datasetId);
+    var ctx = subjectClearanceContext(datasetId, rows);
+    return rows.stream().map(g -> toResponse(g, ctx)).toList();
   }
 
-  private static AccessGrantResponse toResponse(DatasetAccessGrantRepository.GrantRow g) {
+  /** 항목 1개 응답 — 추가 응답도 목록과 같은 필드를 갖게 한다(WD-292). */
+  private AccessGrantResponse toResponse(DatasetAccessGrantRepository.GrantRow g) {
+    return toResponse(g, subjectClearanceContext(g.datasetId(), List.of(g)));
+  }
+
+  private static AccessGrantResponse toResponse(
+      DatasetAccessGrantRepository.GrantRow g, SubjectClearanceContext ctx) {
+    SubjectClearance c = g.userId() != null ? ctx.forUser(g.userId()) : ctx.forRole(g.roleId());
     return new AccessGrantResponse(
-        g.id(), g.type(), g.subjectId(), g.subjectName(), g.grantedByName(), g.grantedAt());
+        g.id(),
+        g.type(),
+        g.subjectId(),
+        g.subjectName(),
+        g.grantedByName(),
+        g.grantedAt(),
+        c,
+        ctx.sufficient(c));
+  }
+
+  /**
+   * 허용 목록 대상의 열람 등급 판단 재료(WD-292) — 데이터셋 등급, 등급 정의(rank → 등급), 사용자 유효 rank, 역할 등급.
+   *
+   * <p>효과 판단은 열람 판정({@link com.smartfirehub.securitylevel.access.DatasetAccessPolicy#decide})의 첫
+   * 절(rank 비교)과 같다: 대상 rank ≥ 데이터셋 등급 rank. admin_bypass 는 허용 목록만 건너뛰고 rank 는 건너뛰지 않으므로 여기서 보지 않는다.
+   * 판정 자체는 바꾸지 않는다 — 표시용이다.
+   */
+  private record SubjectClearanceContext(
+      LevelPolicy datasetLevel,
+      Map<Integer, LevelPolicy> levelByRank,
+      Map<Long, LevelPolicy> levelById,
+      Map<Long, Integer> userRanks,
+      Map<Long, Long> roleLevelIds) {
+
+    /** 사용자 유효 열람 등급 — 역할이 없으면(NO_RANK) null. */
+    SubjectClearance forUser(long userId) {
+      Integer rank = userRanks.get(userId);
+      if (rank == null) {
+        return null;
+      }
+      LevelPolicy l = levelByRank.get(rank);
+      // rank 는 테넌트 안에서 유일하다(uq_security_level_rank) — 이름을 못 찾을 일은 없지만 rank 만은 보존한다.
+      return l != null ? SubjectClearance.of(l) : new SubjectClearance(null, null, rank);
+    }
+
+    /** 역할 열람 등급(max_security_level). 역할이 없으면 null. */
+    SubjectClearance forRole(long roleId) {
+      Long levelId = roleLevelIds.get(roleId);
+      LevelPolicy l = levelId == null ? null : levelById.get(levelId);
+      return l == null ? null : SubjectClearance.of(l);
+    }
+
+    /** 대상 등급이 데이터셋 등급 이상인가. 등급을 모르면(대상 무자격·데이터셋 등급 불명) false — 판정과 같은 fail-closed. */
+    boolean sufficient(SubjectClearance c) {
+      return c != null && datasetLevel != null && c.rank() >= datasetLevel.rank();
+    }
+  }
+
+  /** 주어진 허용 항목들의 대상 등급 판단 재료를 한 번에 읽는다(사용자·역할 각각 일괄 조회). */
+  private SubjectClearanceContext subjectClearanceContext(
+      long datasetId, Collection<DatasetAccessGrantRepository.GrantRow> rows) {
+    Set<Long> userIds = new HashSet<>();
+    Set<Long> roleIds = new HashSet<>();
+    for (var g : rows) {
+      if (g.userId() != null) {
+        userIds.add(g.userId());
+      } else if (g.roleId() != null) {
+        roleIds.add(g.roleId());
+      }
+    }
+    return subjectClearanceContext(datasetId, userIds, roleLevelIds(roleIds));
+  }
+
+  private SubjectClearanceContext subjectClearanceContext(
+      long datasetId, Collection<Long> userIds, Map<Long, Long> roleLevelIds) {
+    long tenantId = TenantContext.require("허용 목록 대상 열람 등급");
+    List<LevelPolicy> levels = levelRepository.findAll();
+    Map<Integer, LevelPolicy> byRank = new HashMap<>();
+    Map<Long, LevelPolicy> byId = new HashMap<>();
+    levels.forEach(
+        l -> {
+          byRank.put(l.rank(), l);
+          byId.put(l.id(), l);
+        });
+    Long datasetLevelId = levelRepository.findDatasetLevelId(datasetId);
+    LevelPolicy datasetLevel = datasetLevelId == null ? null : byId.get(datasetLevelId);
+    return new SubjectClearanceContext(
+        datasetLevel,
+        byRank,
+        byId,
+        accessRepository.findMaxRanksByUser(userIds, tenantId),
+        roleLevelIds);
+  }
+
+  /** 역할 id → 역할 열람 등급 id(max_security_level_id). 이 테넌트(RLS) 역할만 나온다. */
+  private Map<Long, Long> roleLevelIds(Collection<Long> roleIds) {
+    if (roleIds.isEmpty()) {
+      return Map.of();
+    }
+    return dsl.select(ROLE.ID, ROLE.MAX_SECURITY_LEVEL_ID)
+        .from(ROLE)
+        .where(ROLE.ID.in(roleIds))
+        .fetchMap(ROLE.ID, ROLE.MAX_SECURITY_LEVEL_ID);
   }
 
   /**
@@ -518,10 +622,16 @@ public class DatasetSecurityService {
         Map.of("grantId", grantId, "type", grant.type(), "subjectId", grant.subjectId()));
   }
 
-  /** 추가 후보 — 이 테넌트 ACTIVE 멤버와 역할(이름만). membership 은 RLS 없는 전역 테이블이라 tenant_id 를 명시한다. */
+  /**
+   * 추가 후보 — 이 테넌트 ACTIVE 멤버와 역할. membership 은 RLS 없는 전역 테이블이라 tenant_id 를 명시한다.
+   *
+   * <p>WD-292: 후보마다 열람 등급(사용자는 유효 등급, 역할은 역할 등급)과 이 데이터셋 등급 충족 여부를 싣는다. 등급이 모자란 대상도 빼지 않는다 — 등급을
+   * 올리기 전에 미리 등록해 두는 것도 정당한 사용이라, 웹이 경고만 한다.
+   */
   @Transactional(readOnly = true)
-  public GrantCandidatesResponse candidates() {
+  public GrantCandidatesResponse candidates(long datasetId) {
     long tenantId = TenantContext.require("허용 목록 후보");
+    record U(Long id, String name, String email) {}
     var users =
         dsl.select(USER.ID, USER.NAME, USER.EMAIL)
             .from(USER)
@@ -529,17 +639,33 @@ public class DatasetSecurityService {
             .on(ActiveMembership.of(USER.ID, val(tenantId)))
             .where(USER.IS_ACTIVE.isTrue())
             .orderBy(USER.NAME.asc())
-            .fetch(
-                r ->
-                    new GrantCandidatesResponse.UserCandidate(
-                        r.get(USER.ID), r.get(USER.NAME), r.get(USER.EMAIL)));
+            .fetch(r -> new U(r.get(USER.ID), r.get(USER.NAME), r.get(USER.EMAIL)));
+    record R(Long id, String name, Long levelId) {}
     var roles =
-        dsl.select(ROLE.ID, ROLE.NAME)
+        dsl.select(ROLE.ID, ROLE.NAME, ROLE.MAX_SECURITY_LEVEL_ID)
             .from(ROLE)
             .orderBy(ROLE.NAME.asc())
-            .fetch(
-                r -> new GrantCandidatesResponse.RoleCandidate(r.get(ROLE.ID), r.get(ROLE.NAME)));
-    return new GrantCandidatesResponse(users, roles);
+            .fetch(r -> new R(r.get(ROLE.ID), r.get(ROLE.NAME), r.get(ROLE.MAX_SECURITY_LEVEL_ID)));
+    Map<Long, Long> roleLevelIds = new HashMap<>();
+    roles.forEach(r -> roleLevelIds.put(r.id(), r.levelId()));
+    var ctx = subjectClearanceContext(datasetId, users.stream().map(U::id).toList(), roleLevelIds);
+    return new GrantCandidatesResponse(
+        users.stream()
+            .map(
+                u -> {
+                  SubjectClearance c = ctx.forUser(u.id());
+                  return new GrantCandidatesResponse.UserCandidate(
+                      u.id(), u.name(), u.email(), c, ctx.sufficient(c));
+                })
+            .toList(),
+        roles.stream()
+            .map(
+                r -> {
+                  SubjectClearance c = ctx.forRole(r.id());
+                  return new GrantCandidatesResponse.RoleCandidate(
+                      r.id(), r.name(), c, ctx.sufficient(c));
+                })
+            .toList());
   }
 
   private CodedApiException grantNotFound() {

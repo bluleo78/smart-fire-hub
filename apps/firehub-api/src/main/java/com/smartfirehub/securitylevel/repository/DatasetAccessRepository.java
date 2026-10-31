@@ -129,20 +129,7 @@ public class DatasetAccessRepository {
    * 자격 0). membership 은 전역 테이블이라 tenant_id 를 명시한다.
    */
   public ClearanceRow findClearanceRow(long userId, long tenantId) {
-    var rows =
-        dsl.select(ROLE.ID, ROLE.NAME, ROLE.IS_SYSTEM, SECURITY_LEVEL.RANK)
-            .from(USER_ROLE)
-            .join(ROLE)
-            .on(ROLE.ID.eq(USER_ROLE.ROLE_ID))
-            .join(SECURITY_LEVEL)
-            .on(SECURITY_LEVEL.ID.eq(ROLE.MAX_SECURITY_LEVEL_ID))
-            .join(USER)
-            .on(USER.ID.eq(USER_ROLE.USER_ID).and(USER.IS_ACTIVE.isTrue()))
-            .join(ActiveMembership.TABLE)
-            .on(ActiveMembership.of(USER_ROLE.USER_ID, USER_ROLE.TENANT_ID))
-            .where(USER_ROLE.USER_ID.eq(userId))
-            .and(USER_ROLE.TENANT_ID.eq(tenantId))
-            .fetch();
+    var rows = clearanceRoleRows(USER_ROLE.USER_ID.eq(userId), tenantId);
     Integer max = null;
     Set<Long> roleIds = new HashSet<>();
     boolean admin = false;
@@ -153,5 +140,45 @@ public class DatasetAccessRepository {
       admin |= SystemAdminRole.matches(r.get(ROLE.NAME), r.get(ROLE.IS_SYSTEM));
     }
     return new ClearanceRow(max, roleIds, admin);
+  }
+
+  /**
+   * 여러 사용자의 유효 열람 rank(보유 역할 등급의 최댓값)를 한 번에 읽는다(WD-292 — 허용 목록 후보·항목에 대상 등급을 싣기 위해).
+   *
+   * <p>왜 따로 계산하지 않고 이 메서드인가: {@link #findClearanceRow} 와 같은 조인({@link #clearanceRoleRows})을 써야 화면에
+   * 보이는 등급이 실제 판정({@code ClearanceResolver.resolve})과 어긋나지 않는다. 사용자마다 resolve 를 부르면 권한 조회까지 N 번 돈다.
+   *
+   * @return userId → 최대 rank. 역할이 없는(정지·비활성 포함) 사용자는 키가 없다 — 어떤 등급도 못 보는 자격(NO_RANK)
+   */
+  public Map<Long, Integer> findMaxRanksByUser(Collection<Long> userIds, long tenantId) {
+    if (userIds.isEmpty()) {
+      return Map.of();
+    }
+    Map<Long, Integer> out = new HashMap<>();
+    for (var r : clearanceRoleRows(USER_ROLE.USER_ID.in(userIds), tenantId)) {
+      out.merge(r.get(USER_ROLE.USER_ID), r.get(SECURITY_LEVEL.RANK), Math::max);
+    }
+    return out;
+  }
+
+  /**
+   * 자격 계산 공통 조인 — (사용자, 역할, 역할 등급 rank) 행. ACTIVE 멤버십 + 활성 계정의 이 테넌트 역할만 남긴다. 단건({@link
+   * #findClearanceRow})과 일괄({@link #findMaxRanksByUser})이 같은 기준을 쓰도록 한 곳에 둔다(WD-292).
+   */
+  private org.jooq.Result<org.jooq.Record5<Long, Long, String, Boolean, Integer>> clearanceRoleRows(
+      Condition userCondition, long tenantId) {
+    return dsl.select(USER_ROLE.USER_ID, ROLE.ID, ROLE.NAME, ROLE.IS_SYSTEM, SECURITY_LEVEL.RANK)
+        .from(USER_ROLE)
+        .join(ROLE)
+        .on(ROLE.ID.eq(USER_ROLE.ROLE_ID))
+        .join(SECURITY_LEVEL)
+        .on(SECURITY_LEVEL.ID.eq(ROLE.MAX_SECURITY_LEVEL_ID))
+        .join(USER)
+        .on(USER.ID.eq(USER_ROLE.USER_ID).and(USER.IS_ACTIVE.isTrue()))
+        .join(ActiveMembership.TABLE)
+        .on(ActiveMembership.of(USER_ROLE.USER_ID, USER_ROLE.TENANT_ID))
+        .where(userCondition)
+        .and(USER_ROLE.TENANT_ID.eq(tenantId))
+        .fetch();
   }
 }

@@ -479,7 +479,8 @@ class DatasetSecurityServiceTest extends IntegrationTestBase {
                       .from(Tables.ROLE)
                       .limit(1)
                       .fetchSingle(Tables.ROLE.ID));
-      var res = inTenantFixture(() -> service.candidates());
+      long ds = dataset("내부");
+      var res = inTenantFixture(() -> service.candidates(ds));
       assertThat(res.users()).extracting(c -> c.id()).doesNotContain(foreignUser);
       assertThat(res.roles()).extracting(c -> c.id()).doesNotContain(foreignRole);
       assertThat(res.users()).isNotEmpty();
@@ -501,9 +502,91 @@ class DatasetSecurityServiceTest extends IntegrationTestBase {
     long suspended = fx.createUser("dss_candx");
     users.add(suspended);
     dsl.execute("update membership set status = 'SUSPENDED' where user_id = ?", suspended);
-    var res = inTenantFixture(() -> service.candidates());
+    long ds = dataset("내부");
+    var res = inTenantFixture(() -> service.candidates(ds));
     assertThat(res.users()).extracting(u -> u.id()).contains(active).doesNotContain(suspended);
     assertThat(res.roles()).isNotEmpty();
+  }
+
+  /**
+   * WD-292 — 역할 후보는 역할 열람 등급과 데이터셋 등급 충족 여부를 싣는다. 「기밀」 데이터셋에 「내부」 역할은 부족(false), 「기밀」 역할은 충족(true).
+   * 부족한 역할도 후보에서 빠지지 않는다(등급을 올리기 전 미리 등록 허용).
+   */
+  @Test
+  void candidates_roleCarriesClearanceAndSufficiency() {
+    long ds = dataset("기밀");
+    long low = fx.createRole("dss_low_" + System.nanoTime(), fx.levelId("내부"));
+    roles.add(low);
+    long high = fx.createRole("dss_high_" + System.nanoTime(), fx.levelId("기밀"));
+    roles.add(high);
+    var res = inTenantFixture(() -> service.candidates(ds));
+    var lowC = res.roles().stream().filter(r -> r.id() == low).findFirst().orElseThrow();
+    var highC = res.roles().stream().filter(r -> r.id() == high).findFirst().orElseThrow();
+    assertThat(lowC.clearance().levelName()).isEqualTo("내부");
+    assertThat(lowC.clearance().levelId()).isEqualTo(fx.levelId("내부"));
+    assertThat(lowC.sufficientClearance()).isFalse();
+    assertThat(highC.clearance().levelName()).isEqualTo("기밀");
+    assertThat(highC.sufficientClearance()).isTrue();
+  }
+
+  /**
+   * WD-292 — 사용자 후보의 등급은 유효 열람 등급(보유 역할 등급의 최댓값, 판정과 같은 기준)이다. USER(내부)만 → 내부·부족, USER + 기밀 역할 →
+   * 기밀·충족, 역할 없음 → null·부족.
+   */
+  @Test
+  void candidates_userCarriesEffectiveClearance() {
+    long ds = dataset("기밀");
+    long onlyUser = fx.createUser("dss_cu");
+    users.add(onlyUser);
+    long withHigh = fx.createUser("dss_ch");
+    users.add(withHigh);
+    long noRole = fx.createUser("dss_cn");
+    users.add(noRole);
+    long high = fx.createRole("dss_ch_r_" + System.nanoTime(), fx.levelId("기밀"));
+    roles.add(high);
+    fx.assignRole(withHigh, high);
+    fx.removeUserRole(noRole);
+    var res = inTenantFixture(() -> service.candidates(ds));
+    var byId = res.users().stream().collect(java.util.stream.Collectors.toMap(u -> u.id(), u -> u));
+    assertThat(byId.get(onlyUser).clearance().levelName()).isEqualTo("내부");
+    assertThat(byId.get(onlyUser).sufficientClearance()).isFalse();
+    assertThat(byId.get(withHigh).clearance().levelName()).isEqualTo("기밀");
+    assertThat(byId.get(withHigh).sufficientClearance()).isTrue();
+    assertThat(byId.get(noRole).clearance()).isNull();
+    assertThat(byId.get(noRole).sufficientClearance()).isFalse();
+  }
+
+  /**
+   * WD-292 — 허용 목록 항목은 대상 열람 등급과 효과 여부를 싣는다: 「기밀」 데이터셋의 USER(내부)만 가진 사용자 항목·내부 역할 항목은 false, 기밀 역할
+   * 항목은 true. 추가 응답(addGrant)도 같은 필드를 갖는다.
+   */
+  @Test
+  void listGrants_marksEntriesWithInsufficientClearance() {
+    var caller = userWithLevel("기밀");
+    long ds = dataset("기밀");
+    long highRole = roles.get(0); // userWithLevel 이 만든 기밀 역할
+    long lowRole = fx.createRole("dss_lg_low_" + System.nanoTime(), fx.levelId("내부"));
+    roles.add(lowRole);
+    long lowUser = fx.createUser("dss_lg_u");
+    users.add(lowUser);
+    fx.grantRole(ds, highRole);
+    fx.grantRole(ds, lowRole);
+    var added = service.addGrant(ds, new AddAccessGrantRequest(lowUser, null), caller.userId());
+    assertThat(added.subjectClearance().levelName()).isEqualTo("내부");
+    assertThat(added.sufficientClearance()).isFalse();
+
+    var grants = service.listGrants(ds);
+    var bySubject =
+        grants.stream()
+            .collect(
+                java.util.stream.Collectors.toMap(g -> g.type() + ":" + g.subjectId(), g -> g));
+    assertThat(bySubject.get("ROLE:" + highRole).sufficientClearance()).isTrue();
+    assertThat(bySubject.get("ROLE:" + highRole).subjectClearance().levelName()).isEqualTo("기밀");
+    assertThat(bySubject.get("ROLE:" + lowRole).sufficientClearance()).isFalse();
+    assertThat(bySubject.get("ROLE:" + lowRole).subjectClearance().levelName()).isEqualTo("내부");
+    assertThat(bySubject.get("USER:" + lowUser).sufficientClearance()).isFalse();
+    assertThat(bySubject.get("USER:" + lowUser).subjectClearance().rank())
+        .isLessThan(bySubject.get("ROLE:" + highRole).subjectClearance().rank());
   }
 
   /**
