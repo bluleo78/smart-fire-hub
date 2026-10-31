@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { Plus } from 'lucide-react';
-import { useId, useMemo, useState } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { securityLevelsApi } from '../../../api/security-levels';
@@ -85,6 +85,8 @@ export default function SecuritySettingsTab() {
   // "허용 목록 채우기" 체크박스 라벨-입력 연결용 id(09-form-patterns §J).
   const seedViewersId = useId();
   const [deleting, setDeleting] = useState<SecurityLevel | null>(null);
+  // WD-407: 삭제 창을 연 ⋯ 메뉴 버튼 — 창이 닫힌 뒤 포커스를 돌려준다(메뉴 항목은 이미 사라져 Radix 가 돌려줄 곳을 잃는다).
+  const deleteMenuButton = useRef<HTMLElement | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [newName, setNewName] = useState('');
   // 이름 중복 인라인 오류 — 행 저장은 등급 id, 추가 다이얼로그는 'new' 로 구분한다.
@@ -288,7 +290,10 @@ export default function SecuritySettingsTab() {
                 onMoveDown={() => move(i, 1)}
                 onSave={(req, was) => void handleSave(level, req, was)}
                 onSetDefault={() => setDefault.mutate(level.id)}
-                onDelete={() => setDeleting(level)}
+                onDelete={(menuButton) => {
+                  deleteMenuButton.current = menuButton;
+                  setDeleting(level);
+                }}
                 saving={save.isPending}
                 nameError={nameErrors[String(level.id)]}
                 onNameEdit={() => setNameError(String(level.id))}
@@ -414,6 +419,11 @@ export default function SecuritySettingsTab() {
           deleting && remove.mutate({ id: deleting.id, to, reason })
         }
         pending={remove.isPending}
+        onCloseAutoFocus={(e) => {
+          if (!deleteMenuButton.current?.isConnected) return;
+          e.preventDefault();
+          deleteMenuButton.current.focus();
+        }}
       />
 
       <Dialog

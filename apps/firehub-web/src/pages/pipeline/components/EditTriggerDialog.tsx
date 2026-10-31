@@ -34,9 +34,11 @@ interface EditTriggerDialogProps {
   onOpenChange: (open: boolean) => void;
   pipelineId: number;
   trigger: TriggerResponse;
+  /** 창이 닫힌 뒤 포커스를 돌려줄 곳을 호출처가 정한다(WD-407) — ⋯ 메뉴 항목으로 열면 돌려받을 트리거 요소가 없다. */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
-export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger }: EditTriggerDialogProps) {
+export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger, onCloseAutoFocus }: EditTriggerDialogProps) {
   const [name, setName] = useState(trigger.name);
   const [description, setDescription] = useState(trigger.description ?? '');
   const [config, setConfig] = useState<Record<string, unknown>>(trigger.config);
@@ -151,7 +153,7 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger }: E
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto overscroll-contain">
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto overscroll-contain" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             트리거 편집

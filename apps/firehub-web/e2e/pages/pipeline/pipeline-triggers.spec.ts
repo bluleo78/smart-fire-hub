@@ -1322,4 +1322,32 @@ test.describe('파이프라인 트리거 탭', () => {
     await menuButton.click();
     await expect(page.getByRole('menuitem', { name: '편집' })).toBeVisible();
   });
+
+  /**
+   * WD-407: ⋯ 메뉴의 「편집」·「삭제」로 연 창을 키보드(Esc)로 닫으면 포커스가 ⋯ 버튼으로 돌아온다.
+   * 예전에는 메뉴 항목이 닫히며 사라져 Radix 가 돌려줄 요소를 잃고 포커스가 body 로 떨어졌다.
+   */
+  test('⋯ 메뉴로 연 편집·삭제 창을 Esc 로 닫으면 포커스가 ⋯ 버튼으로 돌아온다 (WD-407)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTriggerTabMocks(page, {
+      triggers: [
+        createTrigger({ id: 21, name: '아침 실행', triggerType: 'SCHEDULE', config: { cron: '0 9 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' } }),
+      ],
+    });
+    await gotoTriggerTab(page);
+
+    const menuButton = page.getByRole('button', { name: '트리거 "아침 실행" 작업' });
+    // 편집은 dialog, 삭제 확인은 alertdialog 역할이다.
+    const anyDialog = page.getByRole('dialog').or(page.getByRole('alertdialog'));
+    for (const item of ['편집', '삭제']) {
+      await menuButton.focus();
+      await page.keyboard.press('Enter');
+      await page.getByRole('menuitem', { name: item }).press('Enter');
+      await expect(anyDialog).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(anyDialog).toBeHidden();
+      await expect(menuButton).toBeFocused();
+    }
+  });
 });

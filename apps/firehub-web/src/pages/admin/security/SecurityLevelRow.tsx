@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, ChevronDown, MoreHorizontal } from 'lucide-react';
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -57,7 +57,8 @@ interface Props {
   onMoveDown: () => void;
   onSave: (req: SecurityLevelRequest, wasAllowlistRequired: boolean) => void;
   onSetDefault: () => void;
-  onDelete: () => void;
+  /** 삭제 요청 — 창을 닫을 때 포커스를 돌려줄 ⋯ 메뉴 버튼을 함께 넘긴다(WD-407). */
+  onDelete: (menuButton: HTMLElement | null) => void;
   saving: boolean;
   /** 이름 중복(409) 등 이름 필드 인라인 오류 — 토스트가 아니라 입력란 아래에 표시한다. */
   nameError?: string;
@@ -129,6 +130,8 @@ export function SecurityLevelRow({
   onNameEdit,
 }: Props) {
   const [open, setOpen] = useState(false);
+  // WD-407: ⋯ 메뉴의 「삭제」는 메뉴를 닫으며 확인 창을 연다 — 항목이 사라져 창이 닫힐 때 포커스가 body 로 떨어지므로, 메뉴 버튼을 부모에 넘겨 돌려받게 한다.
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [form, setForm] = useState<SecurityLevelRequest>(() => toRequest(level));
   // 편집 기준 값(WD-440) — 저장 때 함께 보내 그사이 다른 관리자가 바꿨으면 서버가 409 로 거부한다. 폼처럼 처음 읽은 값으로 시작한다.
   const [baseline, setBaseline] = useState<SecurityLevelRequest>(() => toRequest(level));
@@ -202,6 +205,7 @@ export function SecurityLevelRow({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
+                ref={menuButtonRef}
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7"
@@ -219,7 +223,7 @@ export function SecurityLevelRow({
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={level.isDefault}
-                onSelect={onDelete}
+                onSelect={() => onDelete(menuButtonRef.current)}
                 className="text-destructive"
               >
                 삭제

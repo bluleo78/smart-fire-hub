@@ -415,4 +415,21 @@ test.describe('설정 › 데이터 보안', () => {
       name: '극비',
     });
   });
+
+  /** WD-407: ⋯ 메뉴의 「삭제」로 연 확인 창을 Esc·「취소」로 닫으면 포커스가 그 행의 ⋯ 버튼으로 돌아온다. */
+  test('등급 삭제 창을 닫으면 포커스가 ⋯ 메뉴 버튼으로 돌아온다 (WD-407)', async ({ authenticatedPage: page }) => {
+    await openTab(page);
+    const menuButton = page.getByRole('button', { name: '민감 메뉴' });
+    for (const close of ['escape', 'cancel'] as const) {
+      await menuButton.focus();
+      await page.keyboard.press('Enter');
+      await page.getByRole('menuitem', { name: '삭제' }).press('Enter');
+      const dialog = page.getByRole('dialog', { name: "'민감' 등급 삭제" });
+      await expect(dialog).toBeVisible();
+      if (close === 'escape') await page.keyboard.press('Escape');
+      else await dialog.getByRole('button', { name: '취소' }).click();
+      await expect(dialog).toBeHidden();
+      await expect(menuButton).toBeFocused();
+    }
+  });
 });
