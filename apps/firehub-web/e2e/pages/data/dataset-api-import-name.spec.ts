@@ -95,6 +95,8 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
     await page.getByRole('button', { name: 'API 가져오기' }).click();
 
     const dialog = page.getByRole('dialog');
+    // 창은 열릴 때 확대 애니메이션이 있어 바로 재면 폭이 작게 나온다 — 최종 폭(390 - 좌우 1rem)이 될 때까지 기다린 뒤 잰다
+    await expect.poll(async () => Math.round((await dialog.boundingBox())!.width)).toBe(390 - 32);
     const box = (await dialog.boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(15);
     expect(390 - (box.x + box.width)).toBeGreaterThanOrEqual(15);
@@ -123,7 +125,8 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
     await page.getByRole('button', { name: 'API 가져오기' }).click();
 
     const dialog = page.getByRole('dialog');
-    expect(Math.round((await dialog.boundingBox())!.width)).toBe(512);
+    // 확대 애니메이션이 끝나 최종 폭이 될 때까지 기다린다 — 바로 재면 492·510 처럼 작게 나와 간헐 실패했다
+    await expect.poll(async () => Math.round((await dialog.boundingBox())!.width)).toBe(512);
     for (const label of ['API 설정', '응답 매핑', '미리보기', '실행 옵션']) {
       await expect(dialog.getByText(label, { exact: true })).toBeVisible();
     }
