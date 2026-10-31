@@ -373,6 +373,29 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
         .isInstanceOf(UserNotFoundException.class);
   }
 
+  /**
+   * 열어 둔 사용자 상세에서 그사이 제거된 멤버를 다루면(WD-288) 조회·역할 저장·정지·제거가 모두 한국어 안내로 404 가 된다 — 예전엔 영어 「User not
+   * found: 26」에 내부 id 가 그대로 보였다.
+   */
+  @Test
+  void removedMember_allOperationsSayRemovedInKorean() {
+    inA(() -> userService.removeMember(member, owner));
+
+    for (Runnable op :
+        List.<Runnable>of(
+            () -> userService.getUserById(member),
+            () -> userService.setUserRoles(member, List.of(), owner),
+            () -> userService.setUserActive(member, false, owner),
+            () -> userService.removeMember(member, owner))) {
+      assertThatThrownBy(() -> inA(op))
+          .isInstanceOf(UserNotFoundException.class)
+          .hasMessage(UserNotFoundException.NOT_IN_WORKSPACE_MESSAGE)
+          .hasMessageNotContaining(String.valueOf(member))
+          .extracting(e -> ((UserNotFoundException) e).code())
+          .isEqualTo(UserNotFoundException.NOT_IN_WORKSPACE_CODE);
+    }
+  }
+
   @Test
   void suspendReactivateRemove_writeAuditLogs() {
     inA(() -> userService.setUserActive(member, false, owner));

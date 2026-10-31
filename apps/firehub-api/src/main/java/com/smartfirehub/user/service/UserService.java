@@ -184,10 +184,7 @@ public class UserService {
   }
 
   private UserDetailResponse loadDetail(Long id) {
-    UserResponse user =
-        userRepository
-            .findById(id)
-            .orElseThrow(() -> new UserNotFoundException("User not found: " + id));
+    UserResponse user = userRepository.findById(id).orElseThrow(UserNotFoundException::new);
     List<RoleResponse> roles = roleRepository.findByUserId(id);
     return new UserDetailResponse(
         user.id(),
@@ -209,7 +206,7 @@ public class UserService {
     long tenantId = TenantContext.require("사용자 관리 대상 확인");
     return membershipRepository
         .findInTenant(userId, tenantId)
-        .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
+        .orElseThrow(UserNotFoundException::notInWorkspace);
   }
 
   /**
@@ -221,13 +218,10 @@ public class UserService {
    */
   @Transactional
   public void updateProfile(Long userId, String name, String email) {
-    UserResponse before =
-        userRepository
-            .findById(userId)
-            .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
+    UserResponse before = userRepository.findById(userId).orElseThrow(UserNotFoundException::new);
     // 프로필 이메일은 연락처라 다른 계정과 같아도 막지 않는다 — 이유는 TemporaryAccountCreator (WD-271).
     if (!userRepository.update(userId, name, email)) {
-      throw new UserNotFoundException("User not found: " + userId);
+      throw new UserNotFoundException();
     }
     List<String> changedFields = new ArrayList<>();
     if (!Objects.equals(before.name(), name)) {
@@ -393,9 +387,7 @@ public class UserService {
   @Transactional
   public void changePassword(Long userId, String currentPassword, String newPassword) {
     String storedPassword =
-        userRepository
-            .findPasswordById(userId)
-            .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
+        userRepository.findPasswordById(userId).orElseThrow(UserNotFoundException::new);
 
     // 현재 비밀번호 불일치 시 400 Bad Request로 명확한 한국어 메시지 반환 (#27)
     if (!passwordEncoder.matches(currentPassword, storedPassword)) {
@@ -408,10 +400,7 @@ public class UserService {
     }
 
     // 임시 비밀번호(첫 로그인 강제 변경)를 바꾼 것인지 — 변경 전 표식으로 판단한다(updatePassword 가 표식을 끈다).
-    UserResponse user =
-        userRepository
-            .findById(userId)
-            .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
+    UserResponse user = userRepository.findById(userId).orElseThrow(UserNotFoundException::new);
     boolean temporary = user.mustChangePassword();
     userRepository.updatePassword(userId, passwordEncoder.encode(newPassword));
     refreshTokenRepository.revokeAllByUserId(userId);

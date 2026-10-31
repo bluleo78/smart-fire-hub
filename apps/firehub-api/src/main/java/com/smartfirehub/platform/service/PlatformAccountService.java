@@ -154,9 +154,7 @@ public class PlatformAccountService {
   }
 
   private UserResponse requireUser(long userId) {
-    return userRepository
-        .findById(userId)
-        .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
+    return userRepository.findById(userId).orElseThrow(UserNotFoundException::new);
   }
 
   /** 감사 로그 — 운영자 평면 공통 기록기에 위임한다(tenant NULL, WD-12 에서 테넌트 생명주기와 형태 통일). */

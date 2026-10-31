@@ -33,12 +33,19 @@ async function setupTabMocks(page: Page) {
   await setupHomeMocks(page);
 }
 
+/**
+ * 로그인한 탭의 사이드바 아래 사용자 메뉴(이름·이메일) 버튼 — 사이드바가 펼쳐진 기본 상태를 전제한다.
+ * 이름만으로 찾으면(getByText('테스트 사용자')) 홈 인사말 「환영합니다, 테스트 사용자님!」까지 잡혀, 부하로 인사말이 늦게 그려지면
+ * strict mode 위반으로 실패했다(WD-445) — 이메일까지 든 버튼 이름으로 하나만 잡는다.
+ */
+const userMenu = (page: Page) => page.getByRole('button', { name: /테스트 사용자 test@example\.com/ });
+
 test.describe('다중 탭 로그아웃 동기화', () => {
   // MT-01: 탭 B에서 로그아웃하면, 새로고침 없이도 탭 A가 자동으로 /login으로 이동한다.
   test('MT-01: 다른 탭에서 로그아웃하면 이 탭도 즉시 로그인 화면으로 이동한다', async ({ authenticatedPage: tabA }) => {
     await setupTabMocks(tabA);
     await tabA.goto('/');
-    await expect(tabA.getByText('테스트 사용자')).toBeVisible();
+    await expect(userMenu(tabA)).toBeVisible();
 
     // 탭 B: 같은 BrowserContext(=같은 오리진의 localStorage 공유)에 새 탭을 연다.
     // hasSession 플래그는 탭 A가 이미 로그인 시 심어둔 실제 localStorage 값을 그대로 공유하므로
@@ -46,10 +53,10 @@ test.describe('다중 탭 로그아웃 동기화', () => {
     const tabB = await tabA.context().newPage();
     await setupTabMocks(tabB);
     await tabB.goto('/');
-    await expect(tabB.getByText('테스트 사용자')).toBeVisible();
+    await expect(userMenu(tabB)).toBeVisible();
 
     // 탭 B에서 사용자 메뉴 → 로그아웃
-    await tabB.getByText('테스트 사용자').click();
+    await userMenu(tabB).click();
     await tabB.getByRole('menuitem', { name: '로그아웃' }).click();
     await tabB.waitForURL('**/login');
 
@@ -67,9 +74,6 @@ test.describe('다중 탭 로그아웃 동기화', () => {
  * 그 401 이 `hasSession` 삭제(로그아웃 신호)가 되어 모든 탭이 로그인 화면으로 갔다. 수정 뒤에는 탭 사이 잠금으로
  * 갱신이 차례로 나가 뒤 탭이 회전된 쿠키로 성공한다.
  */
-/** 로그인한 탭의 머리글 사용자 메뉴(이름·이메일) 버튼. */
-const userMenu = (page: Page) => page.getByRole('button', { name: /테스트 사용자 test@example\.com/ });
-
 test.describe('다중 탭 동시 갱신 (WD-438)', () => {
   /** 인증·홈 화면 모킹 — 갱신(/auth/refresh)은 컨텍스트 단의 회전 모의가 받도록 페이지 단에서는 걸지 않는다. */
   async function setupPageMocks(page: Page) {
@@ -113,8 +117,7 @@ test.describe('다중 탭 동시 갱신 (WD-438)', () => {
     await tab0.goto('/login');
     await tab0.evaluate(() => localStorage.setItem('hasSession', 'true'));
     await tab0.goto('/');
-    // 로그인 상태 표식은 머리글 사용자 메뉴 버튼으로 본다 — 텍스트로 찾으면 홈 인사말(「환영합니다, 테스트 사용자님!」)이 먼저 그려진
-    // 순간 두 요소에 걸려 strict mode 오류로 가끔 실패한다(부하 중 재현).
+    // 로그인 상태 표식은 사용자 메뉴 버튼으로 본다(이유는 userMenu 주석)
     await expect(userMenu(tab0)).toBeVisible();
 
     // 탭 두 개를 같은 순간에 연다(탭 복원·여러 링크 열기와 같은 상황)

@@ -414,7 +414,7 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     assertThat(receivedUrls()).hasSizeGreaterThanOrEqualTo(2).allMatch(expected::equals);
 
     // 10분 상태 점검 — testConnection 과 같은 경로다. 이 WireMock 포트를 가리키는 연결은 이 TC 가 만든 두 개뿐이다. 개수는 「두 개
-    // 이상」으로 본다 — 백그라운드 @Scheduled 실행이 겹쳐 같은 연결을 한 번 더 점검해도 보내는 값은 같아야 하기 때문이다.
+    // 이상」으로 본다 — 테스트 프로필은 백그라운드 주기 실행을 끄지만(WD-451), 이 단언의 요점은 개수가 아니라 보내는 값이 모두 같다는 것이다.
     wireMock.resetRequests();
     scheduler.runOnce();
     assertThat(receivedUrls()).hasSizeGreaterThanOrEqualTo(2).allMatch(expected::equals);

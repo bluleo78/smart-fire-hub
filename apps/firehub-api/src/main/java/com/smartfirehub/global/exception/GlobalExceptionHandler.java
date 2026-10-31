@@ -39,7 +39,6 @@ import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.exception.SystemRoleModificationException;
-import com.smartfirehub.user.exception.UserNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.ConstraintViolationException;
@@ -301,13 +300,6 @@ public class GlobalExceptionHandler {
       TenantAccessDeniedException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.FORBIDDEN, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
-  }
-
-  @ExceptionHandler(UserNotFoundException.class)
-  public ResponseEntity<ErrorResponse> handleUserNotFound(
-      UserNotFoundException ex, HttpServletRequest request) {
-    ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
   }
 
   @ExceptionHandler(RoleNotFoundException.class)

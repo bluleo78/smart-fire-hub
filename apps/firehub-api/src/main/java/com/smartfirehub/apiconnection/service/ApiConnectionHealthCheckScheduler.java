@@ -5,10 +5,10 @@ import static org.jooq.impl.DSL.*;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jooq.Field;
 import org.jooq.Record;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -22,7 +22,6 @@ import org.springframework.stereotype.Component;
  * <p>initialDelay=60s: 애플리케이션 기동 직후 외부 API 호출을 방지하기 위해 첫 실행을 1분 뒤로 지연한다.
  */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class ApiConnectionHealthCheckScheduler {
 
@@ -40,13 +39,41 @@ public class ApiConnectionHealthCheckScheduler {
   private final ApiConnectionService connectionService;
   private final TenantScopedRunner tenantScopedRunner;
 
+  /** 10분 주기 실행 여부 — 끄면 {@link #scheduledRun()} 만 멈추고 {@link #runOnce()} 직접 호출은 그대로 돈다. */
+  private final boolean scheduledEnabled;
+
+  /**
+   * 주기 실행 여부는 설정값으로 받는다(WD-451). 테스트는 끄고 {@link #runOnce()} 를 직접 부른다 — 공유 테스트 컨텍스트에서 실제 주기 점검이 1분 뒤부터
+   * 끼어들면, 다른 테스트가 막 만든 연결의 상태를 바꾸고 「system」 전환 감사를 남겨 알림·감사 개수 단언이 부하 중 가끔 흔들렸다.
+   */
+  public ApiConnectionHealthCheckScheduler(
+      ApiConnectionRepository repository,
+      ApiConnectionService connectionService,
+      TenantScopedRunner tenantScopedRunner,
+      @Value("${app.api-connection.health-check.scheduled-enabled:true}") boolean scheduledEnabled) {
+    this.repository = repository;
+    this.connectionService = connectionService;
+    this.tenantScopedRunner = tenantScopedRunner;
+    this.scheduledEnabled = scheduledEnabled;
+    if (!scheduledEnabled) {
+      // 꺼 두면 상태 전환 알림이 조용히 멈추므로, 설정을 잘못 옮긴 운영 환경에서도 알아챌 수 있게 기동 때 한 번 남긴다
+      log.warn("API connection health check 주기 실행이 꺼져 있습니다(app.api-connection.health-check.scheduled-enabled=false)");
+    }
+  }
+
+  /** 10분 주기 진입점 — 설정으로 꺼져 있으면 아무것도 하지 않는다. */
+  @Scheduled(fixedDelay = FIXED_DELAY_MS, initialDelay = INITIAL_DELAY_MS)
+  public void scheduledRun() {
+    if (!scheduledEnabled) return;
+    runOnce();
+  }
+
   /**
    * ACTIVE 테넌트를 순회하며 각 테넌트의 헬스체크 대상을 점검한다.
    *
    * <p>{@code @Scheduled} 경로에는 원 HTTP 요청이 없어 승계할 테넌트가 없다. 순회하지 않으면 api_connection 의 RLS 정책이 전 행을
    * 차단해 헬스체크가 매번 대상 0건으로 돌고, 예외도 로그도 없이 UP/DOWN 알림이 영구히 누락된다.
    */
-  @Scheduled(fixedDelay = FIXED_DELAY_MS, initialDelay = INITIAL_DELAY_MS)
   public void runOnce() {
     tenantScopedRunner.forEachActiveTenant(tenantId -> runOnceForTenant());
   }
