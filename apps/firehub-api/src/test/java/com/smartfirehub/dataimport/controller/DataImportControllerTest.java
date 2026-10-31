@@ -157,6 +157,30 @@ class DataImportControllerTest {
     assertThat(ipCaptor.getValue()).isEqualTo("198.51.100.42");
   }
 
+  /**
+   * 회귀 테스트(WD-394): 감사 사용자로 표시 이름(「테스트유저」)이 아니라 로그인 계정(testuser)을 넘긴다 — 다른 감사 기록과 같은 기준이라야 계정으로 검색할
+   * 때 임포트가 빠지지 않는다.
+   */
+  @Test
+  void importFile_passesLoginUsernameNotDisplayName() throws Exception {
+    when(importService.importFile(
+            anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), any()))
+        .thenReturn(new ImportStartResponse("job-394", "PENDING"));
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports")
+                .file(csvFile())
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isCreated());
+
+    ArgumentCaptor<String> usernameCaptor = ArgumentCaptor.forClass(String.class);
+    verify(importService)
+        .importFile(
+            eq(1L), any(), any(), eq(1L), usernameCaptor.capture(), any(), any(), any(), any());
+    assertThat(usernameCaptor.getValue()).isEqualTo("testuser");
+  }
+
   /** POST /datasets/{id}/imports — X-Forwarded-For 헤더가 없으면 remoteAddr가 ipAddress로 전달된다 */
   @Test
   void importFile_withoutXForwardedFor_passesRemoteAddrToService() throws Exception {

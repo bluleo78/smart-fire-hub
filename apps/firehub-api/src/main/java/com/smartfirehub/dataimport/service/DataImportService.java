@@ -61,6 +61,9 @@ public class DataImportService {
   // 패키지 공개: 배치 경계를 넘는 파일을 만드는 테스트가 같은 값을 참조한다.
   static final int BATCH_SIZE = 2000;
 
+  // 임포트 감사 설명 머리말 — 다른 감사 기록(「데이터셋 생성: …」)처럼 한국어로 남긴다(WD-394).
+  static final String IMPORT_AUDIT_PREFIX = "파일 임포트: ";
+
   // 사전 검증 샘플 크기 — 전량 검증(임포트 잡)이 아닌, 스키마/매핑 빠른 확인용 앞 N행.
   private static final int SAMPLE_VALIDATION_ROWS = 200;
 
@@ -738,7 +741,7 @@ public class DataImportService {
             "IMPORT",
             "dataset",
             String.valueOf(datasetId),
-            "File import: " + fileName,
+            IMPORT_AUDIT_PREFIX + fileName,
             ipAddress,
             userAgent,
             "FAILURE",
@@ -926,7 +929,7 @@ public class DataImportService {
             "IMPORT",
             "dataset",
             String.valueOf(datasetId),
-            "File import: " + fileName,
+            IMPORT_AUDIT_PREFIX + fileName,
             ipAddress,
             userAgent,
             "FAILURE",
@@ -1028,7 +1031,7 @@ public class DataImportService {
           "IMPORT",
           "dataset",
           String.valueOf(datasetId),
-          "File import: " + fileName,
+          IMPORT_AUDIT_PREFIX + fileName,
           ipAddress,
           userAgent,
           "SUCCESS",
@@ -1065,7 +1068,7 @@ public class DataImportService {
           "IMPORT",
           "dataset",
           String.valueOf(datasetId),
-          "File import: " + fileName,
+          IMPORT_AUDIT_PREFIX + fileName,
           ipAddress,
           userAgent,
           "FAILURE",
