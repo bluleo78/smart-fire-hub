@@ -39,6 +39,9 @@ interface CreatedCredentials {
   password: string;
 }
 
+/** 시스템 ADMIN 역할 잠금 안내 — 서버 RoleGrantGuard 의 같은 거부 문구. */
+const ADMIN_ROLE_LOCK_REASON = '시스템 ADMIN 역할은 ADMIN 만 부여하거나 회수할 수 있습니다';
+
 /** 폼 초기값 — 닫을 때도 이 값으로 되돌려 임시 비밀번호가 폼 상태에 남지 않게 한다. */
 const EMPTY_FORM: AddMemberFormData = { email: '', name: '', temporaryPassword: '', roleIds: [] };
 
@@ -66,7 +69,7 @@ async function copyText(text: string) {
 export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRoles: boolean; canReadRoles: boolean }) {
   const queryClient = useQueryClient();
   // 시스템 ADMIN 역할은 ADMIN 만 부여할 수 있다(WD-116) — 위임받은 멤버 관리자에게는 그 체크박스를 잠근다.
-  const { isAdmin: isCallerAdmin } = useAuth();
+  const { isAdmin: isCallerAdmin, user: caller } = useAuth();
   const [open, setOpen] = useState(false);
   const [created, setCreated] = useState<CreatedCredentials | null>(null);
   const [suspendedUserId, setSuspendedUserId] = useState<number | null>(null);
@@ -79,6 +82,18 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
     queryFn: () => rolesApi.getRoles().then((r) => r.data),
     enabled: open && canReadRoles,
   });
+
+  // 위임받은 멤버 관리자가 부여할 수 없는 역할(WD-291) — 서버가 실제 부여와 같은 판정(RoleGrantGuard)으로 알려 준다. 화면이 등급·권한 기준을
+  // 따로 흉내 내면 서버와 어긋나므로 목록만 받아 잠근다. ADMIN 은 막히는 역할이 없어 묻지 않는다. 읽기에 실패하면 잠그지 않고 그 사실만 알린다
+  // (서버가 추가 때 막는다).
+  const grantBlockedQuery = useQuery({
+    // 호출자마다 다른 판정이라 사용자 id 를 키에 넣는다 — 새로고침 없이 다른 사용자로 로그인해도 앞 사람의 잠금을 보이지 않게.
+    queryKey: ['roles', 'grant-blocked', caller?.id],
+    queryFn: () => rolesApi.getGrantBlockedRoles().then((r) => r.data),
+    enabled: open && canAssignRoles && !isCallerAdmin,
+  });
+  const grantBlockedData = grantBlockedQuery.data;
+  const blockedReasonById = new Map((grantBlockedData ?? []).map((b) => [b.roleId, b.message]));
 
   // 입력란 blur 검증은 아래 validateFilledOnBlur 로 직접 한다(WD-142) — RHF 의 onBlur 모드는 빈 칸까지 검사한다.
   const form = useForm<AddMemberFormData>({
@@ -111,6 +126,17 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
     onChange: () => setSuspendedUserId(null),
     onBlur: validateFilledOnBlur('email'),
   });
+
+  // 부여 불가 목록이 체크한 뒤에 도착하면(느린 응답) 그 역할을 선택에서 실제로 뺀다 — 화면에만 해제로 보이고 값에 남으면, 다음 재조회에서
+  // 잠금이 풀릴 때 사용자가 고르지 않은 채 다시 체크되어 전송된다.
+  useEffect(() => {
+    if (!grantBlockedData?.length) return;
+    const blocked = new Set(grantBlockedData.map((b) => b.roleId));
+    const current = form.getValues('roleIds');
+    if (current.some((id) => blocked.has(id))) {
+      setValue('roleIds', current.filter((id) => !blocked.has(id)), { shouldDirty: true });
+    }
+  }, [grantBlockedData, form, setValue]);
 
   // 결과 화면으로 바뀌면 제출 버튼이 사라져 포커스가 다이얼로그 컨테이너로 떨어진다 — 다음 행동(복사)으로 옮긴다.
   useEffect(() => {
@@ -245,11 +271,6 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
               </DialogDescription>
             </DialogHeader>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
-              {errors.root && (
-                <p role="alert" className="text-sm text-destructive">
-                  {errors.root.message}
-                </p>
-              )}
               {/* 정지 멤버 상세 링크는 오류 문구 바로 뒤(같은 줄)에 둔다(와이어프레임 ③). 오류 문구가 이메일 입력의
                   aria-describedby 라 링크도 그 입력의 설명으로 함께 읽힌다. */}
               <FormField
@@ -360,14 +381,21 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
                         const isUser = role.name === 'USER';
                         const id = `member-role-${role.id}`;
                         // 시스템 ADMIN 역할 — ADMIN 이 아니면 고를 수 없다(서버 RoleGrantGuard 가 403). 열어 두면 추가 시점에야 실패한다.
+                        // 부여 불가 목록이 오기 전에도 바로 잠그도록 따로 둔다.
                         const adminOnlyLocked = canAssignRoles && !isCallerAdmin && role.isSystem && role.name === 'ADMIN';
+                        // 그 밖에 호출자 범위(열람 등급·권한·허용 목록)를 넘는 역할도 같은 식으로 잠그고 서버 문구로 까닭을 보인다(WD-291).
+                        const lockReason = isUser
+                          ? undefined
+                          : adminOnlyLocked
+                            ? ADMIN_ROLE_LOCK_REASON
+                            : blockedReasonById.get(role.id);
                         return (
                           <div key={role.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
                             <Checkbox
                               id={id}
                               checked={isUser || field.value.includes(role.id)}
-                              disabled={isUser || !canAssignRoles || adminOnlyLocked}
-                              aria-describedby={adminOnlyLocked ? `${id}-lock` : undefined}
+                              disabled={isUser || !canAssignRoles || !!lockReason}
+                              aria-describedby={lockReason ? `${id}-lock` : undefined}
                               onCheckedChange={(checked) =>
                                 field.onChange(
                                   checked ? [...field.value, role.id] : field.value.filter((v) => v !== role.id),
@@ -386,10 +414,10 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
                                 </>
                               )}
                             </Label>
-                            {adminOnlyLocked && (
+                            {lockReason && (
                               // 체크박스 폭+간격(pl-6)만큼 들여 역할 이름과 왼쪽을 맞춘다.
-                              <span id={`${id}-lock`} className="basis-full pl-6 text-xs text-muted-foreground">
-                                시스템 ADMIN 역할은 ADMIN 만 부여하거나 회수할 수 있습니다
+                              <span id={`${id}-lock`} className="basis-full pl-6 text-xs text-muted-foreground break-keep">
+                                {lockReason}
                               </span>
                             )}
                           </div>
@@ -401,11 +429,24 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
                 <p className="text-[13px] text-muted-foreground break-keep">
                   USER 는 워크스페이스 기본 역할로 항상 부여됩니다. 선택한 역할은 여기에 추가됩니다.
                 </p>
+                {grantBlockedQuery.isError && (
+                  // 잠금을 못 받았다고 알린다 — 말없이 다 열어 두면 범위 밖 역할을 고르고 추가할 때에야 거부를 본다.
+                  <p className="text-[13px] text-muted-foreground break-keep">
+                    부여할 수 있는 역할 범위를 확인하지 못했습니다. 범위 밖 역할은 추가할 때 거부될 수 있습니다
+                  </p>
+                )}
                 {!canAssignRoles && (
                   <p className="text-[13px] text-muted-foreground">역할 지정 권한이 없어 USER 역할로만 추가됩니다</p>
                 )}
               </fieldset>
             </div>
+            {/* 제출 실패 문구는 스크롤 영역 밖, 「추가」 버튼 바로 위에 둔다(WD-291) — 역할 목록을 내린 채 누르면 영역 맨 위의 문구는 화면
+                밖에 있어, 눌러도 아무 일이 없는 것처럼 보였다. */}
+            {errors.root && (
+              <p role="alert" className="text-sm text-destructive break-keep">
+                {errors.root.message}
+              </p>
+            )}
             <DialogFooter>
               <Button type="button" variant="outline" disabled={isSubmitting} onClick={() => handleOpenChange(false)}>
                 취소

@@ -12,6 +12,13 @@ export interface RoleResponse {
   isSystem: boolean;
 }
 
+/** 호출자가 부여할 수 없는 역할 하나(WD-291) — code·message 는 실제로 부여하면 받을 403 과 같다. */
+export interface RoleGrantBlockResponse {
+  roleId: number;
+  code: string;
+  message: string;
+}
+
 export interface RoleDetailResponse {
   id: number;
   name: string;

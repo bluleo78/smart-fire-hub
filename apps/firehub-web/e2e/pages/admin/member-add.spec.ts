@@ -310,3 +310,135 @@ test.describe('멤버 추가', () => {
     await expect(trigger).toBeFocused();
   });
 });
+
+/**
+ * 멤버 추가 — 제출 실패 문구 위치와 위임 관리자의 부여 불가 역할 잠금(WD-291).
+ *
+ * 역할이 많아 본문이 스크롤될 때 실패 문구가 스크롤 영역 맨 위(화면 밖)에 붙어 「추가」를 눌러도 반응이 없어 보였고, 위임받은 멤버 관리자(비 ADMIN)는
+ * ADMIN 외의 범위 밖 역할(높은 열람 등급·없는 권한)도 체크할 수 있었다. 잠글 역할은 서버의 GET /roles/grant-blocked 가 실제 부여와 같은 판정으로 준다.
+ */
+const SCOPE_MESSAGE = '자신에게 없는 권한·등급을 가진 역할은 부여하거나 회수할 수 없습니다';
+const ADMIN_MESSAGE = '시스템 ADMIN 역할은 ADMIN 만 부여하거나 회수할 수 있습니다';
+const DELEGATE_ROLES = [
+  createRole({ id: 1, name: 'USER', description: '일반 사용자', isSystem: true }),
+  createRole({ id: 2, name: 'ADMIN', description: '시스템 관리자', isSystem: true }),
+  createRole({ id: 3, name: 'EDITOR', description: '편집자', isSystem: false }),
+  createRole({ id: 4, name: 'QA267_TOP', description: '기밀 열람', isSystem: false }),
+];
+const GRANT_BLOCKED = [
+  { roleId: 2, code: 'SYSTEM_ADMIN_ROLE_ADMIN_ONLY', message: ADMIN_MESSAGE },
+  { roleId: 4, code: 'ROLE_GRANT_BEYOND_SCOPE', message: SCOPE_MESSAGE },
+];
+
+/** 역할 목록을 내려야 끝까지 보이도록 사용자 정의 역할을 많이 둔다. */
+const MANY_ROLES = [
+  ...DELEGATE_ROLES,
+  ...Array.from({ length: 16 }, (_, i) => createRole({ id: 10 + i, name: `TEAM_${i + 1}`, description: null, isSystem: false })),
+];
+
+async function openAddMember(page: import('@playwright/test').Page) {
+  await page.goto('/admin/users');
+  await page.getByRole('button', { name: '멤버 추가' }).click();
+  return page.getByRole('dialog', { name: '멤버 추가' });
+}
+
+test.describe('멤버 추가 — 위임 관리자 역할 잠금 (WD-291)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    // 기본 사용자는 USER(비 ADMIN) — 멤버 관리만 위임받은 사람.
+    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['user:read', 'user:write', 'role:read', 'role:assign']);
+    await mockApi(page, 'GET', '/api/v1/users', createPageResponse([createUser({ id: 1, name: '양동희' })]));
+    await mockApi(page, 'GET', '/api/v1/roles', DELEGATE_ROLES);
+  });
+
+  test('서버가 부여 불가로 준 역할은 잠기고 까닭이 보이며, 범위 안 역할만 전송된다', async ({ authenticatedPage: page }) => {
+    const blocked = await mockApi(page, 'GET', '/api/v1/roles/grant-blocked', GRANT_BLOCKED, { capture: true });
+    const capture = await mockApi(page, 'POST', '/api/v1/users', { userId: 9, created: true }, { status: 201, capture: true });
+
+    const dialog = await openAddMember(page);
+    const top = dialog.getByRole('checkbox', { name: /QA267_TOP/ });
+    await expect(top).toBeDisabled();
+    await expect(top).toHaveAccessibleDescription(SCOPE_MESSAGE);
+    await expect(dialog.getByRole('checkbox', { name: /ADMIN/ })).toHaveAccessibleDescription(ADMIN_MESSAGE);
+    const editor = dialog.getByRole('checkbox', { name: /EDITOR/ });
+    await expect(editor).toBeEnabled();
+    expect(blocked.requests).toHaveLength(1);
+
+    await dialog.getByLabel('이메일').fill('qa267d4@example.com');
+    await dialog.getByLabel('이름').fill('위임 대상');
+    await editor.check();
+    await dialog.getByRole('button', { name: '추가' }).click();
+    expect((await capture.waitForRequest()).payload).toMatchObject({ roleIds: [3] });
+  });
+
+  test('목록이 늦게 와 이미 체크한 역할이 잠기면 체크가 풀리고 전송에서도 빠진다', async ({ authenticatedPage: page }) => {
+    let release: () => void = () => {};
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    await page.route(
+      (url) => url.pathname === '/api/v1/roles/grant-blocked',
+      async (route) => {
+        await released;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(GRANT_BLOCKED) });
+      },
+    );
+    const capture = await mockApi(page, 'POST', '/api/v1/users', { userId: 9, created: true }, { status: 201, capture: true });
+
+    const dialog = await openAddMember(page);
+    const top = dialog.getByRole('checkbox', { name: /QA267_TOP/ });
+    await top.check();
+    await dialog.getByRole('checkbox', { name: /EDITOR/ }).check();
+    release();
+    await expect(top).toBeDisabled();
+    await expect(top).not.toBeChecked();
+
+    await dialog.getByLabel('이메일').fill('late@example.com');
+    await dialog.getByLabel('이름').fill('늦게');
+    await dialog.getByRole('button', { name: '추가' }).click();
+    expect((await capture.waitForRequest()).payload).toMatchObject({ roleIds: [3] });
+  });
+
+  test('부여 불가 목록을 읽지 못하면 잠그지 않는다(ADMIN 잠금만 유지 — 나머지는 서버가 추가 때 막는다)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/roles/grant-blocked', { status: 500, message: '서버 오류' }, { status: 500 });
+
+    const dialog = await openAddMember(page);
+    await expect(dialog.getByRole('checkbox', { name: /EDITOR/ })).toBeEnabled();
+    await expect(dialog.getByRole('checkbox', { name: /QA267_TOP/ })).toBeEnabled();
+    await expect(dialog.getByRole('checkbox', { name: /ADMIN/ })).toBeDisabled();
+    await expect(
+      dialog.getByText('부여할 수 있는 역할 범위를 확인하지 못했습니다. 범위 밖 역할은 추가할 때 거부될 수 있습니다'),
+    ).toBeVisible();
+  });
+
+  test('역할 목록을 내린 채 「추가」가 실패하면 문구가 버튼 바로 위, 보이는 곳에 뜬다', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockApi(page, 'GET', '/api/v1/roles', MANY_ROLES);
+    // 잠긴 역할 없이(그 사이 역할 등급이 바뀐 경우 등) 서버가 추가를 403 으로 거부하는 상황.
+    await mockApi(page, 'GET', '/api/v1/roles/grant-blocked', []);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/users',
+      { status: 403, error: 'Forbidden', message: SCOPE_MESSAGE, code: 'ROLE_GRANT_BEYOND_SCOPE' },
+      { status: 403 },
+    );
+
+    const dialog = await openAddMember(page);
+    await dialog.getByLabel('이메일').fill('qa267d4@example.com');
+    await dialog.getByLabel('이름').fill('위임 대상');
+    const last = dialog.getByRole('checkbox', { name: 'TEAM_16' });
+    await last.scrollIntoViewIfNeeded();
+    await last.check();
+    // 역할 목록을 내렸으므로 이메일 칸은 화면 밖이다(재현 조건).
+    await expect(dialog.getByLabel('이메일')).not.toBeInViewport();
+
+    const submit = dialog.getByRole('button', { name: '추가' });
+    await submit.click();
+    const alert = dialog.getByRole('alert');
+    await expect(alert).toHaveText(SCOPE_MESSAGE);
+    await expect(alert).toBeInViewport();
+    const alertBox = await alert.boundingBox();
+    const submitBox = await submit.boundingBox();
+    expect(alertBox!.y + alertBox!.height).toBeLessThanOrEqual(submitBox!.y);
+  });
+});

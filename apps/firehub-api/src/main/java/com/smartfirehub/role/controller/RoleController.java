@@ -29,6 +29,18 @@ public class RoleController {
     return ResponseEntity.ok(roles);
   }
 
+  /**
+   * 호출자가 부여할 수 없는 역할 목록(WD-291) — 범위 안 역할은 빠진다. 부여 권한(role:assign)이 있어야 의미가 있으므로 그 권한으로 연다. 화면은 이
+   * 목록으로 체크박스를 잠그고, 실제 부여 때의 403 과 같은 문구를 보여 준다.
+   */
+  @GetMapping("/grant-blocked")
+  @RequirePermission("role:assign")
+  public ResponseEntity<List<RoleGrantBlockResponse>> getGrantBlockedRoles(
+      Authentication authentication) {
+    Long callerId = (Long) authentication.getPrincipal();
+    return ResponseEntity.ok(roleService.getGrantBlockedRoles(callerId));
+  }
+
   @GetMapping("/{id}")
   @RequirePermission("role:read")
   public ResponseEntity<RoleDetailResponse> getRoleById(@PathVariable Long id) {
