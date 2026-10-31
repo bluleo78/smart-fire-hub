@@ -171,7 +171,7 @@ test.describe('파이프라인 실행 상세 — 모바일 레이아웃 (WD-309)
     expect(overflowX).toBeLessThanOrEqual(0);
 
     // 재실행 버튼이 화면 안에 있다
-    await expectInsideViewport(page, page.getByRole('button', { name: '같은 입력으로 다시 실행' }));
+    await expectInsideViewport(page, page.getByRole('button', { name: '현재 설정으로 다시 실행' }));
 
     // DAG 의 스텝을 누르면 패널이 그 스텝의 오류 상세로 바뀐다
     await page
