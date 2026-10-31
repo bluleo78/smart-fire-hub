@@ -94,7 +94,10 @@ class TriggerSnapshotVisibilityTest extends IntegrationTestBase {
                   .set(PIPELINE_TRIGGER.PIPELINE_ID, pipelineId)
                   .set(PIPELINE_TRIGGER.TRIGGER_TYPE, "DATASET_CHANGE")
                   .set(PIPELINE_TRIGGER.NAME, "변경 감시")
-                  .set(PIPELINE_TRIGGER.IS_ENABLED, true)
+                  // 꺼 둔 트리거로 넣는다(WD-458) — 켜 두면 테스트 컨텍스트의 데이터 변경 폴러(활성 트리거만 읽음)가
+                  // 주기와 겹칠 때 trigger_state 를 현재 시각으로 덮어써 아래 lastCheckedAt 대조가 흔들렸다.
+                  // 스냅숏 제거는 활성 여부와 상관없이 조회 응답에서 하므로 검증 대상은 그대로다.
+                  .set(PIPELINE_TRIGGER.IS_ENABLED, false)
                   .set(
                       PIPELINE_TRIGGER.CONFIG,
                       JSONB.valueOf(
