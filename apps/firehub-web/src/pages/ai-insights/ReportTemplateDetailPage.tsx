@@ -485,8 +485,9 @@ export default function ReportTemplateDetailPage() {
       {/* 사이드바 링크 클릭 등 SPA 내부 네비게이션 가드 다이얼로그 (이슈 #552) */}
       {unsavedChangesDialog}
       {/* 헤더 */}
-      <header className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      {/* 좁은 화면에서 버튼 줄이 아래로 내려가 줄바꿈되게 한다 — 스마트 작업 상세와 같은 처리(WD-295) */}
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <Button
             variant="ghost"
             size="icon"
@@ -495,11 +496,11 @@ export default function ReportTemplateDetailPage() {
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div>
-            <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">
+          <div className="min-w-0">
+            <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight break-words">
               {isNew ? '새 템플릿' : (template?.name ?? '-')}
             </h1>
-            <div className="flex items-center gap-2 mt-1">
+            <div className="flex flex-wrap items-center gap-2 mt-1">
               {!isNew && template && (
                 <Badge variant={isBuiltin ? 'secondary' : 'default'}>
                   {isBuiltin ? '기본' : '커스텀'}
@@ -516,7 +517,7 @@ export default function ReportTemplateDetailPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* 복제(POST)·편집(PUT)·삭제(DELETE)는 모두 쓰기 권한이 있을 때만 보인다(WD-133) — 기본 템플릿의 복제도 마찬가지 */}
           {!isNew && !isEditing && canWrite && (
             <>

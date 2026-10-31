@@ -456,9 +456,10 @@ export default function ProactiveJobDetailPage() {
 
   return (
     <div className="space-y-6">
-      {/* 헤더 */}
-      <header className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      {/* 헤더 — 좁은 화면에서 제목과 버튼 줄이 한 줄에 다 안 들어가면 버튼 줄이 아래로 내려가고, 버튼끼리도 줄바꿈해
+          본문이 옆으로 밀리지 않게 한다(WD-295). */}
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <Button
             variant="ghost"
             size="icon"
@@ -467,11 +468,11 @@ export default function ProactiveJobDetailPage() {
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div>
-            <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">
+          <div className="min-w-0">
+            <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight break-words">
               {isNew ? '새 스마트 작업' : (job?.name ?? '-')}
             </h1>
-            <div className="flex items-center gap-2 mt-1">
+            <div className="flex flex-wrap items-center gap-2 mt-1">
               {!isNew && job && (
                 <Badge variant={job.enabled ? 'default' : 'secondary'}>
                   {job.enabled ? '활성' : '비활성'}
@@ -492,7 +493,7 @@ export default function ProactiveJobDetailPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* 복제(POST)·지금 실행·편집(PUT)·삭제(DELETE)는 모두 쓰기 권한이 있을 때만 보인다(WD-133) */}
           {!isNew && !isEditing && canWrite && (
             <>

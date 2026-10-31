@@ -1232,3 +1232,26 @@ test.describe('스마트 작업 상세 페이지', () => {
     });
   });
 });
+
+// WD-295: 좁은 화면(390px)에서 머리글 버튼 줄이 화면 밖으로 넘쳐 「삭제」가 잘리고 본문이 가로로 밀리던 회귀를 막는다.
+test.describe('스마트 작업 상세 — 모바일 머리글', () => {
+  test('320px 폭(재배치 기준, #345)에서 복제·지금 실행·편집·삭제가 모두 화면 안에 있고 본문이 가로로 넘치지 않는다', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 320, height: 800 });
+    await setupJobDetailMocks(page, 1);
+
+    await page.goto('/ai-insights/jobs/1');
+    await expect(page.getByRole('heading', { name: '매일 현황 리포트' })).toBeVisible();
+
+    // 네 버튼의 오른쪽 끝이 모두 화면 폭(320) 안에 있어야 한다 — 이전에는 「삭제」가 382~430 에 걸쳤다.
+    const header = page.locator('header').filter({ has: page.getByRole('heading', { name: '매일 현황 리포트' }) });
+    for (const name of ['복제', '지금 실행', '편집', '삭제']) {
+      const box = await header.getByRole('button', { name, exact: true }).boundingBox();
+      expect(box, `${name} 버튼 위치`).not.toBeNull();
+      expect(box!.x + box!.width, `${name} 버튼 오른쪽 끝`).toBeLessThanOrEqual(320);
+    }
+
+    // 본문(main)이 가로로 스크롤되지 않아야 한다.
+    const overflow = await page.locator('main').evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
+});
