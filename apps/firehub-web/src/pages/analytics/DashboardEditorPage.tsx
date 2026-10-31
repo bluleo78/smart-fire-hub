@@ -54,8 +54,15 @@ import {
   useUpdateWidget,
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
+import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { handleApiError } from '../../lib/api-error';
 import type { ChartListItem, DashboardWidget } from '../../types/analytics';
+
+/** 격자 한 행의 높이(px)와 위젯 간격(px) — 쌓기 보기도 같은 값으로 높이를 맞춘다. */
+const ROW_HEIGHT = 80;
+const GRID_GAP = 8;
+/** 이 폭(px)보다 좁으면 보기 모드에서 위젯을 한 줄에 하나씩 쌓는다(WD-321, Tailwind sm 경계). */
+const STACK_BELOW_WIDTH = 640;
 
 // Sub-component that owns width measurement for ResponsiveGridLayout
 interface GridAreaProps {
@@ -77,38 +84,65 @@ function GridArea({
 }: GridAreaProps) {
   const { width, containerRef: gridRef } = useContainerWidth({ initialWidth: 1280 });
 
+  // 좁은 화면(모바일)의 보기 모드는 12칸 좌표를 비례 축소하지 않고 위젯을 한 줄에 하나씩 쌓는다(WD-321).
+  // 4칸 위젯이 95px 로 찌그러져 읽을 수 없었기 때문이다. 순서는 데스크톱 배치의 위→아래, 왼→오른쪽이고,
+  // 높이는 저장된 행 수를 그대로 쓴다. 편집 모드는 저장 좌표를 직접 다루므로 12칸 격자를 유지한다(#529 — lg 고정).
+  // 폭 측정 ref 는 늘 같은 바깥 요소에 둔다 — 쌓기·격자를 오갈 때 측정 대상이 바뀌면 폭이 옛 값에 멈춘다.
+  const stacked = !isEditing && width < STACK_BELOW_WIDTH;
+  const ordered = stacked
+    ? [...widgets].sort((a, b) => a.positionY - b.positionY || a.positionX - b.positionX)
+    : widgets;
+
   return (
     <div ref={gridRef}>
-      <ResponsiveGridLayout
-        width={width}
-        // 대시보드 레이아웃은 항상 "lg" 브레이크포인트(12컬럼) 기준으로만 저장/복원한다
-        // (handleSaveEdit이 localLayouts.lg만 서버에 반영).
-        // 과거에는 md/sm 브레이크포인트도 함께 선언했는데, 편집 영역의 실제 컨테이너 폭이
-        // sidebar/padding 때문에 lg 임계값(1200px)보다 좁은 경우가 흔해 react-grid-layout이
-        // 내부적으로 "md" 브레이크포인트를 활성화했다. 이 상태에서 위젯을 리사이즈하면
-        // onLayoutChange가 allLayouts.md만 갱신하고 allLayouts.lg는 기존 값 그대로 남아,
-        // "완료" 클릭 시 리사이즈 이전 값이 그대로 저장되는 버그가 있었다(#529).
-        // 임계값을 0으로 두어 컨테이너 폭과 무관하게 항상 "lg"만 활성화되도록 고정한다.
-        breakpoints={{ lg: 0 }}
-        cols={{ lg: 12 }}
-        rowHeight={80}
-        dragConfig={{ enabled: isEditing, bounded: false, handle: '.drag-handle' }}
-        resizeConfig={{ enabled: isEditing, handles: ['se'] }}
-        layouts={layouts}
-        onLayoutChange={onLayoutChange}
-        margin={[8, 8]}
-      >
-        {widgets.map((widget) => (
-          <div key={String(widget.id)}>
-            <DashboardWidgetCard
-              widget={widget}
-              isEditing={isEditing}
-              onRemove={onRemove}
-              autoRefreshSeconds={autoRefreshSeconds}
-            />
-          </div>
-        ))}
-      </ResponsiveGridLayout>
+      {stacked ? (
+        <div className="flex flex-col gap-2" data-testid="dashboard-stacked">
+          {ordered.map((widget) => (
+            <div
+              key={String(widget.id)}
+              style={{ height: widget.height * ROW_HEIGHT + (widget.height - 1) * GRID_GAP }}
+            >
+              <DashboardWidgetCard
+                widget={widget}
+                isEditing={false}
+                onRemove={onRemove}
+                autoRefreshSeconds={autoRefreshSeconds}
+              />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <ResponsiveGridLayout
+          width={width}
+          // 대시보드 레이아웃은 항상 "lg" 브레이크포인트(12컬럼) 기준으로만 저장/복원한다
+          // (handleSaveEdit이 localLayouts.lg만 서버에 반영).
+          // 과거에는 md/sm 브레이크포인트도 함께 선언했는데, 편집 영역의 실제 컨테이너 폭이
+          // sidebar/padding 때문에 lg 임계값(1200px)보다 좁은 경우가 흔해 react-grid-layout이
+          // 내부적으로 "md" 브레이크포인트를 활성화했다. 이 상태에서 위젯을 리사이즈하면
+          // onLayoutChange가 allLayouts.md만 갱신하고 allLayouts.lg는 기존 값 그대로 남아,
+          // "완료" 클릭 시 리사이즈 이전 값이 그대로 저장되는 버그가 있었다(#529).
+          // 임계값을 0으로 두어 컨테이너 폭과 무관하게 항상 "lg"만 활성화되도록 고정한다.
+          breakpoints={{ lg: 0 }}
+          cols={{ lg: 12 }}
+          rowHeight={ROW_HEIGHT}
+          dragConfig={{ enabled: isEditing, bounded: false, handle: '.drag-handle' }}
+          resizeConfig={{ enabled: isEditing, handles: ['se'] }}
+          layouts={layouts}
+          onLayoutChange={onLayoutChange}
+          margin={[GRID_GAP, GRID_GAP]}
+        >
+          {widgets.map((widget) => (
+            <div key={String(widget.id)}>
+              <DashboardWidgetCard
+                widget={widget}
+                isEditing={isEditing}
+                onRemove={onRemove}
+                autoRefreshSeconds={autoRefreshSeconds}
+              />
+            </div>
+          ))}
+        </ResponsiveGridLayout>
+      )}
     </div>
   );
 }
@@ -495,6 +529,24 @@ export default function DashboardEditorPage() {
     setIsEditing(false);
   }, [dashboard, editingWidgets, localLayouts, updateWidgetMutation]);
 
+  /**
+   * 편집 모드에서 「완료」 전에 바꾼 배치가 있는지(WD-323). 배치·크기는 완료를 눌러야 서버에 가므로, 이 값이 참인 채로 다른 화면으로 가면
+   * 변경이 사라진다 — 다른 편집 화면처럼 이탈 확인을 띄운다. 위젯 추가·삭제는 즉시 서버에 반영되므로 세지 않는다.
+   * 서버 위젯 좌표와 로컬 lg 배치를 비교한다 — react-grid-layout 이 마운트 때 같은 값으로 onLayoutChange 를 부르므로 「호출 여부」로는 판단할 수 없다.
+   */
+  const layoutDirty = useMemo(() => {
+    if (!isEditing || !dashboard) return false;
+    const items = (localLayouts.lg as LayoutItem[] | undefined) ?? [];
+    return dashboard.widgets.some((w) => {
+      const item = items.find((i) => i.i === String(w.id));
+      return (
+        item !== undefined &&
+        (item.x !== w.positionX || item.y !== w.positionY || item.w !== w.width || item.h !== w.height)
+      );
+    });
+  }, [isEditing, dashboard, localLayouts]);
+  const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(layoutDirty);
+
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -526,19 +578,23 @@ export default function DashboardEditorPage() {
   return (
     <div ref={containerRef} className="flex flex-col h-full min-h-0 bg-background">
       {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b shrink-0 bg-background">
+      {/* 좁은 화면에서는 버튼 묶음이 다음 줄로 내려가 이름이 읽히고 「완료」·「편집 취소」가 화면 밖으로 밀리지 않는다(WD-321) */}
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b shrink-0 bg-background">
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => navigate('/analytics/dashboards')}
+          // 화면 안 「←」도 미저장 배치 확인을 거친다(WD-323) — navigate 직접 호출은 가드를 우회한다
+          onClick={() => requestNavigate('/analytics/dashboards')}
           className="h-8 w-8"
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>
 
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-semibold truncate">{dashboard.name}</h1>
+        <div className="flex-1 min-w-40">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h1 className="text-lg font-semibold truncate min-w-0" title={dashboard.name}>
+              {dashboard.name}
+            </h1>
             {dashboard.isShared && (
               <Badge variant="secondary" className="text-xs shrink-0">공유</Badge>
             )}
@@ -566,7 +622,7 @@ export default function DashboardEditorPage() {
           )}
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex flex-wrap items-center justify-end gap-1.5 ml-auto">
           {/* 공유 (#99, #522) — 현재 URL을 클립보드에 복사하여 협업 시 빠른 링크 공유 지원.
               clipboard API 미지원 환경에서는 텍스트 영역 fallback.
               단, 백엔드(AnalyticsDashboardRepository.findById)는 소유자이거나
@@ -711,6 +767,8 @@ export default function DashboardEditorPage() {
           />
         )}
       </div>
+
+      {unsavedChangesDialog}
 
       <AddWidgetDialog
         open={addWidgetOpen}

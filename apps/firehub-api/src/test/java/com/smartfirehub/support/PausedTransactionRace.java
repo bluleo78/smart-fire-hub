@@ -40,12 +40,12 @@ public final class PausedTransactionRace {
    * tx1 을 커밋 전에 멈춘 채 tx2 를 실행한다.
    *
    * @param transactionTemplate 픽스처 트랜잭션 템플릿(tx1 바깥 트랜잭션)
-   * @param tenantId 두 작업의 테넌트 컨텍스트
+   * @param tenantId 두 작업의 테넌트 컨텍스트. null 이면 컨텍스트 없이 실행한다(운영자 평면 — 감사 tenant_id NULL, WD-322)
    * @param first tx1 본문 — 바깥 테넌트 트랜잭션 안에서 실행되고 이 본문이 끝난 뒤 커밋 전에 멈춘다
    * @param second tx2 — 감싸지 않고 실행한다(프로덕션 호출이 스스로 트랜잭션을 세우는지까지 함께 검증)
    */
   public static <T> Outcome<T> run(
-      TransactionTemplate transactionTemplate, long tenantId, Runnable first, Supplier<T> second)
+      TransactionTemplate transactionTemplate, Long tenantId, Runnable first, Supplier<T> second)
       throws Exception {
     CountDownLatch firstDone = new CountDownLatch(1);
     CountDownLatch release = new CountDownLatch(1);
@@ -85,7 +85,9 @@ public final class PausedTransactionRace {
       Future<Outcome<T>> tx2 =
           pool.submit(
               () -> {
-                TenantContext.set(tenantId);
+                if (tenantId != null) {
+                  TenantContext.set(tenantId);
+                }
                 try {
                   return new Outcome<>(false, second.get(), null);
                 } catch (Throwable e) {

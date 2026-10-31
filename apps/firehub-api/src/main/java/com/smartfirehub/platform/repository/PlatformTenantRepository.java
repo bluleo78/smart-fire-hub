@@ -100,9 +100,15 @@ public class PlatformTenantRepository {
         .findFirst();
   }
 
-  /** 테넌트 상태를 바꾸고 바뀐 행 수를 돌려준다. 0 이면 없는 테넌트다. */
+  /**
+   * 테넌트 상태를 바꾸고 바뀐 행 수를 돌려준다. 0 이면 없는 테넌트이거나 이미 그 상태다.
+   *
+   * <p>{@code status <> ?} 조건이 동시 요청을 가른다(WD-322): 두 트랜잭션이 함께 들어오면 뒤 요청은 앞 요청의 행 잠금을 기다렸다가 커밋된 새
+   * 상태로 조건을 다시 평가해 0 행이 된다(PostgreSQL READ COMMITTED). 호출자는 0 이면 감사를 남기지 않는다.
+   */
   public int updateStatus(long tenantId, String status) {
-    return dsl.execute("update tenant set status = ? where id = ?", status, tenantId);
+    return dsl.execute(
+        "update tenant set status = ? where id = ? and status <> ?", status, tenantId, status);
   }
 
   /**

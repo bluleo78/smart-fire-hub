@@ -14,16 +14,6 @@ import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector'
 import { isNumericColumn, isWeightColumn } from '../../components/analytics/numeric-columns';
 import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '../../components/ui/alert-dialog';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import {
@@ -63,6 +53,7 @@ import {
   useUpdateChart,
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
+import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { handleApiError, isEditConflict } from '../../lib/api-error';
 import {
   exportChartAsPng,
@@ -538,8 +529,9 @@ export default function ChartBuilderPage() {
     if (canEdit) setIsDirty(true);
   }, [canEdit]);
 
-  // 이탈 확인 다이얼로그 상태 — 뒤로가기 클릭 시 dirty면 오픈
-  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+  // 미저장 변경 이탈 확인(WD-323) — 사이드바 등 앱 안 링크·브라우저 뒤로·새로고침·탭 닫기를 함께 막는다.
+  // 전에는 화면 안 「뒤로」 버튼과 beforeunload 만 막아, 사이드바로 나가면 확인 없이 변경이 사라졌다.
+  const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(isDirty);
 
   // 차트 PNG/SVG 다운로드용 — 미리보기 컨테이너 ref. recharts/nivo SVG 추출에 사용 (이슈 #74).
   const previewContainerRef = useRef<HTMLDivElement | null>(null);
@@ -565,30 +557,8 @@ export default function ChartBuilderPage() {
     if (existingChart) applyChart(existingChart);
   }, [existingChart, applyChart]);
 
-  // 브라우저 탭 닫기·새로고침 시 이탈 경고 (PipelineEditorPage와 동일 패턴)
-  useEffect(() => {
-    const handler = (e: BeforeUnloadEvent) => {
-      if (isDirty) e.preventDefault();
-    };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [isDirty]);
-
-  // 뒤로가기 버튼 클릭 핸들러 — dirty면 다이얼로그 표시, 아니면 즉시 이동
-  const handleBackClick = () => {
-    if (isDirty) {
-      setLeaveDialogOpen(true);
-    } else {
-      navigate('/analytics/charts');
-    }
-  };
-
-  // 다이얼로그에서 '이탈' 클릭 — 변경사항 버리고 목록으로 이동
-  const handleLeaveConfirm = () => {
-    setLeaveDialogOpen(false);
-    setIsDirty(false);
-    navigate('/analytics/charts');
-  };
+  // 뒤로가기 버튼 — dirty 면 가드 확인 창, 아니면 즉시 이동
+  const handleBackClick = () => requestNavigate('/analytics/charts');
 
   // Pre-fill save form name for new charts
   useEffect(() => {
@@ -1218,24 +1188,7 @@ export default function ChartBuilderPage() {
         pending={isSaving || isReloading}
       />
 
-      {/*
-        이탈 확인 다이얼로그 — 뒤로가기 클릭 시 dirty면 표시
-        취소 시 머무름, 확인 시 변경사항 버리고 이동
-      */}
-      <AlertDialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>저장하지 않은 변경사항</AlertDialogTitle>
-            <AlertDialogDescription>
-              저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>취소</AlertDialogCancel>
-            <AlertDialogAction onClick={handleLeaveConfirm}>이탈</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {unsavedChangesDialog}
     </div>
   );
 }

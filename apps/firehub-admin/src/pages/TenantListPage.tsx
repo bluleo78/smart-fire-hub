@@ -80,6 +80,14 @@ export default function TenantListPage() {
     setPage(0);
   };
 
+  // 상태 필터가 걸린 빈 결과는 「테넌트 없음」이 아니라 조건 결과다(WD-318) — 감사 로그(WD-15)처럼 한 번에 되돌린다.
+  const hasStatusFilter = status !== 'ALL';
+  const resetFilters = () => {
+    setSearch('');
+    setStatus('ALL');
+    setPage(0);
+  };
+
   // 403 은 토스트가 아니라 본문 교체다 — 재시도할 것이 없다.
   if (isError && isForbidden(error)) {
     return (
@@ -174,6 +182,17 @@ export default function TenantListPage() {
                   <TableCell>{formatDateOnly(t.createdAt)}</TableCell>
                 </TableRow>
               ))
+            ) : hasStatusFilter ? (
+              // 상태 필터가 걸리면 검색어가 있어도 이 문구다 — 「검색 초기화」만으로는 필터가 남아 여전히 비어 보인다.
+              <TableEmptyRow
+                colSpan={5}
+                message="조건에 맞는 테넌트가 없습니다."
+                emptyAction={
+                  <Button variant="outline" size="sm" onClick={resetFilters}>
+                    필터 초기화
+                  </Button>
+                }
+              />
             ) : (
               <TableEmptyRow
                 colSpan={5}

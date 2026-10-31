@@ -304,12 +304,18 @@ public class UserRepository {
         .execute();
   }
 
-  // 전역 계정 활성 플래그 — 운영자 콘솔 계정 비활성화/재활성화(#784, PlatformAccountService)만 쓴다. 테넌트 정지는 멤버십.
-  public void setActive(Long id, boolean active) {
-    dsl.update(USER)
+  /**
+   * 전역 계정 활성 플래그 — 운영자 콘솔 계정 비활성화/재활성화(#784, PlatformAccountService)만 쓴다. 테넌트 정지는 멤버십.
+   *
+   * <p>이미 그 값이면 바꾸지 않고 0 을 돌려준다. 동시 요청 중 실제로 바꾼 쪽만 1 을 받는다 — 뒤 요청은 행 잠금을 기다린 뒤 새 값으로 조건을 다시
+   * 평가한다(WD-322). 호출자는 0 이면 감사·세션 폐기를 하지 않는다.
+   */
+  public int setActive(Long id, boolean active) {
+    return dsl.update(USER)
         .set(USER.IS_ACTIVE, active)
         .set(USER.UPDATED_AT, LocalDateTime.now())
         .where(USER.ID.eq(id))
+        .and(USER.IS_ACTIVE.ne(active))
         .execute();
   }
 

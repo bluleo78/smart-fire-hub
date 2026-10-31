@@ -13,6 +13,7 @@ import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.platform.service.PlatformTenantService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.OpenedSseStreams;
+import com.smartfirehub.support.PausedTransactionRace;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TiberoDriverAssumptions;
 import java.time.Duration;
@@ -52,6 +53,7 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
   private TransactionTemplate tx;
   private String token;
   private Long ownerUserId;
+  private long operatorId;
   private Long createdTenant;
   // 테스트가 실제 레지스트리(싱글턴)에 연 알림 연결 — 다른 테스트의 브로드캐스트에 섞이지 않게 정리한다(WD-190)
   private OpenedSseStreams streams;
@@ -61,7 +63,8 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
     tx = new TransactionTemplate(transactionManager);
     streams = new OpenedSseStreams(sseEmitterRegistry);
     ownerUserId = createUser(false);
-    token = jwtTokenProvider.generatePlatformAccessToken(createUser(true), "ops");
+    operatorId = createUser(true);
+    token = jwtTokenProvider.generatePlatformAccessToken(operatorId, "ops");
     // 운영 조건: 운영자 요청 스레드에는 테넌트 컨텍스트가 없다. JwtAuthenticationFilter 는 요청 끝(finally)에서만
     // 지우므로, 테스트 베이스가 세운 테넌트 1 이 남으면 감사 행이 tenant_id=1 로 새어 들어간다(WD-12).
     TenantContext.clear();
@@ -321,6 +324,48 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
 
     assertThat(auditCount("TENANT_SUSPEND", createdTenant)).isEqualTo(1L);
     assertThat(auditCount("TENANT_ACTIVATE", createdTenant)).isEqualTo(1L);
+  }
+
+  /**
+   * 동시 정지·재개는 실제로 바꾼 요청만 감사에 남는다(WD-322).
+   *
+   * <p>앞 요청이 정지를 바꾼 뒤 커밋 전에 멈춘 사이 뒤 요청이 들어오면, 뒤 요청의 사전 조회는 아직 「활성」을 본다. 뒤 요청이 앞 요청의 행 잠금에서
+   * 기다렸는지(secondBlocked)까지 단언해 경합 구간을 실제로 지났음을 보장한다 — 조건부 갱신을 지우면 감사가 2건이 되어 실패한다.
+   */
+  @Test
+  void concurrentSuspendAndActivate_auditOnlyTheRequestThatChanged() throws Exception {
+    String slug = "wd322-race-" + System.nanoTime();
+    createTenant(slug, ownerUserId);
+    createdTenant = tenantIdBySlug(slug);
+    long id = createdTenant;
+
+    var suspend =
+        PausedTransactionRace.run(
+            tx,
+            null,
+            () -> platformTenantService.suspend(id, operatorId),
+            () -> {
+              platformTenantService.suspend(id, operatorId);
+              return null;
+            });
+    assertThat(suspend.secondBlocked()).as("뒤 요청이 앞 요청의 행 잠금에서 기다렸다").isTrue();
+    assertThat(suspend.secondError()).as("뒤 요청은 무변화로 성공(204 와 같다)").isNull();
+    assertThat(statusOf(id)).isEqualTo("SUSPENDED");
+    assertThat(auditCount("TENANT_SUSPEND", id)).isEqualTo(1L);
+
+    var activate =
+        PausedTransactionRace.run(
+            tx,
+            null,
+            () -> platformTenantService.activate(id, operatorId),
+            () -> {
+              platformTenantService.activate(id, operatorId);
+              return null;
+            });
+    assertThat(activate.secondBlocked()).isTrue();
+    assertThat(activate.secondError()).isNull();
+    assertThat(statusOf(id)).isEqualTo("ACTIVE");
+    assertThat(auditCount("TENANT_ACTIVATE", id)).isEqualTo(1L);
   }
 
   /** 없는 테넌트를 정지하면 404 다. */

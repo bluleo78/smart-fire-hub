@@ -89,10 +89,10 @@ public class PlatformAccountService {
     if (platformRoleRepository.hasAnyPlatformRole(targetUserId)) {
       throw new IllegalStateException("운영자 계정은 비활성화할 수 없습니다");
     }
-    if (!target.isActive()) {
+    // 먼저 읽은 값은 빠른 길이다 — 동시 요청은 둘 다 「활성」으로 읽으므로 실제로 바꾼 요청만 조건부 갱신으로 가린다(WD-322).
+    if (!target.isActive() || userRepository.setActive(targetUserId, false) == 0) {
       return;
     }
-    userRepository.setActive(targetUserId, false);
     // 같은 트랜잭션: "비활성인데 refresh 세션은 살아 있는" 중간 상태가 커밋되지 않게 한다.
     refreshTokenRepository.revokeAllByUserId(targetUserId);
     audit(operatorId, "ACCOUNT_DEACTIVATE", target, "전역 계정 비활성화(모든 워크스페이스 로그인 차단, refresh 세션 폐기)");
@@ -146,10 +146,10 @@ public class PlatformAccountService {
   @Transactional
   public void reactivate(long targetUserId, long operatorId) {
     UserResponse target = requireUser(targetUserId);
-    if (target.isActive()) {
+    // 동시 재활성화도 실제로 바꾼 요청만 감사에 남긴다(WD-322).
+    if (target.isActive() || userRepository.setActive(targetUserId, true) == 0) {
       return;
     }
-    userRepository.setActive(targetUserId, true);
     audit(operatorId, "ACCOUNT_REACTIVATE", target, "전역 계정 재활성화");
   }
 

@@ -32,6 +32,18 @@ test.describe('계정 화면 (#784)', () => {
     await expect(page.getByText(/최대 20건/)).toHaveCount(0);
   });
 
+  test('검색어는 100자에서 막혀 서버 상한(400)을 넘기지 않는다 (WD-317)', async ({ authenticatedPage: page }) => {
+    const capture = await mockApi(page, 'GET', '/api/platform/accounts', createAccountPage([KIM]), { capture: true });
+    await page.goto('/accounts');
+
+    const search = page.getByRole('textbox', { name: '계정 검색' });
+    await search.fill('a'.repeat(101));
+    // 입력란이 서버 상한(100자)에서 잘라 101자째는 들어가지 않는다.
+    await expect(search).toHaveValue('a'.repeat(100));
+    await expect.poll(() => capture.requests.at(-1)?.searchParams.get('q')).toBe('a'.repeat(100));
+    await expect(page.getByText('데이터를 불러오는데 실패했습니다.')).toHaveCount(0);
+  });
+
   test('아이디와 같은 이메일은 반복하지 않고, 다를 때만 보조 줄로 보인다 (WD-15)', async ({ authenticatedPage: page }) => {
     const DIFF = createAccount({ id: 12, name: '박연락', username: 'park@example.com', email: 'park.contact@example.org', active: true });
     // 대소문자만 다른 주소는 같은 메일함 — 반복으로 본다.
