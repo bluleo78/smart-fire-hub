@@ -40,7 +40,10 @@ public class DatasetTagService {
     if (alreadyExists) {
       throw new IllegalStateException("이미 추가된 태그입니다: " + tagName);
     }
-    tagRepository.insert(datasetId, tagName, userId);
+    // 위 검사와 이 삽입 사이에 다른 요청이 대소문자만 다른 태그를 넣었으면 DB 유일 인덱스(V155)가 막아 0 이 온다 — 같은 409 로 알린다(WD-389)
+    if (tagRepository.insert(datasetId, tagName, userId) == 0) {
+      throw new IllegalStateException("이미 추가된 태그입니다: " + tagName);
+    }
 
     // 태그 추가 반영
     reindexSearch(datasetId);
