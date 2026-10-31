@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.service;
 import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
 import com.smartfirehub.dataset.storage.tibero.TiberoErrors;
+import com.smartfirehub.global.util.AdhocSqlErrorMessages;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.DbError;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.PgError;
 import java.sql.SQLTransientConnectionException;
@@ -341,7 +342,8 @@ public final class PipelineSqlErrorMessages {
         return "한 번에 처리할 행 안에서 같은 키가 두 번 이상 나오거나, 한 값만 나와야 할 하위 쿼리가 여러 행을 돌려줬습니다."
             + " 키별로 한 행만 나오도록 SQL 을 고쳐 주세요.";
       case "42703":
-        return "SQL 에 없는 컬럼 이름이 있습니다. 컬럼 이름 철자와 참조한 테이블에 그 컬럼이 있는지 확인하세요.";
+        // 데이터셋 SQL 편집기와 같은 문장(WD-421) — 문구가 두 벌로 갈리지 않게 공용 상수를 쓴다.
+        return AdhocSqlErrorMessages.UNDEFINED_COLUMN_GUIDE;
       case "42P01":
         return "SQL 에서 참조한 테이블이 없습니다. 테이블 이름과 스키마 한정자를 확인하세요.";
       case "42601":
@@ -359,7 +361,7 @@ public final class PipelineSqlErrorMessages {
       case "40P01", "40001":
         return "다른 작업과 충돌해 SQL 실행이 취소되었습니다. 잠시 후 다시 실행하세요.";
       case "22012":
-        return "0 으로 나누는 계산이 있습니다. NULLIF(분모, 0) 등으로 0 나눗셈을 피하세요.";
+        return AdhocSqlErrorMessages.DIVISION_BY_ZERO_GUIDE;
       default:
         break;
     }

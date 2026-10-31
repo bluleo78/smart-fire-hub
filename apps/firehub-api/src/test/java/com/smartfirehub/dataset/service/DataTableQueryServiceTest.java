@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.exception.SqlQueryException;
+import com.smartfirehub.global.util.AdhocSqlErrorMessages;
 import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
@@ -934,5 +935,67 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
     assertThat(r.error()).isEqualTo("Tibero 실행기에 연결하지 못했습니다.");
     assertThat(r.rows()).isEmpty();
     verifyNoInteractions(t.pg());
+  }
+
+  // =========================================================================
+  // DB 실행 오류 문구 (WD-421)
+  // =========================================================================
+
+  /**
+   * 없는 컬럼(42703): jOOQ 메아리 {@code SQL [...]} 와 내부에서 덧붙인 행 제한({@code LIMIT 1000})이 문구에 남지 않고, 분석
+   * 편집기와 같은 ERROR/SQLState/Position 포맷 위에 한국어 안내가 붙는다(WD-421).
+   */
+  @Test
+  void executeQuery_undefinedColumn_reportsUserSqlTermsWithKoreanGuide() {
+    String sql = "SELECT nope FROM " + testTableName;
+    SqlQueryResponse response = dataTableQueryService.executeQuery(sql, 1000);
+
+    String error = response.error();
+    assertThat(error).isNotNull();
+    assertThat(error).doesNotContain("SQL [").doesNotContain("LIMIT 1000");
+    assertThat(error.split("\n")[0]).isEqualTo(AdhocSqlErrorMessages.UNDEFINED_COLUMN_GUIDE);
+    assertThat(error)
+        .contains("ERROR: column \"nope\" does not exist")
+        .contains("SQLState: 42703")
+        // Position 은 사용자 SQL 기준 — "SELECT " 다음 8번째 글자
+        .contains("Position: 8");
+  }
+
+  /** 0 나눗셈(22012): 위치가 없는 오류도 같은 포맷이고 한국어 안내가 첫 줄이다(WD-421). */
+  @Test
+  void executeQuery_divisionByZero_reportsKoreanGuideAndSqlState() {
+    SqlQueryResponse response = dataTableQueryService.executeQuery("SELECT 1/0", 1000);
+
+    String error = response.error();
+    assertThat(error).doesNotContain("SQL [").doesNotContain("LIMIT 1000");
+    assertThat(error.split("\n")[0]).isEqualTo(AdhocSqlErrorMessages.DIVISION_BY_ZERO_GUIDE);
+    assertThat(error).contains("ERROR: division by zero").contains("SQLState: 22012");
+  }
+
+  /** 형 변환 실패(22P02): 한국어 안내가 붙는다(WD-421). */
+  @Test
+  void executeQuery_invalidCast_reportsKoreanGuide() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery("SELECT 'abc'::int FROM " + testTableName, 1000);
+
+    String error = response.error();
+    assertThat(error).doesNotContain("SQL [").doesNotContain("LIMIT 1000");
+    assertThat(error).startsWith("값을 지정한 타입으로 바꿀 수 없습니다.").contains("SQLState: 22P02");
+  }
+
+  /** 안내가 없는 오류 코드도 jOOQ 메아리 없이 ERROR/SQLState 포맷이다 — 여러 줄 SQL·대괄호 포함(WD-421). */
+  @Test
+  void executeQuery_multiLineSqlWithBrackets_noEchoAndNoGuide() {
+    String sql = "SELECT (ARRAY[1,2])[1] AS a,\n  nope2\nFROM " + testTableName;
+    SqlQueryResponse response = dataTableQueryService.executeQuery(sql, 1000);
+
+    String error = response.error();
+    assertThat(error).doesNotContain("SQL [").doesNotContain("LIMIT 1000");
+    assertThat(error).contains("SQLState: 42703");
+
+    // 안내 대상이 아닌 코드(22003 numeric out of range)는 안내 줄 없이 ERROR 로 시작한다
+    SqlQueryResponse overflow =
+        dataTableQueryService.executeQuery("SELECT 2147483647::int + 1", 1000);
+    assertThat(overflow.error()).startsWith("ERROR: ").contains("SQLState: 22003");
   }
 }

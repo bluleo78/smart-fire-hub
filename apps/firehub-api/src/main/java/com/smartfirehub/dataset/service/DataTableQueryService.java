@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.AdhocResultValues;
+import com.smartfirehub.global.util.AdhocSqlErrorMessages;
 import com.smartfirehub.global.util.AdhocSqlStatements;
 import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.global.util.ResultColumnNames;
@@ -110,12 +111,15 @@ public class DataTableQueryService {
     // Rolling back to a savepoint clears the error state.
     dsl.execute("SAVEPOINT user_query");
 
+    // 실제로 DB 에 보낸 SQL — 오류 문구에서 jOOQ 의 "SQL [실행 SQL]; " 메아리를 정확히 떼는 데 쓴다(WD-421).
+    String executedSql = cleanSql;
     try {
       SqlQueryResponse response;
       if ("SELECT".equals(queryType)) {
         // 최상위 행 제한이 없거나 LIMIT ALL 이면 maxRows 를 적용한다(#749 — FETCH FIRST 도 사용자 제한으로
         // 존중하고, 서브쿼리·CTE·문자열 속 LIMIT 에는 속지 않는다). 애드혹 분석 경로와 같은 공용 판정.
         String limitedSql = SqlLexicalMask.applyRowLimit(cleanSql, maxRows);
+        executedSql = limitedSql;
 
         // 정적 Statement 로 원문 그대로 실행한다(#753) — PreparedStatement 는 jsonb ? 연산자를 바인드
         // 자리로 오해한다. 실행 문자열 = 위에서 검증한 문자열 + 행 제한이다(AdhocSqlStatements 참고).
@@ -164,7 +168,9 @@ public class DataTableQueryService {
       // Rollback to savepoint to clear the aborted transaction state
       // 되돌리기마저 실패하면 원래 SQL 오류를 덮지 않도록 suppressed 로 붙여 원래 예외를 던진다(#753).
       AdhocSqlStatements.rollbackToSavepointOrRethrow(dsl, "user_query", e);
-      String errorMessage = e.getMessage();
+      // jOOQ 예외 메시지를 그대로 실으면 "SQL [<내부 행 제한까지 붙은 SQL>]; ERROR: …" 가 화면과 쿼리 이력에 드러난다(WD-421).
+      // 분석 편집기와 같은 ERROR/SQLState/Position 포맷에 흔한 오류는 한국어 안내 한 줄을 앞에 붙인다. 이력은 이 문구를 그대로 저장한다.
+      String errorMessage = AdhocSqlErrorMessages.formatForUser(e, executedSql);
       return new SqlQueryResponse(
           queryType, List.of(), List.of(), 0, executionTimeMs, errorMessage);
     } finally {

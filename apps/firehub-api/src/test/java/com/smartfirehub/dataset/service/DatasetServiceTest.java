@@ -10,6 +10,7 @@ import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.util.AdhocSqlErrorMessages;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
 import java.util.List;
@@ -575,6 +576,30 @@ class DatasetServiceTest extends IntegrationTestBase {
    * 형태여야 한다 — 리뷰에서 지적된 대로, 세미콜론이 있는 멀티 스테이트먼트는 그 앞 단계에서 이미 {@code SqlQueryException}으로 걸러져 이 경로를
    * 검증하지 못한다.
    */
+  /**
+   * 쿼리 이력에도 응답과 같은 정리된 문구가 저장된다 — jOOQ 메아리·내부 행 제한(LIMIT 1000) 없이 한국어 안내와 SQLState 가 남는다(WD-421).
+   */
+  @Test
+  void executeQuery_undefinedColumn_savesCleanedErrorInHistory() {
+    DatasetDetailResponse dataset =
+        createTestDatasetWithData("Clean Error Test", "clean_error_test");
+    SqlQueryRequest request = new SqlQueryRequest("SELECT nope FROM data.clean_error_test", 1000);
+
+    SqlQueryResponse response = datasetDataService.executeQuery(dataset.id(), request, testUserId);
+
+    assertThat(response.error())
+        .doesNotContain("SQL [")
+        .doesNotContain("LIMIT 1000")
+        .contains("SQLState: 42703")
+        .startsWith(AdhocSqlErrorMessages.UNDEFINED_COLUMN_GUIDE);
+
+    PageResponse<QueryHistoryResponse> history =
+        datasetDataService.getQueryHistory(dataset.id(), 0, 10);
+    QueryHistoryResponse failed =
+        history.content().stream().filter(h -> !h.success()).findFirst().orElseThrow();
+    assertThat(failed.error()).isEqualTo(response.error());
+  }
+
   @Test
   void executeQuery_unsafeSqlRejected_doesNotSaveHistory() {
     DatasetDetailResponse dataset =
