@@ -55,7 +55,7 @@ import {
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { handleApiError } from '../../lib/api-error';
+import { extractApiError, handleApiError } from '../../lib/api-error';
 import type { ChartListItem, DashboardWidget } from '../../types/analytics';
 
 /** 격자 한 행의 높이(px)와 위젯 간격(px) — 쌓기 보기도 같은 값으로 높이를 맞춘다. */
@@ -307,6 +307,8 @@ export default function DashboardEditorPage() {
   const updateWidgetMutation = useUpdateWidget(dashboardId!);
 
   const [isEditing, setIsEditing] = useState(false);
+  // 「완료」 배치 저장 요청이 도는 중 — 두 번 눌러 같은 PUT 을 거듭 보내지 않게 버튼을 잠근다(WD-330)
+  const [savingLayout, setSavingLayout] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [addWidgetOpen, setAddWidgetOpen] = useState(false);
 
@@ -497,6 +499,9 @@ export default function DashboardEditorPage() {
   /**
    * 편집 완료(완료 버튼): 레이아웃 변경사항을 서버에 일괄 반영한다.
    * 삭제는 확인 시 즉시 서버에 반영되므로 여기서는 레이아웃 PATCH만 처리한다.
+   * 저장 요청을 모두 기다려, 하나라도 실패하면 사유를 알리고 편집 모드를 유지한다(WD-330) —
+   * 예전에는 결과를 기다리지 않고 편집을 닫아, 403·400·500 이 나도 저장된 것처럼 보이다 새로고침하면 원래대로 돌아갔다.
+   * 바뀐 위젯만 보낸다 — 그대로인 위젯까지 보내면 실패할 요청만 늘어난다.
    */
   const handleSaveEdit = useCallback(async () => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -507,23 +512,44 @@ export default function DashboardEditorPage() {
     }
 
     const remainingIds = new Set(editingWidgets.map((w) => w.id));
+    const serverById = new Map(dashboard.widgets.map((w) => [w.id, w]));
 
-    // 레이아웃 변경 서버에 반영 (lg 기준)
+    // 레이아웃 변경 서버에 반영 (lg 기준) — 현재 편집 목록에 있고 서버 값과 다른 위젯만
     const lgItems = (localLayouts.lg as LayoutItem[] | undefined) ?? [];
-    lgItems.forEach((item) => {
+    const changed = lgItems.filter((item) => {
       const widgetId = parseInt(item.i, 10);
-      // 현재 편집 목록에 없는 위젯(이미 삭제됨)은 건너뜀
-      if (!remainingIds.has(widgetId)) return;
-      updateWidgetMutation.mutate({
-        widgetId,
-        data: {
-          positionX: item.x,
-          positionY: item.y,
-          width: item.w,
-          height: item.h,
-        },
-      });
+      const server = serverById.get(widgetId);
+      if (!remainingIds.has(widgetId) || !server) return false;
+      return (
+        item.x !== server.positionX ||
+        item.y !== server.positionY ||
+        item.w !== server.width ||
+        item.h !== server.height
+      );
     });
+
+    setSavingLayout(true);
+    const results = await Promise.allSettled(
+      changed.map((item) =>
+        updateWidgetMutation.mutateAsync({
+          widgetId: parseInt(item.i, 10),
+          data: { positionX: item.x, positionY: item.y, width: item.w, height: item.h },
+        })
+      )
+    );
+    setSavingLayout(false);
+
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed.length > 0) {
+      // 편집 모드와 화면의 배치는 그대로 둔다 — 다시 「완료」를 누르거나 「편집 취소」로 서버 값으로 되돌릴 수 있다.
+      // 성공한 위젯은 서버에 반영돼 다음 시도에서 빠진다.
+      const what =
+        failed.length === changed.length
+          ? '배치를 저장하지 못했습니다'
+          : `위젯 ${changed.length}개 중 ${failed.length}개의 배치를 저장하지 못했습니다`;
+      toast.error(`${what} — ${extractApiError(failed[0].reason, '잠시 후 다시 시도해 주세요.')}`);
+      return;
+    }
 
     setEditingWidgets(null);
     setIsEditing(false);
@@ -708,7 +734,12 @@ export default function DashboardEditorPage() {
                 차트 추가
               </Button>
               {/* 완료: 로컬 변경사항(삭제·레이아웃)을 서버에 일괄 반영 */}
-              <Button size="sm" onClick={() => void handleSaveEdit()} className="h-8">
+              <Button
+                size="sm"
+                onClick={() => void handleSaveEdit()}
+                className="h-8"
+                disabled={savingLayout}
+              >
                 <Check className="h-3.5 w-3.5" />
                 완료
               </Button>
