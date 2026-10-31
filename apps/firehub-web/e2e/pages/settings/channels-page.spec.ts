@@ -675,8 +675,11 @@ test.describe('채널 설정 페이지', () => {
     async function stubPopup(page: Parameters<typeof mockApi>[0]) {
       await page.addInitScript(() => {
         (window as unknown as { open: typeof window.open }).open = () => {
+          // 버튼은 opener 를 끊고 주소를 location 으로 보낸다(WD-405) — 그 두 속성을 갖춘다
           const fakePopup = {
             closed: false,
+            opener: null,
+            location: { href: '' },
             close(this: { closed: boolean }) {
               this.closed = true;
             },

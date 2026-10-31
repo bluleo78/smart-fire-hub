@@ -377,7 +377,7 @@ public class DatasetController {
   @RequirePermission("dataset:write")
   public ResponseEntity<DatasetDetailResponse> updateStatus(
       @PathVariable Long id,
-      @RequestBody UpdateStatusRequest request,
+      @Valid @RequestBody UpdateStatusRequest request,
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     DatasetDetailResponse response = datasetService.updateStatus(id, request, userId);

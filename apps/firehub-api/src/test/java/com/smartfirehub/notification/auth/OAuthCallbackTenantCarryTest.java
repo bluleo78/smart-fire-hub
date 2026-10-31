@@ -107,7 +107,7 @@ class OAuthCallbackTenantCarryTest extends IntegrationTestBase {
 
     // permitAll 콜백의 실제 조건: 컨텍스트 없음.
     TenantContext.clear();
-    var response = slackController.callback("auth-code", state);
+    var response = slackController.callback("auth-code", state, null);
 
     assertThat(response.getStatusCode().value()).isEqualTo(200);
     assertThat(seenTenant.get()).as("콜백은 state 가 실어 온 테넌트로 스코프를 열어야 한다").isEqualTo(tenantId);
@@ -154,7 +154,7 @@ class OAuthCallbackTenantCarryTest extends IntegrationTestBase {
         .completeAuthorization(anyLong(), anyString());
 
     TenantContext.clear();
-    var response = kakaoController.callback("auth-code", state);
+    var response = kakaoController.callback("auth-code", state, null);
 
     assertThat(response.getStatusCode().value()).isEqualTo(200);
     assertThat(seenTenant.get()).isEqualTo(tenantId);
@@ -179,7 +179,7 @@ class OAuthCallbackTenantCarryTest extends IntegrationTestBase {
   void slackCallback_unknownState_failsClosedWithoutWriting() {
     TenantContext.clear();
 
-    var response = slackController.callback("auth-code", "존재하지-않는-state");
+    var response = slackController.callback("auth-code", "존재하지-않는-state", null);
 
     assertThat(response.getStatusCode().value()).isEqualTo(400);
     verify(slackOAuthService, never()).completeAuthorization(anyString(), anyLong());
@@ -191,10 +191,121 @@ class OAuthCallbackTenantCarryTest extends IntegrationTestBase {
     String kakaoState = issueStateAs(ChannelType.KAKAO);
 
     TenantContext.clear();
-    var response = slackController.callback("auth-code", kakaoState);
+    var response = slackController.callback("auth-code", kakaoState, null);
 
     assertThat(response.getStatusCode().value()).isEqualTo(400);
     verify(slackOAuthService, never()).completeAuthorization(anyString(), anyLong());
+  }
+
+  /**
+   * 동의 화면에서 「취소」하면 제공자는 code 없이 error=access_denied 와 state 만 붙여 돌려보낸다(WD-405). 500 JSON 대신 안내
+   * HTML 로 원래 화면에 cancelled 를 알리고 창을 닫으며, state 는 소비돼 다시 쓸 수 없고 아무것도 쓰지 않는다.
+   */
+  @Test
+  void slackCallback_userCancelled_rendersCancelPageAndConsumesState() {
+    String state = issueStateAs(ChannelType.SLACK);
+
+    TenantContext.clear();
+    var response = slackController.callback(null, state, "access_denied");
+
+    assertThat(response.getStatusCode().value()).isEqualTo(200);
+    assertThat(response.getHeaders().getContentType().toString()).startsWith("text/html");
+    assertThat(response.getBody())
+        .contains("슬랙 연결을 취소했습니다.")
+        .contains("new BroadcastChannel('firehub-oauth')")
+        .contains("channel:'SLACK',result:'cancelled'")
+        .contains("window.close()");
+    assertThat(stateService.consume(state)).as("취소에 쓰인 state 는 다시 쓸 수 없다").isEmpty();
+    verify(slackOAuthService, never()).completeAuthorization(anyString(), anyLong());
+  }
+
+  @Test
+  void kakaoCallback_userCancelled_rendersCancelPage() {
+    String state = issueStateAs(ChannelType.KAKAO);
+
+    TenantContext.clear();
+    var response = kakaoController.callback(null, state, "access_denied");
+
+    assertThat(response.getStatusCode().value()).isEqualTo(200);
+    assertThat(response.getBody())
+        .contains("카카오 연결을 취소했습니다.")
+        .contains("channel:'KAKAO',result:'cancelled'");
+    verify(kakaoOAuthService, never()).completeAuthorization(anyLong(), anyString());
+  }
+
+  /** 취소가 아닌 제공자 오류는 failed 로 알리고, 제공자가 붙인 문자열은 화면에 이스케이프해 넣는다. */
+  @Test
+  void slackCallback_providerError_escapesReasonAndReportsFailed() {
+    String state = issueStateAs(ChannelType.SLACK);
+
+    TenantContext.clear();
+    var response = slackController.callback(null, state, "<script>alert(1)</script>");
+
+    assertThat(response.getStatusCode().value()).isEqualTo(200);
+    assertThat(response.getBody())
+        .contains("result:'failed'")
+        .contains("&lt;script&gt;alert(1)&lt;/script&gt;")
+        .doesNotContain("<script>alert(1)");
+  }
+
+  /**
+   * 콜백은 공개 경로라 아무 페이지나 {@code ?error=access_denied} 로 열 수 있다. 우리가 발급한 이 채널의 state 가 아니면 원래 화면에
+   * 결과를 알리지 않는다 — 다른 사이트가 진행 중인 연결을 「취소됨」으로 꾸며 감시를 끊지 못하게.
+   */
+  @Test
+  void slackCallback_errorWithoutOwnState_doesNotBroadcast() {
+    String kakaoState = issueStateAs(ChannelType.KAKAO);
+
+    TenantContext.clear();
+    var noState = slackController.callback(null, null, "access_denied");
+    var unknown = slackController.callback(null, "존재하지-않는-state", "access_denied");
+    var otherChannel = slackController.callback(null, kakaoState, "access_denied");
+
+    for (var response : java.util.List.of(noState, unknown, otherChannel)) {
+      assertThat(response.getStatusCode().value()).isEqualTo(200);
+      assertThat(response.getBody())
+          .contains("슬랙 연결을 취소했습니다.")
+          .contains("window.close()")
+          .doesNotContain("BroadcastChannel");
+    }
+  }
+
+  /** state 가 유효하지 않으면 글자 대신 다시 시도하라는 안내 페이지(400)를 보이고, 알리지도 닫지도 않는다. */
+  @Test
+  void slackCallback_unknownState_rendersRetryPage() {
+    TenantContext.clear();
+    var response = slackController.callback("auth-code", "존재하지-않는-state", null);
+
+    assertThat(response.getStatusCode().value()).isEqualTo(400);
+    assertThat(response.getHeaders().getContentType().toString()).startsWith("text/html");
+    assertThat(response.getBody())
+        .contains("다시 시도해 주세요")
+        .doesNotContain("BroadcastChannel")
+        .doesNotContain("window.close()");
+  }
+
+  /** error 도 code 도 없으면 400 — 예전처럼 필수 파라미터 누락으로 500 이 나지 않는다. */
+  @Test
+  void slackCallback_missingCodeWithoutError_returns400() {
+    String state = issueStateAs(ChannelType.SLACK);
+
+    TenantContext.clear();
+    var response = slackController.callback(null, state, null);
+
+    assertThat(response.getStatusCode().value()).isEqualTo(400);
+    verify(slackOAuthService, never()).completeAuthorization(anyString(), anyLong());
+  }
+
+  /** 성공 페이지도 원래 화면에 connected 를 알린다 — 화면이 팝업 닫힘을 기다리지 않고 바로 갱신·안내한다. */
+  @Test
+  void kakaoCallback_success_reportsConnected() {
+    String state = issueStateAs(ChannelType.KAKAO);
+
+    TenantContext.clear();
+    var response = kakaoController.callback("auth-code", state, null);
+
+    assertThat(response.getStatusCode().value()).isEqualTo(200);
+    assertThat(response.getBody()).contains("channel:'KAKAO',result:'connected'");
   }
 
   /**

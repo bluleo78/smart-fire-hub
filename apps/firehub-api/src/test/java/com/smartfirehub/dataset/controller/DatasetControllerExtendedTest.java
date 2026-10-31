@@ -3,6 +3,8 @@ package com.smartfirehub.dataset.controller;
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -486,6 +488,37 @@ class DatasetControllerExtendedTest {
                 .header("Authorization", "Bearer test-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isOk());
+  }
+
+  // WD-381: 상태 노트는 500자까지 — 넘으면 서비스를 부르지 않고 400 + 한국어 사유(errors.note)로 거절한다
+  @Test
+  void updateStatus_noteOver500_returns400() throws Exception {
+    UpdateStatusRequest over = new UpdateStatusRequest("DEPRECATED", "가".repeat(501));
+
+    mockMvc
+        .perform(
+            put("/api/v1/datasets/1/status")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.note").value("상태 노트는 500자 이하여야 합니다."));
+    verify(datasetService, never()).updateStatus(anyLong(), any(), anyLong());
+  }
+
+  @Test
+  void updateStatus_noteExactly500_returns200() throws Exception {
+    // 딱 500자는 허용한다
+    when(datasetService.updateStatus(anyLong(), any(), anyLong())).thenReturn(sampleDetail());
+    mockMvc
+        .perform(
+            put("/api/v1/datasets/1/status")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new UpdateStatusRequest("DEPRECATED", "가".repeat(500)))))
         .andExpect(status().isOk());
   }
 

@@ -62,6 +62,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
@@ -854,6 +855,20 @@ public class GlobalExceptionHandler {
     String typeName = ex.getRequiredType() != null ? ex.getRequiredType().getSimpleName() : "올바른";
     Map<String, String> fieldErrors =
         Map.of(ex.getName(), String.format("'%s'는 %s 타입이어야 합니다.", ex.getValue(), typeName));
+    ErrorResponse response =
+        buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
+    return ResponseEntity.badRequest().body(response);
+  }
+
+  /**
+   * 필수 쿼리 파라미터가 빠진 요청은 클라이언트 입력 오류라 500 대신 400 으로 답한다(WD-405). 예전에는 전용 처리가 없어 일반
+   * 예외로 떨어져 500 「예기치 않은 오류」가 났다(예: GET /api/v1/settings 에서 prefix 를 빼면 500).
+   */
+  @ExceptionHandler(MissingServletRequestParameterException.class)
+  public ResponseEntity<ErrorResponse> handleMissingRequestParameter(
+      MissingServletRequestParameterException ex, HttpServletRequest request) {
+    Map<String, String> fieldErrors =
+        Map.of(ex.getParameterName(), String.format("'%s' 값이 필요합니다.", ex.getParameterName()));
     ErrorResponse response =
         buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
     return ResponseEntity.badRequest().body(response);
