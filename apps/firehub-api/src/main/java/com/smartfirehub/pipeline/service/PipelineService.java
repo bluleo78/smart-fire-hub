@@ -971,7 +971,7 @@ public class PipelineService {
 
   /**
    * 파이프라인을 지우면 함께 지워질 자동 생성 임시 데이터셋 개수(WD-170 — 삭제 확인 창 안내용). 실제 삭제({@link #deletePipeline})와 같은
-   * 판정({@link #selectDeletableAutoTemps})을 쓴다.
+   * 판정({@link #selectDeletableAutoTemps})을 쓴다. 함께 꺼질 하류 연쇄 트리거 목록도 담는다(WD-419).
    *
    * @throws PipelineNotFoundException 파이프라인이 없을 때
    */
@@ -985,8 +985,12 @@ public class PipelineService {
     // 볼 수 없는 것이 있으면 삭제가 403 이다(WD-310) — 확인 창이 미리 막도록 알리고, 개수에는 볼 수 있는 것만 센다(숨긴 개수를 드러내지 않게).
     int hidden = pipelineSecurityGate.hiddenCount(userId, deletable);
     // 진행 중 실행이 있으면 삭제가 409 다(WD-437) — 확인 창이 미리 막고 안내하도록 알린다. 실제 판정은 삭제 시점에 잠금과 함께 다시 한다.
+    // 삭제하면 꺼질 하류 연쇄 트리거(WD-419) — 삭제가 조용히 끄던 것을 확인 창에서 미리 알린다. 꺼지는 대상만 보이도록 켜진 것만 담는다.
     return new PipelineDeleteImpactResponse(
-        deletable.size() - hidden, hidden > 0, executionRepository.findActiveExecutionState(id));
+        deletable.size() - hidden,
+        hidden > 0,
+        executionRepository.findActiveExecutionState(id),
+        triggerRepository.findEnabledDownstreamChainTriggers(id));
   }
 
   /**

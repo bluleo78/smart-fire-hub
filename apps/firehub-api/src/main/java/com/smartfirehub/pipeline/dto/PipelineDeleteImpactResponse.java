@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.dto;
 
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveExecutionState;
+import java.util.List;
 
 /**
  * 파이프라인 삭제 영향(WD-170) — 삭제 확인 창이 「자동 생성된 임시 데이터셋 N개도 함께 삭제됩니다」를 보여 주는 데 쓴다.
@@ -11,6 +12,29 @@ import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveEx
  *     삭제를 막고 안내한다.
  * @param activeExecution 진행 중(PENDING/RUNNING) 실행 상태(WD-437) — NONE 이 아니면 삭제가 409 라 확인 창이 삭제를 막고 안내한다.
  *     CANCELLING 은 진행 중 실행이 모두 이미 취소를 요청한 상태다(「취소 진행 중」 안내).
+ * @param downstreamChainTriggers 이 파이프라인을 선행으로 둔, 다른 파이프라인의 켜진 연쇄(PIPELINE_CHAIN) 트리거(WD-419). 삭제하면
+ *     이 트리거들이 꺼지므로(WD-218) 확인 창이 「연쇄 트리거 N개가 꺼집니다」와 목록을 보여 준다. 없으면 빈 목록.
  */
 public record PipelineDeleteImpactResponse(
-    int tempDatasetCount, boolean hasHiddenTempDatasets, ActiveExecutionState activeExecution) {}
+    int tempDatasetCount,
+    boolean hasHiddenTempDatasets,
+    ActiveExecutionState activeExecution,
+    List<DownstreamChainTrigger> downstreamChainTriggers) {
+
+  /** 하류 연쇄 트리거가 없는 응답 — 기존 호출부(연쇄 트리거를 보지 않는 곳)가 그대로 쓰도록 남긴다. */
+  public PipelineDeleteImpactResponse(
+      int tempDatasetCount, boolean hasHiddenTempDatasets, ActiveExecutionState activeExecution) {
+    this(tempDatasetCount, hasHiddenTempDatasets, activeExecution, List.of());
+  }
+
+  /**
+   * 삭제하면 꺼질 하류 연쇄 트리거 한 건(WD-419) — 확인 창에 「파이프라인 「B」 — 트리거 「X」」로 보인다.
+   *
+   * @param triggerId 트리거 id
+   * @param triggerName 트리거 이름
+   * @param pipelineId 트리거가 붙은(하류) 파이프라인 id
+   * @param pipelineName 하류 파이프라인 이름
+   */
+  public record DownstreamChainTrigger(
+      long triggerId, String triggerName, long pipelineId, String pipelineName) {}
+}

@@ -211,11 +211,15 @@ class PipelineControllerTest {
   @Test
   void getDeleteImpact_withPermission_returnsTempDatasetCount() throws Exception {
     when(pipelineService.getDeleteImpact(eq(1L), anyLong()))
-        .thenReturn(new PipelineDeleteImpactResponse(
+        .thenReturn(
+            new PipelineDeleteImpactResponse(
                 2,
                 true,
-                com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveExecutionState
-                    .ACTIVE));
+                com.smartfirehub.pipeline.repository.PipelineExecutionRepository
+                    .ActiveExecutionState.ACTIVE,
+                java.util.List.of(
+                    new PipelineDeleteImpactResponse.DownstreamChainTrigger(
+                        7L, "A 끝나면 실행", 3L, "하류 파이프라인"))));
 
     mockMvc
         .perform(
@@ -224,7 +228,12 @@ class PipelineControllerTest {
         .andExpect(jsonPath("$.tempDatasetCount").value(2))
         .andExpect(jsonPath("$.hasHiddenTempDatasets").value(true))
         // 진행 중 실행 안내(WD-437) — 확인 창이 삭제를 막는 데 쓴다.
-        .andExpect(jsonPath("$.activeExecution").value("ACTIVE"));
+        .andExpect(jsonPath("$.activeExecution").value("ACTIVE"))
+        // 삭제하면 꺼질 하류 연쇄 트리거(WD-419) — 확인 창이 목록으로 보여 준다.
+        .andExpect(jsonPath("$.downstreamChainTriggers[0].triggerId").value(7))
+        .andExpect(jsonPath("$.downstreamChainTriggers[0].triggerName").value("A 끝나면 실행"))
+        .andExpect(jsonPath("$.downstreamChainTriggers[0].pipelineId").value(3))
+        .andExpect(jsonPath("$.downstreamChainTriggers[0].pipelineName").value("하류 파이프라인"));
   }
 
   @Test

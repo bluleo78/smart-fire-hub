@@ -235,6 +235,19 @@ export interface PipelineDeleteImpact {
    * CANCELLING 은 진행 중 실행이 모두 이미 취소를 요청한 상태(「취소 진행 중」 안내).
    */
   activeExecution: 'NONE' | 'ACTIVE' | 'CANCELLING';
+  /**
+   * 이 파이프라인을 선행으로 둔, 다른 파이프라인의 켜진 연쇄 트리거(WD-419) — 삭제하면 서버가 꺼 버린다(WD-218).
+   * 이 필드를 보내지 않는 이전 서버도 있으므로 선택 필드로 두고, 없으면 빈 목록으로 본다.
+   */
+  downstreamChainTriggers?: PipelineDownstreamChainTrigger[];
+}
+
+/** 삭제하면 꺼질 하류 연쇄 트리거 한 건(WD-419) — 트리거와 그 트리거가 붙은(하류) 파이프라인 */
+export interface PipelineDownstreamChainTrigger {
+  triggerId: number;
+  triggerName: string;
+  pipelineId: number;
+  pipelineName: string;
 }
 
 export interface CreateTriggerRequest {

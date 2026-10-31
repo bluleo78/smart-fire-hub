@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.*;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
+import com.smartfirehub.pipeline.dto.PipelineDeleteImpactResponse;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.dto.UpdateTriggerRequest;
 import java.time.LocalDateTime;
@@ -315,6 +316,34 @@ public class TriggerRepository {
               updatedState.remove("nextFireTime");
               updateTriggerState(id, updatedState);
             });
+  }
+
+  /**
+   * 이 파이프라인을 선행으로 둔, 다른 파이프라인의 켜진 연쇄 트리거를 하류 파이프라인 이름과 함께 읽는다(WD-419 — 삭제 확인 창 안내용).
+   *
+   * <p>상류 매칭은 삭제 시 끄는 {@link #disableByUpstreamPipelineId} 와 같은 규칙(config 의 upstreamPipelineId)을
+   * 쓴다. 이미 꺼진 트리거는 삭제로 「꺼지는」 것이 아니므로 세지 않고, 지워질 파이프라인 자신의 트리거는 함께 지워지므로 뺀다. 테넌트 범위는 RLS 가 맡는다.
+   */
+  public List<PipelineDeleteImpactResponse.DownstreamChainTrigger>
+      findEnabledDownstreamChainTriggers(Long upstreamPipelineId) {
+    Table<?> pipeline = table(name("pipeline"));
+    Field<Long> pId = field(name("pipeline", "id"), Long.class);
+    Field<String> pName = field(name("pipeline", "name"), String.class);
+    return dsl.select(T_ID, T_NAME, T_PIPELINE_ID, pName)
+        .from(PIPELINE_TRIGGER)
+        .join(pipeline)
+        .on(pId.eq(T_PIPELINE_ID))
+        .where(T_TRIGGER_TYPE.eq("PIPELINE_CHAIN"))
+        .and(T_IS_ENABLED.eq(true))
+        .and(T_PIPELINE_ID.ne(upstreamPipelineId))
+        .and(
+            field("({0}->>'upstreamPipelineId')::bigint", Long.class, T_CONFIG)
+                .eq(upstreamPipelineId))
+        .orderBy(pName, T_ID)
+        .fetch(
+            r ->
+                new PipelineDeleteImpactResponse.DownstreamChainTrigger(
+                    r.value1(), r.value2(), r.value3(), r.value4()));
   }
 
   public int disableByUpstreamPipelineId(Long upstreamPipelineId) {

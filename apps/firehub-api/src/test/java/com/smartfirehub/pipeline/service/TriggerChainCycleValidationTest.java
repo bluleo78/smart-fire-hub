@@ -370,6 +370,45 @@ class TriggerChainCycleValidationTest extends IntegrationTestBase {
     assertThat(listed.upstreamMissing()).isTrue();
   }
 
+  // ------------------------------------------------------------------ 삭제 영향의 하류 연쇄 트리거(WD-419)
+  //
+  // 결함: 삭제 확인 창은 임시 데이터셋 개수만 알려 주고, 이 파이프라인을 선행으로 둔 다른 파이프라인의 연쇄 트리거가 삭제로 꺼진다는 사실(WD-218)은
+  // 알리지 않았다. 삭제 영향 조회가 꺼질(=지금 켜진) 하류 연쇄 트리거를 하류 파이프라인 이름과 함께 내려 주는지 본다.
+
+  @Test
+  void deleteImpact_noDownstreamChain_returnsEmptyList() {
+    Long a = pipeline("A");
+
+    assertThat(pipelineService.getDeleteImpact(a, userId).downstreamChainTriggers()).isEmpty();
+  }
+
+  @Test
+  void deleteImpact_listsEnabledChainTriggerOnOtherPipeline() {
+    Long a = pipeline("A");
+    Long b = pipeline("B");
+    Long ba = chain(b, a); // A → B
+
+    assertThat(pipelineService.getDeleteImpact(a, userId).downstreamChainTriggers())
+        .containsExactly(
+            new PipelineDeleteImpactResponse.DownstreamChainTrigger(
+                ba, "chain", b, pipelineName("B")));
+    // 하류(B) 쪽에서 보면 A 는 선행일 뿐 B 를 선행으로 둔 트리거는 없다.
+    assertThat(pipelineService.getDeleteImpact(b, userId).downstreamChainTriggers()).isEmpty();
+  }
+
+  @Test
+  void deleteImpact_excludesDisabledTriggerAndOtherUpstream() {
+    Long a = pipeline("A");
+    Long b = pipeline("B");
+    Long c = pipeline("C");
+    Long ba = chain(b, a); // A → B, 꺼 둔다
+    triggerService.toggleTrigger(ba, false);
+    chain(c, b); // B → C — 선행이 A 가 아니다
+
+    // 이미 꺼진 트리거는 삭제로 「꺼지는」 것이 아니고, 다른 선행을 둔 트리거는 영향이 없다.
+    assertThat(pipelineService.getDeleteImpact(a, userId).downstreamChainTriggers()).isEmpty();
+  }
+
   // ------------------------------------------------------------------ 동시 저장(WD-239)
   //
   // 결함: F 에 「G 끝나면 실행」, G 에 「F 끝나면 실행」을 동시에 만들면 READ COMMITTED 두 트랜잭션이 서로의 아직 커밋되지 않은 간선을 못 봐 둘 다

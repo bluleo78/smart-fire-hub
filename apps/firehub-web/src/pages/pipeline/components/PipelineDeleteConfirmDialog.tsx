@@ -4,6 +4,7 @@ import { type ReactNode, useEffect, useState } from 'react';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { InlineBanner } from '@/components/ui/inline-banner';
 import { usePipelineDeleteImpact } from '@/hooks/queries/usePipelines';
+import type { PipelineDownstreamChainTrigger } from '@/types/pipeline';
 
 /**
  * 삭제 영향 조회 상태 — 안내 분기와 삭제 버튼 활성 여부를 이 값 하나로 정한다(WD-170).
@@ -28,6 +29,36 @@ function ImpactBanner({ title, children }: { title: string; children?: ReactNode
       data-testid="pipeline-delete-impact"
     >
       {children}
+    </InlineBanner>
+  );
+}
+
+/** 꺼질 연쇄 트리거를 몇 개까지 이름으로 보일지 — 넘으면 「외 n개」로 줄여 창이 길어지지 않게 한다. */
+const MAX_CHAIN_TRIGGER_ITEMS = 5;
+
+/**
+ * 하류 연쇄 트리거 안내(WD-419) — 이 파이프라인을 선행으로 둔 다른 파이프라인의 연쇄 트리거는 삭제 때 서버가 꺼 버린다(WD-218).
+ * 예전에는 조용히 꺼져 사용자가 몰랐다. 지워지는 것이 아니라 꺼지는 것이라 빨간 상자가 아닌 경고(노란) 배너로 보인다.
+ */
+function ChainTriggerBanner({ triggers }: { triggers: PipelineDownstreamChainTrigger[] }) {
+  const shown = triggers.slice(0, MAX_CHAIN_TRIGGER_ITEMS);
+  const rest = triggers.length - shown.length;
+  return (
+    <InlineBanner
+      variant="warning"
+      icon={<AlertTriangle />}
+      title={`이 파이프라인을 선행으로 둔 연쇄 트리거 ${triggers.length}개가 꺼집니다`}
+      className="break-keep"
+      data-testid="pipeline-delete-chain-impact"
+    >
+      <ul className="list-disc space-y-0.5 pl-4">
+        {shown.map((t) => (
+          <li key={t.triggerId}>
+            파이프라인 「{t.pipelineName}」 — 트리거 「{t.triggerName}」
+          </li>
+        ))}
+        {rest > 0 && <li>외 {rest}개</li>}
+      </ul>
     </InlineBanner>
   );
 }
@@ -62,7 +93,7 @@ function ImpactDetails({ pipelineId, onStatus }: { pipelineId: number; onStatus:
     case 'error':
       return (
         <ImpactBanner title="함께 삭제되는 항목을 불러오지 못했습니다">
-          이 파이프라인이 자동 생성한 임시 데이터셋이 있다면 함께 삭제됩니다.
+          이 파이프라인이 자동 생성한 임시 데이터셋이 있다면 함께 삭제되고, 이 파이프라인을 선행으로 둔 연쇄 트리거가 있다면 꺼집니다.
         </ImpactBanner>
       );
     case 'running':
@@ -83,10 +114,20 @@ function ImpactDetails({ pipelineId, onStatus }: { pipelineId: number; onStatus:
           이 파이프라인이 자동 생성한 임시 데이터셋 중 내 열람 등급으로 볼 수 없는 것이 있습니다. 관리자에게 삭제를 요청하세요.
         </ImpactBanner>
       );
-    case 'ready':
+    case 'ready': {
       // 0개면 문구를 보이지 않는다 — 지금과 같은 일반 확인 창(사람이 고른 A안).
-      if (!data || data.tempDatasetCount === 0) return null;
-      return <ImpactBanner title={`자동 생성된 임시 데이터셋 ${data.tempDatasetCount}개도 함께 삭제됩니다`} />;
+      // 하류 연쇄 트리거 목록을 보내지 않는 이전 서버는 빈 목록으로 본다(WD-419).
+      const chainTriggers = data?.downstreamChainTriggers ?? [];
+      if (!data || (data.tempDatasetCount === 0 && chainTriggers.length === 0)) return null;
+      return (
+        <div className="space-y-3">
+          {data.tempDatasetCount > 0 && (
+            <ImpactBanner title={`자동 생성된 임시 데이터셋 ${data.tempDatasetCount}개도 함께 삭제됩니다`} />
+          )}
+          {chainTriggers.length > 0 && <ChainTriggerBanner triggers={chainTriggers} />}
+        </div>
+      );
+    }
   }
 }
 

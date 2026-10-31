@@ -180,6 +180,72 @@ test.describe('파이프라인 목록 페이지', () => {
     }
   });
 
+  /**
+   * WD-419: 이 파이프라인을 선행으로 둔 다른 파이프라인의 연쇄 트리거는 삭제 때 서버가 꺼 버린다(WD-218).
+   * 확인 창이 꺼질 트리거 개수와 「파이프라인 — 트리거」 목록을 미리 보이고, 5개를 넘으면 「외 n개」로 줄인다.
+   */
+  test('삭제 확인 창에 이 파이프라인을 선행으로 둔 연쇄 트리거가 꺼진다고 목록과 함께 안내한다 (WD-419)', async ({ authenticatedPage: page }) => {
+    await setupPipelineMocks(page, 2);
+    const triggers = Array.from({ length: 6 }, (_, i) => ({
+      triggerId: 10 + i,
+      triggerName: `연쇄 트리거 ${i + 1}`,
+      pipelineId: 100 + i,
+      pipelineName: `하류 파이프라인 ${i + 1}`,
+    }));
+    // 임시 데이터셋 1개와 하류 연쇄 트리거 6개 — 두 안내가 함께 보여야 한다.
+    await mockPipelineDeleteImpact(page, 1, 200, false, 'NONE', triggers);
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/pipelines/1', null, { capture: true });
+
+    await page.goto('/pipelines');
+    const impactRequest = page.waitForRequest((req) => new URL(req.url()).pathname === '/api/v1/pipelines/1/delete-impact');
+    await page.getByRole('button', { name: '삭제' }).first().click();
+    await impactRequest;
+
+    const dialog = page.getByRole('alertdialog');
+    // 기존 임시 데이터셋 안내는 그대로 남는다.
+    await expect(dialog.getByTestId('pipeline-delete-impact')).toHaveText('자동 생성된 임시 데이터셋 1개도 함께 삭제됩니다');
+    const chain = dialog.getByTestId('pipeline-delete-chain-impact');
+    await expect(chain).toContainText('이 파이프라인을 선행으로 둔 연쇄 트리거 6개가 꺼집니다');
+    const items = chain.getByRole('listitem');
+    // 5개까지 이름으로 보이고 나머지는 「외 1개」로 줄인다.
+    await expect(items).toHaveCount(6);
+    await expect(items.nth(0)).toHaveText('파이프라인 「하류 파이프라인 1」 — 트리거 「연쇄 트리거 1」');
+    await expect(items.nth(4)).toHaveText('파이프라인 「하류 파이프라인 5」 — 트리거 「연쇄 트리거 5」');
+    await expect(items.nth(5)).toHaveText('외 1개');
+    await expect(chain).not.toContainText('하류 파이프라인 6');
+    if (process.env.WD419_SHOT_DIR) {
+      await page.screenshot({ path: `${process.env.WD419_SHOT_DIR}/delete-dialog-chain-triggers.png`, animations: 'disabled' });
+    }
+
+    // 꺼지는 것은 안내일 뿐 삭제를 막지 않는다.
+    const confirm = dialog.getByRole('button', { name: '삭제' });
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    const req = await deleteCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/pipelines/1');
+  });
+
+  test('하류 연쇄 트리거가 없거나 서버가 목록을 보내지 않으면 연쇄 트리거 안내를 보이지 않는다 (WD-419)', async ({ authenticatedPage: page }) => {
+    await setupPipelineMocks(page, 2);
+    // 빈 목록(기본값)과 필드 자체가 없는 이전 서버 응답을 차례로 본다.
+    for (const body of [
+      { tempDatasetCount: 0, hasHiddenTempDatasets: false, activeExecution: 'NONE', downstreamChainTriggers: [] },
+      { tempDatasetCount: 0, hasHiddenTempDatasets: false, activeExecution: 'NONE' },
+    ]) {
+      await mockApi(page, 'GET', '/api/v1/pipelines/1/delete-impact', body);
+      await page.goto('/pipelines');
+      const impactRequest = page.waitForRequest((req) => new URL(req.url()).pathname === '/api/v1/pipelines/1/delete-impact');
+      await page.getByRole('button', { name: '삭제' }).first().click();
+      await impactRequest;
+
+      const dialog = page.getByRole('alertdialog');
+      // 조회가 끝나 삭제 버튼이 켜진 뒤에 "없음"을 확인한다 — 조회 중에는 안내가 아직 없어서 공허하게 통과할 수 있다.
+      await expect(dialog.getByRole('button', { name: '삭제' })).toBeEnabled();
+      await expect(dialog.getByTestId('pipeline-delete-chain-impact')).toHaveCount(0);
+      await expect(dialog).not.toContainText('연쇄 트리거');
+    }
+  });
+
   test('볼 수 없는 임시 데이터셋이 함께 지워질 대상에 있으면 안내하고 삭제 버튼을 막는다 (WD-310)', async ({ authenticatedPage: page }) => {
     await setupPipelineMocks(page, 2);
     // 서버는 볼 수 있는 것만 세고(1개) 숨긴 것이 있다는 사실만 알린다 — 삭제하면 403 이다.
