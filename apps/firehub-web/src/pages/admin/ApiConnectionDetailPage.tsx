@@ -170,20 +170,26 @@ export default function ApiConnectionDetailPage() {
     const authConfig: Record<string, string> = { authType };
     if (authType === 'API_KEY') {
       authConfig.placement = placement;
+      // 키 칸을 비워 두면 「저장된 키 유지」(WD-480): 조회로 받은 가린 값(****XXXX)을 그대로 보내면
+      // 서버(resolveMaskedSecrets, WD-179)가 저장 원문을 유지한다. 이미 API_KEY 로 저장된 연결일 때만
+      // 가능하다 — 인증 방식을 바꾸는 경우엔 유지할 키가 없어 새 키를 반드시 받아야 한다.
+      const storedMaskedKey =
+        connection?.authType === 'API_KEY' ? connection.maskedAuthConfig.apiKey : undefined;
+      const keyValue = apiKey.trim() ? apiKey : storedMaskedKey;
       if (placement === 'header') {
-        if (!headerName.trim() || !apiKey.trim()) {
+        if (!headerName.trim() || !keyValue) {
           toast.error('헤더 이름과 키 값을 입력하세요.');
           return;
         }
         authConfig.headerName = headerName;
-        authConfig.apiKey = apiKey;
+        authConfig.apiKey = keyValue;
       } else {
-        if (!paramName.trim() || !apiKey.trim()) {
+        if (!paramName.trim() || !keyValue) {
           toast.error('파라미터 이름과 키 값을 입력하세요.');
           return;
         }
         authConfig.paramName = paramName;
-        authConfig.apiKey = apiKey;
+        authConfig.apiKey = keyValue;
       }
     } else {
       if (!token.trim()) {
@@ -620,6 +626,12 @@ export default function ApiConnectionDetailPage() {
                       value={apiKey}
                       onChange={(e) => setApiKey(e.target.value)}
                     />
+                    {/* 저장된 키가 있으면 비워 둬도 된다는 걸 알려 준다 — 이름·위치만 고칠 때 키 재입력 불필요(WD-480) */}
+                    {connection.authType === 'API_KEY' && mc.apiKey && (
+                      <p className="text-xs text-muted-foreground">
+                        비워 두면 저장된 키를 그대로 사용합니다.
+                      </p>
+                    )}
                   </div>
                 </>
               )}
