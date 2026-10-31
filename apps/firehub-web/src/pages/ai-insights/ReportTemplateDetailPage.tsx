@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ArrowLeft, Copy, Pencil, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -33,6 +33,7 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useCanWriteProactive,useCreateProactiveTemplate, useDeleteProactiveTemplate, useFetchLatestProactiveTemplate, useProactiveJobs, useProactiveTemplate, useProactiveTemplates, useUpdateProactiveTemplate } from '@/hooks/queries/useProactiveMessages';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError, isEditConflict, isForbiddenError } from '@/lib/api-error';
 import { parseUtcDate } from '@/lib/formatters';
@@ -48,6 +49,9 @@ import { TemplateJsonEditor } from './components/TemplateJsonEditor';
 import { useSectionTree } from './hooks/useSectionTree';
 
 const DEFAULT_STRUCTURE = JSON.stringify({ sections: [] }, null, 2);
+
+/** 편집 빌더가 두 열(섹션 구조 | 섹션 편집)로 놓이는 폭 — `lg:grid-cols-5` 와 같은 기준이다(WD-376). */
+const TWO_COLUMN_MQ = '(min-width: 1024px)';
 
 /**
  * 목록 요약(ReportTemplateSummary)을 폴백용 ReportTemplate 형태로 변환한다(#632).
@@ -140,6 +144,24 @@ export default function ReportTemplateDetailPage() {
   const [leaveAction, setLeaveAction] = useState<'back' | 'cancel-edit'>('back');
 
   const tree = useSectionTree([]);
+
+  // 좁은 화면(한 열)에서는 섹션 편집 칸이 섹션 구조 카드 아래에 쌓여, 섹션을 눌러도 편집 칸이 화면 밖에 열린다(WD-376).
+  // 그래서 한 열일 때만 섹션을 고르면 편집 칸으로 스크롤한다 — 두 열이면 편집 칸이 바로 옆에 보이므로 화면을 움직이지 않는다.
+  const isTwoColumn = useMediaQuery(TWO_COLUMN_MQ, true);
+  const sectionEditorRef = useRef<HTMLDivElement>(null);
+  const { setSelectedKey } = tree;
+  const handleSelectSection = useCallback(
+    (key: string) => {
+      setSelectedKey(key);
+      if (isTwoColumn) return;
+      // 선택한 섹션의 편집 칸이 그려진 뒤에 스크롤해야 바뀐 높이 기준으로 맞춰진다.
+      // scroll-mt-16 은 휴대폰 폭 머리의 고정 버튼(메뉴·AI 상태)에 편집 칸 윗부분이 가리지 않게 하는 여백이다.
+      requestAnimationFrame(() => {
+        sectionEditorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    },
+    [setSelectedKey, isTwoColumn],
+  );
 
   // 이전 값 추적용 state (React 19 권장: 렌더링 중 state 조정 시 ref 대신 state 사용)
   // 초깃값을 지금 양식이 아니라 undefined 로 둔다(WD-364) — 상세 캐시가 있는 채로 다시 들어오면 첫 렌더의 양식이 초깃값과 같아
@@ -641,13 +663,14 @@ export default function ReportTemplateDetailPage() {
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
           {/* Left column: meta + tree builder */}
           <div className="lg:col-span-2 space-y-4">
-            <Card className="h-[calc(100vh-320px)] min-h-[400px]">
+            {/* 고정 높이는 두 열일 때만 — 한 열에서는 섹션 수만큼만 차지해 빈 공간이 편집 칸을 밀어내지 않는다(WD-376) */}
+            <Card className="lg:h-[calc(100vh-320px)] lg:min-h-[400px]">
               <SectionTreeBuilder
                 sections={tree.sections}
                 selectedKey={tree.selectedKey}
                 collapsedKeys={tree.collapsedKeys}
                 flatItems={tree.flatItems}
-                onSelect={tree.setSelectedKey}
+                onSelect={handleSelectSection}
                 onMove={(...args) => {
                   markDirty();
                   tree.moveSection(...args);
@@ -666,7 +689,7 @@ export default function ReportTemplateDetailPage() {
           </div>
 
           {/* Right column: Builder/JSON tabs */}
-          <div className="lg:col-span-3">
+          <div ref={sectionEditorRef} className="lg:col-span-3 scroll-mt-16">
             <Tabs value={activeTab} onValueChange={handleTabChange}>
               <TabsList>
                 <TabsTrigger value="builder">빌더</TabsTrigger>
