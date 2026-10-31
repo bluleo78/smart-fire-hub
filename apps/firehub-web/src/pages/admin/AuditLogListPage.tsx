@@ -401,7 +401,8 @@ function AuditLogDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-2xl">
+      {/* WD-416: 이 창에는 설명 문구(DialogDescription)가 없다 — 기본 aria-describedby 가 없는 요소를 가리키지 않게 연결을 끊는다. */}
+      <DialogContent className="max-w-2xl" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>감사 로그 상세</DialogTitle>
         </DialogHeader>
@@ -499,7 +500,14 @@ function AuditLogDetailDialog({
           {log.metadata && Object.keys(log.metadata).length > 0 && (
             <div>
               <p className="text-muted-foreground mb-1 text-xs">Metadata</p>
-              <pre className="bg-muted rounded-md p-3 font-mono text-xs max-h-64 overflow-auto whitespace-pre">
+              {/* WD-416: 높이가 잘려 스크롤되는 상자는 키보드로도 닿아야 한다 — Tab 으로 포커스를 받고(tabIndex=0) 화살표·PageDown 으로 아래 내용을 본다.
+                  포커스를 받는 스크롤 영역은 이름이 있어야 하므로 role=region + aria-label 을 준다. */}
+              <pre
+                tabIndex={0}
+                role="region"
+                aria-label="변경 내용(Metadata)"
+                className="bg-muted rounded-md p-3 font-mono text-xs max-h-64 overflow-auto whitespace-pre focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
                 {JSON.stringify(log.metadata, null, 2)}
               </pre>
             </div>
