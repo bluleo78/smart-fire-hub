@@ -474,4 +474,79 @@ class SavedQueryControllerTest {
         .andExpect(status().isForbidden());
     verify(savedQueryService, never()).getDeleteImpact(anyLong(), anyLong());
   }
+
+  // ── WD-425: SQL 길이 상한 ──────────────────────────────────────────────────
+
+  /** 길이가 정확히 {@code length} 자인 SQL — "SELECT 1" 뒤를 공백으로 채운다. */
+  private static String sqlOfLength(int length) {
+    String head = "SELECT 1";
+    return head + " ".repeat(length - head.length());
+  }
+
+  /** WD-425: SQL 이 정확히 100,000자면 생성된다. */
+  @Test
+  void createQuery_sqlAtLimit_returnsCreated() throws Exception {
+    when(savedQueryService.create(any(CreateSavedQueryRequest.class), anyLong()))
+        .thenReturn(sampleQuery());
+    CreateSavedQueryRequest request =
+        new CreateSavedQueryRequest(
+            "쿼리", null, sqlOfLength(CreateSavedQueryRequest.SQL_MAX_LENGTH), null, null, false);
+
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/queries")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isCreated());
+  }
+
+  /** WD-425: SQL 이 100,000자를 넘으면 400 + 한국어 사유, 서비스는 호출되지 않는다. */
+  @Test
+  void createQuery_sqlOverLimit_returns400() throws Exception {
+    CreateSavedQueryRequest request =
+        new CreateSavedQueryRequest(
+            "쿼리", null, sqlOfLength(CreateSavedQueryRequest.SQL_MAX_LENGTH + 1), null, null, false);
+
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/queries")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.sqlText").value("SQL은 최대 100,000자까지 입력할 수 있습니다."));
+    verify(savedQueryService, never()).create(any(), anyLong());
+  }
+
+  /** WD-425: 수정도 같은 상한 — 넘으면 400, 정확히 100,000자면 200. */
+  @Test
+  void updateQuery_sqlOverLimit_returns400_atLimit_returnsOk() throws Exception {
+    when(savedQueryService.update(anyLong(), any(UpdateSavedQueryRequest.class), anyLong()))
+        .thenReturn(sampleQuery());
+
+    UpdateSavedQueryRequest over =
+        new UpdateSavedQueryRequest(
+            null, null, sqlOfLength(CreateSavedQueryRequest.SQL_MAX_LENGTH + 1), null, null, null);
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/queries/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.sqlText").value("SQL은 최대 100,000자까지 입력할 수 있습니다."));
+    verify(savedQueryService, never()).update(anyLong(), any(), anyLong());
+
+    UpdateSavedQueryRequest atLimit =
+        new UpdateSavedQueryRequest(
+            null, null, sqlOfLength(CreateSavedQueryRequest.SQL_MAX_LENGTH), null, null, null);
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/queries/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(atLimit)))
+        .andExpect(status().isOk());
+  }
 }

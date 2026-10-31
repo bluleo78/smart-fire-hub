@@ -5,6 +5,8 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -26,6 +28,7 @@ import com.smartfirehub.proactive.dto.UpdateReportTemplateRequest;
 import com.smartfirehub.proactive.service.ReportTemplateService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -196,5 +199,118 @@ class ReportTemplateControllerTest {
         .perform(
             delete("/api/v1/proactive/templates/5").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isNoContent());
+  }
+
+  // ── WD-425: 섹션 수·글자 항목 길이 상한 ──────────────────────────────────────
+
+  private static final String TOO_MANY_SECTIONS = "리포트 섹션은 하위 섹션을 포함해 최대 100개까지 만들 수 있습니다.";
+  private static final String TEXT_TOO_LONG =
+      "리포트 섹션의 지침·내용 등 글자 항목은 항목마다 최대 10,000자까지 입력할 수 있습니다.";
+
+  /** 텍스트 섹션 {@code count} 개. */
+  private static List<Map<String, Object>> sections(int count) {
+    List<Map<String, Object>> list = new ArrayList<>();
+    for (int i = 0; i < count; i++) {
+      list.add(Map.of("key", "s" + i, "label", "섹션 " + i, "type", "text"));
+    }
+    return list;
+  }
+
+  private void expectCreate400(CreateReportTemplateRequest req, String message) throws Exception {
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/templates")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.sections").value(message));
+  }
+
+  /** WD-425: 섹션 100개 · 지침 10,000자 정확히 상한이면 생성된다. */
+  @Test
+  void createTemplate_sectionsAtLimit_returnsCreated() throws Exception {
+    mockAuth("proactive:write");
+    when(reportTemplateService.createTemplate(any(), eq(1L))).thenReturn(sampleTemplate());
+    List<Map<String, Object>> list = sections(99);
+    list.add(
+        Map.of("key", "last", "label", "마지막", "type", "text", "instruction", "가".repeat(10_000)));
+
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/templates")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreateReportTemplateRequest("양식", null, list, null))))
+        .andExpect(status().isCreated());
+  }
+
+  /** WD-425: 섹션이 101개면 400 + 한국어 사유, 서비스는 호출되지 않는다. */
+  @Test
+  void createTemplate_tooManySections_returns400() throws Exception {
+    mockAuth("proactive:write");
+    expectCreate400(
+        new CreateReportTemplateRequest("양식", null, sections(101), null), TOO_MANY_SECTIONS);
+    verify(reportTemplateService, never()).createTemplate(any(), anyLong());
+  }
+
+  /** WD-425: group 하나 아래에 하위 섹션을 몰아 넣어도(최상위 1개 + 하위 100개) 전체 개수로 막는다. */
+  @Test
+  void createTemplate_tooManyNestedSections_returns400() throws Exception {
+    mockAuth("proactive:write");
+    Map<String, Object> group =
+        Map.of("key", "g", "label", "그룹", "type", "group", "children", sections(100));
+    expectCreate400(
+        new CreateReportTemplateRequest("양식", null, List.of(group), null), TOO_MANY_SECTIONS);
+    verify(reportTemplateService, never()).createTemplate(any(), anyLong());
+  }
+
+  /** WD-425: 섹션의 글자 항목(지침)이 10,000자를 넘으면 — 하위 섹션이어도 — 400. */
+  @Test
+  void createTemplate_sectionTextTooLong_returns400() throws Exception {
+    mockAuth("proactive:write");
+    Map<String, Object> child =
+        Map.of("key", "c", "label", "하위", "type", "text", "instruction", "가".repeat(10_001));
+    Map<String, Object> group =
+        Map.of("key", "g", "label", "그룹", "type", "group", "children", List.of(child));
+    expectCreate400(
+        new CreateReportTemplateRequest("양식", null, List.of(group), null), TEXT_TOO_LONG);
+    verify(reportTemplateService, never()).createTemplate(any(), anyLong());
+  }
+
+  /** WD-425: 정해진 글자 필드가 아닌 곳(배열)에 큰 값을 넣어도 섹션 전체 크기(512KB) 상한으로 400. */
+  @Test
+  void createTemplate_sectionsJsonTooLarge_returns400() throws Exception {
+    mockAuth("proactive:write");
+    // 원소 하나하나는 짧아(글자 항목 검사 통과) 섹션 1개지만, 합치면 512KB 를 넘는다
+    List<String> junk = new ArrayList<>();
+    for (int i = 0; i < 600; i++) {
+      junk.add("x".repeat(1_000));
+    }
+    Map<String, Object> section = Map.of("key", "a", "label", "b", "type", "text", "junk", junk);
+    expectCreate400(
+        new CreateReportTemplateRequest("양식", null, List.of(section), null),
+        "리포트 섹션 전체가 너무 큽니다(최대 512KB).");
+    verify(reportTemplateService, never()).createTemplate(any(), anyLong());
+  }
+
+  /** WD-425: 수정도 같은 상한 — 섹션 101개면 400. */
+  @Test
+  void updateTemplate_tooManySections_returns400() throws Exception {
+    mockAuth("proactive:write");
+    UpdateReportTemplateRequest req =
+        new UpdateReportTemplateRequest("양식", null, sections(101), null);
+
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/templates/5")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.sections").value(TOO_MANY_SECTIONS));
+    verify(reportTemplateService, never()).updateTemplate(anyLong(), any(), anyLong());
   }
 }

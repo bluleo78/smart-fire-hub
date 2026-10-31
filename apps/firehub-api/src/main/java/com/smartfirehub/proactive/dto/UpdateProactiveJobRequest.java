@@ -1,6 +1,8 @@
 package com.smartfirehub.proactive.dto;
 
+import com.smartfirehub.global.validation.MaxJsonSize;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.Map;
 
@@ -10,12 +12,21 @@ import java.util.Map;
  * <p>{@code triggerType}은 nullable이며 null이면 기존 값을 유지한다. 이 필드가 없어 트리거 유형 변경이 DB에 반영되지 않던 회귀를 수정했다
  * (#655).
  *
+ * <p>이름·프롬프트·config 의 상한은 생성 요청과 같다(WD-425 — 이유는 {@link CreateProactiveJobRequest}). 생략(null)은 "변경
+ * 없음"이라 그대로 통과한다.
+ *
  * @param expectedUpdatedAt 편집을 시작할 때 읽은 작업의 {@code updatedAt}(WD-364 낙관적 잠금). 지금 저장된 값과 다르면 409
  *     EDIT_CONFLICT 로 거부한다. null 이면 비교하지 않는다(AI 도구·목록의 켜기 토글 등 기존 호출부, "내 변경으로 덮어쓰기").
  */
 public record UpdateProactiveJobRequest(
-    String name,
-    String prompt,
+    @Size(
+            max = CreateProactiveJobRequest.NAME_MAX_LENGTH,
+            message = CreateProactiveJobRequest.NAME_TOO_LONG_MESSAGE)
+        String name,
+    @Size(
+            max = CreateProactiveJobRequest.PROMPT_MAX_LENGTH,
+            message = CreateProactiveJobRequest.PROMPT_TOO_LONG_MESSAGE)
+        String prompt,
     Long templateId,
     String cronExpression,
     String timezone,
@@ -24,7 +35,10 @@ public record UpdateProactiveJobRequest(
             regexp = "SCHEDULE|ANOMALY|BOTH",
             message = "triggerType은 SCHEDULE, ANOMALY, BOTH 중 하나여야 합니다")
         String triggerType,
-    Map<String, Object> config,
+    @MaxJsonSize(
+            maxBytes = CreateProactiveJobRequest.CONFIG_MAX_BYTES,
+            message = CreateProactiveJobRequest.CONFIG_TOO_LARGE_MESSAGE)
+        Map<String, Object> config,
     // templateId 가 null 인 이유가 "미제공(변경 없음)"인지 "기본 형식으로 되돌림"인지 Long 하나로는
     // 구분할 수 없어 별도 플래그로 분리한다(WD-136, 대시보드 clearAutoRefresh #568 과 같은 방식).
     // true 면 templateId 가 null 이어도 지정된 템플릿을 실제로 해제한다. AI 도구처럼 바꿀 필드만 보내는

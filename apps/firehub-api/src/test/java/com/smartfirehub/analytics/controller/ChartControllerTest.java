@@ -29,6 +29,7 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -225,5 +226,95 @@ class ChartControllerTest {
     // 레코드 필드가 바뀌면 컴파일 에러로 즉시 감지된다.
     return new ChartResponse(
         id, "name", null, 1L, "query", "bar", Map.of(), false, "user", 1L, null, null, 0L, false);
+  }
+
+  // ── WD-425: 차트 설정(config) 크기 상한 ───────────────────────────────────────
+
+  /**
+   * 직렬화 크기가 정확히 {@code bytes} 인 config 를 만든다 — 앱 ObjectMapper 로 재어 "pad" 값 길이를 맞춘다(ASCII 라 글자 수 =
+   * 바이트 수).
+   */
+  private Map<String, Object> configOfBytes(long bytes) throws Exception {
+    Map<String, Object> config = new LinkedHashMap<>();
+    config.put("xAxis", "region");
+    config.put("pad", "");
+    int base = objectMapper.writeValueAsBytes(config).length;
+    config.put("pad", "x".repeat((int) (bytes - base)));
+    return config;
+  }
+
+  /** WD-425: config 직렬화 크기가 정확히 64KB 면 생성된다. */
+  @Test
+  void createChart_configAtLimit_returnsCreated() throws Exception {
+    mockAuth("analytics:write");
+    when(chartService.create(any(CreateChartRequest.class), eq(1L)))
+        .thenReturn(sampleChartResponse(42L));
+    CreateChartRequest req =
+        new CreateChartRequest(
+            "chart1", null, 1L, "bar", configOfBytes(CreateChartRequest.CONFIG_MAX_BYTES), false);
+
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/charts")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isCreated());
+  }
+
+  /** WD-425: config 가 64KB 를 1바이트라도 넘으면 400 + 한국어 사유, 서비스는 호출되지 않는다. */
+  @Test
+  void createChart_configOverLimit_returns400() throws Exception {
+    mockAuth("analytics:write");
+    CreateChartRequest req =
+        new CreateChartRequest(
+            "chart1",
+            null,
+            1L,
+            "bar",
+            configOfBytes(CreateChartRequest.CONFIG_MAX_BYTES + 1),
+            false);
+
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/charts")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.config").value("차트 설정(config)이 너무 큽니다(최대 64KB)."));
+    verify(chartService, never()).create(any(), anyLong());
+  }
+
+  /** WD-425: 수정도 같은 상한 — 넘으면 400, 정확히 64KB 면 200. */
+  @Test
+  void updateChart_configOverLimit_returns400_atLimit_returnsOk() throws Exception {
+    mockAuth("analytics:write");
+    when(chartService.update(eq(5L), any(UpdateChartRequest.class), eq(1L)))
+        .thenReturn(sampleChartResponse(5L));
+
+    UpdateChartRequest over =
+        new UpdateChartRequest(
+            null, null, null, configOfBytes(CreateChartRequest.CONFIG_MAX_BYTES + 1), null);
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/charts/5")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.config").value("차트 설정(config)이 너무 큽니다(최대 64KB)."));
+    verify(chartService, never()).update(anyLong(), any(), anyLong());
+
+    UpdateChartRequest atLimit =
+        new UpdateChartRequest(
+            null, null, null, configOfBytes(CreateChartRequest.CONFIG_MAX_BYTES), null);
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/charts/5")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(atLimit)))
+        .andExpect(status().isOk());
   }
 }

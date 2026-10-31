@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -35,6 +36,7 @@ import com.smartfirehub.proactive.service.ProactiveJobService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -570,5 +572,165 @@ class ProactiveJobControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].email").value("alice@example.com"))
         .andExpect(jsonPath("$[1].email").value("bob@example.com"));
+  }
+
+  // ── WD-425: 이름·프롬프트·config 크기 상한 ────────────────────────────────────
+
+  /** 직렬화 크기가 정확히 {@code bytes} 인 작업 config — 빈 채널 목록 + "pad" 값으로 맞춘다(ASCII 라 글자 수 = 바이트 수). */
+  private Map<String, Object> jobConfigOfBytes(long bytes) throws Exception {
+    Map<String, Object> config = new LinkedHashMap<>();
+    config.put("channels", List.of());
+    config.put("pad", "");
+    int base = objectMapper.writeValueAsBytes(config).length;
+    config.put("pad", "x".repeat((int) (bytes - base)));
+    return config;
+  }
+
+  private CreateProactiveJobRequest createRequest(String prompt, Map<String, Object> config) {
+    return new CreateProactiveJobRequest(
+        "daily", prompt, null, "0 0 9 * * *", "Asia/Seoul", null, "SCHEDULE", config);
+  }
+
+  /** WD-425: 프롬프트 10,000자 · config 64KB 정확히 상한이면 생성된다. */
+  @Test
+  void createJob_promptAndConfigAtLimit_returnsCreated() throws Exception {
+    mockAuth("proactive:write");
+    when(proactiveJobService.createJob(any(), eq(1L))).thenReturn(sampleJob());
+    CreateProactiveJobRequest req =
+        createRequest(
+            "가".repeat(CreateProactiveJobRequest.PROMPT_MAX_LENGTH),
+            jobConfigOfBytes(CreateProactiveJobRequest.CONFIG_MAX_BYTES));
+
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/jobs")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isCreated());
+  }
+
+  /** WD-425: 프롬프트가 10,000자를 넘으면 400 + 한국어 사유. */
+  @Test
+  void createJob_promptOverLimit_returns400() throws Exception {
+    mockAuth("proactive:write");
+    CreateProactiveJobRequest req =
+        createRequest(
+            "가".repeat(CreateProactiveJobRequest.PROMPT_MAX_LENGTH + 1), jobConfigOfBytes(1024));
+
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/jobs")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.prompt").value("분석 프롬프트는 10,000자 이내여야 합니다"));
+    verify(proactiveJobService, never()).createJob(any(), anyLong());
+  }
+
+  /** WD-425: config 가 64KB 를 넘으면 400 + 한국어 사유. */
+  @Test
+  void createJob_configOverLimit_returns400() throws Exception {
+    mockAuth("proactive:write");
+    CreateProactiveJobRequest req =
+        createRequest("요약해줘", jobConfigOfBytes(CreateProactiveJobRequest.CONFIG_MAX_BYTES + 1));
+
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/jobs")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.config").value("작업 설정(config)이 너무 큽니다(최대 64KB)."));
+    verify(proactiveJobService, never()).createJob(any(), anyLong());
+  }
+
+  /** WD-425: 수정 요청도 검증한다 — 이름 200자·프롬프트 10,000자·config 64KB 초과는 각각 400. */
+  @Test
+  void updateJob_overLimits_returns400() throws Exception {
+    mockAuth("proactive:write");
+    UpdateProactiveJobRequest longName =
+        new UpdateProactiveJobRequest(
+            "가".repeat(CreateProactiveJobRequest.NAME_MAX_LENGTH + 1),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+    UpdateProactiveJobRequest longPrompt =
+        new UpdateProactiveJobRequest(
+            null,
+            "가".repeat(CreateProactiveJobRequest.PROMPT_MAX_LENGTH + 1),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+    UpdateProactiveJobRequest bigConfig =
+        new UpdateProactiveJobRequest(
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            jobConfigOfBytes(CreateProactiveJobRequest.CONFIG_MAX_BYTES + 1));
+
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/jobs/10")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(longName)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value("작업 이름은 200자 이내여야 합니다"));
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/jobs/10")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(longPrompt)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.prompt").value("분석 프롬프트는 10,000자 이내여야 합니다"));
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/jobs/10")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(bigConfig)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.config").value("작업 설정(config)이 너무 큽니다(최대 64KB)."));
+    verify(proactiveJobService, never()).updateJob(anyLong(), any(), anyLong());
+  }
+
+  /** WD-425: 수정 요청이 정확히 상한(이름 200자·프롬프트 10,000자·config 64KB)이면 200. */
+  @Test
+  void updateJob_atLimits_returnsOk() throws Exception {
+    mockAuth("proactive:write");
+    when(proactiveJobService.updateJob(eq(10L), any(), eq(1L))).thenReturn(LocalDateTime.now());
+    UpdateProactiveJobRequest req =
+        new UpdateProactiveJobRequest(
+            "가".repeat(CreateProactiveJobRequest.NAME_MAX_LENGTH),
+            "가".repeat(CreateProactiveJobRequest.PROMPT_MAX_LENGTH),
+            null,
+            null,
+            null,
+            null,
+            null,
+            jobConfigOfBytes(CreateProactiveJobRequest.CONFIG_MAX_BYTES));
+
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/jobs/10")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isOk());
   }
 }

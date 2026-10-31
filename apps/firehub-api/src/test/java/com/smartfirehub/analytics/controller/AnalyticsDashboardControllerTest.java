@@ -484,4 +484,73 @@ class AnalyticsDashboardControllerTest {
         .andExpect(jsonPath("$.errors.positionY").value("행 위치(positionY)는 240 이하여야 합니다."));
     verify(dashboardService, never()).updateWidget(anyLong(), anyLong(), any(), anyLong());
   }
+
+  // ── WD-425: 대시보드 설명 길이 상한 ──────────────────────────────────────────
+
+  /** WD-425: 설명이 정확히 2,000자(한글)면 생성된다. */
+  @Test
+  void createDashboard_descriptionAtLimit_returnsCreated() throws Exception {
+    when(dashboardService.create(any(CreateDashboardRequest.class), anyLong()))
+        .thenReturn(sampleDashboard());
+    CreateDashboardRequest request =
+        new CreateDashboardRequest(
+            "대시보드", "가".repeat(CreateDashboardRequest.DESCRIPTION_MAX_LENGTH), false, null);
+
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/dashboards")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isCreated());
+  }
+
+  /** WD-425: 설명이 2,000자를 넘으면 400 + 한국어 사유, 서비스는 호출되지 않는다. */
+  @Test
+  void createDashboard_descriptionOverLimit_returns400() throws Exception {
+    CreateDashboardRequest request =
+        new CreateDashboardRequest(
+            "대시보드", "가".repeat(CreateDashboardRequest.DESCRIPTION_MAX_LENGTH + 1), false, null);
+
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/dashboards")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value("대시보드 설명은 최대 2,000자까지 입력할 수 있습니다."));
+    verify(dashboardService, never()).create(any(), anyLong());
+  }
+
+  /** WD-425: 설정 수정도 같은 상한 — 넘으면 400, 정확히 2,000자면 200. */
+  @Test
+  void updateDashboard_descriptionOverLimit_returns400_atLimit_returnsOk() throws Exception {
+    when(dashboardService.update(anyLong(), any(UpdateDashboardRequest.class), anyLong()))
+        .thenReturn(sampleDashboard());
+
+    UpdateDashboardRequest over =
+        new UpdateDashboardRequest(
+            null, "가".repeat(CreateDashboardRequest.DESCRIPTION_MAX_LENGTH + 1), null, null, null);
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/dashboards/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value("대시보드 설명은 최대 2,000자까지 입력할 수 있습니다."));
+    verify(dashboardService, never()).update(anyLong(), any(), anyLong());
+
+    UpdateDashboardRequest atLimit =
+        new UpdateDashboardRequest(
+            null, "가".repeat(CreateDashboardRequest.DESCRIPTION_MAX_LENGTH), null, null, null);
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/dashboards/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(atLimit)))
+        .andExpect(status().isOk());
+  }
 }

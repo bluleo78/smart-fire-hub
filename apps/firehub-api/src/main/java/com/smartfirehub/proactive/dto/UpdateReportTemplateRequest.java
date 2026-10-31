@@ -1,5 +1,7 @@
 package com.smartfirehub.proactive.dto;
 
+import com.smartfirehub.global.validation.MaxJsonSize;
+import com.smartfirehub.proactive.validation.ReportSectionLimits;
 import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -15,7 +17,12 @@ import java.util.Map;
 public record UpdateReportTemplateRequest(
     @NotBlank(message = "템플릿 이름은 필수입니다.") String name,
     String description,
-    List<Map<String, Object>> sections,
+    // 섹션 상한은 생성과 같다(WD-425 — ReportSectionLimits, CreateReportTemplateRequest.SECTIONS_MAX_BYTES)
+    @ReportSectionLimits
+        @MaxJsonSize(
+            maxBytes = CreateReportTemplateRequest.SECTIONS_MAX_BYTES,
+            message = CreateReportTemplateRequest.SECTIONS_TOO_LARGE_MESSAGE)
+        List<Map<String, Object>> sections,
     String style,
     LocalDateTime expectedUpdatedAt) {
 

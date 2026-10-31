@@ -17,7 +17,12 @@ import java.time.LocalDateTime;
 public record UpdateSavedQueryRequest(
     @Size(max = 200) @Pattern(regexp = "(?s).*\\S.*", message = "이름을 비울 수 없습니다.") String name,
     String description,
-    @Pattern(regexp = "(?s).*\\S.*", message = "SQL을 비울 수 없습니다.") String sqlText,
+    // 길이 상한은 생성과 같다(WD-425 — 이유는 CreateSavedQueryRequest.SQL_MAX_LENGTH)
+    @Pattern(regexp = "(?s).*\\S.*", message = "SQL을 비울 수 없습니다.")
+        @Size(
+            max = CreateSavedQueryRequest.SQL_MAX_LENGTH,
+            message = CreateSavedQueryRequest.SQL_TOO_LONG_MESSAGE)
+        String sqlText,
     Long datasetId,
     @Size(max = 100) String folder,
     Boolean isShared,

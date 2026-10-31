@@ -30,7 +30,7 @@ import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
 import { formatNextRun,getNextRunDate } from '@/lib/next-run';
 import { TIMEZONE_OPTIONS } from '@/lib/timezone-data';
-import { goalTemplateName, type ProactiveJobFormValues } from '@/lib/validations/proactive-job';
+import { goalTemplateName, MAX_JOB_PROMPT_LENGTH, type ProactiveJobFormValues } from '@/lib/validations/proactive-job';
 
 import ChannelRecipientEditor from '../components/ChannelRecipientEditor';
 import { SectionPreview } from '../components/SectionPreview';
@@ -358,6 +358,8 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
               id="business-question"
               rows={3}
               placeholder="예: 이번 달 매출 하락의 원인을 분석하고 싶습니다"
+              // 질문이 그대로 분석 프롬프트가 되므로 같은 상한을 둔다 — 넘으면 생성 버튼이 안내 없이 비활성화된다(WD-425)
+              maxLength={MAX_JOB_PROMPT_LENGTH}
               value={businessQuestion}
               onChange={(e) => {
                 setBusinessQuestion(e.target.value);
@@ -512,6 +514,8 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
             id="job-prompt"
             rows={4}
             placeholder="어제 파이프라인 실행 결과를 분석하고 주요 이슈를 알려주세요."
+            // 서버 상한과 같은 길이까지만 입력받는다 — 넘으면 저장이 400 으로 거부된다(WD-425)
+            maxLength={MAX_JOB_PROMPT_LENGTH}
             {...register('prompt', { onChange: markDirty })}
           />
           {errors.prompt && <p className="text-xs text-destructive">{errors.prompt.message}</p>}

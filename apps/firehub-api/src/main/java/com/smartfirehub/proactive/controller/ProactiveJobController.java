@@ -63,11 +63,15 @@ public class ProactiveJobController {
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
 
+  /**
+   * 작업 수정. 요청 본문을 {@code @Valid} 로 검증한다(WD-425) — 예전에는 검증 없이 받아 이름·프롬프트·config 상한과 {@code
+   * triggerType} 형식 검사가 수정 경로에서는 돌지 않았다.
+   */
   @PutMapping("/{id}")
   @RequirePermission("proactive:write")
   public ResponseEntity<UpdateProactiveJobResponse> updateJob(
       @PathVariable Long id,
-      @RequestBody UpdateProactiveJobRequest request,
+      @Valid @RequestBody UpdateProactiveJobRequest request,
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     if (request.config() != null) {

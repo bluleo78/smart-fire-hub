@@ -1231,6 +1231,18 @@ test.describe('스마트 작업 상세 페이지', () => {
       await expect(page).toHaveURL(/\/analytics\/queries$/);
     });
   });
+
+  test('새 작업 폼 — 분석 프롬프트·비즈니스 질문 입력란은 서버 상한(10,000자)까지만 입력받는다 (WD-425)', async ({ authenticatedPage: page }) => {
+    // 서버가 10,000자를 넘는 프롬프트를 400 으로 거부하므로 입력란에서 같은 길이로 막는다.
+    await setupNewJobMocks(page);
+    await page.goto('/ai-insights/jobs/new');
+
+    await expect(page.locator('#job-prompt')).toHaveAttribute('maxlength', '10000');
+
+    // 「목표 기반」의 비즈니스 질문도 그대로 프롬프트가 되므로 같은 상한이다
+    await page.locator('#mode-goal').click();
+    await expect(page.locator('#business-question')).toHaveAttribute('maxlength', '10000');
+  });
 });
 
 // WD-295: 좁은 화면(390px)에서 머리글 버튼 줄이 화면 밖으로 넘쳐 「삭제」가 잘리고 본문이 가로로 밀리던 회귀를 막는다.

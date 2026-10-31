@@ -3,6 +3,9 @@ import { z } from 'zod';
 import type { TemplateSection } from '@/api/proactive';
 import { cronTooFrequentMessage } from '@/lib/cron-frequency';
 
+/** 분석 프롬프트 길이 상한(자) — 서버 CreateProactiveJobRequest.PROMPT_MAX_LENGTH 와 같다(WD-425). */
+export const MAX_JOB_PROMPT_LENGTH = 10_000;
+
 export const channelConfigSchema = z.object({
   type: z.enum(['CHAT', 'EMAIL', 'KAKAO', 'SLACK']),
   recipientUserIds: z.array(z.number()),
@@ -30,7 +33,12 @@ export const anomalyConfigSchema = z.object({
 export const proactiveJobSchema = z
   .object({
     name: z.string().min(1, '작업 이름을 입력하세요').max(200, '이름은 200자 이내여야 합니다'),
-    prompt: z.string().min(1, '분석 프롬프트를 입력하세요'),
+    // 상한은 서버 CreateProactiveJobRequest.PROMPT_MAX_LENGTH 와 같다(WD-425). 입력란 maxLength 는 타이핑만 막으므로, 리포트에서
+    // 프리필한 긴 질문처럼 코드로 채운 값도 저장 전에 여기서 잡는다.
+    prompt: z
+      .string()
+      .min(1, '분석 프롬프트를 입력하세요')
+      .max(MAX_JOB_PROMPT_LENGTH, '분석 프롬프트는 10,000자 이내여야 합니다'),
     templateId: z.number().nullable().optional(),
     // 「목표 기반」으로 만든 섹션 구성(WD-297). 서버로 보내는 작업 필드가 아니라, 생성 때 리포트 양식으로 먼저 저장해 templateId 로
     // 연결하려고 폼에 둔다. null 이면 목표 기반 구성이 없다.
