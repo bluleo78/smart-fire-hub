@@ -3,8 +3,10 @@
 // ResizeObserver로 컨테이너 크기를 감지하고 SVG를 직접 렌더링한다.
 // config.xAxis = 카테고리 컬럼명
 // 데이터에 min, q1, median, q3, max 컬럼이 있어야 함
+import { AlertTriangle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
+import { BOXPLOT_REQUIRED_COLUMNS_LABEL, findMissingBoxplotStats } from '../boxplot-stats';
 import type { ChartViewProps } from '../chart-view-props';
 
 const MARGIN = { top: 20, right: 20, bottom: 40, left: 50 };
@@ -34,6 +36,10 @@ export function BoxPlotChartView({ data, config, height = 300 }: ChartViewProps)
     return () => obs.disconnect();
   }, []);
 
+  // WD-305: 통계 컬럼이 없는 일반 쿼리면 값을 0 으로 읽어 납작한 선만 그리게 된다 — 그리지 않고 필요한 컬럼을 안내한다.
+  // 행마다 키가 같으므로 첫 행의 키로 판단한다(빈 데이터는 아래 「데이터 없음」이 처리).
+  const missingStats = data.length > 0 ? findMissingBoxplotStats(Object.keys(data[0])) : [];
+
   const stats: BoxStat[] = data.map(d => ({
     category: String(d[config.xAxis] ?? ''),
     min: Number(d.min ?? d.q0 ?? 0),
@@ -55,6 +61,25 @@ export function BoxPlotChartView({ data, config, height = 300 }: ChartViewProps)
       <div ref={containerRef} style={{ width: '100%', height: containerH }}
         className="flex items-center justify-center text-sm text-muted-foreground">
         데이터 없음
+      </div>
+    );
+  }
+  if (missingStats.length > 0) {
+    // 계속 보이는 정적 안내라 role=alert 를 붙이지 않는다(ChartRenderer 의 컬럼 안내와 같은 판단).
+    return (
+      <div
+        ref={containerRef}
+        style={{ width: '100%', height: containerH }}
+        className="flex flex-col items-center justify-center gap-2 px-4 text-center"
+        data-testid="boxplot-missing-stats"
+      >
+        <AlertTriangle className="h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
+        <p className="text-sm text-muted-foreground break-keep">
+          박스 플롯은 쿼리 결과에 {BOXPLOT_REQUIRED_COLUMNS_LABEL} 컬럼이 있어야 그릴 수 있습니다.
+        </p>
+        <p className="text-xs text-muted-foreground break-keep">
+          없는 컬럼: {missingStats.join(', ')} — 카테고리별 통계를 계산하는 쿼리를 쓰거나 다른 차트 타입을 고르세요.
+        </p>
       </div>
     );
   }

@@ -12,6 +12,7 @@ import {
 } from '../ui/select';
 import { Switch } from '../ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
+import { BOXPLOT_REQUIRED_COLUMNS_LABEL } from './boxplot-stats';
 import { toggleYAxisColumn } from './chart-missing-columns';
 
 interface AxisConfigPanelProps {
@@ -40,6 +41,8 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
   const isPieOrDonut = chartType === 'PIE' || chartType === 'DONUT';
   const isMap = chartType === 'MAP';
   const isCandlestick = chartType === 'CANDLESTICK';
+  // WD-305: 박스 플롯은 Y축 선택을 쓰지 않고 통계 컬럼을 읽는다 — 쓰이지 않는 「Y축 (다중 선택)」 대신 무엇을 읽는지 안내한다.
+  const isBoxplot = chartType === 'BOXPLOT';
 
   // 히트맵 가중치 후보 — 공간 컬럼을 빼고, 숫자 컬럼 목록이 있으면 숫자 컬럼만(WD-354).
   // 이미 문자 컬럼을 골라 둔 저장 차트는 그 값도 목록에 남겨 선택 상자가 비어 보이지 않게 하고 안내 문구를 띄운다.
@@ -373,8 +376,14 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
         </Select>
       </div>
 
-      {/* Y Axis — multi-select for non-pie */}
-      {!isPieOrDonut ? (
+      {isBoxplot && (
+        <p className="text-xs text-muted-foreground break-keep" data-testid="boxplot-stats-hint">
+          박스 플롯은 X축 카테고리별로 쿼리 결과의 {BOXPLOT_REQUIRED_COLUMNS_LABEL} 컬럼을 읽어 그립니다.
+        </p>
+      )}
+
+      {/* Y Axis — multi-select for non-pie (박스 플롯은 통계 컬럼을 읽으므로 숨긴다) */}
+      {isBoxplot ? null : !isPieOrDonut ? (
         <div className="space-y-1.5">
           {/*
             체크박스 묶음이라 가리킬 단일 입력이 없다 — label 대신 span 으로 두고
