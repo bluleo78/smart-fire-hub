@@ -10,7 +10,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ExternalLink, FileDown, Loader2, Printer } from 'lucide-react';
 import { useRef } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { proactiveApi } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
@@ -25,6 +25,12 @@ import { ReportLevelBlockedNotice } from './components/ReportLevelBlockedNotice'
 export default function ReportViewerPage() {
   const { jobId, executionId } = useParams<{ jobId: string; executionId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  // 이 탭의 첫 화면인지(WD-347) — 이메일 「웹에서 보기」·리포트 창 「새 탭에서 열기」는 새 탭으로 열려 돌아갈 기록이 없다.
+  // React Router 는 첫 진입 위치의 key 를 'default' 로 둔다. 그때 navigate(-1) 은 무반응이거나 앱 밖(about:blank)으로 나가므로
+  // 리포트 목록으로 보내고, 버튼 이름도 「리포트 목록」으로 바꿔 어디로 가는지 알린다.
+  const hasHistory = location.key !== 'default';
+  const goBack = () => (hasHistory ? navigate(-1) : navigate('/ai-insights/reports'));
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const jobIdNum = Number(jobId);
@@ -66,11 +72,11 @@ export default function ReportViewerPage() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => navigate(-1)}
+            onClick={goBack}
             className="gap-1.5"
           >
             <ArrowLeft className="h-4 w-4" />
-            뒤로
+            {hasHistory ? '뒤로' : '리포트 목록'}
           </Button>
           <div className="h-5 w-px bg-border" />
           <h1 className="text-sm font-semibold text-foreground">
@@ -113,7 +119,7 @@ export default function ReportViewerPage() {
           <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
             <p className="text-sm">잘못된 요청입니다.</p>
             {/* jobId/executionId가 유효하지 않으므로 "작업 상세 보기" 같은 깨진 링크는 노출하지 않는다 */}
-            <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
+            <Button variant="ghost" size="sm" onClick={goBack}>
               <ArrowLeft className="h-4 w-4" />
               돌아가기
             </Button>
@@ -141,7 +147,7 @@ export default function ReportViewerPage() {
             data-testid="report-not-found"
           >
             <p className="text-sm text-center break-keep px-4">{REPORT_NOT_FOUND_NOTICE}</p>
-            <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
+            <Button variant="ghost" size="sm" onClick={goBack}>
               <ArrowLeft className="h-4 w-4" />
               돌아가기
             </Button>
@@ -151,7 +157,7 @@ export default function ReportViewerPage() {
         {!isInvalidParams && isError && !isForbidden && !isLevelBlocked && !isNotFound && !isLoading && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
             <p className="text-sm">리포트를 불러올 수 없습니다.</p>
-            <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
+            <Button variant="ghost" size="sm" onClick={goBack}>
               <ArrowLeft className="h-4 w-4" />
               돌아가기
             </Button>
