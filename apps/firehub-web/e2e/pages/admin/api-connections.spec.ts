@@ -609,6 +609,116 @@ test.describe('API 연결 페이지', () => {
     });
   });
 
+  test('인증 정보 변경 — 헤더 이름만 고치고 키 칸을 비우면 저장된 가린 값을 그대로 보내 키를 유지한다 (WD-480)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      { id: 1, name: '공공 데이터 API', authType: 'API_KEY' },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+
+    // 저장된 키가 있으면 비워 둬도 된다는 안내가 보인다
+    await expect(page.getByText('비워 두면 저장된 키를 그대로 사용합니다.')).toBeVisible();
+
+    // 헤더 이름만 바꾸고 키 값 칸은 비워 둔다
+    await page.getByPlaceholder('Authorization').fill('X-Fixed-Key');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+
+    // 입력 오류 토스트 없이 PUT 이 나가고, apiKey 는 조회로 받은 가린 값 그대로다(서버가 저장 원문으로 채움)
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      authType: 'API_KEY',
+      authConfig: { placement: 'header', headerName: 'X-Fixed-Key', apiKey: '***masked***' },
+    });
+    await expect(page.getByText('헤더 이름과 키 값을 입력하세요.')).toHaveCount(0);
+  });
+
+  test('인증 정보 변경 — 위치를 Query 로 바꾸고 파라미터 이름만 고쳐도 키 칸을 비워 저장된다 (WD-480)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      { id: 1, name: '공공 데이터 API', authType: 'API_KEY' },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await page.getByRole('combobox').nth(1).click();
+    await page.getByRole('option', { name: 'Query Parameter' }).click();
+    await page.getByPlaceholder('api_key').fill('token_param');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      authType: 'API_KEY',
+      authConfig: { placement: 'query', paramName: 'token_param', apiKey: '***masked***' },
+    });
+  });
+
+  test('인증 정보 변경 — 키를 새로 입력하면 가린 값이 아니라 입력한 값이 전송된다 (WD-480)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      { id: 1, name: '공공 데이터 API', authType: 'API_KEY' },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await page.getByPlaceholder('Authorization').fill('X-Fixed-Key');
+    await page.getByPlaceholder('새 API 키를 입력하세요').fill('brand-new-key');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ authConfig: { apiKey: 'brand-new-key' } });
+  });
+
+  test('인증 정보 변경 — 인증 방식이 BEARER 였던 연결을 API_KEY 로 바꿀 때는 키 칸이 비면 막힌다 (WD-480)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 저장된 API 키가 없으므로 「유지」할 값이 없다 — 안내 문구도 없어야 한다
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/api-connections/1',
+      createApiConnection({ id: 1, authType: 'BEARER', maskedAuthConfig: { token: '***masked***' } }),
+    );
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      { id: 1, authType: 'API_KEY' },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    // 편집 모드의 기본 인증 방식을 API Key 로 바꾼다
+    await page.getByRole('combobox').first().click();
+    await page.getByRole('option', { name: 'API Key' }).click();
+    await expect(page.getByText('비워 두면 저장된 키를 그대로 사용합니다.')).toHaveCount(0);
+    await page.getByPlaceholder('Authorization').fill('X-Key');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+
+    await expect(page.getByText('헤더 이름과 키 값을 입력하세요.')).toBeVisible();
+    expect(updateCapture.requests?.length ?? 0).toBe(0);
+  });
+
   test('생성 폼 — Bearer Token 타입 선택 시 token 필드로 생성', async ({
     authenticatedPage: page,
   }) => {
