@@ -55,6 +55,7 @@ import { handleApiError } from '../../lib/api-error';
 import { previewQuery } from '../analytics/components/schema-explorer-utils';
 import { ChangeSecurityLevelDialog } from './components/ChangeSecurityLevelDialog';
 import { CloneDatasetDialog } from './components/CloneDatasetDialog';
+import { DatasetStatusNote } from './components/DatasetStatusNote';
 import { LinkedPipelineStatus } from './components/LinkedPipelineStatus';
 import { DatasetColumnsTab } from './tabs/DatasetColumnsTab';
 import { DatasetDataTab } from './tabs/DatasetDataTab';
@@ -70,6 +71,8 @@ import { DatasetSecurityTab } from './tabs/DatasetSecurityTab';
 // 백엔드 dataset_tag.tag_name 컬럼 제약(VARCHAR(50))과 동일한 길이 제한.
 // 클라이언트에서 사전에 제한하여 불필요한 400 요청/토스트 혼란을 방지한다 (#530)
 const TAG_NAME_MAX_LENGTH = 50;
+/** 상태 노트 최대 길이(WD-381) — api UpdateStatusRequest.NOTE_MAX_LENGTH 와 같은 값. 머리에 보이는 짧은 사유라 길게 받지 않는다. */
+const STATUS_NOTE_MAX_LENGTH = 500;
 // 서버(DatasetController.validateTagName)와 같은 허용 문자 — 한글·영문·숫자·밑줄·하이픈 (WD-145)
 const TAG_NAME_PATTERN = /^[a-zA-Z0-9가-힣_-]+$/;
 const TAG_NAME_HINT = '한글·영문·숫자·밑줄(_)·하이픈(-), 50자 이하';
@@ -203,6 +206,8 @@ export default function DatasetDetailPage() {
   const [statusEditOpen, setStatusEditOpen] = useState(false);
   const [statusValue, setStatusValue] = useState<string>('NONE');
   const [statusNote, setStatusNote] = useState('');
+  // 입력 칸 maxLength 는 붙여 넣기·타이핑만 막는다 — 상한 이전에 저장된 긴 노트를 불러온 경우를 따로 본다(WD-381)
+  const statusNoteTooLong = statusNote.length > STATUS_NOTE_MAX_LENGTH;
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   // 보안 등급 변경(✎)은 dataset:classify 보유자에게만(스펙 §5-2). 최종 판정은 서버.
   // 복제·태그 추가/제거·상태 변경은 서버가 dataset:write 로 막는다 — 없으면 진입점을 숨긴다(WD-139). 즐겨찾기는 dataset:read 라 그대로 둔다.
@@ -281,8 +286,9 @@ export default function DatasetDetailPage() {
       await updateStatus.mutateAsync({ status: statusValue, note: statusNote || undefined });
       setStatusEditOpen(false);
       toast.success('상태가 변경되었습니다.');
-    } catch {
-      toast.error('상태 변경에 실패했습니다.');
+    } catch (error) {
+      // 서버 검증 사유(예: 「상태 노트는 500자 이하여야 합니다.」)를 그대로 보인다(WD-381)
+      handleApiError(error, '상태 변경에 실패했습니다.');
     }
   };
 
@@ -455,13 +461,26 @@ export default function DatasetDetailPage() {
                         <SelectItem value="DEPRECATED">사용 중단 (Deprecated)</SelectItem>
                       </SelectContent>
                     </Select>
-                    <Input
-                      placeholder="상태 노트 (선택)"
-                      value={statusNote}
-                      onChange={(e) => setStatusNote(e.target.value)}
-                    />
+                    <div className="space-y-1">
+                      <Input
+                        placeholder="상태 노트 (선택)"
+                        aria-label="상태 노트"
+                        value={statusNote}
+                        onChange={(e) => setStatusNote(e.target.value)}
+                        maxLength={STATUS_NOTE_MAX_LENGTH}
+                        aria-invalid={statusNoteTooLong ? true : undefined}
+                        aria-describedby="status-note-count"
+                      />
+                      {/* 글자 수 안내(WD-381) — 상한 이전에 저장된 긴 노트를 고칠 때는 넘친 만큼 빨갛게 보이고 저장을 막는다 */}
+                      <p
+                        id="status-note-count"
+                        className={`text-right text-xs ${statusNoteTooLong ? 'text-destructive' : 'text-muted-foreground'}`}
+                      >
+                        {statusNote.length.toLocaleString('ko-KR')}/{STATUS_NOTE_MAX_LENGTH}
+                      </p>
+                    </div>
                     <div className="flex gap-2">
-                      <Button size="sm" onClick={handleUpdateStatus} disabled={updateStatus.isPending}>
+                      <Button size="sm" onClick={handleUpdateStatus} disabled={updateStatus.isPending || statusNoteTooLong}>
                         저장
                       </Button>
                       <Button size="sm" variant="outline" onClick={() => setStatusEditOpen(false)}>
@@ -475,9 +494,7 @@ export default function DatasetDetailPage() {
             <p className="text-sm text-muted-foreground mt-1">
               테이블: <span className="font-mono">{dataset.tableName}</span>
             </p>
-            {dataset.statusNote && (
-              <p className="text-xs text-muted-foreground mt-0.5 italic">{dataset.statusNote}</p>
-            )}
+            {dataset.statusNote && <DatasetStatusNote key={dataset.statusNote} note={dataset.statusNote} />}
 
             {/* Tags */}
             <div className="flex items-center gap-1.5 flex-wrap mt-2">
