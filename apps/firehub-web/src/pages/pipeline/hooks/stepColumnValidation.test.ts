@@ -7,15 +7,18 @@ import {
   API_PAGE_SIZE_MESSAGE,
   apiPageSizeError,
   EMPTY_MAPPING_ROW_MESSAGE,
+  kvRowField,
   mappingRowField,
   mappingSourceField,
   mappingTargetField,
   OUTPUT_COLUMN_NAME_REQUIRED_MESSAGE,
   pythonOutputColumnNameField,
   SOURCE_FIELD_REQUIRED_MESSAGE,
+  stripKvRows,
   TARGET_COLUMN_REQUIRED_MESSAGE,
   validateAiOutputColumns,
   validateApiFieldMappings,
+  validateKvRows,
   validatePythonOutputColumns,
 } from './stepColumnValidation';
 
@@ -153,5 +156,47 @@ describe('apiPageSizeError', () => {
     expect(apiPageSizeError({ type: 'NONE', pageSize: -5 })).toBeUndefined();
     expect(apiPageSizeError(offset(undefined))).toBeUndefined();
     expect(apiPageSizeError(undefined)).toBeUndefined();
+  });
+});
+
+// WD-359 — 헤더·쿼리 파라미터 행 검증
+describe('validateKvRows', () => {
+  const kv = (key: string, value: string) => ({ key, value });
+
+  it('정상 행·비어 있는 새 행(이름·값 모두 빈)은 오류가 없다', () => {
+    expect(validateKvRows('queryParams', [kv('a', '1'), kv('b', ''), kv('', '')])).toEqual([]);
+    expect(validateKvRows('queryParams', undefined)).toEqual([]);
+  });
+
+  it('이름은 비고 값만 있는 행은 이름 입력을 안내한다', () => {
+    expect(validateKvRows('queryParams', [kv('a', '1'), kv(' ', 'orphan')])).toEqual([
+      { field: kvRowField('queryParams', 1), message: '파라미터명을 입력하세요' },
+    ]);
+    expect(validateKvRows('headers', [kv('', 'v')])).toEqual([
+      { field: kvRowField('headers', 0), message: '헤더명을 입력하세요' },
+    ]);
+  });
+
+  it('같은 이름은 뒤에 나온 행에 안내한다', () => {
+    expect(validateKvRows('queryParams', [kv('tag', 'fire'), kv('tag', 'rescue')])).toEqual([
+      {
+        field: kvRowField('queryParams', 1),
+        message: '같은 이름의 파라미터가 있습니다 — 하나만 보낼 수 있습니다: tag',
+      },
+    ]);
+  });
+
+  it('쿼리 파라미터 이름은 대소문자를 구분하고 헤더 이름은 구분하지 않는다', () => {
+    expect(validateKvRows('queryParams', [kv('Tag', '1'), kv('tag', '2')])).toEqual([]);
+    expect(validateKvRows('headers', [kv('X-Token', '1'), kv('x-token', '2')])).toHaveLength(1);
+  });
+});
+
+describe('stripKvRows', () => {
+  it('화면 전용 행 목록 키만 빼고 나머지 설정은 그대로 둔다', () => {
+    expect(
+      stripKvRows({ path: '/a', queryParams: { a: '1' }, queryParamRows: [{ key: 'a', value: '1' }], headerRows: [] }),
+    ).toEqual({ path: '/a', queryParams: { a: '1' } });
+    expect(stripKvRows(undefined)).toBeUndefined();
   });
 });

@@ -175,3 +175,56 @@ export function apiPageSizeError(pagination: unknown): string | undefined {
     size <= API_PAGE_SIZE_RANGE.max;
   return valid ? undefined : API_PAGE_SIZE_MESSAGE;
 }
+
+/**
+ * API_CALL 헤더·쿼리 파라미터 행 편집 중 상태를 저장하는 apiConfig 의 화면 전용 키(WD-359).
+ * 서버 설정은 `Record<이름, 값>` 객체라 같은 이름 둘·이름 없는 행을 담을 수 없다 — 객체로 바꿀 때 조용히 버려지지 않도록
+ * 편집 중 행 목록을 이 키로 함께 들고 있다가 저장 전에 검증하고, 서버로 보낼 때(usePipelineSave)는 뺀다.
+ */
+export const KV_ROWS_KEYS = { headers: 'headerRows', queryParams: 'queryParamRows' } as const;
+export type KvSection = keyof typeof KV_ROWS_KEYS;
+
+/** 헤더·쿼리 파라미터 행 오류 키 — 행 전체 단위 */
+export const kvRowField = (section: KvSection, i: number) => `apiConfig.${KV_ROWS_KEYS[section]}.${i}`;
+
+const KV_NOUN: Record<KvSection, string> = { headers: '헤더', queryParams: '파라미터' };
+export const kvNameRequiredMessage = (section: KvSection) => `${KV_NOUN[section]}명을 입력하세요`;
+export const kvDuplicateMessage = (section: KvSection, name: string) =>
+  `같은 이름의 ${KV_NOUN[section]}가 있습니다 — 하나만 보낼 수 있습니다: ${name}`;
+
+/**
+ * 헤더·쿼리 파라미터 행 검증(WD-359) — 행마다 첫 번째 오류 하나만 돌려준다.
+ * - 이름은 비어 있는데 값만 있는 행: 이름을 안내한다(이름도 값도 빈 새 행은 보낼 것이 없어 건너뛴다).
+ * - 같은 이름 둘: 뒤에 나온 행에 안내한다. 헤더 이름은 대소문자를 구분하지 않는다(HTTP 규칙).
+ * 설정 형식이 객체라 같은 이름 반복 전송은 지원하지 않으므로, 조용히 마지막 값만 남기지 않고 저장 전에 막는다.
+ */
+export function validateKvRows(section: KvSection, rows: unknown): StepFieldError[] {
+  if (!Array.isArray(rows)) return [];
+  const errors: StepFieldError[] = [];
+  const seen = new Set<string>();
+  rows.forEach((raw, i) => {
+    const row = (raw ?? {}) as Record<string, unknown>;
+    const key = asText(row.key).trim();
+    const value = asText(row.value);
+    if (!key) {
+      if (value.trim()) errors.push({ field: kvRowField(section, i), message: kvNameRequiredMessage(section) });
+      return;
+    }
+    const id = section === 'headers' ? key.toLowerCase() : key;
+    if (seen.has(id)) {
+      errors.push({ field: kvRowField(section, i), message: kvDuplicateMessage(section, key) });
+      return;
+    }
+    seen.add(id);
+  });
+  return errors;
+}
+
+/** 서버로 보내기 전 화면 전용 행 목록 키를 뺀다(WD-359) — 설정이 없으면 그대로 돌려준다. */
+export function stripKvRows<T extends Record<string, unknown> | undefined>(apiConfig: T): T {
+  if (!apiConfig) return apiConfig;
+  const rest: Record<string, unknown> = { ...apiConfig };
+  delete rest[KV_ROWS_KEYS.headers];
+  delete rest[KV_ROWS_KEYS.queryParams];
+  return rest as T;
+}

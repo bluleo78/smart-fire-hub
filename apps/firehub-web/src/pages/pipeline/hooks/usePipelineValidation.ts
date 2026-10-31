@@ -13,8 +13,10 @@ import type { EditorAction, PipelineEditorState, ValidationError } from './pipel
 import {
   API_PAGE_SIZE_FIELD,
   apiPageSizeError,
+  KV_ROWS_KEYS,
   validateAiOutputColumns,
   validateApiFieldMappings,
+  validateKvRows,
   validatePythonOutputColumns,
 } from './stepColumnValidation';
 
@@ -104,6 +106,13 @@ export function usePipelineValidation(
             : null;
         for (const e of validateApiFieldMappings(mappings, step.outputDatasetId == null, outputColumns)) {
           errors.push({ stepTempId: step.tempId, ...e });
+        }
+
+        // 헤더·쿼리 파라미터 행(WD-359) — 같은 이름·이름 없는 행은 객체 설정으로 바꿀 때 조용히 버려지므로 행 아래에 안내하고 저장을 막는다
+        for (const section of ['headers', 'queryParams'] as const) {
+          for (const e of validateKvRows(section, cfg?.[KV_ROWS_KEYS[section]])) {
+            errors.push({ stepTempId: step.tempId, ...e });
+          }
         }
 
         // 페이지 크기(WD-362) — 0 이하·소수·상한 초과는 실행기가 외부 API 를 끝없이(최대 1만 번) 다시 호출하게 하므로 저장을 막는다
