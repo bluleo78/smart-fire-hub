@@ -155,7 +155,9 @@ export function SecurityLevelRow({
 
   return (
     <div data-testid="security-level-row" className="rounded-md border">
-      <div className="flex items-center gap-2 px-3 py-2">
+      {/* 좁은 폭(모바일)에서는 줄바꿈해 오른쪽 묶음(사용량·펼치기·메뉴)을 다음 줄로 내린다(WD-294). 줄바꿈이 없으면 줄어들 수 있는
+          사용량 문구만 12px 까지 눌려 한 글자씩 세로로 쪼개지고, 남는 넘침이 메뉴 버튼을 카드 밖으로 밀었다. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2">
         <Button
           variant="ghost"
           size="icon"
@@ -178,55 +180,58 @@ export function SecurityLevelRow({
         </Button>
         <SecurityLevelBadge level={level} />
         {level.isDefault && <Badge variant="outline">기본</Badge>}
-        <span className="ml-auto text-sm text-muted-foreground">
-          {usage
-            ? `데이터셋 ${usage.datasetCount} · 역할 ${usage.roleCount}`
-            : ''}
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          aria-label={`${level.name} 펼치기`}
-          aria-expanded={open}
-          onClick={() => setOpen((o) => !o)}
-        >
-          <ChevronDown
-            className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`}
-          />
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              aria-label={`${level.name} 메뉴`}
-            >
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              disabled={level.isDefault}
-              onSelect={onSetDefault}
-            >
-              기본으로 지정
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={level.isDefault}
-              onSelect={onDelete}
-              className="text-destructive"
-            >
-              삭제
-            </DropdownMenuItem>
-            {level.isDefault && (
-              <p className="px-2 py-1 text-xs text-muted-foreground">
-                다른 등급을 기본으로 지정한 뒤 삭제하세요
-              </p>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {/* 오른쪽 묶음은 줄어들지 않고 한 줄로 유지한다 — 사용량 문구는 줄바꿈하지 않는다. */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <span className="whitespace-nowrap text-sm text-muted-foreground">
+            {usage
+              ? `데이터셋 ${usage.datasetCount} · 역할 ${usage.roleCount}`
+              : ''}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={`${level.name} 펼치기`}
+            aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+          >
+            <ChevronDown
+              className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`}
+            />
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                aria-label={`${level.name} 메뉴`}
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                disabled={level.isDefault}
+                onSelect={onSetDefault}
+              >
+                기본으로 지정
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={level.isDefault}
+                onSelect={onDelete}
+                className="text-destructive"
+              >
+                삭제
+              </DropdownMenuItem>
+              {level.isDefault && (
+                <p className="px-2 py-1 text-xs text-muted-foreground">
+                  다른 등급을 기본으로 지정한 뒤 삭제하세요
+                </p>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
       {open && (
         <div className="space-y-4 border-t px-4 py-4">

@@ -38,6 +38,32 @@ test.describe('설정 › 데이터 보안', () => {
     },
   );
 
+  /**
+   * WD-294: 모바일(390px)에서 사용량 문구가 한 글자씩 세로로 쪼개지지 않고 한 줄로 읽히며, 「기본」 배지가 붙은 행도 펼치기·메뉴 버튼이
+   * 카드 안에 남는다. 예전에는 줄바꿈 없는 한 줄 flex 라 사용량 span 이 12px 로 눌려 높이 180px 가 되고, 기본 행의 ⋯ 버튼이 카드 밖으로 나갔다.
+   */
+  test('모바일 폭에서 사용량 문구는 한 줄이고 행 버튼은 카드 안에 있다 (WD-294)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openTab(page);
+    const rows = page.getByTestId('security-level-row');
+    await expect(rows).toHaveCount(4);
+    for (let i = 0; i < 4; i++) {
+      const row = rows.nth(i);
+      const rowBox = (await row.boundingBox())!;
+      const usage = row.getByText(/^데이터셋 \d+ · 역할 \d+$/);
+      const usageBox = (await usage.boundingBox())!;
+      // 한 줄(text-sm 줄 높이 20px 안팎) — 쪼개지면 수십~수백 px 가 된다.
+      expect(usageBox.height).toBeLessThan(30);
+      for (const name of ['펼치기', '메뉴']) {
+        const btn = (await row.getByRole('button', { name: new RegExp(`${name}$`) }).boundingBox())!;
+        expect(btn.x).toBeGreaterThanOrEqual(rowBox.x);
+        expect(btn.x + btn.width).toBeLessThanOrEqual(rowBox.x + rowBox.width);
+      }
+    }
+    // 기본 등급 행도 사용량이 그대로 읽힌다.
+    await expect(rows.nth(1)).toContainText('데이터셋 230 · 역할 4');
+  });
+
   test('정책 수정 → PUT payload', async ({ authenticatedPage: page }) => {
     const put = await mockApi(
       page,
