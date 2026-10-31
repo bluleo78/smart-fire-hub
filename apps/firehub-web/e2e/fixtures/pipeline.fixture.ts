@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-import type { PipelineDeleteImpact } from '../../src/types/pipeline';
+import type { PipelineDeleteImpact, PipelineDownstreamChainTrigger } from '../../src/types/pipeline';
 import {
   createExecution,
   createPipelineDetail,
@@ -67,6 +67,7 @@ const PIPELINE_DELETE_IMPACT_PATH = /^\/api\/v1\/pipelines\/\d+\/delete-impact$/
  * @param status - 응답 상태(실패 경로 검증용)
  * @param hasHiddenTempDatasets - 내가 볼 수 없는 임시 데이터셋이 함께 지워질 대상에 있는가(WD-310, 기본값: false)
  * @param activeExecution - 진행 중 실행 상태(WD-437): NONE(기본값)·ACTIVE(취소 요청 없음)·CANCELLING(모두 취소 요청 중)
+ * @param downstreamChainTriggers - 삭제하면 꺼질 하류 연쇄 트리거(WD-419, 기본값: 빈 목록)
  */
 export async function mockPipelineDeleteImpact(
   page: Page,
@@ -74,8 +75,9 @@ export async function mockPipelineDeleteImpact(
   status = 200,
   hasHiddenTempDatasets = false,
   activeExecution: PipelineDeleteImpact['activeExecution'] = 'NONE',
+  downstreamChainTriggers: PipelineDownstreamChainTrigger[] = [],
 ) {
-  const impact: PipelineDeleteImpact = { tempDatasetCount, hasHiddenTempDatasets, activeExecution };
+  const impact: PipelineDeleteImpact = { tempDatasetCount, hasHiddenTempDatasets, activeExecution, downstreamChainTriggers };
   await page.route(
     (url) => PIPELINE_DELETE_IMPACT_PATH.test(url.pathname),
     (route) => {

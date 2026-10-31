@@ -337,4 +337,21 @@ test.describe('데이터셋 목록 — 필터 및 미리보기', () => {
     // 회귀 확인: VARCHAR 는 원문 그대로 표시(과도한 가공 없음)
     await expect(dialog.getByText('서울특별시 중구')).toBeVisible();
   });
+
+  test('저장 방식·출처·상태 필터에 이름이 있어 값을 고른 뒤에도 무엇을 거르는 상자인지 읽힌다 (WD-398)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupCommon(page);
+    const urls = await captureListRequests(page);
+    await page.goto('/data/datasets');
+
+    for (const name of ['저장 방식 필터', '출처 필터', '상태 필터', '보안 등급 필터']) {
+      await expect(page.getByRole('combobox', { name })).toBeVisible();
+    }
+    // 값을 바꾼 뒤에도 같은 이름으로 찾히고, 고른 값이 보인다
+    await page.getByRole('combobox', { name: '출처 필터' }).click();
+    await page.getByRole('option', { name: '원본' }).click();
+    await expect.poll(() => urls.some((u) => u.searchParams.get('originType') === 'SOURCE')).toBeTruthy();
+    await expect(page.getByRole('combobox', { name: '출처 필터' })).toHaveText('원본');
+  });
 });

@@ -1279,11 +1279,15 @@ public class TriggerService {
     try {
       // 새 형식(v2 GCM)과 옛 ECB 암호문을 모두 푼다(WD-220).
       String secret = webhookSecretCipher.decrypt(secretEncrypted);
-      String expectedSignature = hmacSha256(secret, body);
+      String expectedHex = hmacSha256(secret, body).substring(SIGNATURE_PREFIX.length());
+      String receivedHex = normalizeSignatureHex(signature);
+      if (receivedHex == null) {
+        return false;
+      }
       // Compare with timing-safe check
       return MessageDigest.isEqual(
-          expectedSignature.getBytes(StandardCharsets.UTF_8),
-          signature.getBytes(StandardCharsets.UTF_8));
+          expectedHex.getBytes(StandardCharsets.UTF_8),
+          receivedHex.getBytes(StandardCharsets.UTF_8));
     } catch (Exception e) {
       log.error("Failed to verify webhook signature: {}", e.getMessage());
       return false;
@@ -1311,6 +1315,27 @@ public class TriggerService {
     } catch (Exception e) {
       throw new CryptoException("SHA-256 hashing failed", e);
     }
+  }
+
+  private static final String SIGNATURE_PREFIX = "sha256=";
+
+  /**
+   * 받은 서명 헤더 값을 비교용 소문자 hex 로 맞춘다(WD-404). 「sha256=」 접두어가 있든 없든, hex 대소문자가 어떻든 같은 HMAC-SHA256 이면
+   * 통과시킨다 — 화면 안내만 보고 hex 그대로 보낸 연동이 401 이던 문제. 다른 알고리즘(sha1= 등) 접두어는 통과시키지 않는다.
+   *
+   * @return 비교할 hex, 쓸 수 없는 값이면 null
+   */
+  static String normalizeSignatureHex(String signature) {
+    if (signature == null) return null;
+    String value = signature.strip();
+    int eq = value.indexOf('=');
+    if (eq >= 0) {
+      if (!value.substring(0, eq + 1).equalsIgnoreCase(SIGNATURE_PREFIX)) {
+        return null;
+      }
+      value = value.substring(eq + 1);
+    }
+    return value.isEmpty() ? null : value.toLowerCase(java.util.Locale.ROOT);
   }
 
   private String hmacSha256(String secret, String data) {

@@ -7,6 +7,8 @@ import {
 } from '../../../components/ui/select';
 
 interface ColumnTypeSelectProps {
+  // 트리거 버튼 id — 바깥 「데이터 타입 *」 <Label htmlFor> 와 이어 붙여 콤보박스가 라벨 이름으로 읽히게 한다 (WD-398)
+  id?: string;
   value?: string;
   onChange: (value: string) => void;
   disabled?: boolean;
@@ -30,10 +32,10 @@ const DATA_TYPES = [
   { value: 'GEOMETRY', label: '지오메트리(좌표)' },
 ] as const;
 
-export function ColumnTypeSelect({ value, onChange, disabled, disabledOptions, hiddenOptions }: ColumnTypeSelectProps) {
+export function ColumnTypeSelect({ id, value, onChange, disabled, disabledOptions, hiddenOptions }: ColumnTypeSelectProps) {
   return (
     <Select value={value} onValueChange={onChange} disabled={disabled}>
-      <SelectTrigger>
+      <SelectTrigger id={id}>
         <SelectValue placeholder="데이터 타입 선택" />
       </SelectTrigger>
       <SelectContent>

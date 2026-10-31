@@ -219,7 +219,7 @@ test.describe('파이프라인 상세 — 권한별 쓰기 진입점 노출 (WD-
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(createPipelineDetail().name);
     await expect(page.locator('.react-flow__node').first()).toBeVisible();
     await nextFrame(page);
-    await expect(page.getByRole('button', { name: '같은 입력으로 다시 실행' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '현재 설정으로 다시 실행' })).toHaveCount(0);
 
     // 진행 중 실행 — 실행 취소
     await gotoWithPermissions(page, `/pipelines/${PIPELINE_ID}/executions/${RUNNING_EXEC_ID}`);
@@ -230,7 +230,7 @@ test.describe('파이프라인 상세 — 권한별 쓰기 진입점 노출 (WD-
     // 대조군
     await grantPipelinePermissions(page, [...READ_ONLY, 'pipeline:execute']);
     await gotoWithPermissions(page, `/pipelines/${PIPELINE_ID}/executions/${FAILED_EXEC_ID}`);
-    await expect(page.getByRole('button', { name: '같은 입력으로 다시 실행' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '현재 설정으로 다시 실행' })).toBeVisible();
     await gotoWithPermissions(page, `/pipelines/${PIPELINE_ID}/executions/${RUNNING_EXEC_ID}`);
     await expect(page.getByRole('button', { name: '실행 취소', exact: true })).toBeVisible();
   });

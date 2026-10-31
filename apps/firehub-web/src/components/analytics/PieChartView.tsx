@@ -10,7 +10,6 @@ import {
 } from 'recharts';
 
 import type { ChartConfig, ChartType } from '../../types/analytics';
-import { CHART_LEGEND_FORMATTER } from './chart-legend';
 import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from './chart-styles';
 
 interface PieChartViewProps {
@@ -158,7 +157,6 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
             <Legend
               // 범례는 상한 높이 안에서 스크롤된다 — 카드 밖·제목 위로 넘치지 않게(WD-307).
               wrapperStyle={{ fontSize: 12, maxHeight: legendMaxHeight, overflowY: 'auto' }}
-              formatter={CHART_LEGEND_FORMATTER}
             />
           )}
         </PieChart>

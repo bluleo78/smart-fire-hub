@@ -65,7 +65,7 @@ test.describe('파이프라인 실행 실패 안내 (WD-110)', () => {
     await mockApi(page, 'POST', '/api/v1/pipelines/1/execute', { status: 403, error: 'Forbidden', message: denied }, { status: 403 });
 
     await page.goto('/pipelines/1/executions/2');
-    await page.getByRole('button', { name: '같은 입력으로 다시 실행' }).click();
+    await page.getByRole('button', { name: '현재 설정으로 다시 실행' }).click();
 
     await expect(page.locator('[data-sonner-toast]').filter({ hasText: denied })).toBeVisible();
     await expect(page.getByText('재실행에 실패했습니다.')).toHaveCount(0);

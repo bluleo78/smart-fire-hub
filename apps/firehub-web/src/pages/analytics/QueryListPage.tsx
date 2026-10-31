@@ -165,7 +165,8 @@ export default function QueryListPage() {
                 setPage(0);
               }}
             >
-              <SelectTrigger className="w-[180px]">
+              {/* 값을 고른 뒤에도 무엇을 거르는 상자인지 읽히게 접근 이름을 붙인다 (WD-398) */}
+              <SelectTrigger className="w-[180px]" aria-label="폴더 필터">
                 <SelectValue placeholder="전체 폴더" />
               </SelectTrigger>
               <SelectContent>
@@ -282,8 +283,8 @@ export default function QueryListPage() {
                         </span>
                       </TableCell>
                       <TableCell>
-                        {/* Hover action buttons */}
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412: Tab 으로 와도 보이지 않던 문제) */}
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                           <Button
                             variant="ghost"
                             size="sm"

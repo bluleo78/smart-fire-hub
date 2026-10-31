@@ -150,7 +150,7 @@ export function SchemaExplorer({ tables, dialect, schema, onInsertAtCursor }: Sc
                   </span>
                 )}
 
-                <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                   <button
                     type="button"
                     className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -220,7 +220,7 @@ export function SchemaExplorer({ tables, dialect, schema, onInsertAtCursor }: Sc
                         </span>
                         <button
                           type="button"
-                          className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground group-hover/col:opacity-100"
+                          className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground group-hover/col:opacity-100 focus-visible:opacity-100"
                           onClick={() => onInsertAtCursor(columnReference(column.columnName, dialect))}
                           title="컬럼명 삽입"
                         >

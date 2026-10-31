@@ -144,4 +144,21 @@ test.describe('대시보드 에디터 페이지', () => {
     // 편집 모드에서는 위젯 제거 버튼(title="위젯 제거")이 표시된다
     await expect(page.locator('button[title="위젯 제거"]').first()).toBeVisible({ timeout: 5000 });
   });
+
+  test('왼쪽 위 ← 버튼이 보기·편집 모드 모두 「목록으로 돌아가기」로 읽히고 누르면 목록으로 간다 (WD-401)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDashboardEditorMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
+    await page.goto('/analytics/dashboards/1');
+
+    const back = page.getByRole('button', { name: '목록으로 돌아가기' });
+    await expect(back).toBeVisible();
+    await page.getByRole('button', { name: '편집' }).click();
+    await expect(back).toBeVisible();
+    // 편집을 마친 뒤 누르면 대시보드 목록으로 간다
+    await page.getByRole('button', { name: '완료' }).click();
+    await back.click();
+    await expect(page).toHaveURL(/\/analytics\/dashboards$/);
+  });
 });

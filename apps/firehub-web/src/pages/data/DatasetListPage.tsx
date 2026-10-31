@@ -301,7 +301,8 @@ export default function DatasetListPage() {
             value={storageType || '__all__'}
             onValueChange={(v) => patchParams({ storageType: v === '__all__' ? null : v, page: null })}
           >
-            <SelectTrigger className="w-[140px]">
+            {/* 값을 고른 뒤에도 무엇을 거르는 상자인지 읽히게 접근 이름을 붙인다 (WD-398) */}
+            <SelectTrigger className="w-[140px]" aria-label="저장 방식 필터">
               <SelectValue placeholder="전체 저장방식" />
             </SelectTrigger>
             <SelectContent>
@@ -315,7 +316,7 @@ export default function DatasetListPage() {
             value={originType || '__all__'}
             onValueChange={(v) => patchParams({ originType: v === '__all__' ? null : v, page: null })}
           >
-            <SelectTrigger className="w-[140px]">
+            <SelectTrigger className="w-[140px]" aria-label="출처 필터">
               <SelectValue placeholder="전체 출처" />
             </SelectTrigger>
             <SelectContent>
@@ -333,7 +334,7 @@ export default function DatasetListPage() {
               patchParams({ status: value === '__all__' ? null : value, page: null });
             }}
           >
-            <SelectTrigger className="w-[140px]">
+            <SelectTrigger className="w-[140px]" aria-label="상태 필터">
               <SelectValue placeholder="전체 상태" />
             </SelectTrigger>
             <SelectContent>
@@ -544,8 +545,8 @@ export default function DatasetListPage() {
                     {formatDateOnly(dataset.createdAt)}
                   </TableCell>
                   <TableCell className="relative">
-                    {/* Hover action buttons */}
-                    <div className="absolute right-10 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 backdrop-blur-sm rounded-md p-1 shadow-sm z-10">
+                    {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412: Tab 으로 와도 보이지 않던 문제) */}
+                    <div className="absolute right-10 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity bg-background/90 backdrop-blur-sm rounded-md p-1 shadow-sm z-10">
                       <Button
                         variant="ghost"
                         size="sm"

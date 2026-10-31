@@ -10,7 +10,6 @@ import {
 } from 'recharts';
 
 import type { ChartConfig } from '../../types/analytics';
-import { CHART_LEGEND_FORMATTER } from './chart-legend';
 import {
   CHART_SERIES_COLORS,
   formatYAxisTick,
@@ -57,7 +56,7 @@ export function LineChartView({ config, data, height }: LineChartViewProps) {
           }
         />
         <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} itemStyle={TOOLTIP_ITEM_STYLE} cursor={LINE_CURSOR_STYLE} />
-        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} formatter={CHART_LEGEND_FORMATTER} />}
+        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
         {yAxis.map((col, i) => (
           <Line
             key={col}
