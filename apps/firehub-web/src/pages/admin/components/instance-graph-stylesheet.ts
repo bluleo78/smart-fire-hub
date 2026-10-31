@@ -62,6 +62,9 @@ export function buildStylesheet(
       },
     },
     { selector: 'edge:selected', style: { 'line-color': c.ring, 'target-arrow-color': c.ring, width: 2 } },
+    // (WD-377) 타입 묶기에서 같은 관계 여러 건을 합친 엣지 — 건수가 많을수록 굵게(2~6px) 그려 비중을 보인다.
+    // edge:selected 뒤에 두어, 선택해도 굵기(비중)가 2px 로 줄지 않게 한다.
+    { selector: 'edge[count > 1]', style: { width: 'mapData(count, 2, 50, 2, 6)' } },
     // hover 스포트라이트 — 이웃 아닌 요소는 흐리게(.faded), 호버 노드는 강조(.spotlight)해 hairball에서 초점을 살린다.
     { selector: '.faded', style: { opacity: 0.12, 'text-opacity': 0.12 } },
     { selector: '.spotlight', style: { 'border-color': c.ring, 'border-width': 3, 'font-weight': 700 } },
@@ -74,7 +77,8 @@ export function buildStylesheet(
         'background-opacity': 0.08,
         // #377: 타입 묶기 박스의 테두리도 base(500)로는 라이트에서 2.15:1까지 떨어진다.
         // 부모 노드의 label이 곧 타입명이므로 같은 윤곽선 색을 쓴다.
-        'border-color': (ele: cytoscape.NodeSingular) => palette.contour(ele.data('label'), isDark),
+        // (WD-377) 라벨에 노드 수가 붙어 라벨로는 타입을 알 수 없으므로 data(type)으로 고른다(groupNodeData 가 늘 넣는다).
+        'border-color': (ele: cytoscape.NodeSingular) => palette.contour(ele.data('type'), isDark),
         'border-width': 1,
         label: 'data(label)',
         color: c.label,
