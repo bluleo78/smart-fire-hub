@@ -107,3 +107,74 @@ test.describe('대시보드 파이 위젯 — 라벨/범례 겹침 (#642)', () =
     await expect(page.locator('path.recharts-sector').first()).toBeVisible();
   });
 });
+
+/**
+ * WD-307: 카테고리가 수백 개면 범례가 위젯(카드) 위로 넘쳐 제목을 덮고 파이를 가렸다.
+ * 범례는 위젯 안 상한 높이에서 스크롤되고, 파이는 범례 위에 남으며, 많은 항목 안내가 뜨는지 본다.
+ */
+test.describe('대시보드 파이 위젯 — 카테고리 1000개 (WD-307)', () => {
+  test('범례가 위젯 밖으로 넘치지 않고 스크롤되며, 파이가 보이고 많은 항목 안내가 뜬다', async ({
+    authenticatedPage: page,
+  }) => {
+    const rows = Array.from({ length: 1000 }, (_, i) => ({ label: `항목 ${i + 1}`, v: ((i + 1) * 7) % 13 + 1 }));
+    const widget = createWidget({ id: 1, chartId: 1, chartName: '많은 항목 파이', chartType: 'PIE', width: 6, height: 4 });
+    const chart = createChart({
+      id: 1,
+      name: '많은 항목 파이',
+      chartType: 'PIE',
+      config: { xAxis: 'label', yAxis: ['v'], showLegend: true },
+    });
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', createDashboard({ id: 1, widgets: [widget] }));
+    await mockApi(page, 'GET', '/api/v1/analytics/charts/1/data', {
+      chart,
+      queryResult: createQueryResult({ columns: ['label', 'v'], rows, totalRows: rows.length }),
+    });
+    await mockApi(page, 'GET', '/api/v1/analytics/charts/1', chart);
+    await mockApi(page, 'GET', '/api/v1/analytics/charts', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
+
+    await page.goto('/analytics/dashboards/1');
+    const title = page.getByText('많은 항목 파이').first();
+    await expect(title).toBeVisible();
+    await expect(page.getByText('위젯 오류')).not.toBeVisible();
+
+    // 많은 항목 안내
+    await expect(page.getByTestId('pie-many-categories-notice')).toContainText('항목이 1,000개라');
+
+    // 범례는 상한 높이 안에서 스크롤된다(내용이 상자보다 길다)
+    const legend = page.locator('.recharts-legend-wrapper');
+    await expect(legend).toBeVisible();
+    const legendMetrics = await legend.evaluate((el) => ({
+      top: el.getBoundingClientRect().top,
+      bottom: el.getBoundingClientRect().bottom,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    }));
+    expect(legendMetrics.scrollHeight).toBeGreaterThan(legendMetrics.clientHeight);
+
+    // 범례가 위젯 제목 위로 넘치지 않는다 — 이전에는 범례가 카드 위쪽 경계를 넘어 제목을 덮었다.
+    const titleBox = (await title.boundingBox())!;
+    expect(legendMetrics.top).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+
+    // 파이는 그려져 있고 범례 위에 있다 — 많은 항목이면 진입 애니메이션을 끄므로 기다리지 않는다.
+    const sectors = await page.locator('path.recharts-sector').evaluateAll((els) =>
+      els.map((el) => {
+        const r = el.getBoundingClientRect();
+        return { top: r.top, bottom: r.bottom };
+      }),
+    );
+    expect(sectors.length).toBe(1000);
+    expect(Math.max(...sectors.map((b) => b.bottom))).toBeLessThanOrEqual(legendMetrics.top + 1);
+
+    // 안내는 한 줄이라 파이를 덮지 않는다
+    const noticeBox = (await page.getByTestId('pie-many-categories-notice').boundingBox())!;
+    expect(noticeBox.height).toBeLessThan(24);
+    expect(noticeBox.y + noticeBox.height).toBeLessThanOrEqual(Math.min(...sectors.map((b) => b.top)) + 1);
+
+    // 범례 아래쪽도 위젯 칸 안에 있다 — 위·아래 모두 넘치지 않는다.
+    const gridItem = page.locator('.react-grid-item').filter({ has: title });
+    if ((await gridItem.count()) > 0) {
+      const itemBox = (await gridItem.first().boundingBox())!;
+      expect(legendMetrics.bottom).toBeLessThanOrEqual(itemBox.y + itemBox.height + 1);
+    }
+  });
+});

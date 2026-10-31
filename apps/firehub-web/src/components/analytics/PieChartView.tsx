@@ -26,6 +26,15 @@ const LABEL_SUPPRESS_THRESHOLD = 8;
 const LEGEND_ITEM_WIDTH = 100;
 // 범례 한 줄의 높이(px).
 const LEGEND_ROW_HEIGHT = 20;
+// 범례가 차지할 수 있는 최대 비율(컨테이너 높이 대비) — 넘는 범례는 이 높이 안에서 스크롤된다(WD-307).
+// 제한이 없으면 카테고리가 수백 개일 때 범례가 카드 위로 넘쳐 제목을 덮고 파이를 가린다.
+const LEGEND_MAX_HEIGHT_RATIO = 0.4;
+// 이 수를 넘는 카테고리는 파이로 읽기 어렵다고 안내한다(WD-307). 데이터를 상위 N개+기타로 묶지는 않는다 — 값의 의미가 바뀐다.
+const MANY_CATEGORY_THRESHOLD = 50;
+// 안내 문구 한 줄이 차지하는 높이(px) — 파이 위쪽 여백으로 비워 둔다.
+const NOTICE_HEIGHT = 24;
+// 조각 사이 여백(2°)을 둘 수 있는 최대 항목 수 — 넘으면 여백 합이 90° 를 넘어 파이가 크게 비거나 음수 각도가 된다(WD-307).
+const PADDING_MAX_CATEGORIES = 45;
 
 export function PieChartView({ chartType, config, data, height }: PieChartViewProps) {
   const { xAxis, yAxis, showLegend = true, colors } = config;
@@ -53,7 +62,13 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   //  플롯 영역을 자동으로 줄여주지 않아 outerRadius 계산 전에 미리 예약해야 한다.)
   const itemsPerRow = Math.max(1, Math.floor(numericWidth / LEGEND_ITEM_WIDTH));
   const legendRows = showLegend ? Math.ceil(categoryCount / itemsPerRow) : 0;
-  const legendReservedHeight = showLegend ? 8 + legendRows * LEGEND_ROW_HEIGHT : 0;
+  // 범례 높이를 상한으로 자른다 — 나머지는 범례 안에서 스크롤해 보므로, 파이 자리는 늘 남는다(WD-307).
+  const legendMaxHeight = Math.floor(numericHeight * LEGEND_MAX_HEIGHT_RATIO);
+  const legendReservedHeight = showLegend
+    ? Math.min(8 + legendRows * LEGEND_ROW_HEIGHT, legendMaxHeight)
+    : 0;
+  const showManyNotice = categoryCount > MANY_CATEGORY_THRESHOLD;
+  const noticeHeight = showManyNotice ? NOTICE_HEIGHT : 0;
 
   // 라벨을 그릴 때는 조각 바깥으로 텍스트가 삐져나오므로 여백을 더 크게 잡는다.
   const labelMargin = showSliceLabels ? 40 : 16;
@@ -63,48 +78,72 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   const outerRadius = Math.max(
     24,
     Math.min(
-      (numericHeight - legendReservedHeight) / 2 - labelMargin,
+      (numericHeight - legendReservedHeight - noticeHeight) / 2 - labelMargin,
       numericWidth / 2 - 24,
       120,
     ),
   );
 
   return (
-    <ResponsiveContainer
-      width="100%"
-      height={height ?? '100%'}
-      initialDimension={{ width: numericWidth, height: numericHeight }}
-      onResize={(width, resizedHeight) => setMeasured({ width, height: resizedHeight })}
-    >
-      <PieChart margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-        <Pie
-          data={data}
-          dataKey={valueKey}
-          nameKey={nameKey}
-          cx="50%"
-          cy="50%"
-          innerRadius={isDonut ? 60 : 0}
-          outerRadius={outerRadius}
-          paddingAngle={2}
-          label={
-            showSliceLabels
-              ? ({ name, percent }: { name?: string; percent?: number }) =>
-                  (percent ?? 0) > 0.05 ? `${name ?? ''} (${((percent ?? 0) * 100).toFixed(0)}%)` : ''
-              : false
-          }
-          labelLine={false}
+    // 안내 문구를 차트 위에 겹쳐 두기 위한 기준 상자 — 높이는 ResponsiveContainer 와 같게 둔다.
+    <div className="relative w-full" style={{ height: height ?? '100%' }}>
+      {showManyNotice && (
+        // 한 줄로 자르고 포인터를 통과시킨다 — 좁은 위젯에서 여러 줄로 감겨 파이를 덮거나 조각 툴팁을 막지 않게.
+        <p
+          className="pointer-events-none absolute inset-x-0 top-0 z-10 truncate text-xs text-muted-foreground"
+          data-testid="pie-many-categories-notice"
         >
-          {data.map((_entry, index) => (
-            <Cell key={`cell-${index}`} fill={palette[index % palette.length]} />
-          ))}
-        </Pie>
-        <Tooltip
-          contentStyle={TOOLTIP_CONTENT_STYLE}
-          itemStyle={TOOLTIP_ITEM_STYLE}
-          formatter={(value, name) => [value, name]}
-        />
-        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} formatter={CHART_LEGEND_FORMATTER} />}
-      </PieChart>
-    </ResponsiveContainer>
+          항목이 {categoryCount.toLocaleString()}개라 파이 차트로 읽기 어렵습니다 — 막대 차트를 권장합니다.
+        </p>
+      )}
+      <ResponsiveContainer
+        width="100%"
+        height="100%"
+        initialDimension={{ width: numericWidth, height: numericHeight }}
+        onResize={(width, resizedHeight) => setMeasured({ width, height: resizedHeight })}
+      >
+        <PieChart margin={{ top: 8 + noticeHeight, right: 16, left: 0, bottom: 8 }}>
+          <Pie
+            data={data}
+            dataKey={valueKey}
+            nameKey={nameKey}
+            cx="50%"
+            cy="50%"
+            innerRadius={isDonut ? 60 : 0}
+            outerRadius={outerRadius}
+            // 조각 사이 여백은 (항목 수-1)×각도만큼 360° 에서 빠진다 — 항목이 많으면 합이 360° 를 넘어 조각이 음수 각도로 겹쳐
+            // 그려지므로 많은 항목에서는 여백을 없앤다(WD-307).
+            paddingAngle={categoryCount > PADDING_MAX_CATEGORIES ? 0 : 2}
+            // 수백 개 조각의 진입 애니메이션은 대시보드를 무겁게 만든다 — 많은 항목이면 끈다(WD-307).
+            isAnimationActive={!showManyNotice}
+            // 조각이 1° 도 안 되면 기본 흰 테두리(1px)가 조각을 덮어 파이가 속 빈 고리처럼 보인다 — 많은 항목이면 테두리를 없앤다(WD-307).
+            stroke={showManyNotice ? 'none' : undefined}
+            label={
+              showSliceLabels
+                ? ({ name, percent }: { name?: string; percent?: number }) =>
+                    (percent ?? 0) > 0.05 ? `${name ?? ''} (${((percent ?? 0) * 100).toFixed(0)}%)` : ''
+                : false
+            }
+            labelLine={false}
+          >
+            {data.map((_entry, index) => (
+              <Cell key={`cell-${index}`} fill={palette[index % palette.length]} />
+            ))}
+          </Pie>
+          <Tooltip
+            contentStyle={TOOLTIP_CONTENT_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
+            formatter={(value, name) => [value, name]}
+          />
+          {showLegend && (
+            <Legend
+              // 범례는 상한 높이 안에서 스크롤된다 — 카드 밖·제목 위로 넘치지 않게(WD-307).
+              wrapperStyle={{ fontSize: 12, maxHeight: legendMaxHeight, overflowY: 'auto' }}
+              formatter={CHART_LEGEND_FORMATTER}
+            />
+          )}
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
