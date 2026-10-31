@@ -1039,3 +1039,47 @@ test.describe('데이터셋 상세 — 즐겨찾기 원하는 상태 보내기 (
     await expect(page.getByText('즐겨찾기에 추가되었습니다.')).toHaveCount(0);
   });
 });
+
+/**
+ * WD-395: 태그 「×」 — 이름이 모두 「태그 제거」라 어느 태그인지 읽을 수 없었고, 12px 로 작았으며, 잘못 눌러도 되살릴 길이 없었다.
+ */
+test.describe('WD-395 태그 제거 버튼', () => {
+  test('× 버튼 이름에 태그가 들어가고 누르는 영역이 24×24px 이상이다', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setupDetailPageMocks(page, 1);
+    await page.goto('/data/datasets/1');
+
+    // createDatasetDetail 의 태그는 「테스트」·「샘플」
+    const removeTest = page.getByRole('button', { name: '테스트 태그 제거', exact: true });
+    const removeSample = page.getByRole('button', { name: '샘플 태그 제거', exact: true });
+    await expect(removeTest).toBeVisible();
+    await expect(removeSample).toBeVisible();
+    for (const button of [removeTest, removeSample]) {
+      const box = await button.boundingBox();
+      expect(box?.width).toBeGreaterThanOrEqual(24);
+      expect(box?.height).toBeGreaterThanOrEqual(24);
+    }
+  });
+
+  test('제거 토스트의 「되돌리기」를 누르면 같은 태그를 다시 추가한다', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+    // 태그 이름은 경로에서 인코딩되므로 접두로 맞춘다
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/datasets/1/tags/'),
+      (route) =>
+        route.request().method() === 'DELETE'
+          ? route.fulfill({ status: 204, body: '' })
+          : route.fallback(),
+    );
+    const addCapture = await mockApi(page, 'POST', '/api/v1/datasets/1/tags', { id: 1, tags: ['테스트', '샘플'] }, { capture: true });
+    await page.goto('/data/datasets/1');
+
+    await page.getByRole('button', { name: '샘플 태그 제거', exact: true }).click();
+    await expect(page.getByText('태그 "샘플" 제거')).toBeVisible();
+
+    await page.getByRole('button', { name: '되돌리기' }).click();
+    const req = await addCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ tagName: '샘플' });
+    await expect(page.getByText('태그 "샘플" 되돌림')).toBeVisible();
+  });
+});

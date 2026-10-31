@@ -277,7 +277,18 @@ export default function DatasetDetailPage() {
   const handleRemoveTag = async (tag: string) => {
     try {
       await removeTag.mutateAsync(tag);
-      toast.success(`태그 "${tag}" 제거`);
+      // 확인 창 대신 「되돌리기」를 둔다(WD-395) — 자주 하는 동작이라 매번 한 번 더 누르게 하지 않고, 잘못 누른 경우만 바로 되살린다.
+      toast.success(`태그 "${tag}" 제거`, {
+        action: {
+          label: '되돌리기',
+          onClick: () => {
+            addTag
+              .mutateAsync(tag)
+              .then(() => toast.success(`태그 "${tag}" 되돌림`))
+              .catch((error) => handleApiError(error, '태그를 되돌리지 못했습니다.'));
+          },
+        },
+      });
     } catch (error) {
       // 이미 지워진 태그면 서버의 「태그를 찾을 수 없습니다…」(404)를 그대로 보인다 (WD-242)
       handleApiError(error, '태그 제거에 실패했습니다.');
@@ -494,12 +505,16 @@ export default function DatasetDetailPage() {
                   {tag}
                   {/* 태그 제거도 dataset:write — 조회 전용이면 태그는 이름만 보인다 (WD-139) */}
                   {canWriteDataset && (
+                    // 이름에 태그를 넣어 스크린리더가 어느 태그인지 읽게 하고, 누르는 영역은 24×24px(WCAG 2.5.8)로 넓힌다 —
+                    // 아이콘은 12px 그대로 두고 음수 여백으로 칩 높이가 커지지 않게 한다 (WD-395)
                     <button
-                      className="ml-0.5 rounded-full hover:bg-muted-foreground/20 transition-colors"
+                      type="button"
+                      className="-my-1 -mr-1 inline-flex size-6 items-center justify-center rounded-full hover:bg-muted-foreground/20 transition-colors"
                       onClick={() => handleRemoveTag(tag)}
-                      title="태그 제거"
+                      aria-label={`${tag} 태그 제거`}
+                      title={`${tag} 태그 제거`}
                     >
-                      <X className="h-3 w-3" />
+                      <X className="h-3 w-3" aria-hidden="true" />
                     </button>
                   )}
                 </Badge>
