@@ -10,6 +10,12 @@ export interface ImportProgress {
   errorRows?: number;
   /** 건너뛴 빈 행 수 — 모든 값이 비어 있어 적재하지 않은 행(WD-255) */
   skippedRows?: number;
+  /** 업서트로 새로 추가된 행 수(WD-387) — 업서트일 때만 */
+  insertedRows?: number;
+  /** 업서트로 갱신된 기존 행 수(WD-387) — 업서트일 때만 */
+  updatedRows?: number;
+  /** 업서트·교체(PK)에서 파일 안 같은 키 때문에 마지막 행만 반영하고 버린 앞 행 수(WD-387) */
+  duplicateKeyRows?: number;
   message?: string;
   errorMessage?: string;
   /** 임포트가 실패한 것이 아니라 진행 상황을 확인할 수 없어 추적을 멈춘 경우 true (WD-203) */
@@ -42,6 +48,9 @@ export function useImportProgress(jobId: string | null): ImportProgress | null {
     successRows: typeof meta.successRows === 'number' ? meta.successRows : undefined,
     errorRows: typeof meta.errorRows === 'number' ? meta.errorRows : undefined,
     skippedRows: typeof meta.skippedRows === 'number' ? meta.skippedRows : undefined,
+    insertedRows: typeof meta.insertedRows === 'number' ? meta.insertedRows : undefined,
+    updatedRows: typeof meta.updatedRows === 'number' ? meta.updatedRows : undefined,
+    duplicateKeyRows: typeof meta.duplicateKeyRows === 'number' ? meta.duplicateKeyRows : undefined,
     message: jobProgress.message,
     errorMessage: jobProgress.errorMessage,
     unobservable: jobProgress.unobservable,

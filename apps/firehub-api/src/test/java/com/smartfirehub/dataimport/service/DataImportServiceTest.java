@@ -1486,6 +1486,95 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   /**
+   * WD-387: 업서트·교체(PK)에서 파일 안에 같은 키가 여러 번 있으면 키마다 마지막 행만 반영한다. 그때 버린 앞 행 수(duplicateKeyRows)와 업서트의
+   * 추가·갱신 수를 완료 결과와 이력에 남겨, 「성공 N행」과 실제 반영 행 수가 다른 이유를 알 수 있어야 한다.
+   */
+  @Test
+  void processImport_duplicateKeysInFile_reportsDuplicateAndAppliedCounts() throws Exception {
+    List<DatasetColumnRequest> columns =
+        List.of(
+            new DatasetColumnRequest("code", "Code", "TEXT", null, false, false, null, true),
+            new DatasetColumnRequest("qty", "Qty", "INTEGER", null, true, false, null, false));
+    DatasetDetailResponse pkDataset =
+        datasetService.createDataset(
+            new CreateDatasetRequest(
+                "Dup Key Dataset",
+                "dup_key_dataset",
+                "WD-387",
+                null,
+                "TABLE",
+                "SOURCE",
+                columns,
+                null),
+            testUserId);
+
+    // 교체: 5행 파일, 키 3개(X·Y 두 번) → 3행 반영, 2행은 같은 키로 버림
+    String replaceCsv = "code,qty\nX,1\nY,2\nX,3\nZ,4\nY,5\n";
+    dataImportService.processImport(
+        "dup-replace-job",
+        pkDataset.id(),
+        createTempCsvFile(replaceCsv),
+        "",
+        "",
+        "rep_dup.csv",
+        (long) replaceCsv.length(),
+        "CSV",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "REPLACE",
+        1L);
+    ArgumentCaptor<Map<String, Object>> replaceResult = ArgumentCaptor.forClass(Map.class);
+    Mockito.verify(asyncJobService)
+        .completeJob(Mockito.eq("dup-replace-job"), replaceResult.capture());
+    assertThat(replaceResult.getValue())
+        .containsEntry("successRows", 5)
+        .containsEntry("duplicateKeyRows", 2)
+        .doesNotContainKeys("insertedRows", "updatedRows");
+
+    // 업서트: 기존 X·Y·Z 에 W 새 키 + X 두 번 → 추가 1(W)·갱신 1(X)·같은 키로 버림 1
+    String upsertCsv = "code,qty\nX,10\nW,7\nX,11\n";
+    dataImportService.processImport(
+        "dup-upsert-job",
+        pkDataset.id(),
+        createTempCsvFile(upsertCsv),
+        "",
+        "",
+        "ups_dup.csv",
+        (long) upsertCsv.length(),
+        "CSV",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "UPSERT",
+        1L);
+    ArgumentCaptor<Map<String, Object>> upsertResult = ArgumentCaptor.forClass(Map.class);
+    Mockito.verify(asyncJobService)
+        .completeJob(Mockito.eq("dup-upsert-job"), upsertResult.capture());
+    assertThat(upsertResult.getValue())
+        .containsEntry("successRows", 3)
+        .containsEntry("insertedRows", 1)
+        .containsEntry("updatedRows", 1)
+        .containsEntry("duplicateKeyRows", 1);
+
+    // 이력에도 같은 키로 버린 행 수가 남는다(최신 순)
+    List<ImportResponse> imports = dataImportService.getImportsByDatasetId(pkDataset.id());
+    assertThat(imports)
+        .extracting(ImportResponse::fileName, ImportResponse::duplicateKeyRows)
+        .contains(
+            org.assertj.core.groups.Tuple.tuple("rep_dup.csv", 2),
+            org.assertj.core.groups.Tuple.tuple("ups_dup.csv", 1));
+    // 실제 데이터: X 는 마지막 값 11, W 추가
+    var qtyByCode =
+        dsl.select()
+            .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", "dup_key_dataset")))
+            .fetchMap(r -> (String) r.get("code"), r -> ((Number) r.get("qty")).intValue());
+    assertThat(qtyByCode).containsEntry("X", 11).containsEntry("W", 7).hasSize(4);
+  }
+
+  /**
    * BLOCKER 회귀 테스트: REPLACE(PK 無) 모드에서 파일 전체 행이 검증 실패하면, lazy truncate가 발동하지 않아 기존 데이터가 보존되어야 한다.
    * 스트리밍 전환 전 원자적 truncate+insert 로직이 "전량 무효" 케이스에서도 대상 테이블을 건드리지 않아야 한다.
    */

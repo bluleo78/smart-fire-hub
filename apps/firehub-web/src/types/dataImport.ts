@@ -15,6 +15,8 @@ export interface ImportResponse {
   totalRows: number | null;
   successRows: number | null;
   errorRows: number | null;
+  // 업서트·교체(PK)에서 파일 안 같은 키 때문에 마지막 행만 반영하고 버린 앞 행 수(WD-387). 그 밖의 임포트·이전 이력은 null.
+  duplicateKeyRows?: number | null;
   // 백엔드는 { errors: ValidationErrorDetail[] } 를 JSON 문자열로 이중 인코딩해 내려준다 —
   // parseErrorDetails() 로 안전 파싱한다 (src/lib/errorDetails.ts).
   errorDetails: string | Record<string, unknown> | null;

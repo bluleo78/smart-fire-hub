@@ -68,6 +68,12 @@ export const DatasetHistoryTab = React.memo(function DatasetHistoryTab({
                       </span>
                     </div>
                   )}
+                  {/* 같은 키로 버린 행이 있으면 실제 반영 행 수가 「성공」보다 적은 이유를 알린다(WD-387) */}
+                  {imp.duplicateKeyRows != null && imp.duplicateKeyRows > 0 && (
+                    <div className="text-xs text-muted-foreground" data-testid="import-history-duplicate-keys">
+                      파일 안 같은 키 {imp.duplicateKeyRows.toLocaleString()}행은 건너뛰고 키마다 마지막 행만 반영
+                    </div>
+                  )}
                   {imp.status === 'FAILED' && imp.errorMessage && (
                     <div className="flex items-start gap-2">
                       <span className="text-muted-foreground shrink-0">원인:</span>
