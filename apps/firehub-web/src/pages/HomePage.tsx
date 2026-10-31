@@ -44,15 +44,54 @@ function ActivityIcon({ eventType }: { eventType: string }) {
   return <Circle className="h-4 w-4 text-muted-foreground shrink-0" />;
 }
 
+/**
+ * 홈 카드의 조회 실패 안내 — 실패를 「없습니다」·0 개로 그리면 데이터가 사라졌다고 오해하므로(WD-333),
+ * 무엇을 불러오지 못했는지와 「다시 시도」를 그 자리에 보인다.
+ */
+function HomeLoadError({ message, onRetry, className }: { message: string; onRetry: () => void; className?: string }) {
+  return (
+    <div role="alert" className={`flex flex-wrap items-center gap-2 text-sm ${className ?? ''}`}>
+      <span className="text-destructive">{message}</span>
+      <Button variant="outline" size="sm" className="h-6 text-xs px-2" onClick={onRetry}>
+        다시 시도
+      </Button>
+    </div>
+  );
+}
+
 export default function HomePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const { data: health, isLoading: isHealthLoading } = useSystemHealth();
+  // 조회 실패(isError)와 「정말 비어 있음」을 구분한다 — 이전 데이터 없이 실패하면 카드마다 실패 안내를 보인다(WD-333)
+  const {
+    data: health,
+    isLoading: isHealthLoading,
+    isError: isHealthError,
+    refetch: refetchHealth,
+  } = useSystemHealth();
   const { data: stats } = useDashboardStats();
-  const { data: attentionItems } = useAttentionItems();
-  const { data: dashboardsData, isLoading: isDashboardsLoading } = useDashboards({ page: 0, size: 5 });
-  const { data: datasetsData, isLoading: isDatasetsLoading } = useDatasets({ page: 0, size: 5 });
+  const {
+    data: attentionItems,
+    isError: isAttentionError,
+    refetch: refetchAttention,
+  } = useAttentionItems();
+  const {
+    data: dashboardsData,
+    isLoading: isDashboardsLoading,
+    isError: isDashboardsError,
+    refetch: refetchDashboards,
+  } = useDashboards({ page: 0, size: 5 });
+  const {
+    data: datasetsData,
+    isLoading: isDatasetsLoading,
+    isError: isDatasetsError,
+    refetch: refetchDatasets,
+  } = useDatasets({ page: 0, size: 5 });
+  const healthFailed = isHealthError && !health;
+  const attentionFailed = isAttentionError && !attentionItems;
+  const dashboardsFailed = isDashboardsError && !dashboardsData;
+  const datasetsFailed = isDatasetsError && !datasetsData;
   // 데이터셋 생성 바로가기는 생성 권한(dataset:write)이 있을 때만 보인다 — 없으면 생성 화면이 권한 안내만 보이므로(WD-144)
   const { canWriteDataset } = useDatasetPermissions();
   // 파이프라인 요약·바로가기·필터는 조회 권한(pipeline:read)이 있을 때만 보인다 — 없으면 파이프라인 화면이 권한 안내만 보이고,
@@ -71,6 +110,8 @@ export default function HomePage() {
   const {
     data: activityFeedPages,
     isLoading: isActivityLoading,
+    isError: isActivityError,
+    refetch: refetchActivity,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
@@ -116,8 +157,10 @@ export default function HomePage() {
   const dh = health?.datasetHealth;
 
   // 전체 시스템에 문제가 없는지 판단 — 파이프라인을 볼 수 없으면 서버가 0 으로 보내 판단할 수 없으므로 표시하지 않는다(WD-272)
+  // 주의 필요 항목을 불러오지 못했으면 정상이라고 말할 수 없다(WD-333)
   const hasNoIssues = canReadPipeline && ph && dh
     && ph.failing === 0 && dh.stale === 0 && dh.empty === 0
+    && !attentionFailed
     && (!attentionItems || attentionItems.length === 0);
 
   return (
@@ -138,6 +181,8 @@ export default function HomePage() {
             <Skeleton className="h-5 w-48" />
             <Skeleton className="h-5 w-48" />
           </div>
+        ) : healthFailed ? (
+          <HomeLoadError message="시스템 상태를 불러오지 못했습니다." onRetry={() => void refetchHealth()} />
         ) : (
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 [word-break:keep-all]">
             {/* Pipeline summary — 조회 권한이 있을 때만(WD-272) */}
@@ -218,7 +263,8 @@ export default function HomePage() {
             {/* Quick counts */}
             <div className="flex items-center gap-1.5 text-sm text-dashboard-accent whitespace-nowrap">
               <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
-              대시보드 <span className="tabular-nums">{dashboardsData?.totalElements ?? 0}</span>
+              {/* 목록 조회가 실패했으면 0 대신 「—」 — 대시보드가 없는 것처럼 보이지 않게(WD-333) */}
+              대시보드 <span className="tabular-nums">{dashboardsFailed ? '—' : (dashboardsData?.totalElements ?? 0)}</span>
             </div>
 
             {stats && stats.recentImports.length > 0 && (
@@ -242,7 +288,12 @@ export default function HomePage() {
         )}
       </section>
 
-      {/* ZONE 2 — 주의 필요 (이슈가 있을 때만 표시) */}
+      {/* ZONE 2 — 주의 필요 (이슈가 있을 때만 표시). 조회 실패 시에는 사라지지 않고 실패를 알린다(WD-333) */}
+      {attentionFailed && (
+        <Card className="py-2 px-4">
+          <HomeLoadError message="주의 필요 항목을 불러오지 못했습니다." onRetry={() => void refetchAttention()} />
+        </Card>
+      )}
       {attentionItems && attentionItems.length > 0 && (
         <Card className="py-2 gap-1 flex flex-col card-hover">
           <CardHeader className="px-4 pb-0">
@@ -366,6 +417,8 @@ export default function HomePage() {
                     <Skeleton key={i} className="h-7 w-full" />
                   ))}
                 </div>
+              ) : dashboardsFailed ? (
+                <HomeLoadError message="대시보드를 불러오지 못했습니다." onRetry={() => void refetchDashboards()} className="py-1.5" />
               ) : dashboardsData?.content && dashboardsData.content.length > 0 ? (
                 <div className="overflow-y-auto overscroll-contain max-h-[13rem] pr-2">
                   {dashboardsData.content.map((dashboard) => (
@@ -417,6 +470,8 @@ export default function HomePage() {
                     <Skeleton key={i} className="h-7 w-full" />
                   ))}
                 </div>
+              ) : datasetsFailed ? (
+                <HomeLoadError message="데이터셋을 불러오지 못했습니다." onRetry={() => void refetchDatasets()} className="py-1.5" />
               ) : datasetsData?.content && datasetsData.content.length > 0 ? (
                 <div className="overflow-y-auto overscroll-contain max-h-[13rem] pr-2">
                   {datasetsData.content.map((ds) => (
@@ -578,6 +633,8 @@ export default function HomePage() {
                   <Skeleton key={i} className="h-10 w-full" />
                 ))}
               </div>
+            ) : isActivityError && !activityFeedPages ? (
+              <HomeLoadError message="활동 내역을 불러오지 못했습니다." onRetry={() => void refetchActivity()} className="justify-center py-8" />
             ) : activityItems.length > 0 ? (
               <div
                 ref={activityScrollRef}
