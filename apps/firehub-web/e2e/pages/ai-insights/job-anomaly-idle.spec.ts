@@ -1,4 +1,5 @@
 import { createJob, createTemplates } from '../../factories/ai-insight.factory';
+import { mockProactivePermissions } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -154,4 +155,46 @@ test.describe('스마트 작업 — 메트릭 0개 이상 탐지 (#362)', () => 
       page.getByRole('row').filter({ hasText: 'ZZ-anomaly없음' }).getByTestId('anomaly-idle'),
     ).toHaveCount(0);
   });
+});
+
+// WD-301: 좁은 화면에서 「모니터링 메트릭」 머리 줄이 넘쳐 제목이 한 글자씩 세로로 눌리고 「커스텀 메트릭」이 카드 밖으로 나가던 회귀를 막는다.
+test.describe('스마트 작업 모니터링 탭 편집 — 모바일 머리 줄 (WD-301)', () => {
+  // 재배치 기준 폭 320px(#345)과 이슈를 재현한 390px 두 폭에서 본다
+  for (const width of [320, 390]) {
+    test(`${width}px 폭에서 「모니터링 메트릭」 제목이 한 줄이고 추가 버튼·메트릭 행이 카드 안에 있다`, async ({ authenticatedPage: page }) => {
+      await mockProactivePermissions(page);
+      await page.setViewportSize({ width, height: 844 });
+      await setupJobWithConfig(page, anomalyConfig([SYSTEM_METRIC]));
+
+      await page.goto('/ai-insights/jobs/1?tab=monitoring');
+      await page.getByRole('button', { name: '편집', exact: true }).click();
+
+      const title = page.getByText('모니터링 메트릭', { exact: true });
+      await expect(title).toBeVisible();
+      // 한 줄이면 높이가 글자 한 줄(text-sm, leading-none ≈ 14px) 정도다 — 이전에는 세로 일곱 줄(98px)로 눌렸다.
+      const titleBox = await title.boundingBox();
+      expect(titleBox, '제목 위치').not.toBeNull();
+      expect(titleBox!.height).toBeLessThan(24);
+
+      // 제목을 감싼 테두리 카드(가장 안쪽) 안에 추가 묶음과 메트릭 행이 들어와야 한다 — 이전에는 「커스텀 메트릭」 오른쪽이 카드 밖으로 3px 나갔다.
+      const card = page.locator('div.rounded-lg.border').filter({ has: title }).last();
+      const cardBox = await card.boundingBox();
+      expect(cardBox, '카드 위치').not.toBeNull();
+      expect(cardBox!.x + cardBox!.width, '카드 오른쪽 끝').toBeLessThanOrEqual(width);
+      const targets = {
+        '커스텀 메트릭': page.getByRole('button', { name: '커스텀 메트릭' }),
+        '시스템 메트릭 추가': page.getByRole('combobox').filter({ hasText: '시스템 메트릭 추가' }),
+        '메트릭 행 폴링 주기': page.getByLabel('폴링 주기'),
+      };
+      for (const [name, target] of Object.entries(targets)) {
+        const box = await target.boundingBox();
+        expect(box, `${name} 위치`).not.toBeNull();
+        expect(box!.x + box!.width, `${name} 오른쪽 끝`).toBeLessThanOrEqual(cardBox!.x + cardBox!.width);
+      }
+
+      // 본문(main)이 가로로 스크롤되지 않아야 한다.
+      const overflow = await page.locator('main').evaluate((el) => el.scrollWidth - el.clientWidth);
+      expect(overflow).toBeLessThanOrEqual(0);
+    });
+  }
 });

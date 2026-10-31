@@ -378,11 +378,14 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
 
             {/* 모니터링 메트릭 */}
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
+              {/* 좁은 화면에서는 제목을 한 줄로 두고 추가 묶음이 다음 줄로 내려가게 한다 — 제목이 한 글자씩 세로로 눌리거나
+                  버튼이 카드 밖으로 나가지 않게(WD-301). */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 {/* 대응하는 단일 입력이 없는 그룹 제목이라 label 이 아니라 span 이다 (#432).
                     Label 기본 스타일(text-sm/leading-none/font-medium)을 그대로 재현한다. */}
-                <span className="block text-sm leading-none font-medium">모니터링 메트릭</span>
-                <div className="flex items-center gap-2">
+                <span className="block shrink-0 whitespace-nowrap text-sm leading-none font-medium">모니터링 메트릭</span>
+                {/* ml-auto — 줄바꿈돼 혼자 남아도 넓은 화면처럼 오른쪽에 붙어 있게 한다 */}
+                <div className="ml-auto flex flex-wrap items-center gap-2">
                   {/* 시스템 메트릭 추가 Select
                       key를 addSystemMetric 호출마다 증가시켜 Radix Select를 리마운트하면
                       내부 선택 상태가 초기화되어 동일한 항목을 반복 선택할 수 있다 */}
@@ -433,14 +436,15 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
               ) : (
                 <div className="space-y-2">
                   {anomalyConfig.metrics.map((metric) => (
+                    // 좁은 화면에서는 폴링 주기·삭제가 다음 줄로 내려가 이름이 눌리거나 카드 밖으로 나가지 않게 한다(WD-301)
                     <div
                       key={metric.id}
-                      className="flex items-center gap-3 rounded-lg border p-3"
+                      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border p-3"
                     >
                       <Badge variant="outline" className="shrink-0">
                         {metric.source === 'system' ? '시스템' : '데이터셋'}
                       </Badge>
-                      <span className="text-sm font-medium flex-1">{metric.name}</span>
+                      <span className="text-sm font-medium flex-1 min-w-0 break-words">{metric.name}</span>
                       <div className="flex items-center gap-2">
                         {/* 반복 렌더되는 메트릭 행이므로 안정 키(metric.id)를 id 에 끼워
                             행 간 id 충돌을 막는다 (#432). metric.id 는 crypto.randomUUID() 라 안정적. */}
