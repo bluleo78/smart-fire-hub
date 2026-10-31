@@ -83,6 +83,52 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
     expect(JSON.stringify(req.payload)).not.toContain('인사 급여');
   });
 
+  // 회귀 가드(WD-375): 창이 기본 좌우 1rem 여백을 덮어써 390 폭에서 화면 끝에 붙었고,
+  // 단계 이름 4개가 한 줄에 눌려 「API 설/정」처럼 글자 중간에서 두 줄로 끊겼다.
+  test('모바일(390)에서 창에 좌우 여백이 있고 단계 이름이 한 줄로 보인다 (WD-375)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setupDataTabMocks(page);
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: 'API 가져오기' }).click();
+
+    const dialog = page.getByRole('dialog');
+    const box = (await dialog.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(15);
+    expect(390 - (box.x + box.width)).toBeGreaterThanOrEqual(15);
+
+    // 지금 단계 이름만 한 줄(약 16px)로 보이고, 나머지 단계 이름은 숨는다
+    const current = dialog.getByText('API 설정', { exact: true });
+    await expect(current).toBeVisible();
+    expect((await current.boundingBox())!.height).toBeLessThan(24);
+    await expect(dialog.getByText('응답 매핑', { exact: true })).toBeHidden();
+
+    // 다음 단계로 가면 그 단계 이름이 보인다
+    await dialog.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/v1/data');
+    await dialog.getByRole('button', { name: '다음' }).click();
+    await expect(dialog.getByText('응답 매핑', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('API 설정', { exact: true })).toBeHidden();
+  });
+
+  // 데스크톱 폭은 그대로(기본 sm:max-w-lg = 512px)이고 단계 이름 4개가 모두 보인다(WD-375).
+  test('데스크톱(1280)에서는 창 폭이 512px 이고 단계 이름이 모두 보인다 (WD-375)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupDataTabMocks(page);
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: 'API 가져오기' }).click();
+
+    const dialog = page.getByRole('dialog');
+    expect(Math.round((await dialog.boundingBox())!.width)).toBe(512);
+    for (const label of ['API 설정', '응답 매핑', '미리보기', '실행 옵션']) {
+      await expect(dialog.getByText(label, { exact: true })).toBeVisible();
+    }
+  });
+
   /**
    * WD-154 — 서버가 매핑을 저장 시점에 거부하면(400) 고정 문구 대신 서버 문구(스텝 이름·이유)를 보인다.
    * 마법사는 빈 매핑 행을 막지 않으므로, 예전에는 생성에 성공한 뒤 실행 시점에야 영어 원문 오류로 실패했다.

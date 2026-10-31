@@ -50,7 +50,7 @@ export function KeyboardShortcutsHelp() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-md">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>키보드 단축키</DialogTitle>
           <DialogDescription>

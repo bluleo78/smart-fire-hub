@@ -55,7 +55,7 @@ export function DatasetPreviewSheet({ datasetId, datasetName, open, onOpenChange
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto overscroll-contain">
+      <DialogContent className="max-h-[80vh] overflow-auto overscroll-contain">
         <DialogHeader>
           <DialogTitle>미리보기: {datasetName}</DialogTitle>
           <DialogDescription className="sr-only">데이터셋의 데이터를 미리봅니다.</DialogDescription>

@@ -489,7 +489,7 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
 
       {/* 커스텀 메트릭 추가 모달 */}
       <Dialog open={showCustomModal} onOpenChange={setShowCustomModal}>
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Database className="h-5 w-5" />
