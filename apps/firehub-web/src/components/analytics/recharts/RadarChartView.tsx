@@ -5,7 +5,6 @@ import {
 Radar,   RadarChart, ResponsiveContainer,
 Tooltip, } from 'recharts';
 
-import { CHART_LEGEND_FORMATTER } from '../chart-legend';
 import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '../chart-styles';
 import type { ChartViewProps } from '../chart-view-props';
 
@@ -34,7 +33,7 @@ export function RadarChartView({ data, config, height = 300 }: ChartViewProps) {
           />
         ))}
         {config.yAxis.length > 1 && config.showLegend !== false && (
-          <Legend wrapperStyle={{ fontSize: 11 }} formatter={CHART_LEGEND_FORMATTER} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
         )}
       </RadarChart>
     </ResponsiveContainer>

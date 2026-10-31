@@ -11,7 +11,6 @@ import {
 } from 'recharts';
 
 import type { ChartConfig } from '../../types/analytics';
-import { CHART_LEGEND_FORMATTER } from './chart-legend';
 import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from './chart-styles';
 import { toPlotNumber } from './numeric-columns';
 
@@ -126,7 +125,7 @@ export function ScatterChartView({ config, data, height }: ScatterChartViewProps
           contentStyle={TOOLTIP_CONTENT_STYLE}
           itemStyle={TOOLTIP_ITEM_STYLE}
         />
-        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} formatter={CHART_LEGEND_FORMATTER} />}
+        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
         {scatterGroups.map((g) => (
           <Scatter key={g.name} name={g.name} data={g.data} fill={g.color} opacity={0.7} />
         ))}
