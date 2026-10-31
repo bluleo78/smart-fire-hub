@@ -248,4 +248,55 @@ test.describe('AI 인사이트 알림 패널', () => {
       await expect(page.getByText('모든 알림을 확인했습니다')).toBeVisible();
     });
   });
+
+  /**
+   * WD-357: 패널은 종 아이콘 가운데에 맞춰 놓이는데, 휴대폰 폭에서는 종이 오른쪽에 있어 320px 패널의 오른쪽이
+   * 화면 밖으로 나가 「닫기」·알림 시각이 잘렸다. 패널이 화면 안(좌우 여백 포함)에 들어오는지 좌표로 확인한다.
+   */
+  test.describe('휴대폰 폭 위치 보정 (WD-357)', () => {
+    for (const width of [375, 390]) {
+      test(`${width}px 에서 패널·「닫기」·알림 시각이 화면 안에 있다`, async ({ authenticatedPage: page }) => {
+        await page.setViewportSize({ width, height: 760 });
+        await mockApi(page, 'GET', '/api/v1/proactive/messages', messages);
+
+        await page.getByRole('button', { name: bellSelector }).first().click();
+        const dialog = page.getByRole('dialog', { name: 'AI 인사이트 알림' });
+        await expect(dialog).toBeVisible();
+        await expect(page.getByText('데이터 품질 이상 감지')).toBeVisible();
+
+        const panel = (await dialog.boundingBox())!;
+        expect(panel.x).toBeGreaterThanOrEqual(0);
+        expect(panel.x + panel.width).toBeLessThanOrEqual(width);
+
+        const close = (await page.getByRole('button', { name: '알림 패널 닫기' }).boundingBox())!;
+        expect(close.x + close.width).toBeLessThanOrEqual(width);
+        // 첫 알림의 시각(「1시간 전」)도 잘리지 않는다
+        const time = (await dialog.getByText(/1시간 전/).first().boundingBox())!;
+        expect(time.x + time.width).toBeLessThanOrEqual(width);
+
+        // 화면 안에 보이는 「닫기」를 눌러 실제로 닫힌다
+        await page.getByRole('button', { name: '알림 패널 닫기' }).click();
+        await expect(dialog).toHaveCount(0);
+      });
+    }
+
+    test('넓은 화면에서는 지금처럼 종 아이콘 가운데에 맞춘다', async ({ authenticatedPage: page }) => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await mockApi(page, 'GET', '/api/v1/proactive/messages', messages);
+
+      const bell = page.getByRole('button', { name: bellSelector }).first();
+      await bell.click();
+      const dialog = page.getByRole('dialog', { name: 'AI 인사이트 알림' });
+      await expect(dialog).toBeVisible();
+      await expect(page.getByText('데이터 품질 이상 감지')).toBeVisible();
+
+      const panel = (await dialog.boundingBox())!;
+      // 종을 감싼 위치 기준 요소의 가운데와 패널 가운데가 같다(보정 0)
+      const anchorCenter = await dialog.evaluate((el) => {
+        const r = (el as HTMLElement).offsetParent!.getBoundingClientRect();
+        return r.left + r.width / 2;
+      });
+      expect(Math.abs(panel.x + panel.width / 2 - anchorCenter)).toBeLessThanOrEqual(1);
+    });
+  });
 });
