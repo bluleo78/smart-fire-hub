@@ -31,6 +31,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.jooq.DSLContext;
@@ -42,6 +44,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -78,6 +81,12 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
   }
 
   @MockitoBean private SsrfProtectionService ssrfProtectionService;
+
+  /**
+   * 문장 실행 시작 신호용 스파이(WD-479) — 러너는 「SQL 실행 직전」 취소 체크포인트를 지난 뒤에야 {@code execute} 를 부른다. 그래서 이 호출이 곧
+   * 「체크포인트를 지나 문장이 돌기 시작했다」는 결정적 신호다(시간으로 기다리지 않는다). 호출은 그대로 실제 구현에 위임한다.
+   */
+  @MockitoSpyBean private SqlScriptExecutor sqlScriptExecutor;
 
   @Autowired private DSLContext dsl;
   @Autowired private DatasetService datasetService;
@@ -225,11 +234,21 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
                 userId)
             .id();
 
+    // 문장 실행이 시작되는 순간(체크포인트 통과 뒤)을 잡는 래치 — 고정 시간 대기는 부하가 크면 체크포인트 통과 전에 취소해 스텝까지 CANCELLED 가 됐다.
+    CountDownLatch statementStarted = new CountDownLatch(1);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              statementStarted.countDown();
+              return invocation.callRealMethod();
+            })
+        .when(sqlScriptExecutor)
+        .execute(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.anyString());
+
     Long executionId = executionService.executePipeline(pipelineId, userId);
-    // 스텝 안의 「SQL 실행 직전」 체크포인트(RUNNING 기록 직후 수 ms 안)를 지나 문장이 돌기 시작한 뒤에 취소한다 — 그 전이면 체크포인트가 잡아
-    // 스텝도 CANCELLED 다. 문장 본문은 실행 롤로 돌아 pg_stat_activity 의 질의 문구가 이 연결에는 가려지므로 시간으로 기다린다(문장은 수 초).
+    // 「SQL 실행 직전」 체크포인트를 지나 문장이 돌기 시작한 뒤에 취소한다 — 그 전이면 체크포인트가 잡아 스텝도 CANCELLED 다. 문장은 수 초 걸려
+    // 신호 직후 취소해도 아직 도는 중이다.
     awaitStepRunning(executionId, "slow");
-    sleep(1_000);
+    assertThat(awaitLatch(statementStarted)).as("문장 실행 시작 신호").isTrue();
     CancelExecutionResponse accepted =
         pipelineService.cancelExecution(pipelineId, executionId, userId);
     assertThat(accepted.status()).isEqualTo("RUNNING");
@@ -452,6 +471,16 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
       sleep(100);
     }
     throw new IllegalStateException("실행이 끝나지 않았다: " + detail);
+  }
+
+  /** 래치가 열릴 때까지 최대 60초 기다린다 — 부하가 커도 문장이 시작은 한다. */
+  private static boolean awaitLatch(CountDownLatch latch) {
+    try {
+      return latch.await(60, TimeUnit.SECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(e);
+    }
   }
 
   private static void sleep(long ms) {
