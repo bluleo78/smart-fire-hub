@@ -110,11 +110,13 @@ public class PlatformTenantRepository {
    *
    * <p>{@code "user"} 는 예약어라 인용이 필요하다. 도메인 권한(테넌트 평면 role)은 읽지 않는다 — 그것은 RLS 아래에 있고 운영자에게는 컨텍스트가
    * 없다.
+   *
+   * <p>전역 계정 활성({@code u.is_active})도 함께 읽는다 — 멤버십이 ACTIVE 여도 운영자가 비활성화한 계정은 로그인할 수 없다(WD-313).
    */
   public List<TenantMemberResponse> findMembers(long tenantId) {
     return dsl.fetch(
             """
-            select u.id as user_id, u.username, u.email, m.role, m.status
+            select u.id as user_id, u.username, u.email, m.role, m.status, u.is_active
             from membership m
             join "user" u on u.id = m.user_id
             where m.tenant_id = ?
@@ -128,7 +130,8 @@ public class PlatformTenantRepository {
                     r.get("username", String.class),
                     r.get("email", String.class),
                     r.get("role", String.class),
-                    r.get("status", String.class)));
+                    r.get("status", String.class),
+                    Boolean.TRUE.equals(r.get("is_active", Boolean.class))));
   }
 
   private static TenantSummaryResponse toSummary(Record r) {

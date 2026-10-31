@@ -46,7 +46,10 @@ export interface TenantMemberResponse {
   username: string;
   email: string | null;
   role: string;
+  /** 이 워크스페이스의 멤버십 상태(ACTIVE/SUSPENDED). */
   status: string;
+  /** 운영자가 정하는 전역 계정 활성(user.is_active, WD-313). false 면 멤버십이 ACTIVE 여도 로그인할 수 없다. */
+  accountActive: boolean;
 }
 
 /** 데이터셋 저장소 백엔드. 서버 `DataStoreBackend` 와 1:1. */

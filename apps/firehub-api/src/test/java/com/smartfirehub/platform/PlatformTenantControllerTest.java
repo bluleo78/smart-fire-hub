@@ -382,6 +382,33 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
     assertThat(body).contains("\"userId\":" + ownerUserId, "\"role\":\"OWNER\"");
   }
 
+  /** 운영자가 비활성화한 계정은 멤버십이 ACTIVE 여도 accountActive=false 로 보인다(WD-313). */
+  @Test
+  void members_reportsGloballyDeactivatedAccount() throws Exception {
+    String slug = "wd313-members-" + System.nanoTime();
+    createTenant(slug, ownerUserId);
+    createdTenant = tenantIdBySlug(slug);
+
+    String active =
+        mockMvc
+            .perform(authed(get("/api/platform/tenants/" + createdTenant + "/members")))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    assertThat(active).contains("\"status\":\"ACTIVE\"", "\"accountActive\":true");
+
+    dsl.execute("update \"user\" set is_active = false where id = ?", ownerUserId);
+
+    String deactivated =
+        mockMvc
+            .perform(authed(get("/api/platform/tenants/" + createdTenant + "/members")))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    assertThat(deactivated)
+        .contains("\"userId\":" + ownerUserId, "\"status\":\"ACTIVE\"", "\"accountActive\":false");
+  }
+
   /** 플랫폼 롤이 없는 사용자의 토큰은 권한이 비어 403 이다. */
   @Test
   void withoutPlatformPermissions_isForbidden() throws Exception {

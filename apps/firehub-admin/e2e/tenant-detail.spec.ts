@@ -135,6 +135,23 @@ test.describe('테넌트 상세', () => {
     }
   });
 
+  test('운영자가 비활성화한 계정은 멤버십 「활성」 옆에 「계정 비활성(운영자)」로 구분된다 (WD-313)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
+    await mockApi(page, 'GET', '/api/platform/tenants/1/members', [
+      createMember({ userId: 1, username: 'on@example.com', status: 'ACTIVE', accountActive: true }),
+      createMember({ userId: 2, username: 'off@example.com', status: 'ACTIVE', accountActive: false }),
+    ]);
+    await page.goto('/tenants/1');
+    const table = page.getByRole('table', { name: '테넌트 멤버 목록' });
+    const offRow = table.getByRole('row').filter({ hasText: 'off@' });
+    await expect(offRow.getByText('활성', { exact: true })).toBeVisible();
+    await expect(offRow.getByText('계정 비활성(운영자)')).toBeVisible();
+    // 활성 계정에는 붙지 않는다.
+    await expect(table.getByRole('row').filter({ hasText: 'on@' }).getByText('계정 비활성(운영자)')).toHaveCount(0);
+  });
+
   test('멤버 상태 열이 원시값이 아니라 한국어 배지다 (WD-8)', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
     await mockApi(page, 'GET', '/api/platform/tenants/1/members', [
