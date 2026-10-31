@@ -681,11 +681,14 @@ export default function DashboardEditorPage() {
         <Button
           variant="ghost"
           size="icon"
+          // 아이콘만 있는 버튼이라 이름을 붙인다 — 쿼리 편집기·차트 빌더와 같은 문구 (WD-401)
+          aria-label="목록으로 돌아가기"
+          title="목록으로 돌아가기"
           // 화면 안 「←」도 미저장 배치 확인을 거친다(WD-323) — navigate 직접 호출은 가드를 우회한다
           onClick={() => requestNavigate('/analytics/dashboards')}
           className="h-8 w-8"
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
         </Button>
 
         <div className="flex-1 min-w-40">
