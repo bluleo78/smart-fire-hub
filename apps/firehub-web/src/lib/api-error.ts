@@ -117,6 +117,14 @@ export function isNotFoundError(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 404;
 }
 
+/**
+ * 충돌(409) 응답인가 (WD-367) — 요청 사이 다른 탭·사람이 같은 것을 먼저 바꿔 서버 상태와 화면이 어긋났다(예: 이미 대시보드에 추가된 차트).
+ * 코드까지 보는 편집 충돌은 isEditConflict 를 쓴다.
+ */
+export function isConflictError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 409;
+}
+
 /** 워크스페이스 멤버가 아닌 사용자 404 의 코드(WD-288) — api UserNotFoundException.NOT_IN_WORKSPACE_CODE 와 같은 값. */
 export const USER_NOT_IN_WORKSPACE_CODE = 'USER_NOT_IN_WORKSPACE';
 
