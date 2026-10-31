@@ -66,7 +66,8 @@ interface ChartTypeSelectorProps {
 export function ChartTypeSelector({ value, onChange }: ChartTypeSelectorProps) {
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex items-center gap-1 flex-wrap">
+      {/* 17개 아이콘 버튼을 하나의 묶음으로 알려 화면 읽기 프로그램이 「차트 타입」 그룹으로 읽게 한다(WD-349) */}
+      <div role="group" aria-label="차트 타입" className="flex items-center gap-1 flex-wrap">
         {CHART_TYPES.map(({ type, label, Icon }) => (
           <Tooltip key={type}>
             <TooltipTrigger asChild>
@@ -79,6 +80,8 @@ export function ChartTypeSelector({ value, onChange }: ChartTypeSelectorProps) {
                 )}
                 onClick={() => onChange(type)}
                 aria-label={label}
+                // 선택 상태가 색으로만 보이면 화면 읽기 프로그램 사용자는 현재 타입을 알 수 없다 — 토글 버튼으로 노출한다(WD-349)
+                aria-pressed={value === type}
               >
                 <Icon className="h-4 w-4" />
               </Button>
