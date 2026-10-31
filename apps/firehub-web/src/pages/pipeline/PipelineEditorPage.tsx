@@ -33,6 +33,7 @@ import { useCancelExecution, useExecutePipeline, useExecution, useExecutions,use
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError } from '@/lib/api-error';
 import { formatDate, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '@/lib/formatters';
+import { parseRouteId } from '@/lib/route-id';
 import type { PipelineExecutionResponse } from '@/types/pipeline';
 
 import { CancelExecutionDialog } from './components/CancelExecutionDialog';
@@ -55,7 +56,11 @@ export default function PipelineEditorPage() {
   const parsedPipelineId = id ? Number(id) : undefined;
   const isInvalidId = hasIdParam && !Number.isFinite(parsedPipelineId);
   const pipelineId = isInvalidId ? undefined : parsedPipelineId;
-  const executionId = execId ? Number(execId) : undefined;
+  // 실행 id 도 같은 이유로 엄격하게 읽는다(WD-434) — NaN 이면 아래 렌더 중 상태 조정의 `NaN !== NaN` 이 늘 참이라
+  // 매 렌더 setState 로 무한 렌더가 되어 앱 전체가 오류 화면이 됐다. 숫자가 아니면 없는 실행 id 와 같게 안내한다.
+  const parsedExecutionId = parseRouteId(execId);
+  const isInvalidExecutionId = parsedExecutionId === null;
+  const executionId = parsedExecutionId ?? undefined;
 
   const navigate = useNavigate();
 
@@ -111,10 +116,12 @@ export default function PipelineEditorPage() {
 
   /** 존재하지 않는 실행 ID 접근 시 toast 알림 후 파이프라인 페이지로 리다이렉트 — ApiConnectionDetailPage와 동일 패턴 */
   useEffect(() => {
-    if (!executionError) return;
-    toast.error('실행 정보를 불러오는데 실패했습니다.');
+    // 파이프라인 id 부터 틀리면 아래 「파이프라인을 찾을 수 없습니다」가 맡는다(돌아갈 파이프라인이 없다)
+    if (pipelineId === undefined || (!executionError && !isInvalidExecutionId)) return;
+    // 숫자가 아닌 id 는 마운트 즉시 알린다 — 개발 모드 StrictMode 의 이중 실행에도 토스트가 하나만 남게 id 를 준다
+    toast.error('실행 정보를 불러오는데 실패했습니다.', { id: 'pipeline-execution-not-found' });
     navigate(`/pipelines/${pipelineId}`);
-  }, [executionError, navigate, pipelineId]);
+  }, [executionError, isInvalidExecutionId, navigate, pipelineId]);
 
   // 서버 상세를 받을 때마다(최초 로드 + 저장/실행 완료 후 재조회) 편집기에 반영한다 (#742).
   // 미저장 변경이 있으면 화면은 그대로 두고 취소 기준만 갱신한다(usePipelineEditor.loadFromApi 참고).

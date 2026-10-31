@@ -7,6 +7,7 @@ import { StatusBadge } from '@/components/api-connection/StatusBadge';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { handleApiError } from '@/lib/api-error';
 import { formatDate } from '@/lib/formatters';
+import { parseRouteId } from '@/lib/route-id';
 
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -43,7 +44,10 @@ import type { UpdateApiConnectionRequest } from '../../types/api-connection';
 export default function ApiConnectionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: connection, isLoading, isError } = useApiConnection(Number(id));
+  // 숫자가 아닌 id(WD-434)는 조회가 꺼져 로딩·오류·데이터가 모두 없는 빈 화면이 됐다 — 없는 id 와 같게 안내한다
+  const connectionId = parseRouteId(id);
+  const isInvalidId = connectionId == null;
+  const { data: connection, isLoading, isError } = useApiConnection(connectionId ?? 0);
   const updateMutation = useUpdateApiConnection();
   const deleteMutation = useDeleteApiConnection();
   const testMutation = useTestApiConnection();
@@ -87,10 +91,11 @@ export default function ApiConnectionDetailPage() {
 
   /** 404 등 오류 응답 시 목록으로 리다이렉트 — UserDetailPage와 동일 패턴 */
   useEffect(() => {
-    if (!isError) return;
-    toast.error('연결 정보를 불러오는데 실패했습니다.');
+    if (!isError && !isInvalidId) return;
+    // 숫자가 아닌 id 는 마운트 즉시 알린다 — 개발 모드 StrictMode 의 이중 실행에도 토스트가 하나만 남게 id 를 준다
+    toast.error('연결 정보를 불러오는데 실패했습니다.', { id: 'api-connection-not-found' });
     navigate('/admin/api-connections');
-  }, [isError, navigate]);
+  }, [isError, isInvalidId, navigate]);
 
   /* eslint-disable react-hooks/set-state-in-effect -- 서버 응답으로 폼 초기값 시드. connection 참조는 TanStack Query가 id 동일 시 공유하므로 실제 재호출은 라우트/리패치 변경 시에만 발생. */
   useEffect(() => {

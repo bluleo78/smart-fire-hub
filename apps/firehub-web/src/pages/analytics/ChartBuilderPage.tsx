@@ -61,6 +61,7 @@ import {
   findChartSvg,
   sanitizeFilename,
 } from '../../lib/chart-export';
+import { parseRouteId } from '../../lib/route-id';
 import type { Chart, ChartConfig,ChartType } from '../../types/analytics';
 
 // ============================================================
@@ -442,8 +443,11 @@ export default function ChartBuilderPage() {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
 
-  const chartId = id ? parseInt(id, 10) : null;
-  const isNew = !chartId;
+  // 주소 id 는 숫자만 받는다(WD-434) — parseInt 는 'abc' 를 NaN(새 차트 + 「NaN」 글자로), '15abc' 를 15(다른 차트)로 읽었다
+  const parsedChartId = parseRouteId(id);
+  const isInvalidId = parsedChartId === null;
+  const chartId = parsedChartId ?? null;
+  const isNew = id === undefined;
 
   // 접근성: 라벨↔컨트롤 연결용 id 접두사 (#432). 하드코딩 대신 useId 로 충돌을 원천 차단한다.
   const baseId = useId();
@@ -848,7 +852,7 @@ export default function ChartBuilderPage() {
   }
 
   // 존재하지 않는 차트 ID(404 등) 접근 시: 에러 안내 + 목록 이동 버튼 표시
-  if (!isNew && chartError) {
+  if (!isNew && (chartError || isInvalidId)) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-20">
         <BarChart2 className="h-12 w-12 text-muted-foreground" />

@@ -69,6 +69,7 @@ import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError, handleApiErrorAsync, isEditConflict } from '../../lib/api-error';
 import { downloadBlob, filenameFromContentDisposition, localDateStamp } from '../../lib/download';
+import { parseRouteId } from '../../lib/route-id';
 import { sqlRunShortcut } from '../../lib/sql-run-shortcut';
 import { RUN_SHORTCUT_LABEL } from '../../lib/sql-run-shortcut-label';
 import { cn } from '../../lib/utils';
@@ -420,8 +421,11 @@ export default function QueryEditorPage() {
   const navigationExecutionResult =
     (location.state as { executionResult?: AnalyticsQueryResult } | null)?.executionResult ?? null;
 
-  const queryId = id ? parseInt(id, 10) : null;
-  const isNew = !queryId;
+  // 주소 id 는 숫자만 받는다(WD-434) — parseInt 는 'abc' 를 NaN(새 쿼리로), '15abc' 를 15(다른 쿼리)로 읽었다
+  const parsedQueryId = parseRouteId(id);
+  const isInvalidId = parsedQueryId === null;
+  const queryId = parsedQueryId ?? null;
+  const isNew = id === undefined;
 
   // URL params for "open from DatasetDataTab"
   const initialSql = searchParams.get('sql')
@@ -776,7 +780,7 @@ export default function QueryEditorPage() {
   }
 
   // 존재하지 않는 쿼리 ID(404 등) 접근 시: 에러 안내 + 목록 이동 버튼 표시
-  if (!isNew && queryError) {
+  if (!isNew && (queryError || isInvalidId)) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-20">
         <FileCode2 className="h-12 w-12 text-muted-foreground" />
