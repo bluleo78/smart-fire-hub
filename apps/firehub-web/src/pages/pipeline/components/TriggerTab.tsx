@@ -26,7 +26,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useDeleteTrigger, usePipelinePermissions, useToggleTrigger,useTriggers } from '@/hooks/queries/usePipelines';
 import { extractApiError, isNotFoundError } from '@/lib/api-error';
-import { formatDate } from '@/lib/formatters';
+import { formatDate, parseUtcDate } from '@/lib/formatters';
+import { browserTimeZone, timeZoneLabel } from '@/lib/next-run';
 import { iGa } from '@/lib/utils';
 import type { ErrorResponse } from '@/types/auth';
 import type { TriggerResponse, TriggerType } from '@/types/pipeline';
@@ -213,7 +214,8 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
                       {/* 비활성 트리거는 실행되지 않으므로 「다음 실행」을 보이지 않는다(WD-114) */}
                       {trigger.isEnabled && trigger.nextFireTime && (
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          다음 실행: {formatDate(trigger.nextFireTime)}
+                          {/* 보는 사람 시간대로 보이므로 그 시간대 이름을 붙인다 — 편집 창 미리보기(트리거 시간대)와 같은 실행임을 알 수 있게(WD-385) */}
+                          다음 실행: {formatDate(trigger.nextFireTime)} ({timeZoneLabel(parseUtcDate(trigger.nextFireTime), browserTimeZone())})
                         </p>
                       )}
                     </div>
