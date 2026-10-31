@@ -74,9 +74,9 @@ export function SectionTreeItem({
       data-testid="section-tree-item"
       {...attributes}
     >
-      {/* Drag handle - visible on hover */}
+      {/* 끌기 손잡이 — 마우스를 올리거나 키보드 포커스가 오면 보인다(WD-412) */}
       <span
-        className="opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing"
+        className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity cursor-grab active:cursor-grabbing"
         {...listeners}
       >
         <GripVertical className="h-4 w-4 text-muted-foreground" />
@@ -128,7 +128,7 @@ export function SectionTreeItem({
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 opacity-0 group-hover:opacity-100"
+              className="h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
               onClick={(e) => e.stopPropagation()}
             >
               <Plus className="h-3 w-3" />
@@ -156,7 +156,7 @@ export function SectionTreeItem({
       <Button
         variant="ghost"
         size="icon"
-        className="h-6 w-6 opacity-0 group-hover:opacity-100"
+        className="h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
         aria-label={`${section.label} 섹션 삭제`}
         data-testid="section-delete"
         onClick={(e) => {

@@ -545,8 +545,8 @@ export default function DatasetListPage() {
                     {formatDateOnly(dataset.createdAt)}
                   </TableCell>
                   <TableCell className="relative">
-                    {/* Hover action buttons */}
-                    <div className="absolute right-10 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 backdrop-blur-sm rounded-md p-1 shadow-sm z-10">
+                    {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412: Tab 으로 와도 보이지 않던 문제) */}
+                    <div className="absolute right-10 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity bg-background/90 backdrop-blur-sm rounded-md p-1 shadow-sm z-10">
                       <Button
                         variant="ghost"
                         size="sm"

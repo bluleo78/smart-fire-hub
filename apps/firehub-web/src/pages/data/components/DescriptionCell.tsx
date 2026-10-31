@@ -99,7 +99,7 @@ export function DescriptionCell({
       </span>
       <Pencil
         size={14}
-        className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+        className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
       />
     </div>
   );

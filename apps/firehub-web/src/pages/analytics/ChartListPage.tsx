@@ -187,8 +187,9 @@ export default function ChartListPage() {
                         </span>
                       </TableCell>
                       <TableCell>
+                        {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412) */}
                         {isOwner(chart.createdBy) && (
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                             <Button
                               variant="ghost"
                               size="sm"
