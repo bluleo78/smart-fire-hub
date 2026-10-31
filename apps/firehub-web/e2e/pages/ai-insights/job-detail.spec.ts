@@ -462,6 +462,27 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page).toHaveURL('/ai-insights/jobs/1/executions/5');
   });
 
+  test('실행 이력의 시작 시각 링크로 키보드(Tab·Enter)만으로 실행 상세를 연다 (WD-436)', async ({ authenticatedPage: page }) => {
+    // 행 클릭은 마우스로만 열려 키보드 사용자는 실행 상세에 들어갈 수 없었다 — 시작 시각이 링크가 되어 Tab 으로 닿아야 한다
+    const execution = createJobExecution({ id: 5, jobId: 1, status: 'COMPLETED' });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', [execution]);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/5', execution);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/5/html', '', { status: 404 });
+
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+
+    const link = page.getByRole('row').nth(1).getByRole('link');
+    await expect(link).toHaveAttribute('href', '/ai-insights/jobs/1/executions/5');
+    await link.focus();
+    await expect(link).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    await expect(page).toHaveURL('/ai-insights/jobs/1/executions/5');
+  });
+
   test('모니터링 탭에 이상 탐지 이력이 표시된다', async ({ authenticatedPage: page }) => {
     // setupJobDetailMocks에 이상 탐지 이벤트 2건이 모킹되어 있다
     await setupJobDetailMocks(page, 1);

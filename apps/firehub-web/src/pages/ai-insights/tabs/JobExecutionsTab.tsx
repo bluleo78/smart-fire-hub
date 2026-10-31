@@ -6,7 +6,7 @@
  */
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -80,9 +80,15 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
                 >
                   <TableCell className="text-sm">
                     <div className="flex items-center gap-2">
-                      <span>
+                      {/* 키보드 접근성(WD-436): 행 클릭은 마우스로만 열리므로 시작 시각을 실행 상세 링크로 둔다 — Tab 으로 닿고
+                          Enter 로 열린다. 클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
+                      <Link
+                        to={`/ai-insights/jobs/${jobId}/executions/${exec.id}`}
+                        className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {formatDate(exec.startedAt)} ({timeAgo(exec.startedAt)})
-                      </span>
+                      </Link>
                       {/* 리포트 등급 배지(WD-198) — 실행 동안 읽은 데이터셋의 최고 등급 */}
                       {exec.securityLevel && <SecurityLevelBadge level={exec.securityLevel} />}
                     </div>

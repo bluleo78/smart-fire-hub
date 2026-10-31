@@ -1,6 +1,6 @@
 import { Ban, Clock, Code, Database, GitBranch, Globe, Link, User } from 'lucide-react';
 import { useEffect, useMemo,useRef, useState } from 'react';
-import { useNavigate,useParams } from 'react-router-dom';
+import { Link as RouterLink, useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { EditConflictDialog } from '@/components/EditConflictDialog';
@@ -514,7 +514,18 @@ export default function PipelineEditorPage() {
                       className="cursor-pointer hover:bg-muted/50"
                       onClick={() => navigate(`/pipelines/${state.pipelineId}/executions/${exec.id}`)}
                     >
-                      <TableCell className="font-mono text-xs">{exec.id}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {/* 키보드 접근성(WD-436): 행 클릭은 마우스로만 열리므로 실행 번호를 실행 상세 링크로 둔다 — Tab 으로 닿고
+                            Enter 로 열린다. 링크 이름은 번호 그대로 둔다(칸 이름이 바뀌지 않게 — 「ID」 열 머리글이 함께 읽힌다).
+                            클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
+                        <RouterLink
+                          to={`/pipelines/${state.pipelineId}/executions/${exec.id}`}
+                          className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {exec.id}
+                        </RouterLink>
+                      </TableCell>
                       <TableCell>
                         <Badge variant={getStatusBadgeVariant(exec.status)}>
                           {getStatusLabel(exec.status)}
