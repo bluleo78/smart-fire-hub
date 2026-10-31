@@ -193,4 +193,19 @@ test.describe('필드 탭 — 필드 추가·수정 이름 중복과 NULL 허용
     await expect(nullable).not.toBeChecked();
     await expect(dialog.getByText(NULLABLE_LOCK_MESSAGE)).toHaveCount(0);
   });
+
+  test('필드의 「데이터 타입 *」 라벨이 타입 선택 상자와 이어져 라벨 이름으로 읽힌다 (WD-398)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets/new');
+
+    const typeBox = page.getByRole('combobox', { name: '데이터 타입 *' });
+    await expect(typeBox).toHaveCount(1);
+    await expect(typeBox).toHaveText('텍스트');
+    // 라벨을 누르면 이어진 상자가 눌려 타입 목록이 열린다(라벨 연결) — 열리면 나머지 화면은 aria-hidden 이라 상자 대신 목록을 본다
+    await page.getByText('데이터 타입 *').click();
+    await expect(page.getByRole('listbox')).toBeVisible();
+    await expect(page.getByRole('option', { name: '텍스트' })).toBeVisible();
+  });
 });

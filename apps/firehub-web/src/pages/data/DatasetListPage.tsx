@@ -301,7 +301,8 @@ export default function DatasetListPage() {
             value={storageType || '__all__'}
             onValueChange={(v) => patchParams({ storageType: v === '__all__' ? null : v, page: null })}
           >
-            <SelectTrigger className="w-[140px]">
+            {/* 값을 고른 뒤에도 무엇을 거르는 상자인지 읽히게 접근 이름을 붙인다 (WD-398) */}
+            <SelectTrigger className="w-[140px]" aria-label="저장 방식 필터">
               <SelectValue placeholder="전체 저장방식" />
             </SelectTrigger>
             <SelectContent>
@@ -315,7 +316,7 @@ export default function DatasetListPage() {
             value={originType || '__all__'}
             onValueChange={(v) => patchParams({ originType: v === '__all__' ? null : v, page: null })}
           >
-            <SelectTrigger className="w-[140px]">
+            <SelectTrigger className="w-[140px]" aria-label="출처 필터">
               <SelectValue placeholder="전체 출처" />
             </SelectTrigger>
             <SelectContent>
@@ -333,7 +334,7 @@ export default function DatasetListPage() {
               patchParams({ status: value === '__all__' ? null : value, page: null });
             }}
           >
-            <SelectTrigger className="w-[140px]">
+            <SelectTrigger className="w-[140px]" aria-label="상태 필터">
               <SelectValue placeholder="전체 상태" />
             </SelectTrigger>
             <SelectContent>

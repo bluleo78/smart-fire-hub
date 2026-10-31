@@ -207,6 +207,7 @@ export function ColumnDialog({
           <div className="space-y-2">
             <Label htmlFor="dataType">데이터 타입 *</Label>
             <ColumnTypeSelect
+              id="dataType"
               value={form.watch('dataType')}
               onChange={(value) => form.setValue('dataType', value as AddColumnFormData['dataType'])}
               disabled={mode === 'edit' && (hasData || isCurrentColumnGeometry)}

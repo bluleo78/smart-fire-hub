@@ -691,4 +691,15 @@ test.describe('쿼리 삭제 — 함께 삭제되는 항목 안내 (WD-86)', () 
     const req = await deleteCapture.waitForRequest();
     expect(req.url.pathname).toBe('/api/v1/analytics/queries/1');
   });
+
+  test('폴더 필터에 이름이 있어 값을 고른 뒤에도 「폴더 필터」로 읽힌다 (WD-398)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/analytics/queries', createPageResponse([createSavedQueryListItem({ id: 1, folder: '분석' })]));
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', ['분석', '보고서']);
+    await page.goto('/analytics/queries');
+
+    const folder = page.getByRole('combobox', { name: '폴더 필터' });
+    await folder.click();
+    await page.getByRole('option', { name: '분석' }).click();
+    await expect(folder).toHaveText('분석');
+  });
 });

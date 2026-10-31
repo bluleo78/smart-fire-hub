@@ -165,7 +165,8 @@ export default function QueryListPage() {
                 setPage(0);
               }}
             >
-              <SelectTrigger className="w-[180px]">
+              {/* 값을 고른 뒤에도 무엇을 거르는 상자인지 읽히게 접근 이름을 붙인다 (WD-398) */}
+              <SelectTrigger className="w-[180px]" aria-label="폴더 필터">
                 <SelectValue placeholder="전체 폴더" />
               </SelectTrigger>
               <SelectContent>

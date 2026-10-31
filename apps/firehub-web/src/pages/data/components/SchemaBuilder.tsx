@@ -77,6 +77,7 @@ export function SchemaBuilder() {
             <div className="space-y-2">
               <Label htmlFor={`columns.${index}.dataType`}>데이터 타입 *</Label>
               <ColumnTypeSelect
+                id={`columns.${index}.dataType`}
                 value={watch(`columns.${index}.dataType`)}
                 // 저장소가 GEOMETRY 를 지원하지 않으면(Tibero) 목록에서 숨긴다. 조회 전·실패 시엔 그대로 둔다. (WD-80)
                 hiddenOptions={geometrySupported ? undefined : ['GEOMETRY']}
