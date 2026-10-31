@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { analyticsApi } from '../../api/analytics';
+import { DashboardShareNotice } from '../../components/analytics/DashboardShareNotice';
 import { WorkspaceAnalyticsTable } from '../../components/analytics/WorkspaceAnalyticsTable';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
 import { Badge } from '../../components/ui/badge';
@@ -46,6 +47,7 @@ import {
   useCanAdminAnalytics,
   useCreateDashboard,
   useDashboards,
+  useDashboardShareImpact,
   useDeleteDashboard,
   useUpdateDashboard,
 } from '../../hooks/queries/useAnalytics';
@@ -164,9 +166,13 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
               step={1}
             />
           </div>
-          <div className="flex items-center gap-2">
-            <Switch id="dash-shared" checked={isShared} onCheckedChange={setIsShared} />
-            <Label htmlFor="dash-shared">공개 대시보드</Label>
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <Switch id="dash-shared" checked={isShared} onCheckedChange={setIsShared} />
+              <Label htmlFor="dash-shared">공개 대시보드</Label>
+            </div>
+            {/* 새 대시보드는 위젯이 없어 개수 없이 앞으로 넣는 차트·쿼리가 함께 공개된다고만 알린다(WD-325) */}
+            <DashboardShareNotice wasShared={false} isShared={isShared} />
           </div>
         </div>
         <DialogFooter>
@@ -197,6 +203,8 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
     dashboard?.autoRefreshSeconds != null ? String(dashboard.autoRefreshSeconds) : '',
   );
   const updateDashboard = useUpdateDashboard();
+  // 공유 스위치 안내용 영향 개수(WD-325) — 창이 열려 있을 때만 센다. 실패하면 개수 없는 안내로 물러난다
+  const { data: shareImpact } = useDashboardShareImpact(dashboard?.id ?? null);
   const queryClient = useQueryClient();
   // isPending 비동기 반영 지연으로 인한 중복 제출 방지용 동기 가드 (CreateDashboardDialog와 동일 패턴, #546)
   const submittingRef = useRef(false);
@@ -339,9 +347,17 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
               step={1}
             />
           </div>
-          <div className="flex items-center gap-2">
-            <Switch id="edit-dash-shared" checked={isShared} onCheckedChange={setIsShared} />
-            <Label htmlFor="edit-dash-shared">공개 대시보드</Label>
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <Switch id="edit-dash-shared" checked={isShared} onCheckedChange={setIsShared} />
+              <Label htmlFor="edit-dash-shared">공개 대시보드</Label>
+            </div>
+            {/* 함께 공개될·계속 공개로 남는 내 차트·쿼리 개수 안내(WD-325) */}
+            <DashboardShareNotice
+              wasShared={dashboard?.isShared ?? false}
+              isShared={isShared}
+              impact={shareImpact}
+            />
           </div>
         </div>
         <DialogFooter>

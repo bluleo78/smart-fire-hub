@@ -10,6 +10,7 @@ import com.smartfirehub.analytics.dto.CreateDashboardRequest;
 import com.smartfirehub.analytics.dto.DashboardDataResponse;
 import com.smartfirehub.analytics.dto.DashboardGridLimits;
 import com.smartfirehub.analytics.dto.DashboardResponse;
+import com.smartfirehub.analytics.dto.DashboardShareImpactResponse;
 import com.smartfirehub.analytics.dto.UpdateDashboardRequest;
 import com.smartfirehub.analytics.dto.UpdateWidgetLayoutRequest;
 import com.smartfirehub.analytics.dto.UpdateWidgetRequest;
@@ -201,6 +202,29 @@ public class AnalyticsDashboardService {
           null,
           null);
     }
+  }
+
+  /**
+   * 대시보드 공유를 켜거나 끌 때 함께 영향받는 내 차트·저장 쿼리 개수(WD-325) — 설정 창 안내 문구용.
+   *
+   * <p>{@link #shareOwnedWidgetResources} 와 같은 대상(위젯 차트와 그 차트들이 쓰는 쿼리 중 작성자가 요청자인 것)을 센다. 소유자만 볼 수
+   * 있다 — 공유 스위치는 소유자 설정 창에만 있고, 남에게 이 개수를 보이면 대시보드 주인의 비공개 차트 수가 드러난다.
+   */
+  @Transactional(readOnly = true)
+  public DashboardShareImpactResponse getShareImpact(Long id, Long userId) {
+    dashboardRepository
+        .findByIdForOwner(id, userId)
+        .orElseThrow(() -> new DashboardNotFoundException());
+    List<Long> chartIds =
+        widgetRepository.findByDashboardId(id).stream()
+            .map(DashboardResponse.DashboardWidgetResponse::chartId)
+            .distinct()
+            .toList();
+    int[] charts = chartRepository.countOwnedBySharing(chartIds, userId);
+    int[] queries =
+        savedQueryRepository.countOwnedBySharing(
+            chartRepository.findSavedQueryIdsByChartIds(chartIds), userId);
+    return new DashboardShareImpactResponse(charts[0], queries[0], charts[1], queries[1]);
   }
 
   /**

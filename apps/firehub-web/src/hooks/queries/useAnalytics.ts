@@ -347,6 +347,20 @@ export function useDashboard(id: number | null) {
   });
 }
 
+/**
+ * 대시보드 공유 영향 개수(WD-325) — 설정 창이 열려 있을 때만(id 가 있을 때) 조회한다.
+ * 창을 열 때마다 새로 센다(gcTime 0) — 그 사이 차트를 공개·비공개로 바꿨을 수 있다.
+ */
+export function useDashboardShareImpact(id: number | null) {
+  return useQuery({
+    queryKey: ['analytics', 'dashboards', id, 'share-impact'],
+    queryFn: ({ signal }) => analyticsApi.getDashboardShareImpact(id!, signal).then((r) => r.data),
+    enabled: !!id,
+    gcTime: 0,
+    retry: false,
+  });
+}
+
 export function useCreateDashboard() {
   const queryClient = useQueryClient();
   return useMutation({
