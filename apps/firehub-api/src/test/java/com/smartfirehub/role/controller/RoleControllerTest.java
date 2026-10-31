@@ -104,7 +104,7 @@ class RoleControllerTest {
     mockAuthentication("role:read", "role:write");
     when(roleService.getRoleById(10L)).thenThrow(new RoleNotFoundException());
     doThrow(new RoleNotFoundException()).when(roleService).updateRole(10L, "MOD", null, 1L);
-    doThrow(new RoleNotFoundException()).when(roleService).setRolePermissions(10L, List.of(1L), 1L);
+    doThrow(new RoleNotFoundException()).when(roleService).setRolePermissions(10L, List.of(1L), null, 1L);
 
     mockMvc
         .perform(get("/api/v1/roles/10").header("Authorization", "Bearer valid-token"))
@@ -123,7 +123,7 @@ class RoleControllerTest {
             put("/api/v1/roles/10/permissions")
                 .header("Authorization", "Bearer valid-token")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new SetPermissionsRequest(List.of(1L)))))
+                .content(objectMapper.writeValueAsString(new SetPermissionsRequest(List.of(1L), null))))
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.message").value(RoleNotFoundException.MESSAGE));
   }
