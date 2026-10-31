@@ -32,7 +32,7 @@ import { useAllDatasets } from '@/hooks/queries/useDatasets';
 import { useCancelExecution, useExecutePipeline, useExecution, useExecutions,usePipeline, usePipelinePermissions } from '@/hooks/queries/usePipelines';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError } from '@/lib/api-error';
-import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
+import { formatDate, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '@/lib/formatters';
 import type { PipelineExecutionResponse } from '@/types/pipeline';
 
 import { CancelExecutionDialog } from './components/CancelExecutionDialog';
@@ -203,7 +203,7 @@ export default function PipelineEditorPage() {
 
   /**
    * 실행 상세에서 "재실행" 버튼 핸들러 (이슈 #84).
-   * 동일 파이프라인을 다시 실행 — 백엔드 executePipeline은 파이프라인 정의를 그대로 다시 돌리므로 입력 prefill이 필요 없다.
+   * 같은 파이프라인을 지금 저장된 정의로 다시 실행한다 — 실행 이력에 정의 스냅샷이 없어 그때 설정을 재현하지는 않는다(WD-418).
    * 새 실행이 시작되면 응답의 새 execution id로 이동하여 진행 상황을 볼 수 있게 한다.
    */
   const handleRerun = async () => {
@@ -213,7 +213,7 @@ export default function PipelineEditorPage() {
     try {
       const res = await executeMutation.mutateAsync();
       const newExecId = res.data.id;
-      toast.success('파이프라인을 다시 실행했습니다.');
+      toast.success('현재 설정으로 파이프라인을 다시 실행했습니다.');
       navigate(`/pipelines/${pipelineId}/executions/${newExecId}`);
     } catch (error) {
       // 실행 버튼과 같은 이유로 서버 사유를 보여 준다(WD-110).
@@ -246,6 +246,14 @@ export default function PipelineEditorPage() {
   };
 
   /** 종료 상태(FAILED/COMPLETED/CANCELLED)에서만 재실행 버튼 노출 — RUNNING/PENDING은 진행 중이므로 제외 */
+  /**
+   * 이 실행 뒤에 파이프라인이 수정됐는지(WD-418) — 재실행은 지금 저장된 정의로 돌기 때문에,
+   * 파이프라인 수정 시각이 실행 생성 시각보다 뒤면 「그때 설정을 재현하지 않는다」고 먼저 확인받는다.
+   */
+  const rerunDefinitionChanged =
+    !!executionData &&
+    !!pipelineData?.updatedAt &&
+    parseUtcDate(pipelineData.updatedAt).getTime() > parseUtcDate(executionData.createdAt).getTime();
   const canRerun =
     !!executionData &&
     (executionData.status === 'FAILED' ||
@@ -372,6 +380,7 @@ export default function PipelineEditorPage() {
         onEdit={() => setIsEditing(true)}
         onExecute={handleExecute}
         onRerun={handleRerun}
+        rerunDefinitionChanged={rerunDefinitionChanged}
         cancelState={executionData ? getExecutionCancelState(executionData) : 'hidden'}
         onCancelExecution={() => executionData && setCancelTargetExecId(executionData.id)}
         isCancelling={cancelExecutionMutation.isPending}

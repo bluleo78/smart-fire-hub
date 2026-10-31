@@ -137,7 +137,7 @@ test.describe('파이프라인 실행 취소 (WD-153)', () => {
     await expect(page.getByText('실행 정보')).toBeVisible();
     // 진행 중이므로 취소 버튼이 보이고 재실행은 없다
     await expect(headerCancelButton(page)).toBeEnabled();
-    await expect(page.getByRole('button', { name: '같은 입력으로 다시 실행' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '현재 설정으로 다시 실행' })).toHaveCount(0);
 
     await headerCancelButton(page).click();
     const dialog = page.getByRole('alertdialog');
@@ -158,7 +158,7 @@ test.describe('파이프라인 실행 취소 (WD-153)', () => {
     await expect(page.getByTestId('execution-cancel-info')).toContainText('홍길동님이');
     await expect(page.getByTestId('execution-cancel-info')).toContainText('취소했습니다.');
     await expect(headerCancelButton(page)).toHaveCount(0);
-    await expect(page.getByRole('button', { name: '같은 입력으로 다시 실행' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '현재 설정으로 다시 실행' })).toBeVisible();
     // 취소는 실패가 아니다 — 실행 단위 실패 안내·오류 상세가 나오지 않는다
     await expect(page.getByText(/파이프라인 실행 자체가 실패했습니다/)).toHaveCount(0);
     await expect(page.getByText('오류 상세')).toHaveCount(0);
@@ -264,7 +264,7 @@ test.describe('파이프라인 실행 취소 (WD-153)', () => {
       await page.reload();
       await expect(page.getByText('실행 정보')).toBeVisible();
       // 재실행이 보이면 상세가 렌더된 것 — 그 시점에 취소 버튼은 없어야 한다
-      await expect(page.getByRole('button', { name: '같은 입력으로 다시 실행' })).toBeVisible();
+      await expect(page.getByRole('button', { name: '현재 설정으로 다시 실행' })).toBeVisible();
       await expect(headerCancelButton(page)).toHaveCount(0);
       await expect(page.getByRole('button', { name: '취소 요청됨' })).toHaveCount(0);
     }
@@ -283,7 +283,7 @@ test.describe('파이프라인 실행 취소 (WD-153)', () => {
     );
 
     await page.goto(`/pipelines/${PIPELINE_ID}/executions/${EXEC_ID}`);
-    await expect(page.getByRole('button', { name: '같은 입력으로 다시 실행' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '현재 설정으로 다시 실행' })).toBeVisible();
     await expect(page.getByTestId('execution-cancel-info')).toHaveCount(0);
     await expect(headerCancelButton(page)).toHaveCount(0);
     await expect(page.getByRole('button', { name: '취소 요청됨' })).toHaveCount(0);

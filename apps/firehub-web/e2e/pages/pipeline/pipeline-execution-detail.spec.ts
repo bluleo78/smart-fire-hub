@@ -202,7 +202,7 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
     await page.goto('/pipelines/1/executions/2');
 
     // 재실행 버튼 노출 확인 (status=FAILED → canRerun)
-    const rerunBtn = page.getByRole('button', { name: '같은 입력으로 다시 실행' });
+    const rerunBtn = page.getByRole('button', { name: '현재 설정으로 다시 실행' });
     await expect(rerunBtn).toBeVisible({ timeout: 5000 });
 
     // 클릭 → executePipeline POST 호출 → 새 실행 ID(99)로 라우팅
@@ -225,7 +225,64 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
 
     await page.goto('/pipelines/1/executions/1');
     await expect(page.getByText('실행 정보')).toBeVisible({ timeout: 5000 });
-    await expect(page.getByRole('button', { name: '같은 입력으로 다시 실행' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '현재 설정으로 다시 실행' })).toHaveCount(0);
+  });
+
+  /**
+   * WD-418: 재실행은 실행 이력에 정의 스냅샷이 없어 지금 저장된 정의로 돈다. 예전 이름 「같은 입력으로 다시 실행」은
+   * 그때 실행을 재현하는 것처럼 읽혔다 — 이름을 「현재 설정으로 다시 실행」으로 바꾸고, 실행 뒤 파이프라인이 수정됐으면
+   * 재현하지 않는다는 확인 창을 먼저 띄운다. 취소하면 실행 요청을 보내지 않는다.
+   */
+  test('실행 뒤 파이프라인이 수정됐으면 재실행 전에 「현재 설정으로 실행」 확인 창을 띄운다 (WD-418)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupPipelineEditorMocks(page, 1);
+    // 파이프라인은 실행(2024-01-01 00:00) 뒤인 01-02 에 수정됐다
+    await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1, updatedAt: '2024-01-02T00:00:00Z' }));
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/2', createExecutionDetail({
+      id: 2,
+      pipelineId: 1,
+      status: 'FAILED',
+      createdAt: '2024-01-01T00:00:00Z',
+      stepExecutions: [],
+    }));
+    let executeCalls = 0;
+    await page.route('**/api/v1/pipelines/1/execute', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      executeCalls += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: 99, pipelineId: 1, status: 'RUNNING', triggeredBy: 'MANUAL', executedBy: 'testuser',
+          startedAt: '2024-01-03T00:00:00Z', completedAt: null, errorMessage: null }),
+      });
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/99', createExecutionDetail({
+      id: 99,
+      pipelineId: 1,
+      status: 'RUNNING',
+      stepExecutions: [],
+    }));
+
+    await page.goto('/pipelines/1/executions/2');
+    const rerunBtn = page.getByRole('button', { name: '현재 설정으로 다시 실행' });
+    await expect(rerunBtn).toBeVisible({ timeout: 5000 });
+
+    // 누르면 바로 실행하지 않고 확인 창 — 「취소」면 요청이 없다
+    await rerunBtn.click();
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByText('이 실행 뒤에 파이프라인이 수정되었습니다')).toBeVisible();
+    await expect(dialog.getByText(/그대로 재현하지\s*않으므로/)).toBeVisible();
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(executeCalls).toBe(0);
+
+    // 「현재 설정으로 실행」을 고르면 실행하고 새 실행으로 이동한다
+    await rerunBtn.click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '현재 설정으로 실행' }).click();
+    await expect(page).toHaveURL(/\/pipelines\/1\/executions\/99$/, { timeout: 5000 });
+    await expect(page.getByText('현재 설정으로 파이프라인을 다시 실행했습니다.')).toBeVisible();
+    expect(executeCalls).toBe(1);
   });
 
   test('FAILED 스텝 선택 시 오류 상세 제목과 사용자 친화적 안내 메시지가 표시된다', async ({ authenticatedPage: page }) => {

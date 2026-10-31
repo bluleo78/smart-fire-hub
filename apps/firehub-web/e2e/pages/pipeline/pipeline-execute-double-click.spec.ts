@@ -129,7 +129,7 @@ test.describe("파이프라인 실행 더블클릭 중복 방지 (WD-208)", () =
 
     await page.goto("/pipelines/1/executions/2");
     const rerunBtn = page.getByRole("button", {
-      name: "같은 입력으로 다시 실행",
+      name: "현재 설정으로 다시 실행",
     });
     await expect(rerunBtn).toBeEnabled();
 
