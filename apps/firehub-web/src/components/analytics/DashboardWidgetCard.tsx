@@ -1,9 +1,10 @@
-import { AlertTriangle, EyeOff, Loader2, Lock, X } from 'lucide-react';
-import { useCallback, useRef } from 'react';
+import { AlertTriangle, EyeOff, GripVertical, Loader2, Lock, X } from 'lucide-react';
+import { type KeyboardEvent, useCallback, useId, useRef } from 'react';
 
 import { useChart, useChartData } from '../../hooks/queries/useAnalytics';
 import { useWidgetVisibility } from '../../hooks/useWidgetVisibility';
 import { handleApiError } from '../../lib/api-error';
+import { type KeyboardLayoutAction, keyToLayoutAction } from '../../lib/dashboard-layout-keyboard';
 import { type ChartDataResponse, type DashboardWidget, MAX_AUTO_REFRESH_SECONDS } from '../../types/analytics';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
@@ -16,6 +17,8 @@ interface DashboardWidgetCardProps {
   widget: DashboardWidget;
   isEditing: boolean;
   onRemove?: (widgetId: number) => void;
+  /** 편집 모드에서 이동 손잡이에 화살표 키를 누르면 부른다(WD-324) — 끌기 없이 배치를 바꾸는 키보드 대안 */
+  onKeyboardLayout?: (widgetId: number, action: KeyboardLayoutAction) => void;
   autoRefreshSeconds?: number | null;
 }
 
@@ -165,6 +168,7 @@ export function DashboardWidgetCard({
   widget,
   isEditing,
   onRemove,
+  onKeyboardLayout,
   autoRefreshSeconds,
 }: DashboardWidgetCardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -205,11 +209,44 @@ export function DashboardWidgetCard({
     });
   }, [refetch]);
 
+  // 이동 손잡이 사용법 — 손잡이의 설명(aria-describedby)으로 읽히게 숨긴 문구의 id
+  const moveHelpId = useId();
+
+  // 이동 손잡이 키 처리(WD-324): 화살표 = 한 칸 이동, Shift+화살표 = 크기 조절. 화살표만 가로채고(페이지 스크롤 방지)
+  // Tab 등은 그대로 흘려보내 포커스 이동을 막지 않는다.
+  const handleMoveKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
+    const action = keyToLayoutAction(e.key, e.shiftKey);
+    if (!action || !onKeyboardLayout) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onKeyboardLayout(widget.id, action);
+  };
+
   return (
     <Card ref={containerRef} className="h-full py-2 gap-1 overflow-hidden flex flex-col">
       <CardHeader className={`px-3 pb-0 ${isEditing ? 'drag-handle cursor-grab active:cursor-grabbing' : ''}`}>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-xs font-medium truncate">{title}</CardTitle>
+        <div className="flex items-center justify-between gap-1">
+          {/* 키보드 이동 손잡이(WD-324) — 머리글 끌기·모서리 크기 조절은 마우스로만 되므로, Tab 으로 닿는 버튼에서
+              화살표로 옮기고 Shift+화살표로 크기를 바꾼다(WCAG 2.1.1·2.5.7). 머리글 안이라 마우스로 끌어도 그대로 끌린다. */}
+          {isEditing && onKeyboardLayout && (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 shrink-0 text-muted-foreground rounded-sm"
+                aria-label={`「${title}」 위젯 이동·크기 조절`}
+                aria-describedby={moveHelpId}
+                title="화살표: 이동 · Shift+화살표: 크기 조절"
+                onKeyDown={handleMoveKeyDown}
+              >
+                <GripVertical className="h-3 w-3" aria-hidden="true" />
+              </Button>
+              <span id={moveHelpId} className="sr-only">
+                화살표 키로 한 칸씩 옮기고, Shift 와 화살표 키로 크기를 바꿉니다.
+              </span>
+            </>
+          )}
+          <CardTitle className="text-xs font-medium truncate flex-1 min-w-0">{title}</CardTitle>
           {isEditing && onRemove && (
             <Button
               variant="ghost"
