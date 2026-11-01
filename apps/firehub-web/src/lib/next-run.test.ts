@@ -3,22 +3,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { formatNextRun, formatNextRunShort, getNextRunDate, timeZoneLabel } from './next-run';
-
-describe('getNextRunDate', () => {
-  it('유효한 cron은 Date 반환', () => {
-    const date = getNextRunDate('0 9 * * *', 'Asia/Seoul');
-    expect(date).toBeInstanceOf(Date);
-  });
-
-  it('잘못된 cron은 null', () => {
-    expect(getNextRunDate('not a cron', 'Asia/Seoul')).toBeNull();
-  });
-
-  it('잘못된 타임존도 null로 폴백', () => {
-    expect(getNextRunDate('0 9 * * *', 'Invalid/Zone')).toBeNull();
-  });
-});
+import { formatNextRun, formatNextRunShort, timeZoneLabel } from './next-run';
 
 describe('formatNextRun', () => {
   it('날짜/요일/시각 포함 문자열 반환', () => {

@@ -8,6 +8,7 @@ import type { UserDetailResponse } from '../../src/types/user';
 import { coverageOptions } from '../coverage-config';
 import { mockApi } from './api-mock';
 import { setupHomeMocks } from './base.fixture';
+import { JOB_CRON_PREVIEW_PATH, mockCronPreview, TRIGGER_CRON_PREVIEW_PATH } from './cron-preview.fixture';
 
 /**
  * 인증 모킹 테스트 fixture
@@ -85,6 +86,10 @@ async function setupAuthMocks(page: Page) {
   await mockApi(page, 'GET', '/api/v1/auth/me/permissions', []);
   // 로그인 후 홈으로 리다이렉트될 때 대시보드 API 호출을 모킹
   await setupHomeMocks(page);
+  // cron 미리보기 기본 응답(WD-391) — 트리거 편집 창 「다음 5회」·스마트 작업 「다음 실행」이 서버 값을 보이므로, 어떤 spec 이
+  // 그 화면을 열어도 실제 백엔드로 요청이 새지 않게 전역으로 깐다. spec 이 다시 모킹하면 그쪽이 이긴다(나중 등록 우선).
+  await mockCronPreview(page, TRIGGER_CRON_PREVIEW_PATH);
+  await mockCronPreview(page, JOB_CRON_PREVIEW_PATH);
 }
 
 /**

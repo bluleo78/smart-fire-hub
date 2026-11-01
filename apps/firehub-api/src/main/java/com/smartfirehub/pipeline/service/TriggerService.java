@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.service;
 import com.smartfirehub.global.exception.CryptoException;
 import com.smartfirehub.global.security.MemberEligibility;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.util.DstAwareCron;
 import com.smartfirehub.global.util.IpCidr;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
@@ -22,9 +23,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.DateTimeException;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.util.*;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -1392,7 +1393,8 @@ public class TriggerService {
     }
     // 문법은 맞아도 다음 실행 시각이 없는 cron(예: 2월 30일 "0 0 0 30 2 *")은 거부한다(WD-107). 저장되면 스케줄러가 걸 수 있는 스케줄이
     // 없어 아무 때도 실행되지 않는데, 화면엔 "수정되었습니다"가 떠 성공처럼 보인다.
-    if (CronExpression.parse(normalizedCron).next(ZonedDateTime.now(ZoneId.of(timezone))) == null) {
+    // 스케줄러·미리보기와 같은 계산기(DstAwareCron)로 본다(WD-391).
+    if (DstAwareCron.of(normalizedCron, ZoneId.of(timezone)).next(Instant.now()) == null) {
       throw new IllegalArgumentException("다음 실행 시각이 없는 cron 표현식입니다: " + cron);
     }
     // Validate concurrency policy

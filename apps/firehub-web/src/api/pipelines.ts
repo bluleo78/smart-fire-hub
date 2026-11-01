@@ -1,4 +1,4 @@
-import type { PageResponse } from '../types/common';
+import type { CronPreviewParams, CronPreviewResponse, PageResponse } from '../types/common';
 import type {
 CancelExecutionResponse,
 CreatePipelineRequest,
@@ -48,6 +48,9 @@ export const pipelinesApi = {
     client.post<CancelExecutionResponse>(`/pipelines/${pipelineId}/executions/${execId}/cancel`),
 
   // Trigger APIs
+  /** 스케줄 트리거 편집 창 「다음 5회」 미리보기 — 스케줄러와 같은 서머타임 규칙으로 서버가 계산한다(WD-391). */
+  getTriggerCronPreview: (params: CronPreviewParams) =>
+    client.get<CronPreviewResponse>('/triggers/cron-preview', { params }),
   getTriggers: (pipelineId: number) =>
     client.get<TriggerResponse[]>(`/pipelines/${pipelineId}/triggers`),
   createTrigger: (pipelineId: number, data: CreateTriggerRequest) =>

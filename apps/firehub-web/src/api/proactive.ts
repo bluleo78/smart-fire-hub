@@ -1,3 +1,4 @@
+import type { CronPreviewParams, CronPreviewResponse } from '../types/common';
 import type { SecurityLevelSummary } from '../types/security-level';
 import { client } from './client';
 
@@ -286,6 +287,9 @@ export const proactiveApi = {
   // Jobs (6 methods)
   getJobs: () => client.get<ProactiveJob[]>('/proactive/jobs'),
   getJob: (id: number) => client.get<ProactiveJob>(`/proactive/jobs/${id}`),
+  /** 스마트 작업 편집 창 「다음 실행」 미리보기 — 스케줄러와 같은 서머타임 규칙으로 서버가 계산한다(WD-391). */
+  getCronPreview: (params: CronPreviewParams) =>
+    client.get<CronPreviewResponse>('/proactive/jobs/cron-preview', { params }),
   createJob: (data: CreateProactiveJobRequest) =>
     client.post<ProactiveJob>('/proactive/jobs', data),
   updateJob: (id: number, data: UpdateProactiveJobRequest) =>
