@@ -84,6 +84,24 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
     await expect(page.getByText(/DAG에서 스텝을 클릭/)).toBeVisible();
   });
 
+  test('실행 이력의 실행 번호 링크로 키보드(Tab·Enter)만으로 실행 상세를 연다 (WD-436)', async ({ authenticatedPage: page }) => {
+    // 행 클릭은 마우스로만 열려 키보드 사용자는 실행 상세에 들어갈 수 없었다 — 실행 번호가 링크가 되어 Tab 으로 닿아야 한다
+    await setupPipelineEditorMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/1', createExecutionDetail({ id: 1, pipelineId: 1, status: 'COMPLETED' }));
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: /실행|이력/ }).click();
+
+    const link = page.getByRole('row').nth(1).getByRole('link', { name: '1', exact: true });
+    await expect(link).toHaveAttribute('href', '/pipelines/1/executions/1');
+    await link.focus();
+    await expect(link).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    await expect(page).toHaveURL(/\/pipelines\/1\/executions\/1$/);
+    await expect(page.getByText('실행 정보')).toBeVisible({ timeout: 5000 });
+  });
+
   test('완료된 실행의 스텝 현황 요약이 표시된다', async ({ authenticatedPage: page }) => {
     await setupPipelineEditorMocks(page, 1);
 

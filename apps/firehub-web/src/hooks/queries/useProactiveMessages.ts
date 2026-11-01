@@ -11,6 +11,7 @@ import type {
   UpdateReportTemplateRequest,
 } from '../../api/proactive';
 import { proactiveApi } from '../../api/proactive';
+import { cloneName } from '../../lib/clone-name';
 import { useMyPermissions } from './useMyPermissions';
 
 const KEYS = {
@@ -218,7 +219,8 @@ export function useCloneProactiveJob() {
   return useMutation({
     mutationFn: (job: Pick<ProactiveJob, 'name' | 'prompt' | 'templateId' | 'cronExpression' | 'timezone' | 'triggerType' | 'config'>) =>
       proactiveApi.createJob({
-        name: `${job.name} (복사본)`,
+        // 200자에 가까운 이름도 복제되게 접미사가 들어갈 만큼 원래 이름을 자른다(WD-430)
+        name: cloneName(job.name, '(복사본)'),
         prompt: job.prompt,
         templateId: job.templateId,
         cronExpression: job.cronExpression,

@@ -462,6 +462,27 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page).toHaveURL('/ai-insights/jobs/1/executions/5');
   });
 
+  test('실행 이력의 시작 시각 링크로 키보드(Tab·Enter)만으로 실행 상세를 연다 (WD-436)', async ({ authenticatedPage: page }) => {
+    // 행 클릭은 마우스로만 열려 키보드 사용자는 실행 상세에 들어갈 수 없었다 — 시작 시각이 링크가 되어 Tab 으로 닿아야 한다
+    const execution = createJobExecution({ id: 5, jobId: 1, status: 'COMPLETED' });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', [execution]);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/5', execution);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/5/html', '', { status: 404 });
+
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+
+    const link = page.getByRole('row').nth(1).getByRole('link');
+    await expect(link).toHaveAttribute('href', '/ai-insights/jobs/1/executions/5');
+    await link.focus();
+    await expect(link).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    await expect(page).toHaveURL('/ai-insights/jobs/1/executions/5');
+  });
+
   test('모니터링 탭에 이상 탐지 이력이 표시된다', async ({ authenticatedPage: page }) => {
     // setupJobDetailMocks에 이상 탐지 이벤트 2건이 모킹되어 있다
     await setupJobDetailMocks(page, 1);
@@ -775,6 +796,34 @@ test.describe('스마트 작업 상세 페이지', () => {
     // POST API가 실제로 호출되었는지 확인
     const req = await executeCapture.waitForRequest();
     expect(req).toBeTruthy();
+  });
+
+  // WD-430: 200자 이름은 「 (복사본)」을 붙이면 한도를 넘어 「작업 이름은 200자 이내」로 실패했다
+  test('이름이 200자인 작업을 복제하면 원래 이름을 잘라 200자 안의 「(복사본)」 이름으로 보낸다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupJobDetailMocks(page, 1);
+    const longName = '나'.repeat(200);
+    const clonedName = `${'나'.repeat(194)} (복사본)`;
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1, name: longName }));
+    const cloneCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/jobs',
+      createJob({ id: 98, name: clonedName, enabled: false }),
+      { capture: true },
+    );
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/98', createJob({ id: 98, name: clonedName, enabled: false }));
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/98/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/98/anomaly-events', []);
+
+    await page.goto('/ai-insights/jobs/1');
+    await page.getByRole('button', { name: '복제' }).click();
+
+    const req = await cloneCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: clonedName, enabled: false });
+    expect(Array.from((req.payload as { name: string }).name)).toHaveLength(200);
+    await expect(page).toHaveURL(/\/ai-insights\/jobs\/98/);
   });
 
   test('작업 복제 — POST API 호출 및 새 작업으로 이동', async ({ authenticatedPage: page }) => {

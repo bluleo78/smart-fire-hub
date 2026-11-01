@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -191,6 +192,33 @@ class ReportTemplateControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
         .andExpect(status().isBadRequest());
+  }
+
+  /** WD-430: 200자를 넘는 이름은 DB 길이 오류로 500 이 났다 — 생성·수정 모두 400 으로 이유를 알린다. */
+  @Test
+  void createAndUpdateTemplate_nameOver200_returns400WithReason() throws Exception {
+    mockAuth("proactive:write");
+    String tooLong = "a".repeat(201);
+    CreateReportTemplateRequest create =
+        new CreateReportTemplateRequest(tooLong, null, List.of(), null);
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/templates")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(create)))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().string(org.hamcrest.Matchers.containsString("이름은 200자 이내여야 합니다.")));
+
+    UpdateReportTemplateRequest update = new UpdateReportTemplateRequest(tooLong, null, null, null);
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/templates/5")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(update)))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().string(org.hamcrest.Matchers.containsString("이름은 200자 이내여야 합니다.")));
   }
 
   @Test

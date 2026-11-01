@@ -1,6 +1,6 @@
 import { Ban, Clock, Code, Database, GitBranch, Globe, Link, User } from 'lucide-react';
 import { useEffect, useMemo,useRef, useState } from 'react';
-import { useNavigate,useParams } from 'react-router-dom';
+import { Link as RouterLink, useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { EditConflictDialog } from '@/components/EditConflictDialog';
@@ -433,10 +433,15 @@ export default function PipelineEditorPage() {
           </TabsList>
         )}
 
-        {/* 모바일(375px)에서 캔버스 width=0px 붕괴 방지: 모바일은 세로 스택(flex-col), lg+ 에서 가로 배치(flex-row) */}
-        <TabsContent value="overview" className="flex-1 flex flex-col lg:flex-row min-h-0 mt-0 border rounded-b-lg">
-          {/* Canvas: 가로 배치 시 남은 너비, 세로 배치(모바일) 시 최소 300px 높이 확보 */}
-          <div className="flex-1 min-w-0 min-h-[300px]">
+        {/* 모바일(375px)에서 캔버스 width=0px 붕괴 방지: 모바일은 세로 스택(flex-col), lg+ 에서 가로 배치(flex-row).
+            좁은 화면에서는 실행 상세(WD-309)처럼 캔버스를 위(고정 높이)·설정 패널을 아래(내용 높이)로 쌓고 탭 전체를 세로 스크롤한다 —
+            캔버스가 남은 높이를 다 차지하면 패널이 화면 맨 아래 118px 에 갇혀 SQL·데이터셋 칸을 한두 줄씩만 보며 고쳐야 했다(WD-456). */}
+        <TabsContent
+          value="overview"
+          className="flex-1 flex flex-col min-h-0 overflow-y-auto lg:flex-row lg:overflow-hidden mt-0 border rounded-b-lg"
+        >
+          {/* Canvas: 가로 배치 시 남은 너비, 세로 배치(모바일) 시 320px 고정 높이 */}
+          <div className="h-[320px] shrink-0 min-w-0 lg:h-auto lg:flex-1 lg:shrink">
             <PipelineCanvas
               state={state}
               dispatch={dispatch}
@@ -514,7 +519,18 @@ export default function PipelineEditorPage() {
                       className="cursor-pointer hover:bg-muted/50"
                       onClick={() => navigate(`/pipelines/${state.pipelineId}/executions/${exec.id}`)}
                     >
-                      <TableCell className="font-mono text-xs">{exec.id}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {/* 키보드 접근성(WD-436): 행 클릭은 마우스로만 열리므로 실행 번호를 실행 상세 링크로 둔다 — Tab 으로 닿고
+                            Enter 로 열린다. 링크 이름은 번호 그대로 둔다(칸 이름이 바뀌지 않게 — 「ID」 열 머리글이 함께 읽힌다).
+                            클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
+                        <RouterLink
+                          to={`/pipelines/${state.pipelineId}/executions/${exec.id}`}
+                          className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {exec.id}
+                        </RouterLink>
+                      </TableCell>
                       <TableCell>
                         <Badge variant={getStatusBadgeVariant(exec.status)}>
                           {getStatusLabel(exec.status)}

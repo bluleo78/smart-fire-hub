@@ -37,6 +37,7 @@ import { useEditModeFocus } from '@/hooks/useEditModeFocus';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError, isEditConflict, isForbiddenError } from '@/lib/api-error';
+import { cloneName } from '@/lib/clone-name';
 import { parseUtcDate } from '@/lib/formatters';
 import { parseTemplateSections, validateSectionKeys } from '@/lib/template-section-types';
 import { type ReportTemplateFormValues, reportTemplateSchema } from '@/lib/validations/report-template';
@@ -386,7 +387,8 @@ export default function ReportTemplateDetailPage() {
     if (!template) return;
     createMutation.mutate(
       {
-        name: `${template.name} (사본)`,
+        // 200자에 가까운 이름도 복제되게 접미사가 들어갈 만큼 원래 이름을 자른다(WD-430)
+        name: cloneName(template.name, '(사본)'),
         description: template.description ?? undefined,
         sections: Array.isArray(template.sections) ? template.sections : [],
         style: template.style ?? undefined,

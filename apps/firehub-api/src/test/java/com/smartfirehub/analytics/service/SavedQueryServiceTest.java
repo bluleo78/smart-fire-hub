@@ -359,6 +359,17 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     assertThat(cloned.folder()).isEqualTo("my-folder");
   }
 
+  /** WD-430: 200자 이름은 「 (복사본)」을 붙이면 한도를 넘어 복제가 400 으로 실패했다 — 원래 이름을 잘라 200자로 맞춘다. */
+  @Test
+  void clone_nameAtLimit_truncatesOriginalToFitSuffix() {
+    String longName = "가".repeat(200);
+    SavedQueryResponse original = createQuery(longName, "SELECT 1", null, false, ownerUserId);
+
+    SavedQueryResponse cloned = savedQueryService.clone(original.id(), ownerUserId);
+
+    assertThat(cloned.name()).hasSize(200).startsWith("가".repeat(194)).endsWith(" (복사본)");
+  }
+
   @Test
   void clone_otherUserCanCloneSharedQuery() {
     SavedQueryResponse shared =

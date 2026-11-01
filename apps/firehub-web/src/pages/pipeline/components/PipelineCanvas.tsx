@@ -254,8 +254,10 @@ export function PipelineCanvas({
         nodesConnectable={!readOnly}
         elementsSelectable={!readOnly}
         maxZoom={1}
+        // 좁은 화면(375px)에서 기본 최소 배율 0.5 에 걸려 「전체 보기」로도 스텝 세 개가 한 화면에 들어오지 않았다(WD-456)
+        minZoom={0.2}
         fitView
-        fitViewOptions={{ maxZoom: 1, padding: 0.3 }}
+        fitViewOptions={{ maxZoom: 1, minZoom: 0.2, padding: 0.3 }}
         proOptions={{ hideAttribution: true }}
         ariaLabelConfig={KO_ARIA_LABEL_CONFIG}
       >

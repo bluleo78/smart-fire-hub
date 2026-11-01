@@ -346,6 +346,33 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     expect(req.payload).toMatchObject({ name: '기본 리포트 템플릿 (사본)' });
   });
 
+  // WD-430: 200자에 가까운 이름은 「 (사본)」을 붙이면 한도를 넘어 복제가 「예기치 않은 오류」로 실패했다
+  test('이름이 200자인 양식을 복제하면 원래 이름을 잘라 200자 안의 「(사본)」 이름으로 보낸다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTemplateDetailMocks(page, 1);
+    const longName = '가'.repeat(200);
+    // 나중에 등록한 목업이 먼저 쓰인다 — 상세를 긴 이름 양식으로 바꾼다
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/1', createTemplate({ id: 1, name: longName, builtin: false }));
+    const cloneCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/templates',
+      createTemplate({ id: 11, name: `${'가'.repeat(195)} (사본)`, builtin: false }),
+      { capture: true },
+    );
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/11', createTemplate({ id: 11, name: `${'가'.repeat(195)} (사본)`, builtin: false }));
+
+    await page.goto('/ai-insights/templates/1');
+    await page.getByRole('button', { name: '복제' }).click();
+
+    const req = await cloneCapture.waitForRequest();
+    const sentName = (req.payload as { name: string }).name;
+    expect(Array.from(sentName)).toHaveLength(200);
+    expect(sentName).toBe(`${'가'.repeat(195)} (사본)`);
+    await expect(page).toHaveURL(/\/ai-insights\/templates\/11/);
+  });
+
   test('존재하지 않는 템플릿 ID 접근 시 toast.error 후 목록으로 이동한다', async ({ authenticatedPage: page }) => {
     // 존재하지 않는 템플릿 — 단건 API 404 반환, 목록도 비어 있음 (#38)
     await mockApi(page, 'GET', '/api/v1/proactive/templates/99999', { message: 'Not Found' }, { status: 404 });
