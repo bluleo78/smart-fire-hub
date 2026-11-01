@@ -12,6 +12,7 @@ import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -249,20 +250,25 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
   void notConfiguredSkipsWithoutBackoff() {
     when(embeddingFactory.current()).thenThrow(new EmbeddingNotConfiguredException());
 
+    OffsetDateTime before = OffsetDateTime.now();
     assertThat(sync.sync(datasetId)).isEqualTo(RowSearchSyncService.Outcome.SKIPPED);
+    OffsetDateTime after = OffsetDateTime.now();
 
     var s = states.find(datasetId).orElseThrow();
     assertThat(s.lastError()).isEqualTo(EmbeddingNotConfiguredException.MESSAGE);
     assertThat(s.consecutiveFailures()).isZero(); // 30분 백오프로 번지지 않는다
     assertThat(embedded).isEmpty();
     // 1분 뒤 다시 due 가 된다 — 설정을 저장하면 곧 색인이 재개된다.
-    Long waitSeconds =
+    // next_attempt_at 은 JVM 시계(OffsetDateTime.now())로 정해지므로 같은 JVM 시계로 sync 앞뒤를 재어 비교한다.
+    // DB now() 와 빼면 DB 컨테이너 시계가 JVM 과 어긋날 때(부하 중 VM 시계 밀림) 실패한다(WD-235).
+    OffsetDateTime nextAttemptAt =
         inTenantFixture(
             () ->
                 dsl.fetchOne(
-                        "SELECT EXTRACT(EPOCH FROM (next_attempt_at - now()))::bigint FROM dataset_search_index WHERE dataset_id = ?",
+                        "SELECT next_attempt_at FROM dataset_search_index WHERE dataset_id = ?",
                         datasetId)
-                    .get(0, Long.class));
-    assertThat(waitSeconds).isBetween(0L, 61L);
+                    .get(0, OffsetDateTime.class));
+    assertThat(nextAttemptAt.toInstant())
+        .isBetween(before.plusMinutes(1).toInstant(), after.plusMinutes(1).toInstant());
   }
 }

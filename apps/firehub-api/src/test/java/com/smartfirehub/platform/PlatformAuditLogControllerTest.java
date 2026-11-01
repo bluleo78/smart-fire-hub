@@ -17,6 +17,7 @@ import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
@@ -194,7 +195,9 @@ class PlatformAuditLogControllerTest extends IntegrationTestBase {
         .andExpect(jsonPath("$.content[0].resourceId").value(String.valueOf(target)));
 
     // WD-11: 실제 기록 행을 같은 순간 창의 서로 다른 오프셋 표기로 찾는다(오프셋을 버리면 한쪽이 0행)
-    Instant now = Instant.now();
+    // 창의 중심은 action_time 을 찍은 DB 시계로 잡는다 — JVM Instant.now() 로 잡으면 DB 컨테이너 시계가 JVM 과
+    // 어긋날 때(부하 중 VM 시계 밀림) 창이 기록을 비껴 0행이 된다(WD-235).
+    Instant now = dsl.fetchOne("SELECT now()").get(0, OffsetDateTime.class).toInstant();
     for (ZoneOffset off : List.of(ZoneOffset.ofHours(9), ZoneOffset.ofHours(-5))) {
       list(
               "target", username,

@@ -419,7 +419,10 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
 
     OffsetDateTime createdAt =
         OffsetDateTime.parse(objectMapper.readTree(body).get("createdAt").asText());
-    assertThat(Duration.between(createdAt.toInstant(), Instant.now()).abs())
+    // created_at 은 DB NOW() 로 찍히므로 같은 DB 시계와 비교한다. JVM Instant.now() 와 비교하면 DB 컨테이너 시계가
+    // JVM 과 어긋날 때(부하 중 VM 시계 밀림) 오프셋이 맞아도 실패한다(WD-235). 오프셋이 틀리면 시간 단위로 벌어져 여전히 잡힌다.
+    Instant dbNow = dsl.fetchOne("SELECT now()").get(0, OffsetDateTime.class).toInstant();
+    assertThat(Duration.between(createdAt.toInstant(), dbNow).abs())
         .isLessThan(Duration.ofMinutes(2));
   }
 
