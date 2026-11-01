@@ -299,4 +299,76 @@ test.describe('AI 인사이트 알림 패널', () => {
       expect(Math.abs(panel.x + panel.width / 2 - anchorCenter)).toBeLessThanOrEqual(1);
     });
   });
+
+  // WD-422: 사용자 정의 패널이라 포커스 처리가 없어, 키보드로 열어도 포커스가 벨에 머물고 Esc·「닫기」로 닫으면 body 로 사라졌다.
+  test.describe('키보드 포커스 (WD-422)', () => {
+    test('키보드로 열면 포커스가 패널로 가고, Esc 로 닫으면 벨 버튼으로 돌아온다', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/messages', messages);
+      const bell = page.getByRole('button', { name: bellSelector }).first();
+      await bell.focus();
+      await page.keyboard.press('Enter');
+
+      const panel = page.getByRole('dialog', { name: 'AI 인사이트 알림' });
+      await expect(panel).toBeVisible();
+      await expect(panel).toBeFocused();
+      // 다음 Tab 은 패널 안 버튼으로 간다
+      await page.keyboard.press('Tab');
+      await expect(page.locator(':focus')).toHaveAttribute('aria-label', /읽음 처리|알림 패널 닫기/);
+
+      await page.keyboard.press('Escape');
+      await expect(panel).toBeHidden();
+      await expect(bell).toBeFocused();
+      // 포커스가 돌아왔으니 Enter 로 바로 다시 열 수 있다
+      await page.keyboard.press('Enter');
+      await expect(panel).toBeVisible();
+    });
+
+    test('「알림 패널 닫기」를 키보드로 누르면 벨 버튼으로 포커스가 돌아온다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/messages', messages);
+      const bell = page.getByRole('button', { name: bellSelector }).first();
+      await bell.focus();
+      await page.keyboard.press('Enter');
+
+      const close = page.getByRole('button', { name: '알림 패널 닫기' });
+      await close.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('dialog', { name: 'AI 인사이트 알림' })).toBeHidden();
+      await expect(bell).toBeFocused();
+    });
+
+    test('상세에서 Esc 로 목록에 돌아오면 포커스가 패널에 남고, 한 번 더 Esc 로 닫으면 벨로 돌아온다', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/messages', messages);
+      await mockApi(page, 'PUT', '/api/v1/proactive/messages/1/read', {});
+      const bell = page.getByRole('button', { name: bellSelector }).first();
+      await bell.click();
+
+      const panel = page.getByRole('dialog', { name: 'AI 인사이트 알림' });
+      await panel.getByRole('button', { name: /데이터 품질 이상 감지/ }).click();
+      await expect(panel.getByRole('button', { name: '목록으로 돌아가기' })).toBeVisible();
+
+      await page.keyboard.press('Escape');
+      await expect(panel.getByRole('button', { name: /데이터 품질 이상 감지/ })).toBeVisible();
+      await expect(panel).toBeFocused();
+
+      await page.keyboard.press('Escape');
+      await expect(panel).toBeHidden();
+      await expect(bell).toBeFocused();
+    });
+
+    test('바깥을 클릭해 닫으면 누른 곳의 포커스를 빼앗지 않는다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/messages', messages);
+      const bell = page.getByRole('button', { name: bellSelector }).first();
+      await bell.click();
+      const panel = page.getByRole('dialog', { name: 'AI 인사이트 알림' });
+      await expect(panel).toBeVisible();
+
+      await page.mouse.click(5, 400);
+      await expect(panel).toBeHidden();
+      await expect(bell).not.toBeFocused();
+    });
+  });
 });

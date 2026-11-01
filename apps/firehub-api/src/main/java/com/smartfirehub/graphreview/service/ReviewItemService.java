@@ -274,8 +274,16 @@ public class ReviewItemService {
     return rows.stream().map(this::toResponse).toList();
   }
 
-  /** 승인 — item_type별 그래프 변경을 먼저 수행하고, 성공해야 status를 approved로 갱신한다(실패 시 pending 유지). */
+  /**
+   * 승인 — item_type별 그래프 변경을 먼저 수행하고, 성공해야 status를 approved로 갱신한다(실패 시 롤백되어 pending 유지).
+   *
+   * <p>항목 행을 잠근 채(트랜잭션 끝까지) pending 확인 → 그래프 변경 → 상태 갱신을 한다(WD-428). 같은 항목의 승인·거부·정정이 동시에 들어오면 뒤
+   * 요청은 잠금에서 기다렸다가 approved 를 보고 409 「이미 처리된 항목」을 받는다 — 거부한 사람이 성공 안내를 받고도 그래프가 병합되거나, 병합·정정이 두 번
+   * 실행되던 문제를 막는다. 새 「처리 중」 상태를 두지 않은 이유: 그래프 변경 중 서버가 죽으면 그 상태로 갇힌다. 잠금은 트랜잭션과 함께 풀린다.
+   */
+  @Transactional
   public ReviewItemResponse approve(long id, String correctedValue, long userId) {
+    repo.lockForDecision(id);
     ReviewItemRecord row = getPendingOrThrow(id);
     JsonNode p = parse(row.payloadJson());
     // 네 타입 모두 datasetId가 필수다(사유는 requireDatasetId 문서 참고).
@@ -337,8 +345,13 @@ public class ReviewItemService {
     return toResponse(repo.findById(id).orElseThrow());
   }
 
-  /** 거부 — 그래프 변경 없이 status만 rejected로 갱신(속성은 값 없음 유지, 동의어는 별개 유지). */
+  /**
+   * 거부 — 그래프 변경 없이 status만 rejected로 갱신(속성은 값 없음 유지, 동의어는 별개 유지). 승인과 같은 행 잠금으로, 진행 중인 승인이 있으면 끝날
+   * 때까지 기다린 뒤 판정한다(WD-428).
+   */
+  @Transactional
   public ReviewItemResponse reject(long id, long userId) {
+    repo.lockForDecision(id);
     getPendingOrThrow(id);
     repo.updateStatus(id, "rejected", userId);
     return toResponse(repo.findById(id).orElseThrow());
