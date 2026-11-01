@@ -245,6 +245,13 @@ spotless {
     }
 }
 
+// 로컬 개발(pnpm dev → bootRun)도 운영 Docker 처럼 JVM 을 UTC 로 돌린다(WD-476).
+// 서버는 offset 없는 LocalDateTime 을 UTC 로 보내고 웹은 그렇게 읽는데(parseUtcDate), KST 컴퓨터의 기본 시간대로 돌면
+// KST 값이 나가 화면 시각이 9시간 밀린다. 테스트 JVM 은 건드리지 않는다(컴퓨터 시간대 의존은 WD-472 범위).
+tasks.bootRun {
+    jvmArgs("-Duser.timezone=UTC")
+}
+
 tasks.withType<Test> {
     // 로컬 OrbStack 소켓이 있으면 개별 테스트 프로세스에 Docker 연결 정보를 넘긴다.
     val orbStackSocket = File(System.getProperty("user.home"), ".orbstack/run/docker.sock")

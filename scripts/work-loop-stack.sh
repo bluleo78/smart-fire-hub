@@ -767,7 +767,9 @@ cmd_up() {
   # 공유 Postgres 면 다른 클론의 api 기동과 겹치지 않게 기동 락을 잡는다(머리 주석). --own-db 는 클러스터가 내 것이라 필요 없다.
   [ "${WL_OWN_DB:-0}" = 1 ] || startup_lock_acquire
   local api_pgid
-  api_pgid="$(spawn api "$STATE_DIR" java -Xmx1g -jar "$jar" \
+  # JVM 시간대는 운영 Docker 와 같은 UTC 로 고정한다(WD-476) — 컴퓨터 시간대(KST)로 돌면 offset 없는 시각이 KST 로 나가
+  # 화면(UTC 로 읽음)의 생성일 등이 9시간 늦게 보여 라이브 확인이 잘못된 결함을 보게 된다.
+  api_pgid="$(spawn api "$STATE_DIR" java -Xmx1g -Duser.timezone=UTC -jar "$jar" \
     --spring.profiles.active=local \
     --server.port="$WL_API_PORT" \
     --app.jwt.secret="$jwt_secret" \
