@@ -1,4 +1,4 @@
-import { TIMEZONE_OPTIONS } from './timezone-data';
+import { describeTimezone } from './timezone-data';
 
 // 다음 실행 시각 「계산」은 화면에서 하지 않는다 — 서버 미리보기 API(useCronPreview)가 스케줄러와 같은 서머타임 규칙으로
 // 계산한다(WD-391). 이 파일은 받은 시각의 표시 형식만 맡는다.
@@ -71,8 +71,9 @@ export function timeZoneLabel(date: Date, timezone: string): string {
     // 「GMT+9」·「GMT」 → 「UTC+9」·「UTC+0」
     const offset = part({ timeZoneName: 'shortOffset' }).replace(/^GMT/, 'UTC') || 'UTC';
     const normalized = offset === 'UTC' ? 'UTC+0' : offset;
-    const known = TIMEZONE_OPTIONS.find((o) => o.value === timezone);
-    if (known && known.offset === normalized) return known.abbr;
+    // 고정 약어 표는 그 날짜 기준 약어·시차를 describeTimezone 이 계산한다(WD-417 — 표가 표준시/서머타임 쌍으로 바뀜)
+    const known = describeTimezone(timezone, date);
+    if (known.abbr && known.offset === normalized) return known.abbr;
     return normalized;
   } catch {
     return timezone;
