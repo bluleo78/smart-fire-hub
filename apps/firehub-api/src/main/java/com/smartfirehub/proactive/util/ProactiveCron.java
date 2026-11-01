@@ -1,17 +1,19 @@
 package com.smartfirehub.proactive.util;
 
+import com.smartfirehub.global.util.DstAwareCron;
+import com.smartfirehub.global.util.DstAwareCronTrigger;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.support.CronExpression;
 
 /**
  * proactive 잡의 cron 표현식 해석 유틸.
  *
- * <p>스케줄 등록에 쓰는 {@link org.springframework.scheduling.support.CronTrigger} 와 동일한 파서·타임존 규칙으로 "다음 실행
- * 시각"을 계산해, 화면에 표시되는 값이 스케줄러가 실제로 발화하는 시각과 어긋나지 않게 한다 (#348).
+ * <p>스케줄 등록에 쓰는 {@link DstAwareCronTrigger} 와 동일한 계산기({@link DstAwareCron})로 "다음 실행 시각"을 계산해, 화면에
+ * 표시되는 값이 스케줄러가 실제로 발화하는 시각과 어긋나지 않게 한다 (#348). 서머타임 전환일 규칙도 같다(WD-391).
  */
 @Slf4j
 public final class ProactiveCron {
@@ -28,9 +30,8 @@ public final class ProactiveCron {
    * 있다(#347). 5필드면 앞에 초 자리 {@code "0 "} 을 붙인다. TriggerService.validateScheduleConfig 와 같은 규칙이다.
    */
   public static String normalize(String cronExpression) {
-    if (cronExpression == null) return null;
-    String trimmed = cronExpression.trim();
-    return trimmed.split("\\s+").length == 5 ? "0 " + trimmed : trimmed;
+    // 규칙은 서머타임 계산기와 한 곳에 둔다(WD-391) — 스케줄러·미리보기·검증이 같은 정규화를 쓰게
+    return DstAwareCron.normalize(cronExpression);
   }
 
   /** 1분보다 잦은 실행 주기 거부 문구(WD-366) — 웹 cron-frequency.ts 의 CRON_TOO_FREQUENT_MESSAGE 와 같다. */
@@ -40,9 +41,9 @@ public final class ProactiveCron {
   /**
    * 1분에 한 번보다 자주 실행되는 cron 이면 거부 문구를, 아니면 {@code null} 을 돌려준다(WD-366).
    *
-   * <p>파이프라인 트리거·스마트 작업은 데이터 가공·리포트라 초 단위로 돌 이유가 없는데, 「* * * * * *」(매초)처럼 저장되면 실행이 끝나자마자
-   * 다음이 이어져 실행 이력과 스케줄러 자원을 끝없이 쓴다. 분 이상 칸은 아무리 잦아도 1분 간격이 최소이므로 초 칸 하나만 보면 된다 — 초 칸이 숫자
-   * 하나(5필드는 정규화로 "0")면 1분에 최대 한 번이다. 형식이 틀린 식은 여기서 판정하지 않는다(형식 검사가 먼저 거른다).
+   * <p>파이프라인 트리거·스마트 작업은 데이터 가공·리포트라 초 단위로 돌 이유가 없는데, 「* * * * * *」(매초)처럼 저장되면 실행이 끝나자마자 다음이 이어져 실행
+   * 이력과 스케줄러 자원을 끝없이 쓴다. 분 이상 칸은 아무리 잦아도 1분 간격이 최소이므로 초 칸 하나만 보면 된다 — 초 칸이 숫자 하나(5필드는 정규화로 "0")면
+   * 1분에 최대 한 번이다. 형식이 틀린 식은 여기서 판정하지 않는다(형식 검사가 먼저 거른다).
    */
   public static String describeTooFrequent(String cronExpression) {
     if (cronExpression == null || cronExpression.isBlank()) return null;
@@ -112,15 +113,24 @@ public final class ProactiveCron {
    * @return 다음 실행 시각(UTC 벽시계) 또는 계산 불가 시 null
    */
   public static LocalDateTime nextExecuteAtUtc(String cronExpression, String timezone) {
+    return nextExecuteAtUtc(cronExpression, timezone, Instant.now());
+  }
+
+  /**
+   * {@code from} 이후의 다음 실행 시각을 UTC 벽시계로 계산한다 — 기준 시각을 받는 판(스케줄러가 시계를 주입받아 서머타임 전환일을 테스트할 수 있게).
+   *
+   * @see #nextExecuteAtUtc(String, String)
+   */
+  public static LocalDateTime nextExecuteAtUtc(
+      String cronExpression, String timezone, Instant from) {
     if (cronExpression == null || cronExpression.isBlank()) return null;
 
     String tz = timezone != null && !timezone.isBlank() ? timezone : DEFAULT_TIMEZONE;
     try {
-      ZoneId zone = ZoneId.of(tz);
-      CronExpression parsed = CronExpression.parse(normalize(cronExpression));
-      ZonedDateTime next = parsed.next(ZonedDateTime.now(zone));
+      // 스케줄러(DstAwareCronTrigger)와 같은 계산기 — 서머타임 전환일에도 표시값 = 실제 발화 시각(WD-391)
+      Instant next = DstAwareCron.of(cronExpression, ZoneId.of(tz)).next(from);
       if (next == null) return null; // 더 이상 발화하지 않는 식 (예: 지나간 특정 일자)
-      return next.withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+      return LocalDateTime.ofInstant(next, ZoneOffset.UTC);
     } catch (Exception e) {
       log.warn("다음 실행 시각 계산 실패 — cron='{}' timezone='{}': {}", cronExpression, tz, e.getMessage());
       return null;

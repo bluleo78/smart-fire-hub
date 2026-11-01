@@ -1,19 +1,7 @@
-import { CronExpressionParser } from 'cron-parser';
-
 import { TIMEZONE_OPTIONS } from './timezone-data';
 
-/**
- * cron 표현식과 타임존으로 다음 실행 시간을 계산한다.
- * 실패 시 null 반환.
- */
-export function getNextRunDate(cronExpression: string, timezone: string): Date | null {
-  try {
-    const interval = CronExpressionParser.parse(cronExpression, { tz: timezone });
-    return interval.next().toDate();
-  } catch {
-    return null;
-  }
-}
+// 다음 실행 시각 「계산」은 화면에서 하지 않는다 — 서버 미리보기 API(useCronPreview)가 스케줄러와 같은 서머타임 규칙으로
+// 계산한다(WD-391). 이 파일은 받은 시각의 표시 형식만 맡는다.
 
 /**
  * 다음 실행 시간을 사람이 읽기 쉬운 형식으로 포맷한다.

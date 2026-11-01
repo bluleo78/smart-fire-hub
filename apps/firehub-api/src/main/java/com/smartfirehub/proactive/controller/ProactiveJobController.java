@@ -1,8 +1,10 @@
 package com.smartfirehub.proactive.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.dto.CronPreviewResponse;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.global.util.ContentDispositions;
+import com.smartfirehub.global.util.CronPreview;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionSummaryResponse;
@@ -16,6 +18,7 @@ import com.smartfirehub.proactive.service.PdfExportService;
 import com.smartfirehub.proactive.service.ProactiveJobService;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import jakarta.validation.Valid;
+import java.time.Instant;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -39,6 +42,22 @@ public class ProactiveJobController {
   public ResponseEntity<List<ProactiveJobResponse>> getJobs(Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     return ResponseEntity.ok(proactiveJobService.getJobs(userId));
+  }
+
+  /**
+   * 스마트 작업 편집 창 「다음 실행」 미리보기 (WD-391).
+   *
+   * <p>스케줄러와 같은 서머타임 규칙({@link com.smartfirehub.global.util.DstAwareCron})으로 서버가 계산한다 — 웹이 따로 계산하던
+   * 때는 전환일에 화면과 실제 실행이 달랐다. 계산은 파이프라인 트리거 미리보기({@code GET /api/v1/triggers/cron-preview})와 같고, 권한만
+   * 스마트 작업 조회 권한이다.
+   */
+  @GetMapping("/cron-preview")
+  @RequirePermission("proactive:read")
+  public ResponseEntity<CronPreviewResponse> previewCron(
+      @RequestParam String cron,
+      @RequestParam(required = false) String timezone,
+      @RequestParam(defaultValue = "" + CronPreview.DEFAULT_COUNT) int count) {
+    return ResponseEntity.ok(CronPreview.preview(cron, timezone, count, Instant.now()));
   }
 
   @GetMapping("/{id}")

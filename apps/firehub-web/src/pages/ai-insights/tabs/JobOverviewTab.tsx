@@ -25,10 +25,12 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { useCronPreview } from '@/hooks/queries/useCronPreview';
+import { cronTooFrequentMessage } from '@/lib/cron-frequency';
 import { cronToLabel } from '@/lib/cron-label';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
-import { formatNextRun,getNextRunDate } from '@/lib/next-run';
+import { formatNextRun, timeZoneLabel } from '@/lib/next-run';
 import { TIMEZONE_OPTIONS } from '@/lib/timezone-data';
 import { goalTemplateName, MAX_JOB_PROMPT_LENGTH, type ProactiveJobFormValues } from '@/lib/validations/proactive-job';
 
@@ -116,6 +118,18 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
   const cronExpression = watch('cronExpression');
   const timezone = watch('timezone');
 
+  // 「다음 실행」은 서버가 스케줄러와 같은 서머타임 규칙으로 계산한 값을 쓴다(WD-391) — 화면이 따로 계산하면 전환일에
+  // 실제 실행과 달랐다. 이상 감지 전용(ANOMALY)·너무 잦은 주기(폼 검증이 이미 안내)일 때는 묻지 않는다.
+  const cronForPreview = cronExpression && cronExpression !== '__custom__' ? cronExpression : '';
+  const nextRunPreview = useCronPreview('proactive', cronForPreview, timezone, {
+    count: 1,
+    // 읽기 전용 화면에는 이 안내가 없으므로 편집·생성 중에만 묻는다
+    enabled:
+      (isEditing || isNew) &&
+      watch('triggerType') !== 'ANOMALY' &&
+      !cronTooFrequentMessage(cronForPreview),
+  });
+
   // Goal-based mode state
   const [creationMode, setCreationMode] = useState<CreationMode>('manual');
   const [businessQuestion, setBusinessQuestion] = useState('');
@@ -185,15 +199,14 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
     : '__custom__';
 
   const nextRunInfo = useMemo(() => {
-    if (!cronExpression || cronExpression === '__custom__') return null;
-    const nextDate = getNextRunDate(cronExpression, timezone);
+    const nextDate = nextRunPreview.times[0];
     if (!nextDate) return null;
-    const tzOption = TIMEZONE_OPTIONS.find((t) => t.value === timezone);
     return {
       text: formatNextRun(nextDate, timezone),
-      abbr: tzOption?.abbr ?? '',
+      // 그 날짜에 실제로 쓰는 약어(EST/EDT 등) — 고정 표의 약어는 서머타임 기간을 구분하지 못한다
+      abbr: timeZoneLabel(nextDate, timezone),
     };
-  }, [cronExpression, timezone]);
+  }, [nextRunPreview.times, timezone]);
 
   if (!isEditing && !isNew && job) {
     // Read-only view
@@ -629,6 +642,17 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
       {watch('triggerType') !== 'ANOMALY' && nextRunInfo && (
         <InlineBanner variant="info" icon={<span>📅</span>}>
           다음 실행: <strong>{nextRunInfo.text}{nextRunInfo.abbr ? ` ${nextRunInfo.abbr}` : ''}</strong>
+        </InlineBanner>
+      )}
+      {/* 서버 계산 대기(입력 디바운스 포함)·실패 안내 (WD-391) */}
+      {watch('triggerType') !== 'ANOMALY' && nextRunPreview.isLoading && (
+        <p role="status" className="text-xs text-muted-foreground">
+          다음 실행 시각을 계산하는 중…
+        </p>
+      )}
+      {watch('triggerType') !== 'ANOMALY' && nextRunPreview.error && (
+        <InlineBanner variant="warning">
+          다음 실행을 계산할 수 없습니다: {nextRunPreview.error}
         </InlineBanner>
       )}
 

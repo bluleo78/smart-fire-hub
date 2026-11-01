@@ -11,6 +11,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Map;
@@ -74,6 +75,43 @@ class TriggerSchedulerServiceUnitTest {
     assertThat(nextFireInstant).isAfter(Instant.now());
 
     schedulerService.unregisterSchedule(100L);
+  }
+
+  /**
+   * 서머타임 시작일에 「매일 2:30」(America/New_York)은 그날 3:30 EDT 로 밀려야 한다(WD-391). Spring CronTrigger 는 그날을
+   * 건너뛰어 다음 날 2:30 을 기록했다 — 스케줄러가 DstAwareCronTrigger 를 쓰는지 기록된 nextFireTime 으로 확인한다.
+   */
+  @Test
+  void registerSchedule_springForwardDay_writesShiftedSameDayTime() {
+    schedulerService.setClockForTest(
+        Clock.fixed(Instant.parse("2027-03-14T05:00:00Z"), ZoneOffset.UTC)); // 0:00 EST
+    Map<String, Object> config = Map.of("cron", "0 30 2 * * *", "timezone", "America/New_York");
+
+    schedulerService.registerSchedule(102L, config);
+
+    ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+    verify(triggerRepository).mergeNextFireTime(eq(102L), captor.capture());
+    // 3:30 EDT = 07:30Z (Spring CronTrigger 였다면 다음 날 2:30 EDT = 2027-03-15T06:30Z)
+    assertThat(captor.getValue()).isEqualTo("2027-03-14T07:30:00Z");
+
+    schedulerService.unregisterSchedule(102L);
+  }
+
+  /** 서머타임 해제일 겹친 1시대(두 번째, EST)에 재등록돼도 이미 지난 「매일 1:30」을 다시 잡지 않는다(WD-391). */
+  @Test
+  void registerSchedule_fallBackRepeatedHour_doesNotScheduleSecondOccurrence() {
+    schedulerService.setClockForTest(
+        Clock.fixed(Instant.parse("2026-11-01T06:10:00Z"), ZoneOffset.UTC)); // 1:10 EST
+    Map<String, Object> config = Map.of("cron", "30 1 * * *", "timezone", "America/New_York");
+
+    schedulerService.registerSchedule(103L, config);
+
+    ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+    verify(triggerRepository).mergeNextFireTime(eq(103L), captor.capture());
+    // 1:30 EST(06:30Z)가 아니라 다음 날 1:30 EST
+    assertThat(captor.getValue()).isEqualTo("2026-11-02T06:30:00Z");
+
+    schedulerService.unregisterSchedule(103L);
   }
 
   /**

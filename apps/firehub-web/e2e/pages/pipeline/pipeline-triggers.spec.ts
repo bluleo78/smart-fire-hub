@@ -13,6 +13,7 @@ import type { TriggerEventResponse } from '@/types/pipeline';
 import { createPipelineDetail, createTrigger } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { mockCronPreview, TRIGGER_CRON_PREVIEW_PATH } from '../../fixtures/cron-preview.fixture';
 import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /** 파이프라인 상세 + 트리거 리스트 공통 모킹 */
@@ -28,6 +29,8 @@ async function setupTriggerTabMocks(
   await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/executions`, []);
   await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/triggers`, triggers);
   await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/trigger-events`, events);
+  // 「다음 5회」 미리보기 기본 응답(WD-391) — 테스트가 다시 불러 덮어쓸 수 있다
+  await mockCronPreview(page, TRIGGER_CRON_PREVIEW_PATH);
   await mockApi(page, 'GET', '/api/v1/datasets', {
     content: [],
     page: 0,
@@ -1375,6 +1378,14 @@ test.describe('파이프라인 트리거 — 다음 실행 시간대 표기 (WD-
       nextFireTime: '2026-10-29T05:30:00Z', // 뉴욕 01:30 EDT = 서울 14:30 KST
     });
     await setupTriggerTabMocks(page, { triggers: [trigger] });
+    // 편집 창 미리보기는 서버 계산 값을 보인다(WD-391) — 뉴욕 01:30 EDT 부터 5일치
+    await mockCronPreview(page, TRIGGER_CRON_PREVIEW_PATH, [
+      '2026-10-29T05:30:00Z',
+      '2026-10-30T05:30:00Z',
+      '2026-10-31T05:30:00Z',
+      '2026-11-01T05:30:00Z',
+      '2026-11-02T06:30:00Z',
+    ]);
     await gotoTriggerTab(page);
 
     await expect(page.getByText('다음 실행: 2026. 10. 29. 오후 2:30:00 (KST)')).toBeVisible();
@@ -1408,5 +1419,98 @@ test.describe('WD-404 웹훅 서명 안내', () => {
     await expect(dialog.getByText(/요청 본문 원문을 시크릿으로 HMAC-SHA256 한 16진수/)).toBeVisible();
     await expect(dialog.getByText(/sha256=5d41402abc4b2a76/)).toBeVisible();
     await expect(dialog.getByText('GitHub 웹훅은 시크릿만 같게 넣으면 그대로 동작합니다.')).toBeVisible();
+  });
+});
+
+/**
+ * WD-391: 편집 창 「다음 5회」가 화면(cron-parser) 계산이라 서머타임 전환일에 서버 실제 실행과 달랐다 — 해제일엔 두 번 도는 작업이
+ * 한 번으로, 시작일엔 건너뛰는 3:30 이 그대로 보였다. 이제 서버 미리보기 API(스케줄러와 같은 규칙)의 값을 디바운스해 받아 보인다.
+ */
+test.describe('파이프라인 트리거 — 다음 5회 서버 미리보기 (WD-391)', () => {
+  test.use({ timezoneId: 'Asia/Seoul' });
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+    await setupTriggerTabMocks(page);
+  });
+
+  /** 트리거 추가 창을 열고 스케줄(Cron) 유형을 고른다. */
+  async function openScheduleForm(page: Page) {
+    await gotoTriggerTab(page);
+    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /스케줄.*Cron/ }).click();
+    return page.getByRole('dialog');
+  }
+
+  test('서머타임 시작일 — 서버가 준 3:30 EDT 를 그대로 보이고, cron·시간대·개수를 쿼리로 보낸다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 뉴욕 시작일(2027-03-14) 매일 2:30 → 그날 3:30 EDT(07:30Z), 다음 날부터 2:30 EDT
+    const preview = await mockCronPreview(page, TRIGGER_CRON_PREVIEW_PATH, [
+      '2027-03-14T07:30:00Z',
+      '2027-03-15T06:30:00Z',
+      '2027-03-16T06:30:00Z',
+      '2027-03-17T06:30:00Z',
+      '2027-03-18T06:30:00Z',
+    ]);
+    const dialog = await openScheduleForm(page);
+
+    await dialog.getByLabel('타임존').click();
+    await page.getByRole('option', { name: 'America/New_York' }).click();
+    await dialog.locator('input[placeholder*="* * *"]').first().fill('30 2 * * *');
+
+    await expect(dialog.getByText('1. 2027. 3. 14. 오전 3:30:00 (EDT)')).toBeVisible();
+    await expect(dialog.getByText('2. 2027. 3. 15. 오전 2:30:00 (EDT)')).toBeVisible();
+    await expect(dialog.getByRole('list', { name: '다음 5회 실행 예정' }).getByRole('listitem')).toHaveCount(5);
+
+    await expect.poll(() => preview.lastRequest()?.searchParams.get('cron')).toBe('30 2 * * *');
+    const last = preview.lastRequest();
+    expect(last?.searchParams.get('timezone')).toBe('America/New_York');
+    expect(last?.searchParams.get('count')).toBe('5');
+  });
+
+  test('입력 중에는 디바운스되어 마지막 값으로 한 번만 묻는다', async ({ authenticatedPage: page }) => {
+    const preview = await mockCronPreview(page, TRIGGER_CRON_PREVIEW_PATH);
+    const dialog = await openScheduleForm(page);
+    // 기본값(0 9 * * *) 미리보기 요청이 끝난 뒤부터 센다
+    await expect(dialog.getByText(/^1\. /)).toBeVisible();
+    const before = preview.requests.length;
+
+    const input = dialog.locator('input[placeholder*="* * *"]').first();
+    await input.fill('');
+    // 디바운스(300ms)보다 짧은 간격으로 한 글자씩 친다
+    await input.pressSequentially('15 10 * * 1', { delay: 40 });
+
+    await expect.poll(() => preview.requests.length).toBeGreaterThan(before);
+    // 디바운스가 끝날 시간을 충분히 지나도 추가 요청이 없어야 한다
+    await page.waitForTimeout(800);
+    const typed = preview.requests.slice(before);
+    expect(typed).toHaveLength(1);
+    expect(typed[0].searchParams.get('cron')).toBe('15 10 * * 1');
+  });
+
+  test('서버가 거부하면(400) 그 문구를 목록 자리에 보인다', async ({ authenticatedPage: page }) => {
+    await mockCronPreview(page, TRIGGER_CRON_PREVIEW_PATH, [], {
+      status: 400,
+      message: '유효하지 않은 시간대입니다: Asia/Seoul',
+    });
+    const dialog = await openScheduleForm(page);
+
+    await expect(dialog.getByRole('alert').filter({ hasText: '유효하지 않은 시간대입니다: Asia/Seoul' })).toBeVisible();
+    await expect(dialog.getByRole('list', { name: '다음 5회 실행 예정' })).toHaveCount(0);
+  });
+
+  test('형식 오류는 기존 입력 검사 문구만 보이고 서버에 묻지 않는다', async ({ authenticatedPage: page }) => {
+    const preview = await mockCronPreview(page, TRIGGER_CRON_PREVIEW_PATH);
+    const dialog = await openScheduleForm(page);
+    await expect(dialog.getByText(/^1\. /)).toBeVisible();
+    const before = preview.requests.length;
+
+    await dialog.locator('input[placeholder*="* * *"]').first().fill('invalid cron here');
+
+    await expect(dialog.getByText('유효하지 않은 cron 표현식입니다')).toBeVisible();
+    await page.waitForTimeout(600);
+    expect(preview.requests.length).toBe(before);
+    await expect(dialog.getByText('다음 5회 실행 예정')).toHaveCount(0);
   });
 });

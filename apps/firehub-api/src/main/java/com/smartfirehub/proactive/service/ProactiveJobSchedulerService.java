@@ -2,11 +2,13 @@ package com.smartfirehub.proactive.service;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
+import com.smartfirehub.global.util.DstAwareCron;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.util.ProactiveCron;
 import com.smartfirehub.tenant.repository.TenantRepository;
 import jakarta.annotation.PostConstruct;
+import java.time.Clock;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -15,7 +17,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
-import org.springframework.scheduling.support.CronTrigger;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -30,6 +31,8 @@ public class ProactiveJobSchedulerService {
   private final TenantRepository tenantRepository;
   private final ConcurrentHashMap<Long, ScheduledFuture<?>> scheduledTasks =
       new ConcurrentHashMap<>();
+  // 「다음 실행」 계산 기준 시계. 서머타임 전환일 계산을 테스트에서 고정 시각으로 검증할 수 있게 바꿔 끼울 수 있다(WD-391).
+  private Clock clock = Clock.systemUTC();
 
   public ProactiveJobSchedulerService(
       ProactiveJobRepository proactiveJobRepository,
@@ -122,7 +125,15 @@ public class ProactiveJobSchedulerService {
     // 여기 한 곳만 채우면 "한 번도 실행되지 않은 잡"까지 포함해 전 행이 값을 갖는다.
     // compute() 람다 밖에서 쓴다 — ConcurrentHashMap 의 bin lock 을 잡은 채 DB I/O 를 하지 않기 위함.
     proactiveJobRepository.updateNextExecuteAt(
-        jobId, registered ? ProactiveCron.nextExecuteAtUtc(cronExpression, timezone) : null);
+        jobId,
+        registered
+            ? ProactiveCron.nextExecuteAtUtc(cronExpression, timezone, clock.instant())
+            : null);
+  }
+
+  /** 테스트 전용 — 「다음 실행」 계산 기준 시계를 바꾼다(WD-391). 실제 발화 시점은 스케줄러 풀의 시계를 따른다. */
+  void setClockForTest(Clock clock) {
+    this.clock = clock;
   }
 
   /**
@@ -144,12 +155,12 @@ public class ProactiveJobSchedulerService {
                 return null;
               }
               try {
-                // CronTrigger 는 6필드만 수용하는데 DB에는 5필드(Unix 표준)와 6필드가 섞여 있다(#347).
-                // 원시 문자열을 그대로 넘기면 5필드 레거시 잡이 등록에 실패해 enabled=true 인 채로
-                // 영구 미실행 상태가 된다(#354). 다음 실행 시각 계산(nextExecuteAtUtc)과 같은
-                // 정규화 규칙을 쓰게 하여 "표시값 = 실제 발화 시각" 불변식도 유지한다(#348).
-                CronTrigger cronTrigger =
-                    new CronTrigger(ProactiveCron.normalize(cronExpression), ZoneId.of(tz));
+                // DB에는 5필드(Unix 표준)와 6필드가 섞여 있어(#347) 정규화해 받는다 — 원시 문자열을 넘기면
+                // 5필드 레거시 잡이 등록에 실패해 enabled=true 인 채로 영구 미실행 상태가 된다(#354).
+                // Spring CronTrigger 대신 서머타임 전환일을 Linux cron 규칙으로 다루는 트리거를 쓴다(WD-391) —
+                // 다음 실행 시각 계산(nextExecuteAtUtc)·미리보기 API 와 같은 계산기라 "표시값 = 실제 발화 시각"(#348)이
+                // 전환일에도 유지된다.
+                var cronTrigger = DstAwareCron.of(cronExpression, ZoneId.of(tz)).toTrigger();
                 ScheduledFuture<?> future =
                     taskScheduler.schedule(
                         () -> TenantContext.runScoped(tenantId, () -> runScheduledJob(jobId)),

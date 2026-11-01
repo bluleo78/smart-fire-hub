@@ -1,4 +1,3 @@
-import { CronExpressionParser } from 'cron-parser';
 import cronstrue from 'cronstrue/i18n';
 import { useId, useMemo } from 'react';
 
@@ -12,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { useCronPreview } from '@/hooks/queries/useCronPreview';
 import { cronTooFrequentMessage } from '@/lib/cron-frequency';
 import { timeZoneLabel } from '@/lib/next-run';
 
@@ -70,25 +70,18 @@ export default function CronExpressionInput({
     }
   }, [value]);
 
-  const nextExecutions = useMemo(() => {
-    if (!value.trim() || parseError) return [];
-    try {
-      const interval = CronExpressionParser.parse(value, {
-        tz: timezone,
-      });
-      const times: string[] = [];
-      for (let i = 0; i < 5; i++) {
-        const next = interval.next();
-        // eslint-disable-next-line no-restricted-syntax -- 서버 문자열이 아니라 cron 파서가 준 epoch 숫자다
-        const at = new Date(next.getTime());
+  // 「다음 5회」는 서버가 스케줄러와 같은 서머타임 규칙으로 계산한 값을 쓴다(WD-391) — 화면이 따로 계산하면 전환일에
+  // 실제 실행과 달랐다. 형식 오류·너무 잦은 주기는 위 입력 중 검사가 이미 알리므로 그때는 묻지 않는다(기존 안내 그대로).
+  const preview = useCronPreview('trigger', value, timezone, { enabled: !parseError });
+  const nextExecutions = useMemo(
+    () =>
+      preview.times.map(
         // 트리거 시간대 기준 시각이라 그 시간대 이름을 붙인다 — 목록의 「다음 실행」(보는 사람 시간대)과 구분되게(WD-385)
-        times.push(`${at.toLocaleString('ko-KR', { timeZone: timezone })} (${timeZoneLabel(at, timezone)})`);
-      }
-      return times;
-    } catch {
-      return [];
-    }
-  }, [value, timezone, parseError]);
+        (at) => `${at.toLocaleString('ko-KR', { timeZone: timezone })} (${timeZoneLabel(at, timezone)})`,
+      ),
+    [preview.times, timezone],
+  );
+  const showPreview = nextExecutions.length > 0 || preview.isLoading || !!preview.error;
 
   const displayError = error || parseError;
 
@@ -149,7 +142,7 @@ export default function CronExpressionInput({
         </Select>
       </div>
 
-      {nextExecutions.length > 0 && (
+      {showPreview && (
         <div className="space-y-1.5">
           {/*
             대응하는 단일 입력 요소가 없는 목록 제목이라 Label 컴포넌트가 아니라 span 으로 둔다 (#432).
@@ -162,13 +155,24 @@ export default function CronExpressionInput({
           >
             다음 5회 실행 예정
           </span>
-          <ul className="space-y-0.5" aria-labelledby={nextRunsId}>
-            {nextExecutions.map((time, i) => (
-              <li key={i} className="text-xs text-muted-foreground font-mono">
-                {i + 1}. {time}
-              </li>
-            ))}
-          </ul>
+          {/* 서버 계산 대기(입력 디바운스 포함)·실패를 목록 자리에 보인다 — 옛 목록이 새 입력의 결과처럼 남지 않게 */}
+          {preview.isLoading ? (
+            <p role="status" className="text-xs text-muted-foreground">
+              다음 실행 시각을 계산하는 중…
+            </p>
+          ) : preview.error ? (
+            <p role="alert" className="text-xs text-destructive">
+              {preview.error}
+            </p>
+          ) : (
+            <ul className="space-y-0.5" aria-labelledby={nextRunsId}>
+              {nextExecutions.map((time, i) => (
+                <li key={i} className="text-xs text-muted-foreground font-mono">
+                  {i + 1}. {time}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </div>

@@ -10,6 +10,8 @@ import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.util.ProactiveCron;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
@@ -180,6 +182,27 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
         .from(DSL.table(DSL.name("proactive_job")))
         .where(DSL.field(DSL.name("proactive_job", "id"), Long.class).eq(jobId))
         .fetchOne(0, LocalDateTime.class);
+  }
+
+  @Test
+  @DisplayName("서머타임 시작일 — 매일 2:30(뉴욕) 잡의 다음 실행은 그날 3:30 EDT 로 기록된다 (WD-391)")
+  void registerSchedule_springForwardDay_usesDstAwareRule() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            new CreateProactiveJobRequest(
+                "서머타임 잡", "프롬프트", null, "0 0 9 * * *", "Asia/Seoul", true, null, Map.of()),
+            testUserId);
+    // 0:00 EST — Spring CronTrigger 였다면 그날을 건너뛰고 다음 날 2:30 EDT(06:30Z)를 기록했다
+    schedulerService.setClockForTest(
+        Clock.fixed(Instant.parse("2027-03-14T05:00:00Z"), ZoneOffset.UTC));
+    try {
+      schedulerService.registerSchedule(created.id(), "30 2 * * *", "America/New_York");
+
+      assertThat(readNextExecuteAt(created.id())).isEqualTo(LocalDateTime.of(2027, 3, 14, 7, 30));
+    } finally {
+      schedulerService.setClockForTest(Clock.systemUTC());
+      schedulerService.unregisterSchedule(created.id());
+    }
   }
 
   @Test

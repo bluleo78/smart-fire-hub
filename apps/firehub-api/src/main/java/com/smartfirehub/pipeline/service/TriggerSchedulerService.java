@@ -2,11 +2,14 @@ package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
+import com.smartfirehub.global.util.DstAwareCron;
+import com.smartfirehub.global.util.DstAwareCronTrigger;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
 import com.smartfirehub.proactive.util.ProactiveCron;
 import jakarta.annotation.PostConstruct;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.HashMap;
@@ -20,7 +23,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
-import org.springframework.scheduling.support.CronTrigger;
 import org.springframework.scheduling.support.SimpleTriggerContext;
 import org.springframework.stereotype.Service;
 
@@ -34,6 +36,8 @@ public class TriggerSchedulerService {
   private final TriggerService triggerService;
   private final TenantScopedRunner tenantScopedRunner;
   private final Map<Long, ScheduledFuture<?>> scheduledTasks = new ConcurrentHashMap<>();
+  // trigger_state.nextFireTime 계산 기준 시계. 서머타임 전환일 계산을 테스트에서 고정 시각으로 검증할 수 있게 바꿔 끼울 수 있다(WD-391).
+  private Clock clock = Clock.systemUTC();
 
   public TriggerSchedulerService(
       TriggerRepository triggerRepository,
@@ -131,7 +135,7 @@ public class TriggerSchedulerService {
    * cancel} 된 기존 스케줄이 대체 없이 사라진다. 밖에서 먼저 실패하면 아무것도 건드리지 않는다. 호출 경로(요청 스코프의 afterCommit, 기동 시 테넌트
    * 순회)는 모두 컨텍스트가 있다.
    *
-   * <p>등록 성공 시 {@code CronTrigger} 기준으로 다음 발화 시각을 계산해 {@code trigger_state.nextFireTime}에
+   * <p>등록 성공 시 {@link DstAwareCronTrigger} 기준으로 다음 발화 시각을 계산해 {@code trigger_state.nextFireTime}에
    * 기록한다(#676) — 이 값이 없으면 프론트엔드의 "다음 실행" 표시와 {@link #detectMissedFire} 가 둘 다 전제로 삼는 값이 영영 채워지지 않는다.
    * 계산 결과는 {@code compute()} 밖으로 홀더를 통해 전달한 뒤 쓴다 — bin lock 을 잡은 채 DB I/O(트랜잭션)를 하지 않기 위함이다.
    *
@@ -145,7 +149,7 @@ public class TriggerSchedulerService {
     // 다음 발화가 없어 스케줄을 걸지 못했는지 compute() 밖으로 전달한다(WD-107).
     final AtomicBoolean noNextFire = new AtomicBoolean(false);
 
-    // 새 CronTrigger 를 compute() 밖에서 먼저 만든다(WD-107). 예전에는 compute() 안에서 기존 스케줄을 먼저 cancel 한 뒤
+    // 새 트리거를 compute() 밖에서 먼저 만든다(WD-107). 예전에는 compute() 안에서 기존 스케줄을 먼저 cancel 한 뒤
     // 생성에 실패하면 null 을 돌려줘, 잘못된 cron 으로 수정하는 순간 멀쩡하던 옛 스케줄까지 사라지고 오류는 로그로만 남았다.
     // 여기서 실패하면 맵을 건드리기 전이라 옛 스케줄이 그대로 남고, 예외는 호출자에게 전달돼 성공처럼 보이지 않는다.
     // 5필드 cron 은 정규화해 받아들인다 — 이 결함으로 5필드가 저장된 기존 행도 재기동·토글 시 다시 등록되게 하기 위함이다.
@@ -161,9 +165,11 @@ public class TriggerSchedulerService {
     if (tooFrequent != null) {
       throw new IllegalArgumentException(tooFrequent + ": " + cronExpression);
     }
-    final CronTrigger cronTrigger;
+    // Spring CronTrigger 대신 서머타임 전환일을 Linux cron 규칙(고정 시각은 해제일 1회·시작일 +1시간, 매시·n분마다는 경과 시간)으로
+    // 다루는 트리거를 쓴다(WD-391). 편집 창 「다음 5회」 미리보기 API 와 같은 계산기라 화면과 실제 실행이 어긋나지 않는다.
+    final DstAwareCronTrigger cronTrigger;
     try {
-      cronTrigger = new CronTrigger(cronExpression, ZoneId.of(timezone));
+      cronTrigger = DstAwareCron.of(cronExpression, ZoneId.of(timezone)).toTrigger();
     } catch (RuntimeException e) {
       log.error(
           "Failed to register cron schedule for trigger {} (cron '{}', timezone '{}'): {}",
@@ -190,7 +196,8 @@ public class TriggerSchedulerService {
                             // 발화 직후 다음 실행 시각을 재계산해 갱신한다 — 그래야 매 발화마다
                             // "다음 실행" 표시와 missed-fire 감지 기준이 최신으로 유지된다.
                             writeNextFireTime(
-                                triggerId, cronTrigger.nextExecution(new SimpleTriggerContext()));
+                                triggerId,
+                                cronTrigger.nextExecution(new SimpleTriggerContext(clock)));
                           }),
                   cronTrigger);
           if (existing != null) {
@@ -208,7 +215,7 @@ public class TriggerSchedulerService {
             return null;
           }
           // 최초 등록 시점의 다음 발화 시각. compute() 밖(락 해제 후)에서 DB에 반영한다.
-          nextFireHolder.set(cronTrigger.nextExecution(new SimpleTriggerContext()));
+          nextFireHolder.set(cronTrigger.nextExecution(new SimpleTriggerContext(clock)));
           log.info(
               "Registered schedule trigger {} with cron '{}' timezone '{}' (tenant={})",
               triggerId,
@@ -223,6 +230,11 @@ public class TriggerSchedulerService {
       return;
     }
     writeNextFireTime(triggerId, nextFireHolder.get());
+  }
+
+  /** 테스트 전용 — nextFireTime 계산 기준 시계를 바꾼다(WD-391). 실제 발화 시점은 스케줄러 풀의 시계를 따른다. */
+  void setClockForTest(Clock clock) {
+    this.clock = clock;
   }
 
   /**

@@ -83,7 +83,7 @@ Package base: `com.smartfirehub`. Feature-sliced 도메인 모듈, 각 모듈은
 **트리거 타입** (`pipeline/service/`):
 | Type | 동작 |
 |------|------|
-| `SCHEDULE` | Cron식 스케줄링 (Spring TaskScheduler + CronTrigger) |
+| `SCHEDULE` | Cron식 스케줄링 (Spring TaskScheduler + `DstAwareCronTrigger` — 서머타임 전환일은 Linux cron 규칙, 미리보기 API `GET /api/v1/triggers/cron-preview` 와 같은 계산기, WD-391) |
 | `API` | 토큰 기반 (SHA-256 해시 저장). `POST /api/v1/triggers/api/{token}` |
 | `WEBHOOK` | UUID + 선택적 HMAC-SHA256 서명. `POST /api/v1/triggers/webhook/{webhookId}` |
 | `PIPELINE_CHAIN` | 상위 파이프라인 완료 시 실행 (조건: SUCCESS/FAILURE/ANY) |
