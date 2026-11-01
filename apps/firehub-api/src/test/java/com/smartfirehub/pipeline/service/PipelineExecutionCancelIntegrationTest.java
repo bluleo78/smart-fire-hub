@@ -106,6 +106,10 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
   @Value("${app.executor.internal-token}")
   private String executorToken;
 
+  /** db-executor 내부 토큰 — Tibero 경로의 잠금 뒤 취소 확인도 같은 엔드포인트를 부른다(WD-482). */
+  @Value("${app.db-executor.internal-token}")
+  private String dbExecutorToken;
+
   @Autowired private DatasetService datasetService;
   @Autowired private PipelineService pipelineService;
   @Autowired private PipelineExecutionService executionService;
@@ -373,8 +377,20 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
     assertThat(before.statusCode()).isEqualTo(200);
     assertThat(before.body()).contains("\"stopRequested\":false");
 
+    // db-executor 토큰도 같은 판정을 받는다(WD-482 — Tibero 경로). 빈 토큰 헤더는 어느 쪽으로도 통과하지 않는다.
+    HttpResponse<String> viaDbExecutor =
+        getStopRequested(DEFAULT_TEST_TENANT_ID, executionId, "Internal " + dbExecutorToken);
+    assertThat(viaDbExecutor.statusCode()).isEqualTo(200);
+    assertThat(viaDbExecutor.body()).contains("\"stopRequested\":false");
+    assertThat(getStopRequested(DEFAULT_TEST_TENANT_ID, executionId, "Internal ").statusCode())
+        .isEqualTo(401);
+
     pipelineService.cancelExecution(pipelineId, executionId, userId);
     assertThat(getStopRequested(DEFAULT_TEST_TENANT_ID, executionId, auth).body())
+        .contains("\"stopRequested\":true");
+    assertThat(
+            getStopRequested(DEFAULT_TEST_TENANT_ID, executionId, "Internal " + dbExecutorToken)
+                .body())
         .contains("\"stopRequested\":true");
 
     // 다른 테넌트로 물으면 RLS 로 실행이 보이지 않는다 — 판정 규칙상 중지.

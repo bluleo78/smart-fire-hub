@@ -6,6 +6,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -23,6 +25,7 @@ import com.smartfirehub.dataset.storage.TenantDataStoreRepository;
 import com.smartfirehub.dataset.storage.tibero.TiberoPipelineSql;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.ColumnInfo;
 import com.smartfirehub.pipeline.service.IncrementalCursorService;
@@ -329,7 +332,7 @@ class StepDialectTest {
             NO_CANCEL);
 
     assertThat(log).isEqualTo("ok");
-    verify(dbExecutorClient).executeSql("UPDATE t SET a = 1", pre);
+    verify(dbExecutorClient).executeSql(eq("UPDATE t SET a = 1"), eq(pre), isNull());
     // 사용자 DML 은 열 탐침·출력 컬럼 조회가 필요 없다.
     verify(dbExecutorClient, never()).probe(anyString());
     verifyNoInteractions(columnRepository);
@@ -347,9 +350,11 @@ class StepDialectTest {
 
     verify(dbExecutorClient)
         .executeSql(
-            TiberoPipelineSql.insertSelect(
-                "GENIA_T7", OUT_TABLE, List.of("a"), List.of("A"), "SELECT a FROM s"),
-            List.of());
+            eq(
+                TiberoPipelineSql.insertSelect(
+                    "GENIA_T7", OUT_TABLE, List.of("a"), List.of("A"), "SELECT a FROM s")),
+            eq(List.of()),
+            isNull());
   }
 
   @Test
@@ -364,7 +369,7 @@ class StepDialectTest {
 
     // TEMP 생성 때 탐지한 결과를 다시 쓴다 — 탐침을 두 번 보내지 않는다.
     verify(dbExecutorClient, never()).probe(anyString());
-    verify(dbExecutorClient).executeSql(anyString(), eq(List.of()));
+    verify(dbExecutorClient).executeSql(anyString(), eq(List.of()), nullable(Long.class));
   }
 
   @Test
@@ -380,9 +385,11 @@ class StepDialectTest {
 
     verify(dbExecutorClient)
         .executeSql(
-            TiberoPipelineSql.mergeSelect(
-                "GENIA_T7", OUT_TABLE, List.of("k", "v"), List.of("k"), "SELECT k, v FROM s"),
-            List.of());
+            eq(
+                TiberoPipelineSql.mergeSelect(
+                    "GENIA_T7", OUT_TABLE, List.of("k", "v"), List.of("k"), "SELECT k, v FROM s")),
+            eq(List.of()),
+            isNull());
   }
 
   @Test
@@ -398,7 +405,7 @@ class StepDialectTest {
 
   @Test
   void tibero_executeSql_failureTranslatedWithExecutionPrefix() {
-    when(dbExecutorClient.executeSql(anyString(), anyList()))
+    when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
                 false, List.of(), List.of(), 0, null, "boom", null, null));
@@ -408,6 +415,33 @@ class StepDialectTest {
     assertThatThrownBy(() -> tibero.executeSql(run, NO_CANCEL))
         .isInstanceOf(ScriptExecutionException.class)
         .hasMessageStartingWith(PipelineSqlErrorMessages.EXECUTION_PREFIX);
+  }
+
+  /**
+   * 잠금 대기 중 취소(WD-482): 실행 id 를 db-executor 에 넘기고, db-executor 가 잠금 뒤 취소를 확인해 돌려준 cancelled 응답은 실행
+   * 실패가 아니라 취소 예외가 된다(success=false 여도 실패 번역보다 먼저 본다).
+   */
+  @Test
+  void tibero_executeSql_cancelledByExecutorAfterLock_throwsCancelled() {
+    when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
+        .thenReturn(
+            new ExecutorClient.SqlExecuteResult(false, null, null, 0, "", "취소", null, null, true));
+    ExecutionCancelCheck cancel = ExecutionCancelCheck.of(77L, () -> false);
+    SqlStepRun run =
+        new SqlStepRun(
+            "DELETE FROM t",
+            List.of("DELETE FROM \"GENIA_T7\".\"OUT\""),
+            false,
+            null,
+            null,
+            false,
+            false,
+            null);
+
+    assertThatThrownBy(() -> tibero.executeSql(run, cancel))
+        .isInstanceOf(PipelineExecutionCancelledException.class);
+    verify(dbExecutorClient)
+        .executeSql(eq("DELETE FROM t"), eq(List.of("DELETE FROM \"GENIA_T7\".\"OUT\"")), eq(77L));
   }
 
   @Test
@@ -421,7 +455,10 @@ class StepDialectTest {
     // 취소 확인은 실행 요청 직전 — 아직 출력에 아무것도 쓰지 않았다.
     InOrder order = inOrder(cancel, dbExecutorClient);
     order.verify(cancel).checkpoint(0, false);
-    order.verify(dbExecutorClient).executeSql("DELETE FROM t", List.of());
+    // 모의 취소 확인의 executionId() 는 Mockito 기본값(0)이다 — 여기서는 순서만 본다.
+    order
+        .verify(dbExecutorClient)
+        .executeSql(eq("DELETE FROM t"), eq(List.of()), nullable(Long.class));
   }
 
   // ── PG SQL 래핑·실패 번역(싱크 호출 자체는 보안 불변식 때문에 러너 executeStep 에 남는다) ─────────────
@@ -536,7 +573,7 @@ class StepDialectTest {
   private static final ExecutionCancelCheck NO_CANCEL = () -> false;
 
   private void stubDbExecuteSuccess() {
-    when(dbExecutorClient.executeSql(anyString(), anyList()))
+    when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
                 true, List.of(), List.of(), 1, "ok", null, null, null));

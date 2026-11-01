@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -153,7 +154,7 @@ class PipelineStepDialectOrderTest {
                 null));
     when(columnRepository.findByDatasetId(OUTPUT_ID))
         .thenReturn(List.of(col("k", true), col("v", false)));
-    when(dbExecutorClient.executeSql(anyString(), anyList()))
+    when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
         .thenReturn(
             new SqlExecuteResult(true, List.of(), List.of(), 2, "2 rows", null, null, null));
 
@@ -185,7 +186,7 @@ class PipelineStepDialectOrderTest {
     var order = inOrder(tiberoIncrementalCursor, dataTableService, dbExecutorClient);
     order.verify(tiberoIncrementalCursor).captureCandidate();
     order.verify(dataTableService).ensureRowTriggers(List.of("ORDERS", "SRC_ORDERS"));
-    order.verify(dbExecutorClient).executeSql(anyString(), anyList());
+    order.verify(dbExecutorClient).executeSql(anyString(), anyList(), nullable(Long.class));
     // PG 싱크·PG 후보 함수는 Tibero 테넌트에서 부르지 않는다.
     verifyNoInteractions(incrementalCursorService, executorClient, sqlExecutor, sqlColumnProbe);
   }

@@ -105,6 +105,34 @@ class DbExecutorClientTest {
                     """)));
   }
 
+  /**
+   * 실행 id 를 넘기면 본문에 executionId 로 싣고, db-executor 의 잠금 뒤 취소 응답(cancelled=true)을 읽는다(WD-482). 실행 id
+   * 가 없으면 키를 싣지 않는다(위 테스트의 정확한 본문 비교가 고정한다).
+   */
+  @Test
+  void executeSql_withExecutionId_sendsIdAndReadsCancelled() {
+    stubJson(
+        "/execute/sql",
+        """
+        {"success": false, "rows": null, "columns": null, "row_count": 0, "execution_log": "",
+         "error": "취소", "db_error": null, "cancelled": true}
+        """);
+
+    ExecutorClient.SqlExecuteResult result =
+        client().executeSql("INSERT INTO x SELECT 1", List.of("DELETE FROM \"S\".\"T\""), 42L);
+
+    assertThat(result.cancelled()).isTrue();
+    assertThat(result.success()).isFalse();
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/execute/sql"))
+            .withRequestBody(
+                equalToJson(
+                    """
+                    {"tenantId": 5, "query": "INSERT INTO x SELECT 1",
+                     "preStatements": ["DELETE FROM \\"S\\".\\"T\\""], "executionId": 42}
+                    """)));
+  }
+
   /** 실행 오류는 HTTP 200 + success=false — 예외가 아니라 결과로 돌려줘 러너가 db_error 코드로 번역한다. */
   @Test
   void executeSql_failureResponse_returnsDbError() {

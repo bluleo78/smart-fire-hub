@@ -112,7 +112,10 @@ public class ExecuteController {
           req.tenantId(),
           deadline,
           reason -> SqlExecuteResponse.failure(reason, null, "저장소 정보 조회 실패로 실행하지 않았습니다."),
-          d -> sqlRunner.run(d, req.query(), req.preStatements(), deadline, requested));
+          // 파이프라인 실행 id 가 있으면 출력 잠금을 얻은 직후 api 에 중지 요청을 되묻는다(WD-482 — 잠금 대기 중 취소).
+          d ->
+              sqlRunner.run(
+                  d, req.query(), req.preStatements(), deadline, requested, req.executionId()));
     }
   }
 

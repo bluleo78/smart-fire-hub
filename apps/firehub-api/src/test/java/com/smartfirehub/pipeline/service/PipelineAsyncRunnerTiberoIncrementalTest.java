@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
@@ -191,7 +192,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
     // 후보는 실행 전, 전진은 성공 뒤 — 순서가 설계의 핵심 불변식이다.
     var order = inOrder(tiberoIncrementalCursor, dbExecutorClient, stepRepository);
     order.verify(tiberoIncrementalCursor).captureCandidate();
-    order.verify(dbExecutorClient).executeSql(anyString(), anyList());
+    order.verify(dbExecutorClient).executeSql(anyString(), anyList(), nullable(Long.class));
     order.verify(stepRepository).advanceCursor(STEP_ID, CANDIDATE, false, OUTPUT_ID);
     // PG 시계 함수는 Tibero 테넌트에서 부르지 않는다.
     verifyNoInteractions(incrementalCursorService, executorClient, sqlExecutor, sqlColumnProbe);
@@ -209,7 +210,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
     var order = inOrder(dataTableService, dbExecutorClient);
     // 출력·입력 테이블을 한 번에(한 접속) 보장한다 — 출력이 먼저다.
     order.verify(dataTableService).ensureRowTriggers(List.of("ORDERS", "SRC_ORDERS"));
-    order.verify(dbExecutorClient).executeSql(anyString(), anyList());
+    order.verify(dbExecutorClient).executeSql(anyString(), anyList(), nullable(Long.class));
   }
 
   /** 출력과 입력이 같은 테이블이어도 한 번만 보장한다. */
@@ -238,7 +239,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
 
     assertThat(status).isEqualTo("FAILED");
     assertThat(failureMessage()).isEqualTo(MISSING_PRIVILEGE);
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(dbExecutorClient, never()).executeSql(anyString(), anyList(), nullable(Long.class));
     verify(stepRepository, never()).advanceCursor(any(), any(), anyBoolean(), any());
   }
 
@@ -258,7 +259,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
 
     assertThat(status).isEqualTo("FAILED");
     assertThat(failureMessage()).isEqualTo(MISSING_PRIVILEGE);
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(dbExecutorClient, never()).executeSql(anyString(), anyList(), nullable(Long.class));
   }
 
   /** 전체 재생성 예약: 책갈피를 무시하고(최소 리터럴) Tibero 판 DELETE 를 선행문으로 보낸다 — PG DELETE 형식이 아니다. */
@@ -286,7 +287,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
     stubCursor(LAST, false);
     stubProbe("K", "V");
     stubOutputColumns(col("k", true), col("v", false));
-    when(dbExecutorClient.executeSql(anyString(), anyList()))
+    when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
         .thenReturn(new SqlExecuteResult(false, null, null, 0, "", "실패", null, null));
 
     String status = run(sqlStep(INCREMENTAL_SELECT, "MERGE"));
@@ -308,7 +309,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
 
     assertThat(status).isEqualTo("FAILED");
     assertThat(failureMessage()).contains("Tibero 증분 커서");
-    verify(dbExecutorClient, never()).executeSql(anyString(), anyList());
+    verify(dbExecutorClient, never()).executeSql(anyString(), anyList(), nullable(Long.class));
   }
 
   /** PG 테넌트: PG 함수 후보·PG 리터럴 그대로, Tibero 커서·트리거 보장은 건드리지 않는다. */
@@ -344,7 +345,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
   private SentSql captureSent() {
     ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<List<String>> pre = ArgumentCaptor.forClass(List.class);
-    verify(dbExecutorClient).executeSql(query.capture(), pre.capture());
+    verify(dbExecutorClient).executeSql(query.capture(), pre.capture(), nullable(Long.class));
     return new SentSql(query.getValue(), pre.getValue());
   }
 
@@ -375,7 +376,7 @@ class PipelineAsyncRunnerTiberoIncrementalTest {
   }
 
   private void stubExecuteSuccess() {
-    when(dbExecutorClient.executeSql(anyString(), anyList()))
+    when(dbExecutorClient.executeSql(anyString(), anyList(), nullable(Long.class)))
         .thenReturn(
             new SqlExecuteResult(true, List.of(), List.of(), 2, "2 rows", null, null, null));
   }
