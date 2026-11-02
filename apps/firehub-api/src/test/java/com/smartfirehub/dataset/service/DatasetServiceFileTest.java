@@ -14,6 +14,7 @@ import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.repository.DatasetCategoryRepository;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
+import com.smartfirehub.dataset.repository.DatasetReferenceRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
 import com.smartfirehub.dataset.search.DatasetEmbeddingService;
@@ -22,11 +23,9 @@ import com.smartfirehub.file.service.FileObjectStorageService;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;
 import java.util.Optional;
-import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Answers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -36,7 +35,7 @@ import org.springframework.context.ApplicationEventPublisher;
  *
  * <p>DatasetService 는 다수 의존성을 갖는 대형 서비스이므로 {@code @InjectMocks} 로 {@code @RequiredArgsConstructor}
  * 생성자를 자동 주입한다. createDataset 은 성공 시 내부적으로 getDatasetById 를 호출해 응답을 재구성하므로, 그 경로가 예외 없이 끝까지 흐르도록
- * datasetRepository.findById / dsl(deep stub) 도 함께 스텁한다.
+ * datasetRepository.findById / referenceRepository 도 함께 스텁한다.
  */
 @ExtendWith(MockitoExtension.class)
 class DatasetServiceFileTest {
@@ -49,8 +48,8 @@ class DatasetServiceFileTest {
   @Mock private UserRepository userRepository;
   @Mock private DatasetTagRepository tagRepository;
 
-  @Mock(answer = Answers.RETURNS_DEEP_STUBS)
-  private DSLContext dsl;
+  // getDatasetById 의 연결 파이프라인 조회 — 모의 객체가 빈 목록을 돌려준다.
+  @Mock private DatasetReferenceRepository referenceRepository;
 
   @Mock private AuditLogService auditLogService;
   @Mock private DatasetEmbeddingService datasetEmbeddingService;
@@ -76,7 +75,7 @@ class DatasetServiceFileTest {
             dataTableRowService,
             userRepository,
             tagRepository,
-            dsl,
+            referenceRepository,
             auditLogService,
             // 이 테스트는 목록 조회를 쓰지 않아 가드는 호출되지 않는다.
             org.mockito.Mockito.mock(

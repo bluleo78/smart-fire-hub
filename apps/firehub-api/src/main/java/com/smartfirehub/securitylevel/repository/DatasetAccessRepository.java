@@ -33,6 +33,20 @@ public class DatasetAccessRepository {
 
   private final DSLContext dsl;
 
+  /**
+   * 조건을 바인드 값 인라인 SQL 문자열로 렌더한다 — 문자열 SQL 을 조립하는 호출부(시맨틱 검색·스키마 조회)용. 값은 호출자가 long/boolean 만 넣는다.
+   * Condition 을 문자열로 렌더하는 것은 질의가 아니라 jOOQ 렌더링이라 도메인 인터페이스에 맞지 않는다 — WD-485 에서 의도 메서드(예: 가시 데이터셋
+   * 술어)로 바꾼다.
+   *
+   * <p>쿼리를 실행하지 않는 렌더 전용이다. 클래스 단위 readOnly 트랜잭션을 상속하면 트랜잭션 없는 호출부에서 불필요한 트랜잭션·GUC 주입이 새로 생기므로
+   * {@code SUPPORTS} 로 둔다(있으면 합류, 없으면 만들지 않음).
+   */
+  @org.springframework.transaction.annotation.Transactional(
+      propagation = org.springframework.transaction.annotation.Propagation.SUPPORTS)
+  public String inlineSql(Condition condition) {
+    return dsl.renderInlined(condition);
+  }
+
   /** 데이터셋 1개에 대한 판정 사실. */
   public record AccessFacts(
       long datasetId, String tableName, LevelPolicy level, boolean onAllowlist) {}

@@ -1,8 +1,5 @@
 package com.smartfirehub.dashboard.service;
 
-import static com.smartfirehub.audit.repository.AuditLogRepository.AL_RESOURCE_ID_AS_LONG;
-import static org.jooq.impl.DSL.*;
-
 import com.smartfirehub.dashboard.dto.ActivityFeedResponse;
 import com.smartfirehub.dashboard.dto.ActivityFeedResponse.ActivityItem;
 import com.smartfirehub.dashboard.dto.AttentionItemResponse;
@@ -12,6 +9,11 @@ import com.smartfirehub.dashboard.dto.RecentImportResponse;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse.DatasetHealth;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse.PipelineHealth;
+import com.smartfirehub.dashboard.repository.DashboardStatsRepository;
+import com.smartfirehub.dashboard.repository.DashboardStatsRepository.AuditActivityRow;
+import com.smartfirehub.dashboard.repository.DashboardStatsRepository.ExecutionRow;
+import com.smartfirehub.dashboard.repository.DashboardStatsRepository.FailedImportRow;
+import com.smartfirehub.dashboard.repository.DashboardStatsRepository.FailedPipelineRow;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
@@ -28,10 +30,6 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.Record;
-import org.jooq.Table;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -59,7 +57,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 @RequiredArgsConstructor
 public class DashboardService {
 
-  private final DSLContext dsl;
+  /** 홈 대시보드 조회 쿼리(WD-484) — 서비스의 트랜잭션 구간 안에서 불린다(리포지토리에 클래스 단위 트랜잭션 없음). */
+  private final DashboardStatsRepository dashboardStatsRepository;
 
   /** 데이터셋 가시성 조건(보안 등급) — 클래스 Javadoc 참고. */
   private final DatasetAccessGuard datasetAccessGuard;
@@ -82,55 +81,6 @@ public class DashboardService {
    */
   @Qualifier(TransactionTemplateConfig.READ_ONLY)
   private final TransactionTemplate readOnlyTx;
-
-  // Table constants
-  private static final Table<?> DATASET = table(name("dataset"));
-  private static final Field<Long> D_ID = field(name("dataset", "id"), Long.class);
-  private static final Field<String> D_NAME = field(name("dataset", "name"), String.class);
-  private static final Field<String> D_TABLE_NAME =
-      field(name("dataset", "table_name"), String.class);
-  // 저장 방식(TABLE/DOCUMENT)과 출처(SOURCE/DERIVED/TEMP)를 분리한 두 컬럼
-  // 기존 dataset_type='SOURCE' ≡ storage_type='TABLE' AND origin_type='SOURCE' (문서 유입 방지)
-  private static final Field<String> D_STORAGE_TYPE =
-      field(name("dataset", "storage_type"), String.class);
-  private static final Field<String> D_ORIGIN_TYPE =
-      field(name("dataset", "origin_type"), String.class);
-  private static final Field<LocalDateTime> D_CREATED_AT =
-      field(name("dataset", "created_at"), LocalDateTime.class);
-
-  private static final Table<?> PIPELINE = table(name("pipeline"));
-  private static final Field<Long> P_ID = field(name("pipeline", "id"), Long.class);
-  private static final Field<String> P_NAME = field(name("pipeline", "name"), String.class);
-  private static final Field<Boolean> P_IS_ACTIVE =
-      field(name("pipeline", "is_active"), Boolean.class);
-
-  // audit_log constants
-  private static final Table<?> AUDIT_LOG = table(name("audit_log"));
-  private static final Field<Long> AL_ID = field(name("audit_log", "id"), Long.class);
-  private static final Field<String> AL_ACTION_TYPE =
-      field(name("audit_log", "action_type"), String.class);
-  private static final Field<String> AL_RESOURCE =
-      field(name("audit_log", "resource"), String.class);
-  private static final Field<String> AL_RESOURCE_ID =
-      field(name("audit_log", "resource_id"), String.class);
-  private static final Field<String> AL_RESULT = field(name("audit_log", "result"), String.class);
-  private static final Field<LocalDateTime> AL_ACTION_TIME =
-      field(name("audit_log", "action_time"), LocalDateTime.class);
-  private static final Field<String> AL_DESCRIPTION =
-      field(name("audit_log", "description"), String.class);
-
-  private static final Table<?> PIPELINE_EXECUTION = table(name("pipeline_execution"));
-  private static final Field<Long> PE_ID = field(name("pipeline_execution", "id"), Long.class);
-  private static final Field<Long> PE_PIPELINE_ID =
-      field(name("pipeline_execution", "pipeline_id"), Long.class);
-  private static final Field<String> PE_STATUS =
-      field(name("pipeline_execution", "status"), String.class);
-  private static final Field<LocalDateTime> PE_CREATED_AT =
-      field(name("pipeline_execution", "created_at"), LocalDateTime.class);
-  private static final Field<LocalDateTime> PE_STARTED_AT =
-      field(name("pipeline_execution", "started_at"), LocalDateTime.class);
-  private static final Field<LocalDateTime> PE_COMPLETED_AT =
-      field(name("pipeline_execution", "completed_at"), LocalDateTime.class);
 
   /** 홈에서 파이프라인 이름·실행 이력·개수를 볼 수 있는 권한(WD-272) — 파이프라인 목록·실행 이력 API 와 같은 코드다. */
   private static final String PIPELINE_READ = "pipeline:read";
@@ -193,77 +143,35 @@ public class DashboardService {
     // 조회자가 볼 수 있는 데이터셋만 센다·싣는다(보안 등급) — 숨김 데이터셋 개수·이름이 홈에서 새지 않게.
     Condition visible = datasetAccessGuard.visibleCondition(viewer);
 
-    // Count total datasets
-    long totalDatasets = dsl.selectCount().from(DATASET).where(visible).fetchOne(0, Long.class);
-
-    // Count source datasets
-    long sourceDatasets =
-        dsl.selectCount()
-            .from(DATASET)
-            .where(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("SOURCE")))
-            .and(visible)
-            .fetchOne(0, Long.class);
-
-    // Count derived datasets
-    long derivedDatasets =
-        dsl.selectCount()
-            .from(DATASET)
-            .where(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("DERIVED")))
-            .and(visible)
-            .fetchOne(0, Long.class);
+    long totalDatasets = dashboardStatsRepository.countDatasets(visible);
+    long sourceDatasets = dashboardStatsRepository.countSourceDatasets(visible);
+    long derivedDatasets = dashboardStatsRepository.countDerivedDatasets(visible);
 
     // 파이프라인 개수 — 조회 권한이 없으면 세지 않는다(WD-272)
-    long totalPipelines =
-        includePipelines ? dsl.selectCount().from(PIPELINE).fetchOne(0, Long.class) : 0L;
+    long totalPipelines = includePipelines ? dashboardStatsRepository.countPipelines() : 0L;
 
-    long activePipelines =
-        includePipelines
-            ? dsl.selectCount().from(PIPELINE).where(P_IS_ACTIVE.eq(true)).fetchOne(0, Long.class)
-            : 0L;
+    long activePipelines = includePipelines ? dashboardStatsRepository.countActivePipelines() : 0L;
 
-    // Get recent imports from audit_log (top 5)
-    Field<String> metadataFileName = field("audit_log.metadata->>'fileName'", String.class);
-
+    // 최근 임포트(상위 5개) — 감사 결과값을 화면 상태값으로 바꾼다.
     List<RecentImportResponse> recentImports =
-        dsl.select(AL_ID, D_NAME, metadataFileName, AL_RESULT, AL_ACTION_TIME)
-            .from(AUDIT_LOG)
-            .join(DATASET)
-            .on(AL_RESOURCE_ID_AS_LONG.eq(D_ID))
-            .where(AL_ACTION_TYPE.eq("IMPORT").and(AL_RESOURCE.eq("dataset")))
-            // LIMIT 전에 SQL 에서 거른다 — 자바 후처리면 숨김 행이 상위 5개를 차지해 볼 수 있는 임포트가 밀려난다.
-            .and(visible)
-            .orderBy(AL_ACTION_TIME.desc())
-            .limit(5)
-            .fetch(
+        dashboardStatsRepository.findRecentImports(visible).stream()
+            .map(
                 r -> {
                   String status =
-                      switch (r.get(AL_RESULT)) {
+                      switch (r.result()) {
                         case "SUCCESS" -> "COMPLETED";
                         case "FAILURE" -> "FAILED";
-                        default -> r.get(AL_RESULT);
+                        default -> r.result();
                       };
                   return new RecentImportResponse(
-                      r.get(AL_ID),
-                      r.get(D_NAME),
-                      r.get(metadataFileName),
-                      status,
-                      r.get(AL_ACTION_TIME));
-                });
+                      r.id(), r.datasetName(), r.fileName(), status, r.actionTime());
+                })
+            .collect(Collectors.toList());
 
     // 최근 실행(상위 5개) — 파이프라인 이름이 실리므로 조회 권한이 없으면 비운다(WD-272)
     List<RecentExecutionResponse> recentExecutions = List.of();
     if (includePipelines) {
-      recentExecutions =
-          dsl.select(PE_ID, P_NAME, PE_STATUS, PE_CREATED_AT)
-              .from(PIPELINE_EXECUTION)
-              .join(PIPELINE)
-              .on(PE_PIPELINE_ID.eq(P_ID))
-              .orderBy(PE_CREATED_AT.desc())
-              .limit(5)
-              .fetch(
-                  r ->
-                      new RecentExecutionResponse(
-                          r.get(PE_ID), r.get(P_NAME), r.get(PE_STATUS), r.get(PE_CREATED_AT)));
+      recentExecutions = dashboardStatsRepository.findRecentExecutions();
     }
 
     return new DashboardStatsResponse(
@@ -353,39 +261,11 @@ public class DashboardService {
 
   /** 파이프라인 건강도(개수·최근 실행 상태·7일 추이)를 읽는다. readOnly 트랜잭션 안에서 불러야 한다. */
   private PipelineHealth readPipelineHealth() {
-    // Count all pipelines
-    int totalPipelines = dsl.selectCount().from(PIPELINE).fetchOne(0, int.class);
+    int totalPipelines = Math.toIntExact(dashboardStatsRepository.countPipelines());
+    int disabledPipelines = dashboardStatsRepository.countDisabledPipelines();
 
-    // Count disabled pipelines (is_active = false)
-    int disabledPipelines =
-        dsl.selectCount().from(PIPELINE).where(P_IS_ACTIVE.eq(false)).fetchOne(0, int.class);
-
-    // Get the most recent execution status per pipeline (only active pipelines)
-    // Use a lateral/subquery approach: for each active pipeline, get its latest execution status
-    // We query pipeline_execution grouped by pipeline_id, taking MAX(id) as the latest
-    // Build subquery: latest execution per pipeline
-    var latestExecSubquery =
-        dsl.select(
-                PE_PIPELINE_ID.as("pipeline_id"),
-                max(PE_ID).as("latest_id"),
-                field(
-                        "( SELECT pe2.status FROM pipeline_execution pe2"
-                            + " WHERE pe2.pipeline_id = pipeline_execution.pipeline_id"
-                            + " ORDER BY pe2.id DESC LIMIT 1 )",
-                        String.class)
-                    .as("latest_status"))
-            .from(PIPELINE_EXECUTION)
-            .groupBy(PE_PIPELINE_ID)
-            .asTable("latest_exec");
-
-    // Join active pipelines with their latest execution status
-    List<String> latestStatuses =
-        dsl.select(field("latest_exec.latest_status", String.class))
-            .from(latestExecSubquery)
-            .join(PIPELINE)
-            .on(field("latest_exec.pipeline_id", Long.class).eq(P_ID))
-            .where(P_IS_ACTIVE.eq(true))
-            .fetch(r -> r.get(0, String.class));
+    // 활성 파이프라인별 마지막 실행 상태
+    List<String> latestStatuses = dashboardStatsRepository.findLatestStatusesOfActivePipelines();
 
     int activePipelinesTotal = totalPipelines - disabledPipelines;
 
@@ -397,13 +277,8 @@ public class DashboardService {
 
     // ---- Pipeline trend (최근 7일 일자별 실행 건수, #669) ----
     LocalDateTime trendFrom = trendStart();
-    Field<LocalDate> execDay = field("CAST({0} AS date)", LocalDate.class, PE_CREATED_AT);
     Map<LocalDate, Integer> pipelineCountsByDay =
-        dsl.select(execDay, count())
-            .from(PIPELINE_EXECUTION)
-            .where(PE_CREATED_AT.greaterOrEqual(trendFrom))
-            .groupBy(execDay)
-            .fetchMap(r -> r.get(execDay), r -> r.get(1, Integer.class));
+        dashboardStatsRepository.countExecutionsByDay(trendFrom);
     List<Integer> pipelineTrend = fillTrendDays(pipelineCountsByDay);
 
     return new PipelineHealth(
@@ -420,47 +295,18 @@ public class DashboardService {
     // ---- Dataset health ----
     // 데이터셋 건강도 개수는 조회자가 볼 수 있는 데이터셋만 집계한다(보안 등급 — 숨김 데이터셋 존재가 개수로 드러나지 않게).
     Condition visible = datasetAccessGuard.visibleCondition(viewer);
-    int totalDatasets = dsl.selectCount().from(DATASET).where(visible).fetchOne(0, int.class);
+    int totalDatasets = Math.toIntExact(dashboardStatsRepository.countDatasets(visible));
 
     LocalDateTime now = LocalDateTime.now();
     LocalDateTime freshThreshold = now.minusHours(24);
 
     // fresh: SOURCE datasets with a SUCCESS import within 24h
     int freshDatasets =
-        dsl.fetchCount(
-            dsl.selectDistinct(AL_RESOURCE_ID)
-                .from(AUDIT_LOG)
-                .join(DATASET)
-                .on(AL_RESOURCE_ID.eq(D_ID.cast(String.class)))
-                .where(
-                    AL_ACTION_TYPE
-                        .eq("IMPORT")
-                        .and(AL_RESOURCE.eq("dataset"))
-                        .and(AL_RESULT.eq("SUCCESS"))
-                        .and(AL_ACTION_TIME.greaterThan(freshThreshold))
-                        .and(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("SOURCE")))
-                        .and(visible)));
+        dashboardStatsRepository.countFreshImportedDatasets(visible, freshThreshold);
 
     // Also count source datasets created within 24h with no imports (brand new = fresh)
     int newSourceNoImport =
-        dsl.fetchCount(
-            dsl.selectDistinct(D_ID)
-                .from(DATASET)
-                .where(
-                    D_STORAGE_TYPE
-                        .eq("TABLE")
-                        .and(D_ORIGIN_TYPE.eq("SOURCE"))
-                        .and(D_CREATED_AT.greaterThan(freshThreshold))
-                        .and(visible)
-                        .and(
-                            notExists(
-                                dsl.selectOne()
-                                    .from(AUDIT_LOG)
-                                    .where(
-                                        AL_ACTION_TYPE
-                                            .eq("IMPORT")
-                                            .and(AL_RESOURCE.eq("dataset"))
-                                            .and(AL_RESOURCE_ID.eq(D_ID.cast(String.class))))))));
+        dashboardStatsRepository.countNewSourceDatasetsWithoutImport(visible, freshThreshold);
     freshDatasets += newSourceNoImport;
 
     // stale: source datasets whose last import was >24h ago (or has never been imported and >24h
@@ -469,83 +315,21 @@ public class DashboardService {
 
     // Find SOURCE datasets with last import older than 24h
     int staleWithOldImport =
-        dsl.fetchCount(
-            dsl.selectDistinct(AL_RESOURCE_ID)
-                .from(AUDIT_LOG)
-                .join(DATASET)
-                .on(AL_RESOURCE_ID.eq(D_ID.cast(String.class)))
-                .where(
-                    AL_ACTION_TYPE
-                        .eq("IMPORT")
-                        .and(AL_RESOURCE.eq("dataset"))
-                        .and(AL_RESULT.eq("SUCCESS"))
-                        .and(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("SOURCE")))
-                        .and(visible))
-                .andNot(
-                    exists(
-                        dsl.selectOne()
-                            .from(AUDIT_LOG.as("al2"))
-                            .where(
-                                field("al2.action_type", String.class)
-                                    .eq("IMPORT")
-                                    .and(field("al2.resource", String.class).eq("dataset"))
-                                    .and(field("al2.result", String.class).eq("SUCCESS"))
-                                    .and(field("al2.resource_id", String.class).eq(AL_RESOURCE_ID))
-                                    .and(
-                                        field("al2.action_time", LocalDateTime.class)
-                                            .greaterThan(staleThreshold))))));
+        dashboardStatsRepository.countStaleImportedDatasets(visible, staleThreshold);
 
     // Source datasets created >24h ago with no import at all
     int staleNoImport =
-        dsl.fetchCount(
-            dsl.selectDistinct(D_ID)
-                .from(DATASET)
-                .where(
-                    D_STORAGE_TYPE
-                        .eq("TABLE")
-                        .and(D_ORIGIN_TYPE.eq("SOURCE"))
-                        .and(D_CREATED_AT.lessOrEqual(staleThreshold))
-                        .and(visible)
-                        .and(
-                            notExists(
-                                dsl.selectOne()
-                                    .from(AUDIT_LOG)
-                                    .where(
-                                        AL_ACTION_TYPE
-                                            .eq("IMPORT")
-                                            .and(AL_RESOURCE.eq("dataset"))
-                                            .and(AL_RESOURCE_ID.eq(D_ID.cast(String.class))))))));
+        dashboardStatsRepository.countStaleSourceDatasetsWithoutImport(visible, staleThreshold);
     int staleDatasets = staleWithOldImport + staleNoImport;
 
     // empty: 조회자가 볼 수 있는 표(TABLE) 데이터셋의 테이블 이름만 읽는다. 비어 있는지는 호출자가 테넌트 저장소로 판정한다(WD-80).
-    // DOCUMENT/FILE 은 물리 테이블이 없어 판정 대상이 아니다 — 예전 pg_stat_user_tables 조인도 이들을 (테이블이 없어) 뺐으므로
-    // PG 결과는 같고, Tibero 는 없는 테이블에 대한 원격 질의를 하지 않는다.
-    List<String> tableNames =
-        dsl.select(D_TABLE_NAME)
-            .from(DATASET)
-            .where(D_STORAGE_TYPE.eq("TABLE").and(visible))
-            .fetch(D_TABLE_NAME);
+    List<String> tableNames = dashboardStatsRepository.findTableDatasetNames(visible);
 
     // ---- Dataset trend (최근 7일 일자별 임포트 이력 건수, #669) ----
     LocalDateTime trendFrom = trendStart();
-    Field<LocalDate> auditDay = field("CAST({0} AS date)", LocalDate.class, AL_ACTION_TIME);
-    // 숨김 데이터셋의 이력은 추이에서 뺀다(볼 수 있는 것만 집계). 데이터셋 행이 없는 이력(삭제된 데이터셋)은 기존처럼 센다 —
-    // 삭제된 데이터셋은 이름·존재를 드러낼 대상이 없다.
-    // 임포트(IMPORT)만 센다 — 데이터셋 정보·필드·행 편집도 resource=dataset 으로 감사에 남으므로(WD-463) 모두 세면 행 편집
-    // 한 번마다 추이가 올라간다.
+    // 숨김 데이터셋 이력 제외·삭제된 데이터셋 이력 포함·IMPORT 만 집계 — 리포지토리 메서드 주석 참고.
     Map<LocalDate, Integer> datasetCountsByDay =
-        dsl.select(auditDay, count())
-            .from(AUDIT_LOG)
-            .leftJoin(DATASET)
-            .on(AL_RESOURCE_ID_AS_LONG.eq(D_ID))
-            .where(
-                AL_RESOURCE
-                    .eq("dataset")
-                    .and(AL_ACTION_TYPE.eq("IMPORT"))
-                    .and(AL_ACTION_TIME.greaterOrEqual(trendFrom)))
-            .and(D_ID.isNull().or(visible))
-            .groupBy(auditDay)
-            .fetchMap(r -> r.get(auditDay), r -> r.get(1, Integer.class));
+        dashboardStatsRepository.countImportsByDay(visible, trendFrom);
     List<Integer> datasetTrend = fillTrendDays(datasetCountsByDay);
 
     return new HealthRead(
@@ -577,51 +361,16 @@ public class DashboardService {
     // 1. Failed pipelines: active pipelines whose latest execution is FAILED
     // Get latest execution per pipeline
     // 조회 권한이 없으면 파이프라인 이름이 실린 항목을 싣지 않는다 — 질의도 하지 않는다(WD-272)
-    List<? extends Record> failedPipelines = List.of();
+    List<FailedPipelineRow> failedPipelines = List.of();
     if (includePipelines) {
-      failedPipelines =
-          dsl.select(
-                  P_ID,
-                  P_NAME,
-                  field("last_exec.last_status", String.class),
-                  field("last_exec.last_failed_at", LocalDateTime.class),
-                  field("last_exec.last_success_at", LocalDateTime.class))
-              .from(PIPELINE)
-              .join(
-                  dsl.select(
-                          PE_PIPELINE_ID.as("pid"),
-                          field(
-                                  "MAX(CASE WHEN pipeline_execution.status = 'FAILED'"
-                                      + " THEN pipeline_execution.created_at END)",
-                                  LocalDateTime.class)
-                              .as("last_failed_at"),
-                          field(
-                                  "MAX(CASE WHEN pipeline_execution.status = 'COMPLETED'"
-                                      + " THEN pipeline_execution.created_at END)",
-                                  LocalDateTime.class)
-                              .as("last_success_at"),
-                          field(
-                                  "( SELECT pe3.status FROM pipeline_execution pe3"
-                                      + " WHERE pe3.pipeline_id = pipeline_execution.pipeline_id"
-                                      + " ORDER BY pe3.id DESC LIMIT 1 )",
-                                  String.class)
-                              .as("last_status"))
-                      .from(PIPELINE_EXECUTION)
-                      .groupBy(PE_PIPELINE_ID)
-                      .asTable("last_exec"))
-              .on(P_ID.eq(field("last_exec.pid", Long.class)))
-              .where(
-                  P_IS_ACTIVE
-                      .eq(true)
-                      .and(field("last_exec.last_status", String.class).eq("FAILED")))
-              .fetch();
+      failedPipelines = dashboardStatsRepository.findFailedActivePipelines();
     }
 
-    for (Record r : failedPipelines) {
-      Long pipelineId = r.get(P_ID);
-      String pipelineName = r.get(P_NAME);
-      LocalDateTime lastFailedAt = r.get(field("last_exec.last_failed_at", LocalDateTime.class));
-      LocalDateTime lastSuccessAt = r.get(field("last_exec.last_success_at", LocalDateTime.class));
+    for (FailedPipelineRow r : failedPipelines) {
+      Long pipelineId = r.pipelineId();
+      String pipelineName = r.pipelineName();
+      LocalDateTime lastFailedAt = r.lastFailedAt();
+      LocalDateTime lastSuccessAt = r.lastSuccessAt();
 
       // CRITICAL: failing for 2h+ (last success was >2h ago or never)
       boolean isCritical = lastSuccessAt == null || lastSuccessAt.isBefore(twoHoursAgo);
@@ -646,25 +395,13 @@ public class DashboardService {
     }
 
     // 3. Failed imports within last 24h: WARNING
-    var failedImports =
-        dsl.select(AL_ID, D_ID, D_NAME, AL_ACTION_TIME)
-            .from(AUDIT_LOG)
-            .join(DATASET)
-            .on(AL_RESOURCE_ID_AS_LONG.eq(D_ID))
-            .where(
-                AL_ACTION_TYPE
-                    .eq("IMPORT")
-                    .and(AL_RESOURCE.eq("dataset"))
-                    .and(AL_RESULT.eq("FAILURE"))
-                    .and(AL_ACTION_TIME.greaterThan(twentyFourHoursAgo))
-                    .and(visible))
-            .orderBy(AL_ACTION_TIME.desc())
-            .fetch();
+    List<FailedImportRow> failedImports =
+        dashboardStatsRepository.findFailedImportsSince(visible, twentyFourHoursAgo);
 
-    for (Record r : failedImports) {
-      Long datasetId = r.get(D_ID);
-      String datasetName = r.get(D_NAME);
-      LocalDateTime occurredAt = r.get(AL_ACTION_TIME);
+    for (FailedImportRow r : failedImports) {
+      Long datasetId = r.datasetId();
+      String datasetName = r.datasetName();
+      LocalDateTime occurredAt = r.occurredAt();
 
       items.add(
           new AttentionItemResponse(
@@ -724,23 +461,9 @@ public class DashboardService {
 
     // ---- Pipeline executions ----
     // 조회 권한이 없으면 파이프라인 이름·실행 결과가 실린 이벤트를 싣지 않는다 — 질의도 하지 않는다(WD-272)
-    List<? extends Record> executions = List.of();
+    List<ExecutionRow> executions = List.of();
     if (includePipelines) {
-      executions =
-          dsl.select(
-                  PE_ID,
-                  PE_PIPELINE_ID,
-                  P_NAME,
-                  PE_STATUS,
-                  PE_CREATED_AT,
-                  PE_COMPLETED_AT,
-                  PE_STARTED_AT)
-              .from(PIPELINE_EXECUTION)
-              .join(PIPELINE)
-              .on(PE_PIPELINE_ID.eq(P_ID))
-              .orderBy(PE_CREATED_AT.desc())
-              .limit(500) // reasonable cap for feed building
-              .fetch();
+      executions = dashboardStatsRepository.findRecentExecutionsForFeed();
     }
 
     // To determine if a FAILED pipeline has since been resolved (later COMPLETED execution exists)
@@ -749,13 +472,13 @@ public class DashboardService {
         executions.stream()
             .collect(
                 Collectors.toMap(
-                    r -> r.get(PE_PIPELINE_ID),
-                    r -> r.get(PE_STATUS),
+                    ExecutionRow::pipelineId,
+                    ExecutionRow::status,
                     (existing, replacement) -> existing // keep first (most recent)
                     ));
 
-    for (Record r : executions) {
-      String status = r.get(PE_STATUS);
+    for (ExecutionRow r : executions) {
+      String status = r.status();
       String eventType =
           switch (status) {
             case "COMPLETED" -> "PIPELINE_COMPLETED";
@@ -771,21 +494,20 @@ public class DashboardService {
             default -> "INFO";
           };
 
-      Long pipelineId = r.get(PE_PIPELINE_ID);
-      String pipelineName = r.get(P_NAME);
-      LocalDateTime occurredAt = r.get(PE_CREATED_AT);
+      Long pipelineId = r.pipelineId();
+      String pipelineName = r.pipelineName();
+      LocalDateTime occurredAt = r.createdAt();
 
       // isResolved: non-FAILED executions are always resolved;
       // FAILED is resolved only if the latest execution for that pipeline is COMPLETED
       boolean isResolved =
           !"FAILED".equals(status) || "COMPLETED".equals(latestStatusByPipeline.get(pipelineId));
 
-      String description =
-          buildPipelineDescription(status, r.get(PE_STARTED_AT), r.get(PE_COMPLETED_AT));
+      String description = buildPipelineDescription(status, r.startedAt(), r.completedAt());
 
       allItems.add(
           new ActivityItem(
-              r.get(PE_ID),
+              r.id(),
               eventType,
               "파이프라인 '" + pipelineName + "' " + statusLabel(status),
               description,
@@ -800,36 +522,18 @@ public class DashboardService {
     // 분석 대시보드 생성(CREATE·dashboard) 행은 싣지 않는다(WD-464). 그 행은 작성자 본인 변경 감사로 남기 시작했는데,
     // 피드는 조회자 가시성을 보지 않아 비공개 대시보드를 만든 사실이 모든 사람 피드에 「대시보드 생성됨」으로 보이고
     // 이동할 화면도 없다. 예전 dashboard 분기는 그 행을 쓰는 곳이 없던 죽은 경로였다.
-    var auditItems =
-        dsl.select(
-                AL_ID,
-                AL_ACTION_TYPE,
-                AL_RESOURCE,
-                AL_RESOURCE_ID,
-                AL_RESULT,
-                AL_ACTION_TIME,
-                AL_DESCRIPTION,
-                D_NAME,
-                D_ID)
-            .from(AUDIT_LOG)
-            .leftJoin(DATASET)
-            .on(AL_RESOURCE.eq("dataset").and(AL_RESOURCE_ID_AS_LONG.eq(D_ID)))
-            .where(AL_ACTION_TYPE.in("IMPORT", "CREATE").and(AL_RESOURCE.eq("dataset")))
-            // 보안 등급: 조회자가 볼 수 없는 데이터셋 유래 활동은 뺀다. ON 이 아니라 WHERE 에 둔다 — ON 에 두면 숨김 행이
-            // "dataset #id" 로 남아 id 가 새고, 자바 후처리면 LIMIT 500 이 볼 수 있는 행을 먼저 잘라 낸다. 데이터셋 행이
-            // 없는 이력(삭제된 데이터셋)은 D_ID 가 null 이라 기존처럼 남는다.
-            .and(D_ID.isNull().or(datasetAccessGuard.visibleCondition(viewer)))
-            .orderBy(AL_ACTION_TIME.desc())
-            .limit(500)
-            .fetch();
+    // 보안 등급: 조회자가 볼 수 없는 데이터셋 유래 활동은 뺀다(조건 위치는 리포지토리 주석 참고).
+    List<AuditActivityRow> auditItems =
+        dashboardStatsRepository.findDatasetAuditActivities(
+            datasetAccessGuard.visibleCondition(viewer));
 
-    for (Record r : auditItems) {
-      String actionType = r.get(AL_ACTION_TYPE);
-      String resource = r.get(AL_RESOURCE);
-      String result = r.get(AL_RESULT);
-      LocalDateTime occurredAt = r.get(AL_ACTION_TIME);
-      Long resourceId = r.get(AL_RESOURCE_ID) != null ? parseLongSafe(r.get(AL_RESOURCE_ID)) : null;
-      String entityName = r.get(D_NAME) != null ? r.get(D_NAME) : resource + " #" + resourceId;
+    for (AuditActivityRow r : auditItems) {
+      String actionType = r.actionType();
+      String resource = r.resource();
+      String result = r.result();
+      LocalDateTime occurredAt = r.actionTime();
+      Long resourceId = r.resourceId() != null ? parseLongSafe(r.resourceId()) : null;
+      String entityName = r.datasetName() != null ? r.datasetName() : resource + " #" + resourceId;
 
       String eventType;
       String severity;
@@ -842,7 +546,7 @@ public class DashboardService {
         eventType = success ? "IMPORT_COMPLETED" : "IMPORT_FAILED";
         severity = success ? "INFO" : "WARNING";
         title = "데이터셋 '" + entityName + "' 임포트 " + (success ? "완료" : "실패");
-        description = r.get(AL_DESCRIPTION) != null ? r.get(AL_DESCRIPTION) : "";
+        description = r.description() != null ? r.description() : "";
         entityType = "DATASET";
       } else if ("CREATE".equals(actionType) && "dataset".equals(resource)) {
         eventType = "DATASET_CREATED";
@@ -856,7 +560,7 @@ public class DashboardService {
 
       allItems.add(
           new ActivityItem(
-              r.get(AL_ID),
+              r.id(),
               eventType,
               title,
               description,

@@ -2,10 +2,10 @@ package com.smartfirehub.pipeline.repository;
 
 import static org.jooq.impl.DSL.*;
 
+import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.pipeline.dto.ExecutionDetailResponse;
 import com.smartfirehub.pipeline.dto.PipelineExecutionResponse;
 import com.smartfirehub.pipeline.dto.StepExecutionResponse;
-import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import java.time.LocalDateTime;
@@ -313,8 +313,8 @@ public class PipelineExecutionRepository {
    * 러너가 멈춰야 하는가(WD-230) — 취소 요청이 있거나, 실행이 더는 PENDING/RUNNING 이 아니면(중단 정리로 FAILED 등) true.
    *
    * <p>행이 없어도 true 다(WD-437 — fail-closed): 실행 행이 사라진 러너(파이프라인 삭제 CASCADE 등)가 기록 없이 출력 데이터셋을 바꾸지 않게
-   * 멈춘다. 러너는 실행 행 커밋 뒤에만 시작하고(afterCommit) 같은 테넌트 컨텍스트로 돌므로 정상 실행에서는 늘 행이 보인다. 사용자 취소와 구분되도록
-   * 경고 로그를 남긴다(러너는 첫 true 에서 멈추므로 실행당 한 번). 행이 사라진 실행의 마감 쓰기는 모두 조건부 UPDATE 라 무동작으로 끝난다.
+   * 멈춘다. 러너는 실행 행 커밋 뒤에만 시작하고(afterCommit) 같은 테넌트 컨텍스트로 돌므로 정상 실행에서는 늘 행이 보인다. 사용자 취소와 구분되도록 경고 로그를
+   * 남긴다(러너는 첫 true 에서 멈추므로 실행당 한 번). 행이 사라진 실행의 마감 쓰기는 모두 조건부 UPDATE 라 무동작으로 끝난다.
    */
   public boolean isStopRequested(long executionId) {
     var row =
@@ -346,9 +346,7 @@ public class PipelineExecutionRepository {
    */
   public ActiveExecutionState findActiveExecutionState(long pipelineId) {
     var counts =
-        dsl.select(
-                count(),
-                count().filterWhere(PE_CANCEL_REQUESTED_AT.isNull()))
+        dsl.select(count(), count().filterWhere(PE_CANCEL_REQUESTED_AT.isNull()))
             .from(PIPELINE_EXECUTION)
             .where(PE_PIPELINE_ID.eq(pipelineId))
             .and(PE_STATUS.in(ACTIVE_STATUSES))
@@ -719,5 +717,22 @@ public class PipelineExecutionRepository {
                     r.get(PSE_STARTED_AT),
                     r.get(PSE_COMPLETED_AT),
                     false));
+  }
+
+  /**
+   * 보존 기간이 지난 COMPLETED 실행 행을 지운다(TTL 정리 잡용).
+   *
+   * <p>정책: created_at &lt; cutoff AND status = 'COMPLETED'. FAILED 는 디버깅·재시도 단서라 남긴다. 자식
+   * trigger_event 는 FK ON DELETE CASCADE 로 함께 정리된다. 호출자(PipelineExecutionTtlJob)가
+   * TransactionTemplate 으로 연 트랜잭션에 합류한다.
+   *
+   * @param cutoff 이 시각보다 먼저 만들어진 행이 대상
+   * @return 삭제한 행 수
+   */
+  public int deleteCompletedCreatedBefore(LocalDateTime cutoff) {
+    return dsl.deleteFrom(PIPELINE_EXECUTION)
+        .where(PE_CREATED_AT.lt(cutoff))
+        .and(PE_STATUS.eq("COMPLETED"))
+        .execute();
   }
 }

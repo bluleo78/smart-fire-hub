@@ -1,8 +1,5 @@
 package com.smartfirehub.dataset.service;
 
-import static org.jooq.impl.DSL.*;
-
-import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.dataset.dto.AddColumnRequest;
 import com.smartfirehub.dataset.dto.CloneDatasetRequest;
@@ -23,6 +20,8 @@ import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.dataset.repository.DatasetCategoryRepository;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
+import com.smartfirehub.dataset.repository.DatasetReferenceRepository;
+import com.smartfirehub.dataset.repository.DatasetReferenceRepository.DashboardHit;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
@@ -56,8 +55,6 @@ import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jooq.Condition;
-import org.jooq.DSLContext;
-import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.postgresql.util.ServerErrorMessage;
@@ -174,7 +171,7 @@ public class DatasetService {
   private final DataTableRowService dataTableRowService;
   private final UserRepository userRepository;
   private final DatasetTagRepository tagRepository;
-  private final DSLContext dsl;
+  private final DatasetReferenceRepository datasetReferenceRepository;
   private final AuditLogService auditLogService;
   private final DatasetAccessGuard datasetAccessGuard;
   private final DatasetSecurityService datasetSecurityService;
@@ -631,23 +628,7 @@ public class DatasetService {
             .orElse(null);
 
     List<DatasetDetailResponse.LinkedPipelineInfo> linkedPipelines =
-        dsl.selectDistinct(
-                field(name("pipeline", "id"), Long.class),
-                field(name("pipeline", "name"), String.class),
-                field(name("pipeline", "is_active"), Boolean.class))
-            .from(table(name("pipeline_step")))
-            .join(table(name("pipeline")))
-            .on(
-                field(name("pipeline_step", "pipeline_id"), Long.class)
-                    .eq(field(name("pipeline", "id"), Long.class)))
-            .where(field(name("pipeline_step", "output_dataset_id"), Long.class).eq(id))
-            .fetch(
-                r ->
-                    new DatasetDetailResponse.LinkedPipelineInfo(
-                        r.get(field(name("pipeline", "id"), Long.class)),
-                        r.get(field(name("pipeline", "name"), String.class)),
-                        Boolean.TRUE.equals(
-                            r.get(field(name("pipeline", "is_active"), Boolean.class)))));
+        datasetReferenceRepository.findLinkedPipelines(id);
 
     return new DatasetDetailResponse(
         dataset.id(),
@@ -778,9 +759,7 @@ public class DatasetService {
 
     // 파이프라인 스텝 출력 데이터셋으로 참조 중인 경우 삭제 불가 (#126)
     // FK 위반 500 오류를 방지하기 위해 삭제 전 참조 건수를 확인한다.
-    int referencingStepCount =
-        dsl.fetchCount(
-            table(name("pipeline_step")), field(name("output_dataset_id"), Long.class).eq(id));
+    int referencingStepCount = datasetReferenceRepository.countStepsByOutputDataset(id);
     if (referencingStepCount > 0) {
       throw new DatasetInUseException(
           referencingStepCount + "개 파이프라인 스텝이 이 데이터셋을 출력으로 참조하고 있어 삭제할 수 없습니다.");
@@ -1428,10 +1407,8 @@ public class DatasetService {
     // 1. 데이터셋 존재 검증: 참조 집계 쿼리를 실행하기 전에 404 조기 반환. 행 전체 대신 SQL 본문 참조 판정(WD-143)에 필요한
     //    물리 테이블 이름만 읽는다.
     String tableName =
-        dsl.select(field(name("dataset", "table_name"), String.class))
-            .from(table(name("dataset")))
-            .where(field(name("dataset", "id"), Long.class).eq(datasetId))
-            .fetchOptional(field(name("dataset", "table_name"), String.class))
+        datasetRepository
+            .findTableNameById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException());
     // WD-206: SQL 본문 대조는 테넌트 방언 기준 범위로 — 한 번 만들어 파이프라인·대시보드 양쪽에 쓴다.
     DatasetSqlReferenceMatcher.Scope sqlScope =
@@ -1439,56 +1416,12 @@ public class DatasetService {
 
     // 2. Pipelines: output_dataset_id 또는 pipeline_step_input.dataset_id 기준으로 조회. DISTINCT 로 중복 제거.
     List<DatasetReferencesResponse.ReferenceItem> pipelinesByFk =
-        dsl.selectDistinct(
-                field(name("pipeline", "id"), Long.class),
-                field(name("pipeline", "name"), String.class))
-            .from(table(name("pipeline")))
-            .where(
-                field(name("pipeline", "id"), Long.class)
-                    .in(
-                        dsl.select(field(name("pipeline_step", "pipeline_id"), Long.class))
-                            .from(table(name("pipeline_step")))
-                            .where(
-                                field(name("pipeline_step", "output_dataset_id"), Long.class)
-                                    .eq(datasetId))))
-            .or(
-                field(name("pipeline", "id"), Long.class)
-                    .in(
-                        dsl.select(field(name("pipeline_step", "pipeline_id"), Long.class))
-                            .from(table(name("pipeline_step")))
-                            .join(table(name("pipeline_step_input")))
-                            .on(
-                                field(name("pipeline_step", "id"), Long.class)
-                                    .eq(field(name("pipeline_step_input", "step_id"), Long.class)))
-                            .where(
-                                field(name("pipeline_step_input", "dataset_id"), Long.class)
-                                    .eq(datasetId))))
-            .orderBy(field(name("pipeline", "id"), Long.class))
-            .fetch(
-                r ->
-                    new DatasetReferencesResponse.ReferenceItem(
-                        r.get(field(name("pipeline", "id"), Long.class)),
-                        r.get(field(name("pipeline", "name"), String.class))));
+        datasetReferenceRepository.findPipelinesByFk(datasetId);
 
     // 2-0. (WD-441) 이 데이터셋을 병합(MERGE) 적재 출력으로 쓰는 파이프라인 — 기본 키를 해제하면 매 실행 실패하는 대상이다.
     //      pipelines 의 부분집합이라 totalCount 에는 더하지 않는다.
     List<DatasetReferencesResponse.ReferenceItem> mergeOutputPipelines =
-        dsl.selectDistinct(
-                field(name("pipeline", "id"), Long.class),
-                field(name("pipeline", "name"), String.class))
-            .from(table(name("pipeline")))
-            .join(table(name("pipeline_step")))
-            .on(
-                field(name("pipeline_step", "pipeline_id"), Long.class)
-                    .eq(field(name("pipeline", "id"), Long.class)))
-            .where(field(name("pipeline_step", "output_dataset_id"), Long.class).eq(datasetId))
-            .and(field(name("pipeline_step", "load_strategy"), String.class).eq("MERGE"))
-            .orderBy(field(name("pipeline", "id"), Long.class))
-            .fetch(
-                r ->
-                    new DatasetReferencesResponse.ReferenceItem(
-                        r.get(field(name("pipeline", "id"), Long.class)),
-                        r.get(field(name("pipeline", "name"), String.class))));
+        datasetReferenceRepository.findMergeOutputPipelines(datasetId);
 
     // 2-1. (WD-143) 선언 입력 없이 SQL 스텝 본문으로만 이 테이블을 읽는 파이프라인 — FK 결과와 id 로 합친다.
     List<DatasetReferencesResponse.ReferenceItem> pipelines =
@@ -1497,38 +1430,14 @@ public class DatasetService {
     // 3. Dashboards: dashboard → dashboard_widget → chart → saved_query.dataset_id 경로로 조회. 조회자
     // 가시성(본인 소유 또는
     //    공유)을 함께 읽어, 볼 수 없는 대시보드는 이름 대신 개수만 싣는다(WD-143 — 삭제 확인 창에 남의 비공개 대시보드 이름이 보이지 않게).
-    Field<Boolean> dashboardVisible = field(AnalyticsDashboardRepository.visibleTo(userId));
     List<DashboardHit> dashboardsByFk =
-        dsl.selectDistinct(
-                field(name("dashboard", "id"), Long.class),
-                field(name("dashboard", "name"), String.class),
-                dashboardVisible)
-            .from(table(name("dashboard")))
-            .join(table(name("dashboard_widget")))
-            .on(
-                field(name("dashboard", "id"), Long.class)
-                    .eq(field(name("dashboard_widget", "dashboard_id"), Long.class)))
-            .join(table(name("chart")))
-            .on(
-                field(name("dashboard_widget", "chart_id"), Long.class)
-                    .eq(field(name("chart", "id"), Long.class)))
-            .join(table(name("saved_query")))
-            .on(
-                field(name("chart", "saved_query_id"), Long.class)
-                    .eq(field(name("saved_query", "id"), Long.class)))
-            .where(field(name("saved_query", "dataset_id"), Long.class).eq(datasetId))
-            .fetch(
-                r ->
-                    new DashboardHit(
-                        r.get(field(name("dashboard", "id"), Long.class)),
-                        r.get(field(name("dashboard", "name"), String.class)),
-                        Boolean.TRUE.equals(r.get(dashboardVisible))));
+        datasetReferenceRepository.findDashboardsByFk(datasetId, userId);
 
     // 3-1. (WD-143) 화면 쿼리 편집기로 저장한 쿼리는 dataset_id 가 비어 있다(편집기가 보내지 않는다) — 저장 쿼리 SQL 본문이 이 테이블을
     //      참조하는 위젯의 대시보드도 찾아 FK 결과와 id 로 합친다. 이게 없으면 "쿼리→차트→대시보드" 로 쓰는 데이터셋이 확인 창에 안 잡힌다.
     java.util.Map<Long, DashboardHit> dashboardHits = new java.util.TreeMap<>();
     dashboardsByFk.forEach(d -> dashboardHits.putIfAbsent(d.id(), d));
-    findDashboardsBySqlText(sqlScope, tableName, dashboardVisible)
+    findDashboardsBySqlText(sqlScope, tableName, userId)
         .forEach(d -> dashboardHits.putIfAbsent(d.id(), d));
     List<DatasetReferencesResponse.ReferenceItem> dashboards =
         dashboardHits.values().stream()
@@ -1544,30 +1453,7 @@ public class DatasetService {
     //    데이터셋을 감시한다. `config -> 'datasetIds' @> to_jsonb(datasetId)` 로 배열 포함 여부를
     //    검사한다 — 삭제 시 이 참조를 놓치면 트리거가 고아로 남아 존재하지 않는 데이터셋을 계속 폴링한다.
     List<DatasetReferencesResponse.TriggerReferenceItem> triggers =
-        dsl.selectDistinct(
-                field(name("pipeline_trigger", "id"), Long.class),
-                field(name("pipeline_trigger", "name"), String.class),
-                field(name("pipeline", "id"), Long.class),
-                field(name("pipeline", "name"), String.class))
-            .from(table(name("pipeline_trigger")))
-            .join(table(name("pipeline")))
-            .on(
-                field(name("pipeline_trigger", "pipeline_id"), Long.class)
-                    .eq(field(name("pipeline", "id"), Long.class)))
-            .where(
-                field(name("pipeline_trigger", "trigger_type"), String.class).eq("DATASET_CHANGE"))
-            .and(
-                condition(
-                    "(pipeline_trigger.config -> 'datasetIds') @> to_jsonb({0}::bigint)",
-                    datasetId))
-            .orderBy(field(name("pipeline_trigger", "id"), Long.class))
-            .fetch(
-                r ->
-                    new DatasetReferencesResponse.TriggerReferenceItem(
-                        r.get(field(name("pipeline_trigger", "id"), Long.class)),
-                        r.get(field(name("pipeline_trigger", "name"), String.class)),
-                        r.get(field(name("pipeline", "id"), Long.class)),
-                        r.get(field(name("pipeline", "name"), String.class))));
+        datasetReferenceRepository.findDatasetChangeTriggers(datasetId);
 
     int totalCount =
         pipelines.size()
@@ -1587,76 +1473,31 @@ public class DatasetService {
   }
 
   /**
-   * SQL 스텝 본문이 이 데이터셋 테이블을 참조하는 파이프라인(WD-143). 같은 테넌트(RLS) 안에서 {@code ILIKE '%테이블명%'} 으로 값싸게 1차로 거른
-   * 뒤, 관문과 같은 파서로 실제 테이블 참조인지 확정한다 — 1차 거르기만으로는 {@code sales_2024}·문자열 리터럴·주석 안의 이름까지 걸린다. 스텝 본문은
-   * 저장 검증과 같은 치환({{#N}}·{{last_run_at}})을 거쳐야 파싱된다.
+   * SQL 스텝 본문이 이 데이터셋 테이블을 참조하는 파이프라인(WD-143). 리포지토리가 {@code ILIKE '%테이블명%'} 으로 1차로 거른 후보를 관문과 같은
+   * 파서로 실제 테이블 참조인지 확정한다 — 1차 거르기만으로는 {@code sales_2024}·문자열 리터럴·주석 안의 이름까지 걸린다. 스텝 본문은 저장 검증과 같은
+   * 치환({{#N}}·{{last_run_at}})을 거쳐야 파싱된다.
    */
   private List<DatasetReferencesResponse.ReferenceItem> findPipelinesBySqlText(
       DatasetSqlReferenceMatcher.Scope scope, String tableName) {
-    Field<Long> pipelineId = field(name("pipeline", "id"), Long.class);
-    Field<String> pipelineName = field(name("pipeline", "name"), String.class);
-    Field<String> script = field(name("pipeline_step", "script_content"), String.class);
-    return dsl
-        .select(pipelineId, pipelineName, script)
-        .from(table(name("pipeline")))
-        .join(table(name("pipeline_step")))
-        .on(pipelineId.eq(field(name("pipeline_step", "pipeline_id"), Long.class)))
-        .where(field(name("pipeline_step", "script_type"), String.class).eq("SQL"))
-        .and(script.likeIgnoreCase(containsPattern(tableName), '\\'))
-        .fetch()
-        .stream()
+    return datasetReferenceRepository.findPipelineSqlCandidates(tableName).stream()
         .filter(
-            r ->
+            c ->
                 DatasetSqlReferenceMatcher.references(
-                    PipelineService.substituteStepReferencesForValidation(r.get(script)), scope))
-        .map(
-            r ->
-                new DatasetReferencesResponse.ReferenceItem(r.get(pipelineId), r.get(pipelineName)))
+                    PipelineService.substituteStepReferencesForValidation(c.script()), scope))
+        .map(c -> new DatasetReferencesResponse.ReferenceItem(c.id(), c.name()))
         .toList();
   }
-
-  /** 참조 대시보드 한 건 — 조회자가 볼 수 있는지(본인 소유 또는 공유)를 함께 든다. 응답으로 직렬화하지 않는다(볼 수 없는 이름이 들어 있다). */
-  private record DashboardHit(Long id, String name, boolean visible) {}
 
   /**
    * 위젯 → 차트 → 저장 쿼리 SQL 본문이 이 데이터셋 테이블을 참조하는 대시보드(WD-143). 거르기·확정 방식은 {@link
-   * #findPipelinesBySqlText} 와 같다. 가시성은 FK 경로와 같은 조건({@code visible})으로 함께 읽어 호출부가 이름을 가린다.
+   * #findPipelinesBySqlText} 와 같다. 가시성은 FK 경로와 같은 조건으로 함께 읽어 호출부가 이름을 가린다.
    */
   private List<DashboardHit> findDashboardsBySqlText(
-      DatasetSqlReferenceMatcher.Scope scope, String tableName, Field<Boolean> visible) {
-    Field<Long> dashboardId = field(name("dashboard", "id"), Long.class);
-    Field<String> dashboardName = field(name("dashboard", "name"), String.class);
-    Field<String> sqlText = field(name("saved_query", "sql_text"), String.class);
-    return dsl
-        .selectDistinct(dashboardId, dashboardName, visible, sqlText)
-        .from(table(name("dashboard")))
-        .join(table(name("dashboard_widget")))
-        .on(dashboardId.eq(field(name("dashboard_widget", "dashboard_id"), Long.class)))
-        .join(table(name("chart")))
-        .on(
-            field(name("dashboard_widget", "chart_id"), Long.class)
-                .eq(field(name("chart", "id"), Long.class)))
-        .join(table(name("saved_query")))
-        .on(
-            field(name("chart", "saved_query_id"), Long.class)
-                .eq(field(name("saved_query", "id"), Long.class)))
-        .where(sqlText.likeIgnoreCase(containsPattern(tableName), '\\'))
-        .fetch()
-        .stream()
-        .filter(r -> DatasetSqlReferenceMatcher.references(r.get(sqlText), scope))
-        .map(
-            r ->
-                new DashboardHit(
-                    r.get(dashboardId), r.get(dashboardName), Boolean.TRUE.equals(r.get(visible))))
+      DatasetSqlReferenceMatcher.Scope scope, String tableName, Long userId) {
+    return datasetReferenceRepository.findDashboardSqlCandidates(tableName, userId).stream()
+        .filter(c -> DatasetSqlReferenceMatcher.references(c.sqlText(), scope))
+        .map(DatasetReferenceRepository.DashboardSqlCandidate::hit)
         .toList();
-  }
-
-  /**
-   * {@code ILIKE} 부분 일치 패턴 — 테이블 이름의 {@code _} 는 LIKE 와일드카드라 이스케이프한다(안 하면 1차 거르기가 넓어질 뿐 결과는 같다).
-   */
-  private static String containsPattern(String tableName) {
-    String escaped = tableName.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
-    return "%" + escaped + "%";
   }
 
   /** FK 결과와 SQL 본문 결과를 id 로 중복 제거해 합친다 — 기존 응답처럼 id 오름차순. */

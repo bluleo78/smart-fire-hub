@@ -1,7 +1,5 @@
 package com.smartfirehub.pipeline.service;
 
-import static com.smartfirehub.jooq.Tables.DATASET;
-
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
@@ -26,7 +24,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,7 +45,6 @@ public class PipelineSecurityGate {
   private final DatasetAccessGuard guard;
   private final DatasetSecurityService datasetSecurityService;
   private final SecurityLevelRepository levelRepository;
-  private final DSLContext dsl;
 
   /** 실행 주체의 감사 등급 접근 기록(스펙 §4.6). 거부 감사는 가드(requireSql·requireDatasetReads·auditDenial)가 한다. */
   private final SecurityAuditRecorder auditRecorder;
@@ -325,9 +321,7 @@ public class PipelineSecurityGate {
   public void checkStepOutputForSave(
       Long editorUserId, Long outputDatasetId, boolean alreadyInPipeline) {
     if (outputDatasetId == null
-        || (alreadyInPipeline
-            && dsl.fetchExists(
-                DATASET, DATASET.ID.eq(outputDatasetId).and(DATASET.ORIGIN_TYPE.eq("TEMP"))))) {
+        || (alreadyInPipeline && levelRepository.isTempDataset(outputDatasetId))) {
       return;
     }
     guard.requireDatasetReads(clearance(editorUserId), List.of(outputDatasetId));
@@ -465,16 +459,16 @@ public class PipelineSecurityGate {
 
   /**
    * PYTHON 스텝의 읽기 rank — 슬롯 롤 선택({@link
-   * com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync#prepareForRun(Clearance, int)})과 출력 등급
-   * 계산({@link #enforcePythonOutputLevel})이 <b>같은 값</b>을 쓴다.
+   * com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync#prepareForRun(Clearance, int)})과
+   * 출력 등급 계산({@link #enforcePythonOutputLevel})이 <b>같은 값</b>을 쓴다.
    *
-   * <p><b>왜 실행 주체 자격이 아니라 스텝이 다루는 데이터로 정하는가.</b> 예전에는 "실행 주체가 읽을 수 있던 최고 등급"으로 슬롯과 출력 등급을
-   * 정했다. 그러면 외부 API 만 부르는 스크립트도 ADMIN(기밀 자격)이 돌리면 출력이 무조건 '민감'이 되고, 그 출력을 읽는 AI_CLASSIFY 가 외부
-   * 공급자 차단으로 매번 실패했다(운영 전주시 뉴스 수집 파이프라인). 이제 스크립트가 읽을 수 있는 범위를 <b>선언 입력 + 자기 출력</b>의 최고
-   * 등급으로 좁힌다 — 자기 출력은 어차피 쓰는 테이블이라(중복 제거용 조회 등) 읽어도 새로 새는 것이 없다. 실행 주체 자격은 상한으로만 쓴다.
+   * <p><b>왜 실행 주체 자격이 아니라 스텝이 다루는 데이터로 정하는가.</b> 예전에는 "실행 주체가 읽을 수 있던 최고 등급"으로 슬롯과 출력 등급을 정했다. 그러면
+   * 외부 API 만 부르는 스크립트도 ADMIN(기밀 자격)이 돌리면 출력이 무조건 '민감'이 되고, 그 출력을 읽는 AI_CLASSIFY 가 외부 공급자 차단으로 매번
+   * 실패했다(운영 전주시 뉴스 수집 파이프라인). 이제 스크립트가 읽을 수 있는 범위를 <b>선언 입력 + 자기 출력</b>의 최고 등급으로 좁힌다 — 자기 출력은 어차피
+   * 쓰는 테이블이라(중복 제거용 조회 등) 읽어도 새로 새는 것이 없다. 실행 주체 자격은 상한으로만 쓴다.
    *
-   * <p><b>WD-29 우회 차단은 유지된다.</b> 선언하지 않은 상위 등급 데이터셋은 슬롯 롤에 GRANT 가 없어 읽을 수 없고(permission denied), 상위 등급
-   * 입력을 선언하면 그 등급까지 읽는 대신 출력이 그 등급으로 상향된다. 선언 입력도 출력도 없으면 가장 낮은 등급만 읽는다.
+   * <p><b>WD-29 우회 차단은 유지된다.</b> 선언하지 않은 상위 등급 데이터셋은 슬롯 롤에 GRANT 가 없어 읽을 수 없고(permission denied),
+   * 상위 등급 입력을 선언하면 그 등급까지 읽는 대신 출력이 그 등급으로 상향된다. 선언 입력도 출력도 없으면 가장 낮은 등급만 읽는다.
    *
    * @param outputDatasetId 출력(지정 출력·러너 TEMP), 없으면 null
    * @param declaredInputIds 스텝의 선언 입력(없어진 데이터셋은 건너뛴다)
@@ -497,12 +491,7 @@ public class PipelineSecurityGate {
       datasetIds.add(outputDatasetId);
     }
     Set<Long> levelIds =
-        datasetIds.isEmpty()
-            ? Set.of()
-            : dsl.selectDistinct(DATASET.SECURITY_LEVEL_ID)
-                .from(DATASET)
-                .where(DATASET.ID.in(datasetIds))
-                .fetchSet(DATASET.SECURITY_LEVEL_ID);
+        datasetIds.isEmpty() ? Set.of() : levelRepository.findDistinctLevelIds(datasetIds);
     int base =
         levels.stream()
             .filter(l -> levelIds.contains(l.id()))
@@ -523,13 +512,7 @@ public class PipelineSecurityGate {
    * origin_type·source_pipeline_step_id 를 남긴다.
    */
   private boolean isStepTemp(long datasetId, long stepId) {
-    return dsl.fetchExists(
-        DATASET,
-        DATASET
-            .ID
-            .eq(datasetId)
-            .and(DATASET.ORIGIN_TYPE.eq("TEMP"))
-            .and(DATASET.SOURCE_PIPELINE_STEP_ID.eq(stepId)));
+    return levelRepository.isTempDatasetOfStep(datasetId, stepId);
   }
 
   /** 실행 주체 미상(삭제된 트리거 생성자 등)은 아무것도 못 보는 자격 — fail-closed. */

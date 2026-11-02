@@ -1,10 +1,5 @@
 package com.smartfirehub.securitylevel.service;
 
-import static com.smartfirehub.jooq.Tables.DATASET;
-import static com.smartfirehub.jooq.Tables.ROLE;
-import static com.smartfirehub.jooq.Tables.USER;
-import static org.jooq.impl.DSL.val;
-
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -17,7 +12,6 @@ import com.smartfirehub.securitylevel.dto.ChangeDatasetLevelRequest;
 import com.smartfirehub.securitylevel.dto.GrantCandidatesResponse;
 import com.smartfirehub.securitylevel.dto.SubjectClearance;
 import com.smartfirehub.securitylevel.event.DatasetSecurityLevelChangedEvent;
-import com.smartfirehub.securitylevel.repository.ActiveMembership;
 import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository;
 import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository.GrantSubject;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository;
@@ -30,7 +24,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -41,7 +34,6 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class DatasetSecurityService {
 
-  private final DSLContext dsl;
   private final DatasetAccessGrantRepository grantRepository;
   private final SecurityAuditRecorder audit;
   private final SecurityLevelRepository levelRepository;
@@ -62,10 +54,7 @@ public class DatasetSecurityService {
     Long sourceLevel = levelRepository.findDatasetLevelId(sourceDatasetId);
     // 이벤트의 변경 전 등급 — 새 데이터셋은 생성 시 테넌트 기본 등급을 받았으므로 그 값을 읽어 둔다.
     Long before = levelRepository.findDatasetLevelId(newDatasetId);
-    dsl.update(DATASET)
-        .set(DATASET.SECURITY_LEVEL_ID, sourceLevel)
-        .where(DATASET.ID.eq(newDatasetId))
-        .execute();
+    levelRepository.setDatasetLevel(newDatasetId, sourceLevel);
     int copied = grantRepository.copy(sourceDatasetId, newDatasetId, actorUserId);
     audit.record(
         actorUserId,
@@ -115,10 +104,7 @@ public class DatasetSecurityService {
   /** 데이터셋의 자동 상향 시각 — 러너 TEMP 재생성 전 보관용(WD-302). 상향된 적이 없으면 null. */
   @Transactional(readOnly = true)
   public LocalDateTime currentAutoRaisedAt(long datasetId) {
-    return dsl.select(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT)
-        .from(DATASET)
-        .where(DATASET.ID.eq(datasetId))
-        .fetchOne(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT);
+    return levelRepository.findAutoRaisedAt(datasetId);
   }
 
   /**
@@ -128,10 +114,7 @@ public class DatasetSecurityService {
    */
   @Transactional
   public void clearAutoRaisedMarker(long datasetId) {
-    dsl.update(DATASET)
-        .set(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT, (LocalDateTime) null)
-        .where(DATASET.ID.eq(datasetId))
-        .execute();
+    levelRepository.clearAutoRaisedAt(datasetId);
   }
 
   /**
@@ -143,11 +126,7 @@ public class DatasetSecurityService {
     if (previousAutoRaisedAt == null) {
       return;
     }
-    dsl.update(DATASET)
-        .set(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT, previousAutoRaisedAt)
-        .where(DATASET.ID.eq(datasetId))
-        .and(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT.isNull())
-        .execute();
+    levelRepository.restoreAutoRaisedAtIfAbsent(datasetId, previousAutoRaisedAt);
   }
 
   /** 데이터셋의 현재 보안 등급 id — 러너 TEMP 재생성 전 보관용(WD-238). */
@@ -208,11 +187,7 @@ public class DatasetSecurityService {
       String auditAction,
       String auditDescription) {
     Long fromId = levelRepository.findDatasetLevelId(datasetId);
-    var update = dsl.update(DATASET).set(DATASET.SECURITY_LEVEL_ID, level.id());
-    if (autoRaise) {
-      update = update.set(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT, LocalDateTime.now());
-    }
-    update.where(DATASET.ID.eq(datasetId)).execute();
+    levelRepository.setPipelineOutputLevel(datasetId, level.id(), autoRaise);
     audit.record(
         runAsUserId,
         auditAction,
@@ -300,12 +275,7 @@ public class DatasetSecurityService {
    */
   @Transactional
   public boolean lockDatasetRow(long datasetId) {
-    return dsl.select(DATASET.ID)
-        .from(DATASET)
-        .where(DATASET.ID.eq(datasetId))
-        .forUpdate()
-        .fetchOptional()
-        .isPresent();
+    return levelRepository.lockDatasetRow(datasetId);
   }
 
   private Set<GrantSubject> currentSubjects(long datasetId) {
@@ -377,11 +347,7 @@ public class DatasetSecurityService {
         SecurityLevelService.requireDowngradeReason(
             to.rank() < from.rank(), req.reason(), "등급을 낮추려면 사유(10자 이상)가 필요합니다.");
     // 수동 변경은 자동 상향 표시를 지운다 — 남기면 하향 뒤에도 "자동 상향되었습니다" 배너가 남는다(계획 결정 15).
-    dsl.update(DATASET)
-        .set(DATASET.SECURITY_LEVEL_ID, to.id())
-        .set(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT, (LocalDateTime) null)
-        .where(DATASET.ID.eq(datasetId))
-        .execute();
+    levelRepository.setDatasetLevelClearingAutoRaise(datasetId, to.id());
     // 허용 목록 필요 등급이면 (목록이 비었거나 본인이 못 보게 되는 경우) 본인을 시드한다(스펙 §2.4).
     // 관리자 우회(admin_bypass)로 보인다는 이유로 건너뛰면 목록이 빈 채로 남고, 우회를 끄는 순간 아무도 못 보는 고아가 된다.
     boolean seededSelf = false;
@@ -528,10 +494,7 @@ public class DatasetSecurityService {
     if (roleIds.isEmpty()) {
       return Map.of();
     }
-    return dsl.select(ROLE.ID, ROLE.MAX_SECURITY_LEVEL_ID)
-        .from(ROLE)
-        .where(ROLE.ID.in(roleIds))
-        .fetchMap(ROLE.ID, ROLE.MAX_SECURITY_LEVEL_ID);
+    return levelRepository.findRoleLevelIds(roleIds);
   }
 
   /**
@@ -548,11 +511,11 @@ public class DatasetSecurityService {
           HttpStatus.BAD_REQUEST, "GRANT_SUBJECT_INVALID", "사용자 또는 역할 중 하나를 지정하세요.");
     }
     long tenantId = TenantContext.require("허용 목록 추가");
-    if (user && !isActiveMember(req.userId(), tenantId)) {
+    if (user && !levelRepository.isActiveMember(req.userId(), tenantId)) {
       throw new CodedApiException(
           HttpStatus.BAD_REQUEST, "GRANT_SUBJECT_INVALID", "이 워크스페이스의 활성 멤버가 아닙니다.");
     }
-    if (role && !dsl.fetchExists(ROLE, ROLE.ID.eq(req.roleId()))) {
+    if (role && !levelRepository.roleExists(req.roleId())) {
       throw new CodedApiException(
           HttpStatus.BAD_REQUEST, "GRANT_SUBJECT_INVALID", "역할을 찾을 수 없습니다.");
     }
@@ -594,11 +557,8 @@ public class DatasetSecurityService {
   @Transactional
   public void removeGrant(long datasetId, long grantId, long actor) {
     Long levelId =
-        dsl.select(DATASET.SECURITY_LEVEL_ID)
-            .from(DATASET)
-            .where(DATASET.ID.eq(datasetId))
-            .forUpdate()
-            .fetchOptional(DATASET.SECURITY_LEVEL_ID)
+        levelRepository
+            .lockDatasetAndFindLevelId(datasetId)
             // 데이터셋이 없으면 그 항목도 없다 — 잠금을 앞으로 옮기기 전과 같은 404 로 답한다.
             .orElseThrow(this::grantNotFound);
     var grant =
@@ -631,24 +591,15 @@ public class DatasetSecurityService {
   @Transactional(readOnly = true)
   public GrantCandidatesResponse candidates(long datasetId) {
     long tenantId = TenantContext.require("허용 목록 후보");
-    record U(Long id, String name, String email) {}
-    var users =
-        dsl.select(USER.ID, USER.NAME, USER.EMAIL)
-            .from(USER)
-            .join(ActiveMembership.TABLE)
-            .on(ActiveMembership.of(USER.ID, val(tenantId)))
-            .where(USER.IS_ACTIVE.isTrue())
-            .orderBy(USER.NAME.asc())
-            .fetch(r -> new U(r.get(USER.ID), r.get(USER.NAME), r.get(USER.EMAIL)));
-    record R(Long id, String name, Long levelId) {}
-    var roles =
-        dsl.select(ROLE.ID, ROLE.NAME, ROLE.MAX_SECURITY_LEVEL_ID)
-            .from(ROLE)
-            .orderBy(ROLE.NAME.asc())
-            .fetch(r -> new R(r.get(ROLE.ID), r.get(ROLE.NAME), r.get(ROLE.MAX_SECURITY_LEVEL_ID)));
+    var users = levelRepository.findCandidateUsers(tenantId);
+    var roles = levelRepository.findCandidateRoles();
     Map<Long, Long> roleLevelIds = new HashMap<>();
     roles.forEach(r -> roleLevelIds.put(r.id(), r.levelId()));
-    var ctx = subjectClearanceContext(datasetId, users.stream().map(U::id).toList(), roleLevelIds);
+    var ctx =
+        subjectClearanceContext(
+            datasetId,
+            users.stream().map(SecurityLevelRepository.CandidateUser::id).toList(),
+            roleLevelIds);
     return new GrantCandidatesResponse(
         users.stream()
             .map(
@@ -670,19 +621,5 @@ public class DatasetSecurityService {
 
   private CodedApiException grantNotFound() {
     return new CodedApiException(HttpStatus.NOT_FOUND, "GRANT_NOT_FOUND", "허용 항목을 찾을 수 없습니다.");
-  }
-
-  private boolean isActiveMember(long userId, long tenantId) {
-    return dsl.fetchExists(
-        dsl.selectOne()
-            .from(ActiveMembership.TABLE)
-            .where(ActiveMembership.of(val(userId), val(tenantId)))
-            // candidates() 와 같은 기준: 비활성화된 계정은 멤버십이 ACTIVE 여도 대상이 아니다.
-            .and(
-                org.jooq.impl.DSL.exists(
-                    dsl.selectOne()
-                        .from(USER)
-                        .where(USER.ID.eq(userId))
-                        .and(USER.IS_ACTIVE.isTrue()))));
   }
 }

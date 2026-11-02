@@ -1,17 +1,11 @@
 package com.smartfirehub.securitylevel.service;
 
-import static com.smartfirehub.jooq.Tables.DATASET;
-import static com.smartfirehub.jooq.Tables.DATASET_ACCESS_GRANT;
-import static org.jooq.impl.DSL.notExists;
-import static org.jooq.impl.DSL.selectOne;
-
 import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
 import org.springframework.stereotype.Component;
 
 /**
@@ -25,7 +19,6 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class AllowlistSeeder {
 
-  private final DSLContext dsl;
   private final SecurityLevelRepository levelRepository;
   private final DatasetAccessGrantRepository grantRepository;
 
@@ -56,14 +49,6 @@ public class AllowlistSeeder {
 
   /** 이 등급에 속하면서 허용 항목이 하나도 없는 데이터셋. 영향 수 계산과 시드가 같은 정의를 쓴다. */
   public List<Long> datasetsWithoutAllowlist(long levelId) {
-    return dsl.select(DATASET.ID)
-        .from(DATASET)
-        .where(DATASET.SECURITY_LEVEL_ID.eq(levelId))
-        .and(
-            notExists(
-                selectOne()
-                    .from(DATASET_ACCESS_GRANT)
-                    .where(DATASET_ACCESS_GRANT.DATASET_ID.eq(DATASET.ID))))
-        .fetch(DATASET.ID);
+    return grantRepository.findDatasetIdsWithoutAllowlist(levelId);
   }
 }

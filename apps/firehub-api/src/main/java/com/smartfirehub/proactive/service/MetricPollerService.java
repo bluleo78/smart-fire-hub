@@ -1,9 +1,5 @@
 package com.smartfirehub.proactive.service;
 
-import static com.smartfirehub.jooq.Tables.DATASET;
-import static com.smartfirehub.jooq.Tables.PIPELINE_EXECUTION;
-import static com.smartfirehub.jooq.Tables.PROACTIVE_JOB;
-
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.exception.SqlQueryException;
@@ -16,6 +12,7 @@ import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository.MetricSnapshot;
+import com.smartfirehub.proactive.repository.SystemMetricRepository;
 import com.smartfirehub.proactive.util.ProactiveTime;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
@@ -31,8 +28,6 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.DSLContext;
-import org.jooq.JSONB;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -43,13 +38,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 @RequiredArgsConstructor
 public class MetricPollerService {
 
-  private final DSLContext dsl;
+  private final SystemMetricRepository systemMetricRepository;
   private final MetricSnapshotRepository snapshotRepository;
   private final AnomalyDetector anomalyDetector;
   private final ApplicationEventPublisher eventPublisher;
   private final ObjectMapper objectMapper;
   private final TenantScopedRunner tenantScopedRunner;
-  // dsl 직접 경로에 GUC 를 주입하기 위한 트랜잭션 경계 — 순회만으로는 GUC 가 비어 있다.
+  // 시스템 메트릭 저장소는 자체 트랜잭션이 없으므로 GUC 를 주입하기 위한 트랜잭션 경계가 서비스에 필요하다 — 순회만으로는 GUC 가 비어 있다.
   private final TransactionTemplate transactionTemplate;
   // 데이터셋 메트릭 SQL 의 판정+실행 관문 — executor 를 직접 부르지 않는다(SqlGateArchitectureTest).
   private final GuardedSqlExecutor guardedSqlExecutor;
@@ -97,7 +92,7 @@ public class MetricPollerService {
   /**
    * 한 테넌트 범위의 메트릭 폴링 본문.
    *
-   * <p><b>트랜잭션 경계(P2-b)</b>: 이 경로는 리포지토리를 거치지 않고 {@code DSLContext} 를 직접 쓴다 — {@link
+   * <p><b>트랜잭션 경계(P2-b)</b>: 이 경로가 쓰는 {@link SystemMetricRepository} 는 자체 트랜잭션이 없다 — {@link
    * TenantScopedRunner} 는 ThreadLocal 만 세우므로 GUC(app.tenant_id)는 여기서 트랜잭션을 열어야 주입된다. 다만 트랜잭션은 <b>DB
    * 를 만지는 구간에만</b> 둔다: 데이터셋 메트릭은 {@code executorClient} HTTP 호출로 값을 수집하고 이상탐지 이벤트도 발행하므로, 전체를 한
    * 트랜잭션으로 감싸면 외부 호출 동안 커넥션을 점유해 풀이 고갈된다.
@@ -105,21 +100,8 @@ public class MetricPollerService {
   @SuppressWarnings("unchecked")
   private void pollMetrics() {
     // 1. Query enabled proactive jobs with anomaly trigger type — DB 구간이므로 트랜잭션 안에서 읽는다.
-    var jobs =
-        transactionTemplate.execute(
-            status ->
-                dsl.select(
-                        PROACTIVE_JOB.ID,
-                        PROACTIVE_JOB.USER_ID,
-                        PROACTIVE_JOB.CONFIG,
-                        PROACTIVE_JOB.TRIGGER_TYPE)
-                    .from(PROACTIVE_JOB)
-                    .where(
-                        PROACTIVE_JOB
-                            .ENABLED
-                            .isTrue()
-                            .and(PROACTIVE_JOB.TRIGGER_TYPE.in("ANOMALY", "BOTH")))
-                    .fetch());
+    List<SystemMetricRepository.PolledJob> jobs =
+        transactionTemplate.execute(status -> systemMetricRepository.findEnabledAnomalyJobs());
 
     if (jobs == null || jobs.isEmpty()) {
       return;
@@ -128,14 +110,14 @@ public class MetricPollerService {
     log.debug("MetricPollerService: found {} anomaly-enabled jobs", jobs.size());
 
     for (var job : jobs) {
-      Long jobId = job.get(PROACTIVE_JOB.ID);
-      Long userId = job.get(PROACTIVE_JOB.USER_ID);
-      JSONB configJsonb = job.get(PROACTIVE_JOB.CONFIG);
+      Long jobId = job.id();
+      Long userId = job.userId();
+      String configJson = job.config();
 
       try {
         Map<String, Object> config =
-            configJsonb != null
-                ? objectMapper.readValue(configJsonb.data(), new TypeReference<>() {})
+            configJson != null
+                ? objectMapper.readValue(configJson, new TypeReference<>() {})
                 : Map.of();
 
         // Extract anomaly config from the config JSONB
@@ -229,7 +211,7 @@ public class MetricPollerService {
     double value;
     if ("system".equals(source)) {
       String metricKey = (String) metric.getOrDefault("metricKey", metricId);
-      // 시스템 메트릭은 dataset(V88)·pipeline_execution(V96) 등 RLS 테이블을 dsl 로 직접 집계한다 —
+      // 시스템 메트릭은 dataset(V88)·pipeline_execution(V96) 등 RLS 테이블을 저장소로 집계한다 —
       // 트랜잭션 안에서 실행해야 GUC 가 주입되고, 그러지 않으면 언제나 0 이 수집된다.
       // 수집 실패(소유자 자격 계산 실패 등)는 데이터셋 메트릭처럼 이 메트릭만 건너뛴다 — 같은 잡의 다음 메트릭은 그대로 돈다.
       try {
@@ -337,33 +319,17 @@ public class MetricPollerService {
       case "pipeline_failure_rate" -> {
         // Failed / total pipeline executions in last 24 hours
         LocalDateTime since = ProactiveTime.nowUtc().minusHours(24);
-        int total =
-            dsl.selectCount()
-                .from(PIPELINE_EXECUTION)
-                .where(PIPELINE_EXECUTION.CREATED_AT.ge(since))
-                .fetchOne(0, int.class);
+        int total = systemMetricRepository.countPipelineExecutionsSince(since);
         if (total == 0) {
           yield 0.0;
         }
-        int failed =
-            dsl.selectCount()
-                .from(PIPELINE_EXECUTION)
-                .where(
-                    PIPELINE_EXECUTION
-                        .CREATED_AT
-                        .ge(since)
-                        .and(PIPELINE_EXECUTION.STATUS.eq("FAILED")))
-                .fetchOne(0, int.class);
+        int failed = systemMetricRepository.countFailedPipelineExecutionsSince(since);
         yield (double) failed / total * 100.0; // percentage
       }
       case "pipeline_execution_count" -> {
         // Count pipeline executions in last 24 hours
         LocalDateTime since = ProactiveTime.nowUtc().minusHours(24);
-        yield (double)
-            dsl.selectCount()
-                .from(PIPELINE_EXECUTION)
-                .where(PIPELINE_EXECUTION.CREATED_AT.ge(since))
-                .fetchOne(0, int.class);
+        yield (double) systemMetricRepository.countPipelineExecutionsSince(since);
       }
       case "dataset_total_count" -> {
         // 소유자가 볼 수 있는 데이터셋만 센다(WD-168) — 테넌트 전체를 세면 숨긴(상위 등급) 데이터셋의 개수와 생성 사실이 값·리포트로 드러난다.
@@ -374,21 +340,13 @@ public class MetricPollerService {
             ownerClearance.shareCall(),
             () ->
                 (double)
-                    dsl.selectCount()
-                        .from(DATASET)
-                        .where(datasetAccessGuard.visibleCondition(clearance))
-                        .fetchOne(0, int.class));
+                    systemMetricRepository.countDatasets(
+                        datasetAccessGuard.visibleCondition(clearance)));
       }
       case "active_user_count" -> {
         // Count distinct users who executed pipelines in last 24 hours
         LocalDateTime since = ProactiveTime.nowUtc().minusHours(24);
-        yield (double)
-            dsl.selectCount()
-                .from(
-                    dsl.selectDistinct(PIPELINE_EXECUTION.EXECUTED_BY)
-                        .from(PIPELINE_EXECUTION)
-                        .where(PIPELINE_EXECUTION.CREATED_AT.ge(since)))
-                .fetchOne(0, int.class);
+        yield (double) systemMetricRepository.countDistinctPipelineExecutorsSince(since);
       }
       default -> {
         log.warn("MetricPollerService: unknown system metric '{}'", metricKey);

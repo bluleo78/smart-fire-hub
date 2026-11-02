@@ -264,7 +264,29 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
           "FileDatasetConfigRepository",
           "PermissionRepository",
           "RoleRepository",
-          "UserRepository");
+          "UserRepository",
+          // WD-484: 서비스·잡의 직접 쿼리를 옮긴 리포지토리. 트랜잭션 경계(@Transactional·TransactionTemplate)는 옮기기
+          // 전처럼 호출자에 있고, 모든 호출이 그 안에서 일어난다 — 클래스 레벨 트랜잭션을 붙이면 경계가 리포지토리로 새어
+          // 옮기기 전과 동작이 달라질 수 있어 붙이지 않았다.
+          //  - DashboardStatsRepository: DashboardService 의 readOnly 트랜잭션·readOnlyTx 템플릿 안(Tibero 빈
+          // 테이블
+          //    판정은 PG 트랜잭션 밖이며 이 리포지토리를 쓰지 않는다).
+          "DashboardStatsRepository",
+          //  - DatasetReferenceRepository: DatasetService 의
+          // getDatasetById·deleteDataset·getReferences(@Transactional).
+          "DatasetReferenceRepository",
+          //  - UploadedFileRepository: FileUploadService·FileCleanupService 의 TransactionTemplate
+          // 안(디스크 I/O 는 밖).
+          "UploadedFileRepository",
+          //  - AiInferenceCacheRepository: AiClassifyExecutor 의 조회·삽입 TransactionTemplate 안(LLM 호출은
+          // 밖).
+          "AiInferenceCacheRepository",
+          //  - SystemMetricRepository: MetricPollerService 의 TransactionTemplate 안(배경 폴러).
+          "SystemMetricRepository",
+          //  - EmbeddingAiPolicyRepository: 조회는 EmbeddingAiGate 의 readOnly 트랜잭션 안. 술어
+          // 렌더(allowedDatasetSql)는
+          //    질의를 실행하지 않아 트랜잭션이 필요 없다.
+          "EmbeddingAiPolicyRepository");
 
   /**
    * 설계상 RLS 를 우회하는 {@code SECURITY DEFINER} 해석기. (C)-3

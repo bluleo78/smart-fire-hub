@@ -5,7 +5,9 @@ import static com.smartfirehub.jooq.Tables.DATASET_ACCESS_GRANT;
 import static com.smartfirehub.jooq.Tables.ROLE;
 import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
 import static com.smartfirehub.jooq.Tables.USER;
+import static org.jooq.impl.DSL.notExists;
 import static org.jooq.impl.DSL.selectCount;
+import static org.jooq.impl.DSL.selectOne;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -296,5 +298,22 @@ public class DatasetAccessGrantRepository {
         .and(SECURITY_LEVEL.ALLOWLIST_REQUIRED.isTrue())
         .and(selectCount().from(other).where(other.DATASET_ID.eq(g.DATASET_ID)).asField().eq(1))
         .fetch(g.DATASET_ID);
+  }
+
+  /**
+   * 이 등급에 속하면서 허용 항목이 하나도 없는 데이터셋 id. 허용 목록 시드와 영향 수 계산이 같은 정의를 쓰도록 한 곳에 둔다.
+   *
+   * <p>호출자(SecurityLevelService)의 트랜잭션에 합류한다(클래스 레벨 @Transactional, REQUIRED).
+   */
+  public List<Long> findDatasetIdsWithoutAllowlist(long levelId) {
+    return dsl.select(DATASET.ID)
+        .from(DATASET)
+        .where(DATASET.SECURITY_LEVEL_ID.eq(levelId))
+        .and(
+            notExists(
+                selectOne()
+                    .from(DATASET_ACCESS_GRANT)
+                    .where(DATASET_ACCESS_GRANT.DATASET_ID.eq(DATASET.ID))))
+        .fetch(DATASET.ID);
   }
 }

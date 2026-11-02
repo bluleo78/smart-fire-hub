@@ -1,11 +1,6 @@
 package com.smartfirehub.securitylevel.service;
 
-import static com.smartfirehub.jooq.Tables.DATASET;
-import static com.smartfirehub.jooq.Tables.ROLE;
-import static com.smartfirehub.jooq.Tables.USER_ROLE;
-
 import com.smartfirehub.global.exception.CodedApiException;
-import com.smartfirehub.jooq.tables.records.RoleRecord;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.service.RoleGrantGuard;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -14,10 +9,10 @@ import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.dto.ClearancePreviewResponse;
 import com.smartfirehub.securitylevel.dto.RoleClearanceResponse;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
+import com.smartfirehub.securitylevel.repository.SecurityLevelRepository.RoleClearanceRow;
 import com.smartfirehub.securitylevel.repository.SystemAdminRole;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,7 +22,6 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class RoleClearanceService {
 
-  private final DSLContext dsl;
   private final SecurityLevelRepository levelRepository;
   private final DatasetAccessGuard guard;
   private final SecurityAuditRecorder audit;
@@ -37,9 +31,8 @@ public class RoleClearanceService {
   @Transactional(readOnly = true)
   public RoleClearanceResponse get(long roleId) {
     var role = requireRole(roleId);
-    long users = dsl.fetchCount(USER_ROLE, USER_ROLE.ROLE_ID.eq(roleId));
-    return new RoleClearanceResponse(
-        roleId, role.getMaxSecurityLevelId(), users, isSystemAdmin(role));
+    long users = levelRepository.countRoleMembers(roleId);
+    return new RoleClearanceResponse(roleId, role.maxSecurityLevelId(), users, isSystemAdmin(role));
   }
 
   /**
@@ -67,7 +60,7 @@ public class RoleClearanceService {
     return new ClearancePreviewResponse(
         lost,
         topLevelRoleCountAfter(roleId, levelId, rankById),
-        dsl.fetchCount(USER_ROLE, USER_ROLE.ROLE_ID.eq(roleId)));
+        levelRepository.countRoleMembers(roleId));
   }
 
   /** 규칙: 시스템 ADMIN 고정 / 본인 자격 초과 금지(판단 사항 12 — 현재 자격·새 자격 모두, CR7) / 최상위 열람 역할 ≥ 1(스펙 §2.3 불변식). */
@@ -85,10 +78,10 @@ public class RoleClearanceService {
     // 보유자가 상위 역할을 끌어내려 그 역할 보유자들(자기보다 높은 열람자)의 가시성을 마음대로 줄일 수 있다. max_security_level_id 는
     // NOT NULL(V133)이지만 손상 상태면 fail-closed 로 같은 거부를 한다.
     int currentRank =
-        role.getMaxSecurityLevelId() == null
+        role.maxSecurityLevelId() == null
             ? Integer.MAX_VALUE
             : levelRepository
-                .findById(role.getMaxSecurityLevelId())
+                .findById(role.maxSecurityLevelId())
                 .map(LevelPolicy::rank)
                 .orElse(Integer.MAX_VALUE);
     // role:write 보유자가 자기 역할을 최상위로 올려 우회하지 못하게 한다.
@@ -105,14 +98,14 @@ public class RoleClearanceService {
       throw new CodedApiException(
           HttpStatus.CONFLICT, "TOP_LEVEL_ROLE_REQUIRED", "최상위 등급을 열람할 수 있는 역할이 최소 1개 필요합니다.");
     }
-    Long from = role.getMaxSecurityLevelId();
-    dsl.update(ROLE).set(ROLE.MAX_SECURITY_LEVEL_ID, levelId).where(ROLE.ID.eq(roleId)).execute();
+    Long from = role.maxSecurityLevelId();
+    levelRepository.updateRoleMaxLevel(roleId, levelId);
     audit.record(
         caller.userId(),
         "ROLE_CLEARANCE_CHANGE",
         "role",
         String.valueOf(roleId),
-        role.getName(),
+        role.name(),
         Map.of("fromLevelId", from, "toLevelId", levelId));
   }
 
@@ -123,8 +116,8 @@ public class RoleClearanceService {
 
   /** 주어진 자격으로 볼 수 있는 데이터셋 수. */
   private long visibleCount(Clearance c) {
-    return dsl.fetchCount(
-        DATASET, guard.visibleCondition(c, DATASET.ID, DATASET.SECURITY_LEVEL_ID));
+    return levelRepository.countDatasets(
+        (datasetId, levelId) -> guard.visibleCondition(c, datasetId, levelId));
   }
 
   /** 이 역할의 자격만 바꿨을 때 호출자의 새 rank = (나머지 보유 역할들의 rank, 새 rank) 의 최댓값. */
@@ -152,15 +145,11 @@ public class RoleClearanceService {
     return count;
   }
 
-  private RoleRecord requireRole(long roleId) {
-    var r = dsl.selectFrom(ROLE).where(ROLE.ID.eq(roleId)).fetchOne();
-    if (r == null) {
-      throw new RoleNotFoundException();
-    }
-    return r;
+  private RoleClearanceRow requireRole(long roleId) {
+    return levelRepository.findRoleClearanceRow(roleId).orElseThrow(RoleNotFoundException::new);
   }
 
-  private static boolean isSystemAdmin(RoleRecord r) {
-    return SystemAdminRole.matches(r.getName(), r.getIsSystem());
+  private static boolean isSystemAdmin(RoleClearanceRow r) {
+    return SystemAdminRole.matches(r.name(), r.isSystem());
   }
 }

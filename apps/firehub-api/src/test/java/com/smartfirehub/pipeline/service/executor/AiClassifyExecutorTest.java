@@ -28,6 +28,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig.OutputColumn;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
+import com.smartfirehub.pipeline.repository.AiInferenceCacheRepository;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.UnknownAgentTypeException;
@@ -41,14 +42,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.jooq.DSLContext;
-import org.jooq.InsertSetStep;
-import org.jooq.JSONB;
-import org.jooq.Record1;
-import org.jooq.SelectConditionStep;
-import org.jooq.SelectJoinStep;
-import org.jooq.SelectSelectStep;
-import org.jooq.SelectWhereStep;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,8 +50,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * AiClassifyExecutor 단위 테스트. Spring 컨텍스트 없이 Mockito 로 실행한다. jOOQ DSLContext 는 fluent chain 이 많아
- * deep stub 으로 처리한다.
+ * AiClassifyExecutor 단위 테스트. Spring 컨텍스트 없이 Mockito 로 실행한다. 캐시 접근은 AiInferenceCacheRepository mock
+ * 으로 대체한다.
  */
 class AiClassifyExecutorTest {
 
@@ -67,7 +60,7 @@ class AiClassifyExecutorTest {
   private DataTableService dataTableService;
   private DatasetRepository datasetRepository;
   private ObjectMapper objectMapper;
-  private DSLContext dsl;
+  private AiInferenceCacheRepository cacheRepository;
   private TransactionTemplate transactionTemplate;
   private PipelineExecutionRepository executionRepository;
   private DatasetColumnRepository datasetColumnRepository;
@@ -87,7 +80,7 @@ class AiClassifyExecutorTest {
     when(dataTableService.createTempTable("output_table")).thenReturn(RUN_TEMP);
     datasetRepository = mock(DatasetRepository.class);
     objectMapper = new ObjectMapper();
-    dsl = mock(DSLContext.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
+    cacheRepository = mock(AiInferenceCacheRepository.class);
     executionRepository = mock(PipelineExecutionRepository.class);
     datasetColumnRepository = mock(DatasetColumnRepository.class);
     // 기본 입력 데이터셋 컬럼 = text(WD-215) — 실행기가 조회 전에 고른 입력 컬럼이 데이터셋에 있는지 대조하므로, 기존 테스트가 고르는
@@ -115,7 +108,7 @@ class AiClassifyExecutorTest {
             dataTableService,
             datasetRepository,
             objectMapper,
-            dsl,
+            cacheRepository,
             transactionTemplate,
             executionRepository,
             targetResolver,
@@ -141,19 +134,10 @@ class AiClassifyExecutorTest {
     stubCacheLookup(null);
   }
 
-  /** 캐시 조회 목 체인을 세우고 {@code fetchOne()} 이 돌려줄 값을 지정한다(null 이면 미스). */
-  @SuppressWarnings({"unchecked", "rawtypes"})
-  private void stubCacheLookup(Record1<JSONB> result) {
-    SelectSelectStep selectStep = mock(SelectSelectStep.class);
-    SelectJoinStep joinStep = mock(SelectJoinStep.class);
-    SelectConditionStep condStep1 = mock(SelectConditionStep.class);
-    SelectConditionStep condStep2 = mock(SelectConditionStep.class);
-    when(dsl.select(any(org.jooq.Field.class))).thenReturn(selectStep);
-    when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
-    when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
-    when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    when(condStep2.fetchOne()).thenReturn(result);
+  /** 캐시 리포지토리의 조회 결과를 지정한다(null 이면 미스 — 리포지토리는 Optional.empty 를 돌려준다). */
+  private void stubCacheLookup(String cachedJson) {
+    when(cacheRepository.findResultJson(anyString(), anyString(), any()))
+        .thenReturn(Optional.ofNullable(cachedJson));
   }
 
   private PipelineStepResponse buildStep(String loadStrategy, List<Long> inputDatasetIds) {
@@ -312,24 +296,8 @@ class AiClassifyExecutorTest {
     when(dataTableRowService.queryData(eq("source_table"), any(), any(), anyInt(), anyInt()))
         .thenReturn(List.of(sourceRow));
 
-    // Mock jOOQ select -> cache hit with cached result JSON
-    Record1<JSONB> cachedRecord = mock(Record1.class);
-    JSONB cachedJson = JSONB.valueOf("{\"category\":\"A\",\"score\":0.9,\"source_id\":42}");
-    when(cachedRecord.get(any(org.jooq.Field.class))).thenReturn(cachedJson);
-
-    SelectSelectStep selectStep = mock(SelectSelectStep.class);
-    SelectJoinStep joinStep = mock(SelectJoinStep.class);
-    SelectWhereStep whereStep = mock(SelectWhereStep.class);
-    SelectConditionStep condStep1 = mock(SelectConditionStep.class);
-    SelectConditionStep condStep2 = mock(SelectConditionStep.class);
-    when(dsl.select(any(org.jooq.Field.class))).thenReturn(selectStep);
-    when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
-    when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
-    when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    // V103 이후 캐시 조회에 tenant_id 술어가 하나 더 붙는다 — 체인이 한 단계 길어졌으므로
-    // 자기 자신을 돌려주게 해 마지막 fetchOne() 스텁이 계속 유효하도록 한다.
-    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    when(condStep2.fetchOne()).thenReturn(cachedRecord);
+    // 캐시 히트 — 리포지토리가 캐시된 결과 JSON 을 돌려준다
+    stubCacheLookup("{\"category\":\"A\",\"score\":0.9,\"source_id\":42}");
 
     PipelineStepResponse step = buildStep("APPEND", List.of(1L));
 
@@ -374,10 +342,7 @@ class AiClassifyExecutorTest {
           .thenReturn(List.of(sourceRow));
 
       // 캐시 히트로 세워 AI 호출 없이 실행을 끝까지 돌린다 — 관심사는 조회 컬럼뿐이다.
-      Record1<JSONB> cachedRecord = mock(Record1.class);
-      when(cachedRecord.get(any(org.jooq.Field.class)))
-          .thenReturn(JSONB.valueOf("{\"category\":\"A\",\"score\":0.9}"));
-      stubCacheLookup(cachedRecord);
+      stubCacheLookup("{\"category\":\"A\",\"score\":0.9}");
 
       AiClassifyConfig config =
           new AiClassifyConfig(
@@ -528,23 +493,7 @@ class AiClassifyExecutorTest {
     when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
         .thenReturn(List.of(sourceRow));
 
-    Record1<JSONB> cachedRecord = mock(Record1.class);
-    JSONB cachedJson = JSONB.valueOf("{\"category\":\"B\",\"score\":0.5,\"source_id\":7}");
-    when(cachedRecord.get(any(org.jooq.Field.class))).thenReturn(cachedJson);
-
-    SelectSelectStep selectStep = mock(SelectSelectStep.class);
-    SelectJoinStep joinStep = mock(SelectJoinStep.class);
-    SelectWhereStep whereStep = mock(SelectWhereStep.class);
-    SelectConditionStep condStep1 = mock(SelectConditionStep.class);
-    SelectConditionStep condStep2 = mock(SelectConditionStep.class);
-    when(dsl.select(any(org.jooq.Field.class))).thenReturn(selectStep);
-    when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
-    when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
-    when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    // V103 이후 캐시 조회에 tenant_id 술어가 하나 더 붙는다 — 체인이 한 단계 길어졌으므로
-    // 자기 자신을 돌려주게 해 마지막 fetchOne() 스텁이 계속 유효하도록 한다.
-    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    when(condStep2.fetchOne()).thenReturn(cachedRecord);
+    stubCacheLookup("{\"category\":\"B\",\"score\":0.5,\"source_id\":7}");
 
     PipelineStepResponse step = buildStep("REPLACE", List.of(1L));
 
@@ -574,23 +523,7 @@ class AiClassifyExecutorTest {
     when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
         .thenReturn(List.of(sourceRow));
 
-    // select chain → fetchOne() returns null (cache miss)
-    SelectSelectStep selectStep = mock(SelectSelectStep.class);
-    SelectJoinStep joinStep = mock(SelectJoinStep.class);
-    SelectConditionStep condStep1 = mock(SelectConditionStep.class);
-    SelectConditionStep condStep2 = mock(SelectConditionStep.class);
-    when(dsl.select(any(org.jooq.Field.class))).thenReturn(selectStep);
-    when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
-    when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
-    when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    // V103 이후 캐시 조회에 tenant_id 술어가 하나 더 붙는다 — 체인이 한 단계 길어졌으므로
-    // 자기 자신을 돌려주게 해 마지막 fetchOne() 스텁이 계속 유효하도록 한다.
-    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    when(condStep2.fetchOne()).thenReturn(null);
-
-    // insert chain — return a deep-stubbed chain that always resolves
-    InsertSetStep insertSetStep = mock(InsertSetStep.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
-    when(dsl.insertInto(any(org.jooq.Table.class))).thenReturn(insertSetStep);
+    stubCacheMiss();
 
     // AI agent response
     AiAgentClient.ClassifyRowResult aiRow =
@@ -811,18 +744,7 @@ class AiClassifyExecutorTest {
     when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
         .thenReturn(List.of(sourceRow));
 
-    SelectSelectStep selectStep = mock(SelectSelectStep.class);
-    SelectJoinStep joinStep = mock(SelectJoinStep.class);
-    SelectConditionStep condStep1 = mock(SelectConditionStep.class);
-    SelectConditionStep condStep2 = mock(SelectConditionStep.class);
-    when(dsl.select(any(org.jooq.Field.class))).thenReturn(selectStep);
-    when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
-    when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
-    when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    // V103 이후 캐시 조회에 tenant_id 술어가 하나 더 붙는다 — 체인이 한 단계 길어졌으므로
-    // 자기 자신을 돌려주게 해 마지막 fetchOne() 스텁이 계속 유효하도록 한다.
-    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    when(condStep2.fetchOne()).thenReturn(null);
+    stubCacheMiss();
 
     when(aiAgentClient.classify(any(), any(), anyLong()))
         .thenThrow(new RuntimeException("AI agent down"));
@@ -1132,11 +1054,7 @@ class AiClassifyExecutorTest {
         .thenReturn(List.of(sourceRow));
 
     // 캐시에는 **다른 행**이 남긴 source_id 가 들어 있다(예전 형식으로 저장된 항목).
-    Record1<JSONB> cachedRecord = mock(Record1.class);
-    JSONB cachedJson = JSONB.valueOf("{\"category\":\"B\",\"source_id\":11}");
-    when(cachedRecord.get(any(org.jooq.Field.class))).thenReturn(cachedJson);
-
-    stubCacheLookup(cachedRecord);
+    stubCacheLookup("{\"category\":\"B\",\"source_id\":11}");
 
     PipelineStepResponse step = buildStep("APPEND", List.of(1L));
 
@@ -1255,12 +1173,7 @@ class AiClassifyExecutorTest {
     verify(dataTableService).dropTempTable("output_table", RUN_TEMP);
     verify(dataTableService, never()).swapTable(anyString(), anyString());
     // 대조 실패로 배치를 버렸어도 캐시 쓰기는 이미 시도됐다.
-    verify(dsl)
-        .insertInto(
-            any(org.jooq.Table.class),
-            any(org.jooq.Field.class),
-            any(org.jooq.Field.class),
-            any(org.jooq.Field.class));
+    verify(cacheRepository).insertIgnoringConflicts(anyString(), anyList());
   }
 
   /** 보낸 적 없는 번호를 돌려주면 배치를 실패시킨다. */
@@ -1435,7 +1348,7 @@ class AiClassifyExecutorTest {
             dataTableService,
             datasetRepository,
             objectMapper,
-            dsl,
+            cacheRepository,
             transactionTemplate,
             executionRepository,
             new AiClassifyTargetResolver(brokenChat),
@@ -1446,10 +1359,7 @@ class AiClassifyExecutorTest {
     when(dataTableRowService.countRows("source_table")).thenReturn(1L);
     when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
         .thenReturn(List.of(new HashMap<>(Map.of("id", 5L, "text", "cats"))));
-    Record1<JSONB> hit = mock(Record1.class);
-    when(hit.get(any(org.jooq.Field.class)))
-        .thenReturn(JSONB.valueOf("{\"category\":\"animal\",\"score\":0.9}"));
-    stubCacheLookup(hit);
+    stubCacheLookup("{\"category\":\"animal\",\"score\":0.9}");
 
     AiClassifyExecutor.ExecutionResult result =
         realResolverExecutor.execute(buildStep("APPEND", List.of(1L)), 100L, 1L);
@@ -1475,8 +1385,6 @@ class AiClassifyExecutorTest {
     when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
         .thenReturn(List.of(r5, r6));
     stubCacheMiss();
-    InsertSetStep insertSetStep = mock(InsertSetStep.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
-    when(dsl.insertInto(any(org.jooq.Table.class))).thenReturn(insertSetStep);
     when(aiAgentClient.classify(any(), any(), anyLong()))
         .thenReturn(
             new AiAgentClient.ClassifyResponse(
@@ -1589,7 +1497,7 @@ class AiClassifyExecutorTest {
         dataTableService,
         datasetRepository,
         objectMapper,
-        dsl,
+        cacheRepository,
         transactionTemplate,
         executionRepository,
         new AiClassifyTargetResolver(credentials),
@@ -1609,8 +1517,6 @@ class AiClassifyExecutorTest {
                 new HashMap<>(Map.of("id", 6L, "text", "dogs")),
                 new HashMap<>(Map.of("id", 7L, "text", "fish"))));
     stubCacheMiss();
-    InsertSetStep insertSetStep = mock(InsertSetStep.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
-    when(dsl.insertInto(any(org.jooq.Table.class))).thenReturn(insertSetStep);
   }
 
   /**

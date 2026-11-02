@@ -1,12 +1,10 @@
 package com.smartfirehub.proactive.service;
 
-import static com.smartfirehub.jooq.Tables.PROACTIVE_JOB;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -20,6 +18,8 @@ import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.QueryExecuteResult;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository;
+import com.smartfirehub.proactive.repository.SystemMetricRepository;
+import com.smartfirehub.proactive.repository.SystemMetricRepository.PolledJob;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
@@ -29,14 +29,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
-import org.jooq.DSLContext;
-import org.jooq.JSONB;
-import org.jooq.SQLDialect;
-import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -53,6 +50,7 @@ class MetricPollerServiceTiberoTest {
 
   private final GuardedSqlExecutor gate = mock(GuardedSqlExecutor.class);
   private final PipelineDataSchema pipelineDataSchema = mock(PipelineDataSchema.class);
+  private final SystemMetricRepository systemMetrics = mock(SystemMetricRepository.class);
   private final MetricSnapshotRepository snapshots = mock(MetricSnapshotRepository.class);
   private final TenantScopedRunner runner = mock(TenantScopedRunner.class);
   private final TransactionTemplate tx = mock(TransactionTemplate.class);
@@ -71,6 +69,9 @@ class MetricPollerServiceTiberoTest {
             })
         .when(runner)
         .forEachActiveTenant(any());
+    // 트랜잭션 템플릿은 콜백을 그대로 실행한다 — 잡 조회가 템플릿 경계 안에서 저장소를 거쳐 일어남을 보존한다.
+    when(tx.execute(any()))
+        .thenAnswer(inv -> ((TransactionCallback<?>) inv.getArgument(0)).doInTransaction(null));
     // 공유 목적 AI 문맥은 작업을 그대로 실행한다.
     when(aiCallContext.callWith(any(), any()))
         .thenAnswer(inv -> ((Supplier<?>) inv.getArgument(1)).get());
@@ -81,7 +82,7 @@ class MetricPollerServiceTiberoTest {
                 true, "SELECT", List.of("cnt"), List.of(Map.of("cnt", 7)), 1, 0, 3L, true, null));
     poller =
         new MetricPollerService(
-            mock(DSLContext.class),
+            systemMetrics,
             snapshots,
             new AnomalyDetector(),
             mock(ApplicationEventPublisher.class),
@@ -103,26 +104,13 @@ class MetricPollerServiceTiberoTest {
 
   /** 데이터셋 메트릭 하나를 가진 이상탐지 잡 한 건을 잡 조회 결과로 돌려준다. */
   private void givenDatasetMetricJob(String query) throws Exception {
-    DSLContext ctx = DSL.using(SQLDialect.POSTGRES);
-    var jobs =
-        ctx.newResult(
-            PROACTIVE_JOB.ID,
-            PROACTIVE_JOB.USER_ID,
-            PROACTIVE_JOB.CONFIG,
-            PROACTIVE_JOB.TRIGGER_TYPE);
-    var job =
-        ctx.newRecord(
-            PROACTIVE_JOB.ID,
-            PROACTIVE_JOB.USER_ID,
-            PROACTIVE_JOB.CONFIG,
-            PROACTIVE_JOB.TRIGGER_TYPE);
     Map<String, Object> config =
         Map.of(
             "anomaly",
             Map.of("metrics", List.of(Map.of("id", "m1", "source", "dataset", "query", query))));
-    job.values(JOB_ID, 2L, JSONB.valueOf(new ObjectMapper().writeValueAsString(config)), "ANOMALY");
-    jobs.add(job);
-    doReturn(jobs).when(tx).execute(any());
+    when(systemMetrics.findEnabledAnomalyJobs())
+        .thenReturn(
+            List.of(new PolledJob(JOB_ID, 2L, new ObjectMapper().writeValueAsString(config))));
   }
 
   /** Tibero 테넌트의 스키마 한정 메트릭은 관문(executeMetricQuery)까지 가고, 값이 저장된다. */

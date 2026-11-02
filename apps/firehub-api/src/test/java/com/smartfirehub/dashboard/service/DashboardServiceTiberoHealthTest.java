@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dashboard.dto.SystemHealthResponse;
+import com.smartfirehub.dashboard.repository.DashboardStatsRepository;
 import com.smartfirehub.dataset.storage.DataRowStore;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
@@ -131,7 +132,7 @@ class DashboardServiceTiberoHealthTest extends IntegrationTestBase {
 
     DashboardService service =
         new DashboardService(
-            dsl,
+            new DashboardStatsRepository(dsl),
             guard,
             clearanceResolver,
             resolver,

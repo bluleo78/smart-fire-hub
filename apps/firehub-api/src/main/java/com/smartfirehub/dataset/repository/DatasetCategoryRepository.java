@@ -98,4 +98,17 @@ public class DatasetCategoryRepository {
   private static Condition sameNameAs(String name) {
     return lower(trim(DC_NAME)).eq(lower(val(name)));
   }
+
+  /**
+   * 이 카테고리를 참조하는 데이터셋이 하나라도 있는지 — 삭제 가능 여부 판정용.
+   *
+   * <p>보안 등급으로 가려진 데이터셋까지 센다(가시성 조건을 걸지 않는다) — 호출자가 보는 행만이 아니라 연결 자체를 막아야 FK 를 지킨다. RLS 는 걸리므로 같은
+   * 테넌트 데이터셋만 보며, GUC 가 주입된 호출자(DatasetCategoryService.deleteCategory) 트랜잭션 안에서만 맞는 결과를 낸다 — 트랜잭션
+   * 없이 부르면 0행이 되어 참조가 없다고 답한다.
+   */
+  public boolean existsDatasetUsing(Long categoryId) {
+    Table<?> dataset = table(name("dataset"));
+    Field<Long> datasetCategoryId = field(name("dataset", "category_id"), Long.class);
+    return dsl.fetchExists(dsl.selectOne().from(dataset).where(datasetCategoryId.eq(categoryId)));
+  }
 }

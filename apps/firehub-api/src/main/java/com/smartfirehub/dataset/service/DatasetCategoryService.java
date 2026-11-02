@@ -1,7 +1,5 @@
 package com.smartfirehub.dataset.service;
 
-import static org.jooq.impl.DSL.*;
-
 import com.smartfirehub.dataset.dto.CategoryResponse;
 import com.smartfirehub.dataset.exception.CategoryInUseException;
 import com.smartfirehub.dataset.exception.CategoryNotFoundException;
@@ -12,7 +10,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,7 +19,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class DatasetCategoryService {
 
   private final DatasetCategoryRepository categoryRepository;
-  private final DSLContext dsl;
 
   /** 카테고리 생성·수정·삭제 감사(WD-464). */
   private final DatasetCategoryAuditRecorder auditRecorder;
@@ -160,11 +156,7 @@ public class DatasetCategoryService {
         categoryRepository.findById(id).orElseThrow(() -> new CategoryNotFoundException());
 
     // Check if any datasets reference this category
-    var DATASET = table(name("dataset"));
-    var DS_CATEGORY_ID = field(name("dataset", "category_id"), Long.class);
-
-    boolean hasDatasets =
-        dsl.fetchExists(dsl.selectOne().from(DATASET).where(DS_CATEGORY_ID.eq(id)));
+    boolean hasDatasets = categoryRepository.existsDatasetUsing(id);
 
     if (hasDatasets) {
       // 다른 "사용 중이라 삭제 불가" 케이스(DatasetInUseException)와 동일하게 한국어 메시지 +

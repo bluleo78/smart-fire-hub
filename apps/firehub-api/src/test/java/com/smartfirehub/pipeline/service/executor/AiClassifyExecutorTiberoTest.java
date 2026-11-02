@@ -25,17 +25,13 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig.OutputColumn;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
+import com.smartfirehub.pipeline.repository.AiInferenceCacheRepository;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.jooq.DSLContext;
-import org.jooq.InsertSetStep;
-import org.jooq.SelectConditionStep;
-import org.jooq.SelectJoinStep;
-import org.jooq.SelectSelectStep;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,7 +52,7 @@ class AiClassifyExecutorTiberoTest {
   private DataTableRowService dataTableRowService;
   private DataTableService dataTableService;
   private DatasetRepository datasetRepository;
-  private DSLContext dsl;
+  private AiInferenceCacheRepository cacheRepository;
   private AiClassifyExecutor executor;
 
   @BeforeEach
@@ -67,7 +63,8 @@ class AiClassifyExecutorTiberoTest {
     dataTableService = mock(DataTableService.class);
     when(dataTableService.createTempTable("output_table")).thenReturn(STG);
     datasetRepository = mock(DatasetRepository.class);
-    dsl = mock(DSLContext.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
+    // 캐시 리포지토리 mock — 조회는 기본으로 미스(Optional.empty), 저장은 no-op.
+    cacheRepository = mock(AiInferenceCacheRepository.class);
     TenantContext.set(1L);
     AiClassifyTargetResolver targetResolver = mock(AiClassifyTargetResolver.class);
     when(targetResolver.resolve()).thenReturn(new AiClassifyTarget.UseChat());
@@ -85,7 +82,7 @@ class AiClassifyExecutorTiberoTest {
             dataTableService,
             datasetRepository,
             new ObjectMapper(),
-            dsl,
+            cacheRepository,
             new TransactionTemplate(
                 mock(org.springframework.transaction.PlatformTransactionManager.class)),
             mock(PipelineExecutionRepository.class),
@@ -101,19 +98,7 @@ class AiClassifyExecutorTiberoTest {
     when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
         .thenReturn(List.of(source));
 
-    // 캐시 조회는 미스
-    SelectSelectStep selectStep = mock(SelectSelectStep.class);
-    SelectJoinStep joinStep = mock(SelectJoinStep.class);
-    SelectConditionStep cond1 = mock(SelectConditionStep.class);
-    SelectConditionStep cond2 = mock(SelectConditionStep.class);
-    when(dsl.select(any(org.jooq.Field.class))).thenReturn(selectStep);
-    when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
-    when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(cond1);
-    when(cond1.and(any(org.jooq.Condition.class))).thenReturn(cond2);
-    when(cond2.and(any(org.jooq.Condition.class))).thenReturn(cond2);
-    when(cond2.fetchOne()).thenReturn(null);
-    InsertSetStep insertSetStep = mock(InsertSetStep.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
-    when(dsl.insertInto(any(org.jooq.Table.class))).thenReturn(insertSetStep);
+    // 캐시 조회는 미스 — mock 리포지토리의 기본 반환(Optional.empty)이 미스다.
   }
 
   @AfterEach

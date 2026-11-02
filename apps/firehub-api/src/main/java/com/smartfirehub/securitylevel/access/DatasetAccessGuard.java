@@ -38,7 +38,6 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
-import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -53,7 +52,6 @@ public class DatasetAccessGuard {
 
   private final DatasetAccessRepository accessRepository;
   private final ClearanceResolver clearanceResolver;
-  private final DSLContext dsl;
 
   /** 거부 감사 기록기(보충 스펙 §3). 사용자 요청의 거부로 드러나는 require* 지점만 부른다 — 값 판정(check·checkSql)은 부르지 않는다. */
   private final SecurityAuditRecorder auditRecorder;
@@ -568,7 +566,7 @@ public class DatasetAccessGuard {
    * @param datasetAlias 호출부 SQL 에서 dataset 테이블의 별칭(예: "d")
    */
   public String visibleSql(Clearance c, String datasetAlias) {
-    return dsl.renderInlined(
+    return accessRepository.inlineSql(
         visibleCondition(
             c,
             field(name(datasetAlias, "id"), Long.class),

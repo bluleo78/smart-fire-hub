@@ -1,7 +1,5 @@
 package com.smartfirehub.pipeline.service.executor;
 
-import static org.jooq.impl.DSL.*;
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
@@ -13,6 +11,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
+import com.smartfirehub.pipeline.repository.AiInferenceCacheRepository;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -32,10 +31,6 @@ import java.util.TreeMap;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.JSONB;
-import org.jooq.Table;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -56,25 +51,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 @RequiredArgsConstructor
 public class AiClassifyExecutor {
 
-  private static final Table<?> AI_INFERENCE_CACHE = table(name("ai_inference_cache"));
-  private static final Field<String> CACHE_ROW_HASH = field(name("row_hash"), String.class);
-  private static final Field<String> CACHE_PROMPT_VERSION =
-      field(name("prompt_version"), String.class);
-  private static final Field<JSONB> CACHE_RESULT_JSON = field(name("result_json"), JSONB.class);
-
-  /**
-   * 캐시 조회에 붙이는 테넌트 술어용 컬럼. V103 이 유니크를 {@code (tenant_id, row_hash, prompt_version)} 으로 접었으므로 캐시는
-   * 테넌트별로 파티션된다(R2) — {@code row_hash} 는 분류 대상 <b>행 내용</b>의 해시라, 술어 없이 조회하면 A 테넌트 행의 존재와 추론 결과가 B
-   * 테넌트의 캐시 히트로 관측된다. 정책(V104)에 앞서 쿼리 자체가 격리를 성립시킨다.
-   */
-  private static final Field<Long> CACHE_TENANT_ID = field(name("tenant_id"), Long.class);
-
   private final AiAgentClient aiAgentClient;
   private final DataTableRowService dataTableRowService;
   private final DataTableService dataTableService;
   private final DatasetRepository datasetRepository;
   private final ObjectMapper objectMapper;
-  private final DSLContext dsl;
+  // 캐시 조회·저장 — 리포지토리는 트랜잭션을 더하지 않는다(경계는 아래 좁은 TransactionTemplate).
+  private final AiInferenceCacheRepository cacheRepository;
   private final TransactionTemplate transactionTemplate;
   // 배치마다 진척을 남기기 위한 저장소 — 근거는 reportProgress javadoc 참고(#691).
   private final PipelineExecutionRepository executionRepository;
@@ -460,9 +443,6 @@ public class AiClassifyExecutor {
 
   private record BatchResult(List<Map<String, Object>> rows, int cached, int processed) {}
 
-  /** 캐시에 새로 적재할 항목 — 쓰기 루프를 한 트랜잭션으로 모으기 위해 잠시 모아 둔다. */
-  private record PendingCacheEntry(String rowHash, String resultJson) {}
-
   /**
    * 행을 가리키는 키 — id 를 문자열로 통일한다.
    *
@@ -595,27 +575,21 @@ public class AiClassifyExecutor {
     // IN 으로 접으면 테스트가 목을 세우려고 rowContentHash 를 직접 불러 기대 키를 만들어야 하고,
     // 그러면 테스트가 해시 구현에 묶인다 — LLM 호출이 지배하는 이 경로에서 아끼는 몇 번의 왕복보다
     // 그 대가가 크다. 배치 크기가 의미 있게 커지면 다시 볼 것.
-    List<JSONB> cachedJsonByIndex = new ArrayList<>(rowHashes.size());
+    List<String> cachedJsonByIndex = new ArrayList<>(rowHashes.size());
     transactionTemplate.executeWithoutResult(
         status -> {
           for (String rowHash : rowHashes) {
-            var cached =
-                dsl.select(CACHE_RESULT_JSON)
-                    .from(AI_INFERENCE_CACHE)
-                    .where(CACHE_ROW_HASH.eq(rowHash))
-                    .and(CACHE_PROMPT_VERSION.eq(promptHash))
-                    .and(CACHE_TENANT_ID.eq(tenantId))
-                    .fetchOne();
-            cachedJsonByIndex.add(cached != null ? cached.get(CACHE_RESULT_JSON) : null);
+            cachedJsonByIndex.add(
+                cacheRepository.findResultJson(rowHash, promptHash, tenantId).orElse(null));
           }
         });
 
     for (int i = 0; i < batch.size(); i++) {
       Map<String, Object> row = batch.get(i);
-      JSONB cachedJson = cachedJsonByIndex.get(i);
+      String cachedJson = cachedJsonByIndex.get(i);
 
       if (cachedJson != null) {
-        Map<String, Object> cachedValues = fromJson(cachedJson.data());
+        Map<String, Object> cachedValues = fromJson(cachedJson);
         Map<String, Object> outputRow = new HashMap<>(cachedValues);
         // source_id 는 **언제나** 지금 이 행의 id 로 덮는다(#687). 캐시 키가 내용만 보게 된 뒤로
         // 내용이 같은 여러 행이 한 캐시 항목을 공유한다 — 저장된 값을 재사용하면 그 행들이 전부
@@ -661,7 +635,7 @@ public class AiClassifyExecutor {
                   Collectors.toMap(
                       r -> String.valueOf(r.values().get("source_id")), r -> r, (a, b) -> a));
 
-      List<PendingCacheEntry> pendingCacheEntries = new ArrayList<>();
+      List<AiInferenceCacheRepository.Entry> pendingCacheEntries = new ArrayList<>();
 
       for (Map<String, Object> missRow : cacheMissRows) {
         String rowHash = (String) missRow.get("_rowHash");
@@ -683,7 +657,7 @@ public class AiClassifyExecutor {
         // (저장된 내용 + 언제나 이 행의 source_id).
         Map<String, Object> cacheValues = new HashMap<>(classifyResult.values());
         cacheValues.remove("source_id");
-        pendingCacheEntries.add(new PendingCacheEntry(rowHash, toJson(cacheValues)));
+        pendingCacheEntries.add(new AiInferenceCacheRepository.Entry(rowHash, toJson(cacheValues)));
 
         Map<String, Object> outputRow = new HashMap<>(cacheValues);
         outputRow.put("source_id", sourceId);
@@ -692,29 +666,14 @@ public class AiClassifyExecutor {
 
       // ── 쓰기 루프 (좁은 트랜잭션 2/2) ────────────────────────────────────
       // 외부 HTTP 호출은 이미 끝났고 이 블록 밖에 있다(R3).
-      // tenant_id 는 일부러 세팅하지 않는다 — GUC 파생 DEFAULT(V103)가 채운다. 앱이 직접 싣는
-      // 유일한 지점이 되면 GUC 와 어긋날 여지가 생기고, 이 저장소의 다른 테넌트 테이블 선례
-      // (MappingRepository, DatasetOntologyRepository)와도 달라진다.
-      // onConflictDoNothing() 은 conflict target 이 없는 형태라 인덱스 추론을 하지 않는다 —
-      // V103 의 유니크 접기로 깨질 지점이 아니다(전수 확인은 Task 3).
+      // tenant_id 세팅 생략·onConflictDoNothing 근거는 AiInferenceCacheRepository.insertIgnoringConflicts
+      // 의 Javadoc 으로 옮겼다(쿼리와 함께 둔다).
       if (!pendingCacheEntries.isEmpty()) {
         try {
           // 조회와 대칭으로 다중 VALUES 한 방에 넣는다 — 항목마다 INSERT 를 던지면 왕복이 캐시
           // 미스 수만큼 늘고, 그 시간만큼 이 트랜잭션이 열려 있다.
           transactionTemplate.executeWithoutResult(
-              status -> {
-                var insert =
-                    dsl.insertInto(
-                        AI_INFERENCE_CACHE,
-                        CACHE_ROW_HASH,
-                        CACHE_PROMPT_VERSION,
-                        CACHE_RESULT_JSON);
-                for (PendingCacheEntry entry : pendingCacheEntries) {
-                  insert =
-                      insert.values(entry.rowHash(), promptHash, JSONB.valueOf(entry.resultJson()));
-                }
-                insert.onConflictDoNothing().execute();
-              });
+              status -> cacheRepository.insertIgnoringConflicts(promptHash, pendingCacheEntries));
         } catch (Exception e) {
           // log.warn 에서 승격. 여기서 실패하면 캐시가 영구 미스가 되어 같은 행에 대해 LLM 을
           // 매번 다시 호출한다 — 기능은 정상으로 보이면서 비용만 계속 드는 조용한 결함이라
@@ -727,7 +686,7 @@ public class AiClassifyExecutor {
               pendingCacheEntries.size(),
               tenantId,
               promptHash,
-              pendingCacheEntries.stream().map(PendingCacheEntry::rowHash).toList(),
+              pendingCacheEntries.stream().map(AiInferenceCacheRepository.Entry::rowHash).toList(),
               e);
         }
       }

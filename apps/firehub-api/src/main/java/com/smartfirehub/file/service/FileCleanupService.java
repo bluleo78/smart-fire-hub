@@ -1,7 +1,7 @@
 package com.smartfirehub.file.service;
 
-import static com.smartfirehub.jooq.Tables.UPLOADED_FILES;
-
+import com.smartfirehub.file.repository.UploadedFileRepository;
+import com.smartfirehub.file.repository.UploadedFileRepository.ExpiredFile;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
@@ -13,8 +13,6 @@ import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.DSLContext;
-import org.jooq.Record2;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -24,7 +22,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Slf4j
 public class FileCleanupService {
 
-  private final DSLContext dsl;
+  private final UploadedFileRepository uploadedFileRepository;
   private final TenantScopedRunner tenantScopedRunner;
   private final TransactionTemplate transactionTemplate;
 
@@ -49,7 +47,7 @@ public class FileCleanupService {
    * <p><b>테넌트 순회(P2-b)</b>: 스케줄러에는 원 HTTP 요청이 없어 승계할 테넌트가 없다 — ACTIVE 테넌트를 순회한다. 순회하지 않으면 RLS 가
    * uploaded_files 를 전부 차단해 만료 파일이 예외도 로그도 없이 영구히 쌓인다.
    *
-   * <p><b>트랜잭션 경계</b>: 이 메서드는 리포지토리를 거치지 않고 {@code DSLContext} 를 직접 쓰므로, 순회만으로는 GUC(app.tenant_id)가
+   * <p><b>트랜잭션 경계</b>: 이 메서드의 DB 접근은 리포지토리 경유여도(리포지토리에는 트랜잭션을 더하지 않는다) 순회만으로는 GUC(app.tenant_id)가
    * 주입되지 않는다(GUC 는 {@code TenantAwareTransactionManager.doBegin} 에서만 주입된다). 그래서 DB 구간을 {@code
    * TransactionTemplate} 으로 감싸되, <b>느린 디스크 삭제는 트랜잭션 밖</b>에 남긴다 — 파일 수가 많으면 커넥션을 오래 점유해 풀이 고갈된다.
    */
@@ -65,13 +63,8 @@ public class FileCleanupService {
     // 1) 읽기 — 트랜잭션 안(GUC 필요). id 를 함께 읽어 2단계 삭제가 경로 문자열이 아니라 PK 로
     // 이뤄지게 한다. 경로로 지우면 두 구간 사이에 같은 경로가 재사용/갱신됐을 때 만료되지 않은
     // 행을 지울 수 있다.
-    List<Record2<Long, String>> expired =
-        transactionTemplate.execute(
-            status ->
-                dsl.select(UPLOADED_FILES.ID, UPLOADED_FILES.STORAGE_PATH)
-                    .from(UPLOADED_FILES)
-                    .where(UPLOADED_FILES.EXPIRES_AT.lt(now))
-                    .fetch());
+    List<ExpiredFile> expired =
+        transactionTemplate.execute(status -> uploadedFileRepository.findExpired(now));
 
     if (expired == null || expired.isEmpty()) {
       return;
@@ -79,11 +72,11 @@ public class FileCleanupService {
 
     // 2) 디스크 삭제 — 트랜잭션 밖. 삭제 성공한 파일의 id 만 모은다(실패분은 DB 유지 → 다음 주기 재시도).
     List<Long> deletableIds = new ArrayList<>();
-    for (Record2<Long, String> row : expired) {
-      String storagePath = row.value2();
+    for (ExpiredFile row : expired) {
+      String storagePath = row.storagePath();
       try {
         Files.deleteIfExists(Path.of(storagePath));
-        deletableIds.add(row.value1());
+        deletableIds.add(row.id());
       } catch (IOException e) {
         log.warn(
             "디스크 파일 삭제 실패 — DB 레코드를 유지하여 다음 정리 사이클에서 재시도 가능: {}: {}", storagePath, e.getMessage());
@@ -96,11 +89,7 @@ public class FileCleanupService {
     if (!deletableIds.isEmpty()) {
       Integer result =
           transactionTemplate.execute(
-              status ->
-                  dsl.deleteFrom(UPLOADED_FILES)
-                      .where(UPLOADED_FILES.ID.in(deletableIds))
-                      .and(UPLOADED_FILES.EXPIRES_AT.lt(now))
-                      .execute());
+              status -> uploadedFileRepository.deleteExpiredByIds(deletableIds, now));
       dbDeleted = result == null ? 0 : result;
     }
 

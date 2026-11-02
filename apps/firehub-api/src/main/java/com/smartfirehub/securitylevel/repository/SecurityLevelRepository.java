@@ -4,20 +4,26 @@ import static com.smartfirehub.jooq.Tables.DATASET;
 import static com.smartfirehub.jooq.Tables.DATASET_ACCESS_GRANT;
 import static com.smartfirehub.jooq.Tables.ROLE;
 import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
+import static com.smartfirehub.jooq.Tables.USER;
+import static com.smartfirehub.jooq.Tables.USER_ROLE;
+import static org.jooq.impl.DSL.val;
 
 import com.smartfirehub.jooq.tables.records.SecurityLevelRecord;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.dto.SecurityLevelRequest;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
@@ -230,6 +236,65 @@ public class SecurityLevelRepository {
         .execute();
   }
 
+  /** 역할 자격 화면·변경 판정에 필요한 역할 한 행 — 생성 레코드를 서비스에 노출하지 않으려는 값 객체. */
+  public record RoleClearanceRow(String name, Boolean isSystem, Long maxSecurityLevelId) {}
+
+  /** 역할 1개의 (이름·시스템 여부·최대 열람 등급). 없으면 비어 돌아온다. */
+  public Optional<RoleClearanceRow> findRoleClearanceRow(long roleId) {
+    var r = dsl.selectFrom(ROLE).where(ROLE.ID.eq(roleId)).fetchOne();
+    if (r == null) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        new RoleClearanceRow(r.getName(), r.getIsSystem(), r.getMaxSecurityLevelId()));
+  }
+
+  /** 이 역할을 보유한 사용자 수. */
+  public long countRoleMembers(long roleId) {
+    return dsl.fetchCount(USER_ROLE, USER_ROLE.ROLE_ID.eq(roleId));
+  }
+
+  /** 역할의 최대 열람 등급을 바꾼다. */
+  public void updateRoleMaxLevel(long roleId, long levelId) {
+    dsl.update(ROLE).set(ROLE.MAX_SECURITY_LEVEL_ID, levelId).where(ROLE.ID.eq(roleId)).execute();
+  }
+
+  /**
+   * 호출자가 조건 조립기(DatasetAccessGuard)로 만든 가시성 조건에 맞는 데이터셋 수.
+   *
+   * <p>조건은 데이터셋의 id·등급 컬럼에 거는 술어라, 서비스가 생성 테이블을 직접 참조하지 않도록 컬럼을 이 메서드가 넘겨 준다(조건 조립기 설계 변경은 WD-485
+   * 범위).
+   *
+   * @param conditionOf (데이터셋 id 컬럼, 데이터셋 등급 컬럼) → 가시성 조건
+   */
+  public long countDatasets(BiFunction<Field<Long>, Field<Long>, Condition> conditionOf) {
+    return dsl.fetchCount(DATASET, conditionOf.apply(DATASET.ID, DATASET.SECURITY_LEVEL_ID));
+  }
+
+  /** 주어진 데이터셋들이 속한 등급 id 의 집합(중복 제거). */
+  public Set<Long> findDistinctLevelIds(Collection<Long> datasetIds) {
+    return dsl.selectDistinct(DATASET.SECURITY_LEVEL_ID)
+        .from(DATASET)
+        .where(DATASET.ID.in(datasetIds))
+        .fetchSet(DATASET.SECURITY_LEVEL_ID);
+  }
+
+  /** 데이터셋이 러너가 만든 TEMP(origin_type='TEMP') 인가. */
+  public boolean isTempDataset(long datasetId) {
+    return dsl.fetchExists(DATASET, DATASET.ID.eq(datasetId).and(DATASET.ORIGIN_TYPE.eq("TEMP")));
+  }
+
+  /** 데이터셋이 이 스텝이 만든 TEMP(origin_type='TEMP' 이고 source_pipeline_step_id 가 이 스텝) 인가. */
+  public boolean isTempDatasetOfStep(long datasetId, long stepId) {
+    return dsl.fetchExists(
+        DATASET,
+        DATASET
+            .ID
+            .eq(datasetId)
+            .and(DATASET.ORIGIN_TYPE.eq("TEMP"))
+            .and(DATASET.SOURCE_PIPELINE_STEP_ID.eq(stepId)));
+  }
+
   /** 역할 1개의 열람 등급 — 허용 목록 시드가 "rank 이상 자격 역할"을 고르는 데 쓴다. */
   public record RoleLevel(long roleId, String roleName, Long levelId, boolean systemAdmin) {}
 
@@ -244,6 +309,143 @@ public class SecurityLevelRepository {
                     r.get(ROLE.NAME),
                     r.get(ROLE.MAX_SECURITY_LEVEL_ID),
                     SystemAdminRole.matches(r.get(ROLE.NAME), r.get(ROLE.IS_SYSTEM))));
+  }
+
+  /**
+   * 데이터셋의 보안 등급을 지정 값으로 바꾼다(clone 상속). 자동 상향 표시는 건드리지 않는다. 호출자(DatasetSecurityService)는 모두 서비스 트랜잭션
+   * 안이다.
+   */
+  public void setDatasetLevel(long datasetId, Long levelId) {
+    dsl.update(DATASET)
+        .set(DATASET.SECURITY_LEVEL_ID, levelId)
+        .where(DATASET.ID.eq(datasetId))
+        .execute();
+  }
+
+  /** 수동 등급 변경 — 등급을 바꾸면서 자동 상향 표시도 함께 지운다(남기면 하향 뒤에도 "자동 상향되었습니다" 배너가 남는다). */
+  public void setDatasetLevelClearingAutoRaise(long datasetId, long levelId) {
+    dsl.update(DATASET)
+        .set(DATASET.SECURITY_LEVEL_ID, levelId)
+        .set(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT, (LocalDateTime) null)
+        .where(DATASET.ID.eq(datasetId))
+        .execute();
+  }
+
+  /**
+   * 파이프라인 출력 등급 변경 — 등급을 바꾸고, 자동 상향이면 상향 시각(지금)도 남긴다.
+   *
+   * @param autoRaise true 면 자동 상향 시각을 현재 시각으로 기록
+   */
+  public void setPipelineOutputLevel(long datasetId, long levelId, boolean autoRaise) {
+    var update = dsl.update(DATASET).set(DATASET.SECURITY_LEVEL_ID, levelId);
+    if (autoRaise) {
+      update = update.set(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT, LocalDateTime.now());
+    }
+    update.where(DATASET.ID.eq(datasetId)).execute();
+  }
+
+  /** 데이터셋의 자동 상향 시각. 상향된 적이 없으면(또는 데이터셋이 없으면) null. */
+  public LocalDateTime findAutoRaisedAt(long datasetId) {
+    return dsl.select(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT)
+        .from(DATASET)
+        .where(DATASET.ID.eq(datasetId))
+        .fetchOne(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT);
+  }
+
+  /** 데이터셋의 자동 상향 표시를 지운다. */
+  public void clearAutoRaisedAt(long datasetId) {
+    dsl.update(DATASET)
+        .set(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT, (LocalDateTime) null)
+        .where(DATASET.ID.eq(datasetId))
+        .execute();
+  }
+
+  /** 자동 상향 표시가 비어 있을 때만 이전 시각으로 되살린다(이번 실행 중에 더 최근 표시가 찍혔으면 그 값을 둔다). */
+  public void restoreAutoRaisedAtIfAbsent(long datasetId, LocalDateTime previousAutoRaisedAt) {
+    dsl.update(DATASET)
+        .set(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT, previousAutoRaisedAt)
+        .where(DATASET.ID.eq(datasetId))
+        .and(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT.isNull())
+        .execute();
+  }
+
+  /**
+   * 데이터셋 행을 {@code FOR UPDATE} 로 잠근다(호출 트랜잭션 끝까지 유지). 호출 서비스 메서드가 모두 트랜잭션이라 클래스 단위 REQUIRED 가 합류한다.
+   *
+   * @return 데이터셋 행이 있어 잠갔으면 true
+   */
+  public boolean lockDatasetRow(long datasetId) {
+    return dsl.select(DATASET.ID)
+        .from(DATASET)
+        .where(DATASET.ID.eq(datasetId))
+        .forUpdate()
+        .fetchOptional()
+        .isPresent();
+  }
+
+  /** 데이터셋 행을 {@code FOR UPDATE} 로 잠그면서 현재 등급 id 를 읽는다. 데이터셋이 없으면 비어 돌아온다. */
+  public Optional<Long> lockDatasetAndFindLevelId(long datasetId) {
+    return dsl.select(DATASET.SECURITY_LEVEL_ID)
+        .from(DATASET)
+        .where(DATASET.ID.eq(datasetId))
+        .forUpdate()
+        .fetchOptional(DATASET.SECURITY_LEVEL_ID);
+  }
+
+  /** 역할 id → 역할 열람 등급 id(max_security_level_id). 이 테넌트(RLS) 역할만 나온다. */
+  public Map<Long, Long> findRoleLevelIds(Collection<Long> roleIds) {
+    return dsl.select(ROLE.ID, ROLE.MAX_SECURITY_LEVEL_ID)
+        .from(ROLE)
+        .where(ROLE.ID.in(roleIds))
+        .fetchMap(ROLE.ID, ROLE.MAX_SECURITY_LEVEL_ID);
+  }
+
+  /** 이 테넌트(RLS)에 그 역할이 있는가. */
+  public boolean roleExists(long roleId) {
+    return dsl.fetchExists(ROLE, ROLE.ID.eq(roleId));
+  }
+
+  /** 허용 목록 후보 사용자 한 명. */
+  public record CandidateUser(Long id, String name, String email) {}
+
+  /** 허용 목록 후보 역할 한 개(역할 열람 등급 포함). */
+  public record CandidateRole(Long id, String name, Long levelId) {}
+
+  /** 이 테넌트 ACTIVE 멤버이면서 활성 계정인 사용자(이름 순). membership 은 RLS 없는 전역 테이블이라 tenant_id 를 명시한다. */
+  public List<CandidateUser> findCandidateUsers(long tenantId) {
+    return dsl.select(USER.ID, USER.NAME, USER.EMAIL)
+        .from(USER)
+        .join(ActiveMembership.TABLE)
+        .on(ActiveMembership.of(USER.ID, val(tenantId)))
+        .where(USER.IS_ACTIVE.isTrue())
+        .orderBy(USER.NAME.asc())
+        .fetch(r -> new CandidateUser(r.get(USER.ID), r.get(USER.NAME), r.get(USER.EMAIL)));
+  }
+
+  /** 이 테넌트(RLS) 역할 전부(이름 순) — 허용 목록 후보용. */
+  public List<CandidateRole> findCandidateRoles() {
+    return dsl.select(ROLE.ID, ROLE.NAME, ROLE.MAX_SECURITY_LEVEL_ID)
+        .from(ROLE)
+        .orderBy(ROLE.NAME.asc())
+        .fetch(
+            r ->
+                new CandidateRole(
+                    r.get(ROLE.ID), r.get(ROLE.NAME), r.get(ROLE.MAX_SECURITY_LEVEL_ID)));
+  }
+
+  /** 사용자가 이 테넌트 ACTIVE 멤버이고 계정도 활성인가(허용 항목 추가 검증 — 후보 조회와 같은 기준). */
+  public boolean isActiveMember(long userId, long tenantId) {
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from(ActiveMembership.TABLE)
+            .where(ActiveMembership.of(val(userId), val(tenantId)))
+            // 후보 조회와 같은 기준: 비활성화된 계정은 멤버십이 ACTIVE 여도 대상이 아니다.
+            .and(
+                DSL.exists(
+                    dsl.selectOne()
+                        .from(USER)
+                        .where(USER.ID.eq(userId))
+                        .and(USER.IS_ACTIVE.isTrue()))));
   }
 
   /** 순서 일괄 갱신 — UNIQUE(tenant_id, rank) 를 트랜잭션 끝까지 미룬다(DEFERRABLE). */

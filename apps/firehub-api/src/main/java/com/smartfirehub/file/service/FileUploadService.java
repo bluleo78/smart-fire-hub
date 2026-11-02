@@ -1,11 +1,10 @@
 package com.smartfirehub.file.service;
 
-import static com.smartfirehub.jooq.Tables.UPLOADED_FILES;
-
 import com.smartfirehub.file.dto.FileUploadResponse;
 import com.smartfirehub.file.exception.FileNotFoundException;
 import com.smartfirehub.file.exception.FileSizeLimitExceededException;
 import com.smartfirehub.file.exception.UnsupportedUploadFileTypeException;
+import com.smartfirehub.file.repository.UploadedFileRepository;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,7 +19,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.DSLContext;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -83,19 +81,19 @@ public class FileUploadService {
           "DATA", 256L * 1024 * 1024,
           "DOCUMENT", 10L * 1024 * 1024);
 
-  private final DSLContext dsl;
+  private final UploadedFileRepository uploadedFileRepository;
   private final TransactionTemplate transactionTemplate;
   private final String uploadDir;
   private final int maxFilesPerRequest;
   private final int expiryHours;
 
   public FileUploadService(
-      DSLContext dsl,
+      UploadedFileRepository uploadedFileRepository,
       TransactionTemplate transactionTemplate,
       @Value("${firehub.file.upload-dir:./uploads}") String uploadDir,
       @Value("${firehub.file.max-files-per-request:3}") int maxFilesPerRequest,
       @Value("${firehub.file.expiry-hours:24}") int expiryHours) {
-    this.dsl = dsl;
+    this.uploadedFileRepository = uploadedFileRepository;
     this.transactionTemplate = transactionTemplate;
     this.uploadDir = uploadDir;
     this.maxFilesPerRequest = maxFilesPerRequest;
@@ -144,26 +142,22 @@ public class FileUploadService {
     Instant expiresAt = now.plusSeconds((long) expiryHours * 3600);
 
     // 디스크 쓰기(file.transferTo, 위)는 이미 끝났다 — 여기서부터 DB 삽입 구간만 TransactionTemplate 으로
-    // 감싸 GUC(app.tenant_id)가 주입된 트랜잭션 커넥션으로 insert 하되, 파일시스템 I/O 는 트랜잭션
-    // 경계 밖에 남긴다(느린 디스크 I/O 가 커넥션을 점유하는 것을 방지, 데이터임포트 서비스와 동일 패턴).
+    // 감싸 GUC(app.tenant_id)가 주입된 트랜잭션 커넥션으로 리포지토리 insert 를 한다(리포지토리에는 트랜잭션이 없어
+    // 이 경계가 필수). 파일시스템 I/O 는 트랜잭션 경계 밖에 남긴다(느린 디스크 I/O 가 커넥션을 점유하는 것을 방지,
+    // 데이터임포트 서비스와 동일 패턴).
     Long fileId =
         transactionTemplate.execute(
             status ->
-                dsl.insertInto(UPLOADED_FILES)
-                    .set(UPLOADED_FILES.ORIGINAL_NAME, originalName)
-                    .set(UPLOADED_FILES.STORED_NAME, storedName)
-                    .set(UPLOADED_FILES.MIME_TYPE, mimeType)
-                    .set(UPLOADED_FILES.FILE_SIZE, file.getSize())
-                    .set(UPLOADED_FILES.FILE_CATEGORY, category)
-                    .set(UPLOADED_FILES.STORAGE_PATH, storagePath.toAbsolutePath().toString())
-                    .set(UPLOADED_FILES.UPLOADED_BY, userId)
-                    .set(UPLOADED_FILES.CREATED_AT, OffsetDateTime.ofInstant(now, ZoneOffset.UTC))
-                    .set(
-                        UPLOADED_FILES.EXPIRES_AT,
-                        OffsetDateTime.ofInstant(expiresAt, ZoneOffset.UTC))
-                    .returning(UPLOADED_FILES.ID)
-                    .fetchOne()
-                    .getId());
+                uploadedFileRepository.insert(
+                    originalName,
+                    storedName,
+                    mimeType,
+                    file.getSize(),
+                    category,
+                    storagePath.toAbsolutePath().toString(),
+                    userId,
+                    OffsetDateTime.ofInstant(now, ZoneOffset.UTC),
+                    OffsetDateTime.ofInstant(expiresAt, ZoneOffset.UTC)));
 
     log.info(
         "File uploaded: id={}, name={}, category={}, size={}",
@@ -175,48 +169,38 @@ public class FileUploadService {
     return new FileUploadResponse(fileId, originalName, mimeType, file.getSize(), category, now);
   }
 
-  // dsl 직접 사용(리포지토리 미경유) — @Transactional 이 없으면 GUC 미주입으로 RLS 가 전 행을 가려
-  // 예외 없이 fetchOne()==null → FileNotFoundException 으로 오인된다. 실결함 수정.
+  // 리포지토리 경유여도 @Transactional 이 없으면 GUC 미주입으로 RLS 가 전 행을 가려
+  // 예외 없이 조회 결과가 비어 → FileNotFoundException 으로 오인된다. 실결함 수정.
   @Transactional(readOnly = true)
   public FileUploadResponse getFileInfo(Long fileId, Long userId) {
     var record =
-        dsl.selectFrom(UPLOADED_FILES)
-            .where(UPLOADED_FILES.ID.eq(fileId))
-            .and(UPLOADED_FILES.UPLOADED_BY.eq(userId))
-            .fetchOne();
-
-    if (record == null) {
-      throw new FileNotFoundException(fileId);
-    }
+        uploadedFileRepository
+            .findByIdAndUploader(fileId, userId)
+            .orElseThrow(() -> new FileNotFoundException(fileId));
 
     return new FileUploadResponse(
-        record.getId(),
-        record.getOriginalName(),
-        record.getMimeType(),
-        record.getFileSize(),
-        record.getFileCategory(),
-        record.getCreatedAt().toInstant());
+        record.id(),
+        record.originalName(),
+        record.mimeType(),
+        record.fileSize(),
+        record.fileCategory(),
+        record.createdAt().toInstant());
   }
 
   /** 파일 다운로드 결과 레코드. byte[] 대신 Resource를 사용하여 대용량 파일(최대 256MB)을 스트리밍으로 전송하고 힙 메모리 과소비를 방지한다. */
   public record FileContentResult(
       Resource resource, String mimeType, String originalName, long size) {}
 
-  // dsl 직접 사용 — 실결함 수정. 아래 Files.exists/Files.size 는 메타데이터 확인만 하는 짧은 로컬 호출로,
+  // 리포지토리 경유여도 이 트랜잭션이 필수다(GUC 주입) — 실결함 수정. 아래 Files.exists/Files.size 는 메타데이터 확인만 하는 짧은 로컬 호출로,
   // 실제 파일 스트리밍(FileSystemResource 소비)은 컨트롤러 응답 단계에서 트랜잭션 밖에 일어난다.
   @Transactional(readOnly = true)
   public FileContentResult getFileContent(Long fileId, Long userId) throws IOException {
     var record =
-        dsl.selectFrom(UPLOADED_FILES)
-            .where(UPLOADED_FILES.ID.eq(fileId))
-            .and(UPLOADED_FILES.UPLOADED_BY.eq(userId))
-            .fetchOne();
+        uploadedFileRepository
+            .findByIdAndUploader(fileId, userId)
+            .orElseThrow(() -> new FileNotFoundException(fileId));
 
-    if (record == null) {
-      throw new FileNotFoundException(fileId);
-    }
-
-    Path storagePath = Path.of(record.getStoragePath());
+    Path storagePath = Path.of(record.storagePath());
     if (!Files.exists(storagePath)) {
       throw new FileNotFoundException(fileId);
     }
@@ -225,8 +209,7 @@ public class FileUploadService {
     // DATA 카테고리 파일은 최대 256MB이므로 전체 로드 시 OOM 위험 → 스트리밍 방식 필수.
     long fileSize = Files.size(storagePath);
     Resource resource = new FileSystemResource(storagePath);
-    return new FileContentResult(
-        resource, record.getMimeType(), record.getOriginalName(), fileSize);
+    return new FileContentResult(resource, record.mimeType(), record.originalName(), fileSize);
   }
 
   private String resolveMimeType(MultipartFile file) {
