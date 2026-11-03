@@ -25,6 +25,8 @@ import com.smartfirehub.file.exception.FileNotFoundException;
 import com.smartfirehub.file.exception.FileSizeLimitExceededException;
 import com.smartfirehub.file.exception.UnsupportedUploadFileTypeException;
 import com.smartfirehub.global.dto.ErrorResponse;
+import com.smartfirehub.global.platformdb.DbErrorDetail;
+import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import com.smartfirehub.notification.auth.exception.SlackWorkspaceInstallDeniedException;
 import com.smartfirehub.ontology.exception.OntologyElementNotFoundException;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
@@ -49,10 +51,9 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.postgresql.util.ServerErrorMessage;
 import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -73,7 +74,11 @@ import org.springframework.web.util.DisconnectedClientHelper;
 
 @RestControllerAdvice
 @Slf4j
+@RequiredArgsConstructor
 public class GlobalExceptionHandler {
+
+  /** DB 오류 판정 창구 — 벤더별 메시지 문구·드라이버 타입은 구현 안에 둔다(WD-486). */
+  private final PlatformDbErrors platformDbErrors;
 
   private ErrorResponse buildError(
       HttpStatus status, String message, Map<String, String> errors, HttpServletRequest request) {
@@ -180,21 +185,18 @@ public class GlobalExceptionHandler {
 
     // 분류(중복/외래 키/체크)는 원인 메시지로 판정하고, 사용자 문구는 원문 없이 고정한다. 외래 키는 방향(삭제·연결)을 서버 구조화
     // 오류까지 보고 가린다.
-    String message = "데이터 무결성 오류로 저장할 수 없습니다";
-    if (isMissingDefaultSecurityLevel(DataExceptionTranslator.findServerError(ex))) {
-      message = "기본 보안 등급이 없어 저장할 수 없습니다. 설정 › 데이터 보안에서 기본 등급을 지정하세요";
-    } else if (ex.getCause() != null) {
-      String causeMsg = ex.getCause().getMessage();
-      if (causeMsg != null && causeMsg.contains("duplicate key")) {
-        message = "이미 같은 값이 있어 저장할 수 없습니다";
-      } else if (causeMsg != null && causeMsg.contains("foreign key")) {
-        message =
-            describeForeignKeyViolation(causeMsg, DataExceptionTranslator.findServerError(ex));
-      } else if (causeMsg != null && causeMsg.contains("check constraint")) {
-        message = "입력값이 제약 조건을 만족하지 않습니다";
-      }
-      // 위 분류 어디에도 들지 않는 원인은 기본 문구 그대로다 — causeMsg 를 붙이면 스키마 정보가 샌다.
-    }
+    // 위 분류 어디에도 들지 않는 원인(UNCLASSIFIED)은 기본 문구 그대로다 — 원문을 붙이면 스키마 정보가 샌다.
+    String message =
+        isMissingDefaultSecurityLevel(platformDbErrors.findError(ex).orElse(null))
+            ? "기본 보안 등급이 없어 저장할 수 없습니다. 설정 › 데이터 보안에서 기본 등급을 지정하세요"
+            : switch (platformDbErrors.classifyIntegrityViolation(ex)) {
+              case DUPLICATE_KEY -> "이미 같은 값이 있어 저장할 수 없습니다";
+              case FOREIGN_KEY_IN_USE -> "다른 곳에서 사용 중이라 삭제할 수 없습니다";
+              case FOREIGN_KEY_MISSING_TARGET -> "연결할 항목을 찾을 수 없습니다";
+              case FOREIGN_KEY_OTHER -> "연결된 항목 때문에 처리할 수 없습니다";
+              case CHECK_CONSTRAINT -> "입력값이 제약 조건을 만족하지 않습니다";
+              case UNCLASSIFIED -> "데이터 무결성 오류로 저장할 수 없습니다";
+            };
     ErrorResponse response = buildError(HttpStatus.CONFLICT, message, null, request);
     return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }
@@ -204,43 +206,15 @@ public class GlobalExceptionHandler {
    * 걸린다(WD-400). 일반 무결성 문구로는 원인을 알 수 없어 고칠 곳을 알려 준다. 원문 메시지가 아니라 서버 구조화 오류의 SQLState·열 이름으로 가린다 —
    * 문구 대조는 서버 언어 설정에 따라 빗나가고, 메시지에 실린 SQL·행 값에 열 이름이 섞여 다른 위반까지 잡을 수 있다.
    */
-  private static boolean isMissingDefaultSecurityLevel(ServerErrorMessage serverError) {
+  private static boolean isMissingDefaultSecurityLevel(DbErrorDetail serverError) {
     return serverError != null
-        && "23502".equals(serverError.getSQLState())
-        && SECURITY_LEVEL_COLUMNS.contains(serverError.getColumn());
+        && "23502".equals(serverError.sqlState())
+        && SECURITY_LEVEL_COLUMNS.contains(serverError.column());
   }
 
   /** 기본값이 테넌트 기본 보안 등급인 열(V133 — dataset.security_level_id, role.max_security_level_id). */
   private static final Set<String> SECURITY_LEVEL_COLUMNS =
       Set.of("security_level_id", "max_security_level_id");
-
-  /**
-   * 외래 키 위반(23503)의 방향을 가려 문구를 고른다(WD-99). 한 문구로는 한 방향에서 반대 뜻이 된다.
-   *
-   * <ul>
-   *   <li>삭제·키 변경 쪽(다른 곳에서 참조 중): 메시지 {@code update or delete on table}, 세부 {@code is still
-   *       referenced}
-   *   <li>삽입·수정 쪽(연결 대상 없음): 메시지 {@code insert or update on table}, 세부 {@code is not present}
-   * </ul>
-   *
-   * <p>원문은 판별에만 쓰고 응답에 싣지 않는다. 판별할 수 없으면 방향 없는 중립 문구다.
-   */
-  private static String describeForeignKeyViolation(
-      String causeMsg, ServerErrorMessage serverError) {
-    StringBuilder text = new StringBuilder(causeMsg != null ? causeMsg : "");
-    if (serverError != null) {
-      text.append('\n').append(Objects.toString(serverError.getMessage(), ""));
-      text.append('\n').append(Objects.toString(serverError.getDetail(), ""));
-    }
-    String all = text.toString();
-    if (all.contains("still referenced") || all.contains("update or delete on table")) {
-      return "다른 곳에서 사용 중이라 삭제할 수 없습니다";
-    }
-    if (all.contains("is not present") || all.contains("insert or update on table")) {
-      return "연결할 항목을 찾을 수 없습니다";
-    }
-    return "연결된 항목 때문에 처리할 수 없습니다";
-  }
 
   /**
    * Slack 앱 설치가 RLS 에 막힌 경우 500 이 아니라 409 로 응답한다 (멀티 테넌시 P2-g).
@@ -861,8 +835,8 @@ public class GlobalExceptionHandler {
   }
 
   /**
-   * 필수 쿼리 파라미터가 빠진 요청은 클라이언트 입력 오류라 500 대신 400 으로 답한다(WD-405). 예전에는 전용 처리가 없어 일반
-   * 예외로 떨어져 500 「예기치 않은 오류」가 났다(예: GET /api/v1/settings 에서 prefix 를 빼면 500).
+   * 필수 쿼리 파라미터가 빠진 요청은 클라이언트 입력 오류라 500 대신 400 으로 답한다(WD-405). 예전에는 전용 처리가 없어 일반 예외로 떨어져 500 「예기치
+   * 않은 오류」가 났다(예: GET /api/v1/settings 에서 prefix 를 빼면 500).
    */
   @ExceptionHandler(MissingServletRequestParameterException.class)
   public ResponseEntity<ErrorResponse> handleMissingRequestParameter(

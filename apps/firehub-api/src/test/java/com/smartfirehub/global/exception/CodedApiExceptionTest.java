@@ -20,7 +20,9 @@ class CodedApiExceptionTest {
 
   @Test
   void codedException_isRenderedWithStatusAndCode() {
-    var handler = new GlobalExceptionHandler();
+    var handler =
+        new GlobalExceptionHandler(
+            new com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbErrors());
     var request = new MockHttpServletRequest("POST", "/api/v1/auth/signup");
 
     var response =
@@ -37,7 +39,9 @@ class CodedApiExceptionTest {
 
   @Test
   void codedException_detailsGoToErrorsMap() {
-    var handler = new GlobalExceptionHandler();
+    var handler =
+        new GlobalExceptionHandler(
+            new com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbErrors());
     var response =
         handler.handleCodedApiException(
             new CodedApiException(

@@ -1,4 +1,4 @@
-package com.smartfirehub.embedding;
+package com.smartfirehub.embedding.repository;
 
 import java.util.ArrayList;
 import java.util.Comparator;

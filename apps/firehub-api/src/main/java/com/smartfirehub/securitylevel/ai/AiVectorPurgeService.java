@@ -7,6 +7,8 @@ import com.smartfirehub.dataset.rowsearch.RowSearchSyncService;
 import com.smartfirehub.dataset.rowsearch.SearchIndexStateRepository;
 import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
+import com.smartfirehub.global.platformdb.PlatformDbFeature;
+import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.ontology.graphread.GraphOntologySourceRepository;
 import java.util.List;
@@ -39,6 +41,7 @@ public class AiVectorPurgeService {
   private final RowSearchIndex rowSearchIndex;
   private final DatasetRepository datasetRepository;
   private final GraphOntologySourceRepository graphSources;
+  private final PlatformDbFeatures features;
 
   /**
    * 정리 결과(로그·테스트·배포 1회 잡의 완료 판정용).
@@ -65,6 +68,9 @@ public class AiVectorPurgeService {
    */
   public PurgeResult purgeDisallowed() {
     long tenantId = TenantContext.require("외부 벡터 정리");
+    if (vectorUnsupported()) {
+      return noVectorResult();
+    }
     return purge(tenantId, gate.disallowedDatasetIds());
   }
 
@@ -78,8 +84,27 @@ public class AiVectorPurgeService {
    */
   public PurgeResult purgeDataset(long datasetId) {
     long tenantId = TenantContext.require("외부 벡터 정리(데이터셋)");
+    if (vectorUnsupported()) {
+      return noVectorResult();
+    }
     List<Long> ids = gate.datasetDisallowed(datasetId) ? List.of(datasetId) : List.of();
     return purge(tenantId, ids);
+  }
+
+  /**
+   * 플랫폼 DB 가 벡터 검색을 지원하지 않으면 지울 벡터가 없다 — 서비스 가드가 러너·리스너 두 진입점을 모두 덮는다. 다만 {@code
+   * AiVectorPurgeStartupRunner} 도 일부러 기능을 따로 검사한다: 아무것도 지우지 않았는데 "완료" 플래그를 쓰지 않기 위해서다.
+   */
+  private boolean vectorUnsupported() {
+    if (features.supports(PlatformDbFeature.VECTOR_SEARCH)) {
+      return false;
+    }
+    log.info("외부 벡터 정리 건너뜀(벡터 검색 미지원 플랫폼 DB)");
+    return true;
+  }
+
+  private static PurgeResult noVectorResult() {
+    return new PurgeResult(0, 0, 0, 0, 0, List.of());
   }
 
   /** 불허 데이터셋 id 목록의 메타·청크·행 검색 벡터를 지우고 GraphRAG 잔존분을 표시한다(두 진입점 공통). */

@@ -2,7 +2,8 @@ package com.smartfirehub.dataset.search;
 
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
-import com.smartfirehub.embedding.VectorTables;
+import com.smartfirehub.embedding.repository.VectorLiterals;
+import com.smartfirehub.embedding.repository.VectorTables;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import org.jooq.DSLContext;

@@ -8,6 +8,7 @@ import static com.smartfirehub.jooq.Tables.USER;
 import static com.smartfirehub.jooq.Tables.USER_ROLE;
 import static org.jooq.impl.DSL.val;
 
+import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.jooq.tables.records.SecurityLevelRecord;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.dto.SecurityLevelRequest;
@@ -37,6 +38,9 @@ import org.springframework.stereotype.Repository;
 public class SecurityLevelRepository {
 
   private final DSLContext dsl;
+
+  /** 등급 정의 변경 직렬화 잠금 — PG advisory 호출을 플랫폼 잠금 추상화로 위임한다(WD-486). */
+  private final PlatformLocks locks;
 
   /** 현재 테넌트의 등급 전부(rank 오름차순 — 화면의 "아래로 갈수록 높음" 순서). */
   public List<LevelPolicy> findAll() {
@@ -105,9 +109,7 @@ public class SecurityLevelRepository {
    * 동기화 잠금(python_read_sync_t*)과 다르게 둔다 — 등급 변경 트랜잭션이 커밋 후 동기화를 기다리게 하지 않는다.
    */
   public void lockTenantLevelDefinitions(long tenantId) {
-    dsl.execute(
-        "SELECT pg_advisory_xact_lock(hashtextextended({0}, 0))",
-        DSL.val("security_level_defs_t" + tenantId));
+    locks.xactLock("security_level_defs_t" + tenantId);
   }
 
   /** 최상위 등급(rank 최대). 테넌트에는 항상 1개 이상 있다(기본 등급 삭제 불가). */

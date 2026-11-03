@@ -17,6 +17,7 @@ import com.smartfirehub.dataset.storage.TenantDataStoreRow;
 import com.smartfirehub.dataset.storage.TenantDataStoreStatus;
 import com.smartfirehub.dataset.storage.external.ExternalStoreConnections;
 import com.smartfirehub.dataset.storage.external.ExternalStoreConnections.SqlWork;
+import com.smartfirehub.global.platformdb.postgres.PostgresPlatformLocks;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
@@ -131,7 +132,14 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
               connectionsOpened++;
               return inv.<SqlWork<Object>>getArgument(1).apply(conn);
             });
-    sync = new TiberoPythonReadGrantSync(dsl, connections, repository, levelRepository, txManager);
+    sync =
+        new TiberoPythonReadGrantSync(
+            dsl,
+            connections,
+            repository,
+            levelRepository,
+            new PostgresPlatformLocks(dsl),
+            txManager);
   }
 
   @AfterEach

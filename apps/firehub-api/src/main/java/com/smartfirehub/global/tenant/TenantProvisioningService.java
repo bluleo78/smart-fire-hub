@@ -1,7 +1,7 @@
 package com.smartfirehub.global.tenant;
 
+import com.smartfirehub.tenant.repository.TenantRepository;
 import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,7 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class TenantProvisioningService {
 
-  private final DSLContext dsl;
+  private final TenantRepository tenantRepository;
 
   /**
    * 대상 테넌트에 시스템 역할·권한매핑·내장 양식을 채운다. 멱등하므로 재실행해도 안전하다.
@@ -27,6 +27,6 @@ public class TenantProvisioningService {
    */
   @Transactional
   public void provisionDefaults(long tenantId) {
-    dsl.execute("select provision_tenant_defaults(?)", tenantId);
+    tenantRepository.provisionDefaults(tenantId);
   }
 }

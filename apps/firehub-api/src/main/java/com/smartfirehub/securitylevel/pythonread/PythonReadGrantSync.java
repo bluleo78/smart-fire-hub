@@ -163,8 +163,15 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    */
   public static void lockTenantSync(DSLContext ctx, long tenantId) {
     ctx.execute(
-        "SELECT pg_advisory_xact_lock(hashtextextended({0}, 0))",
-        DSL.val("python_read_sync_t" + tenantId));
+        "SELECT pg_advisory_xact_lock(hashtextextended({0}, 0))", DSL.val(syncLockKey(tenantId)));
+  }
+
+  /**
+   * 테넌트 동기화 잠금의 키 문자열. PG 판({@link #lockTenantSync})과 Tibero 판({@code TiberoPythonReadGrantSync})이
+   * <b>같은 키</b>를 써야 서로 직렬화되므로(WD-486 R4) 두 경로가 손으로 쓰지 않고 이 한 곳을 공유한다 — 키를 바꾸면 두 경로가 함께 바뀐다.
+   */
+  public static String syncLockKey(long tenantId) {
+    return "python_read_sync_t" + tenantId;
   }
 
   /**

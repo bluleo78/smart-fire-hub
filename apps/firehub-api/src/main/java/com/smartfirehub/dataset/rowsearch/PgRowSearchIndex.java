@@ -1,6 +1,6 @@
 package com.smartfirehub.dataset.rowsearch;
 
-import com.smartfirehub.dataset.search.VectorLiterals;
+import com.smartfirehub.embedding.repository.VectorLiterals;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;

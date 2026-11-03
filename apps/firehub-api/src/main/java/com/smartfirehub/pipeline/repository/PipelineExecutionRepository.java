@@ -2,7 +2,7 @@ package com.smartfirehub.pipeline.repository;
 
 import static org.jooq.impl.DSL.*;
 
-import com.smartfirehub.dataset.service.DataExceptionTranslator;
+import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import com.smartfirehub.pipeline.dto.ExecutionDetailResponse;
 import com.smartfirehub.pipeline.dto.PipelineExecutionResponse;
 import com.smartfirehub.pipeline.dto.StepExecutionResponse;
@@ -18,7 +18,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
-import org.postgresql.util.ServerErrorMessage;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +32,9 @@ import org.springframework.transaction.annotation.Transactional;
 public class PipelineExecutionRepository {
 
   private final DSLContext dsl;
+
+  /** DB 오류 판정 창구 — FK 위반 제약 이름을 벤더 중립으로 알아본다(WD-486). */
+  private final PlatformDbErrors platformDbErrors;
 
   // Table constants
   private static final Table<?> PIPELINE_EXECUTION = table(name("pipeline_execution"));
@@ -147,8 +149,10 @@ public class PipelineExecutionRepository {
       return query.returning(PE_ID).fetchOne(r -> r.get(PE_ID));
     } catch (DataIntegrityViolationException e) {
       // 파이프라인이 그 사이 삭제됐으면(WD-437 — 경쟁 정리는 PipelineRepository#lockById 참고) FK 위반 대신 404 로 알린다.
-      ServerErrorMessage err = DataExceptionTranslator.findServerError(e);
-      if (err != null && PIPELINE_FK_CONSTRAINT.equals(err.getConstraint())) {
+      if (platformDbErrors
+          .violatedConstraint(e)
+          .filter(PIPELINE_FK_CONSTRAINT::equals)
+          .isPresent()) {
         throw new PipelineNotFoundException();
       }
       throw e;

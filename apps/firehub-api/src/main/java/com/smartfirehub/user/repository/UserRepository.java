@@ -9,8 +9,8 @@ import static org.jooq.impl.DSL.lower;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.selectOne;
 import static org.jooq.impl.DSL.table;
-import static org.jooq.impl.DSL.val;
 
+import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.user.dto.UserResponse;
 import java.time.LocalDateTime;
@@ -43,6 +43,9 @@ public class UserRepository {
   private static final Field<String> M_STATUS = field(name("membership", "status"), String.class);
 
   private final DSLContext dsl;
+
+  /** 가입·관리자 가드 직렬화 잠금 — PG advisory 호출을 플랫폼 잠금 추상화로 위임한다(WD-486). */
+  private final PlatformLocks locks;
 
   /**
    * "이 사용자가 주어진 테넌트의 ACTIVE 멤버인가" 를 {@code "user"} 행에 대해 판정하는 술어.
@@ -169,7 +172,7 @@ public class UserRepository {
    * when the transaction ends.
    */
   public void acquireFirstUserLock() {
-    dsl.execute("SELECT pg_advisory_xact_lock({0})", val(1L));
+    locks.xactLock(1L);
   }
 
   /**
@@ -180,9 +183,7 @@ public class UserRepository {
    * 1)과 같은 숫자 키 공간을 쓰지만 테넌트 id 를 그대로 키로 쓰면 테넌트 1 이 가입 잠금과 충돌하므로 네임스페이스를 나눈다.
    */
   public void acquireMemberAdminGuardLock(long tenantId) {
-    dsl.execute(
-        "SELECT pg_advisory_xact_lock(hashtextextended({0}, 0))",
-        val("member-admin-guard:" + tenantId));
+    locks.xactLock("member-admin-guard:" + tenantId);
   }
 
   public UserResponse save(String username, String email, String password, String name) {

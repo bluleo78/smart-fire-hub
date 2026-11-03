@@ -1,7 +1,7 @@
 package com.smartfirehub.global.tenant;
 
+import com.smartfirehub.global.platformdb.PlatformTenantSession;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import javax.sql.DataSource;
 import org.springframework.jdbc.datasource.DataSourceUtils;
@@ -49,10 +49,12 @@ import org.springframework.transaction.TransactionDefinition;
  */
 public class TenantAwareTransactionManager extends JdbcTransactionManager {
 
-  private static final String SET_TENANT_GUC = "SELECT set_config('app.tenant_id', ?, true)";
+  /** 테넌트를 DB 세션에 심는 포트 — DB 별 SQL 은 구현체가 안다(WD-486). */
+  private final PlatformTenantSession tenantSession;
 
-  public TenantAwareTransactionManager(DataSource dataSource) {
+  public TenantAwareTransactionManager(DataSource dataSource, PlatformTenantSession tenantSession) {
     super(dataSource);
+    this.tenantSession = tenantSession;
   }
 
   @Override
@@ -66,9 +68,8 @@ public class TenantAwareTransactionManager extends JdbcTransactionManager {
 
     // super.doBegin 이 커넥션을 트랜잭션에 바인딩한 뒤이므로, 여기서 얻는 커넥션은 그 트랜잭션의 것이다.
     Connection connection = DataSourceUtils.getConnection(obtainDataSource());
-    try (PreparedStatement ps = connection.prepareStatement(SET_TENANT_GUC)) {
-      ps.setString(1, tenantId.toString());
-      ps.execute();
+    try {
+      tenantSession.applyToConnection(connection, tenantId);
     } catch (SQLException e) {
       // GUC 주입 실패를 조용히 넘기면 RLS 가 fail-closed 로 빈 결과를 주어 원인 추적이 어려워진다.
       // 다만 이 예외는 super.doBegin() 이 "성공적으로 끝난 뒤"에 발생한다 — 즉 커넥션 홀더가 이미

@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
 import com.smartfirehub.pipeline.dto.PipelineDeleteImpactResponse;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
@@ -33,6 +34,9 @@ public class TriggerRepository {
 
   private final DSLContext dsl;
   private final ObjectMapper objectMapper;
+
+  /** 체인 그래프 직렬화 잠금 — PG advisory 호출을 플랫폼 잠금 추상화로 위임한다(WD-486). */
+  private final PlatformLocks locks;
 
   private static final Table<?> PIPELINE_TRIGGER = table(name("pipeline_trigger"));
   private static final Field<Long> T_ID = field(name("pipeline_trigger", "id"), Long.class);
@@ -201,9 +205,7 @@ public class TriggerRepository {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public void lockChainGraph(long tenantId) {
-    dsl.execute(
-        "SELECT pg_advisory_xact_lock(hashtextextended({0}, 0))",
-        val("pipeline-chain-graph:" + tenantId));
+    locks.xactLock("pipeline-chain-graph:" + tenantId);
   }
 
   /**

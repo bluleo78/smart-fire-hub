@@ -1,8 +1,8 @@
 package com.smartfirehub.securitylevel.service;
 
-import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.EditConflictException;
+import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -25,7 +25,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
-import org.postgresql.util.ServerErrorMessage;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
@@ -63,6 +62,9 @@ public class SecurityLevelService {
   /** 리포트(스마트 작업 실행) 등급의 사용 중 집계·이동(WD-198). */
   private final com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository
       executionRepository;
+
+  /** DB 오류 판정 창구 — 이름 유니크 제약 위반을 벤더 중립으로 알아본다(WD-486). */
+  private final PlatformDbErrors platformDbErrors;
 
   @Transactional(readOnly = true)
   public List<SecurityLevelResponse> list() {
@@ -405,21 +407,18 @@ public class SecurityLevelService {
    * {@code uq_security_level_rank})은 이름 중복이 아니므로 그대로 던진다. 이 예외로 트랜잭션은 롤백된다(CodedApiException 은 런타임
    * 예외).
    */
-  private static <T> T withNameDuplicateAs409(java.util.function.Supplier<T> write) {
+  private <T> T withNameDuplicateAs409(java.util.function.Supplier<T> write) {
     try {
       return write.get();
     } catch (DuplicateKeyException e) {
-      if (NAME_UNIQUE_CONSTRAINT.equals(violatedConstraint(e))) {
+      if (platformDbErrors
+          .violatedConstraint(e)
+          .filter(NAME_UNIQUE_CONSTRAINT::equals)
+          .isPresent()) {
         throw nameDuplicate();
       }
       throw e;
     }
-  }
-
-  /** 예외 원인 사슬(연쇄 예외 포함)에서 PostgreSQL 이 보고한 위반 제약 이름을 찾는다(없으면 null). */
-  private static String violatedConstraint(Throwable e) {
-    ServerErrorMessage serverError = DataExceptionTranslator.findServerError(e);
-    return serverError != null ? serverError.getConstraint() : null;
   }
 
   private LevelPolicy require(long id) {

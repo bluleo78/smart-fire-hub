@@ -1,4 +1,4 @@
-package com.smartfirehub.dataset.search;
+package com.smartfirehub.embedding.repository;
 
 /**
  * pgvector 텍스트 리터럴 변환 공용 유틸.

@@ -4,6 +4,8 @@ import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.global.platformdb.PlatformDbFeature;
+import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import java.util.List;
@@ -20,7 +22,7 @@ import org.springframework.stereotype.Service;
  * </ul>
  *
  * <p>주의: 생성자 인자 순서는 {@code @RequiredArgsConstructor} 가 필드 선언 순서대로 생성한다 (embeddingRepo, metaReader,
- * embeddingFactory, aiGate). 단위 테스트가 이 4-arg 시그니처에 의존한다.
+ * embeddingFactory, aiGate, features). 단위 테스트가 이 5-arg 시그니처에 의존한다.
  */
 @Slf4j
 @Service
@@ -31,6 +33,7 @@ public class DatasetEmbeddingService {
   private final DatasetMetaReader metaReader;
   private final EmbeddingProviderFactory embeddingFactory;
   private final EmbeddingAiGate aiGate;
+  private final PlatformDbFeatures features;
 
   /** 동기: source_text 만 갱신. 메타 없으면(삭제됨) 인덱스 제거. 쓰기 트랜잭션 내에서 호출. */
   public void syncSourceText(long datasetId) {
@@ -52,6 +55,11 @@ public class DatasetEmbeddingService {
    * 로직이 추가되는 경우) 그 이후 코드가 컨텍스트 없이 실행되어 RLS 가 조용히 0행을 반환하게 된다.
    */
   public void reindexEmbedding(long datasetId, long tenantId) {
+    // 플랫폼 DB 가 벡터 검색을 지원하지 않으면 벡터 쓰기만 건너뛴다 — source_text 는 syncSourceText 가 이미 저장한다.
+    // 삭제(deleteVectors)도 부르지 않는 것은 의도다 — 벡터 테이블 자체가 없는 백엔드라 지울 것이 없다.
+    if (!features.supports(PlatformDbFeature.VECTOR_SEARCH)) {
+      return;
+    }
     TenantContext.runScoped(
         tenantId,
         () -> {

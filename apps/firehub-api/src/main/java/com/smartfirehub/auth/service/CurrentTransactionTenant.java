@@ -1,10 +1,10 @@
 package com.smartfirehub.auth.service;
 
+import com.smartfirehub.global.platformdb.PlatformTenantSession;
 import com.smartfirehub.global.tenant.TenantAwareTransactionManager;
 import com.smartfirehub.global.tenant.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.DSLContext;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -30,7 +30,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @Slf4j
 class CurrentTransactionTenant {
 
-  private final DSLContext dsl;
+  /** 테넌트 심기 SQL 을 DB 종류별로 숨긴 포트(WD-486). 트랜잭션 유무 가드는 이 클래스에 남는다. */
+  private final PlatformTenantSession tenantSession;
 
   /**
    * 현재 트랜잭션의 {@code app.tenant_id} 를 설정한다. 이후 이 트랜잭션에서 실행되는 문장은 해당 테넌트의 RLS 정책을 적용받고, {@code
@@ -44,6 +45,6 @@ class CurrentTransactionTenant {
       log.warn("트랜잭션 밖에서 app.tenant_id({}) 를 심으려 했다 — 무시한다", tenantId);
       return;
     }
-    dsl.execute("select set_config('app.tenant_id', ?, true)", String.valueOf(tenantId));
+    tenantSession.applyToCurrentTransaction(tenantId);
   }
 }

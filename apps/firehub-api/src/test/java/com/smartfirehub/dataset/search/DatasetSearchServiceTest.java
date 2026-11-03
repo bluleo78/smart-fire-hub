@@ -38,7 +38,7 @@ class DatasetSearchServiceTest {
 
   private DatasetSearchService service() {
     when(datasetAccessGuard.visibleSql(CLEARANCE, "d")).thenReturn(VIS);
-    return new DatasetSearchService(repository, embeddingFactory, datasetAccessGuard);
+    return new DatasetSearchService(repository, embeddingFactory, datasetAccessGuard, f -> true);
   }
 
   @Test

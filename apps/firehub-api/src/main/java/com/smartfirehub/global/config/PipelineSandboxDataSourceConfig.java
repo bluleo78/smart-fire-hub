@@ -1,5 +1,6 @@
 package com.smartfirehub.global.config;
 
+import com.smartfirehub.global.platformdb.PlatformTenantSession;
 import com.smartfirehub.global.tenant.TenantAwareTransactionManager;
 import com.zaxxer.hikari.HikariDataSource;
 import javax.sql.DataSource;
@@ -40,8 +41,9 @@ public class PipelineSandboxDataSourceConfig {
    */
   @Bean
   @Primary
-  public PlatformTransactionManager transactionManager(DataSource dataSource) {
-    return new TenantAwareTransactionManager(dataSource);
+  public PlatformTransactionManager transactionManager(
+      DataSource dataSource, PlatformTenantSession tenantSession) {
+    return new TenantAwareTransactionManager(dataSource, tenantSession);
   }
 
   @Bean

@@ -7,6 +7,7 @@ import static org.jooq.impl.DSL.table;
 import java.util.List;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /** 전역 `tenant` 테이블 조회. 이 테이블은 테넌트 경계 위에 있어 tenant_id·RLS 가 없다(V81). */
@@ -43,5 +44,17 @@ public class TenantRepository {
             .from(table(name("tenant")))
             .where(field(name("tenant", "id"), Long.class).eq(tenantId))
             .and(field(name("tenant", "status"), String.class).eq("ACTIVE")));
+  }
+
+  /**
+   * 대상 테넌트에 기본 역할·권한매핑·내장 양식을 시드하는 SQL 함수 {@code provision_tenant_defaults}(V98)를 호출한다.
+   *
+   * <p>호출 SQL 은 서비스에 있던 문장 그대로다(WD-486 — 서비스에서 DSLContext 를 없애려 리포지토리로 옮겼을 뿐 동작은 같다). 호출자인
+   * TenantProvisioningService 가 이미 트랜잭션을 열어 두므로 여기서는 합류해야 한다(MANDATORY) — 트랜잭션 밖에서 부르면 스스로 열지 않고
+   * 예외로 거부한다(시드가 부분 커밋되는 것을 막는다).
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void provisionDefaults(long tenantId) {
+    dsl.execute("select provision_tenant_defaults(?)", tenantId);
   }
 }

@@ -12,6 +12,8 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.platformdb.PlatformLocks;
+import com.smartfirehub.global.platformdb.postgres.PostgresPlatformLocks;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
@@ -50,6 +52,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
   @Autowired private OutputTableSessionLock sessionLock;
   @Autowired private SqlScriptExecutor sqlScriptExecutor;
   @Autowired private DSLContext dsl;
+  @Autowired private PlatformLocks platformLocks;
   @Autowired private DataTableService dataTableService;
   @Autowired private DataSource dataSource;
   @Autowired private IncrementalStepLock incrementalStepLock;
@@ -231,7 +234,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
     PreparedStatement acquire = mock(PreparedStatement.class);
     Statement release = mock(Statement.class);
     when(dataSource.getConnection()).thenReturn(connection);
-    when(connection.prepareStatement(OutputTableSessionLock.TRY_ACQUIRE_SQL)).thenReturn(acquire);
+    when(connection.prepareStatement(PostgresPlatformLocks.TRY_ACQUIRE_SQL)).thenReturn(acquire);
     ResultSet acquired = mock(ResultSet.class);
     when(acquire.executeQuery()).thenReturn(acquired);
     when(acquired.next()).thenReturn(true);
@@ -240,7 +243,10 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
     when(release.executeQuery(anyString())).thenThrow(new SQLException("연결 끊김"));
 
     String result =
-        inTenant(() -> new OutputTableSessionLock(dataSource).callLocked("some_out", () -> "ok"));
+        inTenant(
+            () ->
+                new OutputTableSessionLock(dataSource, platformLocks)
+                    .callLocked("some_out", () -> "ok"));
 
     // 본문의 결과는 그대로 돌려준다(해제 실패가 성공한 실행을 실패로 바꾸지 않는다).
     assertThat(result).isEqualTo("ok");
@@ -257,16 +263,19 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
     PreparedStatement acquire = mock(PreparedStatement.class);
     Statement release = mock(Statement.class);
     when(dataSource.getConnection()).thenReturn(connection);
-    when(connection.prepareStatement(OutputTableSessionLock.TRY_ACQUIRE_SQL)).thenReturn(acquire);
+    when(connection.prepareStatement(PostgresPlatformLocks.TRY_ACQUIRE_SQL)).thenReturn(acquire);
     ResultSet acquired = mock(ResultSet.class);
     when(acquire.executeQuery()).thenReturn(acquired);
     when(acquired.next()).thenReturn(true);
     when(acquired.getBoolean(1)).thenReturn(true);
     when(connection.createStatement()).thenReturn(release);
 
-    inTenant(() -> new OutputTableSessionLock(dataSource).callLocked("some_out", () -> "ok"));
+    inTenant(
+        () ->
+            new OutputTableSessionLock(dataSource, platformLocks)
+                .callLocked("some_out", () -> "ok"));
 
-    verify(release).executeQuery(OutputTableSessionLock.RELEASE_SQL);
+    verify(release).executeQuery(PostgresPlatformLocks.RELEASE_SQL);
     verify(connection, never()).abort(any());
     verify(connection).close();
   }
@@ -278,7 +287,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
   /** 같은 스텝 키를 다른 실행이 쥐고 있으면 상한까지만 기다리고 한국어 안내로 실패한다 — 대기자는 잠금을 남기지 않는다. */
   @Test
   void 증분_스텝_잠금은_대기_상한을_넘기면_안내와_함께_실패한다() {
-    IncrementalStepLock shortWait = new IncrementalStepLock(dataSource, 600);
+    IncrementalStepLock shortWait = new IncrementalStepLock(platformLocks, dataSource, 600);
     long stepId = 9_000_000L + (System.nanoTime() % 1_000_000);
     try (SessionAdvisoryLock.Held first =
         inTenant(() -> shortWait.acquire(stepId, "느린 스텝", ExecutionCancelCheck.NONE))) {
@@ -298,7 +307,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
   /** 기다리는 동안 실행이 취소되면 바로 취소 예외로 끝난다(WD-153) — 상한까지 기다리지 않는다. */
   @Test
   void 증분_스텝_잠금_대기_중_취소되면_바로_멈춘다() {
-    IncrementalStepLock longWait = new IncrementalStepLock(dataSource, 60_000);
+    IncrementalStepLock longWait = new IncrementalStepLock(platformLocks, dataSource, 60_000);
     long stepId = 8_000_000L + (System.nanoTime() % 1_000_000);
     java.util.concurrent.atomic.AtomicInteger checks =
         new java.util.concurrent.atomic.AtomicInteger();
@@ -317,7 +326,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
   /** 다른 스텝(다른 키)은 서로 기다리지 않는다 — 증분 스텝끼리라도 스텝이 다르면 직렬화하지 않는다. */
   @Test
   void 다른_증분_스텝의_잠금은_서로_막지_않는다() {
-    IncrementalStepLock shortWait = new IncrementalStepLock(dataSource, 600);
+    IncrementalStepLock shortWait = new IncrementalStepLock(platformLocks, dataSource, 600);
     long stepId = 7_000_000L + (System.nanoTime() % 1_000_000);
     try (SessionAdvisoryLock.Held a =
             inTenant(() -> shortWait.acquire(stepId, "A", ExecutionCancelCheck.NONE));
@@ -361,7 +370,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
     config.setMaximumPoolSize(1);
     config.setConnectionTimeout(IncrementalStepLock.POOL_CONNECTION_TIMEOUT_MS);
     try (HikariDataSource onePool = new HikariDataSource(config)) {
-      IncrementalStepLock lock = new IncrementalStepLock(onePool, 1_500);
+      IncrementalStepLock lock = new IncrementalStepLock(platformLocks, onePool, 1_500);
       long stepId = 5_000_000L + (System.nanoTime() % 1_000_000);
       try (SessionAdvisoryLock.Held first =
           inTenant(() -> lock.acquire(stepId, "A", ExecutionCancelCheck.NONE))) {

@@ -1,5 +1,6 @@
 package com.smartfirehub.global.architecture;
 
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,9 +25,12 @@ import org.junit.jupiter.api.Test;
  * <p>왜: 서비스가 쿼리를 직접 쥐면 저장소(PG/Tibero)를 바꿀 때 서비스 전체를 고쳐야 한다. 현재 위반 클래스는 아래 허용 목록으로 동결하고, 이후 작업이 옮긴
  * 클래스를 목록에서 지운다. 목록은 줄기만 하고 늘지 않아야 한다 — 새 클래스를 넣으려면 이 파일을 고쳐야 하므로 리뷰에서 드러난다.
  *
- * <p>WD-484 완료: 이동 대상 14개 클래스(서비스·게이트에 직접 박힌 쿼리)를 모두 리포지토리로 옮겨 그 목록을 없앴다. 남은 네 그룹(테넌트 데이터 경로·PG 기능
- * 인프라 WD-486·조건 조립기 WD-485·repository 패키지 밖 리포지토리)은 각 후속 작업에서 줄인다. 면제는 패키지 기준이며 이름({@code
- * *Repository})만으로는 면제되지 않는다.
+ * <p>플랫폼 DB 의 PG 전용 기능(잠금·테넌트 세션·LISTEN/NOTIFY·오류 판정·벡터 기능 플래그)은 {@code global.platformdb} 인터페이스와
+ * {@code ..platformdb.postgres..} 구현에 있다. 허용 목록의 사유 — {@code TENANT_DATA_PATH}(테넌트 데이터 경로), {@code
+ * PG_DATA_STORE_INFRA}(R2: PG 데이터 저장소를 세우는 코드라 Tibero 설치본에서 안 쓰임), {@code PLATFORM_DB_WIRING}(플랫폼
+ * DataSource 배선, 영구), {@code PG_DRIVER_OOS}(범위 밖 PG 데이터 경로의 드라이버 사용), {@code
+ * PREDICATE_BUILDERS_WD485}(조건 조립기)·{@code REPOSITORIES_OUTSIDE_PACKAGE}(repository 패키지 밖 리포지토리)는
+ * WD-485 에서 줄인다. 면제는 패키지 기준이며 이름({@code *Repository})만으로는 면제되지 않는다.
  *
  * <p>그래프 가져오기는 {@code SqlGateArchitectureTest} 와 같은 옵션을 쓴다(테스트·jooq 생성 코드 제외, 끝나면 해제). 두 클래스는 순차로
  * 돌고 각자 놓으므로 힙에 동시에 두 벌이 남지 않는다. 힙 사정은 그 클래스 주석 참고.
@@ -54,21 +58,43 @@ class PlatformDbAccessArchitectureTest {
           "com.smartfirehub.pipeline.service.SqlScriptExecutor",
           "com.smartfirehub.pipeline.service.VerbatimSql");
 
-  /** PG 기능 인프라 — 테넌트 스키마·롤 프로비저닝, 파이프라인 샌드박스, 벡터·HNSW 등 PG 전용 기능 기반(WD-486 에서 다룬다). */
-  static final Set<String> PG_INFRA_WD486 =
+  /**
+   * PG 데이터 저장소 인프라(R2) — 테넌트 스키마·롤 프로비저닝과 파이썬 읽기 권한 동기화. PG 데이터 저장소(테넌트 스키마·롤·GRANT)를 세우는 코드라
+   * Tibero 설치본에서는 쓰이지 않는다. Tibero 데이터 저장소 쪽 {@code TiberoPythonReadGrantSync} 는 저장소 행 조회에
+   * DSLContext 를 쓴다. 인터페이스로 추상화해도 이득이 없어 영구 분류한다.
+   */
+  static final Set<String> PG_DATA_STORE_INFRA =
       Set.of(
-          "com.smartfirehub.auth.service.CurrentTransactionTenant",
-          "com.smartfirehub.embedding.HnswSearch",
-          "com.smartfirehub.embedding.VectorTables",
-          "com.smartfirehub.global.config.PipelineSandboxDataSourceConfig",
           "com.smartfirehub.global.config.TenantPipelineDataSourceRegistry",
           "com.smartfirehub.global.tenant.TenantPipelineRoleBootstrap",
           "com.smartfirehub.global.tenant.TenantPipelineRoleProvisioner",
-          "com.smartfirehub.global.tenant.TenantProvisioningService",
           "com.smartfirehub.global.tenant.TenantSchemaProvisioner",
           "com.smartfirehub.securitylevel.pythonread.PythonReadGrantBackend",
           "com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync",
           "com.smartfirehub.securitylevel.pythonread.TiberoPythonReadGrantSync");
+
+  /**
+   * 플랫폼 DB 배선 — 플랫폼 {@code @Primary} DataSource·트랜잭션 매니저·DSLContext 를 만드는 설정이라 DSLContext 를 다루는 것이
+   * 존재 이유다. 영구 면제.
+   */
+  static final Set<String> PLATFORM_DB_WIRING =
+      Set.of("com.smartfirehub.global.config.PipelineSandboxDataSourceConfig");
+
+  /**
+   * PG JDBC 드라이버({@code org.postgresql..}) 직접 사용 중 {@code TENANT_DATA_PATH}·{@code
+   * PG_DATA_STORE_INFRA} 에 없는 범위 밖(OOS) 클래스 — 사용자 SQL 오류 메시지 가공·결과 값 변환처럼 PG 데이터 경로(§0.2
+   * Adhoc*·PipelineSqlErrorMessages)에 속한다. 오류 판정 공유 번역기는 {@code DataExceptionTranslator}(R6)다.
+   */
+  static final Set<String> PG_DRIVER_OOS =
+      Set.of(
+          "com.smartfirehub.dataset.service.DataExceptionTranslator",
+          "com.smartfirehub.global.util.AdhocGeometricValues",
+          "com.smartfirehub.global.util.AdhocResultValues",
+          "com.smartfirehub.global.util.AdhocSqlErrorMessages",
+          "com.smartfirehub.pipeline.service.PipelineSqlErrorMessages");
+
+  /** 플랫폼 DB 인터페이스의 PG 구현체 패키지(WD-486) — 이 패키지는 PG 전용 SQL·드라이버를 쓰는 것이 존재 이유라 목록이 아닌 패키지로 면제한다. */
+  static final String PLATFORM_DB_POSTGRES_PACKAGE = "..platformdb.postgres..";
 
   /**
    * 조건 조립기 — 접근 가능 데이터셋·그래프 술어를 jOOQ {@code Condition} 으로 만들어 호출자 쿼리에 끼운다. 생성 테이블 참조를 쓰는 설계 자체를 바꿔야
@@ -118,30 +144,52 @@ class PlatformDbAccessArchitectureTest {
     PROD = null;
   }
 
-  private static Set<String> allAllowed() {
+  /** DSLContext 규칙의 허용 목록 전체(PG 드라이버 규칙 전용 목록은 제외). */
+  private static Set<String> dslAllowed() {
     Set<String> all = new HashSet<>();
     all.addAll(TENANT_DATA_PATH);
-    all.addAll(PG_INFRA_WD486);
+    all.addAll(PG_DATA_STORE_INFRA);
+    all.addAll(PLATFORM_DB_WIRING);
     all.addAll(PREDICATE_BUILDERS_WD485);
     all.addAll(REPOSITORIES_OUTSIDE_PACKAGE);
     return all;
   }
 
-  /** repository 패키지에 있거나 허용 목록(중첩·익명 클래스 {@code Name$...} 포함)에 있는 클래스인가. */
-  private static DescribedPredicate<JavaClass> exempt() {
-    Set<String> allowed = allAllowed();
-    return new DescribedPredicate<>("reside in repository packages or are allowlisted classes") {
+  /** PG 드라이버 규칙의 허용 목록 전체(DSLContext 전용 목록은 제외). */
+  private static Set<String> driverAllowed() {
+    Set<String> all = new HashSet<>();
+    all.addAll(TENANT_DATA_PATH);
+    all.addAll(PG_DATA_STORE_INFRA);
+    all.addAll(PG_DRIVER_OOS);
+    return all;
+  }
+
+  /** 존재 검사 대상 — DSLContext 허용 목록 + PG 드라이버 허용 목록. */
+  private static Set<String> allAllowed() {
+    Set<String> all = dslAllowed();
+    all.addAll(driverAllowed());
+    return all;
+  }
+
+  /** 클래스 이름이 목록에 있거나 그 중첩·익명 클래스({@code Name$...})인가. */
+  private static DescribedPredicate<JavaClass> inList(Set<String> names) {
+    return new DescribedPredicate<>("are allowlisted classes") {
       @Override
       public boolean test(JavaClass c) {
         String name = c.getName();
-        // 면제는 패키지 기준 — 서비스 안의 중첩 클래스 이름(FooService$XReader)으로 면제를 얻지 못하게 한다.
-        String pkg = c.getPackageName();
-        if (pkg.endsWith(".repository") || pkg.contains(".repository.")) {
-          return true;
-        }
-        return allowed.stream().anyMatch(a -> name.equals(a) || name.startsWith(a + "$"));
+        return names.stream().anyMatch(a -> name.equals(a) || name.startsWith(a + "$"));
       }
     };
+  }
+
+  /**
+   * repository 패키지·플랫폼 DB PG 구현 패키지에 있거나 허용 목록(중첩·익명 클래스 {@code Name$...} 포함)에 있는 클래스인가. 면제는 패키지 기준
+   * — 서비스 안의 중첩 클래스 이름(FooService$XReader)으로 면제를 얻지 못하게 한다. PG 구현 패키지는 목록이 아닌 패키지 규칙으로 면제한다.
+   */
+  private static DescribedPredicate<JavaClass> exempt() {
+    return resideInAPackage("..repository..")
+        .or(resideInAPackage(PLATFORM_DB_POSTGRES_PACKAGE))
+        .or(inList(dslAllowed()));
   }
 
   /** 허용 목록 밖의 클래스는 DSLContext·jOOQ 생성 코드에 의존하지 않는다. */
@@ -156,6 +204,23 @@ class PlatformDbAccessArchitectureTest {
         .dependOnClassesThat()
         .resideInAPackage("com.smartfirehub.jooq..")
         .because("WD-484: 플랫폼 DB 쿼리는 리포지토리에 둔다 — 새 예외는 허용 목록(리뷰 대상)에 추가")
+        .check(PROD);
+  }
+
+  /**
+   * PG JDBC 드라이버({@code org.postgresql..})는 PG 구현 패키지·테넌트 데이터 경로·PG 데이터 저장소 인프라·범위 밖 목록에서만 쓴다. 플랫폼
+   * 서비스가 PG 드라이버 타입(PSQLException 등)에 직접 기대면 Tibero 로 옮길 때 깨진다(WD-486).
+   */
+  @Test
+  void onlyPgImplsDependOnPostgresDriver() {
+    noClasses()
+        .that()
+        .resideOutsideOfPackage(PLATFORM_DB_POSTGRES_PACKAGE)
+        .and(DescribedPredicate.not(inList(driverAllowed())))
+        .should()
+        .dependOnClassesThat()
+        .resideInAPackage("org.postgresql..")
+        .because("WD-486: PG 드라이버 타입은 PG 구현 패키지·PG 데이터 경로에만 둔다")
         .check(PROD);
   }
 

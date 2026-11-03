@@ -11,6 +11,7 @@ import com.smartfirehub.dataset.storage.external.ExternalStoreConnections;
 import com.smartfirehub.dataset.storage.tibero.TiberoCatalog;
 import com.smartfirehub.dataset.storage.tibero.TiberoDdlSql;
 import com.smartfirehub.dataset.storage.tibero.TiberoNames;
+import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -61,6 +62,9 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
   private final SecurityLevelRepository levelRepository;
   private final TransactionTemplate requiresNew;
 
+  /** 테넌트 동기화 직렬화 잠금 — 플랫폼 잠금 추상화(WD-486). */
+  private final PlatformLocks locks;
+
   /**
    * txManager 는 @Primary TenantAwareTransactionManager — 트랜잭션 시작 때 TenantContext 를 RLS GUC 로 주입한다.
    */
@@ -69,8 +73,10 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
       ExternalStoreConnections connections,
       TenantDataStoreRepository storeRepository,
       SecurityLevelRepository levelRepository,
+      PlatformLocks locks,
       PlatformTransactionManager txManager) {
     this.dsl = dsl;
+    this.locks = locks;
     this.connections = connections;
     this.storeRepository = storeRepository;
     this.levelRepository = levelRepository;
@@ -154,8 +160,9 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
    */
   private PythonReadGrantSync.SyncResult syncInTx(String onlyTable, Integer runRank) {
     long tenantId = TenantContext.require("Tibero PYTHON 읽기 권한 동기화");
-    // 같은 테넌트 동기화 직렬화(PG 트랜잭션 종료 시 자동 해제) — PG 판과 같은 잠금.
-    PythonReadGrantSync.lockTenantSync(dsl, tenantId);
+    // 같은 테넌트 동기화 직렬화(트랜잭션 종료 시 자동 해제) — PG 판(lockTenantSync)과 같은 syncLockKey 를 써서 같은 잠금이다(WD-486
+    // R4).
+    locks.xactLock(PythonReadGrantSync.syncLockKey(tenantId));
 
     List<LevelPolicy> levelsAsc = levelRepository.findAll();
     // 슬롯 k(1~10)의 계정 이름과, 저장소 계정 행이 실제로 있는 슬롯(없으면 PG 의 "없는 슬롯 롤" 과 같이 취급).

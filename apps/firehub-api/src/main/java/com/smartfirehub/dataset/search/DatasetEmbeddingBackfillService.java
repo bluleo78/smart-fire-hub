@@ -1,5 +1,7 @@
 package com.smartfirehub.dataset.search;
 
+import com.smartfirehub.global.platformdb.PlatformDbFeature;
+import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.transaction.AfterCommitRunner;
 import java.util.List;
@@ -26,6 +28,8 @@ public class DatasetEmbeddingBackfillService {
   private final DatasetMetaReader metaReader;
   private final DatasetEmbeddingService embeddingService;
   private final JobScheduler jobScheduler;
+  // 벡터 검색 미지원 DB 면 벡터를 만들 일이 없으므로 재색인 잡을 쌓지 않는다.
+  private final PlatformDbFeatures features;
 
   /**
    * 모든 데이터셋의 source_text 만 동기 적재한다. 재임베딩 판정식의 모집단(dataset_embedding 행)을 채워, 행이 없던 데이터셋도 전체 재임베딩 대상이
@@ -47,6 +51,12 @@ public class DatasetEmbeddingBackfillService {
   public int backfillAll() {
     // (1) source_text 를 전부 먼저 동기 적재 → 임베딩 생성 전에도 키워드 검색에 즉시 노출.
     List<Long> ids = syncSourceTextOfAll();
+
+    // 벡터 검색을 지원하지 않으면 잡을 쌓지 않는다 — source_text 적재는 위에서 끝났다. 이미 쌓인 잡은 reindexEmbedding 의 가드가 막는다.
+    if (!features.supports(PlatformDbFeature.VECTOR_SEARCH)) {
+      log.info("벡터 검색 미지원 — 데이터셋 임베딩 재색인 잡을 쌓지 않는다: count={}", ids.size());
+      return ids.size();
+    }
 
     // (2) 임베딩 재색인은 데이터셋별 잡으로 분산 enqueue(외부 호출 비용을 백그라운드로 이전).
     // 배경 잡에는 요청 스코프의 테넌트가 승계되지 않으므로 페이로드에 실어 보낸다.

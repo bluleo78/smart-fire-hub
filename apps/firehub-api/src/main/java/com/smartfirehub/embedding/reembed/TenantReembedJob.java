@@ -11,6 +11,8 @@ import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.config.dto.EmbeddingImpact;
+import com.smartfirehub.global.platformdb.PlatformDbFeature;
+import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.transaction.AfterCommitRunner;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
@@ -51,6 +53,7 @@ public class TenantReembedJob {
   private final DatasetEmbeddingBackfillService datasetBackfillService;
   private final JobScheduler jobScheduler;
   private final EmbeddingAiGate aiGate;
+  private final PlatformDbFeatures features;
 
   /** 한 단계(청크·데이터셋)의 결말 — 끝까지 갔는지, 설정 변경으로 멈췄는지. */
   private enum Outcome {
@@ -83,6 +86,12 @@ public class TenantReembedJob {
    */
   @Job(name = "Tenant embedding reembed: tenant %0")
   public void run(long tenantId) {
+    // 벡터 검색을 지원하지 않는 플랫폼 DB 에는 옮길 벡터 테이블이 없다 — 임대·상태 행도 건드리지 않고 끝낸다.
+    // trigger/enqueue 는 꺼져 있어도 이 잡을 예약한다 — 실행 시점에 여기서 바로 끝나므로 비용이 작아 진입점 한 곳에서만 막는다.
+    if (!features.supports(PlatformDbFeature.VECTOR_SEARCH)) {
+      log.info("재임베딩 건너뜀(벡터 검색 미지원 플랫폼 DB): tenant={}", tenantId);
+      return;
+    }
     TenantContext.runScoped(tenantId, () -> runInTenant(tenantId));
   }
 

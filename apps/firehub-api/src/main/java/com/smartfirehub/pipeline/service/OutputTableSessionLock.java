@@ -1,5 +1,6 @@
 package com.smartfirehub.pipeline.service;
 
+import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
@@ -38,24 +39,14 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class OutputTableSessionLock {
 
-  /**
-   * 획득 시도 문장 — 키 식은 {@link SqlScriptExecutor#OUTPUT_LOCK_SQL} 과 같아야 한다(같은 해시).
-   *
-   * <p><b>기다리는 {@code pg_advisory_lock} 이 아니라 시도형({@code pg_try_advisory_lock})을 폴링한다.</b> 기다리는 동안
-   * 메인 풀 커넥션을 쥐고 있으면, 같은 출력에 겹친 실행이 여럿일 때 대기자들이 메인 풀을 다 차지해 잠금을 쥔 실행조차 적재·맞바꿈에 쓸 커넥션을 못 얻는 교착이
-   * 생긴다(대기자는 쥔 실행을, 쥔 실행은 풀을 기다린다). 그래서 실패한 시도는 커넥션을 바로 풀에 돌려주고 잠시 뒤 다시 시도한다. 잠금을 얻은 커넥션만 본문이 끝날
-   * 때까지 붙잡는다.
-   */
-  static final String TRY_ACQUIRE_SQL = SessionAdvisoryLock.TRY_ACQUIRE_SQL;
-
   /** 획득 실패 뒤 다시 시도하기까지의 간격. 로컬 전용 경로라 정밀한 공정성은 필요 없다. */
   static final long RETRY_INTERVAL_MS = SessionAdvisoryLock.RETRY_INTERVAL_MS;
 
-  /** 해제 문장 — 이 세션이 쥔 세션 범위 advisory 잠금을 전부 푼다. */
-  static final String RELEASE_SQL = SessionAdvisoryLock.RELEASE_SQL;
-
   /** 메인 커넥션 풀. 잠금 전용 커넥션을 여기서 하나 빌린다. */
   private final DataSource dataSource;
+
+  /** 세션 잠금 구현 — 잠금 SQL 은 여기 있다(WD-486). */
+  private final PlatformLocks locks;
 
   /**
    * 출력 테이블의 직렬화 잠금을 쥔 채 본문을 실행한다. 다른 실행이 같은 출력의 잠금을 쥐고 있으면 그 실행이 끝날 때까지 기다린다(거부하지 않는다).
@@ -69,6 +60,7 @@ public class OutputTableSessionLock {
     // 획득·해제·누수 방지는 공통 장치(SessionAdvisoryLock, WD-223 에서 추출)가 한다. 대기 상한·취소 확인은 걸지 않는다(위 Javadoc).
     try (SessionAdvisoryLock.Held ignored =
         SessionAdvisoryLock.acquire(
+            locks,
             dataSource,
             key,
             "출력 테이블 잠금",

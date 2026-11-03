@@ -7,6 +7,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import org.jobrunr.jobs.lambdas.JobLambda;
@@ -26,6 +27,8 @@ class DatasetEmbeddingBackfillServiceTest {
   @Mock DatasetMetaReader metaReader;
   @Mock DatasetEmbeddingService embeddingService;
   @Mock JobScheduler jobScheduler;
+  // 기본은 벡터 검색 지원(PG) — 꺼진 경우는 PlatformDbFeaturesOffPathTest 가 다룬다.
+  PlatformDbFeatures features = f -> true;
 
   @BeforeEach
   void setTenant() {
@@ -43,7 +46,7 @@ class DatasetEmbeddingBackfillServiceTest {
     when(metaReader.findAllIds()).thenReturn(List.of(1L, 2L, 3L));
 
     DatasetEmbeddingBackfillService service =
-        new DatasetEmbeddingBackfillService(metaReader, embeddingService, jobScheduler);
+        new DatasetEmbeddingBackfillService(metaReader, embeddingService, jobScheduler, features);
     int scheduled = service.backfillAll();
 
     // 처리 대상 수 반환 검증.
@@ -63,7 +66,7 @@ class DatasetEmbeddingBackfillServiceTest {
     when(metaReader.findAllIds()).thenReturn(List.of());
 
     DatasetEmbeddingBackfillService service =
-        new DatasetEmbeddingBackfillService(metaReader, embeddingService, jobScheduler);
+        new DatasetEmbeddingBackfillService(metaReader, embeddingService, jobScheduler, features);
 
     assertThat(service.backfillAll()).isZero();
     verify(jobScheduler, times(0)).enqueue(any(JobLambda.class));

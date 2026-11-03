@@ -36,6 +36,7 @@ import com.smartfirehub.file.repository.FileDatasetConfigRepository;
 import com.smartfirehub.file.service.FileObjectStorageService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.mapping.service.MappingReferenceService;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
@@ -57,7 +58,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.jooq.Condition;
 import org.jooq.Record;
 import org.jooq.exception.IntegrityConstraintViolationException;
-import org.postgresql.util.ServerErrorMessage;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -124,13 +124,14 @@ public class DatasetService {
    * <p>왜: 사전 검사와 쓰기 사이에 같은 이름이 동시에 들어오면 사전 검사는 미커밋 행을 못 봐 통과하고, 쓰기가 유니크 제약에서 끝난다. 그대로 두면 전역 처리기의 일반
    * 중복 문구(코드 없음)가 되어 화면이 필드명 중복 안내를 못 한다. 필드명은 DB 세부 원문에서 꺼내지 않는다(원문 비노출). 다른 제약 위반은 그대로 던진다.
    */
-  private static <T> T withColumnNameUniqueAs409(Supplier<T> write) {
+  private <T> T withColumnNameUniqueAs409(Supplier<T> write) {
     try {
       return write.get();
     } catch (DataIntegrityViolationException e) {
-      ServerErrorMessage serverError = DataExceptionTranslator.findServerError(e);
-      if (serverError != null
-          && COLUMN_NAME_UNIQUE_CONSTRAINT.equals(serverError.getConstraint())) {
+      if (platformDbErrors
+          .violatedConstraint(e)
+          .filter(COLUMN_NAME_UNIQUE_CONSTRAINT::equals)
+          .isPresent()) {
         throw new CodedApiException(
             HttpStatus.CONFLICT, COLUMN_NAME_DUPLICATE_CODE, COLUMN_NAME_DUPLICATE_MESSAGE);
       }
@@ -139,7 +140,7 @@ public class DatasetService {
   }
 
   /** 반환값 없는 쓰기용 {@link #withColumnNameUniqueAs409(Supplier)}. */
-  private static void withColumnNameUniqueAs409(Runnable write) {
+  private void withColumnNameUniqueAs409(Runnable write) {
     withColumnNameUniqueAs409(
         () -> {
           write.run();
@@ -196,6 +197,9 @@ public class DatasetService {
 
   /** 데이터셋 정보·상태·필드 변경 감사 기록(WD-463). */
   private final DatasetAuditRecorder datasetAuditRecorder;
+
+  /** DB 오류 판정 창구 — 필드명 유니크 제약 위반을 벤더 중립으로 알아본다(WD-486). */
+  private final PlatformDbErrors platformDbErrors;
 
   /** 파이프라인 전용 출처 필드를 일반 생성 경로에서 보냈을 때의 오류 코드. */
   public static final String ORIGIN_RESERVED_CODE = "DATASET_ORIGIN_RESERVED";

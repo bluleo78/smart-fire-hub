@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.global.config.SecurityConfig;
+import com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbErrors;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -452,7 +453,7 @@ class GlobalExceptionHandlerTest {
   /** 이미 커밋된(스트리밍 중) 응답에는 아무것도 쓰지 않는다 — 핸들러가 null(처리 완료)을 돌려준다. */
   @Test
   void ioException_committedResponse_returnsNull() {
-    GlobalExceptionHandler handler = new GlobalExceptionHandler();
+    GlobalExceptionHandler handler = new GlobalExceptionHandler(new PostgresPlatformDbErrors());
     MockHttpServletResponse response = new MockHttpServletResponse();
     response.setCommitted(true);
     assertThat(

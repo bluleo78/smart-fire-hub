@@ -100,7 +100,8 @@ class DatasetServiceFileTest {
             // 이 테스트는 사용처 조회를 쓰지 않아 방언 판정(WD-206)은 호출되지 않는다.
             org.mockito.Mockito.mock(com.smartfirehub.pipeline.service.PipelineDataSchema.class),
             // 이 테스트는 감사 대상 변경(WD-463)을 검증하지 않는다.
-            org.mockito.Mockito.mock(DatasetAuditRecorder.class));
+            org.mockito.Mockito.mock(DatasetAuditRecorder.class),
+            new com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbErrors());
   }
 
   @Test

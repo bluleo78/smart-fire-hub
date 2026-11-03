@@ -1,7 +1,8 @@
 package com.smartfirehub.dataset.search;
 
 import com.smartfirehub.embedding.EmbeddingSpace;
-import com.smartfirehub.embedding.HnswSearch;
+import com.smartfirehub.embedding.repository.HnswSearch;
+import com.smartfirehub.embedding.repository.VectorLiterals;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;

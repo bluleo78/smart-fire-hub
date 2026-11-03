@@ -19,6 +19,7 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.transaction.AfterCommitRunner;
 import com.smartfirehub.job.service.AsyncJobService;
@@ -44,7 +45,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.jobrunr.jobs.annotations.Job;
 import org.jobrunr.scheduling.JobScheduler;
 import org.jooq.JSONB;
-import org.postgresql.util.PSQLException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -91,6 +91,9 @@ public class DataImportService {
   private final AsyncJobService asyncJobService;
   private final TransactionTemplate transactionTemplate;
   private final NotificationService notificationService;
+
+  /** DB 오류 판정 창구 — 진행 중 임포트 인덱스 충돌을 벤더 중립으로 알아본다(WD-486). */
+  private final PlatformDbErrors platformDbErrors;
 
   // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
   // 여기서 감싸면 파일 전송/외부 저장이 DB 커넥션을 잡은 채로 진행된다.
@@ -1324,11 +1327,12 @@ public class DataImportService {
         || (t instanceof SQLException sql && PG_UNIQUE_VIOLATION.equals(sql.getSQLState()));
   }
 
-  /** 진행 중 임포트 고유 인덱스 충돌인지 — PostgreSQL 서버 오류의 제약 이름만 본다(메시지 문구는 보지 않는다). */
-  private static boolean isActiveImportConflict(Throwable t) {
-    return t instanceof PSQLException pe
-        && pe.getServerErrorMessage() != null
-        && ACTIVE_IMPORT_UNIQUE_INDEX.equals(pe.getServerErrorMessage().getConstraint());
+  /**
+   * 진행 중 임포트 고유 인덱스 충돌인지 — DB 서버 오류의 제약 이름만 본다(메시지 문구는 보지 않는다). 원인 체인(getCause)만 걷는다 — 연쇄
+   * 예외(getNextException)까지 넓히지 않는다.
+   */
+  private boolean isActiveImportConflict(Throwable e) {
+    return platformDbErrors.violatesConstraintOnCauseChain(e, ACTIVE_IMPORT_UNIQUE_INDEX);
   }
 
   /**
@@ -1351,7 +1355,7 @@ public class DataImportService {
       return processing.getMessage();
     }
     // 진행 중 임포트 고유 인덱스 충돌 — 제약 이름으로만 판정한다(메시지에는 사용자 데이터가 실릴 수 있다).
-    if (findInChain(e, DataImportService::isActiveImportConflict).isPresent()) {
+    if (isActiveImportConflict(e)) {
       return "이미 진행 중인 임포트가 있습니다. 완료 후 다시 시도해주세요.";
     }
     // 파서가 파일을 읽지 못한 경우(엑셀 아님·손상·암호·깨진 CSV)는 파서가 이미 사용자용 한국어 문구를 실어 두었다 — 그대로 쓴다(WD-204).

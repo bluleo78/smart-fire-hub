@@ -31,7 +31,7 @@ class AiVectorPurgeStartupRunnerTest {
     settings = mock(TenantSettingsRepository.class);
     purge = mock(AiVectorPurgeService.class);
     tenantRunner = mock(TenantScopedRunner.class);
-    runner = new AiVectorPurgeStartupRunner(tenantRunner, settings, purge, true);
+    runner = new AiVectorPurgeStartupRunner(tenantRunner, settings, purge, true, f -> true);
     when(settings.findValue(AiVectorPurgeStartupRunner.FLAG_KEY)).thenReturn(Optional.empty());
   }
 
@@ -68,7 +68,7 @@ class AiVectorPurgeStartupRunnerTest {
 
   @Test
   void disabled_doesNotIterateTenants() {
-    new AiVectorPurgeStartupRunner(tenantRunner, settings, purge, false).onReady();
+    new AiVectorPurgeStartupRunner(tenantRunner, settings, purge, false, f -> true).onReady();
     verify(tenantRunner, never()).forEachActiveTenant(any());
   }
 }

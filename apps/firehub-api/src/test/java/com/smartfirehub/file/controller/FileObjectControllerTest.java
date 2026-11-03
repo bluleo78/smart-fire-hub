@@ -48,7 +48,9 @@ class FileObjectControllerTest {
                   // inline(기본) 경로는 가드를 부르지 않는다 — 실제 attachment 판정은 DataExportPolicyTest 가 검증.
                   org.mockito.Mockito.mock(
                       com.smartfirehub.securitylevel.access.DatasetAccessGuard.class)))
-          .setControllerAdvice(new GlobalExceptionHandler())
+          .setControllerAdvice(
+              new GlobalExceptionHandler(
+                  new com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbErrors()))
           .build();
 
   @Test

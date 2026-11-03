@@ -6,6 +6,8 @@ import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.global.platformdb.PlatformDbFeature;
+import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.util.RankFusion;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -25,6 +27,8 @@ public class DocumentSearchService {
   private final EmbeddingProviderFactory embeddingProviderFactory;
   private final DocumentChunkRepository chunkRepository;
   private final DatasetAccessGuard datasetAccessGuard;
+  // 플랫폼 DB 가 벡터·트라이그램 검색을 지원하는지(꺼진 단계는 빈 목록으로 취급 — 5xx 를 내지 않는다).
+  private final PlatformDbFeatures features;
 
   // RRF 상수: 후보 풀 크기. 융합 상수 k(=60)는 RankFusion 공통 유틸에서 관리한다.
   private static final int CANDIDATE_POOL = 50;
@@ -39,16 +43,10 @@ public class DocumentSearchService {
     String visibility = datasetAccessGuard.visibleSql(clearance, "d");
     List<DocumentSearchHit> hits =
         switch (request.mode()) {
-      case KEYWORD ->
-          chunkRepository.searchByTrigram(
-              request.query(), request.datasetIds(), request.topK(), visibility);
-      case SEMANTIC -> {
-        QueryVector q = embedQuery(request.query());
-        yield chunkRepository.searchByCosine(
-            q.space(), q.vector(), request.datasetIds(), request.topK(), visibility);
-      }
-      case HYBRID -> hybridSearch(request, visibility);
-    };
+          case KEYWORD -> keyword(request, request.topK(), visibility);
+          case SEMANTIC -> semantic(request, request.topK(), visibility);
+          case HYBRID -> hybridSearch(request, visibility);
+        };
     // 청크 본문이 호출자(AI)에게 간다 — 스마트 작업 실행 중이면 실린 청크의 데이터셋 등급을 리포트 등급에 넣는다(WD-198).
     datasetAccessGuard.noteReportReads(hits.stream().map(DocumentSearchHit::datasetId).toList());
     return hits;
@@ -65,14 +63,31 @@ public class DocumentSearchService {
 
   /** 시맨틱·키워드 후보 풀을 RRF 로 융합해 상위 topK 를 반환한다. */
   private List<DocumentSearchHit> hybridSearch(DocumentSearchRequest request, String visibility) {
-    QueryVector q = embedQuery(request.query());
-    List<DocumentSearchHit> semantic =
-        chunkRepository.searchByCosine(
-            q.space(), q.vector(), request.datasetIds(), CANDIDATE_POOL, visibility);
-    List<DocumentSearchHit> keyword =
-        chunkRepository.searchByTrigram(
-            request.query(), request.datasetIds(), CANDIDATE_POOL, visibility);
+    // 꺼진 단계는 빈 목록 — 융합은 남은 단계만으로 이뤄진다(둘 다 꺼지면 빈 결과).
+    List<DocumentSearchHit> semantic = semantic(request, CANDIDATE_POOL, visibility);
+    List<DocumentSearchHit> keyword = keyword(request, CANDIDATE_POOL, visibility);
     return rrfFuse(List.of(semantic, keyword), request.topK());
+  }
+
+  /** 벡터(코사인) 단계. 플랫폼 DB 가 지원하지 않으면 질의 임베딩 호출도 없이 빈 목록. */
+  private List<DocumentSearchHit> semantic(
+      DocumentSearchRequest request, int limit, String visibility) {
+    if (!features.supports(PlatformDbFeature.VECTOR_SEARCH)) {
+      return List.of();
+    }
+    QueryVector q = embedQuery(request.query());
+    return chunkRepository.searchByCosine(
+        q.space(), q.vector(), request.datasetIds(), limit, visibility);
+  }
+
+  /** 트라이그램 단계. 플랫폼 DB 가 지원하지 않으면 호출하지 않고 빈 목록. */
+  private List<DocumentSearchHit> keyword(
+      DocumentSearchRequest request, int limit, String visibility) {
+    if (!features.supports(PlatformDbFeature.TRIGRAM_SEARCH)) {
+      return List.of();
+    }
+    return chunkRepository.searchByTrigram(
+        request.query(), request.datasetIds(), limit, visibility);
   }
 
   /** RRF 융합: {@link RankFusion} 위임. hit.score 는 RRF 점수로 대체된다. */

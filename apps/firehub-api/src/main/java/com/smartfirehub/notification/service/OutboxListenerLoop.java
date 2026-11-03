@@ -1,12 +1,10 @@
 package com.smartfirehub.notification.service;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import org.postgresql.PGConnection;
+import com.smartfirehub.global.platformdb.OutboxWakeupChannel;
+import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -30,8 +28,8 @@ public class OutboxListenerLoop {
 
   private static final Logger log = LoggerFactory.getLogger(OutboxListenerLoop.class);
 
-  /** LISTEN 전용 커넥션 획득에 사용할 JDBC 접속 정보. */
-  private final DataSourceProperties dataSourceProperties;
+  /** 신호 구독 채널 — LISTEN 전용 연결은 구현이 풀 밖에서 직접 얻는다. */
+  private final OutboxWakeupChannel channel;
 
   private final NotificationDispatchWorker worker;
   private final boolean listenEnabled;
@@ -39,11 +37,11 @@ public class OutboxListenerLoop {
   private volatile boolean running = true;
 
   public OutboxListenerLoop(
-      DataSourceProperties dataSourceProperties,
+      OutboxWakeupChannel channel,
       NotificationDispatchWorker worker,
       @Value("${notification.worker.listen_notify:true}") boolean listenEnabled,
       @Value("${notification.outbox.enabled:false}") boolean outboxEnabled) {
-    this.dataSourceProperties = dataSourceProperties;
+    this.channel = channel;
     this.worker = worker;
     this.listenEnabled = listenEnabled;
     this.outboxEnabled = outboxEnabled;
@@ -68,29 +66,12 @@ public class OutboxListenerLoop {
     running = false;
   }
 
-  /** LISTEN 루프 본체. 재시도마다 DriverManager로 풀 외부 전용 커넥션을 획득하고, 루프 종료 또는 예외 발생 시 반드시 커넥션을 close한다. */
+  /** LISTEN 루프 본체. 채널의 listen 이 연결 오류로 던지면 5초 뒤 재시도한다(연결 획득·close 는 채널 구현이 책임진다). */
   private void loop() {
     while (running) {
-      // HikariCP 풀을 거치지 않고 DriverManager로 전용 LISTEN 커넥션 직접 획득.
-      // 이 커넥션은 풀 대역에 포함되지 않으므로 풀 고갈을 유발하지 않는다.
-      Connection conn = null;
       try {
-        conn =
-            DriverManager.getConnection(
-                dataSourceProperties.getUrl(),
-                dataSourceProperties.getUsername(),
-                dataSourceProperties.getPassword());
-        conn.setAutoCommit(true); // LISTEN은 트랜잭션 불필요; idle 트랜잭션 방지
-        PGConnection pg = conn.unwrap(PGConnection.class);
-        try (var st = conn.createStatement()) {
-          st.execute("LISTEN outbox_new");
-        }
-        while (running) {
-          var notes = pg.getNotifications(30_000);
-          if (notes != null && notes.length > 0) {
-            worker.onNotify();
-          }
-        }
+        // 연결 수명(LISTEN 전용 소켓 획득·해제)은 채널 구현이 맡는다. 오류는 예외로 올라온다.
+        channel.listen(() -> running, Duration.ofMillis(30_000), worker::onNotify);
       } catch (Exception e) {
         log.warn("outbox listener loop error, retry in 5s", e);
         try {
@@ -98,15 +79,6 @@ public class OutboxListenerLoop {
         } catch (InterruptedException ie) {
           Thread.currentThread().interrupt();
           return;
-        }
-      } finally {
-        // 전용 커넥션을 명시적으로 닫아 TCP 소켓을 해제한다.
-        if (conn != null) {
-          try {
-            conn.close();
-          } catch (Exception closeEx) {
-            log.debug("outbox listener connection close error (ignored)", closeEx);
-          }
         }
       }
     }

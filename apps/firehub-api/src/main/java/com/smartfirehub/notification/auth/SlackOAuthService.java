@@ -2,13 +2,13 @@ package com.smartfirehub.notification.auth;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.smartfirehub.apiconnection.service.EncryptionService;
+import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.auth.exception.SlackWorkspaceInstallDeniedException;
 import com.smartfirehub.notification.channels.slack.SlackApiClient;
 import com.smartfirehub.notification.repository.SlackWorkspaceRepository;
 import com.smartfirehub.notification.repository.UserChannelBinding;
 import com.smartfirehub.notification.repository.UserChannelBindingRepository;
-import java.sql.SQLException;
 import java.time.Instant;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
@@ -27,13 +27,13 @@ import org.springframework.stereotype.Service;
 @Service
 public class SlackOAuthService {
 
-  /** PostgreSQL insufficient_privilege — RLS 정책 위반이 이 SQLState 로 온다. */
-  private static final String RLS_DENIED_SQLSTATE = "42501";
-
   private final SlackApiClient slackApiClient;
   private final SlackWorkspaceRepository slackWorkspaceRepo;
   private final UserChannelBindingRepository userChannelBindingRepo;
   private final EncryptionService encryption;
+
+  /** DB 오류 판정 창구 — RLS 거부(행 보안)를 벤더 중립으로 알아본다(WD-486). */
+  private final PlatformDbErrors platformDbErrors;
 
   /** Slack 앱 Client ID */
   @Value("${notification.slack.client_id:}")
@@ -60,11 +60,13 @@ public class SlackOAuthService {
       SlackApiClient slackApiClient,
       SlackWorkspaceRepository slackWorkspaceRepo,
       UserChannelBindingRepository userChannelBindingRepo,
-      EncryptionService encryption) {
+      EncryptionService encryption,
+      PlatformDbErrors platformDbErrors) {
     this.slackApiClient = slackApiClient;
     this.slackWorkspaceRepo = slackWorkspaceRepo;
     this.userChannelBindingRepo = userChannelBindingRepo;
     this.encryption = encryption;
+    this.platformDbErrors = platformDbErrors;
   }
 
   /**
@@ -166,7 +168,7 @@ public class SlackOAuthService {
           teamId, teamName, botUserId, botTokenEnc, installedByUserId);
     } catch (DataAccessException ex) {
       Throwable root = ex.getMostSpecificCause();
-      if (root instanceof SQLException sqle && RLS_DENIED_SQLSTATE.equals(sqle.getSQLState())) {
+      if (platformDbErrors.isRowSecurityDenied(root)) {
         throw new SlackWorkspaceInstallDeniedException(teamId, ex);
       }
       // 그 외 DB 오류는 손대지 않는다 — 500 으로 시끄럽게 터지는 것이 맞다.

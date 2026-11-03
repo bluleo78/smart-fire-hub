@@ -3,6 +3,8 @@ package com.smartfirehub.dataset.search;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.global.platformdb.PlatformDbFeature;
+import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.util.RankFusion;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -30,6 +32,8 @@ public class DatasetSearchService {
   private final DatasetSearchRepository repository;
   private final EmbeddingProviderFactory embeddingFactory;
   private final DatasetAccessGuard datasetAccessGuard;
+  // 플랫폼 DB 가 벡터·트라이그램 검색을 지원하는지(꺼진 단계는 빈 목록으로 취급 — 5xx 를 내지 않는다).
+  private final PlatformDbFeatures features;
 
   /** mode 분기 진입점. mode null → HYBRID, topK 정규화 후 각 검색을 수행한다. */
   // RLS 가 걸린 dataset_embedding 을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
@@ -44,11 +48,8 @@ public class DatasetSearchService {
     // 가시성 SQL 은 한 번 렌더해 KEYWORD/SEMANTIC/HYBRID 모든 분기가 공유한다.
     String visibility = datasetAccessGuard.visibleSql(clearance, "d");
     return switch (mode) {
-      case KEYWORD -> repository.searchByTrigram(req.query(), storageType, topK, visibility);
-      case SEMANTIC -> {
-        QueryVector q = embed(req.query());
-        yield repository.searchByCosine(q.space(), q.vector(), storageType, topK, visibility);
-      }
+      case KEYWORD -> keyword(req.query(), storageType, topK, visibility);
+      case SEMANTIC -> semantic(req.query(), storageType, topK, visibility);
       case HYBRID -> hybrid(req.query(), storageType, topK, visibility);
     };
   }
@@ -56,12 +57,29 @@ public class DatasetSearchService {
   /** 시맨틱·키워드 후보 풀(CANDIDATE_POOL)을 RRF 로 융합해 상위 topK 를 반환한다. */
   private List<DatasetSearchHit> hybrid(
       String query, String storageType, int topK, String visibility) {
-    QueryVector q = embed(query);
-    List<DatasetSearchHit> semantic =
-        repository.searchByCosine(q.space(), q.vector(), storageType, CANDIDATE_POOL, visibility);
-    List<DatasetSearchHit> keyword =
-        repository.searchByTrigram(query, storageType, CANDIDATE_POOL, visibility);
+    // 꺼진 단계는 빈 목록 — 융합은 남은 단계만으로 이뤄진다(둘 다 꺼지면 빈 결과).
+    List<DatasetSearchHit> semantic = semantic(query, storageType, CANDIDATE_POOL, visibility);
+    List<DatasetSearchHit> keyword = keyword(query, storageType, CANDIDATE_POOL, visibility);
     return rrfFuse(List.of(semantic, keyword), topK);
+  }
+
+  /** 벡터(코사인) 단계. 플랫폼 DB 가 지원하지 않으면 질의 임베딩 호출도 없이 빈 목록. */
+  private List<DatasetSearchHit> semantic(
+      String query, String storageType, int limit, String visibility) {
+    if (!features.supports(PlatformDbFeature.VECTOR_SEARCH)) {
+      return List.of();
+    }
+    QueryVector q = embed(query);
+    return repository.searchByCosine(q.space(), q.vector(), storageType, limit, visibility);
+  }
+
+  /** 트라이그램 단계. 플랫폼 DB 가 지원하지 않으면 호출하지 않고 빈 목록. */
+  private List<DatasetSearchHit> keyword(
+      String query, String storageType, int limit, String visibility) {
+    if (!features.supports(PlatformDbFeature.TRIGRAM_SEARCH)) {
+      return List.of();
+    }
+    return repository.searchByTrigram(query, storageType, limit, visibility);
   }
 
   /** RRF 융합: {@link RankFusion} 위임. hit.score 는 RRF 점수로 대체된다. */

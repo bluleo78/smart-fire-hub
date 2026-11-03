@@ -1,5 +1,6 @@
 package com.smartfirehub.pipeline.service;
 
+import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import com.zaxxer.hikari.HikariConfig;
@@ -61,6 +62,9 @@ public class IncrementalStepLock implements DisposableBean {
 
   private final long maxWaitMs;
 
+  /** 세션 잠금 구현(WD-486). */
+  private final PlatformLocks locks;
+
   /** 이 객체가 만든 풀(닫을 책임). 외부에서 받은 풀이면 null. */
   private volatile HikariDataSource ownedPool;
 
@@ -73,15 +77,18 @@ public class IncrementalStepLock implements DisposableBean {
    */
   @Autowired
   public IncrementalStepLock(
+      PlatformLocks locks,
       DataSourceProperties properties,
       @Value("${app.pipeline.incremental-lock.max-wait-ms:1800000}") long maxWaitMs,
       @Value("${app.pipeline.incremental-lock.pool-size:10}") int poolSize) {
+    this.locks = locks;
     this.maxWaitMs = maxWaitMs;
     this.lockPool = () -> ownedPool(properties, poolSize);
   }
 
   /** 테스트용 — 잠금 커넥션을 얻을 풀을 직접 넘긴다(닫는 것은 호출자 몫). */
-  IncrementalStepLock(DataSource lockPool, long maxWaitMs) {
+  IncrementalStepLock(PlatformLocks locks, DataSource lockPool, long maxWaitMs) {
+    this.locks = locks;
     this.maxWaitMs = maxWaitMs;
     this.lockPool = () -> lockPool;
   }
@@ -141,6 +148,7 @@ public class IncrementalStepLock implements DisposableBean {
       long stepId, String stepName, ExecutionCancelCheck cancel) {
     long tenantId = TenantContext.require("증분 스텝 잠금");
     return SessionAdvisoryLock.acquire(
+        locks,
         lockPool.get(),
         key(tenantId, stepId),
         "증분 스텝 잠금",

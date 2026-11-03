@@ -53,7 +53,8 @@ class TenantReembedJobFailurePathTest {
             backlogService,
             backfillService,
             jobScheduler,
-            aiGate);
+            aiGate,
+            f -> true);
     when(stateRepository.tryAcquire(any())).thenReturn(true);
   }
 

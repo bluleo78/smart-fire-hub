@@ -1,13 +1,11 @@
 package com.smartfirehub.pipeline.service;
 
+import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLTransientConnectionException;
-import java.sql.Statement;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
 import lombok.extern.slf4j.Slf4j;
@@ -27,14 +25,8 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 final class SessionAdvisoryLock {
 
-  /** 획득 시도 문장 — 키 문자열의 64비트 해시로 잠근다. */
-  static final String TRY_ACQUIRE_SQL = "SELECT pg_try_advisory_lock(hashtextextended(?, 0))";
-
   /** 획득 실패 뒤 다시 시도하기까지의 간격. */
   static final long RETRY_INTERVAL_MS = 200;
-
-  /** 해제 문장 — 이 세션이 쥔 세션 범위 advisory 잠금을 전부 푼다(잠금 커넥션은 이 잠금 하나만 쥔다). */
-  static final String RELEASE_SQL = "SELECT pg_advisory_unlock_all()";
 
   /** 대기 상한 없음. */
   static final long NO_LIMIT = -1;
@@ -47,9 +39,11 @@ final class SessionAdvisoryLock {
    */
   static final class Held implements AutoCloseable {
     private Connection connection;
+    private final PlatformLocks locks;
 
-    private Held(Connection connection) {
+    private Held(Connection connection, PlatformLocks locks) {
       this.connection = connection;
+      this.locks = locks;
     }
 
     @Override
@@ -57,7 +51,7 @@ final class SessionAdvisoryLock {
       Connection c = connection;
       connection = null;
       if (c != null) {
-        release(c);
+        release(locks, c);
       }
     }
   }
@@ -65,6 +59,7 @@ final class SessionAdvisoryLock {
   /**
    * 잠금을 얻을 때까지 시도한다.
    *
+   * @param locks 세션 잠금 구현(DBMS 별 SQL 은 여기 있다 — WD-486)
    * @param dataSource 잠금 전용 커넥션을 빌릴 풀
    * @param key 잠금 키 문자열(해시해 쓴다)
    * @param label 오류 문구에 쓸 잠금 이름(예: "출력 테이블 잠금")
@@ -74,6 +69,7 @@ final class SessionAdvisoryLock {
    * @param timeoutMessage 상한을 넘겼을 때 던질 한국어 안내
    */
   static Held acquire(
+      PlatformLocks locks,
       DataSource dataSource,
       String key,
       String label,
@@ -103,22 +99,17 @@ final class SessionAdvisoryLock {
         // 트랜잭션을 열어 두지 않는다 — 세션 잠금은 트랜잭션과 무관하고, 자동 커밋이 아니면 잠금을 쥐는
         // 내내 이 커넥션이 idle in transaction 으로 남는다.
         connection.setAutoCommit(true);
-        try (PreparedStatement attempt = connection.prepareStatement(TRY_ACQUIRE_SQL)) {
-          attempt.setString(1, key);
-          try (ResultSet rs = attempt.executeQuery()) {
-            locked = rs.next() && rs.getBoolean(1);
-          }
-        }
+        locked = locks.trySessionLock(connection, key);
       } catch (SQLException | RuntimeException e) {
         // 시도 문장이 중간에 끊기면 잠금 여부가 모호하다 — release 가 unlock_all(실패 시 끊기)로 덮는다.
-        release(connection);
+        release(locks, connection);
         throw new ScriptExecutionException(label + "을 얻지 못했습니다: " + e.getMessage(), e);
       }
       if (locked) {
-        return new Held(connection);
+        return new Held(connection, locks);
       }
       // 다른 실행이 쥐고 있다 — 커넥션을 바로 돌려주고 잠시 뒤 다시 시도한다(클래스 Javadoc 참조).
-      release(connection);
+      release(locks, connection);
       waitBeforeRetry(deadline, label, timeoutMessage);
     }
   }
@@ -138,12 +129,9 @@ final class SessionAdvisoryLock {
   }
 
   /** 잠금을 풀고 커넥션을 반납한다. 풀지 못했으면 커넥션을 끊어 잠금이 풀로 새지 않게 한다. */
-  static void release(Connection connection) {
+  static void release(PlatformLocks locks, Connection connection) {
     try {
-      try (Statement release = connection.createStatement();
-          ResultSet ignored = release.executeQuery(RELEASE_SQL)) {
-        // 결과는 쓰지 않는다 — 문장이 끝났다는 것이 곧 해제다.
-      }
+      locks.releaseAllSessionLocks(connection);
     } catch (SQLException | RuntimeException e) {
       log.warn("세션 advisory 잠금 해제 실패 — 커넥션을 끊어 서버가 잠금을 회수하게 한다", e);
       try {

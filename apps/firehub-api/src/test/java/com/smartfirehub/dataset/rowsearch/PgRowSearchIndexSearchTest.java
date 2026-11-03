@@ -115,7 +115,7 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
         RowFilterCompiler.compile(
             new RowFilter(List.of(new RowFilter.Condition("status", "eq", "완료"))),
             Map.of("content", "TEXT", "status", "VARCHAR"));
-    String vec = com.smartfirehub.dataset.search.VectorLiterals.toVectorLiteral(axis(0));
+    String vec = com.smartfirehub.embedding.repository.VectorLiterals.toVectorLiteral(axis(0));
 
     // 필터가 없으면 정렬만 남아 두 경로의 차이가 그대로 드러난다(필터가 있으면 작은 표에선 HNSW 경로도 조인을 고른다).
     assertThat(explain(CompiledFilter.none(), false, vec)).contains("embedding_idx");

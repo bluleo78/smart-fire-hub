@@ -1,5 +1,7 @@
 package com.smartfirehub.securitylevel.ai;
 
+import com.smartfirehub.global.platformdb.PlatformDbFeature;
+import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -29,16 +31,19 @@ public class AiVectorPurgeStartupRunner {
   private final TenantSettingsRepository tenantSettings;
   private final AiVectorPurgeService purgeService;
   private final boolean enabled;
+  private final PlatformDbFeatures features;
 
   public AiVectorPurgeStartupRunner(
       TenantScopedRunner tenantRunner,
       TenantSettingsRepository tenantSettings,
       AiVectorPurgeService purgeService,
-      @Value("${security.ai-vector-purge.startup-enabled:true}") boolean enabled) {
+      @Value("${security.ai-vector-purge.startup-enabled:true}") boolean enabled,
+      PlatformDbFeatures features) {
     this.tenantRunner = tenantRunner;
     this.tenantSettings = tenantSettings;
     this.purgeService = purgeService;
     this.enabled = enabled;
+    this.features = features;
   }
 
   /** 기동 완료 후 백그라운드에서 — 기동 시간을 늘리지 않는다. 테넌트 하나의 실패는 나머지를 막지 않는다(TenantScopedRunner). */
@@ -56,6 +61,11 @@ public class AiVectorPurgeStartupRunner {
    * 테넌트로). 테스트가 직접 부른다.
    */
   public void runForCurrentTenant() {
+    // 벡터 검색을 지원하지 않는 플랫폼 DB 에는 지울 벡터가 없다 — 아무것도 하지 않고 플래그도 남기지 않는다.
+    if (!features.supports(PlatformDbFeature.VECTOR_SEARCH)) {
+      log.info("외부 벡터 정리 건너뜀(벡터 검색 미지원 플랫폼 DB)");
+      return;
+    }
     if (tenantSettings.findValue(FLAG_KEY).isPresent()) {
       return;
     }

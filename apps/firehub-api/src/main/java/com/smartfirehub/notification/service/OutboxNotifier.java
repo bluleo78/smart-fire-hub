@@ -1,8 +1,6 @@
 package com.smartfirehub.notification.service;
 
-import javax.sql.DataSource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.smartfirehub.global.platformdb.OutboxWakeupChannel;
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,20 +12,14 @@ import org.springframework.stereotype.Component;
 @Component
 public class OutboxNotifier {
 
-  private static final Logger log = LoggerFactory.getLogger(OutboxNotifier.class);
+  private final OutboxWakeupChannel channel;
 
-  private final DataSource dataSource;
-
-  public OutboxNotifier(DataSource dataSource) {
-    this.dataSource = dataSource;
+  public OutboxNotifier(OutboxWakeupChannel channel) {
+    this.channel = channel;
   }
 
+  /** 신호 발행을 채널에 위임한다(실패는 채널이 warn 로그로 삼킨다). */
   public void notifyOutboxNew() {
-    try (var conn = dataSource.getConnection();
-        var st = conn.createStatement()) {
-      st.execute("NOTIFY outbox_new");
-    } catch (Exception e) {
-      log.warn("Failed to NOTIFY outbox_new: {}", e.getMessage());
-    }
+    channel.publish();
   }
 }

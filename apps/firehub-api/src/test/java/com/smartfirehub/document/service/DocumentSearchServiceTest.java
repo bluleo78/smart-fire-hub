@@ -63,7 +63,7 @@ class DocumentSearchServiceTest {
             Mockito.eq(VIS)))
         .thenReturn(List.of(hit));
 
-    var service = new DocumentSearchService(factory, repo, guard());
+    var service = new DocumentSearchService(factory, repo, guard(), f -> true);
     // SEMANTIC 모드: 쿼리를 임베딩해 코사인 검색만 위임한다(topK 그대로 전달).
     // (3-인자 생성자는 이제 HYBRID 기본이므로 의미검색 경로는 모드를 명시한다.)
     var result =
@@ -82,7 +82,8 @@ class DocumentSearchServiceTest {
         new DocumentSearchService(
             Mockito.mock(EmbeddingProviderFactory.class),
             Mockito.mock(DocumentChunkRepository.class),
-            guard());
+            guard(),
+            f -> true);
     assertThatThrownBy(() -> service.search(new DocumentSearchRequest("  ", null, 5), CLEARANCE))
         .isInstanceOf(IllegalArgumentException.class);
   }
@@ -96,7 +97,7 @@ class DocumentSearchServiceTest {
             Mockito.eq("질의"), Mockito.eq(List.of(3L)), Mockito.eq(5), Mockito.eq(VIS)))
         .thenReturn(List.of(hit));
 
-    var service = new DocumentSearchService(factory, repo, guard());
+    var service = new DocumentSearchService(factory, repo, guard(), f -> true);
     var result =
         service.search(
             new DocumentSearchRequest(
@@ -126,7 +127,7 @@ class DocumentSearchServiceTest {
             Mockito.eq("질의"), Mockito.eq(List.of(3L)), Mockito.eq(50), Mockito.eq(VIS)))
         .thenReturn(List.of(b, c));
 
-    var service = new DocumentSearchService(factory, repo, guard());
+    var service = new DocumentSearchService(factory, repo, guard(), f -> true);
     var result =
         service.search(
             new DocumentSearchRequest(
@@ -151,7 +152,7 @@ class DocumentSearchServiceTest {
     when(repo.searchByTrigram(Mockito.any(), Mockito.any(), Mockito.anyInt(), Mockito.eq(VIS)))
         .thenReturn(List.of());
 
-    var service = new DocumentSearchService(factory, repo, guard());
+    var service = new DocumentSearchService(factory, repo, guard(), f -> true);
     // 3-인자 생성자 → mode 미지정 → HYBRID → 양쪽 repo 호출돼야 함.
     service.search(new DocumentSearchRequest("질의", List.of(3L), 5), CLEARANCE);
 
@@ -166,7 +167,7 @@ class DocumentSearchServiceTest {
     var factory = Mockito.mock(EmbeddingProviderFactory.class);
     var repo = Mockito.mock(DocumentChunkRepository.class);
     when(factory.current()).thenThrow(new EmbeddingNotConfiguredException());
-    var service = new DocumentSearchService(factory, repo, guard());
+    var service = new DocumentSearchService(factory, repo, guard(), f -> true);
     assertThatThrownBy(
             () ->
                 service.search(

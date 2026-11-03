@@ -1,5 +1,6 @@
-package com.smartfirehub.embedding;
+package com.smartfirehub.embedding.repository;
 
+import com.smartfirehub.embedding.EmbeddingDimension;
 import java.util.function.Function;
 import org.jooq.DSLContext;
 
