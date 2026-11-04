@@ -24,7 +24,6 @@ import com.smartfirehub.mapping.dto.OntologyMappingUsage;
 import com.smartfirehub.mapping.repository.MappingRepository;
 import com.smartfirehub.mapping.service.MappingReferenceService;
 import com.smartfirehub.mapping.service.MappingService;
-import com.smartfirehub.ontology.binding.DatasetOntologyRepository;
 import com.smartfirehub.ontology.binding.DatasetOntologyService;
 import com.smartfirehub.ontology.dto.BindOntologyResponse;
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
@@ -35,6 +34,8 @@ import com.smartfirehub.ontology.element.dto.ElementDtos.CreateRelationRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.UpdateEntityTypeRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.UpdatePropertyRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.UpdateRelationRequest;
+import com.smartfirehub.ontology.repository.DatasetOntologyRepository;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.support.OntologyTestSupport;
 import com.smartfirehub.support.PausedTransactionRace;
 import com.smartfirehub.support.SecurityFixture;
@@ -43,7 +44,6 @@ import java.util.ArrayList;
 import java.util.List;
 import org.jooq.JSONB;
 import org.jooq.Record;
-import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -1386,7 +1386,7 @@ class OntologyElementMappingRefTest extends OntologyElementTestSupport {
   }
 
   private List<Long> liveMappingDatasets(long ontology) {
-    return mappingRepository.findLiveByOntology(ontology, DSL.trueCondition()).stream()
+    return mappingRepository.findLiveByOntology(ontology, DatasetVisibility.UNRESTRICTED).stream()
         .map(MappingRepository.LiveMappingRow::datasetId)
         .toList();
   }

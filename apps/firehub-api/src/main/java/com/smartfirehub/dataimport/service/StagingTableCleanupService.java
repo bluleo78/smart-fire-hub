@@ -1,10 +1,10 @@
 package com.smartfirehub.dataimport.service;
 
+import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.storage.DataRowStore;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
-import com.smartfirehub.dataset.storage.TenantDataStoreRepository;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;

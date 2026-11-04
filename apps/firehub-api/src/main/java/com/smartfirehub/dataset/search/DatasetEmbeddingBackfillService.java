@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.search;
 
+import com.smartfirehub.dataset.repository.DatasetMetaReader;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
 import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;

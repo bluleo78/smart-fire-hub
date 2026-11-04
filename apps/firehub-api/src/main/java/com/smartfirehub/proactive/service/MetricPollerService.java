@@ -340,8 +340,7 @@ public class MetricPollerService {
             ownerClearance.shareCall(),
             () ->
                 (double)
-                    systemMetricRepository.countDatasets(
-                        datasetAccessGuard.visibleCondition(clearance)));
+                    systemMetricRepository.countDatasets(datasetAccessGuard.visibility(clearance)));
       }
       case "active_user_count" -> {
         // Count distinct users who executed pipelines in last 24 hours

@@ -1056,21 +1056,21 @@ class ExcelStreamingParserTest {
       put.accept(
           "[Content_Types].xml",
           ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types"
-               + " xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default"
-               + " Extension=\"rels\""
-               + " ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default"
-               + " Extension=\"bin\" ContentType=\"application/vnd.ms-excel.worksheet\"/><Override"
-               + " PartName=\"/xl/workbook.bin\""
-               + " ContentType=\"application/vnd.ms-excel.sheet.binary.macroEnabled.main\"/>"
-               + "</Types>")
+                  + " xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default"
+                  + " Extension=\"rels\""
+                  + " ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default"
+                  + " Extension=\"bin\" ContentType=\"application/vnd.ms-excel.worksheet\"/><Override"
+                  + " PartName=\"/xl/workbook.bin\""
+                  + " ContentType=\"application/vnd.ms-excel.sheet.binary.macroEnabled.main\"/>"
+                  + "</Types>")
               .getBytes(java.nio.charset.StandardCharsets.UTF_8));
       put.accept(
           "_rels/.rels",
           ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships"
-               + " xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship"
-               + " Id=\"rId1\""
-               + " Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\""
-               + " Target=\"xl/workbook.bin\"/></Relationships>")
+                  + " xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship"
+                  + " Id=\"rId1\""
+                  + " Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\""
+                  + " Target=\"xl/workbook.bin\"/></Relationships>")
               .getBytes(java.nio.charset.StandardCharsets.UTF_8));
       StringBuilder rels =
           new StringBuilder(
@@ -1134,8 +1134,8 @@ class ExcelStreamingParserTest {
   }
 
   /**
-   * 시트 목록이 깨진 xlsb 는 시트를 지정하지 않으면 예전처럼 첫 시트를 가져와야 한다(이 기능 전에 가져와지던 파일의 회귀 방지). 미리보기가 돌려준 그 첫 시트
-   * 이름을 다시 지정해도(화면·AI 가 검증·가져오기에 되돌려 보낸다) 같은 시트를 읽어야 한다(PR #792 리뷰). 다른 이름은 고를 수 없다는 한국어 오류다.
+   * 시트 목록이 깨진 xlsb 는 시트를 지정하지 않으면 예전처럼 첫 시트를 가져와야 한다(이 기능 전에 가져와지던 파일의 회귀 방지). 미리보기가 돌려준 그 첫 시트 이름을
+   * 다시 지정해도(화면·AI 가 검증·가져오기에 되돌려 보낸다) 같은 시트를 읽어야 한다(PR #792 리뷰). 다른 이름은 고를 수 없다는 한국어 오류다.
    */
   @Test
   void xlsb_with_unreadable_sheet_list_falls_back_to_first_sheet(@TempDir File dir)
@@ -1159,7 +1159,6 @@ class ExcelStreamingParserTest {
         .isInstanceOf(com.smartfirehub.dataimport.exception.ExcelSheetSelectionException.class);
     assertThatThrownBy(() -> readSheetMarker(xlsb, "다른시트"))
         .isInstanceOf(com.smartfirehub.dataimport.exception.ExcelSheetSelectionException.class)
-        .hasMessage(
-            "파일의 시트 목록을 읽을 수 없어 '다른시트' 시트를 고를 수 없습니다. 시트를 지정하지 않으면 첫 번째 시트를 가져옵니다.");
+        .hasMessage("파일의 시트 목록을 읽을 수 없어 '다른시트' 시트를 고를 수 없습니다. 시트를 지정하지 않으면 첫 번째 시트를 가져옵니다.");
   }
 }

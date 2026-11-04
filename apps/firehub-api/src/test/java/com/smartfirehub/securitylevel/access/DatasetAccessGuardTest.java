@@ -11,6 +11,7 @@ import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.ai.AiCall;
 import com.smartfirehub.securitylevel.ai.PolicyBlockedException;
+import com.smartfirehub.securitylevel.repository.jooq.JooqDatasetVisibility;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import java.util.ArrayList;
@@ -26,7 +27,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  * 가드의 VIEW 판정과 목록 SQL 조각이 <b>같은 규칙</b>인지 고정한다(Review Focus 1).
  *
  * <p>순수 Policy 는 Task 2 가 매트릭스로 고정했다. 여기서는 DB 에서 사실(등급·허용 목록)을 읽어 Policy 에 넣는 배선과, 그 Policy 와 SQL
- * 조각({@code visibleCondition})이 모든 조합에서 같은 답을 내는지를 본다.
+ * 조각({@code JooqDatasetVisibility.condition})이 모든 조합에서 같은 답을 내는지를 본다.
  */
 class DatasetAccessGuardTest extends IntegrationTestBase {
 
@@ -134,7 +135,7 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
    * 결과.
    */
   @Test
-  void visibleCondition_agreesWithPolicy_acrossMatrix() {
+  void visibility_agreesWithPolicy_acrossMatrix() {
     // 컨트롤러 판정 C2: 최상위 자격만으로는 rank 비교가 실행되지 않는다 — 공개·민감 자격 사용자도 포함한다.
     long pub = user("공개", false);
     long sens = user("민감", false);
@@ -169,8 +170,8 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
                         .from(table(name("dataset")))
                         .where(field(name("dataset", "id"), Long.class).in(ids))
                         .and(
-                            guard.visibleCondition(
-                                c,
+                            JooqDatasetVisibility.condition(
+                                new DatasetVisibility(c, null),
                                 field(name("dataset", "id"), Long.class),
                                 field(name("dataset", "security_level_id"), Long.class)))
                         .fetch(field(name("dataset", "id"), Long.class)));
@@ -215,7 +216,7 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
    * [+SHARE])과 같은 답을 낸다. 기밀은 허용 목록에 올려 VIEW 를 통과시켜야 share 술어가 실제로 검증된다.
    */
   @Test
-  void aiVisibleCondition_agreesWithPolicy_acrossHostingAndShare() {
+  void aiVisibility_agreesWithPolicy_acrossHostingAndShare() {
     long uid = user("기밀", false);
     Clearance c = clearanceResolver.resolve(uid);
     List<Long> ids = new ArrayList<>();
@@ -235,11 +236,10 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
                         .from(table(name("dataset")))
                         .where(field(name("dataset", "id"), Long.class).in(ids))
                         .and(
-                            guard.visibleCondition(
-                                c,
+                            JooqDatasetVisibility.condition(
+                                new DatasetVisibility(c, call),
                                 field(name("dataset", "id"), Long.class),
-                                field(name("dataset", "security_level_id"), Long.class),
-                                call))
+                                field(name("dataset", "security_level_id"), Long.class)))
                         .fetch(field(name("dataset", "id"), Long.class)));
         for (long ds : ids) {
           boolean policy =
@@ -269,20 +269,18 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
                     .from(table(name("dataset")))
                     .where(field(name("dataset", "id"), Long.class).in(ids))
                     .and(
-                        guard.visibleCondition(
-                            c,
+                        JooqDatasetVisibility.condition(
+                            new DatasetVisibility(c, new AiCall(ProviderHosting.EXTERNAL, false)),
                             field(name("dataset", "id"), Long.class),
-                            field(name("dataset", "security_level_id"), Long.class),
-                            new AiCall(ProviderHosting.EXTERNAL, false)))
+                            field(name("dataset", "security_level_id"), Long.class)))
                     .fetch(field(name("dataset", "id"), Long.class)));
     assertThat(viaPublic).containsExactlyInAnyOrder(ids.get(0), ids.get(1));
     String frag =
         dsl.renderInlined(
-            guard.visibleCondition(
-                c,
+            JooqDatasetVisibility.condition(
+                new DatasetVisibility(c, new AiCall(ProviderHosting.SELF_HOSTED, false)),
                 field(name("d", "id"), Long.class),
-                field(name("d", "security_level_id"), Long.class),
-                new AiCall(ProviderHosting.SELF_HOSTED, false)));
+                field(name("d", "security_level_id"), Long.class)));
     List<Long> viaSql =
         inTenantFixture(
             () ->

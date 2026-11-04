@@ -1,10 +1,10 @@
 package com.smartfirehub.dataset.storage.executor;
 
 import com.smartfirehub.apiconnection.service.EncryptionService;
+import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
 import com.smartfirehub.dataset.storage.DataStoreAccountRole;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.StoredAccount;
-import com.smartfirehub.dataset.storage.TenantDataStoreRepository;
 import com.smartfirehub.dataset.storage.TenantDataStoreRow;
 import com.smartfirehub.dataset.storage.TenantDataStoreStatus;
 import com.smartfirehub.global.exception.CodedApiException;
@@ -37,9 +37,12 @@ public class ExecutorDataStoreDescriptorService {
 
   /** 스크립트 자격 검사용 세대만 읽는다. 계정 행 조회와 비밀번호 복호화는 이 경로에 필요하지 않다. */
   public long scriptTokenEpoch(long tenantId) {
-    return repository.findScriptTokenEpoch(tenantId)
-        .orElseThrow(() -> new CodedApiException(
-            HttpStatus.NOT_FOUND, "DATA_STORE_NOT_FOUND", "데이터셋 저장소를 찾지 못했습니다"));
+    return repository
+        .findScriptTokenEpoch(tenantId)
+        .orElseThrow(
+            () ->
+                new CodedApiException(
+                    HttpStatus.NOT_FOUND, "DATA_STORE_NOT_FOUND", "데이터셋 저장소를 찾지 못했습니다"));
   }
 
   /**

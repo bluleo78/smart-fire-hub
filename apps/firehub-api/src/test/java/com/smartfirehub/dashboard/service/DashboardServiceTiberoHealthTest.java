@@ -7,7 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dashboard.dto.SystemHealthResponse;
-import com.smartfirehub.dashboard.repository.DashboardStatsRepository;
+import com.smartfirehub.dashboard.repository.jooq.JooqDashboardStatsRepository;
 import com.smartfirehub.dataset.storage.DataRowStore;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
@@ -17,6 +17,7 @@ import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.ArrayList;
@@ -24,7 +25,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 import org.jooq.DSLContext;
-import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -103,12 +103,12 @@ class DashboardServiceTiberoHealthTest extends IntegrationTestBase {
 
     // 가시성 조건은 조회 구간에서 한 번 만들어진다 — 그 시점의 트랜잭션 상태가 곧 조회 구간의 상태다. 조건은 전부 보이게 둔다.
     DatasetAccessGuard guard = mock(DatasetAccessGuard.class);
-    when(guard.visibleCondition(any(Clearance.class)))
+    when(guard.visibility(any(Clearance.class)))
         .thenAnswer(
             inv -> {
               readTx.add(TransactionSynchronizationManager.isActualTransactionActive());
               readOnly.add(TransactionSynchronizationManager.isCurrentTransactionReadOnly());
-              return DSL.noCondition();
+              return DatasetVisibility.UNRESTRICTED;
             });
     DataRowStore rowStore = mock(DataRowStore.class);
     when(rowStore.emptyTables(any()))
@@ -132,7 +132,7 @@ class DashboardServiceTiberoHealthTest extends IntegrationTestBase {
 
     DashboardService service =
         new DashboardService(
-            new DashboardStatsRepository(dsl),
+            new JooqDashboardStatsRepository(dsl),
             guard,
             clearanceResolver,
             resolver,

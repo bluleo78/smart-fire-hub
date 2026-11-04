@@ -1,188 +1,27 @@
 package com.smartfirehub.pipeline.repository;
 
-import static org.jooq.impl.DSL.*;
-
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
 import com.smartfirehub.pipeline.dto.PipelineDeleteImpactResponse;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.dto.UpdateTriggerRequest;
-import java.time.LocalDateTime;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.JSONB;
-import org.jooq.Table;
-import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
-@Repository
-@RequiredArgsConstructor
-// 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
-// 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
-// REQUIRED 라 서비스가 이미 연 트랜잭션에는 합류한다(기존 경로 동작 불변).
-@Transactional
-public class TriggerRepository {
+/**
+ * 파이프라인 트리거(pipeline_trigger) 정의 저장·조회 리포지토리.
+ *
+ * <p>구현은 {@code JooqTriggerRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ */
+public interface TriggerRepository {
 
-  private final DSLContext dsl;
-  private final ObjectMapper objectMapper;
+  List<TriggerResponse> findByPipelineId(Long pipelineId);
 
-  /** 체인 그래프 직렬화 잠금 — PG advisory 호출을 플랫폼 잠금 추상화로 위임한다(WD-486). */
-  private final PlatformLocks locks;
+  Optional<TriggerResponse> findById(Long id);
 
-  private static final Table<?> PIPELINE_TRIGGER = table(name("pipeline_trigger"));
-  private static final Field<Long> T_ID = field(name("pipeline_trigger", "id"), Long.class);
-  private static final Field<Long> T_PIPELINE_ID =
-      field(name("pipeline_trigger", "pipeline_id"), Long.class);
-  private static final Field<String> T_TRIGGER_TYPE =
-      field(name("pipeline_trigger", "trigger_type"), String.class);
-  private static final Field<String> T_NAME = field(name("pipeline_trigger", "name"), String.class);
-  private static final Field<String> T_DESCRIPTION =
-      field(name("pipeline_trigger", "description"), String.class);
-  private static final Field<Boolean> T_IS_ENABLED =
-      field(name("pipeline_trigger", "is_enabled"), Boolean.class);
-  private static final Field<JSONB> T_CONFIG =
-      field(name("pipeline_trigger", "config"), JSONB.class);
-  private static final Field<JSONB> T_TRIGGER_STATE =
-      field(name("pipeline_trigger", "trigger_state"), JSONB.class);
-  private static final Field<Long> T_CREATED_BY =
-      field(name("pipeline_trigger", "created_by"), Long.class);
-  private static final Field<Long> T_UPDATED_BY =
-      field(name("pipeline_trigger", "updated_by"), Long.class);
-  private static final Field<LocalDateTime> T_CREATED_AT =
-      field(name("pipeline_trigger", "created_at"), LocalDateTime.class);
-  private static final Field<LocalDateTime> T_UPDATED_AT =
-      field(name("pipeline_trigger", "updated_at"), LocalDateTime.class);
+  List<TriggerResponse> findEnabledByType(String triggerType);
 
-  private Map<String, Object> parseJsonb(JSONB jsonb) {
-    if (jsonb == null || jsonb.data() == null) {
-      return Collections.emptyMap();
-    }
-    try {
-      return objectMapper.readValue(jsonb.data(), new TypeReference<Map<String, Object>>() {});
-    } catch (Exception e) {
-      return Collections.emptyMap();
-    }
-  }
-
-  private JSONB toJsonb(Map<String, Object> map) {
-    if (map == null || map.isEmpty()) {
-      return JSONB.valueOf("{}");
-    }
-    try {
-      return JSONB.valueOf(objectMapper.writeValueAsString(map));
-    } catch (Exception e) {
-      return JSONB.valueOf("{}");
-    }
-  }
-
-  private TriggerResponse mapToResponse(org.jooq.Record r) {
-    Map<String, Object> triggerState = parseJsonb(r.get(T_TRIGGER_STATE));
-    // nextFireTime 은 trigger_state(jsonb) 안에 저장돼 있다 (#676) — DTO 최상위 필드로 꺼내
-    // 프론트엔드가 별도 파싱 없이 trigger.nextFireTime 으로 바로 읽을 수 있게 한다.
-    // 비활성 트리거는 실행되지 않으므로 "다음 실행"을 내보내지 않는다(WD-114). 끌 때 trigger_state 의 값은 지우지 않고(이미 꺼진
-    // 옛 행, 끄는 순간 돌던 발화가 끝나며 다시 쓴 값 포함) 읽을 때 한 곳에서 거른다 — 최상위 필드뿐 아니라 triggerState 원본에서도
-    // 빼야 원본 JSON 을 그대로 읽는 AI 에이전트 등 모든 소비자가 같은 답을 본다. 다시 켜면 등록 시 새 값으로 덮어쓴다.
-    boolean isEnabled = r.get(T_IS_ENABLED);
-    if (!isEnabled) {
-      triggerState.remove("nextFireTime");
-    }
-    Object nextFireTimeValue = triggerState.get("nextFireTime");
-    return new TriggerResponse(
-        r.get(T_ID),
-        r.get(T_PIPELINE_ID),
-        r.get(T_TRIGGER_TYPE),
-        r.get(T_NAME),
-        r.get(T_DESCRIPTION),
-        isEnabled,
-        parseJsonb(r.get(T_CONFIG)),
-        triggerState,
-        nextFireTimeValue == null ? null : nextFireTimeValue.toString(),
-        r.get(T_CREATED_BY),
-        r.get(T_CREATED_AT));
-  }
-
-  public List<TriggerResponse> findByPipelineId(Long pipelineId) {
-    return dsl.select(
-            T_ID,
-            T_PIPELINE_ID,
-            T_TRIGGER_TYPE,
-            T_NAME,
-            T_DESCRIPTION,
-            T_IS_ENABLED,
-            T_CONFIG,
-            T_TRIGGER_STATE,
-            T_CREATED_BY,
-            T_CREATED_AT)
-        .from(PIPELINE_TRIGGER)
-        .where(T_PIPELINE_ID.eq(pipelineId))
-        .orderBy(T_ID.asc())
-        .fetch(this::mapToResponse);
-  }
-
-  public Optional<TriggerResponse> findById(Long id) {
-    return dsl.select(
-            T_ID,
-            T_PIPELINE_ID,
-            T_TRIGGER_TYPE,
-            T_NAME,
-            T_DESCRIPTION,
-            T_IS_ENABLED,
-            T_CONFIG,
-            T_TRIGGER_STATE,
-            T_CREATED_BY,
-            T_CREATED_AT)
-        .from(PIPELINE_TRIGGER)
-        .where(T_ID.eq(id))
-        .fetchOptional(this::mapToResponse);
-  }
-
-  public List<TriggerResponse> findEnabledByType(String triggerType) {
-    return dsl.select(
-            T_ID,
-            T_PIPELINE_ID,
-            T_TRIGGER_TYPE,
-            T_NAME,
-            T_DESCRIPTION,
-            T_IS_ENABLED,
-            T_CONFIG,
-            T_TRIGGER_STATE,
-            T_CREATED_BY,
-            T_CREATED_AT)
-        .from(PIPELINE_TRIGGER)
-        .where(T_TRIGGER_TYPE.eq(triggerType))
-        .and(T_IS_ENABLED.eq(true))
-        .fetch(this::mapToResponse);
-  }
-
-  public List<TriggerResponse> findEnabledChainTriggersByUpstreamId(Long upstreamPipelineId) {
-    return dsl.select(
-            T_ID,
-            T_PIPELINE_ID,
-            T_TRIGGER_TYPE,
-            T_NAME,
-            T_DESCRIPTION,
-            T_IS_ENABLED,
-            T_CONFIG,
-            T_TRIGGER_STATE,
-            T_CREATED_BY,
-            T_CREATED_AT)
-        .from(PIPELINE_TRIGGER)
-        .where(T_TRIGGER_TYPE.eq("PIPELINE_CHAIN"))
-        .and(T_IS_ENABLED.eq(true))
-        .and(
-            field("({0}->>'upstreamPipelineId')::bigint", Long.class, T_CONFIG)
-                .eq(upstreamPipelineId))
-        .fetch(this::mapToResponse);
-  }
+  List<TriggerResponse> findEnabledChainTriggersByUpstreamId(Long upstreamPipelineId);
 
   /**
    * 활성 PIPELINE_CHAIN 연쇄 간선 한 줄 — 트리거 id, 그 트리거가 실행하는(하류) 파이프라인 id, config 의 상류 id 원문.
@@ -190,7 +29,7 @@ public class TriggerRepository {
    * <p>상류 id 는 원문(text)으로 돌려준다. SQL 에서 {@code ::bigint} 로 바꾸면 숫자로 읽을 수 없는 값 하나가 조회 전체를 실패시키므로, 해석은
    * 저장 시 검사와 같은 규칙으로 서비스가 한다.
    */
-  public record ChainEdgeRow(long triggerId, long pipelineId, String upstreamPipelineId) {}
+  record ChainEdgeRow(long triggerId, long pipelineId, String upstreamPipelineId) {}
 
   /**
    * 이 테넌트의 연쇄 그래프 변경(새 활성 연쇄 간선을 더하는 생성·수정·켜기)을 직렬화하는 트랜잭션 단위 advisory 잠금(WD-239). 커밋·롤백 때 풀린다.
@@ -203,80 +42,23 @@ public class TriggerRepository {
    * 예외로 드러낸다. 키는 접두어를 붙인 문자열 해시다 — 다른 테넌트 단위 잠금(member-admin-guard:, security_level_defs_t 등)과 키
    * 공간을 나눈다.
    */
-  @Transactional(propagation = Propagation.MANDATORY)
-  public void lockChainGraph(long tenantId) {
-    locks.xactLock("pipeline-chain-graph:" + tenantId);
-  }
+  void lockChainGraph(long tenantId);
 
   /**
    * 현재 테넌트(RLS)의 활성 PIPELINE_CHAIN 간선을 한 번에 읽는다(WD-106). 저장 시 순환·길이 검사가 노드마다 조회하지 않고(N+1) 메모리 그래프로
    * 판정하기 위한 것이다.
    */
-  public List<ChainEdgeRow> findEnabledChainEdges() {
-    return dsl.select(
-            T_ID, T_PIPELINE_ID, field("{0}->>'upstreamPipelineId'", String.class, T_CONFIG))
-        .from(PIPELINE_TRIGGER)
-        .where(T_TRIGGER_TYPE.eq("PIPELINE_CHAIN"))
-        .and(T_IS_ENABLED.eq(true))
-        .fetch(r -> new ChainEdgeRow(r.value1(), r.value2(), r.value3()));
-  }
+  List<ChainEdgeRow> findEnabledChainEdges();
 
-  public Long create(
-      Long pipelineId, CreateTriggerRequest req, Map<String, Object> config, Long userId) {
-    return dsl.insertInto(PIPELINE_TRIGGER)
-        .set(T_PIPELINE_ID, pipelineId)
-        .set(T_TRIGGER_TYPE, req.triggerType().name())
-        .set(T_NAME, req.name())
-        .set(T_DESCRIPTION, req.description())
-        .set(T_CONFIG, toJsonb(config))
-        .set(T_CREATED_BY, userId)
-        .returning(T_ID)
-        .fetchOne(r -> r.get(T_ID));
-  }
+  Long create(Long pipelineId, CreateTriggerRequest req, Map<String, Object> config, Long userId);
 
-  public void update(Long id, UpdateTriggerRequest req, Long userId) {
-    var query =
-        dsl.update(PIPELINE_TRIGGER)
-            .set(T_UPDATED_AT, LocalDateTime.now())
-            .set(T_UPDATED_BY, userId);
+  void update(Long id, UpdateTriggerRequest req, Long userId);
 
-    if (req.name() != null) {
-      query = query.set(T_NAME, req.name());
-    }
-    // description 이 null 이면 "바꾸지 않음"(부분 수정 — AI 에이전트 등), 빈 문자열이면 "지움"으로 본다(WD-113).
-    // 예전엔 웹이 빈 설명을 키째 빼고 보내 null 과 구분이 안 돼, 설명을 지우고 저장해도 옛 설명이 남았다.
-    if (req.description() != null) {
-      query = query.set(T_DESCRIPTION, req.description().isBlank() ? null : req.description());
-    }
-    if (req.isEnabled() != null) {
-      query = query.set(T_IS_ENABLED, req.isEnabled());
-    }
-    if (req.config() != null) {
-      query = query.set(T_CONFIG, toJsonb(req.config()));
-    }
+  void delete(Long id);
 
-    query.where(T_ID.eq(id)).execute();
-  }
+  void updateEnabled(Long id, boolean enabled);
 
-  public void delete(Long id) {
-    dsl.deleteFrom(PIPELINE_TRIGGER).where(T_ID.eq(id)).execute();
-  }
-
-  public void updateEnabled(Long id, boolean enabled) {
-    dsl.update(PIPELINE_TRIGGER)
-        .set(T_IS_ENABLED, enabled)
-        .set(T_UPDATED_AT, LocalDateTime.now())
-        .where(T_ID.eq(id))
-        .execute();
-  }
-
-  public void updateTriggerState(Long id, Map<String, Object> state) {
-    dsl.update(PIPELINE_TRIGGER)
-        .set(T_TRIGGER_STATE, toJsonb(state))
-        .set(T_UPDATED_AT, LocalDateTime.now())
-        .where(T_ID.eq(id))
-        .execute();
-  }
+  void updateTriggerState(Long id, Map<String, Object> state);
 
   /**
    * {@code trigger_state.nextFireTime} 을 읽기-수정-쓰기로 병합한다(#676).
@@ -288,16 +70,7 @@ public class TriggerRepository {
    * 반영되지 않는다(#676 구현 중 실측: 로그·리턴값 모두 정상인데 DB에는 반영 안 됨). {@code REQUIRES_NEW} 로 강제로 새 물리 트랜잭션·커넥션을
    * 열어야 실제로 커밋된다.
    */
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public void mergeNextFireTime(Long id, String nextFireTimeIso) {
-    findById(id)
-        .ifPresent(
-            trigger -> {
-              Map<String, Object> updatedState = new HashMap<>(trigger.triggerState());
-              updatedState.put("nextFireTime", nextFireTimeIso);
-              updateTriggerState(id, updatedState);
-            });
-  }
+  void mergeNextFireTime(Long id, String nextFireTimeIso);
 
   /**
    * {@code trigger_state.nextFireTime} 을 지운다(WD-107).
@@ -305,20 +78,7 @@ public class TriggerRepository {
    * <p>스케줄을 걸 수 없거나(다음 발화가 없는 cron, 커밋 후 등록 실패) 스케줄이 없는 상태로 남을 때, 화면의 "다음 실행"에 옛 시각이 거짓으로 남지 않게 하기
    * 위함이다. {@link #mergeNextFireTime} 과 같은 이유로 afterCommit 콜백 안에서 불리므로 {@code REQUIRES_NEW} 로 연다.
    */
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public void clearNextFireTime(Long id) {
-    findById(id)
-        .ifPresent(
-            trigger -> {
-              if (trigger.triggerState() == null
-                  || !trigger.triggerState().containsKey("nextFireTime")) {
-                return;
-              }
-              Map<String, Object> updatedState = new HashMap<>(trigger.triggerState());
-              updatedState.remove("nextFireTime");
-              updateTriggerState(id, updatedState);
-            });
-  }
+  void clearNextFireTime(Long id);
 
   /**
    * 이 파이프라인을 선행으로 둔, 다른 파이프라인의 켜진 연쇄 트리거를 하류 파이프라인 이름과 함께 읽는다(WD-419 — 삭제 확인 창 안내용).
@@ -326,38 +86,10 @@ public class TriggerRepository {
    * <p>상류 매칭은 삭제 시 끄는 {@link #disableByUpstreamPipelineId} 와 같은 규칙(config 의 upstreamPipelineId)을
    * 쓴다. 이미 꺼진 트리거는 삭제로 「꺼지는」 것이 아니므로 세지 않고, 지워질 파이프라인 자신의 트리거는 함께 지워지므로 뺀다. 테넌트 범위는 RLS 가 맡는다.
    */
-  public List<PipelineDeleteImpactResponse.DownstreamChainTrigger>
-      findEnabledDownstreamChainTriggers(Long upstreamPipelineId) {
-    Table<?> pipeline = table(name("pipeline"));
-    Field<Long> pId = field(name("pipeline", "id"), Long.class);
-    Field<String> pName = field(name("pipeline", "name"), String.class);
-    return dsl.select(T_ID, T_NAME, T_PIPELINE_ID, pName)
-        .from(PIPELINE_TRIGGER)
-        .join(pipeline)
-        .on(pId.eq(T_PIPELINE_ID))
-        .where(T_TRIGGER_TYPE.eq("PIPELINE_CHAIN"))
-        .and(T_IS_ENABLED.eq(true))
-        .and(T_PIPELINE_ID.ne(upstreamPipelineId))
-        .and(
-            field("({0}->>'upstreamPipelineId')::bigint", Long.class, T_CONFIG)
-                .eq(upstreamPipelineId))
-        .orderBy(pName, T_ID)
-        .fetch(
-            r ->
-                new PipelineDeleteImpactResponse.DownstreamChainTrigger(
-                    r.value1(), r.value2(), r.value3(), r.value4()));
-  }
+  List<PipelineDeleteImpactResponse.DownstreamChainTrigger> findEnabledDownstreamChainTriggers(
+      Long upstreamPipelineId);
 
-  public int disableByUpstreamPipelineId(Long upstreamPipelineId) {
-    return dsl.update(PIPELINE_TRIGGER)
-        .set(T_IS_ENABLED, false)
-        .set(T_UPDATED_AT, LocalDateTime.now())
-        .where(T_TRIGGER_TYPE.eq("PIPELINE_CHAIN"))
-        .and(
-            field("({0}->>'upstreamPipelineId')::bigint", Long.class, T_CONFIG)
-                .eq(upstreamPipelineId))
-        .execute();
-  }
+  int disableByUpstreamPipelineId(Long upstreamPipelineId);
 
   /**
    * 데이터 변경(DATASET_CHANGE) 트리거들의 감시 목록에서 데이터셋 하나를 뺀다(WD-221).
@@ -374,41 +106,10 @@ public class TriggerRepository {
    *
    * @return 바뀐 트리거 수
    */
-  public int removeWatchedDataset(Long datasetId) {
-    return dsl.execute(
-        """
-        UPDATE pipeline_trigger SET
-          config = jsonb_set(config, '{datasetIds}', COALESCE(
-            (SELECT jsonb_agg(e) FROM jsonb_array_elements(config -> 'datasetIds') e
-              WHERE e <> to_jsonb(?::bigint)), '[]'::jsonb)),
-          trigger_state = COALESCE(trigger_state, '{}'::jsonb) #- ARRAY['lastSnapshot', ?::text]
-            #- ARRAY['lastChangeSnapshot', ?::text] #- ARRAY['lastRelationSnapshot', ?::text],
-          is_enabled = is_enabled AND EXISTS (
-            SELECT 1 FROM jsonb_array_elements(config -> 'datasetIds') e
-              WHERE e <> to_jsonb(?::bigint)),
-          updated_at = ?
-        WHERE trigger_type = 'DATASET_CHANGE'
-          AND jsonb_typeof(config -> 'datasetIds') = 'array'
-          AND (config -> 'datasetIds') @> to_jsonb(?::bigint)
-        """,
-        datasetId,
-        String.valueOf(datasetId),
-        String.valueOf(datasetId),
-        String.valueOf(datasetId),
-        datasetId,
-        LocalDateTime.now(),
-        datasetId);
-  }
+  int removeWatchedDataset(Long datasetId);
 
   /** 파이프라인 스텝들이 쓰는 출력 데이터셋 id(WD-399). 데이터 변경 폴러가 자기 출력을 감시하는 트리거의 자기 발화를 막는 데 쓴다. */
-  public java.util.Set<Long> findOutputDatasetIds(Long pipelineId) {
-    return new java.util.HashSet<>(
-        dsl.selectDistinct(field(name("pipeline_step", "output_dataset_id"), Long.class))
-            .from(table(name("pipeline_step")))
-            .where(field(name("pipeline_step", "pipeline_id"), Long.class).eq(pipelineId))
-            .and(field(name("pipeline_step", "output_dataset_id"), Long.class).isNotNull())
-            .fetch(0, Long.class));
-  }
+  java.util.Set<Long> findOutputDatasetIds(Long pipelineId);
 
   /**
    * 폴러의 행 수·변경 카운터 스냅숏을 지운다(WD-221, WD-399) — 꺼져 있던 데이터 변경 트리거를 다시 켤 때 부른다.
@@ -416,72 +117,20 @@ public class TriggerRepository {
    * <p>꺼진 동안의 변경으로 켜자마자 발화하지 않게, 켠 뒤 첫 폴링이 기준선만 새로 잡도록 한다. {@code lastCheckedAt} 도 지워 그 기준선을 폴링 주기를
    * 기다리지 않고 다음 폴링에 바로 잡는다.
    */
-  public void clearPollSnapshot(Long id) {
-    dsl.execute(
-        "UPDATE pipeline_trigger SET trigger_state = COALESCE(trigger_state, '{}'::jsonb)"
-            + " - 'lastSnapshot' - 'lastChangeSnapshot' - 'lastRelationSnapshot' - 'lastCheckedAt'"
-            + " WHERE id = ?",
-        id);
-  }
+  void clearPollSnapshot(Long id);
 
   /**
    * 토큰 해시로 API 트리거를 찾는다. 켜짐 여부와 무관하게 찾는다(WD-152) — 맞는 토큰으로 꺼진 트리거를 부른 호출자에게 "토큰이 틀렸다"(401) 대신 "트리거가
    * 꺼져 있다"(409)를 알려 주기 위해서다. 켜짐 판정은 {@code TriggerService#fireTrigger} 한 곳에서만 한다.
    */
-  public Optional<TriggerResponse> findByTokenHash(String tokenHash) {
-    return dsl.select(
-            T_ID,
-            T_PIPELINE_ID,
-            T_TRIGGER_TYPE,
-            T_NAME,
-            T_DESCRIPTION,
-            T_IS_ENABLED,
-            T_CONFIG,
-            T_TRIGGER_STATE,
-            T_CREATED_BY,
-            T_CREATED_AT)
-        .from(PIPELINE_TRIGGER)
-        .where(T_TRIGGER_TYPE.eq("API"))
-        .and(field("{0}->>'tokenHash'", String.class, T_CONFIG).eq(tokenHash))
-        .fetchOptional(this::mapToResponse);
-  }
+  Optional<TriggerResponse> findByTokenHash(String tokenHash);
 
   /** Find webhook trigger by webhookId. */
-  public Optional<TriggerResponse> findByWebhookId(String webhookId) {
-    return dsl.select(
-            T_ID,
-            T_PIPELINE_ID,
-            T_TRIGGER_TYPE,
-            T_NAME,
-            T_DESCRIPTION,
-            T_IS_ENABLED,
-            T_CONFIG,
-            T_TRIGGER_STATE,
-            T_CREATED_BY,
-            T_CREATED_AT)
-        .from(PIPELINE_TRIGGER)
-        .where(T_TRIGGER_TYPE.eq("WEBHOOK"))
-        .and(field("{0}->>'webhookId'", String.class, T_CONFIG).eq(webhookId))
-        .fetchOptional(this::mapToResponse);
-  }
+  Optional<TriggerResponse> findByWebhookId(String webhookId);
 
   /** Check if there is a running execution for the given pipeline. */
-  public boolean hasRunningExecution(Long pipelineId) {
-    return dsl.fetchExists(
-        dsl.selectOne()
-            .from(table(name("pipeline_execution")))
-            .where(field(name("pipeline_execution", "pipeline_id"), Long.class).eq(pipelineId))
-            .and(
-                field(name("pipeline_execution", "status"), String.class)
-                    .in("PENDING", "RUNNING")));
-  }
+  boolean hasRunningExecution(Long pipelineId);
 
   /** Check if pipeline is active. */
-  public boolean isPipelineActive(Long pipelineId) {
-    return dsl.select(field(name("pipeline", "is_active"), Boolean.class))
-        .from(table(name("pipeline")))
-        .where(field(name("pipeline", "id"), Long.class).eq(pipelineId))
-        .fetchOptional(r -> r.get(field(name("pipeline", "is_active"), Boolean.class)))
-        .orElse(false);
-  }
+  boolean isPipelineActive(Long pipelineId);
 }

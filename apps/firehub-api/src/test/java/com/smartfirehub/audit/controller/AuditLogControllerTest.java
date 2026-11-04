@@ -92,8 +92,8 @@ class AuditLogControllerTest {
   }
 
   /**
-   * WD-293: page·size 는 다른 목록과 같이 page ≥ 0, 1 ≤ size ≤ 100 으로 보정해 서비스에 넘긴다 — 상한이 없으면 감사 로그 전체를 한 응답으로
-   * 돌려주고, size=0 은 totalPages 가 int 최댓값, 음수는 엉뚱한 「저장할 수 없는 값」 400 이었다.
+   * WD-293: page·size 는 다른 목록과 같이 page ≥ 0, 1 ≤ size ≤ 100 으로 보정해 서비스에 넘긴다 — 상한이 없으면 감사 로그 전체를 한
+   * 응답으로 돌려주고, size=0 은 totalPages 가 int 최댓값, 음수는 엉뚱한 「저장할 수 없는 값」 400 이었다.
    */
   @Test
   void getAuditLogs_clampsPageAndSize() throws Exception {
@@ -126,8 +126,7 @@ class AuditLogControllerTest {
                 .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk());
 
-    verify(auditLogService)
-        .getAuditLogs(VIEWER, null, null, null, null, null, null, null, 0, 100);
+    verify(auditLogService).getAuditLogs(VIEWER, null, null, null, null, null, null, null, 0, 100);
     verify(auditLogService, times(2))
         .getAuditLogs(VIEWER, null, null, null, null, null, null, null, 0, 1);
   }

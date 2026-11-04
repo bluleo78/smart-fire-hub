@@ -340,7 +340,9 @@ class DashboardHealthTest extends IntegrationTestBase {
         .execute();
 
     // 예전 구현의 조인 그대로(같은 조회자 가시성 조건).
-    org.jooq.Condition visible = datasetAccessGuard.visibleCondition(clearanceResolver.current());
+    org.jooq.Condition visible =
+        com.smartfirehub.securitylevel.repository.jooq.JooqDatasetVisibility.condition(
+            datasetAccessGuard.visibility(clearanceResolver.current()));
     int expected =
         dsl.fetchCount(
             dsl.select(DATASET.ID)

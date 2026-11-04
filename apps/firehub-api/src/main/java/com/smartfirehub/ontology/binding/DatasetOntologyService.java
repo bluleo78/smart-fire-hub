@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.mapping.repository.MappingRepository;
 import com.smartfirehub.ontology.dto.BindOntologyResponse;
 import com.smartfirehub.ontology.dto.DatasetOntologyResponse;
+import com.smartfirehub.ontology.repository.DatasetOntologyRepository;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;

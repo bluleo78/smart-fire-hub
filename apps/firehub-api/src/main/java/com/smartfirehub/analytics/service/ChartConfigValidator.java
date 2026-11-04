@@ -8,20 +8,35 @@ import java.util.Set;
  * 차트 종류와 config 값 검사 (WD-413).
  *
  * <p>예전에는 MAP 의 spatialColumn 만 보고 나머지는 그대로 저장해, {@code yAxis} 가 문자열이거나 {@code xAxis} 가 숫자인 config
- * 가 201 로 들어갔다. 그런 차트는 편집 화면이 깨지거나(yAxis.includes) 조용히 빈 차트가 됐다. 잘못된 종류는 DB 제약에 걸려 409
- * 「입력값이 제약 조건을 만족하지 않습니다」로만 안내됐다.
+ * 가 201 로 들어갔다. 그런 차트는 편집 화면이 깨지거나(yAxis.includes) 조용히 빈 차트가 됐다. 잘못된 종류는 DB 제약에 걸려 409 「입력값이 제약 조건을
+ * 만족하지 않습니다」로만 안내됐다.
  *
- * <p>검사는 <b>값이 있을 때 그 타입</b>만 본다. 종류별 키를 "필수"로 강제하지 않는 이유: TABLE 처럼 축 없이도 정상인 종류가 있고, 화면이
- * 빠진 축을 다시 고르도록 안내하므로 축 없는 저장(작성 중 저장·AI 도구)을 막을 필요가 없다. MAP 의 spatialColumn 만은 지도를 그릴
- * 수 없어 예전처럼 필수다. 위반은 {@link IllegalArgumentException} 으로 던져 전역 핸들러가 400 + 이 문구로 바꾼다.
+ * <p>검사는 <b>값이 있을 때 그 타입</b>만 본다. 종류별 키를 "필수"로 강제하지 않는 이유: TABLE 처럼 축 없이도 정상인 종류가 있고, 화면이 빠진 축을 다시
+ * 고르도록 안내하므로 축 없는 저장(작성 중 저장·AI 도구)을 막을 필요가 없다. MAP 의 spatialColumn 만은 지도를 그릴 수 없어 예전처럼 필수다. 위반은
+ * {@link IllegalArgumentException} 으로 던져 전역 핸들러가 400 + 이 문구로 바꾼다.
  */
 final class ChartConfigValidator {
 
   /** DB 제약 chart_chart_type_check(V48)와 같은 목록 — 순서는 안내 문구에 그대로 쓴다. */
   static final List<String> CHART_TYPES =
       List.of(
-          "BAR", "LINE", "PIE", "AREA", "SCATTER", "DONUT", "TABLE", "MAP", "HISTOGRAM", "BOXPLOT",
-          "HEATMAP", "TREEMAP", "FUNNEL", "RADAR", "WATERFALL", "GAUGE", "CANDLESTICK");
+          "BAR",
+          "LINE",
+          "PIE",
+          "AREA",
+          "SCATTER",
+          "DONUT",
+          "TABLE",
+          "MAP",
+          "HISTOGRAM",
+          "BOXPLOT",
+          "HEATMAP",
+          "TREEMAP",
+          "FUNNEL",
+          "RADAR",
+          "WATERFALL",
+          "GAUGE",
+          "CANDLESTICK");
 
   /** 컬럼 이름·축 제목처럼 문자열이어야 하는 키. */
   private static final Set<String> STRING_KEYS =

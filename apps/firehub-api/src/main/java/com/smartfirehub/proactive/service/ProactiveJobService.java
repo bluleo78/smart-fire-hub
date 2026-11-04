@@ -313,7 +313,7 @@ public class ProactiveJobService {
         proactiveJobRepository
             .lockUpdatedAtById(id)
             .orElseThrow(() -> new ProactiveJobNotFoundException("Proactive Job을 찾을 수 없습니다: " + id))
-            .value1();
+            .updatedAt();
     EditConflictException.check(
         request.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
     // 업데이트 요청에 포함된 cronExpression / timezone 도 동일하게 사전 검증한다 (#221).

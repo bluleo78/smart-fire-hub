@@ -1,7 +1,6 @@
 package com.smartfirehub.ontology.graphread;
 
-import static com.smartfirehub.jooq.Tables.DATASET;
-
+import com.smartfirehub.ontology.repository.GraphOntologySourceRepository;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -15,7 +14,7 @@ import org.springframework.stereotype.Service;
  * 와 같은 판정)만 읽는다. 삭제된 데이터셋은 등급이 없어 판정할 수 없지만 그 내용은 그래프에 남아 있기 때문이다. 판정은 거칠다 — 노드 단위 정밀 판정은 S3 이후
  * 과제다.
  *
- * <p>등급·허용 목록 규칙은 {@link DatasetAccessGuard#visibleCondition} 을 그대로 쓴다(새 판정 SQL 을 만들지 않는다). 온톨로지
+ * <p>등급·허용 목록 규칙은 {@link DatasetAccessGuard#visibility} 를 그대로 쓴다(새 판정 SQL 을 만들지 않는다). 온톨로지
  * 스키마(목록·요소 편집)는 데이터가 아니라 이 판정의 대상이 아니다.
  */
 @Service
@@ -50,8 +49,6 @@ public class GraphReadGate {
     // 삭제된 출처는 테넌트 관리자에게만 열린다. 관리자 판정을 못 하는 자격(Clearance.none 등)은 tenantAdmin=false 라
     // 막힌다(fail-closed).
     return !sourceRepository.existsUnreadableSource(
-        ontologyId,
-        accessGuard.visibleCondition(c, DATASET.ID, DATASET.SECURITY_LEVEL_ID),
-        c.tenantAdmin());
+        ontologyId, accessGuard.visibility(c), c.tenantAdmin());
   }
 }

@@ -99,6 +99,6 @@ public class DatasetTagService {
   @Transactional(readOnly = true)
   public List<String> getAllDistinctTags() {
     // 숨김 데이터셋의 태그명은 집계에서 제외한다.
-    return tagRepository.findAllDistinctTags(datasetAccessGuard.visibleCondition());
+    return tagRepository.findAllDistinctTags(datasetAccessGuard.visibility());
   }
 }

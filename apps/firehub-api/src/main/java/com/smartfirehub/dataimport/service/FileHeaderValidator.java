@@ -79,8 +79,8 @@ final class FileHeaderValidator {
   }
 
   /**
-   * 빈 이름 파일 열을 데이터셋 컬럼에 매핑한 항목인지(WD-369). 검증·적재({@link DataValidationService})와 같이 datasetColumn 이 있으면
-   * 매핑된 것이다.
+   * 빈 이름 파일 열을 데이터셋 컬럼에 매핑한 항목인지(WD-369). 검증·적재({@link DataValidationService})와 같이 datasetColumn 이
+   * 있으면 매핑된 것이다.
    */
   private static boolean isMappedBlank(ColumnMappingEntry m) {
     return m != null && m.datasetColumn() != null && normalize(m.fileColumn()).isEmpty();
@@ -89,9 +89,9 @@ final class FileHeaderValidator {
   /**
    * 이름이 빈 열이 둘 이상인 파일에서 빈 이름 열을 매핑하면 {@link InvalidFileHeaderException}(400)을 던진다(WD-369).
    *
-   * <p>행은 「헤더 이름 → 값」 Map 이라 이름이 같은 빈 열들이 같은 키("")를 나눠 쓰고, 마지막 빈 열 값만 남는다. 어느 빈 열을 가리킨 매핑인지 서버가
-   * 구분할 수 없으므로 경고 없이 엉뚱한 값이 저장되지 않게 거절한다. 매핑한 빈 열과 키가 같은 열이 하나뿐이거나, 빈 이름 열을 매핑하지 않았으면 통과한다(끝 빈
-   * 열 {@code a,b,,} 파일은 계속 받는다).
+   * <p>행은 「헤더 이름 → 값」 Map 이라 이름이 같은 빈 열들이 같은 키("")를 나눠 쓰고, 마지막 빈 열 값만 남는다. 어느 빈 열을 가리킨 매핑인지 서버가 구분할
+   * 수 없으므로 경고 없이 엉뚱한 값이 저장되지 않게 거절한다. 매핑한 빈 열과 키가 같은 열이 하나뿐이거나, 빈 이름 열을 매핑하지 않았으면 통과한다(끝 빈 열 {@code
+   * a,b,,} 파일은 계속 받는다).
    */
   static void requireMappableBlankColumns(List<String> headers, List<ColumnMappingEntry> mappings) {
     if (headers == null || mappings == null) return;

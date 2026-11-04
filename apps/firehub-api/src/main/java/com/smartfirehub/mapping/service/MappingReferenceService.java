@@ -665,7 +665,7 @@ public class MappingReferenceService {
   // 살아 있는 데이터셋의 매핑 + 조회자 기준 이름 가시성(보안 등급).
   private List<ParsedRow> liveMappings(long ontologyId) {
     return mappingRepository
-        .findLiveByOntology(ontologyId, datasetAccessGuard.visibleCondition())
+        .findLiveByOntology(ontologyId, datasetAccessGuard.visibility())
         .stream()
         .map(r -> new ParsedRow(r, deserialize(r.specJson())))
         .toList();

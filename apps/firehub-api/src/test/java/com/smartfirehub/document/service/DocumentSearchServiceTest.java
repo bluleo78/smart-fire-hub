@@ -16,19 +16,20 @@ import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class DocumentSearchServiceTest {
 
-  // 가시성 SQL 은 가드(목)가 만든 고정 문자열 — 서비스가 이 값을 모든 검색 분기에 그대로 전달하는지 eq(VIS) 로 고정한다.
-  private static final String VIS = "VIS_SQL";
   private static final Clearance CLEARANCE = Clearance.none(1L, 1L);
+  // 가시성은 가드(목)가 캡처해 돌려준 고정 값 — 서비스가 이 값을 모든 검색 분기에 그대로 전달하는지 eq(VIS) 로 고정한다.
+  private static final DatasetVisibility VIS = new DatasetVisibility(CLEARANCE, null);
 
   private DatasetAccessGuard guard() {
     var guard = Mockito.mock(DatasetAccessGuard.class);
-    when(guard.visibleSql(CLEARANCE, "d")).thenReturn(VIS);
+    when(guard.visibility(CLEARANCE)).thenReturn(VIS);
     return guard;
   }
 

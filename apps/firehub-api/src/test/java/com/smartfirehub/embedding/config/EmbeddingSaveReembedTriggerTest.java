@@ -8,8 +8,8 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-import com.smartfirehub.dataset.rowsearch.SearchIndexStateRepository;
-import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
+import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
+import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.document.dto.Chunk;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;

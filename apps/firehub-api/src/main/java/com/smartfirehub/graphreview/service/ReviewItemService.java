@@ -107,7 +107,7 @@ public class ReviewItemService {
       b = t;
     }
     return repo.findDecisionStatus(
-            SYNONYM, entityType + "|" + a + "|" + b, datasetAccessGuard.visibleCondition())
+            SYNONYM, entityType + "|" + a + "|" + b, datasetAccessGuard.visibility())
         .orElse("none");
   }
 
@@ -186,7 +186,7 @@ public class ReviewItemService {
   /** 저신뢰 엔티티 기존 결정 조회 — 없으면 "none". dedupe_key는 recordPendingEntity와 동일 규칙. */
   public String lookupEntity(String entityType, String name) {
     return repo.findDecisionStatus(
-            ENTITY, entityType + "|" + normalize(name), datasetAccessGuard.visibleCondition())
+            ENTITY, entityType + "|" + normalize(name), datasetAccessGuard.visibility())
         .orElse("none");
   }
 
@@ -228,9 +228,7 @@ public class ReviewItemService {
   /** 저신뢰 관계 기존 결정 조회 — 없으면 "none". dedupe_key는 ai-agent 계산 opaque 값 그대로. */
   public String lookupRelation(String subjectKey, String relType, String objectKey) {
     return repo.findDecisionStatus(
-            RELATION,
-            subjectKey + "|" + relType + "|" + objectKey,
-            datasetAccessGuard.visibleCondition())
+            RELATION, subjectKey + "|" + relType + "|" + objectKey, datasetAccessGuard.visibility())
         .orElse("none");
   }
 
@@ -268,7 +266,7 @@ public class ReviewItemService {
     }
     // 출처 데이터셋을 볼 수 없는 항목은 SQL 에서 거른다 — 자바에서 거르면 limit/offset 페이지가 어긋난다.
     List<ReviewItemRecord> rows =
-        repo.findByStatus(effective, itemType, offset, size, datasetAccessGuard.visibleCondition());
+        repo.findByStatus(effective, itemType, offset, size, datasetAccessGuard.visibility());
     // 검수 항목에는 데이터에서 뽑은 엔티티 이름·속성 값이 실린다 — 스마트 작업 실행 중이면 출처 데이터셋 등급을 리포트 등급에 넣는다(WD-198).
     datasetAccessGuard.noteReportReads(rows.stream().map(ReviewItemRecord::datasetId).toList());
     return rows.stream().map(this::toResponse).toList();

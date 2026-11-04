@@ -7,13 +7,14 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
 import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
-import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingException;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
+import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import org.jobrunr.scheduling.JobScheduler;
 import org.junit.jupiter.api.BeforeEach;

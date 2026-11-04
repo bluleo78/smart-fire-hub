@@ -113,8 +113,7 @@ public class SlackOAuthController {
           slackOAuthService.completeAuthorization(code, installedByUserId);
 
           // 설치 완료 — 원래 화면에 알리고 팝업 창 닫기
-          return OAuthCallbackPage.connected(
-              ChannelType.SLACK, "슬랙 워크스페이스 설치 완료. 창을 닫아주세요.");
+          return OAuthCallbackPage.connected(ChannelType.SLACK, "슬랙 워크스페이스 설치 완료. 창을 닫아주세요.");
         });
   }
 

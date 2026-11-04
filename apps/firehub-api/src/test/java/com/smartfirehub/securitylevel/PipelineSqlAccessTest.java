@@ -16,11 +16,11 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
 import com.smartfirehub.pipeline.dto.PipelineDeleteImpactResponse;
-import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveExecutionState;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.TriggerType;
 import com.smartfirehub.pipeline.dto.UpdatePipelineRequest;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveExecutionState;
 import com.smartfirehub.pipeline.service.PipelineExecutionService;
 import com.smartfirehub.pipeline.service.PipelineSecurityGate;
 import com.smartfirehub.pipeline.service.PipelineService;
@@ -1040,8 +1040,8 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   }
 
   /**
-   * 타입 있는 컬럼: executor 와 같은 변환(INTEGER·DECIMAL·BOOLEAN·DATE·TIMESTAMP)으로 적재된다. null 은 NULL 로, 변환할 수 없는 값은
-   * NULL 로 적재하지 않고 스텝을 실패시켜 원본을 남긴다(WD-431).
+   * 타입 있는 컬럼: executor 와 같은 변환(INTEGER·DECIMAL·BOOLEAN·DATE·TIMESTAMP)으로 적재된다. null 은 NULL 로, 변환할 수
+   * 없는 값은 NULL 로 적재하지 않고 스텝을 실패시켜 원본을 남긴다(WD-431).
    */
   @Test
   void run_localPython_typedColumns_areConvertedLikeExecutor() throws Exception {
@@ -1084,9 +1084,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
         inTenantFixture(
             () ->
                 dsl.fetch(
-                    "SELECT n, d, b, dt, ts FROM "
-                        + DataSchema.qualify(out)
-                        + " ORDER BY n DESC"));
+                    "SELECT n, d, b, dt, ts FROM " + DataSchema.qualify(out) + " ORDER BY n DESC"));
     assertThat(rows).hasSize(2);
     assertThat(rows.get(0).get("n", Long.class))
         .as("BIGINT 범위 — ?::integer 캐스트면 넘친다")
@@ -1108,9 +1106,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     long bad =
         pipeline(
             user,
-            List.of(
-                pythonJsonStep(
-                    outId, "[{\"n\": 1, \"d\": \"x\", \"b\": true}]", "REPLACE")));
+            List.of(pythonJsonStep(outId, "[{\"n\": 1, \"d\": \"x\", \"b\": true}]", "REPLACE")));
     assertThat(waitForEnd(executionService.executePipeline(bad, user))).isEqualTo("FAILED");
     assertThat(rowCount(out)).isEqualTo(2);
   }

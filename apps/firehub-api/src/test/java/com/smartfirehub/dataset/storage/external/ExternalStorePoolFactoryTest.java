@@ -11,12 +11,13 @@ import org.junit.jupiter.api.Test;
 class ExternalStorePoolFactoryTest {
 
   /**
-   * 최소 유휴 0(WD-449) — 기본값(=최대 크기)이면 정지 후 계정이 지워진 테넌트의 풀이 유휴 커넥션 4개를 채우려 몇 초마다 끝없이 재접속해 외부 DB 에
-   * 로그인 실패를 쌓았다.
+   * 최소 유휴 0(WD-449) — 기본값(=최대 크기)이면 정지 후 계정이 지워진 테넌트의 풀이 유휴 커넥션 4개를 채우려 몇 초마다 끝없이 재접속해 외부 DB 에 로그인
+   * 실패를 쌓았다.
    */
   @Test
   void ownerPoolKeepsNoIdleConnections() {
-    ExternalStorePoolFactory factory = new ExternalStorePoolFactory(mock(ExternalDbConnector.class));
+    ExternalStorePoolFactory factory =
+        new ExternalStorePoolFactory(mock(ExternalDbConnector.class));
     ExternalDbTarget target =
         new ExternalDbTarget(DataStoreBackend.TIBERO, "localhost", 8629, "tibero");
 

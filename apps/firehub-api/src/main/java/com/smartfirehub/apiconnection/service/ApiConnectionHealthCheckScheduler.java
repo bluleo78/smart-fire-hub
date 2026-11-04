@@ -1,13 +1,10 @@
 package com.smartfirehub.apiconnection.service;
 
-import static org.jooq.impl.DSL.*;
-
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
+import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.HealthCheckTarget;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.Field;
-import org.jooq.Record;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -31,10 +28,6 @@ public class ApiConnectionHealthCheckScheduler {
   /** 애플리케이션 기동 직후 첫 실행 지연 (1분) */
   private static final long INITIAL_DELAY_MS = 60_000L;
 
-  // jOOQ 동적 필드 — jOOQ 코드젠 없이 api_connection 테이블 컬럼에 접근한다
-  private static final Field<Long> AC_ID = field(name("api_connection", "id"), Long.class);
-  private static final Field<String> AC_NAME = field(name("api_connection", "name"), String.class);
-
   private final ApiConnectionRepository repository;
   private final ApiConnectionService connectionService;
   private final TenantScopedRunner tenantScopedRunner;
@@ -43,21 +36,23 @@ public class ApiConnectionHealthCheckScheduler {
   private final boolean scheduledEnabled;
 
   /**
-   * 주기 실행 여부는 설정값으로 받는다(WD-451). 테스트는 끄고 {@link #runOnce()} 를 직접 부른다 — 공유 테스트 컨텍스트에서 실제 주기 점검이 1분 뒤부터
-   * 끼어들면, 다른 테스트가 막 만든 연결의 상태를 바꾸고 「system」 전환 감사를 남겨 알림·감사 개수 단언이 부하 중 가끔 흔들렸다.
+   * 주기 실행 여부는 설정값으로 받는다(WD-451). 테스트는 끄고 {@link #runOnce()} 를 직접 부른다 — 공유 테스트 컨텍스트에서 실제 주기 점검이 1분
+   * 뒤부터 끼어들면, 다른 테스트가 막 만든 연결의 상태를 바꾸고 「system」 전환 감사를 남겨 알림·감사 개수 단언이 부하 중 가끔 흔들렸다.
    */
   public ApiConnectionHealthCheckScheduler(
       ApiConnectionRepository repository,
       ApiConnectionService connectionService,
       TenantScopedRunner tenantScopedRunner,
-      @Value("${app.api-connection.health-check.scheduled-enabled:true}") boolean scheduledEnabled) {
+      @Value("${app.api-connection.health-check.scheduled-enabled:true}")
+          boolean scheduledEnabled) {
     this.repository = repository;
     this.connectionService = connectionService;
     this.tenantScopedRunner = tenantScopedRunner;
     this.scheduledEnabled = scheduledEnabled;
     if (!scheduledEnabled) {
       // 꺼 두면 상태 전환 알림이 조용히 멈추므로, 설정을 잘못 옮긴 운영 환경에서도 알아챌 수 있게 기동 때 한 번 남긴다
-      log.warn("API connection health check 주기 실행이 꺼져 있습니다(app.api-connection.health-check.scheduled-enabled=false)");
+      log.warn(
+          "API connection health check 주기 실행이 꺼져 있습니다(app.api-connection.health-check.scheduled-enabled=false)");
     }
   }
 
@@ -86,12 +81,12 @@ public class ApiConnectionHealthCheckScheduler {
   private void runOnceForTenant() {
     // findHealthCheckable 은 리포지토리 클래스 레벨 @Transactional 로 자체 트랜잭션을 열므로
     // 그 시점에 GUC 가 주입된다 — 순회로 세운 TenantContext 가 실제 RLS 스코프로 이어진다.
-    List<Record> targets = repository.findHealthCheckable();
+    List<HealthCheckTarget> targets = repository.findHealthCheckable();
     log.info("API connection health check 시작: {} 대상", targets.size());
 
-    for (Record r : targets) {
-      Long id = r.get(AC_ID);
-      String name = r.get(AC_NAME);
+    for (HealthCheckTarget target : targets) {
+      Long id = target.id();
+      String name = target.name();
 
       try {
         // 시스템 점검(행위자 없음) — 저장·상태 전환 알림·감사는 testConnection 안에서 한 번에 처리된다.

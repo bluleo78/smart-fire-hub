@@ -64,7 +64,7 @@ class OntologyControllerTest {
   @MockitoBean private com.smartfirehub.securitylevel.ai.AiHostingResolver aiHostingResolver;
 
   @MockitoBean
-  private com.smartfirehub.ontology.graphread.GraphOntologySourceRepository sourceRepository;
+  private com.smartfirehub.ontology.repository.GraphOntologySourceRepository sourceRepository;
 
   @BeforeEach
   void setUp() {

@@ -8,6 +8,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
+import com.smartfirehub.settings.repository.jooq.JooqTenantSettingsRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
@@ -124,7 +125,7 @@ class TenantSettingsRlsTest extends IntegrationTestBase {
           transactionTemplate, b, () -> repository.upsert("ai.model", "model-b", null));
 
       DSLContext ownerDsl = DSL.using(schemaOwnerDataSource, SQLDialect.POSTGRES);
-      TenantSettingsRepository ownerRepository = new TenantSettingsRepository(ownerDsl);
+      TenantSettingsRepository ownerRepository = new JooqTenantSettingsRepository(ownerDsl);
 
       TenantContext.set(a);
       try {

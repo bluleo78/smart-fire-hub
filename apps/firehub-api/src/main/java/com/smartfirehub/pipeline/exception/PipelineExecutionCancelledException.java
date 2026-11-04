@@ -3,9 +3,9 @@ package com.smartfirehub.pipeline.exception;
 /**
  * 협조적 취소 체크포인트가 사용자 취소 요청을 알아챘을 때 던지는 제어 흐름 예외(WD-153).
  *
- * <p>실패가 아니다 — 러너는 이 예외를 일반 예외보다 먼저 잡아 스텝을 FAILED 가 아니라 CANCELLED 로 기록하고 남은 스텝을 실행하지 않는다.
- * 실행기들은 실패 경로와 같은 정리 경로(REPLACE 스테이징 임시 테이블 삭제)를 그대로 타도록 이 예외를 다시 던지기만 한다 — 그래서 원본 데이터를 지키는
- * 코드가 실패·취소 두 갈래로 갈라지지 않는다.
+ * <p>실패가 아니다 — 러너는 이 예외를 일반 예외보다 먼저 잡아 스텝을 FAILED 가 아니라 CANCELLED 로 기록하고 남은 스텝을 실행하지 않는다. 실행기들은 실패
+ * 경로와 같은 정리 경로(REPLACE 스테이징 임시 테이블 삭제)를 그대로 타도록 이 예외를 다시 던지기만 한다 — 그래서 원본 데이터를 지키는 코드가 실패·취소 두 갈래로
+ * 갈라지지 않는다.
  *
  * <p>{@code rowsKept} 는 취소 시점까지 출력에 <b>실제로 남은</b> 행 수다(APPEND 의 「취소 전까지 N행 적재됨」 문구). REPLACE 스테이징을
  * 버린 경우에는 {@code replaceDiscarded=true} 이고 원본이 그대로이므로 행 수는 의미가 없다.
@@ -16,8 +16,8 @@ public class PipelineExecutionCancelledException extends RuntimeException {
   public static final String CANCELLED_MESSAGE = "사용자가 실행을 취소했습니다.";
 
   /**
-   * 취소로 실행하지 않은 스텝(SKIPPED)에 남기는 사유. 웹(ExecutionStepPanel.tsx 의 CANCEL_SKIPPED_MESSAGE)이 이 문구로 시작하는지로
-   * "취소 때문에 건너뜀"을 가리므로, 바꿀 때 함께 바꾼다.
+   * 취소로 실행하지 않은 스텝(SKIPPED)에 남기는 사유. 웹(ExecutionStepPanel.tsx 의 CANCEL_SKIPPED_MESSAGE)이 이 문구로
+   * 시작하는지로 "취소 때문에 건너뜀"을 가리므로, 바꿀 때 함께 바꾼다.
    */
   public static final String SKIPPED_BY_CANCEL_MESSAGE = "실행이 취소되어 이 스텝은 실행하지 않았습니다.";
 

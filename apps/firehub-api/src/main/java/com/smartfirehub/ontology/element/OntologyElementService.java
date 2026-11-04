@@ -17,6 +17,7 @@ import com.smartfirehub.ontology.element.dto.ElementDtos.UpdatePropertyRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.UpdateRelationRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.VersionOnly;
 import com.smartfirehub.ontology.exception.OntologyElementNotFoundException;
+import com.smartfirehub.ontology.repository.OntologyElementRepository;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;

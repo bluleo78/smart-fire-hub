@@ -1,17 +1,15 @@
 package com.smartfirehub.apiconnection.service;
 
-import static org.jooq.impl.DSL.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
+import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.HealthCheckTarget;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.support.TenantScopedRunnerStubs;
 import java.util.List;
 import java.util.Map;
-import org.jooq.Field;
-import org.jooq.Record;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,7 +41,8 @@ class ApiConnectionHealthCheckSchedulerTest {
   void stubSingleTenantIteration() {
     TenantScopedRunnerStubs.stubSingleTenantIteration(tenantScopedRunner, 1L);
     scheduler =
-        new ApiConnectionHealthCheckScheduler(repository, connectionService, tenantScopedRunner, false);
+        new ApiConnectionHealthCheckScheduler(
+            repository, connectionService, tenantScopedRunner, false);
   }
 
   /** 주기 실행이 꺼져 있으면 10분 주기 진입점은 아무것도 하지 않는다(WD-451 — 테스트 프로필이 끈다). */
@@ -70,10 +69,6 @@ class ApiConnectionHealthCheckSchedulerTest {
     verify(repository).findHealthCheckable();
   }
 
-  // 테스트용 jOOQ Record 헬퍼 필드
-  private static final Field<Long> AC_ID = field(name("api_connection", "id"), Long.class);
-  private static final Field<String> AC_NAME = field(name("api_connection", "name"), String.class);
-
   /** findHealthCheckable()이 빈 목록을 반환하면 아무 동작도 하지 않아야 한다. */
   @Test
   void runOnce_noTargets_doesNothing() {
@@ -89,8 +84,8 @@ class ApiConnectionHealthCheckSchedulerTest {
    */
   @Test
   void runOnce_callsSystemTestConnectionPerTarget() {
-    Record r1 = mockRecord(10L, "API-10");
-    Record r2 = mockRecord(20L, "API-20");
+    HealthCheckTarget r1 = new HealthCheckTarget(10L, "API-10");
+    HealthCheckTarget r2 = new HealthCheckTarget(20L, "API-20");
     when(repository.findHealthCheckable()).thenReturn(List.of(r1, r2));
     when(connectionService.testConnection(anyLong())).thenReturn(okResponse());
 
@@ -104,8 +99,8 @@ class ApiConnectionHealthCheckSchedulerTest {
   /** testConnection 예외 발생 시 해당 연결만 건너뛰고 나머지 계속 처리한다. */
   @Test
   void runOnce_exceptionOnOne_continuesOthers() {
-    Record r1 = mockRecord(1L, "API-1");
-    Record r2 = mockRecord(2L, "API-2");
+    HealthCheckTarget r1 = new HealthCheckTarget(1L, "API-1");
+    HealthCheckTarget r2 = new HealthCheckTarget(2L, "API-2");
     when(repository.findHealthCheckable()).thenReturn(List.of(r1, r2));
     when(connectionService.testConnection(1L))
         .thenThrow(new RuntimeException("connection refused"));
@@ -121,13 +116,5 @@ class ApiConnectionHealthCheckSchedulerTest {
 
   private static TestConnectionResponse okResponse() {
     return new TestConnectionResponse(true, 200, 30L, null, "https://x", null, Map.of(), null);
-  }
-
-  /** 지정된 값을 반환하는 mock Record를 생성한다. jOOQ Record 인터페이스를 mock으로 대체하여 실제 DB 없이 테스트한다. */
-  private Record mockRecord(Long id, String name) {
-    Record r = mock(Record.class);
-    when(r.get(AC_ID)).thenReturn(id);
-    when(r.get(AC_NAME)).thenReturn(name);
-    return r;
   }
 }

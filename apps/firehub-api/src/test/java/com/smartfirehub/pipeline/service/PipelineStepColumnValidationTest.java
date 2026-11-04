@@ -28,7 +28,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * WD-154 — 스텝 출력 컬럼(API_CALL 응답 필드 매핑·AI_CLASSIFY 출력 컬럼) 저장 시점 검증. WD-352 에서 PYTHON 출력 컬럼(자동 생성 출력)도 더했다.
+ * WD-154 — 스텝 출력 컬럼(API_CALL 응답 필드 매핑·AI_CLASSIFY 출력 컬럼) 저장 시점 검증. WD-352 에서 PYTHON 출력 컬럼(자동 생성
+ * 출력)도 더했다.
  *
  * <p>예전에는 빈 매핑 행·빈 출력 컬럼 이름·출력 데이터셋에 없는 대상 컬럼이 모두 저장에 성공하고, 실행 시점에야 영어 원문 오류({@code Invalid name: .
  * Must match …}, {@code bad SQL grammar [INSERT INTO …]})로 실패했다. 각 규칙을 생성·수정 두 경로에서 같은 한국어 문구(스텝 이름
@@ -153,8 +154,12 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
     return Map.of("name", name, "type", "TEXT");
   }
 
-  /** PYTHON 스텝(WD-352) — outputId 가 null 이면 출력 컬럼 정의로 TEMP 를 자동 생성한다. 출력 컬럼 모양은 AI 분류와 같다(name·type). */
-  private static PipelineStepRequest pythonStep(Long outputId, List<Map<String, Object>> outputColumns) {
+  /**
+   * PYTHON 스텝(WD-352) — outputId 가 null 이면 출력 컬럼 정의로 TEMP 를 자동 생성한다. 출력 컬럼 모양은 AI 분류와
+   * 같다(name·type).
+   */
+  private static PipelineStepRequest pythonStep(
+      Long outputId, List<Map<String, Object>> outputColumns) {
     return new PipelineStepRequest(
         "파이썬",
         null,
@@ -174,32 +179,16 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
   private static final Long OUT = -1L;
 
   /** WD-362 페이지 크기 범위 오류 문구(API 스텝 이름 'API 호출'). */
-  private static final String PAGE_SIZE_ERROR =
-      "스텝 'API 호출': 페이지 크기는 1~10000 사이의 정수여야 합니다";
+  private static final String PAGE_SIZE_ERROR = "스텝 'API 호출': 페이지 크기는 1~10000 사이의 정수여야 합니다";
 
   static Stream<Arguments> rejectedSteps() {
     return Stream.of(
         // WD-362 — 0 이하 페이지 크기는 실행기가 끝없이 다음 페이지를 요청한다
-        Arguments.of(
-            "페이지 크기 음수",
-            apiStepWithPageSize(-5),
-            PAGE_SIZE_ERROR),
-        Arguments.of(
-            "페이지 크기 0",
-            apiStepWithPageSize(0),
-            PAGE_SIZE_ERROR),
-        Arguments.of(
-            "페이지 크기 상한 초과",
-            apiStepWithPageSize(10_001),
-            PAGE_SIZE_ERROR),
-        Arguments.of(
-            "페이지 크기 소수",
-            apiStepWithPageSize(2.5),
-            PAGE_SIZE_ERROR),
-        Arguments.of(
-            "페이지 크기 문자열",
-            apiStepWithPageSize("abc"),
-            PAGE_SIZE_ERROR),
+        Arguments.of("페이지 크기 음수", apiStepWithPageSize(-5), PAGE_SIZE_ERROR),
+        Arguments.of("페이지 크기 0", apiStepWithPageSize(0), PAGE_SIZE_ERROR),
+        Arguments.of("페이지 크기 상한 초과", apiStepWithPageSize(10_001), PAGE_SIZE_ERROR),
+        Arguments.of("페이지 크기 소수", apiStepWithPageSize(2.5), PAGE_SIZE_ERROR),
+        Arguments.of("페이지 크기 문자열", apiStepWithPageSize("abc"), PAGE_SIZE_ERROR),
         Arguments.of(
             "빈 매핑 행",
             apiStep(null, List.of(mapping("a", "a"), mapping("", ""))),
@@ -388,15 +377,14 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
   void create_pageSizeBoundary_succeeds(int pageSize) {
     PipelineDetailResponse created =
         pipelineService.createPipeline(
-            new CreatePipelineRequest(
-                "WD362 페이지 크기", null, List.of(apiStepWithPageSize(pageSize))),
+            new CreatePipelineRequest("WD362 페이지 크기", null, List.of(apiStepWithPageSize(pageSize))),
             userId);
     assertThat(created.steps()).hasSize(1);
   }
 
   /**
-   * 출력을 지정한 PYTHON 스텝은 컬럼 정의를 쓰지 않는다(편집기도 숨긴다) — 남아 있는 정의의 이름은 막지 않는다(WD-352). 막으면 화면에서 고칠 수
-   * 없는 오류로 저장이 막힌다.
+   * 출력을 지정한 PYTHON 스텝은 컬럼 정의를 쓰지 않는다(편집기도 숨긴다) — 남아 있는 정의의 이름은 막지 않는다(WD-352). 막으면 화면에서 고칠 수 없는 오류로
+   * 저장이 막힌다.
    */
   @Test
   void create_pythonExplicitOutputIgnoresColumnNames_succeeds() {
@@ -405,7 +393,8 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
             new CreatePipelineRequest(
                 "WD352 파이썬 지정",
                 null,
-                List.of(pythonStep(outputId, List.of(outputColumn("my col"), outputColumn("my col"))))),
+                List.of(
+                    pythonStep(outputId, List.of(outputColumn("my col"), outputColumn("my col"))))),
             userId);
     assertThat(created.steps()).hasSize(1);
   }

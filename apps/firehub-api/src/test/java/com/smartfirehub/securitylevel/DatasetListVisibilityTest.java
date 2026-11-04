@@ -6,9 +6,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
+import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
+import com.smartfirehub.dataset.repository.DatasetSearchRepository;
 import com.smartfirehub.dataset.search.DatasetSearchHit;
-import com.smartfirehub.dataset.search.DatasetSearchRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -187,7 +187,7 @@ class DatasetListVisibilityTest extends IntegrationTestBase {
                       EmbeddingTestFixtures.axis(1024, 0),
                       null,
                       20,
-                      guard.visibleSql(clearanceResolver.resolve(userId), "d"))
+                      guard.visibility(clearanceResolver.resolve(userId)))
                   .stream()
                   .map(DatasetSearchHit::datasetId)
                   .toList();

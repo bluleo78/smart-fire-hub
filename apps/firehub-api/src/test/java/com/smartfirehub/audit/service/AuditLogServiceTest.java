@@ -356,4 +356,49 @@ class AuditLogServiceTest extends IntegrationTestBase {
     assertThat(scheduled.ipAddress()).isNull();
     assertThat(scheduled.userAgent()).isNull();
   }
+
+  /**
+   * 메타데이터는 서비스가 JSON 문자열로 넘기고 리포지토리가 JSONB 로 감싼다(WD-485) — 저장된 jsonb 가 직렬화한 맵과 같고, 메타데이터가 없으면 SQL
+   * NULL 로 남는다(빈 객체·"null" 문자열이 아니다).
+   */
+  @Test
+  void log_metadataStoredAsJsonb_nullMetadataStaysSqlNull() throws Exception {
+    Long withMeta =
+        auditLogService.log(
+            adminId,
+            "admin",
+            "EXECUTE",
+            "pipeline",
+            "7",
+            "메타 저장",
+            null,
+            null,
+            "SUCCESS",
+            null,
+            Map.of("rows", 3, "file", "a.csv"));
+    Long withoutMeta =
+        auditLogService.log(
+            adminId,
+            "admin",
+            "EXECUTE",
+            "pipeline",
+            "8",
+            "메타 없음",
+            null,
+            null,
+            "SUCCESS",
+            null,
+            null);
+
+    // jsonb 값으로 비교한다 — 키 순서·공백과 무관하게 같은 JSON 이어야 한다.
+    assertThat(
+            dsl.fetchValue(
+                "select metadata = ?::jsonb from audit_log where id = ?",
+                "{\"rows\":3,\"file\":\"a.csv\"}",
+                withMeta))
+        .isEqualTo(true);
+    assertThat(dsl.fetchValue("select metadata is null from audit_log where id = ?", withoutMeta))
+        .isEqualTo(true);
+    assertThat(auditLogService.findById(withoutMeta).orElseThrow().metadata()).isNull();
+  }
 }

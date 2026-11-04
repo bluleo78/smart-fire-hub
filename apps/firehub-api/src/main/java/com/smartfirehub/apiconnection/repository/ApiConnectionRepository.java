@@ -1,153 +1,60 @@
 package com.smartfirehub.apiconnection.repository;
 
-import static org.jooq.impl.DSL.*;
-
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.Record;
-import org.jooq.Table;
-import org.jooq.UpdateSetMoreStep;
-import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
-/** API 연결 정보 저장소. Phase 9 리디자인: baseUrl, 헬스체크 경로, 헬스체크 상태 필드 추가. */
-@Repository
-@RequiredArgsConstructor
-@lombok.extern.slf4j.Slf4j
-// 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
-// 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
-// REQUIRED 라 서비스가 이미 연 트랜잭션에는 합류한다(기존 경로 동작 불변).
-@Transactional
-public class ApiConnectionRepository {
+/**
+ * API 인증정보(api_connection) 저장·조회 리포지토리.
+ *
+ * <p>구현은 {@code JooqApiConnectionRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ */
+public interface ApiConnectionRepository {
 
-  private final DSLContext dsl;
+  /**
+   * API 연결 한 행. 서비스가 응답 변환·감사 스냅샷·인증 정보 복호화에 읽는 열 전부를 담는다(WD-485 — 서비스가 jOOQ Record 를 다루지 않게 리포지토리가
+   * 도메인 값으로 돌려준다). {@code authConfig} 는 암호문 그대로다.
+   */
+  record ApiConnectionRow(
+      Long id,
+      String name,
+      String authType,
+      String authConfig,
+      String description,
+      Long createdBy,
+      LocalDateTime createdAt,
+      LocalDateTime updatedAt,
+      String baseUrl,
+      String healthCheckPath,
+      String lastStatus,
+      LocalDateTime lastCheckedAt,
+      Long lastLatencyMs,
+      String lastErrorMessage) {}
 
-  private static final Table<?> API_CONNECTION = table(name("api_connection"));
-  private static final Field<Long> AC_ID = field(name("api_connection", "id"), Long.class);
-  private static final Field<String> AC_NAME = field(name("api_connection", "name"), String.class);
-  private static final Field<String> AC_AUTH_TYPE =
-      field(name("api_connection", "auth_type"), String.class);
-  private static final Field<String> AC_AUTH_CONFIG =
-      field(name("api_connection", "auth_config"), String.class);
-  private static final Field<String> AC_DESCRIPTION =
-      field(name("api_connection", "description"), String.class);
-  private static final Field<Long> AC_CREATED_BY =
-      field(name("api_connection", "created_by"), Long.class);
-  private static final Field<LocalDateTime> AC_CREATED_AT =
-      field(name("api_connection", "created_at"), LocalDateTime.class);
-  private static final Field<LocalDateTime> AC_UPDATED_AT =
-      field(name("api_connection", "updated_at"), LocalDateTime.class);
+  /** 헬스체크 대상 — 주기 점검이 대상마다 부르는 데 쓰는 id·이름만 담는다. */
+  record HealthCheckTarget(Long id, String name) {}
 
-  // Phase 9: 신규 컬럼 필드
-  private static final Field<String> AC_BASE_URL =
-      field(name("api_connection", "base_url"), String.class);
-  private static final Field<String> AC_HEALTH_CHECK_PATH =
-      field(name("api_connection", "health_check_path"), String.class);
-  private static final Field<String> AC_LAST_STATUS =
-      field(name("api_connection", "last_status"), String.class);
-  private static final Field<LocalDateTime> AC_LAST_CHECKED_AT =
-      field(name("api_connection", "last_checked_at"), LocalDateTime.class);
-  private static final Field<Long> AC_LAST_LATENCY_MS =
-      field(name("api_connection", "last_latency_ms"), Long.class);
-  private static final Field<String> AC_LAST_ERROR_MESSAGE =
-      field(name("api_connection", "last_error_message"), String.class);
+  /** 이 연결을 참조하는 파이프라인(삭제 전 영향 범위 확인용, #605). */
+  record ReferencingPipeline(Long id, String name) {}
 
-  public List<Record> findAll() {
-    return dsl
-        .select(
-            AC_ID,
-            AC_NAME,
-            AC_AUTH_TYPE,
-            AC_AUTH_CONFIG,
-            AC_DESCRIPTION,
-            AC_CREATED_BY,
-            AC_CREATED_AT,
-            AC_UPDATED_AT,
-            AC_BASE_URL,
-            AC_HEALTH_CHECK_PATH,
-            AC_LAST_STATUS,
-            AC_LAST_CHECKED_AT,
-            AC_LAST_LATENCY_MS,
-            AC_LAST_ERROR_MESSAGE)
-        .from(API_CONNECTION)
-        .orderBy(AC_CREATED_AT.desc())
-        .fetch()
-        .stream()
-        .map(r -> (Record) r)
-        .toList();
-  }
+  /** API 연결 전체 목록을 조회한다. */
+  List<ApiConnectionRow> findAll();
 
-  public Optional<Record> findById(Long id) {
-    return dsl.select(
-            AC_ID,
-            AC_NAME,
-            AC_AUTH_TYPE,
-            AC_AUTH_CONFIG,
-            AC_DESCRIPTION,
-            AC_CREATED_BY,
-            AC_CREATED_AT,
-            AC_UPDATED_AT,
-            AC_BASE_URL,
-            AC_HEALTH_CHECK_PATH,
-            AC_LAST_STATUS,
-            AC_LAST_CHECKED_AT,
-            AC_LAST_LATENCY_MS,
-            AC_LAST_ERROR_MESSAGE)
-        .from(API_CONNECTION)
-        .where(AC_ID.eq(id))
-        .fetchOptional()
-        .map(r -> (Record) r);
-  }
+  /** id 로 API 연결 한 건을 조회한다. 없으면 빈 값. */
+  Optional<ApiConnectionRow> findById(Long id);
 
-  public List<Record> findByCreatedBy(Long userId) {
-    return dsl
-        .select(
-            AC_ID,
-            AC_NAME,
-            AC_AUTH_TYPE,
-            AC_AUTH_CONFIG,
-            AC_DESCRIPTION,
-            AC_CREATED_BY,
-            AC_CREATED_AT,
-            AC_UPDATED_AT,
-            AC_BASE_URL,
-            AC_HEALTH_CHECK_PATH,
-            AC_LAST_STATUS,
-            AC_LAST_CHECKED_AT,
-            AC_LAST_LATENCY_MS,
-            AC_LAST_ERROR_MESSAGE)
-        .from(API_CONNECTION)
-        .where(AC_CREATED_BY.eq(userId))
-        .fetch()
-        .stream()
-        .map(r -> (Record) r)
-        .toList();
-  }
+  /** 특정 사용자가 만든 API 연결 목록을 조회한다. */
+  List<ApiConnectionRow> findByCreatedBy(Long userId);
 
   /** API 연결을 저장한다. baseUrl은 필수, healthCheckPath는 선택. */
-  public Long save(
+  Long save(
       String name,
       String description,
       String authType,
       String encryptedAuthConfig,
       Long createdBy,
       String baseUrl,
-      String healthCheckPath) {
-    return dsl.insertInto(API_CONNECTION)
-        .set(AC_NAME, name)
-        .set(AC_DESCRIPTION, description)
-        .set(AC_AUTH_TYPE, authType)
-        .set(AC_AUTH_CONFIG, encryptedAuthConfig)
-        .set(AC_CREATED_BY, createdBy)
-        .set(AC_BASE_URL, baseUrl != null ? baseUrl : "")
-        .set(AC_HEALTH_CHECK_PATH, healthCheckPath)
-        .returning(AC_ID)
-        .fetchOne(r -> r.get(AC_ID));
-  }
+      String healthCheckPath);
 
   /**
    * API 연결을 갱신한다. null인 항목은 Map에서 제외하여 기존 값을 보존한다.
@@ -155,42 +62,14 @@ public class ApiConnectionRepository {
    * @param baseUrl 변경할 Base URL (null이면 미변경)
    * @param healthCheckPath 변경할 헬스체크 경로 (null이면 미변경)
    */
-  public void update(
+  void update(
       Long id,
       String name,
       String description,
       String authType,
       String encryptedAuthConfig,
       String baseUrl,
-      String healthCheckPath) {
-    // null인 항목은 스킵하여 기존 DB 값을 보존한다 (부분 수정 지원).
-    // raw Map 캐스트 대신 명시적 체인으로 null 필드 누락 방지.
-    log.info(
-        "[ApiConnection.update] id={} name={} description={} authType={} hasAuthConfig={} baseUrl={} healthCheckPath={}",
-        id,
-        name,
-        description,
-        authType,
-        encryptedAuthConfig != null,
-        baseUrl,
-        healthCheckPath);
-    UpdateSetMoreStep<?> step = dsl.update(API_CONNECTION).set(AC_UPDATED_AT, LocalDateTime.now());
-
-    if (name != null) step = step.set(AC_NAME, name);
-    if (description != null) step = step.set(AC_DESCRIPTION, description);
-    if (authType != null) step = step.set(AC_AUTH_TYPE, authType);
-    if (encryptedAuthConfig != null) step = step.set(AC_AUTH_CONFIG, encryptedAuthConfig);
-    if (baseUrl != null) step = step.set(AC_BASE_URL, baseUrl);
-    // healthCheckPath: null=미변경, ""=명시적 clear(SQL NULL), 그 외=값 설정 (#115)
-    if (healthCheckPath != null) {
-      step =
-          healthCheckPath.isEmpty()
-              ? step.setNull(AC_HEALTH_CHECK_PATH)
-              : step.set(AC_HEALTH_CHECK_PATH, healthCheckPath);
-    }
-
-    step.where(AC_ID.eq(id)).execute();
-  }
+      String healthCheckPath);
 
   /**
    * 헬스체크 결과를 DB에 반영하고 <b>바꾸기 직전의 상태</b>를 돌려준다. last_checked_at은 현재 시각으로 자동 설정된다.
@@ -207,93 +86,36 @@ public class ApiConnectionRepository {
    * @param errorMessage 오류 메시지 (정상 시 null)
    * @return 갱신 직전의 last_status. 첫 점검이었거나(null) 그 사이 연결이 지워져 갱신할 행이 없으면 null — 둘 다 알릴 전환이 아니다.
    */
-  public String updateHealthStatus(Long id, String status, Long latencyMs, String errorMessage) {
-    // 행 잠금으로 직전 상태를 읽는다 — 같은 연결을 갱신하려는 다른 호출은 이 트랜잭션이 끝날 때까지 여기서 기다렸다가 커밋된 새 값을 읽는다.
-    Record previous =
-        dsl.select(AC_LAST_STATUS).from(API_CONNECTION).where(AC_ID.eq(id)).forUpdate().fetchOne();
-    if (previous == null) {
-      return null;
-    }
-    dsl.update(API_CONNECTION)
-        .set(AC_LAST_STATUS, status)
-        .set(AC_LAST_CHECKED_AT, LocalDateTime.now())
-        .set(AC_LAST_LATENCY_MS, latencyMs)
-        .set(AC_LAST_ERROR_MESSAGE, errorMessage)
-        .where(AC_ID.eq(id))
-        .execute();
-    return previous.get(AC_LAST_STATUS);
-  }
+  String updateHealthStatus(Long id, String status, Long latencyMs, String errorMessage);
 
-  /** 헬스체크 대상 API 연결 목록을 반환한다. health_check_path가 설정된 레코드만 포함한다. */
-  public List<Record> findHealthCheckable() {
-    return dsl
-        .select(
-            AC_ID,
-            AC_NAME,
-            AC_BASE_URL,
-            AC_HEALTH_CHECK_PATH,
-            AC_LAST_STATUS,
-            AC_LAST_CHECKED_AT,
-            AC_LAST_LATENCY_MS,
-            AC_LAST_ERROR_MESSAGE)
-        .from(API_CONNECTION)
-        .where(AC_HEALTH_CHECK_PATH.isNotNull().and(AC_HEALTH_CHECK_PATH.ne("")))
-        .fetch()
-        .stream()
-        .map(r -> (Record) r)
-        .toList();
-  }
+  /**
+   * 헬스체크 대상 API 연결 목록을 반환한다. health_check_path가 설정된 레코드만 포함한다. 조회 열은 예전 그대로 두고(SQL 불변) 호출자가 읽는
+   * id·이름만 돌려준다.
+   */
+  List<HealthCheckTarget> findHealthCheckable();
 
   /**
    * 동일 이름의 API 연결이 이미 존재하는지 확인한다 (#647). RLS(V96) 정책이 현재 트랜잭션의 {@code app.tenant_id} GUC로 자동 필터링하므로
    * 여기서 tenant_id를 명시적으로 조건에 넣을 필요가 없다 — 이미 pipeline.name 유니크 인덱스(V93)에서 검증된 것과 동일한 전제다.
    */
-  public boolean existsByName(String name) {
-    return dsl.fetchExists(dsl.selectOne().from(API_CONNECTION).where(AC_NAME.eq(name)));
-  }
+  boolean existsByName(String name);
 
   /** 이름 중복 확인 시 자기 자신(id)은 제외한다 — update()에서 이름을 바꾸지 않는 경우 자기 자신과 충돌 판정되는 것을 방지. */
-  public boolean existsByNameExcludingId(String name, Long excludeId) {
-    return dsl.fetchExists(
-        dsl.selectOne().from(API_CONNECTION).where(AC_NAME.eq(name)).and(AC_ID.ne(excludeId)));
-  }
+  boolean existsByNameExcludingId(String name, Long excludeId);
 
   /**
    * 이 id 의 API 연결이 현재 워크스페이스에서 보이는지 확인한다(WD-176). {@link #existsByName} 과 같이 RLS(V96) 정책이 {@code
    * app.tenant_id} GUC 로 걸러 주므로, 다른 워크스페이스의 연결과 없는 연결은 똑같이 {@code false} 다. 외래키 검사는 RLS 를 우회해 다른
    * 워크스페이스 행도 통과시키므로, 참조를 저장하기 전에는 반드시 이 조회로 확인해야 한다.
    */
-  public boolean existsById(Long id) {
-    return dsl.fetchExists(dsl.selectOne().from(API_CONNECTION).where(AC_ID.eq(id)));
-  }
+  boolean existsById(Long id);
 
-  public void deleteById(Long id) {
-    dsl.deleteFrom(API_CONNECTION).where(AC_ID.eq(id)).execute();
-  }
+  /** id 로 API 연결을 삭제한다. */
+  void deleteById(Long id);
 
   /**
    * 이 API 연결을 사용하는(pipeline_step.api_connection_id로 참조하는) 파이프라인 목록을 조회한다. 삭제 전 영향 범위 확인용(#605).
    * DISTINCT로 같은 파이프라인의 여러 API_CALL 스텝이 동일 연결을 참조하는 경우 중복을 제거한다.
    */
-  public List<Record> findReferencingPipelines(Long apiConnectionId) {
-    Table<?> pipelineStep = table(name("pipeline_step"));
-    Table<?> pipeline = table(name("pipeline"));
-    Field<Long> psApiConnectionId = field(name("pipeline_step", "api_connection_id"), Long.class);
-    Field<Long> psPipelineId = field(name("pipeline_step", "pipeline_id"), Long.class);
-    Field<Long> pId = field(name("pipeline", "id"), Long.class);
-    Field<String> pName = field(name("pipeline", "name"), String.class);
-
-    return dsl
-        .selectDistinct(pId, pName)
-        .from(pipeline)
-        .where(
-            pId.in(
-                dsl.select(psPipelineId)
-                    .from(pipelineStep)
-                    .where(psApiConnectionId.eq(apiConnectionId))))
-        .fetch()
-        .stream()
-        .map(r -> (Record) r)
-        .toList();
-  }
+  List<ReferencingPipeline> findReferencingPipelines(Long apiConnectionId);
 }

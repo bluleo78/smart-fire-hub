@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
+import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
-import com.smartfirehub.dataset.storage.TenantDataStoreRepository;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import org.junit.jupiter.api.Test;

@@ -3,7 +3,7 @@ package com.smartfirehub.securitylevel.ai;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
+import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
 import com.smartfirehub.document.dto.Chunk;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
@@ -13,10 +13,10 @@ import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.config.EmbeddingProviderType;
 import com.smartfirehub.embedding.reembed.EmbeddingBacklogService;
 import com.smartfirehub.global.tenant.TenantContext;
-import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetAccessPolicy;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
+import com.smartfirehub.securitylevel.repository.jooq.JooqDatasetVisibility;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.EmbeddingTestFixtures.DocFixture;
@@ -116,12 +116,38 @@ class EmbeddingAiGateTest extends IntegrationTestBase {
 
   /** 키셋 시작점을 이 테스트 데이터셋 바로 앞에 둔다 — 공유 DB 의 다른 행 수가 증거를 가리지 않게. */
   private List<Long> missingDatasetIds() {
+    return missingDatasetIds(gate.allowance());
+  }
+
+  /** 주어진(이미 캡처한) 허용 값으로 판정식 대상 데이터셋 id 를 읽는다. */
+  private List<Long> missingDatasetIds(EmbeddingAllowance allowance) {
     return embeddingRepository
-        .findMissing(
-            SPACE, Math.min(pubId, sensId) - 1, 100, gate.allowedDatasetSql("de.dataset_id"))
+        .findMissing(SPACE, Math.min(pubId, sensId) - 1, 100, allowance)
         .stream()
         .map(DatasetEmbeddingRepository.SourceTextRow::datasetId)
         .toList();
+  }
+
+  /**
+   * 캡처 시점(WD-485 T10): allowance() 는 호출 시점의 호스팅을 값에 고정한다 — 그 뒤 호스팅이 자체 호스팅으로 바뀌어도 이미 캡처한 값으로 렌더되어
+   * 민감 데이터셋이 들어오지 않는다(예전 문자열 술어를 그 자리에서 렌더하던 것과 같은 의미). 새로 캡처하면 바뀐 호스팅을 따른다.
+   */
+  @Test
+  void allowance_capturesHostingAtCallTime_andRendersWithCapturedValue() {
+    EmbeddingAllowance captured = gate.allowance();
+    assertThat(captured.hosting()).isEqualTo(ProviderHosting.EXTERNAL);
+    store(ProviderHosting.SELF_HOSTED);
+    assertThat(captured.hosting()).isEqualTo(ProviderHosting.EXTERNAL);
+    assertThat(missingDatasetIds(captured)).contains(pubId).doesNotContain(sensId);
+    EmbeddingAllowance fresh = gate.allowance();
+    assertThat(fresh.hosting()).isEqualTo(ProviderHosting.SELF_HOSTED);
+    assertThat(missingDatasetIds(fresh)).contains(pubId, sensId);
+  }
+
+  /** 판정 입력이 빠진 허용 값은 만들 수 없다(fail-closed — "제한 없음"으로 렌더될 길을 막는다). */
+  @Test
+  void embeddingAllowance_rejectsNullHosting() {
+    assertThatThrownBy(() -> new EmbeddingAllowance(null)).isInstanceOf(NullPointerException.class);
   }
 
   @Test
@@ -145,8 +171,7 @@ class EmbeddingAiGateTest extends IntegrationTestBase {
     // 배경 스레드에 문맥이 전파되지 않은 경우 — 조용히 false(벡터 삭제·키워드 전용 재색인)나 true(fail-open)로 답하지 않는다.
     TenantContext.clear();
     assertThatThrownBy(() -> gate.datasetAllowed(pubId)).isInstanceOf(RuntimeException.class);
-    assertThatThrownBy(() -> gate.allowedDatasetSql("de.dataset_id"))
-        .isInstanceOf(RuntimeException.class);
+    assertThatThrownBy(() -> gate.allowance()).isInstanceOf(RuntimeException.class);
     assertThatThrownBy(() -> gate.disallowedDatasetIds()).isInstanceOf(RuntimeException.class);
     assertThatThrownBy(() -> gate.datasetDisallowed(sensId)).isInstanceOf(RuntimeException.class);
   }
@@ -154,19 +179,17 @@ class EmbeddingAiGateTest extends IntegrationTestBase {
   @Test
   void missingQuery_excludesDisallowedDatasets() {
     assertThat(missingDatasetIds()).contains(pubId).doesNotContain(sensId);
-    long countExternal =
-        embeddingRepository.countMissing(SPACE, gate.allowedDatasetSql("de.dataset_id"));
-    long totalExternal = embeddingRepository.countAll(gate.allowedDatasetSql("de.dataset_id"));
+    long countExternal = embeddingRepository.countMissing(SPACE, gate.allowance());
+    long totalExternal = embeddingRepository.countAll(gate.allowance());
     long impactExternal = backlogService.impact(SPACE).datasets();
     store(ProviderHosting.SELF_HOSTED);
     assertThat(missingDatasetIds()).contains(pubId, sensId);
     // 영향도·스윕 투입 판정(EmbeddingBacklogService)도 같은 술어를 쓴다 — 자체 호스팅 선언으로 민감 1건이 "할 일"로 들어온다.
     assertThat(backlogService.impact(SPACE).datasets()).isEqualTo(impactExternal + 1);
     // 판정식·분모 모두 민감 데이터셋 1건만큼 늘어난다(같은 모집단).
-    assertThat(embeddingRepository.countMissing(SPACE, gate.allowedDatasetSql("de.dataset_id")))
+    assertThat(embeddingRepository.countMissing(SPACE, gate.allowance()))
         .isEqualTo(countExternal + 1);
-    assertThat(embeddingRepository.countAll(gate.allowedDatasetSql("de.dataset_id")))
-        .isEqualTo(totalExternal + 1);
+    assertThat(embeddingRepository.countAll(gate.allowance())).isEqualTo(totalExternal + 1);
   }
 
   @Test
@@ -200,9 +223,7 @@ class EmbeddingAiGateTest extends IntegrationTestBase {
             () ->
                 dsl.fetchOne("select id from document_chunk where document_file_id = ?", fileId)
                     .get(0, Long.class));
-    return chunkRepository
-        .findMissing(SPACE, chunkId - 1, 1, gate.allowedDatasetSql("c.dataset_id"))
-        .stream()
+    return chunkRepository.findMissing(SPACE, chunkId - 1, 1, gate.allowance()).stream()
         .map(DocumentChunkRepository.ChunkContent::chunkId)
         .filter(id -> id == chunkId)
         .toList();
@@ -232,15 +253,16 @@ class EmbeddingAiGateTest extends IntegrationTestBase {
       Arrays.asList(ProviderHosting.EXTERNAL, ProviderHosting.SELF_HOSTED, null);
 
   /**
-   * jOOQ 술어(DatasetAccessGuard#aiPolicyAllows)를 DB 가 실제로 평가한 값이 순수 함수(aiAllowedForLevel)와 모든 정책 ×
-   * 호스팅(null 포함)에서 같다. 문자열 SQL 판(EmbeddingAiGate)은 이 술어를 렌더해 쓰므로 규칙 구현은 이 둘뿐이다.
+   * jOOQ 술어(JooqDatasetVisibility#aiPolicyAllows)를 DB 가 실제로 평가한 값이 순수 함수(aiAllowedForLevel)와 모든 정책
+   * × 호스팅(null 포함)에서 같다. 문자열 SQL 판(EmbeddingAiGate)은 이 술어를 렌더해 쓰므로 규칙 구현은 이 둘뿐이다.
    */
   @Test
   void aiPolicyAllows_agreesWithAiAllowedForLevel_forEveryPolicyAndHosting() {
     for (LevelPolicy.AiPolicy p : LevelPolicy.AiPolicy.values()) {
       for (ProviderHosting h : HOSTINGS) {
         Boolean sql =
-            dsl.fetchValue(DSL.field(DatasetAccessGuard.aiPolicyAllows(DSL.inline(p.name()), h)));
+            dsl.fetchValue(
+                DSL.field(JooqDatasetVisibility.aiPolicyAllows(DSL.inline(p.name()), h)));
         assertThat(sql)
             .as("%s/%s", p, h)
             .isEqualTo(DatasetAccessPolicy.aiAllowedForLevel(level(p), h));

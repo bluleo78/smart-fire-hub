@@ -1,38 +1,21 @@
 package com.smartfirehub.securitylevel.repository;
 
-import static com.smartfirehub.jooq.Tables.DATASET;
-import static com.smartfirehub.jooq.Tables.DATASET_ACCESS_GRANT;
-import static com.smartfirehub.jooq.Tables.ROLE;
-import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
-import static com.smartfirehub.jooq.Tables.USER;
-import static org.jooq.impl.DSL.notExists;
-import static org.jooq.impl.DSL.selectCount;
-import static org.jooq.impl.DSL.selectOne;
-
 import java.time.LocalDateTime;
 import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import lombok.RequiredArgsConstructor;
-import org.jooq.Condition;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.springframework.stereotype.Repository;
 
-/** 데이터셋 허용 목록(dataset_access_grant) CRUD. 테넌트 범위는 RLS — 클래스 레벨 트랜잭션으로 GUC 를 보장한다. */
-@Repository
-@RequiredArgsConstructor
-@org.springframework.transaction.annotation.Transactional
-public class DatasetAccessGrantRepository {
-
-  private final DSLContext dsl;
+/**
+ * 데이터셋 허용 목록(dataset_access_grant 테이블) 저장·조회 리포지토리. 대상 사용자·역할 이름은 user·role 과 조인해 읽는다.
+ *
+ * <p>구현은 {@code JooqDatasetAccessGrantRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ */
+public interface DatasetAccessGrantRepository {
 
   /** 화면용 행 — 대상 이름과 추가한 사람 이름까지 조인해 돌려준다. */
-  public record GrantRow(
+  record GrantRow(
       long id,
       long datasetId,
       Long userId,
@@ -57,7 +40,7 @@ public class DatasetAccessGrantRepository {
    * 허용 항목의 대상 — 사용자 또는 역할 중 하나만 non-null. 파이프라인 출력 허용 목록의 교집합은 이 값의 동등성으로 낸다(항목 단위, 계획 결정 12 — 입력 A
    * 에 역할로, 입력 B 에 사용자로 올라 있는 사람은 교집합에서 빠진다: 보수적 좁힘).
    */
-  public record GrantSubject(Long userId, Long roleId) {
+  record GrantSubject(Long userId, Long roleId) {
     public static GrantSubject user(long id) {
       return new GrantSubject(id, null);
     }
@@ -78,136 +61,35 @@ public class DatasetAccessGrantRepository {
   }
 
   /** 데이터셋별 허용 항목 대상 집합(항목 없는 데이터셋은 키가 없다). */
-  public Map<Long, Set<GrantSubject>> findSubjects(Collection<Long> datasetIds) {
-    if (datasetIds.isEmpty()) {
-      return Map.of();
-    }
-    Map<Long, Set<GrantSubject>> out = new HashMap<>();
-    dsl.select(
-            DATASET_ACCESS_GRANT.DATASET_ID,
-            DATASET_ACCESS_GRANT.USER_ID,
-            DATASET_ACCESS_GRANT.ROLE_ID)
-        .from(DATASET_ACCESS_GRANT)
-        .where(DATASET_ACCESS_GRANT.DATASET_ID.in(datasetIds))
-        .forEach(
-            r ->
-                out.computeIfAbsent(r.value1(), k -> new HashSet<>())
-                    .add(new GrantSubject(r.value2(), r.value3())));
-    return out;
-  }
+  Map<Long, Set<GrantSubject>> findSubjects(Collection<Long> datasetIds);
 
   /**
    * 대상 항목을 없을 때만 넣는다({@link #insertIfAbsent} — 같은 파이프라인의 동시 실행이 같은 항목을 넣어도 유니크 위반으로 트랜잭션이 깨지지 않게).
    *
    * @return 새로 넣은 항목 id — 이미 있었으면 빈 값
    */
-  public Optional<Long> insertSubject(long datasetId, GrantSubject s, Long grantedBy) {
-    return insertIfAbsent(datasetId, s.userId(), s.roleId(), grantedBy);
-  }
+  Optional<Long> insertSubject(long datasetId, GrantSubject s, Long grantedBy);
 
   /** 대상 항목을 지운다. 지운 행 수(이미 없으면 0)를 돌려준다. */
-  public int deleteSubject(long datasetId, GrantSubject s) {
-    var g = DATASET_ACCESS_GRANT;
-    var subject = s.userId() != null ? g.USER_ID.eq(s.userId()) : g.ROLE_ID.eq(s.roleId());
-    return dsl.deleteFrom(g).where(g.DATASET_ID.eq(datasetId)).and(subject).execute();
-  }
+  int deleteSubject(long datasetId, GrantSubject s);
 
-  public List<GrantRow> findByDataset(long datasetId) {
-    return findRows(DATASET_ACCESS_GRANT.DATASET_ID.eq(datasetId));
-  }
+  List<GrantRow> findByDataset(long datasetId);
 
   /** 이 데이터셋에서 지정 대상(사용자 또는 역할 — 둘 중 하나만 non-null)의 항목(이름 조인 포함). 같은 대상의 항목이 여럿이면 목록 순서상 첫 항목. */
-  public Optional<GrantRow> findByDatasetAndSubject(long datasetId, Long userId, Long roleId) {
-    var g = DATASET_ACCESS_GRANT;
-    var subject = userId != null ? g.USER_ID.eq(userId) : g.ROLE_ID.eq(roleId);
-    return findRows(g.DATASET_ID.eq(datasetId).and(subject)).stream().findFirst();
-  }
+  Optional<GrantRow> findByDatasetAndSubject(long datasetId, Long userId, Long roleId);
 
   /** 항목 1개(이름 조인 포함 — 화면 응답용). {@link #findById} 는 이름 없이 원 행만 읽는다. */
-  public Optional<GrantRow> findRowById(long grantId) {
-    return findRows(DATASET_ACCESS_GRANT.ID.eq(grantId)).stream().findFirst();
-  }
+  Optional<GrantRow> findRowById(long grantId);
 
-  /** 화면용 행 조회 공통부 — 대상 이름과 추가한 사람 이름을 조인한다. */
-  private List<GrantRow> findRows(Condition where) {
-    var g = DATASET_ACCESS_GRANT;
-    var subjectUser = USER.as("subject_user");
-    var granter = USER.as("granter");
-    return dsl.select(
-            g.ID,
-            g.DATASET_ID,
-            g.USER_ID,
-            g.ROLE_ID,
-            subjectUser.NAME,
-            ROLE.NAME,
-            g.GRANTED_BY,
-            granter.NAME,
-            g.GRANTED_AT)
-        .from(g)
-        .leftJoin(subjectUser)
-        .on(subjectUser.ID.eq(g.USER_ID))
-        .leftJoin(ROLE)
-        .on(ROLE.ID.eq(g.ROLE_ID))
-        .leftJoin(granter)
-        .on(granter.ID.eq(g.GRANTED_BY))
-        .where(where)
-        .orderBy(g.GRANTED_AT.asc(), g.ID.asc())
-        .fetch(
-            r ->
-                new GrantRow(
-                    r.get(g.ID),
-                    r.get(g.DATASET_ID),
-                    r.get(g.USER_ID),
-                    r.get(g.ROLE_ID),
-                    r.get(g.USER_ID) != null ? r.get(subjectUser.NAME) : r.get(ROLE.NAME),
-                    r.get(g.GRANTED_BY),
-                    r.get(granter.NAME),
-                    r.get(g.GRANTED_AT)));
-  }
+  Optional<GrantRow> findById(long grantId);
 
-  public Optional<GrantRow> findById(long grantId) {
-    return dsl.selectFrom(DATASET_ACCESS_GRANT)
-        .where(DATASET_ACCESS_GRANT.ID.eq(grantId))
-        .fetchOptional(
-            r ->
-                new GrantRow(
-                    r.getId(),
-                    r.getDatasetId(),
-                    r.getUserId(),
-                    r.getRoleId(),
-                    null,
-                    r.getGrantedBy(),
-                    null,
-                    r.getGrantedAt()));
-  }
+  int countByDataset(long datasetId);
 
-  public int countByDataset(long datasetId) {
-    return dsl.fetchCount(DATASET_ACCESS_GRANT, DATASET_ACCESS_GRANT.DATASET_ID.eq(datasetId));
-  }
+  boolean existsUser(long datasetId, long userId);
 
-  public boolean existsUser(long datasetId, long userId) {
-    return dsl.fetchExists(
-        DATASET_ACCESS_GRANT,
-        DATASET_ACCESS_GRANT.DATASET_ID.eq(datasetId).and(DATASET_ACCESS_GRANT.USER_ID.eq(userId)));
-  }
+  long insertUser(long datasetId, long userId, Long grantedBy);
 
-  public long insertUser(long datasetId, long userId, Long grantedBy) {
-    return insert(datasetId, DATASET_ACCESS_GRANT.USER_ID, userId, grantedBy);
-  }
-
-  public long insertRole(long datasetId, long roleId, Long grantedBy) {
-    return insert(datasetId, DATASET_ACCESS_GRANT.ROLE_ID, roleId, grantedBy);
-  }
-
-  /** 항목 1개 추가 공통부 — 대상 컬럼(user_id 또는 role_id) 하나만 채운다. */
-  private long insert(long datasetId, Field<Long> subjectColumn, long subjectId, Long grantedBy) {
-    return dsl.insertInto(DATASET_ACCESS_GRANT)
-        .set(DATASET_ACCESS_GRANT.DATASET_ID, datasetId)
-        .set(subjectColumn, subjectId)
-        .set(DATASET_ACCESS_GRANT.GRANTED_BY, grantedBy)
-        .returning(DATASET_ACCESS_GRANT.ID)
-        .fetchSingle(DATASET_ACCESS_GRANT.ID);
-  }
+  long insertRole(long datasetId, long roleId, Long grantedBy);
 
   /**
    * 허용 항목을 "없을 때만" 추가한다(후속 F5 — 같은 대상 동시 추가 경합). 같은 (데이터셋, 대상) 항목이 이미 있으면(동시 요청이 먼저 커밋한 경우 포함) 아무것도
@@ -222,40 +104,12 @@ public class DatasetAccessGrantRepository {
    * @param roleId 역할 대상(사용자 대상이면 null)
    * @return 새로 넣은 항목 id — 이미 있었으면 빈 값
    */
-  public Optional<Long> insertIfAbsent(long datasetId, Long userId, Long roleId, Long grantedBy) {
-    return dsl.insertInto(DATASET_ACCESS_GRANT)
-        .set(DATASET_ACCESS_GRANT.DATASET_ID, datasetId)
-        .set(DATASET_ACCESS_GRANT.USER_ID, userId)
-        .set(DATASET_ACCESS_GRANT.ROLE_ID, roleId)
-        .set(DATASET_ACCESS_GRANT.GRANTED_BY, grantedBy)
-        .onConflictDoNothing()
-        .returning(DATASET_ACCESS_GRANT.ID)
-        .fetchOptional(DATASET_ACCESS_GRANT.ID);
-  }
+  Optional<Long> insertIfAbsent(long datasetId, Long userId, Long roleId, Long grantedBy);
 
-  public void delete(long grantId) {
-    dsl.deleteFrom(DATASET_ACCESS_GRANT).where(DATASET_ACCESS_GRANT.ID.eq(grantId)).execute();
-  }
+  void delete(long grantId);
 
   /** clone 용 — 원본 항목을 그대로 복사한다(대상·주체 동일, 추가한 사람만 복제자). */
-  public int copy(long fromDatasetId, long toDatasetId, Long grantedBy) {
-    return dsl.insertInto(
-            DATASET_ACCESS_GRANT,
-            DATASET_ACCESS_GRANT.DATASET_ID,
-            DATASET_ACCESS_GRANT.USER_ID,
-            DATASET_ACCESS_GRANT.ROLE_ID,
-            DATASET_ACCESS_GRANT.GRANTED_BY)
-        .select(
-            dsl.select(
-                    org.jooq.impl.DSL.val(toDatasetId),
-                    DATASET_ACCESS_GRANT.USER_ID,
-                    DATASET_ACCESS_GRANT.ROLE_ID,
-                    org.jooq.impl.DSL.val(grantedBy))
-                .from(DATASET_ACCESS_GRANT)
-                .where(DATASET_ACCESS_GRANT.DATASET_ID.eq(fromDatasetId)))
-        .onConflictDoNothing()
-        .execute();
-  }
+  int copy(long fromDatasetId, long toDatasetId, Long grantedBy);
 
   /**
    * 이 역할이 허용 항목으로 걸린 데이터셋 행을 id 오름차순으로 {@code FOR UPDATE} 잠근다(후속 F4 — 역할 삭제 경합).
@@ -271,49 +125,15 @@ public class DatasetAccessGrantRepository {
    *
    * @return 잠근 데이터셋 id(오름차순)
    */
-  public List<Long> lockDatasetsGrantedToRole(long roleId) {
-    return dsl.select(DATASET.ID)
-        .from(DATASET)
-        .where(
-            DATASET.ID.in(
-                dsl.select(DATASET_ACCESS_GRANT.DATASET_ID)
-                    .from(DATASET_ACCESS_GRANT)
-                    .where(DATASET_ACCESS_GRANT.ROLE_ID.eq(roleId))))
-        .orderBy(DATASET.ID.asc())
-        .forUpdate()
-        .fetch(DATASET.ID);
-  }
+  List<Long> lockDatasetsGrantedToRole(long roleId);
 
   /** 이 역할이 "유일한 허용 항목"인 allowlist_required 데이터셋 — 역할 삭제가 고아 데이터셋을 만들지 않게 하는 검사용(판단 사항 14). */
-  public List<Long> datasetsWhereRoleIsSoleGrantOnAllowlistLevel(long roleId) {
-    var g = DATASET_ACCESS_GRANT;
-    var other = DATASET_ACCESS_GRANT.as("other_g");
-    return dsl.select(g.DATASET_ID)
-        .from(g)
-        .join(DATASET)
-        .on(DATASET.ID.eq(g.DATASET_ID))
-        .join(SECURITY_LEVEL)
-        .on(SECURITY_LEVEL.ID.eq(DATASET.SECURITY_LEVEL_ID))
-        .where(g.ROLE_ID.eq(roleId))
-        .and(SECURITY_LEVEL.ALLOWLIST_REQUIRED.isTrue())
-        .and(selectCount().from(other).where(other.DATASET_ID.eq(g.DATASET_ID)).asField().eq(1))
-        .fetch(g.DATASET_ID);
-  }
+  List<Long> datasetsWhereRoleIsSoleGrantOnAllowlistLevel(long roleId);
 
   /**
    * 이 등급에 속하면서 허용 항목이 하나도 없는 데이터셋 id. 허용 목록 시드와 영향 수 계산이 같은 정의를 쓰도록 한 곳에 둔다.
    *
    * <p>호출자(SecurityLevelService)의 트랜잭션에 합류한다(클래스 레벨 @Transactional, REQUIRED).
    */
-  public List<Long> findDatasetIdsWithoutAllowlist(long levelId) {
-    return dsl.select(DATASET.ID)
-        .from(DATASET)
-        .where(DATASET.SECURITY_LEVEL_ID.eq(levelId))
-        .and(
-            notExists(
-                selectOne()
-                    .from(DATASET_ACCESS_GRANT)
-                    .where(DATASET_ACCESS_GRANT.DATASET_ID.eq(DATASET.ID))))
-        .fetch(DATASET.ID);
-  }
+  List<Long> findDatasetIdsWithoutAllowlist(long levelId);
 }

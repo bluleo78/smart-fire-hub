@@ -1,13 +1,5 @@
 package com.smartfirehub.securitylevel.access;
 
-import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
-import static org.jooq.impl.DSL.exists;
-import static org.jooq.impl.DSL.falseCondition;
-import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.name;
-import static org.jooq.impl.DSL.noCondition;
-import static org.jooq.impl.DSL.selectOne;
-
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.security.PermissionInterceptor;
@@ -37,8 +29,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
-import org.jooq.Condition;
-import org.jooq.Field;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -72,8 +62,7 @@ public class DatasetAccessGuard {
 
   /**
    * 스마트 작업 리포트 등급 기록기(WD-198). 데이터셋 내용을 내주는 허용 지점(단건 VIEW·대화형 SQL·내보내기·다건 VIEW→AI)이 허용한 등급을 알린다 —
-   * 스마트 작업 실행에 묶인 요청·범위가 아니면 기록기가 아무 일도 하지 않는다. 값 판정·목록 조건(visibleCondition)은 행 내용을 내주지 않으므로 알리지
-   * 않는다.
+   * 스마트 작업 실행에 묶인 요청·범위가 아니면 기록기가 아무 일도 하지 않는다. 값 판정·목록 가시성(visibility)은 행 내용을 내주지 않으므로 알리지 않는다.
    */
   private final ProactiveReportLevelRecorder reportLevelRecorder;
 
@@ -128,8 +117,8 @@ public class DatasetAccessGuard {
   }
 
   /**
-   * 목록 조건(visibleSql·visibleCondition)으로만 걸러 내용을 돌려주는 경로(문서 청크 검색·검수 항목·지식그래프 읽기)가, 결과에 실린 데이터셋 id
-   * 를 스마트 작업 리포트 등급 기록에 넘긴다(WD-198). 판정은 하지 않는다 — 실행에 묶인 요청이 아니면 아무 일도 하지 않는다.
+   * 목록 조건(visibleSql·visibility)으로만 걸러 내용을 돌려주는 경로(문서 청크 검색·검수 항목·지식그래프 읽기)가, 결과에 실린 데이터셋 id 를 스마트
+   * 작업 리포트 등급 기록에 넘긴다(WD-198). 판정은 하지 않는다 — 실행에 묶인 요청이 아니면 아무 일도 하지 않는다.
    */
   public void noteReportReads(Collection<Long> datasetIds) {
     reportLevelRecorder.noteDatasetIds(datasetIds);
@@ -330,82 +319,30 @@ public class DatasetAccessGuard {
             hosting));
   }
 
-  /** 지금 요청이 AI 대행·AI 범위 문맥인지 — 그 문맥이면 {@link #visibleCondition(Clearance)} 가 등급 AI 정책까지 건다. */
+  /** 지금 요청이 AI 대행·AI 범위 문맥인지 — 그 문맥이면 {@link #visibility()} 가 등급 AI 정책까지 캡처한다. */
   public boolean inAiCall() {
     return aiCallContext.current().isPresent();
   }
 
   /**
-   * 현재 사용자 + DatasetRepository 관례({@code "dataset"."id"}, {@code "dataset"."security_level_id"}).
+   * 현재 사용자의 목록 가시성 — 요청 자격 + 지금의 AI 문맥을 캡처한다. 리포지토리 구현이 DatasetRepository 이름 관례({@code
+   * "dataset"."id"}, {@code "dataset"."security_level_id"}) 등으로 SQL 에 옮긴다.
    */
-  public Condition visibleCondition() {
-    return visibleCondition(clearanceResolver.current());
+  public DatasetVisibility visibility() {
+    return visibility(clearanceResolver.current());
   }
 
   /**
-   * 명시 자격 + DatasetRepository 관례 이름. 요청 사용자가 아니라 서비스 인자 userId 로 자격을 계산하는 호출부(저장 쿼리 등)가 쓴다 — 조회 대상
-   * 테이블이 {@code "dataset"} 이름으로 조인돼 있어야 한다.
+   * 명시 자격의 목록 가시성. 요청 사용자가 아니라 서비스 인자 userId 로 자격을 계산하는 호출부(저장 쿼리·대시보드 등)가 쓴다.
+   *
+   * <p>AI 대행 요청·AI 범위(배경)이면 이름·설명도 LLM 으로 가므로 AI(+SHARE) 정책까지 건다(스펙 §4.3 2행). 모든 가시성 호출처(목록·검색·
+   * 스키마·태그·대시보드·저장 쿼리·검수·그래프 게이트)가 이 메서드를 거치므로 한 곳의 훅으로 전부 덮인다. AI 문맥은 <b>지금</b> 캡처한다 — 나중에 다른 AI
+   * 범위 안에서 렌더해도 SQL 이 바뀌지 않게(호출 시점의 AI 문맥을 고정한다). 비AI 문맥에서는 aiCall 이 null 이라 VIEW 규칙과 같은 SQL 이다.
    */
-  public Condition visibleCondition(Clearance c) {
-    return visibleCondition(
-        c,
-        field(name("dataset", "id"), Long.class),
-        field(name("dataset", "security_level_id"), Long.class));
-  }
-
-  /**
-   * 목록 쿼리용 조건 — {@link DatasetAccessPolicy#canView} 와 같은 규칙을 SQL 로 옮긴 것. 둘의 일치는
-   * DatasetAccessGuardTest#visibleCondition_agreesWithPolicy_acrossMatrix 가 고정한다.
-   */
-  public Condition visibleCondition(
-      Clearance c, Field<Long> datasetIdField, Field<Long> levelIdField) {
-    // AI 대행 요청·AI 범위(배경)이면 이름·설명도 LLM 으로 가므로 AI(+SHARE) 정책까지 건다(스펙 §4.3 2행). 모든 가시성 호출처(목록·검색·
-    // 스키마·태그·대시보드·저장 쿼리·검수·그래프 게이트)가 이 코어를 거치므로 한 곳의 훅으로 전부 덮인다. 비AI 문맥에서는 null 이라 기존 VIEW
-    // 규칙과 같은 SQL 이다.
-    return visibleCondition(c, datasetIdField, levelIdField, aiCallContext.current().orElse(null));
-  }
-
-  /**
-   * 가시성 조건 + (AI 문맥이면) 등급의 ai_policy·share_policy 술어(스펙 §4.3). ai 가 null 이면 기존 VIEW 규칙 그대로다. {@link
-   * DatasetAccessPolicy#aiAllowedForLevel}·{@link DatasetAccessPolicy#shareAllowedForLevel} 와의 일치는
-   * DatasetAccessGuardTest#aiVisibleCondition_agreesWithPolicy_acrossHostingAndShare 가 고정한다.
-   */
-  Condition visibleCondition(
-      Clearance c, Field<Long> datasetIdField, Field<Long> levelIdField, AiCall ai) {
-    if (c.rank() == Clearance.NO_RANK) {
-      return falseCondition();
-    }
-    var sl = SECURITY_LEVEL.as("vis_sl");
-    Condition allowlistOk =
-        sl.ALLOWLIST_REQUIRED
-            .isFalse()
-            .or(c.tenantAdmin() ? sl.ADMIN_BYPASS.isTrue() : falseCondition())
-            .or(DatasetAccessRepository.onAllowlistCondition(c, datasetIdField));
-    // AI 문맥이면 이름·설명까지 LLM 으로 가므로 목록 단계에서 ai_policy(+공유 목적이면 share_policy)로 거른다.
-    Condition aiOk = ai == null ? noCondition() : aiPolicyAllows(sl.AI_POLICY, ai.hosting());
-    Condition shareOk =
-        ai != null && ai.share()
-            ? sl.SHARE_POLICY.eq(LevelPolicy.SharePolicy.ALLOW.name())
-            : noCondition();
-    return exists(
-        selectOne()
-            .from(sl)
-            .where(sl.ID.eq(levelIdField))
-            .and(sl.RANK.le(c.rank()))
-            .and(allowlistOk)
-            .and(aiOk)
-            .and(shareOk));
-  }
-
-  /**
-   * ai_policy 컬럼 술어 — 사용자 없는 경로(임베딩 SQL)도 쓴다. {@link DatasetAccessPolicy#aiAllowedForLevel} 과 같은
-   * 규칙(hosting null = 외부).
-   */
-  public static Condition aiPolicyAllows(Field<String> aiPolicyField, ProviderHosting hosting) {
-    Condition all = aiPolicyField.eq(LevelPolicy.AiPolicy.ALL.name());
-    return hosting == ProviderHosting.SELF_HOSTED
-        ? all.or(aiPolicyField.eq(LevelPolicy.AiPolicy.SELF_HOSTED_ONLY.name()))
-        : all;
+  public DatasetVisibility visibility(Clearance c) {
+    // null 자격을 "제한 없음"으로 흘려보내지 않는다(fail-closed) — 제한 없음은 DatasetVisibility.UNRESTRICTED 로만 명시한다.
+    Objects.requireNonNull(c, "clearance");
+    return new DatasetVisibility(c, aiCallContext.current().orElse(null));
   }
 
   /**
@@ -561,16 +498,17 @@ public class DatasetAccessGuard {
   }
 
   /**
-   * 문자열 SQL 을 조립하는 호출부(시맨틱 검색·스키마 조회)용. 값이 모두 long/boolean 이라 인라인 렌더링이 안전하다.
+   * 가시성을 문자열 SQL 술어로 렌더한다 — <b>테넌트 데이터 경로의 스키마 조회 한 곳</b>(SavedQueryController →
+   * AnalyticsQueryExecutionService#getSchemaInfo, 허용 목록·PG/Tibero 카탈로그 SQL 을 직접 조립) 전용으로 남긴다. 값이 모두
+   * long/boolean 이라 인라인 렌더링이 안전하다.
+   *
+   * <p>플랫폼 리포지토리(시맨틱 검색 등)는 문자열을 받지 않는다 — {@link #visibility(Clearance)} 로 캡처한 값을 넘기고 렌더·별칭은 리포지토리
+   * 구현이 맡는다(WD-485 T10). 새 호출부는 이 메서드 대신 그 경로를 쓴다.
    *
    * @param datasetAlias 호출부 SQL 에서 dataset 테이블의 별칭(예: "d")
    */
   public String visibleSql(Clearance c, String datasetAlias) {
-    return accessRepository.inlineSql(
-        visibleCondition(
-            c,
-            field(name(datasetAlias, "id"), Long.class),
-            field(name(datasetAlias, "security_level_id"), Long.class)));
+    return accessRepository.visibleSql(visibility(c), datasetAlias);
   }
 
   /**

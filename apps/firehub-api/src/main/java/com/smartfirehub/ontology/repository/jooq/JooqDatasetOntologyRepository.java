@@ -1,0 +1,77 @@
+package com.smartfirehub.ontology.repository.jooq;
+
+import static org.jooq.impl.DSL.currentOffsetDateTime;
+import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.name;
+import static org.jooq.impl.DSL.table;
+
+import com.smartfirehub.ontology.repository.DatasetOntologyRepository;
+import com.smartfirehub.ontology.repository.GraphOntologySourceRepository;
+import java.util.Optional;
+import lombok.RequiredArgsConstructor;
+import org.jooq.DSLContext;
+import org.jooq.Field;
+import org.jooq.Table;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * DatasetOntologyRepository 의 jOOQ(PostgreSQL) 구현 — WD-485.
+ *
+ * <p>데이터셋↔온톨로지 바인딩(N:1) 저장/조회. OntologyRepository와 동일한 plain-SQL DSL 패턴(codegen 비의존).
+ */
+@Repository
+@RequiredArgsConstructor
+// RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 DatasetOntologyService.get 은 트랜잭션 경계를 만들지 않는다.
+// 여기서 열지 않으면 get 은 조용히 0행이 되고, 리포지토리를 직접 부르는 호출(테스트 픽스처 등)의 bind 는 tenant_id
+// NOT NULL 위반이 된다. WD-184 이후 DatasetOntologyService.bind 는 자체 트랜잭션(재연결 시 매핑 삭제와 원자적)을
+// 열고 여기에 합류한다. 지우지 말 것.
+@Transactional
+public class JooqDatasetOntologyRepository implements DatasetOntologyRepository {
+
+  private final DSLContext dsl;
+  // WD-28: 연결·재연결 시 출처를 남긴다. 같은 트랜잭션(이 클래스의 @Transactional)에 합류한다.
+  private final GraphOntologySourceRepository sourceRepository;
+
+  private static final Table<?> DATASET_ONTOLOGY = table(name("dataset_ontology"));
+  private static final Field<Long> DO_DATASET_ID =
+      field(name("dataset_ontology", "dataset_id"), Long.class);
+  // V101 에서 dataset_id 유니크가 (tenant_id, dataset_id) 로 접혔다. ON CONFLICT 추론 대상을
+  // 새 인덱스와 일치시키지 않으면 "no unique or exclusion constraint matching" 런타임 오류가 난다.
+  // 값은 컬럼 DEFAULT(GUC app.tenant_id)가 채우므로 INSERT 에서는 세팅하지 않는다.
+  private static final Field<Long> DO_TENANT_ID =
+      field(name("dataset_ontology", "tenant_id"), Long.class);
+  private static final Field<Long> DO_ONTOLOGY_ID =
+      field(name("dataset_ontology", "ontology_id"), Long.class);
+  private static final Field<Long> DO_BOUND_BY =
+      field(name("dataset_ontology", "bound_by"), Long.class);
+  private static final Field<java.time.OffsetDateTime> DO_BOUND_AT =
+      field(name("dataset_ontology", "bound_at"), java.time.OffsetDateTime.class);
+
+  // 데이터셋을 온톨로지에 바인딩(UPSERT) — dataset_id UNIQUE라 재바인딩 시 ontology_id/bound_by 갱신.
+  @Override
+  public void bind(long datasetId, long ontologyId, Long userId) {
+    dsl.insertInto(DATASET_ONTOLOGY)
+        .set(DO_DATASET_ID, datasetId)
+        .set(DO_ONTOLOGY_ID, ontologyId)
+        .set(DO_BOUND_BY, userId)
+        .set(DO_BOUND_AT, currentOffsetDateTime())
+        .onConflict(DO_TENANT_ID, DO_DATASET_ID)
+        .doUpdate()
+        .set(DO_ONTOLOGY_ID, ontologyId)
+        .set(DO_BOUND_BY, userId)
+        .set(DO_BOUND_AT, currentOffsetDateTime())
+        .execute();
+    // 재연결이어도 옛 온톨로지 행은 지우지 않는다 — 예전 그래프의 잔존 데이터 출처이기 때문이다(스펙 §3).
+    sourceRepository.record(ontologyId, datasetId);
+  }
+
+  // 데이터셋에 바인딩된 온톨로지 id 조회(없으면 empty).
+  @Override
+  public Optional<Long> findOntologyIdByDataset(long datasetId) {
+    return dsl.select(DO_ONTOLOGY_ID)
+        .from(DATASET_ONTOLOGY)
+        .where(DO_DATASET_ID.eq(datasetId))
+        .fetchOptional(r -> r.get(DO_ONTOLOGY_ID));
+  }
+}

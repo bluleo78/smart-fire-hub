@@ -7,6 +7,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import java.util.Optional;

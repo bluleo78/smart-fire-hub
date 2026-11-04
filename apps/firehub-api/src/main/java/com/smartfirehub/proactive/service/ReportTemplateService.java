@@ -97,7 +97,7 @@ public class ReportTemplateService {
         reportTemplateRepository
             .lockUpdatedAtById(id)
             .orElseThrow(() -> new ProactiveJobNotFoundException("템플릿을 찾을 수 없습니다: " + id))
-            .value1();
+            .updatedAt();
     EditConflictException.check(
         request.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
     // 감사 비교용 저장 전 값(WD-464) — 행 잠금 뒤에 다시 읽어, 기준 버전 없이 들어온 저장(AI 도구)도 동시 저장의 값이 섞이지 않게 한다.

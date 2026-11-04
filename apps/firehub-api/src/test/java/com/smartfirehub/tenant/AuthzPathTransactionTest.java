@@ -2,12 +2,11 @@ package com.smartfirehub.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.smartfirehub.audit.repository.AuditLogRepository;
+import com.smartfirehub.audit.repository.jooq.JooqAuditLogRepository;
 import com.smartfirehub.dashboard.service.DashboardService;
 import com.smartfirehub.global.security.PermissionChecker;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.lang.reflect.Method;
-import org.jooq.JSONB;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,7 +49,7 @@ class AuthzPathTransactionTest extends IntegrationTestBase {
     // 편승하지만 비동기 알림 경로는 편승할 트랜잭션이 없다 → INSERT 가 WITH CHECK 위반이 된다.
     assertThat(
             isTransactional(
-                AuditLogRepository.class,
+                JooqAuditLogRepository.class,
                 "save",
                 Long.class,
                 String.class,
@@ -62,13 +61,13 @@ class AuthzPathTransactionTest extends IntegrationTestBase {
                 String.class,
                 String.class,
                 String.class,
-                JSONB.class))
+                String.class))
         .isTrue();
   }
 
   /** audit_log 를 직접 읽는 프로덕션 클래스. 새로 생기면 여기에 추가해야 한다. */
   private static final Class<?>[] AUDIT_LOG_READERS = {
-    AuditLogRepository.class, DashboardService.class
+    JooqAuditLogRepository.class, DashboardService.class
   };
 
   @Test
@@ -89,10 +88,10 @@ class AuthzPathTransactionTest extends IntegrationTestBase {
     // 막는다 — AUDIT_LOG_READERS 클래스 자신에 @Scheduled 가 선언되는 경우뿐이고, 그 클래스를
     // 단지 호출하기만 하는 새 배경 진입점(@Scheduled/@Async/@Job/@PostConstruct)은 잡지 못한다.
     // 그 잔여 구멍의 구조적 해법은 BackgroundPathTransactionTest 의 리포지토리 맵이다.
-    assertThat(isTransactional(AuditLogRepository.class, "findById", Long.class)).isTrue();
+    assertThat(isTransactional(JooqAuditLogRepository.class, "findById", Long.class)).isTrue();
     assertThat(
             isTransactional(
-                AuditLogRepository.class,
+                JooqAuditLogRepository.class,
                 "findByResource",
                 String.class,
                 String.class,

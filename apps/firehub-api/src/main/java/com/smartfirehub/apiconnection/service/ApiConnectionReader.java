@@ -1,20 +1,17 @@
 package com.smartfirehub.apiconnection.service;
 
-import static org.jooq.impl.DSL.*;
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
+import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.ApiConnectionRow;
 import com.smartfirehub.global.exception.SerializationException;
-import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
-import org.jooq.Record;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,9 +41,9 @@ public class ApiConnectionReader {
 
   /** 단건 조회 — authConfig 는 마스킹된 형태로 반환한다. */
   public ApiConnectionResponse getById(Long id) {
-    Record record =
+    ApiConnectionRow row =
         repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
-    return toResponse(record);
+    return toResponse(row);
   }
 
   /**
@@ -67,11 +64,10 @@ public class ApiConnectionReader {
    * placement=query 등)할 수 있도록 함께 합쳐 반환한다. (#113)
    */
   public Map<String, String> getDecryptedAuthConfig(Long id) {
-    Record record =
+    ApiConnectionRow row =
         repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
-    String encryptedConfig = record.get(field(name("api_connection", "auth_config"), String.class));
-    Map<String, String> config = decryptToMap(encryptedConfig);
-    String authType = record.get(field(name("api_connection", "auth_type"), String.class));
+    Map<String, String> config = decryptToMap(row.authConfig());
+    String authType = row.authType();
     if (authType != null) {
       config = new HashMap<>(config);
       config.putIfAbsent("authType", authType);
@@ -80,29 +76,28 @@ public class ApiConnectionReader {
   }
 
   /**
-   * jOOQ Record → 응답 DTO 변환. 목록 조회(ApiConnectionService.getAll)도 같은 변환이 필요하므로 공개한다 — 서비스에 복호화/마스킹
-   * 로직을 중복시키지 않기 위함이다.
+   * API 연결 행 → 응답 DTO 변환. 목록 조회(ApiConnectionService.getAll)도 같은 변환이 필요하므로 공개한다 — 서비스에 복호화/마스킹 로직을
+   * 중복시키지 않기 위함이다.
    */
-  public ApiConnectionResponse toResponse(Record r) {
-    String encryptedConfig = r.get(field(name("api_connection", "auth_config"), String.class));
-    Map<String, String> plainConfig = decryptToMap(encryptedConfig);
+  public ApiConnectionResponse toResponse(ApiConnectionRow r) {
+    Map<String, String> plainConfig = decryptToMap(r.authConfig());
     Map<String, String> masked = maskAuthConfig(plainConfig);
 
     return new ApiConnectionResponse(
-        r.get(field(name("api_connection", "id"), Long.class)),
-        r.get(field(name("api_connection", "name"), String.class)),
-        r.get(field(name("api_connection", "description"), String.class)),
-        r.get(field(name("api_connection", "auth_type"), String.class)),
+        r.id(),
+        r.name(),
+        r.description(),
+        r.authType(),
         masked,
-        r.get(field(name("api_connection", "base_url"), String.class)),
-        r.get(field(name("api_connection", "health_check_path"), String.class)),
-        r.get(field(name("api_connection", "last_status"), String.class)),
-        r.get(field(name("api_connection", "last_checked_at"), LocalDateTime.class)),
-        r.get(field(name("api_connection", "last_latency_ms"), Long.class)),
-        r.get(field(name("api_connection", "last_error_message"), String.class)),
-        r.get(field(name("api_connection", "created_by"), Long.class)),
-        r.get(field(name("api_connection", "created_at"), LocalDateTime.class)),
-        r.get(field(name("api_connection", "updated_at"), LocalDateTime.class)));
+        r.baseUrl(),
+        r.healthCheckPath(),
+        r.lastStatus(),
+        r.lastCheckedAt(),
+        r.lastLatencyMs(),
+        r.lastErrorMessage(),
+        r.createdBy(),
+        r.createdAt(),
+        r.updatedAt());
   }
 
   /** 암호문을 복호화해 Map 으로 되돌린다. */

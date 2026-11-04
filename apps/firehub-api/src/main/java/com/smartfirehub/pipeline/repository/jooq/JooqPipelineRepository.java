@@ -1,0 +1,248 @@
+package com.smartfirehub.pipeline.repository.jooq;
+
+import static org.jooq.impl.DSL.*;
+
+import com.smartfirehub.pipeline.dto.PipelineResponse;
+import com.smartfirehub.pipeline.repository.PipelineRepository;
+import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import lombok.RequiredArgsConstructor;
+import org.jooq.DSLContext;
+import org.jooq.Field;
+import org.jooq.Table;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+/** PipelineRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
+@Repository
+@RequiredArgsConstructor
+// 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
+// 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
+// REQUIRED 라 서비스가 이미 연 트랜잭션에는 합류한다(기존 경로 동작 불변).
+@Transactional
+public class JooqPipelineRepository implements PipelineRepository {
+
+  private final DSLContext dsl;
+
+  // Table constants
+  private static final Table<?> PIPELINE = table(name("pipeline"));
+  private static final Field<Long> P_ID = field(name("pipeline", "id"), Long.class);
+  private static final Field<String> P_NAME = field(name("pipeline", "name"), String.class);
+  private static final Field<String> P_DESCRIPTION =
+      field(name("pipeline", "description"), String.class);
+  private static final Field<Boolean> P_IS_ACTIVE =
+      field(name("pipeline", "is_active"), Boolean.class);
+  private static final Field<Long> P_CREATED_BY = field(name("pipeline", "created_by"), Long.class);
+  private static final Field<LocalDateTime> P_CREATED_AT =
+      field(name("pipeline", "created_at"), LocalDateTime.class);
+  private static final Field<LocalDateTime> P_UPDATED_AT =
+      field(name("pipeline", "updated_at"), LocalDateTime.class);
+  private static final Field<Long> P_UPDATED_BY = field(name("pipeline", "updated_by"), Long.class);
+
+  private static final Table<?> USER_TABLE = table(name("user"));
+  private static final Field<Long> U_ID = field(name("user", "id"), Long.class);
+  private static final Field<String> U_NAME = field(name("user", "name"), String.class);
+
+  private static final Table<?> PIPELINE_STEP = table(name("pipeline_step"));
+  private static final Field<Long> PS_PIPELINE_ID =
+      field(name("pipeline_step", "pipeline_id"), Long.class);
+
+  private static final Table<?> PIPELINE_TRIGGER = table(name("pipeline_trigger"));
+  private static final Field<Long> PT_PIPELINE_ID =
+      field(name("pipeline_trigger", "pipeline_id"), Long.class);
+  private static final Field<Boolean> PT_IS_ENABLED =
+      field(name("pipeline_trigger", "is_enabled"), Boolean.class);
+
+  @Override
+  public List<PipelineResponse> findAll(int page, int size) {
+    Field<Integer> stepCountField =
+        selectCount().from(PIPELINE_STEP).where(PS_PIPELINE_ID.eq(P_ID)).asField("step_count");
+    // 활성 트리거 개수: stepCountField와 동일한 상관 서브쿼리 패턴. is_enabled=true인 트리거만 카운트.
+    Field<Integer> triggerCountField =
+        selectCount()
+            .from(PIPELINE_TRIGGER)
+            .where(PT_PIPELINE_ID.eq(P_ID), PT_IS_ENABLED.isTrue())
+            .asField("trigger_count");
+
+    return dsl.select(
+            P_ID,
+            P_NAME,
+            P_DESCRIPTION,
+            P_IS_ACTIVE,
+            P_CREATED_BY,
+            P_CREATED_AT,
+            stepCountField,
+            triggerCountField,
+            U_NAME)
+        .from(PIPELINE)
+        .leftJoin(USER_TABLE)
+        .on(P_CREATED_BY.eq(U_ID))
+        .orderBy(P_ID.desc())
+        .limit(size)
+        .offset(page * size)
+        .fetch(
+            r ->
+                new PipelineResponse(
+                    r.get(P_ID),
+                    r.get(P_NAME),
+                    r.get(P_DESCRIPTION),
+                    r.get(P_IS_ACTIVE),
+                    r.get(U_NAME) != null ? r.get(U_NAME) : String.valueOf(r.get(P_CREATED_BY)),
+                    r.get(stepCountField),
+                    r.get(triggerCountField),
+                    r.get(P_CREATED_AT)));
+  }
+
+  @Override
+  public long count() {
+    return dsl.selectCount().from(PIPELINE).fetchOne(0, Long.class);
+  }
+
+  @Override
+  public Optional<PipelineResponse> findById(Long id) {
+    Field<Integer> stepCountField =
+        selectCount().from(PIPELINE_STEP).where(PS_PIPELINE_ID.eq(P_ID)).asField("step_count");
+    Field<Integer> triggerCountField =
+        selectCount()
+            .from(PIPELINE_TRIGGER)
+            .where(PT_PIPELINE_ID.eq(P_ID), PT_IS_ENABLED.isTrue())
+            .asField("trigger_count");
+
+    return dsl.select(
+            P_ID,
+            P_NAME,
+            P_DESCRIPTION,
+            P_IS_ACTIVE,
+            P_CREATED_BY,
+            P_CREATED_AT,
+            stepCountField,
+            triggerCountField,
+            U_NAME)
+        .from(PIPELINE)
+        .leftJoin(USER_TABLE)
+        .on(P_CREATED_BY.eq(U_ID))
+        .where(P_ID.eq(id))
+        .fetchOptional(
+            r ->
+                new PipelineResponse(
+                    r.get(P_ID),
+                    r.get(P_NAME),
+                    r.get(P_DESCRIPTION),
+                    r.get(P_IS_ACTIVE),
+                    r.get(U_NAME) != null ? r.get(U_NAME) : String.valueOf(r.get(P_CREATED_BY)),
+                    r.get(stepCountField),
+                    r.get(triggerCountField),
+                    r.get(P_CREATED_AT)));
+  }
+
+  @Override
+  public PipelineResponse save(String name, String description, Long createdBy) {
+    var record =
+        dsl.insertInto(PIPELINE)
+            .set(P_NAME, name)
+            .set(P_DESCRIPTION, description)
+            .set(P_IS_ACTIVE, true)
+            .set(P_CREATED_BY, createdBy)
+            .returning(P_ID, P_NAME, P_DESCRIPTION, P_IS_ACTIVE, P_CREATED_BY, P_CREATED_AT)
+            .fetchOne();
+
+    String createdByName =
+        dsl.select(U_NAME)
+            .from(USER_TABLE)
+            .where(U_ID.eq(createdBy))
+            .fetchOptional(r -> r.get(U_NAME))
+            .orElse(String.valueOf(createdBy));
+
+    return new PipelineResponse(
+        record.get(P_ID),
+        record.get(P_NAME),
+        record.get(P_DESCRIPTION),
+        record.get(P_IS_ACTIVE),
+        createdByName,
+        0,
+        0,
+        record.get(P_CREATED_AT));
+  }
+
+  @Override
+  public LocalDateTime update(
+      Long id, String name, String description, Boolean isActive, Long updatedBy) {
+    var query =
+        dsl.update(PIPELINE)
+            .set(P_NAME, name)
+            .set(P_DESCRIPTION, description)
+            .set(P_UPDATED_AT, LocalDateTime.now())
+            .set(P_UPDATED_BY, updatedBy);
+
+    if (isActive != null) {
+      query = query.set(P_IS_ACTIVE, isActive);
+    }
+
+    return query.where(P_ID.eq(id)).returning(P_UPDATED_AT).fetchOne(P_UPDATED_AT);
+  }
+
+  @Override
+  public void deleteById(Long id) {
+    dsl.deleteFrom(PIPELINE).where(P_ID.eq(id)).execute();
+  }
+
+  @Override
+  public boolean existsByName(String name) {
+    return dsl.fetchExists(dsl.selectOne().from(PIPELINE).where(P_NAME.eq(name)));
+  }
+
+  @Override
+  public boolean existsById(Long id) {
+    return dsl.fetchExists(dsl.selectOne().from(PIPELINE).where(P_ID.eq(id)));
+  }
+
+  @Override
+  public Set<Long> findExistingIds(Collection<Long> ids) {
+    if (ids.isEmpty()) {
+      return Set.of();
+    }
+    return new HashSet<>(dsl.select(P_ID).from(PIPELINE).where(P_ID.in(ids)).fetch(P_ID));
+  }
+
+  @Override
+  public Optional<String> findNameById(Long id) {
+    return dsl.select(P_NAME).from(PIPELINE).where(P_ID.eq(id)).fetchOptional(r -> r.get(P_NAME));
+  }
+
+  @Override
+  public Optional<Long> findCreatedByIdById(Long id) {
+    return dsl.select(P_CREATED_BY)
+        .from(PIPELINE)
+        .where(P_ID.eq(id))
+        .fetchOptional(r -> r.get(P_CREATED_BY));
+  }
+
+  @Override
+  public Optional<LocalDateTime> findUpdatedAtById(Long id) {
+    return dsl.select(P_UPDATED_AT)
+        .from(PIPELINE)
+        .where(P_ID.eq(id))
+        .fetchOptional(r -> r.get(P_UPDATED_AT));
+  }
+
+  @Override
+  public Optional<LockedPipeline> lockById(Long id) {
+    return dsl.select(P_NAME, P_UPDATED_AT)
+        .from(PIPELINE)
+        .where(P_ID.eq(id))
+        .forUpdate()
+        .fetchOptional(r -> new LockedPipeline(r.get(P_NAME), r.get(P_UPDATED_AT)));
+  }
+
+  @Override
+  public Optional<Long> findUpdatedByById(Long id) {
+    return dsl.select(P_UPDATED_BY)
+        .from(PIPELINE)
+        .where(P_ID.eq(id))
+        .fetchOptional(r -> r.get(P_UPDATED_BY));
+  }
+}

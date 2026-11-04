@@ -320,7 +320,9 @@ class UserControllerTest {
 
     mockMvc
         .perform(
-            get("/api/v1/users").param("size", "100000").header("Authorization", "Bearer valid-token"))
+            get("/api/v1/users")
+                .param("size", "100000")
+                .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk());
     mockMvc
         .perform(

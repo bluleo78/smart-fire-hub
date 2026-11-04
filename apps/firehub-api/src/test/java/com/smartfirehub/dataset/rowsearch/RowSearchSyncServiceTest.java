@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.dataset.repository.SearchColumnRepository;
+import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.embedding.EmbeddingException;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;

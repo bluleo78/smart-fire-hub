@@ -9,11 +9,12 @@ import org.springframework.test.context.TestPropertySource;
 /**
  * 워크스페이스별 동시 실행 관문(WD-439) — 대기 한도를 넘긴 실행은 한국어 안내로 FAILED 가 된다(내부 풀 이름·영어 원문 없음).
  *
- * <p>한도 초과를 빨리 보려고 대기 한도를 짧게(4초) 둔다. 「기다렸다 완료」 테스트와 한 클래스에 두면 그 테스트가 부하 중 이 한도로 가끔 닫혀서(WD-478)
- * 클래스를 나눴다.
+ * <p>한도 초과를 빨리 보려고 대기 한도를 짧게(4초) 둔다. 「기다렸다 완료」 테스트와 한 클래스에 두면 그 테스트가 부하 중 이 한도로 가끔 닫혀서(WD-478) 클래스를
+ * 나눴다.
  */
 @TestPropertySource(properties = {"app.pipeline.tenant-concurrency.max-wait=PT4S"})
-class PipelineTenantAdmissionWaitLimitIntegrationTest extends AbstractPipelineTenantAdmissionIntegrationTest {
+class PipelineTenantAdmissionWaitLimitIntegrationTest
+    extends AbstractPipelineTenantAdmissionIntegrationTest {
 
   /** 대기 한도(여기서는 4초)를 넘긴 실행은 한국어 안내로 FAILED 가 되고, 스텝은 실행하지 않은 채 닫힌다. */
   @Test

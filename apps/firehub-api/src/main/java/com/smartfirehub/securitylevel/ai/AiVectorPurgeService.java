@@ -1,16 +1,16 @@
 package com.smartfirehub.securitylevel.ai;
 
+import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.rowsearch.RowSearchIndex;
 import com.smartfirehub.dataset.rowsearch.RowSearchSyncService;
-import com.smartfirehub.dataset.rowsearch.SearchIndexStateRepository;
-import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
 import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
-import com.smartfirehub.ontology.graphread.GraphOntologySourceRepository;
+import com.smartfirehub.ontology.repository.GraphOntologySourceRepository;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

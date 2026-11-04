@@ -30,8 +30,8 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 /**
  * 로그인 실패·계정 잠금·비밀번호 변경이 감사 로그에 남는지 고정한다(WD-290).
  *
- * <p>핵심은 「401/403 으로 끝난 로그인의 감사 행이 실제로 커밋되는가」다. 로그인 트랜잭션은 실패 예외로 끝나므로, 롤백되면 행이 사라진다. 그래서
- * {@link LoginAuditTenantTest} 와 같이 <b>클래스 레벨 {@code @Transactional} 없이</b> 운영처럼 호출하고, 감사 행은 호출이 끝난 뒤 별도
+ * <p>핵심은 「401/403 으로 끝난 로그인의 감사 행이 실제로 커밋되는가」다. 로그인 트랜잭션은 실패 예외로 끝나므로, 롤백되면 행이 사라진다. 그래서 {@link
+ * LoginAuditTenantTest} 와 같이 <b>클래스 레벨 {@code @Transactional} 없이</b> 운영처럼 호출하고, 감사 행은 호출이 끝난 뒤 별도
  * 트랜잭션에서 읽는다 — 테스트 트랜잭션이 행을 붙들어 롤백을 가리는 일이 없다.
  *
  * <p>테넌트 규칙은 로그인 성공과 같다: 활성 멤버십이 하나면 그 테넌트, 0개·2개 이상이거나 없는 아이디면 NULL 테넌트(운영자 콘솔).
@@ -50,6 +50,7 @@ class AccountEventAuditTest extends IntegrationTestBase {
   private long tenantB;
   private Long userId;
   private String username;
+
   /** 없는 아이디 시험에 쓴 이름(긴 이름 시험은 이 접두어로 늘인다) — 정리할 때 접두어로 NULL 테넌트 행·카운터를 지운다. */
   private String ghostName;
 
@@ -59,7 +60,8 @@ class AccountEventAuditTest extends IntegrationTestBase {
     tenantB = TenantRlsTestSupport.createActiveTenant(dsl, "acct-audit-b");
     username = "acctaudit-" + TenantRlsTestSupport.nextTenantId();
     userId =
-        TenantRlsTestSupport.insertUserWithPassword(dsl, username, passwordEncoder.encode(PASSWORD));
+        TenantRlsTestSupport.insertUserWithPassword(
+            dsl, username, passwordEncoder.encode(PASSWORD));
     TenantRlsTestSupport.insertActiveMembership(dsl, userId, tenantA);
     ghostName = "ghost-" + UUID.randomUUID().toString().substring(0, 8) + "@example.com";
   }
@@ -74,15 +76,13 @@ class AccountEventAuditTest extends IntegrationTestBase {
           () ->
               dsl.execute(
                   "delete from audit_log where user_id = ? or username like ? || '%'",
-                  userId,
-                  ghostName));
+                  userId, ghostName));
     }
     dsl.execute("delete from refresh_token where user_id = ?", userId);
     dsl.execute("delete from membership where user_id = ?", userId);
     dsl.execute(
         "delete from login_attempts where username = ? or username like ? || '%'",
-        username,
-        ghostName);
+        username, ghostName);
     TenantRlsTestSupport.deleteUser(dsl, userId);
     TenantRlsTestSupport.deleteTenants(dsl, tenantA, tenantB);
     TenantContext.clear();
@@ -131,7 +131,8 @@ class AccountEventAuditTest extends IntegrationTestBase {
         .isInstanceOf(InvalidCredentialsException.class);
 
     String stored =
-        valueIn(null, "select username from audit_log where username = ?", longName.substring(0, 50));
+        valueIn(
+            null, "select username from audit_log where username = ?", longName.substring(0, 50));
     assertThat(stored).hasSize(50);
   }
 
@@ -218,10 +219,8 @@ class AccountEventAuditTest extends IntegrationTestBase {
         tenantA, () -> userService.changePassword(userId, "new-pw-123A", "new-pw-456B"));
 
     List<Record> rows = rowsIn(tenantA, "PASSWORD_CHANGE");
-    assertThat(rows).extracting(r -> r.get("description"))
-        .containsExactly("임시 비밀번호 변경", "비밀번호 변경");
-    assertThat(rows).extracting(r -> r.get("temporary"))
-        .containsExactly("true", "false");
+    assertThat(rows).extracting(r -> r.get("description")).containsExactly("임시 비밀번호 변경", "비밀번호 변경");
+    assertThat(rows).extracting(r -> r.get("temporary")).containsExactly("true", "false");
   }
 
   /** 주어진 테넌트(null = NULL 테넌트) 스코프의 별도 트랜잭션에서 값 하나를 읽는다 — 로그인 호출이 끝난 뒤 커밋된 행만 보인다. */

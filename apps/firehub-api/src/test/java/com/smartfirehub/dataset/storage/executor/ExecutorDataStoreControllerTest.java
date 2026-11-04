@@ -11,11 +11,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.apiconnection.service.EncryptionService;
+import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
 import com.smartfirehub.dataset.storage.DataStoreAccountRole;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreProvisionMode;
 import com.smartfirehub.dataset.storage.StoredAccount;
-import com.smartfirehub.dataset.storage.TenantDataStoreRepository;
 import com.smartfirehub.dataset.storage.TenantDataStoreRow;
 import com.smartfirehub.dataset.storage.TenantDataStoreStatus;
 import com.smartfirehub.global.exception.CodedApiException;
@@ -92,8 +92,14 @@ class ExecutorDataStoreControllerTest extends IntegrationTestBase {
 
   /** 세대 창구는 전체 기술자와 같은 내부 토큰을 요구하지만 비밀번호는 반환하지 않는다. */
   private HttpResponse<String> getEpoch(long id, String authorization) throws Exception {
-    HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://localhost:" + port
-        + "/internal/executor/tenants/" + id + "/script-token-epoch"));
+    HttpRequest.Builder b =
+        HttpRequest.newBuilder(
+            URI.create(
+                "http://localhost:"
+                    + port
+                    + "/internal/executor/tenants/"
+                    + id
+                    + "/script-token-epoch"));
     if (authorization != null) {
       b.header("Authorization", authorization);
     }

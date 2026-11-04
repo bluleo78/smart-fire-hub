@@ -1,5 +1,7 @@
 package com.smartfirehub.dataset.search;
 
+import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
+import com.smartfirehub.dataset.repository.DatasetMetaReader;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;

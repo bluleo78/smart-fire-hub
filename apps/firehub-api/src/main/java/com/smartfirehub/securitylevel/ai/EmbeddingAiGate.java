@@ -11,7 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 임베딩 경로(메타 임베딩·문서 청크·행 검색 색인)의 AI 판정(스펙 §4.3). 사용자가 없으므로 VIEW 없이 <b>등급 ai_policy × 임베딩 공급자
  * 호스팅</b>만 본다 — DatasetAccessPolicy#aiAllowedForLevel 과 같은 규칙(SQL 은
- * DatasetAccessGuard#aiPolicyAllows).
+ * JooqDatasetVisibility#aiPolicyAllows).
  *
  * <p>배경 잡(@Async·JobRunr·@Scheduled)에서 불리므로 메서드 트랜잭션으로 RLS GUC 를 세운다. 요청 스코프 문맥(AiCallContext)은 쓰지
  * 않는다 — 배경 스레드에는 전파되지 않기 때문이다. 대신 <b>TenantContext 가 없으면 예외</b>로 끝낸다: 문맥 없이 조용히 "불허"로 답하면 RLS 0행
@@ -50,12 +50,13 @@ public class EmbeddingAiGate {
   }
 
   /**
-   * 문자열 SQL 저장소용 술어(현재 테넌트의 현재 임베딩 호스팅). datasetIdExpr 은 코드 상수(예: "de.dataset_id")만 넘긴다 — 사용자 입력
-   * 금지. 호스팅은 호출 시점에 읽으므로 배치마다 다시 부르면 도중의 호스팅 변경이 다음 배치부터 반영된다. 테넌트 문맥이 없으면 예외.
+   * 임베딩 허용 판정 입력(현재 테넌트의 현재 임베딩 호스팅)을 <b>지금</b> 캡처한다 — 리포지토리가 자기 별칭으로 술어를 렌더한다(WD-485 T10). 예전
+   * {@code allowedDatasetSql(String)} 과 같은 시점·순서다: 테넌트 문맥을 먼저 확인하고 호스팅을 읽는다. 배치마다 다시 부르면 도중의 호스팅
+   * 변경이 다음 배치부터 반영된다. 트랜잭션은 열지 않는다(예전 메서드도 없었다 — 호스팅 읽기는 설정 서비스가 맡는다). 테넌트 문맥이 없으면 예외.
    */
-  public String allowedDatasetSql(String datasetIdExpr) {
+  public EmbeddingAllowance allowance() {
     TenantContext.require("임베딩 AI 판정 술어");
-    return allowedDatasetSql(datasetIdExpr, hostingResolver.embedding());
+    return new EmbeddingAllowance(hostingResolver.embedding());
   }
 
   /** 호스팅을 정해 렌더한 술어(테스트용 진입점) — 렌더 본체는 {@link EmbeddingAiPolicyRepository#allowedDatasetSql}. */

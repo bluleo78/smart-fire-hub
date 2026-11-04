@@ -12,7 +12,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.JSONB;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -55,10 +54,11 @@ public class AuditLogService {
       String result,
       String errorMessage,
       Object metadata) {
-    JSONB metadataJsonb = null;
+    // 메타데이터는 JSON 문자열로 넘긴다 — JSONB 로 감싸는 일은 리포지토리가 한다(WD-485, 서비스가 jOOQ 타입을 모르게).
+    String metadataJson = null;
     if (metadata != null) {
       try {
-        metadataJsonb = JSONB.jsonb(objectMapper.writeValueAsString(metadata));
+        metadataJson = objectMapper.writeValueAsString(metadata);
       } catch (Exception e) {
         log.warn("Failed to serialize audit metadata", e);
       }
@@ -90,7 +90,7 @@ public class AuditLogService {
         userAgent,
         result,
         errorMessage,
-        metadataJsonb);
+        metadataJson);
   }
 
   /** 지금 스레드가 처리 중인 HTTP 요청(요청 밖 — 스케줄러·비동기 잡 — 이면 null). */
@@ -130,7 +130,7 @@ public class AuditLogService {
    *
    * <p>ADMIN 이 아니면(또는 AI 대행 조회면) 볼 수 없는 데이터셋(등급·허용 목록)의 행과 어느 데이터셋인지 특정할 수 없는 행(삭제됨·id 없음)을
    * 뺀다(WD-289) — audit:read 만으로 기밀 데이터셋의 이름·테이블명·접근자를 알아내지 못하게 한다. 판정은 데이터셋 목록과 같은 {@link
-   * DatasetAccessGuard#visibleCondition(Clearance)} 다.
+   * DatasetAccessGuard#visibility(Clearance)} 다.
    *
    * @param viewer 조회하는 사용자의 열람 자격
    * @param userId 특정 사용자 ID 정확 일치 필터 (null이면 무제한, #89)
@@ -162,7 +162,7 @@ public class AuditLogService {
         // ADMIN 은 삭제된 데이터셋까지 모두 본다. 다만 AI 대행 조회면 설명의 데이터셋 이름이 LLM 으로 가므로 ADMIN 도 같은 판정(등급 AI
         // 정책 포함)을 받는다 — 다른 가시성 호출처와 같은 규칙(스펙 §4.3).
         viewer.tenantAdmin() && !datasetAccessGuard.inAiCall()
-            ? null
-            : datasetAccessGuard.visibleCondition(viewer));
+            ? Optional.empty()
+            : Optional.of(datasetAccessGuard.visibility(viewer)));
   }
 }

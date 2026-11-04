@@ -164,8 +164,8 @@ class PipelineDeleteActiveExecutionTest extends IntegrationTestBase {
   }
 
   /**
-   * 취소를 요청했어도 러너가 체크포인트에 닿기 전까지는 출력을 바꿀 수 있으므로 진행 중으로 센다. 진행 중 실행이 모두 취소 요청 상태면 「취소 진행 중」
-   * 문구로 안내한다(다시 취소하라고 하지 않는다).
+   * 취소를 요청했어도 러너가 체크포인트에 닿기 전까지는 출력을 바꿀 수 있으므로 진행 중으로 센다. 진행 중 실행이 모두 취소 요청 상태면 「취소 진행 중」 문구로
+   * 안내한다(다시 취소하라고 하지 않는다).
    */
   @Test
   void deletePipeline_withCancelRequestedRunningExecution_rejectedWithCancellingMessage() {

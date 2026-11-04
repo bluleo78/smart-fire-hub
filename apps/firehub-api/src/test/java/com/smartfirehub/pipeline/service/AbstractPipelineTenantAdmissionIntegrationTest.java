@@ -24,7 +24,6 @@ import java.util.concurrent.TimeUnit;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Propagation;
@@ -34,8 +33,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 워크스페이스별 동시 실행 관문(WD-439) 통합 테스트의 공통 기반 — 관문 테이블 잠금으로 앞 실행을 붙잡는 픽스처와 대기 헬퍼를 둔다.
  *
  * <p><b>왜 대기 한도(max-wait)를 여기서 정하지 않나(WD-478).</b> 「기다렸다 완료」를 보는 테스트는 한도가 넉넉해야 하고(부하 중 앞 실행이 한도 안에
- * 끝나야 한다), 「한도 초과」를 보는 테스트는 한도가 짧아야 한다. 한 클래스에 한도 하나만 걸 수 있어 짧은 한도(4초)가 앞 테스트를 부하 중 가끔
- * FAILED 로 닫았다 — 그래서 한도는 하위 클래스가 각자 {@code @TestPropertySource} 로 정한다.
+ * 끝나야 한다), 「한도 초과」를 보는 테스트는 한도가 짧아야 한다. 한 클래스에 한도 하나만 걸 수 있어 짧은 한도(4초)가 앞 테스트를 부하 중 가끔 FAILED 로 닫았다
+ * — 그래서 한도는 하위 클래스가 각자 {@code @TestPropertySource} 로 정한다.
  *
  * <p>test 프로필은 관문을 끄므로(기존 테스트 동작 유지) 하위 클래스가 상한 1로 켠다. 테스트 트랜잭션은 끈다 — 실행은 {@code @Async} 라 별도
  * 스레드·커넥션에서 돈다(PipelineExecutionCancelIntegrationTest 와 같은 이유).
@@ -210,8 +209,8 @@ abstract class AbstractPipelineTenantAdmissionIntegrationTest extends Integratio
   }
 
   /**
-   * 실행이 최종 상태가 된 <b>뒤에</b> 대기열·등록부에서 빠지는 것을 기다린다(WD-478) — 러너·대기 한도 마감은 상태를 먼저 커밋하고 등록부를 {@code finally}
-   * 에서 비우므로, 최종 상태를 본 직후 곧바로 단언하면 부하 중 그 사이 틈에 걸린다.
+   * 실행이 최종 상태가 된 <b>뒤에</b> 대기열·등록부에서 빠지는 것을 기다린다(WD-478) — 러너·대기 한도 마감은 상태를 먼저 커밋하고 등록부를 {@code
+   * finally} 에서 비우므로, 최종 상태를 본 직후 곧바로 단언하면 부하 중 그 사이 틈에 걸린다.
    */
   protected void awaitReleased(Long executionId) {
     long deadline = System.currentTimeMillis() + 10_000;

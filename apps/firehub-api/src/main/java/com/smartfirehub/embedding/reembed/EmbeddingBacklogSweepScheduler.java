@@ -1,6 +1,7 @@
 package com.smartfirehub.embedding.reembed;
 
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
+import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;

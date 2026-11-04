@@ -1,8 +1,8 @@
 package com.smartfirehub.embedding.reembed;
 
+import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
+import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository.SourceTextRow;
 import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
-import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
-import com.smartfirehub.dataset.search.DatasetEmbeddingRepository.SourceTextRow;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.document.repository.DocumentChunkRepository.ChunkContent;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
@@ -11,6 +11,7 @@ import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.config.dto.EmbeddingImpact;
+import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
 import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -162,10 +163,9 @@ public class TenantReembedJob {
     long afterId = 0L;
     while (true) {
       if (superseded(space)) return Outcome.SUPERSEDED;
-      // S3 §4.3: 등급 허용 술어는 배치마다 다시 만든다 — 도중에 호스팅이 외부로 바뀌면 다음 배치부터 민감 데이터를 보내지 않는다.
+      // S3 §4.3: 등급 허용 입력(호스팅)은 배치마다 다시 캡처한다 — 도중에 호스팅이 외부로 바뀌면 다음 배치부터 민감 데이터를 보내지 않는다.
       List<ChunkContent> batch =
-          chunkRepository.findMissing(
-              space, afterId, BATCH, aiGate.allowedDatasetSql("c.dataset_id"));
+          chunkRepository.findMissing(space, afterId, BATCH, aiGate.allowance());
       if (batch.isEmpty()) return Outcome.COMPLETED;
       List<float[]> vectors = provider.embed(batch.stream().map(ChunkContent::content).toList());
       chunkRepository.upsertEmbeddings(
@@ -180,10 +180,9 @@ public class TenantReembedJob {
     long afterId = 0L;
     while (true) {
       if (superseded(space)) return Outcome.SUPERSEDED;
-      // 배치마다 등급 허용 술어를 다시 만든다(위 청크 단계와 같은 이유).
+      // 배치마다 등급 허용 입력(호스팅)을 다시 캡처한다(위 청크 단계와 같은 이유).
       List<SourceTextRow> batch =
-          datasetRepository.findMissing(
-              space, afterId, BATCH, aiGate.allowedDatasetSql("de.dataset_id"));
+          datasetRepository.findMissing(space, afterId, BATCH, aiGate.allowance());
       if (batch.isEmpty()) return Outcome.COMPLETED;
       List<float[]> vectors =
           provider.embed(batch.stream().map(SourceTextRow::sourceText).toList());

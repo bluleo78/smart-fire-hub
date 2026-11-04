@@ -21,6 +21,7 @@ import com.smartfirehub.pipeline.service.StoreTransactions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -29,7 +30,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
-import org.jooq.Condition;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -141,7 +141,7 @@ public class DashboardService {
    */
   private DashboardStatsResponse getStats(Clearance viewer, boolean includePipelines) {
     // 조회자가 볼 수 있는 데이터셋만 센다·싣는다(보안 등급) — 숨김 데이터셋 개수·이름이 홈에서 새지 않게.
-    Condition visible = datasetAccessGuard.visibleCondition(viewer);
+    DatasetVisibility visible = datasetAccessGuard.visibility(viewer);
 
     long totalDatasets = dashboardStatsRepository.countDatasets(visible);
     long sourceDatasets = dashboardStatsRepository.countSourceDatasets(visible);
@@ -294,7 +294,7 @@ public class DashboardService {
   private HealthRead readDatasetHealth(Clearance viewer, PipelineHealth pipelineHealth) {
     // ---- Dataset health ----
     // 데이터셋 건강도 개수는 조회자가 볼 수 있는 데이터셋만 집계한다(보안 등급 — 숨김 데이터셋 존재가 개수로 드러나지 않게).
-    Condition visible = datasetAccessGuard.visibleCondition(viewer);
+    DatasetVisibility visible = datasetAccessGuard.visibility(viewer);
     int totalDatasets = Math.toIntExact(dashboardStatsRepository.countDatasets(visible));
 
     LocalDateTime now = LocalDateTime.now();
@@ -353,7 +353,7 @@ public class DashboardService {
       Clearance viewer, boolean includePipelines) {
     List<AttentionItemResponse> items = new ArrayList<>();
     // 임포트 실패 항목은 조회자가 볼 수 있는 데이터셋만(보안 등급 — 항목 제목에 데이터셋 이름이 실린다).
-    Condition visible = datasetAccessGuard.visibleCondition(viewer);
+    DatasetVisibility visible = datasetAccessGuard.visibility(viewer);
     LocalDateTime now = LocalDateTime.now();
     LocalDateTime twoHoursAgo = now.minusHours(2);
     LocalDateTime twentyFourHoursAgo = now.minusHours(24);
@@ -524,8 +524,7 @@ public class DashboardService {
     // 이동할 화면도 없다. 예전 dashboard 분기는 그 행을 쓰는 곳이 없던 죽은 경로였다.
     // 보안 등급: 조회자가 볼 수 없는 데이터셋 유래 활동은 뺀다(조건 위치는 리포지토리 주석 참고).
     List<AuditActivityRow> auditItems =
-        dashboardStatsRepository.findDatasetAuditActivities(
-            datasetAccessGuard.visibleCondition(viewer));
+        dashboardStatsRepository.findDatasetAuditActivities(datasetAccessGuard.visibility(viewer));
 
     for (AuditActivityRow r : auditItems) {
       String actionType = r.actionType();

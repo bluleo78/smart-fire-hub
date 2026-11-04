@@ -135,8 +135,11 @@ public final class TiberoDdlSql {
 
   /** 기존 테이블의 ID 기본값을 추가한다. INSERT 트리거를 바꾸기 전에 실행해야 쓰기 공백이 없다. */
   public static String setIdDefault(String schema, String table) {
-    return "ALTER TABLE " + TiberoNames.table(schema, table) + " MODIFY (\"ID\" DEFAULT "
-        + qualified(schema, TiberoNames.sequenceName(schema, table)) + ".NEXTVAL)";
+    return "ALTER TABLE "
+        + TiberoNames.table(schema, table)
+        + " MODIFY (\"ID\" DEFAULT "
+        + qualified(schema, TiberoNames.sequenceName(schema, table))
+        + ".NEXTVAL)";
   }
 
   /** UPDATE 때만 갱신 시각을 옮긴다. INSERT 의 ID 는 열 기본값이 담당해 행 트리거 비용을 없앤다. */

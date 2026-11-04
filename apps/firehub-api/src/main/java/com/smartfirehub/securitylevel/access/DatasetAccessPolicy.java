@@ -3,7 +3,7 @@ package com.smartfirehub.securitylevel.access;
 /**
  * 데이터셋 접근 판정 — 순수 함수(스펙 §4.1). DB·Spring 을 모른다.
  *
- * <p>왜 순수 함수인가: 같은 규칙이 상세(이 함수), 목록(SQL 조각 — {@link DatasetAccessGuard#visibleCondition}), SQL 경로에서
+ * <p>왜 순수 함수인가: 같은 규칙이 상세(이 함수), 목록(SQL 조각 — {@code JooqDatasetVisibility#condition}), SQL 경로에서
  * 쓰인다. 규칙의 정본을 한 곳에 두고 조합 매트릭스로 고정해야 SQL 조각과의 일치 테스트가 의미를 갖는다.
  */
 public final class DatasetAccessPolicy {

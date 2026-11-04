@@ -81,8 +81,8 @@ class ProactiveAiClientTest extends IntegrationTestBase {
   }
 
   /**
-   * WD-198: 실행 id 를 바디에 싣는다 — ai-agent 가 이 값을 MCP 호출의 X-Proactive-Execution-Id 로 되돌려 보내야 api 가 실행 중 읽은
-   * 데이터셋 등급을 리포트에 남긴다. 실행 id 가 없으면(null) 키 자체를 싣지 않는다.
+   * WD-198: 실행 id 를 바디에 싣는다 — ai-agent 가 이 값을 MCP 호출의 X-Proactive-Execution-Id 로 되돌려 보내야 api 가 실행 중
+   * 읽은 데이터셋 등급을 리포트에 남긴다. 실행 id 가 없으면(null) 키 자체를 싣지 않는다.
    */
   @Test
   void execute_실행id를_바디에_proactiveExecutionId로_싣는다() {
@@ -112,7 +112,8 @@ class ProactiveAiClientTest extends IntegrationTestBase {
         new AiCredential.Opencode("openai", "https://api.openai.com/v1", "medium", "sk-oai-secret"),
         "openai/gpt-4o",
         null,
-        Map.of(), null);
+        Map.of(),
+        null);
 
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/proactive"))
@@ -136,7 +137,8 @@ class ProactiveAiClientTest extends IntegrationTestBase {
         new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"),
         "openai/gpt-4o",
         null,
-        Map.of(), null);
+        Map.of(),
+        null);
 
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/proactive"))
@@ -155,7 +157,8 @@ class ProactiveAiClientTest extends IntegrationTestBase {
         new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"),
         null,
         null,
-        Map.of(), null);
+        Map.of(),
+        null);
 
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/proactive")).withRequestBody(notMatching(".*model.*")));

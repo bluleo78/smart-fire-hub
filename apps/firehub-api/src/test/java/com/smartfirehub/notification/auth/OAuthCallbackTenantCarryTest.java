@@ -198,8 +198,8 @@ class OAuthCallbackTenantCarryTest extends IntegrationTestBase {
   }
 
   /**
-   * 동의 화면에서 「취소」하면 제공자는 code 없이 error=access_denied 와 state 만 붙여 돌려보낸다(WD-405). 500 JSON 대신 안내
-   * HTML 로 원래 화면에 cancelled 를 알리고 창을 닫으며, state 는 소비돼 다시 쓸 수 없고 아무것도 쓰지 않는다.
+   * 동의 화면에서 「취소」하면 제공자는 code 없이 error=access_denied 와 state 만 붙여 돌려보낸다(WD-405). 500 JSON 대신 안내 HTML
+   * 로 원래 화면에 cancelled 를 알리고 창을 닫으며, state 는 소비돼 다시 쓸 수 없고 아무것도 쓰지 않는다.
    */
   @Test
   void slackCallback_userCancelled_rendersCancelPageAndConsumesState() {
@@ -249,8 +249,8 @@ class OAuthCallbackTenantCarryTest extends IntegrationTestBase {
   }
 
   /**
-   * 콜백은 공개 경로라 아무 페이지나 {@code ?error=access_denied} 로 열 수 있다. 우리가 발급한 이 채널의 state 가 아니면 원래 화면에
-   * 결과를 알리지 않는다 — 다른 사이트가 진행 중인 연결을 「취소됨」으로 꾸며 감시를 끊지 못하게.
+   * 콜백은 공개 경로라 아무 페이지나 {@code ?error=access_denied} 로 열 수 있다. 우리가 발급한 이 채널의 state 가 아니면 원래 화면에 결과를
+   * 알리지 않는다 — 다른 사이트가 진행 중인 연결을 「취소됨」으로 꾸며 감시를 끊지 못하게.
    */
   @Test
   void slackCallback_errorWithoutOwnState_doesNotBroadcast() {

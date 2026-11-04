@@ -1,45 +1,19 @@
 package com.smartfirehub.platform.repository;
 
-import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.name;
-import static org.jooq.impl.DSL.table;
-
 import com.smartfirehub.platform.dto.TenantMemberResponse;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import java.util.List;
 import java.util.Optional;
-import org.jooq.DSLContext;
-import org.jooq.Record;
-import org.springframework.stereotype.Repository;
 
 /**
- * 운영자 평면의 {@code tenant} / {@code membership} 접근.
+ * 플랫폼 운영 콘솔용 테넌트(tenant 테이블)와 멤버십(membership) 저장·조회 리포지토리.
  *
- * <p>두 테이블은 테넌트 경계 <b>위</b>에 있어 {@code tenant_id} 컬럼도 RLS 도 없다(V81) — 그래서 운영자 토큰처럼 테넌트 컨텍스트가 비어 있어도
- * 조회·수정이 된다. 이 리포지토리는 그 두 테이블만 만지며, RLS 가 걸린 도메인 테이블은 <b>일절 건드리지 않는다</b>(설계서 §4: 크로스테넌트 도메인 조회를
- * 제공하지 않는다).
- *
- * <p>트랜잭션 경계는 서비스가 잡는다 — 테넌트 생성은 여러 쓰기가 원자적이어야 한다.
+ * <p>구현은 {@code JooqPlatformTenantRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
  */
-@Repository
-public class PlatformTenantRepository {
-
-  private final DSLContext dsl;
-
-  public PlatformTenantRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
+public interface PlatformTenantRepository {
 
   /** 테넌트 행을 만들고 id 를 돌려준다. slug 중복은 UNIQUE 제약이 잡는다. */
-  public long insertTenant(String slug, String name) {
-    return dsl.insertInto(table(name("tenant")))
-        .set(field(name("slug")), slug)
-        .set(field(name("name")), name)
-        .set(field(name("status")), "ACTIVE")
-        .returning(field(name("id"), Long.class))
-        .fetchOne()
-        .get(field(name("id"), Long.class));
-  }
+  long insertTenant(String slug, String name);
 
   /**
    * 초기 Owner 멤버십을 만든다. 이미 있으면 아무것도 하지 않는다(멱등).
@@ -47,58 +21,19 @@ public class PlatformTenantRepository {
    * <p>{@code membership_unique(user_id, tenant_id)} 가 있어 ON CONFLICT 로 멱등하게 만든다 — 운영자가 생성을 재시도해도
    * 터지지 않아야 한다.
    */
-  public void insertOwnerMembership(long tenantId, long userId) {
-    dsl.execute(
-        "insert into membership (user_id, tenant_id, role, status)"
-            + " values (?, ?, 'OWNER', 'ACTIVE')"
-            + " on conflict (user_id, tenant_id) do nothing",
-        userId,
-        tenantId);
-  }
+  void insertOwnerMembership(long tenantId, long userId);
 
   /** slug 가 이미 쓰이고 있는지. UNIQUE 위반을 500 이 아니라 400 으로 돌려주기 위해 미리 본다. */
-  public boolean slugExists(String slug) {
-    return dsl.fetchExists(
-        dsl.selectOne()
-            .from(table(name("tenant")))
-            .where(field(name("slug"), String.class).eq(slug)));
-  }
+  boolean slugExists(String slug);
 
   /** 테넌트가 있는지. 존재만 확인하는 호출처가 멤버 수 집계까지 하는 {@link #findById} 를 부르지 않게 한다. */
-  public boolean existsById(long tenantId) {
-    return dsl.fetchExists(
-        dsl.selectOne()
-            .from(table(name("tenant")))
-            .where(field(name("id"), Long.class).eq(tenantId)));
-  }
+  boolean existsById(long tenantId);
 
   /** 전체 테넌트 목록(id 오름차순) + 멤버 수 집계. */
-  public List<TenantSummaryResponse> findAll() {
-    return dsl.fetch(
-            """
-            select t.id, t.slug, t.name, t.status, t.created_at,
-                   (select count(*) from membership m where m.tenant_id = t.id) as member_count
-            from tenant t
-            order by t.id
-            """)
-        .map(PlatformTenantRepository::toSummary);
-  }
+  List<TenantSummaryResponse> findAll();
 
   /** 테넌트 하나. 없으면 empty — 호출처가 404 로 바꾼다. */
-  public Optional<TenantSummaryResponse> findById(long tenantId) {
-    return dsl
-        .fetch(
-            """
-            select t.id, t.slug, t.name, t.status, t.created_at,
-                   (select count(*) from membership m where m.tenant_id = t.id) as member_count
-            from tenant t
-            where t.id = ?
-            """,
-            tenantId)
-        .map(PlatformTenantRepository::toSummary)
-        .stream()
-        .findFirst();
-  }
+  Optional<TenantSummaryResponse> findById(long tenantId);
 
   /**
    * 테넌트 상태를 바꾸고 바뀐 행 수를 돌려준다. 0 이면 없는 테넌트이거나 이미 그 상태다.
@@ -106,10 +41,7 @@ public class PlatformTenantRepository {
    * <p>{@code status <> ?} 조건이 동시 요청을 가른다(WD-322): 두 트랜잭션이 함께 들어오면 뒤 요청은 앞 요청의 행 잠금을 기다렸다가 커밋된 새
    * 상태로 조건을 다시 평가해 0 행이 된다(PostgreSQL READ COMMITTED). 호출자는 0 이면 감사를 남기지 않는다.
    */
-  public int updateStatus(long tenantId, String status) {
-    return dsl.execute(
-        "update tenant set status = ? where id = ? and status <> ?", status, tenantId, status);
-  }
+  int updateStatus(long tenantId, String status);
 
   /**
    * 테넌트의 멤버 목록.
@@ -119,34 +51,5 @@ public class PlatformTenantRepository {
    *
    * <p>전역 계정 활성({@code u.is_active})도 함께 읽는다 — 멤버십이 ACTIVE 여도 운영자가 비활성화한 계정은 로그인할 수 없다(WD-313).
    */
-  public List<TenantMemberResponse> findMembers(long tenantId) {
-    return dsl.fetch(
-            """
-            select u.id as user_id, u.username, u.email, m.role, m.status, u.is_active
-            from membership m
-            join "user" u on u.id = m.user_id
-            where m.tenant_id = ?
-            order by u.id
-            """,
-            tenantId)
-        .map(
-            r ->
-                new TenantMemberResponse(
-                    r.get("user_id", Long.class),
-                    r.get("username", String.class),
-                    r.get("email", String.class),
-                    r.get("role", String.class),
-                    r.get("status", String.class),
-                    Boolean.TRUE.equals(r.get("is_active", Boolean.class))));
-  }
-
-  private static TenantSummaryResponse toSummary(Record r) {
-    return new TenantSummaryResponse(
-        r.get("id", Long.class),
-        r.get("slug", String.class),
-        r.get("name", String.class),
-        r.get("status", String.class),
-        r.get("member_count", Integer.class),
-        r.get("created_at", java.time.LocalDateTime.class));
-  }
+  List<TenantMemberResponse> findMembers(long tenantId);
 }

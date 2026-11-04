@@ -109,8 +109,8 @@ class AiSessionServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * WD-58 — 제목이 DB 컬럼 한도(VARCHAR(255))를 넘더라도 세션 row 자체는 반드시 생성돼야 한다. 과거에는 title을 그대로
-   * INSERT해 DataIntegrityViolationException(409)이 나고 세션 row 자체가 만들어지지 않아 대화가 통째로 유실됐다.
+   * WD-58 — 제목이 DB 컬럼 한도(VARCHAR(255))를 넘더라도 세션 row 자체는 반드시 생성돼야 한다. 과거에는 title을 그대로 INSERT해
+   * DataIntegrityViolationException(409)이 나고 세션 row 자체가 만들어지지 않아 대화가 통째로 유실됐다.
    */
   @Test
   void createSession_titleExceeds255_persistsSessionWithTruncatedTitle() {

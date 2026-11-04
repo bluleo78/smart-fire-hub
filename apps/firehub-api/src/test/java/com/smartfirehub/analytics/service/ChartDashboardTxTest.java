@@ -167,8 +167,10 @@ class ChartDashboardTxTest extends IntegrationTestBase {
     List<Boolean> metaTx = new ArrayList<>();
     List<Boolean> metaReadOnly = new ArrayList<>();
     List<Boolean> execTx = new ArrayList<>();
-    var w1 = new DashboardResponse.DashboardWidgetResponse(10L, 100L, "c100", "BAR", 0, 0, 6, 4, true);
-    var w2 = new DashboardResponse.DashboardWidgetResponse(11L, 101L, "c101", "BAR", 6, 0, 6, 4, true);
+    var w1 =
+        new DashboardResponse.DashboardWidgetResponse(10L, 100L, "c100", "BAR", 0, 0, 6, 4, true);
+    var w2 =
+        new DashboardResponse.DashboardWidgetResponse(11L, 101L, "c101", "BAR", 6, 0, 6, 4, true);
     DashboardResponse dash =
         new DashboardResponse(
             1L,

@@ -1,31 +1,15 @@
 package com.smartfirehub.settings.repository;
 
-import static org.jooq.impl.DSL.*;
-
-import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.settings.dto.SettingResponse;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.Table;
-import org.springframework.stereotype.Repository;
 
-@Repository
-@RequiredArgsConstructor
-public class SettingsRepository {
-
-  private final DSLContext dsl;
-
-  private static final Table<?> SYSTEM_SETTINGS = table(name("system_settings"));
-  private static final Field<String> KEY = field(name("system_settings", "key"), String.class);
-  private static final Field<String> VALUE = field(name("system_settings", "value"), String.class);
-  private static final Field<String> DESCRIPTION =
-      field(name("system_settings", "description"), String.class);
-  private static final Field<LocalDateTime> UPDATED_AT =
-      field(name("system_settings", "updated_at"), LocalDateTime.class);
+/**
+ * 전역 시스템 설정(system_settings 테이블) 조회 리포지토리.
+ *
+ * <p>구현은 {@code JooqSettingsRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ */
+public interface SettingsRepository {
 
   /**
    * 프리픽스에 속한 설정 행. <b>프리픽스에 마침표를 붙이지 않는다</b> — 예: {@code "ai"}(O), {@code "ai."}(X). 이 메서드가 스스로
@@ -33,18 +17,7 @@ public class SettingsRepository {
    * 목록</b>을 돌려준다. 실제로 {@code ProactiveJobAsyncRunner} 가 이 함정에 빠져 저장된 {@code ai.agent_type} 을 한 번도
    * 읽지 못했다(P7-b Task 8 에서 수정).
    */
-  public List<SettingResponse> findByPrefix(String prefix) {
-    return dsl.select(KEY, VALUE, DESCRIPTION, UPDATED_AT)
-        .from(SYSTEM_SETTINGS)
-        .where(KEY.like(LikePatternUtils.settingKeyPrefixPattern(prefix), '\\'))
-        .orderBy(KEY)
-        .fetch(
-            r ->
-                new SettingResponse(
-                    r.get(KEY), r.get(VALUE), r.get(DESCRIPTION), r.get(UPDATED_AT)));
-  }
+  List<SettingResponse> findByPrefix(String prefix);
 
-  public Optional<String> getValue(String key) {
-    return dsl.select(VALUE).from(SYSTEM_SETTINGS).where(KEY.eq(key)).fetchOptional(VALUE);
-  }
+  Optional<String> getValue(String key);
 }

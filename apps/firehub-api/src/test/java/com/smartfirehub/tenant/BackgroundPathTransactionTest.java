@@ -184,13 +184,13 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   private static final Set<String> NO_RLS_TABLE_REPOSITORIES =
       Set.of(
           // login_attempt / refresh_token / settings 는 테넌트 개념이 없는 전역 테이블이다.
-          "LoginAttemptRepository",
-          "RefreshTokenRepository",
-          "SettingsRepository",
+          "JooqLoginAttemptRepository",
+          "JooqRefreshTokenRepository",
+          "JooqSettingsRepository",
           // membership / tenant 는 테넌시 자체를 정의하는 메타 테이블이라 RLS 대상이 아니다
           // (자기 자신을 정책으로 가리면 테넌트 해석이 불가능해진다).
-          "MembershipRepository",
-          "TenantRepository",
+          "JooqMembershipRepository",
+          "JooqTenantRepository",
           // 운영자 평면(P7-a). tenant / membership / "user" 만 만지고 세 테이블 모두 RLS 대상이
           // 아니다 — 그래서 GUC 가 필요 없다. 트랜잭션 경계는 PlatformTenantService 가 잡는다
           // (테넌트 생성이 여러 쓰기를 원자적으로 묶어야 하므로 리포지토리가 아니라 서비스가
@@ -199,16 +199,16 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
           // ⚠ 이 리포지토리에 RLS 테이블 조회를 추가하려면 이 항목을 지우고 클래스 레벨
           // @Transactional 을 붙여야 한다. 운영자 요청은 테넌트 컨텍스트가 비어 있어 GUC 가
           // 심기지 않으므로, RLS 테이블을 읽으면 예외 없이 조용히 0행이 된다.
-          "PlatformTenantRepository",
+          "JooqPlatformTenantRepository",
           // 테넌트별 외부 저장소 설정(V138, WD-73). tenant_data_store(_account) 두 전역 테이블만 만지고
           // 둘 다 RLS 가 없다 — 운영자 컨텍스트(테넌트 미선택)에서도 읽고 써야 하기 때문이다.
-          "TenantDataStoreRepository",
+          "JooqTenantDataStoreRepository",
           // 운영자 평면 사용자 검색(P7-c2a Task 5). "user" 하나만 만지고 그 테이블은 tenant_id
           // 컬럼도 RLS 정책도 없는 전역 테이블이다(V1 이후 변경 없음) — 로그인이 테넌트 결정
           // 이전에 사용자를 찾아야 하고 한 사람이 여러 테넌트에 속할 수 있어야 하기 때문이다.
           // role/user_role(RLS) 은 절대 조인하지 않는다 — 조인하면 이 항목을 지우고 클래스 레벨
           // @Transactional 을 붙여야 한다.
-          "PlatformUserRepository");
+          "JooqPlatformUserRepository");
 
   /**
    * RLS 테이블을 만지지만 <b>모든 호출자가 트랜잭션 안에서 호출하는</b> 리포지토리. (C)-2
@@ -250,43 +250,44 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
    */
   private static final Set<String> ALL_CALLERS_TRANSACTIONAL_REPOSITORIES =
       Set.of(
-          "AnalyticsDashboardRepository",
+          "JooqAnalyticsDashboardRepository",
           // WD-199: 호출자는 AnalyticsAdminService 하나뿐이고 메서드가 모두 @Transactional 이다(웹 요청 전용, 배경 호출자 없음).
-          "AnalyticsWorkspaceRepository",
-          "ChartRepository",
-          "DashboardWidgetRepository",
-          "SavedQueryRepository",
-          "DatasetCategoryRepository",
-          "DatasetFavoriteRepository",
-          "DatasetTagRepository",
-          "QueryHistoryRepository",
-          "DatasetSearchRepository",
-          "FileDatasetConfigRepository",
-          "PermissionRepository",
-          "RoleRepository",
-          "UserRepository",
+          "JooqAnalyticsWorkspaceRepository",
+          "JooqChartRepository",
+          "JooqDashboardWidgetRepository",
+          "JooqSavedQueryRepository",
+          "JooqDatasetCategoryRepository",
+          "JooqDatasetFavoriteRepository",
+          "JooqDatasetTagRepository",
+          "JooqQueryHistoryRepository",
+          "JooqDatasetSearchRepository",
+          "JooqFileDatasetConfigRepository",
+          "JooqPermissionRepository",
+          "JooqRoleRepository",
+          "JooqUserRepository",
           // WD-484: 서비스·잡의 직접 쿼리를 옮긴 리포지토리. 트랜잭션 경계(@Transactional·TransactionTemplate)는 옮기기
           // 전처럼 호출자에 있고, 모든 호출이 그 안에서 일어난다 — 클래스 레벨 트랜잭션을 붙이면 경계가 리포지토리로 새어
           // 옮기기 전과 동작이 달라질 수 있어 붙이지 않았다.
           //  - DashboardStatsRepository: DashboardService 의 readOnly 트랜잭션·readOnlyTx 템플릿 안(Tibero 빈
           // 테이블
           //    판정은 PG 트랜잭션 밖이며 이 리포지토리를 쓰지 않는다).
-          "DashboardStatsRepository",
+          "JooqDashboardStatsRepository",
           //  - DatasetReferenceRepository: DatasetService 의
           // getDatasetById·deleteDataset·getReferences(@Transactional).
-          "DatasetReferenceRepository",
+          "JooqDatasetReferenceRepository",
           //  - UploadedFileRepository: FileUploadService·FileCleanupService 의 TransactionTemplate
           // 안(디스크 I/O 는 밖).
-          "UploadedFileRepository",
-          //  - AiInferenceCacheRepository: AiClassifyExecutor 의 조회·삽입 TransactionTemplate 안(LLM 호출은
+          "JooqUploadedFileRepository",
+          //  - JooqAiInferenceCacheRepository: AiClassifyExecutor 의 조회·삽입 TransactionTemplate 안(LLM
+          // 호출은
           // 밖).
-          "AiInferenceCacheRepository",
+          "JooqAiInferenceCacheRepository",
           //  - SystemMetricRepository: MetricPollerService 의 TransactionTemplate 안(배경 폴러).
-          "SystemMetricRepository",
+          "JooqSystemMetricRepository",
           //  - EmbeddingAiPolicyRepository: 조회는 EmbeddingAiGate 의 readOnly 트랜잭션 안. 술어
           // 렌더(allowedDatasetSql)는
           //    질의를 실행하지 않아 트랜잭션이 필요 없다.
-          "EmbeddingAiPolicyRepository");
+          "JooqEmbeddingAiPolicyRepository");
 
   /**
    * 설계상 RLS 를 우회하는 {@code SECURITY DEFINER} 해석기. (C)-3
@@ -295,7 +296,7 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
    * 를 주입하면 오히려 자기 자신을 가려 0행이 된다 — 여기에 {@code @Transactional} 을 붙이는 것은 수정이 아니라 회귀다.
    */
   private static final Set<String> SECURITY_DEFINER_RESOLVERS =
-      Set.of("SlackWorkspaceTenantResolver", "TriggerTenantResolver");
+      Set.of("JooqSlackWorkspaceTenantResolver", "JooqTriggerTenantResolver");
 
   /** 세 허용목록의 합집합 — 클래스 레벨 @Transactional 이 없어도 되는 리포지토리 전부. */
   private static Set<String> allowedWithoutTransactional() {

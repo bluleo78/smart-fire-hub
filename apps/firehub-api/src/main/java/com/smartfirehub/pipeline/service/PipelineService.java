@@ -12,12 +12,12 @@ import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.PipelineExecutionActiveException;
-import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveExecutionState;
 import com.smartfirehub.pipeline.exception.PipelineInactiveException;
 import com.smartfirehub.pipeline.exception.PipelineNameConflictException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveExecutionState;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
@@ -576,7 +576,7 @@ public class PipelineService {
         pipelineRepository.findById(id).orElseThrow(PipelineNotFoundException::new);
 
     List<PipelineStepResponse> steps =
-        stepRepository.findByPipelineId(id, datasetAccessGuard.visibleCondition()).stream()
+        stepRepository.findByPipelineId(id, datasetAccessGuard.visibility()).stream()
             .map(this::attachIncrementalMeta)
             .toList();
 
@@ -741,8 +741,7 @@ public class PipelineService {
   }
 
   /** 편집 충돌 안내 문구(WD-353) — 웹은 코드로 충돌 창을 띄우고, 코드를 모르는 호출부(AI 도구 등)는 이 문구를 그대로 보인다. */
-  static final String EDIT_CONFLICT_MESSAGE =
-      "이 파이프라인은 편집을 시작한 뒤 다른 곳에서 변경되었습니다. 다시 불러온 뒤 저장하세요.";
+  static final String EDIT_CONFLICT_MESSAGE = "이 파이프라인은 편집을 시작한 뒤 다른 곳에서 변경되었습니다. 다시 불러온 뒤 저장하세요.";
 
   /**
    * 파이프라인을 고친다.
@@ -1259,10 +1258,10 @@ public class PipelineService {
   }
 
   /**
-   * PYTHON 출력 컬럼 정의 검증. 타입은 늘, 이름은 출력을 자동 생성할 때만 본다(WD-352) — 자동 생성이면 이 이름으로 TEMP 를 만드는데,
-   * 예전에는 이름을 보지 않아 형식이 틀리거나 겹친 이름이 저장되고 실행 시점에야 영어 원문({@code Invalid name: my col. Must match …})
-   * 또는 「이미 있는 필드명입니다」로 실패했다. 편집기도 자동 생성일 때만 컬럼 정의를 보여 주므로, 출력을 지정한 스텝의 남은 정의는 막지 않는다.
-   * 규칙·문구는 AI_CLASSIFY 출력 컬럼과 같다.
+   * PYTHON 출력 컬럼 정의 검증. 타입은 늘, 이름은 출력을 자동 생성할 때만 본다(WD-352) — 자동 생성이면 이 이름으로 TEMP 를 만드는데, 예전에는 이름을
+   * 보지 않아 형식이 틀리거나 겹친 이름이 저장되고 실행 시점에야 영어 원문({@code Invalid name: my col. Must match …}) 또는 「이미 있는
+   * 필드명입니다」로 실패했다. 편집기도 자동 생성일 때만 컬럼 정의를 보여 주므로, 출력을 지정한 스텝의 남은 정의는 막지 않는다. 규칙·문구는 AI_CLASSIFY 출력
+   * 컬럼과 같다.
    */
   private void validatePythonStep(PipelineStepRequest step) {
     PythonStepConfig config =
@@ -1396,11 +1395,11 @@ public class PipelineService {
       "페이지 크기는 " + MIN_PAGE_SIZE + "~" + MAX_PAGE_SIZE + " 사이의 정수여야 합니다";
 
   /**
-   * API_CALL OFFSET 페이지네이션의 페이지 크기 검증(WD-362) — 비어 있으면 실행기 기본값(100)을 쓰므로 허용하고, 값이 있으면 1~10000 의
-   * 정수만 받는다.
+   * API_CALL OFFSET 페이지네이션의 페이지 크기 검증(WD-362) — 비어 있으면 실행기 기본값(100)을 쓰므로 허용하고, 값이 있으면 1~10000 의 정수만
+   * 받는다.
    *
-   * <p>왜 저장에서 막나: 0 이하 페이지 크기는 실행기의 「다음 페이지 없음」 판정(받은 행 수 &lt; 페이지 크기)이 결코 참이 되지 않아, 총 건수
-   * 경로가 없으면 offset 을 0, -5, -10… 으로 줄이며 최대 1만 페이지·최대 실행 시간까지 외부 API 를 반복 호출했다.
+   * <p>왜 저장에서 막나: 0 이하 페이지 크기는 실행기의 「다음 페이지 없음」 판정(받은 행 수 &lt; 페이지 크기)이 결코 참이 되지 않아, 총 건수 경로가 없으면
+   * offset 을 0, -5, -10… 으로 줄이며 최대 1만 페이지·최대 실행 시간까지 외부 API 를 반복 호출했다.
    */
   private static void validateApiCallPagination(PipelineStepRequest step) {
     if (!(step.apiConfig().get("pagination") instanceof Map<?, ?> pagination)) {
@@ -1437,8 +1436,7 @@ public class PipelineService {
     // 63자를 넘으면 TEMP 생성·적재가 실행 시점에 실패한다 — 저장 시점에 같은 상한으로 막는다(WD-352, 화면 문구와 같다)
     if (name.length() > DataTableService.MAX_COLUMN_NAME_LENGTH) {
       throw new IllegalArgumentException(
-          stepError(
-              stepName, "칼럼명은 " + DataTableService.MAX_COLUMN_NAME_LENGTH + "자 이하여야 합니다"));
+          stepError(stepName, "칼럼명은 " + DataTableService.MAX_COLUMN_NAME_LENGTH + "자 이하여야 합니다"));
     }
   }
 
@@ -1492,7 +1490,8 @@ public class PipelineService {
     // 실행 중 삭제 거부(WD-437) — 대기·실행 중 실행이 있으면 지우지 않는다. 지우면 실행 기록이 CASCADE 로 사라지고 이미 시작한 러너가 출력 데이터셋을
     // 기록 없이 바꾸기 때문이다. 판정은 행 잠금 뒤에 한다 — 실행 생성과의 경쟁 정리는 PipelineRepository#lockById 참고.
     // 잠금이 이 경로의 존재 확인(404)이고, 잠근 행의 이름을 감사에 쓴다(WD-462 — 행이 곧 사라진다).
-    String name = pipelineRepository.lockById(id).orElseThrow(PipelineNotFoundException::new).name();
+    String name =
+        pipelineRepository.lockById(id).orElseThrow(PipelineNotFoundException::new).name();
     ActiveExecutionState active = executionRepository.findActiveExecutionState(id);
     if (active != ActiveExecutionState.NONE) {
       // 진행 중 실행이 모두 이미 취소 요청 상태면 「취소 진행 중」으로 안내한다 — 다시 취소하라고 하면 헛걸음이다.
@@ -1530,8 +1529,8 @@ public class PipelineService {
 
   /**
    * 함께 지울 자동 생성 임시 데이터셋을 고른다. 스텝을 지우기 전에 모아 둔다(WD-170) — 스텝을 지우면 source_pipeline_step_id 가 SET
-   * NULL(V36)이 되어 찾을 수 없다. 다른 파이프라인 스텝이 출력으로 쓰는 것은 남긴다(이 파이프라인 스텝은 곧 지워지므로 참조로 세지 않는다). 파이프라인
-   * 존재는 호출부가 이미 확인했다(WD-437 — 404 경로를 하나로).
+   * NULL(V36)이 되어 찾을 수 없다. 다른 파이프라인 스텝이 출력으로 쓰는 것은 남긴다(이 파이프라인 스텝은 곧 지워지므로 참조로 세지 않는다). 파이프라인 존재는
+   * 호출부가 이미 확인했다(WD-437 — 404 경로를 하나로).
    */
   private PipelineDeletionPlan planPipelineDeletion(Long id) {
     List<Long> stepIds = stepRepository.findStepIdsByPipelineId(id);
@@ -1663,7 +1662,7 @@ public class PipelineService {
     // 해석).
     // 출력 id 는 러너 TEMP 폴백(coalesce)이 반영된 값이다. 이름 가시성 조건은 여기서 쓰지 않는다.
     List<PipelineStepResponse> orderedSteps =
-        stepRepository.findByPipelineId(pipelineId, datasetAccessGuard.visibleCondition(viewer));
+        stepRepository.findByPipelineId(pipelineId, datasetAccessGuard.visibility(viewer));
     Map<Long, PipelineStepResponse> stepsById = new HashMap<>();
     for (PipelineStepResponse s : orderedSteps) {
       stepsById.put(s.id(), s);

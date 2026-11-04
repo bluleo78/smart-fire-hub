@@ -146,7 +146,7 @@ public class AnalyticsDashboardService {
         dashboardRepository
             .lockUpdatedAtById(id)
             .orElseThrow(() -> new DashboardNotFoundException())
-            .value1();
+            .updatedAt();
     EditConflictException.check(req.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
     // 감사 비교용 저장 전 값(WD-464) — 행 잠금 뒤에 다시 읽는다. 잠금 전 값은 기준 버전 없이 들어온 저장(AI 도구)과 동시 저장이 겹치면
     // 남의 변경이 이 저장의 바뀐 항목으로 잡힌다.

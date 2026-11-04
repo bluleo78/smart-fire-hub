@@ -1,233 +1,22 @@
 package com.smartfirehub.dataset.repository;
 
-import static org.jooq.impl.DSL.*;
-
-import com.smartfirehub.dataset.dto.CategoryResponse;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.dto.UpdateDatasetRequest;
-import com.smartfirehub.global.util.LikePatternUtils;
-import com.smartfirehub.securitylevel.access.LevelPolicy;
-import com.smartfirehub.securitylevel.dto.SecurityLevelSummary;
-import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.stream.Collectors;
-import lombok.RequiredArgsConstructor;
-import org.jooq.Condition;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.Record;
-import org.jooq.Table;
-import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
-@Repository
-@RequiredArgsConstructor
-// 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
-// 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
-// REQUIRED 라 서비스가 이미 연 트랜잭션에는 합류한다(기존 경로 동작 불변).
-@Transactional
-public class DatasetRepository {
+/**
+ * 데이터셋 정의(dataset) 저장·조회 리포지토리.
+ *
+ * <p>구현은 {@code JooqDatasetRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ */
+public interface DatasetRepository {
 
-  private final DSLContext dsl;
-  private final SecurityLevelRepository securityLevelRepository;
-
-  private static final Table<?> DATASET = table(name("dataset"));
-  private static final Field<Long> DS_ID = field(name("dataset", "id"), Long.class);
-  private static final Field<String> DS_NAME = field(name("dataset", "name"), String.class);
-  private static final Field<String> DS_TABLE_NAME =
-      field(name("dataset", "table_name"), String.class);
-  private static final Field<String> DS_DESCRIPTION =
-      field(name("dataset", "description"), String.class);
-  private static final Field<Long> DS_CATEGORY_ID =
-      field(name("dataset", "category_id"), Long.class);
-  // 저장 방식(TABLE/DOCUMENT)과 출처(SOURCE/DERIVED/TEMP)를 분리한 두 컬럼
-  private static final Field<String> DS_STORAGE_TYPE =
-      field(name("dataset", "storage_type"), String.class);
-  private static final Field<String> DS_ORIGIN_TYPE =
-      field(name("dataset", "origin_type"), String.class);
-  private static final Field<Long> DS_CREATED_BY = field(name("dataset", "created_by"), Long.class);
-  private static final Field<LocalDateTime> DS_CREATED_AT =
-      field(name("dataset", "created_at"), LocalDateTime.class);
-  private static final Field<LocalDateTime> DS_UPDATED_AT =
-      field(name("dataset", "updated_at"), LocalDateTime.class);
-  private static final Field<Long> DS_UPDATED_BY = field(name("dataset", "updated_by"), Long.class);
-  private static final Field<String> DS_STATUS = field(name("dataset", "status"), String.class);
-  private static final Field<String> DS_STATUS_NOTE =
-      field(name("dataset", "status_note"), String.class);
-  private static final Field<Long> DS_STATUS_UPDATED_BY =
-      field(name("dataset", "status_updated_by"), Long.class);
-  private static final Field<LocalDateTime> DS_STATUS_UPDATED_AT =
-      field(name("dataset", "status_updated_at"), LocalDateTime.class);
-  private static final Field<Long> DS_SOURCE_PIPELINE_STEP_ID =
-      field(name("dataset", "source_pipeline_step_id"), Long.class);
-  // V133 보안 등급. 목록 필터·응답 요약·가시성 조건이 쓴다.
-  private static final Field<Long> DS_SECURITY_LEVEL_ID =
-      field(name("dataset", "security_level_id"), Long.class);
-  private static final Field<LocalDateTime> DS_SECURITY_LEVEL_AUTO_RAISED_AT =
-      field(name("dataset", "security_level_auto_raised_at"), LocalDateTime.class);
-
-  private static final Table<?> DATASET_CATEGORY = table(name("dataset_category"));
-  private static final Field<Long> DC_ID = field(name("dataset_category", "id"), Long.class);
-  private static final Field<String> DC_NAME =
-      field(name("dataset_category", "name"), String.class);
-  private static final Field<String> DC_DESCRIPTION =
-      field(name("dataset_category", "description"), String.class);
-
-  private static final Table<?> DATASET_COLUMN = table(name("dataset_column"));
-  private static final Field<Long> COL_DATASET_ID =
-      field(name("dataset_column", "dataset_id"), Long.class);
-  private static final Field<String> COL_COLUMN_NAME =
-      field(name("dataset_column", "column_name"), String.class);
-  private static final Field<String> COL_DISPLAY_NAME =
-      field(name("dataset_column", "display_name"), String.class);
-  private static final Field<String> COL_DESCRIPTION =
-      field(name("dataset_column", "description"), String.class);
-
-  private static final Table<?> DATASET_FAVORITE = table(name("dataset_favorite"));
-  private static final Field<Long> DF_USER_ID =
-      field(name("dataset_favorite", "user_id"), Long.class);
-  private static final Field<Long> DF_DATASET_ID =
-      field(name("dataset_favorite", "dataset_id"), Long.class);
-
-  private static final Table<?> DATASET_TAG = table(name("dataset_tag"));
-  private static final Field<Long> DT_DATASET_ID =
-      field(name("dataset_tag", "dataset_id"), Long.class);
-  private static final Field<String> DT_TAG_NAME =
-      field(name("dataset_tag", "tag_name"), String.class);
-
-  private static final Table<?> USER_TABLE = table(name("user"));
-  private static final Field<Long> U_ID = field(name("user", "id"), Long.class);
-  private static final Field<String> U_NAME = field(name("user", "name"), String.class);
-
-  // status_updated_by 사용자 이름 JOIN을 위한 별칭 (user 테이블 중복 JOIN 시 충돌 방지)
-  private static final Table<?> STATUS_USER_TABLE = table(name("user")).as("status_user");
-  private static final Field<Long> SU_ID = field(name("status_user", "id"), Long.class);
-  private static final Field<String> SU_NAME = field(name("status_user", "name"), String.class);
-
-  private DatasetResponse mapToDatasetResponse(
-      Record r,
-      Set<Long> favoriteIds,
-      Map<Long, List<String>> tagsByDatasetId,
-      Map<Long, SecurityLevelSummary> levels) {
-    CategoryResponse category =
-        r.get(DC_ID) != null
-            ? new CategoryResponse(r.get(DC_ID), r.get(DC_NAME), r.get(DC_DESCRIPTION))
-            : null;
-    Long id = r.get(DS_ID);
-    boolean isFavorite = favoriteIds != null && favoriteIds.contains(id);
-    List<String> tags =
-        tagsByDatasetId != null ? tagsByDatasetId.getOrDefault(id, List.of()) : List.of();
-
-    // N+1 제거: status_updated_by 사용자 이름은 JOIN으로 미리 조회된 값을 사용
-    String statusUpdatedByName = r.get(SU_NAME);
-
-    return new DatasetResponse(
-        id,
-        r.get(DS_NAME),
-        r.get(DS_TABLE_NAME),
-        r.get(DS_DESCRIPTION),
-        category,
-        r.get(DS_STORAGE_TYPE),
-        r.get(DS_ORIGIN_TYPE),
-        r.get(DS_CREATED_AT),
-        isFavorite,
-        tags,
-        r.get(DS_STATUS) != null ? r.get(DS_STATUS) : "NONE",
-        r.get(DS_STATUS_NOTE),
-        statusUpdatedByName,
-        r.get(DS_STATUS_UPDATED_AT),
-        r.get(DS_SOURCE_PIPELINE_STEP_ID),
-        levels.get(r.get(DS_SECURITY_LEVEL_ID)),
-        r.get(DS_SECURITY_LEVEL_AUTO_RAISED_AT));
-  }
-
-  /** 테넌트 등급은 보통 4~10개 — 행마다 조인하는 대신 한 번 읽어 id 로 매핑한다. */
-  private Map<Long, SecurityLevelSummary> fetchLevelSummaries() {
-    return securityLevelRepository.findAll().stream()
-        .collect(Collectors.toMap(LevelPolicy::id, SecurityLevelSummary::of));
-  }
-
-  private Map<Long, List<String>> fetchTagsByDatasetIds(List<Long> datasetIds) {
-    if (datasetIds == null || datasetIds.isEmpty()) {
-      return Collections.emptyMap();
-    }
-    Map<Long, List<String>> result = new HashMap<>();
-    dsl.select(DT_DATASET_ID, DT_TAG_NAME)
-        .from(DATASET_TAG)
-        .where(DT_DATASET_ID.in(datasetIds))
-        .orderBy(DT_TAG_NAME.asc())
-        .forEach(
-            r -> {
-              Long dsId = r.get(DT_DATASET_ID);
-              result.computeIfAbsent(dsId, k -> new ArrayList<>()).add(r.get(DT_TAG_NAME));
-            });
-    return result;
-  }
-
-  private Set<Long> fetchFavoriteIds(Long currentUserId) {
-    if (currentUserId == null) return Collections.emptySet();
-    return new HashSet<>(
-        dsl.select(DF_DATASET_ID)
-            .from(DATASET_FAVORITE)
-            .where(DF_USER_ID.eq(currentUserId))
-            .fetch(r -> r.get(DF_DATASET_ID)));
-  }
-
-  private Condition buildCondition(
-      Long categoryId,
-      String storageType,
-      String originType,
-      String search,
-      String status,
-      Long securityLevelId,
-      Condition access) {
-    // 열람 가능성(보안 등급)은 모든 다른 필터보다 먼저 AND 한다 — 검색어·필터가 가시성을 넓힐 수 없다.
-    Condition condition = access;
-    if (securityLevelId != null) {
-      condition = condition.and(DS_SECURITY_LEVEL_ID.eq(securityLevelId));
-    }
-    if (categoryId != null) {
-      condition = condition.and(DS_CATEGORY_ID.eq(categoryId));
-    }
-    if (storageType != null && !storageType.isBlank()) {
-      condition = condition.and(DS_STORAGE_TYPE.eq(storageType));
-    }
-    if (originType != null && !originType.isBlank()) {
-      condition = condition.and(DS_ORIGIN_TYPE.eq(originType));
-    }
-    if (status != null && !status.isBlank()) {
-      condition = condition.and(DS_STATUS.eq(status));
-    }
-    if (search != null && !search.isBlank()) {
-      String pattern = LikePatternUtils.containsPattern(search);
-      // 대규모 디스커버리(#282): 이름·설명·테이블명·컬럼 외에 태그명·카테고리명도 매칭해
-      // "어느 데이터셋에서 답을 찾을지" 후보 선별의 신호를 넓힌다. (DATASET_TAG·DATASET_CATEGORY
-      // LEFT JOIN 은 findAll/count 의 id 쿼리에 추가; selectDistinct/countDistinct 로 중복 제거됨)
-      condition =
-          condition.and(
-              DS_NAME
-                  .likeIgnoreCase(pattern, '\\')
-                  .or(DS_DESCRIPTION.likeIgnoreCase(pattern, '\\'))
-                  .or(DS_TABLE_NAME.likeIgnoreCase(pattern, '\\'))
-                  .or(COL_COLUMN_NAME.likeIgnoreCase(pattern, '\\'))
-                  .or(COL_DISPLAY_NAME.likeIgnoreCase(pattern, '\\'))
-                  .or(COL_DESCRIPTION.likeIgnoreCase(pattern, '\\'))
-                  .or(DT_TAG_NAME.likeIgnoreCase(pattern, '\\'))
-                  .or(DC_NAME.likeIgnoreCase(pattern, '\\')));
-    }
-    return condition;
-  }
-
-  public List<DatasetResponse> findAll(
+  /** 필터(카테고리·저장유형·출처·검색어·상태·즐겨찾기·보안등급)와 열람 가시성을 적용해 데이터셋 목록을 페이지 단위로 조회한다. */
+  List<DatasetResponse> findAll(
       Long categoryId,
       String storageType,
       String originType,
@@ -238,76 +27,10 @@ public class DatasetRepository {
       String status,
       boolean favoriteOnly,
       Long securityLevelId,
-      Condition access) {
-    Condition condition =
-        buildCondition(
-            categoryId, storageType, originType, search, status, securityLevelId, access);
+      DatasetVisibility access);
 
-    // First get the distinct IDs for the page
-    var idQuery =
-        dsl.selectDistinct(DS_ID)
-            .from(DATASET)
-            .leftJoin(DATASET_COLUMN)
-            .on(COL_DATASET_ID.eq(DS_ID))
-            .leftJoin(DATASET_TAG)
-            .on(DT_DATASET_ID.eq(DS_ID))
-            .leftJoin(DATASET_CATEGORY)
-            .on(DS_CATEGORY_ID.eq(DC_ID));
-
-    if (favoriteOnly && currentUserId != null) {
-      idQuery =
-          idQuery
-              .innerJoin(DATASET_FAVORITE)
-              .on(DF_DATASET_ID.eq(DS_ID).and(DF_USER_ID.eq(currentUserId)));
-    }
-
-    List<Long> datasetIds =
-        idQuery
-            .where(condition)
-            .orderBy(DS_ID.asc())
-            .limit(size)
-            .offset(page * size)
-            .fetch(r -> r.get(DS_ID));
-
-    if (datasetIds.isEmpty()) {
-      return List.of();
-    }
-
-    Set<Long> favoriteIds = fetchFavoriteIds(currentUserId);
-    Map<Long, List<String>> tagsByDatasetId = fetchTagsByDatasetIds(datasetIds);
-    Map<Long, SecurityLevelSummary> levels = fetchLevelSummaries();
-
-    // status_updated_by 사용자 이름을 JOIN으로 한 번에 조회하여 N+1 제거
-    return dsl.select(
-            DS_ID,
-            DS_NAME,
-            DS_TABLE_NAME,
-            DS_DESCRIPTION,
-            DS_STORAGE_TYPE,
-            DS_ORIGIN_TYPE,
-            DS_CREATED_AT,
-            DS_STATUS,
-            DS_STATUS_NOTE,
-            DS_STATUS_UPDATED_BY,
-            DS_STATUS_UPDATED_AT,
-            DS_SOURCE_PIPELINE_STEP_ID,
-            DS_SECURITY_LEVEL_ID,
-            DS_SECURITY_LEVEL_AUTO_RAISED_AT,
-            DC_ID,
-            DC_NAME,
-            DC_DESCRIPTION,
-            SU_NAME)
-        .from(DATASET)
-        .leftJoin(DATASET_CATEGORY)
-        .on(DS_CATEGORY_ID.eq(DC_ID))
-        .leftJoin(STATUS_USER_TABLE)
-        .on(SU_ID.eq(DS_STATUS_UPDATED_BY))
-        .where(DS_ID.in(datasetIds))
-        .orderBy(DS_ID.asc())
-        .fetch(r -> mapToDatasetResponse(r, favoriteIds, tagsByDatasetId, levels));
-  }
-
-  public long count(
+  /** {@link #findAll} 과 같은 필터·가시성을 적용한 전체 건수를 센다. */
+  long count(
       Long categoryId,
       String storageType,
       String originType,
@@ -316,228 +39,72 @@ public class DatasetRepository {
       String status,
       boolean favoriteOnly,
       Long securityLevelId,
-      Condition access) {
-    Condition condition =
-        buildCondition(
-            categoryId, storageType, originType, search, status, securityLevelId, access);
+      DatasetVisibility access);
 
-    var countQuery =
-        dsl.select(countDistinct(DS_ID))
-            .from(DATASET)
-            .leftJoin(DATASET_COLUMN)
-            .on(COL_DATASET_ID.eq(DS_ID))
-            .leftJoin(DATASET_TAG)
-            .on(DT_DATASET_ID.eq(DS_ID))
-            .leftJoin(DATASET_CATEGORY)
-            .on(DS_CATEGORY_ID.eq(DC_ID));
+  /**
+   * WD-186: 필드 이름 변경·타입 변경·삭제가 잡는 데이터셋 행 잠금. 매핑 저장·활성화(MappingService.validate — 이 행을 FOR SHARE 로
+   * 잡고 나서 필드 목록을 읽는다)와 직렬화해, "옛 필드 목록으로 검증한 매핑이 필드 변경 뒤에 저장되는" 틈을 없앤다. NO KEY UPDATE 인 이유: FOR
+   * SHARE 와는 충돌하면서도, 이 데이터셋을 FK 로 참조하는 단순 삽입(KEY SHARE)까지 막지는 않는다. 잠금 순서(교착 방지): 온톨로지 행 → 데이터셋 행 →
+   * 매핑 행. MappingReferenceService.lockForColumnChange 참고.
+   */
+  void lockForColumnChange(Long id);
 
-    if (favoriteOnly && currentUserId != null) {
-      return countQuery
-          .innerJoin(DATASET_FAVORITE)
-          .on(DF_DATASET_ID.eq(DS_ID).and(DF_USER_ID.eq(currentUserId)))
-          .where(condition)
-          .fetchOne(0, Long.class);
-    }
+  /**
+   * WD-184: 지식 모델 연결·재연결(DatasetOntologyService.bind)이 잡는 데이터셋 행 잠금. 재연결은 "이전 연결 읽기 → 연결 갱신 → 옛 모델
+   * 기준 매핑 삭제"를 한 덩어리로 해야 하는데, 매핑 저장·활성화(MappingService.validate — 이 행을 FOR SHARE 로 잡는다)와 직렬화하지 않으면
+   * 옛 모델로 검증한 매핑이 재연결 뒤에 저장돼 고아 매핑이 다시 생긴다. NO KEY UPDATE 인 이유는 lockForColumnChange 와 같다. 잠금 순서:
+   * 데이터셋 행 → 매핑 행(온톨로지 행은 잡지 않는다) — 온톨로지 행 → 데이터셋 행 → 매핑 행 규약의 부분 순서다.
+   */
+  void lockForOntologyRebind(Long id);
 
-    return countQuery.where(condition).fetchOne(0, Long.class);
-  }
+  /**
+   * WD-186: 매핑 저장·활성화가 필드 목록을 읽기 전에 잡는 공유 잠금 — 진행 중인 필드 변경(lockForColumnChange)이 끝난 뒤의 필드 목록으로 검증하게
+   * 한다. 매핑 저장끼리는 서로 막지 않는다(SHARE 는 서로 호환).
+   */
+  void lockForShare(Long id);
 
-  // WD-186: 필드 이름 변경·타입 변경·삭제가 잡는 데이터셋 행 잠금. 매핑 저장·활성화(MappingService.validate — 이 행을 FOR SHARE
-  // 로 잡고 나서 필드 목록을 읽는다)와 직렬화해, "옛 필드 목록으로 검증한 매핑이 필드 변경 뒤에 저장되는" 틈을 없앤다. NO KEY UPDATE
-  // 인 이유: FOR SHARE 와는 충돌하면서도, 이 데이터셋을 FK 로 참조하는 단순 삽입(KEY SHARE)까지 막지는 않는다.
-  // 잠금 순서(교착 방지): 온톨로지 행 → 데이터셋 행 → 매핑 행. MappingReferenceService.lockForColumnChange 참고.
-  public void lockForColumnChange(Long id) {
-    dsl.select(DS_ID).from(DATASET).where(DS_ID.eq(id)).forNoKeyUpdate().fetch();
-  }
+  /** id 로 데이터셋 한 건을 조회한다(즐겨찾기 여부는 채우지 않는다). 없으면 빈 값. */
+  Optional<DatasetResponse> findById(Long id);
 
-  // WD-184: 지식 모델 연결·재연결(DatasetOntologyService.bind)이 잡는 데이터셋 행 잠금. 재연결은 "이전 연결 읽기 → 연결 갱신 → 옛 모델
-  // 기준 매핑 삭제"를 한 덩어리로 해야 하는데, 매핑 저장·활성화(MappingService.validate — 이 행을 FOR SHARE 로 잡는다)와 직렬화하지
-  // 않으면 옛 모델로 검증한 매핑이 재연결 뒤에 저장돼 고아 매핑이 다시 생긴다. NO KEY UPDATE 인 이유는 lockForColumnChange 와 같다.
-  // 잠금 순서: 데이터셋 행 → 매핑 행(온톨로지 행은 잡지 않는다) — 온톨로지 행 → 데이터셋 행 → 매핑 행 규약의 부분 순서다.
-  public void lockForOntologyRebind(Long id) {
-    dsl.select(DS_ID).from(DATASET).where(DS_ID.eq(id)).forNoKeyUpdate().fetch();
-  }
+  /** id 로 데이터셋 한 건을 조회하며 현재 사용자의 즐겨찾기 여부를 함께 채운다. 없으면 빈 값. */
+  Optional<DatasetResponse> findById(Long id, Long currentUserId);
 
-  // WD-186: 매핑 저장·활성화가 필드 목록을 읽기 전에 잡는 공유 잠금 — 진행 중인 필드 변경(lockForColumnChange)이 끝난 뒤의 필드
-  // 목록으로 검증하게 한다. 매핑 저장끼리는 서로 막지 않는다(SHARE 는 서로 호환).
-  public void lockForShare(Long id) {
-    dsl.select(DS_ID).from(DATASET).where(DS_ID.eq(id)).forShare().fetch();
-  }
+  /** 데이터셋 정의를 새로 저장하고 저장된 행을 돌려준다. */
+  DatasetResponse save(CreateDatasetRequest request, Long createdBy);
 
-  public Optional<DatasetResponse> findById(Long id) {
-    return findById(id, null);
-  }
+  /** 파이프라인 스텝이 만든 데이터셋의 id 를 조회한다. 없으면 빈 값. */
+  Optional<Long> findBySourcePipelineStepId(Long stepId);
 
-  public Optional<DatasetResponse> findById(Long id, Long currentUserId) {
-    Set<Long> favoriteIds = fetchFavoriteIds(currentUserId);
-    Map<Long, List<String>> tagMap = fetchTagsByDatasetIds(List.of(id));
-    Map<Long, SecurityLevelSummary> levels = fetchLevelSummaries();
+  /** 데이터셋의 이름·설명·카테고리·태그 등 변경 가능한 항목을 갱신한다. */
+  void update(Long id, UpdateDatasetRequest request, Long updatedBy);
 
-    // status_updated_by 사용자 이름을 JOIN으로 조회하여 N+1 제거
-    return dsl.select(
-            DS_ID,
-            DS_NAME,
-            DS_TABLE_NAME,
-            DS_DESCRIPTION,
-            DS_STORAGE_TYPE,
-            DS_ORIGIN_TYPE,
-            DS_CREATED_AT,
-            DS_STATUS,
-            DS_STATUS_NOTE,
-            DS_STATUS_UPDATED_BY,
-            DS_STATUS_UPDATED_AT,
-            DS_SOURCE_PIPELINE_STEP_ID,
-            DS_SECURITY_LEVEL_ID,
-            DS_SECURITY_LEVEL_AUTO_RAISED_AT,
-            DC_ID,
-            DC_NAME,
-            DC_DESCRIPTION,
-            SU_NAME)
-        .from(DATASET)
-        .leftJoin(DATASET_CATEGORY)
-        .on(DS_CATEGORY_ID.eq(DC_ID))
-        .leftJoin(STATUS_USER_TABLE)
-        .on(SU_ID.eq(DS_STATUS_UPDATED_BY))
-        .where(DS_ID.eq(id))
-        .fetchOptional(r -> mapToDatasetResponse(r, favoriteIds, tagMap, levels));
-  }
+  /** 데이터셋의 이름·설명·카테고리·태그 등 변경 가능한 항목을 갱신한다. */
+  void updateStatus(Long id, String status, String statusNote, Long statusUpdatedBy);
 
-  public DatasetResponse save(CreateDatasetRequest request, Long createdBy) {
-    var insert =
-        dsl.insertInto(DATASET)
-            .set(DS_NAME, request.name())
-            .set(DS_TABLE_NAME, request.tableName())
-            .set(DS_DESCRIPTION, request.description())
-            .set(DS_CATEGORY_ID, request.categoryId())
-            .set(DS_STORAGE_TYPE, request.storageType())
-            .set(DS_ORIGIN_TYPE, request.originType())
-            .set(DS_CREATED_BY, createdBy);
-    if (request.sourcePipelineStepId() != null) {
-      insert = insert.set(DS_SOURCE_PIPELINE_STEP_ID, request.sourcePipelineStepId());
-    }
-    return insert
-        .returning(
-            DS_ID,
-            DS_NAME,
-            DS_TABLE_NAME,
-            DS_DESCRIPTION,
-            DS_STORAGE_TYPE,
-            DS_ORIGIN_TYPE,
-            DS_CREATED_AT,
-            DS_STATUS,
-            DS_STATUS_NOTE,
-            DS_STATUS_UPDATED_BY,
-            DS_STATUS_UPDATED_AT,
-            DS_SOURCE_PIPELINE_STEP_ID,
-            DS_CATEGORY_ID)
-        .fetchOne(
-            r -> {
-              CategoryResponse category =
-                  r.get(DS_CATEGORY_ID) != null
-                      ? dsl.select(DC_ID, DC_NAME, DC_DESCRIPTION)
-                          .from(DATASET_CATEGORY)
-                          .where(DC_ID.eq(r.get(DS_CATEGORY_ID)))
-                          .fetchOne(
-                              cat ->
-                                  new CategoryResponse(
-                                      cat.get(DC_ID), cat.get(DC_NAME), cat.get(DC_DESCRIPTION)))
-                      : null;
-              return new DatasetResponse(
-                  r.get(DS_ID),
-                  r.get(DS_NAME),
-                  r.get(DS_TABLE_NAME),
-                  r.get(DS_DESCRIPTION),
-                  category,
-                  r.get(DS_STORAGE_TYPE),
-                  r.get(DS_ORIGIN_TYPE),
-                  r.get(DS_CREATED_AT),
-                  false,
-                  List.of(),
-                  r.get(DS_STATUS) != null ? r.get(DS_STATUS) : "NONE",
-                  r.get(DS_STATUS_NOTE),
-                  null,
-                  r.get(DS_STATUS_UPDATED_AT),
-                  r.get(DS_SOURCE_PIPELINE_STEP_ID));
-            });
-  }
-
-  public Optional<Long> findBySourcePipelineStepId(Long stepId) {
-    return dsl.select(DS_ID)
-        .from(DATASET)
-        .where(DS_SOURCE_PIPELINE_STEP_ID.eq(stepId))
-        .limit(1)
-        .fetchOptional(r -> r.get(DS_ID));
-  }
-
-  public void update(Long id, UpdateDatasetRequest request, Long updatedBy) {
-    dsl.update(DATASET)
-        .set(DS_NAME, request.name())
-        .set(DS_DESCRIPTION, request.description())
-        .set(DS_CATEGORY_ID, request.categoryId())
-        .set(DS_UPDATED_AT, LocalDateTime.now())
-        .set(DS_UPDATED_BY, updatedBy)
-        .where(DS_ID.eq(id))
-        .execute();
-  }
-
-  public void updateStatus(Long id, String status, String statusNote, Long statusUpdatedBy) {
-    dsl.update(DATASET)
-        .set(DS_STATUS, status)
-        .set(DS_STATUS_NOTE, statusNote)
-        .set(DS_STATUS_UPDATED_BY, statusUpdatedBy)
-        .set(DS_STATUS_UPDATED_AT, LocalDateTime.now())
-        .where(DS_ID.eq(id))
-        .execute();
-  }
-
-  public void deleteById(Long id) {
-    dsl.deleteFrom(DATASET).where(DS_ID.eq(id)).execute();
-  }
+  /** id 로 데이터셋 정의를 삭제한다. */
+  void deleteById(Long id);
 
   /**
    * 조회자가 볼 수 있는 데이터셋 가운데 같은 이름이 있는가(WD-155). 이름 유일 범위는 「볼 수 있는 데이터셋」이다 — 볼 수 없는(상위 등급) 데이터셋과 겹치는지까지
    * 보면 이름을 맞혀 보는 것만으로 존재가 드러난다. DB 유일 제약도 없다(V142).
    *
-   * @param visible 조회자 가시성 조건({@code DatasetAccessGuard.visibleCondition})
+   * @param visible 조회자 가시성({@code DatasetAccessGuard.visibility})
    * @param excludeId 이름 변경 시 자기 자신(없으면 null)
    */
-  public boolean existsVisibleByName(String name, Condition visible, Long excludeId) {
-    Condition c = DS_NAME.eq(name).and(visible);
-    if (excludeId != null) {
-      c = c.and(DS_ID.ne(excludeId));
-    }
-    return dsl.fetchExists(dsl.selectOne().from(DATASET).where(c));
-  }
+  boolean existsVisibleByName(String name, DatasetVisibility visible, Long excludeId);
 
-  public boolean existsByTableName(String tableName) {
-    return dsl.fetchExists(dsl.selectOne().from(DATASET).where(DS_TABLE_NAME.eq(tableName)));
-  }
+  /** 같은 물리 테이블 이름을 쓰는 데이터셋이 있는지 확인한다. */
+  boolean existsByTableName(String tableName);
 
-  public Optional<String> findTableNameById(Long id) {
-    return dsl.select(DS_TABLE_NAME)
-        .from(DATASET)
-        .where(DS_ID.eq(id))
-        .fetchOptional(r -> r.get(DS_TABLE_NAME));
-  }
+  /** 데이터셋의 물리 테이블 이름을 조회한다. 없으면 빈 값. */
+  Optional<String> findTableNameById(Long id);
 
-  public Optional<Long> findCreatedByById(Long id) {
-    return dsl.select(DS_CREATED_BY)
-        .from(DATASET)
-        .where(DS_ID.eq(id))
-        .fetchOptional(r -> r.get(DS_CREATED_BY));
-  }
+  /** 데이터셋 생성자 id 를 조회한다. 없으면 빈 값. */
+  Optional<Long> findCreatedByById(Long id);
 
-  public Optional<LocalDateTime> findUpdatedAtById(Long id) {
-    return dsl.select(DS_UPDATED_AT)
-        .from(DATASET)
-        .where(DS_ID.eq(id))
-        .fetchOptional(r -> r.get(DS_UPDATED_AT));
-  }
+  /** 데이터셋의 마지막 수정 시각을 조회한다. 없으면 빈 값. */
+  Optional<LocalDateTime> findUpdatedAtById(Long id);
 
-  public Optional<Long> findUpdatedByById(Long id) {
-    return dsl.select(DS_UPDATED_BY)
-        .from(DATASET)
-        .where(DS_ID.eq(id))
-        .fetchOptional(r -> r.get(DS_UPDATED_BY));
-  }
+  /** 데이터셋의 마지막 수정자 id 를 조회한다. 없으면 빈 값. */
+  Optional<Long> findUpdatedByById(Long id);
 }

@@ -17,6 +17,7 @@ import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.StoreTransactions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -25,7 +26,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
-import org.jooq.impl.DSL;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -96,7 +96,7 @@ public class ChartService {
   public ChartResponse create(CreateChartRequest req, Long userId) {
     // 저장 쿼리 접근 확인만 한다(연결 데이터셋 이름은 쓰지 않아 가시성 조건이 필요 없다).
     savedQueryRepository
-        .findById(req.savedQueryId(), userId, DSL.trueCondition())
+        .findById(req.savedQueryId(), userId, DatasetVisibility.UNRESTRICTED)
         .orElseThrow(() -> new SavedQueryNotFoundException());
     // 종류·config 값 타입 검사(WD-413) — 잘못된 config 가 저장돼 편집 화면이 깨지거나 빈 차트가 되지 않게 400 으로 막는다.
     ChartConfigValidator.validateType(req.chartType());
@@ -144,7 +144,7 @@ public class ChartService {
         chartRepository
             .lockUpdatedAtById(id)
             .orElseThrow(() -> new ChartNotFoundException())
-            .value1();
+            .updatedAt();
     EditConflictException.check(req.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
     // 감사 비교용 저장 전 값(WD-464) — 행 잠금 뒤에 다시 읽는다. 잠금 전 값은 기준 버전 없이 들어온 저장(AI 도구)과 동시 저장이 겹치면
     // 남의 변경이 이 저장의 바뀐 항목으로 잡힌다.

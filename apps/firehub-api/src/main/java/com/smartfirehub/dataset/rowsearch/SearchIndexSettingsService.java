@@ -5,6 +5,8 @@ import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.repository.SearchColumnRepository;
+import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.dataset.rowsearch.dto.SearchIndexStatusResponse;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.HashSet;

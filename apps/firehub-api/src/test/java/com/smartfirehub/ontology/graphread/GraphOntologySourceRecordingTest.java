@@ -3,7 +3,7 @@ package com.smartfirehub.ontology.graphread;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.mapping.repository.MappingRepository;
-import com.smartfirehub.ontology.binding.DatasetOntologyRepository;
+import com.smartfirehub.ontology.repository.DatasetOntologyRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;

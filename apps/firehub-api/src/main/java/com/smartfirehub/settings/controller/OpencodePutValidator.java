@@ -40,14 +40,15 @@ public class OpencodePutValidator {
   private final OpencodeProbeService opencodeProbeService;
 
   /**
-   * {@link #validate} 의 결과 — 저장을 막아야 하면 {@code block} 에 그 응답을, 막지 않되 사용자에게 알려야 할 사정이 있으면
-   * {@code warning} 에 문구를 담는다(WD-50). 저장을 통과시킨다는 점에서 "차단 아님"은 같지만, 과거 반환 타입({@code
+   * {@link #validate} 의 결과 — 저장을 막아야 하면 {@code block} 에 그 응답을, 막지 않되 사용자에게 알려야 할 사정이 있으면 {@code
+   * warning} 에 문구를 담는다(WD-50). 저장을 통과시킨다는 점에서 "차단 아님"은 같지만, 과거 반환 타입({@code
    * Optional<ResponseEntity<...>>} 의 빈 값)은 그 둘을 구분할 통로가 없었다.
    */
   public record ValidationOutcome(
       Optional<ResponseEntity<Map<String, Object>>> block, Optional<String> warning) {
 
-    private static final ValidationOutcome PASS = new ValidationOutcome(Optional.empty(), Optional.empty());
+    private static final ValidationOutcome PASS =
+        new ValidationOutcome(Optional.empty(), Optional.empty());
 
     /** 막을 것도 경고할 것도 없다 — 조용히 저장 진행. */
     public static ValidationOutcome pass() {
@@ -108,7 +109,8 @@ public class OpencodePutValidator {
     Optional<OpencodeCredentialValidation.Problem> effortProblem =
         OpencodeCredentialValidation.checkReasoningEffort(payload);
     if (effortProblem.isPresent()) {
-      return ValidationOutcome.block(OpencodeCredentialValidation.problemResponse(effortProblem.get()));
+      return ValidationOutcome.block(
+          OpencodeCredentialValidation.problemResponse(effortProblem.get()));
     }
 
     String providerId = OpencodeCredentialValidation.strOrEmpty(payload.get("providerId"));
@@ -120,7 +122,8 @@ public class OpencodePutValidator {
     Optional<OpencodeCredentialValidation.Problem> consistency =
         OpencodeCredentialValidation.checkProviderConsistency(providerId, model);
     if (consistency.isPresent()) {
-      return ValidationOutcome.block(OpencodeCredentialValidation.problemResponse(consistency.get()));
+      return ValidationOutcome.block(
+          OpencodeCredentialValidation.problemResponse(consistency.get()));
     }
 
     // userinfo 거부(#707) — SSRF 가드보다 먼저, 네트워크 없이 끊는다. 가드는 userinfo 를 버린 URI 로
@@ -165,7 +168,8 @@ public class OpencodePutValidator {
       // 돌지 않는다) baseURL 형식 검사는 위 targetCheck 가 이미 끝냈으므로, 지금 이 자리에서
       // 실제로 던져질 수 있는 것은 없다(OpencodeProbeService#probe 의 @throws 문서 참고).
       // 그래도 남겨 둔다 — 그 두 전제 중 하나가 바뀌면 500 이 아니라 400 으로 떨어져야 한다.
-      return ValidationOutcome.block(ResponseEntity.badRequest().body(Map.of("message", e.getMessage())));
+      return ValidationOutcome.block(
+          ResponseEntity.badRequest().body(Map.of("message", e.getMessage())));
     }
     if (!result.ok()) {
       // WD-50: "/models 엔드포인트 자체가 없다"(404)는 "공급자가 진짜로 거부했다"(401/403/5xx 등)와

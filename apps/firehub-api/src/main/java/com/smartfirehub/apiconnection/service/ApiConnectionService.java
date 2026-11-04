@@ -1,7 +1,5 @@
 package com.smartfirehub.apiconnection.service;
 
-import static org.jooq.impl.DSL.*;
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.dto.ApiConnectionReferencesResponse;
@@ -14,6 +12,8 @@ import com.smartfirehub.apiconnection.exception.ApiConnectionException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
+import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.ApiConnectionRow;
+import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.HealthCheckTarget;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.SerializationException;
 import com.smartfirehub.job.service.AsyncJobService;
@@ -34,7 +34,6 @@ import java.util.Set;
 import java.util.concurrent.Executor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.Record;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -163,9 +162,9 @@ public class ApiConnectionService {
    */
   @Transactional
   public ApiConnectionResponse update(Long id, UpdateApiConnectionRequest request, Long userId) {
-    Record existing =
+    ApiConnectionRow existing =
         repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
-    String currentAuthType = existing.get(field(name("api_connection", "auth_type"), String.class));
+    String currentAuthType = existing.authType();
 
     // 인증 방식 검증은 이름 중복(409)보다 먼저 — 입력 자체가 틀린 요청은 400 으로 답한다.
     boolean authTypeChanged = false;
@@ -241,14 +240,11 @@ public class ApiConnectionService {
    */
   @Transactional
   public void delete(Long id, Long userId) {
-    Record existing =
+    ApiConnectionRow existing =
         repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
-    String connectionName = existing.get(field(name("api_connection", "name"), String.class));
+    String connectionName = existing.name();
     Map<String, Object> snapshot =
-        connectionSnapshot(
-            connectionName,
-            existing.get(field(name("api_connection", "auth_type"), String.class)),
-            existing.get(field(name("api_connection", "base_url"), String.class)));
+        connectionSnapshot(connectionName, existing.authType(), existing.baseUrl());
     repository.deleteById(id);
     audit(userId, "DELETE", id, "API 연결 삭제: " + connectionName, snapshot);
   }
@@ -266,11 +262,7 @@ public class ApiConnectionService {
 
     List<ApiConnectionReferencesResponse.ReferenceItem> pipelines =
         repository.findReferencingPipelines(id).stream()
-            .map(
-                r ->
-                    new ApiConnectionReferencesResponse.ReferenceItem(
-                        r.get(field(name("pipeline", "id"), Long.class)),
-                        r.get(field(name("pipeline", "name"), String.class))))
+            .map(r -> new ApiConnectionReferencesResponse.ReferenceItem(r.id(), r.name()))
             .toList();
 
     return new ApiConnectionReferencesResponse(id, pipelines, pipelines.size());
@@ -280,13 +272,7 @@ public class ApiConnectionService {
   @Transactional(readOnly = true)
   public List<ApiConnectionSelectableResponse> findSelectable() {
     return repository.findAll().stream()
-        .map(
-            r ->
-                new ApiConnectionSelectableResponse(
-                    r.get(field(name("api_connection", "id"), Long.class)),
-                    r.get(field(name("api_connection", "name"), String.class)),
-                    r.get(field(name("api_connection", "auth_type"), String.class)),
-                    r.get(field(name("api_connection", "base_url"), String.class))))
+        .map(r -> new ApiConnectionSelectableResponse(r.id(), r.name(), r.authType(), r.baseUrl()))
         .toList();
   }
 
@@ -603,14 +589,14 @@ public class ApiConnectionService {
     pipelineExecutor.execute(
         () -> {
           try {
-            List<Record> targets = repository.findHealthCheckable();
+            List<HealthCheckTarget> targets = repository.findHealthCheckable();
             int total = targets.size();
             log.info("refreshAllAsync job {}: {} 대상 헬스체크 시작", jobId, total);
 
             for (int i = 0; i < total; i++) {
-              Record r = targets.get(i);
-              Long id = r.get(field(name("api_connection", "id"), Long.class));
-              String connName = r.get(field(name("api_connection", "name"), String.class));
+              HealthCheckTarget target = targets.get(i);
+              Long id = target.id();
+              String connName = target.name();
 
               try {
                 // 새로고침을 누른 사용자를 상태 전환 감사의 행위자로 남긴다(WD-189).
@@ -868,19 +854,17 @@ public class ApiConnectionService {
   private void auditUpdate(
       Long userId,
       Long id,
-      Record existing,
+      ApiConnectionRow existing,
       UpdateApiConnectionRequest request,
       String authType,
       String normalizedBaseUrl,
       String normalizedHealthCheckPath,
       boolean credentialsChanged) {
-    String beforeName = existing.get(field(name("api_connection", "name"), String.class));
-    String beforeDescription =
-        existing.get(field(name("api_connection", "description"), String.class));
-    String beforeAuthType = existing.get(field(name("api_connection", "auth_type"), String.class));
-    String beforeBaseUrl = existing.get(field(name("api_connection", "base_url"), String.class));
-    String beforeHealthCheckPath =
-        existing.get(field(name("api_connection", "health_check_path"), String.class));
+    String beforeName = existing.name();
+    String beforeDescription = existing.description();
+    String beforeAuthType = existing.authType();
+    String beforeBaseUrl = existing.baseUrl();
+    String beforeHealthCheckPath = existing.healthCheckPath();
 
     // 리포지토리 규칙대로 실제로 저장되는 값을 구한다 — null 은 미변경, 헬스체크 경로 "" 는 NULL 로 지움(#115).
     String afterName = request.name() != null ? request.name() : beforeName;

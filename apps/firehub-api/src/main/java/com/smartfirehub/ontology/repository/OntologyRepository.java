@@ -1,373 +1,42 @@
 package com.smartfirehub.ontology.repository;
 
-import static org.jooq.impl.DSL.*;
-
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.dto.OntologySummary;
-import java.time.OffsetDateTime;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.Table;
-import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
-// 온톨로지 DB 읽기/쓰기 — id로 지정한 온톨로지를 OntologyResponse 계약으로 조립한다(다중 온톨로지 지원).
-// findOntology 무인자 오버로드는 요소 단위 편집 API 도입과 함께 삭제됨 — #678. sort_order 정렬로
-// ai-agent 프롬프트 조립 순서(바이트 동일성)를 보존한다. plain-SQL DSL(생성 클래스 비의존).
-// (S2 Task 7) 전체 스키마 교체(entity_type/relation의 매칭 기반 UPDATE/INSERT/DELETE) updateOntology는
-// 요소 단위 편집(OntologyElementRepository)으로 대체되어 삭제됐다.
-@Repository
-@RequiredArgsConstructor
-// RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 OntologyService 와 MCP 툴 핸들러는 트랜잭션
-// 경계를 만들지 않는다. 여기서 열지 않으면 온톨로지 조회는 조용히 0행, 쓰기는 tenant_id NOT NULL
-// 위반이 된다. 지우지 말 것.
-@Transactional
-public class OntologyRepository {
+/**
+ * 온톨로지(ontology 테이블)와 엔티티
+ * 타입·속성·관계(ontology_entity_type·ontology_entity_property·ontology_relation)·데이터셋
+ * 연결(dataset_ontology·dataset_mapping) 저장·조회 리포지토리.
+ *
+ * <p>구현은 {@code JooqOntologyRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ */
+public interface OntologyRepository {
 
-  private final DSLContext dsl;
+  OntologyResponse findById(long ontologyId);
 
-  private static final Table<?> ONTOLOGY = table(name("ontology"));
-  private static final Field<String> O_DOMAIN = field(name("ontology", "domain"), String.class);
-  private static final Field<Long> O_ID = field(name("ontology", "id"), Long.class);
-  private static final Field<Integer> O_SCHEMA_VERSION =
-      field(name("ontology", "schema_version"), Integer.class);
-  private static final Field<OffsetDateTime> O_UPDATED_AT =
-      field(name("ontology", "updated_at"), OffsetDateTime.class);
-  private static final Field<String> O_STATUS = field(name("ontology", "status"), String.class);
+  List<OntologySummary> findAllSummaries(String statusFilter);
 
-  // 목록 요약의 카운트 조인 대상. dataset_ontology는 바인딩된 데이터셋 수를 센다.
-  private static final Table<?> DATASET_ONTOLOGY = table(name("dataset_ontology"));
-  private static final Field<Long> DO_ONTOLOGY_ID =
-      field(name("dataset_ontology", "ontology_id"), Long.class);
+  List<OntologySummary> findAllSummaries();
 
-  // 삭제 가능 여부 판정에 쓰는 또 다른 참조원 — 매핑(dataset_mapping)도 이 온톨로지에 묶여 있으면 삭제 불가.
-  private static final Table<?> DATASET_MAPPING = table(name("dataset_mapping"));
-  private static final Field<Long> DM_ONTOLOGY_ID =
-      field(name("dataset_mapping", "ontology_id"), Long.class);
-  private static final Field<Long> DO_DATASET_ID =
-      field(name("dataset_ontology", "dataset_id"), Long.class);
-  private static final Field<Long> DM_DATASET_ID =
-      field(name("dataset_mapping", "dataset_id"), Long.class);
+  boolean existsLiveDomain(String domain);
 
-  private static final Table<?> ENTITY_TYPE = table(name("ontology_entity_type"));
-  private static final Field<Long> ET_ID = field(name("ontology_entity_type", "id"), Long.class);
-  private static final Field<Long> ET_ONTOLOGY_ID =
-      field(name("ontology_entity_type", "ontology_id"), Long.class);
-  private static final Field<String> ET_TYPE =
-      field(name("ontology_entity_type", "type"), String.class);
-  private static final Field<String> ET_DESC =
-      field(name("ontology_entity_type", "description"), String.class);
-  private static final Field<String> ET_NAMING =
-      field(name("ontology_entity_type", "naming"), String.class);
-  private static final Field<String> ET_RES =
-      field(name("ontology_entity_type", "resolution"), String.class);
-  private static final Field<Integer> ET_ORDER =
-      field(name("ontology_entity_type", "sort_order"), Integer.class);
+  String findStatusById(long ontologyId);
 
-  private static final Table<?> ENTITY_PROP = table(name("ontology_entity_property"));
-  private static final Field<Long> EP_TYPE_ID =
-      field(name("ontology_entity_property", "entity_type_id"), Long.class);
-  private static final Field<String> EP_NAME =
-      field(name("ontology_entity_property", "name"), String.class);
-  private static final Field<String> EP_DESC =
-      field(name("ontology_entity_property", "description"), String.class);
-  private static final Field<String> EP_DTYPE =
-      field(name("ontology_entity_property", "data_type"), String.class);
-  private static final Field<String> EP_UNIT =
-      field(name("ontology_entity_property", "unit"), String.class);
-  private static final Field<Integer> EP_ORDER =
-      field(name("ontology_entity_property", "sort_order"), Integer.class);
-  // 요소 단위 편집 API(PATCH/DELETE .../properties/{id})가 속성을 지목하는 안정 id.
-  private static final Field<Long> EP_ID =
-      field(name("ontology_entity_property", "id"), Long.class);
+  String lockAndFindStatus(long ontologyId);
 
-  private static final Table<?> RELATION = table(name("ontology_relation"));
-  private static final Field<Long> R_ID = field(name("ontology_relation", "id"), Long.class);
-  private static final Field<Long> R_ONTOLOGY_ID =
-      field(name("ontology_relation", "ontology_id"), Long.class);
-  // V80: subject/object는 타입 "이름"(TEXT)이 아니라 ontology_entity_type.id FK다.
-  private static final Field<Long> R_SUBJECT_ID =
-      field(name("ontology_relation", "subject_type_id"), Long.class);
-  private static final Field<String> R_RELATION =
-      field(name("ontology_relation", "relation"), String.class);
-  private static final Field<Long> R_OBJECT_ID =
-      field(name("ontology_relation", "object_type_id"), Long.class);
-  private static final Field<String> R_DESC =
-      field(name("ontology_relation", "description"), String.class);
-  private static final Field<Integer> R_ORDER =
-      field(name("ontology_relation", "sort_order"), Integer.class);
+  void lockForShare(long ontologyId);
 
-  // 지정한 온톨로지를 조회해 OntologyResponse로 조립한다(해당 ontology_id의 타입/관계만).
-  public OntologyResponse findById(long ontologyId) {
-    var head =
-        dsl.select(O_DOMAIN, O_SCHEMA_VERSION).from(ONTOLOGY).where(O_ID.eq(ontologyId)).fetchOne();
-    // 존재하지 않는 id는 NPE→500이 아니라 명확한 400(전역 핸들러 규약)으로 차단한다.
-    // 신규 라우트 GET /api/v1/ontology/{id}가 임의 id를 받으므로 반드시 필요.
-    if (head == null) {
-      throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
-    }
-    String domain = head.get(O_DOMAIN);
-    int schemaVersion = head.get(O_SCHEMA_VERSION);
+  void updateStatus(long ontologyId, String status);
 
-    // 이 온톨로지에 속한 모든 엔티티 타입의 프로퍼티를 한 번에 읽어 타입 id별로 묶는다.
-    // 예전에는 타입 하나당 한 번씩 조회하는 N+1이었다 — ai-agent가 매 턴 이 응답을 여러 번 가져가므로
-    // 타입이 수십 개인 온톨로지에서는 왕복 비용이 그대로 응답 지연이 됐다.
-    // 정렬은 (타입, sort_order)로 걸어, 순차 적재만으로 타입별 순서가 기존과 동일하게 보존된다.
-    Map<Long, List<OntologyResponse.Property>> propsByTypeId = new HashMap<>();
-    dsl.select(EP_TYPE_ID, EP_NAME, EP_DESC, EP_DTYPE, EP_UNIT, EP_ID)
-        .from(ENTITY_PROP)
-        .where(
-            EP_TYPE_ID.in(dsl.select(ET_ID).from(ENTITY_TYPE).where(ET_ONTOLOGY_ID.eq(ontologyId))))
-        .orderBy(EP_TYPE_ID, EP_ORDER)
-        .forEach(
-            pr ->
-                propsByTypeId
-                    .computeIfAbsent(pr.get(EP_TYPE_ID), k -> new ArrayList<>())
-                    .add(
-                        new OntologyResponse.Property(
-                            pr.get(EP_NAME),
-                            pr.get(EP_DESC),
-                            pr.get(EP_DTYPE),
-                            pr.get(EP_UNIT),
-                            pr.get(EP_ID))));
+  int countReferences(long ontologyId);
 
-    List<OntologyResponse.EntityType> entities =
-        dsl.select(ET_ID, ET_TYPE, ET_DESC, ET_NAMING, ET_RES)
-            .from(ENTITY_TYPE)
-            .where(ET_ONTOLOGY_ID.eq(ontologyId)) // ← 다중 온톨로지: 자기 타입만
-            .orderBy(ET_ORDER)
-            .fetch(
-                r ->
-                    new OntologyResponse.EntityType(
-                        r.get(ET_TYPE),
-                        r.get(ET_DESC),
-                        r.get(ET_NAMING),
-                        r.get(ET_RES),
-                        // 프로퍼티가 하나도 없는 타입도 빈 목록이어야 한다(기존 계약 — null 아님).
-                        propsByTypeId.getOrDefault(r.get(ET_ID), List.of()),
-                        r.get(ET_ID)));
+  void deleteOntology(long ontologyId);
 
-    // V80 이후 관계는 타입 id를 들고 있다. 읽기 계약(OntologyResponse.Triple)은 이름을 유지해야 하므로
-    // 위에서 이미 조회한 entities로 id→이름 맵을 만들어 되붙인다. 셀프 조인 2회보다 싸고 읽기 쉽다.
-    Map<Long, String> typeNameById = new HashMap<>();
-    for (var e : entities) {
-      typeNameById.put(e.id(), e.type());
-    }
+  boolean existsById(long ontologyId);
 
-    List<OntologyResponse.Triple> relations =
-        dsl.select(R_ID, R_SUBJECT_ID, R_RELATION, R_OBJECT_ID, R_DESC)
-            .from(RELATION)
-            .where(R_ONTOLOGY_ID.eq(ontologyId)) // ← 다중 온톨로지: 자기 관계만
-            .orderBy(R_ORDER)
-            .fetch(
-                r ->
-                    new OntologyResponse.Triple(
-                        typeNameById.get(r.get(R_SUBJECT_ID)),
-                        r.get(R_RELATION),
-                        typeNameById.get(r.get(R_OBJECT_ID)),
-                        r.get(R_DESC),
-                        r.get(R_ID),
-                        r.get(R_SUBJECT_ID),
-                        r.get(R_OBJECT_ID)));
+  int currentSchemaVersion(long ontologyId);
 
-    return new OntologyResponse(domain, schemaVersion, entities, relations);
-  }
-
-  // 온톨로지 목록(요약). id 순. statusFilter가 null이면 전체, 아니면 해당 상태만.
-  // 엔티티 수와 바인딩된 데이터셋 수는 상관 서브쿼리로 센다 — 온톨로지 행 수가 한 자릿수 규모라
-  // 조인 폭발 걱정이 없고, GROUP BY보다 읽기 쉽다.
-  public List<OntologySummary> findAllSummaries(String statusFilter) {
-    var entityCount = field(selectCount().from(ENTITY_TYPE).where(ET_ONTOLOGY_ID.eq(O_ID)));
-    var datasetCount = field(selectCount().from(DATASET_ONTOLOGY).where(DO_ONTOLOGY_ID.eq(O_ID)));
-
-    var condition = statusFilter == null ? noCondition() : O_STATUS.eq(statusFilter);
-
-    return dsl.select(
-            O_ID, O_DOMAIN, O_SCHEMA_VERSION, O_STATUS, entityCount, datasetCount, O_UPDATED_AT)
-        .from(ONTOLOGY)
-        .where(condition)
-        .orderBy(O_ID)
-        .fetch(
-            r ->
-                new OntologySummary(
-                    r.get(O_ID),
-                    r.get(O_DOMAIN),
-                    r.get(O_SCHEMA_VERSION),
-                    r.get(O_STATUS),
-                    r.get(entityCount),
-                    r.get(datasetCount),
-                    r.get(O_UPDATED_AT)));
-  }
-
-  // 하위호환 — 인자 없는 호출은 전체 목록.
-  public List<OntologySummary> findAllSummaries() {
-    return findAllSummaries(null);
-  }
-
-  // 살아있는(archived 아님) 온톨로지 중 같은 도메인이 이미 있는지 — 생성 시 사전 중복 검사용.
-  // V79 부분 유니크 인덱스(status <> 'archived')와 정합해야 한다 — archived는 이름을 선점하지 않으므로
-  // 여기서도 제외해야, 은퇴한 온톨로지와 같은 이름의 후속 온톨로지를 만들 수 있다는 전제가 깨지지 않는다.
-  public boolean existsLiveDomain(String domain) {
-    return dsl.fetchExists(
-        dsl.selectOne().from(ONTOLOGY).where(O_DOMAIN.eq(domain)).and(O_STATUS.ne("archived")));
-  }
-
-  // 상태만 경량 조회 — 바인딩/활성화 가드가 본문 없이 상태만 확인할 때 쓴다.
-  public String findStatusById(long ontologyId) {
-    var record = dsl.select(O_STATUS).from(ONTOLOGY).where(O_ID.eq(ontologyId)).fetchOne();
-    if (record == null) {
-      throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
-    }
-    return record.get(O_STATUS);
-  }
-
-  // WD-129: 요소 편집 트랜잭션의 첫 문장 — 온톨로지 행을 잠그고 상태를 읽는다.
-  // 요소 이름 변경·삭제는 같은 온톨로지의 매핑(dataset_mapping)까지 손대거나 그 사용 여부로 판정하므로, 동시에 도는 매핑
-  // 저장(MappingService — 이 행을 FOR SHARE 로 잡는다)·다른 요소 편집과 직렬화돼야 한다. 잠금 순서는 항상 온톨로지 행 →
-  // 매핑 행이다(교착 방지). NO KEY UPDATE 인 이유: FOR SHARE 와는 충돌해 매핑 저장을 기다리게 하면서도, 이 온톨로지를 FK 로
-  // 참조하는 단순 삽입(KEY SHARE — 바인딩·출처 기록 등)까지 막지는 않는다.
-  public String lockAndFindStatus(long ontologyId) {
-    var record =
-        dsl.select(O_STATUS).from(ONTOLOGY).where(O_ID.eq(ontologyId)).forNoKeyUpdate().fetchOne();
-    if (record == null) {
-      throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
-    }
-    return record.get(O_STATUS);
-  }
-
-  // WD-129: 매핑 저장·활성화가 검증 전에 잡는 공유 잠금. 요소 편집(lockAndFindStatus)이 끝날 때까지 기다렸다가 바뀐 스키마로
-  // 검증하게 해, "옛 스키마로 검증하고 옛 이름으로 저장"하거나 "삭제 검사를 통과한 직후 참조를 추가"하는 틈을 없앤다.
-  // 매핑 저장끼리는 서로 막지 않는다(SHARE 는 서로 호환).
-  public void lockForShare(long ontologyId) {
-    dsl.select(O_ID).from(ONTOLOGY).where(O_ID.eq(ontologyId)).forShare().fetch();
-  }
-
-  // 상태만 전이시킨다. 스키마 내용을 건드리지 않으므로 schema_version은 올리지 않는다
-  // (버전은 "스키마가 몇 번 바뀌었나"를 뜻하고, 적재 노드의 schemaVersion 스탬프와 짝을 이룬다).
-  public void updateStatus(long ontologyId, String status) {
-    dsl.update(ONTOLOGY)
-        .set(O_STATUS, status)
-        .set(O_UPDATED_AT, currentOffsetDateTime())
-        .where(O_ID.eq(ontologyId))
-        .execute();
-  }
-
-  // 이 온톨로지를 참조하는 데이터셋 수(distinct) — 바인딩(dataset_ontology) ∪ 매핑(dataset_mapping).
-  // 삭제 가능 여부의 유일한 판정 근거다(상태는 판정에 쓰지 않는다).
-  // 단순 합산이 아니라 dataset_id 기준 UNION(중복 제거)이어야 한다 — MappingService.save가 ontologyId를
-  // 바인딩에서 파생시키므로, 매핑이 있는 데이터셋은 반드시 같은 dataset_ontology 행도 함께 있다. 합산하면
-  // 매핑까지 만든 데이터셋 1개가 2로 집계돼 관리 다이얼로그의 datasetCount(바인딩만)와 어긋난다.
-  public int countReferences(long ontologyId) {
-    return dsl.fetchCount(
-        dsl.select(DO_DATASET_ID)
-            .from(DATASET_ONTOLOGY)
-            .where(DO_ONTOLOGY_ID.eq(ontologyId))
-            .union(
-                dsl.select(DM_DATASET_ID)
-                    .from(DATASET_MAPPING)
-                    .where(DM_ONTOLOGY_ID.eq(ontologyId))));
-  }
-
-  // 온톨로지 삭제. entity_type/relation/property는 ON DELETE CASCADE로 함께 지워진다.
-  public void deleteOntology(long ontologyId) {
-    dsl.deleteFrom(ONTOLOGY).where(O_ID.eq(ontologyId)).execute();
-  }
-
-  // 온톨로지 존재 여부(바인딩 검증용 + 그래프 프록시의 소유권 확인용).
-  // ONTOLOGY 는 RLS 가 걸려 있어(V102) 다른 테넌트의 행은 이 조회에 애초에 보이지 않는다 —
-  // 그래서 "존재하지 않음"과 "내 것이 아님"이 같은 답이 되고, 이 한 줄이 곧 테넌트 경계가 된다.
-  public boolean existsById(long ontologyId) {
-    return dsl.fetchExists(dsl.selectOne().from(ONTOLOGY).where(O_ID.eq(ontologyId)));
-  }
-
-  // stale 질의용 경량 조회 — 온톨로지 본문 없이 schema_version 만 확인한다(Task 3: dataset_graph_ingest 재사용 여부 판단).
-  public int currentSchemaVersion(long ontologyId) {
-    var record = dsl.select(O_SCHEMA_VERSION).from(ONTOLOGY).where(O_ID.eq(ontologyId)).fetchOne();
-    // 존재하지 않는 id는 NPE→500이 아니라 findById와 동일하게 명확한 400(전역 핸들러 규약)으로 차단한다.
-    if (record == null) {
-      throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
-    }
-    return record.get(O_SCHEMA_VERSION);
-  }
-
-  // 관계 삽입용 이름→id 해석(createOntology 전용). 관계는 V80 이후 FK를 요구하는데 쓰기 계약
-  // (CreateOntologyRequest)은 여전히 이름을 담고 있어, 저장 직전에 한 번 변환해야 한다.
-  // 매칭 실패는 IllegalArgumentException으로 올린다 — OntologyService.validateCore가 이미
-  // 참조 무결성을 검사하므로 여기 도달했다면 검증을 우회한 호출이고, FK 위반 500보다 400이 낫다.
-  private static long resolveTypeId(Map<String, Long> idByType, String typeName, String where) {
-    Long id = idByType.get(typeName);
-    if (id == null) {
-      throw new IllegalArgumentException("관계가 존재하지 않는 엔티티 타입을 참조합니다(" + where + "): " + typeName);
-    }
-    return id;
-  }
-
-  // 신규 도메인 온톨로지 생성 — ontology 행(schema_version=1) + entity_type + relation을 원자 삽입.
-  // id는 IDENTITY(V77)로 자동 발급되어 반환된다. sort_order는 요청 배열 순서로 매긴다.
-  public long createOntology(CreateOntologyRequest req) {
-    return dsl.transactionResult(
-        cfg -> {
-          DSLContext tx = using(cfg);
-          long ontologyId =
-              tx.insertInto(ONTOLOGY)
-                  .set(O_DOMAIN, req.domain())
-                  .set(O_SCHEMA_VERSION, 1)
-                  .set(O_STATUS, req.status())
-                  .set(O_UPDATED_AT, currentOffsetDateTime())
-                  .returning(O_ID)
-                  .fetchOne()
-                  .get(O_ID);
-
-          // 관계 삽입에 쓸 이름→id 맵. 엔티티 타입을 넣으면서 함께 모은다(별도 재조회 불필요).
-          Map<String, Long> idByType = new HashMap<>();
-          int etOrder = 0;
-          for (var e : req.entities()) {
-            long entityTypeId =
-                tx.insertInto(ENTITY_TYPE)
-                    .set(ET_ONTOLOGY_ID, ontologyId)
-                    .set(ET_TYPE, e.type())
-                    .set(ET_DESC, e.description())
-                    .set(ET_NAMING, e.naming())
-                    .set(ET_RES, e.resolution())
-                    .set(ET_ORDER, etOrder++)
-                    .returning(ET_ID)
-                    .fetchOne()
-                    .get(ET_ID);
-            idByType.put(e.type(), entityTypeId);
-            int epOrder = 0;
-            List<OntologyResponse.Property> props =
-                e.properties() == null ? List.of() : e.properties();
-            for (var p : props) {
-              tx.insertInto(ENTITY_PROP)
-                  .set(EP_TYPE_ID, entityTypeId)
-                  .set(EP_NAME, p.name())
-                  .set(EP_DESC, p.description())
-                  .set(EP_DTYPE, p.dataType())
-                  .set(EP_UNIT, p.unit())
-                  .set(EP_ORDER, epOrder++)
-                  .execute();
-            }
-          }
-
-          // 관계는 엔티티 타입이 모두 삽입된 뒤에만 넣을 수 있다(FK).
-          int rOrder = 0;
-          for (var t : req.relations()) {
-            tx.insertInto(RELATION)
-                .set(R_ONTOLOGY_ID, ontologyId)
-                .set(R_SUBJECT_ID, resolveTypeId(idByType, t.subject(), "subject"))
-                .set(R_RELATION, t.relation())
-                .set(R_OBJECT_ID, resolveTypeId(idByType, t.object(), "object"))
-                .set(R_DESC, t.description())
-                .set(R_ORDER, rOrder++)
-                .execute();
-          }
-          return ontologyId;
-        });
-  }
+  long createOntology(CreateOntologyRequest req);
 }

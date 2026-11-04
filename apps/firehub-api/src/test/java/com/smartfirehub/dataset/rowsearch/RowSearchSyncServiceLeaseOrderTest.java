@@ -11,6 +11,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.repository.SearchColumnRepository;
+import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.pipeline.service.IncrementalCursorService;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;

@@ -163,9 +163,7 @@ class OpencodeCredentialValidationTest {
         .isEmpty();
   }
 
-  /**
-   * WD-319 — probe 응답 본문에 실패 종류(reason)가 실려, 화면이 오류를 기본 URL 칸/모델 칸 중 어디에 붙일지 문구 매칭 없이 정한다.
-   */
+  /** WD-319 — probe 응답 본문에 실패 종류(reason)가 실려, 화면이 오류를 기본 URL 칸/모델 칸 중 어디에 붙일지 문구 매칭 없이 정한다. */
   @Test
   void probeBody_실패_종류_reason을_싣고_문구는_화면_용어를_쓴다() {
     var result =

@@ -14,6 +14,7 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.mapping.repository.MappingRepository;
 import com.smartfirehub.ontology.dto.OntologyResponse;
+import com.smartfirehub.ontology.repository.DatasetOntologyRepository;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;

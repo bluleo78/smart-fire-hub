@@ -1,11 +1,14 @@
 package com.smartfirehub.embedding.reembed;
 
-import com.smartfirehub.dataset.rowsearch.SearchIndexStateRepository;
-import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
+import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
+import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.config.dto.EmbeddingImpact;
+import com.smartfirehub.global.platformdb.PlatformDbFeature;
+import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
+import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,18 +29,29 @@ public class EmbeddingBacklogService {
   private final DatasetEmbeddingRepository datasetRepository;
   private final SearchIndexStateRepository searchIndexStates;
   private final EmbeddingAiGate aiGate;
+  // 벡터 읽기 가드(WD-486 패턴) — countMissing 은 NOT EXISTS 로 벡터 테이블을 읽는다.
+  private final PlatformDbFeatures features;
 
+  /** 영향도. 벡터 기능이 꺼지면 벡터 테이블을 읽는 누락 수는 0(조회 없음), 색인 stale 수는 그대로다. */
   @Transactional(readOnly = true)
   public EmbeddingImpact impact(EmbeddingSpace space) {
+    // 허용값은 한 번만 캡처 — 두 누락 수가 같은 호스팅 스냅샷을 쓴다.
+    EmbeddingAllowance a = aiGate.allowance();
+    boolean vector = features.supports(PlatformDbFeature.VECTOR_SEARCH);
     return new EmbeddingImpact(
-        chunkRepository.countMissing(space, aiGate.allowedDatasetSql("c.dataset_id")),
-        datasetRepository.countMissing(space, aiGate.allowedDatasetSql("de.dataset_id")),
+        vector ? chunkRepository.countMissing(space, a) : 0,
+        vector ? datasetRepository.countMissing(space, a) : 0,
         searchIndexStates.countStale(space.model(), space.dimension().size()));
   }
 
+  /** 할 일 여부. 벡터 기능이 꺼지면 항상 false(벡터 테이블 조회 없음). */
   @Transactional(readOnly = true)
   public boolean hasWork(EmbeddingSpace space) {
-    return chunkRepository.countMissing(space, aiGate.allowedDatasetSql("c.dataset_id")) > 0
-        || datasetRepository.countMissing(space, aiGate.allowedDatasetSql("de.dataset_id")) > 0;
+    if (!features.supports(PlatformDbFeature.VECTOR_SEARCH)) {
+      return false;
+    }
+    EmbeddingAllowance a = aiGate.allowance();
+    return chunkRepository.countMissing(space, a) > 0
+        || datasetRepository.countMissing(space, a) > 0;
   }
 }

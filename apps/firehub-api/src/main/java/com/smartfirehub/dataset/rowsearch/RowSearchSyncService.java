@@ -2,6 +2,8 @@ package com.smartfirehub.dataset.rowsearch;
 
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.repository.SearchColumnRepository;
+import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;

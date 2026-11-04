@@ -1,9 +1,5 @@
 package com.smartfirehub.tenant.repository;
 
-import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.name;
-import static org.jooq.impl.DSL.table;
-
 import com.smartfirehub.tenant.dto.MembershipResponse;
 import com.smartfirehub.tenant.dto.TenantMembership;
 import com.smartfirehub.tenant.dto.UnavailableWorkspace;
@@ -12,21 +8,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.Table;
-import org.springframework.stereotype.Repository;
 
 /**
- * 사용자-테넌트 멤버십 조회.
+ * 테넌트 멤버십(membership 테이블) 저장·조회 리포지토리. 소속 워크스페이스는 tenant 테이블과 조인해 읽는다.
  *
- * <p>membership/tenant 는 전역(RLS 미적용) 테이블이다. 테넌트 선택 전에 조회해야 하므로 RLS 를 걸면 순환이 된다 — GUC 가 없어 0행이 나오면
- * 어떤 테넌트를 선택할 수 있는지 알 수 없다.
+ * <p>구현은 {@code JooqMembershipRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
  */
-@Repository
-@RequiredArgsConstructor
-public class MembershipRepository {
+public interface MembershipRepository {
 
   /**
    * 회원가입 시 자동 가입되는 기본 테넌트. V81 마이그레이션에서 시드된 tenant.id=1(slug=default).
@@ -34,36 +22,10 @@ public class MembershipRepository {
    * <p>자가 가입 사용자가 합류하는 기본 워크스페이스. 회원가입의 역할 조회도 이 테넌트 컨텍스트에서 일어난다({@code AuthService.signup} 참고) —
    * public 으로 승격해 트랜잭션 밖에서 미리 세팅할 수 있게 한다.
    */
-  public static final long DEFAULT_TENANT_ID = 1L;
-
-  private static final Table<?> MEMBERSHIP = table(name("membership"));
-  private static final Table<?> TENANT = table(name("tenant"));
-
-  private static final Field<Long> M_USER_ID = field(name("membership", "user_id"), Long.class);
-  private static final Field<Long> M_TENANT_ID = field(name("membership", "tenant_id"), Long.class);
-  private static final Field<String> M_ROLE = field(name("membership", "role"), String.class);
-  private static final Field<String> M_STATUS = field(name("membership", "status"), String.class);
-
-  private static final Field<Long> T_ID = field(name("tenant", "id"), Long.class);
-  private static final Field<String> T_SLUG = field(name("tenant", "slug"), String.class);
-  private static final Field<String> T_NAME = field(name("tenant", "name"), String.class);
-  private static final Field<String> T_STATUS = field(name("tenant", "status"), String.class);
-
-  private final DSLContext dsl;
+  long DEFAULT_TENANT_ID = 1L;
 
   /** 사용자가 선택할 수 있는 테넌트 목록. 멤버십과 테넌트가 모두 ACTIVE 인 것만 반환한다. */
-  public List<MembershipResponse> findActiveByUser(Long userId) {
-    return dsl.select(T_ID, T_SLUG, T_NAME, M_ROLE)
-        .from(MEMBERSHIP)
-        .join(TENANT)
-        .on(T_ID.eq(M_TENANT_ID))
-        .where(M_USER_ID.eq(userId))
-        .and(M_STATUS.eq("ACTIVE"))
-        .and(T_STATUS.eq("ACTIVE"))
-        .orderBy(T_ID)
-        .fetch(
-            r -> new MembershipResponse(r.get(T_ID), r.get(T_SLUG), r.get(T_NAME), r.get(M_ROLE)));
-  }
+  List<MembershipResponse> findActiveByUser(Long userId);
 
   /**
    * 멤버십 행은 있지만 지금 들어갈 수 없는 워크스페이스 목록(WD-281). {@link #findActiveByUser} 의 여집합이다.
@@ -77,35 +39,10 @@ public class MembershipRepository {
    *
    * <p>RLS: {@link #findActiveByUser} 와 같이 전역 테이블만 읽어 테넌트 선택 전(로그인)에도 그대로 동작한다.
    */
-  public List<UnavailableWorkspace> findUnavailableByUser(Long userId) {
-    return dsl.select(T_NAME, M_STATUS, T_STATUS)
-        .from(MEMBERSHIP)
-        .join(TENANT)
-        .on(T_ID.eq(M_TENANT_ID))
-        .where(M_USER_ID.eq(userId))
-        .and(M_STATUS.ne("ACTIVE").or(T_STATUS.ne("ACTIVE")))
-        .orderBy(T_ID)
-        .fetch(
-            r ->
-                new UnavailableWorkspace(
-                    r.get(T_NAME),
-                    "ACTIVE".equals(r.get(T_STATUS))
-                        ? UnavailableWorkspace.Reason.MEMBERSHIP_SUSPENDED
-                        : UnavailableWorkspace.Reason.WORKSPACE_SUSPENDED));
-  }
+  List<UnavailableWorkspace> findUnavailableByUser(Long userId);
 
   /** 해당 사용자가 그 테넌트의 ACTIVE 멤버이고 테넌트도 ACTIVE 인지. 테넌트 선택/갱신 시의 게이트. */
-  public boolean hasActiveMembership(Long userId, Long tenantId) {
-    return dsl.fetchExists(
-        dsl.selectOne()
-            .from(MEMBERSHIP)
-            .join(TENANT)
-            .on(T_ID.eq(M_TENANT_ID))
-            .where(M_USER_ID.eq(userId))
-            .and(M_TENANT_ID.eq(tenantId))
-            .and(M_STATUS.eq("ACTIVE"))
-            .and(T_STATUS.eq("ACTIVE")));
-  }
+  boolean hasActiveMembership(Long userId, Long tenantId);
 
   /**
    * 회원가입한 사용자를 기본 테넌트(id=1)에 ACTIVE MEMBER 로 가입시킨다.
@@ -114,34 +51,13 @@ public class MembershipRepository {
    * 받는다(잠김). 자가 가입 사용자를 잠그지 않기 위해 가입과 동시에 기본 워크스페이스에 합류시킨다. 운영자가 다른 테넌트로 프로비저닝하는 것은 이후
    * 단계(operator-driven provisioning)에서 다룬다 — 이 메서드는 그 대상이 아니다.
    */
-  public void createDefaultMembership(Long userId) {
-    insertMember(userId, DEFAULT_TENANT_ID);
-  }
-
-  // ── 관리 경로(WD-2): 한 테넌트 안의 멤버십을 상태와 무관하게 다룬다 ──────────────
-  // membership 은 RLS 가 없는 전역 테이블이다. 그래서 아래 모든 쿼리는 tenant_id 술어를 직접 건다 —
-  // 빠뜨리면 한 테넌트의 관리자가 다른 테넌트 멤버십을 정지·삭제할 수 있다.
+  void createDefaultMembership(Long userId);
 
   /** 이 테넌트에서의 멤버십(ACTIVE·SUSPENDED 모두). tenant.status 는 보지 않는다(관리 경로). */
-  public Optional<TenantMembership> findInTenant(Long userId, long tenantId) {
-    return dsl.select(M_USER_ID, M_ROLE, M_STATUS)
-        .from(MEMBERSHIP)
-        .where(M_USER_ID.eq(userId).and(M_TENANT_ID.eq(tenantId)))
-        .fetchOptional(r -> new TenantMembership(r.get(M_USER_ID), r.get(M_ROLE), r.get(M_STATUS)));
-  }
+  Optional<TenantMembership> findInTenant(Long userId, long tenantId);
 
   /** 목록 화면용 배치 조회 — 사용자마다 조회하면 페이지 크기만큼 N+1 이 된다. */
-  public Map<Long, TenantMembership> findInTenant(long tenantId, Collection<Long> userIds) {
-    if (userIds.isEmpty()) {
-      return Map.of();
-    }
-    return dsl.select(M_USER_ID, M_ROLE, M_STATUS)
-        .from(MEMBERSHIP)
-        .where(M_TENANT_ID.eq(tenantId).and(M_USER_ID.in(userIds)))
-        .fetchMap(
-            r -> r.get(M_USER_ID),
-            r -> new TenantMembership(r.get(M_USER_ID), r.get(M_ROLE), r.get(M_STATUS)));
-  }
+  Map<Long, TenantMembership> findInTenant(long tenantId, Collection<Long> userIds);
 
   /**
    * 주어진 사용자 중 「계정 활성 + 이 테넌트 ACTIVE 멤버 + 테넌트 ACTIVE」인 사람의 id(WD-192).
@@ -150,49 +66,14 @@ public class MembershipRepository {
    * 목록 화면에서 한 번의 질의로 하기 위한 배치판이다 — 워크스페이스 전체 스마트 작업 목록이 작업 주인마다 따로 조회하면 N+1 이 된다. 조건을 바꿀 때는 두 곳을 함께
    * 바꾼다. membership·tenant·user 모두 전역 테이블이라 tenant_id 를 직접 건다.
    */
-  public Set<Long> findActiveMemberIds(long tenantId, Collection<Long> userIds) {
-    if (userIds.isEmpty()) {
-      return Set.of();
-    }
-    Table<?> user = table(name("user"));
-    Field<Long> uId = field(name("user", "id"), Long.class);
-    Field<Boolean> uActive = field(name("user", "is_active"), Boolean.class);
-    return dsl.select(M_USER_ID)
-        .from(MEMBERSHIP)
-        .join(TENANT)
-        .on(T_ID.eq(M_TENANT_ID))
-        .join(user)
-        .on(uId.eq(M_USER_ID))
-        .where(M_TENANT_ID.eq(tenantId))
-        .and(M_USER_ID.in(userIds))
-        .and(M_STATUS.eq("ACTIVE"))
-        .and(T_STATUS.eq("ACTIVE"))
-        .and(uActive.isTrue())
-        .fetchSet(M_USER_ID);
-  }
+  Set<Long> findActiveMemberIds(long tenantId, Collection<Long> userIds);
 
   /** 멤버 추가: 이 테넌트의 ACTIVE MEMBER 로 넣는다. 중복은 호출자가 먼저 걸러 409 로 응답한다. */
-  public void insertMember(Long userId, long tenantId) {
-    dsl.insertInto(MEMBERSHIP)
-        .set(M_USER_ID, userId)
-        .set(M_TENANT_ID, tenantId)
-        .set(M_ROLE, "MEMBER")
-        .set(M_STATUS, "ACTIVE")
-        .execute();
-  }
+  void insertMember(Long userId, long tenantId);
 
   /** 정지/재활성. 이 테넌트 행만 바꾼다. 반환값은 바뀐 행 수(0 이면 비멤버). */
-  public int updateStatus(Long userId, long tenantId, String status) {
-    return dsl.update(MEMBERSHIP)
-        .set(M_STATUS, status)
-        .where(M_USER_ID.eq(userId).and(M_TENANT_ID.eq(tenantId)))
-        .execute();
-  }
+  int updateStatus(Long userId, long tenantId, String status);
 
   /** 테넌트에서 제거. 계정·다른 테넌트 멤버십은 그대로다. */
-  public int delete(Long userId, long tenantId) {
-    return dsl.deleteFrom(MEMBERSHIP)
-        .where(M_USER_ID.eq(userId).and(M_TENANT_ID.eq(tenantId)))
-        .execute();
-  }
+  int delete(Long userId, long tenantId);
 }

@@ -536,8 +536,12 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     var rawOpt = savedQueryRepository.findRawByIdUnrestricted(privateQuery.id());
 
     assertThat(rawOpt).isPresent();
-    assertThat(rawOpt.get().get("name", String.class)).isEqualTo("Private Raw");
-    assertThat(rawOpt.get().get("sql_text", String.class)).isEqualTo("SELECT 999");
+    assertThat(rawOpt.get().name()).isEqualTo("Private Raw");
+    assertThat(rawOpt.get().sqlText()).isEqualTo("SELECT 999");
+    // 복제가 접근 판정에 읽는 열(RawSavedQuery, WD-485)도 그대로 옮겨진다
+    assertThat(rawOpt.get().id()).isEqualTo(privateQuery.id());
+    assertThat(rawOpt.get().isShared()).isFalse();
+    assertThat(rawOpt.get().createdBy()).isEqualTo(ownerUserId);
   }
 
   @Test

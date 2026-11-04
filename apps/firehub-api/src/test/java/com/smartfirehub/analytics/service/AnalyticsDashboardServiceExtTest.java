@@ -206,8 +206,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
   }
 
   /**
-   * WD-196: 남이 공유한 대시보드를 다른 사람이 고치려 하면(이름 변경·위젯 추가·삭제·배치) 모두 같은 한국어 404 문구로 거절한다. 예전에는 「Dashboard not
-   * found: 2」가 토스트로 그대로 보였다. 조회는 그대로 된다 — 읽기 전용 보기는 유지.
+   * WD-196: 남이 공유한 대시보드를 다른 사람이 고치려 하면(이름 변경·위젯 추가·삭제·배치) 모두 같은 한국어 404 문구로 거절한다. 예전에는 「Dashboard
+   * not found: 2」가 토스트로 그대로 보였다. 조회는 그대로 된다 — 읽기 전용 보기는 유지.
    */
   @Test
   void writes_nonOwnerOfSharedDashboard_rejectWithKoreanNotFound() {

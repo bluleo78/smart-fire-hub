@@ -140,8 +140,8 @@ class AnalyticsDashboardControllerTest {
   }
 
   /**
-   * WD-327: 자동 새로고침 상한 24시간 — 넘으면 400 과 안내 문구, 서비스는 부르지 않는다. 상한 값 그대로는 허용한다. 상한이 없으면 브라우저 타이머가
-   * 넘쳐 위젯 데이터를 쉬지 않고 다시 요청했다.
+   * WD-327: 자동 새로고침 상한 24시간 — 넘으면 400 과 안내 문구, 서비스는 부르지 않는다. 상한 값 그대로는 허용한다. 상한이 없으면 브라우저 타이머가 넘쳐
+   * 위젯 데이터를 쉬지 않고 다시 요청했다.
    */
   @Test
   void createDashboard_autoRefreshOverMax_returns400() throws Exception {

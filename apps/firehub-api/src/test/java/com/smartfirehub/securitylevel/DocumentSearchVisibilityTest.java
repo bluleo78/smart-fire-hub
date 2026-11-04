@@ -165,7 +165,7 @@ class DocumentSearchVisibilityTest extends IntegrationTestBase {
                         axis(1024, 0),
                         List.of(hiddenDatasetId, visibleDatasetId),
                         10,
-                        guard.visibleSql(clearanceResolver.resolve(unclearedUser), "d"))
+                        guard.visibility(clearanceResolver.resolve(unclearedUser)))
                     .stream()
                     .map(h -> h.datasetId())
                     .toList());
@@ -179,7 +179,7 @@ class DocumentSearchVisibilityTest extends IntegrationTestBase {
                         axis(1024, 0),
                         List.of(hiddenDatasetId, visibleDatasetId),
                         10,
-                        guard.visibleSql(clearanceResolver.resolve(clearedUser), "d"))
+                        guard.visibility(clearanceResolver.resolve(clearedUser)))
                     .stream()
                     .map(h -> h.datasetId())
                     .toList());

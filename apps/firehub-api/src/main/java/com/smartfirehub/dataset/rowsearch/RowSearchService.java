@@ -4,6 +4,8 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.repository.SearchColumnRepository;
+import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.dataset.rowsearch.dto.RowSearchRequest;
 import com.smartfirehub.dataset.rowsearch.dto.RowSearchResponse;
 import com.smartfirehub.dataset.service.ColumnPhysicalType;

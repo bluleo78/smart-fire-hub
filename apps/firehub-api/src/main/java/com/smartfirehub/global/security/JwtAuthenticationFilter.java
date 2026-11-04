@@ -39,8 +39,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
   private final String internalToken;
 
   /**
-   * 스마트 작업 리포트 등급 기록기(WD-198) — 요청 끝에 그 요청이 모은 등급을 기록한다. ObjectProvider 인 이유: 웹 슬라이스 테스트처럼 이 빈이
-   * 없는 컨텍스트에서도 필터가 떠야 한다(없으면 기록을 건너뛴다).
+   * 스마트 작업 리포트 등급 기록기(WD-198) — 요청 끝에 그 요청이 모은 등급을 기록한다. ObjectProvider 인 이유: 웹 슬라이스 테스트처럼 이 빈이 없는
+   * 컨텍스트에서도 필터가 떠야 한다(없으면 기록을 건너뛴다).
    */
   private final ObjectProvider<ProactiveReportLevelRecorder> reportLevelRecorder;
 

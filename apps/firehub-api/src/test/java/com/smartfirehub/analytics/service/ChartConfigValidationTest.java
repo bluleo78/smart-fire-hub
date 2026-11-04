@@ -74,18 +74,19 @@ class ChartConfigValidationTest extends IntegrationTestBase {
   void create_nonStringValues_rejected() {
     assertThatThrownBy(() -> create("BAR", Map.of("xAxis", 123, "yAxis", List.of("a"))))
         .hasMessage("차트 설정 xAxis 은(는) 컬럼 이름(문자열)이어야 합니다.");
-    assertThatThrownBy(() -> create("BAR", Map.of("xAxis", "r", "yAxis", List.of(1, Map.of("a", 2)))))
+    assertThatThrownBy(
+            () -> create("BAR", Map.of("xAxis", "r", "yAxis", List.of(1, Map.of("a", 2)))))
         .hasMessage("차트 설정 yAxis 은(는) 문자열 목록(배열)이어야 합니다.");
     assertThatThrownBy(() -> create("BAR", Map.of("xAxis", List.of("r"), "yAxis", List.of("a"))))
         .hasMessage("차트 설정 xAxis 은(는) 컬럼 이름(문자열)이어야 합니다.");
-    assertThatThrownBy(() -> create("BAR", Map.of("xAxis", "r", "yAxis", List.of("a"), "stacked", "yes")))
+    assertThatThrownBy(
+            () -> create("BAR", Map.of("xAxis", "r", "yAxis", List.of("a"), "stacked", "yes")))
         .hasMessage("차트 설정 stacked 은(는) true 또는 false 여야 합니다.");
   }
 
   @Test
   void create_gaugeRange_mustBeNumbersWithMinBelowMax() {
-    assertThatThrownBy(
-            () -> create("GAUGE", Map.of("yAxis", List.of("v"), "min", 100, "max", -5)))
+    assertThatThrownBy(() -> create("GAUGE", Map.of("yAxis", List.of("v"), "min", 100, "max", -5)))
         .hasMessage("차트 설정 min 은 max 보다 작아야 합니다.");
     assertThatThrownBy(() -> create("GAUGE", Map.of("yAxis", List.of("v"), "target", "abc")))
         .hasMessage("차트 설정 target 은(는) 숫자여야 합니다.");

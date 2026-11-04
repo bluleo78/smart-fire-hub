@@ -50,7 +50,7 @@ public class GraphIngestService {
   /** 각 데이터셋이 실제 바인딩된 온톨로지의 현재 버전보다 낡게 적재된 데이터셋. */
   public List<StaleDatasetResponse> stale() {
     // 조회자가 볼 수 없는 데이터셋 id 는 싣지 않는다(보안 등급 — 숨김 데이터셋 존재가 stale 목록으로 드러나지 않게). 요청 경로 전용.
-    return repo.findStale(datasetAccessGuard.visibleCondition()).stream()
+    return repo.findStale(datasetAccessGuard.visibility()).stream()
         .map(
             s ->
                 new StaleDatasetResponse(

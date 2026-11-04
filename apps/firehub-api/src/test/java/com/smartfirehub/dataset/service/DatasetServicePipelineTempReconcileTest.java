@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.dataset.dto.DatasetColumnSnapshot;
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
@@ -17,9 +18,6 @@ import com.smartfirehub.dataset.storage.DataTableStore.RebuildBackupState;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import java.util.List;
 import java.util.Optional;
-import org.jooq.Record;
-import org.jooq.SQLDialect;
-import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -71,19 +69,15 @@ class DatasetServicePipelineTempReconcileTest {
                     100L)));
   }
 
-  private static Record col(long id, String name, String type) {
-    return DSL.using(SQLDialect.POSTGRES)
-        .newRecord(
-            DSL.field("id", Long.class),
-            DSL.field("column_name", String.class),
-            DSL.field("data_type", String.class),
-            DSL.field("column_order", Integer.class))
-        .values(id, name, type, 0);
+  /** 지문이 읽는 열(id·이름·타입)만 채운 컬럼 메타 보관본 한 행. 나머지 열은 지문과 무관하다. */
+  private static DatasetColumnSnapshot col(long id, String name, String type) {
+    return new DatasetColumnSnapshot(
+        id, 10L, name, null, type, true, false, null, 0, null, false, 1L, false);
   }
 
   @Test
   void fingerprint_is32LowerHex_stable_andChangesWithIdNameType_orderIndependent() {
-    List<Record> base = List.of(col(1, "code", "TEXT"), col(2, "amount", "INTEGER"));
+    List<DatasetColumnSnapshot> base = List.of(col(1, "code", "TEXT"), col(2, "amount", "INTEGER"));
     String fp = DatasetService.columnMetaFingerprint(base);
 
     assertThat(fp).matches("[0-9a-f]{32}");
@@ -126,7 +120,7 @@ class DatasetServicePipelineTempReconcileTest {
 
   @Test
   void rebuild_passesFingerprintOfPreRebuildSnapshotToBackup() {
-    List<Record> snapshot = List.of(col(1, "code", "TEXT"));
+    List<DatasetColumnSnapshot> snapshot = List.of(col(1, "code", "TEXT"));
     when(columnRepository.snapshotByDatasetId(DATASET_ID)).thenReturn(snapshot);
     when(dataTableService.moveToRebuildBackup(eq(TABLE), any())).thenReturn(77L);
 
@@ -170,7 +164,7 @@ class DatasetServicePipelineTempReconcileTest {
 
   @Test
   void reconcile_delegatesWithCurrentMetaFingerprint_restoredReindexesSearch() {
-    List<Record> current = List.of(col(5, "code", "TEXT"));
+    List<DatasetColumnSnapshot> current = List.of(col(5, "code", "TEXT"));
     when(columnRepository.snapshotByDatasetId(DATASET_ID)).thenReturn(current);
     when(dataTableService.reconcileRebuildBackup(
             TABLE, DatasetService.columnMetaFingerprint(current)))

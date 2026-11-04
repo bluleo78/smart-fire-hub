@@ -295,15 +295,14 @@ public class RoleGrantGuard {
   public record GrantBlock(long roleId, String code, String message) {}
 
   /**
-   * 판정 본체(호출자는 ADMIN 아님): 범위를 벗어난 역할마다 첫 번째 위반 종류를 돌려준다. 범위 안 역할은 맵에 없다. {@code roleLevels} 는
-   * 현재 테넌트 역할 등급 — 목록 조회가 이미 읽은 것을 다시 읽지 않게 받는다. 검사 순서·fail-closed 규칙은
-   * {@link #assertCanChangeRoles} 문서 참고.
+   * 판정 본체(호출자는 ADMIN 아님): 범위를 벗어난 역할마다 첫 번째 위반 종류를 돌려준다. 범위 안 역할은 맵에 없다. {@code roleLevels} 는 현재
+   * 테넌트 역할 등급 — 목록 조회가 이미 읽은 것을 다시 읽지 않게 받는다. 검사 순서·fail-closed 규칙은 {@link #assertCanChangeRoles}
+   * 문서 참고.
    */
   private Map<Long, Violation> classify(
       Clearance caller, Collection<Long> roleIds, List<RoleLevel> roleLevels) {
     Map<Long, RoleLevel> roles =
-        roleLevels.stream()
-            .collect(Collectors.toMap(RoleLevel::roleId, Function.identity()));
+        roleLevels.stream().collect(Collectors.toMap(RoleLevel::roleId, Function.identity()));
     Map<Long, Integer> rankById = levelRepository.rankById();
     // 역할들의 권한을 한 번에 읽는다(역할마다 조회하면 N+1).
     Map<Long, Set<String>> codesByRole = permissionRepository.findCodesByRoleIds(roleIds);

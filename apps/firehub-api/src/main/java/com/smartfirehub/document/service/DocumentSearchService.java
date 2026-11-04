@@ -11,6 +11,7 @@ import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.util.RankFusion;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -39,8 +40,9 @@ public class DocumentSearchService {
     if (request.query() == null || request.query().isBlank()) {
       throw new IllegalArgumentException("검색어가 비어 있습니다");
     }
-    // 전역 청크 검색이라 청크 본문이 그대로 나간다 — 볼 수 없는 데이터셋의 청크는 SQL 에서 제외한다(별칭 d).
-    String visibility = datasetAccessGuard.visibleSql(clearance, "d");
+    // 전역 청크 검색이라 청크 본문이 그대로 나간다 — 볼 수 없는 데이터셋의 청크는 SQL 에서 제외한다. 가시성은 여기서 캡처하고(AI 문맥
+    // 고정 — 예전 visibleSql 렌더 시점과 같다) SQL 렌더(별칭 d)는 리포지토리 구현이 맡는다(WD-485 T10).
+    DatasetVisibility visibility = datasetAccessGuard.visibility(clearance);
     List<DocumentSearchHit> hits =
         switch (request.mode()) {
           case KEYWORD -> keyword(request, request.topK(), visibility);
@@ -62,7 +64,8 @@ public class DocumentSearchService {
   }
 
   /** 시맨틱·키워드 후보 풀을 RRF 로 융합해 상위 topK 를 반환한다. */
-  private List<DocumentSearchHit> hybridSearch(DocumentSearchRequest request, String visibility) {
+  private List<DocumentSearchHit> hybridSearch(
+      DocumentSearchRequest request, DatasetVisibility visibility) {
     // 꺼진 단계는 빈 목록 — 융합은 남은 단계만으로 이뤄진다(둘 다 꺼지면 빈 결과).
     List<DocumentSearchHit> semantic = semantic(request, CANDIDATE_POOL, visibility);
     List<DocumentSearchHit> keyword = keyword(request, CANDIDATE_POOL, visibility);
@@ -71,7 +74,7 @@ public class DocumentSearchService {
 
   /** 벡터(코사인) 단계. 플랫폼 DB 가 지원하지 않으면 질의 임베딩 호출도 없이 빈 목록. */
   private List<DocumentSearchHit> semantic(
-      DocumentSearchRequest request, int limit, String visibility) {
+      DocumentSearchRequest request, int limit, DatasetVisibility visibility) {
     if (!features.supports(PlatformDbFeature.VECTOR_SEARCH)) {
       return List.of();
     }
@@ -82,7 +85,7 @@ public class DocumentSearchService {
 
   /** 트라이그램 단계. 플랫폼 DB 가 지원하지 않으면 호출하지 않고 빈 목록. */
   private List<DocumentSearchHit> keyword(
-      DocumentSearchRequest request, int limit, String visibility) {
+      DocumentSearchRequest request, int limit, DatasetVisibility visibility) {
     if (!features.supports(PlatformDbFeature.TRIGRAM_SEARCH)) {
       return List.of();
     }

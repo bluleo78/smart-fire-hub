@@ -2,7 +2,6 @@ package com.smartfirehub.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.smartfirehub.pipeline.dto.ExecutionDetailResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.TestPropertySource;
 
@@ -18,7 +17,8 @@ import org.springframework.test.context.TestPropertySource;
  * PipelineTenantAdmissionWaitLimitIntegrationTest} 가 짧은 한도로 본다.
  */
 @TestPropertySource(properties = {"app.pipeline.tenant-concurrency.max-wait=PT60S"})
-class PipelineTenantAdmissionIntegrationTest extends AbstractPipelineTenantAdmissionIntegrationTest {
+class PipelineTenantAdmissionIntegrationTest
+    extends AbstractPipelineTenantAdmissionIntegrationTest {
 
   /** 상한을 넘는 실행은 실패하지 않고 PENDING 으로 기다렸다가, 앞 실행이 끝나면 시작해 완료된다. */
   @Test

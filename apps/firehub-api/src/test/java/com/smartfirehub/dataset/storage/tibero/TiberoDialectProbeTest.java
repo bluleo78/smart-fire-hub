@@ -761,8 +761,13 @@ class TiberoDialectProbeTest {
     String roPw = "Wd" + java.util.UUID.randomUUID().toString().replace("-", "");
     String slotPw = "Wd" + java.util.UUID.randomUUID().toString().replace("-", "");
     createTracked(
-        "CREATE USER \"" + OWN + "\" IDENTIFIED BY \"" + ownPw + "\" DEFAULT TABLESPACE \""
-            + tablespace + "\"",
+        "CREATE USER \""
+            + OWN
+            + "\" IDENTIFIED BY \""
+            + ownPw
+            + "\" DEFAULT TABLESPACE \""
+            + tablespace
+            + "\"",
         "DROP USER \"" + OWN + "\" CASCADE");
     exec("ALTER USER \"" + OWN + "\" QUOTA UNLIMITED ON \"" + tablespace + "\"");
     exec(
@@ -793,8 +798,14 @@ class TiberoDialectProbeTest {
         "rename.setup_owner_ddl",
         () -> {
           ownerExec(
-              "CREATE TABLE " + t1 + " (ID NUMBER CONSTRAINT " + P + "PK1 PRIMARY KEY,"
-                  + " A NUMBER, B NUMBER, CONSTRAINT " + P + "CK1 CHECK (A > 0))");
+              "CREATE TABLE "
+                  + t1
+                  + " (ID NUMBER CONSTRAINT "
+                  + P
+                  + "PK1 PRIMARY KEY,"
+                  + " A NUMBER, B NUMBER, CONSTRAINT "
+                  + P
+                  + "CK1 CHECK (A > 0))");
           ownerExec("CREATE INDEX " + P + "IX1 ON " + t1 + " (A)");
           ownerExec("CREATE UNIQUE INDEX " + P + "UX1 ON " + t1 + " (B)");
           ownerExec("INSERT INTO " + t1 + " VALUES (1, 1, 1)");
@@ -833,34 +844,44 @@ class TiberoDialectProbeTest {
         "rename.alter_index_rename",
         () -> {
           ownerExec("ALTER INDEX " + P + "IX1 RENAME TO " + P + "IX2");
-          return "now=" + ownerString("SELECT INDEX_NAME FROM USER_INDEXES WHERE INDEX_NAME = '"
-              + P + "IX2'");
+          return "now="
+              + ownerString(
+                  "SELECT INDEX_NAME FROM USER_INDEXES WHERE INDEX_NAME = '" + P + "IX2'");
         });
     item(
         "rename.alter_index_rename_unique",
         () -> {
           ownerExec("ALTER INDEX " + P + "UX1 RENAME TO " + P + "UX2");
-          return "now=" + ownerString("SELECT INDEX_NAME FROM USER_INDEXES WHERE INDEX_NAME = '"
-              + P + "UX2'")
+          return "now="
+              + ownerString("SELECT INDEX_NAME FROM USER_INDEXES WHERE INDEX_NAME = '" + P + "UX2'")
               + " uniqueness="
-              + ownerString("SELECT UNIQUENESS FROM USER_INDEXES WHERE INDEX_NAME = '" + P + "UX2'");
+              + ownerString(
+                  "SELECT UNIQUENESS FROM USER_INDEXES WHERE INDEX_NAME = '" + P + "UX2'");
         });
     item(
         "rename.alter_table_rename_constraint",
         () -> {
           ownerExec("ALTER TABLE " + t1 + " RENAME CONSTRAINT " + P + "CK1 TO " + P + "CK2");
-          return "now=" + ownerString("SELECT CONSTRAINT_NAME FROM USER_CONSTRAINTS WHERE"
-              + " CONSTRAINT_NAME = '" + P + "CK2'");
+          return "now="
+              + ownerString(
+                  "SELECT CONSTRAINT_NAME FROM USER_CONSTRAINTS WHERE"
+                      + " CONSTRAINT_NAME = '"
+                      + P
+                      + "CK2'");
         });
     item(
         "rename.alter_table_rename_pk_constraint",
         () -> {
           ownerExec("ALTER TABLE " + t1 + " RENAME CONSTRAINT " + P + "PK1 TO " + P + "PK2");
-          return "now=" + ownerString("SELECT CONSTRAINT_NAME FROM USER_CONSTRAINTS WHERE"
-              + " CONSTRAINT_NAME = '" + P + "PK2'")
+          return "now="
+              + ownerString(
+                  "SELECT CONSTRAINT_NAME FROM USER_CONSTRAINTS WHERE"
+                      + " CONSTRAINT_NAME = '"
+                      + P
+                      + "PK2'")
               + " pk_index_name="
-              + ownerString("SELECT INDEX_NAME FROM USER_CONSTRAINTS WHERE CONSTRAINT_NAME = '"
-                  + P + "PK2'");
+              + ownerString(
+                  "SELECT INDEX_NAME FROM USER_CONSTRAINTS WHERE CONSTRAINT_NAME = '" + P + "PK2'");
         });
 
     // 테이블: ALTER TABLE ... RENAME TO 후 유지 여부
@@ -868,8 +889,9 @@ class TiberoDialectProbeTest {
         "rename.alter_table_rename_to",
         () -> {
           ownerExec("ALTER TABLE " + t1 + " RENAME TO " + t2);
-          return "now=" + ownerString("SELECT OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_NAME = '"
-              + t2 + "'");
+          return "now="
+              + ownerString(
+                  "SELECT OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_NAME = '" + t2 + "'");
         });
     item(
         "rename.object_id_kept_alter_table",
@@ -909,8 +931,9 @@ class TiberoDialectProbeTest {
         "rename.table_rename_stmt",
         () -> {
           ownerExec("RENAME " + t2 + " TO " + t3);
-          return "now=" + ownerString("SELECT OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_NAME = '"
-              + t3 + "'");
+          return "now="
+              + ownerString(
+                  "SELECT OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_NAME = '" + t3 + "'");
         });
     item(
         "rename.object_id_kept_table",
@@ -923,17 +946,16 @@ class TiberoDialectProbeTest {
         });
     item("rename.grant_kept_ro", () -> keptGrantFor(t3, RO));
     item("rename.grant_kept_slot", () -> keptGrantFor(t3, SLOT));
-    item(
-        "rename.rows_kept",
-        () -> "count=" + ownerString("SELECT COUNT(*) FROM " + t3));
+    item("rename.rows_kept", () -> "count=" + ownerString("SELECT COUNT(*) FROM " + t3));
 
     // 시퀀스
     item(
         "rename.sequence_rename_stmt",
         () -> {
           ownerExec("RENAME " + sq1 + " TO " + sq2);
-          return "now=" + ownerString("SELECT OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_NAME = '"
-              + sq2 + "'");
+          return "now="
+              + ownerString(
+                  "SELECT OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_NAME = '" + sq2 + "'");
         });
     item(
         "rename.object_id_kept_sequence",
@@ -968,8 +990,9 @@ class TiberoDialectProbeTest {
         "rename.alter_sequence_rename",
         () -> {
           ownerExec("ALTER SEQUENCE " + sq2 + " RENAME TO " + sq3);
-          return "now=" + ownerString("SELECT OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_NAME = '"
-              + sq3 + "'");
+          return "now="
+              + ownerString(
+                  "SELECT OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_NAME = '" + sq3 + "'");
         });
   }
 

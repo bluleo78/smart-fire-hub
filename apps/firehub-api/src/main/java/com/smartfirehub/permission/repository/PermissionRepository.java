@@ -1,103 +1,39 @@
 package com.smartfirehub.permission.repository;
 
-import static com.smartfirehub.jooq.Tables.*;
-
 import com.smartfirehub.permission.dto.PermissionResponse;
-import com.smartfirehub.securitylevel.repository.ActiveMembership;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
-import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
-import org.jooq.Record;
-import org.jooq.Table;
-import org.springframework.stereotype.Repository;
 
-@Repository
-@RequiredArgsConstructor
-public class PermissionRepository {
+/**
+ * 권한(permission 테이블) 조회 리포지토리. 역할-권한(role_permission)·사용자-역할(user_role)·멤버십을 거쳐 권한 코드를 계산한다.
+ *
+ * <p>구현은 {@code JooqPermissionRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ */
+public interface PermissionRepository {
 
-  private final DSLContext dsl;
+  List<PermissionResponse> findAll();
 
-  private PermissionResponse mapToPermissionResponse(Record r) {
-    return new PermissionResponse(
-        r.get(PERMISSION.ID),
-        r.get(PERMISSION.CODE),
-        r.get(PERMISSION.DESCRIPTION),
-        r.get(PERMISSION.CATEGORY));
-  }
+  List<PermissionResponse> findByCategory(String category);
 
-  public List<PermissionResponse> findAll() {
-    return dsl.select(PERMISSION.ID, PERMISSION.CODE, PERMISSION.DESCRIPTION, PERMISSION.CATEGORY)
-        .from(PERMISSION)
-        .orderBy(PERMISSION.ID.asc())
-        .fetch(this::mapToPermissionResponse);
-  }
+  Optional<PermissionResponse> findById(Long id);
 
-  public List<PermissionResponse> findByCategory(String category) {
-    return dsl.select(PERMISSION.ID, PERMISSION.CODE, PERMISSION.DESCRIPTION, PERMISSION.CATEGORY)
-        .from(PERMISSION)
-        .where(PERMISSION.CATEGORY.eq(category))
-        .orderBy(PERMISSION.ID.asc())
-        .fetch(this::mapToPermissionResponse);
-  }
+  Optional<PermissionResponse> findByCode(String code);
 
-  public Optional<PermissionResponse> findById(Long id) {
-    return dsl.select(PERMISSION.ID, PERMISSION.CODE, PERMISSION.DESCRIPTION, PERMISSION.CATEGORY)
-        .from(PERMISSION)
-        .where(PERMISSION.ID.eq(id))
-        .fetchOptional(this::mapToPermissionResponse);
-  }
-
-  public Optional<PermissionResponse> findByCode(String code) {
-    return dsl.select(PERMISSION.ID, PERMISSION.CODE, PERMISSION.DESCRIPTION, PERMISSION.CATEGORY)
-        .from(PERMISSION)
-        .where(PERMISSION.CODE.eq(code))
-        .fetchOptional(this::mapToPermissionResponse);
-  }
-
-  public List<PermissionResponse> findByRoleId(Long roleId) {
-    return dsl.select(PERMISSION.ID, PERMISSION.CODE, PERMISSION.DESCRIPTION, PERMISSION.CATEGORY)
-        .from(PERMISSION)
-        .join(ROLE_PERMISSION)
-        .on(ROLE_PERMISSION.PERMISSION_ID.eq(PERMISSION.ID))
-        .where(ROLE_PERMISSION.ROLE_ID.eq(roleId))
-        .orderBy(PERMISSION.ID.asc())
-        .fetch(this::mapToPermissionResponse);
-  }
+  List<PermissionResponse> findByRoleId(Long roleId);
 
   /**
    * 주어진 권한 id 들의 코드. 없는 id 는 결과에서 빠진다 — 역할 권한 교체 전에 "새로 추가되는 권한" 을 코드로 판정하기 위해 쓴다(WD-116).
    * permission 은 전역 카탈로그(RLS 없음)다.
    */
-  public Set<String> findCodesByIds(Collection<Long> ids) {
-    if (ids.isEmpty()) {
-      return Set.of();
-    }
-    return new HashSet<>(
-        dsl.select(PERMISSION.CODE)
-            .from(PERMISSION)
-            .where(PERMISSION.ID.in(ids))
-            .fetch(PERMISSION.CODE));
-  }
+  Set<String> findCodesByIds(Collection<Long> ids);
 
   /**
    * 주어진 권한 id 중 category 가 {@code category} 인 것이 하나라도 있는가 — 역할 권한 저장에서 플랫폼 권한을 거르기 위해 쓴다(WD-280).
    */
-  public boolean existsInCategory(Collection<Long> ids, String category) {
-    if (ids.isEmpty()) {
-      return false;
-    }
-    return dsl.fetchExists(
-        dsl.selectOne()
-            .from(PERMISSION)
-            .where(PERMISSION.ID.in(ids))
-            .and(PERMISSION.CATEGORY.eq(category)));
-  }
+  boolean existsInCategory(Collection<Long> ids, String category);
 
   /**
    * 여러 역할의 권한 코드를 한 번의 IN 질의로 모은다(역할 id → 코드 집합). 역할 부여 범위 검사가 바뀌는 역할마다 따로 조회하지 않게 하기 위해
@@ -106,21 +42,7 @@ public class PermissionRepository {
    * <p>role_permission 은 RLS 대상이라 현재 테넌트 역할만 보인다. 권한이 0개이거나 보이지 않는(없는·다른 테넌트) 역할은 결과에 키가 없다 — 호출자가
    * 빈 집합과 "역할 없음" 을 이것만으로 구분해서는 안 된다.
    */
-  public Map<Long, Set<String>> findCodesByRoleIds(Collection<Long> roleIds) {
-    if (roleIds.isEmpty()) {
-      return Map.of();
-    }
-    return dsl
-        .select(ROLE_PERMISSION.ROLE_ID, PERMISSION.CODE)
-        .from(ROLE_PERMISSION)
-        .join(PERMISSION)
-        .on(PERMISSION.ID.eq(ROLE_PERMISSION.PERMISSION_ID))
-        .where(ROLE_PERMISSION.ROLE_ID.in(roleIds))
-        .fetchGroups(ROLE_PERMISSION.ROLE_ID, PERMISSION.CODE)
-        .entrySet()
-        .stream()
-        .collect(Collectors.toMap(Map.Entry::getKey, e -> new HashSet<>(e.getValue())));
-  }
+  Map<Long, Set<String>> findCodesByRoleIds(Collection<Long> roleIds);
 
   /**
    * 사용자의 권한 코드(현재 테넌트, RLS).
@@ -133,45 +55,15 @@ public class PermissionRepository {
    * 요청마다 이 메서드를 부른다). 같은 이유로 비활성 사용자 이름의 비동기 파이프라인 권한 검사 ({@code PermissionChecker})도 거부된다 — 정지
    * 멤버(ACTIVE 조인)와 같은 의미다.
    */
-  public Set<String> findPermissionCodesByUserId(Long userId) {
-    List<String> codes =
-        dsl.selectDistinct(PERMISSION.CODE)
-            .from(activeMemberGrants())
-            .where(USER_ROLE.USER_ID.eq(userId))
-            .fetch(r -> r.get(PERMISSION.CODE));
-    return new HashSet<>(codes);
-  }
+  Set<String> findPermissionCodesByUserId(Long userId);
 
   /**
    * 이 테넌트에서 권한 {@code code} 를 가진 사용자 id 집합(WD-187). 알림 수신자를 고를 때 접속자마다 권한을 따로 조회하지 않고 한 번의 질의로 받을 수
    * 있는 사람 전체를 만든다.
    *
-   * <p>판정 기준은 {@link #findPermissionCodesByUserId} 와 같은 조인({@link #activeMemberGrants})이다 — 계정 활성 +
+   * <p>판정 기준은 {@link #findPermissionCodesByUserId} 와 같은 조인({@code #activeMemberGrants})이다 — 계정 활성 +
    * 이 테넌트 ACTIVE 멤버의 역할만 센다. 그래서 정지(SUSPENDED)·제거(멤버십 없음)·계정 비활성 사용자는 저절로 빠진다. user_role 은 RLS 대상이라
    * 호출자가 테넌트 GUC 가 주입된 트랜잭션 안에서 불러야 하고, RLS 와 별개로 tenant_id 를 명시해 다른 테넌트 역할이 섞이지 않게 한다.
    */
-  public Set<Long> findActiveMemberIdsWithPermission(long tenantId, String code) {
-    return dsl.selectDistinct(USER_ROLE.USER_ID)
-        .from(activeMemberGrants())
-        .where(PERMISSION.CODE.eq(code))
-        .and(USER_ROLE.TENANT_ID.eq(tenantId))
-        .fetchSet(USER_ROLE.USER_ID);
-  }
-
-  /**
-   * 권한 → 역할 → 사용자 역할 → 계정(활성) → 멤버십(같은 테넌트 ACTIVE) 조인. 사용자 단위 권한 조회와 권한 단위 사용자 조회가 「유효한 권한」을 같은
-   * 기준으로 보게 한 곳에 둔다 — 한쪽만 고치면 화면 권한과 알림 수신 범위가 서로 어긋난다. membership 은 전역 테이블이라 user_role.tenant_id 로
-   * 짝을 맞춘다.
-   */
-  private Table<?> activeMemberGrants() {
-    return PERMISSION
-        .join(ROLE_PERMISSION)
-        .on(ROLE_PERMISSION.PERMISSION_ID.eq(PERMISSION.ID))
-        .join(USER_ROLE)
-        .on(USER_ROLE.ROLE_ID.eq(ROLE_PERMISSION.ROLE_ID))
-        .join(USER)
-        .on(USER.ID.eq(USER_ROLE.USER_ID).and(USER.IS_ACTIVE.isTrue()))
-        .join(ActiveMembership.TABLE)
-        .on(ActiveMembership.of(USER_ROLE.USER_ID, USER_ROLE.TENANT_ID));
-  }
+  Set<Long> findActiveMemberIdsWithPermission(long tenantId, String code);
 }

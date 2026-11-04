@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.rowsearch;
 
+import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import java.time.Duration;

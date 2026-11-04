@@ -190,8 +190,7 @@ class TriggerEventServiceTiberoTest {
   }
 
   /**
-   * 감시 대상 데이터셋이 지워졌으면 감시 목록에서 뺀다(WD-221 — 하나도 남지 않으면 같은 리포지토리 문장이 트리거를 끈다). 삭제는 변경이 아니라 발동하지
-   * 않는다.
+   * 감시 대상 데이터셋이 지워졌으면 감시 목록에서 뺀다(WD-221 — 하나도 남지 않으면 같은 리포지토리 문장이 트리거를 끈다). 삭제는 변경이 아니라 발동하지 않는다.
    */
   @Test
   void allDeleted_removesFromWatchList() {

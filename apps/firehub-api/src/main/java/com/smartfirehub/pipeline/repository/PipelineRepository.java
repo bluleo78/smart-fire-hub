@@ -1,234 +1,57 @@
 package com.smartfirehub.pipeline.repository;
 
-import static org.jooq.impl.DSL.*;
-
 import com.smartfirehub.pipeline.dto.PipelineResponse;
 import java.time.LocalDateTime;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.Table;
-import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
-@Repository
-@RequiredArgsConstructor
-// 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
-// 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
-// REQUIRED 라 서비스가 이미 연 트랜잭션에는 합류한다(기존 경로 동작 불변).
-@Transactional
-public class PipelineRepository {
+/**
+ * 파이프라인 정의(pipeline) 저장·조회 리포지토리.
+ *
+ * <p>구현은 {@code JooqPipelineRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ */
+public interface PipelineRepository {
 
-  private final DSLContext dsl;
+  List<PipelineResponse> findAll(int page, int size);
 
-  // Table constants
-  private static final Table<?> PIPELINE = table(name("pipeline"));
-  private static final Field<Long> P_ID = field(name("pipeline", "id"), Long.class);
-  private static final Field<String> P_NAME = field(name("pipeline", "name"), String.class);
-  private static final Field<String> P_DESCRIPTION =
-      field(name("pipeline", "description"), String.class);
-  private static final Field<Boolean> P_IS_ACTIVE =
-      field(name("pipeline", "is_active"), Boolean.class);
-  private static final Field<Long> P_CREATED_BY = field(name("pipeline", "created_by"), Long.class);
-  private static final Field<LocalDateTime> P_CREATED_AT =
-      field(name("pipeline", "created_at"), LocalDateTime.class);
-  private static final Field<LocalDateTime> P_UPDATED_AT =
-      field(name("pipeline", "updated_at"), LocalDateTime.class);
-  private static final Field<Long> P_UPDATED_BY = field(name("pipeline", "updated_by"), Long.class);
+  long count();
 
-  private static final Table<?> USER_TABLE = table(name("user"));
-  private static final Field<Long> U_ID = field(name("user", "id"), Long.class);
-  private static final Field<String> U_NAME = field(name("user", "name"), String.class);
+  Optional<PipelineResponse> findById(Long id);
 
-  private static final Table<?> PIPELINE_STEP = table(name("pipeline_step"));
-  private static final Field<Long> PS_PIPELINE_ID =
-      field(name("pipeline_step", "pipeline_id"), Long.class);
-
-  private static final Table<?> PIPELINE_TRIGGER = table(name("pipeline_trigger"));
-  private static final Field<Long> PT_PIPELINE_ID =
-      field(name("pipeline_trigger", "pipeline_id"), Long.class);
-  private static final Field<Boolean> PT_IS_ENABLED =
-      field(name("pipeline_trigger", "is_enabled"), Boolean.class);
-
-  public List<PipelineResponse> findAll(int page, int size) {
-    Field<Integer> stepCountField =
-        selectCount().from(PIPELINE_STEP).where(PS_PIPELINE_ID.eq(P_ID)).asField("step_count");
-    // 활성 트리거 개수: stepCountField와 동일한 상관 서브쿼리 패턴. is_enabled=true인 트리거만 카운트.
-    Field<Integer> triggerCountField =
-        selectCount()
-            .from(PIPELINE_TRIGGER)
-            .where(PT_PIPELINE_ID.eq(P_ID), PT_IS_ENABLED.isTrue())
-            .asField("trigger_count");
-
-    return dsl.select(
-            P_ID,
-            P_NAME,
-            P_DESCRIPTION,
-            P_IS_ACTIVE,
-            P_CREATED_BY,
-            P_CREATED_AT,
-            stepCountField,
-            triggerCountField,
-            U_NAME)
-        .from(PIPELINE)
-        .leftJoin(USER_TABLE)
-        .on(P_CREATED_BY.eq(U_ID))
-        .orderBy(P_ID.desc())
-        .limit(size)
-        .offset(page * size)
-        .fetch(
-            r ->
-                new PipelineResponse(
-                    r.get(P_ID),
-                    r.get(P_NAME),
-                    r.get(P_DESCRIPTION),
-                    r.get(P_IS_ACTIVE),
-                    r.get(U_NAME) != null ? r.get(U_NAME) : String.valueOf(r.get(P_CREATED_BY)),
-                    r.get(stepCountField),
-                    r.get(triggerCountField),
-                    r.get(P_CREATED_AT)));
-  }
-
-  public long count() {
-    return dsl.selectCount().from(PIPELINE).fetchOne(0, Long.class);
-  }
-
-  public Optional<PipelineResponse> findById(Long id) {
-    Field<Integer> stepCountField =
-        selectCount().from(PIPELINE_STEP).where(PS_PIPELINE_ID.eq(P_ID)).asField("step_count");
-    Field<Integer> triggerCountField =
-        selectCount()
-            .from(PIPELINE_TRIGGER)
-            .where(PT_PIPELINE_ID.eq(P_ID), PT_IS_ENABLED.isTrue())
-            .asField("trigger_count");
-
-    return dsl.select(
-            P_ID,
-            P_NAME,
-            P_DESCRIPTION,
-            P_IS_ACTIVE,
-            P_CREATED_BY,
-            P_CREATED_AT,
-            stepCountField,
-            triggerCountField,
-            U_NAME)
-        .from(PIPELINE)
-        .leftJoin(USER_TABLE)
-        .on(P_CREATED_BY.eq(U_ID))
-        .where(P_ID.eq(id))
-        .fetchOptional(
-            r ->
-                new PipelineResponse(
-                    r.get(P_ID),
-                    r.get(P_NAME),
-                    r.get(P_DESCRIPTION),
-                    r.get(P_IS_ACTIVE),
-                    r.get(U_NAME) != null ? r.get(U_NAME) : String.valueOf(r.get(P_CREATED_BY)),
-                    r.get(stepCountField),
-                    r.get(triggerCountField),
-                    r.get(P_CREATED_AT)));
-  }
-
-  public PipelineResponse save(String name, String description, Long createdBy) {
-    var record =
-        dsl.insertInto(PIPELINE)
-            .set(P_NAME, name)
-            .set(P_DESCRIPTION, description)
-            .set(P_IS_ACTIVE, true)
-            .set(P_CREATED_BY, createdBy)
-            .returning(P_ID, P_NAME, P_DESCRIPTION, P_IS_ACTIVE, P_CREATED_BY, P_CREATED_AT)
-            .fetchOne();
-
-    String createdByName =
-        dsl.select(U_NAME)
-            .from(USER_TABLE)
-            .where(U_ID.eq(createdBy))
-            .fetchOptional(r -> r.get(U_NAME))
-            .orElse(String.valueOf(createdBy));
-
-    return new PipelineResponse(
-        record.get(P_ID),
-        record.get(P_NAME),
-        record.get(P_DESCRIPTION),
-        record.get(P_IS_ACTIVE),
-        createdByName,
-        0,
-        0,
-        record.get(P_CREATED_AT));
-  }
+  PipelineResponse save(String name, String description, Long createdBy);
 
   /**
    * 메타데이터를 고치고 새로 저장된 수정 시각을 돌려준다(WD-353).
    *
-   * <p>Java 의 now() 가 아니라 DB 에 저장된 값(RETURNING)을 돌려준다 — PG timestamp 는 마이크로초로 반올림하므로 now() 를 그대로 돌려주면
-   * 다음 저장의 기준 버전이 저장값과 어긋나 자기 저장과 충돌한다.
+   * <p>Java 의 now() 가 아니라 DB 에 저장된 값(RETURNING)을 돌려준다 — PG timestamp 는 마이크로초로 반올림하므로 now() 를 그대로
+   * 돌려주면 다음 저장의 기준 버전이 저장값과 어긋나 자기 저장과 충돌한다.
    */
-  public LocalDateTime update(
-      Long id, String name, String description, Boolean isActive, Long updatedBy) {
-    var query =
-        dsl.update(PIPELINE)
-            .set(P_NAME, name)
-            .set(P_DESCRIPTION, description)
-            .set(P_UPDATED_AT, LocalDateTime.now())
-            .set(P_UPDATED_BY, updatedBy);
+  LocalDateTime update(Long id, String name, String description, Boolean isActive, Long updatedBy);
 
-    if (isActive != null) {
-      query = query.set(P_IS_ACTIVE, isActive);
-    }
+  void deleteById(Long id);
 
-    return query.where(P_ID.eq(id)).returning(P_UPDATED_AT).fetchOne(P_UPDATED_AT);
-  }
-
-  public void deleteById(Long id) {
-    dsl.deleteFrom(PIPELINE).where(P_ID.eq(id)).execute();
-  }
-
-  public boolean existsByName(String name) {
-    return dsl.fetchExists(dsl.selectOne().from(PIPELINE).where(P_NAME.eq(name)));
-  }
+  boolean existsByName(String name);
 
   /**
    * 파이프라인이 (지금 테넌트에) 있는가 — 연쇄 트리거의 선행 파이프라인 존재 확인용(WD-218).
    *
    * <p>RLS 가 걸린 일반 조회라 다른 테넌트의 파이프라인은 "없음"과 똑같이 보인다(존재를 떠보는 오라클이 되지 않는다).
    */
-  public boolean existsById(Long id) {
-    return dsl.fetchExists(dsl.selectOne().from(PIPELINE).where(P_ID.eq(id)));
-  }
+  boolean existsById(Long id);
 
   /** 주어진 id 중 (지금 테넌트에) 실제로 있는 파이프라인 id 만 돌려준다 — 트리거 목록의 선행 없음 표시를 한 번의 조회로 계산하기 위함(WD-218). */
-  public Set<Long> findExistingIds(Collection<Long> ids) {
-    if (ids.isEmpty()) {
-      return Set.of();
-    }
-    return new HashSet<>(dsl.select(P_ID).from(PIPELINE).where(P_ID.in(ids)).fetch(P_ID));
-  }
+  Set<Long> findExistingIds(Collection<Long> ids);
 
-  public Optional<String> findNameById(Long id) {
-    return dsl.select(P_NAME).from(PIPELINE).where(P_ID.eq(id)).fetchOptional(r -> r.get(P_NAME));
-  }
+  Optional<String> findNameById(Long id);
 
-  public Optional<Long> findCreatedByIdById(Long id) {
-    return dsl.select(P_CREATED_BY)
-        .from(PIPELINE)
-        .where(P_ID.eq(id))
-        .fetchOptional(r -> r.get(P_CREATED_BY));
-  }
+  Optional<Long> findCreatedByIdById(Long id);
 
-  public Optional<LocalDateTime> findUpdatedAtById(Long id) {
-    return dsl.select(P_UPDATED_AT)
-        .from(PIPELINE)
-        .where(P_ID.eq(id))
-        .fetchOptional(r -> r.get(P_UPDATED_AT));
-  }
+  Optional<LocalDateTime> findUpdatedAtById(Long id);
 
   /** 행 잠금으로 읽은 파이프라인 — 이름(삭제 감사용)과 수정 시각(낙관적 잠금 비교용, nullable 컬럼이라 null 일 수 있다). */
-  public record LockedPipeline(String name, LocalDateTime updatedAt) {}
+  record LockedPipeline(String name, LocalDateTime updatedAt) {}
 
   /**
    * 파이프라인 행을 FOR UPDATE 로 잠그고 읽는다. 행이 없으면 빈 값 — 수정·삭제 경로의 존재 확인(404)이다. 잠금은 호출 트랜잭션 끝까지 유지된다.
@@ -236,24 +59,13 @@ public class PipelineRepository {
    * <ul>
    *   <li>수정(WD-353): 잠금 없이 수정 시각을 읽고 비교하면 동시에 들어온 두 저장이 같은 값을 읽어 둘 다 통과한다. 잠그면 나중 저장은 앞 저장의 커밋을
    *       기다렸다가 바뀐 값을 읽어 충돌로 거부된다. 수정 시각이 빈 옛 행도 행은 있으므로 "없음"으로 거부하지 않는다.
-   *   <li>삭제와 실행 생성의 경쟁(WD-437): 실행 행 INSERT 는 FK 검사로 이 행에 FOR KEY SHARE 를 잡는데, 그것이 FOR UPDATE 와 충돌한다. 그래서
-   *       삭제가 잠근 뒤 진행 중 실행을 판정하면 (1) 실행 생성이 먼저면 그 커밋을 기다렸다가 새 실행을 보고 409, (2) 삭제가 먼저면 실행 INSERT 가 삭제
-   *       커밋까지 기다린 뒤 FK 위반으로 실패해 404 로 바뀐다(PipelineExecutionRepository#createExecution) — 어느 순서든 판정과 삭제 사이에 실행이
-   *       끼어들지 못한다.
+   *   <li>삭제와 실행 생성의 경쟁(WD-437): 실행 행 INSERT 는 FK 검사로 이 행에 FOR KEY SHARE 를 잡는데, 그것이 FOR UPDATE 와
+   *       충돌한다. 그래서 삭제가 잠근 뒤 진행 중 실행을 판정하면 (1) 실행 생성이 먼저면 그 커밋을 기다렸다가 새 실행을 보고 409, (2) 삭제가 먼저면 실행
+   *       INSERT 가 삭제 커밋까지 기다린 뒤 FK 위반으로 실패해 404 로 바뀐다(PipelineExecutionRepository#createExecution)
+   *       — 어느 순서든 판정과 삭제 사이에 실행이 끼어들지 못한다.
    * </ul>
    */
-  public Optional<LockedPipeline> lockById(Long id) {
-    return dsl.select(P_NAME, P_UPDATED_AT)
-        .from(PIPELINE)
-        .where(P_ID.eq(id))
-        .forUpdate()
-        .fetchOptional(r -> new LockedPipeline(r.get(P_NAME), r.get(P_UPDATED_AT)));
-  }
+  Optional<LockedPipeline> lockById(Long id);
 
-  public Optional<Long> findUpdatedByById(Long id) {
-    return dsl.select(P_UPDATED_BY)
-        .from(PIPELINE)
-        .where(P_ID.eq(id))
-        .fetchOptional(r -> r.get(P_UPDATED_BY));
-  }
+  Optional<Long> findUpdatedByById(Long id);
 }

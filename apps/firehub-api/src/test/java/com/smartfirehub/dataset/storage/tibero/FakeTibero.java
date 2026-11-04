@@ -137,7 +137,10 @@ final class FakeTibero {
     } else if (sql.contains("DATA_DEFAULT FROM USER_TAB_COLUMNS")) {
       String sequence = idDefaults.get(b.get(0));
       if (tables.containsKey(b.get(0))) {
-        rows.add(new Object[] {sequence == null ? null : "\"" + schema + "\".\"" + sequence + "\".NEXTVAL"});
+        rows.add(
+            new Object[] {
+              sequence == null ? null : "\"" + schema + "\".\"" + sequence + "\".NEXTVAL"
+            });
       }
     } else if (sql.startsWith("SELECT TRIGGER_NAME, STATUS, TRIGGERING_EVENT FROM USER_TRIGGERS")) {
       for (Object name : b) {

@@ -15,7 +15,7 @@ import com.smartfirehub.dataset.dto.UpdateColumnRequest;
 import com.smartfirehub.dataset.exception.ColumnModificationException;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
-import com.smartfirehub.dataset.rowsearch.SearchColumnRepository;
+import com.smartfirehub.dataset.repository.SearchColumnRepository;
 import com.smartfirehub.mapping.service.MappingReferenceService;
 import java.util.List;
 import java.util.Optional;

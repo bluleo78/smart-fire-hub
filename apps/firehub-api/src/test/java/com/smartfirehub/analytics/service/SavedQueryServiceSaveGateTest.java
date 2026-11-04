@@ -18,9 +18,9 @@ import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
 import java.util.Optional;
-import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -41,7 +41,7 @@ class SavedQueryServiceSaveGateTest {
     guard = mock(DatasetAccessGuard.class);
     ClearanceResolver resolver = mock(ClearanceResolver.class);
     when(resolver.resolve(1L)).thenReturn(viewer);
-    when(guard.visibleCondition(viewer)).thenReturn(DSL.trueCondition());
+    when(guard.visibility(viewer)).thenReturn(DatasetVisibility.UNRESTRICTED);
     // 판정과 무관한 협력자는 쓰이지 않으므로 null.
     service =
         new SavedQueryService(

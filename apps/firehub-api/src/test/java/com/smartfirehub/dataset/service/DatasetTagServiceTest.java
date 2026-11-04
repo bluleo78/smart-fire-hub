@@ -143,8 +143,8 @@ class DatasetTagServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * WD-389: 서비스의 대소문자 무시 검사를 지나 동시에 들어온 변형(Fire 뒤 fire)도 DB 가 막아 하나만 남는다. 검사와 삽입 사이에 끼어든
-   * 요청을 흉내 내려고 검사 없이 저장소 삽입을 바로 부른다 — 0 을 돌려주고(서비스는 이때 409) 행은 처음 것 하나뿐이다.
+   * WD-389: 서비스의 대소문자 무시 검사를 지나 동시에 들어온 변형(Fire 뒤 fire)도 DB 가 막아 하나만 남는다. 검사와 삽입 사이에 끼어든 요청을 흉내 내려고
+   * 검사 없이 저장소 삽입을 바로 부른다 — 0 을 돌려주고(서비스는 이때 409) 행은 처음 것 하나뿐이다.
    */
   @Test
   void insert_caseVariantOfExistingTag_isRejectedByDb() {

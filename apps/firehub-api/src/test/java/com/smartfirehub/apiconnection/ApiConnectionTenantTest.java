@@ -203,7 +203,7 @@ class ApiConnectionTenantTest extends IntegrationTestBase {
     assertThat(updateHealthStatusTxNames)
         .as("HTTP 구간을 감싸는 서비스 트랜잭션이 있으면 안 된다 — 커넥션 풀 점유가 재발한다")
         .containsExactly(
-            "com.smartfirehub.apiconnection.repository.ApiConnectionRepository.updateHealthStatus");
+            "com.smartfirehub.apiconnection.repository.jooq.JooqApiConnectionRepository.updateHealthStatus");
   }
 
   // ── 픽스처 헬퍼 ────────────────────────────────────────────────────────────

@@ -1,58 +1,20 @@
 package com.smartfirehub.analytics.repository;
 
-import static org.jooq.impl.DSL.*;
-
 import com.smartfirehub.analytics.dto.AddWidgetRequest;
 import com.smartfirehub.analytics.dto.DashboardResponse;
 import com.smartfirehub.analytics.dto.UpdateWidgetLayoutRequest;
 import com.smartfirehub.analytics.dto.UpdateWidgetRequest;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import lombok.RequiredArgsConstructor;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.Record;
-import org.jooq.Table;
-import org.springframework.stereotype.Repository;
 
-@Repository
-@RequiredArgsConstructor
-public class DashboardWidgetRepository {
-
-  private final DSLContext dsl;
-
-  // dashboard_widget table
-  private static final Table<?> DW = table(name("dashboard_widget"));
-  private static final Field<Long> DW_ID = field(name("dashboard_widget", "id"), Long.class);
-  private static final Field<Long> DW_DASHBOARD_ID =
-      field(name("dashboard_widget", "dashboard_id"), Long.class);
-  private static final Field<Long> DW_CHART_ID =
-      field(name("dashboard_widget", "chart_id"), Long.class);
-  private static final Field<Integer> DW_POSITION_X =
-      field(name("dashboard_widget", "position_x"), Integer.class);
-  private static final Field<Integer> DW_POSITION_Y =
-      field(name("dashboard_widget", "position_y"), Integer.class);
-  private static final Field<Integer> DW_WIDTH =
-      field(name("dashboard_widget", "width"), Integer.class);
-  private static final Field<Integer> DW_HEIGHT =
-      field(name("dashboard_widget", "height"), Integer.class);
-  private static final Field<LocalDateTime> DW_CREATED_AT =
-      field(name("dashboard_widget", "created_at"), LocalDateTime.class);
-  private static final Field<LocalDateTime> DW_UPDATED_AT =
-      field(name("dashboard_widget", "updated_at"), LocalDateTime.class);
-
-  // chart table (join for name/type)
-  private static final Table<?> C = table(name("chart"));
-  private static final Field<Long> C_ID = field(name("chart", "id"), Long.class);
-  private static final Field<String> C_NAME =
-      field(name("chart", "name"), String.class).as("chart_name");
-  private static final Field<String> C_CHART_TYPE =
-      field(name("chart", "chart_type"), String.class).as("chart_type");
+/**
+ * 분석 대시보드 위젯(dashboard_widget) 저장·조회 리포지토리.
+ *
+ * <p>구현은 {@code JooqDashboardWidgetRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ */
+public interface DashboardWidgetRepository {
 
   /**
    * 대시보드의 위젯 전체(차트 이름·종류 포함, 조회자 가시성 미적용 원본).
@@ -60,105 +22,25 @@ public class DashboardWidgetRepository {
    * <p>주의(WD-195): 조회자에게 보이지 않는 차트의 이름도 들어 있다. 응답에 직접 쓰지 말고 서비스의 withholdInaccessible 을 거친다. 공유 처리
    * (shareOwnedWidgetResources)는 모든 위젯의 차트 id 가 필요해서 여기서 거르지 않는다.
    */
-  public List<DashboardResponse.DashboardWidgetResponse> findByDashboardId(Long dashboardId) {
-    var records =
-        dsl.select(
-                DW_ID,
-                DW_CHART_ID,
-                C_NAME,
-                C_CHART_TYPE,
-                DW_POSITION_X,
-                DW_POSITION_Y,
-                DW_WIDTH,
-                DW_HEIGHT)
-            .from(DW)
-            .join(C)
-            .on(DW_CHART_ID.eq(C_ID))
-            .where(DW_DASHBOARD_ID.eq(dashboardId))
-            .orderBy(DW_POSITION_Y.asc(), DW_POSITION_X.asc())
-            .fetch();
+  List<DashboardResponse.DashboardWidgetResponse> findByDashboardId(Long dashboardId);
 
-    List<DashboardResponse.DashboardWidgetResponse> result = new ArrayList<>();
-    for (Record r : records) {
-      result.add(mapToWidgetResponse(r));
-    }
-    return result;
-  }
+  Optional<DashboardResponse.DashboardWidgetResponse> findById(Long widgetId, Long dashboardId);
 
-  public Optional<DashboardResponse.DashboardWidgetResponse> findById(
-      Long widgetId, Long dashboardId) {
-    Record r =
-        dsl.select(
-                DW_ID,
-                DW_CHART_ID,
-                C_NAME,
-                C_CHART_TYPE,
-                DW_POSITION_X,
-                DW_POSITION_Y,
-                DW_WIDTH,
-                DW_HEIGHT)
-            .from(DW)
-            .join(C)
-            .on(DW_CHART_ID.eq(C_ID))
-            .where(DW_ID.eq(widgetId).and(DW_DASHBOARD_ID.eq(dashboardId)))
-            .fetchOne();
-
-    if (r == null) return Optional.empty();
-    return Optional.of(mapToWidgetResponse(r));
-  }
-
-  public int countByDashboardId(Long dashboardId) {
-    return dsl.selectCount()
-        .from(DW)
-        .where(DW_DASHBOARD_ID.eq(dashboardId))
-        .fetchOne(0, Integer.class);
-  }
+  int countByDashboardId(Long dashboardId);
 
   /** 이 대시보드에 같은 차트 위젯이 이미 있는지(WD-202 — 같은 차트 중복 추가 거부용). */
-  public boolean existsByDashboardIdAndChartId(Long dashboardId, Long chartId) {
-    return dsl.fetchExists(
-        dsl.selectOne()
-            .from(DW)
-            .where(DW_DASHBOARD_ID.eq(dashboardId).and(DW_CHART_ID.eq(chartId))));
-  }
+  boolean existsByDashboardIdAndChartId(Long dashboardId, Long chartId);
 
-  public Long insert(Long dashboardId, AddWidgetRequest req) {
-    return dsl.insertInto(DW)
-        .set(DW_DASHBOARD_ID, dashboardId)
-        .set(DW_CHART_ID, req.chartId())
-        .set(DW_POSITION_X, req.positionX())
-        .set(DW_POSITION_Y, req.positionY())
-        .set(DW_WIDTH, req.width())
-        .set(DW_HEIGHT, req.height())
-        .returning(DW_ID)
-        .fetchOne()
-        .get(DW_ID);
-  }
+  Long insert(Long dashboardId, AddWidgetRequest req);
 
-  public void update(Long widgetId, UpdateWidgetRequest req) {
-    var update = dsl.update(DW).set(DW_UPDATED_AT, LocalDateTime.now());
-
-    if (req.positionX() != null) update = update.set(DW_POSITION_X, req.positionX());
-    if (req.positionY() != null) update = update.set(DW_POSITION_Y, req.positionY());
-    if (req.width() != null) update = update.set(DW_WIDTH, req.width());
-    if (req.height() != null) update = update.set(DW_HEIGHT, req.height());
-
-    update.where(DW_ID.eq(widgetId)).execute();
-  }
+  void update(Long widgetId, UpdateWidgetRequest req);
 
   /**
    * 주어진 위젯 id 중 해당 대시보드에 속한 것만 돌려준다 (WD-193).
    *
    * <p>배치 저장 전에 요청 위젯이 모두 경로 대시보드 소속인지 확인하는 데 쓴다.
    */
-  public Set<Long> findIdsInDashboard(Long dashboardId, Collection<Long> widgetIds) {
-    if (widgetIds.isEmpty()) return Set.of();
-    return new HashSet<>(
-        dsl.select(DW_ID)
-            .from(DW)
-            .where(DW_DASHBOARD_ID.eq(dashboardId).and(DW_ID.in(widgetIds)))
-            .fetch(DW_ID));
-  }
+  Set<Long> findIdsInDashboard(Long dashboardId, Collection<Long> widgetIds);
 
   /**
    * 위젯 배치를 일괄 갱신한다.
@@ -166,37 +48,8 @@ public class DashboardWidgetRepository {
    * <p>WD-193: 갱신 조건에 dashboard_id 를 함께 건다. 서비스가 먼저 소속을 확인하지만, 이 메서드를 다른 곳에서 불러도 다른 대시보드의 위젯은 절대
    * 바뀌지 않도록 하는 이중 방어다.
    */
-  public void batchUpdateLayout(
-      Long dashboardId, List<UpdateWidgetLayoutRequest.WidgetPosition> positions) {
-    for (UpdateWidgetLayoutRequest.WidgetPosition pos : positions) {
-      dsl.update(DW)
-          .set(DW_POSITION_X, pos.positionX())
-          .set(DW_POSITION_Y, pos.positionY())
-          .set(DW_WIDTH, pos.width())
-          .set(DW_HEIGHT, pos.height())
-          .set(DW_UPDATED_AT, LocalDateTime.now())
-          .where(DW_ID.eq(pos.widgetId()).and(DW_DASHBOARD_ID.eq(dashboardId)))
-          .execute();
-    }
-  }
+  void batchUpdateLayout(
+      Long dashboardId, List<UpdateWidgetLayoutRequest.WidgetPosition> positions);
 
-  public boolean deleteById(Long widgetId, Long dashboardId) {
-    int deleted =
-        dsl.deleteFrom(DW).where(DW_ID.eq(widgetId).and(DW_DASHBOARD_ID.eq(dashboardId))).execute();
-    return deleted > 0;
-  }
-
-  private DashboardResponse.DashboardWidgetResponse mapToWidgetResponse(Record r) {
-    return new DashboardResponse.DashboardWidgetResponse(
-        r.get(DW_ID),
-        r.get(DW_CHART_ID),
-        r.get("chart_name", String.class),
-        r.get("chart_type", String.class),
-        r.get(DW_POSITION_X),
-        r.get(DW_POSITION_Y),
-        r.get(DW_WIDTH),
-        r.get(DW_HEIGHT),
-        // 리포지토리는 조회자를 모르므로 원본 그대로 싣는다 — 조회자별 가림은 서비스(withholdInaccessible)가 한다(WD-195).
-        true);
-  }
+  boolean deleteById(Long widgetId, Long dashboardId);
 }

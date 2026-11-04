@@ -13,14 +13,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.admin.embedding.EmbeddingStatusService;
+import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
+import com.smartfirehub.dataset.repository.DatasetMetaReader;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.repository.DatasetSearchRepository;
 import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
-import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
 import com.smartfirehub.dataset.search.DatasetEmbeddingService;
-import com.smartfirehub.dataset.search.DatasetMetaReader;
 import com.smartfirehub.dataset.search.DatasetSearchHit;
 import com.smartfirehub.dataset.search.DatasetSearchMode;
-import com.smartfirehub.dataset.search.DatasetSearchRepository;
 import com.smartfirehub.dataset.search.DatasetSearchRequest;
 import com.smartfirehub.dataset.search.DatasetSearchService;
 import com.smartfirehub.dataset.search.DatasetSourceTextBuilder;
@@ -37,20 +38,25 @@ import com.smartfirehub.document.service.DocumentSearchService;
 import com.smartfirehub.document.service.DocumentStorageService;
 import com.smartfirehub.document.service.TextChunker;
 import com.smartfirehub.document.service.TextExtractor;
+import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.reembed.EmbeddingBacklogService;
-import com.smartfirehub.embedding.reembed.EmbeddingReembedStateRepository;
 import com.smartfirehub.embedding.reembed.TenantReembedJob;
+import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
 import com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.notification.service.NotificationService;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
+import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.securitylevel.ai.AiVectorPurgeService;
 import com.smartfirehub.securitylevel.ai.AiVectorPurgeStartupRunner;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
+import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import java.util.EnumSet;
 import java.util.List;
@@ -67,8 +73,9 @@ import org.springframework.http.HttpStatus;
  */
 class PlatformDbFeaturesOffPathTest {
 
-  private static final String VIS = "VIS_SQL";
   private static final Clearance CLEARANCE = Clearance.none(1L, 1L);
+  // 가드(목)가 캡처해 돌려주는 가시성 값 — 서비스가 이 값을 그대로 리포지토리에 넘기는지 eq(VIS) 로 고정한다(WD-485 T10).
+  private static final DatasetVisibility VIS = new DatasetVisibility(CLEARANCE, null);
 
   /** 지정한 기능만 켜진 스텁. */
   private static PlatformDbFeatures only(PlatformDbFeature... on) {
@@ -125,7 +132,7 @@ class PlatformDbFeaturesOffPathTest {
     var repo = mock(DatasetSearchRepository.class);
     var factory = mock(EmbeddingProviderFactory.class);
     var guard = mock(DatasetAccessGuard.class);
-    when(guard.visibleSql(CLEARANCE, "d")).thenReturn(VIS);
+    when(guard.visibility(CLEARANCE)).thenReturn(VIS);
     when(factory.current()).thenReturn(provider());
     return new DsFixture(repo, factory, new DatasetSearchService(repo, factory, guard, features));
   }
@@ -137,7 +144,7 @@ class PlatformDbFeaturesOffPathTest {
     var r =
         f.svc.search(new DatasetSearchRequest("화재", 10, DatasetSearchMode.HYBRID, null), CLEARANCE);
     assertThat(r).extracting(DatasetSearchHit::datasetId).containsExactly(1L);
-    verify(f.repo, never()).searchByCosine(any(), any(), any(), anyInt(), anyString());
+    verify(f.repo, never()).searchByCosine(any(), any(), any(), anyInt(), any());
     verifyNoInteractions(f.factory);
   }
 
@@ -149,7 +156,7 @@ class PlatformDbFeaturesOffPathTest {
     var r =
         f.svc.search(new DatasetSearchRequest("화재", 10, DatasetSearchMode.HYBRID, null), CLEARANCE);
     assertThat(r).extracting(DatasetSearchHit::datasetId).containsExactly(2L);
-    verify(f.repo, never()).searchByTrigram(anyString(), any(), anyInt(), anyString());
+    verify(f.repo, never()).searchByTrigram(anyString(), any(), anyInt(), any());
   }
 
   @Test
@@ -158,8 +165,8 @@ class PlatformDbFeaturesOffPathTest {
       var f = ds(only());
       var r = f.svc.search(new DatasetSearchRequest("화재", 10, mode, null), CLEARANCE);
       assertThat(r).isEmpty();
-      verify(f.repo, never()).searchByCosine(any(), any(), any(), anyInt(), anyString());
-      verify(f.repo, never()).searchByTrigram(anyString(), any(), anyInt(), anyString());
+      verify(f.repo, never()).searchByCosine(any(), any(), any(), anyInt(), any());
+      verify(f.repo, never()).searchByTrigram(anyString(), any(), anyInt(), any());
       verifyNoInteractions(f.factory);
     }
   }
@@ -176,7 +183,7 @@ class PlatformDbFeaturesOffPathTest {
             g.svc.search(
                 new DatasetSearchRequest("화재", 10, DatasetSearchMode.KEYWORD, null), CLEARANCE))
         .isEmpty();
-    verify(g.repo, never()).searchByTrigram(anyString(), any(), anyInt(), anyString());
+    verify(g.repo, never()).searchByTrigram(anyString(), any(), anyInt(), any());
   }
 
   // ---------- 문서 검색 ----------
@@ -188,7 +195,7 @@ class PlatformDbFeaturesOffPathTest {
     var repo = mock(DocumentChunkRepository.class);
     var factory = mock(EmbeddingProviderFactory.class);
     var guard = mock(DatasetAccessGuard.class);
-    when(guard.visibleSql(CLEARANCE, "d")).thenReturn(VIS);
+    when(guard.visibility(CLEARANCE)).thenReturn(VIS);
     when(factory.current()).thenReturn(provider());
     return new DocFixture(repo, factory, new DocumentSearchService(factory, repo, guard, features));
   }
@@ -204,7 +211,7 @@ class PlatformDbFeaturesOffPathTest {
         .thenReturn(List.of(chunkHit(1L)));
     var r = f.svc.search(new DocumentSearchRequest("질의", null, 5, SearchMode.HYBRID), CLEARANCE);
     assertThat(r).extracting(DocumentSearchHit::chunkId).containsExactly(1L);
-    verify(f.repo, never()).searchByCosine(any(), any(), any(), anyInt(), anyString());
+    verify(f.repo, never()).searchByCosine(any(), any(), any(), anyInt(), any());
     verifyNoInteractions(f.factory);
   }
 
@@ -215,7 +222,7 @@ class PlatformDbFeaturesOffPathTest {
         .thenReturn(List.of(chunkHit(2L)));
     var r = f.svc.search(new DocumentSearchRequest("질의", null, 5, SearchMode.HYBRID), CLEARANCE);
     assertThat(r).extracting(DocumentSearchHit::chunkId).containsExactly(2L);
-    verify(f.repo, never()).searchByTrigram(anyString(), any(), anyInt(), anyString());
+    verify(f.repo, never()).searchByTrigram(anyString(), any(), anyInt(), any());
   }
 
   @Test
@@ -224,8 +231,8 @@ class PlatformDbFeaturesOffPathTest {
       var f = doc(only());
       var r = f.svc.search(new DocumentSearchRequest("질의", null, 5, mode), CLEARANCE);
       assertThat(r).isEmpty();
-      verify(f.repo, never()).searchByCosine(any(), any(), any(), anyInt(), anyString());
-      verify(f.repo, never()).searchByTrigram(anyString(), any(), anyInt(), anyString());
+      verify(f.repo, never()).searchByCosine(any(), any(), any(), anyInt(), any());
+      verify(f.repo, never()).searchByTrigram(anyString(), any(), anyInt(), any());
       verifyNoInteractions(f.factory);
     }
   }
@@ -360,10 +367,10 @@ class PlatformDbFeaturesOffPathTest {
             gate,
             dsRepo,
             chunks,
-            mock(com.smartfirehub.dataset.rowsearch.SearchIndexStateRepository.class),
+            mock(com.smartfirehub.dataset.repository.SearchIndexStateRepository.class),
             mock(com.smartfirehub.dataset.rowsearch.RowSearchIndex.class),
             mock(DatasetRepository.class),
-            mock(com.smartfirehub.ontology.graphread.GraphOntologySourceRepository.class),
+            mock(com.smartfirehub.ontology.repository.GraphOntologySourceRepository.class),
             only());
 
     var r =
@@ -379,5 +386,80 @@ class PlatformDbFeaturesOffPathTest {
 
     assertThat(r.failures()).isZero();
     verifyNoInteractions(gate, dsRepo, chunks);
+  }
+
+  // ---------- 벡터 테이블 읽기 가드(WD-485, WD-486 이월) ----------
+
+  private static final EmbeddingSpace SPACE = new EmbeddingSpace(EmbeddingDimension.D1024, "fake");
+
+  private static final EmbeddingAllowance ALLOWANCE =
+      new EmbeddingAllowance(ProviderHosting.EXTERNAL);
+
+  @Test
+  void 임베딩_상태_벡터_꺼짐이면_분자만_0_이고_벡터_테이블_조회가_없다_분모는_그대로() {
+    var datasets = mock(DatasetEmbeddingRepository.class);
+    var chunks = mock(DocumentChunkRepository.class);
+    var config = mock(EmbeddingConfigService.class);
+    var state = mock(EmbeddingReembedStateRepository.class);
+    var gate = mock(EmbeddingAiGate.class);
+    when(gate.allowance()).thenReturn(ALLOWANCE);
+    when(config.currentSpace()).thenReturn(Optional.of(SPACE));
+    when(datasets.countAll(ALLOWANCE)).thenReturn(28L);
+    when(chunks.countAllChunks(ALLOWANCE)).thenReturn(500L);
+    var svc = new EmbeddingStatusService(datasets, chunks, config, state, gate, only());
+
+    var r = svc.status();
+
+    // 분모는 기반 테이블이라 그대로 읽고, 벡터 테이블을 읽는 분자만 0 이다.
+    assertThat(r.datasets().total()).isEqualTo(28L);
+    assertThat(r.datasets().embedded()).isZero();
+    assertThat(r.documentChunks().total()).isEqualTo(500L);
+    assertThat(r.documentChunks().embedded()).isZero();
+    verify(datasets, never()).countEmbedded(any());
+    verify(chunks, never()).countEmbedded(any());
+    // 허용값은 한 번만 캡처한다.
+    verify(gate).allowance();
+  }
+
+  @Test
+  void 백로그_벡터_꺼짐이면_영향도_누락_수는_0_이고_hasWork_는_false_이며_벡터_조회가_없다() {
+    var chunks = mock(DocumentChunkRepository.class);
+    var datasets = mock(DatasetEmbeddingRepository.class);
+    var indexStates = mock(com.smartfirehub.dataset.repository.SearchIndexStateRepository.class);
+    var gate = mock(EmbeddingAiGate.class);
+    when(gate.allowance()).thenReturn(ALLOWANCE);
+    when(indexStates.countStale(any(), anyInt())).thenReturn(4L);
+    var svc = new EmbeddingBacklogService(chunks, datasets, indexStates, gate, only());
+
+    var impact = svc.impact(SPACE);
+
+    assertThat(impact.chunks()).isZero();
+    assertThat(impact.datasets()).isZero();
+    // 행 검색 색인 stale 수는 벡터 테이블을 읽지 않아 그대로다.
+    assertThat(impact.rowSearchIndexes()).isEqualTo(4L);
+    assertThat(svc.hasWork(SPACE)).isFalse();
+    verify(chunks, never()).countMissing(any(), any());
+    verify(datasets, never()).countMissing(any(), any());
+  }
+
+  @Test
+  void 백로그_벡터_켜짐이면_허용값을_한_번만_캡처해_두_리포지토리에_같이_넘긴다() {
+    var chunks = mock(DocumentChunkRepository.class);
+    var datasets = mock(DatasetEmbeddingRepository.class);
+    var indexStates = mock(com.smartfirehub.dataset.repository.SearchIndexStateRepository.class);
+    var gate = mock(EmbeddingAiGate.class);
+    when(gate.allowance()).thenReturn(ALLOWANCE);
+    when(chunks.countMissing(SPACE, ALLOWANCE)).thenReturn(2L);
+    when(datasets.countMissing(SPACE, ALLOWANCE)).thenReturn(3L);
+    var svc =
+        new EmbeddingBacklogService(
+            chunks, datasets, indexStates, gate, only(PlatformDbFeature.VECTOR_SEARCH));
+
+    var impact = svc.impact(SPACE);
+
+    assertThat(impact.chunks()).isEqualTo(2L);
+    assertThat(impact.datasets()).isEqualTo(3L);
+    verify(gate).allowance();
+    assertThat(svc.hasWork(SPACE)).isTrue();
   }
 }

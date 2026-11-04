@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.UpdateColumnRequest;
+import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.embedding.EmbeddingProvider;

@@ -116,8 +116,7 @@ public class RoleClearanceService {
 
   /** 주어진 자격으로 볼 수 있는 데이터셋 수. */
   private long visibleCount(Clearance c) {
-    return levelRepository.countDatasets(
-        (datasetId, levelId) -> guard.visibleCondition(c, datasetId, levelId));
+    return levelRepository.countDatasets(guard.visibility(c));
   }
 
   /** 이 역할의 자격만 바꿨을 때 호출자의 새 rank = (나머지 보유 역할들의 rank, 새 rank) 의 최댓값. */

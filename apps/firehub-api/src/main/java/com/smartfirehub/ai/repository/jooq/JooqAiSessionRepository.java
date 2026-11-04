@@ -1,0 +1,339 @@
+package com.smartfirehub.ai.repository.jooq;
+
+import static org.jooq.impl.DSL.*;
+
+import com.smartfirehub.ai.dto.AiSessionResponse;
+import com.smartfirehub.ai.dto.CreateAiSessionRequest;
+import com.smartfirehub.ai.repository.AiSessionRepository;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+import lombok.RequiredArgsConstructor;
+import org.jooq.DSLContext;
+import org.jooq.Field;
+import org.jooq.Table;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * AiSessionRepository 의 jOOQ(PostgreSQL) 구현 — WD-485.
+ *
+ * <p>AI 세션 레포지토리. jOOQ DSLContext 기반 type-safe SQL로 ai_session 테이블을 관리한다. WEB(기본) 및 SLACK 채널 소스를
+ * 지원한다.
+ *
+ * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code tenant_id} 가 생겼고 V104 에서 RLS 가 걸린다. 테넌트
+ * 값은 트랜잭션-로컬 GUC 이므로, 트랜잭션 없이 도는 경로에서는 세션 INSERT 가 NOT NULL 위반으로 깨지고 조회는 조용히 0행이 된다. 전파 REQUIRED
+ * 이므로 컨트롤러 경로의 동작은 불변이다.
+ *
+ * <p><b>Slack inbound — 해소됨(P2-f Task 5).</b> 이 어노테이션은 트랜잭션이 없다는 문제만 푼다. {@code
+ * SlackInboundService} 의 {@code @Async} 스레드에는 애초에 {@link
+ * com.smartfirehub.global.tenant.TenantContext} 가 없고(원 요청이 permitAll Slack 웹훅이라 승계할 테넌트가 없다),
+ * {@code TenantAwareTransactionManager.doBegin} 은 컨텍스트가 null 이면 GUC 를 <b>아예 세팅하지 않는다</b>. 즉
+ * 트랜잭션만으로는 여전히 조회 0행 / INSERT NOT NULL 위반이었다.
+ *
+ * <p>이 구멍은 이제 <b>호출자 쪽에서</b> 막혀 있다. {@code SlackInboundService.dispatch} 가 본 처리에 들어가기 전에 {@code
+ * SlackWorkspaceTenantResolver}(V106 의 {@code SECURITY DEFINER} 함수, V95 패턴)로 {@code team_id →
+ * tenant_id} 를 해석하고 {@code TenantContext.runScoped} 안에서 나머지를 돌린다. 따라서 여기서 부르는 {@code
+ * createSlackSession}/{@code findBySlackContext} 는 올바른 테넌트 컨텍스트를 갖고 도착한다. 이전 판정("배경 쓰기 경로에 테넌트 해석이
+ * 없는 유일한 테이블")은 <b>더 이상 유효하지 않다</b>.
+ *
+ * <p>{@code @Async("slackInboundExecutor")} 빈은 커밋 {@code 968a28c2} 에서 지워졌다가 이슈 #709 에서 되살아났다 —
+ * Slack inbound 경로는 이제 실제로 돈다. 이 경로의 계약은 {@code SlackInboundService} 클래스 javadoc 에 있다(특히 "{@code
+ * TenantContextTaskDecorator} 는 이 경로의 안전 조건이 아니다").
+ */
+@Transactional
+@Repository
+@RequiredArgsConstructor
+public class JooqAiSessionRepository implements AiSessionRepository {
+
+  private final DSLContext dsl;
+
+  /**
+   * ai_session.title 컬럼의 DB 제약(VARCHAR(255))과 동일한 상한. 프론트가 트렁케이트를 빠뜨리거나(예: 클라이언트 버그) 길이 제한 없는 다른
+   * 호출자가 생기더라도, 제목이 길다는 이유로 세션 row 자체가 INSERT 실패(409)하는 일이 없도록 저장 직전에 항상 여기서 한 번 더 잘라낸다(WD-58). 제목
+   * 길이와 세션 생성 가능 여부를 분리하는 것이 핵심 — 제목이 잘려도 대화 이력은 반드시 영속화돼야 한다.
+   */
+  private static final int TITLE_MAX_LENGTH = 255;
+
+  private static final Table<?> AI_SESSION = table(name("ai_session"));
+  private static final Field<Long> ID = field(name("ai_session", "id"), Long.class);
+  private static final Field<Long> USER_ID = field(name("ai_session", "user_id"), Long.class);
+  private static final Field<String> SESSION_ID =
+      field(name("ai_session", "session_id"), String.class);
+  private static final Field<String> CONTEXT_TYPE =
+      field(name("ai_session", "context_type"), String.class);
+  private static final Field<Long> CONTEXT_RESOURCE_ID =
+      field(name("ai_session", "context_resource_id"), Long.class);
+  private static final Field<String> TITLE = field(name("ai_session", "title"), String.class);
+  private static final Field<LocalDateTime> CREATED_AT =
+      field(name("ai_session", "created_at"), LocalDateTime.class);
+  private static final Field<LocalDateTime> UPDATED_AT =
+      field(name("ai_session", "updated_at"), LocalDateTime.class);
+
+  // V55에서 추가된 Slack 컨텍스트 필드
+  private static final Field<String> CHANNEL_SOURCE =
+      field(name("ai_session", "channel_source"), String.class);
+  private static final Field<String> SLACK_TEAM_ID =
+      field(name("ai_session", "slack_team_id"), String.class);
+  private static final Field<String> SLACK_CHANNEL_ID =
+      field(name("ai_session", "slack_channel_id"), String.class);
+  private static final Field<String> SLACK_THREAD_TS =
+      field(name("ai_session", "slack_thread_ts"), String.class);
+
+  /**
+   * 사용자 ID로 AI 세션 목록을 페이지네이션 조회한다.
+   *
+   * <p>page·size 파라미터로 LIMIT/OFFSET 슬라이싱을 적용하여 전체 세션이 아닌 요청된 범위만 반환한다. 기존에는 전체 목록을 반환하여 세션 수가 많을 때
+   * 성능 저하가 발생했다.
+   *
+   * @param userId 조회할 사용자 ID
+   * @param page 0-based 페이지 번호
+   * @param size 페이지당 항목 수
+   * @return 페이지네이션된 세션 응답 목록 (updatedAt 내림차순 정렬)
+   */
+  @Override
+  public List<AiSessionResponse> findByUserId(Long userId, int page, int size) {
+    return dsl.select(
+            ID,
+            USER_ID,
+            SESSION_ID,
+            CONTEXT_TYPE,
+            CONTEXT_RESOURCE_ID,
+            TITLE,
+            CREATED_AT,
+            UPDATED_AT)
+        .from(AI_SESSION)
+        .where(USER_ID.eq(userId))
+        .orderBy(UPDATED_AT.desc())
+        .limit(size)
+        .offset((long) page * size)
+        .fetch(
+            r ->
+                AiSessionResponse.ofWeb(
+                    r.get(ID),
+                    r.get(USER_ID),
+                    r.get(SESSION_ID),
+                    r.get(CONTEXT_TYPE),
+                    r.get(CONTEXT_RESOURCE_ID),
+                    r.get(TITLE),
+                    r.get(CREATED_AT),
+                    r.get(UPDATED_AT)));
+  }
+
+  @Override
+  public Optional<AiSessionResponse> findById(Long id) {
+    return dsl.select(
+            ID,
+            USER_ID,
+            SESSION_ID,
+            CONTEXT_TYPE,
+            CONTEXT_RESOURCE_ID,
+            TITLE,
+            CREATED_AT,
+            UPDATED_AT)
+        .from(AI_SESSION)
+        .where(ID.eq(id))
+        .fetchOptional(
+            r ->
+                AiSessionResponse.ofWeb(
+                    r.get(ID),
+                    r.get(USER_ID),
+                    r.get(SESSION_ID),
+                    r.get(CONTEXT_TYPE),
+                    r.get(CONTEXT_RESOURCE_ID),
+                    r.get(TITLE),
+                    r.get(CREATED_AT),
+                    r.get(UPDATED_AT)));
+  }
+
+  @Override
+  public Optional<AiSessionResponse> findByUserIdAndContext(
+      Long userId, String contextType, Long contextResourceId) {
+    return dsl.select(
+            ID,
+            USER_ID,
+            SESSION_ID,
+            CONTEXT_TYPE,
+            CONTEXT_RESOURCE_ID,
+            TITLE,
+            CREATED_AT,
+            UPDATED_AT)
+        .from(AI_SESSION)
+        .where(
+            USER_ID
+                .eq(userId)
+                .and(CONTEXT_TYPE.eq(contextType))
+                .and(CONTEXT_RESOURCE_ID.eq(contextResourceId)))
+        .fetchOptional(
+            r ->
+                AiSessionResponse.ofWeb(
+                    r.get(ID),
+                    r.get(USER_ID),
+                    r.get(SESSION_ID),
+                    r.get(CONTEXT_TYPE),
+                    r.get(CONTEXT_RESOURCE_ID),
+                    r.get(TITLE),
+                    r.get(CREATED_AT),
+                    r.get(UPDATED_AT)));
+  }
+
+  @Override
+  public Optional<AiSessionResponse> findByUserIdAndSessionId(Long userId, String sessionId) {
+    return dsl.select(
+            ID,
+            USER_ID,
+            SESSION_ID,
+            CONTEXT_TYPE,
+            CONTEXT_RESOURCE_ID,
+            TITLE,
+            CREATED_AT,
+            UPDATED_AT)
+        .from(AI_SESSION)
+        .where(USER_ID.eq(userId).and(SESSION_ID.eq(sessionId)))
+        .fetchOptional(
+            r ->
+                AiSessionResponse.ofWeb(
+                    r.get(ID),
+                    r.get(USER_ID),
+                    r.get(SESSION_ID),
+                    r.get(CONTEXT_TYPE),
+                    r.get(CONTEXT_RESOURCE_ID),
+                    r.get(TITLE),
+                    r.get(CREATED_AT),
+                    r.get(UPDATED_AT)));
+  }
+
+  /** 이 세션이 다른 사용자에게 기록돼 있는지. RLS 로 현재 테넌트 안에서만 본다. */
+  @Override
+  public boolean existsForOtherUser(Long userId, String sessionId) {
+    return dsl.fetchExists(AI_SESSION, SESSION_ID.eq(sessionId).and(USER_ID.ne(userId)));
+  }
+
+  @Override
+  public AiSessionResponse create(Long userId, CreateAiSessionRequest request) {
+    Long id =
+        dsl.insertInto(AI_SESSION)
+            .set(USER_ID, userId)
+            .set(SESSION_ID, request.sessionId())
+            .set(CONTEXT_TYPE, request.contextType())
+            .set(CONTEXT_RESOURCE_ID, request.contextResourceId())
+            .set(TITLE, truncateTitle(request.title()))
+            .set(CREATED_AT, currentLocalDateTime())
+            .set(UPDATED_AT, currentLocalDateTime())
+            .returningResult(ID)
+            .fetchOne()
+            .get(ID);
+
+    return findById(id).orElseThrow();
+  }
+
+  @Override
+  public void updateTitle(Long id, String title) {
+    dsl.update(AI_SESSION)
+        .set(TITLE, truncateTitle(title))
+        .set(UPDATED_AT, currentLocalDateTime())
+        .where(ID.eq(id))
+        .execute();
+  }
+
+  /** title이 {@link #TITLE_MAX_LENGTH}를 넘으면 잘라낸다(WD-58). null은 그대로 둔다. */
+  private static String truncateTitle(String title) {
+    if (title == null || title.length() <= TITLE_MAX_LENGTH) {
+      return title;
+    }
+    return title.substring(0, TITLE_MAX_LENGTH);
+  }
+
+  @Override
+  public void delete(Long id) {
+    dsl.deleteFrom(AI_SESSION).where(ID.eq(id)).execute();
+  }
+
+  // -----------------------------------------------------------------------
+  // Slack 인바운드 전용 메서드 (V55)
+  // -----------------------------------------------------------------------
+
+  /**
+   * SLACK 스레드 기준 세션 조회. (slack_team_id, slack_channel_id, slack_thread_ts) 3-tuple로 고유 식별. 동일 스레드의
+   * 후속 메시지가 기존 세션을 재사용할 수 있도록 한다.
+   *
+   * @param teamId Slack 워크스페이스 team_id
+   * @param channelId Slack 채널 ID
+   * @param threadTs Slack 스레드 타임스탬프 (없으면 최초 메시지 ts)
+   * @return 해당 스레드에 연결된 세션, 없으면 Optional.empty()
+   */
+  @Override
+  public Optional<AiSessionResponse> findBySlackContext(
+      String teamId, String channelId, String threadTs) {
+    return dsl.select(
+            ID,
+            USER_ID,
+            SESSION_ID,
+            CONTEXT_TYPE,
+            CONTEXT_RESOURCE_ID,
+            TITLE,
+            CREATED_AT,
+            UPDATED_AT,
+            CHANNEL_SOURCE,
+            SLACK_TEAM_ID,
+            SLACK_CHANNEL_ID,
+            SLACK_THREAD_TS)
+        .from(AI_SESSION)
+        .where(
+            CHANNEL_SOURCE
+                .eq("SLACK")
+                .and(SLACK_TEAM_ID.eq(teamId))
+                .and(SLACK_CHANNEL_ID.eq(channelId))
+                .and(SLACK_THREAD_TS.eq(threadTs)))
+        .fetchOptional(
+            r ->
+                new AiSessionResponse(
+                    r.get(ID),
+                    r.get(USER_ID),
+                    r.get(SESSION_ID),
+                    r.get(CONTEXT_TYPE),
+                    r.get(CONTEXT_RESOURCE_ID),
+                    r.get(TITLE),
+                    r.get(CREATED_AT),
+                    r.get(UPDATED_AT),
+                    r.get(CHANNEL_SOURCE),
+                    r.get(SLACK_TEAM_ID),
+                    r.get(SLACK_CHANNEL_ID),
+                    r.get(SLACK_THREAD_TS)));
+  }
+
+  /**
+   * 새 SLACK 세션을 INSERT하고 생성된 row의 id를 반환한다. session_id에는 ai-agent 서비스가 발급한 외부 세션 ID를 저장한다.
+   * uk_ai_session_slack_thread UNIQUE 제약 위반 시 DataIntegrityViolationException 발생.
+   *
+   * @param userId Smart Fire Hub 사용자 ID
+   * @param aiAgentSessionId ai-agent 서비스 세션 ID (session_id 컬럼)
+   * @param teamId Slack 워크스페이스 team_id
+   * @param channelId Slack 채널 ID
+   * @param threadTs Slack 스레드 타임스탬프
+   * @param title 세션 제목 (예: "Slack 대화")
+   * @return 생성된 ai_session.id
+   */
+  @Override
+  public long createSlackSession(
+      long userId,
+      String aiAgentSessionId,
+      String teamId,
+      String channelId,
+      String threadTs,
+      String title) {
+    return dsl.insertInto(AI_SESSION)
+        .set(USER_ID, userId)
+        .set(SESSION_ID, aiAgentSessionId)
+        .set(TITLE, truncateTitle(title))
+        .set(CHANNEL_SOURCE, "SLACK")
+        .set(SLACK_TEAM_ID, teamId)
+        .set(SLACK_CHANNEL_ID, channelId)
+        .set(SLACK_THREAD_TS, threadTs)
+        .set(CREATED_AT, currentLocalDateTime())
+        .set(UPDATED_AT, currentLocalDateTime())
+        .returningResult(ID)
+        .fetchOne()
+        .get(ID);
+  }
+}

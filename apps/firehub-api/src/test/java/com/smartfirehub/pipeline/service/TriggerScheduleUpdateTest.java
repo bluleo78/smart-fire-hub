@@ -311,8 +311,8 @@ class TriggerScheduleUpdateTest extends IntegrationTestBase {
   }
 
   /**
-   * WD-366 — 검증 전에 매초로 저장된 옛 행은 재기동·토글로 다시 걸리지 않는다. 스케줄 등록 자체가 거부하고(재기동은 트리거마다 예외를 잡는다),
-   * 켜기는 커밋 전에 400 이다.
+   * WD-366 — 검증 전에 매초로 저장된 옛 행은 재기동·토글로 다시 걸리지 않는다. 스케줄 등록 자체가 거부하고(재기동은 트리거마다 예외를 잡는다), 켜기는 커밋 전에
+   * 400 이다.
    */
   @Test
   void storedTooFrequentRow_isNotRegisteredAndCannotBeEnabled() {

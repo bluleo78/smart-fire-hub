@@ -518,8 +518,7 @@ class PipelineTriggerAuditTest extends IntegrationTestBase {
                         Map.of("datasetIds", List.of(999_999_999L))),
                     userId))
         .isInstanceOfSatisfying(
-            CodedApiException.class,
-            e -> assertThat(e.status()).isEqualTo(HttpStatus.FORBIDDEN));
+            CodedApiException.class, e -> assertThat(e.status()).isEqualTo(HttpStatus.FORBIDDEN));
 
     assertThat(audits("DELETE", "pipeline_trigger", created.id())).isEmpty();
     assertThat(audits("STATUS_CHANGE", "pipeline_trigger", created.id())).isEmpty();

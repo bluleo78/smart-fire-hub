@@ -177,8 +177,8 @@ class AiCredentialProbeStatusMappingTest {
   }
 
   /**
-   * WD-50 — PROVIDER_REJECTED 라도 httpStatus 가 401(인증 거부, 404 아님)이면 기존대로 422 차단. 아래
-   * {@code PUT_모델목록_미지원_게이트웨이는_저장되고_경고를_반환한다()} 와 짝을 이뤄 "404 만" 경고로 낮춘다는 구분을 증명한다.
+   * WD-50 — PROVIDER_REJECTED 라도 httpStatus 가 401(인증 거부, 404 아님)이면 기존대로 422 차단. 아래 {@code
+   * PUT_모델목록_미지원_게이트웨이는_저장되고_경고를_반환한다()} 와 짝을 이뤄 "404 만" 경고로 낮춘다는 구분을 증명한다.
    */
   @Test
   void PUT_공급자_거부_401은_여전히_422이고_저장하지_않는다() throws Exception {
@@ -186,7 +186,9 @@ class AiCredentialProbeStatusMappingTest {
     when(settingsService.getValue("ai.model")).thenReturn(Optional.empty());
     when(opencodeProbeService.probe(
             eq(AiCredentialSlot.CHAT), any(OpencodeProbeService.TargetCheck.class), any()))
-        .thenReturn(new ProbeResult(false, List.of(), "공급자가 거부했습니다 (status=401)", Reason.PROVIDER_REJECTED, 401));
+        .thenReturn(
+            new ProbeResult(
+                false, List.of(), "공급자가 거부했습니다 (status=401)", Reason.PROVIDER_REJECTED, 401));
 
     mockMvc
         .perform(
@@ -200,8 +202,8 @@ class AiCredentialProbeStatusMappingTest {
   }
 
   /**
-   * WD-50 — {@code /models} 가 404(엔드포인트 자체가 없음)이면 "공급자가 진짜로 거부했다"와 달리 저장을 막지 않는다. 자격증명은
-   * 그대로 저장되고(채팅은 /models 없이도 동작), 응답에 경고 문구만 실린다. 200(기존 204 와 구분)으로 호출부가 경고가 있었음을 알 수 있다.
+   * WD-50 — {@code /models} 가 404(엔드포인트 자체가 없음)이면 "공급자가 진짜로 거부했다"와 달리 저장을 막지 않는다. 자격증명은 그대로
+   * 저장되고(채팅은 /models 없이도 동작), 응답에 경고 문구만 실린다. 200(기존 204 와 구분)으로 호출부가 경고가 있었음을 알 수 있다.
    */
   @Test
   void PUT_모델목록_미지원_게이트웨이는_저장되고_경고를_반환한다() throws Exception {
@@ -210,7 +212,8 @@ class AiCredentialProbeStatusMappingTest {
     when(opencodeProbeService.probe(
             eq(AiCredentialSlot.CHAT), any(OpencodeProbeService.TargetCheck.class), any()))
         .thenReturn(
-            new ProbeResult(false, List.of(), "공급자가 요청을 거부했습니다 (status=404)", Reason.PROVIDER_REJECTED, 404));
+            new ProbeResult(
+                false, List.of(), "공급자가 요청을 거부했습니다 (status=404)", Reason.PROVIDER_REJECTED, 404));
 
     mockMvc
         .perform(

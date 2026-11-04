@@ -22,6 +22,7 @@ import com.smartfirehub.pipeline.service.StoreTransactions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.time.LocalDateTime;
@@ -30,8 +31,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
-import org.jooq.Condition;
-import org.jooq.impl.DSL;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -88,13 +87,13 @@ public class SavedQueryService {
    * 응답의 연결 데이터셋 이름 가시성(보안 등급, 스펙 §2.5) — 조회자가 볼 수 없는 데이터셋은 이름만 null, datasetId 는 유지(웹 편집기가 PUT 으로
    * 되돌려 보내는 참조를 지우지 않게).
    */
-  private Condition datasetNameVisible(Long userId) {
+  private DatasetVisibility datasetNameVisible(Long userId) {
     return datasetNameVisible(clearanceResolver.resolve(userId));
   }
 
   /** 이미 계산한 자격으로 — 한 메서드에서 판정과 이름 가시성에 같은 자격을 쓸 때 DB 왕복을 한 번으로(리뷰 M3). */
-  private Condition datasetNameVisible(Clearance viewer) {
-    return datasetAccessGuard.visibleCondition(viewer);
+  private DatasetVisibility datasetNameVisible(Clearance viewer) {
+    return datasetAccessGuard.visibility(viewer);
   }
 
   /**
@@ -197,13 +196,13 @@ public class SavedQueryService {
         savedQueryRepository
             .lockUpdatedAtById(id)
             .orElseThrow(() -> new SavedQueryNotFoundException())
-            .value1();
+            .updatedAt();
     EditConflictException.check(req.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
     // 감사 비교용 저장 전 값(WD-464) — 행 잠금 뒤에 다시 읽는다. 잠금 전 값은 기준 버전 없이 들어온 저장(AI 도구)과 동시 저장이 겹치면
     // 남의 변경이 이 저장의 바뀐 항목으로 잡힌다.
     SavedQueryResponse auditBefore =
         savedQueryRepository
-            .findByIdForOwner(id, userId, DSL.trueCondition())
+            .findByIdForOwner(id, userId, DatasetVisibility.UNRESTRICTED)
             .orElseThrow(() -> new SavedQueryNotFoundException());
 
     // 연결 데이터셋을 바꾸는 경우만 판정한다(create 와 같은 404) — 웹 편집기가 기존 값(편집자가 자격을 잃은 숨김 id 포함)을 그대로 되돌려
@@ -263,7 +262,7 @@ public class SavedQueryService {
     // Verify ownership first — 응답을 쓰지 않으므로 이름 가시성 조건은 필요 없다. 감사에 남길 이름·공유 여부는 지우기 전에 읽어 둔다(WD-464).
     SavedQueryResponse target =
         savedQueryRepository
-            .findByIdForOwner(id, userId, DSL.trueCondition())
+            .findByIdForOwner(id, userId, DatasetVisibility.UNRESTRICTED)
             .orElseThrow(() -> new SavedQueryNotFoundException());
     boolean deleted = savedQueryRepository.deleteById(id, userId);
     if (!deleted) {
@@ -284,7 +283,7 @@ public class SavedQueryService {
   @Transactional(readOnly = true)
   public DeleteImpactResponse getDeleteImpact(Long id, Long userId) {
     savedQueryRepository
-        .findByIdForOwner(id, userId, DSL.trueCondition())
+        .findByIdForOwner(id, userId, DatasetVisibility.UNRESTRICTED)
         .orElseThrow(() -> new SavedQueryNotFoundException());
     List<DeleteImpactResponse.ChartRawRef> charts =
         chartRepository.findImpactRefsBySavedQueryId(id, userId);
@@ -322,20 +321,20 @@ public class SavedQueryService {
             .orElseThrow(() -> new SavedQueryNotFoundException());
 
     // Verify access: owner or shared
-    boolean isShared = Boolean.TRUE.equals(raw.get("is_shared", Boolean.class));
-    Long ownerId = raw.get("created_by", Long.class);
+    boolean isShared = Boolean.TRUE.equals(raw.isShared());
+    Long ownerId = raw.createdBy();
     if (!isShared && !ownerId.equals(userId)) {
       throw new SavedQueryNotFoundException();
     }
 
-    String originalName = raw.get("name", String.class);
+    String originalName = raw.name();
     CreateSavedQueryRequest cloneReq =
         new CreateSavedQueryRequest(
             cloneName(originalName),
-            raw.get("description", String.class),
-            raw.get("sql_text", String.class),
-            raw.get("dataset_id", Long.class),
-            raw.get("folder", String.class),
+            raw.description(),
+            raw.sqlText(),
+            raw.datasetId(),
+            raw.folder(),
             false);
 
     Long newId = savedQueryRepository.insert(cloneReq, userId);

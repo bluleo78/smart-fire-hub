@@ -1,121 +1,19 @@
 package com.smartfirehub.user.repository;
 
-import static com.smartfirehub.jooq.Tables.*;
-import static org.jooq.impl.DSL.count;
-import static org.jooq.impl.DSL.countDistinct;
-import static org.jooq.impl.DSL.exists;
-import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.lower;
-import static org.jooq.impl.DSL.name;
-import static org.jooq.impl.DSL.selectOne;
-import static org.jooq.impl.DSL.table;
-
-import com.smartfirehub.global.platformdb.PlatformLocks;
-import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.user.dto.UserResponse;
-import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
-import org.jooq.Condition;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.Record;
-import org.jooq.SelectField;
-import org.jooq.Table;
-import org.springframework.stereotype.Repository;
 
-@Repository
-@RequiredArgsConstructor
-public class UserRepository {
+/**
+ * 사용자(user 테이블)와 역할 할당(user_role)·테넌트 멤버십(membership) 저장·조회 리포지토리.
+ *
+ * <p>구현은 {@code JooqUserRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ */
+public interface UserRepository {
 
-  /**
-   * 멤버십 테이블 참조 — jOOQ 코드젠 대상이 아니라 이름으로 만든다.
-   *
-   * <p>{@code membership} 은 {@code MembershipRepository} 도 같은 방식(=생성 클래스 없음)으로 참조한다. 테넌트 선택
-   * <b>전에</b> 조회돼야 하는 전역 테이블이라 RLS 가 없고, 코드젠이 도는 {@code public} 스키마에 있으면서도 도메인 테이블과 다른 계층에 속한다.
-   */
-  private static final Table<?> MEMBERSHIP = table(name("membership"));
+  Optional<UserResponse> findByUsername(String username);
 
-  private static final Field<Long> M_USER_ID = field(name("membership", "user_id"), Long.class);
-  private static final Field<Long> M_TENANT_ID = field(name("membership", "tenant_id"), Long.class);
-  private static final Field<String> M_STATUS = field(name("membership", "status"), String.class);
-
-  private final DSLContext dsl;
-
-  /** 가입·관리자 가드 직렬화 잠금 — PG advisory 호출을 플랫폼 잠금 추상화로 위임한다(WD-486). */
-  private final PlatformLocks locks;
-
-  /**
-   * "이 사용자가 주어진 테넌트의 ACTIVE 멤버인가" 를 {@code "user"} 행에 대해 판정하는 술어.
-   *
-   * <p><b>왜 RLS 가 아니라 명시적 조인인가:</b> {@code "user"} 는 설계상 <b>전역</b> 테이블이다 (tenant_id 컬럼도, RLS 정책도 없다
-   * — 한 사람이 여러 테넌트에 속할 수 있어야 하고, 로그인은 테넌트가 정해지기 <b>전에</b> 사용자를 찾아야 하기 때문이다). 즉 다른 도메인 테이블처럼 GUC 기반
-   * RLS 로 덮을 수 없는 유일한 경로이며, 테넌트 경계는 이렇게 애플리케이션 쿼리에서 직접 세워야 한다. 이 술어가 빠지면 한 테넌트의 ADMIN 이 다른 테넌트 사용자를
-   * 전부 열람·수정할 수 있다.
-   *
-   * <p>{@code tenant.status} 는 보지 않는다 — 테넌트 활성 여부는 로그인/테넌트 선택 시점의 게이트이고({@code
-   * MembershipRepository.hasActiveMembership}), 여기까지 왔다는 것은 그 게이트를 이미 통과했다는 뜻이다. 목록 술어를 단순하게 유지한다.
-   */
-  private Condition memberOfTenant(long tenantId) {
-    return exists(
-        selectOne()
-            .from(MEMBERSHIP)
-            .where(M_USER_ID.eq(USER.ID))
-            .and(M_TENANT_ID.eq(tenantId))
-            .and(M_STATUS.eq("ACTIVE")));
-  }
-
-  /**
-   * "이 사용자가 주어진 테넌트의 멤버인가(ACTIVE·SUSPENDED 모두)" — 관리 목록 전용 술어.
-   *
-   * <p>정지(SUSPENDED) 멤버도 관리자 목록에 보여야 재활성·제거할 수 있다(WD-2). 메시지 수신자 해석처럼 "지금 활동 중인 멤버" 가 필요한 경로는
-   * {@link #memberOfTenant} 를 계속 쓴다.
-   */
-  private Condition inTenant(long tenantId) {
-    return exists(
-        selectOne().from(MEMBERSHIP).where(M_USER_ID.eq(USER.ID)).and(M_TENANT_ID.eq(tenantId)));
-  }
-
-  /**
-   * {@link #mapToUserResponse} 가 읽는 컬럼 목록 — select·returning 이 공유한다. 한 곳만 컬럼이 빠지면 매퍼에서 런타임 오류가 나므로
-   * 목록을 하나로 둔다.
-   */
-  private static final List<SelectField<?>> USER_FIELDS =
-      List.of(
-          USER.ID,
-          USER.USERNAME,
-          USER.EMAIL,
-          USER.NAME,
-          USER.IS_ACTIVE,
-          USER.CREATED_AT,
-          USER.MUST_CHANGE_PASSWORD);
-
-  private UserResponse mapToUserResponse(Record r) {
-    return new UserResponse(
-        r.get(USER.ID),
-        r.get(USER.USERNAME),
-        r.get(USER.EMAIL),
-        r.get(USER.NAME),
-        r.get(USER.IS_ACTIVE),
-        r.get(USER.CREATED_AT),
-        Boolean.TRUE.equals(r.get(USER.MUST_CHANGE_PASSWORD)));
-  }
-
-  public Optional<UserResponse> findByUsername(String username) {
-    return dsl.select(USER_FIELDS)
-        .from(USER)
-        .where(USER.USERNAME.eq(username))
-        .fetchOptional(this::mapToUserResponse);
-  }
-
-  public Optional<UserResponse> findById(Long id) {
-    return dsl.select(USER_FIELDS)
-        .from(USER)
-        .where(USER.ID.eq(id))
-        .fetchOptional(this::mapToUserResponse);
-  }
+  Optional<UserResponse> findById(Long id);
 
   /**
    * 로그인 입력을 저장된 username 으로 해석한다(WD-269). 찾지 못하면 소문자로 정규화한 입력을 돌려준다.
@@ -127,33 +25,13 @@ public class UserRepository {
    *
    * <p>찾지 못했을 때도 정규화한 값을 돌려주는 이유: 호출자가 로그인 시도 카운터 키로 쓴다. 입력 그대로 쓰면 대소문자만 바꿔 가며 잠금을 피할 수 있다.
    */
-  public String resolveLoginUsername(String input) {
-    String trimmed = input.trim();
-    if (dsl.fetchExists(dsl.selectOne().from(USER).where(USER.USERNAME.eq(trimmed)))) {
-      return trimmed;
-    }
-    return findByUsernameIgnoreCase(trimmed)
-        .map(UserResponse::username)
-        .orElse(trimmed.toLowerCase(Locale.ROOT));
-  }
+  String resolveLoginUsername(String input);
 
-  public Optional<String> findPasswordByUsername(String username) {
-    return dsl.select(USER.PASSWORD)
-        .from(USER)
-        .where(USER.USERNAME.eq(username))
-        .fetchOptional(r -> r.get(USER.PASSWORD));
-  }
+  Optional<String> findPasswordByUsername(String username);
 
-  public Optional<String> findPasswordById(Long id) {
-    return dsl.select(USER.PASSWORD)
-        .from(USER)
-        .where(USER.ID.eq(id))
-        .fetchOptional(r -> r.get(USER.PASSWORD));
-  }
+  Optional<String> findPasswordById(Long id);
 
-  public boolean existsByUsername(String username) {
-    return dsl.fetchExists(dsl.selectOne().from(USER).where(USER.USERNAME.eq(username)));
-  }
+  boolean existsByUsername(String username);
 
   /**
    * 사용자가 한 명이라도 있는지 (테넌트 무관, 전역).
@@ -162,18 +40,14 @@ public class UserRepository {
    * 현재 테넌트 소속으로 좁혀지면서 그 판정이 "이 테넌트의 첫 멤버" 로 바뀌어 버린다 — 부트스트랩 의미(시스템 최초 사용자)와 다르다. 전역이라는 사실을 이름으로 드러내
    * 분리한다.
    */
-  public boolean existsAnyUser() {
-    return dsl.fetchExists(dsl.selectOne().from(USER));
-  }
+  boolean existsAnyUser();
 
   /**
    * Acquire a transaction-scoped advisory lock for first-user detection. Serializes concurrent
    * signup requests that might race for ADMIN role assignment. The lock is automatically released
    * when the transaction ends.
    */
-  public void acquireFirstUserLock() {
-    locks.xactLock(1L);
-  }
+  void acquireFirstUserLock();
 
   /**
    * 테넌트 단위 "마지막 활성 ADMIN" 판정 직렬화 잠금(트랜잭션 범위, WD-2 리뷰 지적 3).
@@ -182,26 +56,9 @@ public class UserRepository {
    * 번째 커밋 뒤의 수를 본다(READ COMMITTED). 키는 접두어를 붙인 문자열 해시다 — 가입 잠금({@link #acquireFirstUserLock} 의 키
    * 1)과 같은 숫자 키 공간을 쓰지만 테넌트 id 를 그대로 키로 쓰면 테넌트 1 이 가입 잠금과 충돌하므로 네임스페이스를 나눈다.
    */
-  public void acquireMemberAdminGuardLock(long tenantId) {
-    locks.xactLock("member-admin-guard:" + tenantId);
-  }
+  void acquireMemberAdminGuardLock(long tenantId);
 
-  public UserResponse save(String username, String email, String password, String name) {
-    return insert(username, email, password, name, false);
-  }
-
-  /** 계정 삽입 공통부. mustChangePassword 만 경로(가입 vs 관리자 임시 비밀번호)마다 다르다. */
-  private UserResponse insert(
-      String username, String email, String password, String name, boolean mustChangePassword) {
-    return dsl.insertInto(USER)
-        .set(USER.USERNAME, username)
-        .set(USER.EMAIL, email)
-        .set(USER.PASSWORD, password)
-        .set(USER.NAME, name)
-        .set(USER.MUST_CHANGE_PASSWORD, mustChangePassword)
-        .returning(USER_FIELDS)
-        .fetchOne(this::mapToUserResponse);
-  }
+  UserResponse save(String username, String email, String password, String name);
 
   /**
    * username 대소문자 무시 조회 — 멤버 추가 시 "이미 가입된 계정인가" 판정용.
@@ -209,20 +66,11 @@ public class UserRepository {
    * <p>username 은 이메일이고 사람마다 대소문자를 섞어 입력한다. 정확 일치만 보면 같은 사람의 두 번째 계정이 생긴다. 같은 값이 대소문자만 달리 두 행 있는 과거
    * 데이터는 id 가 작은 쪽을 쓴다.
    */
-  public Optional<UserResponse> findByUsernameIgnoreCase(String username) {
-    return dsl.select(USER_FIELDS)
-        .from(USER)
-        .where(lower(USER.USERNAME).eq(username.toLowerCase(Locale.ROOT)))
-        .orderBy(USER.ID.asc())
-        .limit(1)
-        .fetchOptional(this::mapToUserResponse);
-  }
+  Optional<UserResponse> findByUsernameIgnoreCase(String username);
 
   /** 관리자가 임시 비밀번호로 만드는 계정 — 첫 로그인 시 변경 강제 표식을 켠 채 저장한다. */
-  public UserResponse saveWithTemporaryPassword(
-      String username, String email, String encodedPassword, String name) {
-    return insert(username, email, encodedPassword, name, true);
-  }
+  UserResponse saveWithTemporaryPassword(
+      String username, String email, String encodedPassword, String name);
 
   /**
    * 사용자 목록 — <b>현재 테넌트의 멤버(ACTIVE·SUSPENDED 모두)</b>. 정지 멤버도 보여야 재활성·제거할 수 있다.
@@ -231,27 +79,7 @@ public class UserRepository {
    * MembershipRepository} 도 인자로 받는다). ThreadLocal 과 트랜잭션 GUC 가 어긋날 수 있는 경로가 실제로 존재하므로({@code
    * CurrentTransactionTenant} 참고), 테넌트 해석은 트랜잭션 경계를 아는 서비스 레이어에서 한 번만 한다.
    */
-  public List<UserResponse> findAllPaginated(long tenantId, String search, int page, int size) {
-    Condition condition = inTenant(tenantId);
-
-    if (search != null && !search.isBlank()) {
-      String pattern = LikePatternUtils.containsPattern(search);
-      condition =
-          condition.and(
-              USER.USERNAME
-                  .likeIgnoreCase(pattern, '\\')
-                  .or(USER.NAME.likeIgnoreCase(pattern, '\\'))
-                  .or(USER.EMAIL.likeIgnoreCase(pattern, '\\')));
-    }
-
-    return dsl.select(USER_FIELDS)
-        .from(USER)
-        .where(condition)
-        .orderBy(USER.ID.asc())
-        .limit(size)
-        .offset((long) page * size)
-        .fetch(this::mapToUserResponse);
-  }
+  List<UserResponse> findAllPaginated(long tenantId, String search, int page, int size);
 
   /**
    * 주어진 ID들에 해당하는 사용자를 현재 테넌트 멤버로 한정하여 조회한다 (#555).
@@ -259,51 +87,16 @@ public class UserRepository {
    * <p>알림 수신자 등 이미 ID로 저장된 값을 이름/이메일로 되살릴 때(하이드레이션) 사용 — {@link #findAllPaginated}는 검색어 기반이라 검색을
    * 거치지 않은 기존 선택값은 찾지 못한다.
    */
-  public List<UserResponse> findByIds(long tenantId, List<Long> ids) {
-    if (ids == null || ids.isEmpty()) {
-      return List.of();
-    }
-    Condition condition = memberOfTenant(tenantId).and(USER.ID.in(ids));
-    return dsl.select(USER_FIELDS).from(USER).where(condition).fetch(this::mapToUserResponse);
-  }
+  List<UserResponse> findByIds(long tenantId, List<Long> ids);
 
   /** {@link #findAllPaginated} 의 총건수. 같은 테넌트 술어를 반드시 함께 적용해야 페이지가 맞는다. */
-  public long countAll(long tenantId, String search) {
-    Condition condition = inTenant(tenantId);
-
-    if (search != null && !search.isBlank()) {
-      String pattern = LikePatternUtils.containsPattern(search);
-      condition =
-          condition.and(
-              USER.USERNAME
-                  .likeIgnoreCase(pattern, '\\')
-                  .or(USER.NAME.likeIgnoreCase(pattern, '\\'))
-                  .or(USER.EMAIL.likeIgnoreCase(pattern, '\\')));
-    }
-
-    return dsl.select(count()).from(USER).where(condition).fetchOne(0, Long.class);
-  }
+  long countAll(long tenantId, String search);
 
   /** 이름·프로필 이메일을 바꾼다. 해당 사용자가 없어 바뀐 행이 없으면 false — 존재 확인을 따로 조회하지 않으려고 결과로 돌려준다. */
-  public boolean update(Long id, String name, String email) {
-    return dsl.update(USER)
-            .set(USER.NAME, name)
-            .set(USER.EMAIL, email)
-            .set(USER.UPDATED_AT, LocalDateTime.now())
-            .where(USER.ID.eq(id))
-            .execute()
-        > 0;
-  }
+  boolean update(Long id, String name, String email);
 
   /** 비밀번호를 바꾸고, 임시 비밀번호 표식도 내린다(본인 변경이 유일한 호출처). */
-  public void updatePassword(Long id, String encodedPassword) {
-    dsl.update(USER)
-        .set(USER.PASSWORD, encodedPassword)
-        .set(USER.MUST_CHANGE_PASSWORD, false)
-        .set(USER.UPDATED_AT, LocalDateTime.now())
-        .where(USER.ID.eq(id))
-        .execute();
-  }
+  void updatePassword(Long id, String encodedPassword);
 
   /**
    * 전역 계정 활성 플래그 — 운영자 콘솔 계정 비활성화/재활성화(#784, PlatformAccountService)만 쓴다. 테넌트 정지는 멤버십.
@@ -311,14 +104,7 @@ public class UserRepository {
    * <p>이미 그 값이면 바꾸지 않고 0 을 돌려준다. 동시 요청 중 실제로 바꾼 쪽만 1 을 받는다 — 뒤 요청은 행 잠금을 기다린 뒤 새 값으로 조건을 다시
    * 평가한다(WD-322). 호출자는 0 이면 감사·세션 폐기를 하지 않는다.
    */
-  public int setActive(Long id, boolean active) {
-    return dsl.update(USER)
-        .set(USER.IS_ACTIVE, active)
-        .set(USER.UPDATED_AT, LocalDateTime.now())
-        .where(USER.ID.eq(id))
-        .and(USER.IS_ACTIVE.ne(active))
-        .execute();
-  }
+  int setActive(Long id, boolean active);
 
   /**
    * 이 테넌트의 "활성 ADMIN" 수 — 잠금 방지(마지막 ADMIN 정지·제거 금지) 판정용 (#146, WD-2).
@@ -327,49 +113,17 @@ public class UserRepository {
    * 테넌트에서 정지된 ADMIN 도 "활성" 으로 세어 마지막 활성 ADMIN 정지를 허용했다. RLS 에 기대지 않고 tenant_id 를 명시하는 이유:
    * membership 은 RLS 가 없다.
    */
-  public int countActiveAdmins(long tenantId) {
-    return dsl.select(countDistinct(USER.ID))
-        .from(activeAdminsOf(tenantId))
-        .where(ACTIVE_ADMIN_CONDITION)
-        .fetchOne(0, Integer.class);
-  }
+  int countActiveAdmins(long tenantId);
 
   /**
    * 이 테넌트의 "활성 ADMIN" 사용자 id 목록(WD-169). 트리거가 정지·권한 회수로 건너뛰었을 때 알릴 워크스페이스 관리자를 고르는 데 쓴다. 정의는 {@link
    * #countActiveAdmins} 와 같다 — 멤버십 ACTIVE + 이 테넌트 ADMIN 역할 + 전역 계정 활성. membership.role(OWNER/ADMIN
    * 라벨)은 표시용이라 쓰지 않는다.
    */
-  public List<Long> findActiveAdminIds(long tenantId) {
-    return dsl.selectDistinct(USER.ID)
-        .from(activeAdminsOf(tenantId))
-        .where(ACTIVE_ADMIN_CONDITION)
-        .orderBy(USER.ID)
-        .fetch(USER.ID);
-  }
-
-  /**
-   * 활성 ADMIN 판정의 조인 — 세는 쪽과 고르는 쪽이 같은 정의를 쓰게 한 곳에 둔다(WD-169). tenant_id 를 명시한다(membership 은 RLS 가
-   * 없다).
-   */
-  private Table<?> activeAdminsOf(long tenantId) {
-    return USER.join(USER_ROLE)
-        .on(USER_ROLE.USER_ID.eq(USER.ID).and(USER_ROLE.TENANT_ID.eq(tenantId)))
-        .join(ROLE)
-        .on(ROLE.ID.eq(USER_ROLE.ROLE_ID).and(ROLE.TENANT_ID.eq(tenantId)))
-        .join(MEMBERSHIP)
-        .on(M_USER_ID.eq(USER.ID).and(M_TENANT_ID.eq(tenantId)));
-  }
-
-  /** 활성 ADMIN 판정의 조건 — ADMIN 역할 + 이 테넌트 멤버십 ACTIVE + 전역 계정 활성. */
-  private static final Condition ACTIVE_ADMIN_CONDITION =
-      ROLE.NAME.eq("ADMIN").and(M_STATUS.eq("ACTIVE")).and(USER.IS_ACTIVE.isTrue());
+  List<Long> findActiveAdminIds(long tenantId);
 
   /** 이 테넌트에서 사용자의 역할 배정을 모두 지운다(멤버 제거). RLS 와 별개로 tenant_id 를 명시한다. */
-  public int deleteRolesInTenant(Long userId, long tenantId) {
-    return dsl.deleteFrom(USER_ROLE)
-        .where(USER_ROLE.USER_ID.eq(userId).and(USER_ROLE.TENANT_ID.eq(tenantId)))
-        .execute();
-  }
+  int deleteRolesInTenant(Long userId, long tenantId);
 
   /**
    * 특정 사용자가 ADMIN 역할을 갖고 있는지 확인한다. 마지막 ADMIN 비활성화 방지 체크에 사용 (#146).
@@ -377,37 +131,11 @@ public class UserRepository {
    * @param userId 확인할 사용자 ID
    * @return 해당 사용자가 ADMIN 역할을 보유하면 true
    */
-  public boolean hasAdminRole(Long userId) {
-    return dsl.fetchExists(
-        dsl.selectOne()
-            .from(USER_ROLE)
-            .join(ROLE)
-            .on(ROLE.ID.eq(USER_ROLE.ROLE_ID))
-            .where(USER_ROLE.USER_ID.eq(userId).and(ROLE.NAME.eq("ADMIN"))));
-  }
+  boolean hasAdminRole(Long userId);
 
-  public void addRole(Long userId, Long roleId) {
-    dsl.insertInto(USER_ROLE)
-        .set(USER_ROLE.USER_ID, userId)
-        .set(USER_ROLE.ROLE_ID, roleId)
-        .execute();
-  }
+  void addRole(Long userId, Long roleId);
 
-  public void removeRole(Long userId, Long roleId) {
-    dsl.deleteFrom(USER_ROLE)
-        .where(USER_ROLE.USER_ID.eq(userId).and(USER_ROLE.ROLE_ID.eq(roleId)))
-        .execute();
-  }
+  void removeRole(Long userId, Long roleId);
 
-  public void setRoles(Long userId, List<Long> roleIds) {
-    dsl.deleteFrom(USER_ROLE).where(USER_ROLE.USER_ID.eq(userId)).execute();
-
-    if (!roleIds.isEmpty()) {
-      var insert = dsl.insertInto(USER_ROLE, USER_ROLE.USER_ID, USER_ROLE.ROLE_ID);
-      for (Long roleId : roleIds) {
-        insert = insert.values(userId, roleId);
-      }
-      insert.execute();
-    }
-  }
+  void setRoles(Long userId, List<Long> roleIds);
 }

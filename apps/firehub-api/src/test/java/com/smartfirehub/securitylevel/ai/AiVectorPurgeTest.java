@@ -9,9 +9,9 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
+import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.dataset.rowsearch.RowSearchSyncService;
-import com.smartfirehub.dataset.rowsearch.SearchIndexStateRepository;
-import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
 import com.smartfirehub.document.dto.Chunk;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
@@ -533,8 +533,7 @@ class AiVectorPurgeTest extends IntegrationTestBase {
   /** 키셋 시작점을 이 테스트 데이터셋 바로 앞에 둔다 — 공유 DB 의 다른 행 수가 증거를 가리지 않게. */
   private List<Long> missingDatasetIds() {
     return embeddingRepository
-        .findMissing(
-            SPACE, Math.min(pubId, sensId) - 1, 100, gate.allowedDatasetSql("de.dataset_id"))
+        .findMissing(SPACE, Math.min(pubId, sensId) - 1, 100, gate.allowance())
         .stream()
         .map(DatasetEmbeddingRepository.SourceTextRow::datasetId)
         .toList();

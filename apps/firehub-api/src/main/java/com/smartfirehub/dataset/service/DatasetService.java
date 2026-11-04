@@ -6,6 +6,7 @@ import com.smartfirehub.dataset.dto.CloneDatasetRequest;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.dto.DatasetColumnSnapshot;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.dto.DatasetReferencesResponse;
 import com.smartfirehub.dataset.dto.DatasetResponse;
@@ -24,9 +25,9 @@ import com.smartfirehub.dataset.repository.DatasetReferenceRepository;
 import com.smartfirehub.dataset.repository.DatasetReferenceRepository.DashboardHit;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
+import com.smartfirehub.dataset.repository.SearchColumnRepository;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.rowsearch.RowSearchIndex;
-import com.smartfirehub.dataset.rowsearch.SearchColumnRepository;
 import com.smartfirehub.dataset.rowsearch.SearchConfig;
 import com.smartfirehub.dataset.rowsearch.SearchIndexSettingsService;
 import com.smartfirehub.dataset.search.DatasetChangedEvent;
@@ -43,6 +44,7 @@ import com.smartfirehub.pipeline.repository.TriggerRepository;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
@@ -55,9 +57,6 @@ import java.util.Set;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.Condition;
-import org.jooq.Record;
-import org.jooq.exception.IntegrityConstraintViolationException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -244,7 +243,7 @@ public class DatasetService {
       String tableName,
       String backupTableName,
       long backupTableOid,
-      List<org.jooq.Record> columnSnapshot,
+      List<DatasetColumnSnapshot> columnSnapshot,
       Long previousLevelId,
       java.time.LocalDateTime previousAutoRaisedAt) {
 
@@ -254,7 +253,7 @@ public class DatasetService {
         String tableName,
         String backupTableName,
         long backupTableOid,
-        List<org.jooq.Record> columnSnapshot,
+        List<DatasetColumnSnapshot> columnSnapshot,
         Long previousLevelId) {
       this(
           datasetId,
@@ -299,7 +298,7 @@ public class DatasetService {
       }
     }
     // 되돌리기 재료는 무엇이든 바꾸기 전에 읽는다.
-    List<org.jooq.Record> columnSnapshot = columnRepository.snapshotByDatasetId(datasetId);
+    List<DatasetColumnSnapshot> columnSnapshot = columnRepository.snapshotByDatasetId(datasetId);
     Long previousLevelId = datasetSecurityService.currentLevelId(datasetId);
     java.time.LocalDateTime previousAutoRaisedAt =
         datasetSecurityService.currentAutoRaisedAt(datasetId);
@@ -406,16 +405,16 @@ public class DatasetService {
    * <p>구분: 필드 사이 U+001F(단위 구분자), 행 끝 U+001E(레코드 구분자). 컬럼 이름은 식별자 규칙상 제어 문자를 담을 수 없어 경계가 모호하지 않다. 입력
    * 순서(스냅숏은 column_order 순)와 무관하게 id 로 정렬한다. data_type 이 null 이면 문자열 {@code null} 로 둔다.
    */
-  public static String columnMetaFingerprint(List<Record> columnSnapshot) {
-    List<Record> sorted = new ArrayList<>(columnSnapshot);
-    sorted.sort(Comparator.comparingLong(r -> ((Number) r.get("id")).longValue()));
+  public static String columnMetaFingerprint(List<DatasetColumnSnapshot> columnSnapshot) {
+    List<DatasetColumnSnapshot> sorted = new ArrayList<>(columnSnapshot);
+    sorted.sort(Comparator.comparingLong(DatasetColumnSnapshot::id));
     StringBuilder text = new StringBuilder();
-    for (Record r : sorted) {
-      text.append(r.get("id"))
+    for (DatasetColumnSnapshot r : sorted) {
+      text.append(r.id())
           .append('\u001F')
-          .append(r.get("column_name"))
+          .append(r.columnName())
           .append('\u001F')
-          .append(r.get("data_type"))
+          .append(r.dataType())
           .append('\u001E');
     }
     // SearchConfig.sha256 은 UTF-8 SHA-256 소문자 hex — 앞 32자만 지문으로 쓴다.
@@ -558,7 +557,7 @@ public class DatasetService {
       boolean favoriteOnly,
       Long securityLevelId) {
     // 목록은 항상 현재 사용자 가시성 조건과 함께 조회한다(스펙 §4.2 1행).
-    Condition access = datasetAccessGuard.visibleCondition();
+    DatasetVisibility access = datasetAccessGuard.visibility();
     List<DatasetResponse> content =
         datasetRepository.findAll(
             categoryId,
@@ -676,7 +675,7 @@ public class DatasetService {
    * 없음, V142). 테이블명은 물리 제약이라 전체에서 보되 문구를 일반화한다.
    */
   private void requireUnusedNameAndTableName(String name, String tableName) {
-    if (datasetRepository.existsVisibleByName(name, datasetAccessGuard.visibleCondition(), null)) {
+    if (datasetRepository.existsVisibleByName(name, datasetAccessGuard.visibility(), null)) {
       throw new DuplicateDatasetNameException(DUPLICATE_NAME_MESSAGE + name);
     }
     if (datasetRepository.existsByTableName(tableName)) {
@@ -694,7 +693,7 @@ public class DatasetService {
     if (request.name() != null
         && !request.name().equals(current.name())
         && datasetRepository.existsVisibleByName(
-            request.name(), datasetAccessGuard.visibleCondition(), id)) {
+            request.name(), datasetAccessGuard.visibility(), id)) {
       throw new DuplicateDatasetNameException(DUPLICATE_NAME_MESSAGE + request.name());
     }
 
@@ -1071,11 +1070,14 @@ public class DatasetService {
       try {
         // 데이터 존재 여부와 무관하게 시도하고, DB 가 거부하면 친화적인 메시지로 변환한다.
         // - NOT NULL → NULL 허용: 항상 안전
-        // - NULL 허용 → NOT NULL: 컬럼에 NULL 값이 있으면 Postgres 가 거부 (jOOQ
-        // IntegrityConstraintViolationException)
+        // - NULL 허용 → NOT NULL: 컬럼에 NULL 값이 있으면 DB 가 거부(PG SQLSTATE 23502)
+        // 거부는 Spring DataIntegrityViolationException 으로 온다(WD-485): PG 저장소는 플랫폼 DSLContext 의
+        // ExceptionTranslatorExecuteListener 가 jOOQ 예외를 Spring 계층으로 번역하고, Tibero 저장소는 jOOQ 를 쓰지
+        // 않는다.
+        // 그래서 예전에 함께 잡던 jOOQ IntegrityConstraintViolationException 은 이 경로에 올 수 없어 뺐다.
         dataTableService.setColumnNullable(
             dataset.tableName(), currentColName, request.isNullable());
-      } catch (IntegrityConstraintViolationException | DataIntegrityViolationException e) {
+      } catch (DataIntegrityViolationException e) {
         if (!request.isNullable()) {
           throw new ColumnModificationException(
               "NOT NULL 로 변경할 수 없습니다: 컬럼 '" + currentColName + "' 에 NULL 값이 존재합니다.");

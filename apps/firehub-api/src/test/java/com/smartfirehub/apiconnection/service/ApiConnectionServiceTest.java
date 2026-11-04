@@ -440,8 +440,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
   void getReferences_withReferencingPipeline_returnsPipeline() {
     ApiConnectionResponse created =
         apiConnectionService.create(validReq("https://ref.example.com"), testUserId);
-    Long pipelineId =
-        createPipelineWithApiCallStep("inspector-fk-test-" + System.nanoTime(), created.id());
+    String pipelineName = "inspector-fk-test-" + System.nanoTime();
+    Long pipelineId = createPipelineWithApiCallStep(pipelineName, created.id());
 
     try {
       ApiConnectionReferencesResponse refs = apiConnectionService.getReferences(created.id());
@@ -449,6 +449,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
       assertThat(refs.totalCount()).isEqualTo(1);
       assertThat(refs.pipelines()).hasSize(1);
       assertThat(refs.pipelines().get(0).id()).isEqualTo(pipelineId);
+      // 리포지토리가 돌려주는 참조 파이프라인 행(ReferencingPipeline, WD-485)의 이름도 그대로 옮겨진다
+      assertThat(refs.pipelines().get(0).name()).isEqualTo(pipelineName);
     } finally {
       deletePipeline(pipelineId);
     }

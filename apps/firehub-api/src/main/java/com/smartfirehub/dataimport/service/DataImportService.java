@@ -44,7 +44,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jobrunr.jobs.annotations.Job;
 import org.jobrunr.scheduling.JobScheduler;
-import org.jooq.JSONB;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -1205,19 +1204,17 @@ public class DataImportService {
     if (duplicateKeyRows != null) target.put("duplicateKeyRows", duplicateKeyRows);
   }
 
+  /**
+   * 감사 로그 메타데이터(JSON 문자열)를 맵으로 읽는다. 감사 리포지토리가 JSONB 를 문자열로 풀어 주므로({@code
+   * AuditLogResponse.metadata}) 여기서는 jOOQ JSONB 를 다루지 않는다(WD-485). 읽지 못하면 빈 맵.
+   */
   @SuppressWarnings("unchecked")
-  private Map<String, Object> parseMetadata(Object metadata) {
+  private Map<String, Object> parseMetadata(String metadata) {
     if (metadata == null) {
       return Map.of();
     }
     try {
-      String json;
-      if (metadata instanceof JSONB jsonb) {
-        json = jsonb.data();
-      } else {
-        json = metadata.toString();
-      }
-      return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+      return objectMapper.readValue(metadata, new TypeReference<Map<String, Object>>() {});
     } catch (Exception e) {
       log.warn("Failed to parse audit log metadata", e);
       return Map.of();

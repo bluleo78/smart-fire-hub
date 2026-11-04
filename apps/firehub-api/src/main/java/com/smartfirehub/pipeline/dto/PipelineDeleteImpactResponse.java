@@ -10,8 +10,8 @@ import java.util.List;
  *     않는다(실제 삭제와 같은 판정). 호출자가 볼 수 없는 것도 세지 않는다(WD-310 — 숨긴 개수를 드러내지 않게).
  * @param hasHiddenTempDatasets 호출자가 볼 수 없는 임시 데이터셋이 함께 지워질 대상에 있는가(WD-310). true 면 삭제가 403 이라 확인 창이
  *     삭제를 막고 안내한다.
- * @param activeExecution 진행 중(PENDING/RUNNING) 실행 상태(WD-437) — NONE 이 아니면 삭제가 409 라 확인 창이 삭제를 막고 안내한다.
- *     CANCELLING 은 진행 중 실행이 모두 이미 취소를 요청한 상태다(「취소 진행 중」 안내).
+ * @param activeExecution 진행 중(PENDING/RUNNING) 실행 상태(WD-437) — NONE 이 아니면 삭제가 409 라 확인 창이 삭제를 막고
+ *     안내한다. CANCELLING 은 진행 중 실행이 모두 이미 취소를 요청한 상태다(「취소 진행 중」 안내).
  * @param downstreamChainTriggers 이 파이프라인을 선행으로 둔, 다른 파이프라인의 켜진 연쇄(PIPELINE_CHAIN) 트리거(WD-419). 삭제하면
  *     이 트리거들이 꺼지므로(WD-218) 확인 창이 「연쇄 트리거 N개가 꺼집니다」와 목록을 보여 준다. 없으면 빈 목록.
  */
