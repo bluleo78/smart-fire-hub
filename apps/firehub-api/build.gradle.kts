@@ -79,6 +79,9 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
+    // Tibero 플랫폼 DB 용 Flyway 플러그인(WD-488)의 기반 — Flyway 는 Tibero 를 지원하지 않아 Oracle 모듈을 상속해 제품명·사전 뷰 차이만 덮어쓴다.
+    // 버전은 Spring Boot BOM 이 flyway-core 와 같은 값으로 맞춘다(10.20.1).
+    implementation("org.flywaydb:flyway-database-oracle")
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("io.jsonwebtoken:jjwt-api:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")

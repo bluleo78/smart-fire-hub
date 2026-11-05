@@ -1,0 +1,11 @@
+-- WD-488 PoC: 같은 V2 를 재실행 가능하게(멱등) 고친 판 — 이미 만들어진 half_a 는 건너뛴다.
+DECLARE
+  n NUMBER;
+BEGIN
+  SELECT COUNT(*) INTO n FROM USER_TABLES WHERE TABLE_NAME = 'HALF_A';
+  IF n = 0 THEN
+    EXECUTE IMMEDIATE 'CREATE TABLE half_a (id NUMBER PRIMARY KEY)';
+  END IF;
+END;
+/
+CREATE TABLE half_b (id NUMBER PRIMARY KEY, note VARCHAR(10));
