@@ -130,7 +130,8 @@ test.describe('라우트 전환 스크롤 위치', () => {
 
     await page.getByRole('link', { name: '카테고리' }).click();
     await expect(page).toHaveURL(/\/data\/categories/);
-    await page.getByRole('link', { name: '데이터셋' }).click();
+    // 목록의 「데이터셋 1」 같은 행 링크와 겹치지 않게 사이드바 링크 이름을 정확히 맞춘다.
+    await page.getByRole('link', { name: '데이터셋', exact: true }).click();
     await expect(page).toHaveURL(/\/data\/datasets/);
 
     await expect.poll(() => main.evaluate((el) => el.scrollTop)).toBe(0);
