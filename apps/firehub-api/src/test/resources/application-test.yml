@@ -37,6 +37,11 @@ notification:
     initial_delay_ms: 3600000
 
 firehub:
+  platform-db:
+    mybatis:
+      # MyBatis 플랫폼 DB 배선(WD-487 PoC)을 테스트 컨텍스트에서만 켠다 — 계약 테스트가 MyBatis 구현 빈을 이름으로 꺼낸다.
+      # 운영 기본값은 꺼짐(속성 없음)이라 MyBatisPlatformConfig 와 매퍼·구현 빈이 하나도 생기지 않는다.
+      enabled: true
   analytics:
     query-run:
       cleanup:

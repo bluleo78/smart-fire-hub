@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  MyBatisDatasetVisibilityTest 전용 질의(WD-487 PoC).
+  가시성 조각을 jOOQ 술어와 행 집합으로 비교하려고 픽스처 데이터셋 id 중 보이는 것만 고른다.
+  매퍼 인터페이스 없이 SqlSessionTemplate.selectList(namespace.id) 로 부른다.
+-->
+<mapper namespace="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibilityTest">
+
+  <select id="visibleIds" resultType="long">
+    SELECT dataset.id
+      FROM dataset
+     WHERE dataset.id IN
+       <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+       AND
+       <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+         <property name="idCol" value="dataset.id"/>
+         <property name="levelCol" value="dataset.security_level_id"/>
+       </include>
+  </select>
+
+</mapper>

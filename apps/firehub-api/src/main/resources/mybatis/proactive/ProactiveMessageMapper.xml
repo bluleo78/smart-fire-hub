@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  proactive_message 문장(WD-487 PoC) — JooqProactiveMessageRepository 와 같은 의미. databaseId·테넌트·null 바인드 규칙은
+  MyBatisPlatformConfig javadoc, 공용 조각은 mybatis/common/PlatformSql.xml. 생성 키는 useGeneratedKeys(JDBC 표준)라 두 벤더
+  공통이다(Tibero 는 IDENTITY 컬럼 + keyColumn="id" 로 숫자 키가 돌아온다, 실측). 읽음 처리(markAsRead·markAllAsRead)는
+  user_id 로만 거른다 — Tibero 에서 테넌트 경계 없음.
+-->
+<mapper namespace="com.smartfirehub.proactive.repository.mybatis.ProactiveMessageMapper">
+
+  <resultMap id="messageRow" type="com.smartfirehub.proactive.repository.mybatis.ProactiveMessageRow">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="job_id" javaType="java.lang.Long"/>
+      <arg column="execution_id" javaType="java.lang.Long"/>
+      <arg column="title" javaType="java.lang.String"/>
+      <arg column="content" javaType="java.lang.String"/>
+      <arg column="message_type" javaType="java.lang.String"/>
+      <arg column="read" javaType="java.lang.Boolean"/>
+      <arg column="read_at" javaType="java.time.LocalDateTime"/>
+      <arg column="job_name" javaType="java.lang.String"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="can_view_report" javaType="_int"/>
+      <arg column="report_level_rank" javaType="java.lang.Integer"/>
+    </constructor>
+  </resultMap>
+
+  <!-- content(jsonb)를 JSON 문자열로 읽는다. -->
+  <sql id="contentText" databaseId="postgresql">pm.content::text AS content</sql>
+  <!-- Tibero: JSON 컬럼을 문자열 그대로 읽는다. -->
+  <sql id="contentText" databaseId="tibero">pm.content AS content</sql>
+
+  <sql id="isUnread">pm.read = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/></sql>
+
+  <!-- Tibero 읽기 테넌트 술어(PG 는 렌더되지 않는다). -->
+  <sql id="tiberoTenant">
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.tiberoTenant">
+      <property name="alias" value="pm"/>
+    </include>
+  </sql>
+
+  <!--
+    선택 컬럼. can_view_report: 수신자 = 작업 주인일 때만 1(WD-162). report_level_rank: 연결 실행의 등급 순위 스칼라 서브쿼리(WD-198),
+    실행·등급이 없으면 NULL.
+  -->
+  <sql id="selectColumns">
+    pm.id AS id, pm.user_id AS user_id, pje.job_id AS job_id, pm.execution_id AS execution_id,
+    pm.title AS title, <include refid="contentText"/>, pm.message_type AS message_type,
+    pm.read AS read, pm.read_at AS read_at, pj.name AS job_name, pm.created_at AS created_at,
+    CASE WHEN pj.user_id IS NOT NULL AND pj.user_id = pm.user_id THEN 1 ELSE 0 END AS can_view_report,
+    (SELECT pm_sl.rank FROM security_level pm_sl WHERE pm_sl.id = pje.security_level_id) AS report_level_rank
+  </sql>
+
+  <sql id="fromJoins">
+    FROM proactive_message pm
+    LEFT JOIN proactive_job_execution pje ON pm.execution_id = pje.id
+    LEFT JOIN proactive_job pj ON pje.job_id = pj.id
+  </sql>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id" databaseId="postgresql">
+    INSERT INTO proactive_message (user_id, execution_id, title, content, message_type, read)
+    VALUES (#{userId}, #{executionId,jdbcType=BIGINT}, #{title,jdbcType=VARCHAR},
+            CAST(#{contentJson} AS jsonb), #{messageType}, false)
+  </insert>
+
+  <!--
+    Tibero: tenant_id 명시, read 는 0. PG 판과 합치지 않는다 — PG 판의 jdbcType(BIGINT·VARCHAR) null 바인드를 Tibero 에서 실측한 적이
+    없고, 빼면 PG 바인드가 바뀐다.
+  -->
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id" databaseId="tibero">
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.tiberoTenantBind"/>
+    INSERT INTO proactive_message (tenant_id, user_id, execution_id, title, content, message_type, read)
+    VALUES (#{ctxTenantId}, #{userId}, #{executionId}, #{title},
+            #{contentJson}, #{messageType}, 0)
+  </insert>
+
+  <select id="findByUserId" resultMap="messageRow" flushCache="true">
+    SELECT <include refid="selectColumns"/>
+    <include refid="fromJoins"/>
+    WHERE pm.user_id = #{userId}<include refid="tiberoTenant"/>
+    <if test="unreadOnly"> AND <include refid="isUnread"/></if>
+    ORDER BY pm.id DESC
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <select id="findUnreadByUserId" resultMap="messageRow" flushCache="true">
+    SELECT <include refid="selectColumns"/>
+    <include refid="fromJoins"/>
+    WHERE pm.user_id = #{userId}<include refid="tiberoTenant"/> AND <include refid="isUnread"/>
+    ORDER BY pm.id DESC
+  </select>
+
+  <select id="countUnreadByUserId" resultType="int" flushCache="true">
+    SELECT COUNT(*) FROM proactive_message pm
+     WHERE pm.user_id = #{userId}<include refid="tiberoTenant"/> AND <include refid="isUnread"/>
+  </select>
+
+  <update id="markAsRead">
+    UPDATE proactive_message SET read = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>, read_at = #{readAt} WHERE id = #{id} AND user_id = #{userId}
+  </update>
+
+  <update id="markAllAsRead">
+    UPDATE proactive_message SET read = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>, read_at = #{readAt}
+     WHERE user_id = #{userId} AND read = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+  </update>
+</mapper>

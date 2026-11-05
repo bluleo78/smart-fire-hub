@@ -31,17 +31,19 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p><b>왜 전용 테넌트인가.</b> 공유 테스트 DB 의 기존 테넌트를 건드리지 않고, 새 id 로 {@code GENIA_T{id}} 계정을 만들어 충돌을 피한다.
  * 정리는 항상 이 테스트가 만든 계정·테넌트로만 한정한다.
+ *
+ * <p>접속 정보·드라이버 판정은 WD-487 플랫폼 하네스({@code support.tibero.TiberoPlatformPoc})도 같이 쓰므로 공개한다.
  */
-final class TiberoTestEnvironment {
+public final class TiberoTestEnvironment {
 
   /** 드라이버가 없을 때 건너뛰는 사유. */
-  static final String NO_DRIVER_MESSAGE =
+  public static final String NO_DRIVER_MESSAGE =
       "Tibero JDBC 드라이버 없음 — apps/firehub-api/libs/ 에 jar 를 두세요";
 
   private TiberoTestEnvironment() {}
 
   /** Tibero JDBC 드라이버가 클래스패스에 있으면 true. */
-  static boolean driverPresent() {
+  public static boolean driverPresent() {
     try {
       Class.forName(TiberoDialect.DRIVER_CLASS);
       return true;
@@ -51,7 +53,7 @@ final class TiberoTestEnvironment {
   }
 
   /** 드라이버가 없으면 테스트를 건너뛴다(환경변수만 설정되고 jar 가 없을 때 훅이 초록을 유지하도록). */
-  static void assumeDriverPresent() {
+  public static void assumeDriverPresent() {
     assumeTrue(driverPresent(), NO_DRIVER_MESSAGE);
   }
 
@@ -61,7 +63,7 @@ final class TiberoTestEnvironment {
   }
 
   /** 환경변수에서 읽은 접속 정보. 비밀번호가 있어 toString 은 가린다. */
-  record Dba(ExternalDbTarget target, String user, String password) {
+  public record Dba(ExternalDbTarget target, String user, String password) {
     @Override
     public String toString() {
       return "Dba[" + target.host() + ":" + target.port() + "/" + target.database() + "]";
@@ -69,7 +71,7 @@ final class TiberoTestEnvironment {
   }
 
   /** 환경변수에서 DBA 접속 정보를 만든다. 필수 값이 비어 있으면 IllegalStateException. */
-  static Dba dbaFromEnv() {
+  public static Dba dbaFromEnv() {
     String host = env("TIBERO_TEST_HOST", null);
     String user = env("TIBERO_TEST_DBA_USER", null);
     String password = env("TIBERO_TEST_DBA_PASSWORD", null);
@@ -83,7 +85,7 @@ final class TiberoTestEnvironment {
   }
 
   /** DBA 로 직접 JDBC 연결을 연다(방언 확인용). 호출자가 닫는다. */
-  static Connection openDba(Dba dba) throws SQLException {
+  public static Connection openDba(Dba dba) throws SQLException {
     return DriverManager.getConnection(dba.target().jdbcUrl(), dba.user(), dba.password());
   }
 

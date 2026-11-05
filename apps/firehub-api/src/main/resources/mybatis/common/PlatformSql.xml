@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  플랫폼 매퍼 공용 SQL 조각(WD-487 PoC). 벤더 규칙(databaseId·테넌트·null 바인드)은 MyBatisPlatformConfig javadoc 참조.
+  매퍼 인터페이스 없는 조각 전용 namespace 라 다른 XML 이 namespace.id 로 include 한다.
+-->
+<mapper namespace="com.smartfirehub.global.platformdb.mybatis.PlatformSql">
+
+  <!-- 불리언 리터럴. Tibero 불리언 컬럼은 NUMBER(1) 이다. -->
+  <sql id="sqlTrue" databaseId="postgresql">TRUE</sql>
+  <sql id="sqlTrue" databaseId="tibero">1</sql>
+  <sql id="sqlFalse" databaseId="postgresql">FALSE</sql>
+  <sql id="sqlFalse" databaseId="tibero">0</sql>
+
+  <!-- 행 수 상한(잠금 없는 조회 전용). 속성 n 은 XML 에 박힌 고정 숫자다. Tibero 는 LIMIT 대신 FETCH FIRST(NULLS LAST 와 함께 쓸 수 있음, 실측). -->
+  <sql id="limitRows" databaseId="postgresql">LIMIT ${n}</sql>
+  <sql id="limitRows" databaseId="tibero">FETCH FIRST ${n} ROWS ONLY</sql>
+
+  <!-- 페이지(파라미터 limit·offset). Tibero 는 OFFSET … ROWS FETCH NEXT … ROWS ONLY(바인드 가능, 실측). -->
+  <sql id="pageClause" databaseId="postgresql">LIMIT #{limit} OFFSET #{offset}</sql>
+  <sql id="pageClause" databaseId="tibero">OFFSET #{offset} ROWS FETCH NEXT #{limit} ROWS ONLY</sql>
+
+  <!--
+    Tibero 전용 현재 테넌트 바인드 #{ctxTenantId}. Tibero 는 RLS·GUC 가 없어 INSERT 값과 읽기 술어에 테넌트를 명시하는데, 그 값을
+    TenantContext 에서 여기 한 곳에서만 읽는다. Tibero 문장 안이나 아래 tiberoTenant 의 if 안에서만 include 한다 — PG 는
+    TenantContext 를 읽지 않는다. 이름을 tenantId 와 다르게 둔 이유: bind 값은 같은 이름의 문장 파라미터를 가리므로, 테넌트를
+    명시 인자로 받는 문장(selectDueIdsForUpdate·countPendingByChannel)과 섞이지 않게 한다.
+  -->
+  <sql id="tiberoTenantBind"><bind name="ctxTenantId" value="@com.smartfirehub.global.tenant.TenantContext@get()"/></sql>
+
+  <!--
+    Tibero 읽기 테넌트 술어(PG 는 RLS 가 거르므로 렌더되지 않는다). 속성 alias 에 테이블 별칭(또는 이름)을 넘긴다 — 빠뜨리면 런타임
+    파라미터 조회로 바뀌어 오류가 난다.
+  -->
+  <sql id="tiberoTenant"><if test="_databaseId == 'tibero'"><include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.tiberoTenantBind"/> AND ${alias}.tenant_id = #{ctxTenantId}</if></sql>
+
+</mapper>

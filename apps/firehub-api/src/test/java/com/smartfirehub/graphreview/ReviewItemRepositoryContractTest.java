@@ -14,6 +14,7 @@ import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,6 +41,14 @@ abstract class ReviewItemRepositoryContractTest extends IntegrationTestBase {
   // 테스트 네임스페이스(dedupe_key LIKE 'Test%')를 매 테스트 전 정리한다.
   @BeforeEach
   void cleanup() {
+    cleanupFixtures();
+  }
+
+  // ── 픽스처 seam(WD-487) ── 데이터 넣기·지우기·원시 조회를 아래 protected 메서드로 모은다. 기본 구현은 PG(지금 코드 그대로)이고,
+  // Tibero 하위 클래스가 같은 의미를 Tibero DataSource 위에서 다시 구현한다. 테스트 본문의 단언은 이 seam 과 무관하다.
+
+  /** 이 테스트 네임스페이스의 검수 항목·결정자 사용자를 지운다. */
+  protected void cleanupFixtures() {
     // graph_review_item 을 먼저 지워야 decided_by FK 때문에 "user" 삭제가 막히지 않는다.
     TenantRlsTestSupport.runInTenantTransaction(
         tx,
@@ -50,6 +59,14 @@ abstract class ReviewItemRepositoryContractTest extends IntegrationTestBase {
                 .execute());
     // "user" 는 테넌트 경계 위의 전역 테이블(RLS 없음)이라 컨텍스트 없이 지울 수 있다.
     dsl.execute("DELETE FROM \"user\" WHERE username LIKE 'testdecider%'");
+  }
+
+  /**
+   * 기본 테넌트 컨텍스트 + 트랜잭션 안에서 작업을 실행한다 — 동시 결정 시험에서 잠금과 갱신이 한 트랜잭션을 공유해야 해서 둔다. Tibero 하위 클래스는 Tibero
+   * 트랜잭션으로 연다(PG 트랜잭션으로 열면 Tibero 잠금이 호출마다 풀린다).
+   */
+  protected <T> T inTenantTransaction(Supplier<T> work) {
+    return TenantRlsTestSupport.runInTenantTransaction(tx, DEFAULT_TEST_TENANT_ID, work);
   }
 
   @Test
@@ -130,10 +147,7 @@ abstract class ReviewItemRepositoryContractTest extends IntegrationTestBase {
 
   @Test
   void updateStatus_approved_removesFromPending() {
-    long userId =
-        dsl.fetchOne(
-                "INSERT INTO \"user\"(username, password, name, email) VALUES ('testdecider','x','T','testdecider@example.com') RETURNING id")
-            .get(0, Long.class);
+    long userId = insertDecider();
     repository()
         .upsertPending("synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "r", "{}");
     long id =
@@ -166,6 +180,25 @@ abstract class ReviewItemRepositoryContractTest extends IntegrationTestBase {
         .noneMatch(r -> r.id().equals(id));
   }
 
+  /**
+   * 한 행 안의 시각 기준이 같다 — created_at 은 DB DEFAULT 가, decided_at 은 앱이 {@code LocalDateTime.now()} 로 쓴다.
+   * PG 는 두 값 모두 세션(=JVM) 시간대 벽시계다. Tibero DDL 의 DEFAULT 가 UTC 벽시계면 KST JVM 에서 9시간 어긋나므로 그 회귀를 잡는다(몇
+   * 분 여유).
+   */
+  @Test
+  void createdAtAndDecidedAt_useSameClockConvention() {
+    long userId = insertDecider();
+    long id = insertPendingSynonym();
+    repository().updateStatus(id, "approved", userId);
+
+    ReviewItemRecord row = repository().findById(id).orElseThrow();
+    assertThat(row.createdAt()).isNotNull();
+    assertThat(row.decidedAt()).isNotNull();
+    assertThat(java.time.Duration.between(row.createdAt(), row.decidedAt()).abs())
+        .as("created_at(DEFAULT)·decided_at(앱) 이 같은 시간대 기준이어야 한다")
+        .isLessThan(java.time.Duration.ofMinutes(5));
+  }
+
   // ── 동시 결정(WD-428) ── 승인이 그래프를 바꾸는 사이에 들어온 거부가 pending 으로 보고 「거부했습니다」를 돌려준 뒤, 승인이 approved 로
   // 덮어쓰던 문제. 상태 갱신은 pending 일 때만 되고, 결정 중에는 행을 잠가 뒤 요청이 앞 결정의 결과를 보게 한다.
 
@@ -193,9 +226,7 @@ abstract class ReviewItemRepositoryContractTest extends IntegrationTestBase {
     CompletableFuture<Void> first =
         CompletableFuture.runAsync(
             () ->
-                TenantRlsTestSupport.runInTenantTransaction(
-                    tx,
-                    DEFAULT_TEST_TENANT_ID,
+                inTenantTransaction(
                     () -> {
                       repository().lockForDecision(id);
                       firstLocked.countDown();
@@ -210,9 +241,7 @@ abstract class ReviewItemRepositoryContractTest extends IntegrationTestBase {
     String seen =
         CompletableFuture.supplyAsync(
                 () ->
-                    TenantRlsTestSupport.runInTenantTransaction(
-                        tx,
-                        DEFAULT_TEST_TENANT_ID,
+                    inTenantTransaction(
                         () -> {
                           repository().lockForDecision(id);
                           return repository().findById(id).orElseThrow().status();
@@ -225,7 +254,8 @@ abstract class ReviewItemRepositoryContractTest extends IntegrationTestBase {
     assertThat(waitedMs).isGreaterThanOrEqualTo(300);
   }
 
-  private long insertDecider() {
+  /** 결정자 사용자 'testdecider' 를 넣고 id 를 돌려준다. */
+  protected long insertDecider() {
     return dsl.fetchOne(
             "INSERT INTO \"user\"(username, password, name, email) VALUES ('testdecider','x','T','testdecider@example.com') RETURNING id")
         .get(0, Long.class);
@@ -295,6 +325,11 @@ abstract class ReviewItemRepositoryContractTest extends IntegrationTestBase {
 
   // dedupe_key는 Record에 노출하지 않으므로(내부 조회 키) 테스트에선 id로 DB에서 직접 읽어 비교한다.
   private String dedupeKeyOf(ReviewItemRecord r) {
+    return dedupeKeyOf(r.id());
+  }
+
+  /** id 의 dedupe_key 원시 조회(픽스처 seam). */
+  protected String dedupeKeyOf(long id) {
     // RLS 대상 조회 — 트랜잭션(=GUC) 안에서 읽어야 한다.
     return TenantRlsTestSupport.runInTenantTransaction(
         tx,
@@ -302,7 +337,7 @@ abstract class ReviewItemRepositoryContractTest extends IntegrationTestBase {
         () ->
             dsl.select(field(name("dedupe_key"), String.class))
                 .from(table(name("graph_review_item")))
-                .where(field(name("id"), Long.class).eq(r.id()))
+                .where(field(name("id"), Long.class).eq(id))
                 .fetchOne(0, String.class));
   }
 }

@@ -240,6 +240,39 @@ class PlatformDbAccessArchitectureTest {
         .check(PROD);
   }
 
+  /** MyBatis 매퍼 구현 패키지(WD-487). */
+  static final String REPOSITORY_MYBATIS_PACKAGE = "..repository.mybatis..";
+
+  /** MyBatis 설정 클래스 패키지(WD-487). */
+  static final String PLATFORM_DB_MYBATIS_PACKAGE = "..platformdb.mybatis..";
+
+  /** MyBatis 구현은 jOOQ 에 의존하지 않는다 — 두 구현이 서로 독립이어야 비교·교체가 가능하다(WD-487). */
+  @Test
+  void mybatisImplsDoNotDependOnJooq() {
+    noClasses()
+        .that()
+        .resideInAnyPackage(REPOSITORY_MYBATIS_PACKAGE, PLATFORM_DB_MYBATIS_PACKAGE)
+        .should()
+        .dependOnClassesThat()
+        .resideInAnyPackage("org.jooq..", "com.smartfirehub.jooq..")
+        .allowEmptyShould(true)
+        .because("WD-487: MyBatis 구현은 jOOQ 와 독립이어야 한다")
+        .check(PROD);
+  }
+
+  /** MyBatis 라이브러리는 MyBatis 구현·설정 패키지에서만 쓴다 — 서비스·인터페이스로 새지 않게 한다(WD-487). */
+  @Test
+  void onlyMybatisPackagesDependOnMybatis() {
+    noClasses()
+        .that()
+        .resideOutsideOfPackages(REPOSITORY_MYBATIS_PACKAGE, PLATFORM_DB_MYBATIS_PACKAGE)
+        .should()
+        .dependOnClassesThat()
+        .resideInAnyPackage("org.apache.ibatis..", "org.mybatis..")
+        .because("WD-487: MyBatis 는 ..repository.mybatis..·..platformdb.mybatis.. 에만 둔다")
+        .check(PROD);
+  }
+
   /** 허용 목록의 모든 FQCN 이 실제 클래스여야 한다 — 이름이 바뀌어 목록이 조용히 무의미해지는 것을 막는다. */
   @Test
   void allowlistedClassesExist() {

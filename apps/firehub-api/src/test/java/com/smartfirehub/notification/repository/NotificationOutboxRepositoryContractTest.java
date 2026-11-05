@@ -2,6 +2,7 @@ package com.smartfirehub.notification.repository;
 
 import static com.smartfirehub.jooq.Tables.NOTIFICATION_OUTBOX;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.ChannelType;
@@ -44,15 +45,57 @@ public abstract class NotificationOutboxRepositoryContractTest extends Integrati
   @BeforeEach
   void createScratchTenant() {
     // IntegrationTestBase 의 @BeforeEach 가 먼저 기본 테넌트를 세우므로 여기서 덮어쓴다.
-    tenantId = TenantRlsTestSupport.createActiveTenant(dsl, "outbox-repo");
+    tenantId = createTenant("outbox-repo");
     TenantContext.set(tenantId);
   }
 
   @AfterEach
   void cleanupScratchTenant() {
-    // RLS 대상 테이블이므로 테넌트 컨텍스트 + 트랜잭션 안에서 지운다. 지우는 대상은 내가 만든 테넌트뿐.
-    inTenantFixture(tenantId, () -> TenantRlsTestSupport.deleteChannelCascade(dsl, tenantId));
-    TenantRlsTestSupport.deleteTenants(dsl, tenantId);
+    cleanupTenant(tenantId);
+  }
+
+  // ── 픽스처 seam(WD-487) ── 테넌트 만들기·지우기·원시 갱신·원시 조회를 아래 protected 메서드로 모은다. 기본 구현은 PG(지금 코드
+  // 그대로)이고 Tibero 하위 클래스가 Tibero DataSource 위에서 같은 의미로 다시 구현한다. 테스트 본문의 단언은 바꾸지 않는다.
+
+  /** 활성 테넌트를 새로 만들고 id 를 돌려준다. */
+  protected long createTenant(String slugPrefix) {
+    return TenantRlsTestSupport.createActiveTenant(dsl, slugPrefix);
+  }
+
+  /** 테넌트의 outbox 행(채널 도메인)과 테넌트 자체를 지운다. 지우는 대상은 내가 만든 테넌트뿐. */
+  protected void cleanupTenant(long id) {
+    // RLS 대상 테이블이므로 테넌트 컨텍스트 + 트랜잭션 안에서 지운다.
+    inTenantFixture(id, () -> TenantRlsTestSupport.deleteChannelCascade(dsl, id));
+    TenantRlsTestSupport.deleteTenants(dsl, id);
+  }
+
+  /** 행 없이 테넌트만 지운다(다른 테넌트 시험용). */
+  protected void deleteTenant(long id) {
+    TenantRlsTestSupport.deleteTenants(dsl, id);
+  }
+
+  /** 상관 id 의 행을 DB 시계 기준 "지금 due" 로 당긴다({@link TenantRlsTestSupport#makeOutboxRowDue} 참고). */
+  protected void makeRowDue(UUID correlationId) {
+    inTenantFixture(tenantId, () -> TenantRlsTestSupport.makeOutboxRowDue(dsl, correlationId));
+  }
+
+  /** 상관 id 행의 tenant_id 원시 조회. */
+  protected Long stampedTenantOf(UUID correlationId) {
+    return inTenantFixture(
+        tenantId,
+        () ->
+            dsl.select(NOTIFICATION_OUTBOX.TENANT_ID)
+                .from(NOTIFICATION_OUTBOX)
+                .where(NOTIFICATION_OUTBOX.CORRELATION_ID.eq(correlationId))
+                .fetchOne(NOTIFICATION_OUTBOX.TENANT_ID));
+  }
+
+  /**
+   * 행 수준 보안(RLS)으로 다른 테넌트의 행이 가려지는지 시험할 수 있는가. PG 는 정책이 있어 true. Tibero 는 RLS·GUC 가 없고(WD-492 범위)
+   * 쓰기 문장에 테넌트 술어를 두지 않았으므로 false 다.
+   */
+  protected boolean supportsRowLevelSecurity() {
+    return true;
   }
 
   @Test
@@ -74,16 +117,61 @@ public abstract class NotificationOutboxRepositoryContractTest extends Integrati
     UUID corr = UUID.randomUUID();
     repository().insertIfAbsent(sampleRow("key-tenant-" + corr, corr));
 
-    Long stamped =
-        inTenantFixture(
-            tenantId,
-            () ->
-                dsl.select(NOTIFICATION_OUTBOX.TENANT_ID)
-                    .from(NOTIFICATION_OUTBOX)
-                    .where(NOTIFICATION_OUTBOX.CORRELATION_ID.eq(corr))
-                    .fetchOne(NOTIFICATION_OUTBOX.TENANT_ID));
+    Long stamped = stampedTenantOf(corr);
 
     assertThat(stamped).as("insertIfAbsent 가 GUC 파생 DEFAULT 로 현재 테넌트를 찍어야 한다").isEqualTo(tenantId);
+  }
+
+  /**
+   * 멱등 키의 유일성 범위는 테넌트별이다(V106: uk_outbox_idempotency UNIQUE (tenant_id, idempotency_key)). 두 테넌트가
+   * 같은 키로 넣으면 두 행 모두 생겨야 한다 — 키만으로 중복을 판정하면 뒤 테넌트의 알림이 조용히 사라진다. 상관 id 는 테넌트마다 달리 둬 각자의 행을 찾는다.
+   */
+  @Test
+  void insertIfAbsent_sameKeyInTwoTenants_insertsBoth() {
+    String key = "key-two-tenants-" + UUID.randomUUID();
+    UUID corrA = UUID.randomUUID();
+    UUID corrB = UUID.randomUUID();
+    repository().insertIfAbsent(sampleRow(key, corrA));
+
+    long otherTenant = createTenant("outbox-samekey");
+    try {
+      TenantContext.runScopedGet(
+          otherTenant,
+          () -> {
+            repository().insertIfAbsent(sampleRow(key, corrB));
+            return null;
+          });
+
+      assertThat(repository().findByCorrelation(corrA)).as("먼저 넣은 테넌트의 행").hasSize(1);
+      assertThat(
+              TenantContext.runScopedGet(otherTenant, () -> repository().findByCorrelation(corrB)))
+          .as("같은 키를 쓴 다른 테넌트의 행도 생겨야 한다")
+          .hasSize(1);
+    } finally {
+      cleanupTenant(otherTenant);
+    }
+  }
+
+  /**
+   * 시각 왕복이 양방향으로 맞다 — 새 행의 next_attempt_at(DB DEFAULT, timestamptz 의미)이 지금과 몇 분 안이다. 다른 시각 단언은 한쪽
+   * 방향뿐이라 9시간 어긋나도 통과하므로 이 테스트를 둔다. Tibero 는 UTC 벽시계 TIMESTAMP 라 팩토리 전역 UtcInstantTypeHandler 가
+   * resultMap 에 적용돼야 통과한다(기본 핸들러는 KST JVM 에서 9시간 이르게 읽는다, 실측).
+   */
+  @Test
+  void insertIfAbsent_nextAttemptAtDefault_readsAsCurrentInstant() {
+    UUID corr = UUID.randomUUID();
+    repository().insertIfAbsent(sampleRow("key-clock-" + corr, corr));
+
+    Instant nextAttemptAt = repository().findByCorrelation(corr).get(0).nextAttemptAt();
+    assertThat(java.time.Duration.between(nextAttemptAt, Instant.now()).abs())
+        .as("next_attempt_at 이 시간대 해석 오류 없이 지금 시각으로 읽혀야 한다")
+        .isLessThan(java.time.Duration.ofMinutes(5));
+  }
+
+  /** 상태를 하나도 주지 않으면 빈 목록이다(DB 오류가 아니다) — Tibero 문장의 IN () 구문 오류를 구현이 막는지 본다. */
+  @Test
+  void tenantIdsWithStatus_noStatuses_returnsEmpty() {
+    assertThat(repository().tenantIdsWithStatus()).isEmpty();
   }
 
   /** {@code outbox_tenant_ids} definer 함수가 내 테넌트를 실제로 돌려주는지 — 배경 경로 순회의 전제. */
@@ -101,7 +189,7 @@ public abstract class NotificationOutboxRepositoryContractTest extends Integrati
   void claimDue_marksSendingAndReturnsRows() {
     UUID corr = UUID.randomUUID();
     repository().insertIfAbsent(sampleRow("key-claim-" + corr, corr));
-    inTenantFixture(tenantId, () -> TenantRlsTestSupport.makeOutboxRowDue(dsl, corr));
+    makeRowDue(corr);
 
     var claimed = repository().claimDue(10_000, "test-instance", tenantId);
     assertThat(claimed).hasSize(1);
@@ -121,7 +209,7 @@ public abstract class NotificationOutboxRepositoryContractTest extends Integrati
   void claimDue_skipLockedConcurrent() throws Exception {
     UUID corr = UUID.randomUUID();
     repository().insertIfAbsent(sampleRow("key-skiplocked-" + corr, corr));
-    inTenantFixture(tenantId, () -> TenantRlsTestSupport.makeOutboxRowDue(dsl, corr));
+    makeRowDue(corr);
 
     var pool = Executors.newFixedThreadPool(2);
     try {
@@ -164,7 +252,7 @@ public abstract class NotificationOutboxRepositoryContractTest extends Integrati
   void reclaimZombies_resetsLongClaimedRows() {
     UUID corr = UUID.randomUUID();
     repository().insertIfAbsent(sampleRow("key-zombie-" + corr, corr));
-    inTenantFixture(tenantId, () -> TenantRlsTestSupport.makeOutboxRowDue(dsl, corr));
+    makeRowDue(corr);
     repository().claimDue(10_000, "i", tenantId);
 
     int reclaimed = repository().reclaimZombies(Instant.now().plusSeconds(60)); // 강제 cutoff 미래
@@ -186,7 +274,7 @@ public abstract class NotificationOutboxRepositoryContractTest extends Integrati
 
     UUID sendingCorr = UUID.randomUUID();
     repository().insertIfAbsent(sampleRow("key-requeue-sending-" + sendingCorr, sendingCorr));
-    inTenantFixture(tenantId, () -> TenantRlsTestSupport.makeOutboxRowDue(dsl, sendingCorr));
+    makeRowDue(sendingCorr);
     long sendingId =
         repository().claimDue(10_000, "i-requeue", tenantId).stream()
             .filter(r -> sendingCorr.equals(r.correlationId()))
@@ -224,15 +312,16 @@ public abstract class NotificationOutboxRepositoryContractTest extends Integrati
    */
   @Test
   void requeueForRetry_cannotTouchOtherTenantRow() {
+    assumeTrue(supportsRowLevelSecurity(), "RLS 정책 없는 DB — 다른 테넌트 행 격리는 시험 대상이 아니다");
     long id = insertRow("tenant");
     repository().markPermanentFailure(id, "TEST", "boom");
 
-    long otherTenant = TenantRlsTestSupport.createActiveTenant(dsl, "outbox-other");
+    long otherTenant = createTenant("outbox-other");
     try {
       assertThat(TenantContext.runScopedGet(otherTenant, () -> repository().requeueForRetry(id)))
           .isZero();
     } finally {
-      TenantRlsTestSupport.deleteTenants(dsl, otherTenant);
+      deleteTenant(otherTenant);
     }
     assertThat(rowById(id).status()).isEqualTo("PERMANENT_FAILURE");
   }

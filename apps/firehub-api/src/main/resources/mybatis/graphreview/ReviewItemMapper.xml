@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  graph_review_item 문장(WD-487 PoC) — JooqReviewItemRepository 와 같은 의미. databaseId·테넌트·null 바인드 규칙은
+  MyBatisPlatformConfig javadoc, 공용 조각은 mybatis/common/PlatformSql.xml. id 로만 찾는 쓰기(updateStatusIfPending·
+  lockForDecision)는 Tibero 에서 테넌트 경계가 아직 없다(보고서 참조).
+-->
+<mapper namespace="com.smartfirehub.graphreview.repository.mybatis.ReviewItemMapper">
+
+  <!-- ReviewItemRecord 는 record 라 생성자 인자 순서대로 명시 매핑한다(자동 생성자 매핑은 null 열에서 타입 추론이 흔들린다). -->
+  <resultMap id="reviewItemRecord" type="com.smartfirehub.graphreview.dto.ReviewItemRecord">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="item_type" javaType="java.lang.String"/>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="dataset_id" javaType="java.lang.Long"/>
+      <arg column="signal_type" javaType="java.lang.String"/>
+      <arg column="signal_score" javaType="java.lang.Double"/>
+      <arg column="reason" javaType="java.lang.String"/>
+      <arg column="payload" javaType="java.lang.String"/>
+      <arg column="decided_by" javaType="java.lang.Long"/>
+      <arg column="decided_at" javaType="java.time.LocalDateTime"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <!-- payload(jsonb)를 JSON 문자열로 읽는다 — 서비스가 Jackson 으로 파싱한다. -->
+  <sql id="payloadText" databaseId="postgresql">graph_review_item.payload::text AS payload</sql>
+  <!-- Tibero: JSON 컬럼은 getString 으로 문자열 그대로 읽힌다(실측). -->
+  <sql id="payloadText" databaseId="tibero">graph_review_item.payload AS payload</sql>
+
+  <!-- Tibero 읽기 테넌트 술어(PG 는 렌더되지 않는다). -->
+  <sql id="tiberoTenant">
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.tiberoTenant">
+      <property name="alias" value="graph_review_item"/>
+    </include>
+  </sql>
+
+  <sql id="recordColumns">
+    graph_review_item.id, graph_review_item.item_type, graph_review_item.status,
+    graph_review_item.dataset_id, graph_review_item.signal_type, graph_review_item.signal_score,
+    graph_review_item.reason, <include refid="payloadText"/>, graph_review_item.decided_by,
+    graph_review_item.decided_at, graph_review_item.created_at
+  </sql>
+
+  <!--
+    조회자가 볼 수 있는 검수 항목 — 출처 데이터셋이 보이는 항목 + 판정할 데이터셋이 없는 레거시 항목(dataset_id null).
+    목록·결정 조회가 같은 규칙을 쓰도록 한 곳에 둔다(jOOQ 구현의 visibleItem). 파라미터 "vis" 가 필요하다.
+  -->
+  <sql id="visibleItem">
+    (graph_review_item.dataset_id IS NULL
+     OR graph_review_item.dataset_id IN (
+       SELECT dataset.id FROM dataset
+        WHERE <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+                <property name="idCol" value="dataset.id"/>
+                <property name="levelCol" value="dataset.security_level_id"/>
+              </include>))
+  </sql>
+
+  <!--
+    V134 의 uq_graph_review_item (tenant_id, item_type, dataset_id, dedupe_key) NULLS NOT DISTINCT 와 추론 대상을 맞춘다 —
+    어긋나면 dedupe 가 런타임 오류로 터진다. dataset_id null(레거시)끼리도 NULLS NOT DISTINCT 라 중복으로 걸린다.
+  -->
+  <insert id="insertPendingIgnoreDuplicate" databaseId="postgresql">
+    INSERT INTO graph_review_item
+      (item_type, status, dataset_id, signal_type, signal_score, reason, payload, dedupe_key)
+    VALUES
+      (#{itemType}, 'pending', #{datasetId,jdbcType=BIGINT}, #{signalType,jdbcType=VARCHAR},
+       #{signalScore,jdbcType=DOUBLE}, #{reason,jdbcType=VARCHAR}, CAST(#{payloadJson} AS jsonb), #{dedupeKey})
+    ON CONFLICT (tenant_id, item_type, dataset_id, dedupe_key) DO NOTHING
+  </insert>
+
+  <!--
+    Tibero: ON CONFLICT 가 없어 MERGE … USING (SELECT … FROM DUAL) … WHEN NOT MATCHED 로 쓴다. 일치 조건은 함수 기반 UNIQUE 인덱스
+    (tenant_id, item_type, NVL(dataset_id,-1), dedupe_key) 와 같다 — dataset_id null 끼리도 같은 키로 본다(NULLS NOT DISTINCT).
+    주의: MERGE 는 동시 삽입 경합에서 원자적이지 않다. 두 세션이 동시에 NOT MATCHED 를 보면 한쪽이 UNIQUE 위반으로 실패한다(PG 의
+    ON CONFLICT 는 조용히 무시). 계약 테스트는 순차 호출만 본다.
+  -->
+  <insert id="insertPendingIgnoreDuplicate" databaseId="tibero">
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.tiberoTenantBind"/>
+    MERGE INTO graph_review_item t
+    USING (SELECT #{ctxTenantId} AS tenant_id, #{itemType} AS item_type,
+                  #{datasetId} AS dataset_id, #{dedupeKey} AS dedupe_key FROM DUAL) s
+       ON (t.tenant_id = s.tenant_id AND t.item_type = s.item_type
+           AND NVL(t.dataset_id, -1) = NVL(s.dataset_id, -1) AND t.dedupe_key = s.dedupe_key)
+    WHEN NOT MATCHED THEN INSERT
+      (tenant_id, item_type, status, dataset_id, signal_type, signal_score, reason, payload, dedupe_key)
+    VALUES
+      (s.tenant_id, s.item_type, 'pending', s.dataset_id, #{signalType},
+       #{signalScore}, #{reason}, #{payloadJson}, s.dedupe_key)
+  </insert>
+
+  <!-- 결정(approved/rejected)을 pending 보다 우선하고, 결정끼리는 가장 최근 결정 → id 역순. -->
+  <select id="findDecisionStatus" resultType="string">
+    SELECT graph_review_item.status
+      FROM graph_review_item
+     WHERE graph_review_item.item_type = #{itemType}
+       AND graph_review_item.dedupe_key = #{dedupeKey}
+       <include refid="tiberoTenant"/>
+       AND <include refid="visibleItem"/>
+     ORDER BY CASE WHEN graph_review_item.status = 'pending' THEN 1 ELSE 0 END,
+              graph_review_item.decided_at DESC NULLS LAST,
+              graph_review_item.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
+  </select>
+
+  <!-- CREATED_AT 은 대량 인제스트 때 겹치므로 id 를 2차 정렬키로 둬 페이지 경계의 누락·중복을 막는다. limit null 이면 전체. -->
+  <select id="findByStatus" resultMap="reviewItemRecord">
+    SELECT <include refid="recordColumns"/>
+      FROM graph_review_item
+     WHERE graph_review_item.status = #{status}
+       <if test="itemType != null">AND graph_review_item.item_type = #{itemType}</if>
+       <include refid="tiberoTenant"/>
+       AND <include refid="visibleItem"/>
+     ORDER BY graph_review_item.created_at, graph_review_item.id
+     <if test="limit != null"><include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/></if>
+  </select>
+
+  <select id="findById" resultMap="reviewItemRecord">
+    SELECT <include refid="recordColumns"/>
+      FROM graph_review_item
+     WHERE graph_review_item.id = #{id}
+       <include refid="tiberoTenant"/>
+  </select>
+
+  <!-- pending 일 때만 바꾼다(WD-428) — 동시에 들어온 승인·거부가 서로의 결정을 덮어쓰지 않게. -->
+  <update id="updateStatusIfPending">
+    UPDATE graph_review_item
+       SET status = #{status},
+           decided_by = #{decidedBy},
+           decided_at = #{decidedAt}
+     WHERE id = #{id}
+       AND status = 'pending'
+  </update>
+
+  <!-- 결정 동안 행 잠금(WD-428). 세션 1차 캐시가 잠금 질의를 건너뛰지 않도록 캐시를 끈다. -->
+  <select id="lockForDecision" resultType="long" flushCache="true" useCache="false">
+    SELECT graph_review_item.id
+      FROM graph_review_item
+     WHERE graph_review_item.id = #{id}
+       FOR UPDATE
+  </select>
+
+</mapper>

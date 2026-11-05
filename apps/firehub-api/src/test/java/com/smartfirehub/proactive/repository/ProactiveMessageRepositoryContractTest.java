@@ -35,14 +35,26 @@ abstract class ProactiveMessageRepositoryContractTest extends IntegrationTestBas
   @BeforeEach
   void setUp() {
     userId =
-        dsl.insertInto(USER)
-            .set(USER.USERNAME, "pmrepo_" + System.nanoTime())
-            .set(USER.PASSWORD, "password")
-            .set(USER.NAME, "PM Repo Tester")
-            .set(USER.EMAIL, "pmrepo_" + System.nanoTime() + "@example.com")
-            .returning(USER.ID)
-            .fetchOne()
-            .getId();
+        insertUser(
+            "pmrepo_" + System.nanoTime(),
+            "password",
+            "PM Repo Tester",
+            "pmrepo_" + System.nanoTime() + "@example.com");
+  }
+
+  // ── 픽스처 seam(WD-487) ── 사용자·작업·실행·등급 부여 같은 픽스처를 아래 protected 메서드로 모은다. 기본 구현은 PG(지금 코드 그대로,
+  // 테스트 트랜잭션과 함께 롤백)이고 Tibero 하위 클래스가 Tibero DataSource 위에서 같은 의미로 다시 구현한다. 단언은 바꾸지 않는다.
+
+  /** "user" 행을 넣고 id 를 돌려준다. */
+  protected Long insertUser(String username, String password, String name, String email) {
+    return dsl.insertInto(USER)
+        .set(USER.USERNAME, username)
+        .set(USER.PASSWORD, password)
+        .set(USER.NAME, name)
+        .set(USER.EMAIL, email)
+        .returning(USER.ID)
+        .fetchOne()
+        .getId();
   }
 
   // -----------------------------------------------------------------------
@@ -102,14 +114,11 @@ abstract class ProactiveMessageRepositoryContractTest extends IntegrationTestBas
   void findUnreadByUserId_otherUserMessages_notReturned() {
     // 다른 사용자 메시지는 반환되지 않아야 한다
     Long otherUserId =
-        dsl.insertInto(USER)
-            .set(USER.USERNAME, "pmrepo_other_" + System.nanoTime())
-            .set(USER.PASSWORD, "pw")
-            .set(USER.NAME, "Other")
-            .set(USER.EMAIL, "pmrepo_other_" + System.nanoTime() + "@example.com")
-            .returning(USER.ID)
-            .fetchOne()
-            .getId();
+        insertUser(
+            "pmrepo_other_" + System.nanoTime(),
+            "pw",
+            "Other",
+            "pmrepo_other_" + System.nanoTime() + "@example.com");
 
     repository().create(otherUserId, null, "Other's Message", Map.of(), "REPORT");
 
@@ -162,6 +171,24 @@ abstract class ProactiveMessageRepositoryContractTest extends IntegrationTestBas
         all.stream().filter(m -> m.id().equals(id)).findFirst().orElseThrow();
     assertThat(msg.read()).isTrue();
     assertThat(msg.readAt()).isNotNull();
+  }
+
+  /**
+   * created_at(DB DEFAULT)이 PG 와 같은 기준 — 세션(=JVM) 시간대 벽시계라 {@code LocalDateTime.now()} 와 몇 분 안이다.
+   * Tibero DDL 의 DEFAULT 가 UTC 벽시계면 KST JVM 에서 9시간 어긋나므로 그 회귀를 잡는다.
+   */
+  @Test
+  void create_createdAtDefault_followsSessionClock() {
+    Long id = repository().create(userId, null, "Clock", Map.of(), "REPORT");
+
+    ProactiveMessageResponse msg =
+        repository().findByUserId(userId, 10, 0, false).stream()
+            .filter(m -> m.id().equals(id))
+            .findFirst()
+            .orElseThrow();
+    assertThat(msg.createdAt()).isNotNull();
+    assertThat(java.time.Duration.between(msg.createdAt(), java.time.LocalDateTime.now()).abs())
+        .isLessThan(java.time.Duration.ofMinutes(5));
   }
 
   @Test
@@ -279,21 +306,27 @@ abstract class ProactiveMessageRepositoryContractTest extends IntegrationTestBas
 
   private Long createOtherUser(String prefix) {
     String unique = prefix + "_" + System.nanoTime();
-    return dsl.insertInto(USER)
-        .set(USER.USERNAME, unique)
-        .set(USER.PASSWORD, "pw")
-        .set(USER.NAME, "Recipient")
-        .set(USER.EMAIL, unique + "@example.com")
-        .returning(USER.ID)
-        .fetchOne()
-        .getId();
+    return insertUser(unique, "pw", "Recipient", unique + "@example.com");
   }
 
   /** userId(작성자) 소유 작업의 COMPLETED 리포트 실행을 만든다 — 채팅 리포트가 가리키는 실행. */
   private Long createOwnedReportExecution() {
+    return createReportExecution(userId);
+  }
+
+  /** ownerUserId 소유 작업의 COMPLETED 리포트 실행을 만든다(픽스처 seam — PG 는 작업·실행 리포지토리를 그대로 쓴다). */
+  protected Long createReportExecution(Long ownerUserId) {
     Long jobId =
         jobRepository.create(
-            userId, "주간 현황", "prompt", null, "0 0 9 * * *", "Asia/Seoul", true, null, Map.of());
+            ownerUserId,
+            "주간 현황",
+            "prompt",
+            null,
+            "0 0 9 * * *",
+            "Asia/Seoul",
+            true,
+            null,
+            Map.of());
     Long execId = executionRepository.create(jobId);
     executionRepository.updateResult(
         execId,
@@ -362,7 +395,7 @@ abstract class ProactiveMessageRepositoryContractTest extends IntegrationTestBas
   // -----------------------------------------------------------------------
 
   /** 사용자에게 지정 등급의 역할만 준다(ACTIVE 멤버십 포함) — 수신자의 「현재 최대 등급」. 테스트 트랜잭션과 함께 롤백된다. */
-  private void giveLevel(Long uid, String levelName) {
+  protected void giveLevel(Long uid, String levelName) {
     Long levelId =
         dsl.fetchValue(
                     "select id from security_level where tenant_id = ? and name = ?",
@@ -392,13 +425,19 @@ abstract class ProactiveMessageRepositoryContractTest extends IntegrationTestBas
         DEFAULT_TEST_TENANT_ID);
   }
 
-  private void setReportLevel(Long execId, String levelName) {
+  /** 실행의 리포트 등급을 이름으로 지정한다. */
+  protected void setReportLevel(Long execId, String levelName) {
     dsl.execute(
         "update proactive_job_execution set security_level_id ="
             + " (select id from security_level where tenant_id = ? and name = ?) where id = ?",
         DEFAULT_TEST_TENANT_ID,
         levelName,
         execId);
+  }
+
+  /** 사용자의 역할 부여를 모두 지운다(등급 낮추기 시험용). */
+  protected void revokeRoles(Long uid) {
+    dsl.execute("delete from user_role where user_id = ?", uid);
   }
 
   /**
@@ -441,7 +480,7 @@ abstract class ProactiveMessageRepositoryContractTest extends IntegrationTestBas
     }
 
     // 작성자 등급을 낮추면 작성자 메시지도 가려지고 리포트 열기도 막힌다
-    dsl.execute("delete from user_role where user_id = ?", userId);
+    revokeRoles(userId);
     giveLevel(userId, "내부");
     ProactiveMessageResponse lowered = repository().findUnreadByUserId(userId).get(0);
     assertThat(lowered.content()).doesNotContainKey("summary");

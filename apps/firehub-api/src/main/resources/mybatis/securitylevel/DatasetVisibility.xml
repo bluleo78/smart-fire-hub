@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  데이터셋 가시성 공유 SQL 조각(WD-487 PoC) — JooqDatasetVisibility.condition 의 MyBatis 판.
+
+  쓰는 법: 문장이 파라미터를 "vis"(MyBatisDatasetVisibility.VisibilityParams) 이름으로 받고
+    <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+      <property name="idCol" value="dataset.id"/>
+      <property name="levelCol" value="dataset.security_level_id"/>
+    </include>
+  처럼 데이터셋 id·등급 컬럼 식을 넘긴다. ${idCol}·${levelCol} 은 XML 에 박힌 고정 식이라 사용자 입력이 들어오지 않는다.
+  속성을 빠뜨리면 런타임 파라미터 조회로 바뀌어 "no getter for idCol" 오류가 난다.
+
+  의미는 jOOQ 렌더러와 같다(MyBatisDatasetVisibilityTest 가 행 집합으로 고정):
+    제한 없음 → 1=1, 역할 없음(NO_RANK) → 1=0,
+    그 외 → 등급 rank ≤ 자격 rank ∧ (허용 목록 불필요 ∨ [ADMIN 이면 admin_bypass] ∨ 본인·보유 역할이 허용 목록에 있음)
+           ∧ [AI 문맥이면 ai_policy] ∧ [공유 목적이면 share_policy].
+  별칭(vis_sl·acl_g)은 jOOQ 판과 같게 둔다.
+
+  벤더 차이는 불리언 리터럴뿐이라 공용 조각(PlatformSql.sqlTrue·sqlFalse)으로 한 본문을 쓴다(Tibero 불리언 컬럼은 NUMBER(1)).
+-->
+<mapper namespace="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility">
+
+  <sql id="visible">
+    <choose>
+      <when test="vis.unrestricted">(1=1)</when>
+      <when test="vis.noRank">(1=0)</when>
+      <otherwise>
+        (EXISTS (
+          SELECT 1 FROM security_level vis_sl
+           WHERE vis_sl.id = ${levelCol}
+             AND vis_sl.rank &lt;= #{vis.rank}
+             AND (vis_sl.allowlist_required = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+                  <if test="vis.tenantAdmin">OR vis_sl.admin_bypass = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/></if>
+                  OR EXISTS (
+                    SELECT 1 FROM dataset_access_grant acl_g
+                     WHERE acl_g.dataset_id = ${idCol}
+                       AND (acl_g.user_id = #{vis.userId}
+                            <if test="vis.roleIds != null and vis.roleIds.size() > 0">
+                              OR acl_g.role_id IN
+                              <foreach collection="vis.roleIds" item="roleId" open="(" separator="," close=")">#{roleId}</foreach>
+                            </if>)))
+             <if test="vis.ai">
+               AND (vis_sl.ai_policy = #{vis.aiPolicyAll}
+                    <if test="vis.aiPolicySelfHosted != null">OR vis_sl.ai_policy = #{vis.aiPolicySelfHosted}</if>)
+             </if>
+             <if test="vis.share">AND vis_sl.share_policy = #{vis.sharePolicyAllow}</if>
+        ))
+      </otherwise>
+    </choose>
+  </sql>
+
+</mapper>

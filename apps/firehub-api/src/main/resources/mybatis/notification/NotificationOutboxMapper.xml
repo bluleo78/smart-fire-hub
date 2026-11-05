@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  notification_outbox 문장(WD-487 PoC) — JooqNotificationOutboxRepository 와 같은 의미. databaseId·테넌트·null 바인드 규칙은
+  MyBatisPlatformConfig javadoc, 공용 조각은 mybatis/common/PlatformSql.xml. claimDue·countPendingByChannel 은 jOOQ 와 같이
+  명시 tenantId 인자를 쓴다. id 로 찾는 쓰기(markSent·requeueForRetry 등)는 Tibero 에서 테넌트 경계가 없다(보고서 참조).
+  Tibero 차이(실측): uuid 는 VARCHAR2(36)(Tibero 팩토리 전역 UUID 핸들러가 문자열로 바인딩), jsonb 는 JSON 컬럼 문자열,
+  TIMESTAMPTZ 는 UTC 벽시계 TIMESTAMP(OffsetDateTime(UTC) 바인딩이 벽시계 그대로 저장, 읽기는 전역 UtcInstantTypeHandler).
+-->
+<mapper namespace="com.smartfirehub.notification.repository.mybatis.NotificationOutboxMapper">
+
+  <resultMap id="outboxRow" type="com.smartfirehub.notification.repository.NotificationOutboxRepository$NotificationOutboxRow">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="idempotency_key" javaType="java.lang.String"/>
+      <arg column="correlation_id" javaType="java.util.UUID" typeHandler="com.smartfirehub.global.platformdb.mybatis.UuidTypeHandler"/>
+      <arg column="event_type" javaType="java.lang.String"/>
+      <arg column="event_source_id" javaType="java.lang.Long"/>
+      <arg column="channel_type" javaType="com.smartfirehub.notification.ChannelType"/>
+      <arg column="recipient_user_id" javaType="java.lang.Long"/>
+      <arg column="recipient_address" javaType="java.lang.String"/>
+      <arg column="payload_ref_type" javaType="java.lang.String"/>
+      <arg column="payload_ref_id" javaType="java.lang.Long"/>
+      <arg column="payload" javaType="java.lang.String"/>
+      <arg column="payload_type" javaType="java.lang.String"/>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="attempt_count" javaType="_int"/>
+      <arg column="next_attempt_at" javaType="java.time.Instant"/>
+    </constructor>
+  </resultMap>
+
+  <!-- payload(jsonb)를 JSON 문자열로 읽는다. -->
+  <sql id="payloadText" databaseId="postgresql">payload::text AS payload</sql>
+  <sql id="payloadText" databaseId="tibero">payload AS payload</sql>
+
+  <!-- Tibero 읽기 테넌트 술어(PG 는 렌더되지 않는다). -->
+  <sql id="tiberoTenant">
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.tiberoTenant">
+      <property name="alias" value="notification_outbox"/>
+    </include>
+  </sql>
+
+  <sql id="rowColumns">
+    id, idempotency_key, correlation_id, event_type, event_source_id, channel_type,
+    recipient_user_id, recipient_address, payload_ref_type, payload_ref_id,
+    <include refid="payloadText"/>, payload_type, status, attempt_count, next_attempt_at
+  </sql>
+
+  <insert id="insertIfAbsent" databaseId="postgresql">
+    INSERT INTO notification_outbox
+      (idempotency_key, correlation_id, event_type, event_source_id, channel_type,
+       recipient_user_id, recipient_address, payload_ref_type, payload_ref_id, payload, payload_type)
+    VALUES
+      (#{idempotencyKey}, #{correlationId,jdbcType=OTHER}, #{eventType},
+       #{eventSourceId,jdbcType=BIGINT}, #{channelType}, #{recipientUserId,jdbcType=BIGINT},
+       #{recipientAddress,jdbcType=VARCHAR}, #{payloadRefType,jdbcType=VARCHAR},
+       #{payloadRefId,jdbcType=BIGINT}, CAST(#{payloadJson,jdbcType=VARCHAR} AS jsonb), #{payloadType})
+    ON CONFLICT ON CONSTRAINT uk_outbox_idempotency DO NOTHING
+  </insert>
+
+  <!--
+    Tibero: 멱등 키 MERGE. 일치 조건은 PG V106 의 uk_outbox_idempotency UNIQUE (tenant_id, idempotency_key) 와 같다 — 키만으로
+    맞추면 다른 테넌트가 같은 키를 이미 쓴 경우 조용히 삽입을 건너뛴다.
+    동시 삽입 경합에서는 한쪽이 UNIQUE 위반으로 실패할 수 있다(PG ON CONFLICT 는 조용히 무시) — 계약 테스트는 순차 호출만 본다.
+  -->
+  <insert id="insertIfAbsent" databaseId="tibero">
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.tiberoTenantBind"/>
+    MERGE INTO notification_outbox t
+    USING (SELECT #{ctxTenantId} AS tenant_id, #{idempotencyKey} AS idempotency_key FROM DUAL) s
+       ON (t.tenant_id = s.tenant_id AND t.idempotency_key = s.idempotency_key)
+    WHEN NOT MATCHED THEN INSERT
+      (tenant_id, idempotency_key, correlation_id, event_type, event_source_id, channel_type,
+       recipient_user_id, recipient_address, payload_ref_type, payload_ref_id, payload, payload_type)
+    VALUES
+      (s.tenant_id, s.idempotency_key, #{correlationId}, #{eventType},
+       #{eventSourceId}, #{channelType}, #{recipientUserId},
+       #{recipientAddress}, #{payloadRefType},
+       #{payloadRefId}, #{payloadJson}, #{payloadType})
+  </insert>
+
+  <select id="tenantIdsWithStatus" resultType="java.lang.Long" databaseId="postgresql">
+    SELECT t FROM outbox_tenant_ids(ARRAY[<foreach collection="statuses" item="s" separator=",">#{s}</foreach>]::text[]) AS t
+  </select>
+
+  <!-- Tibero: RLS 가 없어 SECURITY DEFINER 함수가 필요 없다 — 전 테넌트를 그대로 본다. -->
+  <select id="tenantIdsWithStatus" resultType="java.lang.Long" databaseId="tibero">
+    SELECT DISTINCT tenant_id FROM notification_outbox
+     WHERE status IN <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+  </select>
+
+  <select id="selectDueIdsForUpdate" resultType="java.lang.Long" databaseId="postgresql">
+    SELECT id FROM notification_outbox
+     WHERE status = 'PENDING'
+       AND tenant_id = #{tenantId}
+       AND next_attempt_at &lt;= #{now}
+     ORDER BY next_attempt_at ASC
+     LIMIT #{batchSize}
+     FOR UPDATE SKIP LOCKED
+  </select>
+
+  <!--
+    Tibero: FETCH FIRST … FOR UPDATE 는 구문 오류(JDBC-8004), ROWNUM ≤ n … FOR UPDATE SKIP LOCKED 는 되지만 ROWNUM 이 잠금
+    건너뛰기 전에 적용돼 앞 행이 잠겨 있으면 0행이 된다(실측 — 두 번째 워커가 굶는다). 그래서 행 제한 없이 SKIP LOCKED 로 열고 구현이
+    넘긴 RowBounds(batchSize) 만큼만 읽는다. PG 판은 LIMIT 가 같은 값이라 RowBounds 가 아무것도 자르지 않는다. Tibero 는 읽어 간
+    행만 잠근다(실측: 첫 행만 읽으면 다른 세션이 나머지를 잡는다).
+  -->
+  <select id="selectDueIdsForUpdate" resultType="java.lang.Long" databaseId="tibero">
+    SELECT id FROM notification_outbox
+     WHERE status = 'PENDING'
+       AND tenant_id = #{tenantId}
+       AND next_attempt_at &lt;= #{now}
+     ORDER BY next_attempt_at ASC
+     FOR UPDATE SKIP LOCKED
+  </select>
+
+  <update id="markSending">
+    UPDATE notification_outbox
+       SET status = 'SENDING', claimed_at = #{claimedAt}, claimed_by = #{instanceId}
+     WHERE id IN <foreach collection="ids" item="i" open="(" separator="," close=")">#{i}</foreach>
+  </update>
+
+  <!-- flushCache: 같은 트랜잭션 안에서 방금 update 한 결과를 로컬 캐시 없이 읽는다. -->
+  <select id="findByIds" resultMap="outboxRow" flushCache="true">
+    SELECT <include refid="rowColumns"/> FROM notification_outbox
+     WHERE id IN <foreach collection="ids" item="i" open="(" separator="," close=")">#{i}</foreach>
+  </select>
+
+  <update id="markSent">
+    UPDATE notification_outbox
+       SET status = 'SENT', sent_at = #{sentAt}, last_error = #{externalMessageId,jdbcType=VARCHAR}
+     WHERE id = #{id}
+  </update>
+
+  <update id="rescheduleTransient">
+    UPDATE notification_outbox
+       SET status = 'PENDING', attempt_count = #{attemptCount}, next_attempt_at = #{nextAttemptAt},
+           last_error = #{error,jdbcType=VARCHAR}, last_error_at = #{errorAt},
+           claimed_at = NULL, claimed_by = NULL
+     WHERE id = #{id}
+  </update>
+
+  <update id="markPermanentFailure">
+    UPDATE notification_outbox
+       SET status = 'PERMANENT_FAILURE', permanent_failure_reason = #{reason,jdbcType=VARCHAR},
+           last_error = #{error,jdbcType=VARCHAR}, last_error_at = #{errorAt}
+     WHERE id = #{id}
+  </update>
+
+  <update id="reclaimZombies">
+    UPDATE notification_outbox
+       SET status = 'PENDING', claimed_at = NULL, claimed_by = NULL
+     WHERE status = 'SENDING' AND claimed_at &lt; #{cutoff}
+  </update>
+
+  <!-- Tibero 는 RLS 대신 테넌트 술어를 둔다. 상관 id 는 Tibero 팩토리 전역 UUID 핸들러가 문자열로 바인딩한다(jdbcType=OTHER 는 PG 용). -->
+  <select id="findByCorrelation" resultMap="outboxRow">
+    SELECT <include refid="rowColumns"/> FROM notification_outbox
+     WHERE correlation_id = #{correlationId,jdbcType=OTHER}
+       <include refid="tiberoTenant"/>
+     ORDER BY channel_type ASC
+  </select>
+
+  <!--
+    별칭을 따옴표 소문자로 둔다 — Tibero 는 따옴표 없는 별칭을 대문자(CHANNEL_TYPE)로 돌려줘 HashMap 키가 어긋난다(실측). PG 에서 따옴표 소문자
+    별칭은 따옴표 없는 별칭과 같은 이름이라 의미가 같다. 그래서 벤더 공통 한 문장이다.
+  -->
+  <select id="countPendingByChannel" resultType="java.util.HashMap">
+    SELECT channel_type AS "channel_type", COUNT(*) AS "cnt"
+      FROM notification_outbox
+     WHERE status = 'PENDING' AND tenant_id = #{tenantId}
+     GROUP BY channel_type
+  </select>
+
+  <!-- 정체 대기 행 최대 200건. Tibero 는 RLS 대신 테넌트 술어를 둔다(잠금 없는 조회라 FETCH FIRST 를 쓸 수 있다). -->
+  <select id="findStuckPending" resultMap="outboxRow">
+    SELECT <include refid="rowColumns"/> FROM notification_outbox
+     WHERE status = 'PENDING' AND created_at &lt; #{olderThan}
+       <include refid="tiberoTenant"/>
+     ORDER BY created_at ASC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="200"/></include>
+  </select>
+
+  <!-- 시도 횟수는 영구 실패만 0 으로 되돌린다(백오프 중 PENDING 은 횟수 유지). 상태 조건은 인터페이스 javadoc(WD-433) 참조. -->
+  <update id="requeueForRetry">
+    UPDATE notification_outbox
+       SET status = 'PENDING',
+           attempt_count = CASE WHEN status = 'PERMANENT_FAILURE' THEN 0 ELSE attempt_count END,
+           next_attempt_at = #{now},
+           claimed_at = NULL, claimed_by = NULL, last_error = NULL, last_error_at = NULL,
+           permanent_failure_reason = NULL
+     WHERE id = #{id} AND status IN ('PERMANENT_FAILURE', 'PENDING')
+  </update>
+
+  <delete id="deleteSentOlderThan">
+    DELETE FROM notification_outbox WHERE status = 'SENT' AND sent_at &lt; #{cutoff}
+  </delete>
+
+  <delete id="deletePermanentFailureOlderThan">
+    DELETE FROM notification_outbox WHERE status = 'PERMANENT_FAILURE' AND last_error_at &lt; #{cutoff}
+  </delete>
+</mapper>
