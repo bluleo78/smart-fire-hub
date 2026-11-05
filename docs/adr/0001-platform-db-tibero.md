@@ -1,0 +1,232 @@
+# ADR 0001 — 플랫폼 DB Tibero 지원 방식
+
+- 상태: **결정됨** (2026-11-05 — 1·5번은 사용자가 고르고, 나머지 제안은 사용자가 그대로 확정)
+- 날짜: 2026-11-05
+- 이슈: WD-489 (상위 WD-70), 근거 PoC: WD-487(MyBatis), WD-488(Flyway·JobRunr)
+- 실측 상세: WD-70·WD-487·WD-488 이슈 코멘트
+
+## 배경
+
+플랫폼 자체 DB(메타데이터)로 PostgreSQL에 더해 Tibero도 설치할 때 고를 수 있게 한다. PostgreSQL을 버리지 않고 두 DB를 함께 지원한다.
+
+2026-11-04에 이미 정한 것(WD-70 코멘트 「결정 사항」):
+
+- 데이터 저장소는 Tibero 설치본에서도 다른 DB(PG 포함)를 고를 수 있다.
+- 벡터·키워드 검색은 새 벡터 DB를 도입하기 전까지 Tibero 빌드에서 끈다.
+- 접근 계층은 jOOQ 상용 방언이 아니라 MyBatis로 한다.
+- 개발 Tibero는 트라이얼이 만료되는 2026-12-06까지 쓴다.
+
+이 문서는 PoC 결과를 받아 나머지를 정한다.
+
+현재 규모(main `d372e365` 기준):
+
+- 플랫폼 리포지토리: 인터페이스 72개, jOOQ 구현 73개(약 15,600줄, 25개 도메인)
+- 리포지토리 밖에서 `DSLContext` 를 이름으로라도 언급하는 클래스는 31개다. 그중 8개는 주석에만 나온다. 실제로 쓰는 23개의 분류는 아래 「리포지토리 밖 jOOQ 사용처」 표에 있다.
+- Flyway 마이그레이션 155개(최신 V155)
+
+## PoC 요약
+
+| 항목 | 결과 |
+|---|---|
+| MyBatis 리포지토리 3개(UPSERT·잠금 큐·JSON·가시성 조건) | PG 계약 테스트 110건, Tibero 실서버 51건 통과(1건은 RLS 전제라 WD-492로 미룸) |
+| SQL 공유율 | 약 30개 문장 중 **Tibero 전용은 5개**. 나머지는 `databaseId` 하나로 PG·Tibero가 함께 쓴다. |
+| 작성량 | 리포지토리당 jOOQ의 1.3~1.7배(평균 1.5배). 한 번만 드는 공통 부분 349줄이 따로 있다. |
+| Flyway | Oracle 모듈을 상속한 플러그인(클래스 4개)으로 migrate·info·validate·repair·baseline·PL/SQL 블록이 동작한다. clean은 Tibero 전용으로 바꿨다. 계정 생성·삭제는 막았다. |
+| JobRunr | `OracleStorageProvider` 1회전 통과. 단 **JVM이 UTC일 때만** 그렇다. |
+| 드라이버 공통 함정 | 시각의 오프셋을 버리거나 JVM 기본 시간대로 저장한다. UUID·`setNull(OTHER)` 은 지원하지 않는다. 생성 키로 ROWID 를 돌려준다. 따옴표 없는 별칭은 대문자로 온다. |
+| 잠금 큐 | `FETCH FIRST … FOR UPDATE` 는 구문 오류다. `ROWNUM` 과 `SKIP LOCKED` 를 함께 쓰면 두 번째 워커가 한 건도 못 가져간다. 그래서 행 수 제한 없이 `SKIP LOCKED` 로 가져오고 앱에서 자른다. |
+
+## 리포지토리 밖 jOOQ 사용처
+
+리포지토리 구현 73개 말고도 jOOQ 를 직접 쓰는 곳이 있다. Tibero 설치본에서 어느 연결을 써야 하는지로 나누면 다음과 같다. 대부분은 **주 `@Primary` DSLContext(= 플랫폼 DB 연결)로 PG 데이터 스키마를 다루는** 코드다. 지금은 플랫폼 DB 와 데이터 저장소가 같은 PG 라서 맞게 동작한다.
+
+| 묶음 | 클래스 | 실제 대상 | 맡는 이슈 |
+|---|---|---|---|
+| PG 데이터 저장소 | `PostgresDataTableStore`·`PostgresDataRowStore`·`DataTableQueryService`·`PgRowSearchIndex`·`SearchSourceReader`·`StagingTableCleanupService`·`AnalyticsQueryExecutionService`·`IncrementalCursorService`·`VerbatimSql`·`Adhoc*`·`TemporalSafeFetch` | PG `data` 스키마(사용자 테이블·사용자 SQL) | **WD-494** — PG 데이터 저장소 전용 DSLContext 로 옮긴다. Tibero 설치본에서 플랫폼 DSLContext 는 Tibero 를 가리키기 때문이다. |
+| PG 롤·스키마 준비 | `TenantSchemaProvisioner`·`TenantPipelineRoleProvisioner`·`TenantPipelineRoleBootstrap`·`PipelineSandboxDataSourceConfig`·`TenantPipelineDataSourceRegistry` | PG 테넌트 스키마·파이프라인 롤(소유자 연결 포함) | **WD-494** — 데이터 저장소 = PG 일 때만 켠다 |
+| 플랫폼 + 데이터 저장소 혼합 | `PythonReadGrantSync`·`TiberoPythonReadGrantSync`·`PythonReadGrantBackend` | 플랫폼 메타 테이블(jOOQ 생성 테이블)을 읽고, 데이터 저장소에 GRANT 를 한다 | **WD-493·494** — 메타 읽기는 리포지토리로 옮기고, 잠금은 데이터 저장소 쪽 하나로 잡는다 |
+| PG 전용 플랫폼 구현 | `PostgresPlatformLocks`·`PostgresPlatformTenantSession` | 플랫폼 DB(PG) | Tibero 짝은 **WD-493**(잠금)·**WD-492**(테넌트 세션) |
+
+→ WD-491(리포지토리 73개)의 범위는 바뀌지 않는다. 다만 WD-494 는 "연결 분리" 만이 아니라 **위 18개 클래스의 DSLContext 를 바꿔 다는 일** 이다. 규모 M → L 로 본다.
+
+## 결정
+
+### 1. 접근 계층 — **A. 두 벌 유지** (사용자 결정)
+
+PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/mybatis/MyBatisX`)을 따로 둔다. 리포지토리 인터페이스(WD-485)는 하나이고, 설치본의 플랫폼 DB에 따라 구현 빈을 고른다.
+
+검토한 대안:
+
+| | A. 두 벌 유지 (채택) | B. MyBatis 한 벌(`databaseId`) |
+|---|---|---|
+| 내용 | PG는 jOOQ 그대로, Tibero만 MyBatis 구현 | PG도 MyBatis로 옮기고 다른 SQL만 `databaseId` 로 분기 |
+| 처음 비용 | MyBatis 구현 73개(Tibero용) | 같은 73개 + PG 전환 검증 |
+| 이후 비용 | 리포지토리를 고칠 때마다 두 벌 | 한 벌(다른 SQL만 문장 단위로 둘) |
+| PG 운영 위험 | **없음** — 운영 중인 PG 경로를 바꾸지 않는다 | PG 운영 경로가 바뀐다, 컴파일 시 SQL 검사를 잃는다 |
+
+**채택 이유**:
+
+- 운영 중인 PG 경로와 jOOQ 의 타입 안전성을 건드리지 않는다.
+- Tibero 는 고객 요구가 확정되지 않은 선택지다. 그 비용을 PG 쪽이 지지 않게 한다.
+
+**감수하는 것**: 리포지토리를 바꿀 때마다 두 벌을 고쳐야 한다. 두 벌이 조용히 어긋날 위험이 있다.
+
+**두 벌이 어긋나지 않게 하는 규칙**:
+
+1. **계약 테스트 필수**
+   - 리포지토리 인터페이스마다 추상 계약 테스트(`*ContractTest`) 하나를 둔다.
+   - jOOQ 구현과 MyBatis 구현이 같은 테스트를 상속해 돈다(WD-485·WD-487 구조).
+   - 계약 테스트가 없는 리포지토리는 MyBatis 구현을 만들기 전에 테스트부터 만든다.
+2. **MyBatis 구현도 PG CI 에서 돈다**
+   - MyBatis 매퍼는 `databaseId` 로 PG·Tibero 문장을 함께 갖는다. PoC 기준 약 83% 가 공유 문장이다.
+   - 그래서 PG Testcontainers 에서도 MyBatis 계약 테스트가 돈다. Tibero 실서버가 없어도 매 PR 에서 두 구현의 동작 차이를 대부분 잡는다.
+   - Tibero 전용 문장(PoC 기준 30개 중 5개)만 Tibero 실서버 검증에 기댄다.
+   - 운영 PG 는 MyBatis 를 쓰지 않는다. 테스트 프로필에서만 배선을 켠다(지금 WD-487 방식).
+3. **구현 짝 검사**(ArchUnit 또는 테스트)
+   - 모든 플랫폼 리포지토리 인터페이스는 jOOQ 구현과 MyBatis 구현을 하나씩 가진다.
+   - MyBatis 구현이 없는 인터페이스는 허용 목록에 이유와 함께 올린다. 2단계가 진행되는 동안 이 목록이 줄어든다.
+4. **변경 규칙**: 리포지토리 인터페이스나 jOOQ 구현을 바꾸는 PR 은 MyBatis 구현과 매퍼 XML 도 함께 바꾼다. 검토 체크리스트에 넣는다.
+5. **MyBatis 설정**
+   - 지역 캐시는 문장 단위(`localCacheScope=STATEMENT`)로 둔다.
+   - jOOQ 중첩 트랜잭션(savepoint)과 Spring `REQUIRED` 의 의미 차이는 구현마다 주석으로 남긴다(PoC `claimDue`).
+
+### 2. 마이그레이션 이원화 규칙
+
+- **경로**:
+  - PG 는 지금 그대로 `db/migration` 이다.
+  - Tibero 는 `db/migration-tibero` 이다. 기준선은 **WD-490 을 시작할 때의 PG 최신 버전**에 해당하는 스키마 한 파일이다(지금은 V155).
+  - `db/migration/tibero` 처럼 하위 폴더로 두지 않고 형제 폴더로 둔다. Flyway 는 위치를 재귀로 훑기 때문에, 하위 폴더에 두면 Tibero 파일이 PG migrate 와 jOOQ 코드젠에 섞여 들어간다. WD-70 본문의 `db/migration/{vendor}` 안을 따르지 않는 진짜 이유다.
+  - Tibero 프로필은 `spring.flyway.locations` 를 **명시**하고 `fail-on-missing-locations=true` 를 둔다.
+  - `{vendor}` 는 쓰지 않는다. Spring Boot 가 Tibero 를 몰라 글자 그대로 남고, 마이그레이션 0건으로 기동이 "성공"한다(WD-488 실측).
+- **이후 스키마 변경**:
+  - 기준선 뒤의 PG 마이그레이션 Vn 마다 Tibero 쪽에도 같은 버전 Vn 을 둔다.
+  - Tibero 에 할 일이 없으면 주석만 있는 빈 파일을 둔다. Flyway Oracle 파서가 이 파일을 받아들이는지는 WD-490 에서 실서버로 확인한다.
+  - CI 테스트로 두 경로의 버전 집합이 같은지 검사한다(`MigrationParityTest`, WD-490).
+- **Tibero 마이그레이션 작성 규칙**(DDL 이 암묵 커밋하므로):
+  - 1파일 1DDL 이 기본이다.
+  - 여러 DDL 이 필요하면 멱등 블록으로 쓴다(사전 뷰로 존재 확인 + `EXECUTE IMMEDIATE`).
+  - DML 은 DDL 과 같은 파일에 섞지 않는다.
+- **실패 복구**:
+  - 설치 기준선이 실패하면 스키마를 비우고 처음부터 다시 적용한다.
+  - 증분 마이그레이션이 실패하면 남은 객체를 확인하고, 파일을 고치거나 멱등화한 뒤 repair → migrate 한다.
+  - repair 는 이력만 정리하고 반쯤 적용된 객체는 남긴다(실측).
+- **타입 대응**(WD-490 에서 확정):
+  - BOOLEAN → `NUMBER(1)`
+  - TEXT → `VARCHAR(n)`, 큰 값은 CLOB(GROUP BY·DISTINCT 불가에 주의)
+  - JSONB → `JSON`
+  - TIMESTAMPTZ → UTC 를 담는 `TIMESTAMP`. TSTZ 컬럼은 쓰지 않는다(WD-260 결함).
+  - `''` 는 NULL 로 바뀐다. `DEFAULT ''` 4곳과, 코드가 NOT NULL 컬럼에 `''` 를 쓰는 곳을 점검한다.
+- **JobRunr 테이블**: Tibero 기준선 DDL 에 JobRunr Oracle 스키마를 넣는다. PG 가 V85 로 하는 방식과 같다. 런타임 롤에 DDL 권한을 주지 않기 위해서다.
+- **Flyway 플러그인 유지**:
+  - 플러그인은 Flyway 내부 API(패키지 전용 생성자)에 기댄다.
+  - Flyway 를 올릴 때 `TiberoFlywayDatabaseTypeTest` 와 Tibero 실서버 PoC 를 다시 돌리는 것을 업그레이드 조건으로 둔다.
+
+### 3. Tibero 빌드에서 끄는 기능
+
+| 기능 | 이유 | 방식 |
+|---|---|---|
+| 벡터(의미) 검색 — AI 문서·데이터셋 검색 | Tibero 7.2 에 VECTOR 가 없다 | `PlatformDbFeature.VECTOR_SEARCH` 를 Tibero 기본값으로 끈다(WD-486 플래그) |
+| 키워드(트라이그램) 검색 | pg_trgm 에 대응하는 기능이 없다 | `TRIGRAM_SEARCH` 를 끈다 |
+| LISTEN/NOTIFY 즉시 깨우기 | 없다 | 끄지 않고 바꾼다. `DBMS_ALERT` 로 하거나, 폴링만 쓰고 지연을 감수한다(WD-493) |
+
+화면 안내:
+
+- API 가 설치본의 기능 플래그를 내려준다.
+- 웹은 꺼진 기능의 입력을 숨기지 않고 비활성으로 두고, "이 설치본(Tibero)에서는 지원하지 않습니다"를 표시한다(WD-495).
+- AI 에이전트 도구 목록에서도 빠지게 한다.
+- 행 검색·공간 기능은 **데이터 저장소** 쪽 기능이라, 데이터 저장소가 PG 면 Tibero 설치본에서도 그대로 쓴다.
+
+### 4. 플랫폼 DB × 데이터 저장소 조합
+
+| 플랫폼 DB | 데이터 저장소 | 지원 |
+|---|---|---|
+| PG | PG(같은 DB) | 지금 그대로 |
+| PG | Tibero 등 외부 | 지금 그대로(WD-69) |
+| Tibero | Tibero | 지원 |
+| Tibero | PG | 지원 — PG 데이터 저장소 연결을 플랫폼 DB 연결과 분리한다(WD-494) |
+
+두 저장소를 가로지르는 직렬화를 다시 설계한다(WD-493). 지금은 PG 의 같은 잠금 공간을 공유해서 맞게 동작하는 것이 2건 있다. Python 읽기 권한 동기화와 출력 테이블 잠금이다.
+
+- 데이터 저장소에 대한 잠금은 데이터 저장소에서 잡는다.
+- 플랫폼 잠금은 플랫폼 DB 에서 잡는다.
+- 한 직렬화는 한쪽 잠금으로만 잡는다.
+
+### 5. 검증 환경 — **데모 라이선스 매달 갱신** (사용자 결정)
+
+지금 쓰는 개발 Tibero 의 제약: 트라이얼이라 2026-12-06 에 만료되고, 세션이 20개이며, DCIM 팀과 함께 쓴다. K8S `tibero:8629` 도 같은 날 만료된다.
+
+만료 뒤에는 공식 도커 이미지에 1개월 데모 라이선스를 매달 갱신해 쓴다.
+
+- **라이선스 발급**: 데모 라이선스는 TmaxTech 사이트에서 받는다. 가입과 신청은 사람이 한다.
+- **호스트명 고정**: 라이선스가 호스트명에 묶인다. 컨테이너·파드의 호스트명을 고정한다. K8S 인스턴스에는 이미 `wm-management` 로 고정한 선례가 있다.
+- **갱신 절차·만료 확인**(WD-497/498)
+  - 갱신 절차를 runbook 으로 남긴다.
+  - 하네스가 시작할 때 `V$LICENSE` 의 만료일을 읽는다. 7일 안이면 경고하고, 지났으면 "라이선스 만료" 로 건너뛴다. 실패로 오인하지 않게 하기 위해서다.
+- **데이터 유지**: 새 컨테이너나 파드에서 다시 설치되는 이미지 함정이 있다. 라이선스를 갱신할 때 DB 가 초기화될 수 있으므로, Tibero 검증 데이터는 하네스가 매번 만들고 지우는 것만 쓴다.
+- **세션**: 데모 라이선스의 세션 한도에 맞춰 하네스 풀을 작게 둔다(지금 PoC 는 최대 2~3).
+
+CI 에는 Tibero 공개 이미지가 없다. Tibero 실서버 테스트는 환경변수가 있을 때만 도는 지금 방식을 유지한다. PR 마다가 아니라 묶음(단계) 완료 시점에 돌린다. PR 마다는 1번의 PG 위 MyBatis 계약 테스트가 대신한다.
+
+### 6. JVM 시간대 — UTC 필수
+
+Tibero 드라이버는 시각을 JVM 기본 시간대로 저장한다. JVM 이 KST 면 JobRunr 서버가 20초 만에 자기 자신을 시간 초과로 지우고, 저장 시각이 9시간 어긋난다(WD-487·WD-488 실측).
+
+- 운영 JVM 은 UTC 로 본다. 근거는 세 가지다.
+  - api `Dockerfile` 과 배포 차트(`api-deployment.yaml`·values)에 `TZ`·`user.timezone` 설정이 없다. `JAVA_TOOL_OPTIONS` 는 메모리 옵션뿐이다.
+  - 그래서 기반 이미지 eclipse-temurin 의 기본값(UTC)을 따른다.
+  - `bootRun` 도 같은 이유로 UTC 를 고정한다(WD-476).
+  - 실행 중인 파드에서 직접 확인하지는 않았다.
+- Tibero 설치본은 `user.timezone=UTC` 를 **기동 시 검사로 강제**한다(WD-496).
+- Tibero 테스트 하네스도 UTC 로 돈다(WD-497).
+
+## 2단계 순서와 규모
+
+| 순서 | 이슈 | 내용 | 규모 |
+|---|---|---|---|
+| 1 | WD-496 | 부트스트랩: Tibero DataSource·프로필, UTC 검사, 예외 번역(PG SQLState → Tibero 오류 코드), pgjdbc 직접 의존 제거 | M |
+| 1 | WD-497 | 테스트 하네스: Tibero 하네스 통합(WD-487·488 하네스 + `TiberoTestEnvironment`), UTC, 라이선스 만료 검사, 계약 테스트 Tibero 하위 클래스 규칙 | M |
+| 2 | WD-490 | 기준선 DDL(V155 상당) + JobRunr 스키마, `MigrationParityTest`, 작성 규칙 | L |
+| 3 | WD-494 | PG 데이터 저장소 연결을 플랫폼 DB 연결에서 분리하고, 데이터 저장소 경로 18개 클래스의 DSLContext 를 바꿔 단다(위 표) | L |
+| 3 | WD-493 | 잠금(`DBMS_LOCK`)·알림(`DBMS_ALERT`/폴링), 두 저장소 직렬화 재설계 | M |
+| 4 | WD-492 | 테넌트 격리 CONTEXT + DBMS_RLS(61개 테이블, 소유자 필터 대응). PoC 에서 본 테넌트 조건 누락 7곳 포함 | L |
+| 5 | WD-491 | Tibero 용 MyBatis 구현(73개) + 구현 짝 검사. 도메인 묶음으로 쪼갠다(아래) | XL |
+| 6 | WD-495 | Tibero 빌드 기능 비활성 + 화면 안내 | S |
+| 7 | WD-498 | 배포·운영: Helm 값, 백업(tbexport), 설치·복구 문서, 데모 라이선스 갱신 runbook | M |
+
+**WD-491 쪼개기**(jOOQ 구현 수):
+
+| 묶음 | 도메인 | jOOQ 구현 수 |
+|---|---|---|
+| ① 공통·인증 | auth·user·role·permission·tenant·settings·platform·audit·job | 14 |
+| ② 데이터셋 | dataset | 13 |
+| ③ 파이프라인 | pipeline·mapping·apiconnection | 9 |
+| ④ 알림·선제 메시지 | notification·proactive (PoC 2개 포함) | 13 |
+| ⑤ 분석·대시보드 | analytics·dashboard | 7 |
+| ⑥ 보안 등급·온톨로지·그래프 | securitylevel·ontology·graphreview·graphingest (PoC 1개 포함) | 11 |
+| ⑦ AI·문서·파일 | ai·document·embedding·file | 6 |
+
+각 묶음은 "계약 테스트 보강 → MyBatis 구현(+Tibero 전용 문장) → PG CI 계약 테스트 통과 → Tibero 실서버 계약 테스트 통과 → 구현 짝 허용 목록에서 제거" 를 한 단위로 한다. PG 운영 빈은 바뀌지 않는다.
+
+**규모 근거**:
+
+- PoC 는 jOOQ 약 750줄분 리포지토리 3개를 이전했다. 인프라를 빼면 MyBatis 약 1,100줄이다.
+- 전체 15,600줄은 그 약 21배다.
+- 묶음 하나에 Tibero 실서버 검증과 리뷰까지 넣으면, WD-491 은 2단계에서 가장 크다. 나머지 이슈를 다 합친 것과 비슷하거나 더 크다.
+- 날짜는 정하지 않는다. 묶음마다 Tibero 실서버 검증이 들어가므로, 일정은 데모 라이선스 갱신이 끊기지 않는 것을 전제로 한다.
+
+## PoC 브랜치 처리 — 결정(2026-11-05)
+
+| 브랜치 | 처리 |
+|---|---|
+| `worktree-wd487-mybatis-poc` | main 위로 다시 올려 WD-491 의 첫 단위로 병합한다. MyBatis 공통 인프라와 리포지토리 3개가 들어 있고, MyBatis 배선은 테스트 프로필에서만 켜진다. 짝 검사와 Tibero 설치본 배선은 WD-491/496 에서 붙인다. |
+| `worktree-wd488-flyway-poc` | 병합해 WD-490/496 의 출발점으로 쓴다. 플러그인(본 코드)은 PG 에 영향이 없다. 등록·판별 테스트만 PG 회귀에서 돌고, 실서버 테스트는 환경변수가 있을 때만 돈다. |
+
+병합하기 전에 API 전체 회귀를 돌린다. WD-487 은 테스트 프로필에서 MyBatis 배선을 켜서 모든 통합 테스트의 컨텍스트가 바뀌기 때문이다.
+
+## 결과(감수하는 것)
+
+- Tibero 설치본은 벡터·키워드 검색이 없다. 새 벡터 DB 를 도입하기 전까지 그렇다.
+- 스키마를 바꿀 때마다 마이그레이션 두 벌을 쓰고, Tibero 작성 규칙을 지킨다.
+- 플랫폼 리포지토리 변경이 두 벌이 된다. 계약 테스트·구현 짝 검사·PG 위 MyBatis 테스트로 어긋남을 잡는다.
+- MyBatis 구현은 컴파일 시 SQL 검사가 없다. 계약 테스트가 그 역할을 한다.
+- Tibero 검증은 데모 라이선스를 매달 갱신하는 실서버 환경에 기댄다. 갱신이 끊기면 Tibero 테스트는 건너뛰어지고, 그동안의 Tibero 전용 문장은 검증되지 않는다.
