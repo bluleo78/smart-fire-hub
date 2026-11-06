@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.dataset.storage.DataTableStore;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantSchemaProvisioner;
@@ -40,7 +41,7 @@ public class PostgresDataTableStore implements DataTableStore {
     return DataStoreBackend.POSTGRESQL;
   }
 
-  private final DSLContext dsl;
+  @DataStoreDb private final DSLContext dsl;
   private final TenantSchemaProvisioner schemaProvisioner;
 
   /**

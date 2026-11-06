@@ -11,6 +11,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.dto.UpdateColumnRequest;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
@@ -40,6 +41,10 @@ class DatasetNameLengthTest extends IntegrationTestBase {
   @Autowired private DataTableRowService dataTableRowService;
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
 
   private Long userId;
@@ -72,28 +77,30 @@ class DatasetNameLengthTest extends IntegrationTestBase {
    * 테이블을 흉내 낸다.
    */
   private void createPhysicalTableWithRows(String tableName) {
-    dsl.execute(
+    dataDsl.execute(
         "CREATE TABLE "
             + DataSchema.qualify(tableName)
             + " (id BIGSERIAL PRIMARY KEY, import_id BIGINT, val TEXT,"
             + " created_at TIMESTAMP DEFAULT NOW(), _updated_at TIMESTAMPTZ NOT NULL DEFAULT now())");
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO " + DataSchema.qualify(tableName) + " (val) VALUES ('alpha'), ('beta')");
   }
 
   /** 테이블의 val 값을 id 순으로 읽는다 — 행 단위 보존 단언용. */
   private List<String> valuesOf(String tableName) {
-    return dsl.fetch("SELECT val FROM " + DataSchema.qualify(tableName) + " ORDER BY id")
+    return dataDsl
+        .fetch("SELECT val FROM " + DataSchema.qualify(tableName) + " ORDER BY id")
         .getValues(0, String.class);
   }
 
   /** count(*) 질의 결과를 Long 으로 읽는다. */
   private Long countOf(String sql, Object... binds) {
-    return ((Number) dsl.fetchValue(sql, binds)).longValue();
+    return ((Number) dataDsl.fetchValue(sql, binds)).longValue();
   }
 
   private boolean physicalTableExists(String tableName) {
-    return dsl.fetchValue("SELECT to_regclass(?) IS NOT NULL", DataSchema.qualify(tableName))
+    return dataDsl
+        .fetchValue("SELECT to_regclass(?) IS NOT NULL", DataSchema.qualify(tableName))
         .equals(Boolean.TRUE);
   }
 
@@ -344,7 +351,7 @@ class DatasetNameLengthTest extends IntegrationTestBase {
   /** REPLACE 한 번(임시 생성 → 적재 → 마무리)을 실제 실행기와 같은 순서로 돌린다. */
   private void replaceWith(String tableName, String value) {
     String tmp = dataTableService.createTempTable(tableName);
-    dsl.execute("INSERT INTO " + DataSchema.qualify(tmp) + " (val) VALUES (?)", value);
+    dataDsl.execute("INSERT INTO " + DataSchema.qualify(tmp) + " (val) VALUES (?)", value);
     dataTableService.finishReplace(tableName, tmp, 1);
   }
 
@@ -360,7 +367,7 @@ class DatasetNameLengthTest extends IntegrationTestBase {
 
     // 맞바꿈 후 시퀀스 이름이 테이블 이름과 겹치지 않아 두 번째 REPLACE·이후 삽입도 된다.
     replaceWith(legacy, "delta");
-    dsl.execute("INSERT INTO " + DataSchema.qualify(legacy) + " (val) VALUES ('epsilon')");
+    dataDsl.execute("INSERT INTO " + DataSchema.qualify(legacy) + " (val) VALUES ('epsilon')");
     assertThat(valuesOf(legacy)).containsExactly("delta", "epsilon");
 
     // 실패 정리 경로도 원본을 건드리지 않는다.
@@ -420,8 +427,8 @@ class DatasetNameLengthTest extends IntegrationTestBase {
     // 두 테이블 모두 시퀀스가 살아 있어 nextval 로 삽입된다. 맞바꾼 쪽은 원본 시퀀스 이름을 그대로 물려받았다.
     assertThat(serialSequenceOf(second)).isEqualTo(secondSeqBefore);
     assertThat(serialSequenceOf(first)).isEqualTo(firstSeqBefore);
-    dsl.execute("INSERT INTO " + DataSchema.qualify(first) + " (val) VALUES ('first_next')");
-    dsl.execute("INSERT INTO " + DataSchema.qualify(second) + " (val) VALUES ('second_next')");
+    dataDsl.execute("INSERT INTO " + DataSchema.qualify(first) + " (val) VALUES ('first_next')");
+    dataDsl.execute("INSERT INTO " + DataSchema.qualify(second) + " (val) VALUES ('second_next')");
     assertThat(valuesOf(first)).containsExactly("alpha", "beta", "first_next");
     assertThat(valuesOf(second)).containsExactly("gamma", "second_next");
   }
@@ -429,7 +436,7 @@ class DatasetNameLengthTest extends IntegrationTestBase {
   /** 테이블 id 컬럼이 소유한 시퀀스의 실제 이름(스키마 제외). */
   private String serialSequenceOf(String tableName) {
     return (String)
-        dsl.fetchValue(
+        dataDsl.fetchValue(
             "SELECT s.relname::text FROM pg_class s WHERE s.oid = pg_get_serial_sequence(?, 'id')::regclass",
             DataSchema.qualify(tableName));
   }

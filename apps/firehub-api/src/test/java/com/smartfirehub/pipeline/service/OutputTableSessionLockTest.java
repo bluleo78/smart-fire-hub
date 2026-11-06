@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.platformdb.postgres.PostgresPlatformLocks;
 import com.smartfirehub.global.tenant.DataSchema;
@@ -52,6 +53,10 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
   @Autowired private OutputTableSessionLock sessionLock;
   @Autowired private SqlScriptExecutor sqlScriptExecutor;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PlatformLocks platformLocks;
   @Autowired private DataTableService dataTableService;
   @Autowired private DataSource dataSource;
@@ -128,7 +133,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
         List.of(new DatasetColumnRequest("name", "name", "TEXT", null, true, false, null, false)));
     ExecutorService pool = Executors.newSingleThreadExecutor();
     try {
-      dsl.execute("INSERT INTO " + DataSchema.qualify(out) + " (name) VALUES ('old')");
+      dataDsl.execute("INSERT INTO " + DataSchema.qualify(out) + " (name) VALUES ('old')");
       String insert = "INSERT INTO " + DataSchema.qualify(out) + " (name) VALUES ('new')";
 
       Future<String> sqlRun =
@@ -162,7 +167,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
       assertThat(advisoryLocks("true")).isZero();
     } finally {
       pool.shutdownNow();
-      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(out));
+      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(out));
     }
   }
 
@@ -401,7 +406,8 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
   }
 
   private List<String> names(String table) {
-    return dsl.fetch("SELECT name FROM " + DataSchema.qualify(table) + " ORDER BY name")
+    return dataDsl
+        .fetch("SELECT name FROM " + DataSchema.qualify(table) + " ORDER BY name")
         .getValues(0, String.class);
   }
 }

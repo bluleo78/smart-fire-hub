@@ -308,3 +308,42 @@ val tiberoTest by tasks.registering(Test::class) {
     setFinalizedBy(emptyList<Any>())
     extensions.configure<JacocoTaskExtension> { isEnabled = false }
 }
+
+// 분리 모드 통합 회귀 태스크(WD-494). 데이터 저장소를 다루는 패키지의 통합 테스트를 플랫폼 DB 와 다른 두 번째 PG 컨테이너
+// (firehub.data-store.postgres.separate=true)로 다시 돌린다 — PostgresTestContainer 가 시스템 속성을 보고 분리 모드 키를 등록한다.
+// 기본 test 는 별칭 모드(같은 DB·같은 인스턴스)라 "데이터 저장소 객체를 플랫폼 연결로 만지는" 결함을 잡지 못한다.
+val separateDataStoreTest by tasks.registering(Test::class) {
+    description = "데이터 저장소 관련 통합 테스트를 분리 모드(플랫폼 DB ≠ 데이터 저장소 DB)로 실행한다."
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    systemProperty("smartfirehub.separateDataStore", "true")
+    filter {
+        includeTestsMatching("com.smartfirehub.dataset.*")
+        includeTestsMatching("com.smartfirehub.dataimport.*")
+        includeTestsMatching("com.smartfirehub.pipeline.*")
+        includeTestsMatching("com.smartfirehub.analytics.*")
+        includeTestsMatching("com.smartfirehub.securitylevel.pythonread.*")
+        includeTestsMatching("com.smartfirehub.global.datastore.*")
+        includeTestsMatching("com.smartfirehub.global.tenant.*")
+    }
+    // 제외 목록 — 분리 모드에서 성립할 수 없거나 범위 밖 이슈가 원인인 테스트. 줄마다 사유(이슈 번호)를 단다.
+    filter {
+        // 기본(별칭) 모드 전용 단언 — @DataStoreDb 빈이 @Primary 와 같은 인스턴스인지, 분리 모드 빈이 없는지를 본다.
+        excludeTestsMatching("com.smartfirehub.global.datastore.DataStoreDbAliasTest")
+        excludeTestsMatching("com.smartfirehub.global.datastore.DataStoreFlywayConfigTest\$NotSeparate")
+        // WD-494 분리 모드 설계상 두 DB — V124 백필 DO 블록(플랫폼 마이그레이션)은 같은 DB 의 dataset 메타를 돌며 data 물리 테이블을 고친다.
+        // INSERT_UPDATE 테스트는 트리거 동작이 아니라 선행 조건인 백필 호출(V124 백필은 두 DB 를 가로지름) 때문에 뺀다.
+        // 분리 모드 데이터 저장소는 기준선 + createTable 이 _updated_at 을 책임지고, 트리거 동작 자체는 DataTableServiceTest 가 분리 모드로 본다.
+        excludeTestsMatching("com.smartfirehub.pipeline.PipelineIncrementalSchemaTest.백필_DO_블록을_재실행하면_새_TABLE_데이터셋의_물리테이블에도_적용된다")
+        excludeTestsMatching("com.smartfirehub.pipeline.PipelineIncrementalSchemaTest.INSERT와_UPDATE에서_updated_at이_실제로_채워지고_갱신된다")
+        // WD-493 — OutputTableSessionLock(세션 잠금)은 아직 플랫폼 DB 에서 잡히고 SQL REPLACE 의 출력 잠금(OUTPUT_LOCK_SQL)은 파이프라인
+        // 연결(데이터 저장소)에서 잡힌다. 분리 모드에서는 두 잠금이 다른 DB 라 서로 기다리지 않는다 — 잠금 위치 이전이 WD-493 범위다.
+        excludeTestsMatching("com.smartfirehub.pipeline.service.OutputTableSessionLockTest.세션_잠금을_쥔_동안_같은_출력의_SQL_REPLACE는_기다린다")
+    }
+    // 분리 모드 결과는 컨테이너 두 개 상태에 달려 있어 캐시하지 않는다.
+    outputs.upToDateWhen { false }
+    // 커버리지 리포트는 기본 test 의 실행 데이터로 만든다 — 이 태스크는 리포트를 끌어오지 않는다.
+    setFinalizedBy(emptyList<Any>())
+    extensions.configure<JacocoTaskExtension> { isEnabled = false }
+}

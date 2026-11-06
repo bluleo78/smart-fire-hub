@@ -10,6 +10,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.dto.UpdateColumnRequest;
 import com.smartfirehub.dataset.service.PostgresDataTableStore.FieldIndexKind;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
@@ -37,6 +38,10 @@ class DataTableFieldIndexNameTest extends IntegrationTestBase {
   @Autowired private DataTableService dataTableService;
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
 
   /** 결함 재현에 쓰인 55자 테이블명 — {@code idx_<table>_ab_x} 가 64자가 돼 63자에서 잘린다. */
@@ -77,7 +82,8 @@ class DataTableFieldIndexNameTest extends IntegrationTestBase {
    * 것이다.
    */
   private List<Idx> indexesOn(String table, String column) {
-    return dsl.fetch(
+    return dataDsl
+        .fetch(
             "SELECT ic.relname::text AS n, am.amname::text AS am"
                 + " FROM pg_index i"
                 + " JOIN pg_class ic ON ic.oid = i.indexrelid"
@@ -96,7 +102,8 @@ class DataTableFieldIndexNameTest extends IntegrationTestBase {
 
   /** 그 테이블의 인덱스 이름 전부(진단 메시지용). */
   private List<String> allIndexNames(String table) {
-    return dsl.fetch(
+    return dataDsl
+        .fetch(
             "SELECT indexname FROM pg_indexes WHERE schemaname = ? AND tablename = ? ORDER BY 1",
             DataSchema.current(),
             table)
@@ -104,7 +111,7 @@ class DataTableFieldIndexNameTest extends IntegrationTestBase {
   }
 
   private boolean indexNameExists(String name) {
-    return dsl.fetchValue(
+    return dataDsl.fetchValue(
                 "SELECT count(*) FROM pg_indexes WHERE schemaname = ? AND indexname = ?",
                 DataSchema.current(),
                 name)
@@ -115,7 +122,7 @@ class DataTableFieldIndexNameTest extends IntegrationTestBase {
   /** 옛 규칙 그대로(잘림 포함) 인덱스를 직접 만든다 — 운영에 이미 있는 옛 인덱스를 흉내 낸다. */
   private String createLegacyIndex(String table, String column) {
     String legacyFull = "idx_" + table + "_" + column;
-    dsl.execute(
+    dataDsl.execute(
         "CREATE INDEX \""
             + legacyFull
             + "\" ON "
@@ -352,7 +359,7 @@ class DataTableFieldIndexNameTest extends IntegrationTestBase {
   void 새_인덱스_이름이_이미_쓰이고_있어도_컬럼_이름_바꾸기가_실패하지_않는다() {
     dataTableService.createTable("wd100_rn", List.of(text("p", true)));
     // 새 규칙 이름 idx_wd100_rn_q 를 다른 객체가 이미 쓰고 있다(옛 규칙이면 ALTER INDEX ... RENAME TO 가 42P07 → 500).
-    dsl.execute("CREATE SEQUENCE " + DataSchema.qualify("idx_wd100_rn_q"));
+    dataDsl.execute("CREATE SEQUENCE " + DataSchema.qualify("idx_wd100_rn_q"));
 
     assertThatCode(
             () -> {
@@ -442,7 +449,7 @@ class DataTableFieldIndexNameTest extends IntegrationTestBase {
   void REPLACE_교체_후에도_필드_인덱스를_찾아_끄고_켤_수_있다() {
     dataTableService.createTable(LONG_TABLE, List.of(text("ab_x", true), text("ab_y", true)));
     String tmp = dataTableService.createTempTable(LONG_TABLE);
-    dsl.execute("INSERT INTO " + DataSchema.qualify(tmp) + " (ab_x, ab_y) VALUES ('x', 'y')");
+    dataDsl.execute("INSERT INTO " + DataSchema.qualify(tmp) + " (ab_x, ab_y) VALUES ('x', 'y')");
     dataTableService.swapTable(LONG_TABLE, tmp);
 
     // LIKE ... INCLUDING ALL 이 인덱스를 복사하며 PostgreSQL 기본 이름(rtmp_<난수>_<md5>_..._idx, 길면 앞부분)을 붙인다 —

@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.storage.DataColumnTypes;
 import com.smartfirehub.dataset.storage.DataRowStore;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataTableNames;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.TemporalSafeFetch;
 import java.time.Duration;
@@ -38,7 +39,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class PostgresDataRowStore implements DataRowStore {
 
-  private final DSLContext dsl;
+  @DataStoreDb private final DSLContext dsl;
 
   @Override
   public DataStoreBackend backend() {

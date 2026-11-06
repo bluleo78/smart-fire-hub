@@ -42,9 +42,9 @@
 
 | 묶음 | 클래스 | 실제 대상 | 맡는 이슈 |
 |---|---|---|---|
-| PG 데이터 저장소 | `PostgresDataTableStore`·`PostgresDataRowStore`·`DataTableQueryService`·`PgRowSearchIndex`·`SearchSourceReader`·`StagingTableCleanupService`·`AnalyticsQueryExecutionService`·`IncrementalCursorService`·`VerbatimSql`·`Adhoc*`·`TemporalSafeFetch` | PG `data` 스키마(사용자 테이블·사용자 SQL) | **WD-494** — PG 데이터 저장소 전용 DSLContext 로 옮긴다. Tibero 설치본에서 플랫폼 DSLContext 는 Tibero 를 가리키기 때문이다. |
-| PG 롤·스키마 준비 | `TenantSchemaProvisioner`·`TenantPipelineRoleProvisioner`·`TenantPipelineRoleBootstrap`·`PipelineSandboxDataSourceConfig`·`TenantPipelineDataSourceRegistry` | PG 테넌트 스키마·파이프라인 롤(소유자 연결 포함) | **WD-494** — 데이터 저장소 = PG 일 때만 켠다 |
-| 플랫폼 + 데이터 저장소 혼합 | `PythonReadGrantSync`·`TiberoPythonReadGrantSync`·`PythonReadGrantBackend` | 플랫폼 메타 테이블(jOOQ 생성 테이블)을 읽고, 데이터 저장소에 GRANT 를 한다 | **WD-493·494** — 메타 읽기는 리포지토리로 옮기고, 잠금은 데이터 저장소 쪽 하나로 잡는다 |
+| PG 데이터 저장소 | `PostgresDataTableStore`·`PostgresDataRowStore`·`DataTableQueryService`·`PgRowSearchIndex`·`SearchSourceReader`·`StagingTableCleanupService`·`AnalyticsQueryExecutionService`·`IncrementalCursorService`·`VerbatimSql`·`Adhoc*`·`TemporalSafeFetch` | PG `data` 스키마(사용자 테이블·사용자 SQL) | **WD-494 완료** — PG 데이터 저장소 전용 DSLContext(`@DataStoreDb`)로 옮겼다. Tibero 설치본에서 플랫폼 DSLContext 는 Tibero 를 가리키기 때문이다. |
+| PG 롤·스키마 준비 | `TenantSchemaProvisioner`·`TenantPipelineRoleProvisioner`·`TenantPipelineRoleBootstrap`·`PipelineSandboxDataSourceConfig`·`TenantPipelineDataSourceRegistry` | PG 테넌트 스키마·파이프라인 롤(소유자 연결 포함) | **WD-494 완료** — 데이터 저장소 소유자 연결로 옮겼고, 테넌트 롤은 기동 치유가 만든다 |
+| 플랫폼 + 데이터 저장소 혼합 | `PythonReadGrantSync`·`TiberoPythonReadGrantSync`·`PythonReadGrantBackend` | 플랫폼 메타 테이블(jOOQ 생성 테이블)을 읽고, 데이터 저장소에 GRANT 를 한다 | 메타 읽기는 **WD-494 완료**(`DatasetRepository.findSchemaMetas`·`findTableLevels`). staging 정리 게이트는 JobRunr 테이블을 직접 읽지 않고 JobRunr `StorageProvider.getJobStats()` 를 쓴다(Tibero 는 JobRunr Oracle 방언). 잠금은 데이터 저장소 쪽 하나로 잡는다 — **WD-493** |
 | PG 전용 플랫폼 구현 | `PostgresPlatformLocks`·`PostgresPlatformTenantSession` | 플랫폼 DB(PG) | Tibero 짝은 **WD-493**(잠금)·**WD-492**(테넌트 세션) |
 
 → WD-491(리포지토리 73개)의 범위는 바뀌지 않는다. 다만 WD-494 는 "연결 분리" 만이 아니라 **위 18개 클래스의 DSLContext 를 바꿔 다는 일** 이다. 규모 M → L 로 본다.
@@ -145,6 +145,19 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 | PG | Tibero 등 외부 | 지금 그대로(WD-69) |
 | Tibero | Tibero | 지원 |
 | Tibero | PG | 지원 — PG 데이터 저장소 연결을 플랫폼 DB 연결과 분리한다(WD-494) |
+
+#### 분리 모드(WD-494)
+
+`firehub.data-store.postgres.separate=true` 면 `data-store` Hikari 풀(`app_tenant` 롤)이 따로 생기고 데이터 저장소 쪽 jOOQ 는 이 풀을 쓴다. 기본값(false)에서는 플랫폼 풀과 같은 인스턴스라 PG 설치본은 달라지지 않는다. `application-tibero.yml` 이 이 값을 켜고, 접속 정보는 환경변수로 받는다.
+
+- **두 DB 는 원자적이지 않다.** 스프링 트랜잭션 하나당 데이터 저장소 연결 하나를 열고 beforeCommit 에서 먼저 커밋한다. 그래서 데이터 저장소는 커밋됐는데 플랫폼 쪽이 롤백될 수 있다(이때 경고 로그를 남긴다). 데이터 저장소 연결에는 테넌트 GUC 를 걸지 않는다.
+- **새 설치만 지원한다.** 데이터 저장소 Flyway 기준선(`db/datastore-postgres` V1)은 분리 모드에서만 돌고, 빈 DB 만 받는다. 데이터가 든 기존 DB 를 분리 모드로 옮기는 길은 없다.
+- **소유자 계정**(`owner-url`·`owner-username`)에는 superuser(`CREATE EXTENSION postgis`), `pg_read_all_stats`(없으면 `fh_incremental_cursor_candidate` 가 오류 없이 틀린 값을 돌려준다), `app_tenant` 에 대한 ADMIN OPTION 이 필요하다.
+- **같은 클러스터면 `app_tenant` 비밀번호도 같아야 한다.** `app_tenant` 는 PG 클러스터 전역 롤이다. PG 플랫폼 DB 와 분리 모드 데이터 저장소가 한 클러스터에 있으면 플랫폼 Flyway(`spring.datasource.password`)와 데이터 저장소 Flyway(`firehub.data-store.postgres.password`)가 기동마다 서로 덮어써 플랫폼 풀 접속이 깨진다. 막지는 않고, 두 값이 다르면 기동 시 경고 로그를 남긴다.
+- **테넌트 파이프라인 롤은 기동 치유(`TenantPipelineRoleBootstrap`)가 데이터 저장소에 만든다.** 플랫폼 마이그레이션이 만들어 주지 않는다.
+- **배포 차단 사항 — WD-493 전에는 분리 모드를 배포하지 않는다.** 출력 테이블 세션 잠금(`OutputTableSessionLock`, `PostgresPlatformLocks`, 플랫폼 DB)과 SQL REPLACE 출력 잠금(`SqlScriptExecutor` `OUTPUT_LOCK_SQL`, 데이터 저장소)이 서로 다른 DB 에 있어 서로 막지 못한다.
+- **WD-491 이 MyBatis 짝을 만들어야 하는 새 플랫폼 리포지토리 메서드:** `DatasetRepository.findSchemaMetas`, `DatasetRepository.findTableLevels`. (staging 정리 게이트는 JobRunr `StorageProvider` 를 써서 MyBatis 짝이 필요 없다.)
+- **회귀:** Gradle 태스크 `separateDataStoreTest` 가 데이터 저장소 패키지를 분리 모드로 돌린다.
 
 두 저장소를 가로지르는 직렬화를 다시 설계한다(WD-493). 지금은 PG 의 같은 잠금 공간을 공유해서 맞게 동작하는 것이 2건 있다. Python 읽기 권한 동기화와 출력 테이블 잠금이다.
 

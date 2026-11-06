@@ -85,7 +85,7 @@ app:
     stale-sweep-interval: ${PIPELINE_STALE_SWEEP_INTERVAL:PT1M}
     stale-after: ${PIPELINE_STALE_AFTER:PT5M}
     datasource:
-      url: ${spring.datasource.url}
+      url: ${firehub.data-store.postgres.url}
       # username 키는 #681 에서 제거했다 — 읽는 코드가 하나도 남지 않았다. 파이프라인 실행 접속은
       # 전부 테넌트별 롤(pipeline_executor_t{id})로 하고, 롤 이름은 TenantPipelineRole 이 파생한다.
       # 아래 password 는 접속용이 아니라 레거시 공용 롤의 비밀번호를 기동 시 맞추는 용도로만 남는다
@@ -155,6 +155,24 @@ firehub:
       # BackgroundJobServer 가 꺼졌는지 보는 주기(ms). 꺼짐을 2회 연속 보면 재시작하므로 복구는 대략 2주기 안이다.
       interval-ms: ${JOBRUNR_WATCHDOG_INTERVAL_MS:30000}
 
+  # PG 데이터 저장소(사용자 데이터셋 테이블·테넌트 스키마·사용자 SQL·파이프라인 롤) 연결(WD-494).
+  # separate=false(기본)면 플랫폼 DB(spring.datasource)와 같은 연결을 쓰는 별칭이라 PG 설치본은 바뀌지 않는다.
+  # 런타임 롤은 app_tenant 고정이라 사용자 이름 키는 없다.
+  data-store:
+    postgres:
+      separate: false
+      url: ${spring.datasource.url}
+      password: ${spring.datasource.password}
+      # 스키마 소유자 풀(schemaOwnerDataSource) 접속 정보 — 프로필마다 flyway url 이 datasource url 과
+      # 따로 정의되므로 PG 설치본 불변을 위해 flyway 값을 기본으로 한다. (flyway 쪽 사용자 키는 user)
+      owner-url: ${spring.flyway.url}
+      owner-username: ${spring.flyway.user}
+      owner-password: ${spring.flyway.password}
+      # 분리 모드(separate=true) 데이터 저장소 풀 조정(WD-494) — 별칭 모드에서는 쓰지 않는다(플랫폼 풀을 그대로 쓴다).
+      # Spring 트랜잭션 하나가 끝날 때까지 연결 하나를 쥐고 REQUIRES_NEW 는 하나를 더 쥐므로, 동시 트랜잭션 수에 맞춰 키운다.
+      # 기본값은 Hikari 기본(10개, 30000ms)과 같다.
+      maximum-pool-size: 10
+      connection-timeout: 30000
   file:
     upload-dir: ${FILE_UPLOAD_DIR:./uploads}
     max-files-per-request: 3

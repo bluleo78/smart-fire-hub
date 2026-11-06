@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.rowsearch;
 
 import com.smartfirehub.dataset.service.DataTableRowService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.TemporalSafeFetch;
 import java.time.OffsetDateTime;
@@ -23,7 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class SearchSourceReader {
 
-  private final DSLContext dsl;
+  @DataStoreDb private final DSLContext dsl;
   private final DataTableRowService dataTableRowService;
 
   /** 원본 행 한 건 — id 와 요청한 검색 대상 컬럼 값. */

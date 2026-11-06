@@ -7,12 +7,30 @@
 # - 계정에 CREATE SESSION·TABLE·SEQUENCE·VIEW 권한이 있어야 한다(기준선이 JobRunr 통계 뷰를 만든다).
 # - 스키마는 db/migration-tibero 기준선(V155·V155.1, WD-490)이 만든다. 아직 리포지토리(WD-491)·테넌트 세션(WD-492)·잠금(WD-493)·
 #   아웃박스(WD-495)가 없어 이 프로필만으로는 앱이 뜨지 않는다 — 의도한 상태다.
+# - PG 데이터 저장소는 플랫폼 DB(Tibero)와 따로 둔다(WD-494, 아래 firehub.data-store.postgres). 접속 정보는 전부 환경변수로 받는다.
+#   소유자 계정(owner-*)은 superuser(CREATE EXTENSION postgis)·pg_read_all_stats·app_tenant 에 대한 ADMIN OPTION 이 필요하다.
+#   데이터 저장소 Flyway 기준선(db/datastore-postgres V1)은 빈 DB 에서만 적용한다(기존 데이터가 있는 DB 는 지원하지 않는다).
 #
 # 세션 초기화 문장(SESSION_INIT_SQL)·검증 쿼리는 데이터 저장소 Tibero 풀과 같은 값이다(TiberoDialect). 두 곳이 어긋나지 않게
 # TiberoProfileSettingsTest 가 이 파일의 값을 TiberoDialect 상수와 대조한다.
 firehub:
   platform-db:
     type: tibero
+  data-store:
+    postgres:
+      # 분리 모드 — 데이터 저장소(PG) 연결을 플랫폼 DB(Tibero) 연결과 따로 만든다(WD-494). 두 DB 는 하나의 트랜잭션으로 묶이지 않는다.
+      # 배포 금지: 출력 테이블 직렬화 잠금(OutputTableSessionLock=플랫폼 DB)과 SQL REPLACE 출력 잠금(SqlScriptExecutor=데이터 저장소)이
+      # 분리 모드에서는 서로 다른 DB 라 서로 막지 못한다. 잠금을 한쪽으로 모으는 WD-493 이 끝나기 전에는 이 값을 켠 채 배포하지 않는다.
+      separate: true
+      # 값은 두지 않는다 — 자리표시자만 둬서 환경변수가 없으면 기동이 실패하게 한다.
+      url: ${DATA_STORE_PG_URL}
+      password: ${DATA_STORE_PG_PASSWORD}
+      owner-url: ${DATA_STORE_PG_OWNER_URL}
+      owner-username: ${DATA_STORE_PG_OWNER_USERNAME}
+      owner-password: ${DATA_STORE_PG_OWNER_PASSWORD}
+      # 풀 조정 — 접속 정보와 달리 기본값을 둔다(Hikari 기본과 같음). 트랜잭션마다 연결 하나, REQUIRES_NEW 는 하나 더 쥔다.
+      maximum-pool-size: ${DATA_STORE_PG_POOL_SIZE:10}
+      connection-timeout: ${DATA_STORE_PG_CONNECTION_TIMEOUT_MS:30000}
 
 spring:
   datasource:

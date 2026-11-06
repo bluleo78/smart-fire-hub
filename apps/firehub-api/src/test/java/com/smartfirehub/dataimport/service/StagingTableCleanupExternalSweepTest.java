@@ -62,6 +62,7 @@ class StagingTableCleanupExternalSweepTest {
             storeRepository,
             resolver,
             executionRepository,
+            mock(org.jobrunr.storage.StorageProvider.class),
             MIN_AGE);
   }
 

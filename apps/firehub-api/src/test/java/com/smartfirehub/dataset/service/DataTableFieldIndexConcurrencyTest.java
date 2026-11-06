@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
@@ -29,6 +30,9 @@ class DataTableFieldIndexConcurrencyTest extends IntegrationTestBase {
   @Autowired private DataTableService dataTableService;
   @Autowired private DSLContext dsl;
 
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   private static final String TABLE = "wd100_concurrent";
 
   @AfterEach
@@ -39,7 +43,8 @@ class DataTableFieldIndexConcurrencyTest extends IntegrationTestBase {
   private long indexCountOn(String column) {
     return inTenantFixture(
         () ->
-            dsl.fetchOne(
+            dataDsl
+                .fetchOne(
                     "SELECT count(*) FROM pg_index i"
                         + " JOIN pg_class tc ON tc.oid = i.indrelid"
                         + " JOIN pg_namespace ns ON ns.oid = tc.relnamespace"

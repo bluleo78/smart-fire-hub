@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.ArrayList;
@@ -26,6 +27,9 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
   @Autowired private DataTableService dataTableService;
   @Autowired private DSLContext dsl;
 
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   private final IndexRef ref = new IndexRef(DEFAULT_TEST_TENANT_ID, DS, SRC);
 
   /** axis 방향 단위벡터 — 질의와 같은 축이면 코사인 1. */
@@ -38,8 +42,8 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
   @BeforeEach
   void setUp() {
     // 이전 실행의 tearDown 이 실패해 남은 원본·색인 테이블을 먼저 지운다(연쇄 실패 방지).
-    RowSearchTestSupport.cleanup(dsl, dataTableService, SRC);
-    RowSearchTestSupport.dropIndexTables(dsl, DS);
+    RowSearchTestSupport.cleanup(dsl, dataDsl, dataTableService, SRC);
+    RowSearchTestSupport.dropIndexTables(dataDsl, DS);
     inTenantFixture(
         () -> {
           dataTableService.createTable(
@@ -48,7 +52,7 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
                   new DatasetColumnRequest("content", "내용", "TEXT", null, true, false, null),
                   new DatasetColumnRequest("status", "상태", "VARCHAR", 20, true, false, null),
                   new DatasetColumnRequest("cnt", "건수", "INTEGER", null, true, false, null)));
-          dsl.execute(
+          dataDsl.execute(
               "INSERT INTO "
                   + DataSchema.qualify(SRC)
                   + " (content, status, cnt) VALUES ('배관 누수 발생', '미처리', 1), ('소음 민원', '완료', 2), ('누수 재발', '완료', 3)");
@@ -129,18 +133,18 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
   /** 행 수가 임계값 이하면 정확 스캔, 넘으면 HNSW. 통계가 없을 때(-1)와 ANALYZE 뒤 모두 같은 판정이어야 한다. */
   @Test
   void useExactScan_comparesRowCountWithThreshold() {
-    assertThat(new PgRowSearchIndex(dsl, 3).useExactScan(ref)).isTrue();
-    assertThat(new PgRowSearchIndex(dsl, 2).useExactScan(ref)).isFalse();
+    assertThat(new PgRowSearchIndex(dataDsl, 3).useExactScan(ref)).isTrue();
+    assertThat(new PgRowSearchIndex(dataDsl, 2).useExactScan(ref)).isFalse();
 
-    dsl.execute("ANALYZE " + DataSchema.qualify(ref.indexTable()));
-    assertThat(new PgRowSearchIndex(dsl, 3).useExactScan(ref)).isTrue();
-    assertThat(new PgRowSearchIndex(dsl, 2).useExactScan(ref)).isFalse();
+    dataDsl.execute("ANALYZE " + DataSchema.qualify(ref.indexTable()));
+    assertThat(new PgRowSearchIndex(dataDsl, 3).useExactScan(ref)).isTrue();
+    assertThat(new PgRowSearchIndex(dataDsl, 2).useExactScan(ref)).isFalse();
   }
 
   private String explain(CompiledFilter filter, boolean exact, String vec) {
     List<Object> params = new ArrayList<>();
     String sql = index.semanticSql(ref, filter, exact, vec, 5, params);
-    return dsl.transactionResult(
+    return dataDsl.transactionResult(
         cfg -> {
           var tx = DSL.using(cfg);
           tx.execute("SET LOCAL enable_seqscan = off");

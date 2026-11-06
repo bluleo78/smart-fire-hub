@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.service;
 import static com.smartfirehub.jooq.Tables.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
@@ -33,6 +34,9 @@ class TriggerEventServiceTest extends IntegrationTestBase {
   @Autowired private TriggerRepository triggerRepository;
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
 
   @Autowired private TransactionTemplate tx;
 
@@ -270,7 +274,7 @@ class TriggerEventServiceTest extends IntegrationTestBase {
             tx,
             DEFAULT_TEST_TENANT_ID,
             () -> {
-              dsl.execute(
+              dataDsl.execute(
                   "CREATE TABLE "
                       + com.smartfirehub.global.tenant.DataSchema.qualify(table)
                       + " (id bigint)");

@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.math.BigDecimal;
 import java.util.HashMap;
@@ -35,6 +36,10 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
   @Autowired private DatasetDataService datasetDataService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private ObjectMapper objectMapper;
 
   /** 테스트용 사용자 ID */
@@ -1104,7 +1109,8 @@ class DatasetDataServiceTest extends IntegrationTestBase {
             testUserId);
     // API 경로(addRow)는 ±infinity·BC·9자리 넘는 좌표를 만들 수 없으므로 PG 에 직접 넣는다
     Long rowId =
-        dsl.fetchOne(
+        dataDsl
+            .fetchOne(
                 "INSERT INTO data.\""
                     + dataset.tableName()
                     + "\" (label, d, ts, geom)"
@@ -1117,7 +1123,8 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   }
 
   private Map<String, Object> readRawRow(String tableName, Long rowId) {
-    return dsl.fetchOne(
+    return dataDsl
+        .fetchOne(
             "SELECT label, d::text AS d, ts::text AS ts, ST_AsEWKT(geom) AS geom FROM data.\""
                 + tableName
                 + "\" WHERE id = ?",
@@ -1189,7 +1196,8 @@ class DatasetDataServiceTest extends IntegrationTestBase {
 
   /** 물리 컬럼 값을 텍스트로 읽는다 — 검증이 정규화한 "실제 저장값"을 DB 기준으로 확인하기 위함. */
   private String readRawText(String tableName, String column, Long rowId) {
-    return dsl.fetchOne(
+    return dataDsl
+        .fetchOne(
             "SELECT \"" + column + "\"::text AS v FROM data.\"" + tableName + "\" WHERE id = ?",
             rowId)
         .get("v", String.class);
@@ -1197,7 +1205,8 @@ class DatasetDataServiceTest extends IntegrationTestBase {
 
   /** 위치 칸에 실제로 저장된 geometry 를 WKT 로 읽는다 — Feature 가 아니라 도형이 들어갔는지 확인하는 용도(WD-201). */
   private String readGeometryText(String tableName, String column, Long rowId) {
-    return dsl.fetchOne(
+    return dataDsl
+        .fetchOne(
             "SELECT ST_AsText(\""
                 + column
                 + "\") AS v FROM data.\""
@@ -1456,7 +1465,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   void addRow_dbDataError_reachesHandlerAsTranslatableIntegrityViolation() {
     DatasetDetailResponse dataset =
         createSingleColumnDataset("wd98_db_err", "code", "VARCHAR", 10, true);
-    dsl.execute(
+    dataDsl.execute(
         "ALTER TABLE data.\"" + dataset.tableName() + "\" ALTER COLUMN code TYPE varchar(3)");
 
     assertThatThrownBy(

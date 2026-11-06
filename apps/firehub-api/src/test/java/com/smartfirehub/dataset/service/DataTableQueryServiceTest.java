@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.exception.SqlQueryException;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.util.AdhocSqlErrorMessages;
 import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
@@ -44,6 +45,10 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
   @Autowired private DatasetDataService datasetDataService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private ObjectMapper objectMapper;
 
   /** 테스트용 사용자 ID */
@@ -654,7 +659,8 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
 
   /** 테이블의 현재 value 목록(정렬) — search_path 와 무관하게 data 스키마로 직접 읽는다. */
   private List<Integer> currentValues() {
-    return dsl.fetch("SELECT value FROM data." + testTableName + " ORDER BY value")
+    return dataDsl
+        .fetch("SELECT value FROM data." + testTableName + " ORDER BY value")
         .getValues(0, Integer.class);
   }
 

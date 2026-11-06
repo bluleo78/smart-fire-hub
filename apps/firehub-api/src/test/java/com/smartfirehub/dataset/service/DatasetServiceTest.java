@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.exception.ColumnModificationException;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.util.AdhocSqlErrorMessages;
@@ -34,6 +35,10 @@ class DatasetServiceTest extends IntegrationTestBase {
   @Autowired private DatasetTagService datasetTagService;
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
 
   private Long testUserId;
@@ -119,7 +124,8 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     // Verify physical table exists
     Long tableExists =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("information_schema.tables")
             .where("table_schema = 'data' AND table_name = 'test_dataset'")
             .fetchOne(0, Long.class);
@@ -147,7 +153,8 @@ class DatasetServiceTest extends IntegrationTestBase {
     assertThat(created.tableName()).isEqualTo("document_dataset");
 
     Long tableExists =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("information_schema.tables")
             .where("table_schema = 'data' AND table_name = 'document_dataset'")
             .fetchOne(0, Long.class);
@@ -166,8 +173,10 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     assertThat(created.storageType()).isEqualTo("TABLE");
     assertThat(created.columns()).isEmpty();
+    // 물리 테이블은 데이터 저장소에 생긴다 — 분리 모드(WD-494)에서도 맞도록 데이터 저장소 DSL 로 본다.
     Long tableExists =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("information_schema.tables")
             .where("table_schema = 'data' AND table_name = 'tbl_no_columns'")
             .fetchOne(0, Long.class);
@@ -494,7 +503,8 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     // Verify physical table dropped
     Long tableExists =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("information_schema.tables")
             .where("table_schema = 'data' AND table_name = 'to_delete'")
             .fetchOne(0, Long.class);

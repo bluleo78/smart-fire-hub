@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.repository.AnalyticsQueryRunRepository;
 import com.smartfirehub.analytics.service.AnalyticsQueryRunCleanupService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.security.InternalCallHeaders;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.DataSchema;
@@ -44,6 +45,10 @@ class QueryResultExportTest extends IntegrationTestBase {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private JwtTokenProvider jwt;
   @Autowired private ObjectMapper om;
@@ -70,8 +75,8 @@ class QueryResultExportTest extends IntegrationTestBase {
     users.add(creator);
     table = "qre_" + System.nanoTime();
     String schema = DataSchema.current();
-    dsl.execute("CREATE TABLE " + schema + "." + table + " (v text)");
-    dsl.execute("INSERT INTO " + schema + "." + table + " VALUES ('" + VALUE + "')");
+    dataDsl.execute("CREATE TABLE " + schema + "." + table + " (v text)");
+    dataDsl.execute("INSERT INTO " + schema + "." + table + " VALUES ('" + VALUE + "')");
     ds = fx.createDatasetRow(table, fx.levelId("공개"), creator);
     qualified = DataSchema.qualify(table);
   }
@@ -162,7 +167,7 @@ class QueryResultExportTest extends IntegrationTestBase {
           });
     }
     fx.deleteDatasetRow(ds);
-    dsl.execute("DROP TABLE IF EXISTS " + DataSchema.current() + "." + table);
+    dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.current() + "." + table);
     users.forEach(fx::deleteUser);
     roles.forEach(fx::deleteRole);
   }

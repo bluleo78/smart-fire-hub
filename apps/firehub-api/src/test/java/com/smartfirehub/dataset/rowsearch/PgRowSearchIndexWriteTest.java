@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
@@ -25,6 +26,9 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
   @Autowired private DataTableService dataTableService;
   @Autowired private DSLContext dsl;
 
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   private final IndexRef ref = new IndexRef(DEFAULT_TEST_TENANT_ID, DS, SRC);
 
   static float[] vec(float first) {
@@ -37,14 +41,14 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
   @BeforeEach
   void setUp() {
     // 이전 실행의 tearDown 이 실패해 남은 원본·색인 테이블을 먼저 지운다(연쇄 실패 방지).
-    RowSearchTestSupport.cleanup(dsl, dataTableService, SRC);
-    RowSearchTestSupport.dropIndexTables(dsl, DS);
+    RowSearchTestSupport.cleanup(dsl, dataDsl, dataTableService, SRC);
+    RowSearchTestSupport.dropIndexTables(dataDsl, DS);
     inTenantFixture(
         () -> {
           dataTableService.createTable(
               SRC,
               List.of(new DatasetColumnRequest("content", "내용", "TEXT", null, true, false, null)));
-          dsl.execute(
+          dataDsl.execute(
               "INSERT INTO " + DataSchema.qualify(SRC) + " (content) VALUES ('a'), ('b'), ('c')");
         });
   }
@@ -65,8 +69,9 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
     String executor =
         com.smartfirehub.global.tenant.TenantPipelineRole.roleName(DEFAULT_TEST_TENANT_ID);
     boolean roleExists =
-        dsl.fetchExists(
-            dsl.selectOne()
+        dataDsl.fetchExists(
+            dataDsl
+                .selectOne()
                 .from("pg_roles")
                 .where(org.jooq.impl.DSL.field("rolname").eq(executor)));
     assertThat(roleExists).as("테스트 DB 에 실행 롤이 있어야 이 단언이 의미가 있다").isTrue();
@@ -78,7 +83,8 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
       String q = DataSchema.qualify(t);
       for (String priv : List.of("SELECT", "INSERT", "UPDATE", "DELETE")) {
         Boolean has =
-            dsl.fetchOne("SELECT has_table_privilege(?, ?, ?)", executor, q, priv)
+            dataDsl
+                .fetchOne("SELECT has_table_privilege(?, ?, ?)", executor, q, priv)
                 .get(0, Boolean.class);
         assertThat(has).as(t + " " + priv).isFalse();
       }
@@ -104,7 +110,8 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
     String dimType =
         inTenantFixture(
             () ->
-                dsl.fetchOne(
+                dataDsl
+                    .fetchOne(
                         "SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid = ?::regclass AND attname='embedding'",
                         DataSchema.qualify(ref.indexTable()))
                     .get(0, String.class));
@@ -123,7 +130,8 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
     Boolean exists =
         inTenantFixture(
             () ->
-                dsl.fetchOne(
+                dataDsl
+                    .fetchOne(
                         "SELECT to_regclass(?) IS NOT NULL",
                         DataSchema.qualify(foreign.indexTable()))
                     .get(0, Boolean.class));

@@ -3,6 +3,7 @@ package com.smartfirehub.analytics.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.support.IntegrationTestBase;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterAll;
@@ -33,26 +34,29 @@ class AnalyticsQueryGuardTest extends IntegrationTestBase {
   @Autowired private AnalyticsQueryExecutionService executionService;
   @Autowired private DSLContext dsl;
 
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   private static final String TEST_TABLE = "analytics_guard_test";
   private static final String GEOM_TABLE = "analytics_guard_geom_test";
 
   @BeforeAll
   void setUp() {
     // 이전 실행이 tearDown 도달 전에 죽었을 경우를 대비해 생성 전에도 정리한다(자기가 만든 테이블만).
-    dsl.execute("DROP TABLE IF EXISTS data." + TEST_TABLE);
-    dsl.execute("CREATE TABLE data." + TEST_TABLE + " (id BIGSERIAL PRIMARY KEY, name TEXT)");
-    dsl.execute("INSERT INTO data." + TEST_TABLE + " (name) VALUES ('Row1')");
+    dataDsl.execute("DROP TABLE IF EXISTS data." + TEST_TABLE);
+    dataDsl.execute("CREATE TABLE data." + TEST_TABLE + " (id BIGSERIAL PRIMARY KEY, name TEXT)");
+    dataDsl.execute("INSERT INTO data." + TEST_TABLE + " (name) VALUES ('Row1')");
 
     // 공간 경로 픽스처(#385 최종 리뷰 단계3) — 허용목록 전환이 애널리틱스의 GeoJSON 래핑
     // (public.ST_AsGeoJSON 호출, buildGeoJsonWrappedSql)과 사용자가 직접 쓰는 PostGIS 함수 호출을
     // 깨지 않는지 확인해야 한다. StoredUserSqlReplayTest 코퍼스는 dev 이력에 공간 쿼리가 0건이라
     // 이 경로를 전혀 덮지 않는다(원장 R1 명시) — 별도로 여기서 확인한다.
-    dsl.execute("DROP TABLE IF EXISTS data." + GEOM_TABLE);
-    dsl.execute(
+    dataDsl.execute("DROP TABLE IF EXISTS data." + GEOM_TABLE);
+    dataDsl.execute(
         "CREATE TABLE data."
             + GEOM_TABLE
             + " (id BIGSERIAL PRIMARY KEY, geom GEOMETRY(Point, 4326))");
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO data."
             + GEOM_TABLE
             + " (geom) VALUES (ST_SetSRID(ST_MakePoint(126.978, 37.566), 4326))");
@@ -60,8 +64,8 @@ class AnalyticsQueryGuardTest extends IntegrationTestBase {
 
   @AfterAll
   void tearDown() {
-    dsl.execute("DROP TABLE IF EXISTS data." + TEST_TABLE);
-    dsl.execute("DROP TABLE IF EXISTS data." + GEOM_TABLE);
+    dataDsl.execute("DROP TABLE IF EXISTS data." + TEST_TABLE);
+    dataDsl.execute("DROP TABLE IF EXISTS data." + GEOM_TABLE);
   }
 
   // =========================================================================

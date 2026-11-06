@@ -1,7 +1,7 @@
 package com.smartfirehub.securitylevel.pythonread;
 
-import static com.smartfirehub.jooq.Tables.DATASET;
-
+import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
@@ -83,6 +83,8 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   private final TenantPipelineRoleProvisioner roleProvisioner;
 
   private final SecurityLevelRepository levelRepository;
+  // 플랫폼 테이블(dataset) 조회 — 데이터 저장소 DSL 이 아니라 리포지토리로 읽는다(WD-494).
+  private final DatasetRepository datasetRepository;
   private final TransactionTemplate requiresNew;
 
   /** 테넌트 → 마지막으로 슬롯 롤 세션을 끊은 시각(epoch ms). 러너가 끊긴 스텝의 실패 문구를 명확히 하는 데만 쓴다(판정에는 쓰지 않는다). */
@@ -92,13 +94,15 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * txManager 는 @Primary TenantAwareTransactionManager — 트랜잭션 시작 때 TenantContext 를 RLS GUC 로 주입한다.
    */
   public PythonReadGrantSync(
-      DSLContext dsl,
+      @DataStoreDb DSLContext dsl,
       TenantPipelineRoleProvisioner roleProvisioner,
       SecurityLevelRepository levelRepository,
+      DatasetRepository datasetRepository,
       PlatformTransactionManager txManager) {
     this.dsl = dsl;
     this.roleProvisioner = roleProvisioner;
     this.levelRepository = levelRepository;
+    this.datasetRepository = datasetRepository;
     this.requiresNew = new TransactionTemplate(txManager);
     this.requiresNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
@@ -141,7 +145,8 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   /** 데이터셋 하나 — 테이블 이름을 찾아 syncTable. 물리 테이블이 없는 데이터셋(문서·파일형)은 할 일이 없다. */
   @Override
   public void syncDataset(long datasetId) {
-    PythonReadGrantBackend.syncDatasetTable(requiresNew, dsl, datasetId, this::syncTable);
+    PythonReadGrantBackend.syncDatasetTable(
+        requiresNew, datasetRepository, datasetId, this::syncTable);
   }
 
   /**
@@ -264,22 +269,15 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     // 계산값: 데이터셋 테이블 → SELECT 를 받아야 할 슬롯 롤 집합. 테이블 하나만 맞출 때(생성·맞바꿈 훅)는 그 테이블의 데이터셋 행만 읽는다 —
     // 쓰기 경로마다 테넌트 데이터셋 전체를 읽지 않게(CR4).
     Map<String, Set<String>> desired = new HashMap<>();
-    for (var r :
-        dsl.select(DATASET.TABLE_NAME, DATASET.SECURITY_LEVEL_ID)
-            .from(DATASET)
-            .where(
-                onlyTable == null
-                    ? DATASET.TABLE_NAME.isNotNull()
-                    : DATASET.TABLE_NAME.eq(onlyTable))
-            .fetch()) {
+    for (var r : datasetRepository.findTableLevels(onlyTable)) {
       Set<String> roles = new TreeSet<>();
-      for (int k : PythonReadSlots.grantSlotsFor(levelsAsc, r.value2())) {
+      for (int k : PythonReadSlots.grantSlotsFor(levelsAsc, r.securityLevelId())) {
         String role = slotRoleNames.get(k - 1);
         if (existingRoles.contains(role)) {
           roles.add(role);
         }
       }
-      desired.put(r.value1(), roles);
+      desired.put(r.tableName(), roles);
     }
 
     // 실제: 스키마의 관계(테이블·뷰·구체화 뷰·외부 테이블)와 슬롯 롤에 걸린 SELECT.

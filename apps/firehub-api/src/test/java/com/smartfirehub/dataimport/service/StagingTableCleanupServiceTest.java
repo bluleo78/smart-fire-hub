@@ -4,11 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 
 import com.smartfirehub.dataset.service.DataTableRowService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.jobrunr.storage.JobStats;
+import org.jobrunr.storage.StorageProvider;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -25,12 +29,19 @@ import org.springframework.transaction.annotation.Transactional;
  * 변경(테이블 생성·삭제, jobrunr_jobs 조작)이 테스트 종료 시 롤백된다 — PostgreSQL은 트랜잭션 DDL을 지원하므로 안전하다. 게이트는 전역
  * jobrunr_jobs 상태를 보므로, 각 테스트는 트랜잭션 내에서 활성 상태 행을 먼저 삭제해(다른 테스트가 남긴 ENQUEUED 잔여 행의 간섭 제거) 게이트 조건을
  * 결정적으로 만든다.
+ *
+ * <p>게이트는 JobRunr {@code StorageProvider.getJobStats()} 로 묻는데, StorageProvider 는 자기 연결을 직접 얻어 이 테스트
+ * 트랜잭션의 미커밋 변경을 보지 못하고 공유 DB 에 커밋된 남의 활성 행만 본다. 그래서 {@code getJobStats()} 를 스파이로 가로채 <b>이 트랜잭션에서
+ * 보이는</b> 활성 행 수를 돌려준다 — 행 삽입·삭제로 게이트를 여닫는 기존 시나리오가 그대로 성립한다.
  */
 @Transactional
 class StagingTableCleanupServiceTest extends IntegrationTestBase {
 
   @Autowired private StagingTableCleanupService cleanupService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
 
   /**
    * DROP 호출 <b>사이</b>에 개입하기 위한 스파이. 기본 동작은 실제 메서드 위임이라 다른 테스트는 영향을 받지 않고, 스텁은 필요한 테스트 안에서만 설치한다.
@@ -40,21 +51,36 @@ class StagingTableCleanupServiceTest extends IntegrationTestBase {
   /** 생성 규칙(stg_import_ + 32자리 hex)을 만족하는 결정적 staging 테이블명. */
   private static final String STAGING_TABLE = "stg_import_0123456789abcdef0123456789abcdef";
 
+  /** 게이트가 묻는 JobRunr 저장소 — getJobStats 만 이 트랜잭션 기준 값으로 바꾸고 나머지는 실제 동작에 위임한다. */
+  @MockitoSpyBean private StorageProvider storageProvider;
+
   @BeforeEach
   void clearActiveJobs() {
     // 다른 테스트가 커밋으로 남긴 활성(ENQUEUED 등) jobrunr 행을 트랜잭션 내에서 제거 — 롤백되므로 실제 DB엔 영향 없음.
     dsl.execute("DELETE FROM jobrunr_jobs WHERE state IN ('SCHEDULED', 'ENQUEUED', 'PROCESSING')");
+    // 호출 시점마다 이 트랜잭션에서 보이는 활성 행 수를 processing 으로 싣는다(게이트는 scheduled+enqueued+processing 합만 본다).
+    Mockito.doAnswer(invocation -> activeJobStats(countActiveJobs()))
+        .when(storageProvider)
+        .getJobStats();
+  }
+
+  /** 활성 작업 수만 채운 JobStats — 나머지 집계는 게이트가 보지 않으므로 0 이다. */
+  private static JobStats activeJobStats(long active) {
+    // 인자 순서: 시각, total, scheduled, enqueued, processing, failed, succeeded, allTimeSucceeded,
+    // deleted, 반복 작업 수, 서버 수.
+    return new JobStats(Instant.now(), active, 0L, 0L, active, 0L, 0L, 0L, 0L, 0, 0);
   }
 
   /** stg_import_ + 32 hex 형태의 물리 테이블을 data 스키마에 생성한다(고아 시뮬레이션). */
   private void createStagingTable(String name) {
-    dsl.execute("CREATE TABLE data.\"" + name + "\" (_seq BIGSERIAL, a TEXT)");
+    dataDsl.execute("CREATE TABLE data.\"" + name + "\" (_seq BIGSERIAL, a TEXT)");
   }
 
   /** data 스키마에 해당 테이블이 존재하는지 확인. */
   private boolean tableExists(String name) {
     Long count =
-        dsl.fetchOne(
+        dataDsl
+            .fetchOne(
                 "SELECT count(*) FROM information_schema.tables "
                     + "WHERE table_schema = 'data' AND table_name = ?",
                 name)
@@ -185,14 +211,14 @@ class StagingTableCleanupServiceTest extends IntegrationTestBase {
   void staging_형식이_아닌_테이블은_건드리지_않는다() {
     // stg_import_ 접두사로 시작하지만 32 hex 규칙에 맞지 않는 사용자 테이블 — 정규식이 걸러내야 한다.
     String userTable = "stg_import_my_report";
-    dsl.execute("CREATE TABLE data.\"" + userTable + "\" (_seq BIGSERIAL, a TEXT)");
+    dataDsl.execute("CREATE TABLE data.\"" + userTable + "\" (_seq BIGSERIAL, a TEXT)");
     try {
       // 활성 작업이 없어 sweep이 실제 고아를 삭제할 수는 있으나, 형식 불일치 테이블은 대상이 아니어야 한다.
       cleanupService.sweepOrphanedStagingTables();
 
       assertThat(tableExists(userTable)).isTrue();
     } finally {
-      dsl.execute("DROP TABLE IF EXISTS data.\"" + userTable + "\"");
+      dataDsl.execute("DROP TABLE IF EXISTS data.\"" + userTable + "\"");
     }
   }
 }

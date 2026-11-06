@@ -13,6 +13,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -64,6 +65,10 @@ class DataImportPhysicalLimitIntegrationTest extends IntegrationTestBase {
   @Autowired private DatasetColumnRepository columnRepository;
   @Autowired private DataValidationService validationService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private ObjectMapper objectMapper;
 
   @MockitoSpyBean private AsyncJobService asyncJobService;
@@ -267,7 +272,7 @@ class DataImportPhysicalLimitIntegrationTest extends IntegrationTestBase {
   @Test
   void DB에서_난_길이_초과는_일반_문구가_아니라_글자_수_제한_사유로_보인다() throws Exception {
     // 메타데이터는 VARCHAR(10) 인데 물리 컬럼만 VARCHAR(5) 로 줄여, 검증을 통과한 값이 INSERT 에서 22001 로 실패하게 만든다.
-    dsl.execute(
+    dataDsl.execute(
         "ALTER TABLE " + DataSchema.qualify(tableName) + " ALTER COLUMN code TYPE varchar(5)");
     Path csvPath = writeTemp("code,amount\nabcdefg,1\n", ".csv");
 
@@ -285,7 +290,7 @@ class DataImportPhysicalLimitIntegrationTest extends IntegrationTestBase {
   @Test
   void DB에서_난_숫자_범위_초과는_REPLACE_트랜잭션_래핑을_거쳐도_숫자_범위_사유로_보인다() throws Exception {
     // REPLACE(PK 無)는 삽입을 transactionTemplate 안에서 돌려 예외가 한 번 더 감싸진다 — 원인 체인을 끝까지 따라가야 한다.
-    dsl.execute(
+    dataDsl.execute(
         "ALTER TABLE " + DataSchema.qualify(tableName) + " ALTER COLUMN amount TYPE numeric(8,2)");
     Path csvPath = writeTemp("code,amount\nA,1234567\n", ".csv");
 
@@ -347,7 +352,7 @@ class DataImportPhysicalLimitIntegrationTest extends IntegrationTestBase {
   }
 
   private long countRows() {
-    return dsl.fetchCount(DSL.table(DataSchema.qualify(tableName)));
+    return dataDsl.fetchCount(DSL.table(DataSchema.qualify(tableName)));
   }
 
   private Path writeTemp(String content, String ext) throws Exception {
@@ -372,7 +377,7 @@ class DataImportPhysicalLimitIntegrationTest extends IntegrationTestBase {
   private Attempt insert(String column, Object bind) {
     try {
       Object stored =
-          dsl.fetchValue(
+          dataDsl.fetchValue(
               "INSERT INTO "
                   + DataSchema.qualify(tableName)
                   + " (\""

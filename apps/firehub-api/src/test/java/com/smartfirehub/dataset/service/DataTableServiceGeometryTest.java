@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -21,6 +22,9 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
   @Autowired private DataTableService dataTableService;
   @Autowired private DataTableRowService dataTableRowService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
 
   // Seoul Gwanghwamun coordinates
   private static final double LON = 126.978;
@@ -64,7 +68,8 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     dataTableService.createTable(tableName, columns);
 
     Long columnExists =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("information_schema.columns")
             .where(
                 "table_schema = 'data' AND table_name = '"
@@ -75,7 +80,8 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
 
     // Verify the column type is geometry
     String dataType =
-        dsl.fetchOne(
+        dataDsl
+            .fetchOne(
                 "SELECT udt_name FROM information_schema.columns"
                     + " WHERE table_schema = 'data' AND table_name = '"
                     + tableName
@@ -96,7 +102,8 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     dataTableService.createTable(tableName, columns);
 
     Long gistIndexCount =
-        dsl.fetchOne(
+        dataDsl
+            .fetchOne(
                 "SELECT COUNT(*) FROM pg_indexes"
                     + " WHERE schemaname = 'data' AND tablename = '"
                     + tableName
@@ -119,7 +126,8 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     dataTableService.addColumn(tableName, geomCol);
 
     Long gistIndexCount =
-        dsl.fetchOne(
+        dataDsl
+            .fetchOne(
                 "SELECT COUNT(*) FROM pg_indexes"
                     + " WHERE schemaname = 'data' AND tablename = '"
                     + tableName
@@ -521,7 +529,8 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     dataTableService.cloneTable(sourceTable, targetTable, List.of("name", "location"), columnDefs);
 
     Long gistIndexCount =
-        dsl.fetchOne(
+        dataDsl
+            .fetchOne(
                 "SELECT COUNT(*) FROM pg_indexes"
                     + " WHERE schemaname = 'data' AND tablename = '"
                     + targetTable
@@ -572,7 +581,7 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
             + // 10km radius in meters
             ")";
 
-    var result = dsl.fetch(sql);
+    var result = dataDsl.fetch(sql);
     assertThat(result).hasSize(1);
     assertThat(result.get(0).get("name", String.class)).isEqualTo("Gwanghwamun");
   }
@@ -602,7 +611,7 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
             + tableName
             + "\"";
 
-    var result = dsl.fetch(sql);
+    var result = dataDsl.fetch(sql);
     assertThat(result).hasSize(1);
     Double dist = result.get(0).get("dist", Double.class);
     // Same point: distance should be ~0 meters

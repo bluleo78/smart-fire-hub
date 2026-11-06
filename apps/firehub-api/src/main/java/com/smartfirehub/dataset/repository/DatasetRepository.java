@@ -107,4 +107,25 @@ public interface DatasetRepository {
 
   /** 데이터셋의 마지막 수정자 id 를 조회한다. 없으면 빈 값. */
   Optional<Long> findUpdatedByById(Long id);
+
+  /**
+   * 열람 가능한 데이터셋의 스키마 메타(데이터셋 + 컬럼 메타)를 {@code table_name} 순으로 조회한다(WD-494). 분석 편집기 스키마 정보는 이 메타와
+   * 데이터 저장소의 물리 컬럼을 앱에서 합쳐 만든다.
+   *
+   * @param datasetIds null 이면 전체, 아니면 해당 id 만(빈 목록은 호출자가 걸러 넣지 않는다)
+   * @param visibilitySql 별칭 {@code d}(dataset) 기준 열람 가능 조건 SQL 조각({@code
+   *     DatasetAccessGuard.visibleSql})
+   */
+  List<DatasetSchemaMeta> findSchemaMetas(List<Long> datasetIds, String visibilitySql);
+
+  /**
+   * 물리 테이블이 있는 데이터셋의 (테이블 이름, 보안 등급 id) 목록(WD-494). PYTHON 읽기 GRANT 동기화가 "어느 테이블이 어느 등급인가" 를 읽는 데
+   * 쓴다.
+   *
+   * @param onlyTable null 이면 전체, 아니면 그 테이블 하나만
+   */
+  List<DatasetTableLevel> findTableLevels(String onlyTable);
+
+  /** 데이터셋 테이블 이름과 보안 등급 id 한 쌍. */
+  record DatasetTableLevel(String tableName, Long securityLevelId) {}
 }

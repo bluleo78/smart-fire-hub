@@ -57,6 +57,7 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
   private static final String SCHEMA = "GENIA_T1";
 
   @Autowired private DSLContext dsl;
+  @Autowired private com.smartfirehub.dataset.repository.DatasetRepository datasetRepository;
   @Autowired private PasswordEncoder encoder;
   @Autowired private SecurityLevelRepository levelRepository;
   @Autowired private PlatformTransactionManager txManager;
@@ -134,7 +135,7 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
             });
     sync =
         new TiberoPythonReadGrantSync(
-            dsl,
+            datasetRepository,
             connections,
             repository,
             levelRepository,

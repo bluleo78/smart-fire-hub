@@ -16,6 +16,7 @@ import com.smartfirehub.securitylevel.repository.EmbeddingAiPolicyRepository;
 import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.EmbeddingTestFixtures.DocFixture;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PostgresTestContainer;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,7 +28,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 
 /** 데이터셋 카탈로그 벡터: 차원 이동, #392 모델 필터, 부모 행 없으면 no-op, 차원별 HNSW, 다른 차원 정리의 테넌트 범위. */
 class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
@@ -54,9 +54,11 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
   // 손으로 만드는 소유자 커넥션 인스턴스에 넘길 술어 렌더러(삭제 경로는 쓰지 않는다 — 생성자 인자일 뿐).
   @Autowired private EmbeddingAiPolicyRepository aiPolicyRepository;
 
-  @Autowired
-  @Qualifier("schemaOwnerDataSource")
-  private DataSource ownerDataSource;
+  /**
+   * 소유자(RLS 우회) 커넥션. 임베딩 벡터 테이블은 플랫폼 DB(public)에 있으므로 플랫폼 DB 슈퍼유저로 붙는다 — 스키마 소유자 풀은 분리 모드에서 데이터 저장소
+   * DB 를 가리킨다(WD-494). 별칭 모드에서는 같은 DB·같은 자격증명이다.
+   */
+  private final DataSource ownerDataSource = PostgresTestContainer.platformOwnerDataSource();
 
   private long tenant;
   private DocFixture doc;

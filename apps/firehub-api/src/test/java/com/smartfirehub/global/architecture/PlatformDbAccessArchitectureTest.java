@@ -44,8 +44,9 @@ import org.springframework.stereotype.Repository;
 class PlatformDbAccessArchitectureTest {
 
   /**
-   * 테넌트 데이터 경로 — 사용자 데이터 테이블·행·검색 색인·애드혹 SQL 지원. Tibero 설치본에서는 PG 테넌트 저장소 자체가 비활성이라 PG 전용 jOOQ 코드를
-   * 리포지토리로 옮겨도 이득이 없어 이번 범위에서 제외한다.
+   * 테넌트 데이터 경로 — 사용자 데이터 테이블·행·검색 색인·애드혹 SQL 지원. Tibero 설치본에서도 이 경로는 분리 모드({@code
+   * firehub.data-store.postgres.separate=true}, WD-494)의 PG 데이터 저장소 연결로 쓰인다. 데이터 저장소 전용 DSLContext
+   * 를 쓰는 PG 전용 코드라 플랫폼 리포지토리로 옮기지 않는다.
    */
   static final Set<String> TENANT_DATA_PATH =
       Set.of(
@@ -77,6 +78,13 @@ class PlatformDbAccessArchitectureTest {
    */
   static final Set<String> PG_DATA_STORE_INFRA =
       Set.of(
+          // 데이터 저장소 DataSource·DSLContext 배선(WD-494) — PG 데이터 저장소 연결을 세우는 설정이다.
+          "com.smartfirehub.global.datastore.DataStoreDbConfig",
+          // 분리 모드 데이터 저장소 연결·트랜잭션(WD-494) — jOOQ ConnectionProvider·TransactionProvider 구현이 존재 이유다.
+          "com.smartfirehub.global.datastore.DataStoreConnectionBinding",
+          "com.smartfirehub.global.datastore.DataStoreTransactionProvider",
+          // 분리 모드 데이터 저장소 Hikari 풀·DSLContext 를 세우는 설정(WD-494).
+          "com.smartfirehub.global.datastore.SeparateDataStoreDbConfig",
           "com.smartfirehub.global.config.TenantPipelineDataSourceRegistry",
           "com.smartfirehub.global.tenant.TenantPipelineRoleBootstrap",
           "com.smartfirehub.global.tenant.TenantPipelineRoleProvisioner",

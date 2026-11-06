@@ -8,6 +8,7 @@ import com.smartfirehub.dataimport.exception.ImportProcessingException;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
@@ -65,6 +66,10 @@ class DataImportAppendAtomicityTest extends IntegrationTestBase {
   @Autowired private DataImportService dataImportService;
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private AsyncJobRepository asyncJobRepository;
 
   @MockitoSpyBean private AsyncJobService asyncJobService;
@@ -142,7 +147,7 @@ class DataImportAppendAtomicityTest extends IntegrationTestBase {
     // then: 새 행 0건 — 기존 1건만 남고 그 값도 바뀌지 않는다.
     assertThat(countRows(table)).isEqualTo(1);
     assertThat(
-            dsl.fetchValue(
+            dataDsl.fetchValue(
                 "SELECT name FROM " + DataSchema.qualify(table) + " WHERE code = 'K3500'"))
         .isEqualTo("기존");
     assertThat(capturedFailMessage("wd386-existing-dup")).contains(DUPLICATE_MESSAGE);
@@ -167,7 +172,8 @@ class DataImportAppendAtomicityTest extends IntegrationTestBase {
     Mockito.verify(asyncJobService, Mockito.never())
         .failJob(Mockito.eq("wd386-ok"), Mockito.anyString());
     List<String> firstCodes =
-        dsl.fetch(
+        dataDsl
+            .fetch(
                 "SELECT code FROM "
                     + DataSchema.qualify(table)
                     + " WHERE code <> 'X0' ORDER BY id LIMIT 3")
@@ -433,6 +439,6 @@ class DataImportAppendAtomicityTest extends IntegrationTestBase {
   }
 
   private long countRows(String table) {
-    return dsl.fetchCount(DSL.table(DataSchema.qualify(table)));
+    return dataDsl.fetchCount(DSL.table(DataSchema.qualify(table)));
   }
 }

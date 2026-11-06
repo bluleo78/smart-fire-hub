@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -57,6 +58,10 @@ class DataTableServiceTenantUniqueTest extends IntegrationTestBase {
 
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private TransactionTemplate tx;
 
   @Autowired
@@ -187,20 +192,23 @@ class DataTableServiceTenantUniqueTest extends IntegrationTestBase {
 
   /** 현재 테넌트 스키마 안의 {@code tableName} 에 {@code val} 한 건을 넣는다. */
   private void insertRow(String tableName, String value) {
-    dsl.execute("INSERT INTO " + DataSchema.qualify(tableName) + " (val) VALUES (?)", value);
+    dataDsl.execute("INSERT INTO " + DataSchema.qualify(tableName) + " (val) VALUES (?)", value);
   }
 
   /** 현재 테넌트 스키마 안의 {@code tableName} 의 {@code val} 값 전체를 id 순으로 돌려준다. */
   private List<String> selectAllValues(String tableName) {
-    return dsl.fetch("SELECT val FROM " + DataSchema.qualify(tableName) + " ORDER BY id").stream()
+    return dataDsl
+        .fetch("SELECT val FROM " + DataSchema.qualify(tableName) + " ORDER BY id")
+        .stream()
         .map(r -> r.get(0, String.class))
         .toList();
   }
 
   /** 지정한 스키마 안에 {@code tableName} 물리 테이블이 존재하는지(카탈로그 조회, 스키마 무관 접속). */
   private boolean tableExists(String schema, String tableName) {
-    return dsl.fetchExists(
-        dsl.selectOne()
+    return dataDsl.fetchExists(
+        dataDsl
+            .selectOne()
             .from("information_schema.tables")
             .where(org.jooq.impl.DSL.field("table_schema", String.class).eq(schema))
             .and(org.jooq.impl.DSL.field("table_name", String.class).eq(tableName)));

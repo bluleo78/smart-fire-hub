@@ -14,6 +14,7 @@ import com.smartfirehub.embedding.EmbeddingException;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -41,6 +42,10 @@ class RowSearchServiceTest extends IntegrationTestBase {
   @Autowired private PgRowSearchIndex index;
   @Autowired private DataTableService dataTableService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @MockitoBean private EmbeddingProviderFactory embeddingFactory;
 
   private final AtomicBoolean down = new AtomicBoolean(false);
@@ -55,7 +60,7 @@ class RowSearchServiceTest extends IntegrationTestBase {
   @BeforeEach
   void setUp() {
     // 이전 실행의 tearDown 실패로 남은 데이터셋·원본·색인 테이블·사용자를 먼저 지운다(unique 위반 연쇄 방지).
-    RowSearchTestSupport.cleanup(dsl, dataTableService, SRC);
+    RowSearchTestSupport.cleanup(dsl, dataDsl, dataTableService, SRC);
     when(embeddingFactory.current())
         .thenAnswer(
             inv ->
@@ -100,7 +105,7 @@ class RowSearchServiceTest extends IntegrationTestBase {
                   List.of(
                       new DatasetColumnRequest("content", "내용", "TEXT", null, true, false, null),
                       new DatasetColumnRequest("status", "상태", "VARCHAR", 20, true, false, null)));
-              dsl.execute(
+              dataDsl.execute(
                   "INSERT INTO "
                       + DataSchema.qualify(SRC)
                       + " (content, status) VALUES ('파이프 누수 신고', '미처리'), ('소음 민원 A-1023', '완료'), ('누수 재발', '완료')");
@@ -117,7 +122,7 @@ class RowSearchServiceTest extends IntegrationTestBase {
           index.drop(new IndexRef(DEFAULT_TEST_TENANT_ID, datasetId, SRC));
           dataTableService.dropTable(SRC);
           // 맞바꿈이 임시 테이블을 원본으로 바꾸므로 남는 것은 없다 — 옛 고정 이름 잔재만 혹시 몰라 지운다(WD-151).
-          dsl.execute(
+          dataDsl.execute(
               "DROP TABLE IF EXISTS "
                   + DataSchema.qualify(DataTableService.legacyTempTableName(SRC)));
           dsl.execute("DELETE FROM dataset_column WHERE dataset_id = ?", datasetId);
@@ -190,7 +195,7 @@ class RowSearchServiceTest extends IntegrationTestBase {
     inTenantFixture(
         () -> {
           String tmp = dataTableService.createTempTable(SRC);
-          dsl.execute(
+          dataDsl.execute(
               "INSERT INTO "
                   + DataSchema.qualify(tmp)
                   + " (content, status) VALUES ('전혀 다른 행', '완료')");
@@ -248,7 +253,7 @@ class RowSearchServiceTest extends IntegrationTestBase {
     // 후보 풀(50)보다 큰 limit 을 요청하면 풀도 limit 만큼 넓혀야 채울 수 있다.
     inTenantFixture(
         () -> {
-          dsl.execute(
+          dataDsl.execute(
               "INSERT INTO "
                   + DataSchema.qualify(SRC)
                   + " (content, status) SELECT '누수 ' || g, '완료' FROM generate_series(1, 60) g");
@@ -344,7 +349,8 @@ class RowSearchServiceTest extends IntegrationTestBase {
     long vectors =
         inTenantFixture(
             () ->
-                dsl.fetchOne(
+                dataDsl
+                    .fetchOne(
                         "SELECT count(*) FROM "
                             + DataSchema.qualify(
                                 new IndexRef(DEFAULT_TEST_TENANT_ID, datasetId, SRC).indexTable())

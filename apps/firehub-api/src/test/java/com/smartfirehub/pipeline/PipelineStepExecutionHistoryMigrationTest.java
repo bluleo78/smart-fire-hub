@@ -3,11 +3,11 @@ package com.smartfirehub.pipeline;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PostgresTestContainer;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
-import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
@@ -15,7 +15,6 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 
 /**
  * V139(WD-108) — 스텝이 지워져도 과거 스텝 실행 기록이 남도록 바꾼 스키마와 백필을 고정한다.
@@ -29,15 +28,12 @@ class PipelineStepExecutionHistoryMigrationTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
 
-  @Autowired
-  @Qualifier("schemaOwnerDataSource")
-  private DataSource schemaOwnerDataSource;
-
   private Long userId;
   private Long pipelineId;
 
+  /** 플랫폼 DB 소유자 연결 — 검사 대상(pipeline_step_execution·user)이 플랫폼 테이블이라 플랫폼 슈퍼유저로 붙는다(WD-494). */
   private DSLContext owner() {
-    return DSL.using(schemaOwnerDataSource, SQLDialect.POSTGRES);
+    return DSL.using(PostgresTestContainer.platformOwnerDataSource(), SQLDialect.POSTGRES);
   }
 
   @AfterEach

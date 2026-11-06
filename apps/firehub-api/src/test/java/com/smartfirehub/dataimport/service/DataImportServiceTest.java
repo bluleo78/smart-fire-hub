@@ -23,6 +23,7 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.io.ByteArrayOutputStream;
@@ -54,6 +55,9 @@ class DataImportServiceTest extends IntegrationTestBase {
   @Autowired private AuditLogService auditLogService;
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
 
   @MockitoSpyBean private AsyncJobService asyncJobService;
 
@@ -1000,8 +1004,9 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     // Then: 1000행 전부 적재됐는지 확인
     var count =
-        dsl.fetchCount(
-            dsl.select()
+        dataDsl.fetchCount(
+            dataDsl
+                .select()
                 .from(
                     org.jooq.impl.DSL.table(
                         org.jooq.impl.DSL.name("data", "import_test_dataset"))));
@@ -1050,8 +1055,9 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     // 대상 테이블에는 아무 행도 적재되지 않아야 한다(부분 적재 없음)
     var count =
-        dsl.fetchCount(
-            dsl.select()
+        dataDsl.fetchCount(
+            dataDsl
+                .select()
                 .from(
                     org.jooq.impl.DSL.table(
                         org.jooq.impl.DSL.name("data", "import_test_dataset"))));
@@ -1147,7 +1153,8 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     // Then: 중복이 접혀 2행만 적재되고, A001의 label은 마지막 값 'second'여야 한다
     var rows =
-        dsl.select()
+        dataDsl
+            .select()
             .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", "upsert_dedup_dataset")))
             .fetch();
     assertThat(rows).hasSize(2);
@@ -1214,7 +1221,8 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     // Then: 중복이 접혀 2행만 남고, A001의 label은 마지막 값 'second'여야 한다
     var rows =
-        dsl.select()
+        dataDsl
+            .select()
             .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", "replace_dedup_dataset")))
             .fetch();
     assertThat(rows).hasSize(2);
@@ -1361,8 +1369,9 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     // Then: 전체 행이 적재됐어야 한다
     var count =
-        dsl.fetchCount(
-            dsl.select()
+        dataDsl.fetchCount(
+            dataDsl
+                .select()
                 .from(
                     org.jooq.impl.DSL.table(
                         org.jooq.impl.DSL.name("data", "import_test_dataset"))));
@@ -1442,7 +1451,8 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     // Then: A001은 마지막 값('last')이 남고, 총 2499개 고유 row(2498 CODE + A001)가 있어야 한다
     var rows =
-        dsl.select()
+        dataDsl
+            .select()
             .from(
                 org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", "upsert_streaming_dataset")))
             .fetch();
@@ -1458,7 +1468,7 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     // staging 테이블이 정리되었는지 확인 (stg_import_* 패턴의 테이블이 남아있지 않아야 함)
     var stagingTables =
-        dsl.fetch(
+        dataDsl.fetch(
             "SELECT table_name FROM information_schema.tables WHERE table_schema = 'data' AND"
                 + " table_name LIKE 'stg_import_%'");
     assertThat(stagingTables).isEmpty();
@@ -1529,7 +1539,8 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     // Then: 기존 OLD001은 사라지고 새 2행만 존재
     var rows =
-        dsl.select()
+        dataDsl
+            .select()
             .from(
                 org.jooq.impl.DSL.table(
                     org.jooq.impl.DSL.name("data", "replace_streaming_dataset")))
@@ -1539,7 +1550,7 @@ class DataImportServiceTest extends IntegrationTestBase {
         .containsExactlyInAnyOrder("A001", "A002");
 
     var stagingTables =
-        dsl.fetch(
+        dataDsl.fetch(
             "SELECT table_name FROM information_schema.tables WHERE table_schema = 'data' AND"
                 + " table_name LIKE 'stg_import_%'");
     assertThat(stagingTables).isEmpty();
@@ -1629,7 +1640,8 @@ class DataImportServiceTest extends IntegrationTestBase {
             org.assertj.core.groups.Tuple.tuple("ups_dup.csv", 1));
     // 실제 데이터: X 는 마지막 값 11, W 추가
     var qtyByCode =
-        dsl.select()
+        dataDsl
+            .select()
             .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", "dup_key_dataset")))
             .fetchMap(r -> (String) r.get("code"), r -> ((Number) r.get("qty")).intValue());
     assertThat(qtyByCode).containsEntry("X", 11).containsEntry("W", 7).hasSize(4);
@@ -1683,7 +1695,8 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     // Then: 기존 데이터(Alice)가 여전히 존재해야 한다 — truncate가 발동하지 않았어야 함
     var rows =
-        dsl.select()
+        dataDsl
+            .select()
             .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", "import_test_dataset")))
             .fetch();
     assertThat(rows).hasSize(1);
@@ -1734,7 +1747,8 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     // Then: Old는 사라지고 Alice/Bob만 존재
     var rows =
-        dsl.select()
+        dataDsl
+            .select()
             .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", "import_test_dataset")))
             .fetch();
     assertThat(rows).hasSize(2);

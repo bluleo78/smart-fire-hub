@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -27,6 +28,9 @@ class LocalPythonOutputLoaderDbTest extends IntegrationTestBase {
   @Autowired private LocalPythonOutputLoader loader;
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
 
   private Long userId;
 
@@ -66,7 +70,8 @@ class LocalPythonOutputLoaderDbTest extends IntegrationTestBase {
 
     assertThat(loaded).isEqualTo(5);
     List<String> values =
-        dsl.fetch("SELECT v::text FROM " + DataSchema.qualify("local_py_nan") + " ORDER BY k")
+        dataDsl
+            .fetch("SELECT v::text FROM " + DataSchema.qualify("local_py_nan") + " ORDER BY k")
             .getValues(0, String.class);
     assertThat(values).containsExactly("NaN", "NaN", "NaN", "NaN", "1.500000");
   }
@@ -95,7 +100,8 @@ class LocalPythonOutputLoaderDbTest extends IntegrationTestBase {
             .atZoneSameInstant(java.time.ZoneId.systemDefault())
             .format(f);
     assertThat(
-            dsl.fetch("SELECT ts::text FROM " + DataSchema.qualify("local_py_tz") + " ORDER BY k")
+            dataDsl
+                .fetch("SELECT ts::text FROM " + DataSchema.qualify("local_py_tz") + " ORDER BY k")
                 .getValues(0, String.class))
         .containsExactly(kst, utc);
   }
@@ -114,7 +120,8 @@ class LocalPythonOutputLoaderDbTest extends IntegrationTestBase {
         .isInstanceOf(ScriptExecutionException.class)
         .hasMessageContaining("스크립트 출력이 JSON 이 아니어서 결과를 적재하지 않았습니다.");
     assertThat(
-            dsl.fetch("SELECT k FROM " + DataSchema.qualify("local_py_notjson") + " ORDER BY k")
+            dataDsl
+                .fetch("SELECT k FROM " + DataSchema.qualify("local_py_notjson") + " ORDER BY k")
                 .getValues(0, Integer.class))
         .containsExactly(1, 2);
   }
@@ -142,7 +149,8 @@ class LocalPythonOutputLoaderDbTest extends IntegrationTestBase {
         .isInstanceOf(ScriptExecutionException.class)
         .hasMessageContaining("참/거짓(BOOLEAN)으로 변환할 수 없습니다(허용 값: true/false/1/0/yes/no)");
     assertThat(
-            dsl.fetch(
+            dataDsl
+                .fetch(
                     "SELECT k || ':' || b FROM "
                         + DataSchema.qualify("local_py_conv")
                         + " ORDER BY k")
@@ -180,7 +188,8 @@ class LocalPythonOutputLoaderDbTest extends IntegrationTestBase {
 
     // 적재 전 실패라 기존 행이 그대로다. (아래 데이터 오류는 테스트 트랜잭션을 중단시키므로 DB 조회는 그 앞에서 한다.)
     assertThat(
-            dsl.fetch("SELECT k FROM " + DataSchema.qualify("local_py_wd211") + " ORDER BY k")
+            dataDsl
+                .fetch("SELECT k FROM " + DataSchema.qualify("local_py_wd211") + " ORDER BY k")
                 .getValues(0, Integer.class))
         .containsExactly(1);
 
@@ -246,8 +255,8 @@ class LocalPythonOutputLoaderDbTest extends IntegrationTestBase {
 
     String select =
         "SELECT d::text, dn::text, ts::text, tz::text, dt::text, b::text, t, ST_AsText(g) FROM ";
-    var narrow = dsl.fetchOne(select + DataSchema.qualify("local_py_narrow")).intoList();
-    var wideRows = dsl.fetch(select + DataSchema.qualify("local_py_wide"));
+    var narrow = dataDsl.fetchOne(select + DataSchema.qualify("local_py_narrow")).intoList();
+    var wideRows = dataDsl.fetch(select + DataSchema.qualify("local_py_wide"));
     assertThat(wideRows).hasSize(500);
     assertThat(narrow).doesNotContainNull();
     for (var row : wideRows) {

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.time.OffsetDateTime;
@@ -33,6 +34,10 @@ import org.springframework.transaction.annotation.Transactional;
 class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private DataTableService dataTableService;
 
   private static final String TABLE = "merge_builder_it_out";
@@ -49,13 +54,13 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
             new DatasetColumnRequest("cnt", "Count", "DECIMAL", null, true, false, null, false)));
 
     // 소스 테이블(SELECT 대상) — 여기 값을 바꿔 가며 MergeSqlBuilder 가 만든 SQL 을 실행한다.
-    dsl.execute(
+    dataDsl.execute(
         "CREATE TABLE "
             + DataSchema.qualify(SRC_TABLE)
             + " (code TEXT, name TEXT, cnt NUMERIC(18,6))");
 
     // 기존 행 시드: code=A1(갱신 대상), code=A2(변경 없음 확인용).
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(TABLE)
             + " (code, name, cnt) VALUES ('A1', 'old-name', 1), ('A2', 'unchanged', 2)");
@@ -63,8 +68,8 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
 
   @AfterEach
   void tearDown() {
-    dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(TABLE));
-    dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(SRC_TABLE));
+    dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(TABLE));
+    dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(SRC_TABLE));
   }
 
   /** MergeSqlBuilder 가 만든 SQL 을 그대로 실행한다 — 실행 경로(PipelineAsyncRunner)를 흉내내지 않고 빌더 출력만 검증한다. */
@@ -72,7 +77,7 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
     String sql =
         MergeSqlBuilder.build(
             DataSchema.qualify(TABLE), List.of("code", "name", "cnt"), List.of("code"), selectSql);
-    dsl.execute(sql);
+    dataDsl.execute(sql);
   }
 
   @Test
@@ -80,7 +85,7 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
     OffsetDateTime unchangedUpdatedAtBefore = updatedAtOf("A2");
 
     // A1: 기존 행 값 변경(갱신 대상), A3: 신규 PK(삽입 대상), A2: 소스에 없음(그대로 남아야 함).
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(SRC_TABLE)
             + " (code, name, cnt) VALUES ('A1', 'new-name', 10), ('A3', 'brand-new', 30)");
@@ -89,7 +94,8 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
 
     // 전체 행 수: 갱신 1(A1) + 무변경 1(A2, 손대지 않음) + 신규 1(A3) = 3. 중복 삽입이었다면 4 이상이 된다.
     Integer total =
-        dsl.fetchOne(
+        dataDsl
+            .fetchOne(
                 "SELECT count(*) FROM "
                     + DataSchema.qualify(TABLE)
                     + " WHERE code IN ('A1','A2','A3')")
@@ -98,18 +104,21 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
 
     // A1: 값이 실제로 갱신됐다.
     var a1 =
-        dsl.fetchOne("SELECT name, cnt FROM " + DataSchema.qualify(TABLE) + " WHERE code = 'A1'");
+        dataDsl.fetchOne(
+            "SELECT name, cnt FROM " + DataSchema.qualify(TABLE) + " WHERE code = 'A1'");
     assertThat(a1.get("name")).isEqualTo("new-name");
     assertThat(a1.get(1, Integer.class)).isEqualTo(10);
 
     // A3: 신규 삽입됐다.
     var a3 =
-        dsl.fetchOne("SELECT name, cnt FROM " + DataSchema.qualify(TABLE) + " WHERE code = 'A3'");
+        dataDsl.fetchOne(
+            "SELECT name, cnt FROM " + DataSchema.qualify(TABLE) + " WHERE code = 'A3'");
     assertThat(a3.get("name")).isEqualTo("brand-new");
 
     // A2: 소스에 없었으므로 값도, _updated_at 도 그대로다.
     var a2 =
-        dsl.fetchOne("SELECT name, cnt FROM " + DataSchema.qualify(TABLE) + " WHERE code = 'A2'");
+        dataDsl.fetchOne(
+            "SELECT name, cnt FROM " + DataSchema.qualify(TABLE) + " WHERE code = 'A2'");
     assertThat(a2.get("name")).isEqualTo("unchanged");
     assertThat(updatedAtOf("A2")).isEqualTo(unchangedUpdatedAtBefore);
   }
@@ -120,7 +129,7 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
 
     // A2 를 기존 값과 완전히 동일한 값으로 다시 보낸다 — ON CONFLICT 는 발동하지만 WHERE 가드가
     // false 이므로 DO UPDATE 액션 자체가 그 행에 적용되지 않아야 한다(=트리거도 안 돈다).
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(SRC_TABLE)
             + " (code, name, cnt) VALUES ('A2', 'unchanged', 2)");
@@ -136,7 +145,7 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
   void 소스에_같은_키가_중복되면_PostgreSQL_오류를_던진다() {
     // MergeSqlBuilder.DUPLICATE_KEY_PG_MESSAGE 가 실제로 이 상황에서 나는 오류 문구인지 실측한다 —
     // PipelineAsyncRunner 의 한국어 번역 분기가 근거로 삼는 계약이다.
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(SRC_TABLE)
             + " (code, name, cnt) VALUES ('A1', 'dup-1', 11), ('A1', 'dup-2', 12)");
@@ -154,7 +163,7 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
    */
   @Test
   void 세미콜론과_후행_주석이_있는_SELECT도_실제로_실행된다() {
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(SRC_TABLE)
             + " (code, name, cnt) VALUES ('A3', 'brand-new', 30)");
@@ -163,7 +172,8 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
         "SELECT code, name, cnt FROM " + DataSchema.qualify(SRC_TABLE) + "; -- trailing comment");
 
     var a3 =
-        dsl.fetchOne("SELECT name, cnt FROM " + DataSchema.qualify(TABLE) + " WHERE code = 'A3'");
+        dataDsl.fetchOne(
+            "SELECT name, cnt FROM " + DataSchema.qualify(TABLE) + " WHERE code = 'A3'");
     assertThat(a3).as("세미콜론+후행 주석이 있는 SELECT 도 정상 실행되어 신규 행이 삽입돼야 한다").isNotNull();
     assertThat(a3.get("name")).isEqualTo("brand-new");
   }
@@ -175,7 +185,7 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
    */
   @Test
   void 세미콜론_다음_줄에_주석이_있는_SELECT도_실제로_실행된다() {
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(SRC_TABLE)
             + " (code, name, cnt) VALUES ('A4', 'next-line', 40)");
@@ -184,14 +194,16 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
         "SELECT code, name, cnt FROM " + DataSchema.qualify(SRC_TABLE) + ";\n-- trailing comment");
 
     var a4 =
-        dsl.fetchOne("SELECT name, cnt FROM " + DataSchema.qualify(TABLE) + " WHERE code = 'A4'");
+        dataDsl.fetchOne(
+            "SELECT name, cnt FROM " + DataSchema.qualify(TABLE) + " WHERE code = 'A4'");
     assertThat(a4).as("세미콜론 다음 줄 주석이 있는 SELECT 도 정상 실행되어 신규 행이 삽입돼야 한다").isNotNull();
     assertThat(a4.get("name")).isEqualTo("next-line");
   }
 
   private OffsetDateTime updatedAtOf(String code) {
     Map<String, Object> row =
-        dsl.fetchOne(
+        dataDsl
+            .fetchOne(
                 "SELECT _updated_at FROM " + DataSchema.qualify(TABLE) + " WHERE code = ?", code)
             .intoMap();
     return (OffsetDateTime) row.get("_updated_at");

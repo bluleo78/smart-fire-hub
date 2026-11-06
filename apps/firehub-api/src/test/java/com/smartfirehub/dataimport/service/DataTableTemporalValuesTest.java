@@ -18,6 +18,7 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DatasetDataService;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -68,6 +69,10 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
   @Autowired private DatasetRepository datasetRepository;
   @Autowired private DatasetColumnRepository columnRepository;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private ObjectMapper objectMapper;
 
   private static final List<String> COLS = List.of("d", "ts", "label");
@@ -137,7 +142,8 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
     };
     for (String[] r : rows) {
       Long id =
-          dsl.fetchOne(
+          dataDsl
+              .fetchOne(
                   "INSERT INTO "
                       + DataSchema.qualify(table)
                       + " (d, ts, label) VALUES ("
@@ -165,7 +171,7 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
     // 수정 전 경로 — 데이터 탭이 쓰던 그대로(dsl.fetch + record.get)
     preFix = new HashMap<>();
     for (var rec :
-        dsl.fetch("SELECT id, \"d\", \"ts\", \"label\" FROM " + DataSchema.qualify(table))) {
+        dataDsl.fetch("SELECT id, \"d\", \"ts\", \"label\" FROM " + DataSchema.qualify(table))) {
       Map<String, Object> m = new HashMap<>();
       for (int i = 0; i < rec.size(); i++) {
         m.put(rec.field(i).getName(), rec.get(i));
@@ -173,7 +179,8 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
       preFix.put((String) m.get("label"), m);
     }
     pgText = new HashMap<>();
-    for (var rec : dsl.fetch("SELECT label, d::text, ts::text FROM " + DataSchema.qualify(table))) {
+    for (var rec :
+        dataDsl.fetch("SELECT label, d::text, ts::text FROM " + DataSchema.qualify(table))) {
       Map<String, String> m = new HashMap<>();
       m.put("d", rec.get(1, String.class));
       m.put("ts", rec.get(2, String.class));

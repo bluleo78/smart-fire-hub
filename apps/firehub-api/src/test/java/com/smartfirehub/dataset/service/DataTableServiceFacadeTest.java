@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
@@ -22,6 +23,10 @@ class DataTableServiceFacadeTest extends IntegrationTestBase {
 
   @Autowired private DataTableService dataTableService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PlatformTransactionManager transactionManager;
 
   @Test
@@ -40,8 +45,10 @@ class DataTableServiceFacadeTest extends IntegrationTestBase {
                       throw new RuntimeException("rollback");
                     }))
         .hasMessage("rollback");
+    // 부재 단언은 데이터 저장소에서 봐야 한다 — 플랫폼 DB 에서 보면 분리 모드에서 공허하게 통과한다(WD-494).
     Integer count =
-        dsl.fetchOne(
+        dataDsl
+            .fetchOne(
                 "select count(*) from information_schema.tables where table_schema = ? and table_name = ?",
                 DataSchema.forTenant(DEFAULT_TEST_TENANT_ID),
                 table)

@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
@@ -51,6 +52,10 @@ import org.springframework.transaction.annotation.Transactional;
 class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private DatasetService datasetService;
   @Autowired private PipelineService pipelineService;
   @Autowired private PipelineExecutionService executionService;
@@ -59,8 +64,11 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
   /** SELECT * 자동 임시 데이터셋 시나리오에서 생성된 임시 데이터셋을 찾아 정리하기 위해 쓴다. */
   @Autowired private TempDatasetService tempDatasetService;
 
-  /** 늦은 커밋 시나리오에서 실행기와 같은 롤로 직접 접속하기 위한 값들(하드코딩 금지 — 파생 규약을 그대로 쓴다). */
-  @Value("${spring.datasource.url}")
+  /**
+   * 늦은 커밋 시나리오에서 실행기와 같은 롤로 직접 접속하기 위한 값들(하드코딩 금지 — 파생 규약을 그대로 쓴다). URL 은 실행기가 붙는 파이프라인 데이터소스 URL
+   * 이다 — 분리 모드에서는 데이터 저장소 DB 라 플랫폼 URL 과 다르다(WD-494).
+   */
+  @Value("${app.pipeline.datasource.url}")
   private String jdbcUrl;
 
   @Value("${app.pipeline.role-password-secret}")
@@ -195,12 +203,12 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
     assertThat(bookmarkAfterRun1).as("성공 실행은 책갈피를 남긴다").isNotNull();
 
     // 변조 탐침 — 원천이 바뀌지 않은 행. 2회차가 이 행을 다시 읽으면 원천 값으로 덮여 변조가 사라진다.
-    dsl.execute(
+    dataDsl.execute(
         "UPDATE " + DataSchema.qualify(outTable) + " SET name = 'tampered' WHERE code = 'C0001'");
 
     // 신규 50행 + 기존 10행 수정 = 변경분 60건.
     seedSource(SEED_ROWS + 1, SEED_ROWS + 50);
-    dsl.execute(
+    dataDsl.execute(
         "UPDATE "
             + DataSchema.qualify(srcTable)
             + " SET name = 'updated' WHERE code BETWEEN 'C0100' AND 'C0109'");
@@ -223,7 +231,8 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
     // 리터럴 조립은 프로덕션과 같은 포맷터를 쓴다 — 마이크로초가 살아남는지까지 이 단언이 함께 본다
     // (정밀도를 잃으면 경계 행이 추가로 섞여 60건이 깨진다).
     Integer changed =
-        dsl.fetchOne(
+        dataDsl
+            .fetchOne(
                 "SELECT count(*) FROM "
                     + DataSchema.qualify(srcTable)
                     + " WHERE _updated_at >= "
@@ -242,7 +251,7 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
     runAndWait("COMPLETED");
 
     // 원천에 없는 고아 행 — 전체 재생성이 실제로 출력을 비웠는지 보는 표식.
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO " + DataSchema.qualify(outTable) + " (code, name) VALUES ('ZZZ', 'orphan')");
     assertThat(outCount()).isEqualTo(SEED_ROWS + 1);
 
@@ -305,7 +314,7 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
    */
   @Test
   void REPLACE_스텝이_실행_중_실패하면_출력이_비지_않는다() {
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(outTable)
             + " (code, name) SELECT 'K' || i, 'keep-' || i FROM generate_series(1, 5) AS i");
@@ -361,7 +370,7 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
    */
   @Test
   void REPLACE_SELECT_가_자기_출력을_읽으면_비우기_전_데이터를_읽어_다시_채운다() {
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(outTable)
             + " (code, name) SELECT 'K' || i, 'keep-' || i FROM generate_series(1, 50) AS i");
@@ -385,7 +394,7 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
    */
   @Test
   void REPLACE_사용자_DML_이_자기_출력을_고치면_실행_전에_실패하고_출력이_남는다() {
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(outTable)
             + " (code, name) SELECT 'K' || i, 'keep-' || i FROM generate_series(1, 5) AS i");
@@ -515,7 +524,8 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
                       dsl.fetchValue(
                           "SELECT table_name FROM dataset WHERE id = ?", finalTempDatasetId));
       Integer loaded =
-          dsl.fetchOne("SELECT count(*) FROM " + DataSchema.qualify(tempTable))
+          dataDsl
+              .fetchOne("SELECT count(*) FROM " + DataSchema.qualify(tempTable))
               .get(0, Integer.class);
       assertThat(loaded).as("임시 데이터셋에 원천 행이 실제로 적재돼야 한다").isEqualTo(3);
     } finally {
@@ -575,10 +585,11 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
                       dsl.fetchValue(
                           "SELECT table_name FROM dataset WHERE id = ?", finalTempDatasetId));
       List<Long> aliased =
-          dsl.fetch("SELECT DISTINCT id_1 FROM " + DataSchema.qualify(tempTable))
+          dataDsl
+              .fetch("SELECT DISTINCT id_1 FROM " + DataSchema.qualify(tempTable))
               .getValues(0, Long.class);
       List<Long> sourceIds =
-          dsl.fetch("SELECT id FROM " + DataSchema.qualify(srcTable)).getValues(0, Long.class);
+          dataDsl.fetch("SELECT id FROM " + DataSchema.qualify(srcTable)).getValues(0, Long.class);
 
       assertThat(aliased).as("재실행 뒤 id_1 에 NULL 이 없어야 한다").doesNotContainNull();
       assertThat(aliased)
@@ -798,7 +809,7 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
       Long exec1 = executionService.executePipeline(pipelineId, userId);
       awaitSourceReadInProgress();
       // 앞 실행의 본 문장이 원천을 읽는 중 — 이 행은 앞 실행에 보이지 않고, 뒤 실행만 읽어야 한다.
-      dsl.execute(
+      dataDsl.execute(
           "INSERT INTO "
               + DataSchema.qualify(srcTable)
               + " (code, name) VALUES ('NEW1', 'new-row')");
@@ -821,13 +832,14 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
       assertThat(overlapped).as("두 실행이 겹쳐야 검증이 의미 있다").isTrue();
 
       var perCode =
-          dsl.fetch(
+          dataDsl.fetch(
               "SELECT code, count(*) AS n FROM "
                   + DataSchema.qualify(appendTable)
                   + " GROUP BY code HAVING count(*) > 1");
       assertThat(perCode).as("겹친 두 실행이 같은 구간을 두 번 적재하면 안 된다").isEmpty();
       assertThat(
-              dsl.fetchOne("SELECT count(*) FROM " + DataSchema.qualify(appendTable))
+              dataDsl
+                  .fetchOne("SELECT count(*) FROM " + DataSchema.qualify(appendTable))
                   .get(0, Integer.class))
           .as("원천 20행 + 앞 실행 도중 들어온 새 행 1개")
           .isEqualTo(21);
@@ -875,7 +887,8 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
     long deadline = System.currentTimeMillis() + 30_000;
     try (Connection watcher =
             DriverManager.getConnection(
-                PostgresTestContainer.INSTANCE.getJdbcUrl(),
+                // 원천 읽기 SQL 은 데이터 저장소에서 돈다 — 분리 모드면 두 번째 컨테이너를 본다(WD-494).
+                PostgresTestContainer.dataStoreJdbcUrl(),
                 PostgresTestContainer.INSTANCE.getUsername(),
                 PostgresTestContainer.INSTANCE.getPassword());
         PreparedStatement ps =
@@ -919,7 +932,7 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
 
   /** 원천에 code=C{번호} 행을 채운다. {@code _updated_at} 은 트리거가 채운다. */
   private void seedSource(int from, int to) {
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(srcTable)
             + " (code, name) SELECT 'C' || lpad(i::text, 4, '0'), 'name-' || lpad(i::text, 4, '0')"
@@ -988,14 +1001,15 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
   }
 
   private int outCount() {
-    return dsl.fetchOne("SELECT count(*) FROM " + DataSchema.qualify(outTable))
+    return dataDsl
+        .fetchOne("SELECT count(*) FROM " + DataSchema.qualify(outTable))
         .get(0, Integer.class);
   }
 
   /** 행이 없으면 null. */
   private String nameOf(String table, String code) {
     var record =
-        dsl.fetchOne("SELECT name FROM " + DataSchema.qualify(table) + " WHERE code = ?", code);
+        dataDsl.fetchOne("SELECT name FROM " + DataSchema.qualify(table) + " WHERE code = ?", code);
     return record == null ? null : record.get(0, String.class);
   }
 }

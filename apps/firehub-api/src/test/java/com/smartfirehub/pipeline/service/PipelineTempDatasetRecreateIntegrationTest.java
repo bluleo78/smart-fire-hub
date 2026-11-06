@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.ExecutionDetailResponse;
@@ -42,6 +43,10 @@ import org.springframework.transaction.annotation.Transactional;
 class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private DatasetService datasetService;
   @Autowired private PipelineService pipelineService;
   @Autowired private PipelineExecutionService executionService;
@@ -87,7 +92,7 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
                     null),
                 userId)
             .id();
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(srcTable)
             + " (code, label, amount) VALUES ('A', 'a', 1), ('B', 'b', 2)");
@@ -478,7 +483,7 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     assertThat(
             inTenantFixture(
                 () ->
-                    dsl.fetchValue(
+                    dataDsl.fetchValue(
                         "SELECT to_regclass(?) IS NOT NULL",
                         DataSchema.qualify(DataTableService.rebuildBackupTableName(table)))))
         .as("삭제가 남은 보관본도 지운다")
@@ -603,7 +608,7 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     // 다른 실행이 이 보관본을 지우고 자기 보관본을 둔 상황
     inTenantFixture(
         () ->
-            dsl.execute(
+            dataDsl.execute(
                 "DROP TABLE "
                     + DataSchema.qualify(DataTableService.rebuildBackupTableName(table))));
     plantBackup(table);
@@ -636,7 +641,8 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     String table = tableNameOf(datasetId);
     return inTenantFixture(
         () ->
-            dsl.fetchOne("SELECT to_regclass(?)::oid::bigint", DataSchema.qualify(table))
+            dataDsl
+                .fetchOne("SELECT to_regclass(?)::oid::bigint", DataSchema.qualify(table))
                 .get(0, Long.class));
   }
 
@@ -645,7 +651,8 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     return inTenantFixture(
         () ->
             Boolean.TRUE.equals(
-                dsl.fetchValue("SELECT to_regclass(?) IS NOT NULL", DataSchema.qualify(backup))));
+                dataDsl.fetchValue(
+                    "SELECT to_regclass(?) IS NOT NULL", DataSchema.qualify(backup))));
   }
 
   /** 테이블의 증분 인덱스(ix_<table>_upd)가 그 테이블에 붙어 있는지. */
@@ -653,8 +660,9 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     String table = tableNameOf(datasetId);
     return inTenantFixture(
         () ->
-            dsl.fetchCount(
-                    dsl.selectOne()
+            dataDsl.fetchCount(
+                    dataDsl
+                        .selectOne()
                         .from("pg_indexes")
                         .where(
                             "schemaname = ? AND tablename = ? AND indexname = ?",
@@ -668,7 +676,7 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
   private void plantBackup(String table) {
     inTenantFixture(
         () ->
-            dsl.execute(
+            dataDsl.execute(
                 "CREATE TABLE "
                     + DataSchema.qualify(DataTableService.rebuildBackupTableName(table))
                     + " (id BIGINT)"));
@@ -828,7 +836,8 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     String table = tableNameOf(datasetId);
     return inTenantFixture(
         () ->
-            dsl.fetch(
+            dataDsl
+                .fetch(
                     "SELECT column_name FROM information_schema.columns"
                         + " WHERE table_schema = ? AND table_name = ?",
                     DataSchema.current(),
@@ -840,7 +849,8 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     String table = tableNameOf(datasetId);
     return inTenantFixture(
         () ->
-            dsl.fetchOne("SELECT count(*) FROM " + DataSchema.qualify(table))
+            dataDsl
+                .fetchOne("SELECT count(*) FROM " + DataSchema.qualify(table))
                 .get(0, Integer.class));
   }
 
@@ -848,7 +858,8 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     String table = tableNameOf(datasetId);
     return inTenantFixture(
         () ->
-            dsl.fetchOne(
+            dataDsl
+                .fetchOne(
                     "SELECT count(*) FROM "
                         + DataSchema.qualify(table)
                         + " WHERE "
@@ -938,6 +949,7 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     return inTenantFixture(
         () ->
             Boolean.TRUE.equals(
-                dsl.fetchValue("SELECT to_regclass(?) IS NOT NULL", DataSchema.qualify(table))));
+                dataDsl.fetchValue(
+                    "SELECT to_regclass(?) IS NOT NULL", DataSchema.qualify(table))));
   }
 }

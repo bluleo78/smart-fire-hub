@@ -7,8 +7,10 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
@@ -67,32 +69,64 @@ public class FlywayCallbackConfig {
    */
   static Map<String, String> resolveActiveTenantPipelineRolePasswords(
       Connection connection, String secret) throws SQLException {
-    // 후보(ACTIVE 테넌트의 실행 롤 + 슬롯 롤 10개)를 순서대로 모은 뒤 pg_roles 를 한 번만 조회해 있는 것만 남긴다(CR9) — 예전엔 롤마다
-    // 존재 확인 왕복이 테넌트당 11번이었다.
-    Map<String, String> candidates = new LinkedHashMap<>();
+    // ACTIVE 테넌트 목록은 이 콜백 연결(방금 마이그레이션이 끝난 플랫폼 DB)에서 읽는다 — 콜백은 스프링 빈에 닿지 못한다.
+    List<Long> tenantIds = new ArrayList<>();
     try (Statement stmt = connection.createStatement();
         ResultSet activeTenants =
             stmt.executeQuery("SELECT id FROM tenant WHERE status = 'ACTIVE' ORDER BY id")) {
       while (activeTenants.next()) {
-        long tenantId = activeTenants.getLong("id");
-        candidates.put(
-            TenantPipelineRole.roleName(tenantId), TenantPipelineRole.password(tenantId, secret));
-        // PYTHON 읽기 슬롯 롤(WD-29). V137 이 임의 비밀번호로 만든 롤을 여기서 파생값으로 맞춘다 — 빠지면 배포 직후
-        // 모든 PYTHON 스텝이 인증 실패로 멈춘다(FlywayCallbackConfigSlotRoleTest 가 고정).
-        for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {
-          candidates.put(
-              TenantPipelineRole.pythonReadRoleName(tenantId, slot),
-              TenantPipelineRole.pythonReadPassword(tenantId, slot, secret));
-        }
+        tenantIds.add(activeTenants.getLong("id"));
       }
     }
     // 없는 롤은 위 Javadoc 의 이유로 조용히 건너뛴다.
-    Set<String> existing = existingRoles(connection, candidates.keySet());
-    candidates.keySet().retainAll(existing);
+    return existingTenantPipelineRolePasswords(connection, tenantIds, secret);
+  }
+
+  /**
+   * 테넌트 id 목록의 동기화 후보({@link #tenantPipelineRolePasswords}) 중 이 연결의 서버에 실제로 있는 롤만 남긴다 — 없는 롤은
+   * 프로비저너가 아직 만들지 않은 것이라 조용히 건너뛴다.
+   *
+   * <p>PG 설치본 콜백과 분리 모드 데이터 저장소 동기화({@code DataStoreRolePasswordSync}, WD-494)가 "후보 계산 → 존재 확인" 을
+   * 똑같이 하므로 한 곳에 둔다. 롤은 서버 전체 객체라 어느 DB 연결로 물어도 같지만, 분리 모드에서는 데이터 저장소 서버의 연결로 불러야 그 서버의 롤을 본다.
+   *
+   * @return 삽입 순서(테넌트 id → 실행 롤 → 슬롯 1..N)를 지키는 변경 가능한 맵
+   */
+  public static Map<String, String> existingTenantPipelineRolePasswords(
+      Connection connection, List<Long> tenantIds, String secret) throws SQLException {
+    Map<String, String> candidates = tenantPipelineRolePasswords(tenantIds, secret);
+    candidates.keySet().retainAll(existingRoles(connection, candidates.keySet()));
     return candidates;
   }
 
-  /** 주어진 이름 중 pg_roles 에 있는 것 — 한 번의 조회로. */
+  /**
+   * 테넌트 id 목록 → 동기화 후보(실행 롤 + PYTHON 읽기 슬롯 롤 10개)와 파생 비밀번호. DB 를 보지 않는 순수 함수다.
+   *
+   * <p>PG 설치본 콜백({@link #resolveActiveTenantPipelineRolePasswords})과 분리 모드의 데이터 저장소 동기화({@code
+   * DataStoreRolePasswordSync}, WD-494)가 같은 후보 계산을 쓰도록 나눴다 — 두 곳의 롤 목록이 어긋나면 한쪽 설치본만 PYTHON 스텝이 인증
+   * 실패로 멈춘다. 테넌트 목록의 출처(콜백 연결의 {@code tenant} 조회 / 플랫폼 리포지토리)만 다르다.
+   *
+   * @return 삽입 순서(테넌트 id → 실행 롤 → 슬롯 1..N)를 지키는 변경 가능한 맵
+   */
+  public static Map<String, String> tenantPipelineRolePasswords(
+      List<Long> tenantIds, String secret) {
+    // 후보(ACTIVE 테넌트의 실행 롤 + 슬롯 롤 10개)를 순서대로 모은다. 존재 확인은 호출부가 pg_roles 를 한 번만 조회해 한다(CR9) —
+    // 예전엔 롤마다 존재 확인 왕복이 테넌트당 11번이었다.
+    Map<String, String> candidates = new LinkedHashMap<>();
+    for (long tenantId : tenantIds) {
+      candidates.put(
+          TenantPipelineRole.roleName(tenantId), TenantPipelineRole.password(tenantId, secret));
+      // PYTHON 읽기 슬롯 롤(WD-29). V137 이 임의 비밀번호로 만든 롤을 여기서 파생값으로 맞춘다 — 빠지면 배포 직후
+      // 모든 PYTHON 스텝이 인증 실패로 멈춘다(FlywayCallbackConfigSlotRoleTest 가 고정).
+      for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {
+        candidates.put(
+            TenantPipelineRole.pythonReadRoleName(tenantId, slot),
+            TenantPipelineRole.pythonReadPassword(tenantId, slot, secret));
+      }
+    }
+    return candidates;
+  }
+
+  /** 주어진 이름 중 pg_roles 에 있는 것 — 한 번의 조회로(CR9: 롤마다 왕복하지 않는다). */
   private static Set<String> existingRoles(Connection connection, Set<String> names)
       throws SQLException {
     Set<String> existing = new HashSet<>();

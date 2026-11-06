@@ -10,6 +10,7 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.storage.DataTableNames;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.CancelExecutionResponse;
@@ -99,7 +100,16 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
   @MockitoSpyBean private SqlScriptExecutor sqlScriptExecutor;
 
   @Autowired private DSLContext dsl;
-  @Autowired private DataSource dataSource;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
+  /**
+   * 관문·잠금 보유 연결용 데이터 저장소 DataSource. SQL 스텝의 출력 잠금({@link SqlScriptExecutor#OUTPUT_LOCK_SQL})과 원천
+   * 테이블 잠금은 파이프라인 실행 연결(=데이터 저장소)에서 잡히므로, 테스트가 쥐는 잠금과 {@code pg_locks} 관측도 같은 DB 여야 한다(WD-494 — 분리
+   * 모드에서는 플랫폼 DB 와 다르다).
+   */
+  @Autowired @DataStoreDb private DataSource dataSource;
 
   @LocalServerPort private int port;
 
@@ -171,7 +181,7 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
   /** REPLACE 도중 취소: 원본 2행 그대로, 이번 실행 임시 테이블 없음, 스텝 CANCELLED(원본 유지 문구), 뒤 스텝 SKIPPED(취소 사유). */
   @Test
   void REPLACE_적재_도중_취소하면_원본이_그대로이고_임시_테이블이_남지_않는다() {
-    dsl.execute("INSERT INTO " + out() + " (name) VALUES ('orig1'), ('orig2')");
+    dataDsl.execute("INSERT INTO " + out() + " (name) VALUES ('orig1'), ('orig2')");
     createApiPipeline("REPLACE");
     stubSlowPages();
 
@@ -197,7 +207,7 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
 
     // 원본 데이터가 그대로다 — 맞바꾸지 않았다.
     List<String> names =
-        dsl.fetch("SELECT name FROM " + out() + " ORDER BY name").getValues(0, String.class);
+        dataDsl.fetch("SELECT name FROM " + out() + " ORDER BY name").getValues(0, String.class);
     assertThat(names).containsExactly("orig1", "orig2");
     // 이번 실행의 스테이징 임시 테이블(rtmp_<hex>_<md5(출력)>)이 남지 않았다.
     assertThat(leftoverTempTables()).isZero();
@@ -221,7 +231,7 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
 
     StepRow fetch = stepRows(executionId).get("fetch");
     assertThat(fetch.status()).isEqualTo("CANCELLED");
-    int actual = dsl.fetchCount(org.jooq.impl.DSL.table(out()));
+    int actual = dataDsl.fetchCount(org.jooq.impl.DSL.table(out()));
     // 첫 페이지(2행)는 반드시, 지연된 둘째 페이지(2행)는 취소 시점에 따라 들어갔다 — 기록된 N 은 실제 행 수와 같아야 한다.
     assertThat(actual).isIn(2, 4);
     Matcher m = Pattern.compile("취소 전까지 (\\d+)행 적재됨").matcher(fetch.error());
@@ -302,7 +312,7 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
    */
   @Test
   void 출력_잠금_대기_중에_취소하면_잠금을_얻은_뒤_SQL_을_돌리지_않고_출력이_그대로다() throws Exception {
-    dsl.execute("INSERT INTO " + out() + " (name) VALUES ('from_a1'), ('from_a2')");
+    dataDsl.execute("INSERT INTO " + out() + " (name) VALUES ('from_a1'), ('from_a2')");
     PipelineStepRequest replace =
         new PipelineStepRequest(
             "replace",
@@ -352,7 +362,7 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
     }
     // B 의 SQL 은 돌지 않았다 — 출력은 앞 실행의 결과 그대로다.
     List<String> names =
-        dsl.fetch("SELECT name FROM " + out() + " ORDER BY name").getValues(0, String.class);
+        dataDsl.fetch("SELECT name FROM " + out() + " ORDER BY name").getValues(0, String.class);
     assertThat(names).containsExactly("from_a1", "from_a2");
   }
 
@@ -637,8 +647,8 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
   private void awaitAdvisoryLockWaiter() {
     long deadline = System.currentTimeMillis() + 30_000;
     while (System.currentTimeMillis() < deadline) {
-      if (dsl.fetchCount(
-              dsl.selectOne().from("pg_locks").where("locktype = 'advisory' AND NOT granted"))
+      if (dataDsl.fetchCount(
+              dataDsl.selectOne().from("pg_locks").where("locktype = 'advisory' AND NOT granted"))
           > 0) {
         return;
       }
@@ -685,8 +695,9 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
   /** 출력 테이블의 이번 실행 스테이징 임시 테이블 개수(이름이 rtmp_<hex>_<md5(출력)>). */
   private int leftoverTempTables() {
     String md5 = DataTableNames.md5Hex(outTable);
-    return dsl.fetchCount(
-        dsl.selectOne()
+    return dataDsl.fetchCount(
+        dataDsl
+            .selectOne()
             .from("information_schema.tables")
             .where("table_name LIKE 'rtmp\\_%' AND table_name LIKE ?", "%" + md5));
   }

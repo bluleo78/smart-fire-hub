@@ -1,7 +1,6 @@
 package com.smartfirehub.securitylevel.pythonread;
 
-import static com.smartfirehub.jooq.Tables.DATASET;
-
+import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
 import com.smartfirehub.dataset.storage.DataStoreAccountRole;
 import com.smartfirehub.dataset.storage.StoredAccount;
@@ -28,7 +27,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -56,7 +54,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
 
-  private final DSLContext dsl;
+  private final DatasetRepository datasetRepository;
   private final ExternalStoreConnections connections;
   private final TenantDataStoreRepository storeRepository;
   private final SecurityLevelRepository levelRepository;
@@ -69,13 +67,13 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
    * txManager 는 @Primary TenantAwareTransactionManager — 트랜잭션 시작 때 TenantContext 를 RLS GUC 로 주입한다.
    */
   public TiberoPythonReadGrantSync(
-      DSLContext dsl,
+      DatasetRepository datasetRepository,
       ExternalStoreConnections connections,
       TenantDataStoreRepository storeRepository,
       SecurityLevelRepository levelRepository,
       PlatformLocks locks,
       PlatformTransactionManager txManager) {
-    this.dsl = dsl;
+    this.datasetRepository = datasetRepository;
     this.locks = locks;
     this.connections = connections;
     this.storeRepository = storeRepository;
@@ -121,7 +119,8 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
   /** 데이터셋 하나 — 테이블 이름을 찾아 syncTable. 물리 테이블이 없는 데이터셋은 할 일이 없다. */
   @Override
   public void syncDataset(long datasetId) {
-    PythonReadGrantBackend.syncDatasetTable(requiresNew, dsl, datasetId, this::syncTable);
+    PythonReadGrantBackend.syncDatasetTable(
+        requiresNew, datasetRepository, datasetId, this::syncTable);
   }
 
   /**
@@ -210,22 +209,15 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
     // 계산값: 데이터셋 테이블(물리 이름) → SELECT 를 받아야 할 슬롯 계정 집합. 테이블 하나만 맞출 때는 그 데이터셋 행만 읽는다.
     // 임시 데이터셋(ptmp_*)도 PG 와 마찬가지로 데이터셋 행이 있으므로 자기 등급대로 계산된다. 스테이징(STG_*)은 데이터셋이 아니라 행이 없다 → "없음".
     Map<String, Set<String>> desired = new HashMap<>();
-    for (var r :
-        dsl.select(DATASET.TABLE_NAME, DATASET.SECURITY_LEVEL_ID)
-            .from(DATASET)
-            .where(
-                onlyTable == null
-                    ? DATASET.TABLE_NAME.isNotNull()
-                    : DATASET.TABLE_NAME.eq(onlyTable))
-            .fetch()) {
+    for (var r : datasetRepository.findTableLevels(onlyTable)) {
       Set<String> accounts = new TreeSet<>();
-      for (int k : PythonReadSlots.grantSlotsFor(levelsAsc, r.value2())) {
+      for (int k : PythonReadSlots.grantSlotsFor(levelsAsc, r.securityLevelId())) {
         String account = slotAccounts.get(k - 1);
         if (targetAccounts.contains(account)) {
           accounts.add(account);
         }
       }
-      desired.put(TiberoNames.physical(r.value1()), accounts);
+      desired.put(TiberoNames.physical(r.tableName()), accounts);
     }
 
     String onlyPhysical = onlyTable == null ? null : TiberoNames.physical(onlyTable);

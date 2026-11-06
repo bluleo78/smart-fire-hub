@@ -25,13 +25,22 @@ public final class PythonReadTestTables {
 
   private final DatasetService datasetService;
   private final DSLContext dsl;
+
+  /** 데이터 저장소 DSL — 물리 테이블 행 INSERT 용(분리 모드에서는 플랫폼 DB 와 다른 DB, WD-494). */
+  private final DSLContext dataDsl;
+
   private final TransactionTemplate tx;
   private final SecurityFixture fx;
 
   public PythonReadTestTables(
-      DatasetService datasetService, DSLContext dsl, TransactionTemplate tx, SecurityFixture fx) {
+      DatasetService datasetService,
+      DSLContext dsl,
+      DSLContext dataDsl,
+      TransactionTemplate tx,
+      SecurityFixture fx) {
     this.datasetService = datasetService;
     this.dsl = dsl;
+    this.dataDsl = dataDsl;
     this.tx = tx;
     this.fx = fx;
   }
@@ -66,7 +75,7 @@ public final class PythonReadTestTables {
               .set(DATASET.SECURITY_LEVEL_ID, fx.levelId(level))
               .where(DATASET.ID.eq(id))
               .execute();
-          dsl.execute("INSERT INTO " + DataSchema.qualify(tableName) + " (v) VALUES ('row')");
+          dataDsl.execute("INSERT INTO " + DataSchema.qualify(tableName) + " (v) VALUES ('row')");
         });
     return id;
   }
@@ -76,7 +85,7 @@ public final class PythonReadTestTables {
     String role = TenantPipelineRole.pythonReadRoleName(TENANT, slot);
     String pw = TenantPipelineRole.pythonReadPassword(TENANT, slot, secret);
     try (Connection c =
-            DriverManager.getConnection(PostgresTestContainer.INSTANCE.getJdbcUrl(), role, pw);
+            DriverManager.getConnection(PostgresTestContainer.dataStoreJdbcUrl(), role, pw);
         Statement s = c.createStatement()) {
       s.executeQuery("SELECT v FROM " + DataSchema.forTenant(TENANT) + ".\"" + table + "\"");
       return null;

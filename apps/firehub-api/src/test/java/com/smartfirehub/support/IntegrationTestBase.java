@@ -1,8 +1,10 @@
 package com.smartfirehub.support;
 
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.tenant.TenantPipelineRoleBootstrap;
 import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,6 +53,30 @@ public abstract class IntegrationTestBase {
   @BeforeEach
   void setDefaultTenantContext() {
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
+  }
+
+  /** 분리 모드 데이터 저장소에 기본 테넌트 롤을 이미 만들었는지 — 컨테이너가 JVM 하나에 하나라 JVM 당 한 번이면 된다. */
+  private static final AtomicBoolean SEPARATE_DATA_STORE_TENANT_ROLES_READY = new AtomicBoolean();
+
+  @Autowired private TenantPipelineRoleBootstrap tenantPipelineRoleBootstrap;
+
+  /**
+   * 분리 모드 회귀({@code separateDataStoreTest}, WD-494)에서만 기본 테넌트의 파이프라인 실행 롤·Python 읽기 슬롯 롤을 데이터 저장소
+   * DB 에 만든다.
+   *
+   * <p>왜 테스트 지원 코드에서 하는가: 별칭 모드에서는 플랫폼 Flyway 시드(V111·V137)가 같은 DB 에 테넌트 1 롤을 만들어 두지만, 분리 모드 데이터
+   * 저장소 기준선은 테넌트 롤을 시드하지 않는다(Task 4 — 테넌트 롤은 프로비저너 몫). 운영에서는 기동 치유({@link
+   * TenantPipelineRoleBootstrap})가 자동 프로비저닝 켜짐 상태로 데이터 저장소에 만들지만, test 프로필은 그 루프를 꺼 둔다. 그래서 같은 운영
+   * 경로({@code healTenant})를 테넌트 1 하나에만 직접 불러 운영과 같은 상태를 만든다.
+   */
+  @BeforeEach
+  void prepareSeparateDataStoreDefaultTenantRoles() {
+    // 성공한 뒤에만 표시한다 — 첫 호출이 실패하면 다음 테스트가 다시 시도해 원인이 그대로 드러나고, 롤이 없는 채로 연쇄 실패하지 않는다.
+    if (PostgresTestContainer.SEPARATE_DATA_STORE
+        && !SEPARATE_DATA_STORE_TENANT_ROLES_READY.get()) {
+      tenantPipelineRoleBootstrap.healTenant(DEFAULT_TEST_TENANT_ID);
+      SEPARATE_DATA_STORE_TENANT_ROLES_READY.set(true);
+    }
   }
 
   @AfterEach

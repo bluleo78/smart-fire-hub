@@ -17,7 +17,9 @@ final class RowSearchTestSupport {
    * SpringTransactionProvider} 를 거쳐 {@code TenantAwareTransactionManager.doBegin} 을 타므로, {@link
    * TenantContext#runScoped} 로 세운 테넌트가 트랜잭션 시작 시 GUC 로 주입된다.
    */
-  static void cleanup(DSLContext dsl, DataTableService tables, String srcTable) {
+  static void cleanup(
+      DSLContext dsl, DSLContext dataDsl, DataTableService tables, String srcTable) {
+    // 메타(dataset·dataset_column)는 플랫폼 DB, 물리·색인 테이블은 데이터 저장소 — 분리 모드에서는 다른 DB 라 연결을 나눈다(WD-494).
     TenantContext.runScoped(
         1L,
         () ->
@@ -28,18 +30,21 @@ final class RowSearchTestSupport {
                       .forEach(
                           r -> {
                             long id = r.get(0, Long.class);
-                            dropIndexTablesIn(tx, id);
+                            dropIndexTablesIn(dataDsl, id);
                             tx.execute("DELETE FROM dataset_column WHERE dataset_id = ?", id);
                             tx.execute("DELETE FROM dataset WHERE id = ?", id);
                           });
-                  tx.execute(
-                      "DROP TABLE IF EXISTS "
-                          + DataSchema.qualify(DataTableService.legacyTempTableName(srcTable)));
-                  tx.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(srcTable));
                 }));
+    dataDsl.execute(
+        "DROP TABLE IF EXISTS "
+            + DataSchema.qualify(DataTableService.legacyTempTableName(srcTable)));
+    dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(srcTable));
   }
 
-  /** 가짜 데이터셋 id 를 쓰는 테스트용 — dataset 행이 없으므로 색인 테이블을 id 로 직접 지운다. */
+  /**
+   * 가짜 데이터셋 id 를 쓰는 테스트용 — dataset 행이 없으므로 색인 테이블을 id 로 직접 지운다. {@code dsl} 은 데이터 저장소 DSL 이어야 한다(색인
+   * 테이블은 data 스키마).
+   */
   static void dropIndexTables(DSLContext dsl, long datasetId) {
     TenantContext.runScoped(
         1L,

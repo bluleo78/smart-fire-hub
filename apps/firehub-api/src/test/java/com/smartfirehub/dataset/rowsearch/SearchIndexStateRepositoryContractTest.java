@@ -6,6 +6,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.repository.SearchColumnRepository;
 import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -33,6 +34,9 @@ abstract class SearchIndexStateRepositoryContractTest extends IntegrationTestBas
   @Autowired private DataTableService dataTableService;
   @Autowired private DSLContext dsl;
 
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   private long datasetId;
   private static final String SRC = "rs_state_src";
   private Long userId;
@@ -40,7 +44,7 @@ abstract class SearchIndexStateRepositoryContractTest extends IntegrationTestBas
   @BeforeEach
   void setUp() {
     // 이전 실행의 tearDown 실패로 남은 데이터셋·원본 테이블·사용자를 먼저 지운다(unique 위반 연쇄 방지).
-    RowSearchTestSupport.cleanup(dsl, dataTableService, SRC);
+    RowSearchTestSupport.cleanup(dsl, dataDsl, dataTableService, SRC);
     datasetId =
         inTenantFixture(
             () -> {
@@ -65,7 +69,7 @@ abstract class SearchIndexStateRepositoryContractTest extends IntegrationTestBas
                       new DatasetColumnRequest("title", "제목", "TEXT", null, true, false, null),
                       new DatasetColumnRequest("content", "내용", "TEXT", null, true, false, null),
                       new DatasetColumnRequest("cnt", "건수", "INTEGER", null, true, false, null)));
-              dsl.execute(
+              dataDsl.execute(
                   "INSERT INTO "
                       + DataSchema.qualify(SRC)
                       + " (title, content, cnt) VALUES ('t1','c1',1),('t2','c2',2),('t3','c3',3)");
@@ -76,7 +80,7 @@ abstract class SearchIndexStateRepositoryContractTest extends IntegrationTestBas
   @AfterEach
   void tearDown() {
     // dataset 삭제 시 dataset_search_index 는 CASCADE 로 함께 지워진다. 사용자는 dataset 을 지운 뒤에 지운다.
-    RowSearchTestSupport.cleanup(dsl, dataTableService, SRC);
+    RowSearchTestSupport.cleanup(dsl, dataDsl, dataTableService, SRC);
     TenantRlsTestSupport.deleteUser(dsl, userId);
   }
 

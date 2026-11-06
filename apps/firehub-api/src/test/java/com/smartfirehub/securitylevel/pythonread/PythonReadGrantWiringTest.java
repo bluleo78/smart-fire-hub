@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import com.smartfirehub.dataset.dto.CloneDatasetRequest;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
@@ -56,6 +57,10 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   private static final long WRONG_AMBIENT_TENANT = 987_654_321L;
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private DatasetService datasetService;
   @Autowired private DataTableService dataTableService;
@@ -92,7 +97,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   private String table(String suffix, String level) {
     String t = m + "_" + suffix;
     datasets.add(
-        new PythonReadTestTables(datasetService, dsl, fixtureTransactionTemplate, fx)
+        new PythonReadTestTables(datasetService, dsl, dataDsl, fixtureTransactionTemplate, fx)
             .create(t, level, owner));
     return t;
   }
@@ -108,7 +113,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
     TenantRlsTestSupport.runInTenantTransaction(
         fixtureTransactionTemplate,
         DEFAULT_TEST_TENANT_ID,
-        () -> dsl.execute("REVOKE ALL ON " + DataSchema.qualify(table) + " FROM " + roles));
+        () -> dataDsl.execute("REVOKE ALL ON " + DataSchema.qualify(table) + " FROM " + roles));
   }
 
   /** 슬롯 롤로 실제 로그인해 SELECT 한다. 권한 오류면 SQLState 를 돌려준다(성공이면 null). */
@@ -302,7 +307,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   /** 슬롯 롤로 로그인한 연결 — 실행 중인 PYTHON 스크립트의 DB 세션을 흉내 낸다. */
   private Connection openSlotSession(int slot) throws SQLException {
     return DriverManager.getConnection(
-        PostgresTestContainer.INSTANCE.getJdbcUrl(),
+        PostgresTestContainer.dataStoreJdbcUrl(),
         TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, slot),
         TenantPipelineRole.pythonReadPassword(DEFAULT_TEST_TENANT_ID, slot, secret));
   }

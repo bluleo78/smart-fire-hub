@@ -10,6 +10,7 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.exception.RowNotFoundException;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,6 +35,10 @@ class DataTableRowServiceTest extends IntegrationTestBase {
   @Autowired private DataTableRowService dataTableRowService;
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private DataValidationService dataValidationService;
   @Autowired private DataTableService dataTableService;
 
@@ -803,7 +808,8 @@ class DataTableRowServiceTest extends IntegrationTestBase {
 
     // 예외 번역기(ExceptionTranslatorExecuteListener) 등록으로 jOOQ DataAccessException이
     // Spring의 BadSqlGrammarException(존재하지 않는 릴레이션)으로 번역된다 (#312).
-    assertThatThrownBy(() -> dsl.fetch("SELECT * FROM data.\"" + stagingTable + "\""))
+    // 부재 확인은 데이터 저장소에서 — 플랫폼 DB 에서 보면 분리 모드에서 공허하게 통과한다(WD-494).
+    assertThatThrownBy(() -> dataDsl.fetch("SELECT * FROM data.\"" + stagingTable + "\""))
         .isInstanceOf(org.springframework.jdbc.BadSqlGrammarException.class);
   }
 

@@ -18,8 +18,12 @@ import org.springframework.context.annotation.Configuration;
  * (풀이 만들어지는 자리의 설정이라 이미 시작된 풀·Flyway 내부 연결에도 똑같이 걸린다). UTC 검사는 {@code PlatformDbStartupGuard} 가 기동
  * 맨 앞에서 한다.
  *
+ * <p>PG 데이터 저장소 연결 분리는 WD-494 에서 끝났다({@code firehub.data-store.postgres.separate=true}, 프로필 설정은
+ * application-tibero.yml). Tibero 마이그레이션 폴더(WD-490)도 있다.
+ *
  * <p>아직 없는 것(다른 이슈): 테넌트 격리 세션(WD-492)·잠금(WD-493)·아웃박스 깨우기(WD-495)의 Tibero 구현과 리포지토리 MyBatis
- * 구현(WD-491), Tibero 마이그레이션 폴더(WD-490). 그래서 지금은 이 설정만으로 앱 전체가 Tibero 위에서 뜨지 않는다.
+ * 구현(WD-491). 그래서 지금은 이 설정만으로 앱 전체가 Tibero 위에서 뜨지 않는다. 특히 분리 모드에서는 출력 테이블 잠금이 두 DB 에 갈라져 있어 WD-493
+ * 전에는 배포하면 안 된다.
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnTiberoPlatformDb

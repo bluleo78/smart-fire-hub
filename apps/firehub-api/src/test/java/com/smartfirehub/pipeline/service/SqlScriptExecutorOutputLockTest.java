@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -36,6 +37,9 @@ class SqlScriptExecutorOutputLockTest extends IntegrationTestBase {
   /** 메인 애플리케이션 커넥션 — 픽스처 DML·관문 잠금·검증 조회용. */
   @Autowired private DSLContext dsl;
 
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   /** 출력·원천 테이블을 정식 생성 경로로 만든다(파이프라인 롤 권한까지 갖춘다). */
   @Autowired private DataTableService dataTableService;
 
@@ -66,8 +70,8 @@ class SqlScriptExecutorOutputLockTest extends IntegrationTestBase {
     ExecutorService pool = Executors.newFixedThreadPool(2);
     try {
       // given: 원천 2행, 출력에는 이전 실행 결과 1행(모두 커밋 — 다른 롤의 커넥션이 봐야 한다).
-      dsl.execute("INSERT INTO " + DataSchema.qualify(src) + " (name) VALUES ('a'), ('b')");
-      dsl.execute("INSERT INTO " + DataSchema.qualify(out) + " (name) VALUES ('old')");
+      dataDsl.execute("INSERT INTO " + DataSchema.qualify(src) + " (name) VALUES ('a'), ('b')");
+      dataDsl.execute("INSERT INTO " + DataSchema.qualify(out) + " (name) VALUES ('old')");
 
       String insert =
           "INSERT INTO "
@@ -85,7 +89,7 @@ class SqlScriptExecutorOutputLockTest extends IntegrationTestBase {
 
       List<Future<String>> runs = new ArrayList<>();
       // when: 원천에 관문 잠금을 건 채 두 실행을 띄우고, 둘 다 잠금 대기에 들어간 뒤 관문을 연다.
-      dsl.transaction(
+      dataDsl.transaction(
           cfg -> {
             cfg.dsl()
                 .execute("LOCK TABLE " + DataSchema.qualify(src) + " IN ACCESS EXCLUSIVE MODE");
@@ -122,13 +126,14 @@ class SqlScriptExecutorOutputLockTest extends IntegrationTestBase {
       }
       // 출력에는 원천 한 번 분량(2행)만 남는다 — 이전 행('old')도, 앞 실행의 행도 남지 않는다.
       assertThat(
-              dsl.fetch("SELECT name FROM " + DataSchema.qualify(out) + " ORDER BY name")
+              dataDsl
+                  .fetch("SELECT name FROM " + DataSchema.qualify(out) + " ORDER BY name")
                   .getValues(0, String.class))
           .containsExactly("a", "b");
     } finally {
       pool.shutdownNow();
-      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(out));
-      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(src));
+      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(out));
+      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(src));
     }
   }
 
@@ -155,7 +160,7 @@ class SqlScriptExecutorOutputLockTest extends IntegrationTestBase {
 
     ExecutorService pool = Executors.newFixedThreadPool(2);
     try {
-      dsl.execute(
+      dataDsl.execute(
           "INSERT INTO "
               + DataSchema.qualify(out)
               + " (code, name) VALUES ('K1', 'a'), ('K2', 'b')");
@@ -172,7 +177,7 @@ class SqlScriptExecutorOutputLockTest extends IntegrationTestBase {
                               "SELECT code, name || '+' AS name FROM " + DataSchema.qualify(out))));
 
       List<Future<String>> runs = new ArrayList<>();
-      dsl.transaction(
+      dataDsl.transaction(
           cfg -> {
             cfg.dsl()
                 .execute("LOCK TABLE " + DataSchema.qualify(out) + " IN ACCESS EXCLUSIVE MODE");
@@ -202,12 +207,13 @@ class SqlScriptExecutorOutputLockTest extends IntegrationTestBase {
       }
       // 두 실행이 차례로 적용됐다 — 행 수는 그대로이고, 뒤 실행이 앞 실행의 결과를 읽어 한 번 더 변환했다.
       assertThat(
-              dsl.fetch("SELECT name FROM " + DataSchema.qualify(out) + " ORDER BY code")
+              dataDsl
+                  .fetch("SELECT name FROM " + DataSchema.qualify(out) + " ORDER BY code")
                   .getValues(0, String.class))
           .containsExactly("a++", "b++");
     } finally {
       pool.shutdownNow();
-      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(out));
+      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(out));
     }
   }
 }

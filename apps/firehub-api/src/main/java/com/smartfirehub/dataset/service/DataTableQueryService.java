@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.service;
 
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.AdhocResultValues;
 import com.smartfirehub.global.util.AdhocSqlErrorMessages;
@@ -31,7 +32,7 @@ public class DataTableQueryService {
   static final String TIBERO_DML_MESSAGE =
       "Tibero 저장소에서는 이 화면에서 데이터를 바꾸는 SQL 을 실행할 수 없습니다. 파이프라인을 이용해 주세요.";
 
-  private final DSLContext dsl;
+  @DataStoreDb private final DSLContext dsl;
 
   /** Tibero 테넌트의 데이터셋 화면 SQL 실행 창구(WD-76) — Tibero 면 PG 세션 문장 없이 이것으로만 조회한다. */
   private final TiberoQueryService tiberoQueryService;

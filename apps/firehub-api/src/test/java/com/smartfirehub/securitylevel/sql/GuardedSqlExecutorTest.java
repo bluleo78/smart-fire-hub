@@ -596,7 +596,12 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
             });
     TiberoQueryService tibero = spy(new TiberoQueryService(schema, db));
     AnalyticsQueryExecutionService target =
-        spy(new AnalyticsQueryExecutionService(dsl, mock(ExecutorClient.class), tibero));
+        spy(
+            new AnalyticsQueryExecutionService(
+                dsl,
+                mock(ExecutorClient.class),
+                tibero,
+                mock(com.smartfirehub.dataset.repository.DatasetRepository.class)));
     ProxyFactory pf = new ProxyFactory(target);
     pf.setProxyTargetClass(true);
     pf.addAdvice(

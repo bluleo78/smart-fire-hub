@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.rowsearch;
 
 import com.smartfirehub.embedding.repository.VectorLiterals;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
@@ -43,7 +44,7 @@ public class PgRowSearchIndex implements RowSearchIndex {
   static final int HNSW_EF_SEARCH = 200;
 
   public PgRowSearchIndex(
-      DSLContext dsl,
+      @DataStoreDb DSLContext dsl,
       @Value("${row-search.search.exact-scan-max-rows:100000}") long exactScanMaxRows) {
     this.dsl = dsl;
     this.exactScanMaxRows = exactScanMaxRows;

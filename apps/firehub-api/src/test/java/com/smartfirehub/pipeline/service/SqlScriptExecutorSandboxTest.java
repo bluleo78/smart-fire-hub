@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.config.TenantPipelineDataSourceRegistry;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -155,6 +156,9 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
   /** 메인 애플리케이션 커넥션({@code app_tenant}) — 가드 테이블 DDL·검증 조회용. */
   @Autowired private DSLContext dsl;
 
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   /** Task 4 원자성 테스트의 출력 테이블 픽스처를 만드는 데 쓴다(정식 생성 경로 — 권한·트리거까지 갖춘다). */
   @Autowired private DataTableService dataTableService;
 
@@ -170,19 +174,19 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
    */
   private void createGuardTable() {
     dropGuardTable();
-    dsl.execute(
+    dataDsl.execute(
         "CREATE TABLE "
             + GUARD_TABLE
             + " (n INT, who TEXT DEFAULT current_user,"
             + " sp TEXT DEFAULT current_setting('search_path'))");
     // 기본 권한(ALTER DEFAULT PRIVILEGES)에 의존하지 않고 명시적으로 준다 — 어떤 롤이 무엇을 갖는지
     // 테스트를 읽는 사람이 바로 알 수 있어야 한다.
-    dsl.execute("GRANT INSERT, SELECT ON " + GUARD_TABLE + " TO pipeline_executor_t1");
+    dataDsl.execute("GRANT INSERT, SELECT ON " + GUARD_TABLE + " TO pipeline_executor_t1");
   }
 
   @AfterEach
   void dropGuardTable() {
-    dsl.execute("DROP TABLE IF EXISTS " + GUARD_TABLE);
+    dataDsl.execute("DROP TABLE IF EXISTS " + GUARD_TABLE);
   }
 
   @Test
@@ -192,7 +196,7 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
     // 프로덕션 경로로 INSERT 를 실행한다. 검증기(strict)를 통과하는 최소 DML 이다.
     sqlScriptExecutor.execute("INSERT INTO " + GUARD_TABLE + " (n) VALUES (1)");
 
-    var row = dsl.fetch("SELECT who, sp FROM " + GUARD_TABLE).get(0);
+    var row = dataDsl.fetch("SELECT who, sp FROM " + GUARD_TABLE).get(0);
 
     // (1) 접속 신원이 공용 pipeline_executor 가 아니라 테넌트 1 전용 롤이다 — dslForWithoutLease(tenantId) 배선
     //     을 단일 pipelineDsl 로 되돌리면 이 단언이 깨진다(변이 테스트 대상).
@@ -313,12 +317,12 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
 
       // 관측용 가드 테이블 — 기존 테스트와 동일한 장치(컬럼 DEFAULT 로 세션의 current_user·
       // search_path 를 기록한다). app_tenant 로 만들고 executorRole 에 명시적으로 권한을 준다.
-      dsl.execute(
+      dataDsl.execute(
           "CREATE TABLE "
               + guardTable
               + " (n INT, who TEXT DEFAULT current_user,"
               + " sp TEXT DEFAULT current_setting('search_path'))");
-      dsl.execute("GRANT INSERT, SELECT ON " + guardTable + " TO " + executorRole);
+      dataDsl.execute("GRANT INSERT, SELECT ON " + guardTable + " TO " + executorRole);
 
       // 검증 대상 호출도 테넌트 N 컨텍스트 안에서 해야 한다 — SqlValidator 싱글턴이 검증 시점에
       // DataSchema.current() 를 다시 묻으므로(위 클래스 Javadoc 참조), 컨텍스트가 비어 있으면
@@ -330,14 +334,14 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
             return null;
           });
 
-      var row = dsl.fetch("SELECT who, sp FROM " + guardTable).get(0);
+      var row = dataDsl.fetch("SELECT who, sp FROM " + guardTable).get(0);
       // 실측 판정: 인용된 단일 스키마 조립이 숫자 접미사 스키마에서도 정확히 그 스키마 하나로
       // 해석된다(psql 프로브가 SHOW 로 확인한 것을 여기서는 실제 테이블 조회로 확인한다).
       assertThat(row.get("who", String.class)).isEqualTo(executorRole);
       assertThat(row.get("sp", String.class)).isEqualTo(schema);
     } finally {
       TenantRlsTestSupport.cleanupAll(
-          () -> dsl.execute("DROP TABLE IF EXISTS " + guardTable),
+          () -> dataDsl.execute("DROP TABLE IF EXISTS " + guardTable),
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
           // R22(라운드 2 리뷰 확정) — 이 롤은 무조건 생성·삭제한다, ensureRoleExists 의
           // "만들었을 때만" 플래그 패턴을 쓰지 않는다. 규율: 롤이 LOGIN 을 필요로 하면 무조건
@@ -371,7 +375,7 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
         table,
         List.of(new DatasetColumnRequest("name", "name", "TEXT", null, true, false, null, false)));
     try {
-      dsl.execute("INSERT INTO " + DataSchema.qualify(table) + " (name) VALUES ('existing')");
+      dataDsl.execute("INSERT INTO " + DataSchema.qualify(table) + " (name) VALUES ('existing')");
 
       // when: DELETE 선행 문장 다음에 실행되는 INSERT 가 0으로 나누기로 실패한다. 같은 트랜잭션이므로
       // DELETE 도 함께 롤백돼야 한다.
@@ -383,9 +387,9 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
           .isInstanceOf(Exception.class);
 
       // then: 기존 행이 살아 있다 — 출력이 빈 채로 남지 않는다.
-      assertThat(dsl.fetchCount(DSL.table(DSL.name(DataSchema.current(), table)))).isEqualTo(1);
+      assertThat(dataDsl.fetchCount(DSL.table(DSL.name(DataSchema.current(), table)))).isEqualTo(1);
     } finally {
-      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
+      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
     }
   }
 
@@ -419,9 +423,9 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
           .hasMessageContaining("허용되지 않은 선행 문장");
 
       // then: 검증에서 걸렸으므로 본 스크립트(INSERT)는 아예 실행되지 않았다.
-      assertThat(dsl.fetchCount(DSL.table(DSL.name(DataSchema.current(), table)))).isZero();
+      assertThat(dataDsl.fetchCount(DSL.table(DSL.name(DataSchema.current(), table)))).isZero();
     } finally {
-      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
+      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
     }
   }
 
@@ -435,7 +439,7 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
         List.of(
             new DatasetColumnRequest("code", "code", "TEXT", null, false, false, null, true),
             new DatasetColumnRequest("name", "name", "TEXT", null, true, false, null, false)));
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(table)
             + " (code, name) VALUES ('K1', 'a'), ('K2', 'b')");
@@ -443,7 +447,8 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
   }
 
   private List<String> namesOf(String table) {
-    return dsl.fetch("SELECT name FROM " + DataSchema.qualify(table) + " ORDER BY code")
+    return dataDsl
+        .fetch("SELECT name FROM " + DataSchema.qualify(table) + " ORDER BY code")
         .getValues(0, String.class);
   }
 
@@ -464,7 +469,7 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
 
       assertThat(namesOf(table)).containsExactly("a+", "b+");
     } finally {
-      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
+      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
     }
   }
 
@@ -505,7 +510,7 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
 
       assertThat(namesOf(table)).as("거부된 문장은 아무것도 바꾸지 않는다").containsExactly("a", "b");
     } finally {
-      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
+      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
     }
   }
 
@@ -545,8 +550,8 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
       assertThat(namesOf(table)).as("거부된 조합은 아무것도 바꾸지 않는다").containsExactly("a", "b");
       assertThat(namesOf(other)).containsExactly("a", "b");
     } finally {
-      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
-      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(other));
+      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
+      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(other));
     }
   }
 
@@ -585,7 +590,7 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
       }
       assertThat(namesOf(table)).as("거부된 변형은 실행되지 않는다").containsExactly("a", "b", "c");
     } finally {
-      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
+      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
     }
   }
 }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
@@ -26,6 +27,9 @@ class DataTablePrimaryKeyIndexConcurrentlyTest extends IntegrationTestBase {
   @Autowired private DataTableRowService dataTableRowService;
   @Autowired private DSLContext dsl;
 
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   private static final String TABLE = "wd103_pk_cic";
 
   /**
@@ -37,7 +41,7 @@ class DataTablePrimaryKeyIndexConcurrentlyTest extends IntegrationTestBase {
     inTenantFixture(
         () -> {
           // 맞바꿈이 임시 테이블을 원본으로 바꾸므로 남는 것은 없다 — 옛 고정 이름 잔재만 혹시 몰라 지운다(WD-151).
-          dsl.execute(
+          dataDsl.execute(
               "DROP TABLE IF EXISTS "
                   + DataSchema.qualify(DataTableService.legacyTempTableName(TABLE)));
           dataTableService.dropTable(TABLE);
@@ -60,7 +64,8 @@ class DataTablePrimaryKeyIndexConcurrentlyTest extends IntegrationTestBase {
   private Map<String, Boolean> uniqueValidity() {
     return inTenantFixture(
         () ->
-            dsl.fetch(
+            dataDsl
+                .fetch(
                     "SELECT (SELECT string_agg(a.attname::text, ',' ORDER BY a.attname)"
                         + "   FROM pg_attribute a WHERE a.attrelid = tc.oid"
                         + "   AND a.attnum = ANY(i.indkey::int2[])) AS cols, i.indisvalid AS v"
@@ -78,7 +83,8 @@ class DataTablePrimaryKeyIndexConcurrentlyTest extends IntegrationTestBase {
   private List<String> uniqueColumnSets(boolean primary) {
     return inTenantFixture(
         () ->
-            dsl.fetch(
+            dataDsl
+                .fetch(
                     "SELECT (SELECT string_agg(a.attname::text, ',' ORDER BY a.attname)"
                         + "   FROM pg_attribute a WHERE a.attrelid = tc.oid"
                         + "   AND a.attnum = ANY(i.indkey::int2[])) AS cols"
@@ -100,7 +106,7 @@ class DataTablePrimaryKeyIndexConcurrentlyTest extends IntegrationTestBase {
     inTenantFixture(
         () -> {
           String tmp = dataTableService.createTempTable(TABLE);
-          dsl.execute(
+          dataDsl.execute(
               "INSERT INTO " + DataSchema.qualify(tmp) + " (ab_x, ab_y) VALUES ('k1', 'a')");
           dataTableService.finishReplace(TABLE, tmp, 1);
         });
@@ -114,7 +120,7 @@ class DataTablePrimaryKeyIndexConcurrentlyTest extends IntegrationTestBase {
     assertThat(
             inTenantFixture(
                 () ->
-                    dsl.fetchValue(
+                    dataDsl.fetchValue(
                         "SELECT count(*) FROM pg_indexes WHERE schemaname = ? AND indexname = ?",
                         DataSchema.current(),
                         "ux_" + TABLE + "_pk")))
@@ -131,7 +137,7 @@ class DataTablePrimaryKeyIndexConcurrentlyTest extends IntegrationTestBase {
     createPkTable();
     inTenantFixture(
         () ->
-            dsl.execute(
+            dataDsl.execute(
                 "INSERT INTO "
                     + DataSchema.qualify(TABLE)
                     + " (ab_x, ab_y) VALUES ('k1', 'dup'), ('k2', 'dup')"));
@@ -156,7 +162,8 @@ class DataTablePrimaryKeyIndexConcurrentlyTest extends IntegrationTestBase {
         .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
 
     // 데이터를 고치고 다시 부르면 INVALID 잔재가 1단계에서 정리되고, 성공 뒤 옛 PK 유니크도 지워진다.
-    inTenantFixture(() -> dsl.execute("UPDATE " + DataSchema.qualify(TABLE) + " SET ab_y = ab_x"));
+    inTenantFixture(
+        () -> dataDsl.execute("UPDATE " + DataSchema.qualify(TABLE) + " SET ab_y = ab_x"));
     dataTableService.createPrimaryKeyIndexConcurrently(TABLE, List.of("ab_y"));
 
     assertThat(uniqueValidity()).containsExactly(Map.entry("ab_y", true));

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
@@ -48,6 +49,10 @@ import org.springframework.transaction.annotation.Transactional;
 abstract class AbstractPipelineTenantAdmissionIntegrationTest extends IntegrationTestBase {
 
   @Autowired protected DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb protected DSLContext dataDsl;
+
   @Autowired protected PipelineService pipelineService;
   @Autowired protected PipelineExecutionService executionService;
   @Autowired protected PipelineTenantAdmission tenantAdmission;
@@ -152,7 +157,7 @@ abstract class AbstractPipelineTenantAdmissionIntegrationTest extends Integratio
                 TenantContext.runScoped(
                     DEFAULT_TEST_TENANT_ID,
                     () ->
-                        dsl.transaction(
+                        dataDsl.transaction(
                             cfg -> {
                               cfg.dsl()
                                   .execute(

@@ -10,6 +10,7 @@ import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.QueryExecuteResult;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -34,6 +35,9 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
   @Autowired private AnalyticsQueryExecutionService executionService;
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
 
   /**
    * ExecutorClient를 mock으로 교체 — 실제 executor 서비스 없이 executeViaExecutor 경로 테스트.
@@ -74,9 +78,9 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
             null),
         testUserId);
 
-    dsl.execute("INSERT INTO data.exec_ext_test (item, score) VALUES ('apple', 5)");
-    dsl.execute("INSERT INTO data.exec_ext_test (item, score) VALUES ('banana', 3)");
-    dsl.execute("INSERT INTO data.exec_ext_test (item, score) VALUES ('cherry', 8)");
+    dataDsl.execute("INSERT INTO data.exec_ext_test (item, score) VALUES ('apple', 5)");
+    dataDsl.execute("INSERT INTO data.exec_ext_test (item, score) VALUES ('banana', 3)");
+    dataDsl.execute("INSERT INTO data.exec_ext_test (item, score) VALUES ('cherry', 8)");
   }
 
   // =========================================================================

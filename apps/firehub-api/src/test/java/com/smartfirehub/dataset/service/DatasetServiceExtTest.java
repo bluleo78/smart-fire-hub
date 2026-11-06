@@ -10,6 +10,7 @@ import com.smartfirehub.dataset.exception.CategoryNotFoundException;
 import com.smartfirehub.dataset.exception.ColumnModificationException;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -36,6 +37,10 @@ class DatasetServiceExtTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
   @Autowired private DatasetFavoriteService datasetFavoriteService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
 
   private Long testUserId;
@@ -384,7 +389,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     // 데이터가 있는 데이터셋에 NOT NULL 컬럼 추가 시 예외
     DatasetDetailResponse ds = createSimpleDataset("AddColNonNull", "add_col_non_null_ext");
     // 데이터 삽입
-    dsl.execute("INSERT INTO data.add_col_non_null_ext (col1) VALUES ('x')");
+    dataDsl.execute("INSERT INTO data.add_col_non_null_ext (col1) VALUES ('x')");
 
     assertThatThrownBy(
             () ->
@@ -400,7 +405,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
   void addColumn_primaryKeyToDatasetWithData_throwsException() {
     // 데이터가 있는 데이터셋에 PK 컬럼 추가 시 예외
     DatasetDetailResponse ds = createSimpleDataset("AddColPKData", "add_col_pk_data_ext");
-    dsl.execute("INSERT INTO data.add_col_pk_data_ext (col1) VALUES ('x')");
+    dataDsl.execute("INSERT INTO data.add_col_pk_data_ext (col1) VALUES ('x')");
 
     assertThatThrownBy(
             () ->
@@ -466,7 +471,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
             "RenameWithData",
             "rename_with_data_ext",
             List.of(new DatasetColumnRequest("old_name", "Old", "TEXT", null, true, false, null)));
-    dsl.execute("INSERT INTO data.rename_with_data_ext (old_name) VALUES ('x')");
+    dataDsl.execute("INSERT INTO data.rename_with_data_ext (old_name) VALUES ('x')");
     Long colId = ds.columns().get(0).id();
 
     assertThatThrownBy(
@@ -486,7 +491,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
             "TypeChangeWithData",
             "type_change_with_data_ext",
             List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)));
-    dsl.execute("INSERT INTO data.type_change_with_data_ext (col1) VALUES ('x')");
+    dataDsl.execute("INSERT INTO data.type_change_with_data_ext (col1) VALUES ('x')");
     Long colId = ds.columns().get(0).id();
 
     assertThatThrownBy(
@@ -508,7 +513,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
             "TightenNotNullOk",
             "tighten_not_null_ok_ext",
             List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)));
-    dsl.execute("INSERT INTO data.tighten_not_null_ok_ext (col1) VALUES ('x')");
+    dataDsl.execute("INSERT INTO data.tighten_not_null_ok_ext (col1) VALUES ('x')");
     Long colId = ds.columns().get(0).id();
 
     datasetService.updateColumn(
@@ -525,7 +530,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
             "TightenNotNullFail",
             "tighten_not_null_fail_ext",
             List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)));
-    dsl.execute("INSERT INTO data.tighten_not_null_fail_ext (col1) VALUES (NULL)");
+    dataDsl.execute("INSERT INTO data.tighten_not_null_fail_ext (col1) VALUES (NULL)");
     Long colId = ds.columns().get(0).id();
 
     assertThatThrownBy(
@@ -545,7 +550,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
             "RelaxToNullable",
             "relax_to_nullable_ext",
             List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, false, false, null)));
-    dsl.execute("INSERT INTO data.relax_to_nullable_ext (col1) VALUES ('x')");
+    dataDsl.execute("INSERT INTO data.relax_to_nullable_ext (col1) VALUES ('x')");
     Long colId = ds.columns().get(0).id();
 
     datasetService.updateColumn(

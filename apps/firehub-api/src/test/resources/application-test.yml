@@ -81,7 +81,10 @@ app:
     heartbeat-interval: P1D
     stale-sweep-interval: P1D
     datasource:
-      url: jdbc:postgresql://testcontainers-import-missing.invalid:5432/MISSING_PostgresTestContainer
+      # 데이터 저장소 URL 을 따른다(WD-494, 운영 기본값과 같다). 기본 모드는 spring.datasource.url(첫 컨테이너),
+      # 분리 모드 테스트는 두 번째 컨테이너가 된다. 여기서 컨테이너 주소를 따로 등록하면 같은 키를 두 곳에서 등록해
+      # 어느 쪽이 이기는지가 @DynamicPropertySource 처리 순서에 달려 분리 모드 오버라이드가 무시된다.
+      url: ${firehub.data-store.postgres.url}
       password: pipeline_exec_pwd
     # 테넌트별 파이프라인 실행 롤(pipeline_executor_t{id}) 비밀번호 파생 HMAC 키.
     # RolePasswordSyncCallback 이 이 값으로 매 기동마다 DB 쪽 비밀번호를 맞춘다(T1 TenantPipelineRole).

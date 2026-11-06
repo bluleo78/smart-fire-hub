@@ -5,6 +5,7 @@ import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.storage.DataRowStore;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
@@ -13,6 +14,8 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jobrunr.storage.JobStats;
+import org.jobrunr.storage.StorageProvider;
 import org.jooq.DSLContext;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -45,7 +48,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Slf4j
 public class StagingTableCleanupService {
 
-  private final DSLContext dsl;
+  @DataStoreDb private final DSLContext dsl;
   private final DataTableRowService dataTableRowService;
   // @Scheduled 경로에는 승계할 테넌트가 없다 — ACTIVE 테넌트를 순회해야 스키마명을 파생할 수 있다.
   private final TenantScopedRunner tenantScopedRunner;
@@ -57,6 +60,9 @@ public class StagingTableCleanupService {
   private final DataStoreResolver dataStoreResolver;
   // 외부 저장소 스윕의 테넌트별 추가 게이트 — Tibero 파이프라인 스테이징은 JobRunr 게이트에 잡히지 않는다(아래 sweepExternalTenants).
   private final PipelineExecutionRepository pipelineExecutionRepository;
+  // JobRunr 활성 작업 게이트 — 자기 테이블(jobrunr_jobs)을 직접 읽지 않고 JobRunr 공개 API 로 묻는다. StorageProvider 는 플랫폼
+  // DB(PG 는 JobRunr 자동 구성, Tibero 는 TiberoPlatformDbConfig 의 Oracle 방언)에 붙어 있어 DB 종류와 무관하다(WD-494).
+  private final StorageProvider storageProvider;
 
   /**
    * 외부 저장소 고아 staging 으로 볼 최소 나이({@code app.data-store.staging-min-age}, 기본 1시간). PG 스윕에는 나이 기준이
@@ -65,9 +71,6 @@ public class StagingTableCleanupService {
    */
   @Value("${app.data-store.staging-min-age:PT1H}")
   private final Duration stagingMinAge;
-
-  /** JobRunr 작업이 "활성"으로 간주되는 상태 집합(대기/예약/실행 중). 이 중 하나라도 있으면 정리를 건너뛴다. */
-  private static final String ACTIVE_JOB_STATES = "('SCHEDULED', 'ENQUEUED', 'PROCESSING')";
 
   /**
    * 30분마다 고아 staging 테이블을 정리한다. 부팅 직후 초기화 잡음을 피하려 5분 지연 후 첫 실행한다. 스케줄 예외가 다음 주기를 막지 않도록 sweep 실패는
@@ -98,8 +101,9 @@ public class StagingTableCleanupService {
    * 안의 경합</b>이다. 순회가 테넌트 A 를 처리하는 동안(=A 의 게이트 재확인과 그 뒤의 {@code findStagingTables()}+DROP 사이), A 에 새
    * 임포트가 막 시작되면 그 임포트가 방금 만든 staging 테이블이 여전히 "고아처럼" 보여 DROP 될 수 있다. 순회 전 1회만 확인하면 이 창이 "루프 전체(N개
    * 테넌트 처리 시간)" 로 늘어나고, 테넌트마다 재확인하면 "그 테넌트 하나의 처리 시간" 으로 좁혀진다 — 위험이 사라지는 게 아니라 폭이 줄어드는 것이다. 클래스 주석의
-   * "거짓 음성은 치명적 / 과보수는 무해" 비대칭에서 과보수 쪽이다. {@code jobrunr_jobs} 카운트는 인덱스 한 번이라 30분 주기에 N번 묻는 비용은 무시할
-   * 수 있다.
+   * "거짓 음성은 치명적 / 과보수는 무해" 비대칭에서 과보수 쪽이다. 게이트는 JobRunr {@code StorageProvider.getJobStats()}(통계 뷰
+   * {@code jobrunr_jobs_stats} 한 번 조회)라 30분 주기에 테넌트 수만큼 묻는다 — 뷰가 상태별 집계를 하므로 보관 중인 작업 수에 비례하지만, 주기가
+   * 길어 감수한다.
    *
    * @return DROP한 테이블 총 개수(활성 작업이 있어 건너뛴 경우 0)
    */
@@ -226,12 +230,16 @@ public class StagingTableCleanupService {
     return orphans.size();
   }
 
-  /** {@code jobrunr_jobs}에 대기/예약/실행 중(활성) 작업이 하나라도 있는지 확인한다. */
+  /**
+   * JobRunr 에 대기/예약/실행 중(활성) 작업이 하나라도 있는지 확인한다. JobRunr 공개 API(통계)로 물어 그 내부 테이블 구조에 기대지 않는다.
+   *
+   * <p>주의: StorageProvider 는 DataSource 에서 자기 연결을 직접 얻으므로 현재 Spring 트랜잭션의 미커밋 변경은 보지 못한다 — 커밋된 상태만
+   * 본다(운영 경로의 스케줄 스윕은 트랜잭션 밖이라 차이가 없다).
+   */
   private boolean hasActiveJobs() {
-    Long count =
-        dsl.fetchOne("SELECT count(*) FROM jobrunr_jobs WHERE state IN " + ACTIVE_JOB_STATES)
-            .get(0, Long.class);
-    return count != null && count > 0;
+    // "활성" = 대기/예약/실행 중. 이 중 하나라도 있으면 정리를 건너뛴다.
+    JobStats stats = storageProvider.getJobStats();
+    return stats.getScheduled() + stats.getEnqueued() + stats.getProcessing() > 0;
   }
 
   /**

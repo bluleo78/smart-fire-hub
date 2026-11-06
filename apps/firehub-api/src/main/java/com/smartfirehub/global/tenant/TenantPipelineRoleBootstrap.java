@@ -1,5 +1,7 @@
 package com.smartfirehub.global.tenant;
 
+import com.smartfirehub.global.datastore.DataStoreDb;
+import com.smartfirehub.tenant.repository.TenantRepository;
 import java.util.List;
 import org.jooq.DSLContext;
 import org.slf4j.Logger;
@@ -42,15 +44,20 @@ public class TenantPipelineRoleBootstrap {
    */
   private final DSLContext dsl;
 
+  // ACTIVE 테넌트 목록은 플랫폼 테이블(tenant)이라 리포지토리로 읽는다(WD-494).
+  private final TenantRepository tenantRepository;
+
   private final TenantPipelineRoleProvisioner roleProvisioner;
 
   private final TenantSchemaProvisioner schemaProvisioner;
 
   public TenantPipelineRoleBootstrap(
-      DSLContext dsl,
+      @DataStoreDb DSLContext dsl,
+      TenantRepository tenantRepository,
       TenantPipelineRoleProvisioner roleProvisioner,
       TenantSchemaProvisioner schemaProvisioner) {
     this.dsl = dsl;
+    this.tenantRepository = tenantRepository;
     this.roleProvisioner = roleProvisioner;
     this.schemaProvisioner = schemaProvisioner;
   }
@@ -79,10 +86,7 @@ public class TenantPipelineRoleBootstrap {
       return;
     }
 
-    List<Long> tenantIds =
-        dsl.fetch("select id from tenant where status = 'ACTIVE' order by id").stream()
-            .map(r -> r.get(0, Long.class))
-            .toList();
+    List<Long> tenantIds = tenantRepository.findActiveTenantIds();
 
     int healed = 0;
     for (long tenantId : tenantIds) {

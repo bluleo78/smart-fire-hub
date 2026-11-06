@@ -1,11 +1,9 @@
 package com.smartfirehub.securitylevel.pythonread;
 
-import static com.smartfirehub.jooq.Tables.DATASET;
-
+import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.Clearance;
 import java.util.function.Consumer;
-import org.jooq.DSLContext;
 import org.slf4j.Logger;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -41,15 +39,13 @@ interface PythonReadGrantBackend {
    * 데이터셋(문서·파일형)은 할 일이 없다.
    */
   static void syncDatasetTable(
-      TransactionTemplate requiresNew, DSLContext dsl, long datasetId, Consumer<String> syncTable) {
+      TransactionTemplate requiresNew,
+      DatasetRepository datasetRepository,
+      long datasetId,
+      Consumer<String> syncTable) {
+    // 플랫폼 테이블(dataset) 조회는 리포지토리로 — 데이터 저장소 DSL 로 읽으면 분리 설치에서 엉뚱한 DB 를 본다(WD-494).
     String table =
-        requiresNew.execute(
-            status ->
-                dsl.select(DATASET.TABLE_NAME)
-                    .from(DATASET)
-                    .where(DATASET.ID.eq(datasetId))
-                    .fetchOptional(DATASET.TABLE_NAME)
-                    .orElse(null));
+        requiresNew.execute(status -> datasetRepository.findTableNameById(datasetId).orElse(null));
     if (table != null) {
       syncTable.accept(table);
     }

@@ -15,6 +15,7 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DatasetDataService;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -47,6 +48,9 @@ class DataExportSearchColumnsTest extends IntegrationTestBase {
   @Autowired private DatasetRepository datasetRepository;
   @Autowired private DatasetColumnRepository columnRepository;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
 
   private static final String TABLE = "zz_export_search_158";
 
@@ -84,7 +88,7 @@ class DataExportSearchColumnsTest extends IntegrationTestBase {
                     null),
                 userId)
             .id();
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(TABLE)
             + " (region, cnt, amount, geom) VALUES"

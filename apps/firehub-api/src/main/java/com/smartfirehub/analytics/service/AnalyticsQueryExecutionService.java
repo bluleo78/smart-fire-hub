@@ -5,6 +5,9 @@ import static org.jooq.impl.DSL.*;
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.SchemaInfoResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
+import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.repository.DatasetSchemaMeta;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.AdhocResultValues;
 import com.smartfirehub.global.util.AdhocSqlErrorMessages;
@@ -42,6 +45,9 @@ public class AnalyticsQueryExecutionService {
   /** Tibero 테넌트의 분석 SQL 실행 창구(WD-76) — Tibero 면 PG(dsl·Python executor) 대신 이것으로만 실행한다. */
   private final TiberoQueryService tiberoQueryService;
 
+  /** 스키마 정보의 플랫폼 메타(dataset·dataset_column) 조회 — 데이터 저장소 DSL 이 아니라 리포지토리로 읽는다(WD-494). */
+  private final DatasetRepository datasetRepository;
+
   /**
    * 애널리틱스 경로 전용 인스턴스 — 스프링 빈이 아니라 {@link SqlValidator#forAdhocDataSchemaQueries()}로 직접 생성한다(#385
    * Task 4, 팩터리 도입 근거는 R1). 스프링 컨텍스트의 무인자 {@link SqlValidator} 빈은 파이프라인 경로 전용이라 여기서 재사용하면 안 된다.
@@ -52,7 +58,11 @@ public class AnalyticsQueryExecutionService {
   private boolean executorEnabled;
 
   public AnalyticsQueryExecutionService(
-      DSLContext dsl, ExecutorClient executorClient, TiberoQueryService tiberoQueryService) {
+      @DataStoreDb DSLContext dsl,
+      ExecutorClient executorClient,
+      TiberoQueryService tiberoQueryService,
+      DatasetRepository datasetRepository) {
+    this.datasetRepository = datasetRepository;
     this.dsl = dsl;
     this.executorClient = executorClient;
     this.tiberoQueryService = tiberoQueryService;
@@ -500,32 +510,65 @@ public class AnalyticsQueryExecutionService {
       return new SchemaInfoResponse(getTiberoTables(datasetIds, visibilitySql), dialect, schema);
     }
 
-    StringBuilder sql =
-        new StringBuilder()
-            .append("SELECT c.table_name, c.column_name, c.data_type, ")
-            .append("       d.id AS dataset_id, d.name AS dataset_name, ")
-            .append("       dc.display_name ")
-            .append("FROM information_schema.columns c ")
-            // 보안 등급(S2): 열람 가능한 데이터셋의 테이블만 — INNER JOIN 이라 데이터셋이 아닌 data 스키마
-            // 테이블(stg_import_* 등)도 함께 사라진다. visibilitySql 은 별칭 d 기준 인라인 조건.
-            .append("JOIN dataset d ON d.table_name = c.table_name AND ")
-            .append(visibilitySql)
-            .append(" ")
-            .append("LEFT JOIN dataset_column dc ")
-            .append("  ON dc.dataset_id = d.id AND dc.column_name = c.column_name ")
-            // 스키마명은 현재 테넌트에서 파생 + 바인드 파라미터로 넘긴다. 낡은 리터럴을 남기면
-            // 스키마 분리 후 이 조회가 예외도 로그도 없이 0행이 되어 스키마 정보가 빈 응답이 된다.
-            .append("WHERE c.table_schema = ? ");
-
-    if (datasetIds != null) {
-      sql.append(idFilterClause(datasetIds));
+    // 플랫폼 메타(열람 가능한 데이터셋 + 컬럼 표시 이름)는 리포지토리로, 물리 컬럼은 데이터 저장소에서 따로 읽어 앱에서 합친다(WD-494).
+    // 예전에는 information_schema.columns 와 dataset 을 한 SQL 로 조인했다 — 데이터셋이 아닌 data 스키마 테이블(stg_import_*
+    // 등)이
+    // INNER JOIN 으로 사라지던 것은 메타 맵에 없는 테이블을 건너뛰는 것으로 같다.
+    List<DatasetSchemaMeta> metas = datasetRepository.findSchemaMetas(datasetIds, visibilitySql);
+    // 테이블 이름 → 메타, 테이블 이름 → (컬럼 → 표시 이름). 같은 테이블 이름이 두 번 오면 둘 다 뒤의 메타가 이긴다(예전과 같은 마지막 우선).
+    Map<String, DatasetSchemaMeta> metaByTable = new HashMap<>();
+    Map<String, Map<String, String>> displayNamesByTable = new HashMap<>();
+    for (DatasetSchemaMeta m : metas) {
+      if (m.tableName() != null) {
+        metaByTable.put(m.tableName(), m);
+        // 표시 이름이 null 일 수 있어 Collectors.toMap 대신 put 루프로 만든다(같은 컬럼 이름은 뒤의 값이 이긴다).
+        Map<String, String> displayNames = new HashMap<>();
+        for (DatasetSchemaMeta.Column c : m.columns()) {
+          displayNames.put(c.columnName(), c.displayName());
+        }
+        displayNamesByTable.put(m.tableName(), displayNames);
+      }
+    }
+    if (metaByTable.isEmpty()) {
+      return new SchemaInfoResponse(List.of(), dialect, schema);
     }
 
-    sql.append("ORDER BY c.table_name, c.ordinal_position");
+    // 정렬은 예전과 같은 SQL 의 ORDER BY(table_name, ordinal_position) 가 정한다.
+    var infoRecords =
+        dsl.fetch(
+            "SELECT c.table_name, c.column_name, c.data_type "
+                + "FROM information_schema.columns c "
+                + "WHERE c.table_schema = ? AND c.table_name::text = ANY(?::text[]) "
+                + "ORDER BY c.table_name, c.ordinal_position",
+            DataSchema.current(),
+            metaByTable.keySet().toArray(new String[0]));
 
-    var infoRecords = dsl.fetch(sql.toString(), DataSchema.current());
+    // 물리 컬럼 행을 테이블별로 바로 묶는다. 행이 table_name 순으로 오므로 LinkedHashMap 이 그 순서를 지킨다. 메타 맵에 없는 테이블
+    // (데이터셋이 아닌 data 스키마 테이블)은 건너뛰고, 물리 컬럼이 없는 테이블은 행이 없으니 나오지 않는다(예전 INNER JOIN 과 같다).
+    // 컬럼 표시 이름은 그 테이블 메타의 컬럼 목록에서 찾는다 — 예전 LEFT JOIN dataset_column 과 같다.
+    Map<String, SchemaInfoResponse.TableInfo> tables = new LinkedHashMap<>();
+    for (var r : infoRecords) {
+      String tableName = r.get("table_name", String.class);
+      DatasetSchemaMeta m = metaByTable.get(tableName);
+      if (m == null) {
+        continue;
+      }
+      String columnName = r.get("column_name", String.class);
+      tables
+          .computeIfAbsent(
+              tableName,
+              k ->
+                  new SchemaInfoResponse.TableInfo(
+                      m.tableName(), m.datasetName(), m.datasetId(), new ArrayList<>()))
+          .columns()
+          .add(
+              new SchemaInfoResponse.ColumnInfo(
+                  columnName,
+                  r.get("data_type", String.class),
+                  displayNamesByTable.get(tableName).get(columnName)));
+    }
 
-    return new SchemaInfoResponse(assembleTables(infoRecords), dialect, schema);
+    return new SchemaInfoResponse(new ArrayList<>(tables.values()), dialect, schema);
   }
 
   /**
@@ -538,62 +581,23 @@ public class AnalyticsQueryExecutionService {
   // 여기서는 나오지 않고, 컬럼 메타가 없는 TABLE 데이터셋은 빈 컬럼 목록의 테이블로 나온다.
   private List<SchemaInfoResponse.TableInfo> getTiberoTables(
       List<Long> datasetIds, String visibilitySql) {
-    StringBuilder sql =
-        new StringBuilder()
-            .append("SELECT d.table_name, d.id AS dataset_id, d.name AS dataset_name, ")
-            .append("       dc.column_name, dc.data_type, dc.display_name ")
-            .append("FROM dataset d ")
-            .append("LEFT JOIN dataset_column dc ON dc.dataset_id = d.id ")
-            // PG 경로는 information_schema 를 INNER JOIN 하므로 물리 테이블이 없는 DOCUMENT 데이터셋이 자연히 빠진다.
-            // 메타데이터 기반인 이 경로는 같은 결과가 되도록 TABLE 저장 방식만 명시적으로 거른다.
-            .append("WHERE d.storage_type = 'TABLE' AND ")
-            .append(visibilitySql)
-            .append(" ");
-    if (datasetIds != null) {
-      sql.append(idFilterClause(datasetIds));
-    }
-    sql.append("ORDER BY d.table_name, dc.column_order");
-
-    return assembleTables(dsl.fetch(sql.toString()));
-  }
-
-  /**
-   * 스키마 정보 조회 결과 행을 테이블별로 묶는다(PG·Tibero 공용). 행은 table_name 순으로 오며, 컬럼 없는 데이터셋(LEFT JOIN)은 {@code
-   * column_name} 이 null 이라 빈 컬럼 목록의 테이블로만 나온다.
-   */
-  private static List<SchemaInfoResponse.TableInfo> assembleTables(
-      org.jooq.Result<org.jooq.Record> rows) {
-    Map<String, SchemaInfoResponse.TableInfo> tableMap = new LinkedHashMap<>();
-    for (var r : rows) {
-      String tableName = r.get("table_name", String.class);
-      var table =
-          tableMap.computeIfAbsent(
-              tableName,
-              k ->
-                  new SchemaInfoResponse.TableInfo(
-                      tableName,
-                      r.get("dataset_name", String.class),
-                      r.get("dataset_id", Long.class),
-                      new ArrayList<>()));
-      String columnName = r.get("column_name", String.class);
-      if (columnName != null) {
-        table
-            .columns()
-            .add(
-                new SchemaInfoResponse.ColumnInfo(
-                    columnName,
-                    r.get("data_type", String.class),
-                    r.get("display_name", String.class)));
+    // 메타는 전부 플랫폼 테이블이라 리포지토리로 읽는다(WD-494). TABLE 저장 방식만 거르는 것은 예전 SQL 조건과 같다.
+    // 메타 하나가 곧 테이블 하나다 — table_name 은 테넌트 안에서 유일(idx_dataset_table_name)하고 메타 조회는 테넌트 범위라 묶을 일이
+    // 없다. 컬럼 없는 데이터셋은 LEFT JOIN 처럼 빈 컬럼 목록의 테이블로 나온다.
+    List<SchemaInfoResponse.TableInfo> tables = new ArrayList<>();
+    for (DatasetSchemaMeta m : datasetRepository.findSchemaMetas(datasetIds, visibilitySql)) {
+      if (!"TABLE".equals(m.storageType())) {
+        continue;
       }
+      List<SchemaInfoResponse.ColumnInfo> columns = new ArrayList<>();
+      for (DatasetSchemaMeta.Column c : m.columns()) {
+        columns.add(
+            new SchemaInfoResponse.ColumnInfo(c.columnName(), c.dataType(), c.displayName()));
+      }
+      tables.add(
+          new SchemaInfoResponse.TableInfo(m.tableName(), m.datasetName(), m.datasetId(), columns));
     }
-    return new ArrayList<>(tableMap.values());
-  }
-
-  /** {@code AND d.id IN (...)} 조건 — datasetIds 는 컨트롤러에서 Long 타입으로 바인딩되므로 SQL injection 위험 없음. */
-  private static String idFilterClause(List<Long> datasetIds) {
-    String csv =
-        datasetIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
-    return "AND d.id IN (" + csv + ") ";
+    return tables;
   }
 
   /**

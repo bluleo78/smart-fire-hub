@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.dto.UpdateDatasetRequest;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.repository.DatasetSchemaMeta;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
@@ -18,6 +19,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -562,5 +564,64 @@ public class JooqDatasetRepository implements DatasetRepository {
         .from(DATASET)
         .where(DS_ID.eq(id))
         .fetchOptional(r -> r.get(DS_UPDATED_BY));
+  }
+
+  /**
+   * 열람 가능한 데이터셋 메타를 한 번의 조회로 읽는다 — {@code dataset d LEFT JOIN dataset_column dc}. 가시성 조건은 호출자가 만든
+   * SQL 조각이라 {@code d} 별칭 plain SQL 이다. 컬럼은 데이터셋 안에서 {@code column_order} 순으로 담고(예전 Tibero 경로의 정렬과
+   * 같다), 컬럼 없는 데이터셋은 LEFT JOIN 이라 빈 컬럼 목록으로 남는다.
+   *
+   * <p>왜 한 번인가(최종 리뷰 지적 5): 예전에는 데이터셋 행을 읽은 뒤 그 id 전부를 컬럼 조회의 {@code IN} 목록으로 묶었다. 열람 가능한 데이터셋 수만큼
+   * 바인드 값이 늘어 PG 바인드 상한(32767)에 닿을 수 있고 왕복도 한 번 더였다. 조인하면 id 목록을 넘길 필요가 없다.
+   */
+  @Override
+  public List<DatasetSchemaMeta> findSchemaMetas(List<Long> datasetIds, String visibilitySql) {
+    StringBuilder sql =
+        new StringBuilder(
+                "SELECT d.id, d.name, d.table_name, d.storage_type,"
+                    + " dc.column_name, dc.data_type, dc.display_name"
+                    + " FROM dataset d LEFT JOIN dataset_column dc ON dc.dataset_id = d.id WHERE ")
+            .append(visibilitySql)
+            .append(" ");
+    if (datasetIds != null) {
+      // datasetIds 는 컨트롤러에서 Long 으로 바인딩된 값이라 SQL injection 위험 없음. 호출자가 고른 목록이라 크기도 요청이 정한다.
+      sql.append("AND d.id IN (")
+          .append(datasetIds.stream().map(String::valueOf).collect(Collectors.joining(",")))
+          .append(") ");
+    }
+    sql.append("ORDER BY d.table_name, d.id, dc.column_order");
+
+    // 행은 데이터셋별로 붙어 오므로(ORDER BY d.table_name, d.id) 순서를 지키는 맵에 모은다.
+    Map<Long, DatasetSchemaMeta> byId = new LinkedHashMap<>();
+    for (var r : dsl.fetch(sql.toString())) {
+      long id = r.get(0, Long.class);
+      DatasetSchemaMeta meta =
+          byId.computeIfAbsent(
+              id,
+              k ->
+                  new DatasetSchemaMeta(
+                      k,
+                      r.get(1, String.class),
+                      r.get(2, String.class),
+                      r.get(3, String.class),
+                      new ArrayList<>()));
+      String columnName = r.get(4, String.class);
+      if (columnName != null) {
+        // LEFT JOIN 의 빈 쪽(컬럼 없는 데이터셋)은 column_name 이 null 이다 — 컬럼으로 담지 않는다.
+        meta.columns()
+            .add(
+                new DatasetSchemaMeta.Column(
+                    columnName, r.get(5, String.class), r.get(6, String.class)));
+      }
+    }
+    return new ArrayList<>(byId.values());
+  }
+
+  @Override
+  public List<DatasetTableLevel> findTableLevels(String onlyTable) {
+    return dsl.select(DS_TABLE_NAME, DS_SECURITY_LEVEL_ID)
+        .from(DATASET)
+        .where(onlyTable == null ? DS_TABLE_NAME.isNotNull() : DS_TABLE_NAME.eq(onlyTable))
+        .fetch(r -> new DatasetTableLevel(r.value1(), r.value2()));
   }
 }

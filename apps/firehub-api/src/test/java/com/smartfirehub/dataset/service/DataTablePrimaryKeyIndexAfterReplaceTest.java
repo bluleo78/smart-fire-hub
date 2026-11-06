@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.dto.UpdateColumnRequest;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
@@ -39,6 +40,10 @@ class DataTablePrimaryKeyIndexAfterReplaceTest extends IntegrationTestBase {
   @Autowired private DataTableRowService dataTableRowService;
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
 
   private static final String TABLE = "wd103_pk";
@@ -73,7 +78,8 @@ class DataTablePrimaryKeyIndexAfterReplaceTest extends IntegrationTestBase {
 
   /** 그 테이블의 유니크 인덱스 전부를 카탈로그에서 직접 읽는다 — 제품 코드의 식별 기준과 독립적으로 "실제로 무엇이 걸려 있는가"를 본다. */
   private List<Unique> uniques(String table) {
-    return dsl.fetch(
+    return dataDsl
+        .fetch(
             "SELECT ic.relname::text AS n, i.indisprimary AS p,"
                 + " (SELECT string_agg(a.attname::text, ',' ORDER BY a.attname)"
                 + "    FROM pg_attribute a WHERE a.attrelid = tc.oid AND a.attnum = ANY(i.indkey::int2[]))"
@@ -110,7 +116,7 @@ class DataTablePrimaryKeyIndexAfterReplaceTest extends IntegrationTestBase {
   private void replaceLoad(String table, String... abXabY) {
     String tmp = dataTableService.createTempTable(table);
     for (int i = 0; i < abXabY.length; i += 2) {
-      dsl.execute(
+      dataDsl.execute(
           "INSERT INTO " + DataSchema.qualify(tmp) + " (ab_x, ab_y) VALUES (?, ?)",
           abXabY[i],
           abXabY[i + 1]);
@@ -198,7 +204,7 @@ class DataTablePrimaryKeyIndexAfterReplaceTest extends IntegrationTestBase {
   private DatasetDetailResponse legacyResidualState() {
     DatasetDetailResponse ds = createDataset(TABLE, true, false);
     replaceLoad(TABLE, "k1", "a");
-    dsl.execute(
+    dataDsl.execute(
         "CREATE UNIQUE INDEX \"ux_" + TABLE + "_pk\" ON " + DataSchema.qualify(TABLE) + " (ab_y)");
     dsl.execute(
         "UPDATE dataset_column SET is_primary_key = (column_name = 'ab_y') WHERE dataset_id = ?",

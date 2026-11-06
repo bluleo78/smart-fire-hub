@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.PipelineDetailResponse;
@@ -38,6 +39,9 @@ class PipelineTempDatasetCleanupTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
   @Autowired private TempDatasetService tempDatasetService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
 
   private Long userId;
 
@@ -280,7 +284,8 @@ class PipelineTempDatasetCleanupTest extends IntegrationTestBase {
   }
 
   private boolean tableExists(String table) {
-    return dsl.fetchValue("SELECT to_regclass(?) IS NOT NULL", DataSchema.qualify(table))
+    return dataDsl
+        .fetchValue("SELECT to_regclass(?) IS NOT NULL", DataSchema.qualify(table))
         .equals(Boolean.TRUE);
   }
 

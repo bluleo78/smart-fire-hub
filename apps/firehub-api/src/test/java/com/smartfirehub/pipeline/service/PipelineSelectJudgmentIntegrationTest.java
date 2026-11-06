@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.ExecutionDetailResponse;
@@ -45,6 +46,10 @@ import org.springframework.transaction.annotation.Transactional;
 class PipelineSelectJudgmentIntegrationTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private DatasetService datasetService;
   @Autowired private PipelineService pipelineService;
   @Autowired private PipelineExecutionService executionService;
@@ -83,12 +88,12 @@ class PipelineSelectJudgmentIntegrationTest extends IntegrationTestBase {
     // code 를 PK 로 둔다 — MERGE 전략 케이스가 출력 PK 를 요구한다.
     srcDatasetId = createDataset(srcTable, "SOURCE", "code", "name");
     outDatasetId = createDataset(outTable, "DERIVED", "code", "name");
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + src()
             + " (code, name) SELECT 'C' || lpad(i::text, 4, '0'), 'n' || i"
             + " FROM generate_series(1, 3) AS i");
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(outTable)
             + " (code, name) VALUES ('K1', 'keep'), ('K2', 'keep')");
@@ -230,7 +235,7 @@ class PipelineSelectJudgmentIntegrationTest extends IntegrationTestBase {
     String valsTable = "wd93_vals_" + suffix;
     Long valsId = createDataset(valsTable, "DERIVED", "column1", "column2");
     try {
-      dsl.execute(
+      dataDsl.execute(
           "INSERT INTO "
               + DataSchema.qualify(valsTable)
               + " (column1, column2) VALUES ('K1', 'keep')");
@@ -398,7 +403,8 @@ class PipelineSelectJudgmentIntegrationTest extends IntegrationTestBase {
   private String rowsOf(String table, String keyColumn, String valueColumn) {
     return String.join(
         ",",
-        dsl.fetch(
+        dataDsl
+            .fetch(
                 "SELECT "
                     + keyColumn
                     + " || ':' || "

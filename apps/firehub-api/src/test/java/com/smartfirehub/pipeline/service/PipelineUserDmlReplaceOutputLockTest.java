@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
@@ -48,8 +49,16 @@ class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
 
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   /** 관문 잠금 전용 커넥션을 빌리기 위한 메인 풀. */
-  @Autowired private DataSource dataSource;
+  /**
+   * 관문·잠금 보유 연결용 데이터 저장소 DataSource. SQL 스텝의 출력 잠금({@link SqlScriptExecutor#OUTPUT_LOCK_SQL})과 원천
+   * 테이블 잠금은 파이프라인 실행 연결(=데이터 저장소)에서 잡히므로, 테스트가 쥐는 잠금과 {@code pg_locks} 관측도 같은 DB 여야 한다(WD-494 — 분리
+   * 모드에서는 플랫폼 DB 와 다르다).
+   */
+  @Autowired @DataStoreDb private DataSource dataSource;
 
   @Autowired private DatasetService datasetService;
   @Autowired private PipelineService pipelineService;
@@ -109,11 +118,12 @@ class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
             .id();
 
     // 원천 2행, 출력에는 이전 실행 결과 1행.
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(srcTable)
             + " (code, name) VALUES ('a','A'), ('b','B')");
-    dsl.execute("INSERT INTO " + DataSchema.qualify(outTable) + " (code, name) VALUES ('old','O')");
+    dataDsl.execute(
+        "INSERT INTO " + DataSchema.qualify(outTable) + " (code, name) VALUES ('old','O')");
   }
 
   @AfterEach
@@ -334,7 +344,8 @@ class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
   }
 
   private List<String> outCodes() {
-    return dsl.fetch("SELECT code FROM " + DataSchema.qualify(outTable) + " ORDER BY code")
+    return dataDsl
+        .fetch("SELECT code FROM " + DataSchema.qualify(outTable) + " ORDER BY code")
         .getValues(0, String.class);
   }
 }

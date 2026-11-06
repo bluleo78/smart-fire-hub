@@ -11,6 +11,7 @@ import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.time.OffsetDateTime;
@@ -34,6 +35,10 @@ class SearchIndexSettingsServiceTest extends IntegrationTestBase {
   @Autowired private DataTableService dataTableService;
   @Autowired private RowSearchSyncService sync;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @MockitoBean private EmbeddingProviderFactory embeddingFactory;
 
   private long datasetId;
@@ -43,7 +48,7 @@ class SearchIndexSettingsServiceTest extends IntegrationTestBase {
   @BeforeEach
   void setUp() {
     // 이전 실행의 tearDown 실패로 남은 데이터셋·원본·색인 테이블·사용자를 먼저 지운다(unique 위반 연쇄 방지).
-    RowSearchTestSupport.cleanup(dsl, dataTableService, SRC);
+    RowSearchTestSupport.cleanup(dsl, dataDsl, dataTableService, SRC);
     EmbeddingProvider p =
         new EmbeddingProvider() {
           public List<float[]> embed(List<String> t) {
@@ -192,7 +197,8 @@ class SearchIndexSettingsServiceTest extends IntegrationTestBase {
         () ->
             inTenantFixture(
                 () ->
-                    dsl.fetchOne(
+                    dataDsl
+                        .fetchOne(
                             "SELECT to_regclass(?) IS NOT NULL",
                             com.smartfirehub.global.tenant.DataSchema.qualify(ref.indexTable()))
                         .get(0, Boolean.class));
@@ -245,7 +251,8 @@ class SearchIndexSettingsServiceTest extends IntegrationTestBase {
     IndexRef ref = new IndexRef(DEFAULT_TEST_TENANT_ID, datasetId, SRC);
     return inTenantFixture(
         () ->
-            dsl.fetchOne(
+            dataDsl
+                .fetchOne(
                     "SELECT to_regclass(?) IS NOT NULL",
                     com.smartfirehub.global.tenant.DataSchema.qualify(ref.indexTable()))
                 .get(0, Boolean.class));

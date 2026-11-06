@@ -37,10 +37,12 @@ public class SchemaOwnerDataSourceConfig {
 
   @Bean(name = "schemaOwnerDataSource")
   public DataSource schemaOwnerDataSource(
-      @Value("${spring.flyway.url}") String url,
-      // ⚠ 키 이름은 user 다 — Spring Boot Flyway 규약. username 으로 쓰면 기동이 깨진다.
-      @Value("${spring.flyway.user}") String username,
-      @Value("${spring.flyway.password}") String password) {
+      // 소유자 접속 정보는 데이터 저장소 키(firehub.data-store.postgres.owner-*)에서 읽는다(WD-494). 기본값은
+      // application.yml 에서 spring.flyway.* 를 가리켜 PG 설치본 동작이 그대로다.
+      // ⚠ 기본값이 가리키는 Flyway 쪽 키 이름은 user 다 — Spring Boot Flyway 규약. username 으로 쓰면 기동이 깨진다.
+      @Value("${firehub.data-store.postgres.owner-url}") String url,
+      @Value("${firehub.data-store.postgres.owner-username}") String username,
+      @Value("${firehub.data-store.postgres.owner-password}") String password) {
     HikariConfig config = new HikariConfig();
     config.setJdbcUrl(url);
     config.setUsername(username);

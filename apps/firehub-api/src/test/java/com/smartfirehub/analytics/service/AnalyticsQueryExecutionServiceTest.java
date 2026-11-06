@@ -10,6 +10,7 @@ import com.smartfirehub.analytics.dto.SchemaInfoResponse;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
@@ -34,6 +35,9 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
   @Autowired private AnalyticsQueryExecutionService executionService;
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
 
   /** 이 테스트는 필터 동작만 검증하므로 열람 조건은 항상 참(가시성 자체는 SqlPathsAccessTest 가 검증). */
   private static final String ALL_VISIBLE = "TRUE";
@@ -67,8 +71,8 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
             null),
         testUserId);
 
-    dsl.execute("INSERT INTO data.exec_test (name, value) VALUES ('Alice', 10)");
-    dsl.execute("INSERT INTO data.exec_test (name, value) VALUES ('Bob', 20)");
+    dataDsl.execute("INSERT INTO data.exec_test (name, value) VALUES ('Alice', 10)");
+    dataDsl.execute("INSERT INTO data.exec_test (name, value) VALUES ('Bob', 20)");
   }
 
   // =========================================================================
@@ -236,10 +240,11 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
       assertThat(response.error()).as(sql).contains("SELECT 쿼리만");
       assertThat(response.rows()).as(sql).isEmpty();
     }
-    assertThat(dsl.fetchOne("SELECT count(*) FROM data.exec_test").get(0, Integer.class))
+    assertThat(dataDsl.fetchOne("SELECT count(*) FROM data.exec_test").get(0, Integer.class))
         .isEqualTo(2);
     assertThat(
-            dsl.fetchOne("SELECT count(*) FROM data.exec_test WHERE value = 99")
+            dataDsl
+                .fetchOne("SELECT count(*) FROM data.exec_test WHERE value = 99")
                 .get(0, Integer.class))
         .isZero();
   }
@@ -264,10 +269,11 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
       errors.add(executionService.execute(sql, 100, true).error());
     }
     // 행 변화를 먼저 본다 — 분류가 틀리면 어떤 쓰기가 실제로 일어났는지가 결함의 실체다.
-    assertThat(dsl.fetchOne("SELECT count(*) FROM data.exec_test").get(0, Integer.class))
+    assertThat(dataDsl.fetchOne("SELECT count(*) FROM data.exec_test").get(0, Integer.class))
         .isEqualTo(2);
     assertThat(
-            dsl.fetchOne("SELECT count(*) FROM data.exec_test WHERE value = 99")
+            dataDsl
+                .fetchOne("SELECT count(*) FROM data.exec_test WHERE value = 99")
                 .get(0, Integer.class))
         .isZero();
     for (int k = 0; k < dml.size(); k++) {
@@ -604,7 +610,7 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
     assertThat(response.error()).isNull();
     assertThat(response.queryType()).isEqualTo("DELETE");
     assertThat(response.affectedRows()).isEqualTo(2);
-    assertThat(dsl.fetchValue("SELECT count(*) FROM data.exec_test")).isEqualTo(0L);
+    assertThat(dataDsl.fetchValue("SELECT count(*) FROM data.exec_test")).isEqualTo(0L);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -628,7 +634,11 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
     DSLContext pg = mock(DSLContext.class);
     ExecutorClient executor = mock(ExecutorClient.class);
     return new TiberoSetup(
-        new AnalyticsQueryExecutionService(pg, executor, new TiberoQueryService(schema, db)),
+        new AnalyticsQueryExecutionService(
+            pg,
+            executor,
+            new TiberoQueryService(schema, db),
+            mock(com.smartfirehub.dataset.repository.DatasetRepository.class)),
         pg,
         executor,
         db);

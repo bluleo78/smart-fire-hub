@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.storage.DataTableNames;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -40,6 +41,9 @@ class DataTableReplaceOverlapTest extends IntegrationTestBase {
   @Autowired private DataTableRowService dataTableRowService;
   @Autowired private DSLContext dsl;
 
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   /**
    * 긴 컬럼명 — {@code LIKE ... INCLUDING ALL} 이 짓는 인덱스 이름({@code <tmp>_<col>_idx})이 63바이트를 넘어 잘리게 한다.
    * 잘려도 두 실행의 인덱스 이름이 달라야 동시 생성이 중복 오류로 깨지지 않는다(난수가 이름 앞쪽에 있는 이유).
@@ -62,7 +66,7 @@ class DataTableReplaceOverlapTest extends IntegrationTestBase {
   @AfterEach
   void dropOutput() {
     for (String tmp : tempTablesOf(table)) {
-      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tmp));
+      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tmp));
     }
     dataTableService.dropTable(table);
   }
@@ -73,13 +77,15 @@ class DataTableReplaceOverlapTest extends IntegrationTestBase {
   }
 
   private List<String> names(String target) {
-    return dsl.fetch("SELECT name FROM " + DataSchema.qualify(target) + " ORDER BY name")
+    return dataDsl
+        .fetch("SELECT name FROM " + DataSchema.qualify(target) + " ORDER BY name")
         .getValues(0, String.class);
   }
 
   /** 이 출력의 REPLACE 임시 테이블(옛 고정 이름 포함) 중 지금 남아 있는 것. */
   private List<String> tempTablesOf(String output) {
-    return dsl.fetch(
+    return dataDsl
+        .fetch(
             "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
                 + " WHERE n.nspname = ? AND c.relkind = 'r' AND c.relname LIKE ?",
             DataSchema.current(),
@@ -89,7 +95,8 @@ class DataTableReplaceOverlapTest extends IntegrationTestBase {
 
   /** 테이블에 걸린 인덱스 이름. */
   private List<String> indexNames(String target) {
-    return dsl.fetch(
+    return dataDsl
+        .fetch(
             "SELECT indexname::text FROM pg_indexes WHERE schemaname = ? AND tablename = ?",
             DataSchema.current(),
             target)
@@ -250,7 +257,7 @@ class DataTableReplaceOverlapTest extends IntegrationTestBase {
   @Test
   void 옛_고정_이름_잔재는_다음_생성이_지운다() {
     String legacy = DataTableService.legacyTempTableName(table);
-    dsl.execute(
+    dataDsl.execute(
         "CREATE TABLE "
             + DataSchema.qualify(legacy)
             + " (LIKE "

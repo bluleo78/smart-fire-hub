@@ -1,5 +1,6 @@
 package com.smartfirehub.pipeline.service;
 
+import com.smartfirehub.global.datastore.DataStoreDb;
 import java.time.OffsetDateTime;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -18,7 +19,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class IncrementalCursorService {
 
-  private final DSLContext dsl;
+  @DataStoreDb private final DSLContext dsl;
 
   /** 책갈피 후보값을 DB 에서 읽는다. 평가 순서(시각 먼저 → 활성 트랜잭션)는 DB 함수 안에서 고정된다. */
   public OffsetDateTime captureCandidate() {

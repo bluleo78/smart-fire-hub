@@ -10,6 +10,7 @@ import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.exception.RowNotFoundException;
 import com.smartfirehub.dataset.exception.SqlQueryException;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
@@ -28,6 +29,9 @@ class DataTableServiceTest extends IntegrationTestBase {
   @Autowired private DataTableQueryService dataTableQueryService;
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
 
   private final List<String> tablesToCleanup = new java.util.ArrayList<>();
 
@@ -61,7 +65,8 @@ class DataTableServiceTest extends IntegrationTestBase {
 
     // Then
     Long tableExists =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("information_schema.tables")
             .where("table_schema = 'data' AND table_name = '" + tableName + "'")
             .fetchOne(0, Long.class);
@@ -69,7 +74,8 @@ class DataTableServiceTest extends IntegrationTestBase {
 
     // Verify columns exist
     Long columnCount =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("information_schema.columns")
             .where("table_schema = 'data' AND table_name = '" + tableName + "'")
             .fetchOne(0, Long.class);
@@ -78,7 +84,8 @@ class DataTableServiceTest extends IntegrationTestBase {
 
     // Verify index was created for indexed column
     Long indexCount =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("pg_indexes")
             .where(
                 "schemaname = 'data' AND tablename = '"
@@ -140,7 +147,8 @@ class DataTableServiceTest extends IntegrationTestBase {
 
     // Then
     Long columnExists =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("information_schema.columns")
             .where(
                 "table_schema = 'data' AND table_name = '"
@@ -151,7 +159,8 @@ class DataTableServiceTest extends IntegrationTestBase {
 
     // Verify index was created
     Long indexCount =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("pg_indexes")
             .where(
                 "schemaname = 'data' AND tablename = '"
@@ -179,7 +188,8 @@ class DataTableServiceTest extends IntegrationTestBase {
 
     // Then - index exists
     Long indexCount =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("pg_indexes")
             .where(
                 "schemaname = 'data' AND tablename = '"
@@ -195,7 +205,8 @@ class DataTableServiceTest extends IntegrationTestBase {
 
     // Then - index removed
     indexCount =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("pg_indexes")
             .where(
                 "schemaname = 'data' AND tablename = '"
@@ -217,7 +228,8 @@ class DataTableServiceTest extends IntegrationTestBase {
     dataTableService.createTable(tableName, columns);
 
     Long tableExists =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("information_schema.tables")
             .where("table_schema = 'data' AND table_name = '" + tableName + "'")
             .fetchOne(0, Long.class);
@@ -228,7 +240,8 @@ class DataTableServiceTest extends IntegrationTestBase {
 
     // Then
     tableExists =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("information_schema.tables")
             .where("table_schema = 'data' AND table_name = '" + tableName + "'")
             .fetchOne(0, Long.class);
@@ -708,20 +721,24 @@ class DataTableServiceTest extends IntegrationTestBase {
 
     // 원본 이름이 스테이징 내용을 담는다 — DROP 과 RENAME 이 둘 다 올바른 스키마에 닿았다는 증거
     List<String> names =
-        dsl.fetch("SELECT name FROM data.\"" + tableName + "\"").getValues("name", String.class);
+        dataDsl
+            .fetch("SELECT name FROM data.\"" + tableName + "\"")
+            .getValues("name", String.class);
     assertThat(names).containsExactly("new");
 
     // 시퀀스 리네임이 실제로 일어났다 — 빠뜨리면 아무 에러 없이 tmp 이름의 시퀀스가 남고,
     // 원본 시퀀스 이름이 사라져 다음 맞바꿈이 엉뚱한 이름을 물려받는다.
     Long canonicalSeq =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("pg_sequences")
             .where("schemaname = 'data' AND sequencename = '" + tableName + "_id_seq'")
             .fetchOne(0, Long.class);
     assertThat(canonicalSeq).as("스왑 후 시퀀스는 원본 이름 규약을 따라야 한다").isEqualTo(1);
 
     Long tmpSeq =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("pg_sequences")
             .where("schemaname = 'data' AND sequencename = '" + tmp + "_id_seq'")
             .fetchOne(0, Long.class);
@@ -755,11 +772,14 @@ class DataTableServiceTest extends IntegrationTestBase {
     dataTableService.finishReplace(tableName, tmp, 0);
 
     List<String> names =
-        dsl.fetch("SELECT name FROM data.\"" + tableName + "\"").getValues("name", String.class);
+        dataDsl
+            .fetch("SELECT name FROM data.\"" + tableName + "\"")
+            .getValues("name", String.class);
     assertThat(names).as("빈 결과가 기존 데이터를 지워서는 안 된다").containsExactly("keep-me");
 
     Long tmpTable =
-        dsl.selectCount()
+        dataDsl
+            .selectCount()
             .from("pg_tables")
             .where("schemaname = 'data' AND tablename = '" + tmp + "'")
             .fetchOne(0, Long.class);
@@ -780,7 +800,9 @@ class DataTableServiceTest extends IntegrationTestBase {
     dataTableService.finishReplace(tableName, tmp, 1);
 
     List<String> names =
-        dsl.fetch("SELECT name FROM data.\"" + tableName + "\"").getValues("name", String.class);
+        dataDsl
+            .fetch("SELECT name FROM data.\"" + tableName + "\"")
+            .getValues("name", String.class);
     assertThat(names).as("적재된 행이 있으면 REPLACE 는 평소대로 맞바꾼다").containsExactly("new");
   }
 
@@ -803,20 +825,20 @@ class DataTableServiceTest extends IntegrationTestBase {
     tablesToCleanup.add(table);
     dataTableService.createTable(table, List.of(textColumn("name")));
     String q = DataSchema.qualify(table);
-    dsl.execute("INSERT INTO " + q + " (name) VALUES ('a')");
+    dataDsl.execute("INSERT INTO " + q + " (name) VALUES ('a')");
     java.time.OffsetDateTime before =
-        (java.time.OffsetDateTime) dsl.fetchValue("SELECT _updated_at FROM " + q);
+        (java.time.OffsetDateTime) dataDsl.fetchValue("SELECT _updated_at FROM " + q);
     // 별도 트랜잭션에서 수정해야 now() 가 달라진다 — 이 테스트는 IntegrationTestBase 의 테스트
     // 트랜잭션 안에서 실행되므로 now()(=트랜잭션 시작 시각)가 동일할 수 있다. 그래서 아래 단언은
     // 의도적으로 약하다(isAfterOrEqualTo) — 실제 트리거 동작 증명은 다음 단언(명시값 덮어쓰기)이 한다.
-    dsl.execute("UPDATE " + q + " SET name = 'b'");
+    dataDsl.execute("UPDATE " + q + " SET name = 'b'");
     java.time.OffsetDateTime after =
-        (java.time.OffsetDateTime) dsl.fetchValue("SELECT _updated_at FROM " + q);
+        (java.time.OffsetDateTime) dataDsl.fetchValue("SELECT _updated_at FROM " + q);
     assertThat(after).isAfterOrEqualTo(before);
     // 명시값을 넣어도 트리거가 덮어쓴다
-    dsl.execute("UPDATE " + q + " SET _updated_at = '2000-01-01'::timestamptz");
+    dataDsl.execute("UPDATE " + q + " SET _updated_at = '2000-01-01'::timestamptz");
     java.time.OffsetDateTime forced =
-        (java.time.OffsetDateTime) dsl.fetchValue("SELECT _updated_at FROM " + q);
+        (java.time.OffsetDateTime) dataDsl.fetchValue("SELECT _updated_at FROM " + q);
     assertThat(forced.getYear()).isNotEqualTo(2000);
   }
 
@@ -838,7 +860,7 @@ class DataTableServiceTest extends IntegrationTestBase {
     dataTableService.swapTable(table, tmp);
     Long triggers =
         (Long)
-            dsl.fetchValue(
+            dataDsl.fetchValue(
                 "select count(*) from pg_trigger where tgname='fh_touch_updated_at' and tgrelid = to_regclass(?)",
                 DataSchema.qualify(table));
     assertThat(triggers).isEqualTo(1);
@@ -851,22 +873,22 @@ class DataTableServiceTest extends IntegrationTestBase {
     tablesToCleanup.add(src);
     tablesToCleanup.add(dst);
     dataTableService.createTable(src, List.of(textColumn("name")));
-    dsl.execute("INSERT INTO " + DataSchema.qualify(src) + " (name) VALUES ('a')");
+    dataDsl.execute("INSERT INTO " + DataSchema.qualify(src) + " (name) VALUES ('a')");
     List<DatasetColumnResponse> columnDefs =
         List.of(
             new DatasetColumnResponse(
                 1L, "name", "name", "TEXT", null, true, false, null, 0, false));
     dataTableService.cloneTable(src, dst, List.of("name"), columnDefs);
-    dsl.execute("INSERT INTO " + DataSchema.qualify(dst) + " (name) VALUES ('b')");
+    dataDsl.execute("INSERT INTO " + DataSchema.qualify(dst) + " (name) VALUES ('b')");
     Long nulls =
         (Long)
-            dsl.fetchValue(
+            dataDsl.fetchValue(
                 "select count(*) from " + DataSchema.qualify(dst) + " where _updated_at is null");
     assertThat(nulls).isZero();
 
     Long triggers =
         (Long)
-            dsl.fetchValue(
+            dataDsl.fetchValue(
                 "select count(*) from pg_trigger where tgname='fh_touch_updated_at' and tgrelid = to_regclass(?)",
                 DataSchema.qualify(dst));
     assertThat(triggers).isEqualTo(1);
@@ -913,7 +935,7 @@ class DataTableServiceTest extends IntegrationTestBase {
             new DatasetColumnRequest("ts", "TS", "TIMESTAMP", null, true, false, null),
             new DatasetColumnRequest("b", "B", "BOOLEAN", null, true, false, null),
             new DatasetColumnRequest("t", "T", "TEXT", null, true, false, null)));
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO "
             + DataSchema.qualify(tableName)
             + "(n, x, d, ts, b, t) VALUES"
@@ -954,7 +976,7 @@ class DataTableServiceTest extends IntegrationTestBase {
 
     // 교차 확인: PG 가 원래 타입으로 집계한 결과와도 같아야 한다(정수·숫자·날짜·시각).
     var native_ =
-        dsl.fetchOne(
+        dataDsl.fetchOne(
             "SELECT MIN(n)::text AS n_min, MAX(n)::text AS n_max, MIN(x)::text AS x_min,"
                 + " MAX(x)::text AS x_max, MIN(d)::text AS d_min, MAX(d)::text AS d_max,"
                 + " MIN(ts)::text AS ts_min, MAX(ts)::text AS ts_max FROM "

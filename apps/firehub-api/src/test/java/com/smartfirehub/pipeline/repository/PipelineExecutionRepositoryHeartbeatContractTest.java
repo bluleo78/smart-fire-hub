@@ -5,11 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PostgresTestContainer;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
-import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -17,7 +17,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,11 +36,6 @@ abstract class PipelineExecutionRepositoryHeartbeatContractTest extends Integrat
 
   /** 계약 대상 리포지토리 — 구현별 하위 클래스가 제공한다. */
   protected abstract PipelineExecutionRepository repository();
-
-  /** DDL(임시 트리거)은 앱 롤에 권한이 없어 스키마 소유자 연결로 건다. */
-  @Autowired
-  @Qualifier("schemaOwnerDataSource")
-  private DataSource schemaOwnerDataSource;
 
   private Long userId;
   private Long tenantA;
@@ -371,7 +365,10 @@ abstract class PipelineExecutionRepositoryHeartbeatContractTest extends Integrat
   private void withFailingStepTrigger(String marker, Runnable body) {
     String cond =
         marker != null ? "NEW.error_message = '" + marker + "'" : "NEW.status = 'SKIPPED'";
-    DSLContext ownerDsl = DSL.using(schemaOwnerDataSource, SQLDialect.POSTGRES);
+    // DDL(임시 트리거)은 앱 롤에 권한이 없어 소유자 연결로 건다. 대상이 플랫폼 테이블이라 플랫폼 DB 소유자다(WD-494 — 스키마 소유자 풀은
+    // 분리 모드에서 데이터 저장소를 가리킨다).
+    DSLContext ownerDsl =
+        DSL.using(PostgresTestContainer.platformOwnerDataSource(), SQLDialect.POSTGRES);
     ownerDsl.execute(
         "CREATE OR REPLACE FUNCTION wd230_step_boom() RETURNS trigger AS $$ BEGIN IF "
             + cond

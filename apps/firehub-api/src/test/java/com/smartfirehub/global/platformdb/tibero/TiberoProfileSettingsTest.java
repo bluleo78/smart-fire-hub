@@ -48,4 +48,19 @@ class TiberoProfileSettingsTest {
     assertThat(String.valueOf(p.getProperty("spring.datasource.driver-class-name")))
         .isEqualTo(TiberoDialect.DRIVER_CLASS);
   }
+
+  /** 플랫폼 DB 가 Tibero 면 PG 데이터 저장소 연결을 플랫폼 연결과 분리해야 한다(WD-494). 접속 정보는 환경변수 자리로만 두고 값은 박지 않는다. */
+  @Test
+  void PG_데이터_저장소를_분리_모드로_켜고_접속_정보는_환경변수로_받는다() throws IOException {
+    PropertySource<?> p = profile();
+
+    assertThat(String.valueOf(p.getProperty("firehub.data-store.postgres.separate")))
+        .isEqualTo("true");
+    for (String key :
+        new String[] {"url", "password", "owner-url", "owner-username", "owner-password"}) {
+      assertThat(String.valueOf(p.getProperty("firehub.data-store.postgres." + key)))
+          .as("firehub.data-store.postgres.%s 는 환경변수 자리여야 한다", key)
+          .startsWith("${");
+    }
+  }
 }

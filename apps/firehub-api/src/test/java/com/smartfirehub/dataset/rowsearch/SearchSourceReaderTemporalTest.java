@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.HashMap;
@@ -39,6 +40,10 @@ class SearchSourceReaderTemporalTest extends IntegrationTestBase {
   @Autowired private SearchSourceReader reader;
   @Autowired private DataTableService dataTableService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private ObjectMapper objectMapper;
 
   /** 라벨 → id. */
@@ -74,7 +79,8 @@ class SearchSourceReaderTemporalTest extends IntegrationTestBase {
     };
     for (String[] r : rows) {
       Long id =
-          dsl.fetchOne(
+          dataDsl
+              .fetchOne(
                   "INSERT INTO "
                       + DataSchema.qualify(TABLE)
                       + " (label, d, ts) VALUES ('"
@@ -97,14 +103,15 @@ class SearchSourceReaderTemporalTest extends IntegrationTestBase {
 
     // 수정 전 경로 — fetchRows 가 쓰던 그대로(dsl.fetch + record.get)
     preFix = new HashMap<>();
-    for (var rec : dsl.fetch("SELECT label, d, ts FROM " + DataSchema.qualify(TABLE))) {
+    for (var rec : dataDsl.fetch("SELECT label, d, ts FROM " + DataSchema.qualify(TABLE))) {
       Map<String, Object> m = new HashMap<>();
       m.put("d", rec.get("d"));
       m.put("ts", rec.get("ts"));
       preFix.put(rec.get("label", String.class), m);
     }
     pgText = new HashMap<>();
-    for (var rec : dsl.fetch("SELECT label, d::text, ts::text FROM " + DataSchema.qualify(TABLE))) {
+    for (var rec :
+        dataDsl.fetch("SELECT label, d::text, ts::text FROM " + DataSchema.qualify(TABLE))) {
       Map<String, String> m = new HashMap<>();
       m.put("d", rec.get(1, String.class));
       m.put("ts", rec.get(2, String.class));

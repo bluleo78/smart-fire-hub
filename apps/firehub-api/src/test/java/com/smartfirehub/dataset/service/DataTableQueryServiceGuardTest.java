@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.support.IntegrationTestBase;
 import org.jooq.DSLContext;
@@ -30,6 +31,10 @@ class DataTableQueryServiceGuardTest extends IntegrationTestBase {
 
   @Autowired private DataTableQueryService dataTableQueryService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PlatformTransactionManager transactionManager;
 
   private TransactionTemplate tx;
@@ -41,14 +46,15 @@ class DataTableQueryServiceGuardTest extends IntegrationTestBase {
 
     testTableName = "guard_query_table";
     // 이전 실행이 tearDown 도달 전에 죽었을 경우를 대비해 생성 전에도 정리한다.
-    dsl.execute("DROP TABLE IF EXISTS data." + testTableName);
-    dsl.execute("CREATE TABLE data." + testTableName + " (id BIGSERIAL PRIMARY KEY, name TEXT)");
-    dsl.execute("INSERT INTO data." + testTableName + " (name) VALUES ('Row1')");
+    dataDsl.execute("DROP TABLE IF EXISTS data." + testTableName);
+    dataDsl.execute(
+        "CREATE TABLE data." + testTableName + " (id BIGSERIAL PRIMARY KEY, name TEXT)");
+    dataDsl.execute("INSERT INTO data." + testTableName + " (name) VALUES ('Row1')");
   }
 
   @AfterEach
   void tearDown() {
-    dsl.execute("DROP TABLE IF EXISTS data." + testTableName);
+    dataDsl.execute("DROP TABLE IF EXISTS data." + testTableName);
   }
 
   // =========================================================================

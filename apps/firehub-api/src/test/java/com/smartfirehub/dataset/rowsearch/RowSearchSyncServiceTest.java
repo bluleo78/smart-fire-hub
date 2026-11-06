@@ -11,6 +11,7 @@ import com.smartfirehub.embedding.EmbeddingException;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -42,6 +43,10 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
   @Autowired private SearchColumnRepository searchColumns;
   @Autowired private DataTableService dataTableService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @MockitoBean private EmbeddingProviderFactory embeddingFactory;
 
   private final List<String> embedded = new ArrayList<>();
@@ -57,7 +62,7 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
   @BeforeEach
   void setUp() {
     // 이전 실행의 tearDown 실패로 남은 데이터셋·원본·색인 테이블·사용자를 먼저 지운다(unique 위반 연쇄 방지).
-    RowSearchTestSupport.cleanup(dsl, dataTableService, SRC);
+    RowSearchTestSupport.cleanup(dsl, dataDsl, dataTableService, SRC);
     // 가짜 provider: 호출된 텍스트를 기록하고, 텍스트 해시로 한 칸만 1 인 벡터를 만든다.
     when(embeddingFactory.current())
         .thenAnswer(
@@ -103,7 +108,7 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
                   List.of(
                       new DatasetColumnRequest("content", "내용", "TEXT", null, true, false, null),
                       new DatasetColumnRequest("status", "상태", "VARCHAR", 20, true, false, null)));
-              dsl.execute(
+              dataDsl.execute(
                   "INSERT INTO "
                       + DataSchema.qualify(SRC)
                       + " (content, status) VALUES ('a','x'),('b','x'),('c','x')");
@@ -116,14 +121,14 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
   @AfterEach
   void tearDown() {
     // 색인·_prev·_tmp·원본·메타 전부(dataset 삭제 시 상태 행은 CASCADE). 사용자는 dataset 을 지운 뒤에 지운다.
-    RowSearchTestSupport.cleanup(dsl, dataTableService, SRC);
+    RowSearchTestSupport.cleanup(dsl, dataDsl, dataTableService, SRC);
     TenantRlsTestSupport.deleteUser(dsl, userId);
   }
 
   private void exec(String sql) {
     inTenantFixture(
         () -> {
-          dsl.execute(sql.replace("$T", DataSchema.qualify(SRC)));
+          dataDsl.execute(sql.replace("$T", DataSchema.qualify(SRC)));
         });
   }
 
@@ -194,7 +199,7 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
     inTenantFixture(
         () -> {
           String tmp = dataTableService.createTempTable(SRC);
-          dsl.execute(
+          dataDsl.execute(
               "INSERT INTO "
                   + DataSchema.qualify(tmp)
                   + " (content, status) VALUES ('c','x'),('z','x')");

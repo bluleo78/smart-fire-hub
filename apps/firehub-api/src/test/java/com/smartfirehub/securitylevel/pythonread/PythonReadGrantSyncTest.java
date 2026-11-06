@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
@@ -41,6 +42,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 class PythonReadGrantSyncTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private DatasetService datasetService;
   @Autowired private DataTableService dataTableService;
@@ -74,7 +79,7 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
   private String table(String suffix, String level) {
     String t = m + "_" + suffix;
     datasets.add(
-        new PythonReadTestTables(datasetService, dsl, fixtureTransactionTemplate, fx)
+        new PythonReadTestTables(datasetService, dsl, dataDsl, fixtureTransactionTemplate, fx)
             .create(t, level, owner));
     return t;
   }
@@ -124,7 +129,7 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     String role = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 10);
     String pw = TenantPipelineRole.pythonReadPassword(DEFAULT_TEST_TENANT_ID, 10, secret);
     try (Connection c =
-            DriverManager.getConnection(PostgresTestContainer.INSTANCE.getJdbcUrl(), role, pw);
+            DriverManager.getConnection(PostgresTestContainer.dataStoreJdbcUrl(), role, pw);
         Statement s = c.createStatement()) {
       assertThatThrownBy(() -> s.execute("INSERT INTO \"" + pub + "\" (v) VALUES ('x')"))
           .isInstanceOf(SQLException.class)
@@ -162,7 +167,7 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     TenantRlsTestSupport.runInTenantTransaction(
         fixtureTransactionTemplate,
         DEFAULT_TEST_TENANT_ID,
-        () -> dsl.execute("GRANT SELECT ON " + DataSchema.qualify(sens) + " TO " + s1));
+        () -> dataDsl.execute("GRANT SELECT ON " + DataSchema.qualify(sens) + " TO " + s1));
     assertThat(selectAs(1, sens)).isNull();
     PythonReadGrantSync.SyncResult r = sync.syncTenant();
     assertThat(selectAs(1, sens)).isEqualTo("42501");
@@ -183,12 +188,12 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
         fixtureTransactionTemplate,
         DEFAULT_TEST_TENANT_ID,
         () -> {
-          dsl.execute(
+          dataDsl.execute(
               "CREATE VIEW "
                   + DataSchema.qualify(view)
                   + " AS SELECT v FROM "
                   + DataSchema.qualify(sens));
-          dsl.execute("GRANT SELECT ON " + DataSchema.qualify(view) + " TO " + s1);
+          dataDsl.execute("GRANT SELECT ON " + DataSchema.qualify(view) + " TO " + s1);
         });
     try {
       assertThat(selectAs(1, sens)).as("대조군: 테이블 직접 읽기는 거부").isEqualTo("42501");
@@ -200,7 +205,7 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
       TenantRlsTestSupport.runInTenantTransaction(
           fixtureTransactionTemplate,
           DEFAULT_TEST_TENANT_ID,
-          () -> dsl.execute("DROP VIEW IF EXISTS " + DataSchema.qualify(view)));
+          () -> dataDsl.execute("DROP VIEW IF EXISTS " + DataSchema.qualify(view)));
     }
   }
 
@@ -210,7 +215,7 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     String pub = table("pub", "공개");
     sync.syncTenant();
     String tmp = dataTableService.createTempTable(pub);
-    dsl.execute("INSERT INTO " + DataSchema.qualify(tmp) + " (v) VALUES ('new')");
+    dataDsl.execute("INSERT INTO " + DataSchema.qualify(tmp) + " (v) VALUES ('new')");
     dataTableService.swapTable(pub, tmp);
     sync.syncTable(pub);
     assertThat(selectAs(1, pub)).isNull();
@@ -314,7 +319,9 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     TenantRlsTestSupport.runInTenantTransaction(
         fixtureTransactionTemplate,
         DEFAULT_TEST_TENANT_ID,
-        () -> dsl.execute("GRANT SELECT ON " + DataSchema.qualify(sens) + " TO " + s1 + ", " + s2));
+        () ->
+            dataDsl.execute(
+                "GRANT SELECT ON " + DataSchema.qualify(sens) + " TO " + s1 + ", " + s2));
     assertThat(selectAs(2, sens)).as("전제: 슬롯 2 과권한").isNull();
     long internalUser = userAt("내부");
     assertThat(sync.prepareForRun(clearanceResolver.resolve(internalUser))).isEqualTo(2);

@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
@@ -34,6 +35,9 @@ import org.springframework.beans.factory.annotation.Value;
 class SqlColumnProbeSandboxTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
 
   @Autowired private SqlColumnProbe sqlColumnProbe;
 
@@ -82,8 +86,9 @@ class SqlColumnProbeSandboxTest extends IntegrationTestBase {
           });
 
       // 공용 pipeline_executor 에는 이 스키마 권한을 **주지 않는다** — 그것이 이 테스트의 판별력이다.
-      dsl.execute("CREATE TABLE " + probeTable + " (post_id INT, title VARCHAR(500), hit BOOLEAN)");
-      dsl.execute("GRANT SELECT ON " + probeTable + " TO " + executorRole);
+      dataDsl.execute(
+          "CREATE TABLE " + probeTable + " (post_id INT, title VARCHAR(500), hit BOOLEAN)");
+      dataDsl.execute("GRANT SELECT ON " + probeTable + " TO " + executorRole);
 
       List<ColumnInfo> columns =
           TenantContext.runScopedGet(
@@ -99,7 +104,7 @@ class SqlColumnProbeSandboxTest extends IntegrationTestBase {
               new ColumnInfo("hit", "BOOLEAN"));
     } finally {
       TenantRlsTestSupport.cleanupAll(
-          () -> dsl.execute("DROP TABLE IF EXISTS " + probeTable),
+          () -> dataDsl.execute("DROP TABLE IF EXISTS " + probeTable),
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
           () -> TenantRlsTestSupport.dropPipelineLoginRole(ownerDsl(), executorRole),
           () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId));

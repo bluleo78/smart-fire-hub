@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.ExecutionDetailResponse;
@@ -41,6 +42,10 @@ import org.springframework.transaction.annotation.Transactional;
 class PipelineStepErrorMessageIntegrationTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private DatasetService datasetService;
   @Autowired private PipelineService pipelineService;
   @Autowired private PipelineExecutionService executionService;
@@ -68,7 +73,8 @@ class PipelineStepErrorMessageIntegrationTest extends IntegrationTestBase {
     // 출력은 code 가 기본 키 — 같은 code 를 다시 넣으면 23505 가 난다.
     srcDatasetId = createDataset(srcTable, "SOURCE");
     outDatasetId = createDataset(outTable, "DERIVED");
-    dsl.execute("INSERT INTO " + src() + " (code, name) VALUES ('C0001', 'n1'), ('C0002', 'n2')");
+    dataDsl.execute(
+        "INSERT INTO " + src() + " (code, name) VALUES ('C0001', 'n1'), ('C0002', 'n2')");
 
     pipelineId =
         pipelineService
@@ -97,7 +103,7 @@ class PipelineStepErrorMessageIntegrationTest extends IntegrationTestBase {
    */
   @Test
   void 중복_키_실패는_로드_전략_안내와_원문을_저장하고_내부_INSERT_문은_싣지_않는다() {
-    dsl.execute(
+    dataDsl.execute(
         "INSERT INTO " + DataSchema.qualify(outTable) + " (code, name) VALUES ('C0001', 'x')");
 
     Map<String, StepRow> steps = runAndObserve();

@@ -10,6 +10,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.dto.SqlQueryRequest;
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -67,6 +68,10 @@ class DataTableQueryServiceTenantSchemaTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
   @Autowired private DatasetDataService datasetDataService;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private TransactionTemplate tx;
 
   @Autowired
@@ -132,7 +137,7 @@ class DataTableQueryServiceTenantSchemaTest extends IntegrationTestBase {
                             COLUMNS,
                             null),
                         userId);
-                dsl.execute(
+                dataDsl.execute(
                     "INSERT INTO "
                         + DataSchema.qualify("tenant_schema_probe")
                         + " (name) VALUES ('probe')");

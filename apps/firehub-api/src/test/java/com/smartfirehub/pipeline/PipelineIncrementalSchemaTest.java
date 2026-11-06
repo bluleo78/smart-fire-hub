@@ -7,13 +7,16 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.config.TenantPipelineDataSourceRegistry;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PostgresTestContainer;
 import db.migration.V125__pipeline_incremental_updated_at_indexes;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import javax.sql.DataSource;
@@ -33,6 +36,9 @@ import org.springframework.beans.factory.annotation.Qualifier;
 class PipelineIncrementalSchemaTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
 
   // 다른 롤(테넌트 파이프라인 실행 롤) 연결을 얻기 위해 SqlScriptExecutorSandboxTest 와 같은 방식을 쓴다.
   @Autowired private TenantPipelineDataSourceRegistry tenantPipelineDataSources;
@@ -76,11 +82,11 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
   void 후보값_함수는_SECURITY_DEFINER이고_app_tenant가_실행할_수_있다() {
     Boolean secdef =
         (Boolean)
-            dsl.fetchValue(
+            dataDsl.fetchValue(
                 "select prosecdef from pg_proc where proname='fh_incremental_cursor_candidate'");
     assertThat(secdef).isTrue();
     // 런타임 롤(app_tenant)로 호출 가능해야 한다 — 권한 누락이면 여기서 예외.
-    assertThat(dsl.fetchValue("select public.fh_incremental_cursor_candidate()")).isNotNull();
+    assertThat(dataDsl.fetchValue("select public.fh_incremental_cursor_candidate()")).isNotNull();
     // PUBLIC EXECUTE 는 회수돼 있어야 한다(다른 임의 롤은 기본적으로 거부돼야 함) — 전수 검사는
     // TenantSchemaConformanceTest.securityDefinerFunctionsAreKnownAndLeastPrivileged 가
     // KNOWN_SECURITY_DEFINER_FUNCTIONS 에 이 함수를 등재해 이미 수행한다(acl 이 비어있지 않고
@@ -107,7 +113,7 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
   @Test
   void 후보값_함수_소유자는_다른_백엔드의_xact_start를_볼_수_있어야_한다() {
     var row =
-        dsl.fetchOne(
+        dataDsl.fetchOne(
             "select pg_get_userbyid(p.proowner) as owner, r.rolsuper as is_super,"
                 + " pg_has_role(p.proowner, 'pg_read_all_stats', 'member') as reads_stats"
                 + " from pg_proc p join pg_roles r on r.oid = p.proowner"
@@ -143,7 +149,7 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
                 assertThat(ownerDsl().fetchValue("select current_user"))
                     .as("탐침이 진짜 함수 소유자 권한인지 — 아니면 이 검사는 무의미하다")
                     .isEqualTo(
-                        dsl.fetchValue(
+                        dataDsl.fetchValue(
                             "select pg_get_userbyid(proowner) from pg_proc"
                                 + " where proname='fh_incremental_cursor_candidate'"));
                 OffsetDateTime seenByOwner =
@@ -157,7 +163,7 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
                 // 참고 — 런타임 롤(app_tenant)은 같은 값을 보지 못한다. 그래서 이 함수가 SECURITY
                 // DEFINER 여야 한다. (보이면 SECURITY DEFINER 가 불필요하다는 뜻이므로 함께 못 박는다.)
                 assertThat(
-                        dsl.fetchValue(
+                        dataDsl.fetchValue(
                             "select xact_start from pg_stat_activity where pid = ?", tenantPid))
                     .as("app_tenant 가 직접 볼 수 있다면 SECURITY DEFINER 가 필요 없다는 뜻 — 전제가 바뀐 것")
                     .isNull();
@@ -166,7 +172,7 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
                 Thread.sleep(1000);
                 OffsetDateTime candidate =
                     (OffsetDateTime)
-                        dsl.fetchValue("select public.fh_incremental_cursor_candidate()");
+                        dataDsl.fetchValue("select public.fh_incremental_cursor_candidate()");
 
                 // 4) 열려 있는 다른 롤 트랜잭션의 시작 시각이 후보값을 끌어내렸어야 한다.
                 assertThat(candidate).isBeforeOrEqualTo(openedAt);
@@ -178,32 +184,74 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
         });
   }
 
+  /**
+   * 모든 TABLE 데이터셋 물리 테이블에 {@code _updated_at} 컬럼·트리거·인덱스가 있는지 두 단계로 확인한다(최종 리뷰 지적 7).
+   *
+   * <ol>
+   *   <li>플랫폼 DB 의 {@code dataset} 에서 (테넌트, 테이블 이름)을 읽는다 — RLS 를 우회하는 플랫폼 슈퍼유저로 읽어 모든 테넌트를 본다. 예전에는
+   *       app_tenant 로 트랜잭션 밖에서 읽어 RLS 가 모든 행을 가렸으므로(백필 테스트 주석 참고) 기본 모드에서도 공허했다.
+   *   <li>데이터 저장소({@code @DataStoreDb})의 카탈로그({@code pg_class}·{@code pg_attribute}·{@code
+   *       pg_trigger}·{@code pg_index})에서 각 테이블을 이름으로 찾아 셋을 확인한다. 분리 모드에서는 두 단계가 다른 DB 라 한 SQL 로
+   *       조인할 수 없다. {@code information_schema} 는 권한으로 걸러지고 {@code to_regclass} 는 스키마 USAGE 가 없으면
+   *       오류라 쓰지 않는다.
+   * </ol>
+   *
+   * <p>픽스처 하나를 먼저 만들어 2단계가 실제로 테이블을 찾았는지 확인한다 — 그래야 빈 DB 에서도 공허하게 통과하지 않는다.
+   */
   @Test
   void 모든_TABLE_데이터셋의_물리테이블에_updated_at_트리거와_인덱스가_있다() {
-    // 백필 누락 테이블 = _updated_at 컬럼·트리거·인덱스 중 하나라도 없는 데이터셋 물리 테이블.
-    // 인덱스까지 확인한다(코드리뷰 지적 4) — 컬럼·트리거만 보면 CREATE INDEX 줄이 통째로
-    // 빠져도 이 테스트가 못 잡는다.
-    List<String> missing =
-        dsl.fetch(
-                """
-                select d.table_name
-                from dataset d
-                cross join lateral (select case when d.tenant_id = 1 then 'data'
-                                     else 'data_t' || d.tenant_id end as sch) s
-                where d.storage_type = 'TABLE'
-                  and to_regclass(format('%I.%I', s.sch, d.table_name)) is not null
-                  and (not exists (select 1 from information_schema.columns c
-                                   where c.table_schema = s.sch and c.table_name = d.table_name
-                                     and c.column_name = '_updated_at')
-                    or not exists (select 1 from pg_trigger t
-                                   where t.tgrelid = to_regclass(format('%I.%I', s.sch, d.table_name))
-                                     and t.tgname = 'fh_touch_updated_at')
-                    or not exists (select 1 from pg_indexes i
-                                   where i.schemaname = s.sch and i.tablename = d.table_name
-                                     and i.indexname = 'ix_' || d.table_name || '_upd'))
-                """)
-            .getValues(0, String.class);
-    assertThat(missing).isEmpty();
+    Fixture fx = createTableDatasetFixture("all");
+    try {
+      // 1단계 — 플랫폼 DB: 테넌트 1 은 data, 나머지는 data_t{id} 스키마(TenantSchemaProvisioner 규칙).
+      List<String> schemas = new ArrayList<>();
+      List<String> tables = new ArrayList<>();
+      DSL.using(PostgresTestContainer.platformOwnerDataSource(), SQLDialect.POSTGRES)
+          .fetch(
+              "select tenant_id, table_name from dataset"
+                  + " where storage_type = 'TABLE' and table_name is not null")
+          .forEach(
+              r -> {
+                long tenantId = r.get(0, Long.class);
+                schemas.add(tenantId == 1L ? "data" : "data_t" + tenantId);
+                tables.add(r.get(1, String.class));
+              });
+
+      // 2단계 — 데이터 저장소: 실제로 있는 물리 테이블만 보고(없는 테이블은 예전처럼 건너뜀), 셋 중 하나라도 빠진 것을 고른다.
+      var checked =
+          dataDsl.fetch(
+              """
+              select c.relname,
+                     exists (select 1 from pg_attribute a
+                             where a.attrelid = c.oid and a.attname = '_updated_at'
+                               and not a.attisdropped) as has_col,
+                     exists (select 1 from pg_trigger t
+                             where t.tgrelid = c.oid and t.tgname = 'fh_touch_updated_at') as has_trg,
+                     exists (select 1 from pg_index i join pg_class ic on ic.oid = i.indexrelid
+                             where i.indrelid = c.oid and ic.relname = 'ix_' || c.relname || '_upd')
+                       as has_idx
+              from unnest(?::text[], ?::text[]) as w(sch, tbl)
+              join pg_namespace n on n.nspname = w.sch
+              join pg_class c on c.relnamespace = n.oid and c.relname = w.tbl and c.relkind = 'r'
+              """,
+              schemas.toArray(new String[0]),
+              tables.toArray(new String[0]));
+
+      assertThat(checked.getValues(0, String.class))
+          .as("픽스처 테이블을 2단계가 찾아야 검사가 공허하지 않다")
+          .contains(fx.tableName());
+      List<String> missing =
+          checked.stream()
+              .filter(
+                  r ->
+                      !r.get(1, Boolean.class)
+                          || !r.get(2, Boolean.class)
+                          || !r.get(3, Boolean.class))
+              .map(r -> r.get(0, String.class))
+              .toList();
+      assertThat(missing).isEmpty();
+    } finally {
+      dropFixture(fx);
+    }
   }
 
   /**
@@ -289,13 +337,13 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
       ownerDsl().execute(loadBackfillDoBlock());
       assertThat(hasUpdatedAtTrigger(fx.tableName())).as("백필 선행 조건").isTrue();
 
-      dsl.execute("INSERT INTO data." + fx.tableName() + " (val) VALUES ('a')");
+      dataDsl.execute("INSERT INTO data." + fx.tableName() + " (val) VALUES ('a')");
       OffsetDateTime insertedAt = fetchUpdatedAt(fx.tableName());
       assertThat(insertedAt).as("INSERT 시점에 _updated_at 이 채워져야 한다").isNotNull();
 
       // 서로 다른 트랜잭션이 되도록 약간 대기(타임스탬프 해상도 여유) 후 UPDATE.
       Thread.sleep(10);
-      dsl.execute("UPDATE data." + fx.tableName() + " SET val = 'b'");
+      dataDsl.execute("UPDATE data." + fx.tableName() + " SET val = 'b'");
       OffsetDateTime updatedAt = fetchUpdatedAt(fx.tableName());
 
       assertThat(updatedAt).as("UPDATE 후 _updated_at 이 INSERT 시점보다 엄격히 커야 한다").isAfter(insertedAt);
@@ -355,7 +403,7 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
     }
     inTenantFixture(
         () -> {
-          dsl.execute("DROP TABLE IF EXISTS data." + fx.tableName());
+          dataDsl.execute("DROP TABLE IF EXISTS data." + fx.tableName());
           // dataset_column 등은 dataset FK 의 ON DELETE CASCADE 로 함께 지워진다(V2).
           dsl.execute("DELETE FROM dataset WHERE id = ?", fx.datasetId());
           // createDataset 이 남긴 감사 로그(audit_log.user_id FK, CASCADE 아님)를 먼저 지워야
@@ -366,7 +414,7 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
   }
 
   private boolean hasUpdatedAtColumn(String tableName) {
-    return dsl.fetchExists(
+    return dataDsl.fetchExists(
         DSL.select()
             .from(DSL.table("information_schema.columns"))
             .where(
@@ -377,7 +425,7 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
   private boolean hasUpdatedAtTrigger(String tableName) {
     Integer count =
         (Integer)
-            dsl.fetchValue(
+            dataDsl.fetchValue(
                 "select count(*)::int from pg_trigger"
                     + " where tgrelid = to_regclass(format('%I.%I', 'data', ?))"
                     + " and tgname = 'fh_touch_updated_at'",
@@ -386,7 +434,7 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
   }
 
   private boolean hasUpdatedAtIndex(String tableName) {
-    return dsl.fetchExists(
+    return dataDsl.fetchExists(
         DSL.select()
             .from(DSL.table("pg_indexes"))
             .where(
@@ -399,7 +447,7 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
   private boolean isUpdatedAtIndexValid(String tableName) {
     Boolean valid =
         (Boolean)
-            dsl.fetchValue(
+            dataDsl.fetchValue(
                 "select i.indisvalid from pg_class c"
                     + " join pg_namespace n on n.oid = c.relnamespace"
                     + " join pg_index i on i.indexrelid = c.oid"
@@ -409,7 +457,7 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
   }
 
   private OffsetDateTime fetchUpdatedAt(String tableName) {
-    return (OffsetDateTime) dsl.fetchValue("SELECT _updated_at FROM data." + tableName);
+    return (OffsetDateTime) dataDsl.fetchValue("SELECT _updated_at FROM data." + tableName);
   }
 
   /**

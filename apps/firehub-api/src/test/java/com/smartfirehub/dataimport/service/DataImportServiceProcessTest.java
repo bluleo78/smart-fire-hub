@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.nio.charset.StandardCharsets;
@@ -35,6 +36,9 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
 
   @MockitoSpyBean private AsyncJobService asyncJobService;
 
@@ -89,8 +93,8 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
   }
 
   private long countRows(String tableName) {
-    return dsl.fetchCount(
-        dsl.select().from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", tableName))));
+    return dataDsl.fetchCount(
+        dataDsl.select().from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", tableName))));
   }
 
   @Test
@@ -218,8 +222,9 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
     // 데이터 2행만 적재되고, 모든 값이 NULL 인 행은 없다
     assertThat(countRows(tableName)).isEqualTo(2);
     assertThat(
-            dsl.fetchCount(
-                dsl.select()
+            dataDsl.fetchCount(
+                dataDsl
+                    .select()
                     .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", tableName)))
                     .where(org.jooq.impl.DSL.field(org.jooq.impl.DSL.name("name")).isNull())))
         .isZero();
@@ -294,7 +299,8 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
   /** 이름 → ST_AsText(geom) (NULL 이면 null) — 위치 값이 GeoJSON 에서 실제 geometry 로 들어갔는지 본다. */
   private java.util.Map<String, String> geometries(String tableName) {
     java.util.Map<String, String> out = new java.util.HashMap<>();
-    dsl.fetch("SELECT name, ST_AsText(geom) AS wkt FROM data.\"" + tableName + "\"")
+    dataDsl
+        .fetch("SELECT name, ST_AsText(geom) AS wkt FROM data.\"" + tableName + "\"")
         .forEach(r -> out.put(r.get("name", String.class), r.get("wkt", String.class)));
     return out;
   }
@@ -509,7 +515,7 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
     Mockito.verify(asyncJobService, Mockito.never())
         .failJob(Mockito.anyString(), Mockito.anyString());
     var stored =
-        dsl.fetch(
+        dataDsl.fetch(
             "SELECT dt, count(*) AS n FROM data.\"" + tableName + "\" GROUP BY dt ORDER BY dt");
     assertThat(stored).hasSize(2);
     assertThat(stored.get(0).get("dt", java.time.LocalDate.class))
@@ -604,7 +610,8 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
   }
 
   private List<String> storedNames(String tableName) {
-    return dsl.fetch("SELECT name FROM data.\"" + tableName + "\" ORDER BY name")
+    return dataDsl
+        .fetch("SELECT name FROM data.\"" + tableName + "\" ORDER BY name")
         .getValues("name", String.class);
   }
 
