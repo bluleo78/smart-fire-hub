@@ -43,11 +43,16 @@ function GraphLoading() {
 }
 
 // 캔버스 에러 상태 — 아이콘 + 메시지 + 재시도 버튼(하우스 error 패턴). 재시도는 해당 쿼리 refetch를 호출한다.
+// 메시지는 role="alert" 다(WD-529) — 로딩에서 오류로 바뀌어도 포커스·읽기 위치는 그대로라, 알림 역할이 없으면 스크린리더
+// 사용자는 실패를 알 수 없다. 알림은 메시지 문단에만 둔다 — 「다시 시도」 버튼까지 알림 영역에 넣으면 버튼 이름이 알림 문장에
+// 섞여 읽힌다. 아이콘은 장식이라 숨긴다.
 function GraphError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-      <AlertCircle className="h-10 w-10 text-destructive" />
-      <p className="text-sm font-medium">{message}</p>
+      <AlertCircle className="h-10 w-10 text-destructive" aria-hidden="true" />
+      <p role="alert" className="text-sm font-medium">
+        {message}
+      </p>
       <Button variant="outline" size="sm" onClick={onRetry}>
         다시 시도
       </Button>

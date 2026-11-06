@@ -853,6 +853,10 @@ test.describe('지식그래프 시각화 페이지', () => {
 
     // 인스턴스 그래프 API 500 응답 시 에러 문구가 표시된다
     await expect(page.getByText('그래프를 불러오지 못했습니다.')).toBeVisible();
+    // 오류 문구는 알림(role=alert)이라 나타나는 즉시 스크린리더가 읽는다 — 재시도 버튼 이름은 알림에 섞이지 않는다(WD-529)
+    await expect(page.getByRole('alert').filter({ hasText: '그래프를 불러오지 못했습니다.' })).toHaveText(
+      '그래프를 불러오지 못했습니다.',
+    );
     // 그래프 캔버스는 렌더되지 않는다(크래시 없이 안전하게 폴백)
     await expect(page.getByTestId('instance-graph')).toHaveCount(0);
   });
