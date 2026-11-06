@@ -1,5 +1,6 @@
 package com.smartfirehub.analytics.dto;
 
+import com.smartfirehub.global.validation.DescriptionLimits;
 import com.smartfirehub.global.validation.MaxJsonSize;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
@@ -13,7 +14,8 @@ import java.util.Map;
  */
 public record UpdateChartRequest(
     @Size(max = 200) String name,
-    String description,
+    @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.CHART_TOO_LONG)
+        String description,
     String chartType,
     // 상한은 생성과 같다(WD-425 — 이유는 CreateChartRequest.CONFIG_MAX_BYTES)
     @MaxJsonSize(

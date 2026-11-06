@@ -73,6 +73,7 @@ import { parseRouteId } from '../../lib/route-id';
 import { sqlRunShortcut } from '../../lib/sql-run-shortcut';
 import { RUN_SHORTCUT_LABEL } from '../../lib/sql-run-shortcut-label';
 import { cn } from '../../lib/utils';
+import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import type { AnalyticsQueryResult, SavedQuery } from '../../types/analytics';
 import type { ExportFormat } from '../../types/export';
 import { qualifiedName } from './components/schema-explorer-utils';
@@ -341,6 +342,7 @@ function SaveDialog({
               value={description}
               onChange={(e) => onDescriptionChange(e.target.value)}
               placeholder="선택사항"
+              maxLength={MAX_DESCRIPTION_LENGTH}
             />
           </div>
           <div className="space-y-1.5">

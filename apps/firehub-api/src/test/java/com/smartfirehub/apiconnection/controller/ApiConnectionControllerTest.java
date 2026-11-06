@@ -1,6 +1,7 @@
 package com.smartfirehub.apiconnection.controller;
 
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -19,6 +20,7 @@ import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.validation.DescriptionLimits;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.time.LocalDateTime;
@@ -463,5 +465,79 @@ class ApiConnectionControllerTest {
                 .header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.jobId").value(jobId.toString()));
+  }
+
+  // ── WD-520: API 연결 설명 길이 상한 ──────────────────────────────────────────
+
+  /** 설명 상한 초과 400 응답의 한국어 사유. */
+  private static final String API_CONNECTION_DESCRIPTION_TOO_LONG =
+      "API 연결 설명은 최대 2,000자까지 입력할 수 있습니다.";
+
+  /** 설명만 바꿔 끼운 생성 요청 — 나머지는 유효한 값이다. */
+  private static CreateApiConnectionRequest createRequestWithDescription(String description) {
+    return new CreateApiConnectionRequest(
+        "GitHub API", description, "BEARER", Map.of("token", "t"), "https://api.github.com", null);
+  }
+
+  /** WD-520: 생성 — 설명이 정확히 2,000자면 201, 2,001자면 400 + 한국어 사유로 서비스까지 가지 않는다. */
+  @Test
+  void create_descriptionLimit_atLimitCreated_overLimit400() throws Exception {
+    when(apiConnectionService.create(any(CreateApiConnectionRequest.class), anyLong()))
+        .thenReturn(sampleConnection());
+
+    mockMvc
+        .perform(
+            post("/api/v1/api-connections")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        createRequestWithDescription(
+                            "가".repeat(DescriptionLimits.MAX_LENGTH + 1)))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value(API_CONNECTION_DESCRIPTION_TOO_LONG));
+    verify(apiConnectionService, never()).create(any(), anyLong());
+
+    mockMvc
+        .perform(
+            post("/api/v1/api-connections")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        createRequestWithDescription("가".repeat(DescriptionLimits.MAX_LENGTH)))))
+        .andExpect(status().isCreated());
+  }
+
+  /** WD-520: 수정 — 2,001자는 400, 2,000자와 생략(null, 변경 없음)은 200. */
+  @Test
+  void update_descriptionLimit_atLimitOk_overLimit400_nullOk() throws Exception {
+    when(apiConnectionService.update(anyLong(), any(UpdateApiConnectionRequest.class), anyLong()))
+        .thenReturn(sampleConnection());
+
+    UpdateApiConnectionRequest over =
+        new UpdateApiConnectionRequest(
+            null, "가".repeat(DescriptionLimits.MAX_LENGTH + 1), null, null, null, null);
+    mockMvc
+        .perform(
+            put("/api/v1/api-connections/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value(API_CONNECTION_DESCRIPTION_TOO_LONG));
+    verify(apiConnectionService, never()).update(anyLong(), any(), anyLong());
+
+    for (String description : new String[] {"가".repeat(DescriptionLimits.MAX_LENGTH), null}) {
+      UpdateApiConnectionRequest ok =
+          new UpdateApiConnectionRequest(null, description, null, null, null, null);
+      mockMvc
+          .perform(
+              put("/api/v1/api-connections/1")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(ok)))
+          .andExpect(status().isOk());
+    }
   }
 }

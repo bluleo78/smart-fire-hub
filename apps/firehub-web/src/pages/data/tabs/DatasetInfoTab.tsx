@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
+import { FormField } from '../../../components/ui/form-field';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import {
@@ -22,6 +23,7 @@ import { useEditModeFocus } from '../../../hooks/useEditModeFocus';
 import { formatDate, formatRelativeTime, getOriginTypeLabel, getStorageTypeLabel } from '../../../lib/formatters';
 import type { UpdateDatasetFormData } from '../../../lib/validations/dataset';
 import { updateDatasetSchema } from '../../../lib/validations/dataset';
+import { MAX_DESCRIPTION_LENGTH } from '../../../lib/validations/description';
 import type { ErrorResponse } from '../../../types/auth';
 import type { CategoryResponse,DatasetDetailResponse } from '../../../types/dataset';
 
@@ -175,10 +177,16 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
               )}
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="description">설명</Label>
-              <Input id="description" {...infoForm.register('description')} />
-            </div>
+            {/* 예전에 저장된 상한 초과 설명은 maxLength 가 자르지 않으므로 zod 문구를 FormField 로 안내한다(WD-520) */}
+            <FormField label="설명" htmlFor="description" error={infoForm.formState.errors.description?.message}>
+              <Input
+                id="description"
+                maxLength={MAX_DESCRIPTION_LENGTH}
+                aria-invalid={!!infoForm.formState.errors.description}
+                aria-describedby={infoForm.formState.errors.description ? 'description-error' : undefined}
+                {...infoForm.register('description')}
+              />
+            </FormField>
 
             <div className="space-y-2">
               <Label htmlFor="categoryId">카테고리</Label>

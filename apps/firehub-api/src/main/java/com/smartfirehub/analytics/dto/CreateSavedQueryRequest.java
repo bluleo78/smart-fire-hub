@@ -1,12 +1,14 @@
 package com.smartfirehub.analytics.dto;
 
+import com.smartfirehub.global.validation.DescriptionLimits;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 /** 저장 쿼리 생성 요청. */
 public record CreateSavedQueryRequest(
     @NotBlank @Size(max = 200) String name,
-    String description,
+    @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.QUERY_TOO_LONG)
+        String description,
     @NotBlank
         @Size(
             max = CreateSavedQueryRequest.SQL_MAX_LENGTH,

@@ -1,7 +1,9 @@
 package com.smartfirehub.pipeline.dto;
 
+import com.smartfirehub.global.validation.DescriptionLimits;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -13,7 +15,8 @@ import java.util.List;
  */
 public record UpdatePipelineRequest(
     @NotBlank String name,
-    String description,
+    @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.PIPELINE_TOO_LONG)
+        String description,
     Boolean isActive,
     @Valid List<PipelineStepRequest> steps, // full replacement
     LocalDateTime expectedUpdatedAt) {

@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { analyticsApi } from '../../api/analytics';
 import { handleApiError } from '../../lib/api-error';
 import { normalizeChartConfig } from '../../lib/normalize-chart-config';
+import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import type { ChartConfig, ChartType } from '../../types/analytics';
 import { CHART_TYPE_LABELS } from '../../types/analytics';
 import { findMissingChartColumns } from '../analytics/chart-missing-columns';
@@ -148,6 +149,7 @@ function SaveDialog({ open, onOpenChange, sql, chartType, config }: SaveDialogPr
               placeholder="설명을 입력하세요"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
+              maxLength={MAX_DESCRIPTION_LENGTH}
             />
           </div>
           <div className="flex items-center justify-between">

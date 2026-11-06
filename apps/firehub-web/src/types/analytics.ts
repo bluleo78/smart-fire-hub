@@ -1,3 +1,5 @@
+import { MAX_DESCRIPTION_LENGTH } from '../lib/validations/description';
+
 // ============================================================
 // Phase 1: Saved Queries
 // ============================================================
@@ -125,8 +127,9 @@ export const MAX_AUTO_REFRESH_SECONDS = 86_400;
 /**
  * 대시보드 설명 길이 상한(자) — 서버 CreateDashboardRequest.DESCRIPTION_MAX_LENGTH 와 같다(WD-425).
  * 목록 응답이 설명을 싣기 때문에 서버가 상한을 넘는 설명을 400 으로 거부한다 — 입력란에서 미리 막아 저장 실패를 겪지 않게 한다.
+ * 값은 다른 자산 설명과 같은 공용 상한을 쓴다(WD-520 — lib/validations/description).
  */
-export const MAX_DASHBOARD_DESCRIPTION_LENGTH = 2_000;
+export const MAX_DASHBOARD_DESCRIPTION_LENGTH = MAX_DESCRIPTION_LENGTH;
 
 /** 차트 타입 → 한국어 레이블 매핑. 단일 원본으로 InlineChartWidget, ChartListPage 등에서 공유. */
 export const CHART_TYPE_LABELS: Record<ChartType, string> = {

@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { descriptionParam } from './shared-schemas.js';
 import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 
@@ -151,7 +152,7 @@ export function registerProactiveTools(
       '커스텀 리포트 양식을 생성합니다. 스마트 작업의 AI 분석 결과를 구조화된 형식으로 출력하는 데 사용됩니다.',
       {
         name: z.string().describe('양식 이름'),
-        description: z.string().optional().describe('양식 설명'),
+        description: descriptionParam('리포트 양식'),
         structure: z
           .object({
             sections: z.array(
@@ -277,7 +278,7 @@ export function registerProactiveTools(
       {
         id: z.number(),
         name: z.string().optional(),
-        description: z.string().optional(),
+        description: descriptionParam('리포트 양식'),
         style: z.string().optional(),
         structure: z
           .object({

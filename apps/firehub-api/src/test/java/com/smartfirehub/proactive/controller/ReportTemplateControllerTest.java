@@ -21,6 +21,7 @@ import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.validation.DescriptionLimits;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.proactive.dto.CreateReportTemplateRequest;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
@@ -364,5 +365,76 @@ class ReportTemplateControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.errors.sections").value(TOO_MANY_SECTIONS));
     verify(reportTemplateService, never()).updateTemplate(anyLong(), any(), anyLong());
+  }
+
+  // ── WD-520: 리포트 양식 설명 길이 상한 ─────────────────────────────────────────
+  // 화면은 500자까지만 받지만, AI 도구·직접 호출에도 목록이 부풀지 않도록 서버는 공용 상한(2,000자)으로 막는다.
+
+  /** 설명 상한 초과 400 응답의 한국어 사유. */
+  private static final String TEMPLATE_DESCRIPTION_TOO_LONG = "리포트 양식 설명은 최대 2,000자까지 입력할 수 있습니다.";
+
+  /** WD-520: 생성 — 설명이 정확히 2,000자면 201, 2,001자면 400 + 한국어 사유로 서비스까지 가지 않는다. */
+  @Test
+  void createTemplate_descriptionLimit_atLimitCreated_overLimit400() throws Exception {
+    mockAuth("proactive:write");
+    when(reportTemplateService.createTemplate(any(), eq(1L))).thenReturn(sampleTemplate());
+    List<Map<String, Object>> sections = List.of(Map.of("title", "Section 1", "type", "text"));
+
+    CreateReportTemplateRequest over =
+        new CreateReportTemplateRequest(
+            "양식", "가".repeat(DescriptionLimits.MAX_LENGTH + 1), sections, "default");
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/templates")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value(TEMPLATE_DESCRIPTION_TOO_LONG));
+    verify(reportTemplateService, never()).createTemplate(any(), anyLong());
+
+    CreateReportTemplateRequest atLimit =
+        new CreateReportTemplateRequest(
+            "양식", "가".repeat(DescriptionLimits.MAX_LENGTH), sections, "default");
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/templates")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(atLimit)))
+        .andExpect(status().isCreated());
+  }
+
+  /** WD-520: 수정 — 2,001자는 400, 2,000자와 생략(null, 변경 없음)은 200. */
+  @Test
+  void updateTemplate_descriptionLimit_atLimitOk_overLimit400_nullOk() throws Exception {
+    mockAuth("proactive:write");
+    when(reportTemplateService.updateTemplate(eq(5L), any(), eq(1L)))
+        .thenReturn(LocalDateTime.of(2026, 10, 30, 10, 0));
+
+    UpdateReportTemplateRequest over =
+        new UpdateReportTemplateRequest(
+            "양식", "가".repeat(DescriptionLimits.MAX_LENGTH + 1), null, null);
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/templates/5")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value(TEMPLATE_DESCRIPTION_TOO_LONG));
+    verify(reportTemplateService, never()).updateTemplate(anyLong(), any(), anyLong());
+
+    for (String description : new String[] {"가".repeat(DescriptionLimits.MAX_LENGTH), null}) {
+      UpdateReportTemplateRequest ok =
+          new UpdateReportTemplateRequest("양식", description, null, null);
+      mockMvc
+          .perform(
+              put("/api/v1/proactive/templates/5")
+                  .header("Authorization", "Bearer valid-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(ok)))
+          .andExpect(status().isOk());
+    }
   }
 }

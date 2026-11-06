@@ -27,6 +27,7 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.validation.DescriptionLimits;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.util.LinkedHashMap;
@@ -316,5 +317,71 @@ class ChartControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(atLimit)))
         .andExpect(status().isOk());
+  }
+
+  // ── WD-520: 차트 설명 길이 상한 ────────────────────────────────────────────
+
+  /** WD-520: 설명이 정확히 2,000자면 생성되고, 2,001자면 400 + 한국어 사유로 서비스까지 가지 않는다. */
+  @Test
+  void createChart_descriptionLimit_atLimitCreated_overLimit400() throws Exception {
+    mockAuth("analytics:write");
+    when(chartService.create(any(CreateChartRequest.class), eq(1L)))
+        .thenReturn(sampleChartResponse(42L));
+
+    CreateChartRequest over =
+        new CreateChartRequest(
+            "chart", "가".repeat(DescriptionLimits.MAX_LENGTH + 1), 1L, "bar", Map.of(), false);
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/charts")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value("차트 설명은 최대 2,000자까지 입력할 수 있습니다."));
+    verify(chartService, never()).create(any(), anyLong());
+
+    CreateChartRequest atLimit =
+        new CreateChartRequest(
+            "chart", "가".repeat(DescriptionLimits.MAX_LENGTH), 1L, "bar", Map.of(), false);
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/charts")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(atLimit)))
+        .andExpect(status().isCreated());
+  }
+
+  /** WD-520: 수정도 같은 상한 — 2,001자는 400, 2,000자와 생략(null, 변경 없음)은 200. */
+  @Test
+  void updateChart_descriptionLimit_atLimitOk_overLimit400_nullOk() throws Exception {
+    mockAuth("analytics:write");
+    when(chartService.update(eq(5L), any(UpdateChartRequest.class), eq(1L)))
+        .thenReturn(sampleChartResponse(5L));
+
+    UpdateChartRequest over =
+        new UpdateChartRequest(
+            null, "가".repeat(DescriptionLimits.MAX_LENGTH + 1), null, null, null);
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/charts/5")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value("차트 설명은 최대 2,000자까지 입력할 수 있습니다."));
+    verify(chartService, never()).update(anyLong(), any(), anyLong());
+
+    for (String description : new String[] {"가".repeat(DescriptionLimits.MAX_LENGTH), null}) {
+      UpdateChartRequest ok = new UpdateChartRequest(null, description, null, null, null);
+      mockMvc
+          .perform(
+              put("/api/v1/analytics/charts/5")
+                  .header("Authorization", "Bearer valid-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(ok)))
+          .andExpect(status().isOk());
+    }
   }
 }

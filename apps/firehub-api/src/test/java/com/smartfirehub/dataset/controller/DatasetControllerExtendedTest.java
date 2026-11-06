@@ -23,6 +23,7 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.validation.DescriptionLimits;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -831,6 +832,52 @@ class DatasetControllerExtendedTest {
                 .header("Authorization", "Bearer test-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isCreated());
+  }
+
+  // ── WD-520: API 임포트 파이프라인 설명 길이 상한 ───────────────────────────────
+
+  /** WD-520: API 임포트의 새 파이프라인 설명도 파이프라인 생성과 같은 상한 — 2,001자는 400, 2,000자는 201. */
+  @Test
+  void createApiImport_pipelineDescriptionLimit_atLimitCreated_overLimit400() throws Exception {
+    when(apiImportService.createApiImport(anyLong(), any(), anyLong()))
+        .thenReturn(new ApiImportResponse(10L, 20L, 30L));
+
+    ApiImportRequest over =
+        new ApiImportRequest(
+            "api-pipeline",
+            "가".repeat(DescriptionLimits.MAX_LENGTH + 1),
+            null,
+            null,
+            "APPEND",
+            false,
+            null);
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/api-import")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.errors.pipelineDescription").value("파이프라인 설명은 최대 2,000자까지 입력할 수 있습니다."));
+    verify(apiImportService, never()).createApiImport(anyLong(), any(), anyLong());
+
+    ApiImportRequest atLimit =
+        new ApiImportRequest(
+            "api-pipeline",
+            "가".repeat(DescriptionLimits.MAX_LENGTH),
+            null,
+            null,
+            "APPEND",
+            false,
+            null);
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/api-import")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(atLimit)))
         .andExpect(status().isCreated());
   }
 }

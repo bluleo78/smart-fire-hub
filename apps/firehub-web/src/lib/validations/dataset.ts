@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { DATASET_DESCRIPTION_TOO_LONG, MAX_DESCRIPTION_LENGTH } from './description';
+
 // 테이블명 인라인 유효성(입력 중 실시간 판정)에서도 재사용하기 위해 export.
 // (#644) react-hook-form이 mode:'onSubmit'이면 formState.errors가 최초 제출 전까지
 // 채워지지 않으므로, 입력 중 성공 메시지 노출 조건은 이 정규식을 직접 재검사해야 한다.
@@ -77,6 +79,13 @@ export const datasetColumnSchema = z.object({
   { message: '기본 키 칼럼은 NULL을 허용할 수 없습니다', path: ['isNullable'] }
 );
 
+/** 데이터셋 설명 — 서버와 같은 2,000자 상한(WD-520). 생성·수정·복제 폼이 같이 쓴다. */
+export const datasetDescriptionSchema = z
+  .string()
+  .max(MAX_DESCRIPTION_LENGTH, DATASET_DESCRIPTION_TOO_LONG)
+  .optional()
+  .or(z.literal(''));
+
 export const createDatasetSchema = z.object({
   // 공백만 넣은 이름이 길이 검사를 통과해 서버 @NotBlank 400(영어 토스트)까지 가지 않도록 trim 뒤 검사한다 (WD-502).
   name: z.string().trim().min(1, '데이터셋 이름을 입력하세요').max(100, '이름은 100자 이하여야 합니다'),
@@ -84,7 +93,7 @@ export const createDatasetSchema = z.object({
     .min(1, '테이블명을 입력하세요')
     .max(MAX_TABLE_NAME_LENGTH, TABLE_NAME_MAX_MESSAGE)
     .regex(tableNameRegex, '영문 소문자, 숫자, 밑줄만 사용 가능합니다 (소문자로 시작)'),
-  description: z.string().optional().or(z.literal('')),
+  description: datasetDescriptionSchema,
   categoryId: z.number().optional(),
   storageType: z.enum(['TABLE', 'DOCUMENT', 'FILE'], { message: '저장 방식을 선택하세요' }),
   originType: z.enum(['SOURCE', 'DERIVED', 'TEMP'], { message: '출처를 선택하세요' }),
@@ -108,7 +117,7 @@ export const createDatasetSchema = z.object({
 export const updateDatasetSchema = z.object({
   // 공백만 넣은 이름이 길이 검사를 통과해 서버 @NotBlank 400(영어 토스트)까지 가지 않도록 trim 뒤 검사한다 (WD-502).
   name: z.string().trim().min(1, '데이터셋 이름을 입력하세요').max(100, '이름은 100자 이하여야 합니다'),
-  description: z.string().optional().or(z.literal('')),
+  description: datasetDescriptionSchema,
   categoryId: z.number().optional(),
 });
 

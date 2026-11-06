@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { descriptionParam } from './shared-schemas.js';
 import type { FireHubApiClient } from '../api-client.js';
 import type { RowSearchBody } from '../api-client/dataset-api.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
@@ -165,7 +166,7 @@ export function registerDatasetTools(
         name: z.string().describe('데이터셋 이름'),
         // WD-95: 서버 상한(56자)을 넘으면 400 — PostgreSQL 이 63바이트에서 이름을 잘라 기존 테이블과 겹치는 것을 막는 상한이다.
         tableName: z.string().describe(tableNameDescription),
-        description: z.string().optional().describe('데이터셋 설명'),
+        description: descriptionParam('데이터셋'),
         categoryId: z.number().optional().describe('카테고리 ID'),
         originType: z
           .enum(['SOURCE', 'DERIVED'])
@@ -225,7 +226,7 @@ export function registerDatasetTools(
       {
         id: z.number().describe('데이터셋 ID'),
         name: z.string().optional().describe('데이터셋 이름'),
-        description: z.string().optional().describe('데이터셋 설명'),
+        description: descriptionParam('데이터셋'),
         categoryId: z.number().optional().describe('카테고리 ID'),
       },
       async (args: { id: number; name?: string; description?: string; categoryId?: number }) => {

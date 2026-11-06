@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.controller;
 
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -12,6 +13,7 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.validation.DescriptionLimits;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.service.ApiCallPreviewService;
@@ -431,5 +433,65 @@ class PipelineControllerTest {
                 .header("Authorization", "Bearer test-token"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.message").value("limit 은 1~200 사이여야 합니다."));
+  }
+
+  // ── WD-520: 파이프라인 설명 길이 상한 ────────────────────────────────────────
+  // 서비스 목은 기본값을 돌려준다 — 여기서는 검증 통과 여부(상태 코드)만 본다.
+
+  /** 설명 상한 초과 400 응답의 한국어 사유. */
+  private static final String PIPELINE_DESCRIPTION_TOO_LONG = "파이프라인 설명은 최대 2,000자까지 입력할 수 있습니다.";
+
+  /** WD-520: 생성 — 설명이 정확히 2,000자면 201, 2,001자면 400 + 한국어 사유로 서비스까지 가지 않는다. */
+  @Test
+  void createPipeline_descriptionLimit_atLimitCreated_overLimit400() throws Exception {
+    CreatePipelineRequest over =
+        new CreatePipelineRequest("p", "가".repeat(DescriptionLimits.MAX_LENGTH + 1), List.of());
+    mockMvc
+        .perform(
+            post("/api/v1/pipelines")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value(PIPELINE_DESCRIPTION_TOO_LONG));
+    verify(pipelineService, never()).createPipeline(any(), anyLong());
+
+    CreatePipelineRequest atLimit =
+        new CreatePipelineRequest("p", "가".repeat(DescriptionLimits.MAX_LENGTH), List.of());
+    mockMvc
+        .perform(
+            post("/api/v1/pipelines")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(atLimit)))
+        .andExpect(status().isCreated());
+  }
+
+  /** WD-520: 수정 — 2,001자는 400, 2,000자와 빈 설명(null)은 200. */
+  @Test
+  void updatePipeline_descriptionLimit_atLimitOk_overLimit400_nullOk() throws Exception {
+    UpdatePipelineRequest over =
+        new UpdatePipelineRequest(
+            "p", "가".repeat(DescriptionLimits.MAX_LENGTH + 1), true, List.of());
+    mockMvc
+        .perform(
+            put("/api/v1/pipelines/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value(PIPELINE_DESCRIPTION_TOO_LONG));
+    verify(pipelineService, never()).updatePipeline(anyLong(), any(), anyLong());
+
+    for (String description : new String[] {"가".repeat(DescriptionLimits.MAX_LENGTH), null}) {
+      UpdatePipelineRequest ok = new UpdatePipelineRequest("p", description, true, List.of());
+      mockMvc
+          .perform(
+              put("/api/v1/pipelines/1")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(ok)))
+          .andExpect(status().isOk());
+    }
   }
 }

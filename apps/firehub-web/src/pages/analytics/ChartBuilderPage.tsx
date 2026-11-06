@@ -63,6 +63,7 @@ import {
   sanitizeFilename,
 } from '../../lib/chart-export';
 import { parseRouteId } from '../../lib/route-id';
+import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import type { Chart, ChartConfig,ChartType } from '../../types/analytics';
 
 // ============================================================
@@ -288,6 +289,7 @@ function SaveDialog({
               value={description}
               onChange={(e) => onDescriptionChange(e.target.value)}
               placeholder="선택사항"
+              maxLength={MAX_DESCRIPTION_LENGTH}
             />
           </div>
           <div className="flex items-center justify-between">

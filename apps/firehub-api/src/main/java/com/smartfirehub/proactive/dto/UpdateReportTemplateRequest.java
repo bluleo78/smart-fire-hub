@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.dto;
 
+import com.smartfirehub.global.validation.DescriptionLimits;
 import com.smartfirehub.global.validation.MaxJsonSize;
 import com.smartfirehub.proactive.validation.ReportSectionLimits;
 import jakarta.validation.constraints.NotBlank;
@@ -19,7 +20,8 @@ public record UpdateReportTemplateRequest(
     // DB 한도(varchar(200))를 넘으면 500 이 났다 — 400 으로 이유를 알린다(WD-430)
     @NotBlank(message = "템플릿 이름은 필수입니다.") @Size(max = 200, message = "이름은 200자 이내여야 합니다.")
         String name,
-    String description,
+    @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.REPORT_TEMPLATE_TOO_LONG)
+        String description,
     // 섹션 상한은 생성과 같다(WD-425 — ReportSectionLimits, CreateReportTemplateRequest.SECTIONS_MAX_BYTES)
     @ReportSectionLimits
         @MaxJsonSize(

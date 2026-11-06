@@ -1,12 +1,15 @@
 package com.smartfirehub.dataset.dto;
 
+import com.smartfirehub.global.validation.DescriptionLimits;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.util.List;
 
 public record CreateDatasetRequest(
     @NotBlank String name,
     @NotBlank String tableName,
-    String description,
+    @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.DATASET_TOO_LONG)
+        String description,
     Long categoryId,
     String storageType,
     String originType,

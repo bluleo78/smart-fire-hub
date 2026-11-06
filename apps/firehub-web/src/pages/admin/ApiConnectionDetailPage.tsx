@@ -8,6 +8,7 @@ import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { handleApiError } from '@/lib/api-error';
 import { formatDate } from '@/lib/formatters';
 import { parseRouteId } from '@/lib/route-id';
+import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
 
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -449,7 +450,7 @@ export default function ApiConnectionDetailPage() {
           </div>
           <div className="space-y-2">
             <Label htmlFor={`${baseId}-description`}>설명</Label>
-            <Input id={`${baseId}-description`} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="설명 (선택)" disabled={!canWrite} />
+            <Input id={`${baseId}-description`} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="설명 (선택)" disabled={!canWrite} maxLength={MAX_DESCRIPTION_LENGTH} />
           </div>
           {/* Base URL: 외부 API 기본 주소 */}
           <div className="space-y-2">

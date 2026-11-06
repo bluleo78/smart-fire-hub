@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.controller;
 
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -23,6 +24,7 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.security.PermissionInterceptor;
+import com.smartfirehub.global.validation.DescriptionLimits;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -339,5 +341,108 @@ class DatasetControllerTest {
                     "{\"apiConfig\":{\"url\":\"https://api.example.com\"},\"executeImmediately\":true}"))
         .andExpect(status().isForbidden())
         .andExpect(jsonPath("$.message").value(message));
+  }
+
+  // ── WD-520: 데이터셋 설명 길이 상한 ──────────────────────────────────────────
+  // 서비스 목은 기본값(null)을 돌려준다 — 여기서는 검증 통과 여부(상태 코드)만 본다.
+
+  /** 설명 상한 초과 400 응답의 한국어 사유. */
+  private static final String DATASET_DESCRIPTION_TOO_LONG = "데이터셋 설명은 최대 2,000자까지 입력할 수 있습니다.";
+
+  /** WD-520: 생성 — 설명이 정확히 2,000자면 201, 2,001자면 400 + 한국어 사유로 서비스까지 가지 않는다. */
+  @Test
+  void createDataset_descriptionLimit_atLimitCreated_overLimit400() throws Exception {
+    CreateDatasetRequest over =
+        new CreateDatasetRequest(
+            "Orders",
+            "orders",
+            "가".repeat(DescriptionLimits.MAX_LENGTH + 1),
+            null,
+            "TABLE",
+            "SOURCE",
+            List.of(),
+            null);
+    mockMvc
+        .perform(
+            post("/api/v1/datasets")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value(DATASET_DESCRIPTION_TOO_LONG));
+    verify(datasetService, never()).createDataset(any(), anyLong());
+
+    CreateDatasetRequest atLimit =
+        new CreateDatasetRequest(
+            "Orders",
+            "orders",
+            "가".repeat(DescriptionLimits.MAX_LENGTH),
+            null,
+            "TABLE",
+            "SOURCE",
+            List.of(),
+            null);
+    mockMvc
+        .perform(
+            post("/api/v1/datasets")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(atLimit)))
+        .andExpect(status().isCreated());
+  }
+
+  /** WD-520: 수정 — 2,001자는 400, 2,000자와 빈 설명(null)은 204. */
+  @Test
+  void updateDataset_descriptionLimit_atLimitOk_overLimit400_nullOk() throws Exception {
+    UpdateDatasetRequest over =
+        new UpdateDatasetRequest("Orders", "가".repeat(DescriptionLimits.MAX_LENGTH + 1), null);
+    mockMvc
+        .perform(
+            put("/api/v1/datasets/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value(DATASET_DESCRIPTION_TOO_LONG));
+    verify(datasetService, never()).updateDataset(anyLong(), any(), anyLong());
+
+    for (String description : new String[] {"가".repeat(DescriptionLimits.MAX_LENGTH), null}) {
+      UpdateDatasetRequest ok = new UpdateDatasetRequest("Orders", description, null);
+      mockMvc
+          .perform(
+              put("/api/v1/datasets/1")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(ok)))
+          .andExpect(status().isNoContent());
+    }
+  }
+
+  /** WD-520: 복제 — 새 데이터셋에 붙일 설명도 같은 상한. 2,001자는 400, 2,000자는 201. */
+  @Test
+  void cloneDataset_descriptionLimit_atLimitCreated_overLimit400() throws Exception {
+    CloneDatasetRequest over =
+        new CloneDatasetRequest(
+            "Clone", "clone_ds", "가".repeat(DescriptionLimits.MAX_LENGTH + 1), false, false);
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/clone")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(over)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value(DATASET_DESCRIPTION_TOO_LONG));
+    verify(datasetService, never()).cloneDataset(anyLong(), any(), anyLong());
+
+    CloneDatasetRequest atLimit =
+        new CloneDatasetRequest(
+            "Clone", "clone_ds", "가".repeat(DescriptionLimits.MAX_LENGTH), false, false);
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/clone")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(atLimit)))
+        .andExpect(status().isCreated());
   }
 }
