@@ -22,6 +22,12 @@ interface UserComboboxProps {
   onChange: (userIds: number[]) => void;
   placeholder?: string;
   disabled?: boolean;
+  /**
+   * 트리거(role=combobox)의 접근 이름(WD-512).
+   * combobox 역할은 자식 텍스트(placeholder)로 이름이 계산되지 않아 스크린리더가 「이름 없는 버튼」으로 읽는다.
+   * 화면에 보이는 라벨이 있으면 그 문구를 넘긴다. 없거나 빈 문자열이면 placeholder(기본 「사용자 검색...」).
+   */
+  'aria-label'?: string;
 }
 
 export default function UserCombobox({
@@ -29,6 +35,7 @@ export default function UserCombobox({
   onChange,
   placeholder = '사용자 검색...',
   disabled = false,
+  'aria-label': ariaLabel,
 }: UserComboboxProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -107,6 +114,8 @@ export default function UserCombobox({
         <Button
           variant="outline"
           role="combobox"
+          // role=combobox 는 내용으로 이름이 계산되지 않으므로 aria-label 로 이름을 준다(WD-512)
+          aria-label={ariaLabel || placeholder}
           aria-expanded={open}
           disabled={disabled}
           className="w-full justify-between font-normal h-auto min-h-9"
@@ -121,6 +130,8 @@ export default function UserCombobox({
                   <span
                     role="button"
                     tabIndex={0}
+                    // 아이콘(×)뿐인 칩 빼기 버튼 — 누구를 빼는지 이름으로 알린다(WD-512, 아래 받을 수 없는 사용자 칩과 같은 방식)
+                    aria-label={`${u.name} 빼기`}
                     className="cursor-pointer rounded-full hover:bg-muted"
                     onClick={(e) => handleRemove(u.userId, e)}
                     onKeyDown={(e) => {

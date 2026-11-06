@@ -139,6 +139,8 @@ export default function ChannelRecipientEditor({
               selectedUserIds={channel.recipientUserIds}
               onChange={(ids) => updateChannel('CHAT', { recipientUserIds: ids })}
               placeholder="사용자 검색 (이름 또는 이메일)"
+              // 콤보박스 접근 이름 — 채널 라벨 + 「수신자」(WD-512)
+              aria-label={`${label} 수신자`}
               disabled={disabled}
             />
           </div>
@@ -198,6 +200,8 @@ export default function ChannelRecipientEditor({
                 selectedUserIds={channel.recipientUserIds}
                 onChange={(ids) => updateChannel(type, { recipientUserIds: ids })}
                 placeholder="사용자 검색 (이름 또는 이메일)"
+                // 그룹 제목 「등록 사용자」와 같은 문구로 콤보박스 이름을 준다(WD-512)
+                aria-label="등록 사용자"
                 disabled={disabled}
               />
             </div>
@@ -287,6 +291,8 @@ export default function ChannelRecipientEditor({
               selectedUserIds={channel.recipientUserIds}
               onChange={(ids) => updateChannel(type, { recipientUserIds: ids })}
               placeholder="사용자 검색 (이름 또는 이메일)"
+              // 콤보박스 접근 이름 — 채널 라벨 + 「수신자」(WD-512)
+              aria-label={`${label} 수신자`}
               disabled={disabled}
             />
 

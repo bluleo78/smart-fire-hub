@@ -206,6 +206,31 @@ test.describe('ChannelRecipientEditor — 4채널 확장', () => {
     await expect(emailSection.getByText('수신자를 지정하지 않으면 본인에게만 전달됩니다')).toBeVisible();
   });
 
+  // WD-512: UserCombobox 트리거는 role=combobox 라 placeholder 텍스트로 이름이 계산되지 않아 「이름 없는 버튼」이었다.
+  // 화면 라벨과 같은 이름(이메일 「등록 사용자」, 그 밖의 채널 「<채널> 수신자」)으로 찾아 열 수 있어야 한다.
+  test('수신자 사용자 콤보박스는 화면 라벨과 같은 접근 이름을 갖고 눌러서 검색을 연다 (WD-512)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/recipients', []);
+    await setupAndNavigateToNotifyTab(page, {
+      config: {
+        channels: [
+          { type: 'CHAT', recipientUserIds: [], recipientEmails: [] },
+          { type: 'EMAIL', recipientUserIds: [], recipientEmails: [] },
+        ],
+      },
+    });
+
+    await expect(page.getByRole('combobox', { name: '채팅 수신자' })).toBeVisible({ timeout: 5000 });
+    const emailUsers = page.getByRole('combobox', { name: '등록 사용자' });
+    await expect(emailUsers).toBeVisible();
+
+    // 누르면 팝오버가 열리고 검색 입력이 보인다
+    await emailUsers.click();
+    await expect(emailUsers).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByPlaceholder('이름 또는 이메일로 검색...')).toBeVisible();
+  });
+
   // 회귀 테스트 (#555): 저장된 SLACK 채널 수신자가 검색을 거치지 않고 마운트된 selectedUserIds라서
   // UserCombobox 내부 캐시(userCache)에 없어, 배지 카운트는 맞는데 이름 칩이 빈 채로 보이던 결함.
   test('SLACK 채널 수신자를 저장 후 재오픈하면 이름 칩이 하이드레이션된다 (#555)', async ({
@@ -235,6 +260,9 @@ test.describe('ChannelRecipientEditor — 4채널 확장', () => {
     // 수정 후: 마운트 시 하이드레이션되어 "DongHee" 칩이 곧바로 렌더링되어야 한다.
     await expect(slackSection.getByText('DongHee')).toBeVisible({ timeout: 5000 });
     await expect(slackSection.getByText('사용자 검색 (이름 또는 이메일)')).not.toBeVisible();
+    // WD-512: OAuth 채널 콤보박스도 「<채널> 수신자」 이름을 갖고, 칩의 × 는 누구를 빼는지 이름으로 알린다
+    await expect(slackSection.getByRole('combobox', { name: 'Slack 수신자' })).toBeVisible();
+    await expect(slackSection.getByRole('button', { name: 'DongHee 빼기' })).toBeVisible();
   });
   // WD-172: 정지·제거된 수신자는 수신자 조회(현재 워크스페이스 ACTIVE 멤버만)에서 빠져 칩이 사라졌고, 그래서 관리자가 뺄 수 없었다.
   // 이름을 찾지 못한 id 는 「받을 수 없는 사용자」 칩으로 보이고, 빼고 저장하면 그 id 가 요청에서 빠져야 한다.
