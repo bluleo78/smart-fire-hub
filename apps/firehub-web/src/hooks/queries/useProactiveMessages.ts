@@ -119,6 +119,19 @@ export function useCreateProactiveJob() {
   });
 }
 
+/**
+ * 성공한 활성 전환을 내 작업 목록·작업 상세 캐시에 바로 반영한다(WD-511).
+ * 재조회는 그대로 하지만, 그 재조회가 다른 전환에 취소되거나 실패해도 화면이 서버와 어긋난 옛 값으로 돌아가지 않게 한다.
+ */
+function setCachedJobEnabled(queryClient: ReturnType<typeof useQueryClient>, id: number, enabled: boolean) {
+  // 접두사 일괄 갱신(setQueriesData)은 'jobs' 아래 다른 모양의 캐시(워크스페이스 요약 목록 등)까지 건드릴 수 있어,
+  // 스위치가 읽는 내 목록과 그 작업 상세만 정확히 고친다. 나머지는 아래 invalidate 재조회로 맞춘다.
+  queryClient.setQueryData<ProactiveJob[]>(KEYS.jobs, (old) =>
+    Array.isArray(old) ? old.map((j) => (j.id === id ? { ...j, enabled } : j)) : old,
+  );
+  queryClient.setQueryData<ProactiveJob>(KEYS.job(id), (old) => (old ? { ...old, enabled } : old));
+}
+
 export function useUpdateProactiveJob() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -130,6 +143,10 @@ export function useUpdateProactiveJob() {
       const updatedAt = data?.updatedAt;
       if (updatedAt) {
         queryClient.setQueryData<ProactiveJob>(KEYS.job(variables.id), (old) => (old ? { ...old, updatedAt } : old));
+      }
+      // 활성 전환이면 목록·상세 캐시의 enabled 를 먼저 고친다(WD-511) — 재조회 전에 스위치 잠금이 풀려도 낡은 값이 보이지 않게.
+      if (typeof variables.data.enabled === 'boolean') {
+        setCachedJobEnabled(queryClient, variables.id, variables.data.enabled);
       }
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });
       queryClient.invalidateQueries({ queryKey: KEYS.job(variables.id) });
@@ -156,6 +173,8 @@ export function useDisableProactiveJob() {
   return useMutation({
     mutationFn: (id: number) => proactiveApi.disableJob(id),
     onSuccess: (_data, id) => {
+      // 꺼졌음을 캐시에 먼저 반영한다(WD-511) — 재조회 전에 목록 스위치 잠금이 풀려도 켜짐으로 되돌아가 보이지 않게.
+      setCachedJobEnabled(queryClient, id, false);
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });
       queryClient.invalidateQueries({ queryKey: KEYS.job(id) });
     },
