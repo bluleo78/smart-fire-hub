@@ -39,9 +39,10 @@ if [ -z "$NEEDS_REGRESSION" ]; then
 fi
 
 # 게이트 훅 자체를 바꿨으면 판정 테스트를 먼저 — 잘못된 판정이 회귀를 건너뛰거나 가짜 통과를 기록하지 않게 (WD-459)
-if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/husky/|\.husky/)'; then
+# 기차·마이그레이션 번호 검사 스크립트도 같은 묶음으로 본다 — test:hooks 가 husky/*.test.sh 전부와 번호 검사 테스트를 돈다 (WD-506)
+if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/husky/|\.husky/|scripts/check-migration-versions)'; then
   echo "[pre-commit] 게이트 훅 변경 — 판정 테스트(pnpm test:hooks) 실행"
-  [ -n "$PRECOMMIT_DRY_RUN" ] || sh scripts/husky/hooks.test.sh
+  [ -n "$PRECOMMIT_DRY_RUN" ] || pnpm -s test:hooks
 fi
 
 # typecheck 는 코드 변경이 있을 때만 — 문서만 바꾼 커밋에서 전체 앱 타입 검사를 돌지 않게 (WD-459)
