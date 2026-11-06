@@ -36,7 +36,7 @@ import {
   SelectValue,
 } from '../../components/ui/select';
 import { Skeleton } from '../../components/ui/skeleton';
-import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { schemaInfoQueryOptions } from '../../hooks/queries/useAnalytics';
 import {
   useAddTag,
@@ -686,62 +686,48 @@ export default function DatasetDetailPage() {
           {tabsOverflow.canScrollRight && <TabsScrollEdge side="right" onScroll={() => scrollTabs(1)} />}
         </div>
 
-        {activeTab === 'info' && (
-          <div className="mt-6">
-            <DatasetInfoTab
-              dataset={dataset}
-              categories={categories}
-              datasetId={datasetId}
-              onDirtyChange={setInfoDirty}
-            />
-          </div>
-        )}
-        {activeTab === 'security' && (
-          <div className="mt-6">
-            <DatasetSecurityTab dataset={dataset} />
-          </div>
-        )}
-        {activeTab === 'columns' && (
-          <div className="mt-6">
-            <DatasetColumnsTab dataset={dataset} datasetId={datasetId} />
-          </div>
-        )}
-        {activeTab === 'data' && (
-          <div className="mt-6 flex min-h-0 flex-1 flex-col">
-            <DatasetDataTab dataset={dataset} datasetId={datasetId} />
-          </div>
-        )}
-        {activeTab === 'map' && hasGeometry && (
-          <div className="mt-6">
+        {/* 탭 본문은 TabsContent 로 그린다(WD-514) — Radix 가 role=tabpanel·id·aria-labelledby 를 달아 각 탭의 aria-controls 가
+            실제 패널을 가리키게 한다. 비활성 탭은 Radix 기본대로 언마운트되어 이전 조건부 렌더(미저장 경고 #502·#635 전제)와 같다. */}
+        <TabsContent value="info" className="mt-6">
+          <DatasetInfoTab
+            dataset={dataset}
+            categories={categories}
+            datasetId={datasetId}
+            onDirtyChange={setInfoDirty}
+          />
+        </TabsContent>
+        <TabsContent value="security" className="mt-6">
+          <DatasetSecurityTab dataset={dataset} />
+        </TabsContent>
+        <TabsContent value="columns" className="mt-6">
+          <DatasetColumnsTab dataset={dataset} datasetId={datasetId} />
+        </TabsContent>
+        <TabsContent value="data" className="mt-6 flex min-h-0 flex-1 flex-col">
+          <DatasetDataTab dataset={dataset} datasetId={datasetId} />
+        </TabsContent>
+        {hasGeometry && (
+          <TabsContent value="map" className="mt-6">
             <DatasetMapTab dataset={dataset} datasetId={datasetId} />
-          </div>
+          </TabsContent>
         )}
         {/* 판정 전(undefined)에는 본문을 띄우지 않는다 — 색인 조회가 미지원 저장소로 나가지 않게(WD-80). */}
-        {activeTab === 'search' && rowSearch === true && (
-          <div className="mt-6">
+        {rowSearch === true && (
+          <TabsContent value="search" className="mt-6">
             <DatasetSearchTab dataset={dataset} datasetId={datasetId} />
-          </div>
+          </TabsContent>
         )}
-        {activeTab === 'mapping' && (
-          <div className="mt-6">
-            <DatasetMappingTab dataset={dataset} datasetId={datasetId} onDirtyChange={setMappingDirty} />
-          </div>
-        )}
-        {activeTab === 'history' && (
-          <div className="mt-6">
-            <DatasetHistoryTab dataset={dataset} datasetId={datasetId} />
-          </div>
-        )}
-        {activeTab === 'documents' && (
-          <div className="mt-6">
-            <DatasetDocumentsTab dataset={dataset} datasetId={datasetId} />
-          </div>
-        )}
-        {activeTab === 'objects' && (
-          <div className="mt-6">
-            <DatasetObjectsTab datasetId={dataset.id} exportAllowed={dataset.exportAllowed === true} />
-          </div>
-        )}
+        <TabsContent value="mapping" className="mt-6">
+          <DatasetMappingTab dataset={dataset} datasetId={datasetId} onDirtyChange={setMappingDirty} />
+        </TabsContent>
+        <TabsContent value="history" className="mt-6">
+          <DatasetHistoryTab dataset={dataset} datasetId={datasetId} />
+        </TabsContent>
+        <TabsContent value="documents" className="mt-6">
+          <DatasetDocumentsTab dataset={dataset} datasetId={datasetId} />
+        </TabsContent>
+        <TabsContent value="objects" className="mt-6">
+          <DatasetObjectsTab datasetId={dataset.id} exportAllowed={dataset.exportAllowed === true} />
+        </TabsContent>
       </Tabs>
 
       {/* Clone Dataset Dialog — 열림 상태는 권한으로 가려진 「복제」 버튼에서만 바뀐다 */}

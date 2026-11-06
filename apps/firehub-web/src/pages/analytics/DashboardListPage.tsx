@@ -41,7 +41,7 @@ import {
 } from '../../components/ui/table';
 import { TableEmptyRow } from '../../components/ui/table-empty';
 import { TableSkeletonRows } from '../../components/ui/table-skeleton';
-import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
+import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
 import {
   useCanAdminAnalytics,
@@ -400,10 +400,12 @@ type ListTab = 'mine' | 'shared' | 'workspace';
 export default function DashboardListPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
-  const [tab, setTab] = useState<ListTab>('mine');
+  const [selectedTab, setSelectedTab] = useState<ListTab>('mine');
   // 관리자(analytics:admin)에게만 「워크스페이스 전체」 보기를 둔다 (WD-199) — 정지·제거된 작성자가 공유한 자산을 정리할 수 있게 한다.
   const { canAdmin } = useCanAdminAnalytics();
-  const workspaceView = canAdmin && tab === 'workspace';
+  // 관리자 권한이 사라져 「워크스페이스 전체」 탭이 없어지면 「내 …」로 되돌린다 — 없는 탭이 패널에 남지 않게(WD-514)
+  const tab: ListTab = selectedTab === 'workspace' && !canAdmin ? 'mine' : selectedTab;
+  const workspaceView = tab === 'workspace';
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [editDashboard, setEditDashboard] = useState<DashboardListItem | null>(null);
@@ -451,10 +453,12 @@ export default function DashboardListPage() {
         </Button>
       </div>
 
+      {/* 필터형 탭 — 목록을 TabsControlsContent 로 감싸 선택 탭이 실제 패널을 가리킨다(WD-514, ui/tabs.tsx). gap-6 은 이전 space-y-6 유지 */}
       <Tabs
+        className="gap-6"
         value={tab}
         onValueChange={(v) => {
-          setTab(v as ListTab);
+          setSelectedTab(v as ListTab);
           setPage(0);
         }}
       >
@@ -463,175 +467,177 @@ export default function DashboardListPage() {
           <TabsTrigger value="shared">공유됨</TabsTrigger>
           {canAdmin && <TabsTrigger value="workspace">워크스페이스 전체</TabsTrigger>}
         </TabsList>
-      </Tabs>
 
-      {workspaceView ? (
-        <WorkspaceAnalyticsTable kind="dashboards" />
-      ) : (
-        <>
-          <div className="flex items-center gap-3">
-            <SearchInput
-              placeholder="대시보드 검색..."
-              value={search}
-              onChange={(value) => {
-                setSearch(value);
-                setPage(0);
-              }}
-              className="w-64"
-            />
-          </div>
+        <TabsControlsContent value={tab} className="space-y-6">
+          {workspaceView ? (
+            <WorkspaceAnalyticsTable kind="dashboards" />
+          ) : (
+            <>
+              <div className="flex items-center gap-3">
+                <SearchInput
+                  placeholder="대시보드 검색..."
+                  value={search}
+                  onChange={(value) => {
+                    setSearch(value);
+                    setPage(0);
+                  }}
+                  className="w-64"
+                />
+              </div>
 
-          <div className="rounded-md border">
-            <Table aria-label="대시보드 목록">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>이름</TableHead>
-                  <TableHead>위젯</TableHead>
-                  <TableHead>자동 갱신</TableHead>
-                  <TableHead>수정일</TableHead>
-                  <TableHead className="w-[80px]" />
-                </TableRow>
-              </TableHeader>
-              <tbody>
-                {isLoading ? (
-                  <TableSkeletonRows columns={5} rows={5} />
-                ) : dashboards.length > 0 ? (
-                  dashboards.map((dashboard) => (
-                    <TableRow
-                      key={dashboard.id}
-                      className="cursor-pointer hover:bg-muted/50 transition-colors group row-hover"
-                      onClick={() => navigate(`/analytics/dashboards/${dashboard.id}`)}
-                    >
-                      <TableCell className="font-medium">
-                        <div className="flex items-center gap-2">
-                          <LayoutDashboard className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          {/* min-w-0: flex 아이템 기본값(min-width:auto)이 truncate 축소를 막는 문제 방지 */}
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="block truncate max-w-xs" title={dashboard.name}>
-                                {dashboard.name}
-                              </span>
-                              {dashboard.isShared && (
-                                <Badge variant="secondary" className="text-xs gap-1 py-0">
-                                  <Share2 className="h-2.5 w-2.5" />
-                                  공유
-                                </Badge>
-                              )}
-                            </div>
-                            {dashboard.description && (
-                              <p className="text-xs text-muted-foreground truncate max-w-xs mt-0.5">
-                                {dashboard.description}
-                              </p>
-                            )}
-                            <p className="text-xs text-muted-foreground mt-0.5">
-                              {dashboard.createdByName}
-                            </p>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm text-muted-foreground tabular-nums">
-                          {dashboard.widgetCount}개
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        {dashboard.autoRefreshSeconds ? (
-                          <Badge variant="outline" className="text-xs gap-1">
-                            <RefreshCw className="h-2.5 w-2.5" />
-                            {dashboard.autoRefreshSeconds}초
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">수동</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <span
-                          className="text-sm text-muted-foreground"
-                          title={formatDateShort(dashboard.updatedAt)}
+              <div className="rounded-md border">
+                <Table aria-label="대시보드 목록">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>이름</TableHead>
+                      <TableHead>위젯</TableHead>
+                      <TableHead>자동 갱신</TableHead>
+                      <TableHead>수정일</TableHead>
+                      <TableHead className="w-[80px]" />
+                    </TableRow>
+                  </TableHeader>
+                  <tbody>
+                    {isLoading ? (
+                      <TableSkeletonRows columns={5} rows={5} />
+                    ) : dashboards.length > 0 ? (
+                      dashboards.map((dashboard) => (
+                        <TableRow
+                          key={dashboard.id}
+                          className="cursor-pointer hover:bg-muted/50 transition-colors group row-hover"
+                          onClick={() => navigate(`/analytics/dashboards/${dashboard.id}`)}
                         >
-                          {formatRelativeTime(dashboard.updatedAt)}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412) */}
-                        {isOwner(dashboard.createdBy) && (
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0"
-                              title="편집"
-                              aria-label="편집"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                navigate(`/analytics/dashboards/${dashboard.id}`);
-                              }}
+                          <TableCell className="font-medium">
+                            <div className="flex items-center gap-2">
+                              <LayoutDashboard className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              {/* min-w-0: flex 아이템 기본값(min-width:auto)이 truncate 축소를 막는 문제 방지 */}
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="block truncate max-w-xs" title={dashboard.name}>
+                                    {dashboard.name}
+                                  </span>
+                                  {dashboard.isShared && (
+                                    <Badge variant="secondary" className="text-xs gap-1 py-0">
+                                      <Share2 className="h-2.5 w-2.5" />
+                                      공유
+                                    </Badge>
+                                  )}
+                                </div>
+                                {dashboard.description && (
+                                  <p className="text-xs text-muted-foreground truncate max-w-xs mt-0.5">
+                                    {dashboard.description}
+                                  </p>
+                                )}
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                  {dashboard.createdByName}
+                                </p>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-sm text-muted-foreground tabular-nums">
+                              {dashboard.widgetCount}개
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            {dashboard.autoRefreshSeconds ? (
+                              <Badge variant="outline" className="text-xs gap-1">
+                                <RefreshCw className="h-2.5 w-2.5" />
+                                {dashboard.autoRefreshSeconds}초
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">수동</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <span
+                              className="text-sm text-muted-foreground"
+                              title={formatDateShort(dashboard.updatedAt)}
                             >
-                              <Pencil size={13} />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0"
-                              title="설정"
-                              aria-label="설정"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setEditDashboard(dashboard);
-                              }}
-                            >
-                              <Settings size={13} />
-                            </Button>
-                            <DeleteConfirmDialog
-                              entityName="대시보드"
-                              itemName={dashboard.name}
-                              onConfirm={() => handleDelete(dashboard.id, dashboard.name)}
-                              trigger={
+                              {formatRelativeTime(dashboard.updatedAt)}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412) */}
+                            {isOwner(dashboard.createdBy) && (
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                                 <Button
                                   variant="ghost"
                                   size="sm"
                                   className="h-7 w-7 p-0"
-                                  aria-label="삭제"
-                                  onClick={(e) => e.stopPropagation()}
+                                  title="편집"
+                                  aria-label="편집"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigate(`/analytics/dashboards/${dashboard.id}`);
+                                  }}
                                 >
-                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <Pencil size={13} />
                                 </Button>
-                              }
-                            />
-                          </div>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableEmptyRow
-                    colSpan={5}
-                    message="대시보드가 없습니다."
-                    searchKeyword={search || undefined}
-                    onResetSearch={search ? () => { setSearch(''); setPage(0); } : undefined}
-                    emptyAction={
-                      !search ? (
-                        <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
-                          <Plus className="h-4 w-4" />
-                          새 대시보드 만들기
-                        </Button>
-                      ) : undefined
-                    }
-                  />
-                )}
-              </tbody>
-            </Table>
-          </div>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 w-7 p-0"
+                                  title="설정"
+                                  aria-label="설정"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditDashboard(dashboard);
+                                  }}
+                                >
+                                  <Settings size={13} />
+                                </Button>
+                                <DeleteConfirmDialog
+                                  entityName="대시보드"
+                                  itemName={dashboard.name}
+                                  onConfirm={() => handleDelete(dashboard.id, dashboard.name)}
+                                  trigger={
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 w-7 p-0"
+                                      aria-label="삭제"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  }
+                                />
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableEmptyRow
+                        colSpan={5}
+                        message="대시보드가 없습니다."
+                        searchKeyword={search || undefined}
+                        onResetSearch={search ? () => { setSearch(''); setPage(0); } : undefined}
+                        emptyAction={
+                          !search ? (
+                            <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
+                              <Plus className="h-4 w-4" />
+                              새 대시보드 만들기
+                            </Button>
+                          ) : undefined
+                        }
+                      />
+                    )}
+                  </tbody>
+                </Table>
+              </div>
 
-          <SimplePagination
-            page={page}
-            totalPages={totalPages}
-            onPageChange={setPage}
-            totalElements={totalElements}
-            pageSize={size}
-          />
-        </>
-      )}
+              <SimplePagination
+                page={page}
+                totalPages={totalPages}
+                onPageChange={setPage}
+                totalElements={totalElements}
+                pageSize={size}
+              />
+            </>
+          )}
+        </TabsControlsContent>
+      </Tabs>
 
       <CreateDashboardDialog
         open={createOpen}

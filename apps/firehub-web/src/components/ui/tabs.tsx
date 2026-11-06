@@ -1,6 +1,6 @@
-import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { Tabs as TabsPrimitive } from "radix-ui"
+import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
@@ -82,10 +82,26 @@ function TabsContent({
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
-      className={cn("flex-1 outline-none", className)}
+      // 탭 패널은 Radix 가 tabIndex=0 을 줘 Tab 으로 닿으므로, 키보드 포커스가 보이게 링을 그린다(WD-514, WCAG 2.4.7)
+      className={cn(
+        "flex-1 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        className
+      )}
       {...props}
     />
   )
 }
 
-export { Tabs, TabsList, TabsTrigger, TabsContent, tabsListVariants }
+/**
+ * 내용 첫머리가 입력·선택 같은 컨트롤인 탭 패널(WD-514) — 패널 자체는 Tab 순서에서 뺀다(APG 탭 패턴).
+ * 탭에서 Tab 을 누르면 이전처럼 바로 첫 컨트롤로 가고, 보이지 않는 Tab 정지가 생기지 않는다.
+ * 필터형 탭(같은 목록을 거르는 탭)은 활성 탭 값 하나의 이 패널로 목록을 감싸, 선택된 탭의 aria-controls 가
+ * 실제 role=tabpanel 을 가리키게 한다(axe aria-valid-attr-value).
+ */
+function TabsControlsContent(props: Omit<React.ComponentProps<typeof TabsPrimitive.Content>, "tabIndex">) {
+  return <TabsContent tabIndex={-1} {...props} />
+}
+
+// shadcn 생성 파일 — tabsListVariants 재노출은 의도된 것(lint-staged 가 ui 무시 규칙을 못 적용해 훅이 막는 것을 회피)
+// eslint-disable-next-line react-refresh/only-export-components
+export { Tabs, TabsContent, TabsControlsContent, TabsList, tabsListVariants, TabsTrigger }

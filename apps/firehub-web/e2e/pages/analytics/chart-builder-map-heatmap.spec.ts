@@ -10,6 +10,7 @@ import { createChart, createQueryResult } from '../../factories/analytics.factor
 import { setupNewChartBuilderMocks } from '../../fixtures/analytics.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectSelectedTabControlsPanel } from '../../fixtures/tabs-a11y';
 
 const baseGeoResult = createQueryResult({
   columns: ['id', 'name', 'cnt', 'geom'],
@@ -52,6 +53,24 @@ test.describe('차트 빌더 — MAP 히트맵 sub-mode', () => {
 
     await expect(page.getByText('색상 기준 (선택사항)')).toHaveCount(0);
     await expect(page.getByText('가중치 컬럼 (선택사항)')).toBeVisible();
+  });
+
+  // WD-514: 표시 모드 탭의 aria-controls 가 실제 role=tabpanel(모드별 필드)을 가리키고, 패널은 aria-labelledby 로 탭을 되가리킨다.
+  test('표시 모드 탭의 aria-controls 가 모드별 필드 패널을 가리킨다 (WD-514)', async ({ authenticatedPage: page }) => {
+    await setupNewChartBuilderMocks(page);
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', baseGeoResult);
+
+    await page.goto('/analytics/charts/new');
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '저장 쿼리 1' }).click();
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+    await page.getByRole('button', { name: '지도' }).click();
+
+    const pointsPanel = await expectSelectedTabControlsPanel(page, page.getByRole('tab', { name: '점' }));
+    await expect(pointsPanel.getByText('색상 기준 (선택사항)')).toBeVisible();
+    await page.getByRole('tab', { name: '히트맵' }).click();
+    const heatmapPanel = await expectSelectedTabControlsPanel(page, page.getByRole('tab', { name: '히트맵' }));
+    await expect(heatmapPanel.getByText('가중치 컬럼 (선택사항)')).toBeVisible();
   });
 
   test('저장 payload 에 mapDisplayMode 와 weightColumn 이 포함된다', async ({
