@@ -36,7 +36,7 @@ import { useCanWriteProactive,useCreateProactiveTemplate, useDeleteProactiveTemp
 import { useEditModeFocus } from '@/hooks/useEditModeFocus';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { handleApiError, isEditConflict, isForbiddenError } from '@/lib/api-error';
+import { applyFieldErrors, handleApiError, isEditConflict, isForbiddenError } from '@/lib/api-error';
 import { cloneName } from '@/lib/clone-name';
 import { parseUtcDate } from '@/lib/formatters';
 import { parseTemplateSections, validateSectionKeys } from '@/lib/template-section-types';
@@ -51,6 +51,9 @@ import { TemplateJsonEditor } from './components/TemplateJsonEditor';
 import { useSectionTree } from './hooks/useSectionTree';
 
 const DEFAULT_STRUCTURE = JSON.stringify({ sections: [] }, null, 2);
+
+/** 서버 검증 400 의 필드 오류를 입력 아래에 보일 폼 필드(WD-501) — 그 밖의 필드 문구는 토스트로 띄운다. */
+const TEMPLATE_FORM_FIELDS = Object.keys(reportTemplateSchema.shape);
 
 /** 편집 빌더가 두 열(섹션 구조 | 섹션 편집)로 놓이는 폭 — `lg:grid-cols-5` 와 같은 기준이다(WD-376). */
 const TWO_COLUMN_MQ = '(min-width: 1024px)';
@@ -277,6 +280,19 @@ export default function ReportTemplateDetailPage() {
     [activeTab, structureJson, tree],
   );
 
+  /**
+   * 서버 검증 400 의 필드 오류를 이름·설명 입력 아래로 옮긴다(WD-501, WD-270 패턴) — 토스트로만 띄우면 어느 칸인지 모른다.
+   * 폼에 입력이 없는 필드(섹션·스타일)의 문구(root)는 지금처럼 토스트로 띄운다 — 폼 안에 두면 섹션을 고쳐도 지워지지 않고
+   * 섹션 편집기 쪽으로 스크롤해 있으면 보이지 않는다.
+   * @returns 처리했으면 true — 호출부는 자체 폴백 토스트를 건너뛴다.
+   */
+  const applyTemplateFieldErrors = (err: unknown) =>
+    applyFieldErrors<ReportTemplateFormValues>(
+      err,
+      (name, error, options) => (name === 'root' ? toast.error(error.message) : form.setError(name, error, options)),
+      TEMPLATE_FORM_FIELDS,
+    );
+
   /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
   const submitTemplate = (force: boolean) => form.handleSubmit((values) => {
     // JSON 탭 활성 시 현재 structureJson을 파싱하여 sections 반영 (#37)
@@ -315,7 +331,10 @@ export default function ReportTemplateDetailPage() {
           setIsEditing(false);
           navigate(`/ai-insights/templates/${created.id}`);
         },
-        onError: (err) => handleApiError(err, '템플릿 생성에 실패했습니다.'),
+        onError: (err) => {
+          if (applyTemplateFieldErrors(err)) return;
+          handleApiError(err, '템플릿 생성에 실패했습니다.');
+        },
       });
     } else {
       updateMutation.mutate(
@@ -338,6 +357,7 @@ export default function ReportTemplateDetailPage() {
               setEditConflict(true);
               return;
             }
+            if (applyTemplateFieldErrors(err)) return;
             handleApiError(err, '템플릿 수정에 실패했습니다.');
           },
         },

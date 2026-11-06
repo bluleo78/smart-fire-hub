@@ -194,6 +194,27 @@ class ReportTemplateControllerTest {
         .andExpect(status().isBadRequest());
   }
 
+  /**
+   * WD-501: 공백만 있는 이름으로 생성하면 영어 기본 문구("must not be blank")가 화면에 그대로 보였다 — 수정과 같은 한국어 문구를
+   * errors.name 으로 돌려주고, 서비스는 부르지 않는다.
+   */
+  @Test
+  void createTemplate_blankName_returns400WithKoreanFieldError() throws Exception {
+    mockAuth("proactive:write");
+    CreateReportTemplateRequest req = new CreateReportTemplateRequest("   ", null, List.of(), null);
+
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/templates")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value("템플릿 이름은 필수입니다."));
+
+    verify(reportTemplateService, never()).createTemplate(any(), anyLong());
+  }
+
   /** WD-430: 200자를 넘는 이름은 DB 길이 오류로 500 이 났다 — 생성·수정 모두 400 으로 이유를 알린다. */
   @Test
   void createAndUpdateTemplate_nameOver200_returns400WithReason() throws Exception {

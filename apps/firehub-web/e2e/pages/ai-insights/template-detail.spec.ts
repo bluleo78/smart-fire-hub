@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { createJob,createTemplate, createTemplateSection } from '../../factories/ai-insight.factory';
 import { mockProactivePermissions, setupTemplateDetailMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
@@ -957,5 +959,92 @@ test.describe('리포트 템플릿 삭제 영향 고지 (#364)', () => {
 
     await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.getByTestId('template-delete-impact')).toHaveCount(0);
+  });
+});
+
+/**
+ * WD-501 — 공백만 있는 이름은 비어 있는 것으로 본다.
+ * 예전에는 zod `.min(1)` 만 있어 "   " 가 통과해 생성/저장 버튼이 켜지고, 서버의 영어 기본 문구("must not be blank")가 토스트로 보였다.
+ */
+test.describe('WD-501 — 이름 공백 검증', () => {
+  /** 커스텀 양식 상세를 모킹하고 편집 모드까지 연다 — 아래 편집 시나리오들이 함께 쓴다. */
+  async function openCustomTemplateEditor(page: Page, id: number, name: string) {
+    const template = createTemplate({ id, name, builtin: false });
+    await mockApi(page, 'GET', `/api/v1/proactive/templates/${id}`, template);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await page.goto(`/ai-insights/templates/${id}`);
+    await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '편집' }).click();
+    await expect(page.locator('#tpl-name')).toBeVisible();
+    return template;
+  }
+
+  test('새 양식에 공백만 입력하면 안내가 보이고 생성 버튼이 꺼지며 요청이 나가지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    // 생성 요청이 나가는지 지켜본다 — 나가면 안 된다
+    const post = await mockApi(page, 'POST', '/api/v1/proactive/templates', {}, { capture: true });
+
+    await page.goto('/ai-insights/templates/new');
+    await expect(page.getByRole('heading', { name: '새 템플릿' })).toBeVisible();
+    await page.locator('#tpl-name').fill('   ');
+
+    await expect(page.getByText('이름을 입력해주세요.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '생성', exact: true })).toBeDisabled();
+    // 늦게 나가는 요청도 잡도록 잠시 더 기다린 뒤 확인한다
+    await page.waitForTimeout(300);
+    expect(post.requests).toHaveLength(0);
+  });
+
+  test('기존 양식 이름을 공백으로 바꾸면 안내가 보이고 저장 버튼이 꺼지며 요청이 나가지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const put = await mockApi(page, 'PUT', '/api/v1/proactive/templates/501', {}, { capture: true });
+    await openCustomTemplateEditor(page, 501, '공백 검증 양식');
+
+    await page.locator('#tpl-name').fill('   ');
+
+    await expect(page.getByText('이름을 입력해주세요.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toBeDisabled();
+    await page.waitForTimeout(300);
+    expect(put.requests).toHaveLength(0);
+  });
+
+  test('서버가 이름 필드 오류(400 errors.name)를 주면 이름 칸 아래에 문구가 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 클라이언트 검증을 지난 뒤 서버가 @NotBlank 로 거부한 상황 — 필드 오류가 errors 에 담겨 온다
+    await mockApi(
+      page,
+      'PUT',
+      '/api/v1/proactive/templates/502',
+      { status: 400, message: '입력값 검증에 실패했습니다.', errors: { name: '템플릿 이름은 필수입니다.' } },
+      { status: 400 },
+    );
+    await openCustomTemplateEditor(page, 502, '서버 필드 오류 양식');
+
+    await page.locator('#tpl-name').fill('서버가 거부할 이름');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    // 이름 칸과 같은 묶음 안에 서버 문구가 보인다 — 토스트로 흘려보내지 않는다
+    const nameField = page.locator('div.space-y-2').filter({ has: page.locator('#tpl-name') });
+    await expect(nameField.getByText('템플릿 이름은 필수입니다.')).toBeVisible();
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+  });
+
+  test('이름 앞뒤 공백은 잘라서 저장 요청에 보낸다', async ({ authenticatedPage: page }) => {
+    const template = createTemplate({ id: 503, name: '공백 정리 양식', builtin: false });
+    const put = await mockApi(page, 'PUT', '/api/v1/proactive/templates/503', template, { capture: true });
+    await openCustomTemplateEditor(page, 503, '공백 정리 양식');
+
+    await page.locator('#tpl-name').fill('  새 이름 양식  ');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    // 입력값이 아니라 검증(trim)을 거친 값이 나가야 한다
+    const req = await put.waitForRequest();
+    expect(req.payload).toMatchObject({ name: '새 이름 양식' });
   });
 });
