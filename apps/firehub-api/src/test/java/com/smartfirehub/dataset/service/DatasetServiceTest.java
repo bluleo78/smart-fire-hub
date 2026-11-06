@@ -155,6 +155,26 @@ class DatasetServiceTest extends IntegrationTestBase {
   }
 
   @Test
+  void createTableDataset_withoutColumns_createsEmptyTable() {
+    // WD-510 — columns 를 생략(null)하고 TABLE(기본) 데이터셋을 만들면 저장·DDL 단계에서 NPE 로 500 이 났다.
+    // columns: [] 와 같이 컬럼 없는 데이터셋으로 만들어지고 물리 테이블도 생겨야 한다.
+    CreateDatasetRequest request =
+        new CreateDatasetRequest(
+            "No Columns", "tbl_no_columns", null, null, null, null, null, null);
+
+    DatasetDetailResponse created = datasetService.createDataset(request, testUserId);
+
+    assertThat(created.storageType()).isEqualTo("TABLE");
+    assertThat(created.columns()).isEmpty();
+    Long tableExists =
+        dsl.selectCount()
+            .from("information_schema.tables")
+            .where("table_schema = 'data' AND table_name = 'tbl_no_columns'")
+            .fetchOne(0, Long.class);
+    assertThat(tableExists).isEqualTo(1);
+  }
+
+  @Test
   void addColumn_documentDataset_throwsIllegalArgument() {
     // DOCUMENT 데이터셋은 동적 테이블/컬럼이 없으므로 컬럼 추가는 400(IllegalArgumentException)으로 거부되어야 한다.
     DatasetDetailResponse doc =

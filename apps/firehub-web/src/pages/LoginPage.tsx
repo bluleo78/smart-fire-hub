@@ -98,10 +98,13 @@ export default function LoginPage() {
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
+                // 오류 문구를 입력과 연결해 스크린 리더가 어느 칸의 오류인지 읽게 한다(WD-515)
+                aria-invalid={!!errors.username}
+                aria-describedby={errors.username ? 'username-error' : undefined}
                 {...register('username')}
               />
               {errors.username && (
-                <p className="text-sm text-destructive">{errors.username.message}</p>
+                <p id="username-error" role="alert" className="text-sm text-destructive">{errors.username.message}</p>
               )}
             </div>
             <div className="space-y-2">
@@ -109,14 +112,17 @@ export default function LoginPage() {
               <PasswordInput
                 id="password"
                 autoComplete="current-password"
+                aria-invalid={!!errors.password}
+                aria-describedby={errors.password ? 'password-error' : undefined}
                 {...register('password')}
               />
               {errors.password && (
-                <p className="text-sm text-destructive">{errors.password.message}</p>
+                <p id="password-error" role="alert" className="text-sm text-destructive">{errors.password.message}</p>
               )}
             </div>
+            {/* 서버 오류(아이디·비밀번호 불일치 등)도 나타나는 즉시 읽히게 alert 로 둔다(WD-515) */}
             {serverError && (
-              <p className="text-sm text-destructive">{serverError}</p>
+              <p role="alert" className="text-sm text-destructive">{serverError}</p>
             )}
             <Button type="submit" className="w-full" disabled={isSubmitting}>
               {isSubmitting ? '로그인 중...' : '로그인'}

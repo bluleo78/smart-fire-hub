@@ -507,12 +507,15 @@ export default function DatasetListPage() {
 
                   {/* Name + status badge */}
                   <TableCell className="font-medium">
-                    <div className="flex items-center gap-2 flex-wrap">
+                    {/* 이름 칸 폭 상한(WD-517): 표 셀은 줄바꿈하지 않아(whitespace-nowrap) 띄어쓰기 없는 긴 이름이 표를 가로로 밀어
+                        보안 등급·태그·생성일 칸이 화면 밖으로 나갔다. 칸 폭을 묶고 이름은 말줄임, 전체 이름은 title 로 보인다. */}
+                    <div className="flex items-center gap-2 flex-wrap max-w-[22rem]">
                       {/* 키보드 접근성(WD-396): 행 클릭은 마우스로만 열리므로 이름을 상세 링크로 둔다 — Tab 으로 닿고 Enter 로
                           열린다(역할 목록 WD-286 과 같은 방식). 클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
                       <Link
                         to={`/data/datasets/${dataset.id}`}
-                        className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="min-w-0 max-w-full truncate rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        title={dataset.name}
                         onClick={(e) => e.stopPropagation()}
                       >
                         {dataset.name}
