@@ -481,7 +481,8 @@ public class JooqPipelineExecutionRepository implements PipelineExecutionReposit
   }
 
   @Override
-  public List<PipelineExecutionResponse> findExecutionsByPipelineId(Long pipelineId) {
+  public List<PipelineExecutionResponse> findExecutionsByPipelineId(
+      Long pipelineId, int page, int size) {
     return dsl.select(
             PE_ID,
             PE_PIPELINE_ID,
@@ -501,6 +502,9 @@ public class JooqPipelineExecutionRepository implements PipelineExecutionReposit
         .on(PE_TRIGGER_ID.eq(PT_ID))
         .where(PE_PIPELINE_ID.eq(pipelineId))
         .orderBy(PE_ID.desc())
+        // WD-532: 한 페이지만 읽는다(최신 id 순이라 offset 이 안정적).
+        .limit(size)
+        .offset((long) page * size)
         .fetch(
             r ->
                 new PipelineExecutionResponse(
@@ -514,6 +518,11 @@ public class JooqPipelineExecutionRepository implements PipelineExecutionReposit
                     r.get(PE_TRIGGERED_BY),
                     r.get(PT_NAME),
                     r.get(PE_CANCEL_REQUESTED_AT)));
+  }
+
+  @Override
+  public long countExecutionsByPipelineId(Long pipelineId) {
+    return dsl.fetchCount(PIPELINE_EXECUTION, PE_PIPELINE_ID.eq(pipelineId));
   }
 
   @Override

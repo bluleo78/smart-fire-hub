@@ -196,7 +196,11 @@ public interface PipelineExecutionRepository {
       LocalDateTime startedAt,
       LocalDateTime completedAt);
 
-  List<PipelineExecutionResponse> findExecutionsByPipelineId(Long pipelineId);
+  /** 파이프라인의 실행 이력 한 페이지(최신 id 순, WD-532). page 는 0부터. */
+  List<PipelineExecutionResponse> findExecutionsByPipelineId(Long pipelineId, int page, int size);
+
+  /** 파이프라인의 실행 이력 총 건수(WD-532 — 페이지 나눔용). */
+  long countExecutionsByPipelineId(Long pipelineId);
 
   Optional<ExecutionDetailResponse> findExecutionById(Long executionId);
 

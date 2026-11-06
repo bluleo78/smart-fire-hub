@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { Ban, Clock, Code, Database, GitBranch, Globe, Link, User } from 'lucide-react';
 import { useEffect, useMemo,useRef, useState } from 'react';
 import { Link as RouterLink, useNavigate,useParams } from 'react-router-dom';
@@ -19,6 +20,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { SimplePagination } from '@/components/ui/simple-pagination';
 import {
   Table,
   TableBody,
@@ -110,7 +112,19 @@ export default function PipelineEditorPage() {
   const [cancelTargetExecId, setCancelTargetExecId] = useState<number | null>(null);
   // 서버 목록 상한(100)을 넘어도 전부 보이도록 전 페이지를 모은다 (#732)
   const { data: allDatasets } = useAllDatasets();
-  const { data: executions } = useExecutions(pipelineId ?? 0);
+  // 실행 이력 탭의 현재 페이지(WD-532) — 이력을 한 번에 다 받지 않고 페이지로 나눠 받는다.
+  const [executionPage, setExecutionPage] = useState(0);
+  const { data: executionPageData } = useExecutions(pipelineId ?? 0, executionPage);
+  const executions = executionPageData?.content;
+  // 보던 페이지가 사라지면(보존 기간 정리로 이력이 줄어든 경우 등) 마지막 페이지로 옮긴다 — 빈 페이지에 머물면 「실행 기록이
+  // 없습니다」만 보이고 페이지 나눔도 사라져 앞 페이지로 돌아갈 수 없다.
+  // 다른 페이지의 캐시는 이력이 줄기 전 값이라(기본 staleTime 30초 동안 다시 받지 않는다) 이력 쿼리를 무효화해 새로 받게 한다.
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!executionPageData || executionPage === 0 || executionPageData.content.length > 0) return;
+    queryClient.invalidateQueries({ queryKey: ['pipelines', pipelineId ?? 0, 'executions'] });
+    setExecutionPage(Math.max(0, executionPageData.totalPages - 1));
+  }, [executionPageData, executionPage, pipelineId, queryClient]);
   // 실행 이력 행의 「실행 취소」는 pipeline:execute 가 있을 때만 보인다(WD-219) — 헤더 버튼과 같은 기준.
   const { canExecutePipeline } = usePipelinePermissions();
 
@@ -567,6 +581,14 @@ export default function PipelineEditorPage() {
                   ))}
                 </TableBody>
               </Table>
+              {/* 실행 이력 페이지 나눔·총 건수(WD-532) — 한 페이지만 그려 이력이 쌓여도 표가 끝없이 길어지지 않는다. */}
+              <SimplePagination
+                page={executionPage}
+                totalPages={executionPageData?.totalPages ?? 0}
+                totalElements={executionPageData?.totalElements}
+                pageSize={executionPageData?.size}
+                onPageChange={setExecutionPage}
+              />
             </ScrollArea>
           )}
         </TabsContent>

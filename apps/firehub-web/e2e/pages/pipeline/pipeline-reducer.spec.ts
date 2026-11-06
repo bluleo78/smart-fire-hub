@@ -16,7 +16,7 @@
  */
 
 import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
@@ -65,7 +65,7 @@ test.describe('pipelineEditorReducer — cycle detection (ADD_EDGE)', () => {
     });
 
     await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);
-    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
     await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
     await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
     await mockApi(page, 'GET', '/api/v1/datasets', {
@@ -212,7 +212,7 @@ test.describe('pipelineEditorReducer — cycle detection (ADD_EDGE)', () => {
     });
 
     await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);
-    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
     await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
     await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
     await mockApi(page, 'GET', '/api/v1/datasets', {

@@ -8,14 +8,14 @@
  */
 
 import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /** 파이프라인 상세 화면 진입에 필요한 API 를 모킹한다 — 스텝을 직접 지정한다. */
 async function setupMocks(page: import('@playwright/test').Page, step: ReturnType<typeof createStep>) {
   await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1, steps: [step] }));
-  await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+  await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
   await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
   await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
   await mockApi(page, 'GET', '/api/v1/datasets', {

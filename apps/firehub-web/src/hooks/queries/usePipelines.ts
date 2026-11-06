@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 
 import { pipelinesApi } from '../../api/pipelines';
@@ -173,6 +173,9 @@ function isTerminalExecution(e: PipelineExecutionResponse) {
   return e.status !== 'PENDING' && e.status !== 'RUNNING';
 }
 
+/** 실행 이력 탭 한 페이지 크기(WD-532) — 서버 기본값과 같다. */
+export const EXECUTIONS_PAGE_SIZE = 20;
+
 /**
  * 실행 이력 조회 + 실행 종료 시 파이프라인 상세 무효화 (#733).
  *
@@ -184,33 +187,37 @@ function isTerminalExecution(e: PipelineExecutionResponse) {
  * 아니라, 실행이 너무 빨리 끝나 재조회가 곧바로 COMPLETED 를 받는(RUNNING 을 한 번도 못 본) 경우도
  * 새 종료 실행이 서명에 추가되므로 함께 잡힌다. 첫 로드는 기준값만 잡고 무효화하지 않는다.
  */
-export function useExecutions(pipelineId: number) {
+export function useExecutions(pipelineId: number, page = 0, size = EXECUTIONS_PAGE_SIZE) {
   const queryClient = useQueryClient();
   const query = useQuery({
-    queryKey: ['pipelines', pipelineId, 'executions'],
-    queryFn: () => pipelinesApi.getExecutions(pipelineId).then(r => r.data),
+    // 페이지마다 따로 캐시한다(WD-532). 실행·취소 뒤의 무효화는 ['pipelines', id, 'executions'] 접두로 모든 페이지에 닿는다.
+    queryKey: ['pipelines', pipelineId, 'executions', { page, size }],
+    queryFn: () => pipelinesApi.getExecutions(pipelineId, { page, size }).then(r => r.data),
     enabled: !!pipelineId,
+    // 다음 페이지를 받는 동안 이전 페이지를 그대로 보여 표가 깜빡이지 않게 한다.
+    placeholderData: keepPreviousData,
     refetchInterval: (query) => {
       const data = query.state.data;
-      const hasActive = data?.some((e: PipelineExecutionResponse) => e.status === 'PENDING' || e.status === 'RUNNING');
+      const hasActive = data?.content.some((e: PipelineExecutionResponse) => e.status === 'PENDING' || e.status === 'RUNNING');
       return hasActive ? 5000 : false;
     },
   });
 
   const terminalSignature = query.data
-    ?.filter(isTerminalExecution)
+    ?.content.filter(isTerminalExecution)
     .map((e) => `${e.id}:${e.status}`)
     .join(',');
-  // 이전 서명 — undefined 면 아직 기준값이 없는 상태(첫 로드 전)다. 파이프라인이 바뀌면 기준을 다시 잡는다.
-  const prevSignatureRef = useRef<{ pipelineId: number; signature: string } | undefined>(undefined);
+  // 이전 서명 — undefined 면 아직 기준값이 없는 상태(첫 로드 전)다. 파이프라인이나 페이지가 바뀌면 기준을 다시 잡는다
+  // (WD-532 — 다른 페이지로 넘어가 서명이 바뀐 것은 실행이 끝난 것이 아니다).
+  const prevSignatureRef = useRef<{ pipelineId: number; page: number; signature: string } | undefined>(undefined);
   useEffect(() => {
-    if (terminalSignature === undefined) return;
+    if (terminalSignature === undefined || query.isPlaceholderData) return;
     const prev = prevSignatureRef.current;
-    prevSignatureRef.current = { pipelineId, signature: terminalSignature };
-    if (!prev || prev.pipelineId !== pipelineId || prev.signature === terminalSignature) return;
+    prevSignatureRef.current = { pipelineId, page, signature: terminalSignature };
+    if (!prev || prev.pipelineId !== pipelineId || prev.page !== page || prev.signature === terminalSignature) return;
     // exact: 실행 목록(['pipelines', id, 'executions'])까지 prefix 로 다시 불러오지 않도록 상세만 무효화한다.
     queryClient.invalidateQueries({ queryKey: ['pipelines', pipelineId], exact: true });
-  }, [terminalSignature, pipelineId, queryClient]);
+  }, [terminalSignature, pipelineId, page, query.isPlaceholderData, queryClient]);
 
   return query;
 }

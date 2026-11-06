@@ -1,5 +1,5 @@
 import { createExecution, createPipelineDetail, createTrigger } from '../../factories/pipeline.factory';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
@@ -89,10 +89,10 @@ test.describe('파이프라인 에디터 페이지', () => {
     await page.clock.setFixedTime(new Date('2024-01-01T00:00:05Z'));
 
     await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);
-    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', [
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([
       // startedAt은 타임존 표기 없는 UTC 문자열(백엔드 실측 계약과 동일), completedAt=null(RUNNING)
       createExecution({ id: 1, pipelineId: 1, status: 'RUNNING', startedAt: '2024-01-01T00:00:00', completedAt: null }),
-    ]);
+    ]));
     await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
     await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
     await mockApi(page, 'GET', '/api/v1/datasets', {
@@ -116,7 +116,7 @@ test.describe('파이프라인 에디터 페이지', () => {
     // 실행 이력 없는 에디터 API 모킹
     const detail = createPipelineDetail({ id: 1 });
     await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);
-    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
     await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
     await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
     await mockApi(page, 'GET', '/api/v1/datasets', {
@@ -140,9 +140,9 @@ test.describe('파이프라인 에디터 페이지', () => {
     // 스케줄 트리거 1개 포함한 에디터 API 모킹
     const detail = createPipelineDetail({ id: 1 });
     await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);
-    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', [
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([
       createExecution({ id: 1, pipelineId: 1 }),
-    ]);
+    ]));
     await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', [
       createTrigger({ id: 1, pipelineId: 1, name: '매일 실행', triggerType: 'SCHEDULE' }),
     ]);
@@ -172,7 +172,7 @@ test.describe('파이프라인 에디터 페이지', () => {
   }) => {
     // 404 에러 응답으로 모킹
     await mockApi(page, 'GET', '/api/v1/pipelines/999', { message: '파이프라인을 찾을 수 없습니다.' }, { status: 404 });
-    await mockApi(page, 'GET', '/api/v1/pipelines/999/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/999/executions', createPageResponse([]));
     await mockApi(page, 'GET', '/api/v1/pipelines/999/triggers', []);
     await mockApi(page, 'GET', '/api/v1/pipelines/999/trigger-events', []);
     await mockApi(page, 'GET', '/api/v1/datasets', {
@@ -216,7 +216,7 @@ test.describe('파이프라인 에디터 페이지', () => {
   }) => {
     // 파이프라인 API가 404를 반환하도록 모킹 (나머지 API도 필요)
     await mockApi(page, 'GET', '/api/v1/pipelines/99999', { message: 'Not found' }, { status: 404 });
-    await mockApi(page, 'GET', '/api/v1/pipelines/99999/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/99999/executions', createPageResponse([]));
     await mockApi(page, 'GET', '/api/v1/pipelines/99999/triggers', []);
     await mockApi(page, 'GET', '/api/v1/datasets', { content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0 });
 
@@ -236,7 +236,7 @@ test.describe('파이프라인 에디터 페이지', () => {
     authenticatedPage: page,
   }) => {
     await mockApi(page, 'GET', '/api/v1/pipelines/99999', { message: 'Not found' }, { status: 404 });
-    await mockApi(page, 'GET', '/api/v1/pipelines/99999/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/99999/executions', createPageResponse([]));
     await mockApi(page, 'GET', '/api/v1/pipelines/99999/triggers', []);
     await mockApi(page, 'GET', '/api/v1/datasets', { content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0 });
     await mockApi(page, 'GET', '/api/v1/pipelines', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
@@ -303,7 +303,7 @@ test.describe('파이프라인 에디터 페이지', () => {
   test('기존 파이프라인 편집 페이지에 파이프라인 이름이 h1 헤딩으로 노출된다', async ({ authenticatedPage: page }) => {
     const detail = createPipelineDetail({ id: 1, name: '월간 매출 ETL' });
     await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);
-    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
     await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
     await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
     await mockApi(page, 'GET', '/api/v1/datasets', {

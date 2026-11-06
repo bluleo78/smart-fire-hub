@@ -9,7 +9,7 @@ import {
   createStepExecution,
   createTrigger,
 } from '../../factories/pipeline.factory';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions, PIPELINE_ALL_PERMISSIONS, setupPipelineMocks } from '../../fixtures/pipeline.fixture';
 
@@ -60,10 +60,10 @@ async function setupDetailMocks(page: Page, permissions: string[]) {
     fullRebuildMode: 'REBUILD_OUTPUT',
   });
   await mockApi(page, 'GET', `/api/v1/pipelines/${PIPELINE_ID}`, createPipelineDetail({ id: PIPELINE_ID, steps: [step] }));
-  await mockApi(page, 'GET', `/api/v1/pipelines/${PIPELINE_ID}/executions`, [
+  await mockApi(page, 'GET', `/api/v1/pipelines/${PIPELINE_ID}/executions`, createPageResponse([
     createExecution({ id: RUNNING_EXEC_ID, pipelineId: PIPELINE_ID, status: 'RUNNING', completedAt: null }),
     createExecution({ id: FAILED_EXEC_ID, pipelineId: PIPELINE_ID, status: 'FAILED', completedAt: '2024-01-01T00:02:00Z' }),
-  ]);
+  ]));
   await mockApi(page, 'GET', `/api/v1/pipelines/${PIPELINE_ID}/executions/${RUNNING_EXEC_ID}`, createExecutionDetail({
     id: RUNNING_EXEC_ID,
     pipelineId: PIPELINE_ID,

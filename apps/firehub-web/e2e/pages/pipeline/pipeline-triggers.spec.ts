@@ -11,7 +11,7 @@ import type { Page } from '@playwright/test';
 import type { TriggerEventResponse } from '@/types/pipeline';
 
 import { createPipelineDetail, createTrigger } from '../../factories/pipeline.factory';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { mockCronPreview, TRIGGER_CRON_PREVIEW_PATH } from '../../fixtures/cron-preview.fixture';
 import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
@@ -26,7 +26,7 @@ async function setupTriggerTabMocks(
   const events = options?.events ?? [];
 
   await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}`, createPipelineDetail({ id: pipelineId }));
-  await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/executions`, []);
+  await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/executions`, createPageResponse([]));
   await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/triggers`, triggers);
   await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/trigger-events`, events);
   // 「다음 5회」 미리보기 기본 응답(WD-391) — 테스트가 다시 불러 덮어쓸 수 있다
@@ -1013,7 +1013,7 @@ test.describe('파이프라인 트리거 탭', () => {
     // 데이터셋이 있는 경우로 별도 모킹 (setupTriggerTabMocks는 빈 목록으로 설정)
     const pipelineId = 1;
     await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}`, createPipelineDetail({ id: pipelineId }));
-    await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/executions`, []);
+    await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/executions`, createPageResponse([]));
     await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/trigger-events`, []);
     await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/triggers`, []);
     // 데이터셋 목록에 항목 포함 (DatasetCombobox가 선택할 수 있도록)
@@ -1147,7 +1147,7 @@ test.describe('파이프라인 트리거 탭', () => {
       config: { datasetIds: [42, 77], pollingIntervalSeconds: 60, debounceSeconds: 0 },
     });
     await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1 }));
-    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
     await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
     await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', [existing]);
     // 볼 수 있는 목록에는 42 만 — 77 은 숨김

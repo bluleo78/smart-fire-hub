@@ -14,7 +14,7 @@ import type { Page, Route } from '@playwright/test';
 import type { PipelineDetailResponse, UpdatePipelineRequest } from '@/types/pipeline';
 
 import { createExecution, createPipelineDetail, createStep } from '../../factories/pipeline.factory';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
@@ -68,7 +68,7 @@ test.describe('파이프라인 상세 — 편집 취소 복원 기준 (#742)', (
       authenticatedPage: page,
     }) => {
       await mockCommon(page);
-      await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+      await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
 
       let server = initialDetail();
       const puts: UpdatePipelineRequest[] = [];
@@ -144,7 +144,7 @@ test.describe('파이프라인 상세 — 편집 취소 복원 기준 (#742)', (
           return route.fulfill({
             status: 200,
             contentType: 'application/json',
-            body: JSON.stringify([createExecution({ id: 475, status })]),
+            body: JSON.stringify(createPageResponse([createExecution({ id: 475, status })])),
           });
         }
         detailCalls += 1;

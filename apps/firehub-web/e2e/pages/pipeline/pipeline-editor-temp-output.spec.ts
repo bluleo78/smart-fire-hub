@@ -34,7 +34,7 @@ async function setupMocks(page: Page, outputDatasetId: number | null) {
     inputDatasetIds: [],
   });
   await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1, steps: [step] }));
-  await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+  await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
   await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
   await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
   await mockApi(

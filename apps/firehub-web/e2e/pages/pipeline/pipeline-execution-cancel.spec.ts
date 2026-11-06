@@ -21,7 +21,7 @@ import {
   createStep,
   createStepExecution,
 } from '../../factories/pipeline.factory';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
@@ -100,7 +100,8 @@ async function mockList(page: Page, get: () => PipelineExecutionResponse[]) {
     (url) => url.pathname === LIST_PATH,
     (route: Route) => {
       if (route.request().method() !== 'GET') return route.fallback();
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(get()) });
+      // 실행 이력은 페이지 응답이다(WD-532).
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createPageResponse(get())) });
     },
   );
 }

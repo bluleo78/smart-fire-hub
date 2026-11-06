@@ -44,7 +44,8 @@ export default function PipelineStatusWidget({ input, onNavigate, displayMode }:
 
   const { data: executions, isLoading: execLoading } = useQuery({
     queryKey: ['pipeline-executions', pipelineId],
-    queryFn: () => pipelinesApi.getExecutions(pipelineId).then(r => r.data),
+    // 위젯은 최근 실행 하나만 쓴다 — 첫 페이지 1건만 받는다(WD-532: 목록이 페이지 응답이 됐다).
+    queryFn: () => pipelinesApi.getExecutions(pipelineId, { page: 0, size: 1 }).then(r => r.data.content),
     staleTime: 15_000,
     enabled: !!pipelineId,
     refetchInterval: (query) => {
