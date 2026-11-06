@@ -15,13 +15,13 @@ export function useJobToggleLock() {
   const inFlight = useRef(new Set<number>());
   const [requested, setRequested] = useState<Record<number, boolean>>({});
 
-  /** 이 작업의 전환을 시작한다 — 이미 진행 중이면 false 를 돌려주고 아무것도 하지 않는다. */
+  /** 이 작업의 전환을 시작한다 — 이미 진행 중이면 아무것도 하지 않는다(중복 클릭 무시). */
   const run = useCallback((id: number, enabled: boolean, request: () => Promise<unknown>) => {
-    if (inFlight.current.has(id)) return null;
+    if (inFlight.current.has(id)) return;
     inFlight.current.add(id);
     setRequested((prev) => ({ ...prev, [id]: enabled }));
     // 행마다 자기 요청의 끝에서 잠금을 푼다 — mutate 콜백은 마지막 호출에만 불려 여러 행을 이어 누르면 앞 행이 잠긴 채 남는다.
-    return request().finally(() => {
+    void request().finally(() => {
       inFlight.current.delete(id);
       setRequested((prev) => {
         const next = { ...prev };

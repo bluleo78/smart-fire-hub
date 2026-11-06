@@ -104,7 +104,8 @@ export default function ProactiveJobListPage() {
         : updateMutation.mutateAsync({ id: job.id, data: { enabled } })
       ).then(
         () => toast.success(`작업이 ${enabled ? '활성화' : '비활성화'}되었습니다.`),
-        () => toast.error('상태 변경에 실패했습니다.'),
+        // 서버 사유(권한 없음 403 등)가 있으면 그대로 보여 준다(WD-511 리뷰) — 다른 행 동작(복제·실행)과 같은 처리
+        (err) => handleApiError(err, '상태 변경에 실패했습니다.'),
       ),
     );
   };
@@ -321,7 +322,10 @@ export default function ProactiveJobListPage() {
                         checked={toggleLock.requestedValue(job.id) ?? job.enabled}
                         aria-label={`${job.name} 활성화`}
                         aria-busy={toggleLock.isPending(job.id)}
-                        disabled={toggleLock.isPending(job.id) || (!canWrite && !job.enabled)}
+                        // 요청 중에는 disabled 대신 aria-disabled 로 잠근다(WD-511 리뷰) — disabled 는 포커스를 빼앗아 키보드 사용자가
+                        // 방금 누른 행에서 밀려난다. 클릭은 useJobToggleLock 이 무시하므로 중복 요청은 그대로 막힌다.
+                        aria-disabled={toggleLock.isPending(job.id) || undefined}
+                        disabled={!canWrite && !job.enabled}
                         title={canWrite || job.enabled ? undefined : '스마트 작업 쓰기 권한이 있어야 켤 수 있습니다'}
                         onCheckedChange={(checked) => handleToggle(job, checked)}
                       />

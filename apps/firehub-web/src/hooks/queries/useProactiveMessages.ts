@@ -145,6 +145,7 @@ export function useUpdateProactiveJob() {
         queryClient.setQueryData<ProactiveJob>(KEYS.job(variables.id), (old) => (old ? { ...old, updatedAt } : old));
       }
       // 활성 전환이면 목록·상세 캐시의 enabled 를 먼저 고친다(WD-511) — 재조회 전에 스위치 잠금이 풀려도 낡은 값이 보이지 않게.
+      // (수정 응답은 updatedAt 만 돌려줘 서버의 enabled 를 알 수 없다 — 성공한 요청의 값이 곧 저장된 값이다)
       if (typeof variables.data.enabled === 'boolean') {
         setCachedJobEnabled(queryClient, variables.id, variables.data.enabled);
       }

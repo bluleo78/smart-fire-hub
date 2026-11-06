@@ -168,4 +168,23 @@ test.describe('스마트 작업 목록 — 활성 스위치 더블클릭 (WD-511
     await expect(toggle).not.toBeChecked();
     expect(counts.disable).toBe(1);
   });
+
+  test('키보드로 전환해도 요청 중 포커스가 스위치에 남는다(disabled 로 포커스를 잃지 않음)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { counts } = await mockToggleJob(page, { initialEnabled: true });
+    await page.goto('/ai-insights/jobs');
+
+    const toggle = page.getByRole('switch', { name: '잡 1 활성화' });
+    await toggle.focus();
+    await page.keyboard.press('Space');
+    // 요청 중: 잠겼지만(aria-disabled) 포커스는 그대로, 한 번 더 눌러도 요청은 1회
+    await expect(toggle).toHaveAttribute('aria-disabled', 'true');
+    await expect(toggle).toBeFocused();
+    await page.keyboard.press('Space');
+    await expect(page.getByText('작업이 비활성화되었습니다.')).toBeVisible();
+    await expect(toggle).toBeFocused();
+    await expect(toggle).not.toBeChecked();
+    expect(counts.disable).toBe(1);
+  });
 });
