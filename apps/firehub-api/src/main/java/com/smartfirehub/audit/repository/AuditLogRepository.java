@@ -4,7 +4,6 @@ import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Optional;
 
 /**
@@ -35,8 +34,14 @@ public interface AuditLogRepository {
   /** id 로 감사 로그 한 건을 조회한다. 없으면 빈 값. */
   Optional<AuditLogResponse> findById(Long id);
 
-  /** 액션 유형·리소스 종류·리소스 id 가 모두 일치하는 감사 로그를 조회한다. */
-  List<AuditLogResponse> findByResource(String actionType, String resource, String resourceId);
+  /**
+   * 액션 유형·리소스 종류·리소스 id 가 모두 일치하는 감사 로그를 최신 순(action_time desc, id desc)으로 한 페이지만 조회한다(WD-535).
+   *
+   * @param page 페이지 번호 (0부터)
+   * @param size 페이지 크기 (1 이상 — 범위 검증은 호출자 책임)
+   */
+  PageResponse<AuditLogResponse> findByResource(
+      String actionType, String resource, String resourceId, int page, int size);
 
   /**
    * 감사 로그 전체 조회 (페이지네이션 + 복합 필터)

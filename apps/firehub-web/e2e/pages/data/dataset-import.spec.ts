@@ -75,7 +75,7 @@ async function setupImportMocks(
   // 데이터셋 상세 기본 모킹 (detail, data, stats, queries)
   await setupDatasetDetailMocks(page, DATASET_ID);
   // 임포트 이력 목록
-  await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, []);
+  await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, createPageResponse([]));
   // 임포트 진행 상황 SSE — COMPLETED 이벤트를 즉시 반환하여 테스트 속도 확보
   await page.route(
     (url) => url.pathname.includes('/jobs/') && url.pathname.includes('/progress'),
@@ -727,7 +727,7 @@ test.describe('데이터셋 변경 이력 탭', () => {
   test('임포트 이력이 있으면 이력 탭에 파일명과 상태가 표시된다', async ({ authenticatedPage: page }) => {
     await setupDatasetDetailMocks(page, DATASET_ID);
     // 완료된 임포트 레코드 모킹
-    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, [createImportRecord()]);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, createPageResponse([createImportRecord()]));
 
     await page.goto(`/data/datasets/${DATASET_ID}`);
     await page.getByRole('tab', { name: '이력' }).click();
@@ -741,10 +741,10 @@ test.describe('데이터셋 변경 이력 탭', () => {
   // WD-387: 같은 키로 버린 행이 있는 업서트·교체 이력은 그 수를 알리고, 없는 이력엔 줄이 없다
   test('같은 키로 건너뛴 행이 있는 임포트 이력은 그 행 수를 보인다 (WD-387)', async ({ authenticatedPage: page }) => {
     await setupDatasetDetailMocks(page, DATASET_ID);
-    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, [
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, createPageResponse([
       { ...createImportRecord(), id: 2, fileName: 'rep_dup.csv', totalRows: 5, successRows: 5, duplicateKeyRows: 2 },
       { ...createImportRecord(), id: 1, duplicateKeyRows: null },
-    ]);
+    ]));
 
     await page.goto(`/data/datasets/${DATASET_ID}`);
     await page.getByRole('tab', { name: '이력' }).click();
@@ -757,7 +757,7 @@ test.describe('데이터셋 변경 이력 탭', () => {
 
   test('임포트 이력이 없으면 데이터셋 생성 이벤트만 표시된다', async ({ authenticatedPage: page }) => {
     await setupDatasetDetailMocks(page, DATASET_ID);
-    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, []);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, createPageResponse([]));
 
     await page.goto(`/data/datasets/${DATASET_ID}`);
     await page.getByRole('tab', { name: '이력' }).click();
@@ -979,7 +979,7 @@ test.describe('#653 회귀 방지 — 매핑 0개 시 검증/임포트 차단', 
     });
     await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/stats`, []);
     await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/queries`, createPageResponse([]));
-    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, []);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, createPageResponse([]));
   }
 
   /** 파일 컬럼명이 데이터셋 컬럼명과 전혀 달라 전부 미매핑(NONE)으로 제안되는 미리보기 응답 */
@@ -1154,7 +1154,7 @@ test.describe('WD-369 — 이름 없는 열이 여럿인 파일', () => {
     });
     await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/stats`, []);
     await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/queries`, createPageResponse([]));
-    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, []);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, createPageResponse([]));
   }
 
   async function openWithPreview(page: import('@playwright/test').Page, fileHeaders: string[]) {

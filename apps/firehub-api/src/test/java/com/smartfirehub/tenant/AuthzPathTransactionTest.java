@@ -89,13 +89,16 @@ class AuthzPathTransactionTest extends IntegrationTestBase {
     // 단지 호출하기만 하는 새 배경 진입점(@Scheduled/@Async/@Job/@PostConstruct)은 잡지 못한다.
     // 그 잔여 구멍의 구조적 해법은 BackgroundPathTransactionTest 의 리포지토리 맵이다.
     assertThat(isTransactional(JooqAuditLogRepository.class, "findById", Long.class)).isTrue();
+    // 가져오기 이력 페이지 조회(WD-535)도 audit_log 를 읽으므로 같은 트랜잭션 조건을 고정한다.
     assertThat(
             isTransactional(
                 JooqAuditLogRepository.class,
                 "findByResource",
                 String.class,
                 String.class,
-                String.class))
+                String.class,
+                int.class,
+                int.class))
         .isTrue();
     // 대시보드도 audit_log 를 직접 읽는다(AuditLogRepository 를 거치지 않는 별도 경로다).
     // AuditLogRepository.findAll 과 달리 이쪽은 메서드 레벨 @Transactional 이라 하나씩 고정한다.

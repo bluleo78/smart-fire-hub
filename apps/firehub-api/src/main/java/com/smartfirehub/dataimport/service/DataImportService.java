@@ -19,6 +19,7 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.transaction.AfterCommitRunner;
@@ -1123,14 +1124,15 @@ public class DataImportService {
     notificationService.notifyImportCompleted(userId, datasetId, datasetName, false);
   }
 
-  public List<ImportResponse> getImportsByDatasetId(Long datasetId) {
+  /** 데이터셋 가져오기 이력 한 페이지(최신 순, SQL 페이징 — WD-535). page·size 범위 검증은 컨트롤러가 한다. */
+  public PageResponse<ImportResponse> getImportsByDatasetId(Long datasetId, int page, int size) {
     datasetRepository
         .findById(datasetId)
         .orElseThrow(() -> new IllegalArgumentException(DatasetNotFoundException.MESSAGE));
 
-    List<AuditLogResponse> auditLogs =
-        auditLogService.findByResource("IMPORT", "dataset", String.valueOf(datasetId));
-    return auditLogs.stream().map(this::mapToImportResponse).toList();
+    PageResponse<AuditLogResponse> auditLogs =
+        auditLogService.findByResource("IMPORT", "dataset", String.valueOf(datasetId), page, size);
+    return auditLogs.map(this::mapToImportResponse);
   }
 
   public ImportResponse getImportById(Long datasetId, Long importId) {

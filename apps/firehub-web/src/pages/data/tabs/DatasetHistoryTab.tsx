@@ -1,9 +1,10 @@
-import React, { useMemo } from 'react';
+import React, { useState } from 'react';
 
 import { Badge } from '../../../components/ui/badge';
-import { useImports } from '../../../hooks/queries/useDatasets';
+import { SimplePagination } from '../../../components/ui/simple-pagination';
+import { IMPORTS_PAGE_SIZE, useImports } from '../../../hooks/queries/useDatasets';
 import { parseErrorDetails } from '../../../lib/errorDetails';
-import { formatDate, formatFileSize, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '../../../lib/formatters';
+import { formatDate, formatFileSize, getStatusBadgeVariant, getStatusLabel } from '../../../lib/formatters';
 import type { DatasetDetailResponse } from '../../../types/dataset';
 import { ValidationErrorTable } from '../components/ValidationErrorTable';
 
@@ -16,21 +17,22 @@ export const DatasetHistoryTab = React.memo(function DatasetHistoryTab({
   dataset,
   datasetId,
 }: DatasetHistoryTabProps) {
-  const { data: imports } = useImports(datasetId);
-
-  const sortedImports = useMemo(() => {
-    if (!imports) return [];
-    return [...imports].sort(
-      (a, b) => parseUtcDate(b.createdAt).getTime() - parseUtcDate(a.createdAt).getTime(),
-    );
-  }, [imports]);
+  // 이력은 서버가 최신 순으로 잘라 한 페이지씩 준다(WD-535) — 화면에서 다시 정렬하지 않는다.
+  // 페이지 번호는 데이터셋별로 기억한다: 다른 데이터셋으로 옮겨 가면 그 데이터셋의 첫 페이지부터 보이도록 datasetId 와 함께 둔다.
+  const [pageState, setPageState] = useState({ datasetId, page: 0 });
+  const page = pageState.datasetId === datasetId ? pageState.page : 0;
+  const { data: importsPage } = useImports(datasetId, page);
+  const imports = importsPage?.content ?? [];
+  const totalPages = importsPage?.totalPages ?? 0;
+  // 데이터셋 생성은 가장 오래된 사건이라 마지막 페이지(이력이 없으면 totalPages 0 → 참)에만 맨 아래에 보인다.
+  const isLastPage = page >= totalPages - 1;
 
   return (
     <div className="space-y-4">
       <h2 className="text-xl leading-7 font-semibold">변경 이력</h2>
       <div className="space-y-6">
-        {sortedImports.length > 0 &&
-          sortedImports.map((imp) => {
+        {imports.length > 0 &&
+          imports.map((imp) => {
             // audit_log.metadata.errorDetails 는 { errors: ValidationErrorDetail[] } 형태의 (중첩)JSON.
             // 안전 파싱 후 테이블 렌더 — 파싱 실패/형식 불일치 시 null 반환하여 섹션 자체를 숨긴다.
             const parsedErrors = parseErrorDetails(imp.errorDetails);
@@ -95,16 +97,26 @@ export const DatasetHistoryTab = React.memo(function DatasetHistoryTab({
           })}
 
         {/* Dataset creation event */}
-        <div className="flex gap-4">
-          <div className="flex flex-col items-center">
-            <div className="h-2.5 w-2.5 rounded-full bg-muted-foreground mt-1.5" />
+        {isLastPage && (
+          <div className="flex gap-4">
+            <div className="flex flex-col items-center">
+              <div className="h-2.5 w-2.5 rounded-full bg-muted-foreground mt-1.5" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium">{dataset.createdBy}님이 데이터셋을 생성했습니다</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{formatDate(dataset.createdAt)}</p>
+            </div>
           </div>
-          <div className="flex-1">
-            <p className="text-sm font-medium">{dataset.createdBy}님이 데이터셋을 생성했습니다</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{formatDate(dataset.createdAt)}</p>
-          </div>
-        </div>
+        )}
       </div>
+      {/* 이력이 한 페이지를 넘을 때만 보인다(SimplePagination 이 한 페이지 이하면 스스로 숨김) — 「총 N건 중 a-b」도 함께 표시(WD-535) */}
+      <SimplePagination
+        page={page}
+        totalPages={totalPages}
+        onPageChange={(next) => setPageState({ datasetId, page: next })}
+        totalElements={importsPage?.totalElements}
+        pageSize={IMPORTS_PAGE_SIZE}
+      />
     </div>
   );
 });

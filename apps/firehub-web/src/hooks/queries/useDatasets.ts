@@ -226,14 +226,27 @@ export function useDeleteColumn(datasetId: number) {
   });
 }
 
-export function useImports(datasetId: number) {
+/** 가져오기 이력 기본 페이지 크기(WD-535) — 서버 기본값과 같은 20. 화면의 기본값은 여기 한 곳에서 정한다. */
+export const IMPORTS_PAGE_SIZE = 20;
+
+/**
+ * 가져오기 이력 한 페이지 조회(최신 순 — WD-535).
+ * 쿼리 키는 `['datasets', datasetId, 'imports', ...]` 로 시작해 임포트 완료 시의 무효화(useImportDialog)가 모든 페이지에 그대로 닿는다.
+ * 'page' 표지를 넣어 단건 조회 키(`[..., 'imports', importId]`)와 겹치지 않게 한다.
+ * 같은 데이터셋의 다음 페이지를 불러오는 동안 이전 페이지를 유지해 목록이 비었다 다시 차는 깜빡임을 막는다.
+ */
+export function useImports(datasetId: number, page = 0, size = IMPORTS_PAGE_SIZE) {
   return useQuery({
-    queryKey: ['datasets', datasetId, 'imports'],
-    queryFn: () => dataImportsApi.getImports(datasetId).then(r => r.data),
+    queryKey: ['datasets', datasetId, 'imports', 'page', page, size],
+    queryFn: () => dataImportsApi.getImports(datasetId, page, size).then(r => r.data),
     enabled: !!datasetId,
+    // 같은 데이터셋 안에서 페이지를 넘길 때만 이전 페이지를 유지한다 — 다른 데이터셋으로 옮겨 가면 비워 둬야
+    // 새 응답이 오기 전 B 화면(이력 탭·임포트 다이얼로그)에 A 의 이력이 보이지 않는다(WD-535).
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[1] === datasetId ? previousData : undefined,
     refetchInterval: (query) => {
       const data = query.state.data;
-      const hasPending = data?.some((i: ImportResponse) => i.status === 'PENDING' || i.status === 'PROCESSING');
+      const hasPending = data?.content.some((i: ImportResponse) => i.status === 'PENDING' || i.status === 'PROCESSING');
       return hasPending ? 3000 : false;
     },
   });

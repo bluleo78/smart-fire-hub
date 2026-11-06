@@ -122,7 +122,8 @@ class DataImportAppendAtomicityTest extends IntegrationTestBase {
     String message = capturedFailMessage("wd386-infile-dup");
     assertThat(message).isEqualTo(DataImportService.DUPLICATE_KEY_MESSAGE);
     assertThat(message).contains(DUPLICATE_MESSAGE).contains("파일 안에").contains("업서트(UPSERT)");
-    ImportResponse history = dataImportService.getImportsByDatasetId(datasetId).get(0);
+    ImportResponse history =
+        dataImportService.getImportsByDatasetId(datasetId, 0, 20).content().get(0);
     assertThat(history.status()).isEqualTo("FAILED");
   }
 

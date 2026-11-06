@@ -9,7 +9,6 @@ import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
@@ -114,10 +113,11 @@ public class AuditLogService {
     return value == null || value.length() <= max ? value : value.substring(0, max);
   }
 
+  /** 리소스 기준 감사 로그 한 페이지 조회(WD-535) — 최신 순 정렬·자르기·건수 세기는 저장소가 SQL 로 한다. */
   @Transactional(readOnly = true)
-  public List<AuditLogResponse> findByResource(
-      String actionType, String resource, String resourceId) {
-    return auditLogRepository.findByResource(actionType, resource, resourceId);
+  public PageResponse<AuditLogResponse> findByResource(
+      String actionType, String resource, String resourceId, int page, int size) {
+    return auditLogRepository.findByResource(actionType, resource, resourceId, page, size);
   }
 
   @Transactional(readOnly = true)

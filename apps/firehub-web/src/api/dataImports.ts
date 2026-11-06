@@ -1,3 +1,4 @@
+import type { PageResponse } from '../types/common';
 import type { ColumnMappingEntry,ImportPreviewResponse, ImportResponse, ImportStartResponse, ImportValidateResponse } from '../types/dataImport';
 import { client } from './client';
 
@@ -82,8 +83,9 @@ export const dataImportsApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  getImports: (datasetId: number) =>
-    client.get<ImportResponse[]>(`/datasets/${datasetId}/imports`),
+  /** 가져오기 이력 한 페이지(최신 순 — WD-535). size 는 서버 기준 1~200, 기본값은 useImports 가 정한다. */
+  getImports: (datasetId: number, page: number, size: number) =>
+    client.get<PageResponse<ImportResponse>>(`/datasets/${datasetId}/imports`, { params: { page, size } }),
   getImportById: (datasetId: number, importId: number) =>
     client.get<ImportResponse>(`/datasets/${datasetId}/imports/${importId}`),
 };

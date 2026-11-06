@@ -83,7 +83,7 @@ FireHub MCP 서버는 다음 10개 도구를 제공합니다:
 6. `get_pipeline` - 파이프라인 상세
 7. `execute_pipeline` - 파이프라인 실행
 8. `get_execution_status` - 실행 상태 조회
-9. `list_imports` - 임포트 이력
+9. `list_imports` - 임포트 이력 (최신 순 페이지, 기본 20건·최대 200건)
 10. `get_dashboard` - 대시보드 통계
 
 ## 아키텍처

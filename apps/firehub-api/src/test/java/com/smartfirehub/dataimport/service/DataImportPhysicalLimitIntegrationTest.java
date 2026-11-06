@@ -343,7 +343,7 @@ class DataImportPhysicalLimitIntegrationTest extends IntegrationTestBase {
   }
 
   private ImportResponse latestImport() {
-    return dataImportService.getImportsByDatasetId(datasetId).get(0);
+    return dataImportService.getImportsByDatasetId(datasetId, 0, 20).content().get(0);
   }
 
   private long countRows() {
