@@ -22,13 +22,14 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { lazy, Suspense,useRef,useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useActiveNavIntoView } from '../../hooks/useActiveNavIntoView';
 import { useAuth } from '../../hooks/useAuth';
 import { useBranding } from '../../hooks/useBranding';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useNotificationStream } from '../../hooks/useNotificationStream';
 import { useScrollRestoration } from '../../hooks/useScrollRestoration';
 import { cn } from '../../lib/utils';
@@ -264,6 +265,14 @@ function AppLayoutInner() {
   const { brandName } = useBranding(); // 런타임 브랜드명 (사이드바 표시)
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // 서랍 모드(WD-508) — lg(1024px) 미만에서 사이드바는 화면 밖으로 밀려나는 서랍이다. CSS 이동(-translate-x-full)만으로는
+  // 닫힌 서랍의 링크 24개가 Tab 순서·화면 읽기에 그대로 남아, 첫 Tab 부터 보이지 않는 곳으로 포커스가 갔다.
+  // 그래서 닫힌 서랍은 inert 로 빼고, 열린 서랍은 대화상자(role=dialog·aria-modal)로 두고 뒤 본문을 inert 로 막아 포커스를 가둔다.
+  // matchMedia 가 없는 환경(jsdom)은 데스크톱으로 본다 — 사이드바가 늘 보이는 기존 배치 그대로.
+  const isDesktop = useMediaQuery('(min-width: 1024px)', true);
+  const drawerOpen = !isDesktop && sidebarOpen;
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const asideRef = useRef<HTMLElement>(null);
   const { isOpen: aiOpen, mode: aiMode, setMode: setAIMode } = useAI();
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem('sidebar-collapsed') === 'true';
@@ -288,6 +297,36 @@ function AppLayoutInner() {
     // 메뉴 경로와 다른 경로를 쓰는 하위 화면도 해당 메뉴를 활성으로 표시한다
     return (NAV_ALIAS_PATHS[href] ?? []).some((alias) => location.pathname.startsWith(alias));
   };
+
+  // 사용자가 직접 닫았을 때(Esc·바깥 누름) 「메뉴 열기」 버튼으로 포커스를 돌려줄지 — 닫는 순간에는 본문 열이 아직 inert 라
+  // focus() 가 먹지 않으므로, 닫힌 뒤 렌더(아래 effect)에서 돌려준다. inert 가 된 서랍 안의 포커스가 body 로 사라지지 않게 한다.
+  const restoreFocusRef = useRef(false);
+
+  /** 서랍을 닫고 포커스를 메뉴 버튼으로 돌려준다(WD-508). 메뉴 항목을 눌러 이동할 때는 쓰지 않는다 — 새 화면으로 가기 때문. */
+  const closeDrawer = () => {
+    restoreFocusRef.current = true;
+    setSidebarOpen(false);
+  };
+
+  // 서랍이 열리면 서랍 안 첫 항목으로 포커스를 옮기고, 열려 있는 동안 Esc 로 닫는다. 닫히면 필요할 때 포커스를 돌려준다(WD-508).
+  useEffect(() => {
+    if (!drawerOpen) {
+      if (restoreFocusRef.current) {
+        restoreFocusRef.current = false;
+        menuButtonRef.current?.focus();
+      }
+      return;
+    }
+    asideRef.current?.querySelector<HTMLElement>('a[href], button:not([disabled])')?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      restoreFocusRef.current = true;
+      setSidebarOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [drawerOpen]);
 
   const handleNavClick = () => {
     setSidebarOpen(false);
@@ -314,12 +353,18 @@ function AppLayoutInner() {
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/50 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
+          onClick={closeDrawer}
         />
       )}
 
       {/* Sidebar — 인쇄에서는 숨긴다(WD-424). 넓은 인쇄 폭에서 lg:static 사이드바가 메뉴·사용자 정보째 찍히고 본문을 오른쪽으로 밀었다 */}
       <aside
+        ref={asideRef}
+        // 닫힌 서랍은 포커스·접근성 트리에서 뺀다. 열린 서랍은 메뉴 대화상자다(WD-508). 데스크톱(lg 이상)은 늘 보이는 사이드바라 둘 다 아니다.
+        inert={!isDesktop && !sidebarOpen}
+        role={drawerOpen ? 'dialog' : undefined}
+        aria-modal={drawerOpen ? true : undefined}
+        aria-label={drawerOpen ? '메뉴' : undefined}
         className={cn(
           'fixed inset-y-0 left-0 z-50 border-r bg-background transition-[width,transform] duration-200',
           'lg:static lg:translate-x-0 print:hidden',
@@ -465,11 +510,13 @@ function AppLayoutInner() {
       </aside>
 
       {/* Main content */}
-      <div className="flex flex-1 flex-col min-w-0 min-h-0 print:block">
+      {/* 서랍이 열려 있는 동안 본문을 inert 로 막아 Tab 이 서랍 밖으로 새지 않게 한다(WD-508) — 「메뉴 닫기」 버튼도 서랍에 가려 있어 닫기는 Esc·바깥 누름이다 */}
+      <div className="flex flex-1 flex-col min-w-0 min-h-0 print:block" inert={drawerOpen}>
         {/* Mobile-only hamburger — 인쇄 폭이 좁으면(lg 미만) 찍히므로 인쇄에서 숨긴다(WD-424) */}
         <Button
           variant="ghost"
           size="icon"
+          ref={menuButtonRef}
           className="fixed top-3 left-3 z-40 lg:hidden print:hidden"
           aria-label={sidebarOpen ? '메뉴 닫기' : '메뉴 열기'}
           onClick={() => setSidebarOpen(!sidebarOpen)}
