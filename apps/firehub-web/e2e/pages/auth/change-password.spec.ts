@@ -196,8 +196,9 @@ test.describe('비밀번호 변경 강제', () => {
     await page.getByRole('button', { name: '변경하고 계속' }).click();
 
     await expect(page.locator('#new-password-error')).toHaveText('새 비밀번호는 8~128자여야 합니다');
-    // 폼 상단 alert 로 떨어지지 않는다
-    await expect(page.getByRole('alert')).toHaveCount(0);
+    // 폼 상단 alert 로 떨어지지 않는다 — 알려지는 alert 는 칸 아래 오류 문구 하나뿐이다(WD-515 로 칸 오류도 alert)
+    await expect(page.getByRole('alert')).toHaveText(['새 비밀번호는 8~128자여야 합니다']);
+    await expect(page.locator('#new-password-error')).toHaveAttribute('role', 'alert');
     await expect(page).toHaveURL(/\/change-password$/);
   });
 
@@ -224,7 +225,8 @@ test.describe('비밀번호 변경 강제', () => {
     await expect(current).toHaveAttribute('autocomplete', 'current-password');
     await expect(next).toHaveAttribute('autocomplete', 'new-password');
     await expect(confirm).toHaveAttribute('autocomplete', 'new-password');
-    await expect(next).toHaveAccessibleDescription('8~128자, 대·소문자·숫자 포함');
+    // 도움말이 먼저 읽힌다. Tab 으로 지나가며 생긴 칸 오류는 도움말 뒤에 이어 읽힌다(WD-515 — FormField 가 오류 문구를 연결).
+    await expect(next).toHaveAccessibleDescription(/^8~128자, 대·소문자·숫자 포함( 새 비밀번호는 .+)?$/);
     // 사이드바·헤더(AppLayout)를 그리지 않는다 — 변경 전에는 그 API 들이 전부 403 이다.
     await expect(page.getByRole('navigation')).toHaveCount(0);
 

@@ -58,9 +58,12 @@ export function SchemaBuilder() {
                   id={`columns.${index}.columnName`}
                   {...register(`columns.${index}.columnName`)}
                   placeholder="예: user_id"
+                  // 오류 문구를 입력과 연결해 스크린 리더가 어느 칼럼의 오류인지 읽게 한다(WD-515)
+                  aria-invalid={!!errors.columns?.[index]?.columnName}
+                  aria-describedby={errors.columns?.[index]?.columnName ? `columns.${index}.columnName-error` : undefined}
                 />
                 {errors.columns?.[index]?.columnName && (
-                  <p className="text-sm text-destructive">
+                  <p id={`columns.${index}.columnName-error`} role="alert" className="text-sm text-destructive">
                     {errors.columns[index]?.columnName?.message}
                   </p>
                 )}
@@ -92,7 +95,7 @@ export function SchemaBuilder() {
                 }}
               />
               {errors.columns?.[index]?.dataType && (
-                <p className="text-sm text-destructive">
+                <p role="alert" className="text-sm text-destructive">
                   {errors.columns[index]?.dataType?.message}
                 </p>
               )}
@@ -108,9 +111,11 @@ export function SchemaBuilder() {
                   max={10000}
                   {...register(`columns.${index}.maxLength`, { valueAsNumber: true })}
                   placeholder="예: 255"
+                  aria-invalid={!!errors.columns?.[index]?.maxLength}
+                  aria-describedby={errors.columns?.[index]?.maxLength ? `columns.${index}.maxLength-error` : undefined}
                 />
                 {errors.columns?.[index]?.maxLength && (
-                  <p className="text-sm text-destructive">
+                  <p id={`columns.${index}.maxLength-error`} role="alert" className="text-sm text-destructive">
                     {errors.columns[index]?.maxLength?.message}
                   </p>
                 )}
@@ -189,7 +194,7 @@ export function SchemaBuilder() {
       ))}
 
       {errors.columns && typeof errors.columns.message === 'string' && (
-        <p className="text-sm text-destructive">{errors.columns.message}</p>
+        <p role="alert" className="text-sm text-destructive">{errors.columns.message}</p>
       )}
 
       <Button type="button" variant="outline" onClick={addColumn} className="w-full">
