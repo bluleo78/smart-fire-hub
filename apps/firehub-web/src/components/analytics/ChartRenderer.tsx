@@ -4,10 +4,12 @@ import { useMemo } from 'react';
 import type { ChartConfig, ChartType } from '../../types/analytics';
 import { AreaChartView } from './AreaChartView';
 import { BarChartView } from './BarChartView';
-import { findMissingChartColumns, resolveChartAxes } from './chart-missing-columns';
+import { findMissingChartColumns, normalizeYAxis, resolveChartAxes } from './chart-missing-columns';
+import { findMissingChartAxesMessage } from './chart-required-axes';
 import { LineChartView } from './LineChartView';
 import { MapChartView } from './MapChartView';
 import { HeatmapChartView } from './nivo/HeatmapChartView';
+import { toPlotNumber } from './numeric-columns';
 import { PieChartView } from './PieChartView';
 import { BoxPlotChartView } from './recharts/BoxPlotChartView';
 import { CandlestickChartView } from './recharts/CandlestickChartView';
@@ -34,6 +36,12 @@ export interface ChartRendererProps {
    * 대시보드 위젯·차트 편집은 기본값(사람이 승인한 문구)을 쓰고, 저장된 쿼리·차트 편집이 없는 AI 챗은 자기 문구를 넘긴다.
    */
   missingColumnsHint?: string;
+  /**
+   * 비어 있는 xAxis/yAxis 를 결과 컬럼으로 자동 추론할지(기본 true, WD-505).
+   * AI 챗 인라인 차트는 LLM 이 yAxis 를 빠뜨리므로 추론이 필요하다(WD-88/WD-104). 차트 빌더 미리보기는 사용자가
+   * 일부러 Y 를 비운 것이라 추론하면 문자 컬럼을 값으로 읽어 NaN 이 그려진다 — false 를 넘겨 「축을 선택하세요」 안내를 보인다.
+   */
+  inferAxes?: boolean;
 }
 
 /** 위젯·차트 편집 미리보기의 기본 해결 문구(WD-88 A안, 사람 승인 문구 — 바꾸지 않는다) */
@@ -118,6 +126,7 @@ export function ChartRenderer({
   height = 300,
   fillParent,
   missingColumnsHint = DEFAULT_MISSING_COLUMNS_HINT,
+  inferAxes = true,
 }: ChartRendererProps) {
   // WD-88: 원본 쿼리의 컬럼 이름이 바뀌면 저장된 축 설정이 없는 컬럼을 가리켜, 차트가 빈 격자·범례만 그린 채
   // 아무 안내도 하지 않았다. 설정 컬럼이 하나라도 결과에 없으면 틀린 그림 대신 원인과 해결 방법을 보여 준다.
@@ -132,7 +141,8 @@ export function ChartRenderer({
   // Auto-infer xAxis/yAxis from columns when not provided.
   // yAxis 가 아예 없는 설정(AI 챗에서 LLM 이 빠뜨린 경우 등)에서 .length 로 TypeError 가 나지 않게 빈 배열로 정규화한다(WD-88).
   // 추론 규칙은 resolveChartAxes 하나로 AI 챗 rows 정규화(WD-104)와 공유한다.
-  const config = resolveChartAxes(rawConfig, columns);
+  // WD-505: inferAxes=false(차트 빌더 미리보기)면 추론하지 않고 사용자가 고른 축만 쓴다.
+  const config = inferAxes ? resolveChartAxes(rawConfig, columns) : normalizeYAxis(rawConfig);
 
   // 0행 결과에서도 이름이 틀렸으면 컬럼 안내가 「데이터가 없습니다」보다 우선한다(축을 고쳐야 데이터가 보이므로).
   if (missingColumns.length > 0) {
@@ -141,7 +151,31 @@ export function ChartRenderer({
     );
   }
 
-  if (chartType !== 'MAP' && chartType !== 'TABLE' && (!config.xAxis || config.yAxis.length === 0)) {
+  // WD-505: 추론하지 않을 때는 타입별 필수 축 규칙(저장 검증과 같은 규칙·문구)으로 빠진 축을 안내한다.
+  // 컬럼 누락 안내 다음, 「데이터가 없습니다」 앞 — 축을 골라야 차트가 그려지므로.
+  // 단, 산점도의 X 가 숫자로 읽히지 않으면 Y 를 골라도 그릴 수 없으므로 뷰의 「X축은 숫자 컬럼이어야 합니다」(WD-308)가
+  // 진짜 원인이다 — 축 안내를 건너뛰고 뷰에 맡긴다(뷰는 Y 가 비어도 X 검사를 먼저 한다).
+  // 이 검사는 추론하지 않을 때(빌더)만 필요하다 — 대시보드·AI 챗에서 행을 훑지 않게 !inferAxes 를 먼저 본다.
+  const scatterXNotNumeric =
+    !inferAxes &&
+    chartType === 'SCATTER' &&
+    !!config.xAxis &&
+    data.length > 0 &&
+    !data.some((row) => toPlotNumber(row[config.xAxis]) !== null);
+  if (!inferAxes && !scatterXNotNumeric) {
+    const axesMessage = findMissingChartAxesMessage(chartType, config);
+    if (axesMessage) {
+      return (
+        <ChartMessage data-testid="chart-axis-required" height={height} fillParent={fillParent}>
+          {axesMessage}
+        </ChartMessage>
+      );
+    }
+  }
+
+  // 기존 공통 축 검사는 추론하는 경우에만 — 추론하지 않으면 위 타입별 규칙이 대신한다
+  // (게이지는 xAxis 가, 히스토그램·박스플롯·캔들스틱은 yAxis 가 필요 없어 공통 검사로는 오탐한다).
+  if (inferAxes && chartType !== 'MAP' && chartType !== 'TABLE' && (!config.xAxis || config.yAxis.length === 0)) {
     return (
       <ChartMessage height={height} fillParent={fillParent}>
         {chartType === 'PIE' || chartType === 'DONUT'
