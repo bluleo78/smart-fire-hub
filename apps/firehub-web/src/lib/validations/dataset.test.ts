@@ -13,6 +13,7 @@ import {
   RESERVED_COLUMN_NAME_MESSAGE,
   reservedColumnNameError,
   updateColumnSchema,
+  updateDatasetSchema,
 } from './dataset';
 
 /**
@@ -151,5 +152,28 @@ describe('길이 한도 메시지는 한국어다 (WD-360)', () => {
     const r = createDatasetSchema.safeParse({ name: '가'.repeat(101), tableName: 'ok_table', columns: [] });
     const msgs = r.success ? [] : r.error.issues.filter((i) => i.path[0] === 'name').map((i) => i.message);
     expect(msgs).toContain('이름은 100자 이하여야 합니다');
+  });
+});
+
+/**
+ * 공백만 넣은 이름 (WD-502) — trim 없이 길이만 보면 통과해 서버 400 영어 토스트로 이어졌다.
+ */
+describe('데이터셋 이름은 앞뒤 공백을 빼고 검사한다 (WD-502)', () => {
+  const nameMessages = (r: { success: boolean; error?: { issues: { path: PropertyKey[]; message: string }[] } }) =>
+    r.success ? [] : r.error!.issues.filter((i) => i.path[0] === 'name').map((i) => i.message);
+
+  it('만들기: 공백만 있는 이름은 한국어 안내로 거절한다', () => {
+    const r = createDatasetSchema.safeParse({ name: '   ', tableName: 'ok_table', storageType: 'TABLE', originType: 'SOURCE', columns: [] });
+    expect(nameMessages(r)).toContain('데이터셋 이름을 입력하세요');
+  });
+
+  it('정보 수정: 공백만 있는 이름은 한국어 안내로 거절한다', () => {
+    const r = updateDatasetSchema.safeParse({ name: '   ' });
+    expect(nameMessages(r)).toContain('데이터셋 이름을 입력하세요');
+  });
+
+  it('앞뒤 공백은 잘라서 넘긴다', () => {
+    const r = updateDatasetSchema.safeParse({ name: '  매출 데이터  ' });
+    expect(r.success && r.data.name).toBe('매출 데이터');
   });
 });

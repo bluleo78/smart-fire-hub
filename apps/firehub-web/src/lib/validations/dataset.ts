@@ -78,7 +78,8 @@ export const datasetColumnSchema = z.object({
 );
 
 export const createDatasetSchema = z.object({
-  name: z.string().min(1, '데이터셋 이름을 입력하세요').max(100, '이름은 100자 이하여야 합니다'),
+  // 공백만 넣은 이름이 길이 검사를 통과해 서버 @NotBlank 400(영어 토스트)까지 가지 않도록 trim 뒤 검사한다 (WD-502).
+  name: z.string().trim().min(1, '데이터셋 이름을 입력하세요').max(100, '이름은 100자 이하여야 합니다'),
   tableName: z.string()
     .min(1, '테이블명을 입력하세요')
     .max(MAX_TABLE_NAME_LENGTH, TABLE_NAME_MAX_MESSAGE)
@@ -105,7 +106,8 @@ export const createDatasetSchema = z.object({
 });
 
 export const updateDatasetSchema = z.object({
-  name: z.string().min(1, '데이터셋 이름을 입력하세요').max(100, '이름은 100자 이하여야 합니다'),
+  // 공백만 넣은 이름이 길이 검사를 통과해 서버 @NotBlank 400(영어 토스트)까지 가지 않도록 trim 뒤 검사한다 (WD-502).
+  name: z.string().trim().min(1, '데이터셋 이름을 입력하세요').max(100, '이름은 100자 이하여야 합니다'),
   description: z.string().optional().or(z.literal('')),
   categoryId: z.number().optional(),
 });
