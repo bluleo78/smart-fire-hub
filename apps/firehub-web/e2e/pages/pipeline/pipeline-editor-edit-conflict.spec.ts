@@ -13,7 +13,7 @@ import type { Page, Route } from '@playwright/test';
 import type { PipelineDetailResponse, UpdatePipelineRequest } from '@/types/pipeline';
 
 import { createExecution, createPipelineDetail, createStep } from '../../factories/pipeline.factory';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
@@ -53,7 +53,7 @@ async function mockVersionedServer(page: Page, opts: { runningThenCompleted?: bo
       const list = opts.runningThenCompleted
         ? [createExecution({ id: 475, status: listCalls === 1 ? 'RUNNING' : 'COMPLETED' })]
         : [];
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(list) });
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createPageResponse(list)) });
     },
   );
   await page.route(

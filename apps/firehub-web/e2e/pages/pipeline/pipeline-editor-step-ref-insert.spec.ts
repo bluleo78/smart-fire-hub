@@ -7,7 +7,7 @@
  */
 
 import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
@@ -31,7 +31,7 @@ test.describe('파이프라인 스텝 편집기 — 스텝 참조 삽입 후 커
       stepOrder: 1,
     });
     await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1, steps: [sql1, sqlNew] }));
-    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
     await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
     await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
     await mockApi(page, 'GET', '/api/v1/datasets', {
@@ -78,7 +78,7 @@ test.describe('파이프라인 스텝 편집기 — 스텝 참조 삽입 후 커
       stepOrder: 1,
     });
     await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1, steps: [sql1, pyNew] }));
-    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
     await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
     await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
     await mockApi(page, 'GET', '/api/v1/datasets', {

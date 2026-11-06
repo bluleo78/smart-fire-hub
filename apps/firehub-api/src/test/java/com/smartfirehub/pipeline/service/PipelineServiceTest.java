@@ -740,12 +740,47 @@ class PipelineServiceTest extends IntegrationTestBase {
         pipelineService.executePipeline(pipeline.id(), testUserId);
 
     // When
-    List<PipelineExecutionResponse> executions =
-        pipelineService.getExecutionsByPipelineId(pipeline.id());
+    PageResponse<PipelineExecutionResponse> executions =
+        pipelineService.getExecutionsByPipelineId(pipeline.id(), 0, 20);
 
     // Then
-    assertThat(executions).isNotEmpty();
-    assertThat(executions).anyMatch(exec -> exec.id().equals(execution.id()));
+    assertThat(executions.content()).isNotEmpty();
+    assertThat(executions.content()).anyMatch(exec -> exec.id().equals(execution.id()));
+  }
+
+  /** WD-532: 실행 이력은 최신순으로 page/size 만큼만 내려가고 총 건수·총 페이지가 함께 온다. */
+  @Test
+  void getExecutionsByPipelineId_pagesNewestFirstWithTotal() {
+    PipelineDetailResponse pipeline =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest("WD532 paging", "Description", List.of()), testUserId);
+    List<Long> ids = new java.util.ArrayList<>();
+    for (int i = 0; i < 5; i++) {
+      ids.add(pipelineService.executePipeline(pipeline.id(), testUserId).id());
+    }
+    List<Long> newestFirst = ids.stream().sorted(java.util.Comparator.reverseOrder()).toList();
+
+    PageResponse<PipelineExecutionResponse> first =
+        pipelineService.getExecutionsByPipelineId(pipeline.id(), 0, 2);
+    assertThat(first.content())
+        .extracting(PipelineExecutionResponse::id)
+        .containsExactly(newestFirst.get(0), newestFirst.get(1));
+    assertThat(first.totalElements()).isEqualTo(5);
+    assertThat(first.totalPages()).isEqualTo(3);
+    assertThat(first.page()).isZero();
+    assertThat(first.size()).isEqualTo(2);
+
+    PageResponse<PipelineExecutionResponse> last =
+        pipelineService.getExecutionsByPipelineId(pipeline.id(), 2, 2);
+    assertThat(last.content())
+        .extracting(PipelineExecutionResponse::id)
+        .containsExactly(newestFirst.get(4));
+
+    // 범위를 넘은 페이지는 빈 목록이지만 총 건수는 그대로다.
+    PageResponse<PipelineExecutionResponse> beyond =
+        pipelineService.getExecutionsByPipelineId(pipeline.id(), 9, 2);
+    assertThat(beyond.content()).isEmpty();
+    assertThat(beyond.totalElements()).isEqualTo(5);
   }
 
   @Test

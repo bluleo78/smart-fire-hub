@@ -38,8 +38,9 @@ export const pipelinesApi = {
     client.post<void>(`/pipelines/${pipelineId}/steps/${stepId}/full-rebuild`),
   cancelFullRebuild: (pipelineId: number, stepId: number) =>
     client.delete<void>(`/pipelines/${pipelineId}/steps/${stepId}/full-rebuild`),
-  getExecutions: (pipelineId: number) =>
-    client.get<PipelineExecutionResponse[]>(`/pipelines/${pipelineId}/executions`),
+  // 실행 이력 한 페이지(최신순, WD-532) — 예전에는 전체를 배열로 받아 실행이 쌓일수록 응답·DOM 이 끝없이 커졌다.
+  getExecutions: (pipelineId: number, params: { page?: number; size?: number } = {}) =>
+    client.get<PageResponse<PipelineExecutionResponse>>(`/pipelines/${pipelineId}/executions`, { params }),
   getExecutionById: (pipelineId: number, execId: number) =>
     client.get<ExecutionDetailResponse>(`/pipelines/${pipelineId}/executions/${execId}`),
   // 진행 중(PENDING/RUNNING) 실행을 취소한다(WD-153). PENDING 은 즉시 CANCELLED, RUNNING 은 요청만 기록되고

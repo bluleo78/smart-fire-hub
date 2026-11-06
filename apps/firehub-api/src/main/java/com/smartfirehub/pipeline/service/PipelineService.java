@@ -1605,11 +1605,17 @@ public class PipelineService {
   }
 
   @Transactional(readOnly = true)
-  public List<PipelineExecutionResponse> getExecutionsByPipelineId(Long pipelineId) {
-    // Verify pipeline exists
+  public PageResponse<PipelineExecutionResponse> getExecutionsByPipelineId(
+      Long pipelineId, int page, int size) {
+    // 파이프라인 존재 확인
     pipelineRepository.findById(pipelineId).orElseThrow(PipelineNotFoundException::new);
 
-    return executionRepository.findExecutionsByPipelineId(pipelineId);
+    // WD-532: 최신순 한 페이지와 총 건수 — 화면이 페이지 나눔·「총 N건」을 그린다.
+    List<PipelineExecutionResponse> content =
+        executionRepository.findExecutionsByPipelineId(pipelineId, page, size);
+    long totalElements = executionRepository.countExecutionsByPipelineId(pipelineId);
+    int totalPages = (int) Math.ceil((double) totalElements / size);
+    return new PageResponse<>(content, page, size, totalElements, totalPages);
   }
 
   @Transactional(readOnly = true)

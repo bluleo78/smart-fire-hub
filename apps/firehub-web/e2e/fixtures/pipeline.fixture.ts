@@ -103,10 +103,10 @@ export async function setupPipelineEditorMocks(page: Page, pipelineId = 1) {
   await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}`, detail);
 
   // 실행 이력 목록 (완료된 실행 2개)
-  await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/executions`, [
+  await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/executions`, createPageResponse([
     createExecution({ id: 1, pipelineId }),
     createExecution({ id: 2, pipelineId, status: 'FAILED', completedAt: '2024-01-01T00:02:00Z' }),
-  ]);
+  ]));
 
   // 트리거 목록
   await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/triggers`, [

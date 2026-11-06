@@ -96,10 +96,16 @@ public class PipelineController {
 
   @GetMapping("/{id}/executions")
   @RequirePermission("pipeline:read")
-  public ResponseEntity<List<PipelineExecutionResponse>> getExecutionsByPipelineId(
-      @PathVariable Long id) {
-    List<PipelineExecutionResponse> executions = pipelineService.getExecutionsByPipelineId(id);
-    return ResponseEntity.ok(executions);
+  public ResponseEntity<PageResponse<PipelineExecutionResponse>> getExecutionsByPipelineId(
+      @PathVariable Long id,
+      // WD-532: 실행 이력을 page/size 로 잘라 내려준다 — 예전에는 파라미터 없이 전체를 배열로 내려줘, 실행이 쌓일수록(1분 주기면
+      // 하루 1,440건) 응답·화면 DOM 이 끝없이 커졌다. 상한은 파이프라인 목록과 같다.
+      @RequestParam(defaultValue = "0") @jakarta.validation.constraints.Min(0) int page,
+      @RequestParam(defaultValue = "20")
+          @jakarta.validation.constraints.Min(1)
+          @jakarta.validation.constraints.Max(200)
+          int size) {
+    return ResponseEntity.ok(pipelineService.getExecutionsByPipelineId(id, page, size));
   }
 
   @GetMapping("/{id}/executions/{execId}")

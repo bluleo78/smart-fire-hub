@@ -36,7 +36,7 @@ async function setupMocks(
     ...stepOverrides,
   });
   await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1, steps: [step] }));
-  await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+  await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
   await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
   await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
   // 목록에는 볼 수 있는 데이터셋만 — 숨김 출력(77)·입력(78)은 없다

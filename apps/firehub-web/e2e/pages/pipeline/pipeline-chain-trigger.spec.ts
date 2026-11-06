@@ -11,7 +11,7 @@
 import type { Page } from '@playwright/test';
 
 import { createPipelineDetail, createPipelines, createTrigger } from '../../factories/pipeline.factory';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
@@ -57,7 +57,7 @@ async function mockPagedPipelines(page: Page) {
 /** 파이프라인 상세·트리거 탭 공통 모킹 */
 async function setupDetailMocks(page: Page, triggers: ReturnType<typeof createTrigger>[] = []) {
   await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1, name: '파이프라인 1' }));
-  await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+  await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
   await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', triggers);
   await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
 }

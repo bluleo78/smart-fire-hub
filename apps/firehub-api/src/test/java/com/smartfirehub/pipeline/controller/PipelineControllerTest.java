@@ -88,6 +88,46 @@ class PipelineControllerTest {
         .andExpect(jsonPath("$.totalElements").value(1));
   }
 
+  /** WD-532: 실행 이력은 page/size 를 서비스로 넘기고 PageResponse(총 건수 포함)로 답한다. */
+  @Test
+  void getExecutions_passesPageAndSize_returnsPageResponse() throws Exception {
+    PipelineExecutionResponse exec =
+        new PipelineExecutionResponse(
+            7L, 1L, "COMPLETED", "tester", null, null, LocalDateTime.now(), "MANUAL", null, null);
+    when(pipelineService.getExecutionsByPipelineId(1L, 2, 10))
+        .thenReturn(new PageResponse<>(List.of(exec), 2, 10, 21, 3));
+
+    mockMvc
+        .perform(
+            get("/api/v1/pipelines/1/executions")
+                .param("page", "2")
+                .param("size", "10")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.content[0].id").value(7))
+        .andExpect(jsonPath("$.totalElements").value(21))
+        .andExpect(jsonPath("$.totalPages").value(3));
+  }
+
+  /** WD-532: 파라미터가 없으면 첫 페이지 20건, 상한(200)을 넘는 size 는 400 이다. */
+  @Test
+  void getExecutions_defaultsAndUpperBound() throws Exception {
+    when(pipelineService.getExecutionsByPipelineId(1L, 0, 20))
+        .thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
+    mockMvc
+        .perform(get("/api/v1/pipelines/1/executions").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.size").value(20));
+
+    mockMvc
+        .perform(
+            get("/api/v1/pipelines/1/executions")
+                .param("size", "1000")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest());
+    verify(pipelineService, never()).getExecutionsByPipelineId(anyLong(), anyInt(), eq(1000));
+  }
+
   @Test
   void createPipeline_withPermission_returnsCreated() throws Exception {
     CreatePipelineRequest request =

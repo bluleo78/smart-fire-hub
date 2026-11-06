@@ -8,7 +8,7 @@
 
 import { createColumn, createDataset, createDatasetDetail } from '../../factories/dataset.factory';
 import { createExecution, createPipelineDetail, createStep } from '../../factories/pipeline.factory';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
@@ -23,7 +23,7 @@ async function setupMocks(
 ) {
   const detail = createPipelineDetail({ id: 1, steps: [step] });
   await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);
-  await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+  await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
   await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
   await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
   // 출력 데이터셋은 조회자가 볼 수 있는 목록에도 있어야 실제 서버와 같다 — 목록에 없으면 편집기는 "볼 수 없는 출력"(보안 등급)으로
@@ -130,7 +130,7 @@ test.describe('파이프라인 SQL 스텝 증분 처리', () => {
     });
     const detail = createPipelineDetail({ id: 1, steps: [step] });
     await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);
-    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
     await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
     await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
     await mockApi(page, 'GET', '/api/v1/datasets', {
@@ -376,7 +376,7 @@ test.describe('파이프라인 SQL 스텝 증분 처리', () => {
         return route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify(isList ? [createExecution({ id: 474, status: 'COMPLETED' })] : doneDetail),
+          body: JSON.stringify(isList ? createPageResponse([createExecution({ id: 474, status: 'COMPLETED' })]) : doneDetail),
         });
       },
     );
@@ -430,7 +430,7 @@ test.describe('파이프라인 SQL 스텝 증분 처리', () => {
           return route.fulfill({
             status: 200,
             contentType: 'application/json',
-            body: JSON.stringify([createExecution({ id: 475, status })]),
+            body: JSON.stringify(createPageResponse([createExecution({ id: 475, status })])),
           });
         }
         if (listCalls < 2) return route.fallback();

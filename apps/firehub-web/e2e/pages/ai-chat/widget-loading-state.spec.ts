@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 
 import { createDatasetDetail } from '../../factories/dataset.factory';
 import { createPipelineDetail } from '../../factories/pipeline.factory';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
@@ -134,7 +134,7 @@ test.describe('AI 위젯 로딩 상태 (#434)', () => {
       createPipelineDetail({ id: PIPELINE_ID, name: '야간 적재' }),
       3000,
     );
-    await mockApi(page, 'GET', `/api/v1/pipelines/${PIPELINE_ID}/executions`, []);
+    await mockApi(page, 'GET', `/api/v1/pipelines/${PIPELINE_ID}/executions`, createPageResponse([]));
 
     await askInChat(page, '파이프라인 상태 보여줘');
 

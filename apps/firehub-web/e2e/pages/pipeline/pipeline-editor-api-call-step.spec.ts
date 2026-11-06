@@ -9,7 +9,7 @@
  */
 
 import type { ApiConnectionSelectable } from '../../../src/types/api-connection';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
@@ -392,7 +392,7 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
       updatedAt: null,
       updatedBy: null,
     });
-    await mockApi(page, 'GET', '/api/v1/pipelines/999/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/999/executions', createPageResponse([]));
     await mockApi(page, 'GET', '/api/v1/pipelines/999/triggers', []);
     await mockApi(page, 'GET', '/api/v1/pipelines/999/trigger-events', []);
     await mockApi(page, 'GET', '/api/v1/datasets', {
