@@ -828,6 +828,11 @@ public class DatasetService {
         datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "컬럼 관리");
 
+    // WD-531: 필드 목록·데이터 테이블을 읽기 전에 데이터셋 행 잠금으로 같은 데이터셋의 필드 변경을 직렬화한다. 잠금 없이 두면 두 요청이
+    // 각자 데이터 테이블을 읽어(행 수 세기 — 공유 잠금) 쥔 채 서로의 ALTER TABLE(배타 잠금)을 기다려 교착이 나고, 중복 이름 확인도
+    // 읽기와 쓰기 사이 틈으로 둘 다 통과한다. 필드 삭제·이름 바꾸기와 같은 잠금(매핑 저장과도 직렬화)이라 잠금 순서도 같다.
+    mappingReferenceService.lockForColumnChange(datasetId);
+
     DatasetColumnRequest colRequest =
         new DatasetColumnRequest(
             request.columnName(),
@@ -918,6 +923,14 @@ public class DatasetService {
     // 잠그지 않는다.
     if (request.columnName() != null || request.dataType() != null) {
       mappingReferenceService.lockForColumnChange(datasetId);
+    } else if (request.maxLength() != null
+        || request.isNullable() != null
+        || request.isIndexed() != null
+        || request.isPrimaryKey() != null) {
+      // WD-531: 이름·타입 외 변경(길이·NULL 허용·인덱스·기본 키)도 데이터 테이블 DDL 을 낼 수 있어, 같은 데이터셋의 다른 필드 변경
+      // (추가·삭제·기본 키)과 직렬화하도록 데이터셋 행은 잡는다. 매핑과 무관해 매핑·온톨로지 잠금은 잡지 않는다. 표시명·설명만 고치는
+      // 요청은 DDL 이 없어 지금처럼 잠그지 않는다.
+      datasetRepository.lockForColumnChange(datasetId);
     }
 
     DatasetColumnResponse column =
@@ -1204,6 +1217,10 @@ public class DatasetService {
     DatasetResponse dataset =
         datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
     rejectIfDocument(dataset.storageType(), "기본키 변경");
+
+    // WD-531: 기본 키 인덱스를 다시 만드는(DROP·CREATE INDEX) 요청끼리, 그리고 필드 추가·삭제와 겹치면 교착이 났다 — 필드 목록을 읽기
+    // 전에 필드 변경과 같은 데이터셋 행 잠금으로 직렬화한다.
+    mappingReferenceService.lockForColumnChange(datasetId);
 
     List<Long> pkIds = requestedPkIds != null ? requestedPkIds : List.of();
 

@@ -472,4 +472,15 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.message").value("엑셀 파일을 읽을 수 없습니다. 파일이 손상되었거나 엑셀 형식이 아닙니다."))
         .andExpect(content().string(not(containsString("OOXML"))));
   }
+
+  /** DB 교착은 500 이 아니라 409 다시 시도 안내이고, 잠금 원문(프로세스·관계)은 본문에 없다(WD-531). */
+  @Test
+  void deadlock_returns409_retryWithoutLockDetail() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/deadlock"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.status").value(409))
+        .andExpect(jsonPath("$.message").value("다른 변경과 겹쳐 처리하지 못했습니다. 잠시 뒤 다시 시도하세요"))
+        .andExpect(content().string(not(containsString("Process 4242"))));
+  }
 }

@@ -272,4 +272,12 @@ public class ExceptionStubController {
         new IllegalArgumentException(
             "No valid entries or contents found, this is not a valid OOXML (Office Open XML) file"));
   }
+
+  /** DB 교착 피해자(WD-531) — 원문에 잠금 대기 프로세스·SQL 이 실린다. */
+  @GetMapping("/deadlock")
+  public void deadlock() {
+    throw new org.springframework.dao.DeadlockLoserDataAccessException(
+        "ERROR: deadlock detected. Process 4242 waits for AccessExclusiveLock on relation 16384",
+        new java.sql.SQLException("deadlock detected", "40P01"));
+  }
 }
