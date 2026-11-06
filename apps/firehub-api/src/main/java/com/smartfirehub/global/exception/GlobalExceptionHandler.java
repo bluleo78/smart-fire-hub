@@ -69,6 +69,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.util.DisconnectedClientHelper;
 
@@ -845,6 +847,34 @@ public class GlobalExceptionHandler {
         Map.of(ex.getParameterName(), String.format("'%s' 값이 필요합니다.", ex.getParameterName()));
     ErrorResponse response =
         buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
+    return ResponseEntity.badRequest().body(response);
+  }
+
+  /**
+   * 필수 multipart part(예: POST /api/v1/files 의 {@code files})가 빠진 요청은 클라이언트 입력 오류라 400 으로 답한다(WD-521).
+   * 예전에는 전용 처리가 없어 일반 예외로 떨어져 500 「예기치 않은 오류」가 났다 — 쿼리 파라미터 누락(WD-405)과 같은 모양으로 맞춘다.
+   */
+  @ExceptionHandler(MissingServletRequestPartException.class)
+  public ResponseEntity<ErrorResponse> handleMissingRequestPart(
+      MissingServletRequestPartException ex, HttpServletRequest request) {
+    Map<String, String> fieldErrors =
+        Map.of(
+            ex.getRequestPartName(),
+            String.format("'%s' 파일이 필요합니다.", ex.getRequestPartName()));
+    ErrorResponse response =
+        buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
+    return ResponseEntity.badRequest().body(response);
+  }
+
+  /**
+   * multipart 본문을 해석하지 못한 요청(본문 없음·경계 없음 등)도 클라이언트 입력 오류라 400 으로 답한다(WD-521). 크기 초과
+   * ({@link MaxUploadSizeExceededException})는 더 구체적인 전용 처리가 먼저 잡는다.
+   */
+  @ExceptionHandler(MultipartException.class)
+  public ResponseEntity<ErrorResponse> handleMultipart(
+      MultipartException ex, HttpServletRequest request) {
+    ErrorResponse response =
+        buildError(HttpStatus.BAD_REQUEST, "파일 업로드 요청 본문을 해석할 수 없습니다.", null, request);
     return ResponseEntity.badRequest().body(response);
   }
 

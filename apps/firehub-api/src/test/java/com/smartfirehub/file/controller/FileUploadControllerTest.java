@@ -111,4 +111,46 @@ class FileUploadControllerTest {
         .andExpect(
             header().string("Content-Type", org.hamcrest.Matchers.containsString("text/csv")));
   }
+
+  /** POST /files — part 이름이 files 가 아니면(필수 part 누락) 500 이 아니라 400 과 한국어 안내 (WD-521) */
+  @Test
+  void uploadFiles_withoutFilesPart_returnsBadRequest() throws Exception {
+    MockMultipartFile wrong =
+        new MockMultipartFile("foo", "x.html", "text/html", "<p>x</p>".getBytes());
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/files").file(wrong).header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.files").value("'files' 파일이 필요합니다."));
+  }
+
+  /** POST /files — multipart 본문을 해석하지 못하면 500 이 아니라 400 (WD-521) */
+  @Test
+  void uploadFiles_unreadableMultipart_returnsBadRequest() throws Exception {
+    MockMultipartFile file =
+        new MockMultipartFile("files", "test.csv", "text/csv", "a".getBytes());
+    when(fileUploadService.uploadFiles(anyList(), anyLong()))
+        .thenThrow(new org.springframework.web.multipart.MultipartException("no boundary"));
+
+    mockMvc
+        .perform(multipart("/api/v1/files").file(file).header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("파일 업로드 요청 본문을 해석할 수 없습니다."));
+  }
+
+  /** POST /files — 허용하지 않는 형식은 400 과 한국어 문구 (WD-521, 예전 「Unsupported file type: …」) */
+  @Test
+  void uploadFiles_unsupportedType_returnsKoreanMessage() throws Exception {
+    MockMultipartFile file =
+        new MockMultipartFile("files", "x.html", "text/html", "<p>x</p>".getBytes());
+    when(fileUploadService.uploadFiles(anyList(), anyLong()))
+        .thenThrow(
+            new com.smartfirehub.file.exception.UnsupportedUploadFileTypeException("text/html"));
+
+    mockMvc
+        .perform(multipart("/api/v1/files").file(file).header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("지원하지 않는 파일 형식입니다: text/html"));
+  }
 }
