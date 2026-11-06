@@ -343,6 +343,47 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
     await expect(page.getByRole('alertdialog').getByRole('button', { name: '삭제', exact: true })).toHaveAttribute('data-variant', 'destructive');
   });
 
+  // WD-522: 행 삭제 확인 창도 공용 창을 쓰지 않아 더블클릭하면 POST /data/delete 가 두 번(두 번째는 이미 없는 행) 나갔다.
+  test('행 삭제 확인 창의 「삭제」를 더블클릭해도 삭제 요청은 한 번만 나간다 (WD-522)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDataTabMocks(page);
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: datasetDetail.columns,
+            rows: [
+              { _id: 101, id: 1, name: 'Alice', amount: 10 },
+              { _id: 102, id: 2, name: 'Bob', amount: 20 },
+            ],
+            page: 0,
+            size: 50,
+            totalElements: 2,
+            totalPages: 1,
+          }),
+        }),
+    );
+    const del = await mockApi(page, 'POST', '/api/v1/datasets/1/data/delete', { deletedCount: 2 }, { capture: true });
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await expect(page.getByText('Alice')).toBeVisible();
+    await page.getByRole('checkbox', { name: '행 1 선택' }).click();
+    await page.getByRole('checkbox', { name: '행 2 선택' }).click();
+    await page.getByText(/개 행 선택됨/).locator('..').getByRole('button', { name: '삭제' }).click();
+
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제', exact: true }).dblclick();
+
+    await expect(page.getByText('2개 행이 삭제되었습니다.')).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(del.requests).toHaveLength(1);
+    expect(del.requests[0].payload).toEqual({ rowIds: [1, 2] });
+  });
+
   test('컬럼 헤더 정렬 버튼 클릭 시 sortBy 파라미터가 API 에 전달된다', async ({
     authenticatedPage: page,
   }) => {

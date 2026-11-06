@@ -54,7 +54,7 @@ test.describe('역할 상세 — 삭제된 역할 (WD-287)', () => {
 
     await expectBackToListWithKoreanNotice(page);
     // 404 는 일반 로드 실패 문구로 뭉뚱그리지 않는다.
-    await expect(page.getByText('역할 정보를 불러오는데 실패했습니다.')).toHaveCount(0);
+    await expect(page.getByText('역할 정보를 불러오는 데 실패했습니다.')).toHaveCount(0);
   });
 
   test('404 본문에 문구가 없어도 같은 한국어 안내로 대신한다', async ({ authenticatedPage: page }) => {

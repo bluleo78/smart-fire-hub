@@ -165,7 +165,7 @@ test.describe('플랫폼 감사 로그 (WD-4)', () => {
   test('목록 조회가 403 이 아닌 오류로 실패하면 표에 실패 문구를 보인다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', PATH, { status: 500, error: 'Internal Server Error', message: 'boom' }, { status: 500 });
     await page.goto('/audit-logs');
-    await expect(page.getByText('데이터를 불러오는데 실패했습니다.')).toBeVisible();
+    await expect(page.getByText('데이터를 불러오는 데 실패했습니다.')).toBeVisible();
     await expect(page.getByText('이 작업을 수행할 권한이 없습니다.')).toHaveCount(0);
   });
 

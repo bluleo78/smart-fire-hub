@@ -76,7 +76,7 @@ export default function ReportTemplateDetailPage() {
   const templateId = isNew ? 0 : Number(id);
 
   const { data: templateDirect, isLoading: isLoadingDirect, isError: isErrorDirect, error: errorDirect } = useProactiveTemplate(templateId);
-  // 조회 권한 부족(403) — 「불러오는데 실패」 토스트 + 목록 이동 대신 이 화면에 권한 안내를 보이는 기준 (WD-137).
+  // 조회 권한 부족(403) — 「불러오는 데 실패」 토스트 + 목록 이동 대신 이 화면에 권한 안내를 보이는 기준 (WD-137).
   // 목록으로 보내 봐야 목록도 같은 권한으로 막혀 있어, 사용자는 왜 튕겼는지 모른 채 다른 안내를 보게 된다.
   const isForbiddenDirect = isErrorDirect && isForbiddenError(errorDirect);
   const { data: templates = [], isLoading: isLoadingList } = useProactiveTemplates();
@@ -110,7 +110,7 @@ export default function ReportTemplateDetailPage() {
     // 권한 부족은 아래 렌더 분기가 권한 안내로 처리한다 — 토스트·이동을 하지 않는다 (WD-137).
     if (isForbiddenDirect) return;
     if (isErrorDirect) {
-      toast.error('템플릿 정보를 불러오는데 실패했습니다.');
+      toast.error('템플릿 정보를 불러오는 데 실패했습니다.');
       navigate('/ai-insights/templates');
     }
   }, [isErrorDirect, isForbiddenDirect, isNew, navigate]);

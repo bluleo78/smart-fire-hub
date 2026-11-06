@@ -4,7 +4,7 @@ import {
   createDatasetDetail,
   createDatasetReferences,
 } from '../../factories/dataset.factory';
-import { createPageResponse, mockApi } from '../../fixtures/api-mock';
+import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
 
@@ -286,6 +286,34 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     await deleteCapture.waitForRequest();
     await expect(page.getByText(message)).toBeVisible({ timeout: 5000 });
     await expect(page.getByText('필드 삭제에 실패했습니다.')).toHaveCount(0);
+  });
+
+  // WD-522: 필드 삭제 확인 창은 공용 DeleteConfirmDialog 를 쓰지 않아 WD-507 가드가 닿지 않았다 — 더블클릭하면 DELETE 가
+  // 두 번 나가 「필드가 삭제되었습니다.」와 「필드를 찾을 수 없습니다」가 함께 떴다.
+  test('필드 삭제 확인 창의 「삭제」를 더블클릭해도 DELETE 는 한 번만 나가고 오류 토스트가 없다 (WD-522)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+    const del = await mockDeleteOnceThenNotFound(page, '/api/v1/datasets/5/columns/3', '필드를 찾을 수 없습니다: 3');
+
+    await page.goto('/data/datasets/5');
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    const amountRow = page.getByRole('row').filter({ hasText: 'amount' }).first();
+    await amountRow.getByRole('button', { name: '컬럼 삭제' }).click();
+    const confirm = page.getByRole('alertdialog').getByRole('button', { name: '삭제' });
+    await confirm.dblclick();
+
+    await expect(page.getByText('필드가 삭제되었습니다.')).toBeVisible();
+    // 두 번째 요청이 늦게 나가는 경우까지 잡도록 잠시 기다린 뒤 횟수를 본다.
+    await page.waitForTimeout(300);
+    expect(del.requests).toEqual(['/api/v1/datasets/5/columns/3']);
+    await expect(page.getByText('필드를 찾을 수 없습니다')).toHaveCount(0);
+
+    // 가드는 창이 열릴 때마다 새로 시작한다 — 다시 열면 확인 버튼이 켜져 있다.
+    await amountRow.getByRole('button', { name: '컬럼 삭제' }).click();
+    await expect(page.getByRole('alertdialog').getByRole('button', { name: '삭제' })).toBeEnabled();
   });
 
   // WD-186: 매핑 속성 자료형과 맞지 않는 타입 변경도 서버가 409 로 막는다 — 편집 창에서 그 문구가 그대로 보여야 한다.

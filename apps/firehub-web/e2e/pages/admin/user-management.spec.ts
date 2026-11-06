@@ -308,6 +308,21 @@ test.describe('사용자 관리 페이지', () => {
     expect(req.payload).toMatchObject({ active: false });
   });
 
+  // WD-522: 멤버십 정지 확인 창의 「정지」를 더블클릭하면 PUT 이 두 번 나가고 토스트도 두 개 떴다.
+  test('멤버십 정지 확인 창의 「정지」를 더블클릭해도 PUT 은 한 번만 나간다 (WD-522)', async ({ authenticatedPage: page }) => {
+    await setupUserDetailMocks(page, 1);
+    const capture = await mockApi(page, 'PUT', '/api/v1/users/1/active', { id: 1, isActive: false }, { capture: true });
+
+    await page.goto('/admin/users/1');
+    await page.getByRole('switch').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '정지' }).dblclick();
+
+    await capture.waitForRequest();
+    await page.waitForTimeout(300);
+    expect(capture.requests).toHaveLength(1);
+    expect(capture.requests[0].payload).toMatchObject({ active: false });
+  });
+
   // #50: 확인 다이얼로그에서 취소 시 API 호출 없이 닫혀야 한다
   test('활성→비활성 토글 확인 다이얼로그에서 취소 시 API 호출되지 않는다 (#50)', async ({ authenticatedPage: page }) => {
     await setupUserDetailMocks(page, 1);

@@ -140,7 +140,7 @@ export default function TenantDetailPage() {
     return (
       <div className="space-y-4">
         {/* TenantListPage 의 조회 실패 문구와 같은 어휘를 쓴다. */}
-        <p className="text-sm text-muted-foreground">데이터를 불러오는데 실패했습니다.</p>
+        <p className="text-sm text-muted-foreground">데이터를 불러오는 데 실패했습니다.</p>
         <div className="flex items-center gap-3">
           <Button variant="outline" size="sm" onClick={() => void tenantQuery.refetch()}>
             다시 시도
@@ -241,7 +241,7 @@ export default function TenantDetailPage() {
                 </Button>
               }
             >
-              데이터를 불러오는데 실패했습니다.
+              데이터를 불러오는 데 실패했습니다.
             </InlineBanner>
           ) : (
             <>

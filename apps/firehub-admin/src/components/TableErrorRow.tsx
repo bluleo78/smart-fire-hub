@@ -8,7 +8,7 @@ export function TableErrorRow({ colSpan }: { colSpan: number }) {
   return (
     <TableRow>
       <TableCell colSpan={colSpan} className="text-center text-destructive">
-        데이터를 불러오는데 실패했습니다.
+        데이터를 불러오는 데 실패했습니다.
       </TableCell>
     </TableRow>
   );
