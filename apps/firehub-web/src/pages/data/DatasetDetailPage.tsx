@@ -53,6 +53,7 @@ import { useHorizontalOverflow } from '../../hooks/useHorizontalOverflow';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { handleApiError } from '../../lib/api-error';
+import { scrollIntoViewNearest } from '../../lib/scroll-into-view-nearest';
 import { previewQuery } from '../analytics/components/schema-explorer-utils';
 import { ChangeSecurityLevelDialog } from './components/ChangeSecurityLevelDialog';
 import { CloneDatasetDialog } from './components/CloneDatasetDialog';
@@ -173,11 +174,12 @@ export default function DatasetDetailPage() {
     tabsListEl?.scrollBy({ left: direction * tabsListEl.clientWidth * 0.7, behavior: 'smooth' });
   };
   // 활성 탭 끌어오기 — ?tab=history 로 바로 들어오거나 키보드로 뒤쪽 탭을 고르면 가로 스크롤 밖일 수 있다.
-  // inline/block 모두 'nearest': 이미 보이는 탭이면 움직이지 않고, 세로로는 페이지를 건드리지 않는다(기본값 block:'start' 는
-  // 탭을 바꿀 때마다 본문 스크롤을 탭 바 위치로 끌어올린다). scroll-px-10 이 페이드 폭만큼 여유를 둬 활성 탭이 페이드 밑에 숨지 않는다.
+  // 탭 바만 가로로 스크롤하고(이미 보이면 그대로) 본문 세로 스크롤은 건드리지 않는다. scroll-px-10 이 페이드 폭만큼 여유를 둬 활성 탭이 페이드 밑에 숨지 않는다.
+  // scrollIntoView 대신 — 이유는 scrollIntoViewNearest 참고(WD-530)
   useEffect(() => {
-    const active = tabsListEl?.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
-    active?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    if (!tabsListEl) return;
+    const active = tabsListEl.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+    if (active) scrollIntoViewNearest(tabsListEl, active, 'x');
   }, [tabsListEl, activeTab]);
 
   // searchParams가 외부에서 변경될 때(예: DatasetListPage의 ?tab=data 링크) activeTab을 동기화한다 (#170).

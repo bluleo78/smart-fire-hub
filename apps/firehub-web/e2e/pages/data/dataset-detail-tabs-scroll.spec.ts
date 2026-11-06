@@ -1,9 +1,7 @@
 import type { Page } from '@playwright/test';
 
-import { createCategories, createColumn, createDatasetDetail } from '../../factories/dataset.factory';
-import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
+import { setupGeometryDatasetDetailMocks } from '../../fixtures/dataset.fixture';
 
 /**
  * 데이터셋 상세 탭 바 — 가로 넘침 발견성(WD-42 최종 수정).
@@ -13,32 +11,6 @@ import { setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
  * - sm 이상에서 탭이 본문 폭을 넘으면(지도 탭이 있는 표 데이터셋을 640px 에서 열 때 실측 610 > 592px) 가로 스크롤하고,
  *   잘린 쪽에만 페이드 + 화살표 배지를 띄우며, 활성 탭은 스크롤 밖에 있으면 끌어온다.
  */
-
-/** 지도 탭까지 8개 탭이 생기는 표 데이터셋(GEOMETRY 컬럼 포함) + 상세 페이지 부가 호출 모킹. */
-async function setupGeometryDetail(page: Page) {
-  await setupDatasetDetailMocks(page, 1);
-  await mockApi(
-    page,
-    'GET',
-    '/api/v1/datasets/1',
-    createDatasetDetail({
-      id: 1,
-      columns: [
-        createColumn({ id: 1, columnName: 'name', displayName: '이름', dataType: 'TEXT', columnOrder: 0 }),
-        createColumn({
-          id: 2,
-          columnName: 'geom',
-          displayName: '공간',
-          dataType: 'GEOMETRY',
-          isPrimaryKey: false,
-          columnOrder: 1,
-        }),
-      ],
-    }),
-  );
-  await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
-  await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
-}
 
 /** 탭 목록의 스크롤 치수. */
 function listMetrics(page: Page) {
@@ -78,7 +50,7 @@ test.describe('데이터셋 상세 탭 바 — 가로 넘침 발견성', () => {
     authenticatedPage: page,
   }) => {
     await page.setViewportSize({ width: 640, height: 900 });
-    await setupGeometryDetail(page);
+    await setupGeometryDatasetDetailMocks(page);
     await page.goto('/data/datasets/1?tab=history');
 
     const history = page.getByRole('tab', { name: '이력' });
@@ -100,7 +72,7 @@ test.describe('데이터셋 상세 탭 바 — 가로 넘침 발견성', () => {
     authenticatedPage: page,
   }) => {
     await page.setViewportSize({ width: 640, height: 900 });
-    await setupGeometryDetail(page);
+    await setupGeometryDatasetDetailMocks(page);
     await page.goto('/data/datasets/1');
 
     await expect(page.getByRole('tab', { name: '정보' })).toHaveAttribute('data-state', 'active');
@@ -119,7 +91,7 @@ test.describe('데이터셋 상세 탭 바 — 가로 넘침 발견성', () => {
     authenticatedPage: page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await setupGeometryDetail(page);
+    await setupGeometryDatasetDetailMocks(page);
     await page.goto('/data/datasets/1?tab=history');
 
     await expect(page.getByRole('tab', { name: '이력' })).toHaveAttribute('data-state', 'active');
@@ -136,7 +108,7 @@ test.describe('데이터셋 상세 탭 바 — 가로 넘침 발견성', () => {
 
   test('1440px 에서는 넘침이 없어 페이드가 없고 탭 바가 세로 스크롤러가 아니다', async ({ authenticatedPage: page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await setupGeometryDetail(page);
+    await setupGeometryDatasetDetailMocks(page);
     await page.goto('/data/datasets/1?tab=history');
 
     await expect(page.getByRole('tab', { name: '이력' })).toHaveAttribute('data-state', 'active');
