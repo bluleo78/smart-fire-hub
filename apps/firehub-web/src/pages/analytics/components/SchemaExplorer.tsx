@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, MoreHorizontal, Plus, Search, Table2, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { type KeyboardEvent, useMemo, useRef, useState } from 'react';
 
 import {
   DropdownMenu,
@@ -86,6 +86,42 @@ export function SchemaExplorer({ tables, dialect, schema, onInsertAtCursor }: Sc
   const isExpanded = (tableName: string) =>
     expandedTables.has(tableName) || searchExpandedTables.has(tableName);
 
+  /**
+   * 테이블 목록 키보드 이동 — 목록 전체를 Tab 정지 하나로 묶는다(roving tabindex, WD-526).
+   *
+   * 왜: 예전에는 테이블마다 「테이블 이름」「테이블명 삽입」「빠른 쿼리」 버튼이 모두 Tab 을 받아,
+   * 데이터셋이 125개면 SQL 편집기까지 Tab 을 400번 넘게 눌러야 했다. 이제 Tab 은 지금 고른(활성) 테이블 한 줄에만
+   * 멈추고, 테이블 사이는 위·아래 방향키(Home·End)로 옮긴다. 활성 줄의 삽입·빠른 쿼리 버튼과 펼친 컬럼은 그대로
+   * Tab 으로 닿는다.
+   */
+  const [activeTable, setActiveTable] = useState<string | null>(null);
+  const toggleRefs = useRef(new Map<string, HTMLButtonElement>());
+  // 고른 테이블이 검색으로 사라지면 첫 테이블로 돌아가 Tab 정지가 늘 하나 남게 한다.
+  const currentActive =
+    activeTable && filteredTables.some((t) => t.tableName === activeTable)
+      ? activeTable
+      : (filteredTables[0]?.tableName ?? null);
+
+  const moveFocus = (index: number) => {
+    const target = filteredTables[index];
+    if (!target) return;
+    setActiveTable(target.tableName);
+    toggleRefs.current.get(target.tableName)?.focus();
+  };
+
+  const handleTableKeyDown = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const last = filteredTables.length - 1;
+    const next =
+      e.key === 'ArrowDown' ? Math.min(index + 1, last)
+      : e.key === 'ArrowUp' ? Math.max(index - 1, 0)
+      : e.key === 'Home' ? 0
+      : e.key === 'End' ? last
+      : null;
+    if (next === null) return;
+    e.preventDefault();
+    moveFocus(next);
+  };
+
   if (tables.length === 0) {
     return (
       <div className="p-3 text-xs text-muted-foreground">
@@ -123,15 +159,29 @@ export function SchemaExplorer({ tables, dialect, schema, onInsertAtCursor }: Sc
           일치하는 테이블이 없습니다
         </div>
       ) : (
-        filteredTables.map((table) => {
+        <div role="group" aria-label="테이블 목록 — 위·아래 방향키로 테이블을 옮깁니다">
+        {filteredTables.map((table, index) => {
           const tableExpanded = isExpanded(table.tableName);
+          // 활성 줄만 Tab 순서에 남긴다(나머지는 방향키로 닿는다)
+          const tabIndex = table.tableName === currentActive ? 0 : -1;
           return (
             <div key={table.tableName}>
               <div className="group flex items-center gap-1.5 px-3 py-1.5 text-xs hover:bg-muted/50 transition-colors">
                 <button
                   type="button"
+                  ref={(el) => {
+                    if (el) toggleRefs.current.set(table.tableName, el);
+                    else toggleRefs.current.delete(table.tableName);
+                  }}
+                  tabIndex={tabIndex}
+                  aria-expanded={tableExpanded}
                   className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-                  onClick={() => toggleTable(table.tableName)}
+                  onClick={() => {
+                    setActiveTable(table.tableName);
+                    toggleTable(table.tableName);
+                  }}
+                  onFocus={() => setActiveTable(table.tableName)}
+                  onKeyDown={(e) => handleTableKeyDown(e, index)}
                 >
                   {tableExpanded ? (
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
@@ -155,7 +205,9 @@ export function SchemaExplorer({ tables, dialect, schema, onInsertAtCursor }: Sc
                     type="button"
                     className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                     onClick={() => onInsertAtCursor(tableReference(table, dialectInfo))}
+                    tabIndex={tabIndex}
                     title="테이블명 삽입"
+                    aria-label={`${table.tableName} 테이블명 삽입`}
                   >
                     <Plus className="h-3 w-3" />
                   </button>
@@ -164,7 +216,9 @@ export function SchemaExplorer({ tables, dialect, schema, onInsertAtCursor }: Sc
                       <button
                         type="button"
                         className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        tabIndex={tabIndex}
                         title="빠른 쿼리"
+                        aria-label={`${table.tableName} 빠른 쿼리`}
                       >
                         <MoreHorizontal className="h-3 w-3" />
                       </button>
@@ -233,7 +287,8 @@ export function SchemaExplorer({ tables, dialect, schema, onInsertAtCursor }: Sc
               )}
             </div>
           );
-        })
+        })}
+        </div>
       )}
     </div>
   );
