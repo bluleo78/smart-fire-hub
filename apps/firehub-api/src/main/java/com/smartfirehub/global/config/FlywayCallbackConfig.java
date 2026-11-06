@@ -1,5 +1,6 @@
 package com.smartfirehub.global.config;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -21,8 +22,12 @@ import org.springframework.context.annotation.Configuration;
  * <p>{@code FlywayConfigurationCustomizer} 빈을 두 개 등록하면 안 된다 — Flyway 설정 커스터마이저는 순서가 보장되지 않고, {@code
  * configuration.callbacks(...)} 는 "추가"가 아니라 "교체"이므로 나중에 실행되는 커스터마이저가 먼저 등록한 콜백을 통째로 지워버린다. 그래서 콜백을
  * 반드시 하나의 커스터마이저 안에서 같은 {@code callbacks(...)} 호출로 함께 등록한다.
+ *
+ * <p>PG 롤({@code pg_roles}·{@code ALTER ROLE})을 다루므로 플랫폼 DB 가 PostgreSQL 일 때만 켠다(WD-496). Tibero
+ * 플랫폼 DB 에는 이런 롤이 없다.
  */
 @Configuration
+@ConditionalOnPostgresPlatformDb
 public class FlywayCallbackConfig {
 
   @Bean

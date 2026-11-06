@@ -1,6 +1,7 @@
 package com.smartfirehub.global.platformdb.postgres;
 
 import com.smartfirehub.dataset.service.DataExceptionTranslator;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.DbErrorDetail;
 import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import java.sql.SQLException;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Component;
  * DataExceptionTranslator#findServerError} 를 재사용한다(OOS 호출자와 공유하므로 그쪽은 그대로 둔다).
  */
 @Component
+@ConditionalOnPostgresPlatformDb
 public class PostgresPlatformDbErrors implements PlatformDbErrors {
 
   /** PG insufficient_privilege — RLS 정책 위반이 이 SQLState 로 온다. */

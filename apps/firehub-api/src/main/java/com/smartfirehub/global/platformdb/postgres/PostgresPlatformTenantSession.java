@@ -1,5 +1,6 @@
 package com.smartfirehub.global.platformdb.postgres;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.PlatformTenantSession;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Component;
  * {@link #applyToCurrentTransaction} 에서만 호출 시점에 늦게 꺼내 순환을 끊는다.
  */
 @Component
+@ConditionalOnPostgresPlatformDb
 public class PostgresPlatformTenantSession implements PlatformTenantSession {
 
   /** 커넥션에 직접 심는 문장 — 트랜잭션 매니저가 쓰던 것과 같다. */

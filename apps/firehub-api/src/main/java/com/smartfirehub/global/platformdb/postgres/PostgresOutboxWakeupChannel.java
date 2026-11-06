@@ -1,5 +1,6 @@
 package com.smartfirehub.global.platformdb.postgres;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.OutboxWakeupChannel;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -24,6 +25,7 @@ import org.springframework.stereotype.Component;
  * <p><b>테넌트 배선 제외(P2-f)</b>: NOTIFY/LISTEN 만 하고 도메인 행을 읽거나 쓰지 않아 RLS 의 영향을 받지 않는다.
  */
 @Component
+@ConditionalOnPostgresPlatformDb
 public class PostgresOutboxWakeupChannel implements OutboxWakeupChannel {
 
   private static final Logger log = LoggerFactory.getLogger(PostgresOutboxWakeupChannel.class);

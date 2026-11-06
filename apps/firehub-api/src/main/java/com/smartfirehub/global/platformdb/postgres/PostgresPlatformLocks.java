@@ -2,6 +2,7 @@ package com.smartfirehub.global.platformdb.postgres;
 
 import static org.jooq.impl.DSL.val;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -26,6 +27,7 @@ import org.springframework.stereotype.Component;
  * 경로가 같은 잠금 공간에서 직렬화된다.
  */
 @Component
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class PostgresPlatformLocks implements PlatformLocks {
 

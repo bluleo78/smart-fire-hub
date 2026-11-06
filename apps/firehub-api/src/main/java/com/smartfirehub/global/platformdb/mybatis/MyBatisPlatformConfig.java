@@ -1,6 +1,7 @@
 package com.smartfirehub.global.platformdb.mybatis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.platformdb.tibero.TiberoSqlExceptionTranslator;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
 import com.smartfirehub.graphreview.repository.mybatis.MyBatisReviewItemRepository;
 import com.smartfirehub.graphreview.repository.mybatis.ReviewItemMapper;
@@ -18,6 +19,7 @@ import javax.sql.DataSource;
 import org.apache.ibatis.mapping.VendorDatabaseIdProvider;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.apache.ibatis.type.JdbcType;
+import org.mybatis.spring.MyBatisExceptionTranslator;
 import org.mybatis.spring.SqlSessionFactoryBean;
 import org.mybatis.spring.SqlSessionTemplate;
 import org.mybatis.spring.annotation.MapperScan;
@@ -141,7 +143,24 @@ public class MyBatisPlatformConfig {
   @Bean
   public SqlSessionTemplate platformSqlSessionTemplate(
       SqlSessionFactory platformSqlSessionFactory) {
-    return new SqlSessionTemplate(platformSqlSessionFactory);
+    return sqlSessionTemplate(platformSqlSessionFactory);
+  }
+
+  /**
+   * 세션 템플릿 — Tibero 면 예외 번역기를 Tibero 오류 코드 표({@link TiberoSqlExceptionTranslator})로 바꾼다(WD-496).
+   *
+   * <p>기본 번역기는 DataSource 제품명으로 스프링 오류 코드 표를 찾는데 "Tibero" 는 표에 없어, 유일 위반이 {@code
+   * DuplicateKeyException} 이 아니라 일반 무결성 위반으로 번역된다. PostgreSQL 은 기본 번역기 그대로다. 테스트 하네스도 같은 템플릿을 쓰도록
+   * 공개한다.
+   */
+  public static SqlSessionTemplate sqlSessionTemplate(SqlSessionFactory factory) {
+    if (!TIBERO.equals(factory.getConfiguration().getDatabaseId())) {
+      return new SqlSessionTemplate(factory);
+    }
+    return new SqlSessionTemplate(
+        factory,
+        factory.getConfiguration().getDefaultExecutorType(),
+        new MyBatisExceptionTranslator(TiberoSqlExceptionTranslator::create, true));
   }
 
   /**

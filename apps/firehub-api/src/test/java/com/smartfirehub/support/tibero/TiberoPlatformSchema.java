@@ -47,7 +47,8 @@ public final class TiberoPlatformSchema {
     this.account = account;
     DataSource dataSource = account.dataSource();
     this.sqlSessionTemplate =
-        new SqlSessionTemplate(MyBatisPlatformConfig.sqlSessionFactory(dataSource));
+        MyBatisPlatformConfig.sqlSessionTemplate(
+            MyBatisPlatformConfig.sqlSessionFactory(dataSource));
     // 팩토리와 트랜잭션 관리자가 같은 DataSource 인스턴스를 써야 SqlSessionTemplate 이 트랜잭션 커넥션에 참여한다.
     this.transactionManager = new DataSourceTransactionManager(dataSource);
     this.transactionTemplate = new TransactionTemplate(transactionManager);

@@ -1,5 +1,6 @@
 package com.smartfirehub.global.platformdb.postgres;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
 import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import org.springframework.stereotype.Component;
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Component;
  * <p>운영 동작을 바꾸지 않기 위해 항상 true 다.
  */
 @Component
+@ConditionalOnPostgresPlatformDb
 public class PostgresPlatformDbFeatures implements PlatformDbFeatures {
 
   @Override

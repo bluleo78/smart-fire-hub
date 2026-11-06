@@ -1,0 +1,33 @@
+# Tibero 플랫폼 DB 설치본 프로필(WD-496, ADR 0001). 운영 프로필과 함께 켠다: spring.profiles.active=prod,tibero
+# 접속 정보(url·계정·비밀번호)는 운영 프로필·환경변수가 준다. 여기서는 Tibero 라서 달라지는 것만 둔다.
+#
+# 전제:
+# - JVM 시간대 UTC(-Duser.timezone=UTC 또는 TZ=UTC) — 아니면 PlatformDbStartupGuard 가 기동을 멈춘다(ADR 0001 결정 6).
+# - Tibero JDBC 드라이버 jar(libs/tibero*.jar)가 클래스패스에 있어야 한다.
+# - 아직 Tibero 마이그레이션 폴더(WD-490)·리포지토리(WD-491)·테넌트 세션(WD-492)·잠금(WD-493)·아웃박스(WD-495)가 없어
+#   이 프로필만으로는 앱이 뜨지 않는다. 지금 기동하면 Flyway 가 "위치 없음" 으로 먼저 멈춘다 — 의도한 동작이다.
+#
+# 세션 초기화 문장(SESSION_INIT_SQL)·검증 쿼리는 데이터 저장소 Tibero 풀과 같은 값이다(TiberoDialect). 두 곳이 어긋나지 않게
+# TiberoProfileSettingsTest 가 이 파일의 값을 TiberoDialect 상수와 대조한다.
+firehub:
+  platform-db:
+    type: tibero
+
+spring:
+  datasource:
+    # Spring Boot 는 jdbc:tibero URL 에서 드라이버를 추론하지 못한다.
+    driver-class-name: com.tmax.tibero.jdbc.TbDriver
+    hikari:
+      # 검증 서버는 세션 한도가 작다(트라이얼 20개, 다른 팀과 공유). 운영 라이선스에 맞춰 환경변수로 늘린다.
+      maximum-pool-size: ${PLATFORM_DB_POOL_SIZE:5}
+      # 세션 NLS 고정 — 날짜·타임스탬프 기본 형식과 소수점 문자를 고정해 DB·클라이언트 로캘에 따라 암묵 변환 결과가 달라지지 않게 한다.
+      connection-init-sql: "BEGIN EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_DATE_FORMAT=''YYYY-MM-DD'''; EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_TIMESTAMP_FORMAT=''YYYY-MM-DD HH24:MI:SS.FF6'''; EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_NUMERIC_CHARACTERS=''.,'''; END;"
+      connection-test-query: SELECT 1 FROM DUAL
+  flyway:
+    # PG 마이그레이션(db/migration)과 섞이지 않게 형제 폴더를 쓴다 — Flyway 는 위치를 재귀로 훑는다(ADR 0001 결정 2).
+    # {vendor} 자리표시자는 Spring Boot 가 Tibero 를 몰라 그대로 남으므로 쓰지 않는다(WD-488 실측). 폴더는 WD-490 이 만든다.
+    locations: classpath:db/migration-tibero
+    # 위치가 비거나 없으면 "마이그레이션 0개로 성공" 대신 기동 실패로 드러낸다.
+    fail-on-missing-locations: true
+    # 마이그레이션 연결도 앱 풀과 같은 세션 NLS 로 돈다(Flyway 는 자기 연결을 따로 만든다).
+    init-sql: "BEGIN EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_DATE_FORMAT=''YYYY-MM-DD'''; EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_TIMESTAMP_FORMAT=''YYYY-MM-DD HH24:MI:SS.FF6'''; EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_NUMERIC_CHARACTERS=''.,'''; END;"
