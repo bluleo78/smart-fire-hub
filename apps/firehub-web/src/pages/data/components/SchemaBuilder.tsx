@@ -43,6 +43,8 @@ export function SchemaBuilder() {
               size="sm"
               onClick={() => remove(index)}
               disabled={fields.length === 1}
+              // 아이콘(×)뿐인 버튼이라 접근 이름이 없다 — 카드 제목 「칼럼 N」과 같은 번호로 이름을 준다(WD-512)
+              aria-label={`칼럼 ${index + 1} 삭제`}
             >
               <X className="h-4 w-4" />
             </Button>

@@ -217,4 +217,28 @@ test.describe('데이터셋 생성 페이지', () => {
     await page.waitForTimeout(600);
     await expect(page.getByText('사용 가능한 테이블명입니다.')).toBeVisible();
   });
+
+  // WD-512: 칼럼 삭제 「×」 버튼은 아이콘뿐이라 접근 이름이 없었다(axe button-name).
+  // 카드 제목 「칼럼 N」과 같은 번호로 「칼럼 N 삭제」 이름을 갖고, 그 이름으로 찾아 누를 수 있어야 한다.
+  test('칼럼 삭제 버튼은 「칼럼 N 삭제」 이름을 갖고, 칼럼이 하나면 비활성이다 (WD-512)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets/new');
+
+    // 칼럼이 하나뿐이면 삭제할 수 없다
+    await expect(page.getByRole('button', { name: '칼럼 1 삭제' })).toBeDisabled();
+
+    // 칼럼을 하나 더 추가하면 두 삭제 버튼이 번호로 구분된다
+    await page.getByRole('button', { name: '칼럼 추가' }).click();
+    await expect(page.getByRole('heading', { name: '칼럼 2', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '칼럼 2 삭제' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: '칼럼 1 삭제' })).toBeEnabled();
+
+    // 첫 칼럼을 지우면 카드가 하나만 남고, 남은 칼럼의 삭제 버튼은 다시 비활성이다
+    await page.getByRole('button', { name: '칼럼 1 삭제' }).click();
+    await expect(page.getByRole('heading', { name: /^칼럼 \d+$/ })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '칼럼 2 삭제' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '칼럼 1 삭제' })).toBeDisabled();
+  });
 });
