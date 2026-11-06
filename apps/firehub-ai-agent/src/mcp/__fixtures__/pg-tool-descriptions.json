@@ -163,8 +163,9 @@
           "description": "연결 이름 (예: Make.com API)"
         },
         "description": {
-          "description": "연결 설명",
-          "type": "string"
+          "description": "API 연결 설명 (최대 2,000자)",
+          "type": "string",
+          "maxLength": 2000
         },
         "authType": {
           "type": "string",
@@ -332,8 +333,9 @@
           "additionalProperties": false
         },
         "description": {
-          "description": "차트 설명",
-          "type": "string"
+          "description": "차트 설명 (최대 2,000자)",
+          "type": "string",
+          "maxLength": 2000
         },
         "isShared": {
           "description": "다른 사용자와 공유 여부 (기본 false)",
@@ -360,8 +362,9 @@
           "description": "대시보드 이름"
         },
         "description": {
-          "description": "대시보드 설명",
-          "type": "string"
+          "description": "대시보드 설명 (최대 2,000자)",
+          "type": "string",
+          "maxLength": 2000
         },
         "isShared": {
           "description": "다른 사용자와 공유 여부 (기본 false)",
@@ -395,8 +398,9 @@
           "description": "테이블 이름 ([a-z][a-z0-9_]* 패턴, 최대 56자)"
         },
         "description": {
-          "description": "데이터셋 설명",
-          "type": "string"
+          "description": "데이터셋 설명 (최대 2,000자)",
+          "type": "string",
+          "maxLength": 2000
         },
         "categoryId": {
           "description": "카테고리 ID",
@@ -477,8 +481,9 @@
           "description": "파이프라인 이름"
         },
         "description": {
-          "description": "파이프라인 설명",
-          "type": "string"
+          "description": "파이프라인 설명 (최대 2,000자)",
+          "type": "string",
+          "maxLength": 2000
         },
         "steps": {
           "type": "array",
@@ -902,8 +907,9 @@
           "description": "양식 이름"
         },
         "description": {
-          "description": "양식 설명",
-          "type": "string"
+          "description": "리포트 양식 설명 (최대 2,000자)",
+          "type": "string",
+          "maxLength": 2000
         },
         "structure": {
           "type": "object",
@@ -976,8 +982,9 @@
           "description": "저장할 SQL 쿼리 텍스트"
         },
         "description": {
-          "description": "쿼리 설명",
-          "type": "string"
+          "description": "쿼리 설명 (최대 2,000자)",
+          "type": "string",
+          "maxLength": 2000
         },
         "datasetId": {
           "description": "주 데이터셋 ID (선택적, cross-dataset 쿼리는 null)",
@@ -4092,8 +4099,9 @@
           "type": "string"
         },
         "description": {
-          "description": "연결 설명",
-          "type": "string"
+          "description": "API 연결 설명 (최대 2,000자)",
+          "type": "string",
+          "maxLength": 2000
         },
         "authType": {
           "description": "인증 유형 (API_KEY 또는 BEARER)",
@@ -4167,8 +4175,9 @@
           "type": "string"
         },
         "description": {
-          "description": "데이터셋 설명",
-          "type": "string"
+          "description": "데이터셋 설명 (최대 2,000자)",
+          "type": "string",
+          "maxLength": 2000
         },
         "categoryId": {
           "description": "카테고리 ID",
@@ -4196,8 +4205,9 @@
           "description": "파이프라인 이름 (필수)"
         },
         "description": {
-          "description": "파이프라인 설명",
-          "type": "string"
+          "description": "파이프라인 설명 (최대 2,000자)",
+          "type": "string",
+          "maxLength": 2000
         },
         "isActive": {
           "description": "활성화 여부",
@@ -4467,7 +4477,9 @@
           "type": "string"
         },
         "description": {
-          "type": "string"
+          "description": "리포트 양식 설명 (최대 2,000자)",
+          "type": "string",
+          "maxLength": 2000
         },
         "style": {
           "type": "string"
