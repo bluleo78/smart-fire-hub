@@ -114,6 +114,15 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
   const baseId = useId();
   // dirty 마킹 헬퍼 — onChange가 없으면 no-op (이슈 #59)
   const markDirty = useCallback(() => onChange?.(), [onChange]);
+  // 작업 이름·분석 프롬프트는 입력할 때마다 그 칸만 검증한다(WD-500). 폼 mode 가 onSubmit 이라, 공백만 넣으면 「생성/저장」이
+  // isValid 로 꺼져 제출이 없고 errors 도 안 채워져 칸 아래 문구가 안 보였다. 전역 mode 는 크론 등 다른 칸 동작을 바꾸므로 두지 않고,
+  // 포커스 이탈(onBlur)에는 걸지 않는다 — 손대지 않은 빈 새 작업 폼에서 칸만 지나쳐도 빨간 문구가 뜨지 않게.
+  const validatedField = (field: 'name' | 'prompt') => ({
+    onChange: () => {
+      markDirty();
+      void form.trigger(field);
+    },
+  });
   const channels = watch('config.channels');
   const cronExpression = watch('cronExpression');
   const timezone = watch('timezone');
@@ -183,7 +192,8 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
     // shouldValidate: true — 모드 전환 시 prompt를 비워 폼을 invalid 상태로 만들어두므로(#523),
     // 템플릿 생성으로 prompt가 채워진 뒤에는 즉시 재검증해 "생성" 버튼이 다시 활성화되도록 한다.
     setValue('prompt', businessQuestion.trim(), { shouldValidate: true });
-    if (!watch('name')) {
+    // 공백만 든 이름도 비었다고 보고 자동 이름을 채운다(WD-500) — 스키마가 trim 후 거부하므로 그대로 두면 생성이 막힌다.
+    if (!watch('name')?.trim()) {
       // Generate a name from the question (first 30 chars)
       const autoName = businessQuestion.trim().slice(0, 30) + (businessQuestion.trim().length > 30 ? '...' : '');
       // shouldValidate: true — 위 prompt 검증 시점엔 이름이 비어 폼이 invalid 로 판정되므로, 이름을 채운 뒤 다시 검증해야
@@ -479,7 +489,7 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
           id="job-name"
           placeholder="일일 파이프라인 리포트"
           maxLength={200}
-          {...register('name', { onChange: markDirty })}
+          {...register('name', validatedField('name'))}
         />
         {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
       </div>
@@ -569,7 +579,7 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
             placeholder="어제 파이프라인 실행 결과를 분석하고 주요 이슈를 알려주세요."
             // 서버 상한과 같은 길이까지만 입력받는다 — 넘으면 저장이 400 으로 거부된다(WD-425)
             maxLength={MAX_JOB_PROMPT_LENGTH}
-            {...register('prompt', { onChange: markDirty })}
+            {...register('prompt', validatedField('prompt'))}
           />
           {errors.prompt && <p className="text-xs text-destructive">{errors.prompt.message}</p>}
         </div>

@@ -32,11 +32,14 @@ export const anomalyConfigSchema = z.object({
 
 export const proactiveJobSchema = z
   .object({
-    name: z.string().min(1, '작업 이름을 입력하세요').max(200, '이름은 200자 이내여야 합니다'),
+    // trim — 공백만 채운 이름을 빈 값과 같이 거부하고, 앞뒤 공백은 잘라 저장한다(WD-500, user.ts WD-275 와 같은 패턴).
+    name: z.string().trim().min(1, '작업 이름을 입력하세요').max(200, '이름은 200자 이내여야 합니다'),
     // 상한은 서버 CreateProactiveJobRequest.PROMPT_MAX_LENGTH 와 같다(WD-425). 입력란 maxLength 는 타이핑만 막으므로, 리포트에서
     // 프리필한 긴 질문처럼 코드로 채운 값도 저장 전에 여기서 잡는다.
+    // trim — 공백·탭·줄바꿈만 있는 프롬프트는 빈 값으로 보고 거부, 앞뒤 공백은 잘라 저장한다(WD-500).
     prompt: z
       .string()
+      .trim()
       .min(1, '분석 프롬프트를 입력하세요')
       .max(MAX_JOB_PROMPT_LENGTH, '분석 프롬프트는 10,000자 이내여야 합니다'),
     templateId: z.number().nullable().optional(),
