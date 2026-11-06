@@ -1,5 +1,5 @@
 import { createCategories, createDataset, createDatasets } from '../../factories/dataset.factory';
-import { createPageResponse, mockApi, type MockApiCapture } from '../../fixtures/api-mock';
+import { createPageResponse, mockApi, type MockApiCapture, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, mockDatasetReferences, setupDatasetMocks } from '../../fixtures/dataset.fixture';
 
@@ -225,6 +225,27 @@ test.describe('데이터셋 목록 페이지', () => {
     // AlertDialog 열림 확인 — role="alertdialog"
     await expect(page.getByRole('alertdialog')).toBeVisible({ timeout: 3000 });
     await expect(page.getByText('데이터셋 삭제')).toBeVisible();
+  });
+
+  test('확인 창의 「삭제」를 더블클릭해도 DELETE 는 한 번만 나가고 오류 토스트가 뜨지 않는다 (WD-507)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDatasetMocks(page);
+    // 첫 DELETE 204, 두 번째부터 404 — 결함이 있으면 성공·「찾을 수 없습니다」 토스트가 함께 뜬다.
+    const del = await mockDeleteOnceThenNotFound(page, '/api/v1/datasets/1', '데이터셋을 찾을 수 없습니다.');
+    await page.goto('/data/datasets');
+
+    await page.getByRole('row', { name: /데이터셋 1 / }).getByRole('button', { name: '삭제' }).click();
+    const confirm = page.getByRole('alertdialog').getByRole('button', { name: '삭제' });
+    // 참조 집계(WD-143)를 불러오는 동안 꺼져 있을 수 있어 켜진 뒤 누른다.
+    await expect(confirm).toBeEnabled();
+    await confirm.dblclick();
+
+    await expect(page.getByText(/데이터셋 "데이터셋 1".*삭제되었습니다/)).toBeVisible();
+    // 두 번째 요청이 늦게 나가는 경우까지 잡도록 잠시 기다린 뒤 횟수를 본다.
+    await page.waitForTimeout(300);
+    expect(del.requests).toEqual(['/api/v1/datasets/1']);
+    await expect(page.getByText('찾을 수 없습니다')).toHaveCount(0);
   });
 
   test('마지막 페이지의 유일한 항목을 삭제하면 이전 페이지로 이동해 남은 항목을 보여준다 (#549)', async ({ authenticatedPage: page }) => {

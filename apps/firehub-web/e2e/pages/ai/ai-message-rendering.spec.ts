@@ -365,3 +365,89 @@ test.describe('useAIChat — 상태 분기', () => {
     await expect(page.getByText('스트리밍 응답').first()).toBeVisible({ timeout: 10_000 });
   });
 });
+
+// WD-509: 공백 없는 긴 문자열(URL 등)을 보내면 사용자 말풍선이 줄바꿈되지 않아 패널 밖으로 넘치고
+// 메시지 목록이 가로로 넓어지던 회귀를 막는다. 짧은 메시지의 오른쪽 정렬도 함께 확인한다.
+test.describe('MessageBubble — 사용자 말풍선 줄바꿈 (WD-509)', () => {
+  /** 요소에 가로 넘침이 없는지(줄바꿈되어 scrollWidth 가 clientWidth 안에 머무는지) 확인한다 — 1px 반올림 허용. */
+  async function expectNoHorizontalOverflow(locator: import('@playwright/test').Locator) {
+    const size = await locator.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+    expect(size.scroll).toBeLessThanOrEqual(size.client + 1);
+  }
+
+  test('공백 없는 긴 URL 도 말풍선 안에서 줄바꿈되고 목록에 가로 넘침이 없다', async ({ authenticatedPage: page }) => {
+    const longMessage = `https://example.com/${'a'.repeat(300)}`;
+    await sendMessageWithResponse(
+      page,
+      longMessage,
+      [
+        'data: {"type":"init","sessionId":"test-session"}\n\n',
+        'data: {"type":"text","content":"확인했습니다."}\n\n',
+        'data: {"type":"done","inputTokens":10}\n\n',
+      ].join(''),
+    );
+    await expect(page.getByText('확인했습니다.')).toBeVisible({ timeout: 10_000 });
+
+    const panel = page.getByTestId('ai-side-panel');
+    const userText = panel.getByText(longMessage, { exact: true });
+    await expect(userText).toBeVisible();
+
+    // 본문 p 자체가 넘치지 않아야 한다 (줄바꿈되어 scrollWidth 가 clientWidth 안에 머문다)
+    await expectNoHorizontalOverflow(userText);
+
+    // 메시지 목록 스크롤 컨테이너에 가로 넘침이 없어야 한다
+    const scroller = userText.locator('xpath=ancestor::div[contains(@class,"overflow-y-auto")][1]');
+    await expectNoHorizontalOverflow(scroller);
+
+    // 말풍선 오른쪽 끝이 패널 안에 있어야 한다
+    const bubbleBox = await userText.locator('xpath=..').boundingBox();
+    const panelBox = await panel.boundingBox();
+    expect(bubbleBox).not.toBeNull();
+    expect(panelBox).not.toBeNull();
+    expect(bubbleBox!.x + bubbleBox!.width).toBeLessThanOrEqual(panelBox!.x + panelBox!.width + 1);
+  });
+
+  test('AI 답변 속 공백 없는 긴 URL 도 말풍선 안에서 줄바꿈되어 잘리지 않는다', async ({ authenticatedPage: page }) => {
+    const longUrl = `https://example.com/${'b'.repeat(300)}`;
+    await sendMessageWithResponse(
+      page,
+      '링크 알려줘',
+      [
+        'data: {"type":"init","sessionId":"test-session"}\n\n',
+        `data: {"type":"text","content":"링크: ${longUrl}"}\n\n`,
+        'data: {"type":"done","inputTokens":10}\n\n',
+      ].join(''),
+    );
+    const panel = page.getByTestId('ai-side-panel');
+    // 마크다운이 URL 을 링크로 바꿀 수 있어 URL 이 든 가장 안쪽 블록을 잡는다
+    const answer = panel.locator('p', { hasText: longUrl }).last();
+    await expect(answer).toBeVisible({ timeout: 10_000 });
+
+    // 어시스턴트 말풍선은 overflow-hidden 이라 넘치면 잘린다 — 본문 블록이 폭 안에서 줄바꿈되어야 한다
+    await expectNoHorizontalOverflow(answer);
+  });
+
+  test('짧은 사용자 메시지는 목록 오른쪽에 정렬된다', async ({ authenticatedPage: page }) => {
+    await sendMessageWithResponse(
+      page,
+      '짧은 질문',
+      [
+        'data: {"type":"init","sessionId":"test-session"}\n\n',
+        'data: {"type":"text","content":"짧은 답변"}\n\n',
+        'data: {"type":"done","inputTokens":10}\n\n',
+      ].join(''),
+    );
+    await expect(page.getByText('짧은 답변')).toBeVisible({ timeout: 10_000 });
+
+    const userText = page.getByTestId('ai-side-panel').getByText('짧은 질문', { exact: true });
+    const bubble = userText.locator('xpath=..');
+    const row = userText.locator('xpath=../..');
+    const bubbleBox = await bubble.boundingBox();
+    const rowBox = await row.boundingBox();
+    expect(bubbleBox).not.toBeNull();
+    expect(rowBox).not.toBeNull();
+    // 말풍선 오른쪽 끝이 행 오른쪽 끝에 붙어 있고, 행 폭보다 확실히 좁다(내용 폭만큼만 차지)
+    expect(Math.abs(bubbleBox!.x + bubbleBox!.width - (rowBox!.x + rowBox!.width))).toBeLessThanOrEqual(1);
+    expect(bubbleBox!.width).toBeLessThan(rowBox!.width * 0.6);
+  });
+});

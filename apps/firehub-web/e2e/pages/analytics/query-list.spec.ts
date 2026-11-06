@@ -5,7 +5,7 @@ import {
   createSavedQueryListItem,
 } from '../../factories/analytics.factory';
 import { mockDeleteImpact, openFirstRowDeleteDialog, setupQueryListMocks } from '../../fixtures/analytics.fixture';
-import { createPageResponse, mockApi } from '../../fixtures/api-mock';
+import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
@@ -153,6 +153,27 @@ test.describe('쿼리 목록 페이지', () => {
     // DELETE /api/v1/analytics/queries/1 가 실제로 호출되었는지 검증
     const req = await capture.waitForRequest();
     expect(req.url.pathname).toBe('/api/v1/analytics/queries/1');
+  });
+
+  test('확인 창의 「삭제」를 더블클릭해도 DELETE 는 한 번만 나가고 오류 토스트가 뜨지 않는다 (WD-507)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupQueryListMocks(page, 2);
+    // 첫 DELETE 204, 두 번째부터 404 — 결함이 있으면 성공·「찾을 수 없습니다」 토스트가 함께 뜬다.
+    const del = await mockDeleteOnceThenNotFound(page, '/api/v1/analytics/queries/1', '쿼리를 찾을 수 없습니다.');
+    await page.goto('/analytics/queries');
+
+    const dialog = await openFirstRowDeleteDialog(page);
+    const confirm = dialog.getByRole('button', { name: '삭제' });
+    // 영향 범위 조회 등으로 잠시 꺼져 있을 수 있어 켜진 뒤 누른다.
+    await expect(confirm).toBeEnabled();
+    await confirm.dblclick();
+
+    await expect(page.getByText(/쿼리 "저장 쿼리 1".*삭제되었습니다/)).toBeVisible();
+    // 두 번째 요청이 늦게 나가는 경우까지 잡도록 잠시 기다린 뒤 횟수를 본다.
+    await page.waitForTimeout(300);
+    expect(del.requests).toEqual(['/api/v1/analytics/queries/1']);
+    await expect(page.getByText('찾을 수 없습니다')).toHaveCount(0);
   });
 
   test('마지막 페이지의 유일한 항목을 삭제하면 이전 페이지로 이동해 남은 항목을 보여준다 (#549)', async ({ authenticatedPage: page }) => {

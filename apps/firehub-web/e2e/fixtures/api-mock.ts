@@ -143,3 +143,29 @@ export function createPageResponse<T>(
   const totalPages = overrides?.totalPages ?? Math.ceil(totalElements / size);
   return { content, page, size, totalElements, totalPages };
 }
+
+/**
+ * 삭제 API 를 실제 서버처럼 모킹한다(WD-507) — 첫 DELETE 는 204, 같은 항목에 대한 두 번째부터는 404("찾을 수 없습니다").
+ * 확인 버튼 더블클릭으로 DELETE 가 두 번 나가면 성공·오류 토스트가 함께 뜨던 결함을 그대로 재현하기 위해,
+ * 항상 같은 응답을 주는 mockApi 대신 호출 순서에 따라 응답을 바꾼다.
+ * @param path - DELETE 경로(예: /api/v1/analytics/charts/1)
+ * @param notFoundMessage - 두 번째 호출의 404 오류 메시지
+ * @returns 받은 DELETE 요청 경로 목록(호출 횟수 검증용)
+ */
+export async function mockDeleteOnceThenNotFound(page: Page, path: string, notFoundMessage: string) {
+  const requests: string[] = [];
+  await page.route(
+    (url) => url.pathname === path,
+    (route) => {
+      if (route.request().method() !== 'DELETE') return route.fallback();
+      requests.push(new URL(route.request().url()).pathname);
+      if (requests.length === 1) return route.fulfill({ status: 204 });
+      return route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({ status: 404, error: 'Not Found', message: notFoundMessage }),
+      });
+    },
+  );
+  return { requests };
+}

@@ -388,8 +388,10 @@ const MARKDOWN_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['component
 
 function MarkdownContent({ content, hasNeighbor }: { content: string; hasNeighbor: boolean }) {
   return (
+    // wrap-break-word: 답변 속 공백 없는 긴 URL·토큰도 말풍선 폭 안에서 줄바꿈한다(WD-509) — 말풍선은 overflow-hidden 이라 넘치면 잘린다.
+    // break-word 는 최소 폭 계산에 영향을 주지 않아 표·코드 블록의 가로 스크롤 동작은 그대로다. 마크다운 본문에만 둬 도구 카드·차트에는 번지지 않는다.
     <div className={cn(
-      'prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-table:my-0',
+      'prose prose-sm dark:prose-invert max-w-none wrap-break-word prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-table:my-0',
       hasNeighbor && 'mt-2',
     )}>
       <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
@@ -559,7 +561,10 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
                 ))}
               </div>
             )}
-            {message.content && <p className="whitespace-pre-wrap">{message.content}</p>}
+            {/* 공백 없는 긴 URL·토큰은 줄바꿈 지점이 없어 말풍선 밖으로 넘친다(WD-509).
+                anywhere 는 최소 폭까지 줄여 내용 폭만큼 늘던 말풍선이 max-w 안에 머물고,
+                줄에 들어가지 않을 때만 끊으므로 일반 문장 줄바꿈은 그대로다. */}
+            {message.content && <p className="whitespace-pre-wrap wrap-anywhere">{message.content}</p>}
           </>
         ) : (
           <AssistantContent message={message} isStreaming={isStreaming} />
