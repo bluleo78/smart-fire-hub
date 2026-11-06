@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.dto;
 
+import com.smartfirehub.global.validation.DescriptionLimits;
 import com.smartfirehub.global.validation.MaxJsonSize;
 import com.smartfirehub.proactive.validation.ReportSectionLimits;
 import jakarta.validation.constraints.NotBlank;
@@ -15,13 +16,14 @@ import java.util.Map;
  * ReportSectionLimits}). 섹션 맵에는 정해진 필드 외의 값(배열·객체)도 들어올 수 있어, 전체 직렬화 크기에도 상한을 둔다({@link
  * #SECTIONS_MAX_BYTES}).
  *
- * <p>name 은 DB 한도(varchar(200))를 넘으면 500 이 났다 — 400 으로 이유를 알린다(WD-430). 비었거나 공백만 있으면 영어 기본
- * 문구("must not be blank")가 화면에 그대로 보였다 — 수정 요청과 같은 한국어 문구를 쓴다(WD-501).
+ * <p>name 은 DB 한도(varchar(200))를 넘으면 500 이 났다 — 400 으로 이유를 알린다(WD-430). 비었거나 공백만 있으면 영어 기본 문구("must
+ * not be blank")가 화면에 그대로 보였다 — 수정 요청과 같은 한국어 문구를 쓴다(WD-501).
  */
 public record CreateReportTemplateRequest(
     @NotBlank(message = "템플릿 이름은 필수입니다.") @Size(max = 200, message = "이름은 200자 이내여야 합니다.")
         String name,
-    String description,
+    @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.REPORT_TEMPLATE_TOO_LONG)
+        String description,
     @NotNull
         @ReportSectionLimits
         @MaxJsonSize(

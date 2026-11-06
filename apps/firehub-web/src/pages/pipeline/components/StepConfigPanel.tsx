@@ -32,6 +32,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useDataset } from '@/hooks/queries/useDatasets';
 import { formatDate } from '@/lib/formatters';
 import { SYSTEM_COLUMN_NAMES } from '@/lib/validations/dataset';
+import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
 import type { PipelineStepResponse } from '@/types/pipeline';
 
 import type { EditorAction, EditorStep,PipelineEditorState } from '../hooks/usePipelineEditor';
@@ -268,6 +269,7 @@ export default function StepConfigPanel({
                       }
                       placeholder="파이프라인 설명을 입력하세요"
                       rows={4}
+                      maxLength={MAX_DESCRIPTION_LENGTH}
                     />
                   </>
                 )}

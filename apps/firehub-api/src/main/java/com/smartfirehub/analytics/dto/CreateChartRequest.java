@@ -1,5 +1,6 @@
 package com.smartfirehub.analytics.dto;
 
+import com.smartfirehub.global.validation.DescriptionLimits;
 import com.smartfirehub.global.validation.MaxJsonSize;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -9,7 +10,8 @@ import java.util.Map;
 /** 차트 생성 요청. */
 public record CreateChartRequest(
     @NotBlank @Size(max = 200) String name,
-    String description,
+    @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.CHART_TOO_LONG)
+        String description,
     @NotNull Long savedQueryId,
     @NotBlank String chartType,
     @NotNull

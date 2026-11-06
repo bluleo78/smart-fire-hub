@@ -472,7 +472,10 @@ public class DatasetController {
   @PostMapping("/{id}/api-import")
   @RequirePermission("pipeline:write")
   public ResponseEntity<ApiImportResponse> createApiImport(
-      @PathVariable Long id, @RequestBody ApiImportRequest request, Authentication authentication) {
+      @PathVariable Long id,
+      // 파이프라인 설명 상한을 검사한다(WD-520) — 예전에는 검증 없이 받아 긴 설명이 그대로 파이프라인에 저장됐다
+      @Valid @RequestBody ApiImportRequest request,
+      Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     ApiImportResponse response = apiImportService.createApiImport(id, request, userId);
     return ResponseEntity.status(HttpStatus.CREATED).body(response);

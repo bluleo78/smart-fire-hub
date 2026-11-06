@@ -10,6 +10,7 @@ import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { handleApiError } from '@/lib/api-error';
 import { formatDateShort } from '@/lib/formatters';
+import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
 import type { TestConnectionResponse } from '@/types/api-connection';
 
 import { Badge } from '../../components/ui/badge';
@@ -290,6 +291,7 @@ export default function ApiConnectionListPage() {
                       placeholder="연결에 대한 설명"
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
+                      maxLength={MAX_DESCRIPTION_LENGTH}
                     />
                   </div>
 

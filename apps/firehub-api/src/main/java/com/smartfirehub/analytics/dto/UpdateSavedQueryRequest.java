@@ -1,5 +1,6 @@
 package com.smartfirehub.analytics.dto;
 
+import com.smartfirehub.global.validation.DescriptionLimits;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
@@ -16,7 +17,8 @@ import java.time.LocalDateTime;
  */
 public record UpdateSavedQueryRequest(
     @Size(max = 200) @Pattern(regexp = "(?s).*\\S.*", message = "이름을 비울 수 없습니다.") String name,
-    String description,
+    @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.QUERY_TOO_LONG)
+        String description,
     // 길이 상한은 생성과 같다(WD-425 — 이유는 CreateSavedQueryRequest.SQL_MAX_LENGTH)
     @Pattern(regexp = "(?s).*\\S.*", message = "SQL을 비울 수 없습니다.")
         @Size(

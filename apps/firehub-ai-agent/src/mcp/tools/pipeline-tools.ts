@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { descriptionParam } from './shared-schemas.js';
 import type { FireHubApiClient } from '../api-client.js';
 import { DEFAULT_DB_DIALECT, type DbDialect } from '../../agent/db-dialect.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
@@ -61,7 +62,7 @@ export function registerPipelineTools(
       '새 파이프라인을 생성합니다. 스텝(SQL/PYTHON/API_CALL)과 DAG 의존성을 포함합니다.',
       {
         name: z.string().describe('파이프라인 이름'),
-        description: z.string().optional().describe('파이프라인 설명'),
+        description: descriptionParam('파이프라인'),
         steps: z
           .array(
             z.object({
@@ -203,7 +204,7 @@ export function registerPipelineTools(
       {
         id: z.number().describe('파이프라인 ID'),
         name: z.string().describe('파이프라인 이름 (필수)'),
-        description: z.string().optional().describe('파이프라인 설명'),
+        description: descriptionParam('파이프라인'),
         isActive: z.boolean().optional().describe('활성화 여부'),
         steps: z
           .array(

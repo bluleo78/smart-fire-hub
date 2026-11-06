@@ -1,6 +1,6 @@
 import { z } from 'zod/v4';
 import { DEFAULT_DB_DIALECT, type DbDialect } from '../../agent/db-dialect.js';
-import { canvasSchema } from './shared-schemas.js';
+import { canvasSchema, descriptionParam } from './shared-schemas.js';
 import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 
@@ -184,7 +184,7 @@ export function registerAnalyticsTools(
       {
         name: z.string().describe('쿼리 이름'),
         sqlText: z.string().describe('저장할 SQL 쿼리 텍스트'),
-        description: z.string().optional().describe('쿼리 설명'),
+        description: descriptionParam('쿼리'),
         datasetId: z.number().optional().describe('주 데이터셋 ID (선택적, cross-dataset 쿼리는 null)'),
         folder: z.string().optional().describe('폴더/카테고리 (예: "주간보고", "모니터링")'),
         isShared: z.boolean().optional().describe('다른 사용자와 공유 여부 (기본 false)'),
@@ -275,7 +275,7 @@ export function registerAnalyticsTools(
           low: z.string().optional().describe('CANDLESTICK: 저가 컬럼명'),
           close: z.string().optional().describe('CANDLESTICK: 종가 컬럼명'),
         }),
-        description: z.string().optional().describe('차트 설명'),
+        description: descriptionParam('차트'),
         isShared: z.boolean().optional().describe('다른 사용자와 공유 여부 (기본 false)'),
       },
       async (args: {
@@ -325,7 +325,7 @@ export function registerAnalyticsTools(
       '새 대시보드를 생성합니다.',
       {
         name: z.string().describe('대시보드 이름'),
-        description: z.string().optional().describe('대시보드 설명'),
+        description: descriptionParam('대시보드'),
         isShared: z.boolean().optional().describe('다른 사용자와 공유 여부 (기본 false)'),
         autoRefreshSeconds: z.number().int().min(5).max(86400).optional().describe('자동 새로고침 간격(초), 5~86400(24시간). null이면 비활성'),
       },

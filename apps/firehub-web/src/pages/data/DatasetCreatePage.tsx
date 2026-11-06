@@ -15,6 +15,7 @@ import { handleApiError } from '../../lib/api-error';
 import { getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
 import type { CreateDatasetFormData } from '../../lib/validations/dataset';
 import { createDatasetSchema } from '../../lib/validations/dataset';
+import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import { SchemaBuilder } from './components/SchemaBuilder';
 
 export default function DatasetCreatePage() {
@@ -246,11 +247,13 @@ export default function DatasetCreatePage() {
                 )}
               </div>
 
-              <FormField label="설명" htmlFor="description">
+              <FormField label="설명" htmlFor="description" error={form.formState.errors.description?.message}>
                 <Input
                   id="description"
                   {...form.register('description')}
                   placeholder="데이터셋 설명"
+                  maxLength={MAX_DESCRIPTION_LENGTH}
+                  aria-invalid={!!form.formState.errors.description}
                 />
               </FormField>
 

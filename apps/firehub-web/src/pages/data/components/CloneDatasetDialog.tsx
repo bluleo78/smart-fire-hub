@@ -8,6 +8,7 @@ import { z } from 'zod';
 
 import { Button } from '../../../components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
+import { FormField } from '../../../components/ui/form-field';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { Switch } from '../../../components/ui/switch';
@@ -15,10 +16,12 @@ import { Textarea } from '../../../components/ui/textarea';
 import { useCloneDataset } from '../../../hooks/queries/useDatasets';
 import { handleApiError } from '../../../lib/api-error';
 import {
+  datasetDescriptionSchema,
   MAX_TABLE_NAME_LENGTH,
   TABLE_NAME_MAX_MESSAGE,
   tableNameRegex,
 } from '../../../lib/validations/dataset';
+import { MAX_DESCRIPTION_LENGTH } from '../../../lib/validations/description';
 import type { DatasetDetailResponse } from '../../../types/dataset';
 
 interface CloneDatasetDialogProps {
@@ -35,7 +38,7 @@ const cloneSchema = z.object({
     // 형식·길이 상한은 새 데이터셋 생성과 같은 규칙(lib/validations/dataset)을 쓴다.
     .max(MAX_TABLE_NAME_LENGTH, TABLE_NAME_MAX_MESSAGE)
     .regex(tableNameRegex, '영소문자로 시작하며 영소문자, 숫자, _만 허용됩니다.'),
-  description: z.string().optional(),
+  description: datasetDescriptionSchema,
   includeData: z.boolean(),
   includeTags: z.boolean(),
 });
@@ -138,14 +141,22 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
             )}
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="clone-description">설명</Label>
+          {/* 원본에 상한 이전의 긴 설명이 있으면 maxLength 가 자르지 않으므로 zod 문구를 FormField 로 안내한다 */}
+          <FormField
+            label="설명"
+            htmlFor="clone-description"
+            className="space-y-1.5"
+            error={form.formState.errors.description?.message}
+          >
             <Textarea
               id="clone-description"
               {...form.register('description')}
               rows={3}
+              maxLength={MAX_DESCRIPTION_LENGTH}
+              aria-invalid={!!form.formState.errors.description}
+              aria-describedby={form.formState.errors.description ? 'clone-description-error' : undefined}
             />
-          </div>
+          </FormField>
 
           <div className="space-y-3">
             <Controller

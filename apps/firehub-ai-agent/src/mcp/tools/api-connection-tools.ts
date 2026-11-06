@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { descriptionParam } from './shared-schemas.js';
 import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 
@@ -178,7 +179,7 @@ export function registerApiConnectionTools(
       '새 API 연결을 생성합니다. baseUrl은 필수, healthCheckPath는 선택. 인증 정보는 AES-256-GCM 암호화되어 저장됩니다.',
       {
         name: z.string().describe('연결 이름 (예: Make.com API)'),
-        description: z.string().optional().describe('연결 설명'),
+        description: descriptionParam('API 연결'),
         authType: z.enum(['API_KEY', 'BEARER']).describe('인증 유형'),
         authConfig: z
           .record(z.string(), z.string())
@@ -212,7 +213,7 @@ export function registerApiConnectionTools(
       {
         id: z.number().describe('API 연결 ID'),
         name: z.string().optional().describe('연결 이름'),
-        description: z.string().optional().describe('연결 설명'),
+        description: descriptionParam('API 연결'),
         authType: z.string().optional().describe('인증 유형 (API_KEY 또는 BEARER)'),
         authConfig: z.record(z.string(), z.string()).optional().describe('인증 설정'),
         baseUrl: z.string().url().optional().describe('기본 URL 변경'),
