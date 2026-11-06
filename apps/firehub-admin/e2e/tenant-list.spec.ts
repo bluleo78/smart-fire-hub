@@ -142,7 +142,7 @@ test.describe('테넌트 목록', () => {
   test('조회 실패는 표 안에 에러 문구를 그린다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/platform/tenants', {}, { status: 500 });
     await page.goto('/tenants');
-    await expect(page.getByText('데이터를 불러오는데 실패했습니다.')).toBeVisible();
+    await expect(page.getByText('데이터를 불러오는 데 실패했습니다.')).toBeVisible();
   });
 
   test('403 이면 본문을 권한 배너로 교체한다', async ({ authenticatedPage: page }) => {

@@ -34,7 +34,7 @@ test.describe('숫자가 아닌 주소 id (WD-434)', () => {
 
     await page.goto('/pipelines/1/executions/abc');
 
-    await expect(page.getByText('실행 정보를 불러오는데 실패했습니다.')).toBeVisible();
+    await expect(page.getByText('실행 정보를 불러오는 데 실패했습니다.')).toBeVisible();
     await expect(page).toHaveURL(/\/pipelines\/1$/);
     await expect(page.getByText('페이지를 불러오는 중 문제가 발생했습니다')).toHaveCount(0);
     expect(pageErrors.filter((e) => /Too many re-renders/.test(e))).toEqual([]);
@@ -51,7 +51,7 @@ test.describe('숫자가 아닌 주소 id (WD-434)', () => {
 
     await page.goto('/admin/api-connections/abc');
 
-    await expect(page.getByText('연결 정보를 불러오는데 실패했습니다.')).toBeVisible();
+    await expect(page.getByText('연결 정보를 불러오는 데 실패했습니다.')).toBeVisible();
     await expect(page).toHaveURL(/\/admin\/api-connections$/);
     expect(detail.called).toBe(false);
   });

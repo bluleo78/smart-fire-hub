@@ -145,7 +145,7 @@ export default function RoleDetailPage() {
           handleRoleNotFound(error);
           return;
         }
-        toast.error('역할 정보를 불러오는데 실패했습니다.');
+        toast.error('역할 정보를 불러오는 데 실패했습니다.');
         navigate('/admin/roles');
       } finally {
         setIsLoading(false);
@@ -390,7 +390,7 @@ export default function RoleDetailPage() {
           if (!role) return;
           void reloadPermissions(role.id)
             .then(() => setIsPermissionsConflictOpen(false))
-            .catch(() => toast.error('역할 정보를 불러오는데 실패했습니다.'));
+            .catch(() => toast.error('역할 정보를 불러오는 데 실패했습니다.'));
         }}
         onOverwrite={() => void handleSavePermissions(true)}
       />

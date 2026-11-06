@@ -128,7 +128,7 @@ test.describe('스마트 작업 — 조회 권한 없는 사용자 (WD-137)', ()
     await expect(page.getByTestId('template-forbidden')).toHaveText(notice('리포트 양식을'));
     // 예전에는 토스트 후 목록으로 튕겼다 — 머물러 있어야 하고 실패 토스트도 없어야 한다
     await expect(page).toHaveURL(/\/ai-insights\/templates\/1$/);
-    await expect(page.getByText('템플릿 정보를 불러오는데 실패했습니다.')).toHaveCount(0);
+    await expect(page.getByText('템플릿 정보를 불러오는 데 실패했습니다.')).toHaveCount(0);
     await expect(page.getByText('존재하지 않는 템플릿입니다.')).toHaveCount(0);
     for (const name of ['편집', '삭제', '복제']) {
       await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);

@@ -115,7 +115,7 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
       metaRefreshedRef.current?.();
     } catch {
       setLoadFailed(true);
-      toast.error('설정을 불러오는데 실패했습니다.');
+      toast.error('설정을 불러오는 데 실패했습니다.');
     } finally {
       setIsLoading(false);
     }

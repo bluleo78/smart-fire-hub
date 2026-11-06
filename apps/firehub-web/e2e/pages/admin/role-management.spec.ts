@@ -505,7 +505,7 @@ test.describe('역할 관리 페이지', () => {
     await page.goto('/admin/roles/1');
 
     // 에러 토스트 확인 (line 61) — Sonner는 동일 메시지 토스트를 중복 렌더링할 수 있으므로 first() 사용
-    await expect(page.getByText('역할 정보를 불러오는데 실패했습니다.').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('역할 정보를 불러오는 데 실패했습니다.').first()).toBeVisible({ timeout: 5000 });
   });
 
   test('생성 실패 후 이름을 수정하면 서버 중복 에러 메시지가 지워진다 (#558)', async ({

@@ -750,7 +750,7 @@ export default function AuditLogListPage() {
             ) : isError ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-center text-destructive">
-                  데이터를 불러오는데 실패했습니다.
+                  데이터를 불러오는 데 실패했습니다.
                 </TableCell>
               </TableRow>
             ) : logs && logs.content.length > 0 ? (

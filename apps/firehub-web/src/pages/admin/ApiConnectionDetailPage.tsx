@@ -93,7 +93,7 @@ export default function ApiConnectionDetailPage() {
   useEffect(() => {
     if (!isError && !isInvalidId) return;
     // 숫자가 아닌 id 는 마운트 즉시 알린다 — 개발 모드 StrictMode 의 이중 실행에도 토스트가 하나만 남게 id 를 준다
-    toast.error('연결 정보를 불러오는데 실패했습니다.', { id: 'api-connection-not-found' });
+    toast.error('연결 정보를 불러오는 데 실패했습니다.', { id: 'api-connection-not-found' });
     navigate('/admin/api-connections');
   }, [isError, isInvalidId, navigate]);
 

@@ -1158,7 +1158,7 @@ test.describe('API 연결 페이지', () => {
     await page.goto('/admin/api-connections/9999');
 
     // toast 에러 메시지 확인
-    await expect(page.getByText('연결 정보를 불러오는데 실패했습니다.')).toBeVisible();
+    await expect(page.getByText('연결 정보를 불러오는 데 실패했습니다.')).toBeVisible();
 
     // 목록 페이지로 리다이렉트되어야 한다
     await expect(page).toHaveURL(/\/admin\/api-connections$/);

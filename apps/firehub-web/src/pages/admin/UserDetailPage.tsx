@@ -117,7 +117,7 @@ export default function UserDetailPage() {
         // 조회가 겹쳐(개발 StrictMode 의 effect 두 번 실행 등) 실패해도 토스트는 하나만 보이게 id 를 준다.
         const toastId = 'user-detail-load-failed';
         if (!leaveIfMemberGone(error, toastId)) {
-          toast.error('사용자 정보를 불러오는데 실패했습니다.', { id: toastId });
+          toast.error('사용자 정보를 불러오는 데 실패했습니다.', { id: toastId });
           navigate(listPath);
         }
       } finally {
@@ -381,7 +381,7 @@ export default function UserDetailPage() {
             .then(() => setIsRolesConflictOpen(false))
             .catch(error => {
               // 그사이 제거된 멤버면 충돌 창째 목록으로 돌아간다(WD-288)
-              if (!leaveIfMemberGone(error)) toast.error('사용자 정보를 불러오는데 실패했습니다.');
+              if (!leaveIfMemberGone(error)) toast.error('사용자 정보를 불러오는 데 실패했습니다.');
             });
         }}
         onOverwrite={() => void handleSaveRoles(true)}

@@ -119,7 +119,7 @@ export default function PipelineEditorPage() {
     // 파이프라인 id 부터 틀리면 아래 「파이프라인을 찾을 수 없습니다」가 맡는다(돌아갈 파이프라인이 없다)
     if (pipelineId === undefined || (!executionError && !isInvalidExecutionId)) return;
     // 숫자가 아닌 id 는 마운트 즉시 알린다 — 개발 모드 StrictMode 의 이중 실행에도 토스트가 하나만 남게 id 를 준다
-    toast.error('실행 정보를 불러오는데 실패했습니다.', { id: 'pipeline-execution-not-found' });
+    toast.error('실행 정보를 불러오는 데 실패했습니다.', { id: 'pipeline-execution-not-found' });
     navigate(`/pipelines/${pipelineId}`);
   }, [executionError, isInvalidExecutionId, navigate, pipelineId]);
 

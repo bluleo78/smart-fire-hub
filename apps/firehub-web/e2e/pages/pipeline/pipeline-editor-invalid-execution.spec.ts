@@ -23,8 +23,8 @@ test.describe('PipelineEditorPage — 존재하지 않는 실행 ID 접근 에�
     // 존재하지 않는 실행 ID URL로 직접 접근 시도
     await page.goto('/pipelines/1/executions/9999');
 
-    // toast.error 메시지 '실행 정보를 불러오는데 실패했습니다.'가 표시되어야 한다
-    await expect(page.getByText('실행 정보를 불러오는데 실패했습니다.')).toBeVisible({
+    // toast.error 메시지 '실행 정보를 불러오는 데 실패했습니다.'가 표시되어야 한다
+    await expect(page.getByText('실행 정보를 불러오는 데 실패했습니다.')).toBeVisible({
       timeout: 5000,
     });
 

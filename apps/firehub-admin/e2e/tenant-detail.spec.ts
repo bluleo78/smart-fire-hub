@@ -270,7 +270,7 @@ test.describe('테넌트 상세', () => {
     await page.goto('/tenants/1');
 
     await expect(page.getByText('기본 정보')).toBeVisible();
-    await expect(page.getByText('데이터를 불러오는데 실패했습니다.')).toBeVisible();
+    await expect(page.getByText('데이터를 불러오는 데 실패했습니다.')).toBeVisible();
     // "불러오지 못함"과 "진짜 0명"은 다른 화면이어야 한다 — 대조군은 위 '멤버 0명이면 빈
     // 상태를 그린다' 테스트(같은 파일)가 200+[] 로 고정한다.
     await expect(page.getByText('멤버가 없습니다.')).not.toBeVisible();
@@ -305,7 +305,7 @@ test.describe('테넌트 상세', () => {
     await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
     await page.goto('/tenants/1');
 
-    await expect(page.getByText('데이터를 불러오는데 실패했습니다.')).toBeVisible();
+    await expect(page.getByText('데이터를 불러오는 데 실패했습니다.')).toBeVisible();
     // 404("없음")와는 다른 문구여야 한다 — 대조군은 위 '404 는 본문 전체를 교체한다' 테스트
     // (같은 파일)가 고정한다.
     await expect(page.getByText('테넌트를 찾을 수 없습니다.')).not.toBeVisible();
