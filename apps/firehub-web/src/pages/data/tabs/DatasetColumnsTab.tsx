@@ -10,7 +10,6 @@ import React, { lazy, Suspense } from 'react';
 
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -20,6 +19,7 @@ import {
 } from '../../../components/ui/alert-dialog';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
+import { OnceAlertDialogAction } from '../../../components/ui/once-alert-dialog-action';
 import {
   Table,
   TableBody,
@@ -354,9 +354,10 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
             )}
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
-            <AlertDialogAction onClick={handlers.deleteColumn} variant="destructive">
+            {/* WD-522: 더블클릭해도 DELETE 는 한 번만 — 창이 열린 동안 확인을 한 번만 받는다 */}
+            <OnceAlertDialogAction onClick={handlers.deleteColumn} variant="destructive">
               삭제
-            </AlertDialogAction>
+            </OnceAlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -15,6 +14,7 @@ import {
 } from '../../../components/ui/alert-dialog';
 import { Card } from '../../../components/ui/card';
 import { Checkbox } from '../../../components/ui/checkbox';
+import { OnceAlertDialogAction } from '../../../components/ui/once-alert-dialog-action';
 import { useDatasetData, useDatasetPermissions, useDeleteDataRows } from '../../../hooks/queries/useDatasets';
 import { useColumnStatsMap } from '../../../hooks/useColumnStatsMap';
 import { toCsvCell } from '../../../lib/csv';
@@ -445,9 +445,10 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
             {/* WD-13: 색 className 흉내 대신 variant — 다크 모드·호버 토큰이 Button destructive 와 같아진다 */}
-            <AlertDialogAction variant="destructive" onClick={handleDeleteConfirm}>
+            {/* WD-522: 더블클릭해도 행 삭제 요청은 한 번만 — 창이 열린 동안 확인을 한 번만 받는다 */}
+            <OnceAlertDialogAction variant="destructive" onClick={handleDeleteConfirm}>
               삭제
-            </AlertDialogAction>
+            </OnceAlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

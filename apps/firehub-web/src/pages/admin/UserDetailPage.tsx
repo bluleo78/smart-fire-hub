@@ -9,7 +9,6 @@ import { usersApi } from '../../api/users';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -23,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { Checkbox } from '../../components/ui/checkbox';
 import { InlineBanner } from '../../components/ui/inline-banner';
 import { Label } from '../../components/ui/label';
+import { OnceAlertDialogAction } from '../../components/ui/once-alert-dialog-action';
 import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Switch } from '../../components/ui/switch';
@@ -302,7 +302,8 @@ export default function UserDetailPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
-            <AlertDialogAction
+            {/* WD-522: 더블클릭해도 정지 요청은 한 번만 — 창이 열린 동안 확인을 한 번만 받는다 */}
+            <OnceAlertDialogAction
               variant="destructive"
               onClick={() => {
                 setIsDeactivateDialogOpen(false);
@@ -310,7 +311,7 @@ export default function UserDetailPage() {
               }}
             >
               정지
-            </AlertDialogAction>
+            </OnceAlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -398,7 +399,8 @@ export default function UserDetailPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
-            <AlertDialogAction
+            {/* WD-522: 더블클릭해도 역할 저장 요청은 한 번만 */}
+            <OnceAlertDialogAction
               variant="destructive"
               onClick={() => {
                 setIsClearRolesDialogOpen(false);
@@ -406,7 +408,7 @@ export default function UserDetailPage() {
               }}
             >
               역할 해제
-            </AlertDialogAction>
+            </OnceAlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
