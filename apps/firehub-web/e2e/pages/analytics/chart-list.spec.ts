@@ -222,8 +222,8 @@ test.describe('차트 목록 페이지', () => {
     // 검색 결과 반영 대기
     await expect(page.getByText('검색된 차트')).toBeVisible();
 
-    // search 파라미터가 전달되었는지 확인
-    expect(searchCalls.some((s) => s.includes('검색된'))).toBe(true);
+    // search 파라미터가 전달되었는지 확인 — 목록 요청은 300ms 디바운스 뒤에 나가므로 도착을 기다린다 (WD-513)
+    await expect.poll(() => searchCalls.some((s) => s.includes('검색된'))).toBe(true);
   });
 
   test('「내 차트」 탭은 mineOnly=true 만, 「공유됨」 탭은 sharedOnly=true 만 API 에 전달된다 (WD-328)', async ({

@@ -309,8 +309,8 @@ test.describe('대시보드 목록 페이지', () => {
     // 검색 결과 반영 대기
     await expect(page.getByText('검색된 대시보드')).toBeVisible();
 
-    // search 파라미터가 전달되었는지 확인
-    expect(searchCalls.some((s) => s.includes('검색된'))).toBe(true);
+    // search 파라미터가 전달되었는지 확인 — 목록 요청은 300ms 디바운스 뒤에 나가므로 도착을 기다린다 (WD-513)
+    await expect.poll(() => searchCalls.some((s) => s.includes('검색된'))).toBe(true);
   });
 
   test('자동 갱신 초가 설정된 대시보드에 갱신 배지가 표시된다', async ({ authenticatedPage: page }) => {
