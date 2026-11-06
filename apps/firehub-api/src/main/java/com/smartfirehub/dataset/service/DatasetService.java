@@ -486,8 +486,9 @@ public class DatasetService {
     // dataset.table_name 은 메타데이터 식별자로만 쓰이며, 컬럼 영속화/물리 테이블 생성을 건너뛴다.
     if (isTableBacked(request.storageType())) {
       // TABLE 데이터셋만 동적 data.<table> 물리 테이블과 컬럼을 만든다.
-      withColumnNameUniqueAs409(() -> columnRepository.saveBatch(dataset.id(), request.columns()));
-      dataTableService.createTable(request.tableName(), request.columns());
+      // 위에서 정규화한 columns 를 쓴다 — request.columns() 는 생략 시 null 이라 500(NPE)이 났다(WD-510). 빈 목록은 columns: [] 와 같이 생성된다.
+      withColumnNameUniqueAs409(() -> columnRepository.saveBatch(dataset.id(), columns));
+      dataTableService.createTable(request.tableName(), columns);
     } else if (FILE_TYPE.equals(request.storageType())) {
       // FILE 데이터셋은 MinIO 버킷/프리픽스 매핑만 저장한다(개별 파일 행 없음).
       String bucket =
