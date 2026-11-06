@@ -22,6 +22,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useDisableProactiveJob, useExecuteProactiveJob, useProactiveJobs, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
+import { useJobToggleLock } from '@/hooks/useJobToggleLock';
 import { extractApiError, handleApiError, isForbiddenError, isJobAlreadyRunning } from '@/lib/api-error';
 import { cronToLabel } from '@/lib/cron-label';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
@@ -90,18 +91,23 @@ export default function ProactiveJobListPage() {
       <ProactiveWriteNotice subject="스마트 작업" testId="jobs-readonly-notice" />
     ) : null;
 
+  // 행별 활성 전환 잠금(WD-511) — 요청 중인 행은 요청한 값을 바로 보이고 잠겨, 더블클릭이 끄기 요청을 두 번 보내지 않는다.
+  const toggleLock = useJobToggleLock();
+
   const handleToggle = (job: ProactiveJob, enabled: boolean) => {
-    const callbacks = {
-      onSuccess: () => toast.success(`작업이 ${enabled ? '활성화' : '비활성화'}되었습니다.`),
-      onError: () => toast.error('상태 변경에 실패했습니다.'),
-    };
     // 끄기는 끄기 전용 API(읽기 권한)로 — 쓰기 권한을 잃은 작성자도 자기 작업을 끌 수 있어야 한다(WD-192).
     // 켜기는 자동 실행을 늘리므로 여전히 쓰기 권한이 필요한 PUT 으로만 한다.
-    if (!enabled) {
-      disableMutation.mutate(job.id, callbacks);
-    } else {
-      updateMutation.mutate({ id: job.id, data: { enabled } }, callbacks);
-    }
+    // mutate 콜백은 마지막 호출에만 불리므로 행마다 자기 결과를 받도록 mutateAsync 를 쓴다(WD-511).
+    toggleLock.run(job.id, enabled, () =>
+      (!enabled
+        ? disableMutation.mutateAsync(job.id)
+        : updateMutation.mutateAsync({ id: job.id, data: { enabled } })
+      ).then(
+        () => toast.success(`작업이 ${enabled ? '활성화' : '비활성화'}되었습니다.`),
+        // 서버 사유(권한 없음 403 등)가 있으면 그대로 보여 준다(WD-511 리뷰) — 다른 행 동작(복제·실행)과 같은 처리
+        (err) => handleApiError(err, '상태 변경에 실패했습니다.'),
+      ),
+    );
   };
 
   const handleClone = (e: React.MouseEvent, job: ProactiveJob) => {
@@ -311,9 +317,14 @@ export default function ProactiveJobListPage() {
                         쓰기 권한을 잃은 작성자가 자기 작업을 정리할 수 있어야 하기 때문이다(WD-192).
                         비활성 스위치를 눌렀을 때 클릭이 행으로 새어 상세로 이동하지 않도록 감싼 span 에서 막는다. */}
                     <span className="inline-flex" onClick={(e) => e.stopPropagation()}>
+                      {/* 전환 요청이 진행 중이면 요청한 값을 바로 보이고 잠근다(WD-511) — 낡은 checked 로 다시 눌려 중복 요청이 나가지 않게. */}
                       <Switch
-                        checked={job.enabled}
+                        checked={toggleLock.requestedValue(job.id) ?? job.enabled}
                         aria-label={`${job.name} 활성화`}
+                        aria-busy={toggleLock.isPending(job.id)}
+                        // 요청 중에는 disabled 대신 aria-disabled 로 잠근다(WD-511 리뷰) — disabled 는 포커스를 빼앗아 키보드 사용자가
+                        // 방금 누른 행에서 밀려난다. 클릭은 useJobToggleLock 이 무시하므로 중복 요청은 그대로 막힌다.
+                        aria-disabled={toggleLock.isPending(job.id) || undefined}
                         disabled={!canWrite && !job.enabled}
                         title={canWrite || job.enabled ? undefined : '스마트 작업 쓰기 권한이 있어야 켤 수 있습니다'}
                         onCheckedChange={(checked) => handleToggle(job, checked)}
