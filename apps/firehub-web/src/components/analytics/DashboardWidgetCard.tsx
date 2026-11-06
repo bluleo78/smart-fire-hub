@@ -225,8 +225,10 @@ export function DashboardWidgetCard({
   return (
     // 인쇄(WD-424): 위젯 하나가 두 쪽으로 갈리지 않게 한다(쌓기 보기처럼 흐름 배치일 때 효과가 있다)
     <Card ref={containerRef} className="h-full py-2 gap-1 overflow-hidden flex flex-col print:break-inside-avoid">
-      <CardHeader className={`px-3 pb-0 ${isEditing ? 'drag-handle cursor-grab active:cursor-grabbing' : ''}`}>
-        <div className="flex items-center justify-between gap-1">
+      {/* WD-528: CardHeader 는 grid 라 열 폭이 글자 폭(max-content)까지 늘어나 긴 제목이 카드 밖으로 잘렸다(줄임표 없음).
+          열을 minmax(0,1fr)(grid-cols-1)로, 안쪽 줄을 min-w-0 으로 묶어 제목이 카드 폭 안에서 줄임표로 줄어들게 한다. */}
+      <CardHeader className={`grid-cols-1 px-3 pb-0 ${isEditing ? 'drag-handle cursor-grab active:cursor-grabbing' : ''}`}>
+        <div className="flex min-w-0 items-center justify-between gap-1">
           {/* 키보드 이동 손잡이(WD-324) — 머리글 끌기·모서리 크기 조절은 마우스로만 되므로, Tab 으로 닿는 버튼에서
               화살표로 옮기고 Shift+화살표로 크기를 바꾼다(WCAG 2.1.1·2.5.7). 머리글 안이라 마우스로 끌어도 그대로 끌린다. */}
           {/* 편집용 손잡이·제거 버튼은 인쇄에서 숨긴다(WD-424) */}
@@ -249,7 +251,8 @@ export function DashboardWidgetCard({
             </>
           )}
           {/* WD-423: 위젯 제목을 제목(heading)으로 둬 스크린리더의 제목 탐색으로 위젯 사이를 오갈 수 있게 한다(페이지 H1 = 대시보드 이름 아래 단계). */}
-          <CardTitle role="heading" aria-level={2} className="text-xs font-medium truncate flex-1 min-w-0">
+          {/* 잘린 제목의 전체 이름은 title(마우스 올림)로 본다(WD-528) */}
+          <CardTitle role="heading" aria-level={2} className="text-xs font-medium truncate flex-1 min-w-0" title={title}>
             {title}
           </CardTitle>
           {isEditing && onRemove && (
