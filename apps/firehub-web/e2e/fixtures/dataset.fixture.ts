@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 
 import {
   createCategories,
+  createColumn,
   createDatasetDetail,
   createDatasetReferences,
   createDatasets,
@@ -89,6 +90,36 @@ export async function setupDatasetDetailMocks(page: Page, datasetId = 1) {
   });
   await mockApi(page, 'GET', `/api/v1/datasets/${datasetId}/stats`, []);
   await mockApi(page, 'GET', `/api/v1/datasets/${datasetId}/queries`, createPageResponse([]));
+}
+
+/**
+ * 지도 탭까지 8개 탭이 생기는 표 데이터셋(GEOMETRY 컬럼 포함) 상세 페이지 API 모킹(id 1).
+ * - 상세 기본 모킹에 GEOMETRY 컬럼을 가진 상세 응답·카테고리·태그를 덮어쓴다.
+ * - 640px 등에서 탭 바가 가로로 넘치는 조건을 만들 때 쓴다(dataset-detail-tabs-scroll, layout-skip-link — WD-42·WD-530).
+ */
+export async function setupGeometryDatasetDetailMocks(page: Page) {
+  await setupDatasetDetailMocks(page, 1);
+  await mockApi(
+    page,
+    'GET',
+    '/api/v1/datasets/1',
+    createDatasetDetail({
+      id: 1,
+      columns: [
+        createColumn({ id: 1, columnName: 'name', displayName: '이름', dataType: 'TEXT', columnOrder: 0 }),
+        createColumn({
+          id: 2,
+          columnName: 'geom',
+          displayName: '공간',
+          dataType: 'GEOMETRY',
+          isPrimaryKey: false,
+          columnOrder: 1,
+        }),
+      ],
+    }),
+  );
+  await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+  await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
 }
 
 /**

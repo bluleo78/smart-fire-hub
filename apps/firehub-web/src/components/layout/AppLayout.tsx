@@ -338,6 +338,37 @@ function AppLayoutInner() {
   const showFullscreen = aiOpen && aiMode === 'fullscreen';
   const showNative = aiOpen && aiMode === 'native';
 
+  // 본문(main)을 그리는지 — AI native·전체 화면 모드에서는 그 화면이 본문 자리를 대신한다.
+  const showMain = !showNative && !showFullscreen;
+  // 건너뛰기 링크(WD-530)는 본문이 있고 보일 때만 그린다 — 모바일(lg 미만) AI 사이드 패널은 fixed inset-0 덮개라 본문을 가리고,
+  // 열린 모바일 서랍(WD-508)에서는 포커스 가둠을 깨지 않게 뺀다.
+  const showSkipLink = showMain && !(!isDesktop && aiOpen && aiMode === 'side') && !drawerOpen;
+
+  /**
+   * 「본문으로 건너뛰기」 링크 활성화(WD-530, WCAG 2.4.1 Bypass Blocks) — 사이드바 컨트롤 17~24개를 매 화면 Tab 으로 지나야
+   * 본문에 닿던 문제를 막는다. 링크는 셸의 첫 포커스 요소라 첫 Tab 에 닿고, 평소엔 sr-only 로 숨었다가 포커스되면 왼쪽 위에 뜬다.
+   *
+   * 기본 해시 이동 대신 본문(main)에 직접 포커스를 준다.
+   * 해시 이동은 URL 에 #main-content 를 남겨 BrowserRouter 위치·스크롤 복원(useScrollRestoration)과 엉키고,
+   * 스크롤 컨테이너가 window 가 아니라 main 이라 포커스가 확실히 옮겨진다는 보장도 없다. href 는 의미·JS 실패 대비로 둔다.
+   *
+   * main 에 tabindex=-1 을 늘 두지 않고 이때만 붙였다가 포커스가 떠나면(blur) 뗀다 — 늘 두면 본문 빈 곳을 마우스로 누를 때마다
+   * main 이 포커스를 가져가 activeElement 가 body 에서 바뀌고(단축키·포커스 복원 로직이 엉킬 수 있다), 그럴 이유가 없다.
+   * 수정키·가운데 클릭(새 탭 등 브라우저 기본 동작)은 가로채지 않는다. 키보드 Enter 는 button 0 으로 들어와 그대로 처리된다.
+   */
+  const handleSkipToContent = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const main = mainRef.current;
+    if (!main) return;
+    e.preventDefault();
+    // 이미 붙어 있으면(포커스가 아직 main 에 있음) 다시 붙이지 않는다 — blur 리스너가 겹쳐 쌓이지 않게
+    if (main.getAttribute('tabindex') !== '-1') {
+      main.setAttribute('tabindex', '-1');
+      main.addEventListener('blur', () => main.removeAttribute('tabindex'), { once: true });
+    }
+    main.focus();
+  };
+
   return (
     /*
      * 셸 높이는 dvh — 100vh는 모바일 브라우저에서 주소창을 포함한 높이라 하단이 잘리고
@@ -349,6 +380,18 @@ function AppLayoutInner() {
      * 사이드바·상단 칩·AI 패널 같은 앱 테두리는 아래 각 지점에서 print:hidden 으로 숨겨 페이지 내용만 인쇄되게 한다.
      */
     <div className="flex h-dvh overflow-hidden print:block print:h-auto print:overflow-visible">
+      {/* 본문으로 건너뛰기(WD-530, WCAG 2.4.1) — 포커스될 때만 보이고 인쇄에서는 숨긴다.
+          모바일(lg 미만)은 메뉴 버튼(top-3 left-3)을 덮지 않게 상단 줄 아래(top-14)에 띄운다. */}
+      {showSkipLink && (
+        <a
+          href="#main-content"
+          onClick={handleSkipToContent}
+          className="sr-only focus:not-sr-only focus:fixed focus:top-3 max-lg:focus:top-14 focus:left-3 focus:z-[60] focus:rounded-md focus:border focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-md focus:outline-none focus-visible:ring-[3px] focus-visible:ring-ring print:hidden"
+        >
+          본문으로 건너뛰기
+        </a>
+      )}
+
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div
@@ -548,22 +591,27 @@ function AppLayoutInner() {
             </div>
           </div>
 
-          {showNative ? (
-            <Suspense fallback={<div className="flex-1 bg-background" />}>
-              <AINativeMode />
-            </Suspense>
-          ) : showFullscreen ? (
-            <Suspense fallback={<div className="flex-1 bg-background" />}>
-              <AIFullScreen />
-            </Suspense>
-          ) : (
+          {showMain ? (
             // 모바일은 위에 상단 줄(h-12)이 따로 자리를 차지하므로 위 여백을 줄인다(lg 이상은 고정 칩 자리 pt-10 그대로).
             // 인쇄(WD-424): 칩 자리 여백·스크롤 상자를 없애 본문이 종이 왼쪽 위에서 시작하고 스크롤 밖 내용까지 모두 찍히게 한다.
-            <main ref={mainRef} className="flex-1 p-6 pt-10 max-lg:pt-2 overflow-auto min-w-0 print:p-0 print:overflow-visible">
+            // 건너뛰기 링크의 대상(WD-530) — 프로그램 포커스 때 윤곽선은 끈다(handleSkipToContent 참고).
+            <main
+              ref={mainRef}
+              id="main-content"
+              className="flex-1 p-6 pt-10 max-lg:pt-2 overflow-auto min-w-0 focus:outline-none print:p-0 print:overflow-visible"
+            >
               <Suspense fallback={<PageSkeleton />}>
                 <Outlet />
               </Suspense>
             </main>
+          ) : showNative ? (
+            <Suspense fallback={<div className="flex-1 bg-background" />}>
+              <AINativeMode />
+            </Suspense>
+          ) : (
+            <Suspense fallback={<div className="flex-1 bg-background" />}>
+              <AIFullScreen />
+            </Suspense>
           )}
 
           {/* Side panel mode
