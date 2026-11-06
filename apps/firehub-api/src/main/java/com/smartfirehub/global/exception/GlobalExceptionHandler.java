@@ -56,6 +56,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -401,6 +402,22 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleConcurrentImport(
       ConcurrentImportException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+  }
+
+  /**
+   * DB 교착(deadlock)·잠금 대기 실패 — 409 로 다시 시도를 안내한다(WD-531).
+   *
+   * <p>같은 대상을 동시에 바꾸는 요청끼리 DB 가 한쪽을 교착 피해자로 골라 되돌린 경우다. 데이터는 되돌려져 일관되고 다시 보내면 대개 성공하는 일시적 충돌이라,
+   * 「예기치 않은 오류」 500 이 아니라 409 로 알린다. 교착이 알려진 경로(데이터셋 필드 변경)는 행 잠금으로 직렬화해 두었고, 이 처리는 그 밖에서 남는 교착을 위한
+   * 안전망이다. 원문(잠금 대기 프로세스·SQL)은 응답에 싣지 않고 로그에만 남긴다.
+   */
+  @ExceptionHandler(PessimisticLockingFailureException.class)
+  public ResponseEntity<ErrorResponse> handlePessimisticLockingFailure(
+      PessimisticLockingFailureException ex, HttpServletRequest request) {
+    log.warn("Lock conflict on {}: {}", request.getRequestURI(), ex.getMessage(), ex);
+    ErrorResponse response =
+        buildError(HttpStatus.CONFLICT, "다른 변경과 겹쳐 처리하지 못했습니다. 잠시 뒤 다시 시도하세요", null, request);
     return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }
 
