@@ -144,6 +144,8 @@ check_not "ai-agent md 는 비코드가 아님" "비코드 변경만" "$out"
 
 check "docker/postgres 변경은 api 로 본다" "compileTestJava" "$(precommit 'docker/postgres/Dockerfile')"
 check "훅 변경은 판정 테스트" "게이트 훅 변경" "$(precommit 'scripts/husky/noncode.sh')"
+# 마이그레이션 번호 검사도 test:hooks 가 돌리므로 같은 판정을 탄다 (WD-506)
+check "번호 검사 변경도 판정 테스트" "게이트 훅 변경" "$(precommit 'scripts/check-migration-versions.mjs')"
 
 echo "hooks.test: 통과 $PASS, 실패 $FAIL"
 [ "$FAIL" -eq 0 ]
