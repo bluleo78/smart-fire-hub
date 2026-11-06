@@ -42,6 +42,9 @@ class TiberoProfileSettingsTest {
         .isEqualTo("classpath:db/migration-tibero");
     assertThat(String.valueOf(p.getProperty("spring.flyway.fail-on-missing-locations")))
         .isEqualTo("true");
+    // 기본 설정의 baseline-on-migrate(PG 용)를 물려받으면 기준선이 건너뛰어질 수 있다(WD-490).
+    assertThat(String.valueOf(p.getProperty("spring.flyway.baseline-on-migrate")))
+        .isEqualTo("false");
     assertThat(String.valueOf(p.getProperty("spring.datasource.driver-class-name")))
         .isEqualTo(TiberoDialect.DRIVER_CLASS);
   }

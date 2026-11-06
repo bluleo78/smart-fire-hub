@@ -100,7 +100,8 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
   - `{vendor}` 는 쓰지 않는다. Spring Boot 가 Tibero 를 몰라 글자 그대로 남고, 마이그레이션 0건으로 기동이 "성공"한다(WD-488 실측).
 - **이후 스키마 변경**:
   - 기준선 뒤의 PG 마이그레이션 Vn 마다 Tibero 쪽에도 같은 버전 Vn 을 둔다.
-  - Tibero 에 할 일이 없으면 주석만 있는 빈 파일을 둔다. Flyway Oracle 파서가 이 파일을 받아들이는지는 WD-490 에서 실서버로 확인한다.
+  - Tibero 에 할 일이 없으면 주석만 있는 빈 파일을 둔다. Flyway 플러그인(Oracle 파서)이 이 파일을 성공으로 기록하는 것을 WD-490 에서 실서버로 확인했다(`TiberoBaselineSchemaLiveTest`).
+  - 기준선은 스키마 `V155` 와 시드 `V155.1` 두 파일이다(DML 을 DDL 과 섞지 않는 규칙). 제외 목록·타입 대응·모양이 바뀐 인덱스는 `V155` 머리말에 적었다.
   - CI 테스트로 두 경로의 버전 집합이 같은지 검사한다(`MigrationParityTest`, WD-490).
 - **Tibero 마이그레이션 작성 규칙**(DDL 이 암묵 커밋하므로):
   - 1파일 1DDL 이 기본이다.

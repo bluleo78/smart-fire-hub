@@ -1,0 +1,2 @@
+-- 주석만 있는 마이그레이션(WD-490). PG 에만 할 일이 있는 버전 Vn 에 Tibero 쪽은 이런 파일을 둔다(ADR 0001 결정 2).
+-- TiberoBaselineSchemaLiveTest 가 Flyway(Tibero 플러그인 = Oracle 파서)가 문장 없는 파일을 성공으로 기록하는지 실서버에서 확인한다.
