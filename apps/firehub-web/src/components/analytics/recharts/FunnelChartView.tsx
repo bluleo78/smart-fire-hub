@@ -4,11 +4,19 @@ import { Cell,Funnel, FunnelChart, LabelList, ResponsiveContainer, Tooltip } fro
 
 import { CHART_SEQ_LABEL_COLOR, seqColor, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '../chart-styles';
 import type { ChartViewProps } from '../chart-view-props';
+import { isNonNumericValue, toPlotNumber } from '../numeric-columns';
+import { NonNumericValueNotice } from './NonNumericValueNotice';
 
-export function FunnelChartView({ data, config, height = 300 }: ChartViewProps) {
+export function FunnelChartView(props: ChartViewProps) {
+  const { data, config, height = 300 } = props;
+  const valueKey = config.yAxis[0];
+  // WD-505: 값 컬럼이 문자 컬럼이면 단계가 「이름: NaN」 으로 그려졌다 — 숫자로 읽히지 않는 값이 하나라도 있으면 안내한다.
+  // (빈 값이 섞인 문자 컬럼도 걸러지도록 「유한수가 하나도 없을 때」가 아니라 「숫자가 아닌 값이 하나라도 있을 때」로 본다)
+  if (data.some((d) => isNonNumericValue(d[valueKey]))) return <NonNumericValueNotice height={props.height} />;
   const funnelData = data.map((d, i) => ({
     name: String(d[config.xAxis] ?? ''),
-    value: Number(d[config.yAxis[0]] ?? 0),
+    // 빈 값(null·'')은 기존처럼 0 으로 본다
+    value: toPlotNumber(d[valueKey]) ?? 0,
     fill: seqColor(i),
   }));
 

@@ -8,6 +8,7 @@ import { analyticsApi } from '../../api/analytics';
 import { AxisConfigPanel } from '../../components/analytics/AxisConfigPanel';
 import { BOXPLOT_REQUIRED_COLUMNS_LABEL, findMissingBoxplotStats } from '../../components/analytics/boxplot-stats';
 import { findMissingChartColumns } from '../../components/analytics/chart-missing-columns';
+import { findMissingChartAxesMessage } from '../../components/analytics/chart-required-axes';
 import { ChartConfigWithheldNotice } from '../../components/analytics/ChartConfigWithheldNotice';
 import { ChartRenderer } from '../../components/analytics/ChartRenderer';
 import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector';
@@ -754,15 +755,13 @@ export default function ChartBuilderPage() {
             return;
           }
         }
-      } else if (chartType === 'GAUGE') {
-        // 게이지는 yAxis[0]만 필수
-        if (config.yAxis.length === 0) {
-          toast.error('Y축(값 컬럼)을 설정하세요.');
+      } else {
+        // WD-505: 게이지·값 하나 타입·계열 타입의 필수 축은 미리보기 안내와 같은 규칙·문구로 검사한다
+        const axesMessage = findMissingChartAxesMessage(chartType, config);
+        if (axesMessage) {
+          toast.error(axesMessage);
           return;
         }
-      } else if (!config.xAxis || config.yAxis.length === 0) {
-        toast.error('X축과 Y축을 설정하세요.');
-        return;
       }
     }
 
@@ -1147,6 +1146,8 @@ export default function ChartBuilderPage() {
                   data={queryRows}
                   columns={queryColumns}
                   fillParent
+                  // WD-505: 사용자가 비운 축을 결과 컬럼으로 추론하지 않는다 — 문자 컬럼이 값으로 읽혀 NaN 이 그려졌다
+                  inferAxes={false}
                 />
               </div>
             )}

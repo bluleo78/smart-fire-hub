@@ -3,9 +3,18 @@
 import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts';
 
 import type { ChartViewProps } from '../chart-view-props';
+import { isNonNumericValue, toPlotNumber } from '../numeric-columns';
+import { NonNumericValueNotice } from './NonNumericValueNotice';
 
-export function GaugeChartView({ data, config, height = 280 }: ChartViewProps) {
-  const value = Number(data[0]?.[config.yAxis[0]] ?? 0);
+export function GaugeChartView(props: ChartViewProps) {
+  const { data, config, height = 280 } = props;
+  const valueKey = config.yAxis[0];
+  // WD-505: 문자 컬럼을 값으로 고르면 Number('서울') = NaN 이 바늘·수치에 그대로 그려졌다 — 게이지 대신 안내한다.
+  // 첫 행만 보면 첫 칸이 빈 문자 컬럼이 0 으로 그럴듯하게 그려지므로, 컬럼에 숫자가 아닌 값이 하나라도 있으면 안내한다.
+  // 안내 높이는 기본값(280)이 아닌 원래 prop 을 넘긴다 — fillParent(undefined)면 부모 높이를 채워 가운데에 보이게.
+  if (data.some((row) => isNonNumericValue(row[valueKey]))) return <NonNumericValueNotice height={props.height} />;
+  // 빈 값(null·'')은 기존처럼 0 으로 본다
+  const value = toPlotNumber(data[0]?.[valueKey]) ?? 0;
   const min = config.min ?? 0;
   // max 미설정 시 실제 데이터 값의 120%를 기본값으로 사용하여 바늘이 최대값에 고착되지 않도록 함
   const max = config.max ?? (value > 0 ? Math.ceil(value * 1.2) : 100);
