@@ -97,12 +97,13 @@ export function EditorHeader({
     // 머리글이 넘치면 「저장」·「수정」이 잘려 누를 수 없었다. 좁은 화면에서는 이름 칸이 줄어들고 버튼은 아이콘만 보인다
     // (글자는 sr-only 로 남겨 스크린리더·접근 이름은 그대로).
     <header className="h-14 border-b flex items-center px-2 gap-2 sm:px-4 sm:gap-3">
-      {/* Back button */}
-      <Link to="/pipelines">
-        <Button variant="ghost" size="icon" aria-label="파이프라인 목록으로">
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-      </Link>
+      {/* 뒤로 가기 — 목록으로 가는 링크 하나로 렌더링한다(WD-527). 예전엔 <a> 안에 <button> 을 중첩해(대화형 요소 중첩)
+          같은 컨트롤에 Tab 이 두 번(링크 → 안쪽 버튼) 멈추고 스크린리더도 두 번 안내했다. asChild 로 버튼 모양만 링크에 입힌다. */}
+      <Button asChild variant="ghost" size="icon">
+        <Link to="/pipelines" aria-label="파이프라인 목록으로">
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </Button>
 
       {/* Pipeline name */}
       <div
