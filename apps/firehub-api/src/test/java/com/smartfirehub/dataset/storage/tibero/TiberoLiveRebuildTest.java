@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.storage.DataTableStore.RebuildBackupState;
+import com.smartfirehub.support.tibero.TiberoLive;
+import com.smartfirehub.support.tibero.TiberoTestServer;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -14,7 +16,6 @@ import java.util.List;
 import java.util.TreeSet;
 import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 /**
  * Tibero TEMP 재생성 보관본 실서버 테스트(WD-256) — 실서버가 있을 때만 돈다(실행: {@code scripts/tibero-test.sh api}).
@@ -25,7 +26,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  * 최대 ID 보다 크다(Tibero 가 이름 바꿀 때 캐시를 버려 값이 건너뛸 수 있어 정확한 값은 단정하지 않는다). 만든 계정만 마지막에 지운다. 접속 정보는 출력하지
  * 않는다.
  */
-@EnabledIfEnvironmentVariable(named = "TIBERO_TEST_HOST", matches = ".+")
+@TiberoLive
 class TiberoLiveRebuildTest {
 
   private static final String FP = "a".repeat(32);
@@ -123,8 +124,8 @@ class TiberoLiveRebuildTest {
 
   @Test
   void backupRestoreDropReconcile_againstRealServer() throws Exception {
-    TiberoTestEnvironment.assumeDriverPresent();
-    TiberoTestEnvironment.Dba dba = TiberoTestEnvironment.dbaFromEnv();
+    TiberoTestServer.assumeDriverPresent();
+    TiberoTestServer.Dba dba = TiberoTestServer.dbaFromEnv();
     String suffix = String.valueOf(ThreadLocalRandom.current().nextInt(100000, 999999));
     String owner = "WD256O" + suffix;
     String ro = owner + "_RO";
@@ -132,7 +133,7 @@ class TiberoLiveRebuildTest {
     String pw = "Pw" + ThreadLocalRandom.current().nextLong(100000000L, 999999999L) + "x";
     List<String> created = new ArrayList<>();
     Throwable primary = null;
-    try (Connection d = TiberoTestEnvironment.openDba(dba)) {
+    try (Connection d = TiberoTestServer.openDba(dba)) {
       d.setAutoCommit(true);
       // 공유 서버 — 이미 있는 이름이면 우리가 만든 계정이 아니므로 시작하지 않는다.
       for (String u : List.of(owner, ro, slot)) {
@@ -162,7 +163,7 @@ class TiberoLiveRebuildTest {
       throw e;
     } finally {
       // 정리 실패가 테스트의 원래 실패를 가리지 않게, 이미 실패 중이면 suppressed 로만 붙인다.
-      try (Connection d = TiberoTestEnvironment.openDba(dba);
+      try (Connection d = TiberoTestServer.openDba(dba);
           Statement st = d.createStatement()) {
         // 만든 계정만, 만든 역순으로 지운다.
         for (int i = created.size() - 1; i >= 0; i--) {

@@ -2,12 +2,12 @@ package com.smartfirehub.notification.repository;
 
 import com.smartfirehub.notification.repository.mybatis.MyBatisNotificationOutboxRepository;
 import com.smartfirehub.notification.repository.mybatis.NotificationOutboxMapper;
-import com.smartfirehub.support.tibero.TiberoPlatformPoc;
+import com.smartfirehub.support.tibero.TiberoLive;
+import com.smartfirehub.support.tibero.TiberoPlatformSchema;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 /**
  * NotificationOutboxRepositoryContractTest 를 MyBatis 구현 + Tibero 실서버로 실행한다(WD-487 PoC).
@@ -16,17 +16,17 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  * tenant} 표에 예약 대역(900,000,000+) id 로 만든다. RLS 가 없으므로 {@link #supportsRowLevelSecurity()} 는 false —
  * 다른 테넌트 행 재투입 차단 시험은 건너뛴다(Tibero 쓰기 문장에 테넌트 술어가 없다, WD-492 범위).
  */
-@EnabledIfEnvironmentVariable(named = "TIBERO_TEST_HOST", matches = ".+")
+@TiberoLive
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TiberoMyBatisNotificationOutboxRepositoryContractTest
     extends NotificationOutboxRepositoryContractTest {
 
-  private TiberoPlatformPoc poc;
+  private TiberoPlatformSchema poc;
   private NotificationOutboxRepository repository;
 
   @BeforeAll
   void startTibero() {
-    poc = TiberoPlatformPoc.shared();
+    poc = TiberoPlatformSchema.shared();
     repository =
         poc.transactional(
             NotificationOutboxRepository.class,

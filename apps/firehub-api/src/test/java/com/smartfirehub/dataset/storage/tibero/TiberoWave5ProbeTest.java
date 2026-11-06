@@ -3,6 +3,8 @@ package com.smartfirehub.dataset.storage.tibero;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.support.tibero.TiberoLive;
+import com.smartfirehub.support.tibero.TiberoTestServer;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -14,10 +16,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 /** Wave 5 DDL 결정용 실서버 탐침 — 이 테스트가 만든 WD5 객체만 역순으로 지운다. */
-@EnabledIfEnvironmentVariable(named = "TIBERO_TEST_HOST", matches = ".+")
+@TiberoLive
 class TiberoWave5ProbeTest {
 
   private final List<String> cleanups = new ArrayList<>();
@@ -27,8 +28,8 @@ class TiberoWave5ProbeTest {
   /** 연결 정보는 기존 테스트 환경에서만 받고 출력하지 않는다. */
   @BeforeEach
   void connect() throws SQLException {
-    TiberoTestEnvironment.assumeDriverPresent();
-    connection = TiberoTestEnvironment.openDba(TiberoTestEnvironment.dbaFromEnv());
+    TiberoTestServer.assumeDriverPresent();
+    connection = TiberoTestServer.openDba(TiberoTestServer.dbaFromEnv());
     connection.setAutoCommit(true);
     prefix = "WD5_" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
   }

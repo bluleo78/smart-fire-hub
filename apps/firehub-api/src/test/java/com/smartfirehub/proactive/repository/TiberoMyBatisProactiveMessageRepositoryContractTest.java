@@ -6,14 +6,14 @@ import com.smartfirehub.proactive.repository.mybatis.MyBatisProactiveMessageRepo
 import com.smartfirehub.proactive.repository.mybatis.ProactiveMessageMapper;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
-import com.smartfirehub.support.tibero.TiberoPlatformPoc;
+import com.smartfirehub.support.tibero.TiberoLive;
+import com.smartfirehub.support.tibero.TiberoPlatformSchema;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,7 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p><b>열람 자격(ClearanceResolver)은 스텁이다.</b> 실제 해석기는 PG 리포지토리·권한 서비스에 묶여 있어, Tibero {@code user_role
  * → role → security_level} 에서 최대 등급을 읽는 하위 클래스로 바꾼다. 멤버십·관리자 여부·권한은 보지 않는다(이 계약이 쓰는 것은 rank 하나다).
  */
-@EnabledIfEnvironmentVariable(named = "TIBERO_TEST_HOST", matches = ".+")
+@TiberoLive
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class TiberoMyBatisProactiveMessageRepositoryContractTest
@@ -37,12 +37,12 @@ class TiberoMyBatisProactiveMessageRepositoryContractTest
 
   @Autowired private ObjectMapper objectMapper;
 
-  private TiberoPlatformPoc poc;
+  private TiberoPlatformSchema poc;
   private ProactiveMessageRepository repository;
 
   @BeforeAll
   void startTibero() {
-    poc = TiberoPlatformPoc.shared();
+    poc = TiberoPlatformSchema.shared();
     repository =
         poc.transactional(
             ProactiveMessageRepository.class,
@@ -147,9 +147,9 @@ class TiberoMyBatisProactiveMessageRepositoryContractTest
    * #resolve(long)} 만 재정의하고 다른 메서드는 부르지 않는다.
    */
   static final class TiberoClearanceResolver extends ClearanceResolver {
-    private final TiberoPlatformPoc poc;
+    private final TiberoPlatformSchema poc;
 
-    TiberoClearanceResolver(TiberoPlatformPoc poc) {
+    TiberoClearanceResolver(TiberoPlatformSchema poc) {
       super(null, null);
       this.poc = poc;
     }

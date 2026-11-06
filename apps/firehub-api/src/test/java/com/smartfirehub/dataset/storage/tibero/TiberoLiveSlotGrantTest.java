@@ -16,6 +16,8 @@ import com.smartfirehub.securitylevel.pythonread.TiberoPythonReadGrantSync;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import com.smartfirehub.support.tibero.TiberoLive;
+import com.smartfirehub.support.tibero.TiberoTestServer;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -30,7 +32,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -42,7 +43,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  * 테이블은 못 읽는다. 그리고 스펙 §5.1 의 확인 항목 — <b>이미 열려 있는 슬롯 세션</b>(풀 재사용 연결 모델)에서 REVOKE 가 다음 문장부터 적용되는가 — 를
  * 한 JDBC 연결을 REVOKE 를 가로질러 열어 둔 채 본다(PROBE 줄로 기록). 만든 테넌트·계정만 정리한다. 접속 정보·비밀번호는 출력하지 않는다.
  */
-@EnabledIfEnvironmentVariable(named = "TIBERO_TEST_HOST", matches = ".+")
+@TiberoLive
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TiberoLiveSlotGrantTest extends IntegrationTestBase {
 
@@ -63,7 +64,7 @@ class TiberoLiveSlotGrantTest extends IntegrationTestBase {
 
   @BeforeAll
   void prepare() {
-    TiberoTestEnvironment.assumeDriverPresent();
+    TiberoTestServer.assumeDriverPresent();
     env =
         TiberoTestEnvironment.provision(
             dsl,
@@ -118,7 +119,7 @@ class TiberoLiveSlotGrantTest extends IntegrationTestBase {
             .orElseThrow();
     Connection c =
         DriverManager.getConnection(
-            TiberoTestEnvironment.dbaFromEnv().target().jdbcUrl(),
+            TiberoTestServer.dbaFromEnv().target().jdbcUrl(),
             account.username(),
             encryption.decrypt(account.encryptedPassword()));
     c.setAutoCommit(true);

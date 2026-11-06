@@ -3,6 +3,8 @@ package com.smartfirehub.dataset.storage.tibero;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.dataset.service.DataExceptionTranslator;
+import com.smartfirehub.support.tibero.TiberoLive;
+import com.smartfirehub.support.tibero.TiberoTestServer;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -15,7 +17,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 /**
  * Tibero 데이터 오류 코드 실서버 측정(WD-261 §5.1, 측정일 2026-10-27, Tibero 개발 서버).
@@ -27,7 +28,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  * <p>공유 서버라 이 테스트가 만든 {@code WD261_PROBE_} 접두 테이블 하나만 쓰고, 끝나면 반드시 DROP 한다. TIMESTAMP WITH TIME ZONE
  * 열은 쓰지 않는다. 접속 정보는 환경변수에서만 받고 출력하지 않는다(코드만 {@code PROBE} 줄로 낸다).
  */
-@EnabledIfEnvironmentVariable(named = "TIBERO_TEST_HOST", matches = ".+")
+@TiberoLive
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TiberoDataErrorCodeProbeTest {
 
@@ -37,8 +38,8 @@ class TiberoDataErrorCodeProbeTest {
   /** 탐침 전용 테이블 하나를 만든다 — 열: D NUMBER(18,6), I NUMBER(19), DT DATE, TS TIMESTAMP. */
   @BeforeAll
   void createProbeTable() throws SQLException {
-    TiberoTestEnvironment.assumeDriverPresent();
-    connection = TiberoTestEnvironment.openDba(TiberoTestEnvironment.dbaFromEnv());
+    TiberoTestServer.assumeDriverPresent();
+    connection = TiberoTestServer.openDba(TiberoTestServer.dbaFromEnv());
     connection.setAutoCommit(true);
     String name = "WD261_PROBE_" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
     try (Statement st = connection.createStatement()) {

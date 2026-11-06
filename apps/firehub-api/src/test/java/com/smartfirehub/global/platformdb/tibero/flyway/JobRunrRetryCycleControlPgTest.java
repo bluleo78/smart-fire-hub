@@ -3,12 +3,13 @@ package com.smartfirehub.global.platformdb.tibero.flyway;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.support.PostgresTestContainer;
+import com.smartfirehub.support.tibero.TiberoLive;
+import com.smartfirehub.support.tibero.TiberoTestEvidence;
 import java.sql.Connection;
 import java.sql.Statement;
 import org.jobrunr.jobs.states.StateName;
 import org.jobrunr.storage.sql.postgres.PostgresStorageProvider;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /**
@@ -19,7 +20,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
  *
  * <p>Tibero PoC 와 함께만 돈다(실행 시간 약 30초 — 일반 회귀에 넣을 이유가 없다).
  */
-@EnabledIfEnvironmentVariable(named = "TIBERO_TEST_HOST", matches = ".+")
+@TiberoLive
 class JobRunrRetryCycleControlPgTest {
 
   private static final String SCHEMA = "wd488_jobrunr_ctl";
@@ -35,7 +36,7 @@ class JobRunrRetryCycleControlPgTest {
       PostgresStorageProvider storage = new PostgresStorageProvider(ds, SCHEMA + ".");
       try {
         for (JobRunrRetryCycle.Outcome o : JobRunrRetryCycle.run(storage)) {
-          TiberoFlywayPocAccount.evidence("jobrunr postgres " + o);
+          TiberoTestEvidence.write("jobrunr postgres " + o);
           assertThat(o.state()).isEqualTo(StateName.SUCCEEDED);
           assertThat(o.attempts()).isEqualTo(2);
           // 대조의 핵심 근거: PG 에서는 FAILED 가 작업이 던진 예외로 저장된다(고아 감지로 넘어가지 않는다).

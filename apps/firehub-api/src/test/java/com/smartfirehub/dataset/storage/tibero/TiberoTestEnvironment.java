@@ -1,7 +1,5 @@
 package com.smartfirehub.dataset.storage.tibero;
 
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
-
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
@@ -11,12 +9,10 @@ import com.smartfirehub.dataset.storage.StoredAccount;
 import com.smartfirehub.dataset.storage.TenantDataStoreRow;
 import com.smartfirehub.dataset.storage.TenantDataStoreStatus;
 import com.smartfirehub.dataset.storage.external.ExternalAccountProvisioner;
-import com.smartfirehub.dataset.storage.external.ExternalDbTarget;
 import com.smartfirehub.dataset.storage.external.ExternalStoreConnections;
 import com.smartfirehub.support.TenantRlsTestSupport;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
+import com.smartfirehub.support.tibero.TiberoTestServer;
+import com.smartfirehub.support.tibero.TiberoTestServer.Dba;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
@@ -26,68 +22,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Tibero 실서버 테스트의 공용 환경(WD-74).
  *
- * <p>환경변수({@code TIBERO_TEST_HOST/PORT/SID/DBA_USER/DBA_PASSWORD}, 선택 {@code
- * TIBERO_TEST_TABLESPACE})에서 접속 정보를 읽고, 계약 테스트용 전용 테넌트의 Tibero 계정 12개를 만들고 지운다. 값은 어디에도 출력하지 않는다.
+ * <p>{@link TiberoTestServer} 의 DBA 로 계약 테스트용 전용 테넌트의 Tibero 계정 12개를 만들고 지운다. 값은 어디에도 출력하지 않는다.
  *
  * <p><b>왜 전용 테넌트인가.</b> 공유 테스트 DB 의 기존 테넌트를 건드리지 않고, 새 id 로 {@code GENIA_T{id}} 계정을 만들어 충돌을 피한다.
  * 정리는 항상 이 테스트가 만든 계정·테넌트로만 한정한다.
  *
- * <p>접속 정보·드라이버 판정은 WD-487 플랫폼 하네스({@code support.tibero.TiberoPlatformPoc})도 같이 쓰므로 공개한다.
+ * <p>접속 정보·드라이버 판정·DBA 연결은 {@link TiberoTestServer}(WD-497 공용 기반)를 쓴다.
  */
-public final class TiberoTestEnvironment {
-
-  /** 드라이버가 없을 때 건너뛰는 사유. */
-  public static final String NO_DRIVER_MESSAGE =
-      "Tibero JDBC 드라이버 없음 — apps/firehub-api/libs/ 에 jar 를 두세요";
+final class TiberoTestEnvironment {
 
   private TiberoTestEnvironment() {}
-
-  /** Tibero JDBC 드라이버가 클래스패스에 있으면 true. */
-  public static boolean driverPresent() {
-    try {
-      Class.forName(TiberoDialect.DRIVER_CLASS);
-      return true;
-    } catch (ClassNotFoundException | LinkageError e) {
-      return false;
-    }
-  }
-
-  /** 드라이버가 없으면 테스트를 건너뛴다(환경변수만 설정되고 jar 가 없을 때 훅이 초록을 유지하도록). */
-  public static void assumeDriverPresent() {
-    assumeTrue(driverPresent(), NO_DRIVER_MESSAGE);
-  }
-
-  private static String env(String name, String fallback) {
-    String v = System.getenv(name);
-    return (v == null || v.isBlank()) ? fallback : v;
-  }
-
-  /** 환경변수에서 읽은 접속 정보. 비밀번호가 있어 toString 은 가린다. */
-  public record Dba(ExternalDbTarget target, String user, String password) {
-    @Override
-    public String toString() {
-      return "Dba[" + target.host() + ":" + target.port() + "/" + target.database() + "]";
-    }
-  }
-
-  /** 환경변수에서 DBA 접속 정보를 만든다. 필수 값이 비어 있으면 IllegalStateException. */
-  public static Dba dbaFromEnv() {
-    String host = env("TIBERO_TEST_HOST", null);
-    String user = env("TIBERO_TEST_DBA_USER", null);
-    String password = env("TIBERO_TEST_DBA_PASSWORD", null);
-    if (host == null || user == null || password == null) {
-      throw new IllegalStateException(
-          "TIBERO_TEST_HOST / TIBERO_TEST_DBA_USER / TIBERO_TEST_DBA_PASSWORD 가 필요합니다");
-    }
-    int port = Integer.parseInt(env("TIBERO_TEST_PORT", "8629"));
-    String sid = env("TIBERO_TEST_SID", "tibero");
-    return new Dba(new ExternalDbTarget(DataStoreBackend.TIBERO, host, port, sid), user, password);
-  }
-
-  /** DBA 로 직접 JDBC 연결을 연다(방언 확인용). 호출자가 닫는다. */
-  public static Connection openDba(Dba dba) throws SQLException {
-    return DriverManager.getConnection(dba.target().jdbcUrl(), dba.user(), dba.password());
-  }
 
   /** 준비된 테스트 테넌트와 그 Tibero 계정. 정리에 필요한 협력 객체를 함께 들고 있다. */
   static final class Provisioned {
@@ -164,7 +108,7 @@ public final class TiberoTestEnvironment {
       ExternalStoreConnections connections,
       EncryptionService encryption,
       DataStorePasswordGenerator passwordGenerator) {
-    Dba dba = dbaFromEnv();
+    Dba dba = TiberoTestServer.dbaFromEnv();
     // 다른 테스트가 남긴 풀이 이 테넌트 키와 섞이지 않게 먼저 비운다.
     connections.closeAll();
 
@@ -174,7 +118,7 @@ public final class TiberoTestEnvironment {
     TenantRlsTestSupport.insertActiveTenant(dsl, tenantId);
     TiberoAccountPlan plan =
         TiberoAccountPlan.generate(
-            tenantId, System.getenv("TIBERO_TEST_TABLESPACE"), passwordGenerator);
+            tenantId, TiberoTestServer.configuredTablespace(), passwordGenerator);
     Provisioned provisioned =
         new Provisioned(tenantId, dba, plan, provisioner, connections, dsl, tx);
     // 같은 이름 계정이 이미 있으면 프로비저너가 계정 이름을 담아 거절한다. 그 계정은 우리가 만든 것이 아니므로 절대 지우지 않는다.

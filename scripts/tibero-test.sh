@@ -2,7 +2,8 @@
 # Tibero 실서버 테스트 실행기 (WD-74, WD-77).
 #
 # ~/.tibero/credentials 의 TIBERO_* 값을 TIBERO_TEST_* 환경변수로 넘겨 다음을 실행한다.
-#   api 단계: 방언 확인(TiberoDialectProbeTest)과 계약 테스트(TiberoDataStoreContractTest), 행 트리거·슬롯 GRANT·재생성 보관 실서버 테스트
+#   api 단계: tiberoTest 태스크(@TiberoLive 전체, WD-497) — 데이터 저장소 방언·계약·트리거·슬롯 GRANT·재생성 보관,
+#             플랫폼 DB MyBatis 계약 테스트(WD-487)·Flyway 플러그인·JobRunr(WD-488). UTC JVM·단일 포크
 #   db-executor 단계: SQL 실행·컬럼 탐지 실서버 테스트(TiberoLiveSqlTest, WD-77)와 HTTP 끝-끝 테스트(TiberoLiveHttpTest),
 #                     슬롯 스트리밍·REVOKE 즉시 반영(TiberoLiveSlotStreamTest, WD-78)
 #
@@ -91,19 +92,19 @@ set +e
 status=0
 
 if [[ "$STAGE" == all || "$STAGE" == api ]]; then
-  echo "== api 단계 (TiberoDialectProbeTest, TiberoDataStoreContractTest, TiberoLiveTriggerTest, TiberoLiveSlotGrantTest, TiberoLiveRebuildTest, TiberoLiveStoreRebuildTest, TiberoDataErrorCodeProbeTest)"
-  "$ROOT_DIR/apps/firehub-api/gradlew" -p "$ROOT_DIR/apps/firehub-api" test \
-    --tests com.smartfirehub.dataset.storage.tibero.TiberoDialectProbeTest \
-    --tests com.smartfirehub.dataset.storage.tibero.TiberoDataStoreContractTest \
-    --tests com.smartfirehub.dataset.storage.tibero.TiberoLiveTriggerTest \
-    --tests com.smartfirehub.dataset.storage.tibero.TiberoLiveSlotGrantTest \
-    --tests com.smartfirehub.dataset.storage.tibero.TiberoLiveRebuildTest \
-    --tests com.smartfirehub.dataset.storage.tibero.TiberoLiveStoreRebuildTest \
-    --tests com.smartfirehub.dataset.storage.tibero.TiberoDataErrorCodeProbeTest \
-    -i 2>&1 | grep -E '^[[:space:]]*PROBE |[[:space:]]>[[:space:]].*[[:space:]](PASSED|FAILED|SKIPPED)$|^BUILD (SUCCESSFUL|FAILED)|tests completed'
+  echo "== api 단계 (tiberoTest — @TiberoLive 전체: 데이터 저장소 실서버·플랫폼 MyBatis 계약·Flyway 플러그인, UTC JVM)"
+  # --rerun: 입력이 같아도 실서버 테스트를 매번 실제로 돌린다(캐시된 초록 방지).
+  rm -f "$ROOT_DIR/apps/firehub-api/build/tibero-test-evidence.txt"
+  "$ROOT_DIR/apps/firehub-api/gradlew" -p "$ROOT_DIR/apps/firehub-api" tiberoTest --rerun \
+    -i 2>&1 | grep -E '^[[:space:]]*(PROBE|TIBERO_TEST) |[[:space:]]>[[:space:]].*[[:space:]](PASSED|FAILED|SKIPPED)$|^BUILD (SUCCESSFUL|FAILED)|tests completed'
   api_status=${PIPESTATUS[0]}
   # 테스트별 PASSED 줄은 gradle 로그 설정에 따라 안 찍힐 수 있으므로, 결과 XML 의 클래스별 합계를 함께 보여 준다.
-  print_totals "$ROOT_DIR"/apps/firehub-api/build/test-results/test/TEST-com.smartfirehub.dataset.storage.tibero.Tibero{DialectProbe,DataErrorCodeProbe,DataStoreContract,LiveTrigger,LiveSlotGrant,LiveRebuild,LiveStoreRebuild}Test.xml
+  print_totals "$ROOT_DIR"/apps/firehub-api/build/test-results/tiberoTest/TEST-*.xml
+  # 계정 정리 결과(remaining count=0 이어야 한다)·라이선스 경고.
+  if [[ -r "$ROOT_DIR/apps/firehub-api/build/tibero-test-evidence.txt" ]]; then
+    echo "== 증거 (build/tibero-test-evidence.txt)"
+    cat "$ROOT_DIR/apps/firehub-api/build/tibero-test-evidence.txt"
+  fi
   [[ $api_status -ne 0 ]] && status=$api_status
 fi
 

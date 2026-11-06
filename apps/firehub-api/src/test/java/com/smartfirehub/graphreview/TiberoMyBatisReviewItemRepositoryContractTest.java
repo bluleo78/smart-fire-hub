@@ -4,33 +4,33 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
 import com.smartfirehub.graphreview.repository.mybatis.MyBatisReviewItemRepository;
 import com.smartfirehub.graphreview.repository.mybatis.ReviewItemMapper;
-import com.smartfirehub.support.tibero.TiberoPlatformPoc;
+import com.smartfirehub.support.tibero.TiberoLive;
+import com.smartfirehub.support.tibero.TiberoPlatformSchema;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 /**
  * ReviewItemRepositoryContractTest 를 MyBatis 구현 + Tibero 실서버로 실행한다(WD-487 PoC).
  *
- * <p>{@code TIBERO_TEST_HOST} 가 없으면 클래스째 건너뛰고, 드라이버 jar 가 없으면 {@link TiberoPlatformPoc#shared()} 의
- * 가정으로 건너뛴다(pre-commit 훅 초록 유지). PoC 계정·스키마는 JVM 공용이라 행 정리는 기반 클래스의 {@link #cleanupFixtures()} 가
+ * <p>{@code TIBERO_TEST_HOST} 가 없으면 클래스째 건너뛰고, 드라이버 jar 가 없으면 {@link TiberoPlatformSchema#shared()}
+ * 의 가정으로 건너뛴다(pre-commit 훅 초록 유지). PoC 계정·스키마는 JVM 공용이라 행 정리는 기반 클래스의 {@link #cleanupFixtures()} 가
  * 맡는다. 구현은 앱과 같은 클래스를 {@code new} 로 만들고, 매퍼는 Tibero 팩토리(databaseId=tibero)에서, 트랜잭션은 Tibero 관리자로 감싼
  * 프록시에서 얻는다. 픽스처는 같은 Tibero 계정의 JdbcTemplate 으로 다시 구현한다.
  *
  * <p>스프링 컨텍스트(PG)는 기반 클래스 때문에 함께 뜨지만 이 클래스는 PG 를 만지지 않는다.
  */
-@EnabledIfEnvironmentVariable(named = "TIBERO_TEST_HOST", matches = ".+")
+@TiberoLive
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TiberoMyBatisReviewItemRepositoryContractTest extends ReviewItemRepositoryContractTest {
 
-  private TiberoPlatformPoc poc;
+  private TiberoPlatformSchema poc;
   private ReviewItemRepository repository;
 
   /** JVM 공용 PoC 하네스에서 Tibero 트랜잭션 프록시로 감싼 구현을 준비한다. */
   @BeforeAll
   void startTibero() {
-    poc = TiberoPlatformPoc.shared();
+    poc = TiberoPlatformSchema.shared();
     repository =
         poc.transactional(
             ReviewItemRepository.class,

@@ -1,9 +1,12 @@
 package com.smartfirehub.global.platformdb.tibero.flyway;
 
-import static com.smartfirehub.global.platformdb.tibero.flyway.TiberoFlywayPocAccount.evidence;
+import static com.smartfirehub.support.tibero.TiberoTestEvidence.write;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.support.tibero.TiberoLive;
+import com.smartfirehub.support.tibero.TiberoTestAccount;
+import com.smartfirehub.support.tibero.TiberoTestAccount.Privileges;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
@@ -19,7 +22,6 @@ import org.jobrunr.storage.sql.oracle.OracleStorageProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -30,23 +32,23 @@ import org.springframework.jdbc.datasource.DelegatingDataSource;
  *
  * <p>무엇을: 이슈 범위의 명령(migrate·info·validate·repair·baseline·clean)과 DDL 암묵 커밋에서의 실패 복구 순서, Spring
  * Boot 자동 구성의 플러그인 인식·{@code {vendor}} 해소, JobRunr 작업 등록→실패→재시도→성공 1회전을 실제로 돌리고 그 결과를 {@link
- * TiberoFlywayPocAccount#EVIDENCE} 에 남긴다.
+ * com.smartfirehub.support.tibero.TiberoTestEvidence#FILE} 에 남긴다.
  *
  * <p>왜 시험마다 계정을 새로 만드나: Tibero 는 DDL 이 트랜잭션에 묶이지 않아 실패 시험이 반쯤 적용된 스키마를 남긴다. 앞 시험의 잔재가 뒤 시험의 판정을 흐리지
- * 않게 시험마다 PoC 계정(WD488_POC_*)을 새로 만들고 지운다.
+ * 않게 시험마다 테스트 계정(FHT_FLYWAY_*)을 새로 만들고 지운다.
  *
  * <p>실행 조건: {@code TIBERO_TEST_HOST} 가 있을 때만(공유 개발 서버). 일반 PG 회귀에서는 건너뛴다.
  */
-@EnabledIfEnvironmentVariable(named = "TIBERO_TEST_HOST", matches = ".+")
+@TiberoLive
 class TiberoFlywayPocTest {
 
   private static final String COMMON = "classpath:tibero-poc/flyway/common";
 
-  private TiberoFlywayPocAccount account;
+  private TiberoTestAccount account;
 
   @BeforeEach
   void createAccount() {
-    account = TiberoFlywayPocAccount.create(3);
+    account = TiberoTestAccount.create("FLYWAY", Privileges.MIGRATION_OWNER, 3);
   }
 
   @AfterEach
@@ -76,15 +78,15 @@ class TiberoFlywayPocTest {
     Flyway fw = flyway(COMMON, "classpath:tibero-poc/flyway/ok").load();
 
     var result = fw.migrate();
-    evidence("migrate ok: applied=" + result.migrationsExecuted + " db=" + result.database);
+    write("migrate ok: applied=" + result.migrationsExecuted + " db=" + result.database);
     assertThat(result.migrationsExecuted).isEqualTo(2);
 
     String info = states(fw);
-    evidence("info after migrate: " + info);
+    write("info after migrate: " + info);
     assertThat(fw.info().current().getVersion().getVersion()).isEqualTo("2");
 
     ValidateResult v = fw.validateWithResult();
-    evidence("validate ok: " + v.validationSuccessful);
+    write("validate ok: " + v.validationSuccessful);
     assertThat(v.validationSuccessful).isTrue();
 
     // PL/SQL 객체가 유효한 상태로 만들어졌는지(트리거가 실제로 동작하는지까지)
@@ -96,7 +98,7 @@ class TiberoFlywayPocTest {
                 "SELECT (SELECT COUNT(*) FROM USER_OBJECTS WHERE STATUS <> 'VALID'),"
                     + " (SELECT COUNT(*) FROM poc_item WHERE name = 'trimmed') FROM DUAL")) {
       rs.next();
-      evidence("plsql invalid objects=" + rs.getLong(1) + " trigger trimmed rows=" + rs.getLong(2));
+      write("plsql invalid objects=" + rs.getLong(1) + " trigger trimmed rows=" + rs.getLong(2));
       assertThat(rs.getLong(1)).isZero();
       assertThat(rs.getLong(2)).isEqualTo(1);
     }
@@ -113,7 +115,7 @@ class TiberoFlywayPocTest {
 
     Flyway changed = flyway(COMMON, "classpath:tibero-poc/flyway/ok-modified").load();
     ValidateResult v = changed.validateWithResult();
-    evidence(
+    write(
         "validate after checksum change: ok="
             + v.validationSuccessful
             + " errors="
@@ -123,7 +125,7 @@ class TiberoFlywayPocTest {
     assertThat(v.validationSuccessful).isFalse();
 
     RepairResult r = changed.repair();
-    evidence(
+    write(
         "repair realigned="
             + r.migrationsAligned.size()
             + " removed="
@@ -144,10 +146,9 @@ class TiberoFlywayPocTest {
     Flyway broken = flyway(COMMON, "classpath:tibero-poc/flyway/fail").load();
 
     // ①
-    assertThatThrownBy(broken::migrate)
-        .satisfies(e -> evidence("① migrate failed: " + firstLine(e)));
+    assertThatThrownBy(broken::migrate).satisfies(e -> write("① migrate failed: " + firstLine(e)));
     // ②
-    evidence(
+    write(
         "② after failure: info="
             + states(broken)
             + " half_a="
@@ -164,11 +165,11 @@ class TiberoFlywayPocTest {
     } catch (RuntimeException e) {
       rerun = "failed: " + firstLine(e);
     }
-    evidence("③ rerun without repair: " + rerun);
+    write("③ rerun without repair: " + rerun);
 
     // ④
     RepairResult r = broken.repair();
-    evidence(
+    write(
         "④ repair removed="
             + r.migrationsRemoved.size()
             + " realigned="
@@ -183,14 +184,14 @@ class TiberoFlywayPocTest {
     } catch (RuntimeException e) {
       again = "failed: " + firstLine(e);
     }
-    evidence("⑤ rerun original file after repair: " + again);
+    write("⑤ rerun original file after repair: " + again);
 
     // ⑥
     Flyway fixed = flyway(COMMON, "classpath:tibero-poc/flyway/fail-fixed").load();
     RepairResult r2 = fixed.repair();
-    evidence("⑥ repair before fixed rerun removed=" + r2.migrationsRemoved.size());
+    write("⑥ repair before fixed rerun removed=" + r2.migrationsRemoved.size());
     var ok = fixed.migrate();
-    evidence(
+    write(
         "⑥ fixed rerun migrated="
             + ok.migrationsExecuted
             + " info="
@@ -214,7 +215,7 @@ class TiberoFlywayPocTest {
             .load();
 
     var result = fw.migrate();
-    evidence("baseline migrate applied=" + result.migrationsExecuted + " info=" + states(fw));
+    write("baseline migrate applied=" + result.migrationsExecuted + " info=" + states(fw));
     assertThat(account.tableExists("AFTER_BASELINE")).isTrue();
     assertThat(account.tableExists("MUST_NOT_EXIST")).isFalse();
   }
@@ -228,7 +229,7 @@ class TiberoFlywayPocTest {
             .baselineVersion("80")
             .load();
     var result = fw.migrate();
-    evidence("empty schema migrate applied=" + result.migrationsExecuted + " info=" + states(fw));
+    write("empty schema migrate applied=" + result.migrationsExecuted + " info=" + states(fw));
     assertThat(result.migrationsExecuted).isEqualTo(2);
   }
 
@@ -239,7 +240,7 @@ class TiberoFlywayPocTest {
   void clean_isRefusedByDefault() throws Exception {
     Flyway fw = flyway(COMMON).load();
     fw.migrate();
-    assertThatThrownBy(fw::clean).satisfies(e -> evidence("clean default: " + firstLine(e)));
+    assertThatThrownBy(fw::clean).satisfies(e -> write("clean default: " + firstLine(e)));
     assertThat(account.tableExists("POC_ITEM")).isTrue();
   }
 
@@ -266,7 +267,7 @@ class TiberoFlywayPocTest {
       outcome = "failed: " + firstLine(e);
     }
     long after = account.objectCount();
-    evidence("clean enabled: " + outcome + " objects before=" + before + " after=" + after);
+    write("clean enabled: " + outcome + " objects before=" + before + " after=" + after);
     assertThat(after).isZero();
 
     // clean 뒤 처음부터 다시 migrate 할 수 있어야 설치 기준선의 "clean 후 재실행" 복구가 성립한다.
@@ -280,13 +281,13 @@ class TiberoFlywayPocTest {
   @Test
   void clean_unknownObjectType_failsBeforeDroppingAnything() throws Exception {
     flyway(COMMON).load().migrate();
-    evidence("object types after V1 migrate: " + objectTypes());
+    write("object types after V1 migrate: " + objectTypes());
     account.execute("CREATE MATERIALIZED VIEW poc_mv AS SELECT id, name FROM poc_item");
     long before = account.objectCount();
-    evidence("object types with mview: " + objectTypes());
+    write("object types with mview: " + objectTypes());
 
     Flyway fw = flyway(COMMON).cleanDisabled(false).load();
-    assertThatThrownBy(fw::clean).satisfies(e -> evidence("clean with mview: " + firstLine(e)));
+    assertThatThrownBy(fw::clean).satisfies(e -> write("clean with mview: " + firstLine(e)));
     assertThat(account.objectCount()).as("아무것도 지우지 않았다").isEqualTo(before);
   }
 
@@ -305,8 +306,7 @@ class TiberoFlywayPocTest {
   /** Flyway 가 없는 스키마(= 계정)를 만들지 않는다 — Oracle 구현은 고정 비밀번호로 CREATE USER 를 한다. */
   @Test
   void missingSchema_isNotCreatedByFlyway() throws Exception {
-    String missing =
-        "WD488_NOSUCH_" + account.name().substring(TiberoFlywayPocAccount.ACCOUNT_PREFIX.length());
+    String missing = "FHT_NOSUCH_" + account.name().substring(account.name().length() - 6);
     Flyway fw =
         Flyway.configure()
             .dataSource(account.dataSource())
@@ -314,7 +314,7 @@ class TiberoFlywayPocTest {
             .locations(COMMON)
             .load();
     assertThatThrownBy(fw::migrate)
-        .satisfies(e -> evidence("missing schema migrate: " + firstLine(e)));
+        .satisfies(e -> write("missing schema migrate: " + firstLine(e)));
     assertThat(account.userExists(missing)).as("공유 서버에 계정이 생기지 않는다").isFalse();
   }
 
@@ -341,10 +341,10 @@ class TiberoFlywayPocTest {
             ctx -> {
               String failure =
                   ctx.getStartupFailure() == null ? "none" : firstLine(ctx.getStartupFailure());
-              evidence("spring boot startup failure: " + failure);
+              write("spring boot startup failure: " + failure);
               assertThat(ctx).hasNotFailed();
               Flyway fw = ctx.getBean(Flyway.class);
-              evidence(
+              write(
                   "spring boot databaseType="
                       + fw.getConfiguration().getDatabaseType().getName()
                       + " locations="
@@ -357,7 +357,7 @@ class TiberoFlywayPocTest {
               assertThat(fw.getConfiguration().getLocations()[0].getDescriptor())
                   .contains("{vendor}");
             });
-    evidence(
+    write(
         "vendor tables: tibero="
             + account.tableExists("VENDOR_TIBERO")
             + " unknown="
@@ -376,7 +376,7 @@ class TiberoFlywayPocTest {
             "spring.flyway.fail-on-missing-locations=true")
         .run(
             ctx -> {
-              evidence(
+              write(
                   "spring boot fail-on-missing-locations: failure="
                       + (ctx.getStartupFailure() == null
                           ? "none"
@@ -395,7 +395,7 @@ class TiberoFlywayPocTest {
         .run(
             ctx -> {
               assertThat(ctx).hasNotFailed();
-              evidence("spring boot explicit location info=" + states(ctx.getBean(Flyway.class)));
+              write("spring boot explicit location info=" + states(ctx.getBean(Flyway.class)));
             });
     assertThat(account.tableExists("VENDOR_TIBERO")).isTrue();
   }
@@ -417,9 +417,9 @@ class TiberoFlywayPocTest {
       java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"));
       OracleStorageProvider storage = new OracleStorageProvider(account.dataSource());
       try {
-        evidence("jobrunr tables created: objects=" + account.objectCount());
+        write("jobrunr tables created: objects=" + account.objectCount());
         for (JobRunrRetryCycle.Outcome o : JobRunrRetryCycle.run(storage)) {
-          evidence("jobrunr tibero(UTC jvm) " + o);
+          write("jobrunr tibero(UTC jvm) " + o);
           assertThat(o.state()).isEqualTo(StateName.SUCCEEDED);
           assertThat(o.attempts()).isEqualTo(2);
           assertThat(o.failureRecordedAsThrown()).as("FAILED 가 작업이 던진 예외로 저장된다").isTrue();
@@ -488,8 +488,7 @@ class TiberoFlywayPocTest {
                 .append(rs.getString(5))
                 .append("]");
           }
-          evidence(
-              "heartbeat t+" + (i + 1) * 5 + "s jvm=" + java.time.Instant.now() + " rows=" + b);
+          write("heartbeat t+" + (i + 1) * 5 + "s jvm=" + java.time.Instant.now() + " rows=" + b);
         }
       }
     } finally {
@@ -561,7 +560,7 @@ class TiberoFlywayPocTest {
             .append("; ");
       }
     }
-    evidence("probe clob update count " + report);
+    write("probe clob update count " + report);
   }
 
   private static String firstLine(Throwable e) {

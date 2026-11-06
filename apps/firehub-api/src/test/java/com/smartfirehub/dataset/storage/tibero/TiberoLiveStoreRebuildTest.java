@@ -11,6 +11,8 @@ import com.smartfirehub.dataset.storage.external.ExternalAccountProvisioner;
 import com.smartfirehub.dataset.storage.external.ExternalStoreConnections;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.tibero.TiberoLive;
+import com.smartfirehub.support.tibero.TiberoTestServer;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -21,7 +23,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
@@ -33,7 +34,7 @@ import org.springframework.beans.factory.annotation.Autowired;
  * 남긴다; (2) 커밋 뒤 {@code dropRebuildBackup(oid)} 가 보관본만 지운다; (3) 다른 프로세스가 보관한 뒤 죽은 흔적을 맞춤이 복원하고 트리거를
  * 되살린다. 만든 테넌트·계정만 정리한다. 접속 정보는 출력하지 않는다.
  */
-@EnabledIfEnvironmentVariable(named = "TIBERO_TEST_HOST", matches = ".+")
+@TiberoLive
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TiberoLiveStoreRebuildTest extends IntegrationTestBase {
 
@@ -52,7 +53,7 @@ class TiberoLiveStoreRebuildTest extends IntegrationTestBase {
 
   @BeforeAll
   void prepare() {
-    TiberoTestEnvironment.assumeDriverPresent();
+    TiberoTestServer.assumeDriverPresent();
     env =
         TiberoTestEnvironment.provision(
             dsl,

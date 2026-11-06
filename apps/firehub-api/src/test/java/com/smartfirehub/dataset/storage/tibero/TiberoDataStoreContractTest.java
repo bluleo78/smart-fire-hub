@@ -11,6 +11,8 @@ import com.smartfirehub.dataset.storage.DataTableStore;
 import com.smartfirehub.dataset.storage.external.ExternalAccountProvisioner;
 import com.smartfirehub.dataset.storage.external.ExternalStoreConnections;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.support.tibero.TiberoLive;
+import com.smartfirehub.support.tibero.TiberoTestServer;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -19,7 +21,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
@@ -32,7 +33,7 @@ import org.springframework.beans.factory.annotation.Autowired;
  * 만들지 않는다). 테스트 테넌트의 Tibero 계정 12개는 클래스 시작 때 만들고 끝에 지우므로 {@code PER_CLASS} 생명주기를 쓴다 — 정적
  * {@code @BeforeAll} 에서는 스프링 빈을 쓸 수 없다.
  */
-@EnabledIfEnvironmentVariable(named = "TIBERO_TEST_HOST", matches = ".+")
+@TiberoLive
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TiberoDataStoreContractTest extends DataStoreContractTest {
 
@@ -51,7 +52,7 @@ class TiberoDataStoreContractTest extends DataStoreContractTest {
   /** 드라이버가 있을 때만 전용 테넌트·계정을 준비한다. 없으면 가정 실패로 클래스 전체가 건너뛰어진다. */
   @BeforeAll
   void prepare() {
-    TiberoTestEnvironment.assumeDriverPresent();
+    TiberoTestServer.assumeDriverPresent();
     env =
         TiberoTestEnvironment.provision(
             dsl,

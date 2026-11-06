@@ -287,3 +287,24 @@ tasks.withType<Test> {
     // 리포트를 안 만들면 테스트 내내 모든 클래스를 계측하는 비용만 남는다.
     extensions.configure<JacocoTaskExtension> { isEnabled = !providers.gradleProperty("noCoverage").isPresent }
 }
+
+// Tibero 실서버 테스트 전용 태스크(WD-497). @TiberoLive 클래스만 고르고, 그 클래스들은 이 태스크가 켜는
+// firehub.tibero-live=true 가 있을 때만 돈다 — 기본 test(pre-push 전체 회귀 포함)는 셸에 TIBERO_TEST_* 가 남아 있어도
+// 공유 서버(세션 20개, DCIM 팀과 공유)에 붙지 않는다. 접속 정보는 scripts/tibero-test.sh 가 환경변수로 넘긴다.
+// - UTC JVM: Tibero 드라이버가 Instant 를 JVM 시간대 벽시계로 저장해 KST 에서는 JobRunr 가 깨진다(ADR 0001 결정 6).
+// - 단일 포크: 세션 한도 안에서 계정·풀을 하나씩 쓴다.
+val tiberoTest by tasks.registering(Test::class) {
+    description = "Tibero 실서버 테스트(@TiberoLive)만 UTC JVM 에서 실행한다."
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform { includeTags("tibero") }
+    systemProperty("firehub.tibero-live", "true")
+    jvmArgs("-Duser.timezone=UTC")
+    maxParallelForks = 1
+    // 실서버 결과는 매번 달라질 수 있어(라이선스·공유 서버 상태) 캐시하지 않는다.
+    outputs.upToDateWhen { false }
+    // 커버리지 리포트는 기본 test 의 실행 데이터로 만든다 — 이 태스크는 리포트를 끌어오지 않는다.
+    setFinalizedBy(emptyList<Any>())
+    extensions.configure<JacocoTaskExtension> { isEnabled = false }
+}

@@ -3,6 +3,8 @@ package com.smartfirehub.dataset.storage.tibero;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.support.tibero.TiberoLive;
+import com.smartfirehub.support.tibero.TiberoTestServer;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -14,7 +16,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 /**
  * Tibero 행 트리거 실서버 테스트(WD-77) — 실서버가 있을 때만 돈다(실행: {@code scripts/tibero-test.sh api}).
@@ -23,7 +24,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  * 확인한다: 권한 없을 때 거절, 권한 후 {@code SESSION_PRIVS} 행, ID 채움·명시 ID 유지·UPDATE 시 {@code _UPDATED_AT} 갱신,
  * 트리거가 없어도 사용자 INSERT 의 ID 가 채워지고, 옮기기 SQL 의 명시적 ID 가 연속인지 확인한다. 만든 계정만 마지막에 지운다. 접속 정보는 출력하지 않는다.
  */
-@EnabledIfEnvironmentVariable(named = "TIBERO_TEST_HOST", matches = ".+")
+@TiberoLive
 class TiberoLiveTriggerTest {
 
   private static final String STG = "STG_0123456789ABCDEF01234567";
@@ -51,12 +52,12 @@ class TiberoLiveTriggerTest {
 
   @Test
   void rowTrigger_fillsIdAndUpdatedAt_andLeavesExplicitInsertPathsAlone() throws Exception {
-    TiberoTestEnvironment.assumeDriverPresent();
-    TiberoTestEnvironment.Dba dba = TiberoTestEnvironment.dbaFromEnv();
+    TiberoTestServer.assumeDriverPresent();
+    TiberoTestServer.Dba dba = TiberoTestServer.dbaFromEnv();
     String user = "WD77TRG" + ThreadLocalRandom.current().nextInt(100000, 999999);
     String pw = "Pw" + ThreadLocalRandom.current().nextLong(100000000L, 999999999L) + "x";
     boolean created = false;
-    try (Connection d = TiberoTestEnvironment.openDba(dba)) {
+    try (Connection d = TiberoTestServer.openDba(dba)) {
       d.setAutoCommit(true);
       run(
           d,
@@ -194,7 +195,7 @@ class TiberoLiveTriggerTest {
       }
     } finally {
       if (created) {
-        try (Connection d = TiberoTestEnvironment.openDba(dba);
+        try (Connection d = TiberoTestServer.openDba(dba);
             Statement st = d.createStatement()) {
           st.execute("DROP USER \"" + user + "\" CASCADE");
         }
@@ -247,12 +248,12 @@ class TiberoLiveTriggerTest {
    */
   @Test
   void catalogJudgments_matchLiveNotation_forNewAndLegacyShapes() throws Exception {
-    TiberoTestEnvironment.assumeDriverPresent();
-    TiberoTestEnvironment.Dba dba = TiberoTestEnvironment.dbaFromEnv();
+    TiberoTestServer.assumeDriverPresent();
+    TiberoTestServer.Dba dba = TiberoTestServer.dbaFromEnv();
     String user = "WD233CAT" + ThreadLocalRandom.current().nextInt(100000, 999999);
     String pw = "Pw" + ThreadLocalRandom.current().nextLong(100000000L, 999999999L) + "x";
     boolean created = false;
-    try (Connection d = TiberoTestEnvironment.openDba(dba)) {
+    try (Connection d = TiberoTestServer.openDba(dba)) {
       d.setAutoCommit(true);
       run(
           d,
@@ -326,7 +327,7 @@ class TiberoLiveTriggerTest {
       }
     } finally {
       if (created) {
-        try (Connection d = TiberoTestEnvironment.openDba(dba);
+        try (Connection d = TiberoTestServer.openDba(dba);
             Statement st = d.createStatement()) {
           st.execute("DROP USER \"" + user + "\" CASCADE");
         }

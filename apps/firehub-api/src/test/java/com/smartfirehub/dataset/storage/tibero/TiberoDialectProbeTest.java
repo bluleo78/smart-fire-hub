@@ -1,5 +1,7 @@
 package com.smartfirehub.dataset.storage.tibero;
 
+import com.smartfirehub.support.tibero.TiberoLive;
+import com.smartfirehub.support.tibero.TiberoTestServer;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -13,7 +15,6 @@ import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 /**
  * Tibero 방언 확인(WD-74) — 실서버에 DBA 로 직접 붙어 {@code TiberoDialect}·SQL 빌더가 가정한 문법을 하나씩 확인한다.
@@ -25,13 +26,13 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  * <p>임시 객체는 모두 접두사 {@code WD74_PROBE_} 로 만들고, 만들기에 성공한 것만 {@code @AfterEach} 에서 (실패해도) 지운다. 접속
  * 정보·비밀번호는 출력하지 않는다. 실행은 {@code scripts/tibero-test.sh}.
  */
-@EnabledIfEnvironmentVariable(named = "TIBERO_TEST_HOST", matches = ".+")
+@TiberoLive
 class TiberoDialectProbeTest {
 
   /** 임시 객체 이름 접두사. */
   private static final String P = "WD74_PROBE_";
 
-  private TiberoTestEnvironment.Dba dba;
+  private TiberoTestServer.Dba dba;
   private Connection conn;
 
   /** 이름 바꾸기 탐침이 OWNER 권한으로 DDL 을 돌리는 연결. DROP USER 전에 먼저 닫아야 한다. */
@@ -43,9 +44,9 @@ class TiberoDialectProbeTest {
   /** 드라이버가 없으면 건너뛰고, 접속이 안 되면 테스트를 실패시킨다. */
   @BeforeEach
   void connect() throws SQLException {
-    TiberoTestEnvironment.assumeDriverPresent();
-    dba = TiberoTestEnvironment.dbaFromEnv();
-    conn = TiberoTestEnvironment.openDba(dba);
+    TiberoTestServer.assumeDriverPresent();
+    dba = TiberoTestServer.dbaFromEnv();
+    conn = TiberoTestServer.openDba(dba);
     conn.setAutoCommit(true);
   }
 
