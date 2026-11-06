@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useMyPermissions } from '@/hooks/queries/useMyPermissions';
 import {
   REVIEW_ITEMS_QUERY_KEY,
@@ -181,6 +181,8 @@ export default function ReviewInboxPage() {
   // 유지되게 한다 — 데이터셋 목록(#94)에서 이미 쓰인 것과 동일한 패턴.
   const [searchParams, setSearchParams] = useSearchParams();
   const filter = parseFilterParam(searchParams.get('type'));
+  // 탭 값 — 필터 없음은 「전체」 탭(Tabs·패널이 같은 값을 쓴다)
+  const filterTab = filter ?? 'all';
   const setFilter = (next: ReviewItemType | undefined) => {
     setSearchParams(
       (prev) => {
@@ -301,7 +303,8 @@ export default function ReviewInboxPage() {
         )}
       </div>
 
-      <Tabs value={filter ?? 'all'} onValueChange={(v) => setFilter(v === 'all' ? undefined : (v as ReviewItemType))}>
+      {/* 필터형 탭 — 표를 TabsControlsContent 로 감싸 선택 탭이 실제 패널을 가리킨다(WD-514, ui/tabs.tsx). gap-4 는 이전 space-y-4 유지 */}
+      <Tabs className="gap-4" value={filterTab} onValueChange={(v) => setFilter(v === 'all' ? undefined : (v as ReviewItemType))}>
         <TabsList>
           <TabsTrigger value="all">전체</TabsTrigger>
           <TabsTrigger value="synonym_merge">동의어</TabsTrigger>
@@ -309,59 +312,61 @@ export default function ReviewInboxPage() {
           <TabsTrigger value="entity_extraction">엔티티</TabsTrigger>
           <TabsTrigger value="relation_extraction">관계</TabsTrigger>
         </TabsList>
-      </Tabs>
 
-      {/* tabIndex=-1: Tab 순서는 건드리지 않으면서 프로그램적으로 포커스를 받을 수 있게 한다(#337 복귀 지점).
-          포커스 링은 지우지 않는다 — 복귀 지점이 보이지 않으면 SC 2.4.7 위반으로 결함을 바꿔 심는 셈이다. */}
-      <Table ref={tableRef} tabIndex={-1} data-testid="review-inbox-table">
-        <TableHeader>
-          <TableRow>
-            <TableHead>종류</TableHead>
-            <TableHead>내용</TableHead>
-            <TableHead>신호</TableHead>
-            {canDecide && <TableHead className="text-right">조치</TableHead>}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {isLoading && (
-            <TableRow><TableCell colSpan={colCount} className="text-muted-foreground text-center">불러오는 중...</TableCell></TableRow>
-          )}
-          {/* 조회 실패를 「항목 없음」으로 그리지 않는다 (WD-126) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
-              이미 받은 행이 있는 상태에서 「더 보기」만 실패한 경우는 행을 그대로 둔다. */}
-          {!isLoading && isError && (pending?.length ?? 0) === 0 && (
+        <TabsControlsContent value={filterTab} className="space-y-4">
+        {/* tabIndex=-1: Tab 순서는 건드리지 않으면서 프로그램적으로 포커스를 받을 수 있게 한다(#337 복귀 지점).
+            포커스 링은 지우지 않는다 — 복귀 지점이 보이지 않으면 SC 2.4.7 위반으로 결함을 바꿔 심는 셈이다. */}
+        <Table ref={tableRef} tabIndex={-1} data-testid="review-inbox-table">
+          <TableHeader>
             <TableRow>
-              <TableCell colSpan={colCount} className={cn('text-center', isForbidden ? 'text-muted-foreground' : 'text-destructive')}>
-                {isForbidden
-                  ? 'AI 검수 항목을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.'
-                  : '검수 항목을 불러오지 못했습니다.'}
-              </TableCell>
+              <TableHead>종류</TableHead>
+              <TableHead>내용</TableHead>
+              <TableHead>신호</TableHead>
+              {canDecide && <TableHead className="text-right">조치</TableHead>}
             </TableRow>
-          )}
-          {!isLoading && !isError && (pending?.length ?? 0) === 0 && (
-            <TableRow><TableCell colSpan={colCount} className="text-muted-foreground text-center">검수 대기 중인 항목이 없습니다.</TableCell></TableRow>
-          )}
-          {pending?.map((row) => (
-            <ReviewRow
-              key={row.id} row={row} processing={processingId === row.id} canDecide={canDecide}
-              onRequestConfirm={setConfirmTarget}
-            />
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {isLoading && (
+              <TableRow><TableCell colSpan={colCount} className="text-muted-foreground text-center">불러오는 중...</TableCell></TableRow>
+            )}
+            {/* 조회 실패를 「항목 없음」으로 그리지 않는다 (WD-126) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
+                이미 받은 행이 있는 상태에서 「더 보기」만 실패한 경우는 행을 그대로 둔다. */}
+            {!isLoading && isError && (pending?.length ?? 0) === 0 && (
+              <TableRow>
+                <TableCell colSpan={colCount} className={cn('text-center', isForbidden ? 'text-muted-foreground' : 'text-destructive')}>
+                  {isForbidden
+                    ? 'AI 검수 항목을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.'
+                    : '검수 항목을 불러오지 못했습니다.'}
+                </TableCell>
+              </TableRow>
+            )}
+            {!isLoading && !isError && (pending?.length ?? 0) === 0 && (
+              <TableRow><TableCell colSpan={colCount} className="text-muted-foreground text-center">검수 대기 중인 항목이 없습니다.</TableCell></TableRow>
+            )}
+            {pending?.map((row) => (
+              <ReviewRow
+                key={row.id} row={row} processing={processingId === row.id} canDecide={canDecide}
+                onRequestConfirm={setConfirmTarget}
+              />
+            ))}
+          </TableBody>
+        </Table>
 
-      {/* 페이지당 50건씩 무한스크롤(#422) — pending 큐가 커져도 한 번에 전량을 불러오지 않는다.
-          hasNextPage는 직전 페이지가 꽉 찼는지로 추론되므로(useReviewItemsPending), 마지막 페이지가
-          정확히 50건으로 끝나면 "더 보기"가 한 번 더 보이고 빈 응답으로 사라진다(더 보기 UX 표준 트레이드오프). */}
-      {hasNextPage && (
-        <button
-          type="button"
-          onClick={() => fetchNextPage()}
-          disabled={isFetchingNextPage}
-          className="mx-auto block rounded-md border px-4 py-2 text-sm hover:bg-accent"
-        >
-          {isFetchingNextPage ? '불러오는 중…' : '더 보기'}
-        </button>
-      )}
+        {/* 페이지당 50건씩 무한스크롤(#422) — pending 큐가 커져도 한 번에 전량을 불러오지 않는다.
+            hasNextPage는 직전 페이지가 꽉 찼는지로 추론되므로(useReviewItemsPending), 마지막 페이지가
+            정확히 50건으로 끝나면 "더 보기"가 한 번 더 보이고 빈 응답으로 사라진다(더 보기 UX 표준 트레이드오프). */}
+        {hasNextPage && (
+          <button
+            type="button"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+            className="mx-auto block rounded-md border px-4 py-2 text-sm hover:bg-accent"
+          >
+            {isFetchingNextPage ? '불러오는 중…' : '더 보기'}
+          </button>
+        )}
+        </TabsControlsContent>
+      </Tabs>
 
       {/* 4개 조치(승인·적재·정정 적용·거부) 전부가 거치는 단일 확인 게이트. 그래프 변경/목록 소멸이 모두 비가역이라 조건부 스킵은 두지 않는다. */}
       <AlertDialog open={confirmTarget !== null} onOpenChange={(open) => !open && setConfirmTarget(null)}>

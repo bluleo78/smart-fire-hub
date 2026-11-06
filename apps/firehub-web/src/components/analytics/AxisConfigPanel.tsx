@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from '../ui/select';
 import { Switch } from '../ui/switch';
-import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
+import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { BOXPLOT_REQUIRED_COLUMNS_LABEL } from './boxplot-stats';
 import { toggleYAxisColumn } from './chart-missing-columns';
 
@@ -214,7 +214,19 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
   if (isMap) {
     const mode = config.mapDisplayMode ?? 'points';
     return (
-      <div className="space-y-4">
+      // 모드별 필드를 TabsControlsContent 로 그려 각 탭이 실제 패널을 가리킨다(WD-514). gap-4 는 이전 space-y-4 유지
+      <Tabs
+        className="gap-4"
+        value={mode}
+        onValueChange={(next) =>
+          update({
+            mapDisplayMode: next as 'points' | 'heatmap',
+            // 모드 전환 시 반대 모드 전용 필드 초기화
+            weightColumn: next === 'points' ? undefined : config.weightColumn,
+            colorByColumn: next === 'heatmap' ? undefined : config.colorByColumn,
+          })
+        }
+      >
         {/* 표시 모드 — 점 / 히트맵 토글 (#119) */}
         <div className="space-y-1.5">
           {/*
@@ -228,22 +240,10 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
           >
             표시 모드
           </span>
-          <Tabs
-            value={mode}
-            onValueChange={(next) =>
-              update({
-                mapDisplayMode: next as 'points' | 'heatmap',
-                // 모드 전환 시 반대 모드 전용 필드 초기화
-                weightColumn: next === 'points' ? undefined : config.weightColumn,
-                colorByColumn: next === 'heatmap' ? undefined : config.colorByColumn,
-              })
-            }
-          >
-            <TabsList className="h-8" aria-labelledby={`${baseId}-map-mode`}>
-              <TabsTrigger value="points" className="text-xs">점</TabsTrigger>
-              <TabsTrigger value="heatmap" className="text-xs">히트맵</TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <TabsList className="h-8" aria-labelledby={`${baseId}-map-mode`}>
+            <TabsTrigger value="points" className="text-xs">점</TabsTrigger>
+            <TabsTrigger value="heatmap" className="text-xs">히트맵</TabsTrigger>
+          </TabsList>
         </div>
 
         {/* 공간 컬럼 (필수, 공통) */}
@@ -273,78 +273,74 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
         </div>
 
         {/* points 모드: 색상 기준 */}
-        {mode === 'points' && (
-          <div className="space-y-1.5">
-            <Label
-              htmlFor={`${baseId}-color-by`}
-              className="text-xs font-semibold text-muted-foreground uppercase tracking-wide"
-            >
-              색상 기준 (선택사항)
-            </Label>
-            <Select
-              value={config.colorByColumn || NO_COLUMN}
-              onValueChange={(v) => update({ colorByColumn: v === NO_COLUMN ? undefined : v })}
-            >
-              <SelectTrigger id={`${baseId}-color-by`} className="h-8 text-sm">
-                <SelectValue placeholder="선택 안 함" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_COLUMN}>선택 안 함</SelectItem>
-                {columns
-                  .filter((col) => col !== config.spatialColumn)
-                  .map((col) => (
-                    <SelectItem key={col} value={col}>
-                      {col}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-
-        {/* heatmap 모드: 가중치 컬럼 */}
-        {mode === 'heatmap' && (
-          <div className="space-y-1.5">
-            <Label
-              htmlFor={`${baseId}-weight`}
-              className="text-xs font-semibold text-muted-foreground uppercase tracking-wide"
-            >
-              가중치 컬럼 (선택사항)
-            </Label>
-            <Select
-              value={config.weightColumn || NO_COLUMN}
-              onValueChange={(v) => update({ weightColumn: v === NO_COLUMN ? undefined : v })}
-            >
-              <SelectTrigger
-                id={`${baseId}-weight`}
-                className="h-8 text-sm"
-                aria-label="가중치 컬럼"
-                aria-describedby={`${baseId}-weight-help`}
-              >
-                <SelectValue placeholder="없음 — 균등 가중치" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_COLUMN}>없음 — 균등 가중치</SelectItem>
-                {weightOptions.map((col) => (
+        <TabsControlsContent value="points" className="space-y-1.5">
+          <Label
+            htmlFor={`${baseId}-color-by`}
+            className="text-xs font-semibold text-muted-foreground uppercase tracking-wide"
+          >
+            색상 기준 (선택사항)
+          </Label>
+          <Select
+            value={config.colorByColumn || NO_COLUMN}
+            onValueChange={(v) => update({ colorByColumn: v === NO_COLUMN ? undefined : v })}
+          >
+            <SelectTrigger id={`${baseId}-color-by`} className="h-8 text-sm">
+              <SelectValue placeholder="선택 안 함" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_COLUMN}>선택 안 함</SelectItem>
+              {columns
+                .filter((col) => col !== config.spatialColumn)
+                .map((col) => (
                   <SelectItem key={col} value={col}>
                     {col}
                   </SelectItem>
                 ))}
-              </SelectContent>
-            </Select>
-            {/* 도움말 문구를 aria-describedby 로 컨트롤에 연결한다 (#432, §J). */}
-            <p id={`${baseId}-weight-help`} className="text-xs text-muted-foreground">
-              숫자 컬럼만 고를 수 있습니다. 가장 작은 값부터 가장 큰 값까지의 상대 크기로, 값이 클수록 해당 위치의 밀도 기여가 커집니다.
+            </SelectContent>
+          </Select>
+        </TabsControlsContent>
+
+        {/* heatmap 모드: 가중치 컬럼 */}
+        <TabsControlsContent value="heatmap" className="space-y-1.5">
+          <Label
+            htmlFor={`${baseId}-weight`}
+            className="text-xs font-semibold text-muted-foreground uppercase tracking-wide"
+          >
+            가중치 컬럼 (선택사항)
+          </Label>
+          <Select
+            value={config.weightColumn || NO_COLUMN}
+            onValueChange={(v) => update({ weightColumn: v === NO_COLUMN ? undefined : v })}
+          >
+            <SelectTrigger
+              id={`${baseId}-weight`}
+              className="h-8 text-sm"
+              aria-label="가중치 컬럼"
+              aria-describedby={`${baseId}-weight-help`}
+            >
+              <SelectValue placeholder="없음 — 균등 가중치" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_COLUMN}>없음 — 균등 가중치</SelectItem>
+              {weightOptions.map((col) => (
+                <SelectItem key={col} value={col}>
+                  {col}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {/* 도움말 문구를 aria-describedby 로 컨트롤에 연결한다 (#432, §J). */}
+          <p id={`${baseId}-weight-help`} className="text-xs text-muted-foreground">
+            숫자 컬럼만 고를 수 있습니다. 가장 작은 값부터 가장 큰 값까지의 상대 크기로, 값이 클수록 해당 위치의 밀도 기여가 커집니다.
+          </p>
+          {/* 예전에 문자 컬럼을 골라 저장한 차트 — 무엇이 문제인지 알리고 숫자 컬럼을 고르게 한다(WD-354) */}
+          {weightIsNonNumeric && (
+            <p className="text-xs text-destructive" role="alert">
+              「{config.weightColumn}」은(는) 숫자 컬럼이 아니라 가중치로 쓸 수 없어 균등 가중치로 그립니다. 숫자 컬럼을 고르세요.
             </p>
-            {/* 예전에 문자 컬럼을 골라 저장한 차트 — 무엇이 문제인지 알리고 숫자 컬럼을 고르게 한다(WD-354) */}
-            {weightIsNonNumeric && (
-              <p className="text-xs text-destructive" role="alert">
-                「{config.weightColumn}」은(는) 숫자 컬럼이 아니라 가중치로 쓸 수 없어 균등 가중치로 그립니다. 숫자 컬럼을 고르세요.
-              </p>
-            )}
-          </div>
-        )}
-      </div>
+          )}
+        </TabsControlsContent>
+      </Tabs>
     );
   }
 

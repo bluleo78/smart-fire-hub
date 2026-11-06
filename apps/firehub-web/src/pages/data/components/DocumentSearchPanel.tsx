@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
-import { Tabs, TabsList, TabsTrigger } from '../../../components/ui/tabs';
+import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { useSearchDocuments } from '../../../hooks/queries/useDocuments';
 import type { DocumentSearchHit, DocumentSearchMode } from '../../../types/document';
 
@@ -52,66 +52,70 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">문서 검색</h2>
-      {/* 검색 모드 토글 — 하이브리드(기본)/의미/키워드. 서버는 생략 시 HYBRID. */}
-      <Tabs value={mode} onValueChange={(v) => setMode(v as DocumentSearchMode)}>
+      {/* 검색 모드 토글 — 하이브리드(기본)/의미/키워드. 서버는 생략 시 HYBRID.
+          검색 입력·결과를 TabsControlsContent 로 감싸 선택 모드 탭이 실제 패널을 가리킨다(WD-514, ui/tabs.tsx).
+          검색어·결과 상태는 이 컴포넌트에 있어 모드를 바꿔도 유지된다. gap-3 은 이전 space-y-3 유지 */}
+      <Tabs className="gap-3" value={mode} onValueChange={(v) => setMode(v as DocumentSearchMode)}>
         <TabsList>
           <TabsTrigger value="HYBRID">하이브리드</TabsTrigger>
           <TabsTrigger value="SEMANTIC">의미</TabsTrigger>
           <TabsTrigger value="KEYWORD">키워드</TabsTrigger>
         </TabsList>
-      </Tabs>
-      <div className="flex gap-2">
-        {/* shadcn Input 사용 — 다크모드 배경·포커스링·border-input 토큰 일관성 보장 (#288) */}
-        <Input
-          className="flex-1"
-          placeholder="검색어를 입력하세요"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
-        />
-        <Button type="button" disabled={!query.trim() || search.isPending} onClick={handleSearch}>
-          {search.isPending ? '검색 중...' : '검색'}
-        </Button>
-      </div>
+        <TabsControlsContent value={mode} className="space-y-3">
+          <div className="flex gap-2">
+            {/* shadcn Input 사용 — 다크모드 배경·포커스링·border-input 토큰 일관성 보장 (#288) */}
+            <Input
+              className="flex-1"
+              placeholder="검색어를 입력하세요"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
+            />
+            <Button type="button" disabled={!query.trim() || search.isPending} onClick={handleSearch}>
+              {search.isPending ? '검색 중...' : '검색'}
+            </Button>
+          </div>
 
-      {search.isSuccess && hits.length === 0 && (
-        <p className="text-sm text-muted-foreground">검색 결과가 없습니다.</p>
-      )}
-      <ul className="space-y-2">
-        {hits.map((h, index) => {
-          const isExpanded = expandedChunks.has(h.chunkId);
-          return (
-            /* 클릭 시 청크 내용을 accordion 방식으로 펼침/접기 (#291) */
-            <li
-              key={h.chunkId}
-              role="button"
-              tabIndex={0}
-              aria-expanded={isExpanded}
-              className="rounded-md border p-3 cursor-pointer hover:bg-accent/50 transition-colors"
-              onClick={() => toggleChunk(h.chunkId)}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleChunk(h.chunkId); } }}
-            >
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>{h.fileName} · 청크 #{h.chunkIndex}</span>
-                {/* HYBRID의 score는 RRF 점수라 백분율 의미가 없어 순위로 표기. SEMANTIC/KEYWORD는 0~1이라 % 유지. */}
-                {searchedMode === 'HYBRID' ? (
-                  <span>관련도 {index + 1}위</span>
-                ) : (
-                  <span>유사도 {(h.score * 100).toFixed(1)}%</span>
-                )}
-              </div>
-              {/* 접힌 상태: 첫 줄만 표시. 펼친 상태: 전문 표시. */}
-              <p className={`mt-1 text-sm whitespace-pre-wrap ${isExpanded ? '' : 'line-clamp-1'}`}>
-                {h.content}
-              </p>
-              {/* 펼침 상태 힌트 */}
-              <p className="mt-1 text-xs text-muted-foreground select-none">
-                {isExpanded ? '▲ 접기' : '▼ 펼치기'}
-              </p>
-            </li>
-          );
-        })}
-      </ul>
+          {search.isSuccess && hits.length === 0 && (
+            <p className="text-sm text-muted-foreground">검색 결과가 없습니다.</p>
+          )}
+          <ul className="space-y-2">
+            {hits.map((h, index) => {
+              const isExpanded = expandedChunks.has(h.chunkId);
+              return (
+                /* 클릭 시 청크 내용을 accordion 방식으로 펼침/접기 (#291) */
+                <li
+                  key={h.chunkId}
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={isExpanded}
+                  className="rounded-md border p-3 cursor-pointer hover:bg-accent/50 transition-colors"
+                  onClick={() => toggleChunk(h.chunkId)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleChunk(h.chunkId); } }}
+                >
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>{h.fileName} · 청크 #{h.chunkIndex}</span>
+                    {/* HYBRID의 score는 RRF 점수라 백분율 의미가 없어 순위로 표기. SEMANTIC/KEYWORD는 0~1이라 % 유지. */}
+                    {searchedMode === 'HYBRID' ? (
+                      <span>관련도 {index + 1}위</span>
+                    ) : (
+                      <span>유사도 {(h.score * 100).toFixed(1)}%</span>
+                    )}
+                  </div>
+                  {/* 접힌 상태: 첫 줄만 표시. 펼친 상태: 전문 표시. */}
+                  <p className={`mt-1 text-sm whitespace-pre-wrap ${isExpanded ? '' : 'line-clamp-1'}`}>
+                    {h.content}
+                  </p>
+                  {/* 펼침 상태 힌트 */}
+                  <p className="mt-1 text-xs text-muted-foreground select-none">
+                    {isExpanded ? '▲ 접기' : '▼ 펼치기'}
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        </TabsControlsContent>
+      </Tabs>
     </section>
   );
 }
