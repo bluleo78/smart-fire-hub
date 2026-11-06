@@ -37,8 +37,25 @@ describe('Misc MCP Tools', () => {
   describe('list_imports', () => {
     it('calls apiClient.listImports with datasetId', async () => {
       const result = await invokeTool(server, 'list_imports', { datasetId: 5 });
-      expect(client.listImports).toHaveBeenCalledWith(5);
+      expect(client.listImports).toHaveBeenCalledWith(5, {});
       expect(result.isError).toBeFalsy();
+    });
+
+    it('passes page and size to apiClient.listImports (WD-535)', async () => {
+      const result = await invokeTool(server, 'list_imports', { datasetId: 5, page: 1, size: 200 });
+      expect(client.listImports).toHaveBeenCalledWith(5, { page: 1, size: 200 });
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('declares size max 200 and page min 0 in the input schema (WD-535)', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const shape = (server.instance as any)._registeredTools['list_imports'].inputSchema;
+      const schema = shape.shape ?? shape;
+      expect(schema.size.safeParse(200).success).toBe(true);
+      expect(schema.size.safeParse(201).success).toBe(false);
+      expect(schema.size.safeParse(0).success).toBe(false);
+      expect(schema.page.safeParse(-1).success).toBe(false);
+      expect(schema.page.safeParse(undefined).success).toBe(true);
     });
 
     it('returns isError on failure', async () => {

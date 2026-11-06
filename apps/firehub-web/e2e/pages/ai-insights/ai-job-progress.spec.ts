@@ -1,4 +1,4 @@
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
 
@@ -17,7 +17,7 @@ const DATASET_ID = 1;
  */
 async function setupImportBase(page: import('@playwright/test').Page) {
   await setupDatasetDetailMocks(page, DATASET_ID);
-  await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, []);
+  await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, createPageResponse([]));
   // 미리보기 응답
   await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, {
     fileHeaders: ['id', 'name'],

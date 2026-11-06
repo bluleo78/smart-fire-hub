@@ -546,8 +546,8 @@ export class FireHubApiClient {
     return this._connections.listSelectableConnections();
   }
 
-  listImports(datasetId: number) {
-    return this._misc.listImports(datasetId);
+  listImports(datasetId: number, params?: { page?: number; size?: number }) {
+    return this._misc.listImports(datasetId, params);
   }
 
   /**

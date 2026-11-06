@@ -11,6 +11,7 @@ import com.smartfirehub.dataimport.dto.ImportStartResponse;
 import com.smartfirehub.dataimport.dto.ImportValidateResponse;
 import com.smartfirehub.dataimport.dto.ParseOptions;
 import com.smartfirehub.dataimport.service.DataImportService;
+import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.global.util.ClientIpExtractor;
 import com.smartfirehub.user.repository.UserRepository;
@@ -27,6 +28,16 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/v1/datasets/{datasetId}")
 @RequiredArgsConstructor
 public class DataImportController {
+
+  /** 가져오기 이력 페이지 크기 기본값·상한(WD-535) — 파이프라인 목록 등 다른 목록 API 와 같은 20/200. */
+  static final int DEFAULT_IMPORTS_PAGE_SIZE = 20;
+
+  static final int MAX_IMPORTS_PAGE_SIZE = 200;
+
+  static final String INVALID_IMPORTS_PAGE_MESSAGE = "페이지 번호(page)는 0 이상이어야 합니다.";
+
+  static final String INVALID_IMPORTS_SIZE_MESSAGE =
+      "페이지 크기(size)는 1 이상 " + MAX_IMPORTS_PAGE_SIZE + " 이하여야 합니다.";
 
   private final DataImportService importService;
   private final UserRepository userRepository;
@@ -122,10 +133,25 @@ public class DataImportController {
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
 
+  /**
+   * 가져오기 이력 한 페이지(최신 순, 기본 page=0·size=20, size 1~200 — WD-535).
+   *
+   * <p>범위 밖 값은 이 컨트롤러의 다른 400 처럼 한국어 문구를 그대로 돌려주도록 {@link IllegalArgumentException} 으로 거부한다 —
+   * {@code @Validated}+{@code @Max} 는 응답 본문이 영어 "Validation failed" 가 된다.
+   */
   @GetMapping("/imports")
   @RequirePermission("dataset:read")
-  public ResponseEntity<List<ImportResponse>> getImports(@PathVariable Long datasetId) {
-    return ResponseEntity.ok(importService.getImportsByDatasetId(datasetId));
+  public ResponseEntity<PageResponse<ImportResponse>> getImports(
+      @PathVariable Long datasetId,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "" + DEFAULT_IMPORTS_PAGE_SIZE) int size) {
+    if (page < 0) {
+      throw new IllegalArgumentException(INVALID_IMPORTS_PAGE_MESSAGE);
+    }
+    if (size < 1 || size > MAX_IMPORTS_PAGE_SIZE) {
+      throw new IllegalArgumentException(INVALID_IMPORTS_SIZE_MESSAGE);
+    }
+    return ResponseEntity.ok(importService.getImportsByDatasetId(datasetId, page, size));
   }
 
   @GetMapping("/imports/{importId}")

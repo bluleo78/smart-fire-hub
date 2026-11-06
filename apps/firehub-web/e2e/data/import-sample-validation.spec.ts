@@ -1,4 +1,4 @@
-import { mockApi } from '../fixtures/api-mock';
+import { createPageResponse, mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
 import { grantDatasetPermissions, setupDatasetDetailMocks } from '../fixtures/dataset.fixture';
 
@@ -36,7 +36,7 @@ function createPreviewResponse() {
 
 async function setupBaseMocks(page: import('@playwright/test').Page) {
   await setupDatasetDetailMocks(page, DATASET_ID);
-  await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, []);
+  await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, createPageResponse([]));
   await mockApi(
     page,
     'POST',
@@ -204,7 +204,7 @@ test.describe('임포트 잡 실패 — VALIDATING 단계 fail-fast', () => {
           status: 200,
           contentType: 'application/json',
           // FAILED 이전에는 이력에 아무 것도 없다(진행 중이라 아직 기록 안 됨) — 이후에만 FAILED 레코드 노출.
-          body: JSON.stringify(jobHasFailed ? [failedImportRecord] : []),
+          body: JSON.stringify(createPageResponse(jobHasFailed ? [failedImportRecord] : [])),
         });
       },
     );

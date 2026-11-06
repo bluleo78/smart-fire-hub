@@ -3,8 +3,6 @@ import axios from 'axios';
 import { useEffect,useMemo,useState } from 'react';
 import { toast } from 'sonner';
 
-import { parseUtcDate } from '@/lib/formatters';
-
 import { useImports,usePreviewImport, useUploadFile,useValidateImport } from '../../../hooks/queries/useDatasets';
 import type { ImportProgress } from '../../../hooks/queries/useImportProgress';
 import { useImportProgress } from '../../../hooks/queries/useImportProgress';
@@ -128,7 +126,9 @@ export function useImportDialog({
   const uploadFile = useUploadFile(datasetId);
   // 임포트 진행 실패 시 오류 상세(errorDetails)는 SSE 이벤트에 실리지 않고 audit_log를 통해
   // 이력(ImportResponse)에만 저장된다 — 이력 목록을 조회해 FAILED 블록에서 재사용한다.
-  const { data: imports } = useImports(datasetId);
+  // 이력은 페이지로 온다(WD-535). 방금 끝난 임포트는 최신 순 첫 페이지에 있으므로 첫 페이지(content)만 본다.
+  const { data: importsPage } = useImports(datasetId);
+  const imports = importsPage?.content;
 
   // Invalidate queries when import completes or fails (실패 이력도 errorDetails 조회를 위해 갱신 필요)
   useEffect(() => {
@@ -140,14 +140,13 @@ export function useImportDialog({
 
   // 현재 열려 있는 다이얼로그의 선택 파일과 이름이 같은 가장 최근 FAILED 이력에서
   // 검증 오류 상세를 찾는다. jobId는 ImportResponse에 없어 직접 매칭할 수 없기 때문에
-  // fileName + 최신순 정렬을 근사 매칭 기준으로 사용한다.
+  // fileName + 최신순(서버가 최신 순으로 준다 — WD-535)을 근사 매칭 기준으로 사용한다.
   // 진행 상황을 확인할 수 없어 멈춘 경우(WD-203)는 이번 임포트의 실패가 아니므로 예전 실패 이력의 오류를 붙이지 않는다
   const progressUnobservable = importProgress?.unobservable === true;
   const failedErrors = useMemo(() => {
     if (importProgress?.stage !== 'FAILED' || progressUnobservable || !imports) return null;
     const candidates = imports
-      .filter((i) => i.status === 'FAILED' && (!selectedFile || i.fileName === selectedFile.name))
-      .sort((a, b) => parseUtcDate(b.createdAt).getTime() - parseUtcDate(a.createdAt).getTime());
+      .filter((i) => i.status === 'FAILED' && (!selectedFile || i.fileName === selectedFile.name));
     for (const candidate of candidates) {
       const parsed = parseErrorDetails(candidate.errorDetails);
       if (parsed) return parsed;

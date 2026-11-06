@@ -3,6 +3,7 @@ package com.smartfirehub.dataimport.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -15,6 +16,7 @@ import com.smartfirehub.dataimport.exception.FileUnreadableException;
 import com.smartfirehub.dataimport.exception.InvalidFileHeaderException;
 import com.smartfirehub.dataimport.service.DataImportService;
 import com.smartfirehub.global.config.SecurityConfig;
+import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -29,6 +31,8 @@ import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -74,14 +78,58 @@ class DataImportControllerTest {
     return new MockMultipartFile("file", "data.csv", "text/csv", "col1,col2\n1,2".getBytes());
   }
 
-  /** GET /datasets/{id}/imports — 인증 성공 시 임포트 이력 반환 */
+  /** GET /datasets/{id}/imports — 인증 성공 시 기본 page=0·size=20 으로 이력 한 페이지를 페이지 형태로 반환(WD-535) */
   @Test
-  void getImports_withPermission_returnsOk() throws Exception {
-    when(importService.getImportsByDatasetId(1L)).thenReturn(List.of());
+  void getImports_withPermission_returnsDefaultPage() throws Exception {
+    when(importService.getImportsByDatasetId(1L, 0, 20))
+        .thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
 
     mockMvc
         .perform(get("/api/v1/datasets/1/imports").header("Authorization", "Bearer test-token"))
-        .andExpect(status().isOk());
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.content").isArray())
+        .andExpect(jsonPath("$.page").value(0))
+        .andExpect(jsonPath("$.size").value(20))
+        .andExpect(jsonPath("$.totalElements").value(0))
+        .andExpect(jsonPath("$.totalPages").value(0));
+    verify(importService).getImportsByDatasetId(1L, 0, 20);
+  }
+
+  /** WD-535: page·size 쿼리 파라미터가 서비스로 그대로 전달된다(상한 200 포함) */
+  @Test
+  void getImports_passesPageAndSize() throws Exception {
+    when(importService.getImportsByDatasetId(1L, 2, 200))
+        .thenReturn(new PageResponse<>(List.of(), 2, 200, 450, 3));
+
+    mockMvc
+        .perform(
+            get("/api/v1/datasets/1/imports")
+                .param("page", "2")
+                .param("size", "200")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.totalElements").value(450))
+        .andExpect(jsonPath("$.totalPages").value(3));
+    verify(importService).getImportsByDatasetId(1L, 2, 200);
+  }
+
+  /** WD-535: page 가 음수거나 size 가 1~200 을 벗어나면 서비스 호출 없이 한국어 400 */
+  @ParameterizedTest(name = "{0}={1} → 400")
+  @CsvSource({"size, 0, SIZE", "size, 201, SIZE", "size, -1, SIZE", "page, -1, PAGE"})
+  void getImports_outOfRange_returnsKoreanBadRequest(String param, String value, String kind)
+      throws Exception {
+    String expected =
+        kind.equals("PAGE")
+            ? DataImportController.INVALID_IMPORTS_PAGE_MESSAGE
+            : DataImportController.INVALID_IMPORTS_SIZE_MESSAGE;
+    mockMvc
+        .perform(
+            get("/api/v1/datasets/1/imports")
+                .param(param, value)
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(expected));
+    verifyNoInteractions(importService);
   }
 
   /** GET /datasets/{id}/imports — 인증 없으면 401 */

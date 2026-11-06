@@ -755,13 +755,73 @@ class DataImportServiceTest extends IntegrationTestBase {
         metadata);
 
     // When
-    List<ImportResponse> imports = dataImportService.getImportsByDatasetId(testDatasetId);
+    List<ImportResponse> imports =
+        dataImportService.getImportsByDatasetId(testDatasetId, 0, 20).content();
 
     // Then
     assertThat(imports).hasSize(1);
     assertThat(imports.get(0).fileName()).isEqualTo("test.csv");
     assertThat(imports.get(0).status()).isEqualTo("COMPLETED");
     assertThat(imports.get(0).successRows()).isEqualTo(10);
+  }
+
+  /** 테스트용 가져오기 감사 기록 한 건을 남기고 id 를 돌려준다(WD-535). */
+  private Long logImport(Long datasetId, String actionType, String fileName) {
+    return auditLogService.log(
+        testUserId,
+        "Test User",
+        actionType,
+        "dataset",
+        String.valueOf(datasetId),
+        "파일 임포트: " + fileName,
+        null,
+        null,
+        "SUCCESS",
+        null,
+        Map.of("fileName", fileName, "totalRows", 1, "successRows", 1, "errorRows", 0));
+  }
+
+  /**
+   * WD-535: 가져오기 이력은 SQL 에서 최신 순(action_time desc, id desc)으로 잘라 한 페이지만 돌려주고, 전체 건수는 따로 센다.
+   *
+   * <p>테스트 트랜잭션 안에서는 NOW() 가 같아 기록 시각이 모두 같다 — 그래서 id desc 보조 정렬이 순서를 정하는지, 시각을 미래로 옮긴 한 건이 맨 앞에
+   * 오는지(action_time 우선)를 함께 본다. 다른 데이터셋·다른 행위(EXPORT) 기록은 건수에 들지 않아야 한다.
+   */
+  @Test
+  void getImportsByDatasetId_pagesNewestFirstInSqlWithTotalCount() {
+    List<Long> ids = new ArrayList<>();
+    for (int i = 0; i < 25; i++) {
+      ids.add(logImport(testDatasetId, "IMPORT", String.format("f%02d.csv", i)));
+    }
+    // f03 의 기록 시각을 한 시간 뒤로 옮겨 가장 최신으로 만든다 — id 보다 action_time 이 먼저 정렬 키인지 확인.
+    dsl.execute(
+        "update audit_log set action_time = now() + interval '1 hour' where id = ?", ids.get(3));
+    // 건수에 들면 안 되는 기록: 같은 데이터셋의 내보내기, 다른 데이터셋의 가져오기
+    logImport(testDatasetId, "EXPORT", "export.csv");
+    logImport(testDatasetId + 100000, "IMPORT", "other.csv");
+
+    var first = dataImportService.getImportsByDatasetId(testDatasetId, 0, 20);
+    assertThat(first.totalElements()).isEqualTo(25);
+    assertThat(first.totalPages()).isEqualTo(2);
+    assertThat(first.page()).isZero();
+    assertThat(first.size()).isEqualTo(20);
+    assertThat(first.content()).hasSize(20);
+    assertThat(first.content())
+        .extracting(ImportResponse::fileName)
+        .startsWith("f03.csv", "f24.csv", "f23.csv");
+
+    var second = dataImportService.getImportsByDatasetId(testDatasetId, 1, 20);
+    assertThat(second.totalElements()).isEqualTo(25);
+    assertThat(second.page()).isEqualTo(1);
+    // 첫 페이지 20건(f03, f24..f06)을 뺀 나머지가 같은 순서로 이어진다 — 겹치거나 빠지는 행이 없다.
+    assertThat(second.content())
+        .extracting(ImportResponse::fileName)
+        .containsExactly("f05.csv", "f04.csv", "f02.csv", "f01.csv", "f00.csv");
+
+    // 범위 밖 페이지는 빈 목록이지만 건수는 그대로다.
+    var beyond = dataImportService.getImportsByDatasetId(testDatasetId, 5, 20);
+    assertThat(beyond.content()).isEmpty();
+    assertThat(beyond.totalElements()).isEqualTo(25);
   }
 
   @Test
@@ -1560,7 +1620,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         .containsEntry("duplicateKeyRows", 1);
 
     // 이력에도 같은 키로 버린 행 수가 남는다(최신 순)
-    List<ImportResponse> imports = dataImportService.getImportsByDatasetId(pkDataset.id());
+    List<ImportResponse> imports =
+        dataImportService.getImportsByDatasetId(pkDataset.id(), 0, 20).content();
     assertThat(imports)
         .extracting(ImportResponse::fileName, ImportResponse::duplicateKeyRows)
         .contains(

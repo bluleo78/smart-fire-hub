@@ -167,10 +167,31 @@ public class JooqAuditLogRepository implements AuditLogRepository {
         .fetchOptional(this::mapToResponse);
   }
 
+  /** 정렬·자르기·건수 세기는 SQL 에서 한다. 같은 시각 행이 페이지 경계에서 겹치거나 빠지지 않도록 id desc 로 순서를 고정한다(WD-535). */
   @Override
-  public List<AuditLogResponse> findByResource(
+  public PageResponse<AuditLogResponse> findByResource(
+      String actionType, String resource, String resourceId, int page, int size) {
+    Condition condition = resourceCondition(actionType, resource, resourceId);
+
+    long totalElements = dsl.selectCount().from(AUDIT_LOG).where(condition).fetchOne(0, long.class);
+
+    List<AuditLogResponse> content =
+        dsl.select(RESPONSE_FIELDS)
+            .from(AUDIT_LOG)
+            .where(condition)
+            .orderBy(AL_ACTION_TIME.desc(), AL_ID.desc())
+            .offset((long) page * size)
+            .limit(size)
+            .fetch(this::mapToResponse);
+
+    int totalPages = (int) Math.ceil((double) totalElements / size);
+    return new PageResponse<>(content, page, size, totalElements, totalPages);
+  }
+
+  /** 목록·건수 쿼리가 같은 행을 보도록 조건을 한곳에서 만든다(WD-535). actionType·resourceId 가 null 이면 조건에서 뺀다. */
+  private static Condition resourceCondition(
       String actionType, String resource, String resourceId) {
-    var condition = AL_RESOURCE.eq(resource);
+    Condition condition = AL_RESOURCE.eq(resource);
 
     if (actionType != null) {
       condition = condition.and(AL_ACTION_TYPE.eq(actionType));
@@ -179,12 +200,7 @@ public class JooqAuditLogRepository implements AuditLogRepository {
     if (resourceId != null) {
       condition = condition.and(AL_RESOURCE_ID.eq(resourceId));
     }
-
-    return dsl.select(RESPONSE_FIELDS)
-        .from(AUDIT_LOG)
-        .where(condition)
-        .orderBy(AL_ACTION_TIME.desc())
-        .fetch(this::mapToResponse);
+    return condition;
   }
 
   /**

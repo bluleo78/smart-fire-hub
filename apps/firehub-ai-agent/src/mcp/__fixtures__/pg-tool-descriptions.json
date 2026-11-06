@@ -2421,7 +2421,7 @@
     }
   },
   "list_imports": {
-    "description": "데이터셋의 임포트 이력을 조회합니다",
+    "description": "데이터셋의 임포트 이력을 최신 순 페이지로 조회합니다(기본 20건). 응답은 { content, page, size, totalElements, totalPages } 이며, 더 오래된 이력은 page 를 늘려 조회하세요.",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -2429,6 +2429,18 @@
         "datasetId": {
           "type": "number",
           "description": "데이터셋 ID"
+        },
+        "page": {
+          "description": "0-based 페이지 번호 (기본: 0)",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "size": {
+          "description": "페이지당 개수 (기본: 20, 최대 200)",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
         }
       },
       "required": [
