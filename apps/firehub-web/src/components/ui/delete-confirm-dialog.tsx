@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { type MouseEvent, type ReactNode, useRef, useState } from 'react';
 
 import { eulReul } from '../../lib/utils';
 import {
@@ -39,6 +39,47 @@ interface CommonProps {
 type DeleteConfirmDialogProps = CommonProps &
   ({ trigger: ReactNode; open?: never; onOpenChange?: never } | { trigger?: never; open: boolean; onOpenChange: (open: boolean) => void });
 
+/**
+ * 삭제 확인 버튼 — 창이 한 번 열린 동안 확인(onConfirm)을 한 번만 부른다 (WD-507).
+ *
+ * 왜: Radix 는 확인 클릭 때 창 닫기를 시작하지만 닫힘 애니메이션 동안 내용이 남아 있어, 더블클릭의 두 번째 클릭이
+ * onConfirm 을 다시 불러 DELETE 가 두 번 나갔다(204 뒤 404 → 성공·"찾을 수 없습니다" 토스트가 함께 뜸). 호출부의
+ * 삭제 처리는 비동기라 거기서 막기 어렵고, 사용처마다 막으면 한 곳만 빠져도 재발하므로 공용 창 한 곳에서 막는다.
+ *
+ * AlertDialogContent 안에서 렌더되므로 창이 열릴 때마다 새로 마운트된다 — 가드(ref·state)가 매번 초기화되어
+ * 취소 뒤 다시 열면 정상적으로 삭제할 수 있다.
+ */
+function ConfirmDeleteAction({ onConfirm, confirmDisabled }: { onConfirm: () => void; confirmDisabled?: boolean }) {
+  // ref: 같은 이벤트 루프 안에서 연달아 오는 클릭도 즉시 막는다(state 는 다음 렌더까지 반영되지 않는다).
+  const confirmedRef = useRef(false);
+  // state: 첫 클릭 뒤 버튼을 disabled 로 보여 더 누를 수 없음을 알린다.
+  const [confirmed, setConfirmed] = useState(false);
+
+  const handleClick = (e: MouseEvent<HTMLButtonElement>) => {
+    if (confirmedRef.current) {
+      // 이미 확인했다 — 다시 부르지 않는다. 닫기도 이미 시작됐으므로 기본 동작(닫기)도 건너뛴다.
+      e.preventDefault();
+      return;
+    }
+    confirmedRef.current = true;
+    setConfirmed(true);
+    try {
+      onConfirm();
+    } catch (err) {
+      // onConfirm 이 동기로 던지면 Radix 닫기가 실행되지 않아 창이 열린 채 남는다 — 버튼이 영영 꺼지지 않게 가드를 풀고 다시 던진다.
+      confirmedRef.current = false;
+      setConfirmed(false);
+      throw err;
+    }
+  };
+
+  return (
+    <AlertDialogAction variant="destructive" onClick={handleClick} disabled={confirmDisabled || confirmed}>
+      삭제
+    </AlertDialogAction>
+  );
+}
+
 export function DeleteConfirmDialog({
   entityName,
   itemName,
@@ -73,9 +114,8 @@ export function DeleteConfirmDialog({
           <AlertDialogCancel>취소</AlertDialogCancel>
           {/* WD-5: 이 컴포넌트는 정의상 "되돌릴 수 없는 삭제" 확인이다(제목·문구 고정). 디자인 시스템 04 §D 에 따라
               확인 버튼은 항상 destructive — 호출처 prop 으로 열지 않는다(한 곳만 빠져도 같은 결함이 재발한다). */}
-          <AlertDialogAction variant="destructive" onClick={onConfirm} disabled={confirmDisabled}>
-            삭제
-          </AlertDialogAction>
+          {/* key: 열린 채로 대상만 바뀌는 제어형 사용처(OntologyPage)에서도 항목이 바뀌면 가드를 새로 시작한다 (WD-507) */}
+          <ConfirmDeleteAction key={itemName} onConfirm={onConfirm} confirmDisabled={confirmDisabled} />
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
