@@ -1,10 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { Clock,Columns, Database, Pencil, Tag } from 'lucide-react';
 import React, { useCallback, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
+import { datasetsApi } from '../../../api/datasets';
+import { EditConflictDialog } from '../../../components/EditConflictDialog';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
@@ -20,6 +23,7 @@ import {
 } from '../../../components/ui/select';
 import { useDatasetPermissions, useUpdateDataset } from '../../../hooks/queries/useDatasets';
 import { useEditModeFocus } from '../../../hooks/useEditModeFocus';
+import { isEditConflict } from '../../../lib/api-error';
 import { formatDate, formatRelativeTime, getOriginTypeLabel, getStorageTypeLabel } from '../../../lib/formatters';
 import type { UpdateDatasetFormData } from '../../../lib/validations/dataset';
 import { updateDatasetSchema } from '../../../lib/validations/dataset';
@@ -48,6 +52,11 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
   const updateDataset = useUpdateDataset(datasetId);
   // 기본 정보 수정(PUT /datasets/{id})은 dataset:write — 없으면 「수정」을 숨겨 조회 전용으로 보인다 (WD-139)
   const { canWriteDataset } = useDatasetPermissions();
+  const queryClient = useQueryClient();
+  // 정보 저장이 편집 충돌(409 EDIT_CONFLICT)로 거부됐는가(WD-575) — 참이면 EditConflictDialog 를 띄운다
+  const [editConflict, setEditConflict] = React.useState(false);
+  // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
+  const [isReloading, setIsReloading] = React.useState(false);
 
   const infoForm = useForm<UpdateDatasetFormData>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -76,17 +85,31 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 최초 마운트 시점의 onDirtyChange로 충분(부모 setState는 안정적)
   }, []);
 
+  /**
+   * 정보 저장. 편집 기준 버전(expectedUpdatedAt)을 함께 보내 그사이 다른 곳에서 저장됐으면 서버가 409 로 거부한다(WD-575) — 예전엔 옛 화면에서
+   * 설명만 고쳐 저장해도 옛 이름이 다시 써져 먼저 바꾼 이름이 경고 없이 사라졌다.
+   * 기준은 지금 폼 내용을 채운 데이터셋의 updatedAt 이다 — 폼은 useForm 의 values 로 dataset 을 따라가므로(재조회되면 폼도 바뀐다) 둘이 어긋나지 않는다.
+   * overwrite 는 충돌 안내의 「내 변경으로 덮어쓰기」다(기준을 뺀다).
+   */
   const onInfoSubmit = useCallback(
-    async (data: UpdateDatasetFormData) => {
+    async (data: UpdateDatasetFormData, overwrite = false) => {
       try {
         await updateDataset.mutateAsync({
           name: data.name,
           description: data.description || undefined,
           categoryId: data.categoryId || undefined,
+          // 서버 문자열 그대로 보낸다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다)
+          ...(overwrite ? {} : { expectedUpdatedAt: dataset.updatedAt }),
         });
+        setEditConflict(false);
         toast.success('데이터셋 정보가 업데이트되었습니다.');
         setIsEditing(false);
       } catch (error) {
+        // 편집 충돌은 토스트 대신 안내 창으로 — 다시 불러올지 덮어쓸지 고른다(WD-575)
+        if (isEditConflict(error)) {
+          setEditConflict(true);
+          return;
+        }
         if (axios.isAxiosError(error) && error.response?.data) {
           const errData = error.response.data as ErrorResponse;
           toast.error(errData.message || '업데이트에 실패했습니다.');
@@ -95,8 +118,40 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
         }
       }
     },
-    [updateDataset]
+    [updateDataset, dataset.updatedAt]
   );
+
+  /**
+   * 편집 충돌의 「다시 불러오기」(WD-575) — 최신 데이터셋을 서버에서 새로 받아 폼을 그것으로 바꾸고 내 변경은 버린다.
+   * 재조회 결과가 폼 값과 같으면(구조 공유) values 동기화가 다시 돌지 않을 수 있어 reset 으로 직접 채운다.
+   * 편집 모드는 닫는다 — 최신 내용을 보기 화면에서 확인한 뒤 다시 「수정」하게 한다.
+   */
+  const handleReloadLatest = useCallback(async () => {
+    setIsReloading(true);
+    try {
+      const latest = await queryClient.fetchQuery({
+        queryKey: ['datasets', datasetId],
+        queryFn: () => datasetsApi.getDatasetById(datasetId).then((r) => r.data),
+        staleTime: 0,
+      });
+      infoForm.reset({
+        name: latest.name,
+        description: latest.description || '',
+        categoryId: latest.category?.id,
+      });
+      setEditConflict(false);
+      setIsEditing(false);
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.data) {
+        const errData = error.response.data as ErrorResponse;
+        toast.error(errData.message || '최신 내용을 불러오지 못했습니다.');
+      } else {
+        toast.error('최신 내용을 불러오지 못했습니다.');
+      }
+    } finally {
+      setIsReloading(false);
+    }
+  }, [queryClient, datasetId, infoForm]);
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -164,7 +219,8 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
             ref={(el) => {
               editRegionRef.current = el;
             }}
-            onSubmit={infoForm.handleSubmit(onInfoSubmit)}
+            // handleSubmit 은 두 번째 인자로 이벤트를 넘기므로 감싸서 부른다 — 그대로 넘기면 이벤트가 overwrite 로 읽혀 기준 없이 저장된다
+            onSubmit={infoForm.handleSubmit((data) => onInfoSubmit(data))}
             className="space-y-4"
           >
             <div className="space-y-2">
@@ -275,6 +331,16 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
           </dl>
         )}
       </Card>
+
+      {/* 정보 저장 편집 충돌 안내(WD-575) — 다시 불러오기는 최신 정보로 되돌리고, 덮어쓰기는 기준 없이 다시 저장한다 */}
+      <EditConflictDialog
+        open={editConflict}
+        onOpenChange={setEditConflict}
+        resourceLabel="데이터셋"
+        pending={infoForm.formState.isSubmitting || isReloading}
+        onReload={() => void handleReloadLatest()}
+        onOverwrite={() => void infoForm.handleSubmit((data) => onInfoSubmit(data, true))()}
+      />
     </div>
   );
 });

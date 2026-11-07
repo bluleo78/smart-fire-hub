@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.config.SecurityConfig;
+import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -20,6 +21,7 @@ import com.smartfirehub.role.dto.*;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.service.RoleService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -85,14 +87,17 @@ class RoleControllerTest {
             "ADMIN",
             "Administrator",
             true,
-            List.of(new PermissionResponse(1L, "user:read", "Read users", "user")));
+            List.of(new PermissionResponse(1L, "user:read", "Read users", "user")),
+            LocalDateTime.of(2026, 11, 7, 10, 0, 0, 123456000));
     when(roleService.getRoleById(1L)).thenReturn(detail);
 
     mockMvc
         .perform(get("/api/v1/roles/1").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.name").value("ADMIN"))
-        .andExpect(jsonPath("$.permissions[0].code").value("user:read"));
+        .andExpect(jsonPath("$.permissions[0].code").value("user:read"))
+        // 웹이 이름·설명 저장의 편집 기준 버전으로 그대로 돌려보내는 값(WD-575) — 마이크로초까지 실린다
+        .andExpect(jsonPath("$.updatedAt").value("2026-11-07T10:00:00.123456"));
   }
 
   /**
@@ -103,7 +108,7 @@ class RoleControllerTest {
   void missingRole_returns404WithKoreanMessageWithoutId() throws Exception {
     mockAuthentication("role:read", "role:write");
     when(roleService.getRoleById(10L)).thenThrow(new RoleNotFoundException());
-    doThrow(new RoleNotFoundException()).when(roleService).updateRole(10L, "MOD", null, 1L);
+    doThrow(new RoleNotFoundException()).when(roleService).updateRole(10L, "MOD", null, null, 1L);
     doThrow(new RoleNotFoundException())
         .when(roleService)
         .setRolePermissions(10L, List.of(1L), null, 1L);
@@ -161,7 +166,30 @@ class RoleControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isNoContent());
 
-    verify(roleService).updateRole(3L, "MOD", "Updated moderator", 1L);
+    // 기준 버전 없는 요청은 null 로 넘어가 비교하지 않는다(하위 호환, WD-575)
+    verify(roleService).updateRole(3L, "MOD", "Updated moderator", null, 1L);
+  }
+
+  /** WD-575: 요청의 expectedUpdatedAt 은 서비스까지 그대로 넘어가고, 서비스의 편집 충돌은 409 EDIT_CONFLICT 로 응답한다. */
+  @Test
+  void updateRole_withExpectedUpdatedAt_forwardsVersion_andConflictReturns409() throws Exception {
+    mockAuthentication("role:write");
+    LocalDateTime version = LocalDateTime.of(2026, 11, 7, 10, 0, 0, 123456000);
+    doThrow(new EditConflictException(RoleService.EDIT_CONFLICT_MESSAGE))
+        .when(roleService)
+        .updateRole(3L, "MOD", "설명", version, 1L);
+
+    mockMvc
+        .perform(
+            put("/api/v1/roles/3")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"name\":\"MOD\",\"description\":\"설명\","
+                        + "\"expectedUpdatedAt\":\"2026-11-07T10:00:00.123456\"}"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value(EditConflictException.CODE))
+        .andExpect(jsonPath("$.message").value(RoleService.EDIT_CONFLICT_MESSAGE));
   }
 
   /**
@@ -182,7 +210,7 @@ class RoleControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(content().string(containsString("역할 이름은 대문자, 숫자, 밑줄만 허용됩니다")));
 
-    verify(roleService, never()).updateRole(any(), any(), any(), any());
+    verify(roleService, never()).updateRole(any(), any(), any(), any(), any());
   }
 
   @Test

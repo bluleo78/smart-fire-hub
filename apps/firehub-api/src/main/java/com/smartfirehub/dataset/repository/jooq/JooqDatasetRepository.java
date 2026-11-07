@@ -9,6 +9,7 @@ import com.smartfirehub.dataset.dto.UpdateDatasetRequest;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetSchemaMeta;
 import com.smartfirehub.global.platformdb.PlatformLocks;
+import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
@@ -488,6 +489,18 @@ public class JooqDatasetRepository implements DatasetRepository {
         .where(DS_SOURCE_PIPELINE_STEP_ID.eq(stepId))
         .limit(1)
         .fetchOptional(r -> r.get(DS_ID));
+  }
+
+  // WD-575: 정보 수정의 편집 기준 버전 비교용 — 다른 편집 충돌 보호(차트·쿼리·대시보드)와 같은 FOR UPDATE 행 잠금이다.
+  // 이 잠금은 트랜잭션 끝까지 유지돼 같은 데이터셋의 동시 정보 수정이 한 줄로 서고, 나중 요청은 앞 저장이 바꾼 수정 시각을 읽는다.
+  @Override
+  public Optional<LockedRowVersion> lockUpdatedAtById(Long id) {
+    return dsl.select(DS_UPDATED_AT)
+        .from(DATASET)
+        .where(DS_ID.eq(id))
+        .forUpdate()
+        .fetchOptional()
+        .map(r -> new LockedRowVersion(r.value1()));
   }
 
   @Override

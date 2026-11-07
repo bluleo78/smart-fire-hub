@@ -25,6 +25,8 @@ export interface RoleDetailResponse {
   description: string | null;
   isSystem: boolean;
   permissions: PermissionResponse[];
+  /** 이름·설명을 마지막으로 바꾼 시각(WD-575) — 이름·설명 저장의 편집 기준 버전으로 그대로 돌려보낸다. 권한 저장은 바꾸지 않는다. */
+  updatedAt: string | null;
 }
 
 export interface CreateRoleRequest {
@@ -35,6 +37,8 @@ export interface CreateRoleRequest {
 export interface UpdateRoleRequest {
   name: string;
   description?: string;
+  /** 편집을 시작할 때 읽은 역할의 updatedAt(WD-575) — 서버 값과 다르면 409 EDIT_CONFLICT. 빼면 비교하지 않는다(덮어쓰기). */
+  expectedUpdatedAt?: string | null;
 }
 
 export interface SetPermissionsRequest {
