@@ -52,7 +52,8 @@ public class ChannelSettingsController {
    *
    * <p>CHAT 채널은 항상 활성이므로 변경 시 400 응답 (GlobalExceptionHandler에서 처리).
    *
-   * @param channel URL 경로의 채널 이름 (대소문자 무관)
+   * @param channel URL 경로의 채널 이름 (대소문자 무관). 모르는 이름은 {@link ChannelType#fromPath} 가 지원 채널 목록을 담은 한국어
+   *     400 으로 거른다(WD-543 — enum 원문 메시지의 클래스 경로 노출 방지). 다른 엔드포인트도 같다.
    * @param request 활성화 여부
    * @param authentication 인증 객체
    */
@@ -62,7 +63,7 @@ public class ChannelSettingsController {
       @RequestBody ChannelPreferenceRequest request,
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
-    ChannelType channelType = ChannelType.valueOf(channel.toUpperCase());
+    ChannelType channelType = ChannelType.fromPath(channel);
     channelSettingsService.updatePreference(userId, channelType, request.enabled());
     return ResponseEntity.noContent().build();
   }
@@ -79,7 +80,7 @@ public class ChannelSettingsController {
   public ResponseEntity<Void> disconnectBinding(
       @PathVariable("channel") String channel, Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
-    ChannelType channelType = ChannelType.valueOf(channel.toUpperCase());
+    ChannelType channelType = ChannelType.fromPath(channel);
     channelSettingsService.disconnectBinding(userId, channelType);
     return ResponseEntity.noContent().build();
   }
@@ -100,7 +101,7 @@ public class ChannelSettingsController {
   public ResponseEntity<ChannelTestResult> testChannel(
       @PathVariable("channel") String channel, Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
-    ChannelType channelType = ChannelType.valueOf(channel.toUpperCase());
+    ChannelType channelType = ChannelType.fromPath(channel);
     return ResponseEntity.ok(channelSettingsService.testChannel(userId, channelType));
   }
 }

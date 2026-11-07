@@ -2,6 +2,7 @@ package com.smartfirehub.notification.settings;
 
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -137,6 +138,69 @@ class ChannelSettingsControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"enabled\": false}"))
         .andExpect(status().isBadRequest());
+  }
+
+  /** 지원 채널 안내 문구(WD-543) — ChannelType.values() 순서와 같다. */
+  private static final String UNKNOWN_CHANNEL_MESSAGE =
+      "지원하지 않는 채널입니다: NOPE (CHAT, EMAIL, KAKAO, SLACK 중 하나)";
+
+  /**
+   * 없는 채널 이름으로 preference 변경 시도 → 한국어 400 (WD-543). 예전에는 enum valueOf 의 원문 「No enum constant
+   * com.smartfirehub...」가 그대로 나가 내부 클래스 경로가 드러났다. 서비스까지 가지 않아야 한다.
+   */
+  @Test
+  void updatePreference_unknownChannel_returns400WithKoreanMessage() throws Exception {
+    mockMvc
+        .perform(
+            patch("/api/v1/channels/settings/NOPE/preference")
+                .header("Authorization", AUTH_HEADER)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\": false}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(UNKNOWN_CHANNEL_MESSAGE))
+        .andExpect(
+            jsonPath("$.message")
+                .value(
+                    org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("com.smartfirehub"))));
+
+    verifyNoInteractions(channelSettingsService);
+  }
+
+  /** 소문자 경로(email)도 지금처럼 EMAIL 로 받아들인다 (WD-543 회귀 방지). */
+  @Test
+  void updatePreference_lowercaseEmail_returns204() throws Exception {
+    mockMvc
+        .perform(
+            patch("/api/v1/channels/settings/email/preference")
+                .header("Authorization", AUTH_HEADER)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\": true}"))
+        .andExpect(status().isNoContent());
+
+    verify(channelSettingsService).updatePreference(TEST_USER_ID, ChannelType.EMAIL, true);
+  }
+
+  /** 소문자 모르는 채널(nope)도 사용자가 친 값 그대로가 아닌 대문자 표기로 같은 400 을 낸다 (WD-543). */
+  @Test
+  void disconnectBinding_unknownChannel_returns400WithKoreanMessage() throws Exception {
+    mockMvc
+        .perform(delete("/api/v1/channels/settings/nope").header("Authorization", AUTH_HEADER))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(UNKNOWN_CHANNEL_MESSAGE));
+
+    verifyNoInteractions(channelSettingsService);
+  }
+
+  /** 테스트 발송 엔드포인트도 같은 한국어 400 (WD-543). */
+  @Test
+  void testChannel_unknownChannel_returns400WithKoreanMessage() throws Exception {
+    mockMvc
+        .perform(post("/api/v1/channels/settings/NOPE/test").header("Authorization", AUTH_HEADER))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(UNKNOWN_CHANNEL_MESSAGE));
+
+    verifyNoInteractions(channelSettingsService);
   }
 
   // =========================================================================
