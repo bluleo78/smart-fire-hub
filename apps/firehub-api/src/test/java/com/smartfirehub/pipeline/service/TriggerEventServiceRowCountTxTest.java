@@ -81,6 +81,7 @@ class TriggerEventServiceRowCountTxTest extends IntegrationTestBase {
                     Map.of(),
                     null,
                     1L,
+                    LocalDateTime.now(),
                     LocalDateTime.now())));
     TenantScopedRunner runner = mock(TenantScopedRunner.class);
     doAnswer(

@@ -202,6 +202,11 @@ export interface TriggerResponse {
   nextFireTime: string | null;
   createdAt: string;
   /**
+   * 정의(이름·설명·config·켜기/끄기)의 마지막 수정 시각(WD-576) — 편집 창이 편집 기준 버전(expectedUpdatedAt)으로 보낸다.
+   * 스케줄 발화·데이터 변경 폴링 같은 실행 상태 갱신으로는 바뀌지 않는다. 옛 서버·옛 행은 없거나 null 일 수 있다(그때는 비교 없이 저장).
+   */
+  updatedAt?: string | null;
+  /**
    * 연쇄 트리거의 선행 파이프라인이 없는지(삭제됨 등) — 서버가 조회 시 계산한다(WD-218). 옛 서버는 보내지 않으므로 선택값이고, 없으면 false 로 본다.
    */
   upstreamMissing?: boolean;
@@ -262,4 +267,9 @@ export interface UpdateTriggerRequest {
   isEnabled?: boolean;
   description?: string;
   config?: Record<string, unknown>;
+  /**
+   * 편집 기준 버전(WD-576) — 편집 창을 열 때 읽은 트리거의 updatedAt. 그 사이 다른 곳에서 바뀌었으면 서버가 409 EDIT_CONFLICT 로 거부한다.
+   * 빼면 비교하지 않는다(「내 변경으로 덮어쓰기」).
+   */
+  expectedUpdatedAt?: string;
 }

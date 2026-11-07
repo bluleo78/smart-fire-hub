@@ -1,5 +1,6 @@
 package com.smartfirehub.pipeline.repository;
 
+import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
 import com.smartfirehub.pipeline.dto.PipelineDeleteImpactResponse;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
@@ -52,12 +53,29 @@ public interface TriggerRepository {
 
   Long create(Long pipelineId, CreateTriggerRequest req, Map<String, Object> config, Long userId);
 
+  /**
+   * 수정 시각을 행 잠금(FOR UPDATE)과 함께 읽는다 — 트리거 수정의 편집 충돌(낙관적 잠금) 비교용(WD-576, 파이프라인 WD-353 과 같은 방식).
+   *
+   * <p>잠금 없이 읽고 비교하면 동시에 들어온 두 저장이 같은 값을 읽어 둘 다 통과한다. 잠금을 잡으면 나중 저장은 앞 저장이 커밋될 때까지 기다렸다가 바뀐 값을 읽어
+   * 충돌로 거부된다. 호출자의 트랜잭션 안에서 불러야 잠금이 저장까지 유지된다.
+   *
+   * <p>행이 없으면 빈 값, 행은 있는데 수정 시각이 비어 있으면(nullable 컬럼) {@code updatedAt} 이 null 인 {@link
+   * LockedRowVersion} 이다 — 둘을 구분해야 수정 시각이 빈 옛 행을 "없음"으로 잘못 거부하지 않는다.
+   */
+  Optional<LockedRowVersion> lockUpdatedAtById(Long id);
+
   void update(Long id, UpdateTriggerRequest req, Long userId);
 
   void delete(Long id);
 
   void updateEnabled(Long id, boolean enabled);
 
+  /**
+   * 실행 상태({@code trigger_state} — 다음 실행 시각·데이터 변경 폴링 스냅숏 등)를 통째로 바꾼다.
+   *
+   * <p>수정 시각({@code updated_at})은 바꾸지 않는다(WD-576). {@code updated_at} 은 사람이 고친 정의의 수정 시각이며 편집 충돌
+   * 비교의 기준 버전이다 — 스케줄 발화·30초 폴링마다 바뀌면 편집 창을 열어 둔 것만으로 저장이 충돌로 거부된다.
+   */
   void updateTriggerState(Long id, Map<String, Object> state);
 
   /**

@@ -155,7 +155,8 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
             stateWithNextFire,
             nextFireTimeStr,
             trigger.createdBy(),
-            trigger.createdAt());
+            trigger.createdAt(),
+            trigger.updatedAt());
 
     // 실행 (이미 지난 시각으로 now 주입)
     schedulerService.detectMissedFire(triggerWithState, now);
@@ -197,7 +198,8 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
             stateWithNextFire,
             nextFireTimeStr,
             trigger.createdBy(),
-            trigger.createdAt());
+            trigger.createdAt(),
+            trigger.updatedAt());
 
     // 실행 (아직 미래)
     schedulerService.detectMissedFire(triggerWithState, now);
@@ -238,7 +240,8 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
             stateWithNextFire,
             nextFireTimeStr,
             trigger.createdBy(),
-            trigger.createdAt());
+            trigger.createdAt(),
+            trigger.updatedAt());
 
     schedulerService.detectMissedFire(triggerWithState, now);
 

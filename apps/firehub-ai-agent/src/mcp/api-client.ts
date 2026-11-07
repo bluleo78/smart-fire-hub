@@ -493,6 +493,7 @@ export class FireHubApiClient {
       isEnabled?: boolean;
       description?: string;
       config?: Record<string, unknown>;
+      expectedUpdatedAt?: string;
     },
   ) {
     return this._triggers.updateTrigger(pipelineId, triggerId, data);

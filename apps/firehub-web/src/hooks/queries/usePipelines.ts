@@ -262,9 +262,9 @@ export function useUpdateTrigger(pipelineId: number) {
   return useMutation({
     mutationFn: ({ triggerId, data }: { triggerId: number; data: UpdateTriggerRequest }) =>
       pipelinesApi.updateTrigger(pipelineId, triggerId, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['triggers', pipelineId] });
-    },
+    // 재조회가 끝난 뒤에 저장을 끝낸다(WD-576) — 수정 응답은 204 라 새 updatedAt 을 주지 않으므로, 다음 편집 창은 다시 받은 목록의 값을
+    // 기준 버전으로 써야 한다. 기다리지 않으면 저장 직후 곧바로 다시 연 편집 창이 옛 버전을 들고 자기 저장과 충돌한다.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['triggers', pipelineId] }),
   });
 }
 
@@ -286,9 +286,9 @@ export function useToggleTrigger(pipelineId: number) {
     // enabled = 사용자가 고른 상태(WD-435). 서버는 이 값으로 설정하고, 이미 그 상태면 그대로 둔다.
     mutationFn: ({ triggerId, enabled }: { triggerId: number; enabled: boolean }) =>
       pipelinesApi.toggleTrigger(pipelineId, triggerId, enabled),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['triggers', pipelineId] });
-    },
+    // 재조회가 끝난 뒤에 켜기/끄기를 끝낸다(WD-576) — 켜기/끄기는 트리거 updatedAt 을 바꾸므로, 끝나자마자 연 편집 창이 옛 목록의
+    // updatedAt 을 기준 버전으로 들고 자기 변경과 충돌(409)하지 않게 한다.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['triggers', pipelineId] }),
   });
 }
 
