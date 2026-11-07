@@ -20,9 +20,11 @@ import com.smartfirehub.dataset.repository.DatasetTagRepository;
 import com.smartfirehub.dataset.search.DatasetEmbeddingService;
 import com.smartfirehub.file.repository.FileDatasetConfigRepository;
 import com.smartfirehub.file.service.FileObjectStorageService;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -62,8 +64,16 @@ class DatasetServiceFileTest {
   private static final Long DATASET_ID = 100L;
   private static final Long USER_ID = 1L;
 
+  /** 테스트가 세운 테넌트 컨텍스트를 지운다 — 스레드 재사용으로 다른 테스트에 새지 않게. */
+  @AfterEach
+  void clearTenant() {
+    TenantContext.clear();
+  }
+
   @BeforeEach
   void setUp() {
+    // 이름·테이블명 중복 검사가 테넌트 범위 잠금을 잡는다(WD-540) — 실제 요청처럼 테넌트 컨텍스트를 세운다.
+    TenantContext.set(1L);
     // DatasetService 는 @RequiredArgsConstructor 로 생성되므로 실제 생성자 시그니처(필드 선언 순서)와
     // 동일한 순서로 직접 생성한다.
     datasetService =

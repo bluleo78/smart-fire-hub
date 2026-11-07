@@ -674,13 +674,32 @@ public class DatasetService {
   /**
    * 생성·복제 공통 중복 검사(WD-155). 이름은 조회자가 볼 수 있는 데이터셋 안에서만 겹침을 본다 — 숨긴 데이터셋과 같은 이름이면 그대로 만들어진다(DB 유일 제약
    * 없음, V142). 테이블명은 물리 제약이라 전체에서 보되 문구를 일반화한다.
+   *
+   * <p>동시 요청 직렬화(WD-540): 이름 잠금 → 테이블명 잠금 순서로 잡는다(고정 순서라 서로 교착하지 않는다). 테이블명은 유일 인덱스가 있지만 검사 뒤 쓰기
+   * 사이에 겹치면 늦은 쪽이 인덱스 위반(500)이 되므로, 잠금으로 줄 세워 순차일 때와 같은 409 를 돌려준다.
    */
   private void requireUnusedNameAndTableName(String name, String tableName) {
-    if (datasetRepository.existsVisibleByName(name, datasetAccessGuard.visibility(), null)) {
-      throw new DuplicateDatasetNameException(DUPLICATE_NAME_MESSAGE + name);
-    }
+    requireUnusedName(name, null);
+    // 이름 잠금을 잡은 뒤에만 테이블명 잠금을 잡는다 — 모든 경로가 같은 순서라 교착이 없다.
+    datasetRepository.acquireTableNameLock(TenantContext.require("데이터셋 테이블명 잠금"), tableName);
     if (datasetRepository.existsByTableName(tableName)) {
       throw new DuplicateDatasetNameException(TABLE_NAME_UNAVAILABLE_MESSAGE);
+    }
+  }
+
+  /**
+   * 이름 중복 검사 공통부(WD-540) — 이름 잠금을 잡은 뒤 볼 수 있는 데이터셋 가운데 같은 이름이 있으면 409 를 던진다.
+   *
+   * <p>왜 잠금을 먼저 잡나: 이름에는 DB 유일 제약이 없어(V142), 잠금 없이는 같은 이름의 동시 생성·복제·이름 변경이 서로의 미커밋 행을 못 보고 모두 통과한다.
+   * 잠금은 호출자 트랜잭션이 끝날 때까지 유지되므로 다음 요청은 커밋된 행을 보고 검사한다(READ COMMITTED). 테넌트는 다른 테넌트 범위 잠금처럼 {@code
+   * TenantContext.require} 로 확정한다 — dataset 은 RLS 테이블이라 모든 정상 경로(REST·파이프라인 러너)는 테넌트 컨텍스트 안에서 온다.
+   *
+   * @param excludeId 이름 변경 시 자기 자신(생성·복제는 null)
+   */
+  private void requireUnusedName(String name, Long excludeId) {
+    datasetRepository.acquireNameLock(TenantContext.require("데이터셋 이름 잠금"), name);
+    if (datasetRepository.existsVisibleByName(name, datasetAccessGuard.visibility(), excludeId)) {
+      throw new DuplicateDatasetNameException(DUPLICATE_NAME_MESSAGE + name);
     }
   }
 
@@ -691,11 +710,10 @@ public class DatasetService {
 
     // 이름을 바꿀 때도 볼 수 있는 데이터셋끼리만 겹침을 본다(WD-155) — 예전에는 DB 유일 제약이 걸려, 숨긴 데이터셋 이름으로
     // 바꾸면 409·없는 이름이면 200 으로 갈려 존재가 드러났다.
-    if (request.name() != null
-        && !request.name().equals(current.name())
-        && datasetRepository.existsVisibleByName(
-            request.name(), datasetAccessGuard.visibility(), id)) {
-      throw new DuplicateDatasetNameException(DUPLICATE_NAME_MESSAGE + request.name());
+    if (request.name() != null && !request.name().equals(current.name())) {
+      // 새 이름으로 바꿀 때만 생성·복제와 같은 이름 잠금을 잡는다(WD-540) — 같은 새 이름으로의 동시 변경·생성이 함께 통과하지 않게 한다. 이름을
+      // 그대로 두는 수정은 잠그지 않아 무관한 같은 이름 생성에 줄 서지 않는다.
+      requireUnusedName(request.name(), id);
     }
 
     if (request.categoryId() != null) {
