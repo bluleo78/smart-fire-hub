@@ -271,6 +271,17 @@ public class JooqTriggerRepository implements TriggerRepository {
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   @Override
   public void mergeNextFireTime(Long id, String nextFireTimeIso) {
+    doMergeNextFireTime(id, nextFireTimeIso);
+  }
+
+  /** 바깥 트랜잭션에 참여(MANDATORY)해 같은 커넥션으로 쓴다 — 커넥션 1개 원칙(WD-554). */
+  @Transactional(propagation = Propagation.MANDATORY)
+  @Override
+  public void mergeNextFireTimeInTransaction(Long id, String nextFireTimeIso) {
+    doMergeNextFireTime(id, nextFireTimeIso);
+  }
+
+  private void doMergeNextFireTime(Long id, String nextFireTimeIso) {
     findById(id)
         .ifPresent(
             trigger -> {
@@ -283,6 +294,17 @@ public class JooqTriggerRepository implements TriggerRepository {
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   @Override
   public void clearNextFireTime(Long id) {
+    doClearNextFireTime(id);
+  }
+
+  /** 바깥 트랜잭션에 참여(MANDATORY)해 같은 커넥션으로 쓴다 — 커넥션 1개 원칙(WD-554). */
+  @Transactional(propagation = Propagation.MANDATORY)
+  @Override
+  public void clearNextFireTimeInTransaction(Long id) {
+    doClearNextFireTime(id);
+  }
+
+  private void doClearNextFireTime(Long id) {
     findById(id)
         .ifPresent(
             trigger -> {
