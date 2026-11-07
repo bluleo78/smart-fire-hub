@@ -47,6 +47,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.ConstraintViolationException;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.sql.SQLTransientConnectionException;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
@@ -55,13 +56,17 @@ import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
+import org.springframework.core.NestedRuntimeException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -82,6 +87,9 @@ public class GlobalExceptionHandler {
 
   /** DB 오류 판정 창구 — 벤더별 메시지 문구·드라이버 타입은 구현 안에 둔다(WD-486). */
   private final PlatformDbErrors platformDbErrors;
+
+  /** 커넥션 풀 대기 초과(WD-553) 안내 — 일시적 과부하이므로 재시도를 권한다. */
+  static final String POOL_EXHAUSTED_MESSAGE = "요청이 많아 지금은 처리할 수 없습니다. 잠시 후 다시 시도하세요.";
 
   private ErrorResponse buildError(
       HttpStatus status, String message, Map<String, String> errors, HttpServletRequest request) {
@@ -913,6 +921,31 @@ public class GlobalExceptionHandler {
       NoResourceFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, "요청한 리소스를 찾을 수 없습니다.", null, request);
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  /**
+   * 커넥션 풀 대기 초과(WD-553) → 503 + 재시도 안내. 예전에는 일반 500 으로 떨어져 "예기치 않은 오류" 로 보였다.
+   *
+   * <p>트랜잭션 시작({@link CannotCreateTransactionException})이나 트랜잭션 없는 커넥션 획득({@link
+   * DataAccessResourceFailureException} — {@code CannotGetJdbcConnectionException} 등, {@link
+   * TransientDataAccessResourceException})에서 Hikari 가 {@link SQLTransientConnectionException} 을
+   * 원인으로 실어 올린 경우만 503 이다. 같은 타입이라도 원인이 다르면(예: 테넌트 GUC 설정 실패) 기존 일반 500 처리에 그대로 넘긴다.
+   */
+  @ExceptionHandler({
+    CannotCreateTransactionException.class,
+    DataAccessResourceFailureException.class,
+    TransientDataAccessResourceException.class
+  })
+  public ResponseEntity<ErrorResponse> handleConnectionAcquireFailure(
+      NestedRuntimeException ex, HttpServletRequest request) {
+    if (!ex.contains(SQLTransientConnectionException.class)) {
+      return handleException(ex, request);
+    }
+    // 풀 과부하뿐 아니라 DB 장애(접속 거부)로도 같은 예외가 올 수 있어 원인을 찾을 수 있게 스택을 남긴다.
+    log.warn("DB 커넥션 획득 실패(풀 대기 초과): {}", ex.getMessage(), ex);
+    ErrorResponse response =
+        buildError(HttpStatus.SERVICE_UNAVAILABLE, POOL_EXHAUSTED_MESSAGE, null, request);
+    return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
   }
 
   @ExceptionHandler(Exception.class)

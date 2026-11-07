@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.CreateSavedQueryRequest;
+import com.smartfirehub.analytics.service.AnalyticsQueryConcurrencyGate;
 import com.smartfirehub.analytics.service.AnalyticsQueryExecutionService;
 import com.smartfirehub.analytics.service.SavedQueryService;
 import com.smartfirehub.dataset.dto.SqlQueryRequest;
@@ -472,7 +473,9 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
             mock(AnalyticsQueryExecutionService.class),
             executor,
             mock(SecurityAuditRecorder.class),
-            tibero);
+            tibero,
+            // 동시 실행 상한(WD-553)은 끈다 — 이 테스트는 Tibero·트랜잭션 경계만 본다.
+            new AnalyticsQueryConcurrencyGate(0, 0));
     return new MetricSetup(gate, executor, db, tibero);
   }
 
@@ -614,7 +617,9 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
             proxied,
             mock(ExecutorClient.class),
             mock(SecurityAuditRecorder.class),
-            tibero);
+            tibero,
+            // 동시 실행 상한(WD-553)은 끈다 — 이 테스트는 Tibero·트랜잭션 경계만 본다.
+            new AnalyticsQueryConcurrencyGate(0, 0));
     return new AnalyticsTxSetup(gate, target, proxied, db, tibero, txSeen);
   }
 

@@ -54,6 +54,11 @@ firehub:
         initial-delay-ms: 86400000
 
 app:
+  analytics:
+    query-concurrency:
+      # 분석 쿼리 동시 실행 전체 상한(WD-553) — 테스트 풀(2)보다 작게 1 로 둔다. 순차 실행 테스트는 허가가 곧바로 반납돼 영향이 없고,
+      # AnalyticsQueryConcurrencyIntegrationTest 가 두 번째 실행의 즉시 429 를 이 값으로 재현한다.
+      max-total: 1
   data-store:
     tibero-enabled: true
   login-attempts:

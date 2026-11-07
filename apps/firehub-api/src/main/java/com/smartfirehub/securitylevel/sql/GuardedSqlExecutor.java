@@ -1,6 +1,7 @@
 package com.smartfirehub.securitylevel.sql;
 
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
+import com.smartfirehub.analytics.service.AnalyticsQueryConcurrencyGate;
 import com.smartfirehub.analytics.service.AnalyticsQueryExecutionService;
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
@@ -55,6 +56,13 @@ public class GuardedSqlExecutor {
   private final TiberoQueryService tiberoQueryService;
 
   /**
+   * 분석 쿼리 동시 실행 상한(WD-553). 애드혹·저장 쿼리 실행({@link #executeAnalytics})과 결과 내보내기 재실행({@link
+   * #executeJudgedAnalyticsGated})의 PG 실행 구간만 지난다 —
+   * 차트·대시보드는 위젯을 병렬로 불러오므로 지나지 않는다.
+   */
+  private final AnalyticsQueryConcurrencyGate concurrencyGate;
+
+  /**
    * 데이터셋 /query — 정규화 실패({@link SqlQueryException})·파싱 실패({@link UnsafeSqlException})는 기존과 같이
    * 예외(400), 열람 거부는 403.
    */
@@ -76,11 +84,13 @@ public class GuardedSqlExecutor {
    * 애널리틱스 — 기존 계약상 문법·검증 오류는 200 + error 필드다(AnalyticsQueryExecutionService.execute). 정규화·판정 전 파싱
    * 오류도 같은 형태로 돌려 웹 쿼리 편집기 표시가 바뀌지 않게 한다. 열람 거부는 403(구조화 코드 — {@code CodedApiException} 이 그대로
    * 올라간다). 판정({@link #judgeAnalytics})과 실행({@link #executeJudgedAnalytics})을 한 번에 한다.
+   *
+   * <p>호출자는 애드혹 실행과 저장 쿼리 실행뿐이라 동시 실행 상한(WD-553)을 건다 — 초과면 429 {@code QUERY_CONCURRENCY_LIMIT}.
    */
   public AnalyticsQueryResponse executeAnalytics(
       Clearance c, String sql, int maxRows, boolean readOnly) {
     AnalyticsJudgment j = judgeAnalytics(c, sql);
-    AnalyticsQueryResponse r = executeJudgedAnalytics(j, maxRows, readOnly);
+    AnalyticsQueryResponse r = executeJudgedAnalyticsGated(j, maxRows, readOnly);
     // 캐시되지 않는 직접 실행 응답(애드혹·저장 쿼리)에만 조회자 기준 내보내기 플래그를 싣는다(설계 결정 5). 대시보드 공유 캐시는
     // executeJudgedAnalytics 결과를 담으므로 이 플래그가 다른 조회자에게 새지 않는다.
     return r.withExportInfo(j.exportAllowedFor(), null);
@@ -178,9 +188,31 @@ public class GuardedSqlExecutor {
    * 판정 토큰을 실행한다 — 판정한 정규화본 그대로. 정규화·파싱 실패 토큰은 AnalyticsQueryExecutionService.errorResponse 와 같은
    * 모양(queryType "UNKNOWN", 200 + error)으로, 거부 토큰은 {@link DatasetAccessGuard#requireSql} 과 같은 403
    * 으로 끝난다.
+   *
+   * <p>동시 실행 상한을 걸지 않는다 — 차트·대시보드 경로(위젯 병렬 로딩)가 쓴다. 상한이 필요한 경로는 {@link
+   * #executeJudgedAnalyticsGated}.
    */
   public AnalyticsQueryResponse executeJudgedAnalytics(
       AnalyticsJudgment judgment, int maxRows, boolean readOnly) {
+    return runJudgedAnalytics(judgment, maxRows, readOnly, false);
+  }
+
+  /**
+   * 판정 토큰을 실행한다 — {@link #executeJudgedAnalytics} 와 같고, PG 실행 구간을 동시 실행 상한(WD-553)으로 감싼다. 이름으로
+   * 구분해 readOnly 와 뒤바뀔 수 있는 위치 boolean 을 두지 않는다.
+   *
+   * <p>허가는 판정 거부(403)·파싱 오류 뒤, {@code @Transactional} 실행 서비스가 커넥션을 열기 <b>전</b>에 얻고, 실행이 어떻게
+   * 끝나든(정상·200 + error·statement timeout·예외) try-with-resources 로 돌려준다. 기다리지 않고 즉시 거절한다 — 저장 쿼리 실행은
+   * 바깥 트랜잭션이 이미 커넥션을 쥐고 있어 기다리면 풀 고갈이 되풀이된다. Tibero 실행은 공용 PG 커넥션을 쥐지 않으므로 걸지 않는다.
+   */
+  public AnalyticsQueryResponse executeJudgedAnalyticsGated(
+      AnalyticsJudgment judgment, int maxRows, boolean readOnly) {
+    return runJudgedAnalytics(judgment, maxRows, readOnly, true);
+  }
+
+  /** 판정 토큰 실행 공통부 — {@code gated} 면 PG 실행 구간만 동시 실행 상한으로 감싼다. */
+  private AnalyticsQueryResponse runJudgedAnalytics(
+      AnalyticsJudgment judgment, int maxRows, boolean readOnly, boolean gated) {
     if (judgment.parseError != null) {
       return new AnalyticsQueryResponse(
           "UNKNOWN", List.of(), List.of(), 0, 0L, 0, false, judgment.parseError);
@@ -201,10 +233,18 @@ public class GuardedSqlExecutor {
     // 기다리는
     // 내내 PG 커넥션(테넌트 GUC 설정됨)을 쥔다. 판정은 위에서 이미 끝났고, 판정한 같은 정규화본을 실행한다. isTibero 는 RLS 없는
     // tenant_data_store 를 테넌트별 캐시로 읽고 테넌트는 스레드 로컬이라 트랜잭션 없이도 맞게 판정된다. PG 테넌트는 기존 그대로다.
-    AnalyticsQueryResponse response =
-        tiberoQueryService.isTibero()
-            ? analyticsExecution.executeOnTibero(judgment.normalized, maxRows)
-            : analyticsExecution.execute(judgment.normalized, maxRows, readOnly);
+    AnalyticsQueryResponse response;
+    if (tiberoQueryService.isTibero()) {
+      response = analyticsExecution.executeOnTibero(judgment.normalized, maxRows);
+    } else if (gated) {
+      // 허가가 쿼리 시간 전체를 덮도록 실행 호출 자체를 감싼다(공용 풀 커넥션을 쥐는 구간과 같다).
+      try (AnalyticsQueryConcurrencyGate.Permit ignored =
+          concurrencyGate.acquire(judgment.clearance.userId())) {
+        response = analyticsExecution.execute(judgment.normalized, maxRows, readOnly);
+      }
+    } else {
+      response = analyticsExecution.execute(judgment.normalized, maxRows, readOnly);
+    }
     // 실제로 실행돼 결과가 나가는 지점에서 감사 등급 접근을 남긴다(실행 오류 응답은 데이터가 없으므로 남기지 않는다).
     if (response.error() == null) {
       recordDelivered(judgment);
