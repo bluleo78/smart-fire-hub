@@ -102,6 +102,8 @@ export default function ProfilePage() {
               <Input
                 id="profile-username"
                 type="text"
+                // 로그인 계정 칸임을 브라우저·비밀번호 관리자에 알려 아래 비밀번호 변경 폼과 계정을 연결하게 한다 (WD-538)
+                autoComplete="username"
                 value={user?.username ?? ''}
                 readOnly
                 disabled
@@ -118,6 +120,8 @@ export default function ProfilePage() {
                 id="profile-name"
                 type="text"
                 maxLength={50}
+                // 이름 칸 표준 자동완성 값 — 가입 화면과 같게 맞춘다 (WD-538)
+                autoComplete="name"
                 {...profileForm.register('name')}
               />
             </FormField>
@@ -130,6 +134,8 @@ export default function ProfilePage() {
                 id="profile-email"
                 type="email"
                 placeholder="email@example.com"
+                // 이메일 칸 표준 자동완성 값 — 가입 화면과 같게 맞춘다 (WD-538)
+                autoComplete="email"
                 {...profileForm.register('email')}
               />
             </FormField>
@@ -159,6 +165,8 @@ export default function ProfilePage() {
               <Input
                 id="current-password"
                 type="password"
+                // 저장된 현재 비밀번호를 채울 수 있게 한다 — 강제 변경 화면과 같은 값 (WD-538)
+                autoComplete="current-password"
                 {...passwordForm.register('currentPassword')}
               />
             </FormField>
@@ -171,6 +179,8 @@ export default function ProfilePage() {
               <Input
                 id="new-password"
                 type="password"
+                // 새 비밀번호 칸임을 알려 비밀번호 관리자가 현재 값 대신 새 값 생성·저장을 제안하게 한다 (WD-538)
+                autoComplete="new-password"
                 aria-invalid={!!passwordForm.formState.errors.newPassword}
                 aria-describedby={
                   passwordForm.formState.errors.newPassword ? 'new-password-help new-password-error' : 'new-password-help'
@@ -189,6 +199,8 @@ export default function ProfilePage() {
               <Input
                 id="confirm-password"
                 type="password"
+                // 확인 칸도 새 비밀번호와 같은 값으로 묶어 관리자가 같은 생성 값을 채우게 한다 (WD-538)
+                autoComplete="new-password"
                 {...passwordForm.register('confirmPassword')}
               />
             </FormField>

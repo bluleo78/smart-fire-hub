@@ -255,6 +255,28 @@ test.describe('프로필 페이지', () => {
     await expect(page.locator('#profile-name')).toHaveAttribute('maxlength', '50');
   });
 
+  /**
+   * 회귀 테스트 (WD-538): 프로필 화면 모든 입력에 표준 autocomplete 값이 지정돼 있다.
+   * - 가입·로그인·강제 변경 화면과 같은 값이어야 브라우저·비밀번호 관리자가 계정·비밀번호를 올바르게 채우고 저장한다.
+   */
+  test('프로필·비밀번호 입력에 표준 autocomplete 값이 지정돼 있다 (WD-538)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    await expect(page.locator('#profile-name')).toBeVisible({ timeout: 5000 });
+
+    // id → 기대 autocomplete 값 (가입·강제 변경 화면과 동일)
+    const expected: Record<string, string> = {
+      'profile-username': 'username',
+      'profile-name': 'name',
+      'profile-email': 'email',
+      'current-password': 'current-password',
+      'new-password': 'new-password',
+      'confirm-password': 'new-password',
+    };
+    for (const [id, value] of Object.entries(expected)) {
+      await expect(page.locator(`#${id}`)).toHaveAttribute('autocomplete', value);
+    }
+  });
+
   /** WD-125: 상한 경계 — 정확히 50자는 화면 검증을 통과해 그대로 저장 요청에 실린다. */
   test('이름 50자는 그대로 저장 요청에 실린다 (WD-125)', async ({ authenticatedPage: page }) => {
     await page.goto('/profile');
