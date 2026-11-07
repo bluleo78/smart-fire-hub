@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.repository;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.dto.UpdateDatasetRequest;
+import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -74,6 +75,14 @@ public interface DatasetRepository {
 
   /** 파이프라인 스텝이 만든 데이터셋의 id 를 조회한다. 없으면 빈 값. */
   Optional<Long> findBySourcePipelineStepId(Long stepId);
+
+  /**
+   * 수정 시각을 행 잠금(FOR UPDATE)과 함께 읽는다 — 정보 수정의 편집 충돌(낙관적 잠금) 비교용(WD-575, 차트 WD-364 와 같은 방식).
+   *
+   * <p>잠금 없이 읽고 비교하면 동시에 들어온 두 저장이 같은 값을 읽어 둘 다 통과한다. 잠금을 잡으면 나중 저장은 앞 저장이 커밋될 때까지 기다렸다가 바뀐 값을 읽어
+   * 충돌로 거부된다. 행이 없으면 빈 값, 행은 있는데 수정 시각이 비어 있으면 {@code updatedAt} 이 null 인 값이다.
+   */
+  Optional<LockedRowVersion> lockUpdatedAtById(Long id);
 
   /** 데이터셋의 이름·설명·카테고리·태그 등 변경 가능한 항목을 갱신한다. */
   void update(Long id, UpdateDatasetRequest request, Long updatedBy);

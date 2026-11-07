@@ -119,6 +119,8 @@ export interface UpdateDatasetRequest {
   name: string;
   description?: string;
   categoryId?: number;
+  /** 편집을 시작할 때 읽은 데이터셋의 updatedAt(WD-575) — 서버 값과 다르면 409 EDIT_CONFLICT. 빼면 비교하지 않는다(덮어쓰기). */
+  expectedUpdatedAt?: string | null;
 }
 
 export interface AddColumnRequest {
