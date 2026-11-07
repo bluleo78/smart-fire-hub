@@ -116,13 +116,17 @@ public class ProactiveJobAdminService {
     audit(adminUserId, ACTION_ADMIN_DISABLE, job, "스마트 작업 관리자 끄기: " + job.name());
   }
 
-  /** 관리자 삭제 — 예약 실행을 먼저 해제하고 행을 지운다(WD-165 와 같은 순서). */
+  /** 관리자 삭제 — 행을 지우고, 실제로 지웠을 때만 감사를 남기고 예약 실행을 커밋 뒤 해제한다(WD-584 — 작성자 삭제와 같은 규칙). */
   @Transactional
   public void deleteJob(Long id, Long adminUserId) {
     long tenantId = TenantContext.require("스마트 작업 관리자 삭제");
     WorkspaceJobRow job = requireWorkspaceJob(id, tenantId);
-    schedulerService.unregisterSchedule(id);
-    proactiveJobRepository.deleteInTenant(id, tenantId);
+    // 동시 삭제(WD-584) — 진 쪽 DELETE 는 먼저 지운 쪽 커밋을 기다린 뒤 0 행이므로 순차 두 번째 삭제와 같은 404·문구로 끝내고,
+    // 예약 해제·감사를 되풀이하지 않는다. 해제는 커밋 뒤라 감사 실패로 롤백돼도 예약만 풀리지 않는다.
+    if (proactiveJobRepository.deleteInTenant(id, tenantId) == 0) {
+      throw new ProactiveJobNotFoundException("Proactive Job을 찾을 수 없습니다: " + id);
+    }
+    schedulerService.unregisterScheduleAfterCommit(id);
     audit(adminUserId, ACTION_ADMIN_DELETE, job, "스마트 작업 관리자 삭제: " + job.name());
   }
 

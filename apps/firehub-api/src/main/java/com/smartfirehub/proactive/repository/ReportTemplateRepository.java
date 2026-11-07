@@ -70,5 +70,10 @@ public interface ReportTemplateRepository {
       List<Map<String, Object>> sections,
       String style);
 
-  void delete(Long id, Long userId);
+  /**
+   * 사용자 본인 양식을 지운다(빌트인은 조건에서 빠진다).
+   *
+   * @return 지운 행 수 — 동시 삭제에서 진 쪽은 0 이라 호출자가 404 로 바꾼다(WD-584)
+   */
+  int delete(Long id, Long userId);
 }

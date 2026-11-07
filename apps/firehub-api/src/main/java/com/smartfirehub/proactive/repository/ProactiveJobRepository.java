@@ -98,7 +98,12 @@ public interface ProactiveJobRepository {
    */
   void updateNextExecuteAt(Long id, LocalDateTime nextExecuteAt);
 
-  void delete(Long id, Long userId);
+  /**
+   * 사용자 본인 작업을 지운다.
+   *
+   * @return 지운 행 수 — 동시 삭제에서 진 쪽은 0 이라 호출자가 404 로 바꾼다(WD-584)
+   */
+  int delete(Long id, Long userId);
 
   /**
    * 관리자 목록용 최소 행 — 작업 내용(프롬프트·설정)은 읽지 않는다.
@@ -123,6 +128,10 @@ public interface ProactiveJobRepository {
   /** 관리자 끄기 — enabled 만 false 로 바꾼다. 켜기는 이 경로로 하지 않는다(자격 없는 사람이 자동 실행을 늘리면 안 된다). */
   void disableInTenant(Long id, long tenantId);
 
-  /** 관리자 삭제 — 작성자와 무관하게 이 워크스페이스의 작업을 지운다. */
-  void deleteInTenant(Long id, long tenantId);
+  /**
+   * 관리자 삭제 — 작성자와 무관하게 이 워크스페이스의 작업을 지운다.
+   *
+   * @return 지운 행 수 — 동시 삭제에서 진 요청은 0 이라 호출자가 404 로 끝낸다(WD-584)
+   */
+  int deleteInTenant(Long id, long tenantId);
 }

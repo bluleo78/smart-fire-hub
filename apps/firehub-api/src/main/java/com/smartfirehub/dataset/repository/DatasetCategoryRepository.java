@@ -23,8 +23,12 @@ public interface DatasetCategoryRepository {
   /** 카테고리의 이름·설명을 갱신한다. */
   void update(Long id, String name, String description);
 
-  /** id 로 카테고리를 삭제한다. */
-  void deleteById(Long id);
+  /**
+   * id 로 카테고리를 삭제한다.
+   *
+   * @return 지운 행 수 — 동시 삭제에서 진 쪽은 0 이라 호출자가 404 로 바꾼다(WD-584)
+   */
+  int deleteById(Long id);
 
   /**
    * 주어진 이름과 앞뒤 공백·대소문자를 무시하고 같은 카테고리가 있는지 확인한다(WD-241).

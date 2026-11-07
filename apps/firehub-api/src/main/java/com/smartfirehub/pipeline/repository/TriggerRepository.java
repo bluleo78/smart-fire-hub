@@ -66,7 +66,12 @@ public interface TriggerRepository {
 
   void update(Long id, UpdateTriggerRequest req, Long userId);
 
-  void delete(Long id);
+  /**
+   * id 로 트리거를 지운다.
+   *
+   * @return 지운 행 수 — 동시 삭제에서 진 쪽은 0 이라 호출자가 404 로 바꾼다(WD-584)
+   */
+  int delete(Long id);
 
   void updateEnabled(Long id, boolean enabled);
 

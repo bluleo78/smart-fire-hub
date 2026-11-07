@@ -448,7 +448,11 @@ public class TriggerService {
     TriggerResponse existing =
         triggerRepository.findById(triggerId).orElseThrow(TriggerNotFoundException::new);
 
-    triggerRepository.delete(triggerId);
+    // 동시 삭제(WD-584) — 위 조회는 먼저 지운 쪽이 커밋하기 전이면 통과한다. 진 쪽 DELETE 는 그 커밋을 기다린 뒤 0 행이므로, 순차 두 번째
+    // 삭제와 같은 404 로 끝내고 감사·커밋 뒤 예약 해제 등록을 하지 않는다.
+    if (triggerRepository.delete(triggerId) == 0) {
+      throw new TriggerNotFoundException();
+    }
     auditTrigger(userId, "DELETE", existing, "트리거 삭제: " + existing.name(), null);
 
     // Unregister schedule after commit

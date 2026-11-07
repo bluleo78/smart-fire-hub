@@ -245,7 +245,11 @@ public class ApiConnectionService {
     String connectionName = existing.name();
     Map<String, Object> snapshot =
         connectionSnapshot(connectionName, existing.authType(), existing.baseUrl());
-    repository.deleteById(id);
+    // 동시 삭제(WD-584) — 위 조회는 먼저 지운 쪽이 커밋하기 전이면 통과한다. 진 쪽 DELETE 는 그 커밋을 기다린 뒤 0 행이므로, 순차 두 번째
+    // 삭제와 같은 404 로 끝내고 감사를 남기지 않는다.
+    if (repository.deleteById(id) == 0) {
+      throw new ApiConnectionNotFoundException(id);
+    }
     audit(userId, "DELETE", id, "API 연결 삭제: " + connectionName, snapshot);
   }
 

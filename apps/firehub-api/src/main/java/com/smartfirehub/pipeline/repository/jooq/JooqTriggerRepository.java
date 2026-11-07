@@ -263,8 +263,8 @@ public class JooqTriggerRepository implements TriggerRepository {
   }
 
   @Override
-  public void delete(Long id) {
-    dsl.deleteFrom(PIPELINE_TRIGGER).where(T_ID.eq(id)).execute();
+  public int delete(Long id) {
+    return dsl.deleteFrom(PIPELINE_TRIGGER).where(T_ID.eq(id)).execute();
   }
 
   @Override
