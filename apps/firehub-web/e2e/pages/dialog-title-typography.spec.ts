@@ -24,7 +24,7 @@ test.describe('다이얼로그 제목 타이포그래피 (#788)', () => {
   test('일반 Dialog(역할 생성) 제목이 20px/28px', async ({ authenticatedPage: page }) => {
     await setupRoleListMocks(page);
     await page.goto('/admin/roles');
-    await page.getByRole('button', { name: '역할 추가' }).click();
+    await page.getByRole('button', { name: '새 역할' }).click();
     await expectHeadingCard(page.getByRole('dialog').locator('[data-slot="dialog-title"]'));
   });
 
@@ -64,7 +64,7 @@ test.describe('Dialog 헤더와 닫기 버튼 (WD-9)', () => {
   test('헤더 내용 영역이 닫기 X 와 겹치지 않는다', async ({ authenticatedPage: page }) => {
     await setupRoleListMocks(page);
     await page.goto('/admin/roles');
-    await page.getByRole('button', { name: '역할 추가' }).click();
+    await page.getByRole('button', { name: '새 역할' }).click();
 
     const dialog = page.getByRole('dialog');
     const header = dialog.locator('[data-slot="dialog-header"]');

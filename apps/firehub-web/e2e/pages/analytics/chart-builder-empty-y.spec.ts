@@ -129,7 +129,7 @@ test.describe('차트 빌더 — Y축 모두 해제 시 안내 (WD-505)', () => 
     await page.getByRole('button', { name: '저장' }).click();
     const dialog = page.getByRole('dialog');
     await dialog.getByPlaceholder('차트 이름을 입력하세요').fill('빈 게이지');
-    await dialog.getByRole('button', { name: '저장' }).click();
+    await dialog.getByRole('button', { name: '만들기' }).click();
 
     // 미리보기와 같은 문구의 오류 토스트 — 미리보기 안내와 구분하려고 토스트 영역에서 찾는다
     await expect(page.locator('[data-sonner-toast]').filter({ hasText: '값 컬럼(Y축)을 선택하세요.' })).toBeVisible();

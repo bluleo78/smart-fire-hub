@@ -85,7 +85,7 @@ test.describe('대시보드 목록 페이지', () => {
     await page.getByLabel('이름 *').fill('테스트 대시보드');
 
     // "생성" 버튼 클릭
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // POST API가 호출되었는지, payload에 name이 포함되었는지 검증
     const captured = await postCapture.waitForRequest();
@@ -120,7 +120,7 @@ test.describe('대시보드 목록 페이지', () => {
     await page.getByLabel('이름 *').fill('더블클릭 대시보드');
 
     // "생성" 버튼을 빠르게 두 번 클릭 (더블클릭 시뮬레이션)
-    const createButton = page.getByRole('dialog').getByRole('button', { name: '생성' });
+    const createButton = page.getByRole('dialog').getByRole('button', { name: '만들기' });
     await createButton.dblclick();
 
     // 다이얼로그가 닫힐 때까지(=요청 완료) 대기 후 POST 호출 횟수 검증

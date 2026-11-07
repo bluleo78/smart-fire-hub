@@ -40,7 +40,7 @@ test.describe('파이프라인 에디터 페이지', () => {
     await page.getByRole('tab', { name: '트리거' }).click();
 
     // 트리거 탭 콘텐츠가 표시된다 (트리거 추가 버튼 확인)
-    await expect(page.getByRole('button', { name: /트리거 추가/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /새 트리거/ })).toBeVisible();
   });
 
   test('실행 이력 탭을 클릭하면 실행 목록이 표시된다', async ({ authenticatedPage: page }) => {

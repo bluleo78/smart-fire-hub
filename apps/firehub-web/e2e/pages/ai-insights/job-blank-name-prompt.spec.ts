@@ -48,7 +48,7 @@ async function captureJobWrites(page: Page, jobId = 1) {
   return { posts, puts };
 }
 
-const createButton = (page: Page) => page.getByRole('button', { name: '생성', exact: true });
+const createButton = (page: Page) => page.getByRole('button', { name: '만들기', exact: true });
 const saveButton = (page: Page) => page.getByRole('button', { name: '저장', exact: true });
 
 test.describe('스마트 작업 — 공백만 입력한 이름·프롬프트 (WD-500)', () => {

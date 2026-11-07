@@ -62,7 +62,7 @@ test.describe('DOCUMENT 데이터셋 생성', () => {
       await expect(page.getByLabel('테이블명')).toHaveCount(0);
 
       // 생성 버튼 클릭
-      await page.getByRole('button', { name: '생성' }).click();
+      await page.getByRole('button', { name: '만들기' }).click();
 
       // POST payload 검증
       const req = await capture.waitForRequest();

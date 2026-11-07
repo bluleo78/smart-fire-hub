@@ -201,7 +201,7 @@ export default function ProactiveJobListPage() {
         {canWrite && (
           <Button size="sm" onClick={() => navigate('/ai-insights/jobs/new')}>
             <Plus className="h-4 w-4" />
-            작업 추가
+            새 스마트 작업
           </Button>
         )}
       </div>

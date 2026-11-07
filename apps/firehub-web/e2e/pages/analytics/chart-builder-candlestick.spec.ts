@@ -68,7 +68,7 @@ test.describe('캔들스틱 OHLC 필드 매핑 — ChartBuilderPage (#663)', () 
 
     await page.getByRole('button', { name: '저장' }).click();
     await page.getByLabel('이름 *').fill('매핑 안 된 캔들스틱');
-    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     // 검증 실패 토스트가 뜨고, 저장 다이얼로그는 닫히지 않으며, API는 호출되지 않아야 한다
     await expect(page.getByText('시가/고가/저가/종가 컬럼을 모두 선택하세요.')).toBeVisible();
@@ -128,7 +128,7 @@ test.describe('캔들스틱 OHLC 필드 매핑 — ChartBuilderPage (#663)', () 
 
     await page.getByRole('button', { name: '저장' }).click();
     await page.getByLabel('이름 *').fill('주가 캔들스틱');
-    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     const req = await cap.waitForRequest();
     expect(req.payload).toMatchObject({

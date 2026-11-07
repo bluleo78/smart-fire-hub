@@ -93,7 +93,7 @@ test.describe('리포트 양식 목록 페이지', () => {
     await page.goto('/ai-insights/templates');
 
     // "템플릿 추가" 버튼 클릭
-    await page.getByRole('button', { name: '템플릿 추가' }).click();
+    await page.getByRole('button', { name: '새 템플릿' }).click();
 
     // 새 템플릿 페이지로 이동 확인
     await expect(page).toHaveURL('/ai-insights/templates/new');

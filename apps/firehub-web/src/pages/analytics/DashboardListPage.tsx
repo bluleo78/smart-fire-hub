@@ -188,7 +188,7 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
             onClick={handleSubmit}
             disabled={!name.trim() || createDashboard.isPending}
           >
-            생성
+            만들기
           </Button>
         </DialogFooter>
       </DialogContent>

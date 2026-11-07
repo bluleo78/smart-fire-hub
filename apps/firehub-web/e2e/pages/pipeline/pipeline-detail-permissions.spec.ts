@@ -159,7 +159,7 @@ test.describe('파이프라인 상세 — 권한별 쓰기 진입점 노출 (WD-
   }) => {
     await openTriggers(page, READ_ONLY);
 
-    await expect(page.getByRole('button', { name: '트리거 추가' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 트리거' })).toHaveCount(0);
     await expect(triggerMenuButton(page)).toHaveCount(0);
     await expect(page.getByText('최근 트리거 이벤트')).toBeVisible();
   });
@@ -169,7 +169,7 @@ test.describe('파이프라인 상세 — 권한별 쓰기 진입점 노출 (WD-
   }) => {
     await openTriggers(page, PIPELINE_ALL_PERMISSIONS);
 
-    await expect(page.getByRole('button', { name: '트리거 추가' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '새 트리거' })).toBeVisible();
     await triggerMenuButton(page).click();
     await expect(page.getByRole('menuitem', { name: '편집' })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: '비활성화' })).toBeVisible();
@@ -179,7 +179,7 @@ test.describe('파이프라인 상세 — 권한별 쓰기 진입점 노출 (WD-
   test('trigger:write 만 있으면 메뉴에 편집·비활성화만 있고 삭제는 없다', async ({ authenticatedPage: page }) => {
     await openTriggers(page, [...READ_ONLY, 'trigger:write']);
 
-    await expect(page.getByRole('button', { name: '트리거 추가' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '새 트리거' })).toBeVisible();
     await triggerMenuButton(page).click();
     await expect(page.getByRole('menuitem', { name: '편집' })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: '비활성화' })).toBeVisible();
@@ -189,7 +189,7 @@ test.describe('파이프라인 상세 — 권한별 쓰기 진입점 노출 (WD-
   test('trigger:delete 만 있으면 「트리거 추가」는 없고 메뉴에 삭제만 있다', async ({ authenticatedPage: page }) => {
     await openTriggers(page, [...READ_ONLY, 'trigger:delete']);
 
-    await expect(page.getByRole('button', { name: '트리거 추가' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 트리거' })).toHaveCount(0);
     await triggerMenuButton(page).click();
     await expect(page.getByRole('menuitem', { name: '삭제' })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: '편집' })).toHaveCount(0);
@@ -266,7 +266,7 @@ test.describe('파이프라인 목록·생성 경로 — 권한별 추가·삭�
   test('조회 전용이면 「파이프라인 추가」와 행 삭제 버튼이 없고 목록은 보인다', async ({ authenticatedPage: page }) => {
     await openPipelineList(page, READ_ONLY);
 
-    await expect(page.getByRole('link', { name: '파이프라인 추가' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: '새 파이프라인' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: '삭제', exact: true })).toHaveCount(0);
     await expect(page.getByRole('cell', { name: '파이프라인 3', exact: true })).toBeVisible();
   });
@@ -276,18 +276,18 @@ test.describe('파이프라인 목록·생성 경로 — 권한별 추가·삭�
   }) => {
     await openPipelineList(page, [...READ_ONLY, 'pipeline:write', 'pipeline:delete']);
 
-    await expect(page.getByRole('link', { name: '파이프라인 추가' })).toBeVisible();
+    await expect(page.getByRole('link', { name: '새 파이프라인' })).toBeVisible();
     await expect(page.getByRole('button', { name: '삭제', exact: true })).toHaveCount(3);
   });
 
   test('pipeline:write 만 있으면 추가만, pipeline:delete 만 있으면 삭제만 보인다', async ({ authenticatedPage: page }) => {
     await openPipelineList(page, [...READ_ONLY, 'pipeline:write']);
-    await expect(page.getByRole('link', { name: '파이프라인 추가' })).toBeVisible();
+    await expect(page.getByRole('link', { name: '새 파이프라인' })).toBeVisible();
     await expect(page.getByRole('button', { name: '삭제', exact: true })).toHaveCount(0);
 
     await openPipelineList(page, [...READ_ONLY, 'pipeline:delete']);
     await expect(page.getByRole('button', { name: '삭제', exact: true })).toHaveCount(3);
-    await expect(page.getByRole('link', { name: '파이프라인 추가' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: '새 파이프라인' })).toHaveCount(0);
   });
 
   test('pipeline:write 없이 /pipelines/new 로 직접 들어오면 편집기 대신 레이아웃 안 권한 안내가 보인다', async ({

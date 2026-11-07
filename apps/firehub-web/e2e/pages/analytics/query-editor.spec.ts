@@ -293,7 +293,7 @@ test.describe('쿼리 에디터 페이지', () => {
     await page.getByLabel('공유 쿼리').click();
 
     // 다이얼로그의 저장 버튼 클릭
-    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     // POST API가 호출되었는지 확인
     const req = await cap.waitForRequest();
@@ -336,7 +336,7 @@ test.describe('쿼리 에디터 페이지', () => {
     await nameInput.fill('수정된 쿼리');
 
     // 수정 버튼 클릭
-    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
 
     // PUT API가 호출되었는지 확인
     const req = await cap.waitForRequest();
@@ -369,7 +369,7 @@ test.describe('쿼리 에디터 페이지', () => {
     await descInput.fill('');
     await page.getByRole('dialog').getByLabel('폴더').click();
     await page.getByRole('option', { name: '폴더 없음' }).click();
-    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
 
     const req = await cap.waitForRequest();
     expect(req.payload).toMatchObject({ description: '', folder: '' });
@@ -429,7 +429,7 @@ test.describe('쿼리 에디터 페이지', () => {
     await page.getByRole('option', { name: '업무용' }).click();
 
     // 저장 버튼 클릭
-    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     // POST payload에 folder가 포함되는지 검증
     const req = await cap.waitForRequest();
@@ -758,7 +758,7 @@ test.describe('쿼리 에디터 페이지', () => {
       // 저장 다이얼로그 → 저장
       await page.getByRole('button', { name: '저장' }).click();
       await expect(page.getByRole('dialog')).toBeVisible();
-      await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
+      await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
       // 저장 후 isDirty=false → 미저장 표시 사라짐
       await expect(page.getByText('미저장 변경사항')).not.toBeVisible();

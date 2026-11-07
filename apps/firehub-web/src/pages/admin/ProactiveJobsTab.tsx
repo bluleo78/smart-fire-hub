@@ -226,7 +226,7 @@ export default function ProactiveJobsTab() {
         </p>
         <Button size="sm" onClick={openCreate}>
           <Plus className="h-4 w-4" />
-          작업 추가
+          새 작업
         </Button>
       </div>
 
@@ -329,7 +329,7 @@ export default function ProactiveJobsTab() {
       <Dialog open={dialog.open} onOpenChange={(open) => setDialog((d) => ({ ...d, open }))}>
         <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto overscroll-contain">
           <DialogHeader>
-            <DialogTitle>{dialog.mode === 'create' ? '작업 추가' : '작업 수정'}</DialogTitle>
+            <DialogTitle>{dialog.mode === 'create' ? '새 작업' : '작업 수정'}</DialogTitle>
             <DialogDescription className="sr-only">
               {dialog.mode === 'create' ? '새 프로액티브 작업을 추가합니다.' : '프로액티브 작업 설정을 수정합니다.'}
             </DialogDescription>
@@ -467,7 +467,7 @@ export default function ProactiveJobsTab() {
               취소
             </Button>
             <Button onClick={handleSubmit} disabled={isPending || !form.name.trim()}>
-              {isPending ? '저장 중...' : '저장'}
+              {dialog.mode === 'create' ? (isPending ? '만드는 중...' : '만들기') : isPending ? '저장 중...' : '저장'}
             </Button>
           </DialogFooter>
         </DialogContent>

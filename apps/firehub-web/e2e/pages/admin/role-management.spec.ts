@@ -71,7 +71,7 @@ test.describe('역할 관리 페이지', () => {
     await expect(editorLink).toHaveAttribute('href', '/admin/roles/3');
 
     // 「역할 추가」에서 Tab 을 누르면 표의 첫 역할 링크로 간다(예전에는 본문을 지나 사이드바로 갔다).
-    await page.getByRole('button', { name: '역할 추가' }).focus();
+    await page.getByRole('button', { name: '새 역할' }).focus();
     await page.keyboard.press('Tab');
     await expect(userLink).toBeFocused();
     await page.keyboard.press('Tab');
@@ -119,11 +119,11 @@ test.describe('역할 관리 페이지', () => {
     await page.goto('/admin/roles');
 
     // "역할 추가" 버튼 클릭
-    await page.getByRole('button', { name: '역할 추가' }).click();
+    await page.getByRole('button', { name: '새 역할' }).click();
 
     // 다이얼로그 열림 확인
     await expect(page.getByRole('dialog')).toBeVisible();
-    await expect(page.getByText('새 역할 생성')).toBeVisible();
+    await expect(page.getByRole('heading', { name: '새 역할' })).toBeVisible();
 
     // 입력 필드 확인 및 값 입력
     const nameInput = page.getByLabel('역할 이름');
@@ -135,7 +135,7 @@ test.describe('역할 관리 페이지', () => {
     await descInput.fill('새 역할 설명');
 
     // 생성 버튼 클릭 → POST /api/v1/roles 호출
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // API payload 검증 — 입력한 이름이 전달되어야 한다
     const req = await capture.waitForRequest();
@@ -523,11 +523,11 @@ test.describe('역할 관리 페이지', () => {
     );
 
     await page.goto('/admin/roles');
-    await page.getByRole('button', { name: '역할 추가' }).click();
+    await page.getByRole('button', { name: '새 역할' }).click();
 
     const nameInput = page.getByLabel('역할 이름');
     await nameInput.fill('ADMIN');
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 서버 에러 메시지가 표시된다
     const errorMessage = page.getByText('이미 존재하는 역할 이름입니다: ADMIN');

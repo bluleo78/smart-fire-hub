@@ -327,7 +327,7 @@ test.describe('신규 차트 타입 선택 — ChartBuilderPage', () => {
     await page.getByLabel('공유 차트').click();
 
     // 다이얼로그 저장 클릭
-    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     const req = await cap.waitForRequest();
     expect(req.payload).toMatchObject({ name: '공유 차트', isShared: true });

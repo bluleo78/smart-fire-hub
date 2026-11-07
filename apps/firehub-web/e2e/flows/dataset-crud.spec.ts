@@ -52,7 +52,7 @@ test.describe('데이터셋 CRUD 플로우', () => {
     await page.goto('/data/datasets');
 
     // 데이터셋 추가 버튼 클릭 → 2단계 유형 선택 모달 (직접 navigate 하지 않음)
-    await page.getByRole('button', { name: '데이터셋 추가' }).click();
+    await page.getByRole('button', { name: '새 데이터셋' }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('어떤 데이터셋을 만드시나요?')).toBeVisible();
 
@@ -72,7 +72,7 @@ test.describe('데이터셋 CRUD 플로우', () => {
     await page.goto('/data/datasets');
 
     // 데이터셋 추가 버튼 클릭 → 유형 선택 모달에서 "파일" 카드 클릭
-    await page.getByRole('button', { name: '데이터셋 추가' }).click();
+    await page.getByRole('button', { name: '새 데이터셋' }).click();
     await page.getByRole('dialog').getByRole('button', { name: '파일 대량 이미지·파일 오브젝트 스토리지' }).click();
 
     // 문서와 마찬가지로 출처 단계 없이 즉시 storageType=FILE 로 생성 폼 이동
@@ -117,7 +117,7 @@ test.describe('데이터셋 CRUD 플로우', () => {
     await page.getByPlaceholder('예: user_id').fill('col_name');
 
     // 생성 버튼 클릭
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // POST API payload 검증 — 입력한 값이 올바르게 전송되었는지 확인
     const req = await createCapture.waitForRequest();

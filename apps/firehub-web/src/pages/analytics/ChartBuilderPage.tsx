@@ -309,7 +309,7 @@ function SaveDialog({
           </Button>
           <Button onClick={onSave} disabled={!name.trim() || isSaving}>
             {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-            {isEdit ? '수정' : '저장'}
+            {isEdit ? '저장' : '만들기'}
           </Button>
         </DialogFooter>
       </DialogContent>

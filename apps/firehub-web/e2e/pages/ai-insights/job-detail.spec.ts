@@ -84,7 +84,7 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page.getByRole('heading', { name: '새 스마트 작업' })).toBeVisible();
 
     // "생성" 버튼 확인
-    await expect(page.getByRole('button', { name: '생성' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '만들기' })).toBeVisible();
 
     // 작업명 입력 필드 확인 (id="job-name", label="작업 이름 *")
     await expect(page.locator('#job-name')).toBeVisible();
@@ -114,7 +114,7 @@ test.describe('스마트 작업 상세 페이지', () => {
     await page.goto('/ai-insights/jobs/new');
 
     // 초기 상태: 작업 이름과 프롬프트 미입력 → 생성 버튼 비활성화 확인
-    const createBtn = page.getByRole('button', { name: '생성' });
+    const createBtn = page.getByRole('button', { name: '만들기' });
     await expect(createBtn).toBeDisabled();
 
     // 작업 이름만 입력해도 아직 비활성화 (프롬프트 미입력)
@@ -158,7 +158,7 @@ test.describe('스마트 작업 상세 페이지', () => {
     await page.locator('#job-name').fill('테스트 작업');
     await page.locator('#job-prompt').fill('테스트 프롬프트 내용 재현용입니다');
 
-    const createBtn = page.getByRole('button', { name: '생성', exact: true });
+    const createBtn = page.getByRole('button', { name: '만들기', exact: true });
     await expect(createBtn).toBeEnabled();
 
     // 2. "목표 기반" 모드로 전환 — 이전 프롬프트 입력란은 숨겨지고 비즈니스 질문 UI가 나타난다
@@ -212,7 +212,7 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(
       page.getByText('작업을 생성하면 이 구성이 리포트 양식 「지난주 대비 화재 건수 변화는? 양식」(으)로 저장되어 연결됩니다.'),
     ).toBeVisible();
-    const createBtn = page.getByRole('button', { name: '생성', exact: true });
+    const createBtn = page.getByRole('button', { name: '만들기', exact: true });
     await expect(createBtn).toBeEnabled();
 
     await createBtn.click();
@@ -250,7 +250,7 @@ test.describe('스마트 작업 상세 페이지', () => {
     await page.locator('#mode-goal').click();
     await page.getByLabel('비즈니스 질문').fill('주간 화재 추이');
     await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
-    await page.getByRole('button', { name: '생성', exact: true }).click();
+    await page.getByRole('button', { name: '만들기', exact: true }).click();
 
     await expect(page.getByText('양식 저장 중 오류')).toBeVisible();
     expect(createCapture.requests).toHaveLength(0);
@@ -267,7 +267,7 @@ test.describe('스마트 작업 상세 페이지', () => {
     await page.locator('#mode-goal').click();
     await page.getByLabel('비즈니스 질문').fill('주간 화재 추이');
     await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
-    await page.getByRole('button', { name: '생성', exact: true }).click();
+    await page.getByRole('button', { name: '만들기', exact: true }).click();
 
     await expect(page.getByText('작업 생성 거부')).toBeVisible();
     await deleteCapture.waitForRequest();
@@ -292,7 +292,7 @@ test.describe('스마트 작업 상세 페이지', () => {
 
     await page.locator('#mode-manual').click();
     await page.locator('#job-prompt').fill('직접 쓴 프롬프트');
-    await page.getByRole('button', { name: '생성', exact: true }).click();
+    await page.getByRole('button', { name: '만들기', exact: true }).click();
 
     const req = await createCapture.waitForRequest();
     expect(req.payload).toMatchObject({ prompt: '직접 쓴 프롬프트', templateId: null });
@@ -313,7 +313,7 @@ test.describe('스마트 작업 상세 페이지', () => {
     await page.locator('#mode-goal').click();
     await page.getByLabel('비즈니스 질문').fill('주간 화재 추이');
     await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
-    await page.getByRole('button', { name: '생성', exact: true }).click();
+    await page.getByRole('button', { name: '만들기', exact: true }).click();
 
     await expect(page.getByText('작업 생성에 실패했습니다.')).toBeVisible();
     expect(deleteCapture.requests).toHaveLength(0);
@@ -324,7 +324,7 @@ test.describe('스마트 작업 상세 페이지', () => {
     await page.goto('/ai-insights/jobs/new');
     await page.locator('#mode-goal').click();
     const preview = page.getByText('자동 생성된 템플릿 (4개 섹션)');
-    const createBtn = page.getByRole('button', { name: '생성', exact: true });
+    const createBtn = page.getByRole('button', { name: '만들기', exact: true });
 
     // 1) 「직접 설정」으로 갔다 돌아오면 미리보기도 비워진다(구성은 이미 비워졌으므로 안내가 남으면 거짓이다)
     await page.getByLabel('비즈니스 질문').fill('주간 화재 추이');
@@ -380,7 +380,7 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page.getByText('AI 생성에 실패해 기본 구성(4개 섹션)으로 만들었습니다.')).toHaveCount(0);
 
     // 3) 생성하면 AI 구성 그대로 양식으로 저장되고 작업에 연결된다(WD-297 흐름 그대로)
-    await page.getByRole('button', { name: '생성', exact: true }).click();
+    await page.getByRole('button', { name: '만들기', exact: true }).click();
     const templateReq = await templateCapture.waitForRequest();
     const templatePayload = templateReq.payload as { sections: { key: string; label: string }[] };
     expect(templatePayload.sections.map((sec) => sec.key)).toEqual([
@@ -412,7 +412,7 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page.getByText('AI 생성에 실패해 기본 구성(4개 섹션)으로 만들었습니다.')).toBeVisible();
 
     // 대체 구성으로도 작업을 만들 수 있고, 그 4개 섹션이 양식으로 저장된다
-    const createBtn = page.getByRole('button', { name: '생성', exact: true });
+    const createBtn = page.getByRole('button', { name: '만들기', exact: true });
     await expect(createBtn).toBeEnabled();
     await createBtn.click();
     const templateReq = await templateCapture.waitForRequest();
@@ -1029,7 +1029,7 @@ test.describe('스마트 작업 상세 페이지', () => {
     await page.locator('#job-trigger-type').click();
     await page.getByRole('option', { name: '이상 탐지 (이벤트 기반)' }).click();
 
-    const createBtn = page.getByRole('button', { name: '생성', exact: true });
+    const createBtn = page.getByRole('button', { name: '만들기', exact: true });
     await expect(createBtn).toBeEnabled();
     await createBtn.click();
 
@@ -1065,7 +1065,7 @@ test.describe('스마트 작업 상세 페이지', () => {
 
     // 트리거 유형은 기본값(SCHEDULE)에서 건드리지 않는다 — 회귀 없는지 확인
 
-    const createBtn = page.getByRole('button', { name: '생성', exact: true });
+    const createBtn = page.getByRole('button', { name: '만들기', exact: true });
     await expect(createBtn).toBeEnabled();
     await createBtn.click();
 

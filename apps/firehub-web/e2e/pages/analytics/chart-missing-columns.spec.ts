@@ -152,7 +152,7 @@ test.describe('차트 편집 미리보기 — 차트 컬럼 누락 안내 (WD-88
 
     // 저장 시도 → 누락 컬럼을 알리는 오류로 막히고 PUT 은 나가지 않는다
     await page.getByRole('button', { name: '저장' }).click();
-    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
     await expect(page.getByText('쿼리 결과에 없는 컬럼이 있어 저장할 수 없습니다: region, total')).toBeVisible();
     expect(putCount).toBe(0);
 
@@ -163,7 +163,7 @@ test.describe('차트 편집 미리보기 — 차트 컬럼 누락 안내 (WD-88
     await page.getByRole('checkbox', { name: 'sum' }).click();
     await expect(page.getByTestId('chart-missing-columns')).toHaveCount(0);
     await page.getByRole('button', { name: '저장' }).click();
-    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
     const req = await updateCapture.waitForRequest();
     expect(req.payload).toMatchObject({ config: { xAxis: 'area', yAxis: ['sum'] } });
   });

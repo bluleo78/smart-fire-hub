@@ -69,7 +69,7 @@ test.describe('데이터셋 목록 — 권한별 추가·삭제 노출 (WD-144)'
   test('조회 전용이면 「데이터셋 추가」와 행 휴지통이 없고 조회 동작(미리보기)은 남는다', async ({ authenticatedPage: page }) => {
     await openDatasetList(page, READ_ONLY);
 
-    await expect(page.getByRole('button', { name: '데이터셋 추가' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 데이터셋' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: '삭제', exact: true })).toHaveCount(0);
     // 조회 동작은 그대로 — 행마다 미리보기 버튼이 있다
     await expect(page.getByRole('button', { name: '미리보기' })).toHaveCount(5);
@@ -80,14 +80,14 @@ test.describe('데이터셋 목록 — 권한별 추가·삭제 노출 (WD-144)'
   }) => {
     await openDatasetList(page, WRITE_AND_DELETE);
 
-    await expect(page.getByRole('button', { name: '데이터셋 추가' })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '새 데이터셋' })).toHaveCount(1);
     await expect(page.getByRole('button', { name: '삭제', exact: true })).toHaveCount(5);
   });
 
   test('dataset:write 만 있으면 「데이터셋 추가」는 보이고 휴지통은 없다', async ({ authenticatedPage: page }) => {
     await openDatasetList(page, WRITE_ONLY);
 
-    await expect(page.getByRole('button', { name: '데이터셋 추가' })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '새 데이터셋' })).toHaveCount(1);
     await expect(page.getByRole('button', { name: '삭제', exact: true })).toHaveCount(0);
   });
 
@@ -95,14 +95,14 @@ test.describe('데이터셋 목록 — 권한별 추가·삭제 노출 (WD-144)'
     await openDatasetList(page, DELETE_ONLY);
 
     await expect(page.getByRole('button', { name: '삭제', exact: true })).toHaveCount(5);
-    await expect(page.getByRole('button', { name: '데이터셋 추가' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 데이터셋' })).toHaveCount(0);
   });
 
   test('빈 목록: 조회 전용이면 안내 문구만 있고 「새 데이터셋 만들기」가 없다', async ({ authenticatedPage: page }) => {
     await openEmptyDatasetList(page, READ_ONLY);
 
     await expect(page.getByRole('button', { name: '새 데이터셋 만들기' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: '데이터셋 추가' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 데이터셋' })).toHaveCount(0);
   });
 
   test('빈 목록: dataset:write 가 있으면 같은 준비 후 「새 데이터셋 만들기」가 보인다(대조군)', async ({
@@ -125,7 +125,7 @@ test.describe('데이터셋 생성 주소 직접 진입 — 권한 가드 (WD-14
     // 레이아웃(사이드바) 안에 머문다 — 홈으로 튕기지 않는다
     await expect(page).toHaveURL(/\/data\/datasets\/new/);
     await expect(page.getByRole('link', { name: '데이터셋' }).first()).toBeVisible();
-    await expect(page.getByRole('heading', { name: '데이터셋 생성' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: '새 데이터셋' })).toHaveCount(0);
     await expect(page.getByLabel('데이터셋 이름')).toHaveCount(0);
   });
 
@@ -143,7 +143,7 @@ test.describe('데이터셋 생성 주소 직접 진입 — 권한 가드 (WD-14
     await grantDatasetPermissions(page, WRITE_ONLY);
     await gotoWithPermissions(page, '/data/datasets/new?storageType=TABLE&originType=SOURCE');
 
-    await expect(page.getByRole('heading', { name: '데이터셋 생성' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '새 데이터셋' })).toBeVisible();
     await expect(page.getByLabel('데이터셋 이름')).toBeVisible();
     await expect(page.getByTestId('screen-forbidden')).toHaveCount(0);
   });

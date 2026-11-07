@@ -63,7 +63,7 @@ test.describe('데이터셋 생성 — 필드 목록 이름 중복 (WD-99)', () 
     await columnInputs.nth(0).fill('code');
     await columnInputs.nth(1).fill('code');
 
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 안내는 뒤에 나온(두 번째) 칸 하나에만 뜨고, 요청은 나가지 않는다.
     await expect(page.getByText(DUPLICATE_MESSAGE)).toHaveCount(1);
@@ -74,7 +74,7 @@ test.describe('데이터셋 생성 — 필드 목록 이름 중복 (WD-99)', () 
 
     // 이름을 고치면 안내 없이 생성 요청을 보낸다(대조군 — 중복 검사가 과하게 막지 않음).
     await columnInputs.nth(1).fill('name');
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     const req = await capture.waitForRequest();
     expect(req.payload).toMatchObject({

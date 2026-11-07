@@ -57,7 +57,7 @@ test.describe('데이터셋 생성 — 2단계 유형 선택 모달 플로우', 
       await expect(page.getByRole('heading', { name: '데이터셋 관리' })).toBeVisible();
 
       // "데이터셋 추가" 클릭 → 1단계 모달 등장
-      await page.getByRole('button', { name: '데이터셋 추가' }).click();
+      await page.getByRole('button', { name: '새 데이터셋' }).click();
       const dialog = page.getByRole('dialog');
       await expect(dialog.getByText('어떤 데이터셋을 만드시나요?')).toBeVisible();
 
@@ -81,7 +81,7 @@ test.describe('데이터셋 생성 — 2단계 유형 선택 모달 플로우', 
       await page.getByLabel('테이블명').fill('new_table_ds');
       await page.getByPlaceholder('예: user_id').first().fill('col_a');
 
-      await page.getByRole('button', { name: '생성' }).click();
+      await page.getByRole('button', { name: '만들기' }).click();
 
       // 입력값 → API payload 검증: storageType/originType이 정확히 전달되는지 확인
       const req = await capture.waitForRequest();
@@ -130,7 +130,7 @@ test.describe('데이터셋 생성 — 2단계 유형 선택 모달 플로우', 
     await expect(page.getByRole('heading', { name: '데이터셋 관리' })).toBeVisible();
 
     // "데이터셋 추가" → 1단계 모달 → "문서" 선택 (출처 단계 없이 바로 폼 이동)
-    await page.getByRole('button', { name: '데이터셋 추가' }).click();
+    await page.getByRole('button', { name: '새 데이터셋' }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('어떤 데이터셋을 만드시나요?')).toBeVisible();
     await dialog.getByRole('button', { name: '문서' }).click();
@@ -146,7 +146,7 @@ test.describe('데이터셋 생성 — 2단계 유형 선택 모달 플로우', 
     await expect(typeDisplay.getByText('문서', { exact: true })).toBeVisible();
 
     await page.getByLabel('데이터셋 이름').fill('신규 문서셋');
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // payload 검증: storageType=DOCUMENT, 칼럼 없음, tableName은 자동 생성(doc_<timestamp>)
     const req = await capture.waitForRequest();

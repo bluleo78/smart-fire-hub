@@ -99,7 +99,7 @@ test.describe('AI 인사이트 플로우', () => {
     await page.goto('/ai-insights/jobs');
 
     // "작업 추가" 버튼 클릭
-    await page.getByRole('button', { name: '작업 추가' }).click();
+    await page.getByRole('button', { name: '새 스마트 작업' }).click();
 
     // 새 작업 페이지로 이동 확인
     await expect(page).toHaveURL('/ai-insights/jobs/new');
@@ -108,6 +108,6 @@ test.describe('AI 인사이트 플로우', () => {
     await expect(page.getByRole('heading', { name: '새 스마트 작업' })).toBeVisible();
 
     // 생성 버튼이 존재하는지 확인
-    await expect(page.getByRole('button', { name: '생성' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '만들기' })).toBeVisible();
   });
 });

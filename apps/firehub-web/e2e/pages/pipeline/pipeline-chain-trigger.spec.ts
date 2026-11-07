@@ -66,7 +66,7 @@ async function setupDetailMocks(page: Page, triggers: ReturnType<typeof createTr
 async function openChainForm(page: Page) {
   await page.goto('/pipelines/1');
   await page.getByRole('tab', { name: '트리거' }).click();
-  await page.getByRole('button', { name: /트리거 추가/ }).click();
+  await page.getByRole('button', { name: /새 트리거/ }).click();
   await page.getByRole('button', { name: /파이프라인 연쇄/ }).click();
 }
 
@@ -105,7 +105,7 @@ test.describe('파이프라인 연쇄 트리거 — 선행 파이프라인 목�
     await expect(page.getByRole('option', { name: '파이프라인 1', exact: true })).toHaveCount(0);
     await page.keyboard.press('Escape');
 
-    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
     const req = await createCapture.waitForRequest();
     expect(req.payload).toMatchObject({
       triggerType: 'PIPELINE_CHAIN',

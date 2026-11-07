@@ -600,7 +600,7 @@ export default function ReportTemplateDetailPage() {
               )}
               {/* isValid: 이름 필드가 비어 있으면 생성/저장 버튼 비활성화 */}
               <Button variant="default" size="sm" onClick={handleSave} disabled={isSaving || !form.formState.isValid}>
-                {isSaving ? '저장 중...' : isNew ? '생성' : '저장'}
+                {isSaving ? (isNew ? '만드는 중...' : '저장 중...') : isNew ? '만들기' : '저장'}
               </Button>
             </>
           )}

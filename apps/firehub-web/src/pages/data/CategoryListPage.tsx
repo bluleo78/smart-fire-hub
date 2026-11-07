@@ -308,7 +308,7 @@ export default function CategoryListPage() {
       <Dialog open={isCreateOpen} onOpenChange={(open) => { if (!open) setIsCreateOpen(false); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>카테고리 생성</DialogTitle>
+            <DialogTitle>새 카테고리</DialogTitle>
             <DialogDescription className="sr-only">새 데이터셋 카테고리를 생성합니다.</DialogDescription>
           </DialogHeader>
           <form onSubmit={createForm.handleSubmit(handleCreate)} className="space-y-4">
@@ -336,7 +336,7 @@ export default function CategoryListPage() {
               </Button>
               {/* isValid: 필수 필드(이름)가 비어 있으면 버튼 비활성화 */}
               <Button type="submit" disabled={createCategory.isPending || !createForm.formState.isValid}>
-                생성
+                만들기
               </Button>
             </DialogFooter>
           </form>

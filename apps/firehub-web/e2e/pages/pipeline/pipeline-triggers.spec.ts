@@ -44,7 +44,7 @@ async function setupTriggerTabMocks(
 async function gotoTriggerTab(page: Page) {
   await page.goto('/pipelines/1');
   await page.getByRole('tab', { name: '트리거' }).click();
-  await expect(page.getByRole('button', { name: /트리거 추가/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /새 트리거/ })).toBeVisible();
 }
 
 test.describe('파이프라인 트리거 탭', () => {
@@ -76,8 +76,8 @@ test.describe('파이프라인 트리거 탭', () => {
     await gotoTriggerTab(page);
 
     // 추가 버튼 클릭 → 타입 선택 화면
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
-    await expect(page.getByRole('dialog').getByText('트리거 추가')).toBeVisible();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
+    await expect(page.getByRole('dialog').getByRole('heading', { name: '새 트리거' })).toBeVisible();
 
     // 스케줄 선택
     await page.getByRole('button', { name: /스케줄.*Cron/ }).click();
@@ -87,7 +87,7 @@ test.describe('파이프라인 트리거 탭', () => {
     await page.getByLabel('설명').fill('오전 배치 실행');
 
     // 생성
-    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // POST payload 검증
     const req = await createCapture.waitForRequest();
@@ -124,7 +124,7 @@ test.describe('파이프라인 트리거 탭', () => {
 
     await gotoTriggerTab(page);
 
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /웹훅.*HTTP POST/ }).click();
 
     await page.getByLabel(/^이름/).fill('GitHub webhook');
@@ -134,7 +134,7 @@ test.describe('파이프라인 트리거 탭', () => {
       .getByPlaceholder('HMAC-SHA256 서명 검증에 사용할 시크릿 키')
       .fill('my-secret-key');
 
-    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     const req = await createCapture.waitForRequest();
     expect(req.payload).toMatchObject({
@@ -160,11 +160,11 @@ test.describe('파이프라인 트리거 탭', () => {
 
     await gotoTriggerTab(page);
 
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /웹훅.*HTTP POST/ }).click();
 
     await page.getByLabel(/^이름/).fill('슬랙 알림 웹훅');
-    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 생성 후 다이얼로그가 닫히지 않고 유지되어야 함 (버그 #28 회귀 방지)
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -660,11 +660,11 @@ test.describe('파이프라인 트리거 탭', () => {
 
     await gotoTriggerTab(page);
 
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /스케줄/ }).click();
 
     // 이름 비운 채로 생성 시도
-    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     await expect(page.getByText('트리거 이름을 입력하세요')).toBeVisible();
   });
@@ -692,7 +692,7 @@ test.describe('파이프라인 트리거 탭', () => {
     await gotoTriggerTab(page);
 
     // 트리거 추가 → API 유형 선택
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /API.*외부 API/ }).click();
 
     // 이름 입력
@@ -706,7 +706,7 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect(page.getByText('10.0.0.1/24')).toBeVisible();
 
     // 트리거 생성
-    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // POST payload 검증
     const req = await createCapture.waitForRequest();
@@ -769,13 +769,13 @@ test.describe('파이프라인 트리거 탭', () => {
 
     await gotoTriggerTab(page);
 
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /데이터셋 변경/ }).click();
 
     await page.getByLabel(/^이름/).fill('데이터셋 변경 트리거');
 
     // 데이터셋 선택 없이 생성 시도
-    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     await expect(page.getByText('감시 대상 데이터셋을 선택하세요')).toBeVisible();
   });
@@ -796,7 +796,7 @@ test.describe('파이프라인 트리거 탭', () => {
 
     await gotoTriggerTab(page);
 
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /스케줄.*Cron/ }).click();
 
     await page.getByLabel(/^이름/).fill('잘못된 크론 테스트');
@@ -805,7 +805,7 @@ test.describe('파이프라인 트리거 탭', () => {
     const cronInput = page.locator('input[placeholder*="* * *"]').first();
     await cronInput.fill('invalid-cron');
 
-    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 에러 메시지 표시, API 미호출
     await expect(page.getByText('유효하지 않은 Cron 표현식입니다')).toBeVisible();
@@ -835,7 +835,7 @@ test.describe('파이프라인 트리거 탭', () => {
 
     await gotoTriggerTab(page);
 
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /스케줄.*Cron/ }).click();
 
     await page.getByLabel(/^이름/).fill('cron stale 테스트');
@@ -844,7 +844,7 @@ test.describe('파이프라인 트리거 탭', () => {
 
     // 1차: 잘못된 cron으로 제출 → 오류 표시 확인
     await cronInput.fill('invalid cron here');
-    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
     await expect(page.getByText('유효하지 않은 Cron 표현식입니다')).toBeVisible();
     expect(apiCalled).toBe(false);
 
@@ -855,7 +855,7 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect(page.getByText('시간 09:00')).toBeVisible();
 
     // 재제출 시 정상적으로 생성됨
-    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
     await expect.poll(() => apiCalled).toBe(true);
   });
 
@@ -876,7 +876,7 @@ test.describe('파이프라인 트리거 탭', () => {
     await gotoTriggerTab(page);
 
     // API 트리거 유형 선택
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /API.*외부 API/ }).click();
 
     // 잘못된 IP 형식 입력 → 추가 버튼 클릭
@@ -911,7 +911,7 @@ test.describe('파이프라인 트리거 탭', () => {
 
     await gotoTriggerTab(page);
 
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /API.*외부 API/ }).click();
 
     // 프리픽스가 범위 초과 (0~32만 허용)
@@ -950,7 +950,7 @@ test.describe('파이프라인 트리거 탭', () => {
 
     await gotoTriggerTab(page);
 
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /데이터셋 변경/ }).click();
 
     await page.getByLabel(/^이름/).fill('변경 감지 트리거');
@@ -959,7 +959,7 @@ test.describe('파이프라인 트리거 탭', () => {
     const pollingInput = page.locator('input[type="number"]').first();
     await pollingInput.fill('29');
 
-    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 폴링 주기 유효성 에러가 표시되어야 함
     await expect(page.getByText('폴링 주기는 30~3600초 사이여야 합니다')).toBeVisible();
@@ -987,7 +987,7 @@ test.describe('파이프라인 트리거 탭', () => {
 
     await gotoTriggerTab(page);
 
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /데이터셋 변경/ }).click();
 
     await page.getByLabel(/^이름/).fill('변경 감지 트리거');
@@ -996,7 +996,7 @@ test.describe('파이프라인 트리거 탭', () => {
     const pollingInput = page.locator('input[type="number"]').first();
     await pollingInput.fill('3601');
 
-    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 유효성 에러가 표시되어야 함
     await expect(page.getByText('폴링 주기는 30~3600초 사이여야 합니다')).toBeVisible();
@@ -1041,9 +1041,9 @@ test.describe('파이프라인 트리거 탭', () => {
 
     await page.goto('/pipelines/1');
     await page.getByRole('tab', { name: '트리거' }).click();
-    await expect(page.getByRole('button', { name: /트리거 추가/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /새 트리거/ })).toBeVisible();
 
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /데이터셋 변경/ }).click();
 
     await page.getByLabel(/^이름/).fill('화재 이력 변경 감지');
@@ -1056,7 +1056,7 @@ test.describe('파이프라인 트리거 탭', () => {
     const pollingInput = page.locator('input[type="number"]').first();
     await pollingInput.fill('30');
 
-    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // POST payload 검증: pollingIntervalSeconds가 30으로 전송되어야 함
     const req = await createCapture.waitForRequest();
@@ -1284,7 +1284,7 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect(page.getByRole('alert').filter({ hasText: notFound.message })).toBeVisible();
     await expect(page.getByText('트리거가 없습니다.')).toHaveCount(0);
     // 없는 파이프라인에 트리거를 추가할 수 없으므로 추가 버튼과 이벤트 목록을 숨긴다
-    await expect(page.getByRole('button', { name: /트리거 추가/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /새 트리거/ })).toHaveCount(0);
     await expect(page.getByText('최근 트리거 이벤트')).toHaveCount(0);
   });
 
@@ -1410,7 +1410,7 @@ test.describe('WD-404 웹훅 서명 안내', () => {
     await setupTriggerTabMocks(page);
     await gotoTriggerTab(page);
 
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /웹훅.*HTTP POST/ }).click();
 
     const dialog = page.getByRole('dialog');
@@ -1437,7 +1437,7 @@ test.describe('파이프라인 트리거 — 다음 5회 서버 미리보기 (WD
   /** 트리거 추가 창을 열고 스케줄(Cron) 유형을 고른다. */
   async function openScheduleForm(page: Page) {
     await gotoTriggerTab(page);
-    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
     await page.getByRole('button', { name: /스케줄.*Cron/ }).click();
     return page.getByRole('dialog');
   }

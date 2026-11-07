@@ -47,7 +47,7 @@ test.describe('잘못 저장된 차트 config — 차트 편집 (WD-413)', () =>
     await expect(page.locator('.recharts-surface').first()).toBeVisible();
 
     await page.getByRole('button', { name: '저장' }).click();
-    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
     const req = await update.waitForRequest();
     expect(req.payload).toMatchObject({ config: { xAxis: 'region', yAxis: ['amount'] } });
   });
@@ -98,7 +98,7 @@ test.describe('잘못 저장된 차트 config — 차트 편집 (WD-413)', () =>
     await page.getByRole('button', { name: '쿼리 실행' }).click();
     await expect(page.getByText(/행 로드됨/).first()).toBeVisible();
     await page.getByRole('button', { name: '저장' }).click();
-    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
 
     await expect(page.getByText('차트 설정 yAxis 은(는) 문자열 목록(배열)이어야 합니다.')).toBeVisible();
   });

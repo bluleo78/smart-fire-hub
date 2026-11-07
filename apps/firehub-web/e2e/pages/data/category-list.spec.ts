@@ -75,14 +75,14 @@ test.describe('카테고리 관리 페이지', () => {
 
     // 카테고리 생성 다이얼로그가 열리는지 확인
     await expect(page.getByRole('dialog')).toBeVisible();
-    await expect(page.getByRole('heading', { name: '카테고리 생성' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '새 카테고리' })).toBeVisible();
 
     // 폼 입력 — 이름 및 설명 필드 채우기
     await page.getByLabel('이름').fill('신규 카테고리');
     await page.getByLabel('설명').fill('테스트 설명');
 
     // 생성 버튼 클릭 (다이얼로그 내 submit 버튼)
-    await page.getByRole('dialog').getByRole('button', { name: '생성' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     // POST API 호출 및 payload 검증
     const req = await createCapture.waitForRequest();
@@ -170,7 +170,7 @@ test.describe('카테고리 관리 페이지', () => {
 
     // 중복 이름 입력 후 생성 버튼 클릭
     await page.getByLabel('이름').fill('행정');
-    await page.getByRole('dialog').getByRole('button', { name: '생성' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     // 한국어 오류 토스트가 표시되어야 한다
     await expect(page.getByText('이미 사용 중인 카테고리 이름입니다.')).toBeVisible();
@@ -261,7 +261,7 @@ test.describe('카테고리 관리 페이지', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // 이름 필드가 비어있으면 생성 버튼이 비활성화 상태여야 한다
-    const createBtn = page.getByRole('dialog').getByRole('button', { name: '생성' });
+    const createBtn = page.getByRole('dialog').getByRole('button', { name: '만들기' });
     await expect(createBtn).toBeDisabled();
 
     // 이름 입력 후 활성화되는지 확인
@@ -307,7 +307,7 @@ test.describe('카테고리 관리 페이지', () => {
     await page.getByRole('button', { name: /새 카테고리/ }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
 
-    const createBtn = page.getByRole('dialog').getByRole('button', { name: '생성' });
+    const createBtn = page.getByRole('dialog').getByRole('button', { name: '만들기' });
 
     // 공백 문자만 입력 — trim() 없이 min(1)만 검사하면 통과해버리던 버그(#659)
     await page.getByLabel('이름').fill('   ');
@@ -339,7 +339,7 @@ test.describe('카테고리 관리 페이지', () => {
 
     // 이름 앞뒤에 공백을 섞어 입력
     await page.getByLabel('이름').fill('  앞뒤공백카테고리  ');
-    await page.getByRole('dialog').getByRole('button', { name: '생성' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     // 서버로 전송되는 payload의 name은 trim된 값이어야 한다
     const req = await createCapture.waitForRequest();

@@ -148,7 +148,7 @@ test.describe('차트 빌더 인터랙티브 흐름', () => {
     await nameInput.fill('저장된 새 차트');
 
     // 다이얼로그 내부의 "저장" 버튼 클릭 → handleSave
-    await page.getByRole('button', { name: '저장', exact: true }).last().click();
+    await page.getByRole('button', { name: '만들기', exact: true }).last().click();
 
     // POST payload 검증
     const req = await createCapture.waitForRequest();

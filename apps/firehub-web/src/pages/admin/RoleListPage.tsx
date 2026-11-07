@@ -177,12 +177,12 @@ export default function RoleListPage() {
             <DialogTrigger asChild>
               <Button>
                 <Plus className="h-4 w-4" />
-                역할 추가
+                새 역할
               </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>새 역할 생성</DialogTitle>
+                <DialogTitle>새 역할</DialogTitle>
                 <DialogDescription className="sr-only">새로운 사용자 역할을 생성합니다.</DialogDescription>
               </DialogHeader>
               <form onSubmit={form.handleSubmit(onCreateSubmit)} className="space-y-4">
@@ -209,7 +209,7 @@ export default function RoleListPage() {
                   <p className="text-sm text-destructive">{createError}</p>
                 )}
                 <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
-                  {form.formState.isSubmitting ? '생성 중...' : '생성'}
+                  {form.formState.isSubmitting ? '만드는 중...' : '만들기'}
                 </Button>
               </form>
             </DialogContent>

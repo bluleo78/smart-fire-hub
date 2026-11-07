@@ -89,7 +89,7 @@ test.describe('API 연결 페이지', () => {
 
     // 생성 다이얼로그 열림 확인
     await expect(page.getByRole('dialog')).toBeVisible();
-    await expect(page.getByText('새 API 연결 생성')).toBeVisible();
+    await expect(page.getByText('새 API 연결')).toBeVisible();
 
     // 이름 필드 확인 및 입력 — placeholder로 접근
     const nameInput = page.getByPlaceholder('예: Make.com API');
@@ -106,7 +106,7 @@ test.describe('API 연결 페이지', () => {
     await page.getByPlaceholder('API 키를 입력하세요').fill('test-api-key-12345');
 
     // 생성 버튼 클릭 → POST /api/v1/api-connections 호출
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // API payload 검증 — 입력한 이름과 authType이 전달되어야 한다
     const req = await capture.waitForRequest();
@@ -750,7 +750,7 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByPlaceholder('토큰을 입력하세요')).toBeVisible();
     await page.getByPlaceholder('토큰을 입력하세요').fill('my-bearer-token-abc');
 
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     const req = await capture.waitForRequest();
     expect(req.payload).toMatchObject({
@@ -791,7 +791,7 @@ test.describe('API 연결 페이지', () => {
     await page.getByPlaceholder('api_key').fill('my_param');
     await page.getByPlaceholder('API 키를 입력하세요').fill('secret-123');
 
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     const req = await capture.waitForRequest();
     expect(req.payload).toMatchObject({
@@ -814,7 +814,7 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // 이름 없이 바로 생성 클릭
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 유효성 검사 toast 에러 확인
     await expect(page.getByText('연결 이름을 입력하세요.')).toBeVisible();
@@ -834,7 +834,7 @@ test.describe('API 연결 페이지', () => {
     await page.getByPlaceholder('예: Make.com API').fill('헤더 검증 테스트');
     // Base URL 입력 — 없으면 baseUrl 검증이 먼저 실패하여 헤더 검증까지 도달하지 못한다
     await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     await expect(page.getByText('헤더 이름과 키 값을 입력하세요.')).toBeVisible();
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -869,7 +869,7 @@ test.describe('API 연결 페이지', () => {
     await page.getByPlaceholder('Authorization').fill('X-API-Key');
     await page.getByPlaceholder('API 키를 입력하세요').fill('test-key-123');
 
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 생성 요청이 도착할 때까지 기다린다(고정 대기 대신 — WD-257)
     await expect
@@ -1107,7 +1107,7 @@ test.describe('API 연결 페이지', () => {
     await page.getByPlaceholder('예: Make.com API').fill('URL 없는 연결');
     await page.getByPlaceholder('Authorization').fill('X-Key');
     await page.getByPlaceholder('API 키를 입력하세요').fill('key-value');
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     await expect(page.getByText('Base URL은 http 또는 https로 시작해야 합니다')).toBeVisible();
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -1128,7 +1128,7 @@ test.describe('API 연결 페이지', () => {
     await page.getByRole('combobox').first().click();
     await page.getByRole('option', { name: 'Bearer Token' }).click();
     // 토큰 입력 없이 생성 시도
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     await expect(page.getByText('토큰을 입력하세요.')).toBeVisible();
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -1370,7 +1370,7 @@ test.describe('API 연결 페이지', () => {
     await page.getByPlaceholder('Authorization').fill('X-API-Key');
     await page.getByPlaceholder('API 키를 입력하세요').fill('dup-key');
 
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 백엔드 409 메시지가 토스트로 그대로 노출되어야 한다
     await expect(page.getByText('이미 사용 중인 이름입니다: 공공 데이터 API')).toBeVisible();

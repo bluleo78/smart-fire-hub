@@ -63,7 +63,7 @@ test.describe('스마트 작업 — 쓰기 권한 없는 사용자 (WD-133)', ()
     await expect(page.getByTestId('jobs-readonly-notice')).toHaveText(JOBS_NOTICE);
 
     // 쓰기 진입점이 없다
-    await expect(page.getByRole('button', { name: '작업 추가' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 스마트 작업' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: '복제' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: '지금 실행' })).toHaveCount(0);
 
@@ -125,7 +125,7 @@ test.describe('스마트 작업 — 쓰기 권한 없는 사용자 (WD-133)', ()
     await expect(page.getByTestId('job-readonly-notice')).toHaveText(JOBS_NOTICE);
     // 채워도 저장할 수 없는 폼은 아예 그려지지 않는다
     await expect(page.getByLabel('작업 이름 *')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: '생성' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '만들기' })).toHaveCount(0);
 
     await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
     await expect(page).toHaveURL(/\/ai-insights\/jobs$/);
@@ -155,7 +155,7 @@ test.describe('리포트 양식 — 쓰기 권한 없는 사용자 (WD-133)', ()
     await expect(page.getByText('일일 현황 리포트')).toBeVisible();
     await expect(page.getByText('주간 통계 리포트')).toBeVisible();
     await expect(page.getByTestId('templates-readonly-notice')).toHaveText(TEMPLATES_NOTICE);
-    await expect(page.getByRole('button', { name: '템플릿 추가' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 템플릿' })).toHaveCount(0);
   });
 
   test('커스텀 양식이 없을 때 「첫 템플릿 만들기」를 보이지 않는다', async ({ authenticatedPage: page }) => {
@@ -197,7 +197,7 @@ test.describe('리포트 양식 — 쓰기 권한 없는 사용자 (WD-133)', ()
 
     await expect(page.getByTestId('template-readonly-notice')).toHaveText(TEMPLATES_NOTICE);
     await expect(page.getByLabel('이름')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: '생성' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '만들기' })).toHaveCount(0);
 
     await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
     await expect(page).toHaveURL(/\/ai-insights\/reports\?tab=templates$/);
@@ -211,7 +211,7 @@ test.describe('쓰기 권한 있는 사용자 (WD-133 대조군)', () => {
     await mockProactivePermissions(page, { canWrite: true });
 
     await page.goto('/ai-insights/jobs');
-    await expect(page.getByRole('button', { name: '작업 추가' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '새 스마트 작업' })).toBeVisible();
     await expect(page.getByRole('button', { name: '복제' })).toBeVisible();
     await expect(page.getByRole('button', { name: '지금 실행' })).toBeVisible();
     await expect(page.getByRole('switch')).toBeEnabled();
@@ -235,7 +235,7 @@ test.describe('쓰기 권한 있는 사용자 (WD-133 대조군)', () => {
     await mockProactivePermissions(page, { canWrite: true });
 
     await page.goto('/ai-insights/reports?tab=templates');
-    await expect(page.getByRole('button', { name: '템플릿 추가' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '새 템플릿' })).toBeVisible();
     await expect(page.getByTestId('templates-readonly-notice')).toHaveCount(0);
 
     await page.goto('/ai-insights/templates/2');

@@ -70,7 +70,7 @@ test.describe('차트 빌더 — 설정 가림 잠금 (WD-31②)', () => {
     // 잠금 상태에서는 설정이 저장되지 않는다는 설명을 보인다
     await expect(dialog.getByText('차트 설정은 잠겨 있어 이름·설명·공유만 바꿀 수 있습니다.')).toBeVisible();
     await dialog.getByLabel('이름').fill('바뀐 이름');
-    await dialog.getByRole('button', { name: '수정' }).click();
+    await dialog.getByRole('button', { name: '저장' }).click();
 
     const req = await put.waitForRequest();
     expect(req.payload).toMatchObject({ name: '바뀐 이름', isShared: false });
@@ -95,7 +95,7 @@ test.describe('차트 빌더 — 설정 가림 잠금 (WD-31②)', () => {
     await expect(page.getByTestId('chart-config-withheld')).toHaveCount(0);
     await expect(page.getByTestId('chart-preview-withheld')).toHaveCount(0);
     await page.getByRole('button', { name: '저장' }).click();
-    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
 
     const req = await put.waitForRequest();
     expect(req.payload).toMatchObject({ chartType: 'BAR', config: { xAxis: 'name', yAxis: ['value'] } });
