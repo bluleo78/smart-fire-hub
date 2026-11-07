@@ -64,6 +64,15 @@ public interface DatasetRepository {
    */
   void lockForShare(Long id);
 
+  /**
+   * WD-583: 데이터셋 삭제가 맨 앞에서 잡는 배타 잠금({@code FOR UPDATE}). 같은 데이터셋 삭제가 동시에 들어오면 뒤 요청은 이 잠금에서 앞 요청 커밋을
+   * 기다렸다가 행이 없어 false 를 받는다 — 색인 삭제·DROP·감사가 한 번만 돈다. FOR UPDATE 인 이유: 삭제는 키를 지우므로 이 행을 FK 로 참조하는
+   * 삽입(KEY SHARE, 예: 스텝 출력 데이터셋 지정)까지 막아야 참조 검사와 삭제 사이에 새 참조가 끼어들지 않는다.
+   *
+   * @return 행을 잠갔으면 true, 행이 없으면(이미 삭제됨) false
+   */
+  boolean lockForDelete(Long id);
+
   /** id 로 데이터셋 한 건을 조회한다(즐겨찾기 여부는 채우지 않는다). 없으면 빈 값. */
   Optional<DatasetResponse> findById(Long id);
 
@@ -90,8 +99,12 @@ public interface DatasetRepository {
   /** 데이터셋의 이름·설명·카테고리·태그 등 변경 가능한 항목을 갱신한다. */
   void updateStatus(Long id, String status, String statusNote, Long statusUpdatedBy);
 
-  /** id 로 데이터셋 정의를 삭제한다. */
-  void deleteById(Long id);
+  /**
+   * id 로 데이터셋 정의를 삭제한다.
+   *
+   * @return 지운 행 수(0 이면 이미 없음) — 호출부가 「지운 것이 없는데 성공」으로 끝나지 않게 판단한다(WD-583).
+   */
+  int deleteById(Long id);
 
   /**
    * 조회자가 볼 수 있는 데이터셋 가운데 같은 이름이 있는가(WD-155). 이름 유일 범위는 「볼 수 있는 데이터셋」이다 — 볼 수 없는(상위 등급) 데이터셋과 겹치는지까지

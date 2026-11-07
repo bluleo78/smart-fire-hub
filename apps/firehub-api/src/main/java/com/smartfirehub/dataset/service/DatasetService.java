@@ -801,6 +801,13 @@ public class DatasetService {
 
   @Transactional
   public void deleteDataset(Long id) {
+    // 동시 삭제 직렬화(WD-583): 무엇보다 먼저 데이터셋 행을 FOR UPDATE 로 잠근다. 예전에는 잠금 없이 findById 만 해서 같은 데이터셋 삭제를
+    // 동시에 6번 보내면 모두 행을 본 채 진행해 전부 204·감사 DELETE 6건이 남았다. 이제 뒤 요청은 이 잠금에서 앞 요청 커밋을 기다렸다가
+    // 행이 없어 404 로 끝나 참조 검사·색인 삭제·DROP·감사가 한 번만 돈다. 행을 가장 먼저 잡아 컬럼·테이블 잠금보다 앞서므로 필드 변경
+    // 경로(데이터셋 행 → 테이블)와 잠금 순서가 같다.
+    if (!datasetRepository.lockForDelete(id)) {
+      throw new DatasetNotFoundException();
+    }
     DatasetResponse dataset =
         datasetRepository.findById(id).orElseThrow(() -> new DatasetNotFoundException());
 
@@ -829,7 +836,10 @@ public class DatasetService {
       }
     }
     columnRepository.deleteByDatasetId(id);
-    datasetRepository.deleteById(id);
+    // 방어(WD-583): 위 잠금으로 이미 직렬화되지만, 지운 행이 없으면 성공(204)·감사로 끝내지 않고 404 로 롤백한다.
+    if (datasetRepository.deleteById(id) == 0) {
+      throw new DatasetNotFoundException();
+    }
     // 데이터 변경 트리거는 FK 가 아니라 config.datasetIds(JSONB)로 감시하므로 삭제가 전파되지 않는다(WD-221). 남겨 두면 폴러가 매
     // 주기 「행 수 0 ≠ 직전값」으로 보고 삭제된 데이터셋으로 파이프라인을 계속 실행했다 — 같은 트랜잭션에서 감시 목록·스냅숏에서 뺀다.
     triggerRepository.removeWatchedDataset(id);

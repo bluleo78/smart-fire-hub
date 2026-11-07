@@ -14,6 +14,7 @@ import jakarta.mail.internet.InternetAddress;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -36,6 +37,16 @@ public class SettingsService {
    * 있었다 — 즉 이 목록은 이미 한 번 어긋난 상태였다). 새 비밀 키를 추가할 때는 <b>여기만</b> 고친다.
    */
   private static final Set<String> SECRET_KEYS = Set.of("smtp.password");
+
+  /**
+   * {@code ai.system_prompt} 의 최대 길이(글자 수, {@link String#length()} 기준 = UTF-16 코드 단위)(WD-536).
+   *
+   * <p>상한이 없으면 수백만 자 프롬프트도 저장되고, 이후 모든 AI 요청이 그 값을 싣고 나가다 모델 문맥 한도에 걸려 AI 기능 전체가 막힌다. 기본 프롬프트(약
+   * 1,300자)의 15배 여유를 두되 모델 문맥보다 훨씬 작게 잡았다. web 의 {@code
+   * SYSTEM_PROMPT_MAX_LENGTH}(SettingsPage.tsx)와 반드시 같아야 한다 — web 도 {@code string.length}(UTF-16)로
+   * 센다.
+   */
+  public static final int SYSTEM_PROMPT_MAX_LENGTH = 20_000;
 
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
@@ -799,6 +810,16 @@ public class SettingsService {
             case "ai.system_prompt" -> {
               if (value == null || value.isBlank())
                 throw new IllegalArgumentException("시스템 프롬프트는 비어있을 수 없습니다");
+              // 길이 상한(WD-536): 빈 값만 보던 시절에는 500만 자도 204 로 저장됐다. 너무 긴 프롬프트는
+              // 이후 모든 AI 요청을 문맥 한도로 막으므로 저장 전에 거부하고, 현재 길이를 함께 알려
+              // 얼마나 줄여야 하는지 보이게 한다. 상한값은 web 과 같아야 한다.
+              if (value.length() > SYSTEM_PROMPT_MAX_LENGTH)
+                throw new IllegalArgumentException(
+                    String.format(
+                        Locale.ROOT, // 천 단위 구분자를 서버 기본 로케일과 무관하게 쉼표로 고정한다.
+                        "시스템 프롬프트는 %,d자 이하여야 합니다 (현재 %,d자)",
+                        SYSTEM_PROMPT_MAX_LENGTH,
+                        value.length()));
             }
             case "ai.model" -> {
               // 모델 이름 자체는 자유 형식이다(목록 대조는 화면·자격증명 검증이 한다). 다만 빈 값은

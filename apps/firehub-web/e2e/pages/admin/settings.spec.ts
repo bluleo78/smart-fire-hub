@@ -317,6 +317,86 @@ test.describe('설정 페이지', () => {
   });
 
   /**
+   * WD-536 — 시스템 프롬프트 길이 상한(20,000자). 서버 SettingsService 와 같은 상한을 화면이 저장 전에 지킨다.
+   *
+   * 경계: 정확히 20,000자는 PUT 이 나가고, 20,001자는 글자 수가 경고색으로 바뀌며 오류 문구와 함께 저장이 막힌다.
+   * 이미 상한을 넘겨 저장된 값은 잘리지 않고 그대로 보여야 한다(maxLength 로 말없이 자르지 않는다).
+   */
+  test.describe('WD-536 — 시스템 프롬프트 길이 상한', () => {
+    const LIMIT = 20_000;
+    const OVER_LIMIT_MESSAGE = '시스템 프롬프트는 20,000자 이하로 입력하세요';
+
+    test('20,001자를 넣으면 글자 수가 경고색이 되고 오류 문구와 함께 PUT 이 나가지 않는다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+
+      await page.goto('/admin/settings');
+      const count = page.getByTestId('ai-system-prompt-count');
+      // 상한 미만인 평소 상태: 글자 수가 보이되 경고색은 아니다
+      await expect(count).toContainText('/ 20,000자');
+      await expect(count).not.toHaveClass(/text-destructive/);
+
+      await page.locator('#ai-system-prompt').fill('a'.repeat(LIMIT + 1));
+      await expect(count).toHaveText('20,001 / 20,000자');
+      await expect(count).toHaveClass(/text-destructive/);
+
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(fieldBox(page, 'ai-system-prompt').getByText(OVER_LIMIT_MESSAGE)).toBeVisible();
+      await expect(page.getByText('입력값을 확인하세요.')).toBeVisible({ timeout: 5000 });
+      await expect(page.getByText('설정이 저장되었습니다.')).toHaveCount(0);
+      expect(saveCapture.lastRequest()).toBeUndefined();
+    });
+
+    test('정확히 20,000자는 저장되고 PUT 페이로드에 잘리지 않은 값이 실린다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+
+      await page.goto('/admin/settings');
+      const prompt = 'a'.repeat(LIMIT);
+      await page.locator('#ai-system-prompt').fill(prompt);
+      const count = page.getByTestId('ai-system-prompt-count');
+      await expect(count).toHaveText('20,000 / 20,000자');
+      await expect(count).not.toHaveClass(/text-destructive/);
+
+      await page.getByRole('button', { name: '저장' }).click();
+
+      const req = await saveCapture.waitForRequest();
+      const settings = (req.payload as { settings: Record<string, string> }).settings;
+      expect(Object.keys(settings)).toEqual(['ai.system_prompt']);
+      expect(settings['ai.system_prompt']).toHaveLength(LIMIT);
+      await expect(page.getByText(OVER_LIMIT_MESSAGE)).toHaveCount(0);
+    });
+
+    test('이미 상한을 넘겨 저장된 값은 잘리지 않고 그대로 보이며, 다른 칸을 저장하려 하면 오류로 막힌다', async ({
+      authenticatedPage: page,
+    }) => {
+      const stored = 'b'.repeat(LIMIT + 5);
+      await setupSettingsMocks(page, {
+        ai: createAiSettings({ 'ai.system_prompt': { overridden: true, value: stored } }),
+      });
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+
+      await page.goto('/admin/settings');
+      // 화면이 값을 자르지 않는다 — 입력창 값의 길이가 서버 값 그대로다
+      await expect(page.locator('#ai-system-prompt')).toHaveValue(stored);
+      await expect(page.getByTestId('ai-system-prompt-count')).toHaveText('20,005 / 20,000자');
+      await expect(page.getByTestId('ai-system-prompt-count')).toHaveClass(/text-destructive/);
+
+      // 다른 칸만 고쳐 저장해도 validate() 가 프롬프트 초과를 잡아 저장을 막는다(알려진 제약)
+      await page.locator('#ai-max-turns').fill('15');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(fieldBox(page, 'ai-system-prompt').getByText(OVER_LIMIT_MESSAGE)).toBeVisible();
+      expect(saveCapture.lastRequest()).toBeUndefined();
+    });
+  });
+
+  /**
    * 계약(#712): 이메일 탭은 <b>워크스페이스 전용</b> SMTP 6키 편집 화면이다.
    *
    * 서버는 저장된 키만 내려주고(미설정이면 `[]`), 저장은 6키를 한 벌로 보내며, "설정 해제"는

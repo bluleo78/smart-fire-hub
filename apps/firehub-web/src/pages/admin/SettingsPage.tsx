@@ -45,6 +45,7 @@ import { CLAUDE_MODEL_OPTIONS, typeChangeConfirmDescription, withPreservedValue 
 import { extractApiError } from '../../lib/api-error';
 import { HOSTING_DECLARE_PERMISSION } from '../../lib/hosting-location';
 import { isDecimalSyntax, isIntegerSyntax } from '../../lib/settings-number';
+import { cn } from '../../lib/utils';
 import AiClassifySettingsTab from './AiClassifySettingsTab';
 import { AiCredentialFieldset, OpencodeModelField } from './AiCredentialFieldset';
 import EmbeddingSettingsTab from './EmbeddingSettingsTab';
@@ -117,6 +118,16 @@ const NUMBER_RULES: {
     message: '10,000~200,000 사이의 정수를 입력하세요',
   },
 ];
+
+/**
+ * 시스템 프롬프트 최대 길이(글자 수, `string.length` = UTF-16 코드 단위 기준)(WD-536).
+ *
+ * 백엔드 `SettingsService.SYSTEM_PROMPT_MAX_LENGTH` 와 반드시 같아야 한다 — 서버도 Java `String.length()`
+ * (UTF-16)로 세므로 두 쪽의 글자 수가 일치한다. 어긋나면 화면은 통과시키고 서버가 400 으로 거부하거나,
+ * 서버가 받아 주는 값을 화면이 막는다. 입력창에 `maxLength` 를 걸지 않는 이유: 이미 상한을 넘겨 저장된 값이
+ * 말없이 잘려 나가면 안 되므로, 자르지 않고 글자 수 표시와 저장 전 검증으로만 안내한다.
+ */
+const SYSTEM_PROMPT_MAX_LENGTH = 20_000;
 
 /**
  * WD-59: 현재 고른 공급자(자격증명 유형)에서 반영되지 않는 실행 설정 칸 아래에 붙는 안내.
@@ -244,6 +255,10 @@ function AdminSettingsPage() {
 
     if (!form['ai.system_prompt'].trim()) {
       newErrors['ai.system_prompt'] = '시스템 프롬프트를 입력하세요';
+    } else if (form['ai.system_prompt'].length > SYSTEM_PROMPT_MAX_LENGTH) {
+      // 서버 상한(WD-536)과 같은 기준으로 저장 전에 막는다 — 그대로 보내면 서버가 400 으로 거부한다.
+      newErrors['ai.system_prompt'] =
+        `시스템 프롬프트는 ${SYSTEM_PROMPT_MAX_LENGTH.toLocaleString('ko-KR')}자 이하로 입력하세요`;
     }
 
     setErrors(newErrors);
@@ -474,6 +489,8 @@ function AdminSettingsPage() {
   // 잠긴 칸의 오류가 저장을 막는데 고칠 방법이 없어진다. 고쳐서 검증을 통과하면 다시 잠긴다.
   const runUnsupported = (key: AiBehaviorRunSettingKey) => agentTypeKnown && !runSupport[key];
   const runFieldLocked = (key: AiBehaviorRunSettingKey) => runUnsupported(key) && !errors[key];
+  // 시스템 프롬프트가 상한을 넘었는지(WD-536) — 글자 수 표시 색을 바꾸는 데 쓴다. 저장 차단은 validate() 가 한다.
+  const systemPromptOverLimit = form['ai.system_prompt'].length > SYSTEM_PROMPT_MAX_LENGTH;
 
   if (behaviorLoading || cred.isLoading) {
     return (
@@ -744,6 +761,18 @@ function AdminSettingsPage() {
                   onChange={(e) => updateField('ai.system_prompt', e.target.value)}
                   placeholder="시스템 프롬프트를 입력하세요..."
                 />
+                {/* 글자 수(WD-536): 상한에 얼마나 남았는지 늘 보여 주고, 넘으면 destructive 색으로 바꿔
+                    저장 전에도 넘었다는 것을 알 수 있게 한다. */}
+                <p
+                  data-testid="ai-system-prompt-count"
+                  className={cn(
+                    'text-right text-xs tabular-nums',
+                    systemPromptOverLimit ? 'text-destructive' : 'text-muted-foreground',
+                  )}
+                >
+                  {form['ai.system_prompt'].length.toLocaleString('ko-KR')} /{' '}
+                  {SYSTEM_PROMPT_MAX_LENGTH.toLocaleString('ko-KR')}자
+                </p>
                 {errors['ai.system_prompt'] && (
                   <p className="text-sm text-destructive">{errors['ai.system_prompt']}</p>
                 )}
