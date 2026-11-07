@@ -93,6 +93,34 @@ public interface DatasetRepository {
    */
   boolean existsVisibleByName(String name, DatasetVisibility visible, Long excludeId);
 
+  /**
+   * 테넌트 안에서 데이터셋 이름 하나를 두고 트랜잭션 범위 잠금을 건다(WD-540). 커밋·롤백 때 풀린다.
+   *
+   * <p>왜: 이름 중복 검사({@link #existsVisibleByName})는 확인 뒤 쓰는 구조인데 이름에는 DB 유일 제약이 없다(V142 — 유일 범위가 「볼 수
+   * 있는 데이터셋」이라 제약으로 표현할 수 없다). 같은 이름의 생성·복제·이름 변경이 겹치면 서로의 미커밋 행을 못 봐 모두 통과한다. 검사 직전에 이 잠금을 잡으면 두
+   * 번째 트랜잭션은 첫 번째가 끝난 뒤 검사해 커밋된 행을 본다(READ COMMITTED).
+   *
+   * <p>키는 {@code "dataset-name:" + 테넌트 id + ":" + 이름} 문자열의 해시다 — 접두어로 다른 advisory 잠금과 키 공간을 나누고,
+   * 테넌트를 넣어 다른 테넌트의 같은 이름끼리는 막지 않는다. 이름은 검사({@code name = ?})와 같게 원문 그대로 쓴다. 반드시 호출자의 트랜잭션 안에서 불러야
+   * 한다(밖이면 문장이 끝나자마자 풀린다 — 구현은 트랜잭션이 없으면 예외로 거부한다).
+   *
+   * <p>테이블명 잠금({@link #acquireTableNameLock})과 함께 잡을 때는 항상 이 잠금을 먼저 잡는다(고정 순서 — 교착 방지).
+   *
+   * @param tenantId 호출자가 {@code TenantContext.require} 로 확정한 테넌트
+   */
+  void acquireNameLock(long tenantId, String name);
+
+  /**
+   * 테넌트 안에서 물리 테이블 이름 하나를 두고 트랜잭션 범위 잠금을 건다(WD-540). 커밋·롤백 때 풀린다.
+   *
+   * <p>왜: 테이블명은 {@code (tenant_id, table_name)} 유일 인덱스가 있지만(V109), 검사({@link #existsByTableName}) 뒤
+   * 쓰는 사이에 같은 테이블명의 생성·복제가 끼어들면 둘 다 검사를 통과하고 늦은 쪽이 인덱스 위반(500)으로 끝난다. 이 잠금으로 줄 세우면 늦은 쪽은 순차일 때와 같은
+   * 409 를 받는다. 키 접두어 {@code "dataset-table:"} 는 이름 잠금과 키 공간을 나눈다. 이름 잠금 뒤에만 잡는다(고정 순서).
+   *
+   * @param tenantId 호출자가 {@code TenantContext.require} 로 확정한 테넌트
+   */
+  void acquireTableNameLock(long tenantId, String tableName);
+
   /** 같은 물리 테이블 이름을 쓰는 데이터셋이 있는지 확인한다. */
   boolean existsByTableName(String tableName);
 

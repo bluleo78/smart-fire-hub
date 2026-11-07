@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.dto.UpdateDatasetRequest;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetSchemaMeta;
+import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
@@ -32,6 +33,7 @@ import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /** DatasetRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
@@ -45,6 +47,9 @@ public class JooqDatasetRepository implements DatasetRepository {
 
   private final DSLContext dsl;
   private final SecurityLevelRepository securityLevelRepository;
+
+  /** advisory 잠금 창구 — 이름·테이블명 검사 직렬화 잠금(WD-540)에 쓴다. */
+  private final PlatformLocks locks;
 
   private static final Table<?> DATASET = table(name("dataset"));
   private static final Field<Long> DS_ID = field(name("dataset", "id"), Long.class);
@@ -527,6 +532,26 @@ public class JooqDatasetRepository implements DatasetRepository {
       c = c.and(DS_ID.ne(excludeId));
     }
     return dsl.fetchExists(dsl.selectOne().from(DATASET).where(c));
+  }
+
+  /**
+   * 이름 검사 직렬화 잠금(WD-540) — 키·이유는 {@link DatasetRepository#acquireNameLock} 참고. MANDATORY 라 트랜잭션 밖
+   * 호출은 예외로 드러난다 — 클래스 기본(REQUIRED)이면 이 호출만의 트랜잭션이 열렸다 바로 닫혀 잠금이 아무것도 막지 못한다.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  @Override
+  public void acquireNameLock(long tenantId, String name) {
+    locks.xactLock("dataset-name:" + tenantId + ":" + name);
+  }
+
+  /**
+   * 테이블명 검사 직렬화 잠금(WD-540) — 키·이유는 {@link DatasetRepository#acquireTableNameLock} 참고. MANDATORY 인
+   * 이유는 위와 같다.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  @Override
+  public void acquireTableNameLock(long tenantId, String tableName) {
+    locks.xactLock("dataset-table:" + tenantId + ":" + tableName);
   }
 
   @Override
