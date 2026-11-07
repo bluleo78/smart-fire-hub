@@ -134,6 +134,17 @@ public class DataTableService {
    */
   public void validateNewColumns(List<DatasetColumnRequest> columns) {
     for (DatasetColumnRequest col : columns) {
+      // WD-587: 요청 경계(@Valid)를 거치지 않는 호출부(파이프라인 TEMP 생성·복제 등)도 null 을 역참조해 500 이 나지 않도록
+      // 같은 한국어 문구의 400 으로 막는다.
+      if (col == null) {
+        throw new InvalidTableNameException(DatasetColumnRequest.COLUMN_REQUIRED_MESSAGE);
+      }
+      if (col.columnName() == null || col.columnName().isBlank()) {
+        throw new InvalidTableNameException(DatasetColumnRequest.COLUMN_NAME_REQUIRED_MESSAGE);
+      }
+      if (col.dataType() == null || col.dataType().isBlank()) {
+        throw new InvalidTableNameException(DatasetColumnRequest.DATA_TYPE_REQUIRED_MESSAGE);
+      }
       validateNewColumnName(col.columnName());
       // 타입 오류(알 수 없는 타입·VARCHAR 길이 범위)도 DDL 조립 전에 낸다 — 결과는 버리고 검사만 한다.
       mapDataType(col.dataType(), col.maxLength());
