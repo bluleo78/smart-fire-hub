@@ -37,6 +37,10 @@ notification:
     initial_delay_ms: 3600000
 
 firehub:
+  jobrunr:
+    datasource:
+      # 테스트 컨텍스트가 많이 캐시되므로 전용 풀은 유휴 커넥션을 붙들지 않는다(공유 DB max_connections 보호).
+      minimum-idle: 0
   platform-db:
     mybatis:
       # MyBatis 플랫폼 DB 배선(WD-487 PoC)을 테스트 컨텍스트에서만 켠다 — 계약 테스트가 MyBatis 구현 빈을 이름으로 꺼낸다.
