@@ -292,6 +292,8 @@ export default function DatasetListPage() {
         <div className="flex items-center gap-3 flex-wrap">
           <SearchInput
             placeholder="데이터셋 검색..."
+            // 입력이 멈춘 뒤 한 번만 검색한다(WD-513) — 글자마다 목록 요청·페이지 초기화가 나가지 않게
+            debounceMs={300}
             value={search}
             onChange={(value) => {
               patchParams({ q: value, page: null });
