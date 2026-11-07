@@ -5,6 +5,7 @@ import { BrowserRouter, Navigate, Route,Routes } from 'react-router-dom';
 import { AdminOrPermissionRoute } from './components/AdminOrPermissionRoute';
 import { AppLayout } from './components/layout/AppLayout';
 import { PageErrorBoundary } from './components/PageErrorBoundary';
+import { PageTitleSync } from './components/PageTitleSync';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Skeleton } from './components/ui/skeleton';
 import { Toaster } from './components/ui/sonner';
@@ -65,6 +66,8 @@ function App() {
       <ThemeColorProvider>
       <BrowserRouter>
       <AuthProvider>
+        {/* 경로별 탭 제목(WD-580) — 인증 화면(AppLayout 밖)까지 덮도록 레이아웃이 아닌 라우터 최상단에 한 번만 둔다 */}
+        <PageTitleSync />
         <Routes>
           {/* 퍼블릭 라우트: 각 페이지를 ErrorBoundary + Suspense로 감싸 렌더링 오류 격리 */}
           <Route path="/login" element={<PageErrorBoundary><Suspense fallback={<PageSkeleton />}><LoginPage /></Suspense></PageErrorBoundary>} />
