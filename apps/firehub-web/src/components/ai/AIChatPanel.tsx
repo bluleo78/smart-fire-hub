@@ -48,12 +48,15 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
     contextTokens,
     isCompacting,
     compactionStartedAt,
+    isOpen,
+    openFocusOriginRef,
   } = useAI();
 
   const hasMessages = messages.length > 0 || pendingUserMessage || streamingMessage;
 
   return (
-    <div className={`flex flex-col h-full bg-background ${className || ''}`}>
+    // data-ai-chat-panel: ChatInput 열림 포커스 가드의 패널 경계(WD-579)
+    <div data-ai-chat-panel className={`flex flex-col h-full bg-background ${className || ''}`}>
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b gap-2">
         <div className="flex items-center gap-2 min-w-0">
@@ -143,6 +146,8 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
           onStop={stopStreaming}
           isStreaming={isStreaming}
           isUploading={isUploading}
+          focusOnOpen={isOpen}
+          focusOriginRef={openFocusOriginRef}
         />
       </div>
     </div>

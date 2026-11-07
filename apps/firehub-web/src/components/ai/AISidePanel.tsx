@@ -14,6 +14,9 @@ const KEY_STEP = 16;
 /** Tailwind lg 브레이크포인트(1024px) 미만이면 모바일로 판정 */
 const MOBILE_MQ = '(max-width: 1023px)';
 
+/** 패널을 이름 있는 보조 랜드마크로 노출(WD-579) — 데스크탑·모바일 분기 공통 */
+const LANDMARK_PROPS = { role: 'complementary', 'aria-label': 'AI 어시스턴트' } as const;
+
 /**
  * AI 사이드 패널 컴포넌트.
  *
@@ -22,7 +25,7 @@ const MOBILE_MQ = '(max-width: 1023px)';
  *   → flex row 레이아웃에서 벗어나 메인 콘텐츠 너비를 잠식하지 않는다.
  */
 export function AISidePanel() {
-  const { isOpen } = useAI();
+  const { isOpen, openFocusOriginRef } = useAI();
   // 뷰포트가 모바일 너비인지 — 공용 미디어 쿼리 훅으로 리사이즈 시 자동 갱신(WD-372)
   const isMobile = useMediaQuery(MOBILE_MQ);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
@@ -31,26 +34,14 @@ export function AISidePanel() {
   const startWidth = useRef(0);
 
   // 포커스 복귀용 refs (#333). 닫힌 패널을 inert로 만들면 내부에 있던 포커스가 <body>로 유실되므로
-  // 열 때의 트리거를 기억해 두고 닫힐 때 되돌린다(#328과 같은 결함을 새로 만들지 않기 위함).
+  // 열 때의 트리거(AIProvider 가 기록한 openFocusOriginRef, WD-579)로 닫힐 때 되돌린다(#328과 같은 결함 방지).
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const openerRef = useRef<HTMLElement | null>(null);
-  // 초기값을 false로 두는 이유: AISidePanel은 lazy 로드라 "이미 열린 상태"로 처음 마운트될 수 있다.
-  // isOpen으로 초기화하면 그 첫 오픈을 전환으로 보지 못해 트리거를 기억하지 못한다.
+  // 닫힘 "전환"만 감지하기 위한 이전 열림 상태.
   const prevOpenRef = useRef(false);
 
   useEffect(() => {
     const wasOpen = prevOpenRef.current;
     prevOpenRef.current = isOpen;
-
-    if (isOpen && !wasOpen) {
-      // 열림: 패널 밖에 있던 트리거(AI 상태 칩 등)를 복귀 지점으로 보관.
-      const active = document.activeElement;
-      openerRef.current =
-        active instanceof HTMLElement && active !== document.body && !panelRef.current?.contains(active)
-          ? active
-          : null;
-      return;
-    }
 
     // 닫힘: 포커스가 갈 곳을 잃었을 때만(패널 내부에 남아 있거나 이미 <body>) 여는 트리거로 되돌린다.
     // 브라우저는 inert가 붙은 서브트리의 포커스를 나중에 정리해 <body>로 떨어뜨린다 — 이 이펙트
@@ -59,11 +50,17 @@ export function AISidePanel() {
     if (!isOpen && wasOpen) {
       const active = document.activeElement;
       const stranded = !active || active === document.body || !!panelRef.current?.contains(active);
-      const opener = openerRef.current;
-      // 트리거가 사라졌거나 애초에 없었으면(단축키로 열었고 포커스가 없던 경우) 그대로 둔다.
-      if (stranded && opener?.isConnected) opener.focus();
+      // 열 때의 포커스 위치가 패널 밖의 살아 있는 컨트롤일 때만 복귀 지점으로 쓴다.
+      // 트리거가 사라졌거나 애초에 없었으면(단축키로 열었고 포커스가 <body>였던 경우) 그대로 둔다.
+      const opener = openFocusOriginRef.current;
+      const restorable =
+        opener instanceof HTMLElement &&
+        opener !== document.body &&
+        !panelRef.current?.contains(opener) &&
+        opener.isConnected;
+      if (stranded && restorable) opener.focus();
     }
-  }, [isOpen]);
+  }, [isOpen, openFocusOriginRef]);
 
   /** 데스크탑 전용: 좌측 드래그 핸들로 패널 너비 조절 */
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -117,7 +114,7 @@ export function AISidePanel() {
     // 모바일: fixed 오버레이로 렌더링 — flex row 레이아웃에서 완전히 분리
     if (!isOpen) return null;
     return (
-      <div className="fixed inset-0 z-50 bg-background flex flex-col">
+      <div {...LANDMARK_PROPS} className="fixed inset-0 z-50 bg-background flex flex-col">
         {/* AIChatPanel 내부에서 closeAI context 함수로 닫을 수 있음 */}
         <div className="h-full overflow-hidden">
           <AIChatPanel />
@@ -136,6 +133,8 @@ export function AISidePanel() {
       )}
       style={{ width: isOpen ? width : 0 }}
       data-testid="ai-side-panel"
+      // 닫힘에서는 inert라 접근성 트리에서 빠지므로 랜드마크가 중복 노출되지 않는다(WD-579).
+      {...LANDMARK_PROPS}
       // inert: 접힌 패널의 내부 컨트롤 9개를 포커스 순서와 접근성 트리에서 동시에 제거한다(#333).
       // w-0(+overflow-hidden)은 display:none/visibility:hidden이 아니라 포커스를 막지 못해,
       // 전 페이지에서 보이지 않는 탭 스톱이 남아 있었다. aria-hidden은 붙이지 않는다 — inert가 함의한다.

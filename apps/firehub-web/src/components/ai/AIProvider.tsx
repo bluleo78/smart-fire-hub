@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode, RefObject } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useAIChat } from '../../hooks/queries/useAIChat';
 import { useCanvasState } from '../../hooks/useCanvasState';
@@ -20,6 +20,11 @@ interface AIContextValue {
   contextTokens: number | null;
   isCompacting: boolean;
   compactionStartedAt: number | null;
+  /**
+   * 마지막으로 패널이 열린 순간의 document.activeElement(WD-579).
+   * ChatInput 의 포커스 가드와 AISidePanel 의 닫힘 시 포커스 복귀(#333)가 함께 쓴다.
+   */
+  openFocusOriginRef: RefObject<Element | null>;
   openAI: () => void;
   closeAI: () => void;
   toggleAI: () => void;
@@ -57,6 +62,12 @@ function getStoredMode(): AIMode {
 
 export function AIProvider({ children }: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
+  // 열림 순간의 포커스 위치를 기억한다(WD-579). layout effect 라 입력창 포커스(ChatInput 의 passive effect)보다 먼저,
+  // 또 lazy 패널의 Suspense 바깥이라 청크 도착 전 열림 커밋에서 바로 실행된다.
+  const openFocusOriginRef = useRef<Element | null>(null);
+  useLayoutEffect(() => {
+    if (isOpen) openFocusOriginRef.current = document.activeElement;
+  }, [isOpen]);
   const [mode, setModeState] = useState<AIMode>(getStoredMode);
 
   const canvas = useCanvasState();
@@ -150,6 +161,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       contextTokens,
       isCompacting,
       compactionStartedAt,
+      openFocusOriginRef,
       openAI,
       closeAI,
       toggleAI,
