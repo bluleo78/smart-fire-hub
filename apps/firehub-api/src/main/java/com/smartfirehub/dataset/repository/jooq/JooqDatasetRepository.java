@@ -382,6 +382,20 @@ public class JooqDatasetRepository implements DatasetRepository {
     dsl.select(DS_ID).from(DATASET).where(DS_ID.eq(id)).forShare().fetch();
   }
 
+  // WD-583: 데이터셋 삭제의 배타 잠금. findById 와 같은 DATASET 테이블 참조를 쓴다.
+  // 뒤따르는 동시 삭제는 여기서 앞 트랜잭션 커밋을 기다리고, 커밋 뒤 다시 평가된 WHERE 가
+  // 행을 찾지 못해 빈 결과(false)를 받는다(READ COMMITTED).
+  // 잠금 순서: 삭제 경로에서 데이터셋 행을 가장 먼저 잡는다 — 필드 변경 경로(데이터셋 행 → 테이블)와 같은 순서.
+  @Override
+  public boolean lockForDelete(Long id) {
+    return dsl.select(DS_ID)
+        .from(DATASET)
+        .where(DS_ID.eq(id))
+        .forUpdate()
+        .fetchOptional()
+        .isPresent();
+  }
+
   @Override
   public Optional<DatasetResponse> findById(Long id) {
     return findById(id, null);
@@ -527,8 +541,9 @@ public class JooqDatasetRepository implements DatasetRepository {
   }
 
   @Override
-  public void deleteById(Long id) {
-    dsl.deleteFrom(DATASET).where(DS_ID.eq(id)).execute();
+  public int deleteById(Long id) {
+    // 영향 행 수를 돌려준다 — 0 이면 이미 지워진 데이터셋이라 호출부가 404 로 끝낸다(WD-583).
+    return dsl.deleteFrom(DATASET).where(DS_ID.eq(id)).execute();
   }
 
   /**
