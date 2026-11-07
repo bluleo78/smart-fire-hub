@@ -5,6 +5,7 @@ import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
@@ -69,6 +70,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -1660,12 +1662,47 @@ public class PipelineAsyncRunner {
     } else {
       log.info("Creating new temp dataset for {}step {}", logLabel, step.name());
     }
-    return new StepTemp(
-        tempDatasetService.createTempDataset(
-            columns, pipelineId, pipelineName, stepId, step.name(), userId),
-        true,
-        null);
+    try {
+      return new StepTemp(
+          tempDatasetService.createTempDataset(
+              columns, pipelineId, pipelineName, stepId, step.name(), userId),
+          true,
+          null);
+    } catch (DataIntegrityViolationException | DuplicateDatasetNameException e) {
+      // WD-541: 「기존 TEMP 있음?」 확인과 생성이 원자적이지 않아, 같은 파이프라인의 동시 첫 실행 둘이 모두 「없음」을 보고 같은 TEMP 를 만들면 진
+      // 쪽 생성이 유일 제약(idx_dataset_table_name) 또는 사전 중복 검사에서 끝난다. 생성은 한 트랜잭션이라 진 쪽은 통째로 롤백돼 고아 테이블·행이
+      // 남지 않고, 이긴 쪽 커밋은 유일 인덱스가 기다려 준 뒤라 지금은 보인다 — 이긴 쪽 TEMP 를 다시 찾아 정상 재사용 경로(스키마 비교 등)로
+      // 잇는다. 잠금 대신 이 방식을 쓰는 이유: TEMP 가 이미 있는 평상시 실행에는 아무 비용도 없고 다른 파이프라인·단계를 막지 않는다.
+      Optional<Long> winner = tempDatasetService.findExistingTempDataset(stepId);
+      if (winner.isPresent()) {
+        log.info(
+            "Temp dataset for {}step {} was created concurrently by another run; reusing {}",
+            logLabel,
+            step.name(),
+            winner.get());
+        return ensureStepTemp(
+            step,
+            winner,
+            columns,
+            pipelineId,
+            pipelineName,
+            userId,
+            runAs,
+            logLabel,
+            rebuildRefusal);
+      }
+      // 이긴 쪽 TEMP 가 없다 = 동시 실행 경합이 아니라 다른 충돌이다. 제약 이름·SQL 원문은 서버 로그에만 남기고 사용자 문구로 바꾼다.
+      // 데이터셋 이름 중복 예외는 이미 사용자용 문구라 그대로 둔다.
+      if (e instanceof DuplicateDatasetNameException duplicate) {
+        throw duplicate;
+      }
+      log.error("Temp dataset creation failed for {}step {}", logLabel, step.name(), e);
+      throw new ScriptExecutionException(TEMP_PREPARE_FAILED_MESSAGE, e);
+    }
   }
+
+  /** 임시 데이터셋 준비 실패 때 단계 오류에 저장하는 사용자용 문구(WD-541) — SQL 원문·제약 이름은 서버 로그에만 남긴다. */
+  static final String TEMP_PREPARE_FAILED_MESSAGE = "임시 데이터셋을 준비하지 못했습니다. 잠시 뒤 다시 실행해 주세요.";
 
   /**
    * API_CALL 스텝의 러너 소유 TEMP 출력을 준비한다(후속 F1). PYTHON 은 S4 부터 출력 등급 전파(enforcePythonOutputLevel)가 재사용
