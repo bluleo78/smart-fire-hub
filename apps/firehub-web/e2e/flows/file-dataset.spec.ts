@@ -35,7 +35,7 @@ test.describe('FILE 데이터셋', () => {
 
       await page.getByLabel('데이터셋 이름').fill('장비 학습 데이터');
 
-      await page.getByRole('button', { name: '생성' }).click();
+      await page.getByRole('button', { name: '만들기' }).click();
 
       // POST payload 검증 — storageType/columns 가 올바르게 전송되고 prefix 는 전송되지 않는지 확인
       const req = await capture.waitForRequest();

@@ -101,7 +101,7 @@ export default function PipelineListPage() {
           <Button asChild>
             <Link to="/pipelines/new">
               <Plus className="h-4 w-4" />
-              파이프라인 추가
+              새 파이프라인
             </Link>
           </Button>
         )}

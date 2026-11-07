@@ -23,7 +23,7 @@ test.beforeEach(async ({ authenticatedPage: page }) => {
 async function openCreateTypeSelect(page: Page) {
   await setupDatasetMocks(page);
   await page.goto('/data/datasets/new');
-  await expect(page.getByRole('heading', { name: '데이터셋 생성' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '새 데이터셋' })).toBeVisible();
   await page.getByRole('combobox').filter({ hasText: '텍스트' }).first().click();
 }
 

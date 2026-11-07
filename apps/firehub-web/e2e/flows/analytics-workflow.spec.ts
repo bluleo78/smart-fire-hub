@@ -77,7 +77,7 @@ test.describe('분석 플로우', () => {
     await page.getByLabel('이름 *').fill('새 테스트 대시보드');
 
     // "생성" 버튼 클릭
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // POST payload 검증 — 입력한 이름이 API에 정확히 전달되었는지 확인
     const captured = await postCapture.waitForRequest();

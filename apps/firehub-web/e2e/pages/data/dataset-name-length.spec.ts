@@ -36,7 +36,7 @@ test.describe('데이터셋 이름 길이 상한 (WD-95)', () => {
     await expect(page.getByText('사용 가능한 테이블명입니다.')).toHaveCount(0);
 
     // 폼이 onSubmit 모드라 제출해야 zod 메시지가 나타난다.
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
     await expect(page.getByText('테이블명은 56자 이하여야 합니다')).toBeVisible();
 
     // 생성 POST 가 나가지 않았음을 확인한다(메시지가 보인 뒤 잠시 더 기다려 늦은 요청도 잡는다).
@@ -61,7 +61,7 @@ test.describe('데이터셋 이름 길이 상한 (WD-95)', () => {
     await page.waitForTimeout(600);
     await expect(page.getByText('사용 가능한 테이블명입니다.')).toBeVisible();
 
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     const req = await capture.waitForRequest();
     expect(req.payload).toMatchObject({
@@ -81,7 +81,7 @@ test.describe('데이터셋 이름 길이 상한 (WD-95)', () => {
     await page.getByLabel('테이블명').fill('short_table');
     await page.getByPlaceholder('예: user_id').fill(nameOf('c_', 64));
 
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
     await expect(page.getByText('칼럼명은 63자 이하여야 합니다')).toBeVisible();
 
     await page.waitForTimeout(300);

@@ -271,7 +271,7 @@ export default function ApiConnectionListPage() {
               </DialogTrigger>
               <DialogContent className="max-h-[90vh] overflow-y-auto overscroll-contain">
                 <DialogHeader>
-                  <DialogTitle>새 API 연결 생성</DialogTitle>
+                  <DialogTitle>새 API 연결</DialogTitle>
                   <DialogDescription className="sr-only">새 외부 API 연결을 추가합니다.</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
@@ -441,7 +441,7 @@ export default function ApiConnectionListPage() {
                       onClick={handleCreate}
                       disabled={createMutation.isPending}
                     >
-                      {createMutation.isPending ? '생성 중...' : '생성'}
+                      {createMutation.isPending ? '만드는 중...' : '만들기'}
                     </Button>
                   </div>
                 </div>

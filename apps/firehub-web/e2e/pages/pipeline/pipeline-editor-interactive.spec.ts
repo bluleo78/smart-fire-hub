@@ -591,7 +591,7 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
       // 진입해야 실제 브라우저 히스토리 스택이 쌓여 popstate가 의미 있게 재현된다.
       await setupPipelineMocks(page, 1);
       await page.goto('/pipelines');
-      await page.getByRole('link', { name: '파이프라인 추가' }).click();
+      await page.getByRole('link', { name: '새 파이프라인' }).click();
       await expect(page).toHaveURL(/\/pipelines\/new$/);
 
       // 파이프라인 이름 입력 → dirty 상태 생성
@@ -616,7 +616,7 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
       await setupNewEditorMocks(page);
       await setupPipelineMocks(page, 1);
       await page.goto('/pipelines');
-      await page.getByRole('link', { name: '파이프라인 추가' }).click();
+      await page.getByRole('link', { name: '새 파이프라인' }).click();
       await expect(page).toHaveURL(/\/pipelines\/new$/);
 
       await page.getByPlaceholder('파이프라인 이름').fill('취소 테스트');
@@ -636,7 +636,7 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
       await setupNewEditorMocks(page);
       await setupPipelineMocks(page, 1);
       await page.goto('/pipelines');
-      await page.getByRole('link', { name: '파이프라인 추가' }).click();
+      await page.getByRole('link', { name: '새 파이프라인' }).click();
       await expect(page).toHaveURL(/\/pipelines\/new$/);
 
       await page.getByPlaceholder('파이프라인 이름').fill('이탈 테스트');
@@ -656,7 +656,7 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
       await setupNewEditorMocks(page);
       await setupPipelineMocks(page, 1);
       await page.goto('/pipelines');
-      await page.getByRole('link', { name: '파이프라인 추가' }).click();
+      await page.getByRole('link', { name: '새 파이프라인' }).click();
       await expect(page).toHaveURL(/\/pipelines\/new$/);
 
       // 입력 없이(clean) 뒤로가기

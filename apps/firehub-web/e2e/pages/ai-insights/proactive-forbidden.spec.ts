@@ -69,7 +69,7 @@ test.describe('스마트 작업 — 조회 권한 없는 사용자 (WD-137)', ()
     await expect(page.getByTestId('templates-forbidden')).toHaveText(notice('리포트 양식을'));
     await expect(page.getByText('커스텀 템플릿 없음')).toHaveCount(0);
     await expect(page.getByText('기본 템플릿', { exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: '템플릿 추가' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 템플릿' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: '첫 템플릿 만들기' })).toHaveCount(0);
     await expectNoWriteNotice(page);
   });
@@ -83,7 +83,7 @@ test.describe('스마트 작업 — 조회 권한 없는 사용자 (WD-137)', ()
     await expect(page.getByText('작업 목록을 불러오지 못했습니다')).toHaveCount(0);
     await expect(page.getByText('잠시 후 다시 시도해 주세요.')).toHaveCount(0);
     await expect(page.getByText('스마트 작업 없음')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: '작업 추가' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 스마트 작업' })).toHaveCount(0);
     await expectNoWriteNotice(page);
   });
 

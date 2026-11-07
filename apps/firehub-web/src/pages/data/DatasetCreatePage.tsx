@@ -169,7 +169,7 @@ export default function DatasetCreatePage() {
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">데이터셋 생성</h1>
+        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">새 데이터셋</h1>
       </div>
 
       <FormProvider {...form}>
@@ -302,7 +302,7 @@ export default function DatasetCreatePage() {
               type="submit"
               disabled={form.formState.isSubmitting || isNameDuplicate || isTableNameDuplicate}
             >
-              {form.formState.isSubmitting ? '생성 중...' : '생성'}
+              {form.formState.isSubmitting ? '만드는 중...' : '만들기'}
             </Button>
             <Button
               type="button"

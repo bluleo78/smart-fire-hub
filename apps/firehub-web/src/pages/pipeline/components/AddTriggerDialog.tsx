@@ -188,7 +188,7 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
       <DialogContent className="max-h-[85vh] overflow-y-auto overscroll-contain">
         <DialogHeader>
           <DialogTitle>
-            {step === 1 ? '트리거 추가' : `트리거 추가 - ${typeInfo?.label}`}
+            {step === 1 ? '새 트리거' : `새 트리거 - ${typeInfo?.label}`}
           </DialogTitle>
           <DialogDescription className="sr-only">파이프라인에 새 트리거를 추가합니다.</DialogDescription>
         </DialogHeader>
@@ -306,10 +306,10 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
                 {createTrigger.isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    생성 중...
+                    만드는 중...
                   </>
                 ) : (
-                  '트리거 생성'
+                  '만들기'
                 )}
               </Button>
             )}

@@ -166,7 +166,7 @@ test.describe('차트 빌더 페이지', () => {
     await page.getByPlaceholder('차트 이름을 입력하세요').fill('화재 현황 차트');
 
     // 저장 버튼 클릭 (다이얼로그 내)
-    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     // POST payload 검증
     const req = await createCapture.waitForRequest();
@@ -235,7 +235,7 @@ test.describe('차트 빌더 페이지', () => {
     await nameInput.fill('수정된 차트');
 
     // 수정 버튼 클릭
-    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
 
     // PUT payload 검증
     const req = await updateCapture.waitForRequest();
@@ -263,7 +263,7 @@ test.describe('차트 빌더 페이지', () => {
     const descInput = page.getByRole('dialog').getByLabel('설명');
     await expect(descInput).toHaveValue('테스트용 막대 차트');
     await descInput.fill('');
-    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
 
     const req = await updateCapture.waitForRequest();
     expect(req.payload).toMatchObject({ description: '' });
@@ -438,7 +438,7 @@ test.describe('차트 빌더 페이지', () => {
 
       await page.getByRole('button', { name: '저장' }).click();
       await expect(page.getByRole('dialog').getByText('차트 수정')).toBeVisible();
-      await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+      await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
 
       // 저장 후 isDirty=false → 미저장 표시 사라짐
       await expect(page.getByText('미저장 변경사항')).not.toBeVisible();

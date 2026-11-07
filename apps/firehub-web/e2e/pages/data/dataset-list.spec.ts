@@ -64,7 +64,7 @@ test.describe('데이터셋 목록 페이지', () => {
     await page.goto('/data/datasets');
 
     // "데이터셋 추가" 버튼 클릭 → 2단계 유형 선택 모달이 열린다 (더 이상 직접 navigate 하지 않음)
-    await page.getByRole('button', { name: '데이터셋 추가' }).click();
+    await page.getByRole('button', { name: '새 데이터셋' }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('어떤 데이터셋을 만드시나요?')).toBeVisible();
 

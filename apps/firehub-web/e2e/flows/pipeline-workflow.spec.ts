@@ -54,7 +54,7 @@ test.describe('파이프라인 워크플로우', () => {
     await page.goto('/pipelines');
 
     // "파이프라인 추가" 링크 버튼 클릭
-    await page.getByRole('link', { name: /파이프라인 추가/ }).click();
+    await page.getByRole('link', { name: /새 파이프라인/ }).click();
 
     // /pipelines/new 페이지로 이동 확인
     await expect(page).toHaveURL('/pipelines/new');

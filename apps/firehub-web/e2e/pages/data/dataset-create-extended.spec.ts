@@ -38,7 +38,7 @@ async function gotoCreatePage(page: import('@playwright/test').Page) {
   await mockApi(page, 'GET', '/api/v1/dataset-categories', MOCK_CATEGORIES);
   await page.goto(CREATE_URL, { waitUntil: 'commit' });
   // "데이터셋 생성" 헤딩이 표시될 때까지 대기 (#280: 연쇄 실행 race 완화로 10s)
-  await expect(page.getByRole('heading', { name: '데이터셋 생성' })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('heading', { name: '새 데이터셋' })).toBeVisible({ timeout: 10_000 });
 }
 
 /**
@@ -60,7 +60,7 @@ test.describe('DatasetCreatePage — 기본 정보 입력', () => {
 
     await expect(page.getByLabel('데이터셋 이름')).toBeVisible();
     await expect(page.getByLabel('테이블명')).toBeVisible();
-    await expect(page.getByRole('button', { name: '생성' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '만들기' })).toBeVisible();
     await expect(page.getByRole('button', { name: '취소' })).toBeVisible();
   });
 
@@ -70,7 +70,7 @@ test.describe('DatasetCreatePage — 기본 정보 입력', () => {
     await gotoCreatePage(page);
 
     // 빈 폼에서 제출 → handleSubmit → Zod 유효성 검사 실패
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 인라인 에러 메시지 확인 (#69: 토스트 중복 노출 제거)
     await expect(page.getByText('데이터셋 이름을 입력하세요')).toBeVisible({ timeout: 3000 });
@@ -109,7 +109,7 @@ test.describe('DatasetCreatePage — 기본 정보 입력', () => {
     // 생성 버튼 클릭 — POST 응답을 기다려 payload가 캡처된 이후에 검증한다
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/v1/datasets') && r.request().method() === 'POST'),
-      page.getByRole('button', { name: '생성' }).click(),
+      page.getByRole('button', { name: '만들기' }).click(),
     ]);
     expect(capturedPayload).toMatchObject({
       name: '새 소방 데이터',
@@ -143,7 +143,7 @@ test.describe('DatasetCreatePage — 기본 정보 입력', () => {
     await page.getByLabel('테이블명').fill('new_fire_data');
     await page.getByPlaceholder('예: user_id').first().fill('id');
 
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // navigate(`/data/datasets/${result.data.id}`) — 99번 데이터셋 상세로 이동
     await page.waitForURL(`**/data/datasets/${MOCK_CREATED_DATASET.id}`, { timeout: 5000 });
@@ -214,7 +214,7 @@ test.describe('DatasetCreatePage — 카테고리 선택 (useCategories)', () =>
 
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/v1/datasets') && r.request().method() === 'POST'),
-      page.getByRole('button', { name: '생성' }).click(),
+      page.getByRole('button', { name: '만들기' }).click(),
     ]);
     // categoryId: 1 이 payload에 포함되어야 함
     expect(capturedPayload.categoryId).toBe(1);
@@ -251,7 +251,7 @@ test.describe('DatasetCreatePage — 카테고리 선택 (useCategories)', () =>
 
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/v1/datasets') && r.request().method() === 'POST'),
-      page.getByRole('button', { name: '생성' }).click(),
+      page.getByRole('button', { name: '만들기' }).click(),
     ]);
     // categoryId가 undefined → JSON 직렬화 시 누락됨
     expect(capturedPayload.categoryId).toBeUndefined();
@@ -281,7 +281,7 @@ test.describe('DatasetCreatePage — 에러 처리 (useCreateDataset 에러)', (
     await page.getByLabel('테이블명').fill('existing_table');
     await page.getByPlaceholder('예: user_id').first().fill('id');
 
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // handleApiError → extractApiError → errData.message (백엔드 메시지 우선)
     await expect(
@@ -310,7 +310,7 @@ test.describe('DatasetCreatePage — 에러 처리 (useCreateDataset 에러)', (
     await page.getByLabel('테이블명').fill('error_dataset');
     await page.getByPlaceholder('예: user_id').first().fill('id');
 
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // handleApiError → extractApiError → errData.message (백엔드 메시지 우선)
     await expect(
@@ -327,7 +327,7 @@ test.describe('DatasetCreatePage — 데이터셋 유형 선택', () => {
     // 테이블·파생 유형은 storageType=TABLE&originType=DERIVED 로 진입한다.
     await mockApi(page, 'GET', '/api/v1/dataset-categories', MOCK_CATEGORIES);
     await page.goto('/data/datasets/new?storageType=TABLE&originType=DERIVED', { waitUntil: 'commit' });
-    await expect(page.getByRole('heading', { name: '데이터셋 생성' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: '새 데이터셋' })).toBeVisible({ timeout: 10_000 });
 
     let capturedPayload: Record<string, unknown> = {};
     await page.route(
@@ -356,7 +356,7 @@ test.describe('DatasetCreatePage — 데이터셋 유형 선택', () => {
 
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/v1/datasets') && r.request().method() === 'POST'),
-      page.getByRole('button', { name: '생성' }).click(),
+      page.getByRole('button', { name: '만들기' }).click(),
     ]);
     expect(capturedPayload.storageType).toBe('TABLE');
     expect(capturedPayload.originType).toBe('DERIVED');
@@ -490,7 +490,7 @@ test.describe('SchemaBuilder — GEOMETRY 타입 기본 키 비활성화 (#199)'
       page.waitForResponse(
         (r) => r.url().includes('/api/v1/datasets') && r.request().method() === 'POST',
       ),
-      page.getByRole('button', { name: '생성' }).click(),
+      page.getByRole('button', { name: '만들기' }).click(),
     ]);
 
     // payload에서 GEOMETRY 컬럼의 isPrimaryKey가 false인지 검증

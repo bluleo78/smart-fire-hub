@@ -77,7 +77,7 @@ test.describe('스마트 작업 목록 페이지', () => {
     await page.goto('/ai-insights/jobs');
 
     // "작업 추가" 버튼 클릭
-    await page.getByRole('button', { name: '작업 추가' }).click();
+    await page.getByRole('button', { name: '새 스마트 작업' }).click();
 
     // 새 작업 페이지로 이동 확인
     await expect(page).toHaveURL('/ai-insights/jobs/new');

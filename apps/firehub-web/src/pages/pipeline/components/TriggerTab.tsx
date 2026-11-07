@@ -136,7 +136,7 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
           {canWriteTrigger && !pipelineMissing && (
             <Button size="sm" onClick={() => setAddDialogOpen(true)}>
               <Plus className="h-4 w-4" />
-              트리거 추가
+              새 트리거
             </Button>
           )}
         </div>

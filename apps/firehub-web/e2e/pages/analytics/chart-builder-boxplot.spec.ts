@@ -76,7 +76,7 @@ test.describe('박스 플롯 통계 컬럼 — ChartBuilderPage (WD-305)', () =>
 
     await page.getByRole('button', { name: '저장' }).click();
     await page.getByLabel('이름 *').fill('통계 없는 박스 플롯');
-    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     await expect(
       page.getByText(
@@ -123,7 +123,7 @@ test.describe('박스 플롯 통계 컬럼 — ChartBuilderPage (WD-305)', () =>
 
     await page.getByRole('button', { name: '저장' }).click();
     await page.getByLabel('이름 *').fill('지역별 분포');
-    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     const req = await cap.waitForRequest();
     expect(req.payload).toMatchObject({ name: '지역별 분포', chartType: 'BOXPLOT', config: { xAxis: 'region' } });

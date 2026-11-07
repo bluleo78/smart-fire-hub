@@ -50,7 +50,7 @@ test.describe('설명 길이 상한 (WD-520)', () => {
     const description = dialog.getByLabel('설명');
     await expectCappedAt(description);
 
-    await dialog.getByRole('button', { name: '저장' }).click();
+    await dialog.getByRole('button', { name: '만들기' }).click();
     const req = await cap.waitForRequest();
     expect((req.payload as { description: string }).description).toHaveLength(LIMIT);
   });
@@ -126,7 +126,7 @@ test.describe('설명 길이 상한 (WD-520)', () => {
     // 1) 생성 다이얼로그
     await page.getByRole('button', { name: '새 연결' }).click();
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByText('새 API 연결 생성')).toBeVisible();
+    await expect(dialog.getByText('새 API 연결')).toBeVisible();
     const createDescription = dialog.getByLabel('설명 (선택)');
     await expectCappedAt(createDescription);
 

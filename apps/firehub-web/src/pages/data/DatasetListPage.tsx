@@ -254,7 +254,7 @@ export default function DatasetListPage() {
         {canWriteDataset && (
           <Button onClick={() => setTypeModalOpen(true)}>
             <Plus className="h-4 w-4" />
-            데이터셋 추가
+            새 데이터셋
           </Button>
         )}
       </div>

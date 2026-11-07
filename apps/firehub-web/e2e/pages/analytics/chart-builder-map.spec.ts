@@ -95,7 +95,7 @@ test.describe('차트 빌더 — MAP 차트 타입', () => {
     // 비공간 컬럼이 공간 컬럼으로 자동 선택된 상태에서 저장 시도
     await page.getByRole('button', { name: '저장' }).click();
     await expect(page.getByRole('heading', { name: '차트 저장' })).toBeVisible();
-    await page.getByRole('button', { name: '저장', exact: true }).last().click();
+    await page.getByRole('button', { name: '만들기', exact: true }).last().click();
 
     // 에러 토스트가 표시되고 POST /charts 는 호출되지 않아야 한다
     await expect(page.getByText('선택한 컬럼에 공간 데이터(GeoJSON)가 없습니다.')).toBeVisible();
@@ -162,7 +162,7 @@ test.describe('차트 빌더 — MAP 차트 타입', () => {
     await expect(page.getByRole('heading', { name: '차트 저장' })).toBeVisible();
 
     await page.getByLabel('이름 *').fill('화재 지도');
-    await page.getByRole('button', { name: '저장', exact: true }).last().click();
+    await page.getByRole('button', { name: '만들기', exact: true }).last().click();
 
     const req = await createCapture.waitForRequest();
     expect(req.payload).toMatchObject({

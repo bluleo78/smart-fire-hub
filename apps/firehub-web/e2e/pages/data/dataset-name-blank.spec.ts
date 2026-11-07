@@ -22,7 +22,7 @@ test.describe('데이터셋 이름 공백 검증 (WD-502)', () => {
     await page.getByLabel('데이터셋 이름').fill('   ');
     await page.getByLabel('테이블명').fill('tbl_qa3_space');
     await page.getByPlaceholder('예: user_id').fill('c1');
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 이름 칸 한국어 안내 + 포커스, 서버 영어 메시지는 없다
     await expect(page.getByText('데이터셋 이름을 입력하세요')).toBeVisible();
@@ -42,7 +42,7 @@ test.describe('데이터셋 이름 공백 검증 (WD-502)', () => {
     await page.getByLabel('데이터셋 이름').fill('  매출 데이터  ');
     await page.getByLabel('테이블명').fill('sales_data');
     await page.getByPlaceholder('예: user_id').fill('c1');
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     const req = await create.waitForRequest();
     expect(req.payload).toMatchObject({ name: '매출 데이터', tableName: 'sales_data' });

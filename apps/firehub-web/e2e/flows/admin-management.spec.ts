@@ -73,17 +73,17 @@ test.describe('관리자 플로우', () => {
     await expect(page.getByRole('heading', { name: '역할 관리' })).toBeVisible();
 
     // "역할 추가" 버튼 클릭
-    await page.getByRole('button', { name: '역할 추가' }).click();
+    await page.getByRole('button', { name: '새 역할' }).click();
 
     // 생성 다이얼로그가 열리는지 확인
     await expect(page.getByRole('dialog')).toBeVisible();
-    await expect(page.getByText('새 역할 생성')).toBeVisible();
+    await expect(page.getByRole('heading', { name: '새 역할' })).toBeVisible();
 
     // 역할 이름 입력
     await page.getByLabel('역할 이름').fill('CUSTOM_ROLE');
 
     // 생성 버튼 클릭 → POST /api/v1/roles 호출
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 다이얼로그가 닫히는지 확인 (생성 성공 후 닫힘)
     await expect(page.getByRole('dialog')).not.toBeVisible();

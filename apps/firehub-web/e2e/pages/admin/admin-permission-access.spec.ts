@@ -285,7 +285,7 @@ test.describe('역할 관리 — role:read', () => {
     await expect(sidebarLink(page, '역할 관리')).toBeVisible();
     await expect(page.getByRole('cell', { name: 'EDITOR', exact: true })).toBeVisible();
     await nextFrame(page);
-    await expect(page.getByRole('button', { name: '역할 추가' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 역할' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'EDITOR 역할 삭제' })).toHaveCount(0);
 
     await page.getByRole('cell', { name: 'EDITOR', exact: true }).click();
@@ -321,7 +321,7 @@ test.describe('역할 관리 — role:read', () => {
     await gotoWithPermissions(page, '/admin/roles');
     await expect(page.getByRole('cell', { name: 'EDITOR', exact: true })).toBeVisible();
     await nextFrame(page);
-    await expect(page.getByRole('button', { name: '역할 추가' })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '새 역할' })).toHaveCount(1);
     await expect(page.getByRole('button', { name: 'EDITOR 역할 삭제' })).toHaveCount(1);
 
     await page.goto('/admin/roles/3');

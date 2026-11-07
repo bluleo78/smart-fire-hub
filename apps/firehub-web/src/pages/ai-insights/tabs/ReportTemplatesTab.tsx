@@ -114,7 +114,7 @@ export default function ReportTemplatesTab() {
           {canWrite && (
             <Button size="sm" onClick={() => navigate('/ai-insights/templates/new')}>
               <Plus className="h-4 w-4" />
-              템플릿 추가
+              새 템플릿
             </Button>
           )}
         </div>

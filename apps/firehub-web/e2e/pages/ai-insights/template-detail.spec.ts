@@ -135,7 +135,7 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     await expect(page.locator('#tpl-style')).toBeVisible();
 
     // "생성" 버튼 확인
-    await expect(page.getByRole('button', { name: '생성' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '만들기' })).toBeVisible();
   });
 
   test('읽기 모드에서 섹션 구조 미리보기에 섹션 개수가 표시된다', async ({ authenticatedPage: page }) => {
@@ -506,7 +506,7 @@ test.describe('리포트 템플릿 상세 페이지', () => {
             res.url().endsWith('/api/v1/proactive/templates') &&
             res.request().method() === 'POST',
         ),
-        page.getByRole('button', { name: '생성' }).click(),
+        page.getByRole('button', { name: '만들기' }).click(),
       ]);
       expect(postResponse.status()).toBe(200);
 
@@ -993,7 +993,7 @@ test.describe('WD-501 — 이름 공백 검증', () => {
     await page.locator('#tpl-name').fill('   ');
 
     await expect(page.getByText('이름을 입력해주세요.')).toBeVisible();
-    await expect(page.getByRole('button', { name: '생성', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: '만들기', exact: true })).toBeDisabled();
     // 늦게 나가는 요청도 잡도록 잠시 더 기다린 뒤 확인한다
     await page.waitForTimeout(300);
     expect(post.requests).toHaveLength(0);

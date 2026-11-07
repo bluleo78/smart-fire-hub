@@ -86,7 +86,7 @@ test.describe('차트 편집 — 동시 편집 충돌 (WD-364)', () => {
     await expect(page.getByText('테스트 차트').first()).toBeVisible();
 
     await openSaveAndEdit(page, 'first');
-    await saveDialog(page).getByRole('button', { name: '수정' }).click();
+    await saveDialog(page).getByRole('button', { name: '저장' }).click();
     await expect.poll(() => server.puts.length).toBe(1);
     // 서버가 준 문자열 그대로(마이크로초 포함) — Date 로 바꾸면 잘려서 매번 충돌한다
     expect(server.puts[0].expectedUpdatedAt).toBe(V1);
@@ -95,7 +95,7 @@ test.describe('차트 편집 — 동시 편집 충돌 (WD-364)', () => {
     // 바로 다시 고쳐 저장 — 기준은 저장 응답의 새 버전이어야 한다(자기 저장과 충돌하지 않는다)
     const afterFirst = server.version();
     await openSaveAndEdit(page, 'second');
-    await saveDialog(page).getByRole('button', { name: '수정' }).click();
+    await saveDialog(page).getByRole('button', { name: '저장' }).click();
     await expect.poll(() => server.puts.length).toBe(2);
     expect(server.puts[1].expectedUpdatedAt).toBe(afterFirst);
     await expect(saveDialog(page)).toHaveCount(0);
@@ -112,7 +112,7 @@ test.describe('차트 편집 — 동시 편집 충돌 (WD-364)', () => {
 
     await openSaveAndEdit(page, 'mine');
     server.otherTabSaves('other-tab');
-    await saveDialog(page).getByRole('button', { name: '수정' }).click();
+    await saveDialog(page).getByRole('button', { name: '저장' }).click();
 
     await expect(conflictDialog(page)).toBeVisible();
     await expect(conflictDialog(page)).toContainText('이 차트은(는) 편집을 시작한 뒤 다른 사용자 또는 다른 탭에서 변경되었습니다');
@@ -141,7 +141,7 @@ test.describe('차트 편집 — 동시 편집 충돌 (WD-364)', () => {
 
     await openSaveAndEdit(page, 'mine');
     server.otherTabSaves('other-tab');
-    await saveDialog(page).getByRole('button', { name: '수정' }).click();
+    await saveDialog(page).getByRole('button', { name: '저장' }).click();
     await expect(conflictDialog(page)).toBeVisible();
 
     await conflictDialog(page).getByRole('button', { name: '다시 불러오기' }).click();
@@ -153,7 +153,7 @@ test.describe('차트 편집 — 동시 편집 충돌 (WD-364)', () => {
 
     const latest = server.version();
     await saveDialog(page).getByLabel('설명').fill('after-reload');
-    await saveDialog(page).getByRole('button', { name: '수정' }).click();
+    await saveDialog(page).getByRole('button', { name: '저장' }).click();
     await expect.poll(() => server.puts.length).toBe(2);
     expect(server.puts[1].expectedUpdatedAt).toBe(latest);
     await expect(saveDialog(page)).toHaveCount(0);
@@ -178,7 +178,7 @@ test.describe('차트 편집 — 동시 편집 충돌 (WD-364)', () => {
     await expect(page.getByText('테스트 차트').first()).toBeVisible();
 
     await openSaveAndEdit(page, 'mine');
-    await saveDialog(page).getByRole('button', { name: '수정' }).click();
+    await saveDialog(page).getByRole('button', { name: '저장' }).click();
     await expect(page.getByText('같은 이름의 차트가 이미 있습니다.')).toBeVisible();
     await expect(conflictDialog(page)).toHaveCount(0);
   });

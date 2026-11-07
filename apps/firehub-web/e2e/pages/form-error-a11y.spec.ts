@@ -53,7 +53,7 @@ test.describe('폼 오류 문구 접근성 연결 (WD-515)', () => {
     const create = await mockApi(page, 'POST', '/api/v1/datasets', {}, { status: 201, capture: true });
 
     await page.goto('/data/datasets/new');
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     const name = page.getByLabel('데이터셋 이름');
     await expect(name).toHaveAttribute('aria-invalid', 'true');

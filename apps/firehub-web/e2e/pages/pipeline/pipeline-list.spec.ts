@@ -65,7 +65,7 @@ test.describe('파이프라인 목록 페이지', () => {
     await page.goto('/pipelines');
 
     // "파이프라인 추가" 링크 버튼 클릭
-    await page.getByRole('link', { name: /파이프라인 추가/ }).click();
+    await page.getByRole('link', { name: /새 파이프라인/ }).click();
 
     // /pipelines/new 페이지로 이동 확인
     await expect(page).toHaveURL('/pipelines/new');
@@ -432,7 +432,7 @@ test.describe('파이프라인 목록 페이지', () => {
     await expect(table.getByText('파이프라인 목록을 불러오지 못했습니다.')).toBeVisible();
     await expect(table.getByText('파이프라인이 없습니다.')).toHaveCount(0);
     // 권한 문제는 아니므로 추가 버튼은 그대로 둔다
-    await expect(page.getByRole('link', { name: '파이프라인 추가' })).toBeVisible();
+    await expect(page.getByRole('link', { name: '새 파이프라인' })).toBeVisible();
   });
 
   test('조회 권한이 없으면(403) 권한 안내를 보이고 추가 버튼을 숨긴다 (WD-122)', async ({ authenticatedPage: page }) => {
@@ -449,7 +449,7 @@ test.describe('파이프라인 목록 페이지', () => {
     const table = page.getByRole('table', { name: '파이프라인 목록' });
     await expect(table.getByText('파이프라인을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toBeVisible();
     await expect(table.getByText('파이프라인이 없습니다.')).toHaveCount(0);
-    await expect(page.getByRole('link', { name: '파이프라인 추가' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: '새 파이프라인' })).toHaveCount(0);
     // 403 은 재시도해도 같으니 한 번만 요청한다
     expect(listCapture.requests).toHaveLength(1);
   });

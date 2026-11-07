@@ -153,7 +153,7 @@ test.describe('쿼리 에디터 심화', () => {
     await expect(dialog).toBeVisible();
 
     // 다이얼로그 내 저장 버튼 클릭 — SQL이 비어 있으므로 클라이언트 검증으로 막혀야 함
-    await dialog.getByRole('button', { name: '저장' }).click();
+    await dialog.getByRole('button', { name: '만들기' }).click();
 
     // 다이얼로그가 여전히 열려 있어야 한다 (닫히면 안 됨)
     await expect(dialog).toBeVisible();

@@ -102,7 +102,7 @@ test.describe('API 연결 라이프사이클', () => {
     await page.getByPlaceholder('API 키를 입력하세요').fill('secret-key');
 
     // 4) 생성 버튼 클릭
-    await page.getByRole('button', { name: '생성', exact: true }).click();
+    await page.getByRole('button', { name: '만들기', exact: true }).click();
 
     // 5) 목록에 생성된 연결 표시 확인
     await expect(page.getByRole('cell', { name: 'Make.com API', exact: true })).toBeVisible();

@@ -20,14 +20,14 @@ test.describe('데이터셋 생성 페이지', () => {
     await page.goto('/data/datasets/new');
 
     // 페이지 제목 확인
-    await expect(page.getByRole('heading', { name: '데이터셋 생성' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '새 데이터셋' })).toBeVisible();
 
     // 필수 입력 필드 확인
     await expect(page.getByLabel('데이터셋 이름')).toBeVisible();
     await expect(page.getByLabel('테이블명')).toBeVisible();
 
     // 제출 버튼 및 취소 버튼 확인
-    await expect(page.getByRole('button', { name: '생성' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '만들기' })).toBeVisible();
     await expect(page.getByRole('button', { name: '취소' })).toBeVisible();
 
     // 섹션 헤더 확인
@@ -42,7 +42,7 @@ test.describe('데이터셋 생성 페이지', () => {
     await page.goto('/data/datasets/new');
 
     // 빈 폼 상태에서 생성 버튼 클릭 — onInvalid 콜백이 실행된다
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 각 필드 인라인 에러 메시지 확인 (Zod + react-hook-form)
     await expect(page.getByText('데이터셋 이름을 입력하세요')).toBeVisible();
@@ -92,7 +92,7 @@ test.describe('데이터셋 생성 페이지', () => {
     await page.getByPlaceholder('예: user_id').fill('col_name');
 
     // 생성 버튼 클릭
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // handleApiError가 표시하는 정확한 서버 에러 메시지 확인 (Sonner 토스트)
     await expect(page.getByText('이미 존재하는 테이블명입니다.')).toBeVisible();
@@ -135,7 +135,7 @@ test.describe('데이터셋 생성 페이지', () => {
     await page.getByPlaceholder('예: user_id').fill('col_name');
 
     // 생성 버튼 클릭
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // API에 전달된 payload 검증 — 입력값이 정확히 전달되는지 확인한다
     const req = await capture.waitForRequest();
@@ -167,7 +167,7 @@ test.describe('데이터셋 생성 페이지', () => {
     await page.getByLabel('데이터셋 이름').fill('신규 데이터셋');
     await page.getByLabel('테이블명').fill('new_dataset');
     await page.getByPlaceholder('예: user_id').fill('col_name');
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // 서버가 예약 출처(TEMP)를 400 으로 거부하므로 클라이언트는 애초에 보내지 않는다.
     const req = await capture.waitForRequest();
@@ -187,7 +187,7 @@ test.describe('데이터셋 생성 페이지', () => {
     await page.getByPlaceholder('예: user_id').fill('col1');
 
     // 생성 버튼 클릭 — Zod 스키마가 onSubmit 모드이므로 제출 시 검증된다
-    await page.getByRole('button', { name: '생성' }).click();
+    await page.getByRole('button', { name: '만들기' }).click();
 
     // createDatasetSchema의 tableName regex 규칙에서 발생하는 인라인 에러 메시지 확인
     // 이 에러는 Zod resolver가 개별 필드 에러로 처리하여 <p> 태그로 폼 아래 표시된다
