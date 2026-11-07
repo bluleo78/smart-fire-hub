@@ -95,6 +95,23 @@ describe('useSmtpSettingsForm', () => {
     expect(result.current.testNotice).toBeNull();
   });
 
+  // WD-537: 서버가 소문자 true/false 만 받으므로, 예전에 저장된 값은 발송 시점 판정과 같게 정규화해
+  // 시드한다 — 그대로 다시 보내면 저장이 400 으로 막힌다.
+  it.each([
+    ['yes', 'false'],
+    ['TRUE', 'true'],
+    ['false', 'false'],
+  ])('저장된 STARTTLS 값 %s 는 폼에 %s 로 시드된다(WD-537)', async (stored, expected) => {
+    mockedGet.mockResolvedValue({
+      data: CONFIGURED.map((s) => (s.key === 'smtp.starttls' ? saved(s.key, stored) : s)),
+    } as never);
+    const { result } = await renderLoaded();
+
+    expect(result.current.form['smtp.starttls']).toBe(expected);
+    // 정규화는 원본에도 같이 반영돼 불러온 직후에는 dirty 가 아니다.
+    expect(result.current.hasChanges).toBe(false);
+  });
+
   it('설정됨 판정은 폼이 아니라 서버 응답을 본다 — 호스트를 입력해도 저장 전에는 미설정이다', async () => {
     mockedGet.mockResolvedValue({ data: [] } as never);
     const { result } = await renderLoaded();

@@ -1,6 +1,7 @@
 package com.smartfirehub.settings.controller;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -142,6 +143,29 @@ class SettingsControllerTest {
         .andExpect(status().isNoContent());
 
     verify(settingsService).updateSettings(Map.of("ai.max_turns", "10"), 1L);
+  }
+
+  /**
+   * STARTTLS 값 거부(WD-537)는 400 + 한국어 안내로 응답한다 — 서비스의 IllegalArgumentException 이 전역 핸들러를 거쳐 메시지 그대로
+   * 화면 토스트에 나간다. 판정 자체는 {@code SmtpSettingsServiceTest} 가 실제 서비스로 본다.
+   */
+  @Test
+  void updateSettings_invalidStarttls_returns400WithKoreanMessage() throws Exception {
+    mockAuth("ai:settings");
+    String message = "STARTTLS 사용 값은 true 또는 false 여야 합니다. 입력값: yes";
+    doThrow(new IllegalArgumentException(message))
+        .when(settingsService)
+        .updateSettings(Map.of("smtp.starttls", "yes"), 1L);
+    UpdateSettingsRequest body = new UpdateSettingsRequest(Map.of("smtp.starttls", "yes"));
+
+    mockMvc
+        .perform(
+            put("/api/v1/settings")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(body)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(message));
   }
 
   /** SMTP 설정 해제(#712)는 행이 있든 없든 204다 — 이미 미설정이어도 멱등한 성공이다. */

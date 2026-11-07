@@ -83,6 +83,10 @@ function seedFrom(byKey: Record<string, ResolvedSettingResponse>): SmtpForm {
   SMTP_FIELDS.forEach(({ key, initial }) => {
     values[key] = key === 'smtp.password' ? '' : (byKey[key]?.value ?? initial);
   });
+  // WD-537: 서버는 이제 smtp.starttls 로 소문자 true/false 만 받는다. 예전에 저장된 'yes'·''·'TRUE'
+  // 같은 값을 그대로 다시 보내면 저장이 400 으로 막히므로, 발송 시점 판정(true 가 아니면 STARTTLS 끔)과
+  // 같게 정규화한다 — 스위치도 이미 그 값을 꺼짐으로 그리고 있다.
+  values['smtp.starttls'] = values['smtp.starttls'].toLowerCase() === 'true' ? 'true' : 'false';
   return values;
 }
 

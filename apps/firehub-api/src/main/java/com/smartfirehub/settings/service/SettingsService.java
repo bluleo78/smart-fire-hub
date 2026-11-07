@@ -303,11 +303,11 @@ public class SettingsService {
    * 가든 {@code system_settings} 로 가든 똑같이 필요하다.
    *
    * <p><b>모든 키가 {@link #dropMaskSentinels}·{@link #validateSmtpPort}·{@link #validateSmtpHost}·
-   * {@link #validateSmtpFromAddress}·{@link #encryptSecrets} 를 지난다</b>(모두 키로 스스로 가드하므로 SMTP 부분맵을
-   * 떼어낼 필요가 없다). P7-c1 이전 이 자리에는 "마스킹 필터·{@link #encryptIfSecret} 는 여기서 쓰지 않는다 — 허용 키 중 {@link
-   * #SECRET_KEYS} 에 속하는 키가 하나도 없다"고 적혀 있었고, Task 1 이 {@code smtp.*} 를 열면서 그 근거가 죽었다({@code
-   * smtp.password} 는 {@link #SECRET_KEYS} 의 원소다). 그 한 줄이 세 결함을 동시에 깨웠다 — 평문 저장·마스크 센티널 덮어쓰기·포트 검증
-   * 부재.
+   * {@link #validateSmtpFromAddress}·{@link #validateSmtpStarttls}·{@link #encryptSecrets} 를
+   * 지난다</b>(모두 키로 스스로 가드하므로 SMTP 부분맵을 떼어낼 필요가 없다). P7-c1 이전 이 자리에는 "마스킹 필터·{@link #encryptIfSecret}
+   * 는 여기서 쓰지 않는다 — 허용 키 중 {@link #SECRET_KEYS} 에 속하는 키가 하나도 없다"고 적혀 있었고, Task 1 이 {@code smtp.*} 를
+   * 열면서 그 근거가 죽었다({@code smtp.password} 는 {@link #SECRET_KEYS} 의 원소다). 그 한 줄이 세 결함을 동시에 깨웠다 — 평문
+   * 저장·마스크 센티널 덮어쓰기·포트 검증 부재.
    *
    * <p>{@code @Transactional} 이 필수다 — {@code tenant_settings} 는 RLS 테이블이라 GUC 가 트랜잭션이 열릴 때만
    * 주입된다({@code TenantAwareTransactionManager.doBegin}). 트랜잭션 없이 {@link
@@ -334,6 +334,7 @@ public class SettingsService {
     validateSmtpPort(payload);
     validateSmtpHost(payload);
     validateSmtpFromAddress(payload);
+    validateSmtpStarttls(payload);
     Map<String, String> toWrite = encryptSecrets(payload);
 
     // 감사용 변경 판정(WD-465)은 쓰기 전에 저장된 값과 비교해 모은다. 마스크 센티널은 이미
@@ -521,6 +522,25 @@ public class SettingsService {
     } catch (NumberFormatException e) {
       // 문법은 맞지만 int 범위를 넘는 자릿수(예: 99999999999).
       throw new IllegalArgumentException("SMTP 포트 번호가 유효하지 않습니다: " + portStr);
+    }
+  }
+
+  /**
+   * {@code smtp.starttls} 는 정확히 소문자 {@code "true"} 또는 {@code "false"} 여야 한다(WD-537). 키가 없으면 아무것도 하지
+   * 않는다(부분 PUT 에서 "키 없음 = 손대지 않음").
+   *
+   * <p>연결 테스트({@code SettingsController})와 {@code EmailDeliveryChannel} 은 값이 {@code "true"}(대소문자
+   * 무시)일 때만 JavaMail STARTTLS 를 켜고, {@code EmailChannel} 은 {@code Boolean.parseBoolean} 으로 넘긴다. 검증이
+   * 없던 동안 {@code yes} 같은 값이 204 로 저장됐고, 그러면 STARTTLS 가 경고 없이 꺼져 SMTP 인증(AUTH)이 평문으로 나갔다. 빈 문자열도 같은
+   * 상태를 만들므로 함께 막는다 — 설정을 지우는 통로는 {@link #clearSmtpSettings} 하나다. 대소문자 변형({@code TRUE})·앞뒤 공백도
+   * 거부한다: web 스위치가 보내는 두 값과 글자 그대로 같은 문법만 받는다(#727/#728 의 SMTP 검증 원칙). null 은 앞선 {@link
+   * #rejectNullValues} 가 이미 400 으로 거른다.
+   */
+  private static void validateSmtpStarttls(Map<String, String> settings) {
+    if (!settings.containsKey("smtp.starttls")) return;
+    String starttls = settings.get("smtp.starttls");
+    if (!"true".equals(starttls) && !"false".equals(starttls)) {
+      throw new IllegalArgumentException("STARTTLS 사용 값은 true 또는 false 여야 합니다. 입력값: " + starttls);
     }
   }
 
