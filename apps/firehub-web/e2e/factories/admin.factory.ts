@@ -37,6 +37,8 @@ export function createRoleDetail(overrides?: Partial<RoleDetailResponse>): RoleD
       createPermission(),
       createPermission({ id: 2, code: 'DATASET_WRITE', description: '데이터셋 수정 권한' }),
     ],
+    // 이름·설명 저장의 편집 기준 버전(WD-575) — 서버처럼 마이크로초까지 둔다
+    updatedAt: '2026-01-01T09:00:00.123456',
     ...overrides,
   };
 }

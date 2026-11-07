@@ -15,6 +15,7 @@ import com.smartfirehub.role.repository.RoleRepository;
 import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -65,8 +66,14 @@ public class RoleService {
   public RoleDetailResponse getRoleById(Long id) {
     RoleResponse role = roleRepository.findById(id).orElseThrow(RoleNotFoundException::new);
     List<PermissionResponse> permissions = permissionRepository.findByRoleId(id);
+    // 수정 시각은 웹이 이름·설명 저장의 편집 기준 버전으로 돌려보낸다(WD-575).
     return new RoleDetailResponse(
-        role.id(), role.name(), role.description(), role.isSystem(), permissions);
+        role.id(),
+        role.name(),
+        role.description(),
+        role.isSystem(),
+        permissions,
+        roleRepository.findUpdatedAtById(id));
   }
 
   /** 역할 생성. 성공하면 ROLE_CREATE 감사(행위자 = callerId)를 남긴다. */
@@ -93,13 +100,38 @@ public class RoleService {
   /**
    * 역할 이름·설명 수정. 성공하면 ROLE_UPDATE 감사에 변경 전/후 값을 남긴다.
    *
-   * <p>판정 순서는 역할 없음(404) → 변경 없음(아무것도 하지 않음) → 시스템 역할(400) → 범위(403, WD-284) → 이름 중복(400) 이다.
+   * <p>판정 순서는 역할 없음(404) → 편집 충돌(409, WD-575) → 변경 없음(아무것도 하지 않음) → 시스템 역할(400) → 범위(403, WD-284) →
+   * 이름 중복(400) 이다.
    *
    * <p>이름·설명이 둘 다 그대로면 감사를 남기지 않는다 — 멤버십 정지/재활성의 "이미 원하는 상태면 기록 없음" 규칙과 같다. 화면은 저장 버튼을 누를 때마다 같은
    * 값으로 PUT 할 수 있어, 기록하면 실제 변경과 구분되지 않는 잡음 행이 쌓인다.
    */
   @Transactional
   public void updateRole(Long id, String name, String description, Long callerId) {
+    updateRole(id, name, description, null, callerId);
+  }
+
+  /** 이름·설명 편집 충돌 안내(WD-575) — 웹은 코드로 충돌 창을 띄우고, 코드를 모르는 호출부는 이 문구를 그대로 보인다. */
+  public static final String EDIT_CONFLICT_MESSAGE =
+      "다른 관리자가 이 역할의 이름·설명을 바꿨습니다. 새로 불러온 뒤 다시 저장하세요.";
+
+  /**
+   * 화면이 편집을 시작할 때 읽은 수정 시각({@code expectedUpdatedAt})을 함께 받아, 지금 수정 시각과 다르면 409 EDIT_CONFLICT 로
+   * 거부한다(WD-575).
+   *
+   * <p>이름·설명 저장은 두 칸 전체 교체라, 새로고침하지 않은 화면에서 설명만 바꿔 저장하면 그사이 다른 관리자가 바꾼 이름이 옛 이름으로 조용히 되돌아갔다. 비교는 역할
+   * 행 잠금을 잡은 뒤 읽은 값으로 한다 — 동시 저장 둘이 같은 버전으로 통과하지 못한다. {@code expectedUpdatedAt} 이 null 이면 비교하지 않는다.
+   * 나머지 규칙은 {@link #updateRole(Long, String, String, Long)} 문서와 같다.
+   */
+  @Transactional
+  public void updateRole(
+      Long id, String name, String description, LocalDateTime expectedUpdatedAt, Long callerId) {
+    // 행 잠금을 잡고 수정 시각을 읽는다 — 행이 없으면(삭제됐거나 다른 테넌트, RLS) 404. 잠금은 트랜잭션 끝까지 유지된다.
+    LocalDateTime currentUpdatedAt =
+        roleRepository.lockUpdatedAtById(id).orElseThrow(RoleNotFoundException::new).updatedAt();
+    // 편집 충돌은 「변경 없음」보다 먼저 본다 — 낡은 화면의 저장은 무엇이 바뀌었든 최신 값을 다시 보게 한다(차트·쿼리와 같은 순서).
+    EditConflictException.check(expectedUpdatedAt, currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
+    // 변경 판정·감사의 변경 전 값은 잠금 뒤에 읽는다 — 잠금 전 값은 동시 저장과 겹치면 남의 변경을 이 저장의 변경으로 잘못 기록한다.
     RoleResponse role = roleRepository.findById(id).orElseThrow(RoleNotFoundException::new);
 
     // 설명은 빈 문자열과 null 을 같게 본다 — 화면은 빈 설명을 보내지 않고(undefined → null), API·AI 로 만든 역할은 "" 로 저장될 수 있다.

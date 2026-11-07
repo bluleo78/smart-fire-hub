@@ -37,6 +37,7 @@ import com.smartfirehub.file.repository.FileDatasetConfigRepository;
 import com.smartfirehub.file.service.FileObjectStorageService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.mapping.service.MappingReferenceService;
@@ -47,6 +48,7 @@ import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.user.repository.UserRepository;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -486,7 +488,8 @@ public class DatasetService {
     // dataset.table_name 은 메타데이터 식별자로만 쓰이며, 컬럼 영속화/물리 테이블 생성을 건너뛴다.
     if (isTableBacked(request.storageType())) {
       // TABLE 데이터셋만 동적 data.<table> 물리 테이블과 컬럼을 만든다.
-      // 위에서 정규화한 columns 를 쓴다 — request.columns() 는 생략 시 null 이라 500(NPE)이 났다(WD-510). 빈 목록은 columns: [] 와 같이 생성된다.
+      // 위에서 정규화한 columns 를 쓴다 — request.columns() 는 생략 시 null 이라 500(NPE)이 났다(WD-510). 빈 목록은
+      // columns: [] 와 같이 생성된다.
       withColumnNameUniqueAs409(() -> columnRepository.saveBatch(dataset.id(), columns));
       dataTableService.createTable(request.tableName(), columns);
     } else if (FILE_TYPE.equals(request.storageType())) {
@@ -684,8 +687,30 @@ public class DatasetService {
     }
   }
 
+  /** 정보 수정 편집 충돌 안내 문구(WD-575) — 웹은 코드로 충돌 창을 띄우고, 코드를 모르는 호출부는 이 문구를 그대로 보인다. */
+  static final String EDIT_CONFLICT_MESSAGE = "이 데이터셋은 편집을 시작한 뒤 다른 곳에서 변경되었습니다. 다시 불러온 뒤 저장하세요.";
+
+  /**
+   * 데이터셋 이름·설명·카테고리 수정.
+   *
+   * <p>편집 충돌 보호(WD-575): 요청에 편집 기준 버전({@code expectedUpdatedAt})이 있으면 행 잠금을 잡고 읽은 지금 수정 시각과 비교해 다르면
+   * 409 EDIT_CONFLICT 로 거부한다. 예전에는 옛 화면에서 설명만 바꿔 저장해도 옛 이름이 다시 써져 다른 사용자의 이름 변경이 조용히 사라졌다. 기준이 없으면
+   * 예전처럼 비교 없이 저장한다(AI 도구 등 기존 호출부, 「내 변경으로 덮어쓰기」).
+   */
   @Transactional
   public void updateDataset(Long id, UpdateDatasetRequest request, Long userId) {
+    datasetRepository.findById(id).orElseThrow(() -> new DatasetNotFoundException());
+    // 낙관적 잠금(WD-575) — 존재 확인(404) 뒤, 이름 중복·카테고리 검증보다 먼저 한다: 낡은 화면의 저장에는 낡은 값으로 계산한 검증 오류보다
+    // 「다른 곳에서 바뀌었다」를 먼저 알려야 한다. 잠금은 트랜잭션 끝까지 유지되어 동시 저장 둘이 같은 버전으로 통과하지 못한다.
+    LocalDateTime currentUpdatedAt =
+        datasetRepository
+            .lockUpdatedAtById(id)
+            .orElseThrow(() -> new DatasetNotFoundException())
+            .updatedAt();
+    EditConflictException.check(
+        request.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
+    // 이름 중복 판정·감사 비교용 저장 전 값은 행 잠금 뒤에 다시 읽는다 — 잠금 전 값은 기준 없이 들어온 동시 저장과 겹치면 남의 변경이 이 저장의
+    // 바뀐 항목으로 잡힌다(차트 WD-464 와 같은 이유).
     DatasetResponse current =
         datasetRepository.findById(id).orElseThrow(() -> new DatasetNotFoundException());
 

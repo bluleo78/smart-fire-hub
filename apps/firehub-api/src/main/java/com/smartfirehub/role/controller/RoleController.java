@@ -64,7 +64,9 @@ public class RoleController {
       @PathVariable Long id,
       @Valid @RequestBody UpdateRoleRequest request) {
     Long callerId = (Long) authentication.getPrincipal();
-    roleService.updateRole(id, request.name(), request.description(), callerId);
+    // 편집 기준 버전(WD-575) — 화면이 보낸 수정 시각과 지금 값이 다르면 서비스가 409 EDIT_CONFLICT 로 거부한다. 없으면 비교하지 않는다.
+    roleService.updateRole(
+        id, request.name(), request.description(), request.expectedUpdatedAt(), callerId);
     return ResponseEntity.noContent().build();
   }
 
