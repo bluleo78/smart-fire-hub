@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * {@link SqlLexicalMask} 가 공용 픽스처({@code fixtures/sql-lexical-vectors.json})와 같은 결과를 내는지 본다(#746).
@@ -166,5 +167,97 @@ class SqlLexicalMaskTest {
     String sql = "SELECT '$1', $2 -- $3";
     SqlLexicalMask.findPositionalParameter(sql);
     assertThat(SqlLexicalMask.mask(sql)).isEqualTo("SELECT 'xx', $2" + " ".repeat(6));
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // WD-563 — 실행 전 검증(SqlValidationUtils.stripAndValidate)용 주석 제거·닫히지 않은 어휘 탐지.
+  // ---------------------------------------------------------------------------------------------
+
+  static Stream<Arguments> replaceCommentsVectors() {
+    return Stream.of(
+        // 주석 하나는 공백 하나로 바뀐다(토큰이 붙어 -/**/- 가 -- 주석이 되지 않게).
+        Arguments.of("SELECT/**/1", "SELECT 1"),
+        Arguments.of("SELECT--x\n1", "SELECT \n1"),
+        Arguments.of("SELECT 1 -/**/- 2", "SELECT 1 - - 2"),
+        Arguments.of("SELECT 1 /* /* */ x */ + 2", "SELECT 1   + 2"),
+        Arguments.of("SELECT 1 --c\r\n+ 2", "SELECT 1  \r\n+ 2"),
+        // 리터럴·따옴표 식별자·달러 인용 속 주석 표기는 그대로 둔다.
+        Arguments.of("SELECT 'x /* y */ z', '--', \"a--b\", $$/*$$", null),
+        Arguments.of("SELECT E'\\' -- '", null));
+  }
+
+  @ParameterizedTest
+  @MethodSource("replaceCommentsVectors")
+  void 리터럴_밖의_주석만_공백_하나로_바꾼다(String sql, String expected) {
+    assertThat(SqlLexicalMask.replaceComments(sql)).isEqualTo(expected == null ? sql : expected);
+  }
+
+  static Stream<Arguments> unclosedVectors() {
+    return Stream.of(
+        Arguments.of("SELECT 'a''b'", null),
+        Arguments.of("SELECT E'\\''", null),
+        Arguments.of("SELECT $a$ $b$ $a$", null),
+        Arguments.of("SELECT 1 /* /* */ */", null),
+        Arguments.of("SELECT 1 -- 'x", null),
+        Arguments.of("SELECT a$$", null),
+        Arguments.of("SELECT 'abc", SqlLexicalMask.Unclosed.STRING),
+        Arguments.of("SELECT E'abc\\'", SqlLexicalMask.Unclosed.STRING),
+        Arguments.of("SELECT E'abc\\", SqlLexicalMask.Unclosed.STRING),
+        Arguments.of("SELECT \"a", SqlLexicalMask.Unclosed.QUOTED_IDENTIFIER),
+        Arguments.of("SELECT $a$ x $b$", SqlLexicalMask.Unclosed.DOLLAR_QUOTE),
+        Arguments.of("SELECT 1 /* x", SqlLexicalMask.Unclosed.BLOCK_COMMENT),
+        Arguments.of("SELECT 1 /* /* */", SqlLexicalMask.Unclosed.BLOCK_COMMENT));
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "SELECT 1$$x$$",
+        "SELECT $$a$$$$b$$",
+        "SELECT 1E'x'",
+        "SELECT $$a$$e'x'",
+        // 코드 리뷰 1번: E 앞 글자가 pgjdbc 식별자 종결 문자가 아닌 경우(' \ { } VT), 위치 0 의 E
+        "SELECT 'a'E'x'",
+        "SELECT \\E'x'",
+        "SELECT {E'x'",
+        "SELECT }E'x'",
+        "SELECT\u000BE'x'",
+        "E'x'",
+        // E 문자열 속 '' 와 \ 가 함께 있으면 pgjdbc 가 닫는 위치가 다르다.
+        "SELECT E'a''\\b'",
+        // $ 앞 제어 문자, 제어 문자가 든 태그, 비ASCII 뒤 덩어리 속 $$, 비ASCII 태그
+        "SELECT \u0001$$x$$",
+        "SELECT $a\u0001$x$a\u0001$",
+        "SELECT  $$x$$",
+        "SELECT $한$x$한$"
+      })
+  void pgjdbc_와_리터럴_경계가_갈리는_표기를_찾는다(String sql) {
+    assertThat(SqlLexicalMask.hasDriverAmbiguousQuote(sql)).isTrue();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "SELECT 1 $$x$$",
+        "SELECT $$a$$ $$b$$",
+        "SELECT E'x', 1 E'y'",
+        "SELECT a$$x$$",
+        "SELECT \"a\"$$x$$",
+        "SELECT '1$$', $1",
+        "SELECT x$1E'z'",
+        "SELECT \"a\"E'x'",
+        "SELECT (E'\\n'), x||e'y'",
+        "SELECT E'it''s'",
+        "SELECT (\n$$x$$)",
+        "SELECT 한$x FROM t"
+      })
+  void 공백이나_식별자_뒤의_인용은_드라이버와_같다(String sql) {
+    assertThat(SqlLexicalMask.hasDriverAmbiguousQuote(sql)).isFalse();
+  }
+
+  @ParameterizedTest
+  @MethodSource("unclosedVectors")
+  void 닫히지_않은_리터럴_주석을_찾는다(String sql, SqlLexicalMask.Unclosed expected) {
+    assertThat(SqlLexicalMask.findUnclosed(sql)).isEqualTo(expected);
   }
 }

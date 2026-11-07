@@ -3,11 +3,12 @@ package com.smartfirehub.global.util;
 /**
  * 애드혹 SQL 을 실행 직전 형태로 <b>한 번만</b> 정규화한 값(보안 등급 S2, 스펙 §4.1 "판정 = 실행").
  *
- * <p><b>왜 별도 타입인가.</b> 애드혹 실행 서비스는 사용자 원문을 {@link SqlValidationUtils#stripAndValidate}(주석 제거 — 리터럴을
- * 인지하지 못하는 정규식) 로 바꾼 문자열을 실행한다. SQL 판정(DatasetAccessGuard.checkSql)이 원문을 보고 실행은 정규화본으로 하면 두 문자열이 다른
- * 테이블을 참조할 수 있다(실측 우회: 리터럴 안의 {@code /*}·{@code --} 가 주석으로 오인되어 숨은 테이블 참조가 드러난다). 그래서 정규화는
- * 관문(GuardedSqlExecutor)에서 이 타입으로 단 한 번 하고, 판정과 실행이 {@link #text()} 의 <b>같은 String 인스턴스</b>를 쓴다.
- * 생성자가 비공개라 정규화를 거치지 않은 인스턴스는 만들 수 없다 — 실행 서비스의 {@code NormalizedSql} 오버로드는 다시 정규화하지 않는다.
+ * <p><b>왜 별도 타입인가.</b> 애드혹 실행 서비스는 사용자 원문을 {@link SqlValidationUtils#stripAndValidate}(리터럴 밖 주석을
+ * 공백으로 바꿈 — WD-563 전에는 리터럴을 인지하지 못하는 정규식이었다) 로 바꾼 문자열을 실행한다. 원문과 정규화본은 여전히 다른 문자열이다. SQL
+ * 판정(DatasetAccessGuard.checkSql)이 원문을 보고 실행은 정규화본으로 하면 두 문자열이 다른 테이블을 참조할 수 있다(실측 우회: 리터럴 안의
+ * {@code /*}·{@code --} 가 주석으로 오인되어 숨은 테이블 참조가 드러난다). 그래서 정규화는 관문(GuardedSqlExecutor)에서 이 타입으로 단 한
+ * 번 하고, 판정과 실행이 {@link #text()} 의 <b>같은 String 인스턴스</b>를 쓴다. 생성자가 비공개라 정규화를 거치지 않은 인스턴스는 만들 수 없다 —
+ * 실행 서비스의 {@code NormalizedSql} 오버로드는 다시 정규화하지 않는다.
  */
 public final class NormalizedSql {
 

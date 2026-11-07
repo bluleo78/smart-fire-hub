@@ -596,12 +596,12 @@ public class DatasetAccessGuard {
    *
    * <p>파싱(referencedTables)을 DB 접근보다 먼저 한다 — 파싱 예외를 잡아 계속 진행하는 호출자(차트·메트릭)의 트랜잭션이 오염되지 않게.
    *
-   * <p><b>받은 문자열을 그대로 판정한다(주석 정규화 없음).</b> 정규식 주석 제거({@code SqlValidationUtils.stripAndValidate})는
-   * 리터럴 안의 {@code /*}·{@code --} 를 주석으로 오인해 그 사이의 테이블 참조를 지웠다(실측 우회: {@code ... WHERE b = '/*' OR
-   * EXISTS (SELECT 1 FROM hidden) OR b = '*}{@code /'}). 끝 세미콜론만 뗀다. 단 JSqlParser 의 어휘 규칙도 PG 와 완전히
-   * 같지 않다 — 중첩 블록 주석, 백슬래시가 든 E 문자열, 태그 달러 인용 등에서 주석·문자열 경계를 다르게 자른다. 그래서 파싱 전에 받은 문자열 그대로 {@link
-   * PgLexicalAmbiguityCheck#requireUnambiguous} 로 그런 표기를 거부한다 (fail-closed, 400). 멀티 스테이트먼트는 파서가
-   * 거부한다.
+   * <p><b>받은 문자열을 그대로 판정한다(주석 정규화 없음).</b> WD-563 전의 정규식 주석 제거({@code
+   * SqlValidationUtils.stripAndValidate})는 리터럴 안의 {@code /*}·{@code --} 를 주석으로 오인해 그 사이의 테이블 참조를
+   * 지웠다(실측 우회: {@code ... WHERE b = '/*' OR EXISTS (SELECT 1 FROM hidden) OR b = '*}{@code /'}). 끝
+   * 세미콜론만 뗀다. 단 JSqlParser 의 어휘 규칙도 PG 와 완전히 같지 않다 — 중첩 블록 주석, 백슬래시가 든 E 문자열, 태그 달러 인용 등에서 주석·문자열
+   * 경계를 다르게 자른다. 그래서 파싱 전에 받은 문자열 그대로 {@link PgLexicalAmbiguityCheck#requireUnambiguous} 로 그런 표기를
+   * 거부한다 (fail-closed, 400). 멀티 스테이트먼트는 파서가 거부한다.
    *
    * <p><b>전제(호출자 계약):</b> 호출자는 <b>실행할 바로 그 문자열</b>을 넘겨야 하고, 같은 문자열에 {@code SqlValidator.validate} 를
    * 실행해야 한다 — 다른 문자열을 실행하면 판정이 본 테이블과 실행되는 테이블이 달라질 수 있고, validate 없이 쓰면 함수·타입 경유 참조(query_to_xml

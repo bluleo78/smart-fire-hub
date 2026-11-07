@@ -95,23 +95,47 @@ public final class SqlValidationUtils {
   private SqlValidationUtils() {}
 
   /**
-   * Strip block and line comments from SQL, then validate it is a single statement starting with an
-   * allowed keyword.
+   * 리터럴 밖의 주석을 지우고, 단일 문장이며 허용 키워드로 시작하는지 검증한다.
    *
-   * @param sql raw SQL input from the user
-   * @return stripped SQL without comments (trailing semicolon preserved then removed internally)
-   * @throws SqlQueryException if validation fails
+   * <p><b>리터럴을 인지한다(WD-563).</b> 예전엔 정규식으로 주석을 지우고 문자열 전체에서 {@code ;} 를 찾아, 따옴표 안의 {@code ;}·
+   * {@code --}·{@code /* *}{@code /} 를 문장 구분·주석으로 오인했다 — {@code SELECT 'a;b'} 를 다중 문장으로 거부하고,
+   * {@code SELECT 'x /* y *}{@code / z'} 는 값을 {@code 'x z'} 로 바꿔 실행했다. 이제 {@link SqlLexicalMask} 와
+   * 같은 스캔으로 문자열· {@code E'...'}·따옴표 식별자·달러 인용을 구분해 그 <b>바깥</b>의 주석만 지우고 바깥의 {@code ;} 만 센다.
+   *
+   * <p><b>보안 — 다중 문장 차단 장치다.</b> 리터럴 경계를 PG 와 다르게 자르면 바깥 {@code ; DROP ...} 이 리터럴로 숨는다. 그래서 경계 규칙은
+   * PG 렉서(중첩 블록 주석, {@code ''} 이스케이프, E 문자열의 {@code \'}, 같은 태그로만 닫히는 달러 인용, {@code \r} 에서도 끝나는 줄
+   * 주석)를 따르고, 어디까지가 코드인지 알 수 없는 닫히지 않은 리터럴·주석은 먼저 거부한다(fail-closed). 전제: {@code
+   * standard_conforming_strings = on}(PG 9.1+ 기본값, {@code PgLexicalAmbiguityCheck} 와 같은 전제).
+   *
+   * @param sql 사용자 원문 SQL
+   * @return 리터럴 밖 주석을 공백 한 칸으로 바꾸고 앞뒤 공백을 뗀 SQL(끝 세미콜론은 남긴다)
+   * @throws SqlQueryException 닫히지 않은 리터럴·주석, 다중 문장, 허용되지 않은 첫 키워드
    */
   public static String stripAndValidate(String sql) {
-    String stripped =
-        sql.strip()
-            .replaceAll("(?s)/\\*.*?\\*/", " ") // block comments (multiline-safe)
-            .replaceAll("--[^\n]*", " ") // line comments
-            .strip();
-
-    // Reject multi-statement SQL (semicolons not at the very end)
+    String trimmed = sql.strip();
+    // 한 번만 훑는다 — 마스크·주석 구간·닫히지 않은 어휘·드라이버 모호 표기를 같은 스캔에서 얻는다.
+    SqlLexicalMask.Analysis lexed = SqlLexicalMask.analyze(trimmed);
+    // 리터럴 밖의 주석만 공백 한 칸으로 바꾼다 — 리터럴 값은 실행 문자열에 원문 그대로 남는다.
+    String stripped = lexed.withoutComments().strip();
     String withoutTrailingSemicolon = removeTrailingSemicolon(stripped);
-    if (withoutTrailingSemicolon.contains(";")) {
+
+    // 닫히지 않은 리터럴·주석은 마스크가 끝까지 가려 그 안의 ';' 를 볼 수 없다 — 다중 문장 판정보다 먼저 거부한다.
+    if (lexed.unclosed() != null) {
+      // 단, 첫 키워드가 이미 허용 목록 밖(DROP TABLE 'x 등)이면 그 원인을 먼저 알린다. 첫 키워드는 주석을 걷은 문자열의 맨 앞 토큰이라
+      // 닫히지 않은 구간과 무관하게 정확하다(닫히지 않은 구간이 맨 앞이면 토큰이 없어 null). 어느 쪽이든 거부라 판정은 같다.
+      String firstWord = firstKeyword(stripped);
+      if (firstWord != null && !ALLOWED_KEYWORDS.contains(firstWord)) {
+        throw new SqlQueryException(rejectedStartMessage(withoutTrailingSemicolon, stripped));
+      }
+      throw new SqlQueryException(unclosedMessage(lexed.unclosed()));
+    }
+    // pgjdbc 문장 분리기와 리터럴 시작 판정이 갈릴 수 있는 표기 — 마스크가 숨긴 ';' 에서 드라이버가 문장을 나눌 수 있다. 애매하면 거부.
+    if (lexed.driverAmbiguous()) {
+      throw new SqlQueryException(DRIVER_AMBIGUOUS_QUOTE);
+    }
+
+    // 다중 문장 거부: 끝 세미콜론 하나(뒤에 공백·주석만)를 뺀 리터럴 밖 ';' 가 있으면 거부한다. 리터럴 속 ';' 는 마스크가 가린다.
+    if (hasNonTrailingSemicolon(lexed.masked())) {
       // 허용 문장 목록은 싣지 않는다 — 읽기 전용 애널리틱스와 DML 을 허용하는 데이터셋 SQL 탭이 이 검사를 공유한다.
       throw new SqlQueryException("SQL 문장은 한 번에 하나만 실행할 수 있습니다. 세미콜론(;)으로 나뉜 문장을 하나씩 실행하세요.");
     }
@@ -124,6 +148,34 @@ public final class SqlValidationUtils {
     }
 
     return stripped;
+  }
+
+  /** 드라이버 모호 표기 거부 문구. */
+  static final String DRIVER_AMBIGUOUS_QUOTE =
+      "E'...' 문자열·달러 인용($$)이 앞 글자에 붙어 있어 리터럴 경계가 모호합니다. 앞에 공백을 넣어 주세요.";
+
+  /**
+   * 마스크(주석은 공백, 리터럴 내용은 x)에 끝 세미콜론 하나를 뺀 {@code ;} 가 있는지. 끝 세미콜론은 뒤에 공백({@link
+   * Character#isWhitespace} — {@link String#strip} 과 같은 기준)과 주석만 오는 마지막 {@code ;} 다. 예전의 "주석 제거 →
+   * strip → 끝 {@code ;\s*} 제거 → {@code ;} 검색" 과 같은 판정을 다시 스캔하지 않고 한다.
+   */
+  private static boolean hasNonTrailingSemicolon(String masked) {
+    int last = masked.length() - 1;
+    while (last >= 0 && Character.isWhitespace(masked.charAt(last))) {
+      last--;
+    }
+    int limit = last >= 0 && masked.charAt(last) == ';' ? last : last + 1;
+    return masked.lastIndexOf(';', limit - 1) >= 0;
+  }
+
+  /** 닫히지 않은 어휘 종류별 거부 메시지 — 사용자가 어느 따옴표·주석을 닫아야 하는지 알 수 있게 한다. */
+  private static String unclosedMessage(SqlLexicalMask.Unclosed unclosed) {
+    return switch (unclosed) {
+      case STRING -> "닫히지 않은 문자열 리터럴이 있습니다. 작은따옴표(')를 닫아 주세요.";
+      case QUOTED_IDENTIFIER -> "닫히지 않은 따옴표 식별자가 있습니다. 큰따옴표(\")를 닫아 주세요.";
+      case DOLLAR_QUOTE -> "닫히지 않은 달러 인용($$)이 있습니다. 같은 태그로 닫아 주세요.";
+      case BLOCK_COMMENT -> "닫히지 않은 블록 주석(/*)이 있습니다. */ 로 닫아 주세요.";
+    };
   }
 
   /**

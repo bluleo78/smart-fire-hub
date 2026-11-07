@@ -284,11 +284,13 @@ class ChartDeniedTest extends IntegrationTestBase {
   }
 
   /**
-   * 원문은 공개 테이블만 참조하지만 정규화본(실행 문자열)은 민감 테이블을 참조하는 SQL(GuardedSqlExecutorTest 와 같은 형태). 원문으로 판정하면 통과
-   * 후 실행 관문이 403 을 던져 단건은 403, 대시보드는 전체 실패가 된다 — 판정도 실행 문자열 기준이어야 위젯 하나만 denied 가 된다.
+   * 예전 정규화 분기 SQL(GuardedSqlExecutorTest 와 같은 형태). 원문은 공개 테이블만 참조하고 민감 테이블은 문자열 리터럴 안에 있다. WD-563
+   * 전에는 리터럴을 인지하지 못하는 주석 제거로 정규화본이 민감 테이블을 참조해 위젯 denied 로 막았다. 이제 정규화본도 리터럴을 그대로 두므로 민감 테이블을 읽지 않고
+   * 리터럴 값만 보인다 — 차트 단건·대시보드 모두 denied 도 요청 실패도 아니고, 민감 값은 나오지 않는다. 위젯 단위 denied 자체는 {@link
+   * #dashboard_marksOnlyViolatingWidgetDenied} 가 검증한다.
    */
   @Test
-  void normalizationDivergentSql_isDeniedPerWidget_notWholeRequestFailure() {
+  void formerNormalizationDivergentSql_showsLiteralOnly_noSensitiveValue() {
     String leak =
         "SELECT '/*' /* */ || ', (SELECT v FROM "
             + secTable
@@ -296,20 +298,46 @@ class ChartDeniedTest extends IntegrationTestBase {
             + pubTable
             + " --' AS x FROM "
             + pubTable;
-    // 전제: 정규화본이 민감 테이블을 드러낸다(깨지면 이 테스트가 공허해진다).
-    assertThat(NormalizedSql.of(leak).text()).contains("FROM " + secTable);
+    // 정규화본은 리터럴 밖 주석(/* */)만 공백 한 칸으로 바꾼다 — 민감 테이블은 리터럴 속 글자로 남는다.
+    assertThat(NormalizedSql.of(leak).text()).isEqualTo(leak.replace(" /* */ ", "   "));
+    String literal = "/*, (SELECT v FROM " + secTable + " LIMIT 1) AS y FROM " + pubTable + " --";
     long leakChart = chart("cd_leak_" + System.nanoTime(), leak);
     long board = dashboard("cd_leakboard_" + System.nanoTime(), leakChart, pubChart);
     long viewer = viewerAt("공개");
 
     ChartDataResponse single = chartService.getChartData(leakChart, viewer);
-    assertThat(single.denied()).isTrue();
-    assertThat(single.queryResult().rows()).isEmpty();
+    assertThat(single.denied()).isFalse();
+    assertThat(values(single)).containsExactly(literal);
 
     Map<Long, ChartDataResponse> m = byChart(dashboardService.getDashboardData(board, viewer));
-    assertThat(m.get(leakChart).denied()).isTrue();
+    assertThat(m.get(leakChart).denied()).isFalse();
+    assertThat(values(m.get(leakChart))).containsExactly(literal).doesNotContain(SEC_VALUE);
     assertThat(m.get(pubChart).denied()).isFalse();
     assertThat(values(m.get(pubChart))).containsExactly(PUB_VALUE);
+  }
+
+  /**
+   * 「판정 = 실행」 불변식(코드 리뷰 2번): 차트·대시보드 사전 판정도 정규화본을 판정한다. 리터럴 밖 중첩 블록 주석은 원문 판정에선
+   * PgLexicalAmbiguityCheck 가 거부(400)하고 정규화본({@code SELECT v FROM pub})은 허용된다 — 사전 판정이 원문을 보면 이 위젯이
+   * error 가 된다(GuardedSqlExecutorTest 와 같은 형태).
+   */
+  @Test
+  void chartPrecheck_judgesTheExecutedString_notTheRawInput() {
+    String nested = "SELECT v FROM " + pubTable + " /* /* */ " + secTable + " */";
+    assertThat(NormalizedSql.of(nested).text()).isEqualTo("SELECT v FROM " + pubTable);
+    long nestedChart = chart("cd_nested_" + System.nanoTime(), nested);
+    long board = dashboard("cd_nestedboard_" + System.nanoTime(), nestedChart, pubChart);
+    long viewer = viewerAt("공개");
+
+    ChartDataResponse single = chartService.getChartData(nestedChart, viewer);
+    assertThat(single.denied()).isFalse();
+    assertThat(single.queryResult().error()).isNull();
+    assertThat(values(single)).containsExactly(PUB_VALUE);
+
+    Map<Long, ChartDataResponse> m = byChart(dashboardService.getDashboardData(board, viewer));
+    assertThat(m.get(nestedChart).denied()).isFalse();
+    assertThat(m.get(nestedChart).queryResult().error()).isNull();
+    assertThat(values(m.get(nestedChart))).containsExactly(PUB_VALUE);
   }
 
   /** 기존 역할을 떼고 지정 등급 자격 + 지정 권한만 가진 조회자(내보내기 플래그 확인용). */

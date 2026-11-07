@@ -34,7 +34,8 @@ import java.util.Locale;
  * str.strip()} 과 집합이 달라 두 언어 결과가 갈린다.
  *
  * <p>다음 소비처가 재사용할 수 있게 {@link #mask} 를 공개한다(예: 애드혹 경로의 주석 제거 #747, 최상위 LIMIT 판정 #749/#750) — 마스크
- * 위에서 위치를 찾고 원문을 그 위치로 자르면 된다.
+ * 위에서 위치를 찾고 원문을 그 위치로 자르면 된다. 실행 전 검증({@code SqlValidationUtils.stripAndValidate})은 같은 스캔으로 리터럴 밖
+ * 주석 제거({@link #replaceComments})와 닫히지 않은 어휘 탐지({@link #findUnclosed})를 한다(WD-563).
  */
 public final class SqlLexicalMask {
 
@@ -50,9 +51,7 @@ public final class SqlLexicalMask {
    * 위치로 원문을 자를 수 있다.
    */
   public static String mask(String sql) {
-    char[] out = sql.toCharArray();
-    scan(sql, out);
-    return new String(out);
+    return analyze(sql).masked();
   }
 
   /**
@@ -68,15 +67,129 @@ public final class SqlLexicalMask {
    * $2}({@code 1$2}) 는 PostgreSQL 스캐너에서도 파라미터다.
    */
   public static int findPositionalParameter(String sql) {
-    return scan(sql, sql.toCharArray());
+    return analyze(sql).firstPositionalParameter();
+  }
+
+  /** 입력 끝까지 닫히지 않은 어휘 종류(WD-563). */
+  public enum Unclosed {
+    /** {@code /*} 블록 주석(중첩 포함)이 끝까지 닫히지 않음. */
+    BLOCK_COMMENT,
+    /** {@code '...'}·{@code E'...'} 문자열 리터럴이 닫히지 않음. */
+    STRING,
+    /** {@code "..."} 따옴표 식별자가 닫히지 않음. */
+    QUOTED_IDENTIFIER,
+    /** {@code $tag$ ... $tag$} 달러 인용이 같은 태그로 닫히지 않음. */
+    DOLLAR_QUOTE
   }
 
   /**
-   * {@link #mask} 의 본체. {@code out}(원문 복사본)에 주석·리터럴을 가리고, 스캔 중 만난 첫 위치 파라미터의 인덱스(없으면 -1)를 돌려준다. 두
-   * 공개 함수가 같은 토큰 규칙을 쓰도록 한 곳에 둔다.
+   * 입력 끝까지 닫히지 않은 블록 주석·문자열·따옴표 식별자·달러 인용이 있으면 그 종류를, 없으면 null 을 돌려준다(WD-563).
+   *
+   * <p><b>왜 필요한가.</b> {@link #mask} 는 닫히지 않은 리터럴·주석을 끝까지 그 상태로 본다. 마스크 바깥의 {@code ;} 만 세는 다중 문장 검사는
+   * {@code SELECT 'abc; DROP TABLE t} 의 {@code ;} 를 리터럴 속으로 보고 지나친다 — DB 가 구문 오류로 거부하더라도 검증이 어디까지가
+   * 코드인지 모르는 입력을 통과시키면 안 되므로 호출부가 이 결과로 먼저 거부한다(fail-closed). 판정은 {@link #mask} 와 같은 스캔 상태로 한다 — 다른
+   * 렉서를 쓰면 경계가 갈린다.
    */
-  private static int scan(String sql, char[] out) {
-    int firstParam = -1;
+  public static Unclosed findUnclosed(String sql) {
+    return analyze(sql).unclosed();
+  }
+
+  /**
+   * 주석·리터럴 <b>밖</b>의 주석({@code --} 줄 주석, 중첩 포함 {@code /* *}{@code /} 블록 주석)을 각각 공백 한 칸으로 바꾼 SQL 을
+   * 돌려준다(WD-563). 리터럴·따옴표 식별자·달러 인용 속 {@code --}·{@code /*} 는 값이므로 그대로 둔다.
+   *
+   * <p>예전 정규식 제거({@code /\*.*?\*}{@code /}, {@code --[^\n]*})는 리터럴을 몰라 {@code 'x /* y *}{@code /
+   * z'} 의 값을 바꿔 실행했다. 공백 <b>한 칸</b>으로 바꾸는 것은 예전 동작 그대로다 — 주석을 그냥 지우면 {@code -/**}{@code /-} 가
+   * {@code --} 주석이 되는 식으로 앞뒤 토큰이 붙는다. 줄 주석 끝의 개행은 주석이 아니라 남긴다.
+   */
+  public static String replaceComments(String sql) {
+    return analyze(sql).withoutComments();
+  }
+
+  /**
+   * 리터럴 시작 판정이 pgjdbc 의 클라이언트 측 문장 분리기와 갈릴 수 있는 표기가 있으면 true(WD-563).
+   *
+   * <p><b>왜 거부 대상인가.</b> pgjdbc 는 {@code Statement} 실행 시 SQL 을 직접 훑어(Parser.parseJdbcSql) 리터럴·주석 밖의
+   * {@code ;} 에서 문장을 나눠 보낸다. 다중 문장 검사는 이 마스크 기준이므로, 마스크는 리터럴로 보는데 드라이버는 코드로 보는 구간이 있으면 마스크가 숨긴
+   * {@code ;} 에서 드라이버가 문장을 나눈다(예: {@code SELECT 'a'E'\'; DELETE FROM t; --'} — 마스크·PG 는 {@code
+   * E'\'…'} 를 E 문자열 하나로 읽지만 pgjdbc 는 E 앞 글자 {@code '} 가 식별자 종결 문자가 아니라서 일반 문자열 {@code '\'} 로 읽는다).
+   * 반대 방향(드라이버만 리터럴로 보는 구간)도 그 뒤 경계가 어긋나 같은 일이 생길 수 있다. 판정 규칙은 {@link #analyze} 의 pgjdbc 대조 주석 참고.
+   */
+  public static boolean hasDriverAmbiguousQuote(String sql) {
+    return analyze(sql).driverAmbiguous();
+  }
+
+  /**
+   * SQL 을 <b>한 번</b> 훑어 마스크·주석 구간·닫히지 않은 어휘·드라이버 모호 표기·첫 위치 파라미터를 함께 돌려준다(WD-563). 실행 전 검증처럼 여러 결과가
+   * 필요한 호출부가 같은 입력을 여러 번 스캔하지 않게 한다. {@link #mask}·{@link #findUnclosed} 등은 이 결과의 한 항목만 꺼내는 편의 함수다.
+   */
+  public static Analysis analyze(String sql) {
+    return scan(sql);
+  }
+
+  /** {@link #analyze} 결과. 마스크와 주석 구간은 원문 인덱스 기준이다. */
+  public static final class Analysis {
+    private final String sql;
+    private final char[] out;
+    private final List<int[]> comments = new ArrayList<>();
+    private int firstParam = -1;
+    private Unclosed unclosed;
+    private boolean driverAmbiguous;
+
+    private Analysis(String sql) {
+      this.sql = sql;
+      this.out = sql.toCharArray();
+    }
+
+    /** {@link #mask} 결과(주석은 공백, 리터럴 내용은 x, 원문과 같은 길이). */
+    public String masked() {
+      return new String(out);
+    }
+
+    /** 입력 끝까지 닫히지 않은 어휘(없으면 null). {@link #findUnclosed} 참고. */
+    public Unclosed unclosed() {
+      return unclosed;
+    }
+
+    /** pgjdbc 문장 분리기와 리터럴 시작 판정이 갈릴 수 있는 표기가 있는지. {@link #hasDriverAmbiguousQuote} 참고. */
+    public boolean driverAmbiguous() {
+      return driverAmbiguous;
+    }
+
+    /** 리터럴·주석 밖 첫 위치 파라미터의 인덱스(없으면 -1). {@link #findPositionalParameter} 참고. */
+    public int firstPositionalParameter() {
+      return firstParam;
+    }
+
+    /** 리터럴 밖 주석을 각각 공백 한 칸으로 바꾼 SQL. {@link #replaceComments} 참고. */
+    public String withoutComments() {
+      if (comments.isEmpty()) {
+        return sql;
+      }
+      StringBuilder sb = new StringBuilder(sql.length());
+      int prev = 0;
+      for (int[] span : comments) {
+        sb.append(sql, prev, span[0]).append(' ');
+        prev = span[1];
+      }
+      return sb.append(sql, prev, sql.length()).toString();
+    }
+  }
+
+  /**
+   * {@link #analyze} 의 본체. 원문 복사본에 주석·리터럴을 가리면서 첫 위치 파라미터·닫히지 않은 어휘·주석 구간·드라이버 모호 표기를 기록한다. 모든 공개
+   * 함수가 같은 토큰 규칙을 쓰도록 스캔은 여기 한 곳에만 둔다.
+   *
+   * <p><b>pgjdbc 대조(드라이버 모호 표기).</b> 번들 드라이버 pgjdbc 42.7.4 {@code org.postgresql.core.Parser} 의 실제
+   * 규칙(바이트코드로 실행 확인): E 문자열은 따옴표 위치가 2 이상이고 E 앞 글자가 {@code charTerminatesIdentifier}(공백 {@code \t
+   * \n \f \r ' '}·연산자 문자 {@code ! " # % & ( ) * + , - . / : ; < = > ? @ [ ] ^ `} {@code | ~})일 때만,
+   * 달러 인용은 앞 글자가 {@code isIdentifierContChar}(영문자·숫자·{@code _}·{@code $}·제어 문자
+   * 0x00-0x08·0x0E-0x1B·0x7F·Java 식별자용 비ASCII)가 아닐 때만 시작한다. 태그 글자에도 제어 문자를 받는다. 이 규칙과 마스크 판정이 다른
+   * 지점, 그리고 비ASCII 가 걸려 드라이버 판정을 확신할 수 없는 지점은 모두 모호로 표시한다(애매하면 거부).
+   */
+  private static Analysis scan(String sql) {
+    Analysis result = new Analysis(sql);
+    char[] out = result.out;
     int n = sql.length();
     int i = 0;
     while (i < n) {
@@ -89,6 +202,7 @@ public final class SqlLexicalMask {
           j++;
         }
         fill(out, i, j, ' ');
+        result.comments.add(new int[] {i, j});
         i = j;
       } else if (c == '/' && next == '*') {
         // 블록 주석: PostgreSQL 은 중첩을 허용하므로 깊이를 센다.
@@ -106,27 +220,60 @@ public final class SqlLexicalMask {
           }
         }
         fill(out, i, Math.min(j, n), ' ');
+        result.comments.add(new int[] {i, Math.min(j, n)});
+        if (depth > 0) {
+          // 바깥 */ 까지 닫히지 않았다 — 나머지 전부가 주석으로 묻힌다.
+          markUnclosed(result, Unclosed.BLOCK_COMMENT);
+        }
         i = j;
       } else if (c == '\'' || c == '"') {
         i = maskQuoted(sql, out, i, false);
+        if (i > n) {
+          markUnclosed(result, c == '\'' ? Unclosed.STRING : Unclosed.QUOTED_IDENTIFIER);
+        }
       } else if (isIdentStart(c)) {
         // 식별자/키워드 한 덩어리. 정확히 E 이고 바로 ' 가 오면 백슬래시 이스케이프 문자열이다.
         int j = i + 1;
         while (j < n && isIdentCont(sql.charAt(j))) {
+          // 덩어리 속 $ 는 PG·마스크에겐 식별자 글자다. pgjdbc 는 앞 글자가 자기 식별자 글자가 아니면 달러 인용 시작으로 볼 수 있는데,
+          // 비ASCII 앞 글자(NBSP 등)는 드라이버 판정을 확신할 수 없으므로, 뒤가 태그 모양이면 모호로 본다(ASCII 식별자 글자 뒤는 드라이버도
+          // 식별자로 본다). 한$x 처럼 태그 모양이 아니면 어느 쪽도 달러 인용이 아니다.
+          if (sql.charAt(j) == '$'
+              && sql.charAt(j - 1) >= 0x80
+              && driverDollarTagShapeEnd(sql, j) != -1) {
+            result.driverAmbiguous = true;
+          }
           j++;
         }
         if (j - i == 1 && (c == 'e' || c == 'E') && j < n && sql.charAt(j) == '\'') {
+          // pgjdbc 는 따옴표 위치 >= 2 이고 E 앞 글자가 식별자 종결 문자일 때만 E 문자열로 본다. 아니면 일반 문자열로 읽어 \' 에서 닫는다.
+          if (i < 1 || !driverTerminatesIdentifier(sql.charAt(i - 1))) {
+            result.driverAmbiguous = true;
+          }
           i = maskQuoted(sql, out, j, true);
+          // pgjdbc 는 E 문자열 안의 '' 를 이스케이프로 보지 않고 첫 ' 에서 닫은 뒤, 다음 ' 부터 일반 문자열(\ 가 글자)로 다시 읽는다.
+          // 그래서 '' 와 \ 가 함께 든 E 문자열은 닫히는 위치가 갈릴 수 있다(e'''\';' — PG·마스크는 리터럴 하나, pgjdbc 는 ; 에서 분리).
+          String body = sql.substring(j + 1, Math.min(Math.max(i - 1, j + 1), n));
+          if (body.indexOf('\\') >= 0 && body.contains("''")) {
+            result.driverAmbiguous = true;
+          }
+          if (i > n) {
+            markUnclosed(result, Unclosed.STRING);
+          }
         } else {
           i = j;
         }
       } else if (c == '$') {
         // 식별자 밖의 $ 만 여기 온다. $1 같은 위치 파라미터는 태그 모양이 아니라 그냥 지나간다.
         int tagEnd = dollarTagEnd(sql, i);
+        // pgjdbc 가 같은 위치에서 같은 길이의 여는 태그를 인정하는지 대조한다 — 한쪽만 달러 인용으로 보면 경계가 갈린다.
+        if (driverDollarTagEnd(sql, i) != tagEnd) {
+          result.driverAmbiguous = true;
+        }
         if (tagEnd < 0) {
           // 태그 모양이 아닌 $ 뒤에 숫자가 오면 위치 파라미터다(PostgreSQL scan.l 의 param: \${decinteger}).
-          if (firstParam < 0 && i + 1 < n && isAsciiDigit(sql.charAt(i + 1))) {
-            firstParam = i;
+          if (result.firstParam < 0 && i + 1 < n && isAsciiDigit(sql.charAt(i + 1))) {
+            result.firstParam = i;
           }
           i++;
           continue;
@@ -134,13 +281,100 @@ public final class SqlLexicalMask {
         String tag = sql.substring(i, tagEnd);
         int close = sql.indexOf(tag, tagEnd);
         int end = close < 0 ? n : close + tag.length();
+        if (close < 0) {
+          // 같은 태그로 닫히지 않았다 — 다른 태그($b$)는 내용일 뿐이다(PG 와 같다).
+          markUnclosed(result, Unclosed.DOLLAR_QUOTE);
+        }
         fill(out, i, end, 'x');
         i = end;
       } else {
         i++;
       }
     }
-    return firstParam;
+    return result;
+  }
+
+  /**
+   * pgjdbc {@code Parser.charTerminatesIdentifier} 와 같은 집합(42.7.4 실행 확인): 공백 5종과 연산자 문자. VT(0x0B)는
+   * 아니다.
+   */
+  private static final String DRIVER_IDENT_TERMINATORS = " \t\n\f\r!\"#%&()*+,-./:;<=>?@[]^`|~";
+
+  private static boolean driverTerminatesIdentifier(char ch) {
+    return DRIVER_IDENT_TERMINATORS.indexOf(ch) >= 0;
+  }
+
+  /**
+   * pgjdbc 가 식별자 글자로 보는 ASCII 중 영숫자·{@code _}·{@code $} 를 뺀 나머지: 제어 문자 0x00-0x08·0x0E-0x1B·0x7F.
+   */
+  private static boolean isDriverIdentControl(char ch) {
+    return ch <= 0x08 || (ch >= 0x0E && ch <= 0x1B) || ch == 0x7F;
+  }
+
+  /** pgjdbc 판정을 확신할 수 없음(비ASCII 가 걸림). */
+  private static final int DRIVER_UNKNOWN = -2;
+
+  /**
+   * pgjdbc {@code Parser.parseDollarQuotes} 가 {@code sql[i]} 의 {@code $} 에서 여는 태그를 인정하면 그 끝 다음 위치,
+   * 아니면 -1. 비ASCII 가 판정에 걸리면 {@link #DRIVER_UNKNOWN}(pgjdbc 는 Java 식별자 분류를 쓰는데 PG·마스크는 0x80 이상을 모두
+   * 식별자 글자로 본다).
+   *
+   * <p>pgjdbc 규칙: 앞 글자가 식별자 글자(영숫자·{@code _}·{@code $}·제어 문자·Java 식별자용 비ASCII)면 시작하지 않는다. 태그는
+   * {@code $$} 이거나 {@code $} + 영문자·{@code _} + (영숫자·{@code _}·제어 문자)* + {@code $}.
+   */
+  private static int driverDollarTagEnd(String sql, int i) {
+    if (i > 0) {
+      char prev = sql.charAt(i - 1);
+      if (prev >= 0x80) {
+        return DRIVER_UNKNOWN;
+      }
+      if (isIdentCont(prev) || isDriverIdentControl(prev)) {
+        return -1;
+      }
+    }
+    return driverDollarTagShapeEnd(sql, i);
+  }
+
+  /**
+   * pgjdbc 가 앞 글자 조건을 만족한다고 볼 때 {@code sql[i]} 의 {@code $} 에서 시작하는 태그 모양의 끝 다음 위치(-1·{@link
+   * #DRIVER_UNKNOWN}).
+   */
+  private static int driverDollarTagShapeEnd(String sql, int i) {
+    int n = sql.length();
+    int j = i + 1;
+    if (j >= n) {
+      return -1;
+    }
+    char first = sql.charAt(j);
+    if (first == '$') {
+      return j + 1;
+    }
+    if (first >= 0x80) {
+      return DRIVER_UNKNOWN;
+    }
+    if (!((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_')) {
+      return -1;
+    }
+    for (j++; j < n; j++) {
+      char ch = sql.charAt(j);
+      if (ch == '$') {
+        return j + 1;
+      }
+      if (ch >= 0x80) {
+        return DRIVER_UNKNOWN;
+      }
+      if (!(isIdentStart(ch) || isAsciiDigit(ch) || isDriverIdentControl(ch))) {
+        return -1;
+      }
+    }
+    return -1;
+  }
+
+  /** 처음 만난 닫히지 않은 어휘만 기록한다(닫히지 않은 어휘는 입력 끝까지 가므로 사실상 하나뿐이다). */
+  private static void markUnclosed(Analysis result, Unclosed kind) {
+    if (result.unclosed == null) {
+      result.unclosed = kind;
+    }
   }
 
   /**

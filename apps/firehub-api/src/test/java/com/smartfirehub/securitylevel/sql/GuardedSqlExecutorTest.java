@@ -28,7 +28,9 @@ import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.NormalizedSql;
+import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
+import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
@@ -131,8 +133,10 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
   }
 
   /**
-   * 원문은 pub 만 참조하지만, 리터럴을 인지하지 못하는 주석 제거(stripAndValidate)를 거친 실행 문자열은 hidden 을 참조한다. 관문이 원문을 판정하면
-   * 통과 후 hidden 이 실행된다 — 정규화본을 판정해야 거부된다.
+   * 예전 누출 문자열. 원문은 pub 만 참조하고 hidden 은 문자열 리터럴 {@code ', (SELECT a FROM hidden …) … --'} 안에 있다.
+   * WD-563 전에는 리터럴을 인지하지 못하는 주석 제거(stripAndValidate)가 {@code '/*'} 부터 {@code /* *}{@code /} 까지를
+   * 주석으로 지워 실행 문자열이 hidden 을 참조했다(관문이 원문을 판정하면 새는 이유). 이제는 리터럴 밖 주석만 지우므로 실행 문자열에서도 hidden 은 리터럴 속
+   * 글자다.
    */
   private String strippedOnlyLeak() {
     return "SELECT '/*' /* */ || ', (SELECT a FROM "
@@ -143,46 +147,120 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
         + pub;
   }
 
-  /** 전제 확인 — 원문은 hidden 을 숨기고, 정규화본(실행 문자열)은 드러낸다. 이 전제가 깨지면 아래 테스트가 공허해진다. */
-  @Test
-  void leakString_rawHidesHiddenButNormalizedReferencesIt() {
-    String raw = strippedOnlyLeak();
-    String normalized = NormalizedSql.of(raw).text();
-    assertThat(normalized).contains("FROM " + hidden);
-    assertThat(normalized).doesNotContain("--");
-    // 원문을 판정하면 pub 만 보이므로 허용된다 — 관문이 원문을 판정하면 새는 이유.
-    assertThat(guard.checkSql(viewer, raw, SqlAccessMode.INTERACTIVE).allowed()).isTrue();
+  /** 예전 누출 문자열을 실행했을 때 x 컬럼 값 — 두 리터럴을 이은 글자 그대로다(hidden 의 값 4242 가 아니다). */
+  private String leakLiteralValue() {
+    return "/*, (SELECT a FROM " + hidden + " LIMIT 1) AS y FROM " + pub + " --";
   }
 
+  /**
+   * WD-563: 정규화본(실행 문자열)은 리터럴을 원문 그대로 두고 리터럴 밖 주석만 지운다 — hidden 은 리터럴 밖에 드러나지 않는다. 예전엔 이 문자열의 정규화본이
+   * hidden 을 참조했다(판정 = 실행 구조가 막던 우회의 원인).
+   */
   @Test
-  void analytics_judgesTheExecutedString_notTheRawInput() {
-    assertThatThrownBy(() -> gate.executeAnalytics(viewer, strippedOnlyLeak(), 100, true))
+  void leakString_normalizedKeepsHiddenInsideLiteral() {
+    String raw = strippedOnlyLeak();
+    String normalized = NormalizedSql.of(raw).text();
+    // 리터럴 밖의 진짜 주석(/* */)만 공백 한 칸이 되고, 리터럴 속 '/*'·'--' 는 남는다.
+    assertThat(normalized).isEqualTo(raw.replace(" /* */ ", "   "));
+    assertThat(SqlLexicalMask.mask(normalized)).doesNotContain(hidden);
+    assertThat(guard.checkSql(viewer, normalized, SqlAccessMode.INTERACTIVE).allowed()).isTrue();
+  }
+
+  /** 예전 누출 문자열은 이제 hidden 을 읽지 않고 리터럴 값만 돌려준다. 양성 대조로 hidden 직접 참조는 여전히 거부된다. */
+  @Test
+  void analytics_formerLeakString_returnsLiteralNotHiddenValue() {
+    AnalyticsQueryResponse r = gate.executeAnalytics(viewer, strippedOnlyLeak(), 100, true);
+    assertThat(r.error()).isNull();
+    assertThat(r.rows()).hasSize(1);
+    assertThat(r.rows().get(0).get("x")).isEqualTo(leakLiteralValue());
+
+    assertThatThrownBy(() -> gate.executeAnalytics(viewer, "SELECT a FROM " + hidden, 100, true))
         .isInstanceOf(CodedApiException.class)
         .extracting(e -> ((CodedApiException) e).code())
         .isEqualTo("DATASET_SQL_ACCESS_DENIED");
   }
 
   /**
-   * 차트·대시보드 사전 판정(Task 16)도 실행 문자열(정규화본)을 판정한다 — 원문을 판정하면 사전 판정은 통과하고 실행 관문만 거부해 위젯 denied 가 아니라 요청
-   * 실패가 된다. 파싱 불가 SQL 은 거부가 아니다(실행이 200 + error 로 바꾼다).
+   * 차트·대시보드 사전 판정(Task 16)도 실행 문자열(정규화본)을 판정한다. 예전 누출 문자열은 hidden 을 리터럴 안에만 가지므로 거부가 아니다. 파싱 불가 SQL
+   * 은 거부가 아니다(실행이 200 + error 로 바꾼다).
    */
   @Test
-  void analyticsDeniedPrecheck_judgesTheExecutedString_notTheRawInput() {
-    assertThat(gate.judgeAnalytics(viewer, strippedOnlyLeak()).denied()).isTrue();
+  void analyticsDeniedPrecheck_judgesTheExecutedString() {
+    assertThat(gate.judgeAnalytics(viewer, strippedOnlyLeak()).denied()).isFalse();
+    assertThat(gate.judgeAnalytics(viewer, "SELECT a FROM " + hidden).denied()).isTrue();
     assertThat(gate.judgeAnalytics(viewer, "SELECT a FROM " + pub).denied()).isFalse();
     assertThat(gate.judgeAnalytics(viewer, "SELEC a FRM x").denied()).isFalse();
   }
 
   @Test
-  void datasetQuery_judgesTheExecutedString_notTheRawInput() {
+  void datasetQuery_formerLeakString_returnsLiteralNotHiddenValue() {
     asUser(userId);
+    SqlQueryResponse d =
+        datasetDataService.executeQuery(
+            pubId, new SqlQueryRequest(strippedOnlyLeak(), 100), userId);
+    assertThat(d.error()).isNull();
+    assertThat(d.rows()).hasSize(1);
+    assertThat(d.rows().get(0).get("x")).isEqualTo(leakLiteralValue());
+
     assertThatThrownBy(
             () ->
                 datasetDataService.executeQuery(
-                    pubId, new SqlQueryRequest(strippedOnlyLeak(), 100), userId))
+                    pubId, new SqlQueryRequest("SELECT a FROM " + hidden, 100), userId))
         .isInstanceOf(CodedApiException.class)
         .extracting(e -> ((CodedApiException) e).code())
         .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+  }
+
+  /**
+   * 「판정 = 실행」 불변식 고정용 입력(코드 리뷰 2번). 리터럴 밖 중첩 블록 주석 — 원문과 정규화본의 판정이 실제로 갈린다. 원문은
+   * PgLexicalAmbiguityCheck 가 중첩 주석으로 거부(400)하고, 정규화본(주석 제거 → {@code SELECT a FROM pub})은 허용된다.
+   * 관문·사전 판정이 정규화본({@link NormalizedSql#text()}) 대신 원문을 판정하도록 바뀌면 아래 테스트들이 실패한다.
+   *
+   * <p>누출 방향(원문 허용·정규화본 거부)의 입력은 WD-563 이후 찾지 못했다 — 정규화는 PG 기준 리터럴 밖 주석만 지우고, 원문 판정 앞단의
+   * PgLexicalAmbiguityCheck 가 PG 와 JSqlParser 의 주석·리터럴 경계가 갈리는 표기를 거부하므로 두 문자열에서 JSqlParser 가 보는
+   * 토큰이 같다.
+   */
+  private String nestedCommentSql() {
+    return "SELECT a FROM " + pub + " /* /* */ " + hidden + " */";
+  }
+
+  /** 전제 확인 — 원문 판정과 정규화본 판정이 갈린다. 이 전제가 깨지면 아래 불변식 테스트가 공허해진다. */
+  @Test
+  void nestedComment_rawAndNormalizedAreJudgedDifferently() {
+    String raw = nestedCommentSql();
+    assertThatThrownBy(() -> guard.checkSql(viewer, raw, SqlAccessMode.INTERACTIVE))
+        .isInstanceOf(UnsafeSqlException.class);
+    String normalized = NormalizedSql.of(raw).text();
+    assertThat(normalized).isEqualTo("SELECT a FROM " + pub);
+    assertThat(guard.checkSql(viewer, normalized, SqlAccessMode.INTERACTIVE).allowed()).isTrue();
+  }
+
+  /**
+   * 분석 관문과 사전 판정(judgeAnalytics → executeJudgedAnalytics)은 정규화본을 판정한다 — 원문을 판정하면 400·error 가 된다.
+   */
+  @Test
+  void analytics_judgesTheExecutedString_notTheRawInput() {
+    AnalyticsQueryResponse r = gate.executeAnalytics(viewer, nestedCommentSql(), 100, true);
+    assertThat(r.error()).isNull();
+    assertThat(r.rows()).hasSize(1);
+    assertThat(r.rows().get(0).get("a")).isEqualTo(1);
+
+    GuardedSqlExecutor.AnalyticsJudgment j = gate.judgeAnalytics(viewer, nestedCommentSql());
+    assertThat(j.denied()).isFalse();
+    AnalyticsQueryResponse judged = gate.executeJudgedAnalytics(j, 100, true);
+    assertThat(judged.error()).isNull();
+    assertThat(judged.rows()).hasSize(1);
+  }
+
+  /** 데이터셋 SQL 탭 관문도 정규화본을 판정한다. */
+  @Test
+  void datasetQuery_judgesTheExecutedString_notTheRawInput() {
+    asUser(userId);
+    SqlQueryResponse d =
+        datasetDataService.executeQuery(
+            pubId, new SqlQueryRequest(nestedCommentSql(), 100), userId);
+    assertThat(d.error()).isNull();
+    assertThat(d.rows()).hasSize(1);
   }
 
   /** 양성 대조 — 볼 수 있는 테이블만 참조하면 실제로 실행된다(관문이 모든 것을 거부해서 통과하는 공허한 테스트가 아님). */

@@ -27,10 +27,11 @@ import org.springframework.stereotype.Service;
  *
  * <p><b>판정 = 실행(구조적 보장).</b> 사용자 원문을 여기서 {@link NormalizedSql#of} 로 단 한 번 정규화하고, 그 {@link
  * NormalizedSql#text()} String 인스턴스를 판정({@link DatasetAccessGuard#requireSql})에 넘긴 뒤 같은 {@link
- * NormalizedSql} 을 실행 서비스의 정규화 오버로드에 넘긴다 — 실행 서비스는 다시 정규화하지 않는다. 원문을 판정하고 정규화본을 실행하면 리터럴을 인지하지 못하는
- * 주석 제거 때문에 두 문자열이 다른 테이블을 참조할 수 있다(리터럴 안의 블록 주석 시작·줄 주석 표기가 지워지며 리터럴 안에 숨어 있던 숨김 테이블 서브쿼리가 코드로
- * 드러난다 — GuardedSqlExecutorTest 가 실측 문자열로 고정). 같은 문자열에 대한 {@code SqlValidator.validate} 는 실행 서비스가
- * 실행 직전에 한다(가드 계약).
+ * NormalizedSql} 을 실행 서비스의 정규화 오버로드에 넘긴다 — 실행 서비스는 다시 정규화하지 않는다. WD-563 전에는 리터럴을 인지하지 못하는 주석 제거 때문에
+ * 원문과 정규화본이 다른 테이블을 참조할 수 있었다(리터럴 안의 블록 주석 시작·줄 주석 표기가 지워지며 숨김 테이블 서브쿼리가 코드로 드러났다). 지금은 리터럴 밖 주석만
+ * 지우지만(GuardedSqlExecutorTest 가 그 문자열이 더는 새지 않음을 고정), 정규화 규칙이 바뀌어도 판정과 실행이 갈리지 않도록 이 구조를 유지한다
+ * (원문·정규화본 판정이 갈리는 리터럴 밖 중첩 블록 주석으로 GuardedSqlExecutorTest·ChartDeniedTest 가 이 구조를 고정한다). 같은 문자열에
+ * 대한 {@code SqlValidator.validate} 는 실행 서비스가 실행 직전에 한다(가드 계약).
  *
  * <p><b>트랜잭션.</b> 이 클래스와 가드에는 {@code @Transactional} 이 없다 — 판정 거부(403)가 {@code @Transactional} 프록시
  * 안에서 던져지면 호출자의 바깥 트랜잭션이 rollback-only 로 오염된다(판단 사항 19). 판정은 실행 서비스 프록시에 들어가기 <b>전</b>에 끝난다.
