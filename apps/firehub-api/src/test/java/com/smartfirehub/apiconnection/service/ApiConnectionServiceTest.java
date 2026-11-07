@@ -182,6 +182,51 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThat(decrypted.get("token")).isEqualTo("plaintext-bearer-token-xyz");
   }
 
+  // WD-588 — 새 연결에 비밀 필드가 없으면 500(null)·비밀 없는 저장({}) 대신 400 으로 거절한다.
+
+  private CreateApiConnectionRequest createRequest(String authType, Map<String, String> config) {
+    return new CreateApiConnectionRequest(
+        "WD588 " + authType + " " + System.nanoTime(),
+        null,
+        authType,
+        config,
+        "https://a.example.com",
+        null);
+  }
+
+  @Test
+  void create_bearerWithNullAuthConfig_rejected400() {
+    assertThatThrownBy(() -> apiConnectionService.create(createRequest("BEARER", null), testUserId))
+        .isInstanceOf(ApiConnectionException.class)
+        .hasMessage("Bearer 토큰을 입력하세요 (authConfig.token)");
+  }
+
+  @Test
+  void create_bearerWithBlankToken_rejected400() {
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    createRequest("BEARER", Map.of("token", "  ")), testUserId))
+        .isInstanceOf(ApiConnectionException.class)
+        .hasMessage("Bearer 토큰을 입력하세요 (authConfig.token)");
+  }
+
+  @Test
+  void create_apiKeyWithEmptyAuthConfig_rejected400() {
+    assertThatThrownBy(
+            () -> apiConnectionService.create(createRequest("API_KEY", Map.of()), testUserId))
+        .isInstanceOf(ApiConnectionException.class)
+        .hasMessage("API 키를 입력하세요 (authConfig.apiKey)");
+  }
+
+  @Test
+  void create_apiKeyWithNullAuthConfig_rejected400() {
+    assertThatThrownBy(
+            () -> apiConnectionService.create(createRequest("API_KEY", null), testUserId))
+        .isInstanceOf(ApiConnectionException.class)
+        .hasMessage("API 키를 입력하세요 (authConfig.apiKey)");
+  }
+
   @Test
   void update_changesNameAndDescription() {
     Map<String, String> authConfig = Map.of("apiKey", "original-key-value-5678");
