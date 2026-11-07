@@ -996,7 +996,10 @@ class PipelineServiceTest extends IntegrationTestBase {
         .hasMessage(NO_INPUT_REJECTION);
   }
 
-  /** WD-216: 의존 스텝 이름이 이 파이프라인에 없는 스텝이면 러너가 건너뛰므로 입력이 없는 것과 같다 — 함께 거부한다. */
+  /**
+   * WD-216: 의존 스텝 이름이 이 파이프라인에 없는 스텝이면 러너가 건너뛰므로 입력이 없는 것과 같다 — 함께 거부한다. WD-586 부터는 모든 스텝 유형에서 없는
+   * 선행 스텝을 저장 전에 거절하므로, 같은 400 이 더 정확한 문구(어느 이름이 없는지)로 나온다.
+   */
   @Test
   void createPipeline_aiClassifyStep_dependencyOnUnknownStep_rejectedInKorean() {
     CreatePipelineRequest request =
@@ -1007,7 +1010,7 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage(NO_INPUT_REJECTION);
+        .hasMessageContaining("선행 스텝 'no_such_step' 를 찾을 수 없습니다.");
   }
 
   /** WD-216: 수정 경로도 같다 — 입력을 모두 빼고 다시 저장하면 거부한다. */

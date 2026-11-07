@@ -160,6 +160,41 @@ class PipelineExecutionServiceTest {
         .isInstanceOf(CyclicDependencyException.class);
   }
 
+  // WD-586 — 없는 선행 스텝 이름은 조용히 버리지 않고 400, 공백뿐인 스텝 이름도 400.
+
+  @Test
+  void validateDAG_unknownDependencyName_throwsIllegalArgument() {
+    List<PipelineStepRequest> steps = List.of(step("A", List.of("Z")), step("B", List.of()));
+    assertThatThrownBy(() -> service.validateDAG(steps))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스텝 'A' 의 선행 스텝 'Z' 를 찾을 수 없습니다.");
+  }
+
+  @Test
+  void validateDAG_dependencyNameDiffersOnlyByWhitespace_throwsIllegalArgument() {
+    // 저장이 이름을 정확히 대조하므로 "A " 는 "A" 가 아니다 — 예전엔 이것도 조용히 사라졌다.
+    List<PipelineStepRequest> steps = List.of(step("A", List.of()), step("B", List.of("A ")));
+    assertThatThrownBy(() -> service.validateDAG(steps))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스텝 'B' 의 선행 스텝 'A ' 를 찾을 수 없습니다.");
+  }
+
+  @Test
+  void validateDAG_blankStepName_throwsIllegalArgument() {
+    assertThatThrownBy(() -> service.validateDAG(List.of(step("  ", List.of()))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스텝 이름을 입력하세요.");
+    assertThatThrownBy(() -> service.validateDAG(List.of(step("", List.of()))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스텝 이름을 입력하세요.");
+  }
+
+  @Test
+  void validateDAG_nullDependencyList_noException() {
+    List<PipelineStepRequest> steps = List.of(step("A", null), step("B", List.of("A")));
+    assertThatCode(() -> service.validateDAG(steps)).doesNotThrowAnyException();
+  }
+
   // ------------------------------------------------------------------ //
   // executePipeline 오케스트레이션 테스트
   // ------------------------------------------------------------------ //

@@ -18,11 +18,13 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
@@ -88,6 +90,7 @@ public class PipelineExecutionService {
     if (steps == null || steps.isEmpty()) {
       return;
     }
+    validateStepNamesAndDependencies(steps);
 
     // 스텝 이름 → 인덱스 맵 구성
     Map<String, Integer> stepNameToIndex = new HashMap<>();
@@ -142,6 +145,46 @@ public class PipelineExecutionService {
     // 처리된 노드 수 != 전체 노드 수 → 순환 의존성 존재
     if (processedCount != steps.size()) {
       throw new CyclicDependencyException("Cyclic dependency detected in pipeline steps");
+    }
+  }
+
+  /** 스텝 이름이 공백뿐일 때의 400 안내(WD-586). */
+  static final String BLANK_STEP_NAME_MESSAGE = "스텝 이름을 입력하세요.";
+
+  /** 선행 스텝 이름이 이 파이프라인에 없을 때의 400 안내(WD-586). */
+  static String unknownDependencyMessage(String stepName, String dependsOnName) {
+    return "스텝 '" + stepName + "' 의 선행 스텝 '" + dependsOnName + "' 를 찾을 수 없습니다.";
+  }
+
+  /**
+   * 저장 전 스텝 이름·선행 스텝 참조 검사(WD-586) — 생성·수정이 모두 {@link #validateDAG} 를 지나므로 여기서 한 번에 막는다.
+   *
+   * <p>예전에는 저장(saveSteps)이 없는 선행 스텝 이름을 조용히 건너뛰어, 오타나 이름 변경 뒤 남은 참조가 201 과 함께 사라졌다 — 실행 순서가 말없이
+   * 빠진다. 공백뿐인 이름은 화면에서 구분할 수 없는 스텝이 된다. 웹 편집기는 저장 때 현재 이름으로 의존을 다시 만들고 빈 이름을 막으므로 이 검사에 걸리지 않는다 —
+   * API·AI 도구의 직접 호출만 400 으로 바뀐다. 이름은 정확히 같아야 한다(저장이 쓰는 대조와 같다).
+   *
+   * <p>null 원소는 여기서 판정하지 않는다(요청 형식 검증 몫).
+   */
+  private void validateStepNamesAndDependencies(List<PipelineStepRequest> steps) {
+    Set<String> names = new HashSet<>();
+    for (PipelineStepRequest step : steps) {
+      if (step == null) {
+        continue;
+      }
+      if (step.name() != null && step.name().isBlank()) {
+        throw new IllegalArgumentException(BLANK_STEP_NAME_MESSAGE);
+      }
+      names.add(step.name());
+    }
+    for (PipelineStepRequest step : steps) {
+      if (step == null || step.dependsOnStepNames() == null) {
+        continue;
+      }
+      for (String dependsOnName : step.dependsOnStepNames()) {
+        if (!names.contains(dependsOnName)) {
+          throw new IllegalArgumentException(unknownDependencyMessage(step.name(), dependsOnName));
+        }
+      }
     }
   }
 
