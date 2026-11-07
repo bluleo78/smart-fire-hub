@@ -171,7 +171,11 @@ public class RoleService {
     Map<String, Object> metadata = roleSnapshot(role.name(), role.description());
     metadata.put("permissions", List.copyOf(permissionCodes(id)));
     metadata.put("affectedUserIds", roleRepository.findUserIdsByRoleId(id));
-    roleRepository.deleteById(id);
+    // WD-582: 동시 삭제에서 진 요청은 위 findById 는 통과(커밋된 옛 행)했지만, 여기서 이긴 요청의 행 잠금을 기다린 뒤 0행을 지운다.
+    // 0행이면 다른 요청이 이미 지운 것이므로 404 로 거부하고 감사를 남기지 않는다 — 예외로 트랜잭션도 롤백돼 중복 ROLE_DELETE 가 쌓이지 않는다.
+    if (roleRepository.deleteById(id) == 0) {
+      throw new RoleNotFoundException();
+    }
     audit(callerId, "ROLE_DELETE", id, "역할 삭제: " + role.name(), metadata);
   }
 
