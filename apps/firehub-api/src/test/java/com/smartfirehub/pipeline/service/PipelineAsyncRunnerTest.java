@@ -632,6 +632,62 @@ class PipelineAsyncRunnerTest {
     assertThat(sqlCaptor.getValue()).startsWith("INSERT INTO data.\"ptmp_12_plain_select_abcd\"");
   }
 
+  @Test
+  void executeStep_tempCreateLosesRace_reusesWinnersTempDataset() {
+    // WD-541: 동시 첫 실행에서 생성이 유일 제약에 져도, 이긴 쪽 TEMP 를 다시 찾아 재사용하면 실패하지 않는다.
+    Long pipelineId = 12L;
+    Long userId = 1L;
+    Long stepId = 202L;
+    Long winnerId = 998L;
+    PipelineStepResponse sqlStep =
+        stepResponse(
+            stepId, "plain-select", "SQL", "SELECT name FROM data.\"source\"", null, List.of());
+    stubProbeColumns("name");
+    when(tempDatasetService.findExistingTempDataset(stepId))
+        .thenReturn(Optional.empty(), Optional.of(winnerId));
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), anyString(), eq(stepId), anyString(), eq(userId)))
+        .thenThrow(new org.springframework.dao.DuplicateKeyException("idx_dataset_table_name"));
+    when(tempDatasetService.hasSchemaChanged(eq(winnerId), anyList())).thenReturn(false);
+    when(datasetRepository.findTableNameById(winnerId))
+        .thenReturn(Optional.of("ptmp_12_plain_select_abcd"));
+    when(columnRepository.findByDatasetId(winnerId)).thenReturn(List.of(col("name", false)));
+    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("1 rows affected");
+
+    String status = runner.executeStep(302L, sqlStep, pipelineId, "P", userId, false);
+
+    assertThat(status).isEqualTo("COMPLETED");
+  }
+
+  @Test
+  void executeStep_tempCreateFailsWithoutWinner_storesKoreanMessageWithoutSql() {
+    // WD-541: 이긴 쪽도 없는 생성 실패는 SQL 원문·제약 이름 대신 사용자용 문구를 단계 오류에 저장한다.
+    Long pipelineId = 12L;
+    Long userId = 1L;
+    Long stepId = 202L;
+    PipelineStepResponse sqlStep =
+        stepResponse(
+            stepId, "plain-select", "SQL", "SELECT name FROM data.\"source\"", null, List.of());
+    stubProbeColumns("name");
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.empty());
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), anyString(), eq(stepId), anyString(), eq(userId)))
+        .thenThrow(
+            new org.springframework.dao.DataIntegrityViolationException(
+                "jOOQ; SQL [insert into \"dataset\" ...] idx_dataset_table_name"));
+
+    String status = runner.executeStep(302L, sqlStep, pipelineId, "P", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository)
+        .updateStepExecution(eq(302L), eq("FAILED"), any(), any(), msg.capture(), any(), any());
+    assertThat(msg.getValue())
+        .isEqualTo("임시 데이터셋을 준비하지 못했습니다. 잠시 뒤 다시 실행해 주세요.")
+        .doesNotContain("insert into")
+        .doesNotContain("idx_dataset_table_name");
+  }
+
   /**
    * WD-95: 스키마가 바뀐 TEMP 는 "옛 것 삭제 → 새로 생성" 이다. 새 컬럼이 생성 검증(예: 63자 초과)에 걸리면 삭제가 먼저 일어나 이전 출력이 사라지던
    * 순서를, 검증을 삭제 전으로 당겨 막는다 — 검증이 실패하면 deleteTempDataset·createTempDataset 이 호출되지 않아야 한다. (검증 규칙 자체는
