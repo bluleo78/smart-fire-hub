@@ -81,6 +81,19 @@ public interface TriggerRepository {
   void clearNextFireTime(Long id);
 
   /**
+   * {@link #mergeNextFireTime} 의 같은 트랜잭션 참여판(WD-554). 호출자의 트랜잭션(MANDATORY)에 실려 커넥션을 새로 빌리지 않는다 — 커밋
+   * 전에 쓰므로 {@code REQUIRES_NEW} 가 필요 없고, 요청당 커넥션 1개 원칙을 지킨다. afterCommit 콜백 안에서 부르면 이미 끝난 트랜잭션에 걸려
+   * 예외가 난다 — 그 경우는 {@link #mergeNextFireTime} 을 쓴다.
+   */
+  void mergeNextFireTimeInTransaction(Long id, String nextFireTimeIso);
+
+  /**
+   * {@link #clearNextFireTime} 의 같은 트랜잭션 참여판(WD-554). 사용 규칙은 {@link
+   * #mergeNextFireTimeInTransaction} 과 같다.
+   */
+  void clearNextFireTimeInTransaction(Long id);
+
+  /**
    * 이 파이프라인을 선행으로 둔, 다른 파이프라인의 켜진 연쇄 트리거를 하류 파이프라인 이름과 함께 읽는다(WD-419 — 삭제 확인 창 안내용).
    *
    * <p>상류 매칭은 삭제 시 끄는 {@link #disableByUpstreamPipelineId} 와 같은 규칙(config 의 upstreamPipelineId)을

@@ -18,7 +18,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.TaskScheduler;
@@ -144,10 +143,25 @@ public class TriggerSchedulerService {
    *     {@code TriggerService.validateScheduleConfig} 로 같은 검증을 먼저 거쳐 여기까지 오지 않게 한다.
    */
   public void registerSchedule(Long triggerId, Map<String, Object> config) {
+    PreparedSchedule prepared = prepareSchedule(triggerId, config);
+    if (!activateSchedule(prepared)) {
+      triggerRepository.clearNextFireTime(triggerId);
+      return;
+    }
+    writeNextFireTime(triggerId, prepared.nextFire());
+  }
+
+  /**
+   * 스케줄을 실제로 걸지 않고 cron·시간대 검증과 다음 발화 시각 계산만 한다(WD-554) — DB·스케줄러 맵을 건드리지 않는 순수 계산이다.
+   *
+   * <p>등록을 「준비(계산, 커밋 전 같은 트랜잭션에서 DB 기록)」와 「활성화(커밋 후 메모리 등록)」로 나눈 이유: 예전에는 afterCommit 콜백에서 등록과
+   * {@code nextFireTime} 기록(REQUIRES_NEW)을 함께 해, 바깥 트랜잭션이 커넥션을 쥔 채 두 번째 커넥션을 요구했다(커넥션 1개 원칙 위반 —
+   * SecurityAuditRecorder 문서 참고). 계산은 DB 가 필요 없으므로 커밋 전에 하고, 값은 바깥 트랜잭션에 실어 쓴다.
+   *
+   * @throws IllegalArgumentException cron·시간대로 스케줄을 만들 수 없을 때(너무 잦은 주기 포함)
+   */
+  PreparedSchedule prepareSchedule(Long triggerId, Map<String, Object> config) {
     final long tenantId = TenantContext.require();
-    final AtomicReference<Instant> nextFireHolder = new AtomicReference<>();
-    // 다음 발화가 없어 스케줄을 걸지 못했는지 compute() 밖으로 전달한다(WD-107).
-    final AtomicBoolean noNextFire = new AtomicBoolean(false);
 
     // 새 트리거를 compute() 밖에서 먼저 만든다(WD-107). 예전에는 compute() 안에서 기존 스케줄을 먼저 cancel 한 뒤
     // 생성에 실패하면 null 을 돌려줘, 잘못된 cron 으로 수정하는 순간 멀쩡하던 옛 스케줄까지 사라지고 오류는 로그로만 남았다.
@@ -180,6 +194,29 @@ public class TriggerSchedulerService {
       throw new IllegalArgumentException(
           "스케줄을 등록할 수 없습니다. cron 표현식 또는 시간대가 올바르지 않습니다: " + cronExpression + " / " + timezone, e);
     }
+    // 최초 등록 시점의 다음 발화 시각. 다음 발화가 없는 cron(예: 2월 30일)이면 null.
+    return new PreparedSchedule(
+        triggerId,
+        tenantId,
+        cronTrigger,
+        cronExpression,
+        timezone,
+        cronTrigger.nextExecution(new SimpleTriggerContext(clock)));
+  }
+
+  /**
+   * 준비된 스케줄을 스케줄러 풀에 건다 — 메모리만 건드리고 DB 는 쓰지 않는다(커밋 후 호출해도 커넥션을 요구하지 않는다, WD-554).
+   *
+   * @return 스케줄을 걸었으면 true, 다음 발화가 없어 걸지 못했으면 false(옛 스케줄은 취소·제거된다)
+   */
+  private boolean activateSchedule(PreparedSchedule prepared) {
+    final Long triggerId = prepared.triggerId();
+    final long tenantId = prepared.tenantId();
+    final DstAwareCronTrigger cronTrigger = prepared.cronTrigger();
+    final String cronExpression = prepared.cronExpression();
+    final String timezone = prepared.timezone();
+    // 다음 발화가 없어 스케줄을 걸지 못했는지 compute() 밖으로 전달한다(WD-107).
+    final AtomicBoolean noNextFire = new AtomicBoolean(false);
 
     scheduledTasks.compute(
         triggerId,
@@ -214,8 +251,6 @@ public class TriggerSchedulerService {
             noNextFire.set(true);
             return null;
           }
-          // 최초 등록 시점의 다음 발화 시각. compute() 밖(락 해제 후)에서 DB에 반영한다.
-          nextFireHolder.set(cronTrigger.nextExecution(new SimpleTriggerContext(clock)));
           log.info(
               "Registered schedule trigger {} with cron '{}' timezone '{}' (tenant={})",
               triggerId,
@@ -225,11 +260,72 @@ public class TriggerSchedulerService {
           return future;
         });
 
-    if (noNextFire.get()) {
-      triggerRepository.clearNextFireTime(triggerId);
+    return !noNextFire.get();
+  }
+
+  /**
+   * {@link #prepareSchedule} 의 결과 — 커밋 후 {@link #activateSchedule} 이 쓸 값(검증된 트리거 객체와 다음 발화 시각)을
+   * 담는다.
+   */
+  record PreparedSchedule(
+      Long triggerId,
+      long tenantId,
+      DstAwareCronTrigger cronTrigger,
+      String cronExpression,
+      String timezone,
+      Instant nextFire) {}
+
+  /** 커밋 후 활성화 대기 중인 스케줄(WD-554). {@code prepared} 가 null 이면 준비 단계에서 실패해 「스케줄 없음」으로 정리해야 하는 경우다. */
+  public record PendingSchedule(Long triggerId, PreparedSchedule prepared) {}
+
+  /**
+   * 트랜잭션 <b>안에서</b> 스케줄을 준비하고 {@code trigger_state.nextFireTime} 을 같은 커넥션(바깥 트랜잭션 참여)으로
+   * 기록한다(WD-554). 반드시 호출자의 트랜잭션 안에서 불러야 한다(MANDATORY) — 커넥션 1개 원칙. 반환값을 커밋 후 {@link
+   * #activateAfterCommit} 에 넘긴다.
+   *
+   * <p>준비에 실패하면(검증 이전에 저장된 옛 잘못된 행 등) 예외 대신 경고 후 {@code nextFireTime} 을 비우고 「실패」 표지를 돌려준다 — 커밋 후 등록
+   * 실패를 응답으로 깨지 않던 기존 동작(WD-107)을 보존한다. 다음 발화가 없는 cron 도 같은 방식으로 {@code nextFireTime} 을 비운다. 롤백되면
+   * 기록도 함께 되돌아가고 메모리 스케줄은 아직 건드리지 않았으므로 일관된다.
+   */
+  public PendingSchedule prepareInTransaction(Long triggerId, Map<String, Object> config) {
+    try {
+      PreparedSchedule prepared = prepareSchedule(triggerId, config);
+      if (prepared.nextFire() == null) {
+        triggerRepository.clearNextFireTimeInTransaction(triggerId);
+      } else {
+        triggerRepository.mergeNextFireTimeInTransaction(triggerId, prepared.nextFire().toString());
+      }
+      return new PendingSchedule(triggerId, prepared);
+    } catch (IllegalArgumentException e) {
+      log.warn(
+          "Schedule trigger {} could not be prepared; will be left unscheduled: {}",
+          triggerId,
+          e.getMessage());
+      triggerRepository.clearNextFireTimeInTransaction(triggerId);
+      return new PendingSchedule(triggerId, null);
+    }
+  }
+
+  /**
+   * 커밋 후(afterCommit) 메모리 스케줄을 건다 — DB 를 쓰지 않으므로 바깥 커넥션을 쥔 채 두 번째 커넥션을 요구하지 않는다(WD-554). 준비 실패 표지면
+   * 옛 스케줄을 내린다. 활성화 자체가 실패하면(풀 거부 등 극히 드묾) 경고 후 「스케줄 없음」으로 정리하고 {@code nextFireTime} 도 비운다 — 이 드문
+   * 경로만 {@code clearNextFireTime}(REQUIRES_NEW)으로 커넥션을 하나 더 쓴다.
+   */
+  public void activateAfterCommit(PendingSchedule pending) {
+    if (pending.prepared() == null) {
+      unregisterSchedule(pending.triggerId());
       return;
     }
-    writeNextFireTime(triggerId, nextFireHolder.get());
+    try {
+      activateSchedule(pending.prepared());
+    } catch (RuntimeException e) {
+      log.warn(
+          "Schedule trigger {} could not be registered after commit; left unscheduled: {}",
+          pending.triggerId(),
+          e.getMessage());
+      unregisterSchedule(pending.triggerId());
+      triggerRepository.clearNextFireTime(pending.triggerId());
+    }
   }
 
   /** 테스트 전용 — nextFireTime 계산 기준 시계를 바꾼다(WD-391). 실제 발화 시점은 스케줄러 풀의 시계를 따른다. */

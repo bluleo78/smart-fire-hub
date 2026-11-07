@@ -262,17 +262,11 @@ public class TriggerService {
 
     Long triggerId = triggerRepository.create(pipelineId, request, processedConfig, userId);
 
-    // Register schedule after transaction commits
+    // 스케줄 등록: 다음 실행 시각(nextFireTime) 기록은 이 트랜잭션 안에서 같은 커넥션으로 하고, 스케줄러에 거는 일(메모리)만 커밋 후에 한다.
+    // 예전에는 afterCommit 에서 등록과 기록(REQUIRES_NEW)을 함께 해 요청 1건이 커넥션 2개를 쥐려 했고, 동시 요청이 풀 크기와 같으면 서로
+    // 두 번째 커넥션을 기다리며 교착했다(WD-554, 커넥션 1개 원칙). 커밋 후 등록 실패는 응답을 깨지 않고 "스케줄 없음"으로 정리한다(WD-107).
     if (request.triggerType() == TriggerType.SCHEDULE) {
-      final Map<String, Object> finalConfig = processedConfig;
-      TransactionSynchronizationManager.registerSynchronization(
-          new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-              // 커밋 후 등록 실패는 응답을 깨지 않고 "스케줄 없음"으로 정리한다(WD-107) — 본 방어선은 위 커밋 전 검증이다.
-              schedulerService.registerScheduleAfterCommit(triggerId, finalConfig);
-            }
-          });
+      registerScheduleOnCommit(triggerId, processedConfig);
     }
 
     TriggerResponse response =
@@ -401,22 +395,21 @@ public class TriggerService {
       boolean configChanged = request.config() != null;
       Map<String, Object> config = configChanged ? request.config() : existing.config();
       boolean enabled = request.isEnabled() != null ? request.isEnabled() : existing.isEnabled();
-      TransactionSynchronizationManager.registerSynchronization(
-          new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-              if (enabled) {
-                // config 를 바꾸지 않은 수정(이름·설명)이고 이미 돌고 있는 스케줄이 있으면 다시 등록하지 않는다(WD-107) — 바뀐 게 없고,
-                // 저장값이 검증 이전의 잘못된 옛 행이면 재등록이 실패할 수도 있다.
-                if (!configChanged && schedulerService.isScheduled(triggerId)) {
-                  return;
-                }
-                schedulerService.registerScheduleAfterCommit(triggerId, config);
-              } else {
+      if (enabled) {
+        // config 를 바꾸지 않은 수정(이름·설명)이고 이미 돌고 있는 스케줄이 있으면 다시 등록하지 않는다(WD-107) — 바뀐 게 없고,
+        // 저장값이 검증 이전의 잘못된 옛 행이면 재등록이 실패할 수도 있다.
+        if (configChanged || !schedulerService.isScheduled(triggerId)) {
+          registerScheduleOnCommit(triggerId, config);
+        }
+      } else {
+        TransactionSynchronizationManager.registerSynchronization(
+            new TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
                 schedulerService.unregisterSchedule(triggerId);
               }
-            }
-          });
+            });
+      }
     }
 
     // 감사(WD-462) — 저장 전(existing)과 저장 후 다시 읽은 값을 비교해 바뀐 항목 이름만 남긴다.
@@ -530,18 +523,36 @@ public class TriggerService {
 
     // Update scheduler after commit
     if ("SCHEDULE".equals(existing.triggerType())) {
-      TransactionSynchronizationManager.registerSynchronization(
-          new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-              if (enabled) {
-                schedulerService.registerScheduleAfterCommit(triggerId, existing.config());
-              } else {
+      if (enabled) {
+        registerScheduleOnCommit(triggerId, existing.config());
+      } else {
+        TransactionSynchronizationManager.registerSynchronization(
+            new TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
                 schedulerService.unregisterSchedule(triggerId);
               }
-            }
-          });
+            });
+      }
     }
+  }
+
+  /**
+   * 스케줄 등록을 「트랜잭션 안 준비 + 커밋 후 활성화」로 나눠 건다(WD-554). 반드시 활성 트랜잭션 안에서 불러야 한다.
+   *
+   * <p>준비(검증·다음 실행 시각 계산·{@code nextFireTime} 기록)는 지금 같은 커넥션으로, 스케줄러에 거는 일은 afterCommit 에서 메모리만
+   * 건드린다. 커밋 후 콜백이 DB 를 쓰면(예전 REQUIRES_NEW) 바깥 커넥션을 쥔 채 두 번째 커넥션을 요구해 동시 요청이 풀 크기 이상일 때 교착한다.
+   */
+  private void registerScheduleOnCommit(Long triggerId, Map<String, Object> config) {
+    TriggerSchedulerService.PendingSchedule pending =
+        schedulerService.prepareInTransaction(triggerId, config);
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            schedulerService.activateAfterCommit(pending);
+          }
+        });
   }
 
   @Transactional(readOnly = true)
