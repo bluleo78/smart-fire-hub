@@ -1,10 +1,11 @@
 import { expect, test } from '../fixtures/auth.fixture';
+import { mockBrandingConfig } from '../fixtures/branding.fixture';
 
 /**
  * 런타임 브랜딩(화이트라벨) E2E 테스트
  * - /config.js가 window.__APP_CONFIG__로 주입한 값이 탭 타이틀 · 로그인 · 사이드바에 반영되는지 검증.
  * - 기본값(미설정)은 기존 "Smart Fire Hub" 브랜드를 그대로 유지하는지도 함께 검증(회귀 방지).
- * - 사이트별 override는 /config.js 파일 교체(마운트)로 이뤄지므로 테스트는 page.route로 그 파일을 대체한다.
+ * - 사이트별 override는 /config.js 파일 교체(마운트)로 이뤄지므로 테스트는 page.route로 그 파일을 대체한다(mockBrandingConfig).
  */
 
 /** 특정 브랜딩으로 /config.js 응답을 대체하는 헬퍼 (실제 배포의 파일 마운트를 흉내낸다) */
@@ -23,28 +24,15 @@ async function overrideConfig(
       }),
     );
   }
-  await page.route('**/config.js', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/javascript',
-      body: `
-        window.__APP_CONFIG__ = ${JSON.stringify(cfg)};
-        // 실제 config.js와 동일한 빈값 가드 — 빈 brandName이면 타이틀을 건드리지 않는다(#325).
-        if (window.__APP_CONFIG__.brandName) { document.title = window.__APP_CONFIG__.brandName; }
-        var l = document.querySelector("link[rel='icon']");
-        if (!l) { l = document.createElement('link'); l.rel = 'icon'; document.head.appendChild(l); }
-        l.href = window.__APP_CONFIG__.faviconUrl;
-      `,
-    }),
-  );
+  await mockBrandingConfig(page, cfg);
 }
 
 test.describe('런타임 브랜딩 (화이트라벨)', () => {
   test('기본값: 미설정 시 Smart Fire Hub 브랜드가 유지된다', async ({ authMockedPage: page }) => {
     await page.goto('/login');
 
-    // 탭 타이틀 기본값 유지
-    await expect(page).toHaveTitle('Smart Fire Hub');
+    // 탭 타이틀 기본값 유지 — 화면 이름 뒤에 기본 브랜드(WD-580)
+    await expect(page).toHaveTitle('로그인 · Smart Fire Hub');
     // 로그인 화면 제목 기본값 유지
     await expect(page.getByText('Smart Fire Hub')).toBeVisible();
   });
@@ -58,8 +46,8 @@ test.describe('런타임 브랜딩 (화이트라벨)', () => {
 
     await page.goto('/login');
 
-    // 탭 타이틀이 커스텀 브랜드로 교체
-    await expect(page).toHaveTitle('Acme Data');
+    // 탭 타이틀이 커스텀 브랜드로 교체 — 화면 이름 뒤에 커스텀 브랜드(WD-580)
+    await expect(page).toHaveTitle('로그인 · Acme Data');
     // 로그인 화면 제목이 커스텀 브랜드로 교체
     await expect(page.getByText('Acme Data')).toBeVisible();
     // 벤더 기본 브랜드가 노출되지 않아야 함
@@ -132,7 +120,7 @@ test.describe('런타임 브랜딩 (화이트라벨)', () => {
 
     // 앱 브랜드가 공백으로 사라지지 않고, 탭 타이틀과 같은 값(기본 브랜드)으로 일치한다.
     // 수정 전에는 앱은 빈 문자열 / 탭만 index.html의 하드코딩 벤더명 → split-brand 상태였다.
-    await expect(page).toHaveTitle('Smart Fire Hub');
+    await expect(page).toHaveTitle('로그인 · Smart Fire Hub');
     await expect(page.getByText('Smart Fire Hub')).toBeVisible();
   });
 

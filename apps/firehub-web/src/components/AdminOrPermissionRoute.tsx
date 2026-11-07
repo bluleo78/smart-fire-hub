@@ -5,9 +5,11 @@ import { Button } from '@/components/ui/button';
 import { InlineBanner } from '@/components/ui/inline-banner';
 import { RestrictedNotice } from '@/components/ui/restricted-notice';
 import { Skeleton } from '@/components/ui/skeleton';
+import { FORBIDDEN_TITLE } from '@/lib/page-title';
 
 import { useMyPermissions } from '../hooks/queries/useMyPermissions';
 import { useAuth } from '../hooks/useAuth';
+import { PageTitleOverride } from './PageTitleSync';
 
 /** 화면 권한이 없을 때 보이는 안내 — 관리 화면 전체가 같은 문구를 쓴다(WD-121, WD-126 문구 선례). */
 const SCREEN_FORBIDDEN_MESSAGE = '이 화면을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.';
@@ -58,6 +60,8 @@ export function AdminOrPermissionRoute({ permission }: { permission: string }) {
   if (!isAdmin && !permissions.has(permission)) {
     return (
       <div className="flex justify-center py-12">
+        {/* URL 은 관리 화면 그대로지만 화면은 권한 안내다 — 탭 제목이 「사용자 관리」처럼 열린 척하지 않게 덮어쓴다(WD-580) */}
+        <PageTitleOverride label={FORBIDDEN_TITLE} />
         <RestrictedNotice message={SCREEN_FORBIDDEN_MESSAGE} className="max-w-md" data-testid="screen-forbidden" />
       </div>
     );

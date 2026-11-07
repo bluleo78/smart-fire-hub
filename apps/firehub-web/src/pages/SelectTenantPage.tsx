@@ -17,12 +17,14 @@ import { AlertTriangle, Building2, Info, LogOut } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { authApi } from '../api/auth';
+import { PageTitleOverride } from '../components/PageTitleSync';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { InlineBanner } from '../components/ui/inline-banner';
 import { useAuth } from '../hooks/useAuth';
 import { useTenantSelection } from '../hooks/useTenantSelection';
 import { membershipRoleLabel } from '../lib/membership-role';
+import { SELECT_TENANT_TITLE } from '../lib/page-title';
 import type { MembershipResponse, UnavailableWorkspace } from '../types/tenant';
 
 /**
@@ -57,9 +59,11 @@ export function SelectTenantPage() {
 
   return (
     <div className="flex min-h-dvh items-center justify-center bg-muted/30 p-4">
+      {/* URL 은 원래 가려던 경로 그대로라 경로 기반 탭 제목이 엉뚱한 화면 이름이 된다 — 선택 화면 이름으로 덮어쓴다(WD-580) */}
+      <PageTitleOverride label={SELECT_TENANT_TITLE} />
       <div className="w-full max-w-md space-y-4">
         <div className="space-y-1 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">워크스페이스 선택</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{SELECT_TENANT_TITLE}</h1>
           <p className="text-sm text-muted-foreground">
             {user?.name ? `${user.name} 님, 어느 워크스페이스로 들어갈까요?` : '어느 워크스페이스로 들어갈까요?'}
           </p>
