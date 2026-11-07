@@ -1,6 +1,6 @@
 import { File as FileIcon, Image, Paperclip, Send, StopCircle, X } from 'lucide-react';
-import type { ClipboardEvent, DragEvent, KeyboardEvent } from 'react';
-import { useRef, useState } from 'react';
+import type { ClipboardEvent, DragEvent, KeyboardEvent, RefObject } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '../ui/button';
@@ -55,6 +55,10 @@ interface ChatInputProps {
   isUploading?: boolean;
   disabled?: boolean;
   placeholder?: string;
+  /** 패널 열림 여부(WD-579). false→true 로 바뀌면(열린 채 마운트 포함) 입력창에 포커스한다. 미지정이면 포커스하지 않는다. */
+  focusOnOpen?: boolean;
+  /** 패널이 열린 순간의 포커스 위치(WD-579). 포커스가 아직 그 자리(예: AI 상태 칩)면 옮겨도 된다. */
+  focusOriginRef?: RefObject<Element | null>;
 }
 
 export function ChatInput({
@@ -64,6 +68,8 @@ export function ChatInput({
   isUploading = false,
   disabled = false,
   placeholder = '메시지를 입력하세요...',
+  focusOnOpen = false,
+  focusOriginRef,
 }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
@@ -176,6 +182,27 @@ export function ChatInput({
   };
 
   const isDisabled = disabled || isStreaming || isUploading;
+
+  // 열림 포커스(WD-579). 스트리밍·업로드 중엔 textarea 가 disabled 라 focus() 가 무시되므로
+  // 열림 요청을 대기로 두었다가 입력창이 활성화되면 포커스한다. wasOpenRef 초기값 false 라 열린 채 마운트도 열림으로 본다.
+  const pendingFocusRef = useRef(false);
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (focusOnOpen && !wasOpenRef.current) pendingFocusRef.current = true;
+    if (!focusOnOpen) pendingFocusRef.current = false;
+    wasOpenRef.current = focusOnOpen;
+    if (!pendingFocusRef.current || isDisabled) return;
+    const el = textareaRef.current;
+    if (!el) return;
+    pendingFocusRef.current = false;
+    // 빼앗지 않기: <body>·같은 채팅 패널 안·열던 순간의 자리일 때만 옮긴다. 열린 뒤 사용자가 다른 곳으로 옮겼으면 존중.
+    const active = document.activeElement;
+    const panel = el.closest('[data-ai-chat-panel]');
+    const free = active === document.body || !!panel?.contains(active) || active === focusOriginRef?.current;
+    if (!free) return;
+    // preventScroll: 폭 전환 중인 사이드 패널의 overflow-hidden 조상이 스크롤되지 않게 한다.
+    el.focus({ preventScroll: true });
+  }, [focusOnOpen, isDisabled, focusOriginRef]);
   const canSend = (message.trim().length > 0 || pendingFiles.length > 0) && !isStreaming && !isUploading;
 
   return (
