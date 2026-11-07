@@ -54,8 +54,16 @@ public class PlatformAuthService {
    *
    * <p>비활성 계정 검사를 롤 검사보다 <b>먼저</b> 두는 이유: 그러면 비활성 계정은 운영자든 아니든 같은 응답(비활성)을 받는다. 순서를 뒤집으면 비활성 비운영자만
    * 자격증명 오류로 갈려 차이가 생긴다.
+   *
+   * <p>실패 예외(잠금·자격 증명 불일치·비활성)에서는 롤백하지 않는다(WD-552) — 실패 카운터가 이 트랜잭션에 실리므로(커넥션 1개) 롤백되면 카운터가 사라져
+   * 브루트포스 잠금이 무력해진다. 실패 경로에서 이 트랜잭션이 쓰는 것은 카운터뿐이라 커밋돼도 안전하다.
    */
-  @Transactional
+  @Transactional(
+      noRollbackFor = {
+        AccountLockedException.class,
+        InvalidCredentialsException.class,
+        UserDeactivatedException.class
+      })
   public PlatformTokenResponse login(LoginRequest request) {
     // 대소문자·앞뒤 공백만 다른 입력도 같은 계정으로 본다(WD-269, 테넌트 평면과 대칭).
     String username = userRepository.resolveLoginUsername(request.username());
