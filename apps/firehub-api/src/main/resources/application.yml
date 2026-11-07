@@ -39,6 +39,9 @@ org:
     # 테이블 생성은 Flyway(V85)가 담당한다 — 런타임 롤(app_tenant)은 DDL 권한이 없다.
     database:
       skip-create: true
+      # JobRunr 저장소는 업무 풀과 분리된 전용 풀을 쓴다(WD-555, JobRunrDataSourceConfig). 업무 풀이 고갈돼도
+      # 생존 신호 쓰기가 막혀 BackgroundJobServer 가 스스로 꺼지는 일을 막는다.
+      datasource: jobRunrDataSource
     background-job-server:
       enabled: true
       delete-succeeded-jobs-after: 720h
@@ -143,6 +146,15 @@ app:
     backlog-sweep-interval-ms: 300000
 
 firehub:
+  jobrunr:
+    datasource:
+      # JobRunr 전용 풀(기본 4개 — 생존 신호·잡 폴링·워커 상태 갱신용). Tibero 는 세션 한도가 작으니 환경에 맞춰 줄인다.
+      max-pool-size: ${JOBRUNR_POOL_SIZE:4}
+      connection-timeout-ms: ${JOBRUNR_POOL_TIMEOUT_MS:10000}
+    watchdog:
+      # BackgroundJobServer 가 꺼졌는지 보는 주기(ms). 꺼짐을 2회 연속 보면 재시작하므로 복구는 대략 2주기 안이다.
+      interval-ms: ${JOBRUNR_WATCHDOG_INTERVAL_MS:30000}
+
   file:
     upload-dir: ${FILE_UPLOAD_DIR:./uploads}
     max-files-per-request: 3
