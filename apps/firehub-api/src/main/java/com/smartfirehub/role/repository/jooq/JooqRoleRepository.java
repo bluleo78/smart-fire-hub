@@ -2,6 +2,7 @@ package com.smartfirehub.role.repository.jooq;
 
 import static com.smartfirehub.jooq.Tables.*;
 
+import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.role.dto.RoleResponse;
 import com.smartfirehub.role.repository.RoleRepository;
 import java.time.LocalDateTime;
@@ -89,6 +90,23 @@ public class JooqRoleRepository implements RoleRepository {
   @Override
   public void lockById(Long id) {
     dsl.selectOne().from(ROLE).where(ROLE.ID.eq(id)).forUpdate().fetch();
+  }
+
+  @Override
+  public LocalDateTime findUpdatedAtById(Long id) {
+    return dsl.select(ROLE.UPDATED_AT).from(ROLE).where(ROLE.ID.eq(id)).fetchOne(ROLE.UPDATED_AT);
+  }
+
+  // WD-575: 이름·설명 수정의 편집 기준 버전 비교용 — 다른 편집 충돌 보호(차트·쿼리·대시보드)와 같은 FOR UPDATE 행 잠금이다.
+  // 권한 교체(lockById)와 같은 행 잠금이라 둘도 서로 직렬화된다.
+  @Override
+  public Optional<LockedRowVersion> lockUpdatedAtById(Long id) {
+    return dsl.select(ROLE.UPDATED_AT)
+        .from(ROLE)
+        .where(ROLE.ID.eq(id))
+        .forUpdate()
+        .fetchOptional()
+        .map(r -> new LockedRowVersion(r.value1()));
   }
 
   @Override

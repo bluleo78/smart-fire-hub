@@ -75,6 +75,17 @@ export default function RoleDetailPage() {
   const [permissionBaselineIds, setPermissionBaselineIds] = useState<number[]>([]);
   // 권한 저장이 편집 충돌(409 EDIT_CONFLICT)로 거부됐는가(WD-440)
   const [isPermissionsConflictOpen, setIsPermissionsConflictOpen] = useState(false);
+  /**
+   * 이름·설명 폼의 편집 기준 버전(WD-575) — 폼 내용을 서버 값으로 채운 시점(불러오기·이름 저장 뒤 재조회·충돌 「다시 불러오기」)의 updatedAt.
+   * 저장할 때 expectedUpdatedAt 으로 보내 그사이 다른 관리자가 이름·설명을 바꿨으면 서버가 409 로 거부한다.
+   * role 과 따로 두는 이유: 권한 저장 뒤 role 을 다시 읽어도 폼 내용은 그대로라, 그때 기준까지 바꾸면 옛 이름이 「기준과 같다」로 통과해 되살아난다.
+   * 서버 문자열 그대로 둔다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다).
+   */
+  const [roleInfoBaselineUpdatedAt, setRoleInfoBaselineUpdatedAt] = useState<string | null>(null);
+  // 이름·설명 저장이 편집 충돌(409 EDIT_CONFLICT)로 거부됐는가(WD-575)
+  const [isRoleInfoConflictOpen, setIsRoleInfoConflictOpen] = useState(false);
+  // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
+  const [isReloadingRoleInfo, setIsReloadingRoleInfo] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingRole, setIsSavingRole] = useState(false);
   const [isSavingPermissions, setIsSavingPermissions] = useState(false);
@@ -135,6 +146,7 @@ export default function RoleDetailPage() {
         setCatalog(permRes?.data ?? null);
         setSelectedPermissionIds(roleRes.data.permissions.map(p => p.id));
         setPermissionBaselineIds(roleRes.data.permissions.map(p => p.id));
+        setRoleInfoBaselineUpdatedAt(roleRes.data.updatedAt ?? null);
         form.reset({
           name: roleRes.data.name,
           description: roleRes.data.description ?? '',
@@ -196,7 +208,11 @@ export default function RoleDetailPage() {
     );
   };
 
-  const onRoleSubmit = async (data: UpdateRoleFormData) => {
+  /**
+   * 이름·설명 저장. 편집 기준 버전을 함께 보내 그사이 다른 관리자가 이름·설명을 바꿨으면 서버가 409 로 거부한다(WD-575) — 예전엔 옛 화면에서
+   * 설명만 고쳐 저장하면 옛 이름이 다시 써져 먼저 바꾼 이름이 경고 없이 사라졌다. overwrite 는 충돌 안내의 「내 변경으로 덮어쓰기」다(기준을 뺀다).
+   */
+  const onRoleSubmit = async (data: UpdateRoleFormData, overwrite = false) => {
     if (!role) return;
     setIsSavingRole(true);
     setRoleError('');
@@ -204,7 +220,9 @@ export default function RoleDetailPage() {
       await rolesApi.updateRole(role.id, {
         name: data.name,
         description: data.description || undefined,
+        ...(overwrite ? {} : { expectedUpdatedAt: roleInfoBaselineUpdatedAt }),
       });
+      setIsRoleInfoConflictOpen(false);
       // 저장한 값을 폼의 새 기준값으로 삼는다 (WD-119) — 안 하면 isDirty 가 true 로 남아 저장 직후 이동에도
       // 「저장하지 않은 변경사항」 경고가 뜬다. keepValues: 저장 요청 중에 더 입력한 내용은 지우지 않는다 —
       // reset 은 isDirty 를 false 로 두므로, 저장값과 달라진 칸은 setValue 로 다시 dirty 표시한다.
@@ -223,14 +241,23 @@ export default function RoleDetailPage() {
       try {
         const { data: updatedRole } = await rolesApi.getRoleById(role.id);
         setRole(updatedRole);
+        // 방금 저장한 내용의 새 버전을 다음 저장의 기준으로 삼는다(WD-575) — 옛 기준으로 다시 저장하면 자기 저장과 충돌한다.
+        setRoleInfoBaselineUpdatedAt(updatedRole.updatedAt ?? null);
       } catch {
         // 저장은 이미 됐다 — 재조회만 실패했으면 실패 안내 대신 화면 값을 저장한 값으로 맞춘다.
         setRole(prev => (prev ? { ...prev, name: data.name, description: data.description || null } : prev));
+        // 새 버전을 모르면 기준을 비워 다음 저장은 비교 없이 나간다 — 자기 저장과의 거짓 충돌보다 안전한 쪽(차트 화면과 같다).
+        setRoleInfoBaselineUpdatedAt(null);
       }
     } catch (error) {
       // 그새 삭제된 역할이면 입력란 아래 오류로 화면에 남기지 않고 목록으로 돌아간다(WD-287).
       if (isNotFoundError(error)) {
         handleRoleNotFound(error);
+        return;
+      }
+      // 편집 충돌은 입력란 아래 오류 대신 안내 창으로 — 다시 불러올지 덮어쓸지 고른다(WD-575)
+      if (isEditConflict(error)) {
+        setIsRoleInfoConflictOpen(true);
         return;
       }
       if (axios.isAxiosError(error) && error.response?.data) {
@@ -241,6 +268,31 @@ export default function RoleDetailPage() {
       }
     } finally {
       setIsSavingRole(false);
+    }
+  };
+
+  /**
+   * 이름·설명 충돌 안내의 「다시 불러오기」(WD-575) — 최신 이름·설명으로 폼과 기준 버전을 바꾸고 내 이름·설명 변경은 버린다.
+   * 권한 체크(선택·기준)는 건드리지 않는다 — 권한은 따로 저장하고 따로 충돌을 본다(WD-440).
+   */
+  const reloadRoleInfo = async () => {
+    if (!role) return;
+    setIsReloadingRoleInfo(true);
+    try {
+      const { data: latest } = await rolesApi.getRoleById(role.id);
+      setRole(latest);
+      setRoleInfoBaselineUpdatedAt(latest.updatedAt ?? null);
+      form.reset({ name: latest.name, description: latest.description ?? '' });
+      setRoleError('');
+      setIsRoleInfoConflictOpen(false);
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        handleRoleNotFound(error);
+        return;
+      }
+      toast.error('역할 정보를 불러오는 데 실패했습니다.');
+    } finally {
+      setIsReloadingRoleInfo(false);
     }
   };
 
@@ -335,7 +387,8 @@ export default function RoleDetailPage() {
           <CardTitle>역할 정보</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={form.handleSubmit(onRoleSubmit)} className="space-y-4">
+          {/* handleSubmit 은 두 번째 인자로 이벤트를 넘기므로 감싸서 부른다 — 그대로 넘기면 이벤트가 overwrite 로 읽혀 기준 없이 저장된다 */}
+          <form onSubmit={form.handleSubmit(data => onRoleSubmit(data))} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="role-name">역할 이름</Label>
               <Input
@@ -378,6 +431,16 @@ export default function RoleDetailPage() {
       />
 
       <Separator />
+
+      {/* 이름·설명 저장 편집 충돌 안내(WD-575) — 다시 불러오기는 최신 이름·설명으로 폼을 되돌리고, 덮어쓰기는 기준 없이 다시 저장한다 */}
+      <EditConflictDialog
+        open={isRoleInfoConflictOpen}
+        onOpenChange={setIsRoleInfoConflictOpen}
+        resourceLabel="역할 정보"
+        pending={isSavingRole || isReloadingRoleInfo}
+        onReload={() => void reloadRoleInfo()}
+        onOverwrite={() => void form.handleSubmit(data => onRoleSubmit(data, true))()}
+      />
 
       {/* 권한 전체 해제 확인 AlertDialog — "권한 저장" 시점에 선택된 권한이 0개일 때만 표시된다 (#567) */}
       {/* 권한 저장 편집 충돌 안내(WD-440) — 다시 불러오기는 최신 권한으로 체크를 되돌리고, 덮어쓰기는 기준 없이 다시 저장한다 */}

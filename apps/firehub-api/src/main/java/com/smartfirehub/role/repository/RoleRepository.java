@@ -1,6 +1,8 @@
 package com.smartfirehub.role.repository;
 
+import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.role.dto.RoleResponse;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +41,20 @@ public interface RoleRepository {
    * 권한 교체 전에 역할 단위로 직렬화한다.
    */
   void lockById(Long id);
+
+  /**
+   * 역할의 수정 시각(이름·설명을 마지막으로 바꾼 시각)을 읽는다 — 역할 상세 응답에 실어 웹이 편집 기준 버전으로 쓴다(WD-575). 행이 없거나 값이 비어 있으면
+   * null.
+   */
+  LocalDateTime findUpdatedAtById(Long id);
+
+  /**
+   * 수정 시각을 행 잠금(FOR UPDATE)과 함께 읽는다 — 이름·설명 수정의 편집 충돌(낙관적 잠금) 비교용(WD-575, 차트 WD-364 와 같은 방식).
+   *
+   * <p>잠금 없이 읽고 비교하면 동시에 들어온 두 저장이 같은 값을 읽어 둘 다 통과한다. 행이 없으면(다른 테넌트 역할은 RLS 로 보이지 않는다) 빈 값, 행은 있는데
+   * 수정 시각이 비어 있으면 {@code updatedAt} 이 null 인 값이다.
+   */
+  Optional<LockedRowVersion> lockUpdatedAtById(Long id);
 
   /** 이 역할을 가진 사용자 id(현재 테넌트, RLS, 오름차순) — 역할 삭제 감사에 권한을 잃는 사용자를 남기기 위해 쓴다(WD-117). */
   List<Long> findUserIdsByRoleId(Long roleId);
