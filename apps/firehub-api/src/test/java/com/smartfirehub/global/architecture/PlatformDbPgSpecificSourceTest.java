@@ -38,7 +38,7 @@ class PlatformDbPgSpecificSourceTest {
           "global/platformdb/postgres/",
           "PG 구현 패키지 — PG 전용 SQL 이 있는 것이 존재 이유",
           "securitylevel/pythonread/PythonReadGrantSync.java",
-          "R4: lockTenantSync(public static)는 PG 데이터 경로가 계속 쓴다",
+          "lockTenantSync(public static)는 PG 데이터 저장소 경로(동기화·REPLACE 맞바꿈)가 데이터 저장소 연결에서 쓴다 — 한 직렬화 = 한 저장소(WD-493)",
           "global/tenant/TenantPipelineRoleProvisioner.java",
           "R2/R5: 롤 프로비저너의 hashtext(...)::bigint inline 잠금은 PG 데이터 저장소 인프라 안에 둔다",
           "pipeline/service/SqlScriptExecutor.java",

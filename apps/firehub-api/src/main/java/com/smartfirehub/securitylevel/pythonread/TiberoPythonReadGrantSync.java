@@ -47,8 +47,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 로 읽고 차이만 GRANT/REVOKE 한다. 데이터셋 행이 없는 테이블(스테이징 {@code STG_*}·뷰 등)의 계산값은 "없음"이라, 슬롯에 걸려 있으면 회수한다.
  * 슬롯 계정에는 처음부터 CREATE SESSION 만 있다({@code TiberoAccountPlan}).
  *
- * <p><b>직렬화.</b> 같은 테넌트의 동기화는 PG 메타의 트랜잭션 advisory 잠금({@link PythonReadGrantSync#lockTenantSync})으로
- * 직렬화한다 — PG 판과 같은 잠금이라 한 테넌트의 두 백엔드 동기화가 겹치지 않는다. Tibero 문장은 그 PG 트랜잭션이 끝날 때까지 잠금을 쥔 채 실행한다.
+ * <p><b>직렬화.</b> 같은 테넌트의 동기화는 {@code PlatformLocks} 의 트랜잭션 범위 잠금으로 플랫폼에서 직렬화한다. 테넌트마다 백엔드는 하나라 PG
+ * 판과 겹치지 않는다 — PG 판은 데이터 저장소, 이 판은 플랫폼에서 잡는다(WD-493). Tibero 문장은 그 트랜잭션이 끝날 때까지 잠금을 쥔 채 실행한다.
  *
  * <p><b>왜 테이블 잠금을 잡지 않는가(WD-629).</b> PG 판은 ACL 을 바꾸기 전에 테이블에 ACCESS SHARE 를 잡아 같은 테이블의 DDL 과
  * 직렬화한다({@code PythonReadGrantSync.lockTableForAclChange}). Oracle 계열(Tibero)에서는 GRANT/REVOKE 자체가
@@ -296,8 +296,7 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
    */
   private PythonReadGrantSync.SyncResult syncInTx(String onlyTable, Integer runRank) {
     long tenantId = TenantContext.require("Tibero PYTHON 읽기 권한 동기화");
-    // 같은 테넌트 동기화 직렬화(트랜잭션 종료 시 자동 해제) — PG 판(lockTenantSync)과 같은 syncLockKey 를 써서 같은 잠금이다(WD-486
-    // R4).
+    // 같은 테넌트 동기화 직렬화(트랜잭션 종료 시 자동 해제) — 플랫폼에서 잡는다. 테넌트마다 백엔드는 하나라 PG 판(데이터 저장소)과 겹치지 않는다(WD-493).
     locks.xactLock(PythonReadGrantSync.syncLockKey(tenantId));
     return applyInTx(tenantId, onlyTable, runRank, false);
   }

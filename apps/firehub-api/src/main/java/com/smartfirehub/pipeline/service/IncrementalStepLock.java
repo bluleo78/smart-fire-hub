@@ -104,6 +104,7 @@ public class IncrementalStepLock implements DisposableBean {
         HikariConfig config = new HikariConfig();
         config.setPoolName(POOL_NAME);
         // pg_stat_activity 에서 잠금 커넥션을 알아볼 수 있게 접속 이름을 붙인다(PostgreSQL JDBC 의 ApplicationName).
+        // Tibero 드라이버도 이 속성을 거절하지 않는다(WD-493 실측 — getConnection 성공).
         config.addDataSourceProperty("ApplicationName", POOL_NAME);
         config.setJdbcUrl(properties.determineUrl());
         config.setUsername(properties.determineUsername());

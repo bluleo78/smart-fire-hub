@@ -47,6 +47,11 @@ public final class TiberoTestAccount implements AutoCloseable {
     /** 테이블·시퀀스 — 리포지토리 계약 테스트. */
     TABLES("CREATE SESSION, CREATE TABLE, CREATE SEQUENCE"),
     /**
+     * {@link #TABLES} + {@code SYS.DBMS_LOCK} 실행 권한 — 플랫폼 잠금(WD-493) 실서버 테스트. 객체 권한이라 시스템 권한 GRANT
+     * 뒤 DBA 연결로 이번 실행의 계정에만 따로 준다.
+     */
+    TABLES_WITH_DBMS_LOCK("CREATE SESSION, CREATE TABLE, CREATE SEQUENCE"),
+    /**
      * 마이그레이션 소유자 — 테이블·시퀀스·뷰·프로시저·트리거(clean 이 지울 객체 종류를 고루 만든다), 구체화 뷰(clean 이 다루지 않는 종류를 만나면 멈추는지
      * 본다).
      */
@@ -167,6 +172,21 @@ public final class TiberoTestAccount implements AutoCloseable {
     }
   }
 
+  /**
+   * 서버에 남은 {@code FHT_<용도>_*} 계정 수를 센다(읽기 전용 — 지우지 않는다). 테스트가 끝난 뒤 "이번 실행이 계정을 남기지 않았는지"를 증거로 남기는 데
+   * 쓴다. 밑줄을 이스케이프해 {@code FHT_LOCKS_*} 가 {@code FHT_LOCKSX_*} 같은 다른 용도까지 세지 않게 한다.
+   */
+  public static long remainingAccounts(String purpose) {
+    if (!PURPOSE.matcher(purpose).matches()) {
+      throw new IllegalArgumentException("용도는 대문자·숫자 1~16자: " + purpose);
+    }
+    try (Connection c = TiberoTestServer.openDbaForCleanup(TiberoTestServer.dbaFromEnv())) {
+      return countAccounts(c, PREFIX.replace("_", "\\_") + purpose + "\\_%");
+    } catch (SQLException e) {
+      throw new IllegalStateException("계정 수 조회 실패(오류 코드 " + e.getErrorCode() + ")", e);
+    }
+  }
+
   /** 증거·로그 문자열에서 테스트 계정의 실행별 접미사를 가린다. */
   static String mask(String line) {
     return NAME.matcher(line).replaceAll("$1*");
@@ -254,6 +274,10 @@ public final class TiberoTestAccount implements AutoCloseable {
               + ts);
       st.execute("ALTER USER " + account + " QUOTA UNLIMITED ON " + ts);
       st.execute("GRANT " + privileges.grants + " TO " + account);
+      if (privileges == Privileges.TABLES_WITH_DBMS_LOCK) {
+        // 이번 실행이 방금 만든 계정에만 준다. 실패하면 호출자의 "생성 실패면 이번 계정 정리" 경로를 탄다.
+        st.execute("GRANT EXECUTE ON SYS.DBMS_LOCK TO " + account);
+      }
     }
   }
 }

@@ -13,8 +13,8 @@ import static org.mockito.Mockito.when;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.datastore.DataStoreDb;
+import com.smartfirehub.global.datastore.DataStoreSessionLocks;
 import com.smartfirehub.global.platformdb.PlatformLocks;
-import com.smartfirehub.global.platformdb.postgres.PostgresPlatformLocks;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
@@ -67,8 +67,18 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
     return prefix + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
   }
 
-  /** 현재 DB 에 존재하는 advisory 잠금 수(쥔 것·기다리는 것 모두). */
+  /**
+   * 데이터 저장소 DB 에 존재하는 advisory 잠금 수(쥔 것·기다리는 것 모두). 출력 테이블 세션 잠금과 SQL REPLACE 의 출력 잠금은 모두 데이터 저장소에
+   * 있다(WD-493) — 분리 모드에서는 플랫폼 DB 와 다른 DB 이므로 {@code dataDsl} 로 센다.
+   */
   private int advisoryLocks(String condition) {
+    return dataDsl
+        .fetchOne("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND " + condition)
+        .get(0, Integer.class);
+  }
+
+  /** 플랫폼 DB 에 존재하는 advisory 잠금 수 — 증분 스텝 잠금(WD-223)은 플랫폼 DB 의 잠금 전용 풀에서 잡는다. */
+  private int platformAdvisoryLocks(String condition) {
     return dsl.fetchOne(
             "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND " + condition)
         .get(0, Integer.class);
@@ -239,7 +249,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
     PreparedStatement acquire = mock(PreparedStatement.class);
     Statement release = mock(Statement.class);
     when(dataSource.getConnection()).thenReturn(connection);
-    when(connection.prepareStatement(PostgresPlatformLocks.TRY_ACQUIRE_SQL)).thenReturn(acquire);
+    when(connection.prepareStatement(DataStoreSessionLocks.TRY_ACQUIRE_SQL)).thenReturn(acquire);
     ResultSet acquired = mock(ResultSet.class);
     when(acquire.executeQuery()).thenReturn(acquired);
     when(acquired.next()).thenReturn(true);
@@ -250,7 +260,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
     String result =
         inTenant(
             () ->
-                new OutputTableSessionLock(dataSource, platformLocks)
+                new OutputTableSessionLock(dataSource, new DataStoreSessionLocks())
                     .callLocked("some_out", () -> "ok"));
 
     // 본문의 결과는 그대로 돌려준다(해제 실패가 성공한 실행을 실패로 바꾸지 않는다).
@@ -268,7 +278,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
     PreparedStatement acquire = mock(PreparedStatement.class);
     Statement release = mock(Statement.class);
     when(dataSource.getConnection()).thenReturn(connection);
-    when(connection.prepareStatement(PostgresPlatformLocks.TRY_ACQUIRE_SQL)).thenReturn(acquire);
+    when(connection.prepareStatement(DataStoreSessionLocks.TRY_ACQUIRE_SQL)).thenReturn(acquire);
     ResultSet acquired = mock(ResultSet.class);
     when(acquire.executeQuery()).thenReturn(acquired);
     when(acquired.next()).thenReturn(true);
@@ -277,10 +287,10 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
 
     inTenant(
         () ->
-            new OutputTableSessionLock(dataSource, platformLocks)
+            new OutputTableSessionLock(dataSource, new DataStoreSessionLocks())
                 .callLocked("some_out", () -> "ok"));
 
-    verify(release).executeQuery(PostgresPlatformLocks.RELEASE_SQL);
+    verify(release).executeQuery(DataStoreSessionLocks.RELEASE_SQL);
     verify(connection, never()).abort(any());
     verify(connection).close();
   }
@@ -296,7 +306,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
     long stepId = 9_000_000L + (System.nanoTime() % 1_000_000);
     try (SessionAdvisoryLock.Held first =
         inTenant(() -> shortWait.acquire(stepId, "느린 스텝", ExecutionCancelCheck.NONE))) {
-      assertThat(advisoryLocks("granted")).isEqualTo(1);
+      assertThat(platformAdvisoryLocks("granted")).isEqualTo(1);
       long started = System.currentTimeMillis();
       assertThatThrownBy(
               () -> inTenant(() -> shortWait.acquire(stepId, "느린 스텝", ExecutionCancelCheck.NONE)))
@@ -304,9 +314,9 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
           .hasMessageContaining("같은 증분 스텝('느린 스텝')의 이전 실행이")
           .hasMessageContaining("다시 실행해 주세요");
       assertThat(System.currentTimeMillis() - started).as("상한만큼은 기다린다").isGreaterThanOrEqualTo(600);
-      assertThat(advisoryLocks("granted")).as("대기자는 잠금을 쥐지 않는다").isEqualTo(1);
+      assertThat(platformAdvisoryLocks("granted")).as("대기자는 잠금을 쥐지 않는다").isEqualTo(1);
     }
-    assertThat(advisoryLocks("true")).as("닫으면 잠금이 남지 않는다").isZero();
+    assertThat(platformAdvisoryLocks("true")).as("닫으면 잠금이 남지 않는다").isZero();
   }
 
   /** 기다리는 동안 실행이 취소되면 바로 취소 예외로 끝난다(WD-153) — 상한까지 기다리지 않는다. */
@@ -325,7 +335,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
           .isInstanceOf(PipelineExecutionCancelledException.class);
       assertThat(System.currentTimeMillis() - started).isLessThan(10_000);
     }
-    assertThat(advisoryLocks("true")).isZero();
+    assertThat(platformAdvisoryLocks("true")).isZero();
   }
 
   /** 다른 스텝(다른 키)은 서로 기다리지 않는다 — 증분 스텝끼리라도 스텝이 다르면 직렬화하지 않는다. */
@@ -342,7 +352,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
       assertThat(a).isNotNull();
       assertThat(b).isNotNull();
     }
-    assertThat(advisoryLocks("true")).isZero();
+    assertThat(platformAdvisoryLocks("true")).isZero();
   }
 
   /**
@@ -359,9 +369,9 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
       assertThat(main.getHikariPoolMXBean().getActiveConnections())
           .as("잠금을 쥔 동안 메인 풀 사용 중 커넥션이 늘지 않는다")
           .isEqualTo(activeBefore);
-      assertThat(advisoryLocks("granted")).as("잠금은 실제로 잡혀 있다").isEqualTo(1);
+      assertThat(platformAdvisoryLocks("granted")).as("잠금은 실제로 잡혀 있다").isEqualTo(1);
     }
-    assertThat(advisoryLocks("true")).isZero();
+    assertThat(platformAdvisoryLocks("true")).isZero();
   }
 
   /** 잠금 전용 풀이 바닥나면 메인 풀로 넘어가지 않고 상한 안에서 기다리다 같은 안내로 실패한다. */
@@ -387,10 +397,10 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
             .hasMessageContaining("같은 증분 스텝('B')의 이전 실행이");
         assertThat(System.currentTimeMillis() - started).isGreaterThanOrEqualTo(1_500);
         // 메인 풀은 그대로 쓸 수 있다(이 조회가 메인 풀로 돈다).
-        assertThat(advisoryLocks("granted")).isEqualTo(1);
+        assertThat(platformAdvisoryLocks("granted")).isEqualTo(1);
       }
     }
-    assertThat(advisoryLocks("true")).isZero();
+    assertThat(platformAdvisoryLocks("true")).isZero();
   }
 
   private void awaitAdvisoryWaiters(int expected) {

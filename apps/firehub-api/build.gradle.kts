@@ -337,9 +337,6 @@ val separateDataStoreTest by tasks.registering(Test::class) {
         // 분리 모드 데이터 저장소는 기준선 + createTable 이 _updated_at 을 책임지고, 트리거 동작 자체는 DataTableServiceTest 가 분리 모드로 본다.
         excludeTestsMatching("com.smartfirehub.pipeline.PipelineIncrementalSchemaTest.백필_DO_블록을_재실행하면_새_TABLE_데이터셋의_물리테이블에도_적용된다")
         excludeTestsMatching("com.smartfirehub.pipeline.PipelineIncrementalSchemaTest.INSERT와_UPDATE에서_updated_at이_실제로_채워지고_갱신된다")
-        // WD-493 — OutputTableSessionLock(세션 잠금)은 아직 플랫폼 DB 에서 잡히고 SQL REPLACE 의 출력 잠금(OUTPUT_LOCK_SQL)은 파이프라인
-        // 연결(데이터 저장소)에서 잡힌다. 분리 모드에서는 두 잠금이 다른 DB 라 서로 기다리지 않는다 — 잠금 위치 이전이 WD-493 범위다.
-        excludeTestsMatching("com.smartfirehub.pipeline.service.OutputTableSessionLockTest.세션_잠금을_쥔_동안_같은_출력의_SQL_REPLACE는_기다린다")
     }
     // 분리 모드 결과는 컨테이너 두 개 상태에 달려 있어 캐시하지 않는다.
     outputs.upToDateWhen { false }

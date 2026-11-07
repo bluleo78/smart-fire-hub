@@ -44,8 +44,8 @@
 |---|---|---|---|
 | PG 데이터 저장소 | `PostgresDataTableStore`·`PostgresDataRowStore`·`DataTableQueryService`·`PgRowSearchIndex`·`SearchSourceReader`·`StagingTableCleanupService`·`AnalyticsQueryExecutionService`·`IncrementalCursorService`·`VerbatimSql`·`Adhoc*`·`TemporalSafeFetch` | PG `data` 스키마(사용자 테이블·사용자 SQL) | **WD-494 완료** — PG 데이터 저장소 전용 DSLContext(`@DataStoreDb`)로 옮겼다. Tibero 설치본에서 플랫폼 DSLContext 는 Tibero 를 가리키기 때문이다. |
 | PG 롤·스키마 준비 | `TenantSchemaProvisioner`·`TenantPipelineRoleProvisioner`·`TenantPipelineRoleBootstrap`·`PipelineSandboxDataSourceConfig`·`TenantPipelineDataSourceRegistry` | PG 테넌트 스키마·파이프라인 롤(소유자 연결 포함) | **WD-494 완료** — 데이터 저장소 소유자 연결로 옮겼고, 테넌트 롤은 기동 치유가 만든다 |
-| 플랫폼 + 데이터 저장소 혼합 | `PythonReadGrantSync`·`TiberoPythonReadGrantSync`·`PythonReadGrantBackend` | 플랫폼 메타 테이블(jOOQ 생성 테이블)을 읽고, 데이터 저장소에 GRANT 를 한다 | 메타 읽기는 **WD-494 완료**(`DatasetRepository.findSchemaMetas`·`findTableLevels`). staging 정리 게이트는 JobRunr 테이블을 직접 읽지 않고 JobRunr `StorageProvider.getJobStats()` 를 쓴다(Tibero 는 JobRunr Oracle 방언). 잠금은 데이터 저장소 쪽 하나로 잡는다 — **WD-493** |
-| PG 전용 플랫폼 구현 | `PostgresPlatformLocks`·`PostgresPlatformTenantSession` | 플랫폼 DB(PG) | Tibero 짝은 **WD-493**(잠금)·**WD-492**(테넌트 세션) |
+| 플랫폼 + 데이터 저장소 혼합 | `PythonReadGrantSync`·`TiberoPythonReadGrantSync`·`PythonReadGrantBackend` | 플랫폼 메타 테이블(jOOQ 생성 테이블)을 읽고, 데이터 저장소에 GRANT 를 한다 | 메타 읽기는 **WD-494 완료**(`DatasetRepository.findSchemaMetas`·`findTableLevels`). staging 정리 게이트는 JobRunr 테이블을 직접 읽지 않고 JobRunr `StorageProvider.getJobStats()` 를 쓴다(Tibero 는 JobRunr Oracle 방언). 잠금: PG 백엔드는 데이터 저장소에서 잡는다(`lockTenantSync`). Tibero 데이터 저장소 백엔드는 `PlatformLocks` 로 플랫폼 DB 에서 잡고, Tibero 맞바꿈 경로는 JVM 안 잠금뿐이다(알려진 빈틈, 아래 별도 이슈 후보) — **WD-493 완료** |
+| PG 전용 플랫폼 구현 | `PostgresPlatformLocks`·`PostgresPlatformTenantSession` | 플랫폼 DB(PG) | Tibero 짝: 잠금은 **WD-493 완료**(`TiberoPlatformLocks`), 테넌트 세션은 **WD-492** |
 
 → WD-491(리포지토리 73개)의 범위는 바뀌지 않는다. 다만 WD-494 는 "연결 분리" 만이 아니라 **위 18개 클래스의 DSLContext 를 바꿔 다는 일** 이다. 규모 M → L 로 본다.
 
@@ -128,7 +128,7 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 |---|---|---|
 | 벡터(의미) 검색 — AI 문서·데이터셋 검색 | Tibero 7.2 에 VECTOR 가 없다 | `PlatformDbFeature.VECTOR_SEARCH` 를 Tibero 기본값으로 끈다(WD-486 플래그) |
 | 키워드(트라이그램) 검색 | pg_trgm 에 대응하는 기능이 없다 | `TRIGRAM_SEARCH` 를 끈다 |
-| LISTEN/NOTIFY 즉시 깨우기 | 없다 | 끄지 않고 바꾼다. `DBMS_ALERT` 로 하거나, 폴링만 쓰고 지연을 감수한다(WD-493) |
+| LISTEN/NOTIFY 즉시 깨우기 | 없다 | 끄지 않고 바꾼다. `DBMS_ALERT` 로 깨운다(WD-493 완료). 끄면 폴링만 쓰고 지연을 감수한다 |
 
 화면 안내:
 
@@ -155,15 +155,62 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 - **소유자 계정**(`owner-url`·`owner-username`)에는 superuser(`CREATE EXTENSION postgis`), `pg_read_all_stats`(없으면 `fh_incremental_cursor_candidate` 가 오류 없이 틀린 값을 돌려준다), `app_tenant` 에 대한 ADMIN OPTION 이 필요하다.
 - **같은 클러스터면 `app_tenant` 비밀번호도 같아야 한다.** `app_tenant` 는 PG 클러스터 전역 롤이다. PG 플랫폼 DB 와 분리 모드 데이터 저장소가 한 클러스터에 있으면 플랫폼 Flyway(`spring.datasource.password`)와 데이터 저장소 Flyway(`firehub.data-store.postgres.password`)가 기동마다 서로 덮어써 플랫폼 풀 접속이 깨진다. 막지는 않고, 두 값이 다르면 기동 시 경고 로그를 남긴다.
 - **테넌트 파이프라인 롤은 기동 치유(`TenantPipelineRoleBootstrap`)가 데이터 저장소에 만든다.** 플랫폼 마이그레이션이 만들어 주지 않는다.
-- **배포 차단 사항 — WD-493 전에는 분리 모드를 배포하지 않는다.** 출력 테이블 세션 잠금(`OutputTableSessionLock`, `PostgresPlatformLocks`, 플랫폼 DB)과 SQL REPLACE 출력 잠금(`SqlScriptExecutor` `OUTPUT_LOCK_SQL`, 데이터 저장소)이 서로 다른 DB 에 있어 서로 막지 못한다.
+- **배포 차단 사항 해제 — WD-493 완료.** 출력 테이블 세션 잠금을 데이터 저장소(`DataStoreSessionLocks`, `@DataStoreDb` 풀)로 옮겨 SQL REPLACE 출력 잠금과 같은 DB 에서 잡는다. 이제 분리 모드를 배포할 수 있다(남은 선행 이슈는 WD-491·WD-492).
 - **WD-491 이 MyBatis 짝을 만들어야 하는 새 플랫폼 리포지토리 메서드:** `DatasetRepository.findSchemaMetas`, `DatasetRepository.findTableLevels`. (staging 정리 게이트는 JobRunr `StorageProvider` 를 써서 MyBatis 짝이 필요 없다.)
 - **회귀:** Gradle 태스크 `separateDataStoreTest` 가 데이터 저장소 패키지를 분리 모드로 돌린다.
 
-두 저장소를 가로지르는 직렬화를 다시 설계한다(WD-493). 지금은 PG 의 같은 잠금 공간을 공유해서 맞게 동작하는 것이 2건 있다. Python 읽기 권한 동기화와 출력 테이블 잠금이다.
+#### 잠금 배치 규칙(WD-493)
 
-- 데이터 저장소에 대한 잠금은 데이터 저장소에서 잡는다.
-- 플랫폼 잠금은 플랫폼 DB 에서 잡는다.
-- 한 직렬화는 한쪽 잠금으로만 잡는다.
+두 저장소를 가로지르는 직렬화는 아래 규칙으로 정리했다. 스펙 4절 표가 직렬화별 저장소를 정한다.
+
+- 데이터 저장소를 지키는 잠금은 데이터 저장소에서 잡는다(출력 테이블 세션 잠금, SQL REPLACE 출력 잠금, PG 백엔드의 Python 읽기 권한 동기화 `lockTenantSync`).
+- Tibero 데이터 저장소 백엔드의 Python 읽기 권한 동기화(`TiberoPythonReadGrantSync`)는 `PlatformLocks` 로 플랫폼 DB 에서 잡는다. 그 짝이 될 Tibero 맞바꿈 경로는 JVM 안 잠금만 쓴다. 여러 API 인스턴스 사이에서는 서로 막지 못하는 알려진 빈틈이고, 아래 `TiberoDataTableStore` 별도 이슈 후보에 함께 넣는다.
+- 플랫폼을 지키는 잠금은 플랫폼 DB 에서 잡는다(`PlatformLocks.xactLock`, `IncrementalStepLock`).
+- 한 직렬화의 잠금은 모두 한 저장소에서 잡는다. 한 직렬화가 두 DB 에 갈라지면 서로 막지 못한다.
+- 세션 잠금은 `SessionLocks` 인터페이스로 분리했다(`releaseSessionLock(Connection, key)`). PG 구현 `DataStoreSessionLocks` 가 `@DataStoreDb` 풀에서 잡고 푼다.
+
+**불변식: 플랫폼 잠금을 먼저, 데이터 저장소 잠금을 나중에.**
+
+- 두 DB 사이의 교착은 어느 DB 도 탐지하지 못한다. 한 스레드가 A DB 잠금을 쥐고 B DB 잠금을 기다리고, 다른 스레드가 반대로 쥐고 있으면 둘 다 타임아웃 없이 멈춘다. 그래서 획득 순서를 한 방향으로 고정한다.
+- 분리 모드에서 데이터 저장소 xact 잠금은 플랫폼 트랜잭션 커밋보다 먼저 풀린다(beforeCommit). 플랫폼 행을 지키는 잠금을 데이터 저장소에 두면 그 행의 커밋 전에 잠금이 풀리므로, 플랫폼 행을 지키는 잠금은 데이터 저장소에 두지 않는다.
+- 점검 결과: 데이터 저장소 잠금 지점 11곳과 플랫폼 잠금 진입점 6개를 양방향으로 확인했다. 앞쪽은 11곳 각각의 잠금 구간 안에서 플랫폼 잠금으로 가는 경로를 찾았고, 뒤쪽은 진입점 6개의 호출자를 거슬러 올라가 데이터 저장소 구간에 닿는지 봤다. "플랫폼 잠금 후 데이터 저장소 잠금" 순서를 어긴 곳은 0건이다.
+- 잠금 구간은 넓게 잡았다. 분리 모드에서 데이터 저장소 연결은 바깥 플랫폼 트랜잭션에 묶이므로, 데이터 저장소 xact 잠금의 구간은 잠금 문장부터 바깥 플랫폼 트랜잭션의 beforeCommit 까지다.
+- 이 불변식의 범위는 **플랫폼 어드바이저리 잠금**(`PlatformLocks.xactLock`·`IncrementalStepLock`)이다. 데이터 저장소 DDL 뒤에 잡는 행 잠금(`FOR UPDATE`, 예: `DatasetService.updateColumn`)은 전수 점검하지 않았다.
+- 데이터 저장소 잠금을 쥔 채 플랫폼 풀 커넥션을 따로 빌리는 곳이 있다(`isStopRequested`·`backendFor`·`syncTable`). 분리 모드에서는 플랫폼 풀 크기도 동시 실행 수에 맞춰야 한다.
+
+**분리 모드 풀 크기:** `@DataStoreDb` 풀(기본 최대 10)을 추가로 점유하는 것은 출력 테이블 세션 잠금(`OutputTableSessionLock`, 실행기를 끈 로컬 PYTHON 의 PG REPLACE)뿐이다. 세션 잠금 연결을 쥔 채 안쪽 적재·맞바꿈이 풀에서 연결을 따로 빌리므로 한 건당 1개가 더 묶인다. SQL REPLACE 의 출력 잠금(`OUTPUT_LOCK_SQL`)은 테넌트 파이프라인 전용 풀을 쓰므로 `@DataStoreDb` 풀을 더 쓰지 않는다. 위 불변식 항목처럼 데이터 저장소 잠금 보유자가 플랫폼 풀 커넥션도 빌리므로 `PLATFORM_DB_POOL_SIZE` 도 함께 본다.
+
+**알려진 한계(분리 모드 풀 고갈):** 실행기를 끈 로컬 PYTHON REPLACE 는 `@DataStoreDb` 잠금 연결을 쥔 채 같은 풀에서 적재용 연결을 하나 더 빌린다. 이런 REPLACE 가 풀 크기만큼 동시에 돌면 모두 잠금 연결만 쥐고 적재 연결을 기다려 `connection-timeout` 까지 풀이 막힌다. 개발용 경로(운영은 실행기를 켠다)라 지금은 고치지 않고 별도 이슈 후보로 둔다.
+
+#### Tibero 잠금·깨우기 구현(WD-493)
+
+실서버로 확인한 것:
+
+- `DBMS_LOCK` 잠금 id 범위는 `[1073741824, 1999999999]` 다.
+- `ALLOCATE_UNIQUE` 는 호출한 트랜잭션을 커밋하므로 쓰지 않는다. 키는 Java 쪽에서 해시한다(정수 키는 앞 100만 구간, 문자열 키는 SHA-256).
+- `DBMS_LOCK` 사용자 잠금 id 와 `DBMS_ALERT` 이름은 **인스턴스 전역**이다. 한 Tibero 인스턴스에 설치본·계정·실서버 테스트 계정이 여럿 있으면 같은 키가 같은 id·같은 알림 이름을 쓴다. 그래서 둘 다 플랫폼 계정의 현재 스키마로 이름공간을 나눈다. 스키마는 기동 때 `SYS_CONTEXT('USERENV','CURRENT_SCHEMA')` 로 한 번 읽는다(실서버 확인, 실패하면 `USER`). 문자열 키는 `스키마:키` 를 해시하고, 정수 키는 100만 구간 안에서 스키마 해시만큼 돌린다. 알림 이름은 `FH_OUTBOX_NEW_<스키마 SHA-256 앞 8자리 16진>`(22자, 30자 제한 안)이다.
+- `unlock_all` 이 없어 키를 지정해 해제한다.
+- Tibero 드라이버는 `ApplicationName` 데이터 소스 속성을 거부하지 않았다.
+- `DBMS_ALERT.SIGNAL` 은 메시지로 `"1"` 을 보낸다. Tibero 는 `''` 를 NULL 로 보고 거부한다(JDBC-14208).
+
+설치 전제 조건:
+
+- `GRANT EXECUTE ON SYS.DBMS_LOCK TO <플랫폼 계정>` 이 필요하다. 없으면 기동 검사가 "플랫폼 계정에 GRANT EXECUTE ON SYS.DBMS_LOCK 이 필요합니다(ADR 0001)" 안내와 함께 멈춘다.
+- 권한이 없을 때 오류 코드는 15146 이다(드라이버가 음수로 줄 수 있다).
+- 아웃박스 즉시 깨우기는 `DBMS_ALERT`(`FH_OUTBOX_NEW_<스키마 해시>`)로 한다. API 인스턴스마다 Tibero 세션 1개를 상시 점유한다. 끄려면 `notification.worker.listen_notify=false` 로 둔다(30초 폴링만 남는다).
+
+스펙과 달라진 점:
+
+- 알림 이름: 스펙 6절은 `FH_OUTBOX_NEW` 고정이었다. 인스턴스를 여러 설치본이 함께 쓰므로 스키마 해시를 붙였다(위 실측).
+- 잠금 id: 스펙 5절은 키만으로 id 를 정했다. 같은 이유로 스키마를 섞는다.
+- `SIGNAL` 메시지: 스펙은 `''` 였지만 Tibero 가 NULL 로 보고 거부해 `"1"` 을 보낸다.
+- 트랜잭션 잠금 가드: 스펙 5절은 `isActualTransactionActive()` 였다. 지금은 플랫폼 DataSource 가 현재 트랜잭션에 묶였는지(`hasResource`)를 본다. 다른 DataSource 의 트랜잭션 안에서는 자동 커밋 커넥션에서 잡혀 곧바로 풀리기 때문이다.
+
+다른 확인·후보:
+
+- `FOR UPDATE SKIP LOCKED` 는 확인했다(WD-487). 운영 빈 전환은 WD-491 이다.
+- 별도 이슈 후보: `TiberoDataTableStore` 의 JVM 안 잠금은 여러 API 인스턴스 사이를 막지 못한다. Tibero 맞바꿈과 Tibero Python 읽기 권한 동기화(플랫폼 `PlatformLocks`)가 서로 막지 못하는 것도 여기에 넣는다.
+- 별도 이슈 후보: 분리 모드에서 실행기를 끈 로컬 PYTHON REPLACE 가 동시에 많으면 `@DataStoreDb` 풀이 고갈된다(위 풀 크기 항목).
 
 ### 5. 검증 환경 — **데모 라이선스 매달 갱신** (사용자 결정)
 

@@ -3,7 +3,6 @@ package com.smartfirehub.global.platformdb.postgres;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.global.platformdb.PlatformLocks;
-import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.PausedTransactionRace;
 import java.sql.Connection;
@@ -51,13 +50,6 @@ class PostgresPlatformLocksTest extends IntegrationTestBase {
     assertBlocksUntilCommit(l -> l.xactLock("wd486-k"), l -> l.xactLock("wd486-k"));
   }
 
-  /** R4 불변식 — Tibero 판이 쓰는 문자열 키가 PG 판 {@code lockTenantSync} 와 같은 잠금 공간이다. */
-  @Test
-  void xactLockSerializesWithPythonReadGrantSyncLockTenantSync() throws Exception {
-    assertBlocksUntilCommit(
-        l -> PythonReadGrantSync.lockTenantSync(dsl, 7L), l -> l.xactLock("python_read_sync_t7"));
-  }
-
   /** 정수 키는 가입 잠금(acquireFirstUserLock)의 {@code pg_advisory_xact_lock(1)} 과 같은 키 공간이다. */
   @Test
   void xactLockLongUsesSameKeySpaceAsAcquireFirstUserLock() throws Exception {
@@ -76,7 +68,7 @@ class PostgresPlatformLocksTest extends IntegrationTestBase {
   }
 
   @Test
-  void sessionLockTryAndReleaseAll() throws Exception {
+  void sessionLockTryAndRelease() throws Exception {
     try (Connection c1 = dataSource.getConnection();
         Connection c2 = dataSource.getConnection()) {
       c1.setAutoCommit(true);
@@ -84,9 +76,9 @@ class PostgresPlatformLocksTest extends IntegrationTestBase {
       String key = "wd486-session-" + System.nanoTime();
       assertThat(locks.trySessionLock(c1, key)).isTrue();
       assertThat(locks.trySessionLock(c2, key)).isFalse();
-      locks.releaseAllSessionLocks(c1);
+      locks.releaseSessionLock(c1, key);
       assertThat(locks.trySessionLock(c2, key)).isTrue();
-      locks.releaseAllSessionLocks(c2);
+      locks.releaseSessionLock(c2, key);
     }
   }
 }

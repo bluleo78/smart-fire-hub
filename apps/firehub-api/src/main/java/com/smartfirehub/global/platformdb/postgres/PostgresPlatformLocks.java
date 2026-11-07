@@ -5,10 +5,7 @@ import static org.jooq.impl.DSL.val;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -24,8 +21,8 @@ import org.springframework.stereotype.Component;
  * 공유.
  *
  * <p>트랜잭션 범위 잠금은 주입된 메인 {@link DSLContext} 로 실행하므로 호출자의 Spring 트랜잭션에 합류한다. 문자열 키는 {@code
- * PythonReadGrantSync.lockTenantSync} 와 같은 키 식({@code hashtextextended(키, 0)})을 써서, 같은 키 문자열이면 두
- * 경로가 같은 잠금 공간에서 직렬화된다.
+ * hashtextextended(키, 0)} 식을 쓴다. 이 잠금은 플랫폼 DB 에서 잡힌다 — 데이터 저장소의 {@code
+ * PythonReadGrantSync.lockTenantSync} 와는 다른 저장소일 수 있고, 테넌트마다 백엔드가 하나라 서로 겹치지 않는다(WD-493).
  */
 @Component
 @ConditionalOnPostgresPlatformDb
@@ -46,17 +43,11 @@ public class PostgresPlatformLocks implements PlatformLocks {
   /** 정수 키 트랜잭션 잠금 — 키를 그대로 잠금 id 로 쓴다. */
   static final String XACT_LOCK_LONG_SQL = "SELECT pg_advisory_xact_lock({0})";
 
-  /**
-   * 세션 잠금 획득 시도 문장 — 키 문자열의 64비트 해시로 잠근다(기다리지 않는 시도형).
-   *
-   * <p>키 식은 {@code SqlScriptExecutor.OUTPUT_LOCK_SQL} 과 같아야 한다(같은 해시) — 출력 테이블 잠금 ({@code
-   * OutputTableSessionLock})과 SQL 스텝의 출력 잠금이 같은 키 공간에서 서로를 막는 것이 이 일치에 달려 있다.
-   */
-  public static final String TRY_ACQUIRE_SQL =
-      "SELECT pg_try_advisory_lock(hashtextextended(?, 0))";
+  /** 세션 잠금 획득 시도 문장 — {@link PostgresSessionLockSql#TRY_ACQUIRE_SQL} 의 별칭(기존 테스트·호출처 호환). */
+  public static final String TRY_ACQUIRE_SQL = PostgresSessionLockSql.TRY_ACQUIRE_SQL;
 
-  /** 세션 잠금 해제 문장 — 이 세션이 쥔 세션 범위 advisory 잠금을 전부 푼다. */
-  public static final String RELEASE_SQL = "SELECT pg_advisory_unlock_all()";
+  /** 세션 잠금 해제 문장 — {@link PostgresSessionLockSql#RELEASE_SQL} 의 별칭(기존 테스트·호출처 호환). */
+  public static final String RELEASE_SQL = PostgresSessionLockSql.RELEASE_SQL;
 
   /** 메인 DSL — 호출자의 Spring 트랜잭션에 합류해 트랜잭션 범위 잠금을 잡는다. */
   private final DSLContext dsl;
@@ -104,21 +95,17 @@ public class PostgresPlatformLocks implements PlatformLocks {
     }
   }
 
+  /** 플랫폼 DB 커넥션에서 세션 잠금을 시도한다 — 본문은 데이터 저장소 구현과 공유하는 {@link PostgresSessionLockSql} 에 있다. */
   @Override
   public boolean trySessionLock(Connection connection, String key) throws SQLException {
-    try (PreparedStatement attempt = connection.prepareStatement(TRY_ACQUIRE_SQL)) {
-      attempt.setString(1, key);
-      try (ResultSet rs = attempt.executeQuery()) {
-        return rs.next() && rs.getBoolean(1);
-      }
-    }
+    return PostgresSessionLockSql.tryAcquire(connection, key);
   }
 
+  /**
+   * 키와 무관하게 이 세션의 세션 잠금을 전부 푼다({@code unlock_all}, 사유는 {@link PostgresSessionLockSql#releaseAll}).
+   */
   @Override
-  public void releaseAllSessionLocks(Connection connection) throws SQLException {
-    try (Statement release = connection.createStatement();
-        ResultSet ignored = release.executeQuery(RELEASE_SQL)) {
-      // 결과는 쓰지 않는다 — 문장이 끝났다는 것이 곧 해제다.
-    }
+  public void releaseSessionLock(Connection connection, String key) throws SQLException {
+    PostgresSessionLockSql.releaseAll(connection);
   }
 }

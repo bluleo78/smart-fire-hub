@@ -371,6 +371,9 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * {@code DROP TABLE} 과 겹치면 한쪽이 {@code tuple concurrently updated/deleted}(XX000)로 깨진다. REPLACE
    * 맞바꿈(원본 DROP)이 바로 그 경우다 — 같은 출력에 겹친 실행이 맞바꾼 직후 거는 이 동기화의 GRANT 와 다른 실행의 맞바꿈이 부딪혀 실행이 실패했다(WD-151
    * 라이브 확인).
+   *
+   * <p>이 잠금은 <b>데이터 저장소</b> 연결에서 잡는다 — 동기화 GRANT 와 맞바꿈 DROP 이 모두 데이터 저장소에서 일어나므로 직렬화도 그 저장소 안에서 끝나야
+   * 한다(한 직렬화 = 한 저장소, WD-493). 테넌트마다 백엔드는 하나라 Tibero 판({@code TiberoPythonReadGrantSync})과 겹치지 않는다.
    */
   public static void lockTenantSync(DSLContext ctx, long tenantId) {
     ctx.execute(
@@ -379,7 +382,8 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
 
   /**
    * 테넌트 동기화 잠금의 키 문자열. PG 판({@link #lockTenantSync})과 Tibero 판({@code TiberoPythonReadGrantSync})이
-   * <b>같은 키</b>를 써야 서로 직렬화되므로(WD-486 R4) 두 경로가 손으로 쓰지 않고 이 한 곳을 공유한다 — 키를 바꾸면 두 경로가 함께 바뀐다.
+   * 키 문자열을 손으로 쓰지 않고 이 한 곳을 공유한다(키 일관성). 두 판은 서로 다른 저장소에서 잡으므로 서로를 막지는 않는다(WD-493) — 테넌트마다 백엔드는
+   * 하나다.
    */
   public static String syncLockKey(long tenantId) {
     return "python_read_sync_t" + tenantId;
