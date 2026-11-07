@@ -1514,3 +1514,274 @@ test.describe('파이프라인 트리거 — 다음 5회 서버 미리보기 (WD
     await expect(dialog.getByText('다음 5회 실행 예정')).toHaveCount(0);
   });
 });
+
+/**
+ * WD-576: 트리거 수정에 편집 충돌 보호가 없어, A 가 cron 을 바꾼 뒤 옛 화면의 B 가 이름만 바꿔 저장하면(옛 cron 포함) A 의 변경이 경고 없이 사라졌다.
+ * 이제 편집 창이 열 때 읽은 updatedAt 을 expectedUpdatedAt 으로 보내고, 409 EDIT_CONFLICT 면 공통 충돌 창(다시 불러오기 / 덮어쓰기)을 띄운다.
+ */
+test.describe('트리거 편집 — 편집 충돌(WD-576)', () => {
+  const BASE_VERSION = '2026-11-07T09:00:00.123456';
+  const OTHER_VERSION = '2026-11-07T09:05:00.654321';
+  const EDIT_CONFLICT_BODY = {
+    status: 409,
+    error: 'Conflict',
+    code: 'EDIT_CONFLICT',
+    message: '이 트리거는 편집을 시작한 뒤 다른 곳에서 변경되었습니다. 다시 불러온 뒤 저장하세요.',
+  };
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
+  /** ⋯ 메뉴로 첫 트리거의 편집 창을 연다. */
+  async function openEditDialog(page: Page) {
+    await gotoTriggerTab(page);
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+    const dialog = page.getByRole('dialog').filter({ hasText: '트리거 편집' });
+    await expect(dialog.getByText('트리거 편집')).toBeVisible();
+    return dialog;
+  }
+
+  test('저장 요청에 편집 창을 열 때의 updatedAt 이 expectedUpdatedAt 으로 실린다', async ({ authenticatedPage: page }) => {
+    const existing = createTrigger({
+      id: 5,
+      name: '매일새벽',
+      triggerType: 'SCHEDULE',
+      config: { cron: '0 0 3 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' },
+      updatedAt: BASE_VERSION,
+    });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1/triggers/5', null, {
+      status: 204,
+      capture: true,
+    });
+
+    const dialog = await openEditDialog(page);
+    await dialog.getByLabel(/^이름/).fill('이름만 바꿈');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      name: '이름만 바꿈',
+      config: { cron: '0 0 3 * * *' },
+      expectedUpdatedAt: BASE_VERSION,
+    });
+    await expect(page.getByText('트리거 "이름만 바꿈"이 수정되었습니다.')).toBeVisible();
+  });
+
+  test('409 EDIT_CONFLICT 면 충돌 창을 띄우고, 「내 변경으로 덮어쓰기」는 기준 버전 없이 다시 저장한다', async ({
+    authenticatedPage: page,
+  }) => {
+    const existing = createTrigger({
+      id: 5,
+      name: '매일새벽',
+      triggerType: 'SCHEDULE',
+      config: { cron: '0 0 3 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' },
+      updatedAt: BASE_VERSION,
+    });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+
+    // 첫 저장은 충돌(409), 덮어쓰기 저장은 성공(204) — 보낸 본문을 차례로 모은다.
+    const putPayloads: Record<string, unknown>[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1/triggers/5',
+      (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        putPayloads.push(route.request().postDataJSON() as Record<string, unknown>);
+        if (putPayloads.length === 1) {
+          return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify(EDIT_CONFLICT_BODY) });
+        }
+        return route.fulfill({ status: 204 });
+      },
+    );
+
+    const dialog = await openEditDialog(page);
+    await dialog.getByLabel(/^이름/).fill('B 가 바꾼 이름');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const conflict = page.getByRole('alertdialog');
+    await expect(conflict.getByText('다른 곳에서 먼저 변경되었습니다')).toBeVisible();
+    await expect(conflict.getByText(/이 트리거은\(는\) 편집을 시작한 뒤/)).toBeVisible();
+    // 충돌은 토스트(서버 문구)가 아니라 안내 창으로 알린다
+    await expect(page.getByText(EDIT_CONFLICT_BODY.message)).toHaveCount(0);
+    expect(putPayloads[0]).toMatchObject({ expectedUpdatedAt: BASE_VERSION });
+
+    await conflict.getByRole('button', { name: '내 변경으로 덮어쓰기' }).click();
+
+    await expect(page.getByText('트리거 "B 가 바꾼 이름"이 수정되었습니다.')).toBeVisible();
+    expect(putPayloads).toHaveLength(2);
+    expect(putPayloads[1]).toMatchObject({ name: 'B 가 바꾼 이름', config: { cron: '0 0 3 * * *' } });
+    expect(putPayloads[1]).not.toHaveProperty('expectedUpdatedAt');
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+
+  test('「다시 불러오기」는 그 트리거 한 건을 다시 받아 최신 값과 새 기준 버전으로 편집 창을 바꾼다', async ({
+    authenticatedPage: page,
+  }) => {
+    const existing = createTrigger({
+      id: 5,
+      name: '매일새벽',
+      triggerType: 'SCHEDULE',
+      config: { cron: '0 0 3 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' },
+      updatedAt: BASE_VERSION,
+    });
+    // 다른 사람이 먼저 저장한 최신 상태 — cron 이 09:00 으로 바뀌었다.
+    const latest = {
+      ...existing,
+      name: '다른 사람이 고친 이름',
+      config: { cron: '0 0 9 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' },
+      updatedAt: OTHER_VERSION,
+    };
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+
+    // 목록 응답: 충돌 전까지는 옛 값, 충돌 뒤(서버가 이미 바뀐 상태)에는 최신 값.
+    let serverChanged = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1/triggers',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([serverChanged ? latest : existing]),
+        });
+      },
+    );
+    // 단건 조회(「다시 불러오기」)는 최신 값 — 부른 횟수를 센다. PUT 은 첫 번은 충돌, 다음은 성공.
+    let singleGetCalls = 0;
+    const putPayloads: Record<string, unknown>[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1/triggers/5',
+      (route) => {
+        if (route.request().method() === 'GET') {
+          singleGetCalls += 1;
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(latest) });
+        }
+        if (route.request().method() !== 'PUT') return route.fallback();
+        putPayloads.push(route.request().postDataJSON() as Record<string, unknown>);
+        if (putPayloads.length === 1) {
+          serverChanged = true;
+          return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify(EDIT_CONFLICT_BODY) });
+        }
+        return route.fulfill({ status: 204 });
+      },
+    );
+
+    const dialog = await openEditDialog(page);
+    await dialog.getByLabel(/^이름/).fill('B 가 바꾼 이름');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const conflict = page.getByRole('alertdialog');
+    await expect(conflict.getByText('다른 곳에서 먼저 변경되었습니다')).toBeVisible();
+    await conflict.getByRole('button', { name: '다시 불러오기' }).click();
+
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    expect(singleGetCalls).toBe(1);
+    // 편집 창은 열린 채로 최신 값(내 변경은 버림)을 보인다
+    await expect(dialog.getByLabel(/^이름/)).toHaveValue('다른 사람이 고친 이름');
+    await expect(page.getByText('최신 내용을 불러왔습니다.')).toBeVisible();
+
+    // 이어서 저장하면 새 기준 버전과 최신 cron 이 실린다
+    await dialog.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByText('트리거 "다른 사람이 고친 이름"이 수정되었습니다.')).toBeVisible();
+    expect(putPayloads).toHaveLength(2);
+    expect(putPayloads[1]).toMatchObject({
+      name: '다른 사람이 고친 이름',
+      config: { cron: '0 0 9 * * *' },
+      expectedUpdatedAt: OTHER_VERSION,
+    });
+  });
+
+  test('「다시 불러오기」 때 트리거가 이미 삭제됐으면(404) 안내하고 편집 창을 닫는다', async ({ authenticatedPage: page }) => {
+    const existing = createTrigger({
+      id: 5,
+      name: '매일새벽',
+      triggerType: 'SCHEDULE',
+      config: { cron: '0 0 3 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' },
+      updatedAt: BASE_VERSION,
+    });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1/triggers/5',
+      (route) => {
+        if (route.request().method() === 'GET') {
+          return route.fulfill({
+            status: 404,
+            contentType: 'application/json',
+            body: JSON.stringify({ status: 404, error: 'Not Found', message: '트리거를 찾을 수 없습니다.' }),
+          });
+        }
+        if (route.request().method() !== 'PUT') return route.fallback();
+        return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify(EDIT_CONFLICT_BODY) });
+      },
+    );
+
+    const dialog = await openEditDialog(page);
+    await dialog.getByRole('button', { name: '저장' }).click();
+    const conflict = page.getByRole('alertdialog');
+    await expect(conflict.getByText('다른 곳에서 먼저 변경되었습니다')).toBeVisible();
+    await conflict.getByRole('button', { name: '다시 불러오기' }).click();
+
+    await expect(page.getByText('트리거를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.')).toBeVisible();
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+
+  test('켜기/끄기 직후 연 편집 창은 다시 받은 목록의 새 updatedAt 을 기준으로 보낸다(자기 변경과 충돌하지 않음)', async ({
+    authenticatedPage: page,
+  }) => {
+    const existing = createTrigger({
+      id: 5,
+      name: '매일새벽',
+      triggerType: 'SCHEDULE',
+      isEnabled: true,
+      config: { cron: '0 0 3 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' },
+      updatedAt: BASE_VERSION,
+    });
+    // 끈 뒤의 서버 상태 — 켜기/끄기는 updatedAt 을 바꾼다.
+    const toggled = { ...existing, isEnabled: false, nextFireTime: null, updatedAt: OTHER_VERSION };
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+
+    let toggledOnServer = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1/triggers',
+      async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        if (!toggledOnServer) {
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([existing]) });
+        }
+        // 재조회가 늦게 도착한다 — 켜기/끄기가 이 재조회를 기다리지 않으면 그 사이 연 편집 창이 옛 updatedAt 을 든다.
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([toggled]) });
+      },
+    );
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1/triggers/5/toggle',
+      (route) => {
+        if (route.request().method() !== 'PATCH') return route.fallback();
+        toggledOnServer = true;
+        return route.fulfill({ status: 204 });
+      },
+    );
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1/triggers/5', null, {
+      status: 204,
+      capture: true,
+    });
+
+    await gotoTriggerTab(page);
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '비활성화' }).click();
+    await expect(page.getByText('트리거 "매일새벽"이 비활성화되었습니다.')).toBeVisible();
+
+    // 완료 안내가 뜨자마자 편집 창을 연다
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+    const dialog = page.getByRole('dialog').filter({ hasText: '트리거 편집' });
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ expectedUpdatedAt: OTHER_VERSION });
+  });
+});

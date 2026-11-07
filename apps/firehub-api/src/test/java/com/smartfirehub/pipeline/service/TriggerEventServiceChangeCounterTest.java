@@ -102,6 +102,7 @@ class TriggerEventServiceChangeCounterTest {
         state,
         null,
         1L,
+        LocalDateTime.now(),
         LocalDateTime.now());
   }
 

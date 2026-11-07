@@ -72,6 +72,7 @@ class TriggerControllerTest {
         Map.of(),
         null,
         1L,
+        LocalDateTime.now(),
         LocalDateTime.now());
   }
 

@@ -241,6 +241,59 @@ describe('Trigger MCP Tools', () => {
       expect(result.isError).toBe(true);
     });
 
+    it('기존 트리거를 읽었으면 그 updatedAt 을 expectedUpdatedAt 으로 보낸다 (WD-576)', async () => {
+      (client.getTrigger as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 14,
+        name: '매일새벽',
+        config: { cron: '0 0 3 * * *', timezone: 'UTC' },
+        updatedAt: '2026-11-07T09:00:00.123456',
+      });
+      await invokeTool(server, 'update_trigger', {
+        pipelineId: 3,
+        triggerId: 14,
+        config: { cron: '0 0 9 * * *' },
+      });
+      expect(client.updateTrigger).toHaveBeenCalledWith(3, 14, {
+        name: '매일새벽',
+        config: { cron: '0 0 9 * * *', timezone: 'UTC' },
+        expectedUpdatedAt: '2026-11-07T09:00:00.123456',
+      });
+    });
+
+    it('기존 트리거를 읽지 않은 수정(이름만)은 expectedUpdatedAt 없이 보낸다 (WD-576)', async () => {
+      await invokeTool(server, 'update_trigger', { pipelineId: 3, triggerId: 14, name: '새 이름' });
+      expect(client.getTrigger).not.toHaveBeenCalled();
+      expect(client.updateTrigger).toHaveBeenCalledWith(3, 14, { name: '새 이름' });
+    });
+
+    it('편집 충돌(409 EDIT_CONFLICT)이면 다시 조회해 확인하라는 한국어 오류를 돌려준다 (WD-576)', async () => {
+      (client.getTrigger as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 14,
+        name: '매일새벽',
+        config: { cron: '0 0 3 * * *' },
+        updatedAt: '2026-11-07T09:00:00.123456',
+      });
+      // api-client 인터셉터가 던지는 형태 — status 와 원본 response 를 보존한다
+      (client.updateTrigger as ReturnType<typeof vi.fn>).mockRejectedValue(
+        Object.assign(new Error('API 오류 (409): 이 트리거는 편집을 시작한 뒤 다른 곳에서 변경되었습니다.'), {
+          status: 409,
+          response: {
+            status: 409,
+            data: { code: 'EDIT_CONFLICT', message: '이 트리거는 편집을 시작한 뒤 다른 곳에서 변경되었습니다.' },
+          },
+        }),
+      );
+      const result = await invokeTool(server, 'update_trigger', {
+        pipelineId: 3,
+        triggerId: 14,
+        config: { cron: '0 0 9 * * *' },
+      });
+      expect(result.isError).toBe(true);
+      const text = result.content[0].text as string;
+      expect(text).toContain('트리거 14번은 조회한 뒤 다른 곳');
+      expect(text).toContain('다시 조회');
+    });
+
     it('returns isError on failure', async () => {
       (client.updateTrigger as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
       const result = await invokeTool(server, 'update_trigger', {

@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
 import com.smartfirehub.pipeline.dto.PipelineDeleteImpactResponse;
@@ -109,7 +110,8 @@ public class JooqTriggerRepository implements TriggerRepository {
         triggerState,
         nextFireTimeValue == null ? null : nextFireTimeValue.toString(),
         r.get(T_CREATED_BY),
-        r.get(T_CREATED_AT));
+        r.get(T_CREATED_AT),
+        r.get(T_UPDATED_AT));
   }
 
   @Override
@@ -124,7 +126,8 @@ public class JooqTriggerRepository implements TriggerRepository {
             T_CONFIG,
             T_TRIGGER_STATE,
             T_CREATED_BY,
-            T_CREATED_AT)
+            T_CREATED_AT,
+            T_UPDATED_AT)
         .from(PIPELINE_TRIGGER)
         .where(T_PIPELINE_ID.eq(pipelineId))
         .orderBy(T_ID.asc())
@@ -143,7 +146,8 @@ public class JooqTriggerRepository implements TriggerRepository {
             T_CONFIG,
             T_TRIGGER_STATE,
             T_CREATED_BY,
-            T_CREATED_AT)
+            T_CREATED_AT,
+            T_UPDATED_AT)
         .from(PIPELINE_TRIGGER)
         .where(T_ID.eq(id))
         .fetchOptional(this::mapToResponse);
@@ -161,7 +165,8 @@ public class JooqTriggerRepository implements TriggerRepository {
             T_CONFIG,
             T_TRIGGER_STATE,
             T_CREATED_BY,
-            T_CREATED_AT)
+            T_CREATED_AT,
+            T_UPDATED_AT)
         .from(PIPELINE_TRIGGER)
         .where(T_TRIGGER_TYPE.eq(triggerType))
         .and(T_IS_ENABLED.eq(true))
@@ -180,7 +185,8 @@ public class JooqTriggerRepository implements TriggerRepository {
             T_CONFIG,
             T_TRIGGER_STATE,
             T_CREATED_BY,
-            T_CREATED_AT)
+            T_CREATED_AT,
+            T_UPDATED_AT)
         .from(PIPELINE_TRIGGER)
         .where(T_TRIGGER_TYPE.eq("PIPELINE_CHAIN"))
         .and(T_IS_ENABLED.eq(true))
@@ -218,6 +224,17 @@ public class JooqTriggerRepository implements TriggerRepository {
         .set(T_CREATED_BY, userId)
         .returning(T_ID)
         .fetchOne(r -> r.get(T_ID));
+  }
+
+  /** 수정 시각을 행 잠금과 함께 읽는다 — 편집 충돌 비교용(WD-576). 계약은 {@link TriggerRepository#lockUpdatedAtById}. */
+  @Override
+  public Optional<LockedRowVersion> lockUpdatedAtById(Long id) {
+    return dsl.select(T_UPDATED_AT)
+        .from(PIPELINE_TRIGGER)
+        .where(T_ID.eq(id))
+        .forUpdate()
+        .fetchOptional()
+        .map(r -> new LockedRowVersion(r.value1()));
   }
 
   @Override
@@ -259,13 +276,14 @@ public class JooqTriggerRepository implements TriggerRepository {
         .execute();
   }
 
+  /**
+   * 실행 상태만 바꾼다. 수정 시각은 건드리지 않는다(WD-576) — 스케줄 발화·데이터 변경 폴링마다 불리므로, 여기서 {@code updated_at} 을 바꾸면 편집
+   * 창을 열어 둔 사이에 트리거가 한 번 돌기만 해도 저장이 편집 충돌로 거부된다. {@code updated_at} 은 사람이 고친
+   * 정의(이름·설명·config·켜기/끄기)의 수정 시각이다.
+   */
   @Override
   public void updateTriggerState(Long id, Map<String, Object> state) {
-    dsl.update(PIPELINE_TRIGGER)
-        .set(T_TRIGGER_STATE, toJsonb(state))
-        .set(T_UPDATED_AT, LocalDateTime.now())
-        .where(T_ID.eq(id))
-        .execute();
+    dsl.update(PIPELINE_TRIGGER).set(T_TRIGGER_STATE, toJsonb(state)).where(T_ID.eq(id)).execute();
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -411,7 +429,8 @@ public class JooqTriggerRepository implements TriggerRepository {
             T_CONFIG,
             T_TRIGGER_STATE,
             T_CREATED_BY,
-            T_CREATED_AT)
+            T_CREATED_AT,
+            T_UPDATED_AT)
         .from(PIPELINE_TRIGGER)
         .where(T_TRIGGER_TYPE.eq("API"))
         .and(field("{0}->>'tokenHash'", String.class, T_CONFIG).eq(tokenHash))
@@ -430,7 +449,8 @@ public class JooqTriggerRepository implements TriggerRepository {
             T_CONFIG,
             T_TRIGGER_STATE,
             T_CREATED_BY,
-            T_CREATED_AT)
+            T_CREATED_AT,
+            T_UPDATED_AT)
         .from(PIPELINE_TRIGGER)
         .where(T_TRIGGER_TYPE.eq("WEBHOOK"))
         .and(field("{0}->>'webhookId'", String.class, T_CONFIG).eq(webhookId))

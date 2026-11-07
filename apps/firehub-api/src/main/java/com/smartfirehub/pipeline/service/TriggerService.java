@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.global.exception.CryptoException;
+import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.security.MemberEligibility;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.DstAwareCron;
@@ -294,7 +295,8 @@ public class TriggerService {
               response.triggerState(),
               response.nextFireTime(),
               response.createdBy(),
-              response.createdAt());
+              response.createdAt(),
+              response.updatedAt());
     }
 
     return response;
@@ -311,9 +313,25 @@ public class TriggerService {
     updateTrigger(triggerId, request, userId);
   }
 
+  /** 편집 충돌 안내 문구(WD-576) — 웹은 코드로 충돌 창을 띄우고, 코드를 모르는 호출부(AI 도구 등)는 이 문구를 그대로 보인다. */
+  static final String EDIT_CONFLICT_MESSAGE = "이 트리거는 편집을 시작한 뒤 다른 곳에서 변경되었습니다. 다시 불러온 뒤 저장하세요.";
+
   /** 트리거 id 만으로 수정한다 — 소속 파이프라인을 확인하지 않으므로 경로에 pipelineId 가 있는 API 는 위 오버로드를 쓴다. */
   @Transactional
   public void updateTrigger(Long triggerId, UpdateTriggerRequest request, Long userId) {
+    // 존재 확인 + 낙관적 잠금(WD-576, 파이프라인 WD-353 과 같은 방식). 행 잠금을 잡고 수정 시각을 읽어 편집 기준 버전과 비교한다.
+    // allowedIps·연쇄·감시 목록·cron 검증보다 먼저 하는 이유: 낡은 화면에서 저장하면 낡은 내용으로 계산한 검증 오류 대신 "다른 곳에서
+    // 바뀌었다"를 먼저 알려야 한다. 잠금은 이 트랜잭션 끝까지 유지되어 동시에 들어온 두 저장이 같은 버전으로 둘 다 통과하지 못한다.
+    // 기준 버전이 없으면(AI 도구 등 기존 호출부, 「내 변경으로 덮어쓰기」) 비교하지 않는다 — 잠금은 그래도 잡아 아래 existing 이 잠근 뒤의 값이 된다.
+    LocalDateTime currentUpdatedAt =
+        triggerRepository
+            .lockUpdatedAtById(triggerId)
+            .orElseThrow(TriggerNotFoundException::new)
+            .updatedAt();
+    EditConflictException.check(
+        request.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
+
+    // 저장 전 값 — 행 잠금 뒤에 읽는다. 잠금 전에 읽으면 동시 저장이 겹칠 때 남의 변경 이전 값으로 검증·병합·감사(WD-462)하게 된다.
     TriggerResponse existing =
         triggerRepository.findById(triggerId).orElseThrow(TriggerNotFoundException::new);
 
@@ -332,9 +350,7 @@ public class TriggerService {
     if ("DATASET_CHANGE".equals(existing.triggerType()) && request.config() != null) {
       Map<String, Object> updatedConfig =
           DatasetChangeTriggerConfig.normalizedForSave(request.config());
-      request =
-          new UpdateTriggerRequest(
-              request.name(), request.isEnabled(), request.description(), updatedConfig);
+      request = request.withConfig(updatedConfig);
       requireNewWatchedDatasetsVisible(
           updatedConfig.get("datasetIds"), existing.config().get("datasetIds"), userId);
       // config 수정은 저장된 config 를 통째로 바꾼다 — 감시 목록이 비면 영원히 발화하지 않는 트리거가 되므로 거부한다(WD-221).
@@ -359,9 +375,7 @@ public class TriggerService {
       merged.putAll(request.config());
       validateScheduleConfig(merged);
       // 저장(repository.update)과 커밋 후 재등록이 모두 정규화된 config 를 쓰도록 요청을 바꿔 끼운다.
-      request =
-          new UpdateTriggerRequest(
-              request.name(), request.isEnabled(), request.description(), merged);
+      request = request.withConfig(merged);
     } else if ("SCHEDULE".equals(existing.triggerType())
         && !existing.isEnabled()
         && Boolean.TRUE.equals(request.isEnabled())) {
@@ -377,10 +391,7 @@ public class TriggerService {
     // 시크릿·토큰 재발급 기능이 없으므로 평문 secret·rawToken 도 버린다.
     if (SERVER_OWNED_KEYS.containsKey(existing.triggerType()) && request.config() != null) {
       request =
-          new UpdateTriggerRequest(
-              request.name(),
-              request.isEnabled(),
-              request.description(),
+          request.withConfig(
               withServerOwnedKeys(existing.triggerType(), request.config(), existing.config()));
     }
 
@@ -470,6 +481,9 @@ public class TriggerService {
 
   /** 켜기/끄기 본체. 상태가 실제로 바뀌면 STATUS_CHANGE 감사를 남긴다(WD-462). */
   private void toggleTriggerAs(Long triggerId, boolean enabled, Long userId) {
+    // 수정과 같은 행 잠금을 먼저 잡는다(WD-576) — 잠금 없이 읽으면 켜기 검증(cron·연쇄·감시 목록)과 저장 사이에 동시 수정이 config 를
+    // 바꿔, 검증하지 않은 config 로 트리거가 켜질 수 있다. 잠금은 트랜잭션 끝까지 유지되어 아래 existing 은 잠근 뒤의 값이다.
+    triggerRepository.lockUpdatedAtById(triggerId).orElseThrow(TriggerNotFoundException::new);
     TriggerResponse existing =
         triggerRepository.findById(triggerId).orElseThrow(TriggerNotFoundException::new);
 
@@ -843,6 +857,7 @@ public class TriggerService {
         masked.nextFireTime(),
         masked.createdBy(),
         masked.createdAt(),
+        masked.updatedAt(),
         masked.upstreamMissing(),
         masked.watchedDatasetsMissing());
   }
@@ -890,7 +905,8 @@ public class TriggerService {
         state,
         r.nextFireTime(),
         r.createdBy(),
-        r.createdAt());
+        r.createdAt(),
+        r.updatedAt());
   }
 
   /**

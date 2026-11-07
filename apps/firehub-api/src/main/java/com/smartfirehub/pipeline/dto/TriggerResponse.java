@@ -15,6 +15,11 @@ import java.util.Map;
  * <p>{@code watchedDatasetsMissing}: DATASET_CHANGE 트리거의 감시 목록({@code config.datasetIds})이 비었으면
  * true(WD-221). 감시 데이터셋이 삭제되면 서버가 그 id 를 감시 목록에서 빼고, 하나도 남지 않으면 트리거를 끈다 — 이 값이 그 「꺼진 이유」다. 개별 id 의
  * 존재 여부가 아니라 목록이 비었는지만 보므로, 볼 수 없는(상위 등급) 데이터셋이 있는지 없는지를 드러내지 않는다(WD-161). 다른 유형은 늘 false.
+ *
+ * <p>{@code updatedAt}: 사람이 고친 정의(이름·설명·config·켜기/끄기)의 마지막 수정 시각(WD-576). 웹 편집 창이 이 값을 편집 기준
+ * 버전({@code UpdateTriggerRequest.expectedUpdatedAt})으로 보내 다른 곳에서 먼저 바뀐 트리거를 덮어쓰지 않게 한다. 스케줄 발화·데이터
+ * 변경 폴링이 쓰는 실행 상태({@code triggerState}) 갱신은 이 값을 바꾸지 않는다 — 바꾸면 편집 창을 열어 둔 것만으로 거짓 충돌이 난다. 옛 행은 null
+ * 일 수 있다(nullable 컬럼).
  */
 public record TriggerResponse(
     Long id,
@@ -28,6 +33,7 @@ public record TriggerResponse(
     String nextFireTime,
     Long createdBy,
     LocalDateTime createdAt,
+    LocalDateTime updatedAt,
     boolean upstreamMissing,
     boolean watchedDatasetsMissing) {
 
@@ -43,7 +49,8 @@ public record TriggerResponse(
       Map<String, Object> triggerState,
       String nextFireTime,
       Long createdBy,
-      LocalDateTime createdAt) {
+      LocalDateTime createdAt,
+      LocalDateTime updatedAt) {
     this(
         id,
         pipelineId,
@@ -56,6 +63,7 @@ public record TriggerResponse(
         nextFireTime,
         createdBy,
         createdAt,
+        updatedAt,
         false,
         false);
   }
@@ -74,6 +82,7 @@ public record TriggerResponse(
         nextFireTime,
         createdBy,
         createdAt,
+        updatedAt,
         missing,
         watchedDatasetsMissing);
   }
@@ -92,6 +101,7 @@ public record TriggerResponse(
         nextFireTime,
         createdBy,
         createdAt,
+        updatedAt,
         upstreamMissing,
         missing);
   }

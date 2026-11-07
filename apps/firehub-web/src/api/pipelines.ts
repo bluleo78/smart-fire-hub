@@ -54,6 +54,9 @@ export const pipelinesApi = {
     client.get<CronPreviewResponse>('/triggers/cron-preview', { params }),
   getTriggers: (pipelineId: number) =>
     client.get<TriggerResponse[]>(`/pipelines/${pipelineId}/triggers`),
+  /** 트리거 한 건 — 편집 충돌 창의 「다시 불러오기」가 그 트리거의 최신 값·updatedAt 만 다시 받는 데 쓴다(WD-576). */
+  getTrigger: (pipelineId: number, triggerId: number) =>
+    client.get<TriggerResponse>(`/pipelines/${pipelineId}/triggers/${triggerId}`),
   createTrigger: (pipelineId: number, data: CreateTriggerRequest) =>
     client.post<TriggerResponse>(`/pipelines/${pipelineId}/triggers`, data),
   updateTrigger: (pipelineId: number, triggerId: number, data: UpdateTriggerRequest) =>

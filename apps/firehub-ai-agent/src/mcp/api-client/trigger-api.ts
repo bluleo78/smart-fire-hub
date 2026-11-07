@@ -27,6 +27,10 @@ export function createTriggerApi(client: AxiosInstance) {
       const response = await client.post(`/pipelines/${pipelineId}/triggers`, data);
       return response.data;
     },
+    /**
+     * 트리거를 수정한다(PUT). expectedUpdatedAt 은 수정 전에 읽은 트리거의 updatedAt — 그 사이 사람이 먼저 고쳤으면 서버가
+     * 409 EDIT_CONFLICT 로 거부한다(WD-576). 빼면 비교 없이 저장된다.
+     */
     async updateTrigger(
       pipelineId: number,
       triggerId: number,
@@ -35,6 +39,7 @@ export function createTriggerApi(client: AxiosInstance) {
         isEnabled?: boolean;
         description?: string;
         config?: Record<string, unknown>;
+        expectedUpdatedAt?: string;
       },
     ): Promise<unknown> {
       await client.put(`/pipelines/${pipelineId}/triggers/${triggerId}`, data);

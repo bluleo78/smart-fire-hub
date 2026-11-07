@@ -36,7 +36,16 @@ const triggerConfigSchema = z.looseObject({
 });
 
 /** 조회 응답에서 수정에 필요한 부분만 본 모양. */
-type ExistingTrigger = { name?: unknown; config?: unknown };
+type ExistingTrigger = { name?: unknown; config?: unknown; updatedAt?: unknown };
+
+/** 서버 편집 충돌 코드(WD-576) — firehub-api EditConflictException.CODE 와 같은 값. */
+const EDIT_CONFLICT_CODE = 'EDIT_CONFLICT';
+
+/** api-client 인터셉터가 던진 오류가 편집 충돌(409 + EDIT_CONFLICT)인가. */
+function isEditConflictError(error: unknown): boolean {
+  const e = error as { status?: unknown; response?: { data?: { code?: unknown } } } | undefined;
+  return e?.status === 409 && e?.response?.data?.code === EDIT_CONFLICT_CODE;
+}
 
 export function registerTriggerTools(
   apiClient: FireHubApiClient,
@@ -100,8 +109,15 @@ export function registerTriggerTools(
         // isEnabled·description 은 서버가 null 을 「바꾸지 않음」으로 보므로 받은 그대로 넘긴다.
         let resolvedName = name;
         let resolvedConfig: Record<string, unknown> | undefined = config;
+        // 기존 트리거를 읽었으면 그 updatedAt 을 편집 기준 버전으로 보낸다(WD-576) — 읽은 값(이름·config)을 합쳐 보내므로, 읽은 뒤
+        // 사람이 먼저 고친 트리거를 그 옛 값으로 조용히 덮어쓰지 않고 409 로 거부되게 한다. 읽지 않은 수정(이름이 있고 config 가
+        // 없음)은 보낸 필드만 바꾸므로 기준 없이 보낸다.
+        let expectedUpdatedAt: string | undefined;
         if (resolvedName === undefined || config !== undefined) {
           const existing = (await apiClient.getTrigger(pipelineId, triggerId)) as ExistingTrigger;
+          if (typeof existing?.updatedAt === 'string' && existing.updatedAt !== '') {
+            expectedUpdatedAt = existing.updatedAt;
+          }
           if (resolvedName === undefined) {
             if (typeof existing?.name !== 'string' || existing.name.trim() === '') {
               throw new Error(
@@ -123,12 +139,25 @@ export function registerTriggerTools(
           isEnabled?: boolean;
           description?: string;
           config?: Record<string, unknown>;
+          expectedUpdatedAt?: string;
         } = { name: resolvedName };
         if (isEnabled !== undefined) data.isEnabled = isEnabled;
         if (description !== undefined) data.description = description;
         if (resolvedConfig !== undefined) data.config = resolvedConfig;
-        const result = await apiClient.updateTrigger(pipelineId, triggerId, data);
-        return jsonResult(result);
+        if (expectedUpdatedAt !== undefined) data.expectedUpdatedAt = expectedUpdatedAt;
+        try {
+          const result = await apiClient.updateTrigger(pipelineId, triggerId, data);
+          return jsonResult(result);
+        } catch (error) {
+          // 편집 충돌은 에이전트가 할 일을 알 수 있게 풀어 쓴다(WD-576) — 다시 조회해 바뀐 내용을 사용자에게 알리고 확인받은 뒤 재시도한다.
+          if (isEditConflictError(error)) {
+            throw new Error(
+              `트리거 ${triggerId}번은 조회한 뒤 다른 곳(사용자 화면 등)에서 먼저 변경되어 수정하지 않았습니다. ` +
+                '최신 상태를 다시 조회해 바뀐 내용을 사용자에게 알리고, 그래도 수정할지 확인받은 뒤 다시 시도하세요.',
+            );
+          }
+          throw error;
+        }
       },
     ),
 
