@@ -152,6 +152,10 @@ public class PipelineService {
       throw new PipelineNameConflictException(duplicateNameMessage(request.name()));
     }
 
+    // 스텝 형태(null 원소·SQL 빈 스크립트) 검사(WD-585) — 이름 중복 409 뒤, DAG 검증 앞. DAG 검증이 null 원소에서 NPE(500)로
+    // 터졌다.
+    validateStepShapes(request.steps());
+
     // Validate DAG (cycle detection)
     executionService.validateDAG(request.steps());
 
@@ -224,6 +228,16 @@ public class PipelineService {
       // 짝지은 기존 스텝(새 스텝이면 null) — 제자리 갱신 id·자기 TEMP 판정·WD-426 "바뀐 스텝만" 판정이 함께 쓴다.
       PipelineStepResponse storedStep = existingSteps != null ? existingSteps.get(i) : null;
       Long existingStepId = storedStep != null ? storedStep.id() : null;
+
+      // WD-585: PYTHON 스텝의 빈(null·공백) 스크립트는 거부한다 — 웹 편집기가 이미 필수로 막는 값이 API·AI 도구로는 저장돼 실행 시점에야
+      // 실패했다. 다만 이 규칙 전에 빈 스크립트로 저장된 PYTHON 스텝을 그대로(빈 채로) 되돌려 보내는 저장은 막지 않는다 — 막으면 설명만
+      // 고쳐도 파이프라인을 저장할 수 없다(WD-426 의 "새·바뀐 스텝만 거부"와 같은 이유). 그래서 짝지은 기존 스텝을 아는 여기서 판정한다.
+      if ("PYTHON".equals(stepRequest.scriptType())
+          && isBlank(stepRequest.scriptContent())
+          && !isUnchangedBlankPythonStep(storedStep)) {
+        throw new IllegalArgumentException(
+            stepLabel(stepRequest.name(), i) + ": " + PYTHON_SCRIPT_EMPTY_MESSAGE);
+      }
 
       // WD-176: 참조할 API 연결이 현재 워크스페이스에서 보여야 한다. 외래키 검사는 RLS 를 우회해 다른 워크스페이스의 연결 번호도 통과시켜,
       // 남의 연결을 참조로 저장(그 워크스페이스는 참조 0건으로 보이는데 삭제가 영영 409)하거나 저장 성공/FK 409 차이로 번호 존재를 떠볼 수
@@ -476,6 +490,11 @@ public class PipelineService {
   /** 두 치환 변형의 공통 본문. {@code qualifier} 는 {@code {{#N}}} 더미 테이블 이름을 한정하는 함수다. */
   private static String substituteStepReferencesForValidation(
       String sql, UnaryOperator<String> qualifier, DataStoreBackend backend) {
+    // null 본문은 그대로 돌려준다(WD-585) — 정규식 매처가 NPE 로 500 을 내지 않게. 빈 SQL 의 거부는 호출부(형태 검사·SqlValidator)가
+    // 한다.
+    if (sql == null) {
+      return null;
+    }
     // 증분 플레이스홀더도 여기서 유효한 타임스탬프 리터럴로 바꿔 둔다 — {{last_run_at}} 은 SQL 문법이
     // 아니므로 그대로 두면 저장 시점 SQL 가드(AST 파싱)가 항상 실패해 증분 스텝을 아예 저장할 수 없다.
     // 값 자체는 검증에 영향이 없으므로 고정된 epoch 를 쓴다(실행 시점 값은 러너가 따로 주입한다).
@@ -550,6 +569,10 @@ public class PipelineService {
    * 한 덩어리로 쓰든 아예 안 쓰든 경고가 영원히 안 나온다. 그래서 "스텝 참조만" 바꾸는 이 단계가 따로 필요하다.
    */
   private static String substituteStepReferences(String sql, UnaryOperator<String> qualifier) {
+    // null 본문은 그대로 돌려준다(WD-585) — 조회·참조 판정 등 다른 호출부도 null 스크립트에서 NPE 가 나지 않게.
+    if (sql == null) {
+      return null;
+    }
     Matcher matcher = STEP_REFERENCE_PATTERN.matcher(sql);
     StringBuilder result = new StringBuilder();
     while (matcher.find()) {
@@ -771,6 +794,10 @@ public class PipelineService {
         throw new PipelineNameConflictException(duplicateNameMessage(request.name()));
       }
     }
+
+    // 스텝 형태 검사(WD-585) — 존재(404)·낡은 버전(409)·이름 중복(409) 판정 뒤에 둔다(위 WD-353 순서 주석: 낡은 화면의 저장은 검증 오류보다
+    // 충돌을 먼저 알린다). DAG 검증·이름 매칭(steps.get(i).name())보다는 앞이어야 한다 — 뒤면 null 원소가 NPE(500)로 터진다.
+    validateStepShapes(request.steps());
 
     // Validate DAG if steps provided
     if (request.steps() != null) {
@@ -1323,6 +1350,59 @@ public class PipelineService {
   static final String FOREIGN_TEMP_OUTPUT_MESSAGE =
       "출력 데이터셋이 다른 스텝(이 파이프라인 또는 다른 파이프라인)이 자동으로 만든 임시 데이터셋입니다. 임시 데이터셋은 그 스텝이 실행할 때마다 다시"
           + " 채우므로 출력으로 지정할 수 없습니다. 이 스텝의 출력을 새 데이터셋으로 바꾸거나 「자동 생성」으로 두세요.";
+
+  static final String STEP_EMPTY_MESSAGE = "스텝 정보가 비어 있습니다.";
+  static final String SQL_SCRIPT_EMPTY_MESSAGE = "SQL 스크립트가 비어 있습니다.";
+  static final String PYTHON_SCRIPT_EMPTY_MESSAGE = "Python 스크립트가 비어 있습니다.";
+
+  /**
+   * 저장 요청 스텝 목록의 형태 검사(WD-585). 생성·수정 공통으로 DAG 검증·스텝별 판정보다 먼저 부른다(존재·충돌·이름 중복 판정 뒤).
+   *
+   * <ul>
+   *   <li>null 원소({@code "steps":[null]}) — 예전엔 DAG 검증의 {@code steps.get(i).name()} 에서 NPE 로 500
+   *       이었다. 몇 번째 스텝인지(1부터) 알려 준다.
+   *   <li>SQL 스텝의 null·공백 스크립트 — null 이면 스텝 참조 치환({@link #substituteStepReferences})의 {@code
+   *       Pattern.matcher(null)} NPE 로 500 이었다. 빈 문자열이 받던 SqlValidator 의 문구와 같은 문구로 400.
+   * </ul>
+   *
+   * PYTHON 빈 스크립트는 여기서 보지 않는다 — 이미 빈 채로 저장된 스텝의 왕복 저장을 허용해야 해서, 짝지은 기존 스텝을 아는 {@link #saveSteps} 에서
+   * 판정한다. API_CALL·AI_CLASSIFY 는 스크립트를 쓰지 않으므로 null 을 그대로 허용하고, scriptType 이 null 인 스텝도 여기서는 건드리지
+   * 않는다(기존 동작 유지).
+   */
+  static void validateStepShapes(List<PipelineStepRequest> steps) {
+    if (steps == null) {
+      return;
+    }
+    for (int i = 0; i < steps.size(); i++) {
+      PipelineStepRequest step = steps.get(i);
+      if (step == null) {
+        throw new IllegalArgumentException((i + 1) + "번째 " + STEP_EMPTY_MESSAGE);
+      }
+      if ("SQL".equals(step.scriptType()) && isBlank(step.scriptContent())) {
+        throw new IllegalArgumentException(
+            stepLabel(step.name(), i) + ": " + SQL_SCRIPT_EMPTY_MESSAGE);
+      }
+    }
+  }
+
+  /**
+   * 오류 문구에서 스텝을 가리키는 말 — 이름이 있으면 「스텝 '이름'」, 없거나 공백이면 「N번째 스텝」(1부터). 이름 없는 요청에서 「스텝 'null'」이 찍히지 않게
+   * 한다(WD-585).
+   */
+  private static String stepLabel(String stepName, int index) {
+    return isBlank(stepName) ? (index + 1) + "번째 스텝" : "스텝 '" + stepName + "'";
+  }
+
+  private static boolean isBlank(String value) {
+    return value == null || value.isBlank();
+  }
+
+  /** 짝지은 기존 스텝이 이미 빈 스크립트로 저장된 PYTHON 스텝인가 — 그렇다면 빈 채로 되돌려 보낸 저장은 "바뀌지 않은 스텝"이다(WD-585). */
+  private static boolean isUnchangedBlankPythonStep(PipelineStepResponse storedStep) {
+    return storedStep != null
+        && "PYTHON".equals(storedStep.scriptType())
+        && isBlank(storedStep.scriptContent());
+  }
 
   private static String stepError(String stepName, String message) {
     return "스텝 '" + stepName + "': " + message;
