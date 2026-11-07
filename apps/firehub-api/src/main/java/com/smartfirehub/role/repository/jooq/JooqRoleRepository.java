@@ -101,8 +101,9 @@ public class JooqRoleRepository implements RoleRepository {
   }
 
   @Override
-  public void deleteById(Long id) {
-    dsl.deleteFrom(ROLE).where(ROLE.ID.eq(id)).execute();
+  public int deleteById(Long id) {
+    // 지운 행 수를 그대로 돌려준다 — 동시 삭제에서 진 쪽(0행)을 서비스가 404 로 가르기 위해서다(WD-582).
+    return dsl.deleteFrom(ROLE).where(ROLE.ID.eq(id)).execute();
   }
 
   @Override

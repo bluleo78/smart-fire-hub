@@ -8,9 +8,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
 import com.smartfirehub.role.dto.RoleResponse;
+import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.exception.SystemRoleModificationException;
 import com.smartfirehub.role.repository.RoleRepository;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PausedTransactionRace;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
 import java.util.ArrayList;
@@ -181,6 +183,32 @@ class RoleAuditServiceTest extends IntegrationTestBase {
     assertThat(meta.get("name").asText()).isEqualTo("TEMP_ROLE");
     assertThat(texts(meta.get("permissions"))).containsExactly(perm.get("code", String.class));
     assertThat(texts(meta.get("affectedUserIds"))).containsExactly(String.valueOf(actor));
+  }
+
+  /**
+   * WD-582: 같은 역할을 동시에 두 번 삭제하면 하나만 성공하고 나머지는 404(RoleNotFoundException)여야 하며, ROLE_DELETE 감사도 한 행만
+   * 남아야 한다.
+   *
+   * <p>예전에는 두 요청이 모두 findById(커밋된 옛 행)를 통과한 뒤, 뒤 요청이 앞 요청의 행 잠금에서 기다렸다가 0행 삭제를 무시하고 감사를 한 번 더 남겼다.
+   * tx1 을 커밋 전에 멈춘 채 tx2 를 시작해 tx2 가 실제로 행 잠금에서 대기했음(경합 구간 통과)까지 단언한다.
+   */
+  @Test
+  void concurrentDeleteRole_onlyOneSucceeds_andWritesSingleAudit() throws Exception {
+    RoleResponse created = createCustomRole("RACE_ROLE", "동시 삭제");
+
+    var out =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            tenantA,
+            () -> roleService.deleteRole(created.id(), actor),
+            () -> {
+              roleService.deleteRole(created.id(), actor);
+              return null;
+            });
+
+    assertThat(out.secondBlocked()).as("두 번째 삭제는 첫 삭제 커밋 전까지 역할 행 잠금에서 대기해야 한다").isTrue();
+    assertThat(out.secondError()).isInstanceOf(RoleNotFoundException.class);
+    assertThat(roleAudits("ROLE_DELETE", created.id())).hasSize(1);
   }
 
   /** 거부된 변경(시스템 역할 삭제·권한 변경)은 감사를 남기지 않는다. */

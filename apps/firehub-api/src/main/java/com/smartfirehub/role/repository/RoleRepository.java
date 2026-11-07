@@ -43,7 +43,13 @@ public interface RoleRepository {
   /** 이 역할을 가진 사용자 id(현재 테넌트, RLS, 오름차순) — 역할 삭제 감사에 권한을 잃는 사용자를 남기기 위해 쓴다(WD-117). */
   List<Long> findUserIdsByRoleId(Long roleId);
 
-  void deleteById(Long id);
+  /**
+   * 역할 행을 삭제하고 실제로 지운 행 수(0 또는 1)를 돌려준다(WD-582).
+   *
+   * <p>같은 역할을 동시에 지우면 뒤 요청은 앞 요청의 행 잠금에서 기다렸다가(READ COMMITTED) 이미 사라진 행을 보고 0행을 지운다. 호출자가 이 값으로 "내가
+   * 지웠는가"를 판정해야 감사가 한 번만 남는다.
+   */
+  int deleteById(Long id);
 
   void addPermission(Long roleId, Long permissionId);
 
