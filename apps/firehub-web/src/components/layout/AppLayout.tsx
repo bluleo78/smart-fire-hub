@@ -156,6 +156,10 @@ function NavItemLink({
       // 현재 페이지를 보조기술에도 알리고(WCAG SC 4.1.2), 동시에 사이드바를 활성 항목으로
       // 스크롤할 때의 안정적인 셀렉터가 된다(클래스명은 스타일 변경에 취약하다).
       aria-current={active ? 'page' : undefined}
+      // 접힌 상태에서는 라벨 텍스트가 없고 이름이 툴팁에만 있는데, 툴팁은 열리기 전엔 DOM 에 없어
+      // 보조기술이 읽지 못한다(WD-533). 그래서 접힌 때만 aria-label 로 이름을 준다.
+      // 펼친 상태는 보이는 텍스트가 이름이므로 달지 않는다(이름 중복·변경 방지).
+      aria-label={collapsed ? item.label : undefined}
       className={cn(
         'flex items-center rounded-md text-[13px] font-medium transition-colors',
         active
@@ -431,6 +435,8 @@ function AppLayoutInner() {
                       variant="ghost"
                       size="icon"
                       onClick={toggleCollapsed}
+                      // 로고 이미지뿐이라 이름이 없다 — 툴팁은 DOM 에 없을 때가 있어 aria-label 로 명시(WD-533)
+                      aria-label="메뉴 펼치기"
                       className="h-8 w-8"
                     >
                       <BrandLogo className="h-5 w-5" />
