@@ -55,6 +55,13 @@ app:
     # 실제 클라이언트 IP 를 고른다 — 감사 IP·API 트리거 허용 IP 검사에 쓰인다. 비우면 ClientIpExtractor.DEFAULT_TRUSTED_PROXIES
     # (루프백·사설망·링크 로컬)를 쓴다 — 기본 목록은 그 상수 하나에만 둔다.
     trusted-proxies: ${APP_TRUSTED_PROXIES:}
+  analytics:
+    query-concurrency:
+      # 분석 쿼리(애드혹·저장 쿼리 실행·결과 내보내기 재실행) 동시 실행 상한(WD-553). 쿼리 시간 내내 공용 Hikari 풀(기본 10) 커넥션을
+      # 쥐므로 풀보다 작게 두어 목록·로그인 같은 핵심 요청 몫을 남긴다. 초과는 기다리지 않고 429 QUERY_CONCURRENCY_LIMIT. 0 이하면 끈다.
+      max-total: ${ANALYTICS_QUERY_MAX_CONCURRENT:4}
+      # 사용자당 동시 실행 상한 — 한 사용자가 전체 몫을 독점하지 않게. 0 이하면 끈다.
+      max-per-user: ${ANALYTICS_QUERY_MAX_CONCURRENT_PER_USER:2}
   data-store:
     # Tibero 저장소 선택 허용 여부(WD-73). 구현 완료 전에는 운영에서 끈다.
     tibero-enabled: ${DATA_STORE_TIBERO_ENABLED:false}

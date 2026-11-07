@@ -269,4 +269,32 @@ class GlobalExceptionHandlerExtendedTest {
         .andExpect(jsonPath("$.status").value(400))
         .andExpect(jsonPath("$.message").value("요청 본문을 해석할 수 없습니다."));
   }
+
+  /** 풀 대기 초과(WD-553)는 500 이 아니라 503 + 재시도 안내 — 원인 체인의 SQLTransientConnectionException 으로 판별한다. */
+  @Test
+  void poolTimeout_onTransactionBegin_returns503() throws Exception {
+    mockMvc
+        .perform(get("/test/exception2/pool-timeout-tx"))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.status").value(503))
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.POOL_EXHAUSTED_MESSAGE));
+  }
+
+  /** 트랜잭션 없는 커넥션 획득 실패도 원인이 풀 대기 초과면 503. */
+  @Test
+  void poolTimeout_onJdbcConnection_returns503() throws Exception {
+    mockMvc
+        .perform(get("/test/exception2/pool-timeout-jdbc"))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.POOL_EXHAUSTED_MESSAGE));
+  }
+
+  /** 풀 고갈이 아닌 트랜잭션 시작 실패는 기존 그대로 500 일반 문구. */
+  @Test
+  void transactionBeginFailure_withoutPoolTimeout_staysGeneric500() throws Exception {
+    mockMvc
+        .perform(get("/test/exception2/tx-begin-failure"))
+        .andExpect(status().isInternalServerError())
+        .andExpect(jsonPath("$.message").value("예기치 않은 오류가 발생했습니다. 잠시 후 다시 시도하세요."));
+  }
 }

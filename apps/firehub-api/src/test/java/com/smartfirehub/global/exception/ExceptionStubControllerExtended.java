@@ -167,4 +167,31 @@ public class ExceptionStubControllerExtended {
   public void messageNotReadable(@RequestBody java.util.Map<String, Object> body) {
     // 정상 케이스에선 도달하지 않음.
   }
+
+  /** 풀 대기 초과(WD-553) — 트랜잭션 시작 시 Hikari 가 커넥션을 못 줘 SQLTransientConnectionException 이 원인으로 실린다. */
+  @GetMapping("/pool-timeout-tx")
+  public void poolTimeoutTx() {
+    throw new org.springframework.transaction.CannotCreateTransactionException(
+        "Could not open JDBC Connection for transaction",
+        new java.sql.SQLTransientConnectionException(
+            "HikariPool-1 - Connection is not available, request timed out after 30000ms."));
+  }
+
+  /** 풀 대기 초과(WD-553) — 트랜잭션 없는 JdbcTemplate 등이 커넥션을 못 얻을 때(원인이 한 단계 더 깊다). */
+  @GetMapping("/pool-timeout-jdbc")
+  public void poolTimeoutJdbc() {
+    throw new org.springframework.jdbc.CannotGetJdbcConnectionException(
+        "Failed to obtain JDBC Connection",
+        new java.sql.SQLException(
+            "wrapper",
+            new java.sql.SQLTransientConnectionException(
+                "HikariPool-1 - Connection is not available")));
+  }
+
+  /** 풀 고갈이 아닌 트랜잭션 시작 실패(GUC 설정 실패 등) — 기존처럼 500 이어야 한다. */
+  @GetMapping("/tx-begin-failure")
+  public void txBeginFailure() {
+    throw new org.springframework.transaction.CannotCreateTransactionException(
+        "app.tenant_id GUC 설정 실패", new java.sql.SQLException("permission denied"));
+  }
 }
