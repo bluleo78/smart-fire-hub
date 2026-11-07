@@ -71,8 +71,8 @@ public class JooqDatasetCategoryRepository implements DatasetCategoryRepository 
   }
 
   @Override
-  public void deleteById(Long id) {
-    dsl.deleteFrom(DATASET_CATEGORY).where(DC_ID.eq(id)).execute();
+  public int deleteById(Long id) {
+    return dsl.deleteFrom(DATASET_CATEGORY).where(DC_ID.eq(id)).execute();
   }
 
   /**

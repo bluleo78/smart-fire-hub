@@ -166,8 +166,12 @@ public class DatasetCategoryService {
       throw new CategoryInUseException(CATEGORY_IN_USE_MESSAGE);
     }
 
-    categoryRepository.deleteById(id);
-    // 감사(WD-464) — 이름은 지우기 전에 읽은 값을 쓴다.
+    // 동시 삭제(WD-584) — 위 존재 확인은 먼저 지운 쪽이 커밋하기 전이면 통과한다. 진 쪽 DELETE 는 그 커밋을 기다린 뒤 0 행이므로, 순차 두 번째
+    // 삭제와 같은 404 로 끝내고 감사를 남기지 않는다.
+    if (categoryRepository.deleteById(id) == 0) {
+      throw new CategoryNotFoundException();
+    }
+    // 감사(WD-464) — 이름은 지우기 전에 읽은 값을 쓴다. 실제로 지운 요청만 남긴다(WD-584).
     auditRecorder.deleted(userId, id, target.name());
   }
 }

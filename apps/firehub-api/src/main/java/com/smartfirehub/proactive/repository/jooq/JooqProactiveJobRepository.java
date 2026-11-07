@@ -322,8 +322,8 @@ public class JooqProactiveJobRepository implements ProactiveJobRepository {
   }
 
   @Override
-  public void delete(Long id, Long userId) {
-    dsl.deleteFrom(PROACTIVE_JOB).where(PJ_ID.eq(id).and(PJ_USER_ID.eq(userId))).execute();
+  public int delete(Long id, Long userId) {
+    return dsl.deleteFrom(PROACTIVE_JOB).where(PJ_ID.eq(id).and(PJ_USER_ID.eq(userId))).execute();
   }
 
   // ── 관리자(proactive:admin) 경로(WD-192) ─────────────────────────────────────────
@@ -389,8 +389,10 @@ public class JooqProactiveJobRepository implements ProactiveJobRepository {
 
   /** 관리자 삭제 — 작성자와 무관하게 이 워크스페이스의 작업을 지운다. */
   @Override
-  public void deleteInTenant(Long id, long tenantId) {
-    dsl.deleteFrom(PROACTIVE_JOB).where(PJ_ID.eq(id).and(PJ_TENANT_ID.eq(tenantId))).execute();
+  public int deleteInTenant(Long id, long tenantId) {
+    return dsl.deleteFrom(PROACTIVE_JOB)
+        .where(PJ_ID.eq(id).and(PJ_TENANT_ID.eq(tenantId)))
+        .execute();
   }
 
   private ProactiveJobResponse toResponse(

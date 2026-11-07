@@ -137,8 +137,12 @@ public class ReportTemplateService {
     if (template.builtin()) {
       throw new ProactiveJobException("빌트인 템플릿은 삭제할 수 없습니다");
     }
-    reportTemplateRepository.delete(id, userId);
-    // 감사(WD-464) — 이름은 지우기 전에 읽은 값(위 getTemplate)을 쓴다.
+    // 동시 삭제(WD-584) — 위 조회는 먼저 지운 쪽이 커밋하기 전이면 통과한다. 진 쪽 DELETE 는 그 커밋을 기다린 뒤 0 행이므로, 순차 두 번째
+    // 삭제(getTemplate)와 같은 404·문구로 끝내고 감사를 남기지 않는다.
+    if (reportTemplateRepository.delete(id, userId) == 0) {
+      throw new ProactiveJobNotFoundException("템플릿을 찾을 수 없습니다: " + id);
+    }
+    // 감사(WD-464) — 이름은 지우기 전에 읽은 값(위 getTemplate)을 쓴다. 실제로 지운 요청만 남긴다(WD-584).
     auditRecorder.deleted(
         userId,
         ProactiveAuditRecorder.RESOURCE_TEMPLATE,

@@ -222,9 +222,9 @@ public class JooqReportTemplateRepository implements ReportTemplateRepository {
   }
 
   @Override
-  public void delete(Long id, Long userId) {
+  public int delete(Long id, Long userId) {
     // 빌트인 템플릿(user_id IS NULL)은 삭제 불가
-    dsl.deleteFrom(REPORT_TEMPLATE).where(RT_ID.eq(id).and(RT_USER_ID.eq(userId))).execute();
+    return dsl.deleteFrom(REPORT_TEMPLATE).where(RT_ID.eq(id).and(RT_USER_ID.eq(userId))).execute();
   }
 
   private ReportTemplateResponse toResponse(

@@ -110,8 +110,12 @@ public interface ApiConnectionRepository {
    */
   boolean existsById(Long id);
 
-  /** id 로 API 연결을 삭제한다. */
-  void deleteById(Long id);
+  /**
+   * id 로 API 연결을 삭제한다.
+   *
+   * @return 지운 행 수 — 동시 삭제에서 진 쪽은 0 이라 호출자가 404 로 바꾼다(WD-584)
+   */
+  int deleteById(Long id);
 
   /**
    * 이 API 연결을 사용하는(pipeline_step.api_connection_id로 참조하는) 파이프라인 목록을 조회한다. 삭제 전 영향 범위 확인용(#605).

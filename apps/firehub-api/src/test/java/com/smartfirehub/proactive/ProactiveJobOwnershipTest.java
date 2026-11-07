@@ -207,13 +207,15 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
     // 주인 작업은 그대로이고, 남의 삭제 요청이 주인 작업의 예약 실행을 해제하지 않았다
     assertThat(ownerJobName()).isEqualTo("주인_작업");
     verify(schedulerService, never()).unregisterSchedule(jobId);
+    verify(schedulerService, never()).unregisterScheduleAfterCommit(jobId);
 
     // 양성 대조: 주인은 수정·삭제할 수 있다
     // 수정은 200 + 새 수정 시각(WD-364 — 예전에는 204)
     assertThat(send(put(url), ownerToken, rename)).isEqualTo(200);
     assertThat(ownerJobName()).isEqualTo("덮어쓰기");
     assertThat(send(delete(url), ownerToken, null)).isEqualTo(204);
-    verify(schedulerService, times(1)).unregisterSchedule(jobId);
+    // 삭제의 예약 해제는 커밋 뒤에 건다(WD-584)
+    verify(schedulerService, times(1)).unregisterScheduleAfterCommit(jobId);
   }
 
   // ── WD-192: 쓰기 권한을 잃은 작성자의 정리 + 워크스페이스 관리자(proactive:admin) ─────────────────
@@ -479,6 +481,7 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
     assertThat(jobEnabled(otherTenant, foreignJob)).isTrue();
     assertThat(auditRows("PROACTIVE_JOB_ADMIN_DISABLE", foreignJob, admin)).isZero();
     verify(schedulerService, never()).unregisterSchedule(foreignJob);
+    verify(schedulerService, never()).unregisterScheduleAfterCommit(foreignJob);
   }
 
   @Test

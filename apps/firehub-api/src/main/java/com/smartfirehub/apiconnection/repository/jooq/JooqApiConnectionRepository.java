@@ -293,8 +293,8 @@ public class JooqApiConnectionRepository implements ApiConnectionRepository {
   }
 
   @Override
-  public void deleteById(Long id) {
-    dsl.deleteFrom(API_CONNECTION).where(AC_ID.eq(id)).execute();
+  public int deleteById(Long id) {
+    return dsl.deleteFrom(API_CONNECTION).where(AC_ID.eq(id)).execute();
   }
 
   /**

@@ -18,6 +18,8 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @Slf4j
@@ -223,6 +225,35 @@ public class ProactiveJobSchedulerService {
   }
 
   public void unregisterSchedule(Long jobId) {
+    cancelScheduledTask(jobId);
+    // 스케줄이 없어졌으므로 "다음 실행" 표시도 비운다 (#348).
+    // 비활성화/삭제 후에도 과거 계산값이 남아 있으면 곧 실행될 것처럼 보인다.
+    proactiveJobRepository.updateNextExecuteAt(jobId, null);
+  }
+
+  /**
+   * 지운 작업의 예약 실행을 <b>커밋 뒤</b> 해제한다(WD-584) — 트리거 삭제(TriggerService.deleteTriggerAs)와 같은 방식.
+   *
+   * <p>삭제 트랜잭션 안에서 해제하면, 뒤의 감사 기록 등이 실패해 롤백될 때 행은 「켜짐」으로 돌아오는데 예약만 풀려 서버 재시작 전까지 돌지 않는다. 커밋 뒤라면 행이
+   * 정말 사라진 뒤에만 해제된다. 행이 없으니 {@code next_execute_at} 을 비우는 UPDATE 는 하지 않는다(메모리 예약만 취소). 커밋 전에 예약이 한
+   * 번 발화해도 실행 경로가 작업을 다시 조회하므로 지워진 뒤면 아무것도 하지 않는다.
+   */
+  public void unregisterScheduleAfterCommit(Long jobId) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      cancelScheduledTask(jobId);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            cancelScheduledTask(jobId);
+          }
+        });
+  }
+
+  /** 메모리에 걸린 예약 실행만 취소한다(DB 는 건드리지 않는다). */
+  private void cancelScheduledTask(Long jobId) {
     scheduledTasks.computeIfPresent(
         jobId,
         (id, future) -> {
@@ -230,9 +261,6 @@ public class ProactiveJobSchedulerService {
           log.info("Unregistered proactive job schedule {}", jobId);
           return null;
         });
-    // 스케줄이 없어졌으므로 "다음 실행" 표시도 비운다 (#348).
-    // 비활성화/삭제 후에도 과거 계산값이 남아 있으면 곧 실행될 것처럼 보인다.
-    proactiveJobRepository.updateNextExecuteAt(jobId, null);
   }
 
   public void rescheduleJob(ProactiveJobResponse job) {

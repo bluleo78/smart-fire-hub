@@ -390,8 +390,13 @@ public class ProactiveJobService {
             .findById(id, userId)
             .orElseThrow(
                 () -> new ProactiveJobNotFoundException("Proactive Job을 찾을 수 없습니다: " + id));
-    schedulerService.unregisterSchedule(id);
-    proactiveJobRepository.delete(id, userId);
+    // 동시 삭제(WD-584) — 위 확인은 먼저 지운 쪽이 커밋하기 전이면 통과한다. 진 쪽 DELETE 는 그 커밋을 기다린 뒤 0 행이므로, 순차 두 번째
+    // 삭제(requireOwnJob)와 같은 404·문구로 끝내고 예약 해제·감사를 되풀이하지 않는다. 예약 해제는 삭제 앞에서 커밋 뒤로 옮겼다 — 감사
+    // 실패 등으로 롤백되면 행은 남는데 예약만 풀리던 문제도 함께 막는다.
+    if (proactiveJobRepository.delete(id, userId) == 0) {
+      throw new ProactiveJobNotFoundException("Proactive Job을 찾을 수 없습니다: " + id);
+    }
+    schedulerService.unregisterScheduleAfterCommit(id);
     auditRecorder.deleted(
         userId,
         ProactiveAuditRecorder.RESOURCE_JOB,
