@@ -467,6 +467,29 @@ test.describe('설정 페이지', () => {
       await expect(page.getByText('플랫폼 전용')).toHaveCount(0);
     });
 
+    // WD-537: 서버는 smtp.starttls 로 소문자 true/false 만 받는다. 예전에 저장된 'yes' 를 그대로 다시
+    // 보내면 저장이 400 으로 막히므로, 화면은 발송 시점 판정(true 가 아니면 STARTTLS 끔)과 같게 'false' 로 보낸다.
+    test('예전에 저장된 STARTTLS 값 yes 는 꺼짐으로 보이고 저장 시 false 로 보낸다(WD-537)', async ({
+      authenticatedPage: page,
+    }) => {
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+      await setupSettingsMocks(page, {
+        smtp: createSmtpSettings({ 'smtp.starttls': { value: 'yes' } }),
+      });
+      await openEmailTab(page);
+
+      await expect(page.locator('#smtp-starttls')).toHaveAttribute('data-state', 'unchecked');
+      // 정규화는 불러온 값 자체에 반영돼 손대기 전에는 dirty 가 아니다.
+      await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
+
+      await page.locator('#smtp-host').fill('smtp.ourcompany.com');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      const settings = payloadOf(await saveCapture.waitForRequest());
+      expect(settings['smtp.host']).toBe('smtp.ourcompany.com');
+      expect(settings['smtp.starttls']).toBe('false');
+    });
+
     test('한 칸만 바꿔도 나머지 키를 함께 보내고, 비워 둔 비밀번호는 키째 빠진다', async ({
       authenticatedPage: page,
     }) => {

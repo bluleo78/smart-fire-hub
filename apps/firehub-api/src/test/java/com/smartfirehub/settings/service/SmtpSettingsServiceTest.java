@@ -3,15 +3,20 @@ package com.smartfirehub.settings.service;
 import static com.smartfirehub.support.TenantRlsTestSupport.createActiveTenant;
 import static com.smartfirehub.support.TenantRlsTestSupport.deleteTenants;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.util.HashMap;
 import java.util.Map;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
@@ -136,5 +141,62 @@ class SmtpSettingsServiceTest extends IntegrationTestBase {
     settingsService.updateSettings(Map.of("smtp.port", "587"), null);
 
     assertThat(settingsService.getSmtpConfig()).containsEntry("smtp.port", "587");
+  }
+
+  // --- smtp.starttls 값 검증 (WD-537) ---
+
+  /**
+   * {@code smtp.starttls} 는 정확히 소문자 {@code true}/{@code false} 만 받는다. 연결 테스트·{@code
+   * EmailDeliveryChannel} 은 {@code "true"}(대소문자 무시)일 때만 STARTTLS 를 켜므로, {@code yes} 같은 값은 경고 없이 평문
+   * SMTP 인증으로 떨어진다. 거부는 저장 전에 일어나 행이 생기지 않아야 한다.
+   */
+  @ParameterizedTest(name = "smtp.starttls = [{0}] 은 거부된다")
+  @CsvSource(
+      ignoreLeadingAndTrailingWhitespace = false,
+      value = {"yes", "maybe", "''", "TRUE", "' true'", "'false '", "1"})
+  void updateSettings_starttlsNotTrueOrFalse_throwsIllegalArgument(String value) {
+    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("smtp.starttls", value), 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("STARTTLS 사용 값은 true 또는 false 여야 합니다. 입력값: " + value);
+
+    assertThat(settingsService.getSmtpConfig()).doesNotContainKey("smtp.starttls");
+  }
+
+  /** 웹 스위치가 보내는 두 값은 그대로 저장된다. */
+  @ParameterizedTest(name = "smtp.starttls = [{0}] 은 저장된다")
+  @ValueSource(strings = {"true", "false"})
+  void updateSettings_starttlsTrueOrFalse_isStored(String value) {
+    assertThatCode(() -> settingsService.updateSettings(Map.of("smtp.starttls", value), null))
+        .doesNotThrowAnyException();
+    assertThat(settingsService.getSmtpConfig()).containsEntry("smtp.starttls", value);
+  }
+
+  /** null 값은 NPE(500) 가 아니라 IllegalArgumentException(400) 으로 거부된다. */
+  @Test
+  void updateSettings_starttlsNull_throwsIllegalArgument() {
+    Map<String, String> body = new HashMap<>();
+    body.put("smtp.starttls", null);
+    assertThatThrownBy(() -> settingsService.updateSettings(body, 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("smtp.starttls");
+  }
+
+  /** 키가 없는 부분 PUT 은 STARTTLS 검증의 영향을 받지 않는다 — "키 없음 = 손대지 않음". */
+  @Test
+  void updateSettings_withoutStarttlsKey_isUnaffected() {
+    assertThatCode(
+            () -> settingsService.updateSettings(Map.of("smtp.host", "smtp.example.com"), null))
+        .doesNotThrowAnyException();
+    assertThat(settingsService.getSmtpConfig())
+        .containsEntry("smtp.host", "smtp.example.com")
+        .doesNotContainKey("smtp.starttls");
+  }
+
+  /** 설정 해제는 updateSettings 를 지나지 않으므로 STARTTLS 검증과 무관하게 저장된 값을 지운다. */
+  @Test
+  void clearSmtpSettings_afterStarttlsSaved_removesIt() {
+    settingsService.updateSettings(Map.of("smtp.starttls", "false"), null);
+    settingsService.clearSmtpSettings(null);
+    assertThat(settingsService.getSmtpConfig()).doesNotContainKey("smtp.starttls");
   }
 }
