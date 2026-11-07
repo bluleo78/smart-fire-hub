@@ -593,3 +593,51 @@ describe('SettingsPage — 공급자별로 반영되지 않는 실행 설정은 
     }
   });
 });
+
+describe('SettingsPage — 시스템 프롬프트 길이 상한(WD-536)', () => {
+  /** 시스템 프롬프트만 바꾼 동작 설정 반환값. 나머지 5키는 유효하므로 검증 결과는 프롬프트 길이에만 달린다. */
+  const behaviorWithPrompt = (prompt: string) => {
+    const base = makeBehavior();
+    return makeBehavior({
+      hasChanges: true,
+      form: { ...base.form, 'ai.system_prompt': prompt },
+      buildChangedPayload: vi.fn(() => ({ payload: { 'ai.system_prompt': prompt }, droppedChangedKeys: [] })),
+    });
+  };
+
+  it('20,001자면 그 칸에 상한 오류를 붙이고 저장 요청을 보내지 않는다', async () => {
+    const user = userEvent.setup();
+    const cred = makeCred();
+    mockedUseAiCredentialForm.mockReturnValue(cred);
+    const behavior = behaviorWithPrompt('a'.repeat(20_001));
+    mockedUseSettingsOverrideForm.mockReturnValue(behavior);
+
+    render(<SettingsPage />);
+    // 상한을 넘은 상태가 저장 전에도 글자 수로 드러난다
+    expect(screen.getByTestId('ai-system-prompt-count')).toHaveTextContent('20,001 / 20,000자');
+
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    expect(behavior.setErrors).toHaveBeenCalledWith({
+      'ai.system_prompt': '시스템 프롬프트는 20,000자 이하로 입력하세요',
+    });
+    expect(toast.error).toHaveBeenCalledWith('입력값을 확인하세요.');
+    expect(mockedUpdate).not.toHaveBeenCalled();
+    expect(cred.save).not.toHaveBeenCalled();
+  });
+
+  it('정확히 20,000자는 검증을 통과해 저장 요청을 보낸다', async () => {
+    const user = userEvent.setup();
+    mockedUseAiCredentialForm.mockReturnValue(makeCred());
+    const prompt = 'a'.repeat(20_000);
+    const behavior = behaviorWithPrompt(prompt);
+    mockedUseSettingsOverrideForm.mockReturnValue(behavior);
+
+    render(<SettingsPage />);
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    expect(behavior.setErrors).toHaveBeenCalledWith({});
+    await waitFor(() => expect(mockedUpdate).toHaveBeenCalledOnce());
+    expect(mockedUpdate.mock.calls[0][0]).toEqual({ settings: { 'ai.system_prompt': prompt } });
+  });
+});

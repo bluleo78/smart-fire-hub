@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.Map;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 class SettingsServiceTest extends IntegrationTestBase {
 
   @Autowired private SettingsService settingsService;
+  @Autowired private DSLContext dsl;
 
   // getByPrefix_aiPrefix_returnsAiSettings 는 삭제했다 — 그 메서드가 P7-c1 에서 사라졌다(호출자 0).
   // 그 테스트가 지키던 "프리픽스 조회는 그 프리픽스 키만 준다"는 성질은 **살아 있는 경로**에서
@@ -50,7 +53,41 @@ class SettingsServiceTest extends IntegrationTestBase {
         .hasMessageContaining("Temperature는 0.0에서 1.0 사이");
   }
 
-  // getAiCredentials_apiKey_returnsOriginal / getAiCredentials_apiKey_notSet_returnsEmpty 는
+  // ── 시스템 프롬프트 길이 상한(WD-536) ─────────────────────────────────────
+  // 상한이 없으면 500만 자 프롬프트도 204 로 저장돼, 이후 모든 AI 요청이 그 값을 싣고 나가다
+  // 모델 문맥 한도에 걸려 AI 기능 전체가 막힌다. 경계(정확히 상한 허용, 1자 초과 거부)를 고정한다.
+
+  @Test
+  void updateSettings_systemPromptAtLimit_isSaved() {
+    // 정확히 20,000자는 저장된다 — 테스트 트랜잭션이 롤백하므로 다른 테스트에 남지 않는다.
+    // 저장은 updated_by·감사 로그가 사용자 FK 를 거므로 실제 사용자 행이 필요하다(같은 트랜잭션이라 함께 롤백된다).
+    Long actor = TenantRlsTestSupport.insertUser(dsl, "wd536_actor");
+    String prompt = "가".repeat(SettingsService.SYSTEM_PROMPT_MAX_LENGTH);
+
+    settingsService.updateSettings(Map.of("ai.system_prompt", prompt), actor);
+
+    assertThat(settingsService.getValue("ai.system_prompt")).contains(prompt);
+  }
+
+  @Test
+  void updateSettings_systemPromptOverLimit_throwsWithLengthMessage() {
+    // 20,001자는 저장 전에 거부되고, 메시지에 상한과 현재 길이를 함께 알려 준다.
+    String prompt = "a".repeat(SettingsService.SYSTEM_PROMPT_MAX_LENGTH + 1);
+
+    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("ai.system_prompt", prompt), 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("시스템 프롬프트는 20,000자 이하여야 합니다 (현재 20,001자)");
+  }
+
+  @Test
+  void updateSettings_systemPromptBlank_stillRejected() {
+    // 길이 검사를 더해도 기존 빈 값 거부는 그대로다.
+    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("ai.system_prompt", "   "), 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("시스템 프롬프트는 비어있을 수 없습니다");
+  }
+
+  // getAiCredentials_apiKey_returnsOriginal /getAiCredentials_apiKey_notSet_returnsEmpty 는
   // 지웠다 — 검증 대상이던 SettingsService.getAiCredentials()/AiCredentials 자체가 타입형 전환
   // (2026-09)으로 사라졌다. 복호화된 원문 복원 계약은 지금은 AiCredentialService.resolve()/
   // AiCredentialServiceTest 가 진다.
