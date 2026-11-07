@@ -344,6 +344,216 @@ class SqlValidationUtilsTest {
     }
   }
 
+  // ─── WD-563: 주석 제거·다중 문장 판정은 리터럴 밖만 본다 ─────────────────────────
+  // 예전엔 정규식으로 주석을 지우고 문자열 전체에서 ';' 를 찾아, 따옴표 안의 ';'·'--'·'/* */' 를 문장 구분·주석으로 오인했다
+  // (정상 SQL 거부, 리터럴 값을 조용히 바꿔 실행). 이제 SqlLexicalMask 로 리터럴을 가린 뒤 그 바깥만 본다.
+
+  private static final String MULTI_STATEMENT =
+      "SQL 문장은 한 번에 하나만 실행할 수 있습니다. 세미콜론(;)으로 나뉜 문장을 하나씩 실행하세요.";
+
+  /** 리터럴·따옴표 식별자·달러 인용 속 ';'·'--'·'/* *\/' 는 그대로 둔 채 통과한다(실행 문자열 = 원문). */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "SELECT 'a;b' AS v",
+        "SELECT ';' AS v",
+        "SELECT $$a;b$$ AS v",
+        "SELECT 'it''s;ok'",
+        "SELECT \"a;b\" FROM (SELECT 1 AS \"a;b\") t",
+        "SELECT 'a -- b' AS v",
+        "SELECT 'http://a.b/c--d' AS url",
+        "SELECT 'x /* y */ z' AS v",
+        "SELECT $tag$a;--b/*c*/$tag$ AS v",
+        // E 문자열의 \' 는 이스케이프 — 리터럴이 끝나지 않는다(PG 와 같다).
+        "SELECT E'it\\'s;ok' AS v",
+        // 달러 인용은 같은 태그로만 닫힌다 — 안의 $b$ 는 내용이다.
+        "SELECT $a$ x $b$ ; $a$ AS v"
+      })
+  void stripAndValidate_literalContainingDelimiters_keepsLiteralVerbatim(String sql) {
+    assertThat(SqlValidationUtils.stripAndValidate(sql)).isEqualTo(sql);
+  }
+
+  @Test
+  void normalizedSql_keepsBlockCommentMarkersInsideLiteral() {
+    // 실행 문자열에 리터럴 값 'x /* y */ z' 가 그대로 남아야 한다(예전엔 'x   z' 로 바뀌어 실행됐다).
+    assertThat(NormalizedSql.of("SELECT 'x /* y */ z' AS v;").text())
+        .isEqualTo("SELECT 'x /* y */ z' AS v");
+    assertThat(NormalizedSql.of("SELECT 'a;b';").text()).isEqualTo("SELECT 'a;b'");
+  }
+
+  /** 리터럴 밖의 진짜 주석은 지금처럼 공백 하나로 지운다 — 주석 속 ';'·따옴표는 문장 구분·리터럴이 아니다. */
+  static Stream<Arguments> realComments() {
+    return Stream.of(
+        Arguments.of("SELECT 1 -- a;b", "SELECT 1"),
+        Arguments.of("SELECT 1 /* ; */", "SELECT 1"),
+        Arguments.of("SELECT 1 /* it's */ , 'y;z'", "SELECT 1   , 'y;z'"),
+        Arguments.of("SELECT 1 -- it's\n, 2", "SELECT 1  \n, 2"),
+        // PG 블록 주석은 중첩된다 — 안쪽 */ 에서 끝나지 않으므로 ';'·DROP 까지 주석이다(PG 도 한 문장으로 읽는다).
+        Arguments.of("SELECT 1 /* /* */ ; DROP TABLE t */", "SELECT 1"),
+        Arguments.of("SELECT 1; -- trailing", "SELECT 1;"));
+  }
+
+  @ParameterizedTest
+  @MethodSource("realComments")
+  void stripAndValidate_realCommentsOutsideLiterals_areStripped(String sql, String expected) {
+    assertThat(SqlValidationUtils.stripAndValidate(sql)).isEqualTo(expected);
+  }
+
+  /** 보안 경계(Review Focus): 리터럴·주석 경계를 PG 와 다르게 잘라 바깥 ';' 를 숨기는 우회가 없어야 한다. 모두 PG 에서도 두 문장이다. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "SELECT 1; SELECT 2",
+        "SELECT 1 /* x */; DROP TABLE t",
+        "SELECT 'a'; DROP TABLE t",
+        "SELECT 'it''s'; DROP TABLE t",
+        // E'\'' — \' 는 이스케이프, 다음 ' 가 닫는다.
+        "SELECT E'\\''; DROP TABLE t",
+        // standard_conforming_strings=on: 일반 문자열의 \ 는 글자라 '\' 에서 닫힌다.
+        "SELECT '\\'; DROP TABLE t; --'",
+        // 식별자 xe 뒤의 ' 는 일반 문자열(E 접두어 아님).
+        "SELECT xe'\\'; DROP TABLE t; --'",
+        // 중첩 블록 주석은 바깥 */ 에서 닫힌다.
+        "SELECT 1 /* /* */ */; DROP TABLE t",
+        // $a$ 는 $a$ 로만 닫히고, 닫힌 뒤의 ';' 는 코드다.
+        "SELECT $a$ x $b$ y $a$; DROP TABLE t",
+        // a$$ 는 식별자($ 는 식별자 글자) — 달러 인용이 아니다.
+        "SELECT a$$; DROP TABLE t; SELECT $$x$$",
+        "SELECT \"a\"\"b\"; DROP TABLE t",
+        // 줄 주석은 \r 에서도 끝난다(PG scan.l newline).
+        "SELECT 1 --c\r; DROP TABLE t"
+      })
+  void stripAndValidate_multiStatementOutsideLiterals_isRejected(String sql) {
+    assertThatThrownBy(() -> SqlValidationUtils.stripAndValidate(sql))
+        .isInstanceOf(SqlQueryException.class)
+        .hasMessage(MULTI_STATEMENT);
+  }
+
+  /** 닫히지 않은 리터럴·주석은 어디까지가 코드인지 알 수 없다 — 안에 ';' 를 숨길 수 있으므로 거부한다(fail-closed). */
+  static Stream<Arguments> unclosedSql() {
+    String string = "닫히지 않은 문자열 리터럴이 있습니다. 작은따옴표(')를 닫아 주세요.";
+    return Stream.of(
+        Arguments.of("SELECT 'abc", string),
+        Arguments.of("SELECT 'abc; DROP TABLE t", string),
+        Arguments.of("SELECT E'abc\\'; DROP TABLE t", string),
+        Arguments.of("SELECT E'abc\\", string),
+        Arguments.of("SELECT \"a; DROP TABLE t", "닫히지 않은 따옴표 식별자가 있습니다. 큰따옴표(\")를 닫아 주세요."),
+        Arguments.of(
+            "SELECT $a$ x $b$; DROP TABLE t; $b$", "닫히지 않은 달러 인용($$)이 있습니다. 같은 태그로 닫아 주세요."),
+        Arguments.of("SELECT 1 /* ; DROP TABLE t", "닫히지 않은 블록 주석(/*)이 있습니다. */ 로 닫아 주세요."),
+        Arguments.of("SELECT 1 /* /* */ ; DROP TABLE t", "닫히지 않은 블록 주석(/*)이 있습니다. */ 로 닫아 주세요."));
+  }
+
+  @ParameterizedTest
+  @MethodSource("unclosedSql")
+  void stripAndValidate_unclosedLiteralOrComment_isRejected(String sql, String message) {
+    assertThatThrownBy(() -> SqlValidationUtils.stripAndValidate(sql))
+        .isInstanceOf(SqlQueryException.class)
+        .hasMessage(message);
+  }
+
+  /**
+   * 보안 경계(Review Focus, 코드 리뷰 1번): PG·마스크와 pgjdbc 42.7.4 문장 분리기(Parser.parseJdbcSql)가 리터럴 시작·끝을 다르게
+   * 읽는 표기 — 마스크가 리터럴 속으로 본 ';' 에서 드라이버가 문장을 나눌 수 있으므로 거부한다(애매하면 거부). pgjdbc 는 E 앞 글자가 식별자 종결
+   * 문자(공백·연산자·")일 때만 E 문자열로, $ 앞 글자가 자기 식별자 글자(영숫자·_·$·제어 문자)가 아닐 때만 달러 인용으로 본다. 예전 코드는 이 입력들을 문자열
+   * 전체의 ';' 로 거부했다 — 이번 변경이 차단을 느슨하게 만들면 안 된다.
+   */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        // 리뷰 지적 사례: E 앞 글자가 닫는 ' — pgjdbc 는 '\' 를 일반 문자열로 읽고 ';' 에서 나눈다.
+        "SELECT 'a'E'\\'; DELETE FROM t; --'",
+        // E 앞 글자별: \ { } VT(0x0B, PG 공백이지만 pgjdbc 종결 문자 아님) 숫자 $
+        "SELECT \\E'\\'; DELETE FROM t; --'",
+        "SELECT {E'\\'; DELETE FROM t; --'",
+        "SELECT }E'\\'; DELETE FROM t; --'",
+        "SELECT\u000BE'\\'; DELETE FROM t; --'",
+        "SELECT 1E'\\'; DROP TABLE t; --'",
+        "SELECT $$a$$E'\\'; DROP TABLE t; --'",
+        // pgjdbc 는 E 문자열 속 '' 를 이스케이프로 보지 않는다 — 첫 ' 에서 닫고 다음 ' 부터 일반 문자열(\ 가 글자)로 읽는다.
+        "SELECT e'''\\';'",
+        "SELECT E'a''\\'; DELETE FROM t; --'",
+        // $ 앞 글자별: 숫자 $ 제어 문자
+        "SELECT 1$$; DROP TABLE t; $$",
+        "SELECT $$a$$$$; DROP TABLE t; $$",
+        "SELECT \u0001$$; DROP TABLE t; $$",
+        // pgjdbc 는 태그에 제어 문자를 받는다($a<0x01>$) — 마스크·PG 에겐 태그가 아니다.
+        "SELECT $a\u0001$ x ; DELETE FROM t; $a\u0001$",
+        // 반대 방향: NBSP 는 PG·마스크에겐 식별자 글자( $$ 는 식별자), pgjdbc 에겐 달러 인용 시작이다.
+        "SELECT  $$ ' $$; DELETE FROM t; --'",
+        // 태그에 비ASCII 가 있으면 pgjdbc 분류를 확신할 수 없다(보수적으로 거부).
+        "SELECT $한$ x $한$"
+      })
+  void stripAndValidate_quoteBoundaryDifferentInDriver_isRejected(String sql) {
+    assertThatThrownBy(() -> SqlValidationUtils.stripAndValidate(sql))
+        .isInstanceOf(SqlQueryException.class)
+        .hasMessage(SqlValidationUtils.DRIVER_AMBIGUOUS_QUOTE);
+  }
+
+  /** 양성 대조: pgjdbc 도 같은 위치에서 E 문자열·달러 인용으로 읽는 표기는 그대로 통과한다. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "SELECT E'a\\tb' AS v",
+        "SELECT (E'\\n')",
+        "SELECT 1,E'x'",
+        "SELECT \"a\"E'x'",
+        "SELECT x||E'\\t'",
+        "SELECT E'it''s'",
+        "SELECT $$a$$ || $b$c$b$",
+        "SELECT (\n$$x$$)",
+        "SELECT 한$x FROM t"
+      })
+  void stripAndValidate_quoteBoundarySameInDriver_isAccepted(String sql) {
+    assertThat(SqlValidationUtils.stripAndValidate(sql)).isEqualTo(sql);
+  }
+
+  /**
+   * 코드 리뷰 4번: 첫 키워드가 허용 목록 밖이면 닫히지 않은 따옴표보다 그 원인을 먼저 알린다. 닫히지 않은 구간이 맨 앞이거나 첫 키워드가 허용 키워드면 닫히지 않은
+   * 어휘 문구다.
+   */
+  static Stream<Arguments> unclosedWithForbiddenStart() {
+    return Stream.of(
+        Arguments.of("DROP TABLE 'x", "DROP 문은 실행할 수 없습니다."),
+        Arguments.of("/* c */ COPY t FROM 'x", "COPY 문은 실행할 수 없습니다."),
+        Arguments.of("SELECT 'x", "닫히지 않은 문자열 리터럴이 있습니다. 작은따옴표(')를 닫아 주세요."),
+        Arguments.of("'abc", "닫히지 않은 문자열 리터럴이 있습니다. 작은따옴표(')를 닫아 주세요."),
+        Arguments.of("/* DROP", "닫히지 않은 블록 주석(/*)이 있습니다. */ 로 닫아 주세요."));
+  }
+
+  @ParameterizedTest
+  @MethodSource("unclosedWithForbiddenStart")
+  void stripAndValidate_forbiddenStartBeforeUnclosed(String sql, String message) {
+    assertThatThrownBy(() -> SqlValidationUtils.stripAndValidate(sql))
+        .isInstanceOf(SqlQueryException.class)
+        .hasMessage(message);
+  }
+
+  /**
+   * 코드 리뷰 3번(한 번 스캔): 끝 세미콜론 판정이 예전 "주석 제거 → strip → 끝 ; 제거" 와 같다 — 뒤의 Java 공백(EM SPACE)·주석은 끝으로
+   * 본다.
+   */
+  static Stream<Arguments> trailingSemicolonEquivalence() {
+    return Stream.of(
+        Arguments.of("SELECT 1; -- c", "SELECT 1;"),
+        Arguments.of("SELECT 1 ; /* a */ \n", "SELECT 1 ;"),
+        Arguments.of("SELECT ';' ;", "SELECT ';' ;"));
+  }
+
+  @ParameterizedTest
+  @MethodSource("trailingSemicolonEquivalence")
+  void stripAndValidate_trailingSemicolon_sameAsBefore(String sql, String expected) {
+    assertThat(SqlValidationUtils.stripAndValidate(sql)).isEqualTo(expected);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"SELECT 1;;", "SELECT 1; /* x */ ;", "SELECT 1; ;"})
+  void stripAndValidate_moreThanOneSemicolon_isRejected(String sql) {
+    assertThatThrownBy(() -> SqlValidationUtils.stripAndValidate(sql))
+        .isInstanceOf(SqlQueryException.class)
+        .hasMessage(MULTI_STATEMENT);
+  }
+
   @Test
   void displayToken_collapsesWhitespaceAndTruncates() {
     assertThat(SqlValidationUtils.displayToken("'a\n  b'")).isEqualTo("'a b'");
