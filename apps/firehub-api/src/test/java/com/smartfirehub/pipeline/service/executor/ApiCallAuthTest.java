@@ -90,7 +90,7 @@ class ApiCallAuthTest {
             ApiCallAuth.describeCallProblem(
                 conn("API_KEY"), Map.of("headerName", "X Bad", "apiKey", "k")))
         .startsWith("API 연결 「공공 API」의 API 키 헤더 이름을 쓸 수 없습니다(")
-        .endsWith("API 연결 화면에서 인증 정보를 저장하세요.");
+        .endsWith("API 연결 화면에서 이 연결의 헤더 이름을 고치세요.");
     assertThat(
             ApiCallAuth.describeCallProblem(
                 null, Map.of("authType", "API_KEY", "key_name", "Host", "key_value", "")))
@@ -130,7 +130,7 @@ class ApiCallAuthTest {
         .isEqualTo("X-Custom");
   }
 
-  // ── WD-647: Python 실행기(_apply_auth)와 같은 대체 키·빈 이름 규칙 ─────────────────────────────
+  // ── WD-647: Python 실행기(_resolve_auth)와 같은 대체 키·빈 이름 규칙 ─────────────────────────────
 
   /**
    * 헤더 이름이 빈 문자열·공백이면 없는 것으로 보고 key_name, 그다음 기본 헤더(X-API-Key)를 쓴다. 예전에는 getOrDefault 가 키가 없을 때만
@@ -198,5 +198,62 @@ class ApiCallAuthTest {
                     Map.of("authType", "API_KEY", "placement", "query", "key_name", "svc"))
                 .paramName())
         .isEqualTo("svc");
+  }
+
+  // ── WD-657: 헤더 이름 공백 정리·원인 위치 문구·Bearer 끝 앵커·출처 판정 ─────────────────────────────
+
+  /**
+   * 인라인 key_name·저장 headerName 의 앞뒤 공백은 떼고 검사한다(정리 결과 자체는 공용 사례 표 api-call-auth-vectors.json 이 본다)
+   * — 예전엔 돌던 파이프라인(「X-Key 」)이 헤더 이름 검사(WD-647)로 실행 전에 실패하면 안 된다.
+   */
+  @Test
+  void headerName_surroundingWhitespaceIsStripped() {
+    assertThat(
+            ApiCallAuth.describeCallProblem(
+                conn("API_KEY"), Map.of("headerName", "X-Saved ", "apiKey", "k")))
+        .isNull();
+    assertThat(
+            ApiCallAuth.describeCallProblem(
+                null, Map.of("authType", "API_KEY", "key_name", " X-Inline", "key_value", "k")))
+        .isNull();
+  }
+
+  /** 남는 헤더 이름 실패는 원인 위치를 짚는다 — 인라인이면 스텝 설정, 저장 연결이면 연결 화면. */
+  @Test
+  void headerNameProblem_namesWhereToFix() {
+    assertThat(
+            ApiCallAuth.describeCallProblem(
+                null, Map.of("authType", "API_KEY", "key_name", "X Bad", "key_value", "k")))
+        .startsWith("스텝 인증 설정의 ")
+        .endsWith("파이프라인 편집에서 이 스텝의 인증 설정을 고치세요.")
+        .doesNotContain("API 연결");
+    assertThat(
+            ApiCallAuth.describeCallProblem(
+                conn("API_KEY"), Map.of("headerName", "X Bad", "apiKey", "k")))
+        .startsWith("API 연결 「공공 API」의 ")
+        .endsWith("API 연결 화면에서 이 연결의 헤더 이름을 고치세요.");
+  }
+
+  /** 저장 전 연결 테스트용 — 넘긴 방식을 연결 컬럼처럼 본다. */
+  @Test
+  void resolveWithAuthType_overridesJsonAuthType() {
+    ApiCallAuth.ResolvedAuth r =
+        ApiCallAuth.resolveWithAuthType(
+            "BEARER", Map.of("authType", "API_KEY", "token", "Bearer abc"));
+    assertThat(r.isBearer()).isTrue();
+    assertThat(r.secret()).isEqualTo("abc");
+  }
+
+  /** 다른 출처 리다이렉트의 Location 에서 쿼리 인증 키(인코딩된 이름 포함)만 뺀다. */
+  @Test
+  void stripQueryParam_removesOnlyAuthParam() {
+    assertThat(ApiCallAuth.stripQueryParam("https://b.example/p?svc=K&x=1&svc=K2#frag", "svc"))
+        .isEqualTo("https://b.example/p?x=1#frag");
+    assertThat(ApiCallAuth.stripQueryParam("https://b.example/p?s%76c=K", "svc"))
+        .isEqualTo("https://b.example/p");
+    assertThat(ApiCallAuth.stripQueryParam("https://b.example/p?svcx=1", "svc"))
+        .isEqualTo("https://b.example/p?svcx=1");
+    assertThat(ApiCallAuth.stripQueryParam("https://b.example/p", "svc"))
+        .isEqualTo("https://b.example/p");
   }
 }

@@ -1,6 +1,7 @@
 package com.smartfirehub.apiconnection.service;
 
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -47,8 +48,12 @@ public final class AuthConfigValidator {
    *
    * <p>값 전체가 글자 그대로 「bearer」(대소문자 무관)인 토큰도 빈 토큰으로 본다 — 실제 토큰일 가능성보다 접두어만 붙여 넣은 실수일 가능성이 훨씬 커서, 저장해
    * 「Bearer bearer」 로 호출하기보다 「Bearer 토큰을 입력하세요」 로 안내하는 쪽을 택했다.
+   *
+   * <p>값의 끝은 {@code \z}(입력의 진짜 끝)로 본다(WD-657). {@code $} 는 끝 줄바꿈 문자(U+0085·U+2028 등) 앞에서도 맞아
+   * 「Bearer」 + U+0085 에서 접두어를 떼 버렸는데, Python 실행기의 {@code $} 는 그러지 않아 두 실행기가 다른 토큰을 보냈다. Python 은
+   * {@code \Z} 로 맞춘다.
    */
-  private static final Pattern BEARER_PREFIX = Pattern.compile("(?i)^(bearer(\\s+|$))+");
+  private static final Pattern BEARER_PREFIX = Pattern.compile("(?i)^(bearer(\\s+|\\z))+");
 
   /**
    * 지원하는 인증 방식과 그 방식에 반드시 있어야 하는 비밀 필드(API_KEY → apiKey, BEARER → token). 인증 헤더·쿼리 조립이 읽는 키와 같다.
@@ -159,6 +164,38 @@ public final class AuthConfigValidator {
     if (authType == null || !REQUIRED_SECRET_BY_AUTH_TYPE.containsKey(authType)) return false;
     String normalized = "BEARER".equals(authType) ? normalizeBearerToken(value) : value;
     return normalized == null || normalized.isBlank();
+  }
+
+  /**
+   * 실제로 보낼 값({@link ApiCallAuth#resolve} 로 푼 값)으로 연결 테스트 전 검사를 한다(WD-657). 저장된 연결의 「테스트」·10분 주기 상태
+   * 점검이 파이프라인 실행과 같은 값을 보내므로, 검사도 그 값으로 해야 「테스트는 거절, 실행은 통과」 같은 어긋남이 없다(예: 대문자 {@code
+   * QUERY}·paramName 없음·key_name 대체 키). 문구는 연결 화면용 {@link #describeProblem} 과 같다.
+   *
+   * <ol>
+   *   <li>비밀이 비었는지(정리한 뒤) — 가장 먼저
+   *   <li>API_KEY 헤더 이름을 쓸 수 있는지 — 헤더로 보낼 때만
+   *   <li>비밀에 줄바꿈이 있는지
+   * </ol>
+   *
+   * <p>파이프라인 실행·미리보기의 호출 전 검사({@link ApiCallAuth#describeProblem})는 1·2 만 본다 — 줄바꿈 검사는 연결 테스트에만 있다.
+   * 실행에 넣으면 지금 돌던 파이프라인의 동작이 바뀌어 일부러 맞추지 않았다.
+   *
+   * @param auth 실행과 같은 규칙으로 푼 인증 설정. 모르는 방식이면 문제없음
+   * @return 문제 사유(한국어) 또는 문제가 없으면 null
+   */
+  public static String describeSentValueProblem(ApiCallAuth.ResolvedAuth auth) {
+    String authType = auth.authType();
+    String secret = auth.secret();
+    if (isSecretValueMissing(authType, secret)) {
+      return MISSING_SECRET_MESSAGE_BY_AUTH_TYPE.get(authType);
+    }
+    if (auth.isHeaderApiKey()) {
+      String problem = headerNameProblem(auth.headerName());
+      if (problem != null) return problem;
+    }
+    if ("API_KEY".equals(authType)) return lineBreakProblem(secret, "API 키");
+    if (auth.isBearer()) return lineBreakProblem(secret, "Bearer 토큰");
+    return null;
   }
 
   /**

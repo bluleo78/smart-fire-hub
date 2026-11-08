@@ -17,11 +17,13 @@ import errno
 import re
 import socket
 from decimal import Decimal
-from urllib.parse import urlsplit
+from typing import Optional
+from urllib.parse import quote_plus, unquote_plus, urlsplit
 
 import httpx
 
 from app.services import value_conversion
+from app.services.query_key_encoding import encode_query_key, has_invalid_percent
 
 # 자유 문장 안의 URL 에서 쿼리·프래그먼트·userinfo 를 지우는 패턴 — 분류하지 못한 원문을 쓸 때의 마지막 방어선.
 _URL_QUERY_IN_TEXT = re.compile(r"(?i)(https?://[^\s?#\"'<>]*)[?#][^\s\"'<>]*")
@@ -182,8 +184,20 @@ def _chain(error: BaseException):
         current = current.__cause__ or current.__context__
 
 
-def describe_exception(error: BaseException, timeout_ms: int, host: str | None) -> str:
-    """예외를 사용자 문구로 바꾼다. 타임아웃을 연결 오류보다 먼저 본다(httpx.ConnectTimeout 은 TimeoutException)."""
+def describe_exception(
+    error: BaseException, timeout_ms: int, host: str | None, secret: Optional[str] = None
+) -> str:
+    """예외를 사용자 문구로 바꾼다. 타임아웃을 연결 오류보다 먼저 본다(httpx.ConnectTimeout 은 TimeoutException).
+
+    ``secret`` 은 이번 요청에 실제로 실은 비밀(쿼리 키·헤더 키·Bearer 토큰)이다(WD-657). 문구는 실행 기록·경고 로그로 가므로 마지막에
+    ``scrub_secret`` 으로 가린다 — Java ``AuthQueryMasker.scrubSecret(…, auth.sentSecret())`` 와 같다. 예전에는 URL 의 쿼리만 지워,
+    분류하지 못한 원문에 헤더 키·토큰이 실려 오면 그대로 남았다.
+    """
+    return scrub_secret(_describe_exception(error, timeout_ms, host), secret)
+
+
+def _describe_exception(error: BaseException, timeout_ms: int, host: str | None) -> str:
+    """``describe_exception`` 의 분류 본체 — 비밀 가림 전 문구."""
     if isinstance(error, RetryableApiCallError):
         return str(error)
     for c in _chain(error):
@@ -205,6 +219,55 @@ def describe_exception(error: BaseException, timeout_ms: int, host: str | None) 
         return connection_failed_message()
     raw = str(error) or type(error).__name__
     return f"API 호출 중 오류가 발생했습니다: {redact_urls_in_text(raw)}"
+
+
+# ---------------------------------------------------------------------------
+# 비밀 가리기(WD-657) — Java AuthQueryMasker.maskSecret·scrubSecret 과 같은 규칙
+# ---------------------------------------------------------------------------
+
+_MASK_PREFIX = "****"
+
+# 자유 문장에서 비밀을 찾아 지울 최소 길이 — 너무 짧은 값을 지우면 문장의 평범한 글자까지 지워진다(Java MIN_SCRUB_LENGTH 와 같다).
+_MIN_SCRUB_LENGTH = 4
+
+
+def mask_secret(value: Optional[str]) -> str:
+    """비밀을 ``****`` + 끝 4자로 가린다. 4자 미만이면 ``****`` (Java ``AuthQueryMasker.maskSecret`` 과 같다)."""
+    if value is None or len(value) < 4:
+        return _MASK_PREFIX
+    return _MASK_PREFIX + value[-4:]
+
+
+def _secret_forms(secret: str) -> list:
+    """비밀이 문장에 나타날 수 있는 형태(Java ``AuthQueryMasker.secretForms`` 와 같다) — 실제로 보낸 형태(공용 인코딩), 원문,
+    form 인코딩(Java URLEncoder: 영숫자와 ``. - * _`` 만 그대로, 공백은 ``+``), 그 ``+`` 를 ``%20`` 으로 바꾼 것, 디코딩형. 긴 것부터.
+    """
+    form_encoded = quote_plus(secret, safe="*").replace("~", "%7E")
+    candidates = [encode_query_key(secret), form_encoded, form_encoded.replace("+", "%20"), secret]
+    # 잘못된 % 시퀀스가 있으면 Java URLDecoder 가 예외를 내 디코딩형을 넣지 않는다 — 같게 맞춘다.
+    if not has_invalid_percent(secret):
+        candidates.append(unquote_plus(secret))
+    forms = []
+    for form in candidates:
+        if form not in forms:
+            forms.append(form)
+    # 길이 내림차순(같은 길이는 넣은 순서) — Java 의 안정 정렬과 같은 순서다.
+    return sorted(forms, key=len, reverse=True)
+
+
+def scrub_secret(text: Optional[str], secret: Optional[str]) -> Optional[str]:
+    """자유 문장(오류 문구·로그)에서 비밀을 원문·인코딩형·디코딩형 모두 ``mask_secret`` 으로 바꾼다(WD-657).
+
+    Java ``AuthQueryMasker.scrubSecret`` 과 같은 규칙 — 비밀이 4자 미만이면 손대지 않고, 형태마다 4자 이상인 것만 바꾼다.
+    """
+    if text is None or secret is None or len(secret) < _MIN_SCRUB_LENGTH:
+        return text
+    mask = mask_secret(secret)
+    out = text
+    for form in _secret_forms(secret):
+        if len(form) >= _MIN_SCRUB_LENGTH:
+            out = out.replace(form, mask)
+    return out
 
 
 # ---------------------------------------------------------------------------

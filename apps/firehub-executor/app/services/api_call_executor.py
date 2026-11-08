@@ -7,7 +7,7 @@ import time
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urljoin, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -22,7 +22,7 @@ from app.services import api_call_errors as errors
 from app.services import value_conversion as vc
 from app.services.api_call_errors import RetryableApiCallError
 from app.services.db_utils import insert_batch
-from app.services.query_key_encoding import encode_query_key
+from app.services.query_key_encoding import encode_query_key, has_invalid_percent
 from app.validators.ssrf_protection import SsrfException, validate_url
 
 logger = logging.getLogger(__name__)
@@ -47,10 +47,12 @@ def execute_api_call(request: ApiCallExecuteRequest, conn) -> ApiCallExecuteResp
     def write_to_pg(rows: List[Dict[str, Any]]) -> None:
         insert_batch(conn, request.output_table, rows)
 
+    # 인증 설정은 실행마다 한 번만 푼다(WD-657) — 페이지·재시도·리다이렉트·실행 로그 가림이 모두 이 값을 쓴다(Java 실행기와 같다).
+    auth = _resolve_auth(request.auth)
     try:
-        total_rows, total_pages, log_lines = _fetch_and_write_pages(request, write_to_pg, start_time)
+        total_rows, total_pages, log_lines = _fetch_and_write_pages(request, write_to_pg, start_time, auth)
         conn.commit()
-        return _success_response(request, total_rows, total_pages, log_lines, start_time)
+        return _success_response(request, total_rows, total_pages, log_lines, start_time, auth)
 
     except (SsrfException, ApiCallException) as e:
         conn.rollback()
@@ -89,11 +91,13 @@ def execute_api_call_remote(request: ApiCallExecuteRequest, loader: RemoteLoadBa
         # 행은 _parse_and_map 이 이미 변환·검증했다(WD-431) — 적재기는 직렬화만 한다.
         loader.load(request.tenant_id, request.output_table, rows, request.column_type_map)
 
+    # 인증 설정은 실행마다 한 번만 푼다(WD-657) — PG 경로와 같다.
+    auth = _resolve_auth(request.auth)
     try:
         # 스테이징 이름 검증 — 라우터가 이미 거르지만, 이 함수를 직접 부르는 경로도 같은 규칙을 지키게 한다(적재기도 다시 검증한다).
         require_staging_table(request.output_table)
-        total_rows, total_pages, log_lines = _fetch_and_write_pages(request, write_remote, start_time)
-        return _success_response(request, total_rows, total_pages, log_lines, start_time)
+        total_rows, total_pages, log_lines = _fetch_and_write_pages(request, write_remote, start_time, auth)
+        return _success_response(request, total_rows, total_pages, log_lines, start_time, auth)
 
     except Exception as e:
         # 예상한 실패(SSRF·API 오류·원격 적재 실패·스테이징 이름 거부)는 응답 문구로 충분하다 — 그 밖의 예외만 스택과 함께 남긴다.
@@ -117,13 +121,16 @@ def _success_response(
     total_pages: int,
     log_lines: List[str],
     start_time: float,
+    auth: "_ResolvedAuth",
 ) -> ApiCallExecuteResponse:
-    """성공 응답(요약 로그 맨 앞)을 만든다 — PG·Tibero 경로가 같은 모양을 쓴다."""
+    """성공 응답(요약 로그 맨 앞)을 만든다 — PG·Tibero 경로가 같은 모양을 쓴다. ``auth`` 는 실행 시작에 한 번 푼 인증(가릴 비밀)."""
     elapsed_ms = int((time.monotonic() - start_time) * 1000)
     summary = (
         f"url={request.url} method={request.method} "
         f"pages={total_pages} rows={total_rows} duration={elapsed_ms}ms"
     )
+    # 실행 로그(실행 기록으로 저장)에서 보낸 비밀을 가린다(WD-657) — 주소에 직접 쓴 키 등. Java 실행기와 같은 가림 규칙이다.
+    summary = errors.scrub_secret(summary, auth.sent_secret)
     log_lines.insert(0, summary)
     return ApiCallExecuteResponse(
         success=True,
@@ -138,6 +145,7 @@ def _fetch_and_write_pages(
     request: ApiCallExecuteRequest,
     write_rows: Callable[[List[Dict[str, Any]]], None],
     start_time: float,
+    auth: "_ResolvedAuth",
 ) -> Tuple[int, int, List[str]]:
     """API 를 페이지네이션으로 호출해 페이지마다 ``write_rows`` 로 적재하고 (총 행 수, 총 페이지 수, 로그 줄)을 돌려준다.
 
@@ -175,7 +183,7 @@ def _fetch_and_write_pages(
             if pag.limit_param:
                 pag_params[pag.limit_param] = str(page_size)
 
-            response_body = _execute_request(request, pag_params)
+            response_body = _execute_request(request, pag_params, auth)
             # 변환 실패 문구의 행 번호가 페이지를 넘어 이어지도록 지금까지 받은 응답 원소 수를 넘긴다(WD-431).
             rows, item_count = _parse_and_map(
                 response_body,
@@ -215,7 +223,7 @@ def _fetch_and_write_pages(
             offset += page_size
     else:
         # Single request (NONE or unknown pagination type)
-        response_body = _execute_request(request, {})
+        response_body = _execute_request(request, {}, auth)
         rows, _ = _parse_and_map(
             response_body,
             request.data_path,
@@ -234,8 +242,13 @@ def _fetch_and_write_pages(
 # HTTP request with retry + manual redirect + SSRF check
 # ---------------------------------------------------------------------------
 
-def _execute_request(request: ApiCallExecuteRequest, extra_params: Dict[str, str]) -> Any:
-    """Execute a single HTTP request with retry and manual redirect following."""
+def _execute_request(
+    request: ApiCallExecuteRequest, extra_params: Dict[str, str], auth: "_ResolvedAuth"
+) -> Any:
+    """Execute a single HTTP request with retry and manual redirect following.
+
+    ``auth`` 는 실행 시작에 한 번 푼 인증이다(WD-657) — 재시도·리다이렉트·오류문 가림에 같은 값을 쓴다(Java 실행기와 같다).
+    """
     retry_cfg = request.retry
     max_retries = retry_cfg.max_retries if retry_cfg else 3
     initial_backoff_ms = retry_cfg.initial_backoff_ms if retry_cfg else 1000
@@ -250,6 +263,9 @@ def _execute_request(request: ApiCallExecuteRequest, extra_params: Dict[str, str
         target_host = urlsplit(request.url).hostname
     except ValueError:
         target_host = None
+    # 오류 문구·경고 로그에서 가릴 값 — 이번 요청에 실제로 싣는 비밀 전부(쿼리 키·헤더 키·Bearer 토큰, WD-657). Java 실행기
+    # (AuthQueryMasker.scrubSecret(…, auth.sentSecret()))와 같다. 예전에는 URL 의 쿼리만 지웠다.
+    sent_secret = auth.sent_secret
 
     while attempt <= max_retries:
         try:
@@ -259,7 +275,7 @@ def _execute_request(request: ApiCallExecuteRequest, extra_params: Dict[str, str
                 headers=request.headers or {},
                 query_params={**(request.query_params or {}), **extra_params},
                 body=request.body,
-                auth=request.auth,
+                auth=auth,
                 timeout_sec=timeout_sec,
                 max_bytes=max_bytes,
             )
@@ -271,7 +287,7 @@ def _execute_request(request: ApiCallExecuteRequest, extra_params: Dict[str, str
         except Exception as e:
             # 타임아웃·연결 오류·5xx/408/429 — 재시도. 원인을 사용자 문구로 바꿔 둔다(httpx 영어 원문 대신).
             last_error = e
-            last_message = errors.describe_exception(e, request.timeout_ms, target_host)
+            last_message = errors.describe_exception(e, request.timeout_ms, target_host, sent_secret)
             attempt += 1
             if attempt > max_retries:
                 break
@@ -288,7 +304,7 @@ def _execute_request(request: ApiCallExecuteRequest, extra_params: Dict[str, str
     # 마지막 원인을 반드시 담는다(WD-150). 횟수는 Java 와 같게 「재시도 횟수」(max_retries)로 센다 — 예전 「All N attempts」는
     # 첫 시도까지 세어 Java 문구와 숫자가 달랐다.
     last_message = (
-        errors.describe_exception(last_error, request.timeout_ms, target_host)
+        errors.describe_exception(last_error, request.timeout_ms, target_host, sent_secret)
         if last_error is not None
         else ""
     )
@@ -301,30 +317,45 @@ def _do_request(
     headers: Dict[str, str],
     query_params: Dict[str, str],
     body: Optional[str],
-    auth: Optional[dict],
+    auth: "_ResolvedAuth",
     timeout_sec: float,
     max_bytes: int,
 ) -> Any:
-    """Perform a single HTTP call with manual redirect following and SSRF checks."""
-    # Build auth headers
-    req_headers = dict(headers)
+    """Perform a single HTTP call with manual redirect following and SSRF checks.
+
+    인증은 처음 요청과 같은 출처(``_same_auth_origin`` — http→https 승격 포함)로 가는 홉에만 붙인다(WD-657) — 다른 출처로 3xx 하면
+    인증 헤더·자격 증명 헤더(Authorization·Proxy-Authorization·Cookie)·Location 이 되울려 담아 온 쿼리 인증 키를 떼고 따라간다.
+    판단 기준은 언제나 처음 요청 출처라 A→B→A 면 B 에만 떼고, 처음 출처로 돌아오면 헤더도 쿼리 키도 다시 붙인다. Java
+    ``ApiCallExecutor.executeWithRedirects`` 와 같은 규칙이다.
+    """
+    # 인증 헤더는 따로 만들어 둔다 — 다른 출처 홉에서 뗄 수 있게(WD-657).
     req_params = dict(query_params)
-    auth_query = _apply_auth(auth, req_headers, req_params)
+    auth_headers: Dict[str, str] = {}
+    auth_query = _apply_resolved_auth(auth, auth_headers, req_params)
+    req_headers = {**headers, **auth_headers}
+    # 다른 출처 홉에 보낼 헤더 — 자격 증명을 실을 수 있는 사용자 헤더(표준 자격 증명 헤더·인증 헤더와 같은 이름, 대소문자 무시)를 뺀다.
+    dropped = _CREDENTIAL_HEADERS | {name.lower() for name in auth_headers}
+    cross_origin_headers = {k: v for k, v in headers.items() if k.lower() not in dropped}
 
     # 쿼리 문자열은 직접 만들어 URL 에 붙이고 httpx 에 params= 를 넘기지 않는다(WD-182). params= 를 넘기면 httpx 가
     # (1) 값을 다시 인코딩해 인코딩 키의 %2B 가 %252B 로 나가고 (2) URL 에 이미 있던 쿼리를 통째로 바꿔 버린다(httpx 0.28,
     # params={} 여도 쿼리가 사라진다). 문자열 URL 의 쿼리는 httpx 가 유효한 %XX 를 그대로 보낸다.
     current_url = _build_request_url(url, req_params, auth_query)
+    origin_url = current_url
     redirect_count = 0
+    # 이 홉까지 오는 동안 리다이렉트가 처음 출처를 벗어난 적이 있는지 — 돌아올 때 뗐던 쿼리 키를 되붙이는 데 쓴다.
+    has_left_origin = False
 
     with httpx.Client(follow_redirects=False, timeout=timeout_sec) as client:
         while True:
-            # 리다이렉트 대상(Location)은 받은 그대로 쓴다 — 예전에는 params={} 로 Location 의 쿼리(흔한 http→https 리다이렉트가
+            # 리다이렉트 대상(Location)의 쿼리는 받은 그대로 쓴다 — 예전에는 params={} 로 Location 의 쿼리(흔한 http→https 리다이렉트가
             # 옮겨 주는 키 포함)까지 지워졌다(WD-182).
+            # 첫 홉은 판정 없이 인증을 붙인다 — 그 뒤 홉은 처음 요청과 같은 출처일 때만(WD-657).
+            send_auth = redirect_count == 0 or _same_auth_origin(origin_url, current_url)
             resp = client.request(
                 method=method,
                 url=current_url,
-                headers=req_headers,
+                headers=req_headers if send_auth else cross_origin_headers,
                 content=body.encode() if body else None,
             )
 
@@ -335,8 +366,15 @@ def _do_request(
                 location = resp.headers.get("location")
                 if not location:
                     raise ApiCallException(errors.redirect_without_location_message())
+                # Location 은 무엇보다 먼저 지금 요청 기준 절대 주소로 푼다(WD-657) — 주소 검사(SSRF)·출처 판단·다음 요청이 모두 같은
+                # 절대 주소를 본다. 예전에는 상대 주소(「/v2/items?page=2」)를 그대로 써 검사·요청이 실패했다.
+                location = urljoin(current_url, location)
                 # SSRF check on redirect target
                 validate_url(location)
+                same_origin = _same_auth_origin(origin_url, location)
+                if auth.is_query_api_key:
+                    location = _adjust_query_auth(location, auth, same_origin, has_left_origin)
+                has_left_origin = has_left_origin or not same_origin
                 current_url = location
                 # For 303, switch to GET
                 if resp.status_code == 303:
@@ -415,9 +453,10 @@ _JAVA_WHITESPACE = (
     "\u2008\u2009\u200a\u2028\u2029\u205f\u3000"
 )
 
-# 토큰 앞 「Bearer」 접두어(겹친 것·값 끝의 접두어까지) — Java AuthConfigValidator.BEARER_PREFIX `(?i)^(bearer(\s+|$))+` 와 같다.
-# Java 정규식의 \s 는 ASCII 공백뿐이라 여기서도 그 글자만 쓴다.
-_BEARER_PREFIX = re.compile(r"^(bearer([ \t\n\x0b\x0c\r]+|$))+", re.IGNORECASE)
+# 토큰 앞 「Bearer」 접두어(겹친 것·값 끝의 접두어까지) — Java AuthConfigValidator.BEARER_PREFIX `(?i)^(bearer(\s+|\z))+` 와 같다.
+# Java 정규식의 \s 는 ASCII 공백뿐이라 여기서도 그 글자만 쓴다. 값의 끝은 \Z(입력의 진짜 끝)다(WD-657) — Python $ 는 끝 \n 앞에서도,
+# Java $ 는 끝 U+0085·U+2028 앞에서도 맞아 두 실행기가 다른 토큰을 보낼 수 있었다. 양쪽 모두 진짜 끝만 본다.
+_BEARER_PREFIX = re.compile(r"^(bearer([ \t\n\x0b\x0c\r]+|\Z))+", re.IGNORECASE)
 
 
 def _first_non_blank(auth: dict, *keys: str) -> Optional[str]:
@@ -444,40 +483,144 @@ def _normalize_bearer_token(token: str) -> str:
     return _BEARER_PREFIX.sub("", token.strip(_JAVA_WHITESPACE), count=1)
 
 
-def _apply_auth(
-    auth: Optional[dict],
+class _ResolvedAuth(NamedTuple):
+    """인증 설정 한 건을 Java ``ApiCallAuth.resolve`` 와 같은 키·우선순위·정리로 푼 결과(WD-657).
+
+    ``_apply_resolved_auth``(전송)와 오류문 가림(``sent_secret``)이 같은 값을 쓰도록 한 곳에서 푼다.
+    """
+
+    auth_type: str
+    placement: str
+    header_name: str
+    param_name: str
+    secret: str
+
+    @property
+    def is_query_api_key(self) -> bool:
+        """API 키를 쿼리 파라미터로 붙이는 설정인지(Java ``isQueryApiKey`` 와 같다)."""
+        return self.auth_type == "API_KEY" and self.placement == "QUERY"
+
+    @property
+    def sent_secret(self) -> Optional[str]:
+        """실제로 요청에 실리는 비밀 — 오류 문구·로그에서 가릴 값. 인증을 붙이지 않는 설정이면 None(Java ``sentSecret`` 과 같다)."""
+        return self.secret if self.auth_type in ("BEARER", "API_KEY") else None
+
+
+def _resolve_auth(auth: Optional[dict]) -> _ResolvedAuth:
+    """인증 설정을 푼다 — 키·우선순위는 Java ``ApiCallAuth.resolve`` 와 같다(WD-647).
+
+    헤더 이름은 앞뒤 공백(Java 공백 판정)을 뗀다(WD-657) — 인라인 key_name 끝 공백 때문에 실행 전 검사(Java)로 막히거나 공백 든 헤더를
+    만들지 않게 한다.
+    """
+    a = auth or {}
+    auth_type = (_first_non_blank(a, "authType", "type") or "").upper()
+    placement = (_first_non_blank(a, "placement", "location") or "header").upper()
+    header_name = (_first_non_blank(a, "headerName", "key_name") or "x-api-key").strip(_JAVA_WHITESPACE)
+    param_name = _first_non_blank(a, "paramName", "key_name") or "api_key"
+    if auth_type == "BEARER":
+        secret = _normalize_bearer_token(a.get("token") or a.get("value") or "")
+    else:
+        # API 키는 원문 그대로 보낸다(Java ApiCallAuth.resolve 와 같다).
+        secret = a.get("apiKey") or a.get("key_value") or a.get("value") or ""
+    return _ResolvedAuth(auth_type, placement, header_name, param_name, secret)
+
+
+# 다른 출처 홉에서 인증 방식과 상관없이 빼는 표준 자격 증명 헤더(소문자, WD-657) — Java ApiCallExecutor.CREDENTIAL_HEADERS 와 같다.
+_CREDENTIAL_HEADERS = frozenset({"authorization", "proxy-authorization", "cookie"})
+
+
+def _same_auth_origin(origin: str, target: str) -> bool:
+    """리다이렉트 대상(``target``)에 처음 요청(``origin``)의 인증을 실어도 되는지(WD-657) — Java ``ApiCallAuth.isSameAuthOrigin`` 과 같다.
+
+    - 호스트는 대소문자를 무시하고 같아야 한다. 호스트를 알 수 없거나 해석할 수 없으면 다른 출처다.
+    - 스킴이 같으면 포트도 같아야 한다(포트가 없으면 기본 포트 http 80·https 443).
+    - http→https 승격은 같은 출처다 — 두 포트가 모두 스킴 기본값(80→443)이거나 같은 포트를 명시했을 때. 흔한 http→https 리다이렉트에서
+      serviceKey 가 따라가던 동작(WD-182)을 지킨다.
+    - https→http 강등·그 밖의 호스트·포트 변경은 다른 출처다.
+    """
+    try:
+        po, pt = urlsplit(origin), urlsplit(target)
+        if not po.hostname or not pt.hostname or po.hostname.lower() != pt.hostname.lower():
+            return False
+        so, st = po.scheme.lower(), pt.scheme.lower()
+        if so == st:
+            return _effective_port(po) == _effective_port(pt)
+        if so == "http" and st == "https":
+            both_default = _effective_port(po) == 80 and _effective_port(pt) == 443
+            same_explicit = po.port is not None and po.port == pt.port
+            return both_default or same_explicit
+        return False
+    except ValueError:
+        return False
+
+
+def _effective_port(parts) -> int:
+    """포트가 없으면 스킴의 기본 포트. 모르는 스킴이면 -1."""
+    if parts.port is not None:
+        return parts.port
+    return {"http": 80, "https": 443}.get(parts.scheme.lower(), -1)
+
+
+def _strip_query_param(url: str, param_name: str) -> str:
+    """URL 쿼리에서 이름이 ``param_name`` 인 파라미터를 모두 뺀다(WD-657) — Java ``ApiCallAuth.stripQueryParam`` 과 같다.
+
+    이름은 퍼센트 디코딩(``+`` 는 공백, Java URLDecoder 와 같다)해 비교하고, 나머지 쿼리·프래그먼트는 받은 그대로 둔다.
+    """
+    head, hash_mark, fragment = url.partition("#")
+    base, q_mark, query = head.partition("?")
+    if not q_mark:
+        return url
+    kept = [piece for piece in query.split("&") if _decode_name(piece.split("=", 1)[0]) != param_name]
+    rest = "&".join(kept)
+    rebuilt = base + ("?" + rest if rest else "")
+    return rebuilt + (hash_mark + fragment if hash_mark else "")
+
+
+def _adjust_query_auth(url: str, auth: _ResolvedAuth, same_origin: bool, has_left_origin: bool) -> str:
+    """리다이렉트 대상의 쿼리 인증 키를 출처에 맞춘다(WD-657) — Java ``ApiCallExecutor.adjustQueryAuth`` 와 같다.
+
+    - 다른 출처: Location 이 되울려 담아 온 키를 뺀다 — 헤더만 떼고 쿼리 키를 남기면 같은 비밀이 그대로 나간다.
+    - 처음 출처로 돌아옴(A→B→A): 앞에서 뗀 키가 없으면 처음 요청과 같은 규칙으로 되붙인다(헤더 인증이 다시 붙는 것과 같게).
+    - 처음부터 같은 출처 안에서만 옮겨 다니면 Location 을 받은 그대로 쓴다(WD-182).
+    """
+    if not same_origin:
+        return _strip_query_param(url, auth.param_name)
+    if has_left_origin and not _has_query_param(url, auth.param_name):
+        return _build_request_url(url, {}, (auth.param_name, auth.secret))
+    return url
+
+
+def _has_query_param(url: str, param_name: str) -> bool:
+    """URL 쿼리에 이름이 ``param_name`` 인 파라미터가 있는지(이름은 디코딩해 비교, WD-657) — Java ``ApiCallAuth.hasQueryParam`` 과 같다."""
+    return _strip_query_param(url, param_name) != url
+
+
+def _decode_name(raw: str) -> str:
+    """쿼리 파라미터 이름을 디코딩한다. 잘못된 % 시퀀스면 원문 그대로 비교한다(Java 가 디코딩 예외 시 원문을 쓰는 것과 같다)."""
+    if has_invalid_percent(raw):
+        return raw
+    return unquote_plus(raw)
+
+
+def _apply_resolved_auth(
+    resolved: _ResolvedAuth,
     headers: Dict[str, str],
     params: Dict[str, str],
 ) -> Optional[Tuple[str, str]]:
-    """Apply authentication to request headers or query params.
+    """푼 인증(``_resolve_auth``)을 요청 헤더·쿼리에 붙인다 — 실행기는 실행마다 한 번 푼 값을 이것으로 붙인다(WD-657).
 
-    Supports both Java decryptedAuth format (authType, headerName, apiKey,
-    placement, paramName) and generic format (type, key_name, key_value, location).
-
-    쿼리 인증(API_KEY + placement=query)은 ``params`` 에 넣지 않고 ``(파라미터 이름, 키 원문)`` 을 돌려준다(WD-182) —
-    ``params`` 는 httpx 식으로 인코딩되므로, 키는 ``_build_request_url`` 이 공용 규칙으로 따로 붙인다. 같은 이름의 정적
-    파라미터가 있으면 ``params`` 에서 지운다(Java 처럼 그 이름으로는 키 하나만 나간다 — 위치는 맨 끝). 그 밖에는 None.
-
-    키·우선순위·정리는 Java ``ApiCallAuth.resolve`` 와 같다(WD-647) — 방식·위치·이름은 공백뿐이면 없는 것으로 보고, 비밀은
-    ``or`` 처럼 빈 문자열만 건너뛴 뒤 BEARER 토큰만 정리한다. Java 가 같은 값으로 빈 비밀 검사를 하므로 두 실행기가 같은 값을 보낸다.
+    키·우선순위·정리는 Java ``ApiCallAuth.resolve`` 와 같다(WD-647). 쿼리 인증(API_KEY + placement=query)은 ``params`` 에
+    넣지 않고 ``(파라미터 이름, 키 원문)`` 을 돌려준다(WD-182) — ``params`` 는 httpx 식으로 인코딩되므로, 키는
+    ``_build_request_url`` 이 공용 규칙으로 따로 붙인다. 같은 이름의 정적 파라미터가 있으면 ``params`` 에서 지운다(Java 처럼 그
+    이름으로는 키 하나만 나간다 — 위치는 맨 끝). 그 밖에는 None.
     """
-    if not auth:
-        return None
-    auth_type = (_first_non_blank(auth, "authType", "type") or "").upper()
-    if auth_type == "BEARER":
-        token = _normalize_bearer_token(auth.get("token") or auth.get("value") or "")
-        headers["Authorization"] = f"Bearer {token}"
-    elif auth_type == "API_KEY":
-        placement = (_first_non_blank(auth, "placement", "location") or "header").upper()
-        # 키는 위치와 상관없이 같은 규칙으로 고른다 — 원문 그대로 보낸다(Java ApiCallAuth.resolve 와 같다).
-        api_key = auth.get("apiKey") or auth.get("key_value") or auth.get("value") or ""
-        if placement == "QUERY":
-            param_name = _first_non_blank(auth, "paramName", "key_name") or "api_key"
-            params.pop(param_name, None)
-            return (param_name, api_key)
-        else:
-            header_name = _first_non_blank(auth, "headerName", "key_name") or "x-api-key"
-            headers[header_name] = api_key
+    if resolved.auth_type == "BEARER":
+        headers["Authorization"] = f"Bearer {resolved.secret}"
+    elif resolved.auth_type == "API_KEY":
+        if resolved.placement == "QUERY":
+            params.pop(resolved.param_name, None)
+            return (resolved.param_name, resolved.secret)
+        headers[resolved.header_name] = resolved.secret
     return None
 
 

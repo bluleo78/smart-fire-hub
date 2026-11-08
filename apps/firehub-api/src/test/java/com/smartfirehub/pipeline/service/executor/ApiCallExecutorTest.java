@@ -7,8 +7,12 @@ import static org.mockito.Mockito.*;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
@@ -1538,5 +1542,262 @@ class ApiCallExecutorTest {
     wireMock.verify(
         getRequestedFor(urlEqualTo("/api/bearer-prefix"))
             .withHeader("Authorization", equalTo("Bearer abc647")));
+  }
+
+  // -------------------------------------------------------------------------
+  // WD-657: 다른 출처 리다이렉트에 인증을 떼고, 실행기도 저장 연결과 함께 인증을 푼다
+  // -------------------------------------------------------------------------
+
+  /** 같은 WireMock 을 다른 출처(호스트가 다름)로 가리키는 주소 — localhost 와 127.0.0.1 은 출처가 다르다. */
+  private String otherOrigin() {
+    return "http://127.0.0.1:" + wireMock.port();
+  }
+
+  /** path 에서 Location 으로 302 하는 스텁. */
+  private static void stubRedirect(String path, String location) {
+    wireMock.stubFor(
+        get(urlPathEqualTo(path))
+            .willReturn(aResponse().withStatus(302).withHeader("Location", location)));
+  }
+
+  /** 다른 출처로 3xx 하면 Bearer 헤더와 같은 이름의 사용자 헤더를 떼고 따라간다 — 리다이렉트 자체는 따른다. */
+  @Test
+  void execute_crossOriginRedirect_dropsAuthorizationHeader() {
+    stubRedirect("/r657/start", otherOrigin() + "/r657/other");
+    stubEmptyItems("/r657/other");
+
+    executor.execute(
+        simpleGetConfig("/r657/start"),
+        "t",
+        Map.of("authType", "BEARER", "token", "CrossTok657"),
+        "APPEND",
+        null);
+
+    wireMock.verify(
+        getRequestedFor(urlPathEqualTo("/r657/start"))
+            .withHeader("Authorization", equalTo("Bearer CrossTok657")));
+    wireMock.verify(
+        getRequestedFor(urlPathEqualTo("/r657/other"))
+            .withHeader("Host", equalTo("127.0.0.1:" + wireMock.port()))
+            .withoutHeader("Authorization"));
+  }
+
+  /** 다른 출처로 가면 API 키 헤더도, Location 이 되울려 담아 온 쿼리 인증 키도 보내지 않는다. 다른 쿼리는 그대로다. */
+  @Test
+  void execute_crossOriginRedirect_dropsApiKeyHeaderAndQueryKey() {
+    stubRedirect("/r657/hk", otherOrigin() + "/r657/hk-other");
+    stubEmptyItems("/r657/hk-other");
+    stubRedirect("/r657/qk", otherOrigin() + "/r657/qk-other?serviceKey=QryKey657&x=1");
+    stubEmptyItems("/r657/qk-other");
+
+    executor.execute(
+        simpleGetConfig("/r657/hk"),
+        "t",
+        Map.of("authType", "API_KEY", "headerName", "X-Key", "apiKey", "HdrKey657"),
+        "APPEND",
+        null);
+    executor.execute(simpleGetConfig("/r657/qk"), "t", queryAuth("QryKey657"), "APPEND", null);
+
+    wireMock.verify(
+        getRequestedFor(urlPathEqualTo("/r657/hk")).withHeader("X-Key", equalTo("HdrKey657")));
+    wireMock.verify(getRequestedFor(urlPathEqualTo("/r657/hk-other")).withoutHeader("X-Key"));
+    assertThat(receivedUrls("/r657/qk")).containsExactly("/r657/qk?serviceKey=QryKey657");
+    assertThat(receivedUrls("/r657/qk-other")).containsExactly("/r657/qk-other?x=1");
+  }
+
+  /** 같은 출처(기본 포트가 아닌 같은 포트·같은 호스트)로 3xx 하면 지금처럼 인증을 붙인다. */
+  @Test
+  void execute_sameOriginRedirect_keepsAuth() {
+    stubRedirect("/r657/same", baseUrl() + "/r657/same-next");
+    stubEmptyItems("/r657/same-next");
+
+    executor.execute(
+        simpleGetConfig("/r657/same"),
+        "t",
+        Map.of("authType", "BEARER", "token", "SameTok657"),
+        "APPEND",
+        null);
+
+    wireMock.verify(
+        getRequestedFor(urlPathEqualTo("/r657/same-next"))
+            .withHeader("Authorization", equalTo("Bearer SameTok657")));
+  }
+
+  /** A→B→A — 판단 기준은 처음 요청 출처라 B 에는 떼고, 다시 A 로 올 때는 붙인다. */
+  @Test
+  void execute_redirectAtoBtoA_usesOriginalOrigin() {
+    stubRedirect("/r657/a1", otherOrigin() + "/r657/b");
+    stubRedirect("/r657/b", baseUrl() + "/r657/a2");
+    stubEmptyItems("/r657/a2");
+
+    executor.execute(
+        simpleGetConfig("/r657/a1"),
+        "t",
+        Map.of("authType", "BEARER", "token", "AbaTok657"),
+        "APPEND",
+        null);
+
+    wireMock.verify(getRequestedFor(urlPathEqualTo("/r657/b")).withoutHeader("Authorization"));
+    wireMock.verify(
+        getRequestedFor(urlPathEqualTo("/r657/a2"))
+            .withHeader("Host", equalTo("localhost:" + wireMock.port()))
+            .withHeader("Authorization", equalTo("Bearer AbaTok657")));
+  }
+
+  /** URL·사용자 헤더·저장 연결·경로만 바꾼 사본 — 18개 인자 생성자를 테스트마다 다시 쓰지 않게 한 곳에 둔다. */
+  private static ApiCallConfig copy(
+      ApiCallConfig c, String url, Map<String, String> headers, Long connectionId, String path) {
+    return new ApiCallConfig(
+        url,
+        c.method(),
+        headers,
+        c.queryParams(),
+        c.body(),
+        c.responseFormat(),
+        c.dataPath(),
+        c.fieldMappings(),
+        c.sourceTimezone(),
+        c.pagination(),
+        c.retry(),
+        c.timeoutMs(),
+        c.maxDurationMs(),
+        c.maxResponseSizeMb(),
+        c.inlineAuth(),
+        connectionId,
+        path,
+        c.customUrl());
+  }
+
+  /** 저장 연결 스텝 사본 — URL 을 비우고 연결 id·경로를 넣는다. */
+  private static ApiCallConfig withConnectionPath(ApiCallConfig c, Long connectionId, String path) {
+    return copy(c, null, c.headers(), connectionId, path);
+  }
+
+  /**
+   * 실행기도 러너 검사처럼 저장 연결과 함께 인증을 푼다 — 방식은 연결의 auth_type 컬럼이다. 예전엔 Map 만 봐서, Map 에 authType 이 없으면 검사는
+   * BEARER 로 통과하고 실행기는 인증 없이 보냈다.
+   */
+  @Test
+  void execute_withConnection_resolvesAuthTypeFromConnection() {
+    stubEmptyItems("/c657/items");
+    ApiConnectionResponse conn =
+        new ApiConnectionResponse(
+            1L, "wd657", null, "BEARER", Map.of(), baseUrl(), null, null, null, null, null, 1L,
+            null, null);
+    // 저장 연결 스텝 — URL 은 연결의 baseUrl + path 로 만든다.
+    ApiCallConfig config = withConnectionPath(simpleGetConfig("/unused"), 1L, "/c657/items");
+
+    executor.execute(config, "t", Map.of("value", "Bearer ConnTok657"), "APPEND", null, conn);
+
+    wireMock.verify(
+        getRequestedFor(urlPathEqualTo("/c657/items"))
+            .withHeader("Authorization", equalTo("Bearer ConnTok657")));
+  }
+
+  // -------------------------------------------------------------------------
+  // WD-657 리뷰: 상대 Location·A→B→A 쿼리 키 복원·자격 증명 헤더·http→https 승격
+  // -------------------------------------------------------------------------
+
+  /** 사용자 헤더만 바꾼 사본. */
+  private static ApiCallConfig withHeaders(ApiCallConfig c, Map<String, String> headers) {
+    return copy(c, c.url(), headers, c.apiConnectionId(), c.path());
+  }
+
+  /**
+   * 상대 Location 은 지금 요청 기준 절대 주소로 먼저 풀어 주소 검사·출처 판단·다음 요청에 쓴다 — 같은 출처라 인증이 그대로 붙고, 주소 검사는 절대 주소로
+   * 한다.
+   */
+  @Test
+  void execute_relativeLocation_followedAsSameOriginAndSsrfCheckedAbsolute() {
+    List<String> checked = new ArrayList<>();
+    ApiCallExecutor recording =
+        new ApiCallExecutor(
+            new SsrfProtectionService() {
+              @Override
+              public void validateUrl(String url) {
+                checked.add(url);
+              }
+            },
+            jsonParser,
+            paginationHandler,
+            dataTableService,
+            dataTableRowService,
+            WebClient.builder());
+    stubRedirect("/r657/rel", "/r657/v2/items?page=2");
+    stubEmptyItems("/r657/v2/items");
+
+    recording.execute(
+        simpleGetConfig("/r657/rel"),
+        "t",
+        Map.of("authType", "BEARER", "token", "RelTok657"),
+        "APPEND",
+        null);
+
+    assertThat(receivedUrls("/r657/v2/items")).containsExactly("/r657/v2/items?page=2");
+    wireMock.verify(
+        getRequestedFor(urlPathEqualTo("/r657/v2/items"))
+            .withHeader("Authorization", equalTo("Bearer RelTok657")));
+    assertThat(checked).contains(baseUrl() + "/r657/v2/items?page=2");
+  }
+
+  /** A→B→A 쿼리 인증 — B 로 갈 때 뗀 키를 처음 출처로 돌아올 때 되붙인다(헤더 인증이 다시 붙는 것과 같게). */
+  @Test
+  void execute_redirectAtoBtoA_queryKeyRestoredOnReturn() {
+    stubRedirect("/r657/aq1", otherOrigin() + "/r657/aqb?serviceKey=AbaQry657");
+    stubRedirect("/r657/aqb", baseUrl() + "/r657/aq2?p=1");
+    stubEmptyItems("/r657/aq2");
+
+    executor.execute(simpleGetConfig("/r657/aq1"), "t", queryAuth("AbaQry657"), "APPEND", null);
+
+    assertThat(receivedUrls("/r657/aqb")).containsExactly("/r657/aqb");
+    assertThat(receivedUrls("/r657/aq2")).containsExactly("/r657/aq2?p=1&serviceKey=AbaQry657");
+  }
+
+  /** 쿼리 인증이어도 사용자가 직접 넣은 Authorization·Proxy-Authorization·Cookie 는 다른 출처로 보내지 않는다. 다른 헤더는 그대로다. */
+  @Test
+  void execute_crossOriginRedirect_dropsUserCredentialHeaders() {
+    stubRedirect("/r657/ch", otherOrigin() + "/r657/ch-other");
+    stubEmptyItems("/r657/ch-other");
+    Map<String, String> headers = new LinkedHashMap<>();
+    headers.put("authorization", "Basic dXNlcjpwdw==");
+    headers.put("Proxy-Authorization", "Basic cHJveHk=");
+    headers.put("Cookie", "sid=657");
+    headers.put("X-Trace", "t657");
+
+    executor.execute(
+        withHeaders(simpleGetConfig("/r657/ch"), headers),
+        "t",
+        queryAuth("ChKey657"),
+        "APPEND",
+        null);
+
+    wireMock.verify(
+        getRequestedFor(urlPathEqualTo("/r657/ch"))
+            .withHeader("Authorization", equalTo("Basic dXNlcjpwdw==")));
+    wireMock.verify(
+        getRequestedFor(urlPathEqualTo("/r657/ch-other"))
+            .withoutHeader("Authorization")
+            .withoutHeader("Proxy-Authorization")
+            .withoutHeader("Cookie")
+            .withHeader("X-Trace", equalTo("t657")));
+  }
+
+  /**
+   * http→https 승격(같은 호스트·기본 포트)은 같은 출처라 쿼리 키를 그대로 두고, https→http 강등은 다른 출처라 뗀다. 이 실행기는 HTTPS 시험 서버를
+   * 붙일 수 없어(인증서 신뢰를 주입할 곳이 없다) 리다이렉트 대상 조정만 직접 본다 — 헤더는 같은 판정(isSameAuthOrigin)으로 붙인다.
+   */
+  @Test
+  void adjustQueryAuth_upgradeKeepsKey_downgradeDropsKey() {
+    ApiCallAuth.ResolvedAuth auth = ApiCallAuth.resolve(queryAuth("UpKey657"));
+    URI origin = URI.create("http://api.example.com/data?serviceKey=UpKey657");
+    URI upgraded = URI.create("https://api.example.com/data?serviceKey=UpKey657");
+    assertThat(ApiCallAuth.isSameAuthOrigin(origin, upgraded)).isTrue();
+    assertThat(ApiCallExecutor.adjustQueryAuth(upgraded, auth, true, false)).isEqualTo(upgraded);
+
+    URI httpsOrigin = URI.create("https://api.example.com/data");
+    URI downgraded = URI.create("http://api.example.com/data?serviceKey=UpKey657&x=1");
+    assertThat(ApiCallAuth.isSameAuthOrigin(httpsOrigin, downgraded)).isFalse();
+    assertThat(ApiCallExecutor.adjustQueryAuth(downgraded, auth, false, false).toString())
+        .isEqualTo("http://api.example.com/data?x=1");
   }
 }

@@ -22,6 +22,7 @@ import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
 import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
 import com.smartfirehub.job.service.AsyncJobService;
+import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -850,5 +851,99 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     assertThat(statusChanges(legacy)).as("UP→DOWN 알림·감사는 한 번뿐").hasSize(1);
     assertThat(statusChanges(healthy)).isEmpty();
     assertThat(apiConnectionService.getDecryptedAuthConfig(legacy)).containsEntry("token", "");
+  }
+
+  // ── WD-657: 연결 테스트도 파이프라인 실행과 같은 인증 규칙(ApiCallAuth.resolve) ─────────────────────────
+
+  /** 저장 검사를 거치지 않고(검증 규칙 전 저장분·DB 직접 변경) authConfig 를 그대로 저장한 연결. */
+  private Long saveRawConnection(String authType, Map<String, String> authConfig) throws Exception {
+    String encrypted = encryptionService.encrypt(objectMapper.writeValueAsString(authConfig));
+    return inTenantFixture(
+        () ->
+            repository.save(
+                "WD657 raw " + System.nanoTime(),
+                null,
+                authType,
+                encrypted,
+                testUserId,
+                wireMockBase(),
+                "/health"));
+  }
+
+  /** 파이프라인 실행이 같은 연결로 보낼 인증 — 러너·실행기·미리보기가 쓰는 진입점 그대로다. */
+  private ApiCallAuth.ResolvedAuth pipelineAuth(Long id) {
+    return ApiCallAuth.resolve(
+        apiConnectionService.getById(id), apiConnectionService.getDecryptedAuthConfig(id));
+  }
+
+  /**
+   * 대문자 {@code QUERY} 로 저장된 API 키 연결 — 예전 연결 테스트는 소문자 query 만 알아 「키 위치는 header 또는 query 만」 으로 거절했지만
+   * 파이프라인 실행은 쿼리로 보냈다. 이제 테스트도 실행과 같은 이름·키로 쿼리에 붙인다.
+   */
+  @Test
+  void testConnection_upperCaseQueryPlacement_sendsSameQueryAsPipeline() throws Exception {
+    stubHealthOk();
+    Long id =
+        saveRawConnection(
+            "API_KEY", Map.of("placement", "QUERY", "paramName", "svc", "apiKey", "QKey657abc"));
+
+    TestConnectionResponse result = apiConnectionService.testConnection(id, testUserId);
+
+    var pipeline = pipelineAuth(id);
+    assertThat(pipeline.isQueryApiKey()).isTrue();
+    assertThat(result.ok()).isTrue();
+    List<LoggedRequest> requests = wireMock.findAll(getRequestedFor(urlPathEqualTo("/health")));
+    assertThat(requests).hasSize(1);
+    assertThat(requests.get(0).getUrl())
+        .isEqualTo("/health?" + pipeline.paramName() + "=" + pipeline.secret())
+        .isEqualTo("/health?svc=QKey657abc");
+    assertThat(requests.get(0).containsHeader("X-API-Key")).isFalse();
+    assertThat(result.requestUrl()).doesNotContain("QKey657abc");
+  }
+
+  /**
+   * 「Bearer abc」 처럼 접두어째 저장된 토큰 — 예전 연결 테스트는 「Authorization: Bearer Bearer abc」 를 보냈고 파이프라인 실행은
+   * 「Bearer abc」 를 보냈다. 이제 둘이 같다. 대체 키(value)·key_name 도 실행처럼 읽는다.
+   */
+  @Test
+  void testConnection_storedBearerPrefixAndAlternateKeys_sendSameHeaderAsPipeline()
+      throws Exception {
+    stubHealthOk();
+    Long bearer = saveRawConnection("BEARER", Map.of("token", "Bearer abc657"));
+    Long keyName =
+        saveRawConnection("API_KEY", Map.of("key_name", " X-Alt657 ", "value", "AltKey657"));
+
+    assertThat(apiConnectionService.testConnection(bearer, testUserId).ok()).isTrue();
+    assertThat(apiConnectionService.testConnection(keyName, testUserId).ok()).isTrue();
+
+    assertThat(pipelineAuth(bearer).secret()).isEqualTo("abc657");
+    wireMock.verify(
+        1,
+        getRequestedFor(urlEqualTo("/health"))
+            .withHeader("Authorization", equalTo("Bearer abc657")));
+    assertThat(pipelineAuth(keyName).headerName()).isEqualTo("X-Alt657");
+    wireMock.verify(
+        1, getRequestedFor(urlEqualTo("/health")).withHeader("X-Alt657", equalTo("AltKey657")));
+  }
+
+  /**
+   * 연결 테스트 응답 본문도 미리보기와 같은 본문 가림(AuthQueryMasker.maskBody)을 쓴다 — JSON 이스케이프(슬래시 앞 역슬래시)로 되울린 토큰은
+   * 문자열 비교로 찾지 못해 예전에는 본문에 그대로 남았다.
+   */
+  @Test
+  void testConnection_escapedEchoOfToken_bodyMasked() throws Exception {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/health"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"echo\":\"Esc\\/Tok657zz\"}")));
+    Long id = saveRawConnection("BEARER", Map.of("token", "Esc/Tok657zz"));
+
+    TestConnectionResponse result = apiConnectionService.testConnection(id, testUserId);
+
+    assertThat(result.ok()).isTrue();
+    assertThat(result.responseBodyPreview()).doesNotContain("Tok657").contains("****57zz");
   }
 }

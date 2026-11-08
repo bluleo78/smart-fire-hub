@@ -142,3 +142,14 @@ def conn_patch(target):
     if target is None:
         return nullcontext(None)
     return patch(target, MagicMock())
+
+
+def apply_auth(auth, headers, params):
+    """인증 설정(dict)을 실행기와 같은 두 단계(``_resolve_auth`` → ``_apply_resolved_auth``)로 요청에 붙인다(WD-657).
+
+    실행기는 실행마다 한 번 푼 값을 붙이고 dict 를 바로 받는 함수는 없앴다 — 테스트는 이 도우미 하나로 같은 경로를 탄다.
+    반환값은 쿼리 인증이면 ``(파라미터 이름, 키 원문)``, 아니면 None.
+    """
+    from app.services.api_call_executor import _apply_resolved_auth, _resolve_auth
+
+    return _apply_resolved_auth(_resolve_auth(auth), headers, params)

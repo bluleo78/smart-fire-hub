@@ -20,6 +20,7 @@ import httpx
 import pytest
 
 from app.services import api_call_executor
+from tests.conftest import apply_auth
 from app.services.query_key_encoding import encode_query_key, is_pre_encoded
 
 # tests → firehub-executor → apps
@@ -89,7 +90,8 @@ def _send(url: str, query_params: dict, auth: dict, responses=None) -> List[byte
             headers={},
             query_params=query_params,
             body=None,
-            auth=auth,
+            # 실행기는 실행 시작에 한 번 푼 인증을 넘긴다(WD-657).
+            auth=api_call_executor._resolve_auth(auth),
             timeout_sec=5,
             max_bytes=1024 * 1024,
         )
@@ -180,7 +182,7 @@ def test_param_fixture_loaded():
 
 
 def _params_with_auth(case):
-    """실행 요청과 같은 모양으로 만든다 — 정적·페이지네이션 파라미터(순서 유지) + _apply_auth 가 키를 떼어 낸다."""
+    """실행 요청과 같은 모양으로 만든다 — 정적·페이지네이션 파라미터(순서 유지) + apply_auth(_apply_resolved_auth) 가 키를 떼어 낸다."""
     params = {name: value for name, value in case["params"]}
     auth = None
     if case["auth"] is not None:
@@ -193,7 +195,7 @@ def _params_with_auth(case):
 def test_build_request_url_matches_shared_param_vector(case):
     params, auth = _params_with_auth(case)
     headers: dict = {}
-    auth_query = api_call_executor._apply_auth(auth, headers, params)
+    auth_query = apply_auth(auth, headers, params)
     assert api_call_executor._build_request_url(case["url"], params, auth_query) == case["expected"]
 
 
