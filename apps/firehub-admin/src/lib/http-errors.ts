@@ -3,6 +3,7 @@
  * (`.tsx` 컴포넌트 파일에 두면 react-refresh/only-export-components 위반).
  */
 import axios from 'axios';
+import type { FieldPath, FieldValues, UseFormSetError } from 'react-hook-form';
 
 import type { ErrorResponse } from '@/types/platform';
 
@@ -59,6 +60,29 @@ export function serverFieldErrors(error: unknown): Record<string, string> | unde
   if (data?.code != null && data.code !== VALIDATION_FAILED_CODE) return undefined;
   const errors = data?.errors;
   return errors && Object.keys(errors).length > 0 ? errors : undefined;
+}
+
+/**
+ * Bean Validation 400 의 필드 오류를 폼에 단다(WD-654). 폼이 아는 칸(`knownFields`)은 그 칸 아래로 `setError`, 폼 칸이 없는 키
+ * (클래스 단위 제약 `_global`, 서버에만 있는 필드)의 문구는 버리지 않고 한 문장으로 이어 돌려준다 — 호출자가 폼 상단 등 칸 밖에 보인다.
+ *
+ * @returns 검증 400 이 아니면 `undefined`(호출자는 다른 처리로 넘어간다). 맞으면 폼 칸 밖 문구를 이은 문자열 — 없으면 빈 문자열.
+ */
+export function applyServerFieldErrors<T extends FieldValues>(
+  error: unknown,
+  setError: UseFormSetError<T>,
+  knownFields: readonly FieldPath<T>[],
+  options?: { shouldFocus?: boolean },
+): string | undefined {
+  const fieldErrors = serverFieldErrors(error);
+  if (!fieldErrors) return undefined;
+  const rest: string[] = [];
+  Object.entries(fieldErrors).forEach(([field, message]) => {
+    const known = knownFields.find((name) => name === field);
+    if (known) setError(known, { message }, { shouldFocus: options?.shouldFocus ?? false });
+    else rest.push(message);
+  });
+  return rest.join(' ');
 }
 
 /** axios 에러가 4xx 인지 판정한다. 재시도 정책(main.tsx)이 상태코드별로 결정을 내리는 데 쓴다. */

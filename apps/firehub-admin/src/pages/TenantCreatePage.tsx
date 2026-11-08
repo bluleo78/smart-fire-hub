@@ -17,7 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/hooks/useAuth';
 import { DEFAULT_BACKEND } from '@/lib/data-store-labels';
-import { isForbidden, serverFieldErrors, serverMessage } from '@/lib/http-errors';
+import { applyServerFieldErrors, isForbidden, serverMessage } from '@/lib/http-errors';
 import type { CreateTenantFormData } from '@/lib/validations/tenant';
 import { createTenantSchema } from '@/lib/validations/tenant';
 import type { CreateTenantRequest, PlatformUserResponse } from '@/types/platform';
@@ -113,17 +113,9 @@ export default function TenantCreatePage() {
     onError: (error) => {
       // Bean Validation 400 은 필드별 한국어 문구를 해당 칸에 단다(WD-311) — 일반 문구 message(「입력값이 올바르지 않습니다.」, 구버전 「Validation failed」)는 쓰지 않는다.
       // 폼 칸이 없는 필드(dataStore.* 등)의 문구는 폼 아래 한 줄로 모아 보인다.
-      const fieldErrors = serverFieldErrors(error);
-      if (fieldErrors) {
-        const rest: string[] = [];
-        Object.entries(fieldErrors).forEach(([field, message]) => {
-          if (field === 'name' || field === 'slug' || field === 'ownerUserId') {
-            setError(field, { message }, { shouldFocus: true });
-          } else {
-            rest.push(message);
-          }
-        });
-        if (rest.length > 0) setServerFieldError(rest.join(' '));
+      const rest = applyServerFieldErrors(error, setError, ['name', 'slug', 'ownerUserId'], { shouldFocus: true });
+      if (rest !== undefined) {
+        if (rest) setServerFieldError(rest);
         return;
       }
       // 422(DATA_STORE_PROVISIONING_FAILED)도 서버 문구를 그대로 보인다 — 접속 실패 사유를 프런트가 재현할 수 없다.

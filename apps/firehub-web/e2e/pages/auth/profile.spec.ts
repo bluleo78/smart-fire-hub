@@ -226,6 +226,70 @@ test.describe('프로필 페이지', () => {
     await expect(page.getByText('입력값을 확인하세요.')).toHaveCount(0);
   });
 
+  /**
+   * WD-654: 저장(PUT)은 성공했는데 뒤이은 사용자 정보 다시 읽기(GET /users/me)가 실패하면 — 저장 실패 문구가 아니라 저장 완료 안내 한 줄만
+   * 보이고, 폼은 서버에 보낸 값을 보인다. 예전에는 다시 읽기 실패가 저장 실패와 같은 catch 로 떨어져 「프로필을 저장하지 못했습니다」가 떴다.
+   */
+  const failGetAfterSave = async (page: import('@playwright/test').Page) => {
+    // PUT 을 받은 뒤부터만 GET 을 실패시킨다 — 첫 화면 로드의 GET 은 auth fixture 응답을 그대로 쓴다. 401 은 토큰 갱신 흐름을 타므로 500.
+    const state = { saved: false, putPayload: undefined as unknown, getAfterSave: 0 };
+    await page.route(
+      (url) => url.pathname === '/api/v1/users/me',
+      (route) => {
+        const method = route.request().method();
+        if (method === 'PUT') {
+          state.saved = true;
+          state.putPayload = route.request().postDataJSON();
+          return route.fulfill({ status: 204 });
+        }
+        if (method === 'GET' && state.saved) {
+          state.getAfterSave += 1;
+          return route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: '일시적인 오류입니다.' }),
+          });
+        }
+        return route.fallback();
+      },
+    );
+    return state;
+  };
+
+  test('저장 성공 뒤 사용자 정보 다시 읽기가 실패해도 저장 실패로 안내하지 않는다 (WD-654)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    await expect(page.locator('#profile-name')).toHaveValue(MOCK_USER.name, { timeout: 5000 });
+    const state = await failGetAfterSave(page);
+
+    await page.locator('#profile-name').fill('저장된 이름');
+    await page.getByRole('button', { name: '저장' }).first().click();
+
+    // 안내는 하나 — 저장 완료 + 새로고침 안내. 일반 성공 토스트가 겹쳐 뜨지 않는다.
+    await expect(page.getByText('저장은 완료되었습니다. 최신 정보는 새로고침하면 반영됩니다.').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('프로필이 업데이트되었습니다.')).toHaveCount(0);
+    expect(state.putPayload).toMatchObject({ name: '저장된 이름' });
+    expect(state.getAfterSave).toBeGreaterThan(0);
+    await expect(page.getByText('프로필을 저장하지 못했습니다. 잠시 후 다시 시도하세요.')).toHaveCount(0);
+    await expect(page.getByText('일시적인 오류입니다.')).toHaveCount(0);
+    // 폼은 방금 저장한 값을 그대로 보인다(예전 값으로 되돌아가지 않는다).
+    await expect(page.locator('#profile-name')).toHaveValue('저장된 이름');
+  });
+
+  /** WD-654: 이메일을 비워 저장하면 서버엔 이메일이 안 가고(비움), 다시 읽기가 실패해도 폼은 빈 이메일 표시 규칙(로그인 계정)을 따른다. */
+  test('이메일을 비워 저장한 뒤 다시 읽기가 실패하면 폼은 보낸 값 기준으로 보인다 (WD-654)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    await expect(page.locator('#profile-name')).toHaveValue(MOCK_USER.name, { timeout: 5000 });
+    const state = await failGetAfterSave(page);
+
+    await page.locator('#profile-email').fill('');
+    await page.getByRole('button', { name: '저장' }).first().click();
+
+    await expect(page.getByText('저장은 완료되었습니다. 최신 정보는 새로고침하면 반영됩니다.').first()).toBeVisible({ timeout: 5000 });
+    expect(state.putPayload).not.toHaveProperty('email');
+    // 서버는 이메일을 비웠다 — 처음 불러올 때와 같은 규칙으로 로그인 계정이 보인다(보내지 않은 빈 값 '' 이 남지 않는다).
+    await expect(page.locator('#profile-email')).toHaveValue(MOCK_USER.username);
+  });
+
   /** WD-640: 한글이 없는 서버 문구(게이트웨이 영어 문구 등)는 그대로 보이지 않고 한국어 대체 문구를 쓴다. */
   test('서버가 영어 문구만 주면 프로필 저장 실패를 한국어로 안내한다 (WD-640)', async ({ authenticatedPage: page }) => {
     await page.goto('/profile');

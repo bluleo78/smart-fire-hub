@@ -49,6 +49,7 @@ import jakarta.validation.ElementKind;
 import jakarta.validation.Path;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.lang.annotation.Annotation;
 import java.sql.SQLTransientConnectionException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -59,8 +60,11 @@ import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
+import org.springframework.beans.BeanUtils;
 import org.springframework.context.MessageSourceResolvable;
+import org.springframework.core.MethodParameter;
 import org.springframework.core.NestedRuntimeException;
+import org.springframework.core.annotation.MergedAnnotation;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
@@ -218,79 +222,108 @@ public class GlobalExceptionHandler {
   }
 
   /**
-   * Spring 6.1+ 내장 메서드 검증 실패 → 400(WD-640).
+   * Spring 6.1+ 내장 메서드 검증 실패 → 400(WD-640, WD-654).
    *
    * <p>컨트롤러 메서드 파라미터에 제약을 직접 붙이면(예: {@code @RequestParam @Min(1) int size},
    * {@code @PathVariable @Size(max = 3)}) 클래스에 @Validated 가 없어도 Spring MVC 가 검증하고 이 예외를 던진다. 처리기가
    * 없어 일반 예외로 떨어져 500 「예기치 않은 오류」가 났다. 같은 메서드에 @Valid 본문이 함께 있거나 본문이 목록(List&lt;@Valid Dto&gt;)이면
    * 본문 오류도 이 예외로 온다.
    *
-   * <p>필드 키는 클라이언트가 보낸 이름이어야 화면이 칸을 찾는다 — Spring 의 {@link HandlerMethodValidationException.Visitor}
-   * 로 파라미터
-   * 종류(@RequestParam·@PathVariable·@RequestHeader·@CookieValue·@MatrixVariable·@RequestBody·@ModelAttribute·@RequestPart)를
-   * 나눠, 값 파라미터는 애너테이션에 적힌 이름(없으면 파라미터 이름)을, 객체 파라미터는 그 안의 필드 이름을 쓴다. 객체가 목록 원소면 자바 파라미터 이름 없이
-   * 「[0].name」으로 쓴다 — 클라이언트는 JSON 배열을 보냈고, 객체 본문 오류(MethodArgumentNotValidException)도 파라미터 이름 없이 필드
-   * 이름만 쓴다.
+   * <p>필드 키는 클라이언트가 보낸 이름이어야 화면이 칸을 찾는다. 결과 목록({@code getParameterValidationResults()})을 한 경로로 직접
+   * 돌며 나눈다:
+   *
+   * <ul>
+   *   <li>객체 결과(ParameterErrors — @Valid 본문·폼·파트의 필드/클래스 오류): 그 안의 필드 이름. 목록 원소면 자바 파라미터 이름 없이
+   *       「[0].name」 — 클라이언트는 JSON 배열을 보냈고, 객체 본문 오류(MethodArgumentNotValidException)도 필드 이름만 쓴다.
+   *   <li>객체 파라미터 자체의 값 위반(예: {@code @RequestBody @NotEmpty List<Dto>}, 애너테이션 없는 폼 객체 포함): 클라이언트가
+   *       부를 칸 이름이 없어 {@link ValidationErrorCollector#GLOBAL_KEY}, 목록 원소면 「[0]」.
+   *   <li>값
+   *       파라미터(@RequestParam·@PathVariable·@RequestHeader·@CookieValue·@MatrixVariable·@RequestPart,
+   *       애너테이션 없는 단순 타입): 애너테이션에 적힌 이름, 없으면 자바 파라미터 이름 + 목록 원소 위치.
+   * </ul>
+   *
+   * <p>Spring 의 {@code visitResults}(Visitor)는 객체 파라미터 자체의 값 위반에서 IllegalStateException 으로 깨져 쓰지
+   * 않는다.
    */
   @ExceptionHandler(HandlerMethodValidationException.class)
   public ResponseEntity<ErrorResponse> handleHandlerMethodValidation(
       HandlerMethodValidationException ex, HttpServletRequest request) {
     ValidationErrorCollector collector = new ValidationErrorCollector();
-    ex.visitResults(
-        new HandlerMethodValidationException.Visitor() {
-          @Override
-          public void requestParam(RequestParam a, ParameterValidationResult r) {
-            addValueErrors(collector, r, a == null ? null : clientName(a.name(), a.value()));
-          }
-
-          @Override
-          public void pathVariable(PathVariable a, ParameterValidationResult r) {
-            addValueErrors(collector, r, clientName(a.name(), a.value()));
-          }
-
-          @Override
-          public void requestHeader(RequestHeader a, ParameterValidationResult r) {
-            addValueErrors(collector, r, clientName(a.name(), a.value()));
-          }
-
-          @Override
-          public void cookieValue(CookieValue a, ParameterValidationResult r) {
-            addValueErrors(collector, r, clientName(a.name(), a.value()));
-          }
-
-          @Override
-          public void matrixVariable(MatrixVariable a, ParameterValidationResult r) {
-            addValueErrors(collector, r, clientName(a.name(), a.value()));
-          }
-
-          @Override
-          public void requestBody(RequestBody a, ParameterErrors errors) {
-            addBeanErrors(collector, errors);
-          }
-
-          @Override
-          public void modelAttribute(ModelAttribute a, ParameterErrors errors) {
-            addBeanErrors(collector, errors);
-          }
-
-          @Override
-          public void requestPart(RequestPart a, ParameterErrors errors) {
-            addBeanErrors(collector, errors);
-          }
-
-          @Override
-          public void other(ParameterValidationResult r) {
-            if (r instanceof ParameterErrors errors) {
-              addBeanErrors(collector, errors);
-            } else {
-              addValueErrors(collector, r, null);
-            }
-          }
-        });
-    // 교차 파라미터 제약(메서드 단위)은 특정 파라미터에 딸리지 않으므로 필드 없는 오류로 싣는다(Visitor 는 이것을 돌지 않는다).
+    for (ParameterValidationResult r : ex.getParameterValidationResults()) {
+      if (r instanceof ParameterErrors errors) {
+        addBeanErrors(collector, errors);
+      } else if (isObjectParameter(r.getMethodParameter())) {
+        addObjectValueErrors(collector, r);
+      } else {
+        addValueErrors(collector, r, valueParameterName(r.getMethodParameter()));
+      }
+    }
+    // 교차 파라미터 제약(메서드 단위)은 특정 파라미터에 딸리지 않으므로 필드 없는 오류로 싣는다(파라미터 결과 목록에 없다).
     ex.getCrossParameterValidationResults()
         .forEach(e -> collector.addGlobal(e.getDefaultMessage()));
     return validationFailed(collector, request);
+  }
+
+  /**
+   * 객체 파라미터(본문·폼 객체)인지 — Spring MVC 와 같은 기준으로 가른다(WD-654). @RequestBody·@ModelAttribute 는 객체, 값
+   * 애너테이션(@RequestParam 등·@RequestPart)이 있으면 값, 애너테이션이 없으면 Spring 의 ModelAttributeMethodProcessor
+   * 처럼 단순 타입이 아닐 때 폼 객체로 본다 — 그래야 @ModelAttribute 를 적었는지에 따라 응답 키 모양이 달라지지 않는다.
+   */
+  private static boolean isObjectParameter(MethodParameter p) {
+    if (p.hasParameterAnnotation(RequestBody.class)
+        || p.hasParameterAnnotation(ModelAttribute.class)) {
+      return true;
+    }
+    if (valueParameterAnnotation(p) != null) {
+      return false;
+    }
+    return !BeanUtils.isSimpleProperty(p.getParameterType());
+  }
+
+  /** 값 파라미터 애너테이션 — 이 중 하나가 붙으면 값 파라미터로, 키는 애너테이션에 적힌 이름을 쓴다. */
+  private static final List<Class<? extends Annotation>> VALUE_PARAMETER_ANNOTATIONS =
+      List.of(
+          RequestParam.class,
+          PathVariable.class,
+          RequestHeader.class,
+          CookieValue.class,
+          MatrixVariable.class,
+          RequestPart.class);
+
+  /** 파라미터에 붙은 값 파라미터 애너테이션, 없으면 null. */
+  private static Annotation valueParameterAnnotation(MethodParameter p) {
+    for (Annotation a : p.getParameterAnnotations()) {
+      if (VALUE_PARAMETER_ANNOTATIONS.contains(a.annotationType())) {
+        return a;
+      }
+    }
+    return null;
+  }
+
+  /** 객체 파라미터 자체의 값 위반 — 목록 원소면 「[0]」, 아니면 필드 없는 오류(본문 전체에는 클라이언트가 부를 칸 이름이 없다). */
+  private static void addObjectValueErrors(
+      ValidationErrorCollector collector, ParameterValidationResult r) {
+    String at = containerSuffix(r);
+    for (MessageSourceResolvable error : r.getResolvableErrors()) {
+      if (at.isEmpty()) {
+        collector.addGlobal(error.getDefaultMessage());
+      } else {
+        collector.addField(at, constraintCode(error), error.getDefaultMessage());
+      }
+    }
+  }
+
+  /**
+   * 값 파라미터 애너테이션에 적힌 클라이언트 이름, 없으면 null(→ 자바 파라미터 이름). name·value 별칭(@AliasFor)은 MergedAnnotation 이
+   * 어느 쪽에 적었든 같은 값으로 풀어 준다.
+   */
+  private static String valueParameterName(MethodParameter p) {
+    Annotation a = valueParameterAnnotation(p);
+    if (a == null) {
+      return null;
+    }
+    String name = MergedAnnotation.from(a).getString("name");
+    return name.isEmpty() ? null : name;
   }
 
   /**
@@ -310,7 +343,7 @@ public class GlobalExceptionHandler {
                   v.getConstraintDescriptor().getAnnotation().annotationType().getSimpleName();
               String field = violationField(v.getPropertyPath());
               if (field == null) {
-                // 교차 파라미터·반환값 등 특정 입력에 딸리지 않는 위반.
+                // 클래스 단위 제약·교차 파라미터·반환값 등 특정 입력 칸에 딸리지 않는 위반(WD-654).
                 collector.addGlobal(v.getMessage());
               } else {
                 collector.addField(field, constraint, v.getMessage());
@@ -320,12 +353,22 @@ public class GlobalExceptionHandler {
   }
 
   /**
-   * 위반 경로를 클라이언트 쪽 필드 키로 바꾼다(WD-640). 메서드·생성자 마디는 빼고, 파라미터 마디는 값 파라미터일 때(뒤에 속성 마디가 없을 때)만 이름으로 쓴다 —
-   * 객체 파라미터는 MethodArgumentNotValidException 처럼 그 안의 필드 이름만 쓴다. 목록·맵 원소는 「[2]」·「[key]」로 남긴다. 교차
-   * 파라미터·반환값 위반이면 null.
+   * 위반 경로를 클라이언트 쪽 필드 키로 바꾼다(WD-640, WD-654). 문자열을 다시 들여다보지 않고 경로 마디(Path.Node)의 종류만으로 정한다.
+   *
+   * <ul>
+   *   <li>메서드·생성자 마디는 뺀다.
+   *   <li>파라미터 이름은 값 파라미터일 때만(뒤에 속성·BEAN 마디가 하나도 없을 때) 앞에 붙인다 — 객체 파라미터는
+   *       MethodArgumentNotValidException 처럼 그 안의 필드 이름만 쓴다.
+   *   <li>목록·맵 원소는 「[2]」·「[key]」로 남긴다.
+   *   <li>클래스 단위 제약(경로 끝이 BEAN 마디)은 앞에 붙은 속성이 없으면 null(→ {@link
+   *       ValidationErrorCollector#GLOBAL_KEY}), 중첩 객체면 그 속성 경로다 — BindException 경로와 같은 규칙. 단 목록·맵
+   *       파라미터 원소의 클래스 단위 제약은 위치를 남겨 「rows[3]」이다(중첩 목록의 「items[3]」과 같게).
+   *   <li>교차 파라미터·반환값 위반도 null.
+   * </ul>
    */
   static String violationField(Path path) {
     String parameter = null;
+    boolean objectPath = false;
     StringBuilder rest = new StringBuilder();
     for (Path.Node node : path) {
       ElementKind kind = node.getKind();
@@ -339,6 +382,20 @@ public class GlobalExceptionHandler {
         parameter = node.getName();
         continue;
       }
+      if (kind == ElementKind.PROPERTY || kind == ElementKind.BEAN) {
+        objectPath = true;
+      }
+      if (kind == ElementKind.BEAN && rest.length() == 0) {
+        // 파라미터 객체 자체의 클래스 단위 제약 — 붙일 필드가 없다(→ 필드 없는 오류).
+        if (!node.isInIterable()) {
+          continue;
+        }
+        // 목록·맵 파라미터 원소의 클래스 단위 제약은 어느 원소인지 남긴다(「rows[3]」) — 중첩 목록(「items[3]」)처럼 위치를 잃지 않게
+        // 파라미터 이름을 앞에 붙인다(WD-654 리뷰).
+        if (parameter != null) {
+          rest.append(parameter);
+        }
+      }
       // 이 마디가 목록·맵 원소 안에 있으면 그 위치를 먼저 붙인다(HV 는 첨자를 원소 다음 마디에 싣는다).
       if (node.isInIterable()) {
         Object at = node.getIndex() != null ? node.getIndex() : node.getKey();
@@ -351,14 +408,15 @@ public class GlobalExceptionHandler {
         rest.append(node.getName());
       }
     }
-    if (rest.length() == 0) {
-      return parameter != null ? parameter : "";
+    if (objectPath) {
+      // 객체 경로: 필드 경로가 비면 클래스 단위 제약 → 필드 없는 오류.
+      return rest.length() == 0 ? null : rest.toString();
     }
-    // 값 목록 파라미터의 원소(예: ids[0])는 파라미터 이름이 있어야 어느 입력인지 안다.
-    if (rest.charAt(0) == '[' && parameter != null && !rest.toString().contains(".")) {
-      return parameter + rest;
+    // 값 파라미터(그 원소 포함): 파라미터 이름이 있어야 어느 입력인지 안다(예: size, ids[0], labels[x.y]).
+    if (parameter == null) {
+      return rest.length() == 0 ? null : rest.toString();
     }
-    return rest.toString();
+    return parameter + rest;
   }
 
   /** 바인딩 결과의 필드 오류·필드 없는 오류를 수집기에 옮긴다. prefix 는 목록 원소 위치(예: 「[0].」). */
@@ -392,14 +450,6 @@ public class GlobalExceptionHandler {
     for (MessageSourceResolvable error : r.getResolvableErrors()) {
       collector.addField(key, constraintCode(error), error.getDefaultMessage());
     }
-  }
-
-  /** 애너테이션의 name·value 별칭 중 비어 있지 않은 쪽, 둘 다 비면 null(→ 파라미터 이름). */
-  private static String clientName(String name, String value) {
-    if (!name.isEmpty()) {
-      return name;
-    }
-    return value.isEmpty() ? null : value;
   }
 
   /** 목록·맵 원소 검증이면 「[0]」·「[key]」. */

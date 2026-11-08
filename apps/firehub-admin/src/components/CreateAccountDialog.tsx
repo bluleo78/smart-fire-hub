@@ -20,7 +20,7 @@ import { InlineBanner } from '@/components/ui/inline-banner';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { copyText } from '@/lib/clipboard';
-import { isForbidden, serverFieldErrors, serverMessage } from '@/lib/http-errors';
+import { applyServerFieldErrors, isForbidden, serverMessage } from '@/lib/http-errors';
 import { generateTemporaryPassword } from '@/lib/temp-password';
 import type { CreateAccountFormData } from '@/lib/validations/account';
 import { createAccountSchema } from '@/lib/validations/account';
@@ -124,12 +124,11 @@ function CreateAccountDialogBody({
         );
         return;
       }
-      // Bean Validation 400(코드 없음 또는 VALIDATION_FAILED, 필드별 errors)은 해당 필드 아래로 돌려 준다(판정은 serverFieldErrors, WD-640).
-      const fieldErrors = serverFieldErrors(error);
-      if (fieldErrors) {
-        Object.entries(fieldErrors).forEach(([field, message]) => {
-          if (field === 'email' || field === 'name' || field === 'temporaryPassword') setError(field, { message });
-        });
+      // Bean Validation 400(코드 없음 또는 VALIDATION_FAILED, 필드별 errors)은 해당 필드 아래로 돌려 준다(WD-640).
+      // 폼 칸이 없는 키(`_global`, 모르는 필드)의 문구는 폼 상단 오류로 보인다(WD-654).
+      const rest = applyServerFieldErrors(error, setError, ['email', 'name', 'temporaryPassword']);
+      if (rest !== undefined) {
+        if (rest) setError('root', { message: rest });
         return;
       }
       if (isForbidden(error)) {
