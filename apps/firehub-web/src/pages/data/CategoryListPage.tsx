@@ -6,6 +6,7 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
+import { TruncatedText } from '@/components/ui/truncated-text';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
 
 import { Button } from '../../components/ui/button';
@@ -260,8 +261,14 @@ export default function CategoryListPage() {
             ) : hasResults ? (
               visibleCategories.map((category) => (
                 <TableRow key={category.id}>
-                  <TableCell className="font-medium">{category.name}</TableCell>
-                  <TableCell>{category.description || '-'}</TableCell>
+                  {/* WD-559: 표 셀은 줄바꿈하지 않아(whitespace-nowrap) 띄어쓰기 없는 긴 이름·설명이 칸을 늘려 편집·삭제 칸이 화면 밖으로
+                      밀렸다. 데이터셋 목록(WD-517)처럼 값에 고정 폭 상한을 두어 넘는 값만 말줄임, 전체 값은 title 로 보인다. */}
+                  <TableCell className="font-medium">
+                    <TruncatedText value={category.name} className="max-w-[16rem]" />
+                  </TableCell>
+                  <TableCell>
+                    <TruncatedText value={category.description} className="max-w-[28rem]" />
+                  </TableCell>
                   {showActions && (
                     <TableCell>
                       <div className="flex gap-2">

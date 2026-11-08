@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { SimplePagination } from '@/components/ui/simple-pagination';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
+import { TruncatedText } from '@/components/ui/truncated-text';
 import { handleApiError, isForbiddenError } from '@/lib/api-error';
 import { cn, iGa } from '@/lib/utils';
 
@@ -156,12 +157,15 @@ export default function PipelineListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors row-hover"
                   onClick={() => navigate(`/pipelines/${pipeline.id}`)}
                 >
+                  {/* WD-559: 표 셀은 줄바꿈하지 않아(whitespace-nowrap) 띄어쓰기 없는 긴 이름이 칸을 늘려 상태·삭제 칸이 화면 밖으로
+                      밀렸다. 데이터셋 목록(WD-517)처럼 값에 고정 폭 상한을 두어 넘는 값만 말줄임, 전체 값은 title 로 보인다. */}
                   <TableCell className="font-medium">
                     {/* 키보드 접근성(WD-396): 행 클릭은 마우스로만 열리므로 이름을 상세 링크로 둔다 — Tab 으로 닿고 Enter 로
                         열린다. 클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
                     <Link
                       to={`/pipelines/${pipeline.id}`}
-                      className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="inline-block max-w-[20rem] truncate align-middle rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      title={pipeline.name}
                       onClick={(e) => e.stopPropagation()}
                     >
                       {pipeline.name}
@@ -181,7 +185,10 @@ export default function PipelineListPage() {
                       </Badge>
                     )}
                   </TableCell>
-                  <TableCell>{pipeline.createdBy}</TableCell>
+                  {/* WD-559: 생성자 아이디도 길면(최대 60자 안팎) 칸을 늘리므로 같은 방식으로 묶는다 */}
+                  <TableCell>
+                    <TruncatedText value={pipeline.createdBy} className="max-w-[10rem]" />
+                  </TableCell>
                   <TableCell className="tabular-nums" title={formatDateTimeMinute(pipeline.createdAt)}>
                     {formatDateOnly(pipeline.createdAt)}
                   </TableCell>

@@ -2,6 +2,7 @@ import { createCategories } from '../../factories/dataset.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
+import { expectLongValueTruncated, expectValueNotTruncated } from '../../fixtures/table-layout';
 
 // 생성·수정·삭제 진입점은 권한이 있을 때만 보인다(WD-144) — 기본 인증 fixture 는 권한이 비어 있으므로 쓰기 흐름을 검증하는 이 spec 은
 // 데이터셋 쓰기 권한(dataset:write·dataset:delete 포함)을 준다. 조회 전용 노출은 dataset-list-permissions.spec.ts 가 검증한다.
@@ -436,5 +437,44 @@ test.describe('카테고리 관리 페이지', () => {
     // 모든 카테고리에 편집/삭제 버튼 각 3개씩 있어야 한다 (소방 데이터, 통계 데이터, 기타)
     await expect(page.getByRole('button', { name: /편집$/ })).toHaveCount(3);
     await expect(page.getByRole('button', { name: /삭제$/ })).toHaveCount(3);
+  });
+});
+
+/**
+ * 카테고리 목록 — 띄어쓰기 없는 긴 이름·설명 (WD-559)
+ * - 100자 이름·설명이 칸을 늘려 편집·삭제 칸이 화면 밖으로 밀렸다. 이제 둘 다 말줄임되고 전체 값은 title 로 남는다.
+ */
+test.describe('카테고리 목록 긴 이름·설명 말줄임 (WD-559)', () => {
+  const LONG_NAME = '카'.repeat(100);
+  const LONG_DESC = '설'.repeat(100);
+
+  test('1280px 에서 100자 이름·설명이 있어도 표가 넘치지 않고 삭제 버튼까지 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const [first, ...rest] = createCategories();
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', [
+      { ...first, name: LONG_NAME, description: LONG_DESC },
+      ...rest,
+    ]);
+    await page.goto('/data/categories');
+
+    const row = page.getByRole('row').filter({ has: page.getByText(LONG_NAME, { exact: true }) });
+    const lastCell = row.getByRole('button', { name: `${LONG_NAME} 삭제` });
+    await expectLongValueTruncated(row.getByText(LONG_NAME, { exact: true }), LONG_NAME, lastCell);
+    await expectLongValueTruncated(row.getByText(LONG_DESC, { exact: true }), LONG_DESC, lastCell);
+  });
+
+  test('1280px 에서 평범한 길이의 이름·설명은 잘리지 않는다', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const NAME = '소방 출동 기록 원천 데이터';
+    const DESC = '119 상황실에서 매일 적재하는 출동·도착 시각 원천 기록 모음';
+    const [first, ...rest] = createCategories();
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', [{ ...first, name: NAME, description: DESC }, ...rest]);
+    await page.goto('/data/categories');
+
+    const row = page.getByRole('row').filter({ has: page.getByText(NAME, { exact: true }) });
+    await expectValueNotTruncated(row.getByText(NAME, { exact: true }));
+    await expectValueNotTruncated(row.getByText(DESC, { exact: true }));
   });
 });

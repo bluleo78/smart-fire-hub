@@ -6,6 +6,7 @@ import {
 } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectLongValueTruncated, expectValueNotTruncated } from '../../fixtures/table-layout';
 
 /**
  * API 연결 페이지 E2E 테스트
@@ -1453,5 +1454,56 @@ test.describe('API 연결 페이지', () => {
     expect(associations.unlinked).toEqual([]);
     expect(associations.dangling).toEqual([]);
     expect(associations.duplicatedIds).toEqual([]);
+  });
+});
+
+/**
+ * API 연결 목록 — 띄어쓰기 없는 긴 이름·Base URL·설명 (WD-559)
+ * - 긴 이름·설명이 칸을 늘려 삭제 칸이 화면 밖으로 밀렸다. 이제 말줄임되고 전체 값은 title 로 남는다.
+ */
+test.describe('API 연결 목록 긴 값 말줄임 (WD-559)', () => {
+  const LONG_NAME = 'A'.repeat(100);
+  const LONG_URL = `https://api.example.com/${'p'.repeat(100)}`;
+  const LONG_DESC = '설'.repeat(100);
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  test('1280px 에서 긴 이름·URL·설명이 있어도 표가 넘치지 않고 삭제 버튼까지 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupApiConnectionListMocks(page);
+    await mockApi(page, 'GET', '/api/v1/api-connections', [
+      createApiConnection({ id: 1, name: LONG_NAME, baseUrl: LONG_URL, description: LONG_DESC }),
+      createApiConnection({ id: 2, name: '짧은 연결' }),
+    ]);
+    await page.goto('/admin/api-connections');
+
+    const link = page.getByRole('link', { name: LONG_NAME });
+    const row = page.getByRole('row').filter({ has: link });
+    const lastCell = row.getByRole('button', { name: `${LONG_NAME} 삭제` });
+    await expectLongValueTruncated(link, LONG_NAME, lastCell);
+    await expectLongValueTruncated(row.getByText(LONG_URL, { exact: true }), LONG_URL, lastCell);
+    await expectLongValueTruncated(row.getByText(LONG_DESC, { exact: true }), LONG_DESC, lastCell);
+  });
+
+  test('1280px 에서 평범한 길이의 이름·URL·설명은 잘리지 않는다', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupApiConnectionListMocks(page);
+    const NAME = '기상청 단기예보 API 연결';
+    const URL = 'https://apis.data.go.kr/1360000';
+    const DESC = '기상 예보 조회용 키';
+    await mockApi(page, 'GET', '/api/v1/api-connections', [
+      createApiConnection({ id: 1, name: NAME, baseUrl: URL, description: DESC }),
+    ]);
+    await page.goto('/admin/api-connections');
+
+    const link = page.getByRole('link', { name: NAME });
+    const row = page.getByRole('row').filter({ has: link });
+    await expectValueNotTruncated(link);
+    await expectValueNotTruncated(row.getByText(URL, { exact: true }));
+    await expectValueNotTruncated(row.getByText(DESC, { exact: true }));
   });
 });

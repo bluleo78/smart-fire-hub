@@ -7,6 +7,7 @@ import {
 } from '../../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectLongValueTruncated, expectValueNotTruncated } from '../../fixtures/table-layout';
 
 /**
  * 사용자 관리 페이지 E2E 테스트
@@ -719,4 +720,57 @@ test.describe('사용자 관리 페이지', () => {
       await expect(page).toHaveURL(/\/admin\/users\/1$/);
     });
   });
+});
+
+/**
+ * 사용자 목록 — 띄어쓰기 없는 긴 이름·아이디·이메일 (WD-559)
+ * - 긴 값이 칸을 늘려 상태 칸이 화면 밖으로 밀렸다. 이제 말줄임되고 전체 값은 title 로 남는다.
+ */
+test.describe('사용자 목록 긴 값 말줄임 (WD-559)', () => {
+  const LONG_NAME = '이'.repeat(50);
+  const LONG_USERNAME = 'u'.repeat(60);
+  const LONG_EMAIL = `${'e'.repeat(40)}@example.com`;
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  test('1280px 에서 긴 이름·아이디·이메일이 있어도 표가 넘치지 않고 상태 칸까지 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await mockApi(page, 'GET', '/api/v1/users', createPageResponse([
+      createUser({ id: 1, name: LONG_NAME, username: LONG_USERNAME, email: LONG_EMAIL }),
+      createUser({ id: 2, name: '김지수', username: 'jisu@acme.io' }),
+    ]));
+    await page.goto('/admin/users');
+
+    const row = page.getByRole('button', { name: `사용자 ${LONG_NAME} 상세 보기` });
+    const lastCell = row.getByText('활성', { exact: true });
+    await expectLongValueTruncated(row.getByText(LONG_NAME, { exact: true }), LONG_NAME, lastCell);
+    await expectLongValueTruncated(row.getByText(LONG_USERNAME, { exact: true }), LONG_USERNAME, lastCell);
+    await expectLongValueTruncated(row.getByText(LONG_EMAIL, { exact: true }), LONG_EMAIL, lastCell);
+  });
+
+  // 폭 상한이 좁으면 보통 이메일까지 잘린다 — 좁은 노트북 폭(1024px)에서도 평범한 값은 다 보여야 한다
+  for (const width of [1280, 1024]) {
+    test(`${width}px 에서 평범한 길이의 이름·아이디·이메일은 잘리지 않는다`, async ({ authenticatedPage: page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      const NAME = '김수한무거북이와두루미';
+      const USERNAME = 'firstname.lastname';
+      const EMAIL = 'firstname.lastname@company.co.kr';
+      await mockApi(
+        page,
+        'GET',
+        '/api/v1/users',
+        createPageResponse([createUser({ id: 1, name: NAME, username: USERNAME, email: EMAIL })]),
+      );
+      await page.goto('/admin/users');
+
+      const row = page.getByRole('button', { name: `사용자 ${NAME} 상세 보기` });
+      await expectValueNotTruncated(row.getByText(NAME, { exact: true }));
+      await expectValueNotTruncated(row.getByText(USERNAME, { exact: true }));
+      await expectValueNotTruncated(row.getByText(EMAIL, { exact: true }));
+    });
+  }
 });

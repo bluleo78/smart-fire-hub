@@ -5,6 +5,7 @@ import { SearchInput } from '@/components/ui/search-input';
 import { SimplePagination } from '@/components/ui/simple-pagination';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
+import { TruncatedText } from '@/components/ui/truncated-text';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
 import { membershipRoleLabel } from '@/lib/membership-role';
 import { parseNonNegativeInt } from '@/lib/pagination';
@@ -129,14 +130,20 @@ export default function UserListPage() {
                 >
                   {/* WD-15: 주 식별자(이름)만 굵게 — 보조 식별자(아이디)가 더 굵으면 시선이 역전된다(02 §4.1).
                       역할 라벨은 공용 매핑(lib/membership-role)으로 admin 콘솔과 같은 용어 "소유자". */}
+                  {/* WD-559: 띄어쓰기 없는 긴 이름·아이디·이메일이 칸을 늘려 상태 칸이 화면 밖으로 밀렸다. 데이터셋 목록(WD-517)처럼
+                      값에 고정 폭 상한을 두어 넘는 값만 말줄임, 전체 값은 title 로 보인다. 소유자 배지는 줄지 않게 둔다. */}
                   <TableCell className="font-medium">
                     <span className="inline-flex items-center gap-2">
-                      {u.name}
-                      {u.membershipRole === 'OWNER' && <Badge variant="outline">{membershipRoleLabel('OWNER')}</Badge>}
+                      <TruncatedText value={u.name} className="max-w-[12rem]" />
+                      {u.membershipRole === 'OWNER' && <Badge variant="outline" className="shrink-0">{membershipRoleLabel('OWNER')}</Badge>}
                     </span>
                   </TableCell>
-                  <TableCell>{u.username}</TableCell>
-                  <TableCell>{u.email ?? '-'}</TableCell>
+                  <TableCell>
+                    <TruncatedText value={u.username} className="max-w-[10rem]" />
+                  </TableCell>
+                  <TableCell>
+                    <TruncatedText value={u.email} className="max-w-[16rem]" />
+                  </TableCell>
                   <TableCell>
                     {/* 이 워크스페이스 멤버십 상태(전역 계정 아님, WD-2). 색만으로 구분하지 않도록 문구가 다르다.
                         전역 계정이 운영자에게 비활성화됐으면 옆에 계정 배지를 붙인다(WD-3). */}
