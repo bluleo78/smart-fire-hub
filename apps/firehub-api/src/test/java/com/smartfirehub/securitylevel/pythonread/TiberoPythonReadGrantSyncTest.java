@@ -994,6 +994,61 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
   }
 
   /**
+   * 커밋 직전 좁히기(WD-624)가 휴지통(BIN$) 아닌 REVOKE 실패를 만나면 재판정(WD-645)이 같은 연결 안에서 한 번, 테넌트 전체 범위로 돈다. 재판정도
+   * 회수 전용이라 부족한 GRANT 는 걸지 않고 REVOKE 만 보낸다. 재판정 뒤에도 회수 실패가 남은 객체의 슬롯은 {@code narrowResultOf} 가 「확인
+   * 못 함」 결과의 막을 슬롯에 더한다(변경 후 받으면 안 되는 슬롯 {1,2} ∪ 남은 실패 슬롯 {5}).
+   */
+  @Test
+  void
+      narrowDatasetInCurrentTx_revokeFailure_rejudgesTenantWide_revokeOnly_leftoverSlotsUnconfirmed() {
+    String t = table("nrj", "공개");
+    String other = table("nrjo", "민감");
+    sync.syncTenant();
+    long id = datasets.get(0);
+    String upper = t.toUpperCase();
+    // 다른 테이블은 부족한 상태 — 재판정이 테넌트 전체를 보더라도 GRANT 로 채우면 안 된다(넓히기는 실행기 몫).
+    grants.removeIf(g -> g.startsWith(other.toUpperCase() + "|"));
+    // 테이블이 아닌 객체(뷰 흉내)에 슬롯 5 과권한 — 회수가 늘 실패한다. 첫 판(그 테이블만)에는 안 보이고 재판정(전체)에서만 보인다.
+    String stuck = m.toUpperCase() + "_VW";
+    grants.add(stuck + "|" + slot(5));
+    failingFragments.add(revokeSql(stuck, 5));
+    // 좁히는 테이블의 슬롯 1 REVOKE 는 첫 번째만 실패한다(겹친 DDL 흉내) — 재판정에서는 성공한다.
+    String transientFail = revokeSql(upper, 1);
+    failingFragments.add(transientFail);
+    onFailingStatement = () -> failingFragments.remove(transientFail);
+    executed.clear();
+    tableQueries = 0;
+    long from = fx.levelId("공개");
+    long to = fx.levelId("민감");
+
+    NarrowResult narrowed =
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> {
+              dsl.update(DATASET)
+                  .set(DATASET.SECURITY_LEVEL_ID, to)
+                  .where(DATASET.ID.eq(id))
+                  .execute();
+              return sync.narrowDatasetInCurrentTx(id, from, to);
+            });
+
+    assertThat(tableQueries).as("재판정이 한 번 돌았다(테이블 목록을 두 번 읽음)").isEqualTo(2);
+    assertThat(failedStatements)
+        .as("첫 판은 좁히는 테이블만, 재판정은 전체 범위라 뷰의 실패가 드러난다")
+        .containsExactly(transientFail, revokeSql(stuck, 5));
+    assertThat(executed)
+        .as("재판정도 회수 전용 — GRANT 없음")
+        .isNotEmpty()
+        .allMatch(s -> s.startsWith("REVOKE "));
+    assertThat(executed).contains(revokeSql(t, 1), revokeSql(t, 2));
+    assertThat(slotsOf(t)).isEqualTo(range(3, 10));
+    assertThat(slotsOf(other)).as("부족한 GRANT 는 그대로").isEmpty();
+    assertThat(narrowed.confirmed()).isFalse();
+    assertThat(narrowed.exposedSlots()).isEqualTo(Set.of(1, 2, 5));
+  }
+
+  /**
    * 대체 경로 뒷정리(리뷰 1) — 커밋 직전 번호 올리기가 실패했으면({@code tokensInvalidated=false}) 번호를 올리고, 잠금 안에서 그 테이블을
    * 회수한다. 커밋 직전에 이미 올렸고 회수도 성공하면 번호를 다시 올리지 않는다(토큰이 테넌트 단위라 불필요한 무효화는 모든 실행을 끊는다).
    */
