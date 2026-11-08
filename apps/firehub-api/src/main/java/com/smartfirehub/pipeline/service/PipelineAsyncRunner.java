@@ -25,6 +25,7 @@ import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
+import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
@@ -1172,6 +1173,13 @@ public class PipelineAsyncRunner {
           }
         } else if (apiCallConfig.inlineAuth() != null) {
           decryptedAuth = apiCallConfig.inlineAuth();
+        }
+        // 비밀 필드가 비면(빈 비밀로 저장된 옛 연결·인라인 인증) 호출·임시 테이블 준비 전에 실패시킨다(WD-639) — 연결 테스트·상태 점검(WD-623)과
+        // 같은 규칙이다. 예전에는 빈 인증 헤더로 호출해 실행 기록에 대상의 401/403 만 남았다. 실행기 켬·끔 두 경로 모두 이 아래라 함께 막힌다.
+        // 검사는 미리보기와 같은 ApiCallAuth 진입점 하나다. 실행기 안이 아니라 여기서 부르는 것은 임시 테이블·REPLACE 준비보다 먼저여야 해서다.
+        String missingSecret = ApiCallAuth.describeMissingSecret(apiConn, decryptedAuth);
+        if (missingSecret != null) {
+          throw new ScriptExecutionException(missingSecret);
         }
 
         // 보안 등급(코드리뷰 CR2·후속 F1): 이미 있던 출력은 실행 주체가 볼 수 있어야 쓴다 — REPLACE 맞바꿈·적재보다 먼저다. 외부 API 데이터라

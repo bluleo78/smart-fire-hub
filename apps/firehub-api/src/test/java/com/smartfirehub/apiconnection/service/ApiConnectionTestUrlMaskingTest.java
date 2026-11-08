@@ -798,4 +798,57 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     }
     throw new AssertionError("새로고침 작업이 60초 안에 끝나지 않았습니다: " + jobId);
   }
+
+  // ── WD-639: 빈 비밀로 저장된 옛 연결과 주기 점검 ─────────────────────────────
+
+  @Autowired private com.smartfirehub.apiconnection.repository.ApiConnectionRepository repository;
+  @Autowired private EncryptionService encryptionService;
+  @Autowired private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
+  /**
+   * 빈 비밀로 저장된 옛 연결(WD-588·WD-623 전 저장분)이 섞여 있어도 주기 점검은 멈추지 않는다 — 그 연결만 호출 없이 「… 입력하세요」 사유로 DOWN 이
+   * 되고(전환 알림·감사 1회), 정상 연결은 그대로 UP 이며, 저장된 인증 정보는 손대지 않는다. 다음 점검은 이미 DOWN 이라 다시 알리지 않는다. 즉 일괄 DOWN
+   * 은 「비밀이 빈 연결」에만, 한 번만 일어나고 데이터를 지우거나 바꾸지 않는다.
+   */
+  @Test
+  void scheduler_legacyEmptySecretConnection_downOnceWithoutCall_othersUnaffected()
+      throws Exception {
+    stubHealthOk();
+    Long healthy = createWithStatus("WD639 healthy", "UP");
+    String encrypted =
+        encryptionService.encrypt(objectMapper.writeValueAsString(Map.of("token", "")));
+    Long legacy =
+        inTenantFixture(
+            () ->
+                repository.save(
+                    "WD639 legacy " + System.nanoTime(),
+                    null,
+                    "BEARER",
+                    encrypted,
+                    testUserId,
+                    wireMockBase(),
+                    "/health"));
+    int marked =
+        inTenantFixture(
+            () ->
+                dsl.update(API_CONNECTION)
+                    .set(AC_LAST_STATUS, "UP")
+                    .where(AC_ID.eq(legacy))
+                    .execute());
+    assertThat(marked).isEqualTo(1);
+
+    scheduler.runOnce();
+    scheduler.runOnce();
+
+    // 빈 토큰 연결은 호출하지 않는다(쿼리 없는 /health 요청 0건), 정상 연결은 점검마다 호출된다
+    wireMock.verify(0, getRequestedFor(urlEqualTo("/health")));
+    wireMock.verify(2, getRequestedFor(urlEqualTo("/health?serviceKey=" + KEY)));
+    Record legacyRow = readStatus(legacy);
+    assertThat(legacyRow.get(AC_LAST_STATUS)).isEqualTo("DOWN");
+    assertThat(legacyRow.get(AC_LAST_ERROR)).isEqualTo("Bearer 토큰을 입력하세요 (authConfig.token)");
+    assertThat(readStatus(healthy).get(AC_LAST_STATUS)).isEqualTo("UP");
+    assertThat(statusChanges(legacy)).as("UP→DOWN 알림·감사는 한 번뿐").hasSize(1);
+    assertThat(statusChanges(healthy)).isEmpty();
+    assertThat(apiConnectionService.getDecryptedAuthConfig(legacy)).containsEntry("token", "");
+  }
 }

@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 
 import { StatusBadge } from '@/components/api-connection/StatusBadge';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
+import { missingSecretMessage } from '@/lib/api-connection-secret';
 import { handleApiError } from '@/lib/api-error';
 import { formatDate } from '@/lib/formatters';
 import { parseRouteId } from '@/lib/route-id';
@@ -181,7 +182,8 @@ export default function ApiConnectionDetailPage() {
       // 가능하다 — 인증 방식을 바꾸는 경우엔 유지할 키가 없어 새 키를 반드시 받아야 한다.
       const storedMaskedKey =
         connection?.authType === 'API_KEY' ? connection.maskedAuthConfig.apiKey : undefined;
-      const keyValue = apiKey.trim() ? apiKey : storedMaskedKey;
+      // 빈 키 판정은 생성·저장 전 테스트·서버와 같은 공용 헬퍼로 한다(WD-639).
+      const keyValue = missingSecretMessage('API_KEY', apiKey) ? storedMaskedKey : apiKey;
       if (placement === 'header') {
         if (!headerName.trim() || !keyValue) {
           toast.error('헤더 이름과 키 값을 입력하세요.');
@@ -198,8 +200,10 @@ export default function ApiConnectionDetailPage() {
         authConfig.apiKey = keyValue;
       }
     } else {
-      if (!token.trim()) {
-        toast.error('토큰을 입력하세요.');
+      // 접두어만 있는 토큰(「Bearer 」)도 빈 토큰이다 — 생성·저장 전 테스트·서버와 같은 규칙·문구(WD-639).
+      const missingToken = missingSecretMessage('BEARER', token);
+      if (missingToken) {
+        toast.error(missingToken);
         return;
       }
       authConfig.token = token;

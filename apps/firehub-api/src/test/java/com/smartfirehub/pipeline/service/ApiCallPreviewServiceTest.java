@@ -509,6 +509,9 @@ class ApiCallPreviewServiceTest {
             null,
             null);
     when(apiConnectionService.getById(1L)).thenReturn(mockConn);
+    // BEARER 연결이면 토큰이 있어야 한다 — 빈 비밀 검사는 연결의 auth_type 컬럼 기준이라(WD-639) 목의 기본 빈 Map 이면 호출 전에 막힌다.
+    when(apiConnectionService.getDecryptedAuthConfig(1L))
+        .thenReturn(java.util.Map.of("authType", "BEARER", "token", "test-token"));
 
     wireMock.stubFor(
         get(urlEqualTo("/v1/data"))
@@ -1028,5 +1031,183 @@ class ApiCallPreviewServiceTest {
 
     assertThat(response.success()).isFalse();
     assertThat(response.errorMessage()).isEqualTo("응답에서 데이터 경로를 찾을 수 없습니다: $.nonexistent.path");
+  }
+
+  // =========================================================================
+  // WD-639: 빈 비밀 검사 — 연결·인라인 인증 모두 호출 전에 막는다
+  // =========================================================================
+
+  /** 미리보기용 저장 연결 응답(기준 URL 만 의미 있음). */
+  private com.smartfirehub.apiconnection.dto.ApiConnectionResponse connAt(
+      Long id, String authType) {
+    return new com.smartfirehub.apiconnection.dto.ApiConnectionResponse(
+        id,
+        "wd639",
+        null,
+        authType,
+        java.util.Map.of(),
+        baseUrl(),
+        null,
+        null,
+        null,
+        null,
+        null,
+        1L,
+        null,
+        null);
+  }
+
+  /**
+   * 저장 연결의 비밀이 비어 있으면(빈 비밀로 저장된 옛 연결, 「Bearer」 만 있는 토큰) 대상 서버를 부르지 않고 무엇을 채워야 하는지 안내한다. 예전에는
+   * 「Authorization: Bearer 」·빈 키 헤더로 호출해 대상의 401/403 만 보였다 — 연결 테스트·상태 점검(WD-623)과 같은 규칙이다.
+   */
+  @Test
+  void preview_savedConnectionWithEmptySecret_failsWithoutCall() {
+    wireMock.stubFor(
+        get(urlEqualTo("/data")).willReturn(aResponse().withStatus(200).withBody("[]")));
+    when(apiConnectionService.getById(8L)).thenReturn(connAt(8L, "BEARER"));
+    when(apiConnectionService.getDecryptedAuthConfig(8L))
+        .thenReturn(java.util.Map.of("authType", "BEARER", "token", "Bearer"));
+    when(apiConnectionService.getById(9L)).thenReturn(connAt(9L, "API_KEY"));
+    when(apiConnectionService.getDecryptedAuthConfig(9L))
+        .thenReturn(
+            java.util.Map.of("authType", "API_KEY", "placement", "header", "headerName", "X-Key"));
+
+    ApiCallPreviewResponse bearer =
+        service.preview(
+            new ApiCallPreviewRequest("/data", "GET", null, null, null, "$", null, 8L, null, 5000));
+    ApiCallPreviewResponse key =
+        service.preview(
+            new ApiCallPreviewRequest("/data", "GET", null, null, null, "$", null, 9L, null, 5000));
+
+    assertThat(bearer.success()).isFalse();
+    assertThat(bearer.errorMessage())
+        .isEqualTo("API 연결 「wd639」의 Bearer 토큰이 비어 있습니다 — API 연결 화면에서 인증 정보를 저장하세요.");
+    assertThat(key.success()).isFalse();
+    assertThat(key.errorMessage())
+        .isEqualTo("API 연결 「wd639」의 API 키가 비어 있습니다 — API 연결 화면에서 인증 정보를 저장하세요.");
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
+
+  /** 인라인 인증도 같다 — 방식이 정해졌는데 비밀이 비면(정리한 뒤 기준) 호출하지 않는다. */
+  @Test
+  void preview_inlineAuthWithEmptySecret_failsWithoutCall() {
+    wireMock.stubFor(
+        get(urlEqualTo("/data")).willReturn(aResponse().withStatus(200).withBody("[]")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/data",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                java.util.Map.of("authType", "BEARER", "token", "Bearer   "),
+                5000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage())
+        .isEqualTo("스텝 인증 설정의 Bearer 토큰이 비어 있습니다 — 파이프라인 편집에서 이 스텝의 인증 설정을 고치세요.");
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
+
+  /** 방식이 없거나 모르는 인라인 인증은 검사 대상이 아니다(회귀) — 예전처럼 호출한다. */
+  @Test
+  void preview_inlineAuthWithoutKnownAuthType_stillCalls() {
+    wireMock.stubFor(
+        get(urlEqualTo("/data"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+
+    ApiCallPreviewResponse noType =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/data",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                java.util.Map.of("token", ""),
+                5000));
+    ApiCallPreviewResponse unknown =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/data",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                java.util.Map.of("authType", "NONE"),
+                5000));
+
+    assertThat(noType.success()).isTrue();
+    assertThat(unknown.success()).isTrue();
+    wireMock.verify(2, getRequestedFor(urlEqualTo("/data")));
+  }
+
+  /**
+   * 빈 비밀 판정은 연결의 auth_type 컬럼 기준이다 — authConfig JSON 안에 다른 authType 키가 있어도(조회의 putIfAbsent 로 JSON
+   * 쪽이 이긴다) 컬럼이 BEARER 이고 토큰이 있으면 빈 비밀이 아니다. 호출은 그대로 나간다.
+   */
+  @Test
+  void preview_emptySecretCheckUsesConnectionColumnAuthType() {
+    wireMock.stubFor(
+        get(urlEqualTo("/data"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[]")));
+    when(apiConnectionService.getById(10L)).thenReturn(connAt(10L, "BEARER"));
+    when(apiConnectionService.getDecryptedAuthConfig(10L))
+        .thenReturn(java.util.Map.of("authType", "API_KEY", "token", "t"));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/data", "GET", null, null, null, "$", null, 10L, null, 5000));
+
+    assertThat(response.errorMessage()).isNull();
+    wireMock.verify(1, getRequestedFor(urlEqualTo("/data")));
+  }
+
+  /**
+   * 헤더 이름 없이 저장된 API_KEY 헤더 연결도 연결 테스트·실행과 같은 기본 헤더(X-API-Key)로 키를 보낸다 — 예전에는 헤더를 붙이지 않아 연결 테스트는
+   * 통과하고 미리보기는 401 이었다(WD-639).
+   */
+  @Test
+  void preview_apiKeyHeaderConnectionWithoutHeaderName_sendsDefaultHeader() {
+    wireMock.stubFor(
+        get(urlEqualTo("/data"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[]")));
+    when(apiConnectionService.getById(11L)).thenReturn(connAt(11L, "API_KEY"));
+    when(apiConnectionService.getDecryptedAuthConfig(11L))
+        .thenReturn(java.util.Map.of("authType", "API_KEY", "apiKey", "wd639-default-key"));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/data", "GET", null, null, null, "$", null, 11L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    wireMock.verify(
+        getRequestedFor(urlEqualTo("/data")).withHeader("X-API-Key", equalTo("wd639-default-key")));
   }
 }

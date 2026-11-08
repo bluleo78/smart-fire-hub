@@ -6,6 +6,7 @@ import com.smartfirehub.apiconnection.service.AuthQueryMasker;
 import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.pipeline.dto.ApiCallPreviewRequest;
 import com.smartfirehub.pipeline.dto.ApiCallPreviewResponse;
+import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
@@ -42,13 +43,26 @@ public class ApiCallPreviewService {
     String authSecret = null;
     try {
       // 1. URL 결정: apiConnectionId가 있으면 connection.baseUrl + request.url()을 path로 해석
-      String resolvedUrl = resolvePreviewUrl(request);
+      // 연결은 한 번만 읽어 URL·빈 비밀 검사(방식·이름)에 함께 쓴다.
+      ApiConnectionResponse conn =
+          request.apiConnectionId() != null
+              ? apiConnectionService.getById(request.apiConnectionId())
+              : null;
+      String resolvedUrl = resolvePreviewUrl(request, conn);
 
       // 2. SSRF guard
       ssrfProtectionService.validateUrl(resolvedUrl);
 
       // 3. Resolve auth config
       Map<String, String> authConfig = resolveAuthConfig(request);
+      // 비밀 필드가 비면(정리한 뒤 기준) 대상 서버를 부르지 않고 무엇을 채워야 하는지 안내한다(WD-639) — 연결 테스트·상태 점검(WD-623)과 같은
+      // 규칙. 예전에는 빈 인증 헤더로 호출해 대상의 401/403 만 보였다. 빈 비밀로 저장된 옛 연결·인라인 인증 모두 해당한다.
+      // 판정 규칙·문구는 실행과 같은 ApiCallAuth 하나다 — 저장 연결은 연결의 auth_type 컬럼 기준.
+      String missingSecret = ApiCallAuth.describeMissingSecret(conn, authConfig);
+      if (missingSecret != null) {
+        return new ApiCallPreviewResponse(
+            false, null, List.of(), List.of(), 0, missingSecret, resolvedRequestUrl);
+      }
 
       // 4. Build query params (static + auth query-param)
       Map<String, String> allQueryParams = new LinkedHashMap<>();
@@ -130,9 +144,8 @@ public class ApiCallPreviewService {
    * <p>apiConnectionId가 있으면 connection.baseUrl + request.url()을 path로 결합한다. 없으면 request.url()을 그대로
    * 사용한다.
    */
-  private String resolvePreviewUrl(ApiCallPreviewRequest request) {
-    if (request.apiConnectionId() != null) {
-      ApiConnectionResponse conn = apiConnectionService.getById(request.apiConnectionId());
+  private String resolvePreviewUrl(ApiCallPreviewRequest request, ApiConnectionResponse conn) {
+    if (conn != null) {
       return UrlUtils.joinUrl(conn.baseUrl(), request.url());
     }
     return request.url();
@@ -190,7 +203,8 @@ public class ApiCallPreviewService {
       String authType = authConfig.get("authType");
       String placement = authConfig.getOrDefault("placement", "header");
       if ("API_KEY".equals(authType) && "header".equals(placement)) {
-        String headerName = authConfig.get("headerName");
+        // 헤더 이름이 없으면 연결 테스트·실행과 같은 기본 헤더로 보낸다(WD-639) — 예전에는 헤더를 붙이지 않아 테스트는 통과하고 미리보기는 401 이었다.
+        String headerName = ApiCallAuth.apiKeyHeaderName(authConfig);
         String apiKey = authConfig.get("apiKey");
         if (headerName != null && apiKey != null) {
           spec.header(headerName, apiKey);

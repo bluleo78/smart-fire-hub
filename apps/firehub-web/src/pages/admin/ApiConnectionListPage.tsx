@@ -9,6 +9,7 @@ import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
+import { missingSecretMessage } from '@/lib/api-connection-secret';
 import { handleApiError } from '@/lib/api-error';
 import { formatDateShort } from '@/lib/formatters';
 import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
@@ -122,7 +123,8 @@ export default function ApiConnectionListPage() {
    *
    * 비밀 값(API 키·Bearer 토큰)이 비면 호출하지 않고 바로 안내한다(WD-623) — 서버도 저장 전 테스트에서 빈 비밀을 400
    * 「… 입력하세요」로 거절한다(대상 서버의 401/403 대신 무엇을 빠뜨렸는지 보이려는 것). 저장에도 비밀이 필수라 공개 엔드포인트
-   * 용도로 빈 비밀 테스트를 허용할 이유가 없다. 문구는 서버 안내와 같게 맞춘다.
+   * 용도로 빈 비밀 테스트를 허용할 이유가 없다. 문구는 서버 안내와 같게 맞춘다. 빈 값 판정은 서버와 같은 규칙(「Bearer 」 접두어만
+   * 있어도 빈 토큰)을 쓰는 공용 헬퍼 하나로 한다(WD-639).
    */
   const handleTest = async () => {
     if (!/^https?:\/\/.+/.test(baseUrl.trim())) {
@@ -133,12 +135,9 @@ export default function ApiConnectionListPage() {
       toast.error('헬스체크 경로는 /로 시작해야 합니다.');
       return;
     }
-    const missingSecretMessage =
-      authType === 'API_KEY'
-        ? !apiKey.trim() && 'API 키를 입력하세요.'
-        : !token.trim() && 'Bearer 토큰을 입력하세요.';
-    if (missingSecretMessage) {
-      toast.error(missingSecretMessage);
+    const missingSecret = missingSecretMessage(authType, authType === 'API_KEY' ? apiKey : token);
+    if (missingSecret) {
+      toast.error(missingSecret);
       return;
     }
 
@@ -197,14 +196,14 @@ export default function ApiConnectionListPage() {
     if (authType === 'API_KEY') {
       authConfig.placement = placement;
       if (placement === 'header') {
-        if (!headerName.trim() || !apiKey.trim()) {
+        if (!headerName.trim() || missingSecretMessage('API_KEY', apiKey)) {
           toast.error('헤더 이름과 키 값을 입력하세요.');
           return;
         }
         authConfig.headerName = headerName;
         authConfig.apiKey = apiKey;
       } else {
-        if (!paramName.trim() || !apiKey.trim()) {
+        if (!paramName.trim() || missingSecretMessage('API_KEY', apiKey)) {
           toast.error('파라미터 이름과 키 값을 입력하세요.');
           return;
         }
@@ -212,8 +211,10 @@ export default function ApiConnectionListPage() {
         authConfig.apiKey = apiKey;
       }
     } else {
-      if (!token.trim()) {
-        toast.error('토큰을 입력하세요.');
+      // 접두어만 있는 토큰(「Bearer 」)도 빈 토큰이다 — 저장 전 테스트·서버와 같은 규칙·문구(WD-639).
+      const missingToken = missingSecretMessage('BEARER', token);
+      if (missingToken) {
+        toast.error(missingToken);
         return;
       }
       authConfig.token = token;

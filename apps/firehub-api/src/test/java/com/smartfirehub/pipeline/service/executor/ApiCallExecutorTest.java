@@ -214,6 +214,32 @@ class ApiCallExecutorTest {
         getRequestedFor(urlEqualTo("/api/secure")).withHeader("X-Api-Key", equalTo("secret-key")));
   }
 
+  /**
+   * WD-639 — 헤더 이름 없이 저장된 API_KEY 헤더 연결도 연결 테스트와 같은 기본 헤더(X-API-Key)로 키를 보낸다. 예전에는 헤더를 붙이지 않아 연결
+   * 테스트는 통과하고 실행은 401 이었다.
+   */
+  @Test
+  void execute_apiKeyHeaderAuthWithoutHeaderName_sendsDefaultHeader() {
+    wireMock.stubFor(
+        get(urlEqualTo("/api/default-header"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"items\":[]}")));
+
+    executor.execute(
+        simpleGetConfig("/api/default-header"),
+        "t",
+        Map.of("authType", "API_KEY", "apiKey", "wd639-default-key"),
+        "APPEND",
+        null);
+
+    wireMock.verify(
+        getRequestedFor(urlEqualTo("/api/default-header"))
+            .withHeader("X-API-Key", equalTo("wd639-default-key")));
+  }
+
   // -------------------------------------------------------------------------
   // WD-177: 쿼리 인증 키 원문이 실행 기록·오류 문구에 남지 않는다
   // -------------------------------------------------------------------------
