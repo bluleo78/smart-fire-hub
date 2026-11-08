@@ -137,7 +137,7 @@ public class DataImportController {
    * 가져오기 이력 한 페이지(최신 순, 기본 page=0·size=20, size 1~200 — WD-535).
    *
    * <p>범위 밖 값은 이 컨트롤러의 다른 400 처럼 한국어 문구를 그대로 돌려주도록 {@link IllegalArgumentException} 으로 거부한다 —
-   * {@code @Validated}+{@code @Max} 는 응답 본문이 영어 "Validation failed" 가 된다.
+   * {@code @Validated}+{@code @Max} 는 필드명이 없는 일반 문구(「입력값이 올바르지 않습니다.」, WD-570)만 준다.
    */
   @GetMapping("/imports")
   @RequirePermission("dataset:read")

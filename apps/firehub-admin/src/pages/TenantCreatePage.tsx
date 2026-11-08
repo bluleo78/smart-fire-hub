@@ -111,7 +111,7 @@ export default function TenantCreatePage() {
       navigate(`/tenants/${tenant.id}`, { replace: true });
     },
     onError: (error) => {
-      // Bean Validation 400 은 필드별 한국어 문구를 해당 칸에 단다(WD-311) — message(「Validation failed」)는 쓰지 않는다.
+      // Bean Validation 400 은 필드별 한국어 문구를 해당 칸에 단다(WD-311) — 일반 문구 message(「입력값이 올바르지 않습니다.」, 구버전 「Validation failed」)는 쓰지 않는다.
       // 폼 칸이 없는 필드(dataStore.* 등)의 문구는 폼 아래 한 줄로 모아 보인다.
       const fieldErrors = serverFieldErrors(error);
       if (fieldErrors) {

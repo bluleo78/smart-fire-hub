@@ -60,7 +60,7 @@ export default function ProfilePage() {
     } catch (error) {
       // 검증 400 은 해당 입력 아래로 — 이름 오류가 이메일 칸 밑 폼 오류로 보이던 문제 (WD-275)
       if (applyFieldErrors(error, profileForm.setError, Object.keys(updateProfileSchema.shape))) return;
-      // 필드 errors 없이 온 "Validation failed" 영문 메시지는 한국어로 대체 (#72)
+      // 필드 errors 없이 온 구버전 서버의 "Validation failed" 영문 메시지는 한국어로 대체 (#72). 현재 서버는 한국어 문구를 보내 그대로 쓴다(WD-570).
       const msg = extractApiError(error, '');
       profileForm.setError('root', {
         message: msg && msg !== 'Validation failed' ? msg : '입력값을 확인하세요.',
@@ -78,7 +78,7 @@ export default function ProfilePage() {
       passwordForm.reset();
       toast.success('비밀번호가 변경되었습니다.');
     } catch (error) {
-      // 검증 400 은 해당 입력 아래로 (WD-270). "Validation failed" 는 항상 필드 errors 와 함께 오므로 여기서 끝난다(#72 대체 불필요).
+      // 검증 400 은 해당 입력 아래로 (WD-270). 검증 실패 최상위 문구(「입력값이 올바르지 않습니다.」, 구버전 "Validation failed")는 항상 필드 errors 와 함께 오므로 여기서 끝난다(#72 대체 불필요).
       if (applyFieldErrors(error, passwordForm.setError, Object.keys(changePasswordSchema.shape))) return;
       passwordForm.setError('root', { message: extractApiError(error, '현재 비밀번호가 올바르지 않습니다.') });
     }

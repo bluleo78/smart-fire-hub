@@ -16,7 +16,7 @@ public record CreateDatasetRequest(
     String storageType,
     String originType,
     // WD-587: 요소(null)·요소 안 필드(@Valid 로 중첩 검증)를 요청 경계에서 400 으로 거부한다 — 그대로 두면 서비스 검증
-    // (DataTableService.validateNewColumns)이 null 을 역참조해 500 이 났다. 서버에 한국어 기본 문구가 없어(WD-570) 문구를
+    // (DataTableService.validateNewColumns)이 null 을 역참조해 500 이 났다. 기본 문구(WD-570)보다 구체적인 한국어 문구를
     // 명시한다.
     @Valid
         List<@NotNull(message = DatasetColumnRequest.COLUMN_REQUIRED_MESSAGE) DatasetColumnRequest>

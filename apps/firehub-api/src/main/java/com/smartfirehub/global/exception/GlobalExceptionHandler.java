@@ -50,6 +50,7 @@ import java.io.PrintWriter;
 import java.sql.SQLTransientConnectionException;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -90,6 +91,13 @@ public class GlobalExceptionHandler {
 
   /** DB 오류 판정 창구 — 벤더별 메시지 문구·드라이버 타입은 구현 안에 둔다(WD-486). */
   private final PlatformDbErrors platformDbErrors;
+
+  /**
+   * 입력 검증 실패 400 의 최상위 message(WD-570). 예전에는 영어 "Validation failed" 가 그대로 나갔다 — 필드별 문구는 errors 맵에
+   * (ValidationMessages.properties 의 한국어 기본 문구 또는 DTO 의 명시 문구로) 실리고, 최상위 문구도 한국어로 맞춘다. errors 구조는
+   * 그대로다.
+   */
+  public static final String VALIDATION_FAILED_MESSAGE = "입력값이 올바르지 않습니다.";
 
   /** 커넥션 풀 대기 초과(WD-553) 안내 — 일시적 과부하이므로 재시도를 권한다. */
   static final String POOL_EXHAUSTED_MESSAGE = "요청이 많아 지금은 처리할 수 없습니다. 잠시 후 다시 시도하세요.";
@@ -140,11 +148,20 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleValidationExceptions(
       MethodArgumentNotValidException ex, HttpServletRequest request) {
     Map<String, String> fieldErrors = new HashMap<>();
+    Set<String> requiredFields = new HashSet<>();
+    // FieldError 의 code 는 제약 애너테이션의 단순 이름(예: "NotBlank")이다.
     ex.getBindingResult()
         .getFieldErrors()
-        .forEach(error -> fieldErrors.put(error.getField(), error.getDefaultMessage()));
+        .forEach(
+            error ->
+                putFieldError(
+                    fieldErrors,
+                    requiredFields,
+                    error.getField(),
+                    error.getDefaultMessage(),
+                    REQUIRED_CONSTRAINTS.contains(error.getCode())));
     ErrorResponse response =
-        buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
+        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
     return json(HttpStatus.BAD_REQUEST, response);
   }
 
@@ -155,16 +172,52 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleConstraintViolation(
       ConstraintViolationException ex, HttpServletRequest request) {
     Map<String, String> fieldErrors = new HashMap<>();
+    Set<String> requiredFields = new HashSet<>();
     ex.getConstraintViolations()
         .forEach(
             v -> {
               String path = v.getPropertyPath().toString();
               String field = path.contains(".") ? path.substring(path.lastIndexOf('.') + 1) : path;
-              fieldErrors.put(field, v.getMessage());
+              String constraint =
+                  v.getConstraintDescriptor().getAnnotation().annotationType().getSimpleName();
+              putFieldError(
+                  fieldErrors,
+                  requiredFields,
+                  field,
+                  v.getMessage(),
+                  REQUIRED_CONSTRAINTS.contains(constraint));
             });
     ErrorResponse response =
-        buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
+        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
     return json(HttpStatus.BAD_REQUEST, response);
+  }
+
+  /** 「필수값 누락」 계열 제약 — 한 필드에 여러 위반이 겹치면 이 문구를 우선한다(WD-570). */
+  private static final Set<String> REQUIRED_CONSTRAINTS = Set.of("NotBlank", "NotNull", "NotEmpty");
+
+  /**
+   * 필드별 오류 문구를 하나만 고른다(WD-570).
+   *
+   * <p>한 필드가 여러 제약을 동시에 어기면(예: slug="" → @NotBlank + @Pattern) 위반 목록 순서가 정해져 있지 않아, 단순 put 이면 응답
+   * 문구가 요청마다 달라졌다. 규칙: 필수값 누락(NotBlank·NotNull·NotEmpty) 문구가 이기고, 그 밖에는 처음 만난 문구를 유지한다 — 빈 값에 「형식이
+   * 올바르지 않습니다」보다 「필수 입력값입니다」가 맞는 안내다.
+   */
+  private static void putFieldError(
+      Map<String, String> fieldErrors,
+      Set<String> requiredFields,
+      String field,
+      String message,
+      boolean required) {
+    if (!fieldErrors.containsKey(field)) {
+      fieldErrors.put(field, message);
+      if (required) {
+        requiredFields.add(field);
+      }
+    } else if (required && !requiredFields.contains(field)) {
+      // 먼저 들어온 것이 필수값 문구가 아니면 필수값 문구로 바꾼다.
+      fieldErrors.put(field, message);
+      requiredFields.add(field);
+    }
   }
 
   @ExceptionHandler(UsernameAlreadyExistsException.class)
@@ -935,7 +988,7 @@ public class GlobalExceptionHandler {
     Map<String, String> fieldErrors =
         Map.of(ex.getName(), String.format("'%s'는 %s 타입이어야 합니다.", ex.getValue(), typeName));
     ErrorResponse response =
-        buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
+        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
     return json(HttpStatus.BAD_REQUEST, response);
   }
 
@@ -949,7 +1002,7 @@ public class GlobalExceptionHandler {
     Map<String, String> fieldErrors =
         Map.of(ex.getParameterName(), String.format("'%s' 값이 필요합니다.", ex.getParameterName()));
     ErrorResponse response =
-        buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
+        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
     return json(HttpStatus.BAD_REQUEST, response);
   }
 
@@ -965,7 +1018,7 @@ public class GlobalExceptionHandler {
             ex.getRequestPartName(),
             String.format("'%s' 파일이 필요합니다.", ex.getRequestPartName()));
     ErrorResponse response =
-        buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
+        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
     return json(HttpStatus.BAD_REQUEST, response);
   }
 

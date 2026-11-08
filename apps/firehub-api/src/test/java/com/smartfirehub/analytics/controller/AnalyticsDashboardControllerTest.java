@@ -11,6 +11,7 @@ import com.smartfirehub.analytics.exception.WidgetNotFoundException;
 import com.smartfirehub.analytics.service.AnalyticsDashboardService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.exception.GlobalExceptionHandler;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -392,7 +393,7 @@ class AnalyticsDashboardControllerTest {
   void updateWidgetLayout_nullWidgets_returns400() throws Exception {
     putLayout("{\"widgets\":null}")
         .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.message").value("Validation failed"))
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE))
         .andExpect(jsonPath("$.errors.widgets").value("위젯 배치 목록(widgets)은 필수입니다."));
     verify(dashboardService, never()).updateWidgetLayout(anyLong(), any(), anyLong());
   }

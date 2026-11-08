@@ -354,7 +354,7 @@ class GlobalExceptionHandlerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value(400))
         .andExpect(jsonPath("$.error").value("Bad Request"))
-        .andExpect(jsonPath("$.message").value("Validation failed"))
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE))
         .andExpect(jsonPath("$.errors.name").isNotEmpty());
   }
 
