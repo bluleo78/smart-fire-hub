@@ -20,7 +20,7 @@ import pytest
 
 from app.main import app
 from app.schemas import responses
-from tests.test_store_gate_routes import _gate_backend
+from tests.conftest import gate_backend
 
 # 경로별: 요청 경로·본문, 서비스 함수 patch 대상, 커넥션 patch 대상(python 은 없음), 성공 응답 값
 ROUTES = {
@@ -90,7 +90,7 @@ async def test_health_answers_while_route_blocks(mock_auth_header, name):
         return r["ok"]()
 
     conn_patch = nullcontext() if r["conn"] is None else patch(r["conn"], MagicMock())
-    with _gate_backend(kind="POSTGRESQL"), patch(r["service"], side_effect=blocking_service), conn_patch:
+    with gate_backend(kind="POSTGRESQL"), patch(r["service"], side_effect=blocking_service), conn_patch:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
             route_task = asyncio.create_task(client.post(r["path"], json=r["body"], headers=mock_auth_header))

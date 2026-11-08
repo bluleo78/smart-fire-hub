@@ -3,9 +3,9 @@
 PG 경로의 동작이 바이트 단위로 같아야 하므로 로직을 추가하지 않는다. 기존 테스트가
 모듈 수준 이름(``get_connection`` 등)을 patch 하므로 같은 방식으로 import 해 둔다.
 """
-from typing import Any, ContextManager, Dict, List
+from typing import Any, ContextManager, Dict, List, Optional
 
-from app.config import Settings
+from app.config import QUERY_STATEMENT_TIMEOUT_DEFAULT_SECONDS, Settings
 from app.db.backends.base import BACKEND_POSTGRESQL
 from app.db.connection import get_connection
 from app.schemas.responses import QueryExecuteResponse
@@ -29,6 +29,20 @@ class PostgresBackend:
         insert_batch(conn, table_name, rows)
 
     def execute_query(
-        self, query: str, max_rows: int, read_only: bool, conn: Any, *, tenant_id: int
+        self,
+        query: str,
+        max_rows: int,
+        read_only: bool,
+        conn: Any,
+        *,
+        tenant_id: int,
+        timeout_seconds: Optional[int] = None,
+        default_timeout_seconds: int = QUERY_STATEMENT_TIMEOUT_DEFAULT_SECONDS,
     ) -> QueryExecuteResponse:
-        return execute_query(query, max_rows, read_only, conn, tenant_id=tenant_id)
+        # 문장 제한 인자도 그대로 넘긴다(WD-641) — 고르기는 서비스 함수의 일이다.
+        return execute_query(
+            query, max_rows, read_only, conn,
+            tenant_id=tenant_id,
+            timeout_seconds=timeout_seconds,
+            default_timeout_seconds=default_timeout_seconds,
+        )

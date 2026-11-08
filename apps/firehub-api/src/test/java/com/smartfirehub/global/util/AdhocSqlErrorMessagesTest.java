@@ -93,29 +93,33 @@ class AdhocSqlErrorMessagesTest {
   }
 
   /**
-   * WD-571 — 실행기 경로: 실행기가 돌려준 원문 문자열 앞에 db_error 의 SQLState 로 고른 안내를 붙인다. 원문은 그대로 둔다(AI 에이전트·고급
-   * 사용자가 읽는다). 안내가 없는 코드·SQLState 없음(검증 거부 등)이면 원문 그대로다.
+   * WD-571·WD-641 — 실행기 경로: 실행기가 돌려준 원문 앞에 db_error 의 SQLState 로 고른 안내를 붙이고, 직접 경로처럼 끝에 {@code
+   * SQLState:} 줄을 붙인다(원문 본문은 그대로 — AI 에이전트·고급 사용자가 읽는다). 안내가 없는 코드도 SQLState 줄은 붙고, SQLState 가
+   * 없으면(검증 거부 등) 원문 그대로다.
    */
   @Test
-  void withGuide_executorError_prependsGuideBySqlState() {
+  void withGuide_executorError_prependsGuideAndAppendsSqlState() {
     String raw =
         "relation \"nope\" does not exist\nLINE 1: SELECT * FROM nope\n                      ^";
 
-    assertThat(AdhocSqlErrorMessages.withGuide("42P01", raw))
-        .isEqualTo(AdhocSqlErrorMessages.UNDEFINED_TABLE_GUIDE + "\n" + raw);
+    assertThat(AdhocSqlErrorMessages.withGuide("42P01", null, raw))
+        .isEqualTo(AdhocSqlErrorMessages.UNDEFINED_TABLE_GUIDE + "\n" + raw + "\nSQLState: 42P01");
     assertThat(
             AdhocSqlErrorMessages.withGuide(
-                "57014", "canceling statement due to statement timeout"))
+                "57014", null, "canceling statement due to statement timeout"))
         .isEqualTo(
             AdhocSqlErrorMessages.STATEMENT_TIMEOUT_GUIDE
-                + "\ncanceling statement due to statement timeout");
-    assertThat(AdhocSqlErrorMessages.withGuide("42601", "syntax error")).isEqualTo("syntax error");
-    assertThat(AdhocSqlErrorMessages.withGuide(null, "Query must not be empty"))
+                + "\ncanceling statement due to statement timeout\nSQLState: 57014");
+    // 안내가 없는 코드도 직접 경로(format)처럼 SQLState 줄은 있다.
+    assertThat(AdhocSqlErrorMessages.withGuide("42601", null, "syntax error"))
+        .isEqualTo("syntax error\nSQLState: 42601");
+    assertThat(AdhocSqlErrorMessages.withGuide(null, null, "Query must not be empty"))
         .isEqualTo("Query must not be empty");
+    assertThat(AdhocSqlErrorMessages.withGuide(" ", null, "x")).isEqualTo("x");
     // 원문이 없으면 안내만 — "null" 같은 글자를 붙이지 않는다.
-    assertThat(AdhocSqlErrorMessages.withGuide("42P01", null))
+    assertThat(AdhocSqlErrorMessages.withGuide("42P01", null, null))
         .isEqualTo(AdhocSqlErrorMessages.UNDEFINED_TABLE_GUIDE);
-    assertThat(AdhocSqlErrorMessages.withGuide(null, null)).isNull();
+    assertThat(AdhocSqlErrorMessages.withGuide(null, null, null)).isNull();
   }
 
   /** WD-571 — formatWithGuide: 첫 줄 한국어 안내, 둘째 줄부터 format(e) 와 글자 하나까지 같은 원문. */
@@ -144,7 +148,7 @@ class AdhocSqlErrorMessagesTest {
     assertThat(AdhocSqlErrorMessages.formatWithGuide(plain)).isEqualTo("small error");
   }
 
-  /** WD-571 — 안내를 붙여도 2000자 상한을 지킨다. */
+  /** WD-571·WD-641 — 안내를 붙여도 2000자 상한을 지키고, 본문만 잘라 끝의 SQLState 줄은 남긴다. */
   @Test
   void formatWithGuide_longMessage_staysWithinMaxLength() {
     PSQLException e = psql("42P01", "relation \"" + "x".repeat(3000) + "\" does not exist");
@@ -153,8 +157,128 @@ class AdhocSqlErrorMessagesTest {
 
     assertThat(formatted.length()).isLessThanOrEqualTo(AdhocSqlErrorMessages.ERROR_MAX_LEN);
     assertThat(formatted)
-        .startsWith(AdhocSqlErrorMessages.UNDEFINED_TABLE_GUIDE + "\n")
+        .startsWith(AdhocSqlErrorMessages.UNDEFINED_TABLE_GUIDE + "\nERROR: relation \"xxx")
+        .endsWith("... [truncated]\nSQLState: 42P01");
+  }
+
+  /**
+   * WD-641 — 직접 경로의 긴 오류: 안내 첫 줄과 끝의 SQLState·Position 줄을 남기고 가운데 본문(ERROR·DETAIL)만 자른다. 예전에는 끝을 잘라
+   * AI 에이전트가 SQL 을 고칠 때 읽는 Position 이 먼저 사라졌다.
+   */
+  @Test
+  void formatWithGuide_longMessageWithPosition_keepsGuideAndStructuredTail() {
+    PSQLException e =
+        new PSQLException(
+            new ServerErrorMessage(
+                "SERROR\0C42703\0Mcolumn \"nope\" does not exist\0D"
+                    + "d".repeat(3000)
+                    + "\0P15\0"));
+
+    String formatted = AdhocSqlErrorMessages.formatWithGuide(e);
+
+    assertThat(formatted.length()).isLessThanOrEqualTo(AdhocSqlErrorMessages.ERROR_MAX_LEN);
+    assertThat(formatted)
+        .startsWith(
+            AdhocSqlErrorMessages.UNDEFINED_COLUMN_GUIDE
+                + "\nERROR: column \"nope\" does not exist\nDETAIL: ddd")
+        .endsWith("ddd... [truncated]\nSQLState: 42703\nPosition: 15");
+    // 안내 없는 format 도 같은 규칙(꼬리 보존)이다.
+    assertThat(AdhocSqlErrorMessages.format(e))
+        .hasSizeLessThanOrEqualTo(AdhocSqlErrorMessages.ERROR_MAX_LEN)
+        .startsWith("ERROR: column")
+        .endsWith("... [truncated]\nSQLState: 42703\nPosition: 15");
+  }
+
+  /** WD-641 — 꼬리·안내가 없는 긴 원문은 예전 자르기와 글자까지 같다(앞 1980자 + 표시). */
+  @Test
+  void limit_withoutGuideOrTail_matchesLegacyTruncate() {
+    String longMessage = "x".repeat(3000);
+
+    assertThat(AdhocSqlErrorMessages.limit(null, longMessage))
+        .isEqualTo("x".repeat(AdhocSqlErrorMessages.ERROR_MAX_LEN - 20) + "... [truncated]");
+    assertThat(AdhocSqlErrorMessages.limit(null, null)).isEmpty();
+    // 상한 안이면 그대로 — 안내는 첫 줄로 붙는다.
+    assertThat(AdhocSqlErrorMessages.limit("안내", "ERROR: x\nSQLState: 1"))
+        .isEqualTo("안내\nERROR: x\nSQLState: 1");
+  }
+
+  /** WD-641 — 첫 줄은 꼬리 줄 모양이어도 본문으로 남긴다(본문이 통째로 꼬리가 되어 표시 없이 잘리지 않게). */
+  @Test
+  void limit_firstLineIsNeverTreatedAsTail() {
+    String body = "SQLState: " + "y".repeat(3000);
+
+    String limited = AdhocSqlErrorMessages.limit(null, body);
+
+    assertThat(limited)
+        .hasSize(AdhocSqlErrorMessages.ERROR_MAX_LEN - 5)
         .endsWith("... [truncated]");
+  }
+
+  /**
+   * WD-641 — 실행기 경로도 같은 2000자 상한을 꼬리 보존 규칙으로 건다: 안내 첫 줄, 잘린 원문, 끝의 SQLState 줄. 긴 원문(예: 긴 SQL 을 담은
+   * LINE 줄)이 응답·이력을 부풀리지 않는다.
+   */
+  @Test
+  void withGuide_longExecutorError_truncatesBodyAndKeepsSqlStateLine() {
+    String raw = "relation \"nope\" does not exist\nLINE 1: SELECT " + "c, ".repeat(1500) + "\n";
+
+    String limited = AdhocSqlErrorMessages.withGuide("42P01", null, raw);
+
+    assertThat(limited.length()).isLessThanOrEqualTo(AdhocSqlErrorMessages.ERROR_MAX_LEN);
+    assertThat(limited)
+        .startsWith(
+            AdhocSqlErrorMessages.UNDEFINED_TABLE_GUIDE + "\nrelation \"nope\" does not exist")
+        .endsWith("... [truncated]\nSQLState: 42P01");
+  }
+
+  /**
+   * WD-641 — 실행기가 db_error.position 을 주면 직접 경로({@link AdhocSqlErrorMessages#format})처럼 SQLState 줄
+   * 다음에 {@code Position: n} 줄을 붙인다. 원문 끝 줄바꿈(psycopg2 원문)은 빈 줄 없이 뗀다. 위치만 있고 SQLState 가 없어도
+   * Position 줄은 붙는다.
+   */
+  @Test
+  void withGuide_position_appendsPositionLineAfterSqlState() {
+    String raw = "column \"nope\" does not exist\nLINE 1: SELECT nope FROM t\n               ^\n";
+
+    assertThat(AdhocSqlErrorMessages.withGuide("42703", 8, raw))
+        .isEqualTo(
+            AdhocSqlErrorMessages.UNDEFINED_COLUMN_GUIDE
+                + "\ncolumn \"nope\" does not exist\nLINE 1: SELECT nope FROM t\n               ^"
+                + "\nSQLState: 42703\nPosition: 8");
+    assertThat(AdhocSqlErrorMessages.withGuide(null, 3, "boom\n")).isEqualTo("boom\nPosition: 3");
+    // format() 과 같이 0 이하 위치는 붙이지 않는다.
+    assertThat(AdhocSqlErrorMessages.withGuide("42601", 0, "syntax error"))
+        .isEqualTo("syntax error\nSQLState: 42601");
+  }
+
+  /** WD-641 — 실행기 경로의 긴 원문(긴 DETAIL)을 잘라도 안내 첫 줄과 끝의 SQLState·Position 줄은 남는다. */
+  @Test
+  void withGuide_longExecutorErrorWithPosition_keepsPositionLine() {
+    String raw = "column \"nope\" does not exist\nDETAIL: " + "d".repeat(3000) + "\n";
+
+    String limited = AdhocSqlErrorMessages.withGuide("42703", 15, raw);
+
+    assertThat(limited.length()).isLessThanOrEqualTo(AdhocSqlErrorMessages.ERROR_MAX_LEN);
+    assertThat(limited)
+        .startsWith(
+            AdhocSqlErrorMessages.UNDEFINED_COLUMN_GUIDE + "\ncolumn \"nope\" does not exist")
+        .endsWith("ddd... [truncated]\nSQLState: 42703\nPosition: 15");
+  }
+
+  /** WD-641 리뷰 — 자르는 지점이 이모지(서로게이트 쌍) 가운데면 한 글자 앞에서 잘라 깨진 반쪽 글자를 남기지 않는다. */
+  @Test
+  void limit_cutInsideSurrogatePair_stepsBack() {
+    // 1979자 뒤에 이모지 — 자르는 지점(1980)이 이모지의 앞쪽 서로게이트 바로 뒤다.
+    String body =
+        "a".repeat(AdhocSqlErrorMessages.ERROR_MAX_LEN - 21) + "\uD83D\uDE00" + "b".repeat(100);
+
+    String limited = AdhocSqlErrorMessages.limit(null, body);
+
+    assertThat(limited)
+        .isEqualTo("a".repeat(AdhocSqlErrorMessages.ERROR_MAX_LEN - 21) + "... [truncated]");
+    for (int i = 0; i < limited.length(); i++) {
+      assertThat(Character.isSurrogate(limited.charAt(i))).as("index %d", i).isFalse();
+    }
   }
 
   /** 서버 구조화 오류(ServerErrorMessage)를 담은 PSQLException — 실제 드라이버가 만드는 모양(필드코드+값, NUL 구분). */

@@ -192,18 +192,61 @@ public class ExecutorClient {
                 .block());
   }
 
-  /** 분석 쿼리 실행 요청. POST /execute/query Timeout: 35s (30s statement_timeout + 5s buffer) */
+  /**
+   * 실행기 기본 문장 제한(초) — 요청에 {@code timeout_seconds} 를 싣지 않을 때 실행기가 쓰는 값(firehub-executor {@code
+   * EXECUTOR_QUERY_STATEMENT_TIMEOUT_SECONDS} 기본 30)이다. 3인자 {@link #executeQuery(String, int,
+   * boolean)} 의 응답 대기 계산에만 쓴다(WD-641).
+   */
+  static final int EXECUTOR_DEFAULT_QUERY_TIMEOUT_SECONDS = 30;
+
+  /** 응답 대기 여유(초) — 실행기가 문장 제한에 걸려 57014 를 돌려줄 시간을 남겨, api 가 먼저 포기해 원인 없는 시간 초과로 끝나지 않게 한다. */
+  private static final long QUERY_WAIT_MARGIN_SECONDS = 5;
+
+  /**
+   * 분석 쿼리 실행 요청(POST /execute/query) — 문장 제한을 싣지 않는다. 실행기는 자기 기본값(30초)을 쓰고, 응답은 그 값 + 5초(35초) 기다린다.
+   * GuardedSqlExecutor 처럼 편집기 안내 문구와 무관한 호출부가 쓰며, 동작은 WD-641 이전과 같다.
+   */
   public QueryExecuteResult executeQuery(String query, int maxRows, boolean readOnly) {
+    return postQuery(
+        Map.of("query", query, "max_rows", maxRows, "read_only", readOnly),
+        EXECUTOR_DEFAULT_QUERY_TIMEOUT_SECONDS);
+  }
+
+  /**
+   * 분석 쿼리 실행 요청(POST /execute/query) — 문장 제한(초)을 {@code timeout_seconds} 로 실어 보내고, 응답은 그 값 + 5초
+   * 기다린다(WD-641). 분석 편집기는 시간 초과 안내 문구가 말하는 제한({@code
+   * AdhocSqlErrorMessages#ADHOC_STATEMENT_TIMEOUT_SECONDS})을 넘겨, 실제 제한과 안내 숫자가 같은 상수에서 나온다. 이 필드를
+   * 모르는 구버전 실행기는 무시하고 자기 기본값(30초)을 쓴다.
+   *
+   * @param statementTimeoutSeconds 실행기가 이 조회에 거는 {@code statement_timeout}(초, 1~300 — 실행기 요청 검증 범위)
+   */
+  public QueryExecuteResult executeQuery(
+      String query, int maxRows, boolean readOnly, int statementTimeoutSeconds) {
+    return postQuery(
+        Map.of(
+            "query",
+            query,
+            "max_rows",
+            maxRows,
+            "read_only",
+            readOnly,
+            "timeout_seconds",
+            statementTimeoutSeconds),
+        statementTimeoutSeconds);
+  }
+
+  /** {@code /execute/query} 공통 호출 — 본문에 테넌트를 싣고 문장 제한 + 여유만큼 응답을 기다린다. */
+  private QueryExecuteResult postQuery(Map<String, Object> body, int statementTimeoutSeconds) {
+    Duration wait = Duration.ofSeconds(statementTimeoutSeconds + QUERY_WAIT_MARGIN_SECONDS);
     return guardSize(
         () ->
             webClient
                 .post()
                 .uri("/execute/query")
-                .bodyValue(
-                    withTenant(Map.of("query", query, "max_rows", maxRows, "read_only", readOnly)))
+                .bodyValue(withTenant(body))
                 .retrieve()
                 .bodyToMono(QueryExecuteResult.class)
-                .timeout(Duration.ofSeconds(35))
+                .timeout(wait)
                 .block());
   }
 
@@ -408,12 +451,24 @@ public class ExecutorClient {
    * @param message 저장소 오류 메시지(예: {@code JDBC-10007:UNIQUE constraint violation ...})
    * @param sqlState SQLState(계약 벡터 {@code dbErrorFields} 의 {@code sql_state}, WD-571) — 파이썬
    *     실행기(PG)는 PG SQLState 를 싣고(code 는 0), 검증 거부처럼 SQLState 가 없거나 이 필드를 보내지 않는 실행기면 null 이다.
+   * @param position 오류 위치(계약 벡터 {@code dbErrorFields} 의 선택 필드 {@code position}, WD-641) — 파이썬 실행기가
+   *     PG {@code diag.statement_position} 을 정수로 싣는다(사용자 SQL 기준 1부터). 분석 서비스가 직접 실행 경로처럼 {@code
+   *     Position:} 줄을 만든다. 위치가 없는 오류·db-executor·구버전 실행기면 null.
    */
-  public record DbError(int code, String message, @JsonProperty("sql_state") String sqlState) {
+  public record DbError(
+      int code,
+      String message,
+      @JsonProperty("sql_state") String sqlState,
+      @JsonProperty("position") Integer position) {
 
     /** SQLState 없는 저장소 오류(기존 2필드 모양) — db-executor(Tibero) 경로·테스트가 쓴다. */
     public DbError(int code, String message) {
-      this(code, message, null);
+      this(code, message, null, null);
+    }
+
+    /** 위치 없는 오류(WD-571 의 3필드 모양). */
+    public DbError(int code, String message, String sqlState) {
+      this(code, message, sqlState, null);
     }
   }
 

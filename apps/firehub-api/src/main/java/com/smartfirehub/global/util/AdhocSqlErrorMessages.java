@@ -14,9 +14,10 @@ import org.postgresql.util.ServerErrorMessage;
  *
  * <p>{@link #format} 의 출력은 옮기기 전 분석 경로({@code
  * AnalyticsQueryExecutionService#formatExecutionError})와 글자 하나까지 같아야 한다 — AI 에이전트가 이 문자열의 {@code
- * ERROR / HINT / SQLState / Position} 줄을 그대로 읽는다. 한국어 안내 줄은 {@link #formatWithGuide}(분석 편집기 직접 실행,
- * WD-571)·{@link #withGuide}(분석 편집기 실행기 경로, WD-571)·{@link #formatForUser}(데이터셋 편집기, jOOQ 메아리 제거
- * 포함)에서만 첫 줄로 붙이고, 둘째 줄부터는 {@link #format} 결과를 그대로 둔다.
+ * ERROR / HINT / SQLState / Position} 줄을 그대로 읽는다(2000자를 넘는 긴 오류만은 WD-641 부터 끝의 SQLState·Position 줄을
+ * 남기고 본문을 자른다, {@link #limit}). 한국어 안내 줄은 {@link #formatWithGuide}(분석 편집기 직접 실행, WD-571)·{@link
+ * #withGuide}(분석 편집기 실행기 경로, WD-571)·{@link #formatForUser}(데이터셋 편집기, jOOQ 메아리 제거 포함)에서만 첫 줄로 붙이고,
+ * 둘째 줄부터는 {@link #format} 결과를 그대로 둔다.
  */
 public final class AdhocSqlErrorMessages {
 
@@ -42,10 +43,11 @@ public final class AdhocSqlErrorMessages {
    * 애드혹 SQL(분석·데이터셋 편집기) 한 문장의 실행 제한 시간(초, WD-571). 실행 경로의 {@code SET LOCAL statement_timeout} 과 시간
    * 초과 안내 문구가 같은 값을 쓰게 해, 제한을 바꿨는데 안내만 옛 숫자를 말하는 일이 없게 한다.
    *
-   * <p><b>함께 바꿀 곳.</b> 운영 기본 경로인 파이썬 실행기의 분석 조회({@code
-   * apps/firehub-executor/app/services/query_executor.py} 의 {@code execute_query})는 이 상수를 읽지 못해
-   * {@code SET LOCAL statement_timeout = '30s'} 를 직접 적어 둔다. 이 값을 바꾸면 그 줄도 같은 값으로 바꿔야 실행기 경로의 안내 숫자가
-   * 실제 제한과 맞는다({@code ExecutorClient#executeQuery} 의 응답 대기 35초도 「제한 + 5초」다).
+   * <p><b>실행기 경로(WD-641).</b> 직접 실행 경로는 {@link #SET_STATEMENT_TIMEOUT_SQL} 로 이 값을 건다. 운영 기본 경로에서는
+   * 분석 서비스가 이 값을 {@code ExecutorClient#executeQuery(String, int, boolean, int)} 로 넘겨
+   * firehub-executor {@code /execute/query} 요청의 {@code timeout_seconds} 로 보내고, 응답은 이 값 + 5초 기다린다.
+   * 실행기 자체 기본값(30초)은 이 필드가 없는 요청(구버전 api·3인자 호출부)에만 쓰인다. db-executor(Tibero)는 자기 설정 {@code
+   * app.query.timeout-seconds} 를 쓰고 이 필드는 무시한다 — 그 경로의 제한은 이 상수와 따로 맞춰야 한다.
    */
   public static final int ADHOC_STATEMENT_TIMEOUT_SECONDS = 30;
 
@@ -86,6 +88,9 @@ public final class AdhocSqlErrorMessages {
   static final String DATETIME_FORMAT_GUIDE =
       "날짜·시간 값의 형식이나 범위가 올바르지 않습니다. 값과 형식 문자열(예: to_date 의 'YYYY-MM-DD')을 확인하세요.";
 
+  /** 잘라 낸 본문 끝에 붙이는 표시 — 예전 {@code truncate} 와 같은 문구(AI 에이전트·테스트가 이 표시로 잘림을 안다). */
+  private static final String TRUNCATED_MARKER = "... [truncated]";
+
   /** jOOQ 가 DataAccessException 메시지 앞에 붙이는 실행 SQL 메아리 {@code SQL [...]; } (여러 줄 SQL 포함). */
   private static final Pattern JOOQ_SQL_ECHO = Pattern.compile("^SQL \\[.*?\\]; ", Pattern.DOTALL);
 
@@ -104,6 +109,14 @@ public final class AdhocSqlErrorMessages {
    * </ol>
    */
   public static String format(Exception e) {
+    return limit(null, formatUntruncated(e));
+  }
+
+  /**
+   * {@link #format} 의 자르기 전 문자열(WD-641). 안내를 붙이는 경로가 이미 잘린 문자열에 안내를 더해 다시 자르면 끝의 SQLState·Position
+   * 줄이 먼저 잘려 나가므로, 자르기는 안내까지 붙인 뒤 {@link #limit} 한 번으로만 한다.
+   */
+  private static String formatUntruncated(Exception e) {
     Throwable cause = e;
     while (cause.getCause() != null && !(cause instanceof PSQLException)) {
       cause = cause.getCause();
@@ -120,13 +133,13 @@ public final class AdhocSqlErrorMessages {
         if (sem.getPosition() > 0) {
           sb.append("\nPosition: ").append(sem.getPosition());
         }
-        return truncate(sb.toString());
+        return sb.toString();
       }
-      return truncate("ERROR: " + nullToEmpty(psql.getMessage()));
+      return "ERROR: " + nullToEmpty(psql.getMessage());
     }
 
     String msg = cause.getMessage();
-    return truncate(msg != null ? msg : e.toString());
+    return msg != null ? msg : e.toString();
   }
 
   /**
@@ -137,7 +150,7 @@ public final class AdhocSqlErrorMessages {
    * 안내가 먼저 보인다.
    */
   public static String formatWithGuide(Exception e) {
-    return prependGuide(e, format(e));
+    return prependGuide(e, formatUntruncated(e));
   }
 
   /**
@@ -155,34 +168,69 @@ public final class AdhocSqlErrorMessages {
    * @param executedSql 실제로 DB 에 보낸 SQL(메아리 정확 제거용, 모르면 null)
    */
   public static String formatForUser(Exception e, String executedSql) {
-    return prependGuide(e, stripJooqSqlEcho(format(e), executedSql));
+    return prependGuide(e, stripJooqSqlEcho(formatUntruncated(e), executedSql));
   }
 
   /**
-   * 실행기 경로(운영 기본, {@code app.executor.enabled: true})용 error 문자열(WD-571) — 실행기가 돌려준 원문 앞에 SQLState
-   * 로 고른 한국어 안내 한 줄을 붙인다. 실행기는 예외 객체가 아니라 원문 문자열과 {@code db_error.sql_state} 만 돌려주므로 {@link
-   * #formatWithGuide} 를 쓸 수 없다.
+   * 실행기 경로(운영 기본, {@code app.executor.enabled: true})용 error 문자열(WD-571, WD-641) — 직접 실행 경로({@link
+   * #formatWithGuide})와 같은 모양으로 만든다: 첫 줄 한국어 안내(있으면), 실행기 원문, 끝에 {@code SQLState: <code>}·{@code
+   * Position: <n>} 줄({@link #format} 과 같은 순서·조건). 실행기는 예외 객체가 아니라 원문 문자열과 {@code db_error} 의 {@code
+   * sql_state}·{@code position} 만 돌려주므로 {@link #formatWithGuide} 를 쓸 수 없다.
    *
-   * <p>원문은 손대지 않는다(자르지도 않는다) — 이 경로는 원래 실행기 원문을 그대로 돌려줬고, 안내 한 줄만 앞에 더한다.
+   * <p><b>꼬리 줄을 붙이는 이유(WD-641).</b> 직접 경로는 끝에 SQLState·Position 줄이 있는데 실행기 원문(psycopg2 {@code
+   * str(exc)})에는 없어, AI 에이전트·고급 사용자가 경로마다 다른 모양을 봤다. 위치는 libpq 의 {@code LINE n:}/캐럿 문자열을 해석하지 않고
+   * 실행기가 구조화해 보낸 {@code db_error.position} 을 쓴다. 실행기 원문에는 SQLState·Position 줄이 없으므로 중복 확인은 하지 않는다.
+   * 원문 끝의 줄바꿈(psycopg2 원문은 {@code \n} 으로 끝난다)은 빈 줄이 생기지 않게 떼고 붙인다.
+   *
+   * <p><b>자르기(WD-641).</b> 실행기 원문도 매우 길 수 있어 다른 경로와 같은 2000자 상한을 {@link #limit} 규칙(안내 첫 줄·끝 꼬리 줄은
+   * 남기고 본문만 줄임)으로 적용한다.
    *
    * @param sqlState 실행기 응답 {@code db_error.sql_state}(없으면 null — 검증 거부·구버전 실행기)
+   * @param position 실행기 응답 {@code db_error.position}(사용자 SQL 기준 1부터, 없으면 null — 구버전 실행기·위치 없는 오류)
    * @param rawError 실행기 응답 {@code error} 원문(null 가능)
-   * @return 안내가 있으면 {@code 안내 + "\n" + 원문}(원문이 null 이면 안내만), 없으면 원문 그대로
+   * @return {@code [안내 + "\n"] + 원문 [+ "\nSQLState: " + 코드] [+ "\nPosition: " + 위치]}(2000자 상한). 원문이
+   *     null 이면 안내만(안내도 없으면 null)
    */
-  public static String withGuide(String sqlState, String rawError) {
+  public static String withGuide(String sqlState, Integer position, String rawError) {
     String guide = guide(sqlState);
-    if (guide == null) {
-      return rawError;
+    if (rawError == null) {
+      // 원문이 없으면 꼬리 줄만 덩그러니 두지 않는다 — 예전처럼 안내만(없으면 null).
+      return guide;
     }
-    return rawError != null ? guide + "\n" + rawError : guide;
+    boolean hasState = sqlState != null && !sqlState.isBlank();
+    boolean hasPosition = position != null && position > 0;
+    if (!hasState && !hasPosition) {
+      return limit(guide, rawError);
+    }
+    StringBuilder body = new StringBuilder(stripTrailingNewlines(rawError));
+    if (hasState) {
+      body.append("\nSQLState: ").append(sqlState);
+    }
+    if (hasPosition) {
+      body.append("\nPosition: ").append(position);
+    }
+    return limit(guide, body.toString());
   }
 
-  /** 안내가 있으면 {@code 안내 + "\n" + formatted}(2000자 상한), 없으면 formatted 그대로. */
+  /** 끝의 줄바꿈({@code \n}·{@code \r})을 뗀다 — 꼬리 줄을 붙일 때 빈 줄이 생기지 않게(정규식 없이 한 번 훑는다). */
+  private static String stripTrailingNewlines(String s) {
+    int end = s.length();
+    while (end > 0 && (s.charAt(end - 1) == '\n' || s.charAt(end - 1) == '\r')) {
+      end--;
+    }
+    return s.substring(0, end);
+  }
+
+  /**
+   * 안내가 있으면 {@code 안내 + "\n" + formatted}, 없으면 formatted — 어느 쪽이든 {@link #limit} 로 2000자 상한을 건다.
+   *
+   * @param formatted 자르기 전 원문({@link #formatUntruncated} 결과 등)
+   */
   private static String prependGuide(Exception e, String formatted) {
     PSQLException psql = psqlOf(e);
     // PSQLException 이 없으면 SQLState 를 알 수 없어 안내를 붙이지 않는다.
     String guide = psql != null ? guide(psql.getSQLState()) : null;
-    return guide != null ? truncate(guide + "\n" + formatted) : formatted;
+    return limit(guide, formatted);
   }
 
   /**
@@ -241,9 +289,58 @@ public final class AdhocSqlErrorMessages {
     }
   }
 
-  private static String truncate(String s) {
-    if (s == null) return "";
-    if (s.length() <= ERROR_MAX_LEN) return s;
-    return s.substring(0, ERROR_MAX_LEN - 20) + "... [truncated]";
+  /**
+   * {@code [안내 + "\n"] + 본문} 을 2000자 상한({@link #ERROR_MAX_LEN}) 안으로 맞춘다(WD-641).
+   *
+   * <p><b>왜 끝을 그냥 자르지 않는가.</b> 예전에는 다 붙인 문자열의 끝을 잘라, 긴 오류에서 AI 에이전트가 SQL 을 고칠 때 읽는 맨 끝의 {@code
+   * SQLState:}·{@code Position:} 줄이 가장 먼저 사라졌다. 그래서 첫 줄 안내와 본문 끝의 이 꼬리 줄들을 남기고, 가운데 본문만 남은 길이로 잘라
+   * 예전과 같은 {@code ... [truncated]} 표시를 단다. 안내·꼬리가 없으면 결과가 예전 자르기와 글자까지 같다. 자르는 지점이 서로게이트 쌍 가운데면 한
+   * 글자 앞에서 자른다.
+   *
+   * <p>안내와 꼬리만으로 상한을 넘는(현실에서는 없는) 경우에는 전체의 끝을 잘라 상한만은 반드시 지킨다.
+   *
+   * @param guide 첫 줄 한국어 안내(없으면 null)
+   * @param body 원문(null 이면 빈 문자열로 본다 — 예전 {@code truncate} 와 같다)
+   */
+  static String limit(String guide, String body) {
+    String head = guide != null ? guide + "\n" : "";
+    String text = body != null ? body : "";
+    if (head.length() + text.length() <= ERROR_MAX_LEN) {
+      return head + text;
+    }
+    int tailStart = tailStart(text);
+    String tail = text.substring(tailStart); // 꼬리가 없으면 "", 있으면 "\nSQLState: …[\nPosition: …]"
+    // 예전 truncate 와 같이 표시 문구 몫으로 20자를 비워 둔다(표시는 15자라 결과는 상한보다 5자 짧다). 전체가 상한을 넘었으므로 본문은
+    // 언제나 이 길이보다 길다 — 잘라야 한다.
+    int budget = ERROR_MAX_LEN - 20 - head.length() - tail.length();
+    if (budget < 0) {
+      return cutAt(head + text, ERROR_MAX_LEN - 20) + TRUNCATED_MARKER;
+    }
+    return head + cutAt(text, budget) + TRUNCATED_MARKER + tail;
+  }
+
+  /**
+   * 본문 끝에서부터 연속한 구조화 꼬리 줄({@code SQLState:}·{@code Position:})이 시작하는 위치(그 앞 줄바꿈의 인덱스). 꼬리가 없으면 본문
+   * 길이. 앞에 줄바꿈이 있는 줄만 보므로 첫 줄은 꼬리로 치지 않는다(본문이 통째로 꼬리가 되지 않게).
+   */
+  private static int tailStart(String text) {
+    int start = text.length();
+    int newline = text.lastIndexOf('\n');
+    while (newline >= 0
+        && (text.startsWith("SQLState: ", newline + 1)
+            || text.startsWith("Position: ", newline + 1))) {
+      start = newline;
+      newline = text.lastIndexOf('\n', newline - 1);
+    }
+    return start;
+  }
+
+  /** {@code s} 의 앞 {@code n} 글자. 끝 글자가 서로게이트 쌍의 앞쪽이면 쌍을 깨지 않게 한 글자 앞에서 자른다(WD-641). */
+  private static String cutAt(String s, int n) {
+    int end = Math.min(n, s.length());
+    if (end > 0 && Character.isHighSurrogate(s.charAt(end - 1))) {
+      end--;
+    }
+    return s.substring(0, end);
   }
 }

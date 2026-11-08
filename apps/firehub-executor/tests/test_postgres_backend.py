@@ -27,6 +27,11 @@ def test_insert_batch_delegates():
 def test_execute_query_delegates_and_returns_same_object():
     conn, sentinel = object(), object()
     with patch("app.db.backends.postgres.execute_query", return_value=sentinel) as eq:
-        out = PostgresBackend(MagicMock()).execute_query("select 1", 10, True, conn, tenant_id=3)
-    eq.assert_called_once_with("select 1", 10, True, conn, tenant_id=3)
+        out = PostgresBackend(MagicMock()).execute_query(
+            "select 1", 10, True, conn, tenant_id=3, timeout_seconds=12, default_timeout_seconds=40
+        )
+    # 문장 제한 인자도 받은 그대로 넘긴다(WD-641) — 고르기는 서비스 함수의 일이다.
+    eq.assert_called_once_with(
+        "select 1", 10, True, conn, tenant_id=3, timeout_seconds=12, default_timeout_seconds=40
+    )
     assert out is sentinel

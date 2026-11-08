@@ -60,11 +60,15 @@ class DbErrorInfo(BaseModel):
     code: int = 0
     sql_state: Optional[str] = None
     message: str
+    # 오류 위치(사용자 SQL 기준 1부터 센 글자 위치, 선택, WD-641). PG 서버 오류의 diag.statement_position 에서 온다. api 가 직접 실행
+    # 경로처럼 ``Position: n`` 줄을 만든다 — libpq 의 ``LINE n:``/캐럿 문자열을 해석하지 않아도 되게 구조화해 보낸다. 모르면 None.
+    # db-executor 는 이 필드를 보내지 않는다(계약 벡터에서 선택 필드).
+    position: Optional[int] = None
 
 
-def db_error_of(message: str, sql_state: Optional[str] = None) -> DbErrorInfo:
-    """실패 응답에 싣는 ``db_error`` 를 만든다. 검증 거부처럼 SQLState 가 없으면 None 으로 둔다."""
-    return DbErrorInfo(code=0, sql_state=sql_state, message=message)
+def db_error_of(message: str, sql_state: Optional[str] = None, position: Optional[int] = None) -> DbErrorInfo:
+    """실패 응답에 싣는 ``db_error`` 를 만든다. 검증 거부처럼 SQLState·위치가 없으면 None 으로 둔다."""
+    return DbErrorInfo(code=0, sql_state=sql_state, message=message, position=position)
 
 
 class SqlExecuteResponse(BaseModel):
