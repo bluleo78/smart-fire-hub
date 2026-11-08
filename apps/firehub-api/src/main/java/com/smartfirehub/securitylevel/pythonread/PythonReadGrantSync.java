@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -94,6 +95,13 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   private final DatasetRepository datasetRepository;
   private final TransactionTemplate requiresNew;
 
+  /**
+   * 커밋 뒤 묶음 동기화에서 테이블 하나를 감싸는 플랫폼 savepoint 템플릿(PROPAGATION_NESTED, WD-644 리뷰) — 테이블 하나의 플랫폼 읽기
+   * 실패(등급·데이터셋 행)가 묶음 트랜잭션 전체를 aborted 로 만들어 다른 테이블의 회수까지 되돌리지 않게 한다. 데이터 저장소 쪽은 {@link
+   * #inTableSavepoint} 가 따로 감싼다.
+   */
+  private final TransactionTemplate tableSavepoint;
+
   /** 커밋 뒤 테이블 동기화를 돌리는 전용 실행기 — 커밋 콜백 스레드가 커넥션 2개를 쥐지 않게 한다(WD-594). */
   private final PythonReadSyncExecutor afterCommitExecutor;
 
@@ -137,12 +145,14 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     this.separateDataStore = separateDataStore;
     this.requiresNew = new TransactionTemplate(txManager);
     this.requiresNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    this.tableSavepoint = new TransactionTemplate(txManager);
+    this.tableSavepoint.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
   }
 
   /** 현재 테넌트 전체 재동기화. 실패는 예외(호출부가 로그/실패를 정한다). */
   @Override
   public SyncResult syncTenant() {
-    return requiresNew.execute(status -> syncInTx(null, null));
+    return lockedSync(null, null);
   }
 
   /**
@@ -183,7 +193,9 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
       SyncResult result =
           requiresNew.execute(
               status -> {
-                lockTenantSync(dsl, tenantId);
+                // 대기 잠금(WD-644 의 WAIT) — 시도형으로 바꾸지 않는다: 바쁠 때마다 처음부터 다시 하면 끊기도 되풀이돼 커밋 뒤 정상
+                // 시작한 실행까지 거듭 끊는다. 이 경로(등급 정의 변경·미확인 표식 실행 준비)는 드물어 실행기 줄을 잠시 막는 쪽을 받아들인다.
+                lockOps.lock(syncLockKey(tenantId));
                 Set<Integer> check = new TreeSet<>(slots);
                 if (runRank != null) {
                   // 잠금 뒤 읽은 등급으로 실행 슬롯을 정한다(applyInTx 와 같은 스냅샷 규칙).
@@ -244,7 +256,89 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
 
   /** 테이블 하나만 재동기화(생성·클론·맞바꿈 직후 — RENAME 맞바꿈은 ACL 을 잃는다). */
   public SyncResult syncTable(String tableName) {
-    return requiresNew.execute(status -> syncInTx(tableName, null));
+    return lockedSync(tableName, null);
+  }
+
+  /**
+   * 테이블 여러 개를 테넌트 동기화 잠금 <b>한 번</b> 안에서 차례로 동기화한다(WD-644 리뷰) — 커밋 뒤 실행기 전용. 잠금 대기가 0 이면 시도만, 양수면
+   * 그만큼 묶인 대기로 잡는다. 잠금이 바쁘면 아무 일도 하지 않고 곧바로 트랜잭션을 끝내(커넥션 반납) BUSY 를 돌려준다. 실행기가 나중에 다시 부른다.
+   *
+   * <p><b>테이블마다 savepoint(WD-644 리뷰).</b> applyInTx 의 문장 savepoint 는 GRANT/REVOKE·테이블 잠금만 감싸고, 그
+   * 앞뒤의 읽기(등급· 데이터셋 행·pg_roles·슬롯 권한 조회)는 감싸지 않는다. PG 는 문장 하나가 실패하면 트랜잭션 전체가 aborted 가 되므로, 테이블 B 의
+   * 읽기 실패 하나가 이미 적용한 테이블 A 의 회수까지 커밋하지 못하게 만들었다. 그래서 테이블 하나의 동기화 전체를 savepoint 로 감싸 실패하면 그 테이블만
+   * 되돌리고, 다른 테이블은 이어서 맞춘 뒤 함께 커밋한다. 읽기를 묶음 앞에서 한 번만 하는 방식은 테이블별 읽기(데이터셋 행·슬롯 권한)가 남아 충분하지 않고, 테이블마다
+   * 트랜잭션을 나누면 트랜잭션 범위의 테넌트 잠금이 테이블마다 풀려 다시 다퉈야 하므로 savepoint 를 골랐다. 연결이 끊기는 등 트랜잭션 자체가 죽으면 마지막 커밋이
+   * 실패해 묶음 전체가 예외(실행기가 일시 실패로 다시 한다)로 끝난다 — 커밋되지 않은 것을 끝났다고 보고하지 않는다.
+   *
+   * @return 잠금이 바빠 건너뛰었으면 BUSY, 아니면 실패한 테이블 → 예외(없으면 빈 맵)
+   */
+  @Override
+  public BatchResult syncTablesWith(List<String> tableNames, Duration lockWait) {
+    return PythonReadGrantBackend.withTenantSyncLock(
+            requiresNew,
+            lockOps,
+            PythonReadGrantBackend.LockMode.forExecutorWait(lockWait),
+            lockWait,
+            () -> {
+              Map<String, RuntimeException> failed = new LinkedHashMap<>();
+              for (String table : PythonReadGrantBackend.batchOrder(tableNames)) {
+                try {
+                  inTableSavepoint(() -> syncInTx(table, null));
+                } catch (RuntimeException e) {
+                  // 이 테이블만 되돌려졌다 — 다른 테이블은 이어서 맞추고, 이 테이블은 실행기가 분류해 다시 하거나 버린다.
+                  failed.put(table, e);
+                }
+              }
+              return BatchResult.done(failed);
+            })
+        .orElse(BatchResult.BUSY);
+  }
+
+  /**
+   * 테이블 하나의 동기화를 savepoint 로 감싼다(WD-644 리뷰) — 실패하면 그 테이블의 변경만 되돌리고 예외를 그대로 던진다. 플랫폼 트랜잭션은 NESTED
+   * 템플릿({@link #tableSavepoint})이, 분리 설치의 데이터 저장소 연결은 이름 있는 SAVEPOINT 가 맡는다(분리하지 않으면 같은 연결이라 NESTED
+   * 로 충분하다). applyInTx 안의 문장 savepoint({@code python_read_sync})와 이름을 달리해 서로의 되돌리기 범위가 섞이지 않게 한다.
+   */
+  private void inTableSavepoint(Runnable work) {
+    tableSavepoint.executeWithoutResult(
+        status -> {
+          if (!separateDataStore) {
+            work.run();
+            return;
+          }
+          dsl.execute("SAVEPOINT python_read_sync_table");
+          try {
+            work.run();
+            dsl.execute("RELEASE SAVEPOINT python_read_sync_table");
+          } catch (RuntimeException e) {
+            dsl.execute("ROLLBACK TO SAVEPOINT python_read_sync_table");
+            throw e;
+          }
+        });
+  }
+
+  /**
+   * 데이터셋 등급 변경의 커밋 뒤 실행기 경로(WD-624 리스너 → WD-644 실행기) — 데이터셋들의 테이블을 찾아 {@link #syncTablesWith} 로 잠금
+   * 한 번에 맞춘다. 공통부는 {@link PythonReadGrantBackend#syncDatasetTablesWith}.
+   */
+  @Override
+  public BatchResult syncDatasetsWith(List<String> datasetIds, Duration lockWait) {
+    return PythonReadGrantBackend.syncDatasetTablesWith(
+        requiresNew, datasetRepository, datasetIds, lockWait, this::syncTablesWith);
+  }
+
+  /**
+   * 잠금을 기다려 잡은 뒤 동기화한다 — 커밋 뒤 실행기의 테이블 묶음을 뺀 경로(전체·테이블 하나·실행 준비)의 공통 진입점(WD-644). 등급 정의 변경 전체 동기화와
+   * 미확인 표식이 있는 실행 준비는 끊기 → 잠금 안 재확인 순서가 필요해 {@link #killThenApplyUnderLock} 으로 간다(WD-624).
+   */
+  private SyncResult lockedSync(String onlyTable, Integer runRank) {
+    return PythonReadGrantBackend.withTenantSyncLock(
+            requiresNew,
+            lockOps,
+            PythonReadGrantBackend.LockMode.WAIT,
+            null,
+            () -> syncInTx(onlyTable, runRank))
+        .orElseThrow();
   }
 
   /** 데이터셋 하나 — 테이블 이름을 찾아 syncTable. 물리 테이블이 없는 데이터셋(문서·파일형)은 할 일이 없다. */
@@ -361,7 +455,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   @Override
   public void syncTableAfterCommit(String tableName) {
     PythonReadGrantBackend.scheduleTableSync(
-        tableName, log, "", afterCommitExecutor, this::syncTable);
+        tableName, log, "", afterCommitExecutor, this::syncTable, this::syncTablesWith);
   }
 
   /**
@@ -376,9 +470,33 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * 한다(한 직렬화 = 한 저장소, WD-493). 테넌트마다 백엔드는 하나라 Tibero 판({@code TiberoPythonReadGrantSync})과 겹치지 않는다.
    */
   public static void lockTenantSync(DSLContext ctx, long tenantId) {
-    ctx.execute(
-        "SELECT pg_advisory_xact_lock(hashtextextended({0}, 0))", DSL.val(syncLockKey(tenantId)));
+    // SQL·키 식은 PostgresPlatformLocks 한곳에 둔다(WD-644). 잡는 곳은 데이터 저장소 DSL 이다.
+    // Tibero 판(플랫폼 PlatformLocks)과는 저장소가 다르지만 테넌트마다 백엔드는 하나라 겹치지 않는다(WD-493).
+    PostgresPlatformLocks.xactLock(ctx, syncLockKey(tenantId));
   }
+
+  /**
+   * 테넌트 동기화 잠금 원시 동작(WD-644) — PG 데이터 경로라 <b>데이터 저장소 DSL</b> 로 잡는다(동기화가 GRANT 를 거는 그 DB 의 트랜잭션).
+   * SQL 은 {@link PostgresPlatformLocks} 의 정적 도우미를 그대로 쓰고, 대기·시도·묶인 대기 선택은 {@link
+   * PythonReadGrantBackend#withTenantSyncLock} 한곳에서 한다.
+   */
+  private final PythonReadGrantBackend.SyncLockOps lockOps =
+      new PythonReadGrantBackend.SyncLockOps() {
+        @Override
+        public void lock(String key) {
+          PostgresPlatformLocks.xactLock(dsl, key);
+        }
+
+        @Override
+        public boolean tryLock(String key) {
+          return PostgresPlatformLocks.tryXactLock(dsl, key);
+        }
+
+        @Override
+        public void lock(String key, Duration timeout) {
+          PostgresPlatformLocks.xactLock(dsl, key, timeout);
+        }
+      };
 
   /**
    * 테넌트 동기화 잠금의 키 문자열. PG 판({@link #lockTenantSync})과 Tibero 판({@code TiberoPythonReadGrantSync})이
@@ -427,27 +545,28 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
         readRank,
         () -> {
           // 커밋 직후 끊기를 확인하지 못한 슬롯이 있으면 넓히기 전에 먼저 끊는다 — 끊기는 잠금·커넥션 없이, 잠금 안에서는 다시 붙은 세션이 없는지만
-          // 본다(WD-624, killThenApplyUnderLock). 끝내 못 끊으면 예외 → 게이트가 실행을 거부(fail-closed).
+          // 본다(WD-624, killThenApplyUnderLock). 끝내 못 끊으면 예외 → 게이트가 실행을 거부(fail-closed). 그 밖에는 잠금을
+          // 기다려
+          // 맞춘다(WD-644 의 대기 경로 — 실행 준비는 호출 스레드에서 돌아 실행기 줄을 막지 않는다).
           Set<Integer> unconfirmed = terminator.unconfirmedSlots(runAs.tenantId());
           if (!unconfirmed.isEmpty()) {
             return killThenApplyUnderLock(runAs.tenantId(), unconfirmed, readRank);
           }
-          return requiresNew.execute(status -> syncInTx(null, readRank));
+          return lockedSync(null, readRank);
         },
         slot -> TenantPipelineRole.pythonReadRoleName(runAs.tenantId(), slot));
   }
 
   /**
-   * 트랜잭션(=테넌트 GUC) 안에서 호출된다 — 테넌트 동기화 잠금을 잡고 차이를 적용한다. 세션 끊기는 여기서 하지 않는다(잠금을 쥔 채 소유자 풀을 기다리지 않게,
-   * WD-624).
+   * 트랜잭션(=테넌트 GUC) 안에서, 호출자가 그 트랜잭션에 테넌트 동기화 잠금을 <b>잡은 뒤</b> 호출된다({@link #lockedSync}·{@link
+   * #syncTablesWith}). 잠금을 어떻게 잡을지(대기·시도·묶인 대기)는 호출자 몫이라 이 메서드는 언제나 끝까지 동기화한다(WD-644). 세션 끊기는 여기서
+   * 하지 않는다(잠금을 쥔 채 소유자 풀을 기다리지 않게, WD-624).
    *
    * @param onlyTable null 이면 스키마 전체, 아니면 그 테이블만
    * @param runRank null 이면 슬롯 롤 전부, 아니면 그 자격 rank 의 실행 슬롯 롤 하나만(실행 준비) — 슬롯은 잠금 뒤 읽은 등급 스냅샷으로 계산한다
    */
   private SyncResult syncInTx(String onlyTable, Integer runRank) {
     long tenantId = TenantContext.require("PYTHON 읽기 권한 동기화");
-    // 같은 테넌트 동기화 직렬화(트랜잭션 종료 시 자동 해제).
-    lockTenantSync(dsl, tenantId);
     return applyInTx(tenantId, onlyTable, runRank, false);
   }
 

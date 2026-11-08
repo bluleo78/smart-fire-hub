@@ -3,6 +3,7 @@ package com.smartfirehub.securitylevel.pythonread;
 import static com.smartfirehub.jooq.Tables.DATASET;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.awaitility.Awaitility.await;
 
 import com.smartfirehub.dataset.dto.CloneDatasetRequest;
 import com.smartfirehub.dataset.service.DataTableService;
@@ -34,15 +35,19 @@ import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -64,6 +69,9 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
 
   /** 발행 스레드의 "엉뚱한" 테넌트 — 리스너가 이 값이 아니라 event.tenantId() 로 동기화하는지 가른다. 존재하지 않는 id 다. */
   private static final long WRONG_AMBIENT_TENANT = 987_654_321L;
+
+  /** 잠금을 쥔 "다른 테넌트" — 동기화 잠금 키만 다르면 되므로 존재하지 않는 id 다(슬롯 롤이 없어 동기화는 할 일 없이 끝난다, WD-644). */
+  private static final long OTHER_TENANT = 987_654_644L;
 
   @Autowired private DSLContext dsl;
 
@@ -323,6 +331,23 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   }
 
   /** 커밋 뒤 실행기에 넘어간 동기화가 아직 돌고 있는가(기다리지 않고 본다). */
+  /**
+   * 실행기에 일반 작업 하나를 넣는다(테스트용) — WD-644 실행기에는 Runnable 제출 API 가 없으므로, 겹치지 않는 그룹의 재시도형 작업으로 넣고 곧바로
+   * DONE 을 돌려준다. 실행기를 막아 "커밋 뒤 단계가 아직 안 돈" 창을 고정하는 데 쓴다.
+   */
+  private boolean submitBlocking(Runnable work) {
+    return syncExecutor.submitRetryable(
+        "test-block-" + BLOCK_SEQ.incrementAndGet(),
+        "block",
+        (items, lockWait) -> {
+          work.run();
+          return PythonReadSyncExecutor.Outcome.DONE;
+        });
+  }
+
+  private static final java.util.concurrent.atomic.AtomicInteger BLOCK_SEQ =
+      new java.util.concurrent.atomic.AtomicInteger();
+
   private boolean syncPending() throws InterruptedException {
     return !syncExecutor.awaitIdle(Duration.ZERO);
   }
@@ -372,6 +397,194 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
     }
 
     assertThat(failures).as("동기화와 겹친 DDL 이 실패하지 않고, GRANT 는 계산값대로 남는다").isEmpty();
+  }
+
+  /**
+   * 회귀(WD-644): 커밋 뒤 동기화 실행기는 워커가 하나라, 한 테넌트의 동기화 잠금을 <b>기다리면</b>(JIT 실행 준비·전체 동기화·REPLACE 맞바꿈이 오래
+   * 쥘 때) 그 뒤에 줄 선 다른 테넌트의 동기화가 모두 멈췄다(head-of-line blocking).
+   *
+   * <p>(1) 다른 테넌트(A)의 잠금을 별도 연결의 트랜잭션으로 쥔 채 A 의 커밋 뒤 동기화를 먼저 넣고, 이 테넌트(B)의 동기화를 그 뒤에 넣는다 — B 는 A 를
+   * 기다리지 않고 GRANT 되고, A 는 아직 재시도를 기다린다. (2) 이 테넌트 자신의 잠금을 쥐면 동기화는 건너뛰어 재시도를 기다리고, 잠금이 풀리면 재시도가
+   * GRANT 를 적용한다. 시도형 잠금을 기다리는 잠금으로 되돌리면 (1) 의 B 는 A 의 잠금이 풀릴 때까지 GRANT 되지 않아 단언이 실패한다(변이). 재시도 간격에
+   * 기대지 않도록 결과(GRANT)를 넉넉한 제한 시간으로 폴링한다.
+   */
+  @Test
+  void syncTableAfterCommit_otherTenantLockHeld_doesNotBlock_andBusyJobIsRetried()
+      throws Exception {
+    String pub = table("hol", "공개");
+
+    // (1) A 의 잠금을 쥔 동안 A → B 순서로 넣는다.
+    revokeAllSlots(pub);
+    try (Connection holderA = holdSyncLock(OTHER_TENANT)) {
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate, OTHER_TENANT, () -> sync.syncTableAfterCommit(pub));
+      fixtureTransactionTemplate.executeWithoutResult(status -> sync.syncTableAfterCommit(pub));
+      // A 의 잠금은 이 블록 내내 쥐고 있다 — 그 안에서 B 가 GRANT 되면 B 는 A 를 기다리지 않은 것이다.
+      awaitSlotSelect(pub, null, "B 의 동기화는 잠금이 바쁜 A 뒤에서 막히지 않고 GRANT 한다");
+      assertThat(syncPending()).as("A 는 잠금이 풀리길 기다리며 재시도 대기 중이다").isTrue();
+      holderA.rollback();
+    }
+    assertThat(syncExecutor.awaitIdle(Duration.ofSeconds(20))).as("A 의 잠금이 풀리면 재시도가 끝난다").isTrue();
+
+    // (2) 이 테넌트의 잠금을 쥐면 건너뛰었다가, 풀리면 재시도로 GRANT 한다.
+    revokeAllSlots(pub);
+    try (Connection holderB = holdSyncLock(DEFAULT_TEST_TENANT_ID)) {
+      fixtureTransactionTemplate.executeWithoutResult(status -> sync.syncTableAfterCommit(pub));
+      // 잠금을 쥔 동안에는 몇 번을 재시도하든 GRANT 되지 않고 계속 pending 이다(일정 구간 동안 줄곧 성립하는지 본다).
+      await()
+          .during(Duration.ofSeconds(2))
+          .atMost(Duration.ofSeconds(10))
+          .pollInterval(Duration.ofMillis(100))
+          .until(() -> "42501".equals(selectAs(1, pub)) && syncPending());
+      holderB.rollback();
+    }
+    awaitSlotSelect(pub, null, "잠금이 풀린 뒤 재시도가 GRANT 를 적용한다");
+    assertThat(syncExecutor.awaitIdle(Duration.ofSeconds(20))).as("재시도가 끝났다").isTrue();
+  }
+
+  /**
+   * 회귀(WD-644 리뷰): 테넌트 동기화 잠금이 쉴 새 없이 쓰이는(쥔 쪽과 기다리는 쪽이 늘 있는) 테넌트에서도 커밋 뒤 동기화가 결국 적용된다 — 과권한
+   * 회수(REVOKE) 포함. PG 의 시도형 잠금은 쥔 쪽뿐 아니라 기다리는 쪽이 줄에 있어도 실패하므로, 시도만 되풀이하던 코드는 여기서 끝내 잡지 못하고(10분 뒤
+   * 버림) 슬롯 2 의 과권한이 그대로 남았다. 지금은 처음 몇 번 뒤 묶인 대기로 줄에 서서 차례가 오면 잡는다.
+   *
+   * <p>두 스레드가 잠금을 번갈아 쥐되 서로 겹치게 해(한쪽이 쥔 동안 다른 쪽이 줄에 선다) 경합을 끊김 없이 만든다. 결과(REVOKE)를 넉넉한 제한 시간으로
+   * 폴링하므로 재시도 간격에 기대지 않는다.
+   */
+  @Test
+  void syncTableAfterCommit_lockContinuouslyContended_eventuallyRevokesStrayGrant()
+      throws Exception {
+    String sens = table("stv", "민감"); // ACL 은 생성 시점(내부) 기준 → 슬롯 2 에 남는 과권한
+    assertThat(selectAs(2, sens)).as("출발 상태: 슬롯 2 과권한").isNull();
+
+    AtomicBoolean stop = new AtomicBoolean();
+    CountDownLatch bothRunning = new CountDownLatch(2);
+    List<Thread> contenders =
+        List.of(
+            startContender(stop, bothRunning, Duration.ZERO),
+            startContender(stop, bothRunning, Duration.ofMillis(400)));
+    try {
+      assertThat(bothRunning.await(10, TimeUnit.SECONDS)).as("두 경합 스레드가 잠금을 잡기 시작했다").isTrue();
+      fixtureTransactionTemplate.executeWithoutResult(status -> sync.syncTableAfterCommit(sens));
+      await("잠금 경합이 끊이지 않아도 회수가 적용된다")
+          .atMost(Duration.ofSeconds(60))
+          .pollInterval(Duration.ofMillis(200))
+          .until(() -> "42501".equals(selectAs(2, sens)));
+    } finally {
+      stop.set(true);
+      for (Thread t : contenders) {
+        t.join(10_000);
+      }
+    }
+    assertThat(syncExecutor.awaitIdle(Duration.ofSeconds(20))).isTrue();
+    assertThat(selectAs(3, sens)).as("민감은 슬롯 3 이 읽는다").isNull();
+  }
+
+  /**
+   * 회귀(WD-644 리뷰, head-of-line): 잠금이 바쁜 다른 테넌트(A)에 테이블이 여러 개 밀려 격상(묶인 대기)에 들어가도, 이 테넌트(B)의 커밋 뒤
+   * 동기화는 A 의 묶인 대기 <b>한 번</b>(운영 5초) 남짓만 기다린다 — A 의 테이블은 잠금 한 번에 함께 실리기 때문이다. 테이블마다 작업을 두던 모양이면 A 의
+   * 테이블 6개가 저마다 5초씩 대기해 B 가 최대 30초 늦었다(변이).
+   */
+  @Test
+  void syncTableAfterCommit_busyTenantWithManyTables_delaysOtherTenantByAtMostOneWait()
+      throws Exception {
+    String pub = table("hob", "공개");
+    revokeAllSlots(pub);
+    try (Connection holderA = holdSyncLock(OTHER_TENANT)) {
+      // A 의 테이블 6개(슬롯 롤이 없는 테넌트라 잡아도 할 일은 없다) — 한 커밋에서 넣어 한 작업으로 모인다.
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate,
+          OTHER_TENANT,
+          () -> {
+            for (int i = 0; i < 6; i++) {
+              sync.syncTableAfterCommit(m + "_ghost" + i);
+            }
+          });
+      // 시도형 3번 뒤 A 가 묶인 대기로 잠금 줄에 서는 것을 DB 에서 확인한다.
+      await("A 가 묶인 대기에 들어갔다")
+          .atMost(Duration.ofSeconds(20))
+          .pollInterval(Duration.ofMillis(50))
+          .until(() -> advisoryLockWaiters() > 0);
+      long start = System.nanoTime();
+      fixtureTransactionTemplate.executeWithoutResult(status -> sync.syncTableAfterCommit(pub));
+      awaitSlotSelect(pub, null, "B 의 동기화가 GRANT 한다");
+      Duration took = Duration.ofNanos(System.nanoTime() - start);
+      assertThat(took)
+          .as("B 는 A 의 묶인 대기 한 번(5초) 남짓만 기다린다 — 테이블 수만큼이 아니다")
+          .isLessThan(Duration.ofSeconds(9));
+      assertThat(syncPending()).as("A 는 아직 잠금이 바빠 재시도 대기 중이다").isTrue();
+      holderA.rollback();
+    }
+    assertThat(syncExecutor.awaitIdle(Duration.ofSeconds(20))).as("A 의 잠금이 풀리면 끝난다").isTrue();
+  }
+
+  /** advisory 잠금을 기다리는(묶인 대기 중인) 세션 수 — 커밋 뒤 실행기의 대기 문장만 센다. */
+  private int advisoryLockWaiters() {
+    Object n =
+        dataDsl.fetchValue(
+            "select count(*) from pg_stat_activity where wait_event_type = 'Lock'"
+                + " and wait_event = 'advisory' and query ilike '%pg_advisory_xact_lock%'"
+                + " and query ilike '%set_config%'");
+    return ((Number) n).intValue();
+  }
+
+  /**
+   * 테넌트 동기화 잠금을 되풀이해 쥐는 경합 스레드 — {@code initialDelay} 뒤부터, 잡으면 800ms 쥐고 커밋하고 곧바로 다시 요청한다. 둘을 엇갈려
+   * 띄우면 늘 한쪽이 쥐고 다른 쪽이 줄에 있다(JIT 실행 준비가 잇따르는 테넌트 흉내).
+   */
+  private static Thread startContender(
+      AtomicBoolean stop, CountDownLatch started, Duration initialDelay) {
+    Thread t =
+        new Thread(
+            () -> {
+              try (Connection c =
+                  DriverManager.getConnection(
+                      PostgresTestContainer.dataStoreJdbcUrl(),
+                      PostgresTestContainer.INSTANCE.getUsername(),
+                      PostgresTestContainer.INSTANCE.getPassword())) {
+                c.setAutoCommit(false);
+                Thread.sleep(initialDelay.toMillis());
+                boolean first = true;
+                while (!stop.get()) {
+                  PythonReadGrantSync.lockTenantSync(
+                      DSL.using(c, SQLDialect.POSTGRES), DEFAULT_TEST_TENANT_ID);
+                  if (first) {
+                    started.countDown();
+                    first = false;
+                  }
+                  Thread.sleep(800);
+                  c.commit();
+                }
+              } catch (SQLException | InterruptedException e) {
+                // 테스트 종료·연결 문제 — 경합만 멈춘다(단언은 본 테스트가 한다).
+              }
+            },
+            "python-read-lock-contender");
+    t.setDaemon(true);
+    t.start();
+    return t;
+  }
+
+  /**
+   * 테넌트 동기화 잠금(PythonReadGrantSync.lockTenantSync 와 같은 키)을 풀 밖 별도 연결의 열린 트랜잭션으로 쥔다 — JIT·전체 동기화가
+   * 잠금을 오래 쥐는 상황을 흉내 낸다. 롤백하거나 닫으면 풀린다.
+   */
+  private static Connection holdSyncLock(long tenantId) throws SQLException {
+    Connection c =
+        DriverManager.getConnection(
+            PostgresTestContainer.dataStoreJdbcUrl(),
+            PostgresTestContainer.INSTANCE.getUsername(),
+            PostgresTestContainer.INSTANCE.getPassword());
+    c.setAutoCommit(false);
+    PythonReadGrantSync.lockTenantSync(DSL.using(c, SQLDialect.POSTGRES), tenantId);
+    return c;
+  }
+
+  /** 슬롯 1 롤 SELECT 결과가 {@code expected}(null=허용) 가 될 때까지 최대 20초 폴링한다 — 재시도 간격에 기대지 않는다. */
+  private void awaitSlotSelect(String table, String expected, String why) {
+    await(why)
+        .atMost(Duration.ofSeconds(20))
+        .pollInterval(Duration.ofMillis(100))
+        .until(() -> Objects.equals(selectAs(1, table), expected));
   }
 
   // ---------------------------------------------------------------- 이벤트 리스너
@@ -469,7 +682,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
         .as("런타임 롤(app_tenant)은 슬롯 롤 세션을 끊을 권한이 없다")
         .isEqualTo(false);
     assertThat(
-            DSL.using(schemaOwnerDataSource, org.jooq.SQLDialect.POSTGRES)
+            DSL.using(schemaOwnerDataSource, SQLDialect.POSTGRES)
                 .fetchValue("select rolsuper from pg_roles where rolname = current_user"))
         .as("소유자 롤(app)은 슈퍼유저")
         .isEqualTo(true);
@@ -676,7 +889,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   void levelsChangedEvents_whileSyncPending_coalesceIntoOneFullSync() throws Exception {
     String sens = table("coal", "민감"); // ACL 은 내부 기준 → 슬롯 2 에 남는 권한
     java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
-    syncExecutor.submit(
+    submitBlocking(
         () -> {
           try {
             release.await(30, TimeUnit.SECONDS);
@@ -719,7 +932,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   void levelsChangedEvent_terminatesSessionsBeforeDeferredSync() throws Exception {
     String sens = table("ord", "민감"); // ACL 은 내부 기준 → 슬롯 2 에 남는 권한(전체 동기화가 회수할 대상)
     java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
-    syncExecutor.submit(
+    submitBlocking(
         () -> {
           try {
             release.await(30, TimeUnit.SECONDS);
@@ -745,7 +958,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   /** 실행기를 막는 작업을 넣고, 풀어 줄 래치를 돌려준다(커밋 뒤 비동기 단계가 "아직 안 돈" 창을 고정한다). */
   private java.util.concurrent.CountDownLatch blockSyncExecutor() {
     java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
-    syncExecutor.submit(
+    submitBlocking(
         () -> {
           try {
             release.await(30, TimeUnit.SECONDS);

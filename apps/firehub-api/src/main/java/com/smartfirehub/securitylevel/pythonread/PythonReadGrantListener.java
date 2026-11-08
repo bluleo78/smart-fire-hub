@@ -5,7 +5,6 @@ import com.smartfirehub.securitylevel.event.DatasetSecurityLevelChangedEvent;
 import com.smartfirehub.securitylevel.event.SecurityLevelsChangedEvent;
 import com.smartfirehub.securitylevel.pythonread.PythonReadGrantBackend.NarrowResult;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;
@@ -54,18 +53,27 @@ public class PythonReadGrantListener {
   private final PythonReadSyncExecutor executor;
 
   /**
-   * 등급 정의 변경 전체 동기화가 실행기 큐에서 <b>아직 시작하지 않은 채</b> 기다리는 테넌트들(WD-624).
+   * 실행기 작업 그룹 이름(WD-644 실행기의 합치기 기준). 커밋 뒤 실행기로 넘기는 세 경로를 어떻게 올렸는지(WD-624 경로 → WD-644 설계):
    *
-   * <p><b>왜 합치는가.</b> 전체 동기화는 테넌트의 모든 테이블·슬롯을 그 시점 계산값에 맞추므로, 큐에서 기다리는 것이 하나 있으면 같은 테넌트의 다음 변경은 그
-   * 하나가 시작될 때 함께 반영된다. 순서 변경 화면 등이 등급 변경을 연달아 커밋하면 같은 무거운 작업이 쌓여 단일 스레드 큐를 오래 붙잡는다.
+   * <ul>
+   *   <li><b>데이터셋 등급 변경 재동기화</b>({@link #onDatasetLevelChanged}) — 커밋 뒤 경로, <b>재시도형</b>(시도 3번 → 묶인
+   *       대기). 잦은 경로(자동 상향·클론·실패 복원)라 바쁜 테넌트가 단일 스레드를 붙잡으면 안 되고, 넓히기·재계산뿐이라(좁히기는 커밋 직전에 끝남) 바쁘면
+   *       아무것도 하지 않고 다시 해도 안전하다. 테넌트당 작업 하나에 데이터셋 id 를 모아 잠금 한 번에 맞춘다.
+   *   <li><b>등급 정의 변경 전체 동기화</b>({@link #onLevelsChanged}) — <b>대기형</b>. 끊기 → 잠금 안 재확인 → 넓히기 순서를 바쁠
+   *       때마다 처음부터 되풀이하면 커밋 뒤 정상 시작한 실행까지 거듭 끊는다. 드문 관리 작업이라 실행기 줄을 잠시 막는 쪽을 받아들인다. 테넌트 그룹 합치기가
+   *       WD-624 의 "아직 시작 안 한 작업이 있으면 합침" 표식을 대신한다 — 시도는 시작할 때 대기 항목을 비우므로, 실행 중에 커밋된 변경은 다음 회차로
+   *       정확히 한 번 더 돈다.
+   *   <li><b>회수 미확인 뒷정리</b>({@link #blockExposedSlots}) — <b>대기형</b>. 끊기 → 잠금 안 회수 → 다시 끊기 순서가 보안
+   *       계약이라 나누지 않는다. 드문 대체 경로다. 그룹에 데이터셋·슬롯·토큰 여부를 모두 넣어, 같은 요청만 합친다(다른 요청의 인자를 잃지 않게).
+   * </ul>
    *
-   * <p><b>왜 작업이 시작할 때(맨 첫 문장에서) 지우는가.</b> 작업이 등급을 읽은 뒤(실행 중) 커밋된 변경은 그 작업에 반영되지 않는다. 시작할 때 지우면 실행
-   * 중에 커밋된 변경은 표식이 없음을 보고 작업을 하나 더 넣는다 — 마지막 변경이 반드시 반영된다. 끝날 때(finally) 지우면 그 변경이 합쳐진 것으로 잘못 보고
-   * 버려진다. 지우기를 테넌트 세우기·동기화보다 <b>먼저</b> 두므로 그 뒤 무엇이 실패해도 표식이 남지 않는다. 넣기가 받아들여지지 않으면(포화·종료·예외)
-   * finally 에서 지운다. 남는 예외: 종료 시 {@code shutdownNow} 가 시작 전 작업을 버리면 표식이 남지만, 그때는 실행기가 이미 닫혀 어차피 새
-   * 작업을 받지 않는다.
+   * 세 경로 모두 실행기의 실패 분류(일시 실패만 재시도·영구 실패는 ERROR 후 버림)·포화 버림·종료 비우기를 그대로 따른다.
    */
-  private final Set<Long> levelsSyncPending = ConcurrentHashMap.newKeySet();
+  private static final String LEVELS_GROUP = "levels tenant=";
+
+  private static final String DATASET_GROUP = "dataset-level tenant=";
+
+  private static final String NARROW_GROUP = "narrow-cleanup tenant=";
 
   /**
    * 등급 정의 변경 — 커밋 직전, 발행 트랜잭션에서 스크립트 토큰 세대 번호를 올린다(Tibero 실행 중 스크립트의 옛 토큰을 등급 변경 커밋과 동시에 무효로).
@@ -161,14 +169,24 @@ public class PythonReadGrantListener {
           @Override
           public void afterCommit() {
             terminateAfterCommit(tenantId, exposed, logContext);
-            executor.submit(
-                () ->
-                    runScopedLogged(
-                        tenantId,
-                        () ->
-                            sync.syncDatasetAfterUnconfirmedNarrowing(
-                                datasetId, exposed, tokensInvalidated),
-                        logContext));
+            // 대기형(필드 주석) — 끊기·회수·다시 끊기를 한 시도 안에서 끝까지 한다.
+            executor.submitRetryable(
+                NARROW_GROUP
+                    + tenantId
+                    + " dataset="
+                    + datasetId
+                    + " slots="
+                    + exposed
+                    + " tokens="
+                    + tokensInvalidated,
+                String.valueOf(datasetId),
+                PythonReadGrantBackend.waitingAttempt(
+                    tenantId,
+                    log,
+                    logContext + " ",
+                    () ->
+                        sync.syncDatasetAfterUnconfirmedNarrowing(
+                            datasetId, exposed, tokensInvalidated)));
           }
         });
   }
@@ -182,12 +200,12 @@ public class PythonReadGrantListener {
   public void onDatasetLevelChanged(DatasetSecurityLevelChangedEvent event) {
     long datasetId = event.datasetId();
     long tenantId = event.tenantId();
-    executor.submit(
-        () ->
-            runScopedLogged(
-                tenantId,
-                () -> sync.syncDataset(datasetId),
-                "데이터셋 등급 변경(dataset=" + datasetId + ")"));
+    // 재시도형(필드 주석) — 같은 테넌트의 데이터셋들은 한 작업에 모여 잠금 한 번에 맞춰진다. 백엔드·테이블 찾기는 실행기 스레드에서 한다.
+    executor.submitRetryable(
+        DATASET_GROUP + tenantId,
+        String.valueOf(datasetId),
+        PythonReadGrantBackend.retryableAttempt(
+            tenantId, log, "데이터셋 등급 변경 ", sync::syncDatasetsWith));
   }
 
   /** 커밋 직후 주어진 PG 슬롯 세션 끊기(상한 있음). 커밋 콜백이 실패하면 안 되므로 예상 밖 예외도 로그로 끝낸다. */
@@ -199,36 +217,15 @@ public class PythonReadGrantListener {
     }
   }
 
-  /** 등급 정의 변경 전체 동기화를 실행기에 넣는다 — 아직 시작하지 않은 같은 테넌트 작업이 있으면 합친다({@link #levelsSyncPending}). */
-  private void submitLevelsSync(long tenantId, String logContext) {
-    if (!levelsSyncPending.add(tenantId)) {
-      return; // 아직 시작하지 않은 전체 동기화가 큐에 있다 — 그 작업이 시작한 뒤 등급을 읽으므로 이 변경까지 반영한다.
-    }
-    boolean accepted = false;
-    try {
-      accepted =
-          executor.submit(
-              () -> {
-                // 맨 첫 문장 — 무엇이 실패해도 표식이 남지 않고, 실행 중에 커밋된 변경은 작업을 하나 더 넣는다(필드 주석).
-                levelsSyncPending.remove(tenantId);
-                runScopedLogged(tenantId, sync::syncTenantForLevelsChange, logContext);
-              });
-    } finally {
-      if (!accepted) {
-        levelsSyncPending.remove(tenantId); // 버려졌다 — 다음 변경이 다시 넣을 수 있게
-      }
-    }
-  }
-
   /**
-   * 실행기 스레드에서 이벤트의 테넌트를 다시 세우고(실행기 스레드에는 TenantContext 가 없다) 작업을 돌린다. 실패하면 테넌트·사유를 담아 WARN 만 남긴다
-   * (다음 동기화가 회복). 큐 포화·종료로 버려지면 실행기가 버림 WARN 을 남긴다.
+   * 등급 정의 변경 전체 동기화를 실행기에 넣는다 — 대기형(필드 주석). 같은 테넌트 작업이 이미 있으면 실행기가 합친다: 아직 시작 전이면 그 작업이 이 변경까지
+   * 반영하고, 실행 중이면 끝난 뒤 한 번 더 돈다. 포화·종료로 버려지면 실행기가 ERROR 와 함께 센다(합치기 표식이 남지 않는다).
    */
-  private static void runScopedLogged(long tenantId, Runnable work, String logContext) {
-    try {
-      TenantContext.runScoped(tenantId, work);
-    } catch (RuntimeException e) {
-      log.warn("{} 후 PYTHON 읽기 권한 동기화 실패(다음 동기화에서 회복): tenant={}", logContext, tenantId, e);
-    }
+  private void submitLevelsSync(long tenantId, String logContext) {
+    executor.submitRetryable(
+        LEVELS_GROUP + tenantId,
+        "levels",
+        PythonReadGrantBackend.waitingAttempt(
+            tenantId, log, logContext + " ", sync::syncTenantForLevelsChange));
   }
 }

@@ -5,6 +5,8 @@ import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.pythonread.PythonReadGrantBackend.NarrowResult;
+import java.time.Duration;
+import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -175,6 +177,17 @@ public class PythonReadGrants {
   /** 데이터셋 하나의 테이블만 재동기화. */
   public void syncDataset(long datasetId) {
     delegate().syncDataset(datasetId);
+  }
+
+  /**
+   * 데이터셋 여러 개(id 문자열)의 테이블을 잠금 한 번에 재동기화한다 — 데이터셋 등급 변경 리스너의 커밋 뒤 실행기 시도(WD-624 → WD-644, {@link
+   * PythonReadGrantBackend#syncDatasetsWith}). 실행기 스레드에서 부르므로 여기서 백엔드를 물어도 바깥 커넥션을 다시 쓰지 않는다.
+   *
+   * @return 잠금이 바빠 아무것도 하지 않았으면 BUSY(실행기가 다시 한다), 아니면 실패한 데이터셋 id(없으면 빈 맵 — 실행기가 그 id 만 다시 하거나 버린다)
+   */
+  public PythonReadGrantBackend.BatchResult syncDatasetsWith(
+      List<String> datasetIds, Duration lockWait) {
+    return delegate().syncDatasetsWith(datasetIds, lockWait);
   }
 
   /**

@@ -8,6 +8,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
+import com.smartfirehub.global.platformdb.PlatformLockWaitTimeoutException;
 import com.smartfirehub.support.tibero.TiberoLive;
 import com.smartfirehub.support.tibero.TiberoTestAccount;
 import com.smartfirehub.support.tibero.TiberoTestAccount.Privileges;
@@ -153,6 +154,60 @@ class TiberoPlatformLocksLiveTest {
         .hasMessageContaining("트랜잭션 안에서만");
     assertThatThrownBy(() -> locks.xactLock(42L)).isInstanceOf(IllegalStateException.class);
     ev("xact 트랜잭션 밖 → IllegalStateException");
+  }
+
+  /**
+   * WD-644: 커밋 뒤 PYTHON 읽기 동기화의 시도형·묶인 대기가 실제 DBMS_LOCK 에서 같은 잠금을 두고 겨룬다 — 다른 트랜잭션이 쥔 동안 시도형은 기다리지
+   * 않고 false, 묶인 대기(1초)는 약 1초 뒤 {@link PlatformLockWaitTimeoutException}, 보유자가 커밋하면 둘 다 잡는다.
+   */
+  @Test
+  void tryAndBoundedXactLockContendWithHolder() throws Exception {
+    String k = key("bounded");
+    ExecutorService pool = Executors.newFixedThreadPool(1);
+    CountDownLatch held = new CountDownLatch(1);
+    CountDownLatch finish = new CountDownLatch(1);
+    try {
+      Future<?> holder =
+          pool.submit(
+              () ->
+                  tx.executeWithoutResult(
+                      status -> {
+                        locks.xactLock(k);
+                        held.countDown();
+                        awaitQuietly(finish);
+                      }));
+      assertThat(held.await(10, SECONDS)).as("보유자가 잠금을 잡음").isTrue();
+      long t0 = System.nanoTime();
+      Boolean tried = tx.execute(s -> locks.tryXactLock(k));
+      long tryMs = (System.nanoTime() - t0) / 1_000_000;
+      assertThat(tried).as("쥔 동안 시도형은 false").isFalse();
+      long t1 = System.nanoTime();
+      Throwable timedOut =
+          catchThrowable(
+              () ->
+                  tx.executeWithoutResult(s -> locks.xactLock(k, java.time.Duration.ofSeconds(1))));
+      long boundedMs = (System.nanoTime() - t1) / 1_000_000;
+      assertThat(timedOut).isInstanceOf(PlatformLockWaitTimeoutException.class);
+      assertThat(boundedMs).as("묶인 대기는 대략 제한 시간만큼만 기다린다").isBetween(800L, 5_000L);
+      finish.countDown();
+      holder.get(5, SECONDS);
+      Boolean acquired = tx.execute(s -> locks.tryXactLock(k));
+      assertThat(acquired).as("보유자 커밋 뒤 시도형은 잡는다").isTrue();
+      assertThatCode(
+              () ->
+                  tx.executeWithoutResult(s -> locks.xactLock(k, java.time.Duration.ofSeconds(1))))
+          .doesNotThrowAnyException();
+      ev(
+          "xact 시도형: 쥔 동안 "
+              + tryMs
+              + "ms 에 false, 묶인 대기 1초: "
+              + boundedMs
+              + "ms 에 시간 초과, 커밋 뒤 둘 다 잡음");
+    } finally {
+      finish.countDown();
+      pool.shutdown();
+      pool.awaitTermination(10, SECONDS);
+    }
   }
 
   @Test

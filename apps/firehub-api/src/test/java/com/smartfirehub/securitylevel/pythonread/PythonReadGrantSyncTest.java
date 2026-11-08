@@ -3,7 +3,11 @@ package com.smartfirehub.securitylevel.pythonread;
 import static com.smartfirehub.jooq.Tables.DATASET;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.datastore.DataStoreDb;
@@ -12,6 +16,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.PostgresTestContainer;
 import com.smartfirehub.support.PythonReadTestTables;
@@ -21,6 +26,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -31,10 +37,12 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * PythonReadGrantSync 실측(스펙 §4.3, WD-29) — "GRANT 문을 실행했다"가 아니라 슬롯 롤로 <b>실제 로그인해 SELECT</b> 한
@@ -52,6 +60,14 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
   @Autowired private DataTableService dataTableService;
   @Autowired private PythonReadGrantSync sync;
   @Autowired private ClearanceResolver clearanceResolver;
+  @Autowired private PythonReadSessionTerminator terminator;
+  @Autowired private SecurityLevelRepository levelRepository;
+  @Autowired private DatasetRepository datasetRepository;
+  @Autowired private PlatformTransactionManager txManager;
+  @Autowired private PythonReadSyncExecutor syncExecutor;
+
+  @Value("${firehub.data-store.postgres.separate:false}")
+  private boolean separateDataStore;
 
   @Value("${app.pipeline.role-password-secret}")
   private String secret;
@@ -536,6 +552,67 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     } finally {
       pool.shutdown();
     }
+  }
+
+  /**
+   * WD-644 리뷰: 커밋 뒤 묶음 동기화에서 테이블 하나(b)의 읽기가 실패해도(PG 문장 오류 — 트랜잭션을 aborted 로 만든다) 다른 테이블(a·c)의 회수는
+   * 커밋되고, 결과에는 b 만 영구 실패로 실린다. 테이블별 savepoint 를 지우면 b 의 오류가 묶음 트랜잭션 전체를 aborted 로 만들어 a 의 회수까지 커밋되지
+   * 않고 묶음 전체가 실패한다(변이).
+   */
+  @Test
+  void syncTablesWith_oneTableReadFailure_keepsOtherTablesRevokes_andReportsOnlyThatTable() {
+    String a = table("a", "민감");
+    String b = table("b", "민감");
+    String c = table("c", "민감");
+    sync.syncTenant();
+    String s1 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 1);
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dataDsl.execute(
+                "GRANT SELECT ON "
+                    + DataSchema.qualify(a)
+                    + ", "
+                    + DataSchema.qualify(c)
+                    + " TO "
+                    + s1));
+    assertThat(selectAs(1, a)).as("전제: a 과권한").isNull();
+    assertThat(selectAs(1, c)).as("전제: c 과권한").isNull();
+    // b 의 데이터셋 행 읽기에서 PG 문장 오류(22012)를 내는 리포지토리 — 같은 트랜잭션을 aborted 로 만든다. 나머지는 진짜에 맡긴다.
+    DatasetRepository failingForB = mock(DatasetRepository.class);
+    when(failingForB.findTableLevels(any()))
+        .thenAnswer(
+            inv -> {
+              String only = inv.getArgument(0);
+              if (b.equals(only)) {
+                dsl.execute("select 1/0");
+              }
+              return datasetRepository.findTableLevels(only);
+            });
+    PythonReadGrantSync isolated =
+        new PythonReadGrantSync(
+            dataDsl,
+            terminator,
+            levelRepository,
+            failingForB,
+            txManager,
+            syncExecutor,
+            separateDataStore);
+
+    PythonReadSyncExecutor.AttemptResult result =
+        PythonReadGrantBackend.retryableAttempt(
+                DEFAULT_TEST_TENANT_ID,
+                LoggerFactory.getLogger(PythonReadGrantSyncTest.class),
+                "",
+                isolated::syncTablesWith)
+            .run(List.of(c, b, a), Duration.ofSeconds(5));
+
+    assertThat(result)
+        .as("b 만 실패(영구) — a·c 는 끝났다")
+        .isEqualTo(new PythonReadSyncExecutor.PartialFailure(List.of(), List.of(b)));
+    assertThat(selectAs(1, a)).as("a 의 회수는 커밋됐다").isEqualTo("42501");
+    assertThat(selectAs(1, c)).as("b 뒤의 c 도 맞춰 커밋됐다").isEqualTo("42501");
   }
 
   /** 소문자 무작위 이름 조각. */
