@@ -74,8 +74,9 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         {...focusRestore}
+        // grid-cols-[minmax(0,1fr)] wrap-break-word: 긴 이름이 창을 넓히지 않게 하는 AlertDialogContent 와 같은 처리 — 근거·감수한 점은 alert-dialog.tsx 주석 (WD-632, WD-648)
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 outline-none sm:max-w-lg",
+          "grid-cols-[minmax(0,1fr)] wrap-break-word bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 outline-none sm:max-w-lg",
           // WD-9: 닫기 X(우측 16~32px)가 있을 때만 후손 헤더에 X 폭만큼 우측 여백을 준다 — 긴 제목이 X 와 겹치지 않게.
           // 헤더 자체에 박지 않는 이유: X 가 없는 다이얼로그(ReportModal 툴바 헤더 등)까지 여백이 생긴다.
           showCloseButton && "[&_[data-slot=dialog-header]]:pr-6",

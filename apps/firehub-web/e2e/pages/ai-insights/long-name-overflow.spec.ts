@@ -1,5 +1,3 @@
-import type { Locator } from '@playwright/test';
-
 import { createJob, createMessage, createTemplate } from '../../factories/ai-insight.factory';
 import {
   mockProactivePermissions,
@@ -9,6 +7,7 @@ import {
 } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectDialogContained, expectWrapped } from '../../fixtures/long-name-layout';
 import { grantPipelinePermissions, mockPipelineDeleteImpact, setupPipelineMocks } from '../../fixtures/pipeline.fixture';
 
 /**
@@ -17,7 +16,7 @@ import { grantPipelinePermissions, mockPipelineDeleteImpact, setupPipelineMocks 
  * 공백 없는 긴 작업명(서버 상한 200자)·템플릿명(상한 100자)은 줄바꿈 지점이 없어,
  * 그대로 두면 대화상자(grid) 칸을 내용 폭만큼 늘려 「삭제」 버튼을 대화상자·화면 밖으로 밀고,
  * 알림 패널 상세·작업 개요에서는 칸 밖으로 뻗어 잘린다. 확인·상세 화면은 이름을 전부 읽어야 하므로
- * 자르지 않고 칸 안에서 줄바꿈([overflow-wrap:anywhere])되어야 한다.
+ * 자르지 않고 칸 안에서 줄바꿈(overflow-wrap — 대화상자는 break-word 상속, 개별 요소는 wrap-anywhere, WD-648)되어야 한다.
  *
  * 줄바꿈 여부는 글자 요소 자체의 scrollWidth <= clientWidth 로 잰다 — 블록 요소의 오른쪽 끝은
  * 내용이 넘쳐도 부모 폭에 머물러, 끝 위치만 보면 넘침을 놓친다.
@@ -30,26 +29,6 @@ const LONG_JOB_NAME = 'A'.repeat(200);
 const LONG_TEMPLATE_NAME = 'T'.repeat(100);
 
 test.use({ viewport: { width: VIEWPORT_WIDTH, height: 800 } });
-
-/** 글자 요소 안에서 가로로 넘친 내용이 없다 — 긴 낱말이 요소 폭 안에서 줄바꿈되었다 */
-async function expectWrapped(locator: Locator) {
-  const { scrollWidth, clientWidth } = await locator.evaluate((el) => ({
-    scrollWidth: el.scrollWidth,
-    clientWidth: el.clientWidth,
-  }));
-  expect(clientWidth).toBeGreaterThan(0);
-  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
-}
-
-/** 대화상자가 넘치지 않고 화면 안에 있으며, 확인(삭제) 버튼이 화면 안에 보이는지 단언한다 */
-async function expectDialogContained(dialog: Locator, confirmButton: Locator) {
-  await expectWrapped(dialog);
-  const dialogBox = await dialog.boundingBox();
-  expect(dialogBox).not.toBeNull();
-  expect(dialogBox!.x).toBeGreaterThanOrEqual(0);
-  expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(VIEWPORT_WIDTH);
-  await expect(confirmButton).toBeInViewport({ ratio: 1 });
-}
 
 test.describe('긴 이름 넘침 (WD-632)', () => {
   test('작업 삭제 확인 — 200자 작업명이 줄바꿈되고 삭제 버튼이 화면 안에 남는다', async ({
