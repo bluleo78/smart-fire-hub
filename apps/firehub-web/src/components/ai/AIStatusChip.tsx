@@ -2,6 +2,7 @@ import { Bell } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { useUnreadCount } from '../../hooks/queries/useProactiveMessages';
+import { isImeComposing } from '../../hooks/useOverlayEscape';
 import type { AIMode } from '../../types/ai';
 import { FloatingIcon, FullscreenIcon, NativeIcon,SideIcon } from './AIChipIcons';
 import { AINotificationPanel } from './AINotificationPanel';
@@ -244,8 +245,8 @@ export function AIStatusChip() {
     if (!showDropdown) return;
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key !== 'Escape') return;
-      // 빠른 질문 입력창의 한글 조합 취소용 Escape 로는 닫지 않는다 (AIFullScreen 과 같은 기준)
-      if (e.isComposing || e.keyCode === 229) return;
+      // 빠른 질문 입력창의 한글 조합 취소용 Escape 로는 닫지 않는다 (오버레이 Escape 와 같은 공용 판정)
+      if (isImeComposing(e)) return;
       e.preventDefault();
       // 포커스가 칩·드롭다운 안에 있었으면 칩으로 돌린다 — 드롭다운 안 요소가 사라지며 body 로 떨어지지 않게(WD-427).
       // 호버로 열고 포커스는 본문에 있던 경우는 그 자리를 빼앗지 않는다.

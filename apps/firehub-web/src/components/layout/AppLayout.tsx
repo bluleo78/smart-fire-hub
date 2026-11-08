@@ -274,10 +274,22 @@ function AppLayoutInner() {
   // 그래서 닫힌 서랍은 inert 로 빼고, 열린 서랍은 대화상자(role=dialog·aria-modal)로 두고 뒤 본문을 inert 로 막아 포커스를 가둔다.
   // matchMedia 가 없는 환경(jsdom)은 데스크톱으로 본다 — 사이드바가 늘 보이는 기존 배치 그대로.
   const isDesktop = useMediaQuery('(min-width: 1024px)', true);
-  const drawerOpen = !isDesktop && sidebarOpen;
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const asideRef = useRef<HTMLElement>(null);
-  const { isOpen: aiOpen, mode: aiMode, setMode: setAIMode } = useAI();
+  const { isOpen: aiOpen, mode: aiMode, setMode: setAIMode, openFocusOriginRef: aiOpenFocusOriginRef } = useAI();
+  // 모바일(lg 미만) AI 사이드 패널은 화면 전체를 덮는 모달 대화상자다(WD-606). 열려 있는 동안 그 뒤의 사이드바·메뉴 버튼·
+  // AI 상태 칩·본문을 inert 로 막아 Tab 이 가려진 페이지 링크로 새지 않게 한다. 패널은 이 본문 열 안에 있어 열 전체를 막을 수 없다.
+  const aiOverlayOpen = !isDesktop && aiOpen && aiMode === 'side';
+
+  /*
+   * 한 번에 모달 하나(WD-649) — 메뉴 서랍이 열린 채 Ctrl/Cmd+K 로 AI 오버레이가 열리면 서랍(본문 열을 inert 로 막음)과
+   * 오버레이(서랍 aside 를 inert 로 막음)가 서로를 막아, 본문 열 안에 있는 오버레이 입력창까지 inert 가 되어 입력할 수 없었다.
+   * 그래서 오버레이가 열리면 서랍을 닫는다. effect 가 아니라 렌더 중에 고쳐, 서랍이 열린 채로는 한 번도 커밋되지 않게 한다 —
+   * 그래야 같은 커밋의 입력창 포커스(ChatInput effect)가 inert 에 막히지 않는다. 포커스는 AI 입력창으로 가므로
+   * 서랍 닫기의 「메뉴 열기 버튼으로 포커스 돌려주기」(restoreFocusRef)는 켜지 않는다.
+   */
+  if (aiOverlayOpen && sidebarOpen) setSidebarOpen(false);
+  const drawerOpen = !isDesktop && sidebarOpen;
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem('sidebar-collapsed') === 'true';
   });
@@ -339,10 +351,19 @@ function AppLayoutInner() {
     }
   };
 
+  /*
+   * 서랍에서 연 AI 오버레이의 포커스 복귀 지점(WD-649). AIProvider 는 열림 순간의 포커스 위치를 복귀 지점(openFocusOriginRef)으로
+   * 기록하고, AISidePanel 은 닫힐 때 그곳으로 포커스를 돌려준다. 서랍 안 항목에서 Ctrl/Cmd+K 로 열었다면 그 항목은 위에서 닫은 서랍(inert)
+   * 안이라 돌려줄 수 없으므로, 복귀 지점을 서랍을 여는 「메뉴 열기」 버튼으로 바꿔 둔다 — 닫을 때는 AISidePanel 의 기존 복귀가 그대로 처리한다.
+   * passive effect 라 같은 커밋의 입력창 열림 포커스(ChatInput — 원래 복귀 지점과 비교해 포커스를 가져간다)보다 뒤에 돈다.
+   */
+  useEffect(() => {
+    if (!aiOverlayOpen) return;
+    const opener = aiOpenFocusOriginRef.current;
+    if (opener && asideRef.current?.contains(opener)) aiOpenFocusOriginRef.current = menuButtonRef.current;
+  }, [aiOverlayOpen, aiOpenFocusOriginRef]);
+
   const showFullscreen = aiOpen && aiMode === 'fullscreen';
-  // 모바일(lg 미만) AI 사이드 패널은 화면 전체를 덮는 모달 대화상자다(WD-606). 열려 있는 동안 그 뒤의 사이드바·메뉴 버튼·
-  // AI 상태 칩·본문을 inert 로 막아 Tab 이 가려진 페이지 링크로 새지 않게 한다. 패널은 이 본문 열 안에 있어 열 전체를 막을 수 없다.
-  const aiOverlayOpen = !isDesktop && aiOpen && aiMode === 'side';
   const showNative = aiOpen && aiMode === 'native';
 
   // 본문(main)을 그리는지 — AI native·전체 화면 모드에서는 그 화면이 본문 자리를 대신한다.
@@ -595,7 +616,10 @@ function AppLayoutInner() {
         {/* 인쇄(WD-424): 블록으로 풀어 본문(main)이 종이 전체 폭을 쓴다 */}
         <div className="relative flex flex-1 min-h-0 bg-gradient-main print:block">
           {/* AI Status Chip — 전체 뷰포트 가로 중앙. 인쇄에서는 AI 칩·알림 종을 숨긴다(WD-424) */}
-          <div className="fixed top-2 left-0 right-0 z-30 flex justify-center pointer-events-none print:hidden" inert={aiOverlayOpen}>
+          <div
+            className="fixed top-2 left-0 right-0 z-30 flex justify-center pointer-events-none print:hidden"
+            inert={aiOverlayOpen}
+          >
             <div className="pointer-events-auto">
               <AIStatusChip />
             </div>

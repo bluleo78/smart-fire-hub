@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useMediaQuery } from '../../hooks/useMediaQuery';
+import { useOverlayEscape } from '../../hooks/useOverlayEscape';
 import { cn } from '../../lib/utils';
 import { AIChatPanel } from './AIChatPanel';
 import { useAI } from './AIProvider';
@@ -32,7 +33,7 @@ const MOBILE_DIALOG_PROPS = { role: 'dialog', 'aria-modal': true, 'aria-label': 
  *   → flex row 레이아웃에서 벗어나 메인 콘텐츠 너비를 잠식하지 않는다.
  */
 export function AISidePanel() {
-  const { isOpen, openFocusOriginRef } = useAI();
+  const { isOpen, openFocusOriginRef, closeAI } = useAI();
   // 뷰포트가 모바일 너비인지 — 공용 미디어 쿼리 훅으로 리사이즈 시 자동 갱신(WD-372)
   const isMobile = useMediaQuery(MOBILE_MQ);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
@@ -68,6 +69,14 @@ export function AISidePanel() {
       if (stranded && restorable) opener.focus();
     }
   }, [isOpen, openFocusOriginRef]);
+
+  /**
+   * 모바일 오버레이 Esc 닫기(WD-649) — 화면을 덮는 모달 대화상자(WD-606)라 Esc 로 닫혀야 한다(서랍 WD-508 과 같은 기대).
+   * 닫힌 뒤의 포커스 복귀는 위 닫힘 effect 가 연 트리거(AI 칩 등)로 돌려준다.
+   * 데스크탑 사이드 패널은 본문 옆에 함께 보이는 패널이라 Esc 동작을 바꾸지 않는다(ai-fullscreen-escape 의 「사이드 패널 Esc 무동작」).
+   * 하위 팝오버가 먼저 쓴 Esc·IME 조합 중 Esc 무시는 AI 전체 화면(WD-61)과 같은 공용 훅의 규칙이다.
+   */
+  useOverlayEscape(isMobile && isOpen, closeAI);
 
   /** 데스크탑 전용: 좌측 드래그 핸들로 패널 너비 조절 */
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
