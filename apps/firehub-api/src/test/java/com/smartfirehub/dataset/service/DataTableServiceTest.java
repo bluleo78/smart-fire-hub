@@ -986,4 +986,37 @@ class DataTableServiceTest extends IntegrationTestBase {
       assertThat(stats.get(c).maxValue()).isEqualTo(native_.get(c + "_max", String.class));
     }
   }
+
+  // ── WD-587: 요청 경계(@Valid)를 거치지 않는 호출부의 null 컬럼 정의 ─────────────
+
+  /** 코드로 만든 컬럼 목록(파이프라인 TEMP 등)에 null 요소·이름·타입이 있어도 NPE(500) 대신 한국어 400 예외로 막는다. */
+  @Test
+  void validateNewColumns_nullElementOrFields_throwsInvalidTableName() {
+    java.util.List<DatasetColumnRequest> nullElement = new java.util.ArrayList<>();
+    nullElement.add(null);
+    assertThatThrownBy(() -> dataTableService.validateNewColumns(nullElement))
+        .isInstanceOf(InvalidTableNameException.class)
+        .hasMessage("컬럼 정보가 비어 있습니다.");
+
+    assertThatThrownBy(
+            () ->
+                dataTableService.validateNewColumns(
+                    List.of(new DatasetColumnRequest(null, null, "TEXT", null, true, false, null))))
+        .isInstanceOf(InvalidTableNameException.class)
+        .hasMessage("컬럼 이름을 입력하세요.");
+
+    assertThatThrownBy(
+            () ->
+                dataTableService.validateNewColumns(
+                    List.of(new DatasetColumnRequest("a", null, null, null, true, false, null))))
+        .isInstanceOf(InvalidTableNameException.class)
+        .hasMessage("컬럼 데이터 타입을 입력하세요.");
+
+    assertThatThrownBy(
+            () ->
+                dataTableService.validateNewColumns(
+                    List.of(new DatasetColumnRequest("a", null, "  ", null, true, false, null))))
+        .isInstanceOf(InvalidTableNameException.class)
+        .hasMessage("컬럼 데이터 타입을 입력하세요.");
+  }
 }

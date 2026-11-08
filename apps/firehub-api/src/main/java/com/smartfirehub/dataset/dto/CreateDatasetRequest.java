@@ -1,7 +1,9 @@
 package com.smartfirehub.dataset.dto;
 
 import com.smartfirehub.global.validation.DescriptionLimits;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.util.List;
 
@@ -13,7 +15,12 @@ public record CreateDatasetRequest(
     Long categoryId,
     String storageType,
     String originType,
-    List<DatasetColumnRequest> columns,
+    // WD-587: 요소(null)·요소 안 필드(@Valid 로 중첩 검증)를 요청 경계에서 400 으로 거부한다 — 그대로 두면 서비스 검증
+    // (DataTableService.validateNewColumns)이 null 을 역참조해 500 이 났다. 서버에 한국어 기본 문구가 없어(WD-570) 문구를
+    // 명시한다.
+    @Valid
+        List<@NotNull(message = DatasetColumnRequest.COLUMN_REQUIRED_MESSAGE) DatasetColumnRequest>
+            columns,
     Long sourcePipelineStepId,
     String bucket, // FILE 전용: MinIO 버킷 (null이면 기본 버킷 사용)
     String prefix) { // 지정 불가(서버가 datasets/<id>/ 로 생성) — 값이 있으면 400 FILE_PREFIX_NOT_ALLOWED
