@@ -24,7 +24,6 @@ import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
-import com.smartfirehub.pipeline.service.StoreTransactions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
@@ -74,7 +73,7 @@ public class AnalyticsDashboardService {
   /** 작성자 본인의 생성·수정·삭제·공유 변경 감사(WD-464). */
   private final AnalyticsAuditRecorder auditRecorder;
 
-  /** 화면 쿼리 동시 실행 상한(WD-599) — 트랜잭션·커넥션을 열기 전에 허가를 얻어, 기다리는 동안 풀을 쥐지 않는다. */
+  /** 화면 쿼리 동시 실행 상한(WD-599) — 캐시 미스의 로더가 runGated 로만 지난다(WD-625, 게이트 클래스 설명). */
   private final InteractiveQueryConcurrencyGate interactiveQueryGate;
 
   /** 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-464). 공유 여부는 따로 STATUS_CHANGE 로 남기므로 여기 없다. */
@@ -327,25 +326,11 @@ public class AnalyticsDashboardService {
   }
 
   public DashboardDataResponse getDashboardData(Long dashboardId, Long userId) {
-    // PG 테넌트: 세 단계를 readOnly 트랜잭션 하나에서 차례로 실행한다.
-    // Tibero 실행(위젯마다 최대 35초) 동안 PG 연결을 쥐지 않으려고 구간을 나눈다(WD-207).
-    // 1) RLS GUC 가 필요한 위젯·대시보드·SQL 조회는 readOnly 트랜잭션, 2) 판정·캐시·실행은 트랜잭션 밖(캐시 로더의 실행도 밖에서 돈다),
-    // 3) 위젯별 차트 조회·응답 조립은 다시 readOnly 트랜잭션.
-    // WD-599: 위젯 쿼리를 커넥션 하나로 차례로 실행하므로 일괄 전체에 허가 하나만 얻는다 — 트랜잭션보다 먼저 얻어 기다리는 동안 풀을 쥐지 않는다.
-    // 안쪽(executeDashboard)은 getChartData 를 부르지 않는다 — 같은 스레드가 허가를 두 번 얻으려다 스스로 막히는 일이 없다.
-    // Tibero 테넌트는 db-executor 로 실행해 PG 풀 커넥션을 쥐지 않으므로(WD-207) 허가 없이 지난다 — WD-553 게이트와 같은 예외(null
-    // 자원은 닫지 않는다).
-    try (AnalyticsQueryConcurrencyGate.Permit ignored =
-        pipelineDataSchema.isTibero() ? null : interactiveQueryGate.acquire(userId)) {
-      return StoreTransactions.loadExecuteThen(
-          pipelineDataSchema,
-          readOnlyTx,
-          readOnlyTx,
-          () -> loadDashboard(dashboardId, userId),
-          load -> executeDashboard(load, userId),
-          readOnlyTx,
-          exec -> assembleDashboard(exec, userId));
-    }
+    // 조회(readOnly 트랜잭션, 없으면 404) → 판정·캐시(트랜잭션 밖 — 캐시 미스의 로더만 runGated 로 허가 → 실행 구간 트랜잭션) → 위젯별 차트
+    // 조회·응답 조립(readOnly 트랜잭션). 순서의 이유는 InteractiveQueryConcurrencyGate 클래스 설명.
+    DashboardLoad load = readOnlyTx.execute(status -> loadDashboard(dashboardId, userId));
+    DashboardExecution exec = executeDashboard(load, userId);
+    return readOnlyTx.execute(status -> assembleDashboard(exec, userId));
   }
 
   /** 1단계 결과 — 대시보드, 위젯 상한을 적용한 위젯, 차트→저장 쿼리, 저장 쿼리→SQL 원문(미리 읽어 2단계가 DB 를 안 읽게 한다). */
@@ -401,7 +386,7 @@ public class AnalyticsDashboardService {
     return new DashboardLoad(dashboard, limitedWidgets, chartIdToSavedQueryId, sqlByQuery);
   }
 
-  /** 2단계: 판정·캐시·실행·recordDelivered. DB 를 읽지 않으며 Tibero 에서는 트랜잭션 밖에서 불린다. */
+  /** 2단계: 판정·캐시·실행·recordDelivered. DB 를 직접 읽지 않으며 트랜잭션 밖에서 불린다(캐시 미스의 로더만 실행 구간을 연다). */
   private DashboardExecution executeDashboard(DashboardLoad load, Long userId) {
     // Execute each unique savedQueryId — 보안 등급(S2): 조회자 판정이 먼저, 캐시는 그 뒤(스펙 §4.2 4행).
     //
@@ -430,8 +415,9 @@ public class AnalyticsDashboardService {
         continue;
       }
       exportByQuery.put(savedQueryId, judgment.exportAllowedFor());
-      // 판정을 통과한 쿼리만 캐시에 닿는다. 캐시 미스면 방금 판정한 토큰을 그대로 실행한다(다시 판정하지 않는다 — 판정 = 실행). 결과를 지역
-      // 맵에 담아 위젯 루프가 getIfPresent(만료·축출 시 null)에 의존하지 않게 한다.
+      // 판정을 통과한 쿼리만 캐시에 닿는다. 로더는 진짜 미스일 때만 돌고 그때만 runGated(허가 → 실행 구간 트랜잭션)로 방금 판정한 토큰을 그대로
+      // 실행한다(판정 = 실행) — 모두 캐시면 허가를 얻지 않고, 미스마다 허가 하나·짧은 트랜잭션 하나다. 로더의 429 는 런타임 예외라 Caffeine 이
+      // 감싸지 않고 캐시에 남기지 않은 채 그대로 올라간다. 결과를 지역 맵에 담아 위젯 루프가 getIfPresent(만료·축출 시 null)에 의존하지 않게 한다.
       // 이 조회자가 로더를 실제로 돌렸는지 — 돌렸으면 실행 지점이 감사 등급 접근을 이미 남겼다. 아니면(남이 데운 캐시, 동시 로드 대기 포함) 받은
       // 결과를 이 조회자에게 넘기는 것이므로 조회자별로 남긴다(공유 캐시 값 안에 넣지 않는다).
       boolean[] loadedHere = {false};
@@ -440,7 +426,11 @@ public class AnalyticsDashboardService {
               new QueryCacheKey(savedQueryId, sqlText),
               k -> {
                 loadedHere[0] = true;
-                return chartService.executeJudged(judgment);
+                return interactiveQueryGate.runGated(
+                    pipelineDataSchema,
+                    readOnlyTx,
+                    userId,
+                    () -> chartService.executeJudged(judgment));
               });
       if (!loadedHere[0] && result.error() == null) {
         guardedSqlExecutor.recordDelivered(judgment);

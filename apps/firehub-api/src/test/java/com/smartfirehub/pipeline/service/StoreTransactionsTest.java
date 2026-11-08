@@ -279,4 +279,38 @@ class StoreTransactionsTest {
     assertThat(manager.committed).isZero();
     assertThat(log).containsExactly("load:pg/rw@begun=1");
   }
+
+  /** WD-625 실행 구간만: PG 는 주어진 템플릿으로 새 트랜잭션(readOnly 템플릿이면 readOnly)을 열어 그 안에서 실행한다. */
+  @Test
+  void executeOnly_pg_runsInsideGivenTemplate() {
+    String result =
+        StoreTransactions.executeOnly(
+            pgSchema,
+            tiberoLoadTx,
+            () -> {
+              record("execute");
+              return "r";
+            });
+
+    assertThat(result).isEqualTo("r");
+    assertThat(log).containsExactly("execute:load/ro@begun=1");
+    assertThat(manager.committed).isEqualTo(1);
+  }
+
+  /** WD-625 실행 구간만: Tibero 는 트랜잭션 없이 실행한다(PG 커넥션을 쥐지 않는다). */
+  @Test
+  void executeOnly_tibero_runsOutsideTransaction() {
+    String result =
+        StoreTransactions.executeOnly(
+            tiberoSchema,
+            pgTx,
+            () -> {
+              record("execute");
+              return "r";
+            });
+
+    assertThat(result).isEqualTo("r");
+    assertThat(log).containsExactly("execute:none/-@begun=0");
+    assertThat(manager.begun).isZero();
+  }
 }

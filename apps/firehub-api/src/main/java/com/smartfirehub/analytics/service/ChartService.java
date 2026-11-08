@@ -1,5 +1,6 @@
 package com.smartfirehub.analytics.service;
 
+import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.ChartDataResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
@@ -14,7 +15,6 @@ import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
-import com.smartfirehub.pipeline.service.StoreTransactions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
@@ -56,7 +56,7 @@ public class ChartService {
   /** 작성자 본인의 생성·수정·삭제·공유 변경 감사(WD-464). */
   private final AnalyticsAuditRecorder auditRecorder;
 
-  /** 화면 쿼리 동시 실행 상한(WD-599) — 트랜잭션·커넥션을 열기 전에 허가를 얻어, 기다리는 동안 풀을 쥐지 않는다. */
+  /** 화면 쿼리 동시 실행 상한(WD-599) — 실행이 정해진 뒤 runGated 로만 지난다(WD-625, 게이트 클래스 설명). */
   private final InteractiveQueryConcurrencyGate interactiveQueryGate;
 
   /**
@@ -277,33 +277,27 @@ public class ChartService {
    * have access to the chart (owner or shared).
    */
   public ChartDataResponse getChartData(Long id, Long userId) {
-    // PG 테넌트: 세 단계를 readOnly 트랜잭션 하나에서 차례로 실행한다.
-    // Tibero 실행(최대 35초) 동안 PG 연결을 쥐지 않으려고 구간을 나눈다(WD-207).
-    // 1) RLS GUC 가 필요한 차트·SQL 조회만 readOnly 트랜잭션, 2) 판정·실행은 트랜잭션 밖(판정은 자체 트랜잭션 리포지토리를 쓴다),
-    // 3) 응답 조립은 DB 읽기가 없어 템플릿이 필요 없다.
-    // WD-599: 동시 실행 허가를 트랜잭션(=커넥션)보다 먼저 얻는다 — 위젯 병렬 로딩이 몰려도 기다리는 동안 풀을 쥐지 않는다. 바깥(컨트롤러·필터)에
-    // 트랜잭션이 없는 경로다. 404·403·쿼리 오류 등 어떤 예외로 나가도 try-with-resources 가 반납한다.
-    // Tibero 테넌트는 db-executor 로 실행해 PG 풀 커넥션을 쥐지 않으므로(WD-207) 허가 없이 지난다 — WD-553 게이트와 같은 예외(null
-    // 자원은 닫지 않는다).
-    try (AnalyticsQueryConcurrencyGate.Permit ignored =
-        pipelineDataSchema.isTibero() ? null : interactiveQueryGate.acquire(userId)) {
-      return StoreTransactions.loadThenExecute(
-          pipelineDataSchema,
-          readOnlyTx,
-          readOnlyTx,
-          () -> loadChart(id, userId),
-          load -> assembleChartData(executeChart(load, userId)));
+    // 조회(readOnly 트랜잭션, 없으면 404) → 판정(트랜잭션 밖, 거부면 200 denied) → 실행이 정해졌을 때만 runGated(허가 → 실행 구간
+    // 트랜잭션).
+    // 순서의 이유는 InteractiveQueryConcurrencyGate 클래스 설명. 응답 조립은 DB 읽기가 없어 트랜잭션이 필요 없다.
+    ChartLoad load = readOnlyTx.execute(status -> loadChart(id, userId));
+    // 보안 등급(S2): 조회자 기준 판정 — 위반이면 실행하지 않고 200 + denied. 단건 위젯 경로(DashboardWidgetCard→useChartData)도
+    // 대시보드 일괄 경로와 같은 계약이어야 위젯 하나가 화면 전체를 오류로 만들지 않는다(스펙 §4.2 4행).
+    // 판정은 한 번 — 통과한 토큰의 정규화본을 그대로 실행하므로 판정과 실행 사이에 다른 판정이 끼지 않는다.
+    GuardedSqlExecutor.AnalyticsJudgment judgment =
+        judge(clearanceResolver.resolve(userId), load.sqlText());
+    if (judgment.denied()) {
+      return deniedData(load.chart());
     }
+    AnalyticsQueryResponse result =
+        interactiveQueryGate.runGated(
+            pipelineDataSchema, readOnlyTx, userId, () -> executeJudged(judgment));
+    // 내보내기 플래그는 조회자 판정 토큰에서 계산한다(설계 결정 5 — 결과 캐시와 무관하게 조회자별).
+    return new ChartDataResponse(load.chart(), result, false, judgment.exportAllowedFor());
   }
 
   /** 1단계에서 읽은 차트 응답과 저장 쿼리 SQL 원문. */
   private record ChartLoad(ChartResponse chart, String sqlText) {}
-
-  /** 2단계 결과 — 판정이 거부면 result 는 null(실행하지 않았다). */
-  private record ChartExecution(
-      ChartResponse chart,
-      GuardedSqlExecutor.AnalyticsJudgment judgment,
-      com.smartfirehub.analytics.dto.AnalyticsQueryResponse result) {}
 
   /** 1단계: 차트와 저장 쿼리 SQL 을 읽는다. RLS 가 걸려 있어 반드시 트랜잭션 안에서 불러야 한다. */
   private ChartLoad loadChart(Long id, Long userId) {
@@ -316,29 +310,6 @@ public class ChartService {
             .findSavedQuerySqlText(id, userId)
             .orElseThrow(() -> SavedQueryNotFoundException.usedByChart());
     return new ChartLoad(chart, sqlText);
-  }
-
-  /** 2단계: 조회자 기준으로 판정하고, 통과하면 실행한다. Tibero 에서는 트랜잭션 밖에서 불린다. */
-  private ChartExecution executeChart(ChartLoad load, Long userId) {
-    // 보안 등급(S2): 조회자 기준 판정 — 위반이면 실행하지 않고 200 + denied. 단건 위젯 경로(DashboardWidgetCard→useChartData)도
-    // 대시보드 일괄 경로와 같은 계약이어야 위젯 하나가 화면 전체를 오류로 만들지 않는다(스펙 §4.2 4행).
-    // 판정은 한 번 — 통과한 토큰의 정규화본을 그대로 실행하므로 판정과 실행 사이에 다른 판정이 끼지 않는다.
-    GuardedSqlExecutor.AnalyticsJudgment judgment =
-        judge(clearanceResolver.resolve(userId), load.sqlText());
-    if (judgment.denied()) {
-      return new ChartExecution(load.chart(), judgment, null);
-    }
-    return new ChartExecution(load.chart(), judgment, executeJudged(judgment));
-  }
-
-  /** 3단계: 응답 조립(DB 읽기 없음). 거부는 denied 응답, 통과는 실행 결과와 조회자별 내보내기 플래그. */
-  private ChartDataResponse assembleChartData(ChartExecution exec) {
-    if (exec.judgment().denied()) {
-      return deniedData(exec.chart());
-    }
-    // 내보내기 플래그는 조회자 판정 토큰에서 계산한다(설계 결정 5 — 결과 캐시와 무관하게 조회자별).
-    return new ChartDataResponse(
-        exec.chart(), exec.result(), false, exec.judgment().exportAllowedFor());
   }
 
   /**

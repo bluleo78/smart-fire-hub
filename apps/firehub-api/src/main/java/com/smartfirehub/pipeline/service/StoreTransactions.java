@@ -67,6 +67,25 @@ public final class StoreTransactions {
     return afterTx.execute(status -> after.apply(executed));
   }
 
+  /**
+   * 실행 구간만 따로 연다 — 조회 트랜잭션을 이미 닫은 호출자가 그 사이에 트랜잭션 밖 일(동시 실행 허가 대기 등)을 끼울 때 쓴다({@code
+   * InteractiveQueryConcurrencyGate.runGated}).
+   *
+   * <ul>
+   *   <li>PG: {@code pgTx} 로 새 트랜잭션을 열어 그 안에서 실행한다(readOnly 템플릿이면 readOnly 커넥션, 트랜잭션 시작 때 주입되는 테넌트
+   *       RLS GUC).
+   *   <li>Tibero: 트랜잭션 없이 부른다 — 실행(최대 35초) 동안 PG 커넥션을 쥐지 않는다(WD-207, {@link #loadThenExecute} 와
+   *       같다).
+   * </ul>
+   */
+  public static <R> R executeOnly(
+      PipelineDataSchema schema, TransactionTemplate pgTx, Supplier<R> execute) {
+    if (!schema.isTibero()) {
+      return pgTx.execute(status -> execute.get());
+    }
+    return execute.get();
+  }
+
   /** Tibero 조회 구간 — 템플릿이 있으면 그 안에서, 없으면 트랜잭션 없이 부른다. */
   private static <L> L loadTibero(TransactionTemplate tiberoLoadTx, Supplier<L> load) {
     return tiberoLoadTx == null ? load.get() : tiberoLoadTx.execute(status -> load.get());

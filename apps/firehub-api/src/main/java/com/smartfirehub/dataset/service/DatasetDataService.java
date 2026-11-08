@@ -249,10 +249,11 @@ public class DatasetDataService {
     // 실행이 예외(400/403)면 기록 없이 그대로 올라간다.
     // WD-599: 동시 실행 허가를 쓰기 트랜잭션(=커넥션)보다 먼저 얻는다 — 기다리는 동안 풀을 쥐지 않는다. 바깥(컨트롤러·필터)에 트랜잭션이 없는
     // 경로다. 예외로 나가도 try-with-resources 가 반납한다.
-    // Tibero 테넌트는 db-executor 로 실행해 PG 풀 커넥션을 쥐지 않으므로(WD-207) 허가 없이 지난다 — WD-553 게이트와 같은 예외(null
-    // 자원은 닫지 않는다).
+    // Tibero 테넌트는 db-executor 로 실행해 PG 풀 커넥션을 쥐지 않으므로(WD-207) 허가 없이 지난다(acquireUnlessTibero).
+    // 남은 일: 차트·대시보드와 달리 이 경로는 아직 허가를 진입부에서 얻는다 — 게이트가 차 있으면 없는 데이터셋(404)·열람 거부(403)로 끝날 요청도
+    // 줄 서다 429 를 받을 수 있다. 허가를 존재 확인·판정 뒤로 옮기는 것은 후속 작업이다.
     try (AnalyticsQueryConcurrencyGate.Permit permit =
-        pipelineDataSchema.isTibero() ? null : interactiveQueryGate.acquire(userId)) {
+        interactiveQueryGate.acquireUnlessTibero(pipelineDataSchema, userId)) {
       return StoreTransactions.loadExecuteThen(
           pipelineDataSchema,
           tx,
