@@ -30,6 +30,74 @@ async function clickSidebarHome(page: Page) {
   await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
 }
 
+/**
+ * 첫 칼럼의 데이터 타입을 고른다 — 콤보박스를 「데이터 타입 *」 라벨 이름으로 집는다(WD-398 이 라벨을 트리거에 이었다).
+ * 표시 문구(hasText)로 거르면 현재 고른 타입에 따라 셀렉터가 바뀌어 깨지기 쉽다 (WD-642).
+ */
+async function chooseColumnType(page: Page, optionName: string) {
+  await page.getByRole('combobox', { name: '데이터 타입 *' }).click();
+  await page.getByRole('option', { name: optionName, exact: true }).click();
+}
+
+/** 필수 입력(이름·테이블명·칼럼명)을 채운다. */
+async function fillRequired(page: Page, name: string, tableName: string) {
+  await page.getByLabel('데이터셋 이름').fill(name);
+  await page.getByLabel('테이블명').fill(tableName);
+  await page.getByPlaceholder('예: user_id').fill('col_name');
+}
+
+/**
+ * POST /api/v1/datasets 응답을 테스트가 풀어줄 때까지 붙잡는다 (WD-642).
+ * - requested: 첫 요청이 도착하면 풀리는 약속
+ * - release(status, json): 붙잡힌 모든 요청에 같은 응답을 돌려준다
+ * - count(): 지금까지 도착한 POST 수, payloads: 각 요청 본문
+ */
+async function holdCreateRequest(page: Page) {
+  let markRequested: () => void = () => {};
+  const requested = new Promise<void>((resolve) => {
+    markRequested = resolve;
+  });
+  let doRelease: (r: { status: number; json: unknown }) => void = () => {};
+  const released = new Promise<{ status: number; json: unknown }>((resolve) => {
+    doRelease = resolve;
+  });
+  const payloads: unknown[] = [];
+  await page.route(
+    (url) => url.pathname === '/api/v1/datasets',
+    async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      payloads.push(route.request().postDataJSON());
+      markRequested();
+      const r = await released;
+      await route.fulfill({ status: r.status, json: r.json });
+    },
+  );
+  return {
+    requested,
+    payloads,
+    count: () => payloads.length,
+    release: (status: number, json: unknown) => doRelease({ status, json }),
+  };
+}
+
+/**
+ * 생성 요청을 보내 붙잡아 둔 채 사이드바 링크로 이탈 확인창을 연다 (WD-642).
+ * 「확인창이 떠 있는 동안 응답이 온다」 테스트들의 공통 준비 단계다.
+ */
+async function startCreateThenOpenPrompt(
+  page: Page,
+  hold: Awaited<ReturnType<typeof holdCreateRequest>>,
+  name: string,
+  tableName: string,
+) {
+  await page.goto('/data/datasets/new');
+  await fillRequired(page, name, tableName);
+  await page.getByRole('button', { name: '만들기' }).click();
+  await hold.requested;
+  await clickSidebarHome(page);
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+}
+
 /** 취소 가능한 beforeunload 이벤트를 직접 발생시켜, 가드가 preventDefault 했는지(=브라우저 확인창 대상인지) 돌려준다. */
 async function beforeUnloadPrevented(page: Page) {
   return page.evaluate(() => {
@@ -167,8 +235,8 @@ test.describe('데이터셋 생성 페이지 — 미저장 입력 이탈 가드 
 
   test('카테고리만 골라도 다이얼로그를 띄운다', async ({ authenticatedPage: page }) => {
     await page.goto('/data/datasets/new');
-    // 첫 번째 combobox 가 카테고리 셀렉터다 (dataset-create-extended.spec.ts 와 같은 선택 방식)
-    await page.getByRole('combobox').first().click();
+    // 카테고리 콤보박스를 라벨 이름으로 집는다 — 순서(.first())에 기대면 콤보박스가 늘 때 엉뚱한 것을 누른다 (WD-642)
+    await page.getByRole('combobox', { name: '카테고리' }).click();
     await page.getByRole('option', { name: '소방 데이터' }).click();
 
     await clickSidebarHome(page);
@@ -180,13 +248,11 @@ test.describe('데이터셋 생성 페이지 — 미저장 입력 이탈 가드 
     authenticatedPage: page,
   }) => {
     await page.goto('/data/datasets/new');
-    await page.getByRole('combobox').filter({ hasText: '텍스트' }).click();
-    await page.getByRole('option', { name: '문자열(크기지정)' }).click();
+    await chooseColumnType(page, '문자열(크기지정)');
     // VARCHAR 전용 최대 길이 입력이 마운트(등록)된 것을 확인한다
     await expect(page.getByLabel('최대 길이 *')).toBeVisible();
 
-    await page.getByRole('combobox').filter({ hasText: '문자열(크기지정)' }).click();
-    await page.getByRole('option', { name: '텍스트', exact: true }).click();
+    await chooseColumnType(page, '텍스트');
     await expect(page.getByLabel('최대 길이 *')).toHaveCount(0);
 
     // 숨겨진 maxLength 값이 남지 않아 원상태와 같다 → 가드가 꺼져 있다
@@ -258,5 +324,240 @@ test.describe('데이터셋 생성 페이지 — 미저장 입력 이탈 가드 
     release();
     await expect(page.getByText('데이터셋이 생성되었습니다.')).toBeVisible();
     expect(new URL(page.url()).pathname).toBe('/');
+  });
+  test('VARCHAR 길이를 넣고 다른 타입으로 갔다가 돌아오면 넣었던 길이가 그대로 있고 그 길이로 저장된다 (WD-642)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(page, 'POST', '/api/v1/datasets', { id: 99, name: '길이 데이터셋' }, { capture: true });
+    await setupDatasetDetailMocks(page, 99);
+
+    await page.goto('/data/datasets/new');
+    await fillRequired(page, '길이 데이터셋', 'len_dataset');
+    await chooseColumnType(page, '문자열(크기지정)');
+    await page.getByLabel('최대 길이 *').fill('255');
+
+    await chooseColumnType(page, '텍스트');
+    await expect(page.getByLabel('최대 길이 *')).toHaveCount(0);
+    await chooseColumnType(page, '문자열(크기지정)');
+    // 다시 VARCHAR — 비워지지 않고 사용자가 넣었던 255 가 돌아온다
+    await expect(page.getByLabel('최대 길이 *')).toHaveValue('255');
+
+    await page.getByRole('button', { name: '만들기' }).click();
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ columns: [{ columnName: 'col_name', dataType: 'VARCHAR', maxLength: 255 }] });
+    await expect(page).toHaveURL('/data/datasets/99');
+  });
+
+  test('VARCHAR 길이를 넣었다가 다른 타입으로 바꿔 저장하면 숨은 길이를 보내지 않는다 (WD-642)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(page, 'POST', '/api/v1/datasets', { id: 99, name: '텍스트 데이터셋' }, { capture: true });
+    await setupDatasetDetailMocks(page, 99);
+
+    await page.goto('/data/datasets/new');
+    await fillRequired(page, '텍스트 데이터셋', 'text_dataset');
+    await chooseColumnType(page, '문자열(크기지정)');
+    await page.getByLabel('최대 길이 *').fill('255');
+    await chooseColumnType(page, '텍스트');
+
+    await page.getByRole('button', { name: '만들기' }).click();
+    const req = await capture.waitForRequest();
+    const columns = (req.payload as { columns: Record<string, unknown>[] }).columns;
+    expect(columns[0]).toMatchObject({ columnName: 'col_name', dataType: 'TEXT' });
+    expect(columns[0].maxLength).toBeUndefined();
+  });
+
+  test('생성 요청 중 이탈했다가 같은 생성 화면으로 돌아와 새로 입력하면, 늦게 온 옛 응답이 새 입력을 건드리지 않는다 (WD-642)', async ({
+    authenticatedPage: page,
+  }) => {
+    const hold = await holdCreateRequest(page);
+    await setupDatasetDetailMocks(page, 99);
+
+    await page.goto('/data/datasets/new');
+    await fillRequired(page, '옛 데이터셋', 'old_dataset');
+    await page.getByRole('button', { name: '만들기' }).click();
+    await hold.requested;
+
+    await clickSidebarHome(page);
+    await page.getByRole('button', { name: '이탈' }).click();
+    await expect(page).toHaveURL(/\/$/);
+    // 홈 화면이 실제로 그려질 때까지 기다린다 — 라우터 전환(startTransition) 중엔 생성 화면이 아직 마운트돼 있어
+    // 그 틈에 뒤로 가면 옛 화면의 가드가 뒤로가기를 가로챈다(사람 속도로는 생기지 않는 테스트 타이밍 문제).
+    await expect(page.getByRole('heading', { name: '홈', level: 1 })).toBeVisible();
+
+    // SPA 안에서 뒤로 가 같은 생성 화면(새 인스턴스)으로 돌아온다 — goto 는 새로고침이라 옛 요청이 사라져 의미가 없다
+    await page.goBack();
+    await expect(page).toHaveURL('/data/datasets/new');
+    await expect(page.getByLabel('데이터셋 이름')).toHaveValue('');
+    await page.getByLabel('데이터셋 이름').fill('새 입력');
+
+    hold.release(201, { id: 99, name: '옛 데이터셋' });
+    // 옛 요청의 성공 토스트로 응답 처리가 끝난 것을 확인한 뒤 검사한다
+    await expect(page.getByText('데이터셋이 생성되었습니다.')).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe('/data/datasets/new');
+    await expect(page.getByLabel('데이터셋 이름')).toHaveValue('새 입력');
+    // 새 입력은 여전히 미저장으로 가드된다
+    expect(await beforeUnloadPrevented(page)).toBe(true);
+  });
+
+  test('이탈 확인창이 떠 있는 동안 생성이 성공하면 끌고 가지 않고, 이탈을 고르면 가려던 곳으로 간다 (WD-642)', async ({
+    authenticatedPage: page,
+  }) => {
+    const hold = await holdCreateRequest(page);
+    await setupDatasetDetailMocks(page, 99);
+
+    await startCreateThenOpenPrompt(page, hold, '창 데이터셋', 'dialog_dataset');
+
+    hold.release(201, { id: 99, name: '창 데이터셋' });
+    await expect(page.getByText('데이터셋이 생성되었습니다.')).toBeVisible();
+    // 사용자가 고르기 전이므로 화면·확인창이 그대로다
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe('/data/datasets/new');
+    // 선택을 기다리는 동안 Cmd/Ctrl+S 를 눌러도 같은 입력으로 다시 만들지 않는다
+    await page.keyboard.press('ControlOrMeta+s');
+    await page.waitForTimeout(300);
+    expect(hold.count()).toBe(1);
+
+    await page.getByRole('button', { name: '이탈' }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  });
+
+  test('이탈 확인창이 떠 있는 동안 생성이 성공하고 취소를 고르면 만든 데이터셋 상세로 간다 (WD-642)', async ({
+    authenticatedPage: page,
+  }) => {
+    const hold = await holdCreateRequest(page);
+    await setupDatasetDetailMocks(page, 99);
+
+    await startCreateThenOpenPrompt(page, hold, '창 데이터셋', 'dialog_dataset');
+    hold.release(201, { id: 99, name: '창 데이터셋' });
+    await expect(page.getByText('데이터셋이 생성되었습니다.')).toBeVisible();
+
+    // 남기를 골랐는데 생성 화면에 그대로 두면 같은 입력으로 다시 만들게 되므로, 만든 데이터셋 상세로 보낸다
+    await page.getByRole('alertdialog').getByRole('button', { name: '취소' }).click();
+    await expect(page).toHaveURL('/data/datasets/99');
+    expect(await beforeUnloadPrevented(page)).toBe(false);
+  });
+
+  test('이탈 확인창이 떠 있는 동안 생성이 실패하면 오류를 알리고 확인창·입력이 남는다 (WD-642)', async ({
+    authenticatedPage: page,
+  }) => {
+    const hold = await holdCreateRequest(page);
+
+    await startCreateThenOpenPrompt(page, hold, '실패 데이터셋', 'fail_dataset');
+    hold.release(500, { status: 500, message: '서버 내부 오류입니다.' });
+    await expect(page.getByText('서버 내부 오류입니다.')).toBeVisible();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+
+    await page.getByRole('alertdialog').getByRole('button', { name: '취소' }).click();
+    expect(new URL(page.url()).pathname).toBe('/data/datasets/new');
+    await expect(page.getByLabel('데이터셋 이름')).toHaveValue('실패 데이터셋');
+    expect(await beforeUnloadPrevented(page)).toBe(true);
+  });
+
+  test('저장 중 Cmd/Ctrl+S 를 거듭 눌러도 생성 요청은 한 번만 간다 (WD-642)', async ({ authenticatedPage: page }) => {
+    const hold = await holdCreateRequest(page);
+    await setupDatasetDetailMocks(page, 99);
+
+    await page.goto('/data/datasets/new');
+    await fillRequired(page, '단축키 데이터셋', 'shortcut_dataset');
+    await page.keyboard.press('ControlOrMeta+s');
+    await hold.requested;
+    // 요청이 붙잡힌 동안 거듭 누른다 — requestSubmit 은 비활성 버튼과 무관하게 submit 을 일으킨다
+    await page.keyboard.press('ControlOrMeta+s');
+    await page.keyboard.press('ControlOrMeta+s');
+    await expect(page.getByRole('button', { name: '만드는 중...' })).toBeDisabled();
+
+    hold.release(201, { id: 99, name: '단축키 데이터셋' });
+    await expect(page).toHaveURL('/data/datasets/99');
+    expect(hold.count()).toBe(1);
+    expect(hold.payloads[0]).toMatchObject({ name: '단축키 데이터셋', tableName: 'shortcut_dataset' });
+  });
+
+  test('생성 요청 중 이탈한 뒤 요청이 실패하면 어느 데이터셋이 저장되지 않았는지 맥락을 담아 알린다 (WD-642)', async ({
+    authenticatedPage: page,
+  }) => {
+    const hold = await holdCreateRequest(page);
+
+    await page.goto('/data/datasets/new');
+    await fillRequired(page, '실패 데이터셋', 'fail_dataset');
+    await page.getByRole('button', { name: '만들기' }).click();
+    await hold.requested;
+
+    await clickSidebarHome(page);
+    await page.getByRole('button', { name: '이탈' }).click();
+    await expect(page).toHaveURL(/\/$/);
+
+    hold.release(500, { status: 500, message: '서버 내부 오류입니다.' });
+    // 성공은 떠난 뒤에도 알리므로 실패도 알린다 — 다른 화면 위라 데이터셋 이름과 「저장되지 않음」을 함께 적는다
+    await expect(
+      page.getByText('데이터셋 「실패 데이터셋」 생성에 실패했습니다 — 저장되지 않았습니다.'),
+    ).toBeVisible();
+    // 맥락 없는 서버 원문 토스트는 따로 띄우지 않고, 사용자가 간 화면에 그대로 둔다
+    expect(await page.getByText('서버 내부 오류입니다.', { exact: true }).count()).toBe(0);
+    expect(new URL(page.url()).pathname).toBe('/');
+  });
+
+  test('VARCHAR 길이를 넣고 VARCHAR 아닌 타입끼리 거쳐(텍스트→정수) 돌아와도 넣었던 길이가 남는다 (WD-642)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(page, 'POST', '/api/v1/datasets', { id: 99, name: '거친 데이터셋' }, { capture: true });
+    await setupDatasetDetailMocks(page, 99);
+
+    await page.goto('/data/datasets/new');
+    await fillRequired(page, '거친 데이터셋', 'hop_dataset');
+    await chooseColumnType(page, '문자열(크기지정)');
+    await page.getByLabel('최대 길이 *').fill('255');
+    await chooseColumnType(page, '텍스트');
+    await chooseColumnType(page, '정수');
+    await chooseColumnType(page, '문자열(크기지정)');
+    await expect(page.getByLabel('최대 길이 *')).toHaveValue('255');
+
+    await page.getByRole('button', { name: '만들기' }).click();
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ columns: [{ dataType: 'VARCHAR', maxLength: 255 }] });
+  });
+
+  test('생성 성공 직후 상세로 넘어가는 사이 Cmd/Ctrl+S 를 눌러도 다시 만들지 않는다 (WD-642)', async ({
+    authenticatedPage: page,
+  }) => {
+    const hold = await holdCreateRequest(page);
+    await setupDatasetDetailMocks(page, 99);
+    // 상세 화면 코드(lazy 라우트) 로딩을 붙잡아 전환 틈을 넓힌다 — 그동안 라우터는 생성 화면을 마운트한 채 둔다
+    let releaseDetailChunk: () => void = () => {};
+    const detailChunkReleased = new Promise<void>((resolve) => {
+      releaseDetailChunk = resolve;
+    });
+    // dev 서버는 원본 경로(/src/pages/data/DatasetDetailPage.tsx), preview(훅의 전체 스위트)는 해시 청크
+    // (/assets/DatasetDetailPage-<hash>.js)로 받으므로 둘 다 붙잡는다 — 한쪽만 잡으면 preview 에선 전환이 바로 끝나 틈이 사라진다
+    let detailChunkHeld = false;
+    await page.route(
+      /\/(src\/pages\/data\/DatasetDetailPage\.tsx|assets\/DatasetDetailPage-[\w-]+\.js)(\?|$)/,
+      async (route) => {
+        detailChunkHeld = true;
+        await detailChunkReleased;
+        await route.continue();
+      },
+    );
+
+    await page.goto('/data/datasets/new');
+    await fillRequired(page, '전환 데이터셋', 'transition_dataset');
+    await page.keyboard.press('ControlOrMeta+s');
+    await hold.requested;
+
+    hold.release(201, { id: 99, name: '전환 데이터셋' });
+    // 성공 처리(토스트)까지 끝나 상세로 넘어가는 중 — 생성 폼은 아직 화면에 있다
+    await expect(page.getByText('데이터셋이 생성되었습니다.')).toBeVisible();
+    // 상세 청크 요청이 실제로 붙잡혔는지 먼저 확인한다 — 경로가 바뀌어 못 잡으면 여기서 원인이 드러난다
+    await expect.poll(() => detailChunkHeld).toBe(true);
+    await expect(page.getByLabel('데이터셋 이름')).toBeVisible();
+    await page.keyboard.press('ControlOrMeta+s');
+    await page.keyboard.press('ControlOrMeta+s');
+    // 제출이 일어났다면 검증·요청까지 갈 시간을 준다
+    await page.waitForTimeout(300);
+    releaseDetailChunk();
+
+    await expect(page).toHaveURL('/data/datasets/99');
+    expect(hold.count()).toBe(1);
   });
 });
