@@ -63,9 +63,11 @@ interface JobOverviewTabProps {
 
 function ReadonlyCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="space-y-1">
+    // min-w-0 + [overflow-wrap:anywhere] (WD-632): 이 카드는 grid-cols-2 칸의 자식이라 기본 최소 폭이 내용 폭이다.
+    // 공백 없는 긴 값(200자 작업명 등)이 칸을 늘려 카드 밖·화면 밖으로 뻗지 않도록, 칸 폭 안에서 전부 줄바꿈해 보인다(상세라 자르지 않음).
+    <div className="min-w-0 space-y-1">
       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{label}</p>
-      <div className="text-sm">{value}</div>
+      <div className="text-sm [overflow-wrap:anywhere]">{value}</div>
     </div>
   );
 }
