@@ -71,8 +71,11 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         data-size={size}
         {...focusRestore}
+        // grid-cols-[minmax(0,1fr)] + [overflow-wrap:anywhere] (WD-632): 암시적 auto 칸은 자식의 최소 내용 폭까지 늘어나,
+        // 공백 없는 긴 이름(설명·details 영향 목록 등)이 창을 넓혀 「삭제」 버튼을 화면 밖으로 민다.
+        // 칸 최소 폭을 0 으로 묶고 긴 낱말도 어디서든 줄바꿈되게 해, 사용처마다 따로 막지 않아도 창 폭 안에 머물게 한다.
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-lg",
+          "grid-cols-[minmax(0,1fr)] [overflow-wrap:anywhere] bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-lg",
           className
         )}
         {...props}
