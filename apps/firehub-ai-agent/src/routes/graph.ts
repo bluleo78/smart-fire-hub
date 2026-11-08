@@ -1,7 +1,7 @@
 import { Router, type Response } from 'express';
 import { z } from 'zod/v4';
 import { internalAuth, requireDelegation, type Delegation } from '../middleware/auth.js';
-import { jsonBody } from '../http/json-body.js';
+import { authedJsonBody } from '../http/json-body.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
 import { readWholeGraph } from '../graphrag/neo4j-client.js';
 // 그래프 읽기 제한(WD-28) 코드·문구 정본 — api·web 과 같은 값을 쓴다.
@@ -131,7 +131,7 @@ const mergeBodySchema = z.object({
 // entityKey가 typeId 기반(5-6)이라 entityType 문자열→typeId 변환에 온톨로지가 필요하다.
 // 사용자 세션이 없는 서비스 간 호출이라, on-behalf-of는 시스템 사용자(id=1)로 고정한다
 // (다른 백엔드 트리거 스크립트들과 동일한 관례 — migrate-entity-keys-to-id.ts, run-eval.ts 참고).
-router.post('/graph/merge-entities', jsonBody(), internalAuth, requireDelegation, async (req, res) => {
+router.post('/graph/merge-entities', ...authedJsonBody({ afterAuth: [requireDelegation] }), async (req, res) => {
   const parsed = mergeBodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'invalid request body', details: parsed.error.issues });
@@ -160,7 +160,7 @@ const setPropertyBodySchema = z.object({
 // HITL 승인된 속성 정정값을 Neo4j 노드에 write — firehub-api(GraphMutationClient)가 승인 시 호출.
 // 예전에는 이 라우트만 requireDelegation 없이 entityKey 를 그대로 받아 write 했다 — 내부 토큰만 있으면
 // 임의 키의 노드 속성을 고칠 수 있었다. 이제 datasetId→온톨로지 해소(RLS 경계)를 거쳐 스코프된 write 만 한다.
-router.post('/graph/set-property', jsonBody(), internalAuth, requireDelegation, async (req, res) => {
+router.post('/graph/set-property', ...authedJsonBody({ afterAuth: [requireDelegation] }), async (req, res) => {
   const parsed = setPropertyBodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'invalid request body', details: parsed.error.issues });
@@ -193,7 +193,7 @@ const addEntityBodySchema = z.object({
 
 // HITL 승인된 저신뢰 엔티티를 Neo4j에 적재 — firehub-api(GraphMutationClient)가 승인 시 호출.
 // entityKey가 typeId 기반이라 entityType→typeId 변환에 온톨로지가 필요(merge-entities와 동일 관례, 시스템유저 id=1).
-router.post('/graph/add-entity', jsonBody(), internalAuth, requireDelegation, async (req, res) => {
+router.post('/graph/add-entity', ...authedJsonBody({ afterAuth: [requireDelegation] }), async (req, res) => {
   const parsed = addEntityBodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'invalid request body', details: parsed.error.issues });
@@ -229,7 +229,7 @@ const addRelationBodySchema = z.object({
 
 // HITL 승인된 저신뢰 관계를 Neo4j에 적재 — firehub-api(GraphMutationClient)가 승인 시 호출.
 // 엣지 schemaVersion 스탬프를 위해 온톨로지를 로드한다(add-entity와 동일 관례).
-router.post('/graph/add-relation', jsonBody(), internalAuth, requireDelegation, async (req, res) => {
+router.post('/graph/add-relation', ...authedJsonBody({ afterAuth: [requireDelegation] }), async (req, res) => {
   const parsed = addRelationBodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'invalid request body', details: parsed.error.issues });

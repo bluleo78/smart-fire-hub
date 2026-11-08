@@ -7,8 +7,7 @@
  */
 import { Router, Request, Response } from 'express';
 import puppeteer, { type Browser } from 'puppeteer';
-import { internalAuth } from '../middleware/auth.js';
-import { jsonBody } from '../http/json-body.js';
+import { authedJsonBody, PDF_BODY_LIMIT } from '../http/json-body.js';
 
 const router = Router();
 
@@ -43,7 +42,7 @@ interface HtmlToPdfRequest {
  * POST /agent/html-to-pdf
  * HTML 문자열을 받아 PDF 바이너리를 반환한다.
  */
-router.post('/html-to-pdf', jsonBody('5mb'), internalAuth, async (req: Request, res: Response) => {
+router.post('/html-to-pdf', ...authedJsonBody({ limit: PDF_BODY_LIMIT }), async (req: Request, res: Response) => {
   const body = req.body as HtmlToPdfRequest;
 
   if (!body.html) {

@@ -9,8 +9,7 @@ import { isKnownAgentType } from '../providers/types.js';
 import { parseProactiveExecutionId, parseSharePurpose } from '../mcp/api-client.js';
 import { DEFAULT_DB_DIALECT, parseDbDialect, type DbDialect } from '../agent/db-dialect.js';
 import { TIBERO_SQL_GUIDE } from '../agent/tibero-sql-guide.js';
-import { internalAuth } from '../middleware/auth.js';
-import { jsonBody } from '../http/json-body.js';
+import { authedJsonBody } from '../http/json-body.js';
 import { isValidTenantId, proactiveReportDir } from '../agent/tenant-paths.js';
 import {
   AGENT_AUTH_OR_QUOTA_FAILURE,
@@ -390,7 +389,7 @@ export function parseSections(text: string, template?: Template): OutputSection[
   return processSections(template.sections);
 }
 
-router.post('/proactive', jsonBody(), internalAuth, async (req: Request, res: Response) => {
+router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Response) => {
   const body = req.body as ProactiveRequest;
 
   if (!body.prompt || !body.context) {

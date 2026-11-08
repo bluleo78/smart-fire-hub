@@ -9,8 +9,8 @@ import java.util.List;
  * <p>message 는 상한을 둔다(WD-550) — 상한이 없으면 수 MB 메시지가 그대로 ai-agent 로 넘어가 거기서 본문 한도 오류가 나거나 모델 컨텍스트를
  * 낭비한다. 컨트롤러 경계(@Valid)에서만 검증되며, 내부 호출측(Slack·배치 등)은 이 레코드를 거치지 않는다.
  *
- * <p>navigationContext·screenContext 도 같은 이유로 상한을 둔다. 세 필드가 모두 상한이고 전부 한글(UTF-8 3바이트)이어도 (50,000 +
- * 10,000 + 100,000) × 3 ≈ 480KB 로 ai-agent 의 JSON 본문 한도(1MB) 안에 든다.
+ * <p>navigationContext·screenContext 도 같은 이유로 상한을 둔다. 상한은 문자 수라 직렬화 바이트는 더 크다 — ai-agent 채팅 본문 한도의
+ * 최악값 계산은 ai-agent {@code src/http/json-body.ts} 의 CHAT_BODY_LIMIT 주석 참고(상한을 바꾸면 그 값도 다시 계산).
  */
 public record ChatRequest(
     @Size(max = ChatRequest.MAX_MESSAGE_LENGTH, message = ChatRequest.MESSAGE_TOO_LONG)

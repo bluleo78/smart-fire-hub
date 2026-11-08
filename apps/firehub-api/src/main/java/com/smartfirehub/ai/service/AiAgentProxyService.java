@@ -5,11 +5,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.io.IOException;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.http.codec.ServerSentEvent;
@@ -32,12 +34,32 @@ public class AiAgentProxyService {
   private static final String SESSION_BUSY_MESSAGE = "이전 응답을 처리 중입니다. 잠시 후 다시 시도해 주세요.";
 
   /**
-   * WD-57: ai-agent 가 409(같은 세션 실행 중)로 거절했음을 나타낸다. 다른 비 2xx 와 구분해야 웹에 "연결 실패"가 아니라 "이전 응답 처리 중" 안내를
-   * 보낼 수 있다.
+   * ai-agent 가 요청을 거절했고 그 사유를 사용자에게 보여 줄 수 있음을 나타낸다 — 409 같은 세션 실행 중(WD-57, {@code
+   * code=session_busy})과 413 본문 한도 초과(WD-631, {@link #agentErrorFor}). 웹 채팅은 이 예외를 연결 실패가 아니라 처리된
+   * 거절로 보고 {@code code}·{@code userMessage} 를 담은 오류 이벤트를 보낸 뒤 정상 종료한다.
+   *
+   * <p>{@link #getMessage()} 는 진단용 문구(로그·Slack 배치 경로용)로, 사용자 문구와 분리한다.
    */
-  static final class SessionBusyException extends RuntimeException {
-    SessionBusyException() {
-      super("Agent session busy");
+  static final class AgentRejectedException extends RuntimeException {
+    /** 웹이 분기에 쓰는 오류 코드 — 없으면 null */
+    private final String code;
+
+    private final String userMessage;
+
+    AgentRejectedException(String diagnostic, String code, String userMessage) {
+      super(diagnostic);
+      this.code = code;
+      this.userMessage = userMessage;
+    }
+
+    /** 웹이 분기에 쓰는 오류 코드(예: session_busy). 없으면 null. */
+    String code() {
+      return code;
+    }
+
+    /** 사용자에게 그대로 보여 줄 수 있는 거절 문구. */
+    String userMessage() {
+      return userMessage;
     }
   }
 
@@ -177,22 +199,50 @@ public class AiAgentProxyService {
         .exchangeToFlux(
             response -> {
               if (response.statusCode().value() == 409) {
-                return response.releaseBody().thenMany(Flux.error(new SessionBusyException()));
+                return response
+                    .releaseBody()
+                    .thenMany(
+                        Flux.error(
+                            new AgentRejectedException(
+                                "Agent session busy", SESSION_BUSY_CODE, SESSION_BUSY_MESSAGE)));
               }
               if (!response.statusCode().is2xxSuccessful()) {
                 return response
                     .bodyToMono(String.class)
                     .defaultIfEmpty("")
-                    .flatMapMany(
-                        body ->
-                            Flux.error(
-                                new RuntimeException(
-                                    "Agent error: " + response.statusCode() + " " + body)));
+                    .flatMapMany(body -> Flux.error(agentErrorFor(response.statusCode(), body)));
               }
               return response.bodyToFlux(
                   new ParameterizedTypeReference<ServerSentEvent<String>>() {});
             })
         .timeout(TIMEOUT);
+  }
+
+  /**
+   * WD-631: ai-agent 비 2xx 응답을 예외로 바꾼다. <b>413(본문 한도 초과)</b>이고 본문이 JSON 객체이며 {@code error} 가 비어 있지
+   * 않은 문자열이면 그 문구(ai-agent error-handler 의 한국어 안내, 예: 「요청 본문이 너무 큽니다(최대 2MB).」)를 사용자 문구로 담은 {@link
+   * AgentRejectedException}, 아니면 예전처럼 진단 문구만 담은 일반 예외다.
+   *
+   * <p>413 만 통과시키는 이유: 그 밖의 4xx 는 api↔ai-agent 내부 계약 오류("tenantId is required…" 같은 영어 개발자 문구)라 사용자가
+   * 고칠 수 있는 안내가 아니고 서버 버그 신호이므로 예전처럼 오류 로그 + "Agent connection failed" 로 둔다. 401/403(내부 토큰 설정)·5xx
+   * 도 같다. HTML 프록시 오류·빈 본문·깨진 JSON 처럼 해석할 수 없는 본문도 사용자 문구로 추측해 내보내지 않는다.
+   */
+  private RuntimeException agentErrorFor(HttpStatusCode status, String body) {
+    String diagnostic = "Agent error: " + status + " " + body;
+    if (status.value() != 413) {
+      return new RuntimeException(diagnostic);
+    }
+    try {
+      JsonNode node = objectMapper.readTree(body);
+      JsonNode error = node == null ? null : node.get("error");
+      String message = error != null && error.isTextual() ? error.asText() : "";
+      if (!message.isBlank()) {
+        return new AgentRejectedException(diagnostic, null, message);
+      }
+    } catch (IOException ignored) {
+      // JSON 이 아니면 사람이 읽는 문구가 없는 것으로 본다
+    }
+    return new RuntimeException(diagnostic);
   }
 
   /**
@@ -248,15 +298,9 @@ public class AiAgentProxyService {
     AiChatRequestBuilder.Prepared prepared =
         chatRequestBuilder.prepare(tenantId, userId, sessionId, message);
     if (prepared.problem() != null) {
-      try {
-        // 채팅은 예외가 아니라 SSE 이벤트로 오류를 내보내야 하므로 requireModelUsable 대신 문구만
-        // 가져다 쓴다(분류·프로액티브는 같은 문구를 예외로 던진다).
-        String errorPayload =
-            objectMapper.writeValueAsString(Map.of("type", "error", "message", prepared.problem()));
-        emitter.send(SseEmitter.event().data(errorPayload));
-        emitter.complete();
-      } catch (IOException ignored) {
-      }
+      // 채팅은 예외가 아니라 SSE 이벤트로 오류를 내보내야 하므로 requireModelUsable 대신 문구만
+      // 가져다 쓴다(분류·프로액티브는 같은 문구를 예외로 던진다).
+      sendErrorAndComplete(emitter, Map.of("type", "error", "message", prepared.problem()));
       return;
     }
 
@@ -325,22 +369,22 @@ public class AiAgentProxyService {
           }
         },
         error -> {
-          // WD-57: 같은 세션의 이전 실행이 남아 있어 거절된 경우. SSE(200)가 이미 열려 있어 409 상태를 그대로 줄 수 없으므로
-          // 코드가 붙은 오류 이벤트로 전달하고 정상 종료한다 — 웹이 이 코드로 "이전 응답 처리 중" 안내를 띄운다.
-          if (error instanceof SessionBusyException) {
-            log.info("[AI Chat] 세션 {} 이전 실행이 처리 중이라 요청이 거절됨", sessionId);
-            try {
-              emitter.send(
-                  SseEmitter.event()
-                      .data(
-                          objectMapper.writeValueAsString(
-                              Map.of(
-                                  "type", "error",
-                                  "code", SESSION_BUSY_CODE,
-                                  "message", SESSION_BUSY_MESSAGE))));
-              emitter.complete();
-            } catch (IOException ignored) {
+          // 처리된 거절(409 같은 세션 실행 중 · 413 본문 한도) — SSE(200)가 이미 열려 있어 상태 코드를 그대로 줄 수 없으므로
+          // 코드·문구를 담은 오류 이벤트로 전달하고 정상 종료한다. completeWithError 는 웹이 네트워크 오류로 오인한다.
+          if (error instanceof AgentRejectedException rejected) {
+            // 409 는 사용자가 연달아 보낸 정상 흐름이라 info, 413 같은 거절은 warn — 예전 로그 수준을 유지한다
+            if (SESSION_BUSY_CODE.equals(rejected.code())) {
+              log.info("[AI Chat] 세션 {} 이전 실행이 처리 중이라 요청이 거절됨", sessionId);
+            } else {
+              log.warn("[AI Chat] ai-agent 가 요청을 거절함: {}", rejected.getMessage());
             }
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("type", "error");
+            if (rejected.code() != null) {
+              payload.put("code", rejected.code());
+            }
+            payload.put("message", rejected.userMessage());
+            sendErrorAndComplete(emitter, payload);
             return;
           }
           log.error("[AI Chat] Agent stream error: {}", error.getMessage());
@@ -363,5 +407,14 @@ public class AiAgentProxyService {
           }
           emitter.complete();
         });
+  }
+
+  /** 오류 이벤트({@code {type:error,…}})를 보내고 스트림을 정상 종료한다. 이미 끊긴 연결로 보내다 난 IOException 은 무시한다. */
+  private void sendErrorAndComplete(SseEmitter emitter, Map<String, ?> payload) {
+    try {
+      emitter.send(SseEmitter.event().data(objectMapper.writeValueAsString(payload)));
+      emitter.complete();
+    } catch (IOException ignored) {
+    }
   }
 }
