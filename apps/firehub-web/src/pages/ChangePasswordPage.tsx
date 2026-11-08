@@ -5,12 +5,19 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { usersApi } from '../api/users';
+import { PendingSubmitButton } from '../components/PendingSubmitButton';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader } from '../components/ui/card';
 import { FormField } from '../components/ui/form-field';
 import { PasswordInput } from '../components/ui/password-input';
 import { useAuth } from '../hooks/useAuth';
-import { applyFieldErrors, extractApiError } from '../lib/api-error';
+import { useSubmitGuard } from '../hooks/useSubmitGuard';
+import {
+  applyFieldErrors,
+  extractApiError,
+  isWrongCurrentPasswordError,
+  PASSWORD_CHANGE_FAILED_MESSAGE,
+} from '../lib/api-error';
 import type { ChangePasswordFormData } from '../lib/validations/user';
 import { forcedPasswordChangeSchema } from '../lib/validations/user';
 
@@ -29,12 +36,14 @@ export default function ChangePasswordPage() {
     register,
     handleSubmit,
     setError,
+    setFocus,
     formState: { errors, isSubmitting },
   } = useForm<ChangePasswordFormData>({
     resolver: zodResolver(forcedPasswordChangeSchema),
     mode: 'onBlur',
     reValidateMode: 'onChange',
   });
+  const guardSubmit = useSubmitGuard();
 
   // 부팅 refresh 가 끝나기 전에는 표식을 모른다 — 성급히 리다이렉트하지 않고 스피너만 보인다.
   if (isLoading) {
@@ -55,7 +64,9 @@ export default function ChangePasswordPage() {
       // 검증 400 은 해당 입력 아래로 (WD-270)
       if (applyFieldErrors(error, setError, Object.keys(forcedPasswordChangeSchema.shape))) return;
       // 현재(임시) 비밀번호가 틀리면 서버가 400 + 메시지를 준다 — 폼 상단 alert 로 보인다.
-      setError('root', { message: extractApiError(error, '현재 비밀번호가 올바르지 않습니다') });
+      setError('root', { message: extractApiError(error, PASSWORD_CHANGE_FAILED_MESSAGE) });
+      // 현재 비밀번호가 틀린 경우에만 그 칸으로 포커스를 옮긴다(WD-572). 그 밖의 오류(403·429·5xx·네트워크)는 다시 누를 버튼에 둔다.
+      if (isWrongCurrentPasswordError(error)) setFocus('currentPassword');
       return;
     }
     // 서버 표식은 이미 내려갔다 — refresh 로 pwc 가 꺼진 토큰을 받아야 다른 API 가 열린다.
@@ -84,7 +95,7 @@ export default function ChangePasswordPage() {
           <CardDescription className="break-keep">관리자가 발급한 임시 비밀번호입니다. 계속하려면 새 비밀번호를 설정하세요.</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+          <form onSubmit={guardSubmit(handleSubmit(onSubmit))} className="space-y-4" noValidate>
             {errors.root && (
               <p role="alert" className="text-sm text-destructive">
                 {errors.root.message}
@@ -119,10 +130,10 @@ export default function ChangePasswordPage() {
                 {...register('confirmPassword')}
               />
             </FormField>
-            <Button type="submit" className="w-full" size="lg" disabled={isSubmitting}>
+            <PendingSubmitButton className="w-full" size="lg" pending={isSubmitting}>
               {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
               변경하고 계속
-            </Button>
+            </PendingSubmitButton>
           </form>
         </CardContent>
         <CardFooter className="flex justify-center">

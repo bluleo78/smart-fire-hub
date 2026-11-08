@@ -463,6 +463,7 @@ test.describe('프로필 페이지', () => {
             body: JSON.stringify({
               status: 400,
               error: 'Bad Request',
+              code: 'WRONG_CURRENT_PASSWORD',
               message: '현재 비밀번호가 올바르지 않습니다',
             }),
           });
@@ -588,5 +589,51 @@ test.describe('프로필 페이지', () => {
     await expect(page.locator('#new-password-error')).toHaveText('새 비밀번호는 8~128자여야 합니다', { timeout: 5000 });
     // 폼 상단 기본 문구로 떨어지지 않아야 한다
     await expect(page.getByText('현재 비밀번호가 올바르지 않습니다.')).toHaveCount(0);
+  });
+  /** 회귀 테스트 (WD-572): Enter 로 저장해 실패해도 포커스가 body 로 떨어지지 않고 저장 버튼에 남는다. */
+  test('Enter 로 프로필 저장이 실패해도 포커스가 저장 버튼에 남는다 (WD-572)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    const save = await mockApi(page, 'PUT', '/api/v1/users/me', { message: '서버 오류가 발생했습니다.' },
+      { status: 500, delayMs: 500, capture: true });
+
+    await expect(page.locator('#profile-name')).toBeVisible({ timeout: 5000 });
+    await page.locator('#profile-name').fill('에러 테스트');
+    const button = page.getByRole('button', { name: '저장', exact: true });
+    await button.focus();
+    await page.keyboard.press('Enter');
+
+    const pending = page.getByRole('button', { name: '저장 중...' });
+    await expect(pending).toHaveAttribute('aria-disabled', 'true');
+    await expect(pending).toBeFocused();
+    // 제출 중 다시 Enter — 요청이 두 번 나가지 않아야 한다
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByText('서버 오류가 발생했습니다.')).toBeVisible({ timeout: 5000 });
+    await expect(button).toBeFocused();
+    expect(save.requests.length).toBe(1);
+  });
+
+  /** 회귀 테스트 (WD-572): Enter 로 비밀번호 변경이 현재 비밀번호 오류로 실패하면 포커스가 현재 비밀번호 칸으로 간다. */
+  test('Enter 로 비밀번호 변경이 실패하면 포커스가 현재 비밀번호 칸으로 간다 (WD-572)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    const change = await mockApi(page, 'PUT', '/api/v1/users/me/password',
+      { status: 400, error: 'Bad Request', code: 'WRONG_CURRENT_PASSWORD', message: '현재 비밀번호가 올바르지 않습니다' },
+      { status: 400, delayMs: 500, capture: true });
+
+    await expect(page.locator('#current-password')).toBeVisible({ timeout: 5000 });
+    await page.locator('#current-password').fill('wrongpassword');
+    await page.locator('#new-password').fill('NewPass456!');
+    await page.locator('#confirm-password').fill('NewPass456!');
+    await page.getByRole('button', { name: '비밀번호 변경' }).focus();
+    await page.keyboard.press('Enter');
+
+    const pending = page.getByRole('button', { name: '변경 중...' });
+    await expect(pending).toHaveAttribute('aria-disabled', 'true');
+    await expect(pending).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByText('현재 비밀번호가 올바르지 않습니다').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('#current-password')).toBeFocused();
+    expect(change.requests.length).toBe(1);
   });
 });

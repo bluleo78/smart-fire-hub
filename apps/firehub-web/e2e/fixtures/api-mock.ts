@@ -24,6 +24,11 @@ interface MockApiOptions {
   headers?: Record<string, string>;
   /** true로 설정하면 MockApiCapture 객체를 반환하여 요청 캡처가 가능하다 */
   capture?: boolean;
+  /**
+   * 응답을 이만큼(ms) 늦춘다 — 요청 중(제출 중) 화면 상태를 관찰할 때 쓴다(WD-572).
+   * capture 와 함께 쓰면 요청은 도착 즉시 캡처되고 응답만 늦게 간다(중복 요청 수 검증용).
+   */
+  delayMs?: number;
 }
 
 /**
@@ -51,7 +56,7 @@ export async function mockApi(
   body: unknown,
   options: MockApiOptions = {},
 ): Promise<MockApiCapture | void> {
-  const { status = 200, headers = {}, capture = false } = options;
+  const { status = 200, headers = {}, capture = false, delayMs = 0 } = options;
 
   // 캡처 객체 초기화
   const captured: CapturedRequest[] = [];
@@ -59,7 +64,7 @@ export async function mockApi(
 
   await page.route(
     (url) => url.pathname === path,
-    (route) => {
+    async (route) => {
       if (route.request().method() !== method) {
         return route.fallback();
       }
@@ -85,6 +90,11 @@ export async function mockApi(
           resolveWaiter(capturedReq);
           resolveWaiter = null;
         }
+      }
+
+      // 응답 지연(WD-572) — 캡처 뒤에 기다려, 지연 중 들어온 중복 요청도 바로 셀 수 있게 한다
+      if (delayMs > 0) {
+        await new Promise<void>((resolve) => { setTimeout(resolve, delayMs); });
       }
 
       return route.fulfill({

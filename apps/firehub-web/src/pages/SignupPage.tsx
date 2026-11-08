@@ -10,12 +10,14 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { applyFieldErrors, extractApiError } from '@/lib/api-error';
 import type { ErrorResponse } from '@/types/auth';
 
+import { PendingSubmitButton } from '../components/PendingSubmitButton';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { PasswordInput } from '../components/ui/password-input';
 import { useSignupStatus } from '../hooks/queries/useSignupStatus';
 import { useAuth } from '../hooks/useAuth';
+import { useSubmitGuard } from '../hooks/useSubmitGuard';
 import type { SignupFormData } from '../lib/validations/auth';
 import { signupSchema } from '../lib/validations/auth';
 
@@ -34,6 +36,7 @@ export default function SignupPage() {
   } = useForm<SignupFormData>({
     resolver: zodResolver(signupSchema),
   });
+  const guardSubmit = useSubmitGuard();
 
   if (isAuthenticated) {
     return <Navigate to="/" replace />;
@@ -104,7 +107,7 @@ export default function SignupPage() {
           <h1 className="text-2xl leading-8 font-semibold tracking-tight">회원가입</h1>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={guardSubmit(handleSubmit(onSubmit))} className="space-y-4">
             <FormField
               label="아이디 (이메일)"
               htmlFor="username"
@@ -171,9 +174,9 @@ export default function SignupPage() {
             {(serverError || errors.root?.message) && (
               <p className="text-sm text-destructive">{serverError || errors.root?.message}</p>
             )}
-            <Button type="submit" className="w-full" disabled={isSubmitting}>
+            <PendingSubmitButton className="w-full" pending={isSubmitting}>
               {isSubmitting ? '회원가입 중...' : '회원가입'}
-            </Button>
+            </PendingSubmitButton>
           </form>
           <div className="mt-4 text-center text-sm">
             <Link to="/login" className="text-primary underline-offset-4 hover:underline">

@@ -12,13 +12,16 @@ import com.smartfirehub.support.TestUsers;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.dto.UserDetailResponse;
 import com.smartfirehub.user.dto.UserListResponse;
+import com.smartfirehub.user.exception.SameAsCurrentPasswordException;
 import com.smartfirehub.user.exception.UserNotFoundException;
+import com.smartfirehub.user.exception.WrongCurrentPasswordException;
 import java.util.List;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -193,10 +196,28 @@ class UserServiceTest extends IntegrationTestBase {
 
   @Test
   void changePassword_wrongCurrentPassword_throwsException() {
-    // 현재 비밀번호 불일치 → 400 Bad Request를 위한 IllegalArgumentException (#27)
+    // 현재 비밀번호 불일치 → 400 + 코드 WRONG_CURRENT_PASSWORD (#27, WD-572 — 웹이 코드로 포커스 대상을 고른다)
     assertThatThrownBy(() -> userService.changePassword(testUserId, "wrongpass", "newpass"))
-        .isInstanceOf(IllegalArgumentException.class)
+        .isInstanceOfSatisfying(
+            WrongCurrentPasswordException.class,
+            ex -> {
+              assertThat(ex.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+              assertThat(ex.code()).isEqualTo("WRONG_CURRENT_PASSWORD");
+            })
         .hasMessage("현재 비밀번호가 올바르지 않습니다");
+  }
+
+  @Test
+  void changePassword_sameAsCurrent_throwsCodedException() {
+    // 새 비밀번호가 현재와 같음 → 400 + 코드 SAME_AS_CURRENT_PASSWORD (WD-572 — 현재 비밀번호 불일치와 코드로 구분)
+    assertThatThrownBy(() -> userService.changePassword(testUserId, "Password123", "Password123"))
+        .isInstanceOfSatisfying(
+            SameAsCurrentPasswordException.class,
+            ex -> {
+              assertThat(ex.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+              assertThat(ex.code()).isEqualTo("SAME_AS_CURRENT_PASSWORD");
+            })
+        .hasMessage("새 비밀번호는 현재 비밀번호와 달라야 합니다");
   }
 
   @Test

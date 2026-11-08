@@ -294,4 +294,89 @@ test.describe('로그인 페이지', () => {
     await page.getByRole('button', { name: '비밀번호 숨기기' }).click();
     await expect(pwInput).toHaveAttribute('type', 'password');
   });
+  /**
+   * 회귀 테스트 (WD-572): 키보드(Enter)로 제출하면 제출 버튼이 disabled 로 바뀌어 포커스가 body 로 떨어지고
+   * 실패 뒤에도 돌아오지 않았다. 제출 중에는 버튼에 포커스가 남고, 401 이면 다시 입력할 비밀번호 칸으로 옮긴다.
+   */
+  test('Enter 로 제출해 401 이 오면 포커스가 비밀번호 칸으로 간다 (WD-572)', async ({ page }) => {
+    // 응답을 늦춰 제출 중 상태를 관찰한다 — 그동안 포커스가 버튼에 남아야 한다
+    await mockApi(page, 'POST', '/api/v1/auth/login',
+      { status: 401, message: '아이디 또는 비밀번호가 올바르지 않습니다.' }, { status: 401, delayMs: 500 });
+    await mockApi(page, 'POST', '/api/v1/auth/refresh', {}, { status: 401 });
+
+    await page.goto('/login');
+    await page.getByLabel('아이디 (이메일)').fill('wrong@example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill('wrongpassword');
+    await page.getByRole('button', { name: '로그인' }).focus();
+    await page.keyboard.press('Enter');
+
+    // 제출 중: 버튼은 잠겨 있지만(aria-disabled) 포커스를 잃지 않는다
+    const pending = page.getByRole('button', { name: '로그인 중...' });
+    await expect(pending).toHaveAttribute('aria-disabled', 'true');
+    await expect(pending).toBeFocused();
+
+    await expect(page.getByRole('alert')).toHaveText('아이디 또는 비밀번호가 올바르지 않습니다.');
+    // 실패 뒤 포커스는 body 가 아니라 다시 입력할 비밀번호 칸이다
+    await expect(page.getByLabel('비밀번호', { exact: true })).toBeFocused();
+  });
+
+  /** 회귀 테스트 (WD-572): 버튼이 disabled 가 아니게 된 뒤에도 제출 중 Enter·클릭 연타는 요청을 한 번만 보낸다. */
+  test('제출 중 Enter·클릭을 연타해도 로그인 요청은 한 번만 나간다 (WD-572)', async ({ page }) => {
+    const login = await mockApi(page, 'POST', '/api/v1/auth/login', { status: 401 },
+      { status: 401, delayMs: 800, capture: true });
+    await mockApi(page, 'POST', '/api/v1/auth/refresh', {}, { status: 401 });
+
+    await page.goto('/login');
+    await page.getByLabel('아이디 (이메일)').fill('wrong@example.com');
+    const password = page.getByLabel('비밀번호', { exact: true });
+    await password.fill('wrongpassword');
+    // 비밀번호 칸에서 Enter 두 번(암묵적 제출) + 잠긴 버튼 클릭 두 번
+    await password.press('Enter');
+    await password.press('Enter');
+    const pending = page.getByRole('button', { name: '로그인 중...' });
+    await expect(pending).toHaveAttribute('aria-disabled', 'true');
+    await pending.click({ force: true });
+    await pending.click({ force: true });
+    // pointer-events 를 거치지 않는 click() 도 잠긴 버튼은 제출하지 않는다(PendingSubmitButton 이 preventDefault)
+    await pending.evaluate((el) => (el as HTMLButtonElement).click());
+
+    await expect(page.getByText('이메일 또는 비밀번호가 올바르지 않습니다.')).toBeVisible();
+    expect(login.requests.length).toBe(1);
+  });
+
+  /** 회귀 테스트 (WD-572): 비활성 계정 401(code ACCOUNT_DEACTIVATED, WD-278)은 비밀번호 문제가 아니므로 포커스를 비밀번호 칸으로 옮기지 않는다. */
+  test('비활성 계정 401 이면 포커스가 비밀번호 칸이 아니라 버튼에 남는다 (WD-572)', async ({ page }) => {
+    await mockApi(page, 'POST', '/api/v1/auth/login', {
+      status: 401,
+      error: 'Unauthorized',
+      message: '비활성화된 계정입니다. 관리자에게 문의하세요.',
+      code: 'ACCOUNT_DEACTIVATED',
+    }, { status: 401 });
+    await mockApi(page, 'POST', '/api/v1/auth/refresh', {}, { status: 401 });
+
+    await page.goto('/login');
+    await page.getByLabel('아이디 (이메일)').fill('deactivated@example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill('CorrectPass123');
+    await page.getByRole('button', { name: '로그인' }).focus();
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByRole('alert')).toHaveText('비활성화된 계정입니다. 관리자에게 문의하세요.');
+    await expect(page.getByRole('button', { name: '로그인' })).toBeFocused();
+  });
+
+  /** 회귀 테스트 (WD-572): 본문 없는 401 도 자격 증명 오류다 — 기본 문구를 보이고 비밀번호 칸으로 포커스를 옮긴다. */
+  test('본문 없는 401 이면 기본 문구와 함께 포커스가 비밀번호 칸으로 간다 (WD-572)', async ({ page }) => {
+    // mockApi 는 본문을 JSON 으로 감싸므로 완전히 빈 본문은 직접 응답한다
+    await page.route('**/api/v1/auth/login', (route) => route.fulfill({ status: 401, body: '' }));
+    await mockApi(page, 'POST', '/api/v1/auth/refresh', {}, { status: 401 });
+
+    await page.goto('/login');
+    await page.getByLabel('아이디 (이메일)').fill('wrong@example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill('wrongpassword');
+    await page.getByRole('button', { name: '로그인' }).focus();
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByRole('alert')).toHaveText('이메일 또는 비밀번호가 올바르지 않습니다.');
+    await expect(page.getByLabel('비밀번호', { exact: true })).toBeFocused();
+  });
 });

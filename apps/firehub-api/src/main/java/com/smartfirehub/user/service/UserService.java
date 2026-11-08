@@ -18,7 +18,9 @@ import com.smartfirehub.user.dto.AddMemberResponse;
 import com.smartfirehub.user.dto.UserDetailResponse;
 import com.smartfirehub.user.dto.UserListResponse;
 import com.smartfirehub.user.dto.UserResponse;
+import com.smartfirehub.user.exception.SameAsCurrentPasswordException;
 import com.smartfirehub.user.exception.UserNotFoundException;
+import com.smartfirehub.user.exception.WrongCurrentPasswordException;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -389,14 +391,15 @@ public class UserService {
     String storedPassword =
         userRepository.findPasswordById(userId).orElseThrow(UserNotFoundException::new);
 
-    // 현재 비밀번호 불일치 시 400 Bad Request로 명확한 한국어 메시지 반환 (#27)
+    // 현재 비밀번호 불일치 시 400 Bad Request로 명확한 한국어 메시지 반환 (#27). 웹이 같은 400 의 다른 이유와 구분해
+    // 현재 비밀번호 칸으로 포커스를 옮기도록 코드(WRONG_CURRENT_PASSWORD)를 함께 싣는다(WD-572).
     if (!passwordEncoder.matches(currentPassword, storedPassword)) {
-      throw new IllegalArgumentException("현재 비밀번호가 올바르지 않습니다");
+      throw new WrongCurrentPasswordException();
     }
     // 같은 값으로 "변경" 하면 임시 비밀번호가 그대로인데 변경 강제 표식만 꺼진다 — 웹 스키마만 막으면 API
-    // 직접 호출로 강제 변경을 우회할 수 있으므로 서버가 최종 판정한다(리뷰 지적 1). 같은 400 스타일(#27).
+    // 직접 호출로 강제 변경을 우회할 수 있으므로 서버가 최종 판정한다(리뷰 지적 1). 같은 400 스타일(#27) + 코드(WD-572).
     if (passwordEncoder.matches(newPassword, storedPassword)) {
-      throw new IllegalArgumentException("새 비밀번호는 현재 비밀번호와 달라야 합니다");
+      throw new SameAsCurrentPasswordException();
     }
 
     // 임시 비밀번호(첫 로그인 강제 변경)를 바꾼 것인지 — 변경 전 표식으로 판단한다(updatePassword 가 표식을 끈다).
