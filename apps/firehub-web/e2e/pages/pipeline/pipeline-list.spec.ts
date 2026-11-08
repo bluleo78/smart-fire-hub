@@ -1,8 +1,15 @@
+import type { Page } from '@playwright/test';
+
 import { createPipeline, createPipelines } from '../../factories/pipeline.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions, mockPipelineDeleteImpact, setupPipelineMocks } from '../../fixtures/pipeline.fixture';
-import { expectLongValueTruncated, expectValueNotTruncated } from '../../fixtures/table-layout';
+import {
+  expectLongValueTruncated,
+  expectTableFits,
+  expectValueNotTruncated,
+  TABLE_LAYOUT_WIDTHS,
+} from '../../fixtures/table-layout';
 
 /**
  * 파이프라인 목록 페이지 E2E 테스트
@@ -475,51 +482,64 @@ test.describe('파이프라인 목록 페이지', () => {
 });
 
 /**
- * 파이프라인 목록 — 띄어쓰기 없는 긴 이름 (WD-559)
- * - 100자 이름·60자 생성자 아이디가 칸을 늘려 상태·삭제 칸이 화면 밖으로 밀렸다. 이제 말줄임되고 전체 값은 title 로 남는다.
+ * 파이프라인 목록 — 띄어쓰기 없는 긴 이름 (WD-559, WD-634)
+ * - 100자 이름·60자 생성자 아이디가 칸을 늘려 상태·삭제 칸이 화면 밖으로 밀렸다. 1280·1024 두 폭에서 표가 들어맞고 말줄임된다.
  */
 test.describe('파이프라인 목록 긴 이름 말줄임 (WD-559)', () => {
   const LONG_NAME = '가'.repeat(100);
   const LONG_CREATOR = 'c'.repeat(60);
+  const NAME = '일일 매출 집계 파이프라인 운영용 v2';
+  const CREATOR = 'firstname.lastname';
 
   test.beforeEach(async ({ authenticatedPage: page }) => {
     await grantPipelinePermissions(page);
   });
 
-  test('1280px 에서 100자 이름이 있어도 표가 넘치지 않고 삭제 버튼까지 보인다', async ({ authenticatedPage: page }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await setupPipelineMocks(page, 3);
-    const [first, ...rest] = createPipelines(3);
-    await mockApi(
-      page,
-      'GET',
-      '/api/v1/pipelines',
-      createPageResponse([{ ...first, name: LONG_NAME, createdBy: LONG_CREATOR }, ...rest]),
-    );
+  /** 평범한 길이의 이름·생성자 한 행으로 목록을 연다 */
+  async function openNormal(page: Page, width: number) {
+    await page.setViewportSize({ width, height: 800 });
+    await setupPipelineMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/pipelines', createPageResponse([createPipeline({ id: 1, name: NAME, createdBy: CREATOR })]));
     await page.goto('/pipelines');
-
-    const link = page.getByRole('link', { name: LONG_NAME });
+    const link = page.getByRole('link', { name: NAME });
     const row = page.getByRole('row').filter({ has: link });
-    const lastCell = row.getByRole('button', { name: '삭제' });
-    await expectLongValueTruncated(link, LONG_NAME, lastCell);
-    await expectLongValueTruncated(row.getByText(LONG_CREATOR, { exact: true }), LONG_CREATOR, lastCell);
-  });
+    return { link, row, creator: row.getByText(CREATOR, { exact: true }) };
+  }
+
+  for (const width of TABLE_LAYOUT_WIDTHS) {
+    test(`${width}px 에서 100자 이름이 있어도 표가 넘치지 않고 삭제 버튼까지 보인다`, async ({ authenticatedPage: page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await setupPipelineMocks(page, 3);
+      const [first, ...rest] = createPipelines(3);
+      await mockApi(
+        page,
+        'GET',
+        '/api/v1/pipelines',
+        createPageResponse([{ ...first, name: LONG_NAME, createdBy: LONG_CREATOR }, ...rest]),
+      );
+      await page.goto('/pipelines');
+
+      const link = page.getByRole('link', { name: LONG_NAME });
+      const row = page.getByRole('row').filter({ has: link });
+      await expectTableFits(row.getByRole('button', { name: '삭제' }));
+      await expectLongValueTruncated(link, LONG_NAME);
+      await expectLongValueTruncated(row.getByText(LONG_CREATOR, { exact: true }), LONG_CREATOR);
+    });
+  }
 
   test('1280px 에서 평범한 길이의 이름·생성자는 잘리지 않는다', async ({ authenticatedPage: page }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await setupPipelineMocks(page, 1);
-    const NAME = '일일 매출 집계 파이프라인 운영용 v2';
-    const CREATOR = 'firstname.lastname';
-    await mockApi(
-      page,
-      'GET',
-      '/api/v1/pipelines',
-      createPageResponse([createPipeline({ id: 1, name: NAME, createdBy: CREATOR })]),
-    );
-    await page.goto('/pipelines');
-
-    const link = page.getByRole('link', { name: NAME });
+    const { link, row, creator } = await openNormal(page, 1280);
+    await expectTableFits(row.getByRole('button', { name: '삭제' }));
     await expectValueNotTruncated(link);
-    await expectValueNotTruncated(page.getByRole('row').filter({ has: link }).getByText(CREATOR, { exact: true }));
+    await expectValueNotTruncated(creator);
+  });
+
+  // 1024px 은 짧은 칸(상태·스텝 수·트리거·생성일·삭제)을 빼고 남는 폭이 평범한 이름과 생성자의 합보다 좁다 —
+  // 이름을 우선해 이름은 다 보이고 생성자만 말줄임(전체 값은 title)된다.
+  test('1024px 에서 평범한 길이의 이름은 잘리지 않고 생성자는 title 로 남는다', async ({ authenticatedPage: page }) => {
+    const { link, row, creator } = await openNormal(page, 1024);
+    await expectTableFits(row.getByRole('button', { name: '삭제' }));
+    await expectValueNotTruncated(link);
+    await expect(creator).toHaveAttribute('title', CREATOR);
   });
 });

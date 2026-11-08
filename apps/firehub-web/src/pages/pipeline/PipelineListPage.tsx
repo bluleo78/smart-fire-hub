@@ -3,6 +3,7 @@ import { useMemo,useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { TruncatedLink } from '@/components/TruncatedLink';
 import { SimplePagination } from '@/components/ui/simple-pagination';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
@@ -116,7 +117,8 @@ export default function PipelineListPage() {
         </div>
       )}
 
-      <div className="rounded-md border">
+      {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(상태·스텝 수·트리거·생성일·삭제) + 긴 값 칸 여백 */}
+      <div className="@container [--k:calc(3.75rem_+_5.25rem_+_3.75rem_+_7rem_+_3.75rem_+_2rem)] rounded-md border">
         <Table aria-label="파이프라인 목록">
           <TableHeader>
             <TableRow>
@@ -127,24 +129,26 @@ export default function PipelineListPage() {
               >
                 이름
               </SortableHeader>
-              <TableHead>상태</TableHead>
+              <TableHead className="w-[3.75rem]">상태</TableHead>
               <SortableHeader
+                className="w-[5.25rem]"
                 direction={sortKey === 'stepCount' ? sortOrder : 'none'}
                 onSort={() => toggleSort('stepCount')}
                 title="현재 페이지 내에서만 정렬됩니다"
               >
                 스텝 수
               </SortableHeader>
-              <TableHead>트리거</TableHead>
+              <TableHead className="w-[3.75rem]">트리거</TableHead>
               <TableHead>생성자</TableHead>
               <SortableHeader
+                className="w-[7rem]"
                 direction={sortKey === 'createdAt' ? sortOrder : 'none'}
                 onSort={() => toggleSort('createdAt')}
                 title="현재 페이지 내에서만 정렬됩니다"
               >
                 생성일
               </SortableHeader>
-              <TableHead className="w-[60px]" />
+              <TableHead className="w-[3.75rem]" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -157,19 +161,10 @@ export default function PipelineListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors row-hover"
                   onClick={() => navigate(`/pipelines/${pipeline.id}`)}
                 >
-                  {/* WD-559: 표 셀은 줄바꿈하지 않아(whitespace-nowrap) 띄어쓰기 없는 긴 이름이 칸을 늘려 상태·삭제 칸이 화면 밖으로
-                      밀렸다. 데이터셋 목록(WD-517)처럼 값에 고정 폭 상한을 두어 넘는 값만 말줄임, 전체 값은 title 로 보인다. */}
+                  {/* WD-559·WD-634: 긴 값은 표 컨테이너 비례 상한(cqw)으로 말줄임 — 이유는 TruncatedText 설명 */}
                   <TableCell className="font-medium">
-                    {/* 키보드 접근성(WD-396): 행 클릭은 마우스로만 열리므로 이름을 상세 링크로 둔다 — Tab 으로 닿고 Enter 로
-                        열린다. 클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
-                    <Link
-                      to={`/pipelines/${pipeline.id}`}
-                      className="inline-block max-w-[20rem] truncate align-middle rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      title={pipeline.name}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {pipeline.name}
-                    </Link>
+                    {/* 키보드 접근성(WD-396): 행 클릭은 마우스 전용이라 이름을 상세 링크로 둔다 */}
+                    <TruncatedLink to={`/pipelines/${pipeline.id}`} value={pipeline.name} className="max-w-[min(24rem,calc((100cqw_-_var(--k))_*_0.7))]" />
                   </TableCell>
                   <TableCell>
                     <StatusBadge type={pipeline.isActive ? 'active' : 'inactive'}>
@@ -185,9 +180,8 @@ export default function PipelineListPage() {
                       </Badge>
                     )}
                   </TableCell>
-                  {/* WD-559: 생성자 아이디도 길면(최대 60자 안팎) 칸을 늘리므로 같은 방식으로 묶는다 */}
                   <TableCell>
-                    <TruncatedText value={pipeline.createdBy} className="max-w-[10rem]" />
+                    <TruncatedText value={pipeline.createdBy} className="max-w-[min(12rem,calc((100cqw_-_var(--k))_*_0.3))]" />
                   </TableCell>
                   <TableCell className="tabular-nums" title={formatDateTimeMinute(pipeline.createdAt)}>
                     {formatDateOnly(pipeline.createdAt)}

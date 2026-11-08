@@ -246,13 +246,14 @@ export default function CategoryListPage() {
         </div>
       </div>
 
-      <div className="rounded-md border">
+      {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(작업) + 긴 값 칸 여백 */}
+      <div className="@container [--k:calc(7.5rem_+_2rem)] rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
               <TableHead>설명</TableHead>
-              {showActions && <TableHead className="w-[120px]">작업</TableHead>}
+              {showActions && <TableHead className="w-[7.5rem]">작업</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -261,13 +262,12 @@ export default function CategoryListPage() {
             ) : hasResults ? (
               visibleCategories.map((category) => (
                 <TableRow key={category.id}>
-                  {/* WD-559: 표 셀은 줄바꿈하지 않아(whitespace-nowrap) 띄어쓰기 없는 긴 이름·설명이 칸을 늘려 편집·삭제 칸이 화면 밖으로
-                      밀렸다. 데이터셋 목록(WD-517)처럼 값에 고정 폭 상한을 두어 넘는 값만 말줄임, 전체 값은 title 로 보인다. */}
+                  {/* WD-559·WD-634: 긴 값은 표 컨테이너 비례 상한(cqw)으로 말줄임 — 이유는 TruncatedText 설명 */}
                   <TableCell className="font-medium">
-                    <TruncatedText value={category.name} className="max-w-[16rem]" />
+                    <TruncatedText value={category.name} className="max-w-[min(20rem,calc((100cqw_-_var(--k))_*_0.32))]" />
                   </TableCell>
                   <TableCell>
-                    <TruncatedText value={category.description} className="max-w-[28rem]" />
+                    <TruncatedText value={category.description} className="max-w-[min(40rem,calc((100cqw_-_var(--k))_*_0.68))]" />
                   </TableCell>
                   {showActions && (
                     <TableCell>
