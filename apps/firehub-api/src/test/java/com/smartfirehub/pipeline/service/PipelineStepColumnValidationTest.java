@@ -249,7 +249,26 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
         Arguments.of(
             "Python 출력 컬럼 PG 시스템 컬럼명",
             pythonStep(null, List.of(outputColumn("xmin"))),
-            "스텝 '파이썬': 컬럼명 'xmin'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at, xmin, xmax, cmin, cmax, ctid, tableoid)"));
+            "스텝 '파이썬': 컬럼명 'xmin'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at, xmin, xmax, cmin, cmax, ctid, tableoid)"),
+        // WD-635 — 형식 검사를 예약어보다 먼저 하도록 순서를 바꿨어도, 형식에 걸리는 예약어 변형(_updated_at·ID·XMIN)은 자동 생성 출력에서
+        // 예전처럼 「예약어」 안내를 받는다(PG 테넌트라 PG 시스템 컬럼 변형도 예약어).
+        Arguments.of(
+            "자동 생성 출력의 예약어 변형 _updated_at",
+            apiStep(null, List.of(mapping("a", "_updated_at"))),
+            "스텝 'API 호출': 컬럼명 '_updated_at'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at, xmin, xmax, cmin, cmax, ctid, tableoid)"),
+        Arguments.of(
+            "자동 생성 출력의 예약어 변형 ID",
+            apiStep(null, List.of(mapping("a", "ID"))),
+            "스텝 'API 호출': 컬럼명 'ID'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at, xmin, xmax, cmin, cmax, ctid, tableoid)"),
+        Arguments.of(
+            "Python 출력 컬럼 PG 시스템 컬럼명 변형 XMIN",
+            pythonStep(null, List.of(outputColumn("XMIN"))),
+            "스텝 '파이썬': 컬럼명 'XMIN'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at, xmin, xmax, cmin, cmax, ctid, tableoid)"),
+        // 지정 출력 데이터셋은 예약어를 보지 않으므로 같은 이름이 예전처럼 형식 안내를 받는다.
+        Arguments.of(
+            "지정 출력의 형식 위반 _updated_at",
+            apiStep(OUT, List.of(mapping("a", "_updated_at"))),
+            "스텝 'API 호출': 컬럼 이름은 영문 소문자로 시작하고 영문 소문자·숫자·밑줄만 쓸 수 있습니다: _updated_at"));
   }
 
   /** OUT 표식을 실제 출력 데이터셋 id 로 바꾼다. */
@@ -374,6 +393,28 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
                 List.of(pythonStep(null, List.of(outputColumn("val"), outputColumn("score_1"))))),
             userId);
     assertThat(created.steps()).hasSize(1);
+  }
+
+  /**
+   * WD-635 — 출력 컬럼 타입 비교는 기본 로캘과 무관해야 한다. 터키어 로캘에서는 {@code "integer".toUpperCase()} 가 "İNTEGER" 가
+   * 되어 허용 타입 목록과 어긋나, 소문자로 쓴 정상 타입이 저장에서 거부됐다. 로캘은 finally 에서 되돌린다.
+   */
+  @Test
+  void create_pythonLowerCaseOutputType_succeeds_underTurkishDefaultLocale() {
+    java.util.Locale saved = java.util.Locale.getDefault();
+    try {
+      java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr"));
+      PipelineDetailResponse created =
+          pipelineService.createPipeline(
+              new CreatePipelineRequest(
+                  "WD635 터키어 타입",
+                  null,
+                  List.of(pythonStep(null, List.of(Map.of("name", "score", "type", "integer"))))),
+              userId);
+      assertThat(created.steps()).hasSize(1);
+    } finally {
+      java.util.Locale.setDefault(saved);
+    }
   }
 
   /** 페이지 크기 경계값(1·10000)은 저장된다(WD-362). */

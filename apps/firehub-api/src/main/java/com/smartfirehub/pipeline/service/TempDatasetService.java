@@ -9,6 +9,7 @@ import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.storage.tibero.TiberoNames;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -158,11 +159,14 @@ public class TempDatasetService {
    * Sanitize a step name to a safe PostgreSQL table name suffix. Converts to lowercase,
    * non-alphanumeric chars to underscores, deduplicates underscores, and appends a 4-char hash to
    * avoid collisions.
+   *
+   * <p>소문자화는 {@link Locale#ROOT} 로 한다(WD-635) — 기본 로캘이 터키어면 "I" 가 점 없는 "ı" 가 되어 밑줄로 바뀌므로 같은 스텝 이름이
+   * 서버 로캘에 따라 다른 테이블 이름이 된다.
    */
   static String sanitizeForTableName(String stepName) {
     String sanitized =
         stepName
-            .toLowerCase()
+            .toLowerCase(Locale.ROOT)
             .replaceAll("[^a-z0-9]", "_")
             .replaceAll("_+", "_")
             .replaceAll("^_|_$", "");

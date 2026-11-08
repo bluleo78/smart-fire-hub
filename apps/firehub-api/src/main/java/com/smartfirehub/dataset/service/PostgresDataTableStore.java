@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.dataset.storage.DataTableStore;
+import com.smartfirehub.dataset.storage.ReservedColumnNames;
 import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -17,7 +18,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Stream;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
@@ -38,21 +38,13 @@ import org.springframework.stereotype.Component;
 public class PostgresDataTableStore implements DataTableStore {
 
   /**
-   * PostgreSQL 이 모든 테이블에 숨겨 두는 시스템 컬럼 이름(WD-564). 사용자 컬럼으로 만들면 DDL 이 "conflicts with a system
-   * column name" 으로 실패해 500 이 됐으므로 새 컬럼명 검증에서 미리 400 으로 거부한다. PG DDL 제약이라 이 저장소에만 적용한다 — 물리 테이블의 일반
-   * 컬럼이 아니므로 {@link DataTableStore#SYSTEM_COLUMNS}(결과 숨김·적재 키 제거 등에 쓰임)에는 넣지 않는다.
+   * PG 는 앱 시스템 컬럼에 더해 PG 시스템 컬럼명(xmin·ctid 등)도 예약어다 — DDL 이 "conflicts with a system column name"
+   * 으로 거부해 500 이 되던 것을 미리 400 으로 막는다(WD-564). 목록은 단일 출처 {@link
+   * ReservedColumnNames#POSTGRESQL}(WD-635).
    */
-  public static final List<String> PG_SYSTEM_COLUMNS =
-      List.of("xmin", "xmax", "cmin", "cmax", "ctid", "tableoid");
-
-  /** PG 백엔드에서 새 컬럼에 쓸 수 없는 이름 전체(안내 순서) — 앱 시스템 컬럼 다음에 PG 시스템 컬럼. */
-  public static final List<String> RESERVED_COLUMN_NAMES =
-      Stream.concat(SYSTEM_COLUMN_NAMES.stream(), PG_SYSTEM_COLUMNS.stream()).toList();
-
-  /** PG 는 앱 시스템 컬럼에 더해 PG 시스템 컬럼명도 예약어다(WD-564). */
   @Override
   public List<String> reservedColumnNames() {
-    return RESERVED_COLUMN_NAMES;
+    return ReservedColumnNames.POSTGRESQL;
   }
 
   @Override

@@ -4,7 +4,6 @@ import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -20,40 +19,31 @@ public interface DataTableStore {
   String UPDATED_AT_COLUMN = "_updated_at";
 
   /**
-   * 앱 시스템 컬럼 이름(순서 고정) — 모든 백엔드의 데이터셋 물리 테이블이 갖는 컬럼이다. 예약어 안내 문구의 순서와 {@link #SYSTEM_COLUMNS} 집합이
-   * 모두 이 목록 하나에서 나와 서로 어긋나지 않는다(WD-564).
+   * 앱 시스템 컬럼 이름(순서 고정) — 모든 백엔드의 데이터셋 물리 테이블이 갖는 컬럼이다. 목록 자체는 예약 컬럼명 단일 출처 {@link
+   * ReservedColumnNames#APP_SYSTEM} 에 있고 여기서는 가리키기만 한다(WD-635 — 저장소·방언·DDL·별칭이 같은 목록을 쓴다).
    */
-  List<String> SYSTEM_COLUMN_NAMES = List.of("id", "import_id", "created_at", UPDATED_AT_COLUMN);
+  List<String> SYSTEM_COLUMN_NAMES = ReservedColumnNames.APP_SYSTEM;
 
   /** 사용자가 컬럼명으로 쓸 수 없는 시스템 예약 컬럼. 생성·컬럼 추가·결과 숨김이 모두 이 집합을 따른다. */
   Set<String> SYSTEM_COLUMNS = Set.copyOf(SYSTEM_COLUMN_NAMES);
 
   /**
-   * 이 백엔드에서 새 컬럼(생성·추가·이름 변경)에 쓸 수 없는 이름(소문자, 안내 순서). 기본은 앱 시스템 컬럼뿐이고, DB 자체가 막는 이름이 있는 백엔드는 덮어써
-   * 더한다(PG 의 xmin 등 — {@code PostgresDataTableStore}, WD-564). DB 제약이므로 백엔드마다 다르다 — Tibero 에는 PG
-   * 시스템 컬럼명 제약이 없어 그런 이름의 기존 컬럼이 합법적으로 있을 수 있다.
+   * 이 백엔드에서 새 컬럼(생성·추가·이름 변경)에 쓸 수 없는 이름(소문자, 안내 순서). 기본은 앱 시스템 컬럼뿐이고(Tibero 는 이 기본을 그대로 쓴다 —
+   * {@link ReservedColumnNames#TIBERO} 와 같은 목록), DB 자체가 막는 이름이 있는 백엔드는 덮어써 {@link
+   * ReservedColumnNames} 의 자기 백엔드 목록을 돌려준다(PG 의 xmin 등, WD-564). 목록을 구현마다 따로 적지 않는다(WD-635).
    */
   default List<String> reservedColumnNames() {
-    return SYSTEM_COLUMN_NAMES;
+    return ReservedColumnNames.APP_SYSTEM;
   }
 
-  /** 이 백엔드에서 컬럼명이 예약어인지(대소문자 무시). */
+  /** 이 백엔드에서 컬럼명이 예약어인지(대소문자 무시, 로캘 무관 — {@link ReservedColumnNames#contains}). */
   default boolean isReservedColumnName(String columnName) {
-    return reservedColumnNames().contains(columnName.toLowerCase(Locale.ROOT));
+    return ReservedColumnNames.contains(reservedColumnNames(), columnName);
   }
 
   /** 이 백엔드의 예약 컬럼명 안내 문구 — 목록에는 이 백엔드에 적용되는 예약어만 싣는다. */
   default String reservedColumnNameMessage(String columnName) {
-    return reservedColumnNameMessage(columnName, reservedColumnNames());
-  }
-
-  /**
-   * 예약 컬럼명 안내 문구의 단일 형식 — 데이터셋 생성·추가·이름 변경, 백엔드별 저장소, 파이프라인 스텝 저장 검증이 같은 문장을 쓰도록 한 곳에 둔다.
-   *
-   * @param reserved 안내에 실을 예약어 목록(순서 그대로 보여 준다)
-   */
-  static String reservedColumnNameMessage(String columnName, List<String> reserved) {
-    return "컬럼명 '" + columnName + "'은 시스템 예약어입니다. (예약어: " + String.join(", ", reserved) + ")";
+    return ReservedColumnNames.message(columnName, reservedColumnNames());
   }
 
   /**

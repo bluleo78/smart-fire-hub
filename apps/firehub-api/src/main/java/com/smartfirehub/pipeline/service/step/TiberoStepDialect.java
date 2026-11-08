@@ -4,7 +4,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
 import com.smartfirehub.dataset.service.DataTableService;
-import com.smartfirehub.dataset.storage.DataTableStore;
+import com.smartfirehub.dataset.storage.ReservedColumnNames;
 import com.smartfirehub.dataset.storage.tibero.TiberoNames;
 import com.smartfirehub.dataset.storage.tibero.TiberoPipelineSql;
 import com.smartfirehub.dataset.storage.tibero.TiberoSqlLexer;
@@ -155,7 +155,7 @@ public class TiberoStepDialect implements StepDialect {
    *     같다
    * @return 적재 대상 컬럼(메타데이터 이름)과 그 원본 열 이름
    */
-  private static TiberoColumnMatch matchTiberoColumns(
+  private TiberoColumnMatch matchTiberoColumns(
       List<DbExecutorClient.ProbeColumn> probed,
       List<DatasetColumnResponse> outputColumns,
       boolean renameReserved) {
@@ -176,8 +176,8 @@ public class TiberoStepDialect implements StepDialect {
     }
     List<String> targetNames =
         renameReserved
-            ? SqlOutputColumns.renameReservedColumnNames(
-                selectColumns, DataTableStore.SYSTEM_COLUMN_NAMES)
+            // TEMP 생성(Tibero 저장소)과 같은 예약어 목록 — PG 방언처럼 이 방언의 reservedColumnNames() 를 쓴다(WD-635)
+            ? SqlOutputColumns.renameReservedColumnNames(selectColumns, reservedColumnNames())
             : selectColumns;
     // 실패 안내에는 사용자가 쓴 그대로의(탐지된) 이름을 보여 준다.
     List<String> matched =
@@ -326,10 +326,13 @@ public class TiberoStepDialect implements StepDialect {
     return false;
   }
 
-  /** Tibero 저장소와 같은 예약어 — 앱 시스템 컬럼만(PG 시스템 컬럼명은 PG DDL 제약이라 Tibero 에는 없다, WD-564). */
+  /**
+   * Tibero 저장소와 같은 예약어 — 앱 시스템 컬럼만(PG 시스템 컬럼명은 PG DDL 제약이라 Tibero 에는 없다, WD-564). 단일 출처 {@link
+   * ReservedColumnNames#TIBERO}(WD-635).
+   */
   @Override
   public List<String> reservedColumnNames() {
-    return DataTableStore.SYSTEM_COLUMN_NAMES;
+    return ReservedColumnNames.TIBERO;
   }
 
   /**

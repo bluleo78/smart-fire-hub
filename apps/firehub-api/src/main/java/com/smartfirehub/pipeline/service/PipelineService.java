@@ -41,6 +41,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -1307,7 +1308,9 @@ public class PipelineService {
             true);
       }
       for (PythonStepConfig.OutputColumn col : config.outputColumns()) {
-        if (col.type() == null || !VALID_OUTPUT_COLUMN_TYPES.contains(col.type().toUpperCase())) {
+        // Locale.ROOT — 터키어 로캘에서 "integer" 가 "İNTEGER" 로 바뀌어 허용 타입과 어긋나지 않게(WD-635)
+        if (col.type() == null
+            || !VALID_OUTPUT_COLUMN_TYPES.contains(col.type().toUpperCase(Locale.ROOT))) {
           throw new IllegalArgumentException(
               stepError(step.name(), "출력 컬럼 타입은 다음 중 하나여야 합니다: " + VALID_OUTPUT_COLUMN_TYPES));
         }
@@ -1509,24 +1512,25 @@ public class PipelineService {
    * DataTableStore#reservedColumnNameMessage(String)}). 지정 출력 데이터셋에는 이 컬럼들이 물리적으로 있어 적재가 가능하므로 형식
    * 검사만 한다. 형식 규칙은 {@link DataTableNames#isValid} — 공용 영어 문구({@link DataTableNames#validate})는 다른
    * 호출처와 공유하므로 바꾸지 않고 여기서 한국어 안내를 낸다(WD-111 과 같은 문장).
+   *
+   * <p>순서(형식 → 길이 → 예약어)는 데이터셋 컬럼 검증과 같은 단일 구현 {@link DataTableService#checkNewColumnName} 을
+   * 쓰고(WD-635), 여기서는 위반 종류를 스텝 문구로 바꾸기만 한다. 예약어는 자동 생성 출력일 때만 본다.
    */
   private void rejectInvalidColumnName(String stepName, String name, boolean autoOutput) {
-    if (autoOutput) {
-      // 예약어는 테넌트 백엔드마다 다르다 — TEMP 를 만들 저장소와 같은 규칙·문구를 쓴다(PG 는 xmin 등 포함, WD-564).
-      DataTableStore store = dataStoreResolver.tableStore();
-      if (store.isReservedColumnName(name)) {
-        throw new IllegalArgumentException(
-            stepError(stepName, store.reservedColumnNameMessage(name)));
-      }
+    DataTableService.NewColumnNameViolation violation =
+        DataTableService.checkNewColumnName(name, autoOutput, dataStoreResolver);
+    if (violation == null) {
+      return;
     }
-    if (!DataTableNames.isValid(name)) {
-      throw new IllegalArgumentException(stepError(stepName, INVALID_COLUMN_NAME_MESSAGE + name));
-    }
-    // 63자를 넘으면 TEMP 생성·적재가 실행 시점에 실패한다 — 저장 시점에 같은 상한으로 막는다(WD-352, 화면 문구와 같다)
-    if (name.length() > DataTableService.MAX_COLUMN_NAME_LENGTH) {
-      throw new IllegalArgumentException(
-          stepError(stepName, "칼럼명은 " + DataTableService.MAX_COLUMN_NAME_LENGTH + "자 이하여야 합니다"));
-    }
+    String message =
+        switch (violation.kind()) {
+          case FORMAT -> INVALID_COLUMN_NAME_MESSAGE + name;
+          // 63자를 넘으면 TEMP 생성·적재가 실행 시점에 실패한다 — 저장 시점에 같은 상한으로 막는다(WD-352, 화면 문구와 같다)
+          case LENGTH -> "칼럼명은 " + DataTableService.MAX_COLUMN_NAME_LENGTH + "자 이하여야 합니다";
+          // 예약어는 테넌트 백엔드마다 다르다 — TEMP 를 만들 저장소와 같은 규칙·문구(PG 는 xmin 등 포함, WD-564)
+          case RESERVED -> violation.reservedMessage();
+        };
+    throw new IllegalArgumentException(stepError(stepName, message));
   }
 
   /**

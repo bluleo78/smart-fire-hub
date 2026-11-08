@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -22,6 +23,10 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.service.PostgresDataTableStore;
+import com.smartfirehub.dataset.storage.ReservedColumnNames;
+import com.smartfirehub.dataset.storage.tibero.TiberoDataTableStore;
+import com.smartfirehub.dataset.storage.tibero.TiberoDdlSql;
 import com.smartfirehub.dataset.storage.tibero.TiberoPipelineSql;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -124,16 +129,134 @@ class StepDialectTest {
   @Test
   void reservedColumnNames_pgAliasesPgSystemColumns_tiberoKeepsThem() {
     assertThat(pg.reservedColumnNames())
-        .isEqualTo(com.smartfirehub.dataset.service.PostgresDataTableStore.RESERVED_COLUMN_NAMES)
+        .isEqualTo(com.smartfirehub.dataset.storage.ReservedColumnNames.POSTGRESQL)
         .contains("id", "_updated_at", "xmin", "xmax", "cmin", "cmax", "ctid", "tableoid");
     assertThat(tibero.reservedColumnNames())
-        .isEqualTo(com.smartfirehub.dataset.storage.DataTableStore.SYSTEM_COLUMN_NAMES);
+        .isEqualTo(com.smartfirehub.dataset.storage.ReservedColumnNames.TIBERO);
 
     List<String> names = List.of("ctid", "XMIN", "id", "xmin_value", "ctid2", "name");
     assertThat(SqlOutputColumns.renameReservedColumnNames(names, pg.reservedColumnNames()))
         .containsExactly("ctid_1", "xmin_1", "id_1", "xmin_value", "ctid2", "name");
     assertThat(SqlOutputColumns.renameReservedColumnNames(names, tibero.reservedColumnNames()))
         .containsExactly("ctid", "XMIN", "id_1", "xmin_value", "ctid2", "name");
+  }
+
+  /**
+   * WD-635 — 결과 컬럼 별칭의 예약어 비교는 기본 로캘과 무관해야 한다. 터키어 로캘에서는 {@code "ID".toLowerCase()} 가 "ıd" 가 되어 예약어
+   * id 와 어긋나 별칭이 붙지 않았고, 그 이름이 TEMP 생성 검증(Locale.ROOT)에서 예약어로 거부됐다. 로캘은 finally 에서 되돌린다.
+   */
+  @Test
+  void renameReservedColumnNames_isLocaleIndependent_underTurkishDefaultLocale() {
+    List<String> names = List.of("ID", "XMIN", "CTID", "Import_Id", "_UPDATED_AT", "title");
+    java.util.Locale saved = java.util.Locale.getDefault();
+    try {
+      java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr"));
+      assertThat(SqlOutputColumns.renameReservedColumnNames(names, pg.reservedColumnNames()))
+          .containsExactly("id_1", "xmin_1", "ctid_1", "import_id_1", "updated_at_1", "title");
+      assertThat(SqlOutputColumns.renameReservedColumnNames(names, tibero.reservedColumnNames()))
+          .containsExactly("id_1", "XMIN", "CTID", "import_id_1", "updated_at_1", "title");
+    } finally {
+      java.util.Locale.setDefault(saved);
+    }
+  }
+
+  /**
+   * WD-635 — 예약 컬럼명은 백엔드마다 단일 출처({@link ReservedColumnNames})에서 나오고, 모든 호출처(저장소 판정·Tibero DDL 빌더·스텝
+   * 방언의 결과 별칭)가 같은 이름을 거부/별칭한다. 예약어와 그 대소문자 변형, 비슷하지만 예약이 아닌 이름(xmin_value·ids·SQL 키워드 level/rowid
+   * 등)을 모두 넣어 호출처마다 판정이 같은지 본다. 기본 로캘을 터키어로 바꾼 채로도 같아야 한다(로캘은 finally 에서 되돌린다).
+   */
+  @Test
+  void reservedColumnNames_everyCallSiteAgreesWithSingleSource_evenUnderTurkishLocale() {
+    PostgresDataTableStore pgStore = mock(PostgresDataTableStore.class, CALLS_REAL_METHODS);
+    TiberoDataTableStore tiberoStore = mock(TiberoDataTableStore.class, CALLS_REAL_METHODS);
+    List<String> probes = new java.util.ArrayList<>();
+    for (String reserved : ReservedColumnNames.ANY_BACKEND) {
+      probes.add(reserved);
+      probes.add(reserved.toUpperCase(java.util.Locale.ROOT));
+      probes.add(Character.toUpperCase(reserved.charAt(0)) + reserved.substring(1));
+    }
+    probes.addAll(
+        List.of(
+            "xmin_value",
+            "ctid2",
+            "ids",
+            "identity",
+            "created",
+            "updated_at",
+            "title",
+            "level",
+            "rowid",
+            "LEVEL",
+            "ROWID",
+            "oid",
+            "user"));
+
+    java.util.Locale saved = java.util.Locale.getDefault();
+    for (java.util.Locale locale :
+        List.of(java.util.Locale.ROOT, java.util.Locale.forLanguageTag("tr"))) {
+      try {
+        java.util.Locale.setDefault(locale);
+        // 방언·저장소가 단일 출처 목록 그대로를 돌려준다.
+        assertThat(pgStore.reservedColumnNames()).isSameAs(ReservedColumnNames.POSTGRESQL);
+        assertThat(pg.reservedColumnNames()).isSameAs(ReservedColumnNames.POSTGRESQL);
+        assertThat(tiberoStore.reservedColumnNames()).isSameAs(ReservedColumnNames.TIBERO);
+        assertThat(tibero.reservedColumnNames()).isSameAs(ReservedColumnNames.TIBERO);
+
+        for (String probe : probes) {
+          boolean pgReserved = ReservedColumnNames.contains(ReservedColumnNames.POSTGRESQL, probe);
+          boolean tiberoReserved = ReservedColumnNames.contains(ReservedColumnNames.TIBERO, probe);
+          String why = probe + " @ " + locale;
+          // PG: 저장소 판정 == 방언 별칭 여부
+          assertThat(pgStore.isReservedColumnName(probe)).as(why).isEqualTo(pgReserved);
+          assertThat(renamedBy(probe, pg.reservedColumnNames())).as(why).isEqualTo(pgReserved);
+          // Tibero: 저장소 판정 == DDL 빌더 거부 여부 == 방언 별칭 여부
+          assertThat(tiberoStore.isReservedColumnName(probe)).as(why).isEqualTo(tiberoReserved);
+          assertThat(rejectedByTiberoDdl(probe)).as(why).isEqualTo(tiberoReserved);
+          assertThat(renamedBy(probe, tibero.reservedColumnNames()))
+              .as(why)
+              .isEqualTo(tiberoReserved);
+          // 예전 목록과 같은 집합이어야 한다(동작 보존) — PG 는 앱 4개 + PG 시스템 6개, Tibero 는 앱 4개.
+          String lower = probe.toLowerCase(java.util.Locale.ROOT);
+          assertThat(pgReserved)
+              .as(why)
+              .isEqualTo(
+                  List.of(
+                          "id",
+                          "import_id",
+                          "created_at",
+                          "_updated_at",
+                          "xmin",
+                          "xmax",
+                          "cmin",
+                          "cmax",
+                          "ctid",
+                          "tableoid")
+                      .contains(lower));
+          assertThat(tiberoReserved)
+              .as(why)
+              .isEqualTo(List.of("id", "import_id", "created_at", "_updated_at").contains(lower));
+        }
+      } finally {
+        java.util.Locale.setDefault(saved);
+      }
+    }
+  }
+
+  /** 결과 컬럼 별칭 경로가 이 이름을 예약어로 보고 바꿨는지. */
+  private static boolean renamedBy(String name, List<String> reserved) {
+    return !SqlOutputColumns.renameReservedColumnNames(List.of(name), reserved).get(0).equals(name);
+  }
+
+  /** Tibero DDL 빌더가 이 이름을 예약어로 거부하는지. */
+  private static boolean rejectedByTiberoDdl(String name) {
+    try {
+      TiberoDdlSql.rejectSystemColumn(name);
+      return false;
+    } catch (com.smartfirehub.dataset.exception.InvalidTableNameException e) {
+      assertThat(e.getMessage())
+          .isEqualTo(ReservedColumnNames.message(name, ReservedColumnNames.TIBERO));
+      return true;
+    }
   }
 
   @Test

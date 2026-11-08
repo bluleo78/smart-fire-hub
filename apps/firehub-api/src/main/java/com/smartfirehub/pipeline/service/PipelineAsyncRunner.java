@@ -56,6 +56,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
@@ -1951,7 +1952,8 @@ public class PipelineAsyncRunner {
             fm -> {
               String appType = "TEXT";
               if (fm.dataType() != null) {
-                String dt = fm.dataType().toUpperCase();
+                // 타입명 비교는 로캘 무관(Locale.ROOT, WD-635)
+                String dt = fm.dataType().toUpperCase(Locale.ROOT);
                 if (dt.contains("INT")) appType = "INTEGER";
                 else if (dt.contains("NUMERIC")
                     || dt.contains("DECIMAL")

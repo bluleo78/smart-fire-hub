@@ -811,6 +811,29 @@ class SqlValidatorTest {
         .doesNotThrowAnyException();
   }
 
+  /**
+   * WD-635 — 예약 이름 비교는 기본 로캘과 무관해야 한다. 터키어 로캘에서는 {@code "I".toLowerCase()} 가 점 없는 ı 가 되어 대문자로 쓴
+   * {@code SESSION_USER}·{@code PG_READ_FILE} 이 차단 목록과 어긋나 그대로 통과할 수 있었다. 로캘은 finally 에서 되돌린다.
+   */
+  @Test
+  void rejects_upperCaseBlockedNames_underTurkishDefaultLocale() {
+    SqlValidator permissive = new SqlValidator("data", true);
+    java.util.Locale saved = java.util.Locale.getDefault();
+    try {
+      java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr"));
+      assertThatThrownBy(() -> permissive.validate("SELECT SESSION_USER"))
+          .isInstanceOf(UnsafeSqlException.class);
+      assertThatThrownBy(() -> permissive.validate("SELECT CURRENT_CATALOG"))
+          .isInstanceOf(UnsafeSqlException.class);
+      assertThatThrownBy(() -> permissive.validate("SELECT PG_READ_FILE('/etc/passwd')"))
+          .isInstanceOf(UnsafeSqlException.class);
+      assertThatThrownBy(() -> validator.validate("SELECT PG_READ_FILE('/etc/passwd')"))
+          .isInstanceOf(UnsafeSqlException.class);
+    } finally {
+      java.util.Locale.setDefault(saved);
+    }
+  }
+
   // --- 코드리뷰 m4 — current_user 등 의사 상수는 Column 노드라 함수 검사를 안 탄다 ---
 
   /**

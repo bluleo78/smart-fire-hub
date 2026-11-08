@@ -25,6 +25,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -897,7 +898,8 @@ public class AiClassifyExecutor {
       Object value = row.get(col);
       if (value == null) continue;
 
-      String type = entry.getValue().toUpperCase();
+      // 타입명 비교는 로캘 무관(Locale.ROOT, WD-635)
+      String type = entry.getValue().toUpperCase(Locale.ROOT);
       try {
         if (type.contains("TIMESTAMP")) {
           if (value instanceof Number n) {

@@ -2,7 +2,7 @@ package com.smartfirehub.pipeline.service.step;
 
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
-import com.smartfirehub.dataset.service.PostgresDataTableStore;
+import com.smartfirehub.dataset.storage.ReservedColumnNames;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.ColumnInfo;
@@ -226,9 +226,12 @@ public class PgStepDialect implements StepDialect {
     return isReplace;
   }
 
-  /** PG 저장소와 같은 예약어 — 앱 시스템 컬럼 + PG 시스템 컬럼(xmin·ctid 등, WD-564). */
+  /**
+   * PG 저장소와 같은 예약어 — 앱 시스템 컬럼 + PG 시스템 컬럼(xmin·ctid 등, WD-564). 저장소와 같은 단일 출처를 써 TEMP 생성 검증과 별칭이
+   * 어긋나지 않는다(WD-635).
+   */
   @Override
   public List<String> reservedColumnNames() {
-    return PostgresDataTableStore.RESERVED_COLUMN_NAMES;
+    return ReservedColumnNames.POSTGRESQL;
   }
 }
