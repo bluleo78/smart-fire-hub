@@ -28,6 +28,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.stream.Collectors;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
@@ -1431,9 +1432,20 @@ public class TriggerService {
     if (DstAwareCron.of(normalizedCron, ZoneId.of(timezone)).next(Instant.now()) == null) {
       throw new IllegalArgumentException("다음 실행 시각이 없는 cron 표현식입니다: " + cron);
     }
-    // Validate concurrency policy
+    // 동시 실행 정책을 검증한다. Enum.valueOf 의 예외 문구(「No enum constant com.smartfirehub…」)가 그대로 응답에 실려
+    // 내부 클래스 경로가 드러났으므로(WD-622), 허용 값 목록을 담은 한국어 400 으로 바꾼다. 실행 시 비교가 대소문자를 가리므로
+    // (fireTrigger 의 "SKIP".equals) 여기서도 정확히 같은 이름만 받는다. 목록은 values() 에서 만들어 정책이 늘어도 어긋나지 않는다.
     String policy = config.get("concurrencyPolicy").toString();
-    ConcurrencyPolicy.valueOf(policy); // throws if invalid
+    boolean knownPolicy =
+        Arrays.stream(ConcurrencyPolicy.values()).anyMatch(p -> p.name().equals(policy));
+    if (!knownPolicy) {
+      String allowed =
+          Arrays.stream(ConcurrencyPolicy.values())
+              .map(Enum::name)
+              .collect(Collectors.joining(", "));
+      throw new IllegalArgumentException(
+          "동시 실행 정책(concurrencyPolicy)은 " + allowed + " 중 하나여야 합니다: " + policy);
+    }
   }
 
   /**
