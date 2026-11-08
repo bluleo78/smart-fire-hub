@@ -87,6 +87,9 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   private final DatasetRepository datasetRepository;
   private final TransactionTemplate requiresNew;
 
+  /** 커밋 뒤 테이블 동기화를 돌리는 전용 실행기 — 커밋 콜백 스레드가 커넥션 2개를 쥐지 않게 한다(WD-594). */
+  private final PythonReadSyncExecutor afterCommitExecutor;
+
   /** 테넌트 → 마지막으로 슬롯 롤 세션을 끊은 시각(epoch ms). 러너가 끊긴 스텝의 실패 문구를 명확히 하는 데만 쓴다(판정에는 쓰지 않는다). */
   private final Map<Long, Long> slotSessionsTerminatedAt = new ConcurrentHashMap<>();
 
@@ -98,8 +101,10 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
       TenantPipelineRoleProvisioner roleProvisioner,
       SecurityLevelRepository levelRepository,
       DatasetRepository datasetRepository,
-      PlatformTransactionManager txManager) {
+      PlatformTransactionManager txManager,
+      PythonReadSyncExecutor afterCommitExecutor) {
     this.dsl = dsl;
+    this.afterCommitExecutor = afterCommitExecutor;
     this.roleProvisioner = roleProvisioner;
     this.levelRepository = levelRepository;
     this.datasetRepository = datasetRepository;
@@ -150,12 +155,13 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   }
 
   /**
-   * 쓰기 경로 훅 — Spring 트랜잭션 동기화가 활성이면 커밋 후, 아니면 즉시 syncTable. 실패는 로그만 남긴다(판정이 아니라 이중 방어선이라 커밋을 막지
-   * 않는다, 스펙 §4.3). 다음 JIT·일 1회 동기화가 회복한다. 공통부는 {@link PythonReadGrantBackend#scheduleTableSync}.
+   * 쓰기 경로 훅 — 트랜잭션 안이면 커밋 뒤 {@link PythonReadSyncExecutor} 에서 비동기로, 아니면 즉시 syncTable 하고 실패는 로그만
+   * 남긴다(스펙 §4.3). 공통부는 {@link PythonReadGrantBackend#scheduleTableSync}.
    */
   @Override
   public void syncTableAfterCommit(String tableName) {
-    PythonReadGrantBackend.scheduleTableSync(tableName, log, "", this::syncTable);
+    PythonReadGrantBackend.scheduleTableSync(
+        tableName, log, "", afterCommitExecutor, this::syncTable);
   }
 
   /**

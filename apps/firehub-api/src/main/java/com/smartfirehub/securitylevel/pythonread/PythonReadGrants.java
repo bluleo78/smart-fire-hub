@@ -68,7 +68,10 @@ public class PythonReadGrants {
     delegate().syncDataset(datasetId);
   }
 
-  /** 쓰기 경로 훅 — 커밋 후(트랜잭션이 없으면 즉시) 그 테이블만 재동기화. 실패는 로그만. */
+  /**
+   * 쓰기 경로 훅 — 그 테이블만 재동기화한다. 트랜잭션 안이면 커밋 뒤 {@link PythonReadSyncExecutor} 에서 비동기로(요청이 돌아온 시점엔 GRANT
+   * 가 아직 반영되지 않았을 수 있다), 트랜잭션 동기화가 없으면 즉시 돌며 실패는 로그만 남긴다.
+   */
   public void syncTableAfterCommit(String tableName) {
     PythonReadGrantBackend backend;
     try {

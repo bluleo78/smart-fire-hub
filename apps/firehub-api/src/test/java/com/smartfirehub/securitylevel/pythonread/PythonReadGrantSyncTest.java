@@ -79,7 +79,13 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
   private String table(String suffix, String level) {
     String t = m + "_" + suffix;
     datasets.add(
-        new PythonReadTestTables(datasetService, dsl, dataDsl, fixtureTransactionTemplate, fx)
+        new PythonReadTestTables(
+                datasetService,
+                dsl,
+                dataDsl,
+                fixtureTransactionTemplate,
+                fx,
+                this::awaitPythonReadGrantSync)
             .create(t, level, owner));
     return t;
   }

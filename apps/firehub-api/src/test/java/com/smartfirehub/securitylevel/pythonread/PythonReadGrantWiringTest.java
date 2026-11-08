@@ -24,6 +24,7 @@ import com.smartfirehub.support.PostgresTestContainer;
 import com.smartfirehub.support.PythonReadTestTables;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -31,6 +32,11 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
@@ -57,6 +63,9 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   private static final long WRONG_AMBIENT_TENANT = 987_654_321L;
 
   @Autowired private DSLContext dsl;
+
+  /** 플랫폼(@Primary) 커넥션 풀 — 회귀 테스트가 풀 크기만큼 동시 커밋을 만든다(WD-594). */
+  @Autowired private DataSource dataSource;
 
   /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
   @Autowired @DataStoreDb private DSLContext dataDsl;
@@ -97,7 +106,13 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   private String table(String suffix, String level) {
     String t = m + "_" + suffix;
     datasets.add(
-        new PythonReadTestTables(datasetService, dsl, dataDsl, fixtureTransactionTemplate, fx)
+        new PythonReadTestTables(
+                datasetService,
+                dsl,
+                dataDsl,
+                fixtureTransactionTemplate,
+                fx,
+                this::awaitPythonReadGrantSync)
             .create(t, level, owner));
     return t;
   }
@@ -177,6 +192,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
                     .from(DATASET)
                     .where(DATASET.ID.eq(cloneId))
                     .fetchSingle(DATASET.TABLE_NAME));
+    awaitPythonReadGrantSync(); // 커밋 뒤 동기화는 전용 실행기에서 돈다(WD-594)
     assertThat(selectAs(2, cloneTable)).isNull();
   }
 
@@ -197,6 +213,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
           sync.syncTableAfterCommit(pub);
           status.setRollbackOnly();
         });
+    awaitPythonReadGrantSync(); // 실행기에 넘겼다면 끝까지 기다린 뒤 본다 — "아직 안 돌았을 뿐" 으로 공허하게 통과하지 않게
     assertThat(selectAs(1, pub)).as("롤백된 트랜잭션의 예약은 실행되지 않는다").isEqualTo("42501");
 
     // 커밋 → 본문 안에서는 아직 없고, 커밋 후 생긴다.
@@ -206,6 +223,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
           insideBody.set(selectAs(1, pub));
         });
     assertThat(insideBody.get()).as("커밋 전에는 동기화하지 않는다").isEqualTo("42501");
+    awaitPythonReadGrantSync(); // 커밋 뒤 동기화는 전용 실행기에서 돈다(WD-594)
     assertThat(selectAs(1, pub)).as("커밋 후 동기화됐다").isNull();
   }
 
@@ -239,7 +257,63 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
     } finally {
       TenantContext.set(DEFAULT_TEST_TENANT_ID);
     }
+    awaitPythonReadGrantSync();
     assertThat(selectAs(1, pub)).as("컨텍스트 없으면 동기화는 건너뛴다(다음 동기화가 회복)").isEqualTo("42501");
+  }
+
+  /**
+   * 회귀(WD-594): 풀 크기만큼의 트랜잭션이 <b>동시에</b> 커넥션을 쥔 채 syncTableAfterCommit 을 예약하고 커밋해도, 커밋이 두 번째 커넥션을
+   * 기다려 멈추지 않고(커넥션 타임아웃 30초) 모든 테이블이 GRANT 된다. 고치기 전에는 afterCommit 에서 호출 스레드가 바깥 커넥션을 쥔 채
+   * REQUIRES_NEW 로 커넥션을 하나 더 기다려, 풀(테스트 2)을 다 쥔 요청들이 서로 막혀 30초 뒤 동기화가 실패했다 — 시간 단언과 GRANT 단언이 모두
+   * 깨진다.
+   */
+  @Test
+  void syncTableAfterCommit_concurrentCommitsAtPoolSize_doNotHoldTwoConnections() throws Exception {
+    int poolSize = dataSource.unwrap(HikariDataSource.class).getMaximumPoolSize();
+    assertThat(poolSize).as("전제: 테스트 풀이 작아야 동시 커밋으로 풀을 다 쥘 수 있다").isBetween(1, 4);
+    List<String> tables = new ArrayList<>();
+    for (int i = 0; i < poolSize; i++) {
+      String t = table("cc" + i, "공개");
+      revokeAllSlots(t);
+      tables.add(t);
+    }
+    // 모든 트랜잭션이 커넥션을 쥔 상태에서 함께 커밋에 들어가게 맞춘다(= 풀 소진 상태에서 커밋 콜백).
+    CyclicBarrier allHolding = new CyclicBarrier(poolSize);
+    ExecutorService pool = Executors.newFixedThreadPool(poolSize);
+    try {
+      List<Future<Long>> commits = new ArrayList<>();
+      for (String t : tables) {
+        commits.add(
+            pool.submit(
+                () ->
+                    TenantContext.runScopedGet(
+                        DEFAULT_TEST_TENANT_ID,
+                        () -> {
+                          long start = System.nanoTime();
+                          fixtureTransactionTemplate.executeWithoutResult(
+                              status -> {
+                                sync.syncTableAfterCommit(t);
+                                try {
+                                  allHolding.await(10, TimeUnit.SECONDS);
+                                } catch (Exception e) {
+                                  throw new IllegalStateException("동시 커밋 맞추기 실패", e);
+                                }
+                              });
+                          return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+                        })));
+      }
+      for (Future<Long> commit : commits) {
+        assertThat(commit.get(60, TimeUnit.SECONDS))
+            .as("커밋이 두 번째 커넥션을 기다려 멈추지 않는다(커넥션 타임아웃 30초)")
+            .isLessThan(10_000L);
+      }
+    } finally {
+      pool.shutdownNow();
+    }
+    awaitPythonReadGrantSync();
+    for (String t : tables) {
+      assertThat(selectAs(1, t)).as("커밋 뒤 동기화가 실패하지 않고 GRANT 했다: %s", t).isNull();
+    }
   }
 
   // ---------------------------------------------------------------- 이벤트 리스너
