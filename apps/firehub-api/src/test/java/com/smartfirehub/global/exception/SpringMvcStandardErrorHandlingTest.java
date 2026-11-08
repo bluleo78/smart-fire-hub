@@ -66,7 +66,8 @@ class SpringMvcStandardErrorHandlingTest extends IntegrationTestBase {
   void missingRequiredHeader_returns400WithHeaderName() throws Exception {
     HttpResponse<String> res = send(authed(get("/test/wd626/header", "application/json")));
     JsonNode body = assertJsonError(res, 400);
-    assertThat(body.path("message").asText()).isEqualTo(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE);
+    assertThat(body.path("message").asText())
+        .isEqualTo(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE);
     assertThat(body.path("errors").path("X-Wd626-Token").asText())
         .isEqualTo("'X-Wd626-Token' 헤더가 필요합니다.");
   }

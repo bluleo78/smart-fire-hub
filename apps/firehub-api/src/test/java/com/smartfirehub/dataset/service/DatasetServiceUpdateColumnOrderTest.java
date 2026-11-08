@@ -16,6 +16,7 @@ import com.smartfirehub.dataset.exception.ColumnModificationException;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.SearchColumnRepository;
+import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.mapping.service.MappingReferenceService;
 import java.util.List;
 import java.util.Optional;
@@ -169,6 +170,62 @@ class DatasetServiceUpdateColumnOrderTest {
         .isInstanceOf(ColumnModificationException.class)
         .hasMessage("기본 키를 설정할 수 없습니다. 데이터에 중복값이 존재합니다.");
 
+    verifyNoDdl();
+  }
+
+  /**
+   * WD-655: 길이만 보낸 VARCHAR 수정의 검증 — 정준 타입 확인은 매핑 판정 앞에서 한 번만 하고, 뒤의 저장소 한도 검사는 같은 확인을 되풀이하지 않는다
+   * ({@code validateColumnType} 대신 {@code validateKnownColumnTypeLimits}). 실효 타입(요청 타입이 없으면 현재 타입
+   * VARCHAR)으로 검사하고, 뒤의 검증(기본 키 NULL 허용)이 실패하면 DDL 은 하나도 없다.
+   */
+  @Test
+  void maxLengthOnlyOnVarchar_checksStoreLimitsOnceWithEffectiveType() {
+    when(columnRepository.findById(COLUMN_ID))
+        .thenReturn(
+            Optional.of(
+                new DatasetColumnResponse(
+                    COLUMN_ID, "code", "코드", "VARCHAR", null, false, false, null, 0, true)));
+    when(dataTableRowService.countRows("t")).thenReturn(0L);
+    when(dataTableService.currentBackend()).thenReturn(DataStoreBackend.POSTGRESQL);
+    UpdateColumnRequest request =
+        new UpdateColumnRequest(null, null, null, 500, true, null, null, null);
+
+    assertThatThrownBy(() -> datasetService.updateColumn(DATASET_ID, COLUMN_ID, request))
+        .isInstanceOf(ColumnModificationException.class)
+        .hasMessage("기본 키 필드는 NULL 을 허용할 수 없습니다: code");
+
+    verify(dataTableService).validateKnownColumnTypeLimits("VARCHAR", 500);
+    verify(dataTableService, never()).validateColumnType(any(), any());
+    verifyNoDdl();
+  }
+
+  /**
+   * WD-655: 길이 없이 저장된 VARCHAR 의 길이 변경 판정은 현재 저장소의 기본 길이로 비교한다 — Tibero 는 {@code VARCHAR2(4000
+   * CHAR)} 로 만들므로 4000 을 보내면 길이 변경이 아니다(데이터가 있어도 「필드 길이」 거부 없이 다음 검증으로 간다). PG 는 기본 255 라 같은 요청이 길이
+   * 변경으로 거부된다. 예전에는 저장소와 무관하게 255 로 비교해 Tibero 에서 같은 길이를 바꾸는 것으로 오판했다.
+   */
+  @Test
+  void maxLengthOnlyOnNullLengthVarchar_comparesWithBackendDefaultLength() {
+    when(columnRepository.findById(COLUMN_ID))
+        .thenReturn(
+            Optional.of(
+                new DatasetColumnResponse(
+                    COLUMN_ID, "code", "코드", "VARCHAR", null, false, false, null, 0, true)));
+    when(dataTableRowService.countRows("t")).thenReturn(5L);
+    UpdateColumnRequest request =
+        new UpdateColumnRequest(null, null, null, 4000, true, null, null, null);
+
+    when(dataTableService.currentBackend()).thenReturn(DataStoreBackend.TIBERO);
+    assertThatThrownBy(() -> datasetService.updateColumn(DATASET_ID, COLUMN_ID, request))
+        .as("Tibero: 4000 은 기본 길이와 같아 길이 변경이 아니다")
+        .isInstanceOf(ColumnModificationException.class)
+        .hasMessage("기본 키 필드는 NULL 을 허용할 수 없습니다: code");
+
+    when(dataTableService.currentBackend()).thenReturn(DataStoreBackend.POSTGRESQL);
+    assertThatThrownBy(() -> datasetService.updateColumn(DATASET_ID, COLUMN_ID, request))
+        .as("PG: 기본 길이 255 와 달라 길이 변경이다")
+        .isInstanceOf(ColumnModificationException.class)
+        .hasMessage("데이터가 있는 데이터셋에서는 필드 길이를 바꿀 수 없습니다.");
     verifyNoDdl();
   }
 }

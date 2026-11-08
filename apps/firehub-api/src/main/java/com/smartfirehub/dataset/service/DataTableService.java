@@ -5,6 +5,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
+import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.dataset.storage.DataTableStore;
@@ -193,7 +194,39 @@ public class DataTableService {
     // 정준 타입 판정은 백엔드와 무관하게 여기서 먼저 한다 — Tibero DDL 은 별칭(BIGINT·NUMERIC)도 받아 줘 저장소에만 맡기면 앱이 모르는
     // 타입 이름이 저장된다. 저장소는 백엔드 한도(VARCHAR 상한·GEOMETRY 지원)만 본다.
     ColumnPhysicalType.requireKnownDataType(dataType);
-    resolver.tableStore().validateColumnType(dataType, maxLength);
+    validateKnownColumnTypeLimits(dataType, maxLength);
+  }
+
+  /**
+   * 정준 타입임을 호출자가 이미 확인한 타입의 한도(VARCHAR 길이·GEOMETRY 지원)만 검사한다(WD-655). 필드 수정({@code
+   * DatasetService.updateColumn})처럼 정준 타입을 앞에서 따로 확인하는 경로가 쓴다.
+   *
+   * <p><b>테넌트가 있으면</b> 그 저장소가 판정한다. 저장소 검사가 범위 검사를 포함하므로, 범위 밖 길이의 문구도 그 저장소 상한(Tibero 4000)을 보여 준다
+   * — 순수 검사를 먼저 하면 Tibero 테넌트의 길이 0 이 「1~10000」 문구로 나간다.
+   *
+   * <p><b>테넌트가 없으면</b> 저장소와 무관한 순수 검사만 하고 끝낸다. 저장소는 테넌트로 고르는데, 컨텍스트 없이 고르면 {@code
+   * IllegalStateException}(500)이 나서 올바른 입력까지 500 으로 끝났기 때문이다. VARCHAR 길이는 1~{@link
+   * ColumnPhysicalType#WIDEST_VARCHAR_LENGTH}(모든 저장소 상한 중 가장 넓은 값) 밖이면 어느 저장소도 받지 않으므로 400 이다.
+   * 저장소마다 갈리는 판정(Tibero 4001~10000, GEOMETRY)은 테넌트 안에서 실제 DDL 을 만들 때 그 저장소가 다시 막는다.
+   */
+  public void validateKnownColumnTypeLimits(String dataType, Integer maxLength) {
+    if (TenantContext.get() != null) {
+      resolver.tableStore().validateColumnType(dataType, maxLength);
+      return;
+    }
+    if ("VARCHAR".equals(dataType)) {
+      ColumnPhysicalType.requireVarcharLengthWithin(
+          ColumnPhysicalType.WIDEST_VARCHAR_LENGTH,
+          maxLength != null ? maxLength : ColumnPhysicalType.DEFAULT_VARCHAR_LENGTH);
+    }
+  }
+
+  /**
+   * 현재 테넌트의 데이터 저장소 종류(WD-655) — 저장소마다 다른 값(길이 미지정 VARCHAR 의 실제 길이 등)을 서비스가 판정할 때 쓴다. 테넌트 컨텍스트가 없으면
+   * 예외다.
+   */
+  public DataStoreBackend currentBackend() {
+    return resolver.currentBackend();
   }
 
   /** 실행마다 다른 임시 테이블 이름의 난수 부분 길이(hex 글자 수, 48비트). */

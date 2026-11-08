@@ -733,7 +733,7 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
                             })));
             int pid = actionPid.get(10, TimeUnit.SECONDS);
             // 고치기 전에는 작업이 advisory 를 잡지 않으므로 기한까지 그 pid 의 대기 행이 없다.
-            assertThat(awaitAdvisoryWait(holder, pid, returned))
+            assertThat(TenantRlsTestSupport.awaitAdvisoryWait(holder, pid, returned))
                 .as("%s 트랜잭션(pid=%d)이 테넌트 동기화 잠금을 기다려야 한다", what, pid)
                 .isTrue();
             for (String table : qualifiedTables) {
@@ -746,38 +746,6 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     } finally {
       pool.shutdownNow();
     }
-  }
-
-  /**
-   * 그 백엔드(pid)가 advisory 잠금 대기(granted=false)에 설 때까지 기한(10초)을 두고 pg_locks 를 본다(WD-629). 고정 sleep 에
-   * 기대지 않는다. 통계 뷰(pg_stat_activity)는 트랜잭션 안에서 스냅숏이 고정되므로 pg_locks 만
-   * 본다(SqlScriptExecutorOutputLockTest 주석).
-   *
-   * <p>{@code returned} 는 작업이 같은 트랜잭션 안에서(연결을 쥔 채) 돌아왔을 때 세운 표시다. 대기 행을 본 <b>뒤에</b> 표시를 읽어 아직 false
-   * 면 그 대기는 작업 자신의 것이다 — 표시는 연결 반납보다 먼저 서므로, 반납된 연결을 이어 쓴 다른 작업(커밋 뒤 동기화 등)의 대기라면 이미 true 다. 작업이 대기
-   * 없이 돌아오면(고치기 전 동작) false.
-   */
-  private static boolean awaitAdvisoryWait(DSLContext holder, int pid, AtomicBoolean returned)
-      throws InterruptedException {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-    while (System.nanoTime() < deadline) {
-      boolean waiting =
-          holder.fetchExists(
-              holder
-                  .selectOne()
-                  .from("pg_locks")
-                  .where(
-                      "pid = {0} AND locktype = 'advisory' AND NOT granted",
-                      org.jooq.impl.DSL.val(pid)));
-      if (returned.get()) {
-        return false;
-      }
-      if (waiting) {
-        return true;
-      }
-      Thread.sleep(20);
-    }
-    return false;
   }
 
   /** 그 백엔드(pid)가 테이블(스키마 한정 이름)에 쥔 관계 잠금 수. */

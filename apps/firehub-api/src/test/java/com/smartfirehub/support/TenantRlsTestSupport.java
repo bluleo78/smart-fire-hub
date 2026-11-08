@@ -11,6 +11,8 @@ import com.smartfirehub.global.tenant.TenantPipelineRole;
 import java.sql.SQLException;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -815,5 +817,42 @@ public final class TenantRlsTestSupport {
     if (combined != null) {
       throw combined;
     }
+  }
+
+  /**
+   * 그 백엔드(pid)가 advisory 잠금 대기(granted=false)에 설 때까지 기한(10초)을 두고 pg_locks 를 본다(WD-629, WD-655 에서 세
+   * 테스트가 쓰도록 여기로 모음). 고정 sleep 에 기대지 않는다. 통계 뷰(pg_stat_activity)는 트랜잭션 안에서 스냅숏이 고정되므로 pg_locks 만
+   * 본다(SqlScriptExecutorOutputLockTest 주석).
+   *
+   * <p>{@code returned} 는 작업이 같은 트랜잭션 안에서(연결을 쥔 채) 돌아왔을 때 세운 표시다. 대기 행을 본 <b>뒤에</b> 표시를 읽어 아직 false
+   * 면 그 대기는 작업 자신의 것이다 — 표시는 연결 반납보다 먼저 서므로, 반납된 연결을 이어 쓴 다른 작업(커밋 뒤 동기화 등)의 대기라면 이미 true 다. 작업이 대기
+   * 없이 돌아오면(고치기 전 동작) false.
+   *
+   * @param holder 대기를 지켜보는 연결(보통 advisory 를 쥔 트랜잭션)
+   * @param pid 대기에 서야 하는 백엔드
+   * @param returned 작업이 돌아왔다는 표시
+   * @return 그 pid 가 작업이 돌아오기 전에 advisory 대기에 섰으면 true
+   */
+  public static boolean awaitAdvisoryWait(DSLContext holder, int pid, AtomicBoolean returned)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline) {
+      boolean waiting =
+          holder.fetchExists(
+              holder
+                  .selectOne()
+                  .from("pg_locks")
+                  .where(
+                      "pid = {0} AND locktype = 'advisory' AND NOT granted",
+                      org.jooq.impl.DSL.val(pid)));
+      if (returned.get()) {
+        return false;
+      }
+      if (waiting) {
+        return true;
+      }
+      Thread.sleep(20);
+    }
+    return false;
   }
 }

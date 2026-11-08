@@ -117,12 +117,9 @@ public class PostgresDataTableStore implements DataTableStore {
     return switch (dataType) {
       case "TEXT" -> "TEXT";
       case "VARCHAR" -> {
-        int len = maxLength != null ? maxLength : ColumnPhysicalType.DEFAULT_VARCHAR_LENGTH;
-        if (len < 1 || len > ColumnPhysicalType.MAX_VARCHAR_LENGTH) {
-          throw new IllegalArgumentException(
-              ColumnPhysicalType.varcharLengthOutOfRangeMessage(
-                  ColumnPhysicalType.MAX_VARCHAR_LENGTH, len));
-        }
+        // 길이 미지정이면 PG 기본 길이(255) — 길이 변경 판정(DatasetService.updateColumn)과 같은 출처를 쓴다(WD-655).
+        int len = DataStoreBackend.POSTGRESQL.effectiveVarcharLength(maxLength);
+        ColumnPhysicalType.requireVarcharLengthWithin(ColumnPhysicalType.MAX_VARCHAR_LENGTH, len);
         yield "VARCHAR(" + len + ")";
       }
       case "INTEGER" -> "BIGINT";

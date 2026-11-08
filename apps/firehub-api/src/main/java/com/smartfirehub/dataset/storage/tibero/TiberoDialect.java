@@ -218,7 +218,9 @@ public final class TiberoDialect {
     String type = logicalType == null ? "" : logicalType.trim().toUpperCase(Locale.ROOT);
     return switch (type) {
       case "VARCHAR" ->
-          Math.min((maxLength == null ? MAX_VARCHAR : maxLength) * MAX_BYTES_PER_CHAR, MAX_VARCHAR);
+          Math.min(
+              DataStoreBackend.TIBERO.effectiveVarcharLength(maxLength) * MAX_BYTES_PER_CHAR,
+              MAX_VARCHAR);
       case "INTEGER", "BIGINT", "DECIMAL", "NUMERIC", "BOOLEAN" -> 22;
       case "DATE" -> 7;
       case "TIMESTAMP" -> 11;
@@ -398,13 +400,11 @@ public final class TiberoDialect {
     return switch (type) {
       case "TEXT" -> "VARCHAR2(" + MAX_VARCHAR + ")";
       case "VARCHAR" -> {
-        int n = maxLength == null ? MAX_VARCHAR : maxLength;
+        // 길이 미지정이면 Tibero 기본 길이(4000) — 길이 변경 판정(DatasetService.updateColumn)과 같은 출처를 쓴다(WD-655).
+        int n = DataStoreBackend.TIBERO.effectiveVarcharLength(maxLength);
         // 길이·타입 오류 안내는 PostgreSQL 저장소와 같은 한국어 문장을 쓴다(WD-569) — 상한만 Tibero 값(4000).
         // WD-636: 입력한 길이도 함께 보여 준다.
-        if (n < 1 || n > MAX_VARCHAR) {
-          throw new IllegalArgumentException(
-              ColumnPhysicalType.varcharLengthOutOfRangeMessage(MAX_VARCHAR, n));
-        }
+        ColumnPhysicalType.requireVarcharLengthWithin(MAX_VARCHAR, n);
         yield "VARCHAR2(" + n + " CHAR)";
       }
       case "INTEGER", "BIGINT" -> "NUMBER(19)";

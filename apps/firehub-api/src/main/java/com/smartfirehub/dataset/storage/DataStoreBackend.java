@@ -6,17 +6,24 @@ package com.smartfirehub.dataset.storage;
  * <p>이번 단계에서는 모든 테넌트가 {@link #POSTGRESQL} 이다. TIBERO/MYSQL 은 이후 단계에서 구현이 붙을 자리를 미리 잡아 둔 식별자다.
  */
 public enum DataStoreBackend {
-  POSTGRESQL(10000),
-  /** VARCHAR2 상한 4000 — {@code TiberoDialect.MAX_VARCHAR} 가 이 값을 가리킨다(WD-636). */
-  TIBERO(4000),
-  /** 아직 구현이 없어 PG 와 같은 상한을 둔다. */
-  MYSQL(10000);
+  POSTGRESQL(10000, 255),
+  /**
+   * VARCHAR2 상한 4000 — {@code TiberoDialect.MAX_VARCHAR} 가 이 값을 가리킨다(WD-636). 길이 미지정 VARCHAR 도
+   * 상한(4000)으로 만든다(WD-655).
+   */
+  TIBERO(4000, 4000),
+  /** 아직 구현이 없어 PG 와 같은 상한·기본 길이를 둔다. */
+  MYSQL(10000, 255);
 
   /** 이 백엔드의 VARCHAR 최대 길이(WD-636) — 저장소별 상한의 단일 출처. */
   private final int maxVarcharLength;
 
-  DataStoreBackend(int maxVarcharLength) {
+  /** 이 백엔드에서 길이 미지정 VARCHAR 가 실제로 갖는 길이(WD-655) — 저장소별 기본 길이의 단일 출처. */
+  private final int defaultVarcharLength;
+
+  DataStoreBackend(int maxVarcharLength, int defaultVarcharLength) {
     this.maxVarcharLength = maxVarcharLength;
+    this.defaultVarcharLength = defaultVarcharLength;
   }
 
   /**
@@ -47,5 +54,23 @@ public enum DataStoreBackend {
    */
   public int maxVarcharLength() {
     return maxVarcharLength;
+  }
+
+  /**
+   * 이 백엔드에서 길이 미지정 VARCHAR 의 길이(WD-655) — PG·MySQL {@code VARCHAR(255)}, Tibero {@code
+   * VARCHAR2(4000 CHAR)}. DDL 조립과 필드 수정의 길이 변경 판정이 같은 값을 보도록 여기 둔다(예전에는 판정이 PG 기본값 255 만 봐 Tibero 를
+   * 잘못 비교했다).
+   */
+  public int defaultVarcharLength() {
+    return defaultVarcharLength;
+  }
+
+  /**
+   * 저장된(또는 요청한) VARCHAR 길이가 이 백엔드에서 실제로 뜻하는 길이(WD-655) — 값이 없으면 {@link #defaultVarcharLength()}.
+   *
+   * @param maxLength 메타데이터·요청의 길이(null 이면 길이 미지정)
+   */
+  public int effectiveVarcharLength(Integer maxLength) {
+    return maxLength != null ? maxLength : defaultVarcharLength;
   }
 }

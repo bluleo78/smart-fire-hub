@@ -208,4 +208,19 @@ class ColumnPhysicalTypeTest {
         .isEqualTo(DataStoreBackend.TIBERO.maxVarcharLength())
         .isEqualTo(4000);
   }
+
+  /**
+   * WD-655 — 길이 미지정 VARCHAR 의 실제 길이는 저장소마다 다르다(PG 255, Tibero 4000 — {@code
+   * TiberoDialect.columnDdl} 과 같은 값). 테넌트 밖 길이 검사의 상한은 모든 저장소 상한 중 가장 넓은 값으로 계산한다.
+   */
+  @Test
+  void defaultVarcharLength_perBackend_andWidestLimit() {
+    assertThat(DataStoreBackend.POSTGRESQL.effectiveVarcharLength(null))
+        .isEqualTo(ColumnPhysicalType.DEFAULT_VARCHAR_LENGTH)
+        .isEqualTo(255);
+    assertThat(DataStoreBackend.TIBERO.effectiveVarcharLength(null)).isEqualTo(4000);
+    assertThat(TiberoDialect.columnDdl("VARCHAR", null)).isEqualTo("VARCHAR2(4000 CHAR)");
+    assertThat(DataStoreBackend.TIBERO.effectiveVarcharLength(100)).isEqualTo(100);
+    assertThat(ColumnPhysicalType.WIDEST_VARCHAR_LENGTH).isEqualTo(10000);
+  }
 }

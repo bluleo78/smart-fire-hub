@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.service;
 
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -14,7 +15,9 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.dataset.storage.DataTableStore;
 import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
+import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -37,6 +40,13 @@ class DataTableServiceColumnTypeValidationTest {
     when(resolver.tableStore()).thenReturn(store);
     when(store.isReservedColumnName(anyString())).thenReturn(false);
     service = new DataTableService(resolver);
+    // 저장소 위임은 테넌트가 있을 때만 일어난다(WD-655) — 기본은 테넌트 안 호출로 둔다.
+    TenantContext.set(1L);
+  }
+
+  @AfterEach
+  void clearTenant() {
+    TenantContext.clear();
   }
 
   /** 각 컬럼의 타입·길이가 그대로 저장소 검증으로 넘어간다. */
@@ -102,5 +112,52 @@ class DataTableServiceColumnTypeValidationTest {
           .hasMessage("알 수 없는 데이터 타입입니다: " + alias);
     }
     verify(store, never()).validateColumnType(any(), any());
+  }
+
+  /**
+   * WD-655 — 테넌트 컨텍스트 밖 호출은 저장소와 무관한 순수 검사(타입 없음·알 수 없는 타입·어느 저장소도 받지 않는 VARCHAR 길이)만 하고 저장소를 묻지
+   * 않는다. 예전에는 올바른 입력도 저장소 해석이 테넌트 없음(IllegalStateException → 500)으로 실패했다. 범위 밖 길이는 가장 넓은 상한(10000)
+   * 문구의 400(IllegalArgumentException)이다.
+   */
+  @Test
+  void withoutTenant_pureChecksOnly_noStoreLookup() {
+    DataStoreResolver noTenant = mock(DataStoreResolver.class);
+    when(noTenant.tableStore()).thenThrow(new IllegalStateException("테넌트 컨텍스트 없음"));
+    DataTableService outside = new DataTableService(noTenant);
+    TenantContext.clear();
+
+    assertThatThrownBy(() -> outside.validateColumnType("NOPE", null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("알 수 없는 데이터 타입입니다: NOPE");
+    assertThatThrownBy(() -> outside.validateColumnType(null, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("컬럼 데이터 타입을 입력하세요.");
+    assertThatThrownBy(() -> outside.validateColumnType("VARCHAR", 0))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("문자열(VARCHAR) 필드 길이는 1~10000 사이여야 합니다(입력 0).");
+    assertThatThrownBy(() -> outside.validateColumnType("VARCHAR", 10001))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("문자열(VARCHAR) 필드 길이는 1~10000 사이여야 합니다(입력 10001).");
+    // 올바른 입력은 저장소를 묻지 않고 통과한다(예전에는 IllegalStateException → 500).
+    assertThatCode(() -> outside.validateColumnType("VARCHAR", 5000)).doesNotThrowAnyException();
+    assertThatCode(() -> outside.validateColumnType("VARCHAR", null)).doesNotThrowAnyException();
+    assertThatCode(() -> outside.validateColumnType("INTEGER", null)).doesNotThrowAnyException();
+    assertThatCode(() -> outside.validateKnownColumnTypeLimits("TEXT", null))
+        .doesNotThrowAnyException();
+    verify(noTenant, never()).tableStore();
+  }
+
+  /** WD-655: 테넌트가 있으면 길이를 저장소가 판정한다 — 가장 넓은 상한(10000) 밖의 길이(0)도 문구의 상한이 그 저장소 값(Tibero 4000)이다. */
+  @Test
+  void withTenant_lengthIsJudgedByStore() {
+    for (int len : new int[] {0, 5000}) {
+      doThrow(new IllegalArgumentException("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다(입력 " + len + ")."))
+          .when(store)
+          .validateColumnType("VARCHAR", len);
+
+      assertThatThrownBy(() -> service.validateColumnType("VARCHAR", len))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다(입력 " + len + ").");
+    }
   }
 }

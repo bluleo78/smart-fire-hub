@@ -23,6 +23,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -450,6 +451,90 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
       }
     } finally {
       pool.shutdownNow();
+    }
+  }
+
+  /**
+   * 회귀(WD-655): 동기화가 테이블 잠금을 기다리는 사이 그 테이블이 RENAME 되면 잠금이 실패하고 옛 이름의 to_regclass 는 null 이다. 예전에는 이를
+   * 「그새 지워짐 — ACL 도 사라짐」으로 보고 건너뛰었지만, RENAME 된 객체는 슬롯 GRANT 를 그대로 가져가 과권한이 남은 채 실행이
+   * 통과했다(fail-open). 이제 남는 권한이 있던 슬롯 롤을 회수 실패로 세어 그 슬롯의 실행 준비를 거부하고(fail-closed), 다음 동기화가 새 이름의
+   * GRANT 를 회수하면 다시 통과한다. 변이: 잠금 실패 + 테이블 없음 분기의 회수 실패 기록 제거 → 실행 준비가 통과해 실패.
+   */
+  @Test
+  void lockFailedBecauseRenamed_countsExcessAsRevokeFailure_untilNextSync() throws Exception {
+    String s1 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 1);
+    long publicUser = userAt("공개");
+    Clearance publicClearance = clearanceResolver.resolve(publicUser);
+    String t1 = m + "_rnsync";
+    String r1 = m + "_rnsync_moved";
+    String t2 = m + "_rnrun";
+    String r2 = m + "_rnrun_moved";
+    try {
+      // 전체 동기화: 회수 실패에 옛 이름과 그 슬롯 롤이 들어간다.
+      PythonReadGrantSync.SyncResult r =
+          raceWithRename(t1, r1, s1, () -> sync.syncTenant()).get(30, TimeUnit.SECONDS);
+      assertThat(r.revokeFailed().get(t1)).as("RENAME 으로 권한이 따라간 슬롯 롤").containsExactly(s1);
+
+      // 실행 준비: 같은 경합이면 그 슬롯의 실행을 거부한다.
+      java.util.concurrent.Future<Integer> run =
+          raceWithRename(t2, r2, s1, () -> sync.prepareForRun(publicClearance));
+      assertThatThrownBy(() -> run.get(30, TimeUnit.SECONDS))
+          .hasCauseInstanceOf(PythonReadAccessException.class)
+          .hasMessageContaining("회수하지 못한");
+
+      // 다음 동기화가 새 이름의 GRANT 를 회수하면 거부가 풀린다.
+      PythonReadGrantSync.SyncResult next = sync.syncTenant();
+      assertThat(next.revokeFailedTables()).doesNotContain(r1, r2);
+      assertThat(selectAs(1, r1)).as("새 이름의 과권한 회수").isEqualTo("42501");
+      assertThat(selectAs(1, r2)).as("새 이름의 과권한 회수").isEqualTo("42501");
+      assertThat(sync.prepareForRun(publicClearance)).isEqualTo(1);
+    } finally {
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate,
+          DEFAULT_TEST_TENANT_ID,
+          () -> {
+            for (String t : List.of(t1, r1, t2, r2)) {
+              dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(t));
+            }
+          });
+    }
+  }
+
+  /**
+   * WD-655: 데이터셋이 아닌 테이블 {@code table} 에 슬롯 GRANT 를 걸고, 다른 연결이 그 테이블을 ACCESS EXCLUSIVE 로 쥔 동안
+   * {@code action} (동기화)을 다른 스레드에서 시작한다. 동기화가 그 테이블 잠금을 기다리는 것을 pg_locks 로 확인한 뒤 같은 트랜잭션에서 {@code
+   * renamed} 로 이름을 바꿔 커밋한다 — 동기화의 LOCK TABLE 은 옛 이름을 다시 찾지 못해 실패하고 옛 이름의 to_regclass 는 null 이
+   * 된다(GRANT 는 새 이름으로 따라간다).
+   */
+  private <T> java.util.concurrent.Future<T> raceWithRename(
+      String table, String renamed, String slotRole, java.util.function.Supplier<T> action) {
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> {
+          dataDsl.execute("CREATE TABLE " + DataSchema.qualify(table) + " (v text)");
+          dataDsl.execute("GRANT SELECT ON " + DataSchema.qualify(table) + " TO " + slotRole);
+        });
+    java.util.concurrent.ExecutorService pool =
+        java.util.concurrent.Executors.newSingleThreadExecutor();
+    try {
+      java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<T>> running =
+          new java.util.concurrent.atomic.AtomicReference<>();
+      dataDsl.transaction(
+          cfg -> {
+            DSLContext holder = cfg.dsl();
+            holder.execute("LOCK TABLE " + DataSchema.qualify(table) + " IN ACCESS EXCLUSIVE MODE");
+            running.set(
+                pool.submit(() -> TenantContext.runScopedGet(DEFAULT_TEST_TENANT_ID, action)));
+            assertThat(awaitRelationWaiter(holder, DataSchema.qualify(table)))
+                .as("동기화가 %s 잠금을 기다려야 한다", table)
+                .isNotNull();
+            holder.execute(
+                "ALTER TABLE " + DataSchema.qualify(table) + " RENAME TO \"" + renamed + "\"");
+          });
+      return running.get();
+    } finally {
+      pool.shutdown();
     }
   }
 
