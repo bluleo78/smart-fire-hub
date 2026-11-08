@@ -34,7 +34,15 @@ sendRouter.post('/', internalAuth, async (req, res) => {
       });
     } else if (channel === 'EMAIL') {
       await sendEmail({
-        smtpConfig: recipient.smtpConfig as { host: string; port: number; secure: boolean; user: string; pass: string },
+        // requireTLS: STARTTLS 강제 여부(WD-593) — 옛 api 는 보내지 않으므로 선택 필드다.
+        smtpConfig: recipient.smtpConfig as {
+          host: string;
+          port: number;
+          secure: boolean;
+          requireTLS?: boolean;
+          user: string;
+          pass: string;
+        },
         to: recipient.emailAddress as string,
         subject: message.text ?? '',
         html: message.html ?? message.text ?? '',
