@@ -104,9 +104,10 @@ test.describe('대시보드 — 남이 공유한 대시보드는 보기 전용 (
     await expect(page.getByRole('button', { name: '완료' })).toBeVisible();
   });
 
-  test('없는 대시보드 주소는 화면 안내와 같은 한국어 문구를 보인다', async ({ authenticatedPage: page }) => {
-    // 서버(WD-196)는 없는 대시보드·남의 비공개 대시보드를 같은 한국어 404 로 답한다 — 웹은 그 문구를 그대로 토스트한다.
+  test('없는 대시보드 주소는 화면 안 안내만 보이고 토스트는 겹쳐 띄우지 않는다', async ({ authenticatedPage: page }) => {
+    // 서버(WD-196)는 없는 대시보드·남의 비공개 대시보드를 같은 한국어 404 로 답한다.
     // WD-240: 서버 문구에서 번호를 뺐다(「…: 999」 → 「… 이미 삭제되었을 수 있습니다.」).
+    // WD-581: 화면 안 안내와 같은 내용이라 진입 404 의 토스트는 띄우지 않는다.
     await mockApi(
       page,
       'GET',
@@ -117,7 +118,7 @@ test.describe('대시보드 — 남이 공유한 대시보드는 보기 전용 (
 
     await page.goto('/analytics/dashboards/999');
     await expect(page.getByText('대시보드를 찾을 수 없습니다.', { exact: true })).toBeVisible();
-    await expect(page.getByText('대시보드를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.')).toBeVisible();
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
     await expect(page.getByText(/찾을 수 없습니다: 999/)).toHaveCount(0);
     await expect(page.getByText(/Dashboard not found/)).toHaveCount(0);
   });

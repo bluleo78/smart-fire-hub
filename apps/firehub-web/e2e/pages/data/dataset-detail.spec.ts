@@ -134,10 +134,10 @@ test.describe('데이터셋 상세 페이지', () => {
     await expect(page).toHaveURL('/data/datasets');
   });
 
-  test('존재하지 않는 데이터셋(404) 접근 시 로딩 상태가 유지된다', async ({
+  test('존재하지 않는 데이터셋(404) 접근 시 상세 대신 찾을 수 없다는 안내가 보인다', async ({
     authenticatedPage: page,
   }) => {
-    // 404 응답으로 모킹 — dataset이 null이면 Skeleton을 렌더링하고 heading은 표시되지 않는다
+    // 404 응답으로 모킹 — 상세 제목 대신 화면 안 안내(WD-581)가 보인다
     await mockApi(page, 'GET', '/api/v1/datasets/9999', { message: 'Not found' }, { status: 404 });
     // 정적 import 사용 (파일 최상단의 createCategories 활용)
     await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
@@ -145,7 +145,8 @@ test.describe('데이터셋 상세 페이지', () => {
 
     await page.goto('/data/datasets/9999');
 
-    // 404 시 dataset이 null이므로 heading이 표시되지 않아야 함
+    // 404 시 상세 제목은 없고 안내 제목이 보인다
+    await expect(page.getByRole('heading', { name: '데이터셋을 찾을 수 없습니다.' })).toBeVisible();
     await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).not.toBeVisible();
   });
 

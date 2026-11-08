@@ -25,6 +25,7 @@ import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { DashboardWidgetCard } from '../../components/analytics/DashboardWidgetCard';
+import { ResourceNotFound } from '../../components/ResourceNotFound';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -64,6 +65,7 @@ import {
   type KeyboardLayoutAction,
 } from '../../lib/dashboard-layout-keyboard';
 import { formatDateTimeMinute } from '../../lib/formatters';
+import { parseRouteId } from '../../lib/route-id';
 import type { ChartListItem, DashboardWidget } from '../../types/analytics';
 
 /** 격자 한 행의 높이(px)와 위젯 간격(px) — 쌓기 보기도 같은 값으로 높이를 맞춘다. */
@@ -309,7 +311,8 @@ function AddWidgetDialog({ open, onOpenChange, onAdd, isPending }: AddWidgetDial
 
 export default function DashboardEditorPage() {
   const { id } = useParams<{ id: string }>();
-  const dashboardId = id ? parseInt(id, 10) : null;
+  // 주소의 id 는 양의 정수만 받는다(WD-581) — parseInt('3x')=3 이 다른 대시보드를 열었다. 잘못된 id 는 null 이라 조회하지 않고 아래에서 「찾을 수 없음」으로 그린다.
+  const dashboardId = parseRouteId(id) ?? null;
   const navigate = useNavigate();
 
   const queryClient = useQueryClient();
@@ -317,6 +320,7 @@ export default function DashboardEditorPage() {
     data: dashboard,
     isLoading,
     isError: isDashboardError,
+    isLoadingError: isDashboardLoadingError,
     error: dashboardError,
     refetch,
   } = useDashboard(dashboardId);
@@ -324,11 +328,14 @@ export default function DashboardEditorPage() {
   // 새로고침(또는 최초 로드) 실패를 1회성 토스트로 알린다.
   // placeholderData가 이전 데이터를 유지하기 때문에 화면상 아무 변화가 없어 실패가
   // 완전히 조용해지는 문제(#566)를 막기 위해, error 객체 참조가 바뀔 때만(=새 실패 발생 시) 알린다.
+  // 단, 들어오자마자(받아 둔 데이터 없이) 404 면 화면 안 「대시보드를 찾을 수 없습니다」 안내가 이미 이유를 보이므로
+  // 같은 내용의 토스트를 겹쳐 띄우지 않는다 (WD-581). 500·네트워크 등 다른 첫 조회 실패는 사유를 알리도록 토스트를 유지한다.
   useEffect(() => {
     if (isDashboardError && dashboardError) {
+      if (isDashboardLoadingError && isNotFoundError(dashboardError)) return;
       handleApiError(dashboardError, '대시보드 정보를 불러오지 못했습니다.');
     }
-  }, [isDashboardError, dashboardError]);
+  }, [isDashboardError, isDashboardLoadingError, dashboardError]);
 
   // 위젯 데이터 중 내보내기 불가(정책 차단·열람 불가)가 하나라도 있으면 PDF 내보내기를 숨긴다(보조 다운로드 → 숨김, S4).
   // 볼 수 없는 차트의 위젯(accessible=false, WD-195)은 데이터를 받지 않고 안내 문구만 그리므로 내보낼 데이터가 없다 — 판정에서 뺀다.
@@ -684,15 +691,15 @@ export default function DashboardEditorPage() {
     );
   }
 
+  // 대시보드가 없으면 주소는 그대로 두고 화면 안 안내 + 「목록으로」를 보인다 — 데이터셋·사용자·역할 상세와 같은 공용 안내로
+  // 그려 안내 문구가 제목(h1)으로 스크린리더에 잡히게 한다 (WD-581)
   if (!dashboard) {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 py-20">
-        <LayoutDashboard className="h-12 w-12 text-muted-foreground" />
-        <p className="text-muted-foreground">대시보드를 찾을 수 없습니다.</p>
-        <Button variant="outline" onClick={() => navigate('/analytics/dashboards')}>
-          목록으로
-        </Button>
-      </div>
+      <ResourceNotFound
+        icon={LayoutDashboard}
+        message="대시보드를 찾을 수 없습니다."
+        onBackToList={() => navigate('/analytics/dashboards')}
+      />
     );
   }
 

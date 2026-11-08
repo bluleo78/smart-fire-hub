@@ -516,7 +516,8 @@ test.describe('WD-390 최근 접근 — 지운·바뀐 데이터셋', () => {
     await expect.poll(() => readRecentIds(page)).toEqual([2]);
   });
 
-  test('카드를 눌러 상세가 404 를 받으면 목록으로 돌아오고 그 카드가 사라진다', async ({ authenticatedPage: page }) => {
+  // WD-581: 상세는 404 때 목록으로 튕기지 않고 화면 안 안내를 보인다 — 「목록으로」로 돌아오면 카드가 빠져 있다.
+  test('카드를 눌러 상세가 404 를 받으면 화면 안 안내가 보이고, 목록으로 돌아오면 그 카드가 사라진다', async ({ authenticatedPage: page }) => {
     await page.addInitScript((items) => {
       localStorage.setItem('sfh-recent-datasets:1:1', JSON.stringify(items));
     }, [recentItem(77, '지워진 데이터셋', 'gone_ds'), recentItem(2, '데이터셋 2', 'dataset_2')]);
@@ -527,7 +528,9 @@ test.describe('WD-390 최근 접근 — 지운·바뀐 데이터셋', () => {
     const recent = page.getByRole('region', { name: '최근 접근' });
     await recent.getByText('지워진 데이터셋').click();
 
-    await expect(page.getByText('데이터셋을 찾을 수 없습니다.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: '데이터셋을 찾을 수 없습니다.' })).toBeVisible();
+    await expect(page).toHaveURL(/\/data\/datasets\/77$/);
+    await page.getByRole('button', { name: '목록으로' }).click();
     await expect(page).toHaveURL(/\/data\/datasets$/);
     await expect(recent.getByText('지워진 데이터셋')).toHaveCount(0);
     await expect.poll(() => readRecentIds(page)).toEqual([2]);

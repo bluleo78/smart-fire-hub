@@ -691,14 +691,90 @@ test.describe('사용자 관리 페이지', () => {
       await expect(page).toHaveURL(/\/admin\/users$/);
     });
 
-    test('상세 진입 때 이미 제거된 멤버면 일반 실패 대신 제거 안내를 띄운다', async ({ authenticatedPage: page }) => {
+    // WD-581: 진입 때의 404 는 토스트 + 목록 이동 대신 주소를 그대로 두고 화면 안에 안내와 「목록으로」를 보인다
+    test('상세 진입 때 이미 제거된 멤버면 주소를 그대로 두고 화면 안에 제거 안내를 보이며 토스트는 없다', async ({
+      authenticatedPage: page,
+    }) => {
       await setupUserDetailMocks(page, 1);
       await setupUserListMocks(page);
       await mockApi(page, 'GET', '/api/v1/users/1', memberGoneBody, { status: 404 });
 
       await page.goto('/admin/users/1');
 
-      await expect(page.getByText(MEMBER_GONE_MESSAGE)).toBeVisible();
+      await expect(page.getByRole('heading', { name: MEMBER_GONE_MESSAGE })).toBeVisible();
+      await expect(page).toHaveURL(/\/admin\/users\/1$/);
+      await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+      await expect(page.getByText('사용자 정보를 불러오는 데 실패했습니다.')).toHaveCount(0);
+
+      // 「목록으로」로 사용자 목록에 간다
+      await page.getByRole('button', { name: '목록으로' }).click();
+      await expect(page).toHaveURL(/\/admin\/users$/);
+      await expect(page.getByRole('heading', { name: MEMBER_GONE_MESSAGE })).toHaveCount(0);
+    });
+
+    test('상세 진입 때 코드 없는 404 면 일반 「사용자를 찾을 수 없습니다.」 안내를 화면 안에 보인다 (WD-581)', async ({
+      authenticatedPage: page,
+    }) => {
+      // 목록에서 보던 위치(2페이지·검색어)에서 상세로 들어갔는데 그 사용자가 없다(코드 없는 404)
+      const users = Array.from({ length: 10 }, (_, i) =>
+        createUser({ id: i + 1, name: `사용자 ${i + 1}`, username: `user${i + 1}`, email: `user${i + 1}@example.com` }),
+      );
+      const listCapture = await mockApi(page, 'GET', '/api/v1/users', createPageResponse(users, { totalElements: 23 }), {
+        capture: true,
+      });
+      await setupUserDetailMocks(page, 1);
+      await mockApi(page, 'GET', '/api/v1/users/1', { status: 404, error: 'Not Found', message: 'Not Found' }, { status: 404 });
+
+      await page.goto('/admin/users?q=%EC%82%AC%EC%9A%A9%EC%9E%90&page=1');
+      await expect.poll(() => listCapture.requests.length).toBe(1);
+      await page.getByRole('cell', { name: '사용자 1', exact: true }).click();
+
+      await expect(page.getByRole('heading', { name: '사용자를 찾을 수 없습니다.' })).toBeVisible();
+      await expect(page).toHaveURL(/\/admin\/users\/1$/);
+      await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+
+      // 「목록으로」는 들어온 목록 위치(listPath, WD-283)로 돌아간다
+      await page.getByRole('button', { name: '목록으로' }).click();
+      await expect(page).toHaveURL(/\/admin\/users\?q=%EC%82%AC%EC%9A%A9%EC%9E%90&page=1$/);
+      // 목록 캐시(staleTime 30초)를 무효화해 목록을 다시 받는다 — 없는 사용자 행이 남아 보이지 않게 (WD-581)
+      await expect.poll(() => listCapture.requests.length).toBeGreaterThan(1);
+    });
+
+    // WD-581: 주소의 id 가 양의 정수가 아니면 400 요청 + 토스트 + 목록 이동 대신, 요청 없이 곧바로 화면 안 안내를 보인다
+    for (const rawId of ['abc', '1.5', '0']) {
+      test(`양의 정수가 아닌 ID(/admin/users/${rawId})는 요청 없이 화면 안 안내를 보인다`, async ({ authenticatedPage: page }) => {
+        await setupUserListMocks(page);
+        await mockApi(page, 'GET', '/api/v1/roles', []);
+        // 상세 조회(/api/v1/users/<rawId>)가 나가지 않아야 한다 — 내 정보(/api/v1/users/me)는 그대로 둔다
+        const detailRequests: string[] = [];
+        await page.route(
+          (url) => url.pathname === `/api/v1/users/${rawId}` || url.pathname === '/api/v1/users/NaN',
+          (route) => {
+            detailRequests.push(new URL(route.request().url()).pathname);
+            return route.fulfill({ status: 400, contentType: 'application/json', body: '{}' });
+          },
+        );
+
+        await page.goto(`/admin/users/${rawId}`);
+
+        await expect(page.getByRole('heading', { name: '사용자를 찾을 수 없습니다.' })).toBeVisible();
+        expect(new URL(page.url()).pathname).toBe(`/admin/users/${rawId}`);
+        await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+        expect(detailRequests).toEqual([]);
+
+        await page.getByRole('button', { name: '목록으로' }).click();
+        await expect(page).toHaveURL(/\/admin\/users$/);
+      });
+    }
+
+    test('상세 진입 조회가 404 가 아닌 실패(500)면 예전처럼 토스트 후 목록으로 이동한다', async ({ authenticatedPage: page }) => {
+      await setupUserDetailMocks(page, 1);
+      await setupUserListMocks(page);
+      await mockApi(page, 'GET', '/api/v1/users/1', { status: 500, error: 'Internal Server Error', message: '서버 오류' }, { status: 500 });
+
+      await page.goto('/admin/users/1');
+
+      await expect(page.locator('[data-sonner-toast]').filter({ hasText: '사용자 정보를 불러오는 데 실패했습니다.' })).toBeVisible();
       await expect(page).toHaveURL(/\/admin\/users$/);
     });
 

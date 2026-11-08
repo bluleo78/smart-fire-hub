@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { dataImportsApi } from '../../api/dataImports';
 import { categoriesApi,datasetsApi } from '../../api/datasets';
@@ -53,6 +53,17 @@ export function useDatasets(params: { categoryId?: number; storageType?: string;
   return useQuery({
     queryKey: ['datasets', params],
     queryFn: () => datasetsApi.getDatasets(params).then(r => r.data),
+  });
+}
+
+/**
+ * 데이터셋 목록 쿼리만 무효화한다 (WD-581) — 목록 키 ['datasets', params(객체)](useDatasets)·['datasets', 'all'](useAllDatasets).
+ * 상세(['datasets', id])·행 데이터 키는 건드리지 않는다 — 상세 진입 404 뒤 「목록으로」에서 지워진 행이 보이지 않게 하되 404 상세를 다시 부르지 않기 위해서다.
+ */
+export function invalidateDatasetLists(queryClient: QueryClient) {
+  return queryClient.invalidateQueries({
+    predicate: ({ queryKey }) =>
+      queryKey[0] === 'datasets' && (queryKey[1] === 'all' || (typeof queryKey[1] === 'object' && queryKey[1] !== null)),
   });
 }
 
