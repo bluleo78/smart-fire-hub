@@ -15,6 +15,7 @@ import com.smartfirehub.auth.dto.SignupRequest;
 import com.smartfirehub.auth.dto.TokenResponse;
 import com.smartfirehub.auth.exception.AccountLockedException;
 import com.smartfirehub.auth.service.AuthService;
+import com.smartfirehub.auth.service.LoginIpGate;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
@@ -29,6 +30,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -58,6 +61,15 @@ class AuthControllerTest {
   @MockitoBean private JwtProperties jwtProperties;
 
   @MockitoBean private PermissionService permissionService;
+
+  /** IP 키 게이트(WD-630) — 슬라이스에서는 줄 세우기 없이 로그인 호출을 그대로 통과시킨다(게이트 동작은 LoginIpGateTest 가 본다). */
+  @MockitoBean private LoginIpGate loginIpGate;
+
+  @BeforeEach
+  void passThroughLoginIpGate() {
+    when(loginIpGate.run(any(Supplier.class)))
+        .thenAnswer(invocation -> invocation.<Supplier<?>>getArgument(0).get());
+  }
 
   /** 공개 엔드포인트 — 인증 없이 열림 여부를 돌려준다(로그인 화면이 가입 링크를 숨길지 정한다). */
   @Test

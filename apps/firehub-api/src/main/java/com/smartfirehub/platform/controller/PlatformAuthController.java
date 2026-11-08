@@ -1,6 +1,7 @@
 package com.smartfirehub.platform.controller;
 
 import com.smartfirehub.auth.dto.LoginRequest;
+import com.smartfirehub.auth.service.LoginIpGate;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.platform.dto.PlatformMeResponse;
 import com.smartfirehub.platform.dto.PlatformTokenResponse;
@@ -48,20 +49,26 @@ public class PlatformAuthController {
   private final JwtProperties jwtProperties;
   private final boolean cookieSecure;
 
+  /** 같은 IP 키 로그인 줄 세우기(WD-630) — 설계는 {@link LoginIpGate} 참고. */
+  private final LoginIpGate loginIpGate;
+
   public PlatformAuthController(
       PlatformAuthService platformAuthService,
       JwtProperties jwtProperties,
-      @Value("${app.cookie.secure:true}") boolean cookieSecure) {
+      @Value("${app.cookie.secure:true}") boolean cookieSecure,
+      LoginIpGate loginIpGate) {
     this.platformAuthService = platformAuthService;
     this.jwtProperties = jwtProperties;
     this.cookieSecure = cookieSecure;
+    this.loginIpGate = loginIpGate;
   }
 
   /** 운영자 로그인. 리프레시 토큰은 본문에서 비우고 HttpOnly 쿠키로만 내려보낸다. */
   @PostMapping("/login")
   public ResponseEntity<PlatformTokenResponse> login(
       @Valid @RequestBody LoginRequest request, HttpServletResponse response) {
-    PlatformTokenResponse token = platformAuthService.login(request);
+    // 같은 IP 키 줄 세우기는 트랜잭션 밖 LoginIpGate 가 한다(WD-630).
+    PlatformTokenResponse token = loginIpGate.run(() -> platformAuthService.login(request));
     addRefreshCookie(response, token.refreshToken());
     return ResponseEntity.ok(withoutRefreshToken(token));
   }

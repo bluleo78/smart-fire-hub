@@ -5,7 +5,12 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PostgresTestContainer;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -14,6 +19,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import org.jooq.DSLContext;
@@ -53,6 +59,9 @@ class LoginIpLimitTest extends IntegrationTestBase {
   @Autowired private DSLContext dsl;
   @Autowired private PasswordEncoder passwordEncoder;
   @Autowired private TransactionTemplate tx;
+
+  /** 같은 IP 키 게이트(WD-630) — 잠금 대기 재현에서 나머지 요청이 줄에 선 것을 폴링으로 확인한다. */
+  @Autowired private LoginIpGate loginIpGate;
 
   /** 이 테스트가 만든 사용자 id·쓴 IP 키 — 끝에 지운다(아이디는 모두 prefix 로 시작해 prefix 로 지운다). */
   private final List<Long> userIds = new ArrayList<>();
@@ -279,6 +288,134 @@ class LoginIpLimitTest extends IntegrationTestBase {
 
     assertThat(status(PLATFORM_LOGIN, admin, PASSWORD, attacker)).isEqualTo(429);
     assertThat(status(PLATFORM_LOGIN, admin, PASSWORD, bystander)).isEqualTo(200);
+  }
+
+  /**
+   * 운영자 로그인에서 비밀번호는 맞았지만 플랫폼 롤이 없는 실패도 IP 실패로 센다(WD-630 리뷰) — 계정 카운터와 함께.
+   *
+   * <p>롤 없음의 401 은 열거 방지를 위해 비밀번호 불일치와 똑같다. 맞는 비밀번호만 IP 카운터에서 빠지면, 한도 직전에서 후보 비밀번호를 넣어 보고 다음 요청이
+   * 429 인지로 "방금 비밀번호가 맞았다"를 알아내는 오라클이 생긴다. 그래서 맞는 비밀번호·틀린 비밀번호가 IP·계정 카운터에 똑같이 남아야 한다.
+   */
+  @Test
+  @DisplayName("운영자 로그인 롤 없음(비밀번호 맞음)도 틀린 비밀번호와 똑같이 IP 실패·계정 카운터를 남긴다 — 비밀번호 오라클 방지")
+  void platformLogin_noPlatformRole_recordsIpFailureLikeWrongPassword() throws Exception {
+    String rightPassword = createUser(false);
+    String wrongPassword = createUser(false);
+    String ip = newIpv4();
+
+    assertThat(status(PLATFORM_LOGIN, rightPassword, PASSWORD, ip)).isEqualTo(401);
+    assertThat(status(PLATFORM_LOGIN, wrongPassword, "wrong", ip)).isEqualTo(401);
+
+    assertThat(ipFailureRows(ip, rightPassword)).as("롤 없음(비밀번호 맞음)도 IP 실패").isEqualTo(1);
+    assertThat(ipFailureRows(ip, wrongPassword)).as("잘못된 비밀번호는 IP 실패").isEqualTo(1);
+    assertThat(loginAttempts(rightPassword)).as("계정 카운터").isEqualTo(1);
+    assertThat(loginAttempts(wrongPassword)).isEqualTo(1);
+  }
+
+  /**
+   * 같은 IP 키의 로그인이 풀 크기(테스트 2개)보다 많이 몰려 잠금을 기다려도, 기다리는 요청들이 커넥션을 쥐지 않아 다른 IP 의 로그인이 제때 끝난다(WD-630).
+   *
+   * <p>재현: 테스트가 풀 밖의 별도 커넥션으로 그 IP 키의 advisory 잠금을 쥔다(다른 API 인스턴스가 같은 키 로그인을 처리 중인 상황). 예전에는 같은 IP
+   * 로그인이 저마다 커넥션을 빌린 뒤 그 잠금을 기다려 풀 2개가 모두 묶였고, 다른 IP 로그인은 커넥션을 못 얻어 멈췄다. 이제는 JVM 안 게이트가 커넥션을 빌리기 전에
+   * 줄을 세우므로 DB 잠금을 기다리는(커넥션을 쥔) 같은 IP 로그인은 하나뿐이다.
+   *
+   * <p>줄 선 요청이 테스트가 잠금을 쥔 동안 게이트 기다림 상한에 걸려 429 가 되지 않도록, 테스트 프로필은 {@code gate-wait} 를 넉넉히(60초) 둔다
+   * (application-test.yml) — 잠금이 풀리면 모두 401 이어야 한다.
+   */
+  @Test
+  @DisplayName("같은 IP 로그인 3건이 잠금을 기다려도 커넥션은 하나만 묶이고 다른 IP 로그인은 제때 끝난다")
+  void sameIpLoginsWaitingOnLock_doNotStarvePool() throws Exception {
+    String user = createUser(false);
+    String ip = newIpv4();
+    String bystander = newIpv4();
+    String lockKey = "login-ip-limit:" + ip;
+    int sameIpRequests = 3;
+
+    ExecutorService pool = Executors.newFixedThreadPool(sameIpRequests + 1);
+    List<Future<Integer>> sameIp = new ArrayList<>();
+    try (Connection holder =
+        DriverManager.getConnection(
+            PostgresTestContainer.INSTANCE.getJdbcUrl(), "app_tenant", "app_tenant")) {
+      try (PreparedStatement lock =
+          holder.prepareStatement("select pg_advisory_lock(hashtextextended(?, 0))")) {
+        lock.setString(1, lockKey);
+        lock.execute();
+      }
+      try {
+        for (int i = 0; i < sameIpRequests; i++) {
+          String username = prefix + "-wait" + i;
+          sameIp.add(pool.submit(() -> status(TENANT_LOGIN, username, "wrong", ip)));
+        }
+        // 첫 요청이 DB 잠금 대기에 들어가고, 나머지가 게이트 줄에 설 때까지 기다린다(고정 sleep 대신 폴링).
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (waitingOnAdvisoryLock(holder, lockKey) == 0 && System.nanoTime() < deadline) {
+          Thread.sleep(50);
+        }
+        while (loginIpGate.queueLength(ip) < sameIpRequests - 1 && System.nanoTime() < deadline) {
+          Thread.sleep(20);
+        }
+        assertThat(loginIpGate.queueLength(ip))
+            .as("나머지 같은 IP 로그인은 커넥션 없이 게이트 줄에 선다")
+            .isEqualTo(sameIpRequests - 1);
+        int waitingWithConnection = waitingOnAdvisoryLock(holder, lockKey);
+
+        Future<Integer> other = pool.submit(() -> status(TENANT_LOGIN, user, PASSWORD, bystander));
+        Integer otherStatus;
+        try {
+          otherStatus = other.get(5, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+          otherStatus = null;
+        }
+
+        assertThat(waitingWithConnection).as("DB 잠금을 커넥션을 쥔 채 기다리는 같은 IP 로그인 수").isEqualTo(1);
+        assertThat(otherStatus).as("다른 IP 로그인은 풀이 묶이지 않아 제때 200").isEqualTo(200);
+      } finally {
+        try (PreparedStatement unlock =
+            holder.prepareStatement("select pg_advisory_unlock_all()")) {
+          unlock.execute();
+        }
+      }
+      for (Future<Integer> future : sameIp) {
+        assertThat(future.get(60, TimeUnit.SECONDS))
+            .as("잠금이 풀리면 같은 IP 로그인도 차례로 끝난다")
+            .isEqualTo(401);
+      }
+    } finally {
+      pool.shutdown();
+      pool.awaitTermination(60, TimeUnit.SECONDS);
+    }
+  }
+
+  /** 그 문자열 키의 advisory 잠금을 기다리는(granted=false) 세션 수 — 64비트 해시를 classid(상위)·objid(하위)로 나눠 맞춘다. */
+  private static int waitingOnAdvisoryLock(Connection connection, String key) throws Exception {
+    try (PreparedStatement ps =
+        connection.prepareStatement(
+            "with h as (select hashtextextended(?, 0) as v) select count(*)::int from pg_locks l, h"
+                + " where l.locktype = 'advisory' and not l.granted and l.objsubid = 1"
+                + " and l.classid::bigint = ((h.v >> 32) & 4294967295)"
+                + " and l.objid::bigint = (h.v & 4294967295)")) {
+      ps.setString(1, key);
+      try (ResultSet rs = ps.executeQuery()) {
+        rs.next();
+        return rs.getInt(1);
+      }
+    }
+  }
+
+  /** 그 IP 키·계정의 IP 실패 기록 행 수. */
+  private int ipFailureRows(String ipKey, String username) {
+    return dsl.fetchCount(
+        dsl.selectOne()
+            .from("login_ip_failures")
+            .where("ip_key = ? and username = ?", ipKey, username));
+  }
+
+  /** 그 계정의 로그인 실패 카운터(행이 없으면 0). */
+  private int loginAttempts(String username) {
+    return (Integer)
+        dsl.fetchValue(
+            "select coalesce(max(attempts), 0)::int from login_attempts where username = ?",
+            username);
   }
 
   /** 문서용 대역(198.51.100.0/24)의 새 IPv4 를 하나 고르고 정리 목록에 넣는다. */

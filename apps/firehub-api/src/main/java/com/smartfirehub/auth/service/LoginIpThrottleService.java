@@ -111,7 +111,7 @@ public class LoginIpThrottleService {
    *
    * <p>대가: 같은 IP 키(사내 NAT 등)의 로그인은 로그인 트랜잭션 동안(BCrypt 비교 포함) 한 번에 하나씩 처리된다. 다른 IP 끼리는 서로 막지 않고, 키가
    * 없는 요청(IP 모름·제외 대역)은 잠금을 잡지 않는다 — 많은 사람이 한 주소로 나가는 대역은 제외 대역으로 두면 직렬화도 피한다. 반드시 로그인 트랜잭션 안에서 불러야
-   * 한다(밖이면 저장소가 예외로 알린다).
+   * 한다(밖이면 저장소가 예외로 알린다). 같은 인스턴스 안의 줄 세우기는 트랜잭션 밖 {@link LoginIpGate} 가 먼저 한다(WD-630).
    */
   public Optional<String> blockedKey(String clientIp) {
     Optional<String> key = keyFor(clientIp);

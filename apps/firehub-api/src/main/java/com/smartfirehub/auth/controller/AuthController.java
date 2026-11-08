@@ -6,6 +6,7 @@ import com.smartfirehub.auth.dto.SignupRequest;
 import com.smartfirehub.auth.dto.SignupStatusResponse;
 import com.smartfirehub.auth.dto.TokenResponse;
 import com.smartfirehub.auth.service.AuthService;
+import com.smartfirehub.auth.service.LoginIpGate;
 import com.smartfirehub.global.security.AllowedDuringPasswordChange;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.tenant.dto.MembershipResponse;
@@ -29,13 +30,18 @@ public class AuthController {
   private final PermissionService permissionService;
   private final RefreshTokenCookies refreshTokenCookies;
 
+  /** 같은 IP 키 로그인 줄 세우기(WD-630) — 설계는 {@link LoginIpGate} 참고. */
+  private final LoginIpGate loginIpGate;
+
   public AuthController(
       AuthService authService,
       PermissionService permissionService,
-      RefreshTokenCookies refreshTokenCookies) {
+      RefreshTokenCookies refreshTokenCookies,
+      LoginIpGate loginIpGate) {
     this.authService = authService;
     this.permissionService = permissionService;
     this.refreshTokenCookies = refreshTokenCookies;
+    this.loginIpGate = loginIpGate;
   }
 
   @PostMapping("/signup")
@@ -56,7 +62,8 @@ public class AuthController {
   @AllowedDuringPasswordChange
   public ResponseEntity<TokenResponse> login(
       @Valid @RequestBody LoginRequest request, HttpServletResponse response) {
-    TokenResponse token = authService.login(request);
+    // 같은 IP 키 줄 세우기는 트랜잭션 밖 LoginIpGate 가 한다(WD-630).
+    TokenResponse token = loginIpGate.run(() -> authService.login(request));
     refreshTokenCookies.set(response, token.refreshToken());
     // 필드를 다시 조립하지 않는다 — 새 필드(mustChangePassword)가 조용히 빠지는 것을 막는다.
     TokenResponse body = token.withoutRefreshToken();
