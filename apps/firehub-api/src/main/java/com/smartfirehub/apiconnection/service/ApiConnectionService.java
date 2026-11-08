@@ -90,6 +90,7 @@ public class ApiConnectionService {
   @Transactional
   public ApiConnectionResponse create(CreateApiConnectionRequest request, Long userId) {
     validateAuthType(request.authType());
+    requireSecretOnCreate(request.authType(), request.authConfig());
     validateNameNotDuplicated(request.name());
     String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
 
@@ -760,6 +761,29 @@ public class ApiConnectionService {
               + "(으)로 바꾸려면 새 방식의 인증 정보(authConfig."
               + requiredKey
               + ")를 함께 입력하세요");
+    }
+  }
+
+  /** 생성 시 비밀 필드가 비었을 때의 안내(WD-588) — AuthConfigValidator 의 줄바꿈 안내와 같은 이름(API 키·Bearer 토큰)을 쓴다. */
+  private static final Map<String, String> MISSING_SECRET_MESSAGE_BY_AUTH_TYPE =
+      Map.of(
+          "API_KEY", "API 키를 입력하세요 (authConfig.apiKey)",
+          "BEARER", "Bearer 토큰을 입력하세요 (authConfig.token)");
+
+  /**
+   * 새 연결에는 인증 방식의 비밀 필드(API_KEY → apiKey, BEARER → token)가 있어야 한다(WD-588).
+   *
+   * <p>예전에는 authConfig 가 null·누락이면 암호화 단계에서 500 이 났고, {@code {}} 나 빈 값이면 비밀 없는 연결이 201 로 저장돼 연결
+   * 테스트·파이프라인 실행 때에야 인증 실패로 드러났다. 연결 화면은 이 필드를 필수로 받으므로 화면 경로는 바뀌지 않는다. 가린 값({@code ****…})은 「값이
+   * 있음」으로 보고 넘긴다 — 뒤이은 {@link #resolveMaskedSecrets} 가 저장값 없음으로 따로 거절한다.
+   *
+   * @param authType 검증을 마친(지원 목록 안의) 인증 방식
+   */
+  private static void requireSecretOnCreate(String authType, Map<String, String> authConfig) {
+    String requiredKey = REQUIRED_SECRET_BY_AUTH_TYPE.get(authType);
+    String value = authConfig != null ? authConfig.get(requiredKey) : null;
+    if (value == null || value.isBlank()) {
+      throw new ApiConnectionException(MISSING_SECRET_MESSAGE_BY_AUTH_TYPE.get(authType));
     }
   }
 
