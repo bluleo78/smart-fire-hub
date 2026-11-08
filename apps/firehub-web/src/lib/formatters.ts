@@ -114,32 +114,44 @@ export function formatIpAddress(ip: string | null | undefined): string {
   return trimmed;
 }
 
-/** 저장 방식 라벨 */
-export function getStorageTypeLabel(type: string): string {
-  switch (type) {
-    case 'TABLE':
-      return '테이블';
-    case 'DOCUMENT':
-      return '문서';
-    case 'FILE':
-      return '파일';
-    default:
-      return type;
-  }
+/** 유형 라벨과 알려진 값인지 여부 — 라벨 문자열 비교로 「알려진 값」을 추측하지 않으려고 둘을 함께 돌려준다 (WD-650) */
+export interface TypeLabelInfo {
+  label: string;
+  /** 서버 enum 이 아래 목록에 있으면 true. false 면 label 은 원본 enum 그대로이고 길이를 알 수 없다 */
+  known: boolean;
 }
 
-/** 출처 라벨 */
+/** 알려진 저장 방식 enum → 라벨 (get/describe 두 함수의 단일 출처. 목록 유형 칸 배지가 「알 수 없는 값」만 말줄임하는 기준) */
+const STORAGE_TYPE_LABELS: Readonly<Record<string, string>> = { TABLE: '테이블', DOCUMENT: '문서', FILE: '파일' };
+/** 알려진 출처 enum → 라벨 (get/describe 두 함수의 단일 출처) */
+const ORIGIN_TYPE_LABELS: Readonly<Record<string, string>> = { SOURCE: '원본', DERIVED: '파생', TEMP: '임시' };
+
+/**
+ * enum → 라벨 조회 공통 로직 — 모르는 enum 은 원본 그대로 보이고 known=false.
+ * Object.hasOwn 으로 「toString」 같은 프로토타입 키를 알려진 값으로 오인하지 않는다.
+ */
+function describeType(labels: Readonly<Record<string, string>>, type: string): TypeLabelInfo {
+  return Object.hasOwn(labels, type) ? { label: labels[type], known: true } : { label: type, known: false };
+}
+
+/** 저장 방식 라벨 + 알려진 값 여부 (WD-650) */
+export function describeStorageType(type: string): TypeLabelInfo {
+  return describeType(STORAGE_TYPE_LABELS, type);
+}
+
+/** 출처 라벨 + 알려진 값 여부 (WD-650) */
+export function describeOriginType(type: string): TypeLabelInfo {
+  return describeType(ORIGIN_TYPE_LABELS, type);
+}
+
+/** 저장 방식 라벨 — 모르는 enum 은 원본 그대로 */
+export function getStorageTypeLabel(type: string): string {
+  return describeStorageType(type).label;
+}
+
+/** 출처 라벨 — 모르는 enum 은 원본 그대로 */
 export function getOriginTypeLabel(type: string): string {
-  switch (type) {
-    case 'SOURCE':
-      return '원본';
-    case 'DERIVED':
-      return '파생';
-    case 'TEMP':
-      return '임시';
-    default:
-      return type;
-  }
+  return describeOriginType(type).label;
 }
 
 const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;

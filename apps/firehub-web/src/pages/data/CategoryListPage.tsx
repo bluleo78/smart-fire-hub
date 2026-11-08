@@ -246,8 +246,12 @@ export default function CategoryListPage() {
         </div>
       </div>
 
-      {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(작업) + 긴 값 칸 여백 */}
-      <div className="@container [--k:calc(7.5rem_+_2rem)] rounded-md border">
+      {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(작업) + 긴 값 칸 여백
+          WD-650: 작업 열은 쓰기·삭제 권한이 있을 때만 그리므로, 없을 때 그 폭(7.5rem)을 빼면 긴 값이 쓸 폭이 그만큼 줄어 필요 이상으로 잘린다.
+          Tailwind 는 소스의 문자열 그대로만 클래스를 만들므로 두 값을 온전한 클래스 문자열로 둔다. */}
+      <div
+        className={`@container ${showActions ? '[--k:calc(7.5rem_+_2rem)]' : '[--k:2rem]'} rounded-md border`}
+      >
         <Table>
           <TableHeader>
             <TableRow>

@@ -38,15 +38,37 @@ import {
 import { useSecurityLevels } from '../../hooks/queries/useSecurityLevels';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { extractApiError, handleApiError, isForbiddenError } from '../../lib/api-error';
-import { formatDateOnly, formatDateTimeMinute, formatRelativeTime, getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
+import {
+  describeOriginType,
+  describeStorageType,
+  formatDateOnly,
+  formatDateTimeMinute,
+  formatRelativeTime,
+  type TypeLabelInfo,
+} from '../../lib/formatters';
 import { getPageAfterDelete, parseNonNegativeInt } from '../../lib/pagination';
-import { iGa } from '../../lib/utils';
+import { cn, iGa } from '../../lib/utils';
 import { DatasetDeleteConfirmDialog } from './components/DatasetDeleteConfirmDialog';
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
 import { DatasetTypeModal, type DatasetTypeSelection } from './components/DatasetTypeModal';
 import { ExportDialog } from './components/ExportDialog';
 
 type SortKey = 'name' | 'createdAt';
+
+/**
+ * 유형 칸 배지 (WD-650)
+ * - 알려진 유형은 짧은 한글 라벨(「테이블」·「원본」 등)이라 잘리지 않게 그대로 둔다(WD-517: 짧은 값은 자르지 않는다).
+ * - 알 수 없는 유형은 서버 enum 이 그대로 와서 얼마나 길지 모른다 — 그 배지만 줄어들 수 있게 해 칸 상한 안에서 말줄임하고 전체 값은 title 로 보인다.
+ */
+function DatasetTypeBadge({ info: { label, known }, className }: { info: TypeLabelInfo; className: string }) {
+  return (
+    <Badge className={cn('border-0', !known && 'min-w-0 shrink', className)}>
+      <span className="min-w-0 truncate" title={known ? undefined : label}>
+        {label}
+      </span>
+    </Badge>
+  );
+}
 
 /**
  * URL 쿼리 파라미터를 단일 진실 소스(single source of truth)로 사용한다 (refs #94).
@@ -432,8 +454,11 @@ export default function DatasetListPage() {
         </div>
       )}
 
-      {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(즐겨찾기·보안 등급·태그·유형·카테고리·생성일·작업) + 긴 값 칸 여백 */}
-      <div className="@container [--k:calc(2rem_+_5rem_+_5rem_+_7rem_+_6rem_+_6.75rem_+_3.75rem_+_1rem)] rounded-md border">
+      {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(즐겨찾기·보안 등급·태그·유형·카테고리·생성일·작업) + 긴 값 칸 여백
+          WD-650: 보안 등급은 배지 상한(5.25rem)+여백으로 6.25rem. 태그는 선언 폭(5rem)을 바닥으로 두고 남는 폭 R(=100cqw − --k)의 0.25 몫까지 더 받는다.
+          이름은 비율 상한 대신 「남는 칸 전부」를 받는다(이름 칸 w-full + max-w-0) — 태그가 짧으면 태그 칸이 선언 폭에 머물러 그만큼 이름이 넓어지고,
+          긴 태그가 와도 태그 상한이 R 안이라 표가 넘치지 않는다. 이름 칸의 최소 폭이 0 이라 이름 길이는 표 폭에 영향을 주지 않는다. */}
+      <div className="@container [--k:calc(2rem_+_6.25rem_+_5rem_+_7rem_+_6rem_+_6.75rem_+_3.75rem_+_1rem)] rounded-md border">
         <Table aria-label="데이터셋 목록">
           <TableHeader>
             <TableRow>
@@ -445,7 +470,7 @@ export default function DatasetListPage() {
               >
                 이름
               </SortableHeader>
-              <TableHead className="w-[5rem]">보안 등급</TableHead>
+              <TableHead className="w-[6.25rem]">보안 등급</TableHead>
               <TableHead className="w-[5rem]">태그</TableHead>
               <TableHead className="w-[7rem]">유형</TableHead>
               <TableHead className="w-[6rem]">카테고리</TableHead>
@@ -512,9 +537,11 @@ export default function DatasetListPage() {
                   </TableCell>
 
                   {/* Name + status badge */}
-                  <TableCell className="font-medium">
-                    {/* WD-517·WD-634: 긴 이름은 표 폭 비례 상한으로 말줄임(TruncatedText 설명). 이름은 상세 링크(WD-396) */}
-                    <div className="flex items-center gap-2 flex-wrap max-w-[min(22rem,calc(100cqw_-_var(--k)))]">
+                  {/* WD-650: max-w-0 — 표 자동 레이아웃에서 이름 칸의 최소 폭을 0 으로 만들어, 짧은 칸이 먼저 자리를 잡고 남는 폭만 이름이 쓴다.
+                      남는 폭보다 긴 이름은 말줄임(전체는 title). 22rem 은 넓은 화면에서 이름이 지나치게 길게 늘어지지 않게 하는 상한이다. */}
+                  <TableCell className="font-medium max-w-0">
+                    {/* WD-517·WD-634: 긴 이름은 말줄임(TruncatedText 설명). 이름은 상세 링크(WD-396) */}
+                    <div className="flex items-center gap-2 flex-wrap max-w-[22rem]">
                       <TruncatedLink to={`/data/datasets/${dataset.id}`} value={dataset.name} className="min-w-0" />
                       {dataset.status === 'CERTIFIED' && (
                         <Badge variant="success" className="text-xs">
@@ -529,14 +556,17 @@ export default function DatasetListPage() {
                     </div>
                   </TableCell>
 
-                  {/* Security level column — 등급이 비어 오면(생성 직후 등) 빈 칸 */}
+                  {/* Security level column — 등급이 비어 오면(생성 직후 등) 빈 칸.
+                      WD-650: 등급 이름은 관리자가 정해 길이 제한이 없다 — 선언 폭(6.25rem, --k 에 포함) − 칸 여백으로 배지 상한을 두고 말줄임(전체는 title) */}
                   <TableCell>
-                    {dataset.securityLevel && <SecurityLevelBadge level={dataset.securityLevel} />}
+                    {dataset.securityLevel && <SecurityLevelBadge level={dataset.securityLevel} className="max-w-[5.25rem]" />}
                   </TableCell>
 
-                  {/* 태그 칸 — WD-634: 선언 폭(5rem, --k 에 포함)을 넘지 않게 배지는 줄바꿈하고, 긴 태그 하나는 말줄임(전체는 title) */}
+                  {/* 태그 칸 — WD-634: 배지는 줄바꿈하고, 상한을 넘는 긴 태그 하나는 말줄임(전체는 title).
+                      WD-650: 고정 4rem 상한은 「공공데이터」·finance 같은 평범한 태그까지 잘랐다 — 선언 폭 − 여백(4rem)을 바닥으로
+                      남는 폭의 0.25 몫을 더해(최대 12rem) 평범한 태그가 다 보이게 한다. 표가 좁아 R 이 음수여도 4rem 아래로 내려가지 않게 max 로 막는다. */}
                   <TableCell>
-                    <div className="flex max-w-[4rem] items-center gap-1 flex-wrap">
+                    <div className="flex max-w-[max(4rem,min(12rem,calc(4rem_+_(100cqw_-_var(--k))_*_0.25)))] items-center gap-1 flex-wrap">
                       {(dataset.tags || []).slice(0, 3).map((tag) => (
                         <Badge key={tag} variant="secondary" className="max-w-full text-xs" title={tag}>
                           <span className="min-w-0 truncate">{tag}</span>
@@ -550,15 +580,16 @@ export default function DatasetListPage() {
                     </div>
                   </TableCell>
 
-                  {/* 저장 방식 + 출처를 두 배지로 분리 표시 */}
+                  {/* 저장 방식 + 출처를 두 배지로 분리 표시.
+                      WD-650: 선언 폭(7rem, --k 에 포함) − 칸 여백으로 상한을 둔다. 가장 넓은 「테이블」+「원본」(약 88px)은 그대로 들어가고,
+                      알 수 없는 유형(원본 enum)만 이 안에서 말줄임된다. */}
                   <TableCell>
-                    <div className="flex gap-1">
-                      <Badge className="bg-secondary/10 text-secondary-foreground border-0">
-                        {getStorageTypeLabel(dataset.storageType)}
-                      </Badge>
-                      <Badge className="bg-primary/10 text-primary border-0">
-                        {getOriginTypeLabel(dataset.originType)}
-                      </Badge>
+                    <div className="flex max-w-[6rem] gap-1">
+                      <DatasetTypeBadge
+                        info={describeStorageType(dataset.storageType)}
+                        className="bg-secondary/10 text-secondary-foreground"
+                      />
+                      <DatasetTypeBadge info={describeOriginType(dataset.originType)} className="bg-primary/10 text-primary" />
                     </div>
                   </TableCell>
                   {/* 카테고리 — WD-634: 선언 폭(6rem, --k 에 포함) 안에서 말줄임 */}

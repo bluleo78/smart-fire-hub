@@ -3,6 +3,7 @@ import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
 import {
+  expectKMatchesDeclaredWidths,
   expectLongValueTruncated,
   expectTableFits,
   expectValueNotTruncated,
@@ -467,8 +468,44 @@ test.describe('카테고리 목록 긴 이름·설명 말줄임 (WD-559)', () =>
 
       const row = page.getByRole('row').filter({ has: page.getByText(LONG_NAME, { exact: true }) });
       await expectTableFits(row.getByRole('button', { name: `${LONG_NAME} 삭제` }));
+      // WD-650: --k(작업 열 선언 폭 + 긴 값 칸 여백)가 헤더와 맞는다
+      await expectKMatchesDeclaredWidths(row.getByRole('button', { name: `${LONG_NAME} 삭제` }));
       await expectLongValueTruncated(row.getByText(LONG_NAME, { exact: true }), LONG_NAME);
       await expectLongValueTruncated(row.getByText(LONG_DESC, { exact: true }), LONG_DESC);
+    });
+
+    // WD-650: 작업 열이 없을 때(조회 전용)는 --k 에서 작업 열 폭(7.5rem)을 빼지 않아야 긴 값이 남는 폭을 다 쓴다.
+    // 이전에는 그리지도 않는 작업 열 폭만큼 상한이 줄어 표 오른쪽이 비고 긴 값이 필요 이상으로 잘렸다.
+    test(`${width}px 조회 전용(작업 열 없음)에서는 긴 값 상한이 작업 열 폭을 빼지 않는다 (WD-650)`, async ({
+      authenticatedPage: page,
+    }) => {
+      await grantDatasetPermissions(page, ['dataset:read']);
+      await page.setViewportSize({ width, height: 800 });
+      const [first, ...rest] = createCategories();
+      await mockApi(page, 'GET', '/api/v1/dataset-categories', [
+        { ...first, name: LONG_NAME, description: LONG_DESC },
+        ...rest,
+      ]);
+      await page.goto('/data/categories');
+
+      const nameEl = page.getByText(LONG_NAME, { exact: true });
+      const row = page.getByRole('row').filter({ has: nameEl });
+      await expect(page.getByRole('columnheader', { name: '작업' })).toHaveCount(0);
+      await expectTableFits(row.getByRole('cell').last());
+      // 작업 열이 없으면 --k 는 긴 값 칸 여백(2rem)뿐이어야 한다
+      await expectKMatchesDeclaredWidths(row.getByRole('cell').last());
+      await expectLongValueTruncated(nameEl, LONG_NAME);
+      // 이름 상한 = min(20rem, (표 폭 − 2rem) × 0.32) — 작업 열 7.5rem 을 빼면 이보다 좁아진다
+      const m = await nameEl.evaluate((el) => {
+        const container = el.closest('[data-slot="table-container"]');
+        if (!container) throw new Error('table-container 를 찾지 못했다');
+        const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+        return {
+          width: el.getBoundingClientRect().width,
+          expected: Math.min(20 * rem, (container.clientWidth - 2 * rem) * 0.32),
+        };
+      });
+      expect(m.width, '이름 상한이 작업 열 폭을 빼지 않은 값').toBeGreaterThanOrEqual(m.expected - 2);
     });
 
     test(`${width}px 에서 평범한 길이의 이름·설명은 잘리지 않는다`, async ({ authenticatedPage: page }) => {

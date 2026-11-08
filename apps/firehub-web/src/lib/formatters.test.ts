@@ -4,6 +4,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
+  describeOriginType,
+  describeStorageType,
   formatCellValue,
   formatDate,
   formatDateOnly,
@@ -431,6 +433,19 @@ describe('formatIpAddress', () => {
 describe('getStorageTypeLabel', () => {
   it('TABLE → 테이블', () => expect(getStorageTypeLabel('TABLE')).toBe('테이블'));
   it('DOCUMENT → 문서', () => expect(getStorageTypeLabel('DOCUMENT')).toBe('문서'));
+});
+
+describe('describeStorageType / describeOriginType (WD-650)', () => {
+  it('알려진 저장 방식은 라벨과 known=true', () =>
+    expect(describeStorageType('TABLE')).toEqual({ label: '테이블', known: true }));
+  it('모르는 저장 방식은 원본 값과 known=false', () =>
+    expect(describeStorageType('LAKEHOUSE')).toEqual({ label: 'LAKEHOUSE', known: false }));
+  it('라벨과 같은 문자열이 와도 enum 이 아니면 known=false', () =>
+    expect(describeStorageType('테이블')).toEqual({ label: '테이블', known: false }));
+  it('Object 프로토타입 키는 알려진 값이 아니다', () =>
+    expect(describeStorageType('toString')).toEqual({ label: 'toString', known: false }));
+  it('알려진 출처는 라벨과 known=true', () => expect(describeOriginType('DERIVED')).toEqual({ label: '파생', known: true }));
+  it('모르는 출처는 원본 값과 known=false', () => expect(describeOriginType('X')).toEqual({ label: 'X', known: false }));
 });
 
 describe('getOriginTypeLabel', () => {
