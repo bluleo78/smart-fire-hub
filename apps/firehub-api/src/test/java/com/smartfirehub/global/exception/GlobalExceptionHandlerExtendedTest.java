@@ -243,7 +243,7 @@ class GlobalExceptionHandlerExtendedTest {
         .perform(get("/test/exception2/type-mismatch-long/abc"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value(400))
-        .andExpect(jsonPath("$.message").value("Validation failed"))
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE))
         .andExpect(jsonPath("$.errors.id").exists());
   }
 

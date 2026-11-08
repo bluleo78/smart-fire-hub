@@ -46,7 +46,7 @@ export function serverMessage(error: unknown, statuses: number[] = [400]): strin
 
 /**
  * axios 400 에러에서 Bean Validation 필드 오류(`errors`: 필드 → 한국어 문구)를 뽑는다(WD-311).
- * `message` 는 영어 기본값 「Validation failed」라 그대로 보이면 무엇을 고칠지 알 수 없다 —
+ * `message` 는 필드명이 없는 일반 문구(「입력값이 올바르지 않습니다.」, 구버전 서버는 영어 「Validation failed」)라 무엇을 고칠지 알 수 없다 —
  * 화면은 이 맵으로 해당 칸에 문구를 단다. 필드 오류가 없으면 `undefined`.
  */
 export function serverFieldErrors(error: unknown): Record<string, string> | undefined {

@@ -179,7 +179,7 @@ class MediaTypeErrorHandlingTest extends IntegrationTestBase {
         send(
             post("/api/v1/auth/login", "{}", "application/json")
                 .header("Accept", "application/xml"));
-    assertJsonError(res, 400, "Validation failed");
+    assertJsonError(res, 400, GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE);
     assertThat(objectMapper.readTree(res.body()).path("errors").path("username").isMissingNode())
         .as("필드 오류가 함께 실린다")
         .isFalse();
