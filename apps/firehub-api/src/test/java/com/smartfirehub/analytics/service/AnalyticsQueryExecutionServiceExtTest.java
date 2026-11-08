@@ -11,6 +11,7 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.datastore.DataStoreDb;
+import com.smartfirehub.global.util.AdhocSqlErrorMessages;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.QueryExecuteResult;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -344,6 +345,126 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
     assertThat(res.error()).doesNotContain("SQL [");
     assertThat(res.error()).contains("ERROR:");
     assertThat(res.error()).contains("SQLState: 42P01");
+    // WD-571 — 첫 줄에 한국어 안내, 둘째 줄부터 기존 원문(ERROR: …)
+    String[] lines = res.error().split("\n", 2);
+    assertThat(lines[0]).isEqualTo(AdhocSqlErrorMessages.UNDEFINED_TABLE_GUIDE);
+    assertThat(lines[1]).startsWith("ERROR: ");
+  }
+
+  /** WD-571 — 실제 PG 의 0 나눗셈(22012)도 첫 줄에 한국어 안내가 붙고 SQLState 원문은 그대로 남는다. */
+  @Test
+  void executeDirectly_divisionByZero_prependsKoreanGuide() {
+    AnalyticsQueryResponse res = executionService.execute("SELECT 1 / 0", 100, true);
+
+    assertThat(res.error()).isNotNull();
+    String[] lines = res.error().split("\n", 2);
+    assertThat(lines[0]).isEqualTo(AdhocSqlErrorMessages.DIVISION_BY_ZERO_GUIDE);
+    assertThat(lines[1]).startsWith("ERROR: ").contains("SQLState: 22012");
+  }
+
+  /**
+   * WD-571 — 안내 문구의 「30초」가 실제 제한과 어긋나지 않게, 분석 실행이 거는 statement_timeout 이 공용 상수와 같은지 실제 세션 값으로
+   * 확인한다(30초를 실제로 기다리지 않는다). 사용자 SQL 에서는 current_setting 이 막혀 있어, 테스트 트랜잭션이 끝날 때까지 남는 {@code SET
+   * LOCAL} 값을 실행 뒤 같은 커넥션에서 읽는다.
+   */
+  @Test
+  void executeDirectly_statementTimeoutMatchesGuideConstant() {
+    AnalyticsQueryResponse res = executionService.execute("SELECT 1 AS one", 100, true);
+
+    assertThat(res.error()).isNull();
+    // SHOW 는 60초 이상이면 "1min" 처럼 단위를 바꿔 보여 주므로, 단위가 밀리초로 고정된 pg_settings.setting 과 비교한다.
+    assertThat(
+            dataDsl.fetchValue("select setting from pg_settings where name = 'statement_timeout'"))
+        .isEqualTo(String.valueOf(AdhocSqlErrorMessages.ADHOC_STATEMENT_TIMEOUT_SECONDS * 1000));
+  }
+
+  /**
+   * WD-571 — 운영 기본 경로(실행기, {@code app.executor.enabled: true})의 시간 초과(57014)도 첫 줄에 제한 시간·해결 방법 안내가
+   * 오고, 실행기 원문은 둘째 줄부터 그대로 남는다. 안내는 실행기 응답 {@code db_error.sql_state} 로 고른다.
+   */
+  @Test
+  void executeViaExecutor_statementTimeout_prependsKoreanGuide() {
+    String raw = "canceling statement due to statement timeout";
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+        .thenReturn(executorFailure(raw, "57014"));
+
+    AnalyticsQueryResponse res = executeWithExecutor("SELECT 1");
+
+    assertThat(res.error())
+        .isEqualTo(AdhocSqlErrorMessages.STATEMENT_TIMEOUT_GUIDE + "\n" + raw)
+        .contains("30초");
+  }
+
+  /** WD-571 — 실행기 경로의 없는 테이블(42P01)도 한국어 안내 + 실행기 원문(LINE·캐럿 포함)을 그대로 돌려준다. */
+  @Test
+  void executeViaExecutor_undefinedTable_prependsKoreanGuide() {
+    String raw =
+        "relation \"nope\" does not exist\nLINE 1: SELECT * FROM nope\n                      ^";
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+        .thenReturn(executorFailure(raw, "42P01"));
+
+    AnalyticsQueryResponse res = executeWithExecutor("SELECT 1");
+
+    assertThat(res.error()).isEqualTo(AdhocSqlErrorMessages.UNDEFINED_TABLE_GUIDE + "\n" + raw);
+  }
+
+  /** WD-571 — db_error 가 없는 응답(구버전 실행기)·안내 없는 코드는 실행기 원문 그대로(하위 호환). */
+  @Test
+  void executeViaExecutor_withoutDbErrorOrUnknownCode_returnsRawError() {
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+        .thenReturn(
+            new QueryExecuteResult(
+                false, "SELECT", List.of(), List.of(), 0, 0, 5L, false, "old executor error"));
+    assertThat(executeWithExecutor("SELECT 1").error()).isEqualTo("old executor error");
+
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+        .thenReturn(executorFailure("syntax error at or near \"x\"", "42601"));
+    assertThat(executeWithExecutor("SELECT 1").error()).isEqualTo("syntax error at or near \"x\"");
+  }
+
+  /** 실행기 실패 응답 — 파이썬 실행기처럼 error 원문과 db_error(code 0, SQLState) 를 함께 싣는다. */
+  private static QueryExecuteResult executorFailure(String raw, String sqlState) {
+    return new QueryExecuteResult(
+        false,
+        "SELECT",
+        List.of(),
+        List.of(),
+        0,
+        0,
+        5L,
+        false,
+        raw,
+        new ExecutorClient.DbError(0, raw, sqlState));
+  }
+
+  /** executorEnabled 를 잠시 켜고 실행한다(테스트 기본값은 직접 실행 경로). */
+  private AnalyticsQueryResponse executeWithExecutor(String sql) {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        executionService, "executorEnabled", true);
+    try {
+      return executionService.execute(sql, 100, true);
+    } finally {
+      org.springframework.test.util.ReflectionTestUtils.setField(
+          executionService, "executorEnabled", false);
+    }
+  }
+
+  /** WD-571 — 시간 초과(57014, statement_timeout) 는 제한 시간·해결 방법 안내가 첫 줄에 온다(실제 30초 대기 대신 예외 구성). */
+  @Test
+  void formatExecutionError_statementTimeout_prependsTimeoutGuide() {
+    org.postgresql.util.PSQLException timeout =
+        new org.postgresql.util.PSQLException(
+            new org.postgresql.util.ServerErrorMessage(
+                "SERROR\0C57014\0Mcanceling statement due to statement timeout\0"));
+    RuntimeException wrapper = new RuntimeException("jOOQ wrapper", timeout);
+
+    String formatted = executionService.formatExecutionError(wrapper);
+
+    assertThat(formatted)
+        .isEqualTo(
+            AdhocSqlErrorMessages.STATEMENT_TIMEOUT_GUIDE
+                + "\nERROR: canceling statement due to statement timeout\nSQLState: 57014");
+    assertThat(formatted).contains("30초");
   }
 
   /**

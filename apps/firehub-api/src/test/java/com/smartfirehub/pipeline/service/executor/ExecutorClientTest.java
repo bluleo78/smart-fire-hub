@@ -595,6 +595,61 @@ class ExecutorClientTest {
     assertThat(result.error()).contains("timeout");
   }
 
+  /**
+   * WD-571 — 분석 조회 실패 응답의 {@code db_error}(파이썬 실행기 {@code db_error_of(str(exc), sqlstate(exc))})를
+   * 읽어 SQLState 를 꺼낸다. 분석 서비스가 이 값으로 한국어 안내를 고른다. 위 테스트처럼 db_error 가 없는 응답은 null(하위 호환).
+   */
+  @Test
+  void executeQuery_errorResponse_deserializesDbErrorSqlState() {
+    wireMock.stubFor(
+        post(urlEqualTo("/execute/query"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        """
+                        {
+                            "success": false,
+                            "query_type": "SELECT",
+                            "error": "canceling statement due to statement timeout",
+                            "db_error": {
+                                "code": 0,
+                                "sql_state": "57014",
+                                "message": "canceling statement due to statement timeout"
+                            }
+                        }
+                        """)));
+
+    var result = executorClient().executeQuery("SELECT pg_sleep(60)", 1000, true);
+
+    assertThat(result.success()).isFalse();
+    assertThat(result.dbError()).isNotNull();
+    assertThat(result.dbError().sqlState()).isEqualTo("57014");
+    assertThat(result.dbError().message())
+        .isEqualTo("canceling statement due to statement timeout");
+  }
+
+  /** WD-571 — db_error 가 없는 구버전 실행기 응답은 dbError 가 null 이다. */
+  @Test
+  void executeQuery_errorResponseWithoutDbError_hasNullDbError() {
+    wireMock.stubFor(
+        post(urlEqualTo("/execute/query"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        """
+                        {"success": false, "query_type": "SELECT", "error": "boom"}
+                        """)));
+
+    var result = executorClient().executeQuery("SELECT 1", 1000, true);
+
+    assertThat(result.error()).isEqualTo("boom");
+    assertThat(result.dbError()).isNull();
+  }
+
   @Test
   void executeQuery_serverError_throwsException() {
     wireMock.stubFor(

@@ -23,7 +23,11 @@ interface MainPromptParts {
   piiRowSearchTool: string;
 }
 
-/** PG 조각 — 변경 전 SYSTEM_PROMPT 원문 그대로(글자 하나도 바꾸지 말 것: PG 바이트 동일 테스트). */
+/**
+ * PG 조각 — 변경 전 SYSTEM_PROMPT 원문 그대로(글자 하나도 바꾸지 말 것: PG 바이트 동일 테스트).
+ * 의도한 변경은 픽스처(__fixtures__/pg-prompts/system-prompt.txt)도 같이 고친다 — WD-571: 분석 쿼리 error 첫 줄의
+ * 사용자용 한국어 안내를 SQLState 분기로 오인하지 않게 「그 다음 ERROR / SQLState 줄로 판단」 문장을 더했다.
+ */
 const PG_MAIN_PARTS: MainPromptParts = {
   rowSearchLine: `- 내용으로 행 찾기: search_dataset_rows — 텍스트 필드 의미+키워드 검색. get_dataset 의 searchIndex.enabled 가 true 일 때만. 정확 조건·집계는 execute_analytics_query
 `,
@@ -33,6 +37,7 @@ const PG_MAIN_PARTS: MainPromptParts = {
 - 컬럼 정보가 컨텍스트에 없는 상태로 SQL 작성 금지 (retry loop 의 핵심 원인)
 - 에러 발생 시: tool_result 의 ERROR / HINT / SQLState / Position 을 그대로 읽고,
   2단계에서 받은 컬럼 정보와 대조해 1턴 내 자체 정정 — 같은 SQL 재실행 금지.
+  분석 쿼리 error 는 첫 줄에 사용자용 한국어 안내 한 줄이 먼저 올 수 있다 — 아래 분기는 그 다음 ERROR / SQLState 줄로 판단한다.
   · SQLState 42703 (UNDEFINED_COLUMN) → 컬럼 목록 재대조
   · SQLState 42P01 (UNDEFINED_TABLE) → find_datasets(또는 get_dataset)로 tableName 재확인
   · SQLState 42601 (SYNTAX) → Position 부근 SQL 재검토

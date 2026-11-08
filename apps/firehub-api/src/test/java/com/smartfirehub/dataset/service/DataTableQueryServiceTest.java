@@ -476,6 +476,25 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
         .isInstanceOf(com.smartfirehub.pipeline.exception.UnsafeSqlException.class);
   }
 
+  /**
+   * WD-571 — 데이터셋 SQL 편집기의 없는 테이블(42P01)도 첫 줄에 한국어 안내가 오고, 둘째 줄부터 ERROR/SQLState 원문이 남는다. 내부에서 덧붙인
+   * 행 제한이 담긴 jOOQ 메아리({@code SQL [...]; })는 여전히 보이지 않는다(WD-421).
+   */
+  @Test
+  void executeQuery_undefinedTable_prependsKoreanGuideAndStripsJooqEcho() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery("SELECT * FROM non_existent_table_wd571", 100);
+
+    assertThat(response.error()).isNotNull();
+    String[] lines = response.error().split("\n", 2);
+    assertThat(lines[0]).isEqualTo(AdhocSqlErrorMessages.UNDEFINED_TABLE_GUIDE);
+    assertThat(lines[1])
+        .startsWith("ERROR: ")
+        .contains("non_existent_table_wd571")
+        .contains("SQLState: 42P01");
+    assertThat(response.error()).doesNotContain("SQL [").doesNotContain("LIMIT 100");
+  }
+
   /** 존재하지 않는 컬럼 참조 오류는 error 필드로 반환된다 */
   @Test
   void executeQuery_unknownColumn_returnsErrorField() {
