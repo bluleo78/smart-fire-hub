@@ -859,10 +859,10 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
                 <p className="text-sm font-medium text-destructive">
                   이 양식을 사용하는 스마트 작업 {affectedJobs.length}개가 기본 형식으로 전환됩니다.
                 </p>
-                {/* 글머리표는 바깥(list-outside + pl-5)에 둔다 — list-inside 면 inline-block 버튼인 긴 작업명이
+                {/* 글머리표는 바깥(list-outside + pl-4)에 둔다 — list-inside 면 inline-block 버튼인 긴 작업명이
                     글머리표 다음 줄로 통째로 떨어져 글머리표만 한 줄을 차지한다. 버튼의 align-top 은 여러 줄로 감긴
                     버튼의 기준선이 마지막 줄이 되어 글머리표가 맨 아래 줄에 붙는 것을 막고 첫 줄 옆에 두려는 것이다 (WD-632) */}
-                <ul className="mt-2 list-outside list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                <ul className="mt-2 list-outside list-disc space-y-1 pl-4 text-sm text-muted-foreground">
                   {affectedJobs.map((job) => (
                     <li key={job.id}>
                       {/* 공백 없는 긴 작업명(최대 200자)도 상자 안에서 줄바꿈해 전부 읽히게 한다 — 삭제 영향 고지이므로 자르지 않는다 (WD-558) */}

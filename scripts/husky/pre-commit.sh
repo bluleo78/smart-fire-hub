@@ -48,6 +48,13 @@ fi
 # typecheck 는 코드 변경이 있을 때만 — 문서만 바꾼 커밋에서 전체 앱 타입 검사를 돌지 않게 (WD-459)
 [ -n "$PRECOMMIT_CHANGED_FILES" ] || pnpm typecheck
 
+# firehub-web 코드를 바꿨으면 web 단위 테스트(vitest)도 — 디자인·알파 게이트가 정적 검사라 E2E 로는 못 잡는다(WD-668).
+# 전체가 10초 안쪽이라 관련 파일만 고르지 않고 다 돈다.
+if printf '%s\n' "$CHANGED" | grep -qE '^apps/firehub-web/'; then
+  echo "[pre-commit] firehub-web 변경 — web 단위 테스트(vitest) 실행"
+  [ -n "$PRECOMMIT_DRY_RUN" ] || (cd apps/firehub-web && pnpm exec vitest run)
+fi
+
 # 3) 공유 영역 또는 매핑 외 코드 변경 → 전체 풀
 # 도메인 = src/pages/<d>/ 와 e2e/pages/<d>/ 가 모두 있는 폴더 — 목록을 고정하면 새 도메인(graphrag 등)이 빠져 전체 E2E 로 간다 (WD-459).
 WEB_DOMAINS_RE=$(for d in apps/firehub-web/src/pages/*/; do d=$(basename "$d"); [ -d "apps/firehub-web/e2e/pages/$d" ] && printf '%s\n' "$d"; done | paste -sd'|' -)
