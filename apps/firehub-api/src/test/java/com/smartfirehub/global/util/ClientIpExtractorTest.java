@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
  * ClientIpExtractor 단위 테스트 — 신뢰 프록시 기준 X-Forwarded-For 해석(WD-402).
@@ -152,5 +154,22 @@ class ClientIpExtractorTest {
   @Test
   void extract_nullRequest_returnsNull() {
     assertThat(extractor.extract(null)).isNull();
+  }
+
+  /** 현재 요청 IP(WD-578): 요청 컨텍스트가 있으면 extract 와 같은 규칙(신뢰 프록시 기준)으로 고르고, 없으면 null */
+  @Test
+  void currentRequestIp_usesBoundRequestOrNull() {
+    RequestContextHolder.resetRequestAttributes();
+    try {
+      // 요청 컨텍스트 없음(내부 호출·배경 스레드) — null
+      assertThat(extractor.currentRequestIp()).isNull();
+
+      // 신뢰 프록시 뒤 요청 — 위조 값이 아니라 프록시가 덧붙인 주소
+      RequestContextHolder.setRequestAttributes(
+          new ServletRequestAttributes(request("172.18.0.3", "203.0.113.77, 198.51.100.9")));
+      assertThat(extractor.currentRequestIp()).isEqualTo("198.51.100.9");
+    } finally {
+      RequestContextHolder.resetRequestAttributes();
+    }
   }
 }

@@ -3,12 +3,13 @@ package com.smartfirehub.global.util;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.InetAddress;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
  * 클라이언트 IP 추출기 — 신뢰 프록시 기준(WD-402).
@@ -54,7 +55,7 @@ public class ClientIpExtractor {
   @Autowired // 생성자가 둘이라 스프링이 쓸 생성자를 명시한다
   public ClientIpExtractor(@Value("${app.security.trusted-proxies:}") String trustedProxies) {
     this(
-        parseList(
+        IpCidr.parseList(
             trustedProxies == null || trustedProxies.isBlank()
                 ? DEFAULT_TRUSTED_PROXIES
                 : trustedProxies));
@@ -111,6 +112,20 @@ public class ClientIpExtractor {
     return chain.get(chain.size() - 1);
   }
 
+  /**
+   * 현재 스레드에 묶인 HTTP 요청의 클라이언트 IP 를 {@link #extract} 와 같은 규칙으로 고른다(WD-578).
+   *
+   * <p>로그인 서비스처럼 요청 객체를 받지 않는 계층이 각자 {@code RequestContextHolder} 를 꺼내던 중복을 한곳에 모은다.
+   *
+   * @return 클라이언트 IP. 요청 컨텍스트가 없으면(내부 호출·배경 스레드) null
+   */
+  public String currentRequestIp() {
+    if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes sra) {
+      return extract(sra.getRequest());
+    }
+    return null;
+  }
+
   /** 주소가 신뢰 프록시 대역에 속하는지. 해석되지 않는 값은 절대 신뢰하지 않는다. */
   boolean isTrustedProxy(String address) {
     Optional<InetAddress> parsed = IpCidr.parseLiteral(address);
@@ -120,15 +135,5 @@ public class ClientIpExtractor {
       if (cidr.contains(inet)) return true;
     }
     return false;
-  }
-
-  /** 쉼표 목록을 CIDR 로 파싱한다. 빈 항목은 건너뛰고, 잘못된 항목은 예외로 알린다. */
-  private static List<IpCidr> parseList(String csv) {
-    if (csv == null || csv.isBlank()) return List.of();
-    return Arrays.stream(csv.split(","))
-        .map(String::trim)
-        .filter(s -> !s.isEmpty())
-        .map(IpCidr::parse)
-        .toList();
   }
 }

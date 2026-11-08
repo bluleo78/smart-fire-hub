@@ -185,6 +185,8 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
       Set.of(
           // login_attempt / refresh_token / settings 는 테넌트 개념이 없는 전역 테이블이다.
           "JooqLoginAttemptRepository",
+          // login_ip_failures(WD-578)도 테넌트 개념이 없는 전역 테이블이다 — 로그인 IP 기준 제한의 실패 기록.
+          "JooqLoginIpFailureRepository",
           "JooqRefreshTokenRepository",
           "JooqSettingsRepository",
           // membership / tenant 는 테넌시 자체를 정의하는 메타 테이블이라 RLS 대상이 아니다

@@ -7,10 +7,12 @@ import com.smartfirehub.auth.exception.InvalidTokenException;
 import com.smartfirehub.auth.exception.RefreshTokenReusedException;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.auth.service.LoginAttemptService;
+import com.smartfirehub.auth.service.LoginIpThrottleService;
 import com.smartfirehub.auth.service.RefreshTokenHasher;
 import com.smartfirehub.auth.service.RefreshTokenRotation;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.util.ClientIpExtractor;
 import com.smartfirehub.platform.dto.PlatformMeResponse;
 import com.smartfirehub.platform.dto.PlatformTokenResponse;
 import com.smartfirehub.platform.repository.PlatformRoleRepository;
@@ -45,6 +47,12 @@ public class PlatformAuthService {
   private final PlatformRoleRepository platformRoleRepository;
   private final RefreshTokenRotation refreshTokenRotation;
 
+  /** 같은 IP 에서 여러 계정에 돌려 보는 비밀번호 스프레이를 막는 IP 기준 제한(WD-578) — 테넌트 로그인과 같은 정책·같은 카운터. */
+  private final LoginIpThrottleService loginIpThrottleService;
+
+  /** IP 제한의 요청 IP 를 신뢰 프록시 기준으로 고른다(WD-402) — X-Forwarded-For 위조로 IP 키를 바꿔 피하지 못하게. */
+  private final ClientIpExtractor clientIpExtractor;
+
   /**
    * 운영자 로그인.
    *
@@ -57,6 +65,9 @@ public class PlatformAuthService {
    *
    * <p>실패 예외(잠금·자격 증명 불일치·비활성)에서는 롤백하지 않는다(WD-552) — 실패 카운터가 이 트랜잭션에 실리므로(커넥션 1개) 롤백되면 카운터가 사라져
    * 브루트포스 잠금이 무력해진다. 실패 경로에서 이 트랜잭션이 쓰는 것은 카운터뿐이라 커밋돼도 안전하다.
+   *
+   * <p>계정 잠금보다 먼저 IP 기준 제한(WD-578)을 본다. 실패 카운터를 올리는 모든 경로({@link #failed}: 없는 계정·비밀번호 불일치·롤 없음)에서
+   * IP 실패도 함께 기록한다 — 테넌트 평면과 카운터를 공유하므로 두 로그인 화면을 번갈아 써도 피할 수 없다.
    */
   @Transactional(
       noRollbackFor = {
@@ -67,16 +78,24 @@ public class PlatformAuthService {
   public PlatformTokenResponse login(LoginRequest request) {
     // 대소문자·앞뒤 공백만 다른 입력도 같은 계정으로 본다(WD-269, 테넌트 평면과 대칭).
     String username = userRepository.resolveLoginUsername(request.username());
+    // 요청 컨텍스트가 없으면(내부 호출·테스트) null 이고 IP 제한을 적용하지 않는다.
+    String clientIp = clientIpExtractor.currentRequestIp();
+    if (loginIpThrottleService.blockedKey(clientIp).isPresent()) {
+      throw new AccountLockedException(LoginIpThrottleService.BLOCKED_MESSAGE);
+    }
     if (loginAttemptService.isBlocked(username)) {
       throw new AccountLockedException("로그인 시도 횟수를 초과하였습니다. 잠시 후 다시 시도해 주세요.");
     }
 
-    UserResponse user = userRepository.findByUsername(username).orElseThrow(() -> failed(username));
+    UserResponse user =
+        userRepository.findByUsername(username).orElseThrow(() -> failed(username, clientIp));
     String storedPassword =
-        userRepository.findPasswordByUsername(username).orElseThrow(() -> failed(username));
+        userRepository
+            .findPasswordByUsername(username)
+            .orElseThrow(() -> failed(username, clientIp));
 
     if (!passwordEncoder.matches(request.password(), storedPassword)) {
-      throw failed(username);
+      throw failed(username, clientIp);
     }
     if (!user.isActive()) {
       // 테넌트 로그인과 같은 문구 — 비밀번호가 맞을 때만 알리고 할 일까지 적는다(WD-278)
@@ -84,7 +103,7 @@ public class PlatformAuthService {
     }
     // 운영자 자격. 여기서 갈리는 것이 이 서비스와 테넌트 로그인의 유일한 차이다.
     if (!platformRoleRepository.hasAnyPlatformRole(user.id())) {
-      throw failed(username);
+      throw failed(username, clientIp);
     }
 
     loginAttemptService.loginSucceeded(username);
@@ -184,9 +203,10 @@ public class PlatformAuthService {
         List.copyOf(platformRoleRepository.findPlatformPermissionCodes(userId)));
   }
 
-  /** 실패 카운터를 올리고 열거 방지용 공통 예외를 만든다. */
-  private InvalidCredentialsException failed(String username) {
+  /** 계정 실패 카운터와 IP 실패 기록(WD-578)을 함께 올리고 열거 방지용 공통 예외를 만든다. */
+  private InvalidCredentialsException failed(String username, String clientIp) {
     loginAttemptService.loginFailed(username);
+    loginIpThrottleService.loginFailed(clientIp, username);
     return new InvalidCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
   }
 }

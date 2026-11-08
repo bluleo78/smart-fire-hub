@@ -53,4 +53,15 @@ class IpCidrTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> IpCidr.parse(" ")).isInstanceOf(IllegalArgumentException.class);
   }
+
+  /** 쉼표 목록 파싱 — 앞뒤 공백·빈 항목은 건너뛰고, null·빈 값은 빈 목록, 잘못된 항목은 예외(WD-578) */
+  @Test
+  void parseList_skipsBlankEntriesAndRejectsInvalid() {
+    assertThat(IpCidr.parseList(" 10.0.0.0/8 , ,::1/128,"))
+        .containsExactly(IpCidr.parse("10.0.0.0/8"), IpCidr.parse("::1/128"));
+    assertThat(IpCidr.parseList(null)).isEmpty();
+    assertThat(IpCidr.parseList("  ")).isEmpty();
+    assertThatThrownBy(() -> IpCidr.parseList("10.0.0.0/8,not-an-ip"))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
 }

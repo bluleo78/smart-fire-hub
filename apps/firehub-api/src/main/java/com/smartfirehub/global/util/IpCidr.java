@@ -3,6 +3,7 @@ package com.smartfirehub.global.util;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
@@ -100,6 +101,25 @@ public final class IpCidr {
       throw new IllegalArgumentException("CIDR 접두 길이 범위 밖: " + cidr);
     }
     return new IpCidr(bytes, prefix);
+  }
+
+  /**
+   * 쉼표로 구분한 CIDR 목록을 대역 목록으로 파싱한다. 빈 항목은 건너뛰고, 잘못된 항목은 예외로 알린다.
+   *
+   * <p>신뢰 프록시 목록({@link ClientIpExtractor})과 로그인 IP 제한 제외 대역(WD-578)이 같은 설정 형식을 쓰므로 한 곳에 둔다 — 두 곳
+   * 모두 잘못된 항목으로 기동을 실패시켜 보안 설정을 조용히 무시하지 않는다.
+   *
+   * @param csv 쉼표로 구분한 CIDR 목록(null·빈 값이면 빈 목록)
+   * @return 대역 목록(불변)
+   * @throws IllegalArgumentException 항목 중 하나라도 잘못된 경우
+   */
+  public static List<IpCidr> parseList(String csv) {
+    if (csv == null || csv.isBlank()) return List.of();
+    return Arrays.stream(csv.split(","))
+        .map(String::trim)
+        .filter(s -> !s.isEmpty())
+        .map(IpCidr::parse)
+        .toList();
   }
 
   /** 네트워크 주소 바이트의 복사본. */

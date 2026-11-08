@@ -45,6 +45,7 @@ import com.smartfirehub.jooq.tables.JobrunrMetadata;
 import com.smartfirehub.jooq.tables.JobrunrMigrations;
 import com.smartfirehub.jooq.tables.JobrunrRecurringJobs;
 import com.smartfirehub.jooq.tables.LoginAttempts;
+import com.smartfirehub.jooq.tables.LoginIpFailures;
 import com.smartfirehub.jooq.tables.Membership;
 import com.smartfirehub.jooq.tables.MetricSnapshot;
 import com.smartfirehub.jooq.tables.NotificationOutbox;
@@ -329,6 +330,11 @@ public class Tables {
      * 로그인 실패 카운터. 브루트포스 잠금용 영속 저장소(#144).
      */
     public static final LoginAttempts LOGIN_ATTEMPTS = LoginAttempts.LOGIN_ATTEMPTS;
+
+    /**
+     * 로그인 IP 기준 제한용 실패 기록. (IP 키, 계정) 쌍마다 한 행, 15분 만료(WD-578).
+     */
+    public static final LoginIpFailures LOGIN_IP_FAILURES = LoginIpFailures.LOGIN_IP_FAILURES;
 
     /**
      * 사용자-테넌트 소속(다중 소속 허용) — 전역, RLS 미적용
