@@ -1,10 +1,11 @@
 import { CheckCircle2, Plus, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { apiConnectionsApi } from '@/api/api-connections';
 import { StatusBadge } from '@/components/api-connection/StatusBadge';
+import { TruncatedLink } from '@/components/TruncatedLink';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
@@ -465,17 +466,18 @@ export default function ApiConnectionListPage() {
         )}
       </div>
 
-      <div className="rounded-md border">
+      {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(인증 유형·상태·생성일·삭제) + 긴 값 칸 여백 */}
+      <div className="@container [--k:calc(5.25rem_+_3.75rem_+_5.75rem_+_3.75rem_+_3rem)] rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
-              <TableHead>인증 유형</TableHead>
+              <TableHead className="w-[5.25rem]">인증 유형</TableHead>
               <TableHead>Base URL</TableHead>
-              <TableHead>상태</TableHead>
+              <TableHead className="w-[3.75rem]">상태</TableHead>
               <TableHead>설명</TableHead>
-              <TableHead>생성일</TableHead>
-              <TableHead className="w-[60px]" />
+              <TableHead className="w-[5.75rem]">생성일</TableHead>
+              <TableHead className="w-[3.75rem]" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -488,19 +490,10 @@ export default function ApiConnectionListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors"
                   onClick={() => navigate(`/admin/api-connections/${conn.id}`)}
                 >
-                  {/* WD-559: 표 셀은 줄바꿈하지 않아(whitespace-nowrap) 띄어쓰기 없는 긴 이름·Base URL·설명이 칸을 늘려 삭제 칸이 화면 밖으로
-                      밀렸다. 데이터셋 목록(WD-517)처럼 값에 고정 폭 상한을 두어 넘는 값만 말줄임, 전체 값은 title 로 보인다. */}
+                  {/* WD-559·WD-634: 긴 값은 표 컨테이너 비례 상한(cqw)으로 말줄임 — 이유는 TruncatedText 설명 */}
                   <TableCell className="font-medium">
-                    {/* 키보드 접근성(WD-396): 행 클릭은 마우스로만 열리므로 이름을 상세 링크로 둔다 — Tab 으로 닿고 Enter 로
-                        열린다. 클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
-                    <Link
-                      to={`/admin/api-connections/${conn.id}`}
-                      className="inline-block max-w-[12rem] truncate align-middle rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      title={conn.name}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {conn.name}
-                    </Link>
+                    {/* 키보드 접근성(WD-396): 행 클릭은 마우스 전용이라 이름을 상세 링크로 둔다 */}
+                    <TruncatedLink to={`/admin/api-connections/${conn.id}`} value={conn.name} className="max-w-[min(16rem,calc((100cqw_-_var(--k))_*_0.3))]" />
                   </TableCell>
                   <TableCell>
                     <Badge variant={conn.authType === 'BEARER' ? 'default' : 'secondary'}>
@@ -508,13 +501,13 @@ export default function ApiConnectionListPage() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm font-mono">
-                    <TruncatedText value={conn.baseUrl} className="max-w-[18rem]" />
+                    <TruncatedText value={conn.baseUrl} className="max-w-[min(24rem,calc((100cqw_-_var(--k))_*_0.47))]" />
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={conn.lastStatus} checkedAt={conn.lastCheckedAt} />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    <TruncatedText value={conn.description} className="max-w-[10rem]" />
+                    <TruncatedText value={conn.description} className="max-w-[min(14rem,calc((100cqw_-_var(--k))_*_0.23))]" />
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     {formatDateShort(conn.createdAt)}

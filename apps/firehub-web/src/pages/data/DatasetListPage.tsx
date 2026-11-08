@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { TruncatedLink } from '../../components/TruncatedLink';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { SearchInput } from '../../components/ui/search-input';
@@ -26,6 +27,7 @@ import {
 } from '../../components/ui/table';
 import { TableEmptyRow } from '../../components/ui/table-empty';
 import { TableSkeletonRows } from '../../components/ui/table-skeleton';
+import { TruncatedText } from '../../components/ui/truncated-text';
 import {
   useCategories,
   useDatasetPermissions,
@@ -430,11 +432,12 @@ export default function DatasetListPage() {
         </div>
       )}
 
-      <div className="rounded-md border">
+      {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(즐겨찾기·보안 등급·태그·유형·카테고리·생성일·작업) + 긴 값 칸 여백 */}
+      <div className="@container [--k:calc(2rem_+_5rem_+_5rem_+_7rem_+_6rem_+_6.75rem_+_3.75rem_+_1rem)] rounded-md border">
         <Table aria-label="데이터셋 목록">
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[32px]" />
+              <TableHead className="w-[2rem]" />
               <SortableHeader
                 direction={sortKey === 'name' ? sortOrder : 'none'}
                 onSort={() => toggleSort('name')}
@@ -442,18 +445,19 @@ export default function DatasetListPage() {
               >
                 이름
               </SortableHeader>
-              <TableHead>보안 등급</TableHead>
-              <TableHead>태그</TableHead>
-              <TableHead>유형</TableHead>
-              <TableHead>카테고리</TableHead>
+              <TableHead className="w-[5rem]">보안 등급</TableHead>
+              <TableHead className="w-[5rem]">태그</TableHead>
+              <TableHead className="w-[7rem]">유형</TableHead>
+              <TableHead className="w-[6rem]">카테고리</TableHead>
               <SortableHeader
+                className="w-[6.75rem]"
                 direction={sortKey === 'createdAt' ? sortOrder : 'none'}
                 onSort={() => toggleSort('createdAt')}
                 title="현재 페이지 내에서만 정렬됩니다"
               >
                 생성일
               </SortableHeader>
-              <TableHead className="w-[60px]" />
+              <TableHead className="w-[3.75rem]" />
             </TableRow>
           </TableHeader>
           <tbody>
@@ -509,19 +513,9 @@ export default function DatasetListPage() {
 
                   {/* Name + status badge */}
                   <TableCell className="font-medium">
-                    {/* 이름 칸 폭 상한(WD-517): 표 셀은 줄바꿈하지 않아(whitespace-nowrap) 띄어쓰기 없는 긴 이름이 표를 가로로 밀어
-                        보안 등급·태그·생성일 칸이 화면 밖으로 나갔다. 칸 폭을 묶고 이름은 말줄임, 전체 이름은 title 로 보인다. */}
-                    <div className="flex items-center gap-2 flex-wrap max-w-[22rem]">
-                      {/* 키보드 접근성(WD-396): 행 클릭은 마우스로만 열리므로 이름을 상세 링크로 둔다 — Tab 으로 닿고 Enter 로
-                          열린다(역할 목록 WD-286 과 같은 방식). 클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
-                      <Link
-                        to={`/data/datasets/${dataset.id}`}
-                        className="min-w-0 max-w-full truncate rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        title={dataset.name}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {dataset.name}
-                      </Link>
+                    {/* WD-517·WD-634: 긴 이름은 표 폭 비례 상한으로 말줄임(TruncatedText 설명). 이름은 상세 링크(WD-396) */}
+                    <div className="flex items-center gap-2 flex-wrap max-w-[min(22rem,calc(100cqw_-_var(--k)))]">
+                      <TruncatedLink to={`/data/datasets/${dataset.id}`} value={dataset.name} className="min-w-0" />
                       {dataset.status === 'CERTIFIED' && (
                         <Badge variant="success" className="text-xs">
                           ✓ Certified
@@ -540,12 +534,12 @@ export default function DatasetListPage() {
                     {dataset.securityLevel && <SecurityLevelBadge level={dataset.securityLevel} />}
                   </TableCell>
 
-                  {/* Tags column */}
+                  {/* 태그 칸 — WD-634: 선언 폭(5rem, --k 에 포함)을 넘지 않게 배지는 줄바꿈하고, 긴 태그 하나는 말줄임(전체는 title) */}
                   <TableCell>
-                    <div className="flex items-center gap-1 flex-wrap">
+                    <div className="flex max-w-[4rem] items-center gap-1 flex-wrap">
                       {(dataset.tags || []).slice(0, 3).map((tag) => (
-                        <Badge key={tag} variant="secondary" className="text-xs">
-                          {tag}
+                        <Badge key={tag} variant="secondary" className="max-w-full text-xs" title={tag}>
+                          <span className="min-w-0 truncate">{tag}</span>
                         </Badge>
                       ))}
                       {(dataset.tags || []).length > 3 && (
@@ -567,7 +561,10 @@ export default function DatasetListPage() {
                       </Badge>
                     </div>
                   </TableCell>
-                  <TableCell>{dataset.category?.name || '-'}</TableCell>
+                  {/* 카테고리 — WD-634: 선언 폭(6rem, --k 에 포함) 안에서 말줄임 */}
+                  <TableCell>
+                    <TruncatedText value={dataset.category?.name} className="max-w-[5rem]" />
+                  </TableCell>
                   <TableCell className="tabular-nums" title={formatDateTimeMinute(dataset.createdAt)}>
                     {formatDateOnly(dataset.createdAt)}
                   </TableCell>

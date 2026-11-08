@@ -2,9 +2,10 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { TruncatedLink } from '@/components/TruncatedLink';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { FormField } from '@/components/ui/form-field';
 import { InlineBanner } from '@/components/ui/inline-banner';
@@ -218,14 +219,15 @@ export default function RoleListPage() {
         )}
       </div>
 
-      <div className="rounded-md border">
+      {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(유형·삭제) + 긴 값 칸 여백 */}
+      <div className="@container [--k:calc(6rem_+_3.75rem_+_2rem)] rounded-md border">
         <Table aria-label="역할 목록">
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
-              <TableHead>유형</TableHead>
+              <TableHead className="w-[6rem]">유형</TableHead>
               <TableHead>설명</TableHead>
-              <TableHead className="w-[60px]" />
+              <TableHead className="w-[3.75rem]" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -238,20 +240,10 @@ export default function RoleListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors row-hover"
                   onClick={() => navigate(`/admin/roles/${role.id}`)}
                 >
-                  {/* WD-559: 표 셀은 줄바꿈하지 않아(whitespace-nowrap) 띄어쓰기 없는 긴 이름·설명이 칸을 늘려 삭제 칸이 화면 밖으로
-                      밀렸다. 데이터셋 목록(WD-517)처럼 값에 고정 폭 상한을 두어 넘는 값만 말줄임, 전체 값은 title 로 보인다. */}
+                  {/* WD-559·WD-634: 긴 값은 표 컨테이너 비례 상한(cqw)으로 말줄임 — 이유는 TruncatedText 설명 */}
                   <TableCell className="font-medium">
-                    {/* 키보드 접근성(WD-286): 행 클릭은 마우스로만 열리므로 역할 이름을 상세 링크로 둔다 — Tab 으로 닿고
-                        Enter 로 열린다. 행에 role="button" 을 주면 표의 행·칸 의미가 사라져 링크로 한다.
-                        클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
-                    <Link
-                      to={`/admin/roles/${role.id}`}
-                      className="inline-block max-w-[16rem] truncate align-middle rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      title={role.name}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {role.name}
-                    </Link>
+                    {/* 키보드 접근성(WD-286): 행 클릭은 마우스 전용이라 이름을 상세 링크로 둔다 */}
+                    <TruncatedLink to={`/admin/roles/${role.id}`} value={role.name} className="max-w-[min(20rem,calc((100cqw_-_var(--k))_*_0.38))]" />
                   </TableCell>
                   <TableCell>
                     {role.isSystem ? (
@@ -261,7 +253,7 @@ export default function RoleListPage() {
                     )}
                   </TableCell>
                   <TableCell>
-                    <TruncatedText value={role.description} className="max-w-[24rem]" />
+                    <TruncatedText value={role.description} className="max-w-[min(32rem,calc((100cqw_-_var(--k))_*_0.62))]" />
                   </TableCell>
                   <TableCell>
                     {canDeleteRole && !role.isSystem && (

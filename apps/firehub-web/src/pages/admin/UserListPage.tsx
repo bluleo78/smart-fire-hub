@@ -96,14 +96,15 @@ export default function UserListPage() {
         onChange={handleSearchChange}
       />
 
-      <div className="rounded-md border">
+      {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(상태) + 긴 값 칸 여백 */}
+      <div className="@container [--k:calc(6rem_+_3rem)] rounded-md border">
         <Table aria-label="사용자 목록">
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
               <TableHead>아이디</TableHead>
               <TableHead>이메일</TableHead>
-              <TableHead>상태</TableHead>
+              <TableHead className="w-[6rem]">상태</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -130,24 +131,25 @@ export default function UserListPage() {
                 >
                   {/* WD-15: 주 식별자(이름)만 굵게 — 보조 식별자(아이디)가 더 굵으면 시선이 역전된다(02 §4.1).
                       역할 라벨은 공용 매핑(lib/membership-role)으로 admin 콘솔과 같은 용어 "소유자". */}
-                  {/* WD-559: 띄어쓰기 없는 긴 이름·아이디·이메일이 칸을 늘려 상태 칸이 화면 밖으로 밀렸다. 데이터셋 목록(WD-517)처럼
-                      값에 고정 폭 상한을 두어 넘는 값만 말줄임, 전체 값은 title 로 보인다. 소유자 배지는 줄지 않게 둔다. */}
+                  {/* WD-559·WD-634: 긴 값은 표 컨테이너 비례 상한(cqw)으로 말줄임 — 이유는 TruncatedText 설명. 소유자 배지는 줄지 않게 둔다 */}
                   <TableCell className="font-medium">
-                    <span className="inline-flex items-center gap-2">
-                      <TruncatedText value={u.name} className="max-w-[12rem]" />
+                    {/* 상한은 이름+소유자 배지 묶음에 건다 — 배지가 붙어도 칸 몫을 넘지 않고, 이름(min-w-0)만 줄어든다 */}
+                    <span className="inline-flex max-w-[min(16rem,calc((100cqw_-_var(--k))_*_0.26))] items-center gap-2">
+                      <TruncatedText value={u.name} className="min-w-0" />
                       {u.membershipRole === 'OWNER' && <Badge variant="outline" className="shrink-0">{membershipRoleLabel('OWNER')}</Badge>}
                     </span>
                   </TableCell>
                   <TableCell>
-                    <TruncatedText value={u.username} className="max-w-[10rem]" />
+                    <TruncatedText value={u.username} className="max-w-[min(14rem,calc((100cqw_-_var(--k))_*_0.22))]" />
                   </TableCell>
                   <TableCell>
-                    <TruncatedText value={u.email} className="max-w-[16rem]" />
+                    <TruncatedText value={u.email} className="max-w-[min(24rem,calc((100cqw_-_var(--k))_*_0.49))]" />
                   </TableCell>
                   <TableCell>
                     {/* 이 워크스페이스 멤버십 상태(전역 계정 아님, WD-2). 색만으로 구분하지 않도록 문구가 다르다.
-                        전역 계정이 운영자에게 비활성화됐으면 옆에 계정 배지를 붙인다(WD-3). */}
-                    <span className="inline-flex items-center gap-2">
+                        전역 계정이 운영자에게 비활성화됐으면 옆에 계정 배지를 붙인다(WD-3).
+                        WD-634: 배지가 둘이면 줄바꿈(flex-wrap)해 칸이 선언 폭(--k 에 포함)을 넘지 않게 한다. */}
+                    <span className="inline-flex flex-wrap items-center gap-2">
                       <Badge variant={u.isActive ? 'success' : 'secondary'} title="이 워크스페이스 멤버십">{u.isActive ? '활성' : '정지'}</Badge>
                       {u.accountActive === false && <AccountDisabledBadge />}
                     </span>
