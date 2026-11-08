@@ -550,9 +550,10 @@ export default function DatasetDetailPage() {
                   {canWriteDataset && (
                     // 이름에 태그를 넣어 스크린리더가 어느 태그인지 읽게 하고, 누르는 영역은 24×24px(WCAG 2.5.8)로 넓힌다 —
                     // 아이콘은 12px 그대로 두고 음수 여백으로 칩 높이가 커지지 않게 한다 (WD-395)
+                    // shrink-0: 긴 태그 글자에 밀려 24px 아래로 줄지 않게 한다 (WD-663)
                     <button
                       type="button"
-                      className="-my-1 -mr-1 inline-flex size-6 items-center justify-center rounded-full hover:bg-muted-foreground/20 transition-colors"
+                      className="-my-1 -mr-1 inline-flex size-6 shrink-0 items-center justify-center rounded-full hover:bg-muted-foreground/20 transition-colors"
                       onClick={() => handleRemoveTag(tag)}
                       aria-label={`${tag} 태그 제거`}
                       title={`${tag} 태그 제거`}

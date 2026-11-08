@@ -60,3 +60,34 @@ export async function expectInsideHorizontally(el: Locator, container: Locator, 
   const clipped = await el.evaluate((node) => node.scrollWidth - node.clientWidth);
   expect(clipped, `${label} 내용이 상자 밖으로 넘침(px)`).toBeLessThanOrEqual(1);
 }
+
+/**
+ * 잘린 값은 hover 했을 때 전체 이름 title 이 붙는다 — TruncatedTitle 용 (WD-663)
+ * - TruncatedTitle 은 잘림을 늘 관찰하지 않고 pointerenter·focus 때만 재서 title 을 단다. 그래서 hover 전에는 title 이 없다.
+ * - 항상 title 을 두는 TruncatedText(표 칸)는 table-layout.ts 의 expectLongValueTruncated 를 쓴다.
+ * @param el - 말줄임되는 글자 요소
+ * @param fullValue - 잘리기 전 전체 값
+ */
+export async function expectTruncatedWithHoverTitle(el: Locator, fullValue: string) {
+  await expect(el).toBeVisible();
+  const clipped = await el.evaluate((node) => node.scrollWidth > node.clientWidth);
+  expect(clipped, '긴 값이 말줄임되어야 한다').toBe(true);
+  // 포인터가 이미 요소 위에 있으면 hover() 가 pointerenter 를 다시 일으키지 않는다 — 먼저 바깥으로 뺀다
+  await el.page().mouse.move(0, 0);
+  await el.hover();
+  await expect(el).toHaveAttribute('title', fullValue);
+}
+
+/**
+ * 잘리지 않은 값은 hover 해도 title 이 없다 — TruncatedTitle 용 (WD-663)
+ * - hover 없이 title 이 없음만 보면, 판정이 hover 때 일어나므로 늘 통과해 아무것도 검증하지 못한다.
+ * @param el - 잘리지 않아야 하는 글자 요소
+ */
+export async function expectNoTitleOnHover(el: Locator) {
+  await expect(el).toBeVisible();
+  const clipped = await el.evaluate((node) => node.scrollWidth > node.clientWidth);
+  expect(clipped, '평범한 길이의 값은 잘리지 않아야 한다').toBe(false);
+  await el.page().mouse.move(0, 0);
+  await el.hover();
+  await expect(el, '잘리지 않은 값에는 툴팁이 없다').not.toHaveAttribute('title');
+}
