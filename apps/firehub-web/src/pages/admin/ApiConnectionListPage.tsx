@@ -592,7 +592,19 @@ export default function ApiConnectionListPage() {
                 </TableRow>
               ))
             ) : (
-              <TableEmptyRow colSpan={7} message="등록된 API 연결이 없습니다." />
+              <TableEmptyRow
+                colSpan={7}
+                message="등록된 API 연결이 없습니다."
+                // 빈 목록에서 바로 만들 수 있게 다른 목록과 같은 버튼을 둔다(WD-621). 머리말 「새 연결」과 같은 권한·같은 창을 쓴다.
+                emptyAction={
+                  canWrite ? (
+                    <Button size="sm" variant="outline" onClick={() => setDialogOpen(true)}>
+                      <Plus className="h-4 w-4" />
+                      새 API 연결 만들기
+                    </Button>
+                  ) : undefined
+                }
+              />
             )}
           </TableBody>
         </Table>

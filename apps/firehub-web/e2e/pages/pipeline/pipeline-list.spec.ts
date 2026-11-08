@@ -60,6 +60,28 @@ test.describe('파이프라인 목록 페이지', () => {
     await expect(page.getByText('파이프라인이 없습니다.')).toBeVisible();
   });
 
+  test('빈 목록에서 만들기 버튼을 누르면 새 파이프라인 화면으로 간다 (WD-621)', async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+    await mockApi(page, 'GET', '/api/v1/pipelines', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse([]));
+    await page.goto('/pipelines');
+
+    // 빈 상태 행 안의 버튼 — 머리말 「새 파이프라인」과 구분해 빈 행 안에서 찾는다
+    const emptyRow = page.getByRole('row').filter({ hasText: '파이프라인이 없습니다.' });
+    await emptyRow.getByRole('link', { name: '새 파이프라인 만들기' }).click();
+    await expect(page).toHaveURL('/pipelines/new');
+  });
+
+  test('생성 권한(pipeline:write)이 없으면 빈 목록에 만들기 버튼을 두지 않는다 (WD-621)', async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page, ['pipeline:read']);
+    await mockApi(page, 'GET', '/api/v1/pipelines', createPageResponse([]));
+    await page.goto('/pipelines');
+
+    await expect(page.getByText('파이프라인이 없습니다.')).toBeVisible();
+    await expect(page.getByRole('link', { name: '새 파이프라인 만들기' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: '새 파이프라인' })).toHaveCount(0);
+  });
+
   test('파이프라인 추가 버튼 클릭 시 /new 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     await setupPipelineMocks(page, 3);
 

@@ -215,7 +215,21 @@ export default function PipelineListPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              <TableEmptyRow colSpan={7} message="파이프라인이 없습니다." />
+              <TableEmptyRow
+                colSpan={7}
+                message="파이프라인이 없습니다."
+                // 빈 목록에서 바로 만들 수 있게 다른 목록과 같은 버튼을 둔다(WD-621). 머리말 버튼과 같은 권한(pipeline:write)으로만 보인다.
+                emptyAction={
+                  canWritePipeline ? (
+                    <Button asChild size="sm" variant="outline">
+                      <Link to="/pipelines/new">
+                        <Plus className="h-4 w-4" />
+                        새 파이프라인 만들기
+                      </Link>
+                    </Button>
+                  ) : undefined
+                }
+              />
             )}
           </TableBody>
         </Table>
