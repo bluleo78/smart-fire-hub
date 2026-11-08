@@ -125,3 +125,14 @@ export async function setupPipelineEditorMocks(page: Page, pipelineId = 1) {
     totalPages: 0,
   });
 }
+
+/**
+ * 파이프라인 편집기 캔버스의 툴바(우상단)·빈 상태 「스텝 추가」(ADD_STEP)를 누른다(WD-614).
+ *
+ * `{ name: /스텝 추가/ }` 는 스텝이 하나라도 있으면 DOM 에서 먼저 나오는 노드 카드의 20px 「다음 스텝 추가」(ADD_STEP_AFTER)를
+ * 집는다 — fitView 가 화면을 다시 맞추며 새 카드가 그 버튼을 덮으면 클릭이 가로막혀 타임아웃했다. 이름을 정확히 맞춰 툴바만 집는다.
+ * 노드의 「다음 스텝 추가」를 누르려면 노드 locator 안에서 그 이름으로 직접 찾는다.
+ */
+export async function clickToolbarAddStep(page: Page) {
+  await page.getByRole('button', { name: '스텝 추가', exact: true }).click();
+}

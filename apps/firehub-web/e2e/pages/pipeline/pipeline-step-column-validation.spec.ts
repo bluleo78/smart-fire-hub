@@ -13,7 +13,7 @@ import { createColumn, createDataset, createDatasetDetail } from '../../factorie
 import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
+import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 const EMPTY_ROW = '비어 있는 매핑 행이 있습니다 — 채우거나 삭제하세요';
 const TARGET_REQUIRED = '대상 컬럼 이름을 입력하세요';
@@ -36,7 +36,7 @@ async function openNewStep(page: Page, stepTypeLabel: string) {
 
   await page.goto('/pipelines/new');
   await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('WD-154 출력 컬럼 검증');
-  await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+  await clickToolbarAddStep(page);
   await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
   await page.locator('#step-name').fill('출력 스텝');
 

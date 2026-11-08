@@ -18,7 +18,7 @@
 import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
+import { clickToolbarAddStep, grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
 /** 에디터 페이지 공통 모킹 설정 */
 async function setupEditorWithSteps(page: import('@playwright/test').Page, pipelineId = 1) {
@@ -101,7 +101,7 @@ test.describe('pipelineEditorReducer — cycle detection (ADD_EDGE)', () => {
     await page.goto('/pipelines/new');
 
     // 스텝 추가 → ADD_STEP 액션 dispatch
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
 
     // 스텝 설정 패널이 열려야 한다 (step-name 입력 필드 표시)
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
@@ -125,7 +125,7 @@ test.describe('pipelineEditorReducer — cycle detection (ADD_EDGE)', () => {
     await page.goto('/pipelines/new');
 
     // 스텝 추가
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
 
     // 스텝 이름 입력
@@ -144,8 +144,7 @@ test.describe('pipelineEditorReducer — cycle detection (ADD_EDGE)', () => {
   });
 
   /**
-   * 두 스텝을 가진 파이프라인에서 "다음 스텝 추가(ADD_STEP_AFTER)" 기능을 검증한다.
-   * ADD_STEP_AFTER 케이스 — newStep.dependsOnTempIds = [sourceTempId] 경로를 커버한다.
+   * 기존 파이프라인의 스텝 노드를 클릭하면 SELECT_STEP 으로 설정 패널이 열리는지 검증한다.
    */
   test('기존 파이프라인의 스텝을 클릭하면 스텝 설정 패널이 표시된다', async ({
     authenticatedPage: page,
@@ -241,5 +240,62 @@ test.describe('pipelineEditorReducer — cycle detection (ADD_EDGE)', () => {
     // 아직 실행되지 않은 후행 스텝(B={{#3}}, C={{#4}})은 참조 후보로 노출되면 안 된다
     await expect(page.getByRole('button', { name: /\{\{#3\}\}/ })).toHaveCount(0);
     await expect(page.getByRole('button', { name: /\{\{#4\}\}/ })).toHaveCount(0);
+  });
+});
+
+test.describe('pipelineEditorReducer — 다음 스텝 추가 (ADD_STEP_AFTER)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
+  /**
+   * 노드 카드의 「다음 스텝 추가」(ADD_STEP_AFTER)를 누르면 의존 스텝이 생기고 엣지로 이어지는지 검증한다.
+   * ADD_STEP_AFTER 케이스 — newStep.dependsOnTempIds = [sourceTempId] 경로를 커버한다.
+   * (WD-614 이전에는 모호한 /스텝 추가/ locator 가 우연히 이 버튼을 눌러 왔으므로, 의도를 드러내는 테스트로 분리했다)
+   */
+  test('노드의 다음 스텝 추가 클릭 시 ADD_STEP_AFTER 로 의존 스텝과 엣지가 생긴다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [],
+      page: 0,
+      size: 1000,
+      totalElements: 0,
+      totalPages: 0,
+    });
+
+    await page.goto('/pipelines/new');
+
+    // 툴바 「스텝 추가」로 첫 스텝 생성(ADD_STEP 은 엣지를 만들지 않는다)
+    await clickToolbarAddStep(page);
+    await expect(page.locator('.react-flow__node')).toHaveCount(1);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(0);
+
+    // 첫 노드 카드 안의 「다음 스텝 추가」로 범위를 좁혀 ADD_STEP_AFTER dispatch
+    await page
+      .locator('.react-flow__node')
+      .first()
+      .getByRole('button', { name: '다음 스텝 추가' })
+      .click();
+
+    // 새 스텝이 생기고 선행 스텝과 엣지 1개로 이어져야 한다
+    const nodes = page.locator('.react-flow__node');
+    await expect(nodes).toHaveCount(2);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+
+    // 새 스텝이 선택돼 설정 패널에 빈 이름 칸으로 열린다(selectedStepId = 새 스텝)
+    await expect(page.locator('#step-name')).toHaveValue('');
+
+    // 새 스텝은 선행 스텝 오른쪽에 놓인다 — 겹치지 않음(ADD_STEP_AFTER 의 x 오프셋)
+    const first = await nodes.nth(0).boundingBox();
+    const second = await nodes.nth(1).boundingBox();
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    if (first && second) expect(second.x).toBeGreaterThanOrEqual(first.x + first.width);
+
+    // 이어진 두 스텝도 자동 정렬(AUTO_LAYOUT 의 의존 엣지 경로) 뒤 그대로 남는다
+    await page.getByRole('button', { name: '자동 정렬' }).click();
+    await expect(nodes).toHaveCount(2);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   });
 });

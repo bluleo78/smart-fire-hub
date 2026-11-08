@@ -7,7 +7,7 @@
 
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
+import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 test.describe('파이프라인 에디터 — 스텝 설정', () => {
   // 추가·삭제·생성 경로·실행·수정 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 파이프라인 권한을 준다.
@@ -44,7 +44,7 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await page.goto('/pipelines/new');
 
     // ADD_STEP — 첫 번째 스텝 생성 (reducer: selectedStepId 자동 설정)
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
 
     // StepConfigPanel 의 "이름" 필드 (#step-name) 가 자동 선택으로 표시된다
     const stepNameInput = page.locator('#step-name');
@@ -67,10 +67,11 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await page.goto('/pipelines/new');
 
     // ADD_STEP × 2
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
 
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
+    await expect(page.locator('.react-flow__node')).toHaveCount(2);
 
     // 두 번째 스텝이 선택된 상태 — StepConfigPanel 이 여전히 표시
     await expect(page.locator('#step-name')).toBeVisible();
@@ -87,7 +88,7 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await page.goto('/pipelines/new');
 
     // 스텝 추가 먼저 (steps.length === 0 분기 대신 name.trim() 분기를 타게)
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
 
     // 이름 미입력 상태에서 저장 버튼 클릭 → usePipelineValidation → name.trim() === ''
@@ -107,7 +108,7 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await page.goto('/pipelines/new');
     await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('긴 스텝 이름 파이프라인');
 
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     const stepNameInput = page.locator('#step-name');
     await expect(stepNameInput).toBeVisible({ timeout: 10000 });
     await stepNameInput.fill('가'.repeat(101));
@@ -148,7 +149,7 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await page.goto('/pipelines/new');
 
     // 스텝 추가 → StepConfigPanel 표시
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
 
     // 스크립트 타입 드롭다운 열기
@@ -183,7 +184,7 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await page.goto('/pipelines/new');
 
     // 스텝 추가 → StepConfigPanel 표시
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
 
     // 삭제 버튼 클릭 → 확인 다이얼로그 표시 (즉시 삭제 X)
@@ -205,7 +206,7 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await page.goto('/pipelines/new');
 
     // 스텝 추가 → StepConfigPanel 표시
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
 
     // 삭제 버튼 클릭 → 확인 다이얼로그 표시

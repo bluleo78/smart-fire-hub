@@ -13,7 +13,7 @@
 
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
+import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /** 신규 에디터 공통 모킹 — 데이터셋 목록만 있으면 된다 */
 async function setupNewEditorMocks(page: import('@playwright/test').Page) {
@@ -47,7 +47,7 @@ test.describe('usePipelineValidation — 스텝 수준 유효성 검사', () => 
     await nameInput.fill('테스트 파이프라인');
 
     // 스텝 추가 → ADD_STEP dispatch
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
 
     // 스텝 이름을 의도적으로 비워둠 (기본값이 빈 문자열이어야 함)
@@ -76,12 +76,12 @@ test.describe('usePipelineValidation — 스텝 수준 유효성 검사', () => 
     await nameInput.fill('중복 스텝 파이프라인');
 
     // 첫 번째 스텝 추가 → 이름 '스텝A' 설정
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
     await page.locator('#step-name').fill('스텝A');
 
     // 두 번째 스텝 추가 → 이름도 '스텝A'로 설정 (중복)
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     // 두 번째 스텝의 이름 입력 — 새 스텝이 자동 선택된다
     const stepNameInputs = page.locator('#step-name');
     await stepNameInputs.fill('스텝A');
@@ -108,7 +108,7 @@ test.describe('usePipelineValidation — 스텝 수준 유효성 검사', () => 
     await nameInput.fill('스크립트 없는 파이프라인');
 
     // 스텝 추가 → ADD_STEP
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
 
     // 스텝 이름은 입력 (name 유효), scriptContent는 비워둠
@@ -150,7 +150,7 @@ test.describe('usePipelineValidation — 스텝 수준 유효성 검사', () => 
     await nameInput.fill('유효한 파이프라인');
 
     // 스텝 추가
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
     await page.locator('#step-name').fill('데이터 처리');
 
@@ -199,7 +199,7 @@ test.describe('usePipelineValidation — 스텝 수준 유효성 검사', () => 
     const nameInput = page.getByPlaceholder(/파이프라인 이름|이름 입력/).first();
     await nameInput.fill('SQL가드테스트');
 
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
     await page.locator('#step-name').fill('스키마없는스텝');
 
@@ -229,7 +229,7 @@ test.describe('usePipelineValidation — 스텝 수준 유효성 검사', () => 
     await nameInput.fill('Python 파이프라인');
 
     // 스텝 추가
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
     await page.locator('#step-name').fill('Python 스텝');
 
@@ -278,7 +278,7 @@ test.describe('usePipelineValidation — PYTHON 스텝 출력 컬럼 검증', ()
     await nameInput.fill('Python 컬럼명 빈값 테스트');
 
     // 스텝 추가
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
     await page.locator('#step-name').fill('Python 처리 스텝');
 
@@ -328,7 +328,7 @@ test.describe('PYTHON 출력 컬럼 이름 검증 (WD-352)', () => {
   async function fillPythonStep(page: import('@playwright/test').Page, names: string[]) {
     await page.goto('/pipelines/new');
     await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('파이썬 컬럼 검증');
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
     await page.locator('#step-name').fill('파이썬');
     await page.getByRole('combobox').first().click();
@@ -413,7 +413,7 @@ test.describe('usePipelineValidation — AI_CLASSIFY 스텝 검증', () => {
     await nameInput.fill('AI 분류 파이프라인');
 
     // 스텝 추가
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
     await page.locator('#step-name').fill('AI 분류 스텝');
 
@@ -453,7 +453,7 @@ test.describe('usePipelineValidation — AI_CLASSIFY 스텝 검증', () => {
     await nameInput.fill('AI 출력 컬럼 없는 파이프라인');
 
     // 스텝 추가
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
     await page.locator('#step-name').fill('AI 분류 스텝 2');
 
@@ -519,7 +519,7 @@ test.describe('usePipelineValidation — API_CALL 스텝 URL 검증', () => {
     await nameInput.fill('API_CALL 빈URL 테스트');
 
     // 스텝 추가
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
     await page.locator('#step-name').fill('API 스텝');
 
@@ -568,7 +568,7 @@ test.describe('usePipelineValidation — API_CALL 스텝 URL 검증', () => {
     await page.goto('/pipelines/new');
     await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('페이지 크기 검증');
 
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
     await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
     await page.locator('#step-name').fill('API 스텝');
     await page.getByRole('combobox').first().click();

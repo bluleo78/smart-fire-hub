@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 import { createDataset } from "../../factories/dataset.factory";
 import { mockApi } from "../../fixtures/api-mock";
 import { expect, test } from "../../fixtures/auth.fixture";
-import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
+import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /**
  * 파이프라인 스텝 출력 컬럼명 길이 상한 E2E (WD-95)
@@ -41,10 +41,7 @@ async function openNewStep(
     .getByPlaceholder(/파이프라인 이름|이름 입력/)
     .first()
     .fill("WD-95 출력 컬럼 길이");
-  await page
-    .getByRole("button", { name: /스텝 추가/ })
-    .first()
-    .click();
+  await clickToolbarAddStep(page);
   await expect(page.locator("#step-name")).toBeVisible({ timeout: 10000 });
   await page.locator("#step-name").fill("출력 스텝");
 
