@@ -8,6 +8,8 @@ import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.dataset.storage.DataTableStore;
+import com.smartfirehub.dataset.storage.ReservedColumnNames;
+import com.smartfirehub.global.tenant.TenantContext;
 import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.List;
@@ -111,23 +113,85 @@ public class DataTableService {
   }
 
   /**
-   * <b>새로 만드는</b> 컬럼명 검증 — 현재 테넌트 백엔드의 예약어({@link DataTableStore#reservedColumnNames()}) + 형식 + 길이
-   * 상한({@link #MAX_COLUMN_NAME_LENGTH}). 생성·추가·이름 변경에서만 쓴다.
-   *
-   * <p>예약어는 백엔드마다 다르다 — PG 는 앱 시스템 컬럼에 더해 PG 시스템 컬럼(xmin 등)도 DDL 이 거부하므로 미리 400 으로 막고(WD-564, DDL
-   * 까지 가면 500), Tibero 는 앱 시스템 컬럼만 막는다. 그래서 테넌트 컨텍스트 안에서 부른다.
+   * <b>새로 만드는</b> 컬럼명 검증 — 형식({@code [a-z][a-z0-9_]*}) → 길이 상한({@link #MAX_COLUMN_NAME_LENGTH}) →
+   * 현재 테넌트 백엔드의 예약어({@link DataTableStore#reservedColumnNames()}) 순서로 본다. 생성·추가·이름 변경에서만 쓴다. 순서 규칙은
+   * {@link #checkNewColumnName} 하나에 있고, 여기서는 위반 종류를 이 경로의 문구로 바꿔 던지기만 한다.
    */
   public void validateNewColumnName(String columnName) {
-    // 예약어를 형식보다 먼저 본다 — _updated_at 처럼 형식에도 걸리는 이름에 "예약어"라는 정확한 이유를 준다.
-    DataTableStore store = resolver.tableStore();
-    if (store.isReservedColumnName(columnName)) {
-      throw new InvalidTableNameException(store.reservedColumnNameMessage(columnName));
+    NewColumnNameViolation violation = checkNewColumnName(columnName, true, resolver);
+    if (violation == null) {
+      return;
     }
-    validateName(columnName);
+    switch (violation.kind()) {
+      // 형식 문구는 공용 검증기(DataTableNames.validate)의 것을 그대로 쓴다 — 다른 호출처와 같은 문장이다.
+      case FORMAT -> validateName(columnName);
+      case LENGTH ->
+          throw new InvalidTableNameException(
+              "필드명은 최대 "
+                  + MAX_COLUMN_NAME_LENGTH
+                  + "자까지 쓸 수 있습니다(입력 "
+                  + columnName.length()
+                  + "자)");
+      case RESERVED -> throw new InvalidTableNameException(violation.reservedMessage());
+    }
+  }
+
+  /** 새 컬럼명 위반 종류 — 문구는 호출처(데이터셋 DDL·파이프라인 스텝 저장)마다 달라 종류만 공유한다. */
+  public enum NewColumnNameViolationKind {
+    FORMAT,
+    LENGTH,
+    RESERVED
+  }
+
+  /**
+   * 새 컬럼명 위반 — {@code reservedMessage} 는 {@link NewColumnNameViolationKind#RESERVED} 일 때만 있고, 그
+   * 백엔드의 예약어 목록을 담은 단일 문구({@link DataTableStore#reservedColumnNameMessage(String)})다.
+   */
+  public record NewColumnNameViolation(NewColumnNameViolationKind kind, String reservedMessage) {}
+
+  /**
+   * 새 컬럼명의 순서 규칙 단일 구현(WD-635) — 데이터셋 컬럼 생성·추가·이름 변경({@link #validateNewColumnName})과 파이프라인 스텝 출력
+   * 컬럼 저장 검증({@code PipelineService})이 같이 쓴다. 위반이 없으면 null.
+   *
+   * <ol>
+   *   <li>형식 — 테넌트 무관. 형식에 걸린 이름이 어느 백엔드 예약어의 대소문자·형식 변형({@code _updated_at}·{@code ID}·{@code
+   *       XMIN})이고 테넌트 컨텍스트가 있으면, 이 백엔드에서 예약어인지 저장소에 물어 「예약어」라는 정확한 이유를 준다(백엔드마다 안내 목록이 다르다). 테넌트가
+   *       없으면 묻지 않고 일반 형식 위반으로 끝낸다 — 형식이 틀린 이름이 테넌트 오류로 실패하지 않게 한다.
+   *   <li>길이 — 테넌트 무관(예약어는 모두 짧아 이 순서가 예약어 안내를 가리지 않는다).
+   *   <li>백엔드별 예약어 — 현재 테넌트 저장소의 목록(PG 는 xmin 등 포함, WD-564). 형식이 맞는 이름의 판정이라 테넌트가 없으면 조용한 기본값 없이
+   *       실패한다.
+   * </ol>
+   *
+   * @param checkReserved false 면 예약어를 보지 않는다(파이프라인 지정 출력 데이터셋 — 시스템 컬럼이 물리적으로 있어 적재가 가능하다)
+   * @param resolver 현재 테넌트 백엔드 저장소를 얻는 리졸버(예약어 판정에만 쓴다)
+   */
+  public static NewColumnNameViolation checkNewColumnName(
+      String columnName, boolean checkReserved, DataStoreResolver resolver) {
+    if (!DataTableNames.isValid(columnName)) {
+      if (checkReserved
+          && TenantContext.get() != null
+          && ReservedColumnNames.contains(ReservedColumnNames.ANY_BACKEND, columnName)) {
+        NewColumnNameViolation reserved = reservedInCurrentBackend(columnName, resolver);
+        if (reserved != null) {
+          return reserved;
+        }
+      }
+      return new NewColumnNameViolation(NewColumnNameViolationKind.FORMAT, null);
+    }
     if (columnName.length() > MAX_COLUMN_NAME_LENGTH) {
-      throw new InvalidTableNameException(
-          "필드명은 최대 " + MAX_COLUMN_NAME_LENGTH + "자까지 쓸 수 있습니다(입력 " + columnName.length() + "자)");
+      return new NewColumnNameViolation(NewColumnNameViolationKind.LENGTH, null);
     }
+    return checkReserved ? reservedInCurrentBackend(columnName, resolver) : null;
+  }
+
+  /** 현재 테넌트 백엔드에서 예약 컬럼명이면 그 백엔드 안내 문구를 담은 위반, 아니면 null. 테넌트 컨텍스트가 필요하다. */
+  private static NewColumnNameViolation reservedInCurrentBackend(
+      String columnName, DataStoreResolver resolver) {
+    DataTableStore store = resolver.tableStore();
+    return store.isReservedColumnName(columnName)
+        ? new NewColumnNameViolation(
+            NewColumnNameViolationKind.RESERVED, store.reservedColumnNameMessage(columnName))
+        : null;
   }
 
   /**

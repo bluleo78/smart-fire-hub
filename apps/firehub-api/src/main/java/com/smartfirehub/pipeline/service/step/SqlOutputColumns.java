@@ -1,10 +1,12 @@
 package com.smartfirehub.pipeline.service.step;
 
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.storage.ReservedColumnNames;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -110,11 +112,14 @@ public final class SqlOutputColumns {
       String candidate = name;
       // 예약 컬럼 목록은 저장소 정의를 받아 쓴다 — 따로 복사해 두면 시스템 컬럼이 하나 늘었을 때
       // 이쪽만 조용히 낡는다(실제로 _updated_at 이 그렇게 추가됐다). 백엔드마다 다르므로 호출자가 방언에서 넘긴다(WD-564).
-      if (reserved.contains(name.toLowerCase())) {
+      // 판정은 단일 규칙(ReservedColumnNames.contains — Locale.ROOT)을 쓴다. 기본 로캘(터키어 등)로
+      // 소문자화하면 "ID" 가 "ıd" 가 되어 별칭이 안 붙고, 그 이름이 TEMP 생성 검증(Locale.ROOT)에서
+      // 예약어로 거부됐다(WD-635).
+      if (ReservedColumnNames.contains(reserved, name)) {
         // 접미사를 붙일 기반 이름 — 선행 밑줄 제거 + 소문자화로 항상 ^[a-z][a-z0-9_]*$ 를 만족시킨다.
         // (예약어 집합이 전부 영문자로 시작하므로 밑줄을 떼면 반드시 [a-z] 로 시작한다. 그래도
         // 방어적으로 빈 문자열이면 "col" 로 대체한다.)
-        String base = name.toLowerCase().replaceFirst("^_+", "");
+        String base = name.toLowerCase(Locale.ROOT).replaceFirst("^_+", "");
         if (base.isEmpty()) {
           base = "col";
         }

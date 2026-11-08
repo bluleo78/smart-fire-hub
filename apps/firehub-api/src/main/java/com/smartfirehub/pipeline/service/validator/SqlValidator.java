@@ -834,7 +834,7 @@ public class SqlValidator {
           if (trimmed.isEmpty() || trimmed.startsWith("#")) {
             continue;
           }
-          names.add(trimmed.toLowerCase());
+          names.add(trimmed.toLowerCase(Locale.ROOT));
         }
       }
       if (names.isEmpty()) {
@@ -982,7 +982,8 @@ public class SqlValidator {
         collected.functions().stream()
             .anyMatch(
                 f ->
-                    f.getName() != null && AGGREGATE_FUNCTIONS.contains(f.getName().toLowerCase()));
+                    f.getName() != null
+                        && AGGREGATE_FUNCTIONS.contains(f.getName().toLowerCase(Locale.ROOT)));
     if (groupBy || distinct || window || aggregate) {
       return List.of(
           "{{last_run_at}} 을 쓰는 SQL 에 집계(GROUP BY·집계 함수·윈도우 함수·DISTINCT)가 있습니다. "
@@ -1158,7 +1159,7 @@ public class SqlValidator {
         String name = stripQuotes(fqn);
         // 행 검색 색인 보호 — 미한정 허용(애드혹) 모드의 continue 보다 먼저 검사해야 우회되지 않는다
         rejectSearchIndexTable(name);
-        if (name.toLowerCase().startsWith("pg_")) {
+        if (name.toLowerCase(Locale.ROOT).startsWith("pg_")) {
           throw new UnsafeSqlException(
               "테이블 참조에 스키마가 없습니다: '"
                   + name
@@ -1234,7 +1235,7 @@ public class SqlValidator {
    */
   private static void rejectSearchIndexTable(String name) {
     // 접두사 정본은 각 도메인(IndexRef·DataTableService)에 있다 — 검증기가 그 값을 그대로 참조해 어긋나지 않게 한다.
-    String lower = name.toLowerCase();
+    String lower = name.toLowerCase(Locale.ROOT);
     if (lower.startsWith(IndexRef.TABLE_PREFIX)) {
       throw new UnsafeSqlException("검색 색인 테이블은 SQL 로 조회·수정할 수 없습니다: '" + name + "'");
     }
@@ -1311,7 +1312,7 @@ public class SqlValidator {
    */
   private static String foldIdentifier(String raw) {
     boolean quoted = raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"");
-    return quoted ? stripQuotes(raw) : raw.toLowerCase();
+    return quoted ? stripQuotes(raw) : raw.toLowerCase(Locale.ROOT);
   }
 
   /**
@@ -1539,7 +1540,7 @@ public class SqlValidator {
     // deny-list 전체가 무력화됐다(psql 실측: 인용 형태가 그대로 실행됨). PostgreSQL 은 함수 호출에서도
     // 따옴표 유무를 구분하지 않고 같은 함수로 해석하므로, 검증기도 똑같이 취급해야 한다.
     String unquoted = simpleFunctionName(fnName);
-    if (BLOCKED_FUNCTIONS.contains(unquoted.toLowerCase())) {
+    if (BLOCKED_FUNCTIONS.contains(unquoted.toLowerCase(Locale.ROOT))) {
       throw new UnsafeSqlException("허용되지 않는 함수 호출: '" + fnName + "'. 시스템/네트워크 접근 함수는 차단됩니다.");
     }
   }
@@ -1567,7 +1568,7 @@ public class SqlValidator {
       }
       String unquoted = simpleFunctionName(fnName);
       requireSimpleIdentifierForm(unquoted, fnName);
-      String lower = unquoted.toLowerCase();
+      String lower = unquoted.toLowerCase(Locale.ROOT);
       if (SEQUENCE_FUNCTIONS.contains(lower)) {
         requireSafeSequenceArgument(function, fnName);
         continue;
@@ -1580,7 +1581,7 @@ public class SqlValidator {
       }
       String unquoted = simpleFunctionName(fnName);
       requireSimpleIdentifierForm(unquoted, fnName);
-      requireKnownFunctionName(unquoted.toLowerCase(), fnName);
+      requireKnownFunctionName(unquoted.toLowerCase(Locale.ROOT), fnName);
     }
   }
 
@@ -1656,7 +1657,9 @@ public class SqlValidator {
       if (quoted) {
         continue; // 인용된 형태는 PG 가 의사 상수로 해석하지 않는다(위 문서의 실측 참고) — 진짜 컬럼일 수 있다.
       }
-      if (RESERVED_PSEUDO_CONSTANTS.contains(raw.toLowerCase())) {
+      // Locale.ROOT 필수(WD-635) — 기본 로캘이 터키어면 SESSION_USER 가 "sessıon_user" 로 바뀌어 차단을 지나갔다. 이 파일의 모든
+      // 식별자 소문자화가 같은 이유로 Locale.ROOT 를 쓴다.
+      if (RESERVED_PSEUDO_CONSTANTS.contains(raw.toLowerCase(Locale.ROOT))) {
         // F2(수정 라운드 1) — 이 이름의 실제 컬럼을 가진 사용자에게 탈출구(인용)를 알려준다. 차단 자체는
         // 유지한다(#387-3 사용자 판정) — 안내만 보강한다.
         throw new UnsafeSqlException(
@@ -1761,7 +1764,7 @@ public class SqlValidator {
           && lastPart.charAt(end) != '[') {
         end++;
       }
-      name = lastPart.substring(0, end).toLowerCase();
+      name = lastPart.substring(0, end).toLowerCase(Locale.ROOT);
       if (name.equals("u")) {
         // U&"…" 유니코드 이스케이프 타입 이름의 파서 오독 흔적 — PG 에 "u" 라는 타입은 없다.
         throw new UnsafeSqlException(
