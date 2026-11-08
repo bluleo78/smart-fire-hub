@@ -32,6 +32,7 @@ import { bypassNextPopstateGuard, registerActiveGuard } from '../lib/unsaved-cha
  *
  * 사용법:
  *   const { dialog, requestNavigate } = useUnsavedChangesGuard(isDirty);
+ *   // isDirty 대신 판정 함수(() => boolean)를 넘기면 이동 시도·beforeunload 때에만 불러 판정한다 (WD-642).
  *   return <>{...page UI}{dialog}</>;
  *
  * - (이슈 #634) 위 (1)의 document click 캡처는 클릭 경로에 `<a href>`가 있을 때만 동작한다.
@@ -40,7 +41,7 @@ import { bypassNextPopstateGuard, registerActiveGuard } from '../lib/unsaved-cha
  *   직접 호출하지 말고 이 훅이 반환하는 `requestNavigate(to)`를 통해서만 이동해야 한다 —
  *   dirty 상태면 다이얼로그를 띄우고, 아니면 즉시 navigate 한다.
  */
-export function useUnsavedChangesGuard(isDirty: boolean) {
+export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -48,17 +49,34 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
   const [pendingTo, setPendingTo] = useState<string | null>(null);
   // dialog 표시 여부
   const [open, setOpen] = useState(false);
+  // 열림 여부를 동기적으로도 들고 있는다 (WD-642) — 저장 응답 시점의 열림 여부를 정확히 읽고(navigateAfterSave),
+  // 「취소」 클릭이 onClick 과 Radix onOpenChange(false) 로 handleCancel 을 두 번 부르거나
+  // 「이탈」 클릭 뒤 onOpenChange(false) 로 handleCancel 이 이어 불릴 때 이미 닫힌 뒤의 호출을 걸러 낸다.
+  const openRef = useRef(false);
+  // 확인창이 떠 있는 동안 저장이 끝났을 때 갈 곳 (WD-642) — 「취소」(남기)면 이곳으로, 「이탈」이면 버린다.
+  const afterSaveToRef = useRef<string | null>(null);
+  const setOpenState = useCallback((next: boolean) => {
+    openRef.current = next;
+    setOpen(next);
+  }, []);
 
-  // 최신 isDirty 값을 핸들러에서 참조하기 위한 ref
+  // 최신 isDirty 값(또는 판정 함수)을 핸들러에서 참조하기 위한 ref
+  // (렌더 중 ref 대입은 이 저장소의 react-hooks/refs 규칙이 오류로 막아 effect 로 갱신한다 — WD-642)
   const isDirtyRef = useRef(isDirty);
   useEffect(() => {
     isDirtyRef.current = isDirty;
   }, [isDirty]);
+  // (WD-642) isDirty 로 함수를 넘기면 이동 시도·beforeunload 때에만 불러 판정한다 —
+  // 매 렌더마다 폼 전체를 비교하지 않고, 필요한 순간에 최신 값으로 판단하게 한다.
+  const readDirty = useCallback(() => {
+    const value = isDirtyRef.current;
+    return typeof value === 'function' ? value() : value;
+  }, []);
 
   // (1) document click 캡처 — 사이드바/AppLayout 등 모든 <a href> 클릭을 가로챈다.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (!isDirtyRef.current) return;
+      if (!readDirty()) return;
       // 수정자 키(Cmd/Ctrl/Shift/Alt) 또는 우클릭은 새 탭 등 외부 의도이므로 그대로 둔다.
       if (e.defaultPrevented) return;
       if (e.button !== 0) return;
@@ -94,13 +112,13 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
       e.preventDefault();
       e.stopPropagation();
       setPendingTo(targetPath);
-      setOpen(true);
+      setOpenState(true);
     };
 
     // capture 단계에서 처리해 react-router의 Link onClick보다 먼저 동작하게 한다.
     document.addEventListener('click', handler, true);
     return () => document.removeEventListener('click', handler, true);
-  }, [location.pathname, location.search, location.hash]);
+  }, [location.pathname, location.search, location.hash, setOpenState, readDirty]);
 
   // (2) popstate 가로채기 — `unsaved-changes-guard-registry`의 전역 인터셉터(main.tsx에서 1회
   // 설치, 라우터보다 먼저 등록됨)에 현재 페이지를 "활성 가드"로 등록해둔다. 실제 popstate 처리는
@@ -114,27 +132,27 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
 
   useEffect(() => {
     const unregister = registerActiveGuard({
-      isDirty: () => isDirtyRef.current,
+      isDirty: readDirty,
       restorePath: () =>
         locationRef.current.pathname + locationRef.current.search + locationRef.current.hash,
       onIntercepted: () => {
         // pendingTo는 popstate에서는 알 수 없으므로 확정 시 history.back()을 재실행해야 한다
         // (handleConfirm 참고). 단, 다이얼로그는 즉시 표시해 사용자에게 dirty 상태임을 알린다.
         setPendingTo(null);
-        setOpen(true);
+        setOpenState(true);
       },
     });
     return unregister;
-  }, []);
+  }, [setOpenState, readDirty]);
 
   // (3) 브라우저 탭 닫기·새로고침 가드
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
-      if (isDirtyRef.current) e.preventDefault();
+      if (readDirty()) e.preventDefault();
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, []);
+  }, [readDirty]);
 
   // (이슈 #634) 페이지 내 "뒤로가기" 등 프로그래매틱 이동 버튼용 헬퍼.
   // dirty면 <a> 클릭 가로채기와 동일하게 다이얼로그를 띄우고, 아니면 바로 navigate 한다.
@@ -142,23 +160,31 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
   // <a> 탐지 사각지대를 우회하지 않는다.
   const requestNavigate = useCallback(
     (to: string) => {
-      if (!isDirtyRef.current) {
+      if (!readDirty()) {
         navigate(to);
         return;
       }
       setPendingTo(to);
-      setOpen(true);
+      setOpenState(true);
     },
-    [navigate],
+    [navigate, setOpenState, readDirty],
   );
 
   const handleCancel = useCallback(() => {
-    setOpen(false);
+    const wasOpen = openRef.current;
+    setOpenState(false);
     setPendingTo(null);
-  }, []);
+    // (WD-642) 확인창이 떠 있는 동안 저장이 끝났다면, 남기를 고른 사용자를 저장 결과 화면으로 보낸다
+    // (저장된 입력을 그대로 두면 같은 입력으로 다시 만들게 된다). 이미 닫힌 뒤의 중복 호출은 wasOpen 으로 거른다.
+    const afterSaveTo = afterSaveToRef.current;
+    afterSaveToRef.current = null;
+    if (wasOpen && afterSaveTo) navigate(afterSaveTo);
+  }, [navigate, setOpenState]);
 
   const handleConfirm = useCallback(() => {
-    setOpen(false);
+    setOpenState(false);
+    // 이탈을 골랐으면 저장 후 갈 곳은 버리고 사용자가 가려던 곳으로 간다 (WD-642)
+    afterSaveToRef.current = null;
     const to = pendingTo;
     setPendingTo(null);
     if (to) {
@@ -173,7 +199,7 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
         window.history.back();
       }, 0);
     }
-  }, [navigate, pendingTo]);
+  }, [navigate, pendingTo, setOpenState]);
 
   // ESC 등 외부 dismiss는 취소로 처리
   const handleOpenChange = useCallback(
@@ -200,7 +226,21 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
     </AlertDialog>
   );
 
-  return { dialog, requestNavigate };
+  // (WD-642) 저장 성공 후 결과 화면으로 이동할 때 쓴다 — 페이지는 저장 직후 navigate() 대신 이걸 부른다.
+  // 확인창이 없으면 바로 이동한다. 확인창이 떠 있으면(사용자가 이동을 고민하는 중) 끌고 가지 않고 기억해 두었다가
+  // 「취소」면 이곳으로, 「이탈」이면 사용자가 가려던 곳으로 간다. 열림 여부는 동기 갱신되는 openRef 로 읽는다.
+  const navigateAfterSave = useCallback(
+    (to: string) => {
+      if (openRef.current) {
+        afterSaveToRef.current = to;
+        return;
+      }
+      navigate(to);
+    },
+    [navigate],
+  );
+
+  return { dialog, requestNavigate, navigateAfterSave };
 }
 
 /**

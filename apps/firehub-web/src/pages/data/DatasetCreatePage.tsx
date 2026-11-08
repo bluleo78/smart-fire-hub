@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { FormProvider,useForm } from 'react-hook-form';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormProvider, useForm } from 'react-hook-form';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Badge } from '../../components/ui/badge';
@@ -12,6 +12,7 @@ import { Input } from '../../components/ui/input';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { useCategories, useCreateDataset, useDatasets } from '../../hooks/queries/useDatasets';
 import { useDataStoreFeatures } from '../../hooks/queries/useDataStoreCapabilities';
+import { useRhfDirtyReader } from '../../hooks/useRhfDirtyReader';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { handleApiError } from '../../lib/api-error';
 import { getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
@@ -21,7 +22,6 @@ import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import { SchemaBuilder } from './components/SchemaBuilder';
 
 export default function DatasetCreatePage() {
-  const navigate = useNavigate();
   const { data: categoriesData } = useCategories();
   const createDataset = useCreateDataset();
 
@@ -48,44 +48,64 @@ export default function DatasetCreatePage() {
   // 응답이 폼 생성 뒤에 와도 react-hook-form 은 매 렌더의 resolver 를 쓰므로 새 상한이 다음 제출부터 적용된다.
   const { maxVarcharLength } = useDataStoreFeatures();
   const formSchema = useMemo(() => makeCreateDatasetSchema(maxVarcharLength), [maxVarcharLength]);
+  // 기본값은 한 번만 만든다 (WD-642) — tableName 에 Date.now() 가 들어가 렌더마다 새로 만들면 매번 값이 달라진다.
+  const [defaultValues] = useState<CreateDatasetFormData>(() => ({
+    name: '',
+    // DOCUMENT/FILE은 동적 테이블/컬럼이 없어 tableName을 규칙([a-z][a-z0-9_]*) 만족하는 메타 식별자로 자동 생성
+    tableName: isFile ? `file_${Date.now()}` : isDocument ? `doc_${Date.now()}` : '',
+    description: '',
+    categoryId: undefined,
+    storageType,
+    originType,
+    columns: isSchemaless
+      ? []
+      : [
+          {
+            columnName: '',
+            displayName: '',
+            dataType: 'TEXT',
+            isNullable: true,
+            isIndexed: false,
+            isPrimaryKey: false,
+            description: '',
+            // VARCHAR → 다른 타입 전환 시 SchemaBuilder 가 maxLength 를 undefined 로 되돌린다 (WD-577).
+            maxLength: undefined,
+          },
+        ],
+  }));
+
   const form = useForm<CreateDatasetFormData>({
     mode: 'onSubmit',
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(formSchema) as any,
-    defaultValues: {
-      name: '',
-      // DOCUMENT/FILE은 동적 테이블/컬럼이 없어 tableName을 규칙([a-z][a-z0-9_]*) 만족하는 메타 식별자로 자동 생성
-      tableName: isFile ? `file_${Date.now()}` : isDocument ? `doc_${Date.now()}` : '',
-      description: '',
-      categoryId: undefined,
-      storageType,
-      originType,
-      columns: isSchemaless
-        ? []
-        : [
-            {
-              columnName: '',
-              displayName: '',
-              dataType: 'TEXT',
-              isNullable: true,
-              isIndexed: false,
-              isPrimaryKey: false,
-              description: '',
-              // VARCHAR → 다른 타입 전환 시 SchemaBuilder 가 maxLength 를 undefined 로 되돌린다.
-              // 기본값에도 키를 두어야 RHF isDirty(키 개수까지 비교) 가 원상태를 깨끗하다고 본다 (WD-577).
-              maxLength: undefined,
-            },
-          ],
-    },
+    defaultValues,
   });
+
+  // 이 화면 인스턴스가 아직 살아 있는가 (WD-642) — 이탈 후 같은 생성 화면으로 돌아오면 새 인스턴스가 뜨므로,
+  // 옛 인스턴스의 늦은 저장 응답은 이 값이 false 라 새 화면을 건드리지 못한다.
+  // StrictMode 의 마운트→정리→재마운트에서도 맞도록 초기값이 아니라 effect 본문에서 true 로 둔다.
+  const aliveRef = useRef(false);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+
+  // 제출 잠금 (WD-642) — idle: 제출 가능 / pending: 검증·요청 진행 중 / created: 이미 만들어짐.
+  // Cmd/Ctrl+S 의 requestSubmit 은 비활성 버튼과 무관하게 submit 을 일으키고 RHF handleSubmit 도 동시 실행을 막지 않아,
+  // 진행 중 거듭 누르면 생성 요청이 여러 번 간다. 만들어진 뒤에도 상세로 넘어가는 라우터 전환 중이나
+  // 확인창 선택을 기다리는 동안 화면이 남아 있으므로, created 는 풀지 않는다.
+  const submitLockRef = useRef<'idle' | 'pending' | 'created'>('idle');
+
+  // 미저장 입력 판정 (WD-642) — 가드가 물을 때만 현재 값을 기본값과 직접 비교한다(useRhfDirtyReader 참고).
+  // shouldDirty 를 빠뜨린 setValue 도 잡히고, URL 쿼리(storageType/originType)로 정해진 초기값만으로는 dirty 가 되지 않는다.
+  const readIsDirty = useRhfDirtyReader(form);
 
   // 미저장 입력 이탈 가드 (WD-577) — 이름·테이블명·설명·카테고리 입력이나 칼럼 추가·삭제·편집이 있으면
   // 사이드바 링크·브라우저 뒤로가기·새로고침/탭 닫기·취소 버튼에서 확인 다이얼로그를 띄운다.
-  // isDirty 는 defaultValues 와의 비교라, URL 쿼리(storageType/originType)로 정해진 초기값만으로는 dirty 가 되지 않는다.
-  // 칼럼은 SchemaBuilder 의 useFieldArray·register·setValue(shouldDirty) 로 같은 폼에 묶여 있어 isDirty 에 함께 반영된다.
-  const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(
-    form.formState.isDirty,
-  );
+  const { dialog: unsavedChangesDialog, requestNavigate, navigateAfterSave } =
+    useUnsavedChangesGuard(readIsDirty);
 
   // 폼 ref — Cmd/Ctrl+S 단축키에서 submit 트리거에 사용 (#100)
   const formRef = useRef<HTMLFormElement>(null);
@@ -149,6 +169,8 @@ export default function DatasetCreatePage() {
     // 마운트 ref 로는 부족하다: react-router 가 이동을 startTransition 으로 처리해, 주소는 이미 바뀌었어도
     // 다음 화면(lazy 라우트)이 준비될 때까지 이 페이지가 마운트된 채 남는 틈이 있다. 실제 주소를 비교하면 그 틈도 막는다.
     const submitPathname = window.location.pathname;
+    // 이 제출이 낡았는가 — 화면 인스턴스가 사라졌거나(이탈 후 같은 화면으로 돌아온 경우 포함) 주소가 바뀌었으면 낡았다 (WD-642)
+    const isStale = () => !aliveRef.current || window.location.pathname !== submitPathname;
     // 중복 인라인 검증 결과가 있으면 제출 차단 (#103) — 서버 왕복으로 알게 되는 비용을 줄임
     if (isNameDuplicate) {
       form.setError('name', { type: 'duplicate', message: '이미 사용 중인 이름입니다.' });
@@ -180,16 +202,60 @@ export default function DatasetCreatePage() {
           description: col.description || undefined,
         })),
       });
+      // 이후 이 화면에서의 재제출을 막는다
+      submitLockRef.current = 'created';
       // 이탈 후 응답이 와도 서버에는 만들어졌으므로 토스트는 그대로 알린다.
       toast.success('데이터셋이 생성되었습니다.');
-      // 응답 사이 이미 이탈했으면(주소가 바뀜) 사용자가 간 화면에 그대로 둔다 (WD-577).
-      if (window.location.pathname !== submitPathname) return;
-      // 저장한 값으로 폼을 초기화해 isDirty 를 끈 뒤 상세 페이지로 이동한다 (WD-577).
-      // navigate() 는 가드를 거치지 않고, 남는 beforeunload 리스너도 언마운트 때 제거되므로 순서 경합이 없다.
+      // 응답 사이 이미 이탈했으면(주소가 바뀜·화면 인스턴스가 바뀜) 사용자가 있는 화면을 건드리지 않는다 (WD-577, WD-642).
+      if (isStale()) return;
+      // 저장한 값으로 폼을 초기화해 dirty 를 끈다 (WD-577) — 이제 잃을 입력이 없다.
       form.reset(data);
-      navigate(`/data/datasets/${result.data.id}`);
+      // 상세로 이동한다. 이탈 확인창이 떠 있으면 끌고 가지 않고 사용자의 선택을 기다린다 (WD-642) —
+      // 「이탈」이면 가려던 곳으로(WD-577 의 "이탈 선택 → 상세로 가지 않음"과 같다), 「취소」면 만든 데이터셋 상세로 간다.
+      navigateAfterSave(`/data/datasets/${result.data.id}`);
     } catch (error) {
+      // 떠난 화면의 저장 실패도 알린다 (WD-642) — 성공은 떠난 뒤에도 알리므로 실패만 숨기면 만들어졌는지 알 수 없다.
+      // 다른 화면 위에 뜨므로 어느 데이터셋의 일인지와 저장되지 않았다는 결과를 함께 적는다.
+      if (isStale()) {
+        toast.error(`데이터셋 「${data.name}」 생성에 실패했습니다 — 저장되지 않았습니다.`);
+        return;
+      }
       handleApiError(error, '데이터셋 생성에 실패했습니다.');
+    }
+  };
+
+  // RHF 제출 핸들러(검증 → onSubmit) — 실패 시 첫 오류 필드로 이동한다 (#69)
+  const runSubmit = form.handleSubmit(onSubmit, (errors) => {
+    // 에러가 있는 첫 번째 필드를 찾아 focus + scrollIntoView
+    const firstErrorKey = Object.keys(errors)[0];
+    if (firstErrorKey) {
+      const el = document.querySelector<HTMLElement>(
+        `[name="${firstErrorKey}"], #${firstErrorKey}`
+      );
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus({ preventScroll: true });
+      }
+    }
+  });
+
+  // 폼 submit 진입점 (WD-642) — 저장이 진행 중이거나 이미 만들어졌으면 새 제출을 무시한다.
+  // 표식은 검증 전에 동기로 세워, 비동기 zod 검증이 도는 사이 들어온 두 번째 제출도 막는다.
+  // 이미 만들어진 경우: 상세로 넘어가는 전환 중이거나 확인창 선택을 기다리는 중이다 — Cmd/Ctrl+S 는 모달 뒤에서도 window 로 들어온다.
+  const handleFormSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    if (submitLockRef.current !== 'idle') {
+      e.preventDefault();
+      return;
+    }
+    submitLockRef.current = 'pending';
+    try {
+      await runSubmit(e);
+    } catch (error) {
+      // onSubmit 이 API 오류를 모두 처리하므로 여기 오는 것은 예기치 못한 오류뿐이다 — 처리되지 않은 rejection 으로 남기지 않는다
+      console.error('데이터셋 생성 제출 중 예기치 못한 오류', error);
+    } finally {
+      // 검증 실패·요청 실패면 다시 제출할 수 있게 푼다. 만들어졌으면(created) 그대로 둔다.
+      if (submitLockRef.current === 'pending') submitLockRef.current = 'idle';
     }
   };
 
@@ -209,19 +275,7 @@ export default function DatasetCreatePage() {
          * 단, 서버 에러(API 실패)는 onSubmit catch의 handleApiError로 toast 노출 유지.
          */}
         {/* noValidate(WD-636): 숫자 칸의 min/max 를 브라우저가 먼저 막으면 영어 말풍선만 뜨고 zod 의 한국어 인라인 오류(「최대 4000」)가 가려진다. */}
-        <form ref={formRef} noValidate onSubmit={form.handleSubmit(onSubmit, (errors) => {
-          // 에러가 있는 첫 번째 필드를 찾아 focus + scrollIntoView
-          const firstErrorKey = Object.keys(errors)[0];
-          if (firstErrorKey) {
-            const el = document.querySelector<HTMLElement>(
-              `[name="${firstErrorKey}"], #${firstErrorKey}`
-            );
-            if (el) {
-              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              el.focus({ preventScroll: true });
-            }
-          }
-        })} className="space-y-6">
+        <form ref={formRef} noValidate onSubmit={handleFormSubmit} className="space-y-6">
           <Card className="p-6">
             <h2 className="text-xl leading-7 font-semibold mb-4">기본 정보</h2>
             <div className="space-y-4">
@@ -292,10 +346,8 @@ export default function DatasetCreatePage() {
                     id="categoryId"
                     value={form.watch('categoryId')?.toString()}
                     onChange={(value) => {
-                      // shouldDirty — 카테고리 선택도 미저장 입력으로 보고 이탈 가드를 켠다 (WD-577)
-                      form.setValue('categoryId', value === undefined ? undefined : Number(value), {
-                        shouldDirty: true,
-                      });
+                      // 카테고리 선택도 미저장 입력이다 — 가드는 값 비교라 shouldDirty 없이도 잡힌다 (WD-642)
+                      form.setValue('categoryId', value === undefined ? undefined : Number(value));
                     }}
                     options={categories.map((cat) => ({
                       value: cat.id.toString(),
