@@ -9,6 +9,8 @@ import {
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import {
+  expectBadgesFitDeclaredWidth,
+  expectKMatchesDeclaredWidths,
   expectLongValueTruncated,
   expectTableFits,
   expectValueNotTruncated,
@@ -1646,14 +1648,26 @@ test.describe('API 연결 목록 긴 값 말줄임 (WD-559)', () => {
       await page.setViewportSize({ width, height: 800 });
       await setupApiConnectionListMocks(page);
       await mockApi(page, 'GET', '/api/v1/api-connections', [
-        createApiConnection({ id: 1, name: LONG_NAME, baseUrl: LONG_URL, description: LONG_DESC }),
+        // WD-650: 한 번도 확인하지 않은 연결(lastStatus null)은 상태 칸의 가장 넓은 값 「미확인」을 그린다
+        createApiConnection({
+          id: 1,
+          name: LONG_NAME,
+          baseUrl: LONG_URL,
+          description: LONG_DESC,
+          lastStatus: null,
+          lastCheckedAt: null,
+        }),
         createApiConnection({ id: 2, name: '짧은 연결' }),
       ]);
       await page.goto('/admin/api-connections');
 
       const link = page.getByRole('link', { name: LONG_NAME });
       const row = page.getByRole('row').filter({ has: link });
+      // 상태 칸 배지가 선언 폭(--k 에 들어간 값) 안이어야 다른 칸의 여유와 상관없이 표가 들어맞는다
+      await expectBadgesFitDeclaredWidth(row.getByRole('cell').filter({ has: page.getByText('미확인', { exact: true }) }));
       await expectTableFits(row.getByRole('button', { name: `${LONG_NAME} 삭제` }));
+      // WD-650: --k(짧은 칸 선언 폭의 합)가 헤더 w-[..] 와 어긋나면 긴 값 상한이 틀어진다
+      await expectKMatchesDeclaredWidths(row.getByRole('button', { name: `${LONG_NAME} 삭제` }));
       await expectLongValueTruncated(link, LONG_NAME);
       await expectLongValueTruncated(row.getByText(LONG_URL, { exact: true }), LONG_URL);
       await expectLongValueTruncated(row.getByText(LONG_DESC, { exact: true }), LONG_DESC);

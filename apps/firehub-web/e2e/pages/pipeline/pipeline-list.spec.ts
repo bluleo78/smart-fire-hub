@@ -5,6 +5,8 @@ import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions, mockPipelineDeleteImpact, setupPipelineMocks } from '../../fixtures/pipeline.fixture';
 import {
+  expectBadgesFitDeclaredWidth,
+  expectKMatchesDeclaredWidths,
   expectLongValueTruncated,
   expectTableFits,
   expectValueNotTruncated,
@@ -515,14 +517,19 @@ test.describe('파이프라인 목록 긴 이름 말줄임 (WD-559)', () => {
         page,
         'GET',
         '/api/v1/pipelines',
-        createPageResponse([{ ...first, name: LONG_NAME, createdBy: LONG_CREATOR }, ...rest]),
+        // WD-650: 비활성 배지(「비활성」)는 상태 칸의 가장 넓은 값이다 — 긴 값 칸이 모두 상한까지 찬 행에서도 표가 넘치지 않아야 한다
+        createPageResponse([{ ...first, name: LONG_NAME, createdBy: LONG_CREATOR, isActive: false }, ...rest]),
       );
       await page.goto('/pipelines');
 
       const link = page.getByRole('link', { name: LONG_NAME });
       const row = page.getByRole('row').filter({ has: link });
+      // 상태 칸 배지가 선언 폭(--k 에 들어간 값) 안이어야 다른 칸의 여유와 상관없이 표가 들어맞는다
+      await expectBadgesFitDeclaredWidth(row.getByRole('cell').filter({ has: page.getByText('비활성', { exact: true }) }));
       await expectTableFits(row.getByRole('button', { name: '삭제' }));
       await expectLongValueTruncated(link, LONG_NAME);
+      // WD-650: --k(짧은 칸 선언 폭의 합)가 헤더 w-[..] 와 어긋나면 긴 값 상한이 틀어진다
+      await expectKMatchesDeclaredWidths(row.getByRole('button', { name: '삭제' }));
       await expectLongValueTruncated(row.getByText(LONG_CREATOR, { exact: true }), LONG_CREATOR);
     });
   }

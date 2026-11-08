@@ -466,15 +466,16 @@ export default function ApiConnectionListPage() {
         )}
       </div>
 
-      {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(인증 유형·상태·생성일·삭제) + 긴 값 칸 여백 */}
-      <div className="@container [--k:calc(5.25rem_+_3.75rem_+_5.75rem_+_3.75rem_+_3rem)] rounded-md border">
+      {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(인증 유형·상태·생성일·삭제) + 긴 값 칸 여백
+          WD-650: 상태 칸은 한 번도 확인하지 않은 연결의 「미확인」(가장 넓은 배지, 약 65px)이 들어가도록 4.5rem */}
+      <div className="@container [--k:calc(5.25rem_+_4.5rem_+_5.75rem_+_3.75rem_+_3rem)] rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
               <TableHead className="w-[5.25rem]">인증 유형</TableHead>
               <TableHead>Base URL</TableHead>
-              <TableHead className="w-[3.75rem]">상태</TableHead>
+              <TableHead className="w-[4.5rem]">상태</TableHead>
               <TableHead>설명</TableHead>
               <TableHead className="w-[5.75rem]">생성일</TableHead>
               <TableHead className="w-[3.75rem]" />
