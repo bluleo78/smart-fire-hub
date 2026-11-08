@@ -284,6 +284,50 @@ test.describe('파이프라인 에디터 페이지', () => {
     expect(pipelineDetailRequested).toBe(false);
   });
 
+  /**
+   * 회귀 테스트 — 이슈 WD-568
+   * `/pipelines/%20`·`/pipelines/0` 은 `Number(' ')`·`Number('0')` 이 0 이라 #544 의 `Number.isFinite` 검사를 통과했고,
+   * pipelineId 0 이 falsy 라 「새 파이프라인」 화면이 열려 저장하면 새 파이프라인이 생겼다.
+   * parseRouteId(숫자만·양의 정수만)로 읽어 기존 「찾을 수 없음」 안내를 타야 한다.
+   */
+  for (const path of ['/pipelines/%20', '/pipelines/0', '/pipelines/0/executions/5']) {
+    test(`잘못된 ID(${path}) 접근 시 신규 생성 폼 대신 찾을 수 없음 안내가 표시된다`, async ({
+      authenticatedPage: page,
+    }) => {
+      // 잘못된 id 로 상세(및 하위) API 를 부르지 않아야 한다
+      let pipelineDetailRequested = false;
+      await page.route(
+        (url) => /^\/api\/v1\/pipelines\/(0|%20)(\/|$)/.test(url.pathname),
+        (route) => {
+          pipelineDetailRequested = true;
+          return route.abort();
+        },
+      );
+      await mockApi(page, 'GET', '/api/v1/datasets', { content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0 });
+
+      await page.goto(path);
+
+      await expect(page.getByText('파이프라인을 찾을 수 없습니다.')).toBeVisible();
+      await expect(page.getByRole('button', { name: '목록으로' })).toBeVisible();
+
+      // 신규 생성 폼(「새 파이프라인」 제목, 저장 버튼)이 보이지 않아야 한다
+      await expect(page.getByRole('heading', { level: 1, name: '새 파이프라인' })).not.toBeAttached();
+      await expect(page.getByRole('button', { name: '저장' })).not.toBeVisible();
+
+      expect(pipelineDetailRequested).toBe(false);
+    });
+  }
+
+  // 회귀 테스트 — WD-568: id 파라미터가 없는 /pipelines/new(쿼리 포함)는 그대로 새 파이프라인 화면이어야 한다
+  test('쿼리가 붙은 /pipelines/new 도 새 파이프라인 생성 화면으로 열린다 (WD-568)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/datasets', { content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0 });
+
+    await page.goto('/pipelines/new?from=list');
+
+    await expect(page.getByRole('heading', { level: 1, name: '새 파이프라인' })).toBeAttached();
+    await expect(page.getByText('파이프라인을 찾을 수 없습니다.')).not.toBeVisible();
+  });
+
   // 회귀 테스트: WCAG 2.4.6 (Headings and Labels) — 페이지 진입 시 h1 헤딩 존재 보장 (issue #63)
   test('신규 생성 페이지에 "새 파이프라인" h1 헤딩이 존재한다', async ({ authenticatedPage: page }) => {
     // 신규 생성은 ID 없이 진입하므로 datasets/pipelines 목록만 모킹

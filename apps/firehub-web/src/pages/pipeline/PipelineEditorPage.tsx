@@ -54,10 +54,12 @@ export default function PipelineEditorPage() {
   // `{pipelineId && (...)}` 등)이 "신규 생성"으로 잘못 분류되고, `NaN && expr`는
   // false가 아니라 NaN 자체를 반환해 React가 리터럴 "NaN" 텍스트를 그대로 렌더링한다
   // (#544). #543/#545와 동일 원인 클래스라 같은 isInvalidId 플래그로 분리한다.
-  const hasIdParam = id !== undefined;
-  const parsedPipelineId = id ? Number(id) : undefined;
-  const isInvalidId = hasIdParam && !Number.isFinite(parsedPipelineId);
-  const pipelineId = isInvalidId ? undefined : parsedPipelineId;
+  // 공백(`%20`)·`0` 은 `Number()` 가 0 이라 `Number.isFinite` 를 통과했고, 0 이 falsy 라 「새 파이프라인」 화면이 열려
+  // 저장하면 새 파이프라인이 생겼다(WD-568). 실행 id 와 같은 parseRouteId 로 읽어 숫자만·양의 정수만 받는다.
+  // id 파라미터가 없는 `/pipelines/new` 는 undefined 라 그대로 새로 만들기다.
+  const parsedPipelineId = parseRouteId(id);
+  const isInvalidId = parsedPipelineId === null;
+  const pipelineId = parsedPipelineId ?? undefined;
   // 실행 id 도 같은 이유로 엄격하게 읽는다(WD-434) — NaN 이면 아래 렌더 중 상태 조정의 `NaN !== NaN` 이 늘 참이라
   // 매 렌더 setState 로 무한 렌더가 되어 앱 전체가 오류 화면이 됐다. 숫자가 아니면 없는 실행 id 와 같게 안내한다.
   const parsedExecutionId = parseRouteId(execId);
@@ -373,7 +375,7 @@ export default function PipelineEditorPage() {
   // 기존 파이프라인 ID가 있으나 에러(404 등)이거나, 애초에 숫자로 변환 불가능한 ID(#544)인 경우:
   // 존재하지 않는 페이지 안내. isInvalidId는 pipelineId를 undefined로 정규화시켜 usePipeline
   // 쿼리 자체가 실행되지 않으므로(enabled:!!id), pipelineError만으로는 잡히지 않아 별도로 합류시킨다.
-  if (hasIdParam && (pipelineError || isInvalidId)) {
+  if (pipelineError || isInvalidId) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-20">
         <GitBranch className="h-12 w-12 text-muted-foreground" />
