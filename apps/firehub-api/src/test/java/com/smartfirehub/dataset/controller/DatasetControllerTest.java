@@ -20,6 +20,7 @@ import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.service.DatasetTagService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.exception.GlobalExceptionHandler;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -458,7 +459,7 @@ class DatasetControllerTest {
                 .header("Authorization", "Bearer test-token"))
         .andExpect(status().isBadRequest())
         .andExpect(content().contentType(MediaType.APPLICATION_JSON))
-        .andExpect(jsonPath("$.message").value("Validation failed"))
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE))
         .andExpect(jsonPath("$.errors.id").value("'id' 값이 비어 있습니다."));
     verify(datasetService, never()).getDatasetById(any(), any());
   }

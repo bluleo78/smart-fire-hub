@@ -312,7 +312,7 @@ class GlobalExceptionHandlerExtendedTest {
           .andExpect(status().isBadRequest())
           .andExpect(content().contentType(MediaType.APPLICATION_JSON))
           .andExpect(jsonPath("$.status").value(400))
-          .andExpect(jsonPath("$.message").value("Validation failed"))
+          .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE))
           .andExpect(jsonPath("$.errors.id").value("'id' 값이 비어 있습니다."));
     }
   }
@@ -323,7 +323,7 @@ class GlobalExceptionHandlerExtendedTest {
     mockMvc
         .perform(get(URI.create("/test/exception2/missing-path-uuid/%20")))
         .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.message").value("Validation failed"))
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE))
         .andExpect(jsonPath("$.errors.runId").value("'runId' 값이 비어 있습니다."));
   }
 
