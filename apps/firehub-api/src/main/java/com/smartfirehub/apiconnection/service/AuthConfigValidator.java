@@ -86,13 +86,75 @@ public final class AuthConfigValidator {
     return "BEARER".equals(authType) ? normalizeBearerToken(value) : value;
   }
 
+  /** API_KEY + placement=header 에서 헤더 이름을 비워 둘 때 쓰는 기본 헤더 — 검사·호출·비교가 같은 기본값을 보도록 한 곳에 둔다. */
+  public static final String DEFAULT_API_KEY_HEADER = "X-API-Key";
+
+  /**
+   * 가린 값 판정용으로 비밀 값을 정리한다(WD-639) — 앞뒤 공백을 떼고, {@code token} 필드면 「Bearer」 접두어(겹친 것까지)도 뗀다.
+   *
+   * <p>예전에는 원값 그대로 {@code ****} 로 시작하는지만 봐서 「Bearer ****oken」·「 ****cret」 처럼 되돌아온 가린 값을 놓쳤다. 놓친 값은
+   * 뒤이은 정리(「Bearer 」 떼기·strip)를 거쳐 {@code ****oken} 이 된 채 저장돼 실제 토큰을 가린 문자열로 덮었다. 저장 정리와 같은 규칙으로
+   * 판정해야 정리 뒤에 가린 값이 되는 입력을 모두 잡는다.
+   *
+   * @param key authConfig 필드 이름
+   * @return 정리한 값. null 이면 null
+   */
+  static String maskComparable(String key, String value) {
+    if (value == null) return null;
+    return "token".equals(key) ? normalizeBearerToken(value) : value.strip();
+  }
+
+  /**
+   * 조회 화면이 돌려준 가린 값({@code ****…})인지 — 앞뒤 공백·「Bearer 」 접두어가 붙어 와도 가린 값으로 본다(WD-639). 수정·생성·저장 전
+   * 테스트의 가린 값 처리와 방식 변경 검사가 모두 이 판정 하나를 쓴다.
+   */
+  static boolean isMaskedSecret(String key, String value) {
+    return AuthQueryMasker.isMasked(maskComparable(key, value));
+  }
+
+  /** 인증 방식의 비밀 필드 값이 가린 값인지({@link #isMaskedSecret}). 지원하지 않는 방식이거나 config 가 null 이면 false. */
+  static boolean isSecretMasked(String authType, Map<String, String> config) {
+    String key = authType != null ? REQUIRED_SECRET_BY_AUTH_TYPE.get(authType) : null;
+    return key != null && config != null && isMaskedSecret(key, config.get(key));
+  }
+
+  /**
+   * 인증 정보가 「실제로」 바뀌었는지 비교하기 위한 사본을 만든다(감사 credentialsChanged, WD-639).
+   *
+   * <p>양쪽(요청을 정리한 값·저장값)을 같은 규칙으로 맞춘 뒤 비교해야 뜻이 같은 저장을 변경으로 오판하지 않는다 —
+   *
+   * <ul>
+   *   <li>{@code authType} 키는 뺀다(저장값 조회가 덧붙이고, 화면은 authConfig 에도 싣는다. 방식은 컬럼으로 따로 비교한다).
+   *   <li>BEARER 토큰은 저장 정리와 같이 「Bearer 」·앞뒤 공백을 뗀다 — 정리 규칙 전에 저장된 옛 토큰에 가린 값을 되돌려 보내면 저장값만 정리된 형태로
+   *       다시 쓰일 뿐 사용자가 비밀을 바꾼 것이 아니다.
+   *   <li>API_KEY 의 placement(header)·headerName(X-API-Key) 기본값을 채운다 — 화면은 기본값을 명시해 보내지만 AI 챗·API 로
+   *       만든 연결은 빠져 있을 수 있다. 호출은 같은 기본값을 쓰므로 같은 설정이다.
+   * </ul>
+   *
+   * @param config 정리 전·후 어느 쪽이든 된다. null 이면 빈 Map 으로 본다
+   */
+  static Map<String, String> comparableConfig(String authType, Map<String, String> config) {
+    Map<String, String> copy = new HashMap<>(config == null ? Map.of() : config);
+    copy.remove("authType");
+    if ("BEARER".equals(authType)) {
+      copy.computeIfPresent("token", (k, token) -> normalizeBearerToken(token));
+    } else if ("API_KEY".equals(authType)) {
+      copy.putIfAbsent("placement", "header");
+      if ("header".equals(copy.get("placement"))) {
+        copy.putIfAbsent("headerName", DEFAULT_API_KEY_HEADER);
+      }
+    }
+    return copy;
+  }
+
   /**
    * 인증 방식의 비밀 필드가 정리한 뒤 비어 있는지(없음·공백·접두어만) 본다. 비밀 필드가 정해지지 않은 방식이면 false.
    *
    * @param config 정리 전·후 어느 쪽이든 된다 — 판정은 정리한 값으로 한다
    */
-  static boolean isSecretMissing(String authType, Map<String, String> config) {
-    if (!REQUIRED_SECRET_BY_AUTH_TYPE.containsKey(authType)) return false;
+  public static boolean isSecretMissing(String authType, Map<String, String> config) {
+    // Map.of 는 null 키 조회에 NPE 를 던지므로 방식이 없으면 먼저 돌려보낸다 — API_CALL 인라인 인증은 방식이 없을 수 있다(WD-639).
+    if (authType == null || !REQUIRED_SECRET_BY_AUTH_TYPE.containsKey(authType)) return false;
     String value = normalizedSecret(authType, config);
     return value == null || value.isBlank();
   }
@@ -142,7 +204,8 @@ public final class AuthConfigValidator {
           return "쿼리 파라미터 이름을 입력하세요";
         }
       } else if ("header".equals(placement)) {
-        String problem = headerNameProblem(config.getOrDefault("headerName", "X-API-Key"));
+        String problem =
+            headerNameProblem(config.getOrDefault("headerName", DEFAULT_API_KEY_HEADER));
         if (problem != null) return problem;
       } else {
         return "키 위치(placement)는 header 또는 query 만 쓸 수 있습니다: " + placement;

@@ -111,4 +111,41 @@ class AuthConfigValidatorTest {
         .isNull();
     assertThat(AuthConfigValidator.describeProblem("NONE", Map.of())).isNull();
   }
+
+  // ── WD-639: 가린 값 판정·비교용 정리·API_CALL 빈 비밀 ─────────────────────────
+
+  /** 가린 값 판정은 앞뒤 공백과(토큰 필드면) 「Bearer」 접두어를 뗀 값으로 한다 — 실제 값·「bearer****」 같은 토큰은 가린 값이 아니다. */
+  @Test
+  void isMaskedSecret_ignoresPaddingAndBearerPrefixOnlyForToken() {
+    assertThat(AuthConfigValidator.isMaskedSecret("token", "Bearer ****abcd")).isTrue();
+    assertThat(AuthConfigValidator.isMaskedSecret("token", " bearer bearer ****abcd ")).isTrue();
+    assertThat(AuthConfigValidator.isMaskedSecret("apiKey", "\t****abcd ")).isTrue();
+    // 접두어 떼기는 토큰 필드에만 — API 키 「Bearer ****…」 는 키 자체로 본다
+    assertThat(AuthConfigValidator.isMaskedSecret("apiKey", "Bearer ****abcd")).isFalse();
+    assertThat(AuthConfigValidator.isMaskedSecret("token", "bearer****abcd")).isFalse();
+    assertThat(AuthConfigValidator.isMaskedSecret("token", "real-token")).isFalse();
+    assertThat(AuthConfigValidator.isMaskedSecret("token", null)).isFalse();
+    assertThat(AuthConfigValidator.isSecretMasked(null, Map.of("token", "****abcd"))).isFalse();
+  }
+
+  /** 비교용 사본은 authType 키를 빼고, 토큰을 정리하고, API_KEY 헤더 기본값을 채운다 — 뜻이 같으면 같다. */
+  @Test
+  void comparableConfig_sameMeaningIsEqual() {
+    assertThat(
+            AuthConfigValidator.comparableConfig(
+                "API_KEY", Map.of("authType", "API_KEY", "apiKey", "k")))
+        .isEqualTo(
+            AuthConfigValidator.comparableConfig(
+                "API_KEY",
+                Map.of("placement", "header", "headerName", "X-API-Key", "apiKey", "k")));
+    assertThat(AuthConfigValidator.comparableConfig("BEARER", Map.of("token", " Bearer t ")))
+        .isEqualTo(AuthConfigValidator.comparableConfig("BEARER", Map.of("token", "t")));
+    // 쿼리 방식에는 헤더 기본값을 채우지 않는다 · 값이 다르면 다르다
+    assertThat(
+            AuthConfigValidator.comparableConfig(
+                "API_KEY", Map.of("placement", "query", "paramName", "k", "apiKey", "v")))
+        .doesNotContainKey("headerName");
+    assertThat(AuthConfigValidator.comparableConfig("BEARER", Map.of("token", "a")))
+        .isNotEqualTo(AuthConfigValidator.comparableConfig("BEARER", Map.of("token", "b")));
+  }
 }

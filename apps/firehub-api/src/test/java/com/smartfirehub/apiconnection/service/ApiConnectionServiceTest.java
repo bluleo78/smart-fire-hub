@@ -1566,4 +1566,243 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThat(result.ok()).isFalse();
     assertThat(result.errorMessage()).startsWith("헤더 이름이 올바르지 않습니다").doesNotContain("연결하지 못했습니다");
   }
+
+  // ── WD-639: 가린 값 판정 한 규칙(「Bearer 」·앞뒤 공백)·credentialsChanged·검사 순서 ──────────────────────
+
+  /**
+   * 조회한 가린 값에 「Bearer 」 접두어나 앞뒤 공백이 붙어 되돌아와도 가린 값으로 알아보고 저장 원문을 유지한다. 예전에는 원값 그대로 가린 값 판정을 해 놓치고,
+   * 뒤이은 정리(「Bearer 」 떼기·strip)가 {@code ****oken} 을 만들어 실제 토큰을 가린 문자열로 덮었다(main 에도 있던 경로).
+   */
+  @Test
+  void update_bearerPrefixedOrPaddedMaskedEcho_keepsStoredToken() {
+    Long id = createBearer("wd639-echo");
+    String masked = apiConnectionService.getById(id).maskedAuthConfig().get("token");
+    assertThat(masked).isEqualTo("****oken");
+
+    for (String authType : Arrays.asList("BEARER", null)) {
+      for (String echo :
+          List.of(
+              "Bearer " + masked,
+              "  bearer   " + masked + "  ",
+              "Bearer Bearer " + masked,
+              " " + masked)) {
+        apiConnectionService.update(
+            id,
+            new UpdateApiConnectionRequest(null, null, authType, Map.of("token", echo), null, null),
+            testUserId);
+        assertThat(apiConnectionService.getDecryptedAuthConfig(id).get("token"))
+            .as("authType=%s echo=%s", authType, echo)
+            .isEqualTo("wd623-stored-token");
+      }
+    }
+    // 비밀이 그대로이므로 「인증 정보 변경」 감사도 없다
+    assertThat(connectionAudits("UPDATE", id)).isEmpty();
+  }
+
+  /** 「Bearer 」 가 붙었어도 저장값의 가린 형태와 다른 가린 값은 일반 가린 값처럼 거절하고 저장 토큰은 그대로다. */
+  @Test
+  void update_bearerPrefixedMaskedValueNotMatchingStored_rejected() {
+    Long id = createBearer("wd639-mismatch");
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    id,
+                    new UpdateApiConnectionRequest(
+                        null, null, null, Map.of("token", "Bearer ****zzzz"), null, null),
+                    testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("authConfig.token");
+
+    assertAuthUnchanged(id, "BEARER", "token", "wd623-stored-token");
+  }
+
+  /** API_KEY 도 앞뒤 공백이 붙은 가린 값을 알아보고 저장 키를 유지한다 — 예전에는 앞 공백이면 「 ****cret」 이 키로 저장됐다(뒤 공백은 400). */
+  @Test
+  void update_apiKeyPaddedMaskedEcho_keepsStoredKey() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(validReq("https://wd639-key.example.com"), testUserId);
+    String masked = apiConnectionService.getById(created.id()).maskedAuthConfig().get("apiKey");
+
+    for (String echo : List.of(" " + masked, masked + " ", "\t" + masked + " ")) {
+      apiConnectionService.update(
+          created.id(),
+          new UpdateApiConnectionRequest(
+              null,
+              null,
+              "API_KEY",
+              Map.of("placement", "header", "headerName", "X-Key", "apiKey", echo),
+              null,
+              null),
+          testUserId);
+      assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()).get("apiKey"))
+          .as("echo=[%s]", echo)
+          .isEqualTo("secret");
+    }
+  }
+
+  /**
+   * 인증 방식을 바꾸며 앞 공백 붙은 가린 값을 보내면 새 방식의 비밀이 없는 것으로 보고 WD-180 문구로 거절한다(예전에는 「 ****abcd」 가 키로 저장됐다).
+   */
+  @Test
+  void update_authTypeChangedWithPaddedMaskedApiKey_rejectedWithWd180Message() {
+    Long id = createBearer("wd639-change");
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    id,
+                    new UpdateApiConnectionRequest(
+                        null,
+                        null,
+                        "API_KEY",
+                        Map.of("placement", "header", "headerName", "X-Key", "apiKey", " ****abcd"),
+                        null,
+                        null),
+                    testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("인증 방식을 API_KEY(으)로 바꾸려면 새 방식의 인증 정보(authConfig.apiKey)를 함께 입력하세요");
+
+    assertAuthUnchanged(id, "BEARER", "token", "wd623-stored-token");
+  }
+
+  /** 생성·저장 전 테스트에도 같은 판정이다 — 「Bearer ****…」·「 ****…」 는 유지할 저장값이 없으니 거절하고 대상 서버를 부르지 않는다. */
+  @Test
+  void createAndTestPayload_prefixedOrPaddedMaskedValue_rejected() {
+    List<Map.Entry<String, Map<String, String>>> cases =
+        List.of(
+            Map.entry("BEARER", Map.of("token", "Bearer ****abcd")),
+            Map.entry("BEARER", Map.of("token", " ****abcd")),
+            Map.entry(
+                "API_KEY",
+                Map.of("placement", "header", "headerName", "X-Key", "apiKey", " ****abcd")));
+
+    for (Map.Entry<String, Map<String, String>> c : cases) {
+      String field = "BEARER".equals(c.getKey()) ? "authConfig.token" : "authConfig.apiKey";
+      CreateApiConnectionRequest req = createRequest(c.getKey(), c.getValue());
+      assertThatThrownBy(() -> apiConnectionService.create(req, testUserId))
+          .as("create %s", c)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining(field);
+      assertThat(apiConnectionService.getAll()).noneMatch(r -> req.name().equals(r.name()));
+      assertThatThrownBy(() -> apiConnectionService.testConnectionPayload(req))
+          .as("test %s", c)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining(field);
+    }
+    verify(ssrfProtectionService, never()).validateUrl(anyString());
+  }
+
+  /**
+   * 화면은 저장할 때 placement·headerName 기본값과 authType 을 authConfig 에 함께 싣는다. 그 기본값 없이 저장된 연결(AI 챗·API 로
+   * 만든 연결)에 가린 값을 그대로 되돌려 보내면 뜻이 같으므로 「인증 정보 변경」이 아니다 — 예전에는 키 구성이 달라 credentialsChanged=true 감사가
+   * 남았다.
+   */
+  @Test
+  void update_maskedEchoWithExplicitDefaults_isNotCredentialsChange() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            createRequest("API_KEY", Map.of("apiKey", "wd639-key-1234")), testUserId);
+    String maskedKey = apiConnectionService.getById(created.id()).maskedAuthConfig().get("apiKey");
+
+    apiConnectionService.update(
+        created.id(),
+        new UpdateApiConnectionRequest(
+            null,
+            null,
+            "API_KEY",
+            Map.of(
+                "authType",
+                "API_KEY",
+                "placement",
+                "header",
+                "headerName",
+                "X-API-Key",
+                "apiKey",
+                maskedKey),
+            null,
+            null),
+        testUserId);
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()).get("apiKey"))
+        .isEqualTo("wd639-key-1234");
+    assertThat(connectionAudits("UPDATE", created.id())).isEmpty();
+  }
+
+  /**
+   * 정리 규칙(「Bearer 」 떼기) 전에 저장된 옛 토큰({@code Bearer wd639-legacy-token})에 가린 값을 그대로 되돌려 보내면, 저장값은 정리된
+   * 형태로 다시 쓰이지만 사용자가 비밀을 바꾼 것은 아니다 — 양쪽을 같은 정리를 거쳐 비교하므로 credentialsChanged 감사가 남지 않는다.
+   */
+  @Test
+  void update_maskedEchoOfLegacyUnnormalizedToken_isNotCredentialsChange() throws Exception {
+    Long id = saveLegacy("BEARER", Map.of("token", "Bearer wd639-legacy-token"));
+    Map<String, String> masked = apiConnectionService.getById(id).maskedAuthConfig();
+
+    apiConnectionService.update(
+        id, new UpdateApiConnectionRequest(null, null, "BEARER", masked, null, null), testUserId);
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(id).get("token"))
+        .isEqualTo("wd639-legacy-token");
+    assertThat(connectionAudits("UPDATE", id)).isEmpty();
+  }
+
+  /** 실제로 새 토큰을 넣으면 여전히 「인증 정보 변경」이다(회귀) — 비교 정리가 진짜 변경을 가리지 않는다. */
+  @Test
+  void update_realTokenChange_stillCredentialsChange() throws Exception {
+    Long id = createBearer("wd639-real-change");
+
+    apiConnectionService.update(
+        id,
+        new UpdateApiConnectionRequest(
+            null, null, null, Map.of("token", "Bearer wd639-brand-new"), null, null),
+        testUserId);
+
+    List<Record> rows = connectionAudits("UPDATE", id);
+    assertThat(rows).hasSize(1);
+    assertThat(auditMetadata(rows.get(0)).get("credentialsChanged").asBoolean()).isTrue();
+  }
+
+  /**
+   * 입력 검증(빈 비밀·가린 값, 400)은 이름 중복(409)보다 먼저다 — 생성·수정 모두. WD-623 이 순서를 이미 맞췄는지 확인하는 회귀 TC(기준 URL 은 기존
+   * TC 가 본다).
+   */
+  @Test
+  void invalidAuthConfig_takesPrecedenceOverDuplicateName() {
+    String taken = "WD639 taken " + System.nanoTime();
+    apiConnectionService.create(validReq("https://wd639-dup.example.com", taken), testUserId);
+    Long other = createBearer("wd639-dup-other");
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    new CreateApiConnectionRequest(
+                        taken,
+                        null,
+                        "BEARER",
+                        Map.of("token", "Bearer "),
+                        "https://wd639-dup.example.com",
+                        null),
+                    testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("Bearer 토큰을 입력하세요 (authConfig.token)");
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    other,
+                    new UpdateApiConnectionRequest(
+                        taken, null, null, Map.of("token", " "), null, null),
+                    testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("Bearer 토큰을 입력하세요 (authConfig.token)");
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    other,
+                    new UpdateApiConnectionRequest(
+                        taken, null, null, Map.of("token", "****zzzz"), null, null),
+                    testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("authConfig.token");
+    assertAuthUnchanged(other, "BEARER", "token", "wd623-stored-token");
+  }
 }

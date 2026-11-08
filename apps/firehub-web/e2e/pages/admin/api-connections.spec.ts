@@ -1131,8 +1131,100 @@ test.describe('API 연결 페이지', () => {
     // 토큰 입력 없이 생성 시도
     await page.getByRole('button', { name: '만들기' }).click();
 
-    await expect(page.getByText('토큰을 입력하세요.')).toBeVisible();
+    await expect(page.getByText('Bearer 토큰을 입력하세요.')).toBeVisible();
     await expect(page.getByRole('dialog')).toBeVisible();
+  });
+
+  // (WD-639) 생성·저장 전 테스트·상세 저장이 한 헬퍼로 빈 비밀을 판정한다 — 서버처럼 「Bearer 」 접두어만 있는 토큰도 빈 토큰이라
+  // 서버를 부르지 않고 같은 문구로 안내한다. 예전에는 화면마다 trim() 만 봐서 「Bearer 」 가 통과해 서버 400 에서야 거절됐다.
+  test('「Bearer 」 접두어만 있는 토큰은 생성·연결 테스트 모두 서버를 부르지 않고 같은 안내를 보인다 (WD-639)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+    const createCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/api-connections',
+      { id: 21, name: 'WD639', authType: 'BEARER' },
+      { capture: true },
+    );
+    const testCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/api-connections/test',
+      {
+        ok: true,
+        status: 200,
+        latencyMs: 10,
+        errorMessage: null,
+        requestUrl: 'https://api.example.com',
+        responseBodyPreview: null,
+        responseHeaders: {},
+        responseContentType: null,
+      },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByPlaceholder('예: Make.com API').fill('WD639');
+    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByRole('combobox').first().click();
+    await page.getByRole('option', { name: 'Bearer Token' }).click();
+    const tokenInput = page.getByRole('textbox', { name: 'Bearer Token' });
+
+    // 클릭마다 안내 토스트가 하나씩 더 뜬다 — 개수로 「이번 클릭의 안내」를 확인하고(기다림 겸), 그 뒤에 요청이 없었음을 본다.
+    const missingToast = page.getByText('Bearer 토큰을 입력하세요.');
+
+    // 접두어만(공백 포함) — 생성·연결 테스트 모두 막힌다
+    await tokenInput.fill('Bearer   ');
+    await page.getByRole('button', { name: '만들기' }).click();
+    await expect(missingToast).toHaveCount(1);
+    await page.getByRole('button', { name: '연결 테스트' }).click();
+    await expect(missingToast).toHaveCount(2);
+    // 겹친 접두어도 빈 토큰이다
+    await tokenInput.fill('bearer bearer');
+    await page.getByRole('button', { name: '만들기' }).click();
+    await expect(missingToast).toHaveCount(3);
+    expect(createCapture.requests).toHaveLength(0);
+    expect(testCapture.requests).toHaveLength(0);
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 접두어 + 실제 토큰은 통과한다(회귀) — 접두어 정리는 서버 몫이라 입력 그대로 보낸다
+    await tokenInput.fill('Bearer real-token');
+    await page.getByRole('button', { name: '만들기' }).click();
+    const req = await createCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ authType: 'BEARER', authConfig: { token: 'Bearer real-token' } });
+  });
+
+  test('상세 페이지 인증 저장 — 「Bearer 」 만 있는 토큰은 PUT 없이 안내한다 (WD-639)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      { id: 1, name: '공공 데이터 API', authType: 'BEARER' },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await page.getByRole('combobox').first().click();
+    await page.getByRole('option', { name: 'Bearer Token' }).click();
+
+    await page.getByPlaceholder('새 토큰을 입력하세요').fill('Bearer ');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect(page.getByText('Bearer 토큰을 입력하세요.')).toBeVisible();
+    expect(updateCapture.requests).toHaveLength(0);
+
+    await page.getByPlaceholder('새 토큰을 입력하세요').fill('Bearer fresh-token');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ authType: 'BEARER', authConfig: { token: 'Bearer fresh-token' } });
   });
 
   test('존재하지 않는 ID 접근 시 toast 에러 후 목록으로 이동한다 (refs #37)', async ({

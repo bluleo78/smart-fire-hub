@@ -58,7 +58,10 @@ public final class AuthQueryMasker {
     return MASK_PREFIX + value.substring(value.length() - 4);
   }
 
-  /** 조회 화면이 돌려준 가린 값({@code ****…})인지 — 가린 값 판정을 이 한 곳에서만 한다. */
+  /**
+   * 값이 가린 형식({@code ****…})으로 시작하는지. 요청 authConfig 의 가린 값 판정은 앞뒤 공백·「Bearer 」 를 먼저 떼는 {@link
+   * AuthConfigValidator#isMaskedSecret} 을 쓴다(WD-639) — 이 메서드를 원값에 바로 쓰면 「Bearer ****…」 를 놓친다.
+   */
   static boolean isMasked(String value) {
     return value != null && value.startsWith(MASK_PREFIX);
   }

@@ -1023,6 +1023,131 @@ class PipelineAsyncRunnerTest {
   }
 
   /**
+   * WD-639 — API_CALL 스텝이 참조한 연결의 비밀이 비어 있으면(빈 비밀로 저장된 옛 연결) 호출·임시 테이블 생성 전에 실패하고 실행 기록에 무엇을 채워야
+   * 하는지 남긴다. 예전에는 빈 인증(「Authorization: Bearer 」)으로 호출해 대상의 401/403 만 남았다 — 연결 테스트·상태 점검(WD-623)과 같은
+   * 규칙이다.
+   */
+  @Test
+  void executeStep_apiCallConnectionWithEmptySecret_failsBeforeCall() {
+    Long pipelineId = 21L, userId = 2L, stepId = 212L, stepExecId = 312L, connId = 4L;
+    PipelineStepResponse api =
+        new PipelineStepResponse(
+            stepId,
+            "api-empty-secret",
+            null,
+            "API_CALL",
+            null,
+            null,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            Map.of(),
+            null,
+            null,
+            connId);
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(minimalApiConfig());
+    when(apiConnectionService.getById(connId))
+        .thenReturn(
+            new com.smartfirehub.apiconnection.dto.ApiConnectionResponse(
+                connId,
+                "wd639",
+                null,
+                "BEARER",
+                Map.of(),
+                "https://api.example.com",
+                null,
+                null,
+                null,
+                null,
+                null,
+                1L,
+                null,
+                null));
+    when(apiConnectionService.getDecryptedAuthConfig(connId))
+        .thenReturn(Map.of("authType", "BEARER", "token", ""));
+
+    String status = runner.executeStep(stepExecId, api, pipelineId, "TestPipeline", userId, true);
+
+    assertThat(status).isEqualTo("FAILED");
+    ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId), eq("FAILED"), isNull(), isNull(), error.capture(), isNull(), any());
+    assertThat(error.getValue())
+        .isEqualTo("API 연결 「wd639」의 Bearer 토큰이 비어 있습니다 — API 연결 화면에서 인증 정보를 저장하세요.");
+    verify(executorClient, never()).executeApiCall(any());
+    verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any(), any());
+    verify(dataTableService, never()).createTempTable(anyString());
+  }
+
+  /** WD-639 — 인라인 인증도 같다: 방식이 정해졌는데 비밀이 비면(API 키 없음) 호출 전에 실패한다. 실행기를 끈 경로도 막힌다. */
+  @Test
+  void executeStep_apiCallInlineAuthWithEmptySecret_failsBeforeCall() {
+    Long pipelineId = 21L, userId = 2L, stepId = 213L, stepExecId = 313L;
+    PipelineStepResponse api =
+        new PipelineStepResponse(
+            stepId,
+            "api-inline-empty",
+            null,
+            "API_CALL",
+            null,
+            null,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            Map.of(),
+            null,
+            null,
+            null);
+    ApiCallConfig base = minimalApiConfig();
+    ApiCallConfig inline =
+        new ApiCallConfig(
+            base.url(),
+            base.method(),
+            null,
+            null,
+            null,
+            null,
+            base.dataPath(),
+            base.fieldMappings(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            Map.of(
+                "authType",
+                "API_KEY",
+                "placement",
+                "query",
+                "paramName",
+                "serviceKey",
+                "apiKey",
+                " "),
+            null,
+            null,
+            null);
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(inline);
+
+    String status = runner.executeStep(stepExecId, api, pipelineId, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId), eq("FAILED"), isNull(), isNull(), error.capture(), isNull(), any());
+    assertThat(error.getValue())
+        .isEqualTo("스텝 인증 설정의 API 키가 비어 있습니다 — 파이프라인 편집에서 이 스텝의 인증 설정을 고치세요.");
+    verify(executorClient, never()).executeApiCall(any());
+    verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  /**
    * 후속 F1 — PYTHON 도 CR3 와 같다: 스키마가 바뀐 재사용 TEMP 를 실행 주체가 볼 수 없으면 지우기·다시 만들기·실행 전에 실패한다. 예전에는 PYTHON
    * 블록이 판정 없는 자체 삭제·재생성 복사본을 갖고 있었다.
    */

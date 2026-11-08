@@ -204,8 +204,11 @@ public class ApiConnectionService {
               effectiveAuthType, resolveMaskedSecrets(request.authConfig(), stored, true));
       encryptedConfig = serializeAndEncrypt(resolved);
       if (!authTypeChanged) {
-        // 비교는 메모리 안에서만 한다 — 값은 어디에도 남기지 않고 true/false 만 감사에 싣는다.
-        credentialsChanged = !withoutAuthTypeKey(resolved).equals(withoutAuthTypeKey(stored));
+        // 비교는 메모리 안에서만 한다 — 값은 어디에도 남기지 않고 true/false 만 감사에 싣는다. 양쪽을 같은 규칙(authType 키 빼기·토큰 정리·
+        // API_KEY 기본값)으로 맞춰 비교해 뜻이 같은 저장을 변경으로 오판하지 않는다(WD-639).
+        credentialsChanged =
+            !AuthConfigValidator.comparableConfig(effectiveAuthType, resolved)
+                .equals(AuthConfigValidator.comparableConfig(effectiveAuthType, stored));
       }
     }
 
@@ -710,7 +713,8 @@ public class ApiConnectionService {
         // placement=query 는 URL 에 붙이므로 헤더 미생성
         return headers;
       }
-      String headerName = config.getOrDefault("headerName", "X-API-Key");
+      String headerName =
+          config.getOrDefault("headerName", AuthConfigValidator.DEFAULT_API_KEY_HEADER);
       String apiKey = config.get("apiKey");
       if (apiKey != null) headers.put(headerName, apiKey);
     } else if ("BEARER".equals(authType)) {
@@ -767,8 +771,10 @@ public class ApiConnectionService {
    */
   private static void requireSecretForNewAuthType(
       String newAuthType, Map<String, String> requestedConfig) {
-    String secret = AuthConfigValidator.normalizedSecret(newAuthType, requestedConfig);
-    if (secret == null || secret.isBlank() || AuthQueryMasker.isMasked(secret)) {
+    // 가린 값 판정은 resolveMaskedSecrets 와 같은 규칙(앞뒤 공백·「Bearer 」 무시, WD-639)이다 — 「 ****abcd」 도 새 비밀이
+    // 아니다.
+    if (AuthConfigValidator.isSecretMissing(newAuthType, requestedConfig)
+        || AuthConfigValidator.isSecretMasked(newAuthType, requestedConfig)) {
       throw new ApiConnectionException(
           "인증 방식을 "
               + newAuthType
@@ -788,7 +794,7 @@ public class ApiConnectionService {
    */
   private static void rejectMaskedEchoOfEmptyStoredSecret(
       String authType, Map<String, String> requestedConfig, Map<String, String> stored) {
-    if (AuthQueryMasker.isMasked(AuthConfigValidator.normalizedSecret(authType, requestedConfig))
+    if (AuthConfigValidator.isSecretMasked(authType, requestedConfig)
         && AuthConfigValidator.isSecretMissing(authType, stored)) {
       throw new ApiConnectionException(STORED_SECRET_EMPTY_MESSAGE_BY_AUTH_TYPE.get(authType));
     }
@@ -827,11 +833,17 @@ public class ApiConnectionService {
     for (Map.Entry<String, String> entry : requested.entrySet()) {
       String key = entry.getKey();
       String value = entry.getValue();
-      if (!ApiConnectionReader.isSensitiveKey(key) || !AuthQueryMasker.isMasked(value)) {
+      // 가린 값 판정·비교는 앞뒤 공백·「Bearer 」 접두어를 뗀 값으로 한다(WD-639) — 원값으로 보면 「Bearer ****oken」 을 놓쳐, 뒤이은 정리가
+      // ****oken 을 만들어 실제 토큰을 덮었다. 저장값의 가린 형태도 같은 정리를 거쳐 비교한다(정리 전에 저장된 옛 값의 가린 형태 대비).
+      if (!ApiConnectionReader.isSensitiveKey(key)
+          || !AuthConfigValidator.isMaskedSecret(key, value)) {
         continue;
       }
+      String comparable = AuthConfigValidator.maskComparable(key, value);
       String storedValue = stored != null ? stored.get(key) : null;
-      if (storedValue != null && encryptionService.maskValue(storedValue).equals(value)) {
+      if (storedValue != null
+          && AuthConfigValidator.maskComparable(key, encryptionService.maskValue(storedValue))
+              .equals(comparable)) {
         // 조회 결과를 그대로 되돌려 보낸 경우 — 이 필드만 저장 원문으로 채워 비밀을 유지한다.
         resolved.put(key, storedValue);
       } else {
@@ -974,16 +986,6 @@ public class ApiConnectionService {
     if (q >= 0) cut = Math.min(cut, q);
     if (h >= 0) cut = Math.min(cut, h);
     return path.substring(0, cut);
-  }
-
-  /**
-   * 인증 정보 비교용 사본. 저장값 조회({@link ApiConnectionReader#getDecryptedAuthConfig})는 저장 JSON 에 없던 {@code
-   * authType} 키를 덧붙여 돌려주므로, 양쪽에서 그 키를 빼고 비교한다(인증 방식은 컬럼으로 따로 비교한다).
-   */
-  private static Map<String, String> withoutAuthTypeKey(Map<String, String> config) {
-    Map<String, String> copy = new HashMap<>(config == null ? Map.of() : config);
-    copy.remove("authType");
-    return copy;
   }
 
   /**

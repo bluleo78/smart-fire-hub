@@ -594,7 +594,9 @@ public class ApiCallExecutor {
       String authType = decryptedAuthConfig.get("authType");
       String placement = decryptedAuthConfig.getOrDefault("placement", "header");
       if ("API_KEY".equals(authType) && "header".equals(placement)) {
-        String headerName = decryptedAuthConfig.get("headerName");
+        // 헤더 이름이 없으면 연결 테스트·미리보기·Python 실행기와 같은 기본 헤더로 보낸다(WD-639) — 예전에는 헤더를 붙이지 않아 연결 테스트는
+        // 통과하고 실행은 401 이었다.
+        String headerName = ApiCallAuth.apiKeyHeaderName(decryptedAuthConfig);
         String apiKey = decryptedAuthConfig.get("apiKey");
         if (headerName != null && apiKey != null) {
           spec.header(headerName, apiKey);
