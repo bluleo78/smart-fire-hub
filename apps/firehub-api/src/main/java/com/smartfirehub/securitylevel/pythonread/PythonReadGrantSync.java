@@ -73,6 +73,9 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     }
   }
 
+  /** 테이블 잠금 대기 상한 — 생성 직후 컬럼 DDL 은 짧고, 이보다 긴 대기는 다음 동기화에 맡긴다. */
+  private static final String TABLE_LOCK_TIMEOUT = "5s";
+
   private final DSLContext dsl;
 
   /**
@@ -332,6 +335,23 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
       Set<String> missing = new TreeSet<>(want);
       missing.removeAll(have);
       String qualified = dsl.render(DSL.name(schema, table));
+      // ACL 을 고치기 전에 그 테이블에 ACCESS SHARE 잠금을 잡는다 — 이유는 lockTableForAclChange 참고. 못 잡으면(시간 초과·그새
+      // DROP)
+      // 이번에는 건너뛴다: 부족한 GRANT 는 과소권한(안전)이고, 남는 권한은 회수 실패로 세어 prepareForRun 이 fail-closed 로 거부한다.
+      if (!lockTableForAclChange(qualified)) {
+        if (!tableExists(qualified)) {
+          // 그새 지워진 테이블 — ACL 도 함께 사라졌으므로 할 일이 없다(회수 실패로 세면 실행을 공연히 거부한다).
+          continue;
+        }
+        log.warn(
+            "PYTHON 읽기 권한 동기화: 테이블 잠금을 얻지 못해 이번에는 건너뛴다(다음 동기화에서 재시도): tenant={} table={}",
+            tenantId,
+            table);
+        if (!excess.isEmpty()) {
+          revokeFailed.computeIfAbsent(table, x -> new TreeSet<>()).addAll(excess);
+        }
+        continue;
+      }
       // 테이블마다 savepoint 로 격리한다 — 테이블 하나의 오류(소유자 아님·동시 DROP·tuple concurrently updated)가 테넌트 전체
       // 동기화를 중단시키면 JIT 경로에서 그 테넌트의 모든 PYTHON 이 실패한다. REVOKE 와 GRANT 를 따로 감싸는 이유: GRANT 실패로 REVOKE
       // 까지 되돌리면 과권한이 남는다.
@@ -394,14 +414,53 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     return roles.stream().map(x -> dsl.render(DSL.name(x))).collect(Collectors.joining(", "));
   }
 
-  /** 한 문장을 savepoint 안에서 실행한다. 실패하면 savepoint 로 되돌리고 false(트랜잭션은 계속 쓸 수 있다). */
+  /**
+   * ACL 을 바꿀 테이블에 ACCESS SHARE 잠금을 잡는다(트랜잭션 끝까지 유지). 잡았으면 true.
+   *
+   * <p><b>왜 잡는가.</b> GRANT/REVOKE 는 테이블 잠금 없이 pg_class 행(ACL)을 고친다. 그래서 같은 테이블의 DDL(ALTER
+   * TABLE·DROP TABLE — ACCESS EXCLUSIVE)과 겹치면 늦게 커밋되는 쪽이 {@code tuple concurrently updated}(XX000)로
+   * 깨진다. 커밋 뒤 동기화가 전용 실행기로 넘어가면서(WD-594) 데이터셋 생성 직후의 컬럼 추가·삭제와 실제로 겹쳐 사용자 요청이 500 이 됐다. ACCESS
+   * SHARE 는 ACCESS EXCLUSIVE 와 충돌하므로 DDL 은 이 동기화의 커밋을 기다리고, 동기화는 진행 중인 DDL 을 기다린 뒤 새 카탈로그를 본다.
+   * 읽기·쓰기(DML)와는 충돌하지 않는다.
+   *
+   * <p><b>잠금 순서.</b> 테넌트 동기화 잠금(advisory) → 테이블 잠금. REPLACE 맞바꿈({@code
+   * PostgresDataTableStore.swapTable})도 같은 순서(동기화 잠금 → 원본 ACCESS EXCLUSIVE)라 거꾸로 기다리는 쪽이 없다.
+   *
+   * <p><b>왜 짧은 lock_timeout 을 이 문장에만 거는가.</b> 오래 걸리는 DDL(큰 테이블 재작성) 뒤에서 실행 준비(prepareForRun)가 끝없이
+   * 멈추지 않게, 또 같은 스레드가 쥔 다른 트랜잭션의 DDL 을 기다리는 교착(데이터베이스가 볼 수 없는 교착)이 생겨도 풀리게 한다. 테넌트 advisory 잠금 대기에는
+   * 걸지 않는다 — 다른 동기화가 그 잠금을 쥐었다고 실행 준비가 실패하면 안 되므로 문장이 끝나면 이전 값으로 되돌린다.
+   */
+  private boolean lockTableForAclChange(String qualified) {
+    String previous = dsl.fetchValue(DSL.field("current_setting('lock_timeout')", String.class));
+    dsl.execute("select set_config('lock_timeout', {0}, true)", DSL.val(TABLE_LOCK_TIMEOUT));
+    try {
+      return inSavepoint(() -> dsl.execute("LOCK TABLE " + qualified + " IN ACCESS SHARE MODE"));
+    } finally {
+      dsl.execute("select set_config('lock_timeout', {0}, true)", DSL.val(previous));
+    }
+  }
+
+  /** 그 관계가 지금 있는가(잠금 실패가 "그새 지워짐" 때문인지 가른다). */
+  private boolean tableExists(String qualified) {
+    return Boolean.TRUE.equals(
+        dsl.fetchValue(
+            DSL.field("to_regclass({0}) is not null", Boolean.class, DSL.val(qualified))));
+  }
+
+  /**
+   * 한 문장을 savepoint 안에서 실행한다. 실패하면 savepoint 로 되돌리고 false(트랜잭션은 계속 쓸 수 있다).
+   *
+   * <p>jOOQ 의 DataAccessException 도 잡는다 — Spring 의 SQLState 번역기는 모르는 SQLState(XX000 「tuple
+   * concurrently updated」 등)를 번역하지 않아 jOOQ 예외가 그대로 나온다. Spring 예외만 잡으면 바로 그 오류가 savepoint 를 지나쳐 동기화
+   * 트랜잭션 전체를 실패시킨다(실측).
+   */
   private boolean inSavepoint(Runnable statement) {
     dsl.execute("SAVEPOINT python_read_sync");
     try {
       statement.run();
       dsl.execute("RELEASE SAVEPOINT python_read_sync");
       return true;
-    } catch (DataAccessException e) {
+    } catch (DataAccessException | org.jooq.exception.DataAccessException e) {
       dsl.execute("ROLLBACK TO SAVEPOINT python_read_sync");
       log.warn("PYTHON 읽기 권한 문장 실패: {}", e.getMessage());
       return false;

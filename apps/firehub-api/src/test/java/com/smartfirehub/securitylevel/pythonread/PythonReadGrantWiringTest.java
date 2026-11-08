@@ -29,6 +29,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -74,6 +75,10 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
   @Autowired private DataTableService dataTableService;
   @Autowired private PythonReadGrantSync sync;
+
+  /** 커밋 뒤 동기화 실행기 — DDL 겹침 회귀 테스트가 "아직 동기화 중인가"를 기다리지 않고 본다(WD-594). */
+  @Autowired private PythonReadSyncExecutor syncExecutor;
+
   @Autowired private ApplicationEventPublisher events;
   @Autowired private SecurityLevelService levelService;
   @Autowired private SecurityLevelRepository levelRepository;
@@ -314,6 +319,68 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
     for (String t : tables) {
       assertThat(selectAs(1, t)).as("커밋 뒤 동기화가 실패하지 않고 GRANT 했다: %s", t).isNull();
     }
+  }
+
+  /** 테이블 DDL 한 문장을 자기 트랜잭션에서 돌리고, 실패하면 그 사유를 failures 에 남긴다(사용자 요청이면 500 이 되는 오류). */
+  private void ddl(String sql, List<String> failures) {
+    try {
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate, DEFAULT_TEST_TENANT_ID, () -> dataDsl.execute(sql));
+    } catch (RuntimeException e) {
+      failures.add(sql + " → " + e.getMessage());
+    }
+  }
+
+  /** 커밋 뒤 실행기에 넘어간 동기화가 아직 돌고 있는가(기다리지 않고 본다). */
+  private boolean syncPending() throws InterruptedException {
+    return !syncExecutor.awaitIdle(Duration.ZERO);
+  }
+
+  /**
+   * 회귀(WD-594 후속): 커밋 뒤 동기화가 전용 실행기로 넘어가면서, 데이터셋 생성 직후의 같은 테이블 DDL(ALTER TABLE ADD COLUMN·DROP
+   * TABLE)과 동기화의 GRANT/REVOKE 가 겹칠 수 있게 됐다. GRANT/REVOKE 는 테이블 잠금 없이 pg_class 행(ACL)을 고치므로, 고치기 전에는
+   * 겹친 DDL 이 {@code tuple concurrently updated}(XX000)로 깨졌다(사용자에게는 500). 동기화가 바꿀 테이블에 ACCESS SHARE
+   * 잠금을 먼저 잡으면 DDL 은 동기화 커밋을 기다렸다 성공하고, 동기화는 진행 중인 DDL 뒤의 새 카탈로그를 본다 — DDL 오류가 없고 GRANT 도 계산값대로
+   * 남는다.
+   */
+  @Test
+  void syncTableAfterCommit_overlappingAlterAndDrop_doNotFailWithTupleConcurrentlyUpdated()
+      throws Exception {
+    List<String> failures = new ArrayList<>();
+    String slot1 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 1);
+
+    // (1) ALTER TABLE ADD COLUMN — 매 회 슬롯 GRANT 를 걷어 동기화가 GRANT 하게 만들고, 커밋 직후부터 동기화가 끝날 때까지 ADD
+    // COLUMN 을 연달아 던진다.
+    String t = table("ddl", "공개");
+    String qt = DataSchema.qualify(t);
+    int col = 0;
+    for (int round = 0; round < 25; round++) {
+      revokeAllSlots(t);
+      fixtureTransactionTemplate.executeWithoutResult(status -> sync.syncTableAfterCommit(t));
+      // 동기화가 이미 끝났어도 최소 한 번은 던진다. 열 수 상한(1600)을 넘지 않게 회당 상한을 둔다.
+      int perRound = 0;
+      do {
+        ddl("ALTER TABLE " + qt + " ADD COLUMN c" + (col++) + " TEXT", failures);
+      } while (syncPending() && ++perRound < 30);
+      awaitPythonReadGrantSync();
+      if (selectAs(1, t) != null) {
+        failures.add("round " + round + ": 겹친 동기화 뒤 슬롯 1 GRANT 가 없다");
+      }
+    }
+
+    // (2) DROP TABLE — 데이터셋이 아닌 테이블에 슬롯 GRANT 를 걸어 두면(과권한) 동기화가 REVOKE 한다. 그 REVOKE 와 커밋 직후의 DROP 이
+    // 겹친다.
+    for (int round = 0; round < 25; round++) {
+      String raw = m + "_drop" + round;
+      String qraw = DataSchema.qualify(raw);
+      ddl("CREATE TABLE " + qraw + " (id int)", failures);
+      ddl("GRANT SELECT ON TABLE " + qraw + " TO \"" + slot1 + "\"", failures);
+      fixtureTransactionTemplate.executeWithoutResult(status -> sync.syncTableAfterCommit(raw));
+      ddl("DROP TABLE " + qraw, failures);
+      awaitPythonReadGrantSync();
+    }
+
+    assertThat(failures).as("동기화와 겹친 DDL 이 실패하지 않고, GRANT 는 계산값대로 남는다").isEmpty();
   }
 
   // ---------------------------------------------------------------- 이벤트 리스너

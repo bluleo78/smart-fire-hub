@@ -790,7 +790,9 @@ public class PostgresDataTableStore implements DataTableStore {
           // 두 맞바꿈이 각자 공유 잠금을 쥔 채 DROP 의 배타 잠금으로 올리려다 교착할 수 있다.
           // 그보다 먼저 테넌트의 PYTHON 읽기 권한 동기화 잠금을 잡는다 — 겹친 다른 실행이 맞바꾼 직후 거는 GRANT 는 테이블 잠금 없이 pg_class
           // 행을 고쳐, 아래 DROP 과 겹치면 「tuple concurrently updated」로 이 실행이 실패한다(라이브 확인). 동기화도 같은 잠금 안에서
-          // GRANT 하므로 둘이 차례로 돈다. 순서(동기화 잠금 → 테이블 잠금)를 지킨다 — 동기화는 테이블 잠금을 잡지 않아 거꾸로 기다리는 쪽이 없다.
+          // GRANT 하므로 둘이 차례로 돈다. 순서(동기화 잠금 → 테이블 잠금)를 지킨다 — 동기화도 같은 순서로(동기화 잠금 뒤 바꿀 테이블에 ACCESS
+          // SHARE) 잡으므로 거꾸로 기다리는
+          // 쪽이 없다. 그래서 이 트랜잭션은 동기화 잠금보다 먼저 원본 테이블 잠금을 잡으면 안 된다(교착).
           PythonReadGrantSync.lockTenantSync(txDsl, TenantContext.require("REPLACE 맞바꿈"));
           txDsl.execute(
               "LOCK TABLE " + DataSchema.qualify(tableName) + " IN ACCESS EXCLUSIVE MODE");
