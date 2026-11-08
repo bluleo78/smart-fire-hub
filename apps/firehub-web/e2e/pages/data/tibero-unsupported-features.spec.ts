@@ -12,8 +12,8 @@ import {
  * WD-80: Tibero 저장소가 지원하지 않는 기능(GEOMETRY 타입·행 검색)은 화면에서 숨긴다.
  * GET /data-store/capabilities 응답으로 판단하고, 조회 실패·로딩 중에는 PG 기본값(그대로 노출)이다.
  */
-const TIBERO_CAPS = { backend: 'TIBERO', geometry: false, rowSearch: false };
-const PG_CAPS = { backend: 'POSTGRESQL', geometry: true, rowSearch: true };
+const TIBERO_CAPS = { backend: 'TIBERO', geometry: false, rowSearch: false, maxVarcharLength: 4000 };
+const PG_CAPS = { backend: 'POSTGRESQL', geometry: true, rowSearch: true, maxVarcharLength: 10000 };
 
 test.beforeEach(async ({ authenticatedPage: page }) => {
   await grantDatasetPermissions(page);

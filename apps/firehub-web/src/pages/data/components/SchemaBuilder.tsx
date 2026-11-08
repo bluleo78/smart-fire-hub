@@ -12,7 +12,8 @@ import { ColumnTypeSelect } from './ColumnTypeSelect';
 
 export function SchemaBuilder() {
   // 저장소 GEOMETRY 지원 여부 — 조회 전·실패 시 지원으로 취급한다. (WD-80)
-  const { geometrySupported } = useDataStoreFeatures();
+  // VARCHAR 길이 입력 상한도 저장소를 따른다(WD-636, PG 10000·Tibero 4000) — 검증은 부모 폼의 zod 스키마가 같은 값으로 한다.
+  const { geometrySupported, maxVarcharLength } = useDataStoreFeatures();
   // (WD-577) 타입 선택·체크박스는 setValue 로 바뀌는데, 기본 setValue 는 isDirty 를 갱신하지 않는다.
   // 부모 페이지의 이탈 가드가 칼럼 편집도 미저장 입력으로 인식하도록 모든 setValue 에 shouldDirty 를 준다.
   const { control, register, setValue, watch, formState: { errors } } = useFormContext<CreateDatasetFormData>();
@@ -118,7 +119,7 @@ export function SchemaBuilder() {
                   id={`columns.${index}.maxLength`}
                   type="number"
                   min={1}
-                  max={10000}
+                  max={maxVarcharLength}
                   {...register(`columns.${index}.maxLength`, { valueAsNumber: true })}
                   placeholder="예: 255"
                   aria-invalid={!!errors.columns?.[index]?.maxLength}

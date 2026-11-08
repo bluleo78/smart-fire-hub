@@ -104,6 +104,15 @@ public class PostgresDataTableStore implements DataTableStore {
             + " (_updated_at)");
   }
 
+  /**
+   * WD-636: DDL 과 같은 매핑으로 검사만 한다 — 결과(DDL 타입 문자열)는 버린다. 상한은 PG 의 {@link
+   * ColumnPhysicalType#MAX_VARCHAR_LENGTH}.
+   */
+  @Override
+  public void validateColumnType(String dataType, Integer maxLength) {
+    mapDataType(dataType, maxLength);
+  }
+
   private String mapDataType(String dataType, Integer maxLength) {
     return switch (dataType) {
       case "TEXT" -> "TEXT";
@@ -112,7 +121,7 @@ public class PostgresDataTableStore implements DataTableStore {
         if (len < 1 || len > ColumnPhysicalType.MAX_VARCHAR_LENGTH) {
           throw new IllegalArgumentException(
               ColumnPhysicalType.varcharLengthOutOfRangeMessage(
-                  ColumnPhysicalType.MAX_VARCHAR_LENGTH));
+                  ColumnPhysicalType.MAX_VARCHAR_LENGTH, len));
         }
         yield "VARCHAR(" + len + ")";
       }

@@ -6,5 +6,7 @@ package com.smartfirehub.dataset.storage;
  * @param backend 저장소 백엔드 이름("POSTGRESQL"·"TIBERO")
  * @param geometry GEOMETRY 컬럼 지원 여부
  * @param rowSearch 행 검색 지원 여부
+ * @param maxVarcharLength VARCHAR 최대 길이(WD-636) — PG 10000, Tibero 4000. 웹 폼의 길이 입력 상한
  */
-public record DataStoreCapabilitiesResponse(String backend, boolean geometry, boolean rowSearch) {}
+public record DataStoreCapabilitiesResponse(
+    String backend, boolean geometry, boolean rowSearch, int maxVarcharLength) {}

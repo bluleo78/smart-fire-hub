@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.dto;
 
+import com.smartfirehub.dataset.service.ColumnPhysicalType;
 import jakarta.validation.constraints.NotBlank;
 
 /**
@@ -19,6 +20,14 @@ public record AddColumnRequest(
     boolean isIndexed,
     String description,
     boolean isPrimaryKey) {
+  /**
+   * 타입을 입력 경계에서 정규화한다(WD-636) — 소문자·앞뒤 공백 타입도 받아 대문자로 저장한다({@code
+   * ColumnPhysicalType#normalizeDataType}).
+   */
+  public AddColumnRequest {
+    dataType = ColumnPhysicalType.normalizeDataType(dataType);
+  }
+
   public AddColumnRequest(
       String columnName,
       String displayName,

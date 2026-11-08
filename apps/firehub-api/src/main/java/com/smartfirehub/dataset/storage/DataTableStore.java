@@ -56,6 +56,18 @@ public interface DataTableStore {
     RESTORED
   }
 
+  /**
+   * 새 컬럼·타입 변경의 데이터 타입을 DDL 없이 검사한다(WD-636) — 알 수 없는 타입·VARCHAR 길이 범위(이 백엔드의 상한)를 실제 DDL 조립과 같은
+   * 규칙으로 거부한다.
+   *
+   * <p>왜 저장소에 두나: 상한이 백엔드마다 달라(PG 10000, Tibero 4000) 파사드의 PG 사본으로 검사하면 Tibero 데이터셋의 4001~10000 이
+   * 앞단을 통과했다. DDL 을 만드는 쪽이 같은 코드로 검사해야 "검증 통과 == DDL 성공"이 어긋나지 않는다. 테넌트 컨텍스트 안에서 부른다.
+   *
+   * @throws IllegalArgumentException 알 수 없는 타입이거나 VARCHAR 길이가 범위 밖(한국어 안내, 400)
+   * @throws DataStoreFeatureUnsupportedException 이 백엔드가 지원하지 않는 타입(Tibero 의 GEOMETRY)
+   */
+  void validateColumnType(String dataType, Integer maxLength);
+
   /** 이 구현이 담당하는 백엔드. */
   DataStoreBackend backend();
 

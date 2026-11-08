@@ -327,4 +327,6 @@ export interface DataStoreCapabilities {
   geometry: boolean;
   /** 데이터셋 행 검색(검색 탭) 지원 여부 */
   rowSearch: boolean;
+  /** 문자열(VARCHAR) 필드 최대 길이 — PG 10000, Tibero 4000. 생성 폼·필드 대화상자의 길이 입력 상한이다. (WD-636) */
+  maxVarcharLength: number;
 }

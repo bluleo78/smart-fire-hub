@@ -3,6 +3,11 @@ package com.smartfirehub.dataset.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.dataset.dto.AddColumnRequest;
+import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.dataset.dto.UpdateColumnRequest;
+import com.smartfirehub.dataset.storage.DataStoreBackend;
+import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
 import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
 
@@ -84,18 +89,20 @@ class ColumnPhysicalTypeTest {
         .hasMessageStartingWith("정수 범위를 벗어났습니다");
   }
 
-  /** WD-569 — VARCHAR 길이 안내는 저장소별 상한을 받아 같은 한국어 문장으로 만든다. */
+  /** WD-569·WD-636 — VARCHAR 길이 안내는 저장소별 상한과 입력값을 받아 같은 한국어 문장으로 만든다(테이블명·필드명 길이 문구와 같은 꼴). */
   @Test
-  void varcharLengthOutOfRangeMessage_usesGivenMax() {
+  void varcharLengthOutOfRangeMessage_usesGivenMaxAndShowsInput() {
     assertThat(
             ColumnPhysicalType.varcharLengthOutOfRangeMessage(
-                ColumnPhysicalType.MAX_VARCHAR_LENGTH))
-        .isEqualTo("문자열(VARCHAR) 필드 길이는 1~10000 사이여야 합니다.");
-    assertThat(ColumnPhysicalType.varcharLengthOutOfRangeMessage(4000))
-        .isEqualTo("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다.");
+                ColumnPhysicalType.MAX_VARCHAR_LENGTH, 10001))
+        .isEqualTo("문자열(VARCHAR) 필드 길이는 1~10000 사이여야 합니다(입력 10001).");
+    assertThat(ColumnPhysicalType.varcharLengthOutOfRangeMessage(4000, 5000))
+        .isEqualTo("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다(입력 5000).");
+    assertThat(ColumnPhysicalType.varcharLengthOutOfRangeMessage(4000, 0))
+        .isEqualTo("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다(입력 0).");
   }
 
-  /** WD-569 — 알 수 없는 타입 안내는 입력값을 붙이되, 제어 문자는 공백으로 바꾸고 50자를 넘으면 자르며 null 에도 깨지지 않는다. */
+  /** WD-569 — 알 수 없는 타입 안내는 입력값을 붙이되, 제어 문자는 공백으로 바꾸고 50자를 넘으면 자른다. */
   @Test
   void unknownDataTypeMessage_sanitizesAndCapsEcho() {
     assertThat(ColumnPhysicalType.unknownDataTypeMessage("NOPE"))
@@ -106,6 +113,99 @@ class ColumnPhysicalTypeTest {
         .isEqualTo("알 수 없는 데이터 타입입니다: " + "x".repeat(50) + "…");
     assertThat(ColumnPhysicalType.unknownDataTypeMessage("x".repeat(50)))
         .isEqualTo("알 수 없는 데이터 타입입니다: " + "x".repeat(50));
-    assertThat(ColumnPhysicalType.unknownDataTypeMessage(null)).isEqualTo("알 수 없는 데이터 타입입니다: ");
+  }
+
+  /**
+   * WD-636 — 유니코드 서식 문자(양방향 재정렬 U+202E·영폭 공백 U+200B·BOM U+FEFF)와 줄/문단 구분자(U+2028·U+2029)도 공백으로 바꾼다.
+   * 응답 문구에 섞여 토스트 글자 순서를 뒤집거나 보이지 않는 글자를 숨기지 못하게 한다.
+   */
+  @Test
+  void unknownDataTypeMessage_replacesUnicodeFormatAndSeparatorChars() {
+    String message =
+        ColumnPhysicalType.unknownDataTypeMessage("A\u202EB\u200BC\uFEFFD\u2028E\u2029F");
+    assertThat(message).isEqualTo("알 수 없는 데이터 타입입니다: A B C D E F");
+  }
+
+  /** WD-636 — 빈 타입(null·공백)은 「알 수 없는 타입: 」(뒤가 빔) 대신 타입을 입력하라는 안내를 준다. */
+  @Test
+  void unknownDataTypeMessage_blank_returnsRequiredMessage() {
+    assertThat(ColumnPhysicalType.unknownDataTypeMessage(null))
+        .isEqualTo(DatasetColumnRequest.DATA_TYPE_REQUIRED_MESSAGE);
+    assertThat(ColumnPhysicalType.unknownDataTypeMessage(""))
+        .isEqualTo(DatasetColumnRequest.DATA_TYPE_REQUIRED_MESSAGE);
+    assertThat(ColumnPhysicalType.unknownDataTypeMessage("  \t "))
+        .isEqualTo(DatasetColumnRequest.DATA_TYPE_REQUIRED_MESSAGE);
+  }
+
+  /** WD-636 — 입력 경계의 타입 정규화: 앞뒤 공백을 지우고 대문자로(Locale.ROOT). null 은 그대로 둔다(필수 검증이 따로 막는다). */
+  @Test
+  void normalizeDataType_trimsAndUppercases() {
+    assertThat(ColumnPhysicalType.normalizeDataType(" varchar ")).isEqualTo("VARCHAR");
+    assertThat(ColumnPhysicalType.normalizeDataType("integer")).isEqualTo("INTEGER");
+    assertThat(ColumnPhysicalType.normalizeDataType("TEXT")).isEqualTo("TEXT");
+    assertThat(ColumnPhysicalType.normalizeDataType("   ")).isEmpty();
+    assertThat(ColumnPhysicalType.normalizeDataType(null)).isNull();
+  }
+
+  /** WD-636 — 요청 record 가 만들어질 때 타입이 정규화된다(생성·필드 추가·타입 변경·파이프라인 TEMP 등 모든 경로 공통). */
+  @Test
+  void requestRecords_normalizeDataType() {
+    assertThat(new DatasetColumnRequest("a", null, " varchar ", 10, true, false, null).dataType())
+        .isEqualTo("VARCHAR");
+    assertThat(new AddColumnRequest("a", null, "date", null, true, false, null).dataType())
+        .isEqualTo("DATE");
+    assertThat(new UpdateColumnRequest(null, null, "boolean", null, null, null, null).dataType())
+        .isEqualTo("BOOLEAN");
+    assertThat(new UpdateColumnRequest(null, null, null, null, null, null, null).dataType())
+        .isNull();
+  }
+
+  /**
+   * WD-636 리뷰 — 정규화는 정준 타입일 때만 대문자로 바꾼다. 그 밖의 값은 앞뒤 공백만 지우고 원문을 둬야 「알 수 없는 타입」 안내가 사용자가 보낸 값을 그대로
+   * 보여 준다(「straße」가 「STRASSE」로 바뀌지 않게). 별칭(bigint·NUMERIC)도 정준 타입이 아니다.
+   */
+  @Test
+  void normalizeDataType_keepsNonCanonicalInputAsSent() {
+    assertThat(ColumnPhysicalType.normalizeDataType("straße")).isEqualTo("straße");
+    assertThat(ColumnPhysicalType.normalizeDataType(" bigint ")).isEqualTo("bigint");
+    assertThat(ColumnPhysicalType.normalizeDataType("NUMERIC")).isEqualTo("NUMERIC");
+    assertThat(new AddColumnRequest("a", null, "straße", null, true, false, null).dataType())
+        .isEqualTo("straße");
+    assertThat(ColumnPhysicalType.unknownDataTypeMessage("straße"))
+        .isEqualTo("알 수 없는 데이터 타입입니다: straße");
+  }
+
+  /** WD-636 리뷰 — 앞뒤의 유니코드 공백(NBSP U+00A0·전각 공백 U+3000)도 지운다. trim() 은 U+0020 이하만 지운다. */
+  @Test
+  void normalizeDataType_stripsUnicodeSpaces() {
+    assertThat(ColumnPhysicalType.normalizeDataType("\u00A0varchar\u3000")).isEqualTo("VARCHAR");
+    assertThat(ColumnPhysicalType.normalizeDataType("\u3000\u00A0")).isEmpty();
+  }
+
+  /** WD-636 리뷰 — 정준 타입 집합은 앱 전체가 switch 하는 8개뿐이다(저장소 별칭 BIGINT·NUMERIC 제외). */
+  @Test
+  void validDataTypes_areCanonicalOnly() {
+    assertThat(ColumnPhysicalType.VALID_DATA_TYPES)
+        .containsExactlyInAnyOrder(
+            "TEXT", "VARCHAR", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "TIMESTAMP", "GEOMETRY");
+  }
+
+  /** WD-636 리뷰 — 「타입 필요」 문구의 단일 출처는 ColumnPhysicalType 이고, DTO 상수는 같은 값을 가리킨다. */
+  @Test
+  void dataTypeRequiredMessage_singleSource() {
+    assertThat(DatasetColumnRequest.DATA_TYPE_REQUIRED_MESSAGE)
+        .isEqualTo(ColumnPhysicalType.DATA_TYPE_REQUIRED_MESSAGE)
+        .isEqualTo("컬럼 데이터 타입을 입력하세요.");
+  }
+
+  /** WD-636 리뷰 — 저장소별 VARCHAR 상한의 단일 출처는 DataStoreBackend 다(PG 10000·Tibero 4000). */
+  @Test
+  void maxVarcharLength_singleSourceInDataStoreBackend() {
+    assertThat(ColumnPhysicalType.MAX_VARCHAR_LENGTH)
+        .isEqualTo(DataStoreBackend.POSTGRESQL.maxVarcharLength())
+        .isEqualTo(10000);
+    assertThat(TiberoDialect.MAX_VARCHAR)
+        .isEqualTo(DataStoreBackend.TIBERO.maxVarcharLength())
+        .isEqualTo(4000);
   }
 }

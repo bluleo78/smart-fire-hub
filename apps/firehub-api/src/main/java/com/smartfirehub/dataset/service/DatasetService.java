@@ -70,9 +70,6 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class DatasetService {
 
-  private static final Set<String> VALID_DATA_TYPES =
-      Set.of("TEXT", "VARCHAR", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "TIMESTAMP", "GEOMETRY");
-
   private static final Set<String> VALID_STATUSES = Set.of("NONE", "CERTIFIED", "DEPRECATED");
 
   // DOCUMENT 데이터셋은 data.<table> 동적 테이블/컬럼이 없고 데이터가 document_chunk 에 저장된다.
@@ -1006,8 +1003,10 @@ public class DatasetService {
       throw new IllegalArgumentException("이 데이터셋의 필드가 아닙니다: " + columnId);
     }
 
-    if (request.dataType() != null && !VALID_DATA_TYPES.contains(request.dataType())) {
-      throw new ColumnModificationException("알 수 없는 데이터 타입입니다: " + request.dataType());
+    // WD-636: 생성·추가와 같은 정준 타입 집합·예외·문구(400) — 입력값의 제어·서식 문자는 지우고, 빈 타입("")은 「데이터 타입을
+    // 입력하세요」로 안내한다(이 요청은 모든 항목이 선택이라 @NotBlank 를 걸 수 없다). 정준 타입은 요청 record 가 이미 대문자로 맞췄다.
+    if (request.dataType() != null) {
+      ColumnPhysicalType.requireKnownDataType(request.dataType());
     }
 
     // WD-186: 매핑 속성에 연결된 필드의 타입을 그 속성 자료형과 맞지 않게 바꾸면 DDL 전에 409 로 막는다(지식 모델 쪽 WD-185 와
@@ -1061,6 +1060,14 @@ public class DatasetService {
       if (rowCount > 0) {
         throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드 길이를 바꿀 수 없습니다.");
       }
+    }
+    // WD-636: 새 타입·길이를 현재 저장소 규칙(Tibero VARCHAR 상한 4000 등)으로 DDL 전에 검사한다. 타입 변경 DDL 도 같은 검사를 하지만
+    // 그건 이름 변경 DDL 뒤라, Tibero(자동 커밋 DDL)에서는 이름만 바뀐 채 실패할 수 있었다. 타입 없이 길이만 보낸 요청도 기존 타입이
+    // VARCHAR 면 검사한다(실효 타입 = 요청 타입, 없으면 현재 타입) — 예전에는 타입이 없으면 길이 상한을 건너뛰었다.
+    String effectiveType = request.dataType() != null ? request.dataType() : column.dataType();
+    boolean varcharLengthGiven = request.maxLength() != null && "VARCHAR".equals(effectiveType);
+    if (typeChanging || varcharLengthGiven) {
+      dataTableService.validateColumnType(effectiveType, request.maxLength());
     }
 
     // Prevent making PK column nullable

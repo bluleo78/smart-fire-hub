@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { getDataStoreCapabilities } from '../../api/dataStore';
+import { DEFAULT_MAX_VARCHAR_LENGTH } from '../../lib/validations/dataset';
 import { useAuth } from '../useAuth';
 
 /**
@@ -33,6 +34,11 @@ export interface DataStoreFeatures {
    * 미지원 기능은 api 가 422 로 막는다), 조회 성공이면 응답 값.
    */
   rowSearch: boolean | undefined;
+  /**
+   * 문자열(VARCHAR) 길이 입력 상한(WD-636). 조회 중·실패·로그인 전이면 PG 기본값 10000, 조회 성공이면 응답 값(Tibero 4000).
+   * 기본값 상태에서 저장소 상한을 넘는 값은 서버가 400 으로 최종 판정한다.
+   */
+  maxVarcharLength: number;
 }
 
 /**
@@ -45,5 +51,6 @@ export function useDataStoreFeatures(): DataStoreFeatures {
   return {
     geometrySupported: data?.geometry !== false,
     rowSearch: isLoading ? undefined : data?.rowSearch !== false,
+    maxVarcharLength: data?.maxVarcharLength ?? DEFAULT_MAX_VARCHAR_LENGTH,
   };
 }

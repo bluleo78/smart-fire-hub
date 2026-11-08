@@ -56,40 +56,6 @@ public class DataTableService {
   /** 사용자가 컬럼명으로 쓸 수 없는 시스템 예약 컬럼. 생성·컬럼 추가·결과 숨김이 모두 이 집합을 따른다. */
   public static final Set<String> SYSTEM_COLUMNS = DataTableStore.SYSTEM_COLUMNS;
 
-  /**
-   * {@link #validateNewColumns} 의 타입 검증 전용 — 실제 DDL 타입 문자열은 백엔드 구현({@code
-   * PostgresDataTableStore#mapDataType})이 만든다. 여기서는 알 수 없는 타입·VARCHAR 길이 범위 위반만 걸러낸다.
-   */
-  private String mapDataType(String dataType, Integer maxLength) {
-    return switch (dataType) {
-      case "TEXT" -> "TEXT";
-      case "VARCHAR" -> {
-        int len = maxLength != null ? maxLength : ColumnPhysicalType.DEFAULT_VARCHAR_LENGTH;
-        if (len < 1 || len > ColumnPhysicalType.MAX_VARCHAR_LENGTH) {
-          throw new IllegalArgumentException(
-              ColumnPhysicalType.varcharLengthOutOfRangeMessage(
-                  ColumnPhysicalType.MAX_VARCHAR_LENGTH));
-        }
-        yield "VARCHAR(" + len + ")";
-      }
-      case "INTEGER" -> "BIGINT";
-      // 값 검사(ColumnPhysicalType.enforceLimits)와 같은 상수로 조립해야 "검증 통과 == INSERT 성공"이 유지된다.
-      case "DECIMAL" ->
-          "NUMERIC("
-              + ColumnPhysicalType.DECIMAL_PRECISION
-              + ","
-              + ColumnPhysicalType.DECIMAL_SCALE
-              + ")";
-      case "BOOLEAN" -> "BOOLEAN";
-      case "DATE" -> "DATE";
-      case "TIMESTAMP" -> "TIMESTAMP";
-      case "GEOMETRY" -> "GEOMETRY(Geometry, 4326)";
-      // 알 수 없는 타입은 한국어 안내 + 입력값으로 400 을 돌려준다(WD-569).
-      default ->
-          throw new IllegalArgumentException(ColumnPhysicalType.unknownDataTypeMessage(dataType));
-    };
-  }
-
   /** 이름이 {@code [a-z][a-z0-9_]*} 패턴인지 검증한다(백엔드 무관). 어긋나면 {@link InvalidTableNameException}. */
   public void validateName(String name) {
     DataTableNames.validate(name);
@@ -213,9 +179,21 @@ public class DataTableService {
         throw new InvalidTableNameException(DatasetColumnRequest.DATA_TYPE_REQUIRED_MESSAGE);
       }
       validateNewColumnName(col.columnName());
-      // 타입 오류(알 수 없는 타입·VARCHAR 길이 범위)도 DDL 조립 전에 낸다 — 결과는 버리고 검사만 한다.
-      mapDataType(col.dataType(), col.maxLength());
+      // 타입 오류(알 수 없는 타입·VARCHAR 길이 범위)도 DDL 조립 전에 낸다. WD-636: 파사드의 PG 사본 대신 현재 테넌트 저장소가
+      // 검사한다 — 백엔드별 상한(Tibero 4000)이 DDL 전에 같은 문구로 적용된다.
+      validateColumnType(col.dataType(), col.maxLength());
     }
+  }
+
+  /**
+   * 데이터 타입(VARCHAR 길이 포함)만 현재 테넌트 저장소 규칙으로 검사한다(WD-636) — DDL 은 실행하지 않는다. 새 컬럼 검증({@link
+   * #validateNewColumns})과, 다른 DDL(이름 변경 등)보다 먼저 타입 오류를 내야 하는 필드 타입 변경 경로가 쓴다.
+   */
+  public void validateColumnType(String dataType, Integer maxLength) {
+    // 정준 타입 판정은 백엔드와 무관하게 여기서 먼저 한다 — Tibero DDL 은 별칭(BIGINT·NUMERIC)도 받아 줘 저장소에만 맡기면 앱이 모르는
+    // 타입 이름이 저장된다. 저장소는 백엔드 한도(VARCHAR 상한·GEOMETRY 지원)만 본다.
+    ColumnPhysicalType.requireKnownDataType(dataType);
+    resolver.tableStore().validateColumnType(dataType, maxLength);
   }
 
   /** 실행마다 다른 임시 테이블 이름의 난수 부분 길이(hex 글자 수, 48비트). */

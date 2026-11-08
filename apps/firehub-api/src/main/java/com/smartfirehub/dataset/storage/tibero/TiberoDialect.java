@@ -198,8 +198,8 @@ public final class TiberoDialect {
     return "XX000";
   }
 
-  /** VARCHAR2 최대 바이트 길이. */
-  public static final int MAX_VARCHAR = 4000;
+  /** VARCHAR2 최대 바이트 길이 — 값의 단일 출처는 {@link DataStoreBackend#maxVarcharLength()}(WD-636, 4000). */
+  public static final int MAX_VARCHAR = DataStoreBackend.TIBERO.maxVarcharLength();
 
   /**
    * 인덱스 키 최대 바이트(추정치). Oracle 은 블록 크기에 따라 약 6398 바이트(8K 블록)에서 ORA-01450 을 낸다 — 여유를 두고 6000 으로 잡는다.
@@ -400,9 +400,10 @@ public final class TiberoDialect {
       case "VARCHAR" -> {
         int n = maxLength == null ? MAX_VARCHAR : maxLength;
         // 길이·타입 오류 안내는 PostgreSQL 저장소와 같은 한국어 문장을 쓴다(WD-569) — 상한만 Tibero 값(4000).
+        // WD-636: 입력한 길이도 함께 보여 준다.
         if (n < 1 || n > MAX_VARCHAR) {
           throw new IllegalArgumentException(
-              ColumnPhysicalType.varcharLengthOutOfRangeMessage(MAX_VARCHAR));
+              ColumnPhysicalType.varcharLengthOutOfRangeMessage(MAX_VARCHAR, n));
         }
         yield "VARCHAR2(" + n + " CHAR)";
       }
