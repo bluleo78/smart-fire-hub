@@ -121,8 +121,13 @@ export function SchemaBuilder() {
                   // VARCHAR 가 아니면 숨은 길이가 남지 않게 늘 비운다
                   if (value !== 'VARCHAR') setValue(`columns.${index}.maxLength`, undefined);
                   // VARCHAR 로 들어오면 기억한 길이를 되살린다 — 입력 칸이 다시 마운트되기 전에 폼 값을 넣어 두면 register 가 화면에 채운다.
+                  // (WD-662) 되살린 뒤에는 기억을 지운다 — 이제 길이는 폼 값에 있고, 다음에 VARCHAR 를 떠날 때 그때 값으로 다시 기억한다.
+                  // 남겨 두면 쓰이지 않을 항목이 쌓이고, 폼 값과 다른 옛 길이가 기억에 남는다.
                   const stashed = stash.get(field.id);
-                  if (enteringVarchar && stashed !== undefined) setValue(`columns.${index}.maxLength`, stashed);
+                  if (enteringVarchar && stashed !== undefined) {
+                    setValue(`columns.${index}.maxLength`, stashed);
+                    stash.delete(field.id);
+                  }
                   setValue(`columns.${index}.dataType`, value as CreateDatasetFormData['columns'][number]['dataType']);
                   // GEOMETRY 타입은 B-tree 인덱스 기반 PK 불가 — 선택 시 기본 키를 자동 해제한다 (#199)
                   if (value === 'GEOMETRY') {

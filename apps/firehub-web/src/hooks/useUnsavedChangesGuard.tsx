@@ -33,6 +33,7 @@ import { bypassNextPopstateGuard, registerActiveGuard } from '../lib/unsaved-cha
  * 사용법:
  *   const { dialog, requestNavigate } = useUnsavedChangesGuard(isDirty);
  *   // isDirty 대신 판정 함수(() => boolean)를 넘기면 이동 시도·beforeunload 때에만 불러 판정한다 (WD-642).
+ *   // 두 번째 인자(선택) { onStay } 는 확인창에서 「취소」/Esc 로 남기를 고른 때 한 번 불린다 (WD-662).
  *   return <>{...page UI}{dialog}</>;
  *
  * - (이슈 #634) 위 (1)의 document click 캡처는 클릭 경로에 `<a href>`가 있을 때만 동작한다.
@@ -41,7 +42,10 @@ import { bypassNextPopstateGuard, registerActiveGuard } from '../lib/unsaved-cha
  *   직접 호출하지 말고 이 훅이 반환하는 `requestNavigate(to)`를 통해서만 이동해야 한다 —
  *   dirty 상태면 다이얼로그를 띄우고, 아니면 즉시 navigate 한다.
  */
-export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
+export function useUnsavedChangesGuard(
+  isDirty: boolean | (() => boolean),
+  options?: { onStay?: () => void },
+) {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -49,12 +53,10 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
   const [pendingTo, setPendingTo] = useState<string | null>(null);
   // dialog 표시 여부
   const [open, setOpen] = useState(false);
-  // 열림 여부를 동기적으로도 들고 있는다 (WD-642) — 저장 응답 시점의 열림 여부를 정확히 읽고(navigateAfterSave),
+  // 열림 여부를 동기적으로도 들고 있는다 (WD-642) — 저장 응답 시점의 열림 여부를 정확히 읽고(isDialogOpen, WD-662),
   // 「취소」 클릭이 onClick 과 Radix onOpenChange(false) 로 handleCancel 을 두 번 부르거나
   // 「이탈」 클릭 뒤 onOpenChange(false) 로 handleCancel 이 이어 불릴 때 이미 닫힌 뒤의 호출을 걸러 낸다.
   const openRef = useRef(false);
-  // 확인창이 떠 있는 동안 저장이 끝났을 때 갈 곳 (WD-642) — 「취소」(남기)면 이곳으로, 「이탈」이면 버린다.
-  const afterSaveToRef = useRef<string | null>(null);
   const setOpenState = useCallback((next: boolean) => {
     openRef.current = next;
     setOpen(next);
@@ -95,6 +97,11 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
     // 따라가지 못하므로, 그 경우의 재무장은 guardActive 가 판정 시점에 맡는다(아래 guardActive 참고).
     if (isDirty === false) leavingRef.current = false;
   }, [isDirty]);
+  // (WD-662) 남기 콜백도 최신 것을 ref 로 들고 있어, 페이지가 매 렌더 새 함수를 넘겨도 handleCancel 이 다시 만들어지지 않게 한다.
+  const onStayRef = useRef(options?.onStay);
+  useEffect(() => {
+    onStayRef.current = options?.onStay;
+  }, [options?.onStay]);
   // (WD-642) isDirty 로 함수를 넘기면 이동 시도·beforeunload 때에만 불러 판정한다 —
   // 매 렌더마다 폼 전체를 비교하지 않고, 필요한 순간에 최신 값으로 판단하게 한다.
   const readDirty = useCallback(() => {
@@ -124,7 +131,6 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
   // (1) document click 캡처 — 사이드바/AppLayout 등 모든 <a href> 클릭을 가로챈다.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (!guardActive()) return;
       // 수정자 키(Cmd/Ctrl/Shift/Alt) 또는 우클릭은 새 탭 등 외부 의도이므로 그대로 둔다.
       if (e.defaultPrevented) return;
       if (e.button !== 0) return;
@@ -153,6 +159,9 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
       const targetPath = url.pathname + url.search + url.hash;
       // 같은 경로(다른 search·hash 포함)면 통과 — pathname 동일 시만 통과로 한정한다.
       if (url.pathname === locationRef.current.pathname) return;
+      // 가드 판정(dirty·이탈 중 여부)은 가로챌 링크 이동임이 확인된 뒤에만 한다 (WD-662·WD-651) — 판정 함수가 폼 전체를
+      // 비교하므로 화면의 모든 클릭(버튼·입력 칸 등)마다 비교하지 않게 한다. 결과는 이전과 같다.
+      if (!guardActive()) return;
 
       // 이동 가로채기
       e.preventDefault();
@@ -223,12 +232,11 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
     const wasOpen = openRef.current;
     setOpenState(false);
     setPendingTo(null);
-    // (WD-642) 확인창이 떠 있는 동안 저장이 끝났다면, 남기를 고른 사용자를 저장 결과 화면으로 보낸다
-    // (저장된 입력을 그대로 두면 같은 입력으로 다시 만들게 된다). 이미 닫힌 뒤의 중복 호출은 wasOpen 으로 거른다.
-    const afterSaveTo = afterSaveToRef.current;
-    afterSaveToRef.current = null;
-    if (wasOpen && afterSaveTo) navigate(afterSaveTo);
-  }, [navigate, setOpenState]);
+    // (WD-662) 사용자가 남기를 골랐음을 페이지에 한 번 알린다(예: 확인창이 떠 있는 동안 끝난 저장의 결과 화면으로 이동).
+    // 「취소」 클릭은 onClick 과 Radix onOpenChange(false) 로 두 번 들어오고, 「이탈」 뒤에도 onOpenChange(false) 가 이어지므로
+    // 이미 닫힌 뒤의 호출은 wasOpen 으로 거른다.
+    if (wasOpen) onStayRef.current?.();
+  }, [setOpenState]);
 
   // 「취소」는 이 페이지에 남는 것이므로 leavingRef 를 건드리지 않는다(가드 유지).
   const handleConfirm = useCallback(() => {
@@ -237,8 +245,6 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
     // 주소가 바뀌지 않아 settleLeaving 이 불리지 않으므로, 다시 이동하거나 폼이 깨끗해질 때까지 가드가 꺼진 채로 남는다.
     leavingRef.current = true;
     setOpenState(false);
-    // 이탈을 골랐으면 저장 후 갈 곳은 버리고 사용자가 가려던 곳으로 간다 (WD-642)
-    afterSaveToRef.current = null;
     const to = pendingTo;
     setPendingTo(null);
     if (to) {
@@ -280,21 +286,11 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
     </AlertDialog>
   );
 
-  // (WD-642) 저장 성공 후 결과 화면으로 이동할 때 쓴다 — 페이지는 저장 직후 navigate() 대신 이걸 부른다.
-  // 확인창이 없으면 바로 이동한다. 확인창이 떠 있으면(사용자가 이동을 고민하는 중) 끌고 가지 않고 기억해 두었다가
-  // 「취소」면 이곳으로, 「이탈」이면 사용자가 가려던 곳으로 간다. 열림 여부는 동기 갱신되는 openRef 로 읽는다.
-  const navigateAfterSave = useCallback(
-    (to: string) => {
-      if (openRef.current) {
-        afterSaveToRef.current = to;
-        return;
-      }
-      navigate(to);
-    },
-    [navigate],
-  );
+  // (WD-662) 확인창이 지금 떠 있는가 — 동기 갱신되는 openRef 를 읽어, 렌더 사이(예: 저장 응답 시점)에도 정확하다.
+  // 저장 후 어디로 갈지 같은 화면별 판단은 페이지가 이것과 onStay 로 직접 한다 (공용 훅은 일반 기능만 둔다).
+  const isDialogOpen = useCallback(() => openRef.current, []);
 
-  return { dialog, requestNavigate, navigateAfterSave };
+  return { dialog, requestNavigate, isDialogOpen };
 }
 
 /**
