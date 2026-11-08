@@ -13,6 +13,8 @@ import { ColumnTypeSelect } from './ColumnTypeSelect';
 export function SchemaBuilder() {
   // 저장소 GEOMETRY 지원 여부 — 조회 전·실패 시 지원으로 취급한다. (WD-80)
   const { geometrySupported } = useDataStoreFeatures();
+  // (WD-577) 타입 선택·체크박스는 setValue 로 바뀌는데, 기본 setValue 는 isDirty 를 갱신하지 않는다.
+  // 부모 페이지의 이탈 가드가 칼럼 편집도 미저장 입력으로 인식하도록 모든 setValue 에 shouldDirty 를 준다.
   const { control, register, setValue, watch, formState: { errors } } = useFormContext<CreateDatasetFormData>();
   const { fields, append, remove } = useFieldArray({
     control,
@@ -28,6 +30,8 @@ export function SchemaBuilder() {
       isIndexed: false,
       isPrimaryKey: false,
       description: '',
+      // 페이지 기본 칼럼과 같은 모양(maxLength 키 포함)으로 추가한다 (WD-577).
+      maxLength: undefined,
     });
   };
 
@@ -87,10 +91,16 @@ export function SchemaBuilder() {
                 // 저장소가 GEOMETRY 를 지원하지 않으면(Tibero) 목록에서 숨긴다. 조회 전·실패 시엔 그대로 둔다. (WD-80)
                 hiddenOptions={geometrySupported ? undefined : ['GEOMETRY']}
                 onChange={(value) => {
-                  setValue(`columns.${index}.dataType`, value as CreateDatasetFormData['columns'][number]['dataType']);
+                  // (WD-577) maxLength 입력은 VARCHAR 일 때만 보이지만 숨겨진 뒤에도 등록 값이 남는다.
+                  // 그대로 두면 폼이 계속 dirty 이고 낡은 길이가 제출되므로, VARCHAR 가 아니면 기본값(undefined)으로 되돌린다.
+                  // dataType 보다 먼저 지워야 이어지는 shouldDirty 재계산이 지워진 값으로 isDirty 를 판단한다.
+                  if (value !== 'VARCHAR') {
+                    setValue(`columns.${index}.maxLength`, undefined, { shouldDirty: true });
+                  }
+                  setValue(`columns.${index}.dataType`, value as CreateDatasetFormData['columns'][number]['dataType'], { shouldDirty: true });
                   // GEOMETRY 타입은 B-tree 인덱스 기반 PK 불가 — 선택 시 기본 키를 자동 해제한다 (#199)
                   if (value === 'GEOMETRY') {
-                    setValue(`columns.${index}.isPrimaryKey`, false);
+                    setValue(`columns.${index}.isPrimaryKey`, false, { shouldDirty: true });
                   }
                 }}
               />
@@ -131,9 +141,9 @@ export function SchemaBuilder() {
                     checked={watch(`columns.${index}.isPrimaryKey`)}
                     disabled={watch(`columns.${index}.dataType`) === 'GEOMETRY'}
                     onCheckedChange={(checked) => {
-                      setValue(`columns.${index}.isPrimaryKey`, checked as boolean);
+                      setValue(`columns.${index}.isPrimaryKey`, checked as boolean, { shouldDirty: true });
                       if (checked) {
-                        setValue(`columns.${index}.isNullable`, false);
+                        setValue(`columns.${index}.isNullable`, false, { shouldDirty: true });
                       }
                     }}
                   />
@@ -152,7 +162,7 @@ export function SchemaBuilder() {
                     checked={watch(`columns.${index}.isNullable`)}
                     disabled={watch(`columns.${index}.isPrimaryKey`)}
                     onCheckedChange={(checked) => {
-                      setValue(`columns.${index}.isNullable`, checked as boolean);
+                      setValue(`columns.${index}.isNullable`, checked as boolean, { shouldDirty: true });
                     }}
                   />
                   <Label
@@ -168,7 +178,7 @@ export function SchemaBuilder() {
                     id={`columns.${index}.isIndexed`}
                     checked={watch(`columns.${index}.isIndexed`)}
                     onCheckedChange={(checked) => {
-                      setValue(`columns.${index}.isIndexed`, checked as boolean);
+                      setValue(`columns.${index}.isIndexed`, checked as boolean, { shouldDirty: true });
                     }}
                   />
                   <Label
