@@ -121,6 +121,15 @@ public class TiberoDataTableStore implements DataTableStore {
     return DataStoreBackend.TIBERO;
   }
 
+  /**
+   * WD-636: DDL 조립({@link TiberoDialect#columnDdl})과 같은 규칙으로 검사만 한다 — VARCHAR 상한 4000, GEOMETRY 는
+   * {@code DataStoreFeatureUnsupportedException}. 결과는 버리고 문장은 실행하지 않는다.
+   */
+  @Override
+  public void validateColumnType(String dataType, Integer maxLength) {
+    TiberoDialect.columnDdl(dataType, maxLength);
+  }
+
   @Override
   public void createTable(String tableName, List<DatasetColumnRequest> columns) {
     long tenantId = TenantContext.require("Tibero createTable");

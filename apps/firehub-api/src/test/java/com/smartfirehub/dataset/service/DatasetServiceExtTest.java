@@ -331,7 +331,9 @@ class DatasetServiceExtTest extends IntegrationTestBase {
                     colId,
                     new UpdateColumnRequest(
                         null, null, "INVALID_TYPE", null, null, null, null, null)))
-        .isInstanceOf(ColumnModificationException.class);
+        // WD-636: 생성·추가와 같은 정준 타입 검사·예외(IllegalArgumentException, HTTP 400 그대로)·문구를 쓴다.
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("알 수 없는 데이터 타입입니다: INVALID_TYPE");
   }
 
   // =========================================================================

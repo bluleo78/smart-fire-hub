@@ -304,7 +304,10 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
                 : new Object[] {DSL.val(schema), DSL.val(onlyTable)})) {
       relkinds.put(r.get(0, String.class), r.get(1, String.class).charAt(0));
     }
-    List<String> physical = new ArrayList<>(relkinds.keySet());
+    // 이름 오름차순(WD-629) — 아래 루프가 테이블마다 ACCESS SHARE 를 잡아 트랜잭션 끝까지 쥐므로, 해시 순서(HashMap)면 잠금 순서가
+    // 비결정이라 잠금 순서 규칙(lockTableForAclChange 참고)을 세우거나 검증할 수 없다. Java 문자열 순서면 충분하다 — 이 동기화 내부의
+    // 결정성용이라 DB collation 과 일치할 필요는 없다.
+    List<String> physical = new ArrayList<>(new TreeSet<>(relkinds.keySet()));
     // 관계별 계산값 — 일반·분할 테이블이 아닌 관계(뷰 등)는 데이터셋 행이 같은 이름을 가리켜도 "없음"이다. 뷰 GRANT 는 소유자 권한 읽기라
     // 등급 경계를 지키지 못한다(fail-safe). 적용 루프와 재확인이 같은 규칙을 쓴다.
     Function<String, Set<String>> wantOf =
@@ -423,8 +426,20 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * SHARE 는 ACCESS EXCLUSIVE 와 충돌하므로 DDL 은 이 동기화의 커밋을 기다리고, 동기화는 진행 중인 DDL 을 기다린 뒤 새 카탈로그를 본다.
    * 읽기·쓰기(DML)와는 충돌하지 않는다.
    *
-   * <p><b>잠금 순서.</b> 테넌트 동기화 잠금(advisory) → 테이블 잠금. REPLACE 맞바꿈({@code
-   * PostgresDataTableStore.swapTable})도 같은 순서(동기화 잠금 → 원본 ACCESS EXCLUSIVE)라 거꾸로 기다리는 쪽이 없다.
+   * <p><b>잠금 순서.</b> 테넌트 동기화 잠금(advisory) → 테이블 잠금, 테이블끼리는 <b>이름 오름차순</b>(WD-629). 규칙: 여러 기존 테이블을 한
+   * 트랜잭션에서 잠그는 앱 DDL 은 반드시 테넌트 동기화 잠금({@link #lockTenantSync})을 테이블 잠금보다 먼저 잡는다 — 그러면 동기화와 완전히
+   * 직렬화되어 테이블 순서가 달라도 교착이 없다. 이름 정렬만으로는 부족하다: 재생성 되돌리기는 보관본({@code rtmp_bak_*}) → 원래 이름 순서로 잠그는데,
+   * 사용자 테이블 이름은 그 앞뒤 어디든 올 수 있다. 이 순서를 지키는 곳: REPLACE 맞바꿈({@code
+   * PostgresDataTableStore.swapTable}), 재생성 되돌리기({@code
+   * PostgresDataTableStore.restoreRebuildBackup}), 그리고 {@code
+   * DataTableStore.lockTenantGrantSyncForDdl} 을 먼저 부르는 경로 — 데이터셋 삭제(색인·원본·TEMP 보관본, {@code
+   * DatasetService.deleteDataset}), 파이프라인의 임시 데이터셋 일괄 삭제({@code
+   * TempDatasetService.deleteTempDatasets}), 재생성 보관(남은 보관본 DROP + 원본 RENAME, {@code
+   * DataTableService.moveToRebuildBackup}), 보관본 버리기(보관본 + 색인, {@code
+   * DatasetService.discardPipelineTempBackup}). 테이블 하나만 잠그는 DDL(컬럼 DDL·REPLACE 임시 테이블 정리 등)은 고리를
+   * 만들지 않는다. 동기화 잠금은 트랜잭션 범위라 바깥 트랜잭션이 끝날 때까지 쥔다 — 그동안 같은 테넌트 동기화가 기다린다(알려진 성질). 잔여 위험: 사용자 SQL 스텝이
+   * 임의 순서로 여러 테이블을 DDL 하는 경우는 통제할 수 없다 — PG 교착 탐지가 한쪽을 끊고, 동기화 쪽이 지면(40P01) savepoint 로 그 테이블을
+   * 건너뛴다.
    *
    * <p><b>왜 짧은 lock_timeout 을 이 문장에만 거는가.</b> 오래 걸리는 DDL(큰 테이블 재작성) 뒤에서 실행 준비(prepareForRun)가 끝없이
    * 멈추지 않게, 또 같은 스레드가 쥔 다른 트랜잭션의 DDL 을 기다리는 교착(데이터베이스가 볼 수 없는 교착)이 생겨도 풀리게 한다. 테넌트 advisory 잠금 대기에는

@@ -56,6 +56,18 @@ public interface DataTableStore {
     RESTORED
   }
 
+  /**
+   * 새 컬럼·타입 변경의 데이터 타입을 DDL 없이 검사한다(WD-636) — 알 수 없는 타입·VARCHAR 길이 범위(이 백엔드의 상한)를 실제 DDL 조립과 같은
+   * 규칙으로 거부한다.
+   *
+   * <p>왜 저장소에 두나: 상한이 백엔드마다 달라(PG 10000, Tibero 4000) 파사드의 PG 사본으로 검사하면 Tibero 데이터셋의 4001~10000 이
+   * 앞단을 통과했다. DDL 을 만드는 쪽이 같은 코드로 검사해야 "검증 통과 == DDL 성공"이 어긋나지 않는다. 테넌트 컨텍스트 안에서 부른다.
+   *
+   * @throws IllegalArgumentException 알 수 없는 타입이거나 VARCHAR 길이가 범위 밖(한국어 안내, 400)
+   * @throws DataStoreFeatureUnsupportedException 이 백엔드가 지원하지 않는 타입(Tibero 의 GEOMETRY)
+   */
+  void validateColumnType(String dataType, Integer maxLength);
+
   /** 이 구현이 담당하는 백엔드. */
   DataStoreBackend backend();
 
@@ -86,6 +98,17 @@ public interface DataTableStore {
 
   /** 테이블을 지운다. 호출자 트랜잭션에 참여한다. */
   void dropTable(String tableName);
+
+  /**
+   * 여러 기존 데이터 테이블을 한 트랜잭션에서 잠그거나 DDL 하기 전에 테넌트 PYTHON 읽기 권한 동기화 잠금을 호출자 트랜잭션에서 먼저 잡는다(WD-629). 동기화는
+   * 그 잠금 뒤 ACL 을 바꿀 테이블마다 ACCESS SHARE 를 이름 오름차순으로 잡아 트랜잭션 끝까지 쥐므로, 여러 테이블을 다른 순서로 잠그는 DDL 은 동기화와
+   * 교착할 수 있다. 동기화 잠금을 먼저 잡으면 둘이 완전히 직렬화된다({@code PythonReadGrantSync.lockTableForAclChange} 의 잠금 순서
+   * 규칙). 반드시 그 트랜잭션의 첫 데이터 테이블 잠금보다 먼저 불러야 한다. 잠금은 트랜잭션 범위라 바깥 트랜잭션이 끝날 때 풀린다(swapTable 과 같은 성질 —
+   * 같은 테넌트 동기화는 그동안 기다린다).
+   *
+   * <p>기본 구현은 아무것도 하지 않는다 — Tibero 는 DDL 이 자동 커밋이라 호출자 트랜잭션에서 테이블 잠금이 쌓이지 않는다.
+   */
+  default void lockTenantGrantSyncForDdl() {}
 
   /**
    * REPLACE 적재용 임시(staging) 테이블을 이번 실행 전용 이름({@code DataTableService.newTempTableName})으로 만들고 그 이름을

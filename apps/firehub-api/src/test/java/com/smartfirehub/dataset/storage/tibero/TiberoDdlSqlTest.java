@@ -338,14 +338,23 @@ class TiberoDdlSqlTest {
   /** WD-569 — Tibero 도 VARCHAR 길이·알 수 없는 타입 오류를 PostgreSQL 과 같은 한국어 문장으로 안내한다(상한만 4000). */
   @Test
   void columnDdl_invalidLengthOrType_koreanMessages() {
+    // WD-636: 입력한 길이도 함께 보여 준다.
     assertThatThrownBy(() -> TiberoDialect.columnDdl("VARCHAR", 4001))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다.");
+        .hasMessage("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다(입력 4001).");
     assertThatThrownBy(() -> TiberoDialect.columnDdl("VARCHAR", 0))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다.");
+        .hasMessage("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다(입력 0).");
     assertThatThrownBy(() -> TiberoDdlSql.alterColumnType(S, "t", "c", "NOPE", null, "TEXT"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("알 수 없는 데이터 타입입니다: NOPE");
+  }
+
+  /** WD-636 — PG 상한(10000) 안이지만 Tibero 상한(4000)을 넘는 길이도 Tibero 상한과 입력값으로 안내한다. */
+  @Test
+  void columnDdl_varcharBetweenTiberoAndPostgresLimits_rejectedWithTiberoMax() {
+    assertThatThrownBy(() -> TiberoDialect.columnDdl("VARCHAR", 5000))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다(입력 5000).");
   }
 }

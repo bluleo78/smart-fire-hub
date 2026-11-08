@@ -8,6 +8,9 @@ import {
   createDatasetSchema,
   FIELD_NAME_DUPLICATE_MESSAGE,
   findDuplicateColumnIndexes,
+  makeCreateDatasetSchema,
+  makeDatasetColumnSchema,
+  makeUpdateColumnSchema,
   MAX_COLUMN_NAME_LENGTH,
   MAX_TABLE_NAME_LENGTH,
   RESERVED_COLUMN_NAME_MESSAGE,
@@ -177,3 +180,52 @@ describe('데이터셋 이름은 앞뒤 공백을 빼고 검사한다 (WD-502)',
     expect(r.success && r.data.name).toBe('매출 데이터');
   });
 });
+
+describe('VARCHAR 길이 상한은 저장소 값을 받는다 (WD-636)', () => {
+  const varchar = (maxLength: number) => ({
+    columnName: 'title',
+    dataType: 'VARCHAR' as const,
+    maxLength,
+    isNullable: true,
+    isIndexed: false,
+    isPrimaryKey: false,
+  });
+  const messages = (r: { success: boolean; error?: { issues: { message: string }[] } }) =>
+    r.success ? [] : (r.error?.issues ?? []).map((i) => i.message);
+
+  it('기본 상한은 PG 10000 이다', () => {
+    expect(addColumnSchema.safeParse(varchar(10000)).success).toBe(true);
+    expect(messages(addColumnSchema.safeParse(varchar(10001)))).toContain('최대 10000');
+  });
+
+  it('Tibero 상한 4000 — 추가·수정·생성 스키마 모두 4001 을 「최대 4000」으로 막는다', () => {
+    expect(makeDatasetColumnSchema(4000).safeParse(varchar(4000)).success).toBe(true);
+    expect(messages(makeDatasetColumnSchema(4000).safeParse(varchar(4001)))).toContain('최대 4000');
+    expect(messages(makeUpdateColumnSchema(4000).safeParse(varchar(4001)))).toContain('최대 4000');
+    const created = makeCreateDatasetSchema(4000).safeParse({
+      name: '이름',
+      tableName: 'tbl',
+      storageType: 'TABLE',
+      originType: 'SOURCE',
+      columns: [varchar(5000)],
+    });
+    expect(messages(created)).toContain('최대 4000');
+  });
+});
+
+describe('필드 수정 스키마는 칼럼 정의와 같은 바탕이다 (WD-636)', () => {
+  const base = { columnName: 'title', dataType: 'TEXT' as const, isNullable: true, isIndexed: false };
+
+  it('기본 키는 수정에서만 생략할 수 있다', () => {
+    expect(makeUpdateColumnSchema().safeParse(base).success).toBe(true);
+    expect(makeDatasetColumnSchema().safeParse(base).success).toBe(false);
+  });
+
+  it('칼럼 간 규칙(VARCHAR 길이 필수·기본 키 NOT NULL)은 수정에도 그대로 적용된다', () => {
+    const r1 = makeUpdateColumnSchema().safeParse({ ...base, dataType: 'VARCHAR', maxLength: null });
+    expect(r1.success ? [] : r1.error.issues.map((i) => i.message)).toContain('VARCHAR 타입은 길이를 입력해야 합니다');
+    const r2 = makeUpdateColumnSchema().safeParse({ ...base, isPrimaryKey: true, isNullable: true });
+    expect(r2.success ? [] : r2.error.issues.map((i) => i.message)).toContain('기본 키 칼럼은 NULL을 허용할 수 없습니다');
+  });
+});
+

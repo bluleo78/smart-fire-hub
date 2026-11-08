@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FormProvider,useForm } from 'react-hook-form';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -11,11 +11,12 @@ import { FormField } from '../../components/ui/form-field';
 import { Input } from '../../components/ui/input';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { useCategories, useCreateDataset, useDatasets } from '../../hooks/queries/useDatasets';
+import { useDataStoreFeatures } from '../../hooks/queries/useDataStoreCapabilities';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { handleApiError } from '../../lib/api-error';
 import { getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
 import type { CreateDatasetFormData } from '../../lib/validations/dataset';
-import { createDatasetSchema } from '../../lib/validations/dataset';
+import { createDatasetSchema, makeCreateDatasetSchema } from '../../lib/validations/dataset';
 import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import { SchemaBuilder } from './components/SchemaBuilder';
 
@@ -43,10 +44,14 @@ export default function DatasetCreatePage() {
   // 동적 테이블/컬럼이 없는 스키마리스 유형 통합 플래그
   const isSchemaless = isDocument || isFile;
 
+  // WD-636: 칼럼 VARCHAR 길이 상한은 저장소 기능 응답을 따른다(PG 10000, Tibero 4000 — 조회 전·실패 시 10000).
+  // 응답이 폼 생성 뒤에 와도 react-hook-form 은 매 렌더의 resolver 를 쓰므로 새 상한이 다음 제출부터 적용된다.
+  const { maxVarcharLength } = useDataStoreFeatures();
+  const formSchema = useMemo(() => makeCreateDatasetSchema(maxVarcharLength), [maxVarcharLength]);
   const form = useForm<CreateDatasetFormData>({
     mode: 'onSubmit',
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    resolver: zodResolver(createDatasetSchema) as any,
+    resolver: zodResolver(formSchema) as any,
     defaultValues: {
       name: '',
       // DOCUMENT/FILE은 동적 테이블/컬럼이 없어 tableName을 규칙([a-z][a-z0-9_]*) 만족하는 메타 식별자로 자동 생성
@@ -203,7 +208,8 @@ export default function DatasetCreatePage() {
          * 즉시 어떤 필드를 수정해야 하는지 인지할 수 있도록 한다.
          * 단, 서버 에러(API 실패)는 onSubmit catch의 handleApiError로 toast 노출 유지.
          */}
-        <form ref={formRef} onSubmit={form.handleSubmit(onSubmit, (errors) => {
+        {/* noValidate(WD-636): 숫자 칸의 min/max 를 브라우저가 먼저 막으면 영어 말풍선만 뜨고 zod 의 한국어 인라인 오류(「최대 4000」)가 가려진다. */}
+        <form ref={formRef} noValidate onSubmit={form.handleSubmit(onSubmit, (errors) => {
           // 에러가 있는 첫 번째 필드를 찾아 focus + scrollIntoView
           const firstErrorKey = Object.keys(errors)[0];
           if (firstErrorKey) {

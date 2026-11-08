@@ -1015,4 +1015,24 @@ class TiberoDataTableStoreTest {
     // 읽기 전용이므로 DDL 연결은 쓰지 않는다.
     assertThat(ddl).isEmpty();
   }
+
+  /**
+   * WD-636 — 컬럼 타입 사전 검증(DDL 없이): Tibero 상한 4000 을 넘는 VARCHAR(5000, PG 상한 안)는 Tibero 상한과 입력값으로
+   * 거부하고, GEOMETRY 는 지금처럼 미지원 예외다. 검증만 하므로 어떤 문장도 실행하지 않는다.
+   */
+  @Test
+  void validateColumnType_usesTiberoLimitsWithoutDdl() {
+    assertThatThrownBy(() -> store.validateColumnType("VARCHAR", 5000))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다(입력 5000).");
+    assertThatThrownBy(() -> store.validateColumnType("GEOMETRY", null))
+        .isInstanceOf(DataStoreFeatureUnsupportedException.class);
+    assertThatThrownBy(() -> store.validateColumnType("NOPE", null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("알 수 없는 데이터 타입입니다: NOPE");
+    // 상한 안의 값은 통과한다.
+    store.validateColumnType("VARCHAR", 4000);
+    store.validateColumnType("TEXT", null);
+    assertThat(ddl).isEmpty();
+  }
 }

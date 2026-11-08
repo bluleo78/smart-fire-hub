@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
@@ -16,10 +16,10 @@ import { useDataStoreFeatures } from '../../../hooks/queries/useDataStoreCapabil
 import { handleApiError } from '../../../lib/api-error';
 import type { AddColumnFormData, UpdateColumnFormData } from '../../../lib/validations/dataset';
 import {
-  addColumnSchema,
   FIELD_NAME_DUPLICATE_MESSAGE,
+  makeDatasetColumnSchema,
+  makeUpdateColumnSchema,
   reservedColumnNameError,
-  updateColumnSchema,
 } from '../../../lib/validations/dataset';
 import type { DatasetColumnResponse } from '../../../types/dataset';
 import { ColumnTypeSelect } from './ColumnTypeSelect';
@@ -61,10 +61,15 @@ export function ColumnDialog({
 
   const queryClient = useQueryClient();
   // 저장소 GEOMETRY 지원 여부 — 조회 전·실패 시 지원으로 취급한다. (WD-80)
-  const { geometrySupported } = useDataStoreFeatures();
+  // VARCHAR 길이 상한도 저장소를 따른다(WD-636, PG 10000·Tibero 4000 — 조회 전·실패 시 10000).
+  const { geometrySupported, maxVarcharLength } = useDataStoreFeatures();
   const addColumn = useAddColumn(datasetId);
 
-  const schema = mode === 'add' ? addColumnSchema : updateColumnSchema;
+  // 저장소 상한이 바뀔 때만 스키마를 다시 만든다(WD-636) — 추가 스키마는 생성 폼 칼럼 스키마와 같다.
+  const schema = useMemo(
+    () => (mode === 'add' ? makeDatasetColumnSchema(maxVarcharLength) : makeUpdateColumnSchema(maxVarcharLength)),
+    [mode, maxVarcharLength],
+  );
 
   // PostgreSQL은 GEOMETRY ↔ 다른 타입 간 CAST를 지원하지 않아 백엔드가 항상 거부한다.
   // edit 모드에서는 애초에 성공할 수 없는 선택을 UI 단에서 막는다 (#539).
@@ -161,7 +166,8 @@ export function ColumnDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription className="sr-only">데이터셋 컬럼을 추가하거나 수정합니다.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        {/* noValidate(WD-636): 길이 칸 min/max 를 브라우저가 먼저 막아 zod 의 한국어 인라인 오류가 가려지지 않게 한다. */}
+        <form onSubmit={form.handleSubmit(onSubmit)} noValidate className="space-y-4">
           {mode === 'edit' && hasData && (
             <InlineBanner>
               데이터가 있는 경우 필드명, 데이터 타입, 길이는 변경할 수 없습니다.
@@ -231,7 +237,7 @@ export function ColumnDialog({
                 id="maxLength"
                 type="number"
                 min={1}
-                max={10000}
+                max={maxVarcharLength}
                 {...form.register('maxLength', { valueAsNumber: true })}
                 placeholder="예: 255"
                 disabled={mode === 'edit' && hasData}

@@ -12,6 +12,7 @@ import com.smartfirehub.dataset.storage.StoredAccount;
 import com.smartfirehub.dataset.storage.external.ExternalAccountProvisioner;
 import com.smartfirehub.dataset.storage.external.ExternalStoreConnections;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.pythonread.PythonReadSyncExecutor;
 import com.smartfirehub.securitylevel.pythonread.TiberoPythonReadGrantSync;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
@@ -48,6 +49,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 class TiberoLiveSlotGrantTest extends IntegrationTestBase {
 
   @Autowired private TiberoPythonReadGrantSync sync;
+  @Autowired private PythonReadSyncExecutor syncExecutor;
   @Autowired private TiberoDataTableStore tableStore;
   @Autowired private DSLContext dsl;
   @Autowired private TenantDataStoreRepository storeRepository;
@@ -278,5 +280,84 @@ class TiberoLiveSlotGrantTest extends IntegrationTestBase {
           afterRegrant == null ? "READABLE" : "DENIED code=" + afterRegrant);
       assertThat(afterRegrant).isNull();
     }
+  }
+
+  /** 사용자 DDL 처럼 OWNER 자동 커밋 단발 연결로 문장 하나를 던진다. 실패는 목록에 모은다(테스트가 끝에서 한꺼번에 단언). */
+  private void ownerDdl(String sql, List<String> failures) {
+    try {
+      connections.withDdl(
+          env.tenantId,
+          c -> {
+            try (Statement st = c.createStatement()) {
+              st.execute(sql);
+            }
+            return null;
+          });
+    } catch (RuntimeException e) {
+      failures.add(sql + " → " + e.getMessage());
+    }
+  }
+
+  /**
+   * 겹침 실측(WD-629): 커밋 뒤 슬롯 GRANT 동기화는 전용 실행기에서 자동 커밋 GRANT/REVOKE 를 던지고, Tibero 는 테이블 잠금을 잡지
+   * 않는다(GRANT 가 DDL 이라 암묵 커밋으로 잠금이 먼저 풀린다). PG 판 회귀({@code PythonReadGrantWiringTest
+   * .syncTableAfterCommit_overlappingAlterAndDrop_...})와 같은 모양으로, 동기화와 같은 테이블의 ADD COLUMN·DROP
+   * TABLE 을 겹쳐 사용자 DDL 이 실패하지 않는지 본다. 실패하면 앱 수준 직렬화가 필요하다는 증거다(별도 이슈로 연기한 결정).
+   */
+  @Test
+  void grantOverlappingAlterAndDrop_doesNotFailUserDdl() throws Exception {
+    List<String> failures = new ArrayList<>();
+    String suffix = Long.toString(System.nanoTime() % 1_000_000_000L);
+    // 기본 등급 '내부'(위치 2) — 슬롯 2..10 이 SELECT 를 받는다.
+    String t = "ov_" + suffix;
+    dataset(t, "내부");
+    String physical = TiberoNames.physical(t);
+    String qt = TiberoNames.table(schema(), t);
+    List<String> slotAccounts = new ArrayList<>();
+    for (int k = 1; k <= 10; k++) {
+      slotAccounts.add(DataStoreAccountRole.valueOf("S" + k).usernameFor(env.tenantId));
+    }
+
+    // (1) ADD COLUMN — 매 회 슬롯 GRANT 를 걷어 동기화가 GRANT 하게 만들고, 동기화가 끝날 때까지 ADD COLUMN 을 연달아 던진다.
+    int col = 0;
+    for (int round = 0; round < 15; round++) {
+      for (String account : slotAccounts) {
+        // 없는 권한 회수 오류는 무시한다(준비 단계라 실패 목록에 넣지 않는다).
+        ownerDdl(TiberoDdlSql.revokeSelectFromSlot(schema(), physical, account), new ArrayList<>());
+      }
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate, env.tenantId, () -> sync.syncTableAfterCommit(t));
+      int perRound = 0;
+      do {
+        ownerDdl("ALTER TABLE " + qt + " ADD (\"C" + (col++) + "\" VARCHAR2(10))", failures);
+      } while (!syncExecutor.awaitIdle(java.time.Duration.ZERO) && ++perRound < 20);
+      assertThat(syncExecutor.awaitIdle(java.time.Duration.ofSeconds(30))).isTrue();
+      try (Connection s2 = openSlot(2)) {
+        String err = countOrError(s2, t);
+        if (err != null) {
+          failures.add("round " + round + ": 겹친 동기화 뒤 슬롯 2 가 읽지 못한다 code=" + err);
+        }
+      }
+    }
+
+    // (2) DROP TABLE — 데이터셋이 아닌 테이블에 슬롯 GRANT 를 걸어 두면 동기화가 REVOKE 한다. 그 REVOKE 와 직후의 DROP 이 겹친다.
+    // 여기서 보는 것은 사용자 DROP 이 실패하지 않는지뿐이다. 동기화 쪽 REVOKE 가 겹친 DROP 때문에 실패하면 회수 실패로 남는 것이
+    // 의도다(fail-closed — RENAME·휴지통 BIN$ 로 GRANT 가 남을 수 있어 "사라졌다"로 넘기지 않는다, WD-629). 커밋 뒤 경로는 WARN 만
+    // 남긴다.
+    for (int round = 0; round < 15; round++) {
+      String raw = "ovd_" + suffix + "_" + round;
+      String rawPhysical = TiberoNames.physical(raw);
+      String qraw = TiberoNames.table(schema(), raw);
+      ownerDdl("CREATE TABLE " + qraw + " (\"ID\" NUMBER)", failures);
+      ownerDdl(
+          TiberoDdlSql.grantSelectToSlot(schema(), rawPhysical, slotAccounts.get(0)), failures);
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate, env.tenantId, () -> sync.syncTableAfterCommit(raw));
+      ownerDdl("DROP TABLE " + qraw, failures);
+      assertThat(syncExecutor.awaitIdle(java.time.Duration.ofSeconds(30))).isTrue();
+    }
+
+    probe("overlapping-grant-and-ddl-failures", failures.isEmpty() ? "NONE" : failures.toString());
+    assertThat(failures).as("동기화와 겹친 사용자 DDL 이 실패하지 않고, GRANT 는 계산값대로 남는다").isEmpty();
   }
 }

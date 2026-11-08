@@ -13,12 +13,20 @@ import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.ExecutionDetailResponse;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.UpdatePipelineRequest;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -619,6 +627,168 @@ class PipelineTempDatasetRecreateIntegrationTest extends IntegrationTestBase {
     assertThat(physicalColumns(temp)).as("현재 테이블 그대로").contains("x");
     assertThat(datasetService.discardPipelineTempBackup(rebuild)).as("남의 보관본은 버리지도 않는다").isFalse();
     assertThat(backupExists(temp)).isTrue();
+  }
+
+  /**
+   * 회귀(WD-629): 재생성 되돌리기는 보관본과 새 테이블 두 기존 테이블을 한 트랜잭션에서 잠근다. 테넌트 PYTHON 읽기 권한 동기화도 두 테이블의 ACL 을 바꿀
+   * 수 있어(보관본은 RENAME 으로 물려받은 슬롯 GRANT 회수, 새 테이블은 GRANT) 잠금 순서가 엇갈리면 교착한다. 그래서 되돌리기는 테이블 잠금보다 먼저 테넌트
+   * 동기화 잠금을 잡아야 한다(swapTable 과 같은 순서). 다른 트랜잭션이 그 잠금을 쥔 동안 되돌리기는 advisory 대기에 서고 보관본에 어떤 잠금도 잡지 않아야
+   * 하며, 풀리면 정상 복원한다. 대기는 되돌리기 트랜잭션 자신의 pid 로 pg_locks 에서 확인한다(고정 sleep 에 기대지 않는다). 변이:
+   * restoreRebuildBackup 의 lockTenantSync 제거 → 그 pid 가 advisory 를 기다리지 않아 실패.
+   */
+  @Test
+  void restore_waitsForTenantSyncLock_beforeLockingTables() throws Exception {
+    Long pipelineId = createPipeline(sqlStep(STEP_NAME, "code, label", null, null));
+    pipelinesToCleanup.add(pipelineId);
+    assertThat(runAndWait(pipelineId)).isEqualTo("COMPLETED");
+    Long temp = tempIdOf(pipelineId);
+    String backup = DataSchema.qualify(DataTableService.rebuildBackupTableName(tableNameOf(temp)));
+    DatasetService.PipelineTempRebuild rebuild =
+        datasetService.rebuildPipelineTempTable(
+            temp, List.of(new DatasetColumnRequest("x", "x", "TEXT", null, true, false, null)));
+    // 재생성 커밋 뒤 걸린 동기화가 끝난 뒤에 시작한다 — 그 동기화가 advisory 를 기다리는 행으로 섞이지 않게.
+    awaitPythonReadGrantSync();
+
+    assertWaitsForTenantSyncLockBeforeLocking(
+        "되돌리기", () -> datasetService.restorePipelineTempTable(rebuild, userId), backup);
+    assertThat(tempColumns(temp)).containsExactly("code", "label");
+    assertThat(rowCount(temp)).isEqualTo(2);
+    assertThat(backupExists(temp)).isFalse();
+  }
+
+  /**
+   * 회귀(WD-629): 파이프라인 삭제는 자동 생성 임시 데이터셋 여럿의 테이블을 한 트랜잭션에서 DROP 한다(각 DROP 이 커밋까지 ACCESS EXCLUSIVE).
+   * 테넌트 PYTHON 읽기 권한 동기화는 ACL 을 바꿀 테이블마다 이름 오름차순으로 ACCESS SHARE 를 쥐므로, 일괄 삭제가 다른 순서로 잠그면 교착할 수 있다.
+   * 그래서 일괄 삭제는 첫 DROP 보다 먼저 테넌트 동기화 잠금을 잡아야 한다. 다른 트랜잭션이 그 잠금을 쥔 동안 삭제 트랜잭션(자기 pid)은 advisory 대기에
+   * 서고 어느 임시 테이블에도 잠금을 잡지 않아야 하며, 풀리면 정상으로 지운다. 변이: 일괄 삭제·데이터셋 삭제의 동기화 잠금 제거 → 그 pid 가 advisory 를
+   * 기다리지 않고 끝나 실패.
+   */
+  @Test
+  void deletePipelineWithSeveralTemps_waitsForTenantSyncLock_beforeDroppingTables()
+      throws Exception {
+    Long pipelineId =
+        pipelineService
+            .createPipeline(
+                new CreatePipelineRequest(
+                    pipelineName,
+                    null,
+                    List.of(sqlStep("A", "code", null, null), sqlStep("B", "code", null, null))),
+                userId)
+            .id();
+    pipelinesToCleanup.add(pipelineId);
+    assertThat(runAndWait(pipelineId)).as("두 스텝 TEMP 생성 실행").isEqualTo("COMPLETED");
+    String tableA = DataSchema.qualify(tableNameOf(tempOfStep(stepIdOf(pipelineId, "A"))));
+    String tableB = DataSchema.qualify(tableNameOf(tempOfStep(stepIdOf(pipelineId, "B"))));
+    // 실행 뒤 걸린 커밋 뒤 동기화가 끝난 뒤에 시작한다 — 그 동기화가 advisory 대기 행으로 섞이지 않게.
+    awaitPythonReadGrantSync();
+
+    assertWaitsForTenantSyncLockBeforeLocking(
+        "일괄 삭제", () -> pipelineService.deletePipelineUnchecked(pipelineId), tableA, tableB);
+    pipelinesToCleanup.remove(pipelineId);
+    assertThat(
+            inTenantFixture(
+                () ->
+                    dataDsl.fetchValue(
+                        "SELECT to_regclass(?) IS NULL AND to_regclass(?) IS NULL",
+                        tableA,
+                        tableB)))
+        .as("잠금이 풀린 뒤 두 임시 테이블을 모두 지웠다")
+        .isEqualTo(true);
+  }
+
+  /**
+   * 다른 트랜잭션이 테넌트 동기화 잠금을 쥔 동안 {@code action} 을 테넌트 트랜잭션에서 돌려, 그 트랜잭션(자기 pid)이 advisory 대기에 서고
+   * {@code qualifiedTables} 어느 것에도 관계 잠금을 잡지 않았는지 확인한 뒤, 잠금을 풀고 action 이 끝나기를 기다린다(WD-629 — 되돌리기·일괄
+   * 삭제 회귀가 함께 쓴다).
+   *
+   * <p>대기는 작업 자신의 pid 로 가른다 — 아무 대기 행이나 보면 고치기 전에도 커밋 뒤 동기화(실행기의 다른 연결)가 같은 잠금을 기다리는 행으로 통과할 수
+   * 있었다(WD-629 리뷰). 돌아왔는지 표시({@code returned})는 같은 트랜잭션(연결을 쥔 채) 안에서 세운다 — 돌아온 뒤 연결이 풀로 돌아가 커밋 뒤
+   * 동기화가 같은 연결(같은 pid)로 advisory 를 기다릴 수 있어, pid 만으로는 「작업 자신의 대기」를 가를 수 없다(고치기 전 코드로 확인한 함정).
+   */
+  private void assertWaitsForTenantSyncLockBeforeLocking(
+      String what, Runnable action, String... qualifiedTables) throws Exception {
+    ExecutorService pool = Executors.newSingleThreadExecutor();
+    try {
+      AtomicReference<Future<?>> running = new AtomicReference<>();
+      CompletableFuture<Integer> actionPid = new CompletableFuture<>();
+      AtomicBoolean returned = new AtomicBoolean();
+      dataDsl.transaction(
+          cfg -> {
+            DSLContext holder = cfg.dsl();
+            PythonReadGrantSync.lockTenantSync(holder, DEFAULT_TEST_TENANT_ID);
+            running.set(
+                pool.submit(
+                    () ->
+                        TenantRlsTestSupport.runInTenantTransaction(
+                            fixtureTransactionTemplate,
+                            DEFAULT_TEST_TENANT_ID,
+                            () -> {
+                              // 같은 트랜잭션(같은 연결)에 합류하는 작업보다 먼저 그 연결의 pid 를 알린다.
+                              actionPid.complete(
+                                  dataDsl
+                                      .fetchOne("SELECT pg_backend_pid()")
+                                      .get(0, Integer.class));
+                              action.run();
+                              returned.set(true);
+                            })));
+            int pid = actionPid.get(10, TimeUnit.SECONDS);
+            // 고치기 전에는 작업이 advisory 를 잡지 않으므로 기한까지 그 pid 의 대기 행이 없다.
+            assertThat(awaitAdvisoryWait(holder, pid, returned))
+                .as("%s 트랜잭션(pid=%d)이 테넌트 동기화 잠금을 기다려야 한다", what, pid)
+                .isTrue();
+            for (String table : qualifiedTables) {
+              assertThat(relationLocksOf(holder, pid, table))
+                  .as("동기화 잠금을 얻기 전에는 %s 잠금을 잡지 않는다(advisory → 테이블 순서)", table)
+                  .isZero();
+            }
+          });
+      running.get().get(30, TimeUnit.SECONDS);
+    } finally {
+      pool.shutdownNow();
+    }
+  }
+
+  /**
+   * 그 백엔드(pid)가 advisory 잠금 대기(granted=false)에 설 때까지 기한(10초)을 두고 pg_locks 를 본다(WD-629). 고정 sleep 에
+   * 기대지 않는다. 통계 뷰(pg_stat_activity)는 트랜잭션 안에서 스냅숏이 고정되므로 pg_locks 만
+   * 본다(SqlScriptExecutorOutputLockTest 주석).
+   *
+   * <p>{@code returned} 는 작업이 같은 트랜잭션 안에서(연결을 쥔 채) 돌아왔을 때 세운 표시다. 대기 행을 본 <b>뒤에</b> 표시를 읽어 아직 false
+   * 면 그 대기는 작업 자신의 것이다 — 표시는 연결 반납보다 먼저 서므로, 반납된 연결을 이어 쓴 다른 작업(커밋 뒤 동기화 등)의 대기라면 이미 true 다. 작업이 대기
+   * 없이 돌아오면(고치기 전 동작) false.
+   */
+  private static boolean awaitAdvisoryWait(DSLContext holder, int pid, AtomicBoolean returned)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline) {
+      boolean waiting =
+          holder.fetchExists(
+              holder
+                  .selectOne()
+                  .from("pg_locks")
+                  .where(
+                      "pid = {0} AND locktype = 'advisory' AND NOT granted",
+                      org.jooq.impl.DSL.val(pid)));
+      if (returned.get()) {
+        return false;
+      }
+      if (waiting) {
+        return true;
+      }
+      Thread.sleep(20);
+    }
+    return false;
+  }
+
+  /** 그 백엔드(pid)가 테이블(스키마 한정 이름)에 쥔 관계 잠금 수. */
+  private static int relationLocksOf(DSLContext holder, int pid, String qualifiedTable) {
+    return holder
+        .fetchOne(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'relation'"
+                + " AND relation = to_regclass(?) AND pid = ?",
+            qualifiedTable,
+            pid)
+        .get(0, Integer.class);
   }
 
   private void updateStep(Long pipelineId, String name, PipelineStepRequest step) {

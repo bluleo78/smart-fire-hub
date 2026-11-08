@@ -376,6 +376,113 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     }
   }
 
+  /**
+   * 회귀(WD-629): 동기화는 ACL 을 바꿀 테이블마다 ACCESS SHARE 를 잡고 트랜잭션 끝까지 쥔다. 그 순서가 해시 순서(HashMap)면 비결정이라 "테이블
+   * 잠금은 이름 오름차순" 규칙을 세울 수 없다. 이름이 앞선 테이블 L 을 다른 연결이 ACCESS EXCLUSIVE 로 쥔 동안 동기화가 L 을 기다리면, 이름이 뒤인
+   * 테이블 G 의 잠금은 아직 잡지 않았어야 한다. 이름 쌍을 무작위로 20번 바꿔 본다 — 해시 순서면 대략 절반에서 G 를 먼저 잡아 실패한다(변이: 정렬 제거).
+   */
+  @Test
+  void syncTenant_locksTablesInNameOrder() throws Exception {
+    String s1 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 1);
+    java.util.Random random = new java.util.Random();
+    java.util.concurrent.ExecutorService pool =
+        java.util.concurrent.Executors.newSingleThreadExecutor();
+    try {
+      for (int round = 0; round < 20; round++) {
+        String x = m + "_lk" + randomLetters(random, 6);
+        String y = m + "_lk" + randomLetters(random, 6);
+        if (x.equals(y)) {
+          continue;
+        }
+        String first = x.compareTo(y) < 0 ? x : y;
+        String second = x.compareTo(y) < 0 ? y : x;
+        // 데이터셋이 아닌 테이블 두 개에 슬롯 1 GRANT 를 걸어 둔다 — 동기화가 둘 다 REVOKE(ACL 변경)해야 한다.
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> {
+              for (String t : List.of(first, second)) {
+                dataDsl.execute("CREATE TABLE " + DataSchema.qualify(t) + " (v text)");
+                dataDsl.execute("GRANT SELECT ON " + DataSchema.qualify(t) + " TO " + s1);
+              }
+            });
+        try {
+          java.util.concurrent.atomic.AtomicReference<
+                  java.util.concurrent.Future<PythonReadGrantSync.SyncResult>>
+              running = new java.util.concurrent.atomic.AtomicReference<>();
+          dataDsl.transaction(
+              cfg -> {
+                DSLContext holder = cfg.dsl();
+                holder.execute(
+                    "LOCK TABLE " + DataSchema.qualify(first) + " IN ACCESS EXCLUSIVE MODE");
+                running.set(
+                    pool.submit(
+                        () ->
+                            TenantContext.runScopedGet(DEFAULT_TEST_TENANT_ID, sync::syncTenant)));
+                Integer waiter = awaitRelationWaiter(holder, DataSchema.qualify(first));
+                assertThat(waiter).as("동기화가 이름이 앞선 테이블 잠금을 기다려야 한다").isNotNull();
+                Integer heldSecond =
+                    holder
+                        .fetchOne(
+                            "SELECT count(*) FROM pg_locks WHERE pid = ? AND granted"
+                                + " AND locktype = 'relation' AND relation = to_regclass(?)",
+                            waiter,
+                            DataSchema.qualify(second))
+                        .get(0, Integer.class);
+                assertThat(heldSecond)
+                    .as("이름이 앞선 테이블을 기다리는 동안 뒤 테이블(%s) 잠금은 아직 없다 — 이름 오름차순", second)
+                    .isZero();
+              });
+          PythonReadGrantSync.SyncResult r =
+              running.get().get(30, java.util.concurrent.TimeUnit.SECONDS);
+          assertThat(r.revokeFailedTables()).doesNotContain(first, second);
+          assertThat(selectAs(1, first)).as("해제 뒤 회수됨").isEqualTo("42501");
+          assertThat(selectAs(1, second)).as("해제 뒤 회수됨").isEqualTo("42501");
+        } finally {
+          TenantRlsTestSupport.runInTenantTransaction(
+              fixtureTransactionTemplate,
+              DEFAULT_TEST_TENANT_ID,
+              () -> {
+                dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(first));
+                dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(second));
+              });
+        }
+      }
+    } finally {
+      pool.shutdownNow();
+    }
+  }
+
+  /** 소문자 무작위 이름 조각. */
+  private static String randomLetters(java.util.Random random, int length) {
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < length; i++) {
+      sb.append((char) ('a' + random.nextInt(26)));
+    }
+    return sb.toString();
+  }
+
+  /**
+   * 그 관계의 잠금을 기다리는(미승인) 다른 백엔드 pid 를 최대 10초 기다려 찾는다. pg_locks 만 본다(통계 뷰는 트랜잭션 안에서 스냅숏으로 고정된다 —
+   * SqlScriptExecutorOutputLockTest 주석).
+   */
+  private static Integer awaitRelationWaiter(DSLContext holder, String qualified)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline) {
+      var row =
+          holder.fetchOne(
+              "SELECT pid FROM pg_locks WHERE NOT granted AND locktype = 'relation'"
+                  + " AND relation = to_regclass(?) AND pid <> pg_backend_pid() LIMIT 1",
+              qualified);
+      if (row != null) {
+        return row.get(0, Integer.class);
+      }
+      Thread.sleep(20);
+    }
+    return null;
+  }
+
   /** 기본 USER 역할을 떼고 지정 등급 자격의 역할 하나만 가진 사용자. */
   private long userAt(String level) {
     long uid = fx.createUser("prs_u");
