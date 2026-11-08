@@ -10,6 +10,7 @@ import { FormField } from '@/components/ui/form-field';
 import { InlineBanner } from '@/components/ui/inline-banner';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
+import { TruncatedText } from '@/components/ui/truncated-text';
 import { useRoleClearance } from '@/hooks/queries/useSecurityLevels';
 import { extractApiError, handleApiError, isNotFoundError } from '@/lib/api-error';
 import { iGa } from '@/lib/utils';
@@ -237,13 +238,16 @@ export default function RoleListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors row-hover"
                   onClick={() => navigate(`/admin/roles/${role.id}`)}
                 >
+                  {/* WD-559: 표 셀은 줄바꿈하지 않아(whitespace-nowrap) 띄어쓰기 없는 긴 이름·설명이 칸을 늘려 삭제 칸이 화면 밖으로
+                      밀렸다. 데이터셋 목록(WD-517)처럼 값에 고정 폭 상한을 두어 넘는 값만 말줄임, 전체 값은 title 로 보인다. */}
                   <TableCell className="font-medium">
                     {/* 키보드 접근성(WD-286): 행 클릭은 마우스로만 열리므로 역할 이름을 상세 링크로 둔다 — Tab 으로 닿고
                         Enter 로 열린다. 행에 role="button" 을 주면 표의 행·칸 의미가 사라져 링크로 한다.
                         클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
                     <Link
                       to={`/admin/roles/${role.id}`}
-                      className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="inline-block max-w-[16rem] truncate align-middle rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      title={role.name}
                       onClick={(e) => e.stopPropagation()}
                     >
                       {role.name}
@@ -256,7 +260,9 @@ export default function RoleListPage() {
                       <Badge variant="secondary">사용자 정의</Badge>
                     )}
                   </TableCell>
-                  <TableCell>{role.description ?? '-'}</TableCell>
+                  <TableCell>
+                    <TruncatedText value={role.description} className="max-w-[24rem]" />
+                  </TableCell>
                   <TableCell>
                     {canDeleteRole && !role.isSystem && (
                       <RoleDeleteButton role={role} onConfirm={() => handleDelete(role)} />

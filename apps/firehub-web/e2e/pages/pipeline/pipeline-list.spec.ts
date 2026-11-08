@@ -2,6 +2,7 @@ import { createPipeline, createPipelines } from '../../factories/pipeline.factor
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions, mockPipelineDeleteImpact, setupPipelineMocks } from '../../fixtures/pipeline.fixture';
+import { expectLongValueTruncated, expectValueNotTruncated } from '../../fixtures/table-layout';
 
 /**
  * 파이프라인 목록 페이지 E2E 테스트
@@ -470,5 +471,55 @@ test.describe('파이프라인 목록 페이지', () => {
 
     // 페이지네이션 버튼이 표시되는지 확인 (사이드바 nav 와 구분하기 위해 aria-label 지정)
     await expect(page.getByRole('navigation', { name: '페이지네이션' })).toBeVisible();
+  });
+});
+
+/**
+ * 파이프라인 목록 — 띄어쓰기 없는 긴 이름 (WD-559)
+ * - 100자 이름·60자 생성자 아이디가 칸을 늘려 상태·삭제 칸이 화면 밖으로 밀렸다. 이제 말줄임되고 전체 값은 title 로 남는다.
+ */
+test.describe('파이프라인 목록 긴 이름 말줄임 (WD-559)', () => {
+  const LONG_NAME = '가'.repeat(100);
+  const LONG_CREATOR = 'c'.repeat(60);
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
+  test('1280px 에서 100자 이름이 있어도 표가 넘치지 않고 삭제 버튼까지 보인다', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupPipelineMocks(page, 3);
+    const [first, ...rest] = createPipelines(3);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/pipelines',
+      createPageResponse([{ ...first, name: LONG_NAME, createdBy: LONG_CREATOR }, ...rest]),
+    );
+    await page.goto('/pipelines');
+
+    const link = page.getByRole('link', { name: LONG_NAME });
+    const row = page.getByRole('row').filter({ has: link });
+    const lastCell = row.getByRole('button', { name: '삭제' });
+    await expectLongValueTruncated(link, LONG_NAME, lastCell);
+    await expectLongValueTruncated(row.getByText(LONG_CREATOR, { exact: true }), LONG_CREATOR, lastCell);
+  });
+
+  test('1280px 에서 평범한 길이의 이름·생성자는 잘리지 않는다', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupPipelineMocks(page, 1);
+    const NAME = '일일 매출 집계 파이프라인 운영용 v2';
+    const CREATOR = 'firstname.lastname';
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/pipelines',
+      createPageResponse([createPipeline({ id: 1, name: NAME, createdBy: CREATOR })]),
+    );
+    await page.goto('/pipelines');
+
+    const link = page.getByRole('link', { name: NAME });
+    await expectValueNotTruncated(link);
+    await expectValueNotTruncated(page.getByRole('row').filter({ has: link }).getByText(CREATOR, { exact: true }));
   });
 });

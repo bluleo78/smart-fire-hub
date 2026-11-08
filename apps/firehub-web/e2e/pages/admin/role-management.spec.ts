@@ -1,4 +1,5 @@
 import { createPermission, createRoleDetail } from '../../factories/admin.factory';
+import { createRole } from '../../factories/auth.factory';
 import {
   setupAdminAuth,
   setupRoleDetailMocks,
@@ -6,6 +7,7 @@ import {
 } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectLongValueTruncated, expectValueNotTruncated } from '../../fixtures/table-layout';
 
 /**
  * 역할 관리 페이지 E2E 테스트
@@ -814,5 +816,49 @@ test.describe('역할 관리 페이지', () => {
       await expect(page.getByRole('alertdialog')).not.toBeVisible();
       await expect(page).toHaveURL(/\/admin\/roles$/);
     });
+  });
+});
+
+/**
+ * 역할 목록 — 띄어쓰기 없는 긴 이름·설명 (WD-559)
+ * - 100자 이름·설명이 칸을 늘려 삭제 칸이 화면 밖으로 밀렸다. 이제 둘 다 말줄임되고 전체 값은 title 로 남는다.
+ */
+test.describe('역할 목록 긴 이름·설명 말줄임 (WD-559)', () => {
+  const LONG_NAME = 'R'.repeat(100);
+  const LONG_DESC = '설'.repeat(100);
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  test('1280px 에서 100자 이름·설명이 있어도 표가 넘치지 않고 삭제 버튼까지 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupRoleListMocks(page);
+    await mockApi(page, 'GET', '/api/v1/roles', [
+      createRole({ id: 1, name: 'USER', description: '일반 사용자', isSystem: true }),
+      createRole({ id: 3, name: LONG_NAME, description: LONG_DESC, isSystem: false }),
+    ]);
+    await page.goto('/admin/roles');
+
+    const link = page.getByRole('link', { name: LONG_NAME });
+    const row = page.getByRole('row').filter({ has: link });
+    const lastCell = row.getByRole('button', { name: `${LONG_NAME} 역할 삭제` });
+    await expectLongValueTruncated(link, LONG_NAME, lastCell);
+    await expectLongValueTruncated(row.getByText(LONG_DESC), LONG_DESC, lastCell);
+  });
+
+  test('1280px 에서 평범한 길이의 이름·설명은 잘리지 않는다', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupRoleListMocks(page);
+    const NAME = 'DATA_PIPELINE_OPERATOR';
+    const DESC = '파이프라인 실행과 트리거를 관리하는 운영 담당자 역할';
+    await mockApi(page, 'GET', '/api/v1/roles', [createRole({ id: 3, name: NAME, description: DESC, isSystem: false })]);
+    await page.goto('/admin/roles');
+
+    const link = page.getByRole('link', { name: NAME });
+    await expectValueNotTruncated(link);
+    await expectValueNotTruncated(page.getByRole('row').filter({ has: link }).getByText(DESC, { exact: true }));
   });
 });

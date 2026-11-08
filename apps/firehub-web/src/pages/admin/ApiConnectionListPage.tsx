@@ -8,6 +8,7 @@ import { StatusBadge } from '@/components/api-connection/StatusBadge';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
+import { TruncatedText } from '@/components/ui/truncated-text';
 import { handleApiError } from '@/lib/api-error';
 import { formatDateShort } from '@/lib/formatters';
 import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
@@ -474,12 +475,15 @@ export default function ApiConnectionListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors"
                   onClick={() => navigate(`/admin/api-connections/${conn.id}`)}
                 >
+                  {/* WD-559: 표 셀은 줄바꿈하지 않아(whitespace-nowrap) 띄어쓰기 없는 긴 이름·Base URL·설명이 칸을 늘려 삭제 칸이 화면 밖으로
+                      밀렸다. 데이터셋 목록(WD-517)처럼 값에 고정 폭 상한을 두어 넘는 값만 말줄임, 전체 값은 title 로 보인다. */}
                   <TableCell className="font-medium">
                     {/* 키보드 접근성(WD-396): 행 클릭은 마우스로만 열리므로 이름을 상세 링크로 둔다 — Tab 으로 닿고 Enter 로
                         열린다. 클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
                     <Link
                       to={`/admin/api-connections/${conn.id}`}
-                      className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="inline-block max-w-[12rem] truncate align-middle rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      title={conn.name}
                       onClick={(e) => e.stopPropagation()}
                     >
                       {conn.name}
@@ -490,13 +494,15 @@ export default function ApiConnectionListPage() {
                       {conn.authType === 'BEARER' ? 'Bearer' : 'API Key'}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-muted-foreground text-sm font-mono max-w-[200px] truncate">
-                    {conn.baseUrl}
+                  <TableCell className="text-muted-foreground text-sm font-mono">
+                    <TruncatedText value={conn.baseUrl} className="max-w-[18rem]" />
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={conn.lastStatus} checkedAt={conn.lastCheckedAt} />
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{conn.description ?? '-'}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    <TruncatedText value={conn.description} className="max-w-[10rem]" />
+                  </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     {formatDateShort(conn.createdAt)}
                   </TableCell>
