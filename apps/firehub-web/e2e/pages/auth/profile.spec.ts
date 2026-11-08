@@ -275,6 +275,32 @@ test.describe('프로필 페이지', () => {
     await expect(page.locator('#profile-name')).toHaveValue('저장된 이름');
   });
 
+  /**
+   * WD-665: 저장은 성공했는데 다시 읽기가 실패해도 헤더(사이드바 사용자 메뉴)의 이름·아바타 머리글자가 저장한 값으로 바뀐다.
+   * 예전에는 폼만 보낸 값으로 맞추고 인증 상태(AuthContext user)는 예전 값이라, 새로고침 전까지 헤더에 예전 이름이 남았다.
+   */
+  test('저장 성공 뒤 다시 읽기가 실패해도 헤더의 이름이 저장한 값으로 바뀐다 (WD-665)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    await expect(page.locator('#profile-name')).toHaveValue(MOCK_USER.name, { timeout: 5000 });
+    // 저장 전: 헤더 사용자 메뉴에 예전 이름이 보인다(입력칸 값은 getByText 에 걸리지 않는다).
+    const userMenu = page.getByRole('button', { name: new RegExp(MOCK_USER.name) });
+    await expect(userMenu).toBeVisible();
+    const state = await failGetAfterSave(page);
+
+    await page.locator('#profile-name').fill('저장된 이름');
+    await page.getByRole('button', { name: '저장' }).first().click();
+
+    await expect(page.getByText('저장은 완료되었습니다. 최신 정보는 새로고침하면 반영됩니다.').first()).toBeVisible({ timeout: 5000 });
+    expect(state.getAfterSave).toBeGreaterThan(0);
+    // 헤더 사용자 메뉴가 새 이름·새 머리글자(저)를 보이고, 예전 이름은 화면 어디에도 남지 않는다.
+    const savedMenu = page.getByRole('button', { name: /저장된 이름/ });
+    await expect(savedMenu).toBeVisible();
+    await expect(savedMenu.getByText('저', { exact: true })).toBeVisible();
+    await expect(page.getByText(MOCK_USER.name, { exact: true })).toHaveCount(0);
+    // 이메일은 바꾸지 않았으므로 헤더의 이메일 줄은 그대로다.
+    await expect(savedMenu.getByText(MOCK_USER.email ?? MOCK_USER.username, { exact: true })).toBeVisible();
+  });
+
   /** WD-654: 이메일을 비워 저장하면 서버엔 이메일이 안 가고(비움), 다시 읽기가 실패해도 폼은 빈 이메일 표시 규칙(로그인 계정)을 따른다. */
   test('이메일을 비워 저장한 뒤 다시 읽기가 실패하면 폼은 보낸 값 기준으로 보인다 (WD-654)', async ({ authenticatedPage: page }) => {
     await page.goto('/profile');

@@ -218,9 +218,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await fetchUserWithRoles();
   }, [fetchUserWithRoles]);
 
+  // 저장이 끝난 프로필 값을 사용자 상태에 덮어쓴다(WD-665) — 다시 읽기가 실패해도 헤더·아바타가 새 이름을 보이게 한다.
+  // 로그인 전(user 없음)이면 덮어쓸 대상이 없으므로 그대로 둔다.
+  const applySavedProfile = useCallback((saved: Pick<UserResponse, 'name' | 'email'>) => {
+    setUser(prev => (prev ? { ...prev, name: saved.name, email: saved.email } : prev));
+  }, []);
+
   const ctxValue = useMemo(
-    () => ({ user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, activeTenantId, tenantOptions, unavailableWorkspaces, selectTenant, mustChangePassword, completePasswordChange }),
-    [user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, activeTenantId, tenantOptions, unavailableWorkspaces, selectTenant, mustChangePassword, completePasswordChange]
+    () => ({ user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, applySavedProfile, activeTenantId, tenantOptions, unavailableWorkspaces, selectTenant, mustChangePassword, completePasswordChange }),
+    [user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, applySavedProfile, activeTenantId, tenantOptions, unavailableWorkspaces, selectTenant, mustChangePassword, completePasswordChange]
   );
 
   return (
