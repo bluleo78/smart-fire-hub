@@ -621,6 +621,8 @@ describe('SettingsPage — 시스템 프롬프트 길이 상한(WD-536)', () => 
     expect(behavior.setErrors).toHaveBeenCalledWith({
       'ai.system_prompt': '시스템 프롬프트는 20,000자 이하로 입력하세요',
     });
+    // WD-643: 여기서는 setErrors 가 모킹이라 오류가 화면에 그려지지 않아 포커스할 오류 칸이 없다 — 그때만 토스트로
+    // 알리는 대체 경로다(실제 화면에서 오류 칸으로 포커스가 가면 토스트는 없다, settings.spec.ts 가 지킨다).
     expect(toast.error).toHaveBeenCalledWith('입력값을 확인하세요.');
     expect(mockedUpdate).not.toHaveBeenCalled();
     expect(cred.save).not.toHaveBeenCalled();

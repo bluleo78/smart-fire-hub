@@ -799,14 +799,11 @@ export default function ReportTemplateDetailPage() {
             대신 어떤 템플릿인지와, 이 템플릿을 쓰는 작업이 기본 형식으로 전환된다는 사실을 알린다.
           */}
           <div className="space-y-3">
-            {/* 공백 없는 긴 템플릿명(최대 100자)도 대화상자 안에서 줄바꿈한다 — 그대로 두면 대화상자(grid) 칸을
-                내용 폭만큼 늘려 「삭제」 버튼을 화면 밖으로 민다. 삭제 대상 확인 문구라 자르지 않는다 (WD-632) */}
-            <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
+            <p className="text-sm text-muted-foreground">
               {template?.name ? `"${template.name}" 템플릿을 삭제하시겠습니까? 되돌릴 수 없습니다.` : '이 템플릿을 삭제하시겠습니까? 되돌릴 수 없습니다.'}
             </p>
             {affectedJobs.length > 0 && (
-              // 상자가 다이얼로그 밖으로 늘어나지 않는 것은 아래 작업명 버튼의 [overflow-wrap:anywhere] 덕분이다 —
-              // 이 상자는 다이얼로그(grid)의 직접 자식이 아니라 min-w-0 이 효과가 없어 뺐다 (WD-632)
+              // WD-632·WD-648: inline-block 인 작업명 버튼은 최소 내용 폭까지 넓어지므로 버튼에만 wrap-anywhere 를 준다.
               <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3" data-testid="template-delete-impact">
                 <p className="text-sm font-medium text-destructive">
                   이 양식을 사용하는 스마트 작업 {affectedJobs.length}개가 기본 형식으로 전환됩니다.
@@ -814,13 +811,13 @@ export default function ReportTemplateDetailPage() {
                 {/* 글머리표는 바깥(list-outside + pl-5)에 둔다 — list-inside 면 inline-block 버튼인 긴 작업명이
                     글머리표 다음 줄로 통째로 떨어져 글머리표만 한 줄을 차지한다. 버튼의 align-top 은 여러 줄로 감긴
                     버튼의 기준선이 마지막 줄이 되어 글머리표가 맨 아래 줄에 붙는 것을 막고 첫 줄 옆에 두려는 것이다 (WD-632) */}
-                <ul className="mt-2 space-y-1 pl-5 text-sm text-muted-foreground list-disc">
+                <ul className="mt-2 list-outside list-disc space-y-1 pl-5 text-sm text-muted-foreground">
                   {affectedJobs.map((job) => (
                     <li key={job.id}>
                       {/* 공백 없는 긴 작업명(최대 200자)도 상자 안에서 줄바꿈해 전부 읽히게 한다 — 삭제 영향 고지이므로 자르지 않는다 (WD-558) */}
                       <button
                         type="button"
-                        className="align-top text-left [overflow-wrap:anywhere] underline underline-offset-2 hover:text-foreground"
+                        className="align-top text-left wrap-anywhere underline underline-offset-2 hover:text-foreground"
                         onClick={() => navigate(`/ai-insights/jobs/${job.id}`)}
                       >
                         {job.name}

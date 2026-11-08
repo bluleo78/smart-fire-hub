@@ -124,3 +124,11 @@ describe('ChatInput focusOnOpen (WD-579)', () => {
     expect(textarea()).toHaveFocus();
   });
 });
+
+describe('ChatInput 입력란 이름 (WD-590·WD-643)', () => {
+  it('호출부가 아무것도 넘기지 않아도 입력란은 「메시지 입력」 이름을 갖는다(AIChatPanel·AINativeMode 공통)', () => {
+    // AINativeMode 는 UI 진입로가 없어 E2E 로 띄울 수 없으므로, 그 화면이 쓰는 그대로(이름 prop 없이) 여기서 지킨다.
+    render(<ChatInput onSend={vi.fn()} />);
+    expect(screen.getByRole('textbox', { name: '메시지 입력' })).toBe(textarea());
+  });
+});

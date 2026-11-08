@@ -27,8 +27,11 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -359,5 +362,60 @@ class TiberoLiveSlotGrantTest extends IntegrationTestBase {
 
     probe("overlapping-grant-and-ddl-failures", failures.isEmpty() ? "NONE" : failures.toString());
     assertThat(failures).as("동기화와 겹친 사용자 DDL 이 실패하지 않고, GRANT 는 계산값대로 남는다").isEmpty();
+  }
+
+  /**
+   * 휴지통 객체의 권한 가시성(WD-645): 휴지통이 켜져 있으면 PURGE 없이 DROP 한 테이블이 {@code BIN$...} 객체로 슬롯 GRANT 를 쥔 채
+   * 남는다. {@code TiberoPythonReadGrantSync} 재판정의 fail-closed 는 {@link
+   * TiberoCatalog#slotSelectGrants}({@code USER_TAB_PRIVS_MADE})가 이 BIN$ 객체의 권한을 계속 보여 준다는 데 기대므로,
+   * 그것을 실서버로 확인한다. 휴지통이 꺼져 있으면(DROP 뒤 {@code USER_RECYCLEBIN} 에 원래 이름이 없으면) 확인할 대상이 없으므로 건너뛴다.
+   */
+  @Test
+  void droppedTableInRecycleBin_slotGrantStillListed() {
+    List<String> failures = new ArrayList<>();
+    String suffix = Long.toString(System.nanoTime() % 1_000_000_000L);
+    String raw = "rb_" + suffix;
+    String rawPhysical = TiberoNames.physical(raw);
+    String qraw = TiberoNames.table(schema(), raw);
+    String account = DataStoreAccountRole.valueOf("S1").usernameFor(env.tenantId);
+    ownerDdl("CREATE TABLE " + qraw + " (\"ID\" NUMBER)", failures);
+    ownerDdl(TiberoDdlSql.grantSelectToSlot(schema(), rawPhysical, account), failures);
+    // 운영 삭제와 같은 문장(PURGE 없음) — 휴지통이 켜져 있으면 BIN$ 객체로 남는다.
+    ownerDdl(TiberoDdlSql.dropTableOnly(schema(), raw), failures);
+    assertThat(failures).as("준비 DDL").isEmpty();
+
+    // 휴지통 사용 여부는 매개변수 이름·조회 권한이 판마다 달라 실제 결과(USER_RECYCLEBIN 에 남았는가)로 판단한다.
+    String bin =
+        connections.withDdl(
+            env.tenantId,
+            c -> {
+              try (PreparedStatement ps =
+                  c.prepareStatement(
+                      "SELECT OBJECT_NAME FROM USER_RECYCLEBIN WHERE ORIGINAL_NAME = ?")) {
+                ps.setString(1, rawPhysical);
+                try (ResultSet rs = ps.executeQuery()) {
+                  return rs.next() ? rs.getString(1) : null;
+                }
+              } catch (SQLException e) {
+                probe("recyclebin-query", "FAILED code=" + e.getErrorCode());
+                return null;
+              }
+            });
+    probe("recyclebin-object", bin == null ? "NONE (recycle bin off)" : bin);
+    Assumptions.assumeTrue(bin != null, "휴지통이 꺼져 있어 BIN$ 권한 가시성을 확인할 수 없다");
+    try {
+      Map<String, Set<String>> grants =
+          connections.withDdl(
+              env.tenantId, c -> TiberoCatalog.slotSelectGrants(c, List.of(account), null));
+      Map<String, Set<String>> likeGrants =
+          connections.withDdl(
+              env.tenantId, c -> TiberoCatalog.slotSelectGrants(c, env.tenantId, null));
+      probe("recyclebin-grant-visible", String.valueOf(grants.containsKey(bin)));
+      assertThat(grants.get(bin)).as("정확 바인드 조회가 BIN$ 객체의 슬롯 GRANT 를 보여 준다").contains(account);
+      assertThat(likeGrants.get(bin)).as("LIKE 조회도 BIN$ 객체의 슬롯 GRANT 를 보여 준다").contains(account);
+    } finally {
+      // 휴지통에서 지운다(정리 단계라 실패는 무시한다).
+      ownerDdl("PURGE TABLE " + TiberoNames.quote(bin), new ArrayList<>());
+    }
   }
 }

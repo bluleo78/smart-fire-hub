@@ -386,3 +386,48 @@ test.describe('AISidePanel — 패널 동작', () => {
     await expect(page.getByTitle('전체 화면').first()).toBeVisible();
   });
 });
+
+/**
+ * WD-643 — 입력란의 접근 가능한 이름(WD-590 「메시지 입력」)이 사이드 패널뿐 아니라 다른 모드에서도 붙는지 본다.
+ * ChatInput 이 이름을 고정으로 갖고(aria-label) 모든 호출부(AIChatPanel·AINativeMode)가 같은 입력란을 쓰므로, 화면에서
+ * 닿을 수 있는 모드마다 이름이 유지되는지 확인한다.
+ *
+ * native 모드(AINativeMode)는 UI 진입로가 없다 — 칩은 닫힌 상태에서 늘 side 로 열고(AIStatusChip.handleClick),
+ * Cmd/Ctrl+K 는 native 모드에서 무시되며(AIProvider), 모드 전환 버튼 목록에서도 빠져 있다. 그래서 E2E 로는 native 를
+ * 띄울 수 없고, 저장된 모드가 native 여도 칩 클릭이 실제로 이끄는 상태(사이드 패널)를 단언한다. AINativeMode 의 입력란
+ * 이름은 같은 ChatInput 의 고정 aria-label 을 단위 테스트(ChatInput.test.tsx)가 지킨다.
+ */
+test.describe('ChatInput — 모드별 입력란 이름 (WD-643)', () => {
+  test('전체 화면 모드에서도 입력란이 「메시지 입력」 이름으로 찾힌다', async ({ authenticatedPage: page }) => {
+    await openSidePanel(page);
+    // 사이드 패널 → 전체 화면 (chip 한 번 더) — 전체 화면에서만 그려지는 세션 사이드바의 빈 상태 문구로 전환을 확인한다
+    await chipLocator(page).click();
+    await expect(page.getByText('대화 이력이 없습니다')).toBeVisible({ timeout: 5000 });
+
+    const input = page.getByRole('textbox', { name: '메시지 입력', exact: true });
+    await expect(input).toBeVisible();
+    // 이름은 placeholder 가 아니라 aria-label 에서 온다 — 입력해 placeholder 가 사라져도 그대로다
+    await input.fill('안녕하세요');
+    await expect(page.getByRole('textbox', { name: '메시지 입력', exact: true })).toHaveValue('안녕하세요');
+  });
+
+  test('저장된 모드가 native 여도 칩은 사이드 패널로 열고, 그 입력란이 「메시지 입력」 이름을 갖는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.addInitScript(() => localStorage.setItem('ai-mode', 'native'));
+    await mockApi(page, 'GET', '/api/v1/ai/sessions', []);
+    await page.goto('/', { waitUntil: 'commit' });
+    // 앱이 다 그려져 칩이 닫힌 상태로 보일 때까지 기다린 뒤 누른다 — 렌더 전 클릭이 열림/닫힘을 뒤집지 않게
+    const chip = chipLocator(page);
+    await expect(chip).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('textbox', { name: '메시지 입력', exact: true })).toHaveCount(0);
+    await chip.click();
+
+    // 칩 클릭이 이끄는 상태: 사이드 패널(저장 모드가 side 로 바뀌고, 전체 화면 사이드바는 없다)
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('ai-mode'))).toBe('side');
+    const input = page.getByRole('textbox', { name: '메시지 입력', exact: true });
+    await expect(input).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('대화 이력이 없습니다')).toHaveCount(0);
+    await expect(input).toHaveAttribute('placeholder', '메시지를 입력하세요...');
+  });
+});

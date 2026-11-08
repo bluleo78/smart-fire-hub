@@ -71,11 +71,16 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         data-size={size}
         {...focusRestore}
-        // grid-cols-[minmax(0,1fr)] + [overflow-wrap:anywhere] (WD-632): 암시적 auto 칸은 자식의 최소 내용 폭까지 늘어나,
-        // 공백 없는 긴 이름(설명·details 영향 목록 등)이 창을 넓혀 「삭제」 버튼을 화면 밖으로 민다.
-        // 칸 최소 폭을 0 으로 묶고 긴 낱말도 어디서든 줄바꿈되게 해, 사용처마다 따로 막지 않아도 창 폭 안에 머물게 한다.
+        // grid-cols-[minmax(0,1fr)] (WD-632): 암시적 auto 칸은 자식의 최소 내용 폭까지 늘어나,
+        // 공백 없는 긴 이름(설명·details 영향 목록 등)이 창을 넓혀 「삭제」 버튼을 화면 밖으로 민다. 칸 최소 폭을 0 으로 묶는다.
+        // wrap-break-word (WD-648): 칸 폭이 묶였으니 한 줄에 안 들어가는 낱말만 끊으면 충분하다. 예전 overflow-wrap:anywhere 는
+        // 모든 자식의 최소 내용 폭까지 줄여 flex 행의 짧은 식별자·이메일을 글자 중간에서 끊었다. 사용처가 wrap-anywhere 를 주면 cn 이 그것을 남긴다.
+        // 일반 DialogContent 도 같은 두 클래스를 쓴다 — 근거는 이 주석 하나에 둔다.
+        // 알고 받아들인 점(WD-648 리뷰): (a) 물려받은 break-word 는 whitespace-pre-wrap 블록 안의 긴 토큰도 감는다 — pre-wrap 은 이미
+        // 줄바꿈을 고른 것이고 AlertDialog 는 anywhere 로 같은 동작이었다. (b) AlertDialogHeader 의 직접 자식 밖에 있는 inline-block·flex·grid
+        // 후손은 최소 내용 폭이 줄지 않으니, 그런 요소에 긴 값을 넣으면 그 요소에 직접 min-w-0 / wrap-anywhere 를 준다(상속으로 전부 끊지 않는 의도된 선택).
         className={cn(
-          "grid-cols-[minmax(0,1fr)] [overflow-wrap:anywhere] bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-lg",
+          "grid-cols-[minmax(0,1fr)] wrap-break-word bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-lg",
           className
         )}
         {...props}
@@ -91,8 +96,12 @@ function AlertDialogHeader({
   return (
     <div
       data-slot="alert-dialog-header"
+      // *:min-w-0 *:max-w-full (WD-648): 헤더는 칸을 정하지 않은 grid(place-items-center)라, 암시적 auto 칸이 자식의 최소 내용 폭까지
+      // 늘어나고 자식도 내용에 맞춘 폭(shrink-to-fit — 최소 내용 폭 이상)을 갖는다. 상속받는 break-word 는 최소 내용 폭을 줄이지 않으므로,
+      // 직접 자식(제목·설명·요약 등) 모두의 최소 폭을 풀고(min-w-0) 폭을 칸 폭으로 묶어(max-w-full) 공백 없는 긴 이름이 그 안에서 끊기게 한다.
+      // AlertDialogMedia(size-16)는 칸보다 좁아 max-w-full 에 눌리지 않고, 제목의 col-start-2 배치도 그대로다.
       className={cn(
-        "grid grid-rows-[auto_1fr] place-items-center gap-1.5 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-6 sm:group-data-[size=default]/alert-dialog-content:place-items-start sm:group-data-[size=default]/alert-dialog-content:text-left sm:group-data-[size=default]/alert-dialog-content:has-data-[slot=alert-dialog-media]:grid-rows-[auto_1fr]",
+        "grid grid-rows-[auto_1fr] place-items-center *:min-w-0 *:max-w-full gap-1.5 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-6 sm:group-data-[size=default]/alert-dialog-content:place-items-start sm:group-data-[size=default]/alert-dialog-content:text-left sm:group-data-[size=default]/alert-dialog-content:has-data-[slot=alert-dialog-media]:grid-rows-[auto_1fr]",
         className
       )}
       {...props}

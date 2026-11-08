@@ -51,13 +51,23 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 직렬화한다({@code PythonReadGrantSync.lockTableForAclChange}). Oracle 계열(Tibero)에서는 GRANT/REVOKE 자체가
  * DDL 이라 실행 전 암묵 커밋으로 {@code LOCK TABLE} 잠금을 먼저 풀어 버리므로 같은 방법을 쓸 수 없다. Tibero 는 DDL 끼리 딕셔너리 잠금으로
  * 직렬화하고, 겹침 실측은 {@code TiberoLiveSlotGrantTest.grantOverlappingAlterAndDrop_doesNotFailUserDdl} 이
- * 맡는다. 겹쳐서 동기화 쪽 문장이 실패하면 GRANT 실패는 과소권한(안전), REVOKE 실패는 회수 실패(실행 거부)로 처리되어 다음 동기화가 회복한다.
+ * 맡는다. 겹쳐서 동기화 쪽 문장이 실패하면 GRANT 실패는 과소권한(안전), REVOKE 실패는 아래 재판정을 거쳐 남은 권한이 있으면 회수 실패(실행 거부)가 되고 다음
+ * 동기화가 회복한다. 앱 수준 직렬화(DBMS_LOCK·JVM 잠금)는 Tibero DDL 경로 전부에 잠금을 끼워야 하고 교착 위험을 라이브로 검증할 수 없어 택하지
+ * 않았다(WD-645).
  *
- * <p><b>왜 사라진 듯한 테이블의 REVOKE 실패도 회수 실패로 세는가(WD-629).</b> PG 판은 잠금을 쥔 채 {@code tableExists} 로 "정말
- * 지워졌다"를 확정할 수 있지만 Tibero 는 그렇지 못하다. USER_TABLES 에서 이름이 사라져도 권한이 사라졌다는 보장이 없다 — (1) 재생성은 테이블을 보관본
- * 이름으로 RENAME 하고({@code TiberoRebuildBackup}) GRANT 는 이름이 바뀐 객체를 따라간다, (2) 휴지통(recycle bin)이 켜져 있으면
- * DROP 된 테이블이 {@code BIN$...} 객체로 GRANT 를 쥔 채 남는다. 그래서 실패한 REVOKE 는 늘 회수 실패로 남겨 그 슬롯의 PYTHON 실행을
- * 거부한다(fail-closed). 겹친 DROP 때문에 한 번 공연히 거부되는 비용이 과권한을 놓치는 위험보다 작다.
+ * <p><b>재판정 규칙(WD-629 → WD-645).</b> Tibero 는 USER_TABLES 에서 이름이 사라져도 권한이 사라졌다는 보장이 없다 — 재생성은 테이블을
+ * 보관본 이름으로 RENAME 하고({@code TiberoRebuildBackup}) 휴지통은 DROP 된 테이블을 {@code BIN$...} 객체로 남기며, GRANT 는
+ * 둘 다 따라간다. 그래서 "이름이 안 보이면 넘어간다" 는 완화는 쓰지 않는다. 대신 첫 판에 휴지통 객체가 아닌 회수 실패가 있으면 같은 연결·PG 트랜잭션·테넌트 잠금
+ * 안에서 <b>한 번만</b> 대상 계정 그대로, 테이블 범위만 테넌트 전체로 넓혀 다시 맞추고, 그 판의 결과(다시 읽은 실제 권한 기준)가 첫 판의 실패 목록을 바꾼다.
+ * 판정이 이름이 아니라 남은 권한이므로 fail-open 이 아니다 — 권한까지 사라졌거나 새 이름으로 회수되면 실패가 아니고, 권한이 남으면 여전히 회수
+ * 실패다(fail-closed). 휴지통 객체 실패만 있으면 OWNER 가 회수할 수 없어 다시 해도 같으므로 재판정하지 않는다(실패는 남는다). 실패가 없으면 추가
+ * 조회·문장이 없고, 대기·세 번째 시도도 없다(다음 동기화가 다시 맞춘다).
+ *
+ * <p><b>휴지통 권한 가시성(WD-645).</b> 위 fail-closed 는 {@code USER_TAB_PRIVS_MADE}({@link
+ * TiberoCatalog#slotSelectGrants})가 {@code BIN$...} 객체의 GRANT 도 보여 준다는 데 기댄다 — 라이브 TC {@code
+ * TiberoLiveSlotGrantTest.droppedTableInRecycleBin_slotGrantStillListed} 가 확인한다. FLASHBACK 으로 되살아난
+ * GRANT 도, 모든 실행 준비({@link #prepareForRun})가 실행 전에 실행 슬롯을 테넌트 전체 범위로 다시 맞추므로 쓰이기 전에 회수된다(못 하면 실행
+ * 거부).
  *
  * <p><b>세션 종료는 하지 않는다(스펙 §5.1).</b> 스크립트는 슬롯 연결을 쥐지 않고 읽을 때마다 db-executor 가 새 문장을 실행하므로 REVOKE 가 다음
  * 조회부터 반영된다. OWNER 에게는 세션 종료 권한도 없다. 그래서 등급 정의 변경 동기화도 일반 전체 동기화와 같다.
@@ -165,8 +175,11 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
         slot -> DataStoreAccountRole.forSlot(slot).usernameFor(runAs.tenantId()));
   }
 
-  /** Tibero 쪽에서 한 번에 읽고 적용한 결과. */
-  private record Applied(int changedTables, Map<String, Set<String>> revokeFailed) {}
+  /**
+   * Tibero 쪽에서 한 번에 읽고 적용한 결과. 바꾼 테이블은 이름 집합으로 둔다 — 재판정(WD-645)이 같은 테이블을 다시 바꿔도 두 판의 합집합 크기로 세어 두 번
+   * 세지 않는다.
+   */
+  private record Applied(Set<String> changedTables, Map<String, Set<String>> revokeFailed) {}
 
   /**
    * 트랜잭션(=테넌트 GUC) 안에서 호출된다.
@@ -224,7 +237,66 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
     }
 
     // 계산값: 데이터셋 테이블(물리 이름) → SELECT 를 받아야 할 슬롯 계정 집합. 테이블 하나만 맞출 때는 그 데이터셋 행만 읽는다.
-    // 임시 데이터셋(ptmp_*)도 PG 와 마찬가지로 데이터셋 행이 있으므로 자기 등급대로 계산된다. 스테이징(STG_*)은 데이터셋이 아니라 행이 없다 → "없음".
+    Map<String, Set<String>> desired =
+        desiredGrants(onlyTable, levelsAsc, slotAccounts, targetAccounts);
+
+    String onlyPhysical = onlyTable == null ? null : TiberoNames.physical(onlyTable);
+    boolean exact = runRank != null;
+    Applied applied =
+        connections.withDdl(
+            tenantId,
+            conn -> {
+              String schema = connections.schemaOf(tenantId);
+              Applied first =
+                  applyPass(conn, tenantId, schema, onlyPhysical, desired, targetAccounts, exact);
+              if (first.revokeFailed().keySet().stream().allMatch(TiberoNames::isRecycleBinName)) {
+                // 실패 없음·휴지통 객체 실패뿐이면 재판정하지 않는다 — 클래스 Javadoc "재판정 규칙"(WD-645).
+                return first;
+              }
+              // 재판정(WD-645): 한 번만, 대상 계정 그대로 테이블 범위만 전체로 — 클래스 Javadoc "재판정 규칙". 전체 범위 계산값은 이미 있으면
+              // 재사용.
+              Map<String, Set<String>> desiredAll =
+                  onlyTable == null
+                      ? desired
+                      : desiredGrants(null, levelsAsc, slotAccounts, targetAccounts);
+              Applied second =
+                  applyPass(conn, tenantId, schema, null, desiredAll, targetAccounts, exact);
+              // 실패 목록은 재판정 결과로 바꾸고, 바꾼 테이블은 두 판의 합집합으로 센다(두 번 세지 않는다).
+              Set<String> changedUnion = new TreeSet<>(first.changedTables());
+              changedUnion.addAll(second.changedTables());
+              return new Applied(changedUnion, second.revokeFailed());
+            });
+    if (!applied.revokeFailed().isEmpty()) {
+      // 회수 실패는 과권한이 남았을 수 있다는 뜻 — 운영자가 봐야 하므로 warn.
+      log.warn(
+          "Tibero PYTHON 읽기 권한 회수 실패: tenant={} 변경 테이블 {}개, 회수 실패 {}개 {}",
+          tenantId,
+          applied.changedTables().size(),
+          applied.revokeFailed().size(),
+          applied.revokeFailed());
+    } else if (!applied.changedTables().isEmpty()) {
+      log.info(
+          "Tibero PYTHON 읽기 권한 동기화: tenant={} 변경 테이블 {}개",
+          tenantId,
+          applied.changedTables().size());
+    }
+    return new PythonReadGrantSync.SyncResult(
+        levelsAsc, availableSlots, applied.changedTables().size(), applied.revokeFailed(), runSlot);
+  }
+
+  /**
+   * 계산값 {물리 테이블 → SELECT 를 받아야 할 대상 슬롯 계정 집합}을 PG 메타의 데이터셋 행으로 만든다.
+   *
+   * <p>임시 데이터셋(ptmp_*)도 PG 와 마찬가지로 데이터셋 행이 있으므로 자기 등급대로 계산된다. 스테이징(STG_*)은 데이터셋이 아니라 행이 없다 → "없음".
+   * 대상 계정 밖의 슬롯은 넣지 않는다(실행 준비는 실행 슬롯 하나만 다룬다).
+   *
+   * @param onlyTable null 이면 전체 데이터셋, 아니면 그 테이블의 데이터셋 행만(소문자 메타데이터 이름)
+   */
+  private Map<String, Set<String>> desiredGrants(
+      String onlyTable,
+      List<LevelPolicy> levelsAsc,
+      List<String> slotAccounts,
+      Set<String> targetAccounts) {
     Map<String, Set<String>> desired = new HashMap<>();
     for (var r : datasetRepository.findTableLevels(onlyTable)) {
       Set<String> accounts = new TreeSet<>();
@@ -236,88 +308,80 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
       }
       desired.put(TiberoNames.physical(r.tableName()), accounts);
     }
+    return desired;
+  }
 
-    String onlyPhysical = onlyTable == null ? null : TiberoNames.physical(onlyTable);
-    Applied applied =
-        connections.withDdl(
-            tenantId,
-            conn -> {
-              String schema = connections.schemaOf(tenantId);
-              Set<String> tables = TiberoCatalog.ownTables(conn, onlyPhysical);
-              Map<String, Set<String>> actual =
-                  slotGrants(conn, tenantId, onlyPhysical, targetAccounts, runRank != null);
-              // 테이블이 아닌 객체(뷰 등)의 GRANT 도 훑는다 — 뷰는 소유자 권한으로 바닥 테이블을 읽어 등급 경계를 우회하므로 "없음" 으로 회수한다(PG
-              // CR5).
-              Set<String> names = new TreeSet<>(tables);
-              names.addAll(actual.keySet());
-              int changed = 0;
-              Map<String, Set<String>> failed = new TreeMap<>();
-              List<String> changedTables = new ArrayList<>();
-              for (String table : names) {
-                Set<String> want =
-                    tables.contains(table) ? desired.getOrDefault(table, Set.of()) : Set.of();
-                Set<String> have = actual.getOrDefault(table, Set.of());
-                if (want.equals(have)) {
-                  continue;
-                }
-                Set<String> excess = new TreeSet<>(have);
-                excess.removeAll(want);
-                Set<String> missing = new TreeSet<>(want);
-                missing.removeAll(have);
-                // REVOKE 는 남는 권한이 있을 때만 한다(없는 권한을 회수하면 오류). 실패하면 그 계정들에 과권한이 남았을 수 있다.
-                boolean revokeOk = true;
-                for (String account : excess) {
-                  if (!execute(conn, TiberoDdlSql.revokeSelectFromSlot(schema, table, account))) {
-                    revokeOk = false;
-                    failed.computeIfAbsent(table, x -> new TreeSet<>()).add(account);
-                  }
-                }
-                if (!revokeOk) {
-                  // REVOKE 실패는 테이블이 USER_TABLES 에서 사라진 것처럼 보여도 늘 회수 실패다(fail-closed, WD-629).
-                  // 근거는 클래스 Javadoc "왜 사라진 듯한 테이블의 REVOKE 실패도 회수 실패로 세는가" 참고.
-                  continue;
-                }
-                for (String account : missing) {
-                  if (!execute(conn, TiberoDdlSql.grantSelectToSlot(schema, table, account))) {
-                    // 과소권한(안전) — 읽으면 거부된다. 다음 동기화가 재시도한다.
-                    log.warn(
-                        "Tibero PYTHON 읽기 GRANT 실패(과소권한, 다음 동기화에서 재시도): tenant={} table={}",
-                        tenantId,
-                        table);
-                  }
-                }
-                changed++;
-                changedTables.add(table);
-              }
-              // 재확인: 문장이 성공해도 실제 권한을 다시 읽어 "원하지 않는 슬롯에 SELECT 가 남은" 테이블을 회수 실패로 센다.
-              if (!changedTables.isEmpty()) {
-                Map<String, Set<String>> after =
-                    slotGrants(conn, tenantId, onlyPhysical, targetAccounts, runRank != null);
-                for (String table : changedTables) {
-                  Set<String> want =
-                      tables.contains(table) ? desired.getOrDefault(table, Set.of()) : Set.of();
-                  for (String account : after.getOrDefault(table, Set.of())) {
-                    if (!want.contains(account)) {
-                      failed.computeIfAbsent(table, x -> new TreeSet<>()).add(account);
-                    }
-                  }
-                }
-              }
-              return new Applied(changed, failed);
-            });
-    if (!applied.revokeFailed().isEmpty()) {
-      // 회수 실패는 과권한이 남았을 수 있다는 뜻 — 운영자가 봐야 하므로 warn.
-      log.warn(
-          "Tibero PYTHON 읽기 권한 회수 실패: tenant={} 변경 테이블 {}개, 회수 실패 {}개 {}",
-          tenantId,
-          applied.changedTables(),
-          applied.revokeFailed().size(),
-          applied.revokeFailed());
-    } else if (applied.changedTables() > 0) {
-      log.info("Tibero PYTHON 읽기 권한 동기화: tenant={} 변경 테이블 {}개", tenantId, applied.changedTables());
+  /**
+   * 한 판의 적용: 테이블 목록과 대상 계정의 실제 SELECT 권한을 읽어 계산값과의 차이만 REVOKE/GRANT 하고, 바꾼 테이블은 실제 권한을 다시 읽어 남은
+   * 과권한을 회수 실패로 센다. 첫 판과 재판정(WD-645)이 같은 규칙을 쓰도록 하나로 둔다.
+   *
+   * @param onlyPhysical null 이면 테넌트 전체, 아니면 그 물리 테이블만
+   * @param exact 실행 준비(대상 계정을 정확히 바인드해 읽는다)
+   */
+  private static Applied applyPass(
+      java.sql.Connection conn,
+      long tenantId,
+      String schema,
+      String onlyPhysical,
+      Map<String, Set<String>> desired,
+      Set<String> targetAccounts,
+      boolean exact)
+      throws SQLException {
+    Set<String> tables = TiberoCatalog.ownTables(conn, onlyPhysical);
+    Map<String, Set<String>> actual =
+        slotGrants(conn, tenantId, onlyPhysical, targetAccounts, exact);
+    // 테이블이 아닌 객체(뷰 등)의 GRANT 도 훑는다 — 뷰는 소유자 권한으로 바닥 테이블을 읽어 등급 경계를 우회하므로 "없음" 으로 회수한다(PG
+    // CR5).
+    Set<String> names = new TreeSet<>(tables);
+    names.addAll(actual.keySet());
+    Map<String, Set<String>> failed = new TreeMap<>();
+    Set<String> changedTables = new TreeSet<>();
+    for (String table : names) {
+      Set<String> want = tables.contains(table) ? desired.getOrDefault(table, Set.of()) : Set.of();
+      Set<String> have = actual.getOrDefault(table, Set.of());
+      if (want.equals(have)) {
+        continue;
+      }
+      Set<String> excess = new TreeSet<>(have);
+      excess.removeAll(want);
+      Set<String> missing = new TreeSet<>(want);
+      missing.removeAll(have);
+      // REVOKE 는 남는 권한이 있을 때만 한다(없는 권한을 회수하면 오류). 실패하면 그 계정들에 과권한이 남았을 수 있다.
+      boolean revokeOk = true;
+      for (String account : excess) {
+        if (!execute(conn, TiberoDdlSql.revokeSelectFromSlot(schema, table, account))) {
+          revokeOk = false;
+          failed.computeIfAbsent(table, x -> new TreeSet<>()).add(account);
+        }
+      }
+      if (!revokeOk) {
+        // 이 판에서는 늘 회수 실패(fail-closed) — 첫 판 실패는 재판정이 남은 권한으로 다시 가린다(클래스 Javadoc "재판정 규칙", WD-645).
+        continue;
+      }
+      for (String account : missing) {
+        if (!execute(conn, TiberoDdlSql.grantSelectToSlot(schema, table, account))) {
+          // 과소권한(안전) — 읽으면 거부된다. 다음 동기화가 재시도한다.
+          log.warn(
+              "Tibero PYTHON 읽기 GRANT 실패(과소권한, 다음 동기화에서 재시도): tenant={} table={}", tenantId, table);
+        }
+      }
+      changedTables.add(table);
     }
-    return new PythonReadGrantSync.SyncResult(
-        levelsAsc, availableSlots, applied.changedTables(), applied.revokeFailed(), runSlot);
+    // 재확인: 문장이 성공해도 실제 권한을 다시 읽어 "원하지 않는 슬롯에 SELECT 가 남은" 테이블을 회수 실패로 센다.
+    if (!changedTables.isEmpty()) {
+      Map<String, Set<String>> after =
+          slotGrants(conn, tenantId, onlyPhysical, targetAccounts, exact);
+      for (String table : changedTables) {
+        Set<String> want =
+            tables.contains(table) ? desired.getOrDefault(table, Set.of()) : Set.of();
+        for (String account : after.getOrDefault(table, Set.of())) {
+          if (!want.contains(account)) {
+            failed.computeIfAbsent(table, x -> new TreeSet<>()).add(account);
+          }
+        }
+      }
+    }
+    return new Applied(changedTables, failed);
   }
 
   /**

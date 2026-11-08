@@ -54,6 +54,14 @@ public final class TiberoNames {
     return name != null && STAGING_SHAPED.matcher(name).matches();
   }
 
+  /**
+   * 휴지통(recycle bin) 객체 이름({@code BIN$...})인가. null 이면 false. PURGE 없이 DROP 된 테이블이 이 이름으로 남으며,
+   * OWNER 는 그 객체의 권한을 회수할 수 없다 — PYTHON 읽기 권한 동기화가 재판정 여부를 가를 때 쓴다(WD-645).
+   */
+  public static boolean isRecycleBinName(String physicalName) {
+    return physicalName != null && physicalName.startsWith("BIN$");
+  }
+
   /** 스테이징 <b>물리</b> 이름(대문자 그대로)인가. null 이면 false. */
   public static boolean isStagingPhysicalName(String name) {
     return name != null && STAGING_PHYSICAL.matcher(name).matches();
