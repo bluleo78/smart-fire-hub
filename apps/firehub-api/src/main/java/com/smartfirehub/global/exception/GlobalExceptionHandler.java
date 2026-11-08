@@ -61,12 +61,15 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.dao.TransientDataAccessResourceException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -113,6 +116,26 @@ public class GlobalExceptionHandler {
         code);
   }
 
+  /**
+   * 오류 응답을 항상 JSON 으로 내보낸다(WD-548).
+   *
+   * <p>Content-Type 을 명시하면 Spring 이 Accept 협상을 건너뛴다. 명시하지 않으면 클라이언트 Accept 가 JSON 을 받지 않을 때(예:
+   * image/png, text/html) 오류 본문을 쓰다 협상에 실패하고, 그 실패를 처리할 곳이 없어 빈 본문 500·Whitelabel HTML 이 나갔다. 모든
+   * 핸들러가 이 메서드를 거쳐 같은 형식을 보장한다.
+   */
+  private static ResponseEntity<ErrorResponse> json(HttpStatus status, ErrorResponse body) {
+    return json(status, HttpHeaders.EMPTY, body);
+  }
+
+  /** 추가 응답 헤더(예: 415 의 Accept)를 함께 싣는 버전. */
+  private static ResponseEntity<ErrorResponse> json(
+      HttpStatus status, HttpHeaders headers, ErrorResponse body) {
+    return ResponseEntity.status(status)
+        .headers(headers)
+        .contentType(MediaType.APPLICATION_JSON)
+        .body(body);
+  }
+
   @ExceptionHandler(MethodArgumentNotValidException.class)
   public ResponseEntity<ErrorResponse> handleValidationExceptions(
       MethodArgumentNotValidException ex, HttpServletRequest request) {
@@ -122,7 +145,7 @@ public class GlobalExceptionHandler {
         .forEach(error -> fieldErrors.put(error.getField(), error.getDefaultMessage()));
     ErrorResponse response =
         buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   /**
@@ -141,28 +164,28 @@ public class GlobalExceptionHandler {
             });
     ErrorResponse response =
         buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   @ExceptionHandler(UsernameAlreadyExistsException.class)
   public ResponseEntity<ErrorResponse> handleUsernameAlreadyExists(
       UsernameAlreadyExistsException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   @ExceptionHandler(InvalidCredentialsException.class)
   public ResponseEntity<ErrorResponse> handleInvalidCredentials(
       InvalidCredentialsException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.UNAUTHORIZED, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+    return json(HttpStatus.UNAUTHORIZED, response);
   }
 
   @ExceptionHandler(InvalidTokenException.class)
   public ResponseEntity<ErrorResponse> handleInvalidToken(
       InvalidTokenException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.UNAUTHORIZED, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+    return json(HttpStatus.UNAUTHORIZED, response);
   }
 
   /**
@@ -191,7 +214,7 @@ public class GlobalExceptionHandler {
               "저장할 수 없는 값이 있어 처리하지 못했습니다: " + dataErrorReason,
               null,
               request);
-      return ResponseEntity.badRequest().body(response);
+      return json(HttpStatus.BAD_REQUEST, response);
     }
 
     // 분류(중복/외래 키/체크)는 원인 메시지로 판정하고, 사용자 문구는 원문 없이 고정한다. 외래 키는 방향(삭제·연결)을 서버 구조화
@@ -209,7 +232,7 @@ public class GlobalExceptionHandler {
               case UNCLASSIFIED -> "데이터 무결성 오류로 저장할 수 없습니다";
             };
     ErrorResponse response = buildError(HttpStatus.CONFLICT, message, null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   /**
@@ -257,14 +280,14 @@ public class GlobalExceptionHandler {
 
     ErrorResponse response =
         buildError(HttpStatus.CONFLICT, "Slack 워크스페이스를 설치할 수 없습니다.", null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   @ExceptionHandler(AccessDeniedException.class)
   public ResponseEntity<ErrorResponse> handleAccessDenied(
       AccessDeniedException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.FORBIDDEN, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
+    return json(HttpStatus.FORBIDDEN, response);
   }
 
   /**
@@ -276,9 +299,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleJobAccessDenied(
       com.smartfirehub.job.exception.JobAccessDeniedException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.FORBIDDEN, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.FORBIDDEN)
-        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-        .body(response);
+    return json(HttpStatus.FORBIDDEN, response);
   }
 
   /** 소속되지 않았거나 정지된 테넌트 선택 시도 — 403 반환. */
@@ -286,14 +307,14 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleTenantAccessDenied(
       TenantAccessDeniedException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.FORBIDDEN, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
+    return json(HttpStatus.FORBIDDEN, response);
   }
 
   @ExceptionHandler(RoleNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleRoleNotFound(
       RoleNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   /**
@@ -307,9 +328,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleJobNotFound(
       com.smartfirehub.job.exception.JobNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND)
-        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-        .body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   /** 요소 단위 온톨로지 편집 — 이 온톨로지 안에 존재하지 않는 타입/속성/관계 id를 지목하면 404 반환. */
@@ -317,28 +336,28 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleOntologyElementNotFound(
       OntologyElementNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   @ExceptionHandler(SystemRoleModificationException.class)
   public ResponseEntity<ErrorResponse> handleSystemRoleModification(
       SystemRoleModificationException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   @ExceptionHandler(DatasetNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleDatasetNotFound(
       DatasetNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   @ExceptionHandler(CategoryNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleCategoryNotFound(
       CategoryNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   /** 데이터셋에 지우려는 태그가 없을 때 404(WD-242) — 예전에는 204 로 지운 것처럼 보였다. */
@@ -346,14 +365,14 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleDatasetTagNotFound(
       DatasetTagNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   @ExceptionHandler(DuplicateDatasetNameException.class)
   public ResponseEntity<ErrorResponse> handleDuplicateDatasetName(
       DuplicateDatasetNameException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   /** 파이프라인 스텝 등 외부 리소스가 데이터셋을 참조하고 있어 삭제 불가한 경우 409 반환 (#126) */
@@ -361,7 +380,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleDatasetInUse(
       com.smartfirehub.dataset.exception.DatasetInUseException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   /** 카테고리에 연결된 데이터셋이 남아있어 삭제 불가한 경우 409 반환 (#518) */
@@ -369,21 +388,21 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleCategoryInUse(
       com.smartfirehub.dataset.exception.CategoryInUseException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   @ExceptionHandler(InvalidTableNameException.class)
   public ResponseEntity<ErrorResponse> handleInvalidTableName(
       InvalidTableNameException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   @ExceptionHandler(ColumnModificationException.class)
   public ResponseEntity<ErrorResponse> handleColumnModification(
       ColumnModificationException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   // 행 검색: 검색 대상 필드 미지정 데이터셋에 검색·재색인 요청 → 400
@@ -391,7 +410,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleSearchIndexNotConfigured(
       SearchIndexNotConfiguredException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   @ExceptionHandler(ImportValidationException.class)
@@ -403,14 +422,14 @@ public class GlobalExceptionHandler {
       errorMap.put("error_" + i, errors.get(i));
     }
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), errorMap, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   @ExceptionHandler(ConcurrentImportException.class)
   public ResponseEntity<ErrorResponse> handleConcurrentImport(
       ConcurrentImportException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   /**
@@ -426,7 +445,7 @@ public class GlobalExceptionHandler {
     log.warn("Lock conflict on {}: {}", request.getRequestURI(), ex.getMessage(), ex);
     ErrorResponse response =
         buildError(HttpStatus.CONFLICT, "다른 변경과 겹쳐 처리하지 못했습니다. 잠시 뒤 다시 시도하세요", null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   /** 가져오기 이력이 없거나 이 데이터셋의 것이 아닐 때 — 404(WD-250). */
@@ -435,7 +454,7 @@ public class GlobalExceptionHandler {
       com.smartfirehub.dataimport.exception.ImportNotFoundException ex,
       HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   /**
@@ -449,16 +468,14 @@ public class GlobalExceptionHandler {
       com.smartfirehub.dataimport.exception.ExportDownloadException ex,
       HttpServletRequest request) {
     ErrorResponse response = buildError(ex.status(), ex.getMessage(), null, request);
-    return ResponseEntity.status(ex.status())
-        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-        .body(response);
+    return json(ex.status(), response);
   }
 
   @ExceptionHandler(UnsupportedFileTypeException.class)
   public ResponseEntity<ErrorResponse> handleUnsupportedFileType(
       UnsupportedFileTypeException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   /**
@@ -474,14 +491,14 @@ public class GlobalExceptionHandler {
             "파일 크기가 허용 한도(256MB)를 초과했습니다. 더 작은 파일을 업로드해주세요.",
             null,
             request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   @ExceptionHandler(PipelineNotFoundException.class)
   public ResponseEntity<ErrorResponse> handlePipelineNotFound(
       PipelineNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   /** 파이프라인 이름 중복 시 409 반환 (#181) */
@@ -489,7 +506,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handlePipelineNameConflict(
       PipelineNameConflictException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   /** 비활성 파이프라인 수동 실행 시도 시 409 반환 (#187) */
@@ -497,7 +514,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handlePipelineInactive(
       PipelineInactiveException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   /** 이미 끝난 파이프라인 실행을 취소하려 할 때 409 반환 (WD-153) */
@@ -506,14 +523,14 @@ public class GlobalExceptionHandler {
       com.smartfirehub.pipeline.exception.ExecutionAlreadyFinishedException ex,
       HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   @ExceptionHandler(CyclicDependencyException.class)
   public ResponseEntity<ErrorResponse> handleCyclicDependency(
       CyclicDependencyException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   @ExceptionHandler(ScriptExecutionException.class)
@@ -521,7 +538,7 @@ public class GlobalExceptionHandler {
       ScriptExecutionException ex, HttpServletRequest request) {
     ErrorResponse response =
         buildError(HttpStatus.INTERNAL_SERVER_ERROR, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+    return json(HttpStatus.INTERNAL_SERVER_ERROR, response);
   }
 
   /** 파이프라인 SQL 스텝의 안전 정책 위반 — 저장 시 거부 또는 실행 시 거부 모두 동일 매핑. (#136) */
@@ -530,7 +547,7 @@ public class GlobalExceptionHandler {
       UnsafeSqlException ex, HttpServletRequest request) {
     log.warn("Unsafe SQL rejected: {}", ex.getMessage());
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   /** 파이프라인 PYTHON 스텝의 escalation 코드 차단 — 저장 시·실행 시 모두 400 매핑. (#270) */
@@ -540,21 +557,21 @@ public class GlobalExceptionHandler {
       HttpServletRequest request) {
     log.warn("Unsafe Python script rejected: {}", ex.getMessage());
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   @ExceptionHandler(com.smartfirehub.dataset.exception.SqlQueryException.class)
   public ResponseEntity<ErrorResponse> handleSqlQuery(
       com.smartfirehub.dataset.exception.SqlQueryException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   @ExceptionHandler(com.smartfirehub.dataset.exception.RowNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleRowNotFound(
       com.smartfirehub.dataset.exception.RowNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   /** 운영자 평면에서 대상 테넌트가 없을 때 404. */
@@ -562,7 +579,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleTenantNotFound(
       com.smartfirehub.platform.exception.TenantNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   /**
@@ -576,14 +593,14 @@ public class GlobalExceptionHandler {
       CodedApiException ex, HttpServletRequest request) {
     ErrorResponse response =
         buildError(ex.status(), ex.getMessage(), ex.details(), request, ex.code());
-    return ResponseEntity.status(ex.status()).body(response);
+    return json(ex.status(), response);
   }
 
   @ExceptionHandler(IllegalArgumentException.class)
   public ResponseEntity<ErrorResponse> handleIllegalArgument(
       IllegalArgumentException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   /**
@@ -594,28 +611,28 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleIllegalState(
       IllegalStateException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   @ExceptionHandler(AiSessionNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleAiSessionNotFound(
       AiSessionNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   @ExceptionHandler(TriggerNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleTriggerNotFound(
       TriggerNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   @ExceptionHandler(CyclicTriggerDependencyException.class)
   public ResponseEntity<ErrorResponse> handleCyclicTriggerDependency(
       CyclicTriggerDependencyException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   @ExceptionHandler(CryptoException.class)
@@ -623,7 +640,7 @@ public class GlobalExceptionHandler {
       CryptoException ex, HttpServletRequest request) {
     ErrorResponse response =
         buildError(HttpStatus.INTERNAL_SERVER_ERROR, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+    return json(HttpStatus.INTERNAL_SERVER_ERROR, response);
   }
 
   @ExceptionHandler(SerializationException.class)
@@ -631,14 +648,14 @@ public class GlobalExceptionHandler {
       SerializationException ex, HttpServletRequest request) {
     ErrorResponse response =
         buildError(HttpStatus.INTERNAL_SERVER_ERROR, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+    return json(HttpStatus.INTERNAL_SERVER_ERROR, response);
   }
 
   @ExceptionHandler(ExternalServiceException.class)
   public ResponseEntity<ErrorResponse> handleExternalService(
       ExternalServiceException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_GATEWAY, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(response);
+    return json(HttpStatus.BAD_GATEWAY, response);
   }
 
   /** 임베딩 미설정(#713) — 공급자 장애(502)가 아니라 설정 부재라 409 로 알린다. */
@@ -646,7 +663,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleEmbeddingNotConfigured(
       com.smartfirehub.embedding.EmbeddingNotConfiguredException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   /** 임베딩 서비스(Ollama 등) 장애·미지원 provider 설정 시 외부 서비스 실패로 보고 502 반환. */
@@ -654,7 +671,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleEmbedding(
       EmbeddingException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_GATEWAY, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(response);
+    return json(HttpStatus.BAD_GATEWAY, response);
   }
 
   @ExceptionHandler(ImportProcessingException.class)
@@ -662,7 +679,7 @@ public class GlobalExceptionHandler {
       ImportProcessingException ex, HttpServletRequest request) {
     ErrorResponse response =
         buildError(HttpStatus.INTERNAL_SERVER_ERROR, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+    return json(HttpStatus.INTERNAL_SERVER_ERROR, response);
   }
 
   /**
@@ -673,7 +690,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleApiConnectionNotFound(
       ApiConnectionNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   /**
@@ -684,7 +701,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleApiConnectionInvalid(
       ApiConnectionException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   /** 동일 테넌트 내 API 연결 이름 중복 시 409 반환 (#647). */
@@ -692,28 +709,28 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleApiConnectionNameAlreadyExists(
       ApiConnectionNameAlreadyExistsException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   @ExceptionHandler(SavedQueryNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleSavedQueryNotFound(
       SavedQueryNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   @ExceptionHandler(ChartNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleChartNotFound(
       ChartNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   @ExceptionHandler(DashboardNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleDashboardNotFound(
       DashboardNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   /** WD-367: 이 대시보드에 없는(다른 곳에서 먼저 지운) 위젯의 단건 수정·삭제 — 대시보드·차트와 같이 404. */
@@ -721,35 +738,35 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleWidgetNotFound(
       WidgetNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   @ExceptionHandler(FileNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleFileNotFound(
       FileNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   @ExceptionHandler(UnsupportedUploadFileTypeException.class)
   public ResponseEntity<ErrorResponse> handleUnsupportedUploadFileType(
       UnsupportedUploadFileTypeException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   @ExceptionHandler(FileSizeLimitExceededException.class)
   public ResponseEntity<ErrorResponse> handleFileSizeLimitExceeded(
       FileSizeLimitExceededException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   @ExceptionHandler(ProactiveJobNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleProactiveJobNotFound(
       ProactiveJobNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   /** Job 중복 실행 시도 — 409 Conflict 반환 (#149). ProactiveJobException보다 먼저 등록되어야 서브클래스 우선 매핑이 적용된다. */
@@ -764,14 +781,14 @@ public class GlobalExceptionHandler {
             null,
             request,
             ProactiveJobAlreadyRunningException.CODE);
-    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    return json(HttpStatus.CONFLICT, response);
   }
 
   @ExceptionHandler(ProactiveJobException.class)
   public ResponseEntity<ErrorResponse> handleProactiveJob(
       ProactiveJobException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   @ExceptionHandler(AccountLockedException.class)
@@ -779,7 +796,7 @@ public class GlobalExceptionHandler {
       AccountLockedException ex, HttpServletRequest request) {
     ErrorResponse response =
         buildError(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage(), null, request);
-    return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(response);
+    return json(HttpStatus.TOO_MANY_REQUESTS, response);
   }
 
   /**
@@ -806,10 +823,8 @@ public class GlobalExceptionHandler {
     ErrorResponse body =
         buildError(
             HttpStatus.INTERNAL_SERVER_ERROR, "예기치 않은 오류가 발생했습니다. 잠시 후 다시 시도하세요.", null, request);
-    // SSE 요청(Accept: text/event-stream)에서도 협상 실패 없이 JSON 이 나가도록 형식을 명시한다.
-    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-        .contentType(MediaType.APPLICATION_JSON)
-        .body(body);
+    // SSE 요청(Accept: text/event-stream)에서도 협상 실패 없이 JSON 이 나가도록 json() 이 형식을 명시한다.
+    return json(HttpStatus.INTERNAL_SERVER_ERROR, body);
   }
 
   @ExceptionHandler(AsyncRequestTimeoutException.class)
@@ -842,7 +857,70 @@ public class GlobalExceptionHandler {
       HttpRequestMethodNotSupportedException ex, HttpServletRequest request) {
     ErrorResponse response =
         buildError(HttpStatus.METHOD_NOT_ALLOWED, "지원하지 않는 HTTP 메서드입니다.", null, request);
-    return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(response);
+    return json(HttpStatus.METHOD_NOT_ALLOWED, response);
+  }
+
+  /**
+   * 요청 본문 형식(Content-Type)이 엔드포인트가 받는 형식이 아니면 500 대신 415 로 답한다(WD-548).
+   *
+   * <p>text/plain·application/xml·form-urlencoded·헤더 없음(application/octet-stream 으로 간주)뿐 아니라, 형식이
+   * 틀린 Content-Type({@code json}, {@code application/json; charset=bogus} 등)도 Spring 이 "Invalid
+   * mime type" 사유로 같은 예외에 담아 올리므로 여기서 함께 처리된다. 예전에는 전용 처리가 없어 일반 예외로 떨어져 500 + ERROR 스택이 남았고, 공개
+   * 로그인 엔드포인트로 누구나 오류 로그·알림을 채울 수 있었다. 클라이언트 잘못이고 요청 헤더 원문이 실리므로 DEBUG 로만 남긴다.
+   *
+   * <p>안내 문구는 지원 형식에서 고른다({@link #expectedRequestType}). 표준 {@code Accept}(PATCH 면 {@code
+   * Accept-Patch}) 응답 헤더는 Spring 이 예외에 담아 둔 {@link HttpMediaTypeNotSupportedException#getHeaders()}
+   * 를 그대로 싣는다 — 지원 목록이 비어 있으면(형식이 틀린 Content-Type) 헤더도 비어 온다.
+   */
+  @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+  public ResponseEntity<ErrorResponse> handleMediaTypeNotSupported(
+      HttpMediaTypeNotSupportedException ex, HttpServletRequest request) {
+    log.debug("Unsupported media type on {}: {}", request.getRequestURI(), ex.getMessage());
+    String expected = expectedRequestType(ex.getSupportedMediaTypes());
+    ErrorResponse response =
+        buildError(
+            HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+            "지원하지 않는 요청 형식입니다 — 요청 본문은 " + expected + " 이어야 합니다.",
+            null,
+            request);
+    return json(HttpStatus.UNSUPPORTED_MEDIA_TYPE, ex.getHeaders(), response);
+  }
+
+  /**
+   * 415 안내에 쓸 요청 형식을 지원 목록에서 고른다. JSON 계열이 있으면 JSON, 없고 multipart/form-data 가 있으면 multipart(예: POST
+   * /api/v1/files), 그 밖에는 첫 지원 형식이다. 목록이 비면(형식이 틀린 Content-Type) 이 API 의 기본인 JSON 으로 안내한다. 원시 목록
+   * (application/*+json 등)을 그대로 보이면 사용자에게 혼란스러워 대표 형식 하나만 고른다.
+   */
+  private static String expectedRequestType(List<MediaType> supported) {
+    if (supported.isEmpty()
+        || supported.stream().anyMatch(MediaType.APPLICATION_JSON::equalsTypeAndSubtype)) {
+      return MediaType.APPLICATION_JSON_VALUE;
+    }
+    if (supported.stream().anyMatch(MediaType.MULTIPART_FORM_DATA::equalsTypeAndSubtype)) {
+      return MediaType.MULTIPART_FORM_DATA_VALUE;
+    }
+    MediaType first = supported.get(0);
+    return first.getType() + "/" + first.getSubtype();
+  }
+
+  /**
+   * 클라이언트 Accept 가 요구하는 응답 형식을 만들 수 없으면 406 한국어 JSON 으로 답한다(WD-548).
+   *
+   * <p>예전에는 Accept: text/html 이면 영어 Whitelabel HTML, application/xml·image/png 면 빈 본문 406 이 나갔다. 오류
+   * 본문은 항상 JSON 이어야 화면·클라이언트가 같은 형식으로 읽을 수 있으므로 {@link #json} 으로 협상을 건너뛴다(협상을 다시 하면 같은 Accept 로 또
+   * 실패한다). 클라이언트 잘못이고 요청 헤더 원문이 실리므로 DEBUG 로만 남긴다.
+   */
+  @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+  public ResponseEntity<ErrorResponse> handleMediaTypeNotAcceptable(
+      HttpMediaTypeNotAcceptableException ex, HttpServletRequest request) {
+    log.debug("Not acceptable media type on {}: {}", request.getRequestURI(), ex.getMessage());
+    ErrorResponse response =
+        buildError(
+            HttpStatus.NOT_ACCEPTABLE,
+            "요청한 응답 형식을 지원하지 않습니다 — 응답은 application/json 으로만 제공합니다.",
+            null,
+            request);
+    return json(HttpStatus.NOT_ACCEPTABLE, response);
   }
 
   /**
@@ -858,7 +936,7 @@ public class GlobalExceptionHandler {
         Map.of(ex.getName(), String.format("'%s'는 %s 타입이어야 합니다.", ex.getValue(), typeName));
     ErrorResponse response =
         buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   /**
@@ -872,7 +950,7 @@ public class GlobalExceptionHandler {
         Map.of(ex.getParameterName(), String.format("'%s' 값이 필요합니다.", ex.getParameterName()));
     ErrorResponse response =
         buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   /**
@@ -888,7 +966,7 @@ public class GlobalExceptionHandler {
             String.format("'%s' 파일이 필요합니다.", ex.getRequestPartName()));
     ErrorResponse response =
         buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   /**
@@ -900,7 +978,7 @@ public class GlobalExceptionHandler {
       MultipartException ex, HttpServletRequest request) {
     ErrorResponse response =
         buildError(HttpStatus.BAD_REQUEST, "파일 업로드 요청 본문을 해석할 수 없습니다.", null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   /**
@@ -912,7 +990,7 @@ public class GlobalExceptionHandler {
       HttpMessageNotReadableException ex, HttpServletRequest request) {
     ErrorResponse response =
         buildError(HttpStatus.BAD_REQUEST, "요청 본문을 해석할 수 없습니다.", null, request);
-    return ResponseEntity.badRequest().body(response);
+    return json(HttpStatus.BAD_REQUEST, response);
   }
 
   /** 존재하지 않는 API 경로 요청 시 500 대신 404 반환 (#98) */
@@ -920,7 +998,7 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleNoResourceFound(
       NoResourceFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, "요청한 리소스를 찾을 수 없습니다.", null, request);
-    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    return json(HttpStatus.NOT_FOUND, response);
   }
 
   /**
@@ -945,7 +1023,7 @@ public class GlobalExceptionHandler {
     log.warn("DB 커넥션 획득 실패(풀 대기 초과): {}", ex.getMessage(), ex);
     ErrorResponse response =
         buildError(HttpStatus.SERVICE_UNAVAILABLE, POOL_EXHAUSTED_MESSAGE, null, request);
-    return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
+    return json(HttpStatus.SERVICE_UNAVAILABLE, response);
   }
 
   @ExceptionHandler(Exception.class)
@@ -956,6 +1034,6 @@ public class GlobalExceptionHandler {
     ErrorResponse response =
         buildError(
             HttpStatus.INTERNAL_SERVER_ERROR, "예기치 않은 오류가 발생했습니다. 잠시 후 다시 시도하세요.", null, request);
-    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+    return json(HttpStatus.INTERNAL_SERVER_ERROR, response);
   }
 }
