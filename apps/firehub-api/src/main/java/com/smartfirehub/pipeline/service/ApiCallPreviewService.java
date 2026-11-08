@@ -53,15 +53,26 @@ public class ApiCallPreviewService {
       // 2. SSRF guard
       ssrfProtectionService.validateUrl(resolvedUrl);
 
-      // 3. Resolve auth config
+      // 3. Resolve auth config — 연결·설정을 한 번만 풀어(ApiCallAuth.resolve, WD-647) 검사·쿼리·헤더·가림 모두 이 값으로
+      //    한다. 방식은 연결의 auth_type 컬럼(없으면 설정 안의 authType), 키·우선순위·정리는 실행(Java·Python 실행기)과 같다.
       Map<String, String> authConfig = resolveAuthConfig(request);
-      // 비밀 필드가 비면(정리한 뒤 기준) 대상 서버를 부르지 않고 무엇을 채워야 하는지 안내한다(WD-639) — 연결 테스트·상태 점검(WD-623)과 같은
-      // 규칙. 예전에는 빈 인증 헤더로 호출해 대상의 401/403 만 보였다. 빈 비밀로 저장된 옛 연결·인라인 인증 모두 해당한다.
-      // 판정 규칙·문구는 실행과 같은 ApiCallAuth 하나다 — 저장 연결은 연결의 auth_type 컬럼 기준.
-      String missingSecret = ApiCallAuth.describeMissingSecret(conn, authConfig);
-      if (missingSecret != null) {
+      ApiCallAuth.ResolvedAuth auth = ApiCallAuth.resolve(conn, authConfig);
+      // 응답 본문·오류 문구에서 가릴 값은 실제로 보내는 비밀 전부다(WD-647) — 예전에는 쿼리 키만 가려, 헤더 키·Bearer 토큰을 되울리는 대상이면
+      // 화면·AI 챗으로 원문이 나갔다.
+      authSecret = auth.sentSecret();
+
+      // 비밀이 비었거나(WD-639) 헤더 이름을 쓸 수 없으면(WD-647) 대상 서버를 부르지 않고 안내한다 — URL 조립보다 먼저 본다. 예전에는 URL
+      // 조립 오류가 먼저 나 빈 비밀 안내가 가려졌다. 다른 실패처럼 표시 URL 도 돌려주되, 만들 수 없는 경우만 null 이다.
+      String authProblem = ApiCallAuth.describeProblem(auth, conn != null ? conn.name() : null);
+      if (authProblem != null) {
         return new ApiCallPreviewResponse(
-            false, null, List.of(), List.of(), 0, missingSecret, resolvedRequestUrl);
+            false,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            authProblem,
+            displayUrlOrNull(resolvedUrl, request.queryParams()));
       }
 
       // 4. Build query params (static + auth query-param)
@@ -70,17 +81,9 @@ public class ApiCallPreviewService {
         allQueryParams.putAll(request.queryParams());
       }
       String authParamName = null;
-      if (authConfig != null) {
-        String authType = authConfig.get("authType");
-        if ("API_KEY".equals(authType) && "query".equals(authConfig.get("placement"))) {
-          String paramName = authConfig.get("paramName");
-          String apiKey = authConfig.get("apiKey");
-          if (paramName != null && apiKey != null) {
-            allQueryParams.put(paramName, apiKey);
-            authParamName = paramName;
-            authSecret = apiKey;
-          }
-        }
+      if (auth.isQueryApiKey()) {
+        allQueryParams.put(auth.paramName(), auth.secret());
+        authParamName = auth.paramName();
       }
 
       // 5. Build URI — 호출용(키 원문)과 응답용(키 가림)을 함께 만든다(WD-177). 응답의 resolvedUrl 은 화면·AI 챗으로 나가므로
@@ -93,7 +96,7 @@ public class ApiCallPreviewService {
       targetHost = requestUri.getHost();
 
       // 6. Execute HTTP request
-      String responseBody = executeRequest(requestUri, request, authConfig, timeoutMs);
+      String responseBody = executeRequest(requestUri, request, auth, timeoutMs);
 
       // 7. Truncate raw JSON — (WD-177) 응답이 요청 파라미터를 되울려 인증 키가 담겨 올 수 있어 먼저 가린 뒤 자른다.
       String rawJson =
@@ -151,6 +154,18 @@ public class ApiCallPreviewService {
     return request.url();
   }
 
+  /**
+   * 인증 문제로 부르지 않을 때 돌려줄 표시용 URL — 정적 쿼리만 붙인다(인증 키는 붙이지 않는다). 기준 URL 을 만들 수 없으면(공백·한글 등) null — 그
+   * 경우에도 인증 문제 안내가 URL 오류보다 먼저다(WD-647).
+   */
+  private String displayUrlOrNull(String resolvedUrl, Map<String, String> queryParams) {
+    try {
+      return AuthQueryMasker.build(resolvedUrl, queryParams, null, null).displayUrl();
+    } catch (AuthQueryMasker.InvalidRequestUrlException e) {
+      return null;
+    }
+  }
+
   private Map<String, String> resolveAuthConfig(ApiCallPreviewRequest request) {
     if (request.apiConnectionId() != null) {
       return apiConnectionService.getDecryptedAuthConfig(request.apiConnectionId());
@@ -162,7 +177,7 @@ public class ApiCallPreviewService {
   }
 
   private String executeRequest(
-      URI uri, ApiCallPreviewRequest request, Map<String, String> authConfig, int timeoutMs) {
+      URI uri, ApiCallPreviewRequest request, ApiCallAuth.ResolvedAuth auth, int timeoutMs) {
 
     WebClient client = webClientBuilder.build();
     String method = request.method() != null ? request.method().toUpperCase() : "GET";
@@ -171,7 +186,7 @@ public class ApiCallPreviewService {
 
     if ("POST".equals(method)) {
       WebClient.RequestBodySpec bodySpec = client.post().uri(uri);
-      applyHeaders(bodySpec, request, authConfig);
+      applyHeaders(bodySpec, request, auth);
       if (request.body() != null && !request.body().isBlank()) {
         requestSpec = bodySpec.header("Content-Type", "application/json").bodyValue(request.body());
       } else {
@@ -179,7 +194,7 @@ public class ApiCallPreviewService {
       }
     } else {
       WebClient.RequestHeadersSpec<?> getSpec = client.get().uri(uri);
-      applyHeaders(getSpec, request, authConfig);
+      applyHeaders(getSpec, request, auth);
       requestSpec = getSpec;
     }
 
@@ -190,32 +205,18 @@ public class ApiCallPreviewService {
         .block();
   }
 
+  /** 사용자 헤더와 인증 헤더를 붙인다 — 인증은 preview 가 한 번 푼 값을 그대로 쓴다(WD-647, 다시 풀지 않는다). */
   private void applyHeaders(
       WebClient.RequestHeadersSpec<?> spec,
       ApiCallPreviewRequest request,
-      Map<String, String> authConfig) {
+      ApiCallAuth.ResolvedAuth auth) {
 
     if (request.headers() != null) {
       request.headers().forEach(spec::header);
     }
 
-    if (authConfig != null) {
-      String authType = authConfig.get("authType");
-      String placement = authConfig.getOrDefault("placement", "header");
-      if ("API_KEY".equals(authType) && "header".equals(placement)) {
-        // 헤더 이름이 없으면 연결 테스트·실행과 같은 기본 헤더로 보낸다(WD-639) — 예전에는 헤더를 붙이지 않아 테스트는 통과하고 미리보기는 401 이었다.
-        String headerName = ApiCallAuth.apiKeyHeaderName(authConfig);
-        String apiKey = authConfig.get("apiKey");
-        if (headerName != null && apiKey != null) {
-          spec.header(headerName, apiKey);
-        }
-      } else if ("BEARER".equals(authType)) {
-        String token = authConfig.get("token");
-        if (token != null) {
-          spec.header("Authorization", "Bearer " + token);
-        }
-      }
-    }
+    // 실행(ApiCallExecutor)과 같은 규칙 하나(ResolvedAuth.applyHeaders)로 인증 헤더를 붙인다.
+    auth.applyHeaders(spec::header);
   }
 
   private List<ApiCallConfig.FieldMapping> toFieldMappings(

@@ -1108,6 +1108,19 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
                 null));
   }
 
+  /**
+   * WD-647 — 복호화 authConfig 의 authType 은 연결의 auth_type 컬럼이 이긴다. 예전에는 putIfAbsent 라 JSON 안의 다른
+   * authType 키가 남아, 빈 비밀 검사(컬럼 기준)와 실제 호출(JSON 기준)이 다른 방식으로 판정했다.
+   */
+  @Test
+  void getDecryptedAuthConfig_columnAuthTypeOverridesJsonAuthType() throws Exception {
+    Long id = saveLegacy("BEARER", Map.of("authType", "API_KEY", "token", "t647"));
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(id))
+        .containsEntry("authType", "BEARER")
+        .containsEntry("token", "t647");
+  }
+
   /** 비밀이 빠졌으면 헤더 이름·파라미터 이름 등 다른 필드 오류보다 「… 입력하세요」 가 먼저다 — 생성·수정·저장 전 테스트 모두. */
   @Test
   void missingSecret_takesPrecedenceOverOtherFieldErrors() {

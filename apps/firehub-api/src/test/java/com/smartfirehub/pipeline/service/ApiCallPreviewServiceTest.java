@@ -1159,8 +1159,8 @@ class ApiCallPreviewServiceTest {
   }
 
   /**
-   * 빈 비밀 판정은 연결의 auth_type 컬럼 기준이다 — authConfig JSON 안에 다른 authType 키가 있어도(조회의 putIfAbsent 로 JSON
-   * 쪽이 이긴다) 컬럼이 BEARER 이고 토큰이 있으면 빈 비밀이 아니다. 호출은 그대로 나간다.
+   * 빈 비밀 판정은 연결의 auth_type 컬럼 기준이다 — authConfig JSON 안에 다른 authType 키가 있어도(실제 조회는 컬럼으로 덮는다, WD-647)
+   * 컬럼이 BEARER 이고 토큰이 있으면 빈 비밀이 아니다. 호출은 그대로 나간다.
    */
   @Test
   void preview_emptySecretCheckUsesConnectionColumnAuthType() {
@@ -1209,5 +1209,195 @@ class ApiCallPreviewServiceTest {
     assertThat(response.success()).isTrue();
     wireMock.verify(
         getRequestedFor(urlEqualTo("/data")).withHeader("X-API-Key", equalTo("wd639-default-key")));
+  }
+
+  // =========================================================================
+  // WD-647: 대체 키·빈 헤더 이름·빈 비밀 실패의 resolvedUrl
+  // =========================================================================
+
+  /** JSON 배열 하나를 돌려주는 스텁. */
+  private void stubJsonArray(String path) {
+    wireMock.stubFor(
+        get(urlPathEqualTo(path))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[]")));
+  }
+
+  /** 인라인 인증만 바꾼 GET 미리보기 요청. */
+  private ApiCallPreviewRequest inlinePreview(String path, java.util.Map<String, String> auth) {
+    return new ApiCallPreviewRequest(
+        baseUrl() + path, "GET", null, null, null, "$", null, null, auth, 5000);
+  }
+
+  /** 인라인 BEARER 의 value(AI 에이전트 형식)는 빈 비밀이 아니고, 그 값을 실제로 보낸다. */
+  @Test
+  void preview_inlineBearerValueKey_passesCheckAndSendsToken() {
+    stubJsonArray("/v647");
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            inlinePreview("/v647", java.util.Map.of("authType", "BEARER", "value", "abc")));
+
+    assertThat(response.errorMessage()).isNull();
+    wireMock.verify(
+        getRequestedFor(urlEqualTo("/v647")).withHeader("Authorization", equalTo("Bearer abc")));
+  }
+
+  /** 인라인 API_KEY 의 key_value 는 헤더로, value 는 쿼리로도 보낸다 — 표시 URL 은 키를 가린다. */
+  @Test
+  void preview_inlineApiKeyAlternateKeys_passCheckAndSendKey() {
+    stubJsonArray("/kv647");
+    stubJsonArray("/q647");
+
+    ApiCallPreviewResponse header =
+        service.preview(
+            inlinePreview("/kv647", java.util.Map.of("authType", "API_KEY", "key_value", "kv647")));
+    ApiCallPreviewResponse query =
+        service.preview(
+            inlinePreview(
+                "/q647",
+                java.util.Map.of(
+                    "authType",
+                    "API_KEY",
+                    "placement",
+                    "query",
+                    "paramName",
+                    "svc",
+                    "value",
+                    "QueryValue647")));
+
+    assertThat(header.errorMessage()).isNull();
+    wireMock.verify(
+        getRequestedFor(urlEqualTo("/kv647")).withHeader("X-API-Key", equalTo("kv647")));
+    assertThat(query.errorMessage()).isNull();
+    wireMock.verify(getRequestedFor(urlEqualTo("/q647?svc=QueryValue647")));
+    assertThat(query.resolvedUrl()).doesNotContain("QueryValue647");
+  }
+
+  /** 헤더 이름이 빈 문자열이면 기본 헤더(X-API-Key)로 보낸다. */
+  @Test
+  void preview_blankHeaderName_sendsDefaultHeader() {
+    stubJsonArray("/bh647");
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            inlinePreview(
+                "/bh647",
+                java.util.Map.of(
+                    "authType",
+                    "API_KEY",
+                    "placement",
+                    "header",
+                    "headerName",
+                    "",
+                    "apiKey",
+                    "bh-key")));
+
+    assertThat(response.errorMessage()).isNull();
+    wireMock.verify(
+        getRequestedFor(urlEqualTo("/bh647")).withHeader("X-API-Key", equalTo("bh-key")));
+  }
+
+  /** 빈 비밀로 실패해도 다른 실패처럼 요청 URL(키 가림)을 돌려준다 — 예전에는 null 이었다. */
+  @Test
+  void preview_emptySecretFailure_returnsResolvedUrl() {
+    when(apiConnectionService.getById(12L)).thenReturn(connAt(12L, "BEARER"));
+    when(apiConnectionService.getDecryptedAuthConfig(12L))
+        .thenReturn(java.util.Map.of("authType", "BEARER", "token", ""));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/data",
+                "GET",
+                null,
+                java.util.Map.of("q", "1"),
+                null,
+                "$",
+                null,
+                12L,
+                null,
+                5000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).contains("Bearer 토큰이 비어 있습니다");
+    assertThat(response.resolvedUrl()).isEqualTo(baseUrl() + "/data?q=1");
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
+
+  // =========================================================================
+  // WD-647 코드리뷰: 검사 순서·보낼 값 정리·헤더 이름 검사·비밀 가림
+  // =========================================================================
+
+  /** 빈 비밀은 URL 조립보다 먼저 본다 — 기준 URL 을 만들 수 없어도 빈 비밀 안내가 나가고, 그 경우만 resolvedUrl 이 null 이다. */
+  @Test
+  void preview_emptySecretWithUnbuildableUrl_reportsEmptySecret() {
+    ApiCallPreviewResponse response =
+        service.preview(
+            inlinePreview("/data?q=a b", java.util.Map.of("authType", "BEARER", "token", "")));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).contains("Bearer 토큰이 비어 있습니다");
+    assertThat(response.resolvedUrl()).isNull();
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
+
+  /** 검사가 정리한 값(「Bearer 」 접두어·앞뒤 공백 뗌)을 그대로 보낸다 — 「Bearer Bearer abc」 가 나가면 안 된다. */
+  @Test
+  void preview_bearerValueWithPrefix_sendsNormalizedToken() {
+    stubJsonArray("/np647");
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            inlinePreview(
+                "/np647", java.util.Map.of("authType", "BEARER", "value", " Bearer abc647 ")));
+
+    assertThat(response.errorMessage()).isNull();
+    wireMock.verify(
+        getRequestedFor(urlEqualTo("/np647"))
+            .withHeader("Authorization", equalTo("Bearer abc647")));
+  }
+
+  /** 인라인 key_name 헤더 이름도 저장 연결과 같은 규칙으로 본다 — 예약 헤더(Host)면 부르지 않고 안내한다. */
+  @Test
+  void preview_reservedInlineHeaderName_failsWithoutCall() {
+    stubJsonArray("/hn647");
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            inlinePreview(
+                "/hn647",
+                java.util.Map.of("authType", "API_KEY", "key_name", "Host", "key_value", "k647")));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).contains("Host").contains("스텝 인증 설정");
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
+
+  /** 응답이 헤더로 보낸 키·토큰을 되울려도 rawJson 에는 가린 값만 남는다. */
+  @Test
+  void preview_echoedHeaderSecrets_areScrubbedFromRawJson() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/echo647"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"got\":\"EchoToken647xyz EchoKey647xyz\"}]")));
+
+    ApiCallPreviewResponse bearer =
+        service.preview(
+            inlinePreview(
+                "/echo647", java.util.Map.of("authType", "BEARER", "value", "EchoToken647xyz")));
+    ApiCallPreviewResponse key =
+        service.preview(
+            inlinePreview(
+                "/echo647", java.util.Map.of("authType", "API_KEY", "key_value", "EchoKey647xyz")));
+
+    assertThat(bearer.rawJson()).doesNotContain("EchoToken647xyz");
+    assertThat(key.rawJson()).doesNotContain("EchoKey647xyz");
   }
 }

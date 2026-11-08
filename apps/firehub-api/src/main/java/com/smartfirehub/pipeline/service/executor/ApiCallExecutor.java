@@ -105,6 +105,10 @@ public class ApiCallExecutor {
     // 1. URL 결정: apiConnectionId → baseUrl+path, customUrl, 또는 레거시 url 순으로 해석
     String resolvedUrl = resolveTargetUrl(config, conn);
 
+    // 인증 설정은 실행마다 한 번만 푼다(WD-647) — 페이지·재시도·리다이렉트마다 다시 풀지 않고 이 값을 요청 조립까지 넘긴다. 러너가 호출 전 검사에
+    // 쓴 것과 같은 규칙(ApiCallAuth.resolve)이라 검사한 값과 보내는 값이 같다.
+    ApiCallAuth.ResolvedAuth auth = ApiCallAuth.resolve(decryptedAuthConfig);
+
     // 2. SSRF guard on the initial URL
     ssrfProtectionService.validateUrl(resolvedUrl);
 
@@ -154,7 +158,7 @@ public class ApiCallExecutor {
               executeRequest(
                   config,
                   resolvedUrl,
-                  decryptedAuthConfig,
+                  auth,
                   pagParams,
                   timeoutMs,
                   cancel,
@@ -223,15 +227,7 @@ public class ApiCallExecutor {
         // 취소 체크포인트(WD-153) — 요청 전.
         cancel.checkpoint(0, isReplace);
         String responseBody =
-            executeRequest(
-                config,
-                resolvedUrl,
-                decryptedAuthConfig,
-                Map.of(),
-                timeoutMs,
-                cancel,
-                0,
-                isReplace);
+            executeRequest(config, resolvedUrl, auth, Map.of(), timeoutMs, cancel, 0, isReplace);
         List<Map<String, Object>> rows =
             jsonResponseParser.parseAndMap(
                 responseBody, config.dataPath(), config.fieldMappings(), columnTypeMap, 0);
@@ -296,7 +292,7 @@ public class ApiCallExecutor {
   private String executeRequest(
       ApiCallConfig config,
       String resolvedUrl,
-      Map<String, String> decryptedAuthConfig,
+      ApiCallAuth.ResolvedAuth auth,
       Map<String, String> paginationParams,
       int timeoutMs,
       ExecutionCancelCheck cancel,
@@ -320,7 +316,7 @@ public class ApiCallExecutor {
 
     while (attempt <= maxRetries) {
       try {
-        return doHttpRequest(config, resolvedUrl, decryptedAuthConfig, paginationParams, timeoutMs);
+        return doHttpRequest(config, resolvedUrl, auth, paginationParams, timeoutMs);
       } catch (ApiCallException | SsrfException e) {
         // 재시도 안 함: 고쳐지지 않는 4xx·응답 크기 초과 등(ApiCallException)과 리다이렉트 대상이 내부망인 경우(SsrfException).
         // 예전에는 SsrfException 이 아래 catch 로 떨어져 같은 차단을 N회 재시도하고 원인까지 묻혔다(WD-150).
@@ -362,7 +358,7 @@ public class ApiCallExecutor {
   private String doHttpRequest(
       ApiCallConfig config,
       String resolvedUrl,
-      Map<String, String> decryptedAuthConfig,
+      ApiCallAuth.ResolvedAuth auth,
       Map<String, String> paginationParams,
       int timeoutMs) {
 
@@ -375,20 +371,13 @@ public class ApiCallExecutor {
       allQueryParams.putAll(paginationParams);
     }
 
-    // Auth: API_KEY with query param goes into queryParams
+    // 쿼리 인증(API_KEY + placement=query) — 키·이름은 execute 가 한 번 푼 값이다(WD-647, Python 실행기와 같은 규칙).
+    // 오류 문구에서 가릴 값은 쿼리 키뿐 아니라 실제로 보내는 비밀 전부다(헤더 키·Bearer 토큰 포함).
     String authParamName = null;
-    String authSecret = null;
-    if (decryptedAuthConfig != null) {
-      String authType = decryptedAuthConfig.get("authType");
-      if ("API_KEY".equals(authType) && "query".equals(decryptedAuthConfig.get("placement"))) {
-        String paramName = decryptedAuthConfig.get("paramName");
-        String apiKey = decryptedAuthConfig.get("apiKey");
-        if (paramName != null && apiKey != null) {
-          allQueryParams.put(paramName, apiKey);
-          authParamName = paramName;
-          authSecret = apiKey;
-        }
-      }
+    String authSecret = auth.sentSecret();
+    if (auth.isQueryApiKey()) {
+      allQueryParams.put(auth.paramName(), auth.secret());
+      authParamName = auth.paramName();
     }
 
     // Build the full URI with query params (resolvedUrl은 이미 SSRF 검증 완료)
@@ -430,7 +419,7 @@ public class ApiCallExecutor {
 
     try {
       return executeWithRedirects(
-          client, method, requestUri, config, resolvedUrl, decryptedAuthConfig, timeoutMs, 0);
+          client, method, requestUri, config, resolvedUrl, auth, timeoutMs, 0);
     } catch (DataBufferLimitException e) {
       throw new ApiCallException(ApiCallErrorMessages.responseTooLarge(maxResponseSizeMb), e);
     } catch (ApiCallException | SsrfException | ExternalServiceException e) {
@@ -463,7 +452,7 @@ public class ApiCallExecutor {
       URI requestUri,
       ApiCallConfig config,
       String resolvedUrl,
-      Map<String, String> decryptedAuthConfig,
+      ApiCallAuth.ResolvedAuth auth,
       int timeoutMs,
       int redirectCount) {
 
@@ -472,7 +461,7 @@ public class ApiCallExecutor {
     }
 
     WebClient.RequestHeadersSpec<?> requestSpec =
-        buildRequestSpec(client, method, requestUri, config, decryptedAuthConfig);
+        buildRequestSpec(client, method, requestUri, config, auth);
 
     // Use exchangeToMono so we can inspect both status and headers before consuming the body.
     // We capture the Location header via an AtomicReference because the reactive callback
@@ -534,14 +523,7 @@ public class ApiCallExecutor {
       URI redirectUri = URI.create(location);
       // Redirects always use GET (standard 301/302/303 behaviour)
       return executeWithRedirects(
-          client,
-          "GET",
-          redirectUri,
-          config,
-          resolvedUrl,
-          decryptedAuthConfig,
-          timeoutMs,
-          redirectCount + 1);
+          client, "GET", redirectUri, config, resolvedUrl, auth, timeoutMs, redirectCount + 1);
     }
 
     return body;
@@ -556,13 +538,13 @@ public class ApiCallExecutor {
       String method,
       URI requestUri,
       ApiCallConfig config,
-      Map<String, String> decryptedAuthConfig) {
+      ApiCallAuth.ResolvedAuth auth) {
 
     WebClient.RequestHeadersSpec<?> requestSpec;
 
     if ("POST".equals(method)) {
       WebClient.RequestBodySpec bodySpec = client.post().uri(requestUri);
-      applyHeaders(bodySpec, config, decryptedAuthConfig);
+      applyHeaders(bodySpec, config, auth);
       if (config.body() != null && !config.body().isBlank()) {
         requestSpec = bodySpec.header("Content-Type", "application/json").bodyValue(config.body());
       } else {
@@ -571,7 +553,7 @@ public class ApiCallExecutor {
     } else {
       // GET (default) and redirect follow-ups
       WebClient.RequestHeadersSpec<?> getSpec = client.get().uri(requestUri);
-      applyHeaders(getSpec, config, decryptedAuthConfig);
+      applyHeaders(getSpec, config, auth);
       requestSpec = getSpec;
     }
 
@@ -580,34 +562,16 @@ public class ApiCallExecutor {
 
   @SuppressWarnings("unchecked")
   private void applyHeaders(
-      WebClient.RequestHeadersSpec<?> spec,
-      ApiCallConfig config,
-      Map<String, String> decryptedAuthConfig) {
+      WebClient.RequestHeadersSpec<?> spec, ApiCallConfig config, ApiCallAuth.ResolvedAuth auth) {
 
     // Custom headers from config
     if (config.headers() != null) {
       config.headers().forEach(spec::header);
     }
 
-    // Auth headers
-    if (decryptedAuthConfig != null) {
-      String authType = decryptedAuthConfig.get("authType");
-      String placement = decryptedAuthConfig.getOrDefault("placement", "header");
-      if ("API_KEY".equals(authType) && "header".equals(placement)) {
-        // 헤더 이름이 없으면 연결 테스트·미리보기·Python 실행기와 같은 기본 헤더로 보낸다(WD-639) — 예전에는 헤더를 붙이지 않아 연결 테스트는
-        // 통과하고 실행은 401 이었다.
-        String headerName = ApiCallAuth.apiKeyHeaderName(decryptedAuthConfig);
-        String apiKey = decryptedAuthConfig.get("apiKey");
-        if (headerName != null && apiKey != null) {
-          spec.header(headerName, apiKey);
-        }
-      } else if ("BEARER".equals(authType)) {
-        String token = decryptedAuthConfig.get("token");
-        if (token != null) {
-          spec.header("Authorization", "Bearer " + token);
-        }
-      }
-    }
+    // 인증 헤더 — execute 가 한 번 푼 값(ApiCallAuth.resolve)을 미리보기와 같은 규칙(ResolvedAuth.applyHeaders)으로
+    // 붙인다(WD-647).
+    auth.applyHeaders(spec::header);
   }
 
   // -------------------------------------------------------------------------

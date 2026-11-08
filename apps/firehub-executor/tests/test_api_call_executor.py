@@ -611,6 +611,47 @@ def test_auth_java_api_key_query():
     assert len(headers) == 0
 
 
+# WD-647 — Java(ApiCallAuth.resolve)와 같은 정리 규칙: 검사하는 값과 보내는 값이 두 실행기에서 같아야 한다
+
+def test_auth_bearer_token_is_normalized_like_java():
+    # 앞뒤 공백·「Bearer 」 접두어(겹친 것까지)를 뗀 값을 보낸다 — 「Bearer Bearer abc」 가 나가면 안 된다.
+    for raw in ("Bearer abc", " Bearer abc ", "bearer Bearer abc", "abc"):
+        headers: Dict[str, str] = {}
+        _apply_auth({"authType": "BEARER", "value": raw}, headers, {})
+        assert headers["Authorization"] == "Bearer abc", raw
+
+
+def test_auth_whitespace_only_names_are_absent():
+    # 공백뿐인 headerName·placement 는 없는 것으로 보고 다음 키·기본값을 쓴다(Java 와 같다).
+    headers: Dict[str, str] = {}
+    _apply_auth({"authType": "API_KEY", "headerName": "  ", "apiKey": "k"}, headers, {})
+    assert headers == {"x-api-key": "k"}
+
+    headers = {}
+    _apply_auth({"authType": "API_KEY", "headerName": " ", "key_name": "X-Alt", "apiKey": "k"}, headers, {})
+    assert headers == {"X-Alt": "k"}
+
+    # 공백뿐인 authType 이면 type 을 본다
+    headers = {}
+    _apply_auth({"authType": " ", "type": "BEARER", "token": "t"}, headers, {})
+    assert headers == {"Authorization": "Bearer t"}
+
+    # 공백뿐인 placement 면 location 을 본다
+    assert _apply_auth(
+        {"authType": "API_KEY", "placement": " ", "location": "query", "paramName": " ", "key_name": "svc",
+         "apiKey": "k"},
+        {},
+        {},
+    ) == ("svc", "k")
+
+
+def test_auth_api_key_value_is_not_stripped():
+    # API 키는 Java 처럼 원문 그대로 보낸다(정리는 BEARER 만).
+    headers: Dict[str, str] = {}
+    _apply_auth({"authType": "API_KEY", "apiKey": " k "}, headers, {})
+    assert headers == {"x-api-key": " k "}
+
+
 # ---------------------------------------------------------------------------
 # Redirect following with SSRF check
 # ---------------------------------------------------------------------------

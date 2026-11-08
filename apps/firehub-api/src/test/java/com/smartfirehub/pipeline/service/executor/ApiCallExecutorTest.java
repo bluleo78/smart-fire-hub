@@ -1440,4 +1440,92 @@ class ApiCallExecutorTest {
         .hasMessage(ApiCallErrorMessages.notJson());
     wireMock.verify(1, getRequestedFor(urlEqualTo("/api/html")));
   }
+
+  // -------------------------------------------------------------------------
+  // WD-647: Python 실행기와 같은 대체 키·빈 헤더 이름 — 검사만 통과하고 빈 헤더가 나가면 안 된다
+  // -------------------------------------------------------------------------
+
+  /** 헤더 이름이 빈 문자열이면 기본 헤더(X-API-Key)로 보낸다 — 예전에는 이름 없는 헤더를 만들려 했다. */
+  @Test
+  void execute_apiKeyHeaderAuthWithBlankHeaderName_sendsDefaultHeader() {
+    stubEmptyItems("/api/blank-header");
+
+    executor.execute(
+        simpleGetConfig("/api/blank-header"),
+        "t",
+        Map.of("authType", "API_KEY", "placement", "header", "headerName", "", "apiKey", "k647"),
+        "APPEND",
+        null);
+
+    wireMock.verify(
+        getRequestedFor(urlEqualTo("/api/blank-header")).withHeader("X-API-Key", equalTo("k647")));
+  }
+
+  /** 인라인 BEARER 의 {@code value}(AI 에이전트 create_pipeline 형식)도 토큰으로 보낸다. */
+  @Test
+  void execute_inlineBearerValueKey_sendsAuthorizationHeader() {
+    stubEmptyItems("/api/bearer-value");
+
+    executor.execute(
+        simpleGetConfig("/api/bearer-value"),
+        "t",
+        Map.of("authType", "BEARER", "value", "abc"),
+        "APPEND",
+        null);
+
+    wireMock.verify(
+        getRequestedFor(urlEqualTo("/api/bearer-value"))
+            .withHeader("Authorization", equalTo("Bearer abc")));
+  }
+
+  /** 인라인 API_KEY 의 key_value·key_name(헤더)도 Python 실행기처럼 보낸다. */
+  @Test
+  void execute_inlineApiKeyKeyValueAndKeyName_sendsHeader() {
+    stubEmptyItems("/api/key-value");
+
+    executor.execute(
+        simpleGetConfig("/api/key-value"),
+        "t",
+        Map.of("authType", "API_KEY", "key_name", "X-Alt", "key_value", "kv647"),
+        "APPEND",
+        null);
+
+    wireMock.verify(
+        getRequestedFor(urlEqualTo("/api/key-value")).withHeader("X-Alt", equalTo("kv647")));
+  }
+
+  /** 쿼리 인증도 value 키를 보낸다 — 실행 로그엔 키가 없다. */
+  @Test
+  void execute_inlineQueryAuthValueKey_sendsKey_logHasNoKey() {
+    stubEmptyItems("/api/q647");
+    String key = "ValueKey0000647";
+
+    ApiCallExecutor.ApiCallResult result =
+        executor.execute(
+            simpleGetConfig("/api/q647"),
+            "t",
+            Map.of("authType", "API_KEY", "placement", "query", "paramName", "svc", "value", key),
+            "APPEND",
+            null);
+
+    assertThat(receivedUrls("/api/q647")).containsExactly("/api/q647?svc=" + key);
+    assertThat(result.log()).doesNotContain(key);
+  }
+
+  /** WD-647 코드리뷰 — 검사가 정리한 토큰(「Bearer 」 접두어·앞뒤 공백 뗌)을 그대로 보낸다. 「Bearer Bearer abc」 가 나가면 안 된다. */
+  @Test
+  void execute_inlineBearerValueWithPrefix_sendsNormalizedToken() {
+    stubEmptyItems("/api/bearer-prefix");
+
+    executor.execute(
+        simpleGetConfig("/api/bearer-prefix"),
+        "t",
+        Map.of("authType", "BEARER", "value", " Bearer abc647 "),
+        "APPEND",
+        null);
+
+    wireMock.verify(
+        getRequestedFor(urlEqualTo("/api/bearer-prefix"))
+            .withHeader("Authorization", equalTo("Bearer abc647")));
+  }
 }
