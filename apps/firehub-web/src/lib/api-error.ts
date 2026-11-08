@@ -4,18 +4,34 @@ import { toast } from 'sonner';
 
 import type { ErrorResponse } from '@/types/auth';
 
+/** Bean Validation 400 의 기계용 코드(WD-640) — api GlobalExceptionHandler.VALIDATION_FAILED_CODE 와 같은 값. */
+export const VALIDATION_FAILED_CODE = 'VALIDATION_FAILED';
+
+/**
+ * errors 가 사람이 읽는 필드 문구인가 — 코드가 없거나(구 응답·임포트 행 오류 등) 검증 실패 코드면 그렇다(WD-640).
+ * 그 밖의 코드가 있으면 errors 는 화면 분기용 기계 값(details)이다(#787).
+ */
+function hasHumanFieldErrors(errData: ErrorResponse): boolean {
+  return errData.code == null || errData.code === VALIDATION_FAILED_CODE;
+}
+
 /**
  * ErrorResponse 에서 사용자에게 보여 줄 메시지를 고른다.
  *
  * errors 는 (a) 코드 없는 검증 실패(사람이 읽는 문장)와 (b) CodedApiException 의 details(화면 분기용
- * 기계 값, 예: {userId:"5"})로 쓰인다(#787). (b)만 code 를 싣고(GlobalExceptionHandler) 토스트에 "5" 가
- * 뜨면 안 되므로, code 가 있으면 errors 를 건너뛰고 message → fallback 순으로 고른다.
+ * 기계 값, 예: {userId:"5"})로 쓰인다(#787). 토스트에 "5" 가 뜨면 안 되므로 (b)의 code 가 있으면 errors 를 건너뛰고
+ * message → fallback 순으로 고른다. 검증 실패 코드(VALIDATION_FAILED, WD-640)는 (a)라 errors 를 쓴다.
  * axios 를 쓰지 않는 fetch 경로(AI 채팅 SSE, WD-550)도 같은 규칙을 쓰도록 export 한다.
  */
 export function pickBestMessage(errData: ErrorResponse, fallback: string): string {
-  if (errData.code == null && errData.errors) {
-    const firstFieldMsg = Object.values(errData.errors)[0];
-    if (firstFieldMsg) return firstFieldMsg;
+  if (hasHumanFieldErrors(errData) && errData.errors) {
+    const messages = Object.values(errData.errors).filter((m) => m);
+    // 토스트는 첫 오류만 보이므로 나머지 개수를 붙인다 — 「필수 입력값입니다. (외 2건)」(WD-640). 토스트만 쓰는 화면은 칸 아래 문구가
+    // 없어 여러 칸이 틀려도 하나만 고치고 다시 실패하기 쉬웠다. 필드 키(name·tableName)는 영어 식별자라 붙이지 않는다 — 어느 칸인지는
+    // DTO 의 명시 문구가 말하고, 서버가 errors 를 필수값 우선·필드 이름 순(필드 없는 오류는 맨 뒤)으로 고정해 첫 문구도 요청마다 같다.
+    if (messages.length > 0) {
+      return messages.length > 1 ? `${messages[0]} (외 ${messages.length - 1}건)` : messages[0];
+    }
   }
   return errData.message || fallback;
 }
@@ -65,7 +81,7 @@ export async function extractApiErrorAsync(
 }
 
 /**
- * Bean Validation 400(code 없음, 필드별 errors)을 폼 필드 오류로 옮긴다 (WD-270).
+ * Bean Validation 400(code 없음 또는 VALIDATION_FAILED, 필드별 errors)을 폼 필드 오류로 옮긴다 (WD-270, WD-640).
  *
  * 폼 상단 오류 한 줄만으로는 어느 칸이 문제인지 알 수 없으므로, 폼이 아는 필드(fields)는 해당 입력 아래에 표시한다.
  * 폼이 모르는 필드의 문구는 버리지 않고 root(폼 상단)로 모은다 — 서버 DTO 에 필드가 늘어도 문구가 조용히 사라지지 않게.
@@ -80,7 +96,7 @@ export function applyFieldErrors<T extends FieldValues>(
 ): boolean {
   if (!axios.isAxiosError(error) || error.response?.status !== 400) return false;
   const data = error.response.data as ErrorResponse | undefined;
-  if (!data?.errors || data.code != null) return false;
+  if (!data?.errors || !hasHumanFieldErrors(data)) return false;
 
   const entries = Object.entries(data.errors).filter(([, message]) => message);
   const known = entries.filter(([field]) => fields.includes(field));

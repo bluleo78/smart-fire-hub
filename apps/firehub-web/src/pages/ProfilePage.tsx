@@ -15,6 +15,14 @@ import { useAuth } from '../hooks/useAuth';
 import type { ChangePasswordFormData,UpdateProfileFormData } from '../lib/validations/user';
 import { changePasswordSchema,updateProfileSchema } from '../lib/validations/user';
 
+/**
+ * 서버 문구에 한글이 있으면 그대로, 없으면(빈 문구·영어 문구 「Request timed out」 등) 한국어 대체 문구를 쓴다(WD-640).
+ * 서버의 구체 문구는 살리되, 한국어 화면에 영어 원문이 새지 않게 한다.
+ */
+function koreanOr(message: string, fallback: string): string {
+  return /[가-힣]/.test(message) ? message : fallback;
+}
+
 export default function ProfilePage() {
   const { user, refreshUser } = useAuth();
 
@@ -60,10 +68,11 @@ export default function ProfilePage() {
     } catch (error) {
       // 검증 400 은 해당 입력 아래로 — 이름 오류가 이메일 칸 밑 폼 오류로 보이던 문제 (WD-275)
       if (applyFieldErrors(error, profileForm.setError, Object.keys(updateProfileSchema.shape))) return;
-      // 필드 errors 없이 온 구버전 서버의 "Validation failed" 영문 메시지는 한국어로 대체 (#72). 현재 서버는 한국어 문구를 보내 그대로 쓴다(WD-570).
-      const msg = extractApiError(error, '');
+      // 필드 오류가 없으면 서버의 구체 문구(예: 이메일 중복, 서버 오류 안내)를 그대로 보인다(WD-640). 예전에는 문구가 비거나 영어면
+      // 무조건 「입력값을 확인하세요.」라 네트워크 실패처럼 입력과 무관한 실패도 입력 탓으로 안내했다. 응답이 없거나 한국어가 아닌 문구
+      // (게이트웨이·프록시의 영어 문구 등)면 일반 문구를 쓴다.
       profileForm.setError('root', {
-        message: msg && msg !== 'Validation failed' ? msg : '입력값을 확인하세요.',
+        message: koreanOr(extractApiError(error, ''), '프로필을 저장하지 못했습니다. 잠시 후 다시 시도하세요.'),
       });
     }
   };
@@ -80,7 +89,11 @@ export default function ProfilePage() {
     } catch (error) {
       // 검증 400 은 해당 입력 아래로 (WD-270). 검증 실패 최상위 문구(「입력값이 올바르지 않습니다.」, 구버전 "Validation failed")는 항상 필드 errors 와 함께 오므로 여기서 끝난다(#72 대체 불필요).
       if (applyFieldErrors(error, passwordForm.setError, Object.keys(changePasswordSchema.shape))) return;
-      passwordForm.setError('root', { message: extractApiError(error, '현재 비밀번호가 올바르지 않습니다.') });
+      // 현재 비밀번호 불일치는 서버가 「현재 비밀번호가 올바르지 않습니다」를 보내므로 서버 문구를 쓴다. 응답이 없을 때(네트워크 실패)
+      // 대체 문구가 「현재 비밀번호가 올바르지 않습니다.」면 맞는 비밀번호를 넣은 사용자를 오도한다(WD-640).
+      passwordForm.setError('root', {
+        message: koreanOr(extractApiError(error, ''), '비밀번호를 변경하지 못했습니다. 잠시 후 다시 시도하세요.'),
+      });
     }
   };
 

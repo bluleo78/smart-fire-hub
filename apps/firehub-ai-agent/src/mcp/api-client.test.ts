@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import nock from 'nock';
 import { FireHubApiClient, parseProactiveExecutionId } from './api-client.js';
+import { INPUT_VALIDATION_FAILED_MARKER } from '../constants.js';
 
 const BASE_URL = 'http://localhost:8080/api/v1';
 const TOKEN = 'test-token';
@@ -734,6 +735,56 @@ describe('FireHubApiClient', () => {
       const scope = nock(BASE_URL).get('/ontology/10').once().reply(200, { ...ontology, domain: 'theirs' });
       expect((await other.getOntologyById(10)).domain).toBe('theirs');
       expect(scope.isDone()).toBe(true); // 남의 인스턴스는 제 몫의 왕복을 했다.
+    });
+  });
+
+  // WD-640: smart-job-manager 재시도 금지 규칙이 서버 문구·`— {...}` 모양 대신 이 표식을 본다.
+  // 판정은 서버가 Bean Validation 400 에만 싣는 code(VALIDATION_FAILED)로만 한다 — 모양이 같은 다른 400 은 섞이지 않는다.
+  describe('입력 검증 실패 표식 (WD-640)', () => {
+    /** api GlobalExceptionHandler.VALIDATION_FAILED_CODE 와 같은 값. */
+    const VALIDATION_FAILED_CODE = 'VALIDATION_FAILED';
+
+    /** 오류를 던지는 요청을 보내 메시지만 돌려준다. */
+    async function errorMessage(id: number, status: number, body: object): Promise<string> {
+      nock(BASE_URL).get(`/datasets/${id}`).reply(status, body);
+      const err = (await client.getDataset(id).catch((e: unknown) => e)) as Error;
+      return err.message;
+    }
+
+    it('400 + code VALIDATION_FAILED → 메시지에 표식을 붙인다', async () => {
+      const message = await errorMessage(11, 400, {
+        status: 400,
+        code: VALIDATION_FAILED_CODE,
+        message: '입력값이 올바르지 않습니다.',
+        errors: { name: '필수 입력값입니다.' },
+      });
+      expect(message).toBe(
+        `API 오류 (400): ${INPUT_VALIDATION_FAILED_MARKER} 입력값이 올바르지 않습니다. — {"name":"필수 입력값입니다."}`,
+      );
+    });
+
+    it('모양이 같은 code 없는 400(임포트 행 오류·필수 파라미터 누락)에는 표식을 붙이지 않는다', async () => {
+      const message = await errorMessage(12, 400, {
+        status: 400,
+        message: '검증 실패',
+        errors: { error_0: '3행: 날짜 형식 오류' },
+      });
+      expect(message).not.toContain(INPUT_VALIDATION_FAILED_MARKER);
+    });
+
+    it('다른 코드가 있는 400(기계용 details)에는 표식을 붙이지 않는다', async () => {
+      const message = await errorMessage(13, 400, {
+        status: 400,
+        code: 'SOME_CODE',
+        message: '안 됩니다',
+        errors: { userId: '5' },
+      });
+      expect(message).not.toContain(INPUT_VALIDATION_FAILED_MARKER);
+    });
+
+    it('400 이 아니면 검증 실패 코드가 있어도 표식을 붙이지 않는다', async () => {
+      const message = await errorMessage(14, 409, { status: 409, code: VALIDATION_FAILED_CODE, message: '충돌' });
+      expect(message).not.toContain(INPUT_VALIDATION_FAILED_MARKER);
     });
   });
 

@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import { API_ERROR_PREFIX } from '../constants.js';
+import { API_ERROR_PREFIX, INPUT_VALIDATION_FAILED_MARKER } from '../constants.js';
 import { createCategoryApi } from './api-client/category-api.js';
 import {
   type BindOntologyResult,
@@ -120,6 +120,22 @@ export function parseProactiveExecutionId(v: unknown): number | undefined {
  */
 const ONTOLOGY_CACHE_TTL_MS = 30_000;
 
+/** api 의 Bean Validation 400 기계용 코드 — GlobalExceptionHandler.VALIDATION_FAILED_CODE 와 같은 값(WD-640). */
+const VALIDATION_FAILED_CODE = 'VALIDATION_FAILED';
+
+/**
+ * api 응답이 입력 검증 실패(Bean Validation 400)인가(WD-640).
+ *
+ * 응답 모양(400 + code 없음 + 문자열 errors)으로 추측하면 임포트 행 오류(error_N)·필수 파라미터 누락·타입 불일치처럼 모양이 같은 다른 400 도
+ * 섞인다. 서버가 Bean Validation 경로에만 싣는 기계용 코드로만 판정한다.
+ */
+function isInputValidationFailure(
+  status: number | undefined,
+  data: Record<string, unknown> | undefined,
+): boolean {
+  return status === 400 && data?.code === VALIDATION_FAILED_CODE;
+}
+
 export class FireHubApiClient {
   private client: AxiosInstance;
   /** id → 진행 중이거나 방금 끝난 온톨로지 조회. 인스턴스 단위(=테넌트 단위) — getOntologyById 주석 참고. */
@@ -237,7 +253,9 @@ export class FireHubApiClient {
                 message: String(data?.message ?? ''),
               }
             : undefined;
-        throw Object.assign(new Error(`${API_ERROR_PREFIX} (${status}): ${apiMessage}`), {
+        // WD-640: 입력 검증 실패면 표식을 붙여 에이전트가 같은 인자로 재시도하지 않게 한다(판정은 서버의 검증 실패 코드로, 문구는 보지 않는다).
+        const marker = isInputValidationFailure(status, data) ? `${INPUT_VALIDATION_FAILED_MARKER} ` : '';
+        throw Object.assign(new Error(`${API_ERROR_PREFIX} (${status}): ${marker}${apiMessage}`), {
           status,
           response: error.response,
           ...(policyBlocked ? { policyBlocked } : {}),

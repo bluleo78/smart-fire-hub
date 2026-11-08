@@ -104,6 +104,31 @@ test.describe('계정 생성 (WD-46)', () => {
     await expect(dialog.getByText('이름은 50자 이하여야 합니다')).toBeVisible();
   });
 
+  /** WD-640: 서버는 Bean Validation 400 에 code VALIDATION_FAILED 를 싣는다 — 코드가 있어도 기계용 details 로 보지 않고 필드 아래로 돌려 준다. */
+  test('검증 실패 코드(VALIDATION_FAILED)가 실린 400 도 필드 아래로 돌려 준다 (WD-640)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/accounts', createAccountPage([]));
+    await mockApi(
+      page,
+      'POST',
+      '/api/platform/accounts',
+      {
+        status: 400,
+        error: 'Bad Request',
+        code: 'VALIDATION_FAILED',
+        message: '입력값이 올바르지 않습니다.',
+        errors: { name: '이름은 50자 이하여야 합니다' },
+      },
+      { status: 400 },
+    );
+    await page.goto('/accounts');
+    await page.getByRole('button', { name: '계정 생성' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('이메일(로그인 아이디)').fill('x@example.com');
+    await dialog.getByLabel('이름').fill('이름');
+    await dialog.getByRole('button', { name: '계정 생성' }).click();
+    await expect(dialog.getByText('이름은 50자 이하여야 합니다')).toBeVisible();
+  });
+
   test('platform:tenant:create 가 없으면 계정 생성 버튼이 없다', async ({ page }) => {
     await loginAs(page, ['platform:tenant:read', 'platform:member:read', 'platform:tenant:suspend']);
     await mockApi(page, 'GET', '/api/platform/accounts', createAccountPage([]));

@@ -179,6 +179,87 @@ test.describe('프로필 페이지', () => {
     await expect(page.getByText('Validation failed')).toHaveCount(0);
   });
 
+  /** WD-640: 필드에 딸리지 않은 서버 검증 오류(클래스 단위 합성 제약 — errors._global)는 폼 상단에 서버 문구 그대로 보인다. */
+  test('서버의 필드 없는 검증 오류(_global)는 폼 상단에 서버 문구로 표시된다 (WD-640)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    await page.route(
+      (url) => url.pathname === '/api/v1/users/me',
+      (route) => {
+        if (route.request().method() === 'PUT') {
+          return route.fulfill({
+            status: 400,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              status: 400,
+              error: 'Bad Request',
+              code: 'VALIDATION_FAILED',
+              message: '입력값이 올바르지 않습니다.',
+              errors: { _global: '이름과 이메일을 함께 비울 수 없습니다.' },
+            }),
+          });
+        }
+        return route.fallback();
+      },
+    );
+
+    await expect(page.locator('#profile-name')).toBeVisible({ timeout: 5000 });
+    await page.locator('#profile-name').fill('정상 이름');
+    await page.getByRole('button', { name: '저장' }).first().click();
+
+    await expect(page.getByText('이름과 이메일을 함께 비울 수 없습니다.')).toBeVisible();
+    await expect(page.getByText('입력값을 확인하세요.')).toHaveCount(0);
+  });
+
+  /** WD-640: 응답이 없는 실패(네트워크)는 입력 탓(「입력값을 확인하세요.」)으로 안내하지 않는다. */
+  test('프로필 저장 요청이 네트워크로 실패하면 입력 탓이 아닌 저장 실패 안내를 보인다 (WD-640)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    await page.route(
+      (url) => url.pathname === '/api/v1/users/me',
+      (route) => (route.request().method() === 'PUT' ? route.abort() : route.fallback()),
+    );
+
+    await expect(page.locator('#profile-name')).toBeVisible({ timeout: 5000 });
+    await page.locator('#profile-name').fill('정상 이름');
+    await page.getByRole('button', { name: '저장' }).first().click();
+
+    await expect(page.getByText('프로필을 저장하지 못했습니다. 잠시 후 다시 시도하세요.')).toBeVisible();
+    await expect(page.getByText('입력값을 확인하세요.')).toHaveCount(0);
+  });
+
+  /** WD-640: 한글이 없는 서버 문구(게이트웨이 영어 문구 등)는 그대로 보이지 않고 한국어 대체 문구를 쓴다. */
+  test('서버가 영어 문구만 주면 프로필 저장 실패를 한국어로 안내한다 (WD-640)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    await page.route(
+      (url) => url.pathname === '/api/v1/users/me',
+      (route) =>
+        route.request().method() === 'PUT'
+          ? route.fulfill({ status: 504, contentType: 'application/json', body: JSON.stringify({ message: 'Request timed out' }) })
+          : route.fallback(),
+    );
+
+    await expect(page.locator('#profile-name')).toBeVisible({ timeout: 5000 });
+    await page.locator('#profile-name').fill('정상 이름');
+    await page.getByRole('button', { name: '저장' }).first().click();
+
+    await expect(page.getByText('프로필을 저장하지 못했습니다. 잠시 후 다시 시도하세요.')).toBeVisible();
+    await expect(page.getByText('Request timed out')).toHaveCount(0);
+  });
+
+  /** WD-640: 비밀번호 변경이 네트워크로 실패하면 「현재 비밀번호가 올바르지 않습니다」로 오도하지 않는다. */
+  test('비밀번호 변경 요청이 네트워크로 실패하면 현재 비밀번호 탓으로 안내하지 않는다 (WD-640)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    await page.route('**/api/v1/users/me/password', (route) => route.abort());
+
+    await expect(page.locator('#current-password')).toBeVisible({ timeout: 5000 });
+    await page.locator('#current-password').fill('OldPass123!');
+    await page.locator('#new-password').fill('NewPass456!');
+    await page.locator('#confirm-password').fill('NewPass456!');
+    await page.getByRole('button', { name: '비밀번호 변경' }).click();
+
+    await expect(page.getByText('비밀번호를 변경하지 못했습니다. 잠시 후 다시 시도하세요.')).toBeVisible();
+    await expect(page.getByText(/현재 비밀번호가 올바르지 않습니다/)).toHaveCount(0);
+  });
+
   /**
    * 비밀번호 변경 성공 → PUT /api/v1/users/me/password → toast.success + 폼 초기화
    */

@@ -118,4 +118,31 @@ test.describe('데이터셋 상태 노트 (WD-381)', () => {
     await expect(page.getByText('상태 노트는 500자 이하여야 합니다.')).toBeVisible();
     await expect(page.getByText('상태 변경에 실패했습니다.')).toHaveCount(0);
   });
+
+  /** WD-640: 토스트만 쓰는 화면은 칸 아래 문구가 없어, 필드 오류가 여럿이면 첫 문구에 나머지 개수를 붙여 다른 칸도 틀렸음을 알린다. */
+  test('서버 필드 오류가 여럿이면 토스트에 첫 문구와 나머지 개수를 보인다 (WD-640)', async ({ authenticatedPage: page }) => {
+    await setupWithNote(page, null);
+    await mockApi(
+      page,
+      'PUT',
+      '/api/v1/datasets/1/status',
+      {
+        status: 400,
+        error: 'Bad Request',
+        code: 'VALIDATION_FAILED',
+        message: '입력값이 올바르지 않습니다.',
+        errors: { status: '필수 입력값입니다.', note: '상태 노트는 500자 이하여야 합니다.' },
+      },
+      { status: 400 },
+    );
+    await page.goto('/data/datasets/1');
+    await page.getByRole('button', { name: '상태 변경' }).click();
+    await page.getByRole('textbox', { name: '상태 노트' }).fill('짧은 노트');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    // 서버는 필수값 오류를 먼저 싣는다(WD-640) — 토스트는 그 첫 문구를 보인다.
+    await expect(page.getByText('필수 입력값입니다. (외 1건)')).toBeVisible();
+    // 필드 키(note·status)는 영어 식별자라 토스트에 붙이지 않는다.
+    await expect(page.getByText(/note:|status:/)).toHaveCount(0);
+  });
 });

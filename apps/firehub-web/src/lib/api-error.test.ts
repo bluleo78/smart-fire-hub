@@ -44,6 +44,34 @@ describe('extractApiError — errors 맵의 두 의미 구분 (#787)', () => {
     expect(extractApiError(err, '실패')).toBe('올바른 이메일 형식이 아닙니다');
   });
 
+  it('필드 오류가 여럿이면 첫 문구에 나머지 개수를 붙인다 — 토스트만 쓰는 화면에서 다른 칸도 틀렸음을 알린다 (WD-640)', () => {
+    const err = axiosErrorWith({
+      status: 400,
+      message: '입력값이 올바르지 않습니다.',
+      errors: { description: '500자 이하로 입력하세요.', name: '데이터셋 이름을 입력하세요', tableName: '필수 입력값입니다.' },
+    });
+    expect(extractApiError(err, '실패')).toBe('500자 이하로 입력하세요. (외 2건)');
+  });
+
+  it('빈 문구는 개수에서 빼고, 필드 키(영어 식별자)는 토스트에 붙이지 않는다 (WD-640)', () => {
+    const err = axiosErrorWith({ status: 400, message: '입력값이 올바르지 않습니다.', errors: { a: '', name: '필수 입력값입니다.' } });
+    expect(extractApiError(err, '실패')).toBe('필수 입력값입니다.');
+  });
+
+  it('검증 실패 코드(VALIDATION_FAILED)가 있으면 code 없음과 같이 필드 문구를 쓴다 (WD-640)', () => {
+    const err = axiosErrorWith({
+      status: 400,
+      code: 'VALIDATION_FAILED',
+      message: '입력값이 올바르지 않습니다.',
+      errors: { name: '필수 입력값입니다.', _global: '두 값이 같아야 합니다.' },
+    });
+    expect(extractApiError(err, '실패')).toBe('필수 입력값입니다. (외 1건)');
+    const setError = vi.fn();
+    expect(applyFieldErrors(err, setError, ['name'])).toBe(true);
+    expect(setError).toHaveBeenCalledWith('name', { message: '필수 입력값입니다.' });
+    expect(setError).toHaveBeenCalledWith('root', { message: '두 값이 같아야 합니다.' });
+  });
+
   it('code 가 없는 임포트 검증(error_N)도 첫 메시지를 쓴다', () => {
     const err = axiosErrorWith({ status: 400, error: 'Bad Request', message: '검증 실패', errors: { error_0: '3행: 날짜 형식 오류' } });
     expect(extractApiError(err, '실패')).toBe('3행: 날짜 형식 오류');

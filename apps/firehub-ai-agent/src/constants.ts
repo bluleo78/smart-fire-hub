@@ -57,6 +57,14 @@ export const PROACTIVE_EXECUTION_ID_ENV = 'PROACTIVE_EXECUTION_ID';
 export const API_ERROR_PREFIX = 'API 오류';
 
 /**
+ * 입력 검증 실패(400) 표식(WD-640). api-client 가 서버의 검증 실패 코드(code: VALIDATION_FAILED)를 보고 직접 붙인다.
+ * 서버 최상위 문구(「입력값이 올바르지 않습니다.」, 구버전 「Validation failed」)는 버전마다 바뀔 수 있고, 다른 400 의
+ * errors(기계용 details·임포트 행 오류)도 같은 `— {...}` 모양이라, 프롬프트의 재시도 금지 규칙은 문구·모양 대신 이 표식을 본다.
+ * 프롬프트(smart-job-manager agent.md)가 이 문자열을 그대로 인용하므로 바꾸면 함께 고친다.
+ */
+export const INPUT_VALIDATION_FAILED_MARKER = '[입력 검증 실패]';
+
+/**
  * numEnv: 환경변수에서 양수를 읽고, 없거나 NaN/0/음수면 기본값으로 폴백한다.
  * 비용 가드레일 임계값을 운영에서 env로 조정할 수 있도록 한다(#277).
  */

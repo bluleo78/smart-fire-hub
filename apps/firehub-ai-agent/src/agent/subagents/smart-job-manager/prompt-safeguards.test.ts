@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { INPUT_VALIDATION_FAILED_MARKER } from '../../../constants.js';
 
 /**
  * smart-job-manager 프롬프트 회귀 가드 (#625).
@@ -68,5 +69,32 @@ describe('smart-job-manager prompt safeguards (#625)', () => {
 
   it('마커가 없거나 모호한 경우의 안전 fallback이 명시되어 있어야 한다', () => {
     expect(agentMd).toMatch(/마커가 없거나 모호한 경우/);
+  });
+});
+
+/**
+ * 400 fail-fast 규칙의 판정 근거 가드(WD-640).
+ *
+ * WD-570 은 규칙을 「`API 오류 (400)` + `— {...}` 모양」으로 바꿨지만, 다른 400 의 기계용 errors·임포트 행 오류도 같은 모양이라
+ * 검증 실패로 오판할 수 있었다. 이제 api-client 가 서버의 검증 실패 코드(VALIDATION_FAILED)를 보고 직접 붙이는 표식
+ * (INPUT_VALIDATION_FAILED_MARKER)으로 판단한다 —
+ * 프롬프트가 그 표식 문자열을 그대로 인용하고, 서버 문구(「Validation failed」 등)에 기대지 않는지 고정한다.
+ */
+describe('smart-job-manager 400 fail-fast 표식 (WD-640)', () => {
+  const agentMd = readAgentMd();
+  const rule = agentMd.split('\n').find((l) => l.includes('400 Validation 에러 fail-fast')) ?? '';
+
+  it('fail-fast 규칙이 api-client 의 입력 검증 실패 표식을 그대로 인용한다', () => {
+    expect(rule).toContain(INPUT_VALIDATION_FAILED_MARKER);
+  });
+
+  it('표식의 근거가 서버의 검증 실패 코드임을 밝히고, 응답 모양으로 판정하지 말라고 한다', () => {
+    expect(rule).toContain('검증 실패 코드');
+    expect(rule).toContain('모양');
+  });
+
+  it('서버 최상위 문구로 판정하지 않는다(영어·한국어 문구를 판정 근거로 쓰지 않음)', () => {
+    expect(rule).not.toContain('Validation failed');
+    expect(rule).not.toContain('입력값이 올바르지 않습니다');
   });
 });
