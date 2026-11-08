@@ -3,6 +3,9 @@ package com.smartfirehub.apiconnection.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.jooq.impl.DSL.*;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,6 +19,8 @@ import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -670,7 +675,10 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThat(updated.name()).isEqualTo(newName);
   }
 
-  /** authType 이 바뀌면 같은 이름의 필드라도 저장값을 쓰지 않는다 — 끝 4자가 맞는 가린 값이라도 거절된다. */
+  /**
+   * authType 이 바뀌면 같은 이름의 필드라도 저장값을 쓰지 않는다 — 끝 4자가 맞는 가린 값이라도 거절된다. 가린 값은 새 방식의 비밀로 쓸 수 없으므로 일반 가린
+   * 값 문구보다 WD-180 문구(새 방식의 인증 정보를 입력하라)가 먼저다(WD-623).
+   */
   @Test
   void update_maskedValueWithChangedAuthType_rejected() {
     ApiConnectionResponse created =
@@ -691,8 +699,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
                     new UpdateApiConnectionRequest(
                         null, null, "BEARER", Map.of("token", "****1111"), null, null),
                     testUserId))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("authConfig.token");
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("인증 방식을 BEARER(으)로 바꾸려면 새 방식의 인증 정보(authConfig.token)를 함께 입력하세요");
 
     assertThat(apiConnectionService.getById(created.id()).authType()).isEqualTo("API_KEY");
   }
@@ -895,6 +903,345 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertAuthUnchanged(created.id(), "API_KEY", "apiKey", "secret");
   }
 
+  // ── WD-623: 비밀 필드가 비면(정규화 뒤 포함) 수정·생성·저장 전 테스트 모두 400 ──────────────────────
+
+  /** BEARER 연결을 하나 만든다 — 저장 토큰은 {@code wd623-stored-token}. */
+  private Long createBearer(String label) {
+    return apiConnectionService
+        .create(
+            new CreateApiConnectionRequest(
+                "WD623 " + label + " " + System.nanoTime(),
+                null,
+                "BEARER",
+                Map.of("token", "wd623-stored-token"),
+                "https://wd623.example.com",
+                null),
+            testUserId)
+        .id();
+  }
+
+  /**
+   * 인증 방식을 그대로 둔 수정에서 authConfig 의 토큰이 비거나({@code {}}·빈 문자열) 접두어만 있으면(「Bearer 」) 400 으로 거절하고 저장된
+   * 토큰을 그대로 둔다. 예전에는 방식이 바뀔 때만 비밀 필드를 봐서 200 으로 저장된 토큰을 빈 값(또는 「Bearer」)으로 덮었다.
+   */
+  @Test
+  void update_sameAuthTypeWithBlankToken_rejectedAndStoredTokenUnchanged() {
+    Long id = createBearer("blank-token");
+
+    for (Map<String, String> config :
+        List.of(
+            Map.<String, String>of(),
+            Map.of("token", ""),
+            Map.of("token", "   "),
+            Map.of("token", "Bearer   "),
+            Map.of("token", "bearer"))) {
+      for (String authType : Arrays.asList("BEARER", null)) {
+        assertThatThrownBy(
+                () ->
+                    apiConnectionService.update(
+                        id,
+                        new UpdateApiConnectionRequest(null, null, authType, config, null, null),
+                        testUserId))
+            .as("authType=%s authConfig=%s", authType, config)
+            .isExactlyInstanceOf(ApiConnectionException.class)
+            .hasMessage("Bearer 토큰을 입력하세요 (authConfig.token)");
+      }
+    }
+
+    assertAuthUnchanged(id, "BEARER", "token", "wd623-stored-token");
+  }
+
+  /** API_KEY 방식 그대로 키 값을 공백·빈 값으로 보내도 400 이고 저장된 키는 그대로다. */
+  @Test
+  void update_sameAuthTypeWithBlankApiKey_rejectedAndStoredKeyUnchanged() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(validReq("https://wd623-key.example.com"), testUserId);
+
+    for (Map<String, String> config :
+        List.of(
+            Map.of("placement", "header", "headerName", "X-Key", "apiKey", "  "),
+            Map.of("placement", "header", "headerName", "X-Key"))) {
+      assertThatThrownBy(
+              () ->
+                  apiConnectionService.update(
+                      created.id(),
+                      new UpdateApiConnectionRequest(null, null, "API_KEY", config, null, null),
+                      testUserId))
+          .as("authConfig=%s", config)
+          .isExactlyInstanceOf(ApiConnectionException.class)
+          .hasMessage("API 키를 입력하세요 (authConfig.apiKey)");
+    }
+
+    assertAuthUnchanged(created.id(), "API_KEY", "apiKey", "secret");
+  }
+
+  /** 비밀 유지 경로는 막히지 않는다(회귀) — authConfig 미전송·가린 값 그대로는 유지, 새 토큰은 교체(접두어는 뗀다). */
+  @Test
+  void update_secretPreservingPaths_stillAllowed() {
+    Long id = createBearer("preserve");
+    Map<String, String> masked = apiConnectionService.getById(id).maskedAuthConfig();
+
+    apiConnectionService.update(
+        id,
+        new UpdateApiConnectionRequest(
+            "WD623 renamed " + System.nanoTime(), null, null, null, null, null),
+        testUserId);
+    assertAuthUnchanged(id, "BEARER", "token", "wd623-stored-token");
+
+    apiConnectionService.update(
+        id, new UpdateApiConnectionRequest(null, null, "BEARER", masked, null, null), testUserId);
+    assertAuthUnchanged(id, "BEARER", "token", "wd623-stored-token");
+
+    apiConnectionService.update(
+        id,
+        new UpdateApiConnectionRequest(
+            null, null, null, Map.of("token", "Bearer wd623-new-token"), null, null),
+        testUserId);
+    assertAuthUnchanged(id, "BEARER", "token", "wd623-new-token");
+  }
+
+  /** 인증 방식을 바꾸면서 새 방식 토큰이 접두어뿐이면 정규화 뒤 빈 값이라 WD-180 문구로 거절한다(예전에는 「Bearer」 로 저장됐다). */
+  @Test
+  void update_authTypeChangedWithPrefixOnlyToken_rejectedWithWd180Message() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(validReq("https://wd623-change.example.com"), testUserId);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    created.id(),
+                    new UpdateApiConnectionRequest(
+                        null, null, "BEARER", Map.of("token", "Bearer   "), null, null),
+                    testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("인증 방식을 BEARER(으)로 바꾸려면 새 방식의 인증 정보(authConfig.token)를 함께 입력하세요");
+
+    assertAuthUnchanged(created.id(), "API_KEY", "apiKey", "secret");
+  }
+
+  /** 생성도 정규화 뒤 값으로 본다 — 접두어만 있는 토큰은 400 이고 행이 생기지 않는다(WD-588 검사의 구멍). */
+  @ParameterizedTest
+  @ValueSource(strings = {"Bearer   ", "bearer", "BEARER"})
+  void create_prefixOnlyToken_rejected(String token) {
+    CreateApiConnectionRequest req = createRequest("BEARER", Map.of("token", token));
+
+    assertThatThrownBy(() -> apiConnectionService.create(req, testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("Bearer 토큰을 입력하세요 (authConfig.token)");
+
+    assertThat(apiConnectionService.getAll()).noneMatch(c -> req.name().equals(c.name()));
+  }
+
+  /** 접두어 + 토큰은 접두어만 떼고, 「bearer」 로 시작하는 단어 토큰은 그대로 저장한다(회귀). */
+  @Test
+  void create_bearerPrefixStrippedButBearerLikeWordKept() {
+    ApiConnectionResponse prefixed =
+        apiConnectionService.create(
+            createRequest("BEARER", Map.of("token", "Bearer abc")), testUserId);
+    ApiConnectionResponse word =
+        apiConnectionService.create(
+            createRequest("BEARER", Map.of("token", "bearerXYZ")), testUserId);
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(prefixed.id()))
+        .containsEntry("token", "abc");
+    assertThat(apiConnectionService.getDecryptedAuthConfig(word.id()))
+        .containsEntry("token", "bearerXYZ");
+  }
+
+  /**
+   * 저장 전 테스트도 비밀 필드가 비면 대상 서버를 부르지 않고 400 으로 안내한다. 예전에는 빈 인증으로 호출해 대상 서버의 401/403 만 보였다. 주소
+   * 검사(SSRF) 보다 앞에서 거절되므로 그 검사도 불리지 않는다 — 호출 전 단계라는 증거.
+   */
+  @Test
+  void testConnectionPayload_blankSecret_rejectedWithoutCall() {
+    List<Map<String, String>> configs = new ArrayList<>();
+    configs.add(null);
+    configs.add(Map.of());
+    configs.add(Map.of("token", ""));
+    configs.add(Map.of("token", "Bearer   "));
+
+    for (Map<String, String> config : configs) {
+      assertThatThrownBy(
+              () ->
+                  apiConnectionService.testConnectionPayload(
+                      new CreateApiConnectionRequest(
+                          "WD623 test",
+                          null,
+                          "BEARER",
+                          config,
+                          "https://wd623-test.example.com",
+                          null)))
+          .as("authConfig=%s", config)
+          .isExactlyInstanceOf(ApiConnectionException.class)
+          .hasMessage("Bearer 토큰을 입력하세요 (authConfig.token)");
+    }
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.testConnectionPayload(
+                    new CreateApiConnectionRequest(
+                        "WD623 test key",
+                        null,
+                        "API_KEY",
+                        Map.of("placement", "query", "paramName", "serviceKey"),
+                        "https://wd623-test.example.com",
+                        null)))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("API 키를 입력하세요 (authConfig.apiKey)");
+
+    verify(ssrfProtectionService, never()).validateUrl(anyString());
+  }
+
+  // ── WD-623 코드리뷰: 오류 우선순위·저장된 빈 비밀·입력 검증 순서 ──────────────────────
+
+  /** 검사 없이(예전 버전에서) 저장된 연결을 흉내 낸다 — 서비스 검사를 거치지 않고 암호화한 authConfig 를 바로 저장한다. */
+  private Long saveLegacy(String authType, Map<String, String> authConfig) throws Exception {
+    String encrypted = encryptionService.encrypt(objectMapper.writeValueAsString(authConfig));
+    return tx.execute(
+        s ->
+            apiConnectionRepository.save(
+                "WD623 legacy " + System.nanoTime(),
+                null,
+                authType,
+                encrypted,
+                testUserId,
+                "https://wd623-legacy.example.com",
+                null));
+  }
+
+  /** 비밀이 빠졌으면 헤더 이름·파라미터 이름 등 다른 필드 오류보다 「… 입력하세요」 가 먼저다 — 생성·수정·저장 전 테스트 모두. */
+  @Test
+  void missingSecret_takesPrecedenceOverOtherFieldErrors() {
+    Map<String, String> badHeaderNoKey = Map.of("placement", "header", "headerName", "X API Key");
+    Map<String, String> blankParamNoKey = Map.of("placement", "query", "paramName", "");
+
+    for (Map<String, String> config : List.of(badHeaderNoKey, blankParamNoKey)) {
+      assertThatThrownBy(
+              () -> apiConnectionService.create(createRequest("API_KEY", config), testUserId))
+          .as("create %s", config)
+          .isExactlyInstanceOf(ApiConnectionException.class)
+          .hasMessage("API 키를 입력하세요 (authConfig.apiKey)");
+      assertThatThrownBy(
+              () -> apiConnectionService.testConnectionPayload(createRequest("API_KEY", config)))
+          .as("test %s", config)
+          .isExactlyInstanceOf(ApiConnectionException.class)
+          .hasMessage("API 키를 입력하세요 (authConfig.apiKey)");
+    }
+
+    ApiConnectionResponse created =
+        apiConnectionService.create(validReq("https://wd623-prec.example.com"), testUserId);
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    created.id(),
+                    new UpdateApiConnectionRequest(null, null, null, badHeaderNoKey, null, null),
+                    testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("API 키를 입력하세요 (authConfig.apiKey)");
+    // 방식 변경이면 WD-180 문구가 헤더 이름 오류보다 먼저다
+    Long bearerId = createBearer("prec-change");
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    bearerId,
+                    new UpdateApiConnectionRequest(
+                        null, null, "API_KEY", badHeaderNoKey, null, null),
+                    testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("인증 방식을 API_KEY(으)로 바꾸려면 새 방식의 인증 정보(authConfig.apiKey)를 함께 입력하세요");
+    assertAuthUnchanged(created.id(), "API_KEY", "apiKey", "secret");
+    assertAuthUnchanged(bearerId, "BEARER", "token", "wd623-stored-token");
+  }
+
+  /**
+   * 빈 비밀로 저장된 옛 연결은 연결 테스트(·주기 점검)에서 대상 서버를 부르지 않고 무엇을 채워야 하는지 보인다. 예전에는 빈 인증으로 호출해 대상의 401/403 만
+   * 보였다. 주소 검사(SSRF)도 불리지 않는다 — 호출 전 단계라는 증거.
+   */
+  @Test
+  void testConnection_storedEmptySecret_reportsMissingSecretWithoutCall() throws Exception {
+    Long bearerId = saveLegacy("BEARER", Map.of("token", ""));
+    Long prefixOnlyId = saveLegacy("BEARER", Map.of("token", "Bearer"));
+    Long keyId = saveLegacy("API_KEY", Map.of("placement", "header", "headerName", "X-Key"));
+
+    var bearer = apiConnectionService.testConnection(bearerId);
+    var prefixOnly = apiConnectionService.testConnection(prefixOnlyId);
+    var key = apiConnectionService.testConnection(keyId);
+
+    assertThat(bearer.ok()).isFalse();
+    assertThat(bearer.errorMessage()).isEqualTo("Bearer 토큰을 입력하세요 (authConfig.token)");
+    assertThat(prefixOnly.errorMessage()).isEqualTo("Bearer 토큰을 입력하세요 (authConfig.token)");
+    assertThat(key.ok()).isFalse();
+    assertThat(key.errorMessage()).isEqualTo("API 키를 입력하세요 (authConfig.apiKey)");
+    // 결과는 상태(DOWN)·사유로 저장된다 — 목록 화면이 같은 사유를 보인다
+    assertThat(apiConnectionService.getById(bearerId).lastStatus()).isEqualTo("DOWN");
+    verify(ssrfProtectionService, never()).validateUrl(anyString());
+  }
+
+  /**
+   * 빈 비밀로 저장된 옛 연결을 같은 방식으로 수정하면서 조회한 가린 값({@code ****})을 그대로 보내면, 일반 문구 대신 저장된 비밀이 비었다고 짚어 400 이다.
+   */
+  @Test
+  void update_maskedEchoOfEmptyStoredSecret_rejectedWithSpecificMessage() throws Exception {
+    Long bearerId = saveLegacy("BEARER", Map.of("token", ""));
+    Map<String, String> masked = apiConnectionService.getById(bearerId).maskedAuthConfig();
+    assertThat(masked).containsEntry("token", "****");
+
+    for (String authType : Arrays.asList("BEARER", null)) {
+      assertThatThrownBy(
+              () ->
+                  apiConnectionService.update(
+                      bearerId,
+                      new UpdateApiConnectionRequest(null, null, authType, masked, null, null),
+                      testUserId))
+          .as("authType=%s", authType)
+          .isExactlyInstanceOf(ApiConnectionException.class)
+          .hasMessage("저장된 Bearer 토큰이 비어 있습니다 — 새 토큰을 입력하세요 (authConfig.token)");
+    }
+
+    Long keyId =
+        saveLegacy("API_KEY", Map.of("placement", "header", "headerName", "X-Key", "apiKey", ""));
+    Map<String, String> maskedKey = apiConnectionService.getById(keyId).maskedAuthConfig();
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    keyId,
+                    new UpdateApiConnectionRequest(null, null, null, maskedKey, null, null),
+                    testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("저장된 API 키가 비어 있습니다 — 새 키를 입력하세요 (authConfig.apiKey)");
+
+    // 새 토큰을 넣으면 고쳐진다(회귀)
+    apiConnectionService.update(
+        bearerId,
+        new UpdateApiConnectionRequest(null, null, null, Map.of("token", "fresh"), null, null),
+        testUserId);
+    assertAuthUnchanged(bearerId, "BEARER", "token", "fresh");
+  }
+
+  /** 입력 자체가 틀린 요청(기준 URL 형식)은 이름 중복(409)보다 먼저 400 이다 — 생성·수정. */
+  @Test
+  void invalidBaseUrl_takesPrecedenceOverDuplicateName() {
+    String taken = "WD623 taken " + System.nanoTime();
+    apiConnectionService.create(validReq("https://wd623-dup.example.com", taken), testUserId);
+    ApiConnectionResponse other =
+        apiConnectionService.create(
+            validReq("https://wd623-dup2.example.com", taken + " other"), testUserId);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(validReq("ftp://wd623.example.com", taken), testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("baseUrl은 http 또는 https 스킴이어야 합니다");
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    other.id(),
+                    new UpdateApiConnectionRequest(
+                        taken, null, null, null, "ftp://wd623.example.com", null),
+                    testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("baseUrl은 http 또는 https 스킴이어야 합니다");
+  }
+
   // ── 생성·수정·삭제 감사 로그(WD-181) ───────────────────────────────────────────
 
   /** 이 연결의 api_connection 감사 행(id 순). audit_log 는 RLS 대상이라 테넌트 트랜잭션 안에서 읽는다(서비스 호출은 이미 커밋됨). */
@@ -938,7 +1285,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
   }
 
   private static List<String> jsonTexts(JsonNode array) {
-    List<String> out = new java.util.ArrayList<>();
+    List<String> out = new ArrayList<>();
     array.forEach(n -> out.add(n.asText()));
     return out;
   }

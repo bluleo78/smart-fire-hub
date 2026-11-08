@@ -1232,6 +1232,58 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByText('https://api.example.com/health')).toBeVisible();
   });
 
+  // (WD-623) 저장 전 "연결 테스트" — 비밀 값이 비면 서버를 부르지 않고 서버와 같은 안내를 토스트로 보인다.
+  // 서버도 빈 비밀의 저장 전 테스트를 400 으로 거절하므로(대상 서버 401/403 대신 무엇을 빠뜨렸는지 안내) 화면에서 먼저 막는다.
+  test('생성 다이얼로그 "연결 테스트" — API 키·Bearer 토큰이 비면 안내 토스트만 보이고 test API 를 부르지 않는다 (WD-623)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+
+    // test API 호출 횟수를 센다 — 비밀이 빈 동안에는 0, 토큰을 채운 뒤에만 1 이어야 한다.
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/api-connections/test',
+      {
+        ok: true,
+        status: 200,
+        latencyMs: 10,
+        errorMessage: null,
+        requestUrl: 'https://api.example.com',
+        responseBodyPreview: null,
+        responseHeaders: {},
+        responseContentType: null,
+      },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+
+    // API_KEY(기본) — 헤더 이름만 있고 키가 비면 막힌다
+    await page.getByPlaceholder('Authorization').fill('X-API-Key');
+    await page.getByRole('button', { name: '연결 테스트' }).click();
+    await expect(page.getByText('API 키를 입력하세요.')).toBeVisible();
+
+    // BEARER — 공백만 있는 토큰도 빈 값으로 보고 막는다
+    await page.getByRole('combobox').first().click();
+    await page.getByRole('option', { name: 'Bearer Token' }).click();
+    const tokenInput = page.getByRole('textbox', { name: 'Bearer Token' });
+    await tokenInput.fill('   ');
+    await page.getByRole('button', { name: '연결 테스트' }).click();
+    await expect(page.getByText('Bearer 토큰을 입력하세요.')).toBeVisible();
+    expect(capture.requests).toHaveLength(0);
+
+    // 토큰을 채우면 정상 호출되고 토큰이 payload 에 실린다(회귀)
+    await tokenInput.fill('real-token');
+    await page.getByRole('button', { name: '연결 테스트' }).click();
+    await expect(page.getByText('연결 성공')).toBeVisible();
+    expect(capture.requests).toHaveLength(1);
+    expect(capture.requests[0].payload).toMatchObject({ authType: 'BEARER', authConfig: { token: 'real-token' } });
+  });
+
   // (#92) 마스킹 키 옆 도움말 아이콘 — 보안 정책 안내 tooltip 노출 검증
   test('마스킹된 키 값 옆 도움말 아이콘에 보안 정책 tooltip이 노출된다 (#92)', async ({
     authenticatedPage: page,

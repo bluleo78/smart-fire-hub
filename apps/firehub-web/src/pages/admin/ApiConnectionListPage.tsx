@@ -118,7 +118,11 @@ export default function ApiConnectionListPage() {
 
   /**
    * (#90) 입력값으로 dry-run 헬스체크 호출. 저장 없이 인라인 결과 표시.
-   * 입력 검증은 handleCreate와 동일한 규칙을 사용하되, 인증 정보는 미입력이어도 호출은 시도(공개 endpoint 케이스).
+   * 주소·경로 검증은 handleCreate와 같은 규칙을 쓴다. 헤더·파라미터 이름은 비어 있어도 서버가 기본값·사유로 안내하므로 막지 않는다.
+   *
+   * 비밀 값(API 키·Bearer 토큰)이 비면 호출하지 않고 바로 안내한다(WD-623) — 서버도 저장 전 테스트에서 빈 비밀을 400
+   * 「… 입력하세요」로 거절한다(대상 서버의 401/403 대신 무엇을 빠뜨렸는지 보이려는 것). 저장에도 비밀이 필수라 공개 엔드포인트
+   * 용도로 빈 비밀 테스트를 허용할 이유가 없다. 문구는 서버 안내와 같게 맞춘다.
    */
   const handleTest = async () => {
     if (!/^https?:\/\/.+/.test(baseUrl.trim())) {
@@ -129,18 +133,26 @@ export default function ApiConnectionListPage() {
       toast.error('헬스체크 경로는 /로 시작해야 합니다.');
       return;
     }
+    const missingSecretMessage =
+      authType === 'API_KEY'
+        ? !apiKey.trim() && 'API 키를 입력하세요.'
+        : !token.trim() && 'Bearer 토큰을 입력하세요.';
+    if (missingSecretMessage) {
+      toast.error(missingSecretMessage);
+      return;
+    }
 
+    // 위에서 비밀 값이 비지 않았음을 확인했으므로 그대로 싣는다.
     const authConfig: Record<string, string> = { authType };
     if (authType === 'API_KEY') {
       authConfig.placement = placement;
+      authConfig.apiKey = apiKey;
       if (placement === 'header') {
         if (headerName.trim()) authConfig.headerName = headerName;
-        if (apiKey.trim()) authConfig.apiKey = apiKey;
-      } else {
-        if (paramName.trim()) authConfig.paramName = paramName;
-        if (apiKey.trim()) authConfig.apiKey = apiKey;
+      } else if (paramName.trim()) {
+        authConfig.paramName = paramName;
       }
-    } else if (token.trim()) {
+    } else {
       authConfig.token = token;
     }
 
