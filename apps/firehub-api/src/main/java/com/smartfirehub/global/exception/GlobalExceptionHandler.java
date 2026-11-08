@@ -51,6 +51,7 @@ import java.sql.SQLTransientConnectionException;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -64,23 +65,29 @@ import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.util.StringUtils;
 import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.util.DisconnectedClientHelper;
 
@@ -101,6 +108,12 @@ public class GlobalExceptionHandler {
 
   /** 커넥션 풀 대기 초과(WD-553) 안내 — 일시적 과부하이므로 재시도를 권한다. */
   static final String POOL_EXHAUSTED_MESSAGE = "요청이 많아 지금은 처리할 수 없습니다. 잠시 후 다시 시도하세요.";
+
+  /** 404 공통 안내 — 없는 경로(NoResourceFound)와 4xx 표준 예외의 404 가 같은 문장을 쓴다(WD-626). */
+  static final String NOT_FOUND_MESSAGE = "요청한 리소스를 찾을 수 없습니다.";
+
+  /** 500 공통 안내 — 일반 예외·서버 쪽 IOException 이 같은 문장을 쓴다(WD-110, WD-626). */
+  static final String UNEXPECTED_ERROR_MESSAGE = "예기치 않은 오류가 발생했습니다. 잠시 후 다시 시도하세요.";
 
   private ErrorResponse buildError(
       HttpStatus status, String message, Map<String, String> errors, HttpServletRequest request) {
@@ -135,13 +148,32 @@ public class GlobalExceptionHandler {
     return json(status, HttpHeaders.EMPTY, body);
   }
 
-  /** 추가 응답 헤더(예: 415 의 Accept)를 함께 싣는 버전. */
+  /**
+   * 추가 응답 헤더(예: 415 의 Accept)를 함께 싣는 버전.
+   *
+   * <p>응답이 이미 커밋됐으면(SSE·다운로드가 흐르는 중) 본문을 쓰지 않고 null(처리 완료·본문 없음)을 돌려준다(WD-626). 예전에는 일반 처리만 이를 확인해,
+   * 전용 처리가 있는 예외(IllegalStateException 409 등)는 이미 나간 {@code data:} 줄 뒤에 JSON 을 덧붙여 스트림을 깨뜨렸다. 모든
+   * 처리가 이 메서드를 거치므로 여기 한곳에서 막는다. 로그는 각 처리가 이미 남겼으므로(서버 결함이면 ERROR) 여기서는 본문 생략만 DEBUG 로 남긴다.
+   */
   private static ResponseEntity<ErrorResponse> json(
       HttpStatus status, HttpHeaders headers, ErrorResponse body) {
+    if (isCurrentResponseCommitted()) {
+      log.debug("Skip error body {} on committed response: {}", status.value(), body.path());
+      return null;
+    }
     return ResponseEntity.status(status)
         .headers(headers)
         .contentType(MediaType.APPLICATION_JSON)
         .body(body);
+  }
+
+  /** 지금 처리 중인 요청의 응답이 이미 커밋됐는지 본다(WD-626). 요청 문맥이 없으면(단위 테스트에서 처리를 직접 부르는 경우 등) 커밋되지 않은 것으로 본다. */
+  private static boolean isCurrentResponseCommitted() {
+    if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs) {
+      HttpServletResponse response = attrs.getResponse();
+      return response != null && response.isCommitted();
+    }
+    return false;
   }
 
   @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -874,8 +906,7 @@ public class GlobalExceptionHandler {
     }
     log.error("Unhandled IOException", ex);
     ErrorResponse body =
-        buildError(
-            HttpStatus.INTERNAL_SERVER_ERROR, "예기치 않은 오류가 발생했습니다. 잠시 후 다시 시도하세요.", null, request);
+        buildError(HttpStatus.INTERNAL_SERVER_ERROR, UNEXPECTED_ERROR_MESSAGE, null, request);
     // SSE 요청(Accept: text/event-stream)에서도 협상 실패 없이 JSON 이 나가도록 json() 이 형식을 명시한다.
     return json(HttpStatus.INTERNAL_SERVER_ERROR, body);
   }
@@ -942,18 +973,44 @@ public class GlobalExceptionHandler {
   /**
    * 415 안내에 쓸 요청 형식을 지원 목록에서 고른다. JSON 계열이 있으면 JSON, 없고 multipart/form-data 가 있으면 multipart(예: POST
    * /api/v1/files), 그 밖에는 첫 지원 형식이다. 목록이 비면(형식이 틀린 Content-Type) 이 API 의 기본인 JSON 으로 안내한다. 원시 목록
-   * (application/*+json 등)을 그대로 보이면 사용자에게 혼란스러워 대표 형식 하나만 고른다.
+   * (application/*+json 등)을 그대로 보이면 사용자에게 혼란스러워 대표 형식 하나만 고른다({@link #concreteTypes}).
    */
   private static String expectedRequestType(List<MediaType> supported) {
-    if (supported.isEmpty()
-        || supported.stream().anyMatch(MediaType.APPLICATION_JSON::equalsTypeAndSubtype)) {
-      return MediaType.APPLICATION_JSON_VALUE;
+    return preferredType(
+        concreteTypes(supported),
+        MediaType.APPLICATION_JSON_VALUE,
+        MediaType.MULTIPART_FORM_DATA_VALUE);
+  }
+
+  /**
+   * 415·406 안내가 함께 쓰는 형식 정리(WD-626). 지원 목록을 사용자에게 보일 구체 형식("type/subtype")으로 줄인다 — {@code +json}
+   * 계열(application/*+json, application/problem+json)은 application/json 으로 보고, 와일드카드({@code
+   * *}/{@code *}, application/*)는 안내할 수 없으므로 건너뛴다. 순서는 원래 목록 순서를 따르고 중복은 없앤다.
+   */
+  private static Set<String> concreteTypes(List<MediaType> supported) {
+    Set<String> types = new LinkedHashSet<>();
+    for (MediaType type : supported) {
+      if (type.isWildcardType()) {
+        continue;
+      }
+      String subtype = type.getSubtype();
+      if ("json".equals(subtype) || subtype.endsWith("+json")) {
+        types.add(MediaType.APPLICATION_JSON_VALUE);
+      } else if (!type.isWildcardSubtype()) {
+        types.add(type.getType() + "/" + subtype);
+      }
     }
-    if (supported.stream().anyMatch(MediaType.MULTIPART_FORM_DATA::equalsTypeAndSubtype)) {
-      return MediaType.MULTIPART_FORM_DATA_VALUE;
+    return types;
+  }
+
+  /** 정리된 형식 가운데 안내할 하나를 고른다 — 선호 순서대로 있는 것을, 없으면 첫 형식을, 비었으면 이 API 의 기본인 JSON 을 고른다(WD-626). */
+  private static String preferredType(Set<String> types, String... preferences) {
+    for (String preference : preferences) {
+      if (types.contains(preference)) {
+        return preference;
+      }
     }
-    MediaType first = supported.get(0);
-    return first.getType() + "/" + first.getSubtype();
+    return types.isEmpty() ? MediaType.APPLICATION_JSON_VALUE : types.iterator().next();
   }
 
   /**
@@ -962,6 +1019,9 @@ public class GlobalExceptionHandler {
    * <p>예전에는 Accept: text/html 이면 영어 Whitelabel HTML, application/xml·image/png 면 빈 본문 406 이 나갔다. 오류
    * 본문은 항상 JSON 이어야 화면·클라이언트가 같은 형식으로 읽을 수 있으므로 {@link #json} 으로 협상을 건너뛴다(협상을 다시 하면 같은 Accept 로 또
    * 실패한다). 클라이언트 잘못이고 요청 헤더 원문이 실리므로 DEBUG 로만 남긴다.
+   *
+   * <p>안내 문구는 엔드포인트가 실제로 만드는 형식에서 고른다({@link #notAcceptableMessage}, WD-626). 예전에는 SSE 전용
+   * 엔드포인트(produces = text/event-stream)에도 「application/json 으로만 제공」이라 안내해 클라이언트가 틀린 Accept 로 고쳤다.
    */
   @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
   public ResponseEntity<ErrorResponse> handleMediaTypeNotAcceptable(
@@ -970,10 +1030,28 @@ public class GlobalExceptionHandler {
     ErrorResponse response =
         buildError(
             HttpStatus.NOT_ACCEPTABLE,
-            "요청한 응답 형식을 지원하지 않습니다 — 응답은 application/json 으로만 제공합니다.",
+            notAcceptableMessage(ex.getSupportedMediaTypes()),
             null,
             request);
     return json(HttpStatus.NOT_ACCEPTABLE, response);
+  }
+
+  /**
+   * 406 안내 문구를 응답 가능 형식 목록에서 고른다(WD-626). 형식 정리는 415 와 같은 {@link #concreteTypes} 를 쓴다.
+   * text/event-stream 만 있으면 SSE 로 받으라고, JSON 과 text/event-stream 이 함께 있으면 둘 다 안내한다. 그 밖에는 JSON 이
+   * 있거나 목록이 비면(협상 이전 단계 실패 등) 이 API 의 기본인 JSON 을, 아니면 첫 형식을 안내한다. 오류 본문 자체는 어느 경우든 JSON 이다.
+   */
+  private static String notAcceptableMessage(List<MediaType> supported) {
+    // 세 갈래 모두 같은 머리말로 시작한다.
+    String prefix = "요청한 응답 형식을 지원하지 않습니다 — 응답은 ";
+    Set<String> types = concreteTypes(supported);
+    if (types.contains(MediaType.TEXT_EVENT_STREAM_VALUE)) {
+      if (types.contains(MediaType.APPLICATION_JSON_VALUE)) {
+        return prefix + "application/json 또는 text/event-stream 으로 제공합니다.";
+      }
+      return prefix + "text/event-stream(SSE) 으로 제공합니다. Accept 에 text/event-stream 을 넣으세요.";
+    }
+    return prefix + preferredType(types, MediaType.APPLICATION_JSON_VALUE) + " 으로만 제공합니다.";
   }
 
   /**
@@ -1007,24 +1085,45 @@ public class GlobalExceptionHandler {
   }
 
   /**
-   * 필수 multipart part(예: POST /api/v1/files 의 {@code files})가 빠진 요청은 클라이언트 입력 오류라 400 으로 답한다(WD-521).
-   * 예전에는 전용 처리가 없어 일반 예외로 떨어져 500 「예기치 않은 오류」가 났다 — 쿼리 파라미터 누락(WD-405)과 같은 모양으로 맞춘다.
+   * 필수 요청 헤더({@code @RequestHeader} required)가 빠진 요청은 클라이언트 입력 오류라 500 대신 400 으로 답한다(WD-626). 예전에는
+   * 전용 처리가 없어 일반 예외로 떨어져 500 「예기치 않은 오류」+ ERROR 스택이 남았다. 쿼리 파라미터 누락(WD-405)과 같은 모양으로 errors 에 헤더
+   * 이름을 싣는다.
+   *
+   * <p>헤더는 왔지만 값이 비어 변환 결과가 없는 경우({@link MissingRequestHeaderException#isMissingAfterConversion()},
+   * 예: 숫자 헤더에 빈 값)는 「필요합니다」가 틀린 안내라 「값이 올바르지 않습니다」로 답한다.
    */
-  @ExceptionHandler(MissingServletRequestPartException.class)
-  public ResponseEntity<ErrorResponse> handleMissingRequestPart(
-      MissingServletRequestPartException ex, HttpServletRequest request) {
-    Map<String, String> fieldErrors =
-        Map.of(
-            ex.getRequestPartName(),
-            String.format("'%s' 파일이 필요합니다.", ex.getRequestPartName()));
+  @ExceptionHandler(MissingRequestHeaderException.class)
+  public ResponseEntity<ErrorResponse> handleMissingRequestHeader(
+      MissingRequestHeaderException ex, HttpServletRequest request) {
+    String name = ex.getHeaderName();
+    log.debug("Missing request header on {}: {}", request.getRequestURI(), name);
+    String message =
+        ex.isMissingAfterConversion()
+            ? String.format("'%s' 헤더 값이 올바르지 않습니다.", name)
+            : String.format("'%s' 헤더가 필요합니다.", name);
+    Map<String, String> fieldErrors = Map.of(name, message);
     ErrorResponse response =
         buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
     return json(HttpStatus.BAD_REQUEST, response);
   }
 
   /**
-   * multipart 본문을 해석하지 못한 요청(본문 없음·경계 없음 등)도 클라이언트 입력 오류라 400 으로 답한다(WD-521). 크기 초과
-   * ({@link MaxUploadSizeExceededException})는 더 구체적인 전용 처리가 먼저 잡는다.
+   * 필수 multipart part(예: POST /api/v1/files 의 {@code files})가 빠진 요청은 클라이언트 입력 오류라 400 으로
+   * 답한다(WD-521). 예전에는 전용 처리가 없어 일반 예외로 떨어져 500 「예기치 않은 오류」가 났다 — 쿼리 파라미터 누락(WD-405)과 같은 모양으로 맞춘다.
+   */
+  @ExceptionHandler(MissingServletRequestPartException.class)
+  public ResponseEntity<ErrorResponse> handleMissingRequestPart(
+      MissingServletRequestPartException ex, HttpServletRequest request) {
+    Map<String, String> fieldErrors =
+        Map.of(ex.getRequestPartName(), String.format("'%s' 파일이 필요합니다.", ex.getRequestPartName()));
+    ErrorResponse response =
+        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
+    return json(HttpStatus.BAD_REQUEST, response);
+  }
+
+  /**
+   * multipart 본문을 해석하지 못한 요청(본문 없음·경계 없음 등)도 클라이언트 입력 오류라 400 으로 답한다(WD-521). 크기 초과 ({@link
+   * MaxUploadSizeExceededException})는 더 구체적인 전용 처리가 먼저 잡는다.
    */
   @ExceptionHandler(MultipartException.class)
   public ResponseEntity<ErrorResponse> handleMultipart(
@@ -1050,7 +1149,7 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(NoResourceFoundException.class)
   public ResponseEntity<ErrorResponse> handleNoResourceFound(
       NoResourceFoundException ex, HttpServletRequest request) {
-    ErrorResponse response = buildError(HttpStatus.NOT_FOUND, "요청한 리소스를 찾을 수 없습니다.", null, request);
+    ErrorResponse response = buildError(HttpStatus.NOT_FOUND, NOT_FOUND_MESSAGE, null, request);
     return json(HttpStatus.NOT_FOUND, response);
   }
 
@@ -1074,19 +1173,79 @@ public class GlobalExceptionHandler {
     }
     // 풀 과부하뿐 아니라 DB 장애(접속 거부)로도 같은 예외가 올 수 있어 원인을 찾을 수 있게 스택을 남긴다.
     log.warn("DB 커넥션 획득 실패(풀 대기 초과): {}", ex.getMessage(), ex);
-    ErrorResponse response =
+    ErrorResponse body =
         buildError(HttpStatus.SERVICE_UNAVAILABLE, POOL_EXHAUSTED_MESSAGE, null, request);
-    return json(HttpStatus.SERVICE_UNAVAILABLE, response);
+    return json(HttpStatus.SERVICE_UNAVAILABLE, body);
   }
 
+  /**
+   * 전용 처리가 없는 모든 예외의 마지막 처리.
+   *
+   * <p>두 갈래로 나뉜다(WD-626).
+   *
+   * <ol>
+   *   <li>Spring 표준 예외({@link org.springframework.web.ErrorResponse} — Spring MVC 표준 예외·{@link
+   *       ResponseStatusException}·ErrorResponseException 이 구현)이고 상태가 4xx 면 그 상태를 그대로 쓰는 한국어 JSON
+   *       으로 답한다. 예외가 실은 응답 헤더(Allow·Retry-After·WWW-Authenticate 등, {@code getHeaders()})도 그대로
+   *       싣는다. 예전에는 필수 쿠키 누락·ResponseStatusException(409) 등 클라이언트 잘못이 500 + ERROR 스택이 됐다. 예외마다 전용
+   *       처리를 늘리는 대신 여기서 한 번에 받아 앞으로 생길 표준 예외도 같은 길을 탄다. 더 구체적인 전용 처리(405·415·406 등)는 Spring 이 먼저
+   *       고르므로 가로채지 않는다.
+   *   <li>그 밖(5xx 상태의 표준 예외 포함)은 지금처럼 500 「예기치 않은 오류」+ ERROR 로그다.
+   * </ol>
+   *
+   * <p>응답이 이미 커밋됐으면(SSE·스트리밍이 흐르는 중) 본문은 {@link #json} 이 생략한다 — 로그는 위 규칙 그대로 남겨, 스트림 도중 난 서버 결함이
+   * DEBUG 에 묻히지 않게 한다.
+   *
+   * <p>프로젝트에도 같은 이름의 {@link ErrorResponse} DTO 가 있어 Spring 쪽 타입은 완전한 이름으로 쓴다.
+   */
   @ExceptionHandler(Exception.class)
   public ResponseEntity<ErrorResponse> handleException(Exception ex, HttpServletRequest request) {
+    if (ex instanceof org.springframework.web.ErrorResponse standard
+        && standard.getStatusCode().is4xxClientError()) {
+      // 클라이언트 잘못이라 ERROR 스택 없이 DEBUG 로만 남긴다(공개 엔드포인트로 오류 로그·알림을 채우지 못하게).
+      log.debug(
+          "Client error {} on {}: {}",
+          standard.getStatusCode(),
+          request.getRequestURI(),
+          ex.getMessage());
+      HttpStatus status = toHttpStatus(standard.getStatusCode());
+      ErrorResponse body = buildError(status, clientErrorMessage(ex, status), null, request);
+      return json(status, standard.getHeaders(), body);
+    }
     log.error("Unhandled exception", ex);
     // 화면이 서버 message 를 그대로 토스트로 보여 주므로(handleApiError) 사용자 안내 문장으로 쓴다(WD-110).
     // 예전 영어 문구("An unexpected error occurred")가 실행 실패 등에서 그대로 노출됐다.
-    ErrorResponse response =
-        buildError(
-            HttpStatus.INTERNAL_SERVER_ERROR, "예기치 않은 오류가 발생했습니다. 잠시 후 다시 시도하세요.", null, request);
-    return json(HttpStatus.INTERNAL_SERVER_ERROR, response);
+    ErrorResponse body =
+        buildError(HttpStatus.INTERNAL_SERVER_ERROR, UNEXPECTED_ERROR_MESSAGE, null, request);
+    return json(HttpStatus.INTERNAL_SERVER_ERROR, body);
+  }
+
+  /** 표준 예외의 상태 코드를 HttpStatus 로 바꾼다 — 표준에 없는 4xx 값(예: 499)은 400 으로 본다(WD-626). */
+  private static HttpStatus toHttpStatus(HttpStatusCode code) {
+    HttpStatus status = HttpStatus.resolve(code.value());
+    return status != null ? status : HttpStatus.BAD_REQUEST;
+  }
+
+  /**
+   * 4xx 표준 예외의 사용자 안내 문구(WD-626).
+   *
+   * <p>{@link ResponseStatusException} 의 reason 은 비어 있지 않으면 그대로 쓴다. 이 코드베이스의 약속(WD-110)이 「우리 코드가
+   * 던지는 예외 메시지는 화면 토스트에 그대로 보이는 한국어 사용자 문장」이기 때문이다 — 지금 유일하게 던지는 곳인 SavedQueryService 의 409(「공유 쿼리의
+   * SQL은 수정할 수 없습니다…」)도 이를 따른다. reason 이 비었거나 그 밖의 표준 예외(Spring 기본 상세는 영어 내부 문구)면 상태별 짧은 한국어 문구로
+   * 답한다.
+   */
+  private static String clientErrorMessage(Exception ex, HttpStatus status) {
+    if (ex instanceof ResponseStatusException rse && StringUtils.hasText(rse.getReason())) {
+      return rse.getReason();
+    }
+    return switch (status) {
+      case BAD_REQUEST -> "요청이 올바르지 않습니다.";
+      case UNAUTHORIZED -> "인증이 필요합니다.";
+      case FORBIDDEN -> "이 작업을 할 권한이 없습니다.";
+      case NOT_FOUND -> NOT_FOUND_MESSAGE;
+      case CONFLICT -> "요청이 현재 상태와 충돌합니다.";
+      case TOO_MANY_REQUESTS -> "요청이 너무 많습니다. 잠시 후 다시 시도하세요.";
+      default -> "요청을 처리할 수 없습니다.";
+    };
   }
 }
