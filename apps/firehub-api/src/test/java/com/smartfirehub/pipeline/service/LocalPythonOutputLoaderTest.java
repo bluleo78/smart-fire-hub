@@ -5,11 +5,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.service.DataTableRowService;
+import com.smartfirehub.dataset.service.DatasetDataWriteLock;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -23,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -254,7 +260,8 @@ class LocalPythonOutputLoaderTest {
   }
 
   private static LocalPythonOutputLoader loaderWith(DataTableRowService rowService) {
-    return new LocalPythonOutputLoader(rowService, mock(PlatformTransactionManager.class));
+    return new LocalPythonOutputLoader(
+        rowService, mock(PlatformTransactionManager.class), mock(DatasetDataWriteLock.class));
   }
 
   /**
@@ -361,6 +368,36 @@ class LocalPythonOutputLoaderTest {
     assertThat(
             loader.load("t", "[{\"name\": \"a\", \"created_at\": \"x\"}]", Map.of("name", "TEXT")))
         .isEqualTo(1);
+  }
+
+  /** WD-666: 출력 테이블에 쓰기 전에 같은 트랜잭션에서 그 테이블의 쓰기 잠금을 잡는다(잠금 → 삽입 순서). */
+  @Test
+  void load_locksOutputTableBeforeInsert() {
+    DataTableRowService rowService = mock(DataTableRowService.class);
+    DatasetDataWriteLock writeLock = mock(DatasetDataWriteLock.class);
+    LocalPythonOutputLoader loader =
+        new LocalPythonOutputLoader(rowService, mock(PlatformTransactionManager.class), writeLock);
+
+    loader.load("py_out", "[{\"name\": \"a\"}]", Map.of("name", "TEXT"));
+
+    InOrder order = inOrder(writeLock, rowService);
+    order.verify(writeLock).lockLoadTarget("py_out");
+    order.verify(rowService).insertBatch(eq("py_out"), anyList(), anyList(), nullable(Map.class));
+  }
+
+  /** WD-666: 잠금이 출력 데이터셋을 찾지 못하면(삭제됨) 삽입하지 않고 「출력 데이터셋 삭제」 안내로 실패한다. */
+  @Test
+  void load_outputDatasetGone_failsWithoutInsert() {
+    DataTableRowService rowService = mock(DataTableRowService.class);
+    DatasetDataWriteLock writeLock = mock(DatasetDataWriteLock.class);
+    doThrow(new DatasetNotFoundException()).when(writeLock).lockLoadTarget("py_out");
+    LocalPythonOutputLoader loader =
+        new LocalPythonOutputLoader(rowService, mock(PlatformTransactionManager.class), writeLock);
+
+    assertThatThrownBy(() -> loader.load("py_out", "[{\"name\": \"a\"}]", Map.of("name", "TEXT")))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage("Python 실행 실패: 출력 데이터셋이 삭제되어 결과를 적재하지 않았습니다.");
+    verifyNoInteractions(rowService);
   }
 
   /** WD-211: 이후 행에 첫 행의 키가 없으면 행 번호와 키를 짚는다 — executor 와 같은 문구. */

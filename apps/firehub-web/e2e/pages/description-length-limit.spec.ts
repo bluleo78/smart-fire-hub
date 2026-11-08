@@ -134,7 +134,8 @@ test.describe('설명 길이 상한 (WD-520)', () => {
     await setupApiConnectionDetailMocks(page, 1);
     await page.goto('/admin/api-connections/1');
     await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
-    const detailDescription = page.getByLabel('설명', { exact: true });
+    // 상세 화면도 선택 칸은 라벨에 「(선택)」을 붙인다(WD-666 — 생성 대화상자와 같은 표시)
+    const detailDescription = page.getByLabel('설명 (선택)', { exact: true });
     await expectCappedAt(detailDescription);
   });
 

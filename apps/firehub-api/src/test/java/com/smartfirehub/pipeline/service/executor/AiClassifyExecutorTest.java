@@ -33,6 +33,7 @@ import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.UnknownAgentTypeException;
 import com.smartfirehub.settings.service.AiCredentialService;
+import com.smartfirehub.support.PassThroughWriteLock;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
@@ -57,6 +58,7 @@ class AiClassifyExecutorTest {
 
   private AiAgentClient aiAgentClient;
   private DataTableRowService dataTableRowService;
+  private com.smartfirehub.dataset.service.DatasetDataWriteLock writeLock;
   private DataTableService dataTableService;
   private DatasetRepository datasetRepository;
   private ObjectMapper objectMapper;
@@ -101,6 +103,8 @@ class AiClassifyExecutorTest {
     targetResolver = mock(AiClassifyTargetResolver.class);
     when(targetResolver.resolve()).thenReturn(new AiClassifyTarget.UseChat());
 
+    // 출력 쓰기 잠금(WD-666) — 본문을 통과시키며, 어느 출력에 잠금을 걸었는지 verify 한다.
+    writeLock = PassThroughWriteLock.create();
     executor =
         new AiClassifyExecutor(
             aiAgentClient,
@@ -112,7 +116,8 @@ class AiClassifyExecutorTest {
             transactionTemplate,
             executionRepository,
             targetResolver,
-            datasetColumnRepository);
+            datasetColumnRepository,
+            writeLock);
   }
 
   @AfterEach
@@ -503,6 +508,9 @@ class AiClassifyExecutorTest {
     // REPLACE → 임시 테이블 생성 + 스왑
     verify(dataTableService).createTempTable("output_table");
     verify(dataTableService).swapTable("output_table", RUN_TEMP);
+    // WD-666: 맞바꿈은 출력 테이블 잠금 안에서, 임시 테이블 쓰기는 잠금 없이.
+    verify(writeLock).writeToOutput(eq("output_table"), any(Runnable.class));
+    verify(writeLock, never()).writeToOutput(eq(RUN_TEMP), any(Runnable.class));
     verify(dataTableRowService).insertTempBatch(eq(RUN_TEMP), anyList(), anyList(), anyMap());
   }
 
@@ -543,6 +551,8 @@ class AiClassifyExecutorTest {
     assertThat(result.executionLog()).contains("0 rows dropped");
     verify(aiAgentClient).classify(any(), any(), eq(1L));
     verify(dataTableRowService).insertBatch(eq("output_table"), anyList(), anyList(), anyMap());
+    // WD-666: APPEND 배치 쓰기는 출력 테이블의 쓰기 잠금 안에서 한다.
+    verify(writeLock).writeToOutput(eq("output_table"), any(Runnable.class));
   }
 
   @Test
@@ -1352,7 +1362,8 @@ class AiClassifyExecutorTest {
             transactionTemplate,
             executionRepository,
             new AiClassifyTargetResolver(brokenChat),
-            datasetColumnRepository);
+            datasetColumnRepository,
+            PassThroughWriteLock.create());
 
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
     when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
@@ -1501,7 +1512,8 @@ class AiClassifyExecutorTest {
         transactionTemplate,
         executionRepository,
         new AiClassifyTargetResolver(credentials),
-        datasetColumnRepository);
+        datasetColumnRepository,
+        PassThroughWriteLock.create());
   }
 
   /** 행 3개·배치 크기 1 = 캐시 미스 배치 3개. */

@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.AuthenticationException;
@@ -22,6 +23,7 @@ import org.springframework.security.web.AuthenticationEntryPoint;
  *
  * <p>403 이 아닌 401 을 쓰는 이유는 그대로다 — 프론트엔드의 토큰 갱신 인터셉터가 401 에서만 refresh 를 시도한다.
  */
+@Slf4j
 public class JsonAuthenticationEntryPoint implements AuthenticationEntryPoint {
 
   /** 고정 안내 문구. 내부 예외 메시지(영어·구현 세부)를 클라이언트에 노출하지 않으려고 쓰지 않는다. */
@@ -40,6 +42,19 @@ public class JsonAuthenticationEntryPoint implements AuthenticationEntryPoint {
       HttpServletResponse response,
       AuthenticationException authException)
       throws IOException {
+    // WD-666: 앞선 필터가 이미 응답을 커밋했으면 상태·본문을 쓰지 않는다 — 커밋된 응답에 쓰면 예외가 나거나 앞 본문 뒤에 JSON 이 붙어 깨진다.
+    if (response.isCommitted()) {
+      log.debug(
+          "인증 실패 401 을 쓰지 않음(응답이 이미 커밋됨): {} {}", request.getMethod(), request.getRequestURI());
+      return;
+    }
+    // WD-666: 401 을 디버그 로그로 남긴다 — 메서드·경로(쿼리 문자열 제외)·예외 종류만. 토큰·쿼리·예외 메시지는 비밀이 섞일 수 있어 싣지 않는다.
+    // 401 은 만료 토큰 갱신 흐름에서 흔해 info 이상이면 로그가 넘친다.
+    log.debug(
+        "인증 실패 401: {} {} ({})",
+        request.getMethod(),
+        request.getRequestURI(),
+        authException.getClass().getSimpleName());
     HttpStatus status = HttpStatus.UNAUTHORIZED;
     ErrorResponse body =
         new ErrorResponse(

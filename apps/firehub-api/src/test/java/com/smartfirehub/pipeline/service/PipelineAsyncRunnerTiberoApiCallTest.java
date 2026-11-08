@@ -24,6 +24,7 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.service.DatasetDataWriteLock;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.security.PermissionChecker;
@@ -44,6 +45,7 @@ import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.securitylevel.pythonread.PythonReadGrants;
+import com.smartfirehub.support.PassThroughWriteLock;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -88,6 +90,8 @@ class PipelineAsyncRunnerTiberoApiCallTest {
   @Mock PipelineTenantAdmission tenantAdmission;
   @Mock PipelineRepository pipelineRepository;
   @Mock DataTableService dataTableService;
+  // 출력 쓰기 잠금(WD-666) — 목 DataTableService 의 가짜 출력 이름에는 데이터셋 행이 없어, 본문만 통과시키는 목으로 둔다.
+  @Mock DatasetDataWriteLock datasetWriteLock;
   @Mock DataTableRowService dataTableRowService;
   @Mock DatasetRepository datasetRepository;
   @Mock DatasetColumnRepository columnRepository;
@@ -125,6 +129,7 @@ class PipelineAsyncRunnerTiberoApiCallTest {
 
   @BeforeEach
   void setUp() {
+    PassThroughWriteLock.stub(datasetWriteLock);
     TenantContext.set(TENANT_ID);
     lenient().when(dataStoreResolver.currentBackend()).thenReturn(DataStoreBackend.TIBERO);
     lenient()

@@ -59,7 +59,7 @@ class DatasetDataServiceTxTest extends IntegrationTestBase {
     when(datasets.findById(anyLong())).thenReturn(Optional.of(mock(DatasetResponse.class)));
     GuardedSqlExecutor executor = mock(GuardedSqlExecutor.class);
     SqlQueryResponse ok = new SqlQueryResponse("SELECT", List.of(), List.of(), 0, 1L, null);
-    when(executor.executeDatasetQuery(any(), anyString(), anyInt()))
+    when(executor.executeDatasetQuery(any(), anyString(), anyInt(), any()))
         .thenAnswer(
             inv -> {
               execTx.add(TransactionSynchronizationManager.isActualTransactionActive());
@@ -85,6 +85,8 @@ class DatasetDataServiceTxTest extends IntegrationTestBase {
             executor,
             mock(ClearanceResolver.class),
             history,
+            // 쓰기 대상 잠금(WD-666)은 실행기 mock 이 콜백을 부르지 않아 닿지 않는다.
+            mock(DatasetDataWriteLock.class),
             new TransactionTemplate(transactionManager),
             schema,
             // 이 테스트는 SQL 실행 구간만 본다 — 행 변경 감사(WD-463)는 호출되지 않는다.
@@ -123,7 +125,7 @@ class DatasetDataServiceTxTest extends IntegrationTestBase {
   @Test
   void tibero_executionThrows_noHistory() {
     Setup s = setup(true);
-    when(s.executor().executeDatasetQuery(any(), anyString(), anyInt()))
+    when(s.executor().executeDatasetQuery(any(), anyString(), anyInt(), any()))
         .thenThrow(new SqlQueryException("거부"));
 
     assertThatThrownBy(() -> s.service().executeQuery(1L, REQ, 7L))

@@ -25,6 +25,7 @@ import com.smartfirehub.dataset.repository.DatasetReferenceRepository;
 import com.smartfirehub.dataset.repository.DatasetReferenceRepository.DashboardHit;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
+import com.smartfirehub.dataset.repository.DatasetWriteTarget;
 import com.smartfirehub.dataset.repository.SearchColumnRepository;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.rowsearch.RowSearchIndex;
@@ -803,8 +804,8 @@ public class DatasetService {
     // 동시 삭제 직렬화(WD-583): 무엇보다 먼저 데이터셋 행을 FOR UPDATE 로 잠근다. 예전에는 잠금 없이 findById 만 해서 같은 데이터셋 삭제를
     // 동시에 6번 보내면 모두 행을 본 채 진행해 전부 204·감사 DELETE 6건이 남았다. 이제 뒤 요청은 이 잠금에서 앞 요청 커밋을 기다렸다가
     // 행이 없어 404 로 끝나 참조 검사·색인 삭제·DROP·감사가 한 번만 돈다. 행을 가장 먼저 잡아 컬럼·테이블 잠금보다 앞서므로 필드 변경
-    // 경로(데이터셋 행 → 테이블)와 잠금 순서가 같다. 행 쓰기(DatasetDataService — 같은 행 FOR SHARE, WD-551·WD-566)도
-    // 이 잠금 뒤로 줄 서므로, DROP 이 커밋된 뒤 들어온 행 추가는 「테이블 없음」 500 이 아니라 404 로 끝난다.
+    // 경로(데이터셋 행 → 테이블)와 잠금 순서가 같다. 데이터 쓰기(DatasetDataWriteLock — 같은 행 KEY SHARE, WD-666)도 이 잠금 뒤로 줄
+    // 서므로, DROP 이 커밋된 뒤 들어온 행 추가는 「테이블 없음」 500 이 아니라 404 로 끝난다.
     if (!datasetRepository.lockForDelete(id)) {
       throw new DatasetNotFoundException();
     }
@@ -1434,12 +1435,14 @@ public class DatasetService {
   /** 필드 순서를 바꾸고, 순서가 실제로 바뀌면 감사(WD-463, FIELD_REORDER)를 남긴다. */
   @Transactional
   public void reorderColumns(Long datasetId, ReorderColumnsRequest request, Long userId) {
-    // WD-551·WD-566: 필드 목록을 읽기 전에 데이터셋 행을 필드 변경과 같은 잠금(NO KEY UPDATE)으로 잡아 같은 데이터셋의 순서 변경·필드
-    // 변경을 줄 세운다. 잠금 없이 두면 순서가 다른 두 요청이 dataset_column 행을 서로 반대 순서로 UPDATE 해 교착(409)이 났다. 잠근 뒤에
-    // 데이터셋을 읽으므로 그 사이 삭제됐다면 404 다.
-    datasetRepository.lockForColumnChange(datasetId);
-    DatasetResponse dataset =
-        datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
+    // WD-551·WD-566: 필드 목록을 읽기 전에 데이터셋 행을 잡아 같은 데이터셋의 순서 변경·필드 변경을 줄 세운다. 잠금 없이 두면 순서가 다른 두
+    // 요청이 dataset_column 행을 서로 반대 순서로 UPDATE 해 교착(409)이 났다. WD-666: 잠금과 조회를 한 문장으로 하고(그 사이 삭제됐으면
+    // 404), 모드는 NO KEY UPDATE 다 — 순서 변경은 데이터 테이블을 건드리지 않으므로 데이터 쓰기(KEY SHARE)를 막을 이유가 없고, 순서 변경·필드
+    // 변경(FOR UPDATE)끼리는 여전히 충돌한다.
+    DatasetWriteTarget dataset =
+        datasetRepository
+            .lockForColumnReorder(datasetId)
+            .orElseThrow(() -> new DatasetNotFoundException());
 
     List<DatasetColumnResponse> existingColumns = columnRepository.findByDatasetId(datasetId);
     Set<Long> existingIds =

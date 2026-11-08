@@ -394,7 +394,7 @@ test.describe('API 연결 페이지', () => {
     await nameInput.fill('수정된 API 이름');
 
     // 설명 수정 — placeholder="설명 (선택)" 필드
-    const descInput = page.getByPlaceholder('설명 (선택)');
+    const descInput = page.getByLabel('설명 (선택)', { exact: true });
     await descInput.clear();
     await descInput.fill('새 설명 텍스트');
 
@@ -422,7 +422,7 @@ test.describe('API 연결 페이지', () => {
       await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
 
       // dirty 상태 만들기 — 설명 필드만 수정 (저장 버튼은 누르지 않음)
-      const descInput = page.getByPlaceholder('설명 (선택)');
+      const descInput = page.getByLabel('설명 (선택)', { exact: true });
       await descInput.fill('PE-TEST-unsaved-change-probe');
 
       // 사이드바 "사용자 관리" 링크 클릭
@@ -442,7 +442,7 @@ test.describe('API 연결 페이지', () => {
       await setupApiConnectionDetailMocks(page, 1);
       await page.goto('/admin/api-connections/1');
 
-      const descInput = page.getByPlaceholder('설명 (선택)');
+      const descInput = page.getByLabel('설명 (선택)', { exact: true });
       await descInput.fill('PE-TEST-unsaved-change-probe');
 
       await page.getByRole('navigation').getByRole('link', { name: '사용자 관리' }).click();
@@ -462,7 +462,7 @@ test.describe('API 연결 페이지', () => {
       await setupApiConnectionDetailMocks(page, 1);
       await page.goto('/admin/api-connections/1');
 
-      const descInput = page.getByPlaceholder('설명 (선택)');
+      const descInput = page.getByLabel('설명 (선택)', { exact: true });
       await descInput.fill('PE-TEST-unsaved-change-probe');
 
       await page.getByRole('navigation').getByRole('link', { name: '사용자 관리' }).click();
@@ -486,7 +486,7 @@ test.describe('API 연결 페이지', () => {
 
       await page.goto('/admin/api-connections/1');
 
-      const descInput = page.getByPlaceholder('설명 (선택)');
+      const descInput = page.getByLabel('설명 (선택)', { exact: true });
       await descInput.fill('저장된 설명');
       await page.getByRole('button', { name: '저장' }).click();
 
@@ -511,7 +511,7 @@ test.describe('API 연결 페이지', () => {
       await page.goto('/admin/api-connections/1');
       await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
 
-      const descInput = page.getByPlaceholder('설명 (선택)');
+      const descInput = page.getByLabel('설명 (선택)', { exact: true });
       await descInput.fill('PE-TEST-back-button-probe');
 
       await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
@@ -534,7 +534,7 @@ test.describe('API 연결 페이지', () => {
       await setupApiConnectionDetailMocks(page, 1);
       await page.goto('/admin/api-connections/1');
 
-      const descInput = page.getByPlaceholder('설명 (선택)');
+      const descInput = page.getByLabel('설명 (선택)', { exact: true });
       await descInput.fill('PE-TEST-back-button-probe');
 
       await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
@@ -567,7 +567,7 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
 
     // 헬스체크 경로 입력란을 비운다 (placeholder 또는 label 기준 셀렉터 — 검증 가능한 안정 셀렉터 사용)
-    const hcInput = page.getByPlaceholder('/health (선택)');
+    const hcInput = page.getByLabel('헬스체크 경로 (선택)', { exact: true });
     await hcInput.clear();
 
     await page.getByRole('button', { name: '저장' }).click();
@@ -1190,16 +1190,19 @@ test.describe('API 연결 페이지', () => {
     await page.getByRole('option', { name: 'Bearer Token' }).click();
     const tokenInput = page.getByRole('textbox', { name: 'Bearer Token' });
 
-    // 만들기는 토큰 칸 인라인 오류(WD-561), 연결 테스트는 토스트로 같은 문구를 안내한다 — 그 뒤에 요청이 없었음을 본다.
+    // 만들기(WD-561)와 연결 테스트(WD-666) 모두 토큰 칸 인라인 오류로 같은 문구를 안내한다 — 그 뒤에 요청이 없었음을 본다.
     const missingText = 'Bearer 토큰을 입력하세요.';
-    const missingToast = page.locator('[data-sonner-toast]').filter({ hasText: missingText });
 
     // 접두어만(공백 포함) — 생성·연결 테스트 모두 막힌다
     await tokenInput.fill('Bearer   ');
     await page.getByRole('button', { name: '만들기' }).click();
     await expect(tokenInput).toHaveAccessibleDescription(missingText);
+    // 오류를 지우려고 한 글자 고쳤다가 되돌린 뒤 연결 테스트 — 테스트도 같은 인라인 오류를 다시 단다(토스트 없음)
+    await tokenInput.fill('Bearer  ');
+    await expect(tokenInput).not.toHaveAccessibleDescription(missingText);
     await page.getByRole('button', { name: '연결 테스트' }).click();
-    await expect(missingToast).toHaveCount(1);
+    await expect(tokenInput).toHaveAccessibleDescription(missingText);
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: missingText })).toHaveCount(0);
     // 겹친 접두어도 빈 토큰이다 — 입력하면 오류가 지워지고, 다시 만들기를 누르면 같은 오류가 다시 붙는다
     await tokenInput.fill('bearer bearer');
     await expect(tokenInput).not.toHaveAccessibleDescription(missingText);
@@ -1344,7 +1347,7 @@ test.describe('API 연결 페이지', () => {
 
   // (WD-623) 저장 전 "연결 테스트" — 비밀 값이 비면 서버를 부르지 않고 서버와 같은 안내를 토스트로 보인다.
   // 서버도 빈 비밀의 저장 전 테스트를 400 으로 거절하므로(대상 서버 401/403 대신 무엇을 빠뜨렸는지 안내) 화면에서 먼저 막는다.
-  test('생성 다이얼로그 "연결 테스트" — API 키·Bearer 토큰이 비면 안내 토스트만 보이고 test API 를 부르지 않는다 (WD-623)', async ({
+  test('생성 다이얼로그 "연결 테스트" — API 키·Bearer 토큰이 비면 그 칸 안내만 보이고 test API 를 부르지 않는다 (WD-623·WD-666)', async ({
     authenticatedPage: page,
   }) => {
     await setupApiConnectionListMocks(page);
@@ -1963,5 +1966,189 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
     await page.getByRole('button', { name: '취소' }).click();
     await page.getByRole('button', { name: '인증 정보 변경' }).click();
     await expect(page.getByRole('alert')).toHaveCount(0);
+  });
+});
+
+/**
+ * WD-666 — WD-561 후속: 연결 테스트 인라인 오류·상세 화면 오류 초기화·키 칸 필수 표시/안내 일치·안내 aria 연결·필수 표시 정렬
+ */
+test.describe('API 연결 인라인 오류 후속 (WD-666)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  /** 저장 전 연결 테스트(dry-run) 응답 — 호출 횟수를 세려고 capture 한다 */
+  async function mockDryRun(page: Page) {
+    return mockApi(
+      page,
+      'POST',
+      '/api/v1/api-connections/test',
+      {
+        ok: true,
+        status: 200,
+        latencyMs: 10,
+        errorMessage: null,
+        requestUrl: 'https://api.example.com',
+        responseBodyPreview: null,
+        responseHeaders: {},
+        responseContentType: null,
+      },
+      { capture: true },
+    );
+  }
+
+  test('연결 테스트 — 칸 검증 실패는 토스트가 아니라 그 칸 인라인 오류로 뜨고 첫 오류 칸으로 포커스, 요청 없음', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+    const capture = await mockDryRun(page);
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    const dialog = page.getByRole('dialog');
+
+    const baseUrlInput = dialog.getByPlaceholder('https://api.example.com');
+    const healthInput = dialog.getByPlaceholder('/health');
+    const keyInput = dialog.getByPlaceholder('API 키를 입력하세요');
+    await baseUrlInput.fill('ftp://bad');
+    await healthInput.fill('health');
+    await dialog.getByRole('button', { name: '연결 테스트' }).click();
+
+    await expect(baseUrlInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(baseUrlInput).toHaveAccessibleDescription('Base URL은 http 또는 https로 시작해야 합니다.');
+    // 헬스체크 경로는 도움말 설명을 지킨 채 오류가 이어진다
+    await expect(healthInput).toHaveAccessibleDescription(/헬스체크 경로는 \/로 시작해야 합니다\./);
+    await expect(keyInput).toHaveAccessibleDescription('API 키를 입력하세요.');
+    await expect(baseUrlInput).toBeFocused();
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+    expect(capture.requests).toHaveLength(0);
+  });
+
+  test('연결 테스트 — 앞선 만들기의 오래된 인라인 오류를 지우고, 통과하면 결과를 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+    const capture = await mockDryRun(page);
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    const dialog = page.getByRole('dialog');
+
+    // 빈 채로 만들기 → 네 칸 오류
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(dialog.getByRole('alert')).toHaveCount(4);
+
+    // 테스트에 필요한 칸만 채우고(이름·헤더 이름은 비운 채) 연결 테스트 — 오래된 오류가 모두 지워진다
+    await dialog.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await dialog.getByPlaceholder('API 키를 입력하세요').fill('k-123');
+    await dialog.getByRole('button', { name: '연결 테스트' }).click();
+    await expect(dialog.getByText('연결 성공')).toBeVisible();
+    await expect(dialog.getByRole('alert')).toHaveCount(0);
+    await expect(dialog.getByPlaceholder('예: Make.com API')).not.toHaveAttribute('aria-invalid', 'true');
+    expect(capture.requests).toHaveLength(1);
+  });
+
+  test('상세 화면 — 연결을 다시 불러와 폼이 새 값으로 채워지면 이전 값의 인라인 오류가 남지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 조회할 때마다 수정 시각·이름이 바뀐 연결을 돌려준다 — 저장 뒤 재조회가 폼을 실제로 다시 채우게 한다
+    let fetchCount = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/api-connections/1',
+      async (route) => {
+        if (route.request().method() === 'GET') {
+          fetchCount += 1;
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(
+              createApiConnection({
+                id: 1,
+                name: `서버 이름 ${fetchCount}`,
+                updatedAt: `2024-01-0${fetchCount}T00:00:00Z`,
+              }),
+            ),
+          });
+        }
+        if (route.request().method() === 'PUT') {
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1 }) });
+        }
+        return route.continue();
+      },
+    );
+    await page.goto('/admin/api-connections/1');
+    const nameInput = page.getByLabel(/^연결 이름/);
+    await expect(nameInput).toHaveValue('서버 이름 1');
+
+    // 기본 정보 오류(이름 비움)를 만든다
+    await nameInput.fill('');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await expect(nameInput).toHaveAccessibleDescription('연결 이름을 입력하세요.');
+
+    // 인증만 새 키로 저장 → 성공 뒤 재조회가 기본 정보 폼을 서버 값으로 다시 채운다
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await page.getByPlaceholder('Authorization').fill('X-Key');
+    await page.getByPlaceholder('새 API 키를 입력하세요').fill('new-key');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    // 저장 성공은 목록·상세 쿼리를 함께 무효화해 재조회가 한 번 이상 일어난다 — 첫 값이 아니기만 하면 된다
+    await expect(nameInput).toHaveValue(/^서버 이름 [2-9]$/);
+
+    // 채워진 이름 옆에 「연결 이름을 입력하세요.」가 남으면 안 된다
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('상세 화면 — API_KEY 인데 저장된 키가 없으면 키 칸이 필수(*)로 보이고 유지 안내가 없으며, 비우면 키 칸 오류', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/api-connections/1',
+      createApiConnection({ id: 1, authType: 'API_KEY', maskedAuthConfig: { placement: 'header', headerName: 'X-Key' } }),
+    );
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/api-connections/1', { id: 1 }, { capture: true });
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+
+    const keyInput = page.getByPlaceholder('새 API 키를 입력하세요');
+    await expect(page.locator('label', { hasText: '키 값' })).toContainText('*');
+    await expect(page.getByText('비워 두면 저장된 키를 그대로 사용합니다.')).toHaveCount(0);
+
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect(keyInput).toHaveAccessibleDescription('API 키를 입력하세요.');
+    await expect(keyInput).toBeFocused();
+    expect(updateCapture.requests?.length ?? 0).toBe(0);
+  });
+
+  test('상세 화면 — 저장된 키가 있으면 키 칸은 * 가 없고, 유지 안내가 입력의 aria-describedby 로 이어진다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+
+    const keyInput = page.getByPlaceholder('새 API 키를 입력하세요');
+    await expect(page.locator('label', { hasText: '키 값' })).not.toContainText('*');
+    await expect(keyInput).toHaveAccessibleDescription('비워 두면 저장된 키를 그대로 사용합니다.');
+  });
+
+  test('상세 화면 — 필수·선택 표시가 생성 대화상자와 같다(필수 * · 선택 칸은 「(선택)」)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    await expect(page.locator('label', { hasText: '연결 이름' })).toContainText('*');
+    await expect(page.locator('label', { hasText: 'Base URL' })).toContainText('*');
+    // 선택 칸은 생성 대화상자처럼 라벨에 「(선택)」을 붙이고 * 는 없다
+    await expect(page.getByLabel('설명 (선택)', { exact: true })).toBeVisible();
+    await expect(page.getByLabel('헬스체크 경로 (선택)', { exact: true })).toBeVisible();
+
+    // 인증 편집도 같다 — 헤더 이름·Bearer 토큰은 필수
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await expect(page.locator('label', { hasText: '헤더 이름' })).toContainText('*');
+    await page.getByRole('combobox').first().click();
+    await page.getByRole('option', { name: 'Bearer Token' }).click();
+    await expect(page.locator('label', { hasText: 'Bearer Token' })).toContainText('*');
   });
 });

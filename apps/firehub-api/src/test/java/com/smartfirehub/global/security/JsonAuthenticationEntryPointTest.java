@@ -1,5 +1,6 @@
 package com.smartfirehub.global.security;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsStringIgnoringCase;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
@@ -9,11 +10,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.support.IntegrationTestBase;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
@@ -66,6 +76,57 @@ class JsonAuthenticationEntryPointTest extends IntegrationTestBase {
   @Test
   void publicEndpoint_withoutToken_stillWorks() throws Exception {
     mockMvc.perform(get("/api/v1/auth/signup-status")).andExpect(status().isOk());
+  }
+
+  /**
+   * WD-666: 앞 필터가 이미 응답을 커밋했으면(본문을 쓰기 시작함) 진입점은 상태·본문을 건드리지 않는다 — 커밋된 응답에 쓰면 IllegalStateException
+   * 이나 깨진 본문이 된다.
+   */
+  @Test
+  void committedResponse_isLeftUntouched() throws Exception {
+    JsonAuthenticationEntryPoint entryPoint = new JsonAuthenticationEntryPoint(new ObjectMapper());
+    MockHttpServletRequest request = new MockHttpServletRequest("GET", PROTECTED_PATH);
+    MockHttpServletResponse response = new MockHttpServletResponse();
+    response.setStatus(200);
+    response.getWriter().write("partial");
+    response.flushBuffer();
+
+    entryPoint.commence(request, response, new BadCredentialsException("x"));
+
+    assertThat(response.getStatus()).isEqualTo(200);
+    assertThat(response.getContentAsString()).isEqualTo("partial");
+  }
+
+  /**
+   * WD-666: 401 을 디버그 로그로 남긴다 — 메서드·경로·예외 종류만 싣고, 쿼리 문자열·Authorization 값·예외 메시지 같은 비밀이 섞일 수 있는 값은
+   * 싣지 않는다.
+   */
+  @Test
+  void unauthorized_isLoggedAtDebugWithoutSecrets() throws Exception {
+    Logger logger = (Logger) LoggerFactory.getLogger(JsonAuthenticationEntryPoint.class);
+    Level previous = logger.getLevel();
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    logger.setLevel(Level.DEBUG);
+    try {
+      MockHttpServletRequest request = new MockHttpServletRequest("GET", PROTECTED_PATH);
+      request.setQueryString("token=secret-token");
+      request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer secret-jwt");
+      new JsonAuthenticationEntryPoint(new ObjectMapper())
+          .commence(
+              request, new MockHttpServletResponse(), new BadCredentialsException("secret-detail"));
+
+      assertThat(appender.list).hasSize(1);
+      ILoggingEvent event = appender.list.get(0);
+      assertThat(event.getLevel()).isEqualTo(Level.DEBUG);
+      String line = event.getFormattedMessage();
+      assertThat(line).contains("GET").contains(PROTECTED_PATH).contains("BadCredentialsException");
+      assertThat(line).doesNotContain("secret");
+    } finally {
+      logger.detachAppender(appender);
+      logger.setLevel(previous);
+    }
   }
 
   /** 401 · UTF-8 · ErrorResponse 전 필드 · 한국어 문구 · 요청 경로를 한 번에 확인한다. */

@@ -44,9 +44,13 @@ public interface DatasetRepository {
 
   /**
    * WD-186: 필드 이름 변경·타입 변경·삭제가 잡는 데이터셋 행 잠금. 매핑 저장·활성화(MappingService.validate — 이 행을 FOR SHARE 로
-   * 잡고 나서 필드 목록을 읽는다)와 직렬화해, "옛 필드 목록으로 검증한 매핑이 필드 변경 뒤에 저장되는" 틈을 없앤다. NO KEY UPDATE 인 이유: FOR
-   * SHARE 와는 충돌하면서도, 이 데이터셋을 FK 로 참조하는 단순 삽입(KEY SHARE)까지 막지는 않는다. 잠금 순서(교착 방지): 온톨로지 행 → 데이터셋 행 →
-   * 매핑 행. MappingReferenceService.lockForColumnChange 참고.
+   * 잡고 나서 필드 목록을 읽는다)와 직렬화해, "옛 필드 목록으로 검증한 매핑이 필드 변경 뒤에 저장되는" 틈을 없앤다. 잠금 순서(교착 방지): 온톨로지 행 → 데이터셋
+   * 행 → 매핑 행. MappingReferenceService.lockForColumnChange 참고.
+   *
+   * <p>WD-666: 모드는 FOR UPDATE 다(예전 NO KEY UPDATE). 데이터 테이블 쓰기(가져오기·파이프라인 적재·SQL DML·행 쓰기)가 정보 수정을
+   * 막지 않도록 KEY SHARE({@link #lockForDataWrite})만 잡게 됐고, KEY SHARE 와 충돌하는 행 잠금은 FOR UPDATE 뿐이라 구조
+   * 변경이 쓰기 뒤로 줄 서려면 이 모드여야 한다. 대가: 구조 변경이 도는 짧은 동안 이 데이터셋을 FK 로 참조하는 다른 트랜잭션의 삽입(KEY SHARE)도
+   * 기다린다(WD-186 이 NO KEY UPDATE 를 고른 이유를 의도적으로 맞바꾼 것).
    */
   void lockForColumnChange(Long id);
 
@@ -60,10 +64,42 @@ public interface DatasetRepository {
 
   /**
    * WD-186: 매핑 저장·활성화가 필드 목록을 읽기 전에 잡는 공유 잠금 — 진행 중인 필드 변경(lockForColumnChange)이 끝난 뒤의 필드 목록으로 검증하게
-   * 한다. 매핑 저장끼리는 서로 막지 않는다(SHARE 는 서로 호환). WD-551·WD-566: 데이터 탭 행 쓰기(DatasetDataService)도 데이터 테이블에
-   * 쓰기 전에 이 잠금을 잡아 구조 변경(필드 변경·순서·truncate·replace·삭제) 뒤로 줄 선다.
+   * 한다. 매핑 저장끼리는 서로 막지 않는다(SHARE 는 서로 호환). 데이터 테이블 쓰기는 이 잠금이 아니라 {@link #lockForDataWrite} 를
+   * 쓴다(WD-666 — SHARE 는 정보 수정의 UPDATE 와 충돌한다).
    */
   void lockForShare(Long id);
+
+  /**
+   * WD-666: 데이터 테이블 쓰기(행 추가·수정·삭제, 가져오기, 파이프라인 적재·맞바꿈, 사용자 SQL DML)의 첫 문장 — 데이터셋 행을 {@code FOR KEY
+   * SHARE OF dataset} 로 잡으면서 쓰기에 필요한 값을 같은 문장으로 읽는다(잠금·조회 한 번).
+   *
+   * <p>왜 KEY SHARE: 정보 수정(이름·설명 — {@link #lockUpdatedAtById} 의 NO KEY UPDATE 와 이어지는 UPDATE)과는 충돌하지
+   * 않고, 구조 변경({@link #lockForColumnChange}·{@link #lockForStructureWrite}·{@link #lockForDelete} —
+   * 모두 FOR UPDATE)과만 충돌해 그 뒤로 줄 선다. 쓰기끼리도 서로 막지 않는다. 한 문장이므로 READ COMMITTED 는 잠금을 기다린 뒤 행을 다시 확인한다
+   * — 기다리는 동안 삭제가 커밋됐다면 빈 값이다.
+   *
+   * @return 잠근 데이터셋의 쓰기 대상 정보, 행이 없으면(삭제됨) 빈 값
+   */
+  Optional<DatasetWriteTarget> lockForDataWrite(Long id);
+
+  /** {@link #lockForDataWrite} 의 테이블 이름판 — 출력 테이블 이름만 아는 파이프라인 적재가 쓴다(현재 테넌트, RLS). */
+  Optional<DatasetWriteTarget> lockForDataWriteByTableName(String tableName);
+
+  /**
+   * WD-666: 데이터 테이블을 통째로 바꾸는 쓰기(truncate·replace)와 필드 순서 변경의 첫 문장 — {@code FOR UPDATE OF dataset} 로
+   * 잡으며 같은 문장으로 읽는다. 데이터 쓰기(KEY SHARE)·필드 변경과 줄 선다. 정보 수정과도 짧게 줄 선다(구조 변경에만 강한 잠금을 쓴다).
+   *
+   * @return 잠근 데이터셋의 쓰기 대상 정보, 행이 없으면 빈 값
+   */
+  Optional<DatasetWriteTarget> lockForStructureWrite(Long id);
+
+  /**
+   * WD-551·WD-666: 필드 순서 변경의 첫 문장 — {@code FOR NO KEY UPDATE} 로 잡으며 같은 문장으로 읽는다. 순서 변경·필드 변경(FOR
+   * UPDATE)끼리 줄 세우되, 데이터 테이블을 건드리지 않으므로 데이터 쓰기(KEY SHARE)는 막지 않는다.
+   *
+   * @return 잠근 데이터셋 정보, 행이 없으면 빈 값
+   */
+  Optional<DatasetWriteTarget> lockForColumnReorder(Long id);
 
   /**
    * WD-583: 데이터셋 삭제가 맨 앞에서 잡는 배타 잠금({@code FOR UPDATE}). 같은 데이터셋 삭제가 동시에 들어오면 뒤 요청은 이 잠금에서 앞 요청 커밋을
@@ -87,7 +123,8 @@ public interface DatasetRepository {
   Optional<Long> findBySourcePipelineStepId(Long stepId);
 
   /**
-   * 수정 시각을 행 잠금(FOR UPDATE)과 함께 읽는다 — 정보 수정의 편집 충돌(낙관적 잠금) 비교용(WD-575, 차트 WD-364 와 같은 방식).
+   * 수정 시각을 행 잠금(FOR NO KEY UPDATE)과 함께 읽는다 — 정보 수정의 편집 충돌(낙관적 잠금) 비교용(WD-575, 차트 WD-364 와 같은 방식).
+   * 정보 수정끼리는 여전히 줄 서고, 데이터 쓰기(KEY SHARE, WD-666)와는 충돌하지 않는다 — 키를 바꾸지 않으므로 FOR UPDATE 일 이유가 없다.
    *
    * <p>잠금 없이 읽고 비교하면 동시에 들어온 두 저장이 같은 값을 읽어 둘 다 통과한다. 잠금을 잡으면 나중 저장은 앞 저장이 커밋될 때까지 기다렸다가 바뀐 값을 읽어
    * 충돌로 거부된다. 행이 없으면 빈 값, 행은 있는데 수정 시각이 비어 있으면 {@code updatedAt} 이 null 인 값이다.

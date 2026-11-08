@@ -19,6 +19,7 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.service.DatasetDataWriteLock;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -91,6 +92,9 @@ public class DataImportService {
   private final AsyncJobService asyncJobService;
   private final TransactionTemplate transactionTemplate;
   private final NotificationService notificationService;
+
+  /** 데이터 테이블 쓰기 공용 잠금(WD-666) — 대상 테이블에 닿는 트랜잭션의 첫 문장으로 데이터셋 행을 잡는다. */
+  private final DatasetDataWriteLock writeLock;
 
   /** DB 오류 판정 창구 — 진행 중 임포트 인덱스 충돌을 벤더 중립으로 알아본다(WD-486). */
   private final PlatformDbErrors platformDbErrors;
@@ -911,6 +915,9 @@ public class DataImportService {
           || (importMode == ImportMode.REPLACE && pkColumns.isEmpty())) {
         transactionTemplate.executeWithoutResult(
             status -> {
+              // WD-666: 대상 테이블에 쓰기 전, 같은 트랜잭션에서 데이터셋 행을 잡는다 — 삽입 스트림이 커밋될 때까지 truncate·NOT NULL
+              // 필드 추가·삭제가 이 뒤로 줄 선다(정보 수정은 막지 않는다).
+              lockTargetForWrite(datasetId);
               try {
                 fileParserService.parseStreaming(
                     path, fileTypeLower, parseOptionsFinal, BATCH_SIZE, insertBatch);
@@ -967,11 +974,20 @@ public class DataImportService {
       if (validCountFinal > 0) {
         if (importMode == ImportMode.UPSERT) {
           log.info("UPSERT mode: promoting staging to target on PK columns {}", pkColumns);
+          // WD-666: promote 는 대상 테이블 쓰기다 — 예전에는 트랜잭션 없이 나갔다. 잠금과 같은 트랜잭션으로 묶어 구조 변경·삭제와 줄 세운다.
           DataTableRowService.UpsertResult upsertResult =
-              dataWrite(
-                  () ->
-                      dataTableRowService.promoteStagingToUpsert(
-                          stagingTableFinal, dataset.tableName(), columnNames, pkColumns, null));
+              transactionTemplate.execute(
+                  status -> {
+                    lockTargetForWrite(datasetId);
+                    return dataWrite(
+                        () ->
+                            dataTableRowService.promoteStagingToUpsert(
+                                stagingTableFinal,
+                                dataset.tableName(),
+                                columnNames,
+                                pkColumns,
+                                null));
+                  });
           log.info(
               "UPSERT mode: promoted — inserted={}, updated={}",
               upsertResult.inserted(),
@@ -985,13 +1001,16 @@ public class DataImportService {
           // 교체는 대상을 비운 뒤 넣으므로, 같은 트랜잭션에서 센 대상 행 수가 곧 반영된 행 수다
           long replacedRows =
               transactionTemplate.execute(
-                  status ->
-                      dataWrite(
-                          () -> {
-                            dataTableRowService.promoteStagingToReplace(
-                                stagingTableFinal, dataset.tableName(), columnNames, pkColumns);
-                            return dataTableRowService.countRows(dataset.tableName());
-                          }));
+                  status -> {
+                    // WD-666: 교체 promote 도 같은 트랜잭션의 첫 문장으로 데이터셋 행을 잡는다.
+                    lockTargetForWrite(datasetId);
+                    return dataWrite(
+                        () -> {
+                          dataTableRowService.promoteStagingToReplace(
+                              stagingTableFinal, dataset.tableName(), columnNames, pkColumns);
+                          return dataTableRowService.countRows(dataset.tableName());
+                        });
+                  });
           duplicateKeyRows = (int) Math.max(0, validCountFinal - replacedRows);
         }
       }
@@ -1306,6 +1325,21 @@ public class DataImportService {
           write.run();
           return null;
         });
+  }
+
+  /** 임포트 도중 대상 데이터셋이 지워졌을 때의 실패 문구(WD-666) — 원문 SQL 오류(「테이블 없음」) 대신 보인다. */
+  static final String DATASET_GONE_MESSAGE = "임포트 중 데이터셋이 삭제되어 데이터를 적재하지 않았습니다.";
+
+  /**
+   * 대상 테이블 쓰기 트랜잭션의 첫 문장 — 데이터셋 행 쓰기 잠금(KEY SHARE, {@link DatasetDataWriteLock})을 잡는다(WD-666). 그 사이
+   * 데이터셋이 지워졌으면 사라진 테이블에 쓰지 않고 이유가 담긴 실패로 끝낸다.
+   */
+  private void lockTargetForWrite(Long datasetId) {
+    try {
+      writeLock.lockForDataWrite(datasetId);
+    } catch (DatasetNotFoundException e) {
+      throw new ImportProcessingException(DATASET_GONE_MESSAGE, e);
+    }
   }
 
   /** 값을 돌려주는 데이터 행 쓰기용 {@link #dataWrite(Runnable)}. */

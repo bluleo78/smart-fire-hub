@@ -14,6 +14,7 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.service.DatasetDataWriteLock;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.security.PermissionChecker;
@@ -40,6 +41,7 @@ import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.securitylevel.pythonread.PythonReadAccessException;
 import com.smartfirehub.securitylevel.pythonread.PythonReadGrants;
+import com.smartfirehub.support.PassThroughWriteLock;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;
@@ -72,6 +74,8 @@ class PipelineAsyncRunnerTest {
   @Mock PipelineTenantAdmission tenantAdmission;
   @Mock PipelineRepository pipelineRepository;
   @Mock DataTableService dataTableService;
+  // 출력 쓰기 잠금(WD-666) — 목 DataTableService 의 가짜 출력 이름에는 데이터셋 행이 없어, 본문만 통과시키는 목으로 둔다.
+  @Mock DatasetDataWriteLock datasetWriteLock;
   @Mock DataTableRowService dataTableRowService;
   @Mock DatasetRepository datasetRepository;
   @Mock DatasetColumnRepository columnRepository;
@@ -133,6 +137,7 @@ class PipelineAsyncRunnerTest {
    */
   @BeforeEach
   void setTenantContext() {
+    PassThroughWriteLock.stub(datasetWriteLock);
     TenantContext.set(1L);
     // AI_CLASSIFY 분기는 실행 주체 자격(runAs.clearance())을 AI 판정에 넘기고, PYTHON 분기는 같은 자격으로
     // 읽기 슬롯을 준비한다(WD-29). 목 기본값(null RunAs)이면 역참조에서 끊기므로 빈 자격의 RunAs 를 기본으로
@@ -3284,6 +3289,8 @@ class PipelineAsyncRunnerTest {
     // 스왑 여부의 판단은 DataTableService.finishReplace 가 단독으로 갖는다(#685) — 여기서는
     // 실행기가 **적재된 행 수를 정확히 넘겼는지**만 본다. 판단 자체는 DataTableServiceTest 가 본다.
     verify(dataTableService).finishReplace("output_replace", runTemp("output_replace"), 10L);
+    // WD-666: 맞바꿈은 출력 테이블 잠금 안에서 한다.
+    verify(datasetWriteLock).writeToOutput(eq("output_replace"), any(Runnable.class));
     verify(dataTableService, never()).dropTempTable(any(), any());
     // 실행기에는 이번 실행의 임시 테이블 이름이 그대로 적재 대상으로 간다(WD-151) — 실행기는 이름을 스스로 만들지 않는다.
     @SuppressWarnings("unchecked")

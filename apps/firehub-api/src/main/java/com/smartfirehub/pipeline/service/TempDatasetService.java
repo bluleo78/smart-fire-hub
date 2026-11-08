@@ -160,11 +160,16 @@ public class TempDatasetService {
    * EXCLUSIVE 를 쥐므로 여러 기존 테이블을 잠그는 셈이다 — 첫 DROP 보다 먼저 테넌트 PYTHON 읽기 권한 동기화 잠금을 잡아 동기화(이름 오름차순
    * ACCESS SHARE)와 교착하지 않게 한다. {@link DatasetService#deleteDataset} 도 같은 잠금을 잡지만, 여러 테이블을 지우는 이 경로의
    * 규칙을 이 자리에서 분명히 한다.
+   *
+   * <p>WD-666: 동기화 잠금보다 먼저 지울 데이터셋 행 전부를 id 오름차순으로 FOR UPDATE 잠근다 — 잠금 순서 규칙은 「데이터셋 행 → 테넌트 동기화 →
+   * 테이블」이다. 출력 맞바꿈(데이터셋 행 KEY SHARE → 동기화 잠금)과 거꾸로 잡으면 교착한다. 예전에는 동기화 잠금을 먼저 잡은 뒤 deleteDataset 이
+   * 데이터셋마다 행을 잠갔다. 이미 없는 행은 건너뛴다 — deleteDataset 이 404 로 같은 결과를 낸다.
    */
   public void deleteTempDatasets(List<Long> datasetIds) {
     if (datasetIds.isEmpty()) {
       return;
     }
+    datasetIds.stream().sorted().forEach(datasetRepository::lockForDelete);
     dataTableService.lockTenantGrantSyncForDdl();
     for (Long datasetId : datasetIds) {
       datasetService.deleteDataset(datasetId);

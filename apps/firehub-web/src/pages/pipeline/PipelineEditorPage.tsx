@@ -155,8 +155,14 @@ export default function PipelineEditorPage() {
    * 키보드·스크린리더 사용자가 새 스텝을 찾아가야 했다. 추가 액션(ADD_STEP·ADD_STEP_AFTER·INSERT_STEP_BETWEEN — 셋 다 새 스텝을
    * 선택한다)을 보낼 때만 "한 번만" 표시를 켜 두고, 그 선택이 그려진 뒤의 effect 에서 이름 입력에 포커스를 준다.
    * 카드 클릭 선택(SELECT_STEP)·첫 로드·서버 재조회·실행 상세(읽기 전용 캔버스는 원래 dispatch 를 받는다)는 표시를 켜지 않으므로 포커스를 뺏지 않는다.
+   *
+   * WD-666: 표시는 「추가를 보낸 그때 있던 스텝 id 묶음」이다. 리듀서가 추가를 무시하면(지워진 원본·대상을 가리킨 옛 콜백) 새 스텝이 없어
+   * 예전 불리언 표시는 선택이 바뀔 때까지 남았고, 나중의 카드 클릭이 이름 입력으로 포커스를 뺏었다. 이제 표시를 켠 뒤 처음 스텝·선택이
+   * 바뀌는 커밋에서 표시를 무조건 지우고, 선택된 스텝이 그 묶음에 없을 때(= 실제로 새로 생긴 스텝)만 포커스를 준다.
    */
-  const pendingNameFocusRef = useRef(false);
+  const pendingNameFocusRef = useRef<ReadonlySet<string> | null>(null);
+  /** 마지막 커밋의 스텝 id — 추가를 보낼 때 「그때 있던 스텝」 묶음으로 복사해 둔다 */
+  const committedStepIdsRef = useRef<ReadonlySet<string>>(new Set());
   const stepNameInputRef = useRef<HTMLInputElement>(null);
   // 패널이 자기 ref(WD-560)와 함께 이 콜백으로 이름 입력을 넘겨준다 — 객체 ref 를 prop 으로 넘기면 패널이 고칠 수 없다
   const setStepNameInput = useCallback((el: HTMLInputElement | null) => {
@@ -165,7 +171,7 @@ export default function PipelineEditorPage() {
   const editorDispatch = useCallback(
     (action: EditorAction) => {
       if (action.type === 'ADD_STEP' || action.type === 'ADD_STEP_AFTER' || action.type === 'INSERT_STEP_BETWEEN') {
-        pendingNameFocusRef.current = true;
+        pendingNameFocusRef.current = committedStepIdsRef.current;
       }
       dispatch(action);
     },
@@ -174,10 +180,16 @@ export default function PipelineEditorPage() {
   // 부모 effect 는 자식(StepConfigPanel) 커밋 뒤에 돌므로 이 시점엔 새 스텝의 이름 입력이 DOM 에 있다 — 시간 추측(setTimeout) 불필요.
   // 좁은 화면에서 패널은 캔버스 아래에 쌓이므로 preventScroll 을 쓰지 않는다: 입력이 화면 밖이면 브라우저가 보이는 곳까지만 스크롤해 준다.
   useEffect(() => {
-    if (!pendingNameFocusRef.current) return;
-    pendingNameFocusRef.current = false;
-    stepNameInputRef.current?.focus();
-  }, [state.selectedStepId]);
+    committedStepIdsRef.current = new Set(state.steps.map((s) => s.tempId));
+    const knownBeforeAdd = pendingNameFocusRef.current;
+    if (!knownBeforeAdd) return;
+    // 추가가 반영됐든 무시됐든 한 번만 쓴다 — 남겨 두면 나중 선택 변경이 포커스를 뺏는다
+    pendingNameFocusRef.current = null;
+    const selected = state.selectedStepId;
+    if (selected && !knownBeforeAdd.has(selected)) {
+      stepNameInputRef.current?.focus();
+    }
+  }, [state.steps, state.selectedStepId]);
 
   // 미저장 변경사항(dirty) 이탈 가드 (#550) — 브라우저 새로고침/닫기(beforeunload)뿐 아니라
   // 사이드바 SPA 링크 클릭·뒤로가기(popstate)도 가로채 확인 다이얼로그를 띄운다.

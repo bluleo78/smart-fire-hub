@@ -1302,11 +1302,8 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleTypeMismatch(
       MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
     String typeName = ex.getRequiredType() != null ? ex.getRequiredType().getSimpleName() : "올바른";
-    Map<String, String> fieldErrors =
-        Map.of(ex.getName(), String.format("'%s'는 %s 타입이어야 합니다.", ex.getValue(), typeName));
-    ErrorResponse response =
-        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
-    return json(HttpStatus.BAD_REQUEST, response);
+    return singleFieldBadRequest(
+        ex.getName(), String.format("'%s'는 %s 타입이어야 합니다.", ex.getValue(), typeName), request);
   }
 
   /**
@@ -1316,11 +1313,8 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(MissingServletRequestParameterException.class)
   public ResponseEntity<ErrorResponse> handleMissingRequestParameter(
       MissingServletRequestParameterException ex, HttpServletRequest request) {
-    Map<String, String> fieldErrors =
-        Map.of(ex.getParameterName(), String.format("'%s' 값이 필요합니다.", ex.getParameterName()));
-    ErrorResponse response =
-        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
-    return json(HttpStatus.BAD_REQUEST, response);
+    return singleFieldBadRequest(
+        ex.getParameterName(), String.format("'%s' 값이 필요합니다.", ex.getParameterName()), request);
   }
 
   /**
@@ -1338,11 +1332,8 @@ public class GlobalExceptionHandler {
     if (!ex.isMissingAfterConversion()) {
       return handleException(ex, request);
     }
-    Map<String, String> fieldErrors =
-        Map.of(ex.getVariableName(), String.format("'%s' 값이 비어 있습니다.", ex.getVariableName()));
-    ErrorResponse response =
-        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
-    return json(HttpStatus.BAD_REQUEST, response);
+    return singleFieldBadRequest(
+        ex.getVariableName(), String.format("'%s' 값이 비어 있습니다.", ex.getVariableName()), request);
   }
 
   /**
@@ -1362,10 +1353,7 @@ public class GlobalExceptionHandler {
         ex.isMissingAfterConversion()
             ? String.format("'%s' 헤더 값이 올바르지 않습니다.", name)
             : String.format("'%s' 헤더가 필요합니다.", name);
-    Map<String, String> fieldErrors = Map.of(name, message);
-    ErrorResponse response =
-        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
-    return json(HttpStatus.BAD_REQUEST, response);
+    return singleFieldBadRequest(name, message, request);
   }
 
   /**
@@ -1375,10 +1363,21 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(MissingServletRequestPartException.class)
   public ResponseEntity<ErrorResponse> handleMissingRequestPart(
       MissingServletRequestPartException ex, HttpServletRequest request) {
-    Map<String, String> fieldErrors =
-        Map.of(ex.getRequestPartName(), String.format("'%s' 파일이 필요합니다.", ex.getRequestPartName()));
+    return singleFieldBadRequest(
+        ex.getRequestPartName(),
+        String.format("'%s' 파일이 필요합니다.", ex.getRequestPartName()),
+        request);
+  }
+
+  /**
+   * 요청 값 하나가 잘못된 400 을 공통 모양(Validation failed + errors {이름: 사유})으로 만든다(WD-666). 쿼리 파라미터·경로
+   * 변수·헤더·파트 누락과 타입 불일치 처리가 같은 세 줄을 각자 되풀이하던 것을 한 곳으로 모았다 — 모양이 한쪽만 바뀌지 않게 하려는 것이다.
+   */
+  private ResponseEntity<ErrorResponse> singleFieldBadRequest(
+      String name, String message, HttpServletRequest request) {
     ErrorResponse response =
-        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
+        buildError(
+            HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, Map.of(name, message), request);
     return json(HttpStatus.BAD_REQUEST, response);
   }
 

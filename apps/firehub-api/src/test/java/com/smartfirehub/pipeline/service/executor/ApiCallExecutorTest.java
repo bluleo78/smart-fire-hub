@@ -45,6 +45,9 @@ class ApiCallExecutorTest {
   @Mock DataTableService dataTableService;
   @Mock DataTableRowService dataTableRowService;
 
+  /** 출력 쓰기 잠금(WD-666) — 본문을 통과시키며, 어느 출력에 잠금을 걸었는지 verify 한다. */
+  com.smartfirehub.dataset.service.DatasetDataWriteLock writeLock;
+
   SsrfProtectionService ssrfProtectionService;
   JsonResponseParser jsonParser;
   OffsetPaginationHandler paginationHandler;
@@ -61,6 +64,7 @@ class ApiCallExecutorTest {
             // bypass in tests — we control the WireMock server
           }
         };
+    writeLock = com.smartfirehub.support.PassThroughWriteLock.create();
     jsonParser = new JsonResponseParser();
     paginationHandler = new OffsetPaginationHandler();
     executor =
@@ -70,7 +74,8 @@ class ApiCallExecutorTest {
             paginationHandler,
             dataTableService,
             dataTableRowService,
-            WebClient.builder());
+            WebClient.builder(),
+            writeLock);
   }
 
   // -------------------------------------------------------------------------
@@ -130,6 +135,8 @@ class ApiCallExecutorTest {
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<Map<String, Object>>> rowsCaptor = ArgumentCaptor.forClass(List.class);
     verify(dataTableRowService).insertBatch(eq("test_table"), anyList(), rowsCaptor.capture());
+    // WD-666: APPEND 페이지 쓰기는 출력 테이블의 쓰기 잠금 안에서 한다.
+    verify(writeLock).writeToOutput(eq("test_table"), any(Runnable.class));
 
     List<Map<String, Object>> rows = rowsCaptor.getValue();
     assertThat(rows).hasSize(2);
@@ -956,6 +963,9 @@ class ApiCallExecutorTest {
     // 적재된 행 수가 그대로 전달되는지만 본다. API 가 0행을 돌려줘도 원본이 지워지지 않는 것은
     // finishReplace 의 책임이고 DataTableServiceTest 가 본다.
     verify(dataTableService).finishReplace("rep_table", runTemp, 2L);
+    // WD-666: 임시 테이블 쓰기는 잠그지 않고, 출력에 닿는 맞바꿈만 출력 테이블 잠금 안에서 한다.
+    verify(writeLock, times(1)).writeToOutput(eq("rep_table"), any(Runnable.class));
+    verify(writeLock, never()).writeToOutput(eq(runTemp), any(Runnable.class));
 
     // dropTempTable must NOT be called on success
     verify(dataTableService, never()).dropTempTable(any(), any());
@@ -1367,7 +1377,8 @@ class ApiCallExecutorTest {
             paginationHandler,
             dataTableService,
             dataTableRowService,
-            WebClient.builder());
+            WebClient.builder(),
+            com.smartfirehub.support.PassThroughWriteLock.create());
     wireMock.stubFor(
         get(urlEqualTo("/api/redirect"))
             .willReturn(

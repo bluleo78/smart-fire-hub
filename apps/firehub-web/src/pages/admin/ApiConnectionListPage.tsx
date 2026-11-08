@@ -11,6 +11,16 @@ import { FormField } from '@/components/ui/form-field';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
+import {
+  AUTH_FIELD_KEYS,
+  authNameError,
+  baseUrlError,
+  connectionNameError,
+  type FieldErrors,
+  focusFirstError,
+  healthCheckPathError,
+  withoutKeys,
+} from '@/lib/api-connection-form';
 import { missingSecretMessage } from '@/lib/api-connection-secret';
 import { handleApiError } from '@/lib/api-error';
 import { formatDateShort } from '@/lib/formatters';
@@ -57,7 +67,7 @@ import type { CreateApiConnectionRequest } from '../../types/api-connection';
 /** 새 연결 다이얼로그에서 인라인 오류를 보일 수 있는 칸 (WD-561) — 선언 순서가 곧 화면 순서(첫 오류 포커스 기준)다. */
 const CREATE_FIELD_ORDER = ['name', 'baseUrl', 'healthCheckPath', 'authName', 'apiKey', 'token'] as const;
 type CreateFieldKey = (typeof CREATE_FIELD_ORDER)[number];
-type CreateFieldErrors = Partial<Record<CreateFieldKey, string>>;
+type CreateFieldErrors = FieldErrors<CreateFieldKey>;
 
 /** API 연결 목록 페이지 — 생성/삭제/상태 확인 기능 포함 */
 export default function ApiConnectionListPage() {
@@ -123,12 +133,7 @@ export default function ApiConnectionListPage() {
 
   /** 사용자가 그 칸을 고치면 그 칸의 오류만 지운다 — 다른 칸 오류는 고칠 때까지 남겨 둔다. */
   const clearError = (key: CreateFieldKey) => {
-    setErrors((prev) => {
-      if (!prev[key]) return prev;
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
+    setErrors((prev) => withoutKeys(prev, key));
   };
 
   /**
@@ -136,14 +141,7 @@ export default function ApiConnectionListPage() {
    * 다음 제출 때 사라진 칸으로 포커스를 옮기려 하거나, 다른 칸 라벨의 오류처럼 보인다.
    */
   const clearAuthErrors = () => {
-    setErrors((prev) => {
-      if (!prev.authName && !prev.apiKey && !prev.token) return prev;
-      const next = { ...prev };
-      delete next.authName;
-      delete next.apiKey;
-      delete next.token;
-      return next;
-    });
+    setErrors((prev) => withoutKeys(prev, ...AUTH_FIELD_KEYS));
   };
 
   const resetForm = () => {
@@ -170,21 +168,22 @@ export default function ApiConnectionListPage() {
    * 「… 입력하세요」로 거절한다(대상 서버의 401/403 대신 무엇을 빠뜨렸는지 보이려는 것). 저장에도 비밀이 필수라 공개 엔드포인트
    * 용도로 빈 비밀 테스트를 허용할 이유가 없다. 문구는 서버 안내와 같게 맞춘다. 빈 값 판정은 서버와 같은 규칙(「Bearer 」 접두어만
    * 있어도 빈 토큰)을 쓰는 공용 헬퍼 하나로 한다(WD-639).
+   *
+   * WD-666: 칸 검증 실패는 만들기와 같은 방식(칸마다 인라인 오류 + 첫 오류 칸 포커스)으로 알린다 — 예전엔 테스트만 토스트로 알려
+   * 한 대화상자에 두 방식이 섞였다. 테스트를 누를 때마다 지난 인라인 오류(앞선 만들기·테스트의 것)를 지우고, 테스트에 필요한 칸만 다시 단다
+   * (연결 이름·헤더 이름은 테스트에 없어도 되므로 오류를 달지 않는다). 테스트 결과(성공·실패)는 예전처럼 대화상자 안 결과 상자로,
+   * 서버 호출 실패는 토스트로 알린다.
    */
   const handleTest = async () => {
-    if (!/^https?:\/\/.+/.test(baseUrl.trim())) {
-      toast.error('Base URL은 http 또는 https로 시작해야 합니다.');
-      return;
-    }
-    if (healthCheckPath.trim() && !/^\//.test(healthCheckPath.trim())) {
-      toast.error('헬스체크 경로는 /로 시작해야 합니다.');
-      return;
-    }
-    const missingSecret = missingSecretMessage(authType, authType === 'API_KEY' ? apiKey : token);
-    if (missingSecret) {
-      toast.error(missingSecret);
-      return;
-    }
+    const nextErrors: CreateFieldErrors = {
+      baseUrl: baseUrlError(baseUrl),
+      healthCheckPath: healthCheckPathError(healthCheckPath),
+      ...(authType === 'API_KEY'
+        ? { apiKey: missingSecretMessage('API_KEY', apiKey) ?? undefined }
+        : { token: missingSecretMessage('BEARER', token) ?? undefined }),
+    };
+    setErrors(nextErrors);
+    if (focusFirstError(CREATE_FIELD_ORDER, nextErrors, fieldId)) return;
 
     // 위에서 비밀 값이 비지 않았음을 확인했으므로 그대로 싣는다.
     const authConfig: Record<string, string> = { authType };
@@ -225,38 +224,25 @@ export default function ApiConnectionListPage() {
    * 서버 오류(중복 이름 등)는 그대로 토스트로 알린다.
    */
   const handleCreate = async () => {
-    const nextErrors: CreateFieldErrors = {};
-    if (!name.trim()) nextErrors.name = '연결 이름을 입력하세요.';
-
-    // baseUrl 클라이언트 검증: 비었으면 빈 값 안내, 있으면 http/https로 시작해야 한다
-    if (!baseUrl.trim()) nextErrors.baseUrl = 'Base URL을 입력하세요.';
-    else if (!/^https?:\/\/.+/.test(baseUrl.trim())) nextErrors.baseUrl = 'Base URL은 http 또는 https로 시작해야 합니다.';
-
-    // healthCheckPath 클라이언트 검증: 입력 시 /로 시작해야 한다
-    if (healthCheckPath.trim() && !/^\//.test(healthCheckPath.trim())) {
-      nextErrors.healthCheckPath = '헬스체크 경로는 /로 시작해야 합니다.';
-    }
+    // 칸 규칙·문구는 상세 편집과 같은 공용 도우미(api-connection-form)로 한다(WD-666) — 비었으면 빈 값 안내,
+    // Base URL 은 http/https 시작, 헬스체크 경로는 입력했다면 / 시작.
+    const nextErrors: CreateFieldErrors = {
+      name: connectionNameError(name),
+      baseUrl: baseUrlError(baseUrl),
+      healthCheckPath: healthCheckPathError(healthCheckPath),
+    };
 
     // 인증 칸은 지금 보이는 칸만 검사한다(유형·위치에 따라 칸이 바뀐다)
     if (authType === 'API_KEY') {
-      const authNameValue = placement === 'header' ? headerName : paramName;
-      if (!authNameValue.trim()) {
-        nextErrors.authName = placement === 'header' ? '헤더 이름을 입력하세요.' : '파라미터 이름을 입력하세요.';
-      }
+      nextErrors.authName = authNameError(placement, placement === 'header' ? headerName : paramName);
       // 빈 비밀 판정·문구는 저장 전 테스트·서버와 같은 공용 헬퍼로 한다(WD-639) — 「Bearer 」 만 있어도 빈 토큰
-      const missingKey = missingSecretMessage('API_KEY', apiKey);
-      if (missingKey) nextErrors.apiKey = missingKey;
+      nextErrors.apiKey = missingSecretMessage('API_KEY', apiKey) ?? undefined;
     } else {
-      const missingToken = missingSecretMessage('BEARER', token);
-      if (missingToken) nextErrors.token = missingToken;
+      nextErrors.token = missingSecretMessage('BEARER', token) ?? undefined;
     }
 
     setErrors(nextErrors);
-    const firstInvalid = CREATE_FIELD_ORDER.find((key) => nextErrors[key]);
-    if (firstInvalid) {
-      document.getElementById(fieldId[firstInvalid])?.focus();
-      return;
-    }
+    if (focusFirstError(CREATE_FIELD_ORDER, nextErrors, fieldId)) return;
 
     const authConfig: Record<string, string> = { authType };
     if (authType === 'API_KEY') {
