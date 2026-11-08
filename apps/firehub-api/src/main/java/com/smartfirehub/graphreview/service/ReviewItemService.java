@@ -17,6 +17,7 @@ import com.smartfirehub.securitylevel.access.DatasetAction;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
@@ -53,7 +54,7 @@ public class ReviewItemService {
 
   // resolver.ts normalizeName과 동일 규칙(trim + 연속공백 1칸 + 소문자) — 정렬 키로만 사용, 저장은 원본(trim).
   private static String normalize(String s) {
-    return s.trim().replaceAll("\\s+", " ").toLowerCase();
+    return s.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
   }
 
   /**

@@ -28,8 +28,13 @@ public final class DataTableNames {
   /** 이름이 {@code [a-z][a-z0-9_]*} 패턴인지 검증한다. 어긋나면 {@link InvalidTableNameException}. */
   public static void validate(String name) {
     if (!isValid(name)) {
-      throw new InvalidTableNameException("Invalid name: " + name + ". Must match [a-z][a-z0-9_]*");
+      throw invalidNameException(name);
     }
+  }
+
+  /** 형식 위반 예외를 만든다(던지지 않음) — 호출처마다 문구가 같도록 문장을 한 곳에 둔다. */
+  public static InvalidTableNameException invalidNameException(String name) {
+    return new InvalidTableNameException("Invalid name: " + name + ". Must match [a-z][a-z0-9_]*");
   }
 
   /**

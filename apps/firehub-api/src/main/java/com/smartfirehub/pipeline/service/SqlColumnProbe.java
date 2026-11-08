@@ -8,6 +8,7 @@ import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import org.jooq.DataType;
 import org.jooq.Record;
 import org.jooq.Result;
@@ -109,9 +110,14 @@ public class SqlColumnProbe {
                 }));
   }
 
-  /** jOOQ 가 돌려준 DB 타입을 앱의 데이터셋 컬럼 타입 어휘로 옮긴다. */
-  private String mapJooqTypeToAppType(DataType<?> dataType) {
-    String sqlType = dataType.getTypeName().toUpperCase();
+  /**
+   * jOOQ 가 돌려준 DB 타입을 앱의 데이터셋 컬럼 타입 어휘로 옮긴다.
+   *
+   * <p>{@link Locale#ROOT} 로 대문자화해 기본 로캘(예: 터키어 {@code "int8"} → {@code "İNT8"})과 무관하게 판정한다. 로캘 단위
+   * 테스트를 위해 패키지 공개 static 이다.
+   */
+  static String mapJooqTypeToAppType(DataType<?> dataType) {
+    String sqlType = dataType.getTypeName().toUpperCase(Locale.ROOT);
     if (sqlType.contains("VARCHAR") || sqlType.contains("TEXT") || sqlType.contains("CHAR"))
       return "TEXT";
     if (sqlType.contains("INT") || sqlType.contains("SERIAL")) return "INTEGER";

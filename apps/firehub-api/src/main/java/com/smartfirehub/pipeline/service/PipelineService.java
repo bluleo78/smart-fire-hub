@@ -1314,14 +1314,22 @@ public class PipelineService {
             true);
       }
       for (PythonStepConfig.OutputColumn col : config.outputColumns()) {
-        // Locale.ROOT — 터키어 로캘에서 "integer" 가 "İNTEGER" 로 바뀌어 허용 타입과 어긋나지 않게(WD-635)
-        if (col.type() == null
-            || !VALID_OUTPUT_COLUMN_TYPES.contains(col.type().toUpperCase(Locale.ROOT))) {
+        if (!isValidOutputColumnType(col.type())) {
           throw new IllegalArgumentException(
               stepError(step.name(), "출력 컬럼 타입은 다음 중 하나여야 합니다: " + VALID_OUTPUT_COLUMN_TYPES));
         }
       }
     }
+  }
+
+  /**
+   * PYTHON 출력 컬럼 타입이 허용 목록({@link #VALID_OUTPUT_COLUMN_TYPES})에 드는지 — 대소문자 무시. null 은 허용하지 않는다.
+   *
+   * <p>{@link Locale#ROOT} 로 대문자화해 기본 로캘(예: 터키어 "integer" → "İNTEGER")과 무관하게 판정한다. 로캘 단위 테스트를 위해
+   * 패키지 공개 static 이다.
+   */
+  static boolean isValidOutputColumnType(String type) {
+    return type != null && VALID_OUTPUT_COLUMN_TYPES.contains(type.toUpperCase(Locale.ROOT));
   }
 
   /**

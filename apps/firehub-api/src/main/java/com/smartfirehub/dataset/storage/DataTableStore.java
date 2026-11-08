@@ -15,8 +15,11 @@ import java.util.Set;
  */
 public interface DataTableStore {
 
-  /** 행 변경 시각 시스템 컬럼 — 파이프라인 증분 처리({{last_run_at}})의 기준. 트리거가 관리한다. */
-  String UPDATED_AT_COLUMN = "_updated_at";
+  /**
+   * 행 변경 시각 시스템 컬럼(증분 처리 기준, 트리거 관리) — 값은 예약 목록 출처 {@link ReservedColumnNames#UPDATED_AT_COLUMN} 을
+   * 가리킨다.
+   */
+  String UPDATED_AT_COLUMN = ReservedColumnNames.UPDATED_AT_COLUMN;
 
   /**
    * 앱 시스템 컬럼 이름(순서 고정) — 모든 백엔드의 데이터셋 물리 테이블이 갖는 컬럼이다. 목록 자체는 예약 컬럼명 단일 출처 {@link

@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -583,7 +584,7 @@ public class ApiConnectionService {
     headers.forEach(
         (k, v) -> {
           String joined = String.join(", ", v);
-          if (SENSITIVE_HEADER_NAMES.contains(k.toLowerCase())) {
+          if (SENSITIVE_HEADER_NAMES.contains(k.toLowerCase(Locale.ROOT))) {
             out.put(k, "****");
           } else {
             out.put(k, AuthQueryMasker.scrubSecret(joined, secret));

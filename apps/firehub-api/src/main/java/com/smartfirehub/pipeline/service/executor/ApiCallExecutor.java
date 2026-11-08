@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
@@ -423,7 +424,7 @@ public class ApiCallExecutor {
             .exchangeStrategies(exchangeStrategies)
             .build();
 
-    String method = (config.method() != null) ? config.method().toUpperCase() : "GET";
+    String method = (config.method() != null) ? config.method().toUpperCase(Locale.ROOT) : "GET";
 
     try {
       return executeWithRedirects(

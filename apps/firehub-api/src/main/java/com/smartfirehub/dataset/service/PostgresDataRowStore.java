@@ -16,6 +16,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -60,12 +61,17 @@ public class PostgresDataRowStore implements DataRowStore {
     return "\"" + colName + "\"";
   }
 
-  /** Returns type-casting placeholder: ?::timestamp, ?::boolean, ST_GeomFromGeoJSON(?), etc. */
-  private static String insertPlaceholder(String colName, Map<String, String> columnTypes) {
+  /**
+   * 타입 캐스트 자리표시자를 돌려준다: ?::timestamp, ?::boolean, ST_GeomFromGeoJSON(?) 등.
+   *
+   * <p>{@link Locale#ROOT} 로 대문자화해 기본 로캘(예: 터키어 {@code "timestamp"} → {@code "TİMESTAMP"})과 무관하게
+   * 캐스트를 고른다. 로캘 단위 테스트를 위해 패키지 공개다.
+   */
+  static String insertPlaceholder(String colName, Map<String, String> columnTypes) {
     if (columnTypes == null) return "?";
     String type = columnTypes.get(colName);
     if (type == null) return "?";
-    String upper = type.toUpperCase();
+    String upper = type.toUpperCase(Locale.ROOT);
     if (upper.contains("GEOMETRY")) return "ST_SetSRID(ST_GeomFromGeoJSON(?), 4326)";
     if (upper.contains("TIMESTAMP")) return "?::timestamp";
     if (upper.contains("BOOLEAN")) return "?::boolean";

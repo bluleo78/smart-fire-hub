@@ -74,6 +74,6 @@ public class ColumnMappingService {
   }
 
   private String normalize(String s) {
-    return s.replaceAll("[\\s_\\-]", "").toLowerCase();
+    return s.replaceAll("[\\s_\\-]", "").toLowerCase(Locale.ROOT);
   }
 }

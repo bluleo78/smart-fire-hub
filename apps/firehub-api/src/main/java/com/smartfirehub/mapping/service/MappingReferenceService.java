@@ -18,6 +18,7 @@ import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -396,7 +397,7 @@ public class MappingReferenceService {
         + "」 속성은 "
         + where
         + "에 연결되어 있어 "
-        + MappingService.koreanTypeName(newDataType.toLowerCase())
+        + MappingService.koreanTypeName(newDataType.toLowerCase(Locale.ROOT))
         + "로 바꿀 수 없습니다. 매핑에서 연결을 먼저 바꾸세요.";
   }
 
@@ -547,7 +548,7 @@ public class MappingReferenceService {
         }
         columnKind = kind;
         conflicts.add(
-            MappingService.koreanTypeName(want.toLowerCase())
+            MappingService.koreanTypeName(want.toLowerCase(Locale.ROOT))
                 + " 속성 "
                 + MappingService.propertyLabel(em.entityType(), pm.propertyName()));
       }

@@ -15,6 +15,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -217,12 +218,12 @@ public class FileUploadService {
     if (contentType != null
         && !contentType.isBlank()
         && !contentType.equals("application/octet-stream")) {
-      return contentType.split(";")[0].trim().toLowerCase();
+      return contentType.split(";")[0].trim().toLowerCase(Locale.ROOT);
     }
     // Fallback: derive from filename extension
     String name = file.getOriginalFilename();
     if (name != null) {
-      String ext = getExtension(name).toLowerCase();
+      String ext = getExtension(name).toLowerCase(Locale.ROOT);
       return switch (ext) {
         case "png" -> "image/png";
         case "jpg", "jpeg" -> "image/jpeg";

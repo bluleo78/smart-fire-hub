@@ -17,6 +17,7 @@ import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
 import jakarta.validation.Valid;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -293,7 +294,7 @@ public class DatasetController {
             page,
             size,
             sortBy,
-            sortDir.toUpperCase(),
+            sortDir.toUpperCase(Locale.ROOT),
             includeTotalCount,
             spatialFilter);
     return ResponseEntity.ok(response);

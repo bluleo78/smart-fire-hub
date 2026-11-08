@@ -15,6 +15,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -180,7 +181,7 @@ public class ApiCallPreviewService {
       URI uri, ApiCallPreviewRequest request, ApiCallAuth.ResolvedAuth auth, int timeoutMs) {
 
     WebClient client = webClientBuilder.build();
-    String method = request.method() != null ? request.method().toUpperCase() : "GET";
+    String method = request.method() != null ? request.method().toUpperCase(Locale.ROOT) : "GET";
 
     WebClient.RequestHeadersSpec<?> requestSpec;
 

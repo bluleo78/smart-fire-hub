@@ -3,6 +3,7 @@ package com.smartfirehub.proactive.service;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository.MetricSnapshot;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
@@ -49,7 +50,8 @@ public class AnomalyDetector {
 
     double deviation = Math.abs(currentValue - mean) / stddev;
 
-    double threshold = SENSITIVITY_THRESHOLDS.getOrDefault(sensitivity.toLowerCase(), 2.0);
+    double threshold =
+        SENSITIVITY_THRESHOLDS.getOrDefault(sensitivity.toLowerCase(Locale.ROOT), 2.0);
 
     if (deviation >= threshold) {
       List<Double> recentHistory = history.stream().map(MetricSnapshot::value).toList();

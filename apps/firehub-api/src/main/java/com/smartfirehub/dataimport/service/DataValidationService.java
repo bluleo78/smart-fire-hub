@@ -412,7 +412,7 @@ public class DataValidationService {
         }
       }
       case "BOOLEAN" -> {
-        String lower = value.toLowerCase();
+        String lower = value.toLowerCase(Locale.ROOT);
         if (lower.equals("true") || lower.equals("1") || lower.equals("yes")) {
           yield true;
         } else if (lower.equals("false") || lower.equals("0") || lower.equals("no")) {

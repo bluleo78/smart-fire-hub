@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
@@ -630,8 +631,8 @@ public class AnalyticsQueryExecutionService {
           // PostGIS type can be "geometry", "geography", or schema-qualified like
           // "public"."geometry"
           if (pgType != null
-              && (pgType.toLowerCase().contains("geometry")
-                  || pgType.toLowerCase().contains("geography"))) {
+              && (pgType.toLowerCase(Locale.ROOT).contains("geometry")
+                  || pgType.toLowerCase(Locale.ROOT).contains("geography"))) {
             geomColumns.add(i);
           }
         } catch (ReflectiveOperationException ignored) {
