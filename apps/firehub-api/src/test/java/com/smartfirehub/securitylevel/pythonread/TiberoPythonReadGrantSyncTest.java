@@ -3,14 +3,17 @@ package com.smartfirehub.securitylevel.pythonread;
 import static com.smartfirehub.jooq.Tables.DATASET;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
 import com.smartfirehub.dataset.storage.DataStoreAccountRole;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
@@ -61,7 +64,7 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
   private static final String SCHEMA = "GENIA_T1";
 
   @Autowired private DSLContext dsl;
-  @Autowired private com.smartfirehub.dataset.repository.DatasetRepository datasetRepository;
+  @Autowired private DatasetRepository datasetRepository;
   @Autowired private PasswordEncoder encoder;
   @Autowired private SecurityLevelRepository levelRepository;
   @Autowired private PlatformTransactionManager txManager;
@@ -147,15 +150,19 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
               connectionsOpened++;
               return inv.<SqlWork<Object>>getArgument(1).apply(conn);
             });
-    sync =
-        new TiberoPythonReadGrantSync(
-            datasetRepository,
-            connections,
-            repository,
-            levelRepository,
-            new PostgresPlatformLocks(dsl),
-            txManager,
-            syncExecutor);
+    sync = newSync(datasetRepository);
+  }
+
+  /** 가짜 Tibero 연결·PG 저장소로 동기화를 만든다 — 계산값 저장소만 바꿔 끼울 수 있게 한 곳에 둔다(WD-660). */
+  private TiberoPythonReadGrantSync newSync(DatasetRepository datasetRepo) {
+    return new TiberoPythonReadGrantSync(
+        datasetRepo,
+        connections,
+        repository,
+        levelRepository,
+        new PostgresPlatformLocks(dsl),
+        txManager,
+        syncExecutor);
   }
 
   @AfterEach
@@ -209,8 +216,9 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
     List<String[]> rows = new ArrayList<>();
     if (sql.contains("FROM USER_TABLES")) {
       tableQueries++;
+      // 바인드 없음 = 전부, 하나 = 그 테이블, 여럿 = IN 목록(재맞춤의 이름 한정 조회, WD-660).
       for (String t : tables) {
-        if (binds.isEmpty() || t.equals(binds.get(0))) {
+        if (binds.isEmpty() || binds.contains(t)) {
           rows.add(new String[] {t});
         }
       }
@@ -677,7 +685,7 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
 
   /**
    * 재판정(WD-645): 겹친 재생성이 테이블을 보관본 이름으로 RENAME 하면 새 이름의 권한을 회수하고, 성공하면 회수 실패가 아니다. 테이블 하나 동기화도
-   * 재판정에서는 테이블 범위를 테넌트 전체로 넓혀 보관본까지 본다 — 전체·테이블 동기화 두 입구를 모두 본다.
+   * 재맞춤에서는 대상 슬롯 계정 전부의 권한을 테넌트 전체에서 다시 읽어(WD-660) 보관본까지 본다 — 전체·테이블 동기화 두 입구를 모두 본다.
    */
   @Test
   void rejudge_tableRenamedDuringRevoke_revokesUnderNewName_noFailure() {
@@ -751,18 +759,26 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
     assertThat(failedStatements).hasSize(1);
   }
 
-  /** 재판정(WD-645)이 같은 테이블을 다시 바꿔도 변경 테이블 수는 두 판의 합집합으로 센다(두 번 세지 않는다). */
+  /**
+   * 변경 테이블 수는 두 판의 합집합으로 센다(WD-645). 전체 동기화의 재맞춤은 원래 범위(테넌트 전체) 안이므로 첫 판에서 실패한 GRANT 를 다시
+   * 시도한다(WD-660) — 여기서는 또 실패해 과소권한(안전)으로 남고, pub 은 두 판 모두에서 바뀐 것으로 한 번만 센다.
+   */
   @Test
   void rejudge_changedTables_countsUnionOfBothPasses() {
     String pub = table("pub", "공개");
     String upper = sensitiveWithFailingRevoke("sen");
-    failingFragments.add(grantSql(pub, 5)); // pub 은 두 판 모두에서 바뀐다(GRANT 실패 → 과소권한 → 재판정에서 다시 시도)
+    failingFragments.add(grantSql(pub, 5)); // 두 판 모두 GRANT 실패 → 과소권한
     onFailingStatement = () -> renameObject(upper, upper + "_BAK");
 
     PythonReadGrantSync.SyncResult r = sync.syncTenant();
 
     assertThat(r.revokeFailed()).isEmpty();
-    assertThat(r.changedTables()).as("첫 판 {pub} ∪ 재판정 {pub, BAK} = 2").isEqualTo(2);
+    assertThat(r.changedTables()).as("첫 판 {pub} ∪ 재맞춤 {pub, BAK} = 2").isEqualTo(2);
+    assertThat(failedStatements)
+        .as("원래 범위 안이라 재맞춤이 GRANT 를 한 번 더 시도한다")
+        .filteredOn(s -> s.equals(grantSql(pub, 5)))
+        .hasSize(2);
+    assertThat(slotsOf(pub)).doesNotContain(5);
   }
 
   /** 재판정(WD-645)은 한 번만 — 두 번째도 실패하면 세 번째 시도 없이 회수 실패로 남는다(대기도 없다). */
@@ -813,6 +829,195 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
     assertThat(failedStatements).allMatch(s -> s.contains("\"" + slot(1) + "\""));
     assertThat(slotsOf(upper + "_BAK")).as("슬롯 2 권한은 그대로").containsExactly(2);
     assertThat(exactGrantQueries).as("재판정도 실행 슬롯을 정확히 바인드해 읽는다").isEqualTo(4);
+  }
+
+  /**
+   * 재맞춤의 넓히기는 첫 맞춤의 원래 범위 밖으로 나가지 않는다(WD-660): 테이블 하나 동기화에서 REVOKE 가 실패해도 재맞춤이 그 테이블 밖에 GRANT 를 내지
+   * 않는다(단일 테이블 동기화가 테넌트 전체 GRANT 를 넓히면 등급 변경의 세대 번호 올림 없이 권한이 넓어진다).
+   */
+  @Test
+  void repass_singleTableSync_neverGrantsOutsideItsTable() {
+    String pub = table("pub", "공개"); // 아직 GRANT 가 없다 — 전체 동기화였다면 넓혔을 테이블
+    String upper = sensitiveWithFailingRevoke("sen");
+
+    sync.syncTable(upper.toLowerCase());
+
+    assertThat(slotsOf(pub)).as("범위 밖 테이블은 넓히지 않는다").isEmpty();
+    assertThat(executed).noneMatch(s -> s.startsWith("GRANT") && !s.contains("\"" + upper + "\""));
+    assertThat(failedStatements)
+        .as("재맞춤은 한 번 — 같은 REVOKE 를 다시 시도하고 끝")
+        .containsExactly(revokeSql(upper, 1), revokeSql(upper, 1));
+  }
+
+  /**
+   * 재맞춤은 첫 맞춤의 원래 범위 안에서는 GRANT 도 다시 시도한다(WD-660): 첫 맞춤은 한 테이블의 REVOKE 가 실패하면 그 테이블의 GRANT 를 건너뛰므로,
+   * REVOKE 가 일시적으로 실패한 테이블이 재맞춤에서 회수에 성공하면 빠진 GRANT 까지 채운다. 테이블 하나 동기화면 그 테이블만 — 범위 밖 테이블은 넓히지 않는다.
+   * 전체·테이블 동기화 두 입구를 모두 본다.
+   */
+  @Test
+  void repass_retriesMissingGrantsInsideOriginalScope_only() {
+    for (String entry : List.of("tenant", "table")) {
+      String upper = sensitiveWithFailingRevoke("g_" + entry); // 슬롯 1 과권한, 슬롯 3..10 GRANT 없음
+      String revoke = revokeSql(upper, 1);
+      onFailingStatement = () -> failingFragments.remove(revoke); // 첫 판에서 한 번만 실패한다
+      String other = table("o_" + entry, "공개");
+
+      if (entry.equals("tenant")) {
+        assertThat(sync.syncTenant().revokeFailed()).as(entry).isEmpty();
+        assertThat(slotsOf(other)).as(entry + ": 원래 범위(전체) 안").isEqualTo(range(1, 10));
+      } else {
+        sync.syncTable(upper.toLowerCase());
+        assertThat(slotsOf(other)).as(entry + ": 범위 밖 테이블은 넓히지 않는다").isEmpty();
+      }
+
+      assertThat(slotsOf(upper)).as(entry + ": 재맞춤이 빠진 GRANT 를 채운다").isEqualTo(range(3, 10));
+      assertThat(failedStatements).as(entry).containsOnlyOnce(revoke);
+    }
+  }
+
+  /**
+   * 재맞춤의 회수 범위는 대상 슬롯 계정 전부의 권한이다(WD-660): 겹친 RENAME 은 모든 계정의 권한을 보관본으로 옮기므로, 첫 맞춤에서 실패하지 않은 계정 (원래
+   * 테이블에서 정당하게 받은 슬롯 3)의 보관본 권한도 회수한다 — 실패 계정만 보면 데이터셋이 아닌 보관본에 SELECT 가 남는다.
+   */
+  @Test
+  void repass_revokesOtherAccountsGrantCarriedToRenamedBackup() {
+    String upper = sensitiveWithFailingRevoke("sen");
+    grants.add(upper + "|" + slot(3)); // 민감 등급이라 슬롯 3 은 정당한 권한 — 첫 맞춤에서 실패하지 않는다
+    String backup = upper + "_BAK";
+    onFailingStatement = () -> renameObject(upper, backup);
+
+    sync.syncTable(upper.toLowerCase());
+
+    assertThat(executed).contains(revokeSql(backup, 1), revokeSql(backup, 3));
+    assertThat(slotsOf(backup)).as("보관본에 남은 권한 없음").isEmpty();
+  }
+
+  /**
+   * 테이블 하나 동기화의 재맞춤은 테넌트 전체에서 계산값에 없는 권한을 회수할 수 있지만 GRANT 는 하지 않는다(WD-660) — 다른 테이블의 어긋난 권한·뷰 권한도
+   * 회수되고(fail-closed 방향), GRANT 가 필요한 범위 밖 테이블은 그대로 둔다. 회수한 객체는 변경 테이블로 센다.
+   */
+  @Test
+  void repass_singleTableSync_revokesExcessTenantWide_neverGrants() {
+    String need = table("need", "공개"); // GRANT 가 필요하지만 범위 밖이라 넓히지 않는다
+    String stray = table("stray", "민감").toUpperCase();
+    grants.add(stray + "|" + slot(2)); // 실패하지 않은 계정의 과권한 — 재맞춤이 회수한다
+    String view = "A_VIEW_" + m.toUpperCase();
+    grants.add(view + "|" + slot(3)); // 테이블이 아닌 객체 — 계산값 "없음"
+    String upper = sensitiveWithFailingRevoke("sen");
+    String backup = upper + "_BAK";
+    onFailingStatement = () -> renameObject(upper, backup);
+
+    sync.syncTable(upper.toLowerCase());
+
+    assertThat(executed)
+        .as("재맞춤 문장은 계산값에 없는 권한의 REVOKE 뿐")
+        .containsExactlyInAnyOrder(revokeSql(backup, 1), revokeSql(stray, 2), revokeSql(view, 3));
+    assertThat(slotsOf(backup)).isEmpty();
+    assertThat(slotsOf(stray)).isEmpty();
+    assertThat(slotsOf(view)).isEmpty();
+    assertThat(slotsOf(need)).isEmpty();
+  }
+
+  /**
+   * 휴지통(BIN$) 실패와 일반 실패가 섞이면(WD-660) 재맞춤은 BIN$ REVOKE 를 다시 보내지 않고 첫 맞춤의 BIN$ 실패를 그대로 옮긴다 — 일반 실패는
+   * 보관본에서 회수돼 사라진다.
+   */
+  @Test
+  void repass_mixedRecycleBinAndNormalFailure_keepsBinFailure_withoutResendingBinRevoke() {
+    String bin = binName();
+    grants.add(bin + "|" + slot(1));
+    failingFragments.add("BIN$");
+    String upper = sensitiveWithFailingRevoke("sen");
+    String backup = upper + "_BAK";
+    onFailingStatement = () -> renameObject(upper, backup);
+
+    PythonReadGrantSync.SyncResult r = sync.syncTenant();
+
+    assertThat(r.revokeFailed()).containsOnlyKeys(bin);
+    assertThat(r.revokeFailed().get(bin)).containsExactly(slot(1));
+    assertThat(failedStatements)
+        .as("BIN$ REVOKE 는 첫 맞춤에서 한 번만")
+        .containsExactlyInAnyOrder(revokeSql(bin, 1), revokeSql(upper, 1));
+    assertThat(executed).contains(revokeSql(backup, 1));
+    assertThat(slotsOf(backup)).isEmpty();
+  }
+
+  /**
+   * 첫 맞춤의 BIN$ 실패는 재맞춤에서 다시 읽은 권한에 그 (객체, 계정) 쌍이 아직 있을 때만 옮긴다(WD-660) — 그 사이 휴지통이 비워져(PURGE) 권한까지
+   * 사라졌으면 남은 과권한이 없으므로 실패가 아니다.
+   */
+  @Test
+  void repass_dropsCarriedBinFailure_whenGrantNoLongerListed() {
+    String bin = binName();
+    grants.add(bin + "|" + slot(1));
+    failingFragments.add("BIN$");
+    String upper = sensitiveWithFailingRevoke("sen");
+    String backup = upper + "_BAK";
+    onFailingStatement =
+        () -> {
+          renameObject(upper, backup);
+          grants.removeIf(g -> g.startsWith(bin + "|")); // 휴지통 비우기 — BIN$ 권한도 사라진다
+        };
+
+    PythonReadGrantSync.SyncResult r = sync.syncTenant();
+
+    assertThat(failedStatements).as("첫 맞춤은 두 REVOKE 모두 실패").hasSize(2);
+    assertThat(r.revokeFailed()).as("다시 읽은 권한에 없으면 BIN$ 실패를 옮기지 않는다").isEmpty();
+    assertThat(slotsOf(backup)).isEmpty();
+  }
+
+  /** fail-closed(WD-660): 재맞춤에서 보관본의 남은 권한 회수도 실패하면 회수 실패로 남아 실행 준비가 거부된다. */
+  @Test
+  void repass_backupRevokeAlsoFails_staysRevokeFailure_andRunRejected() {
+    String upper = sensitiveWithFailingRevoke("sen");
+    String backup = upper + "_BAK";
+    failingFragments.add(revokeSql(backup, 1));
+    onFailingStatement = () -> renameObject(upper, backup);
+
+    assertThatThrownBy(() -> sync.prepareForRun(clearanceAt("공개"), levelRank("공개")))
+        .isInstanceOf(PythonReadAccessException.class)
+        .hasMessageContaining("회수하지 못한");
+    assertThat(failedStatements).containsExactly(revokeSql(upper, 1), revokeSql(backup, 1));
+    assertThat(slotsOf(backup)).containsExactly(1);
+  }
+
+  /**
+   * 계산값 조회 수를 세는 위임 mock 저장소를 만들고 {@link #sync} 를 그것으로 바꾼다 — 테이블 하나 동기화의 메타 조회 범위를 고정한다(WD-660).
+   */
+  private DatasetRepository countDesiredReads() {
+    DatasetRepository counting = mock(DatasetRepository.class, delegatesTo(datasetRepository));
+    sync = newSync(counting);
+    return counting;
+  }
+
+  /** 실패가 없는 테이블 하나 동기화는 그 테이블의 등급 행만 읽는다(WD-660) — 테넌트 전체 메타를 읽지 않는다. */
+  @Test
+  void desired_singleTableSync_noFailure_readsOnlyThatTable() {
+    DatasetRepository counting = countDesiredReads();
+    String pub = table("pub", "공개");
+
+    sync.syncTable(pub);
+
+    assertThat(slotsOf(pub)).isEqualTo(range(1, 10));
+    verify(counting, times(1)).findTableLevels(pub);
+    verify(counting, never()).findTableLevels(isNull());
+  }
+
+  /**
+   * 테이블 하나 동기화에서 재맞춤이 실제로 돌 때만 테넌트 전체 계산값을 늦게(한 번) 읽는다(WD-660) — 첫 맞춤은 그 테이블의 행만 읽는다. 재맞춤은 자기 스냅숏을
+   * 쓰지만 다시 읽은 실제 권한으로 판정하므로 fail-open 이 되지 않는다.
+   */
+  @Test
+  void desired_singleTableSync_repass_readsTenantWideLazilyOnce() {
+    DatasetRepository counting = countDesiredReads();
+    String upper = sensitiveWithFailingRevoke("sen");
+    onFailingStatement = () -> renameObject(upper, upper + "_BAK");
+
+    sync.syncTable(upper.toLowerCase());
+
+    assertThat(executed).contains(revokeSql(upper + "_BAK", 1));
+    verify(counting, times(1)).findTableLevels(upper.toLowerCase());
+    verify(counting, times(1)).findTableLevels(isNull());
   }
 
   /** 계정 행이 없는 슬롯은 PG 의 "없는 슬롯 롤" 과 같다: 실행 거부, GRANT 도 하지 않는다. */

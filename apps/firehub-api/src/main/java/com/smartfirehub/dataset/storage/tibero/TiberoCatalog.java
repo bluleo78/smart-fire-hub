@@ -144,10 +144,15 @@ public final class TiberoCatalog {
         + " ('CREATE TRIGGER', 'CREATE ANY TRIGGER')";
   }
 
+  /** IN 목록 자리표시자 {@code "?, ?, ..."}({@code n} 개) — IN 질의 빌더들이 같은 모양을 쓰도록 하나로 둔다(WD-660). */
+  private static String inPlaceholders(int n) {
+    return String.join(", ", java.util.Collections.nCopies(n, "?"));
+  }
+
   /** OWNER 세션 소유 트리거의 상태 조회({@code USER_TRIGGERS}). 바인드: 트리거 이름 {@code n} 개(대문자). */
   static String triggerStatusQuery(int n) {
     return "SELECT TRIGGER_NAME, STATUS, TRIGGERING_EVENT FROM USER_TRIGGERS WHERE TRIGGER_NAME IN ("
-        + String.join(", ", java.util.Collections.nCopies(n, "?"))
+        + inPlaceholders(n)
         + ")";
   }
 
@@ -286,7 +291,7 @@ public final class TiberoCatalog {
    */
   static String slotSelectGrantsByGranteeQuery(int grantees, boolean singleTable) {
     return "SELECT TABLE_NAME, GRANTEE FROM USER_TAB_PRIVS_MADE WHERE GRANTEE IN ("
-        + String.join(", ", java.util.Collections.nCopies(grantees, "?"))
+        + inPlaceholders(grantees)
         + ") AND PRIVILEGE = 'SELECT'"
         + (singleTable ? " AND TABLE_NAME = ?" : "");
   }
@@ -306,6 +311,39 @@ public final class TiberoCatalog {
       }
     }
     return names;
+  }
+
+  /** IN 목록 한 번에 묶는 이름 수 상한 — Tibero(Oracle 계열)의 IN 목록 1000개 제한(ORA-01795 계열)을 넘지 않게 나눈다(WD-660). */
+  static final int IN_LIST_CHUNK = 1000;
+
+  /** OWNER 세션 소유 테이블 가운데 주어진 이름들만 조회({@code USER_TABLES}, WD-660). 바인드: 테이블 물리 이름 {@code n} 개. */
+  static String ownTablesAmongQuery(int n) {
+    return "SELECT TABLE_NAME FROM USER_TABLES WHERE TABLE_NAME IN (" + inPlaceholders(n) + ")";
+  }
+
+  /**
+   * 주어진 물리 이름들 가운데 OWNER 세션이 소유한 테이블 이름(WD-660). 권한이 걸린 객체가 테이블인지만 가리면 될 때 {@code USER_TABLES} 전체를
+   * 읽지 않으려고 쓴다. {@link #IN_LIST_CHUNK} 개씩 나눠 질의하고, 이름이 없으면 질의하지 않는다.
+   */
+  public static java.util.Set<String> ownTablesAmong(Connection conn, Collection<String> names)
+      throws SQLException {
+    java.util.Set<String> found = new java.util.TreeSet<>();
+    List<String> all = new ArrayList<>(names);
+    for (int from = 0; from < all.size(); from += IN_LIST_CHUNK) {
+      List<String> chunk = all.subList(from, Math.min(from + IN_LIST_CHUNK, all.size()));
+      try (PreparedStatement ps = conn.prepareStatement(ownTablesAmongQuery(chunk.size()))) {
+        int i = 1;
+        for (String name : chunk) {
+          ps.setString(i++, name);
+        }
+        try (ResultSet rs = ps.executeQuery()) {
+          while (rs.next()) {
+            found.add(rs.getString(1));
+          }
+        }
+      }
+    }
+    return found;
   }
 
   /**

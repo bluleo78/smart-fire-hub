@@ -1,7 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { FormField } from './form-field';
+import { FormField, FormFieldLabelRow } from './form-field';
+import { linkedAriaProps } from './form-field-aria';
 
 /**
  * 공용 FormField 단위 테스트(WD-515·WD-643).
@@ -78,5 +79,30 @@ describe('FormField — 설명·안내·라벨 덧붙임·오류 낭독 끄기(W
     );
     expect(screen.getByText('기본값')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: '턴' })).toBeInTheDocument();
+  });
+});
+
+describe('공유 도우미 — linkedAriaProps·FormFieldLabelRow(WD-660)', () => {
+  it('linkedAriaProps 는 FormField 와 같은 순서(기존 id → 오류 → 설명 → 안내)로 잇고, aria-invalid 는 오류일 때만 둔다', () => {
+    expect(linkedAriaProps({ error: 'e', desc: 'd', hint: 'h' }, { 'aria-describedby': 'own d' })).toEqual({
+      'aria-describedby': 'own d e h',
+      'aria-invalid': true,
+    });
+    expect(linkedAriaProps({ desc: 'd' })).toEqual({ 'aria-describedby': 'd' });
+    expect(linkedAriaProps({})).toEqual({ 'aria-describedby': undefined });
+    // 화면이 직접 정한 aria-invalid 는 지킨다
+    expect(linkedAriaProps({ error: 'e' }, { 'aria-invalid': 'false' })['aria-invalid']).toBe('false');
+  });
+
+  it('FormFieldLabelRow 는 덧붙임이 없으면 감싸지 않고, 있으면 라벨과 한 줄(flex)로 감싼다', () => {
+    const { container, rerender } = render(<FormFieldLabelRow htmlFor="x">모델</FormFieldLabelRow>);
+    expect(container.firstElementChild?.tagName).toBe('LABEL');
+    rerender(
+      <FormFieldLabelRow htmlFor="x" addon={<span>기본값</span>}>
+        모델
+      </FormFieldLabelRow>,
+    );
+    expect(container.firstElementChild).toHaveClass('flex');
+    expect(container.querySelector('label')).toHaveTextContent(/^모델$/);
   });
 });
