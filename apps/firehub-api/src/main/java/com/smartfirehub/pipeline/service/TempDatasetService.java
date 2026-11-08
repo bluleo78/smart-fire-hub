@@ -156,6 +156,22 @@ public class TempDatasetService {
   }
 
   /**
+   * 임시 데이터셋 여럿을 호출자 트랜잭션에서 한꺼번에 지운다(WD-170 의 일괄 삭제 경로, WD-629). 각 데이터셋의 테이블 DROP 이 커밋까지 ACCESS
+   * EXCLUSIVE 를 쥐므로 여러 기존 테이블을 잠그는 셈이다 — 첫 DROP 보다 먼저 테넌트 PYTHON 읽기 권한 동기화 잠금을 잡아 동기화(이름 오름차순
+   * ACCESS SHARE)와 교착하지 않게 한다. {@link DatasetService#deleteDataset} 도 같은 잠금을 잡지만, 여러 테이블을 지우는 이 경로의
+   * 규칙을 이 자리에서 분명히 한다.
+   */
+  public void deleteTempDatasets(List<Long> datasetIds) {
+    if (datasetIds.isEmpty()) {
+      return;
+    }
+    dataTableService.lockTenantGrantSyncForDdl();
+    for (Long datasetId : datasetIds) {
+      datasetService.deleteDataset(datasetId);
+    }
+  }
+
+  /**
    * Sanitize a step name to a safe PostgreSQL table name suffix. Converts to lowercase,
    * non-alphanumeric chars to underscores, deduplicates underscores, and appends a 4-char hash to
    * avoid collisions.

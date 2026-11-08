@@ -359,6 +359,8 @@ public class DatasetService {
   @Transactional
   public boolean discardPipelineTempBackup(PipelineTempRebuild rebuild) {
     requirePipelineTemp(rebuild.datasetId());
+    // 보관본과 행 검색 색인 테이블들을 한 트랜잭션에서 지운다 — 테이블 잠금보다 먼저 동기화 잠금을 잡는다(WD-629, 잠금 순서 규칙).
+    dataTableService.lockTenantGrantSyncForDdl();
     boolean existed =
         dataTableService.dropRebuildBackup(
             rebuild.tableName(), rebuild.backupTableName(), rebuild.backupTableOid());
@@ -824,6 +826,10 @@ public class DatasetService {
     // isTableBacked 로 통일한다.) document_file/document_chunk 행, file_dataset_config 행은
     // dataset 삭제 시 FK CASCADE 로 함께 제거된다.
     if (isTableBacked(dataset.storageType())) {
+      // 색인·원본·(TEMP 면) 재생성 보관본까지 기존 테이블 여럿을 이 트랜잭션에서 지운다 — 어떤 테이블 잠금보다 먼저 테넌트 PYTHON 읽기 권한
+      // 동기화 잠금을 잡는다(WD-629, 잠금 순서 규칙). 파이프라인의 임시 데이터셋 일괄 삭제처럼 바깥 트랜잭션이 이 메서드를 여러 번 부르면 첫 호출에서
+      // 잡은 잠금이 커밋까지 이어진다(advisory 는 같은 세션에서 다시 잡아도 막히지 않는다).
+      dataTableService.lockTenantGrantSyncForDdl();
       // 색인 테이블은 FK 가 없어 CASCADE 로 사라지지 않는다 — 원본과 함께 지운다.
       rowSearchIndex.drop(new IndexRef(TenantContext.require(), id, dataset.tableName()));
       dataTableService.dropTable(dataset.tableName());

@@ -1041,9 +1041,9 @@ public class PipelineService {
    * 목록을 보지 않게).
    */
   private void deleteAutoTempDatasets(AutoTempDeletion temps) {
-    for (Long tempId : temps.deletable()) {
-      tempDatasetService.deleteTempDataset(tempId);
-    }
+    // 여러 테이블을 한 트랜잭션에서 지우므로 일괄 삭제 경로로 부른다 — 첫 DROP 보다 먼저 테넌트 PYTHON 읽기 권한 동기화 잠금을 잡는다(WD-629).
+    // 이 트랜잭션은 그 전에 메타 행만 고쳐 데이터 테이블 잠금이 없으므로 순서(동기화 잠금 → 테이블 잠금)가 지켜진다.
+    tempDatasetService.deleteTempDatasets(temps.deletable());
     if (temps.deletable().size() < temps.candidates().size()) {
       log.info(
           "Kept {} auto temp dataset(s) still used as output by other steps: {}",

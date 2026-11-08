@@ -80,6 +80,9 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
   /** 문장에 이 조각이 들어 있으면 SQLException 을 던진다(회수 실패 흉내). 적용은 되지 않는다. */
   private final List<String> failingFragments = new ArrayList<>();
 
+  /** 실패시키는 문장을 만났을 때 예외 직전에 돌릴 동작(겹친 RENAME·DROP 흉내, WD-629). */
+  private Runnable onFailingStatement = () -> {};
+
   private int connectionsOpened;
 
   /** 계정을 정확히 바인드한 슬롯 GRANT 조회 수(실행 준비 경로, WD-78). */
@@ -263,6 +266,7 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
     assertThat(mt.group(2)).isEqualTo(SCHEMA);
     for (String f : failingFragments) {
       if (sql.contains(f)) {
+        onFailingStatement.run();
         throw new SQLException("거부", "42000", -1);
       }
     }
@@ -560,6 +564,46 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
 
     // 슬롯 3 은 민감을 읽어야 하므로 회수 대상이 아니다 — 회수 실패가 있어도 막히지 않아야 한다.
     assertThat(sync.prepareForRun(clearanceAt("민감"), levelRank("민감"))).isEqualTo(3);
+  }
+
+  /**
+   * fail-closed(WD-629): REVOKE 가 실패하는 순간 테이블 이름이 USER_TABLES 에서 사라져도(재생성 RENAME·휴지통 BIN$ 로 GRANT 가
+   * 이름이 바뀐 객체를 따라갔을 수 있다) 여전히 회수 실패로 센다. "지워졌으니 권한도 사라졌다"고 보고 넘기면 과권한이 남은 슬롯으로 실행을 허용하게 된다.
+   */
+  @Test
+  void revokeFailureOnTableMissingFromUserTables_isStillRevokeFailure() {
+    String upper = table("sen", "민감").toUpperCase();
+    String upper2 = table("sen2", "민감").toUpperCase();
+    grants.add(upper + "|" + slot(1));
+    failingFragments.add("REVOKE");
+    // REVOKE 가 실패하는 순간 이름이 USER_TABLES 에서 사라진다 — RENAME 처럼 GRANT 는 다른 이름의 객체에 남아 있을 수 있다.
+    onFailingStatement = () -> tables.remove(upper);
+
+    // 실행 준비(JIT) — 회수 실패로 세어 슬롯 1 실행을 거부한다.
+    assertThatThrownBy(() -> sync.prepareForRun(clearanceAt("공개"), levelRank("공개")))
+        .isInstanceOf(PythonReadAccessException.class)
+        .hasMessageContaining("회수하지 못한");
+
+    // 전체 동기화도 같은 규칙 — 회수 실패 목록에 넣는다.
+    grants.add(upper2 + "|" + slot(1));
+    onFailingStatement = () -> tables.remove(upper2);
+    PythonReadGrantSync.SyncResult r = sync.syncTenant();
+    assertThat(r.revokeFailedTables()).as("사라진 듯한 테이블의 REVOKE 실패도 회수 실패다").contains(upper2);
+    assertThat(r.revokeFailed().get(upper2)).containsExactly(slot(1));
+  }
+
+  /** 대조(WD-629): REVOKE 가 실패했는데 테이블이 남아 있으면 여전히 회수 실패(fail-closed)다. */
+  @Test
+  void revokeFailureOnExistingTable_isStillRevokeFailure() {
+    String sens = table("sen", "민감");
+    String upper = sens.toUpperCase();
+    grants.add(upper + "|" + slot(1));
+    failingFragments.add("REVOKE");
+
+    PythonReadGrantSync.SyncResult r = sync.syncTenant();
+
+    assertThat(r.revokeFailedTables()).contains(upper);
+    assertThat(r.revokeFailed().get(upper)).containsExactly(slot(1));
   }
 
   /** 계정 행이 없는 슬롯은 PG 의 "없는 슬롯 롤" 과 같다: 실행 거부, GRANT 도 하지 않는다. */

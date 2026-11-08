@@ -724,6 +724,15 @@ public class PostgresDataTableStore implements DataTableStore {
   }
 
   /**
+   * 테넌트 PYTHON 읽기 권한 동기화 잠금을 호출자 트랜잭션에서 잡는다(WD-629) — 여러 기존 테이블을 지우는 경로(데이터셋 삭제·파이프라인의 임시 데이터셋 일괄
+   * 삭제·재생성 보관본 정리)가 첫 테이블 잠금보다 먼저 부른다. 근거는 {@link DataTableStore#lockTenantGrantSyncForDdl}.
+   */
+  @Override
+  public void lockTenantGrantSyncForDdl() {
+    PythonReadGrantSync.lockTenantSync(dsl, TenantContext.require("여러 테이블 DDL"));
+  }
+
+  /**
    * 이번 실행 전용 임시 staging 테이블({@link DataTableService#newTempTableName})을 원본과 같은 구조({@code LIKE ...
    * INCLUDING ALL})로 현재 테넌트 데이터 스키마에 만들고 그 이름을 돌려준다. REPLACE 적재가 새 데이터를 여기에 쌓은 뒤 맞바꾼다.
    *
@@ -903,8 +912,16 @@ public class PostgresDataTableStore implements DataTableStore {
     dsl.transaction(
         cfg -> {
           DSLContext tx = org.jooq.impl.DSL.using(cfg);
-          // 보관본을 배타 잠금으로 잡고 OID 를 본다 — 같은 TEMP 를 겹쳐 다시 만든 다른 실행이 이 이름에 자기 보관본을 두었으면(이 실행의 보관본은
-          // 그 실행이 이미 지웠다) 그 실행의 테이블·메타를 덮지 않도록 아무것도 바꾸지 않는다.
+          // 맨 먼저 테넌트의 PYTHON 읽기 권한 동기화 잠금을 잡는다(WD-629, swapTable 과 같은 패턴). 이 트랜잭션은 보관본과 원래 이름의 새
+          // 테이블 두 기존 테이블을 잠그는데, 테넌트 전체 동기화도 두 테이블의 ACL 을 바꿀 수 있다(보관본은 RENAME 으로 물려받은 슬롯 GRANT
+          // 회수, 새 테이블은 GRANT). 동기화가 새 테이블 → 보관본 순서로 잡으면 이 트랜잭션(보관본 → 새 테이블)과 교착한다. 이름 정렬로는 못 맞춘다
+          // (사용자 테이블 이름이 rtmp_bak_ 앞뒤 어디든 올 수 있다). 동기화 잠금을 먼저 잡으면 둘이 완전히 직렬화된다. 순서(동기화 잠금 → 테이블
+          // 잠금)를 지킨다 — 호출부(DatasetService.restorePipelineTempTable)는 이 호출 전에 데이터 테이블 잠금을 잡지 않는다.
+          // 잠금은 트랜잭션 범위라 jOOQ 중첩 트랜잭션(savepoint)이 아니라 바깥 Spring 트랜잭션이 끝날 때 풀린다(swapTable 과 같은 성질).
+          PythonReadGrantSync.lockTenantSync(tx, TenantContext.require("재생성 되돌리기"));
+          // 보관본의 OID 를 먼저 보고(잠금 없이 카탈로그 조회), 이 실행이 옮긴 그 테이블일 때만 아래에서 배타 잠금을 잡는다 — 같은 TEMP 를 겹쳐
+          // 다시 만든 다른 실행이 이 이름에 자기 보관본을 두었으면(이 실행의 보관본은 그 실행이 이미 지웠다) 그 실행의 테이블·메타를 덮지 않도록
+          // 아무것도 바꾸지 않는다.
           Long oid = tableOid(tx, backupName);
           if (oid == null || oid != expectedOid) {
             throw new IllegalStateException(

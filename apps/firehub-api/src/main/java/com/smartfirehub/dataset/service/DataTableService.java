@@ -326,6 +326,8 @@ public class DataTableService {
   public long moveToRebuildBackup(String tableName, String metaFingerprint) {
     DataTableNames.validate(tableName);
     String backupName = rebuildBackupTableName(tableName);
+    // 남은 보관본 DROP 과 원본 RENAME 은 기존 테이블 둘을 한 트랜잭션에서 잠근다 — 동기화 잠금을 먼저 잡는다(WD-629, 잠금 순서 규칙).
+    lockTenantGrantSyncForDdl();
     if (resolver.tableStore().dropRebuildBackup(tableName, backupName, null)) {
       log.warn("테이블 {} 의 남은 재생성 보관본 {} 을 지웠습니다(이전 실행이 마무리 전에 멈춘 흔적)", tableName, backupName);
     }
@@ -420,6 +422,14 @@ public class DataTableService {
     // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
     DataTableNames.validate(tableName);
     resolver.tableStore().dropTable(tableName);
+  }
+
+  /**
+   * 여러 기존 데이터 테이블을 한 트랜잭션에서 지우기·바꾸기 전에 테넌트 PYTHON 읽기 권한 동기화 잠금을 먼저 잡는다(WD-629). 그 트랜잭션의 첫 데이터 테이블
+   * 잠금보다 먼저 불러야 한다 — 근거는 {@link DataTableStore#lockTenantGrantSyncForDdl}.
+   */
+  public void lockTenantGrantSyncForDdl() {
+    resolver.tableStore().lockTenantGrantSyncForDdl();
   }
 
   /**

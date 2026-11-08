@@ -88,6 +88,17 @@ public interface DataTableStore {
   void dropTable(String tableName);
 
   /**
+   * 여러 기존 데이터 테이블을 한 트랜잭션에서 잠그거나 DDL 하기 전에 테넌트 PYTHON 읽기 권한 동기화 잠금을 호출자 트랜잭션에서 먼저 잡는다(WD-629). 동기화는
+   * 그 잠금 뒤 ACL 을 바꿀 테이블마다 ACCESS SHARE 를 이름 오름차순으로 잡아 트랜잭션 끝까지 쥐므로, 여러 테이블을 다른 순서로 잠그는 DDL 은 동기화와
+   * 교착할 수 있다. 동기화 잠금을 먼저 잡으면 둘이 완전히 직렬화된다({@code PythonReadGrantSync.lockTableForAclChange} 의 잠금 순서
+   * 규칙). 반드시 그 트랜잭션의 첫 데이터 테이블 잠금보다 먼저 불러야 한다. 잠금은 트랜잭션 범위라 바깥 트랜잭션이 끝날 때 풀린다(swapTable 과 같은 성질 —
+   * 같은 테넌트 동기화는 그동안 기다린다).
+   *
+   * <p>기본 구현은 아무것도 하지 않는다 — Tibero 는 DDL 이 자동 커밋이라 호출자 트랜잭션에서 테이블 잠금이 쌓이지 않는다.
+   */
+  default void lockTenantGrantSyncForDdl() {}
+
+  /**
    * REPLACE 적재용 임시(staging) 테이블을 이번 실행 전용 이름({@code DataTableService.newTempTableName})으로 만들고 그 이름을
    * 돌려준다 (WD-151). 같은 테이블에 겹친 실행이 서로의 임시 테이블을 만들거나 지우지 않게 한다.
    */

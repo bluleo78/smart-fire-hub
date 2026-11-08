@@ -47,6 +47,18 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p><b>직렬화.</b> 같은 테넌트의 동기화는 PG 메타의 트랜잭션 advisory 잠금({@link PythonReadGrantSync#lockTenantSync})으로
  * 직렬화한다 — PG 판과 같은 잠금이라 한 테넌트의 두 백엔드 동기화가 겹치지 않는다. Tibero 문장은 그 PG 트랜잭션이 끝날 때까지 잠금을 쥔 채 실행한다.
  *
+ * <p><b>왜 테이블 잠금을 잡지 않는가(WD-629).</b> PG 판은 ACL 을 바꾸기 전에 테이블에 ACCESS SHARE 를 잡아 같은 테이블의 DDL 과
+ * 직렬화한다({@code PythonReadGrantSync.lockTableForAclChange}). Oracle 계열(Tibero)에서는 GRANT/REVOKE 자체가
+ * DDL 이라 실행 전 암묵 커밋으로 {@code LOCK TABLE} 잠금을 먼저 풀어 버리므로 같은 방법을 쓸 수 없다. Tibero 는 DDL 끼리 딕셔너리 잠금으로
+ * 직렬화하고, 겹침 실측은 {@code TiberoLiveSlotGrantTest.grantOverlappingAlterAndDrop_doesNotFailUserDdl} 이
+ * 맡는다. 겹쳐서 동기화 쪽 문장이 실패하면 GRANT 실패는 과소권한(안전), REVOKE 실패는 회수 실패(실행 거부)로 처리되어 다음 동기화가 회복한다.
+ *
+ * <p><b>왜 사라진 듯한 테이블의 REVOKE 실패도 회수 실패로 세는가(WD-629).</b> PG 판은 잠금을 쥔 채 {@code tableExists} 로 "정말
+ * 지워졌다"를 확정할 수 있지만 Tibero 는 그렇지 못하다. USER_TABLES 에서 이름이 사라져도 권한이 사라졌다는 보장이 없다 — (1) 재생성은 테이블을 보관본
+ * 이름으로 RENAME 하고({@code TiberoRebuildBackup}) GRANT 는 이름이 바뀐 객체를 따라간다, (2) 휴지통(recycle bin)이 켜져 있으면
+ * DROP 된 테이블이 {@code BIN$...} 객체로 GRANT 를 쥔 채 남는다. 그래서 실패한 REVOKE 는 늘 회수 실패로 남겨 그 슬롯의 PYTHON 실행을
+ * 거부한다(fail-closed). 겹친 DROP 때문에 한 번 공연히 거부되는 비용이 과권한을 놓치는 위험보다 작다.
+ *
  * <p><b>세션 종료는 하지 않는다(스펙 §5.1).</b> 스크립트는 슬롯 연결을 쥐지 않고 읽을 때마다 db-executor 가 새 문장을 실행하므로 REVOKE 가 다음
  * 조회부터 반영된다. OWNER 에게는 세션 종료 권한도 없다. 그래서 등급 정의 변경 동기화도 일반 전체 동기화와 같다.
  */
@@ -261,6 +273,8 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
                   }
                 }
                 if (!revokeOk) {
+                  // REVOKE 실패는 테이블이 USER_TABLES 에서 사라진 것처럼 보여도 늘 회수 실패다(fail-closed, WD-629).
+                  // 근거는 클래스 Javadoc "왜 사라진 듯한 테이블의 REVOKE 실패도 회수 실패로 세는가" 참고.
                   continue;
                 }
                 for (String account : missing) {
