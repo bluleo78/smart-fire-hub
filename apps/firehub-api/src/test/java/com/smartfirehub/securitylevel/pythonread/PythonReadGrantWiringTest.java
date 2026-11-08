@@ -153,6 +153,8 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
                     status.setRollbackOnly();
                   }
                 }));
+    // 등급 이벤트 리스너의 동기화는 커밋 뒤 전용 실행기에서 돈다(WD-624) — 비운 뒤 단언해야 롤백 "안 돌았음" 단언도 공허하지 않다.
+    awaitPythonReadGrantSync();
   }
 
   // ---------------------------------------------------------------- 테이블 훅
@@ -283,37 +285,10 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
       tables.add(t);
     }
     // 모든 트랜잭션이 커넥션을 쥔 상태에서 함께 커밋에 들어가게 맞춘다(= 풀 소진 상태에서 커밋 콜백).
-    CyclicBarrier allHolding = new CyclicBarrier(poolSize);
-    ExecutorService pool = Executors.newFixedThreadPool(poolSize);
-    try {
-      List<Future<Long>> commits = new ArrayList<>();
-      for (String t : tables) {
-        commits.add(
-            pool.submit(
-                () ->
-                    TenantContext.runScopedGet(
-                        DEFAULT_TEST_TENANT_ID,
-                        () -> {
-                          long start = System.nanoTime();
-                          fixtureTransactionTemplate.executeWithoutResult(
-                              status -> {
-                                sync.syncTableAfterCommit(t);
-                                try {
-                                  allHolding.await(10, TimeUnit.SECONDS);
-                                } catch (Exception e) {
-                                  throw new IllegalStateException("동시 커밋 맞추기 실패", e);
-                                }
-                              });
-                          return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
-                        })));
-      }
-      for (Future<Long> commit : commits) {
-        assertThat(commit.get(60, TimeUnit.SECONDS))
-            .as("커밋이 두 번째 커넥션을 기다려 멈추지 않는다(커넥션 타임아웃 30초)")
-            .isLessThan(10_000L);
-      }
-    } finally {
-      pool.shutdownNow();
+    List<Long> elapsed =
+        commitConcurrentlyAtPoolSize(poolSize, i -> () -> sync.syncTableAfterCommit(tables.get(i)));
+    for (Long ms : elapsed) {
+      assertThat(ms).as("커밋이 두 번째 커넥션을 기다려 멈추지 않는다(커넥션 타임아웃 30초)").isLessThan(10_000L);
     }
     awaitPythonReadGrantSync();
     for (String t : tables) {
@@ -555,6 +530,260 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
           levelService.applyReorder(orderedIds, owner);
           events.publishEvent(event);
         });
+    awaitPythonReadGrantSync(); // 리스너 동기화는 커밋 뒤 실행기에서 돈다(WD-624)
+  }
+
+  // ------------------------------------- 등급 이벤트 리스너 — 커넥션 1개·보안 순서(WD-624)
+
+  /** 커밋되는 트랜잭션 안에서 이벤트를 발행하고 실행기를 <b>비우지 않고</b> 돌아온다(커밋 직후 상태를 보는 순서 테스트용). */
+  private void publishCommittedNoDrain(Object event) {
+    TenantContext.runScoped(
+        WRONG_AMBIENT_TENANT,
+        () ->
+            fixtureTransactionTemplate.executeWithoutResult(status -> events.publishEvent(event)));
+  }
+
+  /**
+   * 풀 크기만큼의 트랜잭션이 커넥션을 쥔 채 함께 커밋에 들어가게 맞추고(각자 트랜잭션 안에서 {@code inTx(i)} 를 실행 — 예약·이벤트 발행), 각 커밋이
+   * 끝나기까지 걸린 시간(ms)을 돌려준다. WD-594(테이블 훅)·WD-624(등급 이벤트) 회귀 테스트가 함께 쓰는 장치다.
+   */
+  private List<Long> commitConcurrentlyAtPoolSize(
+      int poolSize, java.util.function.IntFunction<Runnable> inTx) throws Exception {
+    CyclicBarrier allHolding = new CyclicBarrier(poolSize);
+    ExecutorService pool = Executors.newFixedThreadPool(poolSize);
+    try {
+      List<Future<Long>> commits = new ArrayList<>();
+      for (int i = 0; i < poolSize; i++) {
+        Runnable action = inTx.apply(i);
+        commits.add(
+            pool.submit(
+                () ->
+                    TenantContext.runScopedGet(
+                        DEFAULT_TEST_TENANT_ID,
+                        () -> {
+                          long start = System.nanoTime();
+                          fixtureTransactionTemplate.executeWithoutResult(
+                              status -> {
+                                action.run();
+                                try {
+                                  allHolding.await(10, TimeUnit.SECONDS);
+                                } catch (Exception e) {
+                                  throw new IllegalStateException("동시 커밋 맞추기 실패", e);
+                                }
+                              });
+                          return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+                        })));
+      }
+      List<Long> elapsed = new ArrayList<>();
+      for (Future<Long> commit : commits) {
+        elapsed.add(commit.get(60, TimeUnit.SECONDS));
+      }
+      return elapsed;
+    } finally {
+      pool.shutdownNow();
+    }
+  }
+
+  /**
+   * 회귀(WD-624): 풀 크기만큼의 트랜잭션이 <b>동시에</b> 데이터셋 등급 변경 이벤트를 발행·커밋해도 커밋이 두 번째 커넥션을 기다려 멈추지 않고(커넥션 타임아웃
+   * 30초), 실행기가 비면 각 테이블이 새 등급(민감, 위치 3)대로 맞춰진다. 고치기 전에는 리스너가 커밋 콜백에서 호출 스레드로 REQUIRES_NEW 동기화를 돌려
+   * 바깥 커넥션을 쥔 채 하나를 더 기다렸다 — 풀(테스트 2)을 다 쥔 요청들이 서로 막혀 30초 뒤 동기화가 실패해 시간·GRANT 단언이 모두 깨진다.
+   */
+  @Test
+  void datasetLevelChangedEvents_concurrentCommitsAtPoolSize_doNotHoldTwoConnections()
+      throws Exception {
+    int poolSize = dataSource.unwrap(HikariDataSource.class).getMaximumPoolSize();
+    assertThat(poolSize).as("전제: 테스트 풀이 작아야 동시 커밋으로 풀을 다 쥘 수 있다").isBetween(1, 4);
+    List<String> tables = new ArrayList<>();
+    List<Long> ids = new ArrayList<>();
+    for (int i = 0; i < poolSize; i++) {
+      tables.add(table("dlc" + i, "민감")); // ACL 은 생성 시점(내부) 기준 → 슬롯 2 에 남는 권한
+      ids.add(lastDatasetId());
+    }
+    assertThat(selectAs(2, tables.get(0))).as("출발 상태: 과권한").isNull();
+
+    List<Long> elapsed =
+        commitConcurrentlyAtPoolSize(
+            poolSize,
+            i ->
+                () ->
+                    events.publishEvent(
+                        new DatasetSecurityLevelChangedEvent(
+                            DEFAULT_TEST_TENANT_ID,
+                            ids.get(i),
+                            fx.levelId("내부"),
+                            fx.levelId("민감"),
+                            DatasetSecurityLevelChangedEvent.Cause.MANUAL)));
+    assertThat(elapsed).as("커밋이 두 번째 커넥션을 기다려 멈추지 않는다(커넥션 타임아웃 30초)").allMatch(ms -> ms < 10_000L);
+
+    awaitPythonReadGrantSync();
+    for (String t : tables) {
+      assertThat(selectAs(2, t)).as("커밋 뒤 동기화가 남는 권한을 회수했다: %s", t).isEqualTo("42501");
+      assertThat(selectAs(3, t)).as("슬롯 3 은 읽는다: %s", t).isNull();
+    }
+  }
+
+  /**
+   * 회귀(WD-624): 풀 크기만큼의 트랜잭션이 <b>동시에</b> 등급 정의 변경 이벤트를 발행·커밋해도 멈추지 않고, 실행기가 비면 테넌트 전체가 계산값대로
+   * 맞춰진다(세션 끊기는 커밋 콜백에서 동기로 돌지만 소유자 풀만 쓰므로 플랫폼 풀을 기다리지 않는다). 고치기 전에는 30초 멈춘 뒤 동기화가 실패했다.
+   */
+  @Test
+  void levelsChangedEvents_concurrentCommitsAtPoolSize_doNotHoldTwoConnections() throws Exception {
+    int poolSize = dataSource.unwrap(HikariDataSource.class).getMaximumPoolSize();
+    assertThat(poolSize).as("전제: 테스트 풀이 작아야 동시 커밋으로 풀을 다 쥘 수 있다").isBetween(1, 4);
+    String sens = table("lvc", "민감"); // ACL 은 생성 시점(내부) 기준 → 슬롯 2 에 남는 권한
+    assertThat(selectAs(2, sens)).as("출발 상태: 과권한").isNull();
+
+    List<Long> elapsed =
+        commitConcurrentlyAtPoolSize(
+            poolSize,
+            i ->
+                () ->
+                    events.publishEvent(
+                        new SecurityLevelsChangedEvent(
+                            DEFAULT_TEST_TENANT_ID,
+                            SecurityLevelsChangedEvent.Kind.REORDERED,
+                            null)));
+    assertThat(elapsed).as("커밋이 두 번째 커넥션을 기다려 멈추지 않는다(커넥션 타임아웃 30초)").allMatch(ms -> ms < 10_000L);
+
+    awaitPythonReadGrantSync();
+    assertThat(selectAs(2, sens)).as("커밋 뒤 전체 동기화가 남는 권한을 회수했다").isEqualTo("42501");
+    assertThat(selectAs(3, sens)).isNull();
+  }
+
+  /**
+   * 합치기(WD-624): 실행기가 막혀 전체 동기화가 아직 시작하지 않은 동안 같은 테넌트의 등급 정의 변경이 연달아 커밋돼도 큐에 들어가는 전체 동기화는 하나뿐이고,
+   * 실행기가 비면 그 하나가 마지막 상태까지 맞춘다. 세션 끊기는 변경마다 커밋 직후 동기로 돈다. 변이: 합치기 표식을 지우면 큐에 3개가 쌓여 실패한다.
+   */
+  @Test
+  void levelsChangedEvents_whileSyncPending_coalesceIntoOneFullSync() throws Exception {
+    String sens = table("coal", "민감"); // ACL 은 내부 기준 → 슬롯 2 에 남는 권한
+    java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+    syncExecutor.submit(
+        () -> {
+          try {
+            release.await(30, TimeUnit.SECONDS);
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        });
+    try {
+      for (int i = 0; i < 3; i++) {
+        try (Connection running = openSlotSession(2)) {
+          publishCommittedNoDrain(
+              new SecurityLevelsChangedEvent(
+                  DEFAULT_TEST_TENANT_ID, SecurityLevelsChangedEvent.Kind.REORDERED, null));
+          assertThat(queryState(running)).as("변경 %d: 커밋 직후 세션이 끊겼다", i).isNotNull();
+        }
+      }
+      assertThat(syncExecutor.pendingCount()).as("막는 작업 1 + 합쳐진 전체 동기화 1").isEqualTo(2);
+    } finally {
+      release.countDown();
+    }
+    awaitPythonReadGrantSync();
+    assertThat(selectAs(2, sens)).as("합쳐진 한 번의 전체 동기화가 맞췄다").isEqualTo("42501");
+    assertThat(selectAs(3, sens)).isNull();
+
+    // 시작할 때 표식을 지웠으므로 다음 변경은 다시 작업을 넣는다(합치기가 영구히 막지 않는다).
+    revokeAllSlots(sens);
+    publishInTx(
+        new SecurityLevelsChangedEvent(
+            DEFAULT_TEST_TENANT_ID, SecurityLevelsChangedEvent.Kind.REORDERED, null),
+        true);
+    assertThat(selectAs(3, sens)).as("다음 변경의 전체 동기화도 돈다").isNull();
+  }
+
+  /**
+   * 보안 순서(WD-624): 등급 정의 변경이 커밋되어 돌아온 시점에는 — 넓어지는 GRANT 를 맞추는 전체 동기화가 아직 실행기 큐에서 기다리는 중이어도 — 옛 위치로
+   * 슬롯을 받아 실행 중이던 슬롯 롤 세션이 <b>이미 끊겨</b> 있다. 그래서 큐 대기 중 다른 경로(실행 준비·테이블 동기화)가 슬롯을 먼저 넓혀도 그 넓어짐을 볼 옛
+   * 세션이 없다. 실행기를 막아 "동기화 전" 창을 고정한 뒤 단언한다. 변이: 세션 끊기를 실행기 작업 안으로만 옮기면(커밋 콜백의 동기 끊기를 지우면) 첫 단언이
+   * 실패한다.
+   */
+  @Test
+  void levelsChangedEvent_terminatesSessionsBeforeDeferredSync() throws Exception {
+    String sens = table("ord", "민감"); // ACL 은 내부 기준 → 슬롯 2 에 남는 권한(전체 동기화가 회수할 대상)
+    java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+    syncExecutor.submit(
+        () -> {
+          try {
+            release.await(30, TimeUnit.SECONDS);
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        });
+    try (Connection running = openSlotSession(2)) {
+      assertThat(queryState(running)).as("대조군: 이벤트 전에는 살아 있다").isNull();
+      publishCommittedNoDrain(
+          new SecurityLevelsChangedEvent(
+              DEFAULT_TEST_TENANT_ID, SecurityLevelsChangedEvent.Kind.REORDERED, null));
+      assertThat(syncPending()).as("전제: 전체 동기화는 아직 실행기 큐에 있다").isTrue();
+      assertThat(queryState(running)).as("커밋 직후 — 동기화 전에 이미 끊겼다").isNotNull();
+      assertThat(selectAs(2, sens)).as("전제: ACL 은 아직 옛 상태(전체 동기화 전)").isNull();
+    } finally {
+      release.countDown();
+    }
+    awaitPythonReadGrantSync();
+    assertThat(selectAs(2, sens)).as("실행기가 비면 전체 동기화가 맞춘다").isEqualTo("42501");
+  }
+
+  /**
+   * 보안 순서(WD-624): 데이터셋 등급을 올린(좁힌) 커밋 뒤 그 테이블 동기화가 아직 실행기 큐에 있어도, <b>커밋 뒤 시작하는 실행</b>은 그 테이블을 읽지
+   * 못한다 — 실행 준비(JIT, prepareForRun)가 같은 잠금 안에서 커밋된 데이터셋 등급을 읽어 자기 슬롯의 남는 권한을 회수한 뒤에야 스크립트를 띄우기
+   * 때문이다. 이 성질이 비동기 리스너가 새 실행에 과권한 창을 열지 않는 근거다.
+   */
+  @Test
+  void datasetLevelRaised_newRunBeforeDeferredSync_cannotRead() throws Exception {
+    String t = table("narrow", "공개");
+    long id = lastDatasetId();
+    sync.syncTenant();
+    assertThat(selectAs(2, t)).as("출발: 공개는 슬롯 2 가 읽는다").isNull();
+    int internalRank =
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> levelRepository.findById(fx.levelId("내부")).orElseThrow().rank());
+
+    java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+    syncExecutor.submit(
+        () -> {
+          try {
+            release.await(30, TimeUnit.SECONDS);
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        });
+    try {
+      // 공개 → 민감 상향을 커밋하고 이벤트를 커밋되는 트랜잭션에서 발행한다(리스너 작업은 막힌 실행기 뒤에 줄 선다).
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate,
+          DEFAULT_TEST_TENANT_ID,
+          () ->
+              dsl.update(DATASET)
+                  .set(DATASET.SECURITY_LEVEL_ID, fx.levelId("민감"))
+                  .where(DATASET.ID.eq(id))
+                  .execute());
+      publishCommittedNoDrain(
+          new DatasetSecurityLevelChangedEvent(
+              DEFAULT_TEST_TENANT_ID,
+              id,
+              fx.levelId("공개"),
+              fx.levelId("민감"),
+              DatasetSecurityLevelChangedEvent.Cause.MANUAL));
+      assertThat(syncPending()).as("전제: 테이블 동기화는 아직 실행기 큐에 있다").isTrue();
+      assertThat(selectAs(2, t)).as("전제: 동기화 전이라 슬롯 2 ACL 은 옛 상태").isNull();
+
+      // 커밋 뒤 시작하는 실행(자격 = 내부) — 실행 준비가 슬롯 2 를 커밋된 등급으로 맞춘다.
+      Clearance runAs =
+          new Clearance(owner, DEFAULT_TEST_TENANT_ID, internalRank, Set.of(), false, Set.of());
+      int slot = sync.prepareForRun(runAs);
+      assertThat(slot).isEqualTo(2);
+      assertThat(selectAs(slot, t)).as("새 실행은 동기화 전에도 상향된 테이블을 못 읽는다").isEqualTo("42501");
+    } finally {
+      release.countDown();
+    }
+    awaitPythonReadGrantSync();
+    assertThat(selectAs(2, t)).isEqualTo("42501");
+    assertThat(selectAs(3, t)).isNull();
   }
 
   // ------------------------------------------------ 서비스 발행 → 리스너 종단(R2, B 병합 후)
@@ -581,6 +810,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
         new Clearance(owner, DEFAULT_TEST_TENANT_ID, sensRank, Set.of(), false, Set.of());
     datasetSecurityService.changeLevel(
         id, new ChangeDatasetLevelRequest(fx.levelId("민감"), null), classifier);
+    awaitPythonReadGrantSync(); // 리스너 동기화는 커밋 뒤 실행기에서 돈다(WD-624)
 
     assertThat(selectAs(1, t)).as("민감(위치 3)으로 상향 → 슬롯 1 거부").isEqualTo("42501");
     assertThat(selectAs(2, t)).isEqualTo("42501");
@@ -613,6 +843,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
     swapped.set(1, original.get(0));
     try {
       levelService.applyReorder(swapped, owner); // 서비스 자체 트랜잭션 — 커밋 후 B 의 발행이 리스너에 닿는다
+      awaitPythonReadGrantSync(); // 리스너 동기화는 커밋 뒤 실행기에서 돈다(WD-624)
       assertThat(selectAs(1, pub)).as("공개가 위치 2 로 → 슬롯 1 거부").isEqualTo("42501");
       assertThat(selectAs(2, pub)).isNull();
       assertThat(selectAs(1, internal)).as("내부가 위치 1 로 → 슬롯 1 허용").isNull();

@@ -63,6 +63,15 @@ public class PythonReadGrants {
     delegate().syncTenantForLevelsChange();
   }
 
+  /**
+   * 등급 정의 변경 직후, 무거운 전체 동기화보다 <b>먼저</b> 실행 중인 슬롯 연결만 끊는다(WD-624) — PG 는 끊고 Tibero 는 아무것도 하지 않는다
+   * ({@link PythonReadGrantBackend#terminateSlotSessionsForLevelsChange}). 등급 이벤트 리스너가 커밋 콜백에서 부른다.
+   * 백엔드 조회(캐시 미스)는 그 시점에 아직 스레드에 묶인 바깥 커넥션을 그대로 쓴다 — 예전 동기 리스너도 같은 자리에서 조회했다.
+   */
+  public void terminateSlotSessionsForLevelsChange() {
+    delegate().terminateSlotSessionsForLevelsChange();
+  }
+
   /** 데이터셋 하나의 테이블만 재동기화. */
   public void syncDataset(long datasetId) {
     delegate().syncDataset(datasetId);

@@ -189,6 +189,13 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
   }
 
   /**
+   * 넘겼으나 아직 끝나지 않은(실행 중 포함) 작업 수. <b>테스트 전용 seam</b> — 등급 정의 변경 전체 동기화가 테넌트당 하나로 합쳐지는지(WD-624) 센다.
+   */
+  synchronized int pendingCount() {
+    return pending;
+  }
+
+  /**
    * 라이프사이클 시작 — 워커가 종료돼 있으면(앞선 stop) 새 워커로 바꾼다(WD-629). 고치기 전에는 빈 메서드라 컨텍스트 stop()/start() 뒤 이후 모든
    * 제출이 버려져 커밋 뒤 동기화가 영구히 사라졌다. 실행 중이면 아무것도 하지 않는다(진행 중 작업·큐 유지).
    *

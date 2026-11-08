@@ -138,6 +138,15 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
     return syncTenant();
   }
 
+  /**
+   * 아무것도 하지 않는다 — 스크립트는 슬롯 연결을 쥐지 않고(db-executor 가 문장마다 실행) OWNER 에게 세션 종료 권한도 없다(스펙 §5.1). 실행 중
+   * 스크립트를 막는 세대 번호 올리기는 실행기에서 도는 {@link #syncTenantForLevelsChange} 가 GRANT 전에 한다(WD-624).
+   */
+  @Override
+  public void terminateSlotSessionsForLevelsChange() {
+    // 의도적으로 비움.
+  }
+
   /** 테이블 하나만 재동기화(생성·클론 직후, 데이터셋 등급 변경). 이름은 소문자 메타데이터 이름이다. */
   public void syncTable(String tableName) {
     requiresNew.execute(status -> syncInTx(tableName, null));

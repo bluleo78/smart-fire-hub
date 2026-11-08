@@ -28,6 +28,13 @@ interface PythonReadGrantBackend {
   /** 등급 정의 변경 뒤 전체 재동기화(백엔드별로 실행 중 스크립트를 막는 방법이 다르다). */
   PythonReadGrantSync.SyncResult syncTenantForLevelsChange();
 
+  /**
+   * 등급 정의 변경 직후, 넓히는 GRANT(전체 동기화 — 전용 실행기)보다 <b>먼저</b> 실행 중 스크립트의 슬롯 연결을 끊는다(WD-624). 등급 이벤트 리스너가
+   * 커밋 콜백에서 부르므로 플랫폼 풀 커넥션을 하나 더 잡으면 안 된다. PG 는 소유자 풀로 슬롯 롤 세션을 끊고, Tibero 는 슬롯 연결을 쥔 세션이 없어 아무것도
+   * 하지 않는다(세대 번호는 {@link #syncTenantForLevelsChange} 가 올린다).
+   */
+  void terminateSlotSessionsForLevelsChange();
+
   /** 데이터셋 하나의 테이블만 재동기화. */
   void syncDataset(long datasetId);
 

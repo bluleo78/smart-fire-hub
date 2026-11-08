@@ -95,6 +95,27 @@ class PythonReadGrantsTest {
     verifyNoInteractions(pg, tibero);
   }
 
+  /**
+   * 등급 정의 변경 직후의 세션 끊기(WD-624) — PG 테넌트는 PG 구현으로만 정확히 한 번 가고 GRANT 동기화는 부르지 않는다(넓히는 GRANT 는 실행기 몫).
+   */
+  @Test
+  void pgTenant_terminateSlotSessionsForLevelsChange_goesToPgOnly() {
+    grants.terminateSlotSessionsForLevelsChange();
+    verify(pg).terminateSlotSessionsForLevelsChange();
+    verifyNoMoreInteractions(pg);
+    verifyNoInteractions(tibero);
+  }
+
+  /** Tibero 테넌트는 Tibero 구현(아무것도 하지 않음)으로 간다 — PG 의 세션 끊기로 새지 않는다. */
+  @Test
+  void tiberoTenant_terminateSlotSessionsForLevelsChange_goesToTiberoOnly() {
+    tiberoTenant();
+    grants.terminateSlotSessionsForLevelsChange();
+    verify(tibero).terminateSlotSessionsForLevelsChange();
+    verifyNoMoreInteractions(tibero);
+    verifyNoInteractions(pg);
+  }
+
   /** 테넌트 컨텍스트가 없으면 PG 구현이 예전 그대로(예외·로그) 처리하게 맡긴다 — Tibero 로 새지 않는다. */
   @Test
   void noTenantContext_fallsThroughToPg() {

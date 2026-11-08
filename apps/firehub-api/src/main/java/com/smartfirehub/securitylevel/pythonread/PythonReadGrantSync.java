@@ -139,6 +139,32 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     return requiresNew.execute(status -> syncInTx(null, null, true));
   }
 
+  /**
+   * 그 테넌트 슬롯 롤의 활성 세션을 지금 바로 모두 끊는다(GRANT 는 건드리지 않는다). 끊었으면 러너 실패 문구용 표식을 남긴다. 끊기에 실패하면 예외.
+   *
+   * <p><b>왜 GRANT 동기화와 따로 부를 수 있게 했는가(WD-624).</b> 등급 정의 변경 리스너는 무거운 전체 동기화(REQUIRES_NEW — 플랫폼 풀
+   * 커넥션을 하나 더 잡는다)를 전용 실행기로 넘긴다. 그러면 커밋부터 실행기가 그 작업을 돌리기까지(큐 대기) 옛 등급 위치로 슬롯을 받은 실행 중 세션이 살아 있고, 그
+   * 사이 다른 실행의 준비(JIT)·테이블 동기화가 같은 슬롯에 새 위치 기준 GRANT 를 먼저 걸면 그 세션이 자격 밖 등급을 읽는다. 세션 끊기는 소유자
+   * 풀(TenantPipelineRoleProvisioner 가 쓰는, 플랫폼 풀과 다른 풀)만 쓰므로 커밋 콜백에서 바로 돌려도 플랫폼 풀 커넥션을 둘 쥐지 않는다. 그래서 끊기만 커밋 직후
+   * 호출 스레드에서 먼저 하고, 넓어지는 GRANT 는 실행기에서 한다.
+   *
+   * @return 끊은 세션 수
+   */
+  public int terminateSlotSessions(long tenantId) {
+    int terminated = roleProvisioner.terminatePythonReadSessions(tenantId);
+    if (terminated > 0) {
+      slotSessionsTerminatedAt.put(tenantId, System.currentTimeMillis());
+      log.warn("등급 정의 변경으로 실행 중인 PYTHON 슬롯 롤 세션 {}개를 끊었다(tenant={})", terminated, tenantId);
+    }
+    return terminated;
+  }
+
+  /** 현재 테넌트의 슬롯 롤 세션을 끊는다 — {@link #terminateSlotSessions(long)}. 컨텍스트가 없으면 다른 메서드처럼 예외. */
+  @Override
+  public void terminateSlotSessionsForLevelsChange() {
+    terminateSlotSessions(TenantContext.require("등급 정의 변경 슬롯 세션 끊기"));
+  }
+
   /** sinceMillis 이후 이 테넌트의 슬롯 롤 세션을 끊었는가 — 러너가 실패 문구를 고르는 데만 쓴다. */
   public boolean slotSessionsTerminatedSince(long tenantId, long sinceMillis) {
     Long at = slotSessionsTerminatedAt.get(tenantId);
@@ -233,11 +259,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     List<String> slotRoleNames = TenantPipelineRole.pythonReadRoleNames(tenantId);
     if (terminateSlotSessions) {
       // 잠금 안·GRANT 커밋 전 — 끊긴 뒤 새로 붙는 세션은 아직 옛(이 트랜잭션 전) GRANT 를 본다. 실행 준비도 같은 잠금을 기다린다.
-      int terminated = roleProvisioner.terminatePythonReadSessions(tenantId);
-      if (terminated > 0) {
-        slotSessionsTerminatedAt.put(tenantId, System.currentTimeMillis());
-        log.warn("등급 정의 변경으로 실행 중인 PYTHON 슬롯 롤 세션 {}개를 끊었다(tenant={})", terminated, tenantId);
-      }
+      terminateSlotSessions(tenantId);
     }
     List<LevelPolicy> levelsAsc = levelRepository.findAll(); // rank asc, 이 트랜잭션에 합류(RLS GUC)
     // 다룰 슬롯: 실행 준비면 실행 슬롯 하나(범위 밖이면 없음 — prepareForRun 이 거부), 아니면 전부.
