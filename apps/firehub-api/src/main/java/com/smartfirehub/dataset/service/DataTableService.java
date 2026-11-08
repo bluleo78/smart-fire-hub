@@ -63,8 +63,10 @@ public class DataTableService {
       case "TEXT" -> "TEXT";
       case "VARCHAR" -> {
         int len = maxLength != null ? maxLength : ColumnPhysicalType.DEFAULT_VARCHAR_LENGTH;
-        if (len < 1 || len > 10000) {
-          throw new IllegalArgumentException("VARCHAR length must be between 1 and 10000");
+        if (len < 1 || len > ColumnPhysicalType.MAX_VARCHAR_LENGTH) {
+          throw new IllegalArgumentException(
+              ColumnPhysicalType.varcharLengthOutOfRangeMessage(
+                  ColumnPhysicalType.MAX_VARCHAR_LENGTH));
         }
         yield "VARCHAR(" + len + ")";
       }
@@ -80,7 +82,9 @@ public class DataTableService {
       case "DATE" -> "DATE";
       case "TIMESTAMP" -> "TIMESTAMP";
       case "GEOMETRY" -> "GEOMETRY(Geometry, 4326)";
-      default -> throw new IllegalArgumentException("Unknown data type: " + dataType);
+      // 알 수 없는 타입은 한국어 안내 + 입력값으로 400 을 돌려준다(WD-569).
+      default ->
+          throw new IllegalArgumentException(ColumnPhysicalType.unknownDataTypeMessage(dataType));
     };
   }
 

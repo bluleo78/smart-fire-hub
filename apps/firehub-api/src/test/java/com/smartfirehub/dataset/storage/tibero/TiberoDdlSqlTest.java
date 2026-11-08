@@ -334,4 +334,18 @@ class TiberoDdlSqlTest {
                 .noneMatch(sql -> sql.contains("TRIGGER")))
         .isTrue();
   }
+
+  /** WD-569 — Tibero 도 VARCHAR 길이·알 수 없는 타입 오류를 PostgreSQL 과 같은 한국어 문장으로 안내한다(상한만 4000). */
+  @Test
+  void columnDdl_invalidLengthOrType_koreanMessages() {
+    assertThatThrownBy(() -> TiberoDialect.columnDdl("VARCHAR", 4001))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다.");
+    assertThatThrownBy(() -> TiberoDialect.columnDdl("VARCHAR", 0))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다.");
+    assertThatThrownBy(() -> TiberoDdlSql.alterColumnType(S, "t", "c", "NOPE", null, "TEXT"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("알 수 없는 데이터 타입입니다: NOPE");
+  }
 }

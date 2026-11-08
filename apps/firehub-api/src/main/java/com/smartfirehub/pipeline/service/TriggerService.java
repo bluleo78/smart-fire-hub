@@ -1388,15 +1388,18 @@ public class TriggerService {
   }
 
   private void validateScheduleConfig(Map<String, Object> config) {
-    if (!config.containsKey("cron") || config.get("cron") == null) {
-      throw new IllegalArgumentException("cron expression is required for SCHEDULE trigger");
+    // cron 누락은 형식 오류(「유효하지 않은 cron 표현식입니다」)와 같은 한국어 톤으로 안내한다(WD-569).
+    // 빈 문자열·공백만 보낸 경우도 「누락」으로 본다 — 형식 오류 문구 뒤에 빈 값이 붙어 무엇이 틀렸는지 알 수 없었다.
+    Object raw = config.get("cron");
+    if (raw == null || raw.toString().isBlank()) {
+      throw new IllegalArgumentException("스케줄 트리거에는 cron 표현식이 필요합니다.");
     }
     // cron 형식 검증 및 정규화 (#55)
     // Spring CronExpression은 6필드(초 분 시 일 월 요일) 형식만 수용.
     // 5필드(Unix 표준: 분 시 일 월 요일) 입력은 앞에 "0 "을 붙여 정규화.
     // 정규화 규칙은 등록(TriggerSchedulerService.registerSchedule)과 같은 ProactiveCron.normalize 를
     // 쓴다(WD-107).
-    String cron = config.get("cron").toString().trim();
+    String cron = raw.toString().trim();
     String normalizedCron = ProactiveCron.normalize(cron);
     if (!CronExpression.isValidExpression(normalizedCron)) {
       throw new IllegalArgumentException("유효하지 않은 cron 표현식입니다: " + cron);
