@@ -229,10 +229,17 @@ export default function ProactiveJobListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors"
                   onClick={() => navigate(`/ai-insights/jobs/${job.id}`)}
                 >
-                  <TableCell className="font-medium">
+                  {/* 작업명 셀은 유동 폭 — 공백 없는 긴 이름(최대 200자)이 칸을 수천 px 로 늘려
+                      실행 주기·활성 칸을 화면 밖으로 밀지 않도록 셀 폭을 고정한다 (WD-558).
+                      작업명 한 줄만 말줄임(title 툴팁)하고, 아래 보조 줄(채널 요약·자격 배지·이상 탐지 경고)은
+                      잘리면 경고를 놓치므로 일부러 줄바꿈해 전부 보이게 한다. */}
+                  <TableCell className="font-medium max-w-0 min-w-[180px]">
                     {/* 작업명과 채널 요약을 세로로 분리하여 가독성 개선 (#5) */}
-                    <div className="flex flex-col gap-0.5">
-                      <span>{job.name}</span>
+                    <div className="flex flex-col gap-0.5 min-w-0 whitespace-normal break-words">
+                      {/* 잘린 이름은 title 툴팁으로 전체를 볼 수 있다 */}
+                      <span className="truncate" title={job.name}>
+                        {job.name}
+                      </span>
                       <span className="text-xs text-muted-foreground">
                         {channelSummary(job.config)}
                       </span>

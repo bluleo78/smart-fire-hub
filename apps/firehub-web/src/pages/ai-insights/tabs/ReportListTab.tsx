@@ -118,9 +118,11 @@ export default function ReportListTab() {
                       <div className="text-xs text-muted-foreground truncate">{report.summary}</div>
                     )}
                   </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="text-xs">
-                      {report.jobName}
+                  {/* 작업명 배지는 칸 폭(헤더 200px)에서 말줄임한다 — 공백 없는 긴 작업명(최대 200자)이
+                      칸을 늘려 생성일·액션 칸을 화면 밖으로 밀지 않게 한다. 전체 이름은 title 툴팁으로 본다 (WD-558) */}
+                  <TableCell className="max-w-[200px]">
+                    <Badge variant="outline" className="text-xs max-w-full" title={report.jobName}>
+                      <span className="truncate">{report.jobName}</span>
                     </Badge>
                   </TableCell>
                   <TableCell className="text-sm">

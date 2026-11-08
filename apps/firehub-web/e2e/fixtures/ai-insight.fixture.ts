@@ -34,6 +34,15 @@ export async function mockProactivePermissions(page: Page, { canWrite = true }: 
   );
 }
 
+/** 관리자 권한(proactive:admin) 모킹 — 「워크스페이스 전체」 탭이 보인다. 실제 ADMIN 처럼 읽기·쓰기도 함께 준다(WD-192) */
+export async function mockProactiveAdminPermissions(page: Page) {
+  await mockApi(page, 'GET', '/api/v1/auth/me/permissions', [
+    'proactive:read',
+    'proactive:write',
+    'proactive:admin',
+  ]);
+}
+
 /**
  * 작업 목록 페이지 API 모킹
  * - 프로액티브 잡 목록과 읽지 않은 메시지 수를 모킹한다.

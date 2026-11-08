@@ -800,16 +800,18 @@ export default function ReportTemplateDetailPage() {
               {template?.name ? `"${template.name}" 템플릿을 삭제하시겠습니까? 되돌릴 수 없습니다.` : '이 템플릿을 삭제하시겠습니까? 되돌릴 수 없습니다.'}
             </p>
             {affectedJobs.length > 0 && (
-              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3" data-testid="template-delete-impact">
+              // min-w-0: 다이얼로그(grid)의 자식은 기본 최소 폭이 내용 폭이라, 긴 작업명이 상자째 다이얼로그 밖으로 늘어난다 (WD-558)
+              <div className="min-w-0 rounded-md border border-destructive/40 bg-destructive/5 p-3" data-testid="template-delete-impact">
                 <p className="text-sm font-medium text-destructive">
                   이 양식을 사용하는 스마트 작업 {affectedJobs.length}개가 기본 형식으로 전환됩니다.
                 </p>
                 <ul className="mt-2 space-y-1 text-sm text-muted-foreground list-disc list-inside">
                   {affectedJobs.map((job) => (
                     <li key={job.id}>
+                      {/* 공백 없는 긴 작업명(최대 200자)도 상자 안에서 줄바꿈해 전부 읽히게 한다 — 삭제 영향 고지이므로 자르지 않는다 (WD-558) */}
                       <button
                         type="button"
-                        className="underline underline-offset-2 hover:text-foreground"
+                        className="text-left [overflow-wrap:anywhere] underline underline-offset-2 hover:text-foreground"
                         onClick={() => navigate(`/ai-insights/jobs/${job.id}`)}
                       >
                         {job.name}

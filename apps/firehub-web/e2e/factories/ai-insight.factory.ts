@@ -7,6 +7,7 @@
 import type {
   AnomalyEventRecord,
   ProactiveJob,
+  ProactiveJobAdminSummary,
   ProactiveJobExecution,
   ProactiveMessage,
   ReportListItem,
@@ -86,6 +87,22 @@ export function createReport(overrides?: Partial<ReportListItem>): ReportListIte
     title: '8월 화재 통계 리포트',
     summary: '8월 화재 건수는 전월 대비 12% 감소했습니다.',
     completedAt: '2026-08-10T09:00:00',
+    ...overrides,
+  };
+}
+
+/** 워크스페이스 전체(관리자) 작업 목록 행(ProactiveJobAdminSummary) 객체 생성 — 남의 작업을 최소 정보로 보인다(WD-192) */
+export function createAdminJobRow(overrides?: Partial<ProactiveJobAdminSummary>): ProactiveJobAdminSummary {
+  return {
+    id: 10,
+    name: '남의 작업',
+    ownerName: '홍길동',
+    enabled: true,
+    ownerEligible: true,
+    ownerIneligibleReason: null,
+    nextExecuteAt: null,
+    timezone: 'Asia/Seoul',
+    lastExecutionStatus: null,
     ...overrides,
   };
 }

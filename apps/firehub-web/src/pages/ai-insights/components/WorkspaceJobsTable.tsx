@@ -100,7 +100,13 @@ export function WorkspaceJobsTable() {
             ) : jobs.length > 0 ? (
               jobs.map((job) => (
                 <TableRow key={job.id} data-testid={`workspace-job-${job.id}`}>
-                  <TableCell className="font-medium">{job.name}</TableCell>
+                  {/* 긴 작업명이 칸을 늘려 활성·끄기 칸을 화면 밖으로 밀지 않도록 셀 폭을 따라 말줄임한다 —
+                      전체 이름은 title 툴팁으로 본다 (WD-558, 내 작업 목록과 같은 패턴) */}
+                  <TableCell className="font-medium max-w-0 min-w-[180px]">
+                    <div className="truncate" title={job.name}>
+                      {job.name}
+                    </div>
+                  </TableCell>
                   <TableCell className="text-sm">{job.ownerName ?? '-'}</TableCell>
                   <TableCell>
                     {job.ownerEligible ? (

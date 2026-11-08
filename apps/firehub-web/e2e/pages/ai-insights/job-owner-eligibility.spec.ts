@@ -1,6 +1,9 @@
-import type { ProactiveJobAdminSummary } from '../../../src/api/proactive';
-import { createJob } from '../../factories/ai-insight.factory';
-import { mockProactivePermissions, setupJobDetailMocks } from '../../fixtures/ai-insight.fixture';
+import { createAdminJobRow, createJob } from '../../factories/ai-insight.factory';
+import {
+  mockProactiveAdminPermissions,
+  mockProactivePermissions,
+  setupJobDetailMocks,
+} from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -14,30 +17,6 @@ import { expect, test } from '../../fixtures/auth.fixture';
 
 const NO_PERMISSION_LABEL = '작성자 권한 없음 — 실행되지 않음';
 const INACTIVE_LABEL = '작성자 정지·제거 — 실행되지 않음';
-
-function createAdminRow(overrides?: Partial<ProactiveJobAdminSummary>): ProactiveJobAdminSummary {
-  return {
-    id: 10,
-    name: '남의 작업',
-    ownerName: '홍길동',
-    enabled: true,
-    ownerEligible: true,
-    ownerIneligibleReason: null,
-    nextExecuteAt: null,
-    timezone: 'Asia/Seoul',
-    lastExecutionStatus: null,
-    ...overrides,
-  };
-}
-
-/** 관리자 권한(proactive:admin) — 실제 ADMIN 처럼 읽기·쓰기도 함께 준다 */
-async function mockAdminPermissions(page: import('@playwright/test').Page) {
-  await mockApi(page, 'GET', '/api/v1/auth/me/permissions', [
-    'proactive:read',
-    'proactive:write',
-    'proactive:admin',
-  ]);
-}
 
 test.describe('작성자 실행 자격 표시 (WD-192)', () => {
   test('목록 — 자격 없는 작업에만 「실행되지 않음」이 보이고 사유별 문구가 다르다', async ({ authenticatedPage: page }) => {
@@ -136,13 +115,13 @@ test.describe('워크스페이스 전체 보기 — 관리자 (WD-192)', () => {
   test('관리자 — 남의 작업이 작성자·실행 자격과 함께 보이고 끄기·삭제가 관리자 API 로 간다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: 1, name: '관리자 본인 작업' })]);
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
-    await mockAdminPermissions(page);
+    await mockProactiveAdminPermissions(page);
     const listCapture = await mockApi(
       page,
       'GET',
       '/api/v1/proactive/admin/jobs',
       [
-        createAdminRow({
+        createAdminJobRow({
           id: 10,
           name: '권한 잃은 사람 작업',
           ownerName: '홍길동',
@@ -150,7 +129,7 @@ test.describe('워크스페이스 전체 보기 — 관리자 (WD-192)', () => {
           ownerIneligibleReason: 'OWNER_NO_PERMISSION',
           lastExecutionStatus: 'FAILED',
         }),
-        createAdminRow({ id: 11, name: '꺼진 작업', ownerName: '김철수', enabled: false, lastExecutionStatus: 'COMPLETED' }),
+        createAdminJobRow({ id: 11, name: '꺼진 작업', ownerName: '김철수', enabled: false, lastExecutionStatus: 'COMPLETED' }),
       ],
       { capture: true },
     );
@@ -205,7 +184,7 @@ test.describe('워크스페이스 전체 보기 — 관리자 (WD-192)', () => {
   test('관리자 — 관리자 목록 오류는 빈 상태가 아니라 불러오기 실패로 보인다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
-    await mockAdminPermissions(page);
+    await mockProactiveAdminPermissions(page);
     await mockApi(page, 'GET', '/api/v1/proactive/admin/jobs', { status: 500, message: '서버 오류' }, { status: 500 });
 
     await page.goto('/ai-insights/jobs?view=workspace');
