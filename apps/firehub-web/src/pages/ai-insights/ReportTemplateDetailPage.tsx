@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { ArrowLeft, Copy, Pencil, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useNavigate, useParams } from 'react-router-dom';
+import { type NavigateFunction, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import type { ReportTemplate, ReportTemplateSummary } from '@/api/proactive';
@@ -70,14 +70,58 @@ function toFallbackTemplate(summary: ReportTemplateSummary | undefined): ReportT
   return { id, name, description, builtin, createdAt, updatedAt, sections: [], style: null };
 }
 
+/**
+ * 주소 id 를 읽어 새 양식(`new`)·기존 양식·잘못된 id 로 가른다.
+ * 주소 id 는 숫자만 받는다(WD-628) — `Number('1e1')` 은 10 이라 다른 양식을 열었다.
+ * 잘못된 id 를 0 으로 바꿔 넘기면 조회 훅의 enabled 조건에만 기대고 저장·삭제·다시 불러오기도 0 으로 나갈 수 있었다(WD-652).
+ * 여기서 명시적으로 갈라 잘못된 id 면 본문(조회·저장·삭제 훅)을 아예 그리지 않는다.
+ */
 export default function ReportTemplateDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const isNew = !id || id === 'new';
-  // 주소 id 는 숫자만 받는다(WD-628) — `Number('1e1')` 은 10 이라 다른 양식을 열었다.
-  // 잘못된 id 는 0 으로 두어 단건 조회를 끄고(enabled: !!id) 목록에서도 찾지 못하게 해, 아래 「존재하지 않는 템플릿」 안내로 보낸다.
-  const templateId = isNew ? 0 : (parseRouteId(id) ?? 0);
+  const parsedId = isNew ? undefined : parseRouteId(id);
 
+  // key — 복제 후 새 id 로 이동하는 등 id 가 바뀌면 이전 양식의 편집 상태를 들고 가지 않게 새로 마운트한다
+  if (isNew) return <ReportTemplateDetailContent key="new" templateId={null} />;
+  if (parsedId == null) return <InvalidTemplateId />;
+  return <ReportTemplateDetailContent key={parsedId} templateId={parsedId} />;
+}
+
+/** 「존재하지 않는 템플릿」 토스트 id — 잘못된 주소 id 와 없는 양식이 같은 id 를 써 StrictMode 이중 실행에도 하나만 뜬다 */
+const TEMPLATE_NOT_FOUND_TOAST_ID = 'template-not-found';
+
+/**
+ * 「존재하지 않는 템플릿입니다」 안내 후 양식 목록으로 보낸다(WD-652).
+ * 잘못된 주소 id 와 조회 결과 없음(본문의 effect)이 같은 문구·토스트 id·이동을 쓰도록 한곳에 둔다.
+ * replace — 뒤로 가기가 다시 없는 양식 주소로 돌아가 같은 안내를 반복하지 않게 한다.
+ */
+function notifyTemplateNotFound(navigate: NavigateFunction) {
+  toast.error('존재하지 않는 템플릿입니다.', { id: TEMPLATE_NOT_FOUND_TOAST_ID });
+  navigate('/ai-insights/templates', { replace: true });
+}
+
+/**
+ * 잘못된 주소 id — 이 화면의 「없는 양식」 처리와 같게 토스트 후 양식 목록으로 보낸다(WD-628·WD-652).
+ * API 는 부르지 않는다. 이동 전까지는 아무것도 그리지 않는다.
+ */
+function InvalidTemplateId() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    notifyTemplateNotFound(navigate);
+  }, [navigate]);
+  return null;
+}
+
+/**
+ * 리포트 양식 상세·편집 본문.
+ * templateId 가 null 이면 새 양식 만들기, 아니면 검증된 양의 정수 id 의 양식이다.
+ */
+function ReportTemplateDetailContent({ templateId }: { templateId: number | null }) {
+  const navigate = useNavigate();
+  // 새 양식 여부는 이 변수 하나로 가른다 — const 별칭 조건이라 isNew 가 false 인 분기에서 templateId 는 number 로 좁혀진다
+  const isNew = templateId == null;
+
+  // 새 양식(null)이면 훅이 조회하지 않는다(skipToken) — 잘못된 주소 id 는 바깥에서 이미 걸러졌다
   const { data: templateDirect, isLoading: isLoadingDirect, isError: isErrorDirect, error: errorDirect } = useProactiveTemplate(templateId);
   // 조회 권한 부족(403) — 「불러오는 데 실패」 토스트 + 목록 이동 대신 이 화면에 권한 안내를 보이는 기준 (WD-137).
   // 목록으로 보내 봐야 목록도 같은 권한으로 막혀 있어, 사용자는 왜 튕겼는지 모른 채 다른 안내를 보게 된다.
@@ -124,8 +168,7 @@ export default function ReportTemplateDetailPage() {
     // 둘 다 발화하면 toast 2개가 동시 노출되어 strict-mode locator 검증이 실패하므로 분리.
     if (isErrorDirect) return;
     if (!isLoading && !template) {
-      toast.error('존재하지 않는 템플릿입니다.');
-      navigate('/ai-insights/templates');
+      notifyTemplateNotFound(navigate);
     }
   }, [isErrorDirect, isLoading, isNew, navigate, template]);
 
@@ -325,6 +368,7 @@ export default function ReportTemplateDetailPage() {
       style: styleText.trim(),
     };
 
+    // isNew 가 false 인 수정 분기에서는 templateId 가 number 로 좁혀진다 — 0 같은 대체값이 나갈 수 없다(WD-652)
     if (isNew) {
       createMutation.mutate(payload, {
         onSuccess: (created) => {
@@ -396,6 +440,8 @@ export default function ReportTemplateDetailPage() {
   };
 
   const handleDelete = () => {
+    // 새 양식 화면에는 삭제 버튼이 없지만, 이 검사로 아래 templateId 가 number 로 좁혀져 타입으로도 막힌다(WD-652)
+    if (isNew) return;
     deleteMutation.mutate(templateId, {
       onSuccess: () => {
         toast.success('템플릿이 삭제되었습니다.');

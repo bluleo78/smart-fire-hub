@@ -1,4 +1,4 @@
-import { keepPreviousData,useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
+import { keepPreviousData, skipToken, useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import { useCallback } from 'react';
 
 import type {
@@ -25,7 +25,7 @@ const KEYS = {
   messages: ['proactive', 'messages'] as const,
   unreadCount: ['proactive', 'unread-count'] as const,
   templates: ['proactive', 'templates'] as const,
-  template: (id: number) => ['proactive', 'templates', id] as const,
+  template: (id: number | null) => ['proactive', 'templates', id] as const,
   anomalyEvents: (jobId: number) => ['proactive', 'anomaly-events', jobId] as const,
   reports: (params?: { limit?: number; offset?: number }) =>
     ['proactive', 'reports', params] as const,
@@ -399,11 +399,14 @@ export function useProactiveTemplates() {
   });
 }
 
-export function useProactiveTemplate(id: number) {
+/**
+ * 리포트 양식 단건 조회. id 가 null(새 양식 만들기)이면 조회하지 않는다(WD-652).
+ * 0 같은 대체값 + enabled 조건에 기대지 않고 skipToken 으로 끈다 — null 로는 조회 함수가 아예 만들어지지 않는다.
+ */
+export function useProactiveTemplate(id: number | null) {
   return useQuery({
     queryKey: KEYS.template(id),
-    queryFn: () => proactiveApi.getTemplate(id).then((r) => r.data),
-    enabled: !!id,
+    queryFn: id == null ? skipToken : () => proactiveApi.getTemplate(id).then((r) => r.data),
   });
 }
 

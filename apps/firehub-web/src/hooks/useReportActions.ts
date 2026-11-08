@@ -70,8 +70,9 @@ export async function downloadReportPdf(jobId: number, executionId: number): Pro
 }
 
 interface UseReportActionsOptions {
-  jobId: number;
-  executionId: number;
+  /** null 이면(잘못된 주소 id — WD-652) PDF 다운로드 요청을 보내지 않는다 */
+  jobId: number | null;
+  executionId: number | null;
   /** iframe ref — 인쇄 시 iframe 내부 문서를 인쇄하기 위해 필요 */
   iframeRef: React.RefObject<HTMLIFrameElement | null>;
   /** HTML 리포트가 없을 때(마크다운 폴백) 인쇄할 본문 영역 — 없으면 인쇄할 것이 없다고 안내한다 */
@@ -105,6 +106,8 @@ export function useReportActions({
   );
 
   const handleDownloadPdf = useCallback(async () => {
+    // 잘못된 주소 id 로는 다운로드하지 않는다 — 대체값(0)으로 요청이 나가지 않게 막는다(WD-652)
+    if (jobId == null || executionId == null) return;
     setDownloading(true);
     try {
       await downloadReportPdf(jobId, executionId);

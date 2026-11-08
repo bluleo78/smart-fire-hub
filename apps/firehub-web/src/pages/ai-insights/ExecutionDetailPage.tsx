@@ -13,7 +13,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, FileDown, Loader2, Printer } from 'lucide-react';
 import { useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
 
 import { proactiveApi } from '@/api/proactive';
@@ -22,6 +22,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SecurityLevelBadge } from '@/components/ui/SecurityLevelBadge';
 import { useExecution } from '@/hooks/queries/useProactiveMessages';
+import { useGoBack } from '@/hooks/useGoBack';
 import { useReportActions } from '@/hooks/useReportActions';
 import { isForbiddenError, isNotFoundError, isReportLevelBlocked } from '@/lib/api-error';
 import { classifyExecutionOutcome, getExecutionDisplayStatus } from '@/lib/error-classifier';
@@ -36,16 +37,60 @@ import { ReportLevelBlockedNotice } from './components/ReportLevelBlockedNotice'
 const PROSE_CLASSES = 'prose prose-sm dark:prose-invert max-w-none';
 const REMARK_PLUGINS = [remarkGfm];
 
+/** 돌아갈 기록이 없을 때 보낼 목록 — 작업 id 가 유효하면 그 작업 상세, 아니면 작업 목록 */
+function backFallbackPath(jobIdNum: number | null): string {
+  return jobIdNum != null ? `/ai-insights/jobs/${jobIdNum}` : '/ai-insights/jobs';
+}
+
+/** 안내 화면(찾을 수 없음·등급 차단·권한 없음) 아래의 공용 「돌아가기」 버튼 */
+function BackButton({ fallback }: { fallback: string }) {
+  // 돌아갈 기록이 없으면(새 탭·붙여 넣은 링크) fallback 목록으로 보낸다(WD-652)
+  const { goBack } = useGoBack(fallback);
+  return (
+    <Button variant="ghost" size="sm" onClick={goBack}>
+      <ArrowLeft className="h-4 w-4" />
+      돌아가기
+    </Button>
+  );
+}
+
+/**
+ * 「실행 정보를 찾을 수 없습니다」 안내 + 돌아가기 — 잘못된 주소 id(WD-652)와 조회 결과 없음(404 등)이 같은 화면을 쓴다.
+ * message 를 비우면 기본 문구를 보인다.
+ */
+function ExecutionNotFound({ message, fallback }: { message?: string; fallback: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-64 gap-4 text-muted-foreground">
+      <p className="text-sm text-center break-keep px-4" data-testid="execution-not-found">
+        {message ?? '실행 정보를 찾을 수 없습니다.'}
+      </p>
+      <BackButton fallback={fallback} />
+    </div>
+  );
+}
+
+/**
+ * 주소 id 를 읽어 유효할 때만 상세 화면을 그린다.
+ * 주소 id 는 숫자만 받는다(WD-628) — `Number('1e1')` 은 10 이라 다른 실행을 열고 `1.5`·` 7` 도 그대로 조회했다.
+ * 잘못된 id 를 0 으로 바꿔 넘기면 조회 훅의 enabled 조건에만 기대게 되므로(WD-652), 여기서 명시적으로 갈라
+ * 안쪽 화면(조회·PDF·인쇄 훅)은 아예 그리지 않는다 — 잘못된 id 로는 어떤 API 도 부를 수 없다.
+ */
 export default function ExecutionDetailPage() {
   const { jobId, executionId } = useParams<{ jobId: string; executionId: string }>();
-  const navigate = useNavigate();
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const jobIdNum = parseRouteId(jobId);
+  const executionIdNum = parseRouteId(executionId);
 
-  // 주소 id 는 숫자만 받는다(WD-628) — `Number('1e1')` 은 10 이라 다른 실행을 열고 `1.5`·` 7` 도 그대로 조회했다.
-  // 잘못된 id 는 0 으로 둔다 — useExecution 은 enabled: !!id 라 조회가 꺼지고(isLoading false, execution undefined)
-  // 아래 「실행 정보를 찾을 수 없습니다」 분기로 그대로 떨어진다.
-  const jobIdNum = parseRouteId(jobId) ?? 0;
-  const executionIdNum = parseRouteId(executionId) ?? 0;
+  if (jobIdNum == null || executionIdNum == null) {
+    return <ExecutionNotFound fallback={backFallbackPath(jobIdNum ?? null)} />;
+  }
+  return <ExecutionDetailContent jobIdNum={jobIdNum} executionIdNum={executionIdNum} />;
+}
+
+/** 실행 상세 본문 — 검증된 양의 정수 id 만 받는다 */
+function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number; executionIdNum: number }) {
+  const fallback = backFallbackPath(jobIdNum);
+  const { goBack } = useGoBack(fallback);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // 실행 데이터 조회 — RUNNING 상태일 때 5초 폴링
   const { data: execution, isLoading, isError, error } = useExecution(jobIdNum, executionIdNum);
@@ -81,10 +126,7 @@ export default function ExecutionDetailPage() {
     return (
       <div className="flex flex-col items-center gap-2">
         <ReportLevelBlockedNotice testId="execution-level-blocked" />
-        <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
-          <ArrowLeft className="h-4 w-4" />
-          돌아가기
-        </Button>
+        <BackButton fallback={fallback} />
       </div>
     );
   }
@@ -94,27 +136,19 @@ export default function ExecutionDetailPage() {
     return (
       <div className="flex flex-col items-center gap-2">
         <ProactiveReadForbiddenNotice subject="실행 결과" testId="execution-forbidden" />
-        <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
-          <ArrowLeft className="h-4 w-4" />
-          돌아가기
-        </Button>
+        <BackButton fallback={fallback} />
       </div>
     );
   }
 
   // 실행 데이터 없음 — 404 는 「실행이 없음」과 「작업 작성자가 아님」을 똑같이 숨기므로 두 경우를 함께 말한다 (WD-162)
-  // 숫자만이 아닌 주소 id(WD-628)도 조회가 꺼져 execution 이 없으므로 여기서 같은 안내를 받는다
+  // 숫자만이 아닌 주소 id(WD-628)는 바깥 ExecutionDetailPage 가 먼저 같은 안내로 돌려보낸다(WD-652)
   if (!execution) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 gap-4 text-muted-foreground">
-        <p className="text-sm text-center break-keep px-4" data-testid="execution-not-found">
-          {isError && isNotFoundError(error) ? EXECUTION_NOT_FOUND_NOTICE : '실행 정보를 찾을 수 없습니다.'}
-        </p>
-        <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
-          <ArrowLeft className="h-4 w-4" />
-          돌아가기
-        </Button>
-      </div>
+      <ExecutionNotFound
+        message={isError && isNotFoundError(error) ? EXECUTION_NOT_FOUND_NOTICE : undefined}
+        fallback={fallback}
+      />
     );
   }
 
@@ -141,7 +175,7 @@ export default function ExecutionDetailPage() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => navigate(-1)}
+          onClick={goBack}
           className="gap-1.5"
         >
           <ArrowLeft className="h-4 w-4" />
