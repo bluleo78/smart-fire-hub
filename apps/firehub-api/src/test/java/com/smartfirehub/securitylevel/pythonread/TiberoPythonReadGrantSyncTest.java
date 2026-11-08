@@ -85,6 +85,12 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
 
   private int connectionsOpened;
 
+  /** USER_TABLES 조회 수 — 재판정(WD-645)이 돌았는지, 실패 없을 때 추가 조회가 없는지 센다. */
+  private int tableQueries;
+
+  /** 실패시킨 문장(순서대로) — 재판정이 한 번만 도는지 센다(WD-645). */
+  private final List<String> failedStatements = new ArrayList<>();
+
   /** 계정을 정확히 바인드한 슬롯 GRANT 조회 수(실행 준비 경로, WD-78). */
   private int exactGrantQueries;
 
@@ -198,6 +204,7 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
   private List<String[]> rowsFor(String sql, List<String> binds) {
     List<String[]> rows = new ArrayList<>();
     if (sql.contains("FROM USER_TABLES")) {
+      tableQueries++;
       for (String t : tables) {
         if (binds.isEmpty() || t.equals(binds.get(0))) {
           rows.add(new String[] {t});
@@ -266,6 +273,7 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
     assertThat(mt.group(2)).isEqualTo(SCHEMA);
     for (String f : failingFragments) {
       if (sql.contains(f)) {
+        failedStatements.add(sql);
         onFailingStatement.run();
         throw new SQLException("거부", "42000", -1);
       }
@@ -604,6 +612,203 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
 
     assertThat(r.revokeFailedTables()).contains(upper);
     assertThat(r.revokeFailed().get(upper)).containsExactly(slot(1));
+  }
+
+  /**
+   * 가짜 카탈로그에서 테이블 from 을 to 로 RENAME 한다 — GRANT 는 이름이 바뀐 객체를 따라간다(재생성 보관본·휴지통 BIN$ 흉내). from 이 이미
+   * 없으면 아무것도 하지 않는다(실패 훅이 여러 번 불려도 한 번만 옮긴다).
+   */
+  private void renameObject(String from, String to) {
+    if (!tables.remove(from)) {
+      return;
+    }
+    tables.add(to);
+    List<String> moved = new ArrayList<>();
+    grants.removeIf(
+        g -> {
+          if (g.startsWith(from + "|")) {
+            moved.add(to + g.substring(from.length()));
+            return true;
+          }
+          return false;
+        });
+    grants.addAll(moved);
+  }
+
+  /**
+   * 재판정 TC 공통 준비(WD-645): 민감 등급 테이블에 슬롯 1 과권한을 걸고 그 REVOKE 가 실패하게 한다. 반환: 물리(대문자) 이름.
+   *
+   * @param suffix 테이블 이름 접미사
+   */
+  private String sensitiveWithFailingRevoke(String suffix) {
+    String upper = table(suffix, "민감").toUpperCase();
+    grants.add(upper + "|" + slot(1));
+    failingFragments.add(revokeSql(upper, 1));
+    return upper;
+  }
+
+  /** 가짜 휴지통 객체 이름({@code BIN$...}). */
+  private String binName() {
+    return "BIN$" + m.toUpperCase() + "==$0";
+  }
+
+  /**
+   * 재판정(WD-645): 첫 REVOKE 순간 겹친 DROP(PURGE)로 테이블과 그 권한이 함께 사라지면, 같은 트랜잭션 안의 재판정이 남은 권한이 없음을 다시 읽어
+   * 확인하므로 회수 실패가 아니다 — 실행 준비가 공연히 거부되지 않는다.
+   */
+  @Test
+  void rejudge_tableDroppedDuringRevoke_noRemainingGrant_runIsAllowed() {
+    String upper = sensitiveWithFailingRevoke("sen");
+    // REVOKE 가 실패하는 순간 겹친 DROP 이 끝났다 — 이름도 권한도 사라진다.
+    onFailingStatement =
+        () -> {
+          tables.remove(upper);
+          grants.removeIf(g -> g.startsWith(upper + "|"));
+        };
+
+    assertThat(sync.prepareForRun(clearanceAt("공개"), levelRank("공개"))).isEqualTo(1);
+    assertThat(failedStatements).as("재판정에서는 남은 권한이 없어 REVOKE 를 다시 보내지 않는다").hasSize(1);
+    assertThat(tableQueries).as("재판정이 한 번 돌았다(테이블 목록을 다시 읽음)").isEqualTo(2);
+  }
+
+  /**
+   * 재판정(WD-645): 겹친 재생성이 테이블을 보관본 이름으로 RENAME 하면 새 이름의 권한을 회수하고, 성공하면 회수 실패가 아니다. 테이블 하나 동기화도
+   * 재판정에서는 테이블 범위를 테넌트 전체로 넓혀 보관본까지 본다 — 전체·테이블 동기화 두 입구를 모두 본다.
+   */
+  @Test
+  void rejudge_tableRenamedDuringRevoke_revokesUnderNewName_noFailure() {
+    for (String entry : List.of("tenant", "table")) {
+      String upper = sensitiveWithFailingRevoke("rn_" + entry);
+      String backup = upper + "_BAK";
+      onFailingStatement = () -> renameObject(upper, backup);
+      int failedBefore = failedStatements.size();
+
+      if (entry.equals("tenant")) {
+        assertThat(sync.syncTenant().revokeFailed()).as("재판정 결과가 첫 판의 실패 목록을 바꾼다").isEmpty();
+      } else {
+        // syncTable 은 결과를 돌려주지 않는다 — 아래 "보관본에 남은 권한 없음·추가 실패 없음" 이 revokeFailed 비어 있음과 같은 판정이다.
+        sync.syncTable(upper.toLowerCase());
+      }
+
+      assertThat(executed).as(entry).contains(revokeSql(backup, 1));
+      assertThat(slotsOf(backup)).as(entry).isEmpty();
+      assertThat(slotsOf(upper)).as(entry).isEmpty();
+      assertThat(failedStatements.subList(failedBefore, failedStatements.size()))
+          .as(entry + ": 실패는 첫 판의 원래 이름 REVOKE 하나뿐")
+          .containsExactly(revokeSql(upper, 1));
+    }
+  }
+
+  /**
+   * 재판정(WD-645)도 fail-closed: 휴지통 BIN$ 객체처럼 회수가 늘 실패하는 객체에 권한이 남아 있으면 지금 이름으로 회수 실패에 남고 실행 준비는
+   * 거부된다.
+   */
+  @Test
+  void rejudge_recycleBinObjectStillGranted_staysRevokeFailure_andRunRejected() {
+    String upper = sensitiveWithFailingRevoke("sen");
+    String bin = binName();
+    failingFragments.add("BIN$"); // 휴지통 객체 회수는 늘 실패한다
+    onFailingStatement = () -> renameObject(upper, bin);
+
+    PythonReadGrantSync.SyncResult r = sync.syncTenant();
+
+    assertThat(r.revokeFailed()).containsOnlyKeys(bin);
+    assertThat(r.revokeFailed().get(bin)).containsExactly(slot(1));
+    assertThat(tableQueries).as("첫 실패는 BIN$ 이 아니었으므로 재판정이 돌았다").isEqualTo(2);
+    tableQueries = 0;
+    assertThatThrownBy(() -> sync.prepareForRun(clearanceAt("공개"), levelRank("공개")))
+        .isInstanceOf(PythonReadAccessException.class)
+        .hasMessageContaining("회수하지 못한");
+    assertThat(tableQueries).as("이제 실패는 BIN$ 뿐이라 재판정하지 않는다").isEqualTo(1);
+  }
+
+  /**
+   * 휴지통(BIN$) 객체의 회수 실패뿐이면 재판정하지 않는다(WD-645) — OWNER 는 회수할 수 없어 다시 해도 같다. 그래도 회수 실패로 남아 실행은
+   * 거부된다(fail-closed).
+   */
+  @Test
+  void recycleBinOnlyFailure_noRejudge_andRunRejected() {
+    table("pub", "공개");
+    String bin = binName();
+    grants.add(bin + "|" + slot(1));
+    failingFragments.add("BIN$");
+
+    assertThatThrownBy(() -> sync.prepareForRun(clearanceAt("공개"), levelRank("공개")))
+        .isInstanceOf(PythonReadAccessException.class)
+        .hasMessageContaining("회수하지 못한");
+    assertThat(tableQueries).as("재판정 없음 — 테이블 목록은 한 번만 읽었다").isEqualTo(1);
+    assertThat(failedStatements).containsExactly(revokeSql(bin, 1));
+
+    tableQueries = 0;
+    failedStatements.clear();
+    PythonReadGrantSync.SyncResult r = sync.syncTenant();
+    assertThat(r.revokeFailed()).containsOnlyKeys(bin);
+    assertThat(tableQueries).isEqualTo(1);
+    assertThat(failedStatements).hasSize(1);
+  }
+
+  /** 재판정(WD-645)이 같은 테이블을 다시 바꿔도 변경 테이블 수는 두 판의 합집합으로 센다(두 번 세지 않는다). */
+  @Test
+  void rejudge_changedTables_countsUnionOfBothPasses() {
+    String pub = table("pub", "공개");
+    String upper = sensitiveWithFailingRevoke("sen");
+    failingFragments.add(grantSql(pub, 5)); // pub 은 두 판 모두에서 바뀐다(GRANT 실패 → 과소권한 → 재판정에서 다시 시도)
+    onFailingStatement = () -> renameObject(upper, upper + "_BAK");
+
+    PythonReadGrantSync.SyncResult r = sync.syncTenant();
+
+    assertThat(r.revokeFailed()).isEmpty();
+    assertThat(r.changedTables()).as("첫 판 {pub} ∪ 재판정 {pub, BAK} = 2").isEqualTo(2);
+  }
+
+  /** 재판정(WD-645)은 한 번만 — 두 번째도 실패하면 세 번째 시도 없이 회수 실패로 남는다(대기도 없다). */
+  @Test
+  void rejudge_runsOnlyOnce_whenSecondPassAlsoFails() {
+    String upper = sensitiveWithFailingRevoke("sen");
+
+    PythonReadGrantSync.SyncResult r = sync.syncTenant();
+
+    assertThat(failedStatements).containsExactly(revokeSql(upper, 1), revokeSql(upper, 1));
+    assertThat(tableQueries).isEqualTo(2);
+    assertThat(connectionsOpened).as("같은 Tibero 연결(withDdl 한 번) 안에서").isEqualTo(1);
+    assertThat(r.revokeFailed().get(upper)).containsExactly(slot(1));
+  }
+
+  /** 회수 실패가 없으면 재판정하지 않는다 — PYTHON 실행마다 도는 경로에 추가 조회·문장이 없다(WD-645). */
+  @Test
+  void noRevokeFailure_noRejudge_noExtraQueries() {
+    String pub = table("pub", "공개");
+    String sens = table("sen", "민감");
+    grants.add(sens.toUpperCase() + "|" + slot(1)); // 회수는 성공한다
+
+    PythonReadGrantSync.SyncResult r = sync.syncTenant();
+
+    assertThat(r.revokeFailed()).isEmpty();
+    assertThat(tableQueries).isEqualTo(1);
+    assertThat(connectionsOpened).isEqualTo(1);
+    assertThat(slotsOf(pub)).isEqualTo(range(1, 10));
+
+    tableQueries = 0;
+    grants.add(sens.toUpperCase() + "|" + slot(1));
+    assertThat(sync.prepareForRun(clearanceAt("공개"), levelRank("공개"))).isEqualTo(1);
+    assertThat(tableQueries).isEqualTo(1);
+    assertThat(exactGrantQueries).as("적용 전·재확인 두 번뿐").isEqualTo(2);
+  }
+
+  /** 재판정(WD-645)은 실행 준비의 대상 계정을 넓히지 않는다 — 실행 슬롯 하나만 맞추고 다른 슬롯의 드리프트는 그대로 둔다. */
+  @Test
+  void rejudge_prepareForRun_keepsOnlyRunSlot() {
+    String upper = sensitiveWithFailingRevoke("sen");
+    String pub = table("pub", "공개");
+    grants.add(upper + "|" + slot(2)); // 다른 슬롯의 과권한 — 이 실행(슬롯 1)은 건드리지 않는다
+    grants.add(pub.toUpperCase() + "|" + slot(9));
+    onFailingStatement = () -> renameObject(upper, upper + "_BAK");
+
+    assertThat(sync.prepareForRun(clearanceAt("공개"), levelRank("공개"))).isEqualTo(1);
+    assertThat(executed).allMatch(s -> s.contains("\"" + slot(1) + "\""));
+    assertThat(failedStatements).allMatch(s -> s.contains("\"" + slot(1) + "\""));
+    assertThat(slotsOf(upper + "_BAK")).as("슬롯 2 권한은 그대로").containsExactly(2);
+    assertThat(exactGrantQueries).as("재판정도 실행 슬롯을 정확히 바인드해 읽는다").isEqualTo(4);
   }
 
   /** 계정 행이 없는 슬롯은 PG 의 "없는 슬롯 롤" 과 같다: 실행 거부, GRANT 도 하지 않는다. */

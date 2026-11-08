@@ -228,4 +228,13 @@ class TiberoNamesTest {
       assertThatCode(() -> TiberoNames.validateUserName(ok)).doesNotThrowAnyException();
     }
   }
+
+  /** 휴지통 객체 이름({@code BIN$...})만 참이다(WD-645). */
+  @Test
+  void isRecycleBinName_onlyBinPrefix() {
+    assertThat(TiberoNames.isRecycleBinName("BIN$abc==$0")).isTrue();
+    assertThat(TiberoNames.isRecycleBinName("MY_BIN$")).isFalse();
+    assertThat(TiberoNames.isRecycleBinName("SALES")).isFalse();
+    assertThat(TiberoNames.isRecycleBinName(null)).isFalse();
+  }
 }
