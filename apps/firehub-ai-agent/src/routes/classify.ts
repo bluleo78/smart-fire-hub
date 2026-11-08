@@ -1,12 +1,13 @@
-import express, { Router, Request, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import { z } from 'zod/v4';
 import { internalAuth } from '../middleware/auth.js';
+import { jsonBody } from '../http/json-body.js';
 import { ProviderFactory } from '../providers/index.js';
 
 const router = Router();
 
 // 2mb body limit for batch requests (up to 100 rows with long text)
-const jsonParser = express.json({ limit: '2mb' });
+const jsonParser = jsonBody('2mb');
 
 const outputColumnSchema = z.object({
   name: z.string().min(1),

@@ -5,9 +5,10 @@
  * 백엔드 PdfExportService가 AI 생성 HTML 리포트를 PDF로 변환할 때 호출한다.
  * 브라우저와 동일한 렌더링 엔진을 사용하므로 CSS3, SVG, 한글 폰트가 완벽하게 지원된다.
  */
-import express, { Router, Request, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import puppeteer, { type Browser } from 'puppeteer';
 import { internalAuth } from '../middleware/auth.js';
+import { jsonBody } from '../http/json-body.js';
 
 const router = Router();
 
@@ -42,7 +43,7 @@ interface HtmlToPdfRequest {
  * POST /agent/html-to-pdf
  * HTML 문자열을 받아 PDF 바이너리를 반환한다.
  */
-router.post('/html-to-pdf', express.json({ limit: '5mb' }), internalAuth, async (req: Request, res: Response) => {
+router.post('/html-to-pdf', jsonBody('5mb'), internalAuth, async (req: Request, res: Response) => {
   const body = req.body as HtmlToPdfRequest;
 
   if (!body.html) {

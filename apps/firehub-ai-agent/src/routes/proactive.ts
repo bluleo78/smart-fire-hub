@@ -1,4 +1,4 @@
-import express, { Router, Request, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import fs from 'fs/promises';
 import { ProviderFactory } from '../providers/index.js';
 import type { AgentType, ProviderConfig } from '../providers/index.js';
@@ -10,6 +10,7 @@ import { parseProactiveExecutionId, parseSharePurpose } from '../mcp/api-client.
 import { DEFAULT_DB_DIALECT, parseDbDialect, type DbDialect } from '../agent/db-dialect.js';
 import { TIBERO_SQL_GUIDE } from '../agent/tibero-sql-guide.js';
 import { internalAuth } from '../middleware/auth.js';
+import { jsonBody } from '../http/json-body.js';
 import { isValidTenantId, proactiveReportDir } from '../agent/tenant-paths.js';
 import {
   AGENT_AUTH_OR_QUOTA_FAILURE,
@@ -389,7 +390,7 @@ export function parseSections(text: string, template?: Template): OutputSection[
   return processSections(template.sections);
 }
 
-router.post('/proactive', express.json(), internalAuth, async (req: Request, res: Response) => {
+router.post('/proactive', jsonBody(), internalAuth, async (req: Request, res: Response) => {
   const body = req.body as ProactiveRequest;
 
   if (!body.prompt || !body.context) {

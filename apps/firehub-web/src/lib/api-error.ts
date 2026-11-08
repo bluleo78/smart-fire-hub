@@ -10,8 +10,9 @@ import type { ErrorResponse } from '@/types/auth';
  * errors 는 (a) 코드 없는 검증 실패(사람이 읽는 문장)와 (b) CodedApiException 의 details(화면 분기용
  * 기계 값, 예: {userId:"5"})로 쓰인다(#787). (b)만 code 를 싣고(GlobalExceptionHandler) 토스트에 "5" 가
  * 뜨면 안 되므로, code 가 있으면 errors 를 건너뛰고 message → fallback 순으로 고른다.
+ * axios 를 쓰지 않는 fetch 경로(AI 채팅 SSE, WD-550)도 같은 규칙을 쓰도록 export 한다.
  */
-function pickBestMessage(errData: ErrorResponse, fallback: string): string {
+export function pickBestMessage(errData: ErrorResponse, fallback: string): string {
   if (errData.code == null && errData.errors) {
     const firstFieldMsg = Object.values(errData.errors)[0];
     if (firstFieldMsg) return firstFieldMsg;

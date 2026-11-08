@@ -1,6 +1,7 @@
-import express, { Router, Request, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import { z } from 'zod/v4';
 import { internalAuth } from '../middleware/auth.js';
+import { jsonBody } from '../http/json-body.js';
 import { ProviderFactory } from '../providers/index.js';
 import { AGENT_AUTH_OR_QUOTA_FAILURE } from '../agent/ai-auth-failure.js';
 
@@ -101,7 +102,7 @@ export function parseSectionsFromText(text: string): Record<string, unknown>[] |
   return null;
 }
 
-router.post('/template-sections/generate', express.json(), internalAuth, async (req: Request, res: Response) => {
+router.post('/template-sections/generate', jsonBody(), internalAuth, async (req: Request, res: Response) => {
   const parseResult = requestSchema.safeParse(req.body);
   if (!parseResult.success) {
     res.status(400).json({ error: 'Invalid request', details: parseResult.error.issues });

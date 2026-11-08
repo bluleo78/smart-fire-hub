@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
-import { aiApi, streamAIChat } from '../../api/ai';
+import { aiApi, AIChatHttpError, streamAIChat } from '../../api/ai';
 import { client as apiClient } from '../../api/client';
 import { uploadFiles } from '../../api/files';
 import { buildScreenContext } from '../../components/ai/screen-context';
@@ -437,16 +437,21 @@ export function useAIChat(options?: {
       },
       (error) => {
         console.error('AI stream error:', error);
-        // fetch() 자체가 실패해 SSE 스트림이 열리지도 못한 경우(오프라인/DNS/연결 실패 등).
+        // fetch() 자체가 실패했거나(오프라인/DNS/연결 실패 등) HTTP 오류로 거절돼 SSE 스트림이 열리지 못한 경우.
         // 서버가 보낸 'error' 이벤트 분기(위 case 'error')와 동일하게, 낙관적으로만 표시되던
         // userMessage를 messages에 커밋하고 에러 안내를 함께 추가해 메시지가 소리소문 없이
         // 사라지지 않도록 한다.
+        // 서버가 HTTP 오류로 거절한 경우(WD-550)엔 네트워크 문구 대신 서버가 준 문구(검증 실패 등)를 보여 준다.
+        // 문구가 없으면 상태 코드라도 알려 네트워크 장애로 오인하지 않게 한다.
+        const errorContent = error instanceof AIChatHttpError
+          ? `오류: ${error.serverMessage ?? `요청을 처리하지 못했습니다 (HTTP ${error.status})`}`
+          : '오류: 네트워크 연결에 실패했습니다. 다시 시도해주세요.';
         if (!messagesCommittedRef.current) {
           messagesCommittedRef.current = true;
           setMessages(prev => [...prev, userMessage, {
             id: `error-${Date.now()}`,
             role: 'assistant' as const,
-            content: '오류: 네트워크 연결에 실패했습니다. 다시 시도해주세요.',
+            content: errorContent,
             timestamp: new Date().toISOString(),
           }]);
         }
