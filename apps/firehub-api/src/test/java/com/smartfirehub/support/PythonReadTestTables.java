@@ -32,12 +32,20 @@ public final class PythonReadTestTables {
   private final TransactionTemplate tx;
   private final SecurityFixture fx;
 
+  /**
+   * 커밋 뒤 동기화 실행기가 빌 때까지 기다리는 훅(WD-594, 보통 {@code IntegrationTestBase::awaitPythonReadGrantSync}) —
+   * 생성 훅의 GRANT 가 끝난 뒤에 등급을 바꿔야 "생성 시점 기준 ACL" 출발 상태가 결정적이다.
+   */
+  private final Runnable awaitSync;
+
   public PythonReadTestTables(
       DatasetService datasetService,
       DSLContext dsl,
       DSLContext dataDsl,
       TransactionTemplate tx,
-      SecurityFixture fx) {
+      SecurityFixture fx,
+      Runnable awaitSync) {
+    this.awaitSync = awaitSync;
     this.datasetService = datasetService;
     this.dsl = dsl;
     this.dataDsl = dataDsl;
@@ -67,6 +75,8 @@ public final class PythonReadTestTables {
                     null),
                 owner)
             .id();
+    // 생성 훅의 커밋 뒤 동기화는 전용 실행기에서 돈다(WD-594). 끝나기 전에 등급을 바꾸면 그 동기화가 바뀐 등급으로 GRANT 해 출발 상태가 흔들린다.
+    awaitSync.run();
     TenantRlsTestSupport.runInTenantTransaction(
         tx,
         TENANT,

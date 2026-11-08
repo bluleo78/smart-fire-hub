@@ -61,6 +61,7 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
   @Autowired private PasswordEncoder encoder;
   @Autowired private SecurityLevelRepository levelRepository;
   @Autowired private PlatformTransactionManager txManager;
+  @Autowired private PythonReadSyncExecutor syncExecutor;
 
   private SecurityFixture fx;
   private final List<Long> datasets = new ArrayList<>();
@@ -140,7 +141,8 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
             repository,
             levelRepository,
             new PostgresPlatformLocks(dsl),
-            txManager);
+            txManager,
+            syncExecutor);
   }
 
   @AfterEach
@@ -618,6 +620,7 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
           sync.syncTableAfterCommit(t);
           assertThat(executed).as("커밋 전에는 아무것도 하지 않는다").isEmpty();
         });
+    awaitPythonReadGrantSync(); // 커밋 뒤 동기화는 전용 실행기에서 돈다(WD-594)
     assertThat(slotsOf(t)).isEqualTo(range(1, 10));
   }
 
@@ -631,6 +634,7 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
           sync.syncTableAfterCommit(t);
           status.setRollbackOnly();
         });
+    awaitPythonReadGrantSync(); // 넘겼다면 끝난 뒤에 본다 — 공허한 통과 방지
     assertThat(executed).isEmpty();
   }
 

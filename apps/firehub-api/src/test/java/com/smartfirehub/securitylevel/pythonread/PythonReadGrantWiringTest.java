@@ -24,13 +24,20 @@ import com.smartfirehub.support.PostgresTestContainer;
 import com.smartfirehub.support.PythonReadTestTables;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
@@ -58,6 +65,9 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
 
+  /** 플랫폼(@Primary) 커넥션 풀 — 회귀 테스트가 풀 크기만큼 동시 커밋을 만든다(WD-594). */
+  @Autowired private DataSource dataSource;
+
   /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
   @Autowired @DataStoreDb private DSLContext dataDsl;
 
@@ -65,6 +75,10 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
   @Autowired private DataTableService dataTableService;
   @Autowired private PythonReadGrantSync sync;
+
+  /** 커밋 뒤 동기화 실행기 — DDL 겹침 회귀 테스트가 "아직 동기화 중인가"를 기다리지 않고 본다(WD-594). */
+  @Autowired private PythonReadSyncExecutor syncExecutor;
+
   @Autowired private ApplicationEventPublisher events;
   @Autowired private SecurityLevelService levelService;
   @Autowired private SecurityLevelRepository levelRepository;
@@ -97,7 +111,13 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   private String table(String suffix, String level) {
     String t = m + "_" + suffix;
     datasets.add(
-        new PythonReadTestTables(datasetService, dsl, dataDsl, fixtureTransactionTemplate, fx)
+        new PythonReadTestTables(
+                datasetService,
+                dsl,
+                dataDsl,
+                fixtureTransactionTemplate,
+                fx,
+                this::awaitPythonReadGrantSync)
             .create(t, level, owner));
     return t;
   }
@@ -177,6 +197,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
                     .from(DATASET)
                     .where(DATASET.ID.eq(cloneId))
                     .fetchSingle(DATASET.TABLE_NAME));
+    awaitPythonReadGrantSync(); // 커밋 뒤 동기화는 전용 실행기에서 돈다(WD-594)
     assertThat(selectAs(2, cloneTable)).isNull();
   }
 
@@ -197,6 +218,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
           sync.syncTableAfterCommit(pub);
           status.setRollbackOnly();
         });
+    awaitPythonReadGrantSync(); // 실행기에 넘겼다면 끝까지 기다린 뒤 본다 — "아직 안 돌았을 뿐" 으로 공허하게 통과하지 않게
     assertThat(selectAs(1, pub)).as("롤백된 트랜잭션의 예약은 실행되지 않는다").isEqualTo("42501");
 
     // 커밋 → 본문 안에서는 아직 없고, 커밋 후 생긴다.
@@ -206,6 +228,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
           insideBody.set(selectAs(1, pub));
         });
     assertThat(insideBody.get()).as("커밋 전에는 동기화하지 않는다").isEqualTo("42501");
+    awaitPythonReadGrantSync(); // 커밋 뒤 동기화는 전용 실행기에서 돈다(WD-594)
     assertThat(selectAs(1, pub)).as("커밋 후 동기화됐다").isNull();
   }
 
@@ -239,7 +262,125 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
     } finally {
       TenantContext.set(DEFAULT_TEST_TENANT_ID);
     }
+    awaitPythonReadGrantSync();
     assertThat(selectAs(1, pub)).as("컨텍스트 없으면 동기화는 건너뛴다(다음 동기화가 회복)").isEqualTo("42501");
+  }
+
+  /**
+   * 회귀(WD-594): 풀 크기만큼의 트랜잭션이 <b>동시에</b> 커넥션을 쥔 채 syncTableAfterCommit 을 예약하고 커밋해도, 커밋이 두 번째 커넥션을
+   * 기다려 멈추지 않고(커넥션 타임아웃 30초) 모든 테이블이 GRANT 된다. 고치기 전에는 afterCommit 에서 호출 스레드가 바깥 커넥션을 쥔 채
+   * REQUIRES_NEW 로 커넥션을 하나 더 기다려, 풀(테스트 2)을 다 쥔 요청들이 서로 막혀 30초 뒤 동기화가 실패했다 — 시간 단언과 GRANT 단언이 모두
+   * 깨진다.
+   */
+  @Test
+  void syncTableAfterCommit_concurrentCommitsAtPoolSize_doNotHoldTwoConnections() throws Exception {
+    int poolSize = dataSource.unwrap(HikariDataSource.class).getMaximumPoolSize();
+    assertThat(poolSize).as("전제: 테스트 풀이 작아야 동시 커밋으로 풀을 다 쥘 수 있다").isBetween(1, 4);
+    List<String> tables = new ArrayList<>();
+    for (int i = 0; i < poolSize; i++) {
+      String t = table("cc" + i, "공개");
+      revokeAllSlots(t);
+      tables.add(t);
+    }
+    // 모든 트랜잭션이 커넥션을 쥔 상태에서 함께 커밋에 들어가게 맞춘다(= 풀 소진 상태에서 커밋 콜백).
+    CyclicBarrier allHolding = new CyclicBarrier(poolSize);
+    ExecutorService pool = Executors.newFixedThreadPool(poolSize);
+    try {
+      List<Future<Long>> commits = new ArrayList<>();
+      for (String t : tables) {
+        commits.add(
+            pool.submit(
+                () ->
+                    TenantContext.runScopedGet(
+                        DEFAULT_TEST_TENANT_ID,
+                        () -> {
+                          long start = System.nanoTime();
+                          fixtureTransactionTemplate.executeWithoutResult(
+                              status -> {
+                                sync.syncTableAfterCommit(t);
+                                try {
+                                  allHolding.await(10, TimeUnit.SECONDS);
+                                } catch (Exception e) {
+                                  throw new IllegalStateException("동시 커밋 맞추기 실패", e);
+                                }
+                              });
+                          return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+                        })));
+      }
+      for (Future<Long> commit : commits) {
+        assertThat(commit.get(60, TimeUnit.SECONDS))
+            .as("커밋이 두 번째 커넥션을 기다려 멈추지 않는다(커넥션 타임아웃 30초)")
+            .isLessThan(10_000L);
+      }
+    } finally {
+      pool.shutdownNow();
+    }
+    awaitPythonReadGrantSync();
+    for (String t : tables) {
+      assertThat(selectAs(1, t)).as("커밋 뒤 동기화가 실패하지 않고 GRANT 했다: %s", t).isNull();
+    }
+  }
+
+  /** 테이블 DDL 한 문장을 자기 트랜잭션에서 돌리고, 실패하면 그 사유를 failures 에 남긴다(사용자 요청이면 500 이 되는 오류). */
+  private void ddl(String sql, List<String> failures) {
+    try {
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate, DEFAULT_TEST_TENANT_ID, () -> dataDsl.execute(sql));
+    } catch (RuntimeException e) {
+      failures.add(sql + " → " + e.getMessage());
+    }
+  }
+
+  /** 커밋 뒤 실행기에 넘어간 동기화가 아직 돌고 있는가(기다리지 않고 본다). */
+  private boolean syncPending() throws InterruptedException {
+    return !syncExecutor.awaitIdle(Duration.ZERO);
+  }
+
+  /**
+   * 회귀(WD-594 후속): 커밋 뒤 동기화가 전용 실행기로 넘어가면서, 데이터셋 생성 직후의 같은 테이블 DDL(ALTER TABLE ADD COLUMN·DROP
+   * TABLE)과 동기화의 GRANT/REVOKE 가 겹칠 수 있게 됐다. GRANT/REVOKE 는 테이블 잠금 없이 pg_class 행(ACL)을 고치므로, 고치기 전에는
+   * 겹친 DDL 이 {@code tuple concurrently updated}(XX000)로 깨졌다(사용자에게는 500). 동기화가 바꿀 테이블에 ACCESS SHARE
+   * 잠금을 먼저 잡으면 DDL 은 동기화 커밋을 기다렸다 성공하고, 동기화는 진행 중인 DDL 뒤의 새 카탈로그를 본다 — DDL 오류가 없고 GRANT 도 계산값대로
+   * 남는다.
+   */
+  @Test
+  void syncTableAfterCommit_overlappingAlterAndDrop_doNotFailWithTupleConcurrentlyUpdated()
+      throws Exception {
+    List<String> failures = new ArrayList<>();
+    String slot1 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 1);
+
+    // (1) ALTER TABLE ADD COLUMN — 매 회 슬롯 GRANT 를 걷어 동기화가 GRANT 하게 만들고, 커밋 직후부터 동기화가 끝날 때까지 ADD
+    // COLUMN 을 연달아 던진다.
+    String t = table("ddl", "공개");
+    String qt = DataSchema.qualify(t);
+    int col = 0;
+    for (int round = 0; round < 25; round++) {
+      revokeAllSlots(t);
+      fixtureTransactionTemplate.executeWithoutResult(status -> sync.syncTableAfterCommit(t));
+      // 동기화가 이미 끝났어도 최소 한 번은 던진다. 열 수 상한(1600)을 넘지 않게 회당 상한을 둔다.
+      int perRound = 0;
+      do {
+        ddl("ALTER TABLE " + qt + " ADD COLUMN c" + (col++) + " TEXT", failures);
+      } while (syncPending() && ++perRound < 30);
+      awaitPythonReadGrantSync();
+      if (selectAs(1, t) != null) {
+        failures.add("round " + round + ": 겹친 동기화 뒤 슬롯 1 GRANT 가 없다");
+      }
+    }
+
+    // (2) DROP TABLE — 데이터셋이 아닌 테이블에 슬롯 GRANT 를 걸어 두면(과권한) 동기화가 REVOKE 한다. 그 REVOKE 와 커밋 직후의 DROP 이
+    // 겹친다.
+    for (int round = 0; round < 25; round++) {
+      String raw = m + "_drop" + round;
+      String qraw = DataSchema.qualify(raw);
+      ddl("CREATE TABLE " + qraw + " (id int)", failures);
+      ddl("GRANT SELECT ON TABLE " + qraw + " TO \"" + slot1 + "\"", failures);
+      fixtureTransactionTemplate.executeWithoutResult(status -> sync.syncTableAfterCommit(raw));
+      ddl("DROP TABLE " + qraw, failures);
+      awaitPythonReadGrantSync();
+    }
+
+    assertThat(failures).as("동기화와 겹친 DDL 이 실패하지 않고, GRANT 는 계산값대로 남는다").isEmpty();
   }
 
   // ---------------------------------------------------------------- 이벤트 리스너

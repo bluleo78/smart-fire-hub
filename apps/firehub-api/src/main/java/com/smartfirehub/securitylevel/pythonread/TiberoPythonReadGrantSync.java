@@ -63,6 +63,9 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
   /** 테넌트 동기화 직렬화 잠금 — 플랫폼 잠금 추상화(WD-486). */
   private final PlatformLocks locks;
 
+  /** 커밋 뒤 테이블 동기화를 돌리는 전용 실행기(PG 판과 공용) — 커밋 콜백 스레드가 커넥션 2개를 쥐지 않게 한다(WD-594). */
+  private final PythonReadSyncExecutor afterCommitExecutor;
+
   /**
    * txManager 는 @Primary TenantAwareTransactionManager — 트랜잭션 시작 때 TenantContext 를 RLS GUC 로 주입한다.
    */
@@ -72,8 +75,10 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
       TenantDataStoreRepository storeRepository,
       SecurityLevelRepository levelRepository,
       PlatformLocks locks,
-      PlatformTransactionManager txManager) {
+      PlatformTransactionManager txManager,
+      PythonReadSyncExecutor afterCommitExecutor) {
     this.datasetRepository = datasetRepository;
+    this.afterCommitExecutor = afterCommitExecutor;
     this.locks = locks;
     this.connections = connections;
     this.storeRepository = storeRepository;
@@ -124,13 +129,13 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
   }
 
   /**
-   * 쓰기 경로 훅 — 트랜잭션 동기화가 활성이면 커밋 후, 아니면 즉시 syncTable. PG 판과 같이 실패는 로그만 남긴다(이중 방어선이라 커밋을 막지 않는다 — 다음
-   * 실행 직전 동기화·야간 동기화가 회복한다). 미커밋 PG 트랜잭션 안에서 바로 동기화하면 새 트랜잭션이 아직 보이지 않는 데이터셋 행을 못 읽어 "없음"으로 회수하므로
-   * 반드시 커밋 뒤에 돈다. 공통부는 {@link PythonReadGrantBackend#scheduleTableSync}.
+   * 쓰기 경로 훅 — PG 판과 같이 트랜잭션 안이면 커밋 뒤 {@link PythonReadSyncExecutor} 에서 비동기로, 아니면 즉시 syncTable 하고
+   * 실패는 로그만 남긴다. 공통부는 {@link PythonReadGrantBackend#scheduleTableSync}.
    */
   @Override
   public void syncTableAfterCommit(String tableName) {
-    PythonReadGrantBackend.scheduleTableSync(tableName, log, "Tibero ", this::syncTable);
+    PythonReadGrantBackend.scheduleTableSync(
+        tableName, log, "Tibero ", afterCommitExecutor, this::syncTable);
   }
 
   /**

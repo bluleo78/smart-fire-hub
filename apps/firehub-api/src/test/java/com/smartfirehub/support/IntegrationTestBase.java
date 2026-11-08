@@ -2,6 +2,7 @@ package com.smartfirehub.support;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRoleBootstrap;
+import com.smartfirehub.securitylevel.pythonread.PythonReadSyncExecutor;
 import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -97,6 +98,42 @@ public abstract class IntegrationTestBase {
           SpringExtension.getApplicationContext(context)
               .getBean(SecurityAuditRecorder.class)
               .awaitIdle(Duration.ofSeconds(30));
+
+  /**
+   * 테스트 메서드가 끝난 직후(@AfterEach 정리 <b>전</b>) 커밋 뒤 PYTHON 읽기 권한 동기화(WD-594, 전용 실행기)를 비운다. 늦게 도는 동기화가
+   * 정리 중인 테이블을 건드리거나 다음 테스트의 출발 상태(슬롯 ACL)를 바꾸지 않게 한다.
+   */
+  @RegisterExtension
+  static final AfterTestExecutionCallback DRAIN_PYTHON_READ_SYNC =
+      context ->
+          awaitPythonReadSyncIdle(
+              SpringExtension.getApplicationContext(context).getBean(PythonReadSyncExecutor.class));
+
+  @Autowired private PythonReadSyncExecutor pythonReadSyncExecutor;
+
+  /**
+   * 커밋 뒤 전용 실행기로 넘어간 PYTHON 읽기 권한 동기화(WD-594)가 모두 끝날 때까지 기다린다. 데이터셋 생성·복제 등 트랜잭션 커밋 직후의 슬롯 GRANT 를
+   * 단언하기 직전에 부른다.
+   */
+  protected void awaitPythonReadGrantSync() {
+    awaitPythonReadSyncIdle(pythonReadSyncExecutor);
+  }
+
+  /**
+   * 실행기가 빌 때까지 최대 30초 기다린다(확장 콜백·{@link #awaitPythonReadGrantSync} 공용). 결과를 무시하면 끝나지 않은 동기화가 다음
+   * 테스트로 새어 원인 모를 실패를 낳으므로, 시간 초과는 AssertionError 로 드러낸다. 인터럽트되면 인터럽트 상태를 되살린 뒤 AssertionError 로
+   * 던진다.
+   */
+  private static void awaitPythonReadSyncIdle(PythonReadSyncExecutor executor) {
+    try {
+      if (!executor.awaitIdle(Duration.ofSeconds(30))) {
+        throw new AssertionError("커밋 뒤 PYTHON 읽기 권한 동기화가 30초 안에 끝나지 않았다");
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new AssertionError(e);
+    }
+  }
 
   /**
    * 바깥 트랜잭션 완료 후 비동기로 넘어간 접근 거부·감사 등급 접근 기록(SecurityAuditRecorder)이 모두 쓰일 때까지 기다린다. 그 감사 행을

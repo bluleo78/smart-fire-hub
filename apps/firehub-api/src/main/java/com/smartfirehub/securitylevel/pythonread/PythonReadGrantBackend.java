@@ -31,7 +31,7 @@ interface PythonReadGrantBackend {
   /** 데이터셋 하나의 테이블만 재동기화. */
   void syncDataset(long datasetId);
 
-  /** 쓰기 경로 훅 — 커밋 후(트랜잭션이 없으면 즉시) 그 테이블만 재동기화. 실패는 로그만. */
+  /** 쓰기 경로 훅 — 커밋 후 전용 실행기에서(트랜잭션이 없으면 즉시) 그 테이블만 재동기화. 실패는 로그만. */
   void syncTableAfterCommit(String tableName);
 
   /**
@@ -52,22 +52,29 @@ interface PythonReadGrantBackend {
   }
 
   /**
-   * 쓰기 경로 훅 공통부 — Spring 트랜잭션 동기화가 활성이면 커밋 후, 아니면 즉시 {@code syncTable} 을 부른다. 실패는 로그만 남긴다(판정이 아니라
-   * 이중 방어선이라 커밋을 막지 않는다). 다음 실행 직전·야간 동기화가 회복한다.
+   * 쓰기 경로 훅 공통부 — 트랜잭션 동기화가 활성이면 커밋된 경우({@code STATUS_COMMITTED})에만 완료 후 전용 실행기에서 비동기로, 아니면 호출
+   * 스레드에서 즉시 {@code syncTable} 을 부르고, 실패는 로그만 남긴다(다음 실행 직전·야간 동기화가 회복). 왜 실행기인지는 {@link
+   * PythonReadSyncExecutor} 참고.
    *
    * <p>예약 단계 전체가 try 안이다 — 테넌트 컨텍스트 누락(require 실패)·동기화 등록 실패도 "로그만, 커밋을 막지 않는다" 계약에 든다. 미커밋 트랜잭션
    * 안에서 바로 동기화하면 새 트랜잭션이 아직 보이지 않는 데이터셋 행을 못 읽어 "없음" 으로 회수하므로 반드시 커밋 뒤에 돈다.
    *
+   * @param executor 커밋 뒤 동기화를 돌릴 전용 실행기(PG·Tibero 공용)
    * @param logPrefix 로그 문구 앞머리(백엔드 구분, 예: {@code ""}·{@code "Tibero "})
    */
   static void scheduleTableSync(
-      String tableName, Logger log, String logPrefix, Consumer<String> syncTable) {
+      String tableName,
+      Logger log,
+      String logPrefix,
+      PythonReadSyncExecutor executor,
+      Consumer<String> syncTable) {
     try {
+      // 테넌트는 예약 시점(요청 스레드)에 잡는다 — 실행기 스레드에는 TenantContext 가 없다.
       long tenantId = TenantContext.require("PYTHON 읽기 권한 동기화 예약");
       Runnable work =
           () -> {
             try {
-              // afterCommit 콜백은 다른 컨텍스트에서 돌 수 있어 테넌트를 명시로 다시 세운다.
+              // 실행기 스레드에서 테넌트를 다시 세운다. runScoped 는 finally 로 진입 전 값(null)으로 되돌려 다음 작업에 새지 않는다.
               TenantContext.runScoped(tenantId, () -> syncTable.accept(tableName));
             } catch (RuntimeException e) {
               log.warn(
@@ -82,8 +89,11 @@ interface PythonReadGrantBackend {
         TransactionSynchronizationManager.registerSynchronization(
             new TransactionSynchronization() {
               @Override
-              public void afterCommit() {
-                work.run();
+              public void afterCompletion(int status) {
+                // 여기서 동기로 돌리면 바깥 커넥션을 쥔 채 두 번째 커넥션을 잡는다 — 실행기에 넘기기만 한다(포화·종료면 버림, 예외 없음).
+                if (status == STATUS_COMMITTED) {
+                  executor.submit(work);
+                }
               }
             });
       } else {
