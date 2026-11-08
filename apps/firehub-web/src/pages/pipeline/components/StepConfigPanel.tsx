@@ -84,6 +84,8 @@ interface StepConfigPanelProps {
    * 스텝을 전부 삭제·재생성해 매번 바뀌므로 신뢰할 수 없다.
    */
   serverSteps?: PipelineStepResponse[];
+  /** 이름 입력(#step-name) ref — 「스텝 추가」 직후 편집기 페이지가 새 스텝 이름으로 포커스를 옮기는 데 쓴다(WD-545) */
+  nameInputRef?: React.Ref<HTMLInputElement>;
 }
 
 export default function StepConfigPanel({
@@ -95,6 +97,7 @@ export default function StepConfigPanel({
   pipelineInfo,
   pipelineId,
   serverSteps,
+  nameInputRef,
 }: StepConfigPanelProps) {
   const step = state.selectedStepId
     ? state.steps.find((s) => s.tempId === state.selectedStepId) ?? null
@@ -393,6 +396,7 @@ export default function StepConfigPanel({
             <Input
               ref={nameInputRef}
               id="step-name"
+              ref={nameInputRef}
               placeholder="스텝 이름"
               value={step.name}
               disabled={readOnly}

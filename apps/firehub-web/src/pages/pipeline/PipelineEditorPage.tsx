@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Ban, Clock, Code, Database, GitBranch, Globe, Link, User } from 'lucide-react';
-import { useEffect, useMemo,useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo,useRef, useState } from 'react';
 import { Link as RouterLink, useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -44,7 +44,7 @@ import { ExecutionStepPanel } from './components/ExecutionStepPanel';
 import { PipelineCanvas } from './components/PipelineCanvas';
 import StepConfigPanel from './components/StepConfigPanel';
 import TriggerTab from './components/TriggerTab';
-import { usePipelineEditor } from './hooks/usePipelineEditor';
+import { type EditorAction, usePipelineEditor } from './hooks/usePipelineEditor';
 import { getExecutionCancelState } from './utils/execution-cancel';
 
 export default function PipelineEditorPage() {
@@ -148,6 +148,32 @@ export default function PipelineEditorPage() {
       loadFromApi(pipelineData);
     }
   }, [pipelineData, loadFromApi]);
+
+  /**
+   * 「스텝 추가」 뒤 새 스텝 이름 입력으로 포커스 옮기기(WD-545, WCAG 2.4.3).
+   * 빈 상태의 「스텝 추가」 버튼은 스텝이 생기면 사라져 키보드 포커스가 <body> 로 떨어지고, 툴바 버튼도 포커스가 버튼에 남아
+   * 키보드·스크린리더 사용자가 새 스텝을 찾아가야 했다. 추가 액션(ADD_STEP·ADD_STEP_AFTER·INSERT_STEP_BETWEEN — 셋 다 새 스텝을
+   * 선택한다)을 보낼 때만 "한 번만" 표시를 켜 두고, 그 선택이 그려진 뒤의 effect 에서 이름 입력에 포커스를 준다.
+   * 카드 클릭 선택(SELECT_STEP)·첫 로드·서버 재조회·실행 상세(읽기 전용 캔버스는 원래 dispatch 를 받는다)는 표시를 켜지 않으므로 포커스를 뺏지 않는다.
+   */
+  const pendingNameFocusRef = useRef(false);
+  const stepNameInputRef = useRef<HTMLInputElement>(null);
+  const editorDispatch = useCallback(
+    (action: EditorAction) => {
+      if (action.type === 'ADD_STEP' || action.type === 'ADD_STEP_AFTER' || action.type === 'INSERT_STEP_BETWEEN') {
+        pendingNameFocusRef.current = true;
+      }
+      dispatch(action);
+    },
+    [dispatch],
+  );
+  // 부모 effect 는 자식(StepConfigPanel) 커밋 뒤에 돌므로 이 시점엔 새 스텝의 이름 입력이 DOM 에 있다 — 시간 추측(setTimeout) 불필요.
+  // 좁은 화면에서 패널은 캔버스 아래에 쌓이므로 preventScroll 을 쓰지 않는다: 입력이 화면 밖이면 브라우저가 보이는 곳까지만 스크롤해 준다.
+  useEffect(() => {
+    if (!pendingNameFocusRef.current) return;
+    pendingNameFocusRef.current = false;
+    stepNameInputRef.current?.focus();
+  }, [state.selectedStepId]);
 
   // 미저장 변경사항(dirty) 이탈 가드 (#550) — 브라우저 새로고침/닫기(beforeunload)뿐 아니라
   // 사이드바 SPA 링크 클릭·뒤로가기(popstate)도 가로채 확인 다이얼로그를 띄운다.
@@ -458,7 +484,7 @@ export default function PipelineEditorPage() {
           <div className="h-[320px] shrink-0 min-w-0 lg:h-auto lg:flex-1 lg:shrink">
             <PipelineCanvas
               state={state}
-              dispatch={dispatch}
+              dispatch={editorDispatch}
               readOnly={readOnly}
             />
           </div>
@@ -468,6 +494,7 @@ export default function PipelineEditorPage() {
             state={state}
             dispatch={dispatch}
             readOnly={readOnly}
+            nameInputRef={stepNameInputRef}
             datasets={datasetOptions}
             datasetsLoaded={allDatasets !== undefined}
             pipelineInfo={pipelineInfo}
