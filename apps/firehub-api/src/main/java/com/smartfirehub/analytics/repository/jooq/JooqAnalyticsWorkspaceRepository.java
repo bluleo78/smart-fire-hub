@@ -91,18 +91,22 @@ public class JooqAnalyticsWorkspaceRepository implements AnalyticsWorkspaceRepos
   }
 
   @Override
-  public void unshareInTenant(AnalyticsAssetKind kind, Long id, long tenantId) {
+  public boolean unshareInTenant(AnalyticsAssetKind kind, Long id, long tenantId) {
     Cols c = Cols.of(kind);
-    dsl.update(c.source())
-        .set(c.isShared(), false)
-        .where(c.id().eq(id).and(c.tenantId().eq(tenantId)))
-        .execute();
+    // is_shared 조건을 걸지 않는다 — 이미 비공개인 자산도 일치 행(1)이라 멱등 성공이 유지되고, 0 행은 「자산이 사라짐」뿐이다(WD-616).
+    return dsl.update(c.source())
+            .set(c.isShared(), false)
+            .where(c.id().eq(id).and(c.tenantId().eq(tenantId)))
+            .execute()
+        > 0;
   }
 
+  /** 관리자 삭제 — 실제로 지웠는지 돌려준다(WD-616: 동시 삭제에서 진 쪽 판정용). */
   @Override
-  public void deleteInTenant(AnalyticsAssetKind kind, Long id, long tenantId) {
+  public boolean deleteInTenant(AnalyticsAssetKind kind, Long id, long tenantId) {
     Cols c = Cols.of(kind);
-    dsl.deleteFrom(c.source()).where(c.id().eq(id).and(c.tenantId().eq(tenantId))).execute();
+    return dsl.deleteFrom(c.source()).where(c.id().eq(id).and(c.tenantId().eq(tenantId))).execute()
+        > 0;
   }
 
   private static WorkspaceItemRow toRow(Record r, Cols c) {

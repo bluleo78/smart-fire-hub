@@ -35,12 +35,22 @@ public interface AnalyticsWorkspaceRepository {
   /**
    * 관리자 공유 해제 — is_shared 만 false 로 바꾼다. updated_at·updated_by 는 건드리지 않는다: 내용 편집이 아니라 관리 행위라 작성자의
    * 수정 이력처럼 보이면 안 되고, 누가 했는지는 감사 로그가 남긴다.
+   *
+   * <p>is_shared 조건을 걸지 않으므로 이미 비공개인 자산도 일치 행으로 센다(멱등 성공 유지). 동시에 지워진 자산이면 지운 쪽 커밋을 기다린 뒤 일치 행이 없어
+   * false 가 되고, 서비스가 순차 호출과 같은 NotFound 를 던진다(WD-616).
+   *
+   * @return 일치한 자산이 있었으면 true, 이미 사라졌으면 false
    */
-  void unshareInTenant(AnalyticsAssetKind kind, Long id, long tenantId);
+  boolean unshareInTenant(AnalyticsAssetKind kind, Long id, long tenantId);
 
   /**
    * 관리자 삭제 — 작성자와 무관하게 이 워크스페이스의 자산을 지운다. 작성자 삭제(deleteById)와 같은 단일 DELETE 라 DB ON DELETE CASCADE
    * 결과(쿼리→차트→위젯, 차트→위젯, 대시보드→위젯)가 작성자 삭제와 똑같다.
+   *
+   * <p>실제로 지웠는지 돌려준다(WD-616) — 같은 자산을 동시에 지울 때 진 쪽은 먼저 지운 쪽 커밋을 기다린 뒤 0 행이 되므로, 서비스가 이 값으로 순차 두 번째
+   * 삭제와 같은 NotFound 를 던지고 감사를 남기지 않는다(WD-584 와 같은 방식). 작성자 삭제 리포지토리들의 deleteById 와 같은 boolean 규약이다.
+   *
+   * @return 지운 행이 있었으면 true
    */
-  void deleteInTenant(AnalyticsAssetKind kind, Long id, long tenantId);
+  boolean deleteInTenant(AnalyticsAssetKind kind, Long id, long tenantId);
 }
