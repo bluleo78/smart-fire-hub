@@ -39,6 +39,7 @@ import com.smartfirehub.jooq.tables.JobrunrBackgroundjobservers;
 import com.smartfirehub.jooq.tables.JobrunrJobs;
 import com.smartfirehub.jooq.tables.JobrunrRecurringJobs;
 import com.smartfirehub.jooq.tables.LoginAttempts;
+import com.smartfirehub.jooq.tables.LoginIpFailures;
 import com.smartfirehub.jooq.tables.Membership;
 import com.smartfirehub.jooq.tables.MetricSnapshot;
 import com.smartfirehub.jooq.tables.NotificationOutbox;
@@ -171,6 +172,7 @@ public class Indexes {
     public static final Index IDX_GRAPH_REVIEW_ITEM_TENANT_STATUS = Internal.createIndex(DSL.name("idx_graph_review_item_tenant_status"), GraphReviewItem.GRAPH_REVIEW_ITEM, new OrderField[] { GraphReviewItem.GRAPH_REVIEW_ITEM.TENANT_ID, GraphReviewItem.GRAPH_REVIEW_ITEM.STATUS }, false);
     public static final Index IDX_GRAPH_REVIEW_ITEM_TYPE_STATUS = Internal.createIndex(DSL.name("idx_graph_review_item_type_status"), GraphReviewItem.GRAPH_REVIEW_ITEM, new OrderField[] { GraphReviewItem.GRAPH_REVIEW_ITEM.ITEM_TYPE, GraphReviewItem.GRAPH_REVIEW_ITEM.STATUS }, false);
     public static final Index IDX_LOGIN_ATTEMPTS_EXPIRES_AT = Internal.createIndex(DSL.name("idx_login_attempts_expires_at"), LoginAttempts.LOGIN_ATTEMPTS, new OrderField[] { LoginAttempts.LOGIN_ATTEMPTS.EXPIRES_AT }, false);
+    public static final Index IDX_LOGIN_IP_FAILURES_EXPIRES_AT = Internal.createIndex(DSL.name("idx_login_ip_failures_expires_at"), LoginIpFailures.LOGIN_IP_FAILURES, new OrderField[] { LoginIpFailures.LOGIN_IP_FAILURES.EXPIRES_AT }, false);
     public static final Index IDX_MEMBERSHIP_TENANT = Internal.createIndex(DSL.name("idx_membership_tenant"), Membership.MEMBERSHIP, new OrderField[] { Membership.MEMBERSHIP.TENANT_ID }, false);
     public static final Index IDX_MEMBERSHIP_USER = Internal.createIndex(DSL.name("idx_membership_user"), Membership.MEMBERSHIP, new OrderField[] { Membership.MEMBERSHIP.USER_ID }, false);
     public static final Index IDX_METRIC_SNAPSHOT_JOB_METRIC = Internal.createIndex(DSL.name("idx_metric_snapshot_job_metric"), MetricSnapshot.METRIC_SNAPSHOT, new OrderField[] { MetricSnapshot.METRIC_SNAPSHOT.JOB_ID, MetricSnapshot.METRIC_SNAPSHOT.METRIC_ID, MetricSnapshot.METRIC_SNAPSHOT.COLLECTED_AT.desc() }, false);

@@ -22,11 +22,11 @@ import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserDeactivatedException;
 import com.smartfirehub.user.repository.UserRepository;
-import jakarta.servlet.http.HttpServletRequest;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,6 +50,10 @@ public class AuthService {
   private final JwtProperties jwtProperties;
   private final RefreshTokenRepository refreshTokenRepository;
   private final LoginAttemptService loginAttemptService;
+
+  /** 같은 IP 에서 여러 계정에 돌려 보는 비밀번호 스프레이를 막는 IP 기준 제한(WD-578). */
+  private final LoginIpThrottleService loginIpThrottleService;
+
   private final AuditLogService auditLogService;
   private final MembershipRepository membershipRepository;
   private final SignupTransaction signupTransaction;
@@ -86,6 +90,9 @@ public class AuthService {
    *
    * <p>실패 예외(잠금·자격 증명 불일치·비활성)에서는 롤백하지 않는다(WD-290) — 실패 감사 행을 이 트랜잭션에 쓰고 401/403 과 함께 커밋해야 하기 때문이다.
    * 실패 경로에서 이 트랜잭션이 쓰는 것은 감사 행과 실패 카운터뿐이다. 실패 카운터도 이 트랜잭션에 쓴다 — 커넥션 1개(WD-552).
+   *
+   * <p>계정 잠금보다 먼저 IP 기준 제한(WD-578)을 본다 — 한 IP 에서 서로 다른 계정이 15분 안에 10개 이상 실패했으면 맞는 비밀번호여도 429 로
+   * 거절한다. 없는 계정·비밀번호 불일치는 계정 카운터와 함께 IP 실패도 기록한다. 비활성 계정(비밀번호는 맞음)은 비밀번호를 맞힌 것이라 스프레이 실패로 세지 않는다.
    */
   @Transactional(
       noRollbackFor = {
@@ -96,15 +103,28 @@ public class AuthService {
   public TokenResponse login(LoginRequest request) {
     // 대소문자·앞뒤 공백만 다른 입력도 같은 계정으로 본다(WD-269). 카운터 키도 이 값이라 대소문자별로 갈리지 않는다.
     String username = userRepository.resolveLoginUsername(request.username());
+    // 요청 IP 는 신뢰 프록시 기준(WD-402) — 신뢰 프록시가 아닌 곳의 X-Forwarded-For 는 읽지 않고, 해석 안 되는 값은 공용 키로 센다.
+    // 요청 컨텍스트가 없으면 null 이고 IP 제한을 적용하지 않는다.
+    String clientIp = clientIpExtractor.currentRequestIp();
+    Optional<String> blockedIpKey = loginIpThrottleService.blockedKey(clientIp);
+    if (blockedIpKey.isPresent()) {
+      // 스프레이는 요청마다 아이디를 바꾸므로 IP 키로 합친다 — 아이디로 합치면 감사 행이 요청 수만큼 쌓인다.
+      auditRejectionOncePerMinute(blockedIpKey.get(), username, LoginFailure.IP_LIMITED);
+      throw new AccountLockedException(LoginIpThrottleService.BLOCKED_MESSAGE);
+    }
     if (loginAttemptService.isBlocked(username)) {
-      auditLockedLoginRejection(username);
+      // 잠긴 동안에는 실패 카운터가 더 오르지 않으므로 아이디(감사 행과 같이 50자로 자른 값)로 합친다.
+      auditRejectionOncePerMinute(
+          AuditLogService.truncate(username, AuditLogService.USERNAME_MAX),
+          username,
+          LoginFailure.LOCKED);
       // 과도한 로그인 실패로 계정이 잠긴 경우 한국어 메시지 반환
       throw new AccountLockedException("로그인 시도 횟수를 초과하였습니다. 잠시 후 다시 시도해 주세요.");
     }
 
     UserResponse user = userRepository.findByUsername(username).orElse(null);
     if (user == null) {
-      loginAttemptService.loginFailed(username);
+      recordLoginFailure(username, clientIp);
       auditLoginFailure(username, null, LoginFailure.UNKNOWN_USER);
       // 사용자 존재 여부 노출 방지를 위해 동일한 메시지 반환
       throw new InvalidCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
@@ -112,7 +132,7 @@ public class AuthService {
 
     String storedPassword = userRepository.findPasswordByUsername(username).orElse(null);
     if (storedPassword == null || !passwordEncoder.matches(request.password(), storedPassword)) {
-      boolean justLocked = loginAttemptService.loginFailed(username);
+      boolean justLocked = recordLoginFailure(username, clientIp);
       auditLoginFailure(username, user, LoginFailure.BAD_PASSWORD);
       if (justLocked) {
         auditAccountLocked(user);
@@ -383,6 +403,7 @@ public class AuthService {
     UNKNOWN_USER("없는 아이디"),
     BAD_PASSWORD("비밀번호 불일치"),
     LOCKED("잠긴 계정"),
+    IP_LIMITED("IP 로그인 제한"),
     DEACTIVATED("비활성 계정");
 
     private final String label;
@@ -393,22 +414,41 @@ public class AuthService {
   }
 
   /**
-   * 잠긴 계정의 로그인 거부 기록을 같은 아이디당 1분에 1건으로 합친다. 잠긴 동안에는 실패 카운터가 더 오르지 않아, 합치지 않으면 요청마다 감사 행이 끝없이
-   * 쌓인다({@code SecurityAuditRecorder} 의 거부 감사와 같은 1분 창). 키는 감사 행과 같이 50자로 자른 아이디라 메모리가 묶인다. 인스턴스
-   * 메모리 기준이라 다중 인스턴스면 인스턴스 수만큼 남을 수 있다.
+   * 로그인 실패를 계정 카운터와 IP 기준 제한(WD-578) 양쪽에 기록한다. 없는 아이디·비밀번호 불일치가 같은 쌍을 부르므로 한 곳에 둔다({@code
+   * PlatformAuthService#failed} 와 같은 역할).
+   *
+   * @return 이번 실패로 계정이 막 잠겼으면 true — 계정 잠금 감사에 쓴다
    */
-  private final Cache<String, Boolean> recentLockedRejections =
+  private boolean recordLoginFailure(String username, String clientIp) {
+    boolean justLocked = loginAttemptService.loginFailed(username);
+    loginIpThrottleService.loginFailed(clientIp, username);
+    return justLocked;
+  }
+
+  /**
+   * 잠금·IP 제한으로 거부한 로그인 기록을 1분 창에서 합치는 캐시. 거부 상태에서는 실패 카운터가 더 오르지 않아, 합치지 않으면 요청마다 감사 행이 끝없이
+   * 쌓인다({@code SecurityAuditRecorder} 의 거부 감사와 같은 1분 창). 키는 사유 이름을 앞에 붙여 잠금(아이디)·IP 제한(IP 키)이 서로
+   * 겹치지 않게 한다. 키 길이가 묶여(아이디 50자·IP 키) 메모리도 묶인다. 인스턴스 메모리 기준이라 다중 인스턴스면 인스턴스 수만큼 남을 수 있다.
+   */
+  private final Cache<String, Boolean> recentRejections =
       Caffeine.newBuilder().expireAfterWrite(Duration.ofMinutes(1)).maximumSize(100_000).build();
 
-  /** 잠금 상태에서 거부한 로그인을 남긴다(아이디당 1분에 1건). 없는 아이디도 카운터가 쌓이면 잠기므로 사용자가 없을 수 있다. */
-  private void auditLockedLoginRejection(String username) {
-    String key = AuditLogService.truncate(username, AuditLogService.USERNAME_MAX);
-    if (recentLockedRejections.asMap().putIfAbsent(key, Boolean.TRUE) != null) {
+  /**
+   * 거부한 로그인을 같은 사유·합침 키당 1분에 1건으로 남긴다. 잠금은 아이디, IP 제한(WD-578)은 IP 키로 합친다 — IP 제한이면 그 1분 동안 첫 거부의
+   * 아이디만 남는다. 없는 아이디도 거부될 수 있으므로(카운터가 쌓이면 잠기고, 스프레이 대상은 대개 없는 계정) 사용자가 없을 수 있다.
+   *
+   * @param dedupKey 합침 키(잠금: 잘린 아이디, IP 제한: IP 키)
+   * @param username 감사 행에 남길 정규화된 아이디
+   * @param reason 거부 사유
+   */
+  private void auditRejectionOncePerMinute(String dedupKey, String username, LoginFailure reason) {
+    String key = reason.name() + ":" + dedupKey;
+    if (recentRejections.asMap().putIfAbsent(key, Boolean.TRUE) != null) {
       return;
     }
     UserResponse user = userRepository.findByUsername(username).orElse(null);
-    if (!auditLoginFailure(username, user, LoginFailure.LOCKED)) {
-      recentLockedRejections.invalidate(key); // 못 남겼으면 다음 거부가 다시 시도하게 한다
+    if (!auditLoginFailure(username, user, reason)) {
+      recentRejections.invalidate(key); // 못 남겼으면 다음 거부가 다시 시도하게 한다
     }
   }
 
@@ -492,12 +532,13 @@ public class AuthService {
 
   /** HTTP 요청 컨텍스트에서 IP와 User-Agent를 추출한다. 감사 로그에 사용 */
   private String[] extractRequestInfo() {
+    // IP 는 ClientIpExtractor 가 현재 요청에서 고른다(WD-578, 로그인 IP 제한과 같은 경로). User-Agent 만 여기서 읽는다.
     var attrs = RequestContextHolder.getRequestAttributes();
-    if (attrs instanceof ServletRequestAttributes sra) {
-      HttpServletRequest req = sra.getRequest();
-      return new String[] {clientIpExtractor.extract(req), req.getHeader("User-Agent")};
-    }
-    return new String[] {null, null};
+    String userAgent =
+        attrs instanceof ServletRequestAttributes sra
+            ? sra.getRequest().getHeader("User-Agent")
+            : null;
+    return new String[] {clientIpExtractor.currentRequestIp(), userAgent};
   }
 
   /**

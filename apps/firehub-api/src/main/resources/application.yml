@@ -55,6 +55,12 @@ app:
     # 실제 클라이언트 IP 를 고른다 — 감사 IP·API 트리거 허용 IP 검사에 쓰인다. 비우면 ClientIpExtractor.DEFAULT_TRUSTED_PROXIES
     # (루프백·사설망·링크 로컬)를 쓴다 — 기본 목록은 그 상수 하나에만 둔다.
     trusted-proxies: ${APP_TRUSTED_PROXIES:}
+    login-ip-limit:
+      # 로그인 IP 기준 제한(비밀번호 스프레이 차단, WD-578)에서 뺄 대역, 쉼표로 구분한 CIDR. 기본은 빈 값(제외 없음).
+      # 15분 동안 한 IP(IPv6 는 /64)에서 로그인에 실패한 서로 다른 계정이 10개 이상이면 그 IP 의 로그인을 429 로 거절한다.
+      # 사내 NAT 처럼 많은 사람이 한 주소로 나가는 대역만 넣는다 — 제외 대역은 IP 제한 없이 계정 잠금(5회/15분)만 받는다.
+      # 잘못된 항목이 있으면 기동이 실패한다(보안 설정을 조용히 무시하지 않는다).
+      exempt: ${APP_LOGIN_IP_LIMIT_EXEMPT:}
   analytics:
     query-concurrency:
       # 분석 쿼리(애드혹·저장 쿼리 실행·결과 내보내기 재실행) 동시 실행 상한(WD-553). 쿼리 시간 내내 공용 Hikari 풀(기본 10) 커넥션을

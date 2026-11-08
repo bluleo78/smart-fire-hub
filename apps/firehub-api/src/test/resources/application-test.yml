@@ -64,6 +64,11 @@ app:
   login-attempts:
     cleanup:
       enabled: false
+  security:
+    login-ip-limit:
+      # 로그인 IP 제한(WD-578)에서 루프백을 뺀다 — MockMvc 의 기본 접속 주소가 127.0.0.1 이라, 스위트 전체의 실패 로그인(서로 다른
+      # 아이디 수십 개)이 한 IP 키로 쌓여 무관한 테스트가 429 를 받는다. 제한 자체는 LoginIpLimitTest 가 문서용 대역 주소로 검증한다.
+      exempt: 127.0.0.0/8,::1/128
   api-connection:
     health-check:
       # 10분 주기 점검을 끈다(WD-451) — 공유 컨텍스트에서 다른 테스트가 만든 연결의 상태를 바꿔 알림·감사 단언이 흔들린다.
