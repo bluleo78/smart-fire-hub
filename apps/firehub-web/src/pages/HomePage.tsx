@@ -187,18 +187,20 @@ export default function HomePage() {
         ) : healthFailed ? (
           <HomeLoadError message="시스템 상태를 불러오지 못했습니다." onRetry={() => void refetchHealth()} />
         ) : (
+          // 요약 버튼·숫자 묶음도 줄을 바꿀 수 있게 한다(WD-574, WCAG 1.4.10 Reflow) — 항목마다 whitespace-nowrap 이라
+          // 버튼이 한 줄로 고정되면 320px 폭(400% 확대)에서 main 밖으로 넘쳐 가로 스크롤이 생겼다. 낱말(「빈 데이터」)은 그대로 한 덩어리.
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 [word-break:keep-all]">
             {/* Pipeline summary — 조회 권한이 있을 때만(WD-272) */}
             {canReadPipeline && (
               <>
                 <button
-                  className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
+                  className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-left hover:opacity-80 transition-opacity cursor-pointer"
                   onClick={() => navigate('/pipelines')}
                 >
                   <GitBranch className="h-4 w-4 text-pipeline shrink-0" />
                   <span className="text-sm font-medium text-pipeline whitespace-nowrap">파이프라인</span>
                   {ph && ph.total > 0 ? (
-                    <span className="flex items-center gap-1.5 text-sm tabular-nums">
+                    <span className="flex flex-wrap items-center gap-x-1.5 text-sm tabular-nums">
                       {ph.failing > 0 && (
                         <span className="text-destructive font-semibold whitespace-nowrap">{ph.failing} 실패</span>
                       )}
@@ -231,13 +233,13 @@ export default function HomePage() {
 
             {/* Dataset summary */}
             <button
-              className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
+              className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-left hover:opacity-80 transition-opacity cursor-pointer"
               onClick={() => navigate('/data/datasets')}
             >
               <Database className="h-4 w-4 text-primary shrink-0" />
               <span className="text-sm font-medium text-primary whitespace-nowrap">데이터셋</span>
               {dh && dh.total > 0 ? (
-                <span className="flex items-center gap-1.5 text-sm tabular-nums">
+                <span className="flex flex-wrap items-center gap-x-1.5 text-sm tabular-nums">
                   {dh.empty > 0 && (
                     <span className="text-destructive font-semibold whitespace-nowrap">{dh.empty} 빈 데이터</span>
                   )}
