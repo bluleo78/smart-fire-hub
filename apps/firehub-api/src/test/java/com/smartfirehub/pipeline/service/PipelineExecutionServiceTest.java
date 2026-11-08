@@ -150,14 +150,47 @@ class PipelineExecutionServiceTest {
     List<PipelineStepRequest> steps = List.of(step("A", List.of("B")), step("B", List.of("A")));
     assertThatThrownBy(() -> service.validateDAG(steps))
         .isInstanceOf(CyclicDependencyException.class)
-        .hasMessageContaining("Cyclic dependency");
+        // WD-547: 영어 원문 대신 순환에 걸린 스텝 이름을 실은 한국어 안내.
+        .hasMessage("스텝 사이에 순환 의존이 있어 실행 순서를 정할 수 없습니다. 순환에 걸린 스텝: 'A', 'B'");
   }
 
   @Test
   void validateDAG_selfReferencingStep_throwsCyclicDependencyException() {
     List<PipelineStepRequest> steps = List.of(step("A", List.of("A")));
     assertThatThrownBy(() -> service.validateDAG(steps))
-        .isInstanceOf(CyclicDependencyException.class);
+        .isInstanceOf(CyclicDependencyException.class)
+        .hasMessage("스텝 사이에 순환 의존이 있어 실행 순서를 정할 수 없습니다. 순환에 걸린 스텝: 'A'");
+  }
+
+  /** WD-547: 순환 뒤에 매달린 후행 스텝(D)·앞선 스텝(S)은 안내에서 빼고 순환 구성원(B·C)만 싣는다. */
+  @Test
+  void validateDAG_cycleWithDownstreamStep_listsOnlyCycleMembers() {
+    List<PipelineStepRequest> steps =
+        List.of(
+            step("S", List.of()),
+            step("B", List.of("S", "C")),
+            step("C", List.of("B")),
+            step("D", List.of("C")));
+    assertThatThrownBy(() -> service.validateDAG(steps))
+        .isInstanceOf(CyclicDependencyException.class)
+        .hasMessage("스텝 사이에 순환 의존이 있어 실행 순서를 정할 수 없습니다. 순환에 걸린 스텝: 'B', 'C'");
+  }
+
+  /** WD-547: null 이름도 공백 이름과 같은 400 안내. */
+  @Test
+  void validateDAG_nullStepName_throwsIllegalArgument() {
+    assertThatThrownBy(() -> service.validateDAG(List.of(step(null, List.of()))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스텝 이름을 입력하세요.");
+  }
+
+  /** WD-547: 같은 이름 스텝 둘은 저장 UNIQUE 제약(409) 전에 400 으로 거부한다. */
+  @Test
+  void validateDAG_duplicateStepName_throwsIllegalArgument() {
+    List<PipelineStepRequest> steps = List.of(step("A", List.of()), step("A", List.of()));
+    assertThatThrownBy(() -> service.validateDAG(steps))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스텝 이름 'A' 가 중복됩니다.");
   }
 
   // WD-586 — 없는 선행 스텝 이름은 조용히 버리지 않고 400, 공백뿐인 스텝 이름도 400.

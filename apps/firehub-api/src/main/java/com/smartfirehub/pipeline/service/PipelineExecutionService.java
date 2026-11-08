@@ -144,12 +144,70 @@ public class PipelineExecutionService {
 
     // 처리된 노드 수 != 전체 노드 수 → 순환 의존성 존재
     if (processedCount != steps.size()) {
-      throw new CyclicDependencyException("Cyclic dependency detected in pipeline steps");
+      // WD-547: 예전엔 영어 원문(「Cyclic dependency detected in pipeline steps」)이 그대로 400 메시지로 나가
+      // 사용자가 어느 스텝을 고쳐야 할지 알 수 없었다. 순환에 걸린 스텝 이름을 한국어 안내에 싣는다.
+      throw new CyclicDependencyException(
+          cyclicDependencyMessage(cycleStepNames(steps, adjacencyList, inDegree)));
     }
+  }
+
+  /** 순환 의존 400 안내(WD-547) — 순환에 걸린 스텝 이름을 요청 순서대로 싣는다. */
+  static String cyclicDependencyMessage(List<String> cycleStepNames) {
+    StringBuilder names = new StringBuilder();
+    for (String name : cycleStepNames) {
+      if (names.length() > 0) {
+        names.append(", ");
+      }
+      names.append('\'').append(name).append('\'');
+    }
+    return "스텝 사이에 순환 의존이 있어 실행 순서를 정할 수 없습니다. 순환에 걸린 스텝: " + names;
+  }
+
+  /**
+   * Kahn 정렬 뒤 남은 스텝 가운데 실제 순환에 걸린 스텝만 고른다(WD-547).
+   *
+   * <p>정렬이 끝나도 진입 차수가 남은 스텝에는 순환의 구성원뿐 아니라 순환 뒤에 매달린 후행 스텝(순환을 기다리기만 하는 스텝)도 섞여 있다. 후행 스텝까지 실으면
+   * 사용자가 엉뚱한 스텝을 고치게 되므로, 남은 스텝 안에서 다른 남은 스텝으로 나가는 간선이 없는 스텝을 거꾸로 반복해 걷어낸다 — 남는 것이 순환(과 순환 사이를 잇는
+   * 스텝)이다.
+   */
+  private static List<String> cycleStepNames(
+      List<PipelineStepRequest> steps,
+      Map<Integer, List<Integer>> adjacencyList,
+      Map<Integer, Integer> inDegree) {
+    Set<Integer> remaining = new HashSet<>();
+    for (Map.Entry<Integer, Integer> entry : inDegree.entrySet()) {
+      if (entry.getValue() > 0) {
+        remaining.add(entry.getKey());
+      }
+    }
+    boolean trimmed = true;
+    while (trimmed) {
+      trimmed = false;
+      for (Integer node : new ArrayList<>(remaining)) {
+        boolean pointsIntoRemaining =
+            adjacencyList.get(node).stream().anyMatch(remaining::contains);
+        if (!pointsIntoRemaining) {
+          remaining.remove(node);
+          trimmed = true;
+        }
+      }
+    }
+    List<String> names = new ArrayList<>();
+    for (int i = 0; i < steps.size(); i++) {
+      if (remaining.contains(i)) {
+        names.add(steps.get(i).name());
+      }
+    }
+    return names;
   }
 
   /** 스텝 이름이 공백뿐일 때의 400 안내(WD-586). */
   static final String BLANK_STEP_NAME_MESSAGE = "스텝 이름을 입력하세요.";
+
+  /** 같은 이름의 스텝이 둘 이상일 때의 400 안내(WD-547). */
+  static String duplicateStepNameMessage(String stepName) {
+    return "스텝 이름 '" + stepName + "' 가 중복됩니다.";
+  }
 
   /** 선행 스텝 이름이 이 파이프라인에 없을 때의 400 안내(WD-586). */
   static String unknownDependencyMessage(String stepName, String dependsOnName) {
@@ -171,10 +229,16 @@ public class PipelineExecutionService {
       if (step == null) {
         continue;
       }
-      if (step.name() != null && step.name().isBlank()) {
+      // WD-547: null 이름도 공백 이름과 같이 거부한다 — 예전엔 null 이 그대로 저장돼 이름 없는 스텝이 생겼다(WD-586 은 공백만 막았다).
+      if (step.name() == null || step.name().isBlank()) {
         throw new IllegalArgumentException(BLANK_STEP_NAME_MESSAGE);
       }
-      names.add(step.name());
+      // WD-547: 같은 이름 스텝 둘은 선행 스텝 이름 해석이 모호해지고, 저장 시 UNIQUE (pipeline_id, name) 에 걸려
+      // 「이미 같은 값이…」 409 로 나갔다(어느 칸 문제인지 알 수 없음). 쓰기 전에 어느 이름이 겹치는지 400 으로 알린다.
+      // 비교는 저장과 같이 정확히 일치.
+      if (!names.add(step.name())) {
+        throw new IllegalArgumentException(duplicateStepNameMessage(step.name()));
+      }
     }
     for (PipelineStepRequest step : steps) {
       if (step == null || step.dependsOnStepNames() == null) {

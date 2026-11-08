@@ -162,8 +162,10 @@ public class PipelineService {
     // 터졌다.
     validateStepShapes(request.steps());
 
-    // Validate DAG (cycle detection)
+    // Validate DAG (cycle detection) — 스텝 이름(빈 값·중복)·선행 스텝 참조·순환을 함께 본다(WD-586·WD-547).
     executionService.validateDAG(request.steps());
+    // 스크립트 유형 사전 검증(WD-547) — 파이프라인 행을 만들기 전에 거부해야 아무것도 남지 않는다. 내용(빈 스크립트) 검사는 WD-585 담당.
+    validateStepScripts(request.steps());
 
     // Save pipeline
     PipelineResponse pipeline =
@@ -808,6 +810,10 @@ public class PipelineService {
     // Validate DAG if steps provided
     if (request.steps() != null) {
       executionService.validateDAG(request.steps());
+      // 스크립트 유형 사전 검증(WD-547) — 메타데이터 갱신·기존 스텝 짝짓기·삭제·의존 비우기 같은 쓰기보다 먼저 둬야, 거부된 수정이
+      // 아무것도 바꾸지 않는다(트랜잭션 롤백에만 기대지 않고 쓰기 자체를 하지 않는다). 내용(빈 스크립트) 검사는 WD-585 담당 —
+      // SQL 은 위 validateStepShapes, PYTHON 은 기존 스텝과 짝짓는 saveSteps 에서 본다.
+      validateStepScripts(request.steps());
     }
 
     // Update pipeline metadata
@@ -1413,6 +1419,49 @@ public class PipelineService {
 
   private static String stepError(String stepName, String message) {
     return "스텝 '" + stepName + "': " + message;
+  }
+
+  /** 저장 가능한 스크립트 유형(WD-547) — DB 체크 제약 pipeline_step_script_type_check(V35)와 같은 목록·순서. */
+  static final List<String> SUPPORTED_SCRIPT_TYPES =
+      List.of("SQL", "PYTHON", "API_CALL", "AI_CLASSIFY");
+
+  private static final String SUPPORTED_SCRIPT_TYPES_HINT =
+      " (" + String.join(", ", SUPPORTED_SCRIPT_TYPES) + " 중 하나)";
+
+  /** 스크립트 유형이 비었을 때의 400 안내(WD-547). 스텝 이름은 {@link #stepError} 가 앞에 붙인다. */
+  static final String SCRIPT_TYPE_REQUIRED_MESSAGE = "스크립트 유형을 입력하세요" + SUPPORTED_SCRIPT_TYPES_HINT;
+
+  /** 허용 밖 스크립트 유형의 400 안내(WD-547). */
+  static String unsupportedScriptTypeMessage(String scriptType) {
+    return "지원하지 않는 스크립트 유형입니다: " + scriptType + SUPPORTED_SCRIPT_TYPES_HINT;
+  }
+
+  /**
+   * 스텝 스크립트 유형 사전 검증(WD-547). 생성·수정 모두 {@code validateDAG} 직후, 어떤 쓰기보다 먼저 부른다.
+   *
+   * <p>예전에는 허용 밖 유형(RUBY 등)·null 유형이 저장 단계까지 가서 DB 체크/NOT NULL 제약에 걸려 409 「이미 같은 값이…」류로 나갔다. 사용자가
+   * 무엇을 고쳐야 할지 알 수 있게 400 + 스텝 이름이 붙은 한국어 문구로 바꾼다. 대소문자는 구분한다 — 실행기·DB 제약이 대문자만 안다.
+   *
+   * <p>스크립트 내용(빈 SQL·PYTHON) 검사는 여기서 하지 않는다 — WD-585 가 맡는다: SQL 은 {@link #validateStepShapes},
+   * PYTHON 은 이미 빈 채로 저장된 스텝의 왕복 저장을 허용해야 해서 기존 스텝과 짝짓는 {@link #saveSteps} 에서 본다.
+   */
+  private static void validateStepScripts(List<PipelineStepRequest> steps) {
+    if (steps == null) {
+      return;
+    }
+    for (PipelineStepRequest step : steps) {
+      if (step == null) {
+        continue;
+      }
+      String type = step.scriptType();
+      if (type == null || type.isBlank()) {
+        throw new IllegalArgumentException(stepError(step.name(), SCRIPT_TYPE_REQUIRED_MESSAGE));
+      }
+      if (!SUPPORTED_SCRIPT_TYPES.contains(type)) {
+        throw new IllegalArgumentException(
+            stepError(step.name(), unsupportedScriptTypeMessage(type)));
+      }
+    }
   }
 
   /** API_CALL 응답 필드 매핑 한 행(원문 그대로 — 공백 판정만 trim 으로 한다). */
