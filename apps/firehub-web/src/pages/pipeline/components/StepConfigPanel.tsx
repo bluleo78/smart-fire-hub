@@ -1,5 +1,5 @@
 import { Lock, Trash2,X } from 'lucide-react';
-import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 const ApiCallStepConfig = lazy(() => import('./ApiCallStepConfig'));
 const AiClassifyStepConfig = lazy(() => import('./AiClassifyStepConfig'));
@@ -84,8 +84,9 @@ interface StepConfigPanelProps {
    * 스텝을 전부 삭제·재생성해 매번 바뀌므로 신뢰할 수 없다.
    */
   serverSteps?: PipelineStepResponse[];
-  /** 이름 입력(#step-name) ref — 「스텝 추가」 직후 편집기 페이지가 새 스텝 이름으로 포커스를 옮기는 데 쓴다(WD-545) */
-  nameInputRef?: React.Ref<HTMLInputElement>;
+  /** 이름 입력(#step-name) 콜백 ref — 「스텝 추가」 직후 편집기 페이지가 새 스텝 이름으로 포커스를 옮기는 데 쓴다(WD-545).
+   *  객체 ref 가 아니라 콜백인 이유: 패널도 같은 입력에 자기 ref(WD-560)를 걸어야 하는데, prop 으로 받은 ref 객체를 고치면 안 된다. */
+  nameInputRef?: (el: HTMLInputElement | null) => void;
 }
 
 export default function StepConfigPanel({
@@ -166,7 +167,16 @@ export default function StepConfigPanel({
 
   // 저장 검증 실패 후 첫 오류 필드로 포커스(WD-560). 리듀서의 focusRequest 를 대상 필드가 렌더된 뒤 소비하고 지운다.
   // 스크립트 편집기는 지연 로드되므로 준비되면 넘겨주는 핸들을 state 로 받아, 준비 시점에 이 effect 가 다시 돈다.
-  const nameInputRef = useRef<HTMLInputElement>(null);
+  const nameFieldRef = useRef<HTMLInputElement>(null);
+  // 이름 입력 하나에 두 ref 를 함께 건다 — 위 저장 실패 포커스(WD-560)용 지역 ref 와, 「스텝 추가」 직후 편집기 페이지가
+  // 새 스텝 이름으로 포커스를 옮기는 prop ref(WD-545). <Input> 은 ref 를 하나만 받으므로 콜백 ref 로 둘 다 채운다.
+  const setNameInputRef = useCallback(
+    (el: HTMLInputElement | null) => {
+      nameFieldRef.current = el;
+      nameInputRef?.(el);
+    },
+    [nameInputRef],
+  );
   const outputDatasetTriggerRef = useRef<HTMLButtonElement>(null);
   const [scriptEditorHandle, setScriptEditorHandle] = useState<ScriptEditorHandle | null>(null);
   const focusRequest = state.focusRequest;
@@ -178,7 +188,7 @@ export default function StepConfigPanel({
       if (!scriptEditorHandle) return;
       scriptEditorHandle.focus();
     } else if (focusRequest.field === 'name') {
-      nameInputRef.current?.focus();
+      nameFieldRef.current?.focus();
     } else {
       outputDatasetTriggerRef.current?.focus();
     }
@@ -394,9 +404,8 @@ export default function StepConfigPanel({
           <div className="space-y-1.5">
             <Label htmlFor="step-name">이름</Label>
             <Input
-              ref={nameInputRef}
               id="step-name"
-              ref={nameInputRef}
+              ref={setNameInputRef}
               placeholder="스텝 이름"
               value={step.name}
               disabled={readOnly}

@@ -158,6 +158,10 @@ export default function PipelineEditorPage() {
    */
   const pendingNameFocusRef = useRef(false);
   const stepNameInputRef = useRef<HTMLInputElement>(null);
+  // 패널이 자기 ref(WD-560)와 함께 이 콜백으로 이름 입력을 넘겨준다 — 객체 ref 를 prop 으로 넘기면 패널이 고칠 수 없다
+  const setStepNameInput = useCallback((el: HTMLInputElement | null) => {
+    stepNameInputRef.current = el;
+  }, []);
   const editorDispatch = useCallback(
     (action: EditorAction) => {
       if (action.type === 'ADD_STEP' || action.type === 'ADD_STEP_AFTER' || action.type === 'INSERT_STEP_BETWEEN') {
@@ -494,7 +498,7 @@ export default function PipelineEditorPage() {
             state={state}
             dispatch={dispatch}
             readOnly={readOnly}
-            nameInputRef={stepNameInputRef}
+            nameInputRef={setStepNameInput}
             datasets={datasetOptions}
             datasetsLoaded={allDatasets !== undefined}
             pipelineInfo={pipelineInfo}
