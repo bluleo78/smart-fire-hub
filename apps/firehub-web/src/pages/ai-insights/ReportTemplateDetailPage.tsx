@@ -39,6 +39,7 @@ import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { applyFieldErrors, handleApiError, isEditConflict, isForbiddenError } from '@/lib/api-error';
 import { cloneName } from '@/lib/clone-name';
 import { parseUtcDate } from '@/lib/formatters';
+import { parseRouteId } from '@/lib/route-id';
 import { parseTemplateSections, validateSectionKeys } from '@/lib/template-section-types';
 import { type ReportTemplateFormValues, reportTemplateSchema } from '@/lib/validations/report-template';
 
@@ -73,7 +74,9 @@ export default function ReportTemplateDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const isNew = !id || id === 'new';
-  const templateId = isNew ? 0 : Number(id);
+  // 주소 id 는 숫자만 받는다(WD-628) — `Number('1e1')` 은 10 이라 다른 양식을 열었다.
+  // 잘못된 id 는 0 으로 두어 단건 조회를 끄고(enabled: !!id) 목록에서도 찾지 못하게 해, 아래 「존재하지 않는 템플릿」 안내로 보낸다.
+  const templateId = isNew ? 0 : (parseRouteId(id) ?? 0);
 
   const { data: templateDirect, isLoading: isLoadingDirect, isError: isErrorDirect, error: errorDirect } = useProactiveTemplate(templateId);
   // 조회 권한 부족(403) — 「불러오는 데 실패」 토스트 + 목록 이동 대신 이 화면에 권한 안내를 보이는 기준 (WD-137).

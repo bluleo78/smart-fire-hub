@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { useReportActions } from '@/hooks/useReportActions';
 import { isForbiddenError, isNotFoundError, isReportLevelBlocked } from '@/lib/api-error';
 import { REPORT_NOT_FOUND_NOTICE } from '@/lib/proactive-utils';
+import { parseRouteId } from '@/lib/route-id';
 
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 import { ReportLevelBlockedNotice } from './components/ReportLevelBlockedNotice';
@@ -33,12 +34,14 @@ export default function ReportViewerPage() {
   const goBack = () => (hasHistory ? navigate(-1) : navigate('/ai-insights/reports'));
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  const jobIdNum = Number(jobId);
-  const executionIdNum = Number(executionId);
-  // 경로 파라미터가 숫자가 아닌 경우(잘못된 URL 직접 접근, 손상된 링크 등) — 별도 에러 상태로 분기한다.
-  // "리포트가 없습니다" 빈 상태는 정상적으로 리포트가 없는 경우를 위한 것이라, NaN을 그대로 흘려보내면
-  // 헤더에 "리포트 #NaN", 링크에 "/ai-insights/jobs/NaN"처럼 깨진 UI가 노출된다.
-  const isInvalidParams = isNaN(jobIdNum) || isNaN(executionIdNum);
+  // 경로 파라미터가 잘못된 경우(잘못된 URL 직접 접근, 손상된 링크 등) — 조회하지 않고 별도 「잘못된 요청」 상태로 분기한다.
+  // parseRouteId 는 숫자로만 된 양의 정수가 아니면(`abc`·`1e1`·`1.5`·` 7`·`0` 등) null 을 돌려준다(WD-628).
+  // "리포트가 없습니다" 빈 상태는 정상적으로 리포트가 없는 경우를 위한 것이라 여기에 섞지 않는다.
+  const parsedJobId = parseRouteId(jobId);
+  const parsedExecutionId = parseRouteId(executionId);
+  const isInvalidParams = parsedJobId == null || parsedExecutionId == null;
+  const jobIdNum = parsedJobId ?? 0;
+  const executionIdNum = parsedExecutionId ?? 0;
 
   // HTML 리포트 조회
   const { data: htmlResponse, isLoading, isError, error } = useQuery({
