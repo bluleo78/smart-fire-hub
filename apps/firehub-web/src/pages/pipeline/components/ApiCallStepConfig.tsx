@@ -44,8 +44,13 @@ import { useApiConnectionsSelectable } from '@/hooks/queries/useApiConnections';
 import { cn } from '@/lib/utils';
 import { columnNameLengthError } from '@/lib/validations/dataset';
 
+import { type ApiConfigSection, sectionOf } from '../hooks/errorFieldOrder';
+import type { FocusRequest } from '../hooks/pipelineEditorReducer';
 import {
+  API_CUSTOM_URL_FIELD,
+  API_PAGE_SIZE_FIELD,
   API_PAGE_SIZE_RANGE,
+  API_PATH_FIELD,
   apiPageSizeError,
   KV_ROWS_KEYS,
   kvRowField,
@@ -95,6 +100,10 @@ interface ApiCallStepConfigProps {
    * 매핑 행 아래 인라인 문구와 입력의 aria-invalid 에 쓴다(WD-154).
    */
   fieldError?: (field: string) => string | undefined;
+  /** 이 스텝의 저장 검증 오류 키 — 오류가 든 접힌 절을 편다(WD-633) */
+  errorFields?: readonly string[];
+  /** 저장 실패 포커스 요청(리듀서 focusRequest) — 저장 시도마다 새 객체라, 바뀌면 오류가 남은 절을 다시 편다(WD-633) */
+  errorFocusRequest?: FocusRequest | null;
 }
 
 interface PreviewResult {
@@ -146,10 +155,23 @@ interface SectionProps {
   icon?: React.ReactNode;
   defaultOpen?: boolean;
   children: React.ReactNode;
+  /** 절 안 칸에 저장 검증 오류가 있다 */
+  hasError?: boolean;
+  /** 저장 실패 포커스 요청 — 바뀔 때(저장 시도) 오류가 있으면 편다 */
+  focusRequest?: FocusRequest | null;
 }
 
-function Section({ title, icon, defaultOpen = false, children }: SectionProps) {
-  const [open, setOpen] = useState(defaultOpen);
+/**
+ * 접을 수 있는 설정 절. 오류가 있으면 마운트 때와 저장을 시도할 때마다 펴서 오류 문구·포커스할 칸을 그린다(WD-633).
+ * 렌더 중에 열어야 같은 커밋에 칸이 생겨 포커스가 늦지 않다.
+ */
+function Section({ title, icon, defaultOpen = false, children, hasError = false, focusRequest = null }: SectionProps) {
+  const [open, setOpen] = useState(defaultOpen || hasError);
+  const [prevFocusRequest, setPrevFocusRequest] = useState(focusRequest);
+  if (focusRequest !== prevFocusRequest) {
+    setPrevFocusRequest(focusRequest);
+    if (focusRequest && hasError) setOpen(true);
+  }
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger asChild>
@@ -178,8 +200,10 @@ interface KvEditorProps {
   readOnly: boolean;
   keyPlaceholder?: string;
   valuePlaceholder?: string;
-  /** 행 번호로 저장 검증 오류 문구를 조회한다 — 있으면 그 행 아래에 보인다(WD-359) */
-  rowError?: (i: number) => string | undefined;
+  /** 행 번호 → 저장 검증 오류 키(WD-359). 오류 문구 조회와 저장 실패 포커스 칸(이름 입력)의 data-error-field 에 쓴다 */
+  rowField?: (i: number) => string;
+  /** 저장 검증 오류 조회 — 있으면 그 행 아래에 보인다 */
+  fieldError?: (field: string) => string | undefined;
   /** 오류 문구 요소 id 접두사(입력의 aria-describedby 연결용) */
   errorIdPrefix?: string;
 }
@@ -190,7 +214,8 @@ function KvEditor({
   readOnly,
   keyPlaceholder = '키',
   valuePlaceholder = '값',
-  rowError,
+  rowField,
+  fieldError,
   errorIdPrefix = 'kv',
 }: KvEditorProps) {
   const handleAdd = () => onChange([...pairs, { key: '', value: '' }]);
@@ -203,7 +228,8 @@ function KvEditor({
   return (
     <div className="space-y-1.5">
       {pairs.map((pair, i) => {
-        const message = rowError?.(i);
+        const field = rowField?.(i);
+        const message = field ? fieldError?.(field) : undefined;
         const errorId = `${errorIdPrefix}-error-${i}`;
         return (
         <div key={i} className="space-y-0.5">
@@ -213,6 +239,8 @@ function KvEditor({
             placeholder={keyPlaceholder}
             value={pair.key}
             disabled={readOnly}
+            /* 행 오류(이름 없음·같은 이름)는 이름 칸의 문제라 저장 실패 포커스는 이름 입력으로 간다(WD-633) */
+            data-error-field={field}
             aria-invalid={message ? true : undefined}
             aria-describedby={message ? errorId : undefined}
             onChange={(e) => handleChange(i, 'key', e.target.value)}
@@ -322,6 +350,8 @@ export default function ApiCallStepConfig({
   onConnectionChange,
   readOnly,
   fieldError,
+  errorFields = [],
+  errorFocusRequest = null,
 }: ApiCallStepConfigProps) {
   // 접근성: 라벨↔입력 연결용 id 접두사 (#432).
   // 이 패널은 스텝이 바뀔 때마다 key 로 재마운트되고 여러 곳에서 재사용될 수 있어 하드코딩 id 는 충돌한다.
@@ -362,6 +392,12 @@ export default function ApiCallStepConfig({
   const headersRecord = getConfig<Record<string, string>>(apiConfig, 'headers', {});
   const queryParamsRecord = getConfig<Record<string, string>>(apiConfig, 'queryParams', {});
 
+  // URL 빈 값 저장 오류(usePipelineValidation, 이슈 #44) — 칸 아래 문구로 보이고 입력과 연결한다(WD-633)
+  const customUrlError = fieldError?.(API_CUSTOM_URL_FIELD);
+  const pathError = fieldError?.(API_PATH_FIELD);
+  const customUrlErrorId = `${baseId}-custom-url-error`;
+  const pathErrorId = `${baseId}-path-error`;
+
   // 편집 중 행 목록은 화면 전용 키(headerRows·queryParamRows)로 설정에도 함께 둔다 — 같은 이름·이름 없는 행은 객체 설정(headers·queryParams)에
   // 담기지 않아 조용히 버려지므로, 저장 전 검증(usePipelineValidation)이 이 목록을 보고 행 아래에 안내한다(WD-359).
   // 스텝을 바꿨다 돌아와도 편집 중 행이 남도록 초기값도 이 키를 먼저 본다(없으면 서버 설정 객체에서 만든다).
@@ -373,6 +409,9 @@ export default function ApiCallStepConfig({
   const [queryParamPairs, setQueryParamPairs] = useState<KvPair[]>(() =>
     Array.isArray(queryParamRows) ? queryParamRows : recordToKvPairs(queryParamsRecord),
   );
+
+  // 저장 오류가 든 절(WD-633) — 접힌 절을 펼 때 쓴다
+  const erroredSections = new Set<ApiConfigSection | null>(errorFields.map(sectionOf));
 
   const handleHeadersChange = (pairs: KvPair[]) => {
     setHeaderPairs(pairs);
@@ -508,18 +547,23 @@ export default function ApiCallStepConfig({
           disabled={readOnly}
         />
 
-        {/* saved 모드: baseUrl prefix + path */}
-        {selectedConn && (
+        {/*
+          saved 모드: baseUrl prefix + path. 경로 칸은 연결 정보(selectedConn)를 못 찾아도(삭제·선택 불가 연결, 로딩 중) 그려
+          경로 오류를 보이고 포커스할 수 있게 한다(WD-633).
+        */}
+        {apiConnectionId !== null && (
           <div className="space-y-2">
-            <div className="space-y-1.5">
-              <Label htmlFor={`${baseId}-base-url`} className="text-xs">URL *</Label>
-              <Input
-                id={`${baseId}-base-url`}
-                value={selectedConn.baseUrl}
-                disabled
-                className="text-xs h-8 font-mono bg-muted"
-              />
-            </div>
+            {selectedConn && (
+              <div className="space-y-1.5">
+                <Label htmlFor={`${baseId}-base-url`} className="text-xs">URL *</Label>
+                <Input
+                  id={`${baseId}-base-url`}
+                  value={selectedConn.baseUrl}
+                  disabled
+                  className="text-xs h-8 font-mono bg-muted"
+                />
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label htmlFor={`${baseId}-path`} className="text-xs">추가 경로</Label>
               <Input
@@ -527,9 +571,13 @@ export default function ApiCallStepConfig({
                 placeholder="/v1/data (선택)"
                 value={path}
                 disabled={readOnly}
+                data-error-field={API_PATH_FIELD}
+                aria-invalid={pathError ? true : undefined}
+                aria-describedby={pathError ? pathErrorId : undefined}
                 onChange={(e) => update('path', e.target.value)}
                 className="text-xs h-8"
               />
+              <InlineFieldError id={pathErrorId} message={pathError} />
             </div>
           </div>
         )}
@@ -543,9 +591,13 @@ export default function ApiCallStepConfig({
               placeholder="https://api.example.com/v1/data"
               value={customUrl}
               disabled={readOnly}
+              data-error-field={API_CUSTOM_URL_FIELD}
+              aria-invalid={customUrlError ? true : undefined}
+              aria-describedby={customUrlError ? customUrlErrorId : undefined}
               onChange={(e) => update('customUrl', e.target.value)}
               className="text-xs h-8"
             />
+            <InlineFieldError id={customUrlErrorId} message={customUrlError} />
           </div>
         )}
 
@@ -666,14 +718,15 @@ export default function ApiCallStepConfig({
       <Separator />
 
       {/* Headers */}
-      <Section title="헤더">
+      <Section title="헤더" hasError={erroredSections.has('headers')} focusRequest={errorFocusRequest}>
         <KvEditor
           pairs={headerPairs}
           onChange={handleHeadersChange}
           readOnly={readOnly}
           keyPlaceholder="Content-Type"
           valuePlaceholder="application/json"
-          rowError={(i) => fieldError?.(kvRowField('headers', i))}
+          rowField={(i) => kvRowField('headers', i)}
+          fieldError={fieldError}
           errorIdPrefix={`${baseId}-header`}
         />
       </Section>
@@ -681,14 +734,19 @@ export default function ApiCallStepConfig({
       <Separator />
 
       {/* Query Parameters */}
-      <Section title="쿼리 파라미터">
+      <Section
+        title="쿼리 파라미터"
+        hasError={erroredSections.has('queryParams')}
+        focusRequest={errorFocusRequest}
+      >
         <KvEditor
           pairs={queryParamPairs}
           onChange={handleQueryParamsChange}
           readOnly={readOnly}
           keyPlaceholder="파라미터명"
           valuePlaceholder="값"
-          rowError={(i) => fieldError?.(kvRowField('queryParams', i))}
+          rowField={(i) => kvRowField('queryParams', i)}
+          fieldError={fieldError}
           errorIdPrefix={`${baseId}-query`}
         />
       </Section>
@@ -713,7 +771,12 @@ export default function ApiCallStepConfig({
       )}
 
       {/* Field Mappings */}
-      <Section title="필드 매핑" defaultOpen={true}>
+      <Section
+        title="필드 매핑"
+        defaultOpen={true}
+        hasError={erroredSections.has('fieldMappings')}
+        focusRequest={errorFocusRequest}
+      >
         <p className="text-xs text-muted-foreground">
           미리보기를 실행하면 소스 필드가 자동으로 채워집니다
         </p>
@@ -743,6 +806,8 @@ export default function ApiCallStepConfig({
                     className="h-7 text-xs"
                     placeholder="sourceField"
                     aria-label={`응답 필드 ${i + 1}`}
+                    /* 빈 행·응답 필드 오류는 행의 첫 칸(응답 필드)으로 포커스한다(WD-633) */
+                    data-error-field={`${mappingRowField(i)} ${mappingSourceField(i)}`}
                     value={mapping.sourceField}
                     aria-invalid={sourceInvalid}
                     aria-describedby={sourceInvalid ? rowErrorId : undefined}
@@ -753,6 +818,7 @@ export default function ApiCallStepConfig({
                     className="h-7 text-xs"
                     placeholder="target_col"
                     aria-label={`대상 컬럼 ${i + 1}`}
+                    data-error-field={mappingTargetField(i)}
                     value={mapping.targetColumn}
                     aria-invalid={targetInvalid}
                     aria-describedby={targetInvalid ? rowErrorId : undefined}
@@ -770,7 +836,8 @@ export default function ApiCallStepConfig({
                     </Button>
                   )}
                 </div>
-                <InlineFieldError id={rowErrorId} message={rowMessage} />
+                {/* 대상 컬럼 길이 상한은 입력 중 오류 — live(InlineFieldError 참고) */}
+                <InlineFieldError id={rowErrorId} message={rowMessage} live />
               </div>
             );
           })}
@@ -791,7 +858,11 @@ export default function ApiCallStepConfig({
       <Separator />
 
       {/* Pagination */}
-      <Section title="페이지네이션">
+      <Section
+        title="페이지네이션"
+        hasError={erroredSections.has('pagination')}
+        focusRequest={errorFocusRequest}
+      >
         <div className="space-y-1.5">
           <div className="flex items-center gap-2">
             <div className="flex-1 space-y-1">
@@ -851,6 +922,7 @@ export default function ApiCallStepConfig({
                     step={1}
                     value={pagination.pageSize ?? 100}
                     disabled={readOnly}
+                    data-error-field={API_PAGE_SIZE_FIELD}
                     aria-invalid={pageSizeError ? true : undefined}
                     aria-describedby={pageSizeError ? `${baseId}-page-size-error` : `${baseId}-page-size-hint`}
                     onChange={(e) =>
@@ -858,9 +930,9 @@ export default function ApiCallStepConfig({
                     }
                   />
                   {/* 범위 밖 값은 고치지 않고 안내만 한다 — 외부 API limit 로 그대로 나가는 값이라 조용히 바꾸지 않는다(WD-362) */}
-                  {pageSizeError ? (
-                    <InlineFieldError id={`${baseId}-page-size-error`} message={pageSizeError} />
-                  ) : (
+                  {/* 범위 오류는 입력 중 오류 — live(InlineFieldError 참고). 오류가 없을 때만 범위 안내를 보인다 */}
+                  <InlineFieldError id={`${baseId}-page-size-error`} message={pageSizeError} live />
+                  {!pageSizeError && (
                     <p id={`${baseId}-page-size-hint`} className="text-[11px] text-muted-foreground">
                       {API_PAGE_SIZE_RANGE.min}~{API_PAGE_SIZE_RANGE.max}건
                     </p>

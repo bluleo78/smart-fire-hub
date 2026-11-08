@@ -129,7 +129,7 @@ test.describe('스텝 출력 컬럼 저장 검증 (WD-154)', () => {
     await page.getByRole('button', { name: '저장', exact: true }).click();
 
     await expect(page.getByText('입력 오류를 확인하세요.')).toBeVisible();
-    await expect(page.getByRole('alert').filter({ hasText: EMPTY_ROW })).toBeVisible();
+    await expect(page.getByText(EMPTY_ROW)).toBeVisible();
     // 빈 행의 두 칸 모두 오류 표시, 정상 행은 오류 없음
     await expect(page.getByLabel('응답 필드 2')).toHaveAttribute('aria-invalid', 'true');
     await expect(page.getByLabel('대상 컬럼 2')).toHaveAttribute('aria-invalid', 'true');
@@ -158,8 +158,8 @@ test.describe('스텝 출력 컬럼 저장 검증 (WD-154)', () => {
 
     await page.getByRole('button', { name: '저장', exact: true }).click();
 
-    await expect(page.getByRole('alert').filter({ hasText: TARGET_REQUIRED })).toBeVisible();
-    await expect(page.getByRole('alert').filter({ hasText: SOURCE_REQUIRED })).toBeVisible();
+    await expect(page.getByText(TARGET_REQUIRED)).toBeVisible();
+    await expect(page.getByText(SOURCE_REQUIRED)).toBeVisible();
     await expect(page.getByLabel('대상 컬럼 1')).toHaveAttribute('aria-invalid', 'true');
     await expect(page.getByLabel('응답 필드 1')).toHaveAttribute('aria-invalid', 'false');
     await expect(page.getByLabel('응답 필드 2')).toHaveAttribute('aria-invalid', 'true');
@@ -196,7 +196,7 @@ test.describe('스텝 출력 컬럼 저장 검증 (WD-154)', () => {
 
     await page.getByRole('button', { name: '저장', exact: true }).click();
 
-    await expect(page.getByRole('alert').filter({ hasText: OUTPUT_NAME_REQUIRED })).toBeVisible();
+    await expect(page.getByText(OUTPUT_NAME_REQUIRED)).toBeVisible();
     await expect(page.getByLabel('출력 컬럼명 2')).toHaveAttribute('aria-invalid', 'true');
     await expect(page.getByLabel('출력 컬럼명 1')).toHaveAttribute('aria-invalid', 'false');
     await page.waitForTimeout(300);
@@ -216,7 +216,7 @@ test.describe('스텝 출력 컬럼 저장 검증 (WD-154)', () => {
     await page.getByRole('button', { name: '저장', exact: true }).click();
 
     await expect(
-      page.getByRole('alert').filter({ hasText: '출력 데이터셋에 없는 컬럼입니다: no_such_col' }),
+      page.getByText('출력 데이터셋에 없는 컬럼입니다: no_such_col'),
     ).toBeVisible();
     await expect(page.getByLabel('대상 컬럼 2')).toHaveAttribute('aria-invalid', 'true');
     await expect(page.getByLabel('대상 컬럼 1')).toHaveAttribute('aria-invalid', 'false');
@@ -240,7 +240,7 @@ test.describe('스텝 출력 컬럼 저장 검증 (WD-154)', () => {
     // 다른 필드(설명)만 고쳐 저장해도 빈 행 때문에 막힌다 — 채우거나 지워야 한다
     await page.locator('#step-description').fill('설명 변경');
     await page.getByRole('button', { name: '저장', exact: true }).click();
-    await expect(page.getByRole('alert').filter({ hasText: EMPTY_ROW })).toBeVisible();
+    await expect(page.getByText(EMPTY_ROW)).toBeVisible();
     await page.waitForTimeout(300);
     expect(putCapture.requests).toHaveLength(0);
   });
@@ -382,8 +382,8 @@ test.describe('API 호출 스텝 헤더·쿼리 파라미터 행 저장 검증 (
 
     await expect(page.getByText('입력 오류를 확인하세요.')).toBeVisible();
     // 같은 이름은 뒤에 나온 2행에, 이름 없는 3행에는 이름 안내
-    await expect(page.getByRole('alert').filter({ hasText: '같은 이름의 파라미터가 있습니다' })).toBeVisible();
-    await expect(page.getByRole('alert').filter({ hasText: '파라미터명을 입력하세요' })).toBeVisible();
+    await expect(page.getByText('같은 이름의 파라미터가 있습니다')).toBeVisible();
+    await expect(page.getByText('파라미터명을 입력하세요')).toBeVisible();
     await expect(names.nth(0)).not.toHaveAttribute('aria-invalid', 'true');
     await expect(names.nth(1)).toHaveAttribute('aria-invalid', 'true');
     await expect(names.nth(2)).toHaveAttribute('aria-invalid', 'true');
@@ -423,7 +423,7 @@ test.describe('API 호출 스텝 헤더·쿼리 파라미터 행 저장 검증 (
 
     await page.getByRole('button', { name: '저장', exact: true }).click();
 
-    await expect(page.getByRole('alert').filter({ hasText: '같은 이름의 헤더가 있습니다' })).toBeVisible();
+    await expect(page.getByText('같은 이름의 헤더가 있습니다')).toBeVisible();
     await expect(names.nth(1)).toHaveAttribute('aria-invalid', 'true');
     await page.waitForTimeout(300);
     expect(createCapture.requests).toHaveLength(0);

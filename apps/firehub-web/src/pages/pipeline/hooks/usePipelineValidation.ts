@@ -11,7 +11,11 @@ import type { DatasetResponse } from '@/types/dataset';
 
 import type { EditorAction, PipelineEditorState, ValidationError } from './pipelineEditorReducer';
 import {
+  AI_OUTPUT_COLUMNS_FIELD,
+  AI_PROMPT_FIELD,
+  API_CUSTOM_URL_FIELD,
   API_PAGE_SIZE_FIELD,
+  API_PATH_FIELD,
   apiPageSizeError,
   KV_ROWS_KEYS,
   validateAiOutputColumns,
@@ -92,7 +96,7 @@ export function usePipelineValidation(
         if (!urlValue.trim()) {
           errors.push({
             stepTempId: step.tempId,
-            field: connectionId !== null ? 'apiConfig.path' : 'apiConfig.customUrl',
+            field: connectionId !== null ? API_PATH_FIELD : API_CUSTOM_URL_FIELD,
             message: 'URL을 입력하세요',
           });
         }
@@ -126,10 +130,10 @@ export function usePipelineValidation(
       if (step.scriptType === 'AI_CLASSIFY') {
         const cfg = step.aiConfig;
         if (!cfg || !cfg.prompt || !(cfg.prompt as string).trim()) {
-          errors.push({ stepTempId: step.tempId, field: 'aiConfig.prompt', message: '프롬프트를 입력하세요' });
+          errors.push({ stepTempId: step.tempId, field: AI_PROMPT_FIELD, message: '프롬프트를 입력하세요' });
         }
         if (!cfg || !cfg.outputColumns || (cfg.outputColumns as unknown[]).length === 0) {
-          errors.push({ stepTempId: step.tempId, field: 'aiConfig.outputColumns', message: '출력 컬럼을 최소 1개 정의하세요' });
+          errors.push({ stepTempId: step.tempId, field: AI_OUTPUT_COLUMNS_FIELD, message: '출력 컬럼을 최소 1개 정의하세요' });
         }
         // 출력 컬럼 이름 검증(WD-154) — 빈 이름·형식·중복(자동 생성 출력이면 예약어도). 실행 시점 영어 원문 오류 대신 행 아래에 안내한다.
         for (const e of validateAiOutputColumns(cfg?.outputColumns, step.outputDatasetId == null)) {

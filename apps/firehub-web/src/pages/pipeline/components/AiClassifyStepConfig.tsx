@@ -34,7 +34,7 @@ import { useDataset } from '@/hooks/queries/useDatasets';
 import { columnNameLengthError } from '@/lib/validations/dataset';
 import type { AiClassifyConfig } from '@/types/pipeline';
 
-import { aiOutputColumnNameField } from '../hooks/stepColumnValidation';
+import { AI_OUTPUT_COLUMNS_FIELD, AI_PROMPT_FIELD, aiOutputColumnNameField } from '../hooks/stepColumnValidation';
 import { InlineFieldError } from './InlineFieldError';
 
 /** 데이터셋 컬럼 정의에는 없지만 물리 테이블에 늘 있는 시스템 컬럼 — 서버도 입력 컬럼으로 허용한다(WD-215). */
@@ -76,7 +76,10 @@ interface AiClassifyStepConfigProps {
    * true 면 상세 조회(404)를 하지 않고 "볼 수 없어 컬럼을 표시할 수 없음"을 보인다. 저장된 inputColumns 값은 건드리지 않는다.
    */
   primaryInputHidden?: boolean;
-  /** 저장 시 검증 오류 조회 — 출력 컬럼 이름 행 아래 인라인 문구에 쓴다(WD-154, 키는 aiOutputColumnNameField) */
+  /**
+   * 저장 시 검증 오류 조회 — 프롬프트·출력 컬럼(0개)·출력 컬럼 이름 행 아래 인라인 문구와 입력의 aria-invalid 에 쓴다
+   * (WD-154, WD-633. 키는 aiConfig.prompt · aiConfig.outputColumns · aiOutputColumnNameField)
+   */
   fieldError?: (field: string) => string | undefined;
 }
 
@@ -133,6 +136,12 @@ export default function AiClassifyStepConfig({
   const batchSizeId = `${baseId}-batch-size`;
   const batchSizeHelpId = `${baseId}-batch-size-help`;
   const onErrorId = `${baseId}-on-error`;
+  // 필수 칸 저장 오류(usePipelineValidation) — 칸 아래 문구로 보이고 입력과 연결한다(WD-633)
+  const promptLabelId = `${baseId}-prompt-label`;
+  const promptError = fieldError?.(AI_PROMPT_FIELD);
+  const promptErrorId = `${baseId}-prompt-error`;
+  const outputColumnsError = fieldError?.(AI_OUTPUT_COLUMNS_FIELD);
+  const outputColumnsErrorId = `${baseId}-output-columns-error`;
 
   // 숨김 입력이면 상세를 조회하지 않는다(어차피 404 — "컬럼이 없습니다" 오표시와 재시도 깜빡임 방지).
   const primaryDatasetId = primaryInputHidden ? 0 : (inputDatasetIds[0] ?? 0);
@@ -205,7 +214,8 @@ export default function AiClassifyStepConfig({
       <div className="space-y-2">
         <div className="flex items-center gap-1.5 text-sm font-medium text-ai-accent">
           <MessageSquare className="h-3.5 w-3.5" />
-          프롬프트 <span className="text-destructive ml-0.5">*</span>
+          {/* 입력의 접근 가능한 이름 — 필수 표시(*)는 빼고 이 낱말만 쓴다(WD-633) */}
+          <span id={promptLabelId}>프롬프트</span> <span className="text-destructive ml-0.5" aria-hidden="true">*</span>
         </div>
 
         {/* 프리셋 버튼 */}
@@ -232,9 +242,15 @@ export default function AiClassifyStepConfig({
           placeholder="입력 데이터의 어떤 컬럼을 어떻게 처리할지 설명하세요"
           value={prompt}
           disabled={readOnly}
+          aria-labelledby={promptLabelId}
+          aria-required="true"
+          data-error-field={AI_PROMPT_FIELD}
+          aria-invalid={promptError ? true : undefined}
+          aria-describedby={promptError ? promptErrorId : undefined}
           onChange={(e) => update('prompt', e.target.value)}
           rows={4}
         />
+        <InlineFieldError id={promptErrorId} message={promptError} />
       </div>
 
       <Separator />
@@ -251,6 +267,10 @@ export default function AiClassifyStepConfig({
               size="sm"
               className="h-7 text-xs px-2 border-ai-accent/30 text-ai-accent hover:bg-ai-accent-subtle"
               onClick={addOutputColumn}
+              /* 컬럼이 0개라는 저장 오류는 고칠 방법이 「컬럼 추가」라 포커스를 여기로 보내고 오류 문구를 설명으로 잇는다(WD-633).
+                 버튼에는 aria-invalid 가 맞지 않아(ARIA 1.2) 설명만 단다. */
+              data-error-field={AI_OUTPUT_COLUMNS_FIELD}
+              aria-describedby={outputColumnsError ? outputColumnsErrorId : undefined}
             >
               <Plus className="h-3 w-3" />
               컬럼 추가
@@ -267,6 +287,7 @@ export default function AiClassifyStepConfig({
           <div className="flex flex-col items-center justify-center py-4 border border-dashed border-ai-accent/20 rounded-md text-xs text-muted-foreground gap-1">
             <Plus className="h-4 w-4 text-ai-accent" />
             <span>출력 컬럼을 추가하거나 프리셋을 선택하세요</span>
+            <InlineFieldError id={outputColumnsErrorId} message={outputColumnsError} />
           </div>
         ) : (
           <div className="space-y-1.5">
@@ -288,6 +309,7 @@ export default function AiClassifyStepConfig({
                       className="h-7 text-xs font-mono"
                       placeholder="column_name"
                       aria-label={`출력 컬럼명 ${i + 1}`}
+                      data-error-field={aiOutputColumnNameField(i)}
                       value={col.name}
                       disabled={readOnly}
                       pattern="[a-z][a-z0-9_]*"
@@ -322,7 +344,8 @@ export default function AiClassifyStepConfig({
                       </Button>
                     )}
                   </div>
-                  <InlineFieldError id={nameErrorId} message={nameError} />
+                  {/* 컬럼명 길이 상한은 입력 중 오류 — live(InlineFieldError 참고) */}
+                  <InlineFieldError id={nameErrorId} message={nameError} live />
                 </div>
               );
             })}

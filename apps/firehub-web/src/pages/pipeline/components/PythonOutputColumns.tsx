@@ -127,6 +127,7 @@ export default function PythonOutputColumns({
                 <div className="grid grid-cols-[1fr_140px_auto] gap-1.5 items-center">
                   <Input
                     id={inputId}
+                    data-error-field={pythonOutputColumnNameField(i)}
                     className="h-7 text-xs font-mono"
                     placeholder="column_name"
                     value={col.name}
@@ -171,8 +172,8 @@ export default function PythonOutputColumns({
                   )}
                 </div>
 
-                {/* Inline validation error */}
-                <InlineFieldError id={errorId} message={error} />
+                {/* 형식·길이·예약어·중복은 입력 중 오류 — live(InlineFieldError 참고) */}
+                <InlineFieldError id={errorId} message={error} live />
               </div>
             );
           })}

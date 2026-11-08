@@ -4,6 +4,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { sectionOf } from './errorFieldOrder';
 import {
   createDefaultStep,
   type EditorAction,
@@ -11,6 +12,22 @@ import {
   pipelineEditorReducer,
   type PipelineEditorState,
 } from './pipelineEditorReducer';
+import {
+  AI_OUTPUT_COLUMNS_FIELD,
+  AI_PROMPT_FIELD,
+  aiOutputColumnNameField,
+  API_CUSTOM_URL_FIELD,
+  API_PAGE_SIZE_FIELD,
+  API_PATH_FIELD,
+  KV_ROW_KEY,
+  kvRowField,
+  MAPPING_ROW_KEY,
+  MAPPING_TARGET_KEY,
+  mappingRowField,
+  mappingSourceField,
+  mappingTargetField,
+  pythonOutputColumnNameField,
+} from './stepColumnValidation';
 
 // dagre-layout은 실제 구현을 사용하면 느리거나 사이드이펙트가 있을 수 있어 경량 목
 vi.mock('../utils/dagre-layout', () => ({
@@ -183,12 +200,12 @@ describe('pipelineEditorReducer', () => {
       expect(next.focusRequest).toEqual({ stepTempId: 'b', field: 'name' });
     });
 
-    it('포커스할 필드가 없는 오류(예: API URL)는 스텝만 선택하고 요청은 비운다', () => {
+    it('포커스할 칸이 없는 오류(스키마의 기타 경로)는 스텝만 선택하고 요청은 비운다', () => {
       const next = dispatch(
         {
           ...state,
           steps: [a],
-          validationErrors: [{ stepTempId: 'a', field: 'apiConfig.customUrl', message: 'x' }],
+          validationErrors: [{ stepTempId: 'a', field: 'loadStrategy', message: 'x' }],
         },
         { type: 'REQUEST_ERROR_FOCUS' },
       );
@@ -196,8 +213,106 @@ describe('pipelineEditorReducer', () => {
       expect(next.focusRequest).toBeNull();
     });
 
+    // 하위 설정 칸 오류도 화면 순서의 첫 칸으로 포커스를 요청한다(WD-633)
+    describe('하위 설정 칸 오류(WD-633)', () => {
+      /** 스텝 a 에 주어진 오류 키들이 있는 상태 */
+      const withErrors = (fields: string[]): PipelineEditorState => ({
+        ...state,
+        steps: [a],
+        validationErrors: fields.map((field) => ({ stepTempId: 'a', field, message: 'x' })),
+      });
+      const focusFieldFor = (fields: string[]) =>
+        dispatch(withErrors(fields), { type: 'REQUEST_ERROR_FOCUS' }).focusRequest?.field;
+
+      it('API URL 만 비면 URL 칸을 요청한다', () => {
+        expect(focusFieldFor([API_CUSTOM_URL_FIELD])).toBe(API_CUSTOM_URL_FIELD);
+        expect(focusFieldFor([API_PATH_FIELD])).toBe(API_PATH_FIELD);
+      });
+
+      it('API 호출 칸은 URL → 헤더 → 쿼리 파라미터 → 필드 매핑 → 페이지 크기 순서로 고른다', () => {
+        expect(
+          focusFieldFor([
+            API_PAGE_SIZE_FIELD,
+            mappingTargetField(0),
+            kvRowField('queryParams', 1),
+            kvRowField('headers', 2),
+            API_CUSTOM_URL_FIELD,
+          ]),
+        ).toBe(API_CUSTOM_URL_FIELD);
+        expect(
+          focusFieldFor([API_PAGE_SIZE_FIELD, kvRowField('queryParams', 0), kvRowField('headers', 3)]),
+        ).toBe(kvRowField('headers', 3));
+        expect(focusFieldFor([API_PAGE_SIZE_FIELD, kvRowField('queryParams', 4)])).toBe(
+          kvRowField('queryParams', 4),
+        );
+        expect(focusFieldFor([API_PAGE_SIZE_FIELD, mappingRowField(1)])).toBe(
+          mappingRowField(1),
+        );
+      });
+
+      it('필드 매핑은 앞 행부터, 같은 행이면 응답 필드가 대상 컬럼보다 먼저다', () => {
+        expect(
+          focusFieldFor([mappingSourceField(2), mappingTargetField(10)]),
+        ).toBe(mappingSourceField(2));
+        // 행 번호는 숫자로 비교한다 — 문자열 비교면 10 이 2 보다 앞선다
+        expect(
+          focusFieldFor([mappingSourceField(10), mappingTargetField(2)]),
+        ).toBe(mappingTargetField(2));
+      });
+
+      it('이름 오류는 하위 설정 칸보다 먼저고, 하위 설정 칸은 출력 데이터셋보다 먼저다', () => {
+        expect(focusFieldFor([API_PAGE_SIZE_FIELD, 'name'])).toBe('name');
+        expect(focusFieldFor(['outputDatasetId', API_PAGE_SIZE_FIELD])).toBe(
+          API_PAGE_SIZE_FIELD,
+        );
+      });
+
+      it('AI 분류는 프롬프트 → 출력 컬럼(0개) → 출력 컬럼 이름 순서다', () => {
+        expect(focusFieldFor([AI_OUTPUT_COLUMNS_FIELD, AI_PROMPT_FIELD])).toBe(AI_PROMPT_FIELD);
+        expect(focusFieldFor(['outputDatasetId', AI_OUTPUT_COLUMNS_FIELD])).toBe(AI_OUTPUT_COLUMNS_FIELD);
+        expect(focusFieldFor([aiOutputColumnNameField(3), aiOutputColumnNameField(1)])).toBe(
+          aiOutputColumnNameField(1),
+        );
+      });
+
+      it('Python 출력 컬럼은 출력 데이터셋 아래에 있어 그보다 뒤다', () => {
+        expect(focusFieldFor([pythonOutputColumnNameField(0), 'scriptContent'])).toBe('scriptContent');
+        expect(focusFieldFor([pythonOutputColumnNameField(0), 'loadStrategy'])).toBe(
+          pythonOutputColumnNameField(0),
+        );
+      });
+
+      it('행 키는 만든 키를 그대로 다시 읽고(행 번호), 다른 형식은 읽지 않는다', () => {
+        expect(MAPPING_TARGET_KEY.parse(mappingTargetField(12))).toBe(12);
+        expect(MAPPING_ROW_KEY.parse(mappingTargetField(12))).toBeNull();
+        expect(KV_ROW_KEY.headers.parse(kvRowField('queryParams', 1))).toBeNull();
+      });
+
+      it('sectionOf 는 API 호출 오류 키가 든 접는 절을 돌려준다', () => {
+        expect(sectionOf(kvRowField('headers', 0))).toBe('headers');
+        expect(sectionOf(kvRowField('queryParams', 2))).toBe('queryParams');
+        expect(sectionOf(mappingSourceField(1))).toBe('fieldMappings');
+        expect(sectionOf(API_PAGE_SIZE_FIELD)).toBe('pagination');
+        expect(sectionOf(API_CUSTOM_URL_FIELD)).toBeNull();
+        expect(sectionOf('name')).toBeNull();
+      });
+
+      it('하위 설정 칸 요청도 그 오류가 고쳐지면 지운다', () => {
+        const pending = {
+          ...withErrors([API_CUSTOM_URL_FIELD]),
+          selectedStepId: 'a',
+          focusRequest: { stepTempId: 'a', field: API_CUSTOM_URL_FIELD },
+        };
+        const next = dispatch(pending, {
+          type: 'UPDATE_STEP',
+          payload: { tempId: 'a', changes: { apiConfig: { customUrl: 'https://x' } } },
+        });
+        expect(next.focusRequest).toBeNull();
+      });
+    });
+
     it('CLEAR_FOCUS_REQUEST·SELECT_STEP 은 요청을 지운다', () => {
-      const pending = { ...state, focusRequest: { stepTempId: 'a', field: 'name' as const } };
+      const pending = { ...state, focusRequest: { stepTempId: 'a', field: 'name' } };
       expect(dispatch(pending, { type: 'CLEAR_FOCUS_REQUEST' }).focusRequest).toBeNull();
       expect(dispatch(pending, { type: 'SELECT_STEP', payload: { tempId: 'b' } }).focusRequest).toBeNull();
     });
@@ -212,7 +327,7 @@ describe('pipelineEditorReducer', () => {
           { stepTempId: 'a', field: 'name', message: 'x' },
           { stepTempId: 'b', field: 'name', message: 'x' },
         ],
-        focusRequest: { stepTempId: 'a', field: 'name' as const },
+        focusRequest: { stepTempId: 'a', field: 'name' },
       };
 
       it('UPDATE_STEP 으로 대상 스텝 오류가 지워지면 요청을 지운다', () => {

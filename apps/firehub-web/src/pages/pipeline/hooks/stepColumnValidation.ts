@@ -30,14 +30,45 @@ export const duplicateTargetColumnMessage = (name: string) => `대상 컬럼이 
 export const duplicateOutputColumnMessage = (name: string) => `출력 컬럼 이름이 중복됩니다: ${name}`;
 export const missingOutputColumnMessage = (name: string) => `출력 데이터셋에 없는 컬럼입니다: ${name}`;
 
+/** 단일 칸 오류 키 — 검증·칸 표시·포커스 순서(errorFieldOrder)가 같은 상수를 쓴다(WD-633) */
+export const API_CUSTOM_URL_FIELD = 'apiConfig.customUrl';
+export const API_PATH_FIELD = 'apiConfig.path';
+export const AI_PROMPT_FIELD = 'aiConfig.prompt';
+export const AI_OUTPUT_COLUMNS_FIELD = 'aiConfig.outputColumns';
+
+/** 행 단위 오류 키 — 키 만들기(key)와 읽기(parse: 형식이 맞으면 행 번호, 아니면 null)를 한곳에 둔다(WD-633) */
+export interface RowFieldKey {
+  key: (i: number) => string;
+  parse: (field: string) => number | null;
+}
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** `<prefix>.<행 번호><suffix>` 형식의 행 단위 오류 키 */
+function rowFieldKey(prefix: string, suffix = ''): RowFieldKey {
+  const pattern = new RegExp(`^${escapeRegExp(prefix)}\\.(\\d+)${escapeRegExp(suffix)}$`);
+  return {
+    key: (i) => `${prefix}.${i}${suffix}`,
+    parse: (field) => {
+      const m = pattern.exec(field);
+      return m ? Number(m[1]) : null;
+    },
+  };
+}
+
 /** 매핑 행 오류 키 — 행 전체(빈 행) / 응답 필드 / 대상 컬럼 */
-export const mappingRowField = (i: number) => `apiConfig.fieldMappings.${i}`;
-export const mappingSourceField = (i: number) => `apiConfig.fieldMappings.${i}.sourceField`;
-export const mappingTargetField = (i: number) => `apiConfig.fieldMappings.${i}.targetColumn`;
+export const MAPPING_ROW_KEY = rowFieldKey('apiConfig.fieldMappings');
+export const MAPPING_SOURCE_KEY = rowFieldKey('apiConfig.fieldMappings', '.sourceField');
+export const MAPPING_TARGET_KEY = rowFieldKey('apiConfig.fieldMappings', '.targetColumn');
+export const mappingRowField = MAPPING_ROW_KEY.key;
+export const mappingSourceField = MAPPING_SOURCE_KEY.key;
+export const mappingTargetField = MAPPING_TARGET_KEY.key;
 /** AI_CLASSIFY 출력 컬럼 이름 오류 키 */
-export const aiOutputColumnNameField = (i: number) => `aiConfig.outputColumns.${i}.name`;
+export const AI_OUTPUT_COLUMN_NAME_KEY = rowFieldKey('aiConfig.outputColumns', '.name');
+export const aiOutputColumnNameField = AI_OUTPUT_COLUMN_NAME_KEY.key;
 /** PYTHON 출력 컬럼 이름 오류 키(WD-352) */
-export const pythonOutputColumnNameField = (i: number) => `pythonConfig.outputColumns.${i}.name`;
+export const PYTHON_OUTPUT_COLUMN_NAME_KEY = rowFieldKey('pythonConfig.outputColumns', '.name');
+export const pythonOutputColumnNameField = PYTHON_OUTPUT_COLUMN_NAME_KEY.key;
 
 const isSystemColumn = (name: string) =>
   (SYSTEM_COLUMN_NAMES as readonly string[]).includes(name.toLowerCase());
@@ -185,7 +216,11 @@ export const KV_ROWS_KEYS = { headers: 'headerRows', queryParams: 'queryParamRow
 export type KvSection = keyof typeof KV_ROWS_KEYS;
 
 /** 헤더·쿼리 파라미터 행 오류 키 — 행 전체 단위 */
-export const kvRowField = (section: KvSection, i: number) => `apiConfig.${KV_ROWS_KEYS[section]}.${i}`;
+export const KV_ROW_KEY: Record<KvSection, RowFieldKey> = {
+  headers: rowFieldKey(`apiConfig.${KV_ROWS_KEYS.headers}`),
+  queryParams: rowFieldKey(`apiConfig.${KV_ROWS_KEYS.queryParams}`),
+};
+export const kvRowField = (section: KvSection, i: number) => KV_ROW_KEY[section].key(i);
 
 const KV_NOUN: Record<KvSection, string> = { headers: '헤더', queryParams: '파라미터' };
 export const kvNameRequiredMessage = (section: KvSection) => `${KV_NOUN[section]}명을 입력하세요`;

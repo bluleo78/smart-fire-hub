@@ -2,6 +2,7 @@ import type { AiClassifyConfig, PipelineDetailResponse, PythonStepConfig } from 
 
 import { wouldCreateCycle } from '../utils/cycle-detection';
 import { getLayoutedElements } from '../utils/dagre-layout';
+import { firstFocusableErrorField } from './errorFieldOrder';
 
 const generateId = (): string =>
   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -45,15 +46,13 @@ export interface ValidationError {
 }
 
 /**
- * 저장 검증 실패 후 포커스를 옮길 필드(WD-560). 스텝 설정 패널이 그 필드가 렌더된 뒤 소비하고 지운다.
- * 패널 위에서 아래 순서 — 오류가 여럿이면 이 순서의 첫 필드로 간다.
+ * 저장 검증 실패 후 포커스를 옮길 칸(WD-560). 스텝 설정 패널이 그 칸이 렌더된 뒤 소비하고 지운다.
+ * field 는 검증 오류 키 그대로이며 하위 설정 칸도 포함한다 — 오류가 여럿이면 화면 순서의 첫 칸(errorFieldOrder, WD-633).
+ * 저장을 시도할 때마다 새 객체라, 하위 설정의 접힌 절은 이 객체가 바뀌면 오류가 남은 절을 다시 편다.
  */
-export const ERROR_FOCUS_FIELDS = ['name', 'scriptContent', 'outputDatasetId'] as const;
-export type ErrorFocusField = (typeof ERROR_FOCUS_FIELDS)[number];
-
 export interface FocusRequest {
   stepTempId: string;
-  field: ErrorFocusField;
+  field: string;
 }
 
 export interface PipelineEditorState {
@@ -475,8 +474,8 @@ function reduceEditorAction(
       const targetFields = new Set(
         state.validationErrors.filter((e) => e.stepTempId === targetId).map((e) => e.field),
       );
-      // 포커스할 수 있는 필드(이름·스크립트·출력 데이터셋)에 오류가 없으면 선택만 바꾼다
-      const field = ERROR_FOCUS_FIELDS.find((f) => targetFields.has(f));
+      // 화면 위→아래 순서의 첫 오류 칸(하위 설정 칸 포함, WD-633). 포커스할 칸이 없는 오류뿐이면 선택만 바꾼다
+      const field = firstFocusableErrorField(targetFields);
       return {
         ...state,
         selectedStepId: targetId,
