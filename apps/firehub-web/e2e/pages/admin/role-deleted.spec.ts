@@ -9,7 +9,8 @@ import { setupSecurityLevelMocks } from '../../fixtures/security-level.fixture';
 /**
  * 역할 상세 — 열어 둔 역할이 다른 곳에서 삭제된 경우 (WD-287)
  * - 서버는 조회·이름 저장·권한 저장·열람 등급 미리보기/저장 모두 404 + 「역할을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.」를 돌려준다.
- * - 화면은 그 한국어 안내를 토스트로 보이고, 더 저장해도 실패할 화면에 남지 않고 역할 목록(/admin/roles)으로 돌아가야 한다.
+ * - 열어 둔 뒤 저장하다 404 가 나면 그 한국어 안내를 토스트로 보이고, 더 저장해도 실패할 화면에 남지 않고 역할 목록(/admin/roles)으로 돌아가야 한다.
+ * - WD-581: 들어올 때부터 없는 역할이면 주소를 그대로 두고 화면 안에 그 안내와 「목록으로」를 보인다(토스트 없음).
  * - 예전 영어 원문(「Role not found: 3」)은 보이지 않아야 한다.
  */
 
@@ -38,6 +39,14 @@ async function expectBackToListWithKoreanNotice(page: Page) {
   await expect(page.getByText('저장하지 않은 변경사항')).toHaveCount(0);
 }
 
+/** 들어올 때 없는 역할(WD-581) — 주소는 그대로, 화면 안 제목으로 한국어 안내, 영어 원문·토스트 없음. */
+async function expectInPageNotFound(page: Page, rawId = '3') {
+  await expect(page.getByRole('heading', { name: ROLE_GONE_MESSAGE })).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe(`/admin/roles/${rawId}`);
+  await expect(page.getByText(/Role not found/)).toHaveCount(0);
+  await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+}
+
 test.describe('역할 상세 — 삭제된 역할 (WD-287)', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
@@ -46,15 +55,20 @@ test.describe('역할 상세 — 삭제된 역할 (WD-287)', () => {
     await setupRoleListMocks(page);
   });
 
-  test('삭제된 역할을 열면 한국어 안내 후 역할 목록으로 돌아간다', async ({ authenticatedPage: page }) => {
+  test('삭제된 역할을 열면 주소를 그대로 두고 화면 안에 서버 안내를 보이며 토스트는 없다 (WD-581)', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/roles/3', notFoundBody, { status: 404 });
     await mockApi(page, 'GET', '/api/v1/permissions', []);
 
     await page.goto('/admin/roles/3');
 
-    await expectBackToListWithKoreanNotice(page);
+    await expectInPageNotFound(page);
     // 404 는 일반 로드 실패 문구로 뭉뚱그리지 않는다.
     await expect(page.getByText('역할 정보를 불러오는 데 실패했습니다.')).toHaveCount(0);
+
+    // 「목록으로」로 역할 목록에 간다
+    await page.getByRole('button', { name: '목록으로' }).click();
+    await expect(page).toHaveURL(/\/admin\/roles$/);
+    await expect(page.getByRole('heading', { name: ROLE_GONE_MESSAGE })).toHaveCount(0);
   });
 
   test('404 본문에 문구가 없어도 같은 한국어 안내로 대신한다', async ({ authenticatedPage: page }) => {
@@ -63,8 +77,33 @@ test.describe('역할 상세 — 삭제된 역할 (WD-287)', () => {
 
     await page.goto('/admin/roles/3');
 
-    await expectBackToListWithKoreanNotice(page);
+    await expectInPageNotFound(page);
   });
+
+  // WD-581: 주소의 id 가 양의 정수가 아니면 400 요청 + 토스트 + 목록 이동 대신, 요청 없이 곧바로 화면 안 안내를 보인다
+  for (const rawId of ['abc', '1.5', '0']) {
+    test(`양의 정수가 아닌 ID(/admin/roles/${rawId})는 요청 없이 화면 안 안내를 보인다 (WD-581)`, async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/permissions', []);
+      const detailRequests: string[] = [];
+      await page.route(
+        (url) => /^\/api\/v1\/roles\/[^/]+$/.test(url.pathname),
+        (route) => {
+          detailRequests.push(new URL(route.request().url()).pathname);
+          return route.fulfill({ status: 400, contentType: 'application/json', body: '{}' });
+        },
+      );
+
+      await page.goto(`/admin/roles/${rawId}`);
+
+      await expectInPageNotFound(page, rawId);
+      expect(detailRequests).toEqual([]);
+
+      await page.getByRole('button', { name: '목록으로' }).click();
+      await expect(page).toHaveURL(/\/admin\/roles$/);
+    });
+  }
 
   test.describe('열어 둔 뒤 삭제된 역할을 저장하면', () => {
     test.beforeEach(async ({ authenticatedPage: page }) => {

@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import axios from 'axios';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, ShieldOff } from 'lucide-react';
 import { useCallback, useEffect, useMemo,useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate,useParams } from 'react-router-dom';
@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { permissionsApi } from '../../api/permissions';
 import { rolesApi } from '../../api/roles';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
+import { ResourceNotFound } from '../../components/ResourceNotFound';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,6 +32,7 @@ import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAuth } from '../../hooks/useAuth';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, isEditConflict, isNotFoundError } from '../../lib/api-error';
+import { parseRouteId } from '../../lib/route-id';
 import type { UpdateRoleFormData } from '../../lib/validations/role';
 import { updateRoleSchema } from '../../lib/validations/role';
 import type { ErrorResponse } from '../../types/auth';
@@ -54,6 +56,8 @@ const ROLE_NOT_FOUND_MESSAGE = '역할을 찾을 수 없습니다. 이미 삭제
 export default function RoleDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // 주소의 id 가 양의 정수가 아니면 null — 요청 없이 「찾을 수 없음」 안내로 다룬다 (WD-581)
+  const roleId = parseRouteId(id);
   // 화면 안 조작은 서버가 막는 권한 코드로만 노출한다(WD-121) — 서버에 관리자 우회가 없으므로 역할 이름은 보지 않는다.
   // 이름·설명·권한·열람 등급 저장 = role:write. 권한 체크박스에 쓸 전체 권한 목록(GET /permissions)은 permission:read.
   // 라우트 가드가 권한 조회를 끝낸 뒤에만 이 화면을 그리므로 여기서는 로딩을 따로 기다리지 않는다.
@@ -90,6 +94,8 @@ export default function RoleDetailPage() {
   const [isSavingRole, setIsSavingRole] = useState(false);
   const [isSavingPermissions, setIsSavingPermissions] = useState(false);
   const [roleError, setRoleError] = useState('');
+  // 진입 조회 404 때 화면 안에 보일 안내 문구, null 이면 해당 없음 (WD-581)
+  const [notFoundMessage, setNotFoundMessage] = useState<string | null>(null);
   // 권한 전체 해제 확인 다이얼로그 표시 상태 — "권한 저장" 시점에 선택된 권한이 0개일 때만 열린다 (#567)
   // 사용자 상세(#512)의 "역할 전체 해제"와 동일한 위험 패턴: 이 역할을 사용 중인 모든 사용자가 즉시 권한을 전부 잃는다.
   const [isClearPermissionsDialogOpen, setIsClearPermissionsDialogOpen] = useState(false);
@@ -122,6 +128,7 @@ export default function RoleDetailPage() {
   /**
    * 열어 둔 역할이 다른 곳에서 삭제된 경우(404, WD-287) — 남은 화면에서 더 저장해도 계속 실패하므로 안내 후 역할 목록으로 돌아간다.
    * 저장 실패 시점엔 폼이 dirty 라 requestNavigate 는 「저장하지 않은 변경사항」 확인을 띄운다 — 지킬 대상이 사라졌으니 navigate 로 바로 이동한다.
+   * 화면을 보던 중(저장 시점)의 404 에만 쓴다 — 진입 조회의 404 는 화면 안 안내로 보인다(WD-581).
    */
   const handleRoleNotFound = useCallback(
     (error: unknown) => {
@@ -133,13 +140,15 @@ export default function RoleDetailPage() {
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!id) return;
+      // 잘못된 id 는 조회하지 않는다 — 아래 렌더가 화면 안 안내를 그린다 (WD-581)
+      if (roleId == null) return;
       setIsLoading(true);
+      setNotFoundMessage(null);
       try {
         // 전체 권한 목록은 permission:read 가 있을 때만 읽는다 — 역할 조회(role:read)만 있는 사람에게도 같이 읽으면
         // 403 이 역할 조회까지 실패로 만들어 화면이 열리지 않고 목록으로 튕겼다(WD-121).
         const [roleRes, permRes] = await Promise.all([
-          rolesApi.getRoleById(Number(id)),
+          rolesApi.getRoleById(roleId),
           canReadCatalog ? permissionsApi.getPermissions() : Promise.resolve(null),
         ]);
         setRole(roleRes.data);
@@ -153,8 +162,9 @@ export default function RoleDetailPage() {
         });
       } catch (error) {
         // 없는(삭제된) 역할이면 「불러오지 못함」 대신 삭제됐을 수 있다고 알린다(WD-287). 그 밖의 실패는 일반 안내.
+        // 진입 시점의 404 는 토스트 + 이동 대신 주소를 그대로 두고 화면 안에 서버 안내를 보인다(WD-581).
         if (isNotFoundError(error)) {
-          handleRoleNotFound(error);
+          setNotFoundMessage(extractApiError(error, ROLE_NOT_FOUND_MESSAGE));
           return;
         }
         toast.error('역할 정보를 불러오는 데 실패했습니다.');
@@ -165,7 +175,7 @@ export default function RoleDetailPage() {
     };
 
     fetchData();
-  }, [id, navigate, form, canReadCatalog, handleRoleNotFound]);
+  }, [roleId, navigate, form, canReadCatalog]);
 
   // 체크박스로 그릴 권한 — 전체 목록을 읽었으면 그것, 아니면 이 역할이 가진 권한만.
   const allPermissions = useMemo(() => catalog ?? role?.permissions ?? [], [catalog, role]);
@@ -351,6 +361,12 @@ export default function RoleDetailPage() {
       setIsSavingPermissions(false);
     }
   };
+
+  // 잘못된 id 또는 진입 조회 404 면 주소를 둔 채 화면 안 안내 + 「목록으로」를 보인다 (WD-581)
+  const notFound = roleId == null ? ROLE_NOT_FOUND_MESSAGE : notFoundMessage;
+  if (notFound) {
+    return <ResourceNotFound icon={ShieldOff} message={notFound} onBackToList={() => navigate('/admin/roles')} />;
+  }
 
   if (isLoading) {
     return (

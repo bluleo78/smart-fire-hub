@@ -1,11 +1,11 @@
 import { useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
 import {
   ArrowLeft,
   BarChart2,
   ChevronLeft,
   ChevronRight,
   Copy,
+  Database,
   FileCode,
   Pencil,
   Plus,
@@ -19,6 +19,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Breadcrumb } from '../../components/layout/Breadcrumb';
+import { ResourceNotFound } from '../../components/ResourceNotFound';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -39,6 +40,7 @@ import { Skeleton } from '../../components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { schemaInfoQueryOptions } from '../../hooks/queries/useAnalytics';
 import {
+  invalidateDatasetLists,
   useAddTag,
   useCategories,
   useDataset,
@@ -52,7 +54,8 @@ import { useDataStoreFeatures } from '../../hooks/queries/useDataStoreCapabiliti
 import { useHorizontalOverflow } from '../../hooks/useHorizontalOverflow';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { handleApiError } from '../../lib/api-error';
+import { handleApiError, isNotFoundError } from '../../lib/api-error';
+import { parseRouteId } from '../../lib/route-id';
 import { scrollIntoViewNearest } from '../../lib/scroll-into-view-nearest';
 import { previewQuery } from '../analytics/components/schema-explorer-utils';
 import { ChangeSecurityLevelDialog } from './components/ChangeSecurityLevelDialog';
@@ -123,20 +126,17 @@ export default function DatasetDetailPage() {
     }
   };
   const [searchParams, setSearchParams] = useSearchParams();
-  const parsedDatasetId = Number(id);
-  // id가 'abc'처럼 숫자로 변환 불가능한 경우 — Number()가 NaN을 반환하면
-  // useDataset의 enabled:!!id(!!NaN===false)가 항상 false가 되어 쿼리 자체가
-  // 실행되지 않고 isLoading/isError가 영구히 false로 남아 무한 로딩 스켈레톤에
-  // 갇힌다 (#543). #545(스마트 작업 상세)와 동일한 원인 클래스라 같은 방식으로 분리한다.
-  const isInvalidId = !Number.isFinite(parsedDatasetId);
-  const datasetId = isInvalidId ? 0 : parsedDatasetId;
+  // id가 양의 정수가 아닌 경우('abc'·'1.5'·'0'·'3x') — 'abc'는 NaN이라 useDataset의 enabled:!!id가 false가 되어
+  // 무한 로딩 스켈레톤에 갇혔고(#543), '0'도 같은 이유로 갇혔으며, '1.5'는 요청이 400으로 실패해 목록으로 튕겼다.
+  // 요청 없이 곧바로 없는 id(404)와 같은 화면 안 안내로 다룬다 (WD-581). 판정은 공용 parseRouteId(WD-434)를 쓴다.
+  const parsedDatasetId = parseRouteId(id);
+  const isInvalidId = parsedDatasetId == null;
+  const datasetId = parsedDatasetId ?? 0;
 
   // isError: 존재하지 않는 데이터셋 ID(404 등) 접근 시 에러 상태를 감지한다 (#96)
+  // isLoadingError: 받아 둔 데이터 없이 실패했다(첫 조회 실패) — 재조회 실패와 가르는 데 쓴다 (WD-581)
   // dataset을 먼저 선언하여 하위 탭 타입 판별(isDocument)·useEffect 의존성에 활용한다.
-  const { data: dataset, isLoading, isError: isFetchError, error: fetchError } = useDataset(datasetId);
-  // 비숫자 ID(NaN)는 쿼리가 아예 실행되지 않아 isFetchError가 true가 되지 않으므로
-  // isInvalidId를 합류시켜 기존 404 처리(리다이렉트) 로직을 그대로 재사용한다 (#543).
-  const isError = isFetchError || isInvalidId;
+  const { data: dataset, isLoading, isError, isLoadingError, error: fetchError } = useDataset(datasetId);
 
   // URL ?tab= 파라미터로 초기 탭 설정 — 직접 URL 접근·새로고침 시에도 올바른 탭이 활성화되어야 함
   // dataset 로드 전에는 isDocument=false이므로 validTabs는 전체 목록. 로드 후 useEffect가 재계산.
@@ -219,21 +219,30 @@ export default function DatasetDetailPage() {
 
   const categories = categoriesData || [];
 
-  // 존재하지 않는 데이터셋 ID(404 등) 접근 시: 토스트 안내 + 목록으로 이동 (#96)
-  // — 이전엔 isError 분기가 없어 isLoading=false + dataset=undefined 상태로
-  //   스켈레톤 분기에 갇혀 무한 표시되었음. 다른 도메인(차트/파이프라인/대시보드)은
-  //   "찾을 수 없습니다" 안내 또는 toast.error + navigate를 이미 제공하고 있어 이를 일치시킨다.
+  // 들어오자마자 대상이 없는 경우(첫 조회 404 또는 숫자가 아닌 id) — 화면 안 안내로 그린다 (WD-581).
+  // 예전엔 토스트 + 목록 이동이라 주소가 바뀌어 토스트가 사라지면 이유를 알 수 없었다. 쿼리·차트 상세처럼 주소를 그대로 둔다.
+  // 이미 데이터셋을 보고 있다가 재조회가 404 가 된 경우(isLoadingError=false)는 아래 effect 의 기존 토스트 + 이동을 그대로 쓴다.
+  const isEntryNotFound = isInvalidId || (isLoadingError && isNotFoundError(fetchError));
+
+  // 조회 실패 처리 (#96) — isError 분기가 없던 시절엔 스켈레톤에 갇혀 무한 표시되었다.
+  // 첫 조회 404(isEntryNotFound)는 화면 안 안내가 맡고(WD-581), 그 밖의 실패(500·네트워크·재조회 중 404)는 토스트 + 목록 이동을 유지한다.
   useEffect(() => {
     if (!isError) return;
     // 지워졌거나 볼 수 없게 된(404) 데이터셋은 「최근 접근」에서도 뺀다 — 카드가 남아 눌러도 같은 오류만 반복되지 않게 (WD-390).
-    // 네트워크 오류 등 일시적 실패는 이력을 지우지 않는다.
-    if (axios.isAxiosError(fetchError) && fetchError.response?.status === 404) {
+    // 네트워크 오류 등 일시적 실패는 이력을 지우지 않는다. 화면 안 안내(WD-581)로 바뀐 뒤에도 그대로 지운다.
+    if (isNotFoundError(fetchError)) {
       removeRecent(datasetId);
+    }
+    if (isEntryNotFound) {
+      // 첫 조회 404 — 「목록으로」에서 지워진 행이 다시 보이지 않게 목록 캐시를 무효화한다 (WD-581)
+      void invalidateDatasetLists(queryClient);
+      return;
     }
     toast.error('데이터셋을 찾을 수 없습니다.');
     navigate('/data/datasets');
+    // datasetId 를 넣어 404 데이터셋에서 다른 404 데이터셋으로 옮겨 가도 두 번째 것도 「최근 접근」에서 빠지게 한다 (WD-581).
     // eslint-disable-next-line react-hooks/exhaustive-deps -- removeRecent 는 렌더마다 새로 만들어져 넣으면 반복 실행된다
-  }, [isError, navigate]);
+  }, [isError, navigate, datasetId]);
 
   useEffect(() => {
     if (dataset) {
@@ -322,7 +331,18 @@ export default function DatasetDetailPage() {
 
   const hasGeometry = dataset?.columns.some(c => c.dataType === 'GEOMETRY') ?? false;
 
-  // 에러 시 위 useEffect에서 navigate 처리되므로 빈 컨테이너 렌더링.
+  // 첫 조회에서 데이터셋이 없으면 주소는 그대로 두고 화면 안에 안내 + 「목록으로」를 보인다 (WD-581).
+  // 지킬 편집 내용이 없으므로 이탈 가드(requestNavigate) 없이 바로 이동한다.
+  if (isEntryNotFound) {
+    return (
+      <ResourceNotFound
+        icon={Database}
+        message="데이터셋을 찾을 수 없습니다."
+        onBackToList={() => navigate('/data/datasets')}
+      />
+    );
+  }
+  // 그 밖의 에러는 위 useEffect에서 navigate 처리되므로 빈 컨테이너 렌더링.
   // 로딩 또는 dataset 미도착 시에만 스켈레톤 표시 (#96).
   if (isError) {
     return <div />;

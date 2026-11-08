@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { rolesApi } from '../../api/roles';
 import { usersApi } from '../../api/users';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
+import { ResourceNotFound } from '../../components/ResourceNotFound';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -35,14 +36,19 @@ import {
   handleApiError,
   isEditConflict,
   isMemberGoneError,
+  isNotFoundError,
   MEMBER_GONE_MESSAGE,
 } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
+import { parseRouteId } from '../../lib/route-id';
 import type { RoleResponse } from '../../types/role';
 import type { UserDetailResponse } from '../../types/user';
 import { AccountDisabledBadge } from './components/AccountDisabledBadge';
 import { MemberDangerZone } from './components/MemberDangerZone';
 import { memberLockReason, roleLockReason } from './components/memberLockReason';
+
+/** 들어올 때 사용자가 없거나(코드 없는 404) 주소의 id 가 잘못됐을 때의 화면 안 안내 (WD-581) */
+const USER_NOT_FOUND_MESSAGE = '사용자를 찾을 수 없습니다.';
 
 export default function UserDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -50,6 +56,8 @@ export default function UserDetailPage() {
   // 목록에서 넘겨준 그 목록의 page·검색어(?page=·?q=) — 돌아갈 때 보던 위치로 간다(WD-283). 주소로 바로 들어오면 없다.
   const listSearch = (useLocation().state as { listSearch?: string } | null)?.listSearch ?? '';
   const listPath = `/admin/users${listSearch === '?' ? '' : listSearch}`;
+  // 주소의 id 가 양의 정수가 아니면 null — 요청 없이 「찾을 수 없음」 안내로 다룬다 (WD-581)
+  const userId = parseRouteId(id);
   const queryClient = useQueryClient();
   const { user: currentUser, isAdmin: isCallerAdmin } = useAuth();
   // 화면 안 조작은 서버가 막는 권한 코드로만 노출한다(WD-121) — 서버에 관리자 우회가 없으므로 역할 이름은 보지 않는다.
@@ -77,11 +85,14 @@ export default function UserDetailPage() {
   const [isRolesConflictOpen, setIsRolesConflictOpen] = useState(false);
   // 접근성: 활성 상태 스위치의 라벨↔컨트롤 연결용 id (#432). 조기 return 이 아래에 있으므로 훅 구간에서 호출.
   const activeSwitchId = useId();
+  // 진입 조회 404 때 화면 안에 보일 안내 문구, null 이면 해당 없음 (WD-581)
+  const [notFoundMessage, setNotFoundMessage] = useState<string | null>(null);
 
   /**
    * 열어 둔 사이 이 멤버가 워크스페이스에서 제거됐으면(404) 서버 안내를 띄우고 목록으로 돌아간다(WD-288) — 예전엔 영어 「User not found: 26」
    * 토스트만 뜨고 제거된 멤버의 편집 화면이 그대로 남았다. 제거된 멤버라 남은 역할 변경은 저장할 곳이 없으므로 이탈 가드 없이 바로 이동한다.
-   * 그런 404 가 아니면 false 를 돌려 호출처가 원래 오류 처리를 이어 가게 한다. 진입 조회 effect 도 쓰므로 useCallback 으로 고정한다.
+   * 그런 404 가 아니면 false 를 돌려 호출처가 원래 오류 처리를 이어 가게 한다. 저장·정지 등 화면을 보던 중의 실패에만 쓴다 —
+   * 진입 조회의 404 는 화면 안 안내로 보인다(WD-581).
    */
   const leaveIfMemberGone = useCallback(
     (error: unknown, toastId?: string): boolean => {
@@ -98,13 +109,15 @@ export default function UserDetailPage() {
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!id) return;
+      // 잘못된 id 는 조회하지 않는다 — 아래 렌더가 화면 안 안내를 그린다 (WD-581)
+      if (userId == null) return;
       setIsLoading(true);
+      setNotFoundMessage(null);
       try {
         // 역할 목록(GET /roles, role:read)은 역할을 할당할 수 있을 때만 읽는다 — 사용자 조회 권한(user:read)만 있는
         // 사람에게도 같이 읽으면 403 이 사용자 조회까지 실패로 만들어 화면이 열리지 않고 목록으로 튕겼다(WD-121).
         const [userRes, rolesRes] = await Promise.all([
-          usersApi.getUserById(Number(id)),
+          usersApi.getUserById(userId),
           canAssignRoles ? rolesApi.getRoles() : Promise.resolve(null),
         ]);
         setUser(userRes.data);
@@ -113,20 +126,27 @@ export default function UserDetailPage() {
         setSelectedRoleIds(roleIds);
         setInitialRoleIds(roleIds);
       } catch (error) {
-        // 없는(제거된) 멤버면 그 사실을 안내하고(WD-288), 그 밖의 실패는 일반 안내로 목록에 돌아간다.
-        // 조회가 겹쳐(개발 StrictMode 의 effect 두 번 실행 등) 실패해도 토스트는 하나만 보이게 id 를 준다.
-        const toastId = 'user-detail-load-failed';
-        if (!leaveIfMemberGone(error, toastId)) {
-          toast.error('사용자 정보를 불러오는 데 실패했습니다.', { id: toastId });
-          navigate(listPath);
+        // 없는(제거된) 멤버면 주소를 그대로 두고 화면 안에 안내한다(WD-581) — 공유받은 링크의 멤버가 이미 제거된 경우 등.
+        // 제거된 멤버(USER_NOT_IN_WORKSPACE)면 서버 안내(WD-288)를, 코드 없는 404 면 일반 「찾을 수 없습니다」를 보인다.
+        if (isNotFoundError(error)) {
+          setNotFoundMessage(
+            isMemberGoneError(error) ? extractApiError(error, MEMBER_GONE_MESSAGE) : USER_NOT_FOUND_MESSAGE,
+          );
+          // 목록 캐시(staleTime 30s)에 없는 멤버가 남아 「목록으로」를 눌렀을 때 다시 보이지 않게 한다 — 코드 없는 404 도 같다
+          void queryClient.invalidateQueries({ queryKey: ['users'] });
+          return;
         }
+        // 그 밖의 실패(500·네트워크 등)는 기존대로 일반 안내 후 목록에 돌아간다.
+        // 조회가 겹쳐(개발 StrictMode 의 effect 두 번 실행 등) 실패해도 토스트는 하나만 보이게 id 를 준다.
+        toast.error('사용자 정보를 불러오는 데 실패했습니다.', { id: 'user-detail-load-failed' });
+        navigate(listPath);
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchData();
-  }, [id, navigate, canAssignRoles, listPath, leaveIfMemberGone]);
+  }, [userId, navigate, canAssignRoles, listPath, queryClient]);
 
   const handleRoleToggle = (roleId: number, checked: boolean) => {
     setSelectedRoleIds(prev =>
@@ -234,6 +254,12 @@ export default function UserDetailPage() {
       void handleToggleActive();
     }
   };
+
+  // 잘못된 id 또는 진입 조회 404 면 주소를 둔 채 화면 안 안내 + 「목록으로」를 보인다 (WD-581)
+  const notFound = userId == null ? USER_NOT_FOUND_MESSAGE : notFoundMessage;
+  if (notFound) {
+    return <ResourceNotFound icon={UserX} message={notFound} onBackToList={() => navigate(listPath)} />;
+  }
 
   if (isLoading) {
     return (

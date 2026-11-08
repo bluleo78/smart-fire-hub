@@ -98,16 +98,50 @@ test.describe('대시보드 에디터 페이지', () => {
   test('대시보드를 찾을 수 없을 때 오류 메시지가 표시된다', async ({ authenticatedPage: page }) => {
     // 존재하지 않는 대시보드 ID 요청 — 404 응답 모킹
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards/999', {}, { status: 404 });
+    // 「목록으로」 뒤에 그려질 대시보드 목록
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
     await mockApi(page, 'GET', '/api/v1/analytics/charts', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
 
     await page.goto('/analytics/dashboards/999');
 
-    // 대시보드 없음 메시지 확인
-    await expect(page.getByText('대시보드를 찾을 수 없습니다.')).toBeVisible({ timeout: 5000 });
+    // 대시보드 없음 안내 — 다른 상세와 같은 공용 안내라 제목(h1)으로 잡힌다 (WD-581)
+    await expect(page.getByRole('heading', { name: '대시보드를 찾을 수 없습니다.' })).toBeVisible({ timeout: 5000 });
+    // 화면 안 안내와 같은 내용의 토스트를 겹쳐 띄우지 않는다 (WD-581) — 주소도 그대로
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+    await expect(page).toHaveURL(/\/analytics\/dashboards\/999$/);
 
-    // "목록으로" 버튼 확인
-    await expect(page.getByRole('button', { name: '목록으로' })).toBeVisible();
+    // "목록으로" 버튼으로 대시보드 목록에 간다
+    await page.getByRole('button', { name: '목록으로' }).click();
+    await expect(page).toHaveURL(/\/analytics\/dashboards$/);
   });
+
+  // WD-581: 주소의 id 가 양의 정수가 아니면 조회하지 않고 곧바로 화면 안 안내를 보인다 — 예전 parseInt('3x')=3 은 3번 대시보드를 열었다
+  for (const rawId of ['abc', '3x']) {
+    test(`양의 정수가 아닌 ID(/analytics/dashboards/${rawId})는 요청 없이 화면 안 안내를 보인다`, async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/analytics/dashboards', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
+      // 상세 조회(/api/v1/analytics/dashboards/<rawId>·/3)가 나가지 않아야 한다
+      const detailRequests: string[] = [];
+      await page.route(
+        (url) => /^\/api\/v1\/analytics\/dashboards\/[^/]+/.test(url.pathname),
+        (route) => {
+          detailRequests.push(new URL(route.request().url()).pathname);
+          return route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
+        },
+      );
+
+      await page.goto(`/analytics/dashboards/${rawId}`);
+
+      await expect(page.getByRole('heading', { name: '대시보드를 찾을 수 없습니다.' })).toBeVisible();
+      expect(new URL(page.url()).pathname).toBe(`/analytics/dashboards/${rawId}`);
+      await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+      expect(detailRequests).toEqual([]);
+
+      await page.getByRole('button', { name: '목록으로' }).click();
+      await expect(page).toHaveURL(/\/analytics\/dashboards$/);
+    });
+  }
 
   test('"완료" 버튼 클릭으로 편집 모드를 종료한다', async ({ authenticatedPage: page }) => {
     await setupDashboardEditorMocks(page, 1);
