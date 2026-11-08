@@ -2,8 +2,17 @@ package com.smartfirehub.securitylevel.pythonread;
 
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.tenant.TenantPipelineRole;
 import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.LevelPolicy;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.IntFunction;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -14,8 +23,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * TiberoPythonReadGrantSync})이 따르는 계약(WD-78). 파사드 {@link PythonReadGrants} 가 현재 테넌트의 백엔드로 하나를 골라 같은
  * 메서드를 부른다.
  *
- * <p>두 구현이 똑같이 갖는 "데이터셋 → 테이블 찾기" 와 "커밋 후 테이블 재동기화 예약" 은 정적 도우미({@link #syncDatasetTable}, {@link
- * #scheduleTableSync})로 한 번만 둔다 — 한쪽만 고치면 RLS(새 트랜잭션)·실패 시 로그만 남기는 계약이 갈라지기 때문이다.
+ * <p>두 구현이 똑같이 갖는 "데이터셋 → 테이블 찾기", "커밋 후 테이블 재동기화 예약", "회수 결과 → 좁히기 결과" 는 정적 도우미({@link
+ * #syncDatasetTable}, {@link #scheduleTableSync}, {@link #narrowResultOf})로 한 번만 둔다 — 한쪽만 고치면 RLS(새
+ * 트랜잭션)·실패 시 로그만 남기는 계약이 갈라지기 때문이다.
  */
 interface PythonReadGrantBackend {
 
@@ -28,6 +38,43 @@ interface PythonReadGrantBackend {
   /** 등급 정의 변경 뒤 전체 재동기화(백엔드별로 실행 중 스크립트를 막는 방법이 다르다). */
   PythonReadGrantSync.SyncResult syncTenantForLevelsChange();
 
+  /**
+   * 커밋 직전 좁히기 결과(WD-624).
+   *
+   * @param confirmed 남는 권한을 모두 회수했거나 회수할 것이 없음을 확인했는가
+   * @param exposedSlots 이 변경으로 그 테이블을 더는 읽으면 안 되는 슬롯(회수 실패 슬롯 포함) — 확인 못 했을 때 실행 중 스크립트를 막을 범위
+   */
+  record NarrowResult(boolean confirmed, Set<Integer> exposedSlots) {
+
+    static NarrowResult confirmed(Set<Integer> exposedSlots) {
+      return new NarrowResult(true, Set.copyOf(exposedSlots));
+    }
+
+    static NarrowResult unconfirmed(Set<Integer> exposedSlots) {
+      return new NarrowResult(false, Set.copyOf(exposedSlots));
+    }
+
+    /** 대체 경로(막기)가 필요한가 — 확인 못 했고, 더는 읽으면 안 되는 슬롯이 있다(넓어지는 변경이면 필요 없다). */
+    boolean needsFallback() {
+      return !confirmed && !exposedSlots.isEmpty();
+    }
+  }
+
+  /**
+   * 데이터셋 등급 변경 트랜잭션의 커밋 직전, <b>그 트랜잭션에서</b> 데이터셋 테이블의 남는 슬롯 권한만 회수한다(WD-624 — 좁히기는 커밋 응답 전, 넓히기는 커밋
+   * 뒤 실행기). 새 트랜잭션·새 플랫폼 커넥션을 열지 않는다. 파사드가 savepoint 안에서 부른다.
+   */
+  NarrowResult narrowDatasetInCurrentTx(long datasetId, Long fromLevelId, long toLevelId);
+
+  /**
+   * 커밋 직전 좁히기를 확인하지 못한 데이터셋 등급 변경의 뒷정리 — 실행기에서 커밋 뒤에 돈다(WD-624). 그 슬롯의 실행 중 스크립트를 막고 잠금 안에서 테이블을
+   * 맞춘다(회수 포함).
+   *
+   * @param tokensInvalidated 커밋 직전에 스크립트 토큰 세대 번호를 이미 올렸는가(Tibero — 못 올렸으면 여기서 올린다)
+   */
+  void syncDatasetAfterUnconfirmedNarrowing(
+      long datasetId, Set<Integer> exposedSlots, boolean tokensInvalidated);
+
   /** 데이터셋 하나의 테이블만 재동기화. */
   void syncDataset(long datasetId);
 
@@ -38,17 +85,58 @@ interface PythonReadGrantBackend {
    * 데이터셋의 테이블 이름을 새 트랜잭션에서 찾아(dataset 은 RLS 테이블이라 트랜잭션=GUC 없이 읽으면 0행이다) 그 테이블을 동기화한다. 물리 테이블이 없는
    * 데이터셋(문서·파일형)은 할 일이 없다.
    */
-  static void syncDatasetTable(
+  static <R> R syncDatasetTable(
       TransactionTemplate requiresNew,
       DatasetRepository datasetRepository,
       long datasetId,
-      Consumer<String> syncTable) {
+      Function<String, R> syncTable) {
     // 플랫폼 테이블(dataset) 조회는 리포지토리로 — 데이터 저장소 DSL 로 읽으면 분리 설치에서 엉뚱한 DB 를 본다(WD-494).
     String table =
         requiresNew.execute(status -> datasetRepository.findTableNameById(datasetId).orElse(null));
-    if (table != null) {
-      syncTable.accept(table);
+    return table == null ? null : syncTable.apply(table);
+  }
+
+  /**
+   * 회수 실패 결과(테이블 → 롤/계정 이름)에 나온 슬롯 번호들(WD-624). PG(슬롯 롤)·Tibero(저장소 계정)는 슬롯 → 이름 규칙만 다르므로 그것만 받는다.
+   *
+   * @param slotName 슬롯 k(1~10) → 그 슬롯의 롤/계정 이름
+   */
+  static Set<Integer> slotsOf(Map<String, Set<String>> revokeFailed, IntFunction<String> slotName) {
+    Set<Integer> slots = new TreeSet<>();
+    for (int k = 1; k <= TenantPipelineRole.PYTHON_READ_SLOTS; k++) {
+      String name = slotName.apply(k);
+      for (Set<String> names : revokeFailed.values()) {
+        if (names.contains(name)) {
+          slots.add(k);
+        }
+      }
     }
+    return slots;
+  }
+
+  /**
+   * 커밋 직전 회수({@code applyInTx(revokeOnly)}) 결과를 좁히기 결과로 바꾼다(WD-624, PG·Tibero 공통). 회수 실패가 없으면 확인됨.
+   *
+   * <p>회수 실패면 — savepoint 가 되돌리면 성공한 회수도 사라진다(파사드). 실제 ACL 이 이전 등급보다 넓게 어긋나 있었을 수 있으므로 이전 등급을 모르는
+   * 것으로 보고 "새 등급에서 못 읽는 모든 슬롯" + 실패 슬롯을 막는다(드문 경로라 넓게).
+   *
+   * @param exposed 이전 → 새 등급으로 더는 읽으면 안 되는 슬롯
+   * @param levelsAsc 회수 실패 때만 읽는 등급 목록(잠금 뒤 이 트랜잭션에서 다시 읽는다 — 회수 계산과 같은 스냅샷 규칙)
+   * @param slotName 슬롯 k → 롤/계정 이름({@link #slotsOf})
+   */
+  static NarrowResult narrowResultOf(
+      PythonReadGrantSync.SyncResult result,
+      Set<Integer> exposed,
+      Supplier<List<LevelPolicy>> levelsAsc,
+      long toLevelId,
+      IntFunction<String> slotName) {
+    if (result.revokeFailed().isEmpty()) {
+      return NarrowResult.confirmed(exposed);
+    }
+    Set<Integer> wider =
+        new TreeSet<>(PythonReadSlots.slotsLosingAccess(levelsAsc.get(), null, toLevelId));
+    wider.addAll(slotsOf(result.revokeFailed(), slotName));
+    return NarrowResult.unconfirmed(wider);
   }
 
   /**

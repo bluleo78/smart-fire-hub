@@ -378,8 +378,13 @@ public class DatasetSecurityService {
   }
 
   /**
-   * 데이터셋 등급 변경 이벤트를 낸다. 반드시 {@code @Transactional} 메서드 안에서 불러야 한다 — 구독자는 AFTER_COMMIT 리스너라 커밋된 변경만
-   * 받고, 롤백되면 아무것도 받지 않는다. 리스너가 다른 스레드에서 돌 수 있어 tenantId 를 지금 컨텍스트에서 실어 보낸다.
+   * 데이터셋 등급 변경 이벤트를 낸다. 반드시 {@code @Transactional} 메서드 안에서 불러야 한다 — 트랜잭션 없이 내면 구독자가 받지 못한다. 리스너가 다른
+   * 스레드에서 돌 수 있어 tenantId 를 지금 컨텍스트에서 실어 보낸다.
+   *
+   * <p><b>구독자 계약(WD-624).</b> PYTHON 읽기 권한 구독자({@code PythonReadGrantListener})는 <b>커밋
+   * 직전(BEFORE_COMMIT)</b>에도 돈다 — 이 트랜잭션 안에서 테넌트 동기화 잠금을 짧게(최대 몇 초) 기다리고 그 테이블의 남는 권한을 회수하므로 <b>커밋
+   * 지연이 늘 수 있다</b>. 그 구독자는 이 트랜잭션을 <b>절대 롤백시키지 않는다</b>(savepoint 안에서 돌고 실패하면 막기 쪽 대체 경로로 간다) — 이
+   * 메서드를 부르는 업무(클론·파이프라인 실패 복원·관리자 변경)는 구독자 때문에 실패하지 않는다. 롤백되면 커밋 뒤 작업(재동기화)은 돌지 않는다.
    */
   private void publishLevelChanged(
       long datasetId, Long fromId, long toId, DatasetSecurityLevelChangedEvent.Cause cause) {

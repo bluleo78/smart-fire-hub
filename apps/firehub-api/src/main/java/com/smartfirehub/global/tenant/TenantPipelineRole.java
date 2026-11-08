@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HexFormat;
 import java.util.List;
 import javax.crypto.Mac;
@@ -105,6 +106,18 @@ public final class TenantPipelineRole {
   public static List<String> pythonReadRoleNames(long tenantId) {
     List<String> names = new ArrayList<>(PYTHON_READ_SLOTS);
     for (int slot = 1; slot <= PYTHON_READ_SLOTS; slot++) {
+      names.add(pythonReadRoleName(tenantId, slot));
+    }
+    return List.copyOf(names);
+  }
+
+  /**
+   * 주어진 슬롯 번호들의 롤 이름(순회 순서대로, WD-624) — 슬롯 단위 세션 끊기·세션 존재 확인이 같은 이름 규칙을 쓰도록 {@link
+   * #pythonReadRoleName} 으로만 만든다.
+   */
+  public static List<String> pythonReadRoleNames(long tenantId, Collection<Integer> slots) {
+    List<String> names = new ArrayList<>(slots.size());
+    for (int slot : slots) {
       names.add(pythonReadRoleName(tenantId, slot));
     }
     return List.copyOf(names);

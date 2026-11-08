@@ -2,6 +2,7 @@ package com.smartfirehub.global.platformdb;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.time.Duration;
 
 /**
  * 플랫폼 DB 의 advisory 잠금 추상화(WD-486).
@@ -23,6 +24,17 @@ public interface PlatformLocks {
 
   /** 현재 Spring 트랜잭션에서 정수 키로 트랜잭션 범위 잠금을 건다. 문자열 키와 해시 공간이 달라 서로 섞이지 않는다(PG 기준). */
   void xactLock(long key);
+
+  /**
+   * {@link #xactLock(String)} 의 시도형 — 현재 Spring 트랜잭션에서 같은 키의 트랜잭션 범위 잠금을 최대 {@code maxWait} 동안
+   * 시도한다(WD-624).
+   *
+   * <p>왜: 사용자 트랜잭션의 커밋 직전에 잠금을 잡아야 하는 경로(데이터셋 등급 좁히기)는 그 트랜잭션의 커넥션을 쥔 채 기다린다. 무한정 기다리면 동시 요청이 풀을 다
+   * 쥔 채 멈출 수 있으므로 상한을 둔다. 실패해도 호출자 트랜잭션을 실패 상태로 만들면 안 된다(기다리는 문장의 시간 초과는 PG 트랜잭션을 깨뜨린다).
+   *
+   * @return 잡았으면 true(트랜잭션 끝까지 유지), 시간 안에 못 잡았거나 인터럽트되면 false
+   */
+  boolean tryXactLock(String key, Duration maxWait);
 
   /**
    * autocommit 전용 커넥션에서 세션 범위 시도형 잠금을 시도한다. 기다리지 않는다.

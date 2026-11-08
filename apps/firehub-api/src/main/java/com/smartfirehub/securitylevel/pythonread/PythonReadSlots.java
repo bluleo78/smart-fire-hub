@@ -6,6 +6,8 @@ import com.smartfirehub.securitylevel.access.LevelPolicy;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * PYTHON 읽기 슬롯 위치 계산(순수 함수, 스펙 §4.1 · 공통 결정 R4). 슬롯 k = "rank 오름차순 k 번째까지의 등급"을 읽는 롤.
@@ -19,6 +21,30 @@ import java.util.TreeSet;
 public final class PythonReadSlots {
 
   private PythonReadSlots() {}
+
+  /** 슬롯 1~10 전부 — 범위를 좁힐 수 없을 때(등급을 읽지 못함 등) 쓰는 가장 보수적인 집합. */
+  public static final Set<Integer> ALL_SLOTS =
+      IntStream.rangeClosed(1, TenantPipelineRole.PYTHON_READ_SLOTS)
+          .boxed()
+          .collect(Collectors.toUnmodifiableSet());
+
+  /**
+   * 데이터셋 등급이 {@code fromLevelId} → {@code toLevelId} 로 바뀔 때 그 테이블을 <b>더는 읽으면 안 되는</b> 슬롯들(WD-624) —
+   * 변경 전에 GRANT 를 받았을 수 있고 변경 후에는 받으면 안 되는 슬롯. 넓어지는 변경이면 비어 있다.
+   *
+   * <p>좁히기(REVOKE)를 확인하지 못했을 때 실행 중 스크립트를 막는 범위를 이 슬롯으로만 좁히는 데 쓴다(다른 슬롯 실행은 그 테이블을 읽을 수 없거나 계속 읽어도
+   * 된다). 변경 전 등급을 모르거나(null) 목록에 없으면(그새 삭제 등) 실제 ACL 이 어땠는지 알 수 없으므로 "변경 후 받으면 안 되는 슬롯 전부" 로 넓게
+   * 잡는다.
+   */
+  public static Set<Integer> slotsLosingAccess(
+      List<LevelPolicy> levelsAsc, Long fromLevelId, long toLevelId) {
+    boolean fromKnown =
+        fromLevelId != null && levelsAsc.stream().anyMatch(l -> l.id() == fromLevelId);
+    Set<Integer> exposed =
+        new TreeSet<>(fromKnown ? grantSlotsFor(levelsAsc, fromLevelId) : ALL_SLOTS);
+    exposed.removeAll(grantSlotsFor(levelsAsc, toLevelId));
+    return exposed;
+  }
 
   /**
    * 실행 주체 자격 rank 이하인 등급 수 = 실행 주체의 슬롯 k. 0 이면 슬롯 없음(NO_RANK 이거나 가장 낮은 등급보다도 낮음). 10 초과는 그대로 돌려준다 —

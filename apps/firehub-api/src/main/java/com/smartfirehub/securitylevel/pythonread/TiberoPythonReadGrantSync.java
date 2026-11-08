@@ -15,6 +15,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrantBackend.NarrowResult;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -30,6 +31,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -123,6 +125,9 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
    * <b>전에</b> 번호를 올리고 그 변경을 별도 트랜잭션으로 <b>먼저 커밋</b>해 기술자를 읽는 쪽이 새 번호를 보게 한다. 스크립트 토큰(Task 13)이 옛 번호를
    * 싣고 있으면 db-executor 가 거부하므로 이미 실행 중이던 스크립트의 다음 읽기가 막힌다. 번호를 올리지 못하면 예외로 끝낸다 — 넓히는 GRANT 는 걸지
    * 않는다.
+   *
+   * <p>등급 변경 트랜잭션도 커밋 직전에 번호를 이미 한 번 올렸다({@link #bumpScriptTokenEpochInCurrentTx}, WD-624). 여기서 한 번
+   * 더 올리는 이유는 커밋 직전에 옛 등급으로 준비한 실행이 커밋 뒤에 새 번호를 읽어 토큰을 받았을 수 있기 때문이다 — 그 토큰을 넓히는 GRANT 전에 무효로 만든다.
    */
   @Override
   public PythonReadGrantSync.SyncResult syncTenantForLevelsChange() {
@@ -138,9 +143,109 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
     return syncTenant();
   }
 
+  /**
+   * 스크립트 토큰 세대 번호를 <b>현재 트랜잭션에서</b> 올린다(WD-624) — 등급 정의 변경(또는 좁히기 실패) 트랜잭션의 커밋 직전에 리스너가 부른다.
+   *
+   * <p><b>왜 현재 트랜잭션인가.</b> 넓히는 GRANT(전체 동기화)는 커밋 뒤 전용 실행기에서 돈다. 세대 번호까지 그 작업에 두면 큐가 빌 때까지 옛 토큰을 쥔
+   * 실행 중 스크립트가 좁아진 슬롯의 테이블을 계속 읽는다(Tibero 는 세션을 끊을 수 없다). 같은 트랜잭션이면 번호 올림이 등급 변경과 <b>함께</b> 커밋되므로,
+   * 커밋 응답이 나가는 순간부터 옛 토큰의 다음 읽기가 거부되고, 새 커넥션도 필요 없다(요청당 커넥션 1개). 실패하면 예외 — 등급 변경도 커밋되지 않는다
+   * (fail-closed).
+   *
+   * <p>테넌트 저장소 행이 없으면(PG 테넌트) 아무것도 바꾸지 않는다 — 그래서 부르는 쪽이 백엔드를 묻지 않고 늘 불러도 된다. 실행기의 {@link
+   * #syncTenantForLevelsChange} 는 GRANT 직전에 번호를 한 번 더 올린다(커밋 직전에 옛 등급으로 준비한 실행이 커밋 뒤에 번호를 읽었을 수
+   * 있다).
+   *
+   * @return 올린 뒤 번호(행이 없으면 empty)
+   */
+  public Optional<Long> bumpScriptTokenEpochInCurrentTx(long tenantId) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException("스크립트 토큰 세대 번호는 등급 변경 트랜잭션 안에서만 올린다");
+    }
+    Optional<Long> epoch = storeRepository.incrementScriptTokenEpoch(tenantId);
+    epoch.ifPresent(
+        e -> log.info("커밋 직전 스크립트 토큰 세대 번호를 올렸다(등급 변경과 함께 커밋): tenant={} epoch={}", tenantId, e));
+    return epoch;
+  }
+
+  /**
+   * 데이터셋 등급 변경을 커밋하기 직전, 그 트랜잭션에서 데이터셋 테이블의 남는 슬롯 권한만 회수한다(WD-624) — PG 판 {@link
+   * PythonReadGrantSync#narrowDatasetInCurrentTx} 와 같은 규칙(방향을 따지지 않는 회수 전용, 짧은 잠금 대기, "더는 읽으면 안 되는
+   * 슬롯" 을 결과에 싣는다). Tibero 문장은 OWNER 연결에서 바로 반영되므로 커밋 응답 전에 실행 중 스크립트의 다음 읽기부터 막힌다(등급 변경이 롤백돼도 남는
+   * 것은 회수뿐이라 안전 — 다음 동기화가 되살린다). 파사드가 savepoint 안에서 부른다.
+   */
+  @Override
+  public NarrowResult narrowDatasetInCurrentTx(long datasetId, Long fromLevelId, long toLevelId) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException("데이터셋 등급 좁히기는 등급 변경 트랜잭션 안에서만 부른다");
+    }
+    long tenantId = TenantContext.require("Tibero 데이터셋 등급 좁히기");
+    Set<Integer> exposed =
+        PythonReadSlots.slotsLosingAccess(levelRepository.findAll(), fromLevelId, toLevelId);
+    String table = datasetRepository.findTableNameById(datasetId).orElse(null);
+    if (table == null) {
+      return NarrowResult.confirmed(exposed);
+    }
+    if (!locks.tryXactLock(
+        PythonReadGrantSync.syncLockKey(tenantId), PythonReadGrantSync.NARROW_LOCK_WAIT)) {
+      log.warn("Tibero 데이터셋 등급 좁히기: 테넌트 동기화 잠금을 얻지 못했다(tenant={} dataset={})", tenantId, datasetId);
+      return NarrowResult.unconfirmed(exposed);
+    }
+    return PythonReadGrantBackend.narrowResultOf(
+        applyInTx(tenantId, table, null, true),
+        exposed,
+        levelRepository::findAll,
+        toLevelId,
+        k -> slotAccount(tenantId, k));
+  }
+
+  /**
+   * 커밋 직전 좁히기를 확인하지 못한 데이터셋 등급 변경의 뒷정리(실행기, WD-624) — 잠금 안에서 그 테이블을 계산값으로 맞춘다(회수 포함). Tibero 는 문장마다
+   * 권한을 보므로 회수가 커밋되면(DDL 즉시 반영) 실행 중 스크립트의 다음 읽기부터 막힌다.
+   *
+   * <p><b>스크립트 토큰은 테넌트 단위다.</b> 세대 번호는 db-executor 가 테넌트별로만 비교하므로 슬롯 하나만 무효로 할 수 없다(슬롯별 번호는 저장소
+   * 스키마와 db-executor 를 함께 바꿔야 한다). 그래서 테넌트 단위 번호 올리기는 꼭 필요할 때만 한다 — 커밋 직전에 올리지 못했거나({@code
+   * tokensInvalidated} false) 여기서 회수가 실패해 그 슬롯에 권한이 남을 때.
+   */
+  @Override
+  public void syncDatasetAfterUnconfirmedNarrowing(
+      long datasetId, Set<Integer> exposedSlots, boolean tokensInvalidated) {
+    long tenantId = TenantContext.require("Tibero 데이터셋 좁히기 뒷정리");
+    if (!tokensInvalidated) {
+      bumpEpochInNewTx(tenantId, "커밋 직전 번호 올리기 실패");
+    }
+    PythonReadGrantSync.SyncResult result =
+        PythonReadGrantBackend.syncDatasetTable(
+            requiresNew, datasetRepository, datasetId, this::syncTable);
+    if (result == null) {
+      return; // 물리 테이블이 없는 데이터셋 — 회수할 권한이 없다
+    }
+    Set<Integer> left =
+        PythonReadGrantBackend.slotsOf(result.revokeFailed(), k -> slotAccount(tenantId, k));
+    if (!left.isEmpty()) {
+      log.error(
+          "Tibero 데이터셋 좁히기 뒷정리: 회수 실패가 남았다 — 스크립트 토큰을 무효로 한다(tenant={} dataset={} slots={})",
+          tenantId,
+          datasetId,
+          left);
+      bumpEpochInNewTx(tenantId, "회수 실패");
+    }
+  }
+
+  /** 새 트랜잭션에서 세대 번호를 올리고 커밋한다(실행기 경로). 실패는 예외. */
+  private void bumpEpochInNewTx(long tenantId, String reason) {
+    Optional<Long> epoch =
+        requiresNew.execute(status -> storeRepository.incrementScriptTokenEpoch(tenantId));
+    log.warn("스크립트 토큰 세대 번호를 올렸다({}): tenant={} epoch={}", reason, tenantId, epoch);
+  }
+
+  /** 슬롯 k 의 Tibero 저장소 계정 이름 — 회수 실패 결과에서 슬롯을 찾는 데 쓴다({@link PythonReadGrantBackend#slotsOf}). */
+  private static String slotAccount(long tenantId, int slot) {
+    return DataStoreAccountRole.forSlot(slot).usernameFor(tenantId);
+  }
+
   /** 테이블 하나만 재동기화(생성·클론 직후, 데이터셋 등급 변경). 이름은 소문자 메타데이터 이름이다. */
-  public void syncTable(String tableName) {
-    requiresNew.execute(status -> syncInTx(tableName, null));
+  public PythonReadGrantSync.SyncResult syncTable(String tableName) {
+    return requiresNew.execute(status -> syncInTx(tableName, null));
   }
 
   /** 데이터셋 하나 — 테이블 이름을 찾아 syncTable. 물리 테이블이 없는 데이터셋은 할 일이 없다. */
@@ -192,7 +297,16 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
     // 같은 테넌트 동기화 직렬화(트랜잭션 종료 시 자동 해제) — PG 판(lockTenantSync)과 같은 syncLockKey 를 써서 같은 잠금이다(WD-486
     // R4).
     locks.xactLock(PythonReadGrantSync.syncLockKey(tenantId));
+    return applyInTx(tenantId, onlyTable, runRank, false);
+  }
 
+  /**
+   * 잠금을 잡은 뒤의 본체 — 동기화({@link #syncInTx})와 커밋 직전 좁히기({@link #narrowDatasetInCurrentTx})가 함께 쓴다.
+   *
+   * @param revokeOnly true 면 남는 권한 회수만 하고 부족한 GRANT 는 걸지 않는다(넓히기는 커밋 뒤 실행기 몫)
+   */
+  private PythonReadGrantSync.SyncResult applyInTx(
+      long tenantId, String onlyTable, Integer runRank, boolean revokeOnly) {
     List<LevelPolicy> levelsAsc = levelRepository.findAll();
     // 슬롯 k(1~10)의 계정 이름과, 저장소 계정 행이 실제로 있는 슬롯(없으면 PG 의 "없는 슬롯 롤" 과 같이 취급).
     List<String> slotAccounts = new ArrayList<>();
@@ -248,7 +362,15 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
             conn -> {
               String schema = connections.schemaOf(tenantId);
               Applied first =
-                  applyPass(conn, tenantId, schema, onlyPhysical, desired, targetAccounts, exact);
+                  applyPass(
+                      conn,
+                      tenantId,
+                      schema,
+                      onlyPhysical,
+                      desired,
+                      targetAccounts,
+                      exact,
+                      revokeOnly);
               if (first.revokeFailed().keySet().stream().allMatch(TiberoNames::isRecycleBinName)) {
                 // 실패 없음·휴지통 객체 실패뿐이면 재판정하지 않는다 — 클래스 Javadoc "재판정 규칙"(WD-645).
                 return first;
@@ -260,7 +382,8 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
                       ? desired
                       : desiredGrants(null, levelsAsc, slotAccounts, targetAccounts);
               Applied second =
-                  applyPass(conn, tenantId, schema, null, desiredAll, targetAccounts, exact);
+                  applyPass(
+                      conn, tenantId, schema, null, desiredAll, targetAccounts, exact, revokeOnly);
               // 실패 목록은 재판정 결과로 바꾸고, 바꾼 테이블은 두 판의 합집합으로 센다(두 번 세지 않는다).
               Set<String> changedUnion = new TreeSet<>(first.changedTables());
               changedUnion.addAll(second.changedTables());
@@ -317,6 +440,8 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
    *
    * @param onlyPhysical null 이면 테넌트 전체, 아니면 그 물리 테이블만
    * @param exact 실행 준비(대상 계정을 정확히 바인드해 읽는다)
+   * @param revokeOnly 커밋 직전 좁히기(WD-624) — 남는 권한 회수만 하고 부족한 GRANT 는 걸지 않는다. 재판정(WD-645)도 같은 값으로 돌아
+   *     좁히기 경로가 재판정 중에 넓히는 GRANT 를 걸지 않는다
    */
   private static Applied applyPass(
       java.sql.Connection conn,
@@ -325,7 +450,8 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
       String onlyPhysical,
       Map<String, Set<String>> desired,
       Set<String> targetAccounts,
-      boolean exact)
+      boolean exact,
+      boolean revokeOnly)
       throws SQLException {
     Set<String> tables = TiberoCatalog.ownTables(conn, onlyPhysical);
     Map<String, Set<String>> actual =
@@ -346,6 +472,12 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
       excess.removeAll(want);
       Set<String> missing = new TreeSet<>(want);
       missing.removeAll(have);
+      if (revokeOnly) {
+        if (excess.isEmpty()) {
+          continue; // 좁히기는 부족한 GRANT 를 건드리지 않는다
+        }
+        missing.clear();
+      }
       // REVOKE 는 남는 권한이 있을 때만 한다(없는 권한을 회수하면 오류). 실패하면 그 계정들에 과권한이 남았을 수 있다.
       boolean revokeOk = true;
       for (String account : excess) {
