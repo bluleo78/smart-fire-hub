@@ -178,6 +178,10 @@ export function usePipelineValidation(
 
     if (errors.length > 0) {
       dispatch({ type: 'SET_VALIDATION_ERRORS', payload: errors });
+      // 오류 스텝 선택·첫 오류 필드 포커스 요청(WD-560). 선택 판단은 리듀서가 최신 상태로 한다 —
+      // 여기 state 는 await(출력 컬럼 조회) 이전 값이라 그 사이 사용자가 바꾼 선택을 모른다.
+      // 실제 포커스는 스텝 설정 패널이 대상 필드를 렌더한 뒤 처리한다(타이밍 의존 없음).
+      dispatch({ type: 'REQUEST_ERROR_FOCUS' });
       toast.error('입력 오류를 확인하세요.');
       return false;
     }

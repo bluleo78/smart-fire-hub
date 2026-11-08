@@ -142,6 +142,96 @@ describe('pipelineEditorReducer', () => {
     });
   });
 
+  // 저장 검증 실패 후 오류 스텝 선택·첫 오류 필드 포커스 요청(WD-560)
+  describe('REQUEST_ERROR_FOCUS / CLEAR_FOCUS_REQUEST', () => {
+    const a = { ...createDefaultStep({ x: 0, y: 0 }), tempId: 'a' };
+    const b = { ...createDefaultStep({ x: 0, y: 0 }), tempId: 'b' };
+
+    it('선택 스텝에 오류가 없으면 스텝 순서상 첫 오류 스텝을 고르고 이름→스크립트→출력 순서의 첫 필드를 요청한다', () => {
+      const next = dispatch(
+        {
+          ...state,
+          steps: [a, b],
+          selectedStepId: null,
+          // 목록 순서가 b 먼저여도 스텝 순서(a)로 고른다 — 중복 이름 오류는 목록 끝에 붙는다
+          validationErrors: [
+            { stepTempId: 'b', field: 'name', message: 'x' },
+            { stepTempId: 'a', field: 'outputDatasetId', message: 'x' },
+            { stepTempId: 'a', field: 'scriptContent', message: 'x' },
+          ],
+        },
+        { type: 'REQUEST_ERROR_FOCUS' },
+      );
+      expect(next.selectedStepId).toBe('a');
+      expect(next.focusRequest).toEqual({ stepTempId: 'a', field: 'scriptContent' });
+    });
+
+    it('비동기 검증 중 사용자가 고른 스텝에 오류가 있으면 그 선택을 유지한다', () => {
+      const next = dispatch(
+        {
+          ...state,
+          steps: [a, b],
+          selectedStepId: 'b',
+          validationErrors: [
+            { stepTempId: 'a', field: 'name', message: 'x' },
+            { stepTempId: 'b', field: 'name', message: 'x' },
+          ],
+        },
+        { type: 'REQUEST_ERROR_FOCUS' },
+      );
+      expect(next.selectedStepId).toBe('b');
+      expect(next.focusRequest).toEqual({ stepTempId: 'b', field: 'name' });
+    });
+
+    it('포커스할 필드가 없는 오류(예: API URL)는 스텝만 선택하고 요청은 비운다', () => {
+      const next = dispatch(
+        {
+          ...state,
+          steps: [a],
+          validationErrors: [{ stepTempId: 'a', field: 'apiConfig.customUrl', message: 'x' }],
+        },
+        { type: 'REQUEST_ERROR_FOCUS' },
+      );
+      expect(next.selectedStepId).toBe('a');
+      expect(next.focusRequest).toBeNull();
+    });
+
+    it('CLEAR_FOCUS_REQUEST·SELECT_STEP 은 요청을 지운다', () => {
+      const pending = { ...state, focusRequest: { stepTempId: 'a', field: 'name' as const } };
+      expect(dispatch(pending, { type: 'CLEAR_FOCUS_REQUEST' }).focusRequest).toBeNull();
+      expect(dispatch(pending, { type: 'SELECT_STEP', payload: { tempId: 'b' } }).focusRequest).toBeNull();
+    });
+
+    // 오류를 지우는 액션이 처리되지 않은 요청을 남기면 나중에 포커스가 뜬금없이 옮겨진다(WD-560)
+    describe('요청 대상 오류가 사라지면 요청도 지운다', () => {
+      const pending = {
+        ...state,
+        steps: [a, b],
+        selectedStepId: 'a',
+        validationErrors: [
+          { stepTempId: 'a', field: 'name', message: 'x' },
+          { stepTempId: 'b', field: 'name', message: 'x' },
+        ],
+        focusRequest: { stepTempId: 'a', field: 'name' as const },
+      };
+
+      it('UPDATE_STEP 으로 대상 스텝 오류가 지워지면 요청을 지운다', () => {
+        const next = dispatch(pending, { type: 'UPDATE_STEP', payload: { tempId: 'a', changes: { name: 'n' } } });
+        expect(next.focusRequest).toBeNull();
+      });
+
+      it('다른 스텝의 UPDATE_STEP 은 대상 오류가 남아 있으므로 요청을 유지한다', () => {
+        const next = dispatch(pending, { type: 'UPDATE_STEP', payload: { tempId: 'b', changes: { name: 'n' } } });
+        expect(next.focusRequest).toEqual({ stepTempId: 'a', field: 'name' });
+      });
+
+      it('REMOVE_STEP·SET_META 처럼 오류를 모두 지우는 액션도 요청을 지운다', () => {
+        expect(dispatch(pending, { type: 'REMOVE_STEP', payload: { tempId: 'b' } }).focusRequest).toBeNull();
+        expect(dispatch(pending, { type: 'SET_META', payload: { name: 'p' } }).focusRequest).toBeNull();
+      });
+    });
+  });
+
   describe('ADD_EDGE / REMOVE_EDGE', () => {
     it('엣지 추가는 dependsOnTempIds에 source 추가', () => {
       const a = createDefaultStep({ x: 0, y: 0 });
