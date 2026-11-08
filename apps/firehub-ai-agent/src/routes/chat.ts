@@ -10,6 +10,7 @@ import { AGENT_RUN_SETTING_SUPPORT, isKnownAgentType } from '../providers/types.
 import { parseSharePurpose } from '../mcp/api-client.js';
 import { parseDbDialect } from '../agent/db-dialect.js';
 import { internalAuth } from '../middleware/auth.js';
+import { jsonBody } from '../http/json-body.js';
 import { readSessionTranscript } from '../agent/transcript-reader.js';
 import { checkSessionOwnership } from '../agent/session-owner.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
@@ -37,7 +38,7 @@ router.get('/health', (req: Request, res: Response) => {
 });
 
 // SSE chat endpoint
-router.post('/chat', internalAuth, async (req: Request, res: Response) => {
+router.post('/chat', jsonBody(), internalAuth, async (req: Request, res: Response) => {
   const {
     message,
     sessionId,
@@ -243,7 +244,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
  * 때만 취소한다. 실행이 없거나 주인이 다르면 존재를 알리지 않고 404. 취소는 신호만 보내고 즉시 202 로 답한다 —
  * 정리가 끝나 슬롯이 풀리는 것은 /chat 라우트의 finally 다.
  */
-router.post('/chat/:sessionId/cancel', internalAuth, (req: Request, res: Response) => {
+router.post('/chat/:sessionId/cancel', jsonBody(), internalAuth, (req: Request, res: Response) => {
   const sessionId = req.params.sessionId as string;
   const { tenantId, userId } = req.body ?? {};
   if (!isValidTenantId(tenantId) || typeof userId !== 'number') {
@@ -304,7 +305,7 @@ router.get('/history/:sessionId', internalAuth, async (req: Request, res: Respon
 // API 키 유효성 검증 — Claude CLI로 실제 호출
 // 셸을 경유하지 않고 execFileAsync에 직접 인수 배열을 전달하여 명령어 인젝션 방지
 // API 키는 환경변수(ANTHROPIC_API_KEY)로 안전하게 전달
-router.post('/api-key/verify', internalAuth, async (req: Request, res: Response) => {
+router.post('/api-key/verify', jsonBody(), internalAuth, async (req: Request, res: Response) => {
   const { apiKey } = req.body;
   if (!apiKey || typeof apiKey !== 'string') {
     res.json({ valid: false });
@@ -332,7 +333,7 @@ router.post('/api-key/verify', internalAuth, async (req: Request, res: Response)
 // CLI OAuth 토큰 유효성 검증 — Claude CLI로 실제 호출
 // 셸을 경유하지 않고 execFileAsync에 직접 인수 배열을 전달하여 명령어 인젝션 방지
 // OAuth 토큰은 환경변수(CLAUDE_CODE_OAUTH_TOKEN)로 안전하게 전달
-router.post('/cli-auth/verify', internalAuth, async (req: Request, res: Response) => {
+router.post('/cli-auth/verify', jsonBody(), internalAuth, async (req: Request, res: Response) => {
   const { token } = req.body;
   if (!token || typeof token !== 'string') {
     res.json({ valid: false });

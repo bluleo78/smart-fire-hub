@@ -1,35 +1,12 @@
-import express from 'express';
 import dotenv from 'dotenv';
-import chatRouter from './routes/chat.js';
-import classifyRouter from './routes/classify.js';
-import proactiveRouter from './routes/proactive.js';
-import chartRenderRouter from './routes/chart-render.js';
-import pdfRouter from './routes/pdf.js';
-import graphRouter from './routes/graph.js';
-import templateGenerateRouter from './routes/template-generate.js';
+import { createApp } from './app.js';
 import { DEFAULT_PORT } from './constants.js';
 
 dotenv.config({ path: '.env.local' });
 
-const app = express();
+// 앱 조립(미들웨어·라우터·에러 핸들러)은 app.ts 에서 한다 — 테스트가 같은 구성을 그대로 검증하기 위함(WD-550)
+const app = createApp();
 const PORT = process.env.PORT || DEFAULT_PORT;
-
-app.use(express.json());
-
-app.use('/agent', chatRouter);
-app.use('/agent', classifyRouter);
-app.use('/agent', proactiveRouter);
-app.use('/agent', chartRenderRouter);
-app.use('/agent', pdfRouter);
-app.use('/agent', graphRouter); // 온톨로지 시각화 읽기 엔드포인트
-app.use('/agent', templateGenerateRouter); // 목표 기반 리포트 양식 섹션 생성(WD-455)
-
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-  });
-});
 
 const server = app.listen(PORT, () => {
   console.log(`FireHub AI Agent service running on port ${PORT}`);

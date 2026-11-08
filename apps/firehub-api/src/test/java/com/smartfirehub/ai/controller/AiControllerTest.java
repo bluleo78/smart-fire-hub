@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.ai.dto.AiSessionResponse;
+import com.smartfirehub.ai.dto.ChatRequest;
 import com.smartfirehub.ai.dto.CreateAiSessionRequest;
 import com.smartfirehub.ai.service.AiAgentProxyService;
 import com.smartfirehub.ai.service.AiSessionService;
@@ -25,6 +26,7 @@ import com.smartfirehub.settings.model.UnknownAgentTypeException;
 import com.smartfirehub.settings.service.AiCredentialService;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -226,6 +228,120 @@ class AiControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
         .andExpect(status().isOk());
+  }
+
+  /** WD-550: 메시지가 상한(50,000자)을 넘으면 ai-agent 로 넘기기 전에 400 + 한국어 필드 오류. */
+  @Test
+  void chat_messageOverMaxLength_returnsBadRequestWithoutCallingAgent() throws Exception {
+    mockAuthentication("ai:write");
+
+    String body =
+        objectMapper.writeValueAsString(
+            Map.of("message", "a".repeat(ChatRequest.MAX_MESSAGE_LENGTH + 1)));
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.message").value(ChatRequest.MESSAGE_TOO_LONG));
+    verify(aiAgentProxyService, never())
+        .streamChat(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  /** WD-550: navigationContext 가 상한(10,000자)을 넘으면 400 + 한국어 필드 오류. */
+  @Test
+  void chat_navigationContextOverMaxLength_returnsBadRequest() throws Exception {
+    mockAuthentication("ai:write");
+
+    String body =
+        objectMapper.writeValueAsString(
+            Map.of(
+                "message",
+                "hello",
+                "navigationContext",
+                "a".repeat(ChatRequest.MAX_NAVIGATION_CONTEXT_LENGTH + 1)));
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.errors.navigationContext").value(ChatRequest.NAVIGATION_CONTEXT_TOO_LONG));
+    verify(aiAgentProxyService, never())
+        .streamChat(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  /** WD-550: screenContext 가 상한(100,000자)을 넘으면 400 + 한국어 필드 오류. */
+  @Test
+  void chat_screenContextOverMaxLength_returnsBadRequest() throws Exception {
+    mockAuthentication("ai:write");
+
+    String body =
+        objectMapper.writeValueAsString(
+            Map.of(
+                "message",
+                "hello",
+                "screenContext",
+                "a".repeat(ChatRequest.MAX_SCREEN_CONTEXT_LENGTH + 1)));
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.screenContext").value(ChatRequest.SCREEN_CONTEXT_TOO_LONG));
+    verify(aiAgentProxyService, never())
+        .streamChat(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  /** WD-550: 세 필드 모두 정확히 상한이면 검증을 통과한다(경계값). */
+  @Test
+  void chat_allFieldsAtMaxLength_streams() throws Exception {
+    mockAuthentication("ai:write");
+
+    String body =
+        objectMapper.writeValueAsString(
+            Map.of(
+                "message",
+                "a".repeat(ChatRequest.MAX_MESSAGE_LENGTH),
+                "navigationContext",
+                "a".repeat(ChatRequest.MAX_NAVIGATION_CONTEXT_LENGTH),
+                "screenContext",
+                "a".repeat(ChatRequest.MAX_SCREEN_CONTEXT_LENGTH)));
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isOk());
+  }
+
+  /** WD-550: 정확히 상한(50,000자)인 메시지는 검증을 통과해 에이전트로 전달된다. */
+  @Test
+  void chat_messageAtMaxLength_streams() throws Exception {
+    mockAuthentication("ai:write");
+
+    String message = "a".repeat(ChatRequest.MAX_MESSAGE_LENGTH);
+    String body = objectMapper.writeValueAsString(Map.of("message", message));
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isOk());
+    verify(aiAgentProxyService).streamChat(any(), eq(message), any(), any(), eq(1L), any(), any());
   }
 
   /** 이슈 #714 — 남의 세션을 이어 쓰려 하면 ai-agent 로 넘기기 전에 403. */

@@ -124,7 +124,7 @@ public class AiController {
 
   @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
   @RequirePermission("ai:write")
-  public SseEmitter chat(Authentication authentication, @RequestBody ChatRequest request) {
+  public SseEmitter chat(Authentication authentication, @Valid @RequestBody ChatRequest request) {
     boolean hasMessage = request.message() != null && !request.message().isBlank();
     boolean hasFiles = request.fileIds() != null && !request.fileIds().isEmpty();
 
