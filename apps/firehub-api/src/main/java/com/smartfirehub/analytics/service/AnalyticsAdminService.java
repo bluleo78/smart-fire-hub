@@ -81,22 +81,38 @@ public class AnalyticsAdminService {
         .toList();
   }
 
-  /** 관리자 공유 해제 — 대상 자산 하나만 비공개로 돌린다. 이미 비공개여도 성공(멱등)이며 감사는 남긴다(WD-192 끄기와 같은 규칙). */
+  /**
+   * 관리자 공유 해제 — 대상 자산 하나만 비공개로 돌린다. 이미 비공개여도 성공(멱등)이며 감사는 남긴다(WD-192 끄기와 같은 규칙).
+   *
+   * <p>동시에 지워진 자산이면 순차 호출과 같은 NotFound 이고 감사를 남기지 않는다(WD-616).
+   */
   @Transactional
   public void unshare(AnalyticsAssetKind kind, Long id, Long adminUserId) {
     long tenantId = TenantContext.require("분석 자산 관리자 공유 해제");
     WorkspaceItemRow item = requireWorkspaceItem(kind, id, tenantId);
-    workspaceRepository.unshareInTenant(kind, id, tenantId);
+    // 존재 확인(잠금 없음)은 지운 쪽이 커밋하기 전이면 통과한다. UPDATE 는 그 커밋을 기다린 뒤 일치 행이 없으므로 여기서 판정해
+    // 사라진 자산에 200·「공유 해제」 감사가 남지 않게 한다(WD-616). 이미 비공개인 자산은 일치 행이 있어 멱등 성공 그대로다.
+    if (!workspaceRepository.unshareInTenant(kind, id, tenantId)) {
+      throw kind.notFound();
+    }
     audit(
         adminUserId, kind, kind.unshareAction(), item, kind.label() + " 관리자 공유 해제: " + item.name());
   }
 
-  /** 관리자 삭제 — 작성자 삭제와 같은 CASCADE 로 연결된 차트·위젯도 함께 사라진다. */
+  /**
+   * 관리자 삭제 — 작성자 삭제와 같은 CASCADE 로 연결된 차트·위젯도 함께 사라진다.
+   *
+   * <p>같은 자산을 동시에 지우면 실제로 지운 1건만 성공하고 감사도 1건만 남는다(WD-616, WD-584 후속).
+   */
   @Transactional
   public void delete(AnalyticsAssetKind kind, Long id, Long adminUserId) {
     long tenantId = TenantContext.require("분석 자산 관리자 삭제");
     WorkspaceItemRow item = requireWorkspaceItem(kind, id, tenantId);
-    workspaceRepository.deleteInTenant(kind, id, tenantId);
+    // 존재 확인(잠금 없음)은 먼저 지운 쪽이 커밋하기 전이면 통과한다. 진 쪽 DELETE 는 그 커밋을 기다린 뒤 0 행이므로
+    // 추가 잠금 없이 여기서 판정해 순차 두 번째 삭제와 같은 NotFound(404·같은 문구)를 던진다. 감사는 실제로 지웠을 때만.
+    if (!workspaceRepository.deleteInTenant(kind, id, tenantId)) {
+      throw kind.notFound();
+    }
     audit(adminUserId, kind, kind.deleteAction(), item, kind.label() + " 관리자 삭제: " + item.name());
   }
 

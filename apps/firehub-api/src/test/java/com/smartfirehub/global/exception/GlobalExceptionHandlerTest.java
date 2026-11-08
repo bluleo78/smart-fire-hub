@@ -19,15 +19,25 @@ import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.user.exception.UserNotFoundException;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.MethodParameter;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.ErrorResponseException;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.server.ResponseStatusException;
 
 @SuppressWarnings("null")
 @WebMvcTest(controllers = ExceptionStubController.class)
@@ -45,6 +55,10 @@ class GlobalExceptionHandlerTest {
   @MockitoBean private JwtProperties jwtProperties;
 
   @MockitoBean private PermissionService permissionService;
+
+  /** 처리 메서드를 직접 부르는 단위 검증용 인스턴스(MockMvc 를 거치지 않는 경우). */
+  private final GlobalExceptionHandler handler =
+      new GlobalExceptionHandler(new PostgresPlatformDbErrors());
 
   // --- Tests -----------------------------------------------------------------
 
@@ -453,13 +467,143 @@ class GlobalExceptionHandlerTest {
   /** 이미 커밋된(스트리밍 중) 응답에는 아무것도 쓰지 않는다 — 핸들러가 null(처리 완료)을 돌려준다. */
   @Test
   void ioException_committedResponse_returnsNull() {
-    GlobalExceptionHandler handler = new GlobalExceptionHandler(new PostgresPlatformDbErrors());
     MockHttpServletResponse response = new MockHttpServletResponse();
     response.setCommitted(true);
     assertThat(
             handler.handleIOException(
                 new java.io.IOException("Unsupported"), new MockHttpServletRequest(), response))
         .isNull();
+  }
+
+  /**
+   * 커밋된 응답이면 일반 처리(500 길)도 본문을 쓰지 않고 null 이다(WD-626 — SSE 에 JSON 이 섞이지 않게). 커밋 여부는 요청 문맥의 응답에서 보므로
+   * 실제 디스패치처럼 문맥을 세운다.
+   */
+  @Test
+  void genericException_committedResponse_returnsNull() {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    withCommittedResponse(
+        request,
+        () -> assertThat(handler.handleException(new RuntimeException("boom"), request)).isNull());
+  }
+
+  /** 커밋된 응답이면 4xx 표준 예외 길도 본문을 쓰지 않는다(WD-626). */
+  @Test
+  void standard4xxException_committedResponse_returnsNull() {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    withCommittedResponse(
+        request,
+        () ->
+            assertThat(
+                    handler.handleException(
+                        new ResponseStatusException(HttpStatus.CONFLICT), request))
+                .isNull());
+  }
+
+  /** 커밋된 응답이면 전용 처리(IllegalStateException 409)도 본문을 쓰지 않는다 — 확인이 json() 한곳에 있다(WD-626). */
+  @Test
+  void specificHandler_committedResponse_returnsNull() {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    withCommittedResponse(
+        request,
+        () ->
+            assertThat(handler.handleIllegalState(new IllegalStateException("x"), request))
+                .isNull());
+  }
+
+  /** 커밋 전이면 4xx 표준 예외는 그 상태 그대로이고, 409 는 상태별 안내 문구다(WD-626). */
+  @Test
+  void standard4xxException_notCommitted_keepsStatus() {
+    var res =
+        handler.handleException(
+            new ResponseStatusException(HttpStatus.CONFLICT), new MockHttpServletRequest());
+    assertThat(res.getStatusCode().value()).isEqualTo(409);
+    assertThat(res.getBody().message()).isEqualTo("요청이 현재 상태와 충돌합니다.");
+  }
+
+  /** 401·403 표준 예외도 상태별 안내 문구다(WD-626). */
+  @Test
+  void standard4xxException_unauthorizedAndForbidden_useStatusMessages() {
+    assertThat(
+            handler
+                .handleException(
+                    new ErrorResponseException(HttpStatus.UNAUTHORIZED),
+                    new MockHttpServletRequest())
+                .getBody()
+                .message())
+        .isEqualTo("인증이 필요합니다.");
+    assertThat(
+            handler
+                .handleException(
+                    new ErrorResponseException(HttpStatus.FORBIDDEN), new MockHttpServletRequest())
+                .getBody()
+                .message())
+        .isEqualTo("이 작업을 할 권한이 없습니다.");
+  }
+
+  /** 406: 응답 형식에 JSON 과 text/event-stream 이 함께 있으면 둘 다 안내한다(SSE 전용으로 안내하지 않는다, WD-626). */
+  @Test
+  void notAcceptable_jsonAndEventStream_mentionsBoth() {
+    var res =
+        handler.handleMediaTypeNotAcceptable(
+            new HttpMediaTypeNotAcceptableException(
+                List.of(MediaType.APPLICATION_JSON, MediaType.TEXT_EVENT_STREAM)),
+            new MockHttpServletRequest());
+    assertThat(res.getStatusCode().value()).isEqualTo(406);
+    assertThat(res.getBody().message())
+        .contains("application/json 또는 text/event-stream")
+        .doesNotContain("으로만");
+  }
+
+  /** 406·415 의 형식 정리는 와일드카드를 건너뛰고 +json 을 JSON 으로 본다(WD-626). */
+  @Test
+  void mediaTypeMessages_skipWildcardsAndTreatPlusJsonAsJson() {
+    var notAcceptable =
+        handler.handleMediaTypeNotAcceptable(
+            new HttpMediaTypeNotAcceptableException(
+                List.of(MediaType.ALL, MediaType.valueOf("application/*+json"))),
+            new MockHttpServletRequest());
+    assertThat(notAcceptable.getBody().message()).contains("application/json 으로만");
+    assertThat(notAcceptable.getBody().message()).doesNotContain("*/*");
+    var unsupported =
+        handler.handleMediaTypeNotSupported(
+            new HttpMediaTypeNotSupportedException(
+                MediaType.TEXT_PLAIN,
+                List.of(MediaType.ALL, MediaType.valueOf("application/*+json"))),
+            new MockHttpServletRequest());
+    assertThat(unsupported.getBody().message()).contains("application/json 이어야");
+  }
+
+  /** 헤더가 왔지만 변환 결과가 없으면(빈 숫자 헤더 등) 「값이 올바르지 않습니다」다(WD-626). */
+  @Test
+  void missingHeaderAfterConversion_saysInvalidValue() throws Exception {
+    MethodParameter parameter =
+        new MethodParameter(
+            SpringMvcStandardErrorStubController.class.getMethod(
+                "requiredNumberHeader", Long.class),
+            0);
+    var afterConversion =
+        handler.handleMissingRequestHeader(
+            new MissingRequestHeaderException("X-N", parameter, true),
+            new MockHttpServletRequest());
+    assertThat(afterConversion.getBody().errors()).containsEntry("X-N", "'X-N' 헤더 값이 올바르지 않습니다.");
+    var missing =
+        handler.handleMissingRequestHeader(
+            new MissingRequestHeaderException("X-N", parameter, false),
+            new MockHttpServletRequest());
+    assertThat(missing.getBody().errors()).containsEntry("X-N", "'X-N' 헤더가 필요합니다.");
+  }
+
+  /** 요청 문맥에 커밋된 응답을 세운 채 실행하고 문맥을 원래대로 지운다. */
+  private static void withCommittedResponse(MockHttpServletRequest request, Runnable body) {
+    MockHttpServletResponse response = new MockHttpServletResponse();
+    response.setCommitted(true);
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request, response));
+    try {
+      body.run();
+    } finally {
+      RequestContextHolder.resetRequestAttributes();
+    }
   }
 
   /** 엑셀/CSV 를 읽지 못한 경우 400 + 한국어 안내, POI 원문은 본문에 없다(WD-204). */

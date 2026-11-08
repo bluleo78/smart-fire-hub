@@ -340,13 +340,16 @@ function AppLayoutInner() {
   };
 
   const showFullscreen = aiOpen && aiMode === 'fullscreen';
+  // 모바일(lg 미만) AI 사이드 패널은 화면 전체를 덮는 모달 대화상자다(WD-606). 열려 있는 동안 그 뒤의 사이드바·메뉴 버튼·
+  // AI 상태 칩·본문을 inert 로 막아 Tab 이 가려진 페이지 링크로 새지 않게 한다. 패널은 이 본문 열 안에 있어 열 전체를 막을 수 없다.
+  const aiOverlayOpen = !isDesktop && aiOpen && aiMode === 'side';
   const showNative = aiOpen && aiMode === 'native';
 
   // 본문(main)을 그리는지 — AI native·전체 화면 모드에서는 그 화면이 본문 자리를 대신한다.
   const showMain = !showNative && !showFullscreen;
   // 건너뛰기 링크(WD-530)는 본문이 있고 보일 때만 그린다 — 모바일(lg 미만) AI 사이드 패널은 fixed inset-0 덮개라 본문을 가리고,
   // 열린 모바일 서랍(WD-508)에서는 포커스 가둠을 깨지 않게 뺀다.
-  const showSkipLink = showMain && !(!isDesktop && aiOpen && aiMode === 'side') && !drawerOpen;
+  const showSkipLink = showMain && !aiOverlayOpen && !drawerOpen;
 
   /**
    * 「본문으로 건너뛰기」 링크 활성화(WD-530, WCAG 2.4.1 Bypass Blocks) — 사이드바 컨트롤 17~24개를 매 화면 Tab 으로 지나야
@@ -408,7 +411,7 @@ function AppLayoutInner() {
       <aside
         ref={asideRef}
         // 닫힌 서랍은 포커스·접근성 트리에서 뺀다. 열린 서랍은 메뉴 대화상자다(WD-508). 데스크톱(lg 이상)은 늘 보이는 사이드바라 둘 다 아니다.
-        inert={!isDesktop && !sidebarOpen}
+        inert={(!isDesktop && !sidebarOpen) || aiOverlayOpen}
         role={drawerOpen ? 'dialog' : undefined}
         aria-modal={drawerOpen ? true : undefined}
         aria-label={drawerOpen ? '메뉴' : undefined}
@@ -566,6 +569,7 @@ function AppLayoutInner() {
           variant="ghost"
           size="icon"
           ref={menuButtonRef}
+          inert={aiOverlayOpen}
           className="fixed top-3 left-3 z-40 lg:hidden print:hidden"
           aria-label={sidebarOpen ? '메뉴 닫기' : '메뉴 열기'}
           onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -591,7 +595,7 @@ function AppLayoutInner() {
         {/* 인쇄(WD-424): 블록으로 풀어 본문(main)이 종이 전체 폭을 쓴다 */}
         <div className="relative flex flex-1 min-h-0 bg-gradient-main print:block">
           {/* AI Status Chip — 전체 뷰포트 가로 중앙. 인쇄에서는 AI 칩·알림 종을 숨긴다(WD-424) */}
-          <div className="fixed top-2 left-0 right-0 z-30 flex justify-center pointer-events-none print:hidden">
+          <div className="fixed top-2 left-0 right-0 z-30 flex justify-center pointer-events-none print:hidden" inert={aiOverlayOpen}>
             <div className="pointer-events-auto">
               <AIStatusChip />
             </div>
@@ -604,6 +608,7 @@ function AppLayoutInner() {
             <main
               ref={mainRef}
               id="main-content"
+              inert={aiOverlayOpen}
               className="flex-1 p-6 pt-10 max-lg:pt-2 overflow-auto min-w-0 focus:outline-none print:p-0 print:overflow-visible"
             >
               <Suspense fallback={<PageSkeleton />}>

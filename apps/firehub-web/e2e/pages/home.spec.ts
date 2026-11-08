@@ -321,6 +321,46 @@ test.describe('홈 페이지', () => {
     expect(emptyBox?.height).toBeLessThan(30);
   });
 
+  /**
+   * WD-574: 320px 폭(브라우저 400% 확대, WCAG 1.4.10 Reflow)에서 상단 요약 줄이 main 밖으로 넘치지 않는다.
+   * - 요약 버튼 안 항목이 모두 whitespace-nowrap 이고 버튼이 줄을 바꾸지 않아, 숫자가 크고 항목이 모두 보이면
+   *   데이터셋 요약이 main 폭을 넘어 main 안에 가로 스크롤이 생겼다.
+   * - 파이프라인 네 상태·데이터셋 세 상태를 모두 세 자리 수로 채워 가장 긴 요약을 만든다.
+   */
+  test('320px 폭에서 시스템 건강 요약 줄이 줄을 바꿔 main 에 가로 스크롤이 생기지 않는다 (WD-574)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/dashboard/health', {
+      pipelineHealth: { total: 480, healthy: 120, failing: 120, running: 120, disabled: 120, trend: [1, 2, 3, 4, 5, 6, 7] },
+      datasetHealth: { total: 375, fresh: 124, stale: 124, empty: 127, trend: [1, 2, 3, 4, 5, 6, 7] },
+    });
+    await page.setViewportSize({ width: 320, height: 640 });
+    await page.goto('/');
+
+    // 요약이 다 그려진 뒤 잰다 — 가장 긴 항목들이 보여야 넘침 조건이 만들어진다.
+    await expect(page.getByText('127 빈 데이터', { exact: true })).toBeVisible();
+    await expect(page.getByText('120 비활성', { exact: true })).toBeVisible();
+
+    const main = page.locator('main');
+    const size = await main.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+    expect(size.scroll).toBeLessThanOrEqual(size.client);
+
+    // 요약 버튼 오른쪽 끝이 main 안에 있다 — 넘친 요소를 직접 확인한다.
+    const mainBox = await main.boundingBox();
+    for (const name of [/파이프라인/, /데이터셋/]) {
+      const box = await page
+        .getByRole('region', { name: '시스템 건강 상태' })
+        .getByRole('button', { name })
+        .first()
+        .boundingBox();
+      expect(box!.x + box!.width).toBeLessThanOrEqual(mainBox!.x + mainBox!.width);
+    }
+
+    // 낱말은 여전히 한 덩어리 — 「빈 데이터」가 글자 단위로 깨지지 않는다(이슈 #60 회귀 방지).
+    const emptyBox = await page.getByText('127 빈 데이터', { exact: true }).boundingBox();
+    expect(emptyBox!.height).toBeLessThan(30);
+  });
+
   test('최근 대시보드와 데이터셋이 카드에 표시된다', async ({ authenticatedPage: page }) => {
     // 분석 대시보드 목록 오버라이드
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards', {

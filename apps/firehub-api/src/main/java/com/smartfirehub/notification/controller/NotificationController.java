@@ -33,11 +33,10 @@ public class NotificationController {
     // 정지된 워크스페이스는 구독을 거절한다(WD-190). 권한 판정(@RequirePermission)은 멤버십 상태만 보고 워크스페이스 상태는 보지 않아,
     // 정지 때 연결을 닫아도 기존 토큰(최대 30분)으로 곧바로 다시 붙었다. 다른 API 는 공지대로 토큰 만료까지 열려 있고, 알림 구독만 여기서 막는다.
     //
-    // 스프링 시큐리티 AccessDeniedException 을 던지는 이유: 웹은 Accept: text/event-stream 으로 구독해 전역 예외 처리기의 JSON
-    // 오류 본문을
-    // 쓸 수 없다(처리기가 HttpMediaTypeNotAcceptable 로 실패해 예외가 그대로 올라가고, 다른 예외면 500 이 된다). 이 예외는 그 뒤
-    // 시큐리티 필터(ExceptionTranslationFilter)가 받아 403 으로 바꾼다 —
-    // 권한 없음(@RequirePermission) 403 과 같은 경로라 웹이 같은 규칙(재시도 중단)으로 다룬다.
+    // 스프링 시큐리티 AccessDeniedException 을 던지는 이유: 권한 없음(@RequirePermission)과 같은 예외라
+    // 전역 예외 처리기(handleAccessDenied)가 같은 403 으로 답하고, 웹이 같은 규칙(재시도 중단)으로 다룬다.
+    // WD-548 이후 오류 본문은 Accept: text/event-stream 이어도 항상 JSON 으로 나가므로(협상 실패 없음)
+    // 403 에 이 사유 문장도 실린다(WD-626 에서 낡은 설명 정정).
     if (!membershipRepository.hasActiveMembership(userId, tenantId)) {
       throw new AccessDeniedException("정지되었거나 접근할 수 없는 워크스페이스라 알림을 받을 수 없습니다.");
     }
