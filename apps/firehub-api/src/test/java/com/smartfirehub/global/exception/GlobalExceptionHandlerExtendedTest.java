@@ -2,6 +2,7 @@ package com.smartfirehub.global.exception;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -12,6 +13,7 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.user.exception.UserDeactivatedException;
+import java.net.URI;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -294,6 +296,54 @@ class GlobalExceptionHandlerExtendedTest {
   void transactionBeginFailure_withoutPoolTimeout_staysGeneric500() throws Exception {
     mockMvc
         .perform(get("/test/exception2/tx-begin-failure"))
+        .andExpect(status().isInternalServerError())
+        .andExpect(jsonPath("$.message").value("예기치 않은 오류가 발생했습니다. 잠시 후 다시 시도하세요."));
+  }
+
+  /**
+   * Long 경로 변수에 공백만 오면(%20·여러 공백·탭) 변환 결과가 null 이 되어 MissingPathVariableException 이 난다 — 500 이 아니라
+   * 400 + 변수명 안내 (WD-567). 같은 자리의 'abc' 가 400(#219)인 것과 맞춘다.
+   */
+  @Test
+  void missingPathVariable_blankLong_returns400() throws Exception {
+    for (String blank : new String[] {"%20", "%20%20%20", "%09"}) {
+      mockMvc
+          .perform(get(URI.create("/test/exception2/missing-path-long/" + blank)))
+          .andExpect(status().isBadRequest())
+          .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+          .andExpect(jsonPath("$.status").value(400))
+          .andExpect(jsonPath("$.message").value("Validation failed"))
+          .andExpect(jsonPath("$.errors.id").value("'id' 값이 비어 있습니다."));
+    }
+  }
+
+  /** UUID 경로 변수(실행 runId 등)도 공백이면 400 (WD-567). */
+  @Test
+  void missingPathVariable_blankUuid_returns400() throws Exception {
+    mockMvc
+        .perform(get(URI.create("/test/exception2/missing-path-uuid/%20")))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("Validation failed"))
+        .andExpect(jsonPath("$.errors.runId").value("'runId' 값이 비어 있습니다."));
+  }
+
+  /** 중첩 경로에서 뒤쪽 변수만 공백이면 그 변수 이름으로 400 (WD-567, 예: /pipelines/1/executions/%20). */
+  @Test
+  void missingPathVariable_blankNested_returns400WithThatName() throws Exception {
+    mockMvc
+        .perform(get(URI.create("/test/exception2/missing-path-nested/1/executions/%20")))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.execId").value("'execId' 값이 비어 있습니다."))
+        .andExpect(jsonPath("$.errors.pipelineId").doesNotExist());
+  }
+
+  /**
+   * 매핑 템플릿에 변수가 아예 없는 코드 결함(missingAfterConversion=false)은 400 으로 숨기지 않고 기존 일반 500 그대로 (WD-567).
+   */
+  @Test
+  void missingPathVariable_notInTemplate_staysGeneric500() throws Exception {
+    mockMvc
+        .perform(get("/test/exception2/missing-path-unmapped"))
         .andExpect(status().isInternalServerError())
         .andExpect(jsonPath("$.message").value("예기치 않은 오류가 발생했습니다. 잠시 후 다시 시도하세요."));
   }

@@ -84,6 +84,7 @@ import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingPathVariableException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.CookieValue;
@@ -1267,6 +1268,28 @@ public class GlobalExceptionHandler {
       MissingServletRequestParameterException ex, HttpServletRequest request) {
     Map<String, String> fieldErrors =
         Map.of(ex.getParameterName(), String.format("'%s' 값이 필요합니다.", ex.getParameterName()));
+    ErrorResponse response =
+        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
+    return json(HttpStatus.BAD_REQUEST, response);
+  }
+
+  /**
+   * 경로 변수에 공백만 온 요청(예: GET /api/v1/datasets/%20, /pipelines/1/executions/%20)은 클라이언트 입력 오류라 500 대신
+   * 400 으로 답한다(WD-567). Long·UUID 변환 결과가 null 이 되어 Spring 이 이 예외를 던지는데, 전용 처리가 없어 일반 예외로 떨어져 500
+   * 「예기치 않은 오류」가 났다 — 쿼리 파라미터 누락(WD-405)과 같은 모양이고, 같은 자리의 'abc' 가 400(#219)인 것과도 맞춘다.
+   *
+   * <p>단, 변환 전부터 변수가 없는 경우({@code missingAfterConversion=false})는 컨트롤러 매핑 템플릿과
+   * {@code @PathVariable} 이 어긋난 코드 결함이라 400 으로 숨기지 않고 기존 일반 500 처리(오류 로그 포함)에 그대로 넘긴다. Spring 기본
+   * 처리도 이 경우 500 이다.
+   */
+  @ExceptionHandler(MissingPathVariableException.class)
+  public ResponseEntity<ErrorResponse> handleMissingPathVariable(
+      MissingPathVariableException ex, HttpServletRequest request) {
+    if (!ex.isMissingAfterConversion()) {
+      return handleException(ex, request);
+    }
+    Map<String, String> fieldErrors =
+        Map.of(ex.getVariableName(), String.format("'%s' 값이 비어 있습니다.", ex.getVariableName()));
     ErrorResponse response =
         buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
     return json(HttpStatus.BAD_REQUEST, response);

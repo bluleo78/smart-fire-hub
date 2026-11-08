@@ -445,4 +445,21 @@ class DatasetControllerTest {
                 .content(objectMapper.writeValueAsString(atLimit)))
         .andExpect(status().isCreated());
   }
+
+  /**
+   * GET /datasets/%20 — 공백만 있는 id 는 변환 결과가 null 이라 MissingPathVariableException 이 난다. 500 이 아니라 400
+   * + 변수명 안내이고 서비스까지 가지 않는다 (WD-567).
+   */
+  @Test
+  void getDataset_blankId_returns400NotServerError() throws Exception {
+    mockMvc
+        .perform(
+            get(java.net.URI.create("/api/v1/datasets/%20"))
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.message").value("Validation failed"))
+        .andExpect(jsonPath("$.errors.id").value("'id' 값이 비어 있습니다."));
+    verify(datasetService, never()).getDatasetById(any(), any());
+  }
 }
