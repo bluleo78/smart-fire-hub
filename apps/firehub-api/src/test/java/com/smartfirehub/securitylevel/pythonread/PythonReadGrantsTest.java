@@ -13,6 +13,7 @@ import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrantBackend.NarrowResult;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -96,24 +97,56 @@ class PythonReadGrantsTest {
   }
 
   /**
-   * 등급 정의 변경 직후의 세션 끊기(WD-624) — PG 테넌트는 PG 구현으로만 정확히 한 번 가고 GRANT 동기화는 부르지 않는다(넓히는 GRANT 는 실행기 몫).
+   * 커밋 직전 토큰 무효화·커밋 직후 세션 끊기(WD-624)는 백엔드를 묻지 않는다 — 커밋 콜백에서 백엔드 조회(캐시 미스)가 바깥 커넥션으로 DB 를 읽지 않게. 토큰
+   * 번호는 Tibero 구현(행이 없는 PG 테넌트는 변화 없음), 세션 끊기는 PG 구현(Tibero 테넌트는 끊을 세션 없음)으로 늘 간다.
    */
   @Test
-  void pgTenant_terminateSlotSessionsForLevelsChange_goesToPgOnly() {
-    grants.terminateSlotSessionsForLevelsChange();
-    verify(pg).terminateSlotSessionsForLevelsChange();
-    verifyNoMoreInteractions(pg);
-    verifyNoInteractions(tibero);
+  void invalidateTokensAndTerminate_neverConsultBackend() {
+    tiberoTenant();
+    when(pg.terminateSlotSessionsAfterCommit(5L, Set.of(1, 2))).thenReturn(true);
+
+    assertThat(grants.invalidateScriptTokensInCurrentTx(5L)).isTrue();
+    assertThat(grants.terminateSlotSessionsAfterCommit(5L, Set.of(1, 2))).isTrue();
+
+    verify(tibero).bumpScriptTokenEpochInCurrentTx(5L);
+    verify(pg).terminateSlotSessionsAfterCommit(5L, Set.of(1, 2));
+    verifyNoInteractions(resolver);
+    verifyNoMoreInteractions(pg, tibero);
   }
 
-  /** Tibero 테넌트는 Tibero 구현(아무것도 하지 않음)으로 간다 — PG 의 세션 끊기로 새지 않는다. */
+  /** 커밋 직전 좁히기는 현재 테넌트의 백엔드로만 간다(커밋 전이라 백엔드 조회가 트랜잭션에 정상 합류한다). */
   @Test
-  void tiberoTenant_terminateSlotSessionsForLevelsChange_goesToTiberoOnly() {
+  void narrowDatasetInCurrentTx_goesToTenantBackendOnly() {
+    NarrowResult ok = NarrowResult.confirmed(Set.of(1));
+    when(pg.narrowDatasetInCurrentTx(42L, 1L, 2L)).thenReturn(ok);
+    assertThat(grants.narrowDatasetInCurrentTx(42L, 1L, 2L)).isEqualTo(ok);
+    verify(pg).narrowDatasetInCurrentTx(42L, 1L, 2L);
+    verifyNoInteractions(tibero);
+
     tiberoTenant();
-    grants.terminateSlotSessionsForLevelsChange();
-    verify(tibero).terminateSlotSessionsForLevelsChange();
-    verifyNoMoreInteractions(tibero);
-    verifyNoInteractions(pg);
+    NarrowResult no = NarrowResult.unconfirmed(Set.of(1));
+    when(tibero.narrowDatasetInCurrentTx(42L, 1L, 2L)).thenReturn(no);
+    assertThat(grants.narrowDatasetInCurrentTx(42L, 1L, 2L)).isEqualTo(no);
+    verify(tibero).narrowDatasetInCurrentTx(42L, 1L, 2L);
+    verifyNoMoreInteractions(pg, tibero);
+  }
+
+  /**
+   * 리뷰 4+5 — 커밋 직전 작업은 게시자에게 예외를 내지 않는다. 좁히기 예외(백엔드 조회 실패 포함)는 "확인 못 함 + 모든 슬롯" 으로, 토큰 무효화 예외는
+   * false 로 바뀐다(부르는 리스너가 대체 경로로 막는다).
+   */
+  @Test
+  void beforeCommitWork_neverThrows_failsClosed() {
+    when(pg.narrowDatasetInCurrentTx(42L, 1L, 2L)).thenThrow(new IllegalStateException("boom"));
+    NarrowResult r = grants.narrowDatasetInCurrentTx(42L, 1L, 2L);
+    assertThat(r.confirmed()).isFalse();
+    assertThat(r.exposedSlots()).isEqualTo(PythonReadSlots.ALL_SLOTS);
+
+    when(resolver.backendFor(5L)).thenThrow(new IllegalStateException("db down"));
+    assertThat(grants.narrowDatasetInCurrentTx(42L, 1L, 2L).needsFallback()).isTrue();
+
+    when(tibero.bumpScriptTokenEpochInCurrentTx(5L)).thenThrow(new IllegalStateException("x"));
+    assertThat(grants.invalidateScriptTokensInCurrentTx(5L)).isFalse();
   }
 
   /** 테넌트 컨텍스트가 없으면 PG 구현이 예전 그대로(예외·로그) 처리하게 맡긴다 — Tibero 로 새지 않는다. */

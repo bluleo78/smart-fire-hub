@@ -6,6 +6,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
@@ -21,6 +24,7 @@ import com.smartfirehub.global.platformdb.postgres.PostgresPlatformLocks;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrantBackend.NarrowResult;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
@@ -900,6 +904,180 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
                 com.smartfirehub.dataset.storage.tibero.TiberoDdlSql.revokeSelectFromSlot(
                     SCHEMA, "T", "GENIA_T1_S11"))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  /**
+   * 커밋 직전 좁히기(WD-624) — 등급 변경 트랜잭션 안에서(아직 커밋 전인 새 등급을 읽고) 그 테이블의 남는 슬롯 권한만 회수하고 부족한 GRANT 는 걸지 않는다.
+   * 다른 테이블은 건드리지 않는다.
+   */
+  @Test
+  void narrowDatasetInCurrentTx_revokesExcessOnly_seeingUncommittedLevel() {
+    String t = table("nar", "공개");
+    String other = table("noth", "민감");
+    sync.syncTenant();
+    grants.removeIf(g -> g.startsWith(other.toUpperCase() + "|")); // 다른 테이블은 부족한 상태
+    executed.clear();
+    long id = datasets.get(0);
+
+    long from = fx.levelId("공개");
+    long to = fx.levelId("민감");
+    NarrowResult narrowed =
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> {
+              dsl.update(DATASET)
+                  .set(DATASET.SECURITY_LEVEL_ID, to)
+                  .where(DATASET.ID.eq(id))
+                  .execute();
+              return sync.narrowDatasetInCurrentTx(id, from, to);
+            });
+
+    assertThat(narrowed.confirmed()).isTrue();
+    assertThat(narrowed.exposedSlots()).isEqualTo(Set.of(1, 2));
+    assertThat(executed).containsExactlyInAnyOrder(revokeSql(t, 1), revokeSql(t, 2));
+    assertThat(slotsOf(other)).as("다른 테이블·부족한 GRANT 는 그대로(넓히기는 실행기 몫)").isEmpty();
+  }
+
+  /** 넓어지는 변경이면 회수할 것이 없어 아무 문장도 보내지 않는다(방향을 따지지 않아도 저절로 그렇게 된다). */
+  @Test
+  void narrowDatasetInCurrentTx_wideningChange_sendsNothing() {
+    String t = table("wid", "민감");
+    sync.syncTenant();
+    executed.clear();
+    long id = datasets.get(0);
+
+    long from = fx.levelId("민감");
+    long to = fx.levelId("공개");
+    NarrowResult narrowed =
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> {
+              dsl.update(DATASET)
+                  .set(DATASET.SECURITY_LEVEL_ID, to)
+                  .where(DATASET.ID.eq(id))
+                  .execute();
+              return sync.narrowDatasetInCurrentTx(id, from, to);
+            });
+
+    assertThat(narrowed.confirmed()).isTrue();
+    assertThat(narrowed.needsFallback()).as("넓어지는 변경 — 막을 슬롯 없음").isFalse();
+    assertThat(executed).isEmpty();
+    assertThat(slotsOf(t)).isEqualTo(range(3, 10));
+  }
+
+  /** 회수 문장이 실패하면 "확인 못 함" + 막을 슬롯 {1,2} — 리스너가 대체 경로로 막는다. */
+  @Test
+  void narrowDatasetInCurrentTx_revokeFailure_returnsUnconfirmedWithExposedSlots() {
+    table("rf", "공개");
+    sync.syncTenant();
+    long id = datasets.get(0);
+    failingFragments.add("REVOKE");
+    long from = fx.levelId("공개");
+    long to = fx.levelId("민감");
+
+    NarrowResult narrowed =
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> {
+              dsl.update(DATASET)
+                  .set(DATASET.SECURITY_LEVEL_ID, to)
+                  .where(DATASET.ID.eq(id))
+                  .execute();
+              return sync.narrowDatasetInCurrentTx(id, from, to);
+            });
+
+    assertThat(narrowed.confirmed()).isFalse();
+    assertThat(narrowed.exposedSlots()).isEqualTo(Set.of(1, 2));
+  }
+
+  /**
+   * 대체 경로 뒷정리(리뷰 1) — 커밋 직전 번호 올리기가 실패했으면({@code tokensInvalidated=false}) 번호를 올리고, 잠금 안에서 그 테이블을
+   * 회수한다. 커밋 직전에 이미 올렸고 회수도 성공하면 번호를 다시 올리지 않는다(토큰이 테넌트 단위라 불필요한 무효화는 모든 실행을 끊는다).
+   */
+  @Test
+  void syncDatasetAfterUnconfirmedNarrowing_revokes_andBumpsEpochOnlyWhenNeeded() {
+    String t = table("cln", "공개");
+    sync.syncTenant();
+    long id = datasets.get(0);
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.update(DATASET)
+                .set(DATASET.SECURITY_LEVEL_ID, fx.levelId("민감"))
+                .where(DATASET.ID.eq(id))
+                .execute());
+
+    sync.syncDatasetAfterUnconfirmedNarrowing(id, Set.of(1, 2), true);
+    assertThat(slotsOf(t)).isEqualTo(range(3, 10));
+    verify(repository, never()).incrementScriptTokenEpoch(DEFAULT_TEST_TENANT_ID);
+
+    sync.syncDatasetAfterUnconfirmedNarrowing(id, Set.of(1, 2), false);
+    verify(repository, times(1)).incrementScriptTokenEpoch(DEFAULT_TEST_TENANT_ID);
+  }
+
+  /** 뒷정리에서도 회수가 실패해 슬롯에 권한이 남으면 번호를 올려 실행 중 스크립트를 막는다. */
+  @Test
+  void syncDatasetAfterUnconfirmedNarrowing_revokeFailure_bumpsEpoch() {
+    table("clf", "공개");
+    sync.syncTenant();
+    long id = datasets.get(0);
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.update(DATASET)
+                .set(DATASET.SECURITY_LEVEL_ID, fx.levelId("민감"))
+                .where(DATASET.ID.eq(id))
+                .execute());
+    failingFragments.add("REVOKE");
+
+    sync.syncDatasetAfterUnconfirmedNarrowing(id, Set.of(1, 2), true);
+    verify(repository, times(1)).incrementScriptTokenEpoch(DEFAULT_TEST_TENANT_ID);
+  }
+
+  /** 트랜잭션 밖 호출은 잠금·회수가 아무것도 지키지 못하므로 거부한다. */
+  @Test
+  void narrowAndBump_outsideTransaction_throw() {
+    assertThatThrownBy(() -> sync.narrowDatasetInCurrentTx(1L, null, 1L))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> sync.bumpScriptTokenEpochInCurrentTx(DEFAULT_TEST_TENANT_ID))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  /**
+   * 커밋 직전 토큰 번호 올리기는 <b>부른 쪽 트랜잭션</b>에서 한다(새 트랜잭션이 아니다 — 등급 변경과 함께 커밋·롤백되고 커넥션을 더 쓰지 않는다). 올림 시점의
+   * 트랜잭션 동기화에 등록한 콜백이 바깥 트랜잭션의 커밋에서 불리는 것으로 "같은 트랜잭션" 을 고정한다.
+   */
+  @Test
+  void bumpScriptTokenEpochInCurrentTx_runsInCallersTransaction() {
+    boolean[] committedWithOuter = {false};
+    when(repository.incrementScriptTokenEpoch(DEFAULT_TEST_TENANT_ID))
+        .thenAnswer(
+            inv -> {
+              org.springframework.transaction.support.TransactionSynchronizationManager
+                  .registerSynchronization(
+                      new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                          committedWithOuter[0] = true;
+                        }
+                      });
+              return java.util.Optional.of(3L);
+            });
+    boolean[] committedBeforeOuterEnds = {true};
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> {
+          assertThat(sync.bumpScriptTokenEpochInCurrentTx(DEFAULT_TEST_TENANT_ID)).contains(3L);
+          committedBeforeOuterEnds[0] = committedWithOuter[0];
+        });
+    assertThat(committedBeforeOuterEnds[0]).as("새 트랜잭션이면 반환 전에 이미 커밋됐다").isFalse();
+    assertThat(committedWithOuter[0]).as("바깥 트랜잭션 커밋 때 함께 커밋").isTrue();
   }
 
   private int levelRank(String name) {

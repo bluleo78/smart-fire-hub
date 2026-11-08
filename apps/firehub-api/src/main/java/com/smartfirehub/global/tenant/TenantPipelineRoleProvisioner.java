@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.name;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -78,18 +79,23 @@ public class TenantPipelineRoleProvisioner {
   }
 
   /**
-   * 테넌트 PYTHON 읽기 슬롯 롤({@code pipeline_py_t{id}_s1..s10})의 활성 세션을 모두 끊는다 — 등급 정의 변경 재동기화가 새 GRANT 를
-   * 커밋하기 전에 부른다(PythonReadGrantSync, WD-29 CR2). 런타임 롤(app_tenant)은 슬롯 롤 세션을 끊을 권한이
-   * 없어(pg_signal_backend·슬롯 롤 멤버 아님, 실측) 슬롯 롤 수명을 맡은 이 클래스의 소유자 연결로 한다.
+   * 테넌트 PYTHON 읽기 슬롯 롤({@code pipeline_py_t{id}_s{k}}) 중 주어진 슬롯 번호(1~10)의 활성 세션을 끊는다 — 등급 변경 뒤 넓히는
+   * GRANT 전에 부른다(PythonReadSessionTerminator, WD-29 CR2·WD-624). 슬롯 단위인 이유: 데이터셋 하나의 등급 상향을 확인하지
+   * 못했을 때 그 테이블을 더는 읽으면 안 되는 슬롯만 끊어, 같은 테넌트의 다른 슬롯 실행은 건드리지 않기 위해서다. 빈 집합이면 아무것도 하지 않는다. 런타임
+   * 롤(app_tenant)은 슬롯 롤 세션을 끊을 권한이 없어(pg_signal_backend·슬롯 롤 멤버 아님, 실측) 슬롯 롤 수명을 맡은 이 클래스의 소유자 연결로
+   * 한다.
    *
    * <p>대상은 정확한 롤 이름 목록으로만 고른다(LIKE 금지 — 다른 테넌트 롤 오인 방지). {@code pg_terminate_backend(pid, 5000)} 은
    * 대상이 실제로 끝날 때까지(최대 5초) 기다려, 호출자가 이 뒤에 커밋하는 GRANT 를 그 세션이 보지 못한다. false 는 시간 초과이거나 조회와 종료 사이에 이미
-   * 끝난 세션(경고만)이라, 아직 살아 있는지 다시 본다. 남아 있거나 권한이 없으면 예외 — 호출자 트랜잭션(넓히는 GRANT)을 되돌린다(fail-closed).
+   * 끝난 세션(경고만)이라, 아직 살아 있는지 다시 본다. 남아 있거나 권한이 없으면 예외 — 호출자가 넓히는 GRANT 를 걸지 않는다(fail-closed).
    *
    * @return 끊은(종료 신호를 보낸) 세션 수
    */
-  public int terminatePythonReadSessions(long tenantId) {
-    String[] roles = TenantPipelineRole.pythonReadRoleNames(tenantId).toArray(new String[0]);
+  public int terminatePythonReadSessions(long tenantId, Set<Integer> slots) {
+    if (slots.isEmpty()) {
+      return 0;
+    }
+    String[] roles = TenantPipelineRole.pythonReadRoleNames(tenantId, slots).toArray(new String[0]);
     var results =
         ownerDsl.fetch(
             "select pid, pg_terminate_backend(pid, 5000) from pg_stat_activity"

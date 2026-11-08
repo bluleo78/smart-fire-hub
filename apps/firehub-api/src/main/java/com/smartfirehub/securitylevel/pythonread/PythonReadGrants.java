@@ -4,8 +4,16 @@ import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrantBackend.NarrowResult;
+import java.util.Set;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * PYTHON 읽기 슬롯 GRANT 동기화의 <b>백엔드 분기 파사드</b>(WD-78). 호출부(러너·등급 이벤트 리스너·야간 스케줄러)는 이 클래스만 부르고, 현재 테넌트의
@@ -22,11 +30,54 @@ public class PythonReadGrants {
   private final PythonReadGrantSync pg;
   private final TiberoPythonReadGrantSync tibero;
 
+  /**
+   * 커밋 직전 작업(좁히기·토큰 무효화)을 감싸는 savepoint 템플릿(WD-624). 그 안의 예외는 savepoint 까지만 되돌려 바깥(게시자) 트랜잭션을 살린다 —
+   * PG 는 문장 하나가 실패하면 트랜잭션 전체가 aborted 가 되므로 savepoint 없이는 뒤따르는 대체 경로 문장도, 게시자의 커밋도 실패한다. null 이면(단위
+   * 테스트용 생성자) 감싸지 않고 바로 부른다.
+   */
+  private final TransactionTemplate savepoint;
+
+  @Autowired
   public PythonReadGrants(
+      DataStoreResolver resolver,
+      PythonReadGrantSync pg,
+      TiberoPythonReadGrantSync tibero,
+      PlatformTransactionManager txManager) {
+    this.resolver = resolver;
+    this.pg = pg;
+    this.tibero = tibero;
+    TransactionTemplate nested = new TransactionTemplate(txManager);
+    nested.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
+    this.savepoint = nested;
+  }
+
+  /** 단위 테스트용 — savepoint 없이 백엔드를 바로 부른다. */
+  PythonReadGrants(
       DataStoreResolver resolver, PythonReadGrantSync pg, TiberoPythonReadGrantSync tibero) {
     this.resolver = resolver;
     this.pg = pg;
     this.tibero = tibero;
+    this.savepoint = null;
+  }
+
+  /**
+   * 커밋 직전 작업을 savepoint 안에서 돌린다 — 예외는 savepoint 를 되돌린 뒤 그대로 던진다(부르는 쪽이 삼켜 대체 경로로 간다). {@code
+   * rollbackIf} 가 결과를 보고 true 면 예외 없이도 savepoint 를 되돌린다: 백엔드가 문장 오류를 잡아 "확인 못 함" 으로 돌려준 경우, 그 오류로
+   * PG 서브트랜잭션이 aborted 로 남았을 수 있어 RELEASE 대신 ROLLBACK TO SAVEPOINT 로 끝내야 게시자 커밋이 살아남는다(대체 경로로 가므로
+   * 되돌려도 잃는 것이 없다).
+   */
+  private <T> T inSavepoint(Supplier<T> work, Predicate<T> rollbackIf) {
+    if (savepoint == null) {
+      return work.get();
+    }
+    return savepoint.execute(
+        status -> {
+          T result = work.get();
+          if (rollbackIf.test(result)) {
+            status.setRollbackOnly();
+          }
+          return result;
+        });
   }
 
   /**
@@ -64,12 +115,61 @@ public class PythonReadGrants {
   }
 
   /**
-   * 등급 정의 변경 직후, 무거운 전체 동기화보다 <b>먼저</b> 실행 중인 슬롯 연결만 끊는다(WD-624) — PG 는 끊고 Tibero 는 아무것도 하지 않는다
-   * ({@link PythonReadGrantBackend#terminateSlotSessionsForLevelsChange}). 등급 이벤트 리스너가 커밋 콜백에서 부른다.
-   * 백엔드 조회(캐시 미스)는 그 시점에 아직 스레드에 묶인 바깥 커넥션을 그대로 쓴다 — 예전 동기 리스너도 같은 자리에서 조회했다.
+   * 실행 중 스크립트의 옛 읽기 자격을 <b>커밋 직전, 현재 트랜잭션에서</b> 무효로 만든다(WD-624) — Tibero 스크립트 토큰 세대 번호를 올린다({@link
+   * TiberoPythonReadGrantSync#bumpScriptTokenEpochInCurrentTx}). 백엔드를 묻지 않는다: PG 테넌트는 저장소 행이 없어
+   * 아무것도 바뀌지 않는다.
+   *
+   * <p><b>게시자를 절대 롤백시키지 않는다.</b> savepoint 안에서 돌리고, 실패하면 savepoint 만 되돌린 뒤 ERROR 로그와 false 를 낸다 —
+   * 부르는 쪽이 대체 경로(커밋 뒤 실행기의 번호 올리기)로 막는다.
+   *
+   * @return 이 트랜잭션에서 번호를 올렸으면(또는 올릴 행이 없는 PG 테넌트면) true, 실패하면 false
    */
-  public void terminateSlotSessionsForLevelsChange() {
-    delegate().terminateSlotSessionsForLevelsChange();
+  public boolean invalidateScriptTokensInCurrentTx(long tenantId) {
+    try {
+      inSavepoint(() -> tibero.bumpScriptTokenEpochInCurrentTx(tenantId), r -> false);
+      return true;
+    } catch (RuntimeException e) {
+      log.error("커밋 직전 스크립트 토큰 무효화 실패 — 커밋 뒤 대체 경로로 막는다: tenant={}", tenantId, e);
+      return false;
+    }
+  }
+
+  /**
+   * 커밋 직후(응답 전) 주어진 PG 슬롯 롤 세션을 상한 안에서 끊는다(WD-624, {@link
+   * PythonReadGrantSync#terminateSlotSessionsAfterCommit}). 백엔드를 묻지 않는다 — 커밋 콜백에서 백엔드 조회(캐시 미스)가 바깥
+   * 커넥션을 다시 쓰지 않게. Tibero 테넌트는 PG 슬롯 롤 세션이 없어 끊을 것이 없다(조회 한 번).
+   *
+   * @return 상한 안에 끊었으면 true(실패·시간 초과는 로그와 미확인 표식으로 처리하고 false)
+   */
+  public boolean terminateSlotSessionsAfterCommit(long tenantId, Set<Integer> slots) {
+    return pg.terminateSlotSessionsAfterCommit(tenantId, slots);
+  }
+
+  /**
+   * 데이터셋 등급 변경 트랜잭션의 커밋 직전, 그 트랜잭션에서 남는 슬롯 권한만 회수한다(WD-624, {@link
+   * PythonReadGrantBackend#narrowDatasetInCurrentTx}). 커밋 전이라 백엔드 조회는 이 트랜잭션에 정상 합류한다.
+   *
+   * <p><b>게시자를 절대 롤백시키지 않는다.</b> savepoint 안에서 돌리고, 어떤 예외든 savepoint 만 되돌린 뒤 "확인 못 함 + 모든 슬롯" 으로 바꿔
+   * 돌려준다 — 등급 이전값을 알 수 없을 수도 있으니 가장 넓게 막는다(fail-closed).
+   */
+  public NarrowResult narrowDatasetInCurrentTx(long datasetId, Long fromLevelId, long toLevelId) {
+    try {
+      return inSavepoint(
+          () -> delegate().narrowDatasetInCurrentTx(datasetId, fromLevelId, toLevelId),
+          r -> !r.confirmed());
+    } catch (RuntimeException e) {
+      log.error("커밋 직전 데이터셋 등급 좁히기 실패 — 대체 경로로 막는다: dataset={}", datasetId, e);
+      return NarrowResult.unconfirmed(PythonReadSlots.ALL_SLOTS);
+    }
+  }
+
+  /**
+   * 커밋 직전 좁히기를 확인하지 못한 데이터셋 등급 변경의 뒷정리(실행기, WD-624, {@link
+   * PythonReadGrantBackend#syncDatasetAfterUnconfirmedNarrowing}). 실패는 예외 — 실행기 작업이 로그로 남긴다.
+   */
+  public void syncDatasetAfterUnconfirmedNarrowing(
+      long datasetId, Set<Integer> exposedSlots, boolean tokensInvalidated) {
+    delegate().syncDatasetAfterUnconfirmedNarrowing(datasetId, exposedSlots, tokensInvalidated);
   }
 
   /** 데이터셋 하나의 테이블만 재동기화. */

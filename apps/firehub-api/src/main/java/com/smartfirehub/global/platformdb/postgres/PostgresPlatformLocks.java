@@ -9,6 +9,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Component;
@@ -34,6 +35,13 @@ public class PostgresPlatformLocks implements PlatformLocks {
   /** 문자열 키 트랜잭션 잠금 — 키의 64비트 해시로 잠근다. */
   static final String XACT_LOCK_STRING_SQL =
       "SELECT pg_advisory_xact_lock(hashtextextended({0}, 0))";
+
+  /** 문자열 키 트랜잭션 잠금 시도(기다리지 않음) — {@link #XACT_LOCK_STRING_SQL} 과 같은 키 식. */
+  static final String TRY_XACT_LOCK_STRING_SQL =
+      "SELECT pg_try_advisory_xact_lock(hashtextextended({0}, 0))";
+
+  /** 시도형 트랜잭션 잠금의 재시도 간격. */
+  private static final long TRY_XACT_LOCK_POLL_MILLIS = 50;
 
   /** 정수 키 트랜잭션 잠금 — 키를 그대로 잠금 id 로 쓴다. */
   static final String XACT_LOCK_LONG_SQL = "SELECT pg_advisory_xact_lock({0})";
@@ -61,6 +69,39 @@ public class PostgresPlatformLocks implements PlatformLocks {
   @Override
   public void xactLock(long key) {
     dsl.execute(XACT_LOCK_LONG_SQL, val(key));
+  }
+
+  /** 시도형 트랜잭션 잠금 — {@link #tryXactLock(DSLContext, String, Duration)} 를 메인 DSL(호출자 트랜잭션)로 부른다. */
+  @Override
+  public boolean tryXactLock(String key, Duration maxWait) {
+    return tryXactLock(dsl, key, maxWait);
+  }
+
+  /**
+   * 주어진 DSL 의 현재 트랜잭션에서 문자열 키 트랜잭션 잠금을 최대 {@code maxWait} 동안 시도한다 — {@code
+   * pg_try_advisory_xact_lock} 을 짧은 간격으로 되풀이한다. 키 식은 {@link #XACT_LOCK_STRING_SQL} 과 같다(같은 잠금).
+   * PYTHON 읽기 동기화처럼 메인 DSL 이 아닌 연결(분리 설치의 데이터 저장소)에서 같은 잠금을 시도하는 곳도 이 한 구현을 쓴다(WD-624).
+   *
+   * <p>기다리는 문장 + lock_timeout 을 쓰지 않는 이유: 시간 초과된 문장은 호출자 트랜잭션 전체를 실패 상태로 만든다.
+   *
+   * @return 잡았으면 true(트랜잭션 끝까지 유지), 시간 안에 못 잡았거나 인터럽트되면 false
+   */
+  public static boolean tryXactLock(DSLContext ctx, String key, Duration maxWait) {
+    long deadline = System.nanoTime() + maxWait.toNanos();
+    while (true) {
+      if (Boolean.TRUE.equals(ctx.fetchValue(TRY_XACT_LOCK_STRING_SQL, val(key)))) {
+        return true;
+      }
+      if (System.nanoTime() >= deadline) {
+        return false;
+      }
+      try {
+        Thread.sleep(TRY_XACT_LOCK_POLL_MILLIS);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return false;
+      }
+    }
   }
 
   @Override

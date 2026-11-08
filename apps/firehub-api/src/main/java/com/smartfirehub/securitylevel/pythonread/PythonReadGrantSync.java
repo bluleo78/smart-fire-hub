@@ -2,13 +2,15 @@ package com.smartfirehub.securitylevel.pythonread;
 
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.global.datastore.DataStoreDb;
+import com.smartfirehub.global.datastore.DataStoreDbConfig;
+import com.smartfirehub.global.platformdb.postgres.PostgresPlatformLocks;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
-import com.smartfirehub.global.tenant.TenantPipelineRoleProvisioner;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -17,7 +19,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -25,10 +27,12 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.Result;
 import org.jooq.impl.DSL;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -79,11 +83,11 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   private final DSLContext dsl;
 
   /**
-   * 슬롯 롤 세션 종료 위임처(소유자 롤 app 연결을 가진 프로비저너). 런타임 롤(app_tenant)은 pg_signal_backend 멤버도, 슬롯 롤 멤버도 아니어서
-   * 슬롯 롤 세션을 끊을 수 없다(실측) — 그 권한을 런타임 롤에 주는 것은 클러스터 전역 권한 확대라 하지 않는다. 슈퍼유저 풀을 이 클래스에 직접 주입하지 않는 것은
-   * SchemaOwnerDataSourceExposureGuardTest 의 노출 제한 때문이다(슬롯 롤 수명은 이미 그 프로비저너 몫).
+   * 슬롯 롤 세션 끊기 장치(WD-624) — 런타임 롤(app_tenant)은 pg_signal_backend 멤버도, 슬롯 롤 멤버도 아니어서 슬롯 롤 세션을 끊을 수
+   * 없다(실측). 그래서 소유자 연결을 가진 프로비저너가 끊되, 그 대기(소유자 풀 크기 1·세션당 최대 5초)가 플랫폼 커넥션·동기화 잠금을 쥔 채 길어지지 않게 전용
+   * 스레드에서 돌리고 여기서는 상한만큼만 기다린다.
    */
-  private final TenantPipelineRoleProvisioner roleProvisioner;
+  private final PythonReadSessionTerminator terminator;
 
   private final SecurityLevelRepository levelRepository;
   // 플랫폼 테이블(dataset) 조회 — 데이터 저장소 DSL 이 아니라 리포지토리로 읽는다(WD-494).
@@ -93,24 +97,44 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   /** 커밋 뒤 테이블 동기화를 돌리는 전용 실행기 — 커밋 콜백 스레드가 커넥션 2개를 쥐지 않게 한다(WD-594). */
   private final PythonReadSyncExecutor afterCommitExecutor;
 
-  /** 테넌트 → 마지막으로 슬롯 롤 세션을 끊은 시각(epoch ms). 러너가 끊긴 스텝의 실패 문구를 명확히 하는 데만 쓴다(판정에는 쓰지 않는다). */
-  private final Map<Long, Long> slotSessionsTerminatedAt = new ConcurrentHashMap<>();
+  /**
+   * 실행기·실행 준비가 세션 끊기를 기다리는 상한 — 이 기다림 동안에는 커넥션도 테넌트 동기화 잠금도 쥐지 않는다(WD-624, 남을 막지 않는다). 넘기면 넓히지
+   * 않는다(전체 동기화) / 실행을 거부한다(실행 준비).
+   */
+  static final Duration TERMINATE_WAIT = Duration.ofSeconds(10);
+
+  /** 커밋 콜백이 세션 끊기를 기다리는 상한 — 바깥 플랫폼 커넥션을 쥐고 기다리므로 짧게 둔다(넘기면 미확인 표식, WD-624). */
+  static final Duration AFTER_COMMIT_TERMINATE_WAIT = Duration.ofSeconds(3);
+
+  /** 커밋 직전 좁히기가 테넌트 동기화 잠금을 기다리는 상한 — 사용자 트랜잭션의 커넥션을 쥐고 기다리므로 짧게 둔다(WD-624). */
+  static final Duration NARROW_LOCK_WAIT = Duration.ofSeconds(3);
+
+  /** 등급 정의 변경 전체 동기화의 "끊기 → 잠금 안 재확인" 시도 횟수 — 끊은 뒤에도 슬롯 세션이 계속 다시 붙으면 이번에는 넓히지 않는다. */
+  static final int LEVELS_SYNC_ATTEMPTS = 3;
+
+  /**
+   * 분리 설치(데이터 저장소가 플랫폼 DB 와 다른 DB)인가 — 커밋 직전 좁히기를 "확인 못 함" 으로 다룬다({@link
+   * #narrowDatasetInCurrentTx}).
+   */
+  private final boolean separateDataStore;
 
   /**
    * txManager 는 @Primary TenantAwareTransactionManager — 트랜잭션 시작 때 TenantContext 를 RLS GUC 로 주입한다.
    */
   public PythonReadGrantSync(
       @DataStoreDb DSLContext dsl,
-      TenantPipelineRoleProvisioner roleProvisioner,
+      PythonReadSessionTerminator terminator,
       SecurityLevelRepository levelRepository,
       DatasetRepository datasetRepository,
       PlatformTransactionManager txManager,
-      PythonReadSyncExecutor afterCommitExecutor) {
+      PythonReadSyncExecutor afterCommitExecutor,
+      @Value("${" + DataStoreDbConfig.SEPARATE_PROPERTY + ":false}") boolean separateDataStore) {
     this.dsl = dsl;
     this.afterCommitExecutor = afterCommitExecutor;
-    this.roleProvisioner = roleProvisioner;
+    this.terminator = terminator;
     this.levelRepository = levelRepository;
     this.datasetRepository = datasetRepository;
+    this.separateDataStore = separateDataStore;
     this.requiresNew = new TransactionTemplate(txManager);
     this.requiresNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
@@ -118,62 +142,109 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   /** 현재 테넌트 전체 재동기화. 실패는 예외(호출부가 로그/실패를 정한다). */
   @Override
   public SyncResult syncTenant() {
-    return requiresNew.execute(status -> syncInTx(null, null, false));
+    return requiresNew.execute(status -> syncInTx(null, null));
   }
 
   /**
-   * 등급 정의 변경(추가·수정·삭제·순서) 뒤 테넌트 전체 재동기화 — <b>새 GRANT 를 커밋하기 전에</b> 그 테넌트 슬롯 롤의 활성 세션을 모두 끊는다(CR2).
+   * 등급 정의 변경(추가·수정·삭제·순서) 뒤 테넌트 전체 재동기화 — 넓히는 GRANT 를 커밋하기 전에 그 테넌트 슬롯 롤의 활성 세션이 없게 한다(CR2).
    *
    * <p><b>왜 끊는가.</b> 슬롯 k 는 "rank 오름차순 k 번째 등급까지"다. 순서 변경·삭제(위치 당김)·허용 목록 해제는 같은 슬롯 롤에 새 등급 테이블을
    * GRANT 한다. PostgreSQL 은 매 쿼리마다 권한을 보므로, 옛 위치로 슬롯을 받아 실행 중이던 스크립트(최대 30분)가 다음 쿼리부터 자격 밖 등급을 읽는다.
-   * 회수(좁아짐)는 다음 쿼리부터 막히므로 안전하고, 위험한 쪽은 넓어짐뿐이다.
+   * 이벤트는 무엇이 바뀌었는지 싣지 않아(이름만 바꾼 UPDATED 포함) 등급 정의 변경마다 끊는다 — 드문 관리 작업이라 수용한다. 커밋 콜백이 응답 전에 이미 한 번
+   * 끊었고, 여기서 다시 보는 이유는 커밋 직전에 옛 등급으로 슬롯을 고른 실행 준비가 그 뒤에 스크립트를 접속시켰을 수 있기 때문이다.
    *
-   * <p><b>왜 이 동기화의 GRANT 차이가 아니라 이벤트 기준으로 전부 끊는가.</b> 리스너는 커밋 후에 잠금을 다투므로, 그 사이 실행 준비·일 1회 동기화가 새
-   * 경계의 GRANT 를 먼저 걸 수 있다 — 그러면 이 동기화의 차이는 비어 아무도 끊지 않는데 실행 중 세션은 이미 넓어져 있다. 이벤트는 무엇이 바뀌었는지 싣지
-   * 않아(이름만 바꾼 UPDATED 포함) 등급 정의 변경마다 끊는다 — 드문 관리 작업이라 수용한다.
-   *
-   * <p>끊기에 실패하면(권한 없음·시간 초과) 예외로 이 동기화 트랜잭션을 되돌린다 — 이 경로가 넓힌 GRANT 는 커밋되지 않는다.
+   * <p><b>왜 잠금 밖에서 끊고 잠금 안에서는 확인만 하는가(WD-624).</b> 끊기는 소유자 풀(크기 1)·세션당 최대 5초를 기다린다. 그 기다림을 테넌트 동기화
+   * 잠금과 플랫폼 커넥션을 쥔 채 하면, 그 잠금을 기다리는 실행 준비들이 각자 플랫폼 커넥션을 쥔 채 함께 멈춘다. 그래서 (1) 커넥션·잠금 없이 끊고 ({@link
+   * #TERMINATE_WAIT} 상한, 넘기면 예외 = 넓히지 않음), (2) 새 트랜잭션에서 잠금을 잡은 뒤 슬롯 세션이 <b>하나도 없을 때만</b> 넓힌다. 그새 다시
+   * 붙은 세션이 있으면 이 트랜잭션은 아무것도 바꾸지 않고 끝내고 (1) 부터 다시 한다({@link #LEVELS_SYNC_ATTEMPTS} 번). 그래도 남으면 예외 —
+   * 이번에는 넓히지 않는다(fail-closed). 넓히지 못해도 기능은 유지된다: 실행 준비가 자기 슬롯을 계산값대로(넓히기 포함) 맞춘 뒤 스크립트를 띄운다.
    */
   @Override
   public SyncResult syncTenantForLevelsChange() {
-    return requiresNew.execute(status -> syncInTx(null, null, true));
+    long tenantId = TenantContext.require("등급 정의 변경 전체 동기화");
+    return killThenApplyUnderLock(tenantId, PythonReadSlots.ALL_SLOTS, null);
   }
 
   /**
-   * 그 테넌트 슬롯 롤의 활성 세션을 지금 바로 모두 끊는다(GRANT 는 건드리지 않는다). 끊었으면 러너 실패 문구용 표식을 남긴다. 끊기에 실패하면 예외.
+   * 주어진 슬롯 세션을 <b>잠금·커넥션 없이</b> 끊고, 새 트랜잭션에서 잠금을 잡은 뒤 <b>넓힐 슬롯</b>의 세션이 하나도 없을 때만 차이를 적용한다(WD-624).
+   * 그새 다시 붙은 세션이 있으면 아무것도 바꾸지 않고 잠금을 놓은 뒤 그 슬롯만 다시 끊는다({@link #LEVELS_SYNC_ATTEMPTS} 번, 그래도 남으면 예외
+   * = 넓히지 않음). 끊기 기다림(소유자 풀)이 잠금 안에 들어가지 않으므로, 소유자 풀이 바빠도 잠금을 기다리는 다른 실행 준비가 함께 멈추지 않는다.
    *
-   * <p><b>왜 GRANT 동기화와 따로 부를 수 있게 했는가(WD-624).</b> 등급 정의 변경 리스너는 무거운 전체 동기화(REQUIRES_NEW — 플랫폼 풀
-   * 커넥션을 하나 더 잡는다)를 전용 실행기로 넘긴다. 그러면 커밋부터 실행기가 그 작업을 돌리기까지(큐 대기) 옛 등급 위치로 슬롯을 받은 실행 중 세션이 살아 있고, 그
-   * 사이 다른 실행의 준비(JIT)·테이블 동기화가 같은 슬롯에 새 위치 기준 GRANT 를 먼저 걸면 그 세션이 자격 밖 등급을 읽는다. 세션 끊기는 소유자
-   * 풀(TenantPipelineRoleProvisioner 가 쓰는, 플랫폼 풀과 다른 풀)만 쓰므로 커밋 콜백에서 바로 돌려도 플랫폼 풀 커넥션을 둘 쥐지 않는다. 그래서 끊기만 커밋 직후
-   * 호출 스레드에서 먼저 하고, 넓어지는 GRANT 는 실행기에서 한다.
+   * <p><b>실행 준비는 자기 실행 슬롯만 본다.</b> 실행 준비가 넓히는 것은 실행 슬롯 하나뿐이므로, 잠금 안에서 그 슬롯(∩ 끊을 슬롯)의 세션만 확인하고 다시 끊는
+   * 것도 그 슬롯만이다 — 미확인 표식 창에 정상적으로 시작한 다른 슬롯의 실행을 끊지 않는다. 첫 끊기는 표식을 지우기 위해 주어진 슬롯 전부다.
    *
-   * @return 끊은 세션 수
+   * @param runRank null 이면 슬롯 전부(전체 동기화), 아니면 실행 준비의 실행 슬롯 하나
    */
-  public int terminateSlotSessions(long tenantId) {
-    int terminated = roleProvisioner.terminatePythonReadSessions(tenantId);
-    if (terminated > 0) {
-      slotSessionsTerminatedAt.put(tenantId, System.currentTimeMillis());
-      log.warn("등급 정의 변경으로 실행 중인 PYTHON 슬롯 롤 세션 {}개를 끊었다(tenant={})", terminated, tenantId);
+  private SyncResult killThenApplyUnderLock(long tenantId, Set<Integer> slots, Integer runRank) {
+    Set<Integer> toKill = slots;
+    for (int attempt = 1; attempt <= LEVELS_SYNC_ATTEMPTS; attempt++) {
+      terminator.terminateWithin(tenantId, toKill, TERMINATE_WAIT);
+      AtomicReference<Set<Integer>> widened = new AtomicReference<>(slots);
+      SyncResult result =
+          requiresNew.execute(
+              status -> {
+                lockTenantSync(dsl, tenantId);
+                Set<Integer> check = new TreeSet<>(slots);
+                if (runRank != null) {
+                  // 잠금 뒤 읽은 등급으로 실행 슬롯을 정한다(applyInTx 와 같은 스냅샷 규칙).
+                  check.retainAll(
+                      Set.of(PythonReadSlots.slotFor(levelRepository.findAll(), runRank)));
+                }
+                widened.set(check);
+                if (!check.isEmpty() && slotSessionsExist(tenantId, check)) {
+                  return null; // 끊은 뒤 다시 붙은 세션 — 잠금을 놓고 그 슬롯만 다시 끊는다
+                }
+                return applyInTx(tenantId, null, runRank, false);
+              });
+      if (result != null) {
+        return result;
+      }
+      toKill = widened.get();
+      log.info("끊은 뒤 슬롯 세션이 다시 붙어 다시 끊는다(tenant={} slots={} 시도 {})", tenantId, toKill, attempt);
     }
-    return terminated;
+    throw new IllegalStateException(
+        "PYTHON 슬롯 롤 세션이 계속 다시 붙어 넓히는 GRANT 를 이번에는 걸지 않았다(tenant="
+            + tenantId
+            + " slots="
+            + toKill
+            + ")");
   }
 
-  /** 현재 테넌트의 슬롯 롤 세션을 끊는다 — {@link #terminateSlotSessions(long)}. 컨텍스트가 없으면 다른 메서드처럼 예외. */
-  @Override
-  public void terminateSlotSessionsForLevelsChange() {
-    terminateSlotSessions(TenantContext.require("등급 정의 변경 슬롯 세션 끊기"));
+  /** 그 테넌트의 주어진 슬롯 롤 세션이 지금 있는가. 런타임 롤도 남의 세션 행의 롤 이름은 볼 수 있다(쿼리 내용 등은 가려진다). */
+  private boolean slotSessionsExist(long tenantId, Set<Integer> slots) {
+    String[] roles = TenantPipelineRole.pythonReadRoleNames(tenantId, slots).toArray(new String[0]);
+    Object count =
+        dsl.fetchValue(
+            "select count(*) from pg_stat_activity where usename::text = any({0}::text[])",
+            DSL.val(roles));
+    return count != null && ((Number) count).longValue() > 0;
+  }
+
+  /**
+   * 커밋 직후(커밋 응답 전) 그 테넌트의 주어진 슬롯 롤 세션을 끊는다 — 커밋 콜백이 부른다(WD-624). GRANT 는 건드리지 않는다.
+   *
+   * <p><b>왜 커밋 응답 전에 끊는가.</b> 넓어지는 GRANT 는 전용 실행기에서 나중에 돈다. 그 사이 옛 등급으로 슬롯을 받아 실행 중이던 세션이 살아 있으면
+   * (1) 좁아진 슬롯의 테이블을 계속 읽고 (2) 다른 실행의 준비(JIT)가 같은 슬롯을 새 기준으로 넓히면 자격 밖까지 읽는다. 끊긴 스크립트는 다시 실행되면 JIT 가
+   * 커밋된 등급으로 자기 슬롯을 맞춘 뒤에 접속한다.
+   *
+   * <p><b>왜 상한만큼만 기다리는가.</b> 커밋 콜백은 바깥 플랫폼 커넥션을 쥔 채 돈다. 끊기는 소유자 풀 전용 스레드에서 돌므로 플랫폼 풀을 더 쥐지 않지만, 소유자
+   * 풀이 바쁘면 기다림이 길어진다 — 그래서 {@link #AFTER_COMMIT_TERMINATE_WAIT} 만 기다린다. 기다리기 전에 미확인 표식을 달아, 끊기가 끝내
+   * 실패하면 실행 준비가 넓히기 전에 먼저 끊는다(fail-closed, {@link PythonReadSessionTerminator}).
+   *
+   * @return 상한 안에 끊었으면 true
+   */
+  public boolean terminateSlotSessionsAfterCommit(long tenantId, Set<Integer> slots) {
+    return terminator.terminateConfirmingWithin(tenantId, slots, AFTER_COMMIT_TERMINATE_WAIT);
   }
 
   /** sinceMillis 이후 이 테넌트의 슬롯 롤 세션을 끊었는가 — 러너가 실패 문구를 고르는 데만 쓴다. */
   public boolean slotSessionsTerminatedSince(long tenantId, long sinceMillis) {
-    Long at = slotSessionsTerminatedAt.get(tenantId);
-    return at != null && at >= sinceMillis;
+    return terminator.terminatedSince(tenantId, sinceMillis);
   }
 
   /** 테이블 하나만 재동기화(생성·클론·맞바꿈 직후 — RENAME 맞바꿈은 ACL 을 잃는다). */
-  public void syncTable(String tableName) {
-    requiresNew.execute(status -> syncInTx(tableName, null, false));
+  public SyncResult syncTable(String tableName) {
+    return requiresNew.execute(status -> syncInTx(tableName, null));
   }
 
   /** 데이터셋 하나 — 테이블 이름을 찾아 syncTable. 물리 테이블이 없는 데이터셋(문서·파일형)은 할 일이 없다. */
@@ -181,6 +252,106 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   public void syncDataset(long datasetId) {
     PythonReadGrantBackend.syncDatasetTable(
         requiresNew, datasetRepository, datasetId, this::syncTable);
+  }
+
+  /**
+   * 커밋 직전 좁히기를 확인하지 못한 데이터셋 등급 변경의 뒷정리(실행기, WD-624) — 그 테이블을 더는 읽으면 안 되는 슬롯의 세션을 <b>커넥션·잠금 없이</b>
+   * 끊은 뒤, 잠금 안에서 테이블을 계산값으로 맞춘다(회수 포함).
+   *
+   * <p><b>왜 끊고 나서 회수하는가.</b> 커밋 직후 한 번 끊었어도, 커밋 직전에 잠금 안에서 옛 등급으로 슬롯을 맞춘 실행 준비가 그 뒤에 스크립트를 접속시켰을 수
+   * 있다(그 실행의 GRANT 는 새 등급 기준으로 남는 권한이다). 여기서 다시 끊고, 잠금 안의 회수로 그 뒤에 붙은 세션도 다음 쿼리부터 막는다(PG 는 매 쿼리 권한을
+   * 본다). 끊기 기다림을 잠금 안에서 하지 않는 이유는 {@link #syncTenantForLevelsChange} 와 같다. 끊기가 실패해도 회수는 한다(회수는 좁히기라
+   * 늘 안전).
+   *
+   * <p><b>회수가 커밋된 뒤 한 번 더 끊는다.</b> 권한 확인은 쿼리 시작 때 한 번이라, 회수 커밋 전에 시작한 긴 쿼리 하나는 회수 뒤에도 끝까지 돈다. 회수 커밋
+   * 뒤에 끊으면 그 전에 붙은 세션은 모두 끊기고, 그 뒤의 쿼리는 모두 거부된다 — 빈틈이 닫힌다. 회수 실패가 남으면 ERROR(그 슬롯의 새 실행은 실행 준비가 다시
+   * 맞춘다).
+   */
+  @Override
+  public void syncDatasetAfterUnconfirmedNarrowing(
+      long datasetId, Set<Integer> exposedSlots, boolean tokensInvalidated) {
+    long tenantId = TenantContext.require("데이터셋 좁히기 뒷정리");
+    terminateQuietly(tenantId, exposedSlots);
+    SyncResult result =
+        PythonReadGrantBackend.syncDatasetTable(
+            requiresNew, datasetRepository, datasetId, this::syncTable);
+    if (result == null) {
+      return; // 물리 테이블이 없는 데이터셋 — 회수할 권한이 없다
+    }
+    Set<Integer> again = new TreeSet<>(exposedSlots);
+    Set<Integer> left = slotsOf(tenantId, result.revokeFailed());
+    if (!left.isEmpty()) {
+      log.error(
+          "데이터셋 좁히기 뒷정리: 회수 실패가 남았다(tenant={} dataset={} slots={})", tenantId, datasetId, left);
+      again.addAll(left);
+    }
+    terminateQuietly(tenantId, again); // 회수 커밋 뒤 — 커밋 전에 시작한 쿼리까지 끊는다
+  }
+
+  /** 끊기를 요청하고 상한만큼 기다린다 — 실패는 ERROR 로그만(부르는 쪽이 다음 방어선을 이어 간다). */
+  private void terminateQuietly(long tenantId, Set<Integer> slots) {
+    try {
+      terminator.terminateWithin(tenantId, slots, TERMINATE_WAIT);
+    } catch (IllegalStateException e) {
+      log.error("PYTHON 슬롯 롤 세션 끊기 실패(tenant={} slots={})", tenantId, slots, e);
+    }
+  }
+
+  /** 회수 실패 결과(테이블 → 슬롯 롤 이름)에 나온 슬롯 번호들 — {@link PythonReadGrantBackend#slotsOf}. */
+  private static Set<Integer> slotsOf(long tenantId, Map<String, Set<String>> revokeFailed) {
+    return PythonReadGrantBackend.slotsOf(
+        revokeFailed, k -> TenantPipelineRole.pythonReadRoleName(tenantId, k));
+  }
+
+  /**
+   * 데이터셋 등급 변경을 커밋하기 <b>직전</b>, 그 변경을 담은 <b>바로 그 트랜잭션</b>에서 데이터셋 테이블의 남는 슬롯 권한만 회수한다(WD-624). GRANT
+   * 는 걸지 않는다 — 넓어지는 쪽은 커밋 뒤 전용 실행기의 {@link #syncDataset} 몫이다. 파사드가 savepoint 안에서 부르므로 여기서 난 예외는 이
+   * 좁히기만 되돌리고 발행 트랜잭션을 깨뜨리지 않는다({@link PythonReadGrants#narrowDatasetInCurrentTx}).
+   *
+   * <p><b>왜 같은 트랜잭션인가.</b> 새 트랜잭션(REQUIRES_NEW)을 열면 요청 하나가 플랫폼 커넥션 2개를 쥐어 동시 변경 때 풀이 멈춘다. 같은 트랜잭션이면
+   * 커넥션이 하나뿐이고, 아직 커밋 전인 새 등급을 그대로 읽어 계산하며, REVOKE 가 등급 변경과 <b>함께</b> 커밋된다 — 커밋 응답이 나가는 순간 실행 중 세션의
+   * 다음 쿼리부터 막힌다.
+   *
+   * <p><b>왜 방향(올림·내림)을 따지지 않는가.</b> 회수 대상은 "실제 ACL − 새 등급 기준 계산값" 이라 넓어지는 변경이면 저절로 빈다. 결과에는 확인 여부와
+   * 함께 "더는 읽으면 안 되는 슬롯"({@link PythonReadSlots#slotsLosingAccess} + 회수 실패 슬롯)을 실어, 확인 못 했을 때 막을 범위를
+   * 그 슬롯으로만 좁힌다.
+   *
+   * <p><b>확인 못 함으로 다루는 경우.</b> 잠금을 {@link #NARROW_LOCK_WAIT} 안에 못 잡음, 회수 실패, 그리고 <b>분리 설치</b>. 분리
+   * 설치에서는 데이터 저장소 연결이 이 트랜잭션에 처음 묶이는 것이 커밋 직전 단계일 수 있는데, 그러면 그 연결은 플랫폼 커밋 <b>뒤</b>(완료 콜백)에서야 커밋되고
+   * 실패해도 로그만 남는다 — 커밋 응답 전에 회수가 커밋됐다고 확인할 수 없다. 또 그 연결의 문장 오류는 플랫폼 savepoint 로 되돌릴 수 없어 데이터 저장소 커밋
+   * 실패가 발행 트랜잭션을 롤백시킬 수 있다. 그래서 분리 설치에서는 데이터 저장소를 건드리지 않고 대체 경로(그 슬롯 세션 끊기 + 실행기 회수)로 간다.
+   *
+   * @throws IllegalStateException 실제 트랜잭션 밖에서 불렀을 때(파사드가 "확인 못 함" 으로 바꾼다)
+   */
+  @Override
+  public NarrowResult narrowDatasetInCurrentTx(long datasetId, Long fromLevelId, long toLevelId) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException("데이터셋 등급 좁히기는 등급 변경 트랜잭션 안에서만 부른다");
+    }
+    long tenantId = TenantContext.require("데이터셋 등급 좁히기");
+    Set<Integer> exposed =
+        PythonReadSlots.slotsLosingAccess(levelRepository.findAll(), fromLevelId, toLevelId);
+    if (separateDataStore) {
+      return NarrowResult.unconfirmed(exposed);
+    }
+    String table = datasetRepository.findTableNameById(datasetId).orElse(null);
+    if (table == null) {
+      return NarrowResult.confirmed(exposed); // 물리 테이블이 없는 데이터셋(문서·파일형) — 회수할 권한이 없다
+    }
+    if (!tryLockTenantSync(dsl, tenantId, NARROW_LOCK_WAIT)) {
+      log.warn(
+          "데이터셋 등급 좁히기: 테넌트 동기화 잠금을 {} 안에 얻지 못했다(tenant={} dataset={})",
+          NARROW_LOCK_WAIT,
+          tenantId,
+          datasetId);
+      return NarrowResult.unconfirmed(exposed);
+    }
+    return PythonReadGrantBackend.narrowResultOf(
+        applyInTx(tenantId, table, null, true),
+        exposed,
+        levelRepository::findAll,
+        toLevelId,
+        k -> TenantPipelineRole.pythonReadRoleName(tenantId, k));
   }
 
   /**
@@ -215,11 +386,23 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   }
 
   /**
+   * {@link #lockTenantSync} 의 시도형 — 같은 키로 최대 {@code maxWait} 동안 시도한다. 구현은 플랫폼 잠금의 시도형과 하나다({@link
+   * PostgresPlatformLocks#tryXactLock(DSLContext, String, Duration)}) — 여기서는 연결(분리 설치면 데이터 저장소)만
+   * 고른다.
+   */
+  static boolean tryLockTenantSync(DSLContext ctx, long tenantId, Duration maxWait) {
+    return PostgresPlatformLocks.tryXactLock(ctx, syncLockKey(tenantId), maxWait);
+  }
+
+  /**
    * PYTHON 실행 직전 준비(JIT) — 잠금 안에서 읽은 등급 스냅샷으로 실행 주체의 슬롯 k 를 계산하고, <b>그 슬롯 롤 하나의</b> ACL 만 계산값에 맞춘다
    * (CR3 — 매 스텝 10개 롤 전부를 맞추지 않는다. 다른 슬롯은 이 스크립트가 접속하지 않는 롤이라 이벤트·일 1회·그 슬롯의 실행이 맞춘다). 실행 슬롯의 과권한은
    * 매번 실제 ACL 로 확인하므로 손으로 건 GRANT 도 회수하거나(실패하면) 거부한다 — "마지막 동기화 이후 변경 없음" 단락은 이 확인을 건너뛰게 되므로 쓰지
    * 않는다. 어떤 실패든 {@link PythonReadAccessException}(fail-closed). 테넌트 실행 롤(pipeline_executor_t*)로
    * 대체하는 경로는 없다 — 그 롤은 모든 등급을 읽으므로 대체하는 순간 등급 경계가 사라진다.
+   *
+   * <p>커밋 직후 세션 끊기를 확인하지 못한 슬롯(미확인 표식, WD-624)이 있으면 슬롯을 맞추기 <b>전에</b> 먼저 끊는다 — 옛 등급으로 슬롯을 받은 세션이 살아
+   * 있는 채로 이 실행이 같은 슬롯을 넓히지 않게. 끊기는 잠금·커넥션을 쥐기 전에 기다린다(상한 {@link #TERMINATE_WAIT}). 끊지 못하면 실행을 거부한다.
    *
    * @return 실행에 쓸 슬롯 번호(1~10)
    */
@@ -238,29 +421,42 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     return PythonReadRunGate.prepare(
         runAs,
         readRank,
-        () -> requiresNew.execute(status -> syncInTx(null, readRank, false)),
+        () -> {
+          // 커밋 직후 끊기를 확인하지 못한 슬롯이 있으면 넓히기 전에 먼저 끊는다 — 끊기는 잠금·커넥션 없이, 잠금 안에서는 다시 붙은 세션이 없는지만
+          // 본다(WD-624, killThenApplyUnderLock). 끝내 못 끊으면 예외 → 게이트가 실행을 거부(fail-closed).
+          Set<Integer> unconfirmed = terminator.unconfirmedSlots(runAs.tenantId());
+          if (!unconfirmed.isEmpty()) {
+            return killThenApplyUnderLock(runAs.tenantId(), unconfirmed, readRank);
+          }
+          return requiresNew.execute(status -> syncInTx(null, readRank));
+        },
         slot -> TenantPipelineRole.pythonReadRoleName(runAs.tenantId(), slot));
   }
 
   /**
-   * 트랜잭션(=테넌트 GUC) 안에서 호출된다.
+   * 트랜잭션(=테넌트 GUC) 안에서 호출된다 — 테넌트 동기화 잠금을 잡고 차이를 적용한다. 세션 끊기는 여기서 하지 않는다(잠금을 쥔 채 소유자 풀을 기다리지 않게,
+   * WD-624).
    *
    * @param onlyTable null 이면 스키마 전체, 아니면 그 테이블만
    * @param runRank null 이면 슬롯 롤 전부, 아니면 그 자격 rank 의 실행 슬롯 롤 하나만(실행 준비) — 슬롯은 잠금 뒤 읽은 등급 스냅샷으로 계산한다
-   * @param terminateSlotSessions true 면 잠금 직후(이 트랜잭션의 GRANT 가 커밋되기 전) 테넌트 슬롯 롤 세션을 모두 끊는다 — {@link
-   *     #syncTenantForLevelsChange()}
    */
-  private SyncResult syncInTx(String onlyTable, Integer runRank, boolean terminateSlotSessions) {
+  private SyncResult syncInTx(String onlyTable, Integer runRank) {
     long tenantId = TenantContext.require("PYTHON 읽기 권한 동기화");
     // 같은 테넌트 동기화 직렬화(트랜잭션 종료 시 자동 해제).
     lockTenantSync(dsl, tenantId);
-    String schema = DataSchema.current();
+    return applyInTx(tenantId, onlyTable, runRank, false);
+  }
 
+  /**
+   * 잠금을 잡은 뒤의 본체 — 계산값과 실제 ACL 의 차이를 적용한다. 동기화({@link #syncInTx})와 커밋 직전 좁히기({@link
+   * #narrowDatasetInCurrentTx})가 함께 쓴다.
+   *
+   * @param revokeOnly true 면 남는 권한 회수만 하고 부족한 GRANT 는 걸지 않는다(커밋 직전 좁히기 — 넓히기는 커밋 뒤 실행기 몫)
+   */
+  private SyncResult applyInTx(
+      long tenantId, String onlyTable, Integer runRank, boolean revokeOnly) {
+    String schema = DataSchema.current();
     List<String> slotRoleNames = TenantPipelineRole.pythonReadRoleNames(tenantId);
-    if (terminateSlotSessions) {
-      // 잠금 안·GRANT 커밋 전 — 끊긴 뒤 새로 붙는 세션은 아직 옛(이 트랜잭션 전) GRANT 를 본다. 실행 준비도 같은 잠금을 기다린다.
-      terminateSlotSessions(tenantId);
-    }
     List<LevelPolicy> levelsAsc = levelRepository.findAll(); // rank asc, 이 트랜잭션에 합류(RLS GUC)
     // 다룰 슬롯: 실행 준비면 실행 슬롯 하나(범위 밖이면 없음 — prepareForRun 이 거부), 아니면 전부.
     int runSlot = 0;
@@ -359,6 +555,12 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
       excess.removeAll(want);
       Set<String> missing = new TreeSet<>(want);
       missing.removeAll(have);
+      if (revokeOnly) {
+        if (excess.isEmpty()) {
+          continue; // 좁히기는 부족한 GRANT 를 건드리지 않는다 — 넓히기는 커밋 뒤 실행기가 한다
+        }
+        missing.clear();
+      }
       String qualified = dsl.render(DSL.name(schema, table));
       // ACL 을 고치기 전에 그 테이블에 ACCESS SHARE 잠금을 잡는다 — 이유는 lockTableForAclChange 참고. 못 잡으면(시간 초과·그새
       // DROP)
