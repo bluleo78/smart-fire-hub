@@ -944,6 +944,37 @@ test.describe('리포트 템플릿 삭제 영향 고지 (#364)', () => {
     await expect(impact.getByRole('button', { name: '무관한 작업' })).toHaveCount(0);
   });
 
+  test('공백 없는 200자 작업명도 영향 안내 상자 밖으로 넘치지 않는다 (WD-558)', async ({ authenticatedPage: page }) => {
+    // 서버 상한(200자)을 꽉 채운 공백 없는 이름 — 줄바꿈 지점이 없어 그대로 두면 다이얼로그 밖으로 뻗는다
+    const longName = 'A'.repeat(200);
+    const template = createTemplate({ id: 66, name: '긴 이름 사용 템플릿', builtin: false });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/66', template);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
+      createJob({ id: 105, templateId: 66, templateName: '긴 이름 사용 템플릿', name: longName }),
+    ]);
+
+    await page.goto('/ai-insights/templates/66');
+    await expect(page.getByRole('heading', { name: '긴 이름 사용 템플릿' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '삭제' }).click();
+
+    const impact = page.getByTestId('template-delete-impact');
+    const jobButton = impact.getByRole('button', { name: longName });
+    // 이름은 잘리지 않고 전부 읽힌다(줄바꿈) — 영향 안내 상자도, 버튼도 다이얼로그 오른쪽 끝을 넘지 않는다.
+    // 상자는 다이얼로그(grid)의 자식이라 내용에 맞춰 함께 늘어나므로, 상자가 아니라 다이얼로그 기준으로 잰다.
+    await expect(jobButton).toHaveText(longName);
+    const buttonBox = await jobButton.boundingBox();
+    const impactBox = await impact.boundingBox();
+    const dialogBox = await page.getByRole('dialog').boundingBox();
+    expect(buttonBox).not.toBeNull();
+    expect(impactBox).not.toBeNull();
+    expect(dialogBox).not.toBeNull();
+    const dialogRight = dialogBox!.x + dialogBox!.width;
+    expect(impactBox!.x + impactBox!.width).toBeLessThanOrEqual(dialogRight);
+    expect(buttonBox!.x + buttonBox!.width).toBeLessThanOrEqual(dialogRight);
+  });
+
   test('사용 중인 작업이 없으면 영향 안내가 표시되지 않는다', async ({ authenticatedPage: page }) => {
     const template = createTemplate({ id: 65, name: '미사용 템플릿', builtin: false });
     await mockApi(page, 'GET', '/api/v1/proactive/templates/65', template);
