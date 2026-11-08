@@ -1,8 +1,8 @@
 import type { Page } from '@playwright/test';
 
-import { createAiSettings, createSmtpSettings } from '../../factories/admin.factory';
+import { createAiCredential, createAiSettings, createSmtpSettings } from '../../factories/admin.factory';
 import { captureSmtpClear, SETTINGS_FETCH_ERROR } from '../../fixtures/admin.fixture';
-import { setupAdminAuth, setupSettingsMocks } from '../../fixtures/admin.fixture';
+import { mockAiCredential, setupAdminAuth, setupSettingsMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -28,6 +28,18 @@ import { expect, test } from '../../fixtures/auth.fixture';
  */
 const fieldBox = (page: Page, inputId: string) =>
   page.locator('div.space-y-2', { has: page.locator(`#${inputId}`) });
+
+/**
+ * AI 탭 검증 실패 시 「입력값을 확인하세요.」 토스트가 뜨지 않았는지 본다(WD-643).
+ *
+ * 토스트는 클릭 뒤 비동기로 그려지고 몇 초 뒤 저절로 사라진다. 그래서 `toHaveCount(0)` 처럼 재시도하는 단언은 뜬 토스트가
+ * 사라질 때까지 기다려 통과해 버린다(수정 전에도 초록). 토스트가 뜨기에 충분한 시간을 기다린 뒤, 재시도하지 않는 한 번의
+ * 개수 확인으로 없음을 단언한다 — 부재 단언이라 기다림이 불가피하다.
+ */
+async function expectNoValidationToast(page: Page) {
+  await page.waitForTimeout(1000);
+  expect(await page.getByText('입력값을 확인하세요.').count()).toBe(0);
+}
 
 test.describe('설정 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
@@ -209,7 +221,9 @@ test.describe('설정 페이지', () => {
       await expect(
         fieldBox(page, 'ai-max-turns').getByText('1~50 사이의 정수를 입력하세요'),
       ).toBeVisible();
-      await expect(page.getByText('입력값을 확인하세요.')).toBeVisible({ timeout: 5000 });
+      // WD-643: 오류 칸으로 포커스가 가면 「입력값을 확인하세요.」 토스트는 띄우지 않는다(라이브 영역이 칸 낭독과 겹친다)
+      await expect(page.locator('#ai-max-turns')).toBeFocused();
+      await expectNoValidationToast(page);
       // 성공 토스트가 뜨지 않고, 저장 요청 자체가 나가지 않아야 한다(가짜 성공 금지)
       await expect(page.getByText('설정이 저장되었습니다.')).toHaveCount(0);
       expect(saveCapture.lastRequest()).toBeUndefined();
@@ -241,7 +255,9 @@ test.describe('설정 페이지', () => {
         await page.getByRole('button', { name: '저장' }).click();
 
         await expect(fieldBox(page, c.id).getByText(c.message)).toBeVisible();
-        await expect(page.getByText('입력값을 확인하세요.')).toBeVisible({ timeout: 5000 });
+        // WD-643: 오류 칸으로 포커스가 가면 「입력값을 확인하세요.」 토스트는 띄우지 않는다(라이브 영역이 칸 낭독과 겹친다)
+        await expect(page.locator(`#${c.id}`)).toBeFocused();
+        await expectNoValidationToast(page);
         await expect(page.getByText('설정이 저장되었습니다.')).toHaveCount(0);
         expect(saveCapture.lastRequest()).toBeUndefined();
       });
@@ -339,8 +355,10 @@ test.describe('설정 페이지', () => {
       await expect(prompt).toHaveAttribute('aria-invalid', 'true');
       await expect(prompt).toHaveAccessibleDescription(/^시스템 프롬프트를 입력하세요/);
       await expect(page.locator('#ai-system-prompt-error')).toBeVisible();
-      // 오류 문구는 role=alert 라 저장을 누른 순간 읽힌다(FormField 와 같은 동작)
-      await expect(page.locator('#ai-system-prompt-error')).toHaveAttribute('role', 'alert');
+      // WD-643: 오류 문구는 role=alert 로 동시에 읽히지 않고, 대신 첫 오류 칸으로 포커스가 가서
+      // 스크린 리더가 라벨 + 연결된 오류 문구(describedby)를 읽는다.
+      await expect(page.locator('#ai-system-prompt-error')).not.toHaveAttribute('role', /.*/);
+      await expect(prompt).toBeFocused();
       expect(saveCapture.lastRequest()).toBeUndefined();
 
       // 값을 다시 넣고 저장하면 오류 연결이 풀리고 값이 그대로 PUT 에 실린다
@@ -375,6 +393,133 @@ test.describe('설정 페이지', () => {
   });
 
   /**
+   * WD-643 — WD-590 리뷰 후속. AI 동작 설정 폼의 접근성 연결 계약:
+   *  - 저장 시 검증이 실패하면 오류 문구들이 role=alert 로 한꺼번에 읽히지 않고, 폼 순서상 첫 오류 칸으로 포커스가 간다.
+   *  - aria-describedby 의 모든 id 가 실제로 그려진 요소를 가리킨다(하드코딩 id 와 파생 id 가 어긋나지 않는다).
+   *  - 「현재 공급자에서는 적용되지 않습니다」 안내·상한 초과 글자 수도 칸 설명으로 연결된다.
+   */
+  test.describe('WD-643 — AI 동작 설정 오류 포커스·설명 연결', () => {
+    /** 칸의 aria-describedby id 목록 — 각 id 의 요소가 DOM 에 정확히 하나 있는지도 함께 단언한다. */
+    async function describedByIds(page: Page, inputId: string): Promise<string[]> {
+      const raw = (await page.locator(`#${inputId}`).getAttribute('aria-describedby')) ?? '';
+      const ids = raw.split(/\s+/).filter(Boolean);
+      for (const id of ids) {
+        await expect(page.locator(`#${id}`), `describedby id "${id}" 가 가리키는 요소`).toHaveCount(1);
+      }
+      return ids;
+    }
+
+    const NUMBER_FIELD_IDS = ['ai-max-turns', 'ai-temperature', 'ai-max-tokens', 'ai-session-max-tokens'];
+
+    test('숫자 칸 여러 개가 틀린 채 저장하면 첫 오류 칸(최대 턴 수)에 포커스가 가고, 오류 문구에 role=alert 가 없으며 describedby 가 실제 요소를 가리킨다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+      await page.goto('/admin/settings');
+
+      // 평소: 오류 없이 설명 문구만 연결된다
+      for (const id of NUMBER_FIELD_IDS) {
+        expect(await describedByIds(page, id)).toEqual([`${id}-desc`]);
+      }
+
+      // 폼 뒤쪽 칸을 먼저 틀리게 해도 포커스는 폼 순서상 첫 오류 칸으로 간다
+      await page.locator('#ai-session-max-tokens').fill('5');
+      await page.locator('#ai-max-tokens').fill('0');
+      await page.locator('#ai-max-turns').fill('999');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(page.locator('#ai-max-turns')).toBeFocused();
+      // WD-643: 오류 칸으로 포커스가 가면 「입력값을 확인하세요.」 토스트는 띄우지 않는다(라이브 영역이 칸 낭독과 겹친다)
+      await expectNoValidationToast(page);
+      for (const id of ['ai-max-turns', 'ai-max-tokens', 'ai-session-max-tokens']) {
+        await expect(page.locator(`#${id}`)).toHaveAttribute('aria-invalid', 'true');
+        await expect(page.locator(`#${id}-error`)).toBeVisible();
+        await expect(page.locator(`#${id}-error`)).not.toHaveAttribute('role', /.*/);
+        expect(await describedByIds(page, id)).toEqual([`${id}-error`, `${id}-desc`]);
+      }
+      // 틀리지 않은 칸은 그대로다
+      await expect(page.locator('#ai-temperature')).not.toHaveAttribute('aria-invalid', /.*/);
+      expect(await describedByIds(page, 'ai-temperature')).toEqual(['ai-temperature-desc']);
+      // 폼 안의 어떤 필드 오류 문구도 role=alert 가 아니다(동시 다발 낭독 방지)
+      await expect(page.locator('[id$="-error"][role="alert"]')).toHaveCount(0);
+      expect(saveCapture.lastRequest()).toBeUndefined();
+    });
+
+    test('숫자 칸이 모두 맞고 시스템 프롬프트만 틀리면 포커스가 시스템 프롬프트로 간다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      await page.goto('/admin/settings');
+
+      await page.locator('#ai-system-prompt').fill('   ');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(page.locator('#ai-system-prompt')).toBeFocused();
+      expect(await describedByIds(page, 'ai-system-prompt')).toEqual(['ai-system-prompt-error', 'ai-system-prompt-desc']);
+    });
+
+    test('잠긴(지원 안 함) 칸에 저장된 값이 틀리면, 오류로 잠금이 풀린 뒤 그 칸에 포커스가 간다', async ({
+      authenticatedPage: page,
+    }) => {
+      // sdk 는 Temperature 를 반영하지 않아 칸이 잠긴다(WD-59). 그런데 저장된 값이 범위를 벗어났다.
+      await mockAiCredential(page, createAiCredential({ agentType: 'sdk' }));
+      await setupSettingsMocks(page, {
+        ai: createAiSettings({ 'ai.temperature': { overridden: true, value: '5' } }),
+      });
+      await page.goto('/admin/settings');
+      await expect(page.locator('#ai-temperature')).toBeDisabled();
+
+      // 다른 칸만 고쳐 저장 버튼을 켠다
+      await page.locator('#ai-max-turns').fill('15');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      // 오류가 붙으면 잠금이 풀리고(기존 규칙), 그 다음 렌더 뒤에 포커스가 간다
+      await expect(page.locator('#ai-temperature')).toBeEnabled();
+      await expect(page.locator('#ai-temperature')).toBeFocused();
+    });
+
+    test('지원 안 함 안내가 보이는 칸은 describedby 에 안내 id 가 들어가고, 반영되는 칸에는 없다', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockAiCredential(page, createAiCredential({ agentType: 'sdk' }));
+      await setupSettingsMocks(page);
+      await page.goto('/admin/settings');
+
+      for (const id of ['ai-temperature', 'ai-max-tokens']) {
+        expect(await describedByIds(page, id)).toEqual([`${id}-desc`, `${id}-hint`]);
+        await expect(page.locator(`#${id}-hint`)).toHaveText('현재 공급자에서는 적용되지 않습니다');
+      }
+      await expect(page.locator('#ai-temperature')).toHaveAccessibleDescription(
+        '응답의 창의성 수준 (0.0: 결정적, 1.0: 창의적) 현재 공급자에서는 적용되지 않습니다',
+      );
+      // 최대 턴 수는 sdk 에서도 반영된다 — 안내도, 안내 id 도 없다
+      expect(await describedByIds(page, 'ai-max-turns')).toEqual(['ai-max-turns-desc']);
+      await expect(page.locator('#ai-max-turns-hint')).toHaveCount(0);
+    });
+
+    test('시스템 프롬프트가 상한을 넘으면 글자 수 표시가 describedby 에 들어가고, 상한 안으로 돌아오면 빠진다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      await page.goto('/admin/settings');
+      const prompt = page.locator('#ai-system-prompt');
+
+      // 평소에는 글자 수를 읽히지 않는다(칸에 들어갈 때마다 숫자를 읽어 시끄럽다)
+      expect(await describedByIds(page, 'ai-system-prompt')).toEqual(['ai-system-prompt-desc']);
+
+      await prompt.fill('a'.repeat(20_001));
+      await expect(prompt).toHaveAttribute('aria-describedby', /ai-system-prompt-count/);
+      expect(await describedByIds(page, 'ai-system-prompt')).toEqual(['ai-system-prompt-desc', 'ai-system-prompt-count']);
+      await expect(page.getByTestId('ai-system-prompt-count')).toHaveAttribute('id', 'ai-system-prompt-count');
+
+      await prompt.fill('a'.repeat(20_000));
+      await expect(prompt).not.toHaveAttribute('aria-describedby', /ai-system-prompt-count/);
+      expect(await describedByIds(page, 'ai-system-prompt')).toEqual(['ai-system-prompt-desc']);
+    });
+  });
+
+  /**
    * WD-536 — 시스템 프롬프트 길이 상한(20,000자). 서버 SettingsService 와 같은 상한을 화면이 저장 전에 지킨다.
    *
    * 경계: 정확히 20,000자는 PUT 이 나가고, 20,001자는 글자 수가 경고색으로 바뀌며 오류 문구와 함께 저장이 막힌다.
@@ -403,7 +548,9 @@ test.describe('설정 페이지', () => {
       await page.getByRole('button', { name: '저장' }).click();
 
       await expect(fieldBox(page, 'ai-system-prompt').getByText(OVER_LIMIT_MESSAGE)).toBeVisible();
-      await expect(page.getByText('입력값을 확인하세요.')).toBeVisible({ timeout: 5000 });
+      // WD-643: 오류 칸으로 포커스가 가면 「입력값을 확인하세요.」 토스트는 띄우지 않는다(라이브 영역이 칸 낭독과 겹친다)
+      await expect(page.locator('#ai-system-prompt')).toBeFocused();
+      await expectNoValidationToast(page);
       await expect(page.getByText('설정이 저장되었습니다.')).toHaveCount(0);
       expect(saveCapture.lastRequest()).toBeUndefined();
     });

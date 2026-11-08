@@ -1,5 +1,5 @@
 import { Bot, Boxes, Mail, RotateCcw, Save, Settings, ShieldCheck, Tags } from 'lucide-react';
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, type ReactNode, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { settingsApi } from '../../api/settings';
@@ -16,6 +16,7 @@ import {
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { FormField } from '../../components/ui/form-field';
 import { InlineBanner } from '../../components/ui/inline-banner';
 import { Input } from '../../components/ui/input';
 import {
@@ -132,10 +133,91 @@ const SYSTEM_PROMPT_MAX_LENGTH = 20_000;
 /**
  * WD-59: 현재 고른 공급자(자격증명 유형)에서 반영되지 않는 실행 설정 칸 아래에 붙는 안내.
  * 칸은 비활성화하지만 값은 지우지 않는다 — 공급자를 다시 바꾸면 그 값이 그대로 쓰인다.
+ * WD-643: 반영되지 않을 때만 FormField 의 `hint` 자리로 넘겨, 칸의 aria-describedby 에도 이어진다.
  */
-function UnsupportedHint({ show }: { show: boolean }) {
-  if (!show) return null;
-  return <p className="text-sm text-muted-foreground">현재 공급자에서는 적용되지 않습니다</p>;
+const UNSUPPORTED_HINT = '현재 공급자에서는 적용되지 않습니다';
+
+/**
+ * 필드 키 하나에서 입력·문구 id 를 만든다(WD-643) — id 의 단일 출처.
+ *
+ * WD-590 에서는 JSX 에 하드코딩한 문구 id 와 describedby 를 만드는 정규식 파생 id 가 따로 놀아, 한쪽만 바뀌면
+ * describedby 가 없는 요소를 가리킬 수 있었다. 숫자 칸은 `input` 을 FormField 의 `htmlFor` 로 넘기고 문구 id 는
+ * FormField 가 같은 규칙(`-error`·`-desc`·`-hint`)으로 만든다. 라벨이 없어 FormField 를 못 쓰는 시스템 프롬프트는
+ * 여기서 나온 `error`·`desc`·`count` 를 문구 id 와 describedby 에 함께 쓴다. 예: 'ai.max_turns' → 'ai-max-turns'.
+ */
+function fieldIds(key: keyof AIBehaviorForm) {
+  const input = key.replace(/[._]/g, '-');
+  return { input, error: `${input}-error`, desc: `${input}-desc`, count: `${input}-count` };
+}
+
+/**
+ * aria-describedby 값을 실제로 그려진 문구 id 만으로 만든다(WD-643) — 그려지지 않은 문구(false)는 뺀다.
+ * 순서: 오류 → 설명 → 글자 수(FormField 의 오류 → 설명 → 안내와 같은 규칙).
+ */
+function describedBy(...ids: (string | false)[]): string {
+  return ids.filter(Boolean).join(' ');
+}
+
+/**
+ * AI 동작 설정의 숫자 칸 하나 — 공용 FormField 의 얇은 감싸개(WD-643).
+ *
+ * 네 칸(최대 턴 수·Temperature·최대 응답 토큰·세션 최대 토큰)이 같은 모양이라 입력 속성만 여기서 정한다.
+ * 라벨·기본값 배지(`labelAddon`)·오류·설명·지원 안 함 안내(`hint`)와 aria-describedby·aria-invalid 연결은 FormField 가
+ * 맡는다. `announceError={false}` — 저장 시 여러 칸이 한꺼번에 틀리면 role=alert 가 겹쳐 읽히므로 끄고, 대신 저장 시
+ * 첫 오류 칸으로 포커스를 옮긴다(`handleSaveClick`).
+ */
+function AiNumberSettingField({
+  fieldKey,
+  label,
+  description,
+  isDefault,
+  value,
+  onChange,
+  error,
+  min,
+  max,
+  step,
+  disabled,
+  unsupported = false,
+}: {
+  fieldKey: keyof AIBehaviorForm;
+  label: string;
+  description: ReactNode;
+  isDefault: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+  min: number;
+  max: number;
+  step?: number;
+  disabled?: boolean;
+  /** 지금 고른 공급자에서 반영되지 않는 칸인가(WD-59) — 그때만 안내를 그리고 칸 설명에 잇는다. */
+  unsupported?: boolean;
+}) {
+  const { input } = fieldIds(fieldKey);
+  return (
+    <FormField
+      label={label}
+      htmlFor={input}
+      labelAddon={<DefaultHint show={isDefault} />}
+      error={error}
+      announceError={false}
+      description={description}
+      hint={unsupported ? UNSUPPORTED_HINT : undefined}
+    >
+      <Input
+        id={input}
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        className="w-full max-w-md"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+      />
+    </FormField>
+  );
 }
 
 /**
@@ -238,7 +320,11 @@ function AdminSettingsPage() {
     refreshMeta,
   } = behavior;
 
-  const validate = (): boolean => {
+  /**
+   * 동작 설정 폼을 검증해 오류 문구를 세우고, 그 오류 객체를 돌려준다(WD-643 — 호출부가 첫 오류 칸을 고르려면
+   * 방금 계산한 결과가 필요하다. `errors` 상태는 다음 렌더에야 바뀐다).
+   */
+  const validate = (): Partial<Record<keyof AIBehaviorForm, string>> => {
     const newErrors: Partial<Record<keyof AIBehaviorForm, string>> = {};
 
     NUMBER_RULES.forEach(({ key, min, max, integer, message }) => {
@@ -262,8 +348,38 @@ function AdminSettingsPage() {
     }
 
     setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    return newErrors;
   };
+
+  /**
+   * 검증 실패 뒤 첫 오류 칸으로 포커스를 옮기는 장치(WD-643).
+   *
+   * 바로 포커스하지 않고 오류가 그려진 렌더 뒤(아래 effect)에 옮긴다 — 지원 안 함으로 잠긴(disabled) 칸은 오류가 붙어야
+   * 잠금이 풀리는데(`runFieldLocked`), setErrors 직후에는 아직 disabled 라 포커스를 받지 못한다.
+   * `pendingErrorFocusRef` 는 "이번 저장 실패에 대한 포커스가 남았다"는 표시이고, `errorFocusRequest` 는 오류 객체가
+   * 같아 보여도(예: 같은 오류로 다시 저장) effect 가 한 번 돌게 하는 신호다.
+   */
+  const aiTabRef = useRef<HTMLDivElement>(null);
+  const pendingErrorFocusRef = useRef(false);
+  const [errorFocusRequest, setErrorFocusRequest] = useState(0);
+  useEffect(() => {
+    if (!pendingErrorFocusRef.current) return;
+    // 찾든 못 찾든 표시는 지운다 — 남겨 두면 나중의 다른 렌더가 사용자 포커스를 빼앗는다.
+    pendingErrorFocusRef.current = false;
+    // 손으로 적은 순서 목록 대신 화면(DOM) 순서상 첫 오류 칸을 고른다 — 사용자가 보는 순서와 늘 같다.
+    // 이번 검증 오류의 칸만 고른다(같은 탭의 자격증명 칸이 자기 오류로 aria-invalid 일 수 있다).
+    const invalidIds = new Set(Object.keys(errors).map((key) => fieldIds(key as keyof AIBehaviorForm).input));
+    const target = Array.from(aiTabRef.current?.querySelectorAll<HTMLElement>('[aria-invalid="true"]') ?? []).find(
+      (el) => invalidIds.has(el.id),
+    );
+    if (target) {
+      // 포커스가 칸을 화면에 보이게 하고 연결된 오류 문구를 읽힌다 — 토스트는 띄우지 않는다(라이브 영역이 칸 낭독과 겹친다).
+      target.focus();
+    } else {
+      // 포커스할 칸을 못 찾았을 때만 토스트로 알린다(무슨 일이 있었는지 알 방법이 없어지지 않게).
+      toast.error('입력값을 확인하세요.');
+    }
+  }, [errors, errorFocusRequest]);
 
   /**
    * 실제 저장 실행 — 확인 다이얼로그(필요한 경우)를 지난 뒤에만 호출된다.
@@ -424,8 +540,13 @@ function AdminSettingsPage() {
    * 먼저 연다(설계서 §193 "유형 전환").
    */
   const handleSaveClick = () => {
-    if (!validate()) {
-      toast.error('입력값을 확인하세요.');
+    const validationErrors = validate();
+    // 오류가 하나라도 있으면 저장하지 않는다(WD-643) — 어느 칸으로 포커스할지와 저장 차단은 별개다.
+    if (Object.keys(validationErrors).length > 0) {
+      // 오류 문구들을 role=alert 로 한꺼번에 읽히는 대신, 렌더 뒤 첫 오류 칸으로 포커스를 옮겨 라벨과 연결된 오류
+      // 문구(describedby)를 읽게 한다. 검증 실패일 때만이라 확인 다이얼로그·저장 경로에는 끼어들지 않는다.
+      pendingErrorFocusRef.current = true;
+      setErrorFocusRequest((n) => n + 1);
       return;
     }
     if (cred.typeChanged) {
@@ -489,18 +610,11 @@ function AdminSettingsPage() {
   // 잠긴 칸의 오류가 저장을 막는데 고칠 방법이 없어진다. 고쳐서 검증을 통과하면 다시 잠긴다.
   const runUnsupported = (key: AiBehaviorRunSettingKey) => agentTypeKnown && !runSupport[key];
   const runFieldLocked = (key: AiBehaviorRunSettingKey) => runUnsupported(key) && !errors[key];
-  // 오류·설명 문구를 필드와 잇는 속성(WD-590, WCAG 3.3.1·1.3.1) — 오류가 있으면 aria-invalid 와 함께 오류 문구를
-  // 먼저, 설명 문구를 늘 읽게 한다. 필드 id 는 키에서 나온다('ai.max_turns' → 'ai-max-turns') — 문구 id 는
-  // `<필드 id>-error`·`<필드 id>-desc` 로 맞춘다.
-  const fieldA11y = (key: keyof AIBehaviorForm) => {
-    const fieldId = key.replace(/[._]/g, '-');
-    return {
-      'aria-invalid': errors[key] ? true : undefined,
-      'aria-describedby': errors[key] ? `${fieldId}-error ${fieldId}-desc` : `${fieldId}-desc`,
-    };
-  };
-  // 시스템 프롬프트가 상한을 넘었는지(WD-536) — 글자 수 표시 색을 바꾸는 데 쓴다. 저장 차단은 validate() 가 한다.
+  // 시스템 프롬프트가 상한을 넘었는지(WD-536) — 글자 수 표시 색을 바꾸고, 넘었을 때만 글자 수를 칸 설명에 잇는다
+  // (WD-643 — 평소에도 이으면 칸에 들어갈 때마다 숫자를 읽어 시끄럽다). 저장 차단은 validate() 가 한다.
   const systemPromptOverLimit = form['ai.system_prompt'].length > SYSTEM_PROMPT_MAX_LENGTH;
+  // 시스템 프롬프트 칸의 id 묶음(WD-643 — 문구 id·describedby 의 단일 출처).
+  const promptIds = fieldIds('ai.system_prompt');
 
   if (behaviorLoading || cred.isLoading) {
     return (
@@ -572,7 +686,8 @@ function AdminSettingsPage() {
         </TabsContent>
 
         {/* AI 에이전트 탭 */}
-        <TabsContent value="ai" className="mt-6 space-y-6">
+        {/* aiTabRef: 검증 실패 시 첫 오류 칸을 찾는 범위(WD-643) */}
+        <TabsContent ref={aiTabRef} value="ai" className="mt-6 space-y-6">
           <Card className="card-hover">
             <CardHeader>
               <CardTitle>모델 설정</CardTitle>
@@ -643,117 +758,69 @@ function AdminSettingsPage() {
 
               <Separator />
 
-              {/* Max Turns */}
-              <div className="space-y-2">
-                <SettingFieldLabel
-                  htmlFor="ai-max-turns"
-                  badge={<DefaultHint show={isDefault('ai.max_turns')} />}
-                >
-                  최대 턴 수
-                </SettingFieldLabel>
-                <Input
-                  id="ai-max-turns"
-                  {...fieldA11y('ai.max_turns')}
-                  type="number"
-                  min={1}
-                  max={50}
-                  className="w-full max-w-md"
-                  value={form['ai.max_turns']}
-                  onChange={(e) => updateField('ai.max_turns', e.target.value)}
-                  disabled={runFieldLocked('ai.max_turns')}
-                />
-                {errors['ai.max_turns'] && (
-                  <p id="ai-max-turns-error" role="alert" className="text-sm text-destructive">{errors['ai.max_turns']}</p>
-                )}
-                <p id="ai-max-turns-desc" className="text-sm text-muted-foreground">에이전트가 도구를 사용할 수 있는 최대 반복 횟수 (1~50)</p>
-                <UnsupportedHint show={runUnsupported('ai.max_turns')} />
-              </div>
+              {/* 숫자 칸 4개 — 라벨·입력·오류·설명·안내 마크업과 id 연결은 AiNumberSettingField 가 맡는다(WD-643). */}
+              <AiNumberSettingField
+                fieldKey="ai.max_turns"
+                label="최대 턴 수"
+                description="에이전트가 도구를 사용할 수 있는 최대 반복 횟수 (1~50)"
+                isDefault={isDefault('ai.max_turns')}
+                value={form['ai.max_turns']}
+                onChange={(v) => updateField('ai.max_turns', v)}
+                error={errors['ai.max_turns']}
+                min={1}
+                max={50}
+                disabled={runFieldLocked('ai.max_turns')}
+                unsupported={runUnsupported('ai.max_turns')}
+              />
 
               <Separator />
 
-              {/* Temperature */}
-              <div className="space-y-2">
-                <SettingFieldLabel
-                  htmlFor="ai-temperature"
-                  badge={<DefaultHint show={isDefault('ai.temperature')} />}
-                >
-                  Temperature
-                </SettingFieldLabel>
-                <Input
-                  id="ai-temperature"
-                  {...fieldA11y('ai.temperature')}
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.1}
-                  className="w-full max-w-md"
-                  value={form['ai.temperature']}
-                  onChange={(e) => updateField('ai.temperature', e.target.value)}
-                  disabled={runFieldLocked('ai.temperature')}
-                />
-                {errors['ai.temperature'] && (
-                  <p id="ai-temperature-error" role="alert" className="text-sm text-destructive">{errors['ai.temperature']}</p>
-                )}
-                <p id="ai-temperature-desc" className="text-sm text-muted-foreground">응답의 창의성 수준 (0.0: 결정적, 1.0: 창의적)</p>
-                <UnsupportedHint show={runUnsupported('ai.temperature')} />
-              </div>
+              <AiNumberSettingField
+                fieldKey="ai.temperature"
+                label="Temperature"
+                description="응답의 창의성 수준 (0.0: 결정적, 1.0: 창의적)"
+                isDefault={isDefault('ai.temperature')}
+                value={form['ai.temperature']}
+                onChange={(v) => updateField('ai.temperature', v)}
+                error={errors['ai.temperature']}
+                min={0}
+                max={1}
+                step={0.1}
+                disabled={runFieldLocked('ai.temperature')}
+                unsupported={runUnsupported('ai.temperature')}
+              />
 
               <Separator />
 
-              {/* Max Tokens */}
-              <div className="space-y-2">
-                <SettingFieldLabel
-                  htmlFor="ai-max-tokens"
-                  badge={<DefaultHint show={isDefault('ai.max_tokens')} />}
-                >
-                  최대 응답 토큰
-                </SettingFieldLabel>
-                <Input
-                  id="ai-max-tokens"
-                  {...fieldA11y('ai.max_tokens')}
-                  type="number"
-                  min={1}
-                  max={65536}
-                  className="w-full max-w-md"
-                  value={form['ai.max_tokens']}
-                  onChange={(e) => updateField('ai.max_tokens', e.target.value)}
-                  disabled={runFieldLocked('ai.max_tokens')}
-                />
-                {errors['ai.max_tokens'] && (
-                  <p id="ai-max-tokens-error" role="alert" className="text-sm text-destructive">{errors['ai.max_tokens']}</p>
-                )}
-                <p id="ai-max-tokens-desc" className="text-sm text-muted-foreground">AI 응답의 최대 토큰 수 (1~65536)</p>
-                <UnsupportedHint show={runUnsupported('ai.max_tokens')} />
-              </div>
+              <AiNumberSettingField
+                fieldKey="ai.max_tokens"
+                label="최대 응답 토큰"
+                description="AI 응답의 최대 토큰 수 (1~65536)"
+                isDefault={isDefault('ai.max_tokens')}
+                value={form['ai.max_tokens']}
+                onChange={(v) => updateField('ai.max_tokens', v)}
+                error={errors['ai.max_tokens']}
+                min={1}
+                max={65536}
+                disabled={runFieldLocked('ai.max_tokens')}
+                unsupported={runUnsupported('ai.max_tokens')}
+              />
 
               <Separator />
 
-              {/* Session Max Tokens */}
-              <div className="space-y-2">
-                <SettingFieldLabel
-                  htmlFor="ai-session-max-tokens"
-                  badge={<DefaultHint show={isDefault('ai.session_max_tokens')} />}
-                >
-                  세션 최대 토큰
-                </SettingFieldLabel>
-                <Input
-                  id="ai-session-max-tokens"
-                  {...fieldA11y('ai.session_max_tokens')}
-                  type="number"
-                  min={10000}
-                  max={200000}
-                  step={10000}
-                  className="w-full max-w-md"
-                  value={form['ai.session_max_tokens']}
-                  onChange={(e) => updateField('ai.session_max_tokens', e.target.value)}
-                />
-                {errors['ai.session_max_tokens'] && (
-                  <p id="ai-session-max-tokens-error" role="alert" className="text-sm text-destructive">{errors['ai.session_max_tokens']}</p>
-                )}
-                <p id="ai-session-max-tokens-desc" className="text-sm text-muted-foreground">
-                  세션의 입력 토큰이 이 값을 초과하면 대화를 자동 요약하고 새 세션으로 전환합니다 (10,000~200,000)
-                </p>
-              </div>
+              {/* 세션 최대 토큰은 공급자별 실행 설정(WD-59)이 아니라 잠금·안내가 없다. */}
+              <AiNumberSettingField
+                fieldKey="ai.session_max_tokens"
+                label="세션 최대 토큰"
+                description="세션의 입력 토큰이 이 값을 초과하면 대화를 자동 요약하고 새 세션으로 전환합니다 (10,000~200,000)"
+                isDefault={isDefault('ai.session_max_tokens')}
+                value={form['ai.session_max_tokens']}
+                onChange={(v) => updateField('ai.session_max_tokens', v)}
+                error={errors['ai.session_max_tokens']}
+                min={10000}
+                max={200000}
+                step={10000}
+              />
             </CardContent>
           </Card>
 
@@ -769,9 +836,15 @@ function AdminSettingsPage() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Textarea
-                  id="ai-system-prompt"
+                  id={promptIds.input}
                   aria-labelledby="ai-system-prompt-label"
-                  {...fieldA11y('ai.system_prompt')}
+                  aria-invalid={errors['ai.system_prompt'] ? true : undefined}
+                  // WD-643: 실제로 그려진 문구 id 만 잇는다 — 오류(있을 때)·설명(늘)·글자 수(상한을 넘었을 때).
+                  aria-describedby={describedBy(
+                    errors['ai.system_prompt'] ? promptIds.error : false,
+                    promptIds.desc,
+                    systemPromptOverLimit ? promptIds.count : false,
+                  )}
                   rows={15}
                   className="font-mono text-sm"
                   value={form['ai.system_prompt']}
@@ -781,7 +854,9 @@ function AdminSettingsPage() {
                 {/* 글자 수(WD-536): 상한에 얼마나 남았는지 늘 보여 주고, 넘으면 destructive 색으로 바꿔
                     저장 전에도 넘었다는 것을 알 수 있게 한다. */}
                 <p
-                  data-testid="ai-system-prompt-count"
+                  id={promptIds.count}
+                  // 테스트 훅도 같은 id 값을 쓴다(WD-643 — 글자 수 id 의 출처는 fieldIds 하나).
+                  data-testid={promptIds.count}
                   className={cn(
                     'text-right text-xs tabular-nums',
                     systemPromptOverLimit ? 'text-destructive' : 'text-muted-foreground',
@@ -790,12 +865,13 @@ function AdminSettingsPage() {
                   {form['ai.system_prompt'].length.toLocaleString('ko-KR')} /{' '}
                   {SYSTEM_PROMPT_MAX_LENGTH.toLocaleString('ko-KR')}자
                 </p>
+                {/* 오류 문구에 role=alert 를 두지 않는다(WD-643) — 저장 시 첫 오류 칸으로 포커스가 와 describedby 로 읽힌다. */}
                 {errors['ai.system_prompt'] && (
-                  <p id="ai-system-prompt-error" role="alert" className="text-sm text-destructive">
+                  <p id={promptIds.error} className="text-sm text-destructive">
                     {errors['ai.system_prompt']}
                   </p>
                 )}
-                <p id="ai-system-prompt-desc" className="text-sm text-muted-foreground">
+                <p id={promptIds.desc} className="text-sm text-muted-foreground">
                   AI 에이전트의 역할과 동작을 정의하는 시스템 프롬프트
                 </p>
               </div>
