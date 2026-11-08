@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 
 import { Breadcrumb } from '../../components/layout/Breadcrumb';
 import { ResourceNotFound } from '../../components/ResourceNotFound';
+import { TruncatedTitle } from '../../components/TruncatedTitle';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -404,7 +405,8 @@ export default function DatasetDetailPage() {
           </button>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">{dataset.name}</h1>
+              {/* 띄어쓰기 없는 긴 이름도 머리글 안에서 줄바꿈한다(WD-656) */}
+              <h1 className="min-w-0 wrap-anywhere text-[28px] leading-[36px] font-semibold tracking-tight">{dataset.name}</h1>
               {/* 보안 등급 배지 — Certified 배지 앞, 같은 위계(목업 s2). 생성 응답 등에서 비어 올 수 있어 있을 때만 그린다. */}
               {dataset.securityLevel && (
                 <span className="inline-flex items-center gap-1">
@@ -532,7 +534,8 @@ export default function DatasetDetailPage() {
                 </Popover>
               )}
             </div>
-            <p className="text-sm text-muted-foreground mt-1">
+            {/* 긴 테이블명도 머리글 안에서 줄바꿈한다(WD-656) */}
+            <p className="text-sm text-muted-foreground mt-1 wrap-anywhere">
               테이블: <span className="font-mono">{dataset.tableName}</span>
             </p>
             {dataset.statusNote && <DatasetStatusNote key={dataset.statusNote} note={dataset.statusNote} />}
@@ -540,8 +543,9 @@ export default function DatasetDetailPage() {
             {/* Tags */}
             <div className="flex items-center gap-1.5 flex-wrap mt-2">
               {(dataset.tags || []).map((tag) => (
-                <Badge key={tag} variant="secondary" className="text-xs gap-1 pr-1">
-                  {tag}
+                // 긴 태그는 칩 안에서 말줄임하고 잘렸을 때만 title 을 단다 — 제거 버튼은 줄지 않고 보인다(WD-656)
+                <Badge key={tag} variant="secondary" className="text-xs gap-1 pr-1 max-w-full">
+                  <TruncatedTitle text={tag} />
                   {/* 태그 제거도 dataset:write — 조회 전용이면 태그는 이름만 보인다 (WD-139) */}
                   {canWriteDataset && (
                     // 이름에 태그를 넣어 스크린리더가 어느 태그인지 읽게 하고, 누르는 영역은 24×24px(WCAG 2.5.8)로 넓힌다 —
