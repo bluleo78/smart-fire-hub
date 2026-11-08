@@ -204,7 +204,7 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
         Arguments.of(
             "자동 생성 출력의 예약어 대상 컬럼",
             apiStep(null, List.of(mapping("id", "id"))),
-            "스텝 'API 호출': 컬럼명 'id'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)"),
+            "스텝 'API 호출': 컬럼명 'id'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at, xmin, xmax, cmin, cmax, ctid, tableoid)"),
         Arguments.of(
             "대상 컬럼 중복",
             apiStep(null, List.of(mapping("a", "dup"), mapping("b", "dup"))),
@@ -244,7 +244,12 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
         Arguments.of(
             "Python 출력 컬럼 예약어",
             pythonStep(null, List.of(outputColumn("created_at"))),
-            "스텝 '파이썬': 컬럼명 'created_at'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)"));
+            "스텝 '파이썬': 컬럼명 'created_at'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at, xmin, xmax, cmin, cmax, ctid, tableoid)"),
+        // PG 시스템 컬럼명도 TEMP 생성이 거부하므로 저장 시점에 같은 문구로 막는다(WD-564).
+        Arguments.of(
+            "Python 출력 컬럼 PG 시스템 컬럼명",
+            pythonStep(null, List.of(outputColumn("xmin"))),
+            "스텝 '파이썬': 컬럼명 'xmin'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at, xmin, xmax, cmin, cmax, ctid, tableoid)"));
   }
 
   /** OUT 표식을 실제 출력 데이터셋 id 로 바꾼다. */

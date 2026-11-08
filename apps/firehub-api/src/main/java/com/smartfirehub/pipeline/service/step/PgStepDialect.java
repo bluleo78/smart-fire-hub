@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service.step;
 
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
+import com.smartfirehub.dataset.service.PostgresDataTableStore;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.ColumnInfo;
@@ -77,7 +78,7 @@ public class PgStepDialect implements StepDialect {
     List<String> rawSelectColumns = probedColumns.stream().map(ColumnInfo::name).toList();
     List<String> selectColumns =
         run.tempDatasetAutoCreated()
-            ? SqlOutputColumns.renameReservedColumnNames(rawSelectColumns)
+            ? SqlOutputColumns.renameReservedColumnNames(rawSelectColumns, reservedColumnNames())
             : rawSelectColumns;
 
     // 출력 데이터셋의 컬럼은 **하나도 빼지 않는다**. 특히 is_primary_key 컬럼을 제외하면 안 된다
@@ -223,5 +224,11 @@ public class PgStepDialect implements StepDialect {
   @Override
   public boolean takesOutputSessionLock(boolean isReplace) {
     return isReplace;
+  }
+
+  /** PG 저장소와 같은 예약어 — 앱 시스템 컬럼 + PG 시스템 컬럼(xmin·ctid 등, WD-564). */
+  @Override
+  public List<String> reservedColumnNames() {
+    return PostgresDataTableStore.RESERVED_COLUMN_NAMES;
   }
 }

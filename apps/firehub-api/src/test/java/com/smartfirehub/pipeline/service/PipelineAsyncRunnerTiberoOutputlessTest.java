@@ -153,7 +153,9 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
                 tmp.repo(),
                 tmp.datasets(),
                 tmp.columns(),
-                new DataTableService(null),
+                // Tibero 테넌트 — 예약 컬럼명은 앱 시스템 컬럼만(WD-564).
+                new DataTableService(
+                    com.smartfirehub.support.ReservedNameResolvers.appReservedOnly()),
                 pipelineDataSchema));
     org.springframework.test.util.ReflectionTestUtils.setField(
         runner, "tempDatasetService", realTempDatasetService);

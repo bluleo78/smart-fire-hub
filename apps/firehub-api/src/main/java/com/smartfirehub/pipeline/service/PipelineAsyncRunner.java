@@ -733,6 +733,7 @@ public class PipelineAsyncRunner {
           tempDatasetAutoCreated = true;
           // SELECT * FROM {{#N}} 처럼 이전 스텝(또는 실제 데이터셋)의 결과를 그대로 재사용하면
           // 결과 컬럼에 시스템 예약 컬럼(id/import_id/created_at/_updated_at)이 그대로 섞여 들어온다.
+          // (PG 는 SELECT ctid 처럼 PG 시스템 컬럼명도 예약어라 같은 방식으로 별칭 처리한다 — WD-564.)
           // V124 백필 이후 _updated_at 은 모든 데이터셋 테이블에 있으므로 SELECT * 는 항상 이 경로를 탄다.
           // 이 컬럼들을 그대로 새 임시 데이터셋의 사용자 컬럼으로 넘기면
           // DataTableService의 예약어 가드(사용자가 신규 데이터셋에 직접 그 이름을 짓는 것을 막기 위한 것)에
@@ -747,7 +748,8 @@ public class PipelineAsyncRunner {
           } else {
             probedColumns = sqlColumnProbe.columnsWithTypes(sql);
           }
-          List<ColumnInfo> selectColumns = renameReservedColumns(probedColumns);
+          List<ColumnInfo> selectColumns =
+              renameReservedColumns(probedColumns, dialect.reservedColumnNames());
           // 결과 컬럼명이 데이터셋 이름 규칙에 맞는지 TEMP 생성 전에 본다(WD-111). 맞지 않으면 데이터셋 공용 검증의
           // 영어 문구(Invalid name: ?column?. Must match …)로 실패해, 별칭 없는 식 컬럼(SELECT 1 → ?column?)에 AS 를
           // 붙이면 된다는 걸 알 수 없었다. 규칙은 DataTableNames 하나를 쓰고, 안내는 이 경로에서만 SQL 문맥으로 낸다.
@@ -2164,12 +2166,14 @@ public class PipelineAsyncRunner {
   }
 
   /**
-   * {@link SqlOutputColumns#renameReservedColumnNames(List)}의 {@link ColumnInfo} 목록 버전 (타입 정보는 그대로
-   * 보존).
+   * {@link SqlOutputColumns#renameReservedColumnNames(List, List)}의 {@link ColumnInfo} 목록 버전 (타입
+   * 정보는 그대로 보존). {@code reserved} 는 방언(테넌트 백엔드)의 예약 컬럼명이다(WD-564).
    */
-  private static List<ColumnInfo> renameReservedColumns(List<ColumnInfo> columns) {
+  private static List<ColumnInfo> renameReservedColumns(
+      List<ColumnInfo> columns, List<String> reserved) {
     List<String> renamedNames =
-        SqlOutputColumns.renameReservedColumnNames(columns.stream().map(ColumnInfo::name).toList());
+        SqlOutputColumns.renameReservedColumnNames(
+            columns.stream().map(ColumnInfo::name).toList(), reserved);
     List<ColumnInfo> result = new ArrayList<>();
     for (int i = 0; i < columns.size(); i++) {
       result.add(new ColumnInfo(renamedNames.get(i), columns.get(i).appType()));

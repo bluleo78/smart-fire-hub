@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -18,8 +19,42 @@ public interface DataTableStore {
   /** 행 변경 시각 시스템 컬럼 — 파이프라인 증분 처리({{last_run_at}})의 기준. 트리거가 관리한다. */
   String UPDATED_AT_COLUMN = "_updated_at";
 
+  /**
+   * 앱 시스템 컬럼 이름(순서 고정) — 모든 백엔드의 데이터셋 물리 테이블이 갖는 컬럼이다. 예약어 안내 문구의 순서와 {@link #SYSTEM_COLUMNS} 집합이
+   * 모두 이 목록 하나에서 나와 서로 어긋나지 않는다(WD-564).
+   */
+  List<String> SYSTEM_COLUMN_NAMES = List.of("id", "import_id", "created_at", UPDATED_AT_COLUMN);
+
   /** 사용자가 컬럼명으로 쓸 수 없는 시스템 예약 컬럼. 생성·컬럼 추가·결과 숨김이 모두 이 집합을 따른다. */
-  Set<String> SYSTEM_COLUMNS = Set.of("id", "import_id", "created_at", UPDATED_AT_COLUMN);
+  Set<String> SYSTEM_COLUMNS = Set.copyOf(SYSTEM_COLUMN_NAMES);
+
+  /**
+   * 이 백엔드에서 새 컬럼(생성·추가·이름 변경)에 쓸 수 없는 이름(소문자, 안내 순서). 기본은 앱 시스템 컬럼뿐이고, DB 자체가 막는 이름이 있는 백엔드는 덮어써
+   * 더한다(PG 의 xmin 등 — {@code PostgresDataTableStore}, WD-564). DB 제약이므로 백엔드마다 다르다 — Tibero 에는 PG
+   * 시스템 컬럼명 제약이 없어 그런 이름의 기존 컬럼이 합법적으로 있을 수 있다.
+   */
+  default List<String> reservedColumnNames() {
+    return SYSTEM_COLUMN_NAMES;
+  }
+
+  /** 이 백엔드에서 컬럼명이 예약어인지(대소문자 무시). */
+  default boolean isReservedColumnName(String columnName) {
+    return reservedColumnNames().contains(columnName.toLowerCase(Locale.ROOT));
+  }
+
+  /** 이 백엔드의 예약 컬럼명 안내 문구 — 목록에는 이 백엔드에 적용되는 예약어만 싣는다. */
+  default String reservedColumnNameMessage(String columnName) {
+    return reservedColumnNameMessage(columnName, reservedColumnNames());
+  }
+
+  /**
+   * 예약 컬럼명 안내 문구의 단일 형식 — 데이터셋 생성·추가·이름 변경, 백엔드별 저장소, 파이프라인 스텝 저장 검증이 같은 문장을 쓰도록 한 곳에 둔다.
+   *
+   * @param reserved 안내에 실을 예약어 목록(순서 그대로 보여 준다)
+   */
+  static String reservedColumnNameMessage(String columnName, List<String> reserved) {
+    return "컬럼명 '" + columnName + "'은 시스템 예약어입니다. (예약어: " + String.join(", ", reserved) + ")";
+  }
 
   /**
    * 크래시 뒤 재생성 보관본 맞춤 결과(WD-256) — 보관본이 없었으면 {@code NONE}, 재생성이 커밋돼 옛 보관본을 지웠으면 {@code

@@ -1,7 +1,6 @@
 package com.smartfirehub.pipeline.service.step;
 
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
-import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -81,7 +80,8 @@ public final class SqlOutputColumns {
   }
 
   /**
-   * SELECT 결과 컬럼명 중 시스템 예약어(id/import_id/created_at/_updated_at)와 충돌하는 이름을 자동으로 안전한 이름으로 바꾼다(#645).
+   * SELECT 결과 컬럼명 중 테넌트 백엔드의 예약어({@code reserved} — 앱 시스템 컬럼 id/import_id/created_at/_updated_at,
+   * PG 는 xmin/ctid 등 PG 시스템 컬럼까지, WD-564)와 충돌하는 이름을 자동으로 안전한 이름으로 바꾼다(#645).
    *
    * <p>{@code SELECT * FROM {{#N}}}처럼 이전 스텝(또는 실제 데이터셋)의 출력을 그대로 재사용하면, 모든 데이터셋 물리 테이블이 자동으로 갖는 시스템
    * 컬럼(id/created_at 등)이 결과 컬럼에 그대로 섞여 들어온다. 이를 새 임시 데이터셋의 "사용자 컬럼"으로 그대로 저장하려 하면 {@code
@@ -99,16 +99,18 @@ public final class SqlOutputColumns {
    * 목록과 어긋나 실행이 깨진다.
    *
    * @param names SELECT 결과 컬럼명 목록 (순서 보존 필요 — INSERT 매칭에 그대로 재사용됨)
+   * @param reserved 이 백엔드의 예약 컬럼명(소문자) — TEMP 생성 검증과 같은 목록이어야 별칭이 그 검증을 통과한다({@code
+   *     StepDialect#reservedColumnNames})
    * @return 예약어 충돌이 해소된 컬럼명 목록 (같은 순서, 같은 개수)
    */
-  public static List<String> renameReservedColumnNames(List<String> names) {
+  public static List<String> renameReservedColumnNames(List<String> names, List<String> reserved) {
     Set<String> used = new HashSet<>(names);
     List<String> result = new ArrayList<>();
     for (String name : names) {
       String candidate = name;
-      // 예약 컬럼 집합은 DataTableService 와 공유한다 — 따로 복사해 두면 시스템 컬럼이 하나 늘었을 때
-      // 이쪽만 조용히 낡는다(실제로 _updated_at 이 그렇게 추가됐다).
-      if (DataTableService.SYSTEM_COLUMNS.contains(name.toLowerCase())) {
+      // 예약 컬럼 목록은 저장소 정의를 받아 쓴다 — 따로 복사해 두면 시스템 컬럼이 하나 늘었을 때
+      // 이쪽만 조용히 낡는다(실제로 _updated_at 이 그렇게 추가됐다). 백엔드마다 다르므로 호출자가 방언에서 넘긴다(WD-564).
+      if (reserved.contains(name.toLowerCase())) {
         // 접미사를 붙일 기반 이름 — 선행 밑줄 제거 + 소문자화로 항상 ^[a-z][a-z0-9_]*$ 를 만족시킨다.
         // (예약어 집합이 전부 영문자로 시작하므로 밑줄을 떼면 반드시 [a-z] 로 시작한다. 그래도
         // 방어적으로 빈 문자열이면 "col" 로 대체한다.)

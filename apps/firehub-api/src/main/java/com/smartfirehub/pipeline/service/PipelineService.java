@@ -6,7 +6,9 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
+import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.dataset.storage.DataTableNames;
+import com.smartfirehub.dataset.storage.DataTableStore;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.tenant.DataSchema;
@@ -90,6 +92,9 @@ public class PipelineService {
    * 기존 검증기 빈·{@code DataSchema.qualify} 그대로라 러너와 같은 선택이 된다.
    */
   private final PipelineDataSchema pipelineDataSchema;
+
+  /** 테넌트 백엔드의 DDL 저장소 — 자동 생성 출력 컬럼의 예약어 규칙(백엔드별, WD-564)을 TEMP 생성과 같게 얻는다. */
+  private final DataStoreResolver dataStoreResolver;
 
   private final PythonScriptValidator pythonScriptValidator;
   private final DatasetColumnRepository columnRepository;
@@ -1314,8 +1319,7 @@ public class PipelineService {
    * 출력 컬럼 이름 검증 — 빈 이름·예약어(자동 생성 시)·형식·길이·중복. AI_CLASSIFY·PYTHON 이 같은 규칙·문구를 쓴다(WD-352 — 화면의
    * validateOutputColumns 와 같다).
    */
-  private static void validateOutputColumnNames(
-      String stepName, List<String> names, boolean autoOutput) {
+  private void validateOutputColumnNames(String stepName, List<String> names, boolean autoOutput) {
     Set<String> seenNames = new java.util.HashSet<>();
     for (String raw : names) {
       String name = raw == null ? "" : raw;
@@ -1442,7 +1446,7 @@ public class PipelineService {
    * 대상 컬럼 둘은 INSERT 컬럼 중복(또는 TEMP 생성 실패)으로 실패했다. 빈 행을 조용히 버리지 않는 이유: 사용자가 채우려던 행일 수 있다 — 채우거나 지우게
    * 한다.
    */
-  private static void validateApiCallFieldMappings(PipelineStepRequest step) {
+  private void validateApiCallFieldMappings(PipelineStepRequest step) {
     String stepName = step.name();
     boolean autoOutput = step.outputDatasetId() == null;
     Set<String> seenTargets = new java.util.HashSet<>();
@@ -1500,15 +1504,20 @@ public class PipelineService {
   /**
    * 출력 컬럼 이름(API_CALL 대상 컬럼·AI_CLASSIFY 출력 컬럼)의 예약어·형식 검사.
    *
-   * <p>예약어(id·import_id·created_at·_updated_at)는 출력 데이터셋을 자동 생성할 때만 막는다 — TEMP 생성이 예약어를 거부하기
-   * 때문이다(문구는 데이터셋 생성과 같은 {@link DataTableService#reservedColumnNameMessage}). 지정 출력 데이터셋에는 이 컬럼들이
-   * 물리적으로 있어 적재가 가능하므로 형식 검사만 한다. 형식 규칙은 {@link DataTableNames#isValid} — 공용 영어 문구({@link
-   * DataTableNames#validate})는 다른 호출처와 공유하므로 바꾸지 않고 여기서 한국어 안내를 낸다(WD-111 과 같은 문장).
+   * <p>예약어(현재 테넌트 저장소의 {@link DataTableStore#reservedColumnNames()} — 앱 시스템 컬럼, PG 는 xmin 등 PG 시스템
+   * 컬럼까지, WD-564)는 출력 데이터셋을 자동 생성할 때만 막는다 — TEMP 생성이 예약어를 거부하기 때문이다(문구는 데이터셋 생성과 같은 {@link
+   * DataTableStore#reservedColumnNameMessage(String)}). 지정 출력 데이터셋에는 이 컬럼들이 물리적으로 있어 적재가 가능하므로 형식
+   * 검사만 한다. 형식 규칙은 {@link DataTableNames#isValid} — 공용 영어 문구({@link DataTableNames#validate})는 다른
+   * 호출처와 공유하므로 바꾸지 않고 여기서 한국어 안내를 낸다(WD-111 과 같은 문장).
    */
-  private static void rejectInvalidColumnName(String stepName, String name, boolean autoOutput) {
-    if (autoOutput && DataTableService.SYSTEM_COLUMNS.contains(name.toLowerCase())) {
-      throw new IllegalArgumentException(
-          stepError(stepName, DataTableService.reservedColumnNameMessage(name)));
+  private void rejectInvalidColumnName(String stepName, String name, boolean autoOutput) {
+    if (autoOutput) {
+      // 예약어는 테넌트 백엔드마다 다르다 — TEMP 를 만들 저장소와 같은 규칙·문구를 쓴다(PG 는 xmin 등 포함, WD-564).
+      DataTableStore store = dataStoreResolver.tableStore();
+      if (store.isReservedColumnName(name)) {
+        throw new IllegalArgumentException(
+            stepError(stepName, store.reservedColumnNameMessage(name)));
+      }
     }
     if (!DataTableNames.isValid(name)) {
       throw new IllegalArgumentException(stepError(stepName, INVALID_COLUMN_NAME_MESSAGE + name));

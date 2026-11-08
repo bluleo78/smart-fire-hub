@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.service.step;
 import com.smartfirehub.pipeline.service.PythonScriptExecutor;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -51,6 +52,13 @@ public interface StepDialect {
 
   /** 실행기 꺼짐 Python 적재(PG 는 트랜잭션 적재, Tibero 는 스테이징 창구). 적재한 행 수를 돌려준다. */
   long loadLocalPythonOutput(String targetTable, String stdout, Map<String, String> columnTypes);
+
+  /**
+   * 이 백엔드에서 새 컬럼에 쓸 수 없는 이름(소문자) — 저장소 {@code DataTableStore#reservedColumnNames()} 와 같은 목록이다. 자동
+   * 생성 TEMP 의 결과 컬럼 별칭({@link SqlOutputColumns#renameReservedColumnNames})이 TEMP 생성 검증과 같은 규칙을 따르게
+   * 한다(WD-564 — PG 만 xmin 등 PG 시스템 컬럼 포함).
+   */
+  List<String> reservedColumnNames();
 
   /** 로컬 REPLACE 에 PG 출력 세션 잠금을 잡는가(PG REPLACE 만 true). */
   boolean takesOutputSessionLock(boolean isReplace);

@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.storage.DataTableStore;
 import com.smartfirehub.dataset.storage.tibero.TiberoNames;
 import com.smartfirehub.dataset.storage.tibero.TiberoPipelineSql;
 import com.smartfirehub.dataset.storage.tibero.TiberoSqlLexer;
@@ -174,7 +175,10 @@ public class TiberoStepDialect implements StepDialect {
       }
     }
     List<String> targetNames =
-        renameReserved ? SqlOutputColumns.renameReservedColumnNames(selectColumns) : selectColumns;
+        renameReserved
+            ? SqlOutputColumns.renameReservedColumnNames(
+                selectColumns, DataTableStore.SYSTEM_COLUMN_NAMES)
+            : selectColumns;
     // 실패 안내에는 사용자가 쓴 그대로의(탐지된) 이름을 보여 준다.
     List<String> matched =
         SqlOutputColumns.matchOutputColumns(targetNames, probedNames, outputColumnNames);
@@ -320,6 +324,12 @@ public class TiberoStepDialect implements StepDialect {
   @Override
   public boolean takesOutputSessionLock(boolean isReplace) {
     return false;
+  }
+
+  /** Tibero 저장소와 같은 예약어 — 앱 시스템 컬럼만(PG 시스템 컬럼명은 PG DDL 제약이라 Tibero 에는 없다, WD-564). */
+  @Override
+  public List<String> reservedColumnNames() {
+    return DataTableStore.SYSTEM_COLUMN_NAMES;
   }
 
   /**

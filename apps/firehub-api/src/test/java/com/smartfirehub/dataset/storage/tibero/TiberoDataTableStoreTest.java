@@ -499,6 +499,20 @@ class TiberoDataTableStoreTest {
         .isInstanceOf(com.smartfirehub.dataset.exception.InvalidTableNameException.class);
   }
 
+  /**
+   * PG 시스템 컬럼명(xmin·ctid 등)은 PG DDL 제약일 뿐이라 Tibero 에서는 막지 않는다(WD-564) — 그런 이름의 기존 Tibero 컬럼이
+   * 복제·TEMP 재생성(createTable)에서 거부되면 안 된다. 예약어 목록도 앱 시스템 컬럼만이다.
+   */
+  @Test
+  void pgSystemColumnNames_areAllowedOnTibero() {
+    assertThat(store.isReservedColumnName("xmin")).isFalse();
+    assertThat(store.reservedColumnNames())
+        .containsExactly("id", "import_id", "created_at", "_updated_at");
+    store.createTable("t", List.of(req("xmin", "TEXT"), req("ctid", "TEXT")));
+    store.addColumn("t", req("tableoid", "TEXT"));
+    assertThat(String.join("\n", ddl)).contains("\"XMIN\"", "\"CTID\"", "\"TABLEOID\"");
+  }
+
   @Test
   void cloneTable_runsCreateThenInsert_andRollbackDrops() {
     TransactionSynchronizationManager.initSynchronization();
