@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { skipToken, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
 import { apiConnectionsApi } from '../../api/api-connections';
@@ -19,11 +19,14 @@ export function useApiConnections() {
   });
 }
 
-export function useApiConnection(id: number) {
+/**
+ * API 연결 단건 조회. id 가 null(잘못된 주소 id)이면 조회하지 않는다(WD-652).
+ * 0 같은 대체값 + enabled 조건에 기대지 않고 skipToken 으로 끈다 — null 로는 조회 함수가 아예 만들어지지 않는다.
+ */
+export function useApiConnection(id: number | null) {
   return useQuery({
     queryKey: [QUERY_KEY, id],
-    queryFn: () => apiConnectionsApi.getById(id).then(r => r.data),
-    enabled: !!id,
+    queryFn: id == null ? skipToken : () => apiConnectionsApi.getById(id).then(r => r.data),
   });
 }
 

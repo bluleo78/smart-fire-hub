@@ -8,7 +8,14 @@
 
 import type { Page } from '@playwright/test';
 
+import { createTemplate } from '../factories/ai-insight.factory';
 import { setupAdminAuth, setupApiConnectionListMocks, setupRoleListMocks } from '../fixtures/admin.fixture';
+import {
+  mockProactivePermissions,
+  setupExecutionDetailMocks,
+  setupJobListMocks,
+  setupTemplateDetailMocks,
+} from '../fixtures/ai-insight.fixture';
 import { mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
 import { setupPipelineEditorMocks } from '../fixtures/pipeline.fixture';
@@ -102,9 +109,10 @@ test.describe('숫자가 아닌 주소 id (WD-434)', () => {
 const BAD_RAW_IDS = ['1e1', '1.5', 'abc', '15abc', '%207'];
 /**
  * 잘못 읽힌 id 가 주소에 들어간 형태 — Number/parseInt 결과(10·1.5·1·15·7·NaN)와 원문 그대로.
+ * `0` 은 잘못된 id 를 0 으로 바꿔 넘기던 코드(WD-652)가 조회 조건을 놓치면 나갈 요청이다.
  * url.pathname 은 늘 퍼센트 인코딩돼 있으므로 공백은 `%20` 형태(`%207`)로만 나타난다.
  */
-const BAD_SEGMENT = '(?:10|1\\.5|1|15|7|NaN|1e1|abc|15abc|%207)';
+const BAD_SEGMENT = '(?:0|10|1\\.5|1|15|7|NaN|1e1|abc|15abc|%207)';
 
 /** 상세 API 경로(와 그 아래 하위 자원 `/<bad>/...`)가 잘못된 id 로 불렸는지 기록한다 — 나머지 mock 뒤에 등록해야 먼저 쓰인다 */
 async function trackBadIdRequest(page: Page, prefix: string) {
@@ -142,6 +150,42 @@ test.describe('숫자만이 아닌 주소 id — 남은 상세 화면 (WD-628)',
       await page.goto(`/ai-insights/jobs/1/executions/${raw}`);
 
       await expect(page.getByTestId('execution-not-found')).toHaveText('실행 정보를 찾을 수 없습니다.');
+      await expect(page.getByRole('button', { name: '돌아가기' })).toBeVisible();
+      await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+      expect(hit.urls).toEqual([]);
+    });
+
+    // 작업 id 도 같은 규칙이다(WD-652) — 실행 id 가 정상이어도 작업 id 가 잘못되면 /jobs/0·/jobs/10 등으로 조회하지 않는다
+    test(`AI 실행 상세 /ai-insights/jobs/${raw}/executions/5 — 작업 id 가 잘못돼도 조회 없이 같은 안내`, async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+      const hit = await trackBadIdRequest(page, '/api/v1/proactive/jobs');
+
+      // 돌아가기의 대체 목적지(작업 목록)가 부르는 API — 목록 경로(/proactive/jobs)는 위 추적 정규식에 걸리지 않는다
+      await setupJobListMocks(page);
+
+      await page.goto(`/ai-insights/jobs/${raw}/executions/5`);
+
+      await expect(page.getByTestId('execution-not-found')).toHaveText('실행 정보를 찾을 수 없습니다.');
+      await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+      expect(hit.urls).toEqual([]);
+
+      // 주소로 바로 들어와 돌아갈 기록이 없다 — 돌아가기는 앱 밖이 아니라 작업 목록으로 보낸다(WD-652)
+      await page.getByRole('button', { name: '돌아가기' }).click();
+      await expect(page).toHaveURL(/\/ai-insights\/jobs$/);
+      expect(hit.urls).toEqual([]);
+    });
+
+    // 리포트 보기도 작업 id 가 잘못되면 /jobs/0·/jobs/10 등으로 조회하지 않는다(WD-652)
+    test(`리포트 보기 /ai-insights/jobs/${raw}/executions/5/report — 작업 id 가 잘못돼도 조회 없이 「잘못된 요청입니다」`, async ({
+      authenticatedPage: page,
+    }) => {
+      const hit = await trackBadIdRequest(page, '/api/v1/proactive/jobs');
+
+      await page.goto(`/ai-insights/jobs/${raw}/executions/5/report`);
+
+      await expect(page.getByText('잘못된 요청입니다.')).toBeVisible();
       expect(hit.urls).toEqual([]);
     });
 
@@ -160,14 +204,26 @@ test.describe('숫자만이 아닌 주소 id — 남은 상세 화면 (WD-628)',
     test(`리포트 양식 상세 /ai-insights/templates/${raw} — 조회 없이 「존재하지 않는 템플릿」 후 목록`, async ({
       authenticatedPage: page,
     }) => {
-      await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+      // 이동해 가는 리포트 양식 목록 화면이 부르는 API 까지 모두 모킹한다(WD-652) — 네트워크 실패로 다른 오류 토스트가 끼면
+      // 아래 「토스트 하나」 검사가 흔들린다. 목록에는 잘못 읽힌 id(1·7·10)의 양식을 두어, 그 id 로 상세를 열면 바로 드러나게 한다.
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', [
+        createTemplate({ id: 1, name: '양식 1' }),
+        createTemplate({ id: 7, name: '양식 7' }),
+        createTemplate({ id: 10, name: '양식 10' }),
+      ]);
+      await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
       await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
       const hit = await trackBadIdRequest(page, '/api/v1/proactive/templates');
 
       await page.goto(`/ai-insights/templates/${raw}`);
 
-      await expect(page.locator('[data-sonner-toast]').filter({ hasText: '존재하지 않는 템플릿입니다.' })).toBeVisible();
       await expect(page).toHaveURL(/\/ai-insights\/reports\?tab=templates$/);
+      await expect(page.getByRole('tab', { name: '리포트 양식' })).toHaveAttribute('data-state', 'active');
+      await expect(page.getByText('양식 7')).toBeVisible();
+      // 안내 토스트는 정확히 하나 — 실패 토스트가 따로 뜨지 않는다
+      const toasts = page.locator('[data-sonner-toast]');
+      await expect(toasts).toHaveCount(1);
+      await expect(toasts).toHaveText(/존재하지 않는 템플릿입니다\./);
       expect(hit.urls).toEqual([]);
     });
 
@@ -219,4 +275,49 @@ test.describe('숫자만이 아닌 주소 id — 남은 상세 화면 (WD-628)',
       expect(hit.urls).toEqual([]);
     });
   }
+
+  // 새 양식 화면은 단건 조회를 하지 않는다(WD-652) — 0 같은 대체 id 로 /templates/0 을 부르지 않는다
+  test('리포트 양식 새로 만들기 /ai-insights/templates/new — /templates/0 등 단건 조회 없음', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockProactivePermissions(page);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    const hit = await trackBadIdRequest(page, '/api/v1/proactive/templates');
+
+    await page.goto('/ai-insights/templates/new');
+
+    await expect(page.getByRole('heading', { level: 1, name: '새 템플릿' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '만들기' })).toBeVisible();
+    expect(hit.urls).toEqual([]);
+  });
+
+  // 정상 id 는 그대로 연다(WD-652) — 잘못된 id 분기가 정상 경로를 막지 않는다
+  test('AI 실행 상세 /ai-insights/jobs/1/executions/5 — 정상 id 는 그 실행을 조회해 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupExecutionDetailMocks(page, 1, 5, 'FAILED');
+    const detailRequest = page.waitForRequest((req) => new URL(req.url()).pathname === '/api/v1/proactive/jobs/1/executions/5');
+
+    await page.goto('/ai-insights/jobs/1/executions/5');
+
+    await detailRequest;
+    await expect(page.getByText('실행 #5')).toBeVisible();
+    await expect(page.getByTestId('execution-not-found')).toHaveCount(0);
+  });
+
+  test('리포트 양식 상세 /ai-insights/templates/7 — 정상 id 는 그 양식을 조회해 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTemplateDetailMocks(page, 7);
+    const detailRequest = page.waitForRequest((req) => new URL(req.url()).pathname === '/api/v1/proactive/templates/7');
+
+    await page.goto('/ai-insights/templates/7');
+
+    await detailRequest;
+    await expect(page.getByRole('heading', { level: 1, name: createTemplate({ id: 7 }).name })).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe('/ai-insights/templates/7');
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+  });
 });
