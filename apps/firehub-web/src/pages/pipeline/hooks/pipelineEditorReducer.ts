@@ -44,6 +44,18 @@ export interface ValidationError {
   message: string;
 }
 
+/**
+ * 저장 검증 실패 후 포커스를 옮길 필드(WD-560). 스텝 설정 패널이 그 필드가 렌더된 뒤 소비하고 지운다.
+ * 패널 위에서 아래 순서 — 오류가 여럿이면 이 순서의 첫 필드로 간다.
+ */
+export const ERROR_FOCUS_FIELDS = ['name', 'scriptContent', 'outputDatasetId'] as const;
+export type ErrorFocusField = (typeof ERROR_FOCUS_FIELDS)[number];
+
+export interface FocusRequest {
+  stepTempId: string;
+  field: ErrorFocusField;
+}
+
 export interface PipelineEditorState {
   name: string;
   description: string;
@@ -61,6 +73,11 @@ export interface PipelineEditorState {
    * 서버 문자열 그대로 둔다(Date 로 바꾸면 마이크로초가 잘려 매번 충돌한다). null 이면 비교하지 않는다(새 파이프라인).
    */
   baseUpdatedAt: string | null;
+  /**
+   * 저장 검증 실패 후 포커스를 옮겨 달라는 요청(WD-560). 선택 필드라 기존 상태 리터럴·스냅샷은 그대로 둔다.
+   * 타이밍(rAF 재시도) 대신 상태로 두어, 패널이 대상 필드를 실제로 렌더한 뒤(지연 로드되는 스크립트 편집기 포함) 소비한다.
+   */
+  focusRequest?: FocusRequest | null;
 }
 
 // === 액션 타입 ===
@@ -84,7 +101,11 @@ export type EditorAction =
   | { type: 'RESTORE_SNAPSHOT'; payload: PipelineEditorState }
   // 서버에서 다시 불러온 상태를 반영하되, 미저장 변경이 있으면 무시한다 — 재조회용 (#742)
   | { type: 'SYNC_FROM_SERVER'; payload: PipelineEditorState }
-  | { type: 'SET_VALIDATION_ERRORS'; payload: ValidationError[] };
+  | { type: 'SET_VALIDATION_ERRORS'; payload: ValidationError[] }
+  // 현재 검증 오류 기준으로 오류 스텝을 선택하고 첫 오류 필드 포커스를 요청한다(WD-560)
+  | { type: 'REQUEST_ERROR_FOCUS' }
+  // 패널이 포커스 요청을 처리한 뒤 지운다(WD-560)
+  | { type: 'CLEAR_FOCUS_REQUEST' };
 
 // === 초기 상태 ===
 
@@ -203,7 +224,28 @@ export function buildStateFromDetail(detail: PipelineDetailResponse): PipelineEd
 
 // === 리듀서 ===
 
+/**
+ * 처리되지 않은 오류 포커스 요청이 가리키는 오류가 사라졌으면 요청을 버린다(WD-560).
+ * UPDATE_STEP·REMOVE_STEP·SET_META·편집 취소 등 오류를 지우는 액션이 여럿이라, 액션마다 지우는 대신
+ * 결과 상태 기준으로 한곳에서 판단한다 — 남은 요청이 나중에 그 스텝을 열 때 뜬금없이 포커스를 옮기지 않게 한다.
+ */
+function dropStaleFocusRequest(state: PipelineEditorState): PipelineEditorState {
+  const req = state.focusRequest;
+  if (!req) return state;
+  const stillErrored = state.validationErrors.some(
+    (e) => e.stepTempId === req.stepTempId && e.field === req.field,
+  );
+  return stillErrored ? state : { ...state, focusRequest: null };
+}
+
 export function pipelineEditorReducer(
+  state: PipelineEditorState,
+  action: EditorAction,
+): PipelineEditorState {
+  return dropStaleFocusRequest(reduceEditorAction(state, action));
+}
+
+function reduceEditorAction(
   state: PipelineEditorState,
   action: EditorAction,
 ): PipelineEditorState {
@@ -283,7 +325,8 @@ export function pipelineEditorReducer(
       };
 
     case 'SELECT_STEP':
-      return { ...state, selectedStepId: action.payload.tempId };
+      // 사용자가 다른 스텝을 고르면 처리되지 않은 오류 포커스 요청은 버린다 — 나중에 그 스텝을 열 때 뜬금없이 포커스가 튀지 않게(WD-560)
+      return { ...state, selectedStepId: action.payload.tempId, focusRequest: null };
 
     case 'ADD_EDGE': {
       const { sourceTempId, targetTempId } = action.payload;
@@ -418,6 +461,31 @@ export function pipelineEditorReducer(
 
     case 'SET_VALIDATION_ERRORS':
       return { ...state, validationErrors: action.payload };
+
+    case 'REQUEST_ERROR_FOCUS': {
+      // 리듀서 안에서 판단해 비동기 검증(await) 동안 사용자가 바꾼 선택도 최신 값으로 본다.
+      // 지금 선택한 스텝에 오류가 있으면 그대로 두고, 없으면 스텝 순서상 첫 오류 스텝을 선택한다
+      // (중복 이름 오류는 오류 목록 끝에 붙으므로 목록 순서가 아니라 스텝 순서로 고른다).
+      const erroredIds = new Set(state.validationErrors.map((e) => e.stepTempId));
+      const targetId =
+        state.selectedStepId && erroredIds.has(state.selectedStepId)
+          ? state.selectedStepId
+          : (state.steps.find((s) => erroredIds.has(s.tempId))?.tempId ?? null);
+      if (!targetId) return state;
+      const targetFields = new Set(
+        state.validationErrors.filter((e) => e.stepTempId === targetId).map((e) => e.field),
+      );
+      // 포커스할 수 있는 필드(이름·스크립트·출력 데이터셋)에 오류가 없으면 선택만 바꾼다
+      const field = ERROR_FOCUS_FIELDS.find((f) => targetFields.has(f));
+      return {
+        ...state,
+        selectedStepId: targetId,
+        focusRequest: field ? { stepTempId: targetId, field } : null,
+      };
+    }
+
+    case 'CLEAR_FOCUS_REQUEST':
+      return state.focusRequest ? { ...state, focusRequest: null } : state;
 
     default:
       return state;

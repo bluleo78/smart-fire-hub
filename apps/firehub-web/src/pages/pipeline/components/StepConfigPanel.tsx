@@ -1,5 +1,5 @@
 import { Lock, Trash2,X } from 'lucide-react';
-import { lazy, Suspense, useId, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 const ApiCallStepConfig = lazy(() => import('./ApiCallStepConfig'));
 const AiClassifyStepConfig = lazy(() => import('./AiClassifyStepConfig'));
@@ -38,6 +38,8 @@ import type { PipelineStepResponse } from '@/types/pipeline';
 import type { EditorAction, EditorStep,PipelineEditorState } from '../hooks/usePipelineEditor';
 import DatasetCombobox from './DatasetCombobox';
 import { IncrementalProcessingSection } from './IncrementalProcessingSection';
+// 타입만 가져온다 — 편집기 청크는 아래 lazy 로 계속 지연 로드된다
+import type { ScriptEditorHandle } from './ScriptEditor';
 
 const ScriptEditor = lazy(() => import('./ScriptEditor'));
 
@@ -155,6 +157,30 @@ export default function StepConfigPanel({
   const outputDatasetHelpId = `${baseId}-output-dataset-help`;
   const outputDatasetRestrictedId = `${baseId}-output-dataset-restricted`;
   const outputDatasetErrorId = `${baseId}-output-dataset-error`;
+  // 이름·스크립트 검증 오류 문구 id — 입력(래퍼)의 aria-describedby 가 가리켜 보조기기가 오류를 읽게 한다(WD-560)
+  const nameErrorId = `${baseId}-name-error`;
+  const scriptErrorId = `${baseId}-script-error`;
+
+  // 저장 검증 실패 후 첫 오류 필드로 포커스(WD-560). 리듀서의 focusRequest 를 대상 필드가 렌더된 뒤 소비하고 지운다.
+  // 스크립트 편집기는 지연 로드되므로 준비되면 넘겨주는 핸들을 state 로 받아, 준비 시점에 이 effect 가 다시 돈다.
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const outputDatasetTriggerRef = useRef<HTMLButtonElement>(null);
+  const [scriptEditorHandle, setScriptEditorHandle] = useState<ScriptEditorHandle | null>(null);
+  const focusRequest = state.focusRequest;
+  const selectedTempId = step?.tempId;
+  useEffect(() => {
+    if (!focusRequest || focusRequest.stepTempId !== selectedTempId) return;
+    if (focusRequest.field === 'scriptContent') {
+      // 편집기가 아직 준비되지 않았으면 요청을 남겨 두고 onReady 뒤에 처리한다
+      if (!scriptEditorHandle) return;
+      scriptEditorHandle.focus();
+    } else if (focusRequest.field === 'name') {
+      nameInputRef.current?.focus();
+    } else {
+      outputDatasetTriggerRef.current?.focus();
+    }
+    dispatch({ type: 'CLEAR_FOCUS_REQUEST' });
+  }, [focusRequest, selectedTempId, scriptEditorHandle, dispatch]);
   const outputDatasetForeignTempId = `${baseId}-output-dataset-foreign-temp`;
   const loadStrategyId = `${baseId}-load-strategy`;
   const loadStrategyHelpId = `${baseId}-load-strategy-help`;
@@ -365,15 +391,20 @@ export default function StepConfigPanel({
           <div className="space-y-1.5">
             <Label htmlFor="step-name">이름</Label>
             <Input
+              ref={nameInputRef}
               id="step-name"
               placeholder="스텝 이름"
               value={step.name}
               disabled={readOnly}
               className={nameError ? 'border-destructive' : undefined}
+              /* 오류가 있을 때만 오류 상태·문구를 연결한다 — 빨간 테두리만으로는 스크린리더가 알 수 없다(WD-560) */
+              aria-invalid={nameError ? true : undefined}
+              aria-describedby={nameError ? nameErrorId : undefined}
               onChange={(e) => handleUpdateStep({ name: e.target.value })}
             />
+            {/* role="alert": 저장 실패로 문구가 나타나는 순간 스크린리더가 바로 읽는다(WCAG 4.1.3) */}
             {nameError && (
-              <p className="text-sm text-destructive">{nameError}</p>
+              <p id={nameErrorId} role="alert" className="text-sm text-destructive">{nameError}</p>
             )}
           </div>
 
@@ -504,11 +535,15 @@ export default function StepConfigPanel({
                       language={step.scriptType}
                       readOnly={readOnly}
                       insertTextRef={insertTextRef}
+                      /* 오류 상태·문구는 포커스를 받는 실제 입력 요소(.cm-content)에 단다(WD-560) */
+                      invalid={!!scriptContentError}
+                      describedBy={scriptContentError ? scriptErrorId : undefined}
+                      onReady={setScriptEditorHandle}
                     />
                   </Suspense>
                 </div>
                 {scriptContentError && (
-                  <p className="text-sm text-destructive">{scriptContentError}</p>
+                  <p id={scriptErrorId} role="alert" className="text-sm text-destructive">{scriptContentError}</p>
                 )}
               </div>
             </>
@@ -529,6 +564,7 @@ export default function StepConfigPanel({
               disabled={readOnly}
             >
               <SelectTrigger
+                ref={outputDatasetTriggerRef}
                 id={outputDatasetId}
                 className="w-full"
                 /* 자동 생성 안내문·검증 오류를 조건부로 연결한다 */
@@ -595,7 +631,8 @@ export default function StepConfigPanel({
               </p>
             )}
             {outputDatasetIdError && (
-              <p id={outputDatasetErrorId} className="text-sm text-destructive">{outputDatasetIdError}</p>
+              /* 이름·스크립트 오류와 같이 나타날 때 바로 읽히도록 role="alert" 로 맞춘다(WD-560) */
+              <p id={outputDatasetErrorId} role="alert" className="text-sm text-destructive">{outputDatasetIdError}</p>
             )}
           </div>
 
