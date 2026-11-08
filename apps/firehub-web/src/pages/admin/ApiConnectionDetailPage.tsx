@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 
 import { StatusBadge } from '@/components/api-connection/StatusBadge';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
+import { FormField } from '@/components/ui/form-field';
 import { missingSecretMessage } from '@/lib/api-connection-secret';
 import { handleApiError } from '@/lib/api-error';
 import { formatDate } from '@/lib/formatters';
@@ -41,6 +42,21 @@ import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import type { TestConnectionResponse } from '../../types/api-connection';
 import type { UpdateApiConnectionRequest } from '../../types/api-connection';
+
+/** 기본 정보 카드에서 인라인 오류를 보일 수 있는 칸 (WD-561) — 선언 순서가 화면 순서(첫 오류 포커스 기준)다. */
+const INFO_FIELD_ORDER = ['name', 'baseUrl'] as const;
+type InfoFieldKey = (typeof INFO_FIELD_ORDER)[number];
+/** 인증 편집 칸 (WD-561) — 유형·위치에 따라 보이는 칸만 검사한다. */
+const AUTH_FIELD_ORDER = ['authName', 'apiKey', 'token'] as const;
+type AuthFieldKey = (typeof AUTH_FIELD_ORDER)[number];
+
+/** errors 에서 key 하나만 지운 새 객체를 돌려준다 — 없으면 같은 참조를 돌려줘 불필요한 렌더를 막는다. */
+function withoutKey<K extends string>(prev: Partial<Record<K, string>>, key: K): Partial<Record<K, string>> {
+  if (!prev[key]) return prev;
+  const next = { ...prev };
+  delete next[key];
+  return next;
+}
 
 /** API 연결 상세 페이지 — 기본 정보/인증/연결 상태 확인/삭제 */
 export default function ApiConnectionDetailPage() {
@@ -81,6 +97,30 @@ export default function ApiConnectionDetailPage() {
   const [paramName, setParamName] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [token, setToken] = useState('');
+
+  // (WD-561) 칸별 검증 오류 — 예전엔 토스트로만 알려 어느 칸이 틀렸는지 알기 어려웠다.
+  // 기본 정보와 인증은 저장 버튼이 따로라 오류도 따로 둔다(한쪽 저장이 다른 쪽 오류를 건드리지 않게).
+  const [infoErrors, setInfoErrors] = useState<Partial<Record<InfoFieldKey, string>>>({});
+  const [authErrors, setAuthErrors] = useState<Partial<Record<AuthFieldKey, string>>>({});
+
+  /** 칸 key → 입력 id. 첫 오류 칸 포커스용(FormField htmlFor 와 같은 값). */
+  const infoFieldId: Record<InfoFieldKey, string> = {
+    name: `${baseId}-name`,
+    baseUrl: `${baseId}-base-url`,
+  };
+  const authFieldId: Record<AuthFieldKey, string> = {
+    authName: `${baseId}-auth-name`,
+    apiKey: `${baseId}-api-key`,
+    token: `${baseId}-token`,
+  };
+
+  /** 인증 편집을 닫는다 — 입력한 키·토큰과 인증 칸 오류를 함께 비워, 다시 열었을 때 지난 오류가 남지 않게 한다. */
+  const closeAuthEdit = () => {
+    setIsEditingAuth(false);
+    setApiKey('');
+    setToken('');
+    setAuthErrors({});
+  };
 
   // 서버에서 로드된 기본 정보 초기값 스냅샷 — 이탈 가드용 dirty 비교 기준 (#551)
   // render 중 비교에 사용하므로 ref가 아닌 state로 관리한다 (react-hooks/refs 룰).
@@ -138,17 +178,22 @@ export default function ApiConnectionDetailPage() {
     isInfoDirty || isAuthDirty,
   );
 
-  /** 기본 정보(이름/설명/baseUrl/healthCheckPath) 저장 */
+  /**
+   * 기본 정보(이름/설명/baseUrl/healthCheckPath) 저장.
+   * (WD-561) 이름·Base URL 을 한꺼번에 검사해 칸마다 인라인 오류를 달고, 첫 오류 칸으로 포커스를 옮긴다.
+   */
   const handleSaveInfo = async () => {
     // 숫자만으로 된 주소 id(connectionId)로만 저장한다(WD-628) — 화면도 그 id 로 조회했다
     if (connectionId == null) return;
-    if (!name.trim()) {
-      toast.error('연결 이름은 필수입니다.');
-      return;
-    }
+    const nextErrors: Partial<Record<InfoFieldKey, string>> = {};
+    if (!name.trim()) nextErrors.name = '연결 이름을 입력하세요.';
     // Base URL은 API 연결의 필수 값 — 빈 값으로 저장하면 백엔드가 null 처리해 무음으로 무시하므로 클라이언트에서 차단 (#124)
-    if (!baseUrl.trim()) {
-      toast.error('Base URL은 필수입니다.');
+    // 편집 화면은 예전처럼 빈 값만 막는다(형식 검사는 서버 검증에 맡긴다).
+    if (!baseUrl.trim()) nextErrors.baseUrl = 'Base URL을 입력하세요.';
+    setInfoErrors(nextErrors);
+    const firstInvalid = INFO_FIELD_ORDER.find((key) => nextErrors[key]);
+    if (firstInvalid) {
+      document.getElementById(infoFieldId[firstInvalid])?.focus();
       return;
     }
     try {
@@ -171,10 +216,14 @@ export default function ApiConnectionDetailPage() {
     }
   };
 
-  /** 인증 설정 저장 */
+  /**
+   * 인증 설정 저장.
+   * (WD-561) 지금 보이는 인증 칸을 한꺼번에 검사해 칸마다 인라인 오류를 달고, 첫 오류 칸으로 포커스를 옮긴다.
+   */
   const handleSaveAuth = async () => {
     if (connectionId == null) return;
 
+    const nextErrors: Partial<Record<AuthFieldKey, string>> = {};
     const authConfig: Record<string, string> = { authType };
     if (authType === 'API_KEY') {
       authConfig.placement = placement;
@@ -184,39 +233,36 @@ export default function ApiConnectionDetailPage() {
       const storedMaskedKey =
         connection?.authType === 'API_KEY' ? connection.maskedAuthConfig.apiKey : undefined;
       // 빈 키 판정은 생성·저장 전 테스트·서버와 같은 공용 헬퍼로 한다(WD-639).
-      const keyValue = missingSecretMessage('API_KEY', apiKey) ? storedMaskedKey : apiKey;
-      if (placement === 'header') {
-        if (!headerName.trim() || !keyValue) {
-          toast.error('헤더 이름과 키 값을 입력하세요.');
-          return;
-        }
-        authConfig.headerName = headerName;
-        authConfig.apiKey = keyValue;
-      } else {
-        if (!paramName.trim() || !keyValue) {
-          toast.error('파라미터 이름과 키 값을 입력하세요.');
-          return;
-        }
-        authConfig.paramName = paramName;
-        authConfig.apiKey = keyValue;
+      const missingKey = missingSecretMessage('API_KEY', apiKey);
+      const keyValue = missingKey ? storedMaskedKey : apiKey;
+      const authNameValue = placement === 'header' ? headerName : paramName;
+      if (!authNameValue.trim()) {
+        nextErrors.authName = placement === 'header' ? '헤더 이름을 입력하세요.' : '파라미터 이름을 입력하세요.';
       }
+      // 유지할 저장 키도 없을 때만 키 칸 오류다
+      if (!keyValue && missingKey) nextErrors.apiKey = missingKey;
+      if (placement === 'header') authConfig.headerName = headerName;
+      else authConfig.paramName = paramName;
+      if (keyValue) authConfig.apiKey = keyValue;
     } else {
       // 접두어만 있는 토큰(「Bearer 」)도 빈 토큰이다 — 생성·저장 전 테스트·서버와 같은 규칙·문구(WD-639).
       const missingToken = missingSecretMessage('BEARER', token);
-      if (missingToken) {
-        toast.error(missingToken);
-        return;
-      }
+      if (missingToken) nextErrors.token = missingToken;
       authConfig.token = token;
+    }
+
+    setAuthErrors(nextErrors);
+    const firstInvalid = AUTH_FIELD_ORDER.find((key) => nextErrors[key]);
+    if (firstInvalid) {
+      document.getElementById(authFieldId[firstInvalid])?.focus();
+      return;
     }
 
     const data: UpdateApiConnectionRequest = { authType, authConfig };
     try {
       await updateMutation.mutateAsync({ id: connectionId, data });
       toast.success('인증 정보가 업데이트되었습니다.');
-      setIsEditingAuth(false);
-      setApiKey('');
-      setToken('');
+      closeAuthEdit();
     } catch (error) {
       handleApiError(error, '인증 정보 업데이트에 실패했습니다.');
     }
@@ -449,25 +495,35 @@ export default function ApiConnectionDetailPage() {
           <CardTitle>기본 정보</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor={`${baseId}-name`}>연결 이름</Label>
-            <Input id={`${baseId}-name`} value={name} onChange={(e) => setName(e.target.value)} disabled={!canWrite} />
-          </div>
+          {/* (WD-561) 필수 칸은 FormField 로 감싸 * 표시·인라인 오류·aria 연결을 한 곳에서 처리한다 */}
+          <FormField label="연결 이름" htmlFor={infoFieldId.name} error={infoErrors.name} required>
+            <Input
+              id={infoFieldId.name}
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setInfoErrors((prev) => withoutKey(prev, 'name'));
+              }}
+              disabled={!canWrite}
+            />
+          </FormField>
           <div className="space-y-2">
             <Label htmlFor={`${baseId}-description`}>설명</Label>
             <Input id={`${baseId}-description`} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="설명 (선택)" disabled={!canWrite} maxLength={MAX_DESCRIPTION_LENGTH} />
           </div>
           {/* Base URL: 외부 API 기본 주소 */}
-          <div className="space-y-2">
-            <Label htmlFor={`${baseId}-base-url`}>Base URL</Label>
+          <FormField label="Base URL" htmlFor={infoFieldId.baseUrl} error={infoErrors.baseUrl} required>
             <Input
-              id={`${baseId}-base-url`}
+              id={infoFieldId.baseUrl}
               value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
+              onChange={(e) => {
+                setBaseUrl(e.target.value);
+                setInfoErrors((prev) => withoutKey(prev, 'baseUrl'));
+              }}
               placeholder="https://api.example.com"
               disabled={!canWrite}
             />
-          </div>
+          </FormField>
           {/* 헬스체크 경로 */}
           <div className="space-y-2">
             <Label htmlFor={`${baseId}-health-path`}>헬스체크 경로</Label>
@@ -586,7 +642,14 @@ export default function ApiConnectionDetailPage() {
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor={`${baseId}-auth-type`}>인증 유형</Label>
-                <Select value={authType} onValueChange={(v) => setAuthType(v as 'API_KEY' | 'BEARER')}>
+                {/* 유형·위치를 바꾸면 인증 칸 오류를 비운다 — 숨겨진 칸 오류가 남아 사라진 칸으로 포커스가 가지 않게(WD-561) */}
+                <Select
+                  value={authType}
+                  onValueChange={(v) => {
+                    setAuthType(v as 'API_KEY' | 'BEARER');
+                    setAuthErrors({});
+                  }}
+                >
                   {/* shadcn Select 는 트리거가 실제 포커스 대상이라 id 를 트리거에 건다 */}
                   <SelectTrigger id={`${baseId}-auth-type`}>
                     <SelectValue />
@@ -602,7 +665,13 @@ export default function ApiConnectionDetailPage() {
                 <>
                   <div className="space-y-2">
                     <Label htmlFor={`${baseId}-placement`}>위치</Label>
-                    <Select value={placement} onValueChange={setPlacement}>
+                    <Select
+                      value={placement}
+                      onValueChange={(v) => {
+                        setPlacement(v);
+                        setAuthErrors({});
+                      }}
+                    >
                       <SelectTrigger id={`${baseId}-placement`}>
                         <SelectValue />
                       </SelectTrigger>
@@ -612,30 +681,41 @@ export default function ApiConnectionDetailPage() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
-                    {/* 라벨 텍스트만 placement 에 따라 바뀌고 입력은 하나뿐이라 id 는 고정한다 */}
-                    <Label htmlFor={`${baseId}-auth-name`}>
-                      {placement === 'query' ? '파라미터 이름' : '헤더 이름'}
-                    </Label>
+                  {/* 라벨 텍스트만 placement 에 따라 바뀌고 입력은 하나뿐이라 id 는 고정한다 */}
+                  <FormField
+                    label={placement === 'query' ? '파라미터 이름' : '헤더 이름'}
+                    htmlFor={authFieldId.authName}
+                    error={authErrors.authName}
+                    required
+                  >
                     <Input
-                      id={`${baseId}-auth-name`}
+                      id={authFieldId.authName}
                       placeholder={placement === 'query' ? 'api_key' : 'Authorization'}
                       value={placement === 'query' ? paramName : headerName}
-                      onChange={(e) =>
-                        placement === 'query'
-                          ? setParamName(e.target.value)
-                          : setHeaderName(e.target.value)
-                      }
+                      onChange={(e) => {
+                        if (placement === 'query') setParamName(e.target.value);
+                        else setHeaderName(e.target.value);
+                        setAuthErrors((prev) => withoutKey(prev, 'authName'));
+                      }}
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor={`${baseId}-api-key`}>키 값</Label>
+                  </FormField>
+                  {/* 키 값도 필수지만, 저장된 키가 있으면 비워 둬도 유지된다(WD-480) — 아래 안내 문구가 이를 알린다 */}
+                  {/* 이미 API_KEY 로 저장된 연결은 키 칸을 비우면 저장된 키를 유지하므로(WD-480) 필수 표시를 하지 않는다 */}
+                  <FormField
+                    label="키 값"
+                    htmlFor={authFieldId.apiKey}
+                    error={authErrors.apiKey}
+                    required={connection?.authType !== 'API_KEY'}
+                  >
                     <Input
-                      id={`${baseId}-api-key`}
+                      id={authFieldId.apiKey}
                       type="password"
                       placeholder="새 API 키를 입력하세요"
                       value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
+                      onChange={(e) => {
+                        setApiKey(e.target.value);
+                        setAuthErrors((prev) => withoutKey(prev, 'apiKey'));
+                      }}
                     />
                     {/* 저장된 키가 있으면 비워 둬도 된다는 걸 알려 준다 — 이름·위치만 고칠 때 키 재입력 불필요(WD-480) */}
                     {connection.authType === 'API_KEY' && mc.apiKey && (
@@ -643,28 +723,30 @@ export default function ApiConnectionDetailPage() {
                         비워 두면 저장된 키를 그대로 사용합니다.
                       </p>
                     )}
-                  </div>
+                  </FormField>
                 </>
               )}
 
               {authType === 'BEARER' && (
-                <div className="space-y-2">
-                  <Label htmlFor={`${baseId}-token`}>Bearer Token</Label>
+                <FormField label="Bearer Token" htmlFor={authFieldId.token} error={authErrors.token} required>
                   <Input
-                    id={`${baseId}-token`}
+                    id={authFieldId.token}
                     type="password"
                     placeholder="새 토큰을 입력하세요"
                     value={token}
-                    onChange={(e) => setToken(e.target.value)}
+                    onChange={(e) => {
+                      setToken(e.target.value);
+                      setAuthErrors((prev) => withoutKey(prev, 'token'));
+                    }}
                   />
-                </div>
+                </FormField>
               )}
 
               <div className="flex gap-2">
                 <Button onClick={handleSaveAuth} disabled={updateMutation.isPending}>
                   {updateMutation.isPending ? '저장 중...' : '인증 저장'}
                 </Button>
-                <Button variant="outline" onClick={() => { setIsEditingAuth(false); setApiKey(''); setToken(''); }}>
+                <Button variant="outline" onClick={closeAuthEdit}>
                   취소
                 </Button>
               </div>

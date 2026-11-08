@@ -7,6 +7,7 @@ import { apiConnectionsApi } from '@/api/api-connections';
 import { StatusBadge } from '@/components/api-connection/StatusBadge';
 import { TruncatedLink } from '@/components/TruncatedLink';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
+import { FormField } from '@/components/ui/form-field';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
@@ -52,6 +53,11 @@ import {
 } from '../../hooks/queries/useApiConnections';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import type { CreateApiConnectionRequest } from '../../types/api-connection';
+
+/** 새 연결 다이얼로그에서 인라인 오류를 보일 수 있는 칸 (WD-561) — 선언 순서가 곧 화면 순서(첫 오류 포커스 기준)다. */
+const CREATE_FIELD_ORDER = ['name', 'baseUrl', 'healthCheckPath', 'authName', 'apiKey', 'token'] as const;
+type CreateFieldKey = (typeof CREATE_FIELD_ORDER)[number];
+type CreateFieldErrors = Partial<Record<CreateFieldKey, string>>;
 
 /** API 연결 목록 페이지 — 생성/삭제/상태 확인 기능 포함 */
 export default function ApiConnectionListPage() {
@@ -102,6 +108,43 @@ export default function ApiConnectionListPage() {
   // (#90) 저장 전 연결 테스트 결과/진행 상태
   const [testResult, setTestResult] = useState<TestConnectionResponse | null>(null);
   const [testing, setTesting] = useState(false);
+  // (WD-561) 칸별 검증 오류 — 예전엔 첫 실패 하나만 사라지는 토스트로 알려 어느 칸이 틀렸는지 알기 어려웠다.
+  const [errors, setErrors] = useState<CreateFieldErrors>({});
+
+  /** 칸 key → 입력 id. 첫 오류 칸으로 포커스를 옮길 때 쓴다(FormField htmlFor 와 같은 값). */
+  const fieldId: Record<CreateFieldKey, string> = {
+    name: `${baseId}-name`,
+    baseUrl: `${baseId}-base-url`,
+    healthCheckPath: `${baseId}-health-path`,
+    authName: `${baseId}-auth-name`,
+    apiKey: `${baseId}-api-key`,
+    token: `${baseId}-token`,
+  };
+
+  /** 사용자가 그 칸을 고치면 그 칸의 오류만 지운다 — 다른 칸 오류는 고칠 때까지 남겨 둔다. */
+  const clearError = (key: CreateFieldKey) => {
+    setErrors((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  /**
+   * 인증 유형·위치를 바꾸면 인증 칸 오류를 모두 지운다 — 숨겨진 칸의 오류가 남으면
+   * 다음 제출 때 사라진 칸으로 포커스를 옮기려 하거나, 다른 칸 라벨의 오류처럼 보인다.
+   */
+  const clearAuthErrors = () => {
+    setErrors((prev) => {
+      if (!prev.authName && !prev.apiKey && !prev.token) return prev;
+      const next = { ...prev };
+      delete next.authName;
+      delete next.apiKey;
+      delete next.token;
+      return next;
+    });
+  };
 
   const resetForm = () => {
     setName('');
@@ -116,6 +159,7 @@ export default function ApiConnectionListPage() {
     setHealthCheckPath('');
     setTestResult(null);
     setTesting(false);
+    setErrors({});
   };
 
   /**
@@ -175,49 +219,52 @@ export default function ApiConnectionListPage() {
     }
   };
 
+  /**
+   * 새 연결 만들기. (WD-561) 모든 칸을 한꺼번에 검사해 틀린 칸마다 인라인 오류를 달고,
+   * 하나라도 있으면 저장하지 않고 화면 순서상 첫 오류 칸으로 포커스를 옮긴다.
+   * 서버 오류(중복 이름 등)는 그대로 토스트로 알린다.
+   */
   const handleCreate = async () => {
-    if (!name.trim()) {
-      toast.error('연결 이름을 입력하세요.');
-      return;
-    }
+    const nextErrors: CreateFieldErrors = {};
+    if (!name.trim()) nextErrors.name = '연결 이름을 입력하세요.';
 
-    // baseUrl 클라이언트 검증: http/https로 시작해야 한다
-    if (!/^https?:\/\/.+/.test(baseUrl.trim())) {
-      toast.error('Base URL은 http 또는 https로 시작해야 합니다.');
-      return;
-    }
+    // baseUrl 클라이언트 검증: 비었으면 빈 값 안내, 있으면 http/https로 시작해야 한다
+    if (!baseUrl.trim()) nextErrors.baseUrl = 'Base URL을 입력하세요.';
+    else if (!/^https?:\/\/.+/.test(baseUrl.trim())) nextErrors.baseUrl = 'Base URL은 http 또는 https로 시작해야 합니다.';
 
     // healthCheckPath 클라이언트 검증: 입력 시 /로 시작해야 한다
     if (healthCheckPath.trim() && !/^\//.test(healthCheckPath.trim())) {
-      toast.error('헬스체크 경로는 /로 시작해야 합니다.');
+      nextErrors.healthCheckPath = '헬스체크 경로는 /로 시작해야 합니다.';
+    }
+
+    // 인증 칸은 지금 보이는 칸만 검사한다(유형·위치에 따라 칸이 바뀐다)
+    if (authType === 'API_KEY') {
+      const authNameValue = placement === 'header' ? headerName : paramName;
+      if (!authNameValue.trim()) {
+        nextErrors.authName = placement === 'header' ? '헤더 이름을 입력하세요.' : '파라미터 이름을 입력하세요.';
+      }
+      // 빈 비밀 판정·문구는 저장 전 테스트·서버와 같은 공용 헬퍼로 한다(WD-639) — 「Bearer 」 만 있어도 빈 토큰
+      const missingKey = missingSecretMessage('API_KEY', apiKey);
+      if (missingKey) nextErrors.apiKey = missingKey;
+    } else {
+      const missingToken = missingSecretMessage('BEARER', token);
+      if (missingToken) nextErrors.token = missingToken;
+    }
+
+    setErrors(nextErrors);
+    const firstInvalid = CREATE_FIELD_ORDER.find((key) => nextErrors[key]);
+    if (firstInvalid) {
+      document.getElementById(fieldId[firstInvalid])?.focus();
       return;
     }
 
     const authConfig: Record<string, string> = { authType };
     if (authType === 'API_KEY') {
       authConfig.placement = placement;
-      if (placement === 'header') {
-        if (!headerName.trim() || missingSecretMessage('API_KEY', apiKey)) {
-          toast.error('헤더 이름과 키 값을 입력하세요.');
-          return;
-        }
-        authConfig.headerName = headerName;
-        authConfig.apiKey = apiKey;
-      } else {
-        if (!paramName.trim() || missingSecretMessage('API_KEY', apiKey)) {
-          toast.error('파라미터 이름과 키 값을 입력하세요.');
-          return;
-        }
-        authConfig.paramName = paramName;
-        authConfig.apiKey = apiKey;
-      }
+      if (placement === 'header') authConfig.headerName = headerName;
+      else authConfig.paramName = paramName;
+      authConfig.apiKey = apiKey;
     } else {
-      // 접두어만 있는 토큰(「Bearer 」)도 빈 토큰이다 — 저장 전 테스트·서버와 같은 규칙·문구(WD-639).
-      const missingToken = missingSecretMessage('BEARER', token);
-      if (missingToken) {
-        toast.error(missingToken);
-        return;
-      }
       authConfig.token = token;
     }
 
@@ -290,15 +337,18 @@ export default function ApiConnectionListPage() {
                   <DialogDescription className="sr-only">새 외부 API 연결을 추가합니다.</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor={`${baseId}-name`}>연결 이름</Label>
+                  {/* (WD-561) 필수 칸은 FormField 로 감싸 * 표시·인라인 오류·aria 연결을 한 곳에서 처리한다 */}
+                  <FormField label="연결 이름" htmlFor={fieldId.name} error={errors.name} required>
                     <Input
-                      id={`${baseId}-name`}
+                      id={fieldId.name}
                       placeholder="예: Make.com API"
                       value={name}
-                      onChange={(e) => setName(e.target.value)}
+                      onChange={(e) => {
+                        setName(e.target.value);
+                        clearError('name');
+                      }}
                     />
-                  </div>
+                  </FormField>
                   <div className="space-y-2">
                     <Label htmlFor={`${baseId}-description`}>설명 (선택)</Label>
                     <Input
@@ -311,35 +361,46 @@ export default function ApiConnectionListPage() {
                   </div>
 
                   {/* Base URL: 외부 API의 기본 URL */}
-                  <div className="space-y-2">
-                    <Label htmlFor={`${baseId}-base-url`}>Base URL *</Label>
+                  <FormField label="Base URL" htmlFor={fieldId.baseUrl} error={errors.baseUrl} required>
                     <Input
-                      id={`${baseId}-base-url`}
+                      id={fieldId.baseUrl}
                       placeholder="https://api.example.com"
                       value={baseUrl}
-                      onChange={(e) => setBaseUrl(e.target.value)}
+                      onChange={(e) => {
+                        setBaseUrl(e.target.value);
+                        clearError('baseUrl');
+                      }}
                     />
-                  </div>
+                  </FormField>
 
                   {/* 헬스체크 경로: 10분마다 자동 상태 점검 */}
-                  <div className="space-y-2">
-                    <Label htmlFor={`${baseId}-health-path`}>헬스체크 경로 (선택)</Label>
+                  {/* 오류가 생기면 FormField 가 도움말 id 뒤에 오류 id 를 이어 붙인다 — 도움말 연결(#432)은 유지된다 */}
+                  <FormField label="헬스체크 경로 (선택)" htmlFor={fieldId.healthCheckPath} error={errors.healthCheckPath}>
                     <Input
-                      id={`${baseId}-health-path`}
+                      id={fieldId.healthCheckPath}
                       placeholder="/health"
                       value={healthCheckPath}
-                      onChange={(e) => setHealthCheckPath(e.target.value)}
+                      onChange={(e) => {
+                        setHealthCheckPath(e.target.value);
+                        clearError('healthCheckPath');
+                      }}
                       /* 아래 도움말 문구를 스크린리더가 함께 읽도록 연결 (#432) */
                       aria-describedby={`${baseId}-health-path-help`}
                     />
                     <p id={`${baseId}-health-path-help`} className="text-xs text-muted-foreground">
                       10분마다 자동 상태 점검. 비워두면 점검 안 함.
                     </p>
-                  </div>
+                  </FormField>
 
                   <div className="space-y-2">
                     <Label htmlFor={`${baseId}-auth-type`}>인증 유형</Label>
-                    <Select value={authType} onValueChange={(v) => setAuthType(v as 'API_KEY' | 'BEARER')}>
+                    <Select
+                      value={authType}
+                      onValueChange={(v) => {
+                        setAuthType(v as 'API_KEY' | 'BEARER');
+                        clearAuthErrors();
+                      }}
+                    >
                       {/* shadcn Select 는 트리거가 실제 포커스 대상이라 id 를 트리거에 건다 */}
                       <SelectTrigger id={`${baseId}-auth-type`}>
                         <SelectValue />
@@ -355,7 +416,13 @@ export default function ApiConnectionListPage() {
                     <>
                       <div className="space-y-2">
                         <Label htmlFor={`${baseId}-placement`}>위치</Label>
-                        <Select value={placement} onValueChange={setPlacement}>
+                        <Select
+                          value={placement}
+                          onValueChange={(v) => {
+                            setPlacement(v);
+                            clearAuthErrors();
+                          }}
+                        >
                           <SelectTrigger id={`${baseId}-placement`}>
                             <SelectValue />
                           </SelectTrigger>
@@ -365,46 +432,52 @@ export default function ApiConnectionListPage() {
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-2">
-                        {/* 라벨 텍스트만 placement 에 따라 바뀌고 입력은 하나뿐이라 id 는 고정한다 */}
-                        <Label htmlFor={`${baseId}-auth-name`}>
-                          {placement === 'query' ? '파라미터 이름' : '헤더 이름'}
-                        </Label>
+                      {/* 라벨 텍스트만 placement 에 따라 바뀌고 입력은 하나뿐이라 id 는 고정한다 */}
+                      <FormField
+                        label={placement === 'query' ? '파라미터 이름' : '헤더 이름'}
+                        htmlFor={fieldId.authName}
+                        error={errors.authName}
+                        required
+                      >
                         <Input
-                          id={`${baseId}-auth-name`}
+                          id={fieldId.authName}
                           placeholder={placement === 'query' ? 'api_key' : 'Authorization'}
                           value={placement === 'query' ? paramName : headerName}
-                          onChange={(e) =>
-                            placement === 'query'
-                              ? setParamName(e.target.value)
-                              : setHeaderName(e.target.value)
-                          }
+                          onChange={(e) => {
+                            if (placement === 'query') setParamName(e.target.value);
+                            else setHeaderName(e.target.value);
+                            clearError('authName');
+                          }}
                         />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor={`${baseId}-api-key`}>키 값</Label>
+                      </FormField>
+                      <FormField label="키 값" htmlFor={fieldId.apiKey} error={errors.apiKey} required>
                         <Input
-                          id={`${baseId}-api-key`}
+                          id={fieldId.apiKey}
                           type="password"
                           placeholder="API 키를 입력하세요"
                           value={apiKey}
-                          onChange={(e) => setApiKey(e.target.value)}
+                          onChange={(e) => {
+                            setApiKey(e.target.value);
+                            clearError('apiKey');
+                          }}
                         />
-                      </div>
+                      </FormField>
                     </>
                   )}
 
                   {authType === 'BEARER' && (
-                    <div className="space-y-2">
-                      <Label htmlFor={`${baseId}-token`}>Bearer Token</Label>
+                    <FormField label="Bearer Token" htmlFor={fieldId.token} error={errors.token} required>
                       <Input
-                        id={`${baseId}-token`}
+                        id={fieldId.token}
                         type="password"
                         placeholder="토큰을 입력하세요"
                         value={token}
-                        onChange={(e) => setToken(e.target.value)}
+                        onChange={(e) => {
+                          setToken(e.target.value);
+                          clearError('token');
+                        }}
                       />
-                    </div>
+                    </FormField>
                   )}
 
                   {/* (#90) 인라인 연결 테스트 결과 표시 */}
