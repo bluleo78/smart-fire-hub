@@ -817,8 +817,11 @@ export default function QueryEditorPage() {
           {savedQuery ? (
             <div className="flex items-center gap-2">
               {/* 문서 개요에 페이지 heading 이 하나는 있어야 한다(02-typography §2.2, #433).
-                  툴바 내 제목이라 시각 크기(text-lg)는 그대로 두고 태그만 h1 으로 올린다. */}
-              <h1 className="text-lg font-semibold truncate">{savedQuery.name}</h1>
+                  툴바 내 제목이라 시각 크기(text-lg)는 그대로 두고 태그만 h1 으로 올린다.
+                  긴 이름은 한 줄 말줄임되므로 title 로 전체 이름을 보인다(WD-656 — 대시보드 제목과 같은 규칙). */}
+              <h1 className="text-lg font-semibold truncate min-w-0" title={savedQuery.name}>
+                {savedQuery.name}
+              </h1>
               {savedQuery.folder && (
                 <Badge variant="outline" className="text-xs">
                   {savedQuery.folder}

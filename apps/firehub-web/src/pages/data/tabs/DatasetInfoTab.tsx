@@ -283,7 +283,8 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
             </div>
           </form>
         ) : (
-          <dl className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <dl className="grid grid-cols-2 md:grid-cols-3 gap-4 [&_dd]:wrap-anywhere">
+            {/* 띄어쓰기 없는 긴 값도 칸 안에서 줄바꿈한다(WD-656) */}
             <div>
               <dt className="text-sm text-muted-foreground">이름</dt>
               <dd className="text-sm font-medium">{dataset.name}</dd>

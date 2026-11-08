@@ -113,7 +113,11 @@ export function EditorHeader({
         className="flex min-w-0 flex-col justify-center"
       >
         {readOnly ? (
-          <span className="font-semibold text-lg min-w-0 sm:min-w-[200px] max-w-[400px] truncate">
+          // 긴 이름은 400px 에서 말줄임되므로 title 로 전체 이름을 보인다(WD-656, WD-517 원칙 — 잘린 값은 title)
+          <span
+            className="font-semibold text-lg min-w-0 sm:min-w-[200px] max-w-[400px] truncate"
+            title={state.name || undefined}
+          >
             {state.name || '파이프라인 이름'}
           </span>
         ) : (
@@ -132,6 +136,8 @@ export function EditorHeader({
             // 화면에 보이는 라벨이 없어 placeholder 만 이름 역할을 하던 것을 고친다(WD-590) — 입력하면 사라진다.
             aria-label="파이프라인 이름"
             maxLength={100}
+            // 입력칸은 400px 에서 잘려 보이므로 title 로 전체 이름을 보인다(WD-656)
+            title={state.name || undefined}
             className="font-semibold text-lg border-transparent hover:border-input focus:border-input min-w-0 sm:min-w-[200px] max-w-[400px] h-8 px-2"
           />
         )}
