@@ -103,3 +103,21 @@ test.describe('AISidePanel — 접힌 패널 inert (이슈 #333)', () => {
     await expect(chip).toBeFocused();
   });
 });
+
+// (WD-590) 채팅 입력창은 placeholder 만 이름 역할을 해, 입력하면 스크린리더가 기댈 이름이 사라졌다.
+test.describe('AI 채팅 입력창 이름 (WD-590)', () => {
+  test('사이드 패널을 열면 입력창이 「메시지 입력」 이름으로 찾히고, 글자를 넣어도 이름이 유지된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/ai/sessions', []);
+    await page.goto('/', { waitUntil: 'commit' });
+    await chipLocator(page).click();
+
+    // 사이드 패널 안으로 한정한다 — 같은 ChatInput 이 전체 화면 모드에도 그려진다
+    const panel = page.getByTestId('ai-side-panel');
+    const input = panel.getByRole('textbox', { name: '메시지 입력', exact: true });
+    await expect(input).toBeVisible();
+    await input.fill('데이터셋 목록 보여줘');
+    await expect(input).toHaveValue('데이터셋 목록 보여줘');
+  });
+});

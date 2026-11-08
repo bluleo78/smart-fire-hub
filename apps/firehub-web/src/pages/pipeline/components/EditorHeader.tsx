@@ -129,6 +129,8 @@ export function EditorHeader({
               }
             }}
             placeholder="파이프라인 이름"
+            // 화면에 보이는 라벨이 없어 placeholder 만 이름 역할을 하던 것을 고친다(WD-590) — 입력하면 사라진다.
+            aria-label="파이프라인 이름"
             maxLength={100}
             className="font-semibold text-lg border-transparent hover:border-input focus:border-input min-w-0 sm:min-w-[200px] max-w-[400px] h-8 px-2"
           />

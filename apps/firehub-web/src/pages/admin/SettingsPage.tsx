@@ -489,6 +489,16 @@ function AdminSettingsPage() {
   // 잠긴 칸의 오류가 저장을 막는데 고칠 방법이 없어진다. 고쳐서 검증을 통과하면 다시 잠긴다.
   const runUnsupported = (key: AiBehaviorRunSettingKey) => agentTypeKnown && !runSupport[key];
   const runFieldLocked = (key: AiBehaviorRunSettingKey) => runUnsupported(key) && !errors[key];
+  // 오류·설명 문구를 필드와 잇는 속성(WD-590, WCAG 3.3.1·1.3.1) — 오류가 있으면 aria-invalid 와 함께 오류 문구를
+  // 먼저, 설명 문구를 늘 읽게 한다. 필드 id 는 키에서 나온다('ai.max_turns' → 'ai-max-turns') — 문구 id 는
+  // `<필드 id>-error`·`<필드 id>-desc` 로 맞춘다.
+  const fieldA11y = (key: keyof AIBehaviorForm) => {
+    const fieldId = key.replace(/[._]/g, '-');
+    return {
+      'aria-invalid': errors[key] ? true : undefined,
+      'aria-describedby': errors[key] ? `${fieldId}-error ${fieldId}-desc` : `${fieldId}-desc`,
+    };
+  };
   // 시스템 프롬프트가 상한을 넘었는지(WD-536) — 글자 수 표시 색을 바꾸는 데 쓴다. 저장 차단은 validate() 가 한다.
   const systemPromptOverLimit = form['ai.system_prompt'].length > SYSTEM_PROMPT_MAX_LENGTH;
 
@@ -643,6 +653,7 @@ function AdminSettingsPage() {
                 </SettingFieldLabel>
                 <Input
                   id="ai-max-turns"
+                  {...fieldA11y('ai.max_turns')}
                   type="number"
                   min={1}
                   max={50}
@@ -652,9 +663,9 @@ function AdminSettingsPage() {
                   disabled={runFieldLocked('ai.max_turns')}
                 />
                 {errors['ai.max_turns'] && (
-                  <p className="text-sm text-destructive">{errors['ai.max_turns']}</p>
+                  <p id="ai-max-turns-error" role="alert" className="text-sm text-destructive">{errors['ai.max_turns']}</p>
                 )}
-                <p className="text-sm text-muted-foreground">에이전트가 도구를 사용할 수 있는 최대 반복 횟수 (1~50)</p>
+                <p id="ai-max-turns-desc" className="text-sm text-muted-foreground">에이전트가 도구를 사용할 수 있는 최대 반복 횟수 (1~50)</p>
                 <UnsupportedHint show={runUnsupported('ai.max_turns')} />
               </div>
 
@@ -670,6 +681,7 @@ function AdminSettingsPage() {
                 </SettingFieldLabel>
                 <Input
                   id="ai-temperature"
+                  {...fieldA11y('ai.temperature')}
                   type="number"
                   min={0}
                   max={1}
@@ -680,9 +692,9 @@ function AdminSettingsPage() {
                   disabled={runFieldLocked('ai.temperature')}
                 />
                 {errors['ai.temperature'] && (
-                  <p className="text-sm text-destructive">{errors['ai.temperature']}</p>
+                  <p id="ai-temperature-error" role="alert" className="text-sm text-destructive">{errors['ai.temperature']}</p>
                 )}
-                <p className="text-sm text-muted-foreground">응답의 창의성 수준 (0.0: 결정적, 1.0: 창의적)</p>
+                <p id="ai-temperature-desc" className="text-sm text-muted-foreground">응답의 창의성 수준 (0.0: 결정적, 1.0: 창의적)</p>
                 <UnsupportedHint show={runUnsupported('ai.temperature')} />
               </div>
 
@@ -698,6 +710,7 @@ function AdminSettingsPage() {
                 </SettingFieldLabel>
                 <Input
                   id="ai-max-tokens"
+                  {...fieldA11y('ai.max_tokens')}
                   type="number"
                   min={1}
                   max={65536}
@@ -707,9 +720,9 @@ function AdminSettingsPage() {
                   disabled={runFieldLocked('ai.max_tokens')}
                 />
                 {errors['ai.max_tokens'] && (
-                  <p className="text-sm text-destructive">{errors['ai.max_tokens']}</p>
+                  <p id="ai-max-tokens-error" role="alert" className="text-sm text-destructive">{errors['ai.max_tokens']}</p>
                 )}
-                <p className="text-sm text-muted-foreground">AI 응답의 최대 토큰 수 (1~65536)</p>
+                <p id="ai-max-tokens-desc" className="text-sm text-muted-foreground">AI 응답의 최대 토큰 수 (1~65536)</p>
                 <UnsupportedHint show={runUnsupported('ai.max_tokens')} />
               </div>
 
@@ -725,6 +738,7 @@ function AdminSettingsPage() {
                 </SettingFieldLabel>
                 <Input
                   id="ai-session-max-tokens"
+                  {...fieldA11y('ai.session_max_tokens')}
                   type="number"
                   min={10000}
                   max={200000}
@@ -734,9 +748,9 @@ function AdminSettingsPage() {
                   onChange={(e) => updateField('ai.session_max_tokens', e.target.value)}
                 />
                 {errors['ai.session_max_tokens'] && (
-                  <p className="text-sm text-destructive">{errors['ai.session_max_tokens']}</p>
+                  <p id="ai-session-max-tokens-error" role="alert" className="text-sm text-destructive">{errors['ai.session_max_tokens']}</p>
                 )}
-                <p className="text-sm text-muted-foreground">
+                <p id="ai-session-max-tokens-desc" className="text-sm text-muted-foreground">
                   세션의 입력 토큰이 이 값을 초과하면 대화를 자동 요약하고 새 세션으로 전환합니다 (10,000~200,000)
                 </p>
               </div>
@@ -747,7 +761,8 @@ function AdminSettingsPage() {
             <CardHeader>
               {/* 이 카드에는 별도 Label 이 없으므로(제목이 곧 필드 이름) 기본값 힌트를 제목 줄에 붙인다. */}
               <CardTitle className="flex flex-wrap items-center gap-2">
-                <span>시스템 프롬프트</span>
+                {/* 아래 Textarea 의 aria-labelledby 대상 — placeholder 는 입력하면 사라져 이름이 못 된다(WD-590). */}
+                <span id="ai-system-prompt-label">시스템 프롬프트</span>
                 <DefaultHint show={isDefault('ai.system_prompt')} />
               </CardTitle>
             </CardHeader>
@@ -755,6 +770,8 @@ function AdminSettingsPage() {
               <div className="space-y-2">
                 <Textarea
                   id="ai-system-prompt"
+                  aria-labelledby="ai-system-prompt-label"
+                  {...fieldA11y('ai.system_prompt')}
                   rows={15}
                   className="font-mono text-sm"
                   value={form['ai.system_prompt']}
@@ -774,9 +791,13 @@ function AdminSettingsPage() {
                   {SYSTEM_PROMPT_MAX_LENGTH.toLocaleString('ko-KR')}자
                 </p>
                 {errors['ai.system_prompt'] && (
-                  <p className="text-sm text-destructive">{errors['ai.system_prompt']}</p>
+                  <p id="ai-system-prompt-error" role="alert" className="text-sm text-destructive">
+                    {errors['ai.system_prompt']}
+                  </p>
                 )}
-                <p className="text-sm text-muted-foreground">AI 에이전트의 역할과 동작을 정의하는 시스템 프롬프트</p>
+                <p id="ai-system-prompt-desc" className="text-sm text-muted-foreground">
+                  AI 에이전트의 역할과 동작을 정의하는 시스템 프롬프트
+                </p>
               </div>
             </CardContent>
           </Card>

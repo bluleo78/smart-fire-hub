@@ -278,6 +278,8 @@ export function ChatInput({
           onInput={handleInput}
           onPaste={handlePaste}
           placeholder={placeholder}
+          // placeholder 는 입력하면 사라져 이름이 될 수 없으므로 접근 가능한 이름을 따로 준다(WD-590).
+          aria-label="메시지 입력"
           disabled={isDisabled}
           className="min-h-[44px] max-h-[150px] resize-none text-sm"
           rows={1}
