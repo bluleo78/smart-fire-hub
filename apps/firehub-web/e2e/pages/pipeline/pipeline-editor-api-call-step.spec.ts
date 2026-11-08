@@ -11,7 +11,7 @@
 import type { ApiConnectionSelectable } from '../../../src/types/api-connection';
 import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
+import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /** 모킹용 API 연결 목록 — ApiConnectionSelectable 타입으로 스펙 정합성 보장 */
 const MOCK_CONNECTIONS: ApiConnectionSelectable[] = [
@@ -64,7 +64,7 @@ async function addAndOpenApiCallStep(page: import('@playwright/test').Page) {
   await page.goto('/pipelines/new');
 
   // 스텝 추가 → ADD_STEP dispatch
-  await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+  await clickToolbarAddStep(page);
   await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
 
   // ReactFlow 노드 클릭 → StepConfigPanel 열기

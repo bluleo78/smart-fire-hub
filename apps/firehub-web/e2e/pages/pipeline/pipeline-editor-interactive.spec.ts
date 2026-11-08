@@ -7,7 +7,7 @@
 
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { grantPipelinePermissions, setupPipelineEditorMocks, setupPipelineMocks } from '../../fixtures/pipeline.fixture';
+import { clickToolbarAddStep, grantPipelinePermissions, setupPipelineEditorMocks, setupPipelineMocks } from '../../fixtures/pipeline.fixture';
 
 test.describe('파이프라인 에디터 — 상호작용', () => {
   // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
@@ -39,7 +39,7 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     await expect(page.getByText('첫 번째 스텝을 추가하세요')).toBeVisible();
 
     // 스텝 추가 → ADD_STEP dispatch → steps[0] 생성
-    await page.getByRole('button', { name: /스텝 추가/ }).click();
+    await clickToolbarAddStep(page);
 
     // 빈 상태가 사라지고 ReactFlow 캔버스가 렌더링된다
     await expect(page.getByText('첫 번째 스텝을 추가하세요')).not.toBeVisible();
@@ -53,17 +53,19 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     await setupNewEditorMocks(page);
 
     await page.goto('/pipelines/new');
-    await page.getByRole('button', { name: /스텝 추가/ }).click();
+    await clickToolbarAddStep(page);
     await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
 
-    // 스텝 하나 더 추가 (ADD_STEP) — 우상단의 추가 버튼 사용 (first())
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    // 스텝 하나 더 추가 (ADD_STEP) — 우상단의 추가 버튼 사용
+    await clickToolbarAddStep(page);
+    await expect(page.locator('.react-flow__node')).toHaveCount(2);
 
     // 자동 정렬 버튼 클릭 (AUTO_LAYOUT dispatch)
     await page.getByRole('button', { name: '자동 정렬' }).click();
 
-    // 여전히 캔버스가 정상 렌더링되는지 확인 — AUTO_LAYOUT 이후 에러 없이 유지
+    // 여전히 캔버스가 정상 렌더링되는지 확인 — AUTO_LAYOUT 이후 두 스텝이 그대로 남는다
     await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
+    await expect(page.locator('.react-flow__node')).toHaveCount(2);
   });
 
   test('신규 에디터에서 헤더에 파이프라인 이름 입력 필드가 있다', async ({
@@ -104,7 +106,7 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     await page.goto('/pipelines/new');
 
     // 스텝 추가 → ADD_STEP dispatch
-    await page.getByRole('button', { name: /스텝 추가/ }).click();
+    await clickToolbarAddStep(page);
     await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
 
     // ReactFlow 노드 클릭 → SELECT_STEP dispatch → StepConfigPanel 열림
@@ -129,7 +131,7 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     await page.goto('/pipelines/new');
 
     // 스텝 추가 → ADD_STEP dispatch
-    await page.getByRole('button', { name: /스텝 추가/ }).click();
+    await clickToolbarAddStep(page);
     await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
 
     // ReactFlow 노드 클릭 → StepConfigPanel 열기
@@ -156,7 +158,7 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     await page.goto('/pipelines/new');
 
     // 스텝 추가 → ADD_STEP dispatch
-    await page.getByRole('button', { name: /스텝 추가/ }).click();
+    await clickToolbarAddStep(page);
     await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
 
     // 노드 우상단 X 버튼(aria-label="스텝 삭제") 클릭 — 패널을 열지 않고 노드에서 직접 클릭
@@ -187,7 +189,7 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     await page.goto('/pipelines/new');
 
     // 스텝 추가 → SELECT
-    await page.getByRole('button', { name: /스텝 추가/ }).click();
+    await clickToolbarAddStep(page);
     await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
 
     // 노드 클릭 → StepConfigPanel 열기
@@ -216,9 +218,9 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     await page.goto('/pipelines/new');
 
     // 스텝 두 개 추가 → ADD_STEP 두 번 dispatch
-    await page.getByRole('button', { name: /스텝 추가/ }).click();
+    await clickToolbarAddStep(page);
     await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
 
     // 두 개의 ReactFlow 노드가 캔버스에 렌더링되어야 한다
     await expect(page.locator('.react-flow__node')).toHaveCount(2);
@@ -239,12 +241,14 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     await page.goto('/pipelines/new');
 
     // 스텝 3개 연속 추가 → ADD_STEP 3번 dispatch
-    await page.getByRole('button', { name: /스텝 추가/ }).click();
+    await clickToolbarAddStep(page);
     await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
-    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await clickToolbarAddStep(page);
+    await clickToolbarAddStep(page);
 
     await expect(page.locator('.react-flow__node')).toHaveCount(3);
+    // 툴바 ADD_STEP 만 눌렀다면 독립 스텝이라 엣지가 없어야 한다(노드의 ADD_STEP_AFTER 를 누르면 엣지가 생긴다)
+    await expect(page.locator('.react-flow__edge')).toHaveCount(0);
 
     // 각 노드의 바운딩 박스를 수집해 서로 겹치는 쌍이 없는지 검증한다.
     const nodes = page.locator('.react-flow__node');
@@ -502,7 +506,7 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
 
       // 편집 모드 진입 → 스텝 추가로 dirty 상태 생성
       await page.getByRole('button', { name: '수정' }).click();
-      await page.getByRole('button', { name: '스텝 추가', exact: true }).click();
+      await clickToolbarAddStep(page);
       await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
 
       // 사이드바 "홈" 링크 클릭 (nav 영역으로 한정 — 다른 위치의 동명 텍스트와 구분)
@@ -521,7 +525,7 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
       await page.goto('/pipelines/1');
 
       await page.getByRole('button', { name: '수정' }).click();
-      await page.getByRole('button', { name: '스텝 추가', exact: true }).click();
+      await clickToolbarAddStep(page);
       await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
 
       await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
@@ -542,7 +546,7 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
       await page.goto('/pipelines/1');
 
       await page.getByRole('button', { name: '수정' }).click();
-      await page.getByRole('button', { name: '스텝 추가', exact: true }).click();
+      await clickToolbarAddStep(page);
       await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
 
       await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
