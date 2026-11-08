@@ -9,6 +9,8 @@ import {
   expectInsideHorizontally,
   expectNoHorizontalOverflow,
   expectNoOverflowWithin,
+  expectNoTitleOnHover,
+  expectTruncatedWithHoverTitle,
   LONG_UNBROKEN_NAME,
   NARROW_DESKTOP_VIEWPORT,
 } from '../fixtures/long-unbroken-name';
@@ -20,6 +22,8 @@ import { expectLongValueTruncated, expectValueNotTruncated } from '../fixtures/t
  * - 세 화면은 툴바 안 한 줄 제목이라 줄바꿈 대신 말줄임을 쓴다. 원칙(WD-517·WD-634)대로 잘린 제목은 title 로 전체 이름을 보여야 하고,
  *   짧은 이름은 잘리지 않아야 한다.
  * - 파이프라인은 공용 Breadcrumb 의 마지막 항목(잘렸을 때만 title)과 편집 모드 이름 입력칸도 함께 본다.
+ * - WD-663: 파이프라인·저장된 쿼리 제목은 TruncatedTitle 로 바꿔 잘렸을 때만(hover 때 재서) title 을 단다.
+ *   대시보드 제목은 이 이슈 범위 밖이라 늘 title 을 두는 기존 동작을 그대로 본다.
  */
 
 const SHORT_NAME = '일일 출동 집계';
@@ -33,6 +37,8 @@ interface Scenario {
   setup: (page: Page, name: string) => Promise<void>;
   /** 화면에 보이는 제목 요소 */
   title: (page: Page, name: string) => Locator;
+  /** 제목이 TruncatedTitle 이라 잘렸을 때만(hover 때) title 을 단다 (WD-663) */
+  titleOnlyWhenTruncated?: boolean;
 }
 
 const SCENARIOS: Scenario[] = [
@@ -40,6 +46,7 @@ const SCENARIOS: Scenario[] = [
     label: '파이프라인',
     path: '/pipelines/1',
     canvas: true,
+    titleOnlyWhenTruncated: true,
     setup: async (page, name) => {
       await setupPipelineEditorMocks(page, 1);
       await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1, name }));
@@ -50,6 +57,7 @@ const SCENARIOS: Scenario[] = [
   {
     label: '저장된 쿼리',
     path: '/analytics/queries/1',
+    titleOnlyWhenTruncated: true,
     setup: async (page, name) => {
       await setupQueryEditorMocks(page, 1);
       await mockApi(page, 'GET', '/api/v1/analytics/queries/1', createSavedQuery({ id: 1, name }));
@@ -93,13 +101,14 @@ for (const s of SCENARIOS) {
       await expectPageFits(page, s);
       const box = await title.boundingBox();
       expect(box!.x + box!.width, '제목 오른쪽 끝이 화면 밖').toBeLessThanOrEqual(NARROW_DESKTOP_VIEWPORT.width);
-      await expectLongValueTruncated(title, LONG_UNBROKEN_NAME);
+      if (s.titleOnlyWhenTruncated) await expectTruncatedWithHoverTitle(title, LONG_UNBROKEN_NAME);
+      else await expectLongValueTruncated(title, LONG_UNBROKEN_NAME);
 
-      // 공용 Breadcrumb 를 쓰는 화면(파이프라인)은 마지막 항목도 말줄임 + title 이다
+      // 공용 Breadcrumb 를 쓰는 화면(파이프라인)은 마지막 항목도 말줄임 + (hover 때) title 이다
       const nav = page.getByRole('navigation', { name: '현재 위치' });
       if ((await nav.count()) > 0) {
         const current = nav.locator('[aria-current="page"]');
-        await expectLongValueTruncated(current, LONG_UNBROKEN_NAME);
+        await expectTruncatedWithHoverTitle(current, LONG_UNBROKEN_NAME);
         const currentBox = await current.boundingBox();
         const navBox = await nav.boundingBox();
         expect(currentBox!.x + currentBox!.width).toBeLessThanOrEqual(navBox!.x + navBox!.width + 1);
@@ -112,12 +121,12 @@ for (const s of SCENARIOS) {
 
       const title = s.title(page, SHORT_NAME);
       await expect(title).toHaveText(SHORT_NAME);
-      await expectValueNotTruncated(title);
+      // TruncatedTitle 제목은 hover 해도 툴팁이 없다(WD-663)
+      if (s.titleOnlyWhenTruncated) await expectNoTitleOnHover(title);
+      else await expectValueNotTruncated(title);
       const nav = page.getByRole('navigation', { name: '현재 위치' });
       if ((await nav.count()) > 0) {
-        const current = nav.locator('[aria-current="page"]');
-        await expectValueNotTruncated(current);
-        await expect(current, '잘리지 않은 breadcrumb 항목에는 툴팁이 없다').not.toHaveAttribute('title');
+        await expectNoTitleOnHover(nav.locator('[aria-current="page"]'));
       }
       await expectPageFits(page, s);
     });
@@ -132,7 +141,7 @@ test.describe('파이프라인 머리글 동작 버튼·편집 모드 (WD-656)',
     await page.goto('/pipelines/1');
   });
 
-  test('긴 이름이어도 머리글 동작 버튼이 화면·머리글 안에 보이고, 편집 모드 입력칸은 전체 이름 title 을 가진다', async ({
+  test('긴 이름이어도 머리글 동작 버튼이 화면·머리글 안에 보이고, 편집 모드 입력칸에는 title 이 없다', async ({
     authenticatedPage: page,
   }) => {
     const header = page.locator('header');
@@ -143,11 +152,13 @@ test.describe('파이프라인 머리글 동작 버튼·편집 모드 (WD-656)',
       await expectInsideHorizontally(button, header, `「${name}」 버튼`);
     }
 
-    // 편집 모드 — 이름 입력칸은 400px 에서 잘리므로 title 로 전체 이름을 보이고, 저장·취소 버튼도 보인다
+    // 편집 모드 — 입력칸에는 title 을 두지 않는다(WD-663: 스크린리더가 이름을 두 번 읽고, 입력 중에도 툴팁이 뜬다).
+    // 저장·취소 버튼도 화면 안에 보인다
     await header.getByRole('button', { name: '수정', exact: true }).click();
     const input = header.getByRole('textbox', { name: '파이프라인 이름' });
     await expect(input).toHaveValue(LONG_UNBROKEN_NAME);
-    await expect(input).toHaveAttribute('title', LONG_UNBROKEN_NAME);
+    await input.hover();
+    await expect(input).not.toHaveAttribute('title');
     await expectInsideHorizontally(input, header, '이름 입력칸', { content: false });
     for (const name of ['저장', '취소']) {
       const button = header.getByRole('button', { name, exact: true });
@@ -155,5 +166,31 @@ test.describe('파이프라인 머리글 동작 버튼·편집 모드 (WD-656)',
       await expectInsideHorizontally(button, header, `「${name}」 버튼`);
     }
     await expectPageFits(page, SCENARIOS[0]);
+  });
+});
+
+test.describe('TruncatedTitle 글자가 바뀌면 이전 title 을 뗀다 (WD-663)', () => {
+  test('파이프라인 이름을 고치면 breadcrumb 마지막 항목의 예전 이름 title 이 남지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize(NARROW_DESKTOP_VIEWPORT);
+    await grantPipelinePermissions(page);
+    await SCENARIOS[0].setup(page, LONG_UNBROKEN_NAME);
+    await page.goto('/pipelines/1');
+
+    // hover 로 예전 이름 title 을 단다
+    const current = page.getByRole('navigation', { name: '현재 위치' }).locator('[aria-current="page"]');
+    await expectTruncatedWithHoverTitle(current, LONG_UNBROKEN_NAME);
+
+    // 편집 모드에서 이름을 바꾸면 breadcrumb 글자도 바뀐다 — 다시 hover 하기 전까지 예전 이름 title 이 남으면 안 된다
+    const header = page.locator('header');
+    await header.getByRole('button', { name: '수정', exact: true }).click();
+    const renamed = `${LONG_UNBROKEN_NAME.slice(0, 99)}Z`;
+    await header.getByRole('textbox', { name: '파이프라인 이름' }).fill(renamed);
+    await expect(current).toHaveText(renamed);
+    await expect(current, '예전 이름 title 이 남지 않는다').not.toHaveAttribute('title');
+
+    // 다시 hover 하면 새 이름으로 단다
+    await expectTruncatedWithHoverTitle(current, renamed);
   });
 });
