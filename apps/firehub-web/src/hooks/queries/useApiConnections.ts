@@ -2,6 +2,7 @@ import { skipToken, useMutation, useQuery, useQueryClient } from '@tanstack/reac
 import { useEffect } from 'react';
 
 import { apiConnectionsApi } from '../../api/api-connections';
+import { isValidId } from '../../lib/route-id';
 import type { CreateApiConnectionRequest, UpdateApiConnectionRequest } from '../../types/api-connection';
 import type { JobProgress } from '../../types/job';
 import { useJobProgress } from './useJobProgress';
@@ -25,8 +26,9 @@ export function useApiConnections() {
  */
 export function useApiConnection(id: number | null | undefined) {
   return useQuery({
-    queryKey: [QUERY_KEY, id ?? null],
-    queryFn: id == null ? skipToken : () => apiConnectionsApi.getById(id).then(r => r.data),
+    // 양의 정수가 아니면(0·NaN 포함) 조회하지 않고 키도 null 로 맞춘다(WD-667)
+    queryKey: [QUERY_KEY, isValidId(id) ? id : null],
+    queryFn: isValidId(id) ? () => apiConnectionsApi.getById(id).then(r => r.data) : skipToken,
   });
 }
 

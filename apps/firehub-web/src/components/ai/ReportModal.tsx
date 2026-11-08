@@ -61,8 +61,12 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
     enabled: open,
   });
 
-  // 실행 메타데이터 조회 — useExecution 훅으로 통일 (RUNNING 시 폴링 포함)
-  const { data: execution, isLoading: metaLoading, error: metaError } = useExecution(jobId, executionId);
+  // 실행 메타데이터 조회 — useExecution 훅으로 통일 (RUNNING 시 폴링 포함).
+  // HTML 처럼 열려 있을 때만 조회한다(WD-667) — 닫힌 모달도 조회하고 RUNNING 이면 5초마다 폴링해,
+  // 채팅·알림의 리포트 메시지 N개가 N개의 요청을 계속 보냈다.
+  const { data: execution, isLoading: metaLoading, error: metaError } = useExecution(jobId, executionId, {
+    enabled: open,
+  });
   // 리포트 등급이 작성자의 현재 보안 등급보다 높아 서버가 403 으로 막았는가(WD-198) — 「리포트가 없습니다」 대신 등급 안내를 보인다.
   const levelBlocked = isReportLevelBlocked(htmlError) || isReportLevelBlocked(metaError);
 

@@ -1,14 +1,16 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import { hasInAppHistory } from '@/lib/app-history';
+
 /**
- * 이 탭에서 앱 안 기록이 한 칸이라도 쌓였는가(WD-661).
- * React Router 는 history.state 에 이 탭의 몇 번째 기록인지(idx)를 남긴다 — 첫 화면은 0 이고 push 마다 1 씩 늘며
- * replace 는 그대로 둔다. location.key 로 판정하면 로그인 리다이렉트(replace)만 거쳐도 key 가 바뀌어
- * 기록이 없는데 「있음」으로 오판했다(이메일 링크를 새 탭으로 열고 로그인한 경우).
+ * 이 탭에서 지금 위치 뒤로 앱 안 기록이 한 칸이라도 있는가(WD-661·WD-667).
+ * NavigationHistoryTracker 가 PUSH 이동을 기록으로 센다 — 로그인 리다이렉트(replace)만 거친 첫 화면은 「없음」이다.
+ * 판정 규칙과 한계(상태 없는 기록 칸으로 POP 하면 「없음」)는 lib/app-history 참고.
  */
-function hasAppHistory(): boolean {
-  const idx = (window.history.state as { idx?: number } | null)?.idx;
-  return typeof idx === 'number' && idx > 0;
+export function useHasAppHistory(): boolean {
+  // 위치가 바뀔 때마다 다시 그려 판정을 새로 읽는다
+  const location = useLocation();
+  return hasInAppHistory(location.key);
 }
 
 /**
@@ -18,9 +20,7 @@ function hasAppHistory(): boolean {
  */
 export function useGoBack(fallback: string) {
   const navigate = useNavigate();
-  // history.state 는 반응형 값이 아니다 — useLocation 구독으로 이동할 때마다 다시 그려 판정을 새로 읽는다
-  useLocation();
-  const hasHistory = hasAppHistory();
+  const hasHistory = useHasAppHistory();
   const goBack = () => (hasHistory ? navigate(-1) : navigate(fallback));
   return { hasHistory, goBack };
 }

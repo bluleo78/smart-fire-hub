@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { analyticsApi } from '../../api/analytics';
 import { isNotFoundError } from '../../lib/api-error';
 import { fetchAllPages } from '../../lib/fetch-all-pages';
+import { isValidId } from '../../lib/route-id';
 import type {
   AddWidgetRequest,
   AnalyticsAdminKind,
@@ -63,8 +64,9 @@ export function useAllSavedQueries() {
  */
 export function useSavedQuery(id: number | null | undefined) {
   return useQuery({
-    queryKey: ['analytics', 'queries', id ?? null],
-    queryFn: id == null ? skipToken : () => analyticsApi.getQuery(id).then((r) => r.data),
+    // 양의 정수가 아니면(0·NaN 포함) 조회하지 않고 키도 null 로 맞춘다(WD-667)
+    queryKey: ['analytics', 'queries', isValidId(id) ? id : null],
+    queryFn: isValidId(id) ? () => analyticsApi.getQuery(id).then((r) => r.data) : skipToken,
   });
 }
 
@@ -198,8 +200,9 @@ export function useChartsInfinite(params: {
 /** 차트 단건 조회. id 가 없으면(null·undefined — 새 차트·잘못된 주소 id) skipToken 으로 조회하지 않는다(WD-661). */
 export function useChart(id: number | null | undefined) {
   return useQuery({
-    queryKey: ['analytics', 'charts', id ?? null],
-    queryFn: id == null ? skipToken : () => analyticsApi.getChart(id).then((r) => r.data),
+    // 양의 정수가 아니면(0·NaN 포함) 조회하지 않는다(WD-667)
+    queryKey: ['analytics', 'charts', isValidId(id) ? id : null],
+    queryFn: isValidId(id) ? () => analyticsApi.getChart(id).then((r) => r.data) : skipToken,
   });
 }
 
@@ -210,9 +213,9 @@ export function useChart(id: number | null | undefined) {
 function chartDataQuery(id: number | null | undefined) {
   // queryOptions 로 감싸야 삼항식의 skipToken 이 일반 symbol 로 넓어지지 않고 조회 옵션 타입으로 추론된다
   return queryOptions({
-    queryKey: ['analytics', 'charts', id ?? null, 'data'],
-    // id 가 없으면 skipToken — `id!` 로 undefined 를 넘기는 조회 함수를 만들지 않는다(WD-661)
-    queryFn: id == null ? skipToken : () => analyticsApi.getChartData(id).then((r) => r.data),
+    queryKey: ['analytics', 'charts', isValidId(id) ? id : null, 'data'],
+    // id 가 양의 정수가 아니면 skipToken — undefined·0·NaN 으로 조회 함수를 만들지 않는다(WD-661·WD-667)
+    queryFn: isValidId(id) ? () => analyticsApi.getChartData(id).then((r) => r.data) : skipToken,
   });
 }
 
@@ -356,8 +359,9 @@ export function useAllDashboards() {
 /** 대시보드 단건 조회. id 가 없으면(null·undefined — 잘못된 주소 id) skipToken 으로 조회하지 않는다(WD-661). */
 export function useDashboard(id: number | null | undefined) {
   return useQuery({
-    queryKey: ['analytics', 'dashboards', id ?? null],
-    queryFn: id == null ? skipToken : () => analyticsApi.getDashboard(id).then((r) => r.data),
+    // 양의 정수가 아니면(0·NaN 포함) 조회하지 않는다(WD-667)
+    queryKey: ['analytics', 'dashboards', isValidId(id) ? id : null],
+    queryFn: isValidId(id) ? () => analyticsApi.getDashboard(id).then((r) => r.data) : skipToken,
   });
 }
 
@@ -367,9 +371,11 @@ export function useDashboard(id: number | null | undefined) {
  */
 export function useDashboardShareImpact(id: number | null | undefined) {
   return useQuery({
-    queryKey: ['analytics', 'dashboards', id ?? null, 'share-impact'],
-    // 창이 닫혀 있으면(id 없음) skipToken 으로 조회하지 않는다(WD-661)
-    queryFn: id == null ? skipToken : ({ signal }) => analyticsApi.getDashboardShareImpact(id, signal).then((r) => r.data),
+    queryKey: ['analytics', 'dashboards', isValidId(id) ? id : null, 'share-impact'],
+    // 창이 닫혀 있으면(id 없음)·id 가 양의 정수가 아니면 skipToken 으로 조회하지 않는다(WD-661·WD-667)
+    queryFn: isValidId(id)
+      ? ({ signal }) => analyticsApi.getDashboardShareImpact(id, signal).then((r) => r.data)
+      : skipToken,
     gcTime: 0,
     retry: false,
   });

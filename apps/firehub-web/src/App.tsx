@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route,Routes } from 'react-router-dom';
 
 import { AdminOrPermissionRoute } from './components/AdminOrPermissionRoute';
 import { AppLayout } from './components/layout/AppLayout';
+import { NavigationHistoryTracker } from './components/NavigationHistoryTracker';
 import { PageErrorBoundary } from './components/PageErrorBoundary';
 import { PageTitleSync } from './components/PageTitleSync';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -65,6 +66,8 @@ function App() {
       <BrandingProvider>
       <ThemeColorProvider>
       <BrowserRouter>
+      {/* 앱 안 이동 기록(WD-667) — useGoBack 의 「돌아갈 기록」 판정용. 페이지보다 먼저 렌더되도록 인증·라우트 앞에 둔다 */}
+      <NavigationHistoryTracker />
       <AuthProvider>
         {/* 경로별 탭 제목(WD-580) — 인증 화면(AppLayout 밖)까지 덮도록 레이아웃이 아닌 라우터 최상단에 한 번만 둔다 */}
         <PageTitleSync />

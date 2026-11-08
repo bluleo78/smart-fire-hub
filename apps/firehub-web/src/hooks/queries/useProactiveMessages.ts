@@ -5,6 +5,7 @@ import type {
   CreateProactiveJobRequest,
   CreateReportTemplateRequest,
   ProactiveJob,
+  ProactiveJobExecution,
   ProactiveJobExecutionSummary,
   ReportListItem,
   UpdateProactiveJobRequest,
@@ -12,6 +13,7 @@ import type {
 } from '../../api/proactive';
 import { proactiveApi } from '../../api/proactive';
 import { cloneName } from '../../lib/clone-name';
+import { isValidId } from '../../lib/route-id';
 import { useMyPermissions } from './useMyPermissions';
 
 const KEYS = {
@@ -25,8 +27,15 @@ const KEYS = {
   // 예전 [..., jobId, undefined](파라미터 없는 목록)가 [..., jobId, null](실행 id 없는 단건)과 같은 캐시가 됐다
   executionList: (jobId: number | null, params?: { limit?: number; offset?: number }) =>
     ['proactive', 'executions', jobId, 'list', params] as const,
+  // 실행 목록만의 접두사(WD-667) — executionList(jobId) 는 끝에 params(undefined) 칸이 남아 접두사 비교에서
+  // [..., 'list', {limit,offset}] 와 맞지 않는다. 「지금 실행」은 이것으로 목록만 무효화하고 단건 실행 캐시는 그대로 둔다.
+  executionListPrefix: (jobId: number) => ['proactive', 'executions', jobId, 'list'] as const,
   execution: (jobId: number | null, executionId: number | null) =>
     ['proactive', 'executions', jobId, executionId] as const,
+  // 실행 HTML 리포트 — 단건 실행 키 아래에 둬 executions(jobId)·execution(...) 접두사 무효화가 함께 닿게 한다(WD-667).
+  // 예전 ['execution-html', ...] 는 proactive 바깥이라 실행 중에 열어 받은 빈 응답이 완료 뒤에도 staleTime 동안 남았다.
+  executionHtml: (jobId: number | null, executionId: number | null) =>
+    ['proactive', 'executions', jobId, executionId, 'html'] as const,
   recipients: (search: string) => ['proactive', 'recipients', search] as const,
   recipientsByIds: (userIds: number[]) => ['proactive', 'recipients', 'byIds', userIds] as const,
   messages: ['proactive', 'messages'] as const,
@@ -227,8 +236,10 @@ export function useExecuteProactiveJob() {
     mutationFn: (id: number) => proactiveApi.executeJob(id).then((r) => r.data),
     onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });
-      // 실행 직후 실행 이력 목록을 즉시 갱신하여 "실행 중" 상태가 바로 보이도록 한다
-      queryClient.invalidateQueries({ queryKey: KEYS.executions(id) });
+      // 실행 직후 실행 이력 목록을 즉시 갱신하여 "실행 중" 상태가 바로 보이도록 한다.
+      // 목록 접두사만 무효화한다(WD-667) — 실행 접두사 전체로 하면 그 작업의 모든 단건 실행·HTML 캐시까지 다시 읽었다.
+      // 끝난 실행의 단건·HTML 갱신은 useExecution 의 RUNNING 폴링과 상태 전환 무효화가 맡는다.
+      queryClient.invalidateQueries({ queryKey: KEYS.executionListPrefix(id) });
     },
   });
 }
@@ -266,7 +277,7 @@ export function useCloneProactiveJob() {
   });
 }
 
-/** 작업의 실행 이력 목록. 작업 id 가 없으면(null·undefined) skipToken 으로 조회하지 않는다(WD-661). */
+/** 작업의 실행 이력 목록. 작업 id 가 양의 정수가 아니면(null·undefined·0·NaN) skipToken 으로 조회하지 않는다(WD-661·WD-667). */
 export function useJobExecutions(
   jobId: number | null | undefined,
   params?: { limit?: number; offset?: number },
@@ -276,8 +287,9 @@ export function useJobExecutions(
   },
 ) {
   return useQuery<ProactiveJobExecutionSummary[]>({
-    queryKey: KEYS.executionList(jobId ?? null, params),
-    queryFn: jobId == null ? skipToken : () => proactiveApi.getJobExecutions(jobId, params).then((r) => r.data),
+    // 잘못된 id 는 키도 null 로 맞춘다 — NaN 은 해시에서 어차피 null 이 되므로 꺼진 관찰자끼리만 같은 캐시를 본다
+    queryKey: KEYS.executionList(isValidId(jobId) ? jobId : null, params),
+    queryFn: isValidId(jobId) ? () => proactiveApi.getJobExecutions(jobId, params).then((r) => r.data) : skipToken,
     refetchInterval: options?.refetchInterval,
   });
 }
@@ -300,33 +312,54 @@ export function useReports(params?: { limit?: number; offset?: number }) {
 /**
  * 단건 실행 조회 훅 — 실행 상세 페이지·리포트 모달에서 사용.
  * RUNNING 상태일 때 5초 간격으로 자동 폴링하여 완료를 감지한다.
- * 두 id 중 하나라도 없으면(null·undefined) skipToken 으로 조회하지 않는다(WD-661).
+ * 두 id 중 하나라도 양의 정수가 아니면(null·undefined·0·NaN) skipToken 으로 조회하지 않는다(WD-661·WD-667).
+ * options.enabled 는 화면별 추가 조건이다 — 닫힌 리포트 모달이 조회·폴링하지 않게(WD-667).
  */
-export function useExecution(jobId: number | null | undefined, executionId: number | null | undefined) {
+export function useExecution(
+  jobId: number | null | undefined,
+  executionId: number | null | undefined,
+  options?: { enabled?: boolean },
+) {
+  const queryClient = useQueryClient();
+  const valid = isValidId(jobId) && isValidId(executionId);
+  const queryKey = KEYS.execution(valid ? jobId : null, valid ? executionId : null);
   return useQuery({
-    queryKey: KEYS.execution(jobId ?? null, executionId ?? null),
-    queryFn:
-      jobId == null || executionId == null
-        ? skipToken
-        : () => proactiveApi.getExecution(jobId, executionId).then((r) => r.data),
+    queryKey,
+    queryFn: valid
+      ? async () => {
+          // 직전 캐시가 RUNNING 이었는데 이번에 끝났으면 HTML 을 다시 읽게 한다(WD-667) — 실행 중에 연 모달·뷰어가
+          // 받아 둔 빈 HTML 이 완료 뒤에도 staleTime 동안 남지 않게. 관찰자마다가 아니라 조회 한 번에 한 번만 판단한다.
+          const prevStatus = queryClient.getQueryData<ProactiveJobExecution>(queryKey)?.status;
+          const data = await proactiveApi.getExecution(jobId, executionId).then((r) => r.data);
+          if (prevStatus === 'RUNNING' && data.status !== 'RUNNING') {
+            queryClient.invalidateQueries({ queryKey: KEYS.executionHtml(jobId, executionId), exact: true });
+          }
+          return data;
+        }
+      : skipToken,
+    enabled: options?.enabled ?? true,
     refetchInterval: (query) => (query.state.data?.status === 'RUNNING' ? 5000 : false),
   });
 }
 
 /**
  * 실행의 HTML 리포트 조회(WD-661) — 실행 상세·리포트 보기·리포트 모달이 같은 훅·캐시를 쓴다.
- * id 가 없으면 skipToken 으로 끄고, options.enabled 는 화면별 추가 조건이다. 응답은 AxiosResponse 그대로다.
+ * id 가 양의 정수가 아니면 skipToken 으로 끄고, options.enabled 는 화면별 추가 조건이다. 응답은 AxiosResponse 그대로다.
+ * 키는 단건 실행 키 아래(KEYS.executionHtml)라 실행 접두사 무효화가 함께 닿는다(WD-667).
  */
 export function useExecutionHtml(
   jobId: number | null | undefined,
   executionId: number | null | undefined,
   options?: { enabled?: boolean },
 ) {
+  const valid = isValidId(jobId) && isValidId(executionId);
   return useQuery({
-    queryKey: ['execution-html', jobId ?? null, executionId ?? null],
-    queryFn:
-      jobId == null || executionId == null ? skipToken : () => proactiveApi.getExecutionHtml(jobId, executionId),
+    queryKey: KEYS.executionHtml(valid ? jobId : null, valid ? executionId : null),
+    queryFn: valid ? () => proactiveApi.getExecutionHtml(jobId, executionId) : skipToken,
     enabled: options?.enabled ?? true,
+    // 빈 응답(아직 리포트 없음)은 바로 낡은 것으로 본다(WD-667) — 실행 중에 연 리포트 보기·모달이 받아 둔 빈 HTML 이
+    // 완료 뒤 실행 상세를 처음 열 때도 30초(staleTime) 동안 남지 않게. 실행을 관찰하지 않는 화면이 캐시한 경우도 덮는다.
+    staleTime: (query) => (query.state.data?.data ? 30_000 : 0),
   });
 }
 
@@ -432,8 +465,9 @@ export function useProactiveTemplates() {
  */
 export function useProactiveTemplate(id: number | null | undefined) {
   return useQuery({
-    queryKey: KEYS.template(id ?? null),
-    queryFn: id == null ? skipToken : () => proactiveApi.getTemplate(id).then((r) => r.data),
+    // 양의 정수가 아니면(0·NaN 포함) 조회하지 않는다(WD-667)
+    queryKey: KEYS.template(isValidId(id) ? id : null),
+    queryFn: isValidId(id) ? () => proactiveApi.getTemplate(id).then((r) => r.data) : skipToken,
   });
 }
 

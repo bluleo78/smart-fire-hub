@@ -29,6 +29,12 @@ export function jobBackFallback(jobId: number | null | undefined): { path: strin
     : { path: '/ai-insights/jobs', label: '작업 목록' };
 }
 
+/**
+ * 리포트 보기의 대체 목적지 — 작업을 읽을 수 있다고 확인되지 않았을 때(404·403·그 밖의 오류)(WD-667).
+ * 작업 상세로 보내면 오류·권한 안내 화면에 떨어질 수 있어 리포트 목록으로 보낸다.
+ */
+export const REPORT_LIST_FALLBACK = { path: '/ai-insights/reports', label: '리포트 목록' } as const;
+
 export interface Section {
   key: string;
   label: string;
