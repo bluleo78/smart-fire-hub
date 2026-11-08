@@ -1,0 +1,185 @@
+package com.smartfirehub.global.exception;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.smartfirehub.dataimport.exception.ImportValidationException;
+import com.smartfirehub.global.config.SecurityConfig;
+import com.smartfirehub.global.dto.ErrorResponse;
+import com.smartfirehub.global.security.JwtAuthenticationFilter;
+import com.smartfirehub.global.security.JwtProperties;
+import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.permission.service.PermissionService;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import jakarta.servlet.http.Cookie;
+import java.util.List;
+import java.util.stream.IntStream;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.validation.BeanPropertyBindingResult;
+import org.springframework.validation.BindException;
+import org.springframework.validation.ObjectError;
+import teststub.validation.ValidationStubController;
+
+/**
+ * 검증 실패 응답 모양 통일(WD-640) — 경로가 달라도 400 + 「입력값이 올바르지 않습니다.」 + 한국어 필드 오류로 나오는지 HTTP 왕복으로 확인한다.
+ *
+ * <p>결함: HandlerMethodValidationException(메서드 파라미터 제약)·BindException(@ModelAttribute)은 처리기가 없어 일반
+ * 예외 500 으로 떨어졌고, 클래스 단위 합성 제약(global error)은 getFieldErrors() 만 읽어 응답에서 사라졌다.
+ */
+@SuppressWarnings("null")
+@WebMvcTest(controllers = ValidationStubController.class)
+// 스텁은 컴포넌트 스캔 범위 밖(teststub)이라 controllers 필터로는 잡히지 않는다 — @Import 로 이 슬라이스에만 올린다.
+@Import({
+  SecurityConfig.class,
+  JwtAuthenticationFilter.class,
+  GlobalExceptionHandler.class,
+  ValidationStubController.class
+})
+class ValidationErrorShapeTest {
+
+  // WebMvcConfig 가 DatasetAccessInterceptor(→DatasetAccessGuard)를 등록하므로 슬라이스에도 빈이 있어야 한다.
+  @MockitoBean private DatasetAccessGuard datasetAccessGuard;
+  @MockitoBean private JwtTokenProvider jwtTokenProvider;
+  @MockitoBean private JwtProperties jwtProperties;
+  @MockitoBean private PermissionService permissionService;
+
+  @Autowired private MockMvc mockMvc;
+
+  /** 쿼리 파라미터 @Min 위반 → 400, 키는 @RequestParam 이름(size)이지 자바 파라미터 이름(pageSize)이 아니다. */
+  @Test
+  void requestParamConstraint_returns400WithKoreanFieldError() throws Exception {
+    mockMvc
+        .perform(get("/test/validation/param").param("size", "0"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(GlobalExceptionHandler.VALIDATION_FAILED_CODE))
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE))
+        .andExpect(jsonPath("$.errors.size").value("1 이상이어야 합니다."))
+        .andExpect(jsonPath("$.errors.pageSize").doesNotExist());
+  }
+
+  /** 경로 변수 @Size 위반 → 400, 한국어 Size 문구. */
+  @Test
+  void pathVariableConstraint_returns400WithKoreanFieldError() throws Exception {
+    mockMvc
+        .perform(get("/test/validation/path/abcdef"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE))
+        .andExpect(jsonPath("$.errors.code").value("3자 이하로 입력하세요."));
+  }
+
+  /** 본문 + 파라미터 제약이 함께 있으면 본문 필드 오류도 같은 응답의 errors 에 실린다. */
+  @Test
+  void bodyAndParamConstraint_bothReported() throws Exception {
+    mockMvc
+        .perform(
+            post("/test/validation/body-and-param")
+                .param("size", "0")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE))
+        .andExpect(jsonPath("$.errors.name").value("필수 입력값입니다."))
+        .andExpect(jsonPath("$.errors.size").value("1 이상이어야 합니다."));
+  }
+
+  /**
+   * @ModelAttribute 필수값 위반·숫자 칸 형식 오류 → 400, 형식 오류도 영어 「Failed to convert…」가 아니라 한국어.
+   */
+  @Test
+  void modelAttribute_returns400WithKoreanMessages() throws Exception {
+    mockMvc
+        .perform(get("/test/validation/model").param("name", "").param("age", "abc"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE))
+        .andExpect(jsonPath("$.errors.name").value("필수 입력값입니다."))
+        .andExpect(jsonPath("$.errors.age").value(ValidationErrorCollector.TYPE_MISMATCH_MESSAGE));
+  }
+
+  /** 클래스 단위 합성 제약 → 사라지지 않고 예약 키(_global)에 한국어 문구로 실린다. */
+  @Test
+  void classLevelConstraint_surfacesUnderGlobalKey() throws Exception {
+    mockMvc
+        .perform(
+            post("/test/validation/class-level")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"password\":\"a\",\"confirm\":\"b\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE))
+        .andExpect(
+            jsonPath("$.errors." + ValidationErrorCollector.GLOBAL_KEY)
+                .value("비밀번호 확인이 일치하지 않습니다."));
+  }
+
+  /** MethodArgumentNotValidException 이 아닌 순수 BindException 도 같은 400 모양(처리기 직접 호출). */
+  @Test
+  void plainBindException_handledAs400() {
+    BeanPropertyBindingResult br = new BeanPropertyBindingResult(new Object(), "form");
+    br.addError(new ObjectError("form", new String[] {"SameValues"}, null, "두 값이 같아야 합니다."));
+    ErrorResponse body =
+        new GlobalExceptionHandler(null)
+            .handleValidationExceptions(
+                new BindException(br), new MockHttpServletRequest("GET", "/x"))
+            .getBody();
+    assertThat(body.status()).isEqualTo(400);
+    assertThat(body.message()).isEqualTo(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE);
+    assertThat(body.errors()).containsEntry(ValidationErrorCollector.GLOBAL_KEY, "두 값이 같아야 합니다.");
+  }
+
+  /** 임포트 검증 오류(error_N)는 행 순서대로 나간다 — 토스트가 첫 값을 보이므로 1행 오류가 먼저여야 한다. */
+  @Test
+  void importValidationErrors_keepRowOrder() {
+    List<String> rows = IntStream.range(0, 12).mapToObj(i -> (i + 1) + "행 오류").toList();
+    ErrorResponse body =
+        new GlobalExceptionHandler(null)
+            .handleImportValidation(
+                new ImportValidationException("검증 실패", rows),
+                new MockHttpServletRequest("POST", "/x"))
+            .getBody();
+    assertThat(body.errors().values()).containsExactlyElementsOf(rows);
+  }
+
+  /** 목록 본문 원소 오류는 「[1].name」 — 자바 파라미터 이름(requests)을 붙이지 않는다. */
+  @Test
+  void listBody_elementErrorsKeyedByIndex() throws Exception {
+    mockMvc
+        .perform(
+            post("/test/validation/list-body")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("[{\"name\":\"ok\"},{\"name\":\"\"}]"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(GlobalExceptionHandler.VALIDATION_FAILED_CODE))
+        .andExpect(jsonPath("$.errors['[1].name']").value("필수 입력값입니다."))
+        .andExpect(jsonPath("$.errors['requests[1].name']").doesNotExist());
+  }
+
+  /** 값 목록 파라미터 원소는 「ids[1]」. */
+  @Test
+  void listParam_elementKeyedWithName() throws Exception {
+    mockMvc
+        .perform(get("/test/validation/list-param").param("ids", "3", "0"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors['ids[1]']").value("1 이상이어야 합니다."));
+  }
+
+  /**
+   * @CookieValue 제약 — 키는 쿠키 이름(자바 파라미터 이름 session 이 아니다).
+   */
+  @Test
+  void cookieValue_keyedByCookieName() throws Exception {
+    mockMvc
+        .perform(get("/test/validation/cookie").cookie(new Cookie("sid", "abcdef")))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.sid").value("3자 이하로 입력하세요."))
+        .andExpect(jsonPath("$.errors.session").doesNotExist());
+  }
+}

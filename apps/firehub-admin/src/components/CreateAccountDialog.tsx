@@ -20,7 +20,7 @@ import { InlineBanner } from '@/components/ui/inline-banner';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { copyText } from '@/lib/clipboard';
-import { isForbidden, serverMessage } from '@/lib/http-errors';
+import { isForbidden, serverFieldErrors, serverMessage } from '@/lib/http-errors';
 import { generateTemporaryPassword } from '@/lib/temp-password';
 import type { CreateAccountFormData } from '@/lib/validations/account';
 import { createAccountSchema } from '@/lib/validations/account';
@@ -124,9 +124,10 @@ function CreateAccountDialogBody({
         );
         return;
       }
-      // Bean Validation 400(코드 없음, 필드별 errors)은 해당 필드 아래로 돌려 준다.
-      if (body?.errors && Object.keys(body.errors).length > 0 && body.code == null) {
-        Object.entries(body.errors).forEach(([field, message]) => {
+      // Bean Validation 400(코드 없음 또는 VALIDATION_FAILED, 필드별 errors)은 해당 필드 아래로 돌려 준다(판정은 serverFieldErrors, WD-640).
+      const fieldErrors = serverFieldErrors(error);
+      if (fieldErrors) {
+        Object.entries(fieldErrors).forEach(([field, message]) => {
           if (field === 'email' || field === 'name' || field === 'temporaryPassword') setError(field, { message });
         });
         return;

@@ -44,14 +44,20 @@ export function serverMessage(error: unknown, statuses: number[] = [400]): strin
   return message ? message : undefined;
 }
 
+/** Bean Validation 400 의 기계용 코드(WD-640) — api GlobalExceptionHandler.VALIDATION_FAILED_CODE 와 같은 값. */
+export const VALIDATION_FAILED_CODE = 'VALIDATION_FAILED';
+
 /**
  * axios 400 에러에서 Bean Validation 필드 오류(`errors`: 필드 → 한국어 문구)를 뽑는다(WD-311).
  * `message` 는 필드명이 없는 일반 문구(「입력값이 올바르지 않습니다.」, 구버전 서버는 영어 「Validation failed」)라 무엇을 고칠지 알 수 없다 —
  * 화면은 이 맵으로 해당 칸에 문구를 단다. 필드 오류가 없으면 `undefined`.
+ * code 가 없거나 검증 실패 코드일 때만 사람용 문구다 — 다른 코드의 errors 는 화면 분기용 기계 값(details)이라 칸에 달지 않는다(WD-640).
  */
 export function serverFieldErrors(error: unknown): Record<string, string> | undefined {
   if (!axios.isAxiosError(error) || error.response?.status !== 400) return undefined;
-  const errors = (error.response?.data as ErrorResponse | undefined)?.errors;
+  const data = error.response?.data as ErrorResponse | undefined;
+  if (data?.code != null && data.code !== VALIDATION_FAILED_CODE) return undefined;
+  const errors = data?.errors;
   return errors && Object.keys(errors).length > 0 ? errors : undefined;
 }
 

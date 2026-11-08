@@ -45,12 +45,13 @@ import com.smartfirehub.role.exception.SystemRoleModificationException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.ConstraintViolationException;
+import jakarta.validation.ElementKind;
+import jakarta.validation.Path;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.sql.SQLTransientConnectionException;
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +59,7 @@ import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
+import org.springframework.context.MessageSourceResolvable;
 import org.springframework.core.NestedRuntimeException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -72,17 +74,32 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.util.StringUtils;
+import org.springframework.validation.BindException;
+import org.springframework.validation.Errors;
+import org.springframework.validation.FieldError;
+import org.springframework.validation.ObjectError;
+import org.springframework.validation.method.ParameterErrors;
+import org.springframework.validation.method.ParameterValidationResult;
 import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.MatrixVariable;
+import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartException;
@@ -105,6 +122,12 @@ public class GlobalExceptionHandler {
    * 그대로다.
    */
   public static final String VALIDATION_FAILED_MESSAGE = "입력값이 올바르지 않습니다.";
+
+  /**
+   * Bean Validation 400 의 기계용 코드(WD-640) — 화면·ai-agent 가 「필드별 사람용 문구가 담긴 검증 실패」를 문구·모양 추측 없이 가려내게
+   * 한다. web 의 errors 해석(pickBestMessage·applyFieldErrors)과 admin 폼은 이 코드를 code 없음과 똑같이(필드 문구로) 다룬다.
+   */
+  public static final String VALIDATION_FAILED_CODE = "VALIDATION_FAILED";
 
   /** 커넥션 풀 대기 초과(WD-553) 안내 — 일시적 과부하이므로 재시도를 권한다. */
   static final String POOL_EXHAUSTED_MESSAGE = "요청이 많아 지금은 처리할 수 없습니다. 잠시 후 다시 시도하세요.";
@@ -176,80 +199,244 @@ public class GlobalExceptionHandler {
     return false;
   }
 
-  @ExceptionHandler(MethodArgumentNotValidException.class)
+  /**
+   * 요청 본문(@Valid @RequestBody)·폼 바인딩(@ModelAttribute) 검증 실패 → 400(WD-570, WD-640).
+   *
+   * <p>{@link MethodArgumentNotValidException} 은 {@link BindException} 의 하위 타입이라 이 처리기 하나가 둘 다 받는다.
+   * Spring 6 의 @ModelAttribute 검증 실패는 MethodArgumentNotValidException 으로 오지만, 직접 만든 데이터 바인더 등에서 순수
+   * BindException 이 올라오면 예전에는 일반 500 으로 떨어졌다. 예전 처리의 실제 결함은 둘이었다: getFieldErrors() 만 읽어 클래스 단위 합성
+   * 제약(global error)이 응답에서 사라졌고, 바인딩 타입 변환 실패(typeMismatch)는 Spring 영어 기본 문구 「Failed to convert
+   * property value…」가 그대로 나갔다 — 이제 각각 {@link ValidationErrorCollector#GLOBAL_KEY} 와 한국어 문구로 싣는다.
+   */
+  @ExceptionHandler(BindException.class)
   public ResponseEntity<ErrorResponse> handleValidationExceptions(
-      MethodArgumentNotValidException ex, HttpServletRequest request) {
-    Map<String, String> fieldErrors = new HashMap<>();
-    Set<String> requiredFields = new HashSet<>();
-    // FieldError 의 code 는 제약 애너테이션의 단순 이름(예: "NotBlank")이다.
-    ex.getBindingResult()
-        .getFieldErrors()
-        .forEach(
-            error ->
-                putFieldError(
-                    fieldErrors,
-                    requiredFields,
-                    error.getField(),
-                    error.getDefaultMessage(),
-                    REQUIRED_CONSTRAINTS.contains(error.getCode())));
-    ErrorResponse response =
-        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
-    return json(HttpStatus.BAD_REQUEST, response);
+      BindException ex, HttpServletRequest request) {
+    ValidationErrorCollector collector = new ValidationErrorCollector();
+    collectErrors(collector, ex.getBindingResult(), "");
+    return validationFailed(collector, request);
   }
 
   /**
-   * @Validated + @Min/@Max 등 쿼리 파라미터 제약 위반 시 400 반환 (#139)
+   * Spring 6.1+ 내장 메서드 검증 실패 → 400(WD-640).
+   *
+   * <p>컨트롤러 메서드 파라미터에 제약을 직접 붙이면(예: {@code @RequestParam @Min(1) int size},
+   * {@code @PathVariable @Size(max = 3)}) 클래스에 @Validated 가 없어도 Spring MVC 가 검증하고 이 예외를 던진다. 처리기가
+   * 없어 일반 예외로 떨어져 500 「예기치 않은 오류」가 났다. 같은 메서드에 @Valid 본문이 함께 있거나 본문이 목록(List&lt;@Valid Dto&gt;)이면
+   * 본문 오류도 이 예외로 온다.
+   *
+   * <p>필드 키는 클라이언트가 보낸 이름이어야 화면이 칸을 찾는다 — Spring 의 {@link HandlerMethodValidationException.Visitor}
+   * 로 파라미터
+   * 종류(@RequestParam·@PathVariable·@RequestHeader·@CookieValue·@MatrixVariable·@RequestBody·@ModelAttribute·@RequestPart)를
+   * 나눠, 값 파라미터는 애너테이션에 적힌 이름(없으면 파라미터 이름)을, 객체 파라미터는 그 안의 필드 이름을 쓴다. 객체가 목록 원소면 자바 파라미터 이름 없이
+   * 「[0].name」으로 쓴다 — 클라이언트는 JSON 배열을 보냈고, 객체 본문 오류(MethodArgumentNotValidException)도 파라미터 이름 없이 필드
+   * 이름만 쓴다.
+   */
+  @ExceptionHandler(HandlerMethodValidationException.class)
+  public ResponseEntity<ErrorResponse> handleHandlerMethodValidation(
+      HandlerMethodValidationException ex, HttpServletRequest request) {
+    ValidationErrorCollector collector = new ValidationErrorCollector();
+    ex.visitResults(
+        new HandlerMethodValidationException.Visitor() {
+          @Override
+          public void requestParam(RequestParam a, ParameterValidationResult r) {
+            addValueErrors(collector, r, a == null ? null : clientName(a.name(), a.value()));
+          }
+
+          @Override
+          public void pathVariable(PathVariable a, ParameterValidationResult r) {
+            addValueErrors(collector, r, clientName(a.name(), a.value()));
+          }
+
+          @Override
+          public void requestHeader(RequestHeader a, ParameterValidationResult r) {
+            addValueErrors(collector, r, clientName(a.name(), a.value()));
+          }
+
+          @Override
+          public void cookieValue(CookieValue a, ParameterValidationResult r) {
+            addValueErrors(collector, r, clientName(a.name(), a.value()));
+          }
+
+          @Override
+          public void matrixVariable(MatrixVariable a, ParameterValidationResult r) {
+            addValueErrors(collector, r, clientName(a.name(), a.value()));
+          }
+
+          @Override
+          public void requestBody(RequestBody a, ParameterErrors errors) {
+            addBeanErrors(collector, errors);
+          }
+
+          @Override
+          public void modelAttribute(ModelAttribute a, ParameterErrors errors) {
+            addBeanErrors(collector, errors);
+          }
+
+          @Override
+          public void requestPart(RequestPart a, ParameterErrors errors) {
+            addBeanErrors(collector, errors);
+          }
+
+          @Override
+          public void other(ParameterValidationResult r) {
+            if (r instanceof ParameterErrors errors) {
+              addBeanErrors(collector, errors);
+            } else {
+              addValueErrors(collector, r, null);
+            }
+          }
+        });
+    // 교차 파라미터 제약(메서드 단위)은 특정 파라미터에 딸리지 않으므로 필드 없는 오류로 싣는다(Visitor 는 이것을 돌지 않는다).
+    ex.getCrossParameterValidationResults()
+        .forEach(e -> collector.addGlobal(e.getDefaultMessage()));
+    return validationFailed(collector, request);
+  }
+
+  /**
+   * @Validated 메서드 검증(쿼리 파라미터·서비스 메서드 등) 제약 위반 → 400 (#139, WD-640).
+   *
+   * <p>필드 키는 위반 경로에서 메서드 이름을 뺀 나머지다(예: 「create.req.items[2].name」 → 「items[2].name」). 예전에는 마지막 마디만
+   * 써서 서로 다른 속성의 같은 이름(a.name·b.name)이 한 키로 합쳐져 문구 하나가 사라졌고, 목록 첨자도 잃었다.
    */
   @ExceptionHandler(ConstraintViolationException.class)
   public ResponseEntity<ErrorResponse> handleConstraintViolation(
       ConstraintViolationException ex, HttpServletRequest request) {
-    Map<String, String> fieldErrors = new HashMap<>();
-    Set<String> requiredFields = new HashSet<>();
+    ValidationErrorCollector collector = new ValidationErrorCollector();
     ex.getConstraintViolations()
         .forEach(
             v -> {
-              String path = v.getPropertyPath().toString();
-              String field = path.contains(".") ? path.substring(path.lastIndexOf('.') + 1) : path;
               String constraint =
                   v.getConstraintDescriptor().getAnnotation().annotationType().getSimpleName();
-              putFieldError(
-                  fieldErrors,
-                  requiredFields,
-                  field,
-                  v.getMessage(),
-                  REQUIRED_CONSTRAINTS.contains(constraint));
+              String field = violationField(v.getPropertyPath());
+              if (field == null) {
+                // 교차 파라미터·반환값 등 특정 입력에 딸리지 않는 위반.
+                collector.addGlobal(v.getMessage());
+              } else {
+                collector.addField(field, constraint, v.getMessage());
+              }
             });
+    return validationFailed(collector, request);
+  }
+
+  /**
+   * 위반 경로를 클라이언트 쪽 필드 키로 바꾼다(WD-640). 메서드·생성자 마디는 빼고, 파라미터 마디는 값 파라미터일 때(뒤에 속성 마디가 없을 때)만 이름으로 쓴다 —
+   * 객체 파라미터는 MethodArgumentNotValidException 처럼 그 안의 필드 이름만 쓴다. 목록·맵 원소는 「[2]」·「[key]」로 남긴다. 교차
+   * 파라미터·반환값 위반이면 null.
+   */
+  static String violationField(Path path) {
+    String parameter = null;
+    StringBuilder rest = new StringBuilder();
+    for (Path.Node node : path) {
+      ElementKind kind = node.getKind();
+      if (kind == ElementKind.CROSS_PARAMETER || kind == ElementKind.RETURN_VALUE) {
+        return null;
+      }
+      if (kind == ElementKind.METHOD || kind == ElementKind.CONSTRUCTOR) {
+        continue;
+      }
+      if (kind == ElementKind.PARAMETER) {
+        parameter = node.getName();
+        continue;
+      }
+      // 이 마디가 목록·맵 원소 안에 있으면 그 위치를 먼저 붙인다(HV 는 첨자를 원소 다음 마디에 싣는다).
+      if (node.isInIterable()) {
+        Object at = node.getIndex() != null ? node.getIndex() : node.getKey();
+        rest.append('[').append(at == null ? "" : at).append(']');
+      }
+      if (kind == ElementKind.PROPERTY && node.getName() != null) {
+        if (rest.length() > 0) {
+          rest.append('.');
+        }
+        rest.append(node.getName());
+      }
+    }
+    if (rest.length() == 0) {
+      return parameter != null ? parameter : "";
+    }
+    // 값 목록 파라미터의 원소(예: ids[0])는 파라미터 이름이 있어야 어느 입력인지 안다.
+    if (rest.charAt(0) == '[' && parameter != null && !rest.toString().contains(".")) {
+      return parameter + rest;
+    }
+    return rest.toString();
+  }
+
+  /** 바인딩 결과의 필드 오류·필드 없는 오류를 수집기에 옮긴다. prefix 는 목록 원소 위치(예: 「[0].」). */
+  private static void collectErrors(
+      ValidationErrorCollector collector, Errors errors, String prefix) {
+    // FieldError 의 code 는 제약 애너테이션의 단순 이름(예: "NotBlank") 또는 변환 실패 "typeMismatch" 다.
+    for (FieldError error : errors.getFieldErrors()) {
+      collector.addField(prefix + error.getField(), error.getCode(), error.getDefaultMessage());
+    }
+    // 클래스 단위 합성 제약(예: 두 칸이 같아야 함)은 특정 필드가 없는 global error 로 온다.
+    for (ObjectError error : errors.getGlobalErrors()) {
+      collector.addGlobal(error.getDefaultMessage());
+    }
+  }
+
+  /** 객체 파라미터(본문·폼·파트)의 오류 — 필드 이름 그대로, 목록 원소면 「[0].」을 앞에 붙인다(파라미터 이름은 붙이지 않는다). */
+  private static void addBeanErrors(ValidationErrorCollector collector, ParameterErrors errors) {
+    String at = containerSuffix(errors);
+    collectErrors(collector, errors, at.isEmpty() ? "" : at + ".");
+  }
+
+  /** 값 파라미터의 오류 — 키는 클라이언트 이름(없으면 파라미터 이름) + 목록 원소 위치. */
+  private static void addValueErrors(
+      ValidationErrorCollector collector, ParameterValidationResult r, String name) {
+    String base = name;
+    if (base == null) {
+      String javaName = r.getMethodParameter().getParameterName();
+      base = javaName != null ? javaName : "arg" + r.getMethodParameter().getParameterIndex();
+    }
+    String key = base + containerSuffix(r);
+    for (MessageSourceResolvable error : r.getResolvableErrors()) {
+      collector.addField(key, constraintCode(error), error.getDefaultMessage());
+    }
+  }
+
+  /** 애너테이션의 name·value 별칭 중 비어 있지 않은 쪽, 둘 다 비면 null(→ 파라미터 이름). */
+  private static String clientName(String name, String value) {
+    if (!name.isEmpty()) {
+      return name;
+    }
+    return value.isEmpty() ? null : value;
+  }
+
+  /** 목록·맵 원소 검증이면 「[0]」·「[key]」. */
+  private static String containerSuffix(ParameterValidationResult result) {
+    if (result.getContainerIndex() != null) {
+      return "[" + result.getContainerIndex() + "]";
+    }
+    if (result.getContainerKey() != null) {
+      return "[" + result.getContainerKey() + "]";
+    }
+    return "";
+  }
+
+  /**
+   * 검증 실패 공통 응답 — 400, 한국어 최상위 문구, 필드별 문구(필수값 우선 순), 기계용 코드 {@link #VALIDATION_FAILED_CODE}.
+   *
+   * <p>코드를 싣는 이유(WD-640): ai-agent 가 「입력 검증 실패」를 응답 모양으로 추측하면 임포트 행 오류(error_N)·필수 파라미터 누락처럼 모양이 같은
+   * 다른 400 도 섞였다. 코드는 Bean Validation 경로에만 붙인다.
+   */
+  private ResponseEntity<ErrorResponse> validationFailed(
+      ValidationErrorCollector collector, HttpServletRequest request) {
     ErrorResponse response =
-        buildError(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_MESSAGE, fieldErrors, request);
+        buildError(
+            HttpStatus.BAD_REQUEST,
+            VALIDATION_FAILED_MESSAGE,
+            collector.toErrors(),
+            request,
+            VALIDATION_FAILED_CODE);
     return json(HttpStatus.BAD_REQUEST, response);
   }
 
-  /** 「필수값 누락」 계열 제약 — 한 필드에 여러 위반이 겹치면 이 문구를 우선한다(WD-570). */
-  private static final Set<String> REQUIRED_CONSTRAINTS = Set.of("NotBlank", "NotNull", "NotEmpty");
-
   /**
-   * 필드별 오류 문구를 하나만 고른다(WD-570).
-   *
-   * <p>한 필드가 여러 제약을 동시에 어기면(예: slug="" → @NotBlank + @Pattern) 위반 목록 순서가 정해져 있지 않아, 단순 put 이면 응답
-   * 문구가 요청마다 달라졌다. 규칙: 필수값 누락(NotBlank·NotNull·NotEmpty) 문구가 이기고, 그 밖에는 처음 만난 문구를 유지한다 — 빈 값에 「형식이
-   * 올바르지 않습니다」보다 「필수 입력값입니다」가 맞는 안내다.
+   * MessageSourceResolvable 의 제약 이름. 메서드 검증 오류의 codes 는 구체적인 것부터 「Min.controller.size」…「Min」 순이라
+   * 마지막이 단순 이름이다.
    */
-  private static void putFieldError(
-      Map<String, String> fieldErrors,
-      Set<String> requiredFields,
-      String field,
-      String message,
-      boolean required) {
-    if (!fieldErrors.containsKey(field)) {
-      fieldErrors.put(field, message);
-      if (required) {
-        requiredFields.add(field);
-      }
-    } else if (required && !requiredFields.contains(field)) {
-      // 먼저 들어온 것이 필수값 문구가 아니면 필수값 문구로 바꾼다.
-      fieldErrors.put(field, message);
-      requiredFields.add(field);
-    }
+  private static String constraintCode(MessageSourceResolvable error) {
+    String[] codes = error.getCodes();
+    return codes == null || codes.length == 0 ? null : codes[codes.length - 1];
   }
 
   @ExceptionHandler(UsernameAlreadyExistsException.class)
@@ -501,7 +688,8 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(ImportValidationException.class)
   public ResponseEntity<ErrorResponse> handleImportValidation(
       ImportValidationException ex, HttpServletRequest request) {
-    Map<String, String> errorMap = new HashMap<>();
+    // 행 순서를 지킨다(WD-640) — 웹 토스트는 첫 값에 「(외 N건)」을 붙여 보이므로 HashMap 순서면 1행이 아닌 임의의 행이 보였다.
+    Map<String, String> errorMap = new LinkedHashMap<>();
     List<String> errors = ex.getErrors();
     for (int i = 0; i < errors.size(); i++) {
       errorMap.put("error_" + i, errors.get(i));
