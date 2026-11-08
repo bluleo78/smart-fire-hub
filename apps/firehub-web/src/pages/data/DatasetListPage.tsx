@@ -48,6 +48,7 @@ import {
 } from '../../lib/formatters';
 import { getPageAfterDelete, parseNonNegativeInt } from '../../lib/pagination';
 import { cn, iGa } from '../../lib/utils';
+import type { DatasetResponse } from '../../types/dataset';
 import { DatasetDeleteConfirmDialog } from './components/DatasetDeleteConfirmDialog';
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
 import { DatasetTypeModal, type DatasetTypeSelection } from './components/DatasetTypeModal';
@@ -55,17 +56,21 @@ import { ExportDialog } from './components/ExportDialog';
 
 type SortKey = 'name' | 'createdAt';
 
+/** 이름 옆 상태 배지 — 상태별 문구·색 (NONE 은 배지 없음) */
+const STATUS_BADGES: Partial<Record<DatasetResponse['status'], { label: string; variant: 'success' | 'destructive' }>> = {
+  CERTIFIED: { label: '✓ Certified', variant: 'success' },
+  DEPRECATED: { label: 'Deprecated', variant: 'destructive' },
+};
+
 /**
  * 유형 칸 배지 (WD-650)
  * - 알려진 유형은 짧은 한글 라벨(「테이블」·「원본」 등)이라 잘리지 않게 그대로 둔다(WD-517: 짧은 값은 자르지 않는다).
- * - 알 수 없는 유형은 서버 enum 이 그대로 와서 얼마나 길지 모른다 — 그 배지만 줄어들 수 있게 해 칸 상한 안에서 말줄임하고 전체 값은 title 로 보인다.
+ * - 알 수 없는 유형(서버 enum 원본)만 줄어들며 TruncatedText 로 말줄임·title(WD-658).
  */
 function DatasetTypeBadge({ info: { label, known }, className }: { info: TypeLabelInfo; className: string }) {
   return (
     <Badge className={cn('border-0', !known && 'min-w-0 shrink', className)}>
-      <span className="min-w-0 truncate" title={known ? undefined : label}>
-        {label}
-      </span>
+      {known ? label : <TruncatedText value={label} className="min-w-0" />}
     </Badge>
   );
 }
@@ -454,10 +459,7 @@ export default function DatasetListPage() {
         </div>
       )}
 
-      {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(즐겨찾기·보안 등급·태그·유형·카테고리·생성일·작업) + 긴 값 칸 여백
-          WD-650: 보안 등급은 배지 상한(5.25rem)+여백으로 6.25rem. 태그는 선언 폭(5rem)을 바닥으로 두고 남는 폭 R(=100cqw − --k)의 0.25 몫까지 더 받는다.
-          이름은 비율 상한 대신 「남는 칸 전부」를 받는다(이름 칸 w-full + max-w-0) — 태그가 짧으면 태그 칸이 선언 폭에 머물러 그만큼 이름이 넓어지고,
-          긴 태그가 와도 태그 상한이 R 안이라 표가 넘치지 않는다. 이름 칸의 최소 폭이 0 이라 이름 길이는 표 폭에 영향을 주지 않는다. */}
+      {/* WD-634·WD-658: --k = 헤더 선언 폭 합 + 선언 폭 없는 칸(이름) 1rem 여백. 남는 폭 R = 100cqw − --k 은 태그가 0.35 몫, 나머지는 이름이 쓴다. */}
       <div className="@container [--k:calc(2rem_+_6.25rem_+_5rem_+_7rem_+_6rem_+_6.75rem_+_3.75rem_+_1rem)] rounded-md border">
         <Table aria-label="데이터셋 목록">
           <TableHeader>
@@ -536,40 +538,38 @@ export default function DatasetListPage() {
                     </button>
                   </TableCell>
 
-                  {/* Name + status badge */}
-                  {/* WD-650: max-w-0 — 표 자동 레이아웃에서 이름 칸의 최소 폭을 0 으로 만들어, 짧은 칸이 먼저 자리를 잡고 남는 폭만 이름이 쓴다.
-                      남는 폭보다 긴 이름은 말줄임(전체는 title). 22rem 은 넓은 화면에서 이름이 지나치게 길게 늘어지지 않게 하는 상한이다. */}
-                  <TableCell className="font-medium max-w-0">
-                    {/* WD-517·WD-634: 긴 이름은 말줄임(TruncatedText 설명). 이름은 상세 링크(WD-396) */}
-                    <div className="flex items-center gap-2 flex-wrap max-w-[22rem]">
-                      <TruncatedLink to={`/data/datasets/${dataset.id}`} value={dataset.name} className="min-w-0" />
-                      {dataset.status === 'CERTIFIED' && (
-                        <Badge variant="success" className="text-xs">
-                          ✓ Certified
-                        </Badge>
-                      )}
-                      {dataset.status === 'DEPRECATED' && (
-                        <Badge variant="destructive" className="text-xs">
-                          Deprecated
-                        </Badge>
-                      )}
+                  {/* 이름 칸 — WD-658: 안쪽 w-0 min-w-full 로 고유 폭 0(td max-width 는 자동 레이아웃에서 정의되지 않음), 남는 폭을 다 쓰고 넘치면 말줄임. 22rem 상한 */}
+                  <TableCell className="font-medium">
+                    <div className="w-0 min-w-full">
+                      <div className="flex items-center gap-2 flex-wrap max-w-[22rem]">
+                        <TruncatedLink to={`/data/datasets/${dataset.id}`} value={dataset.name} className="min-w-0" />
+                        {STATUS_BADGES[dataset.status] && (
+                          // 고정 문구라 title 없이 칸 폭에서만 말줄임 — 좁은 칸에서 옆 칸으로 넘치지 않게(WD-658)
+                          <Badge variant={STATUS_BADGES[dataset.status]!.variant} className="block max-w-full min-w-0 truncate text-xs">
+                            {STATUS_BADGES[dataset.status]!.label}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                   </TableCell>
 
                   {/* Security level column — 등급이 비어 오면(생성 직후 등) 빈 칸.
                       WD-650: 등급 이름은 관리자가 정해 길이 제한이 없다 — 선언 폭(6.25rem, --k 에 포함) − 칸 여백으로 배지 상한을 두고 말줄임(전체는 title) */}
                   <TableCell>
-                    {dataset.securityLevel && <SecurityLevelBadge level={dataset.securityLevel} className="max-w-[5.25rem]" />}
+                    {dataset.securityLevel && (
+                      <SecurityLevelBadge level={dataset.securityLevel} truncate className="max-w-[5.25rem]" />
+                    )}
                   </TableCell>
 
-                  {/* 태그 칸 — WD-634: 배지는 줄바꿈하고, 상한을 넘는 긴 태그 하나는 말줄임(전체는 title).
-                      WD-650: 고정 4rem 상한은 「공공데이터」·finance 같은 평범한 태그까지 잘랐다 — 선언 폭 − 여백(4rem)을 바닥으로
-                      남는 폭의 0.25 몫을 더해(최대 12rem) 평범한 태그가 다 보이게 한다. 표가 좁아 R 이 음수여도 4rem 아래로 내려가지 않게 max 로 막는다. */}
+                  {/* 태그 칸 — WD-658: 상한 = 바닥 4rem(--k 안) + R × 0.35(최대 12rem). w-max 로 한 줄 폭(상한까지)을 받아 세로로 쌓이지 않는다. data-long-value-cap 은 E2E 표식 */}
                   <TableCell>
-                    <div className="flex max-w-[max(4rem,min(12rem,calc(4rem_+_(100cqw_-_var(--k))_*_0.25)))] items-center gap-1 flex-wrap">
+                    <div
+                      data-long-value-cap
+                      className="flex w-max max-w-[max(4rem,min(12rem,calc(4rem_+_(100cqw_-_var(--k))_*_0.35)))] items-center gap-1 flex-wrap"
+                    >
                       {(dataset.tags || []).slice(0, 3).map((tag) => (
-                        <Badge key={tag} variant="secondary" className="max-w-full text-xs" title={tag}>
-                          <span className="min-w-0 truncate">{tag}</span>
+                        <Badge key={tag} variant="secondary" className="max-w-full text-xs">
+                          <TruncatedText value={tag} className="min-w-0" />
                         </Badge>
                       ))}
                       {(dataset.tags || []).length > 3 && (
