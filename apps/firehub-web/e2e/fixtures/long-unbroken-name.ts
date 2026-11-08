@@ -70,7 +70,8 @@ export async function expectInsideHorizontally(el: Locator, container: Locator, 
  */
 export async function expectTruncatedWithHoverTitle(el: Locator, fullValue: string) {
   await expect(el).toBeVisible();
-  const clipped = await el.evaluate((node) => node.scrollWidth > node.clientWidth);
+  // 제품 판정(lib/overflow-title.ts)과 같은 1px 여유 — 반올림 1px 차이는 잘림이 아니다(WD-669)
+  const clipped = await el.evaluate((node) => node.scrollWidth - 1 > node.clientWidth);
   expect(clipped, '긴 값이 말줄임되어야 한다').toBe(true);
   // 포인터가 이미 요소 위에 있으면 hover() 가 pointerenter 를 다시 일으키지 않는다 — 먼저 바깥으로 뺀다
   await el.page().mouse.move(0, 0);
@@ -85,7 +86,8 @@ export async function expectTruncatedWithHoverTitle(el: Locator, fullValue: stri
  */
 export async function expectNoTitleOnHover(el: Locator) {
   await expect(el).toBeVisible();
-  const clipped = await el.evaluate((node) => node.scrollWidth > node.clientWidth);
+  // 제품 판정(lib/overflow-title.ts)과 같은 1px 여유 — 반올림 1px 차이는 잘림이 아니다(WD-669)
+  const clipped = await el.evaluate((node) => node.scrollWidth - 1 > node.clientWidth);
   expect(clipped, '평범한 길이의 값은 잘리지 않아야 한다').toBe(false);
   await el.page().mouse.move(0, 0);
   await el.hover();
