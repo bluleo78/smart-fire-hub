@@ -7,6 +7,8 @@ import jakarta.validation.Payload;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.Null;
 import jakarta.validation.constraints.Size;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -121,4 +123,29 @@ public class ValidationStubController {
   /** 쿠키 값 제약 — 키는 쿠키 이름(sid). */
   @GetMapping("/cookie")
   public void cookie(@CookieValue("sid") @Size(max = 3) String session) {}
+
+  /**
+   * 본문 자체에 값 제약(@NotEmpty 목록)이 붙은 경우(WD-654) — Spring 6.2.1 의 visitResults 는 본문 결과를 ParameterErrors
+   * 로 바꾸다 IllegalStateException(「Expected ParameterErrors」)을 던져 처리기가 깨졌다. 쿼리 파라미터 제약도 함께 두어 같은 응답에서
+   * 파라미터 키(size)가 지켜지는지 본다.
+   */
+  @PostMapping("/not-empty-body")
+  public void notEmptyBody(
+      @Valid @RequestBody @NotEmpty List<NamedBody> requests,
+      @RequestParam("size") @Min(1) int size) {}
+
+  /** 본문 값 제약(@Size 목록)과 원소 오류가 한 요청에 함께 나는 경우(WD-654) — 원소 오류(ParameterErrors)도 함께 남는지 본다. */
+  @PostMapping("/sized-body")
+  public void sizedBody(@Valid @RequestBody @Size(min = 2) List<NamedBody> requests) {}
+
+  /**
+   * 폼 객체 자체의 값 위반(WD-654 리뷰) — Spring 이 항상 객체를 만들어 넣으므로 @Null 은 늘 어긴다. @ModelAttribute 를 적은 것과 안 적은
+   * 것(Spring 이 단순 타입이 아니면 폼 객체로 본다)이 같은 키 모양(_global)이어야 한다.
+   */
+  @GetMapping("/model-value-annotated")
+  public void modelValueAnnotated(@ModelAttribute @Null SearchForm form) {}
+
+  /** 위와 같되 애너테이션 없는 폼 객체. */
+  @GetMapping("/model-value-unannotated")
+  public void modelValueUnannotated(@Null SearchForm form) {}
 }

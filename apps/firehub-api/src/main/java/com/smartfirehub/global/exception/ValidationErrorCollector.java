@@ -1,6 +1,5 @@
 package com.smartfirehub.global.exception;
 
-import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -91,8 +90,10 @@ final class ValidationErrorCollector {
   }
 
   /**
-   * 필드 경로 비교 — 숫자 묶음은 수 크기로, 나머지는 문자 순으로 비교한다(자연 정렬). 「rows[10]」이 「rows[2]」 앞에 오던 사전순 문제를 막는다. 숫자는
-   * BigInteger 로 읽는다 — 첨자는 int 지만 맵 키(「[123…]」)는 클라이언트가 보낸 임의 길이 숫자일 수 있어 long 으로 읽다 넘치면 500 이 된다.
+   * 필드 경로 비교 — 숫자 묶음은 수 크기로, 나머지는 문자 순으로 비교한다(자연 정렬). 「rows[10]」이 「rows[2]」 앞에 오던 사전순 문제를 막는다.
+   *
+   * <p>숫자 묶음은 수로 파싱하지 않고 제자리에서 비교한다(WD-654) — 맵 키는 클라이언트가 보낸 임의 길이 숫자일 수 있어 long 은 넘치고, 비교마다
+   * BigInteger 로 읽으면 정렬 중 긴 키를 반복 파싱한다.
    */
   static int compareFieldPath(String a, String b) {
     int i = 0;
@@ -101,7 +102,7 @@ final class ValidationErrorCollector {
       if (Character.isDigit(a.charAt(i)) && Character.isDigit(b.charAt(j))) {
         int ei = digitsEnd(a, i);
         int ej = digitsEnd(b, j);
-        int cmp = new BigInteger(a.substring(i, ei)).compareTo(new BigInteger(b.substring(j, ej)));
+        int cmp = compareDigitRuns(a, i, ei, b, j, ej);
         if (cmp != 0) {
           return cmp;
         }
@@ -116,6 +117,28 @@ final class ValidationErrorCollector {
       }
     }
     return Integer.compare(a.length() - i, b.length() - j);
+  }
+
+  /** 두 숫자 묶음 a[ai,ae)·b[bi,be) 를 수 크기로 비교한다 — 앞자리 0 제거 → 자릿수 → 자리별 값. 0 만 있는 묶음끼리는 같다. */
+  private static int compareDigitRuns(String a, int ai, int ae, String b, int bi, int be) {
+    while (ai < ae && Character.digit(a.charAt(ai), 10) == 0) {
+      ai++;
+    }
+    while (bi < be && Character.digit(b.charAt(bi), 10) == 0) {
+      bi++;
+    }
+    int lengthCmp = Integer.compare(ae - ai, be - bi);
+    if (lengthCmp != 0) {
+      return lengthCmp;
+    }
+    for (; ai < ae; ai++, bi++) {
+      int cmp =
+          Integer.compare(Character.digit(a.charAt(ai), 10), Character.digit(b.charAt(bi), 10));
+      if (cmp != 0) {
+        return cmp;
+      }
+    }
+    return 0;
   }
 
   /** from 부터 이어지는 숫자 묶음의 끝 위치. */

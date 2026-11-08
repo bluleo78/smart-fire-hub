@@ -129,6 +129,43 @@ test.describe('계정 생성 (WD-46)', () => {
     await expect(dialog.getByText('이름은 50자 이하여야 합니다')).toBeVisible();
   });
 
+  /**
+   * WD-654: 폼 칸이 없는 키만 담긴 검증 400(클래스 단위 제약 `_global`, 모르는 필드)도 다이얼로그 안에 문구를 보인다.
+   * 예전에는 세 칸(email·name·temporaryPassword) 외 키를 버리고 끝나 아무 안내도 없었다.
+   */
+  for (const [label, errors] of [
+    ['_global', { _global: '이 조합으로는 계정을 만들 수 없습니다.' }],
+    ['모르는 필드', { tenantHint: '이 조합으로는 계정을 만들 수 없습니다.' }],
+  ] as const) {
+    test(`폼 칸이 없는 검증 오류(${label})만 오면 다이얼로그 상단에 서버 문구를 보인다 (WD-654)`, async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/platform/accounts', createAccountPage([]));
+      await mockApi(
+        page,
+        'POST',
+        '/api/platform/accounts',
+        {
+          status: 400,
+          error: 'Bad Request',
+          code: 'VALIDATION_FAILED',
+          message: '입력값이 올바르지 않습니다.',
+          errors,
+        },
+        { status: 400 },
+      );
+      await page.goto('/accounts');
+      await page.getByRole('button', { name: '계정 생성' }).click();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByLabel('이메일(로그인 아이디)').fill('x@example.com');
+      await dialog.getByLabel('이름').fill('이름');
+      await dialog.getByRole('button', { name: '계정 생성' }).click();
+      // 폼 상단 오류(role=alert)로 보이고, 다이얼로그는 입력 화면에 머문다(결과 화면으로 넘어가지 않는다).
+      await expect(dialog.getByRole('alert')).toHaveText('이 조합으로는 계정을 만들 수 없습니다.');
+      await expect(dialog.getByLabel('이름')).toBeVisible();
+    });
+  }
+
   test('platform:tenant:create 가 없으면 계정 생성 버튼이 없다', async ({ page }) => {
     await loginAs(page, ['platform:tenant:read', 'platform:member:read', 'platform:tenant:suspend']);
     await mockApi(page, 'GET', '/api/platform/accounts', createAccountPage([]));

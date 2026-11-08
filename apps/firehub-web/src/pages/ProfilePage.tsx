@@ -23,6 +23,14 @@ function koreanOr(message: string, fallback: string): string {
   return /[가-힣]/.test(message) ? message : fallback;
 }
 
+/**
+ * 저장된 프로필 → 폼 값. 이메일이 비어 있으면(null·undefined) 로그인 계정(username)으로 채운다 — 처음 불러올 때와 저장 직후(다시 읽기
+ * 실패 시)가 같은 규칙을 쓰게 한곳에 둔다(WD-654).
+ */
+function toProfileFormValues(name: string, email: string | null | undefined, username: string | undefined): UpdateProfileFormData {
+  return { name, email: email ?? username ?? '' };
+}
+
 export default function ProfilePage() {
   const { user, refreshUser } = useAuth();
 
@@ -47,24 +55,16 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (user) {
-      // email 필드가 null인 경우 username(로그인 이메일)으로 초기값을 채운다.
-      // /api/v1/users/me의 email 컬럼이 null이어도 username을 통해 로그인 계정이 표시된다.
-      profileForm.reset({
-        name: user.name,
-        email: user.email ?? user.username ?? '',
-      });
+      profileForm.reset(toProfileFormValues(user.name, user.email, user.username));
     }
   }, [user, profileForm]);
 
   const onProfileSubmit = async (data: UpdateProfileFormData) => {
+    // 서버에 실제로 보내는 값 — 빈 이메일은 보내지 않는다(서버는 이메일을 비운다). 저장 뒤 폼도 이 값 기준으로 맞춘다.
+    const sent = { name: data.name, email: data.email || undefined };
     try {
       profileForm.clearErrors();
-      await usersApi.updateMe({
-        name: data.name,
-        email: data.email || undefined,
-      });
-      await refreshUser();
-      toast.success('프로필이 업데이트되었습니다.');
+      await usersApi.updateMe(sent);
     } catch (error) {
       // 검증 400 은 해당 입력 아래로 — 이름 오류가 이메일 칸 밑 폼 오류로 보이던 문제 (WD-275)
       if (applyFieldErrors(error, profileForm.setError, Object.keys(updateProfileSchema.shape))) return;
@@ -74,6 +74,18 @@ export default function ProfilePage() {
       profileForm.setError('root', {
         message: koreanOr(extractApiError(error, ''), '프로필을 저장하지 못했습니다. 잠시 후 다시 시도하세요.'),
       });
+      return;
+    }
+
+    // 저장은 끝났다 — 다시 읽기 실패를 저장 실패로 안내하지 않는다(WD-654). 안내는 하나만:
+    // 성공이면 토스트(폼은 바뀐 user 로 위 effect 가 맞춘다), 실패면 보낸 값으로 폼을 맞추고 새로고침 안내.
+    try {
+      await refreshUser();
+      toast.success('프로필이 업데이트되었습니다.');
+    } catch (error) {
+      console.warn('프로필 저장 후 사용자 정보를 다시 불러오지 못했습니다.', error);
+      profileForm.reset(toProfileFormValues(sent.name, sent.email, user?.username));
+      toast.success('저장은 완료되었습니다. 최신 정보는 새로고침하면 반영됩니다.');
     }
   };
 

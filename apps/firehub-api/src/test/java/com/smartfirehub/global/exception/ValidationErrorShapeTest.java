@@ -162,6 +162,71 @@ class ValidationErrorShapeTest {
         .andExpect(jsonPath("$.errors['requests[1].name']").doesNotExist());
   }
 
+  /**
+   * 본문 값 제약(@NotEmpty List) 위반은 500 이 아니라 400 — 키는 본문 전체라 클라이언트가 부를 이름이 없어 _global, 같은 요청의 쿼리 파라미터
+   * 오류는 그대로 size(WD-654). 결함: visitResults 의 ParameterErrors 캐스팅이 ClassCastException 으로 500 이 났다.
+   */
+  @Test
+  void bodyValueConstraint_returns400NotClassCast500() throws Exception {
+    mockMvc
+        .perform(
+            post("/test/validation/not-empty-body")
+                .param("size", "0")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("[]"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(GlobalExceptionHandler.VALIDATION_FAILED_CODE))
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE))
+        .andExpect(jsonPath("$.errors._global").value("비어 있을 수 없습니다."))
+        .andExpect(jsonPath("$.errors.size").value("1 이상이어야 합니다."))
+        .andExpect(jsonPath("$.errors.requests").doesNotExist());
+  }
+
+  /** 같은 본문의 원소 오류(값 제약 위반 없음)는 평소처럼 「[0].name」. */
+  @Test
+  void bodyValueConstraintEndpoint_elementErrorsStillKeyedByIndex() throws Exception {
+    mockMvc
+        .perform(
+            post("/test/validation/not-empty-body")
+                .param("size", "1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("[{\"name\":\"\"}]"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors['[0].name']").value("필수 입력값입니다."));
+  }
+
+  /** 대체 경로(본문 값 제약 위반)에서도 원소 오류는 「[0].name」으로 남고, 본문 값 위반은 _global 이다(WD-654). */
+  @Test
+  void bodyValueConstraintFallback_keepsElementErrors() throws Exception {
+    mockMvc
+        .perform(
+            post("/test/validation/sized-body")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("[{\"name\":\"\"}]"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(GlobalExceptionHandler.VALIDATION_FAILED_CODE))
+        .andExpect(jsonPath("$.errors['[0].name']").value("필수 입력값입니다."))
+        .andExpect(jsonPath("$.errors._global").exists());
+  }
+
+  /**
+   * 폼 객체 자체의 값 위반은 @ModelAttribute 를 적었든 안 적었든 _global 이고, 자바 파라미터 이름(form) 키가 없다(WD-654 리뷰). 결함:
+   * 애너테이션이 없으면 대체 경로가 값 파라미터로 보아 「form」 키로 나갔다.
+   */
+  @Test
+  void modelObjectValueConstraint_sameShapeWithOrWithoutAnnotation() throws Exception {
+    for (String path :
+        List.of(
+            "/test/validation/model-value-annotated", "/test/validation/model-value-unannotated")) {
+      mockMvc
+          .perform(get(path).param("name", "x"))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.code").value(GlobalExceptionHandler.VALIDATION_FAILED_CODE))
+          .andExpect(jsonPath("$.errors._global").value("값을 지정할 수 없습니다."))
+          .andExpect(jsonPath("$.errors.form").doesNotExist());
+    }
+  }
+
   /** 값 목록 파라미터 원소는 「ids[1]」. */
   @Test
   void listParam_elementKeyedWithName() throws Exception {

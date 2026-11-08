@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { serverFieldErrors, serverMessage } from './http-errors';
+import { applyServerFieldErrors, serverFieldErrors, serverMessage } from './http-errors';
 
 /** axios.isAxiosError 가 인정하는 최소 모양. */
 const axiosError = (status: number, message?: string) => ({
@@ -43,5 +43,33 @@ describe('serverFieldErrors (WD-311)', () => {
     expect(serverFieldErrors(withErrors(400, {}))).toBeUndefined();
     expect(serverFieldErrors(withErrors(422, { name: 'x' }))).toBeUndefined();
     expect(serverFieldErrors(new Error('x'))).toBeUndefined();
+  });
+});
+
+describe('applyServerFieldErrors (WD-654)', () => {
+  const validation400 = (errors: Record<string, string>) => ({
+    isAxiosError: true,
+    response: { status: 400, data: { status: 400, error: 'x', code: 'VALIDATION_FAILED', message: 'm', errors } },
+  });
+  type Form = { name: string; slug: string };
+
+  it('아는 칸은 setError, 칸 밖 키(_global·모르는 필드)는 이어서 돌려준다', () => {
+    const setError = vi.fn();
+    const rest = applyServerFieldErrors<Form>(
+      validation400({ name: '이름 오류', _global: '전체 오류', extra: '서버 칸 오류' }),
+      setError,
+      ['name', 'slug'],
+      { shouldFocus: true },
+    );
+    expect(setError).toHaveBeenCalledTimes(1);
+    expect(setError).toHaveBeenCalledWith('name', { message: '이름 오류' }, { shouldFocus: true });
+    expect(rest).toBe('전체 오류 서버 칸 오류');
+  });
+
+  it('칸 밖 문구가 없으면 빈 문자열, 검증 400 이 아니면 undefined', () => {
+    const setError = vi.fn();
+    expect(applyServerFieldErrors<Form>(validation400({ slug: 's' }), setError, ['name', 'slug'])).toBe('');
+    expect(setError).toHaveBeenCalledWith('slug', { message: 's' }, { shouldFocus: false });
+    expect(applyServerFieldErrors<Form>(new Error('x'), setError, ['name'])).toBeUndefined();
   });
 });
