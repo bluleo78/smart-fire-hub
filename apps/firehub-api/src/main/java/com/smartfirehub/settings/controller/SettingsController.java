@@ -4,10 +4,10 @@ import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
 import com.smartfirehub.settings.dto.UpdateSettingsRequest;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.settings.service.SmtpMailSenders;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
@@ -105,25 +105,9 @@ public class SettingsController {
             Map.of("success", false, "message", "SMTP 가 설정되지 않았습니다. 호스트를 입력하고 저장한 뒤 다시 테스트하세요"));
       }
 
-      JavaMailSenderImpl sender = new JavaMailSenderImpl();
-      sender.setHost(host);
-      String portStr = config.getOrDefault("smtp.port", "587");
-      sender.setPort(portStr.isBlank() ? 587 : Integer.parseInt(portStr));
-      String username = config.getOrDefault("smtp.username", "");
-      if (!username.isBlank()) sender.setUsername(username);
-      String password = config.getOrDefault("smtp.password", "");
-      if (!password.isBlank()) sender.setPassword(password);
-
-      Properties props = sender.getJavaMailProperties();
-      props.put("mail.transport.protocol", "smtp");
-      props.put("mail.smtp.auth", !username.isBlank() ? "true" : "false");
-      props.put("mail.smtp.connectiontimeout", "10000");
-      props.put("mail.smtp.timeout", "10000");
-      String starttls = config.getOrDefault("smtp.starttls", "true");
-      if ("true".equalsIgnoreCase(starttls)) {
-        props.put("mail.smtp.starttls.enable", "true");
-      }
-
+      // 리포트 메일과 같은 팩토리로 만든다(WD-627) — 포트·TLS(465 암시적 TLS, STARTTLS 강제/기회적)·타임아웃이 실제
+      // 발송과 같아야 테스트 결과가 발송 결과를 말해 준다. 숫자가 아닌 옛 포트는 아래 catch 가 실패 응답으로 바꾼다.
+      JavaMailSenderImpl sender = SmtpMailSenders.create(config);
       sender.testConnection();
       return ResponseEntity.ok(Map.of("success", true, "message", "SMTP 연결 성공"));
     } catch (Exception e) {

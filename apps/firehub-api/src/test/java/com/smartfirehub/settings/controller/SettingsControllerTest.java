@@ -295,4 +295,20 @@ class SettingsControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.success").value(false));
   }
+
+  /**
+   * WD-627: 연결 테스트는 리포트 메일과 같은 sender 팩토리({@code SmtpMailSenders})를 쓴다. 팩토리의 속성은 {@code
+   * SmtpMailSendersTest} 가 보고, 여기서는 숫자가 아닌 옛 포트가 500 이 아니라 success=false 응답이 되는지만 본다.
+   */
+  @Test
+  void testSmtpSettings_nonNumericPort_returnsFailureNotError() throws Exception {
+    mockAuth("ai:settings");
+    when(settingsService.getSmtpConfig())
+        .thenReturn(Map.of("smtp.host", "smtp.example.com", "smtp.port", "smtp"));
+
+    mockMvc
+        .perform(post("/api/v1/settings/smtp/test").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(false));
+  }
 }

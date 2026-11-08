@@ -816,6 +816,13 @@ test.describe('설정 페이지', () => {
       const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
       await openEmailTab(page);
 
+      // WD-627: 스위치 설명이 세 발송 경로의 실제 동작(켜짐=STARTTLS 강제, 꺼짐=서버가 지원하면 암호화, 465=즉시 TLS)을 말하고,
+      // 스위치의 접근 가능한 설명으로 연결된다. 예전 문구는 끄면·465 면 어떻게 되는지 알려주지 않았다.
+      await expect(page.locator('#smtp-starttls')).toHaveAccessibleDescription(
+        '켜면 STARTTLS 로 암호화를 강제합니다(서버가 지원하지 않으면 발송 실패). 끄면 서버가 지원할 때만 암호화합니다. 포트 465 는 이 설정과 관계없이 접속 즉시 TLS 로 암호화합니다.',
+      );
+      await expect(emailPanel(page).getByText('TLS 암호화로 SMTP 연결 보안')).toHaveCount(0);
+
       await page.locator('#smtp-starttls').click();
       await expect(page.locator('#smtp-starttls')).toHaveAttribute('data-state', 'unchecked');
       await page.getByRole('button', { name: '저장' }).click();
