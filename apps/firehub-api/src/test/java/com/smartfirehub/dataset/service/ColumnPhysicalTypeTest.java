@@ -83,4 +83,29 @@ class ColumnPhysicalTypeTest {
             () -> ColumnPhysicalType.toExactBigint(new BigDecimal("1E+999999999"), "1e999999999"))
         .hasMessageStartingWith("정수 범위를 벗어났습니다");
   }
+
+  /** WD-569 — VARCHAR 길이 안내는 저장소별 상한을 받아 같은 한국어 문장으로 만든다. */
+  @Test
+  void varcharLengthOutOfRangeMessage_usesGivenMax() {
+    assertThat(
+            ColumnPhysicalType.varcharLengthOutOfRangeMessage(
+                ColumnPhysicalType.MAX_VARCHAR_LENGTH))
+        .isEqualTo("문자열(VARCHAR) 필드 길이는 1~10000 사이여야 합니다.");
+    assertThat(ColumnPhysicalType.varcharLengthOutOfRangeMessage(4000))
+        .isEqualTo("문자열(VARCHAR) 필드 길이는 1~4000 사이여야 합니다.");
+  }
+
+  /** WD-569 — 알 수 없는 타입 안내는 입력값을 붙이되, 제어 문자는 공백으로 바꾸고 50자를 넘으면 자르며 null 에도 깨지지 않는다. */
+  @Test
+  void unknownDataTypeMessage_sanitizesAndCapsEcho() {
+    assertThat(ColumnPhysicalType.unknownDataTypeMessage("NOPE"))
+        .isEqualTo("알 수 없는 데이터 타입입니다: NOPE");
+    assertThat(ColumnPhysicalType.unknownDataTypeMessage("A\nB\tC"))
+        .isEqualTo("알 수 없는 데이터 타입입니다: A B C");
+    assertThat(ColumnPhysicalType.unknownDataTypeMessage("x".repeat(60)))
+        .isEqualTo("알 수 없는 데이터 타입입니다: " + "x".repeat(50) + "…");
+    assertThat(ColumnPhysicalType.unknownDataTypeMessage("x".repeat(50)))
+        .isEqualTo("알 수 없는 데이터 타입입니다: " + "x".repeat(50));
+    assertThat(ColumnPhysicalType.unknownDataTypeMessage(null)).isEqualTo("알 수 없는 데이터 타입입니다: ");
+  }
 }

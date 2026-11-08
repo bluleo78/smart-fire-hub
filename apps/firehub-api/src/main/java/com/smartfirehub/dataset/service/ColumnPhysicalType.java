@@ -14,6 +14,9 @@ public final class ColumnPhysicalType {
   /** 길이 미지정 VARCHAR 의 물리 타입 길이 — {@code VARCHAR(255)}. */
   public static final int DEFAULT_VARCHAR_LENGTH = 255;
 
+  /** PostgreSQL 저장소가 허용하는 VARCHAR 최대 길이 — 웹 폼(최대 10000)과 같은 상한이다. */
+  public static final int MAX_VARCHAR_LENGTH = 10000;
+
   /** DECIMAL 의 물리 타입 {@code NUMERIC(18,6)} 전체 자릿수. */
   public static final int DECIMAL_PRECISION = 18;
 
@@ -25,6 +28,30 @@ public final class ColumnPhysicalType {
 
   /** PostgreSQL 텍스트 타입이 담을 수 없는 NUL(U+0000) 문자 — 바인딩/INSERT 가 22021 로 실패한다. */
   public static final char NUL = '\u0000';
+
+  /** 알 수 없는 타입 안내에 되돌려 보여 줄 입력값의 최대 글자 수 — 긴 입력이 토스트를 덮지 않게 자른다. */
+  private static final int UNKNOWN_TYPE_ECHO_MAX = 50;
+
+  /**
+   * VARCHAR 길이가 1~{@code max} 범위를 벗어났을 때의 안내(WD-569) — 웹이 응답 message 를 토스트로 그대로 보여 주므로 한국어로 둔다.
+   * 저장소마다 상한이 달라(PostgreSQL {@link #MAX_VARCHAR_LENGTH}, Tibero 4000) 상한을 인자로 받는다. 컬럼 검증({@code
+   * DataTableService})·물리 DDL({@code PostgresDataTableStore}, {@code TiberoDialect})이 같은 문장을 쓴다.
+   */
+  public static String varcharLengthOutOfRangeMessage(int max) {
+    return "문자열(VARCHAR) 필드 길이는 1~" + max + " 사이여야 합니다.";
+  }
+
+  /**
+   * 지원하지 않는 데이터 타입 안내(WD-569) — 사용자가 무엇을 잘못 보냈는지 알 수 있게 입력값을 뒤에 붙인다. 입력값은 그대로 응답에 실리므로 제어 문자(줄바꿈
+   * 등)는 공백으로 바꾸고 50자를 넘으면 잘라 「…」를 붙인다. null 이면 빈 값으로 둔다.
+   */
+  public static String unknownDataTypeMessage(String dataType) {
+    String shown = dataType == null ? "" : dataType.replaceAll("\\p{Cntrl}", " ");
+    if (shown.codePointCount(0, shown.length()) > UNKNOWN_TYPE_ECHO_MAX) {
+      shown = shown.substring(0, shown.offsetByCodePoints(0, UNKNOWN_TYPE_ECHO_MAX)) + "…";
+    }
+    return "알 수 없는 데이터 타입입니다: " + shown;
+  }
 
   private static final BigDecimal DECIMAL_ZERO = BigDecimal.ZERO.setScale(DECIMAL_SCALE);
 

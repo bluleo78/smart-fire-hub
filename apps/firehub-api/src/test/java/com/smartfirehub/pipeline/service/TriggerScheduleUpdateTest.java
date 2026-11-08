@@ -224,6 +224,11 @@ class TriggerScheduleUpdateTest extends IntegrationTestBase {
    * 내린다.
    */
   private Long storedInvalidRow() {
+    return storedRowWithCron("99 * * * *");
+  }
+
+  /** 검증을 거치지 않는 리포지토리로 cron 을 임의 값으로 덮은 옛 행을 만들고, 등록에 실패한 것처럼 스케줄을 내린다. */
+  private Long storedRowWithCron(String cron) {
     TriggerResponse created = createSchedule("0 3 * * *");
     triggerRepository.update(
         created.id(),
@@ -231,7 +236,7 @@ class TriggerScheduleUpdateTest extends IntegrationTestBase {
             "매일새벽",
             null,
             null,
-            Map.of("cron", "99 * * * *", "timezone", "UTC", "concurrencyPolicy", "ALLOW")),
+            Map.of("cron", cron, "timezone", "UTC", "concurrencyPolicy", "ALLOW")),
         userId);
     schedulerService.unregisterSchedule(created.id());
     return created.id();
@@ -271,6 +276,29 @@ class TriggerScheduleUpdateTest extends IntegrationTestBase {
                     id, new UpdateTriggerRequest("매일새벽", true, null, null), userId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("유효하지 않은 cron 표현식입니다: 99 * * * *");
+
+    assertThat(triggerService.getTriggerById(id).isEnabled()).isFalse();
+    assertThat(schedulerService.isScheduled(id)).isFalse();
+  }
+
+  /**
+   * WD-569 — cron 이 공백으로 저장된 옛 행을 켜면(토글·수정) 형식 오류 문구 뒤에 빈 값이 붙는 대신 「cron 표현식이 필요합니다」 한국어 문구로 막히고,
+   * 꺼진 채 남아야 한다.
+   */
+  @Test
+  void enable_onStoredBlankCronRow_isRejectedWithKoreanRequiredMessage() {
+    Long id = storedRowWithCron("  ");
+    triggerService.toggleTrigger(id, false);
+
+    assertThatThrownBy(() -> triggerService.toggleTrigger(id, true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스케줄 트리거에는 cron 표현식이 필요합니다.");
+    assertThatThrownBy(
+            () ->
+                triggerService.updateTrigger(
+                    id, new UpdateTriggerRequest("매일새벽", true, null, null), userId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스케줄 트리거에는 cron 표현식이 필요합니다.");
 
     assertThat(triggerService.getTriggerById(id).isEnabled()).isFalse();
     assertThat(schedulerService.isScheduled(id)).isFalse();

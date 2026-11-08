@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.storage.tibero;
 
+import com.smartfirehub.dataset.service.ColumnPhysicalType;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreFeatureUnsupportedException;
 import java.util.Arrays;
@@ -398,9 +399,10 @@ public final class TiberoDialect {
       case "TEXT" -> "VARCHAR2(" + MAX_VARCHAR + ")";
       case "VARCHAR" -> {
         int n = maxLength == null ? MAX_VARCHAR : maxLength;
+        // 길이·타입 오류 안내는 PostgreSQL 저장소와 같은 한국어 문장을 쓴다(WD-569) — 상한만 Tibero 값(4000).
         if (n < 1 || n > MAX_VARCHAR) {
           throw new IllegalArgumentException(
-              "Tibero VARCHAR 길이는 1~" + MAX_VARCHAR + " 이어야 합니다: " + n);
+              ColumnPhysicalType.varcharLengthOutOfRangeMessage(MAX_VARCHAR));
         }
         yield "VARCHAR2(" + n + " CHAR)";
       }
@@ -411,7 +413,9 @@ public final class TiberoDialect {
       case "TIMESTAMP" -> "TIMESTAMP";
       case "GEOMETRY" ->
           throw new DataStoreFeatureUnsupportedException(DataStoreBackend.TIBERO, "GEOMETRY 컬럼");
-      default -> throw new IllegalArgumentException("지원하지 않는 컬럼 타입입니다: " + logicalType);
+      default ->
+          throw new IllegalArgumentException(
+              ColumnPhysicalType.unknownDataTypeMessage(logicalType));
     };
   }
 }
