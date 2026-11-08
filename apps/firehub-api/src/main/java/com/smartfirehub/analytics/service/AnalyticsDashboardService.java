@@ -74,6 +74,9 @@ public class AnalyticsDashboardService {
   /** 작성자 본인의 생성·수정·삭제·공유 변경 감사(WD-464). */
   private final AnalyticsAuditRecorder auditRecorder;
 
+  /** 화면 쿼리 동시 실행 상한(WD-599) — 트랜잭션·커넥션을 열기 전에 허가를 얻어, 기다리는 동안 풀을 쥐지 않는다. */
+  private final InteractiveQueryConcurrencyGate interactiveQueryGate;
+
   /** 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-464). 공유 여부는 따로 STATUS_CHANGE 로 남기므로 여기 없다. */
   private static final Map<String, String> AUDIT_FIELD_LABELS =
       Map.of("name", "이름", "description", "설명", "autoRefreshSeconds", "자동 새로고침");
@@ -328,14 +331,21 @@ public class AnalyticsDashboardService {
     // Tibero 실행(위젯마다 최대 35초) 동안 PG 연결을 쥐지 않으려고 구간을 나눈다(WD-207).
     // 1) RLS GUC 가 필요한 위젯·대시보드·SQL 조회는 readOnly 트랜잭션, 2) 판정·캐시·실행은 트랜잭션 밖(캐시 로더의 실행도 밖에서 돈다),
     // 3) 위젯별 차트 조회·응답 조립은 다시 readOnly 트랜잭션.
-    return StoreTransactions.loadExecuteThen(
-        pipelineDataSchema,
-        readOnlyTx,
-        readOnlyTx,
-        () -> loadDashboard(dashboardId, userId),
-        load -> executeDashboard(load, userId),
-        readOnlyTx,
-        exec -> assembleDashboard(exec, userId));
+    // WD-599: 위젯 쿼리를 커넥션 하나로 차례로 실행하므로 일괄 전체에 허가 하나만 얻는다 — 트랜잭션보다 먼저 얻어 기다리는 동안 풀을 쥐지 않는다.
+    // 안쪽(executeDashboard)은 getChartData 를 부르지 않는다 — 같은 스레드가 허가를 두 번 얻으려다 스스로 막히는 일이 없다.
+    // Tibero 테넌트는 db-executor 로 실행해 PG 풀 커넥션을 쥐지 않으므로(WD-207) 허가 없이 지난다 — WD-553 게이트와 같은 예외(null
+    // 자원은 닫지 않는다).
+    try (AnalyticsQueryConcurrencyGate.Permit ignored =
+        pipelineDataSchema.isTibero() ? null : interactiveQueryGate.acquire(userId)) {
+      return StoreTransactions.loadExecuteThen(
+          pipelineDataSchema,
+          readOnlyTx,
+          readOnlyTx,
+          () -> loadDashboard(dashboardId, userId),
+          load -> executeDashboard(load, userId),
+          readOnlyTx,
+          exec -> assembleDashboard(exec, userId));
+    }
   }
 
   /** 1단계 결과 — 대시보드, 위젯 상한을 적용한 위젯, 차트→저장 쿼리, 저장 쿼리→SQL 원문(미리 읽어 2단계가 DB 를 안 읽게 한다). */

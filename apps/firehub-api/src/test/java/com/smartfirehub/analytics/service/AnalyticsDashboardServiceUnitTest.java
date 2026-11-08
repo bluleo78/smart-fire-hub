@@ -67,7 +67,9 @@ class AnalyticsDashboardServiceUnitTest {
             guardedSqlExecutor,
             mock(PipelineDataSchema.class),
             TransactionTemplateConfig.readOnly(mock(PlatformTransactionManager.class)),
-            mock(AnalyticsAuditRecorder.class));
+            mock(AnalyticsAuditRecorder.class),
+            // 동시 실행 상한(WD-599)은 이 테스트의 관심사가 아니다 — 끈 게이트.
+            new InteractiveQueryConcurrencyGate(0, 0, 0));
   }
 
   /**
