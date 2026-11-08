@@ -1,5 +1,7 @@
 package com.smartfirehub.dataset.service;
 
+import com.smartfirehub.analytics.service.AnalyticsQueryConcurrencyGate;
+import com.smartfirehub.analytics.service.InteractiveQueryConcurrencyGate;
 import com.smartfirehub.dataset.dto.BatchRowDataRequest;
 import com.smartfirehub.dataset.dto.BatchRowDataResponse;
 import com.smartfirehub.dataset.dto.ColumnStatsResponse;
@@ -60,6 +62,9 @@ public class DatasetDataService {
 
   /** 데이터 탭 행 추가·수정·일괄 삭제 감사 기록(WD-463). */
   private final DatasetAuditRecorder datasetAuditRecorder;
+
+  /** 화면 쿼리 동시 실행 상한(WD-599) — 트랜잭션·커넥션을 열기 전에 허가를 얻어, 기다리는 동안 풀을 쥐지 않는다. */
+  private final InteractiveQueryConcurrencyGate interactiveQueryGate;
 
   // DOCUMENT 데이터셋은 data.<table> 동적 테이블이 없고 데이터가 document_chunk 에 저장된다.
   private static final String DOCUMENT_TYPE = "DOCUMENT";
@@ -237,19 +242,28 @@ public class DatasetDataService {
     // Tibero 실행(최대 35초) 동안 PG 연결을 쥐지 않으려고 구간을 나눈다(WD-207).
     // 존재 확인은 리포지토리 자체 트랜잭션(조회 템플릿 없음), 실행은 트랜잭션 밖, 기록만 쓰기 트랜잭션으로 연다.
     // 실행이 예외(400/403)면 기록 없이 그대로 올라간다.
-    return StoreTransactions.loadExecuteThen(
-        pipelineDataSchema,
-        tx,
-        null,
-        // 존재 확인만 필요하다 — 조회 결과(데이터셋)는 도우미의 조회 단계 자리를 채울 뿐 쓰지 않는다. 없으면 404.
-        () ->
-            datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException()),
-        ignored -> executeSql(request),
-        tx,
-        response -> {
-          saveHistory(datasetId, request, userId, response);
-          return response;
-        });
+    // WD-599: 동시 실행 허가를 쓰기 트랜잭션(=커넥션)보다 먼저 얻는다 — 기다리는 동안 풀을 쥐지 않는다. 바깥(컨트롤러·필터)에 트랜잭션이 없는
+    // 경로다. 예외로 나가도 try-with-resources 가 반납한다.
+    // Tibero 테넌트는 db-executor 로 실행해 PG 풀 커넥션을 쥐지 않으므로(WD-207) 허가 없이 지난다 — WD-553 게이트와 같은 예외(null
+    // 자원은 닫지 않는다).
+    try (AnalyticsQueryConcurrencyGate.Permit permit =
+        pipelineDataSchema.isTibero() ? null : interactiveQueryGate.acquire(userId)) {
+      return StoreTransactions.loadExecuteThen(
+          pipelineDataSchema,
+          tx,
+          null,
+          // 존재 확인만 필요하다 — 조회 결과(데이터셋)는 도우미의 조회 단계 자리를 채울 뿐 쓰지 않는다. 없으면 404.
+          () ->
+              datasetRepository
+                  .findById(datasetId)
+                  .orElseThrow(() -> new DatasetNotFoundException()),
+          ignored -> executeSql(request),
+          tx,
+          response -> {
+            saveHistory(datasetId, request, userId, response);
+            return response;
+          });
+    }
   }
 
   /** SQL 을 실행한다. 트랜잭션 구간은 호출자(executeQuery)가 정한다. */

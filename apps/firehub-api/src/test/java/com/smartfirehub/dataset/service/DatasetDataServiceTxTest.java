@@ -24,6 +24,7 @@ import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TxRecordingInteractiveGate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -48,7 +49,8 @@ class DatasetDataServiceTxTest extends IntegrationTestBase {
       GuardedSqlExecutor executor,
       QueryHistoryRepository history,
       List<Boolean> execTx,
-      List<Boolean> saveTx) {}
+      List<Boolean> saveTx,
+      List<Boolean> gateTx) {}
 
   private Setup setup(boolean tibero) {
     List<Boolean> execTx = new ArrayList<>();
@@ -73,6 +75,7 @@ class DatasetDataServiceTxTest extends IntegrationTestBase {
         .save(anyLong(), anyLong(), anyString(), any(), anyInt(), anyLong(), anyBoolean(), any());
     PipelineDataSchema schema = mock(PipelineDataSchema.class);
     when(schema.isTibero()).thenReturn(tibero);
+    TxRecordingInteractiveGate gate = new TxRecordingInteractiveGate();
     DatasetDataService service =
         new DatasetDataService(
             datasets,
@@ -85,8 +88,9 @@ class DatasetDataServiceTxTest extends IntegrationTestBase {
             new TransactionTemplate(transactionManager),
             schema,
             // 이 테스트는 SQL 실행 구간만 본다 — 행 변경 감사(WD-463)는 호출되지 않는다.
-            mock(DatasetAuditRecorder.class));
-    return new Setup(service, executor, history, execTx, saveTx);
+            mock(DatasetAuditRecorder.class),
+            gate);
+    return new Setup(service, executor, history, execTx, saveTx, gate.acquireTx);
   }
 
   /** Tibero: 실행은 트랜잭션 밖, 이력 저장은 트랜잭션 안. */
@@ -98,6 +102,8 @@ class DatasetDataServiceTxTest extends IntegrationTestBase {
 
     assertThat(s.execTx()).containsExactly(false);
     assertThat(s.saveTx()).containsExactly(true);
+    // WD-599: Tibero 는 PG 풀 커넥션을 쥐지 않으므로 동시 실행 허가를 얻지 않는다.
+    assertThat(s.gateTx()).isEmpty();
   }
 
   /** PG: 실행과 이력 저장이 같은 트랜잭션 안(기존 동작). */
@@ -109,6 +115,8 @@ class DatasetDataServiceTxTest extends IntegrationTestBase {
 
     assertThat(s.execTx()).containsExactly(true);
     assertThat(s.saveTx()).containsExactly(true);
+    // WD-599: 동시 실행 허가는 쓰기 트랜잭션을 열기 전(커넥션 없이) 한 번 얻는다.
+    assertThat(s.gateTx()).containsExactly(false);
   }
 
   /** Tibero 실행이 예외(400/403)면 기록 없이 그대로 올라간다. */

@@ -24,6 +24,7 @@ import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TxRecordingInteractiveGate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -86,7 +87,11 @@ class ChartDashboardTxTest extends IntegrationTestBase {
   // ---------------------------------------------------------------- 차트
 
   private record ChartSetup(
-      ChartService service, List<Boolean> readTx, List<Boolean> readOnly, List<Boolean> execTx) {}
+      ChartService service,
+      List<Boolean> readTx,
+      List<Boolean> readOnly,
+      List<Boolean> execTx,
+      List<Boolean> gateTx) {}
 
   private ChartSetup chartSetup(boolean tibero) {
     List<Boolean> readTx = new ArrayList<>();
@@ -108,6 +113,7 @@ class ChartDashboardTxTest extends IntegrationTestBase {
     ClearanceResolver resolver = mock(ClearanceResolver.class);
     when(resolver.resolve(anyLong())).thenReturn(mock(Clearance.class));
     GuardedSqlExecutor executor = mock(GuardedSqlExecutor.class);
+    TxRecordingInteractiveGate gate = new TxRecordingInteractiveGate();
     GuardedSqlExecutor.AnalyticsJudgment allowed = judgment(false);
     when(executor.judgeAnalytics(any(), anyString())).thenReturn(allowed);
     when(executor.executeJudgedAnalytics(any(), anyInt(), anyBoolean()))
@@ -125,8 +131,9 @@ class ChartDashboardTxTest extends IntegrationTestBase {
             mock(AnalyticsDashboardRepository.class),
             schema(tibero),
             TransactionTemplateConfig.readOnly(transactionManager),
-            mock(AnalyticsAuditRecorder.class));
-    return new ChartSetup(service, readTx, readOnly, execTx);
+            mock(AnalyticsAuditRecorder.class),
+            gate);
+    return new ChartSetup(service, readTx, readOnly, execTx, gate.acquireTx);
   }
 
   /** Tibero: 차트·SQL 조회는 readOnly 트랜잭션 안, 실행은 트랜잭션 밖. */
@@ -140,6 +147,8 @@ class ChartDashboardTxTest extends IntegrationTestBase {
     assertThat(s.readTx()).containsExactly(true, true);
     assertThat(s.readOnly()).containsExactly(true, true);
     assertThat(s.execTx()).containsExactly(false);
+    // WD-599: Tibero 는 PG 풀 커넥션을 쥐지 않으므로 동시 실행 허가를 얻지 않는다.
+    assertThat(s.gateTx()).isEmpty();
   }
 
   /** PG: 조회와 실행이 기존대로 readOnly 트랜잭션 하나 안. */
@@ -152,6 +161,8 @@ class ChartDashboardTxTest extends IntegrationTestBase {
     assertThat(s.readTx()).containsExactly(true, true);
     assertThat(s.readOnly()).containsExactly(true, true);
     assertThat(s.execTx()).containsExactly(true);
+    // WD-599: 동시 실행 허가는 readOnly 트랜잭션을 열기 전(커넥션 없이) 한 번 얻는다.
+    assertThat(s.gateTx()).containsExactly(false);
   }
 
   // ------------------------------------------------------------- 대시보드
@@ -160,7 +171,8 @@ class ChartDashboardTxTest extends IntegrationTestBase {
       AnalyticsDashboardService service,
       List<Boolean> metaTx,
       List<Boolean> metaReadOnly,
-      List<Boolean> execTx) {}
+      List<Boolean> execTx,
+      List<Boolean> gateTx) {}
 
   /** 위젯 2개(차트 100→저장 쿼리 300, 차트 101→저장 쿼리 301). deniedQuery 가 null 이 아니면 그 저장 쿼리는 거부 판정. */
   private DashSetup dashSetup(boolean tibero, Long deniedQuery) {
@@ -241,6 +253,7 @@ class ChartDashboardTxTest extends IntegrationTestBase {
             });
     ClearanceResolver resolver = mock(ClearanceResolver.class);
     when(resolver.resolve(anyLong())).thenReturn(mock(Clearance.class));
+    TxRecordingInteractiveGate gate = new TxRecordingInteractiveGate();
     AnalyticsDashboardService service =
         new AnalyticsDashboardService(
             dashRepo,
@@ -252,8 +265,9 @@ class ChartDashboardTxTest extends IntegrationTestBase {
             mock(GuardedSqlExecutor.class),
             schema(tibero),
             TransactionTemplateConfig.readOnly(transactionManager),
-            mock(AnalyticsAuditRecorder.class));
-    return new DashSetup(service, metaTx, metaReadOnly, execTx);
+            mock(AnalyticsAuditRecorder.class),
+            gate);
+    return new DashSetup(service, metaTx, metaReadOnly, execTx, gate.acquireTx);
   }
 
   /** Tibero: 저장 쿼리 2개 실행이 모두 트랜잭션 밖, 모든 조회는 readOnly 트랜잭션 안. */
@@ -265,6 +279,8 @@ class ChartDashboardTxTest extends IntegrationTestBase {
 
     assertThat(r.widgetData()).hasSize(2);
     assertThat(s.execTx()).containsExactly(false, false);
+    // WD-599: Tibero 는 PG 풀 커넥션을 쥐지 않으므로 동시 실행 허가를 얻지 않는다.
+    assertThat(s.gateTx()).isEmpty();
     assertThat(s.metaTx()).isNotEmpty().containsOnly(true);
     assertThat(s.metaReadOnly()).containsOnly(true);
   }
@@ -294,5 +310,7 @@ class ChartDashboardTxTest extends IntegrationTestBase {
 
     assertThat(s.execTx()).containsExactly(true, true);
     assertThat(s.metaTx()).isNotEmpty().containsOnly(true);
+    // WD-599: 일괄 데이터는 위젯 수와 상관없이 허가 하나를, 트랜잭션을 열기 전에 얻는다.
+    assertThat(s.gateTx()).containsExactly(false);
   }
 }

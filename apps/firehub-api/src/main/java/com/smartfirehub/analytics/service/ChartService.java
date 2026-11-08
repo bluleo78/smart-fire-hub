@@ -56,6 +56,9 @@ public class ChartService {
   /** 작성자 본인의 생성·수정·삭제·공유 변경 감사(WD-464). */
   private final AnalyticsAuditRecorder auditRecorder;
 
+  /** 화면 쿼리 동시 실행 상한(WD-599) — 트랜잭션·커넥션을 열기 전에 허가를 얻어, 기다리는 동안 풀을 쥐지 않는다. */
+  private final InteractiveQueryConcurrencyGate interactiveQueryGate;
+
   /**
    * 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-464). 공유 여부는 따로 STATUS_CHANGE 로 남기므로 여기 없다. 차트 설정(config)은 무엇이 바뀌었든
    * "config" 하나로만 남긴다 — 설정 값(원본 컬럼명 등)은 감사에 싣지 않는다.
@@ -278,12 +281,19 @@ public class ChartService {
     // Tibero 실행(최대 35초) 동안 PG 연결을 쥐지 않으려고 구간을 나눈다(WD-207).
     // 1) RLS GUC 가 필요한 차트·SQL 조회만 readOnly 트랜잭션, 2) 판정·실행은 트랜잭션 밖(판정은 자체 트랜잭션 리포지토리를 쓴다),
     // 3) 응답 조립은 DB 읽기가 없어 템플릿이 필요 없다.
-    return StoreTransactions.loadThenExecute(
-        pipelineDataSchema,
-        readOnlyTx,
-        readOnlyTx,
-        () -> loadChart(id, userId),
-        load -> assembleChartData(executeChart(load, userId)));
+    // WD-599: 동시 실행 허가를 트랜잭션(=커넥션)보다 먼저 얻는다 — 위젯 병렬 로딩이 몰려도 기다리는 동안 풀을 쥐지 않는다. 바깥(컨트롤러·필터)에
+    // 트랜잭션이 없는 경로다. 404·403·쿼리 오류 등 어떤 예외로 나가도 try-with-resources 가 반납한다.
+    // Tibero 테넌트는 db-executor 로 실행해 PG 풀 커넥션을 쥐지 않으므로(WD-207) 허가 없이 지난다 — WD-553 게이트와 같은 예외(null
+    // 자원은 닫지 않는다).
+    try (AnalyticsQueryConcurrencyGate.Permit ignored =
+        pipelineDataSchema.isTibero() ? null : interactiveQueryGate.acquire(userId)) {
+      return StoreTransactions.loadThenExecute(
+          pipelineDataSchema,
+          readOnlyTx,
+          readOnlyTx,
+          () -> loadChart(id, userId),
+          load -> assembleChartData(executeChart(load, userId)));
+    }
   }
 
   /** 1단계에서 읽은 차트 응답과 저장 쿼리 SQL 원문. */
