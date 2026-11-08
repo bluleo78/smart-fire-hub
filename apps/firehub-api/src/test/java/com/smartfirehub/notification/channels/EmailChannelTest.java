@@ -93,7 +93,54 @@ class EmailChannelTest {
     Map<String, Object> smtpConfig =
         (Map<String, Object>) recipientCaptor.getValue().get("smtpConfig");
     assertThat(smtpConfig.get("port")).isEqualTo(587);
+    // WD-593: STARTTLS 기본 켜짐은 "접속 후 승격 + 강제"로 전달돼야 한다 — secure(암시적 TLS)가 아니다.
+    assertThat(smtpConfig.get("secure")).isEqualTo(false);
+    assertThat(smtpConfig.get("requireTLS")).isEqualTo(true);
+  }
+
+  /**
+   * WD-593: 포트 587 + STARTTLS 켜짐이면 평문으로 접속한 뒤 STARTTLS 로 승격해야 하므로 secure(암시적 TLS)는 false,
+   * requireTLS 는 true 다. 예전처럼 secure=true 로 넘기면 nodemailer 가 587 에서 곧바로 TLS 핸드셰이크를 시도해 협상이 실패한다.
+   */
+  @Test
+  void deliver_port587StartTlsTrue_sendsRequireTlsNotImplicitTls() {
+    Map<String, Object> smtpConfig = capturedSmtpConfig("587", "true");
+
+    assertThat(smtpConfig.get("secure")).isEqualTo(false);
+    assertThat(smtpConfig.get("requireTLS")).isEqualTo(true);
+  }
+
+  /** WD-593: 포트 587 + STARTTLS 꺼짐이면 암시적 TLS 도, STARTTLS 강제도 하지 않는다(운영자가 명시적으로 끈 경우의 기존 동작 유지). */
+  @Test
+  void deliver_port587StartTlsFalse_sendsNeitherSecureNorRequireTls() {
+    Map<String, Object> smtpConfig = capturedSmtpConfig("587", "false");
+
+    assertThat(smtpConfig.get("secure")).isEqualTo(false);
+    assertThat(smtpConfig.get("requireTLS")).isEqualTo(false);
+  }
+
+  /**
+   * WD-593: 포트 465 는 관례상 암시적 TLS(SMTPS) 전용이라 STARTTLS 값과 무관하게 secure=true 로 접속 즉시 TLS 를 건다. 이미 TLS
+   * 위이므로 STARTTLS 승격 강제(requireTLS)는 의미가 없어 false 다.
+   */
+  @Test
+  void deliver_port465_sendsImplicitTlsWithoutRequireTls() {
+    Map<String, Object> smtpConfig = capturedSmtpConfig("465", "true");
+
     assertThat(smtpConfig.get("secure")).isEqualTo(true);
+    assertThat(smtpConfig.get("requireTLS")).isEqualTo(false);
+  }
+
+  /**
+   * WD-593: 옛 행에 "TRUE" 처럼 대문자로 저장된 STARTTLS 값도 켜짐으로 해석한다 — JavaMail 경로(Boolean.parseBoolean)와 같은
+   * 대소문자 무시 규칙이어야 같은 설정이 경로마다 다르게 동작하지 않는다.
+   */
+  @Test
+  void deliver_legacyUppercaseStartTls_isTreatedAsEnabled() {
+    Map<String, Object> smtpConfig = capturedSmtpConfig("587", "TRUE");
+
+    assertThat(smtpConfig.get("secure")).isEqualTo(false);
+    assertThat(smtpConfig.get("requireTLS")).isEqualTo(true);
   }
 
   @Test
@@ -235,6 +282,26 @@ class EmailChannelTest {
             Map.of(),
             Map.of());
     return new DeliveryContext(1L, UUID.randomUUID(), null, address, Optional.empty(), p);
+  }
+
+  /** 주어진 포트·STARTTLS 값으로 발송하고 firehub-channel 로 넘긴 smtpConfig 맵을 캡처해 돌려준다(WD-593 TLS 매핑 검증용). */
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> capturedSmtpConfig(String port, String startTls) {
+    when(settingsService.getSmtpConfig())
+        .thenReturn(
+            Map.of(
+                "smtp.host", "smtp.example.com",
+                "smtp.port", port,
+                "smtp.username", "user@example.com",
+                "smtp.password", "secret",
+                "smtp.starttls", startTls));
+
+    var result = channel.deliver(ctx(null, "to@example.com"));
+
+    assertThat(result).isInstanceOf(DeliveryResult.Sent.class);
+    ArgumentCaptor<Map<String, Object>> recipientCaptor = ArgumentCaptor.forClass(Map.class);
+    verify(channelHttpClient).send(eq("EMAIL"), recipientCaptor.capture(), any(Map.class));
+    return (Map<String, Object>) recipientCaptor.getValue().get("smtpConfig");
   }
 
   private Map<String, String> smtpConfig() {

@@ -91,11 +91,24 @@ public class EmailChannel implements Channel {
     // 이전에 저장된 옛 행이 있을 수 있고, Integer.parseInt("") 는 아래 try 블록 밖이라 발송 워커로
     // 처리되지 않은 예외가 튀어나간다. 형태는 EmailDeliveryChannel / SettingsController 와 같다.
     String portStr = smtp.getOrDefault("smtp.port", "587");
+    int port = portStr.isBlank() ? 587 : Integer.parseInt(portStr);
+    // TLS 방식 매핑(WD-593) — smtp.starttls 는 STARTTLS(평문 접속 후 승격)를 뜻한다(연결 테스트·리포트 메일의
+    // JavaMail mail.smtp.starttls.enable 과 같은 의미). nodemailer 의 secure 는 접속 즉시 TLS(암시적 TLS)라
+    // 이를 그대로 secure 로 넘기면 587 에서 TLS 협상이 실패하고, 끄면 TLS 를 강제하지 않은 채 발송됐다.
+    // - 465 는 관례상 암시적 TLS(SMTPS) 전용 포트라 STARTTLS 값과 무관하게 secure=true 로 접속 즉시 TLS 를 건다.
+    // - 그 밖 포트는 secure=false 로 접속하고, STARTTLS 가 켜져 있으면 requireTLS=true 로 승격을 강제한다 —
+    //   서버가 STARTTLS 를 광고하지 않을 때 평문으로 조용히 내려가(다운그레이드) 자격증명이 노출되는 것을 막는다.
+    // - starttls 키가 없으면(#712: 미저장 키는 맵에 없다) 켜짐으로 본다. 옛 행의 "TRUE" 등도 켜짐으로 읽도록
+    //   JavaMail 경로(Boolean.parseBoolean)와 같이 대소문자를 무시한다.
+    boolean implicitTls = port == 465;
+    boolean requireStartTls =
+        !implicitTls && "true".equalsIgnoreCase(smtp.getOrDefault("smtp.starttls", "true"));
     Map<String, Object> smtpConfig =
         Map.of(
             "host", host,
-            "port", portStr.isBlank() ? 587 : Integer.parseInt(portStr),
-            "secure", Boolean.parseBoolean(smtp.getOrDefault("smtp.starttls", "true")),
+            "port", port,
+            "secure", implicitTls,
+            "requireTLS", requireStartTls,
             "user", smtp.getOrDefault("smtp.username", ""),
             "pass", smtp.getOrDefault("smtp.password", ""));
 
