@@ -41,7 +41,7 @@ import { Skeleton } from '../../components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { schemaInfoQueryOptions } from '../../hooks/queries/useAnalytics';
 import {
-  invalidateDatasetLists,
+  DATASET_LIST_KEY,
   useAddTag,
   useCategories,
   useDataset,
@@ -52,6 +52,7 @@ import {
   useUpdateStatus,
 } from '../../hooks/queries/useDatasets';
 import { useDataStoreFeatures } from '../../hooks/queries/useDataStoreCapabilities';
+import { useInvalidateListsOnEntryNotFound } from '../../hooks/queries/useInvalidateListsOnEntryNotFound';
 import { useHorizontalOverflow } from '../../hooks/useHorizontalOverflow';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
@@ -224,6 +225,8 @@ export default function DatasetDetailPage() {
   // 예전엔 토스트 + 목록 이동이라 주소가 바뀌어 토스트가 사라지면 이유를 알 수 없었다. 쿼리·차트 상세처럼 주소를 그대로 둔다.
   // 이미 데이터셋을 보고 있다가 재조회가 404 가 된 경우(isLoadingError=false)는 아래 effect 의 기존 토스트 + 이동을 그대로 쓴다.
   const isEntryNotFound = isInvalidId || (isLoadingError && isNotFoundError(fetchError));
+  // 첫 조회 404 면 「목록으로」에서 지워진 행이 다시 보이지 않게 목록 캐시를 무효화한다 (WD-581)
+  useInvalidateListsOnEntryNotFound({ isLoadingError, error: fetchError }, DATASET_LIST_KEY);
 
   // 조회 실패 처리 (#96) — isError 분기가 없던 시절엔 스켈레톤에 갇혀 무한 표시되었다.
   // 첫 조회 404(isEntryNotFound)는 화면 안 안내가 맡고(WD-581), 그 밖의 실패(500·네트워크·재조회 중 404)는 토스트 + 목록 이동을 유지한다.
@@ -234,16 +237,17 @@ export default function DatasetDetailPage() {
     if (isNotFoundError(fetchError)) {
       removeRecent(datasetId);
     }
-    if (isEntryNotFound) {
-      // 첫 조회 404 — 「목록으로」에서 지워진 행이 다시 보이지 않게 목록 캐시를 무효화한다 (WD-581)
-      void invalidateDatasetLists(queryClient);
-      return;
-    }
-    toast.error('데이터셋을 찾을 수 없습니다.');
+    if (isEntryNotFound) return;
+    // 재조회 중 404 만 「찾을 수 없음」이다 — 일시적 실패(500·네트워크)에는 다시 시도를 권한다(WD-646)
+    toast.error(
+      isNotFoundError(fetchError)
+        ? '데이터셋을 찾을 수 없습니다.'
+        : '데이터셋을 불러오지 못했습니다. 잠시 후 다시 시도하세요.',
+    );
     navigate('/data/datasets');
     // datasetId 를 넣어 404 데이터셋에서 다른 404 데이터셋으로 옮겨 가도 두 번째 것도 「최근 접근」에서 빠지게 한다 (WD-581).
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- removeRecent 는 렌더마다 새로 만들어져 넣으면 반복 실행된다
-  }, [isError, navigate, datasetId]);
+    // removeRecent 는 useCallback 으로 고정돼 있고 fetchError 는 새 실패 때만 바뀌어 반복 실행되지 않는다.
+  }, [isError, isEntryNotFound, fetchError, navigate, datasetId, removeRecent]);
 
   useEffect(() => {
     if (dataset) {

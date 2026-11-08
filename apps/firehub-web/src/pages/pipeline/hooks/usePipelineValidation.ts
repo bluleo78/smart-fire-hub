@@ -5,6 +5,7 @@ import { useCallback } from 'react';
 import { toast } from 'sonner';
 
 import { datasetsApi } from '@/api/datasets';
+import { ALL_DATASETS_QUERY_KEY } from '@/hooks/queries/useDatasets';
 import { iGa } from '@/lib/utils';
 import { editorPipelineSchema } from '@/lib/validations/pipeline';
 import type { DatasetResponse } from '@/types/dataset';
@@ -32,7 +33,7 @@ import {
  * 쿼리 키는 useDataset 과 같아 스텝 설정 패널이 이미 불러온 상세를 그대로 쓴다.
  */
 async function loadOutputColumns(queryClient: QueryClient, datasetId: number): Promise<string[] | null> {
-  const visible = queryClient.getQueryData<DatasetResponse[]>(['datasets', 'all']);
+  const visible = queryClient.getQueryData<DatasetResponse[]>(ALL_DATASETS_QUERY_KEY);
   if (visible && !visible.some((d) => d.id === datasetId)) return null;
   try {
     const detail = await queryClient.fetchQuery({

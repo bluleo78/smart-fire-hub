@@ -48,6 +48,7 @@ import {
 } from '../../components/ui/dialog';
 import { Skeleton } from '../../components/ui/skeleton';
 import {
+  DASHBOARD_LIST_KEY,
   useAddWidget,
   useChartsInfinite,
   useDashboard,
@@ -55,6 +56,7 @@ import {
   useRemoveWidget,
   useUpdateWidget,
 } from '../../hooks/queries/useAnalytics';
+import { useInvalidateListsOnEntryNotFound } from '../../hooks/queries/useInvalidateListsOnEntryNotFound';
 import { useIsOwner } from '../../hooks/useIsOwner';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError, isConflictError, isNotFoundError } from '../../lib/api-error';
@@ -336,6 +338,7 @@ export default function DashboardEditorPage() {
       handleApiError(dashboardError, '대시보드 정보를 불러오지 못했습니다.');
     }
   }, [isDashboardError, isDashboardLoadingError, dashboardError]);
+  useInvalidateListsOnEntryNotFound({ isLoadingError: isDashboardLoadingError, error: dashboardError }, DASHBOARD_LIST_KEY);
 
   // 위젯 데이터 중 내보내기 불가(정책 차단·열람 불가)가 하나라도 있으면 PDF 내보내기를 숨긴다(보조 다운로드 → 숨김, S4).
   // 볼 수 없는 차트의 위젯(accessible=false, WD-195)은 데이터를 받지 않고 안내 문구만 그리므로 내보낼 데이터가 없다 — 판정에서 뺀다.

@@ -35,9 +35,12 @@ export function usePipelinePermissions() {
   };
 }
 
+/** 파이프라인 목록 쿼리 키 접두 — 목록 접두 규칙은 useInvalidateListsOnEntryNotFound 참고 */
+export const PIPELINE_LIST_KEY = ['pipelines', 'list'] as const;
+
 export function usePipelines(params: { page?: number; size?: number }) {
   return useQuery({
-    queryKey: ['pipelines', params],
+    queryKey: [...PIPELINE_LIST_KEY, params],
     queryFn: () => pipelinesApi.getPipelines(params).then(r => r.data),
   });
 }
@@ -54,7 +57,7 @@ const ALL_PIPELINES_PAGE_SIZE = 200;
  */
 export function useAllPipelines() {
   return useQuery({
-    queryKey: ['pipelines', 'all'],
+    queryKey: [...PIPELINE_LIST_KEY, 'all'],
     queryFn: () =>
       fetchAllPages(
         (page, size) => pipelinesApi.getPipelines({ page, size }).then((r) => r.data),

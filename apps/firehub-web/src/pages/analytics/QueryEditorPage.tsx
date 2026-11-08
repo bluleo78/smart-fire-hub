@@ -27,6 +27,7 @@ import { analyticsApi } from '../../api/analytics';
 import { exportsApi } from '../../api/exports';
 import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
+import { ResourceNotFound } from '../../components/ResourceNotFound';
 import { TruncatedTitle } from '../../components/TruncatedTitle';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -57,6 +58,7 @@ import {
 import { Skeleton } from '../../components/ui/skeleton';
 import { Switch } from '../../components/ui/switch';
 import {
+  SAVED_QUERY_LIST_KEY,
   useCloneSavedQuery,
   useCreateSavedQuery,
   useExecuteAnalyticsQuery,
@@ -65,6 +67,7 @@ import {
   useSchemaInfo,
   useUpdateSavedQuery,
 } from '../../hooks/queries/useAnalytics';
+import { useInvalidateListsOnEntryNotFound } from '../../hooks/queries/useInvalidateListsOnEntryNotFound';
 import { useIsOwner } from '../../hooks/useIsOwner';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
@@ -469,7 +472,13 @@ export default function QueryEditorPage() {
   const ignoreNextChangeRef = useRef(false);
 
   // isError: 존재하지 않는 쿼리 ID(404 등) 접근 시 에러 상태를 감지한다.
-  const { data: savedQuery, isLoading: queryLoading, isError: queryError } = useSavedQuery(queryId);
+  const {
+    data: savedQuery,
+    isLoading: queryLoading,
+    isError: queryError,
+    isLoadingError: isQueryLoadingError,
+    error: queryFetchError,
+  } = useSavedQuery(queryId);
 
   // 저장(덮어쓰기)·이름 변경은 작성자만 — 서버가 남의 수정 요청을 404 로 거절한다(WD-196). 남이 공유한 쿼리는 저장 버튼 대신
   // 「복제」 안내를 둔다. SQL 을 고쳐 실행해 보는 것(읽기)은 그대로 허용하고, 보안 등급 판정도 실행 경로가 기존대로 한다.
@@ -488,6 +497,7 @@ export default function QueryEditorPage() {
   const updateSavedQuery = useUpdateSavedQuery();
   const savingRef = useRef(false);
   const queryClient = useQueryClient();
+  useInvalidateListsOnEntryNotFound({ isLoadingError: isQueryLoadingError, error: queryFetchError }, SAVED_QUERY_LIST_KEY);
 
   /**
    * 지금 편집기 내용의 기준 버전 — 그 내용을 불러온(또는 저장한) 시점의 서버 updatedAt(WD-364 낙관적 잠금).
@@ -781,19 +791,14 @@ export default function QueryEditorPage() {
     );
   }
 
-  // 존재하지 않는 쿼리 ID(404 등) 접근 시: 에러 안내 + 목록 이동 버튼 표시
+  // 존재하지 않는 쿼리 ID(404 등) 접근 시: 공용 「찾을 수 없음」 안내(제목 h1) + 목록 이동 버튼
   if (!isNew && (queryError || isInvalidId)) {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 py-20">
-        <FileCode2 className="h-12 w-12 text-muted-foreground" />
-        <p className="text-muted-foreground">쿼리를 찾을 수 없습니다.</p>
-        <Button
-          variant="outline"
-          onClick={() => navigate('/analytics/queries')}
-        >
-          목록으로
-        </Button>
-      </div>
+      <ResourceNotFound
+        icon={FileCode2}
+        message="쿼리를 찾을 수 없습니다."
+        onBackToList={() => navigate('/analytics/queries')}
+      />
     );
   }
 

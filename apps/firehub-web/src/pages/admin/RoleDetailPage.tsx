@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { ArrowLeft, ShieldOff } from 'lucide-react';
 import { useCallback, useEffect, useMemo,useState } from 'react';
@@ -7,7 +8,7 @@ import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { permissionsApi } from '../../api/permissions';
-import { rolesApi } from '../../api/roles';
+import { ROLE_LIST_KEY, rolesApi } from '../../api/roles';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
 import { ResourceNotFound } from '../../components/ResourceNotFound';
 import {
@@ -30,6 +31,7 @@ import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAuth } from '../../hooks/useAuth';
+import { useIsMounted } from '../../hooks/useIsMounted';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, isEditConflict, isNotFoundError } from '../../lib/api-error';
 import { parseRouteId } from '../../lib/route-id';
@@ -53,9 +55,21 @@ const PYTHON_READ_NOTICE_PERMISSIONS = new Set(['pipeline:python_execute']);
  */
 const ROLE_NOT_FOUND_MESSAGE = '역할을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.';
 
+/**
+ * 역할 상세 — 주소의 역할 id 마다 화면을 새로 만든다 (WD-646).
+ * 같은 컴포넌트를 다른 id 에 재사용하면 이전 id 의 안내·폼·늦은 응답이 새 id 화면에 섞인다. key 로 다시 만들면 상태가 새로 시작하고,
+ * 떠난 화면의 늦은 응답은 진입 조회의 cancelled 와 핸들러의 isMounted 가 버린다.
+ */
 export default function RoleDetailPage() {
   const { id } = useParams<{ id: string }>();
+  return <RoleDetailView key={id} />;
+}
+
+function RoleDetailView() {
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const isMounted = useIsMounted();
   // 주소의 id 가 양의 정수가 아니면 null — 요청 없이 「찾을 수 없음」 안내로 다룬다 (WD-581)
   const roleId = parseRouteId(id);
   // 화면 안 조작은 서버가 막는 권한 코드로만 노출한다(WD-121) — 서버에 관리자 우회가 없으므로 역할 이름은 보지 않는다.
@@ -137,18 +151,51 @@ export default function RoleDetailPage() {
   );
 
   useEffect(() => {
+    // 화면을 떠난 뒤 늦게 온 응답은 버린다 (WD-646)
+    let cancelled = false;
     const fetchData = async () => {
       // 잘못된 id 는 조회하지 않는다 — 아래 렌더가 화면 안 안내를 그린다 (WD-581)
       if (roleId == null) return;
       setIsLoading(true);
       setNotFoundMessage(null);
+      // 일반 불러오기 실패 — 안내 후 역할 목록으로 돌아간다
+      const failLoad = () => {
+        toast.error('역할 정보를 불러오는 데 실패했습니다.');
+        navigate('/admin/roles');
+      };
       try {
         // 전체 권한 목록은 permission:read 가 있을 때만 읽는다 — 역할 조회(role:read)만 있는 사람에게도 같이 읽으면
         // 403 이 역할 조회까지 실패로 만들어 화면이 열리지 않고 목록으로 튕겼다(WD-121).
-        const [roleRes, permRes] = await Promise.all([
-          rolesApi.getRoleById(roleId),
-          canReadCatalog ? permissionsApi.getPermissions() : Promise.resolve(null),
-        ]);
+        // 두 요청을 함께 보내되 역할 응답을 먼저 기다려 404 를 판정한다(WD-646) — 「역할 없음」은 역할 조회의 404 만이다.
+        const rolePromise = rolesApi.getRoleById(roleId);
+        const permPromise = canReadCatalog ? permissionsApi.getPermissions() : Promise.resolve(null);
+        // 역할을 기다리는 사이 권한 목록이 먼저 실패해도 처리되지 않은 거부로 남지 않게 한다 — 실제 처리는 아래 await 가 한다
+        permPromise.catch(() => {});
+        let roleRes;
+        try {
+          roleRes = await rolePromise;
+        } catch (error) {
+          if (cancelled) return;
+          // 없는(삭제된) 역할이면 「불러오지 못함」 대신 삭제됐을 수 있다고 알린다(WD-287).
+          // 진입 시점의 404 는 토스트 + 이동 대신 주소를 그대로 두고 화면 안에 서버 안내를 보인다(WD-581).
+          if (isNotFoundError(error)) {
+            setNotFoundMessage(extractApiError(error, ROLE_NOT_FOUND_MESSAGE));
+            // 역할 목록 캐시에 지워진 역할이 남지 않게 목록만 무효화한다 — 사용자·데이터셋 상세와 같다
+            void queryClient.invalidateQueries({ queryKey: ROLE_LIST_KEY });
+            return;
+          }
+          failLoad();
+          return;
+        }
+        let permRes;
+        try {
+          permRes = await permPromise;
+        } catch {
+          // 권한 목록 실패(404 포함)는 「역할 없음」이 아니라 일반 실패다
+          if (!cancelled) failLoad();
+          return;
+        }
+        if (cancelled) return;
         setRole(roleRes.data);
         setCatalog(permRes?.data ?? null);
         setSelectedPermissionIds(roleRes.data.permissions.map(p => p.id));
@@ -158,22 +205,16 @@ export default function RoleDetailPage() {
           name: roleRes.data.name,
           description: roleRes.data.description ?? '',
         });
-      } catch (error) {
-        // 없는(삭제된) 역할이면 「불러오지 못함」 대신 삭제됐을 수 있다고 알린다(WD-287). 그 밖의 실패는 일반 안내.
-        // 진입 시점의 404 는 토스트 + 이동 대신 주소를 그대로 두고 화면 안에 서버 안내를 보인다(WD-581).
-        if (isNotFoundError(error)) {
-          setNotFoundMessage(extractApiError(error, ROLE_NOT_FOUND_MESSAGE));
-          return;
-        }
-        toast.error('역할 정보를 불러오는 데 실패했습니다.');
-        navigate('/admin/roles');
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     fetchData();
-  }, [roleId, navigate, form, canReadCatalog]);
+    return () => {
+      cancelled = true;
+    };
+  }, [roleId, navigate, form, canReadCatalog, queryClient]);
 
   // 체크박스로 그릴 권한 — 전체 목록을 읽었으면 그것, 아니면 이 역할이 가진 권한만.
   const allPermissions = useMemo(() => catalog ?? role?.permissions ?? [], [catalog, role]);
@@ -230,6 +271,7 @@ export default function RoleDetailPage() {
         description: data.description || undefined,
         ...(overwrite ? {} : { expectedUpdatedAt: roleInfoBaselineUpdatedAt }),
       });
+      if (!isMounted()) return;
       setIsRoleInfoConflictOpen(false);
       // 저장한 값을 폼의 새 기준값으로 삼는다 (WD-119) — 안 하면 isDirty 가 true 로 남아 저장 직후 이동에도
       // 「저장하지 않은 변경사항」 경고가 뜬다. keepValues: 저장 요청 중에 더 입력한 내용은 지우지 않는다 —
@@ -248,16 +290,19 @@ export default function RoleDetailPage() {
       toast.success('역할 정보가 업데이트되었습니다.');
       try {
         const { data: updatedRole } = await rolesApi.getRoleById(role.id);
+        if (!isMounted()) return;
         setRole(updatedRole);
         // 방금 저장한 내용의 새 버전을 다음 저장의 기준으로 삼는다(WD-575) — 옛 기준으로 다시 저장하면 자기 저장과 충돌한다.
         setRoleInfoBaselineUpdatedAt(updatedRole.updatedAt ?? null);
       } catch {
+        if (!isMounted()) return;
         // 저장은 이미 됐다 — 재조회만 실패했으면 실패 안내 대신 화면 값을 저장한 값으로 맞춘다.
         setRole(prev => (prev ? { ...prev, name: data.name, description: data.description || null } : prev));
         // 새 버전을 모르면 기준을 비워 다음 저장은 비교 없이 나간다 — 자기 저장과의 거짓 충돌보다 안전한 쪽(차트 화면과 같다).
         setRoleInfoBaselineUpdatedAt(null);
       }
     } catch (error) {
+      if (!isMounted()) return;
       // 그새 삭제된 역할이면 입력란 아래 오류로 화면에 남기지 않고 목록으로 돌아간다(WD-287).
       if (isNotFoundError(error)) {
         handleRoleNotFound(error);
@@ -287,12 +332,14 @@ export default function RoleDetailPage() {
     if (!role) return;
     try {
       const { data: latest } = await rolesApi.getRoleById(role.id);
+      if (!isMounted()) return;
       setRole(latest);
       setRoleInfoBaselineUpdatedAt(latest.updatedAt ?? null);
       form.reset({ name: latest.name, description: latest.description ?? '' });
       setRoleError('');
       setIsRoleInfoConflictOpen(false);
     } catch (error) {
+      if (!isMounted()) return;
       if (isNotFoundError(error)) {
         handleRoleNotFound(error);
         return;
@@ -314,13 +361,18 @@ export default function RoleDetailPage() {
     void handleSavePermissions();
   };
 
-  /** 서버의 최신 역할·권한으로 체크를 다시 맞춘다 — 권한 저장 뒤와 충돌 안내의 「다시 불러오기」가 쓴다(내 체크 변경은 버린다). */
-  const reloadPermissions = async (roleId: number) => {
+  /**
+   * 서버의 최신 역할·권한으로 체크를 다시 맞춘다 — 권한 저장 뒤와 충돌 안내의 「다시 불러오기」가 쓴다(내 체크 변경은 버린다).
+   * 응답 전에 화면을 떠났으면 반영하지 않고 false 를 돌려준다 — 호출처도 뒤처리를 건너뛴다.
+   */
+  const reloadPermissions = async (roleId: number): Promise<boolean> => {
     const { data: updatedRole } = await rolesApi.getRoleById(roleId);
+    if (!isMounted()) return false;
     setRole(updatedRole);
     const ids = updatedRole.permissions.map(p => p.id);
     setSelectedPermissionIds(ids);
     setPermissionBaselineIds(ids);
+    return true;
   };
 
   /**
@@ -335,10 +387,11 @@ export default function RoleDetailPage() {
         permissionIds: selectedPermissionIds,
         ...(overwrite ? {} : { expectedPermissionIds: permissionBaselineIds }),
       });
-      await reloadPermissions(role.id);
+      if (!(await reloadPermissions(role.id))) return;
       setIsPermissionsConflictOpen(false);
       toast.success('권한이 저장되었습니다.');
     } catch (error) {
+      if (!isMounted()) return;
       // 그새 삭제된 역할이면 목록으로 돌아간다(WD-287).
       if (isNotFoundError(error)) {
         handleRoleNotFound(error);
@@ -463,9 +516,14 @@ export default function RoleDetailPage() {
         // pending(isSavingPermissions)은 다시 불러오기를 덮지 않는다 — 불러오기 중 잠금은 돌려준 Promise 가 맡는다(WD-678)
         onReload={() => {
           if (!role) return;
+          // 돌려준 Promise 로 창이 불러오기 동안 잠기고(WD-678), 떠난 뒤·적용되지 않은 결과는 창을 닫거나 알리지 않는다(WD-646)
           return reloadPermissions(role.id)
-            .then(() => setIsPermissionsConflictOpen(false))
-            .catch(() => toast.error('역할 정보를 불러오는 데 실패했습니다.'));
+            .then(applied => {
+              if (applied) setIsPermissionsConflictOpen(false);
+            })
+            .catch(() => {
+              if (isMounted()) toast.error('역할 정보를 불러오는 데 실패했습니다.');
+            });
         }}
         onOverwrite={() => handleSavePermissions(true)}
       />
