@@ -641,13 +641,14 @@ test.describe('API 연결 페이지', () => {
     await page.getByPlaceholder('Authorization').fill('X-Fixed-Key');
     await page.getByRole('button', { name: '인증 저장' }).click();
 
-    // 입력 오류 토스트 없이 PUT 이 나가고, apiKey 는 조회로 받은 가린 값 그대로다(서버가 저장 원문으로 채움)
+    // 입력 오류 없이 PUT 이 나가고, apiKey 는 조회로 받은 가린 값 그대로다(서버가 저장 원문으로 채움)
     const req = await updateCapture.waitForRequest();
     expect(req.payload).toMatchObject({
       authType: 'API_KEY',
       authConfig: { placement: 'header', headerName: 'X-Fixed-Key', apiKey: '***masked***' },
     });
-    await expect(page.getByText('헤더 이름과 키 값을 입력하세요.')).toHaveCount(0);
+    // 키 칸 인라인 오류도 없어야 한다(WD-561) — 저장 성공으로 편집 모드가 닫히므로 문구 부재로 본다
+    await expect(page.getByText('API 키를 입력하세요.')).toHaveCount(0);
   });
 
   test('인증 정보 변경 — 위치를 Query 로 바꾸고 파라미터 이름만 고쳐도 키 칸을 비워 저장된다 (WD-480)', async ({
@@ -725,7 +726,10 @@ test.describe('API 연결 페이지', () => {
     await page.getByPlaceholder('Authorization').fill('X-Key');
     await page.getByRole('button', { name: '인증 저장' }).click();
 
-    await expect(page.getByText('헤더 이름과 키 값을 입력하세요.')).toBeVisible();
+    // 키 칸에 인라인 오류가 뜨고 그 칸으로 포커스가 간다(WD-561)
+    const keyInput = page.getByPlaceholder('새 API 키를 입력하세요');
+    await expect(keyInput).toHaveAccessibleDescription('API 키를 입력하세요.');
+    await expect(keyInput).toBeFocused();
     expect(updateCapture.requests?.length ?? 0).toBe(0);
   });
 
@@ -815,7 +819,7 @@ test.describe('API 연결 페이지', () => {
     });
   });
 
-  test('생성 폼 — 이름 미입력 시 toast 에러가 표시되고 API가 호출되지 않는다', async ({
+  test('생성 폼 — 이름 미입력 시 이름 칸에 인라인 오류가 표시되고 API가 호출되지 않는다', async ({
     authenticatedPage: page,
   }) => {
     await setupApiConnectionListMocks(page);
@@ -826,13 +830,13 @@ test.describe('API 연결 페이지', () => {
     // 이름 없이 바로 생성 클릭
     await page.getByRole('button', { name: '만들기' }).click();
 
-    // 유효성 검사 toast 에러 확인
-    await expect(page.getByText('연결 이름을 입력하세요.')).toBeVisible();
+    // 유효성 검사 인라인 오류 확인(WD-561 — 토스트 대신 칸 아래 role=alert)
+    await expect(page.getByRole('alert').filter({ hasText: '연결 이름을 입력하세요.' })).toBeVisible();
     // 다이얼로그는 여전히 열려있어야 한다
     await expect(page.getByRole('dialog')).toBeVisible();
   });
 
-  test('생성 폼 — API_KEY header 타입에서 헤더 이름/키 미입력 시 toast 에러', async ({
+  test('생성 폼 — API_KEY header 타입에서 헤더 이름/키 미입력 시 각 칸에 인라인 오류', async ({
     authenticatedPage: page,
   }) => {
     await setupApiConnectionListMocks(page);
@@ -846,7 +850,9 @@ test.describe('API 연결 페이지', () => {
     await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
     await page.getByRole('button', { name: '만들기' }).click();
 
-    await expect(page.getByText('헤더 이름과 키 값을 입력하세요.')).toBeVisible();
+    // 두 칸 오류가 따로 뜬다(WD-561)
+    await expect(page.getByPlaceholder('Authorization')).toHaveAccessibleDescription('헤더 이름을 입력하세요.');
+    await expect(page.getByPlaceholder('API 키를 입력하세요')).toHaveAccessibleDescription('API 키를 입력하세요.');
     await expect(page.getByRole('dialog')).toBeVisible();
   });
 
@@ -1107,7 +1113,7 @@ test.describe('API 연결 페이지', () => {
     await expect.poll(() => testCalled).toBe(true);
   });
 
-  test('baseUrl 미입력 시 toast 에러가 표시된다', async ({ authenticatedPage: page }) => {
+  test('baseUrl 미입력 시 Base URL 칸에 인라인 오류가 표시된다', async ({ authenticatedPage: page }) => {
     await setupApiConnectionListMocks(page);
     await page.goto('/admin/api-connections');
     await page.getByRole('button', { name: '새 연결' }).click();
@@ -1119,11 +1125,12 @@ test.describe('API 연결 페이지', () => {
     await page.getByPlaceholder('API 키를 입력하세요').fill('key-value');
     await page.getByRole('button', { name: '만들기' }).click();
 
-    await expect(page.getByText('Base URL은 http 또는 https로 시작해야 합니다')).toBeVisible();
+    // 빈 값은 형식 안내가 아니라 빈 값 안내로 보인다(WD-561)
+    await expect(page.getByPlaceholder('https://api.example.com')).toHaveAccessibleDescription('Base URL을 입력하세요.');
     await expect(page.getByRole('dialog')).toBeVisible();
   });
 
-  test('생성 폼 — BEARER 타입에서 토큰 미입력 시 toast 에러', async ({
+  test('생성 폼 — BEARER 타입에서 토큰 미입력 시 토큰 칸에 인라인 오류', async ({
     authenticatedPage: page,
   }) => {
     await setupApiConnectionListMocks(page);
@@ -1140,7 +1147,7 @@ test.describe('API 연결 페이지', () => {
     // 토큰 입력 없이 생성 시도
     await page.getByRole('button', { name: '만들기' }).click();
 
-    await expect(page.getByText('Bearer 토큰을 입력하세요.')).toBeVisible();
+    await expect(page.getByPlaceholder('토큰을 입력하세요')).toHaveAccessibleDescription('Bearer 토큰을 입력하세요.');
     await expect(page.getByRole('dialog')).toBeVisible();
   });
 
@@ -1183,19 +1190,21 @@ test.describe('API 연결 페이지', () => {
     await page.getByRole('option', { name: 'Bearer Token' }).click();
     const tokenInput = page.getByRole('textbox', { name: 'Bearer Token' });
 
-    // 클릭마다 안내 토스트가 하나씩 더 뜬다 — 개수로 「이번 클릭의 안내」를 확인하고(기다림 겸), 그 뒤에 요청이 없었음을 본다.
-    const missingToast = page.getByText('Bearer 토큰을 입력하세요.');
+    // 만들기는 토큰 칸 인라인 오류(WD-561), 연결 테스트는 토스트로 같은 문구를 안내한다 — 그 뒤에 요청이 없었음을 본다.
+    const missingText = 'Bearer 토큰을 입력하세요.';
+    const missingToast = page.locator('[data-sonner-toast]').filter({ hasText: missingText });
 
     // 접두어만(공백 포함) — 생성·연결 테스트 모두 막힌다
     await tokenInput.fill('Bearer   ');
     await page.getByRole('button', { name: '만들기' }).click();
-    await expect(missingToast).toHaveCount(1);
+    await expect(tokenInput).toHaveAccessibleDescription(missingText);
     await page.getByRole('button', { name: '연결 테스트' }).click();
-    await expect(missingToast).toHaveCount(2);
-    // 겹친 접두어도 빈 토큰이다
+    await expect(missingToast).toHaveCount(1);
+    // 겹친 접두어도 빈 토큰이다 — 입력하면 오류가 지워지고, 다시 만들기를 누르면 같은 오류가 다시 붙는다
     await tokenInput.fill('bearer bearer');
+    await expect(tokenInput).not.toHaveAccessibleDescription(missingText);
     await page.getByRole('button', { name: '만들기' }).click();
-    await expect(missingToast).toHaveCount(3);
+    await expect(tokenInput).toHaveAccessibleDescription(missingText);
     expect(createCapture.requests).toHaveLength(0);
     expect(testCapture.requests).toHaveLength(0);
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -1480,8 +1489,8 @@ test.describe('API 연결 페이지', () => {
     // 저장 버튼 클릭
     await page.getByRole('button', { name: '저장' }).click();
 
-    // 에러 토스트가 표시되어야 한다
-    await expect(page.getByText('Base URL은 필수입니다.')).toBeVisible();
+    // Base URL 칸에 인라인 오류가 표시되어야 한다(WD-561 — 토스트 대신)
+    await expect(baseUrlInput).toHaveAccessibleDescription('Base URL을 입력하세요.');
 
     // PUT API가 호출되지 않아야 한다 (short wait after click to be sure)
     await page.waitForTimeout(300);
@@ -1580,15 +1589,16 @@ test.describe('API 연결 페이지', () => {
     await expect(dialog).toBeVisible();
 
     // 1) 접근 가능한 이름으로 입력을 찾을 수 있어야 한다 (연결 전에는 매칭 자체가 불가능했다).
-    const nameInput = page.getByLabel('연결 이름', { exact: true });
+    // 필수 칸 라벨은 FormField 가 「*」를 덧붙이므로(WD-561) 접두로 찾는다
+    const nameInput = page.getByLabel(/^연결 이름/);
     await nameInput.fill('접근성 검증용 연결');
     await expect(nameInput).toHaveValue('접근성 검증용 연결');
 
     // 2) 라벨을 클릭하면 그 입력이 포커스를 받아야 한다.
     //    Select 트리거가 아니라 일반 <Input> 으로 검증한다 — Select 는 클릭이
     //    드롭다운을 여는 부수효과가 있어 포커스 단언이 흐려진다.
-    const baseUrlInput = page.getByLabel('Base URL *', { exact: true });
-    await dialog.getByText('Base URL *', { exact: true }).click();
+    const baseUrlInput = page.getByLabel(/^Base URL/);
+    await dialog.locator('label', { hasText: 'Base URL' }).click();
     await expect(baseUrlInput).toBeFocused();
 
     // 3) 다이얼로그의 모든 <label> 이 실재하는 컨트롤을 가리켜야 한다 (dangling htmlFor 방지).
@@ -1687,5 +1697,271 @@ test.describe('API 연결 목록 긴 값 말줄임 (WD-559)', () => {
     await expect(link).toHaveAttribute('title', NAME);
     await expect(url).toHaveAttribute('title', URL);
     await expect(desc).toHaveAttribute('title', DESC);
+  });
+});
+
+/**
+ * WD-561 — API 연결 생성·편집 화면의 필수값 오류를 토스트가 아닌 필드 인라인 오류로 보인다.
+ * 예전에는 첫 실패 하나만 사라지는 토스트로 알려, 어느 칸이 문제인지·다른 칸도 틀렸는지 알 수 없었다.
+ * 이제 제출 시 모든 칸을 한꺼번에 검사해 칸 아래에 role=alert 문구를 달고(aria-invalid·aria-describedby 연결),
+ * 화면 순서상 첫 오류 칸으로 포커스를 옮긴다.
+ */
+test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  /** 새 연결 다이얼로그를 연다 */
+  async function openCreateDialog(page: import('@playwright/test').Page) {
+    await setupApiConnectionListMocks(page);
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    return dialog;
+  }
+
+  test('빈 채로 만들기 — 모든 필수 칸에 인라인 오류가 한꺼번에 뜨고 이름 칸으로 포커스, 토스트·요청 없음', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(page, 'POST', '/api/v1/api-connections', { id: 30 }, { capture: true });
+    const dialog = await openCreateDialog(page);
+
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    const nameInput = dialog.getByPlaceholder('예: Make.com API');
+    const baseUrlInput = dialog.getByPlaceholder('https://api.example.com');
+    const headerInput = dialog.getByPlaceholder('Authorization');
+    const keyInput = dialog.getByPlaceholder('API 키를 입력하세요');
+
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(nameInput).toHaveAccessibleDescription('연결 이름을 입력하세요.');
+    await expect(baseUrlInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(baseUrlInput).toHaveAccessibleDescription('Base URL을 입력하세요.');
+    await expect(headerInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(headerInput).toHaveAccessibleDescription('헤더 이름을 입력하세요.');
+    await expect(keyInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(keyInput).toHaveAccessibleDescription('API 키를 입력하세요.');
+    await expect(dialog.getByRole('alert')).toHaveCount(4);
+
+    // 화면 순서상 첫 오류 칸(연결 이름)으로 포커스
+    await expect(nameInput).toBeFocused();
+    // 검증 실패는 토스트로 알리지 않는다
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+    expect(capture.requests?.length ?? 0).toBe(0);
+    // 필수 칸은 * 로 표시한다
+    await expect(dialog.locator('label', { hasText: '연결 이름' })).toContainText('*');
+    await expect(dialog.locator('label', { hasText: '헤더 이름' })).toContainText('*');
+    await expect(dialog.locator('label', { hasText: '키 값' })).toContainText('*');
+  });
+
+  test('오류 뒤 한 칸을 고치면 그 칸 오류만 사라지고, 모두 고치면 생성된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/api-connections',
+      { id: 31, name: '고친 연결', authType: 'API_KEY' },
+      { capture: true },
+    );
+    const dialog = await openCreateDialog(page);
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    const nameInput = dialog.getByPlaceholder('예: Make.com API');
+    const baseUrlInput = dialog.getByPlaceholder('https://api.example.com');
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+
+    // 이름만 고친다 → 이름 오류만 사라지고 Base URL 오류는 남는다
+    await nameInput.fill('고친 연결');
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByText('연결 이름을 입력하세요.')).toHaveCount(0);
+    await expect(baseUrlInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByText('Base URL을 입력하세요.')).toBeVisible();
+    // 입력 중 리마운트로 포커스를 잃지 않는다
+    await expect(nameInput).toBeFocused();
+
+    await baseUrlInput.fill('https://api.example.com');
+    await dialog.getByPlaceholder('Authorization').fill('X-API-Key');
+    await dialog.getByPlaceholder('API 키를 입력하세요').fill('key-1');
+    await expect(dialog.getByRole('alert')).toHaveCount(0);
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      name: '고친 연결',
+      baseUrl: 'https://api.example.com',
+      authConfig: { placement: 'header', headerName: 'X-API-Key', apiKey: 'key-1' },
+    });
+    await expect(page.getByText('API 연결이 생성되었습니다.')).toBeVisible();
+  });
+
+  test('이름만 채우고 Base URL 형식이 틀리면 Base URL 오류만 뜨고 그 칸으로 포커스, 공백만인 이름은 빈 값 오류', async ({
+    authenticatedPage: page,
+  }) => {
+    const dialog = await openCreateDialog(page);
+    const nameInput = dialog.getByPlaceholder('예: Make.com API');
+    const baseUrlInput = dialog.getByPlaceholder('https://api.example.com');
+
+    await nameInput.fill('형식 검증');
+    await baseUrlInput.fill('ftp://api.example.com');
+    await dialog.getByPlaceholder('Authorization').fill('X-API-Key');
+    await dialog.getByPlaceholder('API 키를 입력하세요').fill('key-1');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    await expect(baseUrlInput).toHaveAccessibleDescription('Base URL은 http 또는 https로 시작해야 합니다.');
+    await expect(dialog.getByRole('alert')).toHaveCount(1);
+    await expect(baseUrlInput).toBeFocused();
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+
+    // 공백만 입력한 이름은 빈 값으로 본다 — 이름 + Base URL 두 오류, 포커스는 이름
+    await nameInput.fill('   ');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(nameInput).toHaveAccessibleDescription('연결 이름을 입력하세요.');
+    await expect(dialog.getByRole('alert')).toHaveCount(2);
+    await expect(nameInput).toBeFocused();
+  });
+
+  test('헬스체크 경로 형식 오류는 도움말 설명을 지키며 인라인으로 뜬다', async ({ authenticatedPage: page }) => {
+    const dialog = await openCreateDialog(page);
+    await dialog.getByPlaceholder('예: Make.com API').fill('헬스체크 검증');
+    await dialog.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    const healthInput = dialog.getByPlaceholder('/health');
+    await healthInput.fill('health');
+    await dialog.getByPlaceholder('Authorization').fill('X-API-Key');
+    await dialog.getByPlaceholder('API 키를 입력하세요').fill('key-1');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    await expect(healthInput).toHaveAttribute('aria-invalid', 'true');
+    // 기존 도움말 + 오류 문구가 함께 읽힌다
+    await expect(healthInput).toHaveAccessibleDescription(/10분마다 자동 상태 점검.*헬스체크 경로는 \/로 시작해야 합니다\./);
+    await expect(healthInput).toBeFocused();
+  });
+
+  test('인증 유형을 바꾸면 숨겨진 칸의 오류가 지워지고, Bearer 토큰 누락은 토큰 칸에 뜬다', async ({
+    authenticatedPage: page,
+  }) => {
+    const dialog = await openCreateDialog(page);
+    await dialog.getByPlaceholder('예: Make.com API').fill('Bearer 검증');
+    await dialog.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(dialog.getByText('헤더 이름을 입력하세요.')).toBeVisible();
+    await expect(dialog.getByText('API 키를 입력하세요.')).toBeVisible();
+
+    // Bearer 로 바꾸면 헤더 이름·키 값 오류는 사라진다
+    await dialog.getByRole('combobox').first().click();
+    await page.getByRole('option', { name: 'Bearer Token' }).click();
+    await expect(dialog.getByRole('alert')).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    const tokenInput = dialog.getByPlaceholder('토큰을 입력하세요');
+    await expect(tokenInput).toHaveAccessibleDescription('Bearer 토큰을 입력하세요.');
+    await expect(tokenInput).toBeFocused();
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+  });
+
+  test('위치(Header→Query)를 바꾸면 인증 칸 오류가 지워지고 파라미터 이름 오류로 다시 뜬다', async ({
+    authenticatedPage: page,
+  }) => {
+    const dialog = await openCreateDialog(page);
+    await dialog.getByPlaceholder('예: Make.com API').fill('Query 검증');
+    await dialog.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(dialog.getByText('헤더 이름을 입력하세요.')).toBeVisible();
+
+    await dialog.getByRole('combobox').nth(1).click();
+    await page.getByRole('option', { name: 'Query Parameter' }).click();
+    await expect(dialog.getByRole('alert')).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    const paramInput = dialog.getByPlaceholder('api_key');
+    await expect(paramInput).toHaveAccessibleDescription('파라미터 이름을 입력하세요.');
+    await expect(paramInput).toBeFocused();
+  });
+
+  test('다이얼로그를 닫았다 다시 열면 오류가 남아 있지 않다', async ({ authenticatedPage: page }) => {
+    const dialog = await openCreateDialog(page);
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(dialog.getByRole('alert')).toHaveCount(4);
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await page.getByRole('button', { name: '새 연결' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('dialog').getByRole('alert')).toHaveCount(0);
+    await expect(page.getByRole('dialog').getByPlaceholder('예: Make.com API')).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('편집 화면 — 이름·Base URL 을 비우고 저장하면 두 칸에 인라인 오류, 이름으로 포커스, PUT·토스트 없음', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/api-connections/1', { id: 1 }, { capture: true });
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    const nameInput = page.getByLabel(/^연결 이름/);
+    const baseUrlInput = page.getByPlaceholder('https://api.example.com');
+    await nameInput.fill('   ');
+    await baseUrlInput.clear();
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(nameInput).toHaveAccessibleDescription('연결 이름을 입력하세요.');
+    await expect(baseUrlInput).toHaveAccessibleDescription('Base URL을 입력하세요.');
+    await expect(nameInput).toBeFocused();
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+    expect(updateCapture.requests?.length ?? 0).toBe(0);
+
+    // 고치면 오류가 사라지고 저장된다
+    await nameInput.fill('고친 이름');
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+    await baseUrlInput.fill('https://fixed.example.com');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: '고친 이름', baseUrl: 'https://fixed.example.com' });
+  });
+
+  test('편집 화면 — 인증 헤더 이름을 비우면 인라인 오류, 저장된 키가 있으면 키 칸 비움은 오류가 아니다 (WD-480 유지)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/api-connections/1', { id: 1 }, { capture: true });
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+
+    const headerInput = page.getByPlaceholder('Authorization');
+    const keyInput = page.getByPlaceholder('새 API 키를 입력하세요');
+    await headerInput.clear();
+    await page.getByRole('button', { name: '인증 저장' }).click();
+
+    await expect(headerInput).toHaveAccessibleDescription('헤더 이름을 입력하세요.');
+    await expect(headerInput).toBeFocused();
+    // 저장된 키를 유지하므로 키 칸은 오류가 아니다
+    await expect(keyInput).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByRole('alert')).toHaveCount(1);
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+    expect(updateCapture.requests?.length ?? 0).toBe(0);
+
+    await headerInput.fill('X-Fixed');
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      authConfig: { placement: 'header', headerName: 'X-Fixed', apiKey: '***masked***' },
+    });
+  });
+
+  test('편집 화면 — 인증 편집을 취소하면 인증 칸 오류가 지워진다', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await page.getByPlaceholder('Authorization').clear();
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect(page.getByText('헤더 이름을 입력하세요.')).toBeVisible();
+
+    await page.getByRole('button', { name: '취소' }).click();
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await expect(page.getByRole('alert')).toHaveCount(0);
   });
 });

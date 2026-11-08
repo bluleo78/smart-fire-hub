@@ -194,4 +194,34 @@ public class ExceptionStubControllerExtended {
     throw new org.springframework.transaction.CannotCreateTransactionException(
         "app.tenant_id GUC 설정 실패", new java.sql.SQLException("permission denied"));
   }
+
+  /**
+   * 공백만 있는 {@code Long} 경로 변수(WD-567) — 변환 결과가 null 이라 Spring 이 MissingPathVariableException
+   * (missingAfterConversion=true)을 던진다. 예: GET /api/v1/datasets/%20.
+   */
+  @GetMapping("/missing-path-long/{id}")
+  public void missingPathLong(@PathVariable Long id) {
+    // 정상 케이스에선 도달하지 않음.
+  }
+
+  /** 공백만 있는 {@code UUID} 경로 변수(WD-567) — 실행 runId 처럼 UUID 로 받는 경로도 같은 예외가 난다. */
+  @GetMapping("/missing-path-uuid/{runId}")
+  public void missingPathUuid(@PathVariable java.util.UUID runId) {
+    // 정상 케이스에선 도달하지 않음.
+  }
+
+  /** 중첩 경로의 뒤쪽 변수만 공백인 경우(WD-567) — 예: /pipelines/1/executions/%20. */
+  @GetMapping("/missing-path-nested/{pipelineId}/executions/{execId}")
+  public void missingPathNested(@PathVariable Long pipelineId, @PathVariable Long execId) {
+    // 정상 케이스에선 도달하지 않음.
+  }
+
+  /**
+   * 매핑 템플릿에 없는 경로 변수를 받는 잘못된 핸들러(WD-567) — missingAfterConversion=false 인 코드 결함이라 400 으로 숨기지 않고 500
+   * 이어야 한다.
+   */
+  @GetMapping("/missing-path-unmapped")
+  public void missingPathUnmapped(@PathVariable("id") Long id) {
+    // 정상 케이스에선 도달하지 않음.
+  }
 }

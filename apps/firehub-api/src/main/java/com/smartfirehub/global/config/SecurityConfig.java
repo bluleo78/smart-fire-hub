@@ -1,11 +1,12 @@
 package com.smartfirehub.global.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.security.JsonAuthenticationEntryPoint;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.PlatformAuthPaths;
 import com.smartfirehub.global.security.PlatformPlaneFilter;
 import jakarta.servlet.DispatcherType;
-import jakarta.servlet.http.HttpServletResponse;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -33,6 +34,9 @@ public class SecurityConfig {
 
   private final JwtAuthenticationFilter jwtAuthenticationFilter;
   private final CorsProperties corsProperties;
+
+  /** 인증 진입점 401 본문 직렬화용 — 다른 응답과 같은 설정의 Spring 빈을 쓴다(WD-549). */
+  private final ObjectMapper objectMapper;
 
   @Bean
   public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -95,19 +99,9 @@ public class SecurityConfig {
         // 인증 실패 시 403 대신 401을 반환하여 프론트엔드의 토큰 갱신 인터셉터가 동작하도록 한다.
         // Spring Security 기본 EntryPoint는 403을 반환하여, 만료된 JWT로 접근 시
         // 프론트엔드가 refresh를 시도하지 못하는 문제가 있었다.
+        // WD-549 — 본문은 공통 ErrorResponse·UTF-8·고정 한국어 문구로 쓴다(JsonAuthenticationEntryPoint 참고).
         .exceptionHandling(
-            ex ->
-                ex.authenticationEntryPoint(
-                    (request, response, authException) -> {
-                      response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                      response.setContentType("application/json");
-                      response
-                          .getWriter()
-                          .write(
-                              "{\"error\":\"Unauthorized\",\"message\":\""
-                                  + authException.getMessage()
-                                  + "\"}");
-                    }))
+            ex -> ex.authenticationEntryPoint(new JsonAuthenticationEntryPoint(objectMapper)))
         .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
         // 평면 교차 차단은 인증이 세워진 뒤에 판정해야 하므로 JWT 필터 바로 뒤에 놓는다.
         // @Component 로 두면 서블릿 체인에도 자동 등록돼 두 번 도므로 여기서만 배선한다.

@@ -20,6 +20,7 @@ import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.service.DatasetTagService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.exception.GlobalExceptionHandler;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -444,5 +445,22 @@ class DatasetControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(atLimit)))
         .andExpect(status().isCreated());
+  }
+
+  /**
+   * GET /datasets/%20 — 공백만 있는 id 는 변환 결과가 null 이라 MissingPathVariableException 이 난다. 500 이 아니라 400
+   * + 변수명 안내이고 서비스까지 가지 않는다 (WD-567).
+   */
+  @Test
+  void getDataset_blankId_returns400NotServerError() throws Exception {
+    mockMvc
+        .perform(
+            get(java.net.URI.create("/api/v1/datasets/%20"))
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.message").value(GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE))
+        .andExpect(jsonPath("$.errors.id").value("'id' 값이 비어 있습니다."));
+    verify(datasetService, never()).getDatasetById(any(), any());
   }
 }

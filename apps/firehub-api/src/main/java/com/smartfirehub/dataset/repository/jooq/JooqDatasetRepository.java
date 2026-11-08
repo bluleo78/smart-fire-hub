@@ -8,8 +8,8 @@ import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.dto.UpdateDatasetRequest;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetSchemaMeta;
-import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
@@ -377,6 +377,7 @@ public class JooqDatasetRepository implements DatasetRepository {
 
   // WD-186: 매핑 저장·활성화가 필드 목록을 읽기 전에 잡는 공유 잠금 — 진행 중인 필드 변경(lockForColumnChange)이 끝난 뒤의 필드
   // 목록으로 검증하게 한다. 매핑 저장끼리는 서로 막지 않는다(SHARE 는 서로 호환).
+  // WD-551·WD-566: 데이터 탭 행 쓰기(DatasetDataService)도 데이터 테이블에 쓰기 전에 이 잠금을 잡아 구조 변경 뒤로 줄 선다.
   @Override
   public void lockForShare(Long id) {
     dsl.select(DS_ID).from(DATASET).where(DS_ID.eq(id)).forShare().fetch();
