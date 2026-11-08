@@ -63,8 +63,37 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
   // 최신 isDirty 값(또는 판정 함수)을 핸들러에서 참조하기 위한 ref
   // (렌더 중 ref 대입은 이 저장소의 react-hooks/refs 규칙이 오류로 막아 effect 로 갱신한다 — WD-642)
   const isDirtyRef = useRef(isDirty);
+  // (WD-651) 「이탈」을 확정해 라우터가 이 페이지에서 떠나는 중인지 여부 — 이 동안만 가드를 끈다.
+  // 확정 뒤 다음 화면(지연 로딩 청크)이 준비될 때까지 이 페이지가 마운트된 채 남는다. react-router v7 BrowserRouter 는
+  // location 갱신을 startTransition 안에서 하므로, 그동안 이 페이지의 useLocation 은 옛 경로에 머물고
+  // window.location 은 이미 새 경로다. 이 틈에 가드가 살아 있으면 브라우저 뒤로 가기를 전역 popstate 인터셉터가 잡아
+  // 기록을 하나 더 넣고 다이얼로그를 열어(곧 언마운트돼 사라짐) 주소와 화면이 어긋난다.
+  // 그래서 확정 즉시 가드를 끄고(언마운트를 기다리지 않음), 탐색이 이 페이지로 다시 정착해 커밋된 location 과
+  // window.location 이 같아지면(settleLeaving) 또는 폼이 깨끗해지면 다시 켠다.
+  const leavingRef = useRef(false);
+
+  // 이 컴포넌트가 커밋한 라우터 location. `location`은 렌더 시점 스냅샷이라 이벤트 핸들러(popstate 인터셉터·click 캡처 등)는
+  // ref 로 최신 값을 참조한다.
+  const locationRef = useRef(location);
+  // 이 페이지(커밋된 location)의 경로 — pathname + search + hash. restorePath·click 캡처·settleLeaving 이 함께 쓴다.
+  const currentPath = useCallback(
+    () => locationRef.current.pathname + locationRef.current.search + locationRef.current.hash,
+    [],
+  );
+
+  // (WD-651) 커밋된 location 과 window.location 이 같아졌으면(이 페이지로 정착) 이탈 중 상태를 끝낸다 — leavingRef 설명 참고.
+  const settleLeaving = useCallback(() => {
+    if (!leavingRef.current) return;
+    const { pathname, search, hash } = window.location;
+    if (currentPath() === pathname + search + hash) leavingRef.current = false;
+  }, [currentPath]);
+
   useEffect(() => {
     isDirtyRef.current = isDirty;
+    // (WD-651) 폼이 깨끗해지면(같은 컴포넌트가 마운트된 채 새 대상으로 바뀐 경우 등) 가드를 다시 켠다.
+    // boolean 으로 넘긴 경우만 여기서 처리한다. 판정 함수(WD-642)는 참조가 바뀌지 않으면 이 effect 가 폼 상태를
+    // 따라가지 못하므로, 그 경우의 재무장은 guardActive 가 판정 시점에 맡는다(아래 guardActive 참고).
+    if (isDirty === false) leavingRef.current = false;
   }, [isDirty]);
   // (WD-642) isDirty 로 함수를 넘기면 이동 시도·beforeunload 때에만 불러 판정한다 —
   // 매 렌더마다 폼 전체를 비교하지 않고, 필요한 순간에 최신 값으로 판단하게 한다.
@@ -73,10 +102,29 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
     return typeof value === 'function' ? value() : value;
   }, []);
 
+  // 커밋된 location 을 ref 에 반영한다. (WD-651) 같은 요소에 새 location 이 커밋되면(같은 페이지로 push·새 id·리다이렉트) settleLeaving.
+  useEffect(() => {
+    locationRef.current = location;
+    settleLeaving();
+  }, [location, settleLeaving]);
+
+  // (WD-651) 가드 세 곳(popstate 레지스트리·click 캡처·beforeunload)과 requestNavigate 가 함께 쓰는 판정.
+  // dirty 이면서 아직 「이탈」을 확정하지 않았을 때만 가로챈다. dirty 는 readDirty 로 읽어 판정 함수도 지원한다 (WD-642).
+  // (WD-651·WD-642) 판정 시점에 폼이 깨끗하면 이탈 중 상태도 함께 끝낸다 — 판정 함수를 넘긴 경우엔 [isDirty] effect 가
+  // 폼이 깨끗해진 것을 알 수 없으므로, 가드가 실제로 쓰이는 순간(이동 시도·beforeunload·popstate)에 재무장해 둔다.
+  // 깨끗한 동안은 어차피 가로채지 않으므로 이 시점의 해제는 동작을 바꾸지 않고, 이후 다시 dirty 가 되면 곧바로 가드가 켜진다.
+  const guardActive = useCallback(() => {
+    if (!readDirty()) {
+      leavingRef.current = false;
+      return false;
+    }
+    return !leavingRef.current;
+  }, [readDirty]);
+
   // (1) document click 캡처 — 사이드바/AppLayout 등 모든 <a href> 클릭을 가로챈다.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (!readDirty()) return;
+      if (!guardActive()) return;
       // 수정자 키(Cmd/Ctrl/Shift/Alt) 또는 우클릭은 새 탭 등 외부 의도이므로 그대로 둔다.
       if (e.defaultPrevented) return;
       if (e.button !== 0) return;
@@ -103,10 +151,8 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
       if (url.origin !== window.location.origin) return;
 
       const targetPath = url.pathname + url.search + url.hash;
-      const currentPath = location.pathname + location.search + location.hash;
-      if (targetPath === currentPath) return;
-      // 같은 경로(다른 hash)면 통과 — pathname 동일 시만 통과로 한정한다.
-      if (url.pathname === location.pathname) return;
+      // 같은 경로(다른 search·hash 포함)면 통과 — pathname 동일 시만 통과로 한정한다.
+      if (url.pathname === locationRef.current.pathname) return;
 
       // 이동 가로채기
       e.preventDefault();
@@ -118,23 +164,18 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
     // capture 단계에서 처리해 react-router의 Link onClick보다 먼저 동작하게 한다.
     document.addEventListener('click', handler, true);
     return () => document.removeEventListener('click', handler, true);
-  }, [location.pathname, location.search, location.hash, setOpenState, readDirty]);
+    // 경로는 locationRef 로 읽고 판정·열기는 안정 콜백(guardActive·setOpenState)이라 마운트당 한 번만 구독한다 (WD-651·WD-642).
+  }, [guardActive, setOpenState]);
 
   // (2) popstate 가로채기 — `unsaved-changes-guard-registry`의 전역 인터셉터(main.tsx에서 1회
   // 설치, 라우터보다 먼저 등록됨)에 현재 페이지를 "활성 가드"로 등록해둔다. 실제 popstate 처리는
   // 그 인터셉터가 담당하며, dirty일 때 라우터로의 전파를 막고(stopImmediatePropagation) URL을
-  // 원복한 뒤 `onIntercepted`로 이 다이얼로그를 연다. `location`은 렌더 시점 스냅샷이라 ref로
-  // 감싸 popstate 발생 시점의 최신 경로를 참조한다.
-  const locationRef = useRef(location);
-  useEffect(() => {
-    locationRef.current = location;
-  }, [location]);
-
+  // 원복한 뒤 `onIntercepted`로 이 다이얼로그를 연다. 원복 경로는 locationRef(currentPath)로
+  // popstate 발생 시점의 최신 경로를 참조한다.
   useEffect(() => {
     const unregister = registerActiveGuard({
-      isDirty: readDirty,
-      restorePath: () =>
-        locationRef.current.pathname + locationRef.current.search + locationRef.current.hash,
+      isDirty: guardActive,
+      restorePath: currentPath,
       onIntercepted: () => {
         // pendingTo는 popstate에서는 알 수 없으므로 확정 시 history.back()을 재실행해야 한다
         // (handleConfirm 참고). 단, 다이얼로그는 즉시 표시해 사용자에게 dirty 상태임을 알린다.
@@ -143,16 +184,24 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
       },
     });
     return unregister;
-  }, [setOpenState, readDirty]);
+  }, [guardActive, currentPath, setOpenState]);
+
+  // (2-1) (WD-651) 같은 기록 항목으로 뒤로 가기하면 커밋된 location 이 바뀌지 않아 위 이펙트가 돌지 않으므로 popstate 에서 settleLeaving.
+  // 이 리스너는 페이지 마운트 시점에 등록돼 항상 전역 인터셉터·라우터보다 나중에 실행된다(#562 참고) — 그래서 이 뒤로 가기
+  // 자체는 이미 가드 없이 통과된 뒤에 재무장된다(먼저 실행됐다면 바로 이 뒤로 가기를 다시 가로챘을 것이다).
+  useEffect(() => {
+    window.addEventListener('popstate', settleLeaving);
+    return () => window.removeEventListener('popstate', settleLeaving);
+  }, [settleLeaving]);
 
   // (3) 브라우저 탭 닫기·새로고침 가드
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
-      if (readDirty()) e.preventDefault();
+      if (guardActive()) e.preventDefault();
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, [readDirty]);
+  }, [guardActive]);
 
   // (이슈 #634) 페이지 내 "뒤로가기" 등 프로그래매틱 이동 버튼용 헬퍼.
   // dirty면 <a> 클릭 가로채기와 동일하게 다이얼로그를 띄우고, 아니면 바로 navigate 한다.
@@ -160,14 +209,14 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
   // <a> 탐지 사각지대를 우회하지 않는다.
   const requestNavigate = useCallback(
     (to: string) => {
-      if (!readDirty()) {
+      if (!guardActive()) {
         navigate(to);
         return;
       }
       setPendingTo(to);
       setOpenState(true);
     },
-    [navigate, setOpenState, readDirty],
+    [navigate, guardActive, setOpenState],
   );
 
   const handleCancel = useCallback(() => {
@@ -181,7 +230,12 @@ export function useUnsavedChangesGuard(isDirty: boolean | (() => boolean)) {
     if (wasOpen && afterSaveTo) navigate(afterSaveTo);
   }, [navigate, setOpenState]);
 
+  // 「취소」는 이 페이지에 남는 것이므로 leavingRef 를 건드리지 않는다(가드 유지).
   const handleConfirm = useCallback(() => {
+    // (WD-651) 이탈 확정 즉시 가드를 끈다(leavingRef 설명 참고). popstate 경로(history.back())여도 같다.
+    // 처리하지 않는 경우: popstate 경로에서 history.back() 이 아무 일도 하지 않으면(되돌아갈 기록이 없는 드문 경우)
+    // 주소가 바뀌지 않아 settleLeaving 이 불리지 않으므로, 다시 이동하거나 폼이 깨끗해질 때까지 가드가 꺼진 채로 남는다.
+    leavingRef.current = true;
     setOpenState(false);
     // 이탈을 골랐으면 저장 후 갈 곳은 버리고 사용자가 가려던 곳으로 간다 (WD-642)
     afterSaveToRef.current = null;
