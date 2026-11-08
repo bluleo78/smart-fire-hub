@@ -104,7 +104,8 @@ public class DataTableQueryService {
     // DataTableQueryServiceTenantSchemaTest 가 접미사 붙은 테넌트로 실제 프로덕션 경로를 재확인
     // 한다. 고치지 않는다.
     dsl.execute("SET LOCAL search_path = '" + schema + "'");
-    dsl.execute("SET LOCAL statement_timeout = '30s'");
+    // 제한 시간은 시간 초과 안내 문구와 같은 상수에서 만든다(WD-571).
+    dsl.execute(AdhocSqlErrorMessages.SET_STATEMENT_TIMEOUT_SQL);
 
     // Use SAVEPOINT so that SQL errors don't abort the outer transaction.
     // PostgreSQL marks the entire transaction as aborted on any error,

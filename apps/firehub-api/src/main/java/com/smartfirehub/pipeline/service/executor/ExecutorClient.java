@@ -316,6 +316,13 @@ public class ExecutorClient {
     }
   }
 
+  /**
+   * 분석 조회 응답(POST /execute/query).
+   *
+   * @param dbError 실패 때 실행기가 싣는 공통 오류 구조(파이썬 실행기 {@code db_error_of(str(exc), sqlstate(exc))},
+   *     WD-77) — 분석 서비스가 {@code sqlState} 로 한국어 안내를 고른다(WD-571). 성공 응답·이 필드를 보내지 않는 구버전 실행기면 null
+   *     이고, 그때는 {@code error} 원문만 쓴다.
+   */
   public record QueryExecuteResult(
       boolean success,
       @JsonProperty("query_type") String queryType,
@@ -325,7 +332,33 @@ public class ExecutorClient {
       @JsonProperty("affected_rows") int affectedRows,
       @JsonProperty("execution_time_ms") long executionTimeMs,
       boolean truncated,
-      String error) {}
+      String error,
+      @JsonProperty("db_error") DbError dbError) {
+
+    /** db_error 없는 결과(기존 9필드 모양) — Tibero 변환·테스트 등 SQLState 가 없는 경로가 쓴다(WD-571). */
+    public QueryExecuteResult(
+        boolean success,
+        String queryType,
+        List<String> columns,
+        List<Map<String, Object>> rows,
+        int rowCount,
+        int affectedRows,
+        long executionTimeMs,
+        boolean truncated,
+        String error) {
+      this(
+          success,
+          queryType,
+          columns,
+          rows,
+          rowCount,
+          affectedRows,
+          executionTimeMs,
+          truncated,
+          error,
+          null);
+    }
+  }
 
   /**
    * SQL 실행 응답.
@@ -373,8 +406,16 @@ public class ExecutorClient {
    *
    * @param code 저장소 오류 코드(부호 포함)
    * @param message 저장소 오류 메시지(예: {@code JDBC-10007:UNIQUE constraint violation ...})
+   * @param sqlState SQLState(계약 벡터 {@code dbErrorFields} 의 {@code sql_state}, WD-571) — 파이썬
+   *     실행기(PG)는 PG SQLState 를 싣고(code 는 0), 검증 거부처럼 SQLState 가 없거나 이 필드를 보내지 않는 실행기면 null 이다.
    */
-  public record DbError(int code, String message) {}
+  public record DbError(int code, String message, @JsonProperty("sql_state") String sqlState) {
+
+    /** SQLState 없는 저장소 오류(기존 2필드 모양) — db-executor(Tibero) 경로·테스트가 쓴다. */
+    public DbError(int code, String message) {
+      this(code, message, null);
+    }
+  }
 
   /**
    * PostgreSQL 서버 구조화 오류 중 사용자 문구에 쓰는 필드만. firehub-executor SQL 실행 응답의 {@code pg_error}(필드명

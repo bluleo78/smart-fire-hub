@@ -190,7 +190,10 @@ public class AnalyticsQueryExecutionService {
     try {
       var result = executorClient.executeQuery(sql, maxRows, readOnly);
       if (!result.success()) {
-        return errorResponse(result.error());
+        // 운영 기본 경로라 직접 실행 경로와 같은 한국어 안내를 첫 줄에 붙인다(WD-571) — 실행기는 예외 대신 원문 문자열과
+        // db_error.sql_state 만 주므로 SQLState 로 안내를 고르고, 실행기 원문은 둘째 줄부터 그대로 둔다.
+        String sqlState = result.dbError() != null ? result.dbError().sqlState() : null;
+        return errorResponse(AdhocSqlErrorMessages.withGuide(sqlState, result.error()));
       }
       return new AnalyticsQueryResponse(
           result.queryType(),
@@ -252,7 +255,8 @@ public class AnalyticsQueryExecutionService {
     // 가 접미사 붙은 테넌트로 이 문장을 실제 프로덕션 경로로 재확인한다. 그래서 이 줄은 고치지
     // 않는다 — 인용이 이미 있어 안전하다.
     dsl.execute("SET LOCAL search_path = '" + DataSchema.current() + "', 'public'");
-    dsl.execute("SET LOCAL statement_timeout = '30s'");
+    // 제한 시간은 시간 초과 안내 문구와 같은 상수에서 만든다(WD-571).
+    dsl.execute(AdhocSqlErrorMessages.SET_STATEMENT_TIMEOUT_SQL);
     dsl.execute("SAVEPOINT analytics_query");
 
     try {
@@ -711,16 +715,18 @@ public class AnalyticsQueryExecutionService {
   //  - PSQLException.getServerErrorMessage() 분해로 LLM 친화적 자연어 인라인 포맷 반환
   //  - jOOQ 가 prefix 로 echo 하는 SQL 본문 제거 (회당 6KB → ~150B)
   //  - 모든 경로 2000자 truncate 가드
-  //  - 본문은 데이터셋 SQL 편집기와 함께 쓰도록 AdhocSqlErrorMessages 로 옮겼다(WD-421). 출력은 그대로다.
+  //  - 본문은 데이터셋 SQL 편집기와 함께 쓰도록 AdhocSqlErrorMessages 로 옮겼다(WD-421).
+  //  - 흔한 오류(시간 초과·없는 테이블/컬럼 등)는 첫 줄에 한국어 안내를 붙이고 둘째 줄부터 기존 포맷을 둔다(WD-571).
   // ============================================================
 
   /**
-   * 실행 catch 블록에서 응답 error 필드 문자열을 생성한다 — {@link AdhocSqlErrorMessages#format} 에 그대로 맡긴다(WD-421).
+   * 실행 catch 블록에서 응답 error 필드 문자열을 생성한다 — {@link AdhocSqlErrorMessages#formatWithGuide} 에
+   * 맡긴다(WD-571: 영어 원문·SQLState 만 나가 시간 초과 등에서 제한·해결 방법을 알 수 없던 문제). 원문 포맷은 둘째 줄부터 그대로 남는다.
    *
    * <p>package-private — same-package 테스트에서 분기 커버리지(truncate, sem==null fallback) 직접 검증을 위해 노출. 외부
    * 호출은 위 catch 블록 한 곳뿐.
    */
   String formatExecutionError(Exception e) {
-    return AdhocSqlErrorMessages.format(e);
+    return AdhocSqlErrorMessages.formatWithGuide(e);
   }
 }

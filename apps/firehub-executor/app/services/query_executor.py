@@ -716,6 +716,8 @@ def execute_query(
         # 파라미터 없는 설정 문장들은 한 번의 execute 로 보내 왕복을 줄인다(순서 유지 — READ ONLY 가 첫 문장).
         setup = [
             f"SET LOCAL search_path = '{schema}', 'public'",
+            # 30초는 API 의 AdhocSqlErrorMessages.ADHOC_STATEMENT_TIMEOUT_SECONDS 와 같은 값이어야 한다(WD-571) — API 가 이 실패
+            # (57014)에 「30초 제한 시간」 한국어 안내를 붙이므로, 이 값을 바꾸면 그 상수(와 ExecutorClient.executeQuery 의 35초 대기)도 함께 바꾼다.
             "SET LOCAL statement_timeout = '30s'",
             "SAVEPOINT analytics_query",
         ]

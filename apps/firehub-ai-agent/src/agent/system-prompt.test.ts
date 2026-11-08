@@ -631,6 +631,12 @@ describe('SYSTEM_PROMPT', () => {
       expect(SYSTEM_PROMPT).toContain('SQLState 42601');
     });
 
+    // WD-571 — 분석 쿼리 error 첫 줄에 붙는 사용자용 한국어 안내를 SQLState 분기로 오인하지 않도록, 분기는 그 아래 원문 줄로 하라고 알린다
+    it('분석 쿼리 error 첫 줄의 한국어 안내를 건너뛰고 ERROR / SQLState 줄로 분기하라고 명시한다', () => {
+      expect(SYSTEM_PROMPT).toContain('첫 줄에 사용자용 한국어 안내 한 줄이 먼저 올 수 있다');
+      expect(SYSTEM_PROMPT).toContain('그 다음 ERROR / SQLState 줄로 판단한다');
+    });
+
     // 컬럼 정보가 컨텍스트에 없는 상태로 SQL 작성 금지 가드
     it('컬럼 정보 없이 SQL 작성 금지 가드를 명시한다', () => {
       expect(SYSTEM_PROMPT).toContain('컬럼 정보가 컨텍스트에 없는 상태로 SQL 작성 금지');
