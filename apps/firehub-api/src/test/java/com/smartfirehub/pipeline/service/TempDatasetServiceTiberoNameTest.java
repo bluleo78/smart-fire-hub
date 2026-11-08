@@ -169,7 +169,11 @@ class TempDatasetServiceTiberoNameTest {
         mock(DatasetRepository.class),
         datasetService,
         mock(DatasetColumnRepository.class),
-        new DataTableService(null),
+        // 예약 컬럼명 규칙은 저장소마다 다르다(WD-564) — 스키마 목의 백엔드에 맞는 규칙을 쓴다.
+        new DataTableService(
+            schema.isTibero()
+                ? com.smartfirehub.support.ReservedNameResolvers.appReservedOnly()
+                : com.smartfirehub.support.ReservedNameResolvers.postgres()),
         schema);
   }
 }

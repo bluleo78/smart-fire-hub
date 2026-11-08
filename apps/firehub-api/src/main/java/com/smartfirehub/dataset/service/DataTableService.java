@@ -107,24 +107,23 @@ public class DataTableService {
   }
 
   /**
-   * <b>새로 만드는</b> 컬럼명 검증 — 시스템 예약어({@link #SYSTEM_COLUMNS}) + 형식 + 길이 상한({@link
-   * #MAX_COLUMN_NAME_LENGTH}). 생성·추가·이름 변경에서만 쓴다.
+   * <b>새로 만드는</b> 컬럼명 검증 — 현재 테넌트 백엔드의 예약어({@link DataTableStore#reservedColumnNames()}) + 형식 + 길이
+   * 상한({@link #MAX_COLUMN_NAME_LENGTH}). 생성·추가·이름 변경에서만 쓴다.
+   *
+   * <p>예약어는 백엔드마다 다르다 — PG 는 앱 시스템 컬럼에 더해 PG 시스템 컬럼(xmin 등)도 DDL 이 거부하므로 미리 400 으로 막고(WD-564, DDL
+   * 까지 가면 500), Tibero 는 앱 시스템 컬럼만 막는다. 그래서 테넌트 컨텍스트 안에서 부른다.
    */
   public void validateNewColumnName(String columnName) {
     // 예약어를 형식보다 먼저 본다 — _updated_at 처럼 형식에도 걸리는 이름에 "예약어"라는 정확한 이유를 준다.
-    if (SYSTEM_COLUMNS.contains(columnName.toLowerCase())) {
-      throw new InvalidTableNameException(reservedColumnNameMessage(columnName));
+    DataTableStore store = resolver.tableStore();
+    if (store.isReservedColumnName(columnName)) {
+      throw new InvalidTableNameException(store.reservedColumnNameMessage(columnName));
     }
     validateName(columnName);
     if (columnName.length() > MAX_COLUMN_NAME_LENGTH) {
       throw new InvalidTableNameException(
           "필드명은 최대 " + MAX_COLUMN_NAME_LENGTH + "자까지 쓸 수 있습니다(입력 " + columnName.length() + "자)");
     }
-  }
-
-  /** 시스템 예약 컬럼명 안내 문구 — 데이터셋 컬럼 생성과 파이프라인 스텝 저장 검증(WD-154)이 같은 문장을 쓰도록 한 곳에 둔다. */
-  public static String reservedColumnNameMessage(String columnName) {
-    return "컬럼명 '" + columnName + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)";
   }
 
   /**

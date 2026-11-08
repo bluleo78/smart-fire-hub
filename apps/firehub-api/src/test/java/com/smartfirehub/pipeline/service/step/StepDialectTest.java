@@ -117,6 +117,25 @@ class StepDialectTest {
     TenantContext.clear();
   }
 
+  /**
+   * WD-564 — 자동 생성 TEMP 의 결과 컬럼 별칭은 방언(백엔드)의 예약어를 따른다. PG 는 PG 시스템 컬럼명(ctid·xmin 등)도 id 처럼 별칭하고,
+   * Tibero 는 PG 시스템 컬럼명 제약이 없으므로 그대로 둔다. 방언 목록은 저장소 정의와 같아야 TEMP 생성 검증과 어긋나지 않는다.
+   */
+  @Test
+  void reservedColumnNames_pgAliasesPgSystemColumns_tiberoKeepsThem() {
+    assertThat(pg.reservedColumnNames())
+        .isEqualTo(com.smartfirehub.dataset.service.PostgresDataTableStore.RESERVED_COLUMN_NAMES)
+        .contains("id", "_updated_at", "xmin", "xmax", "cmin", "cmax", "ctid", "tableoid");
+    assertThat(tibero.reservedColumnNames())
+        .isEqualTo(com.smartfirehub.dataset.storage.DataTableStore.SYSTEM_COLUMN_NAMES);
+
+    List<String> names = List.of("ctid", "XMIN", "id", "xmin_value", "ctid2", "name");
+    assertThat(SqlOutputColumns.renameReservedColumnNames(names, pg.reservedColumnNames()))
+        .containsExactly("ctid_1", "xmin_1", "id_1", "xmin_value", "ctid2", "name");
+    assertThat(SqlOutputColumns.renameReservedColumnNames(names, tibero.reservedColumnNames()))
+        .containsExactly("ctid", "XMIN", "id_1", "xmin_value", "ctid2", "name");
+  }
+
   @Test
   void pg_takesOutputSessionLock_onlyForReplace() {
     assertThat(pg.takesOutputSessionLock(true)).isTrue();

@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
@@ -35,6 +36,24 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class PostgresDataTableStore implements DataTableStore {
+
+  /**
+   * PostgreSQL 이 모든 테이블에 숨겨 두는 시스템 컬럼 이름(WD-564). 사용자 컬럼으로 만들면 DDL 이 "conflicts with a system
+   * column name" 으로 실패해 500 이 됐으므로 새 컬럼명 검증에서 미리 400 으로 거부한다. PG DDL 제약이라 이 저장소에만 적용한다 — 물리 테이블의 일반
+   * 컬럼이 아니므로 {@link DataTableStore#SYSTEM_COLUMNS}(결과 숨김·적재 키 제거 등에 쓰임)에는 넣지 않는다.
+   */
+  public static final List<String> PG_SYSTEM_COLUMNS =
+      List.of("xmin", "xmax", "cmin", "cmax", "ctid", "tableoid");
+
+  /** PG 백엔드에서 새 컬럼에 쓸 수 없는 이름 전체(안내 순서) — 앱 시스템 컬럼 다음에 PG 시스템 컬럼. */
+  public static final List<String> RESERVED_COLUMN_NAMES =
+      Stream.concat(SYSTEM_COLUMN_NAMES.stream(), PG_SYSTEM_COLUMNS.stream()).toList();
+
+  /** PG 는 앱 시스템 컬럼에 더해 PG 시스템 컬럼명도 예약어다(WD-564). */
+  @Override
+  public List<String> reservedColumnNames() {
+    return RESERVED_COLUMN_NAMES;
+  }
 
   @Override
   public DataStoreBackend backend() {
@@ -167,13 +186,10 @@ public class PostgresDataTableStore implements DataTableStore {
     sql.append("id BIGSERIAL PRIMARY KEY, ");
     sql.append("import_id BIGINT, ");
 
-    // id, import_id, created_at, _updated_at은 시스템 예약 컬럼명 — 사용자 지정 불가
+    // 앱 시스템 컬럼(id 등)과 PostgreSQL 시스템 컬럼(xmin 등, WD-564)은 사용자 지정 불가
     for (DatasetColumnRequest col : columns) {
-      if (SYSTEM_COLUMNS.contains(col.columnName().toLowerCase())) {
-        throw new InvalidTableNameException(
-            "컬럼명 '"
-                + col.columnName()
-                + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)");
+      if (isReservedColumnName(col.columnName())) {
+        throw new InvalidTableNameException(reservedColumnNameMessage(col.columnName()));
       }
       DataTableNames.validate(col.columnName());
       sql.append("\"").append(col.columnName()).append("\" ");
@@ -227,12 +243,9 @@ public class PostgresDataTableStore implements DataTableStore {
     DataTableNames.validate(tableName);
     DataTableNames.validate(column.columnName());
 
-    // id, import_id, created_at, _updated_at은 시스템 예약 컬럼명 — addColumn 시에도 차단
-    if (SYSTEM_COLUMNS.contains(column.columnName().toLowerCase())) {
-      throw new InvalidTableNameException(
-          "컬럼명 '"
-              + column.columnName()
-              + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)");
+    // 앱·PostgreSQL 시스템 컬럼명(WD-564) — addColumn 시에도 DDL 전에 차단해 500 대신 400 으로 알린다
+    if (isReservedColumnName(column.columnName())) {
+      throw new InvalidTableNameException(reservedColumnNameMessage(column.columnName()));
     }
 
     StringBuilder sql = new StringBuilder();

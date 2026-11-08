@@ -542,6 +542,71 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
   }
 
   /**
+   * WD-564 — PG SQL 스텝 결과 컬럼명이 PG 시스템 컬럼명(ctid·xmin 등)이면, 출력 데이터셋 자동 생성(TEMP) 경로에서 앱 예약어(id →
+   * id_1)와 같은 방식으로 별칭해야 한다. 별칭이 없으면 TEMP 생성 검증이 PG 예약어로 거부해 스텝이 실패한다.
+   */
+  @Test
+  void PG_시스템_컬럼명_결과는_TEMP_자동생성에서_별칭된다() {
+    seedSource(1, 3);
+
+    pipelineService.updatePipeline(
+        pipelineId,
+        new UpdatePipelineRequest(
+            "Inc Pipeline " + suffix,
+            "PG 시스템 컬럼명 별칭",
+            null,
+            List.of(
+                new PipelineStepRequest(
+                    STEP_NAME,
+                    "pg system column names",
+                    "SQL",
+                    "SELECT ctid::text AS ctid, code AS xmin, name FROM "
+                        + DataSchema.qualify(srcTable),
+                    null, // 출력 데이터셋 미지정 → 임시 데이터셋 자동 생성 경로
+                    null,
+                    null,
+                    "REPLACE"))),
+        userId);
+
+    Long tempDatasetId = null;
+    try {
+      runAndWait("COMPLETED");
+
+      tempDatasetId = tempDatasetService.findExistingTempDataset(stepId()).orElseThrow();
+      Long finalTempDatasetId = tempDatasetId;
+      List<String> columns =
+          inTenantFixture(
+              () ->
+                  dsl.fetch(
+                          "SELECT column_name FROM dataset_column WHERE dataset_id = ?"
+                              + " ORDER BY column_order",
+                          finalTempDatasetId)
+                      .getValues(0, String.class));
+      assertThat(columns).containsExactly("ctid_1", "xmin_1", "name");
+
+      String tempTable =
+          inTenantFixture(
+              () ->
+                  (String)
+                      dsl.fetchValue(
+                          "SELECT table_name FROM dataset WHERE id = ?", finalTempDatasetId));
+      List<String> xminValues =
+          dataDsl
+              .fetch("SELECT xmin_1 FROM " + DataSchema.qualify(tempTable) + " ORDER BY xmin_1")
+              .getValues(0, String.class);
+      assertThat(xminValues).as("별칭 컬럼에 원래 값(code)이 적재돼야 한다").hasSize(3).doesNotContainNull();
+    } finally {
+      if (tempDatasetId != null) {
+        try {
+          datasetService.deleteDataset(tempDatasetId);
+        } catch (Exception ignored) {
+          // 정리 실패가 본 검증 결과를 가리지 않게 한다.
+        }
+      }
+    }
+  }
+
+  /**
    * 재실행 회귀 고정(WD-229): 같은 {@code SELECT *} 파이프라인을 두 번 실행해도 임시 데이터셋의 {@code id_1} 에 원본 {@code id} 가
    * 채워진다.
    *

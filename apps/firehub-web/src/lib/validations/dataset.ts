@@ -29,7 +29,9 @@ export function columnNameLengthError(name: string): string | undefined {
 export const COLUMN_NAME_DUPLICATE_MESSAGE = '이미 있는 칼럼명입니다';
 export const FIELD_NAME_DUPLICATE_MESSAGE = '이미 있는 필드명입니다';
 
-// 시스템 예약 칼럼명 — 백엔드 DataTableService.SYSTEM_COLUMNS 와 같아야 한다(물리 테이블이 직접 쓰는 이름).
+// 시스템 예약 칼럼명 — 백엔드 DataTableStore.SYSTEM_COLUMN_NAMES(앱 예약어, 물리 테이블이 직접 쓰는 이름)와 같아야 한다.
+// 화면은 백엔드와 무관한 앱 예약어만 미리 검사한다. DB 별 예약어(PG 시스템 컬럼 xmin·ctid 등, WD-564)는 화면이 테넌트 저장소
+// 백엔드를 모르므로 여기 넣지 않는다 — 서버가 400 과 예약어 안내로 거부한다.
 // 예약어 안내가 중복 안내보다 먼저 보이게 하는 데 쓴다(예약어 이름이 기존 필드처럼 보여도 진짜 이유는 예약어다):
 // 필드 추가·수정 다이얼로그는 제출 시 이 검사를 중복보다 먼저 하고, 생성 화면은 예약어를 중복으로 세지 않아 서버의 예약어 안내가 뜬다.
 export const SYSTEM_COLUMN_NAMES = ['id', 'import_id', 'created_at', '_updated_at'] as const;

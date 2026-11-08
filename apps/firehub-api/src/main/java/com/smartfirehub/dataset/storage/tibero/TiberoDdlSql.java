@@ -155,15 +155,17 @@ public final class TiberoDdlSql {
   }
 
   /**
-   * 사용자 컬럼 이름이 시스템 예약 컬럼({@link DataTableStore#SYSTEM_COLUMNS})이면 PG 구현과 같은 메시지의 400 으로 거부한다.
+   * 사용자 컬럼 이름이 앱 시스템 예약 컬럼({@link DataTableStore#SYSTEM_COLUMNS})이면 PG 구현과 같은 메시지의 400 으로 거부한다.
    * {@code createTable}(따라서 {@code cloneTable})은 이 빌더 안에서, {@code addColumn} 은 저장소가 DDL 전에 부른다.
    *
    * @throws InvalidTableNameException 시스템 예약 컬럼 이름일 때
    */
   public static void rejectSystemColumn(String columnName) {
+    // 앱 시스템 컬럼만 막는다 — PG 시스템 컬럼명(xmin 등)은 PG DDL 제약이라 Tibero 에는 적용하지 않는다. 그런 이름의 기존 Tibero
+    // 컬럼이 복제·TEMP 재생성(createTable) 에서 거부되면 안 되기 때문이다(WD-564).
     if (DataTableStore.SYSTEM_COLUMNS.contains(columnName.toLowerCase(Locale.ROOT))) {
       throw new InvalidTableNameException(
-          "컬럼명 '" + columnName + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)");
+          DataTableStore.reservedColumnNameMessage(columnName, DataTableStore.SYSTEM_COLUMN_NAMES));
     }
   }
 
