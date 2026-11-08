@@ -37,8 +37,11 @@ export function normalizeSecret(authType: SecretAuthType, value: string): string
   return authType === 'BEARER' ? stripped.replace(BEARER_PREFIX, '') : stripped;
 }
 
-/** 비밀 칸이 정리한 뒤 비었을 때의 안내(서버 문구와 같은 이름). 비지 않았으면 null — 서버 `isBlank()` 와 같은 판정. */
+/**
+ * 비밀 칸이 정리한 뒤 비었을 때의 안내(서버 문구와 같은 이름). 비지 않았으면 null — 서버 `isBlank()` 와 같은 판정.
+ * normalizeSecret 이 이미 앞뒤 공백을 떼고(접두어를 뗀 나머지는 원래 값의 끝부분이라 끝 공백이 없다) 돌려주므로 빈 문자열 비교만 한다.
+ */
 export function missingSecretMessage(authType: SecretAuthType, value: string): string | null {
-  if (javaStrip(normalizeSecret(authType, value)) !== '') return null;
+  if (normalizeSecret(authType, value) !== '') return null;
   return authType === 'API_KEY' ? 'API 키를 입력하세요.' : 'Bearer 토큰을 입력하세요.';
 }

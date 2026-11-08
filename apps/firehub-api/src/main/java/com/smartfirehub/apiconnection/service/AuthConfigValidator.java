@@ -69,21 +69,10 @@ public final class AuthConfigValidator {
    *
    * @return 정리한 토큰. null 이면 null
    */
-  static String normalizeBearerToken(String token) {
+  public static String normalizeBearerToken(String token) {
     if (token == null) return null;
     // 앞뒤 공백까지 함께 정리한다 — 공백도 줄바꿈처럼 헤더 값을 깨거나 인증을 실패시킨다.
     return BEARER_PREFIX.matcher(token.strip()).replaceFirst("");
-  }
-
-  /**
-   * 인증 방식의 비밀 필드 값을 정리한 형태로 꺼낸다(BEARER 면 {@link #normalizeBearerToken} 적용). 지원하지 않는 방식이거나 config 가
-   * null 이면 null.
-   */
-  static String normalizedSecret(String authType, Map<String, String> config) {
-    String key = REQUIRED_SECRET_BY_AUTH_TYPE.get(authType);
-    if (key == null || config == null) return null;
-    String value = config.get(key);
-    return "BEARER".equals(authType) ? normalizeBearerToken(value) : value;
   }
 
   /** API_KEY + placement=header 에서 헤더 이름을 비워 둘 때 쓰는 기본 헤더 — 검사·호출·비교가 같은 기본값을 보도록 한 곳에 둔다. */
@@ -155,8 +144,21 @@ public final class AuthConfigValidator {
   public static boolean isSecretMissing(String authType, Map<String, String> config) {
     // Map.of 는 null 키 조회에 NPE 를 던지므로 방식이 없으면 먼저 돌려보낸다 — API_CALL 인라인 인증은 방식이 없을 수 있다(WD-639).
     if (authType == null || !REQUIRED_SECRET_BY_AUTH_TYPE.containsKey(authType)) return false;
-    String value = normalizedSecret(authType, config);
-    return value == null || value.isBlank();
+    return isSecretValueMissing(
+        authType, config != null ? config.get(REQUIRED_SECRET_BY_AUTH_TYPE.get(authType)) : null);
+  }
+
+  /**
+   * 이미 골라 낸 비밀 값 하나가 정리한 뒤 비어 있는지 본다(WD-647). {@link #isSecretMissing} 은 표준 필드(apiKey·token)만 보지만,
+   * API_CALL 경로({@code ApiCallAuth})는 Python 실행기와 같은 대체 키(value·key_value)에서 값을 고른 뒤 같은 정리·빈 값 규칙을
+   * 써야 해서 값 단위로 나눴다. 저장·저장 전 테스트 검사는 여전히 표준 필드만 받는다.
+   *
+   * @return 비밀 필드가 정해진 방식이고 값이 없음·공백·(BEARER) 접두어만이면 true. 방식이 없거나 모르면 false
+   */
+  public static boolean isSecretValueMissing(String authType, String value) {
+    if (authType == null || !REQUIRED_SECRET_BY_AUTH_TYPE.containsKey(authType)) return false;
+    String normalized = "BEARER".equals(authType) ? normalizeBearerToken(value) : value;
+    return normalized == null || normalized.isBlank();
   }
 
   /**
@@ -218,7 +220,13 @@ public final class AuthConfigValidator {
     return null;
   }
 
-  private static String headerNameProblem(String headerName) {
+  /**
+   * API_KEY 헤더 이름을 쓸 수 있는지 본다 — HTTP 토큰 형식·예약 헤더(Host 등). 저장 검사와 API_CALL 호출 전 검사({@code
+   * ApiCallAuth}, WD-647)가 같은 규칙을 쓰도록 공개한다.
+   *
+   * @return 문제 사유(한국어) 또는 문제가 없으면 null
+   */
+  public static String headerNameProblem(String headerName) {
     if (headerName == null || headerName.isBlank()) {
       return "헤더 이름을 입력하세요";
     }

@@ -62,6 +62,11 @@ public class ApiConnectionReader {
    *
    * <p>authType 은 별도 컬럼이라 복호화된 Map 에 들어있지 않다. 호출자(Preview/Executor 등)가 authType 으로 분기(API_KEY +
    * placement=query 등)할 수 있도록 함께 합쳐 반환한다. (#113)
+   *
+   * <p>JSON 안에 authType 키가 따로 있어도 컬럼 값으로 덮는다(WD-647). 예전에는 putIfAbsent 라 JSON 쪽이 이겨, 빈 비밀 검사(컬럼 기준
+   * {@code ApiCallAuth})와 실제 호출(이 Map 의 authType 기준 — Java 실행기·미리보기·Python 실행기)이 서로 다른 방식으로 판정할 수
+   * 있었다. 연결 화면·연결 테스트도 컬럼을 본다. 컬럼이 NULL 이면 JSON 의 authType 을 그대로 둔다 — 호출 전 검사({@code
+   * ApiCallAuth.resolve(conn, auth)})도 같은 규칙(컬럼, 없으면 JSON)이라 검사·전송이 같은 방식을 본다.
    */
   public Map<String, String> getDecryptedAuthConfig(Long id) {
     ApiConnectionRow row =
@@ -70,7 +75,7 @@ public class ApiConnectionReader {
     String authType = row.authType();
     if (authType != null) {
       config = new HashMap<>(config);
-      config.putIfAbsent("authType", authType);
+      config.put("authType", authType);
     }
     return config;
   }

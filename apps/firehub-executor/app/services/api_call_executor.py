@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 import time
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -407,6 +408,42 @@ def _encode_param(raw: Any) -> str:
     return encode_query_key(str(raw))
 
 
+# Java Character.isWhitespace 가 참인 글자(WD-647) — Java ApiCallAuth·AuthConfigValidator 의 strip()/isBlank() 와 같은 공백 판정을 하려고
+# 따로 둔다. Python str.strip()/isspace() 는 NBSP(U+00A0)·U+2007·U+202F 까지 공백으로 봐 두 실행기의 판정이 어긋난다.
+_JAVA_WHITESPACE = (
+    "\t\n\x0b\x0c\r\x1c\x1d\x1e\x1f \u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006"
+    "\u2008\u2009\u200a\u2028\u2029\u205f\u3000"
+)
+
+# 토큰 앞 「Bearer」 접두어(겹친 것·값 끝의 접두어까지) — Java AuthConfigValidator.BEARER_PREFIX `(?i)^(bearer(\s+|$))+` 와 같다.
+# Java 정규식의 \s 는 ASCII 공백뿐이라 여기서도 그 글자만 쓴다.
+_BEARER_PREFIX = re.compile(r"^(bearer([ \t\n\x0b\x0c\r]+|$))+", re.IGNORECASE)
+
+
+def _first_non_blank(auth: dict, *keys: str) -> Optional[str]:
+    """앞 키부터 공백뿐이 아닌 첫 값(WD-647). 이름·방식·위치용 — 공백뿐인 값은 없는 것으로 보고 다음 키·기본값으로 넘어간다(Java 와 같다).
+
+    예전에는 ``or`` 만 써서 ``"  "`` 이 그대로 골라져 공백 이름의 헤더를 만들려 했다.
+    """
+    for key in keys:
+        value = auth.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip(_JAVA_WHITESPACE):
+            continue
+        if value:
+            return value
+    return None
+
+
+def _normalize_bearer_token(token: str) -> str:
+    """Bearer 토큰을 Java normalizeBearerToken 과 같이 정리한다 — 앞뒤 공백, 앞의 「Bearer」 접두어(겹친 것까지)를 뗀다(WD-647).
+
+    Java 쪽 빈 비밀 검사가 이 정리를 거친 값으로 판정하므로, 보내는 값도 같아야 「검사는 통과했는데 Bearer Bearer abc 가 나가는」 어긋남이 없다.
+    """
+    return _BEARER_PREFIX.sub("", token.strip(_JAVA_WHITESPACE), count=1)
+
+
 def _apply_auth(
     auth: Optional[dict],
     headers: Dict[str, str],
@@ -420,23 +457,26 @@ def _apply_auth(
     쿼리 인증(API_KEY + placement=query)은 ``params`` 에 넣지 않고 ``(파라미터 이름, 키 원문)`` 을 돌려준다(WD-182) —
     ``params`` 는 httpx 식으로 인코딩되므로, 키는 ``_build_request_url`` 이 공용 규칙으로 따로 붙인다. 같은 이름의 정적
     파라미터가 있으면 ``params`` 에서 지운다(Java 처럼 그 이름으로는 키 하나만 나간다 — 위치는 맨 끝). 그 밖에는 None.
+
+    키·우선순위·정리는 Java ``ApiCallAuth.resolve`` 와 같다(WD-647) — 방식·위치·이름은 공백뿐이면 없는 것으로 보고, 비밀은
+    ``or`` 처럼 빈 문자열만 건너뛴 뒤 BEARER 토큰만 정리한다. Java 가 같은 값으로 빈 비밀 검사를 하므로 두 실행기가 같은 값을 보낸다.
     """
     if not auth:
         return None
-    auth_type = (auth.get("authType") or auth.get("type") or "").upper()
+    auth_type = (_first_non_blank(auth, "authType", "type") or "").upper()
     if auth_type == "BEARER":
-        token = auth.get("token") or auth.get("value") or ""
+        token = _normalize_bearer_token(auth.get("token") or auth.get("value") or "")
         headers["Authorization"] = f"Bearer {token}"
     elif auth_type == "API_KEY":
-        placement = (auth.get("placement") or auth.get("location") or "header").upper()
+        placement = (_first_non_blank(auth, "placement", "location") or "header").upper()
+        # 키는 위치와 상관없이 같은 규칙으로 고른다 — 원문 그대로 보낸다(Java ApiCallAuth.resolve 와 같다).
+        api_key = auth.get("apiKey") or auth.get("key_value") or auth.get("value") or ""
         if placement == "QUERY":
-            param_name = auth.get("paramName") or auth.get("key_name") or "api_key"
-            api_key = auth.get("apiKey") or auth.get("key_value") or auth.get("value") or ""
+            param_name = _first_non_blank(auth, "paramName", "key_name") or "api_key"
             params.pop(param_name, None)
             return (param_name, api_key)
         else:
-            header_name = auth.get("headerName") or auth.get("key_name") or "x-api-key"
-            api_key = auth.get("apiKey") or auth.get("key_value") or auth.get("value") or ""
+            header_name = _first_non_blank(auth, "headerName", "key_name") or "x-api-key"
             headers[header_name] = api_key
     return None
 
