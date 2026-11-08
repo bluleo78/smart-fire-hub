@@ -312,7 +312,7 @@ function AddWidgetDialog({ open, onOpenChange, onAdd, isPending }: AddWidgetDial
 export default function DashboardEditorPage() {
   const { id } = useParams<{ id: string }>();
   // 주소의 id 는 양의 정수만 받는다(WD-581) — parseInt('3x')=3 이 다른 대시보드를 열었다. 잘못된 id 는 null 이라 조회하지 않고 아래에서 「찾을 수 없음」으로 그린다.
-  const dashboardId = parseRouteId(id) ?? null;
+  const dashboardId = parseRouteId(id);
   const navigate = useNavigate();
 
   const queryClient = useQueryClient();

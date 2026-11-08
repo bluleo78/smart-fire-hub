@@ -424,9 +424,8 @@ export default function QueryEditorPage() {
     (location.state as { executionResult?: AnalyticsQueryResult } | null)?.executionResult ?? null;
 
   // 주소 id 는 숫자만 받는다(WD-434) — parseInt 는 'abc' 를 NaN(새 쿼리로), '15abc' 를 15(다른 쿼리)로 읽었다
-  const parsedQueryId = parseRouteId(id);
-  const isInvalidId = parsedQueryId === null;
-  const queryId = parsedQueryId ?? null;
+  const queryId = parseRouteId(id);
+  const isInvalidId = queryId === null;
   const isNew = id === undefined;
 
   // URL params for "open from DatasetDataTab"

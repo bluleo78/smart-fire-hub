@@ -90,6 +90,9 @@ export default function ReportTemplateDetailPage() {
 /** 「존재하지 않는 템플릿」 토스트 id — 잘못된 주소 id 와 없는 양식이 같은 id 를 써 StrictMode 이중 실행에도 하나만 뜬다 */
 const TEMPLATE_NOT_FOUND_TOAST_ID = 'template-not-found';
 
+/** 「불러오는 데 실패」 토스트 id(WD-661) — 같은 실패를 여러 번 알려도(StrictMode 이중 실행 등) 토스트가 하나만 뜬다 */
+const TEMPLATE_LOAD_FAILED_TOAST_ID = 'template-load-failed';
+
 /**
  * 「존재하지 않는 템플릿입니다」 안내 후 양식 목록으로 보낸다(WD-652).
  * 잘못된 주소 id 와 조회 결과 없음(본문의 effect)이 같은 문구·토스트 id·이동을 쓰도록 한곳에 둔다.
@@ -137,7 +140,7 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
   // #632: 목록 응답이 요약(ReportTemplateSummary)으로 축소되어 sections/style을 포함하지 않는다.
   // 이 폴백은 단건 조회 실패라는 드문 경로뿐 아니라, 단건 조회가 아직 pending인 정상 경로에서도
   // 항상 거쳐가는 흔한 경로다(목록 캐시가 warm하고 단건 조회가 로딩 중인 동안).
-  // toFallbackTemplate()는 매 호출마다 새 객체를 반환하므로, 아래 146번 줄처럼 결과를 참조
+  // toFallbackTemplate()는 매 호출마다 새 객체를 반환하므로, 아래 「템플릿 로드 시 구조/스타일 동기화」처럼 결과를 참조
   // 동일성(!==)으로 비교해 렌더 중 state를 조정하는 코드와 만나면 매 렌더마다 값이 "바뀐 것"으로
   // 오인되어 무한 리렌더에 빠진다(#633). summary(목록에서 찾은 원본 객체)는 react-query 캐시가
   // 안정적으로 유지하는 참조이므로, 이를 의존성으로 useMemo에 넣어 fallback 객체 자체도 같은
@@ -145,9 +148,8 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
   const fallbackSummary = templates.find((t) => t.id === templateId);
   const fallbackTemplate = useMemo(() => toFallbackTemplate(fallbackSummary), [fallbackSummary]);
   const template = templateDirect ?? fallbackTemplate;
-  // 두 쿼리 중 하나라도 진행 중이면 "로딩 중"으로 본다 — 저장 직후 /templates/new → /templates/100 으로
-  // 이동하는 시점에 list 쿼리가 캐시 적중으로 즉시 false가 되어 guard(73~80)가 잘못 발화,
-  // detail 쿼리가 끝나기 전에 목록으로 되돌리던 race를 차단한다.
+  // 두 쿼리 중 하나라도 진행 중이면 "로딩 중"으로 본다 — 둘 다 끝난 뒤에만 아래 「없는 양식」 판정을 한다.
+  // (만들기·복제 뒤 새 id 로 가면 바깥에서 key 로 새로 마운트하므로, 같은 인스턴스가 id 만 바뀌며 옛 로딩 상태를 들고 오는 일은 없다)
   const isLoading = isLoadingDirect || isLoadingList;
 
   // 존재하지 않는 템플릿 ID 접근 시 에러 처리 — toast + 목록 페이지로 이동 (#38)
@@ -157,8 +159,10 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
     // 권한 부족은 아래 렌더 분기가 권한 안내로 처리한다 — 토스트·이동을 하지 않는다 (WD-137).
     if (isForbiddenDirect) return;
     if (isErrorDirect) {
-      toast.error('템플릿 정보를 불러오는 데 실패했습니다.');
-      navigate('/ai-insights/templates');
+      // 404 경로(notifyTemplateNotFound)와 같게 토스트 id + replace 로 보낸다(WD-661) — push 면 뒤로 가기가 이 실패한 주소로
+      // 돌아와 다시 실패 → 다시 목록으로 push 하는 고리가 되어, 상세 이전 화면으로 돌아갈 수 없었다.
+      toast.error('템플릿 정보를 불러오는 데 실패했습니다.', { id: TEMPLATE_LOAD_FAILED_TOAST_ID });
+      navigate('/ai-insights/templates', { replace: true });
     }
   }, [isErrorDirect, isForbiddenDirect, isNew, navigate]);
 

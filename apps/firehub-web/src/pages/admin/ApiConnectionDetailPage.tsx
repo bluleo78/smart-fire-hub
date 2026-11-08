@@ -65,7 +65,7 @@ export default function ApiConnectionDetailPage() {
   // 숫자가 아닌 id(WD-434)는 조회가 꺼져 로딩·오류·데이터가 모두 없는 빈 화면이 됐다 — 없는 id 와 같게 안내한다
   const connectionId = parseRouteId(id);
   const isInvalidId = connectionId == null;
-  const { data: connection, isLoading, isError } = useApiConnection(connectionId ?? null);
+  const { data: connection, isLoading, isError } = useApiConnection(connectionId);
   const updateMutation = useUpdateApiConnection();
   const deleteMutation = useDeleteApiConnection();
   const testMutation = useTestApiConnection();

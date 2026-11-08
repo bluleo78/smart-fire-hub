@@ -6,14 +6,12 @@
  * 하단에 "실행 상세 보기" 링크로 상세 페이지 진입 가능.
  */
 
-import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, FileDown, Loader2, Printer, XIcon } from 'lucide-react';
 import { useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Link, useNavigate } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
 
-import { proactiveApi } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,7 +24,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { RestrictedNotice } from '@/components/ui/restricted-notice';
-import { useExecution } from '@/hooks/queries/useProactiveMessages';
+import { useExecution, useExecutionHtml } from '@/hooks/queries/useProactiveMessages';
 import { useReportActions } from '@/hooks/useReportActions';
 import { isReportLevelBlocked, REPORT_LEVEL_BLOCKED_MESSAGE } from '@/lib/api-error';
 import { getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
@@ -58,11 +56,9 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
   /** 마크다운 폴백 본문 — HTML 리포트가 없을 때 이 영역만 인쇄한다(WD-343) */
   const contentRef = useRef<HTMLDivElement>(null);
 
-  // HTML 리포트 조회 — 모달이 열려 있고 유효한 ID일 때만 fetch
-  const { data: htmlResponse, isLoading: htmlLoading, error: htmlError } = useQuery({
-    queryKey: ['execution-html', jobId, executionId],
-    queryFn: () => proactiveApi.getExecutionHtml(jobId, executionId),
-    enabled: open && !!jobId && !!executionId,
+  // HTML 리포트 조회 — 모달이 열려 있을 때만 fetch. 실행 상세·리포트 보기와 같은 훅·캐시를 쓴다(WD-661)
+  const { data: htmlResponse, isLoading: htmlLoading, error: htmlError } = useExecutionHtml(jobId, executionId, {
+    enabled: open,
   });
 
   // 실행 메타데이터 조회 — useExecution 훅으로 통일 (RUNNING 시 폴링 포함)

@@ -19,7 +19,14 @@ const KEYS = {
   // 워크스페이스 전체(관리자) 목록 — 'jobs' 접두사 아래에 두어 내 작업 변경 시 함께 무효화된다
   workspaceJobs: ['proactive', 'jobs', 'workspace'] as const,
   job: (id: number) => ['proactive', 'jobs', id] as const,
-  executions: (jobId: number) => ['proactive', 'executions', jobId] as const,
+  // 실행 목록·단건의 공통 접두사 — 이것으로 무효화하면 그 작업의 목록·단건이 함께 갱신된다
+  executions: (jobId: number | null) => ['proactive', 'executions', jobId] as const,
+  // 목록은 'list' 조각으로 단건과 모양을 가른다(WD-661) — 해시가 undefined 를 null 로 바꿔
+  // 예전 [..., jobId, undefined](파라미터 없는 목록)가 [..., jobId, null](실행 id 없는 단건)과 같은 캐시가 됐다
+  executionList: (jobId: number | null, params?: { limit?: number; offset?: number }) =>
+    ['proactive', 'executions', jobId, 'list', params] as const,
+  execution: (jobId: number | null, executionId: number | null) =>
+    ['proactive', 'executions', jobId, executionId] as const,
   recipients: (search: string) => ['proactive', 'recipients', search] as const,
   recipientsByIds: (userIds: number[]) => ['proactive', 'recipients', 'byIds', userIds] as const,
   messages: ['proactive', 'messages'] as const,
@@ -259,8 +266,9 @@ export function useCloneProactiveJob() {
   });
 }
 
+/** 작업의 실행 이력 목록. 작업 id 가 없으면(null·undefined) skipToken 으로 조회하지 않는다(WD-661). */
 export function useJobExecutions(
-  jobId: number,
+  jobId: number | null | undefined,
   params?: { limit?: number; offset?: number },
   options?: {
     // number | false | 함수형 모두 수용 — RUNNING 상태 기반 동적 폴링 지원
@@ -268,9 +276,8 @@ export function useJobExecutions(
   },
 ) {
   return useQuery<ProactiveJobExecutionSummary[]>({
-    queryKey: [...KEYS.executions(jobId), params],
-    queryFn: () => proactiveApi.getJobExecutions(jobId, params).then((r) => r.data),
-    enabled: !!jobId,
+    queryKey: KEYS.executionList(jobId ?? null, params),
+    queryFn: jobId == null ? skipToken : () => proactiveApi.getJobExecutions(jobId, params).then((r) => r.data),
     refetchInterval: options?.refetchInterval,
   });
 }
@@ -291,15 +298,35 @@ export function useReports(params?: { limit?: number; offset?: number }) {
 }
 
 /**
- * 단건 실행 조회 훅 — 실행 상세 페이지에서 사용.
+ * 단건 실행 조회 훅 — 실행 상세 페이지·리포트 모달에서 사용.
  * RUNNING 상태일 때 5초 간격으로 자동 폴링하여 완료를 감지한다.
+ * 두 id 중 하나라도 없으면(null·undefined) skipToken 으로 조회하지 않는다(WD-661).
  */
-export function useExecution(jobId: number, executionId: number) {
+export function useExecution(jobId: number | null | undefined, executionId: number | null | undefined) {
   return useQuery({
-    queryKey: [...KEYS.executions(jobId), executionId],
-    queryFn: () => proactiveApi.getExecution(jobId, executionId).then((r) => r.data),
-    enabled: !!jobId && !!executionId,
+    queryKey: KEYS.execution(jobId ?? null, executionId ?? null),
+    queryFn:
+      jobId == null || executionId == null
+        ? skipToken
+        : () => proactiveApi.getExecution(jobId, executionId).then((r) => r.data),
     refetchInterval: (query) => (query.state.data?.status === 'RUNNING' ? 5000 : false),
+  });
+}
+
+/**
+ * 실행의 HTML 리포트 조회(WD-661) — 실행 상세·리포트 보기·리포트 모달이 같은 훅·캐시를 쓴다.
+ * id 가 없으면 skipToken 으로 끄고, options.enabled 는 화면별 추가 조건이다. 응답은 AxiosResponse 그대로다.
+ */
+export function useExecutionHtml(
+  jobId: number | null | undefined,
+  executionId: number | null | undefined,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ['execution-html', jobId ?? null, executionId ?? null],
+    queryFn:
+      jobId == null || executionId == null ? skipToken : () => proactiveApi.getExecutionHtml(jobId, executionId),
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -400,12 +427,12 @@ export function useProactiveTemplates() {
 }
 
 /**
- * 리포트 양식 단건 조회. id 가 null(새 양식 만들기)이면 조회하지 않는다(WD-652).
- * 0 같은 대체값 + enabled 조건에 기대지 않고 skipToken 으로 끈다 — null 로는 조회 함수가 아예 만들어지지 않는다.
+ * 리포트 양식 단건 조회. id 가 없으면(null·undefined — 새 양식 만들기 등) 조회하지 않는다(WD-652·WD-661).
+ * 0 같은 대체값 + enabled 조건에 기대지 않고 skipToken 으로 끈다 — 없는 id 로는 조회 함수가 아예 만들어지지 않는다.
  */
-export function useProactiveTemplate(id: number | null) {
+export function useProactiveTemplate(id: number | null | undefined) {
   return useQuery({
-    queryKey: KEYS.template(id),
+    queryKey: KEYS.template(id ?? null),
     queryFn: id == null ? skipToken : () => proactiveApi.getTemplate(id).then((r) => r.data),
   });
 }

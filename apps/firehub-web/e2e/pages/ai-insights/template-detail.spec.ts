@@ -392,6 +392,30 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     await expect(page).toHaveURL(/\/ai-insights\/reports\?tab=templates$/, { timeout: 5000 });
   });
 
+  // 회귀 가드(WD-661): 불러오기 실패(500)도 404 처럼 replace 로 목록에 가야 한다. push 면 뒤로 가기가 실패한 상세로 돌아가
+  // 다시 실패 → 다시 목록으로 push 하는 고리에 빠져, 사용자가 상세 이전 화면으로 영영 돌아갈 수 없었다.
+  test('템플릿 불러오기가 500 으로 실패하면 목록으로 replace 이동해 뒤로 가기가 실패한 상세로 돌아가지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/7', { message: '서버 오류' }, { status: 500 });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    // 상세 이전 화면 — 뒤로 가기로 돌아와야 할 곳
+    await page.goto('/ai-insights/jobs');
+    await page.goto('/ai-insights/templates/7');
+
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: '템플릿 정보를 불러오는 데 실패했습니다.' })).toHaveCount(1, {
+      timeout: 10000,
+    });
+    await expect(page).toHaveURL(/\/ai-insights\/reports\?tab=templates$/, { timeout: 5000 });
+
+    // 기록은 [작업 목록, 양식 목록(실패한 상세를 replace)] — 뒤로 가면 작업 목록이다(실패한 상세 → 다시 양식 목록 고리가 아니다)
+    await page.goBack();
+    await expect(page).toHaveURL(/\/ai-insights\/jobs$/);
+  });
+
   /**
    * 회귀 테스트 — 이슈 #58
    * 템플릿 작성/수정 중 뒤로가기 클릭 시 저장 확인 다이얼로그 없이 변경사항이 소실되는 문제.
