@@ -14,14 +14,21 @@ const KEY_STEP = 16;
 /** Tailwind lg 브레이크포인트(1024px) 미만이면 모바일로 판정 */
 const MOBILE_MQ = '(max-width: 1023px)';
 
-/** 패널을 이름 있는 보조 랜드마크로 노출(WD-579) — 데스크탑·모바일 분기 공통 */
+/** 패널을 이름 있는 보조 랜드마크로 노출(WD-579) — 데스크탑 분기(본문 옆에 함께 보이는 패널) */
 const LANDMARK_PROPS = { role: 'complementary', 'aria-label': 'AI 어시스턴트' } as const;
+
+/**
+ * 모바일 오버레이는 화면 전체를 덮으므로 모달 대화상자로 노출한다(WD-606).
+ * 뒤 화면(사이드바·메뉴 버튼·본문)은 AppLayout 이 열려 있는 동안 inert 로 막아 Tab 이 오버레이 밖으로 새지 않는다
+ * — 모바일 메뉴 서랍(WD-508)과 같은 방식.
+ */
+const MOBILE_DIALOG_PROPS = { role: 'dialog', 'aria-modal': true, 'aria-label': 'AI 어시스턴트' } as const;
 
 /**
  * AI 사이드 패널 컴포넌트.
  *
  * - 데스크탑(lg 이상): flex row 내 고정 너비 패널로 표시. 좌측 핸들로 너비 조절 가능.
- * - 모바일(lg 미만): `fixed inset-0` 오버레이로 전체 화면 표시.
+ * - 모바일(lg 미만): `fixed inset-0` 오버레이로 전체 화면 표시하는 모달 대화상자(WD-606).
  *   → flex row 레이아웃에서 벗어나 메인 콘텐츠 너비를 잠식하지 않는다.
  */
 export function AISidePanel() {
@@ -114,7 +121,7 @@ export function AISidePanel() {
     // 모바일: fixed 오버레이로 렌더링 — flex row 레이아웃에서 완전히 분리
     if (!isOpen) return null;
     return (
-      <div {...LANDMARK_PROPS} className="fixed inset-0 z-50 bg-background flex flex-col">
+      <div {...MOBILE_DIALOG_PROPS} className="fixed inset-0 z-50 bg-background flex flex-col">
         {/* AIChatPanel 내부에서 closeAI context 함수로 닫을 수 있음 */}
         <div className="h-full overflow-hidden">
           <AIChatPanel />
