@@ -11,6 +11,7 @@ import { FormField } from '../../components/ui/form-field';
 import { Input } from '../../components/ui/input';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { useCategories, useCreateDataset, useDatasets } from '../../hooks/queries/useDatasets';
+import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { handleApiError } from '../../lib/api-error';
 import { getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
 import type { CreateDatasetFormData } from '../../lib/validations/dataset';
@@ -65,10 +66,21 @@ export default function DatasetCreatePage() {
               isIndexed: false,
               isPrimaryKey: false,
               description: '',
+              // VARCHAR → 다른 타입 전환 시 SchemaBuilder 가 maxLength 를 undefined 로 되돌린다.
+              // 기본값에도 키를 두어야 RHF isDirty(키 개수까지 비교) 가 원상태를 깨끗하다고 본다 (WD-577).
+              maxLength: undefined,
             },
           ],
     },
   });
+
+  // 미저장 입력 이탈 가드 (WD-577) — 이름·테이블명·설명·카테고리 입력이나 칼럼 추가·삭제·편집이 있으면
+  // 사이드바 링크·브라우저 뒤로가기·새로고침/탭 닫기·취소 버튼에서 확인 다이얼로그를 띄운다.
+  // isDirty 는 defaultValues 와의 비교라, URL 쿼리(storageType/originType)로 정해진 초기값만으로는 dirty 가 되지 않는다.
+  // 칼럼은 SchemaBuilder 의 useFieldArray·register·setValue(shouldDirty) 로 같은 폼에 묶여 있어 isDirty 에 함께 반영된다.
+  const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(
+    form.formState.isDirty,
+  );
 
   // 폼 ref — Cmd/Ctrl+S 단축키에서 submit 트리거에 사용 (#100)
   const formRef = useRef<HTMLFormElement>(null);
@@ -128,6 +140,10 @@ export default function DatasetCreatePage() {
   }, []);
 
   const onSubmit = async (data: CreateDatasetFormData) => {
+    // 제출 시점 경로 — 생성 요청 중 사용자가 이탈을 확정해 다른 화면으로 갔다면 응답 후 상세로 끌고 가지 않으려고 기억한다 (WD-577).
+    // 마운트 ref 로는 부족하다: react-router 가 이동을 startTransition 으로 처리해, 주소는 이미 바뀌었어도
+    // 다음 화면(lazy 라우트)이 준비될 때까지 이 페이지가 마운트된 채 남는 틈이 있다. 실제 주소를 비교하면 그 틈도 막는다.
+    const submitPathname = window.location.pathname;
     // 중복 인라인 검증 결과가 있으면 제출 차단 (#103) — 서버 왕복으로 알게 되는 비용을 줄임
     if (isNameDuplicate) {
       form.setError('name', { type: 'duplicate', message: '이미 사용 중인 이름입니다.' });
@@ -159,7 +175,13 @@ export default function DatasetCreatePage() {
           description: col.description || undefined,
         })),
       });
+      // 이탈 후 응답이 와도 서버에는 만들어졌으므로 토스트는 그대로 알린다.
       toast.success('데이터셋이 생성되었습니다.');
+      // 응답 사이 이미 이탈했으면(주소가 바뀜) 사용자가 간 화면에 그대로 둔다 (WD-577).
+      if (window.location.pathname !== submitPathname) return;
+      // 저장한 값으로 폼을 초기화해 isDirty 를 끈 뒤 상세 페이지로 이동한다 (WD-577).
+      // navigate() 는 가드를 거치지 않고, 남는 beforeunload 리스너도 언마운트 때 제거되므로 순서 경합이 없다.
+      form.reset(data);
       navigate(`/data/datasets/${result.data.id}`);
     } catch (error) {
       handleApiError(error, '데이터셋 생성에 실패했습니다.');
@@ -264,7 +286,10 @@ export default function DatasetCreatePage() {
                     id="categoryId"
                     value={form.watch('categoryId')?.toString()}
                     onChange={(value) => {
-                      form.setValue('categoryId', value === undefined ? undefined : Number(value));
+                      // shouldDirty — 카테고리 선택도 미저장 입력으로 보고 이탈 가드를 켠다 (WD-577)
+                      form.setValue('categoryId', value === undefined ? undefined : Number(value), {
+                        shouldDirty: true,
+                      });
                     }}
                     options={categories.map((cat) => ({
                       value: cat.id.toString(),
@@ -307,13 +332,16 @@ export default function DatasetCreatePage() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => navigate('/data/datasets')}
+              // (WD-577) navigate() 직접 호출은 이탈 가드(<a> 클릭 캡처)를 우회하므로 requestNavigate 로 이동한다.
+              onClick={() => requestNavigate('/data/datasets')}
             >
               취소
             </Button>
           </div>
         </form>
       </FormProvider>
+      {/* 미저장 입력 이탈 확인 다이얼로그 (WD-577) — useUnsavedChangesGuard 가 렌더 */}
+      {unsavedChangesDialog}
     </div>
   );
 }
