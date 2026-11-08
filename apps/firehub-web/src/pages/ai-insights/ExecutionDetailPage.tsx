@@ -27,6 +27,7 @@ import { isForbiddenError, isNotFoundError, isReportLevelBlocked } from '@/lib/a
 import { classifyExecutionOutcome, getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
 import { EXECUTION_NOT_FOUND_NOTICE, getSections } from '@/lib/proactive-utils';
+import { parseRouteId } from '@/lib/route-id';
 
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 import { ReportLevelBlockedNotice } from './components/ReportLevelBlockedNotice';
@@ -40,8 +41,11 @@ export default function ExecutionDetailPage() {
   const navigate = useNavigate();
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  const jobIdNum = Number(jobId);
-  const executionIdNum = Number(executionId);
+  // 주소 id 는 숫자만 받는다(WD-628) — `Number('1e1')` 은 10 이라 다른 실행을 열고 `1.5`·` 7` 도 그대로 조회했다.
+  // 잘못된 id 는 0 으로 둔다 — useExecution 은 enabled: !!id 라 조회가 꺼지고(isLoading false, execution undefined)
+  // 아래 「실행 정보를 찾을 수 없습니다」 분기로 그대로 떨어진다.
+  const jobIdNum = parseRouteId(jobId) ?? 0;
+  const executionIdNum = parseRouteId(executionId) ?? 0;
 
   // 실행 데이터 조회 — RUNNING 상태일 때 5초 폴링
   const { data: execution, isLoading, isError, error } = useExecution(jobIdNum, executionIdNum);
@@ -99,6 +103,7 @@ export default function ExecutionDetailPage() {
   }
 
   // 실행 데이터 없음 — 404 는 「실행이 없음」과 「작업 작성자가 아님」을 똑같이 숨기므로 두 경우를 함께 말한다 (WD-162)
+  // 숫자만이 아닌 주소 id(WD-628)도 조회가 꺼져 execution 이 없으므로 여기서 같은 안내를 받는다
   if (!execution) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-4 text-muted-foreground">

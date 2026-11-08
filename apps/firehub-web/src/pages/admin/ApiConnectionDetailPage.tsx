@@ -140,7 +140,8 @@ export default function ApiConnectionDetailPage() {
 
   /** 기본 정보(이름/설명/baseUrl/healthCheckPath) 저장 */
   const handleSaveInfo = async () => {
-    if (!id) return;
+    // 숫자만으로 된 주소 id(connectionId)로만 저장한다(WD-628) — 화면도 그 id 로 조회했다
+    if (connectionId == null) return;
     if (!name.trim()) {
       toast.error('연결 이름은 필수입니다.');
       return;
@@ -152,7 +153,7 @@ export default function ApiConnectionDetailPage() {
     }
     try {
       await updateMutation.mutateAsync({
-        id: Number(id),
+        id: connectionId,
         data: {
           name: name.trim(),
           description: description.trim() || undefined,
@@ -172,7 +173,7 @@ export default function ApiConnectionDetailPage() {
 
   /** 인증 설정 저장 */
   const handleSaveAuth = async () => {
-    if (!id) return;
+    if (connectionId == null) return;
 
     const authConfig: Record<string, string> = { authType };
     if (authType === 'API_KEY') {
@@ -211,7 +212,7 @@ export default function ApiConnectionDetailPage() {
 
     const data: UpdateApiConnectionRequest = { authType, authConfig };
     try {
-      await updateMutation.mutateAsync({ id: Number(id), data });
+      await updateMutation.mutateAsync({ id: connectionId, data });
       toast.success('인증 정보가 업데이트되었습니다.');
       setIsEditingAuth(false);
       setApiKey('');
@@ -267,9 +268,9 @@ export default function ApiConnectionDetailPage() {
   };
 
   const handleDelete = async () => {
-    if (!id || !connection) return;
+    if (connectionId == null || !connection) return;
     try {
-      await deleteMutation.mutateAsync(Number(id));
+      await deleteMutation.mutateAsync(connectionId);
       toast.success(`"${connection.name}" 연결이 삭제되었습니다.`);
       navigate('/admin/api-connections');
     } catch (error) {
