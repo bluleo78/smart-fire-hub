@@ -316,6 +316,64 @@ test.describe('설정 페이지', () => {
     });
   });
 
+  // (WD-590) 시스템 프롬프트 입력란은 placeholder 만 이름 역할을 했고, 오류 문구가 필드와 연결되지 않았다.
+  test.describe('WD-590 — 시스템 프롬프트 입력란 이름·오류 연결', () => {
+    test('입력란이 「시스템 프롬프트」 이름으로 찾히고, 비우고 저장하면 aria-invalid 와 오류 문구 연결이 붙으며 PUT 이 나가지 않는다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+
+      await page.goto('/admin/settings');
+      // 접근 가능한 이름은 카드 제목(aria-labelledby)에서 온다 — 값을 지워 placeholder 가 보여도 이름은 그대로다
+      const prompt = page.getByRole('textbox', { name: '시스템 프롬프트', exact: true });
+      await expect(prompt).toHaveAttribute('id', 'ai-system-prompt');
+      // 평소에는 오류가 아니고 설명 문구만 함께 읽힌다
+      await expect(prompt).not.toHaveAttribute('aria-invalid', /.*/);
+      await expect(prompt).toHaveAccessibleDescription('AI 에이전트의 역할과 동작을 정의하는 시스템 프롬프트');
+
+      await prompt.fill('');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      // 오류 문구가 필드 설명으로 먼저 읽히고, 필드가 오류 상태로 표시된다
+      await expect(prompt).toHaveAttribute('aria-invalid', 'true');
+      await expect(prompt).toHaveAccessibleDescription(/^시스템 프롬프트를 입력하세요/);
+      await expect(page.locator('#ai-system-prompt-error')).toBeVisible();
+      // 오류 문구는 role=alert 라 저장을 누른 순간 읽힌다(FormField 와 같은 동작)
+      await expect(page.locator('#ai-system-prompt-error')).toHaveAttribute('role', 'alert');
+      expect(saveCapture.lastRequest()).toBeUndefined();
+
+      // 값을 다시 넣고 저장하면 오류 연결이 풀리고 값이 그대로 PUT 에 실린다
+      await prompt.fill('너는 데이터 도우미다.');
+      await page.getByRole('button', { name: '저장' }).click();
+      const req = await saveCapture.waitForRequest();
+      expect((req.payload as { settings: Record<string, string> }).settings['ai.system_prompt']).toBe(
+        '너는 데이터 도우미다.',
+      );
+      await expect(prompt).not.toHaveAttribute('aria-invalid', /.*/);
+      await expect(page.locator('#ai-system-prompt-error')).toHaveCount(0);
+    });
+
+    test('같은 폼의 숫자 칸(최대 응답 토큰)도 범위를 벗어나 저장하면 aria-invalid 와 오류 문구가 필드에 연결된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+
+      await page.goto('/admin/settings');
+      const maxTokens = page.getByRole('spinbutton', { name: '최대 응답 토큰' });
+      await expect(maxTokens).not.toHaveAttribute('aria-invalid', /.*/);
+      await expect(maxTokens).toHaveAccessibleDescription('AI 응답의 최대 토큰 수 (1~65536)');
+
+      await maxTokens.fill('0');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(maxTokens).toHaveAttribute('aria-invalid', 'true');
+      await expect(maxTokens).toHaveAccessibleDescription(/^1~65536 사이의 정수를 입력하세요/);
+      expect(saveCapture.lastRequest()).toBeUndefined();
+    });
+  });
+
   /**
    * WD-536 — 시스템 프롬프트 길이 상한(20,000자). 서버 SettingsService 와 같은 상한을 화면이 저장 전에 지킨다.
    *

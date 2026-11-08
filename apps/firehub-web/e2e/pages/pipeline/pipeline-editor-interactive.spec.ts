@@ -293,6 +293,20 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     await expect(nameInputs).toHaveCount(1);
   });
 
+  // (WD-590) 이름 입력란은 화면에 라벨이 없어 placeholder 만 이름 역할을 했다 — 입력하면 사라진다.
+  test('편집 모드 — 이름 입력란이 「파이프라인 이름」 이름으로 찾히고, 값을 바꿔도 이름이 유지된다 (WD-590)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupPipelineEditorMocks(page, 1);
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+
+    const nameInput = page.getByRole('textbox', { name: '파이프라인 이름', exact: true });
+    await expect(nameInput).toHaveCount(1);
+    await nameInput.fill('야간 적재');
+    await expect(nameInput).toHaveValue('야간 적재');
+  });
+
   test('편집 모드 — 이름 변경 후 저장 API payload에 새 이름만 담겨야 한다 (중복 문자열 방지)', async ({
     authenticatedPage: page,
   }) => {
