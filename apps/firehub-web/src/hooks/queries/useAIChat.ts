@@ -351,7 +351,8 @@ export function useAIChat(options?: {
                 }
 
                 // Auto-invalidate TanStack Query cache
-                const keys = getInvalidationKeys(lastTool.name);
+                // 도구 입력도 넘긴다 — 입력의 작업 id 로 그 작업의 캐시만 고르는 항목이 있다(WD-667)
+                const keys = getInvalidationKeys(lastTool.name, lastTool.input);
                 for (const key of keys) {
                   queryClient.invalidateQueries({ queryKey: key });
                 }

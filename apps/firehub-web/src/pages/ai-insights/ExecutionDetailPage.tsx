@@ -40,13 +40,13 @@ const REMARK_PLUGINS = [remarkGfm];
  * 「실행 정보를 찾을 수 없습니다」 안내 + 돌아가기 — 잘못된 주소 id(WD-652)와 조회 결과 없음(404 등)이 같은 화면을 쓴다.
  * message 를 비우면 기본 문구를 보인다.
  */
-function ExecutionNotFound({ message, fallback }: { message?: string; fallback: string }) {
+function ExecutionNotFound({ message, onBack }: { message?: string; onBack: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center h-64 gap-4 text-muted-foreground">
       <p className="text-sm text-center break-keep px-4" data-testid="execution-not-found">
         {message ?? '실행 정보를 찾을 수 없습니다.'}
       </p>
-      <BackButton fallback={fallback} />
+      <BackButton onBack={onBack} />
     </div>
   );
 }
@@ -61,18 +61,26 @@ export default function ExecutionDetailPage() {
   const { jobId, executionId } = useParams<{ jobId: string; executionId: string }>();
   const jobIdNum = parseRouteId(jobId);
   const executionIdNum = parseRouteId(executionId);
+  // 돌아갈 기록이 없을 때의 목적지는 리포트 보기와 같은 규칙(작업 상세, 작업 id 가 잘못되면 작업 목록)이다(WD-661).
+  // 뒤로 가기는 여기서 한 번만 만들어 안내 화면·본문의 버튼에 내려준다(WD-667) — 버튼마다 같은 훅을 다시 부르지 않게.
+  const { goBack } = useGoBack(jobBackFallback(jobIdNum).path);
 
   if (jobIdNum == null || executionIdNum == null) {
-    // 돌아갈 기록이 없을 때의 목적지는 리포트 보기와 같은 규칙(작업 상세, 작업 id 가 잘못되면 작업 목록)이다(WD-661)
-    return <ExecutionNotFound fallback={jobBackFallback(jobIdNum).path} />;
+    return <ExecutionNotFound onBack={goBack} />;
   }
-  return <ExecutionDetailContent jobIdNum={jobIdNum} executionIdNum={executionIdNum} />;
+  return <ExecutionDetailContent jobIdNum={jobIdNum} executionIdNum={executionIdNum} goBack={goBack} />;
 }
 
-/** 실행 상세 본문 — 검증된 양의 정수 id 만 받는다 */
-function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number; executionIdNum: number }) {
-  const fallback = jobBackFallback(jobIdNum).path;
-  const { goBack } = useGoBack(fallback);
+/** 실행 상세 본문 — 검증된 양의 정수 id 와 바깥에서 만든 뒤로 가기를 받는다 */
+function ExecutionDetailContent({
+  jobIdNum,
+  executionIdNum,
+  goBack,
+}: {
+  jobIdNum: number;
+  executionIdNum: number;
+  goBack: () => void;
+}) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // 실행 데이터 조회 — RUNNING 상태일 때 5초 폴링
@@ -107,7 +115,7 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
     return (
       <div className="flex flex-col items-center gap-2">
         <ReportLevelBlockedNotice testId="execution-level-blocked" />
-        <BackButton fallback={fallback} />
+        <BackButton onBack={goBack} />
       </div>
     );
   }
@@ -117,7 +125,7 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
     return (
       <div className="flex flex-col items-center gap-2">
         <ProactiveReadForbiddenNotice subject="실행 결과" testId="execution-forbidden" />
-        <BackButton fallback={fallback} />
+        <BackButton onBack={goBack} />
       </div>
     );
   }
@@ -128,7 +136,7 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
     return (
       <ExecutionNotFound
         message={isError && isNotFoundError(error) ? EXECUTION_NOT_FOUND_NOTICE : undefined}
-        fallback={fallback}
+        onBack={goBack}
       />
     );
   }

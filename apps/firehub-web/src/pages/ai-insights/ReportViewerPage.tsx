@@ -7,22 +7,37 @@
  * 상단 바에 뒤로가기, PDF 다운로드, 인쇄 버튼을 제공한다.
  */
 
+import { skipToken, useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ExternalLink, FileDown, Loader2, Printer } from 'lucide-react';
 import { useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
+import { proactiveApi } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
 import { Button } from '@/components/ui/button';
 import { useExecutionHtml } from '@/hooks/queries/useProactiveMessages';
-import { useGoBack } from '@/hooks/useGoBack';
+import { useGoBack, useHasAppHistory } from '@/hooks/useGoBack';
 import { useReportActions } from '@/hooks/useReportActions';
 import { isForbiddenError, isNotFoundError, isReportLevelBlocked } from '@/lib/api-error';
-import { jobBackFallback, REPORT_NOT_FOUND_NOTICE } from '@/lib/proactive-utils';
-import { parseRouteId } from '@/lib/route-id';
+import { jobBackFallback, REPORT_LIST_FALLBACK, REPORT_NOT_FOUND_NOTICE } from '@/lib/proactive-utils';
+import { isValidId, parseRouteId } from '@/lib/route-id';
 
 import { BackButton } from './components/BackButton';
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 import { ReportLevelBlockedNotice } from './components/ReportLevelBlockedNotice';
+
+/**
+ * 돌아갈 기록이 없을 때 대체 목적지를 정하려고 작업을 읽을 수 있는지만 확인한다(WD-667).
+ * useProactiveJob(WD-568 소유)을 빌리면 실행 중 폴링·404 재시도까지 따라와, 별도 키로 한 번만 묻는다 — 재시도·폴링 없음.
+ * jobId 가 없으면(기록 있음·잘못된 id) 조회하지 않는다.
+ */
+function useJobReadableForFallback(jobId: number | null | undefined) {
+  return useQuery({
+    queryKey: ['proactive', 'report-viewer-fallback-job', isValidId(jobId) ? jobId : null],
+    queryFn: isValidId(jobId) ? () => proactiveApi.getJob(jobId).then(() => true) : skipToken,
+    retry: false,
+  });
+}
 
 export default function ReportViewerPage() {
   const { jobId, executionId } = useParams<{ jobId: string; executionId: string }>();
@@ -38,7 +53,14 @@ export default function ReportViewerPage() {
   // 이 탭의 첫 화면인지(WD-347) — 이메일 「웹에서 보기」·리포트 창 「새 탭에서 열기」는 새 탭으로 열려 돌아갈 기록이 없다.
   // 그때 navigate(-1) 은 무반응이거나 앱 밖(about:blank)으로 나가므로 대체 목적지로 보내고, 버튼 이름도 그 목적지로 바꿔 알린다.
   // 목적지는 실행 상세와 같다(WD-661) — 작업 id 가 유효하면 그 작업 상세, 아니면 작업 목록.
-  const backFallback = jobBackFallback(parsedJobId);
+  // 다만 작업 상세는 작업을 읽을 수 있다고 확인됐을 때만 쓴다(WD-667) — 삭제(404)·권한 없음(403)·그 밖의 오류면
+  // 오류·권한 안내 화면에 떨어지므로 리포트 목록으로 보낸다. 확인하는 동안은 버튼을 잠근다(목적지가 바뀌기 전에 눌리지 않게).
+  const hasAppHistory = useHasAppHistory();
+  const jobCheck = useJobReadableForFallback(!hasAppHistory ? parsedJobId : null);
+  const backFallback =
+    parsedJobId == null || hasAppHistory || jobCheck.isSuccess ? jobBackFallback(parsedJobId) : REPORT_LIST_FALLBACK;
+  const backPending = jobCheck.isLoading;
+  // 뒤로 가기는 여기서 한 번만 만들고 안내 화면의 「돌아가기」 버튼들에도 넘긴다(WD-667)
   const { hasHistory, goBack } = useGoBack(backFallback.path);
 
   // HTML 리포트 조회 — 잘못된 id 면 대체값 없이 훅이 skipToken 으로 조회 자체를 끈다(WD-652). 실행 상세·모달과 캐시를 함께 쓴다(WD-661)
@@ -71,6 +93,7 @@ export default function ReportViewerPage() {
             variant="ghost"
             size="sm"
             onClick={goBack}
+            disabled={backPending}
             className="gap-1.5"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -117,7 +140,7 @@ export default function ReportViewerPage() {
           <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
             <p className="text-sm">잘못된 요청입니다.</p>
             {/* jobId/executionId가 유효하지 않으므로 "작업 상세 보기" 같은 깨진 링크는 노출하지 않는다 */}
-            <BackButton fallback={backFallback.path} />
+            <BackButton onBack={goBack} disabled={backPending} />
           </div>
         )}
 
@@ -142,14 +165,14 @@ export default function ReportViewerPage() {
             data-testid="report-not-found"
           >
             <p className="text-sm text-center break-keep px-4">{REPORT_NOT_FOUND_NOTICE}</p>
-            <BackButton fallback={backFallback.path} />
+            <BackButton onBack={goBack} disabled={backPending} />
           </div>
         )}
 
         {!isInvalidParams && isError && !isForbidden && !isLevelBlocked && !isNotFound && !isLoading && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
             <p className="text-sm">리포트를 불러올 수 없습니다.</p>
-            <BackButton fallback={backFallback.path} />
+            <BackButton onBack={goBack} disabled={backPending} />
           </div>
         )}
 

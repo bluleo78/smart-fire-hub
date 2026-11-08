@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm';
 import ReportModal from '@/components/ai/ReportModal';
 import { RestrictedNotice } from '@/components/ui/restricted-notice';
 import { parseUtcDate } from '@/lib/formatters';
+import { toValidId } from '@/lib/route-id';
 
 import type { ProactiveMessage as ProactiveMessageType } from '../../api/proactive';
 import { REPORT_LEVEL_BLOCKED_MESSAGE } from '../../lib/api-error';
@@ -26,11 +27,13 @@ export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveM
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const isUnread = !message.read;
   const sections = getSections(message.content);
-  // ChatDeliveryChannel이 저장한 jobId/executionId — 리포트 보기 링크 생성에 사용
-  const jobId = message.content.jobId as string | undefined;
-  const executionId = message.content.executionId as string | undefined;
+  // ChatDeliveryChannel이 저장한 jobId/executionId — 리포트 보기 링크 생성에 사용.
+  // content 는 형식 없는 값이라 Number() 로 바꾸면 숫자가 아닐 때 NaN 이 되어 `/jobs/NaN/executions/NaN` 을 불렀다(WD-667).
+  // 양의 정수(숫자 또는 숫자만으로 된 문자열)만 id 로 받고, 아니면 null — 리포트 보기를 그리지 않는다.
+  const jobId = toValidId(message.content.jobId);
+  const executionId = toValidId(message.content.executionId);
   // 작업 작성자가 아닌 수신자는 리포트 전문을 열 수 없다 — 버튼 대신 안내를 보인다 (WD-162, 알림 패널과 같은 기준)
-  const hasReport = !!jobId && !!executionId;
+  const hasReport = jobId != null && executionId != null;
   const canOpenReport = hasReport && message.canViewReport;
   const time = parseUtcDate(message.createdAt).toLocaleTimeString('ko-KR', {
     hour: '2-digit',
@@ -107,7 +110,7 @@ export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveM
         </div>
       )}
       <div className="px-3 pb-3 flex gap-2">
-        {canOpenReport && jobId && executionId && (
+        {canOpenReport && jobId != null && executionId != null && (
           <>
             <Button
               variant="default"
@@ -124,8 +127,8 @@ export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveM
             <ReportModal
               open={reportModalOpen}
               onClose={() => setReportModalOpen(false)}
-              jobId={Number(jobId)}
-              executionId={Number(executionId)}
+              jobId={jobId}
+              executionId={executionId}
             />
           </>
         )}
