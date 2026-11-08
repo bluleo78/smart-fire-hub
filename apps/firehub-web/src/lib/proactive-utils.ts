@@ -19,6 +19,16 @@ export const REPORT_NOT_FOUND_NOTICE =
 export const EXECUTION_NOT_FOUND_NOTICE =
   '실행 정보를 찾을 수 없습니다. 실행 결과는 작업을 만든 사람만 열 수 있습니다.';
 
+/**
+ * 실행 상세·리포트 보기에서 돌아갈 기록이 없을 때 보낼 곳(WD-661) — 작업 id 가 유효하면 그 작업 상세, 아니면 작업 목록.
+ * 같은 주소 파라미터(/jobs/:jobId/executions/:executionId[/report])를 쓰는 두 화면이 목적지가 어긋나지 않게 한곳에 둔다.
+ */
+export function jobBackFallback(jobId: number | null | undefined): { path: string; label: string } {
+  return jobId != null
+    ? { path: `/ai-insights/jobs/${jobId}`, label: '작업 상세' }
+    : { path: '/ai-insights/jobs', label: '작업 목록' };
+}
+
 export interface Section {
   key: string;
   label: string;

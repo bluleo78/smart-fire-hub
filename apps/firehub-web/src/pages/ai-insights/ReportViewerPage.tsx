@@ -7,29 +7,25 @@
  * 상단 바에 뒤로가기, PDF 다운로드, 인쇄 버튼을 제공한다.
  */
 
-import { skipToken, useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ExternalLink, FileDown, Loader2, Printer } from 'lucide-react';
 import { useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
-import { proactiveApi } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
 import { Button } from '@/components/ui/button';
+import { useExecutionHtml } from '@/hooks/queries/useProactiveMessages';
 import { useGoBack } from '@/hooks/useGoBack';
 import { useReportActions } from '@/hooks/useReportActions';
 import { isForbiddenError, isNotFoundError, isReportLevelBlocked } from '@/lib/api-error';
-import { REPORT_NOT_FOUND_NOTICE } from '@/lib/proactive-utils';
+import { jobBackFallback, REPORT_NOT_FOUND_NOTICE } from '@/lib/proactive-utils';
 import { parseRouteId } from '@/lib/route-id';
 
+import { BackButton } from './components/BackButton';
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 import { ReportLevelBlockedNotice } from './components/ReportLevelBlockedNotice';
 
 export default function ReportViewerPage() {
   const { jobId, executionId } = useParams<{ jobId: string; executionId: string }>();
-  // 이 탭의 첫 화면인지(WD-347) — 이메일 「웹에서 보기」·리포트 창 「새 탭에서 열기」는 새 탭으로 열려 돌아갈 기록이 없다.
-  // React Router 는 첫 진입 위치의 key 를 'default' 로 둔다. 그때 navigate(-1) 은 무반응이거나 앱 밖(about:blank)으로 나가므로
-  // 리포트 목록으로 보내고, 버튼 이름도 「리포트 목록」으로 바꿔 어디로 가는지 알린다.
-  const { hasHistory, goBack } = useGoBack('/ai-insights/reports');
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // 경로 파라미터가 잘못된 경우(잘못된 URL 직접 접근, 손상된 링크 등) — 조회하지 않고 별도 「잘못된 요청」 상태로 분기한다.
@@ -39,11 +35,14 @@ export default function ReportViewerPage() {
   const parsedExecutionId = parseRouteId(executionId);
   const isInvalidParams = parsedJobId == null || parsedExecutionId == null;
 
-  // HTML 리포트 조회 — 잘못된 id 면 0 같은 대체값 없이 skipToken 으로 조회 자체를 끈다(WD-652)
-  const { data: htmlResponse, isLoading, isError, error } = useQuery({
-    queryKey: ['execution-html', parsedJobId, parsedExecutionId],
-    queryFn: isInvalidParams ? skipToken : () => proactiveApi.getExecutionHtml(parsedJobId, parsedExecutionId),
-  });
+  // 이 탭의 첫 화면인지(WD-347) — 이메일 「웹에서 보기」·리포트 창 「새 탭에서 열기」는 새 탭으로 열려 돌아갈 기록이 없다.
+  // 그때 navigate(-1) 은 무반응이거나 앱 밖(about:blank)으로 나가므로 대체 목적지로 보내고, 버튼 이름도 그 목적지로 바꿔 알린다.
+  // 목적지는 실행 상세와 같다(WD-661) — 작업 id 가 유효하면 그 작업 상세, 아니면 작업 목록.
+  const backFallback = jobBackFallback(parsedJobId);
+  const { hasHistory, goBack } = useGoBack(backFallback.path);
+
+  // HTML 리포트 조회 — 잘못된 id 면 대체값 없이 훅이 skipToken 으로 조회 자체를 끈다(WD-652). 실행 상세·모달과 캐시를 함께 쓴다(WD-661)
+  const { data: htmlResponse, isLoading, isError, error } = useExecutionHtml(parsedJobId, parsedExecutionId);
 
   const rawHtml = htmlResponse?.data ?? null;
   // 조회 권한 부족(403) — 「리포트를 불러올 수 없습니다」 대신 권한 안내를 보이는 기준 (WD-137). 다시 시도해도 같다.
@@ -56,9 +55,9 @@ export default function ReportViewerPage() {
 
   // PDF 다운로드 + 인쇄 공통 훅
   const { handleDownloadPdf, handlePrint, downloading } = useReportActions({
-    // 잘못된 id 는 null 그대로 넘긴다 — 훅이 다운로드 요청을 보내지 않는다(WD-652)
-    jobId: parsedJobId ?? null,
-    executionId: parsedExecutionId ?? null,
+    // 잘못된 id 는 그대로 넘긴다 — 훅이 다운로드 요청을 보내지 않는다(WD-652)
+    jobId: parsedJobId,
+    executionId: parsedExecutionId,
     iframeRef,
   });
 
@@ -75,7 +74,7 @@ export default function ReportViewerPage() {
             className="gap-1.5"
           >
             <ArrowLeft className="h-4 w-4" />
-            {hasHistory ? '뒤로' : '리포트 목록'}
+            {hasHistory ? '뒤로' : backFallback.label}
           </Button>
           <div className="h-5 w-px bg-border" />
           <h1 className="text-sm font-semibold text-foreground">
@@ -118,10 +117,7 @@ export default function ReportViewerPage() {
           <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
             <p className="text-sm">잘못된 요청입니다.</p>
             {/* jobId/executionId가 유효하지 않으므로 "작업 상세 보기" 같은 깨진 링크는 노출하지 않는다 */}
-            <Button variant="ghost" size="sm" onClick={goBack}>
-              <ArrowLeft className="h-4 w-4" />
-              돌아가기
-            </Button>
+            <BackButton fallback={backFallback.path} />
           </div>
         )}
 
@@ -146,20 +142,14 @@ export default function ReportViewerPage() {
             data-testid="report-not-found"
           >
             <p className="text-sm text-center break-keep px-4">{REPORT_NOT_FOUND_NOTICE}</p>
-            <Button variant="ghost" size="sm" onClick={goBack}>
-              <ArrowLeft className="h-4 w-4" />
-              돌아가기
-            </Button>
+            <BackButton fallback={backFallback.path} />
           </div>
         )}
 
         {!isInvalidParams && isError && !isForbidden && !isLevelBlocked && !isNotFound && !isLoading && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
             <p className="text-sm">리포트를 불러올 수 없습니다.</p>
-            <Button variant="ghost" size="sm" onClick={goBack}>
-              <ArrowLeft className="h-4 w-4" />
-              돌아가기
-            </Button>
+            <BackButton fallback={backFallback.path} />
           </div>
         )}
 

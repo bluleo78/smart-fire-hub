@@ -9,50 +9,32 @@
  * - COMPLETED: 요약(마크다운) + HTML 리포트(iframe) 또는 마크다운 섹션 폴백
  */
 
-import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, FileDown, Loader2, Printer } from 'lucide-react';
 import { useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useParams } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
 
-import { proactiveApi } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SecurityLevelBadge } from '@/components/ui/SecurityLevelBadge';
-import { useExecution } from '@/hooks/queries/useProactiveMessages';
+import { useExecution, useExecutionHtml } from '@/hooks/queries/useProactiveMessages';
 import { useGoBack } from '@/hooks/useGoBack';
 import { useReportActions } from '@/hooks/useReportActions';
 import { isForbiddenError, isNotFoundError, isReportLevelBlocked } from '@/lib/api-error';
 import { classifyExecutionOutcome, getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
-import { EXECUTION_NOT_FOUND_NOTICE, getSections } from '@/lib/proactive-utils';
+import { EXECUTION_NOT_FOUND_NOTICE, getSections, jobBackFallback } from '@/lib/proactive-utils';
 import { parseRouteId } from '@/lib/route-id';
 
+import { BackButton } from './components/BackButton';
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 import { ReportLevelBlockedNotice } from './components/ReportLevelBlockedNotice';
 
 /** 마크다운 렌더링용 prose 클래스 */
 const PROSE_CLASSES = 'prose prose-sm dark:prose-invert max-w-none';
 const REMARK_PLUGINS = [remarkGfm];
-
-/** 돌아갈 기록이 없을 때 보낼 목록 — 작업 id 가 유효하면 그 작업 상세, 아니면 작업 목록 */
-function backFallbackPath(jobIdNum: number | null): string {
-  return jobIdNum != null ? `/ai-insights/jobs/${jobIdNum}` : '/ai-insights/jobs';
-}
-
-/** 안내 화면(찾을 수 없음·등급 차단·권한 없음) 아래의 공용 「돌아가기」 버튼 */
-function BackButton({ fallback }: { fallback: string }) {
-  // 돌아갈 기록이 없으면(새 탭·붙여 넣은 링크) fallback 목록으로 보낸다(WD-652)
-  const { goBack } = useGoBack(fallback);
-  return (
-    <Button variant="ghost" size="sm" onClick={goBack}>
-      <ArrowLeft className="h-4 w-4" />
-      돌아가기
-    </Button>
-  );
-}
 
 /**
  * 「실행 정보를 찾을 수 없습니다」 안내 + 돌아가기 — 잘못된 주소 id(WD-652)와 조회 결과 없음(404 등)이 같은 화면을 쓴다.
@@ -81,24 +63,23 @@ export default function ExecutionDetailPage() {
   const executionIdNum = parseRouteId(executionId);
 
   if (jobIdNum == null || executionIdNum == null) {
-    return <ExecutionNotFound fallback={backFallbackPath(jobIdNum ?? null)} />;
+    // 돌아갈 기록이 없을 때의 목적지는 리포트 보기와 같은 규칙(작업 상세, 작업 id 가 잘못되면 작업 목록)이다(WD-661)
+    return <ExecutionNotFound fallback={jobBackFallback(jobIdNum).path} />;
   }
   return <ExecutionDetailContent jobIdNum={jobIdNum} executionIdNum={executionIdNum} />;
 }
 
 /** 실행 상세 본문 — 검증된 양의 정수 id 만 받는다 */
 function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number; executionIdNum: number }) {
-  const fallback = backFallbackPath(jobIdNum);
+  const fallback = jobBackFallback(jobIdNum).path;
   const { goBack } = useGoBack(fallback);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // 실행 데이터 조회 — RUNNING 상태일 때 5초 폴링
   const { data: execution, isLoading, isError, error } = useExecution(jobIdNum, executionIdNum);
 
-  // HTML 리포트 조회 — COMPLETED 상태이고 result가 있을 때만 활성화
-  const { data: htmlResponse } = useQuery({
-    queryKey: ['execution-html', jobIdNum, executionIdNum],
-    queryFn: () => proactiveApi.getExecutionHtml(jobIdNum, executionIdNum),
+  // HTML 리포트 조회 — COMPLETED 상태이고 result가 있을 때만 활성화. 리포트 보기·모달과 같은 훅·캐시를 쓴다(WD-661)
+  const { data: htmlResponse } = useExecutionHtml(jobIdNum, executionIdNum, {
     enabled: execution?.status === 'COMPLETED' && execution?.result != null,
   });
 

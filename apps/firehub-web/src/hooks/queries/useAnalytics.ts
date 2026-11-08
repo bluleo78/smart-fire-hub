@@ -1,4 +1,4 @@
-import { queryOptions,useInfiniteQuery,useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryOptions, skipToken, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { analyticsApi } from '../../api/analytics';
@@ -57,11 +57,14 @@ export function useAllSavedQueries() {
   });
 }
 
-export function useSavedQuery(id: number | null) {
+/**
+ * 저장 쿼리 단건 조회. id 가 없으면(null·undefined — 새 쿼리·잘못된 주소 id) 조회하지 않는다(WD-661).
+ * `id!` + enabled 조건에 기대지 않고 skipToken 으로 끈다 — 없는 id 로는 조회 함수가 아예 만들어지지 않는다.
+ */
+export function useSavedQuery(id: number | null | undefined) {
   return useQuery({
-    queryKey: ['analytics', 'queries', id],
-    queryFn: () => analyticsApi.getQuery(id!).then((r) => r.data),
-    enabled: !!id,
+    queryKey: ['analytics', 'queries', id ?? null],
+    queryFn: id == null ? skipToken : () => analyticsApi.getQuery(id).then((r) => r.data),
   });
 }
 
@@ -192,11 +195,11 @@ export function useChartsInfinite(params: {
   });
 }
 
-export function useChart(id: number | null) {
+/** 차트 단건 조회. id 가 없으면(null·undefined — 새 차트·잘못된 주소 id) skipToken 으로 조회하지 않는다(WD-661). */
+export function useChart(id: number | null | undefined) {
   return useQuery({
-    queryKey: ['analytics', 'charts', id],
-    queryFn: () => analyticsApi.getChart(id!).then((r) => r.data),
-    enabled: !!id,
+    queryKey: ['analytics', 'charts', id ?? null],
+    queryFn: id == null ? skipToken : () => analyticsApi.getChart(id).then((r) => r.data),
   });
 }
 
@@ -204,11 +207,13 @@ export function useChart(id: number | null) {
  * 차트 데이터 쿼리의 키·조회 함수 — useChartData 와 useDashboardExportAllowed 가 같은 캐시 항목을 봐야 하므로 한 곳에 둔다.
  * 키가 어긋나면 enabled: false 관찰자가 늘 undefined 를 받아 내보내기 판정이 조용히 "전부 허용"이 된다.
  */
-function chartDataQuery(id: number) {
-  return {
-    queryKey: ['analytics', 'charts', id, 'data'],
-    queryFn: () => analyticsApi.getChartData(id).then((r) => r.data),
-  };
+function chartDataQuery(id: number | null | undefined) {
+  // queryOptions 로 감싸야 삼항식의 skipToken 이 일반 symbol 로 넓어지지 않고 조회 옵션 타입으로 추론된다
+  return queryOptions({
+    queryKey: ['analytics', 'charts', id ?? null, 'data'],
+    // id 가 없으면 skipToken — `id!` 로 undefined 를 넘기는 조회 함수를 만들지 않는다(WD-661)
+    queryFn: id == null ? skipToken : () => analyticsApi.getChartData(id).then((r) => r.data),
+  });
 }
 
 export function useChartData(id: number | null | undefined, options?: {
@@ -220,8 +225,9 @@ export function useChartData(id: number | null | undefined, options?: {
   // 컴포넌트가 다시 렌더될 때마다 타이머를 처음부터 재시작했다. 주기보다 자주 렌더되면 자동 새로고침이 영영 발화하지 않는다.
   const [jitterFactor] = useState(() => 1 + (Math.random() - 0.5) * 0.2);
   return useQuery({
-    ...chartDataQuery(id!),
-    enabled: options?.enabled !== false && !!id,
+    ...chartDataQuery(id),
+    // id 없음은 chartDataQuery 의 skipToken 이 끈다 — enabled 는 호출부의 지연 로딩 조건만 맡는다
+    enabled: options?.enabled !== false,
     refetchInterval: options?.refetchInterval
       ? Math.round(options.refetchInterval * jitterFactor)
       : undefined,
@@ -347,11 +353,11 @@ export function useAllDashboards() {
   });
 }
 
-export function useDashboard(id: number | null) {
+/** 대시보드 단건 조회. id 가 없으면(null·undefined — 잘못된 주소 id) skipToken 으로 조회하지 않는다(WD-661). */
+export function useDashboard(id: number | null | undefined) {
   return useQuery({
-    queryKey: ['analytics', 'dashboards', id],
-    queryFn: () => analyticsApi.getDashboard(id!).then((r) => r.data),
-    enabled: !!id,
+    queryKey: ['analytics', 'dashboards', id ?? null],
+    queryFn: id == null ? skipToken : () => analyticsApi.getDashboard(id).then((r) => r.data),
   });
 }
 
@@ -359,11 +365,11 @@ export function useDashboard(id: number | null) {
  * 대시보드 공유 영향 개수(WD-325) — 설정 창이 열려 있을 때만(id 가 있을 때) 조회한다.
  * 창을 열 때마다 새로 센다(gcTime 0) — 그 사이 차트를 공개·비공개로 바꿨을 수 있다.
  */
-export function useDashboardShareImpact(id: number | null) {
+export function useDashboardShareImpact(id: number | null | undefined) {
   return useQuery({
-    queryKey: ['analytics', 'dashboards', id, 'share-impact'],
-    queryFn: ({ signal }) => analyticsApi.getDashboardShareImpact(id!, signal).then((r) => r.data),
-    enabled: !!id,
+    queryKey: ['analytics', 'dashboards', id ?? null, 'share-impact'],
+    // 창이 닫혀 있으면(id 없음) skipToken 으로 조회하지 않는다(WD-661)
+    queryFn: id == null ? skipToken : ({ signal }) => analyticsApi.getDashboardShareImpact(id, signal).then((r) => r.data),
     gcTime: 0,
     retry: false,
   });

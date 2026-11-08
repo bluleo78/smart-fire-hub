@@ -211,7 +211,7 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
   );
   const updateDashboard = useUpdateDashboard();
   // 공유 스위치 안내용 영향 개수(WD-325) — 창이 열려 있을 때만 센다. 실패하면 개수 없는 안내로 물러난다
-  const { data: shareImpact } = useDashboardShareImpact(dashboard?.id ?? null);
+  const { data: shareImpact } = useDashboardShareImpact(dashboard?.id);
   const queryClient = useQueryClient();
   // isPending 비동기 반영 지연으로 인한 중복 제출 방지용 동기 가드 (CreateDashboardDialog와 동일 패턴, #546)
   const submittingRef = useRef(false);

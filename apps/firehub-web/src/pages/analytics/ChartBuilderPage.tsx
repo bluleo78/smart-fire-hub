@@ -447,9 +447,8 @@ export default function ChartBuilderPage() {
   const [searchParams] = useSearchParams();
 
   // 주소 id 는 숫자만 받는다(WD-434) — parseInt 는 'abc' 를 NaN(새 차트 + 「NaN」 글자로), '15abc' 를 15(다른 차트)로 읽었다
-  const parsedChartId = parseRouteId(id);
-  const isInvalidId = parsedChartId === null;
-  const chartId = parsedChartId ?? null;
+  const chartId = parseRouteId(id);
+  const isInvalidId = chartId === null;
   const isNew = id === undefined;
 
   // 접근성: 라벨↔컨트롤 연결용 id 접두사 (#432). 하드코딩 대신 useId 로 충돌을 원천 차단한다.

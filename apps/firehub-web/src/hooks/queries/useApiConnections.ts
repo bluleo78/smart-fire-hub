@@ -20,12 +20,12 @@ export function useApiConnections() {
 }
 
 /**
- * API 연결 단건 조회. id 가 null(잘못된 주소 id)이면 조회하지 않는다(WD-652).
- * 0 같은 대체값 + enabled 조건에 기대지 않고 skipToken 으로 끈다 — null 로는 조회 함수가 아예 만들어지지 않는다.
+ * API 연결 단건 조회. id 가 없으면(null·undefined — 잘못된 주소 id 등) 조회하지 않는다(WD-652·WD-661).
+ * 0 같은 대체값 + enabled 조건에 기대지 않고 skipToken 으로 끈다 — 없는 id 로는 조회 함수가 아예 만들어지지 않는다.
  */
-export function useApiConnection(id: number | null) {
+export function useApiConnection(id: number | null | undefined) {
   return useQuery({
-    queryKey: [QUERY_KEY, id],
+    queryKey: [QUERY_KEY, id ?? null],
     queryFn: id == null ? skipToken : () => apiConnectionsApi.getById(id).then(r => r.data),
   });
 }

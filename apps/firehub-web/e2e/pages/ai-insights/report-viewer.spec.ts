@@ -1,5 +1,5 @@
 import { createJob, createReport } from '../../factories/ai-insight.factory';
-import { setupReportViewerMocks } from '../../fixtures/ai-insight.fixture';
+import { setupJobDetailMocks, setupReportViewerMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -113,21 +113,21 @@ test.describe('리포트 뷰어 페이지', () => {
 
   // 회귀 가드(WD-347): 이메일 「웹에서 보기」·리포트 창 「새 탭에서 열기」는 새 탭으로 열려 돌아갈 기록이 없다.
   // 예전엔 「뒤로」가 navigate(-1) 뿐이라 눌러도 무반응(빈 탭에서 연 경우 about:blank 로 앱 이탈)이었다.
-  test('새 탭처럼 바로 연 리포트에서는 「리포트 목록」 버튼이 리포트 목록으로 보낸다 (WD-347)', async ({
+  // 대체 목적지는 실행 상세와 같은 작업 상세다(WD-661) — 예전엔 리포트 목록으로 보내 같은 주소 파라미터에 목적지가 달랐다.
+  test('새 탭처럼 바로 연 리포트에서는 「작업 상세」 버튼이 그 작업 상세로 보낸다 (WD-347·WD-661)', async ({
     authenticatedPage: page,
   }) => {
     await setupReportViewerMocks(page, 1, 1);
-    await mockApi(page, 'GET', '/api/v1/proactive/reports', [createReport()]);
-    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: 3 })]);
+    await setupJobDetailMocks(page, 1);
 
     await page.goto('/ai-insights/jobs/1/executions/1/report');
 
     // 돌아갈 기록이 없으니 「뒤로」 대신 어디로 가는지 이름에 드러낸다
     await expect(page.getByRole('button', { name: '뒤로' })).toHaveCount(0);
-    await page.getByRole('button', { name: '리포트 목록' }).click();
+    await page.getByRole('button', { name: '작업 상세' }).click();
 
-    await expect(page).toHaveURL(/\/ai-insights\/reports$/);
-    await expect(page.getByText('8월 화재 통계 리포트')).toBeVisible();
+    await expect(page).toHaveURL(/\/ai-insights\/jobs\/1$/);
+    await expect(page.getByRole('heading', { name: createJob({ id: 1 }).name })).toBeVisible();
   });
 
   test('앱 안에서 들어온 리포트의 「뒤로」는 들어온 화면으로 돌아간다 (WD-347)', async ({
