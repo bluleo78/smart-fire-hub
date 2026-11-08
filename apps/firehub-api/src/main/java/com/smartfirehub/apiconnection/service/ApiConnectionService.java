@@ -90,16 +90,17 @@ public class ApiConnectionService {
   @Transactional
   public ApiConnectionResponse create(CreateApiConnectionRequest request, Long userId) {
     validateAuthType(request.authType());
-    requireSecretOnCreate(request.authType(), request.authConfig());
-    validateNameNotDuplicated(request.name());
-    String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
-
     // 저장값이 없으니 가린 값(****…)은 유지할 대상도 없다 — 그대로 저장되지 않게 거절한다(WD-179).
-    // 헤더·파라미터 이름과 값 줄바꿈을 저장 전에 검사한다(WD-392) — 쓸 수 없는 값이 저장돼 테스트가 네트워크 오류처럼 안내되지 않게.
-    String encryptedConfig =
-        serializeAndEncrypt(
-            AuthConfigValidator.validateAndNormalize(
-                request.authType(), resolveMaskedSecrets(request.authConfig(), null, false)));
+    // 비밀 필드 빈 값(정리한 뒤 기준, WD-588 → WD-623)을 먼저, 이어서 헤더·파라미터 이름과 값 줄바꿈을 저장 전에 검사한다(WD-392) —
+    // 쓸 수 없는 값이 저장돼 테스트가 네트워크 오류처럼 안내되지 않게.
+    Map<String, String> normalizedConfig =
+        AuthConfigValidator.validateAndNormalize(
+            request.authType(), resolveMaskedSecrets(request.authConfig(), null, false));
+    // 입력 검증(인증 정보·기준 URL, 400)은 이름 중복(409)보다 먼저 — 입력 자체가 틀린 요청은 400 으로 답한다.
+    String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
+    validateNameNotDuplicated(request.name());
+
+    String encryptedConfig = serializeAndEncrypt(normalizedConfig);
     Long id =
         repository.save(
             request.name(),
@@ -152,6 +153,9 @@ public class ApiConnectionService {
    *       받아야 한다(400). authConfig 가 없거나 {@code {}}·옛 방식의 필드만 있으면 거절한다 — 그대로 두면 신고된 「인증 헤더 없이 호출」이
    *       재현된다.
    *   <li>authType 이 그대로(또는 생략)이고 authConfig 도 없으면 저장된 비밀을 그대로 둔다(기존 동작).
+   *   <li>authConfig 를 보내면 방식이 그대로여도 정리한 값(「Bearer 」 떼기·가린 값 채우기 뒤)에 비밀 필드가 있어야 한다(400, WD-623).
+   *       authConfig 는 통째로 교체되므로 {@code {}}·빈 토큰을 받으면 저장된 비밀이 빈 값으로 덮인다. 조회한 가린 값을 그대로 보내면 저장 원문으로
+   *       채워져 통과한다.
    * </ol>
    *
    * <p><b>감사(WD-181).</b> 실제로 바뀐 항목이 있으면 UPDATE 감사를 한 건 남긴다 — 바뀐 항목 목록(이름·설명·기준 URL·헬스체크 경로·인증
@@ -167,21 +171,18 @@ public class ApiConnectionService {
         repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
     String currentAuthType = existing.authType();
 
-    // 인증 방식 검증은 이름 중복(409)보다 먼저 — 입력 자체가 틀린 요청은 400 으로 답한다.
+    // 입력 검증(인증 방식·인증 정보·기준 URL, 400)은 이름 중복(409)보다 먼저 — 입력 자체가 틀린 요청은 400 으로 답한다.
     boolean authTypeChanged = false;
     if (request.authType() != null) {
       validateAuthType(request.authType());
       authTypeChanged = !request.authType().equals(currentAuthType);
-      if (authTypeChanged) {
-        requireAuthConfigForNewAuthType(request.authType(), request.authConfig());
-      }
     }
-
-    // 이름을 변경하는 경우에만 중복 검사 — 자기 자신은 제외 (#647)
-    if (request.name() != null && !request.name().isBlank()) {
-      if (repository.existsByNameExcludingId(request.name(), id)) {
-        throw new ApiConnectionNameAlreadyExistsException(request.name());
-      }
+    // 검사·저장·감사 모두 바뀐 뒤의 인증 방식 기준이다(WD-392) — 방식을 바꾸지 않는 수정이면 저장된 방식으로 본다.
+    String effectiveAuthType = request.authType() != null ? request.authType() : currentAuthType;
+    if (authTypeChanged) {
+      // 방식 변경은 새 방식의 비밀이 반드시 함께 와야 한다(WD-180). 가린 값 거절·헤더 이름 등 다른 사유보다 먼저 본다 — 무엇을 빠뜨렸는지가 가장
+      // 중요한 안내다(WD-623).
+      requireSecretForNewAuthType(effectiveAuthType, request.authConfig());
     }
 
     String encryptedConfig = null;
@@ -190,12 +191,17 @@ public class ApiConnectionService {
     if (request.authConfig() != null) {
       // 조회 결과(maskedAuthConfig)를 그대로 되돌려 보낸 비밀 필드는 저장 원문으로 채운다(WD-179). authType 이 바뀌면 같은 이름의
       // 필드라도 뜻이 달라지므로 저장값을 쓰지 않는다 — 가린 값은 모두 거절된다.
-      Map<String, String> stored = authTypeChanged ? null : reader.getDecryptedAuthConfig(id);
-      // 검사는 바뀐 뒤의 인증 방식 기준이다(WD-392) — 방식을 바꾸지 않는 수정이면 저장된 방식으로 본다.
+      Map<String, String> stored = null;
+      if (!authTypeChanged) {
+        stored = reader.getDecryptedAuthConfig(id);
+        rejectMaskedEchoOfEmptyStoredSecret(effectiveAuthType, request.authConfig(), stored);
+      }
+      // authConfig 는 통째로 교체되므로 방식이 그대로여도 비밀 필드가 비면 거절한다(WD-623) — 예전에는 방식이 바뀔 때만 봐서 {}·빈 토큰이
+      // 저장된 비밀을 빈 값으로 덮었다(200). 가린 값을 그대로 보낸 경우는 저장 원문으로 채워져 통과한다. 빈 값 검사는 validateAndNormalize 가
+      // 정리한 값으로 다른 필드 검사보다 먼저 한다.
       Map<String, String> resolved =
           AuthConfigValidator.validateAndNormalize(
-              request.authType() != null ? request.authType() : currentAuthType,
-              resolveMaskedSecrets(request.authConfig(), stored, true));
+              effectiveAuthType, resolveMaskedSecrets(request.authConfig(), stored, true));
       encryptedConfig = serializeAndEncrypt(resolved);
       if (!authTypeChanged) {
         // 비교는 메모리 안에서만 한다 — 값은 어디에도 남기지 않고 true/false 만 감사에 싣는다.
@@ -209,13 +215,19 @@ public class ApiConnectionService {
       normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
     }
 
-    String authType = request.authType() != null ? request.authType() : currentAuthType;
+    // 이름을 변경하는 경우에만 중복 검사 — 자기 자신은 제외 (#647)
+    if (request.name() != null && !request.name().isBlank()) {
+      if (repository.existsByNameExcludingId(request.name(), id)) {
+        throw new ApiConnectionNameAlreadyExistsException(request.name());
+      }
+    }
+
     String normalizedHealthCheckPath = normalizeHealthCheckPath(request.healthCheckPath());
     repository.update(
         id,
         request.name(),
         request.description(),
-        authType,
+        effectiveAuthType,
         encryptedConfig,
         normalizedBaseUrl,
         normalizedHealthCheckPath);
@@ -225,7 +237,7 @@ public class ApiConnectionService {
         id,
         existing,
         request,
-        authType,
+        effectiveAuthType,
         normalizedBaseUrl,
         normalizedHealthCheckPath,
         credentialsChanged);
@@ -357,11 +369,11 @@ public class ApiConnectionService {
   public TestConnectionResponse testConnectionPayload(CreateApiConnectionRequest request) {
     validateAuthType(request.authType());
     // 저장 전 테스트도 가린 값(****…)을 인증 값으로 보내지 않는다 — 저장값이 없으니 유지할 것도 없다(WD-179).
+    // 비밀 필드가 없거나 비면(정리한 뒤 기준) 대상 서버를 부르지 않고 생성과 같은 안내로 거절한다(WD-623) — 예전에는 빈 인증으로 호출해 대상
+    // 서버의 401/403 만 보여 무엇을 빠뜨렸는지 알 수 없었다. 이 검사는 validateAndNormalize 가 다른 필드 검사보다 먼저 한다.
     Map<String, String> rawConfig =
-        request.authConfig() != null
-            ? AuthConfigValidator.validateAndNormalize(
-                request.authType(), resolveMaskedSecrets(request.authConfig(), null, false))
-            : Map.of();
+        AuthConfigValidator.validateAndNormalize(
+            request.authType(), resolveMaskedSecrets(request.authConfig(), null, false));
     String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
     String normalizedPath = normalizeHealthCheckPath(request.healthCheckPath());
     return callHealthCheck(
@@ -719,10 +731,6 @@ public class ApiConnectionService {
     }
   }
 
-  /** 지원하는 인증 방식과 그 방식에 반드시 있어야 하는 비밀 필드. 인증 헤더·쿼리 조립({@link #buildAuthHeaders})이 읽는 키와 같다. */
-  private static final Map<String, String> REQUIRED_SECRET_BY_AUTH_TYPE =
-      Map.of("API_KEY", "apiKey", "BEARER", "token");
-
   /** 안내 문구에 싣는 지원 목록 — 순서를 고정해 문구가 실행마다 달라지지 않게 한다. */
   private static final String SUPPORTED_AUTH_TYPES_TEXT = "API_KEY, BEARER";
 
@@ -735,55 +743,54 @@ public class ApiConnectionService {
       throw new ApiConnectionException(
           "인증 방식(authType)을 입력하세요 (사용 가능: " + SUPPORTED_AUTH_TYPES_TEXT + ")");
     }
-    if (!REQUIRED_SECRET_BY_AUTH_TYPE.containsKey(authType)) {
+    if (!AuthConfigValidator.REQUIRED_SECRET_BY_AUTH_TYPE.containsKey(authType)) {
       throw new ApiConnectionException(
           "지원하지 않는 인증 방식입니다: " + authType + " (사용 가능: " + SUPPORTED_AUTH_TYPES_TEXT + ")");
     }
   }
 
+  /** 같은 방식 수정에서 가린 값을 되돌려 보냈는데 저장된 비밀이 비어 있을 때의 안내(WD-623). */
+  private static final Map<String, String> STORED_SECRET_EMPTY_MESSAGE_BY_AUTH_TYPE =
+      Map.of(
+          "API_KEY", "저장된 API 키가 비어 있습니다 — 새 키를 입력하세요 (authConfig.apiKey)",
+          "BEARER", "저장된 Bearer 토큰이 비어 있습니다 — 새 토큰을 입력하세요 (authConfig.token)");
+
   /**
    * 인증 방식을 바꾸는 수정에는 새 방식의 비밀 필드를 담은 authConfig 가 함께 와야 한다(WD-180). 저장된 비밀은 옛 방식의 것이라(API 키 ↔ 토큰) 새
    * 방식으로 쓸 수 없다 — 없이 저장하면 인증 헤더 없이 호출되면서도 오류가 나지 않는다.
    *
-   * <p>가린 값({@code ****…})은 여기서는 「값이 있음」으로 보고 넘긴다 — 방식이 바뀌면 유지할 저장값이 없으므로 뒤이은 {@link
-   * #resolveMaskedSecrets} 가 따로 거절한다.
+   * <p>정리한 값 기준으로 비었거나(「Bearer 」 포함, WD-623) 가린 값({@code ****…})이면 거절한다. 방식이 바뀌면 가린 값을 채울 저장값이 없어
+   * 어차피 쓸 수 없으므로, 뒤이은 {@link #resolveMaskedSecrets} 의 일반 거절 문구보다 「새 방식의 인증 정보를 입력하라」는 이 안내를 먼저 보인다.
    *
    * @param newAuthType 검증을 마친(지원 목록 안의) 새 인증 방식
+   * @param requestedConfig 요청 authConfig(정리 전, null 가능)
    */
-  private static void requireAuthConfigForNewAuthType(
-      String newAuthType, Map<String, String> authConfig) {
-    String requiredKey = REQUIRED_SECRET_BY_AUTH_TYPE.get(newAuthType);
-    String value = authConfig != null ? authConfig.get(requiredKey) : null;
-    if (value == null || value.isBlank()) {
+  private static void requireSecretForNewAuthType(
+      String newAuthType, Map<String, String> requestedConfig) {
+    String secret = AuthConfigValidator.normalizedSecret(newAuthType, requestedConfig);
+    if (secret == null || secret.isBlank() || AuthQueryMasker.isMasked(secret)) {
       throw new ApiConnectionException(
           "인증 방식을 "
               + newAuthType
               + "(으)로 바꾸려면 새 방식의 인증 정보(authConfig."
-              + requiredKey
+              + AuthConfigValidator.REQUIRED_SECRET_BY_AUTH_TYPE.get(newAuthType)
               + ")를 함께 입력하세요");
     }
   }
 
-  /** 생성 시 비밀 필드가 비었을 때의 안내(WD-588) — AuthConfigValidator 의 줄바꿈 안내와 같은 이름(API 키·Bearer 토큰)을 쓴다. */
-  private static final Map<String, String> MISSING_SECRET_MESSAGE_BY_AUTH_TYPE =
-      Map.of(
-          "API_KEY", "API 키를 입력하세요 (authConfig.apiKey)",
-          "BEARER", "Bearer 토큰을 입력하세요 (authConfig.token)");
-
   /**
-   * 새 연결에는 인증 방식의 비밀 필드(API_KEY → apiKey, BEARER → token)가 있어야 한다(WD-588).
+   * 같은 방식 수정에서 비밀 필드에 가린 값({@code ****…})을 되돌려 보냈는데 저장된 비밀이 비어 있으면(정리한 뒤 기준) 그 사실을 알려 거절한다(WD-623).
    *
-   * <p>예전에는 authConfig 가 null·누락이면 암호화 단계에서 500 이 났고, {@code {}} 나 빈 값이면 비밀 없는 연결이 201 로 저장돼 연결
-   * 테스트·파이프라인 실행 때에야 인증 실패로 드러났다. 연결 화면은 이 필드를 필수로 받으므로 화면 경로는 바뀌지 않는다. 가린 값({@code ****…})은 「값이
-   * 있음」으로 보고 넘긴다 — 뒤이은 {@link #resolveMaskedSecrets} 가 저장값 없음으로 따로 거절한다.
+   * <p>빈 비밀은 예전(WD-588·WD-623 전)에 저장된 연결에 남아 있을 수 있다. 조회 화면에는 {@code ****} 로 보여 사용자는 키가 있다고 여기고 그대로
+   * 저장하는데, 일반 문구(「… 입력하세요」·「가려진 값은 저장할 수 없습니다」)로는 왜 거절됐는지 알기 어렵다. 저장된 값이 비었다고 짚어 새 값을 받게 한다.
    *
-   * @param authType 검증을 마친(지원 목록 안의) 인증 방식
+   * @param stored 현재 저장된 복호화 authConfig
    */
-  private static void requireSecretOnCreate(String authType, Map<String, String> authConfig) {
-    String requiredKey = REQUIRED_SECRET_BY_AUTH_TYPE.get(authType);
-    String value = authConfig != null ? authConfig.get(requiredKey) : null;
-    if (value == null || value.isBlank()) {
-      throw new ApiConnectionException(MISSING_SECRET_MESSAGE_BY_AUTH_TYPE.get(authType));
+  private static void rejectMaskedEchoOfEmptyStoredSecret(
+      String authType, Map<String, String> requestedConfig, Map<String, String> stored) {
+    if (AuthQueryMasker.isMasked(AuthConfigValidator.normalizedSecret(authType, requestedConfig))
+        && AuthConfigValidator.isSecretMissing(authType, stored)) {
+      throw new ApiConnectionException(STORED_SECRET_EMPTY_MESSAGE_BY_AUTH_TYPE.get(authType));
     }
   }
 
@@ -820,9 +827,7 @@ public class ApiConnectionService {
     for (Map.Entry<String, String> entry : requested.entrySet()) {
       String key = entry.getKey();
       String value = entry.getValue();
-      if (!ApiConnectionReader.isSensitiveKey(key)
-          || value == null
-          || !value.startsWith(AuthQueryMasker.MASK_PREFIX)) {
+      if (!ApiConnectionReader.isSensitiveKey(key) || !AuthQueryMasker.isMasked(value)) {
         continue;
       }
       String storedValue = stored != null ? stored.get(key) : null;

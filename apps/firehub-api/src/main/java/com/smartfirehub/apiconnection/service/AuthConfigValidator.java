@@ -38,27 +38,79 @@ public final class AuthConfigValidator {
           "trailer",
           "expect");
 
-  /** 토큰 칸에 접두어까지 붙여 넣은 값 — 그대로 두면 「Authorization: Bearer Bearer …」 로 나간다. */
-  private static final Pattern BEARER_PREFIX = Pattern.compile("(?i)^bearer\\s+");
+  /**
+   * 토큰 칸에 접두어까지 붙여 넣은 값 — 그대로 두면 「Authorization: Bearer Bearer …」 로 나간다.
+   *
+   * <p>접두어 뒤가 공백이거나 <b>값의 끝</b>이어도 떼고, 접두어가 여러 번 겹쳐 있어도(「Bearer Bearer abc」) 모두 뗀다(WD-623). 앞뒤 공백을
+   * strip 한 뒤 맞추므로 「Bearer 」 는 「Bearer」 가 되는데, 예전 패턴(뒤에 공백 필수·한 번만)은 이를 놓쳐 「Bearer」 가 토큰으로 저장됐다.
+   * 접두어만 있으면 빈 토큰이 돼야 비밀 필드 검사가 거절한다. 「bearerXYZ」 처럼 접두어 뒤에 바로 글자가 이어지는 값은 토큰 자체이므로 건드리지 않는다.
+   *
+   * <p>값 전체가 글자 그대로 「bearer」(대소문자 무관)인 토큰도 빈 토큰으로 본다 — 실제 토큰일 가능성보다 접두어만 붙여 넣은 실수일 가능성이 훨씬 커서, 저장해
+   * 「Bearer bearer」 로 호출하기보다 「Bearer 토큰을 입력하세요」 로 안내하는 쪽을 택했다.
+   */
+  private static final Pattern BEARER_PREFIX = Pattern.compile("(?i)^(bearer(\\s+|$))+");
+
+  /**
+   * 지원하는 인증 방식과 그 방식에 반드시 있어야 하는 비밀 필드(API_KEY → apiKey, BEARER → token). 인증 헤더·쿼리 조립이 읽는 키와 같다.
+   * 저장·저장 전 테스트 검사와 저장된 값 검사({@link #describeProblem})가 같은 규칙을 쓰도록 여기 한 곳에 둔다(WD-623).
+   */
+  static final Map<String, String> REQUIRED_SECRET_BY_AUTH_TYPE =
+      Map.of("API_KEY", "apiKey", "BEARER", "token");
+
+  /** 비밀 필드가 비었을 때의 안내(WD-588) — 줄바꿈 안내와 같은 이름(API 키·Bearer 토큰)을 쓴다. */
+  private static final Map<String, String> MISSING_SECRET_MESSAGE_BY_AUTH_TYPE =
+      Map.of(
+          "API_KEY", "API 키를 입력하세요 (authConfig.apiKey)",
+          "BEARER", "Bearer 토큰을 입력하세요 (authConfig.token)");
+
+  /**
+   * Bearer 토큰 값을 정리한다 — 앞뒤 공백을 떼고 앞에 붙은 「Bearer」 접두어(겹친 것까지)를 뗀다. 저장 검사와 비밀 필드 빈 값 판정이 같은 정리를 거치도록
+   * 이 메서드 하나만 쓴다(WD-623).
+   *
+   * @return 정리한 토큰. null 이면 null
+   */
+  static String normalizeBearerToken(String token) {
+    if (token == null) return null;
+    // 앞뒤 공백까지 함께 정리한다 — 공백도 줄바꿈처럼 헤더 값을 깨거나 인증을 실패시킨다.
+    return BEARER_PREFIX.matcher(token.strip()).replaceFirst("");
+  }
+
+  /**
+   * 인증 방식의 비밀 필드 값을 정리한 형태로 꺼낸다(BEARER 면 {@link #normalizeBearerToken} 적용). 지원하지 않는 방식이거나 config 가
+   * null 이면 null.
+   */
+  static String normalizedSecret(String authType, Map<String, String> config) {
+    String key = REQUIRED_SECRET_BY_AUTH_TYPE.get(authType);
+    if (key == null || config == null) return null;
+    String value = config.get(key);
+    return "BEARER".equals(authType) ? normalizeBearerToken(value) : value;
+  }
+
+  /**
+   * 인증 방식의 비밀 필드가 정리한 뒤 비어 있는지(없음·공백·접두어만) 본다. 비밀 필드가 정해지지 않은 방식이면 false.
+   *
+   * @param config 정리 전·후 어느 쪽이든 된다 — 판정은 정리한 값으로 한다
+   */
+  static boolean isSecretMissing(String authType, Map<String, String> config) {
+    if (!REQUIRED_SECRET_BY_AUTH_TYPE.containsKey(authType)) return false;
+    String value = normalizedSecret(authType, config);
+    return value == null || value.isBlank();
+  }
 
   /**
    * 저장·저장 전 테스트에 쓰는 검사. 잘못된 필드는 한국어 사유와 함께 {@link ApiConnectionException}(400)으로 거절한다.
    *
    * @param authType 검증을 마친 인증 방식(API_KEY·BEARER)
-   * @param config 가린 값을 저장 원문으로 채운 authConfig. null 이면 null
+   * @param config 가린 값을 저장 원문으로 채운 authConfig. null 이면 비밀 필드 없음으로 거절한다
    * @return 정리한 새 Map — BEARER 토큰 앞의 「Bearer 」 를 뗀다(요청 Map 은 불변일 수 있어 건드리지 않는다)
    */
   public static Map<String, String> validateAndNormalize(
       String authType, Map<String, String> config) {
-    if (config == null) return null;
-    Map<String, String> normalized = new HashMap<>(config);
-    if ("BEARER".equals(authType)) {
-      String token = config.get("token");
-      if (token != null) {
-        // 앞뒤 공백까지 함께 정리한다 — 공백도 줄바꿈처럼 헤더 값을 깨거나 인증을 실패시킨다.
-        normalized.put("token", BEARER_PREFIX.matcher(token.strip()).replaceFirst(""));
-      }
+    Map<String, String> normalized = config != null ? new HashMap<>(config) : null;
+    if (normalized != null && "BEARER".equals(authType)) {
+      normalized.computeIfPresent("token", (k, token) -> normalizeBearerToken(token));
     }
+    // describeProblem 은 비밀 필드 빈 값을 가장 먼저 본다 — config 가 null 이어도 「… 입력하세요」 로 거절한다(WD-623).
     String problem = describeProblem(authType, normalized);
     if (problem != null) {
       throw new ApiConnectionException(problem);
@@ -69,9 +121,17 @@ public final class AuthConfigValidator {
   /**
    * 이미 저장된 authConfig 로 호출하기 전에 쓸 수 없는 값인지 본다 — 연결 테스트가 네트워크 오류처럼 안내하지 않고 실제 원인을 보이게 한다.
    *
+   * <p>비밀 필드가 비었는지(정리한 뒤 기준)를 <b>가장 먼저</b> 본다(WD-623) — 헤더 이름·줄바꿈 등 다른 사유보다 앞선다. 저장할 때는 이 규칙으로
+   * 거절하지만, 그 전에 빈 비밀로 저장된 연결은 연결 테스트·10분 주기 상태 점검에서 빈 인증으로 대상을 부르고 대상의 401/403 만 보였다. 이제 호출하지 않고
+   * 「Bearer 토큰을 입력하세요」 처럼 무엇을 채워야 하는지 보인다.
+   *
+   * @param config 정리한 authConfig. null 이면 비밀 필드가 없는 것으로 본다
    * @return 문제 사유(한국어) 또는 문제가 없으면 null
    */
   public static String describeProblem(String authType, Map<String, String> config) {
+    if (isSecretMissing(authType, config)) {
+      return MISSING_SECRET_MESSAGE_BY_AUTH_TYPE.get(authType);
+    }
     if (config == null) return null;
     if ("API_KEY".equals(authType)) {
       String placement = config.getOrDefault("placement", "header");

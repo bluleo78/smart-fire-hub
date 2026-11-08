@@ -58,6 +58,11 @@ public final class AuthQueryMasker {
     return MASK_PREFIX + value.substring(value.length() - 4);
   }
 
+  /** 조회 화면이 돌려준 가린 값({@code ****…})인지 — 가린 값 판정을 이 한 곳에서만 한다. */
+  static boolean isMasked(String value) {
+    return value != null && value.startsWith(MASK_PREFIX);
+  }
+
   /**
    * 호출용 URL 과 표시용 URL 을 함께 만든다.
    *
