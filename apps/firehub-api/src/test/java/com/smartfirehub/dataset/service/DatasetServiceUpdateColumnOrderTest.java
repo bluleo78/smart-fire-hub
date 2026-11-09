@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -226,6 +227,32 @@ class DatasetServiceUpdateColumnOrderTest {
         .as("PG: 기본 길이 255 와 달라 길이 변경이다")
         .isInstanceOf(ColumnModificationException.class)
         .hasMessage("데이터가 있는 데이터셋에서는 필드 길이를 바꿀 수 없습니다.");
+    verifyNoDdl();
+  }
+
+  /**
+   * WD-673: Tibero 테넌트에서 데이터가 있는 VARCHAR 에 범위 밖 길이(0)만 보내면 저장소 한도 검사의 범위 문구(상한 4000)가 「필드 길이를 바꿀 수
+   * 없습니다」보다 먼저 나간다. 저장소 검사는 가짜라 Tibero 저장소가 던지는 예외를 그대로 흉내 낸다.
+   */
+  @Test
+  void outOfRangeMaxLengthOnTiberoWithData_rangeMessageBeforeHasDataRule() {
+    when(columnRepository.findById(COLUMN_ID))
+        .thenReturn(
+            Optional.of(
+                new DatasetColumnResponse(
+                    COLUMN_ID, "code", "코드", "VARCHAR", 100, true, false, null, 0, false)));
+    when(dataTableRowService.countRows("t")).thenReturn(5L);
+    when(dataTableService.currentBackend()).thenReturn(DataStoreBackend.TIBERO);
+    String rangeMessage = ColumnPhysicalType.varcharLengthOutOfRangeMessage(4000, 0);
+    doThrow(new IllegalArgumentException(rangeMessage))
+        .when(dataTableService)
+        .validateKnownColumnTypeLimits("VARCHAR", 0);
+    UpdateColumnRequest request =
+        new UpdateColumnRequest(null, null, null, 0, null, null, null, null);
+
+    assertThatThrownBy(() -> datasetService.updateColumn(DATASET_ID, COLUMN_ID, request))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(rangeMessage);
     verifyNoDdl();
   }
 }

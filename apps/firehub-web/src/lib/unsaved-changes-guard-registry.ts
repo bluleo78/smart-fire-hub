@@ -49,9 +49,21 @@ export function registerActiveGuard(entry: ActiveGuardEntry): () => void {
   };
 }
 
-/** 다이얼로그의 "이탈" 확정 후 재시도하는 뒤로가기 1회는 가드를 우회하도록 표시한다. */
-export function bypassNextPopstateGuard(): void {
+// (WD-673) 우회 표시를 건 차례 번호 — 취소 함수가 자기가 건 표시일 때만 지우도록 구분한다.
+let bypassSeq = 0;
+
+/**
+ * 다이얼로그의 "이탈" 확정 후 재시도하는 뒤로가기 1회는 가드를 우회하도록 표시한다.
+ * (WD-673) 그 뒤로가기가 아무 데도 가지 않으면(되돌아갈 기록이 없는 드문 경우) popstate 가 오지 않아 표시가 남고,
+ * 나중에 사용자가 dirty 상태에서 누른 진짜 뒤로가기가 확인 없이 통과된다. 그래서 표시를 거두는 취소 함수를 돌려준다 —
+ * 아직 이 호출의 표시가 소비되지 않았을 때만 지우고, 이미 소비됐거나 그 뒤 새 표시가 걸렸으면 아무것도 하지 않는다.
+ */
+export function bypassNextPopstateGuard(): () => void {
   bypassNextPop = true;
+  const seq = ++bypassSeq;
+  return () => {
+    if (bypassSeq === seq) bypassNextPop = false;
+  };
 }
 
 /**
