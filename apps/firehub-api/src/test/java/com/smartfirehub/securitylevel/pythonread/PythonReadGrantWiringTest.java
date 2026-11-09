@@ -1185,6 +1185,77 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
     }
   }
 
+  /**
+   * 커밋 직전 토큰 번호 올리기는 저장소 행 잠금을 상한({@link TiberoPythonReadGrantSync#PRE_COMMIT_EPOCH_LOCK_WAIT})까지만
+   * 기다린다(WD-664 4b). 다른 트랜잭션이 그 행을 쥐고 있으면 상한 안에 포기하고(false), savepoint 만 되돌려 발행 트랜잭션은 커밋된다 — 예전에는
+   * 행이 풀릴 때까지 사용자 트랜잭션의 커넥션을 쥔 채 멈췄다. 시간 초과가 발행 트랜잭션에 새지 않는다(취소된 문장 뒤에도 커밋이 성공한다).
+   */
+  @Test
+  void preCommitEpochBump_rowLockedByOtherTx_givesUpWithinBound_andPublisherStillCommits()
+      throws Exception {
+    long tenant = TenantRlsTestSupport.createActiveTenant(dsl, "prw-el");
+    dsl.execute(
+        "insert into tenant_data_store (tenant_id, backend, host, port, database_name, schema_name,"
+            + " provision_mode, status) values ({0}, 'TIBERO', 'h', 8629, 'tibero', 'GENIA_T', 'DBA_AUTO', 'PENDING')",
+        DSL.val(tenant));
+    DataStoreResolver resolver = org.mockito.Mockito.mock(DataStoreResolver.class);
+    PythonReadGrants facade = new PythonReadGrants(resolver, sync, tiberoSync, txManager);
+    String marker = "prw_el_" + System.nanoTime();
+    ExecutorService pool = Executors.newFixedThreadPool(2);
+    CountDownLatch held = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    try {
+      // 다른 트랜잭션이 그 테넌트의 저장소 행을 잠그고 쥔다.
+      pool.submit(
+          () ->
+              fixtureTransactionTemplate.executeWithoutResult(
+                  status -> {
+                    dsl.fetch(
+                        "select 1 from tenant_data_store where tenant_id = {0} for update",
+                        DSL.val(tenant));
+                    held.countDown();
+                    try {
+                      release.await(60, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                      Thread.currentThread().interrupt();
+                    }
+                  }));
+      assertThat(held.await(10, TimeUnit.SECONDS)).as("전제: 행 잠금을 쥐었다").isTrue();
+      long before = epochOf(tenant);
+
+      boolean[] invalidated = {true};
+      Future<?> publisher =
+          pool.submit(
+              () ->
+                  TenantRlsTestSupport.runInTenantTransaction(
+                      fixtureTransactionTemplate,
+                      tenant,
+                      () -> {
+                        dsl.execute(
+                            "insert into tenant (slug, name, status) values ({0}, {0}, 'ACTIVE')",
+                            DSL.val(marker));
+                        invalidated[0] = facade.invalidateScriptTokensInCurrentTx(tenant);
+                      }));
+      long bound = TiberoPythonReadGrantSync.PRE_COMMIT_EPOCH_LOCK_WAIT.toSeconds();
+      // 상한이 없으면 여기서 시간 초과(행이 풀릴 때까지 멈춘다). 여유 15초는 queryTimeout 의 초 단위 올림·바쁜 CI 를 견디게
+      // 하되, 잠금 보유자가 쥐는 60초보다는 짧아 상한이 없을 때의 실패는 그대로 잡는다.
+      publisher.get(bound + 15, TimeUnit.SECONDS);
+
+      assertThat(invalidated[0]).as("상한 안에 번호 올리기를 포기했다").isFalse();
+      assertThat(dsl.fetchCount(DSL.table("tenant"), DSL.field("slug").eq(marker)))
+          .as("발행 트랜잭션은 커밋됐다(취소된 문장이 새지 않았다)")
+          .isEqualTo(1);
+      release.countDown();
+      assertThat(epochOf(tenant)).as("번호는 올라가지 않았다(커밋 뒤 실행기 몫)").isEqualTo(before);
+    } finally {
+      release.countDown();
+      pool.shutdown();
+      pool.awaitTermination(30, TimeUnit.SECONDS);
+      dsl.execute("delete from tenant where slug = {0}", DSL.val(marker));
+      dsl.execute("delete from tenant_data_store where tenant_id = {0}", DSL.val(tenant));
+    }
+  }
+
   /** 다른 트랜잭션에서 테넌트 동기화 잠금을 잡고 놓을 때까지 쥔다(커밋 직전 좁히기가 잠금을 못 얻는 상황). 돌려준 래치를 내리면 놓는다. */
   private java.util.concurrent.CountDownLatch holdTenantSyncLock(ExecutorService holder)
       throws Exception {

@@ -82,6 +82,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
 
+  /**
+   * 커밋 직전 스크립트 토큰 세대 번호 올리기가 저장소 행 잠금을 기다리는 상한(WD-664 4b) — 사용자 트랜잭션의 커넥션을 쥔 채 기다리므로 다른 커밋 직전
+   * 상한({@link PythonReadGrantSync#NARROW_LOCK_WAIT}, {@link
+   * PythonReadGrantSync#AFTER_COMMIT_TERMINATE_WAIT})과 같은 3초로 둔다. 넘기면 문장이 취소되고 파사드가 savepoint 만 되돌린
+   * 뒤 등급 변경은 커밋한다 — 그때는 커밋 뒤 실행기 작업이 GRANT 전에 번호를 올린다.
+   */
+  static final Duration PRE_COMMIT_EPOCH_LOCK_WAIT = Duration.ofSeconds(3);
+
   private final DatasetRepository datasetRepository;
   private final ExternalStoreConnections connections;
   private final TenantDataStoreRepository storeRepository;
@@ -160,8 +168,14 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
    *
    * <p><b>왜 현재 트랜잭션인가.</b> 넓히는 GRANT(전체 동기화)는 커밋 뒤 전용 실행기에서 돈다. 세대 번호까지 그 작업에 두면 큐가 빌 때까지 옛 토큰을 쥔
    * 실행 중 스크립트가 좁아진 슬롯의 테이블을 계속 읽는다(Tibero 는 세션을 끊을 수 없다). 같은 트랜잭션이면 번호 올림이 등급 변경과 <b>함께</b> 커밋되므로,
-   * 커밋 응답이 나가는 순간부터 옛 토큰의 다음 읽기가 거부되고, 새 커넥션도 필요 없다(요청당 커넥션 1개). 실패하면 예외 — 등급 변경도 커밋되지 않는다
-   * (fail-closed).
+   * 커밋 응답이 나가는 순간부터 옛 토큰의 다음 읽기가 거부되고, 새 커넥션도 필요 없다(요청당 커넥션 1개).
+   *
+   * <p><b>실패해도 등급 변경은 커밋된다(WD-664 4a).</b> 이 메서드는 실패하면 예외를 던지지만, 파사드({@link
+   * PythonReadGrants#invalidateScriptTokensInCurrentTx})가 savepoint 만 되돌리고 ERROR 와 함께 삼킨다 — 게시자(등급
+   * 변경)를 롤백시키지 않는다. 그 사이(커밋 ~ 실행기 작업) 옛 토큰은 유효하지만, 등급 정의 변경이면 실행기의 {@link
+   * #syncTenantForLevelsChange} 가, 좁히기 미확인이면 {@link #syncDatasetAfterUnconfirmedNarrowing}(토큰을 못
+   * 올렸다는 표시를 받아)이 넓히는 GRANT·회수 전에 새 트랜잭션에서 번호를 올린다. 두 작업은 회수 필수라 실행기가 포화로 버리지 않는다(WD-664 1a). 저장소 행
+   * 잠금은 {@link #PRE_COMMIT_EPOCH_LOCK_WAIT} 까지만 기다린다(WD-664 4b) — 넘기면 위와 같이 실패로 처리된다.
    *
    * <p>테넌트 저장소 행이 없으면(PG 테넌트) 아무것도 바꾸지 않는다 — 그래서 부르는 쪽이 백엔드를 묻지 않고 늘 불러도 된다. 실행기의 {@link
    * #syncTenantForLevelsChange} 는 GRANT 직전에 번호를 한 번 더 올린다(커밋 직전에 옛 등급으로 준비한 실행이 커밋 뒤에 번호를 읽었을 수
@@ -173,7 +187,9 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
     if (!TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException("스크립트 토큰 세대 번호는 등급 변경 트랜잭션 안에서만 올린다");
     }
-    Optional<Long> epoch = storeRepository.incrementScriptTokenEpoch(tenantId);
+    // 행 잠금 대기에 상한을 둔다(WD-664 4b) — 사용자 트랜잭션의 커넥션을 쥔 채 무한정 기다리지 않는다.
+    Optional<Long> epoch =
+        storeRepository.incrementScriptTokenEpoch(tenantId, PRE_COMMIT_EPOCH_LOCK_WAIT);
     epoch.ifPresent(
         e -> log.info("커밋 직전 스크립트 토큰 세대 번호를 올렸다(등급 변경과 함께 커밋): tenant={} epoch={}", tenantId, e));
     return epoch;
@@ -203,12 +219,11 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
       log.warn("Tibero 데이터셋 등급 좁히기: 테넌트 동기화 잠금을 얻지 못했다(tenant={} dataset={})", tenantId, datasetId);
       return NarrowResult.unconfirmed(exposed);
     }
+    // 회수 실패 시 넓혀 막을 슬롯은 잠금 뒤 applyInTx 가 이미 읽은 등급 스냅샷으로 계산한다(WD-664 10) — 같은 트랜잭션의 같은 값이라
+    // 결과는 같고, 커밋 직전 경로(사용자 트랜잭션의 커넥션을 쥔 채)의 등급 재조회를 한 번 줄인다.
+    PythonReadGrantSync.SyncResult narrowed = applyInTx(tenantId, table, null, true);
     return PythonReadGrantBackend.narrowResultOf(
-        applyInTx(tenantId, table, null, true),
-        exposed,
-        levelRepository::findAll,
-        toLevelId,
-        k -> slotAccount(tenantId, k));
+        narrowed, exposed, narrowed::levelsAsc, toLevelId, k -> slotAccount(tenantId, k));
   }
 
   /**

@@ -1549,7 +1549,9 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
   @Test
   void bumpScriptTokenEpochInCurrentTx_runsInCallersTransaction() {
     boolean[] committedWithOuter = {false};
-    when(repository.incrementScriptTokenEpoch(DEFAULT_TEST_TENANT_ID))
+    // 커밋 직전 경로는 행 잠금 대기 상한이 있는 판을 부른다(WD-664 4b).
+    when(repository.incrementScriptTokenEpoch(
+            DEFAULT_TEST_TENANT_ID, TiberoPythonReadGrantSync.PRE_COMMIT_EPOCH_LOCK_WAIT))
         .thenAnswer(
             inv -> {
               org.springframework.transaction.support.TransactionSynchronizationManager

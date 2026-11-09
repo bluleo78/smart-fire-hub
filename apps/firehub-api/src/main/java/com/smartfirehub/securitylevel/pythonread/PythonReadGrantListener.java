@@ -67,7 +67,10 @@ public class PythonReadGrantListener {
    *       계약이라 나누지 않는다. 드문 대체 경로다. 그룹에 데이터셋·슬롯·토큰 여부를 모두 넣어, 같은 요청만 합친다(다른 요청의 인자를 잃지 않게).
    * </ul>
    *
-   * 세 경로 모두 실행기의 실패 분류(일시 실패만 재시도·영구 실패는 ERROR 후 버림)·포화 버림·종료 비우기를 그대로 따른다.
+   * 세 경로 모두 실행기의 실패 분류(일시 실패만 재시도·영구 실패는 ERROR 후 버림)·종료 비우기를 그대로 따른다. 포화 버림은 데이터셋 등급 변경 재동기화만 따른다 —
+   * 등급 정의 변경 전체 동기화와 회수 미확인 뒷정리는 회수 필수 작업이라 상한을 넘겨도 받아들인다(WD-664 1a, {@link
+   * PythonReadSyncExecutor#submitRetryable(String, String, PythonReadSyncExecutor.Attempt,
+   * boolean)}).
    */
   private static final String LEVELS_GROUP = "levels tenant=";
 
@@ -123,7 +126,10 @@ public class PythonReadGrantListener {
    *       회수하고, 회수 커밋 뒤 한 번 더 끊는다 — 커밋 직전에 옛 등급으로 준비된 실행이 첫 끊기 뒤에 붙었더라도 막힌다.
    * </ol>
    *
-   * 넓어지는 변경이거나 새 테이블에 줄 권한이 원래 없는 경우(클론 등)는 막을 슬롯이 비어 아무것도 끊지 않는다.
+   * 넓어지는(등급을 내린) 변경이면 더는 읽으면 안 되는 슬롯이 비어 대체 경로가 필요 없다. 클론 상속(CLONE_INHERIT)·자동 상향(AUTO_RAISE)은 변경 전
+   * 등급({@code from})으로 새 데이터셋이 생성 때 받은 테넌트 기본 등급(자동 상향은 그 출력의 현재 등급)을 싣는다 — 그래서 더 높은 등급으로 옮기면 막을
+   * 슬롯이 <b>비지 않는다</b>(WD-664 5). 다만 정상 경로에서는 커밋 직전 회수가 확인되므로(회수할 권한이 원래 없거나 회수에 성공) 아무것도 끊지 않고, 회수를
+   * 확인하지 못했을 때(잠금 대기 초과·회수 실패·분리 설치)에만 위 대체 경로로 그 슬롯을 막는다.
    *
    * <p><b>테넌트 확인.</b> 회수 계산은 이 트랜잭션의 RLS 테넌트로 데이터셋·등급을 읽는다. 발행 측은 같은 컨텍스트로 이벤트를 만들므로 늘 같아야 한다 — 다르면
    * 0행을 읽어 아무것도 회수하지 못하고 조용히 넘어가므로, 회수를 시도하지 않고 ERROR 와 함께 이벤트 테넌트의 모든 슬롯을 막는다(롤백하지 않는다).
@@ -186,7 +192,9 @@ public class PythonReadGrantListener {
                     logContext + " ",
                     () ->
                         sync.syncDatasetAfterUnconfirmedNarrowing(
-                            datasetId, exposed, tokensInvalidated)));
+                            datasetId, exposed, tokensInvalidated)),
+                // 회수 필수(WD-664 1a) — 이 작업이 마지막 회수 방어선이라 포화여도 버리지 않는다.
+                true);
           }
         });
   }
@@ -219,13 +227,15 @@ public class PythonReadGrantListener {
 
   /**
    * 등급 정의 변경 전체 동기화를 실행기에 넣는다 — 대기형(필드 주석). 같은 테넌트 작업이 이미 있으면 실행기가 합친다: 아직 시작 전이면 그 작업이 이 변경까지
-   * 반영하고, 실행 중이면 끝난 뒤 한 번 더 돈다. 포화·종료로 버려지면 실행기가 ERROR 와 함께 센다(합치기 표식이 남지 않는다).
+   * 반영하고, 실행 중이면 끝난 뒤 한 번 더 돈다. 회수 필수 작업이라 포화로는 버리지 않고(WD-664 1a), 종료로 버려지면 실행기가 ERROR 와 함께 센다.
    */
   private void submitLevelsSync(long tenantId, String logContext) {
     executor.submitRetryable(
         LEVELS_GROUP + tenantId,
         "levels",
         PythonReadGrantBackend.waitingAttempt(
-            tenantId, log, logContext + " ", sync::syncTenantForLevelsChange));
+            tenantId, log, logContext + " ", sync::syncTenantForLevelsChange),
+        // 회수 필수(WD-664 1a) — 커밋 직전 토큰 번호 올리기가 실패했을 때의 유일한 대체 경로라 포화여도 버리지 않는다.
+        true);
   }
 }

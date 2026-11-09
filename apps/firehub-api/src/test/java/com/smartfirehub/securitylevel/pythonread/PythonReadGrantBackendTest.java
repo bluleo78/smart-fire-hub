@@ -213,6 +213,12 @@ class PythonReadGrantBackendTest {
           .as("SQLState " + state)
           .isTrue();
     }
+    assertThat(
+            PythonReadGrantBackend.isTransient(
+                new PythonReadGrantBackend.SessionKillFailed(
+                    "회수 뒤 끊기 실패", new IllegalStateException("영구처럼 보이는 원인"))))
+        .as("회수 뒤 세션 끊기 실패는 원인과 무관하게 일시 실패(WD-664 1b)")
+        .isTrue();
   }
 
   /**

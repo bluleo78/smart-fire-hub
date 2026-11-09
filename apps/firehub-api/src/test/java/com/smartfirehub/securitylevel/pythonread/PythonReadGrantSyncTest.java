@@ -29,7 +29,9 @@ import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -668,6 +670,104 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
         .isEqualTo(new PythonReadSyncExecutor.PartialFailure(List.of(), List.of(b)));
     assertThat(selectAs(1, a)).as("a 의 회수는 커밋됐다").isEqualTo("42501");
     assertThat(selectAs(1, c)).as("b 뒤의 c 도 맞춰 커밋됐다").isEqualTo("42501");
+  }
+
+  /** 끊기가 늘 실패하는 끊기 장치(호출 수를 센다) — 소유자 풀 장애를 흉내 낸다. */
+  private static PythonReadSessionTerminator failingTerminator(AtomicInteger kills) {
+    return new PythonReadSessionTerminator(
+        (tenant, slots) -> {
+          kills.incrementAndGet();
+          throw new IllegalStateException("끊기 실패 흉내");
+        });
+  }
+
+  /** 주어진 끊기 장치로 만든 PG 동기화(나머지는 진짜 빈). */
+  private PythonReadGrantSync syncWith(PythonReadSessionTerminator term) {
+    return new PythonReadGrantSync(
+        dataDsl,
+        term,
+        levelRepository,
+        datasetRepository,
+        txManager,
+        syncExecutor,
+        separateDataStore);
+  }
+
+  /**
+   * 회수 미확인 뒷정리에서 회수 커밋 뒤의 두 번째 끊기가 실패하면 일시 실패로 끝나 실행기가 다시 한다(WD-664 1b). 예전에는 실패를 로그로 삼켜 DONE 이 되어,
+   * 회수 커밋 전에 시작한 긴 쿼리를 끊지 못한 채 작업이 끝났다. 회수는 멱등이라 다시 해도 안전하다.
+   */
+  @Test
+  void unconfirmedNarrowingCleanup_secondKillFails_isTransientAndRetried() throws Exception {
+    table("sen", "민감");
+    long datasetId = datasets.get(datasets.size() - 1);
+    AtomicInteger kills = new AtomicInteger();
+    PythonReadSessionTerminator term = failingTerminator(kills);
+    try {
+      PythonReadGrantSync isolated = syncWith(term);
+      PythonReadSyncExecutor.Attempt attempt =
+          PythonReadGrantBackend.waitingAttempt(
+              DEFAULT_TEST_TENANT_ID,
+              LoggerFactory.getLogger(PythonReadGrantSyncTest.class),
+              "",
+              () -> isolated.syncDatasetAfterUnconfirmedNarrowing(datasetId, Set.of(3), true));
+
+      assertThat(attempt.run(List.of(String.valueOf(datasetId)), Duration.ZERO))
+          .as("두 번째 끊기 실패는 일시 실패 — 실행기가 다시 한다")
+          .isEqualTo(PythonReadSyncExecutor.Outcome.FAILED);
+      assertThat(kills.get()).as("회수 앞뒤로 두 번 끊으려 했다").isEqualTo(2);
+
+      // 실행기에서는 재시도 상한까지 다시 하며 매번 끊기를 다시 시도한다.
+      kills.set(0);
+      PythonReadSyncExecutor retrying =
+          new PythonReadSyncExecutor(
+              10,
+              new PythonReadSyncExecutor.RetryPolicy(
+                  Duration.ofMillis(5), Duration.ofMillis(20), 0, 3));
+      try {
+        assertThat(retrying.submitRetryable("wd664-1b", String.valueOf(datasetId), attempt))
+            .isTrue();
+        assertThat(retrying.awaitIdle(Duration.ofSeconds(30))).isTrue();
+      } finally {
+        retrying.shutdown();
+      }
+      assertThat(kills.get()).as("재시도마다 끊기를 다시 시도했다").isGreaterThan(2);
+    } finally {
+      term.shutdown();
+    }
+  }
+
+  /**
+   * 미확인 표식이 실행 슬롯과 무관한 슬롯에만 있으면 그 끊기 실패가 실행을 막지 않는다(WD-664 8). 예전에는 표식 슬롯 전부를 첫 끊기에 넘겨, 슬롯 3 의 끊기
+   * 실패가 슬롯 1 실행까지 거부했다. 표식 슬롯의 실행은 여전히 막힌다(fail-closed).
+   */
+  @Test
+  void prepareForRun_markerOnOtherSlot_killFailureDoesNotRejectUnrelatedRun() {
+    AtomicInteger kills = new AtomicInteger();
+    PythonReadSessionTerminator term = failingTerminator(kills);
+    try {
+      assertThat(
+              term.terminateConfirmingWithin(
+                  DEFAULT_TEST_TENANT_ID, Set.of(3), Duration.ofSeconds(2)))
+          .as("전제: 끊기 실패 → 슬롯 3 미확인 표식")
+          .isFalse();
+      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID)).containsExactly(3);
+      PythonReadGrantSync isolated = syncWith(term);
+
+      assertThat(isolated.prepareForRun(clearanceResolver.resolve(userAt("공개"))))
+          .as("슬롯 1 실행은 슬롯 3 표식의 끊기 실패와 무관하다")
+          .isEqualTo(1);
+      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID))
+          .as("다른 슬롯의 표식은 남는다")
+          .containsExactly(3);
+
+      Clearance sensitive = clearanceResolver.resolve(userAt("민감"));
+      assertThatThrownBy(() -> isolated.prepareForRun(sensitive))
+          .as("표식 슬롯(3)의 실행은 끊지 못하면 여전히 거부")
+          .isInstanceOf(PythonReadAccessException.class);
+    } finally {
+      term.shutdown();
+    }
   }
 
   /** 소문자 무작위 이름 조각. */

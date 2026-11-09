@@ -11,6 +11,7 @@ import com.smartfirehub.dataset.storage.DataStoreProvisionMode;
 import com.smartfirehub.dataset.storage.StoredAccount;
 import com.smartfirehub.dataset.storage.TenantDataStoreRow;
 import com.smartfirehub.dataset.storage.TenantDataStoreStatus;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
@@ -224,6 +225,27 @@ public class JooqTenantDataStoreRepository implements TenantDataStoreRepository 
         .set(UPDATED_AT, LocalDateTime.now())
         .where(TENANT_ID.eq(tenantId))
         .returning(SCRIPT_TOKEN_EPOCH)
+        .fetchOptional()
+        .map(r -> r.get(SCRIPT_TOKEN_EPOCH));
+  }
+
+  /**
+   * 행 잠금 대기에 상한을 둔 세대 번호 올리기(WD-664 4b) — 커밋 직전 경로 전용.
+   *
+   * <p><b>왜 queryTimeout 인가.</b> JDBC 문장 시간 제한(jOOQ {@code queryTimeout} → {@code
+   * Statement.setQueryTimeout})은 PG·Tibero 플랫폼 DB 모두에서 이 문장 하나에만 걸린다. {@code SET LOCAL
+   * lock_timeout} 은 PG 전용이고, savepoint 를 RELEASE 해도 트랜잭션 끝까지 남아 발행 트랜잭션의 뒤 문장까지 제한하므로 쓰지 않는다. JDBC
+   * 는 초 단위라 올림하고 최소 1초다(0 은 "제한 없음").
+   */
+  @Override
+  public Optional<Long> incrementScriptTokenEpoch(long tenantId, Duration lockWait) {
+    int seconds = (int) Math.max(1L, (lockWait.toMillis() + 999L) / 1000L);
+    return dsl.update(STORE)
+        .set(SCRIPT_TOKEN_EPOCH, SCRIPT_TOKEN_EPOCH.plus(1L))
+        .set(UPDATED_AT, LocalDateTime.now())
+        .where(TENANT_ID.eq(tenantId))
+        .returning(SCRIPT_TOKEN_EPOCH)
+        .queryTimeout(seconds)
         .fetchOptional()
         .map(r -> r.get(SCRIPT_TOKEN_EPOCH));
   }

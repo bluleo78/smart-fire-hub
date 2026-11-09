@@ -172,7 +172,8 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   @Override
   public SyncResult syncTenantForLevelsChange() {
     long tenantId = TenantContext.require("등급 정의 변경 전체 동기화");
-    return killThenApplyUnderLock(tenantId, PythonReadSlots.ALL_SLOTS, null);
+    return killThenApplyUnderLock(
+        tenantId, PythonReadSlots.ALL_SLOTS, PythonReadSlots.ALL_SLOTS, null);
   }
 
   /**
@@ -181,12 +182,17 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * = 넓히지 않음). 끊기 기다림(소유자 풀)이 잠금 안에 들어가지 않으므로, 소유자 풀이 바빠도 잠금을 기다리는 다른 실행 준비가 함께 멈추지 않는다.
    *
    * <p><b>실행 준비는 자기 실행 슬롯만 본다.</b> 실행 준비가 넓히는 것은 실행 슬롯 하나뿐이므로, 잠금 안에서 그 슬롯(∩ 끊을 슬롯)의 세션만 확인하고 다시 끊는
-   * 것도 그 슬롯만이다 — 미확인 표식 창에 정상적으로 시작한 다른 슬롯의 실행을 끊지 않는다. 첫 끊기는 표식을 지우기 위해 주어진 슬롯 전부다.
+   * 것도 그 슬롯만이다 — 미확인 표식 창에 정상적으로 시작한 다른 슬롯의 실행을 끊지 않는다. 첫 끊기도 실행 준비면 실행 슬롯(∩ 표식 슬롯)뿐이다(WD-664 8) —
+   * 이 실행과 무관한 슬롯의 끊기 실패가 실행을 거부하지 않게. 다른 슬롯의 표식은 남아 그 슬롯의 실행 준비가 먼저 끊는다.
    *
+   * @param firstKill 잠금 전에 처음 끊을 슬롯 — 전체 동기화면 {@code slots} 전부, 실행 준비면 잠금 밖에서 계산한 실행 슬롯 ∩ 표식 슬롯(비면
+   *     첫 끊기를 건너뛰고 잠금 안 재확인만 한다)
+   * @param slots 잠금 안에서 다시 붙은 세션을 확인할 슬롯 범위(실행 준비면 표식 슬롯 — 잠금 뒤 등급으로 다시 고른 실행 슬롯과 겹치는 것만 본다)
    * @param runRank null 이면 슬롯 전부(전체 동기화), 아니면 실행 준비의 실행 슬롯 하나
    */
-  private SyncResult killThenApplyUnderLock(long tenantId, Set<Integer> slots, Integer runRank) {
-    Set<Integer> toKill = slots;
+  private SyncResult killThenApplyUnderLock(
+      long tenantId, Set<Integer> firstKill, Set<Integer> slots, Integer runRank) {
+    Set<Integer> toKill = firstKill;
     for (int attempt = 1; attempt <= LEVELS_SYNC_ATTEMPTS; attempt++) {
       terminator.terminateWithin(tenantId, toKill, TERMINATE_WAIT);
       AtomicReference<Set<Integer>> widened = new AtomicReference<>(slots);
@@ -359,7 +365,8 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    *
    * <p><b>회수가 커밋된 뒤 한 번 더 끊는다.</b> 권한 확인은 쿼리 시작 때 한 번이라, 회수 커밋 전에 시작한 긴 쿼리 하나는 회수 뒤에도 끝까지 돈다. 회수 커밋
    * 뒤에 끊으면 그 전에 붙은 세션은 모두 끊기고, 그 뒤의 쿼리는 모두 거부된다 — 빈틈이 닫힌다. 회수 실패가 남으면 ERROR(그 슬롯의 새 실행은 실행 준비가 다시
-   * 맞춘다).
+   * 맞춘다). 이 두 번째 끊기가 실패하면 {@link PythonReadGrantBackend.SessionKillFailed}(일시 실패)로 끝나 실행기가 다시
+   * 한다(WD-664 1b).
    */
   @Override
   public void syncDatasetAfterUnconfirmedNarrowing(
@@ -379,10 +386,24 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
           "데이터셋 좁히기 뒷정리: 회수 실패가 남았다(tenant={} dataset={} slots={})", tenantId, datasetId, left);
       again.addAll(left);
     }
-    terminateQuietly(tenantId, again); // 회수 커밋 뒤 — 커밋 전에 시작한 쿼리까지 끊는다
+    // 회수 커밋 뒤 — 커밋 전에 시작한 쿼리까지 끊는다. 이 끊기는 삼키지 않는다(WD-664 1b): 실패하면 일시 실패로 던져 실행기가 재시도 상한까지
+    // 다시 하게 한다(회수는 멱등). 삼키면 작업이 DONE 으로 끝나 회수 커밋 전에 시작한 긴 쿼리가 끝까지 돈다.
+    try {
+      terminator.terminateWithin(tenantId, again, TERMINATE_WAIT);
+    } catch (IllegalStateException e) {
+      throw new PythonReadGrantBackend.SessionKillFailed(
+          "데이터셋 좁히기 뒷정리: 회수 뒤 PYTHON 슬롯 롤 세션 끊기 실패 — 다시 한다(tenant="
+              + tenantId
+              + " dataset="
+              + datasetId
+              + " slots="
+              + again
+              + ")",
+          e);
+    }
   }
 
-  /** 끊기를 요청하고 상한만큼 기다린다 — 실패는 ERROR 로그만(부르는 쪽이 다음 방어선을 이어 간다). */
+  /** 끊기를 요청하고 상한만큼 기다린다 — 실패는 ERROR 로그만(회수 앞의 첫 끊기 전용 — 뒤의 회수·두 번째 끊기가 다음 방어선을 이어 간다). */
   private void terminateQuietly(long tenantId, Set<Integer> slots) {
     try {
       terminator.terminateWithin(tenantId, slots, TERMINATE_WAIT);
@@ -440,10 +461,13 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
           datasetId);
       return NarrowResult.unconfirmed(exposed);
     }
+    // 회수 실패 시 넓혀 막을 슬롯은 잠금 뒤 applyInTx 가 이미 읽은 등급 스냅샷으로 계산한다(WD-664 10) — 같은 트랜잭션의 같은 값이라
+    // 결과는 같고, 커밋 직전 경로(사용자 트랜잭션의 커넥션을 쥔 채)의 등급 재조회를 한 번 줄인다.
+    PythonReadGrantSync.SyncResult narrowed = applyInTx(tenantId, table, null, true);
     return PythonReadGrantBackend.narrowResultOf(
-        applyInTx(tenantId, table, null, true),
+        narrowed,
         exposed,
-        levelRepository::findAll,
+        narrowed::levelsAsc,
         toLevelId,
         k -> TenantPipelineRole.pythonReadRoleName(tenantId, k));
   }
@@ -550,7 +574,15 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
           // 맞춘다(WD-644 의 대기 경로 — 실행 준비는 호출 스레드에서 돌아 실행기 줄을 막지 않는다).
           Set<Integer> unconfirmed = terminator.unconfirmedSlots(runAs.tenantId());
           if (!unconfirmed.isEmpty()) {
-            return killThenApplyUnderLock(runAs.tenantId(), unconfirmed, readRank);
+            // 첫 끊기는 이 실행의 슬롯과 겹치는 표식 슬롯만(WD-664 8) — 무관한 슬롯의 끊기 실패로 실행을 거부하지 않는다. 실행 슬롯은 잠금 밖
+            // 추정값이다: security_level 이 RLS 테이블이라 트랜잭션(GUC) 안에서 읽어야 한다(밖에서 읽으면 0행 → 교집합이 비어 끊기를 건너뛰는
+            // fail-open). 추정이 잠금 뒤 등급과 달라져도 잠금 안 재확인이 잠금 뒤 실행 슬롯 ∩ 표식 슬롯의 세션을 다시 보고 끊는다.
+            Integer estimated =
+                requiresNew.execute(
+                    status -> PythonReadSlots.slotFor(levelRepository.findAll(), readRank));
+            Set<Integer> firstKill = new TreeSet<>(unconfirmed);
+            firstKill.retainAll(estimated == null ? Set.of() : Set.of(estimated));
+            return killThenApplyUnderLock(runAs.tenantId(), firstKill, unconfirmed, readRank);
           }
           return lockedSync(null, readRank);
         },
