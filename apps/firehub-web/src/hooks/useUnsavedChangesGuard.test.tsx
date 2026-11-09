@@ -11,6 +11,9 @@
  *   「이탈」 클릭 뒤에도 onOpenChange(false) 가 이어지므로 중복·오호출을 거르는지 본다.
  * - 옵션 없이 쓰는 기존 화면(약 20곳)은 그대로 동작해야 한다.
  *
+ * (WD-673) 커밋된 location 과 window.location 의 표기(한글·공백 퍼센트 인코딩)만 다를 때도 같은 위치로 보고 재무장하는지,
+ * popstate 경로 「이탈」 뒤 history.back() 이 아무 일도 하지 않으면 제한 시간 뒤 가드를 다시 켜고 우회 표시를 거두는지 본다.
+ *
  * 레지스트리 모듈 모킹은 파일 전체에 걸리지만, WD-662 묶음은 requestNavigate 경로만 쓰므로 실제 레지스트리가 필요 없다.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react';
@@ -18,16 +21,22 @@ import { type ReactNode, useEffect } from 'react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useUnsavedChangesGuard } from './useUnsavedChangesGuard';
+import { BACK_NOOP_REARM_MS, useUnsavedChangesGuard } from './useUnsavedChangesGuard';
 
 // 레지스트리에 등록되는 가드 진입점을 가로채 isDirty() 를 직접 조회한다.
-const registered = vi.hoisted(() => ({ isDirty: null as null | (() => boolean) }));
+// (WD-673) onIntercepted 로 popstate 가로채기 다이얼로그를 열고, bypassNextPopstateGuard 가 돌려주는 취소 함수 호출을 센다.
+const registered = vi.hoisted(() => ({
+  isDirty: null as null | (() => boolean),
+  onIntercepted: null as null | (() => void),
+  cancelBypass: null as null | ReturnType<typeof vi.fn>,
+}));
 vi.mock('../lib/unsaved-changes-guard-registry', () => ({
-  registerActiveGuard: (entry: { isDirty: () => boolean }) => {
+  registerActiveGuard: (entry: { isDirty: () => boolean; onIntercepted: () => void }) => {
     registered.isDirty = entry.isDirty;
+    registered.onIntercepted = entry.onIntercepted;
     return () => {};
   },
-  bypassNextPopstateGuard: vi.fn(),
+  bypassNextPopstateGuard: vi.fn(() => registered.cancelBypass),
 }));
 
 /**
@@ -51,8 +60,8 @@ function GuardedPage({ dirty }: { dirty: boolean }) {
   );
 }
 
-function wrap(node: ReactNode) {
-  return <MemoryRouter initialEntries={['/form']}>{node}</MemoryRouter>;
+function wrap(node: ReactNode, entry = '/form') {
+  return <MemoryRouter initialEntries={[entry]}>{node}</MemoryRouter>;
 }
 
 /** 취소 가능한 beforeunload 를 발생시켜 가드가 preventDefault 했는지 돌려준다. */
@@ -245,5 +254,92 @@ describe('useUnsavedChangesGuard — onStay·isDialogOpen (WD-662)', () => {
     fireEvent.click(screen.getByRole('button', { name: '취소' }));
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     expect(screen.queryByText('다른 화면')).not.toBeInTheDocument();
+  });
+});
+
+describe('useUnsavedChangesGuard — 한글·공백 경로에서 이탈 확정 뒤 재무장 (WD-673)', () => {
+  let savedUrl = '';
+  beforeEach(() => {
+    registered.isDirty = null;
+    savedUrl = window.location.href;
+  });
+  afterEach(() => {
+    window.history.replaceState(null, '', savedUrl);
+  });
+
+  it('커밋된 location 이 원문 한글·공백이고 window.location 이 퍼센트 인코딩이어도 같은 위치면 다시 켜진다', () => {
+    // MemoryRouter 는 원문 그대로 들고 있고, jsdom 주소는 한글·공백을 퍼센트 인코딩한다 — 문자열로는 늘 다르다.
+    const raw = '/form/검색 화면?q=한글 값#요약 1';
+    window.history.replaceState(null, '', raw);
+    expect(window.location.search).not.toContain('한글');
+    render(wrap(<GuardedPage dirty />, raw));
+    fireEvent.click(screen.getByText('다른 곳'));
+    fireEvent.click(screen.getByRole('button', { name: '이탈' }));
+    expect(registered.isDirty?.()).toBe(false);
+
+    // 다음 화면이 뜨기 전 뒤로 가기로 같은 위치에 되돌아온 경우 — 표기만 다르고 같은 위치이므로 재무장해야 한다
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    expect(registered.isDirty?.()).toBe(true);
+    expect(beforeUnloadPrevented()).toBe(true);
+  });
+});
+
+describe('useUnsavedChangesGuard — popstate 경로 이탈의 뒤로 가기가 아무 일도 안 할 때 (WD-673)', () => {
+  let savedUrl = '';
+  let backSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    registered.isDirty = null;
+    registered.cancelBypass = vi.fn();
+    savedUrl = window.location.href;
+    window.history.replaceState(null, '', '/form');
+    // jsdom 의 history.back() 대신 아무 일도 하지 않는 뒤로 가기(되돌아갈 기록이 없는 경우)를 흉내 낸다
+    backSpy = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    backSpy.mockRestore();
+    vi.useRealTimers();
+    window.history.replaceState(null, '', savedUrl);
+  });
+
+  /** 더티 상태로 렌더 → 브라우저 뒤로 가기 가로채기(onIntercepted)로 다이얼로그 → 「이탈」 → history.back() 실행까지. */
+  function confirmLeaveViaPopstate() {
+    render(wrap(<GuardedPage dirty />));
+    act(() => registered.onIntercepted?.());
+    fireEvent.click(screen.getByRole('button', { name: '이탈' }));
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(backSpy).toHaveBeenCalledTimes(1);
+    expect(registered.isDirty?.()).toBe(false);
+  }
+
+  it('제한 시간 안에 popstate 가 없으면 가드를 다시 켜고 쓰이지 않은 우회 표시를 거둔다', () => {
+    confirmLeaveViaPopstate();
+    act(() => {
+      vi.advanceTimersByTime(BACK_NOOP_REARM_MS - 1);
+    });
+    expect(registered.isDirty?.()).toBe(false);
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(registered.isDirty?.()).toBe(true);
+    expect(beforeUnloadPrevented()).toBe(true);
+    expect(registered.cancelBypass).toHaveBeenCalledTimes(1);
+  });
+
+  it('제한 시간 안에 popstate 가 오면(실제로 이동) 꺼진 채 두고 우회 표시도 건드리지 않는다', () => {
+    confirmLeaveViaPopstate();
+    window.history.replaceState(null, '', '/elsewhere');
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    act(() => {
+      vi.advanceTimersByTime(BACK_NOOP_REARM_MS * 2);
+    });
+    expect(registered.isDirty?.()).toBe(false);
+    expect(registered.cancelBypass).not.toHaveBeenCalled();
   });
 });

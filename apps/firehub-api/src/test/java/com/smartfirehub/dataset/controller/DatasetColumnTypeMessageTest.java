@@ -279,6 +279,32 @@ class DatasetColumnTypeMessageTest extends IntegrationTestBase {
     assertThat(physicalVarcharLength("wd655_lendata_" + unique)).isEqualTo(255);
   }
 
+  /**
+   * WD-673: 데이터가 있어도 범위 밖 길이(0·99999)만 보낸 수정은 「필드 길이를 바꿀 수 없습니다」가 아니라 빈 데이터셋·생성과 같은 범위 문구(400)로
+   * 거부한다 — 입력값 검사가 「데이터가 있으면 길이 변경 불가」 규칙보다 먼저다. 예전에는 데이터 유무 규칙이 먼저 걸려 진짜 이유가 가려졌다. 메타데이터·물리 길이는
+   * 그대로다.
+   */
+  @Test
+  void updateColumn_outOfRangeMaxLengthOnVarcharWithData_returnsRangeMessage() throws Exception {
+    String table = "wd673_lenrange_" + unique;
+    long id = createVarcharDataset(table, 255);
+    insertRow(table);
+    long columnId = firstColumnId(id);
+    for (int given : new int[] {0, 99999}) {
+      assertBadRequest(
+          updateColumn(id, columnId, "{\"maxLength\":" + given + "}"), varcharMessage(given));
+    }
+    assertThat(detail(id).get("columns").get(0).get("maxLength").asInt()).isEqualTo(255);
+    assertThat(physicalVarcharLength(table)).isEqualTo(255);
+  }
+
+  /** WD-673: 빈 데이터셋의 범위 밖 길이도 같은 범위 문구다(대조 — 데이터 유무와 무관하게 같은 안내). */
+  @Test
+  void updateColumn_outOfRangeMaxLengthOnEmptyVarchar_returnsRangeMessage() throws Exception {
+    long id = createVarcharDataset("wd673_lenrange_empty_" + unique, 255);
+    assertBadRequest(updateColumn(id, firstColumnId(id), "{\"maxLength\":0}"), varcharMessage(0));
+  }
+
   /** WD-655: 데이터가 없으면 길이만 보낸 수정이 물리 컬럼 길이까지 바꾼다(ALTER) — 메타데이터와 실제 컬럼이 어긋나지 않는다. */
   @Test
   void updateColumn_maxLengthOnlyOnVarcharWithoutData_altersPhysicalColumn() throws Exception {

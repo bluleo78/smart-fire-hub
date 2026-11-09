@@ -1080,7 +1080,8 @@ public class DatasetService {
 
     // 1단계: 던질 수 있는 검증을 모두 끝낸 뒤에 물리 DDL 을 실행한다. PG 는 DDL 도 트랜잭션이라 검증 실패 시 함께 롤백되지만, 외부
     // 저장소(Tibero)의 DDL 은 자동 커밋이라 DDL 뒤에 검증이 실패하면 메타데이터는 그대로인데 물리 컬럼만 바뀐 채 남는다(WD-74).
-    // 검증들의 상대 순서는 예전 그대로 두어, 여러 조건이 동시에 걸릴 때 어떤 예외가 나는지도 바뀌지 않게 한다.
+    // 검증들의 상대 순서는 예전 그대로 두어, 여러 조건이 동시에 걸릴 때 어떤 예외가 나는지도 바뀌지 않게 한다. 예외: 타입·길이 입력값 검사는
+    // 「데이터가 있으면 타입·길이를 바꿀 수 없음」보다 앞이다(WD-673, 아래 설명).
     boolean renaming =
         request.columnName() != null && !request.columnName().equals(column.columnName());
     if (renaming) {
@@ -1110,28 +1111,28 @@ public class DatasetService {
             && request.maxLength() != null
             && request.maxLength()
                 != dataTableService.currentBackend().effectiveVarcharLength(column.maxLength());
-    if (typeChanging) {
-      // 검색 대상 필드를 TEXT/VARCHAR 밖 타입으로 바꾸면 색인 텍스트를 만들 수 없다 — 먼저 해제하게 한다(409).
-      if (!SearchIndexSettingsService.SEARCHABLE_TYPES.contains(request.dataType())
-          && searchColumnRepository.isSearchable(columnId)) {
-        throw new IllegalStateException(
-            "검색 대상 필드는 TEXT/VARCHAR 이외 타입으로 바꿀 수 없습니다. 검색 탭에서 먼저 해제하세요.");
-      }
-      if (rowCount > 0) {
-        throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드의 데이터 타입을 바꿀 수 없습니다.");
-      }
-    } else if (sizeChanging) {
-      if (rowCount > 0) {
-        throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드 길이를 바꿀 수 없습니다.");
-      }
+    // 검색 대상 필드를 TEXT/VARCHAR 밖 타입으로 바꾸면 색인 텍스트를 만들 수 없다 — 먼저 해제하게 한다(409).
+    if (typeChanging
+        && !SearchIndexSettingsService.SEARCHABLE_TYPES.contains(request.dataType())
+        && searchColumnRepository.isSearchable(columnId)) {
+      throw new IllegalStateException("검색 대상 필드는 TEXT/VARCHAR 이외 타입으로 바꿀 수 없습니다. 검색 탭에서 먼저 해제하세요.");
     }
     // WD-636: 새 타입·길이를 현재 저장소 규칙(Tibero VARCHAR 상한 4000 등)으로 DDL 전에 검사한다. 타입 변경 DDL 도 같은 검사를 하지만
     // 그건 이름 변경 DDL 뒤라, Tibero(자동 커밋 DDL)에서는 이름만 바뀐 채 실패할 수 있었다. 타입 없이 길이만 보낸 요청도 기존 타입이
     // VARCHAR 면 검사한다(실효 타입 = 요청 타입, 없으면 현재 타입) — 예전에는 타입이 없으면 길이 상한을 건너뛰었다.
+    // WD-673: 이 입력값 검사(범위 밖 길이 등)는 아래 「데이터가 있으면 바꿀 수 없음」 규칙보다 먼저 한다 — 데이터가 있는 데이터셋에 길이
+    // 0·99999 를 보내면 입력 자체가 틀렸다는 범위 문구가 나와야 하는데, 예전에는 「필드 길이를 바꿀 수 없습니다」가 먼저 나가 빈 데이터셋에서만
+    // 진짜 이유를 알 수 있었다. 검색 대상 409 뒤에 두는 건 Tibero 의 GEOMETRY 미지원 400 이 그 409 를 가리지 않게 하려는 것이다.
     boolean varcharLengthGiven = request.maxLength() != null && "VARCHAR".equals(effectiveType);
     if (typeChanging || varcharLengthGiven) {
       // 정준 타입은 위(매핑 판정 앞)에서 확인했으므로 저장소 한도만 본다(WD-655).
       dataTableService.validateKnownColumnTypeLimits(effectiveType, request.maxLength());
+    }
+    if (typeChanging && rowCount > 0) {
+      throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드의 데이터 타입을 바꿀 수 없습니다.");
+    }
+    if (sizeChanging && rowCount > 0) {
+      throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드 길이를 바꿀 수 없습니다.");
     }
 
     // Prevent making PK column nullable

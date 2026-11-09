@@ -11,7 +11,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog';
+import { isSameLocationPath } from '../lib/location-path';
 import { bypassNextPopstateGuard, registerActiveGuard } from '../lib/unsaved-changes-guard-registry';
+
+/**
+ * (WD-673) popstate 경로 「이탈」의 history.back() 이 실제로 이동했는지 기다리는 시간(ms).
+ * 이 안에 popstate 가 오지 않으면 뒤로 가기가 아무 일도 하지 않은 것으로 보고 가드를 다시 켠다.
+ * history.back() 의 popstate 는 보통 수 ms 안에 오므로 넉넉히 잡았다. 너무 늦게 온 popstate 는 다시 확인 창을 띄울 뿐
+ * (입력 유실 없음)이라, 짧게 잡아 생기는 위험보다 가드가 꺼진 채 남는 위험을 더 무겁게 봤다.
+ */
+export const BACK_NOOP_REARM_MS = 1000;
 
 /**
  * useUnsavedChangesGuard
@@ -84,11 +93,17 @@ export function useUnsavedChangesGuard(
   );
 
   // (WD-651) 커밋된 location 과 window.location 이 같아졌으면(이 페이지로 정착) 이탈 중 상태를 끝낸다 — leavingRef 설명 참고.
+  // (WD-673) 한글·공백이 든 경로·쿼리는 한쪽이 원문, 다른 쪽이 퍼센트 인코딩(`+`/`%20` 포함)이면 문자열로는 영영 같지 않아
+  // 가드가 다시 켜지지 않았다 — 표기 차이를 정규화해 비교한다(lib/location-path).
   const settleLeaving = useCallback(() => {
     if (!leavingRef.current) return;
     const { pathname, search, hash } = window.location;
-    if (currentPath() === pathname + search + hash) leavingRef.current = false;
+    if (isSameLocationPath(currentPath(), pathname + search + hash)) leavingRef.current = false;
   }, [currentPath]);
+
+  // (WD-673) popstate 경로 「이탈」의 뒤로 가기 대기(popstate 리스너·제한 시간 타이머) 정리 함수 — 언마운트 때도 부른다.
+  const pendingBackCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => pendingBackCleanupRef.current?.(), []);
 
   useEffect(() => {
     isDirtyRef.current = isDirty;
@@ -241,8 +256,8 @@ export function useUnsavedChangesGuard(
   // 「취소」는 이 페이지에 남는 것이므로 leavingRef 를 건드리지 않는다(가드 유지).
   const handleConfirm = useCallback(() => {
     // (WD-651) 이탈 확정 즉시 가드를 끈다(leavingRef 설명 참고). popstate 경로(history.back())여도 같다.
-    // 처리하지 않는 경우: popstate 경로에서 history.back() 이 아무 일도 하지 않으면(되돌아갈 기록이 없는 드문 경우)
-    // 주소가 바뀌지 않아 settleLeaving 이 불리지 않으므로, 다시 이동하거나 폼이 깨끗해질 때까지 가드가 꺼진 채로 남는다.
+    // (WD-673) popstate 경로에서 history.back() 이 아무 일도 하지 않으면(되돌아갈 기록이 없는 드문 경우) 주소가 바뀌지 않아
+    // settleLeaving 이 불리지 않는다 — 아래 else 분기가 제한 시간 안에 popstate 가 없으면 가드를 다시 켠다.
     leavingRef.current = true;
     setOpenState(false);
     const to = pendingTo;
@@ -255,7 +270,28 @@ export function useUnsavedChangesGuard(
       // 인터셉터가 이번 이동을 막아둔 상태이므로, 사용자가 "이탈"을 확정하면
       // 다음 popstate 1회는 가드를 우회하도록 표시한 뒤 실제 뒤로가기를 재실행한다.
       setTimeout(() => {
-        bypassNextPopstateGuard();
+        pendingBackCleanupRef.current?.();
+        const cancelBypass = bypassNextPopstateGuard();
+        // (WD-673) 뒤로 가기가 실제로 일어났는지 popstate 한 번으로 확인한다. BACK_NOOP_REARM_MS 안에 오지 않으면
+        // 아무 데도 가지 않은 것이므로 가드를 다시 켜고, 쓰이지 않은 우회 표시도 거둔다 — 남겨 두면 다음의 진짜 뒤로 가기가
+        // 확인 없이 통과된다. popstate 가 오면(이동함) 기다림만 끝내고 재무장은 기존 settleLeaving 규칙에 맡긴다.
+        // 다른 문서로 가는 뒤로 가기는 popstate 없이 문서가 바뀐다 — 그 문서가 늦게 떠 이 타이머가 먼저 돌아도, 새로고침 가드
+        // (beforeunload)는 이미 가드가 꺼진 채 지나갔으므로 확인 창이 끼어들지 않는다.
+        const finish = () => {
+          window.clearTimeout(timer);
+          window.removeEventListener('popstate', finish);
+          pendingBackCleanupRef.current = null;
+        };
+        const timer = window.setTimeout(() => {
+          finish();
+          cancelBypass();
+          leavingRef.current = false;
+        }, BACK_NOOP_REARM_MS);
+        window.addEventListener('popstate', finish);
+        pendingBackCleanupRef.current = () => {
+          finish();
+          cancelBypass();
+        };
         window.history.back();
       }, 0);
     }

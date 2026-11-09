@@ -678,69 +678,80 @@ test.describe('데이터셋 생성 페이지 — 미저장 입력 이탈 가드 
 });
 
 test.describe('데이터셋 생성 페이지 — 이탈 확정 뒤 다음 화면 로딩 중 뒤로 가기 (WD-651)', () => {
-  test('이탈 확정 뒤 홈 화면 코드가 늦게 와도, 그 사이 뒤로 가기는 다이얼로그 없이 처리되고 주소·화면·기록이 어긋나지 않는다', async ({
-    authenticatedPage: page,
-  }) => {
-    // 홈 화면 지연 로딩 청크(dev: /src/pages/HomePage.tsx, preview: /assets/HomePage-<hash>.js)를 테스트가 풀어줄 때까지 붙잡는다.
-    // 이렇게 해야 「이탈」 확정 뒤 주소는 '/' 로 바뀌었지만 작성 화면이 아직 마운트된 틈을 결정적으로 재현할 수 있다.
-    let markChunkRequested: () => void = () => {};
-    const chunkRequested = new Promise<void>((resolve) => {
-      markChunkRequested = resolve;
+  // (WD-673) 한글·공백이 든 쿼리에서도 같은 시나리오가 성립해야 한다 — 가드는 「이 화면으로 돌아왔는가」를 라우터 위치와
+  // 브라우저 주소의 비교로 판정하는데, 표기(원문 vs 퍼센트 인코딩)가 다르면 영영 다시 켜지지 않을 수 있었다.
+  // 참고: BrowserRouter 는 위치를 늘 window.location 에서 읽어 이 앱에서는 두 표기가 같으므로, 이 경우는 수정 전에도
+  // 통과하는 회귀 방지용이다(표기가 갈리는 경우의 수정 전 실패는 vitest useUnsavedChangesGuard.test 가 보인다).
+  for (const { label, entry } of [
+    { label: '', entry: '/data/datasets/new' },
+    { label: ' — 한글·공백 쿼리(WD-673)', entry: '/data/datasets/new?q=한글 값&from=a+b' },
+  ]) {
+    test(`이탈 확정 뒤 홈 화면 코드가 늦게 와도, 그 사이 뒤로 가기는 다이얼로그 없이 처리되고 주소·화면·기록이 어긋나지 않는다${label}`, async ({
+      authenticatedPage: page,
+    }) => {
+      // 홈 화면 지연 로딩 청크(dev: /src/pages/HomePage.tsx, preview: /assets/HomePage-<hash>.js)를 테스트가 풀어줄 때까지 붙잡는다.
+      // 이렇게 해야 「이탈」 확정 뒤 주소는 '/' 로 바뀌었지만 작성 화면이 아직 마운트된 틈을 결정적으로 재현할 수 있다.
+      let markChunkRequested: () => void = () => {};
+      const chunkRequested = new Promise<void>((resolve) => {
+        markChunkRequested = resolve;
+      });
+      let releaseChunk: () => void = () => {};
+      const chunkReleased = new Promise<void>((resolve) => {
+        releaseChunk = resolve;
+      });
+      const isHomeChunk = (url: URL) => /\/HomePage[^/]*\.(tsx|js)$/.test(url.pathname);
+      await page.route(
+        isHomeChunk,
+        async (route) => {
+          markChunkRequested();
+          await chunkReleased;
+          await route.continue();
+        },
+      );
+
+      await page.goto(entry);
+      // 브라우저가 실제로 쓰는 주소(퍼센트 인코딩된 표기) — 뒤로 가기 뒤 이 주소로 돌아왔는지 본다
+      const entryUrl = page.url();
+      await page.getByLabel('데이터셋 이름').fill('작성 중 데이터셋');
+      const historyLengthBefore = await page.evaluate(() => window.history.length);
+
+      await clickSidebarHome(page);
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await page.getByRole('button', { name: '이탈' }).click();
+      await expect(page).toHaveURL(/\/$/);
+      await chunkRequested;
+      // 홈 화면 코드가 아직 오지 않아 작성 화면이 남아 있는 상태다
+      await expect(page.getByLabel('데이터셋 이름')).toBeVisible();
+
+      // 이 틈에 브라우저 뒤로 가기 — 옛 가드가 잡으면 기록을 하나 더 넣고 다이얼로그를 연다(수정 전 결함)
+      await page.goBack();
+      await expect(page).toHaveURL(entryUrl);
+
+      // 홈 청크를 풀고 그 응답이 도착한 뒤 두 프레임(React 커밋 여유)을 기다린다 — 고정 시간 대기 대신 이벤트로 기다려,
+      // 수정 전처럼 청크 도착 후 화면이 홈으로 바뀌는 결함이 있었다면 아래 단언 시점에는 이미 드러나 있다.
+      const chunkResponse = page.waitForResponse((res) => isHomeChunk(new URL(res.url())));
+      releaseChunk();
+      await chunkResponse;
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }),
+      );
+
+      // 다이얼로그가 뜨지 않고, 주소(/data/datasets/new)와 보이는 화면(작성 폼)이 일치하며, 기록이 늘지 않는다
+      expect(page.url()).toBe(entryUrl);
+      await expect(page.getByRole('heading', { name: '새 데이터셋' })).toBeVisible();
+      await expect(page.getByRole('alertdialog')).toHaveCount(0);
+      expect(await page.evaluate(() => window.history.length)).toBe(historyLengthBefore + 1);
+
+      // 라우터가 대기 중인 전환을 버리고 같은 화면을 그대로 그려 작성 화면이 재마운트되지 않으므로 입력값이 남아 있다.
+      // 이 페이지로 되돌아왔으니 가드가 다시 켜져야 한다 — 새로고침 가드와 사이드바 링크 가드가 다시 동작한다.
+      await expect(page.getByLabel('데이터셋 이름')).toHaveValue('작성 중 데이터셋');
+      expect(await beforeUnloadPrevented(page)).toBe(true);
+      await clickSidebarHome(page);
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      expect(page.url()).toBe(entryUrl);
     });
-    let releaseChunk: () => void = () => {};
-    const chunkReleased = new Promise<void>((resolve) => {
-      releaseChunk = resolve;
-    });
-    const isHomeChunk = (url: URL) => /\/HomePage[^/]*\.(tsx|js)$/.test(url.pathname);
-    await page.route(
-      isHomeChunk,
-      async (route) => {
-        markChunkRequested();
-        await chunkReleased;
-        await route.continue();
-      },
-    );
-
-    await page.goto('/data/datasets/new');
-    await page.getByLabel('데이터셋 이름').fill('작성 중 데이터셋');
-    const historyLengthBefore = await page.evaluate(() => window.history.length);
-
-    await clickSidebarHome(page);
-    await expect(page.getByRole('alertdialog')).toBeVisible();
-    await page.getByRole('button', { name: '이탈' }).click();
-    await expect(page).toHaveURL(/\/$/);
-    await chunkRequested;
-    // 홈 화면 코드가 아직 오지 않아 작성 화면이 남아 있는 상태다
-    await expect(page.getByLabel('데이터셋 이름')).toBeVisible();
-
-    // 이 틈에 브라우저 뒤로 가기 — 옛 가드가 잡으면 기록을 하나 더 넣고 다이얼로그를 연다(수정 전 결함)
-    await page.goBack();
-    await expect(page).toHaveURL('/data/datasets/new');
-
-    // 홈 청크를 풀고 그 응답이 도착한 뒤 두 프레임(React 커밋 여유)을 기다린다 — 고정 시간 대기 대신 이벤트로 기다려,
-    // 수정 전처럼 청크 도착 후 화면이 홈으로 바뀌는 결함이 있었다면 아래 단언 시점에는 이미 드러나 있다.
-    const chunkResponse = page.waitForResponse((res) => isHomeChunk(new URL(res.url())));
-    releaseChunk();
-    await chunkResponse;
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) => {
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-        }),
-    );
-
-    // 다이얼로그가 뜨지 않고, 주소(/data/datasets/new)와 보이는 화면(작성 폼)이 일치하며, 기록이 늘지 않는다
-    expect(new URL(page.url()).pathname).toBe('/data/datasets/new');
-    await expect(page.getByRole('heading', { name: '새 데이터셋' })).toBeVisible();
-    await expect(page.getByRole('alertdialog')).toHaveCount(0);
-    expect(await page.evaluate(() => window.history.length)).toBe(historyLengthBefore + 1);
-
-    // 라우터가 대기 중인 전환을 버리고 같은 화면을 그대로 그려 작성 화면이 재마운트되지 않으므로 입력값이 남아 있다.
-    // 이 페이지로 되돌아왔으니 가드가 다시 켜져야 한다 — 새로고침 가드와 사이드바 링크 가드가 다시 동작한다.
-    await expect(page.getByLabel('데이터셋 이름')).toHaveValue('작성 중 데이터셋');
-    expect(await beforeUnloadPrevented(page)).toBe(true);
-    await clickSidebarHome(page);
-    await expect(page.getByRole('alertdialog')).toBeVisible();
-    expect(new URL(page.url()).pathname).toBe('/data/datasets/new');
-  });
+  }
 });
