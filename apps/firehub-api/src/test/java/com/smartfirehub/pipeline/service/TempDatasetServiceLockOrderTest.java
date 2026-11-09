@@ -64,9 +64,11 @@ class TempDatasetServiceLockOrderTest {
     order.verify(datasetRepository).lockForDelete(20L);
     order.verify(datasetRepository).lockForDelete(30L);
     order.verify(dataTableService).lockTenantGrantSyncForDdl();
-    order.verify(datasetService).deleteDataset(10L);
-    order.verify(datasetService).deleteDataset(20L);
-    order.verify(datasetService).deleteDataset(30L);
+    // WD-674: 두 잠금을 쥐었다고 가정하는 삭제 본문을 부른다 — 잠금을 다시 잡는 deleteDataset 은 쓰지 않는다
+    order.verify(datasetService).deleteLockedDataset(10L);
+    order.verify(datasetService).deleteLockedDataset(20L);
+    order.verify(datasetService).deleteLockedDataset(30L);
+    verify(datasetService, never()).deleteDataset(anyLong());
   }
 
   @Test
@@ -85,7 +87,7 @@ class TempDatasetServiceLockOrderTest {
 
     service.deleteTempDatasets(List.of(20L, 10L));
 
-    verify(datasetService).deleteDataset(10L);
-    verify(datasetService, never()).deleteDataset(20L);
+    verify(datasetService).deleteLockedDataset(10L);
+    verify(datasetService, never()).deleteLockedDataset(20L);
   }
 }

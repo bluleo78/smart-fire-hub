@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Ban, Clock, Code, Database, GitBranch, Globe, Link, User } from 'lucide-react';
-import { useCallback, useEffect, useMemo,useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo,useRef, useState } from 'react';
 import { Link as RouterLink, useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -170,7 +170,11 @@ export default function PipelineEditorPage() {
   const [addRequestSeq, setAddRequestSeq] = useState(0);
   /** 마지막 커밋의 스텝 배열 참조(복사 없음) — 추가를 보낼 때 이것으로 「그때 있던 스텝」 묶음을 만든다 */
   const committedStepsRef = useRef(state.steps);
-  useEffect(() => {
+  // WD-674: 레이아웃 effect 로 갱신한다. 일반 effect 는 그리기 뒤로 미뤄질 수 있어(서버 재조회처럼 비긴급 갱신의 커밋), 그 사이 들어온
+  // 클릭이 「스텝 추가」를 보내면 옛 스텝 묶음을 읽어 방금 바뀐 id 를 새 스텝으로 오인할 수 있었다. 레이아웃 effect 는 커밋과 같은 동기
+  // 구간에서 돌아 어떤 이벤트 처리기보다 먼저 끝난다. 렌더 중 ref 대입은 react-hooks/refs 규칙이 막고(버려진 렌더 값이 남을 수 있음),
+  // 디스패치 콜백이 state.steps 를 캡처하면 붙잡힌 옛 콜백(지워진 스텝 — 아래 E2E)이 옛 묶음을 쓰므로 둘 다 쓰지 않는다.
+  useLayoutEffect(() => {
     committedStepsRef.current = state.steps;
   }, [state.steps]);
   const stepNameInputRef = useRef<HTMLInputElement>(null);

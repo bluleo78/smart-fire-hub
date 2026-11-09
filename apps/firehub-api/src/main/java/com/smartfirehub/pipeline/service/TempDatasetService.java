@@ -162,16 +162,18 @@ public class TempDatasetService {
   /**
    * 임시 데이터셋 여럿을 호출자 트랜잭션에서 한꺼번에 지운다(WD-170 의 일괄 삭제 경로, WD-629). 각 데이터셋의 테이블 DROP 이 커밋까지 ACCESS
    * EXCLUSIVE 를 쥐므로 여러 기존 테이블을 잠그는 셈이다 — 첫 DROP 보다 먼저 테넌트 PYTHON 읽기 권한 동기화 잠금을 잡아 동기화(이름 오름차순
-   * ACCESS SHARE)와 교착하지 않게 한다. {@link DatasetService#deleteDataset} 도 같은 잠금을 잡지만, 여러 테이블을 지우는 이 경로의
-   * 규칙을 이 자리에서 분명히 한다.
+   * ACCESS SHARE)와 교착하지 않게 한다. 이 경로에서는 이 자리에서만 잡는다(WD-674 — 아래).
    *
    * <p>WD-666: 동기화 잠금보다 먼저 지울 데이터셋 행 전부를 id 오름차순으로 FOR UPDATE 잠근다 — 잠금 순서 규칙은 「데이터셋 행 → 테넌트 동기화 →
    * 테이블」이다. 출력 맞바꿈(데이터셋 행 KEY SHARE → 동기화 잠금)과 거꾸로 잡으면 교착한다. 예전에는 동기화 잠금을 먼저 잡은 뒤 deleteDataset 이
    * 데이터셋마다 행을 잠갔다.
    *
    * <p>WD-672: 행 잠금은 공용 층({@link DatasetDataWriteLock#lockAllForDelete})을 거친다 — 트랜잭션 밖에서 부르면 잠금이 문장
-   * 끝에서 바로 풀리므로 {@link IllegalStateException} 으로 거부된다. 기다리는 동안 이미 지워진 행은 건너뛴다 — 그 id 로
-   * deleteDataset 을 부르면 404 가 합류한 호출자 트랜잭션을 롤백 전용으로 만들어 스텝·파이프라인 삭제까지 실패시키기 때문이다.
+   * 끝에서 바로 풀리므로 {@link IllegalStateException} 으로 거부된다. 기다리는 동안 이미 지워진 행은 건너뛴다 — 그 id 로 삭제 본문을 부르면
+   * 404 가 합류한 호출자 트랜잭션을 롤백 전용으로 만들어 스텝·파이프라인 삭제까지 실패시키기 때문이다.
+   *
+   * <p>WD-674: 행 잠금·동기화 잠금은 여기서 한 번씩만 잡는다 — 데이터셋마다 {@link DatasetService#deleteLockedDataset}(두 잠금을
+   * 쥐었다고 가정하는 삭제 본문)을 부른다. 예전에는 {@link DatasetService#deleteDataset} 을 불러 같은 두 잠금을 데이터셋마다 다시 잡았다.
    */
   public void deleteTempDatasets(List<Long> datasetIds) {
     if (datasetIds.isEmpty()) {
@@ -182,7 +184,7 @@ public class TempDatasetService {
       return;
     }
     dataTableService.lockTenantGrantSyncForDdl();
-    lockedIds.forEach(datasetService::deleteDataset);
+    lockedIds.forEach(datasetService::deleteLockedDataset);
   }
 
   /**
