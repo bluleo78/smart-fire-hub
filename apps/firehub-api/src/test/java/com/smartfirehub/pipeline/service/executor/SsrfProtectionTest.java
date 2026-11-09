@@ -319,4 +319,57 @@ class SsrfProtectionTest {
         .startsWith("URL 형식이 올바르지 않습니다: ")
         .doesNotContain("SECRET123");
   }
+
+  // --- WD-676: 밑줄 든 호스트 ---
+
+  /**
+   * 밑줄 든 호스트는 {@code URI.getHost()} 가 null 이라 예전엔 「URL 에 호스트가 없습니다」로 거부됐다(Python 실행기는 받는다). 이제 호스트를
+   * 읽어 DNS 로 풀어 본다 — 없는 이름이면 unknown-host 문구가 나오는 것이 호스트를 제대로 뽑았다는 증거다.
+   */
+  @Test
+  void validateUrl_underscoreHost_isResolvedNotRejectedAsHostless() {
+    SsrfException e =
+        assertThrows(SsrfException.class, () -> service.validateUrl("http://my_api.invalid/data"));
+    org.assertj.core.api.Assertions.assertThat(e.getMessage())
+        .isEqualTo(ApiCallErrorMessages.unknownHost("my_api.invalid"));
+  }
+
+  /** 사용자 정보에 밑줄이 있어도 실제 호스트(127.0.0.1)를 검사해 루프백으로 막는다. */
+  @Test
+  void validateUrl_underscoreUserinfoBeforeLoopback_stillBlocked() {
+    SsrfException e =
+        assertThrows(SsrfException.class, () -> service.validateUrl("http://a_b@127.0.0.1/"));
+    org.assertj.core.api.Assertions.assertThat(e.getMessage()).contains("루프백");
+  }
+
+  /** 파서마다 다르게 읽는 모호한 authority(역슬래시·@ 둘·퍼센트·대괄호)는 호스트를 읽지 않고 거부한다 — SSRF 해석 차이를 막는다. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "http://a_b.example\\@127.0.0.1/",
+        "http://a@b@my_api.internal/",
+        "http://my_api%2einternal/",
+        "http://my_api.internal:99999/",
+      })
+  void validateUrl_ambiguousAuthority_rejected(String url) {
+    assertThrows(SsrfException.class, () -> service.validateUrl(url));
+  }
+
+  /**
+   * 밑줄 호스트도 풀린 IP 로 사설·루프백을 막는다 — {@code *.localhost} 가 루프백으로 풀리는 환경(systemd-resolved 등)에서만 확인한다.
+   * 풀리지 않는 환경이면 건너뛴다(위 unknown-host 테스트가 호스트 추출을 대신 증명한다).
+   */
+  @Test
+  void validateUrl_underscoreHostResolvingToLoopback_blocked() {
+    boolean resolvesToLoopback;
+    try {
+      resolvesToLoopback = InetAddress.getByName("my_api.localhost").isLoopbackAddress();
+    } catch (UnknownHostException e) {
+      resolvesToLoopback = false;
+    }
+    org.junit.jupiter.api.Assumptions.assumeTrue(resolvesToLoopback, "*.localhost 가 풀리지 않는 환경");
+    SsrfException e =
+        assertThrows(SsrfException.class, () -> service.validateUrl("http://my_api.localhost/x"));
+    org.assertj.core.api.Assertions.assertThat(e.getMessage()).contains("루프백");
+  }
 }

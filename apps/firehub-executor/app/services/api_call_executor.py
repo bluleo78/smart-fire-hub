@@ -327,6 +327,11 @@ def _do_request(
     인증 헤더·자격 증명 헤더(Authorization·Proxy-Authorization·Cookie)·Location 이 되울려 담아 온 쿼리 인증 키를 떼고 따라간다.
     판단 기준은 언제나 처음 요청 출처라 A→B→A 면 B 에만 떼고, 처음 출처로 돌아오면 헤더도 쿼리 키도 다시 붙인다. Java
     ``ApiCallExecutor.executeWithRedirects`` 와 같은 규칙이다.
+
+    다른 출처로 가는 홉부터는 메서드를 GET 으로 바꾸고 본문을 버린다(WD-676) — 307/308 이라도 다른 출처로 본문(비밀이 들 수 있음)을 보내지
+    않는다. 본문을 버린 홉부터는 본문 헤더(Content-Type·Content-Length 등)도 뺀다. 이 상태는 유지되어 처음 출처로 돌아와도
+    본문을 다시 싣지 않는다. Java 실행기는 모든 리다이렉트 홉을 본문 없는 GET 으로 보내므로
+    다른 출처 홉에서는 두 실행기가 같다. 같은 출처 307/308 의 메서드·본문 유지는 이 실행기에만 있는 차이로 남는다.
     """
     # 인증 헤더는 따로 만들어 둔다 — 다른 출처 홉에서 뗄 수 있게(WD-657).
     req_params = dict(query_params)
@@ -345,6 +350,8 @@ def _do_request(
     redirect_count = 0
     # 이 홉까지 오는 동안 리다이렉트가 처음 출처를 벗어난 적이 있는지 — 돌아올 때 뗐던 쿼리 키를 되붙이는 데 쓴다.
     has_left_origin = False
+    # 리다이렉트로 본문을 버렸는지(303·다른 출처 홉, WD-676) — 그 뒤 홉은 본문 헤더도 뺀다.
+    body_dropped = False
 
     with httpx.Client(follow_redirects=False, timeout=timeout_sec) as client:
         while True:
@@ -352,10 +359,14 @@ def _do_request(
             # 옮겨 주는 키 포함)까지 지워졌다(WD-182).
             # 첫 홉은 판정 없이 인증을 붙인다 — 그 뒤 홉은 처음 요청과 같은 출처일 때만(WD-657).
             send_auth = redirect_count == 0 or _same_auth_origin(origin_url, current_url)
+            hop_headers = req_headers if send_auth else cross_origin_headers
+            if body_dropped:
+                # 본문을 버린 홉(303·다른 출처, WD-676)에는 본문 헤더(Content-Type 등)도 보내지 않는다 — Java 리다이렉트 GET 홉과 같다.
+                hop_headers = {k: v for k, v in hop_headers.items() if k.lower() not in _BODY_HEADERS}
             resp = client.request(
                 method=method,
                 url=current_url,
-                headers=req_headers if send_auth else cross_origin_headers,
+                headers=hop_headers,
                 content=body.encode() if body else None,
             )
 
@@ -376,10 +387,13 @@ def _do_request(
                     location = _adjust_query_auth(location, auth, same_origin, has_left_origin)
                 has_left_origin = has_left_origin or not same_origin
                 current_url = location
-                # For 303, switch to GET
-                if resp.status_code == 303:
+                # 303 이거나 다른 출처 홉이면 본문 없는 GET 으로 따라간다(WD-676) — 예전에는 307/308 이 다른 출처로 가도 POST 본문
+                # (client_secret 등 비밀이 들 수 있음)을 그대로 보냈다. 한 번 바꾸면 되돌리지 않아 A→B→A 로 돌아와도 본문을 다시
+                # 싣지 않는다. 같은 출처 307/308 은 메서드·본문을 유지한다(운영 동작 보존).
+                if resp.status_code == 303 or not same_origin:
                     method = "GET"
                     body = None
+                    body_dropped = True
                 continue
 
             # HTTP 오류: 상태별 한국어 안내(WD-150). 5xx·408·429 만 재시도, 나머지 4xx 는 즉시 실패 —
@@ -527,6 +541,9 @@ def _resolve_auth(auth: Optional[dict]) -> _ResolvedAuth:
 
 # 다른 출처 홉에서 인증 방식과 상관없이 빼는 표준 자격 증명 헤더(소문자, WD-657) — Java ApiCallExecutor.CREDENTIAL_HEADERS 와 같다.
 _CREDENTIAL_HEADERS = frozenset({"authorization", "proxy-authorization", "cookie"})
+
+# 본문을 설명하는 헤더(소문자, WD-676) — 본문을 버린 리다이렉트 홉에서 뺀다. Java ApiCallExecutor.BODY_HEADERS 와 같다.
+_BODY_HEADERS = frozenset({"content-type", "content-length", "content-encoding", "transfer-encoding"})
 
 
 def _same_auth_origin(origin: str, target: str) -> bool:

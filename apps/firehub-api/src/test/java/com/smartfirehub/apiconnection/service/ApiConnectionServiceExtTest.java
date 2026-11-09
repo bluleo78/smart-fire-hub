@@ -148,6 +148,25 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
         .hasMessageNotContaining("at index");
   }
 
+  // ── WD-676: 밑줄 든 호스트 ────────────────────────────────────────────────
+
+  /**
+   * 밑줄 든 호스트의 baseUrl 도 저장된다(WD-676). 연결 테스트는 요청 전 검사(UrlAuthority.requireClientSupportedHost)로 호스트
+   * 이름을 담아 실패한다 — 이 서버의 HTTP 클라이언트가 그런 호스트를 부르지 못한다.
+   */
+  @Test
+  void create_underscoreHostBaseUrl_savesAndHealthCheckNamesHost() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(bearerReq("https://my_api.invalid/v1/"), testUserId);
+
+    assertThat(created.baseUrl()).isEqualTo("https://my_api.invalid/v1");
+
+    TestConnectionResponse result = apiConnectionService.testConnection(created.id());
+    assertThat(result.ok()).isFalse();
+    assertThat(result.errorMessage())
+        .isEqualTo(ApiCallErrorMessages.unsupportedHostName("my_api.invalid"));
+  }
+
   // ── validateAndNormalizeBaseUrl: SsrfException → ApiConnectionException ────
 
   @Test

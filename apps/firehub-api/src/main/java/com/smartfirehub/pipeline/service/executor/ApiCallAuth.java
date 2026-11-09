@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiConsumer;
 
@@ -272,29 +273,25 @@ public final class ApiCallAuth {
    * Python {@code _same_auth_origin} 과 같은 규칙이다. 처음 요청과만 비교하므로 방향이 있다(origin→target).
    */
   public static boolean isSameAuthOrigin(URI origin, URI target) {
-    if (origin == null || target == null || origin.getHost() == null || target.getHost() == null) {
-      return false;
-    }
-    if (!origin.getHost().equalsIgnoreCase(target.getHost())) return false;
+    if (origin == null || target == null) return false;
+    // 호스트·포트는 UrlAuthority 로 읽는다(WD-676) — getHost() 는 밑줄 든 호스트(my_api.internal)에서 null 이라, 같은 호스트로
+    // 가는 홉도 다른 출처로 봐 인증을 뗐다. 해석할 수 없으면 지금처럼 다른 출처다.
+    Optional<UrlAuthority> fromAuthority = UrlAuthority.of(origin);
+    Optional<UrlAuthority> toAuthority = UrlAuthority.of(target);
+    if (fromAuthority.isEmpty() || toAuthority.isEmpty()) return false;
+    UrlAuthority o = fromAuthority.get();
+    UrlAuthority t = toAuthority.get();
+    if (!o.host().equalsIgnoreCase(t.host())) return false;
     String from = upper(origin.getScheme());
     String to = upper(target.getScheme());
     if (from == null || to == null) return false;
-    if (from.equals(to)) return effectivePort(origin) == effectivePort(target);
+    if (from.equals(to)) return o.effectivePort(from) == t.effectivePort(to);
     if ("HTTP".equals(from) && "HTTPS".equals(to)) {
-      boolean bothDefault = effectivePort(origin) == 80 && effectivePort(target) == 443;
-      boolean sameExplicit = origin.getPort() != -1 && origin.getPort() == target.getPort();
+      boolean bothDefault = o.effectivePort(from) == 80 && t.effectivePort(to) == 443;
+      boolean sameExplicit = o.port() != -1 && o.port() == t.port();
       return bothDefault || sameExplicit;
     }
     return false;
-  }
-
-  /** 포트가 없으면 스킴의 기본 포트(http 80·https 443). 모르는 스킴이면 -1. */
-  private static int effectivePort(URI uri) {
-    if (uri.getPort() != -1) return uri.getPort();
-    String scheme = upper(uri.getScheme());
-    if ("HTTP".equals(scheme)) return 80;
-    if ("HTTPS".equals(scheme)) return 443;
-    return -1;
   }
 
   /**

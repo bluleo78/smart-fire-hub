@@ -59,7 +59,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    *
    * @param levelsAsc 동기화에 쓴 등급 스냅샷(rank 오름차순) — prepareForRun 이 같은 스냅샷으로 슬롯을 계산해 계산 불일치 창을 없앤다
    * @param availableSlots 실제로 존재하는 슬롯 롤 번호(실행 준비 동기화면 실행 슬롯만 본다)
-   * @param changedTables 권한을 바꾼 테이블 수
+   * @param changedTables 요청한 범위 안에서 권한을 바꾼 테이블 수(두 백엔드 같은 규칙, WD-679)
    * @param revokeFailed 남는 권한을 회수하지 못한 테이블 → 과권한이 남았을 수 있는 슬롯 롤 이름들. prepareForRun 은 <b>실행 슬롯
    *     롤</b>이 여기 들어 있을 때만 실행을 거부한다(다른 슬롯 롤의 과권한은 이 실행이 쓰지 않는 롤이라 무관). GRANT 실패는 과소권한(안전)이라 로그만 남긴다
    * @param runSlot 실행 준비 동기화(prepareForRun)에서 같은 등급 스냅샷으로 계산한 실행 슬롯(범위 밖이면 그 값 그대로), 그 밖의 동기화는 0

@@ -43,7 +43,10 @@ public class SsrfProtectionService {
       throw new SsrfException("http 또는 https 주소만 호출할 수 있습니다(입력: " + scheme + ")");
     }
 
-    String hostname = uri.getHost();
+    // 호스트는 UrlAuthority 로 읽는다(WD-676) — 밑줄 든 호스트는 getHost() 가 null 이다.
+    // 읽은 호스트도 아래에서 DNS 로 풀어 사설·예약 IP 를 막는다.
+    // 모호한 authority(역슬래시·%·대괄호·@ 둘 이상)는 해석하지 않아 거부된다(SSRF 우회 방지).
+    String hostname = UrlAuthority.hostOrNull(uri);
     if (hostname == null || hostname.isBlank()) {
       throw new SsrfException("URL 에 호스트가 없습니다: " + ApiCallErrorMessages.redactUrl(url));
     }

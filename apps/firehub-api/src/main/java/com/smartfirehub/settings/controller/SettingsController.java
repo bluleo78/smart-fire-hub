@@ -4,6 +4,7 @@ import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
 import com.smartfirehub.settings.dto.UpdateSettingsRequest;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.settings.service.SmtpFailureMessages;
 import com.smartfirehub.settings.service.SmtpMailSenders;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -97,9 +98,13 @@ public class SettingsController {
   @RequirePermission("ai:settings")
   public ResponseEntity<Map<String, Object>> testSmtpSettings(Authentication authentication) {
     // SMTP 연결 테스트 — 현재 설정으로 실제 연결 확인
+    String host = "";
+    // 실패 문구의 서버 응답 조각에서 지울 비밀번호(WD-676) — 비밀번호는 어떤 경우에도 토스트에 나가지 않는다.
+    String password = null;
     try {
       Map<String, String> config = settingsService.getSmtpConfig();
-      String host = config.getOrDefault("smtp.host", "");
+      host = config.getOrDefault("smtp.host", "");
+      password = config.get("smtp.password");
       if (host.isBlank()) {
         return ResponseEntity.ok(
             Map.of("success", false, "message", "SMTP 가 설정되지 않았습니다. 호스트를 입력하고 저장한 뒤 다시 테스트하세요"));
@@ -111,7 +116,9 @@ public class SettingsController {
       sender.testConnection();
       return ResponseEntity.ok(Map.of("success", true, "message", "SMTP 연결 성공"));
     } catch (Exception e) {
-      return ResponseEntity.ok(Map.of("success", false, "message", e.getMessage()));
+      // JavaMail 영어 원문 대신 고칠 방법을 담은 한국어 분류 문구(WD-676) — 리포트 메일 발송 실패 사유와 같은 문장이다.
+      return ResponseEntity.ok(
+          Map.of("success", false, "message", SmtpFailureMessages.describe(e, host, password)));
     }
   }
 }

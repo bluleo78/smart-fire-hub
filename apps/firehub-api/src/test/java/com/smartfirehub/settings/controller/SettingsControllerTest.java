@@ -22,6 +22,7 @@ import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
 import com.smartfirehub.settings.dto.UpdateSettingsRequest;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.settings.service.SmtpFailureMessages;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -293,7 +294,14 @@ class SettingsControllerTest {
     mockMvc
         .perform(post("/api/v1/settings/smtp/test").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.success").value(false));
+        .andExpect(jsonPath("$.success").value(false))
+        // WD-676: JavaMail 영어 원문 대신 리포트 메일 발송과 같은 한국어 분류 문구다.
+        .andExpect(
+            jsonPath("$.message")
+                .value(
+                    org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString("invalid.nonexistent.example.invalid"),
+                        org.hamcrest.Matchers.containsString(SmtpFailureMessages.SETTINGS_PLACE))));
   }
 
   /**
@@ -309,6 +317,12 @@ class SettingsControllerTest {
     mockMvc
         .perform(post("/api/v1/settings/smtp/test").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.success").value(false));
+        .andExpect(jsonPath("$.success").value(false))
+        // WD-676: 분류 문구 — 포트를 고치라는 안내(SmtpFailureMessages 와 같은 문장).
+        .andExpect(
+            jsonPath("$.message")
+                .value(
+                    SmtpFailureMessages.describe(
+                        new NumberFormatException(), "smtp.example.com", null)));
   }
 }

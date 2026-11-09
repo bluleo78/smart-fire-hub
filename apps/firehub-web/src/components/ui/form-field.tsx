@@ -27,7 +27,6 @@ interface FormFieldProps {
   announceError?: boolean;
 }
 
-/** 입력 요소에 덧붙일 접근성 속성 — FormField 가 오류를 그릴 때만 채운다. */
 /**
  * 라벨 줄 — 라벨(필수 표시 포함)과, 줄 때만 라벨 옆 덧붙임(배지 등)을 가로 한 줄(flex)로 감싼다(WD-643).
  * WD-660: FormField 를 쓰지 못하는 칸(설정 화면의 모델 칸 등)도 같은 마크업을 쓰도록 내보낸다.

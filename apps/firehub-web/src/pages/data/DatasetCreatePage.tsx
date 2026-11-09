@@ -123,7 +123,8 @@ export default function DatasetCreatePage() {
 
   // 미저장 입력 판정 (WD-642) — 가드가 물을 때만 현재 값을 기본값과 직접 비교한다(useRhfDirtyReader 참고).
   // shouldDirty 를 빠뜨린 setValue 도 잡히고, URL 쿼리(storageType/originType)로 정해진 초기값만으로는 dirty 가 되지 않는다.
-  const readIsDirty = useRhfDirtyReader(form);
+  // (WD-676) 저장값 기준선은 훅이 갖는다 — 저장 뒤 폼 초기화는 form.reset 대신 resetToSaved 로 해야 기준선이 함께 바뀐다.
+  const { readIsDirty, resetToSaved } = useRhfDirtyReader(form);
 
   // 미저장 입력 이탈 가드 (WD-577) — 이름·테이블명·설명·카테고리 입력이나 칼럼 추가·삭제·편집이 있으면
   // 사이드바 링크·브라우저 뒤로가기·새로고침/탭 닫기·취소 버튼에서 확인 다이얼로그를 띄운다.
@@ -234,8 +235,8 @@ export default function DatasetCreatePage() {
       // 떠나지 않았을 때만 기억한다 — 떠난 뒤(라우터 전환 중 남은 화면)의 재제출이 사용자를 상세로 끌고 가지 않게 (WD-662)
       const detailPath = `/data/datasets/${result.data.id}`;
       createdRef.current = { detailPath, formPathname: submitPathname, goOnStay: isDialogOpen() };
-      // 저장한 값으로 폼을 초기화해 dirty 를 끈다 (WD-577) — 이제 잃을 입력이 없다.
-      form.reset(data);
+      // 저장한 값으로 폼을 초기화해 dirty 를 끈다 (WD-577) — 이제 잃을 입력이 없다. 기준선도 함께 바꾼다 (WD-676).
+      resetToSaved(data);
       // 상세로 이동한다. 이탈 확인창이 떠 있으면 끌고 가지 않고 사용자의 선택을 기다린다 (WD-642, WD-662) —
       // 「이탈」이면 가려던 곳으로(WD-577 의 "이탈 선택 → 상세로 가지 않음"과 같다), 「취소」면 handleStay 가 만든 데이터셋 상세로 보낸다.
       if (!createdRef.current.goOnStay) navigate(detailPath);

@@ -27,7 +27,8 @@ from app.services.query_key_encoding import encode_query_key, has_invalid_percen
 
 # 자유 문장 안의 URL 에서 쿼리·프래그먼트·userinfo 를 지우는 패턴 — 분류하지 못한 원문을 쓸 때의 마지막 방어선.
 _URL_QUERY_IN_TEXT = re.compile(r"(?i)(https?://[^\s?#\"'<>]*)[?#][^\s\"'<>]*")
-_URL_USERINFO_IN_TEXT = re.compile(r"(?i)(https?://)[^\s/@\"'<>]+@")
+# userinfo 가 @ 로 여럿 이어져도(「a:x@b:y@host」) 마지막 @ 까지 한 번에 지운다(WD-676) — Java URL_USERINFO_IN_TEXT 와 같다.
+_URL_USERINFO_IN_TEXT = re.compile(r"(?i)(https?://)(?:[^\s/@\"'<>]+@)+")
 
 
 class RetryableApiCallError(Exception):

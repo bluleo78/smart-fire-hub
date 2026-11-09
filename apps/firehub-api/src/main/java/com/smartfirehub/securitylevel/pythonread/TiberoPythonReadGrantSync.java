@@ -20,6 +20,7 @@ import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -67,7 +68,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 동기화가 다시 맞춘다).
  *
  * <p><b>휴지통 권한 가시성(WD-645).</b> 위 fail-closed 는 {@code USER_TAB_PRIVS_MADE}({@link
- * TiberoCatalog#slotSelectGrants})가 {@code BIN$...} 객체의 GRANT 도 보여 준다는 데 기댄다 — 라이브 TC {@code
+ * TiberoCatalog#slotSelectGrantsAmong})가 {@code BIN$...} 객체의 GRANT 도 보여 준다는 데 기댄다 — 라이브 TC {@code
  * TiberoLiveSlotGrantTest.droppedTableInRecycleBin_slotGrantStillListed} 가 확인한다. FLASHBACK 으로 되살아난
  * GRANT 도, 모든 실행 준비({@link #prepareForRun})가 실행 전에 실행 슬롯을 테넌트 전체 범위로 다시 맞추므로 쓰이기 전에 회수된다(못 하면 실행
  * 거부).
@@ -283,7 +284,7 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
 
   /**
    * Tibero 쪽에서 한 번에 읽고 적용한 결과. 바꾼 테이블은 이름 집합으로 둔다 — 재판정(WD-645)이 같은 테이블을 다시 바꿔도 두 판의 합집합 크기로 세어 두 번
-   * 세지 않는다.
+   * 세지 않는다. 범위 밖 객체도 들어 있다(변경 수 규칙은 {@link #applyInTx}).
    */
   private record Applied(Set<String> changedTables, Map<String, Set<String>> revokeFailed) {}
 
@@ -399,22 +400,31 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
               changedUnion.addAll(second.changedTables());
               return new Applied(changedUnion, second.revokeFailed());
             });
+    // 변경 수는 요청한 범위 안만 센다(WD-679) — 테이블 하나 동기화의 재맞춤이 범위 밖(보관본·다른 테이블·뷰·BIN$)에서 회수한 객체는
+    // 로그에만 따로 싣는다. 회수 실패는 범위 밖도 그대로 둔다(fail-closed — 실행 준비가 범위와 상관없이 거부해야 한다).
+    Set<String> changed = applied.changedTables();
+    int changedInScope =
+        onlyPhysical == null ? changed.size() : (changed.contains(onlyPhysical) ? 1 : 0);
+    int revokedOutOfScope = changed.size() - changedInScope;
+    String outOfScopeNote = revokedOutOfScope > 0 ? ", 범위 밖 회수 " + revokedOutOfScope + "개" : "";
     if (!applied.revokeFailed().isEmpty()) {
       // 회수 실패는 과권한이 남았을 수 있다는 뜻 — 운영자가 봐야 하므로 warn.
       log.warn(
-          "Tibero PYTHON 읽기 권한 회수 실패: tenant={} 변경 테이블 {}개, 회수 실패 {}개 {}",
+          "Tibero PYTHON 읽기 권한 회수 실패: tenant={} 범위 안 변경 {}개{}, 회수 실패 {}개(범위 밖 포함) {}",
           tenantId,
-          applied.changedTables().size(),
+          changedInScope,
+          outOfScopeNote,
           applied.revokeFailed().size(),
           applied.revokeFailed());
-    } else if (!applied.changedTables().isEmpty()) {
+    } else if (!changed.isEmpty()) {
       log.info(
-          "Tibero PYTHON 읽기 권한 동기화: tenant={} 변경 테이블 {}개",
+          "Tibero PYTHON 읽기 권한 동기화: tenant={} 범위 안 변경 {}개{}",
           tenantId,
-          applied.changedTables().size());
+          changedInScope,
+          outOfScopeNote);
     }
     return new PythonReadGrantSync.SyncResult(
-        levelsAsc, availableSlots, applied.changedTables().size(), applied.revokeFailed(), runSlot);
+        levelsAsc, availableSlots, changedInScope, applied.revokeFailed(), runSlot);
   }
 
   /**
@@ -507,7 +517,12 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
       boolean revokeOnly)
       throws SQLException {
     Map<String, Set<String>> actual =
-        slotGrants(conn, tenantId, pass.readScope(), targetAccounts, exact);
+        slotGrants(
+            conn,
+            tenantId,
+            pass.readScope() == null ? null : List.of(pass.readScope()),
+            targetAccounts,
+            exact);
     Set<String> tables;
     if (pass.readScope() == null && pass.widenScope() != null) {
       // 재맞춤의 테이블 여부는 권한이 걸린 이름과 원래 범위 테이블만 가린다(WD-660) — USER_TABLES 전체를 읽지 않는다.
@@ -550,19 +565,20 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
       if (excess.isEmpty() && missing.isEmpty() && carried.isEmpty()) {
         continue;
       }
-      boolean revokeOk = carried.isEmpty();
       if (!carried.isEmpty()) {
         failed.computeIfAbsent(table, x -> new TreeSet<>()).addAll(carried);
       }
       // REVOKE 는 남는 권한이 있을 때만 한다(없는 권한을 회수하면 오류). 실패하면 그 계정들에 과권한이 남았을 수 있다.
       for (String account : excess) {
-        if (!execute(conn, TiberoDdlSql.revokeSelectFromSlot(schema, table, account))) {
-          revokeOk = false;
+        if (execute(conn, TiberoDdlSql.revokeSelectFromSlot(schema, table, account))) {
+          // 한 계정이라도 회수했으면 다른 계정이 실패해도 변경이다 — 재확인 대상에 넣는다(WD-679).
+          changedTables.add(table);
+        } else {
           failed.computeIfAbsent(table, x -> new TreeSet<>()).add(account);
         }
       }
-      if (!revokeOk) {
-        // 이 판에서는 늘 회수 실패(fail-closed) — 첫 판 실패는 재맞춤이 남은 권한으로 다시 가린다(클래스 Javadoc "재판정 규칙", WD-645).
+      if (failed.containsKey(table)) {
+        // 회수 실패(옮긴 휴지통 실패 포함)가 있으면 GRANT 를 건너뛴다(fail-closed) — 첫 판 실패는 재맞춤이 다시 가린다(WD-645).
         continue;
       }
       for (String account : missing) {
@@ -575,12 +591,11 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
       changedTables.add(table);
     }
     // 재확인: 문장이 성공해도 실제 권한을 다시 읽어 "원하지 않는 슬롯에 SELECT 가 남은" 객체를 회수 실패로 센다.
-    // 바꾼 객체가 하나면 그 객체만 다시 읽는다 — 테이블 하나 동기화의 재맞춤이 원래 테이블만 바꿨을 때 테넌트 전체를 다시 훑지 않는다(WD-660).
+    // 바꾼 객체만 IN 목록으로 다시 읽는다(WD-660 → WD-679: 하나뿐 아니라 여럿이어도) — 재맞춤이 몇 객체만 바꿨을 때 테넌트 전체를 다시 훑지 않는다.
+    // IN 1000개 제한은 TiberoCatalog 가 조각으로 나눠 지킨다.
     if (!changedTables.isEmpty()) {
-      String recheckScope =
-          changedTables.size() == 1 ? changedTables.iterator().next() : pass.readScope();
       Map<String, Set<String>> after =
-          slotGrants(conn, tenantId, recheckScope, targetAccounts, exact);
+          slotGrants(conn, tenantId, changedTables, targetAccounts, exact);
       for (String table : changedTables) {
         Set<String> want =
             tables.contains(table) ? desired.getOrDefault(table, Set.of()) : Set.of();
@@ -600,18 +615,21 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
    * <p>실행 준비({@code exact}, 실행 슬롯 계정 하나)는 그 계정을 정확히 바인드해 읽는다 — PYTHON 실행마다 도는 경로라 테넌트 슬롯 전부를 LIKE 로
    * 읽고 버리지 않는다. 전체·테이블 동기화는 LIKE 로 테넌트 슬롯 계정 전부를 읽고, LIKE 가 넓게 잡은 이름({@code GENIA_T1_SXYZ} 등)과 대상이
    * 아닌 슬롯은 여기서 거른다. 두 방식의 결과는 같다.
+   *
+   * @param onlyPhysicals null 이면 테넌트 전체, 아니면 그 물리 이름들만(IN 목록, WD-679 — 비어 있으면 질의 없이 빈 맵)
    */
   private static Map<String, Set<String>> slotGrants(
       java.sql.Connection conn,
       long tenantId,
-      String onlyPhysical,
+      Collection<String> onlyPhysicals,
       Set<String> targetAccounts,
       boolean exact)
       throws SQLException {
     if (exact) {
-      return TiberoCatalog.slotSelectGrants(conn, targetAccounts, onlyPhysical);
+      return TiberoCatalog.slotSelectGrantsAmong(conn, targetAccounts, onlyPhysicals);
     }
-    Map<String, Set<String>> all = TiberoCatalog.slotSelectGrants(conn, tenantId, onlyPhysical);
+    Map<String, Set<String>> all =
+        TiberoCatalog.slotSelectGrantsAmong(conn, tenantId, onlyPhysicals);
     Map<String, Set<String>> filtered = new HashMap<>();
     all.forEach(
         (table, accounts) -> {

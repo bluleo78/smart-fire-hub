@@ -8,6 +8,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /**
  * {@link AuthQueryMasker} 단위 테스트(WD-177). 호출 URL 은 예전과 같고 표시 URL 만 인증 쿼리 키를 {@code ****XXXX} 로
@@ -188,5 +190,66 @@ class AuthQueryMaskerTest {
   void maskBody_maskedKeyCollisionKeepsBoth() {
     String masked = AuthQueryMasker.maskBody("{\"****abcd\":1,\"KeyXabcd\":2}", "KeyXabcd");
     assertThat(masked).isEqualTo("{\"****abcd\":1,\"****abcd (2)\":2}");
+  }
+
+  // ── WD-676: 역슬래시만 있는 본문은 비밀이 실제로 있을 때만 트리를 만든다 ─────────────────────
+
+  /** 스트리밍 판정 — 이스케이프된 비밀(「\/」·유니코드·키)과 정규형이 같은 숫자는 있음, 역슬래시만·깨진 JSON 은 없음. */
+  @Test
+  void jsonValuesContainSecret_detectsEscapedFormsOnly() {
+    assertThat(containsSecret("{\"t\":\"ab\\/cd6761\"}", "ab/cd6761")).as("\\/ 이스케이프 값").isTrue();
+    assertThat(containsSecret("{\"t\":\"\\u0041Key6761\"}", "AKey6761"))
+        .as("유니코드 이스케이프 값")
+        .isTrue();
+    assertThat(containsSecret("{\"\\u0041Key6761\":1}", "AKey6761")).as("이스케이프된 키").isTrue();
+    assertThat(containsSecret("{\"p\":\"a\\/b\",\"n\":12}", "Zzz96761"))
+        .as("역슬래시만 있고 비밀 없음")
+        .isFalse();
+    assertThat(containsSecret("{\"n\":1e3,\"p\":\"a\\/b\"}", "1E+3"))
+        .as("숫자 1e3 과 비밀 1E+3 — BigDecimal 정규형 일치")
+        .isTrue();
+    assertThat(containsSecret("not json \\ AKey6761", "AKey6761")).as("JSON 아님").isFalse();
+  }
+
+  /** 역슬래시만 있고 비밀이 없으면 트리를 만들지 않고 원문을 그대로(같은 객체) 돌려준다 — 줄바꿈·들여쓰기도 그대로다. */
+  @Test
+  void maskBody_backslashOnlyWithoutSecret_returnsSameString() {
+    String pretty = "{\n  \"path\" : \"a\\/b\",\n  \"s\" : \"\\u00e9\"\n}";
+    assertThat(AuthQueryMasker.maskBody(pretty, "Zzz96761")).isSameAs(pretty);
+  }
+
+  /** 이스케이프된 비밀은 여전히 가린다(트리 경로). */
+  @Test
+  void maskBody_escapedSecret_stillMasked() {
+    String masked = AuthQueryMasker.maskBody("{\"t\":\"x \\u0041Key6761 y\"}", "AKey6761");
+    assertThat(masked).isEqualTo("{\"t\":\"x ****6761 y\"}");
+  }
+
+  /**
+   * 교차 검증 — 같은 입력 표에서 스트리밍 판정이 「있음」인 것과 트리 가림이 실제로 무언가를 바꾸는 것이 정확히 같아야 한다. 어긋나면(판정은 없음인데 트리는 가림)
+   * 이스케이프된 비밀이 새어 나간다. 표는 문자열 가림에 바로 걸리지 않는 본문만 담는다 — 그런 본문은 판정 없이 곧장 트리 경로로 가기 때문이다.
+   */
+  @ParameterizedTest
+  @CsvSource(
+      delimiter = '|',
+      value = {
+        "{\"t\":\"ab\\/cd6761\"}|ab/cd6761",
+        "{\"t\":\"\\u0041Key6761\"}|AKey6761",
+        "{\"\\u0041Key6761\":1}|AKey6761",
+        "{\"a\":[{\"b\":\"\\u0041Key6761\"}]}|AKey6761",
+        "{\"p\":\"a\\/b\",\"n\":12}|Zzz96761",
+        "{\"n\":1e3,\"p\":\"a\\/b\"}|1E+3",
+        "{\"n\":1000,\"p\":\"a\\/b\"}|1E+3",
+        "{\"n\":12.5,\"p\":\"a\\/b\"}|12.50",
+        "[\"\\u0041Key6761\"]|AKey6761",
+      })
+  void jsonValuesContainSecret_agreesWithTreeMasking(String body, String secret) {
+    boolean treeChanges = !AuthQueryMasker.maskBodyViaTree(body, secret).equals(body);
+    assertThat(containsSecret(body, secret)).as("%s / %s", body, secret).isEqualTo(treeChanges);
+  }
+
+  /** 스트리밍 판정을 비밀 문자열로 부른다 — 테스트에서 쓰는 비밀은 모두 최소 길이 이상이라 Scrubber 가 있다. */
+  private static boolean containsSecret(String body, String secret) {
+    return AuthQueryMasker.jsonValuesContainSecret(body, AuthQueryMasker.Scrubber.of(secret));
   }
 }

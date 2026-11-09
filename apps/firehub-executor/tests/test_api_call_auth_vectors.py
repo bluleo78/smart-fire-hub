@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urljoin
 
 import pytest
 
@@ -27,7 +28,7 @@ def _ids(section: str):
 
 def test_fixture_is_loaded():
     # 표가 비면 아래 파라미터 테스트가 공허하게 통과한다 — 갈래마다 사례가 실제로 읽혔는지 본다.
-    for section in ("sameAuthOrigin", "bearerToken", "headerName", "scrub"):
+    for section in ("sameAuthOrigin", "bearerToken", "headerName", "scrub", "redirectLocation"):
         assert len(_DATA[section]) >= 4, section
 
 
@@ -52,3 +53,9 @@ def test_header_name_matches_vector(case):
 @pytest.mark.parametrize("case", _DATA["scrub"], ids=_ids("scrub"))
 def test_scrub_secret_matches_vector(case):
     assert errors.scrub_secret(case["text"], case["secret"]) == case["expected"]
+
+
+@pytest.mark.parametrize("case", _DATA["redirectLocation"], ids=_ids("redirectLocation"))
+def test_redirect_location_matches_vector(case):
+    # 리다이렉트 Location 해석(WD-676) — _do_request 가 쓰는 urljoin 이 Java RedirectLocations 와 같은 표에서 같은 주소를 낸다.
+    assert urljoin(case["base"], case["location"]) == case["expected"]

@@ -44,6 +44,13 @@ public class ApiCallExecutor {
   private static final int DEFAULT_MAX_RESPONSE_SIZE_MB = 10;
   private static final int MAX_REDIRECTS = 5;
 
+  /**
+   * 본문을 설명하는 헤더(소문자, WD-676) — 리다이렉트 홉은 본문 없는 GET 이라 사용자 헤더에 이 이름이 있어도 보내지 않는다. Python {@code
+   * _BODY_HEADERS} 와 같다(Python 은 본문을 버린 홉부터 뺀다).
+   */
+  private static final java.util.Set<String> BODY_HEADERS =
+      java.util.Set.of("content-type", "content-length", "content-encoding", "transfer-encoding");
+
   private final SsrfProtectionService ssrfProtectionService;
   private final JsonResponseParser jsonResponseParser;
   private final OffsetPaginationHandler offsetPaginationHandler;
@@ -439,7 +446,8 @@ public class ApiCallExecutor {
       // (WD-177) 분류하지 못한 원문 메시지에 쿼리 인증 키가 실려 올 수 있어 키도 가린다 — 이 문구는 재시도 로그·실행 기록으로 간다.
       throw new ExternalServiceException(
           AuthQueryMasker.scrubSecret(
-              ApiCallErrorMessages.describe(e, timeoutMs, requestUri.getHost()), authSecret),
+              ApiCallErrorMessages.describe(e, timeoutMs, UrlAuthority.hostOrNull(requestUri)),
+              authSecret),
           e);
     }
   }
@@ -477,8 +485,10 @@ public class ApiCallExecutor {
     // 이 홉이 처음 요청과 같은 출처일 때만 인증 헤더를 붙인다(WD-657). 첫 홉은 판정 없이 붙인다 — java.net.URI 가 호스트를 못 읽는 주소(밑줄 든
     // 호스트 이름 등)도 예전처럼 인증해 보내야 한다.
     boolean sendAuth = redirectCount == 0 || ApiCallAuth.isSameAuthOrigin(originUri, requestUri);
+    // Netty 가 못 부르는 호스트(밑줄 등)는 요청 전에 고정 문구로 실패한다(WD-676) — 리다이렉트 대상도 여기서 같이 본다.
+    UrlAuthority.requireClientSupportedHost(requestUri);
     WebClient.RequestHeadersSpec<?> requestSpec =
-        buildRequestSpec(client, method, requestUri, config, auth, sendAuth);
+        buildRequestSpec(client, method, requestUri, config, auth, sendAuth, redirectCount > 0);
 
     // Use exchangeToMono so we can inspect both status and headers before consuming the body.
     // We capture the Location header via an AtomicReference because the reactive callback
@@ -495,7 +505,9 @@ public class ApiCallExecutor {
                     // Capture Location header, drain body without buffering, signal redirect with
                     // null
                     String location = response.headers().asHttpHeaders().getFirst("Location");
-                    locationRef.set(location);
+                    // Location 이 없으면 빈 문자열로 둔다(WD-676) — null 은 「3xx 아님」이라, 아래에서 빈 값을 「Location 없는
+                    // 3xx」로 판정한다.
+                    locationRef.set(location != null ? location : "");
                     return response
                         .releaseBody()
                         .thenReturn(""); // sentinel: empty string + locationRef set
@@ -526,10 +538,18 @@ public class ApiCallExecutor {
 
     // Handle redirect: locationRef is set only when a 3xx was received
     String location = locationRef.get();
+    if (location != null && location.isBlank()) {
+      // Location 없는 3xx 는 따라갈 곳이 없다(WD-676) — 예전에는 빈 본문을 성공으로 보고 0행 「완료」가 됐다. Python 실행기
+      // (redirect_without_location)와 같은 문구로 실패시킨다. 다시 보내도 같으므로 재시도하지 않는다.
+      throw new ApiCallException(ApiCallErrorMessages.redirectWithoutLocation());
+    }
     if (location != null) {
       // Location 은 무엇보다 먼저 지금 요청 기준 절대 주소로 푼다(WD-657) — 주소 검사(SSRF)·출처 판단·다음 요청이 모두 같은 절대 주소를 본다.
       // 예전에는 상대 주소(「/v2/items?page=2」)를 그대로 써 검사·요청이 실패했다.
-      URI target = requestUri.resolve(location);
+      // (WD-676) JDK URI.resolve 대신 RFC 3986 해석기를 쓴다. JDK 는 path 가 빈 base 에 슬래시 없는 상대 경로를
+      // 호스트에 붙이고, 쿼리만 있는 참조에서 base 경로를 잘라 Python(urljoin)과 다른 주소로 갔다.
+      // 문법 오류 Location 은 재시도하지 않는 고정 문구로 실패한다.
+      URI target = RedirectLocations.resolve(requestUri, location);
       log.debug(
           "Redirect {}/{}: {} -> {}",
           redirectCount + 1,
@@ -596,6 +616,7 @@ public class ApiCallExecutor {
    * headers and auth.
    *
    * @param sendAuth 인증 헤더를 붙일지 — 처음 요청과 다른 출처로 가는 리다이렉트 홉이면 false(WD-657)
+   * @param redirectHop 리다이렉트 홉인지 — 본문 없는 GET 이므로 본문 헤더(Content-Type 등)를 뺀다(WD-676)
    */
   private WebClient.RequestHeadersSpec<?> buildRequestSpec(
       WebClient client,
@@ -603,13 +624,14 @@ public class ApiCallExecutor {
       URI requestUri,
       ApiCallConfig config,
       ApiCallAuth.ResolvedAuth auth,
-      boolean sendAuth) {
+      boolean sendAuth,
+      boolean redirectHop) {
 
     WebClient.RequestHeadersSpec<?> requestSpec;
 
     if ("POST".equals(method)) {
       WebClient.RequestBodySpec bodySpec = client.post().uri(requestUri);
-      applyHeaders(bodySpec, config, auth, sendAuth);
+      applyHeaders(bodySpec, config, auth, sendAuth, false);
       if (config.body() != null && !config.body().isBlank()) {
         requestSpec = bodySpec.header("Content-Type", "application/json").bodyValue(config.body());
       } else {
@@ -618,7 +640,7 @@ public class ApiCallExecutor {
     } else {
       // GET (default) and redirect follow-ups
       WebClient.RequestHeadersSpec<?> getSpec = client.get().uri(requestUri);
-      applyHeaders(getSpec, config, auth, sendAuth);
+      applyHeaders(getSpec, config, auth, sendAuth, redirectHop);
       requestSpec = getSpec;
     }
 
@@ -637,14 +659,19 @@ public class ApiCallExecutor {
       WebClient.RequestHeadersSpec<?> spec,
       ApiCallConfig config,
       ApiCallAuth.ResolvedAuth auth,
-      boolean sendAuth) {
+      boolean sendAuth,
+      boolean dropBodyHeaders) {
 
-    // Custom headers from config — 다른 출처 홉이면 자격 증명 헤더를 뺀다(WD-657).
+    // Custom headers from config — 다른 출처 홉이면 자격 증명 헤더를 뺀다(WD-657). 리다이렉트 홉(본문 없는 GET)이면 본문 헤더도
+    // 뺀다(WD-676) — 본문이 없는데 Content-Type·Content-Length 를 보내지 않게, Python 실행기와 같게.
     if (config.headers() != null) {
       config
           .headers()
           .forEach(
               (name, value) -> {
+                if (dropBodyHeaders && BODY_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
+                  return;
+                }
                 if (sendAuth || !auth.isCredentialHeader(name)) {
                   spec.header(name, value);
                 }

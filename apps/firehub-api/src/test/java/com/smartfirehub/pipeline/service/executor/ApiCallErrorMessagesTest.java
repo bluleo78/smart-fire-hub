@@ -77,9 +77,23 @@ class ApiCallErrorMessagesTest {
         "https://api.example.com|https://api.example.com",
         "http://exa mple.com/a?serviceKey=SECRET123|http://exa mple.com/a",
         "example.com/x?k=SECRET123|example.com/x",
+        // WD-676: 밑줄 든 호스트(getHost() 가 null)도 스킴·호스트·포트·경로로 다시 만든다 — userinfo·쿼리가 남지 않는다.
+        "https://svc:S3cret@my_api.internal/x?key=K|https://my_api.internal/x",
+        "http://svc:S3cret@my_api.internal:8443/x#f|http://my_api.internal:8443/x",
+        // 해석하지 못하는 authority(@ 둘)는 문자열 자르기 — 넓힌 userinfo 패턴이 @ 를 모두 지운다.
+        "https://a:S3cret@b:S3cret2@my_api.internal/x?key=K|https://my_api.internal/x",
       })
   void redactUrl_dropsQueryAndUserinfo(String input, String expected) {
     assertThat(ApiCallErrorMessages.redactUrl(input)).isEqualTo(expected);
+  }
+
+  /** WD-676: 자유 문장 안 URL 의 userinfo 가 @ 로 여럿 이어져도 모두 지운다(Python 과 같은 패턴). */
+  @Test
+  void redactUrlsInText_multipleUserinfo_allRemoved() {
+    assertThat(
+            ApiCallErrorMessages.redactUrlsInText(
+                "failed GET https://a:S3cret@b:S3cret2@my_api.internal/x?key=K done"))
+        .isEqualTo("failed GET https://my_api.internal/x done");
   }
 
   /** 원인 사슬 분류 — 타임아웃이 연결 오류보다 먼저(netty 연결 타임아웃은 ConnectException 하위다). */

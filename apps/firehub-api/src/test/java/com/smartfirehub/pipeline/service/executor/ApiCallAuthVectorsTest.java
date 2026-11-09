@@ -60,10 +60,15 @@ class ApiCallAuthVectorsTest {
     return cases("scrub");
   }
 
+  static Stream<Arguments> redirectLocation() throws IOException {
+    return cases("redirectLocation");
+  }
+
   /** 표가 비면 아래 파라미터 테스트가 공허하게 통과한다 — 갈래마다 사례가 실제로 읽혔는지 본다. */
   @Test
   void fixture_isLoaded() throws IOException {
-    for (String name : List.of("sameAuthOrigin", "bearerToken", "headerName", "scrub")) {
+    for (String name :
+        List.of("sameAuthOrigin", "bearerToken", "headerName", "scrub", "redirectLocation")) {
       assertThat(section(name).size()).as(name).isGreaterThanOrEqualTo(4);
     }
   }
@@ -98,6 +103,20 @@ class ApiCallAuthVectorsTest {
   @MethodSource("scrub")
   void scrub_matchesVector(String name, JsonNode c) {
     assertThat(AuthQueryMasker.scrubSecret(c.get("text").asText(), c.get("secret").asText()))
+        .isEqualTo(c.get("expected").asText());
+  }
+
+  /**
+   * 리다이렉트 Location 해석(WD-676) — Java 는 RFC 3986 해석기({@link RedirectLocations}), Python 은 {@code
+   * urljoin} 이 같은 표에서 같은 절대 주소를 내야 한다. JDK {@code URI.resolve} 는 path 가 빈 base·쿼리만 있는 참조에서 결과가 달랐다.
+   */
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("redirectLocation")
+  void redirectLocation_matchesVector(String name, JsonNode c) {
+    assertThat(
+            RedirectLocations.resolve(
+                    URI.create(c.get("base").asText()), c.get("location").asText())
+                .toString())
         .isEqualTo(c.get("expected").asText());
   }
 }

@@ -1801,4 +1801,118 @@ class ApiCallExecutorTest {
     assertThat(ApiCallExecutor.adjustQueryAuth(downgraded, auth, false, false).toString())
         .isEqualTo("http://api.example.com/data?x=1");
   }
+
+  // -------------------------------------------------------------------------
+  // WD-676: RFC 3986 Location 해석·Location 없는 3xx·다른 출처 307 POST
+  // -------------------------------------------------------------------------
+
+  /**
+   * path 가 빈 base({@code http://localhost:port?k=v})가 슬래시 없는 상대 Location 을 받으면 「/r676/items」 로 간다 —
+   * JDK {@code URI.resolve} 는 「localhost:portr676/items」 처럼 포트에 붙였다. Python urljoin 과 같은 결과다.
+   */
+  @Test
+  void execute_redirectFromEmptyPathBase_resolvesRelativeLocationPerRfc3986() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/"))
+            .withQueryParam("k", equalTo("v676"))
+            .willReturn(aResponse().withStatus(302).withHeader("Location", "r676/items?page=2")));
+    stubEmptyItems("/r676/items");
+
+    executor.execute(simpleGetConfig("?k=v676"), "t", null, "APPEND", null);
+
+    assertThat(receivedUrls("/r676/items")).containsExactly("/r676/items?page=2");
+  }
+
+  /** Location 없는 3xx 는 빈 본문 성공이 아니라 Python(redirect_without_location)과 같은 문구로, 재시도 없이 실패한다. */
+  @Test
+  void execute_redirectWithoutLocation_failsImmediately() {
+    wireMock.stubFor(get(urlEqualTo("/r676/noloc")).willReturn(aResponse().withStatus(302)));
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    retryConfig(baseUrl() + "/r676/noloc", 3, 5000), "t", null, "APPEND", null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.redirectWithoutLocation());
+    wireMock.verify(1, getRequestedFor(urlEqualTo("/r676/noloc")));
+  }
+
+  /** 문법 오류 Location(공백)은 재시도하지 않는 고정 문구로 실패한다 — 주소(쿼리 비밀)는 싣지 않는다. */
+  @Test
+  void execute_redirectWithInvalidLocation_failsWithFixedMessage() {
+    stubRedirect("/r676/badloc", "/next page?serviceKey=SECRET676");
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    retryConfig(baseUrl() + "/r676/badloc", 3, 5000), "t", null, "APPEND", null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.invalidRedirectLocation());
+    wireMock.verify(1, getRequestedFor(urlPathEqualTo("/r676/badloc")));
+  }
+
+  /**
+   * POST 가 다른 출처로 307 되면 본문 없는 GET 으로 따라간다 — Python 실행기도 다른 출처 홉부터 같은 규칙(WD-676)이라 두 실행기가 비밀을 담은
+   * 본문을 다른 출처로 보내지 않는다.
+   */
+  @Test
+  void execute_crossOrigin307Post_followsAsGetWithoutBody() {
+    wireMock.stubFor(
+        post(urlEqualTo("/r676/post"))
+            .willReturn(
+                aResponse().withStatus(307).withHeader("Location", otherOrigin() + "/r676/other")));
+    stubEmptyItems("/r676/other");
+    ApiCallConfig config =
+        new ApiCallConfig(
+            baseUrl() + "/r676/post",
+            "POST",
+            // 사용자 헤더에 본문 헤더(Content-Type)와 일반 헤더를 함께 둔다 — 리다이렉트 GET 홉에는 일반 헤더만 간다.
+            Map.of("Content-Type", "application/json", "X-Trace", "t676"),
+            null,
+            "{\"client_secret\":\"x676\"}",
+            "JSON",
+            "$.items",
+            List.of(new ApiCallConfig.FieldMapping("name", "name", "TEXT", null, null, null)),
+            "UTC",
+            null,
+            new ApiCallConfig.RetryConfig(0, 100, 1000),
+            5000,
+            60000,
+            100,
+            null,
+            null,
+            null,
+            null);
+
+    executor.execute(config, "t", null, "APPEND", null);
+
+    wireMock.verify(0, postRequestedFor(urlPathEqualTo("/r676/other")));
+    List<com.github.tomakehurst.wiremock.verification.LoggedRequest> hops =
+        wireMock.findAll(getRequestedFor(urlPathEqualTo("/r676/other")));
+    assertThat(hops).hasSize(1);
+    assertThat(hops.get(0).getBodyAsString()).isEmpty();
+    assertThat(hops.get(0).getHeader("Host")).isEqualTo("127.0.0.1:" + wireMock.port());
+    // 본문 없는 GET 이므로 본문 헤더를 보내지 않는다(WD-676, Python 과 같게). 본문과 상관없는 헤더는 그대로 간다.
+    assertThat(hops.get(0).containsHeader("Content-Type")).isFalse();
+    // Content-Length 는 Reactor Netty 가 본문 없는 요청에도 「0」으로 붙일 수 있다 — 사용자 헤더의 값이 아니라 본문이 없다는 뜻이면 된다.
+    if (hops.get(0).containsHeader("Content-Length")) {
+      assertThat(hops.get(0).getHeader("Content-Length")).isEqualTo("0");
+    }
+    assertThat(hops.get(0).getHeader("X-Trace")).isEqualTo("t676");
+  }
+
+  /** HTTP 클라이언트가 못 부르는 밑줄 호스트는 요청 전에 호스트 이름을 담은 고정 문구로, 재시도 없이 실패한다(WD-676). */
+  @Test
+  void execute_underscoreHost_failsBeforeRequestWithFixedMessage() {
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    retryConfig("http://my_api.invalid:" + wireMock.port() + "/x", 3, 5000),
+                    "t",
+                    null,
+                    "APPEND",
+                    null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.unsupportedHostName("my_api.invalid"));
+  }
 }

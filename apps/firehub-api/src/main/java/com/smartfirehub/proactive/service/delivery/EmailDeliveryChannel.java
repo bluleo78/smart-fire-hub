@@ -8,6 +8,7 @@ import com.smartfirehub.proactive.service.ReportRenderUtils.ChartImage;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import com.smartfirehub.proactive.util.ProactiveConfigParser.ChannelConfig;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.settings.service.SmtpFailureMessages;
 import com.smartfirehub.settings.service.SmtpMailSenders;
 import com.smartfirehub.user.dto.UserResponse;
 import java.time.LocalDateTime;
@@ -140,6 +141,9 @@ public class EmailDeliveryChannel implements DeliveryChannel {
       toAddresses.add(ownerEmail);
     }
 
+    // 성공한 발송 수와 마지막 실패(WD-676) — 하나도 보내지 못했으면 예외로 알려 실행 기록에 「이메일로 전달됨」이 거짓으로 남지 않게 한다.
+    int sent = 0;
+    Exception lastFailure = null;
     try {
       // 이메일 공통 준비 (SMTP, 템플릿) - 루프 밖에서 1회 수행
       // htmlContent가 있으면 요약(summary) 기반 이메일을 보내고, PDF에 전체 리포트를 첨부한다.
@@ -198,6 +202,7 @@ public class EmailDeliveryChannel implements DeliveryChannel {
           }
 
           mailSender.send(message);
+          sent++;
           log.info(
               "EmailDeliveryChannel sent report '{}' to {} for job {}",
               result.effectiveTitle(job.name()),
@@ -206,10 +211,20 @@ public class EmailDeliveryChannel implements DeliveryChannel {
         } catch (Exception e) {
           log.error("EmailDeliveryChannel failed to send to {}: {}", toAddress, e.getMessage());
           // 개별 발송 실패는 다른 수신자에게 영향을 주지 않도록 continue
+          lastFailure = e;
         }
       }
     } catch (Exception e) {
+      // sender 생성(옛 포트 형식 등)·템플릿 실패 — 아무에게도 보내지 못했다.
       log.error("EmailDeliveryChannel delivery failed for job {}: {}", job.id(), e.getMessage(), e);
+      lastFailure = e;
+    }
+    if (sent == 0 && lastFailure != null) {
+      // 하나도 보내지 못했다(WD-676) — 예전에는 로그만 남기고 정상 반환해 실행 기록에 EMAIL 이 「전달됨」으로 남았다(STARTTLS 미지원·인증서
+      // 불일치로 모든 발송이 실패해도 조용했다). 예외를 던지면 호출부가 EMAIL 을 전달 채널에서 빼고 사유를 warn 로그로 남긴다. 사유 문구는
+      // 설정 화면 연결 테스트와 같은 분류(SmtpFailureMessages)를 쓴다. 일부만 실패하면 지금처럼 정상 반환한다(개별 주소 오류는 로그로만).
+      throw new IllegalStateException(
+          SmtpFailureMessages.describe(lastFailure, host, smtp.get("smtp.password")), lastFailure);
     }
   }
 
