@@ -1,5 +1,7 @@
 import type { AxiosInstance } from 'axios';
 
+import { clampSearchQuery } from './request-limits.js';
+
 /** 검색 결과 청크 (백엔드 DocumentSearchHit 와 1:1) */
 export interface DocumentSearchHit {
   chunkId: number;
@@ -29,7 +31,8 @@ export function createDocumentApi(client: AxiosInstance) {
       mode?: 'SEMANTIC' | 'KEYWORD' | 'HYBRID',
     ): Promise<DocumentSearchHit[]> {
       const response = await client.post('/documents/search', {
-        query,
+        // api 질의 상한(1,000자, WD-600)에 맞춰 자른다 — 사용자 질문 전체가 와도 400 으로 검색이 실패하지 않게.
+        query: clampSearchQuery(query),
         datasetIds: datasetIds ?? null,
         topK: topK ?? null,
         mode: mode ?? null, // 서버 기본 HYBRID

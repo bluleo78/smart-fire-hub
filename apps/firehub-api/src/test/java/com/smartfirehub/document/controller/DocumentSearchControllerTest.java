@@ -1,6 +1,8 @@
 package com.smartfirehub.document.controller;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -12,6 +14,7 @@ import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.validation.SearchQueryLimits;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -100,5 +103,35 @@ class DocumentSearchControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"query\":\"  \",\"topK\":5}"))
         .andExpect(status().isBadRequest());
+  }
+
+  /** WD-600: 1,001자 질의는 서비스(임베딩 provider) 호출 전에 400(한국어 문구). */
+  @Test
+  void search_queryOverMaxLength_returnsBadRequestWithoutCallingService() throws Exception {
+    String query = "가".repeat(SearchQueryLimits.MAX_QUERY_LENGTH + 1);
+    mockMvc
+        .perform(
+            post("/api/v1/documents/search")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"query\":\"" + query + "\",\"topK\":5}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.query").value(SearchQueryLimits.QUERY_TOO_LONG));
+    verify(searchService, never()).search(any(), any());
+  }
+
+  /** WD-600 경계값: 정확히 1,000자는 통과해 서비스로 전달된다. */
+  @Test
+  void search_queryAtMaxLength_passesToService() throws Exception {
+    when(searchService.search(any(), any())).thenReturn(List.of());
+    String query = "가".repeat(SearchQueryLimits.MAX_QUERY_LENGTH);
+    mockMvc
+        .perform(
+            post("/api/v1/documents/search")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"query\":\"" + query + "\",\"topK\":5}"))
+        .andExpect(status().isOk());
+    verify(searchService).search(any(), any());
   }
 }

@@ -1,5 +1,7 @@
 import type { AxiosInstance } from 'axios';
 
+import { clampSearchQuery } from './request-limits.js';
+
 /** POST /datasets/search 응답 후보 1건. (백엔드 DatasetSearchHit record와 필드 일치) */
 export interface DatasetSearchHit {
   datasetId: number;
@@ -30,7 +32,8 @@ export function createDatasetSearchApi(client: AxiosInstance) {
       storageType?: 'TABLE' | 'DOCUMENT' | 'FILE',
     ): Promise<DatasetSearchHit[]> {
       const response = await client.post('/datasets/search', {
-        query,
+        // api 질의 상한(1,000자, WD-600)에 맞춰 자른다 — 사용자 질문 전체가 와도 400 으로 검색이 실패하지 않게.
+        query: clampSearchQuery(query),
         mode: mode ?? null,
         topK: topK ?? null,
         storageType: storageType ?? null,

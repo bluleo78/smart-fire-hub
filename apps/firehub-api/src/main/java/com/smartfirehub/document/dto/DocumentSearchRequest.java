@@ -1,13 +1,22 @@
 package com.smartfirehub.document.dto;
 
+import com.smartfirehub.global.validation.SearchQueryLimits;
+import jakarta.validation.constraints.Size;
 import java.util.List;
 
 /**
  * 문서 검색 요청. datasetIds 생략/빈값이면 전역 검색, topK 기본 5(최대 20). mode 생략 시 HYBRID(의미+키워드 RRF 융합)가 기본 — 기존
  * 호출자도 자동으로 하이브리드 검색을 받는다.
+ *
+ * <p>query 는 최대 {@link SearchQueryLimits#MAX_QUERY_LENGTH}자(WD-600) — 임베딩 provider·키워드 SQL 로 그대로
+ * 가므로 상한을 둔다. 컨트롤러의 {@code @Valid} 로 검증되고 초과 시 400. 빈/누락 질의는 기존대로 서비스가 판정한다.
  */
 public record DocumentSearchRequest(
-    String query, List<Long> datasetIds, Integer topK, SearchMode mode) {
+    @Size(max = SearchQueryLimits.MAX_QUERY_LENGTH, message = SearchQueryLimits.QUERY_TOO_LONG)
+        String query,
+    List<Long> datasetIds,
+    Integer topK,
+    SearchMode mode) {
 
   // 정규화: topK 범위 보정, mode 기본값 HYBRID. (Jackson 역직렬화도 이 canonical 생성자를 사용)
   public DocumentSearchRequest {

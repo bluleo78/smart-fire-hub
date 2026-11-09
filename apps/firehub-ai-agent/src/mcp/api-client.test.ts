@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import nock from 'nock';
 import { FireHubApiClient, parseProactiveExecutionId } from './api-client.js';
+import { EMBED_BATCH_SIZE, EMBED_MAX_TEXT_LENGTH } from './api-client/request-limits.js';
 import { INPUT_VALIDATION_FAILED_MARKER } from '../constants.js';
 
 const BASE_URL = 'http://localhost:8080/api/v1';
@@ -95,6 +96,88 @@ describe('FireHubApiClient', () => {
     const vectors = await client.embed(['스프링클러', '스프링클러 설비']);
     expect(vectors).toEqual([[1, 0, 0], [0.9, 0.1, 0]]);
     expect(scope.isDone()).toBe(true);
+  });
+
+  it('embed 는 EMBED_BATCH_SIZE(256)씩 나눠 순서대로 호출하고 결과를 입력 순서대로 이어 붙인다 (WD-600)', async () => {
+    // 600개 → 256·256·88 세 번. 각 벡터는 [원래 인덱스] 로 만들어 순서 보존을 검증한다.
+    const texts = Array.from({ length: 600 }, (_, i) => `e${i}`);
+    const seenSizes: number[] = [];
+    const scope = nock(BASE_URL)
+      .post('/admin/embedding/embed')
+      .times(3)
+      .reply(200, (_uri, body) => {
+        const batch = (body as { texts: string[] }).texts;
+        seenSizes.push(batch.length);
+        return {
+          model: 'bge-m3',
+          dimension: 1,
+          embeddings: batch.map((t) => [Number(t.slice(1))]),
+        };
+      });
+
+    const vectors = await client.embed(texts);
+    expect(seenSizes).toEqual([256, 256, 88]);
+    expect(vectors).toHaveLength(600);
+    expect(vectors.map((v) => v[0])).toEqual(texts.map((_, i) => i));
+    expect(scope.isDone()).toBe(true);
+  });
+
+  it('embed 는 정확히 256개면 한 번만 호출한다 (WD-600 경계값)', async () => {
+    const texts = Array.from({ length: EMBED_BATCH_SIZE }, (_, i) => `e${i}`);
+    const scope = nock(BASE_URL)
+      .post('/admin/embedding/embed', (body) => body.texts.length === EMBED_BATCH_SIZE)
+      .reply(200, { model: 'm', dimension: 1, embeddings: texts.map(() => [0]) });
+
+    const vectors = await client.embed(texts);
+    expect(vectors).toHaveLength(EMBED_BATCH_SIZE);
+    expect(scope.isDone()).toBe(true);
+  });
+
+  it('embed 는 빈 입력이면 api 를 호출하지 않고 빈 배열을 돌려준다', async () => {
+    // 인터셉터를 걸어 두고 소비되지 않았음을 확인한다 — 호출이 나갔다면 isDone() 이 true 가 된다.
+    const scope = nock(BASE_URL).post('/admin/embedding/embed').reply(200, { embeddings: [] });
+    await expect(client.embed([])).resolves.toEqual([]);
+    expect(scope.isDone()).toBe(false);
+  });
+
+  it('embed 는 중간 배치가 실패하면 부분 결과 없이 예외를 던지고 이후 배치를 보내지 않는다 (WD-600)', async () => {
+    const texts = Array.from({ length: 600 }, (_, i) => `e${i}`);
+    const first = nock(BASE_URL)
+      .post('/admin/embedding/embed')
+      .reply(200, { model: 'm', dimension: 1, embeddings: Array.from({ length: 256 }, () => [0]) });
+    const second = nock(BASE_URL)
+      .post('/admin/embedding/embed')
+      .reply(400, { status: 400, message: '입력값이 올바르지 않습니다.' });
+    const third = nock(BASE_URL).post('/admin/embedding/embed').reply(200, { embeddings: [] });
+
+    await expect(client.embed(texts)).rejects.toBeTruthy();
+    expect(first.isDone()).toBe(true);
+    expect(second.isDone()).toBe(true);
+    expect(third.isDone()).toBe(false);
+  });
+
+  it('embed 는 2,000자를 넘는 항목을 api 항목 상한으로 잘라 보내고 순서·개수를 유지한다 (WD-600)', async () => {
+    // 긴 엔티티 이름 하나 때문에 graphrag_ingest 전체가 400 으로 실패하지 않게 한다.
+    const texts = ['짧음', 'x'.repeat(2500), '끝'];
+    const scope = nock(BASE_URL)
+      .post('/admin/embedding/embed', (body) =>
+        body.texts.length === 3 &&
+        body.texts[0] === '짧음' &&
+        body.texts[1] === 'x'.repeat(EMBED_MAX_TEXT_LENGTH) &&
+        body.texts[2] === '끝')
+      .reply(200, { model: 'm', dimension: 1, embeddings: [[1], [2], [3]] });
+
+    await expect(client.embed(texts)).resolves.toEqual([[1], [2], [3]]);
+    expect(scope.isDone()).toBe(true);
+  });
+
+  it('embed 는 배치 응답 벡터 수가 요청과 다르면 예외를 던진다 (WD-600)', async () => {
+    // 벡터를 밀어 맞추면 엉뚱한 이름끼리 병합된다 — 명확히 실패시킨다.
+    nock(BASE_URL)
+      .post('/admin/embedding/embed')
+      .reply(200, { model: 'm', dimension: 1, embeddings: [[1]] });
+
+    await expect(client.embed(['a', 'b'])).rejects.toThrow(/임베딩 응답 개수가 요청과 다릅니다\(요청 2개, 응답 1개/);
   });
 
   // --- Categories ---

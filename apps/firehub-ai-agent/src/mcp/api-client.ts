@@ -75,6 +75,11 @@ import {
 import { POLICY_BLOCKED_CODE, type PolicyBlockedInfo } from './policy-blocked.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
 import { isPositiveInteger } from '../utils.js';
+import {
+  EMBED_BATCH_SIZE,
+  EMBED_MAX_TEXT_LENGTH,
+  truncateUtf16,
+} from './api-client/request-limits.js';
 
 export type { DocumentSearchHit };
 export type { DatasetSearchHit };
@@ -812,16 +817,41 @@ export class FireHubApiClient {
 
   /**
    * 텍스트 배치를 firehub-api 의 활성 임베딩 provider(system_settings 기반)로 벡터화한다
-   * (POST /api/v1/admin/embedding/embed, dataset:read). provider/모델/API 키는 api 가 소유하므로
+   * (POST /api/v1/admin/embedding/embed, dataset:write). provider/모델/API 키는 api 가 소유하므로
    * ai-agent 는 이를 알 필요 없이 위임만 한다 — GraphRAG 엔티티 해소의 시맨틱 클러스터링에서 사용.
+   *
+   * api 가 요청당 개수를 EMBED_BATCH_SIZE 로 제한하므로(WD-600), 큰 데이터셋의 엔티티 이름 수천 개를
+   * 이 크기씩 나눠 **순서대로** 호출하고 결과를 입력 순서 그대로 이어 붙인다. 중간 배치가 하나라도 실패하면
+   * 예외를 그대로 던진다 — 부분 결과를 섞어 names[]↔vectors[] 인덱스 정렬이 깨지는 것을 막기 위해서다.
+   * 배치마다 돌아온 벡터 수가 보낸 텍스트 수와 다르면 역시 예외다 — 벡터를 밀거나 채워 맞추면 엉뚱한 이름끼리 병합된다.
+   * 빈 입력은 api 를 부르지 않고 빈 배열을 돌려준다(불필요한 호출 방지).
+   *
+   * 항목은 api 항목 상한(EMBED_MAX_TEXT_LENGTH, 2,000자)으로 잘라 보낸다. 엔티티 이름 하나가 길다고 LLM 추출 비용을
+   * 다 쓴 graphrag_ingest 전체가 400 으로 실패하는 것보다, 앞 2,000자로 임베딩해 클러스터링하는 편이 낫다.
+   * 결과 벡터의 순서·개수는 입력과 같다(자르기만 하고 빼지 않는다).
    */
   async embed(texts: string[]): Promise<number[][]> {
-    const { data } = await this.client.post<{
-      model: string;
-      dimension: number;
-      embeddings: number[][];
-    }>('/admin/embedding/embed', { texts });
-    return data.embeddings;
+    if (texts.length === 0) return [];
+    const result: number[][] = [];
+    // 병렬이 아니라 순차 — provider 쪽 동시 호출 폭주를 피하고 결과 순서를 단순하게 보장한다.
+    for (let start = 0; start < texts.length; start += EMBED_BATCH_SIZE) {
+      const batch = texts
+        .slice(start, start + EMBED_BATCH_SIZE)
+        .map((t) => truncateUtf16(t, EMBED_MAX_TEXT_LENGTH));
+      const { data } = await this.client.post<{
+        model: string;
+        dimension: number;
+        embeddings: number[][];
+      }>('/admin/embedding/embed', { texts: batch });
+      const embeddings = Array.isArray(data?.embeddings) ? data.embeddings : [];
+      if (embeddings.length !== batch.length) {
+        throw new Error(
+          `임베딩 응답 개수가 요청과 다릅니다(요청 ${batch.length}개, 응답 ${embeddings.length}개, 시작 위치 ${start}).`,
+        );
+      }
+      result.push(...embeddings);
+    }
+    return result;
   }
 
   // GraphRAG 적재 이력을 api에 기록한다(best-effort — 호출부에서 실패를 삼킨다).

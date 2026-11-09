@@ -95,6 +95,24 @@ test.describe('문서 데이터셋 상세', () => {
     expect(req.payload).toMatchObject({ query: '소화 방식', mode: 'KEYWORD' });
   });
 
+  test('검색어는 서버 상한(1,000자)을 넘겨 입력할 수 없다 (WD-600)', async ({ authenticatedPage: page }) => {
+    // 서버는 1,001자 이상 query 를 400 으로 거절한다 — 입력란이 같은 상한(maxlength)으로 먼저 막아 요청이 400 이 되지 않게 한다.
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const capture = await mockApi(page, 'POST', '/api/v1/documents/search', [], { capture: true });
+
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    const input = page.getByPlaceholder('검색어를 입력하세요');
+    await expect(input).toHaveAttribute('maxlength', '1000');
+    // 실제 입력처럼 텍스트를 넣으면(insertText) 브라우저가 1,000자에서 자른다.
+    await input.click();
+    await page.keyboard.insertText('가'.repeat(1001));
+    await expect(input).toHaveValue('가'.repeat(1000));
+    await page.getByRole('button', { name: '검색' }).click();
+
+    const req = await capture.waitForRequest();
+    expect((req.payload as { query: string }).query).toHaveLength(1000);
+  });
+
   /**
    * 회귀 테스트 (#286): DOCUMENT 데이터셋은 행/컬럼 개념이 없으므로
    * 정보 탭에서 '행' 및 '개 컬럼' 통계 카드를 숨겨야 한다.
