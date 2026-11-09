@@ -1722,7 +1722,8 @@ class ApiCallExecutorTest {
             paginationHandler,
             dataTableService,
             dataTableRowService,
-            WebClient.builder());
+            WebClient.builder(),
+            writeLock);
     stubRedirect("/r657/rel", "/r657/v2/items?page=2");
     stubEmptyItems("/r657/v2/items");
 
