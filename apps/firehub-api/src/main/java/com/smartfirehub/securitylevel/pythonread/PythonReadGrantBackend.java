@@ -90,6 +90,20 @@ interface PythonReadGrantBackend {
   }
 
   /**
+   * 회수가 커밋된 뒤의 슬롯 세션 끊기가 실패했다는 표시(WD-664 1b) — {@link #isTransient} 가 일시 실패로 가른다.
+   *
+   * <p><b>왜 일시 실패인가.</b> 끊기 실패의 원인(소유자 풀 바쁨·대기 시간 초과·연결 끊김)은 대개 잠시 뒤 풀리고, 끊기를 끝내 하지 못하면 회수 커밋 전에
+   * 시작한 긴 쿼리가 끝까지 돈다(빈틈). 그래서 작업을 끝났다(DONE)고 보지 않고 실행기가 재시도 상한까지 다시 하게 한다 — 회수는 멱등이라 다시 해도 안전하다.
+   * 상한을 넘기면 실행기가 ERROR 와 함께 버린다(그 뒤는 실행 준비의 미확인 표식·일 1회 동기화가 막는다). 원인 예외의 분류(영구일 수도 있다)를 따르지 않으려고
+   * 원인 사슬보다 이 표시를 먼저 본다.
+   */
+  final class SessionKillFailed extends RuntimeException {
+    SessionKillFailed(String message, Throwable cause) {
+      super(message, cause);
+    }
+  }
+
+  /**
    * 새 트랜잭션에서 현재 테넌트의 동기화 잠금을 {@code mode} 대로 잡고 {@code work} 를 돌린다 — 두 백엔드의 유일한 잠금 지점(WD-644). 잠금이
    * 바빠(시도 실패·묶인 대기 시간 초과) 일을 하지 못했으면 빈 값이다 — 그때 트랜잭션은 아무것도 바꾸지 않고 끝나 커넥션을 돌려준다. {@code work} 는 잠금을
    * 쥔 같은 트랜잭션 안에서 돈다. 그 밖의 예외(work 가 던진 55P03 포함)는 그대로 던진다.
@@ -181,6 +195,7 @@ interface PythonReadGrantBackend {
    *   <li>Spring {@link TransientDataAccessException}·{@link RecoverableDataAccessException}, JDBC
    *       {@link SQLTransientException}(커넥션 풀 시간 초과 포함)·{@link SQLRecoverableException}
    *   <li>SQLState 클래스 08(연결), 40001·40P01(직렬화 실패·교착), 57P01(관리자 종료), 53xxx(자원 부족)
+   *   <li>{@link SessionKillFailed} — 회수 커밋 뒤 슬롯 세션 끊기 실패(WD-664 1b)
    * </ul>
    *
    * <p>그 밖의 DB 예외(문법·권한·제약 위반 등)와 프로그램 오류는 다시 해도 같으므로 영구 실패다 — 실행기가 곧바로 버리고 ERROR 로 남긴다. 예전처럼 모든
@@ -188,6 +203,9 @@ interface PythonReadGrantBackend {
    */
   static boolean isTransient(Throwable e) {
     for (Throwable t = e; t != null; t = t.getCause()) {
+      if (t instanceof SessionKillFailed) {
+        return true; // 회수 뒤 끊기 실패 — 원인과 무관하게 다시 해 본다(WD-664 1b)
+      }
       if (t instanceof TransientDataAccessException
           || t instanceof RecoverableDataAccessException
           || t instanceof SQLTransientException

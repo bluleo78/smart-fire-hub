@@ -196,6 +196,13 @@ abstract class TenantDataStoreRepositoryContractTest extends IntegrationTestBase
     assertThat(repository().incrementScriptTokenEpoch(id)).contains(1L);
     assertThat(repository().incrementScriptTokenEpoch(id)).contains(2L);
     assertThat(repository().findScriptTokenEpoch(id)).contains(2L);
+    // 잠금 대기 상한이 있는 판(WD-664 4b)도 다투는 쪽이 없으면 똑같이 1 올린다.
+    assertThat(repository().incrementScriptTokenEpoch(id, java.time.Duration.ofSeconds(3)))
+        .contains(3L);
+    assertThat(
+            repository()
+                .incrementScriptTokenEpoch(id + 1_000_000L, java.time.Duration.ofSeconds(3)))
+        .isEmpty();
   }
 
   /** PG 의 등급 정의 변경 동기화는 세대 번호를 건드리지 않는다(PG 는 세션을 끊는다). */

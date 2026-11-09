@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.StoredAccount;
 import com.smartfirehub.dataset.storage.TenantDataStoreRow;
 import com.smartfirehub.dataset.storage.TenantDataStoreStatus;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 
@@ -69,4 +70,13 @@ public interface TenantDataStoreRepository {
    * 다른 읽는 쪽(기술자 조회)이 새 번호를 먼저 본다.
    */
   Optional<Long> incrementScriptTokenEpoch(long tenantId);
+
+  /**
+   * {@link #incrementScriptTokenEpoch(long)} 와 같되, 그 행의 잠금을 최대 {@code lockWait}(초 단위로 올림, 최소 1초)만
+   * 기다린다(WD-664 4b). 넘기면 예외 — 문장만 취소되고(PG 는 57014, 트랜잭션은 aborted) 부르는 쪽이 savepoint 로 되돌린다.
+   *
+   * <p>커밋 직전 경로(사용자 트랜잭션의 커넥션을 쥔 채 부른다) 전용이다. 다른 트랜잭션이 같은 행을 잡고 있으면 상한 없이 기다려 등급 변경 커밋과 요청 스레드가 함께
+   * 멈추기 때문이다.
+   */
+  Optional<Long> incrementScriptTokenEpoch(long tenantId, Duration lockWait);
 }

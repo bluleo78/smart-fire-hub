@@ -150,21 +150,28 @@ class PythonReadGrantListenerTest {
     verify(grants, times(2)).syncTenantForLevelsChange();
   }
 
-  /** 큐 포화로 버려지면 표식을 지운다 — 다음 변경이 다시 넣는다. 변이: 버림 뒤 표식을 남기면 다음 변경이 합쳐진 것으로 보고 영영 돌지 않는다. */
+  /**
+   * 큐가 포화여도 등급 정의 변경 전체 동기화는 버리지 않는다(WD-664 1a) — 커밋 직전 토큰 번호 올리기가 실패했을 때의 유일한 대체 경로다. 같은 포화에서 데이터셋
+   * 등급 변경 재동기화(일반 작업)는 여전히 버린다. 변이: 회수 필수 표시를 떼면 등급 정의 변경이 버려져 한 번도 돌지 않는다.
+   */
   @Test
-  void rejectedSubmit_releasesPendingMark() throws Exception {
+  void saturatedQueue_stillAcceptsLevelsSync_butDropsDatasetResync() throws Exception {
     executor.shutdown();
     executor = new PythonReadSyncExecutor(1);
     listener = new PythonReadGrantListener(grants, executor);
-    CountDownLatch release = block(); // 워커 점유
-    submitBlocking(() -> {}); // 큐(1) 점유
-    listener.onLevelsChanged(LEVELS); // 버려진다
+    CountDownLatch release = block(); // 워커 점유 — 상한 1 이 찼다
+    listener.onLevelsChanged(LEVELS); // 회수 필수 — 포화여도 받아들인다
+    listener.onDatasetLevelChanged(DATASET); // 일반 — 포화라 버려진다
     release.countDown();
     drain();
-    verify(grants, never()).syncTenantForLevelsChange();
-    listener.onLevelsChanged(LEVELS);
-    drain();
     verify(grants, times(1)).syncTenantForLevelsChange();
+    verify(grants, never()).syncDatasetsWith(any(), any());
+    // 버려진 일반 제출은 그룹 작업을 남기지 않는다 — 다음 변경이 합쳐진 것으로 보고 영영 돌지 않는 일이 없다(옛 표식 회귀 방어).
+    when(grants.syncDatasetsWith(any(), any()))
+        .thenReturn(PythonReadGrantBackend.BatchResult.done(java.util.Map.of()));
+    listener.onDatasetLevelChanged(DATASET);
+    drain();
+    verify(grants, times(1)).syncDatasetsWith(any(), any());
   }
 
   /** 커밋 직후 세션 끊기가 실행기 작업보다 먼저, 호출 스레드에서 돈다. 끊기 요청이 예외여도 커밋 콜백은 실패하지 않고 동기화는 넘긴다. */

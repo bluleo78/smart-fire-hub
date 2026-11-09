@@ -74,6 +74,45 @@ class PythonReadSyncExecutorTest {
     }
   }
 
+  /**
+   * 회수 필수(critical) 작업은 포화여도 버리지 않는다(WD-664 1a) — 회수 미확인 뒷정리·등급 정의 변경 전체 동기화는 다른 방어선이 없는 마지막 회수라
+   * 상한에 막혀 버려지면 과권한이 남는다. 일반 작업은 여전히 버린다.
+   */
+  @Test
+  void submit_critical_bypassesCapacity_whileOrdinaryIsStillDropped() throws Exception {
+    PythonReadSyncExecutor executor = new PythonReadSyncExecutor(1);
+    try {
+      CountDownLatch release = new CountDownLatch(1);
+      CountDownLatch started = new CountDownLatch(1);
+      submit(
+          executor,
+          () -> {
+            started.countDown();
+            awaitQuietly(release);
+          });
+      assertThat(started.await(5, TimeUnit.SECONDS)).isTrue(); // 상한 1 이 찼다
+      AtomicInteger criticalRan = new AtomicInteger();
+      AtomicInteger ordinaryRan = new AtomicInteger();
+      boolean critical =
+          executor.submitRetryable(
+              "critical-" + KEYS.incrementAndGet(),
+              "t",
+              (items, lockWait) -> {
+                criticalRan.incrementAndGet();
+                return Outcome.DONE;
+              },
+              true);
+      assertThat(critical).as("회수 필수 작업은 포화여도 받아들인다").isTrue();
+      assertThat(submit(executor, ordinaryRan::incrementAndGet)).as("일반 작업은 포화 → 버림").isFalse();
+      release.countDown();
+      assertThat(executor.awaitIdle(Duration.ofSeconds(5))).isTrue();
+      assertThat(criticalRan.get()).as("받아들인 회수 필수 작업이 실제로 돌았다").isEqualTo(1);
+      assertThat(ordinaryRan.get()).isZero();
+    } finally {
+      executor.shutdown();
+    }
+  }
+
   /** 작업이 예외를 던져도 워커가 죽지 않고 다음 작업을 돌린다. */
   @Test
   void submit_failingWork_doesNotKillWorker() throws Exception {

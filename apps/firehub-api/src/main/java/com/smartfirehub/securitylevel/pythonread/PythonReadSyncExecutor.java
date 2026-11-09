@@ -70,9 +70,10 @@ import org.springframework.stereotype.Component;
  *
  * <p><b>기다림의 상한(WD-673).</b> 인터럽트를 무시하고 멈춘 옛 시도(예: 응답 없는 JDBC 호출)가 있으면 그 기다림이 끝나지 않아 모든 테넌트의 커밋 뒤
  * 동기화가 무기한 멈췄다. 그래서 {@link #RETIRED_AWAIT_TIMEOUT} 만 기다리고, 넘기면 ERROR 를 남긴 뒤 새 스케줄러가 진행한다. 그 뒤 옛 시도와
- * 새 작업이 겹쳐 돌아도 정합성은 깨지지 않는다: 멈춘 시도의 작업은 잡 목록에 실행 중(running)으로 남아 같은 그룹 키의 새 제출은 그 작업에 합쳐질 뿐 두 번째 작업이
- * 생기지 않고, 같은 테넌트의 다른 그룹·다른 테넌트의 작업은 동시에 돌 수 있지만 테넌트 동기화 잠금이 보호한다(멈춘 시도가 잠금을 쥐면 BUSY 로 재시도할 뿐 버리지 않음). 비용은 그동안 스레드·커넥션 하나가 더 쓰이는 것이다. 멈춘 시도는 버림으로 세지 않는다 — 끝나면 평소처럼
- * 스스로 다음 회차를 현재 스케줄러에 올린다(그 테넌트의 커밋 뒤 동기화는 그때까지 멈춰 있다 — 이전부터 있던 성질).
+ * 새 작업이 겹쳐 돌아도 정합성은 깨지지 않는다: 멈춘 시도의 작업은 잡 목록에 실행 중(running)으로 남아 같은 그룹 키의 새 제출은 그 작업에 합쳐질 뿐 두 번째
+ * 작업이 생기지 않고, 같은 테넌트의 다른 그룹·다른 테넌트의 작업은 동시에 돌 수 있지만 테넌트 동기화 잠금이 보호한다(멈춘 시도가 잠금을 쥐면 BUSY 로 재시도할 뿐
+ * 버리지 않음). 비용은 그동안 스레드·커넥션 하나가 더 쓰이는 것이다. 멈춘 시도는 버림으로 세지 않는다 — 끝나면 평소처럼 스스로 다음 회차를 현재 스케줄러에 올린다(그
+ * 테넌트의 커밋 뒤 동기화는 그때까지 멈춰 있다 — 이전부터 있던 성질).
  */
 @Slf4j
 @Component
@@ -290,6 +291,23 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
    * @return 받아들였으면(합친 경우 포함) true, 버렸으면 false
    */
   public boolean submitRetryable(String group, String item, Attempt attempt) {
+    return submitRetryable(group, item, attempt, false);
+  }
+
+  /**
+   * {@link #submitRetryable(String, String, Attempt)} 와 같되, {@code critical} 이면 진행 중 작업 상한(포화) 검사를
+   * 건너뛴다(WD-664 1a).
+   *
+   * <p><b>왜 상한을 넘겨도 받는가.</b> 회수 미확인 뒷정리(좁히기를 커밋 직전에 확인하지 못한 데이터셋의 회수)와 등급 정의 변경 전체 동기화(커밋 직전 토큰 번호
+   * 올리기가 실패했을 때의 유일한 대체 경로)는 과권한을 닫는 마지막 방어선이다. 이것이 포화로 버려지면 다음 실행 준비·일 1회 동기화까지 실행 중 스크립트가 자격 밖
+   * 테이블을 계속 읽는다. 상한을 넘긴 만큼의 증가는 막지 않는다 — 실제 상한은 이 경로들이 생기는 빈도다. 등급 정의 변경은 테넌트 그룹으로 합쳐지지만, 회수 미확인
+   * 뒷정리는 그룹에 데이터셋·슬롯·토큰 여부를 넣어 요청마다 작업 하나가 되므로 잠금 경합 중 자동 상향이 몰리면 그 수만큼 늘 수 있다(받아들인 트레이드오프 — 버리면
+   * 과권한이 남는다). 받아들이면 일반 작업처럼 pending 에 세고(awaitIdle·비우기가 기다린다), 종료(비우기) 중이면 일반 작업처럼 버린다 — 종료 뒤 스레드를
+   * 만들지 않는다는 규칙은 그대로다.
+   *
+   * @param critical 회수 필수 작업이면 true — 포화여도 버리지 않는다
+   */
+  public boolean submitRetryable(String group, String item, Attempt attempt, boolean critical) {
     Job job = null;
     String dropReason = null;
     synchronized (this) {
@@ -302,7 +320,8 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
           existing.queued.add(item);
           return true;
         }
-        if (pending >= capacity) {
+        // 회수 필수 작업은 상한을 보지 않는다(WD-664 1a — 위 Javadoc).
+        if (!critical && pending >= capacity) {
           dropReason = "진행 중 작업 상한(" + capacity + ") 포화";
         } else {
           job = new Job(group, attempt);
