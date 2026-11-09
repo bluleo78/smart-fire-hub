@@ -1314,19 +1314,11 @@ class ApiCallExecutorTest {
   /** 연결 거부도 재시도하고, 소진 문구에 원인이 담긴다. */
   @Test
   void execute_connectionRefused_retriesAndMessageIncludesCause() throws Exception {
-    int closedPort;
-    try (java.net.ServerSocket socket = new java.net.ServerSocket(0)) {
-      closedPort = socket.getLocalPort();
-    }
-
+    // 특권 포트 1 — 임시 포트 범위가 아니라 남이 다시 잡을 일이 없어 거부가 확실하다(WD-685: 방금 닫은 포트는 부하 중 재사용돼 간헐 실패)
     assertThatThrownBy(
             () ->
                 executor.execute(
-                    retryConfig("http://localhost:" + closedPort + "/api", 1, 5000),
-                    "t",
-                    null,
-                    "APPEND",
-                    null))
+                    retryConfig("http://127.0.0.1:1/api", 1, 5000), "t", null, "APPEND", null))
         .isInstanceOf(ApiCallException.class)
         .hasMessage("API 호출이 1회 재시도 후에도 실패했습니다 — 마지막 오류: 연결이 거부되었습니다 — 주소·포트와 서버 실행 여부를 확인하세요");
   }

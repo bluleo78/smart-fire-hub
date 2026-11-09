@@ -413,15 +413,11 @@ class ApiCallPreviewServiceTest {
   /** 오류: HTTP 서버 연결 실패 시 success=false, errorMessage 반환 */
   @Test
   void preview_connectionRefused_returnsError() throws Exception {
-    // WireMock이 아닌 닫힌 포트로 요청 — 방금 열었다 닫은 포트라 거부가 확실하다
-    int closedPort;
-    try (java.net.ServerSocket socket = new java.net.ServerSocket(0)) {
-      closedPort = socket.getLocalPort();
-    }
+    // 특권 포트 1 — 임시 포트 범위가 아니라 남이 다시 잡을 일이 없어 거부가 확실하다(WD-685: 방금 닫은 포트는 부하 중 재사용돼 간헐 실패)
     ApiCallPreviewResponse response =
         service.preview(
             new ApiCallPreviewRequest(
-                "http://localhost:" + closedPort + "/unreachable",
+                "http://127.0.0.1:1/unreachable",
                 "GET",
                 null,
                 null,
@@ -800,11 +796,8 @@ class ApiCallPreviewServiceTest {
 
   @Test
   void preview_queryKey_connectionRefused_resolvedUrlMaskedAndNoSecretInError() throws Exception {
-    int port;
-    try (java.net.ServerSocket s = new java.net.ServerSocket(0)) {
-      port = s.getLocalPort();
-    }
-    String url = "http://localhost:" + port + "/wd177";
+    // 특권 포트 1 — 임시 포트 범위가 아니라 남이 다시 잡을 일이 없어 거부가 확실하다(WD-685: 방금 닫은 포트는 부하 중 재사용돼 간헐 실패)
+    String url = "http://127.0.0.1:1/wd177";
 
     ApiCallPreviewResponse response = previewWithQueryAuth(url, WD177_KEY);
 

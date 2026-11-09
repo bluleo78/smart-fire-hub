@@ -26,7 +26,6 @@ import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.support.IntegrationTestBase;
-import java.net.ServerSocket;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -189,12 +188,11 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
         "/health");
   }
 
-  /** 아무도 듣지 않는 로컬 포트 — 연결 거부 경로 재현용. */
-  private static int closedPort() throws Exception {
-    try (ServerSocket s = new ServerSocket(0)) {
-      return s.getLocalPort();
-    }
-  }
+  /**
+   * 아무도 듣지 않는 로컬 주소 — 연결 거부 경로 재현용. 특권 포트 1 은 임시 포트 범위가 아니라 남이 다시 잡을 일이 없다(WD-685: 예전엔 방금 닫은 포트를
+   * 썼고, 부하 중 다른 프로세스가 그 포트를 다시 잡아 간헐 실패했다).
+   */
+  private static final String REFUSED_BASE = "http://127.0.0.1:1";
 
   /** 키의 원문·form 인코딩형·%20 인코딩형이 모두 없는지. */
   private static void assertNoSecret(String text, String key) {
@@ -305,7 +303,7 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
   /** 연결 거부(catch-all 경로): 응답 URL·오류 문구·DB lastErrorMessage 에 원문이 없다. */
   @Test
   void testConnection_queryKey_connectionRefused_noSecretInUrlOrError() throws Exception {
-    String base = "http://localhost:" + closedPort();
+    String base = REFUSED_BASE;
     ApiConnectionResponse created =
         apiConnectionService.create(queryKeyReq("WD177 refused", base, KEY), testUserId);
 
@@ -480,7 +478,7 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
 
   @Test
   void testConnectionPayload_queryKey_connectionRefused_noSecret() throws Exception {
-    String base = "http://localhost:" + closedPort();
+    String base = REFUSED_BASE;
 
     TestConnectionResponse result =
         apiConnectionService.testConnectionPayload(queryKeyReq("WD177 payload refused", base, KEY));

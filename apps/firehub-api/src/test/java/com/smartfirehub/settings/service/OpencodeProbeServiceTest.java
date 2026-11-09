@@ -16,7 +16,6 @@ import com.smartfirehub.settings.service.OpencodeProbeService.ProbeResult;
 import com.smartfirehub.settings.service.OpencodeProbeService.ProbeResult.Reason;
 import java.io.IOException;
 import java.net.InetAddress;
-import java.net.ServerSocket;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.time.Duration;
@@ -523,16 +522,12 @@ class OpencodeProbeServiceTest {
    */
   @Test
   void 연결이_거부되면_unreachable_이다() throws IOException {
-    int closedPort;
-    try (ServerSocket socket = new ServerSocket(0)) {
-      closedPort = socket.getLocalPort();
-    }
-    // 소켓을 닫은 직후라 그 포트는 즉시 connection refused 를 반환한다 — validateTarget() 을
-    // 건너뛰는 wireMockService 그룹을 써서(로컬호스트라 실제 가드라면 막힌다) 진짜 doRequest() 의
+    // 특권 포트 1 — 임시 포트 범위가 아니라 남이 다시 잡을 일이 없어 거부가 확실하다(WD-685: 방금 닫은 포트는 부하 중 재사용돼 간헐 실패).
+    // validateTarget() 을 건너뛰는 wireMockService 그룹을 써서(로컬호스트라 실제 가드라면 막힌다) 진짜 doRequest() 의
     // 예외 매핑만 재현한다.
     OpencodeProbeService service = wireMockService(mock(AiCredentialService.class));
     ProbeResultAssertHelper.assertBlocked(
-        service.probe("http://localhost:" + closedPort + "/v1", "k"),
+        service.probe("http://127.0.0.1:1/v1", "k"),
         OpencodeProbeService.MSG_UNREACHABLE,
         Reason.UNREACHABLE);
   }
