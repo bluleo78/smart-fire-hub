@@ -1,11 +1,12 @@
 import { AlertTriangle, EyeOff, GripVertical, Loader2, Lock, X } from 'lucide-react';
-import { type KeyboardEvent, useCallback, useId, useRef } from 'react';
+import { type KeyboardEvent, type ReactNode, useCallback, useId, useRef, useState } from 'react';
 
 import { useChart, useChartData } from '../../hooks/queries/useAnalytics';
 import { useWidgetVisibility } from '../../hooks/useWidgetVisibility';
-import { handleApiError } from '../../lib/api-error';
+import { extractApiError, handleApiError } from '../../lib/api-error';
 import { type KeyboardLayoutAction, keyToLayoutAction } from '../../lib/dashboard-layout-keyboard';
 import { type ChartDataResponse, type DashboardWidget, MAX_AUTO_REFRESH_SECONDS } from '../../types/analytics';
+import { PendingButton } from '../PendingButton';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Separator } from '../ui/separator';
@@ -27,19 +28,63 @@ interface WidgetContentProps {
   chartData?: ChartDataResponse;
   dataLoading: boolean;
   dataFetching: boolean;
+  /** 이 위젯 단건 조회의 마지막 오류(없으면 null) — 다시 조회하는 동안에도 남아, 데이터가 없으면 사유와 「다시 시도」를 보인다(WD-686) */
+  dataError: unknown;
+  /** 이 위젯만 다시 조회한다 — 실패해도 토스트를 띄우지 않는다(위젯 안 안내가 이미 사유를 보인다, WD-686) */
+  onRetry: () => void;
+}
+
+/**
+ * 위젯 안 오류 상자(WD-686) — 저장 쿼리 오류(「쿼리 오류」)와 조회 실패(서버 문구 + 「다시 시도」)가 같은 모양을 쓴다.
+ * 쿼리 편집기 결과 영역(ResultTable)의 「쿼리 오류」 박스와 같은 형식이다.
+ */
+function WidgetErrorBox({ title, children, action }: { title: ReactNode; children?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="h-full overflow-auto py-1">
+      <div role="alert" className="rounded-md border border-destructive/50 bg-destructive/10 p-3">
+        <p className="flex items-center gap-1.5 text-sm font-medium text-destructive">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          {title}
+        </p>
+        {children}
+        {action}
+      </div>
+    </div>
+  );
 }
 
 /**
  * 위젯 본문 — 카드가 조회한 이 위젯의 단건 차트 데이터(`/charts/{id}/data`)를 렌더링한다.
  * 데이터 조회·새로고침 상태는 카드가 소유하고(신선도 바와 같은 쿼리를 보도록), 본문은 표시만 한다.
  */
-function WidgetContent({ widget, chartData, dataLoading, dataFetching }: WidgetContentProps) {
-  const { data: chart, isLoading: chartLoading } = useChart(widget.chartId);
+function WidgetContent({ widget, chartData, dataLoading, dataFetching, dataError, onRetry }: WidgetContentProps) {
+  // 차트 메타는 첫 로딩 표시에만 쓴다 — 그리는 정의는 데이터 응답의 chart 다
+  const { isLoading: chartLoading } = useChart(widget.chartId);
 
   const isInitialLoading = chartLoading || (dataLoading && !chartData);
   const isBackgroundFetching = !isInitialLoading && dataFetching;
 
-  if (isInitialLoading) {
+  // 조회 실패·표시할 데이터 없음(WD-686) — 500·504·네트워크·429(동시 실행 상한) 어느 것이든 서버 문구(없으면 일반 문구)와 이 위젯만 다시
+  // 조회하는 「다시 시도」를 위젯 안에 보인다. 예전에는 「데이터를 불러올 수 없습니다.」와 신선도 바의 「새로고침 실패」만 보여, 429 처럼 잠시 뒤
+  // 다시 하면 되는 실패도 알 수 없었다. 이전 결과가 있으면 그것을 그대로 보이고 신선도 바 배지가 실패를 알린다.
+  // 로딩 표시보다 먼저 본다 — 데이터 없는 쿼리를 다시 조회하면 TanStack 이 pending 으로 되돌려 error 를 비우므로 카드가 기억한 마지막 오류로
+  // 안내를 유지하고, 「다시 시도」만 진행 중 잠근다(스피너로 바뀌면 버튼이 사라져 잠금을 보일 수 없다).
+  if (!chartData && dataError) {
+    return (
+      <WidgetErrorBox
+        title={extractApiError(dataError, '데이터를 불러올 수 없습니다.')}
+        action={
+          // 다시 조회하는 동안 잠근다 — 거듭 눌러 같은 차트 데이터 요청이 겹쳐 나가지 않게(aria-disabled 로 포커스 유지)
+          <PendingButton pending={dataFetching} variant="outline" size="sm" className="mt-2 h-7 text-xs" onClick={onRetry}>
+            다시 시도
+          </PendingButton>
+        }
+      />
+    );
+  }
+
+  // 아직 받은 데이터가 없다(첫 조회 중이거나, 화면 밖이라 조회를 미룬 위젯) — 로딩 표시
+  if (isInitialLoading || !chartData) {
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -54,7 +99,7 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching }: WidgetC
   // 주고(스펙 §2.5), 삭제되면 saved_query.dataset_id 도 SET NULL 이라 삭제 사실이 남지 않는다. 조회자 기준으로 둘을 가르면 사용자가 직접
   // 쓴 SQL 로 숨김 데이터셋 존재를 떠보는 경로가 생기므로, 모든 조회자에게 두 원인을 함께 알리는 같은 문구를 보인다(스펙 §5-4 문구에서
   // 의도적으로 벗어남 — 관리자에게 삭제된 원본을 "권한 없음"으로 단정하던 오안내를 없앤다).
-  if (chartData?.denied) {
+  if (chartData.denied) {
     return (
       <div
         data-testid="widget-denied"
@@ -67,42 +112,23 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching }: WidgetC
     );
   }
 
-  const queryResult = chartData?.queryResult ?? null;
+  const queryResult = chartData.queryResult;
 
   // 저장 쿼리 실패(#764): API는 HTTP 200 + queryResult.error 로 사유(division by zero,
   // 결과 32MB 초과 안내 등)를 준다. 빈 rows 를 그대로 ChartRenderer 에 넘기면
   // "데이터가 없습니다." 로 보여 정상 0행과 구분되지 않으므로,
   // queryResult 에서 error 를 먼저 검사해 오류 상태와 사유 원문을 표시한다.
   // 표시 형식은 쿼리 편집기 결과 영역(ResultTable)의 "쿼리 오류" 박스와 맞춘다.
-  if (queryResult?.error) {
+  if (queryResult.error) {
     return (
-      <div className="h-full overflow-auto py-1">
-        <div
-          role="alert"
-          className="rounded-md border border-destructive/50 bg-destructive/10 p-3"
-        >
-          <p className="flex items-center gap-1.5 text-sm font-medium text-destructive">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            쿼리 오류
-          </p>
-          <p className="text-xs text-destructive/80 mt-1 font-mono whitespace-pre-wrap break-words">
-            {queryResult.error}
-          </p>
-        </div>
-      </div>
+      <WidgetErrorBox title="쿼리 오류">
+        <p className="text-xs text-destructive/80 mt-1 font-mono whitespace-pre-wrap break-words">{queryResult.error}</p>
+      </WidgetErrorBox>
     );
   }
 
-  if (!chart || !queryResult) {
-    return (
-      <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-        데이터를 불러올 수 없습니다.
-      </div>
-    );
-  }
-
-  // 데이터 응답에 실린 차트 정의가 최신이므로 우선 사용하고, 없으면 메타 조회 결과로 폴백
-  const effectiveChart = chartData?.chart ?? chart;
+  // 데이터 응답에 실린 차트 정의가 최신이라 그것을 쓴다(데이터 응답의 chart 는 언제나 있다)
+  const effectiveChart = chartData.chart;
   // 메타 조회는 설정이 가려지면 config 가 null 이다(WD-31②). queryResult 가 있으면 데이터 응답(config 항상 객체)이
   // 쓰이므로 실제로는 닿지 않지만, 렌더러가 null 에서 깨지지 않게 빈 설정으로 좁힌다.
   const effectiveConfig = effectiveChart.config ?? { xAxis: '', yAxis: [] };
@@ -191,13 +217,27 @@ export function DashboardWidgetCard({
     data: chartData,
     isLoading: dataLoading,
     isFetching: dataFetching,
-    isError: dataError,
+    isError: dataIsError,
+    error: queryError,
+    status: dataStatus,
     dataUpdatedAt,
     refetch,
   } = useChartData(widget.chartId, {
     refetchInterval,
     enabled: isVisible && !inaccessible,
   });
+
+  // 위젯 본문에 넘길 오류(WD-686) — 데이터 없는 쿼리를 다시 조회하면 TanStack 이 error 를 비우므로, 마지막 오류를 다시 조회하는 동안 기억해
+  // 실패 안내와 잠긴 「다시 시도」가 스피너로 바뀌지 않게 한다. 조회가 성공하면(status success) 지운다. 렌더 중 상태 맞추기(React 권장 패턴)라
+  // 두 갈래가 겹치면 끝없이 다시 그린다 — 기억은 오류가 있을 때만, 지우기는 오류가 없을 때만 해 서로 배타적이게 둔다(데이터가 있는 채로
+  // 새로고침이 실패해도 「기억 → 지움」이 번갈아 돌지 않는다).
+  const [lastError, setLastError] = useState<unknown>(null);
+  if (queryError != null) {
+    if (queryError !== lastError) setLastError(queryError);
+  } else if (dataStatus === 'success' && lastError !== null) {
+    setLastError(null);
+  }
+  const dataError = queryError ?? lastError;
 
   // 수동 새로고침 — 이 위젯의 데이터를 실제로 다시 조회하고, 실패하면 1회 토스트로 알린다(#566).
   // 자동 새로고침 실패는 위젯마다 토스트가 쏟아지지 않도록 신선도 바 배지로만 알린다.
@@ -207,6 +247,12 @@ export function DashboardWidgetCard({
         handleApiError(result.error, '위젯 데이터를 불러오지 못했습니다.');
       }
     });
+  }, [refetch]);
+
+  // 위젯 안 「다시 시도」(429 안내, WD-686) — 다시 조회만 한다. 실패하면 위젯 안 안내가 그대로 사유를 보이므로 수동 새로고침처럼
+  // 토스트를 더 띄우지 않는다(같은 문구가 두 번 보이지 않게). 신선도 바의 새로고침 버튼은 handleRefresh(토스트 포함) 그대로다.
+  const handleRetry = useCallback(() => {
+    void refetch();
   }, [refetch]);
 
   // 이동 손잡이 사용법 — 손잡이의 설명(aria-describedby)으로 읽히게 숨긴 문구의 id
@@ -282,6 +328,8 @@ export function DashboardWidgetCard({
               chartData={chartData}
               dataLoading={dataLoading}
               dataFetching={dataFetching}
+              dataError={dataError}
+              onRetry={handleRetry}
             />
           </WidgetErrorBoundary>
         )}
@@ -291,7 +339,7 @@ export function DashboardWidgetCard({
         <WidgetFreshnessBar
           dataUpdatedAt={dataUpdatedAt}
           isFetching={dataFetching}
-          isError={dataError}
+          isError={dataIsError}
           refreshSeconds={refreshSeconds}
           onRefresh={handleRefresh}
           widgetName={title}

@@ -10,7 +10,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import App from './App.tsx'
-import { isForbiddenError } from './lib/api-error'
+import { isForbiddenError, isTooManyRequestsError } from './lib/api-error'
 import { installScrollbarAutoHide } from './lib/scrollbar-autohide'
 import { installPopstateGuardInterceptor } from './lib/unsaved-changes-guard-registry'
 
@@ -26,8 +26,11 @@ installPopstateGuardInterceptor();
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // 권한 부족(403)은 다시 시도해도 같다 — 재시도 없이 바로 권한 안내를 보이게 한다 (WD-122·WD-126). 그 밖은 1회 재시도.
-      retry: (failureCount, error) => !isForbiddenError(error) && failureCount < 1,
+      // 권한 부족(403)은 다시 시도해도 같다 — 재시도 없이 바로 권한 안내를 보이게 한다 (WD-122·WD-126).
+      // 요청이 너무 많음(429, 동시 실행 상한)도 곧바로 다시 하면 같은 상한에 걸리고 부하만 더한다 — 재시도 없이 화면 안내로 넘긴다(WD-686).
+      // 그 밖은 1회 재시도.
+      retry: (failureCount, error) =>
+        !isForbiddenError(error) && !isTooManyRequestsError(error) && failureCount < 1,
       staleTime: 30_000,
       refetchOnWindowFocus: false,
     },

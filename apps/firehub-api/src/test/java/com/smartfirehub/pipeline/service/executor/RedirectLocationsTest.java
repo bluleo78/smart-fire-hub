@@ -32,4 +32,38 @@ class RedirectLocationsTest {
     assertThat(RedirectLocations.removeDotSegments("/../../x")).isEqualTo("/x");
     assertThat(RedirectLocations.removeDotSegments("/a/..")).isEqualTo("/");
   }
+
+  /**
+   * Location 의 프래그먼트는 떼고 따라간다(WD-686) — 요청 줄에는 의미가 없고, 로그·SSRF 검사·출처 판정에 섞이지 않게 한다. base 의 프래그먼트도
+   * 물려받지 않는다.
+   */
+  @Test
+  void resolve_dropsFragment() {
+    URI base = URI.create("https://api.example.com/v1/items?k=v#old");
+    assertThat(RedirectLocations.resolve(base, "/v2?page=2#frag"))
+        .hasToString("https://api.example.com/v2?page=2");
+    assertThat(RedirectLocations.resolve(base, "#only"))
+        .hasToString("https://api.example.com/v1/items?k=v");
+    assertThat(RedirectLocations.resolve(base, "https://other.example/p#x").getRawFragment())
+        .isNull();
+    // 떼는 곳은 resolve() 한 곳이다 — 문자열 해석 자체는 RFC 3986 대로 참조의 프래그먼트를 붙인다.
+    assertThat(RedirectLocations.resolveString(base.toString(), "/v2#frag"))
+        .isEqualTo("https://api.example.com/v2#frag");
+  }
+
+  /**
+   * 프래그먼트는 문법 검사보다 먼저 뗀다(WD-686) — 따라갈 주소와 상관없는 프래그먼트의 문법 오류(「#」 두 번·공백)로 Java 만 실패하고 Python
+   * (urldefrag)은 따라가던 차이를 없앤다. 프래그먼트 앞부분의 문법 오류는 지금처럼 고정 문구로 실패한다.
+   */
+  @Test
+  void resolve_malformedFragment_isDroppedBeforeSyntaxCheck() {
+    URI base = URI.create("https://api.example.com/v1/items");
+    assertThat(RedirectLocations.resolve(base, "/v2/items?page=2#a#b"))
+        .hasToString("https://api.example.com/v2/items?page=2");
+    assertThat(RedirectLocations.resolve(base, "next#my section"))
+        .hasToString("https://api.example.com/v1/next");
+    assertThatThrownBy(() -> RedirectLocations.resolve(base, "/next page#ok"))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.invalidRedirectLocation());
+  }
 }

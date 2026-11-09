@@ -9,6 +9,7 @@ import com.smartfirehub.notification.Payload;
 import com.smartfirehub.notification.PermanentFailureReason;
 import com.smartfirehub.notification.TransientFailureReason;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.settings.service.SmtpFailureMessages;
 import com.smartfirehub.settings.service.SmtpTlsPolicy;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.Map;
@@ -123,23 +124,30 @@ public class EmailChannel implements Channel {
             "text", subject,
             "html", htmlBody);
 
+    // 실패 예외는 서버 응답 원문(AUTH 단계에서 되울린 비밀번호·자격 증명 포함 가능)을 담는다(WD-686) — 로그와 결과 cause(발송 워커
+    // debug 로그가 결과를 찍는다)에는 가린 사본만 남긴다. 사본은 원래 클래스 이름·스택 위치를 지킨다.
+    SmtpFailureMessages.CredentialMasker masker =
+        SmtpFailureMessages.forCredentials(
+            host, smtp.get("smtp.username"), smtp.get("smtp.password"));
     try {
       channelHttpClient.send("EMAIL", recipient, message);
       log.info("EmailChannel sent to {} (outboxId={})", toAddress, ctx.outboxId());
       return new DeliveryResult.Sent("email-" + ctx.outboxId());
     } catch (ChannelHttpException e) {
+      Throwable masked = masker.maskedCopy(e);
       log.warn(
           "EmailChannel ChannelHttpException {} (outboxId={})",
           e.getStatusCode(),
           ctx.outboxId(),
-          e);
+          masked);
       return new DeliveryResult.TransientFailure(
-          TransientFailureReason.CHANNEL_HTTP_PREFIX + e.getStatusCode(), e);
+          TransientFailureReason.CHANNEL_HTTP_PREFIX + e.getStatusCode(), masked);
     } catch (Exception e) {
       // 원본 예외(클래스명 등)는 서버 로그에만 남기고, 사용자에게는 노출하지 않는다.
       // reason()에는 안정적인 사유 코드만 담아 ChannelSettingsService가 한국어 메시지로 매핑한다.
-      log.warn("EmailChannel 네트워크 오류 (outboxId={})", ctx.outboxId(), e);
-      return new DeliveryResult.TransientFailure(TransientFailureReason.NETWORK_ERROR, e);
+      Throwable masked = masker.maskedCopy(e);
+      log.warn("EmailChannel 네트워크 오류 (outboxId={})", ctx.outboxId(), masked);
+      return new DeliveryResult.TransientFailure(TransientFailureReason.NETWORK_ERROR, masked);
     }
   }
 

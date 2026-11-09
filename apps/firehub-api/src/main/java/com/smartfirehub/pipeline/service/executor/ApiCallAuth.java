@@ -276,6 +276,7 @@ public final class ApiCallAuth {
     if (origin == null || target == null) return false;
     // 호스트·포트는 UrlAuthority 로 읽는다(WD-676) — getHost() 는 밑줄 든 호스트(my_api.internal)에서 null 이라, 같은 호스트로
     // 가는 홉도 다른 출처로 봐 인증을 뗐다. 해석할 수 없으면 지금처럼 다른 출처다.
+    // (WD-686) Python 과 같게 두려고 남긴다 — 공용 사례 표 sameAuthOrigin 의 밑줄 호스트 사례가 고정한다.
     Optional<UrlAuthority> fromAuthority = UrlAuthority.of(origin);
     Optional<UrlAuthority> toAuthority = UrlAuthority.of(target);
     if (fromAuthority.isEmpty() || toAuthority.isEmpty()) return false;

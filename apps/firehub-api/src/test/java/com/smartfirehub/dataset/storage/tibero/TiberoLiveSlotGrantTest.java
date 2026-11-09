@@ -419,4 +419,115 @@ class TiberoLiveSlotGrantTest extends IntegrationTestBase {
       ownerDdl("PURGE TABLE " + TiberoNames.quote(bin), new ArrayList<>());
     }
   }
+
+  /**
+   * IN 목록 나누기 실측(WD-686): {@link TiberoCatalog#IN_LIST_CHUNK}(1000) 를 넘는 이름 목록으로 테이블·슬롯 권한을 조회해도
+   * Tibero 가 IN 목록 제한 오류 없이 답하고, 첫 조각과 둘째 조각에 놓인 실제 테이블을 모두 찾는지 본다. 가짜 JDBC 테스트는 문장 모양만 보므로, 실서버에서
+   * 나눈 조각이 실제로 받아들여지는지(바인드 수·문법)를 여기서 확인한다.
+   *
+   * <p>객체 1001개를 만들면 느리고 공유 서버를 어지럽히므로 실제 테이블은 두 개만 만들고 나머지는 없는 이름으로 채운다 — 나누기는 이름 수로 일어나므로 경계를 넘는
+   * 것은 같다.
+   */
+  @Test
+  void inListOverChunkBoundary_findsTablesAndGrantsInBothChunks() {
+    List<String> failures = new ArrayList<>();
+    String suffix = Long.toString(System.nanoTime() % 1_000_000_000L);
+    String first = TiberoNames.physical("ch_a_" + suffix);
+    String second = TiberoNames.physical("ch_b_" + suffix);
+    String account = DataStoreAccountRole.valueOf("S1").usernameFor(env.tenantId);
+    for (String t : List.of(first, second)) {
+      ownerDdl("CREATE TABLE " + TiberoNames.qualified(schema(), t) + " (\"ID\" NUMBER)", failures);
+      ownerDdl(TiberoDdlSql.grantSelectToSlot(schema(), t, account), failures);
+    }
+    assertThat(failures).as("준비 DDL").isEmpty();
+    try {
+      // 첫 이름은 첫 조각, IN_LIST_CHUNK 번째(0부터) 이름은 둘째 조각 — 경계를 넘는 수(IN_LIST_CHUNK + 5).
+      List<String> names = new ArrayList<>();
+      names.add(first);
+      for (int i = 1; i < TiberoCatalog.IN_LIST_CHUNK; i++) {
+        names.add("NO_SUCH_" + suffix + "_" + i);
+      }
+      names.add(second);
+      for (int i = 0; i < 4; i++) {
+        names.add("NO_SUCH_TAIL_" + suffix + "_" + i);
+      }
+      assertThat(names).hasSize(TiberoCatalog.IN_LIST_CHUNK + 5);
+
+      // 세 카탈로그 조회는 연결 하나에서 한 번에 한다 — 테이블·정확 바인드 권한·LIKE 권한.
+      record Lookups(
+          Set<String> tables, Map<String, Set<String>> exact, Map<String, Set<String>> like) {}
+      Lookups found =
+          connections.withDdl(
+              env.tenantId,
+              c ->
+                  new Lookups(
+                      TiberoCatalog.ownTablesAmong(c, names),
+                      TiberoCatalog.slotSelectGrantsAmong(c, List.of(account), names),
+                      TiberoCatalog.slotSelectGrantsAmong(c, env.tenantId, names)));
+      probe("in-list-chunk-tables", String.valueOf(found.tables()));
+      probe("in-list-chunk-grants", String.valueOf(found.exact().keySet()));
+
+      assertThat(found.tables()).as("두 조각의 테이블을 모두 찾는다").containsExactlyInAnyOrder(first, second);
+      assertThat(found.exact()).as("정확 바인드 권한 조회").containsOnlyKeys(first, second);
+      assertThat(found.exact().get(second)).contains(account);
+      assertThat(found.like()).as("LIKE 권한 조회").containsKeys(first, second);
+    } finally {
+      for (String t : List.of(first, second)) {
+        ownerDdl("DROP TABLE " + TiberoNames.qualified(schema(), t) + " PURGE", new ArrayList<>());
+      }
+    }
+  }
+
+  /**
+   * 휴지통(BIN$) 객체 회수 실측(WD-686): PURGE 없이 DROP 해 슬롯 GRANT 를 쥔 채 남은 BIN$ 객체를 테넌트 전체 동기화가 만나면, 실제로 회수해
+   * 권한 목록에서 사라지거나, 회수하지 못하면 회수 실패({@code revokeFailed})로 남아야 한다(fail-closed, WD-645·WD-660). 어느
+   * 쪽인지는 Tibero 판·설정에 달려 있어 PROBE 줄로 남긴다. 휴지통이 꺼져 있으면 건너뛴다.
+   */
+  @Test
+  void recycleBinObjectGrant_isRevokedOrReportedAsRevokeFailure() {
+    List<String> failures = new ArrayList<>();
+    String suffix = Long.toString(System.nanoTime() % 1_000_000_000L);
+    String raw = "rbs_" + suffix;
+    String rawPhysical = TiberoNames.physical(raw);
+    String account = DataStoreAccountRole.valueOf("S1").usernameFor(env.tenantId);
+    ownerDdl("CREATE TABLE " + TiberoNames.table(schema(), raw) + " (\"ID\" NUMBER)", failures);
+    ownerDdl(TiberoDdlSql.grantSelectToSlot(schema(), rawPhysical, account), failures);
+    ownerDdl(TiberoDdlSql.dropTableOnly(schema(), raw), failures);
+    assertThat(failures).as("준비 DDL").isEmpty();
+
+    String bin =
+        connections.withDdl(
+            env.tenantId,
+            c -> {
+              try (PreparedStatement ps =
+                  c.prepareStatement(
+                      "SELECT OBJECT_NAME FROM USER_RECYCLEBIN WHERE ORIGINAL_NAME = ?")) {
+                ps.setString(1, rawPhysical);
+                try (ResultSet rs = ps.executeQuery()) {
+                  return rs.next() ? rs.getString(1) : null;
+                }
+              } catch (SQLException e) {
+                probe("recyclebin-sync-query", "FAILED code=" + e.getErrorCode());
+                return null;
+              }
+            });
+    probe("recyclebin-sync-object", bin == null ? "NONE (recycle bin off)" : bin);
+    Assumptions.assumeTrue(bin != null, "휴지통이 꺼져 있어 BIN$ 회수를 확인할 수 없다");
+    try {
+      var result = sync.syncTenant();
+      Map<String, Set<String>> after =
+          connections.withDdl(
+              env.tenantId, c -> TiberoCatalog.slotSelectGrantsAmong(c, List.of(account), null));
+      boolean stillGranted = after.getOrDefault(bin, Set.of()).contains(account);
+      boolean reported = result.revokeFailed().getOrDefault(bin, Set.of()).contains(account);
+      probe(
+          "recyclebin-sync-revoke",
+          stillGranted ? (reported ? "NOT REVOKED, REPORTED" : "NOT REVOKED, SILENT") : "REVOKED");
+      assertThat(!stillGranted || reported)
+          .as("BIN$ 권한은 회수되거나, 남으면 회수 실패로 보고된다(fail-closed)")
+          .isTrue();
+    } finally {
+      ownerDdl("PURGE TABLE " + TiberoNames.quote(bin), new ArrayList<>());
+    }
+  }
 }

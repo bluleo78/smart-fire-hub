@@ -402,8 +402,8 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
     // 변경 수는 요청한 범위 안만 센다(WD-679) — 테이블 하나 동기화의 재맞춤이 범위 밖(보관본·다른 테이블·뷰·BIN$)에서 회수한 객체는
     // 로그에만 따로 싣는다. 회수 실패는 범위 밖도 그대로 둔다(fail-closed — 실행 준비가 범위와 상관없이 거부해야 한다).
     Set<String> changed = applied.changedTables();
-    int changedInScope =
-        onlyPhysical == null ? changed.size() : (changed.contains(onlyPhysical) ? 1 : 0);
+    // 이름은 대소문자 그대로 비교한다 — GRANT 결정(Pass.widens)과 같은 판정(WD-686).
+    int changedInScope = (int) changed.stream().filter(Pass.first(onlyPhysical)::widens).count();
     int revokedOutOfScope = changed.size() - changedInScope;
     String outOfScopeNote = revokedOutOfScope > 0 ? ", 범위 밖 회수 " + revokedOutOfScope + "개" : "";
     if (!applied.revokeFailed().isEmpty()) {

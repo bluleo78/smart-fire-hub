@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from urllib.parse import urljoin
 
 import pytest
 
@@ -28,7 +27,7 @@ def _ids(section: str):
 
 def test_fixture_is_loaded():
     # 표가 비면 아래 파라미터 테스트가 공허하게 통과한다 — 갈래마다 사례가 실제로 읽혔는지 본다.
-    for section in ("sameAuthOrigin", "bearerToken", "headerName", "scrub", "redirectLocation"):
+    for section in ("sameAuthOrigin", "bearerToken", "headerName", "scrub", "redirectLocation", "redirectMethod"):
         assert len(_DATA[section]) >= 4, section
 
 
@@ -57,5 +56,13 @@ def test_scrub_secret_matches_vector(case):
 
 @pytest.mark.parametrize("case", _DATA["redirectLocation"], ids=_ids("redirectLocation"))
 def test_redirect_location_matches_vector(case):
-    # 리다이렉트 Location 해석(WD-676) — _do_request 가 쓰는 urljoin 이 Java RedirectLocations 와 같은 표에서 같은 주소를 낸다.
-    assert urljoin(case["base"], case["location"]) == case["expected"]
+    # 리다이렉트 Location 해석(WD-676) — _do_request 가 쓰는 해석(urljoin + 프래그먼트 떼기, WD-686)이 Java RedirectLocations 와
+    # 같은 표에서 같은 주소를 낸다.
+    assert api_call_executor._resolve_redirect_location(case["base"], case["location"]) == case["expected"]
+
+
+@pytest.mark.parametrize("case", _DATA["redirectMethod"], ids=_ids("redirectMethod"))
+def test_redirect_method_matches_vector(case):
+    # 리다이렉트 홉 메서드·본문 판정(WD-686) — 규칙은 _redirect_keeps_method_and_body 참고.
+    keeps = api_call_executor._redirect_keeps_method_and_body(case["status"], case["sameOrigin"])
+    assert keeps is case["keepsBody"]

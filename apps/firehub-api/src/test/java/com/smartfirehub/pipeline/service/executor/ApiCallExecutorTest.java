@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.verification.LoggedRequest;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
@@ -20,6 +21,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -426,7 +429,7 @@ class ApiCallExecutorTest {
   /** WireMock 이 path 로 받은 요청 URL(디코딩하지 않은 원형). */
   private static List<String> receivedUrls(String path) {
     return wireMock.findAll(getRequestedFor(urlPathEqualTo(path))).stream()
-        .map(com.github.tomakehurst.wiremock.verification.LoggedRequest::getUrl)
+        .map(LoggedRequest::getUrl)
         .toList();
   }
 
@@ -1878,19 +1881,14 @@ class ApiCallExecutorTest {
 
     executor.execute(config, "t", null, "APPEND", null);
 
-    wireMock.verify(0, postRequestedFor(urlPathEqualTo("/r676/other")));
-    List<com.github.tomakehurst.wiremock.verification.LoggedRequest> hops =
-        wireMock.findAll(getRequestedFor(urlPathEqualTo("/r676/other")));
-    assertThat(hops).hasSize(1);
-    assertThat(hops.get(0).getBodyAsString()).isEmpty();
-    assertThat(hops.get(0).getHeader("Host")).isEqualTo("127.0.0.1:" + wireMock.port());
     // 본문 없는 GET 이므로 본문 헤더를 보내지 않는다(WD-676, Python 과 같게). 본문과 상관없는 헤더는 그대로 간다.
-    assertThat(hops.get(0).containsHeader("Content-Type")).isFalse();
+    LoggedRequest hop = assertSingleBodylessGet("/r676/other");
+    assertThat(hop.getHeader("Host")).isEqualTo("127.0.0.1:" + wireMock.port());
     // Content-Length 는 Reactor Netty 가 본문 없는 요청에도 「0」으로 붙일 수 있다 — 사용자 헤더의 값이 아니라 본문이 없다는 뜻이면 된다.
-    if (hops.get(0).containsHeader("Content-Length")) {
-      assertThat(hops.get(0).getHeader("Content-Length")).isEqualTo("0");
+    if (hop.containsHeader("Content-Length")) {
+      assertThat(hop.getHeader("Content-Length")).isEqualTo("0");
     }
-    assertThat(hops.get(0).getHeader("X-Trace")).isEqualTo("t676");
+    assertThat(hop.getHeader("X-Trace")).isEqualTo("t676");
   }
 
   /** HTTP 클라이언트가 못 부르는 밑줄 호스트는 요청 전에 호스트 이름을 담은 고정 문구로, 재시도 없이 실패한다(WD-676). */
@@ -1906,5 +1904,117 @@ class ApiCallExecutorTest {
                     null))
         .isInstanceOf(ApiCallException.class)
         .hasMessage(ApiCallErrorMessages.unsupportedHostName("my_api.invalid"));
+  }
+
+  // -------------------------------------------------------------------------
+  // WD-686: 같은 출처 리다이렉트의 메서드·본문 규칙을 Python 실행기와 하나로
+  // -------------------------------------------------------------------------
+
+  /** POST·사용자 Content-Type·본문을 가진 설정 — 리다이렉트 홉의 메서드·본문을 보려고 쓴다. */
+  private ApiCallConfig postConfig(String path, String body) {
+    return new ApiCallConfig(
+        baseUrl() + path,
+        "POST",
+        Map.of("Content-Type", "application/json", "X-Trace", "t686"),
+        null,
+        body,
+        "JSON",
+        "$.items",
+        List.of(new ApiCallConfig.FieldMapping("name", "name", "TEXT", null, null, null)),
+        "UTC",
+        null,
+        new ApiCallConfig.RetryConfig(0, 100, 1000),
+        5000,
+        60000,
+        100,
+        null,
+        null,
+        null,
+        null);
+  }
+
+  /**
+   * path 로 간 홉이 POST 없이 GET 한 번이고 본문·Content-Type 이 없는지 본다 — 본문을 버린 리다이렉트 홉의 공통 검증. 홉을 돌려줘 그 밖의 헤더를
+   * 더 볼 수 있게 한다.
+   */
+  private static LoggedRequest assertSingleBodylessGet(String path) {
+    wireMock.verify(0, postRequestedFor(urlPathEqualTo(path)));
+    List<LoggedRequest> hops = wireMock.findAll(getRequestedFor(urlPathEqualTo(path)));
+    assertThat(hops).hasSize(1);
+    assertThat(hops.get(0).getBodyAsString()).isEmpty();
+    assertThat(hops.get(0).containsHeader("Content-Type")).isFalse();
+    return hops.get(0);
+  }
+
+  /** POST path 가 status 로 Location 에 리다이렉트하는 스텁. */
+  private static void stubPostRedirect(String path, int status, String location) {
+    wireMock.stubFor(
+        post(urlPathEqualTo(path))
+            .willReturn(aResponse().withStatus(status).withHeader("Location", location)));
+  }
+
+  /** path 가 GET·POST 어느 쪽이든 빈 items 를 주는 스텁. */
+  private static void stubEmptyItemsAnyMethod(String path) {
+    wireMock.stubFor(
+        any(urlPathEqualTo(path))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"items\":[]}")));
+  }
+
+  /**
+   * 같은 출처 301·302·303 은 본문 없는 GET 으로 따라간다(WD-686, RFC 9110·브라우저 관례) — Python 실행기는 예전에 같은 출처 301·302
+   * 에서 POST·본문을 유지해 두 실행기가 달랐다. 본문 헤더(사용자 Content-Type)도 보내지 않는다.
+   */
+  @ParameterizedTest(name = "same-origin {0} POST -> GET without body")
+  @ValueSource(ints = {301, 302, 303})
+  void execute_sameOrigin301to303Post_followsAsGetWithoutBody(int status) {
+    stubPostRedirect("/r686/s" + status, status, baseUrl() + "/r686/next" + status);
+    stubEmptyItemsAnyMethod("/r686/next" + status);
+
+    executor.execute(postConfig("/r686/s" + status, "{\"k\":\"v686\"}"), "t", null, "APPEND", null);
+
+    assertThat(assertSingleBodylessGet("/r686/next" + status).getHeader("X-Trace"))
+        .isEqualTo("t686");
+  }
+
+  /**
+   * 같은 출처 307·308 은 메서드·본문·Content-Type 을 유지한다(WD-686) — 예전 Java 실행기는 모든 홉을 본문 없는 GET 으로 보내 Python
+   * 실행기(같은 출처 307·308 유지)와 달랐다. 307·308 은 메서드를 바꾸지 말라는 상태라 GET 으로 바꾸면 405·잘못된 조회가 된다.
+   */
+  @ParameterizedTest(name = "same-origin {0} POST keeps method and body")
+  @ValueSource(ints = {307, 308})
+  void execute_sameOrigin307or308Post_keepsMethodAndBody(int status) {
+    stubPostRedirect("/r686/k" + status, status, baseUrl() + "/r686/kept" + status);
+    stubEmptyItemsAnyMethod("/r686/kept" + status);
+
+    executor.execute(postConfig("/r686/k" + status, "{\"k\":\"v686\"}"), "t", null, "APPEND", null);
+
+    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/r686/kept" + status)));
+    List<LoggedRequest> hops =
+        wireMock.findAll(postRequestedFor(urlPathEqualTo("/r686/kept" + status)));
+    assertThat(hops).hasSize(1);
+    assertThat(hops.get(0).getBodyAsString()).isEqualTo("{\"k\":\"v686\"}");
+    assertThat(hops.get(0).getHeader("Content-Type")).startsWith("application/json");
+  }
+
+  /**
+   * 한 번 본문을 버리면(303) 그 뒤 같은 출처 307 이 와도 본문 없는 GET 이 이어진다(WD-686) — Python {@code body_dropped} 와
+   * 같다.
+   */
+  @Test
+  void execute_bodyDroppedBy303_staysGetOnLaterSameOrigin307() {
+    stubPostRedirect("/r686/d1", 303, baseUrl() + "/r686/d2");
+    wireMock.stubFor(
+        get(urlPathEqualTo("/r686/d2"))
+            .willReturn(
+                aResponse().withStatus(307).withHeader("Location", baseUrl() + "/r686/d3")));
+    stubEmptyItemsAnyMethod("/r686/d3");
+
+    executor.execute(postConfig("/r686/d1", "{\"k\":\"v686\"}"), "t", null, "APPEND", null);
+
+    assertSingleBodylessGet("/r686/d3");
   }
 }

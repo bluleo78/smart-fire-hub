@@ -64,11 +64,21 @@ class ApiCallAuthVectorsTest {
     return cases("redirectLocation");
   }
 
+  static Stream<Arguments> redirectMethod() throws IOException {
+    return cases("redirectMethod");
+  }
+
   /** 표가 비면 아래 파라미터 테스트가 공허하게 통과한다 — 갈래마다 사례가 실제로 읽혔는지 본다. */
   @Test
   void fixture_isLoaded() throws IOException {
     for (String name :
-        List.of("sameAuthOrigin", "bearerToken", "headerName", "scrub", "redirectLocation")) {
+        List.of(
+            "sameAuthOrigin",
+            "bearerToken",
+            "headerName",
+            "scrub",
+            "redirectLocation",
+            "redirectMethod")) {
       assertThat(section(name).size()).as(name).isGreaterThanOrEqualTo(4);
     }
   }
@@ -118,5 +128,15 @@ class ApiCallAuthVectorsTest {
                     URI.create(c.get("base").asText()), c.get("location").asText())
                 .toString())
         .isEqualTo(c.get("expected").asText());
+  }
+
+  /** 리다이렉트 홉 메서드·본문 판정(WD-686) — 규칙은 {@link RedirectLocations#keepsMethodAndBody} 참고. */
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("redirectMethod")
+  void redirectMethod_matchesVector(String name, JsonNode c) {
+    boolean keeps =
+        RedirectLocations.keepsMethodAndBody(
+            c.get("status").asInt(), c.get("sameOrigin").asBoolean());
+    assertThat(keeps).isEqualTo(c.get("keepsBody").asBoolean());
   }
 }

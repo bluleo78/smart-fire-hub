@@ -151,10 +151,18 @@ public final class AuthQueryMasker {
 
   /** {@link #scrubSecret(String, String)} 와 같되 가림 문자열을 정한다 — 끝 4자도 보이면 안 되는 비밀번호용(SMTP, WD-676). */
   public static String scrubSecret(String text, String secret, String mask) {
+    return text == null ? null : scrubberFor(secret, mask).apply(text);
+  }
+
+  /**
+   * {@link #scrubSecret(String, String, String)} 의 가릴 형태(원문·URL 인코딩형·디코딩형)를 한 번만 계산해 둔 함수(WD-686) —
+   * 같은 비밀로 여러 문장을 가리는 호출부(SMTP 실패 사슬의 예외마다)가 형태를 매번 다시 만들지 않게 한다. 비밀이 없거나 너무 짧으면 그대로 돌려주는 함수다.
+   */
+  public static java.util.function.UnaryOperator<String> scrubberFor(String secret, String mask) {
     Scrubber scrubber = Scrubber.of(secret);
-    return text == null || scrubber == null
-        ? text
-        : new Scrubber(scrubber.forms(), mask).scrub(text);
+    if (scrubber == null) return text -> text;
+    Scrubber masked = new Scrubber(scrubber.forms(), mask);
+    return masked::scrub;
   }
 
   /**

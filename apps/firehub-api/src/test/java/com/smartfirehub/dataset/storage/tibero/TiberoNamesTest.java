@@ -15,6 +15,23 @@ class TiberoNamesTest {
     assertThat(TiberoNames.physical("sales_2024")).isEqualTo("SALES_2024");
   }
 
+  /**
+   * 대소문자가 섞인 메타 이름도 언제나 대문자 물리 이름이 된다(WD-686) — 기본 로케일이 터키어여도 「i」가 점 있는 「İ」로 바뀌지 않는다. 동기화의 범위
+   * 판정(TiberoPythonReadGrantSync.changedInScope·Pass.widens)이 이름을 그대로 비교하는 근거다.
+   */
+  @Test
+  void physical_uppercasesMixedCase_regardlessOfDefaultLocale() {
+    Locale saved = Locale.getDefault();
+    try {
+      Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+      String physical = TiberoNames.physical("Mixed_Title_item");
+      assertThat(physical).isEqualTo("MIXED_TITLE_ITEM");
+      assertThat(physical).isEqualTo(physical.toUpperCase(Locale.ROOT));
+    } finally {
+      Locale.setDefault(saved);
+    }
+  }
+
   @Test
   void table_quotesAndQualifies() {
     assertThat(TiberoNames.table("GENIA_T5", "sales")).isEqualTo("\"GENIA_T5\".\"SALES\"");

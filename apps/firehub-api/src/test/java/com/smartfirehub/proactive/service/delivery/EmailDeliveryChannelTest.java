@@ -2,6 +2,7 @@ package com.smartfirehub.proactive.service.delivery;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
@@ -11,6 +12,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.util.StringUtils.countOccurrencesOf;
 
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
@@ -18,11 +20,16 @@ import com.smartfirehub.proactive.service.PdfExportService;
 import com.smartfirehub.proactive.service.ReportRenderUtils;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.settings.service.SmtpFailureMessages;
+import com.smartfirehub.settings.service.SmtpFailureMessages.MaskedSmtpException;
 import com.smartfirehub.settings.service.SmtpMailSenders;
 import com.smartfirehub.user.dto.UserResponse;
 import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
 import jakarta.mail.internet.MimeMessage;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -36,6 +43,8 @@ import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.mail.MailSendException;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.thymeleaf.context.IContext;
@@ -432,5 +441,116 @@ class EmailDeliveryChannelTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("포트")
         .hasMessageContaining(SmtpFailureMessages.SETTINGS_PLACE);
+  }
+
+  // ── WD-686: 발송 실패 원문(비밀번호·서버 응답)이 던지는 예외의 cause·로그에 남지 않게 ─────────────────
+
+  private static final String PW686 = "Pw686Secret!";
+
+  /** UTF-8 바이트의 Base64 — 서버가 되울리는 AUTH LOGIN·PLAIN 형태를 만든다. */
+  private static String b64(String text) {
+    return Base64.getEncoder().encodeToString(text.getBytes(StandardCharsets.UTF_8));
+  }
+
+  /** 스택 출력 전체(Caused by·Suppressed 포함) — 호출부가 스택을 찍으면 남는 문자열과 같다. */
+  private static String stackOf(Throwable t) {
+    StringWriter out = new StringWriter();
+    t.printStackTrace(new PrintWriter(out));
+    return out.toString();
+  }
+
+  /**
+   * 모든 발송이 비밀번호가 든 서버 응답으로 실패하면, 던진 예외와 cause 사슬 전체(메시지·toString·스택 출력)와 이 채널의 error 로그 어디에도
+   * 비밀번호(원문·Base64)가 없고, 가린 문구와 원래 예외 클래스 이름은 남는다. 예전에는 원래 예외를 cause 로 담아, 호출부가 스택을 찍으면 원문이 그대로
+   * 나갔고, 이 채널의 error 로그도 원문 메시지를 찍었다. 스택은 첫 실패에만 찍힌다(수신자 수만큼 반복되지 않게).
+   */
+  @Test
+  @ExtendWith(OutputCaptureExtension.class)
+  void deliver_allSendsFail_causeChainAndLogsDoNotCarryRawPassword(CapturedOutput output) {
+    String base64 = b64(PW686);
+    // AUTH PLAIN 자격 증명 덩어리(WD-686) — Base64("\0" + user + "\0" + password)
+    String plainBlob = b64("\0mailer\0" + PW686);
+    when(settingsService.getSmtpConfig())
+        .thenReturn(
+            Map.of(
+                "smtp.host",
+                "smtp.example.com",
+                "smtp.port",
+                "587",
+                "smtp.username",
+                "mailer",
+                "smtp.password",
+                PW686));
+    when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("<html/>");
+    doThrow(
+            new MailSendException(
+                "Failed messages: 554 relay denied for pass=" + PW686,
+                new MessagingException(
+                    "535 5.7.8 AUTH PLAIN "
+                        + plainBlob
+                        + " relay denied AUTH "
+                        + base64
+                        + " pass="
+                        + PW686)))
+        .when(mailSender)
+        .send(any(MimeMessage.class));
+
+    Throwable thrown =
+        catchThrowable(
+            () ->
+                emailDeliveryChannel.deliver(
+                    jobWithExternal("a@example.com", "b@example.com"), 1L, makeResult()));
+
+    assertThat(thrown).isInstanceOf(IllegalStateException.class);
+    assertThat(stackOf(thrown))
+        .doesNotContain(PW686)
+        .doesNotContain(base64)
+        .doesNotContain(plainBlob)
+        .contains("****")
+        .contains("org.springframework.mail.MailSendException")
+        .contains("jakarta.mail.MessagingException");
+    assertThat(thrown.getCause()).isNotNull().isNotInstanceOf(MailSendException.class);
+    for (Throwable t = thrown; t != null; t = t.getCause()) {
+      assertThat(String.valueOf(t.getMessage()))
+          .doesNotContain(PW686)
+          .doesNotContain(base64)
+          .doesNotContain(plainBlob);
+      assertThat(t.toString()).doesNotContain(PW686).doesNotContain(base64);
+    }
+    // 이 채널의 error 로그(수신자별 실패)에도 원문이 없다. 가린 사본을 throwable 로 남기므로 원래 클래스 이름·스택 위치는 보인다(WD-686).
+    assertThat(output.getAll())
+        .contains("EmailDeliveryChannel failed to send to")
+        .contains("org.springframework.mail.MailSendException")
+        .contains("jakarta.mail.MessagingException: 535 5.7.8 AUTH PLAIN ****")
+        .doesNotContain(PW686)
+        .doesNotContain(base64)
+        .doesNotContain(plainBlob);
+    // 두 수신자 모두 실패를 남기지만 스택(가린 사본의 Caused by)은 첫 실패에만 있다.
+    String all = output.getAll();
+    assertThat(countOccurrencesOf(all, "EmailDeliveryChannel failed to send to")).isEqualTo(2);
+    assertThat(countOccurrencesOf(all, "Caused by: " + MaskedSmtpException.class.getName()))
+        .isEqualTo(1);
+  }
+
+  /** sender 생성·템플릿 단계 실패(바깥 catch)의 error 로그 스택에도 원문 비밀번호가 없다(WD-686). */
+  @Test
+  @ExtendWith(OutputCaptureExtension.class)
+  void deliver_outerFailure_logStackDoesNotCarryRawPassword(CapturedOutput output) {
+    when(settingsService.getSmtpConfig())
+        .thenReturn(
+            Map.of("smtp.host", "smtp.example.com", "smtp.port", "587", "smtp.password", PW686));
+    smtpFactory
+        .when(() -> SmtpMailSenders.create(any()))
+        .thenThrow(new IllegalStateException("bad config with " + PW686));
+
+    Throwable thrown =
+        catchThrowable(
+            () -> emailDeliveryChannel.deliver(jobWithExternal("a@example.com"), 1L, makeResult()));
+
+    assertThat(thrown).isInstanceOf(IllegalStateException.class);
+    assertThat(output.getAll())
+        .contains("EmailDeliveryChannel delivery failed for job")
+        .contains("bad config with ****")
+        .doesNotContain(PW686);
   }
 }

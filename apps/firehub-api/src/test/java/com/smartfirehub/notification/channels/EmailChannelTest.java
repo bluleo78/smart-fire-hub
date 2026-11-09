@@ -25,6 +25,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -231,6 +233,41 @@ class EmailChannelTest {
                 assertThat(tf.reason())
                     .isEqualTo(com.smartfirehub.notification.TransientFailureReason.NETWORK_ERROR)
                     .doesNotContain("Exception"));
+  }
+
+  /**
+   * WD-686: firehub-channel 호출 실패 예외가 서버 응답 원문(AUTH 단계에서 되울린 비밀번호 포함 가능)을 담아도, warn 로그와 결과의 cause
+   * (발송 워커의 debug 로그가 결과를 찍는다) 어디에도 비밀번호 원문이 없다. 원래 예외 클래스 이름은 남아 어느 단계에서 실패했는지 보인다.
+   */
+  @Test
+  @ExtendWith(OutputCaptureExtension.class)
+  void deliver_failureEchoingPassword_logAndCauseDoNotCarryRawPassword(CapturedOutput output) {
+    String password = "Pw686Channel!";
+    when(settingsService.getSmtpConfig())
+        .thenReturn(
+            Map.of(
+                "smtp.host", "smtp.example.com",
+                "smtp.port", "587",
+                "smtp.username", "user@example.com",
+                "smtp.password", password));
+    doThrow(new RuntimeException("535 auth failed pass=" + password))
+        .doThrow(new ChannelHttpException("smtp said pass=" + password, 502))
+        .when(channelHttpClient)
+        .send(anyString(), any(), any());
+
+    var network = channel.deliver(ctx(null, "to@example.com"));
+    var http = channel.deliver(ctx(null, "to@example.com"));
+
+    for (var result : List.of(network, http)) {
+      assertThat(result)
+          .isInstanceOfSatisfying(
+              DeliveryResult.TransientFailure.class,
+              tf -> assertThat(String.valueOf(tf.cause())).doesNotContain(password));
+    }
+    assertThat(output.getAll())
+        .contains("java.lang.RuntimeException: 535 auth failed pass=****")
+        .contains(ChannelHttpException.class.getName())
+        .doesNotContain(password);
   }
 
   /**
