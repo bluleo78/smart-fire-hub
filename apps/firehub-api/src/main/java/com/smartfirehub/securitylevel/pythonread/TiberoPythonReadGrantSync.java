@@ -84,11 +84,53 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
 
   /**
    * 커밋 직전 스크립트 토큰 세대 번호 올리기가 저장소 행 잠금을 기다리는 상한(WD-664 4b) — 사용자 트랜잭션의 커넥션을 쥔 채 기다리므로 다른 커밋 직전
-   * 상한({@link PythonReadGrantSync#NARROW_LOCK_WAIT}, {@link
-   * PythonReadGrantSync#AFTER_COMMIT_TERMINATE_WAIT})과 같은 3초로 둔다. 넘기면 문장이 취소되고 파사드가 savepoint 만 되돌린
-   * 뒤 등급 변경은 커밋한다 — 그때는 커밋 뒤 실행기 작업이 GRANT 전에 번호를 올린다.
+   * 상한({@link PythonReadGrantSync#NARROW_LOCK_WAIT}, {@link #PRE_COMMIT_BOUNDS} 의 문장 상한)과 같은 3초로
+   * 둔다. 넘기면 문장이 취소되고 파사드가 savepoint 만 되돌린 뒤 등급 변경은 커밋한다 — 그때는 커밋 뒤 실행기 작업이 GRANT 전에 번호를 올린다.
    */
   static final Duration PRE_COMMIT_EPOCH_LOCK_WAIT = Duration.ofSeconds(3);
+
+  /**
+   * 커밋 직전 좁히기(데이터셋 등급 변경)의 시간 상한 묶음(WD-664 6).
+   *
+   * <p><b>왜 상한이 필요한가.</b> Tibero 커밋 직전 좁히기는 사용자 트랜잭션의 커밋 직전 단계에서 <b>플랫폼 커넥션을 쥔 채</b> 외부 직결 접속 →
+   * REVOKE DDL → (실패가 있으면) WD-645 재판정의 테넌트 전체 조회를 한다. 예전에는 접속만 10초 상한이 있고 문장에는 상한이 없어, 느린 Tibero
+   * 하나가 요청마다 플랫폼 풀 커넥션을 오래 쥐어 풀을 바닥낼 수 있었다. 이제 아래 상한을 넘기면 남은 일을 하지 않고 "확인 못 함" 으로 돌아가 리스너의 대체 경로(토큰
+   * 무효화 + 커밋 뒤 실행기의 비동기 좁히기, 회수 필수 작업)로 막는다 — 커밋을 무한정 붙잡지 않고, 막기도 빠뜨리지 않는다(fail-closed).
+   *
+   * @param total 좁히기 전체 예산 — 테넌트 잠금 대기·접속·문장을 모두 포함한다
+   * @param connect 직결 접속(로그인 포함) 상한 — 남은 예산이 더 짧으면 그만큼
+   * @param statement REVOKE 문장·카탈로그 질의 하나의 queryTimeout 상한 — 남은 예산이 더 짧으면 그만큼(JDBC 는 초 단위라 올림, 최소
+   *     1초)
+   */
+  record PreCommitBounds(Duration total, Duration connect, Duration statement) {}
+
+  /**
+   * 운영 상한(WD-664 6) — 전체 8초·접속 3초·문장 3초.
+   *
+   * <ul>
+   *   <li><b>문장 3초</b>: 다른 커밋 직전 상한({@link PythonReadGrantSync#NARROW_LOCK_WAIT}, {@link
+   *       #PRE_COMMIT_EPOCH_LOCK_WAIT})과 같은 값. 테이블 하나의 REVOKE·카탈로그 조회는 정상이면 수십 ms 다.
+   *   <li><b>접속 3초</b>: 같은 망의 Tibero 로그인은 정상이면 1초 안이다. 운영 접속기 기본 10초는 운영자 경로(연결 테스트·생성) 기준이라 커밋
+   *       직전에는 길다.
+   *   <li><b>전체 8초</b>: 잠금 대기 3초 + 접속 3초를 다 써도 문장 몇 개를 보낼 여유를 남기되, 최악의 커밋 지연을 한 자릿수 초로
+   *       묶는다(queryTimeout 의 초 단위 올림으로 최대 1초쯤 더 걸릴 수 있다. 예산을 넘겨 대체 경로로 가면 리스너가 같은 트랜잭션에서 토큰 세대 번호를
+   *       올리며 {@link #PRE_COMMIT_EPOCH_LOCK_WAIT}(3초)까지 더 기다릴 수 있어, 커밋 직전 단계 전체의 최악은 약 12초다). 넘기는
+   *       일은 드물고, 넘기면 대체 경로가 막으므로 보안 공백은 없고 실행 중 스크립트가 토큰 무효로 한 번 실패하는 비용만 든다.
+   * </ul>
+   *
+   * 실서버 Tibero 드라이버가 DDL 의 queryTimeout·접속 상한을 실제로 지키는지는 사람이 따로 확인한다(TC 는 가짜 연결로 상한 값과 예산 초과 처리만
+   * 본다). 드라이버가 queryTimeout 을 지키지 않아도 예산은 문장과 문장 사이에서 지켜진다 — 그때 최악 지연은 "예산 + 느린 문장 하나" 다.
+   */
+  static final PreCommitBounds PRE_COMMIT_BOUNDS =
+      new PreCommitBounds(Duration.ofSeconds(8), Duration.ofSeconds(3), Duration.ofSeconds(3));
+
+  /** 이 인스턴스가 쓰는 커밋 직전 상한 — 운영은 {@link #PRE_COMMIT_BOUNDS}, 단위 테스트는 짧게 바꾼다. */
+  private volatile PreCommitBounds preCommitBounds = PRE_COMMIT_BOUNDS;
+
+  /** 테스트 전용 — 예산 초과를 몇 초 안에 재현하려고 상한을 짧게 바꾼다. */
+  void preCommitBoundsForTest(PreCommitBounds bounds) {
+    this.preCommitBounds = bounds;
+  }
 
   private final DatasetRepository datasetRepository;
   private final ExternalStoreConnections connections;
@@ -200,30 +242,159 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
    * PythonReadGrantSync#narrowDatasetInCurrentTx} 와 같은 규칙(방향을 따지지 않는 회수 전용, 짧은 잠금 대기, "더는 읽으면 안 되는
    * 슬롯" 을 결과에 싣는다). Tibero 문장은 OWNER 연결에서 바로 반영되므로 커밋 응답 전에 실행 중 스크립트의 다음 읽기부터 막힌다(등급 변경이 롤백돼도 남는
    * 것은 회수뿐이라 안전 — 다음 동기화가 되살린다). 파사드가 savepoint 안에서 부른다.
+   *
+   * <p><b>시간 상한(WD-664 6).</b> 플랫폼 커넥션을 쥔 채 도는 일이라 {@link PreCommitBounds}(운영 {@link
+   * #PRE_COMMIT_BOUNDS})로 묶는다 — 잠금 대기는 남은 예산 안에서만, 직결 접속은 접속 상한으로, 모든 문장·카탈로그 질의에는 queryTimeout 을
+   * 걸고, 문장마다 예산을 확인해 넘겼으면 더 보내지 않는다. 예산을 넘기거나 접속·질의가 시간 초과로 실패하면 "확인 못 함" 으로 돌아간다. 이미 보낸 REVOKE 는
+   * Tibero 에서 곧바로 반영되지만(DDL) 어디까지 됐는지 모르므로, 회수 실패와 같은 규칙으로 "새 등급에서 못 읽는 모든 슬롯" 을 막는다({@link
+   * PythonReadGrantBackend#narrowResultOf} 와 같은 근거).
+   *
+   * <p>확인됐을 때 실제로 회수한 슬롯은 싣지 않는다 — Tibero 는 스크립트가 슬롯 연결을 쥐지 않고 문장마다 권한을 봐서 끊을 세션이 없다(스펙 §5.1).
    */
   @Override
   public NarrowResult narrowDatasetInCurrentTx(long datasetId, Long fromLevelId, long toLevelId) {
     if (!TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException("데이터셋 등급 좁히기는 등급 변경 트랜잭션 안에서만 부른다");
     }
+    PreCommitDeadline deadline = new PreCommitDeadline(preCommitBounds);
     long tenantId = TenantContext.require("Tibero 데이터셋 등급 좁히기");
-    Set<Integer> exposed =
-        PythonReadSlots.slotsLosingAccess(levelRepository.findAll(), fromLevelId, toLevelId);
+    List<LevelPolicy> levels = levelRepository.findAll();
+    Set<Integer> exposed = PythonReadSlots.slotsLosingAccess(levels, fromLevelId, toLevelId);
     String table = datasetRepository.findTableNameById(datasetId).orElse(null);
     if (table == null) {
       return NarrowResult.confirmed(exposed);
     }
     // 커밋 직전 경로라 WD-644 의 묶인 대기(lock_timeout — 시간 초과가 발행 트랜잭션을 깨뜨린다)가 아니라 WD-624 의 폴링형 시도를 쓴다.
+    // 대기도 남은 예산 안에서만(WD-664 6).
     if (!locks.tryXactLock(
-        PythonReadGrantSync.syncLockKey(tenantId), PythonReadGrantSync.NARROW_LOCK_WAIT)) {
+        PythonReadGrantSync.syncLockKey(tenantId),
+        deadline.cap(PythonReadGrantSync.NARROW_LOCK_WAIT))) {
       log.warn("Tibero 데이터셋 등급 좁히기: 테넌트 동기화 잠금을 얻지 못했다(tenant={} dataset={})", tenantId, datasetId);
       return NarrowResult.unconfirmed(exposed);
     }
+    PythonReadGrantSync.SyncResult narrowed;
+    try {
+      narrowed = applyInTx(tenantId, table, null, true, deadline);
+    } catch (RuntimeException e) {
+      if (!deadline.exceededBy(e)) {
+        throw e; // 시간과 무관한 실패 — 파사드가 savepoint 를 되돌리고 모든 슬롯을 막는다
+      }
+      Set<Integer> wider =
+          new TreeSet<>(PythonReadSlots.slotsLosingAccess(levels, null, toLevelId));
+      wider.addAll(exposed);
+      log.warn(
+          "Tibero 데이터셋 등급 좁히기: 커밋 직전 시간 상한({}) 초과 또는 직결 접속 실패로 대체 경로로 막는다(tenant={} dataset={} slots={}): {}",
+          preCommitBounds,
+          tenantId,
+          datasetId,
+          wider,
+          e.toString());
+      return NarrowResult.unconfirmed(wider);
+    }
     // 회수 실패 시 넓혀 막을 슬롯은 잠금 뒤 applyInTx 가 이미 읽은 등급 스냅샷으로 계산한다(WD-664 10) — 같은 트랜잭션의 같은 값이라
     // 결과는 같고, 커밋 직전 경로(사용자 트랜잭션의 커넥션을 쥔 채)의 등급 재조회를 한 번 줄인다.
-    PythonReadGrantSync.SyncResult narrowed = applyInTx(tenantId, table, null, true);
     return PythonReadGrantBackend.narrowResultOf(
         narrowed, exposed, narrowed::levelsAsc, toLevelId, k -> slotAccount(tenantId, k));
+  }
+
+  /** 커밋 직전 좁히기가 시간 예산을 넘겼다는 표시(WD-664 6) — 남은 문장을 보내지 않고 대체 경로로 간다. */
+  static final class PreCommitBudgetExceeded extends RuntimeException {
+    PreCommitBudgetExceeded(String step) {
+      super("Tibero 커밋 직전 좁히기 시간 예산 초과(" + step + ")");
+    }
+  }
+
+  /**
+   * 커밋 직전 좁히기 한 번의 마감 시각(WD-664 6) — 남은 예산으로 잠금 대기·접속 상한·queryTimeout 을 정하고, 문장을 만들 때마다 예산을 확인한다.
+   * 문장 확인은 연결을 감싼 대리 객체({@link #bind})가 한 곳에서 한다 — 카탈로그 질의({@link TiberoCatalog})가 문장을 직접 만들기 때문에
+   * 호출부마다 넣지 않는다.
+   */
+  private static final class PreCommitDeadline {
+    private final PreCommitBounds bounds;
+    private final long deadlineNanos;
+
+    PreCommitDeadline(PreCommitBounds bounds) {
+      this.bounds = bounds;
+      this.deadlineNanos = System.nanoTime() + bounds.total().toNanos();
+    }
+
+    private long remainingNanos() {
+      return deadlineNanos - System.nanoTime();
+    }
+
+    /** 남은 예산이 없으면 던진다. */
+    void check(String step) {
+      if (remainingNanos() <= 0) {
+        throw new PreCommitBudgetExceeded(step);
+      }
+    }
+
+    /** {@code limit} 와 남은 예산 중 짧은 쪽(최소 1ms — 0 은 "상한 없음" 으로 읽히는 API 가 있다). */
+    Duration cap(Duration limit) {
+      long nanos = Math.min(limit.toNanos(), remainingNanos());
+      return Duration.ofNanos(Math.max(nanos, Duration.ofMillis(1).toNanos()));
+    }
+
+    /** 직결 접속 상한 — 접속 상한과 남은 예산 중 짧은 쪽. */
+    Duration connectTimeout() {
+      return cap(bounds.connect());
+    }
+
+    /** 이번 문장의 queryTimeout 초 — 문장 상한과 남은 예산 중 짧은 쪽을 초 단위로 올린다(0 은 무제한이라 최소 1초). */
+    int queryTimeoutSeconds() {
+      long millis = cap(bounds.statement()).toMillis();
+      return (int) Math.max(1L, (millis + 999L) / 1000L);
+    }
+
+    /**
+     * 이 실패가 시간 상한 때문인가 — 예산을 넘겼거나, 예산 초과 표시·질의 시간 초과(드라이버 queryTimeout)가 원인 사슬에 있거나, 직결 접속이 실패했다(접속
+     * 상한 초과 포함 — 접속하지 못했으니 아무것도 회수하지 않았다).
+     */
+    boolean exceededBy(Throwable e) {
+      if (remainingNanos() <= 0) {
+        return true;
+      }
+      for (Throwable t = e; t != null; t = t.getCause()) {
+        if (t instanceof PreCommitBudgetExceeded
+            || t instanceof java.sql.SQLTimeoutException
+            || t instanceof org.springframework.dao.QueryTimeoutException
+            || t instanceof org.springframework.dao.DataAccessResourceFailureException) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /**
+     * 연결을 감싸 문장(Statement·PreparedStatement·CallableStatement)을 만들 때마다 예산을 확인하고(넘겼으면 {@link
+     * PreCommitBudgetExceeded}) queryTimeout 을 건다. 그 밖의 호출은 그대로 넘긴다.
+     */
+    java.sql.Connection bind(java.sql.Connection conn) {
+      return (java.sql.Connection)
+          java.lang.reflect.Proxy.newProxyInstance(
+              java.sql.Connection.class.getClassLoader(),
+              new Class<?>[] {java.sql.Connection.class},
+              (proxy, method, args) -> {
+                String name = method.getName();
+                boolean creates =
+                    name.equals("createStatement")
+                        || name.equals("prepareStatement")
+                        || name.equals("prepareCall");
+                if (creates) {
+                  check("문장 " + name);
+                }
+                Object result;
+                try {
+                  result = method.invoke(conn, args);
+                } catch (java.lang.reflect.InvocationTargetException ite) {
+                  throw ite.getCause();
+                }
+                if (creates && result instanceof Statement st) {
+                  st.setQueryTimeout(queryTimeoutSeconds());
+                }
+                return result;
+              });
+    }
   }
 
   /**
@@ -405,16 +576,22 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
    */
   private PythonReadGrantSync.SyncResult syncInTx(String onlyTable, Integer runRank) {
     long tenantId = TenantContext.require("Tibero PYTHON 읽기 권한 동기화");
-    return applyInTx(tenantId, onlyTable, runRank, false);
+    return applyInTx(tenantId, onlyTable, runRank, false, null);
   }
 
   /**
    * 잠금을 잡은 뒤의 본체 — 동기화({@link #syncInTx})와 커밋 직전 좁히기({@link #narrowDatasetInCurrentTx})가 함께 쓴다.
    *
    * @param revokeOnly true 면 남는 권한 회수만 하고 부족한 GRANT 는 걸지 않는다(넓히기는 커밋 뒤 실행기 몫)
+   * @param deadline 커밋 직전 좁히기의 시간 예산(WD-664 6) — null 이면 상한 없음(실행기·실행 준비 경로는 플랫폼 커넥션을 쥔 사용자 커밋이
+   *     아니다)
    */
   private PythonReadGrantSync.SyncResult applyInTx(
-      long tenantId, String onlyTable, Integer runRank, boolean revokeOnly) {
+      long tenantId,
+      String onlyTable,
+      Integer runRank,
+      boolean revokeOnly,
+      PreCommitDeadline deadline) {
     List<LevelPolicy> levelsAsc = levelRepository.findAll();
     // 슬롯 k(1~10)의 계정 이름과, 저장소 계정 행이 실제로 있는 슬롯(없으면 PG 의 "없는 슬롯 롤" 과 같이 취급).
     List<String> slotAccounts = new ArrayList<>();
@@ -465,47 +642,59 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
 
     String onlyPhysical = onlyTable == null ? null : TiberoNames.physical(onlyTable);
     boolean exact = runRank != null;
-    Applied applied =
-        connections.withDdl(
-            tenantId,
-            conn -> {
-              String schema = connections.schemaOf(tenantId);
-              Applied first =
-                  applyPass(
-                      conn,
-                      tenantId,
-                      schema,
-                      Pass.first(onlyPhysical),
-                      desired,
-                      targetAccounts,
-                      exact,
-                      revokeOnly);
-              if (first.revokeFailed().keySet().stream().allMatch(TiberoNames::isRecycleBinName)) {
-                // 실패 없음·휴지통 객체 실패뿐이면 재판정하지 않는다 — 클래스 Javadoc "재판정 규칙"(WD-645).
-                return first;
-              }
-              // 재맞춤(WD-645 → WD-660): 한 번만, 범위·계산값·휴지통 실패 옮기기 규칙은 applyPass Javadoc.
-              Map<String, Set<String>> desiredAll =
-                  onlyTable == null
-                      ? desired
-                      : desiredGrants(null, levelsAsc, slotAccounts, targetAccounts);
-              Map<String, Set<String>> carriedBin = new TreeMap<>(first.revokeFailed());
-              carriedBin.keySet().removeIf(object -> !TiberoNames.isRecycleBinName(object));
-              Applied second =
-                  applyPass(
-                      conn,
-                      tenantId,
-                      schema,
-                      Pass.repass(onlyPhysical, carriedBin),
-                      desiredAll,
-                      targetAccounts,
-                      exact,
-                      revokeOnly);
-              // 실패 목록은 재판정 결과로 바꾸고, 바꾼 테이블은 두 판의 합집합으로 센다(두 번 세지 않는다).
-              Set<String> changedUnion = new TreeSet<>(first.changedTables());
-              changedUnion.addAll(second.changedTables());
-              return new Applied(changedUnion, second.revokeFailed());
-            });
+    ExternalStoreConnections.SqlWork<Applied> work =
+        rawConn -> {
+          // 커밋 직전이면 문장마다 예산 확인·queryTimeout(WD-664 6).
+          java.sql.Connection conn = deadline == null ? rawConn : deadline.bind(rawConn);
+          String schema = connections.schemaOf(tenantId);
+          Applied first =
+              applyPass(
+                  conn,
+                  tenantId,
+                  schema,
+                  Pass.first(onlyPhysical),
+                  desired,
+                  targetAccounts,
+                  exact,
+                  revokeOnly);
+          if (first.revokeFailed().keySet().stream().allMatch(TiberoNames::isRecycleBinName)) {
+            // 실패 없음·휴지통 객체 실패뿐이면 재판정하지 않는다 — 클래스 Javadoc "재판정 규칙"(WD-645).
+            return first;
+          }
+          // 재맞춤(WD-645 → WD-660): 한 번만, 범위·계산값·휴지통 실패 옮기기 규칙은 applyPass Javadoc.
+          // 커밋 직전이면 예산이 남았을 때만 — 테넌트 전체 계산값·권한 조회가 가장 비싼 단계다(WD-664 6).
+          if (deadline != null) {
+            deadline.check("재판정");
+          }
+          Map<String, Set<String>> desiredAll =
+              onlyTable == null
+                  ? desired
+                  : desiredGrants(null, levelsAsc, slotAccounts, targetAccounts);
+          Map<String, Set<String>> carriedBin = new TreeMap<>(first.revokeFailed());
+          carriedBin.keySet().removeIf(object -> !TiberoNames.isRecycleBinName(object));
+          Applied second =
+              applyPass(
+                  conn,
+                  tenantId,
+                  schema,
+                  Pass.repass(onlyPhysical, carriedBin),
+                  desiredAll,
+                  targetAccounts,
+                  exact,
+                  revokeOnly);
+          // 실패 목록은 재판정 결과로 바꾸고, 바꾼 테이블은 두 판의 합집합으로 센다(두 번 세지 않는다).
+          Set<String> changedUnion = new TreeSet<>(first.changedTables());
+          changedUnion.addAll(second.changedTables());
+          return new Applied(changedUnion, second.revokeFailed());
+        };
+    Applied applied;
+    if (deadline == null) {
+      applied = connections.withDdl(tenantId, work);
+    } else {
+      // 접속도 예산 안에서만 — 접속 상한과 남은 예산 중 짧은 쪽(WD-664 6).
+      deadline.check("접속");
+      applied = connections.withDdl(tenantId, deadline.connectTimeout(), work);
+    }
     // 변경 수는 요청한 범위 안만 센다(WD-679) — 테이블 하나 동기화의 재맞춤이 범위 밖(보관본·다른 테이블·뷰·BIN$)에서 회수한 객체는
     // 로그에만 따로 싣는다. 회수 실패는 범위 밖도 그대로 둔다(fail-closed — 실행 준비가 범위와 상관없이 거부해야 한다).
     Set<String> changed = applied.changedTables();

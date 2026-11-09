@@ -120,6 +120,29 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
   private TenantDataStoreRepository repository;
   private ExternalStoreConnections connections;
 
+  /**
+   * 직결 접속에 걸리는 시간(ms, WD-664 6) — 느린 Tibero 접속 흉내. 상한 없는 접속(withDdl 2인자)은 이만큼 기다린 뒤 접속에 성공하고, 상한 있는
+   * 접속(3인자)은 상한을 넘기면 상한만큼만 기다린 뒤 접속 시간 초과로 실패한다(운영 접속기와 같은 규칙).
+   */
+  private volatile long connectDelayMs;
+
+  /** 상한 있는 직결 접속에 넘어온 접속 상한(순서대로, WD-664 6). */
+  private final List<Duration> connectTimeouts = new ArrayList<>();
+
+  /** 문장(GRANT/REVOKE)·카탈로그 질의에 걸린 queryTimeout 초(순서대로, WD-664 6). */
+  private final List<Integer> queryTimeouts = new ArrayList<>();
+
+  /**
+   * 이 조각이 든 GRANT/REVOKE 문장은 {@link #slowStatementMs} 만큼 걸린다(queryTimeout 을 무시하는 드라이버 흉내, WD-664
+   * 6).
+   */
+  private volatile String slowStatementFragment;
+
+  private volatile long slowStatementMs;
+
+  /** 테넌트 전체 슬롯 GRANT 조회(재판정 판)가 걸리는 시간(ms, WD-664 6). 0 이면 즉시. */
+  private volatile long tenantWideGrantQueryDelayMs;
+
   /** 세대 번호 올림 트랜잭션이 끝난(커밋된) 뒤인가 — 첫 Tibero 접속 시점에 확인한다. */
   private boolean epochCommitted;
 
@@ -160,8 +183,27 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
     when(connections.withDdl(anyLong(), org.mockito.ArgumentMatchers.<SqlWork<Object>>any()))
         .thenAnswer(
             inv -> {
+              sleepQuietly(connectDelayMs); // 상한 없는 접속 — 느려도 끝까지 기다린다
               connectionsOpened++;
               return inv.<SqlWork<Object>>getArgument(1).apply(conn);
+            });
+    // 상한 있는 직결 접속(WD-664 6) — 상한을 넘기면 상한만큼만 기다린 뒤 접속 시간 초과(운영 접속기 → withDdl 과 같은 예외).
+    when(connections.withDdl(
+            anyLong(),
+            org.mockito.ArgumentMatchers.any(Duration.class),
+            org.mockito.ArgumentMatchers.<SqlWork<Object>>any()))
+        .thenAnswer(
+            inv -> {
+              Duration limit = inv.getArgument(1);
+              connectTimeouts.add(limit);
+              if (connectDelayMs > limit.toMillis()) {
+                sleepQuietly(limit.toMillis());
+                throw new org.springframework.dao.DataAccessResourceFailureException(
+                    "연결 시간이 초과되었습니다");
+              }
+              sleepQuietly(connectDelayMs);
+              connectionsOpened++;
+              return inv.<SqlWork<Object>>getArgument(2).apply(conn);
             });
     sync = newSync(datasetRepository);
   }
@@ -206,6 +248,7 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
                       })
                   .when(ps)
                   .setString(org.mockito.ArgumentMatchers.anyInt(), anyString());
+              recordQueryTimeout(ps);
               when(ps.executeQuery()).thenAnswer(x -> resultSet(rowsFor(sql, binds)));
               return ps;
             });
@@ -213,15 +256,46 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
         .thenAnswer(
             inv -> {
               Statement st = mock(Statement.class);
+              recordQueryTimeout(st);
               when(st.execute(anyString()))
                   .thenAnswer(
                       x -> {
-                        apply(x.getArgument(0));
+                        String sql = x.getArgument(0);
+                        String slow = slowStatementFragment;
+                        if (slow != null && sql.contains(slow)) {
+                          sleepQuietly(slowStatementMs); // queryTimeout 을 무시하고 오래 걸린다
+                        }
+                        apply(sql);
                         return false;
                       });
               return st;
             });
     return conn;
+  }
+
+  /** 문장·질의 객체에 걸리는 queryTimeout 을 기록한다(WD-664 6 — 커밋 직전 좁히기의 문장 상한). */
+  private void recordQueryTimeout(Statement st) throws SQLException {
+    org.mockito.Mockito.doAnswer(
+            a -> {
+              synchronized (queryTimeouts) {
+                queryTimeouts.add(a.getArgument(0));
+              }
+              return null;
+            })
+        .when(st)
+        .setQueryTimeout(org.mockito.ArgumentMatchers.anyInt());
+  }
+
+  /** 느린 외부 DB 흉내용 잠자기 — 인터럽트되면 상태만 되살린다. */
+  private static void sleepQuietly(long ms) {
+    if (ms <= 0) {
+      return;
+    }
+    try {
+      Thread.sleep(ms);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   /** 카탈로그 질의별 가짜 결과 행. */
@@ -269,6 +343,9 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
       java.util.function.Predicate<String> grantee,
       List<String[]> rows) {
     List<String> boundTables = List.copyOf(binds.subList(leading, binds.size()));
+    if (boundTables.isEmpty()) {
+      sleepQuietly(tenantWideGrantQueryDelayMs); // 재판정의 테넌트 전체 조회가 느린 Tibero 흉내(WD-664 6)
+    }
     grantQueryTables.add(boundTables); // 순서 검증용 목록
     Set<String> onlyTables = Set.copyOf(boundTables); // 소속 판정용 집합
     for (String g : grants) {
@@ -1404,6 +1481,140 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
     assertThat(narrowed.needsFallback()).as("넓어지는 변경 — 막을 슬롯 없음").isFalse();
     assertThat(executed).isEmpty();
     assertThat(slotsOf(t)).isEqualTo(range(3, 10));
+  }
+
+  // ------------------------------------------------ WD-664 6: 커밋 직전 좁히기의 시간 상한
+
+  /** 테스트용 짧은 상한 — 전체 1초·접속 0.6초·문장 0.5초(초 단위 queryTimeout 은 1초로 올림). */
+  private static final TiberoPythonReadGrantSync.PreCommitBounds SHORT_BOUNDS =
+      new TiberoPythonReadGrantSync.PreCommitBounds(
+          Duration.ofSeconds(1), Duration.ofMillis(600), Duration.ofMillis(500));
+
+  /** 등급 변경 트랜잭션 안에서 공개 → 민감 좁히기를 부르고, 결과와 걸린 시간(ms)을 돌려준다. */
+  private NarrowResult narrowPublicToSensitive(long id, long[] elapsedMs) {
+    long from = fx.levelId("공개");
+    long to = fx.levelId("민감");
+    long start = System.nanoTime();
+    NarrowResult r =
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> {
+              dsl.update(DATASET)
+                  .set(DATASET.SECURITY_LEVEL_ID, to)
+                  .where(DATASET.ID.eq(id))
+                  .execute();
+              return sync.narrowDatasetInCurrentTx(id, from, to);
+            });
+    elapsedMs[0] = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+    return r;
+  }
+
+  /**
+   * WD-664 6 — 커밋 직전 좁히기의 Tibero 직결 접속이 느리면(예전 상한 10초) 접속 상한(전체 예산 안)에서 포기하고 "확인 못 함" 으로 돌아온다 —
+   * 리스너가 대체 경로(토큰 무효화 + 커밋 뒤 비동기 좁히기)로 막는다. 커밋은 상한 안에 진행된다. 고치기 전에는 상한 없는 접속을 끝까지 기다려(여기서는 3초) 시간
+   * 단언이 깨지고, 늦게라도 접속돼 "확인됨" 이 됐다.
+   */
+  @Test
+  void narrowBeforeCommit_slowConnect_givesUpWithinBudget_andFallsBack() {
+    table("bcn", "공개");
+    sync.syncTenant();
+    long id = datasets.get(0);
+    sync.preCommitBoundsForTest(SHORT_BOUNDS);
+    connectDelayMs = 3_000;
+    executed.clear();
+    long[] elapsed = {0};
+
+    NarrowResult narrowed = narrowPublicToSensitive(id, elapsed);
+
+    assertThat(elapsed[0]).as("접속 상한(0.6초) 안에서 포기 — 커밋을 붙잡지 않는다").isLessThan(2_000L);
+    assertThat(narrowed.confirmed()).as("대체 경로로 간다").isFalse();
+    assertThat(narrowed.exposedSlots()).as("새 등급에서 못 읽는 슬롯을 막는다").containsAll(Set.of(1, 2));
+    assertThat(connectTimeouts).as("접속 상한을 넘겼다").hasSize(1);
+    assertThat(connectTimeouts.get(0)).isLessThanOrEqualTo(SHORT_BOUNDS.connect());
+    assertThat(executed).as("접속을 못 했으니 문장도 없다").isEmpty();
+  }
+
+  /**
+   * WD-664 6 — REVOKE 문장 하나가 느리면(드라이버가 queryTimeout 을 지키지 않는 최악의 경우까지) 전체 예산을 넘긴 뒤 나머지 문장은 보내지 않고
+   * "확인 못 함" 으로 돌아온다. 문장마다 queryTimeout(남은 예산, 초 단위 올림)을 건다. 고치기 전에는 REVOKE 두 개를 모두 끝까지 기다려(2 ×
+   * 1.5초) "확인됨" 이었다.
+   */
+  @Test
+  void narrowBeforeCommit_slowRevoke_stopsAtBudget_andFallsBack() {
+    String t = table("brv", "공개");
+    sync.syncTenant();
+    long id = datasets.get(0);
+    sync.preCommitBoundsForTest(SHORT_BOUNDS);
+    slowStatementFragment = "REVOKE";
+    slowStatementMs = 1_500;
+    executed.clear();
+    queryTimeouts.clear();
+    long[] elapsed = {0};
+
+    NarrowResult narrowed = narrowPublicToSensitive(id, elapsed);
+
+    assertThat(narrowed.confirmed()).as("예산을 넘겨 대체 경로로 간다").isFalse();
+    assertThat(narrowed.exposedSlots()).containsAll(Set.of(1, 2));
+    assertThat(executed).as("예산을 넘긴 뒤의 REVOKE 는 보내지 않는다").containsExactly(revokeSql(t, 1));
+    assertThat(elapsed[0]).as("느린 문장 하나 + 여유 — 문장마다 끝까지 기다리지 않는다").isLessThan(2_800L);
+    assertThat(queryTimeouts)
+        .as("모든 문장·질의에 queryTimeout 을 건다")
+        .isNotEmpty()
+        .allMatch(sec -> sec == 1);
+  }
+
+  /**
+   * WD-664 6 — 첫 판 REVOKE 가 실패해 재판정(WD-645, 테넌트 전체 조회)이 돌 때 그 조회가 느리면 예산을 넘긴 뒤 더 진행하지 않고 "확인 못 함"
+   * 으로 돌아온다. 고치기 전에는 느린 재판정을 끝까지 기다려 다시 회수하고 "확인됨" 이 됐다(커밋을 그만큼 붙잡았다).
+   */
+  @Test
+  void narrowBeforeCommit_slowRejudge_stopsAtBudget_andFallsBack() {
+    String t = table("brj", "공개");
+    sync.syncTenant();
+    long id = datasets.get(0);
+    sync.preCommitBoundsForTest(SHORT_BOUNDS);
+    // 첫 판의 슬롯 1 REVOKE 만 실패(겹친 DDL 흉내) → 재판정. 재판정까지 가면 성공하므로, 예산이 없으면 "확인됨" 이 된다.
+    String transientFail = revokeSql(t, 1);
+    failingFragments.add(transientFail);
+    onFailingStatement = () -> failingFragments.remove(transientFail);
+    tenantWideGrantQueryDelayMs = 2_500;
+    executed.clear();
+    long[] elapsed = {0};
+
+    NarrowResult narrowed = narrowPublicToSensitive(id, elapsed);
+
+    assertThat(narrowed.confirmed()).isFalse();
+    assertThat(narrowed.exposedSlots()).containsAll(Set.of(1, 2));
+    assertThat(elapsed[0]).as("재판정 조회 하나 + 여유 — 그 뒤로 더 진행하지 않는다").isLessThan(3_800L);
+    assertThat(executed)
+        .as("재판정 조회 뒤 예산을 넘겨 재판정의 REVOKE 는 보내지 않는다")
+        .containsExactly(revokeSql(t, 2));
+  }
+
+  /** WD-664 6 — 예산 안에 끝나면 상한이 결과를 바꾸지 않는다(확인됨). 접속·문장에 상한 값이 실린다. */
+  @Test
+  void narrowBeforeCommit_fastTibero_confirmedWithBoundsApplied() {
+    String t = table("bok", "공개");
+    sync.syncTenant();
+    long id = datasets.get(0);
+    executed.clear();
+    queryTimeouts.clear();
+    long[] elapsed = {0};
+
+    NarrowResult narrowed = narrowPublicToSensitive(id, elapsed);
+
+    assertThat(narrowed.confirmed()).isTrue();
+    assertThat(executed).containsExactlyInAnyOrder(revokeSql(t, 1), revokeSql(t, 2));
+    assertThat(connectTimeouts)
+        .as("운영 상한으로 접속")
+        .containsExactly(TiberoPythonReadGrantSync.PRE_COMMIT_BOUNDS.connect());
+    assertThat(queryTimeouts)
+        .isNotEmpty()
+        .allMatch(
+            sec ->
+                sec >= 1
+                    && sec <= TiberoPythonReadGrantSync.PRE_COMMIT_BOUNDS.statement().toSeconds());
   }
 
   /** 회수 문장이 실패하면 "확인 못 함" + 막을 슬롯 {1,2} — 리스너가 대체 경로로 막는다. */

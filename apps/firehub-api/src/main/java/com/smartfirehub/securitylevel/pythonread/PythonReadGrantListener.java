@@ -5,6 +5,7 @@ import com.smartfirehub.securitylevel.event.DatasetSecurityLevelChangedEvent;
 import com.smartfirehub.securitylevel.event.SecurityLevelsChangedEvent;
 import com.smartfirehub.securitylevel.pythonread.PythonReadGrantBackend.NarrowResult;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;
@@ -25,8 +26,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <ol>
  *   <li><b>커밋 직전(BEFORE_COMMIT), 발행 트랜잭션 안에서</b> — 좁히기 중 커넥션이 더 필요 없는 것: Tibero 스크립트 토큰 세대 번호 올리기,
  *       데이터셋 테이블의 남는 권한 회수(REVOKE). 같은 트랜잭션이라 등급 변경과 함께 커밋된다. 가장 높은 우선순위로 돈다(다른 커밋 직전 작업보다 먼저).
- *   <li><b>커밋 직후(AFTER_COMMIT), 호출 스레드에서 상한만큼만</b> — PG 슬롯 롤 세션 끊기. 소유자 풀 전용 스레드에서 돌고 여기서는 짧게
- *       기다린다(플랫폼 풀을 더 쥐지 않고, 소유자 풀이 바빠도 30초씩 멈추지 않는다). 확인 못 하면 미확인 표식 → 실행 준비가 넓히기 전에 먼저 끊는다.
+ *   <li><b>커밋 직후(AFTER_COMMIT), 호출 스레드는 요청만</b> — PG 슬롯 롤 세션 끊기. 소유자 풀 전용 스레드에서 돌고 커밋 콜백은 <b>기다리지
+ *       않는다</b>(WD-664 9 — 예전에는 3초까지 기다려, 동시 커밋 N 개가 바깥 플랫폼 커넥션 N 개를 그만큼 쥐었다). 회수 미확인·등급 정의 변경이면 요청
+ *       전에 미확인 표식을 달아 실행 준비가 넓히기 전에 먼저 끊고(fail-closed), 확인된 회수면 실제로 회수한 슬롯만 끊는다(WD-664 7). 끊김은 커밋
+ *       응답 뒤 몇 초 안에 일어난다(응답 시점 보장 없음 — 설계 결정 Q2 A).
  *   <li><b>전용 실행기(비동기)</b> — 넓어지는 GRANT 와 전체 재계산(새 트랜잭션 = 커넥션 하나 더). 큐 대기만큼 늦어도 과권한 창이 없다: 넓어지기 전에
  *       실행 중 세션은 이미 끊기거나(PG) 토큰이 무효이고(Tibero), 실행기 작업도 넓히기 전에 다시 끊거나 번호를 올린다.
  * </ol>
@@ -53,7 +56,8 @@ public class PythonReadGrantListener {
   private final PythonReadSyncExecutor executor;
 
   /**
-   * 실행기 작업 그룹 이름(WD-644 실행기의 합치기 기준). 커밋 뒤 실행기로 넘기는 세 경로를 어떻게 올렸는지(WD-624 경로 → WD-644 설계):
+   * 실행기 작업 그룹 이름(WD-644 실행기의 합치기 기준). 커밋 뒤 실행기로 넘기는 네 경로를 어떻게 올렸는지(WD-624 경로 → WD-644 설계, 넷째는
+   * WD-664 7):
    *
    * <ul>
    *   <li><b>데이터셋 등급 변경 재동기화</b>({@link #onDatasetLevelChanged}) — 커밋 뒤 경로, <b>재시도형</b>(시도 3번 → 묶인
@@ -65,10 +69,14 @@ public class PythonReadGrantListener {
    *       정확히 한 번 더 돈다.
    *   <li><b>회수 미확인 뒷정리</b>({@link #blockExposedSlots}) — <b>대기형</b>. 끊기 → 잠금 안 회수 → 다시 끊기 순서가 보안
    *       계약이라 나누지 않는다. 드문 대체 경로다. 그룹에 데이터셋·슬롯·토큰 여부를 모두 넣어, 같은 요청만 합친다(다른 요청의 인자를 잃지 않게).
+   *   <li><b>확인된 회수 뒤 끊기 재시도</b>({@link #killRevokedSlotsAfterCommit}, WD-664 7) — <b>대기형</b>. 커밋
+   *       콜백이 넣은 끊기 요청이 실패했을 때만 들어간다. 끊기를 기다리다 못 끊으면 일시 실패(SessionKillFailed, WD-664 1b)로 끝나 실행기가
+   *       재시도 상한까지 다시 한다. 회수 전에 시작한 긴 쿼리를 막는 유일한 방어선이라 포화여도 버리지 않는다(작업이 작고 실패 때만 생긴다). 그룹에 슬롯을 넣어
+   *       같은 요청만 합친다.
    * </ul>
    *
-   * 세 경로 모두 실행기의 실패 분류(일시 실패만 재시도·영구 실패는 ERROR 후 버림)·종료 비우기를 그대로 따른다. 포화 버림은 데이터셋 등급 변경 재동기화만 따른다 —
-   * 등급 정의 변경 전체 동기화와 회수 미확인 뒷정리는 회수 필수 작업이라 상한을 넘겨도 받아들인다(WD-664 1a, {@link
+   * 네 경로 모두 실행기의 실패 분류(일시 실패만 재시도·영구 실패는 ERROR 후 버림)·종료 비우기를 그대로 따른다. 포화 버림은 데이터셋 등급 변경 재동기화만 따른다 —
+   * 등급 정의 변경 전체 동기화·회수 미확인 뒷정리·확인된 회수 뒤 끊기 재시도는 회수 필수 작업이라 상한을 넘겨도 받아들인다(WD-664 1a, {@link
    * PythonReadSyncExecutor#submitRetryable(String, String, PythonReadSyncExecutor.Attempt,
    * boolean)}).
    */
@@ -77,6 +85,8 @@ public class PythonReadGrantListener {
   private static final String DATASET_GROUP = "dataset-level tenant=";
 
   private static final String NARROW_GROUP = "narrow-cleanup tenant=";
+
+  private static final String KILL_GROUP = "narrow-kill tenant=";
 
   /**
    * 등급 정의 변경 — 커밋 직전, 발행 트랜잭션에서 스크립트 토큰 세대 번호를 올린다(Tibero 실행 중 스크립트의 옛 토큰을 등급 변경 커밋과 동시에 무효로).
@@ -96,12 +106,12 @@ public class PythonReadGrantListener {
   }
 
   /**
-   * 등급 정의 변경(추가·수정·삭제·순서) — 커밋 직후 PG 슬롯 롤 세션을 상한 안에서 끊고({@link
-   * PythonReadGrantSync#terminateSlotSessionsAfterCommit}), 테넌트 전체 재동기화(넓히는 GRANT 포함)는 실행기에
-   * 넘긴다(테넌트당 큐 대기 1개로 합친다).
+   * 등급 정의 변경(추가·수정·삭제·순서) — 커밋 직후 PG 슬롯 롤 세션에 미확인 표식을 달고 끊기를 요청하고({@link
+   * PythonReadGrantSync#terminateSlotSessionsAfterCommit}, 기다리지 않음 — WD-664 9), 테넌트 전체 재동기화(넓히는
+   * GRANT 포함)는 실행기에 넘긴다(테넌트당 큐 대기 1개로 합친다).
    *
-   * <p>끊기가 상한을 넘거나 실패해도 커밋 결과는 바꾸지 않는다(이미 커밋됐다). 끊기는 계속 돌고, 미확인 표식이 실행 준비의 넓히기를 막으며, 실행기 작업은 넓히기 전에
-   * 다시 끊고 실패하면 넓히지 않는다.
+   * <p>끊기가 늦거나 실패해도 커밋 결과는 바꾸지 않는다(이미 커밋됐다). 끊기는 끊기 스레드에서 계속 돌고, 미확인 표식이 실행 준비의 넓히기를 막으며, 실행기 작업은
+   * 넓히기 전에 다시 끊고 실패하면 넓히지 않는다.
    */
   @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
   public void onLevelsChanged(SecurityLevelsChangedEvent event) {
@@ -121,15 +131,21 @@ public class PythonReadGrantListener {
    *
    * <ol>
    *   <li>같은 트랜잭션에서 Tibero 스크립트 토큰 번호를 올린다(테넌트 단위 — 번호가 테넌트별이라 더 좁힐 수 없다. PG 테넌트는 변화 없음).
-   *   <li>커밋 직후 그 슬롯들의 PG 세션을 상한 안에서 끊는다(못 끊으면 미확인 표식 → 실행 준비가 먼저 끊는다).
+   *   <li>커밋 직후 그 슬롯들에 미확인 표식을 달고 PG 세션 끊기를 요청한다 — 기다리지 않는다(WD-664 9). 끊기가 확인될 때까지 표식이 그 슬롯의 실행 준비를
+   *       막는다(실행 준비가 먼저 끊고, 못 끊으면 거부).
    *   <li>실행기 작업({@link PythonReadGrants#syncDatasetAfterUnconfirmedNarrowing})이 다시 끊고, 잠금 안에서
    *       회수하고, 회수 커밋 뒤 한 번 더 끊는다 — 커밋 직전에 옛 등급으로 준비된 실행이 첫 끊기 뒤에 붙었더라도 막힌다.
    * </ol>
    *
    * 넓어지는(등급을 내린) 변경이면 더는 읽으면 안 되는 슬롯이 비어 대체 경로가 필요 없다. 클론 상속(CLONE_INHERIT)·자동 상향(AUTO_RAISE)은 변경 전
    * 등급({@code from})으로 새 데이터셋이 생성 때 받은 테넌트 기본 등급(자동 상향은 그 출력의 현재 등급)을 싣는다 — 그래서 더 높은 등급으로 옮기면 막을
-   * 슬롯이 <b>비지 않는다</b>(WD-664 5). 다만 정상 경로에서는 커밋 직전 회수가 확인되므로(회수할 권한이 원래 없거나 회수에 성공) 아무것도 끊지 않고, 회수를
-   * 확인하지 못했을 때(잠금 대기 초과·회수 실패·분리 설치)에만 위 대체 경로로 그 슬롯을 막는다.
+   * 슬롯이 <b>비지 않는다</b>(WD-664 5). 회수를 확인하지 못했을 때(잠금 대기 초과·회수 실패·분리 설치·Tibero 시간 예산 초과)에만 위 대체 경로로 그
+   * 슬롯을 막는다.
+   *
+   * <p><b>회수가 확인되면(WD-664 7, 설계 결정 Q2 A).</b> 실제로 회수한 슬롯이 있으면 커밋 뒤 <b>그 슬롯의</b> PG 세션 끊기를
+   * 요청한다({@link #killRevokedSlotsAfterCommit}). PG 는 권한을 쿼리 시작 때만 보므로, 회수 전에 시작한 긴 쿼리·서버 쪽 커서는 회수
+   * 뒤에도 계속 읽기 때문이다(예전에는 대체 경로만 끊어 두 경로가 어긋났다). 회수할 권한이 원래 없었으면(회수한 슬롯 없음) 아무것도 끊지 않는다. 롤백되면 회수도
+   * 되돌려지므로 끊지 않는다(커밋 뒤 콜백).
    *
    * <p><b>테넌트 확인.</b> 회수 계산은 이 트랜잭션의 RLS 테넌트로 데이터셋·등급을 읽는다. 발행 측은 같은 컨텍스트로 이벤트를 만들므로 늘 같아야 한다 — 다르면
    * 0행을 읽어 아무것도 회수하지 못하고 조용히 넘어가므로, 회수를 시도하지 않고 ERROR 와 함께 이벤트 테넌트의 모든 슬롯을 막는다(롤백하지 않는다).
@@ -154,6 +170,8 @@ public class PythonReadGrantListener {
       }
       if (result.needsFallback()) {
         blockExposedSlots(tenantId, datasetId, result.exposedSlots());
+      } else if (result.needsKillAfterCommit()) {
+        killRevokedSlotsAfterCommit(tenantId, datasetId, result.revokedSlots());
       }
     } catch (RuntimeException e) {
       // 대체 경로 등록까지 실패한 예상 밖 경우 — 게시자를 롤백시키지 않는다. 커밋 뒤 동기화·실행 준비가 회복한다.
@@ -200,6 +218,61 @@ public class PythonReadGrantListener {
   }
 
   /**
+   * 확인된 커밋 직전 회수 뒤 — 커밋되면 실제로 회수한 슬롯의 PG 세션 끊기를 요청한다(WD-664 7). 커밋 콜백은 요청만 넣고 기다리지 않으며(WD-664 9)
+   * 표식도 달지 않는다: 회수가 커밋돼 새 실행은 옳은 권한으로 붙으므로 실행 준비를 막을 까닭이 없고, 회수 전에 시작한 쿼리·커서만 끊으면 된다.
+   *
+   * <p>요청이 실패하면(큐 포화·종료·소유자 풀 오류) 실행기 대기형 작업으로 다시 한다 — 끊기를 기다리다 못 끊으면 일시 실패(SessionKillFailed,
+   * WD-664 1b)라 실행기가 재시도 상한까지 다시 한다. 그래도 못 끊으면 실행기가 ERROR 로 남긴다(회수 전에 시작한 긴 쿼리가 끝까지 도는 잔여 위험). 실패
+   * 처리는 끊기 스레드(또는 요청이 곧바로 실패하면 커밋 콜백 스레드)에서 실행기에 넣기만 하므로 커밋 콜백을 붙잡지 않는다.
+   */
+  private void killRevokedSlotsAfterCommit(long tenantId, long datasetId, Set<Integer> revoked) {
+    String logContext = "데이터셋 등급 변경 회수 확인(dataset=" + datasetId + ")";
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            CompletableFuture<Integer> kill;
+            try {
+              kill = sync.requestSlotSessionTermination(tenantId, revoked);
+            } catch (RuntimeException e) {
+              kill = CompletableFuture.failedFuture(e);
+            }
+            kill.whenComplete(
+                (n, e) -> {
+                  if (e != null) {
+                    retryKill(tenantId, datasetId, revoked, logContext, e);
+                  }
+                });
+          }
+        });
+  }
+
+  /** 확인된 회수 뒤 끊기 요청이 실패했을 때 실행기에서 다시 한다(대기형·회수 필수 — 필드 주석). 예외를 밖으로 내지 않는다. */
+  private void retryKill(
+      long tenantId, long datasetId, Set<Integer> slots, String logContext, Throwable cause) {
+    try {
+      log.warn(
+          "{} 뒤 PYTHON 슬롯 롤 세션 끊기 요청 실패 — 실행기에서 다시 한다: tenant={} slots={}",
+          logContext,
+          tenantId,
+          slots,
+          cause);
+      executor.submitRetryable(
+          KILL_GROUP + tenantId + " slots=" + slots,
+          String.valueOf(datasetId),
+          PythonReadGrantBackend.waitingAttempt(
+              tenantId,
+              log,
+              logContext + " ",
+              () -> sync.terminateSlotSessionsOrThrow(tenantId, slots)),
+          true);
+    } catch (RuntimeException e) {
+      log.error(
+          "{} 뒤 PYTHON 슬롯 롤 세션 끊기 재시도 등록 실패: tenant={} slots={}", logContext, tenantId, slots, e);
+    }
+  }
+
+  /**
    * 데이터셋 하나의 등급 변경 — 커밋 뒤 그 테이블 재동기화(넓어지는 GRANT 포함)를 실행기에 넘긴다. 좁히기는 커밋 직전에 이미 끝났으므로({@link
    * #narrowDatasetBeforeCommit}) 큐 대기 동안 과권한 창이 없다. <b>새 실행</b>도 실행 준비(JIT)가 같은 잠금 안에서 커밋된 등급으로 자기
    * 슬롯을 맞춘다.
@@ -216,7 +289,10 @@ public class PythonReadGrantListener {
             tenantId, log, "데이터셋 등급 변경 ", sync::syncDatasetsWith));
   }
 
-  /** 커밋 직후 주어진 PG 슬롯 세션 끊기(상한 있음). 커밋 콜백이 실패하면 안 되므로 예상 밖 예외도 로그로 끝낸다. */
+  /**
+   * 커밋 직후 주어진 PG 슬롯에 미확인 표식을 달고 세션 끊기를 요청한다 — 기다리지 않는다(WD-664 9). 커밋 콜백이 실패하면 안 되므로 예상 밖 예외도 로그로
+   * 끝낸다.
+   */
   private void terminateAfterCommit(long tenantId, Set<Integer> slots, String logContext) {
     try {
       sync.terminateSlotSessionsAfterCommit(tenantId, slots);

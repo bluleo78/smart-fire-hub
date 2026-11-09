@@ -30,6 +30,7 @@ import java.io.Closeable;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -968,6 +969,40 @@ class ExternalStoreConnectionsTest {
         .isInstanceOf(DataAccessResourceFailureException.class)
         .hasMessage("연결 시간이 초과되었습니다(10초)")
         .satisfies(e -> assertThat(e.getMessage()).doesNotContain("plain-pw"));
+  }
+
+  /**
+   * WD-664 6 리뷰: 접속 상한을 받은 withDdl 은 로그인 뒤 세션 설정 문장에도 queryTimeout 을 건다 — 로그인 뒤 서버가 멈춰도 커밋 스레드가 상한
+   * 없이 붙잡히지 않게. 상한 없는 withDdl 은 기존처럼 queryTimeout 을 걸지 않는다.
+   */
+  @Test
+  void withDdl_connectTimeout_boundsSessionInitStatement() throws Exception {
+    ready(1);
+    Connection bounded = mock(Connection.class);
+    Statement boundedSt = mock(Statement.class);
+    when(bounded.createStatement()).thenReturn(boundedSt);
+    when(factory.openDirect(
+            any(ExternalDbTarget.class), eq("owner1"), eq("plain-pw"), any(Duration.class)))
+        .thenReturn(bounded);
+
+    connections.withDdl(1, Duration.ofMillis(2500), c -> 1);
+
+    InOrder order = inOrder(boundedSt);
+    order.verify(boundedSt).setQueryTimeout(3); // 2.5초 → 올림 3초
+    order.verify(boundedSt).execute(TiberoDialect.SESSION_INIT_SQL);
+
+    Connection plain = mock(Connection.class);
+    Statement plainSt = mock(Statement.class);
+    when(plain.createStatement()).thenReturn(plainSt);
+    when(factory.openDirect(any(ExternalDbTarget.class), eq("owner1"), eq("plain-pw")))
+        .thenReturn(plain);
+
+    connections.withDdl(1, c -> 1);
+
+    verify(plainSt, never()).setQueryTimeout(org.mockito.ArgumentMatchers.anyInt());
+    verify(plainSt).execute(TiberoDialect.SESSION_INIT_SQL);
+    // 남은 예산이 1ms 여도 0(무제한)이 아니라 최소 1초다.
+    assertThat(ExternalStoreConnections.initTimeoutSeconds(Duration.ofMillis(1))).isEqualTo(1);
   }
 
   @Test

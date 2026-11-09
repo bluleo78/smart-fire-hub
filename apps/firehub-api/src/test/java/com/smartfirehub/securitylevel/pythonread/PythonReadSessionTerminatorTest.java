@@ -111,8 +111,6 @@ class PythonReadSessionTerminatorTest {
   @Test
   void emptySlots_doNothing() {
     assertThat(terminator.terminateWithin(TENANT, Set.of(), Duration.ofSeconds(1))).isZero();
-    assertThat(terminator.terminateConfirmingWithin(TENANT, Set.of(), Duration.ofSeconds(1)))
-        .isTrue();
     assertThat(kills.get()).isZero();
     assertThat(terminator.unconfirmedSlots(TENANT)).isEmpty();
   }
@@ -121,8 +119,8 @@ class PythonReadSessionTerminatorTest {
   @Test
   void unconfirmedMark_clearedOnlyByLaterSuccessfulKillOfThatSlot() {
     gate = new CountDownLatch(1);
-    assertThat(terminator.terminateConfirmingWithin(TENANT, Set.of(1, 2), Duration.ofMillis(100)))
-        .isFalse();
+    CompletableFuture<Integer> original = terminator.markAndRequest(TENANT, Set.of(1, 2));
+    assertThat(original.isDone()).as("막힌 끊기를 기다리지 않는다").isFalse();
     assertThat(terminator.unconfirmedSlots(TENANT)).containsExactlyInAnyOrder(1, 2);
     failure = new IllegalStateException("still alive");
     gate.countDown(); // 늦게 끝난 원래 끊기 — 실패라 지우지 않는다
@@ -141,7 +139,7 @@ class PythonReadSessionTerminatorTest {
   }
 
   /**
-   * 리뷰 6 — 표식은 기다리기 <b>전에</b> 세운다. 이미 돌고 있던(표식 전에 시작한) 끊기가 끝나도 표식은 남고, 새 요청이 만든 작업(표식 뒤 시작)이 끝나야
+   * 리뷰 6 — 표식은 요청하기 <b>전에</b> 세운다. 이미 돌고 있던(표식 전에 시작한) 끊기가 끝나도 표식은 남고, 새 요청이 만든 작업(표식 뒤 시작)이 끝나야
    * 지워진다. 표식을 기다림 실패 뒤에 세우면, 그 사이 끝난 끊기가 표식을 못 지워 영원히 남거나(무해) 반대로 늦게 세운 표식을 옛 작업이 지우는 경합이 생긴다.
    */
   @Test
@@ -151,20 +149,59 @@ class PythonReadSessionTerminatorTest {
         CompletableFuture.supplyAsync(
             () -> terminator.terminateWithin(TENANT, Set.of(3), Duration.ofSeconds(5)));
     assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue(); // 표식 전에 시작한 끊기가 돌고 있다
-    CompletableFuture<Boolean> confirming =
-        CompletableFuture.supplyAsync(
-            () -> terminator.terminateConfirmingWithin(TENANT, Set.of(3), Duration.ofSeconds(5)));
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-    while (terminator.unconfirmedSlots(TENANT).isEmpty() && System.nanoTime() < deadline) {
-      Thread.sleep(5);
-    }
-    assertThat(terminator.unconfirmedSlots(TENANT)).as("기다리기 전에 표식").containsExactly(3);
+    CompletableFuture<Integer> confirming = terminator.markAndRequest(TENANT, Set.of(3));
+    assertThat(terminator.unconfirmedSlots(TENANT)).as("요청하기 전에 표식").containsExactly(3);
     assertThat(confirming.isDone()).isFalse();
     gate.countDown();
     running.get(5, TimeUnit.SECONDS);
-    assertThat(confirming.get(5, TimeUnit.SECONDS)).isTrue();
+    assertThat(confirming.get(5, TimeUnit.SECONDS)).isEqualTo(2);
     assertThat(kills.get()).as("표식 뒤 요청은 실행 중 작업에 합류하지 않고 새로 돈다").isEqualTo(2);
     assertThat(terminator.unconfirmedSlots(TENANT)).isEmpty();
+  }
+
+  /**
+   * WD-664 9 — 커밋 콜백용 "표식 + 요청" 은 끊기가 막혀 있어도(소유자 풀 바쁨) 곧바로 돌아온다. 표식은 돌아오기 전에 이미 서 있고(실행 준비가 먼저 끊는다
+   * — fail-closed), 끊기는 끊기 전용 스레드에서 계속 돌아 성공하면 표식을 지운다. 변이: 요청 뒤 결과를 기다리면 막힌 끊기만큼 늦게 돌아온다.
+   */
+  @Test
+  void markAndRequest_returnsWithoutWaiting_markerStaysUntilKillSucceeds() throws Exception {
+    gate = new CountDownLatch(1);
+    long start = System.nanoTime();
+    CompletableFuture<Integer> result = terminator.markAndRequest(TENANT, Set.of(1, 2));
+    assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)).isLessThan(300L);
+    assertThat(result.isDone()).isFalse();
+    assertThat(terminator.unconfirmedSlots(TENANT))
+        .as("돌아오기 전에 표식")
+        .containsExactlyInAnyOrder(1, 2);
+    gate.countDown();
+    assertThat(result.get(5, TimeUnit.SECONDS)).isEqualTo(2);
+    assertThat(terminator.unconfirmedSlots(TENANT)).as("끊기 성공이 표식을 지운다").isEmpty();
+  }
+
+  /** WD-664 9 — "표식 + 요청" 의 끊기가 실패하면 표식이 남는다(실행 준비가 넓히기 전에 먼저 끊는다). 실패는 돌려준 결과로만 알린다(던지지 않는다). */
+  @Test
+  void markAndRequest_failedKill_keepsMarker() throws Exception {
+    failure = new IllegalStateException("owner pool busy");
+    CompletableFuture<Integer> result = terminator.markAndRequest(TENANT, Set.of(4));
+    assertThatThrownBy(() -> result.get(5, TimeUnit.SECONDS))
+        .hasCauseInstanceOf(IllegalStateException.class);
+    assertThat(terminator.unconfirmedSlots(TENANT)).containsExactly(4);
+  }
+
+  /** WD-664 7 — 표식 없는 요청(확인된 좁히기 뒤 끊기)은 표식을 세우지 않고 곧바로 돌아온다. 빈 슬롯은 끊기를 돌리지 않는다. */
+  @Test
+  void request_withoutMarker_returnsImmediately() throws Exception {
+    gate = new CountDownLatch(1);
+    long start = System.nanoTime();
+    CompletableFuture<Integer> result = terminator.requestTermination(TENANT, Set.of(5));
+    assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)).isLessThan(300L);
+    assertThat(terminator.unconfirmedSlots(TENANT)).isEmpty();
+    gate.countDown();
+    assertThat(result.get(5, TimeUnit.SECONDS)).isEqualTo(2);
+    assertThat(killedSlots).containsExactly(Set.of(5));
+    assertThat(terminator.requestTermination(TENANT, Set.of()).get(1, TimeUnit.SECONDS)).isZero();
+    assertThat(terminator.markAndRequest(TENANT, Set.of()).get(1, TimeUnit.SECONDS)).isZero();
+    assertThat(kills.get()).isEqualTo(1);
   }
 
   /** 종료된 뒤의 요청은 기다리지 않고 바로 실패한다(부르는 쪽이 fail-closed 처리). */

@@ -14,6 +14,7 @@ import jakarta.annotation.PreDestroy;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -178,6 +179,16 @@ public class ExternalStoreConnections {
    * 스윕(고아 staging 삭제)도 이 메서드를 그대로 쓴다(예전 {@code withDdlTransient} 와 합쳤다).
    */
   public <T> T withDdl(long tenantId, SqlWork<T> work) {
+    return withDdl(tenantId, null, work);
+  }
+
+  /**
+   * {@link #withDdl(long, SqlWork)} 와 같되 직결 접속의 대기 상한을 부르는 쪽이 정한다(WD-664 6). Tibero 커밋 직전 좁히기는 사용자
+   * 트랜잭션의 플랫폼 커넥션을 쥔 채 접속하므로 기본 10초보다 짧게 포기해야 한다 — 넘기면 {@link DataAccessResourceFailureException}.
+   *
+   * @param connectTimeout 접속 대기 상한(null 이면 기본 상한 10초, 그보다 긴 값은 10초로 줄인다)
+   */
+  public <T> T withDdl(long tenantId, Duration connectTimeout, SqlWork<T> work) {
     OwnerCredentials owner;
     synchronized (this) {
       TenantPool existing = peek(tenantId);
@@ -187,7 +198,7 @@ public class ExternalStoreConnections {
       // PG 읽기·복호화는 잠금 밖에서 한다(풀 생성 경로와 같은 규칙).
       owner = loadOwner(tenantId);
     }
-    Connection c = openDirect(owner);
+    Connection c = openDirect(owner, connectTimeout);
     try (c) {
       c.setAutoCommit(true);
       return work.apply(c);
@@ -199,16 +210,22 @@ public class ExternalStoreConnections {
   /**
    * 소유 계정으로 풀 밖의 단발 커넥션을 열고 세션 NLS 설정을 적용한다. 설정이 실패하면 커넥션을 닫고 예외를 던진다(설정 안 된 세션으로 DDL 을 돌리지 않도록).
    */
-  private Connection openDirect(OwnerCredentials owner) {
+  private Connection openDirect(OwnerCredentials owner, Duration connectTimeout) {
     Connection c;
     try {
-      c = factory.openDirect(owner.target(), owner.username(), owner.password());
+      c =
+          connectTimeout == null
+              ? factory.openDirect(owner.target(), owner.username(), owner.password())
+              : factory.openDirect(
+                  owner.target(), owner.username(), owner.password(), connectTimeout);
     } catch (ExternalDbConnectionException e) {
       // 메시지는 비밀번호를 가린 한국어 사유다.
       throw new DataAccessResourceFailureException(e.getMessage());
     }
     try {
-      initSession(c);
+      // 접속 상한을 받은 경우(커밋 직전 좁히기 — WD-664 6) 로그인 뒤 세션 설정 문장도 같은 상한으로 묶는다.
+      // 로그인은 됐지만 서버가 멈춘 경우 이 문장이 상한 없이 커밋 스레드를 붙잡지 않게 한다.
+      initSession(c, connectTimeout == null ? 0 : initTimeoutSeconds(connectTimeout));
       return c;
     } catch (SQLException e) {
       JdbcClose.closeQuietly(c);
@@ -216,12 +233,26 @@ public class ExternalStoreConnections {
     }
   }
 
+  /** 접속 상한을 세션 설정 문장의 queryTimeout(초)으로 바꾼다. JDBC 에서 0 은 무제한이므로 최소 1초로 올린다. */
+  static int initTimeoutSeconds(Duration connectTimeout) {
+    long millis = Math.max(1L, connectTimeout.toMillis());
+    return (int) Math.max(1L, (millis + 999L) / 1000L);
+  }
+
   /**
    * 세션 NLS 설정({@link TiberoDialect#SESSION_INIT_SQL})을 실행한다. 풀 커넥션은 Hikari {@code
    * connectionInitSql} 로 같은 문장을 실행하므로({@link ExternalStorePoolFactory#create}) 두 경로의 세션이 같아진다.
    */
   static void initSession(Connection c) throws SQLException {
+    initSession(c, 0);
+  }
+
+  /** {@link #initSession(Connection)} 와 같되 문장에 queryTimeout(초)을 건다. 0 이면 상한 없이(기존 동작) 실행한다. */
+  static void initSession(Connection c, int queryTimeoutSeconds) throws SQLException {
     try (Statement st = c.createStatement()) {
+      if (queryTimeoutSeconds > 0) {
+        st.setQueryTimeout(queryTimeoutSeconds);
+      }
       st.execute(TiberoDialect.SESSION_INIT_SQL);
     }
   }

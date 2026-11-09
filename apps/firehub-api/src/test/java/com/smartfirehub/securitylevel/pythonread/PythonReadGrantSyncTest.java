@@ -742,16 +742,15 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
    * 실패가 슬롯 1 실행까지 거부했다. 표식 슬롯의 실행은 여전히 막힌다(fail-closed).
    */
   @Test
-  void prepareForRun_markerOnOtherSlot_killFailureDoesNotRejectUnrelatedRun() {
+  void prepareForRun_markerOnOtherSlot_killFailureDoesNotRejectUnrelatedRun() throws Exception {
     AtomicInteger kills = new AtomicInteger();
     PythonReadSessionTerminator term = failingTerminator(kills);
     try {
-      assertThat(
-              term.terminateConfirmingWithin(
-                  DEFAULT_TEST_TENANT_ID, Set.of(3), Duration.ofSeconds(2)))
+      term.markAndRequest(DEFAULT_TEST_TENANT_ID, Set.of(3));
+      assertThat(term.awaitIdle(Duration.ofSeconds(5))).isTrue();
+      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID))
           .as("전제: 끊기 실패 → 슬롯 3 미확인 표식")
-          .isFalse();
-      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID)).containsExactly(3);
+          .containsExactly(3);
       PythonReadGrantSync isolated = syncWith(term);
 
       assertThat(isolated.prepareForRun(clearanceResolver.resolve(userAt("공개"))))
@@ -765,6 +764,78 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
       assertThatThrownBy(() -> isolated.prepareForRun(sensitive))
           .as("표식 슬롯(3)의 실행은 끊지 못하면 여전히 거부")
           .isInstanceOf(PythonReadAccessException.class);
+    } finally {
+      term.shutdown();
+    }
+  }
+
+  /**
+   * WD-664 9 — 커밋 콜백의 슬롯 세션 끊기({@link PythonReadGrantSync#terminateSlotSessionsAfterCommit})는 끊기가
+   * 막혀 있어도(소유자 풀 바쁨) 기다리지 않고 돌아온다 — 커밋 콜백이 바깥 플랫폼 커넥션을 쥔 채 멈추지 않게. 표식은 돌아오기 전에 이미 서 있고, 막힘이 풀려 끊기가
+   * 성공하면 지워진다. 고치기 전에는 상한(3초)만큼 기다렸다.
+   */
+  @Test
+  void afterCommitTermination_doesNotWaitForBlockedKill_butMarksFirst() throws Exception {
+    java.util.concurrent.CountDownLatch gate = new java.util.concurrent.CountDownLatch(1);
+    PythonReadSessionTerminator term =
+        new PythonReadSessionTerminator(
+            (tenant, slots) -> {
+              try {
+                gate.await(30, TimeUnit.SECONDS);
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+              return 0;
+            });
+    try {
+      PythonReadGrantSync isolated = syncWith(term);
+      long start = System.nanoTime();
+      isolated.terminateSlotSessionsAfterCommit(DEFAULT_TEST_TENANT_ID, Set.of(3));
+      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start))
+          .as("막힌 끊기를 기다리지 않는다")
+          .isLessThan(500L);
+      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID)).as("돌아오기 전에 표식").containsExactly(3);
+      gate.countDown();
+      assertThat(term.awaitIdle(Duration.ofSeconds(10))).isTrue();
+      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID)).as("늦게라도 끊기가 성공하면 지운다").isEmpty();
+    } finally {
+      gate.countDown();
+      term.shutdown();
+    }
+  }
+
+  /**
+   * WD-664 9 — 기다리지 않게 된 뒤에도 대체 경로의 fail-closed 는 그대로다: 커밋 콜백의 끊기가 실패하면 표식이 남아, 그 슬롯의 실행 준비는 끊기를
+   * 확인할 때까지 거부된다. 끊기가 되살아나면 실행 준비가 먼저 끊고 표식을 지운 뒤 실행한다.
+   */
+  @Test
+  void afterCommitTermination_killFails_runRejectedUntilKillConfirmed() throws Exception {
+    java.util.concurrent.atomic.AtomicBoolean failing =
+        new java.util.concurrent.atomic.AtomicBoolean(true);
+    PythonReadSessionTerminator term =
+        new PythonReadSessionTerminator(
+            (tenant, slots) -> {
+              if (failing.get()) {
+                throw new IllegalStateException("끊기 실패 흉내");
+              }
+              return 0;
+            });
+    try {
+      PythonReadGrantSync isolated = syncWith(term);
+      isolated.terminateSlotSessionsAfterCommit(DEFAULT_TEST_TENANT_ID, Set.of(3));
+      assertThat(term.awaitIdle(Duration.ofSeconds(10))).isTrue();
+      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID))
+          .as("끊기 실패 — 표식이 남는다")
+          .containsExactly(3);
+
+      Clearance sensitive = clearanceResolver.resolve(userAt("민감"));
+      assertThatThrownBy(() -> isolated.prepareForRun(sensitive))
+          .as("표식 슬롯(3)의 실행은 끊기를 확인할 때까지 거부(fail-closed)")
+          .isInstanceOf(PythonReadAccessException.class);
+
+      failing.set(false);
+      assertThat(isolated.prepareForRun(sensitive)).as("끊기가 되면 실행한다").isEqualTo(3);
+      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID)).isEmpty();
     } finally {
       term.shutdown();
     }

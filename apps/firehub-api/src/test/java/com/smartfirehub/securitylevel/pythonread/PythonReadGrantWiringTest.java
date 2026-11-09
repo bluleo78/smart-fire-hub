@@ -667,6 +667,76 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
     }
   }
 
+  /** 세션이 끊겼다는 SQLState 인가 — 관리자 종료(57P01)·연결 오류(08xxx)·닫힘. */
+  private static boolean isTerminated(String state) {
+    return "57P01".equals(state) || state.startsWith("08") || "closed".equals(state);
+  }
+
+  /** 커밋 콜백이 기다리지 않고 넣은 끊기(WD-664 7·9)가 그 세션에 닿을 때까지 최대 10초 기다린다 — 끊겼으면 SQLState, 끝내 살아 있으면 null. */
+  private static String awaitKilled(Connection c) throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    String state = queryState(c);
+    while (state == null && System.nanoTime() < deadline) {
+      Thread.sleep(50);
+      state = queryState(c);
+    }
+    return state;
+  }
+
+  /** 한 트랜잭션에서 데이터셋 등급을 바꾸고 변경 이벤트를 발행한다(서비스와 같은 모양) — commit=false 면 롤백한다. */
+  private void changeLevelAndPublish(long id, long from, long to, boolean commit) {
+    TenantContext.runScoped(
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            fixtureTransactionTemplate.executeWithoutResult(
+                status -> {
+                  dsl.update(DATASET)
+                      .set(DATASET.SECURITY_LEVEL_ID, to)
+                      .where(DATASET.ID.eq(id))
+                      .execute();
+                  events.publishEvent(
+                      new DatasetSecurityLevelChangedEvent(
+                          DEFAULT_TEST_TENANT_ID,
+                          id,
+                          from,
+                          to,
+                          DatasetSecurityLevelChangedEvent.Cause.MANUAL));
+                  if (!commit) {
+                    status.setRollbackOnly();
+                  }
+                }));
+  }
+
+  /**
+   * WD-664 7(설계 결정 Q2 A): 커밋 직전 회수가 <b>확인된</b> 경로도 커밋 뒤 <b>실제로 회수한 슬롯</b>의 세션 끊기를 요청한다 — PG 는 권한을
+   * 쿼리 시작 때만 보므로, 회수 전에 시작한 긴 쿼리·서버 쪽 커서는 회수 뒤에도 계속 읽기 때문이다. 공개 → 민감이면 슬롯 1·2 를 회수하므로 슬롯 1 세션은 끊기고,
+   * 회수하지 않은 슬롯 3 세션은 그대로다. 롤백된 변경은 아무것도 끊지 않는다(회수도 함께 되돌려졌다). 고치기 전에는 확인된 경로가 회수만 하고 끊지 않아 슬롯 1 세션이
+   * 살아 있었다(대체 경로만 끊어 두 경로가 어긋났다).
+   */
+  @Test
+  void datasetNarrowingConfirmed_killsRevokedSlotSessionsAfterCommit_notOnRollback()
+      throws Exception {
+    String t = table("cfk", "공개");
+    long id = lastDatasetId();
+    sync.syncTenant();
+    long from = fx.levelId("공개");
+    long to = fx.levelId("민감");
+    try (Connection s1 = openSlotSession(1);
+        Connection s3 = openSlotSession(3)) {
+      changeLevelAndPublish(id, from, to, false);
+      awaitPythonReadGrantSync();
+      assertThat(queryState(s1)).as("롤백된 변경은 끊지 않는다").isNull();
+      assertThat(selectAs(1, t)).as("롤백 — 회수도 되돌려졌다").isNull();
+
+      changeLevelAndPublish(id, from, to, true);
+      assertThat(awaitKilled(s1)).as("회수한 슬롯 1 의 세션은 커밋 뒤 끊긴다").isNotNull();
+      awaitPythonReadGrantSync();
+      assertThat(queryState(s3)).as("회수하지 않은 슬롯 3 세션은 그대로").isNull();
+      assertThat(selectAs(1, t)).isEqualTo("42501");
+      assertThat(selectAs(3, t)).isNull();
+    }
+  }
+
   /**
    * CR2 권한 실측(이 테스트 DB): 런타임 롤 app_tenant 는 pg_signal_backend 멤버도 슬롯 롤 멤버도 아니라 슬롯 롤 세션을 끊을 수 없고,
    * 소유자 롤(app, schemaOwnerDataSource)은 슈퍼유저라 끊을 수 있다. 끊기를 소유자 연결로 하는 근거이며, 이 전제가 바뀌면 이 테스트가 먼저 알린다.
@@ -708,11 +778,12 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   }
 
   /**
-   * 데이터셋 하나의 등급 변경은 세션을 끊지 않는다 — 슬롯↔등급 위치 대응이 그대로라 늘어나는 GRANT 는 이미 자격 있는 슬롯에만 가고, 줄어드는 GRANT 는 다음
-   * 쿼리부터 막힌다(PostgreSQL 은 매 쿼리 권한을 본다). 끊긴 연결이 아닌 권한 오류(42501)로 막히는 것을 함께 단언한다.
+   * 데이터셋 하나의 등급 변경 — 회수한 슬롯의 실행 중 세션은 커밋 뒤 끊긴다(WD-664 7, 설계 결정 Q2 A). 예전에는 "다음 쿼리부터 권한 오류로 막히므로 끊지
+   * 않는다" 였지만, PG 는 권한을 쿼리 시작 때만 보므로 회수 전에 시작한 긴 쿼리·서버 쪽 커서는 회수 뒤에도 계속 읽었다. 회수하지 않은 슬롯은 끊지 않는다
+   * ({@link #datasetNarrowingConfirmed_killsRevokedSlotSessionsAfterCommit_notOnRollback}).
    */
   @Test
-  void datasetLevelChangedEvent_doesNotTerminate_butRevokesFromNextQuery() throws SQLException {
+  void datasetLevelChangedEvent_revokes_andKillsRevokedSlotSession() throws Exception {
     String t = table("dl_live", "공개");
     long id = lastDatasetId();
     sync.syncTenant();
@@ -737,16 +808,8 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
               fx.levelId("민감"),
               DatasetSecurityLevelChangedEvent.Cause.MANUAL),
           true);
-      assertThatCode(() -> st.executeQuery("SELECT 1").close())
-          .as("세션은 살아 있다")
-          .doesNotThrowAnyException();
-      String deniedState = null;
-      try {
-        st.executeQuery(sql).close();
-      } catch (SQLException e) {
-        deniedState = e.getSQLState();
-      }
-      assertThat(deniedState).as("같은 세션의 다음 쿼리부터 권한 오류로 거부").isEqualTo("42501");
+      assertThat(awaitKilled(running)).as("회수한 슬롯 1 의 실행 중 세션은 끊긴다").isNotNull();
+      assertThat(selectAs(1, t)).as("새 연결은 권한 오류로 거부").isEqualTo("42501");
     }
   }
 
@@ -903,7 +966,8 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
           publishCommittedNoDrain(
               new SecurityLevelsChangedEvent(
                   DEFAULT_TEST_TENANT_ID, SecurityLevelsChangedEvent.Kind.REORDERED, null));
-          assertThat(queryState(running)).as("변경 %d: 커밋 직후 세션이 끊겼다", i).isNotNull();
+          // WD-664 9: 커밋 콜백은 끊기를 요청만 한다 — 커밋 직후 몇 초 안에 끊긴다(실행기는 막혀 있어도).
+          assertThat(awaitKilled(running)).as("변경 %d: 커밋 직후 세션이 끊긴다", i).isNotNull();
         }
       }
     } finally {
@@ -923,10 +987,10 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   }
 
   /**
-   * 보안 순서(WD-624): 등급 정의 변경이 커밋되어 돌아온 시점에는 — 넓어지는 GRANT 를 맞추는 전체 동기화가 아직 실행기 큐에서 기다리는 중이어도 — 옛 위치로
-   * 슬롯을 받아 실행 중이던 슬롯 롤 세션이 <b>이미 끊겨</b> 있다. 그래서 큐 대기 중 다른 경로(실행 준비·테이블 동기화)가 슬롯을 먼저 넓혀도 그 넓어짐을 볼 옛
-   * 세션이 없다. 실행기를 막아 "동기화 전" 창을 고정한 뒤 단언한다. 변이: 세션 끊기를 실행기 작업 안으로만 옮기면(커밋 콜백의 동기 끊기를 지우면) 첫 단언이
-   * 실패한다.
+   * 보안 순서(WD-624): 등급 정의 변경이 커밋되면 — 넓어지는 GRANT 를 맞추는 전체 동기화가 아직 실행기 큐에서 기다리는 중이어도 — 옛 위치로 슬롯을 받아 실행
+   * 중이던 슬롯 롤 세션이 <b>먼저</b> 끊긴다(WD-664 9 부터 커밋 응답 시점이 아니라 그 직후 몇 초 안에 — 그동안은 미확인 표식이 실행 준비를 막는다).
+   * 그래서 큐 대기 중 다른 경로(실행 준비·테이블 동기화)가 슬롯을 먼저 넓혀도 그 넓어짐을 볼 옛 세션이 없다. 실행기를 막아 "동기화 전" 창을 고정한 뒤 단언한다.
+   * 변이: 세션 끊기를 실행기 작업 안으로만 옮기면(커밋 콜백의 동기 끊기를 지우면) 첫 단언이 실패한다.
    */
   @Test
   void levelsChangedEvent_terminatesSessionsBeforeDeferredSync() throws Exception {
@@ -946,7 +1010,8 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
           new SecurityLevelsChangedEvent(
               DEFAULT_TEST_TENANT_ID, SecurityLevelsChangedEvent.Kind.REORDERED, null));
       assertThat(syncPending()).as("전제: 전체 동기화는 아직 실행기 큐에 있다").isTrue();
-      assertThat(queryState(running)).as("커밋 직후 — 동기화 전에 이미 끊겼다").isNotNull();
+      // WD-664 9: 커밋 콜백은 끊기를 요청만 한다(응답 시점 보장 없음) — 그래도 전체 동기화(실행기, 막혀 있음)보다 먼저 끊긴다.
+      assertThat(awaitKilled(running)).as("커밋 직후 — 동기화 전에 끊긴다").isNotNull();
       assertThat(selectAs(2, sens)).as("전제: ACL 은 아직 옛 상태(전체 동기화 전)").isNull();
     } finally {
       release.countDown();
@@ -1016,7 +1081,12 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
       } catch (SQLException e) {
         deniedState = e.getSQLState();
       }
-      assertThat(deniedState).as("커밋 응답 직후 — 실행 중 세션의 다음 쿼리가 이미 거부된다").isEqualTo("42501");
+      // WD-664 7: 확인된 좁히기도 커밋 뒤 회수한 슬롯의 세션 끊기를 요청한다 — 그 끊기가 먼저 닿으면 권한 오류 대신 세션 종료(57P01·08xxx)다.
+      assertThat(deniedState).as("커밋 응답 직후 — 실행 중 세션의 다음 쿼리가 이미 거부된다").isNotNull();
+      assertThat(deniedState.equals("42501") || isTerminated(deniedState))
+          .as("권한 오류 또는 세션 종료: " + deniedState)
+          .isTrue();
+      assertThat(awaitKilled(running)).as("회수한 슬롯 1 의 실행 중 세션은 커밋 뒤 끊긴다(WD-664 7)").isNotNull();
       assertThat(selectAs(2, t)).as("슬롯 2 도 이미 회수").isEqualTo("42501");
       assertThat(selectAs(3, t)).as("자격 있는 슬롯 3 은 그대로 읽는다(좁히기는 넓힌 것을 건드리지 않는다)").isNull();
 
@@ -1104,7 +1174,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
       assertThat(dsl.fetchCount(DSL.table("tenant"), DSL.field("slug").eq(marker)))
           .as("발행 트랜잭션은 커밋됐다(구독자가 롤백시키지 않는다)")
           .isEqualTo(1);
-      assertThat(queryState(running)).as("대신 이벤트 테넌트의 모든 슬롯 세션을 끊었다").isNotNull();
+      assertThat(awaitKilled(running)).as("대신 이벤트 테넌트의 모든 슬롯 세션을 끊는다(커밋 직후, 기다리지 않음)").isNotNull();
     } finally {
       dsl.execute("delete from tenant where slug = {0}", DSL.val(marker));
     }
@@ -1330,7 +1400,8 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
                     to,
                     DatasetSecurityLevelChangedEvent.Cause.AUTO_RAISE));
           });
-      assertThat(queryState(s1)).as("막을 슬롯 1 세션은 커밋 응답 전에 끊겼다").isNotNull();
+      // WD-664 9: 커밋 콜백은 끊기를 요청만 하고 기다리지 않는다 — 커밋 응답 시점이 아니라 몇 초 안에 끊긴다.
+      assertThat(awaitKilled(s1)).as("막을 슬롯 1 세션은 커밋 직후 끊긴다").isNotNull();
       assertThat(queryState(s3)).as("자격이 그대로인 슬롯 3 세션은 끊지 않는다").isNull();
 
       late = openSlotSession(1);
@@ -1459,9 +1530,9 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
 
   /**
    * 반려 3(WD-624): 소유자 풀(크기 1)이 다른 일로 막혀 있어도, 풀 크기만큼 동시에 커밋되는 등급 정의 변경이 커밋 콜백에서 30초(소유자 풀 연결 대기 상한)씩
-   * 멈추지 않는다 — 세션 끊기는 소유자 풀 전용 스레드에서 돌고 커밋 콜백은 상한(3초)만 기다린 뒤 미확인 표식을 달고 돌아온다. 그 사이 무관한 플랫폼 트랜잭션도 곧바로
-   * 커넥션을 얻는다. 소유자 풀이 풀리면 계속 돌던 끊기가 세션을 끊고, 실행기의 전체 동기화(잠금 안에서 다시 끊음)도 넓힌다. 고치기 전에는 커밋 콜백이 바깥 커넥션을 쥔
-   * 채 소유자 풀을 30초 기다려 시간 단언이 깨졌다.
+   * 멈추지 않는다 — 세션 끊기는 소유자 풀 전용 스레드에서 돌고 커밋 콜백은 미확인 표식을 달고 요청만 넣은 뒤 <b>기다리지 않고</b> 돌아온다(WD-664 9,
+   * 예전에는 상한 3초를 기다렸다). 그 사이 무관한 플랫폼 트랜잭션도 곧바로 커넥션을 얻는다. 소유자 풀이 풀리면 계속 돌던 끊기가 세션을 끊고, 실행기의 전체 동기화(잠금
+   * 안에서 다시 끊음)도 넓힌다. 고치기 전에는 커밋 콜백이 바깥 커넥션을 쥔 채 소유자 풀을 30초 기다려 시간 단언이 깨졌다.
    */
   @Test
   void levelsChanged_ownerPoolBusy_commitsDoNotStall_andSessionsAreKilledOnceFree()
@@ -1483,7 +1554,8 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
                               DEFAULT_TEST_TENANT_ID,
                               SecurityLevelsChangedEvent.Kind.REORDERED,
                               null)));
-      assertThat(elapsed).as("커밋 콜백이 소유자 풀을 30초씩 기다리지 않는다(상한 3초)").allMatch(ms -> ms < 8_000L);
+      // WD-664 9: 커밋 콜백은 끊기를 기다리지 않는다(표식 + 요청만) — 예전 상한 3초만큼도 멈추지 않는다.
+      assertThat(elapsed).as("커밋 콜백이 끊기를 기다리지 않는다(예전 상한 3초)").allMatch(ms -> ms < 2_000L);
       long start = System.nanoTime();
       TenantRlsTestSupport.runInTenantTransaction(
           fixtureTransactionTemplate, DEFAULT_TEST_TENANT_ID, () -> dsl.fetchValue("select 1"));

@@ -264,20 +264,36 @@ interface PythonReadGrantBackend {
    *
    * @param confirmed 남는 권한을 모두 회수했거나 회수할 것이 없음을 확인했는가
    * @param exposedSlots 이 변경으로 그 테이블을 더는 읽으면 안 되는 슬롯(회수 실패 슬롯 포함) — 확인 못 했을 때 실행 중 스크립트를 막을 범위
+   * @param revokedSlots 확인된 회수에서 <b>실제로</b> SELECT 를 회수한(REVOKE 가 성공한) PG 슬롯(WD-664 7) — 커밋 뒤 이 슬롯의
+   *     세션만 끊는다. 확인 못 함이면 늘 비어 있다(savepoint 가 회수를 되돌린다). Tibero 는 끊을 세션이 없어(스펙 §5.1) 늘 비어 있다
    */
-  record NarrowResult(boolean confirmed, Set<Integer> exposedSlots) {
+  record NarrowResult(boolean confirmed, Set<Integer> exposedSlots, Set<Integer> revokedSlots) {
 
+    /** 확인됨 — 실제로 회수한 슬롯 없음(회수할 권한이 원래 없었거나 Tibero). */
     static NarrowResult confirmed(Set<Integer> exposedSlots) {
-      return new NarrowResult(true, Set.copyOf(exposedSlots));
+      return confirmed(exposedSlots, Set.of());
+    }
+
+    /** 확인됨 — 실제로 회수한 슬롯과 함께(커밋 뒤 그 슬롯 세션 끊기, WD-664 7). */
+    static NarrowResult confirmed(Set<Integer> exposedSlots, Set<Integer> revokedSlots) {
+      return new NarrowResult(true, Set.copyOf(exposedSlots), Set.copyOf(revokedSlots));
     }
 
     static NarrowResult unconfirmed(Set<Integer> exposedSlots) {
-      return new NarrowResult(false, Set.copyOf(exposedSlots));
+      return new NarrowResult(false, Set.copyOf(exposedSlots), Set.of());
     }
 
     /** 대체 경로(막기)가 필요한가 — 확인 못 했고, 더는 읽으면 안 되는 슬롯이 있다(넓어지는 변경이면 필요 없다). */
     boolean needsFallback() {
       return !confirmed && !exposedSlots.isEmpty();
+    }
+
+    /**
+     * 확인된 회수 뒤 커밋 뒤 세션 끊기가 필요한가(WD-664 7) — 실제로 회수한 슬롯이 있다. PG 는 권한을 쿼리 시작 때만 보므로 회수 전에 시작한 긴 쿼리·서버
+     * 쪽 커서는 회수 뒤에도 계속 읽는다 — 그 세션을 끊는다.
+     */
+    boolean needsKillAfterCommit() {
+      return confirmed && !revokedSlots.isEmpty();
     }
   }
 
@@ -397,6 +413,9 @@ interface PythonReadGrantBackend {
   /**
    * 커밋 직전 회수({@code applyInTx(revokeOnly)}) 결과를 좁히기 결과로 바꾼다(WD-624, PG·Tibero 공통). 회수 실패가 없으면 확인됨.
    *
+   * <p>확인됨이면 실제로 회수한 슬롯({@link PythonReadGrantSync.SyncResult#revoked})을 함께 싣는다 — 리스너가 커밋 뒤 그 슬롯의
+   * 세션만 끊는다(WD-664 7).
+   *
    * <p>회수 실패면 — savepoint 가 되돌리면 성공한 회수도 사라진다(파사드). 실제 ACL 이 이전 등급보다 넓게 어긋나 있었을 수 있으므로 이전 등급을 모르는
    * 것으로 보고 "새 등급에서 못 읽는 모든 슬롯" + 실패 슬롯을 막는다(드문 경로라 넓게).
    *
@@ -411,7 +430,7 @@ interface PythonReadGrantBackend {
       long toLevelId,
       IntFunction<String> slotName) {
     if (result.revokeFailed().isEmpty()) {
-      return NarrowResult.confirmed(exposed);
+      return NarrowResult.confirmed(exposed, slotsOf(result.revoked(), slotName));
     }
     Set<Integer> wider =
         new TreeSet<>(PythonReadSlots.slotsLosingAccess(levelsAsc.get(), null, toLevelId));
