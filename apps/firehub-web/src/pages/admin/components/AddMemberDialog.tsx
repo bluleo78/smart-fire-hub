@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 
 import { rolesApi } from '../../../api/roles';
 import { usersApi } from '../../../api/users';
+import { PendingSubmitButton } from '../../../components/PendingSubmitButton';
 import { Button } from '../../../components/ui/button';
 import { Checkbox } from '../../../components/ui/checkbox';
 import {
@@ -27,6 +28,7 @@ import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { Skeleton } from '../../../components/ui/skeleton';
 import { useAuth } from '../../../hooks/useAuth';
+import { useSubmitGuard } from '../../../hooks/useSubmitGuard';
 import { applyFieldErrors, extractApiError } from '../../../lib/api-error';
 import { generateTemporaryPassword, PASSWORD_MAX_LENGTH } from '../../../lib/temp-password';
 import type { AddMemberFormData } from '../../../lib/validations/user';
@@ -153,6 +155,9 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
     reset(next ? { ...EMPTY_FORM, temporaryPassword: generateTemporaryPassword() } : EMPTY_FORM);
   };
 
+  // 제출 잠금(WD-637) — 버튼을 disabled 대신 aria-disabled 로 잠가 포커스를 지키므로, 진행 중 재제출(입력칸 Enter 연타)은 여기서 무시한다
+  const guardSubmit = useSubmitGuard();
+
   const onSubmit = async (values: AddMemberFormData) => {
     const email = values.email.trim();
     try {
@@ -263,7 +268,7 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
             </DialogFooter>
           </>
         ) : (
-          <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex min-h-0 flex-1 flex-col gap-4">
+          <form onSubmit={guardSubmit(handleSubmit(onSubmit))} noValidate className="flex min-h-0 flex-1 flex-col gap-4">
             <DialogHeader>
               <DialogTitle>멤버 추가</DialogTitle>
               <DialogDescription className="break-keep">
@@ -451,10 +456,11 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
               <Button type="button" variant="outline" disabled={isSubmitting} onClick={() => handleOpenChange(false)}>
                 취소
               </Button>
-              <Button type="submit" disabled={isSubmitting}>
+              {/* 제출 중에도 포커스가 버튼에 남도록 aria-disabled 로 잠근다(WD-637) */}
+              <PendingSubmitButton pending={isSubmitting}>
                 {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
                 추가
-              </Button>
+              </PendingSubmitButton>
             </DialogFooter>
           </form>
         )}

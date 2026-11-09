@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
 import { datasetsApi } from '../../../api/datasets';
+import { PendingSubmitButton } from '../../../components/PendingSubmitButton';
 import { Button } from '../../../components/ui/button';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
@@ -13,6 +14,7 @@ import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { useAddColumn } from '../../../hooks/queries/useDatasets';
 import { useDataStoreFeatures } from '../../../hooks/queries/useDataStoreCapabilities';
+import { useSubmitGuard } from '../../../hooks/useSubmitGuard';
 import { handleApiError } from '../../../lib/api-error';
 import type { AddColumnFormData, UpdateColumnFormData } from '../../../lib/validations/dataset';
 import {
@@ -106,6 +108,9 @@ export function ColumnDialog({
     }
   }, [column, open, mode, form]);
 
+  // 제출 잠금(WD-637) — 버튼을 disabled 대신 aria-disabled 로 잠가 포커스를 지키므로, 진행 중 재제출(입력칸 Enter 연타)은 여기서 무시한다
+  const guardSubmit = useSubmitGuard();
+
   const onSubmit = async (data: AddColumnFormData | UpdateColumnFormData) => {
     // 이름 칸 사전 검사 (WD-99) — 예약어 → 중복 순서(서버 validateNewColumnName 과 같은 우선순위). 수정 모드는 이름을 바꿀 때만
     // 본다(기존 이름을 그대로 두는 수정까지 막지 않는다).
@@ -167,7 +172,7 @@ export function ColumnDialog({
           <DialogDescription className="sr-only">데이터셋 컬럼을 추가하거나 수정합니다.</DialogDescription>
         </DialogHeader>
         {/* noValidate(WD-636): 길이 칸 min/max 를 브라우저가 먼저 막아 zod 의 한국어 인라인 오류가 가려지지 않게 한다. */}
-        <form onSubmit={form.handleSubmit(onSubmit)} noValidate className="space-y-4">
+        <form onSubmit={guardSubmit(form.handleSubmit(onSubmit))} noValidate className="space-y-4">
           {mode === 'edit' && hasData && (
             <InlineBanner>
               데이터가 있는 경우 필드명, 데이터 타입, 길이는 변경할 수 없습니다.
@@ -306,9 +311,10 @@ export function ColumnDialog({
           </div>
 
           <div className="flex gap-2">
-            <Button type="submit" className="flex-1" disabled={form.formState.isSubmitting}>
+            {/* 제출 중에도 포커스가 버튼에 남도록 aria-disabled 로 잠근다(WD-637) */}
+            <PendingSubmitButton className="flex-1" pending={form.formState.isSubmitting}>
               {form.formState.isSubmitting ? submittingLabel : submitLabel}
-            </Button>
+            </PendingSubmitButton>
             {mode === 'edit' && (
               <Button
                 type="button"

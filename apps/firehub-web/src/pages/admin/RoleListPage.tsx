@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { PendingSubmitButton } from '@/components/PendingSubmitButton';
 import { TruncatedLink } from '@/components/TruncatedLink';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { FormField } from '@/components/ui/form-field';
@@ -13,6 +14,7 @@ import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
 import { useRoleClearance } from '@/hooks/queries/useSecurityLevels';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { extractApiError, handleApiError, isNotFoundError } from '@/lib/api-error';
 import { iGa } from '@/lib/utils';
 
@@ -142,6 +144,9 @@ export default function RoleListPage() {
     setCreateError('');
   }, [nameValue]);
 
+  // 제출 잠금(WD-637) — 버튼을 disabled 대신 aria-disabled 로 잠가 포커스를 지키므로, 진행 중 재제출(입력칸 Enter 연타)은 여기서 무시한다
+  const guardCreateSubmit = useSubmitGuard();
+
   const onCreateSubmit = async (data: CreateRoleFormData) => {
     try {
       setCreateError('');
@@ -187,7 +192,7 @@ export default function RoleListPage() {
                 <DialogTitle>새 역할</DialogTitle>
                 <DialogDescription className="sr-only">새로운 사용자 역할을 생성합니다.</DialogDescription>
               </DialogHeader>
-              <form onSubmit={form.handleSubmit(onCreateSubmit)} className="space-y-4">
+              <form onSubmit={guardCreateSubmit(form.handleSubmit(onCreateSubmit))} className="space-y-4">
                 <FormField
                   label="역할 이름"
                   htmlFor="role-name"
@@ -210,9 +215,10 @@ export default function RoleListPage() {
                 {createError && (
                   <p className="text-sm text-destructive">{createError}</p>
                 )}
-                <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
+                {/* 제출 중에도 포커스가 버튼에 남도록 aria-disabled 로 잠근다(WD-637) */}
+                <PendingSubmitButton className="w-full" pending={form.formState.isSubmitting}>
                   {form.formState.isSubmitting ? '만드는 중...' : '만들기'}
-                </Button>
+                </PendingSubmitButton>
               </form>
             </DialogContent>
           </Dialog>

@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
-import { Button } from '../../../components/ui/button';
+import { PendingSubmitButton } from '../../../components/PendingSubmitButton';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { FormField } from '../../../components/ui/form-field';
 import { Input } from '../../../components/ui/input';
@@ -14,6 +14,7 @@ import { Label } from '../../../components/ui/label';
 import { Switch } from '../../../components/ui/switch';
 import { Textarea } from '../../../components/ui/textarea';
 import { useCloneDataset } from '../../../hooks/queries/useDatasets';
+import { useSubmitGuard } from '../../../hooks/useSubmitGuard';
 import { handleApiError } from '../../../lib/api-error';
 import {
   datasetDescriptionSchema,
@@ -65,6 +66,9 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
     },
   });
 
+  // 제출 잠금(WD-637) — 버튼을 disabled 대신 aria-disabled 로 잠가 포커스를 지키므로, 진행 중 재제출(입력칸 Enter 연타)은 여기서 무시한다
+  const guardSubmit = useSubmitGuard();
+
   const onSubmit = async (data: CloneFormData) => {
     try {
       const result = await cloneDataset.mutateAsync({
@@ -99,7 +103,7 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
           ({dataset.columns.length}열, {(dataset.rowCount ?? 0).toLocaleString()}행)
         </div>
 
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <form onSubmit={guardSubmit(form.handleSubmit(onSubmit))} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="clone-name">데이터셋 이름 *</Label>
             {/* 오류 문구를 aria-describedby/aria-invalid 로 입력에 연결한다 (#432, §J). */}
@@ -212,7 +216,8 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
             />
           </div>
 
-          <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
+          {/* 제출 중에도 포커스가 버튼에 남도록 aria-disabled 로 잠근다(WD-637) */}
+          <PendingSubmitButton className="w-full" pending={form.formState.isSubmitting}>
             {form.formState.isSubmitting ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -221,7 +226,7 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
             ) : (
               '복제'
             )}
-          </Button>
+          </PendingSubmitButton>
         </form>
       </DialogContent>
     </Dialog>
