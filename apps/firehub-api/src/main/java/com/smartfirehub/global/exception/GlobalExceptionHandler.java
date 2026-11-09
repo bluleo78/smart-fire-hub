@@ -69,6 +69,7 @@ import org.springframework.context.MessageSourceResolvable;
 import org.springframework.core.MethodParameter;
 import org.springframework.core.NestedRuntimeException;
 import org.springframework.core.ResolvableType;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.core.annotation.MergedAnnotation;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -104,6 +105,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
+import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
@@ -111,6 +113,7 @@ import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.multipart.support.MultipartResolutionDelegate;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.util.DisconnectedClientHelper;
 
@@ -1615,6 +1618,8 @@ public class GlobalExceptionHandler {
    *       503·501 같은 5xx 표준 예외는 500 으로 뭉개지고 Retry-After 가 사라졌다(WD-649). 로그 수준만 나눈다 — 4xx 는 클라이언트
    *       잘못이라 DEBUG, 5xx 는 서버 쪽 문제라 ERROR + 스택. 5xx 본문 문구는 예외 상세(내부 정보)를 싣지 않는 상태별 기본 한국어 문구다. 더
    *       구체적인 전용 처리(405·415·406 등)는 Spring 이 먼저 고르므로 가로채지 않는다.
+   *   <li>데이터셋 테이블 엔드포인트({@link TranslatesMissingDatasetTable})에서 새어 나온 「테이블 없음」 DB 오류는 404 「데이터셋
+   *       없음」이다(WD-601, {@link #isMissingDatasetTable}).
    *   <li>그 밖의 예외는 지금처럼 500 「예기치 않은 오류」+ ERROR 로그다.
    * </ol>
    *
@@ -1637,12 +1642,42 @@ public class GlobalExceptionHandler {
       ErrorResponse body = buildError(status, standardErrorMessage(status), null, request);
       return json(status, standard.getHeaders(), body);
     }
+    if (isMissingDatasetTable(ex, request)) {
+      // WD-601: 존재 확인 뒤 삭제가 DROP 을 커밋한 경합 — 서버 결함이 아니라 「이미 삭제됨」이라 ERROR 스택 대신 WARN 한 줄만 남긴다.
+      log.warn("데이터셋 테이블이 없어 404 로 답함(삭제 경합) on {}", request.getRequestURI());
+      return handleDatasetNotFound(new DatasetNotFoundException(), request);
+    }
     log.error("Unhandled exception", ex);
     // 화면이 서버 message 를 그대로 토스트로 보여 주므로(handleApiError) 사용자 안내 문장으로 쓴다(WD-110).
     // 예전 영어 문구("An unexpected error occurred")가 실행 실패 등에서 그대로 노출됐다.
     ErrorResponse body =
         buildError(HttpStatus.INTERNAL_SERVER_ERROR, UNEXPECTED_ERROR_MESSAGE, null, request);
     return json(HttpStatus.INTERNAL_SERVER_ERROR, body);
+  }
+
+  /**
+   * 이 예외를 「데이터셋 없음」(404)으로 답할지(WD-601) — 요청을 처리한 핸들러 메서드(없으면 그 컨트롤러)에 {@link
+   * TranslatesMissingDatasetTable} 이 켜져 있고, 예외 체인에 「테이블 없음」 DB 오류(PG 42P01·Tibero
+   * ORA-00942/JDBC-8033)가 있을 때만 참이다.
+   *
+   * <p>표지로 범위를 좁히는 이유: 사용자 SQL(SQL 편집기·애널리틱스·파이프라인)의 없는 테이블 오류까지 「데이터셋 없음」으로 바꾸면 안 된다. 핸들러는 요청
+   * 속성({@link HandlerMapping#BEST_MATCHING_HANDLER_ATTRIBUTE})에서 읽는다 — 이 메서드의 서명을 바꾸지 않아 다른 처리기가
+   * 위임하는 {@code handleException(ex, request)} 호출도 그대로 둔다.
+   */
+  private static boolean isMissingDatasetTable(Exception ex, HttpServletRequest request) {
+    if (!(request.getAttribute(HandlerMapping.BEST_MATCHING_HANDLER_ATTRIBUTE)
+        instanceof HandlerMethod handler)) {
+      return false;
+    }
+    // 메서드 표지가 클래스 표지보다 우선한다 — 클래스에 켜 두고 사용자 SQL 실행 메서드만 false 로 뺀다.
+    TranslatesMissingDatasetTable marker =
+        handler.getMethodAnnotation(TranslatesMissingDatasetTable.class);
+    if (marker == null) {
+      marker =
+          AnnotatedElementUtils.findMergedAnnotation(
+              handler.getBeanType(), TranslatesMissingDatasetTable.class);
+    }
+    return marker != null && marker.value() && DataExceptionTranslator.isUndefinedTable(ex);
   }
 
   /**

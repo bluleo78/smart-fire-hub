@@ -804,6 +804,18 @@ class ExternalStoreConnectionsTest {
     assertThat(DataExceptionTranslator.describe(e)).isNotNull();
   }
 
+  /**
+   * (WD-601) Tibero 「테이블 없음」(ORA-00942·JDBC-8033)이 커넥션 래퍼 번역을 거친 뒤에도 {@link
+   * DataExceptionTranslator#isUndefinedTable} 로 판정된다 — 데이터셋 엔드포인트가 PG 와 같이 404 「데이터셋 없음」으로 답하는 근거.
+   */
+  @ParameterizedTest
+  @ValueSource(ints = {942, -8033})
+  void wrap_tiberoTableNotFound_isUndefinedTable(int code) {
+    DataAccessException e =
+        ExternalStoreConnections.wrap(new SQLException("table not found", null, code));
+    assertThat(DataExceptionTranslator.isUndefinedTable(e)).isTrue();
+  }
+
   @Test
   void translate_messageTagOnly_stillRecognised() throws Exception {
     // 드라이버가 코드를 비워 두고 메시지에만 ORA 표기를 싣는 경우.
