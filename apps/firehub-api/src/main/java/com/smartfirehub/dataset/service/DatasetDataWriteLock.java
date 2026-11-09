@@ -4,7 +4,7 @@ import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetWriteTarget;
 import java.util.Collection;
-import java.util.List;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import org.springframework.stereotype.Component;
@@ -40,8 +40,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       #lockForStructureChange}).
  *   <li>가져오기 REPLACE 는 그 트랜잭션에서 대상 테이블에 닿는 첫 문장이 곧 TRUNCATE 다(행 수는 비운 뒤에 센다). 격상이 없으니 다른 가져오기
  *       REPLACE·데이터 쓰기와는 테이블 잠금에서 차례로 기다릴 뿐 교착하지 않는다(PG). Tibero 는 TRUNCATE 대신 DELETE 라 행을 하나씩
- *       잠그므로, 여러 행을 다른 순서로 잠그는 데이터 탭 쓰기와 겹치면 교착이 날 수 있다 — DB 가 교착을 감지해 한쪽을 실패시킨다(잠금 단계는
- *       예전과 같음).
+ *       잠그므로, 여러 행을 다른 순서로 잠그는 데이터 탭 쓰기와 겹치면 교착이 날 수 있다 — DB 가 교착을 감지해 한쪽을 실패시킨다(잠금 단계는 예전과 같음).
  *   <li>필드 변경·데이터셋 삭제(FOR UPDATE)와는 KEY SHARE 로도 충돌하므로 컬럼 ALTER·DROP 과 겹치지 않는다 — 구조 변경 쪽 직렬화는 그대로다.
  *   <li>PK 없는 교체는 파일 전체를 삽입하는 동안 잠금을 쥔다. FOR UPDATE 로 올리면 그동안 이름·설명 수정까지 막혀, 이 사다리가 피하려던 「긴 적재가 이름
  *       변경을 붙잡는」 일이 다시 생긴다.
@@ -53,7 +52,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 실패한다. 스테이징·임시 테이블 쓰기는 다른 테이블이라 잠그지 않는다 — 실제 테이블에 닿는 promote·맞바꿈에서 잠근다.
  *
  * <p><b>순서.</b> 항상 「데이터셋 행 → (테넌트 동기화 잠금) → 데이터 테이블」이다. 여러 데이터셋을 잠글 때는 id 오름차순으로 잡아 서로 거꾸로 기다리지 않게
- * 한다.
+ * 한다. 데이터셋 삭제 잠금(FOR UPDATE)은 증표 {@link DatasetDeleteLock} 이 잡는다(WD-675 — 규칙은 그 클래스 문서).
  *
  * <p><b>트랜잭션.</b> 잠금은 현재 Spring 트랜잭션에 묶여 커밋·롤백 때 풀린다. 트랜잭션 밖에서 잡으면 문장이 끝나자마자 풀려 아무것도 막지 못하므로 {@link
  * IllegalStateException} 으로 거부한다. 데이터 저장소가 플랫폼 DB 와 따로인 설치본(WD-494)에서는 잠금이 플랫폼 트랜잭션에 있고 쓰기는 저장소
@@ -140,17 +139,6 @@ public class DatasetDataWriteLock {
   }
 
   /**
-   * 지울 데이터셋 여럿의 행을 id 오름차순으로 삭제 잠금(FOR UPDATE)한다 — 파이프라인 임시 데이터셋 일괄 삭제용(WD-672). 오름차순이라 두 일괄 삭제가 서로
-   * 거꾸로 기다리지 않고, 테넌트 동기화 잠금·테이블 DROP 보다 먼저 잡아 「데이터셋 행 → 동기화 → 테이블」 순서를 지킨다.
-   *
-   * @return 실제로 잠근(아직 남아 있는) 데이터셋 id 들(오름차순). 기다리는 동안 이미 지워진 행은 빠진다 — 호출자는 그 id 를 건너뛴다.
-   */
-  public List<Long> lockAllForDelete(Collection<Long> datasetIds) {
-    requireTransaction();
-    return datasetIds.stream().sorted().filter(datasetRepository::lockForDelete).toList();
-  }
-
-  /**
    * 트랜잭션(없으면 새로, 있으면 합류)을 열어 출력 테이블의 데이터 쓰기 잠금을 잡은 뒤 {@code body} 를 실행한다. 페이지·배치마다 커밋하는 파이프라인 적재와
    * 맞바꿈이 쓴다 — 잠금과 쓰기가 같은 트랜잭션에 있어야 잠금이 쓰기 커밋까지 유지된다.
    */
@@ -180,7 +168,8 @@ public class DatasetDataWriteLock {
    * <p>WD-674: 잠금을 잡을 때 데이터셋이 없으면 {@code onGone} 이 만든 예외를 던진다. 이 변환은 잠금 한 문장에만 걸린다 — {@code body}
    * 안에서 난 {@link DatasetNotFoundException} 은 그대로 올라가, 무관한 「없음」이 「쓰는 중 삭제됨」으로 잘못 안내되지 않는다.
    *
-   * @param onGone 잠금 시점에 데이터셋이 없을 때(없거나 기다리는 동안 삭제됨) 던질 예외를 만든다 — {@code body} 는 실행되지 않는다
+   * @param onGone 잠금 시점에 데이터셋이 없을 때(없거나 기다리는 동안 삭제됨) 던질 예외를 만든다 — {@code body} 는 실행되지 않는다. null 을
+   *     돌려주면 호출자 버그이므로 그 사실을 담은 {@link NullPointerException} 이다(WD-675)
    */
   public <T> T writeToDataset(
       Long datasetId,
@@ -191,14 +180,17 @@ public class DatasetDataWriteLock {
           try {
             lockForDataWrite(datasetId);
           } catch (DatasetNotFoundException e) {
-            throw onGone.apply(e);
+            // WD-675: onGone 이 null 을 돌려주면 `throw null` 이 원인 없는 NPE 가 된다.
+            // 호출자 버그를 숨기지 않고 무엇이 잘못됐는지 남긴다.
+            throw Objects.requireNonNull(
+                onGone.apply(e), "writeToDataset 의 onGone 이 던질 예외를 만들지 않았습니다(null)");
           }
           return body.get();
         });
   }
 
-  /** 잠금이 문장 끝에서 바로 풀리는 실수를 막는다 — 트랜잭션 밖 호출은 버그다. */
-  private static void requireTransaction() {
+  /** 잠금이 문장 끝에서 바로 풀리는 실수를 막는다 — 트랜잭션 밖 호출은 버그다. 삭제 잠금 증표(DatasetDeleteLock)도 같은 확인을 쓴다(WD-675). */
+  static void requireTransaction() {
     if (!TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException("데이터셋 쓰기 잠금은 트랜잭션 안에서만 잡을 수 있습니다");
     }

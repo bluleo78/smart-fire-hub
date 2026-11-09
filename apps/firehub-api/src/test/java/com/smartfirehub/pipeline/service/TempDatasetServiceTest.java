@@ -10,7 +10,6 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
-import com.smartfirehub.support.PassThroughWriteLock;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -156,9 +155,7 @@ class TempDatasetServiceTest {
             datasetService,
             columnRepository,
             new DataTableService(com.smartfirehub.support.ReservedNameResolvers.postgres()),
-            org.mockito.Mockito.mock(PipelineDataSchema.class),
-            // WD-674: 맨 목은 삭제 잠금이 빈 목록을 돌려줘 삭제가 조용히 건너뛰어진다 — 실제처럼 통과시키는 잠금을 쓴다.
-            PassThroughWriteLock.create());
+            org.mockito.Mockito.mock(PipelineDataSchema.class));
     String col63 = "c_" + "x".repeat(61);
     String col64 = "c_" + "x".repeat(62);
 

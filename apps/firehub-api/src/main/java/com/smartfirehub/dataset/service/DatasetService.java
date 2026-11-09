@@ -807,34 +807,57 @@ public class DatasetService {
     // 행이 없어 404 로 끝나 참조 검사·색인 삭제·DROP·감사가 한 번만 돈다. 행을 가장 먼저 잡아 컬럼·테이블 잠금보다 앞서므로 필드 변경
     // 경로(데이터셋 행 → 테이블)와 잠금 순서가 같다. 데이터 쓰기(DatasetDataWriteLock — 같은 행 KEY SHARE, WD-666)도 이 잠금 뒤로 줄
     // 서므로, DROP 이 커밋된 뒤 들어온 행 추가는 「테이블 없음」 500 이 아니라 404 로 끝난다.
-    if (!datasetRepository.lockForDelete(id)) {
+    // WD-675: 행 잠금은 삭제 잠금 증표가 건다 — 일괄 삭제와 같은 길(잠금 규칙은 DatasetDeleteLock 문서).
+    DatasetDeleteLock lock = DatasetDeleteLock.acquire(datasetRepository, List.of(id));
+    if (lock.lockedIds().isEmpty()) {
       throw new DatasetNotFoundException();
     }
-    deleteRowLockedDataset(id, false);
+    deleteLocked(lock, true);
   }
 
   /**
-   * 호출자가 이미 데이터셋 행 삭제 잠금(FOR UPDATE)과 테넌트 동기화 잠금을 쥔 채로 데이터셋을 지운다 — 파이프라인 임시 데이터셋 일괄 삭제({@code
-   * TempDatasetService.deleteTempDatasets})용(WD-674). 일괄 삭제는 지울 행 전부를 id 오름차순으로 잠근 뒤 동기화 잠금을 한 번
-   * 잡는다(순서 「데이터셋 행 → 동기화 → 테이블」). 예전에는 그 뒤 데이터셋마다 {@link #deleteDataset} 을 불러 같은 행 잠금·동기화 잠금을 다시
-   * 잡았다 — 같은 트랜잭션이라 막히지는 않지만(행 잠금 재획득·트랜잭션 advisory 재진입) 쓸데없는 왕복이고, 순서 규칙을 두 곳이 따로 지켜야 했다.
+   * 이 트랜잭션에서 삭제 잠금한 데이터셋들을 지운다 — 파이프라인 임시 데이터셋 일괄 삭제({@code
+   * TempDatasetService.deleteTempDatasets})용(WD-674). 예전에는 데이터셋마다 {@link #deleteDataset} 을 불러 같은 행
+   * 잠금·동기화 잠금을 다시 잡았다. 선행 조건(행 잠금)과 동기화 잠금 시점은 증표 {@link DatasetDeleteLock} 의 규칙을 따른다(WD-675).
    *
    * <p>잠금이 커밋까지 유지돼야 하므로 바깥 트랜잭션 안에서만 부를 수 있다(MANDATORY). 참조 검사·404 방어·감사는 {@link #deleteDataset} 과
    * 같은 본문을 쓴다.
+   *
+   * @throws IllegalStateException 증표를 만든 트랜잭션이 이미 끝났을 때
    */
   @Transactional(propagation = Propagation.MANDATORY)
-  public void deleteLockedDataset(Long id) {
-    deleteRowLockedDataset(id, true);
+  public void deleteLockedDatasets(DatasetDeleteLock lock) {
+    deleteLocked(lock, false);
   }
 
   /**
-   * 데이터셋 행이 이미 삭제 잠금된 상태에서의 삭제 본문 — {@link #deleteDataset}·{@link #deleteLockedDataset} 이 함께 쓴다.
+   * 단건·일괄 삭제 공용 — 증표의 데이터셋을 읽고 지운다. 동기화 잠금 시점은 {@link DatasetDeleteLock} 문서의 규칙대로다.
    *
-   * @param syncLockHeld 호출자가 테넌트 동기화 잠금을 이미 쥐었는지 — 아니면 테이블 DROP 직전에 여기서 잡는다
+   * @param syncBeforeDrop true 면 단건 삭제 — 테이블 DROP 직전에 동기화 잠금을 잡는다. false 면 일괄 삭제 — 테이블 있는 데이터셋이
+   *     하나라도 있으면 첫 삭제 전에 한 번 잡는다
    */
-  private void deleteRowLockedDataset(Long id, boolean syncLockHeld) {
-    DatasetResponse dataset =
-        datasetRepository.findById(id).orElseThrow(() -> new DatasetNotFoundException());
+  private void deleteLocked(DatasetDeleteLock lock, boolean syncBeforeDrop) {
+    lock.requireActive();
+    List<DatasetResponse> datasets = new ArrayList<>();
+    for (Long id : lock.lockedIds()) {
+      datasets.add(
+          datasetRepository.findById(id).orElseThrow(() -> new DatasetNotFoundException()));
+    }
+    if (!syncBeforeDrop && datasets.stream().anyMatch(d -> isTableBacked(d.storageType()))) {
+      dataTableService.lockTenantGrantSyncForDdl();
+    }
+    for (DatasetResponse dataset : datasets) {
+      deleteRowLockedDataset(dataset, syncBeforeDrop);
+    }
+  }
+
+  /**
+   * 데이터셋 행이 이미 삭제 잠금된 상태에서의 데이터셋 하나 삭제 본문.
+   *
+   * @param syncBeforeDrop 테이블 DROP 직전에 동기화 잠금을 잡을지(단건 삭제) — 일괄 삭제는 이미 잡았다
+   */
+  private void deleteRowLockedDataset(DatasetResponse dataset, boolean syncBeforeDrop) {
+    Long id = dataset.id();
 
     // 파이프라인 스텝 출력 데이터셋으로 참조 중인 경우 삭제 불가 (#126)
     // FK 위반 500 오류를 방지하기 위해 삭제 전 참조 건수를 확인한다.
@@ -852,8 +875,8 @@ public class DatasetService {
       // 색인·원본·(TEMP 면) 재생성 보관본까지 기존 테이블 여럿을 이 트랜잭션에서 지운다 — 어떤 테이블 잠금보다 먼저 테넌트 PYTHON 읽기 권한
       // 동기화 잠금을 잡는다(WD-629, 잠금 순서 규칙). 순서는 「데이터셋 행 → 동기화 → 테이블」 하나다
       // (WD-666 — 출력 맞바꿈·임시 데이터셋 일괄 삭제도 같은 순서. WD-655 는 이 순서를 바꾸지 않는다).
-      // 임시 데이터셋 일괄 삭제(deleteLockedDataset)는 행 전부를 잠근 뒤 이 잠금을 이미 한 번 잡았으므로 다시 잡지 않는다(WD-674).
-      if (!syncLockHeld) {
+      // 일괄 삭제는 삭제 시작 전에 이미 잡았다(WD-675, DatasetDeleteLock 문서).
+      if (syncBeforeDrop) {
         dataTableService.lockTenantGrantSyncForDdl();
       }
       // 색인 테이블은 FK 가 없어 CASCADE 로 사라지지 않는다 — 원본과 함께 지운다.
