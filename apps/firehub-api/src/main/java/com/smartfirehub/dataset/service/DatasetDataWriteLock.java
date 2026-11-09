@@ -189,10 +189,18 @@ public class DatasetDataWriteLock {
         });
   }
 
-  /** 잠금이 문장 끝에서 바로 풀리는 실수를 막는다 — 트랜잭션 밖 호출은 버그다. 삭제 잠금 증표(DatasetDeleteLock)도 같은 확인을 쓴다(WD-675). */
+  /** 잠금이 문장 끝에서 바로 풀리는 실수를 막는다 — 트랜잭션 밖 호출은 버그다. */
   static void requireTransaction() {
+    requireTransaction("데이터셋 쓰기 잠금은 트랜잭션 안에서만 잡을 수 있습니다");
+  }
+
+  /**
+   * {@link #requireTransaction()} 의 거부 문구를 호출자가 고르는 판 — 삭제 잠금 증표(DatasetDeleteLock)가 같은 확인을 쓰면서 「쓰기
+   * 잠금」이 아닌 자기 이름으로 안내하게 한다(WD-675·WD-680).
+   */
+  static void requireTransaction(String outsideTransactionMessage) {
     if (!TransactionSynchronizationManager.isActualTransactionActive()) {
-      throw new IllegalStateException("데이터셋 쓰기 잠금은 트랜잭션 안에서만 잡을 수 있습니다");
+      throw new IllegalStateException(outsideTransactionMessage);
     }
   }
 }

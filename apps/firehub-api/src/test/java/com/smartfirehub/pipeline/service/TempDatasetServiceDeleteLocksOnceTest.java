@@ -171,6 +171,16 @@ class TempDatasetServiceDeleteLocksOnceTest {
     verify(datasetRepository).deleteById(10L);
   }
 
+  @Test
+  void 같은_id_가_두_번_와도_한_번만_지운다() {
+    // WD-680: 증표가 중복 id 를 걸러 내지 않으면 같은 데이터셋의 DROP·행 삭제가 두 번 돈다(두 번째는 404 로 트랜잭션 전체 롤백)
+    tempDatasetService.deleteTempDatasets(List.of(10L, 10L));
+
+    verify(datasetRepository, times(1)).lockForDelete(10L);
+    verify(dataTableService, times(1)).dropTable(table(10L));
+    verify(datasetRepository, times(1)).deleteById(10L);
+  }
+
   private static String table(long id) {
     return "ptmp_" + id;
   }
