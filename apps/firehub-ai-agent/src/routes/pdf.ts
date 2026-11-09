@@ -29,6 +29,9 @@ async function getBrowser(): Promise<Browser> {
         // 내부 호스트·포트를 TCP 로 두드릴 수 있다(실측: 차단된 <img> 하나에 연결 1건). 모든 호스트 이름과
         // IP 리터럴의 해석을 실패시켜 브라우저가 어떤 주소에도 연결하지 못하게 한다. 리포트는 외부
         // 리소스가 필요 없으므로 잃는 것이 없다.
+        // WD-697 실측(Chrome 153): 이 규칙은 IP 리터럴(127.0.0.1·[::1]·169.254.169.254)에도 적용돼, 가로채기에
+        // 보이지 않는 preconnect·preload·iframe·meta refresh 의 투기적 TCP 연결까지 0건이 된다(net-log TCP_CONNECT 0).
+        // 그래서 프록시(--proxy-server) 백스톱은 두지 않는다 — 회귀는 pdf.ssrf.test.ts 의 원시 TCP accept 검사가 잡는다.
         '--host-resolver-rules=MAP * ~NOTFOUND',
       ],
     });
