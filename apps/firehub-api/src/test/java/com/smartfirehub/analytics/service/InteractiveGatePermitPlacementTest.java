@@ -12,6 +12,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -26,6 +27,7 @@ import com.smartfirehub.analytics.service.AnalyticsServiceFixtures.ChartFixture;
 import com.smartfirehub.analytics.service.AnalyticsServiceFixtures.DashFixture;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import com.smartfirehub.support.TxRecordingInteractiveGate;
 import java.util.Optional;
 import java.util.Set;
@@ -395,5 +397,41 @@ class InteractiveGatePermitPlacementTest {
     assertThat(widgetOf(r, 100L).queryResult()).isEqualTo(RESULT);
     assertLimitedWidget(widgetOf(r, 101L), AnalyticsQueryConcurrencyGate.USER_LIMIT_MESSAGE);
     assertThat(active(gate)).isZero();
+  }
+
+  // ---------------------------------------------------------------- WD-684: 실행 직전 재판정
+
+  /** PG 차트 — 허가 구간 안에서 한 번 더 판정한다(앞 판정 + 재판정 = 2회). 재판정 거부면 실행하지 않고 200 denied. */
+  @Test
+  void pgChart_rejudgesInsidePermit_deniedRejudgmentNotExecuted() {
+    TxRecordingInteractiveGate gate = gate(LONG_WAIT_MS);
+    ChartFixture f = chart(gate, false);
+    GuardedSqlExecutor.AnalyticsJudgment denied = AnalyticsServiceFixtures.judgment(true);
+    GuardedSqlExecutor.AnalyticsJudgment allowed = AnalyticsServiceFixtures.judgment(false);
+    when(f.executor().judgeAnalytics(any(), anyString())).thenReturn(allowed, denied);
+
+    ChartDataResponse r = f.service().getChartData(1L, USER);
+
+    assertThat(r.denied()).isTrue();
+    assertThat(gate.acquireTx).hasSize(1);
+    verify(f.executor(), times(2)).judgeAnalytics(any(), anyString());
+    verify(f.executor(), never()).executeJudgedAnalytics(any(), anyInt(), anyBoolean());
+    assertThat(active(gate)).isZero();
+  }
+
+  /** Tibero 차트·대시보드 — 허가를 기다리지 않으므로(게이트가 지나지 않음) 재판정 없이 앞 판정 토큰을 한 번만 판정해 실행한다. */
+  @Test
+  void tibero_noPermitWait_judgesOnce() {
+    TxRecordingInteractiveGate gate = gate(LONG_WAIT_MS);
+    ChartFixture c = chartFixture(tx(), schema(true), gate, false, NONE, NONE);
+    c.service().getChartData(1L, USER);
+    verify(c.executor(), times(1)).judgeAnalytics(any(), anyString());
+    verify(c.executor(), times(1)).executeJudgedAnalytics(any(), anyInt(), anyBoolean());
+
+    DashFixture d = dashFixture(tx(), schema(true), gate, Set.of(), NONE, NONE);
+    d.service().getDashboardData(1L, USER);
+    verify(d.chartService(), times(2)).judge(any(), anyString());
+    verify(d.chartService(), times(2)).executeJudged(any());
+    assertThat(gate.acquireTx).isEmpty();
   }
 }
