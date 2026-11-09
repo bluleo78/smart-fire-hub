@@ -26,11 +26,13 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.security.PermissionInterceptor;
 import com.smartfirehub.global.validation.DescriptionLimits;
+import com.smartfirehub.global.validation.SearchQueryLimits;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -257,6 +259,36 @@ class DatasetControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].datasetId").value(42))
         .andExpect(jsonPath("$[0].storageType").value("TABLE"));
+  }
+
+  @Test
+  void searchDatasets_queryOverMaxLength_returns400WithoutCallingService() throws Exception {
+    // WD-600: 1,001자 질의는 임베딩 provider·키워드 SQL 로 가기 전에 400(한국어 문구) — 서비스 미호출.
+    String query = "가".repeat(SearchQueryLimits.MAX_QUERY_LENGTH + 1);
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/search")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("query", query))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.query").value(SearchQueryLimits.QUERY_TOO_LONG));
+    verify(datasetSearchService, never()).search(any(), any());
+  }
+
+  @Test
+  void searchDatasets_queryAtMaxLength_passesToService() throws Exception {
+    // WD-600 경계값: 정확히 1,000자는 통과해 서비스로 전달된다.
+    when(datasetSearchService.search(any(), any())).thenReturn(List.of());
+    String query = "가".repeat(SearchQueryLimits.MAX_QUERY_LENGTH);
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/search")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("query", query))))
+        .andExpect(status().isOk());
+    verify(datasetSearchService).search(any(), any());
   }
 
   @Test

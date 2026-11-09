@@ -5,6 +5,7 @@ import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { useSearchDocuments } from '../../../hooks/queries/useDocuments';
+import { MAX_SEARCH_QUERY_LENGTH } from '../../../lib/validations/search-query';
 import type { DocumentSearchHit, DocumentSearchMode } from '../../../types/document';
 
 interface DocumentSearchPanelProps {
@@ -67,6 +68,8 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
             <Input
               className="flex-1"
               placeholder="검색어를 입력하세요"
+              // 서버 검색어 상한(1,000자, WD-600)과 같은 값 — 넘기면 400 이 되므로 입력 단계에서 막는다.
+              maxLength={MAX_SEARCH_QUERY_LENGTH}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}

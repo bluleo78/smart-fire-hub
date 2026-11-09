@@ -73,10 +73,14 @@ public class DatasetController {
     return ResponseEntity.ok(response);
   }
 
-  /** 데이터셋 카탈로그 시맨틱+키워드 하이브리드 검색 (AI discovery 진입점). */
+  /**
+   * 데이터셋 카탈로그 시맨틱+키워드 하이브리드 검색 (AI discovery 진입점).
+   *
+   * <p>{@code @Valid}: query 길이 상한(WD-600)을 검증해 초과 질의가 임베딩 provider 로 가기 전에 400 으로 거절한다.
+   */
   @PostMapping("/search")
   @RequirePermission("dataset:read")
-  public List<DatasetSearchHit> searchDatasets(@RequestBody DatasetSearchRequest request) {
+  public List<DatasetSearchHit> searchDatasets(@Valid @RequestBody DatasetSearchRequest request) {
     // find_datasets(ai-agent)도 이 경로 — 이름·설명이 결과로 나가므로 가시성 조건 필수(스펙 §4.2 1행).
     return datasetSearchService.search(request, clearanceResolver.current());
   }

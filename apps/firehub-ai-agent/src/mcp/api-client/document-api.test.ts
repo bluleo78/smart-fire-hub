@@ -63,4 +63,14 @@ describe('documentApi (via FireHubApiClient)', () => {
     const result = await client.searchDocuments('질의', undefined, undefined, 'KEYWORD');
     expect(result).toEqual(mock);
   });
+
+  it('searchDocuments 는 1,000자를 넘는 질의를 api 상한으로 잘라 보낸다 (WD-600)', async () => {
+    // graphrag_query·search_documents 는 사용자 질문 전체를 넘긴다 — 400 으로 도구가 실패하지 않게 앞 1,000자만 보낸다.
+    const long = '가'.repeat(1500);
+    const scope = nock(BASE_URL)
+      .post('/documents/search', (body) => body.query === '가'.repeat(1000))
+      .reply(200, []);
+    await expect(client.searchDocuments(long, undefined, undefined)).resolves.toEqual([]);
+    expect(scope.isDone()).toBe(true);
+  });
 });
