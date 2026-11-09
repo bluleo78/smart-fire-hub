@@ -1003,6 +1003,10 @@ test.describe('AI 동작 설정 — 테넌트 전용 평면 설정', () => {
     // 저장된 필드: 값만 보이고 힌트는 없다
     await expect(page.locator('#ai-temperature')).toHaveValue('0.7');
     await expect(defaultHint(fieldBox(page, 'ai-temperature'))).toHaveCount(0);
+    // WD-660: 배지가 없으면 라벨 줄 감싸개(flex)도 없다 — 기본값일 때만 labelAddon 을 넘긴다. 배지가 있는 칸은 감싼다.
+    await expect(page.locator('label[for="ai-temperature"]').locator('xpath=..')).not.toHaveClass(/\bflex\b/);
+    await expect(page.locator('label[for="ai-max-turns"]').locator('xpath=..')).toHaveClass(/\bflex\b/);
+    await expect(page.locator('label[for="ai-model"]').locator('xpath=..')).toHaveClass(/\bflex\b/);
     // 저장 안 한 5키만 힌트를 단다(모델·최대 턴 수·최대 응답 토큰·세션 최대 토큰·시스템 프롬프트)
     await expect(defaultHint(panel)).toHaveCount(5);
 

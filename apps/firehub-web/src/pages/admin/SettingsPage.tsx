@@ -16,7 +16,8 @@ import {
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { FormField } from '../../components/ui/form-field';
+import { FormField, FormFieldLabelRow } from '../../components/ui/form-field';
+import { linkedAriaProps } from '../../components/ui/form-field-aria';
 import { InlineBanner } from '../../components/ui/inline-banner';
 import { Input } from '../../components/ui/input';
 import {
@@ -51,7 +52,6 @@ import AiClassifySettingsTab from './AiClassifySettingsTab';
 import { AiCredentialFieldset, OpencodeModelField } from './AiCredentialFieldset';
 import EmbeddingSettingsTab from './EmbeddingSettingsTab';
 import SecurityOnlySettingsPage from './security/SecurityOnlySettingsPage';
-import { SettingFieldLabel } from './settings-lock';
 import SmtpSettingsTab from './SmtpSettingsTab';
 
 // 데이터 보안 탭은 security:settings 보유자만 열므로 지연 로딩한다.
@@ -151,14 +151,6 @@ function fieldIds(key: keyof AIBehaviorForm) {
 }
 
 /**
- * aria-describedby 값을 실제로 그려진 문구 id 만으로 만든다(WD-643) — 그려지지 않은 문구(false)는 뺀다.
- * 순서: 오류 → 설명 → 글자 수(FormField 의 오류 → 설명 → 안내와 같은 규칙).
- */
-function describedBy(...ids: (string | false)[]): string {
-  return ids.filter(Boolean).join(' ');
-}
-
-/**
  * AI 동작 설정의 숫자 칸 하나 — 공용 FormField 의 얇은 감싸개(WD-643).
  *
  * 네 칸(최대 턴 수·Temperature·최대 응답 토큰·세션 최대 토큰)이 같은 모양이라 입력 속성만 여기서 정한다.
@@ -199,7 +191,7 @@ function AiNumberSettingField({
     <FormField
       label={label}
       htmlFor={input}
-      labelAddon={<DefaultHint show={isDefault} />}
+      labelAddon={defaultHint(isDefault)}
       error={error}
       announceError={false}
       description={description}
@@ -223,9 +215,10 @@ function AiNumberSettingField({
 /**
  * 저장한 적 없는(=코드 기본값이 적용 중인) 필드 라벨 옆에 붙는 작은 힌트.
  * 저장된 필드에는 아무것도 붙이지 않는다 — 입력창의 값이 곧 적용 중인 값이라 따로 알릴 것이 없다.
+ * 보일 때만 요소를, 아니면 undefined 를 돌려준다(WD-660) — 라벨 줄은 덧붙임이 있을 때만 감싸므로 null 을 그리는 요소를 넘기지 않는다.
  */
-function DefaultHint({ show }: { show: boolean }) {
-  if (!show) return null;
+function defaultHint(show: boolean): ReactNode | undefined {
+  if (!show) return undefined;
   return (
     <Badge variant="outline" className="font-normal text-muted-foreground">
       기본값
@@ -713,12 +706,9 @@ function AdminSettingsPage() {
                   남는다"). opencode 는 자격증명의 providerId/모델 불러오기 결과에 딸린 4상태
                   칸(`OpencodeModelField`)을, 나머지 세 유형은 옛 정적 Claude 모델 목록을 쓴다. */}
               <div className="space-y-2">
-                <SettingFieldLabel
-                  htmlFor="ai-model"
-                  badge={<DefaultHint show={isDefault('ai.model')} />}
-                >
+                <FormFieldLabelRow htmlFor="ai-model" addon={defaultHint(isDefault('ai.model'))}>
                   모델
-                </SettingFieldLabel>
+                </FormFieldLabelRow>
                 {cred.agentType === 'opencode' ? (
                   <OpencodeModelField
                     cred={cred}
@@ -830,7 +820,7 @@ function AdminSettingsPage() {
               <CardTitle className="flex flex-wrap items-center gap-2">
                 {/* 아래 Textarea 의 aria-labelledby 대상 — placeholder 는 입력하면 사라져 이름이 못 된다(WD-590). */}
                 <span id="ai-system-prompt-label">시스템 프롬프트</span>
-                <DefaultHint show={isDefault('ai.system_prompt')} />
+                {defaultHint(isDefault('ai.system_prompt'))}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -838,13 +828,13 @@ function AdminSettingsPage() {
                 <Textarea
                   id={promptIds.input}
                   aria-labelledby="ai-system-prompt-label"
-                  aria-invalid={errors['ai.system_prompt'] ? true : undefined}
                   // WD-643: 실제로 그려진 문구 id 만 잇는다 — 오류(있을 때)·설명(늘)·글자 수(상한을 넘었을 때).
-                  aria-describedby={describedBy(
-                    errors['ai.system_prompt'] ? promptIds.error : false,
-                    promptIds.desc,
-                    systemPromptOverLimit ? promptIds.count : false,
-                  )}
+                  // WD-660: describedby 순서·aria-invalid 규칙은 FormField 와 같은 도우미(linkedAriaProps)를 쓴다 — 글자 수는 안내 자리.
+                  {...linkedAriaProps({
+                    error: errors['ai.system_prompt'] ? promptIds.error : undefined,
+                    desc: promptIds.desc,
+                    hint: systemPromptOverLimit ? promptIds.count : undefined,
+                  })}
                   rows={15}
                   className="font-mono text-sm"
                   value={form['ai.system_prompt']}

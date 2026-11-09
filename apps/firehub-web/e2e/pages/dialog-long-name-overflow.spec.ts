@@ -1,8 +1,10 @@
 import type { Page } from '@playwright/test';
 
+import { createApiConnection } from '../factories/admin.factory';
 import { createMessage } from '../factories/ai-insight.factory';
-import { createCategories, createColumn, createDatasetDetail } from '../factories/dataset.factory';
+import { createCategories, createCategory, createColumn, createDatasetDetail } from '../factories/dataset.factory';
 import { createEntityReviewItem } from '../factories/reviewItem.factory';
+import { setupAdminAuth, setupApiConnectionListMocks } from '../fixtures/admin.fixture';
 import { setupJobListMocks, setupNotificationPanelMocks } from '../fixtures/ai-insight.fixture';
 import { createPageResponse, mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
@@ -168,5 +170,59 @@ test.describe('일반 대화상자·알림 상세 긴 이름 넘침 (WD-648)', (
     const title = panel.getByText(LONG_MESSAGE_TITLE, { exact: true });
     await expectWrapped(title);
     await expectWithin(title, panel);
+  });
+});
+
+/** API 연결 이름 — 공백 없는 긴 이름 */
+const LONG_CONNECTION_NAME = 'C'.repeat(100);
+/** API 연결 Base URL — 공백 없는 긴 경로(삭제 확인 설명에 ID 와 함께 실린다) */
+const LONG_BASE_URL = `https://api.example.com/${'p'.repeat(200)}`;
+/** 카테고리 이름 — 공백 없는 긴 이름 */
+const LONG_CATEGORY_NAME = 'K'.repeat(80);
+
+/**
+ * 확인 대화상자 긴 값 E2E (WD-660, WD-648 리뷰 후속) — 확인 대화상자(AlertDialog) 설명에 실리는 사용자 값(이름·URL)은
+ * 공백이 없어도 창 안에서 줄바꿈되고 확인 버튼이 화면 안에 남는다. 대표 사용처 두 곳을 고정한다.
+ */
+test.describe('확인 대화상자 긴 값 (WD-660)', () => {
+  test('API 연결 삭제 확인 — 100자 이름과 긴 Base URL 이 줄바꿈되고 삭제 버튼이 화면 안에 남는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAdminAuth(page);
+    await setupApiConnectionListMocks(page);
+    // 목록만 긴 이름·URL 로 덮어쓴다(나중에 등록한 route 가 우선)
+    await mockApi(page, 'GET', '/api/v1/api-connections', [
+      createApiConnection({ id: 1, name: LONG_CONNECTION_NAME, baseUrl: LONG_BASE_URL }),
+    ]);
+
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: `${LONG_CONNECTION_NAME} 삭제` }).click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toBeVisible();
+    const description = dialog.getByText(LONG_BASE_URL, { exact: false });
+    await expect(description).toContainText(LONG_CONNECTION_NAME);
+    await expectWrapped(description);
+    await expectWithin(description, dialog);
+    await expectDialogContained(dialog, dialog.getByRole('button', { name: '삭제', exact: true }));
+  });
+
+  test('카테고리 삭제 확인 — 공백 없는 긴 카테고리 이름이 줄바꿈되고 삭제 버튼이 화면 안에 남는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await grantDatasetPermissions(page);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', [
+      createCategory({ id: 1, name: LONG_CATEGORY_NAME, description: '긴 이름 카테고리' }),
+    ]);
+
+    await page.goto('/data/categories');
+    await page.getByRole('button', { name: `${LONG_CATEGORY_NAME} 삭제` }).click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toBeVisible();
+    const description = dialog.getByText(LONG_CATEGORY_NAME, { exact: false }).first();
+    await expectWrapped(description);
+    await expectWithin(description, dialog);
+    await expectDialogContained(dialog, dialog.getByRole('button', { name: '삭제', exact: true }));
   });
 });

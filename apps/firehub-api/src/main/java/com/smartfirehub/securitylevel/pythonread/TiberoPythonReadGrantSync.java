@@ -60,11 +60,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p><b>재판정 규칙(WD-629 → WD-645).</b> Tibero 는 USER_TABLES 에서 이름이 사라져도 권한이 사라졌다는 보장이 없다 — 재생성은 테이블을
  * 보관본 이름으로 RENAME 하고({@code TiberoRebuildBackup}) 휴지통은 DROP 된 테이블을 {@code BIN$...} 객체로 남기며, GRANT 는
  * 둘 다 따라간다. 그래서 "이름이 안 보이면 넘어간다" 는 완화는 쓰지 않는다(PG 판도 테이블 잠금 실패 뒤 옛 이름이 없으면 RENAME 일 수 있어 같은 근거로 회수
- * 실패로 센다 — WD-655). 대신 첫 판에 휴지통 객체가 아닌 회수 실패가 있으면 같은 연결·PG 트랜잭션·테넌트 잠금 안에서 <b>한 번만</b> 대상 계정 그대로,
- * 테이블 범위만 테넌트 전체로 넓혀 다시 맞추고, 그 판의 결과(다시 읽은 실제 권한 기준)가 첫 판의 실패 목록을 바꾼다. 판정이 이름이 아니라 남은 권한이므로
- * fail-open 이 아니다 — 권한까지 사라졌거나 새 이름으로 회수되면 실패가 아니고, 권한이 남으면 여전히 회수 실패다(fail-closed). 휴지통 객체 실패만 있으면
- * OWNER 가 회수할 수 없어 다시 해도 같으므로 재판정하지 않는다(실패는 남는다). 실패가 없으면 추가 조회·문장이 없고, 대기·세 번째 시도도 없다(다음 동기화가 다시
- * 맞춘다).
+ * 실패로 센다 — WD-655). 대신 첫 판에 휴지통 객체가 아닌 회수 실패가 있으면 같은 연결·PG 트랜잭션·테넌트 잠금 안에서 <b>한 번만</b> 다시 맞추고(읽는
+ * 범위·넓히는 범위는 {@link #applyPass}, WD-660), 그 판의 결과(다시 읽은 실제 권한 기준)가 첫 판의 실패 목록을 바꾼다. 판정이 이름이 아니라 남은
+ * 권한이므로 fail-open 이 아니다 — 권한까지 사라졌거나 새 이름으로 회수되면 실패가 아니고, 권한이 남으면 여전히 회수 실패다(fail-closed). 휴지통 객체
+ * 실패만 있으면 OWNER 가 회수할 수 없어 다시 해도 같으므로 재판정하지 않는다(실패는 남는다). 실패가 없으면 추가 조회·문장이 없고, 대기·세 번째 시도도 없다(다음
+ * 동기화가 다시 맞춘다).
  *
  * <p><b>휴지통 권한 가시성(WD-645).</b> 위 fail-closed 는 {@code USER_TAB_PRIVS_MADE}({@link
  * TiberoCatalog#slotSelectGrants})가 {@code BIN$...} 객체의 GRANT 도 보여 준다는 데 기댄다 — 라이브 TC {@code
@@ -351,7 +351,8 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
       targetAccounts.add(slotAccounts.get(k - 1));
     }
 
-    // 계산값: 데이터셋 테이블(물리 이름) → SELECT 를 받아야 할 슬롯 계정 집합. 테이블 하나만 맞출 때는 그 데이터셋 행만 읽는다.
+    // 계산값: 데이터셋 테이블(물리 이름) → SELECT 를 받아야 할 슬롯 계정 집합. 테이블 하나만 맞출 때는 그 데이터셋 행만 읽는다 — 재맞춤용 테넌트 전체
+    // 계산값은 재맞춤이 실제로 돌 때만 늦게 읽는다(WD-660, 실패 없는 단일 테이블 동기화에 메타 전체 조회를 더하지 않는다).
     Map<String, Set<String>> desired =
         desiredGrants(onlyTable, levelsAsc, slotAccounts, targetAccounts);
 
@@ -367,7 +368,7 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
                       conn,
                       tenantId,
                       schema,
-                      onlyPhysical,
+                      Pass.first(onlyPhysical),
                       desired,
                       targetAccounts,
                       exact,
@@ -376,15 +377,23 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
                 // 실패 없음·휴지통 객체 실패뿐이면 재판정하지 않는다 — 클래스 Javadoc "재판정 규칙"(WD-645).
                 return first;
               }
-              // 재판정(WD-645): 한 번만, 대상 계정 그대로 테이블 범위만 전체로 — 클래스 Javadoc "재판정 규칙". 전체 범위 계산값은 이미 있으면
-              // 재사용.
+              // 재맞춤(WD-645 → WD-660): 한 번만, 범위·계산값·휴지통 실패 옮기기 규칙은 applyPass Javadoc.
               Map<String, Set<String>> desiredAll =
                   onlyTable == null
                       ? desired
                       : desiredGrants(null, levelsAsc, slotAccounts, targetAccounts);
+              Map<String, Set<String>> carriedBin = new TreeMap<>(first.revokeFailed());
+              carriedBin.keySet().removeIf(object -> !TiberoNames.isRecycleBinName(object));
               Applied second =
                   applyPass(
-                      conn, tenantId, schema, null, desiredAll, targetAccounts, exact, revokeOnly);
+                      conn,
+                      tenantId,
+                      schema,
+                      Pass.repass(onlyPhysical, carriedBin),
+                      desiredAll,
+                      targetAccounts,
+                      exact,
+                      revokeOnly);
               // 실패 목록은 재판정 결과로 바꾸고, 바꾼 테이블은 두 판의 합집합으로 센다(두 번 세지 않는다).
               Set<String> changedUnion = new TreeSet<>(first.changedTables());
               changedUnion.addAll(second.changedTables());
@@ -436,10 +445,53 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
   }
 
   /**
-   * 한 판의 적용: 테이블 목록과 대상 계정의 실제 SELECT 권한을 읽어 계산값과의 차이만 REVOKE/GRANT 하고, 바꾼 테이블은 실제 권한을 다시 읽어 남은
-   * 과권한을 회수 실패로 센다. 첫 판과 재판정(WD-645)이 같은 규칙을 쓰도록 하나로 둔다.
+   * 한 판의 읽기·넓히기 범위(WD-660) — 첫 판과 재맞춤의 차이를 위치 인자·모드 플래그 대신 이름 있는 범위로 둔다.
    *
-   * @param onlyPhysical null 이면 테넌트 전체, 아니면 그 물리 테이블만
+   * @param readScope 권한·테이블을 읽는 범위 — null 이면 테넌트 전체, 아니면 그 물리 테이블만
+   * @param widenScope GRANT(넓히기)를 낼 수 있는 원래 범위 — null 이면 테넌트 전체, 아니면 그 물리 테이블만
+   * @param carriedBin 첫 판에서 이미 실패한 휴지통 객체 {객체 → 계정 집합}(첫 판은 빈 맵)
+   */
+  private record Pass(String readScope, String widenScope, Map<String, Set<String>> carriedBin) {
+
+    /** 첫 판: 읽기·넓히기 모두 동기화의 원래 범위. */
+    static Pass first(String onlyPhysical) {
+      return new Pass(onlyPhysical, onlyPhysical, Map.of());
+    }
+
+    /** 재맞춤: 권한은 테넌트 전체에서 읽고, 넓히기는 첫 판의 원래 범위 그대로. */
+    static Pass repass(String onlyPhysical, Map<String, Set<String>> carriedBin) {
+      return new Pass(null, onlyPhysical, carriedBin);
+    }
+
+    /** 이 객체에 GRANT 를 낼 수 있는가(원래 범위 안인가). */
+    boolean widens(String table) {
+      return widenScope == null || widenScope.equals(table);
+    }
+  }
+
+  /**
+   * 한 판의 적용: 테이블 목록과 대상 계정의 실제 SELECT 권한을 읽어 계산값과의 차이만 REVOKE/GRANT 하고, 바꾼 객체는 실제 권한을 다시 읽어 남은 과권한을
+   * 회수 실패로 센다. 첫 판과 재맞춤(WD-645 → WD-660)이 같은 규칙을 쓰도록 하나로 두고, 둘의 차이는 {@link Pass} 의 범위뿐이다.
+   *
+   * <ul>
+   *   <li><b>첫 판</b>({@link Pass#first}): 테이블·권한 모두 동기화의 원래 범위만 읽는다.
+   *   <li><b>재맞춤</b>({@link Pass#repass}): 권한은 대상 슬롯 계정 전부의 것을 테넌트 전체에서 한 번에 읽는다(첫 판에서 실패한 계정만이 아니다
+   *       — 겹친 RENAME·DROP 은 모든 계정의 권한을 보관본·{@code BIN$} 이름으로 옮기므로, 원래 테이블에서 정당하게 받은 계정도 데이터셋이 아닌 그
+   *       객체에 SELECT 가 남는다). 계산값에 없는 권한은 어디에 있든 회수한다(fail-closed 방향). 그래서 테이블 하나 동기화의 재맞춤도 다른 객체의
+   *       어긋난 권한을 회수할 수 있고(GRANT 는 하지 않는다) 그 객체를 변경 테이블로 센다. 테이블 여부는 테이블 하나 동기화면 권한이 걸린 이름과 그 테이블만
+   *       {@code USER_TABLES} 에서 IN 목록으로 가린다 — 전체 동기화는 원래 범위 GRANT 를 다시 시도하려면 권한 없는 테이블까지 알아야 해 전부
+   *       읽는다.
+   *   <li><b>재맞춤의 계산값</b>은 테넌트 전체 값이다(보관본 등 범위 밖 객체의 회수 판정에 필요). 전체 동기화는 첫 판 값을 그대로 쓰고, 테이블 하나 동기화는
+   *       재맞춤이 실제로 돌 때만 늦게 읽는다 — 첫 판과 다른 스냅숏일 수 있지만 같은 테넌트 잠금 안이고, 다시 읽은 실제 권한으로 판정·재확인하므로
+   *       fail-open 이 되지 않는다.
+   *   <li><b>넓히기(GRANT)는 원래 범위 안에서만</b>({@link Pass#widens}) — 전체 동기화면 전부, 테이블 하나 동기화면 그 테이블만. 첫 판은
+   *       한 테이블의 REVOKE 가 실패하면 그 테이블의 GRANT 를 건너뛰므로 재맞춤이 원래 범위 안에서는 다시 시도한다. 범위 밖은 회수만 한다 — 테이블 하나
+   *       동기화가 실패 한 번으로 테넌트 전체 GRANT 를 넓히면 안 된다(WD-660).
+   *   <li>{@link Pass#carriedBin}: 첫 판에서 이미 실패한 휴지통 객체·계정 쌍. OWNER 가 회수할 수 없어 다시 보내도 같으므로, 다시 읽은
+   *       권한에 그 쌍이 남아 있으면 문장 없이 회수 실패로 옮기고, 사라졌으면(휴지통 비우기 등) 버린다. 이 판에서 새로 보인 BIN$ 권한은 한 번 시도한다.
+   * </ul>
+   *
+   * @param pass 이 판의 읽기·넓히기 범위와 옮길 휴지통 실패
    * @param exact 실행 준비(대상 계정을 정확히 바인드해 읽는다)
    * @param revokeOnly 커밋 직전 좁히기(WD-624) — 남는 권한 회수만 하고 부족한 GRANT 는 걸지 않는다. 재판정(WD-645)도 같은 값으로 돌아
    *     좁히기 경로가 재판정 중에 넓히는 GRANT 를 걸지 않는다
@@ -448,15 +500,23 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
       java.sql.Connection conn,
       long tenantId,
       String schema,
-      String onlyPhysical,
+      Pass pass,
       Map<String, Set<String>> desired,
       Set<String> targetAccounts,
       boolean exact,
       boolean revokeOnly)
       throws SQLException {
-    Set<String> tables = TiberoCatalog.ownTables(conn, onlyPhysical);
     Map<String, Set<String>> actual =
-        slotGrants(conn, tenantId, onlyPhysical, targetAccounts, exact);
+        slotGrants(conn, tenantId, pass.readScope(), targetAccounts, exact);
+    Set<String> tables;
+    if (pass.readScope() == null && pass.widenScope() != null) {
+      // 재맞춤의 테이블 여부는 권한이 걸린 이름과 원래 범위 테이블만 가린다(WD-660) — USER_TABLES 전체를 읽지 않는다.
+      Set<String> lookup = new TreeSet<>(actual.keySet());
+      lookup.add(pass.widenScope());
+      tables = TiberoCatalog.ownTablesAmong(conn, lookup);
+    } else {
+      tables = TiberoCatalog.ownTables(conn, pass.readScope());
+    }
     // 테이블이 아닌 객체(뷰 등)의 GRANT 도 훑는다 — 뷰는 소유자 권한으로 바닥 테이블을 읽어 등급 경계를 우회하므로 "없음" 으로 회수한다(PG
     // CR5).
     Set<String> names = new TreeSet<>(tables);
@@ -466,21 +526,35 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
     for (String table : names) {
       Set<String> want = tables.contains(table) ? desired.getOrDefault(table, Set.of()) : Set.of();
       Set<String> have = actual.getOrDefault(table, Set.of());
+      // 같으면 볼 것이 없다 — 옮길 휴지통 실패도 남은 과권한(excess) 안에서만 세므로 여기서 함께 걸러진다(WD-660).
       if (want.equals(have)) {
         continue;
       }
       Set<String> excess = new TreeSet<>(have);
       excess.removeAll(want);
-      Set<String> missing = new TreeSet<>(want);
-      missing.removeAll(have);
-      if (revokeOnly) {
-        if (excess.isEmpty()) {
-          continue; // 좁히기는 부족한 GRANT 를 건드리지 않는다
-        }
-        missing.clear();
+      // 넓히기는 원래 범위 안에서만 — 범위 밖 객체는 회수만 한다(WD-660). 커밋 직전 좁히기(revokeOnly, WD-624)는 어디서도 넓히지 않는다
+      // — 남는 권한이 없으면 아래 「할 것 없음」으로 건너뛴다.
+      Set<String> missing = new TreeSet<>();
+      if (!revokeOnly && pass.widens(table)) {
+        missing.addAll(want);
+        missing.removeAll(have);
+      }
+      // 첫 판 휴지통 객체 실패 가운데 다시 읽은 권한에도 남은 쌍 — 문장 없이 회수 실패로 옮긴다(있을 때만 만든다).
+      Set<String> carried = Set.of();
+      Set<String> binFailed = pass.carriedBin().get(table);
+      if (binFailed != null) {
+        carried = new TreeSet<>(binFailed);
+        carried.retainAll(excess);
+        excess.removeAll(carried);
+      }
+      if (excess.isEmpty() && missing.isEmpty() && carried.isEmpty()) {
+        continue;
+      }
+      boolean revokeOk = carried.isEmpty();
+      if (!carried.isEmpty()) {
+        failed.computeIfAbsent(table, x -> new TreeSet<>()).addAll(carried);
       }
       // REVOKE 는 남는 권한이 있을 때만 한다(없는 권한을 회수하면 오류). 실패하면 그 계정들에 과권한이 남았을 수 있다.
-      boolean revokeOk = true;
       for (String account : excess) {
         if (!execute(conn, TiberoDdlSql.revokeSelectFromSlot(schema, table, account))) {
           revokeOk = false;
@@ -488,7 +562,7 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
         }
       }
       if (!revokeOk) {
-        // 이 판에서는 늘 회수 실패(fail-closed) — 첫 판 실패는 재판정이 남은 권한으로 다시 가린다(클래스 Javadoc "재판정 규칙", WD-645).
+        // 이 판에서는 늘 회수 실패(fail-closed) — 첫 판 실패는 재맞춤이 남은 권한으로 다시 가린다(클래스 Javadoc "재판정 규칙", WD-645).
         continue;
       }
       for (String account : missing) {
@@ -500,10 +574,13 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
       }
       changedTables.add(table);
     }
-    // 재확인: 문장이 성공해도 실제 권한을 다시 읽어 "원하지 않는 슬롯에 SELECT 가 남은" 테이블을 회수 실패로 센다.
+    // 재확인: 문장이 성공해도 실제 권한을 다시 읽어 "원하지 않는 슬롯에 SELECT 가 남은" 객체를 회수 실패로 센다.
+    // 바꾼 객체가 하나면 그 객체만 다시 읽는다 — 테이블 하나 동기화의 재맞춤이 원래 테이블만 바꿨을 때 테넌트 전체를 다시 훑지 않는다(WD-660).
     if (!changedTables.isEmpty()) {
+      String recheckScope =
+          changedTables.size() == 1 ? changedTables.iterator().next() : pass.readScope();
       Map<String, Set<String>> after =
-          slotGrants(conn, tenantId, onlyPhysical, targetAccounts, exact);
+          slotGrants(conn, tenantId, recheckScope, targetAccounts, exact);
       for (String table : changedTables) {
         Set<String> want =
             tables.contains(table) ? desired.getOrDefault(table, Set.of()) : Set.of();
