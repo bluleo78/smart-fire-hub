@@ -2,6 +2,7 @@ package com.smartfirehub.dataimport.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.dataimport.dto.ColumnMappingEntry;
 import com.smartfirehub.dataimport.exception.FileUnreadableException;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
@@ -771,5 +772,38 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
     runImport(jobId, datasetId, csv, "APPEND");
 
     Mockito.verify(asyncJobService).failJob(jobId, DataImportService.DATASET_GONE_MESSAGE);
+  }
+
+  /**
+   * 잡 페이로드로 바로 들어온 매핑 파일에 null 항목이 있으면(시작 요청을 거치지 않은 경로) NPE 범용 문구가 아니라 매핑 규칙의 한국어 문구로 실패하고 아무 행도
+   * 넣지 않아야 한다(WD-608).
+   */
+  @Test
+  void mappingsFileWithNullElement_failsJobWithIncompleteMappingMessage() throws Exception {
+    String jobId = "process-null-mapping";
+    String tableName = "process_null_mapping";
+    Long datasetId = createDatasetWithBigintColumn(tableName);
+    Path csv = writeCsv(10, -1);
+    Path mappingsFile = Files.createTempFile(csv.getParent(), "mappings-", ".json");
+    Files.writeString(mappingsFile, "[{\"fileColumn\":\"name\",\"datasetColumn\":\"name\"}, null]");
+
+    dataImportService.processImport(
+        jobId,
+        datasetId,
+        csv.toString(),
+        mappingsFile.toString(),
+        "",
+        "process_null_mapping.csv",
+        Files.size(csv),
+        "CSV",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "APPEND",
+        1L);
+
+    Mockito.verify(asyncJobService).failJob(jobId, ColumnMappingEntry.INCOMPLETE_MAPPING_MESSAGE);
+    assertThat(countRows(tableName)).isZero();
   }
 }
