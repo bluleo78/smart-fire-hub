@@ -197,6 +197,7 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 
 - `GRANT EXECUTE ON SYS.DBMS_LOCK TO <플랫폼 계정>` 이 필요하다. 없으면 기동 검사가 "플랫폼 계정에 GRANT EXECUTE ON SYS.DBMS_LOCK 이 필요합니다(ADR 0001)" 안내와 함께 멈춘다.
 - 권한이 없을 때 오류 코드는 15146 이다(드라이버가 음수로 줄 수 있다).
+- `DBMS_ALERT` 실행 권한은 기동 때 `TiberoOutboxWakeupChannel.probe()` 가 자기 알림 이름으로 `DBMS_ALERT.REMOVE` 를 한 번 실행해 확인한다. 오류 없음과 -14207(등록 안 된 이름, 권한이 있어도 난다 — 실측)은 통과, 15146 은 즉시 깨우기를 끄고 폴링으로만 동작(WARN 한 번), 그 밖의 오류는 WARN 만 남기고 채널을 유지한다. 결정은 기동 때 고정되므로 `GRANT EXECUTE ON SYS.DBMS_ALERT TO <플랫폼 계정>` 뒤에는 재기동해야 한다. `DBMS_LOCK` 과 달리 기동을 막지 않는다(폴링 폴백이 있다). 권한 없는 계정의 부정 실서버 테스트는 하지 않았다 — 공유 서버에서 `REVOKE ... FROM PUBLIC` 을 할 수 없어서다.
 - 아웃박스 즉시 깨우기는 `DBMS_ALERT`(`FH_OUTBOX_NEW_<스키마 해시>`)로 한다. API 인스턴스마다 Tibero 세션 1개를 상시 점유한다. 끄려면 `notification.worker.listen_notify=false` 로 둔다(30초 폴링만 남는다).
 
 스펙과 달라진 점:

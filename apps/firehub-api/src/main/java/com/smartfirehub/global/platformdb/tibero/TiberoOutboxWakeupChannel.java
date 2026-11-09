@@ -13,6 +13,7 @@ import java.util.function.BooleanSupplier;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 import org.springframework.stereotype.Component;
 
@@ -31,12 +32,13 @@ import org.springframework.stereotype.Component;
  * 깨어나고 남을 깨운다. 그래서 {@link #ALERT_NAME_PREFIX} 뒤에 플랫폼 계정 현재 스키마의 짧은 해시(16진 8자)를 붙인다(총 22자, 30자 제한
  * 안). 스키마는 풀 커넥션에서 처음 쓸 때 한 번 읽어 둔다.
  *
- * <p><b>테넌트 배선 제외.</b> 도메인 행을 읽거나 쓰지 않으므로 RLS 의 영향을 받지 않는다. DBMS_ALERT 는 PUBLIC 실행 권한이라 추가 GRANT 가
- * 필요 없다.
+ * <p><b>기동 점검(WD-691).</b> 실행 권한이 없으면 {@link #probe()} 가 알아내 채널을 끄고 폴링만 쓴다.
+ *
+ * <p><b>테넌트 배선 제외.</b> 도메인 행을 읽거나 쓰지 않으므로 RLS 의 영향을 받지 않는다.
  */
 @Component
 @ConditionalOnTiberoPlatformDb
-public class TiberoOutboxWakeupChannel implements OutboxWakeupChannel {
+public class TiberoOutboxWakeupChannel implements OutboxWakeupChannel, InitializingBean {
 
   private static final Logger log = LoggerFactory.getLogger(TiberoOutboxWakeupChannel.class);
 
@@ -45,6 +47,15 @@ public class TiberoOutboxWakeupChannel implements OutboxWakeupChannel {
 
   /** DBMS_ALERT 이름 길이 상한(Oracle 규칙과 같다). */
   static final int MAX_ALERT_NAME_LENGTH = 30;
+
+  /** REMOVE 호출 — 기동 점검과 구독 종료 정리가 함께 쓴다. */
+  static final String REMOVE_SQL = "BEGIN DBMS_ALERT.REMOVE(?); END;";
+
+  /**
+   * 등록 안 된 알림 이름을 REMOVE 할 때 Tibero 가 내는 오류 "The specified alert name does not exist."(-14207). 실서버
+   * 실측(WD-691): PUBLIC 실행 권한이 있는 계정에서도 이 오류가 나므로 권한은 있다는 뜻이다.
+   */
+  static final int ALERT_NOT_REGISTERED_ERROR = 14207;
 
   /** WAITONE 호출 — 구독 루프 밖에서 한 번 준비해 재사용한다. */
   static final String WAITONE_SQL = "BEGIN DBMS_ALERT.WAITONE(?, ?, ?, ?); END;";
@@ -60,6 +71,9 @@ public class TiberoOutboxWakeupChannel implements OutboxWakeupChannel {
 
   /** 구독 전용 커넥션 공급자 — 운영에서는 풀 밖 DriverManager 연결, 테스트에서는 주입. */
   private final Callable<Connection> listenConnection;
+
+  /** 즉시 깨우기 사용 여부 — 기동 점검에서 권한 없음이면 꺼진다. */
+  private volatile boolean enabled = true;
 
   /** 처음 쓸 때 풀 커넥션의 스키마로 정한 알림 이름 — 이후로는 바뀌지 않는다. */
   private volatile String alertName;
@@ -81,9 +95,76 @@ public class TiberoOutboxWakeupChannel implements OutboxWakeupChannel {
     this.listenConnection = listenConnection;
   }
 
+  /** 즉시 깨우기가 켜져 있는지(테스트용). */
+  boolean enabled() {
+    return enabled;
+  }
+
+  /** 꺼진 채널의 listen 이 쉬는 방법 — 테스트에서 실제로 자지 않게 바꾼다. */
+  @FunctionalInterface
+  interface Sleeper {
+    void sleep(long millis) throws InterruptedException;
+  }
+
+  /** 꺼진 채널의 대기 수단(테스트용 교체). */
+  Sleeper sleeper = Thread::sleep;
+
+  /** 기동 점검 결과 — 권한 확인됨 / 권한 없음 / 확인 못 함. */
+  enum ProbeResult {
+    OK,
+    NO_GRANT,
+    FAILED
+  }
+
+  /** 기동 점검 결과로 채널을 켜 둘지 정한다. 권한 없음이면 끄고 한 번만 WARN 한다. */
+  @Override
+  public void afterPropertiesSet() {
+    if (probe() == ProbeResult.NO_GRANT) {
+      enabled = false;
+      log.warn(
+          "Tibero DBMS_ALERT 실행 권한이 없어 아웃박스 즉시 깨우기를 끄고 폴링으로만 동작합니다. "
+              + "필요하면 DBA 가 'GRANT EXECUTE ON SYS.DBMS_ALERT TO <계정>' 을 실행하고 재기동하세요");
+    }
+  }
+
+  /**
+   * 자기 알림 이름으로 {@code REMOVE} 를 한 번 실행해 권한을 확인한다. 오류 없음·{@link #ALERT_NOT_REGISTERED_ERROR} 는 OK(등록
+   * 안 된 이름의 REMOVE 는 권한이 있어도 14207 을 낸다 — 실서버 실측), {@link TiberoPlatformLocks#MISSING_GRANT_ERROR}
+   * 는 NO_GRANT, 그 밖의 SQLException·RuntimeException 은 WARN 후 FAILED(기동을 막지 않고 채널은 유지).
+   */
+  ProbeResult probe() {
+    try {
+      String name = alertName();
+      try (Connection conn = dataSource.getConnection()) {
+        conn.setAutoCommit(true);
+        try (CallableStatement cs = conn.prepareCall(REMOVE_SQL)) {
+          cs.setString(1, name);
+          cs.execute();
+        }
+      }
+      return ProbeResult.OK;
+    } catch (SQLException e) {
+      int code = Math.abs(e.getErrorCode());
+      if (code == ALERT_NOT_REGISTERED_ERROR) {
+        return ProbeResult.OK;
+      }
+      if (code == TiberoPlatformLocks.MISSING_GRANT_ERROR) {
+        return ProbeResult.NO_GRANT;
+      }
+      log.warn("DBMS_ALERT 점검 실패(오류 코드 {}) — 점검을 건너뛰고 깨우기를 그대로 씁니다", e.getErrorCode(), e);
+      return ProbeResult.FAILED;
+    } catch (RuntimeException e) {
+      log.warn("DBMS_ALERT 점검 실패 — 점검을 건너뛰고 깨우기를 그대로 씁니다", e);
+      return ProbeResult.FAILED;
+    }
+  }
+
   /** SIGNAL 발행. 실패해도 폴백 폴링이 처리하므로 warn 로그만 남기고 삼킨다. */
   @Override
   public void publish() {
+    if (!enabled) {
+      return;
+    }
     try {
       String name = alertName();
       try (Connection conn = dataSource.getConnection()) {
@@ -109,6 +190,18 @@ public class TiberoOutboxWakeupChannel implements OutboxWakeupChannel {
   @Override
   public void listen(BooleanSupplier running, Duration pollTimeout, Runnable onSignal)
       throws Exception {
+    if (!enabled) {
+      // 꺼진 채널은 DB 에 붙지 않고 종료만 기다린다. 대기는 최소 1초(0 공회전·음수 예외 방지).
+      while (running.getAsBoolean()) {
+        try {
+          sleeper.sleep(waitSeconds(pollTimeout) * 1000L);
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+          return;
+        }
+      }
+      return;
+    }
     String name = alertName();
     Connection conn = null;
     CallableStatement wait = null;
@@ -144,7 +237,7 @@ public class TiberoOutboxWakeupChannel implements OutboxWakeupChannel {
       }
       if (conn != null) {
         // 등록을 지워 구독자 없이 신호가 쌓이지 않게 한다. 실패는 연결이 이미 죽은 경우라 무시한다.
-        try (CallableStatement cs = conn.prepareCall("BEGIN DBMS_ALERT.REMOVE(?); END;")) {
+        try (CallableStatement cs = conn.prepareCall(REMOVE_SQL)) {
           cs.setString(1, name);
           cs.execute();
         } catch (Exception removeEx) {

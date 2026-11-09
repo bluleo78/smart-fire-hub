@@ -66,9 +66,12 @@ public class OutboxListenerLoop {
     running = false;
   }
 
-  /** LISTEN 루프 본체. 채널의 listen 이 연결 오류로 던지면 5초 뒤 재시도한다(연결 획득·close 는 채널 구현이 책임진다). */
-  private void loop() {
-    while (running) {
+  /**
+   * LISTEN 루프 본체. 채널의 listen 이 연결 오류로 던지면 5초 뒤 재시도한다(연결 획득·close 는 채널 구현이 책임진다). 스레드가 인터럽트되면 멈춘다 —
+   * 꺼진 Tibero 채널처럼 인터럽트 플래그를 세운 채 곧바로 돌아오는 구현이 바쁜 루프를 만들지 않게 한다.
+   */
+  void loop() {
+    while (running && !Thread.currentThread().isInterrupted()) {
       try {
         // 연결 수명(LISTEN 전용 소켓 획득·해제)은 채널 구현이 맡는다. 오류는 예외로 올라온다.
         channel.listen(() -> running, Duration.ofMillis(30_000), worker::onNotify);

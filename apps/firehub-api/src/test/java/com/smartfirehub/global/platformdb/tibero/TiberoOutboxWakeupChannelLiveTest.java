@@ -64,6 +64,18 @@ class TiberoOutboxWakeupChannelLiveTest {
     ev("알림 이름: 스키마 해시 접미사 일치, 길이 " + name.length());
   }
 
+  /**
+   * 권한 있는 계정이면 기동 점검(REMOVE)이 통과해 채널이 켜진 채로 남는다(WD-691). 권한 없는 계정 실서버 테스트는 공유 서버의 PUBLIC 권한을 건드려야
+   * 해서 하지 않는다.
+   */
+  @Test
+  void 기동_점검이_통과하면_채널이_켜져_있다() {
+    assertThat(channel.probe()).isEqualTo(TiberoOutboxWakeupChannel.ProbeResult.OK);
+    channel.afterPropertiesSet();
+    assertThat(channel.enabled()).isTrue();
+    ev("기동 점검 통과: probe=OK, enabled=true");
+  }
+
   @Test
   void signalWakesListener() throws Exception {
     var running = new AtomicBoolean(true);
