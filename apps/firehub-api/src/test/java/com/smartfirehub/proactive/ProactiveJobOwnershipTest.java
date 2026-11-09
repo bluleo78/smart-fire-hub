@@ -98,7 +98,9 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
                     .header("Authorization", ownerToken)
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(
-                        "{\"name\":\"주인_작업\",\"prompt\":\"요약\",\"enabled\":false,\"config\":{}}"))
+                        "{\"name\":\"주인_작업\",\"prompt\":\"요약\",\"enabled\":false,"
+                            // 정기 작업은 주기가 필수다(WD-607)
+                            + "\"cronExpression\":\"0 0 9 * * *\",\"config\":{}}"))
             .andReturn()
             .getResponse();
     assertThat(res.getStatus()).as(res.getContentAsString()).isEqualTo(201);
@@ -182,6 +184,29 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
       req.contentType(MediaType.APPLICATION_JSON).content(body);
     }
     return mockMvc.perform(req).andReturn().getResponse().getStatus();
+  }
+
+  /**
+   * [WD-607] HTTP 경계 — 주기 없는 정기 작업 생성·주기 지우기 수정은 400 + 한국어 안내다(예외 → 400 매핑 확인). 세부 경우는
+   * ProactiveJobServiceTest 가 본다.
+   */
+  @Test
+  void scheduleJobWithoutCron_is400_onCreateAndUpdate() throws Exception {
+    MockHttpServletResponse created =
+        mockMvc
+            .perform(
+                post("/api/v1/proactive/jobs")
+                    .header("Authorization", ownerToken)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"name\":\"주기_없음\",\"prompt\":\"요약\",\"config\":{}}"))
+            .andReturn()
+            .getResponse();
+    assertThat(created.getStatus()).as(created.getContentAsString()).isEqualTo(400);
+    assertThat(om.readTree(created.getContentAsString()).path("message").asText())
+        .isEqualTo("정기 실행에는 실행 주기가 필요합니다");
+
+    String url = "/api/v1/proactive/jobs/" + jobId;
+    assertThat(send(put(url), ownerToken, "{\"cronExpression\":\"\"}")).isEqualTo(400);
   }
 
   private String ownerJobName() throws Exception {

@@ -122,7 +122,8 @@ class ReportTemplateOwnershipTest extends IntegrationTestBase {
   private String jobBody(long templateId) {
     return "{\"name\":\"rto_job\",\"prompt\":\"요약\",\"templateId\":"
         + templateId
-        + ",\"enabled\":false,\"config\":{}}";
+        // 정기 작업은 주기가 필수다(WD-607)
+        + ",\"enabled\":false,\"cronExpression\":\"0 0 9 * * *\",\"config\":{}}";
   }
 
   private long builtinTemplateId(String token) throws Exception {

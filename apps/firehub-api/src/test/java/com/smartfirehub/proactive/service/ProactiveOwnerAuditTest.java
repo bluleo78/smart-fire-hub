@@ -34,8 +34,8 @@ import org.springframework.beans.factory.annotation.Autowired;
  * report_template), 변경 없는 저장·이미 꺼진 작업 끄기와 거부된 요청(400·404·409 편집 충돌)은 아무것도 남기지 않으며,
  * 프롬프트·설정(채널·수신자)·섹션 내용·스타일 값이 설명·metadata 에 새지 않는다.
  *
- * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 서비스 트랜잭션의 실제 커밋·롤백으로 감사가 남거나 남지 않는지 본다. 작업은 cron 없이
- * 만들어 스케줄러에 등록되지 않게 한다.
+ * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 서비스 트랜잭션의 실제 커밋·롤백으로 감사가 남거나 남지 않는지 본다. 작업은 cron 없는
+ * 이상 탐지(ANOMALY) 작업으로 만들어 스케줄러에 등록되지 않게 한다(정기 작업은 주기가 필수 — WD-607).
  */
 class ProactiveOwnerAuditTest extends IntegrationTestBase {
 
@@ -122,7 +122,7 @@ class ProactiveOwnerAuditTest extends IntegrationTestBase {
     return out;
   }
 
-  /** 프롬프트·설정(채널·수신자)에 표식을 넣은 작업 — cron 없이 만들어 예약되지 않는다. */
+  /** 프롬프트·설정(채널·수신자)에 표식을 넣은 작업 — cron 없는 이상 탐지 작업이라 예약되지 않는다(정기 작업은 주기 필수, WD-607). */
   private ProactiveJobResponse createJob(String name, boolean enabled) {
     return jobService.createJob(
         new CreateProactiveJobRequest(
@@ -132,7 +132,7 @@ class ProactiveOwnerAuditTest extends IntegrationTestBase {
             null,
             null,
             enabled,
-            null,
+            "ANOMALY",
             Map.of("channels", List.of("CHAT"), "recipientEmails", List.of(MARKER + "@x.com"))),
         owner);
   }

@@ -15,6 +15,21 @@ import java.util.Optional;
  */
 public interface ProactiveJobRepository {
 
+  /** 트리거 값 — cron 으로 정기 실행한다(trigger_type 컬럼, #655). */
+  String TRIGGER_SCHEDULE = "SCHEDULE";
+
+  /** 트리거 값 — 이상 탐지로만 실행한다. 실행 주기가 필요 없다(WD-607). */
+  String TRIGGER_ANOMALY = "ANOMALY";
+
+  /** 트리거 값 — 정기 실행과 이상 탐지를 함께 쓴다. 정기 실행이 들어 있어 주기가 필요하다(WD-607). */
+  String TRIGGER_BOTH = "BOTH";
+
+  /**
+   * 트리거를 정하지 않은 작업의 트리거 — 생성 시 생략하면 이 값으로 저장하고(#655), 트리거가 NULL 인 옛 행도 이 값으로 본다(WD-607). 저장소와 서비스가
+   * 같은 값을 쓰도록 한 곳에 둔다.
+   */
+  String DEFAULT_TRIGGER_TYPE = TRIGGER_SCHEDULE;
+
   List<ProactiveJobResponse> findByUserId(Long userId);
 
   Optional<ProactiveJobResponse> findById(Long id, Long userId);

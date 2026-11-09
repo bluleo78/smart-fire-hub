@@ -213,7 +213,7 @@ public class JooqProactiveJobRepository implements ProactiveJobRepository {
           .set(PJ_TIMEZONE, timezone != null ? timezone : "Asia/Seoul")
           .set(PJ_ENABLED, enabled != null ? enabled : true)
           // triggerType 미지정 시 DB 컬럼 기본값과 동일하게 SCHEDULE로 명시 저장 (#655)
-          .set(PJ_TRIGGER_TYPE, triggerType != null ? triggerType : "SCHEDULE")
+          .set(PJ_TRIGGER_TYPE, triggerType != null ? triggerType : DEFAULT_TRIGGER_TYPE)
           .set(PJ_CONFIG, JSONB.valueOf(configJson))
           .returning(PJ_ID)
           .fetchOne(r -> r.get(PJ_ID));
