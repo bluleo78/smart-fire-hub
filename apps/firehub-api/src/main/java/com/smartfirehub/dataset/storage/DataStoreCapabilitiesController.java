@@ -20,7 +20,8 @@ public class DataStoreCapabilitiesController {
 
   /**
    * 백엔드별 기능 지원 여부 — 판정은 {@link DataStoreBackend} 에 둔다(지금은 PostgreSQL 만 GEOMETRY·행 검색을 지원). WD-636:
-   * VARCHAR 최대 길이도 함께 내려 웹 폼이 저장소 상한으로 미리 막게 한다.
+   * VARCHAR 최대 길이도 함께 내려 웹 폼이 저장소 상한으로 미리 막게 한다. WD-659: 길이 미지정 VARCHAR 의 실제 길이(저장소 기본 길이)도 내려 웹 행
+   * 폼이 서버 행 API 와 같은 한도로 판정하게 한다.
    */
   @GetMapping("/capabilities")
   public DataStoreCapabilitiesResponse capabilities() {
@@ -29,6 +30,7 @@ public class DataStoreCapabilitiesController {
         backend.name(),
         backend.supportsGeometry(),
         backend.supportsRowSearch(),
-        backend.maxVarcharLength());
+        backend.maxVarcharLength(),
+        backend.defaultVarcharLength());
   }
 }

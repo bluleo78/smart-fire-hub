@@ -184,6 +184,19 @@ describe('buildRowZodSchema — 물리 타입 한도 (WD-98)', () => {
     expect(issues(required, { code: '' })).toEqual(['필수 입력 항목입니다.']);
     expect(issues(required, { code: 'abcd' })).toEqual(['최대 3자']);
   });
+
+  it('VARCHAR(WD-659): 길이 미지정이면 저장소 기본 길이(Tibero 4000)를 따르고, 명시한 길이는 그대로 이긴다', () => {
+    const tibero = buildRowZodSchema([col('code', 'VARCHAR')], 'add', undefined, 4000);
+    expect(issues(tibero, { code: 'a'.repeat(300) })).toEqual([]);
+    expect(issues(tibero, { code: 'a'.repeat(4000) })).toEqual([]);
+    expect(issues(tibero, { code: 'a'.repeat(4001) })).toEqual(['최대 4000자']);
+
+    const pg = buildRowZodSchema([col('code', 'VARCHAR')], 'add', undefined, 255);
+    expect(issues(pg, { code: 'a'.repeat(300) })).toEqual(['최대 255자']);
+
+    const explicit = buildRowZodSchema([{ ...col('code', 'VARCHAR'), maxLength: 10 }], 'edit', undefined, 4000);
+    expect(issues(explicit, { code: 'a'.repeat(11) })).toEqual(['최대 10자']);
+  });
 });
 
 describe('GEOMETRY 입력 검증 (WD-201)', () => {

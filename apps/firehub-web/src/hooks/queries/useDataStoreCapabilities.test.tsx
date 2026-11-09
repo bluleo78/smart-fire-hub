@@ -23,8 +23,8 @@ vi.mock('../useAuth', () => ({
 
 import { useDataStoreCapabilities, useDataStoreFeatures } from './useDataStoreCapabilities';
 
-const PG = { backend: 'POSTGRESQL', geometry: true, rowSearch: true, maxVarcharLength: 10000 };
-const TIBERO = { backend: 'TIBERO', geometry: false, rowSearch: false, maxVarcharLength: 4000 };
+const PG = { backend: 'POSTGRESQL', geometry: true, rowSearch: true, maxVarcharLength: 10000, defaultVarcharLength: 255 };
+const TIBERO = { backend: 'TIBERO', geometry: false, rowSearch: false, maxVarcharLength: 4000, defaultVarcharLength: 4000 };
 
 describe('useDataStoreCapabilities — 테넌트별 캐시 (WD-80)', () => {
   beforeEach(() => {
@@ -87,7 +87,12 @@ describe('useDataStoreFeatures — 기능 판정 기본값 (WD-80)', () => {
   it('조회 중이면 행 검색은 undefined, GEOMETRY 는 지원으로 둔다', () => {
     getCapabilitiesMock.mockReturnValue(new Promise(() => {}));
     const { result, client } = setupFeatures();
-    expect(result.current).toEqual({ geometrySupported: true, rowSearch: undefined, maxVarcharLength: 10000 });
+    expect(result.current).toEqual({
+      geometrySupported: true,
+      rowSearch: undefined,
+      maxVarcharLength: 10000,
+      defaultVarcharLength: 255,
+    });
     client.clear();
   });
 
@@ -98,13 +103,20 @@ describe('useDataStoreFeatures — 기능 판정 기본값 (WD-80)', () => {
     expect(result.current.geometrySupported).toBe(true);
     // WD-636: 실패 시 VARCHAR 길이 상한은 PG 기본값 10000 이다.
     expect(result.current.maxVarcharLength).toBe(10000);
+    // WD-659: 실패 시 길이 미지정 VARCHAR 한도는 PG 기본값 255 다.
+    expect(result.current.defaultVarcharLength).toBe(255);
     client.clear();
   });
 
   it('활성 테넌트가 없으면(조회 안 함) PG 기본값이다', () => {
     activeTenantId = null;
     const { result, client } = setupFeatures();
-    expect(result.current).toEqual({ geometrySupported: true, rowSearch: true, maxVarcharLength: 10000 });
+    expect(result.current).toEqual({
+      geometrySupported: true,
+      rowSearch: true,
+      maxVarcharLength: 10000,
+      defaultVarcharLength: 255,
+    });
     client.clear();
   });
 
@@ -112,13 +124,23 @@ describe('useDataStoreFeatures — 기능 판정 기본값 (WD-80)', () => {
     getCapabilitiesMock.mockResolvedValueOnce(PG).mockResolvedValueOnce(TIBERO);
     const { result, rerender, client } = setupFeatures();
     await waitFor(() =>
-      expect(result.current).toEqual({ geometrySupported: true, rowSearch: true, maxVarcharLength: 10000 }),
+      expect(result.current).toEqual({
+        geometrySupported: true,
+        rowSearch: true,
+        maxVarcharLength: 10000,
+        defaultVarcharLength: 255,
+      }),
     );
     activeTenantId = 2;
     rerender();
-    // WD-636: Tibero 는 VARCHAR 길이 상한 4000 을 그대로 따른다.
+    // WD-636: Tibero 는 VARCHAR 길이 상한 4000 을 그대로 따른다. WD-659: 길이 미지정 VARCHAR 도 4000.
     await waitFor(() =>
-      expect(result.current).toEqual({ geometrySupported: false, rowSearch: false, maxVarcharLength: 4000 }),
+      expect(result.current).toEqual({
+        geometrySupported: false,
+        rowSearch: false,
+        maxVarcharLength: 4000,
+        defaultVarcharLength: 4000,
+      }),
     );
     client.clear();
   });

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { cellTimestampToLocalInput, isFormattableDateString } from '../../../lib/formatters';
+import { DEFAULT_VARCHAR_LENGTH } from '../../../lib/validations/dataset';
 import type { DatasetColumnResponse } from '../../../types/dataset';
 
 // ---------------------------------------------------------------------------
@@ -12,8 +13,6 @@ import type { DatasetColumnResponse } from '../../../types/dataset';
 const DECIMAL_INTEGER_DIGITS = 12;
 /** DECIMAL 의 물리 타입 NUMERIC(18,6) 소수 자릿수. */
 const DECIMAL_SCALE = 6;
-/** 길이 미지정 VARCHAR 의 물리 타입 길이 — VARCHAR(255). */
-const DEFAULT_VARCHAR_LENGTH = 255;
 /** INTEGER 의 물리 타입 BIGINT 범위. */
 const BIGINT_MIN = -(2n ** 63n);
 const BIGINT_MAX = 2n ** 63n - 1n;
@@ -150,11 +149,17 @@ function withinCodePointLimit(s: string, limit: number): boolean {
   return s.length <= limit || [...s].length <= limit;
 }
 
-/** @param initialValues (WD-98) 편집 폼 초기값 — 손대지 않은 숫자 칸은 한도 검사를 건너뛴다(numericField 참고). */
+/**
+ * @param initialValues (WD-98) 편집 폼 초기값 — 손대지 않은 숫자 칸은 한도 검사를 건너뛴다(numericField 참고).
+ * @param defaultVarcharLength (WD-659) 길이 미지정 VARCHAR 의 실제 길이 — 저장소마다 달라(PG 255, Tibero 4000)
+ *   useDataStoreFeatures().defaultVarcharLength 를 넘긴다. 단일 출처는 서버 DataStoreBackend.defaultVarcharLength 이고,
+ *   생략하면(저장소 모름) PG 기본값 255 다.
+ */
 export function buildRowZodSchema(
   columns: DatasetColumnResponse[],
   mode: 'add' | 'edit' = 'edit',
   initialValues?: Record<string, unknown>,
+  defaultVarcharLength: number = DEFAULT_VARCHAR_LENGTH,
 ) {
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const col of columns) {
@@ -178,9 +183,10 @@ export function buildRowZodSchema(
         if (col.isNullable) field = field.nullable().optional();
         break;
       case 'VARCHAR': {
-        // (WD-98) 길이 미지정 VARCHAR 도 물리 타입은 VARCHAR(255) 라 같은 한도로 막는다. 길이는 서버·PG 와 같은
-        // 문자(코드포인트) 수로 센다 — z.string().max() 는 UTF-16 단위라 이모지 5자를 VARCHAR(5) 초과로 잘못 막았다.
-        const limit = col.maxLength ?? DEFAULT_VARCHAR_LENGTH;
+        // (WD-98) 길이 미지정 VARCHAR 도 물리 타입 길이가 있어 같은 한도로 막는다 — 그 길이는 저장소 기본 길이(WD-659,
+        // PG VARCHAR(255)·Tibero VARCHAR2(4000 CHAR))로, 서버 행 API(ColumnPhysicalType.enforceLimitsStrict)와 같은 값이다.
+        // 길이는 서버·PG 와 같은 문자(코드포인트) 수로 센다 — z.string().max() 는 UTF-16 단위라 이모지 5자를 VARCHAR(5) 초과로 잘못 막았다.
+        const limit = col.maxLength ?? defaultVarcharLength;
         let str = z.string();
         if (!col.isNullable) str = str.min(1, '필수 입력 항목입니다.');
         const limited = str.refine((v) => withinCodePointLimit(v, limit), `최대 ${limit}자`);

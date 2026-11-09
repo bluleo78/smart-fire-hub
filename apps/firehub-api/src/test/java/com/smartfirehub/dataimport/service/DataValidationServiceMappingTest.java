@@ -8,6 +8,7 @@ import com.smartfirehub.dataimport.dto.ValidationErrorDetail;
 import com.smartfirehub.dataimport.service.DataValidationService.PkValidationResult;
 import com.smartfirehub.dataimport.service.DataValidationService.ValidationResultWithDetails;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.storage.DataStoreBackend;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -33,7 +34,8 @@ class DataValidationServiceMappingTest {
 
   @BeforeEach
   void setUp() {
-    service = new DataValidationService();
+    // 값 한도 검사는 현재 테넌트 저장소를 본다(WD-659) — 여기서는 PostgreSQL 로 고정한다.
+    service = DataValidationServiceTest.serviceFor(DataStoreBackend.POSTGRESQL);
   }
 
   // -----------------------------------------------------------------------

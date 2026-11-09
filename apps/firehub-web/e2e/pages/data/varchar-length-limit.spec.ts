@@ -17,12 +17,14 @@ const TIBERO_CAPS: DataStoreCapabilities = {
   geometry: false,
   rowSearch: false,
   maxVarcharLength: 4000,
+  defaultVarcharLength: 4000,
 };
 const PG_CAPS: DataStoreCapabilities = {
   backend: 'POSTGRESQL',
   geometry: true,
   rowSearch: true,
   maxVarcharLength: 10000,
+  defaultVarcharLength: 255,
 };
 
 test.beforeEach(async ({ authenticatedPage: page }) => {

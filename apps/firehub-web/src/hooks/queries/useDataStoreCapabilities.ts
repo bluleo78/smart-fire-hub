@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { getDataStoreCapabilities } from '../../api/dataStore';
-import { DEFAULT_MAX_VARCHAR_LENGTH } from '../../lib/validations/dataset';
+import { DEFAULT_MAX_VARCHAR_LENGTH, DEFAULT_VARCHAR_LENGTH } from '../../lib/validations/dataset';
 import { useAuth } from '../useAuth';
 
 /**
@@ -39,6 +39,11 @@ export interface DataStoreFeatures {
    * 기본값 상태에서 저장소 상한을 넘는 값은 서버가 400 으로 최종 판정한다.
    */
   maxVarcharLength: number;
+  /**
+   * 길이 미지정 VARCHAR 의 실제 길이(WD-659) — 행 폼의 길이 검사 한도. 조회 중·실패·로그인 전이면 PG 기본값 255,
+   * 조회 성공이면 응답 값(Tibero 4000). 단일 출처는 서버 DataStoreBackend.defaultVarcharLength 다.
+   */
+  defaultVarcharLength: number;
 }
 
 /**
@@ -52,5 +57,6 @@ export function useDataStoreFeatures(): DataStoreFeatures {
     geometrySupported: data?.geometry !== false,
     rowSearch: isLoading ? undefined : data?.rowSearch !== false,
     maxVarcharLength: data?.maxVarcharLength ?? DEFAULT_MAX_VARCHAR_LENGTH,
+    defaultVarcharLength: data?.defaultVarcharLength ?? DEFAULT_VARCHAR_LENGTH,
   };
 }

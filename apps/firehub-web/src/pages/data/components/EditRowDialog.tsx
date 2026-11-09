@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { useUpdateRow } from '../../../hooks/queries/useDatasets';
+import { useDataStoreFeatures } from '../../../hooks/queries/useDataStoreCapabilities';
 import { useGuardedSubmit } from '../../../hooks/useSubmitGuard';
 import { handleApiError } from '../../../lib/api-error';
 import type { DatasetColumnResponse } from '../../../types/dataset';
@@ -58,7 +59,12 @@ export function EditRowDialog({ open, onOpenChange, datasetId, columns, rowId, i
     return vals;
   }, [editableColumns, initialData]);
   // (WD-98) 초기값을 넘겨 손대지 않은 DECIMAL 칸은 자릿수 검사를 건너뛴다(JS double 표시로 13자리처럼 보이는 저장값 대비).
-  const schema = useMemo(() => buildRowZodSchema(columns, 'edit', defaultValues), [columns, defaultValues]);
+  // (WD-659) 길이 미지정 VARCHAR 한도는 저장소 기본 길이(PG 255, Tibero 4000)를 따른다 — 서버 행 API 와 같은 판정.
+  const { defaultVarcharLength } = useDataStoreFeatures();
+  const schema = useMemo(
+    () => buildRowZodSchema(columns, 'edit', defaultValues, defaultVarcharLength),
+    [columns, defaultValues, defaultVarcharLength],
+  );
 
   // (#772) date/datetime-local 입력이 담을 수 없는 기존 값(±infinity·BC·5자리 연도 등)을 가진 컬럼 —
   // 원문 텍스트 입력으로 렌더링해 빈칸으로 보이거나 빈칸이 NULL 로 저장되는 일을 막는다.

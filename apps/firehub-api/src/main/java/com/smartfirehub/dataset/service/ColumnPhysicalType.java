@@ -5,6 +5,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Arrays;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -180,37 +181,48 @@ public final class ColumnPhysicalType {
   private ColumnPhysicalType() {}
 
   /**
-   * 형식 변환을 마친 값이 물리 컬럼에 들어가는지 검사하고, PostgreSQL 이 실제로 저장할 값으로 정규화해 돌려준다. 위반 시 사유를 담은 {@link
+   * 형식 변환을 마친 값이 물리 컬럼에 들어가는지 검사하고, 저장소가 실제로 저장할 값으로 정규화해 돌려준다. 위반 시 사유를 담은 {@link
    * IllegalArgumentException}.
    *
    * <p>파일 임포트용 관대 모드 — PG 가 오류 없이 받는 값(초과분이 공백뿐인 VARCHAR, 소수 7자리 이상)은 PG 와 같은 규칙으로 잘라·반올림해 받는다. 사람이
    * 직접 입력하는 행 API 는 {@link #enforceLimitsStrict} 를 쓴다.
    *
-   * @param maxLength VARCHAR 길이(그 밖의 타입은 무시)
+   * <p>WD-659: 길이 미지정 VARCHAR 의 실제 길이는 저장소마다 다르다(PG 255, Tibero 4000) — 그래서 저장소({@code backend})를
+   * 반드시 받아 {@link DataStoreBackend#effectiveVarcharLength(Integer)} 로 한도를 정한다. 저장소를 받지 않는 옛 시그니처는
+   * PG 의 255 로 조용히 떨어져 Tibero 에서 256~4000자 값을 잘못 거부했으므로 남기지 않는다.
+   *
+   * @param maxLength VARCHAR 길이(그 밖의 타입은 무시, null 이면 저장소 기본 길이)
+   * @param backend 값이 들어갈 현재 테넌트의 저장소
    * @return VARCHAR 는 공백 초과분을 자른 문자열, DECIMAL 은 scale 6 BigDecimal, 그 밖은 입력 그대로
    */
-  public static Object enforceLimits(Object value, String dataType, Integer maxLength) {
-    return enforceLimits(value, dataType, maxLength, false);
+  public static Object enforceLimits(
+      Object value, String dataType, Integer maxLength, DataStoreBackend backend) {
+    return enforceLimits(value, dataType, maxLength, backend, false);
   }
 
   /**
    * {@link #enforceLimits} 의 엄격 모드 — 저장값이 입력값과 달라지는 경우를 정규화하지 않고 거부한다(WD-98).
    *
    * <p>행 추가·수정처럼 사람이 직접 친 값은 "성공" 뒤 다른 값이 저장되면 알아챌 수 없다(예: {@code 0.0000001} → {@code 0.000000}).
-   * 그래서 소수부 7자리 이상(끝 0 제외)과 VARCHAR 길이 초과(초과분이 공백뿐이어도)를 거부한다. 웹 행 폼의 판정과 같다.
+   * 그래서 소수부 7자리 이상(끝 0 제외)과 VARCHAR 길이 초과(초과분이 공백뿐이어도)를 거부한다. 웹 행 폼의 판정과 같다. 길이 미지정 VARCHAR 의 한도는
+   * {@code backend} 의 기본 길이다(WD-659).
    */
-  public static Object enforceLimitsStrict(Object value, String dataType, Integer maxLength) {
-    return enforceLimits(value, dataType, maxLength, true);
+  public static Object enforceLimitsStrict(
+      Object value, String dataType, Integer maxLength, DataStoreBackend backend) {
+    return enforceLimits(value, dataType, maxLength, backend, true);
   }
 
+  /** 두 모드의 공통 본문 — 타입별 물리 한도를 검사한다. VARCHAR 한도는 저장소의 실제 길이(길이 미지정이면 저장소 기본 길이)다. */
   private static Object enforceLimits(
-      Object value, String dataType, Integer maxLength, boolean strict) {
+      Object value, String dataType, Integer maxLength, DataStoreBackend backend, boolean strict) {
+    // 저장소 없이 부르면 어느 길이로 검사할지 알 수 없다 — PG 기본값으로 조용히 떨어지지 않게 즉시 실패시킨다(WD-659).
+    Objects.requireNonNull(backend, "backend");
     switch (dataType) {
       case "TEXT" -> rejectNul(value);
       case "VARCHAR" -> {
         rejectNul(value);
         if (value instanceof String s) {
-          return fitVarchar(s, maxLength != null ? maxLength : DEFAULT_VARCHAR_LENGTH, strict);
+          return fitVarchar(s, backend.effectiveVarcharLength(maxLength), strict);
         }
       }
       case "DECIMAL" -> {
