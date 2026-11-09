@@ -24,6 +24,7 @@ import com.smartfirehub.dataset.repository.QueryHistoryRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.StoreTransactions;
+import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.math.BigDecimal;
@@ -245,27 +246,33 @@ public class DatasetDataService {
   }
 
   public SqlQueryResponse executeQuery(Long datasetId, SqlQueryRequest request, Long userId) {
-    // PG 테넌트: 존재 확인·실행·기록을 쓰기 트랜잭션 하나로 처리한다.
-    // Tibero 실행(최대 35초) 동안 PG 연결을 쥐지 않으려고 구간을 나눈다(WD-207).
-    // 존재 확인은 리포지토리 자체 트랜잭션(조회 템플릿 없음), 실행은 트랜잭션 밖, 기록만 쓰기 트랜잭션으로 연다.
-    // 실행이 예외(400/403)면 기록 없이 그대로 올라간다.
-    // WD-599: 동시 실행 허가를 쓰기 트랜잭션(=커넥션)보다 먼저 얻는다 — 기다리는 동안 풀을 쥐지 않는다. 바깥(컨트롤러·필터)에 트랜잭션이 없는
-    // 경로다. 예외로 나가도 try-with-resources 가 반납한다.
-    // Tibero 테넌트는 db-executor 로 실행해 PG 풀 커넥션을 쥐지 않으므로(WD-207) 허가 없이 지난다(acquireUnlessTibero).
-    // 남은 일: 차트·대시보드와 달리 이 경로는 아직 허가를 진입부에서 얻는다 — 게이트가 차 있으면 없는 데이터셋(404)·열람 거부(403)로 끝날 요청도
-    // 줄 서다 429 를 받을 수 있다. 허가를 존재 확인·판정 뒤로 옮기는 것은 후속 작업이다.
+    // WD-638: 순서는 존재 확인(404) → 판정(400/403) → 허가 → (PG) 재판정 → 실행·기록. 차트·대시보드(WD-625)와 같이 허가는 「실제로
+    // 실행한다」가 정해진
+    // 뒤에만 얻는다 — 게이트가 차 있어도 없는 데이터셋·거부·잘못된 SQL 은 줄 서지 않고 곧바로 끝나고, 실행하지 않을 요청이 자리를 차지하지 않는다.
+    // 존재 확인은 리포지토리 자체 트랜잭션, 판정은 트랜잭션 밖(가드는 리포지토리가 트랜잭션을 보장하고, 거부 감사는 자기 트랜잭션으로 쓴다) — 둘 다
+    // 허가 전에 커넥션을 돌려준다.
+    requireDataset(datasetId);
+    // 보안 등급(S2): 경로의 데이터셋이 아니라 SQL 이 참조하는 모든 데이터셋을 실행자 기준으로 판정한다 — /query 는 data 스키마 전체에 닿는다.
+    // 이 앞 판정은 거부(403)·잘못된 SQL(400)을 허가 없이 곧바로 끝내기 위한 것이다. PG 는 허가를 기다리는 동안(최대 wait-ms) 보안 등급
+    // 상향·테이블 매핑 변경이 있을 수 있어 실행 직전에 다시 판정하고 그 토큰을 실행한다(아래 judgeForExecution). Tibero 는 허가 대기가 없어
+    // 이 토큰을 그대로 실행한다.
+    Clearance viewer = clearanceResolver.current();
+    GuardedSqlExecutor.DatasetQueryJudgment judgment =
+        guardedSqlExecutor.judgeDatasetQuery(viewer, request.sql());
+    // WD-599: 허가는 쓰기 트랜잭션(=커넥션)보다 먼저, 트랜잭션 밖에서 얻는다 — 기다리는 동안 풀을 쥐지 않는다. 바깥(컨트롤러·필터)에 트랜잭션이
+    // 없는 경로다. 예외로 나가도 try-with-resources 가 반납한다. Tibero 테넌트는 db-executor 로 실행해 PG 풀 커넥션을 쥐지 않으므로
+    // (WD-207) 허가 없이 지난다(acquireUnlessTibero).
     try (AnalyticsQueryConcurrencyGate.Permit permit =
         interactiveQueryGate.acquireUnlessTibero(pipelineDataSchema, userId)) {
+      // PG 테넌트: 재확인·실행·기록을 쓰기 트랜잭션 하나로 처리한다(DML 쓰기 잠금·DML 결과와 이력이 함께 커밋/롤백).
+      // Tibero: 실행(최대 35초) 동안 PG 연결을 쥐지 않으려고 재확인은 리포지토리 자체 트랜잭션, 실행은 트랜잭션 밖, 기록만 쓰기 트랜잭션(WD-207).
       return StoreTransactions.loadExecuteThen(
           pipelineDataSchema,
           tx,
           null,
-          // 존재 확인만 필요하다 — 조회 결과(데이터셋)는 도우미의 조회 단계 자리를 채울 뿐 쓰지 않는다. 없으면 404.
-          () ->
-              datasetRepository
-                  .findById(datasetId)
-                  .orElseThrow(() -> new DatasetNotFoundException()),
-          ignored -> executeSql(request),
+          // 허가를 기다리는 동안(최대 wait-ms) 데이터셋이 지워졌으면 실행 전에 404 로 끝낸다 — 이력 저장이 지워진 데이터셋을 가리키지 않게.
+          () -> requireDataset(datasetId),
+          ignored -> executeJudged(judgeForExecution(judgment, viewer, request), request),
           tx,
           response -> {
             saveHistory(datasetId, request, userId, response);
@@ -274,15 +281,33 @@ public class DatasetDataService {
     }
   }
 
-  /** SQL 을 실행한다. 트랜잭션 구간은 호출자(executeQuery)가 정한다. */
-  private SqlQueryResponse executeSql(SqlQueryRequest request) {
-    // 보안 등급(S2): 경로의 데이터셋이 아니라 SQL 이 참조하는 모든 데이터셋을 실행자 기준으로 판정한다 — /query 는 data 스키마 전체에 닿는다.
+  /** 데이터셋이 있는지만 확인한다(없으면 404). 조회 결과는 쓰지 않는다. */
+  private DatasetResponse requireDataset(Long datasetId) {
+    return datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
+  }
+
+  /**
+   * 실행할 판정 토큰을 고른다. PG 는 쓰기 트랜잭션 안, 쓰기 잠금·실행 바로 앞에서 다시 판정한다 — 앞 판정은 허가 대기 전이라, 기다리는 동안 관리자가 보안 등급을
+   * 올리거나 매핑을 바꿨으면 낡은 판정으로 실행하게 된다(WD-638 전에는 판정이 이 트랜잭션 안 실행 직전이었다). 거부면 여기서 403(감사 포함)·400 이 나
+   * 트랜잭션이 롤백되고 실행·이력 저장이 없다. 허가가 실제로 기다렸을 때만 다시 판정하지 않고 늘 다시 판정한다 — 판정은 매핑 조회 한 번이라 싸고, 대기 없이 들어와도
+   * 앞 판정과 허가 사이에 변경이 끼어들 수 있어 「기다렸는가」는 낡음의 기준이 아니다. Tibero 는 허가 대기가 없어 앞 판정을 그대로 쓴다.
+   */
+  private GuardedSqlExecutor.DatasetQueryJudgment judgeForExecution(
+      GuardedSqlExecutor.DatasetQueryJudgment early, Clearance viewer, SqlQueryRequest request) {
+    if (pipelineDataSchema.isTibero()) {
+      return early;
+    }
+    return guardedSqlExecutor.judgeDatasetQuery(viewer, request.sql());
+  }
+
+  /** 판정 토큰을 실행한다. 트랜잭션 구간은 호출자(executeQuery)가 정한다. */
+  private SqlQueryResponse executeJudged(
+      GuardedSqlExecutor.DatasetQueryJudgment judgment, SqlQueryRequest request) {
     // WD-666: DML 이면 쓰기 대상 데이터셋들의 쓰기 잠금(KEY SHARE, id 오름차순)을 실행 직전에 같은 PG 트랜잭션에서 잡는다 — 잠금이
-    // 이력 저장 커밋까지 유지돼 truncate·NOT NULL 필드 추가·삭제와 줄 선다. Tibero 는 실행이 PG 트랜잭션 밖이라(WD-207) 잠금을 쥘 수
-    // 없어 잡지 않는다(남은 위험).
-    return guardedSqlExecutor.executeDatasetQuery(
-        clearanceResolver.current(),
-        request.sql(),
+    // 이력 저장 커밋까지 유지돼 truncate·NOT NULL 필드 추가·삭제와 줄 선다. 허가는 이 트랜잭션을 열기 전에 이미 얻었다(허가 → 트랜잭션 → 잠금).
+    // Tibero 는 실행이 PG 트랜잭션 밖이라(WD-207) 잠금을 쥘 수 없어 잡지 않는다(남은 위험).
+    return guardedSqlExecutor.executeJudgedDatasetQuery(
+        judgment,
         request.maxRows(),
         pipelineDataSchema.isTibero() ? writeTargets -> {} : writeLock::lockAllForDataWrite);
   }

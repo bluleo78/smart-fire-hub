@@ -48,18 +48,27 @@ class DatasetDataServiceTxTest extends IntegrationTestBase {
       DatasetDataService service,
       GuardedSqlExecutor executor,
       QueryHistoryRepository history,
+      List<Boolean> judgeTx,
       List<Boolean> execTx,
       List<Boolean> saveTx,
       List<Boolean> gateTx) {}
 
   private Setup setup(boolean tibero) {
+    List<Boolean> judgeTx = new ArrayList<>();
     List<Boolean> execTx = new ArrayList<>();
     List<Boolean> saveTx = new ArrayList<>();
     DatasetRepository datasets = mock(DatasetRepository.class);
     when(datasets.findById(anyLong())).thenReturn(Optional.of(mock(DatasetResponse.class)));
     GuardedSqlExecutor executor = mock(GuardedSqlExecutor.class);
     SqlQueryResponse ok = new SqlQueryResponse("SELECT", List.of(), List.of(), 0, 1L, null);
-    when(executor.executeDatasetQuery(any(), anyString(), anyInt(), any()))
+    // WD-638: 판정(judge)은 허가·트랜잭션보다 먼저, 실행(executeJudged)은 판정 토큰 그대로 실행 구간에서.
+    when(executor.judgeDatasetQuery(any(), anyString()))
+        .thenAnswer(
+            inv -> {
+              judgeTx.add(TransactionSynchronizationManager.isActualTransactionActive());
+              return mock(GuardedSqlExecutor.DatasetQueryJudgment.class);
+            });
+    when(executor.executeJudgedDatasetQuery(any(), anyInt(), any()))
         .thenAnswer(
             inv -> {
               execTx.add(TransactionSynchronizationManager.isActualTransactionActive());
@@ -92,7 +101,7 @@ class DatasetDataServiceTxTest extends IntegrationTestBase {
             // 이 테스트는 SQL 실행 구간만 본다 — 행 변경 감사(WD-463)는 호출되지 않는다.
             mock(DatasetAuditRecorder.class),
             gate);
-    return new Setup(service, executor, history, execTx, saveTx, gate.acquireTx);
+    return new Setup(service, executor, history, judgeTx, execTx, saveTx, gate.acquireTx);
   }
 
   /** Tibero: 실행은 트랜잭션 밖, 이력 저장은 트랜잭션 안. */
@@ -106,6 +115,8 @@ class DatasetDataServiceTxTest extends IntegrationTestBase {
     assertThat(s.saveTx()).containsExactly(true);
     // WD-599: Tibero 는 PG 풀 커넥션을 쥐지 않으므로 동시 실행 허가를 얻지 않는다.
     assertThat(s.gateTx()).isEmpty();
+    // WD-638: Tibero 는 허가 대기가 없어 판정은 트랜잭션 밖 한 번뿐이다.
+    assertThat(s.judgeTx()).containsExactly(false);
   }
 
   /** PG: 실행과 이력 저장이 같은 트랜잭션 안(기존 동작). */
@@ -117,20 +128,23 @@ class DatasetDataServiceTxTest extends IntegrationTestBase {
 
     assertThat(s.execTx()).containsExactly(true);
     assertThat(s.saveTx()).containsExactly(true);
+    // WD-638: 앞 판정은 허가·쓰기 트랜잭션보다 먼저 트랜잭션 밖에서(거부 403 이 허가를 기다리지 않게), 재판정은 실행 직전 쓰기 트랜잭션
+    // 안에서(허가 대기 중 바뀐 등급·매핑을 반영 — 낡은 판정으로 실행하지 않게).
+    assertThat(s.judgeTx()).containsExactly(false, true);
     // WD-599: 동시 실행 허가는 쓰기 트랜잭션을 열기 전(커넥션 없이) 한 번 얻는다.
     assertThat(s.gateTx()).containsExactly(false);
   }
 
-  /** Tibero 실행이 예외(400/403)면 기록 없이 그대로 올라간다. */
+  /** Tibero 판정이 예외(400/403)면 실행·기록 없이 그대로 올라간다. */
   @Test
-  void tibero_executionThrows_noHistory() {
+  void tibero_judgementThrows_noHistory() {
     Setup s = setup(true);
-    when(s.executor().executeDatasetQuery(any(), anyString(), anyInt(), any()))
-        .thenThrow(new SqlQueryException("거부"));
+    when(s.executor().judgeDatasetQuery(any(), anyString())).thenThrow(new SqlQueryException("거부"));
 
     assertThatThrownBy(() -> s.service().executeQuery(1L, REQ, 7L))
         .isInstanceOf(SqlQueryException.class);
 
+    assertThat(s.execTx()).isEmpty();
     verify(s.history(), never())
         .save(anyLong(), anyLong(), anyString(), any(), anyInt(), anyLong(), anyBoolean(), any());
   }

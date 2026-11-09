@@ -68,21 +68,57 @@ public class GuardedSqlExecutor {
    * 예외(400), 열람 거부는 403.
    */
   public SqlQueryResponse executeDatasetQuery(Clearance c, String sql, int maxRows) {
-    return executeDatasetQuery(c, sql, maxRows, writeTargets -> {});
+    return executeJudgedDatasetQuery(judgeDatasetQuery(c, sql), maxRows, writeTargets -> {});
   }
 
   /**
-   * {@link #executeDatasetQuery(Clearance, String, int)} 에 「실행 직전 쓰기 대상 처리」를 끼운 판(WD-666). 판정이 알아낸
-   * DML 쓰기 대상 데이터셋 id({@link SqlAccessResult#writeDatasetIds()}, SELECT 면 빈 집합)를 실행 바로 전에 {@code
-   * beforeExecute} 로 넘긴다 — 호출자(데이터셋 /query)가 같은 트랜잭션에서 그 데이터셋들의 쓰기 잠금을 잡아, DML 이 truncate·NOT NULL
-   * 필드 추가·삭제와 줄 서게 한다.
+   * 데이터셋 /query 판정을 통과한 토큰 — 판정한 정규화본과 허용 판정 결과를 함께 들고 다닌다. 판정과 실행을 나눠 부르는 호출자(WD-638 — 허가 전 앞 판정,
+   * 실행 직전 재판정)도 실행에서는 다시 판정하지 않고 토큰에 담긴 바로 그 문자열을 실행한다(판정 = 실행). {@link AnalyticsJudgment} 와 달리 거부는
+   * 값이 아니라 판정 시점의 예외(403)라, 이 토큰은 언제나 허용 판정이다.
+   *
+   * <p>생성자는 이 관문만 부른다 — 바깥에서 판정 없이 실행할 토큰을 만들 수 없게 한다.
    */
-  public SqlQueryResponse executeDatasetQuery(
-      Clearance c, String sql, int maxRows, Consumer<Set<Long>> beforeExecute) {
+  public static final class DatasetQueryJudgment {
+    /** 판정·실행할 정규화본. */
+    private final NormalizedSql normalized;
+
+    /** 허용 판정 결과 — 쓰기 대상 id(WD-666 잠금)와 감사 등급 접근 기록에 쓴다. */
+    private final SqlAccessResult result;
+
+    /** 판정한 자격 — 감사 등급 접근 기록의 행위자. */
+    private final Clearance clearance;
+
+    private DatasetQueryJudgment(
+        NormalizedSql normalized, SqlAccessResult result, Clearance clearance) {
+      this.normalized = normalized;
+      this.result = result;
+      this.clearance = clearance;
+    }
+  }
+
+  /**
+   * 데이터셋 /query SQL 을 실행하지 않고 판정만 한다 — 원문을 한 번 정규화하고 그 정규화본을 판정한다. 정규화 실패({@link
+   * SqlQueryException})·파싱 실패({@link UnsafeSqlException})는 400, 열람 거부는 거부 감사 뒤 403 예외로 끝난다({@link
+   * DatasetAccessGuard#requireSql}). DB 는 데이터셋 매핑 조회만 하고, 리포지토리가 트랜잭션을 보장하므로 호출자 트랜잭션 밖에서 불러도 된다.
+   */
+  public DatasetQueryJudgment judgeDatasetQuery(Clearance c, String sql) {
     NormalizedSql normalized = NormalizedSql.of(sql);
     SqlAccessResult r = guard.requireSql(c, normalized.text(), SqlAccessMode.INTERACTIVE);
+    return new DatasetQueryJudgment(normalized, r, c);
+  }
+
+  /**
+   * 판정 토큰을 실행한다 — 판정한 정규화본 그대로, 다시 판정하지 않는다. 판정이 알아낸 DML 쓰기 대상 데이터셋 id({@link
+   * SqlAccessResult#writeDatasetIds()}, SELECT 면 빈 집합)를 실행 바로 전에 {@code beforeExecute} 로
+   * 넘긴다(WD-666) — 호출자(데이터셋 /query)가 같은 트랜잭션에서 그 데이터셋들의 쓰기 잠금을 잡아, DML 이 truncate·NOT NULL 필드 추가·삭제와
+   * 줄 서게 한다.
+   */
+  public SqlQueryResponse executeJudgedDatasetQuery(
+      DatasetQueryJudgment judgment, int maxRows, Consumer<Set<Long>> beforeExecute) {
+    Clearance c = judgment.clearance;
+    SqlAccessResult r = judgment.result;
     beforeExecute.accept(r.writeDatasetIds());
-    SqlQueryResponse response = dataTableQueryService.executeQuery(normalized, maxRows);
+    SqlQueryResponse response = dataTableQueryService.executeQuery(judgment.normalized, maxRows);
     // 감사 등급 데이터셋을 읽은 사용자 SQL 은 접근 기록을 남긴다(거부는 requireSql 이 감사한다). 허용 판정이 아니라 실행이 성공해 결과가
     // 나가는 지점에서 남긴다 — 검증 예외·실행 오류(200 + error)는 데이터가 나가지 않았다(executeJudgedAnalytics 와 같은 규칙, 코드리뷰
     // 3).

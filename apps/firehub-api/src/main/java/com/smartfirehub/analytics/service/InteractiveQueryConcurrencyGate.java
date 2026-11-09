@@ -34,7 +34,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 위젯·전부 캐시된 대시보드)까지 wait-ms 동안 줄 서다 429 를 받는다. 실행 구간을 새 readOnly 트랜잭션으로 여는 이유: 실행 서비스({@code
  * AnalyticsQueryExecutionService.execute})는 자기 {@code @Transactional}(쓰기 가능)을 열므로, 바깥 readOnly 트랜잭션
  * 없이 부르면 차트 저장 쿼리(readOnly=false 로 실행)가 쓰기 가능한 커넥션에서 돈다. 판정·자격 계산 리포지토리는 각자 readOnly 트랜잭션으로 테넌트 GUC
- * 를 세우므로 바깥 트랜잭션 없이 불러도 된다.
+ * 를 세우므로 바깥 트랜잭션 없이 불러도 된다. 데이터셋 SQL 편집기도 같은 규칙이다(WD-638): 존재 확인(404)·판정(400/403)을 먼저 끝낸 뒤 {@link
+ * #acquireUnlessTibero} 로 허가를 얻고, 재판정(대기 중 바뀐 등급 반영)·실행·이력 저장을 쓰기 트랜잭션 하나로 연다(쓰기 트랜잭션이라 {@code
+ * runGated} 를 쓰지 않는다).
  *
  * <p><b>WD-553 게이트({@link AnalyticsQueryConcurrencyGate})와의 차이.</b> 그쪽(애드혹·저장 쿼리·내보내기)은 바깥 트랜잭션이 이미
  * 커넥션을 쥔 채 오므로 기다리면 안 되어 즉시 거절한다. 이 게이트는 커넥션을 쥐기 전에 얻으므로 기다려도 풀을 쥐지 않는다. 두 게이트는 몫을 따로 센다(합쳐 최대 8 동시
