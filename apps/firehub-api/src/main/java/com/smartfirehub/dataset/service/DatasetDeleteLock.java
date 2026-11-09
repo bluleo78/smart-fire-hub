@@ -46,6 +46,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p><b>잠금 순서.</b> 항상 「데이터셋 행(이 증표) → 테넌트 PYTHON 읽기 권한 동기화 잠금(advisory) → 테이블」이다. 동기화 잠금은 기존 테이블을
  * 잠그는 DDL 앞에서만 필요하므로 테이블 없는 데이터셋(DOCUMENT/FILE)만 지우면 잡지 않는다 — 잡으면 같은 테넌트의 동기화가 끝날 때까지 쓸데없이 기다린다.
  *
+ * <p>WD-670: 테이블 있는 데이터셋은 행 잠금과 동기화 잠금 사이에 구조 잠금({@link DatasetDataWriteLock#lockStructure} — 데이터
+ * 저장소에 직접 쓰는 파이프라인과 직렬화, 시간 넘으면 409)을 테이블마다 한 번 잡는다 — 순서는 「데이터셋 행 → 구조 → 동기화 → 테이블」. 일괄 삭제는 동기화 잠금
+ * 직전에 모두(id 오름차순), 단건 삭제는 동기화 잠금 직전에 잡는다.
+ *
  * <ul>
  *   <li>일괄 삭제({@link DatasetService#deleteLockedDatasets}): 지울 목록에 테이블 있는 데이터셋이 하나라도 있으면 행 잠금 직후·첫
  *       삭제 전에 한 번 잡는다. 없으면 잡지 않는다.

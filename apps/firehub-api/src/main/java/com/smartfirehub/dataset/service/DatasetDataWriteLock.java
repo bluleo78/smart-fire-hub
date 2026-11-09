@@ -1,12 +1,19 @@
 package com.smartfirehub.dataset.service;
 
+import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
+import com.smartfirehub.dataset.exception.OutputStructureChangedException;
+import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetWriteTarget;
+import com.smartfirehub.dataset.storage.DataTableStore;
+import com.smartfirehub.dataset.storage.OutputStructureErrors;
 import java.util.Collection;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -57,18 +64,34 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p><b>트랜잭션.</b> 잠금은 현재 Spring 트랜잭션에 묶여 커밋·롤백 때 풀린다. 트랜잭션 밖에서 잡으면 문장이 끝나자마자 풀려 아무것도 막지 못하므로 {@link
  * IllegalStateException} 으로 거부한다. 데이터 저장소가 플랫폼 DB 와 따로인 설치본(WD-494)에서는 잠금이 플랫폼 트랜잭션에 있고 쓰기는 저장소
  * 연결에서 일어난다 — 잠금은 플랫폼 트랜잭션 커밋까지 유지되므로 직렬화는 같지만, 두 커밋이 원자적이지는 않다.
+ *
+ * <p><b>구조 잠금(WD-670).</b> 플랫폼 트랜잭션 없이 데이터 저장소에 직접 쓰는 경로(파이프라인 SQL 스텝 — 앱 안·실행기, 실행기의 PG 적재)는 이 행
+ * 잠금을 잡지 않고 데이터 저장소 트랜잭션 첫 문장으로 구조 잠금({@code DatasetStructureLock})을 공유로 잡는다. 그래서 구조 변경은 FOR UPDATE
+ * 바로 뒤에 같은 키를 배타로 잡는다({@link #lockStructure}) — 순서는 「데이터셋 행 → 구조 잠금 → 테넌트 동기화 → 테이블」이다. 플랫폼 쓰기(행
+ * 쓰기·가져오기· 파이프라인 페이지 적재)는 지금처럼 KEY SHARE 만 잡는다(구조 변경과의 직렬화는 행 잠금이 이미 한다).
  */
 @Component
 public class DatasetDataWriteLock {
 
   private final DatasetRepository datasetRepository;
 
+  /** 구조 잠금(WD-670)을 테넌트 저장소 구현에 맡기는 파사드. */
+  private final DataTableService dataTableService;
+
+  /** 페이지 적재 전 현재 필드 목록 확인용(WD-670). */
+  private final DatasetColumnRepository columnRepository;
+
   /** 잠금 + 쓰기를 한 트랜잭션으로 묶는 템플릿(기본 전파 REQUIRED — 바깥 트랜잭션이 있으면 거기에 합류해 그 커밋까지 쥔다). */
   private final TransactionTemplate tx;
 
   public DatasetDataWriteLock(
-      DatasetRepository datasetRepository, PlatformTransactionManager transactionManager) {
+      DatasetRepository datasetRepository,
+      DataTableService dataTableService,
+      DatasetColumnRepository columnRepository,
+      PlatformTransactionManager transactionManager) {
     this.datasetRepository = datasetRepository;
+    this.dataTableService = dataTableService;
+    this.columnRepository = columnRepository;
     this.tx = new TransactionTemplate(transactionManager);
   }
 
@@ -93,9 +116,41 @@ public class DatasetDataWriteLock {
    */
   public DatasetWriteTarget lockForStructureChange(Long datasetId) {
     requireTransaction();
+    DatasetWriteTarget target =
+        datasetRepository
+            .lockForStructureWrite(datasetId)
+            .orElseThrow(DatasetNotFoundException::new);
+    // WD-670: 행 잠금 바로 뒤 — 데이터 저장소에 직접 쓰는 파이프라인 쓰기가 끝나기를 기다린다(시간 넘으면 409).
+    lockStructure(target.tableName());
+    return target;
+  }
+
+  /**
+   * 데이터셋 행만 FOR UPDATE 로 잡는다(구조 잠금 없이, WD-670) — 데이터 저장소 쓰기와 다툴 필요는 없지만 테넌트 동기화 잠금보다 먼저 데이터셋 행을 잡아야
+   * 하는 경로(러너 TEMP 재생성 보관본 맞춤)용. 「데이터셋 행 → 동기화」 순서를 지켜 데이터셋 삭제와 거꾸로 기다리지 않게 한다.
+   *
+   * @throws DatasetNotFoundException 데이터셋이 없거나 기다리는 동안 삭제됐을 때(404)
+   */
+  public DatasetWriteTarget lockRowForStructureChange(Long datasetId) {
+    requireTransaction();
     return datasetRepository
         .lockForStructureWrite(datasetId)
         .orElseThrow(DatasetNotFoundException::new);
+  }
+
+  /**
+   * 구조 잠금(WD-670)을 배타로 잡는다 — 데이터셋 행 FOR UPDATE(필드 변경·삭제 잠금)를 잡은 <b>바로 뒤</b>, 테넌트 동기화 잠금·테이블 잠금보다 먼저
+   * 부른다. 파이프라인 SQL 스텝·실행기 적재가 그 테이블에 쓰는 중이면 끝날 때까지 기다리되 정해진 시간({@code
+   * DatasetStructureLock.EXCLUSIVE_WAIT})을 넘기면 409 로 끝난다. 테이블 이름이 없으면(문서형 데이터셋) 아무것도 하지 않는다.
+   *
+   * @throws com.smartfirehub.dataset.exception.DatasetInUseException 시간 안에 잡지 못했을 때(409)
+   */
+  public void lockStructure(String tableName) {
+    requireTransaction();
+    if (tableName == null || tableName.isBlank()) {
+      return;
+    }
+    dataTableService.lockStructureExclusive(tableName);
   }
 
   /**
@@ -147,6 +202,83 @@ public class DatasetDataWriteLock {
         status -> {
           lockOutputForWrite(tableName);
           return body.get();
+        });
+  }
+
+  /**
+   * {@link #writeToOutput(String, Supplier)} 에 <b>쓸 컬럼 확인</b>을 더한 판(WD-670) — 페이지·배치마다 커밋하는 파이프라인
+   * APPEND 적재용.
+   *
+   * <p>페이지 사이에는 잠금을 쥐지 않으므로 그 틈에 필드가 지워질 수 있다. 예전에는 다음 페이지가 DB 원문 「column does not exist」로 실패했다. 이제
+   * KEY SHARE 를 잡은 뒤(이후 필드 변경은 이 쓰기 커밋 뒤로 줄 선다) 이 배치의 컬럼이 현재 필드 목록에 모두 있는지 보고, 없으면 그 필드 이름을 짚어
+   * 실패한다. 그래도 DB 가 구조 변경 오류(PG 42703·42P01, Tibero 식별자 무효·테이블 없음·자원 사용 중)를 내면 같은 깔끔한 예외로 바꾼다(마지막
+   * 방어선). 임시 테이블(REPLACE 스테이징)이 대상이면 확인하지 않는다 — 다른 테이블이고 맞바꿈이 구조를 따로 확인한다.
+   *
+   * @param columns 이 배치가 쓸 컬럼 이름
+   * @throws OutputStructureChangedException 배치 컬럼 중 현재 없는 필드가 있거나 DB 가 구조 변경 오류를 냈을 때
+   */
+  public <T> T writeToOutput(String tableName, Collection<String> columns, Supplier<T> body) {
+    return tx.execute(
+        status -> {
+          DatasetWriteTarget target = lockOutputForWrite(tableName);
+          requireColumnsPresent(target.id(), columns);
+          return translatingStructureErrors(body);
+        });
+  }
+
+  /**
+   * {@link #lockLoadTarget(String)} 에 쓸 컬럼 확인을 더한 판(WD-670) — 로컬 Python 출력 적재가 자기 트랜잭션 안에서 부른다. 임시
+   * 테이블이면 아무것도 하지 않는다.
+   */
+  public void lockLoadTarget(String tableName, Collection<String> columns) {
+    if (tableName.startsWith(DataTableService.TEMP_TABLE_PREFIX)) {
+      return;
+    }
+    DatasetWriteTarget target = lockOutputForWrite(tableName);
+    requireColumnsPresent(target.id(), columns);
+  }
+
+  /** 쓸 컬럼이 모두 현재 필드 목록에 있는지 — 없는 첫 필드를 짚어 실패한다(이름순이 아니라 배치 순서). */
+  private void requireColumnsPresent(Long datasetId, Collection<String> columns) {
+    if (columns == null || columns.isEmpty()) {
+      return;
+    }
+    Set<String> current =
+        columnRepository.findByDatasetId(datasetId).stream()
+            .map(DatasetColumnResponse::columnName)
+            .collect(Collectors.toSet());
+    for (String column : columns) {
+      // 시스템 컬럼(id·import_id·created_at·_updated_at)은 필드 목록에 없지만 물리 테이블에 늘 있다 — 확인하지 않는다.
+      if (DataTableStore.SYSTEM_COLUMNS.contains(column)) {
+        continue;
+      }
+      if (!current.contains(column)) {
+        throw OutputStructureChangedException.missingField(column);
+      }
+    }
+  }
+
+  /** 본문이 구조 변경 DB 오류로 실패하면 깔끔한 예외로 바꾼다(그 밖의 오류는 그대로). 트랜잭션은 예외로 롤백된다. */
+  private static <T> T translatingStructureErrors(Supplier<T> body) {
+    try {
+      return body.get();
+    } catch (RuntimeException e) {
+      if (!(e instanceof OutputStructureChangedException)
+          && OutputStructureErrors.isStructureChange(e)) {
+        throw new OutputStructureChangedException(e);
+      }
+      throw e;
+    }
+  }
+
+  /** {@link #writeToOutput(String, Collection, Supplier)} 의 반환값 없는 판. */
+  public void writeToOutput(String tableName, Collection<String> columns, Runnable body) {
+    writeToOutput(
+        tableName,
+        columns,
+        () -> {
+          body.run();
+          return null;
         });
   }
 

@@ -150,7 +150,7 @@ def test_postgres_tenant_runs_existing_path(test_client, mock_auth_header, mock_
         assert args[0] == "print(1)"
         assert kwargs["tenant_id"] == 7 and kwargs["read_slot"] == 1
         # PG 경로 호출 인자는 예전 그대로다 — 스크립트 토큰·적재기가 끼어들지 않는다(WD-78, D4).
-        assert set(kwargs) == {"tenant_id", "read_slot", "output_table", "column_type_map"}
+        assert set(kwargs) == {"tenant_id", "read_slot", "output_table", "column_type_map", "structure_locks"}
         assert data["output"] == "hi"
 
 

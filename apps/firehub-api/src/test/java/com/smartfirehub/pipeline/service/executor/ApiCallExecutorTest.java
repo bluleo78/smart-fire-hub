@@ -143,7 +143,8 @@ class ApiCallExecutorTest {
     ArgumentCaptor<List<Map<String, Object>>> rowsCaptor = ArgumentCaptor.forClass(List.class);
     verify(dataTableRowService).insertBatch(eq("test_table"), anyList(), rowsCaptor.capture());
     // WD-666: APPEND 페이지 쓰기는 출력 테이블의 쓰기 잠금 안에서 한다.
-    verify(writeLock).writeToOutput(eq("test_table"), any(Runnable.class));
+    // WD-670: 이 페이지가 쓸 컬럼을 넘겨 잠금 뒤 현재 필드 목록과 대조한다.
+    verify(writeLock).writeToOutput(eq("test_table"), anyCollection(), any(Runnable.class));
 
     List<Map<String, Object>> rows = rowsCaptor.getValue();
     assertThat(rows).hasSize(2);

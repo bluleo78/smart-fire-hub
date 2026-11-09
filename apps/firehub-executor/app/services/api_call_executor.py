@@ -23,6 +23,7 @@ from app.services import value_conversion as vc
 from app.services.api_call_errors import RetryableApiCallError
 from app.services.db_utils import insert_batch
 from app.services.query_key_encoding import encode_query_key, has_invalid_percent
+from app.services.structure_lock import StructureChangedError, StructureLockError, acquire_structure_locks
 from app.validators.ssrf_protection import SsrfException, validate_url
 
 logger = logging.getLogger(__name__)
@@ -50,11 +51,17 @@ def execute_api_call(request: ApiCallExecuteRequest, conn) -> ApiCallExecuteResp
     # 인증 설정은 실행마다 한 번만 푼다(WD-657) — 페이지·재시도·리다이렉트·실행 로그 가림이 모두 이 값을 쓴다(Java 실행기와 같다).
     auth = _resolve_auth(request.auth)
     try:
+        # 구조 잠금(WD-670) — PG APPEND 로 출력에 직접 쓸 때 api 가 싣는다. 수집 전에 이 트랜잭션의 첫 문장으로 공유 잠금을 잡고 구조를
+        # 확인한다. 끝에 한 번 커밋하므로 수집 내내 잠금을 쥔다(결정 C) — 그동안 api 의 구조 변경은 수 초 뒤 409 로 끝나고, 페이지 사이에 필드가
+        # 사라지는 일은 없다.
+        if request.structure_locks:
+            with conn.cursor() as cur:
+                acquire_structure_locks(cur, request.tenant_id, request.structure_locks)
         total_rows, total_pages, log_lines = _fetch_and_write_pages(request, write_to_pg, start_time, auth)
         conn.commit()
         return _success_response(request, total_rows, total_pages, log_lines, start_time, auth)
 
-    except (SsrfException, ApiCallException) as e:
+    except (SsrfException, ApiCallException, StructureChangedError, StructureLockError) as e:
         conn.rollback()
         return _failure_response(e, start_time)
     except Exception as e:

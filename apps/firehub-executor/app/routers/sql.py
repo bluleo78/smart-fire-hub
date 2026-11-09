@@ -42,5 +42,7 @@ async def execute_sql(
             default_timeout_seconds=settings.sql_statement_timeout_seconds,
             pre_statement_timeout_seconds=settings.sql_pre_statement_timeout_seconds,
             stop_requested=stop_requested,
+            tenant_id=request.tenant_id,
+            structure_locks=request.structure_locks,
         ),
     )

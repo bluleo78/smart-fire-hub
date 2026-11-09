@@ -114,6 +114,20 @@ public interface DataTableStore {
   default void lockTenantGrantSyncForDdl() {}
 
   /**
+   * 구조 변경(필드 추가·변경·삭제, truncate·replace, 데이터셋 삭제, TEMP 재생성) 전에 그 테이블의 구조 잠금({@link
+   * DatasetStructureLock})을 배타로 잡는다(WD-670). 데이터셋 행 FOR UPDATE <b>바로 뒤</b>, 테넌트 동기화 잠금·테이블 잠금보다 먼저
+   * 부른다 — 순서는 「데이터셋 행 → 구조 잠금 → 테넌트 동기화 → 테이블」 하나다.
+   *
+   * <p>파이프라인 SQL 스텝·실행기 적재는 플랫폼 행 잠금 없이 데이터 저장소 트랜잭션 첫 문장으로 같은 키의 공유 잠금을 잡는다. 그 쓰기가 끝날 때까지 이 잠금이
+   * 기다리되 {@link DatasetStructureLock#EXCLUSIVE_WAIT} 를 넘기면 409({@code DatasetInUseException})로 끝낸다.
+   * 잠금은 호출자 트랜잭션(데이터 저장소 연결이 묶인 플랫폼 트랜잭션)이 끝날 때 풀린다.
+   *
+   * <p>기본 구현은 아무것도 하지 않는다 — Tibero 는 이 잠금을 쓰지 않는다(결정 B: Tibero 쓰기 경로는 PG advisory 를 공유하지 않으므로 잡아도
+   * 막을 상대가 없다. 후속으로 DBMS_LOCK 을 검토한다).
+   */
+  default void lockStructureExclusive(String tableName) {}
+
+  /**
    * REPLACE 적재용 임시(staging) 테이블을 이번 실행 전용 이름({@code DataTableService.newTempTableName})으로 만들고 그 이름을
    * 돌려준다 (WD-151). 같은 테이블에 겹친 실행이 서로의 임시 테이블을 만들거나 지우지 않게 한다.
    */

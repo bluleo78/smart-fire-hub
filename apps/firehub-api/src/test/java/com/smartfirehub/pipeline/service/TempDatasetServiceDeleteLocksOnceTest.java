@@ -16,6 +16,7 @@ import com.smartfirehub.dataset.repository.DatasetReferenceRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.rowsearch.RowSearchIndex;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.service.DatasetDataWriteLock;
 import com.smartfirehub.dataset.service.DatasetDeleteLock;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -44,6 +45,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
  *
  * <p>WD-675 — 동기화 잠금 시점(일괄은 테이블 있는 데이터셋이 있을 때만 첫 삭제 전, 단건은 DROP 직전)이 {@link DatasetDeleteLock} 문서의
  * 규칙대로인지 본다.
+ *
+ * <p>WD-670 — 구조 잠금({@link DatasetDataWriteLock#lockStructure})은 테이블마다 한 번, 데이터셋 행 잠금 뒤·동기화 잠금 앞에서
+ * 잡는다(일괄 삭제는 동기화 잠금을 첫 삭제 전에 잡으므로 구조 잠금도 모두 그 앞에서).
  */
 @ExtendWith(MockitoExtension.class)
 class TempDatasetServiceDeleteLocksOnceTest {
@@ -56,6 +60,9 @@ class TempDatasetServiceDeleteLocksOnceTest {
   @Mock private DatasetReferenceRepository datasetReferenceRepository;
   @Mock private RowSearchIndex rowSearchIndex;
   @Mock private TriggerRepository triggerRepository;
+
+  /** 구조 잠금(WD-670) 호출 순서를 보려는 목 — 실제 잠금은 하지 않는다. */
+  @Mock private DatasetDataWriteLock writeLock;
 
   @InjectMocks private DatasetService datasetService;
 
@@ -105,9 +112,14 @@ class TempDatasetServiceDeleteLocksOnceTest {
     verify(datasetRepository).deleteById(20L);
     verify(rowSearchIndex, times(2)).drop(any());
 
-    InOrder order = inOrder(datasetRepository, dataTableService);
+    // WD-670: 행 → 구조(테이블마다 한 번, id 순) → 동기화 → 테이블. 본문이 구조 잠금을 다시 잡지 않는다.
+    verify(writeLock, times(1)).lockStructure(table(10L));
+    verify(writeLock, times(1)).lockStructure(table(20L));
+    InOrder order = inOrder(datasetRepository, writeLock, dataTableService);
     order.verify(datasetRepository).lockForDelete(10L);
     order.verify(datasetRepository).lockForDelete(20L);
+    order.verify(writeLock).lockStructure(table(10L));
+    order.verify(writeLock).lockStructure(table(20L));
     order.verify(dataTableService).lockTenantGrantSyncForDdl();
     order.verify(dataTableService).dropTable(table(10L));
     order.verify(dataTableService).dropTable(table(20L));
@@ -117,8 +129,11 @@ class TempDatasetServiceDeleteLocksOnceTest {
   void 단건_삭제는_예전처럼_행_잠금_뒤에_동기화_잠금을_잡는다() {
     datasetService.deleteDataset(10L);
 
-    InOrder order = inOrder(datasetRepository, dataTableService);
+    // WD-670: 단건도 행 → 구조 → 동기화 → 테이블, 구조 잠금은 한 번
+    verify(writeLock, times(1)).lockStructure(table(10L));
+    InOrder order = inOrder(datasetRepository, writeLock, dataTableService);
     order.verify(datasetRepository).lockForDelete(10L);
+    order.verify(writeLock).lockStructure(table(10L));
     order.verify(dataTableService).lockTenantGrantSyncForDdl();
     order.verify(dataTableService).dropTable(table(10L));
     verify(datasetRepository).deleteById(10L);
@@ -134,6 +149,8 @@ class TempDatasetServiceDeleteLocksOnceTest {
 
     verify(dataTableService, never()).lockTenantGrantSyncForDdl();
     verify(dataTableService, never()).dropTable(anyString());
+    // WD-670: 테이블이 없으면 구조 잠금도 잡지 않는다
+    verify(writeLock, never()).lockStructure(any());
     verify(datasetRepository).deleteById(10L);
     verify(datasetRepository).deleteById(20L);
   }
@@ -148,11 +165,14 @@ class TempDatasetServiceDeleteLocksOnceTest {
 
     verify(dataTableService, times(1)).lockTenantGrantSyncForDdl();
     verify(dataTableService, times(2)).dropTable(anyString());
-    InOrder order = inOrder(datasetRepository, dataTableService);
+    InOrder order = inOrder(datasetRepository, writeLock, dataTableService);
     order.verify(datasetRepository).lockForDelete(10L);
     order.verify(datasetRepository).lockForDelete(20L);
     order.verify(datasetRepository).lockForDelete(30L);
     order.verify(datasetRepository).lockForDelete(40L);
+    // WD-670: 테이블 있는 데이터셋(20·40)만 구조 잠금 — 동기화 잠금 앞
+    order.verify(writeLock).lockStructure(table(20L));
+    order.verify(writeLock).lockStructure(table(40L));
     order.verify(dataTableService).lockTenantGrantSyncForDdl();
     order.verify(datasetRepository).deleteById(10L);
     order.verify(dataTableService).dropTable(table(20L));

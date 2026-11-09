@@ -18,6 +18,12 @@ from app.schemas.responses import PythonExecuteResponse
 from app.services.db_utils import insert_batch
 from app.services.sql_executor import pg_error_info
 from app.services import value_conversion as vc
+from app.services.structure_lock import (
+    StructureChangedError,
+    StructureLockError,
+    acquire_structure_locks,
+    validate_locks,
+)
 from app.tenant import resolve_read_db_url, resolve_schema
 
 logger = logging.getLogger(__name__)
@@ -32,6 +38,7 @@ def execute_python(
     read_slot: int,
     output_table: Optional[str] = None,
     column_type_map: Optional[dict] = None,
+    structure_locks=(),
 ) -> PythonExecuteResponse:
     """사용자 Python 스크립트를 실행한다. ``tenant_id``·``read_slot`` 은 **키워드 전용 필수** 인자다.
 
@@ -54,6 +61,11 @@ def execute_python(
     # 스크립트는 실행 주체 슬롯 롤로 **직접 로그인**한다(WD-29). 슬롯 검증 실패는 여기서 예외 —
     # 스크립트를 띄우기 전에 끝난다. 테넌트 롤은 아래 출력 적재(get_connection)에만 쓴다(폴백 아님).
     script_db_url = resolve_read_db_url(tenant_id, read_slot, settings)
+    # 구조 잠금 키(WD-670)는 스크립트를 띄우기 전에 검증한다 — 형식·테넌트가 틀리면 아무것도 실행하지 않고 거부한다(StructureLockError).
+    try:
+        validate_locks(structure_locks, tenant_id)
+    except StructureLockError as e:
+        return rejected_response(str(e))
     tenant_schema = resolve_schema(tenant_id)
 
     def command(script_path: str) -> Tuple[List[str], Optional[Dict[str, str]]]:
@@ -98,8 +110,16 @@ def execute_python(
         # 타입 변환은 _run_script 가 DB 에 닿기 전에 모든 행에 대해 이미 했다(WD-431) — 변환 실패면 여기까지 오지 않는다.
         # 적재도 테넌트 롤로 — 스크립트가 남의 스키마에 쓰지 못하게 한다.
         with get_connection(tenant_id, settings) as conn:
-            insert_batch(conn, output_table, rows)
-            conn.commit()
+            try:
+                # 구조 잠금(WD-670) — PG APPEND 로 출력에 직접 쓸 때 api 가 싣는다. 적재 트랜잭션의 첫 문장으로 공유 잠금을 잡고, 스크립트가
+                # 도는 동안 필드가 지워지거나 NOT NULL 필드가 생겼으면 쓰기 전에 실패한다.
+                with conn.cursor() as cur:
+                    acquire_structure_locks(cur, tenant_id, structure_locks)
+                insert_batch(conn, output_table, rows)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
         return len(rows)
 
     effective_timeout = timeout if timeout is not None else settings.python_timeout
@@ -115,7 +135,11 @@ def execute_python(
 
 
 def _pg_load_failure(error: Exception) -> Tuple[str, Optional[Any]]:
-    """PG 적재 실패 문구(WD-211) — 원문은 로그에만 두고 일반 안내 문구와 pg_error(SQLState 22 사유는 api 가 만든다)를 돌려준다."""
+    """PG 적재 실패 문구(WD-211) — 원문은 로그에만 두고 일반 안내 문구와 pg_error(SQLState 22 사유는 api 가 만든다)를 돌려준다.
+
+    실행 중 구조 변경(WD-670)은 실행기가 판정한 실패라 그 한국어 문구를 그대로 싣는다(pg_error 없음)."""
+    if isinstance(error, StructureChangedError):
+        return str(error), None
     return LOAD_FAILED_MESSAGE, pg_error_info(error)
 
 

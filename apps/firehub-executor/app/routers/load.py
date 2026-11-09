@@ -29,5 +29,7 @@ async def execute_load_endpoint(
         lambda conn: load_executor.execute_load(
             request.table, request.rows, request.column_type_map, conn, request.timeout_seconds,
             default_timeout_seconds=settings.load_statement_timeout_seconds,
+            tenant_id=request.tenant_id,
+            structure_locks=request.structure_locks,
         ),
     )

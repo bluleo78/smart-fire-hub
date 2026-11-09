@@ -111,7 +111,9 @@ class DatasetServiceFileTest {
             org.mockito.Mockito.mock(com.smartfirehub.pipeline.service.PipelineDataSchema.class),
             // 이 테스트는 감사 대상 변경(WD-463)을 검증하지 않는다.
             org.mockito.Mockito.mock(DatasetAuditRecorder.class),
-            new com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbErrors());
+            new com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbErrors(),
+            // 이 테스트는 구조 변경을 쓰지 않아 구조 잠금(WD-670)은 호출되지 않는다.
+            org.mockito.Mockito.mock(DatasetDataWriteLock.class));
   }
 
   @Test

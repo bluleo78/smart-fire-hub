@@ -892,6 +892,16 @@ public class PipelineAsyncRunner {
         // SqlGateArchitectureTest 가 보안 판정(checkStepSqlForRun)과 같은 이 메서드 안에서만 부르게 강제한다 —
         // 방언·람다·도우미로 옮기면 판정과 실행이 갈라진다. 그래서 PG 는 싱크가 아닌 조립·번역만 방언에 맡기고
         // 싱크는 여기서 직접 부른다.
+        // 구조 잠금 대상(WD-670, PG 만) — 이 실행이 데이터 저장소에 직접 쓰는 테이블(출력 + 사용자 DML 쓰기 대상). SQL 실행 트랜잭션의 첫
+        // 문장으로
+        // 공유 잠금을 잡고 잠금 뒤 구조를 다시 확인한다(앱 안 경로·실행기 같은 계약). 플랫폼 데이터셋 행 잠금을 쥐지 않는 이유는 SqlScriptExecutor
+        // 의
+        // 4인자 execute Javadoc(플랫폼 풀 고갈). Tibero 는 이 잠금이 없다(결정 B).
+        List<StructureGuard> structureGuards =
+            dialect instanceof TiberoStepDialect
+                ? List.of()
+                : sqlStructureGuards(
+                    isSelect ? null : access, outputTableName, outputDatasetId, isSelect);
         if (dialect instanceof TiberoStepDialect tiberoDialect) {
           // Tibero 테넌트: 컬럼 탐지·실행 모두 db-executor 로만 한다. executorEnabled 와 무관하고 PG 실행기로
           // 폴백하지 않는다(스펙 §3). 여기까지 오면 검증·보안 게이트·출력 등급 처리가 이미 끝났다(사용자 SQL 은 게이트 통과 뒤에만
@@ -912,7 +922,8 @@ public class PipelineAsyncRunner {
           if (executorEnabled) {
             // 실행 id 를 넘겨 실행기가 출력 잠금을 얻은 뒤 사용자 SQL 전에 취소를 되묻게 한다(WD-466 — 잠금 대기 중 취소).
             var result =
-                executorClient.executeSql(wrapped.sql(), preStatements, cancel.executionId());
+                executorClient.executeSql(
+                    wrapped.sql(), preStatements, cancel.executionId(), structureGuards);
             // 실행기가 잠금 뒤 취소를 확인해 롤백했다(WD-466) — 실패가 아니라 취소다. 출력은 손대지 않았다.
             if (result.cancelled()) {
               throw new PipelineExecutionCancelledException(0, false);
@@ -926,7 +937,8 @@ public class PipelineAsyncRunner {
           } else {
             try {
               // 취소 확인을 넘겨 출력 잠금을 얻은 직후에도 취소를 확인하게 한다(WD-466 — 잠금 대기 중 취소).
-              executionLog = sqlExecutor.execute(preStatements, wrapped.sql(), cancel);
+              executionLog =
+                  sqlExecutor.execute(preStatements, wrapped.sql(), cancel, structureGuards);
             } catch (ScriptExecutionException e) {
               // 번역할 MERGE 오류가 아니면 방언이 같은 예외를 그대로 돌려준다(예전 rethrow 와 같다).
               throw pgDialect.translateLocalFailure(e, wrapped.mergePkColumns());
@@ -942,7 +954,9 @@ public class PipelineAsyncRunner {
           cancel.checkpoint(0, false);
           if (executorEnabled) {
             // 잠금 대기 중 취소(WD-466) — 위 SELECT 적재 분기와 같다.
-            var result = executorClient.executeSql(sql, preStatements, cancel.executionId());
+            var result =
+                executorClient.executeSql(
+                    sql, preStatements, cancel.executionId(), structureGuards);
             if (result.cancelled()) {
               throw new PipelineExecutionCancelledException(0, false);
             }
@@ -952,7 +966,7 @@ public class PipelineAsyncRunner {
             executionLog = result.executionLog();
           } else {
             // 잠금 대기 중 취소(WD-466) — 위 SELECT 적재 분기와 같다.
-            executionLog = sqlExecutor.execute(preStatements, sql, cancel);
+            executionLog = sqlExecutor.execute(preStatements, sql, cancel, structureGuards);
           }
         }
       } else if ("PYTHON".equals(step.scriptType())) {
@@ -1081,6 +1095,16 @@ public class PipelineAsyncRunner {
                         }
                         if (pyColumnTypes != null) {
                           request.put("column_type_map", pyColumnTypes);
+                        }
+                        // WD-670: PG APPEND 로 출력에 직접 쓰면 실행기가 적재 트랜잭션 첫 문장으로 구조 잠금(공유)을 잡게 한다.
+                        List<Map<String, Object>> pyLocks =
+                            executorLoadStructureLocks(
+                                targetTable,
+                                pyOutputTable,
+                                pyColumnTypes,
+                                dialect instanceof TiberoStepDialect);
+                        if (!pyLocks.isEmpty()) {
+                          request.put("structure_locks", pyLocks);
                         }
                         // Tibero 에만 싣는다 — PG 요청 본문에는 키 자체가 없다(PG 동작 불변).
                         if (scriptToken != null) {
@@ -1254,6 +1278,7 @@ public class PipelineAsyncRunner {
           final ApiConnectionResponse apiConnFinal = apiConn;
           final Map<String, String> apiAuth = decryptedAuth;
           final Map<String, String> apiColumnTypes = columnTypeMap;
+          final String apiOutputTable = outputTableName;
           executionLog =
               runStaged(
                       outputTableName,
@@ -1264,6 +1289,18 @@ public class PipelineAsyncRunner {
                         Map<String, Object> request =
                             buildApiCallExecutorRequest(
                                 apiCallConfig, targetTable, apiAuth, apiColumnTypes, apiConnFinal);
+                        // WD-670: PG APPEND 로 출력에 직접 쓰면 실행기가 적재 트랜잭션 첫 문장으로 구조 잠금(공유)을 잡는다. 실행기는 끝에
+                        // 한
+                        // 번 커밋하므로 수집 내내 잠금을 쥔다(결정 C) — 그동안 구조 변경은 수 초 뒤 409 로 끝난다.
+                        List<Map<String, Object>> apiLocks =
+                            executorLoadStructureLocks(
+                                targetTable,
+                                apiOutputTable,
+                                apiColumnTypes,
+                                dialect instanceof TiberoStepDialect);
+                        if (!apiLocks.isEmpty()) {
+                          request.put("structure_locks", apiLocks);
+                        }
                         // 취소 체크포인트(WD-153) — 실행기 호출 직전. 실행기 안의 페이지·재시도는 이 API 가 들여다볼 수 없어 호출
                         // 직전·직후만 본다.
                         cancel.checkpoint(0, useStaging);
@@ -1749,6 +1786,50 @@ public class PipelineAsyncRunner {
       pipelineSecurityGate.requireOutputVisible(temp.datasetId(), runAs);
     }
     return temp;
+  }
+
+  /**
+   * SQL 스텝의 구조 잠금 대상(WD-670). SELECT 자동 적재면 출력 테이블 하나를 출력 데이터셋 필드 목록과 함께(잠금 뒤 계획 컬럼 확인), 사용자 DML 이면
+   * 지정 출력과 보안 관문이 판정한 쓰기 대상 데이터셋 전부를 존재 확인만으로 넣는다 — 출력 지정 없이 다른 데이터셋에 쓰는 DML 도 덮는다.
+   *
+   * @param dmlAccess 사용자 DML 의 판정 결과(SELECT 면 null)
+   */
+  private List<StructureGuard> sqlStructureGuards(
+      SqlAccessResult dmlAccess, String outputTableName, Long outputDatasetId, boolean isSelect) {
+    List<StructureGuard> guards = new ArrayList<>();
+    if (outputTableName != null) {
+      if (isSelect && outputDatasetId != null) {
+        List<String> known =
+            columnRepository.findByDatasetId(outputDatasetId).stream()
+                .map(DatasetColumnResponse::columnName)
+                .toList();
+        guards.add(new StructureGuard(outputTableName, known));
+      } else {
+        guards.add(StructureGuard.exists(outputTableName));
+      }
+    }
+    if (dmlAccess != null) {
+      for (Long id : dmlAccess.writeDatasetIds()) {
+        datasetRepository
+            .findTableNameById(id)
+            .ifPresent(t -> guards.add(StructureGuard.exists(t)));
+      }
+    }
+    return StructureGuard.normalize(guards);
+  }
+
+  /**
+   * 실행기 PG 적재(Python·API_CALL)가 출력 테이블에 <b>직접</b> 쓸 때(PG APPEND)의 구조 잠금 대상(WD-670) — 실행기는 적재 트랜잭션 첫
+   * 문장으로 공유 잠금을 잡고 계획 컬럼(출력 필드 목록 = 타입 맵 키)이 그대로인지 확인한다. 스테이징(REPLACE 임시 테이블·Tibero)에 쓰면 비운다 — 다른
+   * 테이블이고 맞바꿈이 구조를 따로 확인한다.
+   */
+  private static List<Map<String, Object>> executorLoadStructureLocks(
+      String targetTable, String outputTable, Map<String, String> columnTypes, boolean tibero) {
+    if (tibero || targetTable == null || !targetTable.equals(outputTable)) {
+      return List.of();
+    }
+    List<String> known = columnTypes == null ? null : new ArrayList<>(columnTypes.keySet());
+    return StructureGuard.toExecutorPayload(List.of(new StructureGuard(outputTable, known)));
   }
 
   /** PYTHON 적재 결과 — 실행 로그와 적재 행 수(REPLACE 맞바꿈 여부 판단 재료). */

@@ -233,7 +233,7 @@ class PipelineAsyncRunnerTest {
 
     when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
     when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
-    when(sqlExecutor.execute(eq(List.of()), eq("INSERT INTO data.\"t\" VALUES (1)"), any()))
+    when(sqlExecutor.execute(eq(List.of()), eq("INSERT INTO data.\"t\" VALUES (1)"), any(), any()))
         .thenReturn("1 row affected");
 
     // when
@@ -342,7 +342,7 @@ class PipelineAsyncRunnerTest {
 
     stubProbeColumns("id", "name");
 
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("2 rows affected");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("2 rows affected");
 
     // when
     String status =
@@ -351,7 +351,7 @@ class PipelineAsyncRunnerTest {
     // then
     assertThat(status).isEqualTo("COMPLETED");
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any());
+    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any(), any());
     String executedSql = sqlCaptor.getValue();
     assertThat(executedSql).startsWith("INSERT INTO data.\"output_table\"");
     assertThat(executedSql).contains("\"id\"");
@@ -394,7 +394,7 @@ class PipelineAsyncRunnerTest {
 
     stubProbeColumns("post_id", "summary", "urgency");
 
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("3 rows affected");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("3 rows affected");
 
     // when
     String status =
@@ -403,7 +403,7 @@ class PipelineAsyncRunnerTest {
     // then
     assertThat(status).isEqualTo("COMPLETED");
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any());
+    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any(), any());
     String executedSql = sqlCaptor.getValue();
 
     String columnList =
@@ -437,7 +437,7 @@ class PipelineAsyncRunnerTest {
 
     stubProbeColumns("val");
 
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("1 row affected");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("1 row affected");
 
     // when
     String status =
@@ -446,7 +446,7 @@ class PipelineAsyncRunnerTest {
     // then
     assertThat(status).isEqualTo("COMPLETED");
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any());
+    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any(), any());
     String executedSql = sqlCaptor.getValue();
     assertThat(executedSql).startsWith("INSERT INTO data.\"output_cte\"");
     assertThat(executedSql).contains("\"val\"");
@@ -475,7 +475,7 @@ class PipelineAsyncRunnerTest {
 
     when(datasetRepository.findTableNameById(outputDatasetId))
         .thenReturn(Optional.of("target_tbl"));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("3 rows affected");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("3 rows affected");
 
     // when
     String status =
@@ -484,7 +484,7 @@ class PipelineAsyncRunnerTest {
     // then: INSERT INTO 래핑 없이 원래 SQL 그대로 실행
     assertThat(status).isEqualTo("COMPLETED");
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any());
+    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any(), any());
     assertThat(sqlCaptor.getValue())
         .as("CTE+UPDATE DML은 INSERT INTO 래핑 없이 그대로 실행되어야 한다")
         .doesNotStartWith("INSERT INTO");
@@ -509,7 +509,7 @@ class PipelineAsyncRunnerTest {
         stepResponseWithOutput(stepId, "cte-delete", "SQL", cteDml, outputDatasetId, List.of());
 
     when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("logs_tbl"));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("5 rows deleted");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("5 rows deleted");
 
     // when
     String status =
@@ -518,7 +518,7 @@ class PipelineAsyncRunnerTest {
     // then
     assertThat(status).isEqualTo("COMPLETED");
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any());
+    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any(), any());
     assertThat(sqlCaptor.getValue())
         .as("CTE+DELETE DML은 INSERT INTO 래핑 없이 그대로 실행되어야 한다")
         .doesNotStartWith("INSERT INTO");
@@ -548,7 +548,7 @@ class PipelineAsyncRunnerTest {
 
     stubProbeColumns("category", "cnt");
 
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("10 rows affected");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("10 rows affected");
 
     // when
     String status =
@@ -557,7 +557,7 @@ class PipelineAsyncRunnerTest {
     // then: CTE+SELECT는 INSERT INTO로 래핑
     assertThat(status).isEqualTo("COMPLETED");
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any());
+    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any(), any());
     assertThat(sqlCaptor.getValue())
         .as("CTE+SELECT는 INSERT INTO 래핑이 되어야 한다")
         .startsWith("INSERT INTO data.\"output_summary\"");
@@ -581,7 +581,7 @@ class PipelineAsyncRunnerTest {
         stepResponseWithOutput(stepId, "cte-insert", "SQL", cteInsert, outputDatasetId, List.of());
 
     when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("dest_tbl"));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("7 rows affected");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("7 rows affected");
 
     // when
     String status =
@@ -590,7 +590,7 @@ class PipelineAsyncRunnerTest {
     // then: CTE+INSERT DML은 추가 INSERT INTO 래핑 없이 그대로 실행
     assertThat(status).isEqualTo("COMPLETED");
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any());
+    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any(), any());
     assertThat(sqlCaptor.getValue())
         .as("CTE+INSERT DML은 이중 INSERT INTO 래핑 없이 원본 SQL 그대로 실행되어야 한다")
         .isEqualTo(cteInsert);
@@ -622,7 +622,7 @@ class PipelineAsyncRunnerTest {
     // SELECT 컬럼 id는 시스템 예약어이므로 임시 데이터셋에는 id_1로 별칭 처리되어 저장된다(#645)
     when(columnRepository.findByDatasetId(tempDatasetId))
         .thenReturn(List.of(col("id_1", false), col("name", false)));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("2 rows affected");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("2 rows affected");
 
     // when
     String status =
@@ -633,7 +633,7 @@ class PipelineAsyncRunnerTest {
     verify(tempDatasetService)
         .createTempDataset(any(), eq(pipelineId), anyString(), eq(stepId), anyString(), eq(userId));
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any());
+    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any(), any());
     assertThat(sqlCaptor.getValue()).startsWith("INSERT INTO data.\"ptmp_12_plain_select_abcd\"");
   }
 
@@ -657,7 +657,7 @@ class PipelineAsyncRunnerTest {
     when(datasetRepository.findTableNameById(winnerId))
         .thenReturn(Optional.of("ptmp_12_plain_select_abcd"));
     when(columnRepository.findByDatasetId(winnerId)).thenReturn(List.of(col("name", false)));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("1 rows affected");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("1 rows affected");
 
     String status = runner.executeStep(302L, sqlStep, pipelineId, "P", userId, false);
 
@@ -761,7 +761,7 @@ class PipelineAsyncRunnerTest {
     // 임시 데이터셋에 실제로 저장된 컬럼명(별칭 처리된 결과)을 그대로 반영
     when(columnRepository.findByDatasetId(tempDatasetId))
         .thenReturn(List.of(col("id_1", false), col("created_at_1", false), col("name", false)));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("3 rows affected");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("3 rows affected");
 
     // when
     String status =
@@ -778,7 +778,7 @@ class PipelineAsyncRunnerTest {
 
     // INSERT 컬럼 목록도 별칭과 동일해야 실제 저장된 컬럼과 매칭된다
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any());
+    verify(sqlExecutor).execute(anyList(), sqlCaptor.capture(), any(), any());
     assertThat(sqlCaptor.getValue()).contains("\"id_1\"", "\"created_at_1\"", "\"name\"");
   }
 
@@ -805,7 +805,7 @@ class PipelineAsyncRunnerTest {
     // SELECT 컬럼 id는 시스템 예약어이므로 임시 데이터셋에는 id_1로 별칭 처리되어 저장돼 있다(#645)
     when(columnRepository.findByDatasetId(existingTempDatasetId))
         .thenReturn(List.of(col("id_1", false)));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("1 row affected");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("1 row affected");
 
     // when
     runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
@@ -840,7 +840,7 @@ class PipelineAsyncRunnerTest {
     // SELECT 컬럼 id는 시스템 예약어이므로 임시 데이터셋에는 id_1로 별칭 처리되어 저장된다(#645)
     when(columnRepository.findByDatasetId(oldTempDatasetId))
         .thenReturn(List.of(col("id_1", false), col("name", false), col("extra", false)));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("3 rows affected");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("3 rows affected");
 
     // when
     runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
@@ -884,7 +884,7 @@ class PipelineAsyncRunnerTest {
     // WD-222: 재생성은 같은 id 로 테이블만 다시 만든다 — 그 경로도 타지 않아야 한다.
     verify(tempDatasetService, never()).rebuildTempDataset(any(), any());
     verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
-    verify(sqlExecutor, never()).execute(anyList(), anyString(), any());
+    verify(sqlExecutor, never()).execute(anyList(), anyString(), any(), any());
   }
 
   /** CR3 — AI_CLASSIFY 도 같다: 볼 수 없는 재사용 TEMP 는 스키마가 바뀌어도 지우지 않고 실패한다. */
@@ -1418,7 +1418,7 @@ class PipelineAsyncRunnerTest {
     assertThat(error.getValue()).contains("전체 재생성");
     verify(tempDatasetService, never()).rebuildTempDataset(any(), any());
     verify(tempDatasetService, never()).deleteTempDataset(any());
-    verify(sqlExecutor, never()).execute(anyList(), anyString(), any());
+    verify(sqlExecutor, never()).execute(anyList(), anyString(), any(), any());
     verify(stepRepository, never()).advanceCursor(any(), any(), anyBoolean(), any());
   }
 
@@ -1441,7 +1441,7 @@ class PipelineAsyncRunnerTest {
     when(tempDatasetService.rebuildTempDataset(eq(ownTemp), any())).thenReturn(rebuild);
     when(columnRepository.findByDatasetId(ownTemp))
         .thenReturn(List.of(col("code", false), col("name", false)));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("ok");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("ok");
 
     String status = runner.executeStep(stepExecId, step, pipelineId, "P", userId, false);
 
@@ -1497,7 +1497,8 @@ class PipelineAsyncRunnerTest {
         stepResponseWithOutput(stepId, "insert-step", "SQL", insertSql, outputDatasetId, List.of());
 
     when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("target"));
-    when(sqlExecutor.execute(eq(List.of()), eq(insertSql), any())).thenReturn("1 row affected");
+    when(sqlExecutor.execute(eq(List.of()), eq(insertSql), any(), any()))
+        .thenReturn("1 row affected");
 
     // when
     String status =
@@ -1505,7 +1506,7 @@ class PipelineAsyncRunnerTest {
 
     // then: 원본 INSERT 그대로 실행 (래핑 없음)
     assertThat(status).isEqualTo("COMPLETED");
-    verify(sqlExecutor).execute(eq(List.of()), eq(insertSql), any());
+    verify(sqlExecutor).execute(eq(List.of()), eq(insertSql), any(), any());
     verify(dataTableRowService, never()).truncateTable(anyString());
     verifyNoInteractions(sqlColumnProbe);
   }
@@ -1556,7 +1557,7 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("id", false), col("name", false)));
     stubProbeColumns("id", "name");
-    when(executorClient.executeSql(anyString(), anyList(), any()))
+    when(executorClient.executeSql(anyString(), anyList(), any(), any()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
                 true, List.of(), List.of(), 0, "2 rows affected", null, null, null));
@@ -1571,7 +1572,7 @@ class PipelineAsyncRunnerTest {
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<String>> preStatementsCaptor = ArgumentCaptor.forClass(List.class);
     verify(executorClient)
-        .executeSql(startsWith("INSERT INTO"), preStatementsCaptor.capture(), any());
+        .executeSql(startsWith("INSERT INTO"), preStatementsCaptor.capture(), any(), any());
     // 리터럴로 못박는다 — firehub-executor 의 선행 문장 화이트리스트 정규식
     // (^DELETE FROM "(data|data_t\d+)"\."[a-z0-9_]+"( WHERE false)?$ — 접미사는 WD-426 잠금 전용) 이 요구하는
     // 형태(스키마·테이블 양쪽 인용)와
@@ -1609,7 +1610,7 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("id", false), col("name", false)));
     stubProbeColumns("id", "name");
-    when(executorClient.executeSql(anyString(), anyList(), any()))
+    when(executorClient.executeSql(anyString(), anyList(), any(), any()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(false, null, null, 0, "", "취소", null, null, true));
 
@@ -1625,7 +1626,7 @@ class PipelineAsyncRunnerTest {
 
     assertThat(status).isEqualTo("CANCELLED");
     // 실행기가 되물을 실행 id 를 실어 보냈다.
-    verify(executorClient).executeSql(startsWith("INSERT INTO"), anyList(), eq(777L));
+    verify(executorClient).executeSql(startsWith("INSERT INTO"), anyList(), eq(777L), any());
     verify(executionRepository)
         .updateStepExecution(
             eq(502L),
@@ -1657,7 +1658,7 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("id", false), col("name", false)));
     stubProbeColumns("id", "name");
-    when(executorClient.executeSql(anyString(), anyList(), any()))
+    when(executorClient.executeSql(anyString(), anyList(), any(), any()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
                 true, List.of(), List.of(), 0, "2 rows affected", null, null, null));
@@ -1669,7 +1670,7 @@ class PipelineAsyncRunnerTest {
     // then
     assertThat(status).isEqualTo("COMPLETED");
     verify(dataTableRowService, never()).truncateTable(anyString());
-    verify(executorClient).executeSql(startsWith("INSERT INTO"), eq(List.of()), any());
+    verify(executorClient).executeSql(startsWith("INSERT INTO"), eq(List.of()), any(), any());
   }
 
   /** 실행기가 꺼진 경로({@code sqlExecutor})도 같은 원자성 계약을 따라야 한다. */
@@ -1706,7 +1707,7 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("id", false), col("name", false)));
     stubProbeColumns("id", "name");
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("2 rows affected");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("2 rows affected");
 
     // when
     String status =
@@ -1719,6 +1720,7 @@ class PipelineAsyncRunnerTest {
         .execute(
             eq(List.of("DELETE FROM \"data\".\"" + outputTable + "\"")),
             startsWith("INSERT INTO"),
+            any(),
             any());
   }
 
@@ -1747,11 +1749,11 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("id", false), col("name", false)));
     stubProbeColumns("id", "name");
-    when(executorClient.executeSql(anyString(), anyList(), any()))
+    when(executorClient.executeSql(anyString(), anyList(), any(), any()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
                 true, List.of(), List.of(), 2, "2 row(s) affected", null, null, null));
-    when(sqlExecutor.execute(anyList(), anyString(), any()))
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any()))
         .thenReturn("SQL executed successfully");
 
     assertThat(runner.executeStep(4261L, step, 42L, "TestPipeline", 1L, true))
@@ -1767,8 +1769,8 @@ class PipelineAsyncRunnerTest {
             + "\n), \"_fh_self_clear\" AS (DELETE FROM data.\"out426\" RETURNING 1)"
             + " INSERT INTO data.\"out426\" (\"id\", \"name\") SELECT * FROM \"_fh_self_src\""
             + " WHERE (SELECT count(*) FROM \"_fh_self_clear\") >= 0";
-    verify(executorClient).executeSql(eq(reload), eq(lockOnly), any());
-    verify(sqlExecutor).execute(eq(lockOnly), eq(reload), any());
+    verify(executorClient).executeSql(eq(reload), eq(lockOnly), any(), any());
+    verify(sqlExecutor).execute(eq(lockOnly), eq(reload), any(), any());
   }
 
   /**
@@ -1785,7 +1787,7 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("id", false), col("name", false)));
     stubProbeColumns("id", "name");
-    when(executorClient.executeSql(anyString(), anyList(), any()))
+    when(executorClient.executeSql(anyString(), anyList(), any(), any()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
                 true, List.of(), List.of(), 2, "2 row(s) affected", null, null, null));
@@ -1796,6 +1798,7 @@ class PipelineAsyncRunnerTest {
         .executeSql(
             eq("INSERT INTO data.\"out427\" (\"id\", \"name\") " + selectSql),
             eq(List.of("DELETE FROM \"data\".\"out427\"")),
+            any(),
             any());
   }
 
@@ -1863,7 +1866,7 @@ class PipelineAsyncRunnerTest {
     when(datasetRepository.findTableNameById(tempId)).thenReturn(Optional.of("ptmp_429"));
     when(columnRepository.findByDatasetId(tempId))
         .thenReturn(List.of(col("code", false), col("name", false)));
-    when(sqlExecutor.execute(anyList(), anyString(), any()))
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any()))
         .thenReturn("SQL executed successfully");
 
     assertThat(runner.executeStep(4291L, step, 42L, "TestPipeline", 1L, false))
@@ -1878,6 +1881,7 @@ class PipelineAsyncRunnerTest {
                     + "\n), \"_fh_self_clear\" AS (DELETE FROM data.\"ptmp_429\" RETURNING 1)"
                     + " INSERT INTO data.\"ptmp_429\" (\"code\", \"name\") SELECT * FROM"
                     + " \"_fh_self_src\" WHERE (SELECT count(*) FROM \"_fh_self_clear\") >= 0"),
+            any(),
             any());
     verify(tempDatasetService, times(1)).findExistingTempDataset(stepId);
     verify(tempDatasetService, never()).rebuildTempDataset(any(), any());
@@ -1950,7 +1954,7 @@ class PipelineAsyncRunnerTest {
     PipelineStepResponse step = replaceStep(7350L, "SQL", insertSql, outputDatasetId);
 
     when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out735"));
-    when(executorClient.executeSql(anyString(), anyList(), any()))
+    when(executorClient.executeSql(anyString(), anyList(), any(), any()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
                 true, List.of(), List.of(), 1, "1 row(s) affected", null, null, null));
@@ -1961,7 +1965,7 @@ class PipelineAsyncRunnerTest {
     verify(dataTableRowService, never()).truncateTable(anyString());
     // SELECT 경로 테스트와 같은 리터럴 — 두 경로의 선행 문장(=잠금 키)이 글자 단위로 같아야 서로 배타다.
     verify(executorClient)
-        .executeSql(eq(insertSql), eq(List.of("DELETE FROM \"data\".\"out735\"")), any());
+        .executeSql(eq(insertSql), eq(List.of("DELETE FROM \"data\".\"out735\"")), any(), any());
     verifyNoInteractions(sqlColumnProbe);
   }
 
@@ -1974,7 +1978,7 @@ class PipelineAsyncRunnerTest {
 
     when(datasetRepository.findTableNameById(outputDatasetId))
         .thenReturn(Optional.of("out735_off"));
-    when(sqlExecutor.execute(anyList(), anyString(), any()))
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any()))
         .thenReturn("SQL executed successfully");
 
     String status = runner.executeStep(7361L, step, 73L, "TestPipeline", 1L, false);
@@ -1982,7 +1986,7 @@ class PipelineAsyncRunnerTest {
     assertThat(status).isEqualTo("COMPLETED");
     verify(dataTableRowService, never()).truncateTable(anyString());
     verify(sqlExecutor)
-        .execute(eq(List.of("DELETE FROM \"data\".\"out735_off\"")), eq(insertSql), any());
+        .execute(eq(List.of("DELETE FROM \"data\".\"out735_off\"")), eq(insertSql), any(), any());
   }
 
   /**
@@ -2451,7 +2455,7 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("id", false), col("name", false)));
     stubProbeColumns("id", "name");
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("2 rows affected");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("2 rows affected");
 
     // when
     String status =
@@ -2464,6 +2468,7 @@ class PipelineAsyncRunnerTest {
         .execute(
             eq(List.of("DELETE FROM \"data\".\"" + outputTable + "\"")),
             startsWith("INSERT INTO"),
+            any(),
             any());
   }
 
@@ -2508,7 +2513,7 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("code", true), col("name", false)));
     stubProbeColumns("code", "name");
-    when(executorClient.executeSql(anyString(), anyList(), any()))
+    when(executorClient.executeSql(anyString(), anyList(), any(), any()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
                 true, List.of(), List.of(), 0, "2 rows affected", null, null, null));
@@ -2523,7 +2528,8 @@ class PipelineAsyncRunnerTest {
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<String>> preStatementsCaptor = ArgumentCaptor.forClass(List.class);
-    verify(executorClient).executeSql(sqlCaptor.capture(), preStatementsCaptor.capture(), any());
+    verify(executorClient)
+        .executeSql(sqlCaptor.capture(), preStatementsCaptor.capture(), any(), any());
     assertThat(sqlCaptor.getValue()).contains("ON CONFLICT (\"code\")");
     assertThat(preStatementsCaptor.getValue()).isEmpty();
   }
@@ -2566,7 +2572,7 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("code", true), col("name", false)));
     stubProbeColumns("code", "name");
-    when(executorClient.executeSql(anyString(), anyList(), any()))
+    when(executorClient.executeSql(anyString(), anyList(), any(), any()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
                 false,
@@ -2627,7 +2633,7 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("code", true), col("name", false)));
     stubProbeColumns("code", "name");
-    when(sqlExecutor.execute(anyList(), anyString(), any()))
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any()))
         .thenThrow(
             new ScriptExecutionException(
                 "SQL 실행 실패: 한 번에 처리할 행 안에서 같은 키가 두 번 이상 나옵니다.\n원인: ERROR: ON CONFLICT DO UPDATE"
@@ -2639,7 +2645,7 @@ class PipelineAsyncRunnerTest {
 
     // then
     assertThat(status).isEqualTo("FAILED");
-    verify(sqlExecutor).execute(eq(List.of()), anyString(), any());
+    verify(sqlExecutor).execute(eq(List.of()), anyString(), any(), any());
     verify(executionRepository)
         .updateStepExecution(
             eq(stepExecId), eq("FAILED"), isNull(), isNull(), contains("같은 키"), isNull(), any());
@@ -2684,7 +2690,7 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("code", true), col("name", false)));
     stubProbeColumns("code", "name");
-    when(executorClient.executeSql(anyString(), anyList(), any()))
+    when(executorClient.executeSql(anyString(), anyList(), any(), any()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
                 false,
@@ -3392,7 +3398,7 @@ class PipelineAsyncRunnerTest {
     when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
     when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
     when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("table1"));
-    when(sqlExecutor.execute(eq(List.of()), eq("INSERT INTO data.\"t\" VALUES (1)"), any()))
+    when(sqlExecutor.execute(eq(List.of()), eq("INSERT INTO data.\"t\" VALUES (1)"), any(), any()))
         .thenReturn("ok");
 
     // step2: SELECT → 임시 데이터셋 자동 생성
@@ -3406,7 +3412,8 @@ class PipelineAsyncRunnerTest {
     // "SELECT *"로 시스템 예약 컬럼 id가 그대로 섞여 들어오므로, 임시 데이터셋 생성 시 id_1로
     // 자동 별칭 처리된다(#645) — mock도 실제 저장되는 컬럼명과 일치시킨다.
     when(columnRepository.findByDatasetId(tempDsId)).thenReturn(List.of(col("id_1", false)));
-    when(sqlExecutor.execute(anyList(), contains("data.\"table1\""), any())).thenReturn("1 row");
+    when(sqlExecutor.execute(anyList(), contains("data.\"table1\""), any(), any()))
+        .thenReturn("1 row");
 
     // when
     runner.executeAsync(
@@ -3414,7 +3421,7 @@ class PipelineAsyncRunnerTest {
 
     // then: step2 SQL에 {{#1}}이 data."table1"로 치환됨
     ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
-    verify(sqlExecutor, atLeastOnce()).execute(anyList(), captor.capture(), any());
+    verify(sqlExecutor, atLeastOnce()).execute(anyList(), captor.capture(), any(), any());
     assertThat(captor.getAllValues()).anyMatch(s -> s.contains("data.\"table1\""));
   }
 
@@ -3463,9 +3470,9 @@ class PipelineAsyncRunnerTest {
     when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
     when(datasetRepository.findTableNameById(ds1Id)).thenReturn(Optional.of("tbl1"));
     when(datasetRepository.findTableNameById(ds2Id)).thenReturn(Optional.of("tbl2"));
-    when(sqlExecutor.execute(eq(List.of()), eq("INSERT INTO data.\"t\" VALUES (1)"), any()))
+    when(sqlExecutor.execute(eq(List.of()), eq("INSERT INTO data.\"t\" VALUES (1)"), any(), any()))
         .thenReturn("ok");
-    when(sqlExecutor.execute(eq(List.of()), eq("INSERT INTO data.\"t\" VALUES (2)"), any()))
+    when(sqlExecutor.execute(eq(List.of()), eq("INSERT INTO data.\"t\" VALUES (2)"), any(), any()))
         .thenReturn("ok");
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2, step3));
 
@@ -3531,9 +3538,9 @@ class PipelineAsyncRunnerTest {
     when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
     when(datasetRepository.findTableNameById(ds1Id)).thenReturn(Optional.of("tbl1"));
     when(datasetRepository.findTableNameById(ds3Id)).thenReturn(Optional.of("tbl3"));
-    when(sqlExecutor.execute(eq(List.of()), eq("INSERT INTO data.\"t\" VALUES (1)"), any()))
+    when(sqlExecutor.execute(eq(List.of()), eq("INSERT INTO data.\"t\" VALUES (1)"), any(), any()))
         .thenReturn("ok");
-    when(sqlExecutor.execute(eq(List.of()), eq("INSERT INTO data.\"t\" VALUES (3)"), any()))
+    when(sqlExecutor.execute(eq(List.of()), eq("INSERT INTO data.\"t\" VALUES (3)"), any(), any()))
         .thenReturn("ok");
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2, step3));
 
@@ -3617,7 +3624,7 @@ class PipelineAsyncRunnerTest {
             })
         .when(stepRepository)
         .advanceCursor(any(), any(), anyBoolean(), any());
-    when(sqlExecutor.execute(anyList(), anyString(), any()))
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any()))
         .thenAnswer(
             inv -> {
               // 이 시점이 "출력이 커밋되는 순간"이다 — 여기서 이미 책갈피가 전진했다면 순서가 뒤집힌 것.
@@ -3649,13 +3656,13 @@ class PipelineAsyncRunnerTest {
     when(stepRepository.findCursor(stepId))
         .thenReturn(Optional.of(new StepCursor(null, false, outputDatasetId)));
     when(incrementalCursorService.captureCandidate()).thenReturn(candidate);
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("ok");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("ok");
 
     runner.executeStep(801L, step, 71L, "P", 1L, false);
 
     org.mockito.InOrder inOrder = inOrder(incrementalCursorService, sqlExecutor);
     inOrder.verify(incrementalCursorService).captureCandidate();
-    inOrder.verify(sqlExecutor).execute(anyList(), anyString(), any());
+    inOrder.verify(sqlExecutor).execute(anyList(), anyString(), any(), any());
     // 정확히 한 번이어야 한다 — 실행 뒤에 다시 잡아 그 값을 쓰면 실행 도중 커밋된 행을 영원히 건너뛴다.
     // (times(1) 이 없으면 "실행 후에도 한 번 더 잡는" 변이를 InOrder 가 놓친다.)
     verify(incrementalCursorService, times(1)).captureCandidate();
@@ -3679,7 +3686,7 @@ class PipelineAsyncRunnerTest {
         .thenReturn(Optional.of(new StepCursor(bookmark, false, outputDatasetId)));
     when(incrementalCursorService.captureCandidate())
         .thenReturn(OffsetDateTime.parse("2026-09-19T01:00:00Z"));
-    when(sqlExecutor.execute(anyList(), anyString(), any()))
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any()))
         .thenThrow(new ScriptExecutionException("boom"));
 
     String status = runner.executeStep(stepExecId, step, 72L, "P", 1L, false);
@@ -3707,14 +3714,14 @@ class PipelineAsyncRunnerTest {
         .thenReturn(Optional.of(new StepCursor(null, false, outputDatasetId)));
     when(incrementalCursorService.captureCandidate())
         .thenReturn(OffsetDateTime.parse("2026-09-19T01:00:00Z"));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("ok");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("ok");
 
     runner.executeStep(stepExecId, step, 73L, "P", 1L, false);
 
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<String>> preCaptor = ArgumentCaptor.forClass(List.class);
-    verify(sqlExecutor).execute(preCaptor.capture(), sqlCaptor.capture(), any());
+    verify(sqlExecutor).execute(preCaptor.capture(), sqlCaptor.capture(), any(), any());
     assertThat(sqlCaptor.getValue()).contains("'-infinity'::timestamptz");
     assertThat(preCaptor.getValue()).as("전체 재생성 예약이 없으면 출력을 비우지 않는다").isEmpty();
     verify(executionRepository).setInjectedLastRunAt(stepExecId, null);
@@ -3738,14 +3745,14 @@ class PipelineAsyncRunnerTest {
         .thenReturn(Optional.of(new StepCursor(bookmark, true, outputDatasetId)));
     when(incrementalCursorService.captureCandidate())
         .thenReturn(OffsetDateTime.parse("2026-09-19T01:00:00Z"));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("ok");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("ok");
 
     runner.executeStep(stepExecId, step, 74L, "P", 1L, false);
 
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<String>> preCaptor = ArgumentCaptor.forClass(List.class);
-    verify(sqlExecutor).execute(preCaptor.capture(), sqlCaptor.capture(), any());
+    verify(sqlExecutor).execute(preCaptor.capture(), sqlCaptor.capture(), any(), any());
     assertThat(sqlCaptor.getValue()).contains("'-infinity'::timestamptz");
     assertThat(preCaptor.getValue())
         .as("전체 재생성은 출력을 비우는 DELETE 를 본 INSERT 와 같은 트랜잭션으로 보낸다")
@@ -3795,7 +3802,7 @@ class PipelineAsyncRunnerTest {
                     OffsetDateTime.parse("2026-09-19T00:00:00Z"), true, outputDatasetId)));
     when(incrementalCursorService.captureCandidate())
         .thenReturn(OffsetDateTime.parse("2026-09-19T01:00:00Z"));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("ok");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("ok");
 
     String status = runner.executeStep(stepExecId, step, 76L, "P", 1L, false);
 
@@ -3803,7 +3810,7 @@ class PipelineAsyncRunnerTest {
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<String>> preCaptor = ArgumentCaptor.forClass(List.class);
-    verify(sqlExecutor).execute(preCaptor.capture(), sqlCaptor.capture(), any());
+    verify(sqlExecutor).execute(preCaptor.capture(), sqlCaptor.capture(), any(), any());
     assertThat(preCaptor.getValue())
         .as("비SELECT 스텝에 출력 비우기 DELETE 를 얹으면 사용자 DML 이 그 자리를 채운다는 보장이 없다")
         .isEmpty();
@@ -3832,7 +3839,7 @@ class PipelineAsyncRunnerTest {
                     OffsetDateTime.parse("2026-09-19T00:00:00Z"), false, outputDatasetId)));
     when(incrementalCursorService.captureCandidate())
         .thenReturn(OffsetDateTime.parse("2026-09-19T01:00:00Z"));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("ok");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("ok");
 
     runner.executeStep(807L, step, 77L, "P", 1L, false);
 
@@ -3902,7 +3909,7 @@ class PipelineAsyncRunnerTest {
         .thenReturn(Optional.of(new StepCursor(null, false, outputDatasetId)));
     when(incrementalCursorService.captureCandidate())
         .thenReturn(OffsetDateTime.parse("2026-10-24T01:00:00Z"));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("ok");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("ok");
 
     String status = runner.executeStep(810L, step, 78L, "P", 1L, false);
 
@@ -3912,7 +3919,7 @@ class PipelineAsyncRunnerTest {
     order.verify(incrementalStepLock).acquire(eq(stepId), eq("incremental-step"), any());
     order.verify(stepRepository).findCursor(stepId);
     order.verify(incrementalCursorService).captureCandidate();
-    order.verify(sqlExecutor).execute(anyList(), anyString(), any());
+    order.verify(sqlExecutor).execute(anyList(), anyString(), any(), any());
     order.verify(stepRepository).advanceCursor(eq(stepId), any(), eq(false), any());
     order.verify(held, atLeastOnce()).close();
     assertThat(advancedAtFirstRelease.get()).as("잠금은 책갈피 전진 뒤에야 처음 풀린다").isTrue();
@@ -3935,7 +3942,7 @@ class PipelineAsyncRunnerTest {
         .thenReturn(Optional.of(new StepCursor(null, false, outputDatasetId)));
     when(incrementalCursorService.captureCandidate())
         .thenReturn(OffsetDateTime.parse("2026-10-24T01:00:00Z"));
-    when(executorClient.executeSql(anyString(), anyList(), any()))
+    when(executorClient.executeSql(anyString(), anyList(), any(), any()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
                 true, List.of(), List.of(), 0, "ok", null, null, null));
@@ -3946,7 +3953,7 @@ class PipelineAsyncRunnerTest {
     org.mockito.InOrder order = inOrder(incrementalStepLock, stepRepository, executorClient, held);
     order.verify(incrementalStepLock).acquire(eq(stepId), any(), any());
     order.verify(stepRepository).findCursor(stepId);
-    order.verify(executorClient).executeSql(anyString(), anyList(), any());
+    order.verify(executorClient).executeSql(anyString(), anyList(), any(), any());
     order.verify(stepRepository).advanceCursor(eq(stepId), any(), eq(false), any());
     order.verify(held, atLeastOnce()).close();
   }
@@ -3968,7 +3975,7 @@ class PipelineAsyncRunnerTest {
         .thenReturn(Optional.of(new StepCursor(null, false, outputDatasetId)));
     when(incrementalCursorService.captureCandidate())
         .thenReturn(OffsetDateTime.parse("2026-10-24T01:00:00Z"));
-    when(sqlExecutor.execute(anyList(), anyString(), any()))
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any()))
         .thenThrow(new ScriptExecutionException("boom"));
 
     String status = runner.executeStep(811L, step, 79L, "P", 1L, false);
@@ -3997,7 +4004,7 @@ class PipelineAsyncRunnerTest {
     assertThat(status).isEqualTo("FAILED");
     verify(stepRepository, never()).findCursor(any());
     verify(stepRepository, never()).advanceCursor(any(), any(), anyBoolean(), any());
-    verify(sqlExecutor, never()).execute(anyList(), anyString(), any());
+    verify(sqlExecutor, never()).execute(anyList(), anyString(), any(), any());
     verify(executionRepository)
         .updateStepExecution(
             eq(stepExecId),
@@ -4035,7 +4042,7 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("code", false), col("name", false)));
     stubProbeColumns("code", "name");
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("ok");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("ok");
 
     String status = runner.executeStep(813L, step, 81L, "P", 1L, false);
 
@@ -4434,7 +4441,7 @@ class PipelineAsyncRunnerTest {
         .thenReturn(Optional.of("out_orders"));
     when(columnRepository.findByDatasetId(outputDatasetId)).thenReturn(List.of(col("k", true)));
     stubProbeColumns("k");
-    when(executorClient.executeSql(anyString(), anyList(), any()))
+    when(executorClient.executeSql(anyString(), anyList(), any(), any()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
                 false,
@@ -4490,7 +4497,7 @@ class PipelineAsyncRunnerTest {
         .thenReturn(Optional.of("out_orders"));
     when(columnRepository.findByDatasetId(outputDatasetId)).thenReturn(List.of(col("k", false)));
     stubProbeColumns("k");
-    when(executorClient.executeSql(anyString(), anyList(), any()))
+    when(executorClient.executeSql(anyString(), anyList(), any(), any()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
                 false,
@@ -4597,7 +4604,7 @@ class PipelineAsyncRunnerTest {
     PipelineStepResponse s2 =
         stepResponse(702L, "s2", "SQL", "INSERT INTO data.\"t\" VALUES (2)", null, List.of());
     when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("P"));
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("ok");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("ok");
     // 시작 직후 false, s1 시작 전 false, s1 안(SQL 직전) false, s2 시작 전 true
     when(executionRepository.isStopRequested(executionId)).thenReturn(false, false, false, true);
 
@@ -4611,7 +4618,7 @@ class PipelineAsyncRunnerTest {
         false);
 
     // s1 만 실행됐다
-    verify(sqlExecutor, times(1)).execute(anyList(), anyString(), any());
+    verify(sqlExecutor, times(1)).execute(anyList(), anyString(), any(), any());
     verify(executionRepository)
         .updateStepExecution(eq(801L), eq("COMPLETED"), any(), any(), any(), any(), any());
     verify(executionRepository, never())
@@ -4634,7 +4641,7 @@ class PipelineAsyncRunnerTest {
     Long pipelineId = 11L, executionId = 110L, userId = 10L;
     PipelineStepResponse s1 =
         stepResponse(1101L, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", null, List.of());
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("ok");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("ok");
     when(executionRepository.finishUnlessCancelRequested(eq(executionId), eq("COMPLETED"), any()))
         .thenReturn(false);
 
@@ -4661,7 +4668,7 @@ class PipelineAsyncRunnerTest {
     Long pipelineId = 15L, executionId = 150L, userId = 10L;
     PipelineStepResponse s1 =
         stepResponse(1501L, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", null, List.of());
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("ok");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("ok");
     // 체크포인트는 모두 지났다(시작·스텝 전·SQL 직전 false) — 취소는 문장이 도는 동안 들어와 최종 쓰기의 조건에서 걸린다.
     when(executionRepository.isStopRequested(executionId)).thenReturn(false);
     when(executionRepository.finishUnlessCancelRequested(eq(executionId), eq("COMPLETED"), any()))
@@ -4676,7 +4683,7 @@ class PipelineAsyncRunnerTest {
         userId,
         false);
 
-    verify(sqlExecutor, times(1)).execute(anyList(), anyString(), any());
+    verify(sqlExecutor, times(1)).execute(anyList(), anyString(), any(), any());
     verify(executionRepository)
         .updateStepExecution(eq(1601L), eq("COMPLETED"), any(), any(), any(), any(), any());
     verify(executionRepository).cancelAndSkipPendingSteps(eq(executionId), any());
@@ -4747,7 +4754,7 @@ class PipelineAsyncRunnerTest {
         stepResponse(1103L, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", null, List.of());
     PipelineStepResponse s2 =
         stepResponse(1104L, "s2", "SQL", "INSERT INTO data.\"t\" VALUES (2)", null, List.of());
-    when(sqlExecutor.execute(anyList(), anyString(), any())).thenReturn("ok");
+    when(sqlExecutor.execute(anyList(), anyString(), any(), any())).thenReturn("ok");
     when(executionRepository.isStopRequested(executionId)).thenReturn(false, false, false, true);
 
     runner.executeAsync(
@@ -4759,7 +4766,7 @@ class PipelineAsyncRunnerTest {
         userId,
         false);
 
-    verify(sqlExecutor, times(1)).execute(anyList(), anyString(), any());
+    verify(sqlExecutor, times(1)).execute(anyList(), anyString(), any(), any());
   }
 
   /** 정리기가 이미 FAILED 로 마감한 실행: 러너의 CANCELLED 쓰기는 지고, 이벤트도 내지 않으며, 정리기가 닫은 스텝 행을 취소 문구로 덮지 않는다. */
@@ -4780,7 +4787,7 @@ class PipelineAsyncRunnerTest {
         userId,
         false);
 
-    verify(sqlExecutor, never()).execute(anyList(), anyString(), any());
+    verify(sqlExecutor, never()).execute(anyList(), anyString(), any(), any());
     verify(executionRepository).cancelAndSkipPendingSteps(eq(executionId), any());
     verify(applicationEventPublisher, never()).publishEvent(any());
   }
@@ -4802,7 +4809,7 @@ class PipelineAsyncRunnerTest {
         userId,
         false);
 
-    verify(sqlExecutor, never()).execute(anyList(), anyString(), any());
+    verify(sqlExecutor, never()).execute(anyList(), anyString(), any(), any());
     verify(executionRepository, never())
         .updateStepExecution(anyLong(), eq("RUNNING"), any(), any(), any(), any(), any());
     verify(executionRepository).cancelAndSkipPendingSteps(eq(executionId), any());
@@ -4818,7 +4825,7 @@ class PipelineAsyncRunnerTest {
     String status = runner.executeStep(821L, s1, 9L, "P", 10L, false, () -> true);
 
     assertThat(status).isEqualTo("CANCELLED");
-    verify(sqlExecutor, never()).execute(anyList(), anyString(), any());
+    verify(sqlExecutor, never()).execute(anyList(), anyString(), any(), any());
     verify(executionRepository)
         .updateStepExecution(
             eq(821L),

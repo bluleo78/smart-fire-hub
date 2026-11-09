@@ -48,6 +48,8 @@ class DatasetServiceUpdateColumnOrderTest {
   @Mock private SearchColumnRepository searchColumnRepository;
   // WD-186: updateColumn 이 매핑 잠금·타입 판정·이름 연쇄 갱신을 부르므로 가짜로 둔다(없으면 null 주입으로 NPE).
   @Mock private MappingReferenceService mappingReferenceService;
+  // WD-670: 구조 변경·TEMP 재생성이 공용 쓰기 잠금 층(행 → 구조 잠금)을 부르므로 가짜로 둔다(없으면 null 주입으로 NPE).
+  @Mock private DatasetDataWriteLock writeLock;
 
   @InjectMocks private DatasetService datasetService;
 

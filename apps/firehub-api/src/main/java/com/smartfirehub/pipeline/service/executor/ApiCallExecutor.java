@@ -764,8 +764,10 @@ public class ApiCallExecutor {
       dataTableRowService.insertTempBatch(target, columns, rows, null);
     } else {
       // WD-666: 실제 출력 테이블 쓰기 — 페이지마다 짧은 트랜잭션에서 데이터셋 행을 잡고 쓰고 커밋한다. 다음 페이지를 받는(외부 API) 동안에는
-      // 잠금을 쥐지 않는다.
-      writeLock.writeToOutput(target, () -> dataTableRowService.insertBatch(target, columns, rows));
+      // 잠금을 쥐지 않는다. WD-670: 그래서 페이지 사이에 필드가 지워질 수 있다 — 잠금 뒤 이 페이지의 컬럼이 아직 있는지 보고, 없으면 그 필드를
+      // 짚어 깔끔하게 실패한다(DB 원문 「column does not exist」 대신).
+      writeLock.writeToOutput(
+          target, columns, () -> dataTableRowService.insertBatch(target, columns, rows));
     }
   }
 

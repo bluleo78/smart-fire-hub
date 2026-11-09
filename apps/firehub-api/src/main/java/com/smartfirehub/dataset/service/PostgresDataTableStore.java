@@ -3,13 +3,17 @@ package com.smartfirehub.dataset.service;
 import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.exception.DatasetInUseException;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
+import com.smartfirehub.dataset.exception.OutputStructureChangedException;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.dataset.storage.DataTableStore;
+import com.smartfirehub.dataset.storage.DatasetStructureLock;
 import com.smartfirehub.dataset.storage.ReservedColumnNames;
 import com.smartfirehub.global.datastore.DataStoreDb;
+import com.smartfirehub.global.platformdb.postgres.PostgresPlatformLocks;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantSchemaProvisioner;
@@ -739,6 +743,46 @@ public class PostgresDataTableStore implements DataTableStore {
   }
 
   /**
+   * 구조 잠금 배타 시도(WD-670) — 데이터 저장소 DSL(플랫폼 Spring 트랜잭션에 묶인 연결)에서 {@code pg_try_advisory_xact_lock} 을
+   * {@link DatasetStructureLock#EXCLUSIVE_WAIT} 동안 되풀이한다. 기다리는 문장 + lock_timeout 을 쓰지 않는 이유는 시도형
+   * 플랫폼 잠금과 같다(시간 초과 문장이 호출자 트랜잭션 전체를 실패 상태로 만든다). 못 잡으면 파이프라인 SQL 스텝·실행기 적재가 이 테이블에 쓰는 중이므로 409 로
+   * 끝낸다 — 사용자 요청이 데이터셋 행 잠금과 연결을 쥔 채 긴 적재를 기다리지 않게 한다(결정 A).
+   */
+  @Override
+  public void lockStructureExclusive(String tableName) {
+    DataTableNames.validate(tableName);
+    if (!PostgresPlatformLocks.tryXactLock(
+        dsl, DatasetStructureLock.keyFor(tableName), DatasetStructureLock.EXCLUSIVE_WAIT)) {
+      throw new DatasetInUseException(DatasetStructureLock.BUSY_MESSAGE);
+    }
+  }
+
+  /**
+   * 맞바꿈 직전 스테이징과 원본의 물리 구조(컬럼 이름·타입·NOT NULL)가 같은지 확인한다(WD-670). 스테이징은 {@code createTempTable} 때
+   * 원본을 {@code LIKE} 로 복사하므로 그 뒤 원본에 필드 추가·삭제·변경이 커밋됐으면 둘이 다르다 — 그대로 맞바꾸면 그 변경이 조용히 사라지고 {@code
+   * dataset_column} 과 물리 테이블이 어긋난다. 원본 ACCESS EXCLUSIVE 잠금 뒤(맞바꿈 트랜잭션 안)에 부른다.
+   *
+   * @throws OutputStructureChangedException 구조가 다를 때 — 맞바꿈 트랜잭션이 롤백되고 호출자가 스테이징을 버린다(원본 유지)
+   */
+  private static void requireSameStructure(DSLContext ctx, String tableName, String tmpName) {
+    List<String> original = physicalStructure(ctx, tableName);
+    List<String> staging = physicalStructure(ctx, tmpName);
+    if (!original.equals(staging)) {
+      throw new OutputStructureChangedException();
+    }
+  }
+
+  /** 테이블의 (이름, 타입, NOT NULL) 목록 — 이름순. 테이블이 없으면 빈 목록. */
+  private static List<String> physicalStructure(DSLContext ctx, String tableName) {
+    return ctx.fetch(
+            "SELECT a.attname::text || ':' || format_type(a.atttypid, a.atttypmod) || ':' ||"
+                + " a.attnotnull::text FROM pg_attribute a WHERE a.attrelid = to_regclass(?)"
+                + " AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attname",
+            DataSchema.qualify(tableName))
+        .getValues(0, String.class);
+  }
+
+  /**
    * 이번 실행 전용 임시 staging 테이블({@link DataTableService#newTempTableName})을 원본과 같은 구조({@code LIKE ...
    * INCLUDING ALL})로 현재 테넌트 데이터 스키마에 만들고 그 이름을 돌려준다. REPLACE 적재가 새 데이터를 여기에 쌓은 뒤 맞바꾼다.
    *
@@ -820,6 +864,8 @@ public class PostgresDataTableStore implements DataTableStore {
           PythonReadGrantSync.lockTenantSync(txDsl, TenantContext.require("REPLACE 맞바꿈"));
           txDsl.execute(
               "LOCK TABLE " + DataSchema.qualify(tableName) + " IN ACCESS EXCLUSIVE MODE");
+          // WD-670: 스테이징 동안 원본 구조가 바뀌었으면 맞바꾸지 않는다 — 원본 배타 잠금 뒤라 더 바뀌지 않는다.
+          requireSameStructure(txDsl, tableName, tmpName);
           // 원본 id 시퀀스의 실제 이름을 DROP 전에 읽어 둔다 — 원본을 지우면 소유 시퀀스도 함께 사라지고 그 이름을 임시 시퀀스가 물려받는다.
           // 이름을 규칙으로 다시 만들지 않는 이유: PostgreSQL 은 긴 테이블의 시퀀스 이름을 잘라 짓고 충돌하면 번호를 붙이므로, 앞부분이 같은
           // 긴 테이블 둘에서 규칙으로 만든 이름은 다른 테이블의 시퀀스와 겹칠 수 있다.
