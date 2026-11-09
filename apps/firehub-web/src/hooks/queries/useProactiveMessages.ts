@@ -16,23 +16,26 @@ import { cloneName } from '../../lib/clone-name';
 import { isValidId } from '../../lib/route-id';
 import { useMyPermissions } from './useMyPermissions';
 
+/**
+ * 한 작업의 실행 목록만의 접두사(WD-667) — executionList(jobId) 는 끝에 params(undefined) 칸이 남아 접두사 비교에서
+ * [..., 'list', {limit,offset}] 와 맞지 않는다. 「지금 실행」은 이것으로 목록만 무효화하고 단건 실행 캐시는 그대로 둔다.
+ * 채팅 도구 실행 뒤 무효화(invalidationMap)도 같은 키를 쓰도록 내보낸다(WD-671) — 키 모양을 두 곳에 손으로 적지 않게.
+ */
+export const executionListPrefix = (jobId: number) => ['proactive', 'executions', jobId, 'list'] as const;
+
 const KEYS = {
   jobs: ['proactive', 'jobs'] as const,
   // 워크스페이스 전체(관리자) 목록 — 'jobs' 접두사 아래에 두어 내 작업 변경 시 함께 무효화된다
   workspaceJobs: ['proactive', 'jobs', 'workspace'] as const,
   job: (id: number) => ['proactive', 'jobs', id] as const,
-  // 실행 목록·단건의 공통 접두사 — 이것으로 무효화하면 그 작업의 목록·단건이 함께 갱신된다
-  executions: (jobId: number | null) => ['proactive', 'executions', jobId] as const,
   // 목록은 'list' 조각으로 단건과 모양을 가른다(WD-661) — 해시가 undefined 를 null 로 바꿔
   // 예전 [..., jobId, undefined](파라미터 없는 목록)가 [..., jobId, null](실행 id 없는 단건)과 같은 캐시가 됐다
   executionList: (jobId: number | null, params?: { limit?: number; offset?: number }) =>
     ['proactive', 'executions', jobId, 'list', params] as const,
-  // 실행 목록만의 접두사(WD-667) — executionList(jobId) 는 끝에 params(undefined) 칸이 남아 접두사 비교에서
-  // [..., 'list', {limit,offset}] 와 맞지 않는다. 「지금 실행」은 이것으로 목록만 무효화하고 단건 실행 캐시는 그대로 둔다.
-  executionListPrefix: (jobId: number) => ['proactive', 'executions', jobId, 'list'] as const,
+  executionListPrefix,
   execution: (jobId: number | null, executionId: number | null) =>
     ['proactive', 'executions', jobId, executionId] as const,
-  // 실행 HTML 리포트 — 단건 실행 키 아래에 둬 executions(jobId)·execution(...) 접두사 무효화가 함께 닿게 한다(WD-667).
+  // 실행 HTML 리포트 — 단건 실행 키 아래에 둬 execution(...) 접두사 무효화가 함께 닿게 한다(WD-667).
   // 예전 ['execution-html', ...] 는 proactive 바깥이라 실행 중에 열어 받은 빈 응답이 완료 뒤에도 staleTime 동안 남았다.
   executionHtml: (jobId: number | null, executionId: number | null) =>
     ['proactive', 'executions', jobId, executionId, 'html'] as const,

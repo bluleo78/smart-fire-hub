@@ -39,6 +39,27 @@ describe('execute_proactive_job 무효화 (WD-667)', () => {
     expect(isInvalidated(OTHER_JOB_LIST)).toBe(false);
   });
 
+  it('작업 id 가 문자열("3")이어도 그 작업의 실행 목록만 무효화한다 (WD-671)', async () => {
+    const isInvalidated = await invalidatedAfter('mcp__firehub__execute_proactive_job', { id: '3' }, [
+      LIST,
+      SINGLE,
+      OTHER_JOB_LIST,
+      JOBS,
+    ]);
+    expect(isInvalidated(LIST)).toBe(true);
+    expect(isInvalidated(JOBS)).toBe(true);
+    expect(isInvalidated(SINGLE)).toBe(false);
+    expect(isInvalidated(OTHER_JOB_LIST)).toBe(false);
+  });
+
+  it('작업 id 가 형식이 잘못되면("abc"·1e21) 모든 실행 캐시로 넓혀 낡은 목록을 남기지 않는다 (WD-671)', async () => {
+    for (const id of ['abc', 1e21]) {
+      const isInvalidated = await invalidatedAfter('mcp__firehub__execute_proactive_job', { id }, [LIST, OTHER_JOB_LIST]);
+      expect(isInvalidated(LIST)).toBe(true);
+      expect(isInvalidated(OTHER_JOB_LIST)).toBe(true);
+    }
+  });
+
   it('입력에 작업 id 가 없으면 모든 실행 캐시를 무효화해 낡은 목록을 남기지 않는다', async () => {
     const isInvalidated = await invalidatedAfter('mcp__firehub__execute_proactive_job', undefined, [LIST, JOBS]);
     expect(isInvalidated(LIST)).toBe(true);

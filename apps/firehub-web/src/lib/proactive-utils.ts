@@ -19,21 +19,32 @@ export const REPORT_NOT_FOUND_NOTICE =
 export const EXECUTION_NOT_FOUND_NOTICE =
   '실행 정보를 찾을 수 없습니다. 실행 결과는 작업을 만든 사람만 열 수 있습니다.';
 
-/**
- * 실행 상세·리포트 보기에서 돌아갈 기록이 없을 때 보낼 곳(WD-661) — 작업 id 가 유효하면 그 작업 상세, 아니면 작업 목록.
- * 같은 주소 파라미터(/jobs/:jobId/executions/:executionId[/report])를 쓰는 두 화면이 목적지가 어긋나지 않게 한곳에 둔다.
- */
-export function jobBackFallback(jobId: number | null | undefined): { path: string; label: string } {
-  return jobId != null
-    ? { path: `/ai-insights/jobs/${jobId}`, label: '작업 상세' }
-    : { path: '/ai-insights/jobs', label: '작업 목록' };
-}
+/** 작업 목록 — 주소의 작업 id 가 잘못돼 작업 상세로 보낼 수 없을 때의 대체 목적지(WD-661) */
+const JOB_LIST_FALLBACK = { path: '/ai-insights/jobs', label: '작업 목록' } as const;
 
 /**
- * 리포트 보기의 대체 목적지 — 작업을 읽을 수 있다고 확인되지 않았을 때(404·403·그 밖의 오류)(WD-667).
- * 작업 상세로 보내면 오류·권한 안내 화면에 떨어질 수 있어 리포트 목록으로 보낸다.
+ * 리포트 목록 — 작업을 읽을 수 있다고 아직 모를 때의 대체 목적지(WD-667·WD-671).
+ * 작업 상세로 보내면 삭제(404)·작성자 아님(403)일 때 오류·권한 안내 화면에 떨어지므로 누구나 열 수 있는 목록으로 보낸다.
  */
 export const REPORT_LIST_FALLBACK = { path: '/ai-insights/reports', label: '리포트 목록' } as const;
+
+/**
+ * 실행 상세·리포트 보기에서 돌아갈 기록이 없을 때 보낼 곳(WD-661·WD-671) — 같은 주소 파라미터를 쓰는 두 화면이 한 규칙을 쓴다.
+ * - 작업 id 가 잘못되면 작업 목록
+ * - 화면 자신의 조회(실행 단건·리포트 HTML)가 한 번이라도 성공했으면 작업을 읽을 수 있으니 작업 상세
+ * - 그 밖(조회 중·멈춘 요청·403·404·다른 오류·잘못된 실행 id 로 조회하지 않음)은 리포트 목록
+ *
+ * 목적지만 정하려고 작업을 따로 조회하지 않는다(WD-671) — 예전엔 기록 없이 열 때마다 GET /jobs/{id} 를 더 부르고,
+ * 응답을 기다리는 동안 돌아가기를 잠가 요청이 멈추면 돌아갈 길이 없었다.
+ * jobReadable 은 「조회 데이터가 있는가」로 넘긴다 — 재조회가 잠깐 실패해도 데이터는 남아 목적지가 도중에 뒤집히지 않는다.
+ */
+export function jobBackFallback(
+  jobId: number | null | undefined,
+  jobReadable: boolean,
+): { path: string; label: string } {
+  if (jobId == null) return JOB_LIST_FALLBACK;
+  return jobReadable ? { path: `/ai-insights/jobs/${jobId}`, label: '작업 상세' } : REPORT_LIST_FALLBACK;
+}
 
 export interface Section {
   key: string;

@@ -1,4 +1,5 @@
-import { isValidId } from '../../../lib/route-id';
+import { executionListPrefix } from '../../../hooks/queries/useProactiveMessages';
+import { toValidId } from '../../../lib/route-id';
 
 /** invalidateQueries 에 넘길 쿼리 키 하나 — 작업 id 같은 숫자 조각도 담는다 */
 type InvalidationKey = (string | number)[];
@@ -38,9 +39,11 @@ const TOOL_INVALIDATION_MAP: Record<string, InvalidationEntry> = {
   delete_proactive_job: [['proactive', 'jobs']],
   // 채팅에서 실행해도 실행 이력 탭이 바로 「실행 중」을 보이고 폴링을 시작하게 그 작업의 실행 목록도 무효화한다(WD-667).
   // 화면의 「지금 실행」과 같이 목록 접두사만 — 단건 실행 캐시는 다시 읽지 않는다. id 를 모르면 모든 실행 캐시로 넓힌다.
+  // 키 모양은 훅의 executionListPrefix 를 그대로 쓰고, 도구 입력 id 는 숫자·숫자 문자열 모두 받는다(WD-671) —
+  // 에이전트가 id 를 "3" 처럼 문자열로 넘기면 예전엔 모든 실행 캐시로 넓혀 무효화했다.
   execute_proactive_job: (input) => {
-    const id = typeof input?.id === 'number' ? input.id : null;
-    return [['proactive', 'jobs'], isValidId(id) ? ['proactive', 'executions', id, 'list'] : ['proactive', 'executions']];
+    const id = toValidId(input?.id);
+    return [['proactive', 'jobs'], id != null ? [...executionListPrefix(id)] : ['proactive', 'executions']];
   },
   create_report_template: [['proactive', 'templates']],
 };

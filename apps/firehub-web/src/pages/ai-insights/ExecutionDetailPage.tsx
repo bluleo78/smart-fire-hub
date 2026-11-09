@@ -20,12 +20,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SecurityLevelBadge } from '@/components/ui/SecurityLevelBadge';
 import { useExecution, useExecutionHtml } from '@/hooks/queries/useProactiveMessages';
-import { useGoBack } from '@/hooks/useGoBack';
+import { useJobGoBack } from '@/hooks/useGoBack';
 import { useReportActions } from '@/hooks/useReportActions';
 import { isForbiddenError, isNotFoundError, isReportLevelBlocked } from '@/lib/api-error';
 import { classifyExecutionOutcome, getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
-import { EXECUTION_NOT_FOUND_NOTICE, getSections, jobBackFallback } from '@/lib/proactive-utils';
+import { EXECUTION_NOT_FOUND_NOTICE, getSections } from '@/lib/proactive-utils';
 import { parseRouteId } from '@/lib/route-id';
 
 import { BackButton } from './components/BackButton';
@@ -61,30 +61,33 @@ export default function ExecutionDetailPage() {
   const { jobId, executionId } = useParams<{ jobId: string; executionId: string }>();
   const jobIdNum = parseRouteId(jobId);
   const executionIdNum = parseRouteId(executionId);
-  // 돌아갈 기록이 없을 때의 목적지는 리포트 보기와 같은 규칙(작업 상세, 작업 id 가 잘못되면 작업 목록)이다(WD-661).
-  // 뒤로 가기는 여기서 한 번만 만들어 안내 화면·본문의 버튼에 내려준다(WD-667) — 버튼마다 같은 훅을 다시 부르지 않게.
-  const { goBack } = useGoBack(jobBackFallback(jobIdNum).path);
-
   if (jobIdNum == null || executionIdNum == null) {
-    return <ExecutionNotFound onBack={goBack} />;
+    return <InvalidExecutionId jobIdNum={jobIdNum} />;
   }
-  return <ExecutionDetailContent jobIdNum={jobIdNum} executionIdNum={executionIdNum} goBack={goBack} />;
+  return <ExecutionDetailContent jobIdNum={jobIdNum} executionIdNum={executionIdNum} />;
 }
 
-/** 실행 상세 본문 — 검증된 양의 정수 id 와 바깥에서 만든 뒤로 가기를 받는다 */
-function ExecutionDetailContent({
-  jobIdNum,
-  executionIdNum,
-  goBack,
-}: {
-  jobIdNum: number;
-  executionIdNum: number;
-  goBack: () => void;
-}) {
+/**
+ * 주소 id 가 잘못된 실행 상세 — 조회하지 않으므로 작업을 읽을 수 있는지 모른다.
+ * 리포트 보기와 같은 규칙(useJobGoBack, WD-671)으로 작업 id 가 잘못되면 작업 목록, 아니면 리포트 목록으로 보낸다.
+ */
+function InvalidExecutionId({ jobIdNum }: { jobIdNum: number | null | undefined }) {
+  const { goBack } = useJobGoBack(jobIdNum, false);
+  return <ExecutionNotFound onBack={goBack} />;
+}
+
+/** 실행 상세 본문 — 검증된 양의 정수 id 를 받는다 */
+function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number; executionIdNum: number }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // 실행 데이터 조회 — RUNNING 상태일 때 5초 폴링
   const { data: execution, isLoading, isError, error } = useExecution(jobIdNum, executionIdNum);
+
+  // 돌아갈 기록이 없을 때의 목적지는 리포트 보기와 같은 규칙이다(WD-671, jobBackFallback) — 실행 조회가 성공했으면
+  // 작업을 읽을 수 있으니 작업 상세, 403·404·다른 오류면 리포트 목록. 새 탭으로 연 삭제된 작업·남의 작업의 실행이
+  // 작업 상세의 오류 화면으로 돌아가지 않게 한다. 데이터 유무로 판단해 폴링 중 잠깐 실패해도 목적지가 뒤집히지 않는다.
+  // 뒤로 가기는 여기서 한 번만 만들어 안내 화면·본문의 버튼에 내려준다(WD-667).
+  const { goBack } = useJobGoBack(jobIdNum, execution !== undefined);
 
   // HTML 리포트 조회 — COMPLETED 상태이고 result가 있을 때만 활성화. 리포트 보기·모달과 같은 훅·캐시를 쓴다(WD-661)
   const { data: htmlResponse } = useExecutionHtml(jobIdNum, executionIdNum, {
