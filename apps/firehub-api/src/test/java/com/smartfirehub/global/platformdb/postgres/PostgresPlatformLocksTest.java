@@ -1,7 +1,9 @@
 package com.smartfirehub.global.platformdb.postgres;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
+import com.smartfirehub.global.platformdb.PlatformLockWaitTimeoutException;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -154,6 +156,46 @@ class PostgresPlatformLocksTest extends IntegrationTestBase {
               return String.valueOf(dsl.fetchValue("SELECT current_setting('lock_timeout')"));
             });
     assertThat(after).isEqualTo("7s");
+  }
+
+  /**
+   * 묶인 대기 시간 초과 계약(WD-694) — PG 판.
+   *
+   * <ul>
+   *   <li>(a) 시간을 넘기면 저장소와 무관한 {@link PlatformLockWaitTimeoutException} 을 던진다(Tibero 판과 같은 형). 원인
+   *       사슬에는 PG 의 lock_not_available(55P03)이 남는다.
+   *   <li>(b) 그 뒤 같은 트랜잭션은 쓸 수 없다 — 다음 문장이 in_failed_sql_transaction(25P02)으로 실패한다. Tibero 는 트랜잭션이
+   *       살아 있어 이어 쓸 수 있어 보이지만, PG 에서는 이렇게 깨지므로 인터페이스 계약은 "시간 초과 뒤에는 트랜잭션을 끝낸다(롤백)" 로 둔다.
+   * </ul>
+   */
+  @Test
+  void boundedXactLock_timeout_throwsPlatformTimeout_andLeavesTransactionUnusable()
+      throws Exception {
+    String key = PythonReadGrantSync.syncLockKey(694L);
+    var outcome =
+        PausedTransactionRace.run(
+            tx,
+            null,
+            () -> locks.xactLock(key),
+            () ->
+                tx.execute(
+                    s -> {
+                      Throwable timeout =
+                          catchThrowable(() -> locks.xactLock(key, Duration.ofMillis(200)));
+                      Throwable reuse = catchThrowable(() -> dsl.fetchValue("SELECT 1"));
+                      // 깨진 트랜잭션을 커밋하려 하지 않고 계약대로 롤백으로 끝낸다.
+                      s.setRollbackOnly();
+                      return new Throwable[] {timeout, reuse};
+                    }));
+    assertThat(outcome.secondError()).isNull();
+    Throwable timeout = outcome.secondResult()[0];
+    Throwable reuse = outcome.secondResult()[1];
+    assertThat(timeout)
+        .as("(a) 시간 초과는 PlatformLockWaitTimeoutException")
+        .isInstanceOf(PlatformLockWaitTimeoutException.class);
+    assertThat(hasSqlState(timeout, "55P03")).as("원인 사슬에 55P03 이 남는다").isTrue();
+    assertThat(reuse).as("(b) 시간 초과 뒤 같은 트랜잭션의 다음 문장은 실패한다").isNotNull();
+    assertThat(hasSqlState(reuse, "25P02")).as("in_failed_sql_transaction").isTrue();
   }
 
   /** 원인 사슬에 그 SQLState 의 SQLException 이 있는가. */

@@ -338,13 +338,14 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * 미확인 표식이 있는 실행 준비는 끊기 → 잠금 안 재확인 순서가 필요해 {@link #killThenApplyUnderLock} 으로 간다(WD-624).
    */
   private SyncResult lockedSync(String onlyTable, Integer runRank) {
-    return PythonReadGrantBackend.withTenantSyncLock(
+    // 대기형(WAIT)은 빈 값을 내지 않는다는 불변식을 이름 붙은 검사로 묶는다 — 깨지면 원인을 알리는 IllegalStateException(WD-694).
+    return PythonReadGrantBackend.requireWaitModeResult(
+        PythonReadGrantBackend.withTenantSyncLock(
             requiresNew,
             lockOps,
             PythonReadGrantBackend.LockMode.WAIT,
             null,
-            () -> syncInTx(onlyTable, runRank))
-        .orElseThrow();
+            () -> syncInTx(onlyTable, runRank)));
   }
 
   /** 데이터셋 하나 — 테이블 이름을 찾아 syncTable. 물리 테이블이 없는 데이터셋(문서·파일형)은 할 일이 없다. */

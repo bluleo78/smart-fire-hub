@@ -3,6 +3,7 @@ package com.smartfirehub.global.platformdb.postgres;
 import static org.jooq.impl.DSL.val;
 
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
+import com.smartfirehub.global.platformdb.PlatformLockWaitTimeoutException;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -63,6 +64,9 @@ public class PostgresPlatformLocks implements PlatformLocks {
       "WITH l AS MATERIALIZED (SELECT pg_advisory_xact_lock(hashtextextended({0}, 0)))"
           + " SELECT set_config('lock_timeout', {1}, true) FROM l";
 
+  /** lock_timeout 초과 SQLState(lock_not_available) — 묶인 대기의 시간 초과 판정(WD-694). */
+  private static final String LOCK_NOT_AVAILABLE = "55P03";
+
   /** 정수 키 트랜잭션 잠금 — 키를 그대로 잠금 id 로 쓴다. */
   static final String XACT_LOCK_LONG_SQL = "SELECT pg_advisory_xact_lock({0})";
 
@@ -107,12 +111,34 @@ public class PostgresPlatformLocks implements PlatformLocks {
    * 하지만 잠금을 잡은 <b>같은 트랜잭션</b>에서 동기화(카탈로그 읽기·GRANT/REVOKE)가 이어지므로, 되돌리지 않으면 그 문장들에까지 수 초 제한이 남아 엉뚱한
    * 곳에서 55P03 으로 실패한다(그건 "바쁨" 이 아니라 동기화 실패다). 그래서 "SET LOCAL 하고 잠금" 만으로 끝내지 않고, 원래 값 읽기를 걸기와, 되돌리기를
    * 잠금과 한 문장으로 묶는다.
+   *
+   * <p><b>시간 초과(WD-694).</b> 잠금 문장의 lock_not_available(SQLState {@code 55P03})은 Tibero 판과 같은 {@link
+   * PlatformLockWaitTimeoutException} 으로 감싸 던진다(원래 예외는 원인으로 남긴다). 이때 PG 트랜잭션은 이미 중단됐으므로 호출자는 롤백으로
+   * 끝내야 한다({@link PlatformLocks#xactLock(String, Duration)} 계약). 그 밖의 예외는 그대로 던진다.
    */
   public static void xactLock(DSLContext ctx, String key, Duration timeout) {
     Object previous =
         ctx.fetchOne(SAVE_AND_SET_LOCK_TIMEOUT_SQL, val(Math.max(1, timeout.toMillis()) + "ms"))
             .get(0);
-    ctx.fetch(LOCK_THEN_RESTORE_LOCK_TIMEOUT_SQL, val(key), val(String.valueOf(previous)));
+    try {
+      ctx.fetch(LOCK_THEN_RESTORE_LOCK_TIMEOUT_SQL, val(key), val(String.valueOf(previous)));
+    } catch (RuntimeException e) {
+      // 잠금 대기 시간 초과만 저장소 무관한 표시 예외로 바꾼다 — 메시지에 키는 싣지 않는다(테넌트 id·내부 잠금 이름).
+      if (hasLockNotAvailable(e)) {
+        throw new PlatformLockWaitTimeoutException("PG 트랜잭션 잠금 대기 시간 초과(제한 " + timeout + ")", e);
+      }
+      throw e;
+    }
+  }
+
+  /** 원인 사슬에 lock_not_available(SQLState {@code 55P03}) SQLException 이 있는가. */
+  private static boolean hasLockNotAvailable(Throwable e) {
+    for (Throwable t = e; t != null; t = t.getCause()) {
+      if (t instanceof SQLException sql && LOCK_NOT_AVAILABLE.equals(sql.getSQLState())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @Override
