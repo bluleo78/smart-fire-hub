@@ -155,7 +155,7 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 - **소유자 계정**(`owner-url`·`owner-username`)에는 superuser(`CREATE EXTENSION postgis`), `pg_read_all_stats`(없으면 `fh_incremental_cursor_candidate` 가 오류 없이 틀린 값을 돌려준다), `app_tenant` 에 대한 ADMIN OPTION 이 필요하다.
 - **같은 클러스터면 `app_tenant` 비밀번호도 같아야 한다.** `app_tenant` 는 PG 클러스터 전역 롤이다. PG 플랫폼 DB 와 분리 모드 데이터 저장소가 한 클러스터에 있으면 플랫폼 Flyway(`spring.datasource.password`)와 데이터 저장소 Flyway(`firehub.data-store.postgres.password`)가 기동마다 서로 덮어써 플랫폼 풀 접속이 깨진다. 막지는 않고, 두 값이 다르면 기동 시 경고 로그를 남긴다.
 - **테넌트 파이프라인 롤은 기동 치유(`TenantPipelineRoleBootstrap`)가 데이터 저장소에 만든다.** 플랫폼 마이그레이션이 만들어 주지 않는다.
-- **배포 차단 사항 해제 — WD-493 완료.** 출력 테이블 세션 잠금을 데이터 저장소(`DataStoreSessionLocks`, `@DataStoreDb` 풀)로 옮겨 SQL REPLACE 출력 잠금과 같은 DB 에서 잡는다. 이제 분리 모드를 배포할 수 있다(남은 선행 이슈는 WD-491·WD-492).
+- **배포 차단 사항 해제 — WD-493 완료.** 출력 테이블 잠금을 SQL REPLACE 출력 잠금과 같은 DB(데이터 저장소)에서 잡도록 옮겼다(이후 WD-690 에서 세션 잠금이 트랜잭션 범위 잠금으로 바뀌었다). 이제 분리 모드를 배포할 수 있다(남은 선행 이슈는 WD-491·WD-492).
 - **WD-491 이 MyBatis 짝을 만들어야 하는 새 플랫폼 리포지토리 메서드:** `DatasetRepository.findSchemaMetas`, `DatasetRepository.findTableLevels`. (staging 정리 게이트는 JobRunr `StorageProvider` 를 써서 MyBatis 짝이 필요 없다.)
 - **회귀:** Gradle 태스크 `separateDataStoreTest` 가 데이터 저장소 패키지를 분리 모드로 돌린다.
 
@@ -163,24 +163,24 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 
 두 저장소를 가로지르는 직렬화는 아래 규칙으로 정리했다. 스펙 4절 표가 직렬화별 저장소를 정한다.
 
-- 데이터 저장소를 지키는 잠금은 데이터 저장소에서 잡는다(출력 테이블 세션 잠금, SQL REPLACE 출력 잠금, PG 백엔드의 Python 읽기 권한 동기화 `lockTenantSync`).
+- 데이터 저장소를 지키는 잠금은 데이터 저장소에서 잡는다(출력 테이블 잠금(`OutputSwapLock`, 트랜잭션 범위), SQL REPLACE 출력 잠금, PG 백엔드의 Python 읽기 권한 동기화 `lockTenantSync`).
 - Tibero 데이터 저장소 백엔드의 Python 읽기 권한 동기화(`TiberoPythonReadGrantSync`)는 `PlatformLocks` 로 플랫폼 DB 에서 잡는다. 그 짝이 될 Tibero 맞바꿈 경로는 JVM 안 잠금만 쓴다. 여러 API 인스턴스 사이에서는 서로 막지 못하는 알려진 빈틈이고, 아래 `TiberoDataTableStore` 별도 이슈 후보에 함께 넣는다.
 - 플랫폼을 지키는 잠금은 플랫폼 DB 에서 잡는다(`PlatformLocks.xactLock`, `IncrementalStepLock`).
 - 한 직렬화의 잠금은 모두 한 저장소에서 잡는다. 한 직렬화가 두 DB 에 갈라지면 서로 막지 못한다.
-- 세션 잠금은 `SessionLocks` 인터페이스로 분리했다(`releaseSessionLock(Connection, key)`). PG 구현 `DataStoreSessionLocks` 가 `@DataStoreDb` 풀에서 잡고 푼다.
+- 세션 잠금은 증분 스텝 잠금(`IncrementalStepLock`) 하나뿐이고 플랫폼 풀에서 `PlatformLocks.trySessionLock`/`releaseSessionLock` 으로 잡는다. 데이터 저장소에는 세션 잠금이 없다(WD-690·692).
 
 **불변식: 플랫폼 잠금을 먼저, 데이터 저장소 잠금을 나중에.**
 
 - 두 DB 사이의 교착은 어느 DB 도 탐지하지 못한다. 한 스레드가 A DB 잠금을 쥐고 B DB 잠금을 기다리고, 다른 스레드가 반대로 쥐고 있으면 둘 다 타임아웃 없이 멈춘다. 그래서 획득 순서를 한 방향으로 고정한다.
 - 분리 모드에서 데이터 저장소 xact 잠금은 플랫폼 트랜잭션 커밋보다 먼저 풀린다(beforeCommit). 플랫폼 행을 지키는 잠금을 데이터 저장소에 두면 그 행의 커밋 전에 잠금이 풀리므로, 플랫폼 행을 지키는 잠금은 데이터 저장소에 두지 않는다.
-- 점검 결과: 데이터 저장소 잠금 지점 11곳과 플랫폼 잠금 진입점 6개를 양방향으로 확인했다. 앞쪽은 11곳 각각의 잠금 구간 안에서 플랫폼 잠금으로 가는 경로를 찾았고, 뒤쪽은 진입점 6개의 호출자를 거슬러 올라가 데이터 저장소 구간에 닿는지 봤다. "플랫폼 잠금 후 데이터 저장소 잠금" 순서를 어긴 곳은 0건이다.
+- 점검 결과(WD-493 시점 기준): 데이터 저장소 잠금 지점 11곳과 플랫폼 잠금 진입점 6개를 양방향으로 확인했다. 앞쪽은 11곳 각각의 잠금 구간 안에서 플랫폼 잠금으로 가는 경로를 찾았고, 뒤쪽은 진입점 6개의 호출자를 거슬러 올라가 데이터 저장소 구간에 닿는지 봤다. "플랫폼 잠금 후 데이터 저장소 잠금" 순서를 어긴 곳은 0건이었다. 그 뒤 WD-690 이 세션 잠금이던 출력 잠금 한 곳을 맞바꿈 트랜잭션 안의 트랜잭션 범위 잠금(`OutputSwapLock`)으로 바꿨다 — 이 잠금은 플랫폼 쓰기 트랜잭션(데이터셋 KEY SHARE 행 잠금) 안에서 잡히므로 순서는 플랫폼 먼저, 데이터 저장소 나중이며 불변식을 어기지 않는다.
 - 잠금 구간은 넓게 잡았다. 분리 모드에서 데이터 저장소 연결은 바깥 플랫폼 트랜잭션에 묶이므로, 데이터 저장소 xact 잠금의 구간은 잠금 문장부터 바깥 플랫폼 트랜잭션의 beforeCommit 까지다.
 - 이 불변식의 범위는 **플랫폼 어드바이저리 잠금**(`PlatformLocks.xactLock`·`IncrementalStepLock`)이다. 데이터 저장소 DDL 뒤에 잡는 행 잠금(`FOR UPDATE`, 예: `DatasetService.updateColumn`)은 전수 점검하지 않았다.
 - 데이터 저장소 잠금을 쥔 채 플랫폼 풀 커넥션을 따로 빌리는 곳이 있다(`isStopRequested`·`backendFor`·`syncTable`). 분리 모드에서는 플랫폼 풀 크기도 동시 실행 수에 맞춰야 한다.
 
 **분리 모드 풀 크기:** `@DataStoreDb` 풀(기본 최대 10)을 추가로 점유하는 잠금은 이제 없다. 실행기를 끈 로컬 PYTHON 의 PG REPLACE 는 예전에 세션 잠금 연결을 쥔 채 안쪽 적재·맞바꿈이 풀에서 연결을 따로 빌려 한 건당 1개가 더 묶였고(동시에 몰리면 풀 상한에서 서로 막힘), 이 이중 점유는 WD-690 으로 해소됐다 — 출력 잠금(`OutputSwapLock`)을 맞바꿈 트랜잭션 안의 트랜잭션 범위 잠금으로 옮겨 스레드당 연결 하나만 쥔다. SQL REPLACE 의 출력 잠금(`OUTPUT_LOCK_SQL`)은 테넌트 파이프라인 전용 풀을 쓰므로 `@DataStoreDb` 풀을 더 쓰지 않는다. 위 불변식 항목처럼 데이터 저장소 잠금 보유자가 플랫폼 풀 커넥션도 빌리므로 `PLATFORM_DB_POOL_SIZE` 도 함께 본다.
 
-**해소된 한계(분리 모드 풀 고갈, WD-690):** 실행기를 끈 로컬 PYTHON REPLACE 가 `@DataStoreDb` 잠금 연결과 적재·맞바꿈 연결을 함께 쥐어 풀 크기만큼 동시에 돌면 `connection-timeout` 까지 풀이 막히던 한계는, 출력 잠금을 맞바꿈 트랜잭션 안으로 옮겨(`OutputSwapLock`) 실행당 데이터 저장소 연결 하나만 쓰게 되면서 해소됐다. 남은 한계: 출력 잠금 대기가 플랫폼 쓰기 트랜잭션 안(데이터셋 KEY SHARE 행 잠금 뒤)에서 일어나, 같은 출력의 SQL 스텝이 끝날 때까지 기다리는 동안 플랫폼 커넥션과 행 잠금을 쥔다(그 출력의 데이터셋 삭제·필드 변경이 함께 기다림). 「플랫폼 잠금 먼저, 데이터 저장소 잠금 나중」 순서(WD-493)를 지키려는 선택이며 실행기를 끈 로컬 경로 전용이다(운영은 실행기를 켜고, 실행기는 Python 출력 잠금을 잡지 않는다).
+**해소된 한계(분리 모드 풀 고갈, WD-690):** 실행기를 끈 로컬 PYTHON REPLACE 가 `@DataStoreDb` 잠금 연결과 적재·맞바꿈 연결을 함께 쥐어 풀 크기만큼 동시에 돌면 `connection-timeout` 까지 풀이 막히던 한계는, 출력 잠금을 맞바꿈 트랜잭션 안으로 옮겨(`OutputSwapLock`) 실행당 데이터 저장소 연결 하나만 쓰게 되면서 해소됐다. 남은 한계: 출력 잠금 대기가 플랫폼 쓰기 트랜잭션 안(데이터셋 KEY SHARE 행 잠금 뒤)에서 일어나, 같은 출력의 SQL 스텝이 끝날 때까지 기다리는 동안 플랫폼 커넥션과 행 잠금을 쥔다(그 출력의 데이터셋 삭제·필드 변경이 함께 기다림). 「플랫폼 잠금 먼저, 데이터 저장소 잠금 나중」 순서(WD-493)를 지키려는 선택이며 실행기를 끈 로컬 경로 전용이다(운영은 실행기를 켜고, 실행기는 Python 출력 잠금을 잡지 않는다). 같은 출력의 로컬 REPLACE 맞바꿈들이 `pg_advisory_xact_lock` 에서 플랫폼 커넥션을 쥔 채 기다리는 동안, 같은 출력 잠금을 쥔 SQL 스텝(실행기 끔)은 트랜잭션 밖에서 `cancel.checkpoint` 를 부르며 플랫폼 풀 커넥션이 필요하다 — 같은 출력을 기다리는 맞바꿈이 플랫폼 풀 크기만큼 쌓이면 그 SQL 스텝이 `connection-timeout` 까지 막혔다가 실패한다(실행기를 끈 개발 전용 경로이고 시간이 한정돼 영구 교착은 아니다).
 
 #### Tibero 잠금·깨우기 구현(WD-493)
 

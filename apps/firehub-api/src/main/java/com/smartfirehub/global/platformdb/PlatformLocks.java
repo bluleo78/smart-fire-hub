@@ -1,5 +1,7 @@
 package com.smartfirehub.global.platformdb;
 
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Duration;
 
 /**
@@ -9,10 +11,11 @@ import java.time.Duration;
  * pg_advisory_*} 함수를 직접 불렀다. 플랫폼 DB 를 다른 DBMS 로 옮길 수 있게 이 호출을 인터페이스 뒤로 모으고, PG 구현은 {@code
  * postgres.PostgresPlatformLocks} 가 맡는다. 호출자의 키 문자열·잠금 범위는 바뀌지 않는다(동작 0 변경).
  *
- * <p>트랜잭션 범위 잠금은 "현재 Spring 트랜잭션(주입된 메인 DSL)에서 잡는다"를 계약으로 하며 시그니처에 jOOQ 타입을 노출하지 않는다. 세션 범위 잠금만
- * 호출자가 넘긴 커넥션(autocommit 전용)에서 잡으며 그 계약은 {@link SessionLocks} 에 있다.
+ * <p>트랜잭션 범위 잠금은 "현재 Spring 트랜잭션(주입된 메인 DSL)에서 잡는다"를 계약으로 하며 시그니처에 jOOQ 타입을 노출하지 않는다. 세션 범위 잠금은 플랫폼
+ * 풀 커넥션(autocommit 전용)에서만 잡는다(증분 스텝 잠금, WD-223). 세션 잠금 시도는 절대 블록·대기하면 안 된다(대기자가 풀을 붙잡아 교착) — 메서드 문서
+ * 참조.
  */
-public interface PlatformLocks extends SessionLocks {
+public interface PlatformLocks {
 
   /**
    * 현재 Spring 트랜잭션에서 문자열 키로 트랜잭션 범위 잠금을 건다. 커밋·롤백 때 풀린다. 트랜잭션 밖에서 부르면 문장이 끝나자마자 풀려 아무것도 막지 못하므로 호출
@@ -71,4 +74,23 @@ public interface PlatformLocks extends SessionLocks {
    * @return 잡았으면 true(트랜잭션 끝까지 유지), 시간 안에 못 잡았거나 인터럽트되면 false
    */
   boolean tryXactLock(String key, Duration maxWait);
+
+  /**
+   * autocommit 전용 플랫폼 풀 커넥션에서 세션 범위 시도형 잠금을 시도한다. 기다리지 않는다.
+   *
+   * <p>절대 블록·대기하면 안 된다 — 호출자는 재시도 간격을 두고 폴링하며 시도 사이에 커넥션을 풀에 돌려준다. 여기서 기다리면 대기자들이 메인 풀 커넥션을 쥔 채
+   * 멈추고, 잠금 보유자는 작업을 마칠 커넥션을 못 얻어 교착이 된다. Tibero DBMS_LOCK 구현을 포함해 모든 구현은 즉시 반환해야 한다.
+   *
+   * @return 잠금을 잡았으면 true, 다른 세션이 쥐고 있으면 false
+   */
+  boolean trySessionLock(Connection connection, String key) throws SQLException;
+
+  /**
+   * 그 커넥션 세션이 쥔 그 키의 세션 잠금을 푼다. 쥐지 않은 키도 예외 없이 끝나야 한다(획득 시도가 중간에 끊겨 잠금 여부가 모호한 경우를 덮는다). 구현은 더 많이
+   * 풀어도 된다(PG 는 {@code unlock_all}).
+   *
+   * <p>전제: {@code connection} 은 그 잠금 하나만 쥔 <b>잠금 전용 커넥션</b>이어야 한다 — 다른 세션 잠금을 함께 쥔 커넥션에 부르면 PG 구현은
+   * 그것까지 전부 푼다.
+   */
+  void releaseSessionLock(Connection connection, String key) throws SQLException;
 }

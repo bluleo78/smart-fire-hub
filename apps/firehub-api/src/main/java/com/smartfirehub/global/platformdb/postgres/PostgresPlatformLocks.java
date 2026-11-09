@@ -6,7 +6,10 @@ import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.PlatformLockWaitTimeoutException;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -70,11 +73,15 @@ public class PostgresPlatformLocks implements PlatformLocks {
   /** 정수 키 트랜잭션 잠금 — 키를 그대로 잠금 id 로 쓴다. */
   static final String XACT_LOCK_LONG_SQL = "SELECT pg_advisory_xact_lock({0})";
 
-  /** 세션 잠금 획득 시도 문장 — {@link PostgresSessionLockSql#TRY_ACQUIRE_SQL} 의 별칭(기존 테스트·호출처 호환). */
-  public static final String TRY_ACQUIRE_SQL = PostgresSessionLockSql.TRY_ACQUIRE_SQL;
+  /**
+   * 세션 잠금 획득 시도 문장 — 키 문자열의 64비트 해시로 잠근다(기다리지 않는 시도형). 키 식은 {@link #XACT_LOCK_STRING_SQL} 과 같은
+   * {@code hashtextextended(?, 0)} 이다.
+   */
+  public static final String TRY_ACQUIRE_SQL =
+      "SELECT pg_try_advisory_lock(hashtextextended(?, 0))";
 
-  /** 세션 잠금 해제 문장 — {@link PostgresSessionLockSql#RELEASE_SQL} 의 별칭(기존 테스트·호출처 호환). */
-  public static final String RELEASE_SQL = PostgresSessionLockSql.RELEASE_SQL;
+  /** 세션 잠금 해제 문장 — 이 세션이 쥔 세션 범위 advisory 잠금을 전부 푼다. */
+  public static final String RELEASE_SQL = "SELECT pg_advisory_unlock_all()";
 
   /** 메인 DSL — 호출자의 Spring 트랜잭션에 합류해 트랜잭션 범위 잠금을 잡는다. */
   private final DSLContext dsl;
@@ -182,17 +189,26 @@ public class PostgresPlatformLocks implements PlatformLocks {
     }
   }
 
-  /** 플랫폼 DB 커넥션에서 세션 잠금을 시도한다 — 본문은 데이터 저장소 구현과 공유하는 {@link PostgresSessionLockSql} 에 있다. */
+  /** 플랫폼 DB 커넥션에서 세션 잠금을 한 번 시도한다. 기다리지 않는다. */
   @Override
   public boolean trySessionLock(Connection connection, String key) throws SQLException {
-    return PostgresSessionLockSql.tryAcquire(connection, key);
+    try (PreparedStatement attempt = connection.prepareStatement(TRY_ACQUIRE_SQL)) {
+      attempt.setString(1, key);
+      try (ResultSet rs = attempt.executeQuery()) {
+        return rs.next() && rs.getBoolean(1);
+      }
+    }
   }
 
   /**
-   * 키와 무관하게 이 세션의 세션 잠금을 전부 푼다({@code unlock_all}, 사유는 {@link PostgresSessionLockSql#releaseAll}).
+   * 키와 무관하게 이 세션의 세션 잠금을 전부 푼다({@code unlock_all}). 키별 해제 대신 쓰는 것은 잠금 전용 커넥션이 이 잠금 하나만 쥐고, 획득 시도가
+   * 중간에 끊겨 잠금 여부가 모호한 경우까지 덮기 위해서다.
    */
   @Override
   public void releaseSessionLock(Connection connection, String key) throws SQLException {
-    PostgresSessionLockSql.releaseAll(connection);
+    try (Statement release = connection.createStatement();
+        ResultSet ignored = release.executeQuery(RELEASE_SQL)) {
+      // 결과는 쓰지 않는다 — 문장이 끝났다는 것이 곧 해제다.
+    }
   }
 }

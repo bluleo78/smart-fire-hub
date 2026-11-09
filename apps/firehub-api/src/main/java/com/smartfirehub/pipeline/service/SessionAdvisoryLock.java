@@ -1,6 +1,6 @@
 package com.smartfirehub.pipeline.service;
 
-import com.smartfirehub.global.platformdb.SessionLocks;
+import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import java.sql.Connection;
@@ -39,10 +39,10 @@ final class SessionAdvisoryLock {
    */
   static final class Held implements AutoCloseable {
     private Connection connection;
-    private final SessionLocks locks;
+    private final PlatformLocks locks;
     private final String key;
 
-    private Held(Connection connection, SessionLocks locks, String key) {
+    private Held(Connection connection, PlatformLocks locks, String key) {
       this.connection = connection;
       this.locks = locks;
       this.key = key;
@@ -61,18 +61,17 @@ final class SessionAdvisoryLock {
   /**
    * 잠금을 얻을 때까지 시도한다.
    *
-   * @param locks 세션 잠금 구현(DBMS 별 SQL 은 여기 있다 — WD-486). 잠금이 놓일 DB 는 {@code dataSource} 와 같은 저장소여야
-   *     한다
-   * @param dataSource 잠금 전용 커넥션을 빌릴 풀
+   * @param locks 플랫폼 DB 잠금 구현(DBMS 별 SQL 은 여기 있다 — WD-486)
+   * @param dataSource 플랫폼 풀(잠금이 놓일 DB 는 이 풀의 DB 다). 잠금 전용 커넥션을 빌린다
    * @param key 잠금 키 문자열(해시해 쓴다)
-   * @param label 오류 문구에 쓸 잠금 이름(예: "출력 테이블 잠금")
+   * @param label 오류 문구에 쓸 잠금 이름(예: "증분 스텝 잠금")
    * @param maxWaitMs 대기 상한(밀리초). {@link #NO_LIMIT} 이면 무제한
    * @param cancel 대기 중 매 회차 확인할 협조적 취소(WD-153). 취소면 {@code PipelineExecutionCancelledException} 이
    *     그대로 나간다
    * @param timeoutMessage 상한을 넘겼을 때 던질 한국어 안내
    */
   static Held acquire(
-      SessionLocks locks,
+      PlatformLocks locks,
       DataSource dataSource,
       String key,
       String label,
@@ -88,7 +87,7 @@ final class SessionAdvisoryLock {
         connection = dataSource.getConnection();
       } catch (SQLTransientConnectionException e) {
         // 상한이 있는 대기(증분 스텝 잠금, WD-223)는 잠금 전용 풀이 바닥나도 "다른 실행이 쥐고 있음"과 같게 본다 — 상한 안에서
-        // 다시 시도하고, 넘기면 같은 안내로 실패한다. 상한 없는 호출(#735 출력 세션 잠금)은 예전처럼 바로 실패한다.
+        // 다시 시도하고, 넘기면 같은 안내로 실패한다. 상한 없는 호출은 예전처럼 바로 실패한다.
         if (maxWaitMs < 0) {
           throw new ScriptExecutionException(label + "용 커넥션을 얻지 못했습니다: " + e.getMessage(), e);
         }
@@ -132,7 +131,7 @@ final class SessionAdvisoryLock {
   }
 
   /** 잠금을 풀고 커넥션을 반납한다. 풀지 못했으면 커넥션을 끊어 잠금이 풀로 새지 않게 한다. */
-  static void release(SessionLocks locks, Connection connection, String key) {
+  static void release(PlatformLocks locks, Connection connection, String key) {
     try {
       locks.releaseSessionLock(connection, key);
     } catch (SQLException | RuntimeException e) {

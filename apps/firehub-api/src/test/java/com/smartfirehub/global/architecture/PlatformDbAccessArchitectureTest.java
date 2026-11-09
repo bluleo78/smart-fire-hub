@@ -5,15 +5,18 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
+import com.tngtech.archunit.core.domain.JavaMethodCall;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import java.util.HashSet;
 import java.util.Set;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.stereotype.Repository;
 
@@ -289,5 +292,76 @@ class PlatformDbAccessArchitectureTest {
     for (String fqcn : allAllowed()) {
       assertThat(PROD.contain(fqcn)).as("허용 목록의 클래스가 존재해야 한다: %s", fqcn).isTrue();
     }
+  }
+
+  private static final String SESSION_ADVISORY_LOCK =
+      "com.smartfirehub.pipeline.service.SessionAdvisoryLock";
+  private static final String INCREMENTAL_STEP_LOCK =
+      "com.smartfirehub.pipeline.service.IncrementalStepLock";
+
+  /** {@code c} 가 {@code fqcn} 이거나 그 중첩 클래스인지. */
+  private static boolean isOrNested(JavaClass c, String fqcn) {
+    return c.getName().equals(fqcn) || c.getName().startsWith(fqcn + "$");
+  }
+
+  /** 이름 문자열(패키지 비공개 클래스)로 겨냥하는 규칙이 이름 변경·이동으로 조용히 공허해지지 않게 한다(WD-692). */
+  @Test
+  @DisplayName("세션 잠금 규칙이 이름으로 겨냥하는 클래스가 실제로 존재한다")
+  void sessionLockRuleTargetsExist() {
+    assertThat(PROD.contain(SESSION_ADVISORY_LOCK))
+        .as("세션 잠금 규칙의 대상 클래스가 있어야 한다: %s", SESSION_ADVISORY_LOCK)
+        .isTrue();
+    assertThat(PROD.contain(INCREMENTAL_STEP_LOCK))
+        .as("세션 잠금 규칙의 허용 호출자가 있어야 한다: %s", INCREMENTAL_STEP_LOCK)
+        .isTrue();
+  }
+
+  /**
+   * 세션 잠금 시도·해제({@code PlatformLocks.trySessionLock/releaseSessionLock})는 {@code
+   * SessionAdvisoryLock} 과 {@link PlatformLocks} 구현체만 부른다(WD-692). 날 호출은 잠금 전용 커넥션 규칙을 건너뛰어 한 실행이
+   * 커넥션을 둘 쥐는 WD-690 의 풀 고갈을 되살릴 수 있다.
+   */
+  @Test
+  @DisplayName("세션 잠금 시도·해제는 SessionAdvisoryLock 과 PlatformLocks 구현체만 부른다")
+  void onlySessionAdvisoryLockCallsSessionLockMethods() {
+    noClasses()
+        .that(
+            DescribedPredicate.describe(
+                "SessionAdvisoryLock 이나 PlatformLocks 구현체가 아닌 클래스",
+                (JavaClass c) ->
+                    !(isOrNested(c, SESSION_ADVISORY_LOCK)
+                        || c.isAssignableTo(PlatformLocks.class))))
+        .should()
+        .callMethodWhere(
+            DescribedPredicate.describe(
+                "PlatformLocks.trySessionLock/releaseSessionLock 호출",
+                (JavaMethodCall call) ->
+                    call.getTarget().getOwner().isAssignableTo(PlatformLocks.class)
+                        && (call.getName().equals("trySessionLock")
+                            || call.getName().equals("releaseSessionLock"))))
+        .because("세션 잠금은 SessionAdvisoryLock 의 잠금 전용 커넥션 규칙을 거쳐야 한다 — WD-690·WD-692")
+        .check(PROD);
+  }
+
+  /** {@code SessionAdvisoryLock.acquire} 의 호출자는 증분 스텝 잠금뿐이다(WD-692) — 세션 잠금은 플랫폼 풀 전용이다. */
+  @Test
+  @DisplayName("SessionAdvisoryLock.acquire 호출자는 IncrementalStepLock 뿐이다")
+  void onlyIncrementalStepLockCallsSessionAdvisoryLockAcquire() {
+    noClasses()
+        .that(
+            DescribedPredicate.describe(
+                "SessionAdvisoryLock 과 IncrementalStepLock 이 아닌 클래스",
+                (JavaClass c) ->
+                    !(isOrNested(c, INCREMENTAL_STEP_LOCK)
+                        || isOrNested(c, SESSION_ADVISORY_LOCK))))
+        .should()
+        .callMethodWhere(
+            DescribedPredicate.describe(
+                "SessionAdvisoryLock.acquire 호출",
+                (JavaMethodCall call) ->
+                    call.getTargetOwner().getName().equals(SESSION_ADVISORY_LOCK)
+                        && call.getName().equals("acquire")))
+        .because("세션 잠금은 증분 스텝 잠금(플랫폼 풀) 전용이다 — WD-690·WD-692")
+        .check(PROD);
   }
 }

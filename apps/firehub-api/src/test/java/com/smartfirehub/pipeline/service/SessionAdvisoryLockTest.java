@@ -10,12 +10,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.smartfirehub.dataset.dto.DatasetColumnRequest;
-import com.smartfirehub.dataset.service.DataTableService;
-import com.smartfirehub.global.datastore.DataStoreDb;
-import com.smartfirehub.global.datastore.DataStoreSessionLocks;
 import com.smartfirehub.global.platformdb.PlatformLocks;
-import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.platformdb.postgres.PostgresPlatformLocks;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
@@ -27,7 +23,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -42,44 +37,28 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 
 /**
- * 세션 범위 advisory 잠금 공통 장치({@link SessionAdvisoryLock})의 계약 — 실제 DB 로 확인한다. 출력 테이블 세션 잠금(#735)에서 옮겨
- * 온 테스트다(WD-690). 세션 범위 advisory 잠금은 커밋으로 풀리지 않고 풀로 돌아간 커넥션에도 남으므로, <b>누수가 없다는 것</b>이 이 클래스의 핵심
- * 단언이다.
+ * 세션 범위 advisory 잠금 공통 장치({@link SessionAdvisoryLock})의 계약 — 실제 DB 로 확인한다. 지금 운영 호출자는 증분 스텝 잠금(플랫폼
+ * 풀)뿐이다(WD-692, 출력 쪽 잠금은 WD-690 에서 트랜잭션 범위로 옮겼다). 세션 범위 advisory 잠금은 커밋으로 풀리지 않고 풀로 돌아간 커넥션에도 남으므로,
+ * <b>누수가 없다는 것</b>이 이 클래스의 핵심 단언이다.
  *
- * <p>잠금 관측은 {@code pg_locks} 의 advisory 행으로 한다. 테스트 DB 는 이 JVM 전용 컨테이너이고, 세션 범위 advisory 잠금은 이 클래스가
- * 검증하는 증분 스텝 직렬화(WD-223)와 이 클래스의 공통 장치 테스트만 쓰며 테스트 클래스는 차례로 돌아 다른 잠금이 섞이지 않는다(트랜잭션 범위 잠금은 트랜잭션이 끝나면
- * 사라진다). 클래스 레벨 {@code @Transactional} 은 쓰지 않는다 — 다른 커넥션이 픽스처를 봐야 한다.
+ * <p>잠금 관측은 {@code pg_locks} 의 advisory 행으로 한다. 테스트 DB 는 이 JVM 전용 컨테이너이고 세션 범위 advisory 잠금을 쓰는 곳이 이
+ * 클래스의 테스트뿐이라 다른 잠금이 섞이지 않는다. 클래스 레벨 {@code @Transactional} 은 쓰지 않는다 — 다른 커넥션이 픽스처를 봐야 한다.
  */
 class SessionAdvisoryLockTest extends IntegrationTestBase {
 
-  /** 데이터 저장소 풀 — 출력 테이블 세션 잠금이 쓰던 풀(잠금 전용 커넥션을 여기서 빌린다). */
-  @Autowired @DataStoreDb private DataSource storeDataSource;
-
-  @Autowired private DataStoreSessionLocks storeLocks;
-  @Autowired private SqlScriptExecutor sqlScriptExecutor;
-  @Autowired private DSLContext dsl;
-
-  /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
-  @Autowired @DataStoreDb private DSLContext dataDsl;
-
+  /**
+   * 플랫폼 잠금 인터페이스와 플랫폼(@Primary) 풀. 운영의 증분 스텝 잠금은 같은 플랫폼 DB 의 작은 전용 잠금 풀을 쓰지만, 이 테스트는 @Primary 플랫폼
+   * 풀을 빌린다 — DB 와 잠금 의미가 같다.
+   */
   @Autowired private PlatformLocks platformLocks;
-  @Autowired private DataTableService dataTableService;
+
   @Autowired private DataSource dataSource;
+  @Autowired private DSLContext dsl;
   @Autowired private IncrementalStepLock incrementalStepLock;
   @Autowired private DataSourceProperties dataSourceProperties;
 
-  private static String randomTable(String prefix) {
+  private static String randomKey(String prefix) {
     return prefix + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
-  }
-
-  /**
-   * 데이터 저장소 DB 에 존재하는 advisory 잠금 수(쥔 것·기다리는 것 모두). 출력 테이블 세션 잠금과 SQL REPLACE 의 출력 잠금은 모두 데이터 저장소에
-   * 있다(WD-493) — 분리 모드에서는 플랫폼 DB 와 다른 DB 이므로 {@code dataDsl} 로 센다.
-   */
-  private int advisoryLocks(String condition) {
-    return dataDsl
-        .fetchOne("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND " + condition)
-        .get(0, Integer.class);
   }
 
   /** 플랫폼 DB 에 존재하는 advisory 잠금 수 — 증분 스텝 잠금(WD-223)은 플랫폼 DB 의 잠금 전용 풀에서 잡는다. */
@@ -90,20 +69,19 @@ class SessionAdvisoryLockTest extends IntegrationTestBase {
   }
 
   /**
-   * 출력 테이블 키로 세션 잠금을 쥔 채 본문을 실행한다 — 예전 출력 테이블 세션 잠금 클래스(#735, WD-690 에서 제거)가 하던 일을 공통 장치로 직접 한다. 이
-   * 클래스가 검증하는 것은 그 뒤의 공통 장치({@link SessionAdvisoryLock})의 획득·재시도·해제·누수 방지 계약이다.
+   * 임의 키로 세션 잠금을 쥔 채 본문을 실행한다 — 공통 장치를 직접 부른다. 이 클래스가 검증하는 것은 그 뒤의 공통 장치({@link
+   * SessionAdvisoryLock})의 획득·재시도·해제·누수 방지 계약이다.
    */
-  private <T> T callLocked(
-      DataSource pool, DataStoreSessionLocks locks, String key, Supplier<T> body) {
+  private <T> T callLocked(DataSource pool, PlatformLocks locks, String key, Supplier<T> body) {
     try (SessionAdvisoryLock.Held ignored =
         SessionAdvisoryLock.acquire(
             locks,
             pool,
             key,
-            "출력 테이블 잠금",
+            "테스트 잠금",
             SessionAdvisoryLock.NO_LIMIT,
             ExecutionCancelCheck.NONE,
-            () -> "출력 테이블 잠금 대기 시간이 끝났습니다")) {
+            () -> "테스트 잠금 대기 시간이 끝났습니다")) {
       return body.get();
     }
   }
@@ -114,121 +92,62 @@ class SessionAdvisoryLockTest extends IntegrationTestBase {
 
   @Test
   void 본문이_도는_동안만_잠금을_쥐고_끝나면_남기지_않는다() {
-    String table = randomTable("p735_sl_");
+    String key = randomKey("wd692_sl_");
 
     String result =
         inTenant(
             () ->
                 callLocked(
-                    storeDataSource,
-                    storeLocks,
-                    SqlScriptExecutor.outputLockKeyFor(table),
+                    dataSource,
+                    platformLocks,
+                    key,
                     () -> {
                       // 본문 안: 잠금이 실제로 잡혀 있다(없으면 이 테스트 전체가 공허하다).
-                      assertThat(advisoryLocks("granted")).isEqualTo(1);
+                      assertThat(platformAdvisoryLocks("granted")).isEqualTo(1);
                       return "done";
                     }));
 
     assertThat(result).isEqualTo("done");
     // 커넥션은 풀로 돌아갔지만 세션은 살아 있다 — 여기서 0 이 아니면 잠금이 풀로 샌 것이다.
-    assertThat(advisoryLocks("true")).isZero();
+    assertThat(platformAdvisoryLocks("true")).isZero();
   }
 
   @Test
   void 본문이_예외로_끝나도_잠금을_남기지_않는다() {
-    String table = randomTable("p735_sl_");
+    String key = randomKey("wd692_sl_");
 
     assertThatThrownBy(
             () ->
                 inTenant(
                     () ->
                         callLocked(
-                            storeDataSource,
-                            storeLocks,
-                            SqlScriptExecutor.outputLockKeyFor(table),
+                            dataSource,
+                            platformLocks,
+                            key,
                             () -> {
-                              assertThat(advisoryLocks("granted")).isEqualTo(1);
+                              assertThat(platformAdvisoryLocks("granted")).isEqualTo(1);
                               throw new IllegalStateException("자식 프로세스 실패");
                             })))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("자식 프로세스 실패");
 
-    assertThat(advisoryLocks("true")).isZero();
+    assertThat(platformAdvisoryLocks("true")).isZero();
     // 같은 테이블을 바로 다시 잠글 수 있다 — 앞 실패가 뒤 실행을 막지 않는다.
-    assertThat(
-            inTenant(
-                () ->
-                    callLocked(
-                        storeDataSource,
-                        storeLocks,
-                        SqlScriptExecutor.outputLockKeyFor(table),
-                        () -> "again")))
+    assertThat(inTenant(() -> callLocked(dataSource, platformLocks, key, () -> "again")))
         .isEqualTo("again");
-    assertThat(advisoryLocks("true")).isZero();
+    assertThat(platformAdvisoryLocks("true")).isZero();
   }
 
   /**
-   * 세션 잠금을 쥔 동안에는 같은 출력에 대한 SQL 스텝의 "비우기 + 적재"(트랜잭션 범위 잠금, #731)가 기다린다 — 두 경로의 키가 같다는 증거다. 키가 어긋나면
-   * SQL 실행이 기다리지 않고 바로 끝나 대기 단언(1건)과 "아직 비워지지 않았다" 단언이 깨진다.
-   */
-  @Test
-  void 세션_잠금을_쥔_동안_같은_출력의_SQL_REPLACE는_기다린다() throws Exception {
-    String out = randomTable("p735_sl_out_");
-    dataTableService.createTable(
-        out,
-        List.of(new DatasetColumnRequest("name", "name", "TEXT", null, true, false, null, false)));
-    ExecutorService pool = Executors.newSingleThreadExecutor();
-    try {
-      dataDsl.execute("INSERT INTO " + DataSchema.qualify(out) + " (name) VALUES ('old')");
-      String insert = "INSERT INTO " + DataSchema.qualify(out) + " (name) VALUES ('new')";
-
-      Future<String> sqlRun =
-          inTenant(
-              () ->
-                  callLocked(
-                      storeDataSource,
-                      storeLocks,
-                      SqlScriptExecutor.outputLockKeyFor(out),
-                      () -> {
-                        Future<String> run =
-                            pool.submit(
-                                () ->
-                                    TenantContext.runScopedGet(
-                                        DEFAULT_TEST_TENANT_ID,
-                                        () ->
-                                            sqlScriptExecutor.execute(
-                                                List.of(OutputClearStatement.deleteAll(out)),
-                                                insert)));
-                        awaitAdvisoryWaiters(1);
-                        assertThat(advisoryLocks("NOT granted"))
-                            .as("SQL REPLACE 가 같은 키의 잠금을 기다려야 한다")
-                            .isEqualTo(1);
-                        // 기다리는 동안 출력은 그대로다(비우기가 잠금 뒤에 있다).
-                        assertThat(names(out)).containsExactly("old");
-                        assertThat(run.isDone()).isFalse();
-                        return run;
-                      }));
-
-      // 세션 잠금이 풀리면 SQL 실행이 이어서 끝난다.
-      assertThat(sqlRun.get(30, TimeUnit.SECONDS)).isEqualTo("SQL executed successfully");
-      assertThat(names(out)).containsExactly("new");
-      assertThat(advisoryLocks("true")).isZero();
-    } finally {
-      pool.shutdownNow();
-      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(out));
-    }
-  }
-
-  /**
-   * 같은 출력에 대한 세션 잠금끼리도 배타다 — 뒤 본문은 앞 본문이 끝난 뒤에 시작한다. 뒤 실행은 커넥션을 쥐지 않고 시도를 반복하므로(pg_locks 대기 행이 없다)
-   * 시도가 시작됐다는 신호를 받은 뒤 재시도 간격 여러 번만큼 기다려도 들어오지 못함을 확인한다.
+   * 같은 키의 세션 잠금끼리도 배타다 — 뒤 본문은 앞 본문이 끝난 뒤에 시작한다. 뒤 실행은 커넥션을 쥐지 않고 시도를 반복하므로(pg_locks 대기 행이 없다) 시도가
+   * 시작됐다는 신호를 받은 뒤 재시도 간격 여러 번만큼 기다려도 들어오지 못함을 확인한다.
    *
    * <p>테스트 프로파일의 메인 풀은 2개다 — 앞 본문이 1개를 쥔 채 뒤 실행이 시도를 반복하고 테스트가 조회까지 하는데도 막히지 않는다는 것이, 대기자가 풀을 붙잡지
    * 않는다는 증거이기도 하다.
    */
   @Test
-  void 같은_출력의_두_본문은_겹쳐_돌지_않는다() throws Exception {
-    String table = randomTable("p735_sl_");
+  void 같은_키의_두_본문은_겹쳐_돌지_않는다() throws Exception {
+    String key = randomKey("wd692_sl_");
     ExecutorService pool = Executors.newSingleThreadExecutor();
     CountDownLatch secondStarted = new CountDownLatch(1);
     CountDownLatch secondEntered = new CountDownLatch(1);
@@ -237,9 +156,9 @@ class SessionAdvisoryLockTest extends IntegrationTestBase {
           inTenant(
               () ->
                   callLocked(
-                      storeDataSource,
-                      storeLocks,
-                      SqlScriptExecutor.outputLockKeyFor(table),
+                      dataSource,
+                      platformLocks,
+                      key,
                       () -> {
                         Future<String> run =
                             pool.submit(
@@ -249,9 +168,9 @@ class SessionAdvisoryLockTest extends IntegrationTestBase {
                                         () -> {
                                           secondStarted.countDown();
                                           return callLocked(
-                                              storeDataSource,
-                                              storeLocks,
-                                              SqlScriptExecutor.outputLockKeyFor(table),
+                                              dataSource,
+                                              platformLocks,
+                                              key,
                                               () -> {
                                                 secondEntered.countDown();
                                                 return "second";
@@ -266,7 +185,7 @@ class SessionAdvisoryLockTest extends IntegrationTestBase {
                               .as("앞 본문이 도는 동안 뒤 본문은 시작하지 않는다")
                               .isFalse();
                           // 테스트 커넥션 조회도 막히지 않는다(대기자가 풀을 붙잡지 않는다).
-                          assertThat(advisoryLocks("granted")).isEqualTo(1);
+                          assertThat(platformAdvisoryLocks("granted")).isEqualTo(1);
                         } catch (InterruptedException e) {
                           throw new IllegalStateException(e);
                         }
@@ -274,14 +193,14 @@ class SessionAdvisoryLockTest extends IntegrationTestBase {
                       }));
 
       assertThat(second.get(30, TimeUnit.SECONDS)).isEqualTo("second");
-      assertThat(advisoryLocks("true")).isZero();
+      assertThat(platformAdvisoryLocks("true")).isZero();
     } finally {
       pool.shutdownNow();
     }
   }
 
   /**
-   * 해제 문장이 실패하면 커넥션을 물리적으로 끊는다 — 잠금을 쥔 세션이 풀로 돌아가면 그 출력의 모든 REPLACE 가 영원히 기다리게 되므로, 서버가 세션 종료로 잠금을
+   * 해제 문장이 실패하면 커넥션을 물리적으로 끊는다 — 잠금을 쥔 세션이 풀로 돌아가면 그 키를 기다리는 모든 실행이 영원히 기다리게 되므로, 서버가 세션 종료로 잠금을
    * 회수하게 만든다. 실제 DB 로는 해제 실패를 결정적으로 만들 수 없어 이 분기만 목으로 확인한다.
    */
   @Test
@@ -291,7 +210,7 @@ class SessionAdvisoryLockTest extends IntegrationTestBase {
     PreparedStatement acquire = mock(PreparedStatement.class);
     Statement release = mock(Statement.class);
     when(dataSource.getConnection()).thenReturn(connection);
-    when(connection.prepareStatement(DataStoreSessionLocks.TRY_ACQUIRE_SQL)).thenReturn(acquire);
+    when(connection.prepareStatement(PostgresPlatformLocks.TRY_ACQUIRE_SQL)).thenReturn(acquire);
     ResultSet acquired = mock(ResultSet.class);
     when(acquire.executeQuery()).thenReturn(acquired);
     when(acquired.next()).thenReturn(true);
@@ -301,7 +220,12 @@ class SessionAdvisoryLockTest extends IntegrationTestBase {
 
     String result =
         inTenant(
-            () -> callLocked(dataSource, new DataStoreSessionLocks(), "some_out_key", () -> "ok"));
+            () ->
+                callLocked(
+                    dataSource,
+                    new PostgresPlatformLocks(mock(DSLContext.class)),
+                    "some_key",
+                    () -> "ok"));
 
     // 본문의 결과는 그대로 돌려준다(해제 실패가 성공한 실행을 실패로 바꾸지 않는다).
     assertThat(result).isEqualTo("ok");
@@ -318,16 +242,22 @@ class SessionAdvisoryLockTest extends IntegrationTestBase {
     PreparedStatement acquire = mock(PreparedStatement.class);
     Statement release = mock(Statement.class);
     when(dataSource.getConnection()).thenReturn(connection);
-    when(connection.prepareStatement(DataStoreSessionLocks.TRY_ACQUIRE_SQL)).thenReturn(acquire);
+    when(connection.prepareStatement(PostgresPlatformLocks.TRY_ACQUIRE_SQL)).thenReturn(acquire);
     ResultSet acquired = mock(ResultSet.class);
     when(acquire.executeQuery()).thenReturn(acquired);
     when(acquired.next()).thenReturn(true);
     when(acquired.getBoolean(1)).thenReturn(true);
     when(connection.createStatement()).thenReturn(release);
 
-    inTenant(() -> callLocked(dataSource, new DataStoreSessionLocks(), "some_out_key", () -> "ok"));
+    inTenant(
+        () ->
+            callLocked(
+                dataSource,
+                new PostgresPlatformLocks(mock(DSLContext.class)),
+                "some_key",
+                () -> "ok"));
 
-    verify(release).executeQuery(DataStoreSessionLocks.RELEASE_SQL);
+    verify(release).executeQuery(PostgresPlatformLocks.RELEASE_SQL);
     verify(connection, never()).abort(any());
     verify(connection).close();
   }
@@ -438,23 +368,5 @@ class SessionAdvisoryLockTest extends IntegrationTestBase {
       }
     }
     assertThat(platformAdvisoryLocks("true")).isZero();
-  }
-
-  private void awaitAdvisoryWaiters(int expected) {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-    while (System.nanoTime() < deadline && advisoryLocks("NOT granted") < expected) {
-      try {
-        Thread.sleep(50);
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        throw new IllegalStateException(e);
-      }
-    }
-  }
-
-  private List<String> names(String table) {
-    return dataDsl
-        .fetch("SELECT name FROM " + DataSchema.qualify(table) + " ORDER BY name")
-        .getValues(0, String.class);
   }
 }
