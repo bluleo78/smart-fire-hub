@@ -44,7 +44,18 @@ public class ReportRenderUtils {
     this.objectMapper = objectMapper;
     var extensions = List.of(TablesExtension.create());
     this.markdownParser = Parser.builder().extensions(extensions).build();
-    this.htmlRenderer = HtmlRenderer.builder().extensions(extensions).build();
+    // AI 가 만든 마크다운은 그대로 th:utext 로 PDF·메일 템플릿에 들어간다(WD-695).
+    // - escapeHtml: 원시 HTML(<img>·<script>·<iframe>·<link>…)은 태그가 아니라 글자로 찍는다
+    // - sanitizeUrls: 링크의 javascript: 같은 위험 스킴을 지운다
+    // - DataImageOnlyNodeRenderer: 마크다운 이미지는 래스터 data URI 만 남기고 외부 주소는 대체 텍스트로 바꾼다
+    //   (sanitizeUrls 기본 허용 목록은 http/https 이미지를 그대로 두므로 따로 막는다)
+    this.htmlRenderer =
+        HtmlRenderer.builder()
+            .extensions(extensions)
+            .escapeHtml(true)
+            .sanitizeUrls(true)
+            .nodeRendererFactory(DataImageOnlyNodeRenderer::new)
+            .build();
     HttpClient httpClient = HttpClient.create().responseTimeout(CHART_TIMEOUT);
     this.agentWebClient =
         WebClient.builder()
@@ -54,6 +65,9 @@ public class ReportRenderUtils {
             .build();
   }
 
+  /**
+   * 마크다운을 HTML 로 바꾼다. 결과는 템플릿에서 이스케이프 없이(th:utext) 쓰이므로 원시 HTML 은 이스케이프되고 외부 이미지 주소는 제거된다(WD-695).
+   */
   public String markdownToHtml(String markdown) {
     if (markdown == null || markdown.isBlank()) return "";
     Node document = markdownParser.parse(markdown);
