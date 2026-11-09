@@ -189,11 +189,28 @@ public class DataImportService {
     }
   }
 
-  /** 미리보기 행의 엑셀 오류 셀 표식을 표시 문자열로 바꾼다. 순서·null 값은 그대로 둔다. */
+  /**
+   * 미리보기 행의 엑셀 오류 셀 표식을 표시 문자열로 바꾸고, 너무 긴 값은 표시용으로 자른다(WD-612). 순서·null 값은 그대로 둔다.
+   *
+   * <p>샘플은 화면에 보여 주기만 하므로 자른 값이 매핑·검증·적재에 영향을 주지 않는다(실제 임포트는 원본 값을 다시 읽는다).
+   */
   private static Map<String, String> toDisplayRow(Map<String, String> row) {
     Map<String, String> display = new LinkedHashMap<>();
-    row.forEach((k, v) -> display.put(k, LegacyExcelDataFormatter.toDisplay(v)));
+    row.forEach(
+        (k, v) -> display.put(k, truncateForPreview(LegacyExcelDataFormatter.toDisplay(v))));
     return display;
+  }
+
+  /**
+   * 미리보기 샘플 값이 {@link ImportFileLimits#MAX_PREVIEW_VALUE_LENGTH} 자를 넘으면 앞부분만 남기고 말줄임표(…)를
+   * 붙인다(WD-612). 긴 본문·GeoJSON 셀 때문에 미리보기 응답이 파일 크기만큼 커지지 않게 한다. 자르는 자리가 서로게이트 쌍(이모지 등) 한가운데면 한 글자
+   * 앞에서 잘라 깨진 문자를 만들지 않는다.
+   */
+  static String truncateForPreview(String value) {
+    if (value == null || value.length() <= ImportFileLimits.MAX_PREVIEW_VALUE_LENGTH) return value;
+    int end = ImportFileLimits.MAX_PREVIEW_VALUE_LENGTH;
+    if (Character.isHighSurrogate(value.charAt(end - 1))) end--;
+    return value.substring(0, end) + "…";
   }
 
   // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
