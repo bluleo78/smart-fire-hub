@@ -12,10 +12,17 @@ import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.user.repository.UserRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.sql.Connection;
 import java.time.Duration;
+import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
@@ -62,9 +69,35 @@ class SecurityAuditRecorderTest extends IntegrationTestBase {
     sensitive = fx.createDatasetRow("sar_s_" + System.nanoTime(), fx.levelId("민감"), actor);
     open = fx.createDatasetRow("sar_o_" + System.nanoTime(), fx.levelId("공개"), actor);
     // 테스트마다 새 기록기 — 합치기 캐시가 테스트 사이에 새지 않게 한다.
-    recorder =
-        new SecurityAuditRecorder(
-            auditLogService, userRepository, levelRepository, txManager, nanos::get);
+    recorder = newRecorder(auditLogService, levelRepository);
+  }
+
+  /** 테스트용 기록기 — 가짜 시계, 운영 대기 상한, 10초 종료 대기, 격리된 메트릭. */
+  private SecurityAuditRecorder newRecorder(AuditLogService audit, SecurityLevelRepository levels) {
+    return newRecorder(
+        audit,
+        levels,
+        new SimpleMeterRegistry(),
+        SecurityAuditRecorder.QUEUE_CAPACITY,
+        Duration.ofSeconds(10));
+  }
+
+  /** 테스트용 기록기 — 메트릭 레지스트리·대기 상한·종료 대기를 정해 포화·종료 버림을 만든다. */
+  private SecurityAuditRecorder newRecorder(
+      AuditLogService audit,
+      SecurityLevelRepository levels,
+      MeterRegistry registry,
+      int queueCapacity,
+      Duration drainTimeout) {
+    return new SecurityAuditRecorder(
+        audit,
+        userRepository,
+        levels,
+        txManager,
+        new SecurityAuditMetrics(registry),
+        nanos::get,
+        queueCapacity,
+        drainTimeout);
   }
 
   @AfterEach
@@ -212,9 +245,7 @@ class SecurityAuditRecorderTest extends IntegrationTestBase {
             })
         .when(auditMock)
         .log(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-    SecurityAuditRecorder isolated =
-        new SecurityAuditRecorder(
-            auditMock, userRepository, levelRepository, txManager, nanos::get);
+    SecurityAuditRecorder isolated = newRecorder(auditMock, levelRepository);
     try {
       assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
       isolated.recordDenial(
@@ -269,5 +300,144 @@ class SecurityAuditRecorderTest extends IntegrationTestBase {
           assertThat(r.get("ip_address", String.class)).isEqualTo("203.0.113.7");
           assertThat(r.get("user_agent", String.class)).isEqualTo("wd682-agent/1.0");
         });
+  }
+
+  /** 첫 log 호출에서 실행기 스레드를 붙잡는 감사 쓰기 대역 — 그동안 들어온 기록은 큐에 쌓인다. 쓴 기록은 "action:resourceId" 로 모은다. */
+  private static final class HoldingAudit {
+    final AuditLogService mock = mock(AuditLogService.class);
+    final List<String> written = new CopyOnWriteArrayList<>();
+    final CountDownLatch writerHeld = new CountDownLatch(1);
+    final CountDownLatch release = new CountDownLatch(1);
+    private final AtomicBoolean first = new AtomicBoolean(true);
+
+    HoldingAudit() {
+      when(mock.currentOrigin()).thenReturn(AuditLogService.RequestOrigin.NONE);
+      doAnswer(
+              inv -> {
+                if (first.compareAndSet(true, false)) {
+                  writerHeld.countDown();
+                  try {
+                    release.await(30, TimeUnit.SECONDS);
+                  } catch (InterruptedException e) {
+                    // 종료(shutdownNow)의 인터럽트 — 붙잡은 기록만 마저 쓰고 끝낸다.
+                    Thread.currentThread().interrupt();
+                  }
+                }
+                written.add(inv.getArgument(2) + ":" + inv.getArgument(4));
+                return 1L;
+              })
+          .when(mock)
+          .log(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    void awaitHeld() throws InterruptedException {
+      assertThat(writerHeld.await(30, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  /** 모든 데이터셋을 감사 등급으로 보는 등급 저장소 대역 — 버리지 않은 접근은 실제로 쓰여야 단언이 의미 있다. */
+  private static SecurityLevelRepository allAudited() {
+    SecurityLevelRepository levels = mock(SecurityLevelRepository.class);
+    when(levels.findAuditedDatasetIds(any()))
+        .thenAnswer(inv -> Set.copyOf(inv.<Collection<Long>>getArgument(0)));
+    return levels;
+  }
+
+  /** 종류별 버림 카운터 값. */
+  private static double dropped(MeterRegistry registry, String kind) {
+    return registry.counter(SecurityAuditMetrics.DROPPED, "kind", kind).count();
+  }
+
+  /** 넘침 카운터 값. */
+  private static double overflowed(MeterRegistry registry) {
+    return registry.counter(SecurityAuditMetrics.OVERFLOW).count();
+  }
+
+  /**
+   * WD-687 — 큐 포화 정책. 소프트 상한 2(하드 상한 4)에서: 접근 감사는 소프트 상한에서 버리고 {@code
+   * security_audit_dropped_total{kind=access}} 를 올린다. 거부 감사는 하드 상한까지 받고({@code
+   * security_audit_overflow_total}), 하드 상한이 차면 거부도 버리고 {@code dropped{kind=denial}} 을 올린다(무제한 큐로
+   * 메모리를 다 쓰지 않게). 실행기 스레드를 첫 기록에서 붙잡아 큐를 결정적으로 채운다. 버린 기록은 합치기 키가 지워져 다음 호출에서 다시 기록된다.
+   */
+  @Test
+  void queueFull_accessDroppedAtSoftCap_denialAcceptedUntilHardCap_thenDropped() throws Exception {
+    HoldingAudit audit = new HoldingAudit();
+    MeterRegistry registry = new SimpleMeterRegistry();
+    SecurityAuditRecorder small =
+        newRecorder(audit.mock, allAudited(), registry, 2, Duration.ofSeconds(10));
+    try {
+      // 1) 거부 1건이 실행기 스레드를 붙잡는다(큐는 비어 있음).
+      small.recordDenial(actor, AccessDenialAction.VIEW, "R0", sensitive, null);
+      audit.awaitHeld();
+      // 2) 접근 2건으로 큐를 소프트 상한(2)까지 채운다.
+      small.recordAccess(actor, SecurityAuditRecorder.AccessKind.SQL, List.of(101L));
+      small.recordAccess(actor, SecurityAuditRecorder.AccessKind.SQL, List.of(102L));
+      // 3) 소프트 상한 — 접근은 버린다.
+      small.recordAccess(actor, SecurityAuditRecorder.AccessKind.SQL, List.of(103L));
+      // 4) 소프트 상한 위 — 거부는 하드 상한(4)까지 받는다.
+      small.recordDenial(actor, AccessDenialAction.VIEW, "R1", sensitive, null);
+      small.recordDenial(actor, AccessDenialAction.VIEW, "R2", sensitive, null);
+      // 5) 하드 상한 — 거부도 버린다.
+      small.recordDenial(actor, AccessDenialAction.VIEW, "R3", sensitive, null);
+
+      assertThat(dropped(registry, "access")).isEqualTo(1.0);
+      assertThat(overflowed(registry)).isEqualTo(2.0);
+      assertThat(dropped(registry, "denial")).isEqualTo(1.0);
+
+      audit.release.countDown();
+      assertThat(small.awaitIdle(Duration.ofSeconds(30))).isTrue();
+      assertThat(audit.written)
+          .containsExactlyInAnyOrder(
+              "DATASET_ACCESS_DENIED:" + sensitive,
+              "DATASET_ACCESS:101",
+              "DATASET_ACCESS:102",
+              "DATASET_ACCESS_DENIED:" + sensitive,
+              "DATASET_ACCESS_DENIED:" + sensitive);
+
+      // 버린 접근(103)·거부(R3)는 합치기 키가 지워졌다 — 큐가 비면 같은 1분 안이어도 다시 기록된다.
+      small.recordAccess(actor, SecurityAuditRecorder.AccessKind.SQL, List.of(103L));
+      small.recordDenial(actor, AccessDenialAction.VIEW, "R3", sensitive, null);
+      assertThat(small.awaitIdle(Duration.ofSeconds(30))).isTrue();
+      assertThat(audit.written).contains("DATASET_ACCESS:103").hasSize(7);
+    } finally {
+      audit.release.countDown();
+      small.shutdown();
+    }
+  }
+
+  /**
+   * WD-687 — 종료 시 비우지 못한 기록(shutdownNow 가 돌려준 미실행 작업)도 종류별 버림 카운터에 들어가고, 대기 수가 정리돼 awaitIdle 이 멈추지
+   * 않는다. 실행기를 붙잡은 채 종료 대기를 짧게 줘 비우기 시한을 넘긴다.
+   */
+  @Test
+  void shutdownDiscards_areCountedPerKind() throws Exception {
+    HoldingAudit audit = new HoldingAudit();
+    MeterRegistry registry = new SimpleMeterRegistry();
+    SecurityAuditRecorder small =
+        newRecorder(
+            audit.mock,
+            allAudited(),
+            registry,
+            SecurityAuditRecorder.QUEUE_CAPACITY,
+            Duration.ofMillis(100));
+    try {
+      // 실행 중(붙잡힘) 거부 1 + 대기 중 거부 1·접근 2.
+      small.recordDenial(actor, AccessDenialAction.VIEW, "S0", sensitive, null);
+      audit.awaitHeld();
+      small.recordDenial(actor, AccessDenialAction.VIEW, "S1", sensitive, null);
+      small.recordAccess(actor, SecurityAuditRecorder.AccessKind.SQL, List.of(201L));
+      small.recordAccess(actor, SecurityAuditRecorder.AccessKind.SQL, List.of(202L));
+
+      small.shutdown();
+
+      assertThat(dropped(registry, "denial")).isEqualTo(1.0);
+      assertThat(dropped(registry, "access")).isEqualTo(2.0);
+      // 붙잡힌 기록은 인터럽트로 풀려 끝난다 — 버린 3건은 대기 수에서 빠져 awaitIdle 이 끝난다.
+      assertThat(small.awaitIdle(Duration.ofSeconds(30))).isTrue();
+      assertThat(audit.written).containsExactly("DATASET_ACCESS_DENIED:" + sensitive);
+    } finally {
+      audit.release.countDown();
+      small.shutdown();
+    }
   }
 }

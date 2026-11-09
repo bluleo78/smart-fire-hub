@@ -17,7 +17,7 @@ import { createPermissions, createRoleDetail } from '../../factories/admin.facto
 import { setupAdminAuth } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { expectLockedInFlight, holdRequests } from '../../fixtures/hold-api';
+import { expectLockedInFlight, expectSingleHeldRequest, holdRequests } from '../../fixtures/hold-api';
 import { setupSecurityLevelMocks } from '../../fixtures/security-level.fixture';
 
 const conflictDialog = (page: Page) => page.getByRole('alertdialog', { name: '다른 곳에서 먼저 변경되었습니다' });
@@ -233,9 +233,8 @@ test.describe('역할 상세 — 충돌 창 진행 중 포커스 유지 (WD-678)
     // 진행 중 다시 Enter — 두 번째 조회가 나가지 않는다
     await page.keyboard.press('Enter');
     await expect(conflictDialog(page)).toBeVisible();
-    // 두 번째 요청이 나갈 틈을 잠깐 준 뒤 센다 — 누른 직후 바로 세면 아직 안 나간 요청을 놓친다
-    await page.waitForTimeout(300);
-    expect(hold.count()).toBe(1);
+    // 두 번째 요청이 나갈 틈을 준 뒤 센다 — 누른 직후 바로 세면 아직 안 나간 요청을 놓친다
+    await expectSingleHeldRequest(hold.count);
 
     hold.release();
     await expect(conflictDialog(page)).toBeHidden();

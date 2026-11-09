@@ -8,7 +8,7 @@ import {
   Share2,
   Trash2,
 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -52,6 +52,7 @@ import {
   useUpdateDashboard,
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
+import { useSubmitGuard } from '../../hooks/useSubmitGuard';
 import { handleApiError, isEditConflict } from '../../lib/api-error';
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
@@ -96,18 +97,17 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
   const [autoRefresh, setAutoRefresh] = useState('');
   const createDashboard = useCreateDashboard();
   // isPending은 mutateAsync 호출 후 리렌더를 거쳐야 반영되는 비동기 상태라,
-  // 같은 틱에 도착하는 빠른 연속 클릭(더블클릭)을 막지 못한다.
-  // 클릭 즉시 동기적으로 세팅되는 ref 플래그로 재진입을 차단한다.
-  const submittingRef = useRef(false);
+  // 같은 틱에 도착하는 빠른 연속 클릭(더블클릭)을 막지 못한다(#546).
+  // 클릭 즉시 동기로 잠그는 공용 제출 잠금으로 재진입을 막는다(WD-688 — 화면 전용 ref 플래그를 옮김).
+  const guardSubmit = useSubmitGuard();
 
-  const handleSubmit = async () => {
-    if (!name.trim() || submittingRef.current) return;
+  const handleSubmit = guardSubmit(async () => {
+    if (!name.trim()) return;
     const parsedAutoRefresh = parseAutoRefreshInput(autoRefresh);
     if ('error' in parsedAutoRefresh) {
       toast.error(parsedAutoRefresh.error);
       return;
     }
-    submittingRef.current = true;
     const req: CreateDashboardRequest = {
       name: name.trim(),
       description: description.trim() || undefined,
@@ -125,10 +125,8 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
       setAutoRefresh('');
     } catch (error) {
       handleApiError(error, '대시보드 생성에 실패했습니다.');
-    } finally {
-      submittingRef.current = false;
     }
-  };
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -185,7 +183,7 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>취소</Button>
           <Button
-            onClick={handleSubmit}
+            onClick={() => handleSubmit()}
             disabled={!name.trim() || createDashboard.isPending}
           >
             만들기
@@ -213,8 +211,10 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
   // 공유 스위치 안내용 영향 개수(WD-325) — 창이 열려 있을 때만 센다. 실패하면 개수 없는 안내로 물러난다
   const { data: shareImpact } = useDashboardShareImpact(dashboard?.id);
   const queryClient = useQueryClient();
-  // isPending 비동기 반영 지연으로 인한 중복 제출 방지용 동기 가드 (CreateDashboardDialog와 동일 패턴, #546)
-  const submittingRef = useRef(false);
+  // isPending 비동기 반영 지연으로 인한 중복 제출 방지용 동기 잠금 (CreateDashboardDialog와 동일, #546, WD-688).
+  // 저장·「내 변경으로 덮어쓰기」가 같은 잠금을 나눠 써, 한쪽이 진행 중이면 다른 쪽을 무시한다.
+  // 무시된 덮어쓰기는 진행 중 저장이 끝날 때 끝나므로 충돌 창이 그보다 먼저 잠금을 풀지 않는다(WD-678).
+  const guardSubmit = useSubmitGuard();
   /**
    * 지금 폼 내용의 기준 버전 — 그 내용을 채운(창을 연 / 다시 불러온) 시점의 서버 updatedAt(WD-364 낙관적 잠금).
    * 저장할 때 expectedUpdatedAt 으로 보내 그 사이 다른 곳에서 저장됐으면 서버가 409 EDIT_CONFLICT 로 거부한다.
@@ -246,14 +246,13 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
   }
 
   /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
-  const handleSubmit = async (force = false) => {
-    if (!dashboard || !name.trim() || submittingRef.current) return;
+  const submitSettings = async (force: boolean) => {
+    if (!dashboard || !name.trim()) return;
     const parsedAutoRefresh = parseAutoRefreshInput(autoRefresh);
     if ('error' in parsedAutoRefresh) {
       toast.error(parsedAutoRefresh.error);
       return;
     }
-    submittingRef.current = true;
     try {
       await updateDashboard.mutateAsync({
         id: dashboard.id,
@@ -280,10 +279,10 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
         return;
       }
       handleApiError(error, '대시보드 수정에 실패했습니다.');
-    } finally {
-      submittingRef.current = false;
     }
   };
+  const handleSave = guardSubmit(() => submitSettings(false));
+  const handleOverwrite = guardSubmit(() => submitSettings(true));
 
   /**
    * 편집 충돌의 「다시 불러오기」(WD-364) — 최신 대시보드를 서버에서 새로 받아 폼과 기준 버전을 그것으로 바꾸고 내 변경을 버린다.
@@ -372,7 +371,7 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>취소</Button>
           <Button
-            onClick={() => handleSubmit()}
+            onClick={() => handleSave()}
             disabled={!name.trim() || updateDashboard.isPending}
           >
             저장
@@ -387,7 +386,7 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
         }}
         resourceLabel="대시보드"
         onReload={handleReloadLatest}
-        onOverwrite={() => handleSubmit(true)}
+        onOverwrite={handleOverwrite}
         pending={updateDashboard.isPending || isReloading}
       />
     </Dialog>

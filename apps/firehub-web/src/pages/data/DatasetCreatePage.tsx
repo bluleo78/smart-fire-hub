@@ -97,6 +97,8 @@ export default function DatasetCreatePage() {
   // Cmd/Ctrl+S 의 requestSubmit 은 비활성 버튼과 무관하게 submit 을 일으키고 RHF handleSubmit 도 동시 실행을 막지 않아,
   // 진행 중 거듭 누르면 생성 요청이 여러 번 간다. 만들어진 뒤에도 상세로 넘어가는 라우터 전환 중이나
   // 확인창 선택을 기다리는 동안 화면이 남아 있으므로, created 는 풀지 않는다.
+  // 공용 useSubmitGuard 로 옮기지 않는 이유(WD-688): 그 훅은 제출이 끝나면 늘 풀리는 잠금이라, 풀지 않는 created 상태와
+  // 「이미 만들어졌습니다」 안내·상세 이동을 넣으려면 이 화면 전용 종료 상태를 공용 훅에 더하거나 ref 를 하나 더 둬야 한다.
   const submitLockRef = useRef<'idle' | 'pending' | 'created'>('idle');
   // 이 화면에서 만든 데이터셋 (WD-662) — 상세 경로, 만들 때 이 생성 화면의 경로,
   // 확인창이 떠 있는 동안 만들어져 「취소」(남기) 때 상세로 보낼지(goOnStay, WD-642 에서 공용 훅에 있던 것을 옮김).

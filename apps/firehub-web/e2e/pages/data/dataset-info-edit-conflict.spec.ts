@@ -17,7 +17,7 @@ import { createCategories, createDatasetDetail } from '../../factories/dataset.f
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
-import { expectLockedInFlight, holdRequests } from '../../fixtures/hold-api';
+import { expectLockedInFlight, expectSingleHeldRequest, holdRequests } from '../../fixtures/hold-api';
 
 const conflictDialog = (page: Page) => page.getByRole('alertdialog', { name: '다른 곳에서 먼저 변경되었습니다' });
 
@@ -216,9 +216,8 @@ test.describe('데이터셋 기본 정보 — 충돌 창 진행 중 포커스 �
     await cancel.dispatchEvent('click');
     await expect(conflictDialog(page)).toBeVisible();
     await expect(overwrite).toBeFocused();
-    // 두 번째 요청이 나갈 틈을 잠깐 준 뒤 센다 — 누른 직후 바로 세면 아직 안 나간 요청을 놓친다
-    await page.waitForTimeout(300);
-    expect(hold.count()).toBe(1);
+    // 두 번째 요청이 나갈 틈을 준 뒤 센다 — 누른 직후 바로 세면 아직 안 나간 요청을 놓친다
+    await expectSingleHeldRequest(hold.count);
 
     // Escape 는 끝나지 않는 요청의 비상구로 창을 닫는다 — 요청은 더 나가지 않는다
     await page.keyboard.press('Escape');
