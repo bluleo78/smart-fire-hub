@@ -41,13 +41,11 @@ test.describe('데이터셋 생성 — 제출 중 포커스 (WD-637)', () => {
     const submit = page.getByRole('button', { name: '만들기' });
     await expect(submit).toBeEnabled();
 
-    await submitAndRetryWhilePending(page, submit, page.getByRole('button', { name: '만드는 중...' }));
-    // 다시 제출해 본 뒤에야 응답을 보낸다 — 그사이 중복 요청이 있었다면 이미 requests 에 쌓였다
+    await submitAndRetryWhilePending(page, submit, page.getByRole('button', { name: '만드는 중...' }), create);
     create.release();
 
     await expect(submit).toBeFocused();
     await expect(submit).not.toHaveAttribute('aria-disabled', 'true');
-    expect(create.requests.length).toBe(1);
   });
 });
 
@@ -109,14 +107,13 @@ test.describe('데이터셋 상세 다이얼로그 — 제출 중 포커스 (WD-
       page,
       dialog.getByRole('button', { name: '추가', exact: true }),
       dialog.getByRole('button', { name: '추가 중...' }),
+      add,
     );
-    // 다시 제출해 본 뒤에야 응답을 보낸다 — 그사이 중복 요청이 있었다면 이미 requests 에 쌓였다
     add.release();
 
     await expect(page.getByText('서버 오류가 발생했습니다.')).toBeVisible();
     await expect(dialog.getByRole('button', { name: '추가', exact: true })).toBeFocused();
     expect(await focusInsideDialog(page)).toBe(true);
-    expect(add.requests.length).toBe(1);
   });
 
   test('행 추가: 성공하면 다이얼로그가 닫히고 포커스가 「행 추가」 버튼으로 돌아간다', async ({
@@ -131,13 +128,41 @@ test.describe('데이터셋 상세 다이얼로그 — 제출 중 포커스 (WD-
       page,
       dialog.getByRole('button', { name: '추가', exact: true }),
       dialog.getByRole('button', { name: '추가 중...' }),
+      add,
     );
-    // 다시 제출해 본 뒤에야 응답을 보낸다 — 그사이 중복 요청이 있었다면 이미 requests 에 쌓였다
     add.release();
 
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByRole('button', { name: /행 추가/ })).toBeFocused();
-    expect(add.requests.length).toBe(1);
+  });
+
+  test('행 편집: Enter 로 저장해 실패해도 포커스가 다이얼로그의 「저장」에 남고 요청은 한 번만 간다 (WD-683)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDetail(page);
+    const put = await holdApi(page, 'PUT', '/api/v1/datasets/1/data/rows/1', 500, SERVER_ERROR);
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+    await page.getByRole('tab', { name: '데이터' }).click();
+    // 행 더블클릭 → EditRowDialog(행 편집 (ID: 1))
+    await page.getByRole('cell', { name: 'Alice' }).dblclick();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 1\)/ })).toBeVisible();
+    await page.locator('#edit-name').fill('Alice Edited');
+
+    await submitAndRetryWhilePending(
+      page,
+      dialog.getByRole('button', { name: '저장', exact: true }),
+      dialog.getByRole('button', { name: '저장 중...' }),
+      put,
+    );
+    put.release();
+
+    await expect(page.getByText('서버 오류가 발생했습니다.')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '저장', exact: true })).toBeFocused();
+    expect(await focusInsideDialog(page)).toBe(true);
+    // 바꾼 칸만 실려 갔는지 — 잠금이 제출 내용을 바꾸지 않는다
+    expect(JSON.parse(put.requests[0] ?? '{}')).toEqual({ data: { name: 'Alice Edited' } });
   });
 
   test('필드 추가: Enter 로 제출해 실패해도 포커스가 다이얼로그의 「추가」에 남고 요청은 한 번만 간다', async ({
@@ -157,14 +182,13 @@ test.describe('데이터셋 상세 다이얼로그 — 제출 중 포커스 (WD-
       page,
       dialog.getByRole('button', { name: '추가', exact: true }),
       dialog.getByRole('button', { name: '추가 중...' }),
+      add,
     );
-    // 다시 제출해 본 뒤에야 응답을 보낸다 — 그사이 중복 요청이 있었다면 이미 requests 에 쌓였다
     add.release();
 
     await expect(page.getByText('서버 오류가 발생했습니다.')).toBeVisible();
     await expect(dialog.getByRole('button', { name: '추가', exact: true })).toBeFocused();
     expect(await focusInsideDialog(page)).toBe(true);
-    expect(add.requests.length).toBe(1);
   });
 
   test('복제: Enter 로 제출해 실패해도 포커스가 다이얼로그의 「복제」에 남고 요청은 한 번만 간다', async ({
@@ -182,14 +206,13 @@ test.describe('데이터셋 상세 다이얼로그 — 제출 중 포커스 (WD-
       page,
       dialog.getByRole('button', { name: '복제', exact: true }),
       dialog.getByRole('button', { name: '복제 중...' }),
+      clone,
     );
-    // 다시 제출해 본 뒤에야 응답을 보낸다 — 그사이 중복 요청이 있었다면 이미 requests 에 쌓였다
     clone.release();
 
     await expect(page.getByText('서버 오류가 발생했습니다.')).toBeVisible();
     await expect(dialog.getByRole('button', { name: '복제', exact: true })).toBeFocused();
     expect(await focusInsideDialog(page)).toBe(true);
-    expect(clone.requests.length).toBe(1);
   });
 
   test('기본 정보: Enter 로 저장해 실패해도 포커스가 「저장」에 남고 요청은 한 번만 간다', async ({
@@ -204,12 +227,10 @@ test.describe('데이터셋 상세 다이얼로그 — 제출 중 포커스 (WD-
     const save = page.getByRole('button', { name: '저장', exact: true });
 
     // 저장 버튼은 진행 중에도 라벨이 「저장」 그대로다
-    await submitAndRetryWhilePending(page, save, save);
-    // 다시 제출해 본 뒤에야 응답을 보낸다 — 그사이 중복 요청이 있었다면 이미 requests 에 쌓였다
+    await submitAndRetryWhilePending(page, save, save, put);
     put.release();
 
     await expect(page.getByText('서버 오류가 발생했습니다.')).toBeVisible();
     await expect(save).toBeFocused();
-    expect(put.requests.length).toBe(1);
   });
 });

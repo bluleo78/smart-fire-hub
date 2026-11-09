@@ -17,7 +17,7 @@ import { Input } from '../components/ui/input';
 import { PasswordInput } from '../components/ui/password-input';
 import { useSignupStatus } from '../hooks/queries/useSignupStatus';
 import { useAuth } from '../hooks/useAuth';
-import { useSubmitGuard } from '../hooks/useSubmitGuard';
+import { useGuardedSubmit } from '../hooks/useSubmitGuard';
 import type { SignupFormData } from '../lib/validations/auth';
 import { signupSchema } from '../lib/validations/auth';
 
@@ -36,7 +36,27 @@ export default function SignupPage() {
   } = useForm<SignupFormData>({
     resolver: zodResolver(signupSchema),
   });
-  const guardSubmit = useSubmitGuard();
+
+  const onSubmit = async (data: SignupFormData) => {
+    try {
+      setServerError('');
+      await signup(data);
+    } catch (error) {
+      // 열림을 보고 들어왔지만 그 사이 첫 사용자가 생겼다 — 서버가 이미 "닫힘" 을 알려 줬으므로 다시 묻지 않고
+      // 캐시를 닫힘으로 바꿔 안내 화면으로 전환한다(재조회에 기대면 그 조회가 실패할 때 폼이 아무 안내 없이 남는다).
+      if (
+        axios.isAxiosError(error) &&
+        (error.response?.data as ErrorResponse | undefined)?.code === 'SIGNUP_DISABLED'
+      ) {
+        queryClient.setQueryData(['auth', 'signup-status'], { open: false });
+        return;
+      }
+      // 검증 400 은 해당 입력 아래로, 모르는 필드 문구는 errors.root 로 (WD-270)
+      if (applyFieldErrors(error, setError, Object.keys(signupSchema.shape))) return;
+      setServerError(extractApiError(error, '회원가입에 실패했습니다.'));
+    }
+  };
+  const submitForm = useGuardedSubmit(handleSubmit, onSubmit);
 
   if (isAuthenticated) {
     return <Navigate to="/" replace />;
@@ -77,26 +97,6 @@ export default function SignupPage() {
     );
   }
 
-  const onSubmit = async (data: SignupFormData) => {
-    try {
-      setServerError('');
-      await signup(data);
-    } catch (error) {
-      // 열림을 보고 들어왔지만 그 사이 첫 사용자가 생겼다 — 서버가 이미 "닫힘" 을 알려 줬으므로 다시 묻지 않고
-      // 캐시를 닫힘으로 바꿔 안내 화면으로 전환한다(재조회에 기대면 그 조회가 실패할 때 폼이 아무 안내 없이 남는다).
-      if (
-        axios.isAxiosError(error) &&
-        (error.response?.data as ErrorResponse | undefined)?.code === 'SIGNUP_DISABLED'
-      ) {
-        queryClient.setQueryData(['auth', 'signup-status'], { open: false });
-        return;
-      }
-      // 검증 400 은 해당 입력 아래로, 모르는 필드 문구는 errors.root 로 (WD-270)
-      if (applyFieldErrors(error, setError, Object.keys(signupSchema.shape))) return;
-      setServerError(extractApiError(error, '회원가입에 실패했습니다.'));
-    }
-  };
-
   return (
     <div className="flex min-h-dvh items-center justify-center px-4">
       <Card className="w-full max-w-md">
@@ -107,7 +107,7 @@ export default function SignupPage() {
           <h1 className="text-2xl leading-8 font-semibold tracking-tight">회원가입</h1>
         </CardHeader>
         <CardContent>
-          <form onSubmit={guardSubmit(handleSubmit(onSubmit))} className="space-y-4">
+          <form onSubmit={submitForm} className="space-y-4">
             <FormField
               label="아이디 (이메일)"
               htmlFor="username"
