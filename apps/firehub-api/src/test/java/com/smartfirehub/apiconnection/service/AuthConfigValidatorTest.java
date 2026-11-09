@@ -148,4 +148,81 @@ class AuthConfigValidatorTest {
     assertThat(AuthConfigValidator.comparableConfig("BEARER", Map.of("token", "a")))
         .isNotEqualTo(AuthConfigValidator.comparableConfig("BEARER", Map.of("token", "b")));
   }
+
+  // ── WD-681: BASIC(아이디·비밀번호) ──────────────────────────────────────────────
+
+  /** BASIC 은 아이디·비밀번호 둘 다 있어야 하고, 아이디부터 본다. 값은 정리하지 않고 그대로 둔다. */
+  @Test
+  void basic_requiresUsernameThenPassword() {
+    assertThatThrownBy(() -> AuthConfigValidator.validateAndNormalize("BASIC", Map.of()))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("아이디를 입력하세요 (authConfig.username)");
+    assertThatThrownBy(
+            () -> AuthConfigValidator.validateAndNormalize("BASIC", Map.of("username", "  ")))
+        .hasMessage("아이디를 입력하세요 (authConfig.username)");
+    assertThatThrownBy(
+            () -> AuthConfigValidator.validateAndNormalize("BASIC", Map.of("username", "alice")))
+        .hasMessage("비밀번호를 입력하세요 (authConfig.password)");
+    assertThatThrownBy(
+            () ->
+                AuthConfigValidator.validateAndNormalize(
+                    "BASIC", Map.of("username", "alice", "password", "")))
+        .hasMessage("비밀번호를 입력하세요 (authConfig.password)");
+    assertThatThrownBy(() -> AuthConfigValidator.validateAndNormalize("BASIC", null))
+        .hasMessage("아이디를 입력하세요 (authConfig.username)");
+
+    Map<String, String> ok =
+        AuthConfigValidator.validateAndNormalize(
+            "BASIC", Map.of("username", "alice", "password", " p@ss "));
+    assertThat(ok).containsEntry("username", "alice").containsEntry("password", " p@ss ");
+  }
+
+  /** 아이디의 콜론은 Basic 인증에서 비밀번호로 읽히고, 줄바꿈은 헤더를 깬다 — 저장 전에 거절한다. */
+  @Test
+  void basic_rejectsColonInUsernameAndLineBreaks() {
+    assertThatThrownBy(
+            () ->
+                AuthConfigValidator.validateAndNormalize(
+                    "BASIC", Map.of("username", "a:b", "password", "pw")))
+        .hasMessage("아이디에 콜론(:)을 넣을 수 없습니다 — Basic 인증 아이디에는 콜론을 쓸 수 없습니다");
+    assertThatThrownBy(
+            () ->
+                AuthConfigValidator.validateAndNormalize(
+                    "BASIC", Map.of("username", "a\nb", "password", "pw")))
+        .hasMessage("아이디에 줄바꿈을 넣을 수 없습니다 — 한 줄로 입력하세요");
+    assertThatThrownBy(
+            () ->
+                AuthConfigValidator.validateAndNormalize(
+                    "BASIC", Map.of("username", "alice", "password", "p\rw")))
+        .hasMessage("비밀번호에 줄바꿈을 넣을 수 없습니다 — 한 줄로 입력하세요");
+  }
+
+  /** 비밀 필드 표에 BASIC → password — 가린 값 판정·빈 비밀 판정이 같은 표를 쓴다. */
+  @Test
+  void basic_secretFieldIsPassword() {
+    assertThat(AuthConfigValidator.REQUIRED_SECRET_BY_AUTH_TYPE).containsEntry("BASIC", "password");
+    assertThat(AuthConfigValidator.isSecretMasked("BASIC", Map.of("password", "****abcd")))
+        .isTrue();
+    assertThat(AuthConfigValidator.isSecretMissing("BASIC", Map.of("username", "a"))).isTrue();
+  }
+
+  /** 저장된 값 검사(연결 테스트)도 보내는 값으로 같은 문구를 쓴다. */
+  @Test
+  void basic_describeSentValueProblem_usesSameMessages() {
+    assertThat(
+            AuthConfigValidator.describeSentValueProblem(
+                com.smartfirehub.pipeline.service.executor.ApiCallAuth.resolveWithAuthType(
+                    "BASIC", Map.of("password", "pw"))))
+        .isEqualTo("아이디를 입력하세요 (authConfig.username)");
+    assertThat(
+            AuthConfigValidator.describeSentValueProblem(
+                com.smartfirehub.pipeline.service.executor.ApiCallAuth.resolveWithAuthType(
+                    "BASIC", Map.of("username", "alice"))))
+        .isEqualTo("비밀번호를 입력하세요 (authConfig.password)");
+    assertThat(
+            AuthConfigValidator.describeSentValueProblem(
+                com.smartfirehub.pipeline.service.executor.ApiCallAuth.resolveWithAuthType(
+                    "BASIC", Map.of("username", "alice", "password", "pw"))))
+        .isNull();
+  }
 }

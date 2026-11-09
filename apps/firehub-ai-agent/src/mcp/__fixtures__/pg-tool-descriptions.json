@@ -153,7 +153,7 @@
     }
   },
   "create_api_connection": {
-    "description": "새 API 연결을 생성합니다. baseUrl은 필수, healthCheckPath는 선택. 인증 정보는 AES-256-GCM 암호화되어 저장됩니다.",
+    "description": "새 API 연결을 생성합니다. baseUrl은 필수, healthCheckPath는 선택. 인증 정보는 AES-256-GCM 암호화되어 저장됩니다. 아이디·비밀번호 인증은 authType BASIC + authConfig { username, password } 로 보내고, baseUrl 에 사용자 정보(아이디:비밀번호@)를 넣지 마세요.",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -171,9 +171,10 @@
           "type": "string",
           "enum": [
             "API_KEY",
-            "BEARER"
+            "BEARER",
+            "BASIC"
           ],
-          "description": "인증 유형"
+          "description": "인증 유형 (API_KEY, BEARER, BASIC=아이디·비밀번호)"
         },
         "authConfig": {
           "type": "object",
@@ -183,12 +184,12 @@
           "additionalProperties": {
             "type": "string"
           },
-          "description": "인증 설정 — API_KEY: { placement, headerName/paramName, apiKey }, BEARER: { token }"
+          "description": "인증 설정 — API_KEY: { placement, headerName/paramName, apiKey }, BEARER: { token }, BASIC: { username, password }"
         },
         "baseUrl": {
           "type": "string",
           "format": "uri",
-          "description": "호출 대상 서비스의 기본 URL (예: https://api.make.com/v2, trailing slash 불필요)"
+          "description": "호출 대상 서비스의 기본 URL (예: https://api.make.com/v2, trailing slash 불필요). 사용자 정보(아이디:비밀번호@)는 넣지 말고 BASIC 의 username·password 로 보내세요."
         },
         "healthCheckPath": {
           "description": "주기적 상태 점검 경로 (예: /health). 생략 시 점검 미수행.",
@@ -697,7 +698,7 @@
                     "type": "number"
                   },
                   "inlineAuth": {
-                    "description": "인라인 인증 정보",
+                    "description": "인라인 인증 정보 — { authType, ... }. API_KEY: { placement, headerName/paramName, apiKey }, BEARER: { token }, BASIC: { username, password }. URL 에 사용자 정보(아이디:비밀번호@)를 넣지 말 것. 가능하면 저장된 apiConnectionId 를 쓰세요",
                     "type": "object",
                     "propertyNames": {
                       "type": "string"
@@ -2755,7 +2756,7 @@
           "type": "number"
         },
         "inlineAuth": {
-          "description": "인라인 인증 정보",
+          "description": "인라인 인증 정보 — { authType, ... }. API_KEY: { placement, headerName/paramName, apiKey }, BEARER: { token }, BASIC: { username, password }. URL 에 사용자 정보(아이디:비밀번호@)를 넣지 말 것. 가능하면 저장된 apiConnectionId 를 쓰세요",
           "type": "object",
           "propertyNames": {
             "type": "string"
@@ -4097,7 +4098,7 @@
     }
   },
   "update_api_connection": {
-    "description": "API 연결을 수정합니다. authConfig를 제공하면 인증 정보 전체가 교체됩니다(빠진 필드는 지워짐). baseUrl/healthCheckPath도 변경 가능. 인증 정보를 바꾸지 않으면 authConfig를 생략하세요. 가려진 값(****…)을 새 값처럼 지어내 보내지 마세요 — get_api_connection 결과의 가린 값과 정확히 같을 때만 기존 값이 유지되고, 그 외의 ****… 값은 거절됩니다. 비밀 값을 바꾸려면 사용자에게 실제 값을 받으세요.",
+    "description": "API 연결을 수정합니다. authConfig를 제공하면 인증 정보 전체가 교체됩니다(빠진 필드는 지워짐). baseUrl/healthCheckPath도 변경 가능. 인증 정보를 바꾸지 않으면 authConfig를 생략하세요. 가려진 값(****…)을 새 값처럼 지어내 보내지 마세요 — get_api_connection 결과의 가린 값과 정확히 같을 때만 기존 값이 유지되고, 그 외의 ****… 값은 거절됩니다. 비밀 값을 바꾸려면 사용자에게 실제 값을 받으세요. BASIC 은 authConfig { username, password } 이며 password 도 가린 값 규칙이 같습니다. 조회한 baseUrl 이 아이디:****@ 처럼 가려져 있으면 옛 연결의 사용자 정보이므로 고치려 하지 말고, baseUrl 을 바꾸지 않을 때는 생략하세요.",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -4116,11 +4117,11 @@
           "maxLength": 2000
         },
         "authType": {
-          "description": "인증 유형 (API_KEY 또는 BEARER)",
+          "description": "인증 유형 (API_KEY, BEARER, BASIC 중 하나)",
           "type": "string"
         },
         "authConfig": {
-          "description": "인증 설정",
+          "description": "인증 설정 — API_KEY: { placement, headerName/paramName, apiKey }, BEARER: { token }, BASIC: { username, password }",
           "type": "object",
           "propertyNames": {
             "type": "string"
@@ -4130,7 +4131,7 @@
           }
         },
         "baseUrl": {
-          "description": "기본 URL 변경",
+          "description": "기본 URL 변경. 사용자 정보(아이디:비밀번호@)는 넣지 말고 BASIC 의 username·password 로 보내세요.",
           "type": "string",
           "format": "uri"
         },

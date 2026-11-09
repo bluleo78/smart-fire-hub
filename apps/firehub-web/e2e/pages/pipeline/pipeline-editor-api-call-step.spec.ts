@@ -260,6 +260,50 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
   });
 
   /**
+   * WD-681: 직접 입력(inline) 인증에서 Basic 을 고르면 아이디·비밀번호 칸이 나오고,
+   * 테스트 호출 payload 의 inlineAuth 에 { authType: 'BASIC', username, password } 가 실린다.
+   * (서버의 공용 인증 해석 경로가 인라인 맵의 BASIC 도 처리한다)
+   */
+  test('직접 입력 인증에서 Basic 을 고르면 아이디·비밀번호가 inlineAuth 로 전송된다 (WD-681)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines/api-call/preview',
+      {
+        success: true,
+        rawJson: '[]',
+        rows: [],
+        columns: [],
+        totalExtractedRows: 0,
+        errorMessage: null,
+        resolvedUrl: 'https://api.example.com/v1/data',
+      },
+      { capture: true },
+    );
+
+    await addAndOpenApiCallStep(page);
+    await page.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/v1/data');
+
+    // 인증 섹션의 방식 선택 — 기본값 「없음」
+    await page.locator('[role="combobox"]:has-text("없음")').click();
+    await page.getByRole('option', { name: 'Basic Auth' }).click();
+    await page.getByLabel('아이디').fill('svc-user');
+    const password = page.getByLabel('비밀번호');
+    await expect(password).toHaveAttribute('type', 'password');
+    await password.fill('secret-pw');
+
+    await page.getByRole('button', { name: '테스트 호출' }).click();
+    const req = await capture.waitForRequest();
+    expect((req.payload as { inlineAuth?: Record<string, string> }).inlineAuth).toMatchObject({
+      authType: 'BASIC',
+      username: 'svc-user',
+      password: 'secret-pw',
+    });
+  });
+
+  /**
    * TC-7: API_CALL 스텝이 올바른 payload로 저장된다
    * - saved 연결 선택 + path 입력 후 파이프라인 저장
    * - POST /api/v1/pipelines payload에 apiConnectionId, path가 포함되어야 한다

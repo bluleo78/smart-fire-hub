@@ -16,6 +16,7 @@ import {
   createAiSettings,
   createApiConnections,
   createAuditLogs,
+  createBasicApiConnection,
   createEmbeddingConfig,
   createEmbeddingStatus,
   createPermissions,
@@ -418,6 +419,24 @@ export async function setupApiConnectionDetailMocks(page: Page, connectionId = 1
     responseHeaders: { 'content-type': 'application/json' },
     responseContentType: 'application/json',
   });
+}
+
+/**
+ * BASIC 인증 API 연결 상세 페이지 API 모킹(WD-681)
+ * - 아이디·가린 비밀번호를 가진 BASIC 연결 상세를 모킹한다. overrides 로 baseUrl 등을 바꿀 수 있다.
+ * @param connectionId - 모킹할 API 연결 ID (기본값: 1)
+ */
+export async function setupBasicApiConnectionDetailMocks(
+  page: Page,
+  connectionId = 1,
+  overrides: Parameters<typeof createBasicApiConnection>[0] = {},
+) {
+  await mockApi(
+    page,
+    'GET',
+    `/api/v1/api-connections/${connectionId}`,
+    createBasicApiConnection({ id: connectionId, name: 'Basic 인증 API', ...overrides }),
+  );
 }
 
 /**

@@ -15,7 +15,7 @@
     "maxTurns": 15
   },
   "api-connection-manager": {
-    "description": "외부 API 연결(API_KEY·BEARER 인증)을 대화형으로 설계·등록·수정·삭제하는 전문 에이전트. 인증 유형 선택, authConfig 필드 안내, 보안 주의사항, 삭제 전 참조 확인을 포함한 전체 커넥션 라이프사이클을 지원한다.",
+    "description": "외부 API 연결(API_KEY·BEARER·BASIC 인증)을 대화형으로 설계·등록·수정·삭제하는 전문 에이전트. 인증 유형 선택, authConfig 필드 안내, 보안 주의사항, 삭제 전 참조 확인을 포함한 전체 커넥션 라이프사이클을 지원한다.",
     "tools": [
       "mcp__firehub__list_api_connections",
       "mcp__firehub__get_api_connection",

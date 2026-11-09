@@ -168,21 +168,25 @@ API 연결 생성 시 다음 순서로 정보를 수집한다:
 
 1. **연결 이름** — 서비스명 + 목적 (예: `"Make.com API"`)
 2. **Base URL** — 서비스의 기본 URL (예: `https://api.make.com/v2`). trailing slash 제거 필수.
-3. **인증 유형** — API_KEY / BEARER
+3. **인증 유형** — API_KEY / BEARER / BASIC
 4. **authConfig** — 인증 유형별 설정 (아래 섹션 참조)
 5. **헬스체크 경로** (선택) — `/health`, `/status` 등. 생략 시 주기적 점검 미수행.
 
 **URL 정규화 규칙**: baseUrl에 trailing slash가 있으면 제거한다.
 예: `https://api.example.com/` → `https://api.example.com`
 
+**baseUrl 에 사용자 정보 금지**: `https://아이디:비밀번호@api.example.com` 처럼 baseUrl 에 사용자 정보를 넣지 않는다.
+아이디·비밀번호는 authType `BASIC` 의 authConfig `{ username, password }` 로 보낸다. API_KEY·BEARER 인데 baseUrl 에
+사용자 정보가 있으면 서버가 400 「baseUrl 에 사용자 정보(아이디:비밀번호@)를 넣으려면 인증 방식을 BASIC 으로 고르세요」로 거절한다.
+
 ## 1. authType별 authConfig 구조
 
 > **중요 — `NONE`/`인증 없음` authType은 존재하지 않는다.**
-> 백엔드(ApiConnectionService.validateAuthType)는 `API_KEY`와 `BEARER`만 허용하며 그 외 값은 400으로 거절한다.
+> 백엔드(ApiConnectionService.validateAuthType)는 `API_KEY`·`BEARER`·`BASIC`만 허용하며 그 외 값은 400으로 거절한다.
 > 사용자가 "인증 필요 없음", "public API", "no auth", "오픈 API" 등을 요청하더라도:
 > 1. **절대로** `apiKey: "none"`, `headerName: "X-No-Auth"`, `token: "none"`, 빈 문자열, placeholder 같은 **더미 자격증명을 합성하지 않는다**.
 > 2. 사용자에게 다음과 같이 안내한다:
->    > "현재 시스템은 인증 없는 연결 등록을 지원하지 않습니다 (`API_KEY` 또는 `BEARER`만 가능). 정말 인증이 필요 없는 공개 엔드포인트인지, 아니면 API_KEY/BEARER 중 어떤 인증 방식을 사용하는지 확인 부탁드립니다."
+>    > "현재 시스템은 인증 없는 연결 등록을 지원하지 않습니다 (`API_KEY`·`BEARER`·`BASIC`만 가능). 정말 인증이 필요 없는 공개 엔드포인트인지, 아니면 API_KEY/BEARER/BASIC 중 어떤 인증 방식을 사용하는지 확인 부탁드립니다."
 > 3. 사용자가 명시적으로 실제 인증 정보를 제공하기 전에는 `create_api_connection` / `update_api_connection`을 호출하지 않는다.
 > 4. 위 가드레일은 self-`SendMessage`(자기 자신에게 위임)·`compact`·`turn` 재시도 어느 경로에서도 우회 금지.
 > 5. **더미 값 권유도 금지 (#255/#619 회귀 방지)**: 사용자에게 "BEARER 방식, 토큰 값 `none` 또는 임의 더미 문자열로 등록", "API_KEY 방식, 헤더명과 키 값을 임의로 지정하여 등록", "빈 토큰으로 진행" 같은 **우회 제안 자체를 하지 않는다**. 빈 문자열·`none`·`null`·`dummy`·`placeholder`·`todo`·`xxx`·`X-No-Auth`·3자 미만의 짧은 문자열은 MCP 서버가 **정확일치**로 강제 거부하며, `dummyvalue12345`·`testkey123`처럼 더미 단어가 **접두사**로 오는 변형이나 `xxxxxxxx`·`123456789` 같은 반복/순차 패턴도 서버가 강제 거부한다(자동 차단, `assertAuthConfigNotPlaceholder`). 다만 이 서버측 가드는 접두사·반복 패턴만 포괄하며 모든 변형을 완벽히 차단하지는 못하므로(예: 단어가 값 중간에 섞인 경우), 모델은 서버 차단을 최종 방어선으로 신뢰하지 말고 처음부터 사용자에게 **실제 인증 값**을 요구해야 한다. 사용자가 "그냥 더미로 등록해줘"라고 강하게 요청해도 동일하게 거부한다 — 잘못된 자격증명이 암호화 저장되어 추후 외부 호출 시 invalid 헤더가 송신되는 무결성 사고를 방지한다.
@@ -223,6 +227,33 @@ authConfig 구조:
 |------|------|------|
 | `token` | ✅ | Bearer 토큰 값 (JWT, OAuth Access Token 등) |
 
+### BASIC 방식
+
+아이디·비밀번호로 인증하는 API 에 사용한다. `Authorization: Basic base64(username:password)` 헤더를 자동으로 추가한다.
+
+authConfig 구조:
+```json
+{
+  "username": "실제-아이디",
+  "password": "실제-비밀번호"
+}
+```
+
+| 필드 | 필수 | 설명 |
+|------|------|------|
+| `username` | ✅ | 아이디 (조회 시 가리지 않고 그대로 보임) |
+| `password` | ✅ | 비밀번호 — apiKey·token 과 같은 비밀. 조회 시 끝 글자 없이 `****` 로만 가려지며(apiKey·token 의 `****`+끝 4자리와 다르다), 더미 값 금지 규칙도 같다 |
+
+- 아이디·비밀번호를 baseUrl 에 넣지 않는다(`https://아이디:비밀번호@host` 금지) — 반드시 이 두 필드로 보낸다.
+- 수정 시 비밀번호를 바꾸지 않으려면 authConfig 를 생략하거나, 아이디를 바꿀 때는 get_api_connection 결과의 가린 password 값을 **그대로** 함께 보낸다(같은 authType 일 때만 저장값이 유지된다). 가린 값을 지어내지 않는다.
+
+### 1.4. 가려진 baseUrl(`아이디:****@`) — 옛 연결
+
+예전에 baseUrl 에 사용자 정보를 넣어 저장한 연결은 조회 시 baseUrl 이 `https://아이디:****@host` 처럼 가려져 보인다.
+- 이것은 옛 연결에 저장된 사용자 정보이며 **그대로 동작한다**. 고치려 하지 않는다 — 사용자가 요청하지 않는 한 baseUrl 을 다시 보내거나 바꾸지 않는다.
+- 가려진 baseUrl 은 실제 URL 이 아니다. 파이프라인 customUrl 등 다른 곳에 옮겨 쓰지 않는다.
+- 사용자가 BASIC 으로 옮기길 원하면 authType `BASIC` 과 실제 아이디·비밀번호를 받아 수정한다.
+
 ## 1.5. 존재/미존재 진술 전 검증 의무 (필수) — 무검증 확인 진술 차단 (refs #591)
 
 사용자가 이름 또는 ID로 특정 API 연결을 지칭하며 조회·수정·삭제를 요청한 경우, **`list_api_connections()` 또는 `get_api_connection()`을 실제로 호출하기 전에는 그 연결의 존재 여부에 대해 어떠한 확정적 진술도 하지 않는다.** 사용자가 스스로 "이런 이름의 연결이 없는 것 같은데"처럼 존재 여부를 미리 의심하거나, 이름이 낯설어 보이는 경우에도 마찬가지다. "존재하지 않습니다", "찾을 수 없습니다", "확인해보니 없습니다" 같이 검증을 완료한 것으로 들리는 표현은 실제로 `list_api_connections()`/`get_api_connection()` 도구를 호출해 그 응답을 받은 경우에만 사용할 수 있다. 사용자의 추측이 결과적으로 맞아떨어지더라도, 도구 호출 없이 확인했다고 진술하는 것은 그 자체로 환각이다.
@@ -255,7 +286,8 @@ authConfig 구조:
 
 - 이름·설명만 변경: `authConfig` 미제공 가능 (기존 암호화 값 유지)
 - 인증 갱신(키 로테이션): `authConfig` 전체 재제공 필수 — 부분 갱신 불가
-- authType 변경: 기존 authConfig는 새 authType의 필드 구조로 완전히 교체해야 함
+- authType 변경: 기존 authConfig는 새 authType의 필드 구조로 완전히 교체해야 함 (BASIC 이면 `{ username, password }`)
+- baseUrl 이 `아이디:****@` 로 가려진 옛 연결: baseUrl 을 바꾸지 않을 때는 baseUrl 을 생략한다 (1.4 참조)
 
 ## 5. test_api_connection 사용법
 

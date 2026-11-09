@@ -1,5 +1,5 @@
 /**
- * API 연결 비밀 값(API 키·Bearer 토큰) 빈 값 판정 — 화면 안 한 곳(WD-639).
+ * API 연결 비밀 값(API 키·Bearer 토큰·Basic 비밀번호) 빈 값 판정 — 화면 안 한 곳(WD-639, BASIC 은 WD-681).
  *
  * 서버(AuthConfigValidator)가 최종 판정을 하고 같은 경우를 400 「… 입력하세요」로 거절한다. 화면은 서버를 부르기 전에 같은 규칙으로
  * 먼저 안내만 한다. 예전에는 생성·저장 전 테스트·상세 저장이 저마다 `token.trim()` 으로 봐서 「Bearer 」 처럼 접두어만 있는 토큰은
@@ -11,7 +11,15 @@
  * 화면은 「비었다」고 막고 서버는 받아들이는 식으로 어긋난다.
  */
 
-export type SecretAuthType = 'API_KEY' | 'BEARER';
+/** 비밀 칸이 있는 인증 방식 — BASIC(WD-681)의 비밀은 비밀번호다(서버 REQUIRED_SECRET_BY_AUTH_TYPE 와 같다). */
+export type SecretAuthType = 'API_KEY' | 'BEARER' | 'BASIC';
+
+/** 방식별 빈 비밀 안내 — 서버 MISSING_SECRET_MESSAGE_BY_AUTH_TYPE 와 같은 이름을 쓴다. */
+const MISSING_SECRET_MESSAGE: Record<SecretAuthType, string> = {
+  API_KEY: 'API 키를 입력하세요.',
+  BEARER: 'Bearer 토큰을 입력하세요.',
+  BASIC: '비밀번호를 입력하세요.',
+};
 
 /**
  * Java `Character.isWhitespace` 가 참인 글자 — ASCII 제어 공백(\t \n \u000B \f \r \u001C–\u001F), 공백(U+0020), 유니코드
@@ -31,6 +39,14 @@ function javaStrip(value: string): string {
   return value.replace(JAVA_STRIP, '');
 }
 
+/**
+ * 서버 `String.isBlank()` 와 같은 빈 값 판정 — Java 공백만 있거나 비었으면 true(WD-681).
+ * Basic 아이디처럼 정리(strip)하지 않고 그대로 보내지만 비었는지는 서버와 같게 봐야 하는 칸에 쓴다. NBSP 는 값이다.
+ */
+export function isBlankLikeServer(value: string): boolean {
+  return javaStrip(value) === '';
+}
+
 /** 비밀 값을 서버와 같은 방식으로 정리한다 — 앞뒤 공백을 떼고, Bearer 토큰이면 접두어도 뗀다(서버 normalizeBearerToken). */
 export function normalizeSecret(authType: SecretAuthType, value: string): string {
   const stripped = javaStrip(value);
@@ -43,5 +59,5 @@ export function normalizeSecret(authType: SecretAuthType, value: string): string
  */
 export function missingSecretMessage(authType: SecretAuthType, value: string): string | null {
   if (normalizeSecret(authType, value) !== '') return null;
-  return authType === 'API_KEY' ? 'API 키를 입력하세요.' : 'Bearer 토큰을 입력하세요.';
+  return MISSING_SECRET_MESSAGE[authType];
 }

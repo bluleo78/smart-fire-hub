@@ -13,11 +13,12 @@ api 쪽 Java ``ApiCallErrorMessages`` (firehub-api ``pipeline/service/executor``
 
 from __future__ import annotations
 
+import base64
 import errno
 import re
 import socket
 from decimal import Decimal
-from typing import Optional
+from typing import NamedTuple, Optional
 from urllib.parse import quote_plus, unquote_plus, urlsplit
 
 import httpx
@@ -186,15 +187,15 @@ def _chain(error: BaseException):
 
 
 def describe_exception(
-    error: BaseException, timeout_ms: int, host: str | None, secret: Optional[str] = None
+    error: BaseException, timeout_ms: int, host: str | None, secrets: Optional["SentSecrets"] = None
 ) -> str:
     """예외를 사용자 문구로 바꾼다. 타임아웃을 연결 오류보다 먼저 본다(httpx.ConnectTimeout 은 TimeoutException).
 
-    ``secret`` 은 이번 요청에 실제로 실은 비밀(쿼리 키·헤더 키·Bearer 토큰)이다(WD-657). 문구는 실행 기록·경고 로그로 가므로 마지막에
-    ``scrub_secret`` 으로 가린다 — Java ``AuthQueryMasker.scrubSecret(…, auth.sentSecret())`` 와 같다. 예전에는 URL 의 쿼리만 지워,
-    분류하지 못한 원문에 헤더 키·토큰이 실려 오면 그대로 남았다.
+    ``secrets`` 는 이번 요청에 실제로 실은 비밀(쿼리 키·헤더 키·Bearer 토큰·Basic, WD-657·WD-681)과 그 가림 규칙이다. 문구는 실행
+    기록·경고 로그로 가므로 마지막에 ``scrub_secret`` 으로 가린다 — Java ``auth.sentSecrets().scrubText(…)`` 와 같다. 예전에는 URL 의
+    쿼리만 지워, 분류하지 못한 원문에 헤더 키·토큰이 실려 오면 그대로 남았다. None 이면 가릴 비밀이 없다.
     """
-    return scrub_secret(_describe_exception(error, timeout_ms, host), secret)
+    return scrub_secret(_describe_exception(error, timeout_ms, host), secrets or SentSecrets())
 
 
 def _describe_exception(error: BaseException, timeout_ms: int, host: str | None) -> str:
@@ -256,19 +257,76 @@ def _secret_forms(secret: str) -> list:
     return sorted(forms, key=len, reverse=True)
 
 
-def scrub_secret(text: Optional[str], secret: Optional[str]) -> Optional[str]:
-    """자유 문장(오류 문구·로그)에서 비밀을 원문·인코딩형·디코딩형 모두 ``mask_secret`` 으로 바꾼다(WD-657).
+# 비밀번호·Basic 덩어리·URL 사용자 정보 비밀번호 자리에 넣는 고정 가림(WD-681 리뷰) — Java ``AuthQueryMasker.PASSWORD_MASK`` 와
+# 같다(끝 4자를 보이지 않는다). API 키 가림의 접두와 같은 글자라 한 값을 쓴다.
+PASSWORD_MASK = _MASK_PREFIX
 
-    Java ``AuthQueryMasker.scrubSecret`` 과 같은 규칙 — 비밀이 4자 미만이면 손대지 않고, 형태마다 4자 이상인 것만 바꾼다.
+# 가린 뒤에도 비밀번호가 글자 그대로 남은 문장(지우기엔 짧은 비밀번호) 대신 쓰는 문구 — Java ``AuthQueryMasker.PASSWORD_WITHHELD`` 와
+# 같다. SMTP 실패 문구(WD-676)가 조각을 버리는 것과 같은 규칙이다.
+PASSWORD_WITHHELD = "(비밀번호와 같은 글자가 들어 있어 내용을 가렸습니다)"
+
+
+class SentSecrets(NamedTuple):
+    """이번 요청에 실은 비밀과 그 가림 규칙(WD-681 리뷰) — Java ``AuthQueryMasker.SentSecrets`` 와 같다.
+
+    - ``key``(API 키·Bearer 토큰): 예전 그대로 ``****``+끝 4자, 4자 미만이면 손대지 않는다.
+    - ``basic_token``(base64(아이디:비밀번호)): 언제나 고정 ``****`` — 끝 4자는 비밀번호 끝 3바이트를 드러낸다.
+    - ``password``(Basic 비밀번호): SMTP 비밀번호와 같은 규칙(Java ``AuthQueryMasker.scrubPassword``) — 원문·인코딩형·Base64 형을
+      고정 ``****`` 로 지우고, 지운 뒤에도 남으면(4자 미만) 문장을 ``PASSWORD_WITHHELD`` 로 바꾼다.
+
+    공용 사례 표 ``api-call-auth-vectors.json`` 의 ``basicScrub`` 으로 Java 와 같은 결과인지 본다.
     """
+
+    key: Optional[str] = None
+    basic_token: Optional[str] = None
+    password: Optional[str] = None
+
+    def scrub(self, text: Optional[str]) -> Optional[str]:
+        """오류 문구·실행 로그 같은 자유 문장을 가린다(Java ``SentSecrets.scrubText``)."""
+        if text is None:
+            return None
+        out = _scrub_one(text, self.key, None)
+        out = _scrub_one(out, self.basic_token, PASSWORD_MASK)
+        if not self.password:
+            return out
+        out = _scrub_one(out, self.password, PASSWORD_MASK)
+        # Base64 형(AUTH LOGIN 형태)도 지운다 — Java scrubPassword(SMTP 와 같은 규칙)와 같다.
+        out = out.replace(base64.b64encode(self.password.encode("utf-8")).decode("ascii"), PASSWORD_MASK)
+        return PASSWORD_WITHHELD if self.password in out else out
+
+
+def _scrub_one(text: Optional[str], secret: Optional[str], mask: Optional[str]) -> Optional[str]:
+    """비밀 하나를 원문·인코딩형·디코딩형 모두 가린다. ``mask`` 가 None 이면 ``mask_secret``(끝 4자) — Java ``scrubSecret`` 두 갈래와 같다."""
     if text is None or secret is None or len(secret) < _MIN_SCRUB_LENGTH:
         return text
-    mask = mask_secret(secret)
+    replacement = mask if mask is not None else mask_secret(secret)
     out = text
     for form in _secret_forms(secret):
         if len(form) >= _MIN_SCRUB_LENGTH:
-            out = out.replace(form, mask)
+            out = out.replace(form, replacement)
     return out
+
+
+def scrub_secret(text: Optional[str], secrets: SentSecrets) -> Optional[str]:
+    """자유 문장(오류 문구·로그)에서 보낸 비밀을 ``secrets`` 의 규칙으로 가린다(WD-657·WD-681 리뷰).
+
+    API 키·토큰은 Java ``AuthQueryMasker.scrubSecret`` 과 같은 규칙(원문·인코딩형·디코딩형을 ``mask_secret`` 으로, 4자 미만이면 손대지
+    않음), Basic 덩어리·비밀번호는 고정 가림(짧은 비밀번호는 문장을 통째로 가림)이다 — 비밀은 늘 ``SentSecrets`` 하나로 받는다.
+    """
+    return secrets.scrub(text)
+
+
+def strip_url_userinfo(url: Optional[str]) -> Optional[str]:
+    """URL 의 사용자 정보(``아이디:비밀번호@``)를 뗀다(WD-681 리뷰) — Java ``BaseUrlUserInfo.strip`` 과 같은 문자열 해석이다.
+
+    BASIC 인증은 설정한 아이디·비밀번호로 ``Authorization: Basic`` 을 보내는데, URL 에 사용자 정보가 남아 있으면 httpx 가 그것으로 Basic
+    인증을 만들어 설정한 헤더를 덮는다. 사용자 정보가 없으면 그대로다.
+    """
+    parts = _split_userinfo(url)
+    if parts is None:
+        return url
+    prefix, _, host, rest = parts
+    return f"{prefix}{host}{rest}"
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +349,43 @@ def redact_url(url: str | None) -> str:
         pass
     head = re.split(r"[?#]", url, maxsplit=1)[0]
     return _URL_USERINFO_IN_TEXT.sub(r"\1", head)
+
+
+# URL 의 「스킴://」 뒤 authority(첫 / ? # 앞) — 사용자 정보 가림(WD-681)에 쓴다. Java BaseUrlUserInfo 와 같은 문자열 해석이다.
+_URL_AUTHORITY = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*://)([^/?#]*)(.*)$", re.DOTALL)
+
+
+def _split_userinfo(url: Optional[str]) -> Optional[tuple]:
+    """URL 을 (``스킴://``, 인코딩된 사용자 정보, ``호스트[:포트]``, 나머지)로 나눈다 — Java ``BaseUrlUserInfo.split`` 과 같은 문자열
+    해석(authority 안의 마지막 ``@`` 앞이 사용자 정보)이다. URL 모양이 아니거나 사용자 정보가 없으면 None.
+    ``strip_url_userinfo``·``mask_url_userinfo`` 가 같은 해석을 쓰도록 한 곳에 둔다.
+    """
+    if not url:
+        return None
+    m = _URL_AUTHORITY.match(url)
+    if not m:
+        return None
+    prefix, authority, rest = m.groups()
+    user_info, at, host = authority.rpartition("@")
+    if not at:
+        return None
+    return prefix, user_info, host, rest
+
+
+def mask_url_userinfo(url: Optional[str]) -> Optional[str]:
+    """URL 사용자 정보(``아이디:비밀번호@``)의 비밀번호만 ``****`` 로 가린다(WD-681) — Java ``BaseUrlUserInfo.mask`` 와 같다.
+
+    옛 연결(API_KEY·BEARER + baseUrl 사용자 정보)은 이관하지 않아 호출 URL 에 사용자 정보가 남는다. 실행 기록 요약 줄에는 비밀번호를
+    남기지 않는다. 사용자 정보가 없거나 비밀번호가 비었으면(``아이디@``·``아이디:@``) 그대로다.
+    """
+    parts = _split_userinfo(url)
+    if parts is None:
+        return url
+    prefix, user_info, host, rest = parts
+    username, colon, password = user_info.partition(":")
+    if not colon or not password:
+        return url
+    return f"{prefix}{username}:{PASSWORD_MASK}@{host}{rest}"
 
 
 def redact_urls_in_text(text: str) -> str:

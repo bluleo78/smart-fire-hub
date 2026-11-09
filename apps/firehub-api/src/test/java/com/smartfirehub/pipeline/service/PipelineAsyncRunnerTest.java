@@ -1009,7 +1009,7 @@ class PipelineAsyncRunnerTest {
             null,
             connId);
     when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(minimalApiConfig());
-    when(apiConnectionService.getById(connId))
+    when(apiConnectionService.getByIdForCall(connId))
         .thenThrow(new ApiConnectionNotFoundException(connId));
 
     String status = runner.executeStep(stepExecId, api, pipelineId, "TestPipeline", userId, true);
@@ -1053,7 +1053,7 @@ class PipelineAsyncRunnerTest {
             null,
             connId);
     when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(minimalApiConfig());
-    when(apiConnectionService.getById(connId))
+    when(apiConnectionService.getByIdForCall(connId))
         .thenReturn(
             new com.smartfirehub.apiconnection.dto.ApiConnectionResponse(
                 connId,

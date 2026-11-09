@@ -3,10 +3,12 @@ package com.smartfirehub.pipeline.service.executor;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.service.AuthConfigValidator;
 import com.smartfirehub.apiconnection.service.AuthQueryMasker;
+import com.smartfirehub.apiconnection.service.BaseUrlUserInfo;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -40,7 +42,7 @@ public final class ApiCallAuth {
 
   /** 안내 문구의 비밀 필드 이름(주격 조사 포함) — 관리 화면 칸 이름과 같다. */
   private static final Map<String, String> SECRET_SUBJECT_BY_AUTH_TYPE =
-      Map.of("API_KEY", "API 키가", "BEARER", "Bearer 토큰이");
+      Map.of("API_KEY", "API 키가", "BEARER", "Bearer 토큰이", "BASIC", "비밀번호가");
 
   /** Python 실행기의 쿼리 인증 기본 파라미터 이름. */
   static final String DEFAULT_API_KEY_PARAM = "api_key";
@@ -54,10 +56,61 @@ public final class ApiCallAuth {
    * @param placement 대문자 위치(HEADER·QUERY). 없으면 HEADER
    * @param headerName API_KEY 헤더 이름(빈 값이면 기본 헤더)
    * @param paramName API_KEY 쿼리 파라미터 이름(빈 값이면 api_key)
-   * @param secret 보낼 비밀 — BEARER 는 정리한 토큰(「Bearer 」 접두어·앞뒤 공백 뗌), API_KEY 는 원문. 어느 키에도 없으면 빈 문자열
+   * @param secret 보낼 비밀 — BEARER 는 정리한 토큰(「Bearer 」 접두어·앞뒤 공백 뗌), API_KEY 는 원문, BASIC 은 비밀번호
+   *     원문(WD-681). 어느 키에도 없으면 빈 문자열
+   * @param username BASIC 아이디 원문(WD-681). BASIC 이 아니거나 없으면 빈 문자열
+   * @param basicCredentials Basic 인증 헤더 값의 Base64 덩어리 — {@code base64(utf8(아이디:비밀번호))}(RFC 7617,
+   *     WD-681). Python 실행기({@code _basic_credentials})와 같은 바이트다. 풀 때 한 번만 계산해 헤더·가림이 같은 값을 쓴다.
+   *     BASIC 이 아니면 null
    */
   public record ResolvedAuth(
-      String authType, String placement, String headerName, String paramName, String secret) {
+      String authType,
+      String placement,
+      String headerName,
+      String paramName,
+      String secret,
+      String username,
+      String basicCredentials) {
+
+    /** Basic 덩어리를 방식·아이디·비밀번호로 한 번 계산해 채운다(WD-681) — 쓸 때마다 다시 인코딩하지 않는다. */
+    public ResolvedAuth(
+        String authType,
+        String placement,
+        String headerName,
+        String paramName,
+        String secret,
+        String username) {
+      this(
+          authType,
+          placement,
+          headerName,
+          paramName,
+          secret,
+          username,
+          "BASIC".equals(authType)
+              ? Base64.getEncoder()
+                  .encodeToString((username + ":" + secret).getBytes(StandardCharsets.UTF_8))
+              : null);
+    }
+
+    /** Authorization: Basic 헤더를 붙이는 설정인지(WD-681). */
+    public boolean isBasic() {
+      return "BASIC".equals(authType);
+    }
+
+    /**
+     * 응답 본문·헤더·오류 문구에서 가릴 비밀과 그 규칙(WD-681, {@link AuthQueryMasker.SentSecrets}). BASIC 은 Basic
+     * 덩어리(늘 고정 {@code ****})와 비밀번호(SMTP 와 같은 규칙 — 짧아 지울 수 없으면 문장을 통째로 가린다) — 대상이 「Authorization:
+     * Basic …」 헤더를 되울리면(httpbin /headers 등) 덩어리를 풀어 아이디·비밀번호를 그대로 알 수 있기 때문이다. 그 밖에는 {@link
+     * #sentSecret} 하나를 API 키 규칙으로 가린다.
+     */
+    public AuthQueryMasker.SentSecrets sentSecrets() {
+      if (isBasic()) return new AuthQueryMasker.SentSecrets(null, basicCredentials, secret);
+      String one = sentSecret();
+      return one != null
+          ? new AuthQueryMasker.SentSecrets(one, null, null)
+          : AuthQueryMasker.SentSecrets.NONE;
+    }
 
     /** API_KEY 를 쿼리 파라미터로 붙이는 설정인지. */
     public boolean isQueryApiKey() {
@@ -74,7 +127,10 @@ public final class ApiCallAuth {
       return "BEARER".equals(authType);
     }
 
-    /** 실제로 요청에 실리는 비밀(헤더·쿼리·Bearer) — 응답 본문·오류 문구에서 가릴 값이다. 인증을 붙이지 않는 설정이면 null(가릴 것 없음). */
+    /**
+     * 요청에 실리는 API 키·Bearer 토큰 — API 키 규칙({@code ****}+끝 4자)으로 가릴 값이다. 인증을 붙이지 않는 설정·BASIC 이면 null —
+     * BASIC 의 비밀번호·Basic 덩어리는 고정 가림 규칙이라 {@link #sentSecrets} 가 따로 다룬다(표시 URL 을 API 키 규칙으로 가리지 않게).
+     */
     public String sentSecret() {
       return isBearer() || "API_KEY".equals(authType) ? secret : null;
     }
@@ -90,6 +146,10 @@ public final class ApiCallAuth {
         header.accept(headerName, secret);
       } else if (isBearer()) {
         header.accept("Authorization", "Bearer " + secret);
+      } else if (isBasic()) {
+        // BASIC(WD-681): Authorization: Basic base64(utf8(아이디:비밀번호)). 다른 출처 리다이렉트에서는 Bearer 와 같이
+        // 뗀다(authHeaderName).
+        header.accept("Authorization", "Basic " + basicCredentials);
       }
     }
 
@@ -101,7 +161,7 @@ public final class ApiCallAuth {
      */
     public String authHeaderName() {
       if (isHeaderApiKey()) return headerName;
-      if (isBearer()) return "Authorization";
+      if (isBearer() || isBasic()) return "Authorization";
       return null;
     }
 
@@ -130,7 +190,8 @@ public final class ApiCallAuth {
      */
     public AuthQueryMasker.AuthQueryUrls buildUrls(String url, Map<String, String> extraParams) {
       if (extraParams == null && !isQueryApiKey()) {
-        return new AuthQueryMasker.AuthQueryUrls(url, url);
+        // URL 은 손대지 않되 표시용은 빌더 경로와 같이 사용자 정보 비밀번호를 가린다(WD-681).
+        return new AuthQueryMasker.AuthQueryUrls(url, BaseUrlUserInfo.mask(url));
       }
       Map<String, String> params = new LinkedHashMap<>();
       if (extraParams != null) params.putAll(extraParams);
@@ -169,7 +230,9 @@ public final class ApiCallAuth {
    *   <li>위치: placement → location → header (대문자로)
    *   <li>헤더 이름: headerName → key_name → X-API-Key
    *   <li>쿼리 이름: paramName → key_name → api_key
-   *   <li>비밀: BEARER 는 token → value, API_KEY 는 apiKey → key_value → value
+   *   <li>비밀: BEARER 는 token → value, API_KEY 는 apiKey → key_value → value, BASIC 은
+   *       password(WD-681)
+   *   <li>BASIC 아이디: username(WD-681) — 아이디·비밀번호 모두 원문 그대로(앞뒤 공백도 떼지 않는다) 보낸다
    * </ul>
    *
    * <p>비밀은 Python {@code or} 와 똑같이 null·빈 문자열만 건너뛰어 고른 뒤, BEARER 면 저장 검사와 같은 정리({@link
@@ -195,9 +258,14 @@ public final class ApiCallAuth {
     String headerName = strip(firstNonBlank(a, "headerName", "key_name"));
     String paramName = firstNonBlank(a, "paramName", "key_name");
     String secret;
+    String username = null;
     if ("BEARER".equals(authType)) {
       String raw = firstNonEmpty(a, "token", "value");
       secret = raw != null ? AuthConfigValidator.normalizeBearerToken(raw) : null;
+    } else if ("BASIC".equals(authType)) {
+      // BASIC(WD-681) — 저장 연결·인라인 인증 모두 username·password 키만 읽는다(대체 키 없음, Python 과 같다).
+      secret = firstNonEmpty(a, AuthConfigValidator.BASIC_PASSWORD_KEY);
+      username = firstNonEmpty(a, AuthConfigValidator.BASIC_USERNAME_KEY);
     } else {
       secret = firstNonEmpty(a, "apiKey", "key_value", "value");
     }
@@ -206,7 +274,8 @@ public final class ApiCallAuth {
         placement != null ? placement : "HEADER",
         headerName != null ? headerName : AuthConfigValidator.DEFAULT_API_KEY_HEADER,
         paramName != null ? paramName : DEFAULT_API_KEY_PARAM,
-        secret != null ? secret : "");
+        secret != null ? secret : "",
+        username != null ? username : "");
   }
 
   /**
@@ -244,6 +313,23 @@ public final class ApiCallAuth {
     boolean saved = connectionName != null;
     String owner = saved ? "API 연결 「" + connectionName + "」의 " : "스텝 인증 설정의 ";
     String fixStep = "파이프라인 편집에서 이 스텝의 인증 설정을 고치세요.";
+    // BASIC 아이디(WD-681)는 비밀번호보다 먼저 본다 — 연결 화면 검사({@link AuthConfigValidator#describeProblem})와 같은
+    // 순서·같은
+    // 규칙({@link AuthConfigValidator#basicUsernameProblem})이다. 인라인 인증은 저장 검사를 거치지 않아 「a:b」 아이디가
+    // Basic
+    // 헤더에서 비밀번호 일부로 읽히거나 줄바꿈이 헤더를 깨뜨렸다(WD-681 리뷰). 빈 아이디는 「저장」, 쓸 수 없는 아이디는 연결 화면 사유를 실어
+    // 「고치기」로 안내한다(헤더 이름 문제와 같은 모양).
+    if (auth.isBasic()) {
+      String problem = AuthConfigValidator.basicUsernameProblem(auth.username());
+      if (AuthConfigValidator.MISSING_USERNAME_MESSAGE.equals(problem)) {
+        String fixWhere = saved ? "API 연결 화면에서 인증 정보를 저장하세요." : fixStep;
+        return owner + "아이디가 비어 있습니다 — " + fixWhere;
+      }
+      if (problem != null) {
+        String fixWhere = saved ? "API 연결 화면에서 이 연결의 아이디를 고치세요." : fixStep;
+        return owner + "아이디를 쓸 수 없습니다(" + problem + ") — " + fixWhere;
+      }
+    }
     if (AuthConfigValidator.isSecretValueMissing(auth.authType(), auth.secret())) {
       String fixWhere = saved ? "API 연결 화면에서 인증 정보를 저장하세요." : fixStep;
       return owner + SECRET_SUBJECT_BY_AUTH_TYPE.get(auth.authType()) + " 비어 있습니다 — " + fixWhere;

@@ -13,8 +13,13 @@ import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
 import {
   AUTH_FIELD_KEYS,
+  AUTH_TYPE_LABEL,
+  AUTH_TYPE_OPTIONS,
   authNameError,
+  authTypeBadgeVariant,
+  authTypeLabel,
   baseUrlError,
+  basicUsernameError,
   connectionNameError,
   type FieldErrors,
   focusFirstError,
@@ -25,7 +30,7 @@ import { missingSecretMessage } from '@/lib/api-connection-secret';
 import { handleApiError } from '@/lib/api-error';
 import { formatDateShort } from '@/lib/formatters';
 import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
-import type { TestConnectionResponse } from '@/types/api-connection';
+import type { ApiConnectionAuthType, TestConnectionResponse } from '@/types/api-connection';
 
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -63,9 +68,10 @@ import {
 } from '../../hooks/queries/useApiConnections';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import type { CreateApiConnectionRequest } from '../../types/api-connection';
+import { BasicAuthFields } from './components/BasicAuthFields';
 
 /** 새 연결 다이얼로그에서 인라인 오류를 보일 수 있는 칸 (WD-561) — 선언 순서가 곧 화면 순서(첫 오류 포커스 기준)다. */
-const CREATE_FIELD_ORDER = ['name', 'baseUrl', 'healthCheckPath', 'authName', 'apiKey', 'token'] as const;
+const CREATE_FIELD_ORDER = ['name', 'baseUrl', 'healthCheckPath', ...AUTH_FIELD_KEYS] as const;
 type CreateFieldKey = (typeof CREATE_FIELD_ORDER)[number];
 type CreateFieldErrors = FieldErrors<CreateFieldKey>;
 
@@ -106,12 +112,15 @@ export default function ApiConnectionListPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [authType, setAuthType] = useState<'API_KEY' | 'BEARER'>('API_KEY');
+  const [authType, setAuthType] = useState<ApiConnectionAuthType>('API_KEY');
   const [placement, setPlacement] = useState('header');
   const [headerName, setHeaderName] = useState('');
   const [paramName, setParamName] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [token, setToken] = useState('');
+  // (WD-681) Basic 인증 아이디·비밀번호
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   // 신규 필드: baseUrl, healthCheckPath
   const [baseUrl, setBaseUrl] = useState('');
   const [healthCheckPath, setHealthCheckPath] = useState('');
@@ -129,6 +138,8 @@ export default function ApiConnectionListPage() {
     authName: `${baseId}-auth-name`,
     apiKey: `${baseId}-api-key`,
     token: `${baseId}-token`,
+    username: `${baseId}-username`,
+    password: `${baseId}-password`,
   };
 
   /** 사용자가 그 칸을 고치면 그 칸의 오류만 지운다 — 다른 칸 오류는 고칠 때까지 남겨 둔다. */
@@ -153,11 +164,50 @@ export default function ApiConnectionListPage() {
     setParamName('');
     setApiKey('');
     setToken('');
+    setUsername('');
+    setPassword('');
     setBaseUrl('');
     setHealthCheckPath('');
     setTestResult(null);
     setTesting(false);
     setErrors({});
+  };
+
+  /**
+   * 지금 보이는 인증 방식의 비밀(과 Basic 아이디) 칸 오류 — 만들기·저장 전 테스트가 같은 규칙을 쓴다(WD-681).
+   * Basic 은 아이디(비었는지·콜론)와 비밀번호(비었는지)를 함께 본다 — 서버 AuthConfigValidator 와 같은 순서·문구다.
+   */
+  const secretFieldErrors = (): CreateFieldErrors => {
+    if (authType === 'API_KEY') return { apiKey: missingSecretMessage('API_KEY', apiKey) ?? undefined };
+    if (authType === 'BASIC') {
+      return {
+        username: basicUsernameError(username),
+        password: missingSecretMessage('BASIC', password) ?? undefined,
+      };
+    }
+    return { token: missingSecretMessage('BEARER', token) ?? undefined };
+  };
+
+  /**
+   * 지금 보이는 인증 방식의 칸만 담은 authConfig 를 만든다 — 저장 전 테스트·만들기가 같이 쓴다(WD-681).
+   * 다른 방식의 칸 값은 싣지 않는다(서버는 authConfig 를 통째로 저장한다). Basic 아이디·비밀번호는 서버가 그대로 쓰므로 정리하지 않는다.
+   * omitBlankAuthName: 저장 전 테스트는 헤더·파라미터 이름 칸을 검사하지 않으므로, 비어 있으면 빼서 서버가 기본값·사유로 안내하게 한다.
+   */
+  const buildAuthConfig = ({ omitBlankAuthName }: { omitBlankAuthName: boolean }): Record<string, string> => {
+    const authConfig: Record<string, string> = { authType };
+    if (authType === 'API_KEY') {
+      authConfig.placement = placement;
+      const authNameKey = placement === 'header' ? 'headerName' : 'paramName';
+      const authNameValue = placement === 'header' ? headerName : paramName;
+      if (!omitBlankAuthName || authNameValue.trim()) authConfig[authNameKey] = authNameValue;
+      authConfig.apiKey = apiKey;
+    } else if (authType === 'BASIC') {
+      authConfig.username = username;
+      authConfig.password = password;
+    } else {
+      authConfig.token = token;
+    }
+    return authConfig;
   };
 
   /**
@@ -178,26 +228,13 @@ export default function ApiConnectionListPage() {
     const nextErrors: CreateFieldErrors = {
       baseUrl: baseUrlError(baseUrl),
       healthCheckPath: healthCheckPathError(healthCheckPath),
-      ...(authType === 'API_KEY'
-        ? { apiKey: missingSecretMessage('API_KEY', apiKey) ?? undefined }
-        : { token: missingSecretMessage('BEARER', token) ?? undefined }),
+      ...secretFieldErrors(),
     };
     setErrors(nextErrors);
     if (focusFirstError(CREATE_FIELD_ORDER, nextErrors, fieldId)) return;
 
-    // 위에서 비밀 값이 비지 않았음을 확인했으므로 그대로 싣는다.
-    const authConfig: Record<string, string> = { authType };
-    if (authType === 'API_KEY') {
-      authConfig.placement = placement;
-      authConfig.apiKey = apiKey;
-      if (placement === 'header') {
-        if (headerName.trim()) authConfig.headerName = headerName;
-      } else if (paramName.trim()) {
-        authConfig.paramName = paramName;
-      }
-    } else {
-      authConfig.token = token;
-    }
+    // 위에서 비밀 값이 비지 않았음을 확인했으므로 그대로 싣는다. 비어 있는 헤더·파라미터 이름은 빼서 서버 기본값을 쓰게 한다.
+    const authConfig = buildAuthConfig({ omitBlankAuthName: true });
 
     setTesting(true);
     setTestResult(null);
@@ -233,26 +270,17 @@ export default function ApiConnectionListPage() {
     };
 
     // 인증 칸은 지금 보이는 칸만 검사한다(유형·위치에 따라 칸이 바뀐다)
+    // 빈 비밀 판정·문구는 저장 전 테스트·서버와 같은 공용 헬퍼로 한다(WD-639) — 「Bearer 」 만 있어도 빈 토큰
+    Object.assign(nextErrors, secretFieldErrors());
     if (authType === 'API_KEY') {
       nextErrors.authName = authNameError(placement, placement === 'header' ? headerName : paramName);
-      // 빈 비밀 판정·문구는 저장 전 테스트·서버와 같은 공용 헬퍼로 한다(WD-639) — 「Bearer 」 만 있어도 빈 토큰
-      nextErrors.apiKey = missingSecretMessage('API_KEY', apiKey) ?? undefined;
-    } else {
-      nextErrors.token = missingSecretMessage('BEARER', token) ?? undefined;
     }
 
     setErrors(nextErrors);
     if (focusFirstError(CREATE_FIELD_ORDER, nextErrors, fieldId)) return;
 
-    const authConfig: Record<string, string> = { authType };
-    if (authType === 'API_KEY') {
-      authConfig.placement = placement;
-      if (placement === 'header') authConfig.headerName = headerName;
-      else authConfig.paramName = paramName;
-      authConfig.apiKey = apiKey;
-    } else {
-      authConfig.token = token;
-    }
+    // 만들기는 위에서 헤더·파라미터 이름도 검사했으므로 그대로 싣는다
+    const authConfig = buildAuthConfig({ omitBlankAuthName: false });
 
     const data: CreateApiConnectionRequest = {
       name: name.trim(),
@@ -383,7 +411,7 @@ export default function ApiConnectionListPage() {
                     <Select
                       value={authType}
                       onValueChange={(v) => {
-                        setAuthType(v as 'API_KEY' | 'BEARER');
+                        setAuthType(v as ApiConnectionAuthType);
                         clearAuthErrors();
                       }}
                     >
@@ -392,8 +420,12 @@ export default function ApiConnectionListPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="API_KEY">API Key</SelectItem>
-                        <SelectItem value="BEARER">Bearer Token</SelectItem>
+                        {/* 선택지·이름은 상세 화면과 같은 공용 표(WD-681) */}
+                        {AUTH_TYPE_OPTIONS.map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {AUTH_TYPE_LABEL[type].full}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -464,6 +496,27 @@ export default function ApiConnectionListPage() {
                         }}
                       />
                     </FormField>
+                  )}
+
+                  {/* (WD-681) Basic 인증 — 아이디·비밀번호. baseUrl 에 아이디:비밀번호@ 를 넣는 대신 이 두 칸을 쓴다
+                      (baseUrl 에 넣어도 서버가 이 칸으로 옮긴다). 비밀번호는 다른 비밀처럼 가린 입력이다. */}
+                  {authType === 'BASIC' && (
+                    <BasicAuthFields
+                      usernameId={fieldId.username}
+                      passwordId={fieldId.password}
+                      username={username}
+                      password={password}
+                      usernameError={errors.username}
+                      passwordError={errors.password}
+                      onUsernameChange={(value) => {
+                        setUsername(value);
+                        clearError('username');
+                      }}
+                      onPasswordChange={(value) => {
+                        setPassword(value);
+                        clearError('password');
+                      }}
+                    />
                   )}
 
                   {/* (#90) 인라인 연결 테스트 결과 표시 */}
@@ -556,8 +609,9 @@ export default function ApiConnectionListPage() {
                     <TruncatedLink to={`/admin/api-connections/${conn.id}`} value={conn.name} className="max-w-[min(16rem,calc((100cqw_-_var(--k))_*_0.3))]" />
                   </TableCell>
                   <TableCell>
-                    <Badge variant={conn.authType === 'BEARER' ? 'default' : 'secondary'}>
-                      {conn.authType === 'BEARER' ? 'Bearer' : 'API Key'}
+                    {/* 배지 문구는 공용 표 — 모르는 값(OAUTH2 등)은 서버 값을 그대로 보인다(WD-681) */}
+                    <Badge variant={authTypeBadgeVariant(conn.authType)}>
+                      {authTypeLabel(conn.authType, 'badge')}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm font-mono">

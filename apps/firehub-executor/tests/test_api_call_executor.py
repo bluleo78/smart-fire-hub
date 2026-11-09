@@ -1552,11 +1552,13 @@ def test_strip_query_param_helper_matches_java_rules():
 def test_describe_exception_scrubs_sent_secret():
     from app.services import api_call_errors as errors
 
-    message = errors.describe_exception(RuntimeError("boom Bearer HdrSecret657xyz"), 1000, "h", "HdrSecret657xyz")
+    message = errors.describe_exception(
+        RuntimeError("boom Bearer HdrSecret657xyz"), 1000, "h", errors.SentSecrets(key="HdrSecret657xyz")
+    )
     assert "HdrSecret657xyz" not in message
     assert "****7xyz" in message
     # 최소 길이(4자) 미만 비밀은 Java 처럼 손대지 않는다 — 평범한 글자를 지우지 않게
-    assert errors.describe_exception(RuntimeError("abc"), 1000, "h", "abc").endswith("abc")
+    assert errors.describe_exception(RuntimeError("abc"), 1000, "h", errors.SentSecrets(key="abc")).endswith("abc")
 
 
 def test_retry_warning_and_failure_message_scrub_header_secret(caplog):
@@ -1719,3 +1721,113 @@ def test_redirect_location_fragment_is_dropped_before_ssrf_check_and_request():
     assert "https://a.example.com/two?page=2" in [c.args[0] for c in validate.call_args_list]
     assert all("#" not in c.args[0] for c in validate.call_args_list)
 
+
+# ---------------------------------------------------------------------------
+# WD-681: BASIC 인증 — 헤더·다른 출처 리다이렉트 떼기·비밀 가림·실행 기록 URL 사용자 정보 가림
+# ---------------------------------------------------------------------------
+
+import base64 as _b64  # noqa: E402
+
+
+def _basic(username: str, password: str) -> str:
+    """Basic 인증 헤더 값의 Base64 덩어리(UTF-8)."""
+    return _b64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+
+
+def test_auth_basic_sets_authorization_header():
+    headers: Dict[str, str] = {}
+    params: Dict[str, str] = {}
+    auth = {"authType": "BASIC", "username": "홍길동", "password": "pa:ss 1"}
+    assert apply_auth(auth, headers, params) is None
+    assert headers == {"Authorization": "Basic " + _basic("홍길동", "pa:ss 1")}
+    assert params == {}
+
+
+def test_cross_origin_redirect_drops_basic_authorization():
+    req = make_request(
+        url="https://a.example.com/api",
+        headers={"X-Trace": "t1"},
+        auth={"authType": "BASIC", "username": "alice", "password": "BasicPw681"},
+    )
+    result, client, _ = _run_with_responses(
+        req,
+        [
+            _redirect(302, "https://a.example.com/same"),
+            _redirect(302, "https://b.example.com/next"),
+            mock_response({"items": []}),
+        ],
+    )
+
+    assert result.success is True
+    _, first = _sent(client, 0)
+    assert first["Authorization"] == "Basic " + _basic("alice", "BasicPw681")
+    _, same = _sent(client, 1)
+    assert same["Authorization"] == "Basic " + _basic("alice", "BasicPw681")
+    url, other = _sent(client, 2)
+    assert url == "https://b.example.com/next"
+    assert {k.lower() for k in other} == {"x-trace"}
+
+
+def test_basic_secret_and_base64_scrubbed_from_errors(caplog):
+    blob = _basic("alice", "LeakPw681abc")
+    req = make_request(
+        retry=RetryConfig(max_retries=1, initial_backoff_ms=0, max_backoff_ms=0),
+        auth={"authType": "BASIC", "username": "alice", "password": "LeakPw681abc"},
+    )
+    with caplog.at_level("WARNING"):
+        result, _, _ = _run_with_responses(
+            req, [RuntimeError(f"upstream echoed LeakPw681abc and Basic {blob}")]
+        )
+
+    assert result.success is False
+    assert "LeakPw681abc" not in result.error
+    assert blob not in result.error
+    assert "LeakPw681abc" not in caplog.text
+    assert blob not in caplog.text
+
+
+def test_execution_log_masks_url_userinfo_password():
+    # 옛 연결(API_KEY + baseUrl 사용자 정보)은 이관하지 않아 URL 에 사용자 정보가 남는다 — 실행 기록 요약 줄에서는 비밀번호를 가린다.
+    req = make_request(
+        url="http://svc:LegacyPw681@public.example.com/api/data",
+        auth={"authType": "API_KEY", "headerName": "X-Key", "apiKey": "k681"},
+    )
+    result, client, _ = _run_with_responses(req, [mock_response({"items": []})])
+
+    assert result.success is True
+    assert "LegacyPw681" not in result.execution_log
+    assert "url=http://svc:****@public.example.com/api/data" in result.execution_log
+    # 호출은 원래대로(사용자 정보 포함 URL) — 옛 연결 동작은 바꾸지 않는다
+    assert client.request.call_args.kwargs["url"] == "http://svc:LegacyPw681@public.example.com/api/data"
+
+
+def test_basic_strips_url_userinfo_so_configured_credentials_win():
+    # WD-681 리뷰: URL 에 사용자 정보가 남으면 httpx 가 그것으로 Basic 인증을 만들어 설정한 헤더를 덮는다 — BASIC 은 떼고 보낸다.
+    req = make_request(
+        url="https://old:OldPw681@a.example.com/api",
+        auth={"authType": "BASIC", "username": "alice", "password": "NewPw681"},
+    )
+    result, client, _ = _run_with_responses(
+        req,
+        [_redirect(302, "https://evil:EvilPw@a.example.com/next"), mock_response({"items": []})],
+    )
+
+    assert result.success is True
+    url, first = _sent(client, 0)
+    assert url == "https://a.example.com/api"
+    assert first["Authorization"] == "Basic " + _basic("alice", "NewPw681")
+    url2, second = _sent(client, 1)
+    assert url2 == "https://a.example.com/next"
+    assert second["Authorization"] == "Basic " + _basic("alice", "NewPw681")
+
+
+def test_basic_short_password_withholds_error_text():
+    # WD-681 리뷰: 4자 미만 비밀번호는 지울 수 없어 남으면 문장을 통째로 가린다(SMTP 규칙) — 비밀번호가 실행 기록에 나가지 않는다.
+    req = make_request(
+        retry=RetryConfig(max_retries=0, initial_backoff_ms=0, max_backoff_ms=0),
+        auth={"authType": "BASIC", "username": "alice", "password": "q7z"},
+    )
+    result, _, _ = _run_with_responses(req, [RuntimeError("upstream said q7z is wrong")])
+
+    assert result.success is False
+    assert "q7z" not in result.error

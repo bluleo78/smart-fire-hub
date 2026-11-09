@@ -40,14 +40,15 @@ public class ApiCallPreviewService {
     // 오류 문구 분류용(WD-150) — 타임아웃 문구의 초, DNS 실패 문구의 호스트.
     int timeoutMs = request.timeoutMs() != null ? request.timeoutMs() : DEFAULT_TIMEOUT_MS;
     String targetHost = null;
-    // 오류 문구에서 가릴 인증 쿼리 키(WD-177) — 인증 설정을 읽은 뒤에 채운다.
-    String authSecret = null;
+    // 오류 문구에서 가릴 비밀(WD-177) — 인증 설정을 읽은 뒤에 채운다. BASIC 은 비밀번호와 Base64 덩어리 둘이다(WD-681).
+    AuthQueryMasker.SentSecrets authSecret = AuthQueryMasker.SentSecrets.NONE;
     try {
       // 1. URL 결정: apiConnectionId가 있으면 connection.baseUrl + request.url()을 path로 해석
       // 연결은 한 번만 읽어 URL·빈 비밀 검사(방식·이름)에 함께 쓴다.
       ApiConnectionResponse conn =
           request.apiConnectionId() != null
-              ? apiConnectionService.getById(request.apiConnectionId())
+              // 호출 URL 은 저장 원문 baseUrl 로 만든다(WD-681) — 표시용 resolvedUrl 은 아래에서 사용자 정보를 가린다.
+              ? apiConnectionService.getByIdForCall(request.apiConnectionId())
               : null;
       String resolvedUrl = resolvePreviewUrl(request, conn);
 
@@ -60,7 +61,7 @@ public class ApiCallPreviewService {
       ApiCallAuth.ResolvedAuth auth = ApiCallAuth.resolve(conn, authConfig);
       // 응답 본문·오류 문구에서 가릴 값은 실제로 보내는 비밀 전부다(WD-647) — 예전에는 쿼리 키만 가려, 헤더 키·Bearer 토큰을 되울리는 대상이면
       // 화면·AI 챗으로 원문이 나갔다.
-      authSecret = auth.sentSecret();
+      authSecret = auth.sentSecrets();
 
       // 비밀이 비었거나(WD-639) 헤더 이름을 쓸 수 없으면(WD-647) 대상 서버를 부르지 않고 안내한다 — URL 조립보다 먼저 본다. 예전에는 URL
       // 조립 오류가 먼저 나 빈 비밀 안내가 가려졌다. 다른 실패처럼 표시 URL 도 돌려주되, 만들 수 없는 경우만 null 이다.
@@ -84,6 +85,7 @@ public class ApiCallPreviewService {
           auth.buildUrls(
               resolvedUrl, request.queryParams() != null ? request.queryParams() : Map.of());
       URI requestUri = urls.callUri();
+      // 표시용 URL 은 옛 연결·주소에 직접 쓴 사용자 정보(아이디:비밀번호@)의 비밀번호도 가려져 있다(WD-681, AuthQueryMasker.build).
       resolvedRequestUrl = urls.displayUrl();
       // 오류 문구용 호스트 — 밑줄 든 호스트도 실제 이름으로 보이게 UrlAuthority 로 읽는다(WD-676, getHost() 는 null).
       targetHost = UrlAuthority.hostOrNull(requestUri);
@@ -95,8 +97,12 @@ public class ApiCallPreviewService {
       // 7. 응답을 가린다 — (WD-177) 응답이 요청 파라미터·헤더를 되울려 보낸 비밀이 담겨 올 수 있다. rawJson 과 결과 행(previewRows)을 이
       //    가린 본문 하나로 만든다(WD-657) — 예전에는 rawJson 만 가리고 행은 원문 본문으로 만들어, httpbin /headers 같은 echo 응답에서
       //    「Authorization: Bearer <원문>」 이 행으로 화면·AI 챗에 나갔다. 가린 뒤 자른다(자른 뒤 가리면 경계에 걸친 앞부분이 남는다).
-      String maskedBody = AuthQueryMasker.maskBody(responseBody, authSecret);
-      String rawJson = truncate(maskedBody, MAX_RAW_JSON_BYTES);
+      //    BASIC 비밀번호(WD-681 리뷰)는 SMTP 와 같은 규칙으로 화면 원문(rawJson)에서만 지운다 — 결과 행 본문에서 지우면
+      //    「admin」 같은 짧은 낱말 비밀번호가 응답의 같은 글자를 모두 바꿔 행이 망가진다. 결과 행에서는 값 전체가 비밀번호인 칸만 가린다(maskRows).
+      //    rawJson 은 이미 가린 본문에 비밀번호 규칙만 더한다 — 본문을 두 번 가리지 않는다.
+      String maskedBody = authSecret.maskBody(responseBody);
+      String rawJson =
+          truncate(authSecret.maskPasswordInMaskedBody(maskedBody), MAX_RAW_JSON_BYTES);
 
       // 8. Convert field mappings
       List<ApiCallConfig.FieldMapping> fieldMappings = toFieldMappings(request.fieldMappings());
@@ -115,7 +121,8 @@ public class ApiCallPreviewService {
               : List.of();
 
       List<Map<String, Object>> previewRows =
-          allRows.size() > MAX_PREVIEW_ROWS ? allRows.subList(0, MAX_PREVIEW_ROWS) : allRows;
+          authSecret.maskRows(
+              allRows.size() > MAX_PREVIEW_ROWS ? allRows.subList(0, MAX_PREVIEW_ROWS) : allRows);
 
       return new ApiCallPreviewResponse(
           true, rawJson, previewRows, columns, allRows.size(), null, resolvedRequestUrl);
@@ -126,8 +133,7 @@ public class ApiCallPreviewService {
       // API 키가 담긴 URL 이 그대로 노출됐다. 로그에도 원문 메시지 대신 같은 문구를 남긴다(스택은 debug 로만).
       // 분류하지 못한 원문 메시지에 키가 실려 올 수 있어 인증 쿼리 키(원문·인코딩형)도 가린다(WD-177).
       String message =
-          AuthQueryMasker.scrubSecret(
-              ApiCallErrorMessages.describe(e, timeoutMs, targetHost), authSecret);
+          authSecret.scrubText(ApiCallErrorMessages.describe(e, timeoutMs, targetHost));
       log.warn("[Preview] 실패: {} ({})", message, e.getClass().getSimpleName());
       log.debug("[Preview] 실패 상세", e);
       return new ApiCallPreviewResponse(
@@ -156,6 +162,7 @@ public class ApiCallPreviewService {
    */
   private String displayUrlOrNull(String resolvedUrl, Map<String, String> queryParams) {
     try {
+      // 사용자 정보의 비밀번호는 build 가 가린다(WD-681).
       return AuthQueryMasker.build(resolvedUrl, queryParams, null, null).displayUrl();
     } catch (AuthQueryMasker.InvalidRequestUrlException e) {
       return null;

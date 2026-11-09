@@ -565,6 +565,14 @@ describe('SYSTEM_PROMPT', () => {
       expect(section).toMatch(/API_KEY.*BEARER|BEARER.*API_KEY/);
       expect(section).toMatch(/placeholder.*authConfig|authConfig.*placeholder|더미.*합성 금지/);
     });
+
+    // WD-681: BASIC 도 지원 인증 방식이며, baseUrl 에 사용자 정보(아이디:비밀번호@)를 넣지 않는다는 가드가 있어야 한다.
+    it('create_api_connection 인증 가드가 BASIC 과 baseUrl 사용자 정보 금지를 안내한다 (WD-681)', () => {
+      const section = SYSTEM_PROMPT.split('## L3. 통합 가드 패턴')[1];
+      expect(section).toContain('BASIC');
+      expect(section).toContain('password');
+      expect(section).toContain(':****@');
+    });
   });
 
   describe('도구 카탈로그 제거 후 enforcement 정책 보존 (refs #260)', () => {

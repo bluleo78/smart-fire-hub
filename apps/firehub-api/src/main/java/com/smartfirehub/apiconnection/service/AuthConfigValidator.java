@@ -55,18 +55,39 @@ public final class AuthConfigValidator {
    */
   private static final Pattern BEARER_PREFIX = Pattern.compile("(?i)^(bearer(\\s+|\\z))+");
 
+  /** BASIC 인증의 아이디 필드 이름(WD-681) — 비밀이 아니라 응답에서 가리지 않는다. */
+  public static final String BASIC_USERNAME_KEY = "username";
+
   /**
-   * 지원하는 인증 방식과 그 방식에 반드시 있어야 하는 비밀 필드(API_KEY → apiKey, BEARER → token). 인증 헤더·쿼리 조립이 읽는 키와 같다.
-   * 저장·저장 전 테스트 검사와 저장된 값 검사({@link #describeProblem})가 같은 규칙을 쓰도록 여기 한 곳에 둔다(WD-623).
+   * BASIC 인증의 비밀번호 필드 이름(WD-681) — 비밀 필드이고, 응답에서는 끝 글자 없이 고정 {@code ****} 로 가린다({@code
+   * ApiConnectionReader.maskSecretValue}).
+   */
+  public static final String BASIC_PASSWORD_KEY = "password";
+
+  /**
+   * 지원하는 인증 방식과 그 방식에 반드시 있어야 하는 비밀 필드(API_KEY → apiKey, BEARER → token, BASIC → password). 인증
+   * 헤더·쿼리 조립이 읽는 키와 같다. 저장·저장 전 테스트 검사와 저장된 값 검사({@link #describeProblem})가 같은 규칙을 쓰도록 여기 한 곳에
+   * 둔다(WD-623). BASIC(WD-681)은 비밀번호가 비밀 필드이고, 아이디({@link #BASIC_USERNAME_KEY})는 비밀이 아니지만 따로 필수로 본다.
    */
   static final Map<String, String> REQUIRED_SECRET_BY_AUTH_TYPE =
-      Map.of("API_KEY", "apiKey", "BEARER", "token");
+      Map.of("API_KEY", "apiKey", "BEARER", "token", "BASIC", BASIC_PASSWORD_KEY);
+
+  /** BASIC 아이디가 비었을 때의 안내(WD-681) — 비밀번호 안내와 같은 모양이다. */
+  public static final String MISSING_USERNAME_MESSAGE = "아이디를 입력하세요 (authConfig.username)";
+
+  /**
+   * BASIC 아이디에 콜론이 있을 때의 안내(WD-681) — Basic 인증은 「아이디:비밀번호」 를 첫 콜론에서 나누므로(RFC 7617) 아이디의 콜론 뒤가 비밀번호로
+   * 읽혀 인증이 깨진다.
+   */
+  static final String USERNAME_COLON_MESSAGE =
+      "아이디에 콜론(:)을 넣을 수 없습니다 — Basic 인증 아이디에는 콜론을 쓸 수 없습니다";
 
   /** 비밀 필드가 비었을 때의 안내(WD-588) — 줄바꿈 안내와 같은 이름(API 키·Bearer 토큰)을 쓴다. */
   private static final Map<String, String> MISSING_SECRET_MESSAGE_BY_AUTH_TYPE =
       Map.of(
           "API_KEY", "API 키를 입력하세요 (authConfig.apiKey)",
-          "BEARER", "Bearer 토큰을 입력하세요 (authConfig.token)");
+          "BEARER", "Bearer 토큰을 입력하세요 (authConfig.token)",
+          "BASIC", "비밀번호를 입력하세요 (authConfig.password)");
 
   /**
    * Bearer 토큰 값을 정리한다 — 앞뒤 공백을 떼고 앞에 붙은 「Bearer」 접두어(겹친 것까지)를 뗀다. 저장 검사와 비밀 필드 빈 값 판정이 같은 정리를 거치도록
@@ -186,6 +207,11 @@ public final class AuthConfigValidator {
   public static String describeSentValueProblem(ApiCallAuth.ResolvedAuth auth) {
     String authType = auth.authType();
     String secret = auth.secret();
+    // BASIC 은 아이디를 비밀번호보다 먼저 본다(WD-681) — 화면 칸 순서(아이디 → 비밀번호)와 같다.
+    if (auth.isBasic()) {
+      String problem = basicUsernameProblem(auth.username());
+      if (problem != null) return problem;
+    }
     if (isSecretValueMissing(authType, secret)) {
       return MISSING_SECRET_MESSAGE_BY_AUTH_TYPE.get(authType);
     }
@@ -195,13 +221,14 @@ public final class AuthConfigValidator {
     }
     if ("API_KEY".equals(authType)) return lineBreakProblem(secret, "API 키");
     if (auth.isBearer()) return lineBreakProblem(secret, "Bearer 토큰");
+    if (auth.isBasic()) return lineBreakProblem(secret, "비밀번호");
     return null;
   }
 
   /**
    * 저장·저장 전 테스트에 쓰는 검사. 잘못된 필드는 한국어 사유와 함께 {@link ApiConnectionException}(400)으로 거절한다.
    *
-   * @param authType 검증을 마친 인증 방식(API_KEY·BEARER)
+   * @param authType 검증을 마친 인증 방식(API_KEY·BEARER·BASIC)
    * @param config 가린 값을 저장 원문으로 채운 authConfig. null 이면 비밀 필드 없음으로 거절한다
    * @return 정리한 새 Map — BEARER 토큰 앞의 「Bearer 」 를 뗀다(요청 Map 은 불변일 수 있어 건드리지 않는다)
    */
@@ -230,6 +257,11 @@ public final class AuthConfigValidator {
    * @return 문제 사유(한국어) 또는 문제가 없으면 null
    */
   public static String describeProblem(String authType, Map<String, String> config) {
+    // BASIC 은 아이디(비밀 아님)부터 본다(WD-681) — 화면 칸 순서와 같고, 아이디가 없으면 비밀번호가 있어도 인증할 수 없다.
+    if ("BASIC".equals(authType)) {
+      String problem = basicUsernameProblem(config != null ? config.get(BASIC_USERNAME_KEY) : null);
+      if (problem != null) return problem;
+    }
     if (isSecretMissing(authType, config)) {
       return MISSING_SECRET_MESSAGE_BY_AUTH_TYPE.get(authType);
     }
@@ -254,7 +286,25 @@ public final class AuthConfigValidator {
     if ("BEARER".equals(authType)) {
       return lineBreakProblem(config.get("token"), "Bearer 토큰");
     }
+    if ("BASIC".equals(authType)) {
+      return lineBreakProblem(config.get(BASIC_PASSWORD_KEY), "비밀번호");
+    }
     return null;
+  }
+
+  /**
+   * BASIC 아이디를 쓸 수 있는지 본다(WD-681) — 비었는지(공백만이어도 빈 값), 콜론·줄바꿈이 있는지. 저장 검사({@link #describeProblem})와
+   * 보내는 값 검사({@link #describeSentValueProblem})가 같은 규칙을 쓴다. 아이디는 앞뒤 공백을 떼지 않는다 — 공백도 아이디의 일부일 수 있다.
+   *
+   * <p>API_CALL 호출 전 검사({@code ApiCallAuth.describeProblem}, 인라인 BASIC 포함)도 같은 규칙을 쓰도록 공개한다(WD-681
+   * 리뷰).
+   *
+   * @return 문제 사유(한국어) 또는 문제가 없으면 null
+   */
+  public static String basicUsernameProblem(String username) {
+    if (username == null || username.isBlank()) return MISSING_USERNAME_MESSAGE;
+    if (username.indexOf(':') >= 0) return USERNAME_COLON_MESSAGE;
+    return lineBreakProblem(username, "아이디");
   }
 
   /**

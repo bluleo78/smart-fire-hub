@@ -827,7 +827,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
    * CHECK 제약에 걸려 409 일반 문구가 됐다.
    */
   @ParameterizedTest
-  @ValueSource(strings = {"OAUTH2", "BASIC", "FOO"})
+  @ValueSource(strings = {"OAUTH2", "FOO"})
   void update_unsupportedAuthType_rejectedInKoreanAndUnchanged(String authType) {
     ApiConnectionResponse created =
         apiConnectionService.create(
@@ -840,14 +840,14 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
                     new UpdateApiConnectionRequest(null, null, authType, null, null, null),
                     testUserId))
         .isExactlyInstanceOf(ApiConnectionException.class)
-        .hasMessage("지원하지 않는 인증 방식입니다: " + authType + " (사용 가능: API_KEY, BEARER)");
+        .hasMessage("지원하지 않는 인증 방식입니다: " + authType + " (사용 가능: API_KEY, BEARER, BASIC)");
 
     assertAuthUnchanged(created.id(), "API_KEY", "apiKey", "secret");
   }
 
   /** 생성도 지원 목록 밖의 authType 을 400 한국어로 거절하고 행을 만들지 않는다. */
   @ParameterizedTest
-  @ValueSource(strings = {"OAUTH2", "BASIC", "FOO"})
+  @ValueSource(strings = {"OAUTH2", "FOO"})
   void create_unsupportedAuthType_rejectedInKorean(String authType) {
     String name = "WD180 create " + authType + " " + System.nanoTime();
     assertThatThrownBy(
@@ -862,7 +862,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
                         null),
                     testUserId))
         .isExactlyInstanceOf(ApiConnectionException.class)
-        .hasMessage("지원하지 않는 인증 방식입니다: " + authType + " (사용 가능: API_KEY, BEARER)");
+        .hasMessage("지원하지 않는 인증 방식입니다: " + authType + " (사용 가능: API_KEY, BEARER, BASIC)");
 
     assertThat(apiConnectionService.getAll()).noneMatch(c -> name.equals(c.name()));
   }
@@ -1817,5 +1817,416 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("authConfig.token");
     assertAuthUnchanged(other, "BEARER", "token", "wd623-stored-token");
+  }
+
+  // ── WD-681: BASIC 인증 + baseUrl 사용자 정보 이관·가림 ───────────────────────────
+
+  /** BASIC 요청을 만든다. */
+  private CreateApiConnectionRequest basicReq(
+      String name, String baseUrl, Map<String, String> authConfig) {
+    return new CreateApiConnectionRequest(name, null, "BASIC", authConfig, baseUrl, null);
+  }
+
+  /** 서비스 검사를 거치지 않고 사용자 정보가 든 baseUrl 로 저장된 옛 연결을 흉내 낸다(WD-681 이전 저장분). */
+  private Long saveLegacyWithBaseUrl(
+      String authType, Map<String, String> authConfig, String baseUrl) throws Exception {
+    String encrypted = encryptionService.encrypt(objectMapper.writeValueAsString(authConfig));
+    return tx.execute(
+        s ->
+            apiConnectionRepository.save(
+                "WD681 legacy " + System.nanoTime(),
+                null,
+                authType,
+                encrypted,
+                testUserId,
+                baseUrl,
+                null));
+  }
+
+  /** DB 에 저장된 base_url 원문을 읽는다(응답은 가리므로 저장값은 직접 본다). */
+  private String storedBaseUrl(Long id) {
+    return tx.execute(
+        s ->
+            dsl.select(field(name("api_connection", "base_url"), String.class))
+                .from(API_CONNECTION)
+                .where(field(name("api_connection", "id"), Long.class).eq(id))
+                .fetchOne(0, String.class));
+  }
+
+  /** BASIC 은 아이디·비밀번호를 받아 저장하고, 비밀번호만 가려 응답한다. 가린 비밀번호를 그대로 보내 수정하면 저장값이 유지된다. */
+  @Test
+  void basic_createAndUpdateWithMaskedPassword_keepsStoredPassword() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            basicReq(
+                "WD681 basic",
+                "https://wd681-basic.example.com",
+                Map.of("username", "alice", "password", "s3cretPass")),
+            testUserId);
+
+    assertThat(created.authType()).isEqualTo("BASIC");
+    assertThat(created.maskedAuthConfig())
+        .containsEntry("username", "alice")
+        // 비밀번호는 끝 글자 없이 고정 가림(****)이다(WD-681 리뷰) — API 키처럼 끝 4자를 보이지 않는다.
+        .containsEntry("password", "****");
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()))
+        .containsEntry("username", "alice")
+        .containsEntry("password", "s3cretPass");
+
+    apiConnectionService.update(
+        created.id(),
+        new UpdateApiConnectionRequest(
+            null, "desc", "BASIC", Map.of("username", "alice2", "password", "****"), null, null),
+        testUserId);
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()))
+        .containsEntry("username", "alice2")
+        .containsEntry("password", "s3cretPass");
+  }
+
+  /** BASIC + baseUrl 사용자 정보: 디코딩한 아이디·비밀번호를 인증 설정으로 옮겨 암호화하고 baseUrl 에서는 뗀다. */
+  @Test
+  void basic_createWithUserInfo_movesCredentialsAndStripsBaseUrl() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            basicReq("WD681 move", "https://al%20ice:p%40ss+1@wd681-move.example.com/v1/", null),
+            testUserId);
+
+    assertThat(created.baseUrl()).isEqualTo("https://wd681-move.example.com/v1");
+    assertThat(storedBaseUrl(created.id())).isEqualTo("https://wd681-move.example.com/v1");
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()))
+        .containsEntry("username", "al ice")
+        .containsEntry("password", "p@ss+1");
+    assertThat(created.maskedAuthConfig()).containsEntry("password", "****");
+  }
+
+  /** 인증 설정과 사용자 정보가 같으면 그대로, 다르면 400(어느 쪽이 맞는지 고를 수 없다). */
+  @Test
+  void basic_userInfoConflictsWithConfig_rejected_sameValueAccepted() {
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    basicReq(
+                        "WD681 conflict",
+                        "https://alice:one@wd681-conflict.example.com",
+                        Map.of("username", "alice", "password", "two")),
+                    testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("사용자 정보가 baseUrl 과 인증 설정에 다르게 들어 있습니다 — 한 곳에만 넣으세요");
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    basicReq(
+                        "WD681 conflict2",
+                        "https://bob:one@wd681-conflict.example.com",
+                        Map.of("username", "alice", "password", "one")),
+                    testUserId))
+        .hasMessage("사용자 정보가 baseUrl 과 인증 설정에 다르게 들어 있습니다 — 한 곳에만 넣으세요");
+
+    ApiConnectionResponse same =
+        apiConnectionService.create(
+            basicReq(
+                "WD681 same",
+                "https://alice:one@wd681-same.example.com",
+                Map.of("username", "alice", "password", "one")),
+            testUserId);
+    assertThat(same.baseUrl()).isEqualTo("https://wd681-same.example.com");
+  }
+
+  /** 가린 비밀번호(****)가 든 baseUrl 은 BASIC 으로 옮기지 않고 400 — 가린 값이 실제 비밀번호로 저장되면 안 된다. */
+  @Test
+  void basic_maskedPasswordInBaseUrl_rejected() {
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    basicReq("WD681 masked", "https://alice:****@wd681-masked.example.com", null),
+                    testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessageStartingWith("baseUrl 의 비밀번호에 가려진 값(****)은 쓸 수 없습니다");
+  }
+
+  /** API_KEY·BEARER 인데 새 사용자 정보가 들어오면 400 — 생성·수정·저장 전 테스트 모두. */
+  @Test
+  void apiKeyOrBearer_withNewUserInfo_rejected() {
+    String msg = "baseUrl 에 사용자 정보(아이디:비밀번호@)를 넣으려면 인증 방식을 BASIC 으로 고르세요";
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    validReq("https://u:p@wd681-apikey.example.com", "WD681 apikey"), testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage(msg);
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.testConnectionPayload(
+                    new CreateApiConnectionRequest(
+                        "x",
+                        null,
+                        "BEARER",
+                        Map.of("token", "tok"),
+                        "https://u:p@wd681-bearer.example.com",
+                        null)))
+        .hasMessage(msg);
+
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            validReq("https://wd681-upd.example.com", "WD681 upd"), testUserId);
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    created.id(),
+                    new UpdateApiConnectionRequest(
+                        null, null, null, null, "https://u:p@wd681-upd.example.com", null),
+                    testUserId))
+        .hasMessage(msg);
+    assertThat(storedBaseUrl(created.id())).isEqualTo("https://wd681-upd.example.com");
+  }
+
+  /**
+   * 옛 연결(API_KEY + 사용자 정보)은 이관하지 않고 응답에서만 가린다 — 목록·상세·선택 목록 모두. 가린 baseUrl 을 그대로 되돌려 보내며 다른 칸만 고치면
+   * 저장된 원래 값이 유지된다.
+   */
+  @Test
+  void legacyUserInfo_maskedInResponses_andMaskedEchoKeepsStoredValue() throws Exception {
+    String raw = "https://svc:LegacyPw1@wd681-legacy.example.com/api";
+    Long id =
+        saveLegacyWithBaseUrl("API_KEY", Map.of("headerName", "X-Key", "apiKey", "k-123"), raw);
+    String masked = "https://svc:****@wd681-legacy.example.com/api";
+
+    assertThat(apiConnectionService.getById(id).baseUrl()).isEqualTo(masked);
+    assertThat(apiConnectionService.getAll())
+        .filteredOn(c -> c.id().equals(id))
+        .singleElement()
+        .extracting(ApiConnectionResponse::baseUrl)
+        .isEqualTo(masked);
+    assertThat(apiConnectionService.findSelectable())
+        .filteredOn(c -> c.id().equals(id))
+        .singleElement()
+        .extracting(ApiConnectionSelectableResponse::baseUrl)
+        .isEqualTo(masked);
+    // 호출용 조회만 원문이다(실행·미리보기·연결 테스트가 원래대로 부른다)
+    assertThat(apiConnectionService.getByIdForCall(id).baseUrl()).isEqualTo(raw);
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id,
+            new UpdateApiConnectionRequest(
+                "WD681 renamed " + System.nanoTime(), null, null, null, masked + "/", null),
+            testUserId);
+    assertThat(updated.baseUrl()).isEqualTo(masked);
+    assertThat(storedBaseUrl(id)).isEqualTo(raw);
+    assertThat(apiConnectionService.getDecryptedAuthConfig(id)).containsEntry("apiKey", "k-123");
+  }
+
+  /**
+   * 가린 baseUrl 의 호스트·포트·스킴·아이디를 바꾸면 저장된 비밀번호를 붙이지 않고 400(WD-681 리뷰) — 다른 주소로 저장된 비밀이 가지 않게, 「사용자
+   * 정보를 지우거나 BASIC 을 고르라」고 안내한다. BASIC 으로 바꾸는 수정도 같다.
+   */
+  @Test
+  void legacyUserInfo_maskedEchoWithChangedOrigin_rejectedWithOtherAddressMessage()
+      throws Exception {
+    String raw = "https://svc:LegacyPw2@wd681-host.example.com/api";
+    Long id = saveLegacyWithBaseUrl("BEARER", Map.of("token", "tok-1"), raw);
+
+    for (String changed :
+        List.of(
+            "https://svc:****@evil.example.com/api",
+            "https://svc:****@wd681-host.example.com:8443/api",
+            "http://svc:****@wd681-host.example.com/api",
+            "https://other:****@wd681-host.example.com/api")) {
+      assertThatThrownBy(
+              () ->
+                  apiConnectionService.update(
+                      id,
+                      new UpdateApiConnectionRequest(null, null, null, null, changed, null),
+                      testUserId))
+          .as(changed)
+          .isExactlyInstanceOf(ApiConnectionException.class)
+          .hasMessage(ApiConnectionService.USERINFO_MASKED_OTHER_ADDRESS_MESSAGE);
+    }
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    id,
+                    new UpdateApiConnectionRequest(
+                        null,
+                        null,
+                        "BASIC",
+                        Map.of("username", "svc"),
+                        "https://svc:****@evil.example.com/api",
+                        null),
+                    testUserId))
+        .hasMessage(ApiConnectionService.USERINFO_MASKED_OTHER_ADDRESS_MESSAGE);
+    assertThat(storedBaseUrl(id)).isEqualTo(raw);
+  }
+
+  /**
+   * 옛 연결(API_KEY·BEARER + 사용자 정보)의 가린 baseUrl 에서 경로·쿼리만 고치면 같은 주소(스킴·호스트·포트)·같은 아이디라 저장된 비밀번호를 새
+   * URL 에 되살려 저장한다(WD-681 리뷰) — 예전에는 「BASIC 을 고르라」 400 이었다.
+   */
+  @Test
+  void legacyUserInfo_maskedEchoWithChangedPathOrQuery_restoresStoredPassword() throws Exception {
+    String raw = "https://svc:Legacy%40Pw5@wd681-path.example.com/api";
+    Long id = saveLegacyWithBaseUrl("BEARER", Map.of("token", "tok-5"), raw);
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id,
+            new UpdateApiConnectionRequest(
+                null, null, null, null, "https://svc:****@WD681-PATH.example.com/v2?x=1", null),
+            testUserId);
+
+    assertThat(storedBaseUrl(id))
+        .isEqualTo("https://svc:Legacy%40Pw5@WD681-PATH.example.com/v2?x=1");
+    assertThat(updated.baseUrl()).isEqualTo("https://svc:****@WD681-PATH.example.com/v2?x=1");
+    assertThat(apiConnectionService.getDecryptedAuthConfig(id)).containsEntry("token", "tok-5");
+  }
+
+  /**
+   * BASIC 연결을 authConfig 없이 baseUrl 에 새 사용자 정보만 넣어 고치면 그 사용자 정보가 저장된 아이디·비밀번호를 바꾼다(WD-681 리뷰) —
+   * 예전에는 저장된 값과 합치며 값이 다르면 늘 「충돌」 400 이었다.
+   */
+  @Test
+  void basic_updateWithNewUserInfoAndNoAuthConfig_replacesStoredCredentials() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            basicReq(
+                "WD681 replace " + System.nanoTime(),
+                "https://wd681-replace.example.com",
+                Map.of("username", "alice", "password", "oldPass1")),
+            testUserId);
+
+    apiConnectionService.update(
+        created.id(),
+        new UpdateApiConnectionRequest(
+            null, null, null, null, "https://bob:newPass2@wd681-replace.example.com", null),
+        testUserId);
+
+    assertThat(storedBaseUrl(created.id())).isEqualTo("https://wd681-replace.example.com");
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()))
+        .containsEntry("username", "bob")
+        .containsEntry("password", "newPass2");
+  }
+
+  /** 같은 요청이 authConfig 아이디·비밀번호와 다른 baseUrl 사용자 정보를 함께 실으면 400(WD-681 리뷰) — 어느 쪽이 맞는지 고를 수 없다. */
+  @Test
+  void basic_updateWithAuthConfigAndDifferentUserInfo_conflicts() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            basicReq(
+                "WD681 upd conflict " + System.nanoTime(),
+                "https://wd681-updconflict.example.com",
+                Map.of("username", "alice", "password", "oldPass1")),
+            testUserId);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    created.id(),
+                    new UpdateApiConnectionRequest(
+                        null,
+                        null,
+                        null,
+                        Map.of("username", "alice", "password", "typedPass"),
+                        "https://alice:otherPass@wd681-updconflict.example.com",
+                        null),
+                    testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage(ApiConnectionService.USERINFO_CONFLICT_MESSAGE);
+    // 가린 비밀번호(****)를 그대로 되돌려 보낸 것은 새로 입력한 값이 아니다 — baseUrl 의 비밀번호가 바꾼다.
+    apiConnectionService.update(
+        created.id(),
+        new UpdateApiConnectionRequest(
+            null,
+            null,
+            null,
+            Map.of("username", "alice", "password", "****"),
+            "https://alice:newPass3@wd681-updconflict.example.com",
+            null),
+        testUserId);
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()))
+        .containsEntry("username", "alice")
+        .containsEntry("password", "newPass3");
+  }
+
+  /**
+   * 옛 연결을 BASIC 으로 바꾸며 아이디·비밀번호를 입력하면, 저장소에서 되살린 사용자 정보(입력한 값이 아니다)와 충돌로 보지 않고 입력한 값을 쓴다(WD-681
+   * 리뷰). baseUrl 의 옛 사용자 정보는 떼기만 한다 — 가린 baseUrl 을 그대로 보내든 baseUrl 을 보내지 않든 같다.
+   */
+  @Test
+  void legacyUserInfo_switchToBasicWithTypedCredentials_typedWinAndLegacyStripped()
+      throws Exception {
+    Long echoed =
+        saveLegacyWithBaseUrl(
+            "API_KEY", Map.of("apiKey", "k-6"), "https://svc:LegacyPw6@wd681-typed.example.com/a");
+    apiConnectionService.update(
+        echoed,
+        new UpdateApiConnectionRequest(
+            null,
+            null,
+            "BASIC",
+            Map.of("username", "newUser", "password", "newPass6"),
+            "https://svc:****@wd681-typed.example.com/a",
+            null),
+        testUserId);
+    assertThat(storedBaseUrl(echoed)).isEqualTo("https://wd681-typed.example.com/a");
+    assertThat(apiConnectionService.getDecryptedAuthConfig(echoed))
+        .containsEntry("username", "newUser")
+        .containsEntry("password", "newPass6");
+
+    Long omitted =
+        saveLegacyWithBaseUrl(
+            "BEARER", Map.of("token", "t-7"), "https://svc:LegacyPw7@wd681-typed2.example.com");
+    apiConnectionService.update(
+        omitted,
+        new UpdateApiConnectionRequest(
+            null, null, "BASIC", Map.of("username", "svc", "password", "newPass7"), null, null),
+        testUserId);
+    assertThat(storedBaseUrl(omitted)).isEqualTo("https://wd681-typed2.example.com");
+    assertThat(apiConnectionService.getDecryptedAuthConfig(omitted))
+        .containsEntry("username", "svc")
+        .containsEntry("password", "newPass7");
+  }
+
+  /** 옛 연결을 BASIC 으로 바꾸며 가린 baseUrl 을 그대로 보내면 그때 저장된 사용자 정보가 인증 설정으로 옮겨지고 baseUrl 에서 빠진다. */
+  @Test
+  void legacyUserInfo_switchToBasic_movesStoredCredentials() throws Exception {
+    String raw = "https://svc:Legacy%40Pw3@wd681-switch.example.com/api";
+    Long id = saveLegacyWithBaseUrl("API_KEY", Map.of("apiKey", "k-1"), raw);
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id,
+            new UpdateApiConnectionRequest(
+                null,
+                null,
+                "BASIC",
+                Map.of("username", "", "password", ""),
+                "https://svc:****@wd681-switch.example.com/api",
+                null),
+            testUserId);
+
+    assertThat(updated.authType()).isEqualTo("BASIC");
+    assertThat(updated.baseUrl()).isEqualTo("https://wd681-switch.example.com/api");
+    assertThat(storedBaseUrl(id)).isEqualTo("https://wd681-switch.example.com/api");
+    assertThat(apiConnectionService.getDecryptedAuthConfig(id))
+        .containsEntry("username", "svc")
+        .containsEntry("password", "Legacy@Pw3")
+        .doesNotContainKey("apiKey");
+  }
+
+  /** baseUrl 을 보내지 않고 BASIC 으로만 바꿔도 저장된 사용자 정보를 옮긴다 — BASIC 연결의 baseUrl 에는 사용자 정보를 남기지 않는다. */
+  @Test
+  void legacyUserInfo_switchToBasicWithoutBaseUrl_movesStoredCredentials() throws Exception {
+    Long id =
+        saveLegacyWithBaseUrl(
+            "BEARER", Map.of("token", "t"), "https://svc:Pw4@wd681-switch2.example.com");
+
+    apiConnectionService.update(
+        id, new UpdateApiConnectionRequest(null, null, "BASIC", null, null, null), testUserId);
+
+    assertThat(storedBaseUrl(id)).isEqualTo("https://wd681-switch2.example.com");
+    assertThat(apiConnectionService.getDecryptedAuthConfig(id))
+        .containsEntry("username", "svc")
+        .containsEntry("password", "Pw4");
   }
 }

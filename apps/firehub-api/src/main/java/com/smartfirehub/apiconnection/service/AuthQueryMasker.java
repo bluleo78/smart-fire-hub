@@ -15,10 +15,12 @@ import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -116,7 +118,9 @@ public final class AuthQueryMasker {
                     : encodeParam(value)));
     // build()(encoded=false) 는 문자 검사 없이 이어 붙이기만 한다 — 가린 값의 끝 4자에 '=' 나 잘린 '%3' 가 있어도 표시 URL 은
     // 만들어져야 하므로 검사하는 build(true) 를 쓰지 않는다. 혹시 기준 URL 자체에 키가 있으면 그것도 지운다(방어).
-    String displayUrl = scrubSecret(displayBuilder.build().toUriString(), authSecret);
+    // 기준 URL 의 사용자 정보(아이디:비밀번호@)는 비밀번호를 가린다(WD-681) — 표시 URL 을 쓰는 곳마다 따로 가리지 않게 여기서 한다.
+    String displayUrl =
+        BaseUrlUserInfo.mask(scrubSecret(displayBuilder.build().toUriString(), authSecret));
 
     // 호출용: 이름·값을 모두 공용 규칙으로 한 번 인코딩한다(인증 키 WD-182, 정적·페이지네이션 파라미터 WD-200). 인코딩한 조각은 비예약 문자와
     // %XX 로만 이뤄져 build(true) 검사를 항상 통과하므로, build(true) 가 실패하는 것은 기준 URL 자체가 잘못된 경우뿐이다.
@@ -149,6 +153,202 @@ public final class AuthQueryMasker {
     return text == null || scrubber == null ? text : scrubber.scrub(text);
   }
 
+  /**
+   * 비밀번호·Basic 덩어리 자리에 넣는 고정 가림 문자열(WD-681) — API 키와 달리 끝 4자도 보이지 않는다. SMTP 실패 문구·baseUrl 사용자
+   * 정보({@link BaseUrlUserInfo#mask})·응답의 비밀번호 필드가 모두 이 값 하나를 쓴다.
+   */
+  public static final String PASSWORD_MASK = "****";
+
+  /**
+   * 가린 뒤에도 비밀번호가 글자 그대로 남은 문장(지우기엔 짧은 비밀번호) 대신 쓰는 문구(WD-681). SMTP 실패 문구({@code
+   * SmtpFailureMessages.detail})는 같은 규칙({@link #scrubPassword})에서 이 문구 대신 예외 클래스 이름을 쓴다 — 비밀번호는 어떤
+   * 경우에도 문구에 나가지 않는다.
+   */
+  public static final String PASSWORD_WITHHELD = "(비밀번호와 같은 글자가 들어 있어 내용을 가렸습니다)";
+
+  /**
+   * 자유 문장(오류 문구·헤더 값)에서 비밀번호를 지우는 규칙 한 곳(SMTP WD-676 · BASIC WD-681). 원문·URL 인코딩형({@link
+   * #scrubSecret})과 Base64 형(AUTH LOGIN 형태)을 고정 {@link #PASSWORD_MASK} 로 바꾸고, 지운 뒤에도 비밀번호가 글자 그대로
+   * 남으면 (지우기엔 짧은 값) 문장 전체를 {@code withheld} 로 바꾼다.
+   *
+   * @param text 가릴 문장(null 이면 null)
+   * @param password 비밀번호(null·빈 값이면 받은 그대로)
+   * @param withheld 비밀번호가 남았을 때 대신 쓸 문구
+   */
+  public static String scrubPassword(String text, String password, String withheld) {
+    return PasswordScrub.of(password).apply(text, withheld);
+  }
+
+  /**
+   * {@link #scrubPassword} 규칙을 형태(원문·인코딩형·Base64)를 한 번만 계산해 둔 함수로 돌려준다 — 같은 비밀번호로 여러 문장을 가리는
+   * 호출부(SMTP 마스커 {@code SmtpFailureMessages.CredentialMasker}, WD-686)가 문장마다 형태를 다시 만들지 않게
+   * 한다(WD-681 규칙과 WD-686 의 한 번 계산을 함께 지키려고 둔다). 비밀번호가 남으면 {@code withheld} 를 돌려준다 — null 을 넘기면 호출부가
+   * 문장을 버릴 수 있다.
+   *
+   * @param password 비밀번호(null·빈 값이면 받은 그대로 돌려주는 함수)
+   * @param withheld 비밀번호가 남았을 때 대신 돌려줄 값(null 가능)
+   */
+  public static java.util.function.UnaryOperator<String> passwordScrubberFor(
+      String password, String withheld) {
+    PasswordScrub scrub = PasswordScrub.of(password);
+    return text -> scrub.apply(text, withheld);
+  }
+
+  /**
+   * 비밀번호 하나를 지우는 데 필요한 값을 한 번만 계산해 둔 것 — {@link SentSecrets} 가 문장마다 형태를 다시 만들지 않도록 만들 때 한 번 계산한다.
+   *
+   * @param password 비밀번호. null 이면 지울 것 없음
+   * @param scrubber 원문·인코딩형 지우개(4자 미만이면 null)
+   * @param base64 Base64 형(AUTH LOGIN 형태)
+   */
+  private record PasswordScrub(String password, Scrubber scrubber, String base64) {
+
+    /** 지울 것이 없는 값. */
+    private static final PasswordScrub NONE = new PasswordScrub(null, null, null);
+
+    static PasswordScrub of(String password) {
+      if (password == null || password.isEmpty()) return NONE;
+      return new PasswordScrub(
+          password,
+          Scrubber.of(password, PASSWORD_MASK),
+          Base64.getEncoder().encodeToString(password.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /** {@link AuthQueryMasker#scrubPassword} 규칙을 적용한다. */
+    String apply(String text, String withheld) {
+      if (text == null || password == null) return text;
+      String out = scrubber != null ? scrubber.scrub(text) : text;
+      out = out.replace(base64, PASSWORD_MASK);
+      return out.contains(password) ? withheld : out;
+    }
+  }
+
+  /**
+   * 이번 요청에 실은 비밀과 그 가림 규칙(WD-681). 연결 테스트·API_CALL 미리보기·Java 실행기가 응답 본문·헤더·오류 문구를 가릴 때 이것 하나만 쓴다 —
+   * Python 실행기({@code api_call_errors.SentSecrets})도 같은 규칙이고 공용 사례 표({@code basicScrub})로 맞춘다.
+   *
+   * <ul>
+   *   <li><b>API 키·Bearer 토큰({@code key})</b>: 예전 그대로 {@code ****}+끝 4자로 가리고, 4자 미만이면 손대지 않는다.
+   *   <li><b>Basic 덩어리({@code basicToken}, base64(아이디:비밀번호))</b>: 언제나 고정 {@code ****} 로 가린다 —
+   *       「Authorization: Basic …」 을 되울리면 풀어서 비밀번호를 알 수 있고, 끝 4자는 비밀번호 끝 3바이트를 드러낸다. 덩어리는 늘 4자
+   *       이상이다.
+   *   <li><b>Basic 비밀번호({@code password})</b>: SMTP 비밀번호(WD-676)와 같은 규칙({@link #scrubPassword}) —
+   *       자유 문장(오류 문구·헤더·응답 원문)에서 원문·인코딩형을 고정 {@code ****} 로 지우고, 지운 뒤에도 남으면(4자 미만) 그 문장을 {@link
+   *       #PASSWORD_WITHHELD} 로 바꾼다. 결과 행을 만드는 본문({@link #maskBody})에서는 지우지 않는다 — 「admin」 같은 짧은 낱말
+   *       비밀번호가 응답의 같은 글자를 모두 바꿔 결과 행이 망가졌다. 대신 결과 행에서는 값 전체가 비밀번호와 같은 칸만 가린다({@link #maskRows}).
+   * </ul>
+   *
+   * <p>지우개(형태 목록·가림 문자열)는 만들 때 한 번만 계산한다 — 응답 헤더마다·문장마다 다시 만들지 않는다. 같음 비교는 세 비밀 값으로만 한다.
+   */
+  public static final class SentSecrets {
+
+    /** 가릴 비밀이 없는 설정(인증 없음). */
+    public static final SentSecrets NONE = new SentSecrets(null, null, null);
+
+    private final String key;
+    private final String basicToken;
+    private final String password;
+    private final Scrubber keyScrubber;
+    private final Scrubber tokenScrubber;
+    private final Scrubber passwordBodyScrubber;
+    private final PasswordScrub passwordScrub;
+
+    /**
+     * @param key API 키·Bearer 토큰(없으면 null)
+     * @param basicToken Basic 덩어리(BASIC 이 아니면 null)
+     * @param password Basic 비밀번호(BASIC 이 아니면 null)
+     */
+    public SentSecrets(String key, String basicToken, String password) {
+      this.key = key;
+      this.basicToken = basicToken;
+      this.password = password;
+      this.keyScrubber = Scrubber.of(key);
+      this.tokenScrubber = Scrubber.of(basicToken, PASSWORD_MASK);
+      this.passwordBodyScrubber = Scrubber.of(password, PASSWORD_MASK);
+      this.passwordScrub = PasswordScrub.of(password);
+    }
+
+    public String key() {
+      return key;
+    }
+
+    public String basicToken() {
+      return basicToken;
+    }
+
+    public String password() {
+      return password;
+    }
+
+    /** 오류 문구·헤더 값 같은 자유 문장을 가린다. */
+    public String scrubText(String text) {
+      if (text == null) return null;
+      String out = keyScrubber != null ? keyScrubber.scrub(text) : text;
+      out = tokenScrubber != null ? tokenScrubber.scrub(out) : out;
+      return passwordScrub.apply(out, PASSWORD_WITHHELD);
+    }
+
+    /**
+     * 결과 행을 만드는 응답 본문을 가린다 — API 키·토큰·Basic 덩어리만({@link AuthQueryMasker#maskBody} 규칙, JSON 이스케이프
+     * 포함). Basic 비밀번호 원문은 건드리지 않는다(구조 데이터 보존, 위 설명).
+     */
+    public String maskBody(String body) {
+      return maskBodyWith(tokenScrubber, maskBodyWith(keyScrubber, body));
+    }
+
+    /** 화면에 그대로 보이는 응답 원문(rawJson·연결 테스트 본문)을 가린다 — {@link #maskBody} 에 비밀번호 규칙을 더한다. */
+    public String maskRawText(String body) {
+      return maskPasswordInMaskedBody(maskBody(body));
+    }
+
+    /**
+     * 이미 {@link #maskBody} 를 거친 본문에 비밀번호 규칙만 더한다 — 결과 행용 본문과 화면 원문을 함께 만드는 곳(API_CALL 미리보기)이 본문을 두
+     * 번 가리지 않게 쓴다. 지운 뒤에도 비밀번호가 남으면(지우기엔 짧은 값) 본문 전체를 {@link #PASSWORD_WITHHELD} 로 바꾼다.
+     */
+    public String maskPasswordInMaskedBody(String maskedBody) {
+      if (maskedBody == null || password == null || password.isEmpty()) return maskedBody;
+      String out = maskBodyWith(passwordBodyScrubber, maskedBody);
+      return out.contains(password) ? PASSWORD_WITHHELD : out;
+    }
+
+    /**
+     * 결과 행에서 값 전체가 Basic 비밀번호와 같은 칸만 {@code ****} 로 바꾼다 — 다른 칸·부분 일치는 그대로다. 바꿀 칸이 든 행만 복사하고, 바꿀 것이
+     * 없으면 받은 목록을 그대로 돌려준다.
+     */
+    public List<Map<String, Object>> maskRows(List<Map<String, Object>> rows) {
+      if (rows == null || password == null || password.isEmpty()) return rows;
+      List<Map<String, Object>> out = null;
+      for (int i = 0; i < rows.size(); i++) {
+        Map<String, Object> row = rows.get(i);
+        if (row.values().stream().noneMatch(password::equals)) continue;
+        if (out == null) out = new ArrayList<>(rows);
+        Map<String, Object> copy = new LinkedHashMap<>(row);
+        copy.replaceAll((k, v) -> password.equals(v) ? PASSWORD_MASK : v);
+        out.set(i, copy);
+      }
+      return out != null ? out : rows;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      return o instanceof SentSecrets other
+          && Objects.equals(key, other.key)
+          && Objects.equals(basicToken, other.basicToken)
+          && Objects.equals(password, other.password);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(key, basicToken, password);
+    }
+
+    /** 비밀 값을 담지 않는다 — 로그·디버거에 원문이 찍히지 않게. */
+    @Override
+    public String toString() {
+      return "SentSecrets[key=" + (key != null) + ", basic=" + (basicToken != null) + "]";
+    }
+  }
+
   /** {@link #scrubSecret(String, String)} 와 같되 가림 문자열을 정한다 — 끝 4자도 보이면 안 되는 비밀번호용(SMTP, WD-676). */
   public static String scrubSecret(String text, String secret, String mask) {
     return text == null ? null : scrubberFor(secret, mask).apply(text);
@@ -156,13 +356,13 @@ public final class AuthQueryMasker {
 
   /**
    * {@link #scrubSecret(String, String, String)} 의 가릴 형태(원문·URL 인코딩형·디코딩형)를 한 번만 계산해 둔 함수(WD-686) —
-   * 같은 비밀로 여러 문장을 가리는 호출부(SMTP 실패 사슬의 예외마다)가 형태를 매번 다시 만들지 않게 한다. 비밀이 없거나 너무 짧으면 그대로 돌려주는 함수다.
+   * 같은 비밀로 여러 문장을 가리는 호출부(SMTP 실패 사슬의 예외마다)가 형태를 매번 다시 만들지 않게 한다. 비밀이 없거나 너무 짧으면 그대로 돌려주는 함수다. 지우개는
+   * 가림 문자열을 정한 {@link Scrubber#of(String, String)}(WD-681)로 만든다.
    */
   public static java.util.function.UnaryOperator<String> scrubberFor(String secret, String mask) {
-    Scrubber scrubber = Scrubber.of(secret);
+    Scrubber scrubber = Scrubber.of(secret, mask);
     if (scrubber == null) return text -> text;
-    Scrubber masked = new Scrubber(scrubber.forms(), mask);
-    return masked::scrub;
+    return scrubber::scrub;
   }
 
   /**
@@ -184,7 +384,11 @@ public final class AuthQueryMasker {
    * @param secret 보낸 비밀. null 이면 가릴 것 없음
    */
   public static String maskBody(String body, String secret) {
-    Scrubber scrubber = Scrubber.of(secret);
+    return maskBodyWith(Scrubber.of(secret), body);
+  }
+
+  /** 본문 가림 본체 — 가림 문자열이 정해진 {@code scrubber} 로 문자열·JSON 값을 가린다. */
+  private static String maskBodyWith(Scrubber scrubber, String body) {
     if (body == null || scrubber == null) return body;
     String textMasked = scrubber.scrub(body);
     if (textMasked.equals(body)) {
@@ -327,16 +531,21 @@ public final class AuthQueryMasker {
    * 직접 넘기기 위해서다(WD-676).
    *
    * @param forms 지울 형태(긴 것부터, 최소 길이 이상만)
-   * @param mask 바꿔 넣을 가림 문자열({@link #maskSecret})
+   * @param mask 바꿔 넣을 가림 문자열({@link #maskSecret} 또는 {@link #PASSWORD_MASK})
    */
   record Scrubber(List<String> forms, String mask) {
 
-    /** 비밀이 없거나 최소 길이 미만이면 null — 가릴 것이 없다. */
+    /** API 키 규칙({@link #maskSecret}, 끝 4자 보임) 지우개. 비밀이 없거나 최소 길이 미만이면 null — 가릴 것이 없다. */
     static Scrubber of(String secret) {
+      return of(secret, maskSecret(secret));
+    }
+
+    /** 가림 문자열을 정한 지우개 — 비밀번호·Basic 덩어리용 고정 가림(WD-681). 비밀이 없거나 최소 길이 미만이면 null. */
+    static Scrubber of(String secret, String mask) {
       if (secret == null || secret.length() < MIN_SCRUB_LENGTH) return null;
       List<String> forms =
           secretForms(secret).stream().filter(f -> f.length() >= MIN_SCRUB_LENGTH).toList();
-      return new Scrubber(forms, maskSecret(secret));
+      return new Scrubber(forms, mask);
     }
 
     String scrub(String text) {
@@ -376,7 +585,7 @@ public final class AuthQueryMasker {
    * 호출용 URI 와 표시용 URL 묶음.
    *
    * @param callUrl 실제 HTTP 호출에 쓰는 URL(키 원문 포함 — 응답·로그·DB 로 내보내지 말 것)
-   * @param displayUrl 응답·화면·로그에 내보낼 URL(인증 파라미터 값이 {@code ****XXXX})
+   * @param displayUrl 응답·화면·로그에 내보낼 URL(인증 파라미터 값이 {@code ****XXXX}, 사용자 정보 비밀번호는 {@code ****})
    */
   public record AuthQueryUrls(String callUrl, String displayUrl) {
 

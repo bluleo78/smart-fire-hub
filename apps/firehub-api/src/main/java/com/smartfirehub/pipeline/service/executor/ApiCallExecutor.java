@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service.executor;
 
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.service.AuthQueryMasker;
+import com.smartfirehub.apiconnection.service.BaseUrlUserInfo;
 import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
@@ -284,8 +285,9 @@ public class ApiCallExecutor {
 
     executionLog.insert(
         0,
+        // 실행 기록에 남는 줄이라 주소의 사용자 정보(아이디:비밀번호@)는 비밀번호를 가린다(WD-681).
         "url="
-            + resolvedUrl
+            + BaseUrlUserInfo.mask(resolvedUrl)
             + " method="
             + config.method()
             + " pages="
@@ -390,7 +392,8 @@ public class ApiCallExecutor {
     }
 
     // 오류 문구에서 가릴 값 — 쿼리 키뿐 아니라 실제로 보내는 비밀 전부다(헤더 키·Bearer 토큰 포함).
-    String authSecret = auth.sentSecret();
+    // BASIC 은 비밀번호와 Basic 헤더의 Base64 덩어리 둘 다다(WD-681).
+    AuthQueryMasker.SentSecrets authSecret = auth.sentSecrets();
 
     // Build the full URI with query params (resolvedUrl은 이미 SSRF 검증 완료)
     // 쿼리 인증 키(API_KEY + placement=query)는 execute 가 한 번 푼 값으로, 연결 테스트·미리보기와 같은 공용
@@ -445,9 +448,8 @@ public class ApiCallExecutor {
       // URL 을 담을 수 있어(customUrl 에 serviceKey 등) 원인을 묻고 키까지 남겼다.
       // (WD-177) 분류하지 못한 원문 메시지에 쿼리 인증 키가 실려 올 수 있어 키도 가린다 — 이 문구는 재시도 로그·실행 기록으로 간다.
       throw new ExternalServiceException(
-          AuthQueryMasker.scrubSecret(
-              ApiCallErrorMessages.describe(e, timeoutMs, UrlAuthority.hostOrNull(requestUri)),
-              authSecret),
+          authSecret.scrubText(
+              ApiCallErrorMessages.describe(e, timeoutMs, UrlAuthority.hostOrNull(requestUri))),
           e);
     }
   }

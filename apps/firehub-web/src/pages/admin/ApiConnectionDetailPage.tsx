@@ -8,8 +8,13 @@ import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { FormField } from '@/components/ui/form-field';
 import {
   AUTH_FIELD_KEYS,
+  AUTH_TYPE_LABEL,
+  AUTH_TYPE_OPTIONS,
   authNameError,
+  authTypeBadgeVariant,
+  authTypeLabel,
   baseUrlError,
+  basicUsernameError,
   connectionNameError,
   type FieldErrors,
   focusFirstError,
@@ -49,8 +54,13 @@ import {
 } from '../../hooks/queries/useApiConnections';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import type { TestConnectionResponse } from '../../types/api-connection';
+import type {
+  ApiConnectionAuthType,
+  StoredApiConnectionAuthType,
+  TestConnectionResponse,
+} from '../../types/api-connection';
 import type { UpdateApiConnectionRequest } from '../../types/api-connection';
+import { BasicAuthFields } from './components/BasicAuthFields';
 
 /** 기본 정보 카드에서 인라인 오류를 보일 수 있는 칸 (WD-561) — 선언 순서가 화면 순서(첫 오류 포커스 기준)다. */
 const INFO_FIELD_ORDER = ['name', 'baseUrl'] as const;
@@ -91,12 +101,16 @@ export default function ApiConnectionDetailPage() {
 
   // Auth edit state
   const [isEditingAuth, setIsEditingAuth] = useState(false);
-  const [authType, setAuthType] = useState<'API_KEY' | 'BEARER'>('API_KEY');
+  // 조회한 방식(옛 OAUTH2 포함)을 그대로 들고 시작하므로 조회 값 범위로 둔다
+  const [authType, setAuthType] = useState<StoredApiConnectionAuthType>('API_KEY');
   const [placement, setPlacement] = useState('header');
   const [headerName, setHeaderName] = useState('');
   const [paramName, setParamName] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [token, setToken] = useState('');
+  // (WD-681) Basic 인증 — 아이디는 조회값(가리지 않음)으로 채우고, 비밀번호는 다른 비밀처럼 비워 둔 채 시작한다
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
 
   // (WD-561) 칸별 검증 오류 — 예전엔 토스트로만 알려 어느 칸이 틀렸는지 알기 어려웠다.
   // 기본 정보와 인증은 저장 버튼이 따로라 오류도 따로 둔다(한쪽 저장이 다른 쪽 오류를 건드리지 않게).
@@ -112,6 +126,8 @@ export default function ApiConnectionDetailPage() {
     authName: `${baseId}-auth-name`,
     apiKey: `${baseId}-api-key`,
     token: `${baseId}-token`,
+    username: `${baseId}-username`,
+    password: `${baseId}-password`,
   };
 
   /**
@@ -123,11 +139,25 @@ export default function ApiConnectionDetailPage() {
     connection?.authType === 'API_KEY' ? connection.maskedAuthConfig.apiKey || undefined : undefined;
   const apiKeyHintId = `${baseId}-api-key-keep-hint`;
 
+  /**
+   * 비밀번호 칸을 비워 두면 유지할 저장 비밀번호(가린 값) — 이미 BASIC 으로 저장됐고 가린 비밀번호가 있을 때만 있다(WD-681).
+   * 키 칸(storedMaskedKey)과 같은 규칙: 가린 값을 그대로 보내면 서버(resolveMaskedSecrets)가 저장 원문을 유지하고,
+   * 다른 방식에서 BASIC 으로 바꾸면 유지할 비밀번호가 없어 새로 받아야 한다.
+   */
+  const storedMaskedPassword =
+    connection?.authType === 'BASIC' ? connection.maskedAuthConfig.password || undefined : undefined;
+  const passwordHintId = `${baseId}-password-keep-hint`;
+  /** 조회로 받은 Basic 아이디 — 편집 칸 초기값·편집 취소 시 되돌릴 값이다(아이디는 비밀이 아니라 가리지 않고 내려온다). */
+  const storedUsername = connection?.maskedAuthConfig.username ?? '';
+
   /** 인증 편집을 닫는다 — 입력한 키·토큰과 인증 칸 오류를 함께 비워, 다시 열었을 때 지난 오류가 남지 않게 한다. */
   const closeAuthEdit = () => {
     setIsEditingAuth(false);
     setApiKey('');
     setToken('');
+    // 아이디는 저장된 값으로 되돌리고 비밀번호는 비운다(WD-681)
+    setUsername(storedUsername);
+    setPassword('');
     setAuthErrors({});
   };
 
@@ -164,6 +194,7 @@ export default function ApiConnectionDetailPage() {
     setPlacement(mc.placement ?? 'header');
     setHeaderName(mc.headerName ?? '');
     setParamName(mc.paramName ?? '');
+    setUsername(mc.username ?? '');
     // 폼을 새 연결 값으로 다시 채우면 이전 값에 대한 인라인 오류도 비운다(WD-666) — 재조회·다른 id 로 옮겨 가도
     // 지난 오류 문구가 새 값 옆에 남아 「틀린 칸」처럼 보이지 않게 한다.
     setInfoErrors({});
@@ -186,7 +217,10 @@ export default function ApiConnectionDetailPage() {
       baseUrl !== initialInfo.baseUrl ||
       healthCheckPath !== initialInfo.healthCheckPath);
   // 인증 정보 편집 모드에서 새 키/토큰을 입력 중인 경우도 미저장 변경으로 간주 (#551)
-  const isAuthDirty = isEditingAuth && (apiKey.trim() !== '' || token.trim() !== '');
+  // (WD-681) 비밀번호를 입력했거나 Basic 아이디를 고친 것도 미저장 변경이다.
+  const isAuthDirty =
+    isEditingAuth &&
+    (apiKey.trim() !== '' || token.trim() !== '' || password !== '' || username !== storedUsername);
   const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(
     isInfoDirty || isAuthDirty,
   );
@@ -249,6 +283,15 @@ export default function ApiConnectionDetailPage() {
       if (placement === 'header') authConfig.headerName = headerName;
       else authConfig.paramName = paramName;
       if (keyValue) authConfig.apiKey = keyValue;
+    } else if (authType === 'BASIC') {
+      // (WD-681) 비밀번호 칸을 비워 두면 키 칸과 같이 조회로 받은 가린 값을 그대로 보내 저장된 비밀번호를 유지한다.
+      // 유지할 비밀번호가 없을 때(다른 방식에서 바꾸는 중 등)만 비밀번호 칸 오류다. 아이디는 서버처럼 그대로 보낸다.
+      const missingPassword = missingSecretMessage('BASIC', password);
+      const passwordValue = missingPassword ? storedMaskedPassword : password;
+      nextErrors.username = basicUsernameError(username);
+      if (!passwordValue && missingPassword) nextErrors.password = missingPassword;
+      authConfig.username = username;
+      if (passwordValue) authConfig.password = passwordValue;
     } else {
       // 접두어만 있는 토큰(「Bearer 」)도 빈 토큰이다 — 생성·저장 전 테스트·서버와 같은 규칙·문구(WD-639).
       const missingToken = missingSecretMessage('BEARER', token);
@@ -354,8 +397,9 @@ export default function ApiConnectionDetailPage() {
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">API 연결 상세</h1>
-        <Badge variant={connection.authType === 'BEARER' ? 'default' : 'secondary'}>
-          {connection.authType === 'BEARER' ? 'Bearer' : 'API Key'}
+        {/* 배지 문구는 목록과 같은 공용 표(WD-681) — 모르는 값은 서버 값을 그대로 보인다 */}
+        <Badge variant={authTypeBadgeVariant(connection.authType)}>
+          {authTypeLabel(connection.authType, 'badge')}
         </Badge>
       </div>
 
@@ -574,7 +618,7 @@ export default function ApiConnectionDetailPage() {
             <div className="space-y-3">
               <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
                 <span className="text-muted-foreground">인증 유형</span>
-                <span>{connection.authType === 'BEARER' ? 'Bearer Token' : 'API Key'}</span>
+                <span>{authTypeLabel(connection.authType, 'full')}</span>
               </div>
               {connection.authType === 'API_KEY' && (
                 <>
@@ -638,6 +682,19 @@ export default function ApiConnectionDetailPage() {
                   <span className="font-mono">{mc.token ?? '****'}</span>
                 </div>
               )}
+              {/* (WD-681) Basic — 아이디는 그대로, 비밀번호는 서버가 가린 값(다른 비밀과 같은 정책) */}
+              {connection.authType === 'BASIC' && (
+                <>
+                  <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
+                    <span className="text-muted-foreground">아이디</span>
+                    <span className="font-mono break-all">{mc.username ?? '-'}</span>
+                  </div>
+                  <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
+                    <span className="text-muted-foreground">비밀번호</span>
+                    <span className="font-mono">{mc.password ?? '****'}</span>
+                  </div>
+                </>
+              )}
             </div>
           ) : (
             /* 편집 모드 */
@@ -648,7 +705,7 @@ export default function ApiConnectionDetailPage() {
                 <Select
                   value={authType}
                   onValueChange={(v) => {
-                    setAuthType(v as 'API_KEY' | 'BEARER');
+                    setAuthType(v as ApiConnectionAuthType);
                     setAuthErrors({});
                   }}
                 >
@@ -657,8 +714,12 @@ export default function ApiConnectionDetailPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="API_KEY">API Key</SelectItem>
-                    <SelectItem value="BEARER">Bearer Token</SelectItem>
+                    {/* 선택지·이름은 만들기 대화상자와 같은 공용 표(WD-681) */}
+                    {AUTH_TYPE_OPTIONS.map((type) => (
+                      <SelectItem key={type} value={type}>
+                        {AUTH_TYPE_LABEL[type].full}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -743,6 +804,28 @@ export default function ApiConnectionDetailPage() {
                     }}
                   />
                 </FormField>
+              )}
+
+              {/* (WD-681) Basic — 아이디·비밀번호. 비밀번호는 키 칸처럼 저장된 값이 있으면 비워 둬도 된다 */}
+              {authType === 'BASIC' && (
+                <BasicAuthFields
+                  usernameId={authFieldId.username}
+                  passwordId={authFieldId.password}
+                  username={username}
+                  password={password}
+                  usernameError={authErrors.username}
+                  passwordError={authErrors.password}
+                  onUsernameChange={(value) => {
+                    setUsername(value);
+                    setAuthErrors((prev) => withoutKeys(prev, 'username'));
+                  }}
+                  onPasswordChange={(value) => {
+                    setPassword(value);
+                    setAuthErrors((prev) => withoutKeys(prev, 'password'));
+                  }}
+                  passwordPlaceholder="새 비밀번호를 입력하세요"
+                  keepPasswordHintId={storedMaskedPassword ? passwordHintId : undefined}
+                />
               )}
 
               <div className="flex gap-2">

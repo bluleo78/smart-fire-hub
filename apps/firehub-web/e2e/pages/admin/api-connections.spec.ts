@@ -1,10 +1,11 @@
 import type { Page } from '@playwright/test';
 
-import { createApiConnection } from '../../factories/admin.factory';
+import { createApiConnection, createApiConnections, createBasicApiConnection } from '../../factories/admin.factory';
 import {
   setupAdminAuth,
   setupApiConnectionDetailMocks,
   setupApiConnectionListMocks,
+  setupBasicApiConnectionDetailMocks,
 } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -2170,5 +2171,248 @@ test.describe('API 연결 인라인 오류 후속 (WD-666)', () => {
     await page.getByRole('combobox').first().click();
     await page.getByRole('option', { name: 'Bearer Token' }).click();
     await expect(page.locator('label', { hasText: 'Bearer Token' })).toContainText('*');
+  });
+});
+
+/**
+ * BASIC 인증(아이디·비밀번호)과 baseUrl 사용자 정보 처리(WD-681).
+ * - 만들기: BASIC 을 고르면 아이디·비밀번호 칸이 나오고, authConfig { username, password } 로 보낸다. 목록 배지는 「Basic」.
+ * - 상세: 비밀번호 칸을 비워 두면 조회로 받은 가린 비밀번호를 그대로 보내 서버가 저장값을 유지한다(API 키와 같은 규칙).
+ * - baseUrl 의 사용자 정보는 화면이 떼거나 막지 않는다 — 서버가 옮기고·가리고·거절한다. 화면은 서버 값·문구를 그대로 보인다.
+ */
+test.describe('API 연결 BASIC 인증 (WD-681)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  /** 생성 대화상자를 열고 이름·Base URL 을 채운 뒤 인증 유형을 Basic 으로 고른다. */
+  async function openCreateWithBasic(page: Page) {
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByPlaceholder('예: Make.com API').fill('Basic 연결');
+    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByLabel('인증 유형').click();
+    await page.getByRole('option', { name: 'Basic Auth' }).click();
+  }
+
+  test('만들기 — Basic 을 고르면 아이디·비밀번호로 authConfig 를 보내고, 목록에 「Basic」 배지가 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+    // 목록에 BASIC 연결 하나를 더 둔다 — 배지 문구 확인용(나중에 등록한 route 가 먼저 쓰인다)
+    await mockApi(page, 'GET', '/api/v1/api-connections', [
+      ...createApiConnections(),
+      createBasicApiConnection({ id: 3, name: '사내 Basic API' }),
+    ]);
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/api-connections',
+      createBasicApiConnection({ id: 30, name: 'Basic 연결' }),
+      { capture: true },
+    );
+
+    await openCreateWithBasic(page);
+    // API 키·토큰 칸 대신 아이디·비밀번호 칸이 보인다
+    await expect(page.getByPlaceholder('API 키를 입력하세요')).toHaveCount(0);
+    await expect(page.getByPlaceholder('토큰을 입력하세요')).toHaveCount(0);
+    await page.getByLabel('아이디').fill('svc-user');
+    const password = page.getByLabel('비밀번호');
+    await expect(password).toHaveAttribute('type', 'password');
+    await password.fill('p@ss:word');
+    await page.getByRole('button', { name: '만들기' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      name: 'Basic 연결',
+      authType: 'BASIC',
+      baseUrl: 'https://api.example.com',
+      authConfig: { username: 'svc-user', password: 'p@ss:word' },
+    });
+    // 다른 방식의 칸 값이 섞여 나가지 않는다
+    expect((req.payload as { authConfig: Record<string, string> }).authConfig).not.toHaveProperty('apiKey');
+    expect((req.payload as { authConfig: Record<string, string> }).authConfig).not.toHaveProperty('token');
+
+    const row = page.getByRole('row').filter({ hasText: '사내 Basic API' });
+    await expect(row.getByText('Basic', { exact: true })).toBeVisible();
+  });
+
+  test('만들기 — 아이디·비밀번호가 비면 각 칸에 인라인 오류, 아이디에 콜론이 있으면 막고 요청을 보내지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+    const capture = await mockApi(page, 'POST', '/api/v1/api-connections', {}, { capture: true });
+
+    await openCreateWithBasic(page);
+    await page.getByRole('button', { name: '만들기' }).click();
+    const username = page.getByLabel('아이디');
+    await expect(username).toHaveAccessibleDescription('아이디를 입력하세요.');
+    await expect(page.getByLabel('비밀번호')).toHaveAccessibleDescription('비밀번호를 입력하세요.');
+    await expect(username).toBeFocused();
+
+    // 서버와 같은 규칙 — Basic 아이디에는 콜론을 쓸 수 없다
+    await username.fill('a:b');
+    await page.getByLabel('비밀번호').fill('secret');
+    await page.getByRole('button', { name: '만들기' }).click();
+    await expect(username).toHaveAccessibleDescription('아이디에 콜론(:)을 넣을 수 없습니다.');
+    expect(capture.requests?.length ?? 0).toBe(0);
+  });
+
+  test('만들기 — 연결 테스트도 Basic 아이디·비밀번호를 실어 보낸다', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionListMocks(page);
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/api-connections/test',
+      {
+        ok: true,
+        status: 200,
+        latencyMs: 30,
+        errorMessage: null,
+        requestUrl: 'https://api.example.com',
+        responseBodyPreview: null,
+        responseHeaders: {},
+        responseContentType: null,
+      },
+      { capture: true },
+    );
+
+    await openCreateWithBasic(page);
+    await page.getByLabel('아이디').fill('svc-user');
+    await page.getByLabel('비밀번호').fill('secret');
+    await page.getByRole('button', { name: '연결 테스트' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      authType: 'BASIC',
+      authConfig: { username: 'svc-user', password: 'secret' },
+    });
+    await expect(page.getByText('연결 성공')).toBeVisible();
+  });
+
+  test('상세 — BASIC 연결의 아이디·가린 비밀번호를 보이고, 비밀번호를 비운 채 저장하면 가린 값을 그대로 보내 유지한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupBasicApiConnectionDetailMocks(page, 1);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      createBasicApiConnection({ id: 1 }),
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+    // 읽기 전용 보기 — 아이디는 그대로, 비밀번호는 서버가 가린 고정 값(끝 글자 없음, WD-681 리뷰)
+    await expect(page.getByText('svc-user')).toBeVisible();
+    await expect(page.getByText('****', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    const username = page.getByLabel('아이디');
+    await expect(username).toHaveValue('svc-user');
+    const password = page.getByLabel('비밀번호');
+    await expect(password).toHaveValue('');
+    await expect(password).toHaveAccessibleDescription('비워 두면 저장된 비밀번호를 그대로 사용합니다.');
+    await username.fill('svc-user-2');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      authType: 'BASIC',
+      // 비워 둔 비밀번호 칸은 조회로 받은 고정 가림 값을 그대로 보내 서버가 저장 원문을 유지한다
+      authConfig: { username: 'svc-user-2', password: '****' },
+    });
+  });
+
+  test('상세 — 비밀번호를 새로 입력하면 입력값을 보내고, API Key 연결을 Basic 으로 바꿀 때는 비밀번호가 필수다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 저장된 API 키 연결 — 유지할 비밀번호가 없다
+    await setupApiConnectionDetailMocks(page, 1);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      createBasicApiConnection({ id: 1 }),
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await page.getByLabel('인증 유형').click();
+    await page.getByRole('option', { name: 'Basic Auth' }).click();
+    await expect(page.getByText('비워 두면 저장된 비밀번호를 그대로 사용합니다.')).toHaveCount(0);
+    await page.getByLabel('아이디').fill('new-user');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    const password = page.getByLabel('비밀번호');
+    await expect(password).toHaveAccessibleDescription('비밀번호를 입력하세요.');
+    await expect(password).toBeFocused();
+    expect(capture.requests?.length ?? 0).toBe(0);
+
+    await password.fill('brand-new-pw');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      authType: 'BASIC',
+      authConfig: { username: 'new-user', password: 'brand-new-pw' },
+    });
+    // 인증 저장은 baseUrl 을 보내지 않는다 — 옛 연결(baseUrl 사용자 정보)을 Basic 으로 바꾸면 서버가 입력한 아이디·비밀번호를 쓰고
+    // 저장된 사용자 정보는 baseUrl 에서 떼기만 한다(WD-681 리뷰, 충돌 400 없음).
+    expect(req.payload).not.toHaveProperty('baseUrl');
+  });
+
+  test('상세 — 서버가 가린 baseUrl(아이디:****@)을 그대로 보이고, 고치지 않고 저장하면 그 값을 그대로 보낸다', async ({
+    authenticatedPage: page,
+  }) => {
+    const maskedBaseUrl = 'https://legacy-user:****@legacy.example.com/v1';
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/api-connections/1',
+      createApiConnection({ id: 1, name: '옛 연결', baseUrl: maskedBaseUrl }),
+    );
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      createApiConnection({ id: 1, name: '옛 연결 수정', baseUrl: maskedBaseUrl }),
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    const baseUrlInput = page.getByLabel('Base URL');
+    await expect(baseUrlInput).toHaveValue(maskedBaseUrl);
+    // 다른 칸만 고쳐 저장 — 화면은 가린 baseUrl 을 막거나 고치지 않는다(서버가 저장된 원래 값을 유지)
+    await page.getByLabel('연결 이름').fill('옛 연결 수정');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: '옛 연결 수정', baseUrl: maskedBaseUrl });
+    await expect(page.getByText('연결 정보가 업데이트되었습니다.')).toBeVisible();
+  });
+
+  test('상세 — API Key 연결의 baseUrl 에 사용자 정보를 넣어 저장하면 서버 400 안내를 그대로 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    const message = 'baseUrl 에 사용자 정보(아이디:비밀번호@)를 넣으려면 인증 방식을 BASIC 으로 고르세요';
+    await setupApiConnectionDetailMocks(page, 1);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      { status: 400, error: 'Bad Request', message },
+      { status: 400, capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await page.getByLabel('Base URL').fill('https://user:pass@api.example.com');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    const req = await capture.waitForRequest();
+    // 화면은 사용자 정보를 떼거나 막지 않고 그대로 보낸다 — 판정은 서버가 한다
+    expect(req.payload).toMatchObject({ baseUrl: 'https://user:pass@api.example.com' });
+    await expect(page.getByText(message)).toBeVisible();
   });
 });

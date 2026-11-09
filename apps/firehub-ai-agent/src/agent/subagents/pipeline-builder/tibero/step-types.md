@@ -112,6 +112,8 @@
 **인증**:
 - apiConnectionId: 저장된 API 연결 참조 (권장 — 인증 정보 암호화 저장)
 - 또는 inlineAuth: 직접 인증 정보 (일회성)
+  - 모양: `{ authType, ... }` — API_KEY `{ placement, headerName/paramName, apiKey }`, BEARER `{ token }`, BASIC `{ username, password }` (아이디·비밀번호)
+  - customUrl·연결 baseUrl 에 사용자 정보(`아이디:비밀번호@`)를 넣지 않는다 — 아이디·비밀번호는 BASIC 으로 보낸다. 조회한 연결의 baseUrl 이 `아이디:****@` 처럼 가려져 있으면 실제 URL 이 아니므로 customUrl 로 옮겨 쓰지 않는다
 
 **페이지네이션**:
 - pagination: { type: "OFFSET", pageSize: N(1~10000 정수), offsetParam, limitParam, totalPath }

@@ -27,7 +27,17 @@ def _ids(section: str):
 
 def test_fixture_is_loaded():
     # 표가 비면 아래 파라미터 테스트가 공허하게 통과한다 — 갈래마다 사례가 실제로 읽혔는지 본다.
-    for section in ("sameAuthOrigin", "bearerToken", "headerName", "scrub", "redirectLocation", "redirectMethod"):
+    for section in (
+        "sameAuthOrigin",
+        "bearerToken",
+        "headerName",
+        "scrub",
+        "redirectLocation",
+        "redirectMethod",
+        "basicAuth",
+        "maskUserInfo",
+        "basicScrub",
+    ):
         assert len(_DATA[section]) >= 4, section
 
 
@@ -51,7 +61,7 @@ def test_header_name_matches_vector(case):
 
 @pytest.mark.parametrize("case", _DATA["scrub"], ids=_ids("scrub"))
 def test_scrub_secret_matches_vector(case):
-    assert errors.scrub_secret(case["text"], case["secret"]) == case["expected"]
+    assert errors.scrub_secret(case["text"], errors.SentSecrets(key=case["secret"])) == case["expected"]
 
 
 @pytest.mark.parametrize("case", _DATA["redirectLocation"], ids=_ids("redirectLocation"))
@@ -66,3 +76,33 @@ def test_redirect_method_matches_vector(case):
     # 리다이렉트 홉 메서드·본문 판정(WD-686) — 규칙은 _redirect_keeps_method_and_body 참고.
     keeps = api_call_executor._redirect_keeps_method_and_body(case["status"], case["sameOrigin"])
     assert keeps is case["keepsBody"]
+
+
+@pytest.mark.parametrize("case", _DATA["basicAuth"], ids=_ids("basicAuth"))
+def test_basic_auth_matches_vector(case):
+    # BASIC(WD-681) — Java ApiCallAuth 와 같은 「Authorization: Basic …」 을 붙이고, 비밀번호와 Base64 덩어리를 가릴 비밀로 본다.
+    resolved = api_call_executor._resolve_auth(case["auth"])
+    headers: dict = {}
+    params: dict = {}
+    assert api_call_executor._apply_resolved_auth(resolved, headers, params) is None
+    assert headers == {"Authorization": case["expectedHeader"]}
+    assert params == {}
+    assert resolved.sent_secrets == errors.SentSecrets(
+        None, case["expectedHeader"][len("Basic "):], case["auth"]["password"]
+    )
+
+
+@pytest.mark.parametrize("case", _DATA["maskUserInfo"], ids=_ids("maskUserInfo"))
+def test_mask_userinfo_matches_vector(case):
+    # 실행 기록 요약 줄의 URL 사용자 정보 가림(WD-681) — Java BaseUrlUserInfo.mask 와 같다.
+    assert errors.mask_url_userinfo(case["url"]) == case["expected"]
+
+
+@pytest.mark.parametrize("case", _DATA["basicScrub"], ids=_ids("basicScrub"))
+def test_basic_scrub_matches_vector(case):
+    # BASIC 비밀 가림(WD-681 리뷰) — Basic 덩어리는 늘 고정 ****, 비밀번호는 SMTP 규칙(지우고 남으면 문장을 통째로 가림). Java
+    # ApiCallAuthVectorsTest.basicScrub_matchesVector 와 같은 표다.
+    resolved = api_call_executor._resolve_auth(
+        {"authType": "BASIC", "username": case["username"], "password": case["password"]}
+    )
+    assert errors.scrub_secret(case["text"], resolved.sent_secrets) == case["expected"]

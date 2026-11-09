@@ -360,4 +360,137 @@ describe('API Connection MCP Tools', () => {
       expect(result.isError).toBe(true);
     });
   });
+
+  // WD-681: BASIC(아이디·비밀번호) 인증 — 스키마·더미 검사·설명이 API_KEY/BEARER 와 같은 수준으로 다루는지 확인한다.
+  describe('BASIC 인증 (WD-681)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tool = (name: string) => (server.instance as any)._registeredTools[name];
+
+    it('create_api_connection 스키마가 authType BASIC 을 받는다', () => {
+      const parsed = tool('create_api_connection').inputSchema.safeParse({
+        name: 'Basic API',
+        authType: 'BASIC',
+        authConfig: { username: 'svc-user', password: 'S3cr3t-pw!9' },
+        baseUrl: 'https://api.example.com',
+      });
+      expect(parsed.success).toBe(true);
+    });
+
+    it('create_api_connection 스키마는 지원하지 않는 authType(NONE)을 여전히 거절한다', () => {
+      const parsed = tool('create_api_connection').inputSchema.safeParse({
+        name: 'No auth',
+        authType: 'NONE',
+        authConfig: {},
+        baseUrl: 'https://api.example.com',
+      });
+      expect(parsed.success).toBe(false);
+    });
+
+    it('실제 아이디·비밀번호로 BASIC 연결을 만들면 그대로 서버로 보낸다', async () => {
+      const args = {
+        name: 'Basic API',
+        authType: 'BASIC',
+        authConfig: { username: 'svc-user', password: 'S3cr3t-pw!9' },
+        baseUrl: 'https://api.example.com',
+      };
+      const result = await invokeTool(server, 'create_api_connection', args);
+      expect(result.isError).toBeFalsy();
+      expect(client.createApiConnection).toHaveBeenCalledWith(args);
+    });
+
+    it.each([
+      ['빈 값', ''],
+      ['공백만', '   '],
+      ['none', 'none'],
+      ['dummy 접두사', 'dummypass123'],
+      ['반복 문자', 'xxxxxxxx'],
+      ['순차 숫자', '123456789'],
+      ['너무 짧음', 'ab'],
+    ])('BASIC password 가 %s 이면 token/apiKey 처럼 거절한다', async (_label, password) => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'basic-placeholder',
+        authType: 'BASIC',
+        authConfig: { username: 'svc-user', password },
+        baseUrl: 'https://api.example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('BASIC 인데 password 가 없으면 거절한다', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'basic-missing-pw',
+        authType: 'BASIC',
+        authConfig: { username: 'svc-user' },
+        baseUrl: 'https://api.example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('BASIC 인데 username 이 없거나 빈 값·placeholder 면 거절한다', async () => {
+      for (const authConfig of [
+        { password: 'S3cr3t-pw!9' },
+        { username: '  ', password: 'S3cr3t-pw!9' },
+        { username: 'none', password: 'S3cr3t-pw!9' },
+      ]) {
+        const result = await invokeTool(server, 'create_api_connection', {
+          name: 'basic-missing-user',
+          authType: 'BASIC',
+          authConfig,
+          baseUrl: 'https://api.example.com',
+        });
+        expect(result.isError, JSON.stringify(authConfig)).toBe(true);
+      }
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('username 은 비밀이 아니므로 접두사·길이 검사를 하지 않는다(testuser·jo 같은 실제 아이디 허용)', async () => {
+      for (const username of ['testuser', 'jo']) {
+        const result = await invokeTool(server, 'create_api_connection', {
+          name: 'basic-real-user',
+          authType: 'BASIC',
+          authConfig: { username, password: 'S3cr3t-pw!9' },
+          baseUrl: 'https://api.example.com',
+        });
+        expect(result.isError, username).toBeFalsy();
+      }
+    });
+
+    it('update 에서 조회 결과의 가린 password(****…)는 막지 않고 서버로 그대로 보낸다', async () => {
+      const authConfig = { username: 'svc-user', password: '****pw!9' };
+      const result = await invokeTool(server, 'update_api_connection', {
+        id: 7,
+        authType: 'BASIC',
+        authConfig,
+      });
+      expect(result.isError).toBeFalsy();
+      expect(client.updateApiConnection).toHaveBeenCalledWith(7, { authType: 'BASIC', authConfig });
+    });
+
+    it('update 에서 placeholder password 는 거절한다', async () => {
+      const result = await invokeTool(server, 'update_api_connection', {
+        id: 7,
+        authType: 'BASIC',
+        authConfig: { username: 'svc-user', password: 'changeme' },
+      });
+      expect(result.isError).toBe(true);
+      expect(client.updateApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('도구 설명이 BASIC(username·password)과 baseUrl 에 사용자 정보를 넣지 말라는 안내를 담는다', () => {
+      for (const name of ['create_api_connection', 'update_api_connection']) {
+        const text = JSON.stringify({
+          d: tool(name).description,
+          authType: tool(name).inputSchema.shape.authType.description,
+          authConfig: tool(name).inputSchema.shape.authConfig.description,
+          baseUrl: tool(name).inputSchema.shape.baseUrl.description,
+        });
+        expect(text, name).toContain('BASIC');
+        expect(text, name).toContain('username');
+        expect(text, name).toContain('password');
+        expect(text, name).toContain('사용자 정보');
+      }
+    });
+  });
 });

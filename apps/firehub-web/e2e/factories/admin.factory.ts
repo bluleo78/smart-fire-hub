@@ -85,6 +85,18 @@ export function createApiConnection(overrides?: Partial<ApiConnectionResponse>):
 }
 
 /**
+ * BASIC 인증(아이디·비밀번호) API 연결 응답(WD-681).
+ * 서버는 아이디는 그대로, 비밀번호는 끝 글자 없이 고정 「****」로 가려 내려준다(WD-681 리뷰 — API 키·토큰의 「****」+끝 4자와 다르다).
+ */
+export function createBasicApiConnection(overrides?: Partial<ApiConnectionResponse>): ApiConnectionResponse {
+  return createApiConnection({
+    authType: 'BASIC',
+    maskedAuthConfig: { username: 'svc-user', password: '****' },
+    ...overrides,
+  });
+}
+
+/**
  * `GET /api/v1/settings?prefix=...` 가 내려주는 해석된 설정 1건.
  *
  * 기본값을 `overridden: false, tenantEditable: true`(= 저장한 적 없음 + 편집 가능)로 둔다.

@@ -41,6 +41,7 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { useApiConnectionsSelectable } from '@/hooks/queries/useApiConnections';
+import { AUTH_TYPE_LABEL, AUTH_TYPE_OPTIONS } from '@/lib/api-connection-form';
 import { cn } from '@/lib/utils';
 import { columnNameLengthError } from '@/lib/validations/dataset';
 
@@ -73,6 +74,9 @@ interface InlineAuth {
   paramName?: string;
   apiKey?: string;
   token?: string;
+  /** (WD-681) Basic 인증 아이디·비밀번호 — 서버·실행기가 저장 연결과 같은 해석 경로(username·password)로 읽는다 */
+  username?: string;
+  password?: string;
 }
 
 interface Pagination {
@@ -654,9 +658,13 @@ export default function ApiCallStepConfig({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                {/* 「없음」은 인라인 인증에만 있는 선택지라 따로 두고, 나머지는 API 연결 화면과 같은 공용 표를 쓴다(WD-681) */}
                 <SelectItem value="NONE">없음</SelectItem>
-                <SelectItem value="API_KEY">API Key</SelectItem>
-                <SelectItem value="BEARER">Bearer Token</SelectItem>
+                {AUTH_TYPE_OPTIONS.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {AUTH_TYPE_LABEL[type].full}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
 
@@ -710,6 +718,32 @@ export default function ApiCallStepConfig({
                 disabled={readOnly}
                 onChange={(e) => handleAuthChange({ token: e.target.value })}
               />
+            )}
+
+            {/* (WD-681) Basic — 인라인 인증도 저장 연결과 같은 해석 경로라 Authorization: Basic 으로 나간다.
+                URL 에 아이디:비밀번호@ 를 넣는 대신 이 두 칸을 쓴다. 라벨이 보이지 않는 좁은 칸이라 aria-label 로 이름을 준다. */}
+            {inlineAuth.authType === 'BASIC' && (
+              <>
+                <Input
+                  className="h-7 text-xs"
+                  aria-label="아이디"
+                  autoComplete="off"
+                  placeholder="아이디를 입력하세요"
+                  value={inlineAuth.username ?? ''}
+                  disabled={readOnly}
+                  onChange={(e) => handleAuthChange({ username: e.target.value })}
+                />
+                <Input
+                  className="h-7 text-xs"
+                  type="password"
+                  aria-label="비밀번호"
+                  autoComplete="new-password"
+                  placeholder="비밀번호를 입력하세요"
+                  value={inlineAuth.password ?? ''}
+                  disabled={readOnly}
+                  onChange={(e) => handleAuthChange({ password: e.target.value })}
+                />
+              </>
             )}
           </div>
         </Section>

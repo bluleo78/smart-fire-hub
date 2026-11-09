@@ -1,5 +1,5 @@
 {
-  "description": "API_CALL \uc778\uc99d \uacf5\uc6a9 \uc0ac\ub840 \ud45c(WD-657) \u2014 Java(ApiCallAuthVectorsTest)\uc640 Python(test_api_call_auth_vectors.py)\uc774 \uac19\uc740 \ud45c\ub85c \uac19\uc740 \uacb0\uacfc\ub97c \ub0b4\ub294\uc9c0 \ubcf8\ub2e4. \ud55c\ucabd \uaddc\uce59\ub9cc \ubc14\uafb8\uba74 \uc5b4\ub290 \ud55c\ucabd \ud14c\uc2a4\ud2b8\uac00 \uae68\uc9c4\ub2e4. \ud5e4\ub354 \uc774\ub984 \uae30\ubcf8\uac12\uc740 Java X-API-Key\u00b7Python x-api-key \ub85c \ub300\uc18c\ubb38\uc790\ub9cc \ub2ec\ub77c \ub300\uc18c\ubb38\uc790\ub97c \ubb34\uc2dc\ud558\uace0 \ube44\uad50\ud55c\ub2e4. redirectMethod(WD-686)\uc758 \uaddc\uce59\uc740 Java RedirectLocations.keepsMethodAndBody\u00b7Python _redirect_keeps_method_and_body \ucc38\uace0. redirectLocation \uacb0\uacfc\uc5d0\ub294 \ud504\ub798\uadf8\uba3c\ud2b8\uac00 \uc5c6\ub2e4(WD-686 \u2014 \ub9ac\ub2e4\uc774\ub809\ud2b8 \ud574\uc11d\uc774 \ubb38\ubc95 \uac80\uc0ac \uc804\uc5d0 \ub5c0\ub2e4).",
+  "description": "API_CALL \uc778\uc99d \uacf5\uc6a9 \uc0ac\ub840 \ud45c(WD-657) \u2014 Java(ApiCallAuthVectorsTest)\uc640 Python(test_api_call_auth_vectors.py)\uc774 \uac19\uc740 \ud45c\ub85c \uac19\uc740 \uacb0\uacfc\ub97c \ub0b4\ub294\uc9c0 \ubcf8\ub2e4. \ud55c\ucabd \uaddc\uce59\ub9cc \ubc14\uafb8\uba74 \uc5b4\ub290 \ud55c\ucabd \ud14c\uc2a4\ud2b8\uac00 \uae68\uc9c4\ub2e4. \ud5e4\ub354 \uc774\ub984 \uae30\ubcf8\uac12\uc740 Java X-API-Key\u00b7Python x-api-key \ub85c \ub300\uc18c\ubb38\uc790\ub9cc \ub2ec\ub77c \ub300\uc18c\ubb38\uc790\ub97c \ubb34\uc2dc\ud558\uace0 \ube44\uad50\ud55c\ub2e4. redirectMethod(WD-686)\uc758 \uaddc\uce59\uc740 Java RedirectLocations.keepsMethodAndBody\u00b7Python _redirect_keeps_method_and_body \ucc38\uace0. redirectLocation \uacb0\uacfc\uc5d0\ub294 \ud504\ub798\uadf8\uba3c\ud2b8\uac00 \uc5c6\ub2e4(WD-686 \u2014 \ub9ac\ub2e4\uc774\ub809\ud2b8 \ud574\uc11d\uc774 \ubb38\ubc95 \uac80\uc0ac \uc804\uc5d0 \ub5c0\ub2e4). BASIC \uc778\uc99d \ud5e4\ub354(basicAuth)\uc640 URL \uc0ac\uc6a9\uc790 \uc815\ubcf4 \uac00\ub9bc(maskUserInfo)\ub3c4 \uac19\uc740 \ud45c\ub85c \ubcf8\ub2e4(WD-681). BASIC \ube44\ubc00 \uac00\ub9bc(basicScrub)\uc740 Basic \ub369\uc5b4\ub9ac\ub97c \ub298 \uace0\uc815 ****, \ube44\ubc00\ubc88\ud638\ub97c SMTP \uaddc\uce59(\uc9c0\uc6b0\uace0 \ub0a8\uc73c\uba74 \ubb38\uc7a5\uc744 \ud1b5\uc9f8\ub85c \uac00\ub9bc)\uc73c\ub85c \ubcf8\ub2e4(WD-681 \ub9ac\ubdf0).",
   "sameAuthOrigin": [
     {
       "name": "same origin, host case, explicit default port",
@@ -375,6 +375,108 @@
       "status": 308,
       "sameOrigin": false,
       "keepsBody": false
+    }
+  ],
+  "basicAuth": [
+    {
+      "name": "ascii username and password",
+      "auth": {
+        "authType": "BASIC",
+        "username": "alice",
+        "password": "s3cret!"
+      },
+      "expectedHeader": "Basic YWxpY2U6czNjcmV0IQ=="
+    },
+    {
+      "name": "utf-8 korean credentials",
+      "auth": {
+        "authType": "BASIC",
+        "username": "\ud64d\uae38\ub3d9",
+        "password": "\ube44\ubc00\ubc88\ud6381"
+      },
+      "expectedHeader": "Basic 7ZmN6ri464+ZOuu5hOuwgOuyiO2YuDE="
+    },
+    {
+      "name": "lowercase inline type and colon in password",
+      "auth": {
+        "type": "basic",
+        "username": "svc",
+        "password": "pa:ss word"
+      },
+      "expectedHeader": "Basic c3ZjOnBhOnNzIHdvcmQ="
+    },
+    {
+      "name": "surrounding spaces kept as-is",
+      "auth": {
+        "authType": "BASIC",
+        "username": " u ",
+        "password": " p "
+      },
+      "expectedHeader": "Basic IHUgOiBwIA=="
+    }
+  ],
+  "maskUserInfo": [
+    {
+      "name": "password masked",
+      "url": "https://alice:s3cret@api.example.com/v1?x=1",
+      "expected": "https://alice:****@api.example.com/v1?x=1"
+    },
+    {
+      "name": "username only kept",
+      "url": "https://alice@api.example.com/v1",
+      "expected": "https://alice@api.example.com/v1"
+    },
+    {
+      "name": "no userinfo kept",
+      "url": "https://api.example.com/a@b",
+      "expected": "https://api.example.com/a@b"
+    },
+    {
+      "name": "underscore host with port",
+      "url": "http://u:p%40ss@my_api.internal:8080/x",
+      "expected": "http://u:****@my_api.internal:8080/x"
+    },
+    {
+      "name": "empty password kept",
+      "url": "https://alice:@api.example.com",
+      "expected": "https://alice:@api.example.com"
+    }
+  ],
+  "basicScrub": [
+    {
+      "name": "long password and base64 token use fixed mask",
+      "username": "alice",
+      "password": "s3cretPw",
+      "text": "echo s3cretPw / Basic YWxpY2U6czNjcmV0UHc=",
+      "expected": "echo **** / Basic ****"
+    },
+    {
+      "name": "short password present withholds whole text",
+      "username": "u",
+      "password": "ab1",
+      "text": "401 for ab1 user",
+      "expected": "(\ube44\ubc00\ubc88\ud638\uc640 \uac19\uc740 \uae00\uc790\uac00 \ub4e4\uc5b4 \uc788\uc5b4 \ub0b4\uc6a9\uc744 \uac00\ub838\uc2b5\ub2c8\ub2e4)"
+    },
+    {
+      "name": "short password absent keeps text",
+      "username": "u",
+      "password": "zq9",
+      "text": "Connection refused",
+      "expected": "Connection refused"
+    },
+    {
+      "name": "encoded password forms scrubbed",
+      "username": "u",
+      "password": "p@ss word",
+      "text": "GET /x?p=p%40ss+word&q=p%40ss%20word",
+      "expected": "GET /x?p=****&q=****"
+    },
+    {
+      "name": "dictionary word password scrubbed in message",
+      "username": "u",
+      "password": "admin",
+      "text": "user admin denied",
+      "expected": "user **** denied"
     }
   ]
 }

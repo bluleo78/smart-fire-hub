@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { missingSecretMessage, normalizeSecret } from './api-connection-secret';
+import { isBlankLikeServer, missingSecretMessage, normalizeSecret } from './api-connection-secret';
 
 /** 화면 빈 비밀 판정이 서버(Java strip·isBlank·ASCII \s 정규식)와 글자 단위로 같은지(WD-639). */
 describe('api-connection-secret', () => {
@@ -25,5 +25,20 @@ describe('api-connection-secret', () => {
     }
     // 서버 정규식의 \s 는 ASCII 공백뿐이라 「Bearer<NBSP>」 의 접두어는 떼지 않는다
     expect(normalizeSecret('BEARER', 'Bearer ')).toBe('Bearer ');
+  });
+
+  it('Basic 비밀번호는 앞뒤 Java 공백만 떼고 비면 「비밀번호를 입력하세요.」, 접두어는 떼지 않는다 (WD-681)', () => {
+    for (const pw of ['', '   ', '\t\n']) {
+      expect(missingSecretMessage('BASIC', pw)).toBe('비밀번호를 입력하세요.');
+    }
+    expect(missingSecretMessage('BASIC', 'Bearer')).toBeNull();
+    expect(normalizeSecret('BASIC', ' Bearer pw ')).toBe('Bearer pw');
+    expect(missingSecretMessage('BASIC', '\u00A0')).toBeNull();
+  });
+
+  it('isBlankLikeServer 는 서버 isBlank 와 같다 — NBSP 는 값이다 (WD-681)', () => {
+    expect(isBlankLikeServer(' \u3000 ')).toBe(true);
+    expect(isBlankLikeServer('\u00A0')).toBe(false);
+    expect(isBlankLikeServer('user')).toBe(false);
   });
 });

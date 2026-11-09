@@ -944,4 +944,100 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     assertThat(result.ok()).isTrue();
     assertThat(result.responseBodyPreview()).doesNotContain("Tok657").contains("****57zz");
   }
+
+  // ── WD-681: BASIC 인증·baseUrl 사용자 정보 가림 ────────────────────────────────────
+
+  /**
+   * BASIC 연결 테스트는 「Authorization: Basic base64(아이디:비밀번호)」 를 보내고, 대상이 그 헤더·비밀번호를 되울려도 응답 본문에는 Base64
+   * 덩어리도 비밀번호도 남지 않는다.
+   */
+  @Test
+  void testConnection_basic_sendsBasicHeader_andEchoMasked() {
+    String b64 =
+        java.util.Base64.getEncoder()
+            .encodeToString("alice:Pw681secret".getBytes(StandardCharsets.UTF_8));
+    wireMock.stubFor(
+        get(urlPathEqualTo("/health"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "{\"headers\":{\"Authorization\":\"Basic "
+                            + b64
+                            + "\"},\"pw\":\"Pw681secret\"}")));
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "WD681 basic test",
+                null,
+                "BASIC",
+                Map.of("username", "alice", "password", "Pw681secret"),
+                wireMockBase(),
+                "/health"),
+            testUserId);
+
+    TestConnectionResponse result = apiConnectionService.testConnection(created.id(), testUserId);
+
+    assertThat(result.ok()).isTrue();
+    wireMock.verify(
+        1,
+        getRequestedFor(urlEqualTo("/health"))
+            .withHeader("Authorization", equalTo("Basic " + b64)));
+    assertThat(result.responseBodyPreview()).doesNotContain(b64).doesNotContain("Pw681secret");
+    assertThat(result.requestUrl()).isEqualTo(wireMockBase() + "/health");
+  }
+
+  /** 저장 전 테스트에서 baseUrl 의 사용자 정보는 BASIC 헤더로 옮겨 보내고, requestUrl 에는 남기지 않는다. */
+  @Test
+  void testConnectionPayload_basicUserInfo_sentAsHeaderNotInUrl() {
+    stubHealthOk();
+    String base = wireMockBase().replace("http://", "http://bob:Pw%40681@");
+
+    TestConnectionResponse result =
+        apiConnectionService.testConnectionPayload(
+            new CreateApiConnectionRequest("x", null, "BASIC", null, base, "/health"));
+
+    assertThat(result.ok()).isTrue();
+    String b64 =
+        java.util.Base64.getEncoder().encodeToString("bob:Pw@681".getBytes(StandardCharsets.UTF_8));
+    wireMock.verify(
+        1,
+        getRequestedFor(urlEqualTo("/health"))
+            .withHeader("Authorization", equalTo("Basic " + b64)));
+    assertThat(result.requestUrl()).isEqualTo(wireMockBase() + "/health");
+  }
+
+  /**
+   * 옛 연결(API_KEY + baseUrl 사용자 정보)의 연결 테스트 — 저장 원문으로 그대로 부르되(동작 유지), 응답 requestUrl·조회 응답 baseUrl 에는
+   * 비밀번호가 가려진다.
+   */
+  @Test
+  void testConnection_legacyUserInfo_requestUrlMasked() throws Exception {
+    stubHealthOk();
+    String raw = wireMockBase().replace("http://", "http://svc:LegacyPw681@");
+    String encrypted =
+        encryptionService.encrypt(
+            objectMapper.writeValueAsString(Map.of("headerName", "X-Key", "apiKey", "k681key")));
+    Long id =
+        inTenantFixture(
+            () ->
+                repository.save(
+                    "WD681 legacy " + System.nanoTime(),
+                    null,
+                    "API_KEY",
+                    encrypted,
+                    testUserId,
+                    raw,
+                    "/health"));
+
+    TestConnectionResponse result = apiConnectionService.testConnection(id, testUserId);
+
+    assertThat(result.requestUrl())
+        .isEqualTo(wireMockBase().replace("http://", "http://svc:****@") + "/health")
+        .doesNotContain("LegacyPw681");
+    assertThat(apiConnectionService.getById(id).baseUrl()).doesNotContain("LegacyPw681");
+    wireMock.verify(
+        1, getRequestedFor(urlEqualTo("/health")).withHeader("X-Key", equalTo("k681key")));
+  }
 }

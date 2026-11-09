@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 import random
 import re
@@ -125,12 +126,13 @@ def _success_response(
 ) -> ApiCallExecuteResponse:
     """성공 응답(요약 로그 맨 앞)을 만든다 — PG·Tibero 경로가 같은 모양을 쓴다. ``auth`` 는 실행 시작에 한 번 푼 인증(가릴 비밀)."""
     elapsed_ms = int((time.monotonic() - start_time) * 1000)
+    # 주소의 사용자 정보(옛 연결의 아이디:비밀번호@)는 비밀번호를 가린다(WD-681) — Java 실행기 요약 줄과 같다.
     summary = (
-        f"url={request.url} method={request.method} "
+        f"url={errors.mask_url_userinfo(request.url)} method={request.method} "
         f"pages={total_pages} rows={total_rows} duration={elapsed_ms}ms"
     )
     # 실행 로그(실행 기록으로 저장)에서 보낸 비밀을 가린다(WD-657) — 주소에 직접 쓴 키 등. Java 실행기와 같은 가림 규칙이다.
-    summary = errors.scrub_secret(summary, auth.sent_secret)
+    summary = errors.scrub_secret(summary, auth.sent_secrets)
     log_lines.insert(0, summary)
     return ApiCallExecuteResponse(
         success=True,
@@ -265,7 +267,8 @@ def _execute_request(
         target_host = None
     # 오류 문구·경고 로그에서 가릴 값 — 이번 요청에 실제로 싣는 비밀 전부(쿼리 키·헤더 키·Bearer 토큰, WD-657). Java 실행기
     # (AuthQueryMasker.scrubSecret(…, auth.sentSecret()))와 같다. 예전에는 URL 의 쿼리만 지웠다.
-    sent_secret = auth.sent_secret
+    # BASIC 은 비밀번호와 Base64 덩어리 둘 다다(WD-681).
+    sent_secret = auth.sent_secrets
 
     while attempt <= max_retries:
         try:
@@ -342,6 +345,11 @@ def _do_request(
     # 쿼리 문자열은 직접 만들어 URL 에 붙이고 httpx 에 params= 를 넘기지 않는다(WD-182). params= 를 넘기면 httpx 가
     # (1) 값을 다시 인코딩해 인코딩 키의 %2B 가 %252B 로 나가고 (2) URL 에 이미 있던 쿼리를 통째로 바꿔 버린다(httpx 0.28,
     # params={} 여도 쿼리가 사라진다). 문자열 URL 의 쿼리는 httpx 가 유효한 %XX 를 그대로 보낸다.
+    # BASIC(저장·인라인)은 URL 의 사용자 정보를 떼고 보낸다(WD-681 리뷰) — 남겨 두면 httpx 가 그것으로 Basic 인증을 만들어 설정한
+    # 「Authorization: Basic」 헤더를 덮는다. Java 실행기(WebClient)는 URL 사용자 정보로 인증하지 않아 설정한 값이 이긴다 — 같게 맞춘다.
+    # 옛 연결(API_KEY·BEARER + 사용자 정보)은 이관하지 않았으므로 그대로 둔다(httpx 가 사용자 정보를 Basic 으로 보내던 동작 유지).
+    if auth.is_basic:
+        url = errors.strip_url_userinfo(url)
     current_url = _build_request_url(url, req_params, auth_query)
     origin_url = current_url
     redirect_count = 0
@@ -380,6 +388,9 @@ def _do_request(
                 location = _resolve_redirect_location(current_url, location)
                 # SSRF check on redirect target
                 validate_url(location)
+                if auth.is_basic:
+                    # 리다이렉트 대상에 사용자 정보가 붙어 와도 설정한 Basic 헤더를 덮지 못하게 뗀다(WD-681 리뷰, 첫 요청과 같은 규칙).
+                    location = errors.strip_url_userinfo(location)
                 same_origin = _same_auth_origin(origin_url, location)
                 if auth.is_query_api_key:
                     location = _adjust_query_auth(location, auth, same_origin, has_left_origin)
@@ -504,6 +515,11 @@ class _ResolvedAuth(NamedTuple):
     header_name: str
     param_name: str
     secret: str
+    # BASIC 아이디(WD-681) — BASIC 이 아니면 빈 문자열. 비밀번호는 secret 이다.
+    username: str = ""
+    # Basic 인증 헤더 값의 Base64 덩어리 — ``base64(utf8(아이디:비밀번호))``(RFC 7617, WD-681). Java ``basicCredentials`` 와 같은
+    # 바이트다. 풀 때(``_resolve_auth``) 한 번만 계산해 헤더·가림이 같은 값을 쓴다. BASIC 이 아니면 None.
+    basic_credentials: Optional[str] = None
 
     @property
     def is_query_api_key(self) -> bool:
@@ -511,9 +527,24 @@ class _ResolvedAuth(NamedTuple):
         return self.auth_type == "API_KEY" and self.placement == "QUERY"
 
     @property
+    def is_basic(self) -> bool:
+        """Authorization: Basic 헤더를 붙이는 설정인지(WD-681, Java ``isBasic`` 과 같다)."""
+        return self.auth_type == "BASIC"
+
+    @property
     def sent_secret(self) -> Optional[str]:
-        """실제로 요청에 실리는 비밀 — 오류 문구·로그에서 가릴 값. 인증을 붙이지 않는 설정이면 None(Java ``sentSecret`` 과 같다)."""
+        """요청에 실리는 API 키·Bearer 토큰 — API 키 규칙으로 가릴 값. 인증을 붙이지 않는 설정·BASIC 이면 None(Java ``sentSecret`` 과
+        같다). BASIC 은 고정 가림 규칙이라 ``sent_secrets`` 가 따로 다룬다."""
         return self.secret if self.auth_type in ("BEARER", "API_KEY") else None
+
+    @property
+    def sent_secrets(self) -> "errors.SentSecrets":
+        """오류 문구·로그에서 가릴 비밀과 그 규칙(WD-681 리뷰, Java ``sentSecrets`` 와 같다). BASIC 은 Base64 덩어리(늘 고정 ``****``)와
+        비밀번호(SMTP 규칙 — 짧아 지울 수 없으면 문장을 통째로 가림) — 되울린 「Authorization: Basic …」 을 풀면 아이디·비밀번호가 그대로
+        나온다. 그 밖에는 ``sent_secret`` 하나를 API 키 규칙으로 가린다."""
+        if self.is_basic:
+            return errors.SentSecrets(None, self.basic_credentials, self.secret)
+        return errors.SentSecrets(self.sent_secret, None, None)
 
 
 def _resolve_auth(auth: Optional[dict]) -> _ResolvedAuth:
@@ -527,12 +558,19 @@ def _resolve_auth(auth: Optional[dict]) -> _ResolvedAuth:
     placement = (_first_non_blank(a, "placement", "location") or "header").upper()
     header_name = (_first_non_blank(a, "headerName", "key_name") or "x-api-key").strip(_JAVA_WHITESPACE)
     param_name = _first_non_blank(a, "paramName", "key_name") or "api_key"
+    username = ""
+    basic_credentials = None
     if auth_type == "BEARER":
         secret = _normalize_bearer_token(a.get("token") or a.get("value") or "")
+    elif auth_type == "BASIC":
+        # BASIC(WD-681) — username·password 키만 원문 그대로 읽는다(Java ApiCallAuth.resolve 와 같다, 공백도 떼지 않는다).
+        secret = a.get("password") or ""
+        username = a.get("username") or ""
+        basic_credentials = base64.b64encode(f"{username}:{secret}".encode("utf-8")).decode("ascii")
     else:
         # API 키는 원문 그대로 보낸다(Java ApiCallAuth.resolve 와 같다).
         secret = a.get("apiKey") or a.get("key_value") or a.get("value") or ""
-    return _ResolvedAuth(auth_type, placement, header_name, param_name, secret)
+    return _ResolvedAuth(auth_type, placement, header_name, param_name, secret, username, basic_credentials)
 
 
 # 다른 출처 홉에서 인증 방식과 상관없이 빼는 표준 자격 증명 헤더(소문자, WD-657) — Java ApiCallExecutor.CREDENTIAL_HEADERS 와 같다.
@@ -654,6 +692,9 @@ def _apply_resolved_auth(
     """
     if resolved.auth_type == "BEARER":
         headers["Authorization"] = f"Bearer {resolved.secret}"
+    elif resolved.is_basic:
+        # BASIC(WD-681) — 다른 출처 리다이렉트에서는 auth_headers 에 든 이름(Authorization)이라 Bearer 처럼 떼진다.
+        headers["Authorization"] = f"Basic {resolved.basic_credentials}"
     elif resolved.auth_type == "API_KEY":
         if resolved.placement == "QUERY":
             params.pop(resolved.param_name, None)
