@@ -87,9 +87,10 @@ public interface DatasetRepository {
   Optional<DatasetWriteTarget> lockForDataWriteByTableName(String tableName);
 
   /**
-   * WD-666: 데이터 테이블을 통째로 바꾸는 쓰기(truncate·replace)의 첫 문장 — {@code FOR UPDATE OF dataset} 로 잡으며 같은
-   * 문장으로 읽는다. 데이터 쓰기(KEY SHARE)·필드 변경과 줄 선다. 정보 수정·필드 순서 변경(NO KEY UPDATE)과도 짧게 줄 선다(구조 변경에만 강한 잠금을
-   * 쓴다). 필드 순서 변경은 이 잠금이 아니라 {@link #lockForColumnReorder} 를 쓴다.
+   * WD-666: 데이터 탭의 비우기·교체(사용자 truncate·replace)의 첫 문장 — {@code FOR UPDATE OF dataset} 로 잡으며 같은 문장으로
+   * 읽는다. 데이터 쓰기(KEY SHARE)·필드 변경과 줄 선다. 정보 수정·필드 순서 변경(NO KEY UPDATE)과도 짧게 줄 선다(구조 변경에만 강한 잠금을 쓴다).
+   * 필드 순서 변경은 이 잠금이 아니라 {@link #lockForColumnReorder} 를 쓴다. 파일 가져오기의 REPLACE 는 TRUNCATE 가 첫 문장이라 격상
+   * 교착이 없어 데이터 쓰기 잠금({@link #lockForDataWrite})을 쓴다(WD-674, 근거는 DatasetDataWriteLock 클래스 문서).
    *
    * @return 잠근 데이터셋의 쓰기 대상 정보, 행이 없으면 빈 값
    */

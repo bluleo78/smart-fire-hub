@@ -157,8 +157,8 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
                 new DataTableService(
                     com.smartfirehub.support.ReservedNameResolvers.appReservedOnly()),
                 pipelineDataSchema,
-                org.mockito.Mockito.mock(
-                    com.smartfirehub.dataset.service.DatasetDataWriteLock.class)));
+                // WD-674: 맨 목이면 삭제 잠금이 빈 목록을 돌려줘 「지우지 않는다」 단언이 공허해진다 — 통과시키는 잠금을 쓴다.
+                com.smartfirehub.support.PassThroughWriteLock.create()));
     org.springframework.test.util.ReflectionTestUtils.setField(
         runner, "tempDatasetService", realTempDatasetService);
     TenantContext.set(TENANT_ID);

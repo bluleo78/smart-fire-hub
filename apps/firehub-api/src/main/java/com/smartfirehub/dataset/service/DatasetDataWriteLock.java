@@ -5,6 +5,7 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetWriteTarget;
 import java.util.Collection;
 import java.util.List;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -26,8 +27,24 @@ import org.springframework.transaction.support.TransactionTemplate;
  *   <li>정보 수정(이름·설명)·필드 순서 변경: {@code FOR NO KEY UPDATE} — 같은 단계끼리는 줄 서지만 데이터 테이블 모양을 바꾸지 않으므로 데이터
  *       쓰기는 막지 않는다. 이 단계는 이 클래스가 아니라 {@link DatasetService} 가 직접 잡는다({@code
  *       DatasetRepository#lockUpdatedAtById}·{@code #lockForColumnReorder}).
- *   <li>필드 추가·변경·삭제, truncate·replace, 데이터셋 삭제: {@code FOR UPDATE} — 데이터 쓰기와 충돌해 진행 중인 쓰기가 커밋될 때까지
- *       기다리고, 뒤에 온 쓰기는 구조 변경 커밋 뒤의 모양(또는 삭제됨 → 404)을 본다.
+ *   <li>필드 추가·변경·삭제, 데이터 탭의 비우기·교체(사용자 truncate·replace), 데이터셋 삭제: {@code FOR UPDATE} — 데이터 쓰기와 충돌해
+ *       진행 중인 쓰기가 커밋될 때까지 기다리고, 뒤에 온 쓰기는 구조 변경 커밋 뒤의 모양(또는 삭제됨 → 404)을 본다.
+ * </ul>
+ *
+ * <p><b>가져오기 REPLACE 는 데이터 쓰기(KEY SHARE)다(WD-674).</b> 파일 가져오기의 교체(PK 없는 삽입 스트림의 첫 배치 truncate, PK
+ * 있는 staging 교체 promote)도 테이블을 비우지만 사용자 truncate 와 달리 FOR UPDATE 가 필요 없다.
+ *
+ * <ul>
+ *   <li>사용자 truncate 가 FOR UPDATE 인 이유는 「행 수를 센 뒤(ACCESS SHARE) 같은 트랜잭션에서 TRUNCATE(ACCESS
+ *       EXCLUSIVE)로 격상」하기 때문이다 — 둘이 겹치면 격상 교착이 나므로 데이터셋 행에서 서로 배타로 줄 세운다({@link
+ *       #lockForStructureChange}).
+ *   <li>가져오기 REPLACE 는 그 트랜잭션에서 대상 테이블에 닿는 첫 문장이 곧 TRUNCATE 다(행 수는 비운 뒤에 센다). 격상이 없으니 다른 가져오기
+ *       REPLACE·데이터 쓰기와는 테이블 잠금에서 차례로 기다릴 뿐 교착하지 않는다(PG). Tibero 는 TRUNCATE 대신 DELETE 라 행을 하나씩
+ *       잠그므로, 여러 행을 다른 순서로 잠그는 데이터 탭 쓰기와 겹치면 교착이 날 수 있다 — DB 가 교착을 감지해 한쪽을 실패시킨다(잠금 단계는
+ *       예전과 같음).
+ *   <li>필드 변경·데이터셋 삭제(FOR UPDATE)와는 KEY SHARE 로도 충돌하므로 컬럼 ALTER·DROP 과 겹치지 않는다 — 구조 변경 쪽 직렬화는 그대로다.
+ *   <li>PK 없는 교체는 파일 전체를 삽입하는 동안 잠금을 쥔다. FOR UPDATE 로 올리면 그동안 이름·설명 수정까지 막혀, 이 사다리가 피하려던 「긴 적재가 이름
+ *       변경을 붙잡는」 일이 다시 생긴다.
  * </ul>
  *
  * <p><b>범위(입도).</b> 잠금은 데이터셋 하나·쓰기 트랜잭션 하나 단위다. 한 트랜잭션으로 묶인 쓰기(행 쓰기, 가져오기 APPEND·REPLACE, promote,
@@ -67,7 +84,8 @@ public class DatasetDataWriteLock {
   }
 
   /**
-   * 구조 변경 잠금(FOR UPDATE)을 잡고 쓰기 대상을 같은 문장으로 읽는다 — truncate·replace 처럼 데이터 테이블을 통째로 바꾸는 쓰기용.
+   * 구조 변경 잠금(FOR UPDATE)을 잡고 쓰기 대상을 같은 문장으로 읽는다 — 데이터 탭의 비우기·교체(사용자 truncate·replace)용. 파일 가져오기의
+   * REPLACE 는 이 잠금이 아니라 데이터 쓰기 잠금을 쓴다(이유는 클래스 문서, WD-674).
    *
    * <p>truncate 는 행 수를 세며(공유 잠금) 테이블을 쥔 채 TRUNCATE(배타 잠금)로 격상한다. 두 truncate 가 겹치면 격상 교착이 나므로, 데이터
    * 테이블을 만지기 전에 데이터셋 행에서 서로 배타로 줄 세운다(WD-551).
@@ -156,14 +174,25 @@ public class DatasetDataWriteLock {
 
   /**
    * 트랜잭션(없으면 새로, 있으면 합류)을 열어 데이터셋 id 로 데이터 쓰기 잠금을 잡은 뒤 {@code body} 를 실행한다(WD-672) — 가져오기의 대상 테이블
-   * 쓰기(APPEND·REPLACE 삽입 스트림, UPSERT·REPLACE promote)가 쓴다. {@link #writeToOutput} 의 id 판이다.
+   * 쓰기(APPEND·REPLACE 삽입 스트림, UPSERT·REPLACE promote)가 쓴다. {@link #writeToOutput} 의 id 판이다. 가져오기
+   * REPLACE 도 데이터 쓰기 잠금(KEY SHARE)이면 충분하다 — 이유는 클래스 문서(WD-674).
    *
-   * @throws DatasetNotFoundException 데이터셋이 없거나 기다리는 동안 삭제됐을 때 — {@code body} 는 실행되지 않는다
+   * <p>WD-674: 잠금을 잡을 때 데이터셋이 없으면 {@code onGone} 이 만든 예외를 던진다. 이 변환은 잠금 한 문장에만 걸린다 — {@code body}
+   * 안에서 난 {@link DatasetNotFoundException} 은 그대로 올라가, 무관한 「없음」이 「쓰는 중 삭제됨」으로 잘못 안내되지 않는다.
+   *
+   * @param onGone 잠금 시점에 데이터셋이 없을 때(없거나 기다리는 동안 삭제됨) 던질 예외를 만든다 — {@code body} 는 실행되지 않는다
    */
-  public <T> T writeToDataset(Long datasetId, Supplier<T> body) {
+  public <T> T writeToDataset(
+      Long datasetId,
+      Function<DatasetNotFoundException, ? extends RuntimeException> onGone,
+      Supplier<T> body) {
     return tx.execute(
         status -> {
-          lockForDataWrite(datasetId);
+          try {
+            lockForDataWrite(datasetId);
+          } catch (DatasetNotFoundException e) {
+            throw onGone.apply(e);
+          }
           return body.get();
         });
   }

@@ -384,7 +384,8 @@ public class JooqDatasetRepository implements DatasetRepository {
         .fetchOptional(this::toWriteTarget);
   }
 
-  // WD-666: 데이터 테이블을 통째로 바꾸는 쓰기(truncate·replace) — FOR UPDATE 잠금 + 읽기를 한 문장으로.
+  // WD-666: 데이터 탭의 비우기·교체(사용자 truncate·replace) — FOR UPDATE 잠금 + 읽기를 한 문장으로.
+  // 파일 가져오기 REPLACE 는 여기가 아니라 KEY SHARE(lockForDataWrite)다(WD-674 — DatasetDataWriteLock 클래스 문서).
   @Override
   public Optional<DatasetWriteTarget> lockForStructureWrite(Long id) {
     return writeTargetWhere(DS_ID.eq(id)).forUpdate().fetchOptional(this::toWriteTarget);

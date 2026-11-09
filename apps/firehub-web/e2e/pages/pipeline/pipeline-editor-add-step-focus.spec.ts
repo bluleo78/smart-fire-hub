@@ -195,9 +195,21 @@ test.describe('파이프라인 에디터 — 스텝 추가 후 포커스 (WD-545
 
     // 실행이 끝나 상세가 재조회되면 tempId 가 새로 만들어지고, 선택은 이름으로 새 id 에 다시 붙는다 —
     // 남아 있던 포커스 표시가 이 「새 id 선택」을 새 스텝으로 오인해 이름 입력으로 포커스를 뺏으면 안 된다
+    // WD-674: 고정 대기 대신 조건으로 기다린다 — ① 재조회 응답, ② 그 응답이 편집기에 반영됨(tempId 가 새로 만들어져 노드 data-id 가
+    // 바뀜), ③ 반영 커밋의 effect(포커스 판정)가 끝남(두 프레임). 실행 목록 폴링 주기가 5초라 응답 대기에만 넉넉한 상한을 둔다.
+    const firstNode = page.locator('.react-flow__node').first();
+    const nodeIdBeforeRefetch = await firstNode.getAttribute('data-id');
+    expect(nodeIdBeforeRefetch).toBeTruthy();
+    const refetched = page.waitForResponse(
+      (res) => res.request().method() === 'GET' && new URL(res.url()).pathname === '/api/v1/pipelines/1',
+      { timeout: 15_000 },
+    );
     completeRun = true;
-    await expect.poll(() => detailCalls, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
-    await page.waitForTimeout(500);
+    await refetched;
+    await expect(firstNode).not.toHaveAttribute('data-id', nodeIdBeforeRefetch as string);
+    await page.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    );
     await expect(stepName).toHaveValue('데이터 추출');
     await expect(stepName).not.toBeFocused();
   });

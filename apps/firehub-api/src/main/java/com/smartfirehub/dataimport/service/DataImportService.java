@@ -912,7 +912,8 @@ public class DataImportService {
       if (importMode == ImportMode.APPEND
           || (importMode == ImportMode.REPLACE && pkColumns.isEmpty())) {
         // WD-666: 대상 테이블에 쓰기 전, 같은 트랜잭션에서 데이터셋 행을 잡는다 — 삽입 스트림이 커밋될 때까지 truncate·NOT NULL
-        // 필드 추가·삭제가 이 뒤로 줄 선다(정보 수정은 막지 않는다).
+        // 필드 추가·삭제가 이 뒤로 줄 선다(정보 수정은 막지 않는다). REPLACE(PK 無)의 첫 배치 truncate 도 KEY SHARE 로 충분하다 —
+        // 대상에 닿는 첫 문장이 TRUNCATE 라 격상 교착이 없다(WD-674, DatasetDataWriteLock 문서).
         writeToTarget(
             datasetId,
             () -> {
@@ -997,7 +998,9 @@ public class DataImportService {
         } else if (importMode == ImportMode.REPLACE && !pkColumns.isEmpty()) {
           log.info("REPLACE mode: promoting staging to target (truncate + insert) atomically");
           // 교체는 대상을 비운 뒤 넣으므로, 같은 트랜잭션에서 센 대상 행 수가 곧 반영된 행 수다
-          // WD-666: 교체 promote 도 같은 트랜잭션의 첫 문장으로 데이터셋 행을 잡는다.
+          // WD-666: 교체 promote 도 같은 트랜잭션의 첫 문장으로 데이터셋 행을 잡는다. 데이터 탭 truncate 와 달리 FOR UPDATE 가 아니라
+          // 데이터 쓰기 잠금(KEY SHARE)이다 — 대상에 닿는 첫 문장이 TRUNCATE 라 격상 교착이 없다(WD-674, DatasetDataWriteLock
+          // 문서).
           long replacedRows =
               writeToTarget(
                   datasetId,
@@ -1332,11 +1335,18 @@ public class DataImportService {
    * DatasetDataWriteLock#writeToDataset}, WD-672). 그 사이 데이터셋이 지워졌으면 사라진 테이블에 쓰지 않고 이유가 담긴 실패로 끝낸다.
    */
   private <T> T writeToTarget(Long datasetId, Supplier<T> body) {
-    try {
-      return writeLock.writeToDataset(datasetId, body);
-    } catch (DatasetNotFoundException e) {
-      throw new ImportProcessingException(DATASET_GONE_MESSAGE, e);
-    }
+    return writeToTarget(writeLock, datasetId, body);
+  }
+
+  /**
+   * {@link #writeToTarget(Long, Supplier)} 의 본체 — 잠금 층만 받아 서비스 전체를 조립하지 않고 단위 테스트한다(WD-674).
+   *
+   * <p>WD-674: 「삭제되어…」 안내는 잠금을 잡을 때 데이터셋이 없을 때만 붙인다. 예전에는 쓰기 본문 전체를 감싸 잡아, 본문 안에서 난 무관한 {@link
+   * DatasetNotFoundException} 까지 삭제로 오인해 안내했다.
+   */
+  static <T> T writeToTarget(DatasetDataWriteLock writeLock, Long datasetId, Supplier<T> body) {
+    return writeLock.writeToDataset(
+        datasetId, gone -> new ImportProcessingException(DATASET_GONE_MESSAGE, gone), body);
   }
 
   /** 값을 돌려주는 데이터 행 쓰기용 {@link #dataWrite(Runnable)}. */

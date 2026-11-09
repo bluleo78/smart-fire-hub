@@ -175,6 +175,7 @@ class TempDatasetServiceTiberoNameTest {
                 ? com.smartfirehub.support.ReservedNameResolvers.appReservedOnly()
                 : com.smartfirehub.support.ReservedNameResolvers.postgres()),
         schema,
-        mock(com.smartfirehub.dataset.service.DatasetDataWriteLock.class));
+        // WD-674: 맨 목은 삭제 잠금이 빈 목록을 돌려줘 삭제가 조용히 건너뛰어진다 — 실제처럼 통과시키는 잠금을 쓴다.
+        com.smartfirehub.support.PassThroughWriteLock.create());
   }
 }
