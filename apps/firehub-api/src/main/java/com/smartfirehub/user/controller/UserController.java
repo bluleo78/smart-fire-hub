@@ -135,7 +135,8 @@ public class UserController {
       @PathVariable Long id,
       @Valid @RequestBody SetActiveRequest request) {
     Long callerId = (Long) authentication.getPrincipal();
-    userService.setUserActive(id, request.active(), callerId);
+    // WD-596: @Valid + @NotNull 로 active 누락·null 은 이미 400 이므로 여기서의 언박싱은 안전하다.
+    userService.setUserActive(id, request.active().booleanValue(), callerId);
     return ResponseEntity.noContent().build();
   }
 
