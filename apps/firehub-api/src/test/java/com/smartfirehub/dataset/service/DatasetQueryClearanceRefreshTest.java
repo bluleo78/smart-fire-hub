@@ -11,15 +11,22 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.QueryHistoryRepository;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.permission.repository.jooq.JooqPermissionRepository;
+import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.repository.jooq.JooqDatasetAccessRepository;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TxRecordingInteractiveGate;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteContext;
+import org.jooq.ExecuteListener;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -218,5 +225,52 @@ class DatasetQueryClearanceRefreshTest extends IntegrationTestBase {
 
     SecurityContextHolder.clearContext();
     assertThat(clearanceResolver.readFresh().rank()).isEqualTo(Clearance.NO_RANK);
+  }
+
+  /**
+   * WD-687 — 재판정이 자격을 새로 읽으며(readFresh, WD-682) 더하는 쿼리 수를 TC 수준에서 잰다(부하 환경 대신). PG 재판정처럼 쓰기 트랜잭션
+   * 안에서 readFresh 로 재판정한다.
+   *
+   * <p>공유 싱글턴 DSLContext 설정은 건드리지 않는다 — 세는 리스너를 단 파생 설정(derive)의 DSLContext 로 자격 계산 저장소만 따로 조립한
+   * ClearanceResolver 를 쓴다(운영과 같은 저장소 구현·같은 트랜잭션 연결). 판정 자체(매핑 조회)는 공유 DSL 이라 세지 않는다. 트랜잭션·GUC 같은
+   * 기반 문장이 섞여도 흔들리지 않게 역할·권한 표를 읽는 문장만 세고, 지연 1회성 조회가 숫자를 흐리지 않게 먼저 한 번 데운다. 기대: 2건(역할·등급 조인 1 + 권한
+   * 코드 1).
+   */
+  @Test
+  void rejudgment_readFreshAddsTwoRolePermissionQueries() {
+    List<String> seen = new CopyOnWriteArrayList<>();
+    ExecuteListener counter =
+        new ExecuteListener() {
+          @Override
+          public void executeStart(ExecuteContext ctx) {
+            seen.add(ctx.sql());
+          }
+        };
+    DSLContext counted = DSL.using(dsl.configuration().deriveAppending(counter));
+    ClearanceResolver countedResolver =
+        new ClearanceResolver(
+            new JooqDatasetAccessRepository(counted),
+            new PermissionService(new JooqPermissionRepository(counted)));
+    TransactionTemplate writeTx = new TransactionTemplate(transactionManager);
+    String sql = selectRequest().sql();
+    Runnable rejudge =
+        () ->
+            writeTx.executeWithoutResult(
+                s -> guardedSqlExecutor.judgeDatasetQuery(countedResolver.readFresh(), sql));
+
+    // 데우기 — 첫 호출에만 도는 지연 조회를 측정에서 뺀다.
+    rejudge.run();
+    seen.clear();
+    rejudge.run();
+
+    assertThat(rolePermissionQueries(seen)).as("readFresh 의 역할·권한 조회: %s", seen).isEqualTo(2);
+  }
+
+  /** 역할·권한 표(user_role·role_permission·permission)를 읽는 문장 수. */
+  private static long rolePermissionQueries(List<String> sqls) {
+    return sqls.stream()
+        .map(String::toLowerCase)
+        .filter(q -> q.contains("user_role") || q.contains("permission"))
+        .count();
   }
 }

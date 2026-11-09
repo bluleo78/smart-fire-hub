@@ -17,7 +17,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -55,7 +54,13 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       반납하므로(spring-tx 6.2.1 AbstractPlatformTransactionManager.processCommit:
  *       triggerAfterCompletion → finally cleanupAfterCompletion) 그 자리에서 쓰면 여전히 커넥션 2개다. 실행기 스레드는
  *       커넥션을 하나만 쥐고 다른 커넥션을 기다리지 않는다.
- *   <li>실행기 큐가 차거나(유한 큐) 종료 중이면 호출자를 막지 않고 버린다(WARN + 누적 건수). 프로세스 크래시 때 큐에 있던 기록은 유실될 수 있다.
+ *   <li><b>큐 포화 정책(WD-687)</b> — 상한이 둘이다. 접근 감사는 대기 건수(실행 중 포함)가 소프트 상한({@link #QUEUE_CAPACITY})을
+ *       넘으면 버린다. 거부 감사는 그 위의 여유분까지, 실행기의 유한 큐(하드 상한 = 소프트 × {@link #HARD_CAPACITY_FACTOR})가 찰 때까지
+ *       받는다 — 접근 감사보다 오래 살아남지만 무제한은 아니다. 합치기 키에 사용자 입력(SQL 의 테이블 이름·사유)이 들어가고 합치기 캐시도 크기 상한에서 일찍
+ *       밀려나므로, DB 가 느린 동안 서로 다른 키가 몰리면 무제한 큐는 메모리를 다 쓸 수 있다. 호출 스레드에서 동기로 쓰는 대안은 afterCompletion
+ *       갈래에서 바깥 커넥션을 쥔 채 커넥션을 하나 더 잡아 위의 풀 교착을 되살리므로 쓰지 않는다.
+ *   <li>버림(소프트·하드 상한, 종료 중 거절, 종료 시 비우지 못함)과 넘침(소프트 상한을 넘어 받아들인 거부)은 {@link SecurityAuditMetrics}
+ *       카운터로 보이고, WARN 은 각각 1분에 1번으로 묶는다(건마다 남기면 포화 때 로그가 넘친다). 프로세스 크래시 때 큐에 있던 기록은 유실될 수 있다.
  * </ul>
  *
  * <p>거부·접근 감사 실패는 요청을 실패시키지 않는다(경고 로그만) — 감사는 판정이 아니라 기록이다. 실패·버림이면 합치기 키를 지워 다음 호출이 다시 시도한다.
@@ -73,11 +78,34 @@ public class SecurityAuditRecorder {
   /** 같은 거부·접근을 하나로 합치는 창. */
   static final Duration COALESCE_WINDOW = Duration.ofMinutes(1);
 
-  /** 비동기 기록 큐 상한 — 넘치면 버리고 WARN(호출자 요청을 막지 않는다). */
+  /** 비동기 기록 대기의 소프트 상한 — 접근 감사가 버려지는 지점(클래스 설명의 큐 포화 정책). */
   static final int QUEUE_CAPACITY = 10_000;
+
+  /** 하드 상한(실행기 큐 크기) = 소프트 상한 × 이 값 — 거부 감사의 여유분(클래스 설명의 큐 포화 정책). */
+  static final int HARD_CAPACITY_FACTOR = 2;
+
+  /** 버림·넘침 WARN 을 묶는 간격(1분) — 이 간격 안의 건수는 카운터로만 센다. */
+  private static final long WARN_INTERVAL_NANOS = Duration.ofMinutes(1).toNanos();
 
   /** 종료 시 남은 기록을 비우는 최대 대기. */
   private static final Duration DRAIN_TIMEOUT = Duration.ofSeconds(10);
+
+  /** 비동기 기록의 종류 — 어느 상한에서 버리는지(접근: 소프트, 거부: 하드)를 가르고, 메트릭 태그·로그 이름이 된다. */
+  enum Kind {
+    DENIAL("denial", "접근 거부"),
+    ACCESS("access", "감사 등급 접근");
+
+    /** 메트릭 태그 값. */
+    final String tag;
+
+    /** 로그에 쓰는 이름. */
+    final String label;
+
+    Kind(String tag, String label) {
+      this.tag = tag;
+      this.label = label;
+    }
+  }
 
   /** 감사 등급 접근의 종류(스펙 §4.6 "audit_access 등급만"). */
   public enum AccessKind {
@@ -87,9 +115,41 @@ public class SecurityAuditRecorder {
     AI
   }
 
+  /**
+   * 실행기에 넘기는 기록 작업. 종류·키를 들고 있어 거절 처리기와 종료 시 미실행 작업 정리가 종류별로 세고 합치기 키를 지울 수 있다. 실행하면 테넌트 컨텍스트를 다시
+   * 세워(GUC) 쓰고 대기 수를 줄인다.
+   */
+  private final class AuditTask implements Runnable {
+    final long tenantId;
+    final Runnable write;
+    final List<String> keys;
+    final Kind kind;
+
+    /** 거절 처리기가 표시한다 — execute 를 부른 호출 스레드에서만 읽고 쓴다. */
+    boolean rejected;
+
+    AuditTask(long tenantId, Runnable write, List<String> keys, Kind kind) {
+      this.tenantId = tenantId;
+      this.write = write;
+      this.keys = keys;
+      this.kind = kind;
+    }
+
+    @Override
+    public void run() {
+      try {
+        // runScoped 는 진입 전 값(워커 스레드는 null)으로 되돌린다 — 다음 작업에 테넌트가 새지 않는다.
+        TenantContext.runScoped(tenantId, () -> writeNow(write, keys, kind));
+      } finally {
+        finishOne();
+      }
+    }
+  }
+
   private final AuditLogService auditLogService;
   private final UserRepository userRepository;
   private final SecurityLevelRepository levelRepository;
+  private final SecurityAuditMetrics metrics;
 
   /** 실행기 스레드가 기록마다 여는 트랜잭션 — 그 스레드엔 바깥 트랜잭션이 없지만 합류를 막는 안전장치로 REQUIRES_NEW 를 둔다. */
   private final TransactionTemplate ownTx;
@@ -97,14 +157,27 @@ public class SecurityAuditRecorder {
   /** 최근 1분 안에 기록한 키(값은 의미 없음). 키에 테넌트를 넣어 테넌트 간 합치기를 막는다. */
   private final Cache<String, Boolean> recent;
 
-  /** 모든 거부·접근 기록을 처리하는 단일 스레드 실행기(유한 큐, 포화 시 예외 → 버림). */
+  /** 모든 거부·접근 기록을 처리하는 단일 스레드 실행기(하드 상한 크기의 유한 큐). */
   private final ThreadPoolExecutor writer;
 
-  /** 실행기에 넘겼으나 아직 끝나지 않은 기록 수 — {@link #awaitIdle} 가 기다리는 대상. {@code this} 모니터로 보호한다. */
-  private int pending;
+  /** 접근 감사의 소프트 상한(운영 {@link #QUEUE_CAPACITY}, 테스트는 작게). */
+  private final int queueCapacity;
 
-  /** 큐 포화·종료로 버린 기록 누적 수(WARN 로그에 함께 남긴다). */
-  private final AtomicLong dropped = new AtomicLong();
+  /** 종료 시 남은 기록을 비우는 최대 대기(운영 {@link #DRAIN_TIMEOUT}, 테스트는 짧게). */
+  private final Duration drainTimeout;
+
+  /** 마지막 버림 WARN 시각(nanoTime). */
+  private final AtomicLong lastDropWarnNanos =
+      new AtomicLong(System.nanoTime() - WARN_INTERVAL_NANOS);
+
+  /** 마지막 넘침 WARN 시각(nanoTime). */
+  private final AtomicLong lastOverflowWarnNanos =
+      new AtomicLong(System.nanoTime() - WARN_INTERVAL_NANOS);
+
+  /**
+   * 실행기에 넘겼으나 아직 끝나지 않은 기록 수(실행 중 포함) — 소프트 상한 판정과 {@link #awaitIdle} 가 본다. {@code this} 모니터로 보호한다.
+   */
+  private int pending;
 
   /** 운영용 — 시스템 시계로 1분 창을 잰다. */
   @Autowired
@@ -112,20 +185,33 @@ public class SecurityAuditRecorder {
       AuditLogService auditLogService,
       UserRepository userRepository,
       SecurityLevelRepository levelRepository,
-      PlatformTransactionManager txManager) {
-    this(auditLogService, userRepository, levelRepository, txManager, Ticker.systemTicker());
+      PlatformTransactionManager txManager,
+      SecurityAuditMetrics metrics) {
+    this(
+        auditLogService,
+        userRepository,
+        levelRepository,
+        txManager,
+        metrics,
+        Ticker.systemTicker(),
+        QUEUE_CAPACITY,
+        DRAIN_TIMEOUT);
   }
 
-  /** 테스트용 — 시계를 주입해 1분 창을 테스트 안에서 넘긴다. */
+  /** 테스트용 — 시계를 주입해 1분 창을 테스트 안에서 넘기고, 대기 상한·종료 대기를 작게 줘 포화·종료 버림을 만든다. */
   SecurityAuditRecorder(
       AuditLogService auditLogService,
       UserRepository userRepository,
       SecurityLevelRepository levelRepository,
       PlatformTransactionManager txManager,
-      Ticker ticker) {
+      SecurityAuditMetrics metrics,
+      Ticker ticker,
+      int queueCapacity,
+      Duration drainTimeout) {
     this.auditLogService = auditLogService;
     this.userRepository = userRepository;
     this.levelRepository = levelRepository;
+    this.metrics = metrics;
     TransactionTemplate t = new TransactionTemplate(txManager);
     t.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     this.ownTx = t;
@@ -135,18 +221,27 @@ public class SecurityAuditRecorder {
             .maximumSize(100_000)
             .ticker(ticker)
             .build();
-    // AbortPolicy(기본) — 포화 시 RejectedExecutionException 을 받아 버림 처리한다(CallerRuns 면 호출자를 다시 막는다).
+    this.queueCapacity = queueCapacity;
+    this.drainTimeout = drainTimeout;
+    // 하드 상한 크기의 유한 큐. 가득 찼거나 종료 중이면 거절 처리기가 호출 스레드에서 버림으로 센다
+    // (CallerRuns 면 호출 스레드가 커넥션을 잡아 풀 교착을 되살린다).
     this.writer =
         new ThreadPoolExecutor(
             1,
             1,
             0L,
             TimeUnit.MILLISECONDS,
-            new ArrayBlockingQueue<>(QUEUE_CAPACITY),
+            new ArrayBlockingQueue<>(queueCapacity * HARD_CAPACITY_FACTOR),
             r -> {
               Thread th = new Thread(r, "security-audit-writer");
               th.setDaemon(true);
               return th;
+            },
+            (r, executor) -> {
+              AuditTask task = (AuditTask) r;
+              task.rejected = true;
+              finishOne();
+              drop(task.keys, task.kind, executor.isShutdown() ? "종료 중" : "하드 상한 포화");
             });
   }
 
@@ -226,7 +321,7 @@ public class SecurityAuditRecorder {
                 null,
                 meta),
         List.of(key),
-        "접근 거부");
+        Kind.DENIAL);
   }
 
   /**
@@ -284,7 +379,7 @@ public class SecurityAuditRecorder {
           }
         },
         List.copyOf(fresh.values()),
-        "감사 등급 접근");
+        Kind.ACCESS);
   }
 
   /**
@@ -295,12 +390,13 @@ public class SecurityAuditRecorder {
    * 커넥션은 범위가 끝날 때까지 스레드에 묶여 있을 수 있으므로, 동기화 범위가 있으면 실제 트랜잭션 여부와 무관하게 완료 후로 미룬다.
    *
    * @param keys 실패·버림 시 지울 합치기 키(다음 호출이 다시 시도하게)
+   * @param kind 포화 시 버릴 수 있는지 가르는 기록 종류
    */
   private void dispatch(
       long tenantId,
       Consumer<AuditLogService.RequestOrigin> writeWithOrigin,
       List<String> keys,
-      String what) {
+      Kind kind) {
     AuditLogService.RequestOrigin origin = auditLogService.currentOrigin();
     Runnable write = () -> writeWithOrigin.accept(origin);
     if (TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -309,45 +405,78 @@ public class SecurityAuditRecorder {
             @Override
             public void afterCompletion(int status) {
               // 커밋·롤백 무관 — 거부 감사는 요청이 롤백돼도 남아야 한다. 여기서 동기로 쓰지 않고 실행기로 넘긴다.
-              submit(tenantId, write, keys, what);
+              submit(tenantId, write, keys, kind);
             }
           });
     } else {
       // 동기화 범위 없음(바깥 커넥션 없음·SYNCHRONIZATION_NEVER) — 호출 스레드는 커넥션을 열지 않고 바로 넘긴다(WD-682).
-      submit(tenantId, write, keys, what);
+      submit(tenantId, write, keys, kind);
     }
   }
 
-  /** 실행기에 기록을 넘긴다. 큐 포화·종료면 버리고 WARN(호출자를 막지 않는다). 워커는 테넌트 컨텍스트를 다시 세워 GUC 가 심기게 한다. */
-  private void submit(long tenantId, Runnable write, List<String> keys, String what) {
+  /**
+   * 실행기에 기록을 넘긴다(호출자를 막지 않는다). 소프트 상한은 대기 수({@code pending})로 정확히 판정하고, 하드 상한은 실행기 큐가 묶는다 — 넘친 거부는
+   * 거절 처리기가 버림으로 센다(클래스 설명의 큐 포화 정책).
+   */
+  private void submit(long tenantId, Runnable write, List<String> keys, Kind kind) {
+    boolean overSoftCap;
     synchronized (this) {
-      pending++;
+      overSoftCap = pending > queueCapacity;
+      if (!overSoftCap || kind == Kind.DENIAL) {
+        pending++;
+      }
     }
-    try {
-      writer.execute(
-          () -> {
-            try {
-              // runScoped 는 진입 전 값(워커 스레드는 null)으로 되돌린다 — 다음 작업에 테넌트가 새지 않는다.
-              TenantContext.runScoped(tenantId, () -> writeNow(write, keys, what));
-            } finally {
-              finishOne();
-            }
-          });
-    } catch (RejectedExecutionException e) {
-      finishOne();
-      keys.forEach(recent::invalidate);
+    if (overSoftCap && kind == Kind.ACCESS) {
+      drop(keys, kind, "큐 포화");
+      return;
+    }
+    AuditTask task = new AuditTask(tenantId, write, keys, kind);
+    writer.execute(task);
+    // 넘침은 실제로 받아들인 거부만 센다(하드 상한에서 거절된 것은 처리기가 버림으로 셌다).
+    if (overSoftCap && !task.rejected) {
+      metrics.overflowed();
+      if (shouldWarn(lastOverflowWarnNanos)) {
+        log.warn(
+            "접근 거부 감사가 대기 소프트 상한({}건)을 넘었다 — 접근 감사는 버리는 중이고 거부는 하드 상한({}건)까지 받는다. 넘침 누적 {}건",
+            queueCapacity,
+            queueCapacity * HARD_CAPACITY_FACTOR,
+            metrics.overflowTotal());
+      }
+    }
+  }
+
+  /** 버린 기록을 센다 — 합치기 키를 지워 다음 호출이 다시 시도하게 하고 종류별 카운터를 올린다. */
+  private void discard(List<String> keys, Kind kind) {
+    keys.forEach(recent::invalidate);
+    metrics.dropped(kind);
+  }
+
+  /** 기록 하나를 버린다(카운터 + 1분에 1번 WARN). */
+  private void drop(List<String> keys, Kind kind, String reason) {
+    discard(keys, kind);
+    if (shouldWarn(lastDropWarnNanos)) {
       log.warn(
-          "{} 감사 기록을 버렸다 — 큐 포화 또는 종료 중(누적 {}건). 요청 처리는 그대로 진행한다", what, dropped.incrementAndGet());
+          "보안 감사 기록을 버렸다({}, 이번 종류 {}) — 누적 {}건. 요청 처리는 그대로 진행한다. 이후 1분간 버림은 카운터로만 센다",
+          reason,
+          kind.label,
+          metrics.totalDropped());
     }
+  }
+
+  /** {@code last} 로부터 1분이 지났으면 지금으로 바꾸고 true(동시 호출 중 한 스레드만). */
+  private static boolean shouldWarn(AtomicLong last) {
+    long now = System.nanoTime();
+    long prev = last.get();
+    return now - prev >= WARN_INTERVAL_NANOS && last.compareAndSet(prev, now);
   }
 
   /** 실행기 스레드에서 기록 하나를 트랜잭션으로 쓴다. 실패하면 합치기 키를 지우고 WARN(요청은 실패시키지 않는다). */
-  private void writeNow(Runnable write, List<String> keys, String what) {
+  private void writeNow(Runnable write, List<String> keys, Kind kind) {
     try {
       ownTx.executeWithoutResult(s -> write.run());
     } catch (RuntimeException e) {
       keys.forEach(recent::invalidate);
-      log.warn("{} 감사 기록 실패 — 요청 처리는 그대로 진행한다", what, e);
+      log.warn("{} 감사 기록 실패 — 요청 처리는 그대로 진행한다", kind.label, e);
     }
   }
 
@@ -376,19 +505,39 @@ public class SecurityAuditRecorder {
     return true;
   }
 
-  /** 애플리케이션 종료 시 큐에 남은 기록을 제한 시간 안에 비운다. 넘기면 남은 작업을 버리고 WARN. */
+  /** 애플리케이션 종료 시 큐에 남은 기록을 제한 시간 안에 비운다. 넘기거나 인터럽트되면 남은 작업을 버림으로 센다. */
   @PreDestroy
   void shutdown() {
     writer.shutdown();
     try {
-      if (!writer.awaitTermination(DRAIN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
-        int left = writer.shutdownNow().size();
-        log.warn("종료 시 감사 기록 {}건을 비우지 못하고 버렸다", left);
+      if (!writer.awaitTermination(drainTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
+        discardUnrun(writer.shutdownNow());
       }
     } catch (InterruptedException e) {
-      writer.shutdownNow();
+      discardUnrun(writer.shutdownNow());
       Thread.currentThread().interrupt();
     }
+  }
+
+  /**
+   * shutdownNow 가 돌려준 미실행 작업을 버림으로 센다. 실행되지 않아 finishOne 이 불리지 않으므로 대기 수도 한 번에 줄인다(awaitIdle 이 멈추지
+   * 않게).
+   */
+  private void discardUnrun(List<Runnable> unrun) {
+    if (unrun.isEmpty()) {
+      return;
+    }
+    for (Runnable r : unrun) {
+      AuditTask task = (AuditTask) r;
+      discard(task.keys, task.kind);
+    }
+    synchronized (this) {
+      pending -= unrun.size();
+      if (pending == 0) {
+        notifyAll();
+      }
+    }
+    log.warn("종료 시 감사 기록 {}건을 비우지 못하고 버렸다 — 버림 누적 {}건", unrun.size(), metrics.totalDropped());
   }
 
   /** 감사 행의 사용자 이름(없으면 "unknown"). */

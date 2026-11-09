@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+
+from tests.conftest import REFUSED_BASE_URL
 
 _HELPER_PATH = Path(__file__).resolve().parents[1] / "sandbox" / "genia_db.py"
 _FIXTURE = (
@@ -265,10 +266,7 @@ def test_failure_messages_never_contain_token_or_url(server, monkeypatch, scenar
         server.respond = lambda h: (h.send_response(401), h.end_headers())
     else:
         # 아무도 듣지 않는 포트 — 연결 거부. 원문 예외(주소 포함)는 체인에서 끊긴다.
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            dead_port = s.getsockname()[1]
-        url = f"http://127.0.0.1:{dead_port}"
+        url = REFUSED_BASE_URL
         monkeypatch.setenv("GENIA_DB_URL", url)
     with pytest.raises(genia_db.QueryError) as ei:
         genia_db.query("SELECT 1 FROM DUAL")

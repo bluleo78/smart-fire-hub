@@ -15,6 +15,10 @@ TEST_TOKEN = "test-internal-token-secret"
 # 두 언어의 비밀번호 파생이 일치함을 이 값으로 검증한다.
 TEST_ROLE_SECRET = "test-tenant-pipeline-secret"
 
+# 연결 거부가 확정된 주소(WD-685·WD-687) — 특권 포트 1 은 임시 포트 범위 밖이고 루트가 아니면 열 수 없다.
+# 빈 포트를 열었다 닫은 뒤 그 번호로 보내면, 부하 중 다른 프로세스가 같은 임시 포트를 다시 잡아 거부가 나지 않을 수 있다.
+REFUSED_BASE_URL = "http://127.0.0.1:1"
+
 
 def get_test_settings(**overrides) -> Settings:
     """테스트용 Settings. 기본값 위에 ``overrides`` 를 덮어쓴다(예: ``_env_file=None`` 으로 .env 무시)."""

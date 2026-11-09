@@ -25,7 +25,7 @@ from app.services.api_call_executor import (
 from app.services.db_utils import insert_batch
 from app.services.value_conversion import ConversionFailed
 from app.validators.ssrf_protection import SsrfException
-from tests.conftest import apply_auth
+from tests.conftest import REFUSED_BASE_URL, apply_auth
 
 
 def _conv(value, fm):
@@ -871,16 +871,9 @@ def test_non_json_response_is_not_retried():
 
 
 def test_connection_refused_real_socket_retried_with_cause():
-    """실제 닫힌 포트로 보내 httpx 가 내는 예외를 그대로 분류한다(영어 [Errno …] 원문 대신 한국어 안내)."""
-    import socket as sock
-
-    s = sock.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-
+    """실제 닫힌 포트(REFUSED_BASE_URL)로 보내 httpx 가 내는 예외를 그대로 분류한다(영어 [Errno …] 원문 대신 한국어 안내)."""
     req = make_request(
-        url=f"http://127.0.0.1:{port}/api",
+        url=f"{REFUSED_BASE_URL}/api",
         retry=RetryConfig(max_retries=1, initial_backoff_ms=0, max_backoff_ms=0),
     )
     conn, _ = make_conn()
