@@ -311,6 +311,62 @@ class UserControllerTest {
     verify(userService).setUserActive(eq(2L), eq(false), any());
   }
 
+  /** WD-596: active 를 보내면 그 값 그대로(true=재활성화) 서비스에 넘어간다. */
+  @Test
+  void setUserActive_activeTrue_reactivates() throws Exception {
+    mockAuthentication("user:write");
+
+    putActive("{\"active\":true}").andExpect(status().isNoContent());
+
+    verify(userService).setUserActive(eq(2L), eq(true), any());
+  }
+
+  /** WD-596: 빈 본문 {} 이 false 로 묶여 사용자가 몰래 비활성화되면 안 된다 — 400 이고 서비스는 호출되지 않는다. */
+  @Test
+  void setUserActive_emptyBody_returnsBadRequestAndKeepsUser() throws Exception {
+    mockAuthentication("user:write");
+
+    putActive("{}")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.active").value("활성 여부(active)는 필수입니다"));
+
+    verify(userService, never()).setUserActive(anyLong(), anyBoolean(), any());
+  }
+
+  /** WD-596: 필드 이름 오타(actvie)도 active 누락으로 보고 400 — 사용자 상태는 바뀌지 않는다. */
+  @Test
+  void setUserActive_typoField_returnsBadRequestAndKeepsUser() throws Exception {
+    mockAuthentication("user:write");
+
+    putActive("{\"actvie\":true}")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.active").value("활성 여부(active)는 필수입니다"));
+
+    verify(userService, never()).setUserActive(anyLong(), anyBoolean(), any());
+  }
+
+  /** WD-596: 명시적 null 도 누락과 같이 400 이다. */
+  @Test
+  void setUserActive_nullActive_returnsBadRequestAndKeepsUser() throws Exception {
+    mockAuthentication("user:write");
+
+    putActive("{\"active\":null}")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.active").value("활성 여부(active)는 필수입니다"));
+
+    verify(userService, never()).setUserActive(anyLong(), anyBoolean(), any());
+  }
+
+  /** 사용자 2번의 활성 상태 변경 요청을 주어진 JSON 본문 그대로 보낸다(WD-596 바인딩 검증용). */
+  private org.springframework.test.web.servlet.ResultActions putActive(String body)
+      throws Exception {
+    return mockMvc.perform(
+        put("/api/v1/users/2/active")
+            .header("Authorization", "Bearer valid-token")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body));
+  }
+
   /** WD-293: 사용자 목록도 page ≥ 0, 1 ≤ size ≤ 100 으로 보정해 서비스에 넘긴다(상한 없음·size=0·음수 오류 방지). */
   @Test
   void getUsers_clampsPageAndSize() throws Exception {
