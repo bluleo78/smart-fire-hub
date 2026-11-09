@@ -95,7 +95,8 @@ class ApiCallAuthVectorsTest {
             "basicAuth",
             "maskUserInfo",
             "basicScrub",
-            "redirectFollow")) {
+            "redirectFollow",
+            "scrubUrlUserInfo")) {
       assertThat(section(name).size()).as(name).isGreaterThanOrEqualTo(4);
     }
   }
@@ -195,6 +196,26 @@ class ApiCallAuthVectorsTest {
                 "password", c.get("password").asText()));
     assertThat(resolved.sentSecrets().scrubText(c.get("text").asText()))
         .isEqualTo(c.get("expected").asText());
+  }
+
+  static Stream<Arguments> scrubUrlUserInfo() throws IOException {
+    return cases("scrubUrlUserInfo");
+  }
+
+  /**
+   * 자유 문장 안 URL 사용자 정보 가림(WD-699) — 옛 연결(API_KEY·BEARER + baseUrl 사용자 정보)은 비밀번호가 {@code
+   * SentSecrets} 에 없어, 분류하지 못한 오류 문구·응답 헤더에 실린 URL 의 비밀번호를 공용 가림({@code scrubText})이 직접 가려야 한다.
+   * Python {@code SentSecrets.scrub} 과 같은 표다.
+   */
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("scrubUrlUserInfo")
+  void scrubUrlUserInfo_matchesVector(String name, JsonNode c) {
+    String key = c.get("secret").isNull() ? null : c.get("secret").asText();
+    AuthQueryMasker.SentSecrets secrets = new AuthQueryMasker.SentSecrets(key, null, null);
+    String once = secrets.scrubText(c.get("text").asText());
+    assertThat(once).isEqualTo(c.get("expected").asText());
+    // 두 번 가려도 같다 — 이미 가린 문구(****)를 다시 가리지 않는다.
+    assertThat(secrets.scrubText(once)).isEqualTo(once);
   }
 
   /** 실행 기록·응답에 남기는 URL 의 사용자 정보 가림(WD-681) — Python 실행기 요약 줄과 같은 모양이다. */

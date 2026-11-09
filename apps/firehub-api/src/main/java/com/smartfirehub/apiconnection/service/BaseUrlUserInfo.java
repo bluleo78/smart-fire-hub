@@ -29,7 +29,42 @@ public final class BaseUrlUserInfo {
   /** URL 스킴(RFC 3986) — 이 모양 뒤에 {@code ://} 가 와야 authority 가 있는 URL 로 본다. */
   private static final Pattern SCHEME = Pattern.compile("[A-Za-z][A-Za-z0-9+.-]*");
 
+  /**
+   * 자유 문장 안 URL 의 {@code 스킴://사용자정보@}(WD-699). 사용자 정보는 authority 안이라 공백·{@code /}·{@code ?}·{@code
+   * #}·큰따옴표·꺾쇠에서 끝나고(작은따옴표는 RFC 3986 이 사용자 정보에 허락하는 문자라 비밀번호 {@code pa'ss} 를 놓치지 않게 끊지 않는다 — 공백 없는
+   * 작은따옴표 문장을 더 가리는 쪽이 비밀번호를 흘리는 쪽보다 낫다), {@code @} 가 여럿이면 마지막 {@code @} 까지다({@link #split} 과 같은
+   * 해석). {@code ?}·{@code #} 를 빼야 {@code https://host?email=a@b.com} 의 쿼리 {@code @} 를 사용자 정보로 잘못 읽지
+   * 않는다. Python {@code api_call_errors._URL_USERINFO_FOR_MASK} 와 같은 패턴이다.
+   */
+  private static final Pattern USERINFO_IN_TEXT =
+      Pattern.compile("([A-Za-z][A-Za-z0-9+.\\-]*://)((?:[^\\s/?#@\"<>]+@)+)");
+
   private BaseUrlUserInfo() {}
+
+  /**
+   * 자유 문장(오류 문구·로그·응답 헤더 값) 안 모든 URL 의 사용자 정보 비밀번호를 {@link #mask} 와 같은 모양({@code 아이디:****@})으로
+   * 가린다(WD-699).
+   *
+   * <p><b>왜.</b> 옛 연결(API_KEY·BEARER + baseUrl 사용자 정보)은 이관하지 않아 그 비밀번호가 {@link
+   * AuthQueryMasker.SentSecrets} 의 비밀 목록에 없다 — 분류하지 못한 예외 원문이나 대상 서버가 되울린 헤더에 호출 URL 이 실리면 비밀번호가
+   * 그대로 나갔다. 비밀번호가 없거나 비었으면, 이미 가린 {@code ****} 이면 그대로다(두 번 가려도 같다). null 이면 null.
+   */
+  public static String maskInText(String text) {
+    if (text == null || text.indexOf('@') < 0) return text;
+    return USERINFO_IN_TEXT
+        .matcher(text)
+        .replaceAll(
+            m -> {
+              String chain = m.group(2);
+              String raw = chain.substring(0, chain.length() - 1);
+              int colon = raw.indexOf(':');
+              if (colon < 0 || colon == raw.length() - 1) {
+                return java.util.regex.Matcher.quoteReplacement(m.group());
+              }
+              return java.util.regex.Matcher.quoteReplacement(
+                  m.group(1) + raw.substring(0, colon) + ":" + AuthQueryMasker.PASSWORD_MASK + "@");
+            });
+  }
 
   /**
    * URL 에서 읽은 사용자 정보 — 퍼센트 인코딩을 푼 값이다(httpx 가 Basic 인증으로 보내던 값과 같다).

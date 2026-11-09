@@ -722,6 +722,51 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     }
   }
 
+  /**
+   * 옛 연결(API_KEY + baseUrl 사용자 정보, WD-681 이관 안 함)의 비밀번호는 {@code SentSecrets} 에 없다(WD-699). 대상 서버가
+   * 따라가지 않는 3xx(300)의 Location·다른 헤더로 사용자 정보가 든 URL 을 되울리면 예전에는 응답 헤더에 비밀번호가 그대로 나갔다 — 공용
+   * 가림(scrubText)이 문장 안 URL 의 비밀번호를 {@code 아이디:****@} 로 가리므로 응답 헤더·오류 문구·요청 URL·DB 어디에도 비밀번호가 없다.
+   */
+  @Test
+  void testConnection_legacyUserInfo_echoedInHeaders_passwordMasked() {
+    String legacyPassword = "LegacyPw9";
+    String echoed = "http://svc:" + legacyPassword + "@localhost:" + wireMock.port() + "/elsewhere";
+    wireMock.stubFor(
+        get(urlPathEqualTo("/health"))
+            .willReturn(
+                aResponse()
+                    .withStatus(300)
+                    .withHeader("Location", echoed)
+                    .withHeader("X-Echo-Url", "requested " + echoed + " ok")));
+    Long id =
+        apiConnectionService
+            .create(queryKeyReq("WD699 legacy", wireMockBase(), KEY), testUserId)
+            .id();
+    int updated =
+        inTenantFixture(
+            () ->
+                dsl.update(API_CONNECTION)
+                    .set(
+                        AC_BASE_URL,
+                        "http://svc:" + legacyPassword + "@localhost:" + wireMock.port())
+                    .where(AC_ID.eq(id))
+                    .execute());
+    assertThat(updated).as("옛 연결처럼 baseUrl 에 사용자 정보를 넣은 행이 1건이어야 한다").isEqualTo(1);
+
+    TestConnectionResponse result = apiConnectionService.testConnection(id);
+
+    assertThat(result.status()).isEqualTo(300);
+    String masked = "http://svc:****@localhost:" + wireMock.port() + "/elsewhere";
+    Map<String, String> headers = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+    headers.putAll(result.responseHeaders());
+    assertThat(headers.get("Location")).isEqualTo(masked);
+    assertThat(headers.get("X-Echo-Url")).isEqualTo("requested " + masked + " ok");
+    assertThat(String.valueOf(result.responseHeaders())).doesNotContain(legacyPassword);
+    assertThat(String.valueOf(result.errorMessage())).doesNotContain(legacyPassword);
+    assertThat(String.valueOf(result.requestUrl())).doesNotContain(legacyPassword);
+    assertThat(String.valueOf(readStatus(id).get(AC_LAST_ERROR))).doesNotContain(legacyPassword);
+  }
+
   // ── 상태 전환 알림·감사: 「테스트」·새로고침·주기 점검이 한 곳을 거친다(WD-189) ─────────────
 
   /** 연결을 만들고 직전 상태를 DB 에서 직접 맞춘다(주기 점검이 이미 한 번 본 연결). 0건 갱신이면 TC 가 공허하므로 1건을 단언한다. */

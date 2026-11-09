@@ -479,6 +479,56 @@ class DatasetControllerTest {
         .andExpect(status().isCreated());
   }
 
+  /** 복제 요청 본문을 그대로 보낸다 — 앞뒤 공백·이모지가 든 이름을 원문 JSON 으로 싣기 위해. */
+  private org.springframework.test.web.servlet.ResultActions postClone(String name)
+      throws Exception {
+    Map<String, Object> body = new java.util.HashMap<>();
+    body.put("name", name);
+    body.put("tableName", "clone_ds");
+    body.put("includeData", false);
+    body.put("includeTags", false);
+    return mockMvc.perform(
+        post("/api/v1/datasets/1/clone")
+            .header("Authorization", "Bearer test-token")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(body)));
+  }
+
+  /**
+   * WD-699: 복제 이름도 화면 규칙(datasetNameSchema)과 같게 — 공백만·null 은 「데이터셋 이름을 입력하세요」, 앞뒤 공백을 뺀 길이가 100자를
+   * 넘으면 「이름은 100자 이하여야 합니다」로 400 이고 서비스까지 가지 않는다.
+   */
+  @Test
+  void cloneDataset_blankOrTooLongName_returns400WithKoreanMessage() throws Exception {
+    for (String blank : new String[] {"   ", "", null}) {
+      postClone(blank)
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.name").value("데이터셋 이름을 입력하세요"));
+    }
+    postClone("a".repeat(101))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value("이름은 100자 이하여야 합니다"));
+    verify(datasetService, never()).cloneDataset(anyLong(), any(), anyLong());
+  }
+
+  /**
+   * WD-699: 길이는 앞뒤 공백을 자른 뒤 UTF-16 단위로 센다 — 공백을 둘러싼 100자 이름·이모지 50개(UTF-16 100단위)는 통과하고, 서비스에는 잘린
+   * 이름이 간다.
+   */
+  @Test
+  void cloneDataset_nameIsStrippedBeforeLengthCheck_andSavedStripped() throws Exception {
+    String hundred = "가".repeat(100);
+    String emoji = "\uD83D\uDE00".repeat(50);
+    for (String expected : new String[] {"매출 사본", hundred, emoji}) {
+      org.mockito.Mockito.clearInvocations(datasetService);
+      postClone("  " + expected + "  ").andExpect(status().isCreated());
+      org.mockito.ArgumentCaptor<CloneDatasetRequest> captor =
+          org.mockito.ArgumentCaptor.forClass(CloneDatasetRequest.class);
+      verify(datasetService).cloneDataset(eq(1L), captor.capture(), anyLong());
+      org.assertj.core.api.Assertions.assertThat(captor.getValue().name()).isEqualTo(expected);
+    }
+  }
+
   /**
    * GET /datasets/%20 — 공백만 있는 id 는 변환 결과가 null 이라 MissingPathVariableException 이 난다. 500 이 아니라 400
    * + 변수명 안내이고 서비스까지 가지 않는다 (WD-567).

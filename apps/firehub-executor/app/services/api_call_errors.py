@@ -285,7 +285,10 @@ class SentSecrets(NamedTuple):
         """오류 문구·실행 로그 같은 자유 문장을 가린다(Java ``SentSecrets.scrubText``)."""
         if text is None:
             return None
-        out = _scrub_one(text, self.key, None)
+        # 문장 안 URL 의 사용자 정보 비밀번호를 먼저 가린다(WD-699) — 옛 연결(API_KEY·BEARER + baseUrl 사용자 정보)은 그 비밀번호가 여기
+        # 비밀 목록에 없어, 분류하지 못한 원문·응답 헤더에 URL 이 실리면 그대로 나갔다. Java SentSecrets.scrubText 와 같은 순서다.
+        out = mask_urls_userinfo_in_text(text)
+        out = _scrub_one(out, self.key, None)
         out = _scrub_one(out, self.basic_token, PASSWORD_MASK)
         if not self.password:
             return out
@@ -386,6 +389,30 @@ def mask_url_userinfo(url: Optional[str]) -> Optional[str]:
     if not colon or not password:
         return url
     return f"{prefix}{username}:{PASSWORD_MASK}@{host}{rest}"
+
+
+# 자유 문장 안 URL 의 「스킴://사용자정보@」(WD-699) — 사용자 정보는 authority 안이라 공백·/·?·#·큰따옴표·꺾쇠에서 끝나고, @ 가 여럿이면
+# 마지막 @ 까지다(BaseUrlUserInfo 와 같은 해석). 작은따옴표는 RFC 3986 이 사용자 정보에 허락하는 문자라 끊지 않는다(비밀번호 pa'ss 를
+# 놓치지 않게). ?·# 를 빼야 「https://host?email=a@b.com」 의 쿼리 @ 를 사용자 정보로 잘못 읽지 않는다. re.ASCII 는 Java \s(ASCII
+# 공백만)와 같게 하려는 것 — 없으면 전각 공백에서 끊겨 Java 는 가리고 Python 은 흘린다. Java BaseUrlUserInfo.USERINFO_IN_TEXT 와 같은 패턴이다.
+_URL_USERINFO_FOR_MASK = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)((?:[^\s/?#@\"<>]+@)+)", re.ASCII)
+
+
+def mask_urls_userinfo_in_text(text: Optional[str]) -> Optional[str]:
+    """자유 문장 안 모든 URL 의 사용자 정보 비밀번호를 ``****`` 로 가린다(WD-699) — 모양은 ``mask_url_userinfo``(Java
+    ``BaseUrlUserInfo.maskInText``)와 같다(``아이디:****@``). 비밀번호가 없거나 비었으면, 이미 가린 ``****`` 이면 그대로다.
+    """
+    if not text:
+        return text
+
+    def _mask(m: "re.Match[str]") -> str:
+        raw = m.group(2)[:-1]
+        username, colon, password = raw.partition(":")
+        if not colon or not password:
+            return m.group(0)
+        return f"{m.group(1)}{username}:{PASSWORD_MASK}@"
+
+    return _URL_USERINFO_FOR_MASK.sub(_mask, text)
 
 
 def redact_urls_in_text(text: str) -> str:
