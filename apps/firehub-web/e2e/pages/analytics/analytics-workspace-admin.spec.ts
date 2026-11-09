@@ -5,6 +5,7 @@ import { createDeleteImpact } from '../../factories/analytics.factory';
 import { setupChartListMocks, setupDashboardListMocks, setupQueryListMocks } from '../../fixtures/analytics.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { holdApi } from '../../fixtures/hold-api';
 
 /**
  * 워크스페이스 분석 자산 관리 E2E (WD-199).
@@ -254,5 +255,40 @@ test.describe('분석 자산 「워크스페이스 전체」 보기 (WD-199)', (
     await page.getByPlaceholder('이름·작성자 검색...').fill('김철수');
     await expect(page.getByTestId('workspace-analytics-queries-32')).toBeVisible();
     await expect(page.getByTestId('workspace-analytics-queries-31')).toHaveCount(0);
+  });
+
+  // WD-524: 공유 해제 확인 창의 「공유 해제」를 더블클릭하면 닫힘 애니메이션 동안 남은 버튼이 두 번째 클릭을 받아
+  // unshare POST 가 두 번 나갔다. 응답을 붙잡아 진행 중에도 두 번째 요청이 나가지 않는지 세 종류 모두 본다.
+  test('관리자 — 공유 해제 확인 창의 「공유 해제」를 더블클릭해도 unshare 요청은 한 번만 나간다 (WD-524)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockAdminPermissions(page);
+    await setupDashboardListMocks(page, 1);
+    await setupChartListMocks(page, 1);
+    await setupQueryListMocks(page, 1);
+
+    for (const [kind, entity, id] of [
+      ['dashboards', '대시보드', 40],
+      ['charts', '차트', 41],
+      ['queries', '쿼리', 42],
+    ] as const) {
+      const name = `공유된 ${entity}`;
+      await mockApi(page, 'GET', `/api/v1/analytics/admin/${kind}`, [createAdminItem({ id, name })]);
+      const unshare = await holdApi(page, 'POST', `/api/v1/analytics/admin/${kind}/${id}/unshare`, 200, {});
+
+      await page.goto(`/analytics/${kind}`);
+      await page.getByRole('tab', { name: '워크스페이스 전체' }).click();
+      await page.getByTestId(`workspace-analytics-${kind}-${id}`).getByRole('button', { name: `${name} 공유 해제` }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: '공유 해제' }).dblclick();
+
+      // 첫 요청이 붙잡힌 동안 두 번째 클릭이 요청을 더 보내지 않아야 한다
+      await expect.poll(() => unshare.requests.length).toBe(1);
+      await page.waitForTimeout(300);
+      expect(unshare.requests).toHaveLength(1);
+
+      unshare.release();
+      await expect(page.getByText(`${entity} "${name}"의 공유를 해제했습니다.`)).toBeVisible();
+      expect(unshare.requests).toHaveLength(1);
+    }
   });
 });

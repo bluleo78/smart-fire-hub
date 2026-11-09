@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 import { AnalyticsDeleteConfirmDialog } from '@/components/analytics/AnalyticsDeleteConfirmDialog';
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -17,6 +16,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
+import { OnceAlertDialogAction } from '@/components/ui/once-alert-dialog-action';
 import { SearchInput } from '@/components/ui/search-input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableEmptyRow } from '@/components/ui/table-empty';
@@ -93,7 +93,9 @@ function UnshareConfirmDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>취소</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>공유 해제</AlertDialogAction>
+          {/* WD-524: 더블클릭의 두 번째 클릭이 닫힘 애니메이션 중 남은 버튼에 닿아 unshare 가 두 번 나갔다 —
+              삭제 확인 창(WD-507/522)과 같은 OnceAlertDialogAction 으로 창이 열린 동안 한 번만 확인하고 버튼을 잠근다 */}
+          <OnceAlertDialogAction onClick={onConfirm}>공유 해제</OnceAlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
