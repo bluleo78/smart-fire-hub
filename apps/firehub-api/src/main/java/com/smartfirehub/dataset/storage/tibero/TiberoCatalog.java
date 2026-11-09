@@ -144,15 +144,10 @@ public final class TiberoCatalog {
         + " ('CREATE TRIGGER', 'CREATE ANY TRIGGER')";
   }
 
-  /** IN 목록 자리표시자 {@code "?, ?, ..."}({@code n} 개) — IN 질의 빌더들이 같은 모양을 쓰도록 하나로 둔다(WD-660). */
-  private static String inPlaceholders(int n) {
-    return String.join(", ", java.util.Collections.nCopies(n, "?"));
-  }
-
   /** OWNER 세션 소유 트리거의 상태 조회({@code USER_TRIGGERS}). 바인드: 트리거 이름 {@code n} 개(대문자). */
   static String triggerStatusQuery(int n) {
     return "SELECT TRIGGER_NAME, STATUS, TRIGGERING_EVENT FROM USER_TRIGGERS WHERE TRIGGER_NAME IN ("
-        + inPlaceholders(n)
+        + TiberoDmlSql.placeholders(n)
         + ")";
   }
 
@@ -276,24 +271,31 @@ public final class TiberoCatalog {
 
   /**
    * OWNER 가 슬롯 계정에 건 SELECT 권한 조회({@code USER_TAB_PRIVS_MADE}). 바인드: 슬롯 계정 LIKE 패턴({@code \}로
-   * 이스케이프), (테이블 한정 시) 테이블 물리 이름. 뷰·시퀀스 등 테이블이 아닌 객체의 GRANT 도 함께 나온다.
+   * 이스케이프), (테이블 한정 시) 테이블 물리 이름 {@code tables} 개. 뷰·시퀀스 등 테이블이 아닌 객체의 GRANT 도 함께 나온다.
+   *
+   * @param tables 0 이면 테이블 조건 없음(전부), 아니면 그 수만큼의 IN 목록(WD-679 — 재확인이 바꾼 테이블 여럿만 다시 읽는다)
    */
-  static String slotSelectGrantsQuery(boolean singleTable) {
+  static String slotSelectGrantsQuery(int tables) {
     return "SELECT TABLE_NAME, GRANTEE FROM USER_TAB_PRIVS_MADE WHERE GRANTEE LIKE ? ESCAPE '\\'"
         + " AND PRIVILEGE = 'SELECT'"
-        + (singleTable ? " AND TABLE_NAME = ?" : "");
+        + tableInClause(tables);
   }
 
   /**
    * OWNER 가 지정한 계정들에 건 SELECT 권한 조회({@code USER_TAB_PRIVS_MADE}, WD-78). 바인드: 계정 이름 {@code
-   * grantees} 개, (테이블 한정 시) 테이블 물리 이름. LIKE 판({@link #slotSelectGrantsQuery})과 달리 계정을 정확히 묶어 다시 거를
-   * 필요가 없다.
+   * grantees} 개, (테이블 한정 시) 테이블 물리 이름 {@code tables} 개. LIKE 판({@link #slotSelectGrantsQuery})과 달리
+   * 계정을 정확히 묶어 다시 거를 필요가 없다.
    */
-  static String slotSelectGrantsByGranteeQuery(int grantees, boolean singleTable) {
+  static String slotSelectGrantsByGranteeQuery(int grantees, int tables) {
     return "SELECT TABLE_NAME, GRANTEE FROM USER_TAB_PRIVS_MADE WHERE GRANTEE IN ("
-        + inPlaceholders(grantees)
+        + TiberoDmlSql.placeholders(grantees)
         + ") AND PRIVILEGE = 'SELECT'"
-        + (singleTable ? " AND TABLE_NAME = ?" : "");
+        + tableInClause(tables);
+  }
+
+  /** 권한 조회의 테이블 한정 조건 — 0 이면 없음, 아니면 {@code TABLE_NAME IN (?..)}(하나여도 IN, {@code = ?} 와 같다). */
+  private static String tableInClause(int tables) {
+    return tables == 0 ? "" : " AND TABLE_NAME IN (" + TiberoDmlSql.placeholders(tables) + ")";
   }
 
   /** OWNER 세션 소유 테이블 물리 이름들(대문자). {@code onlyTable} 이 null 이면 전부, 아니면 그 하나(있으면). */
@@ -313,12 +315,17 @@ public final class TiberoCatalog {
     return names;
   }
 
-  /** IN 목록 한 번에 묶는 이름 수 상한 — Tibero(Oracle 계열)의 IN 목록 1000개 제한(ORA-01795 계열)을 넘지 않게 나눈다(WD-660). */
+  /**
+   * IN 목록 한 번에 묶는 이름 수 상한 — Tibero(Oracle 계열)의 IN 목록 1000개 제한(ORA-01795 계열)을 넘지 않게 나눈다(WD-660). 같은
+   * 패키지의 행 저장소({@code TiberoDataRowStore})도 이 값과 {@link #forEachInChunk} 를 쓴다(WD-679).
+   */
   static final int IN_LIST_CHUNK = 1000;
 
   /** OWNER 세션 소유 테이블 가운데 주어진 이름들만 조회({@code USER_TABLES}, WD-660). 바인드: 테이블 물리 이름 {@code n} 개. */
   static String ownTablesAmongQuery(int n) {
-    return "SELECT TABLE_NAME FROM USER_TABLES WHERE TABLE_NAME IN (" + inPlaceholders(n) + ")";
+    return "SELECT TABLE_NAME FROM USER_TABLES WHERE TABLE_NAME IN ("
+        + TiberoDmlSql.placeholders(n)
+        + ")";
   }
 
   /**
@@ -328,64 +335,123 @@ public final class TiberoCatalog {
   public static java.util.Set<String> ownTablesAmong(Connection conn, Collection<String> names)
       throws SQLException {
     java.util.Set<String> found = new java.util.TreeSet<>();
-    List<String> all = new ArrayList<>(names);
-    for (int from = 0; from < all.size(); from += IN_LIST_CHUNK) {
-      List<String> chunk = all.subList(from, Math.min(from + IN_LIST_CHUNK, all.size()));
-      try (PreparedStatement ps = conn.prepareStatement(ownTablesAmongQuery(chunk.size()))) {
-        int i = 1;
-        for (String name : chunk) {
-          ps.setString(i++, name);
-        }
-        try (ResultSet rs = ps.executeQuery()) {
-          while (rs.next()) {
-            found.add(rs.getString(1));
+    forEachInChunk(
+        names,
+        chunk -> {
+          try (PreparedStatement ps = conn.prepareStatement(ownTablesAmongQuery(chunk.size()))) {
+            int i = 1;
+            for (String name : chunk) {
+              ps.setString(i++, name);
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+              while (rs.next()) {
+                found.add(rs.getString(1));
+              }
+            }
           }
-        }
-      }
-    }
+        });
     return found;
+  }
+
+  /** IN 목록 한 조각을 처리하는 질의 작업 — SQLException 을 그대로 던질 수 있게 따로 둔다. */
+  @FunctionalInterface
+  interface ChunkWork<T> {
+    void accept(List<T> chunk) throws SQLException;
+  }
+
+  /**
+   * 값들을 {@link #IN_LIST_CHUNK} 개씩 나눠 조각마다 {@code work} 를 돌린다(WD-679) — Tibero 저장소 패키지의 IN 질의들이
+   * Oracle 계열 IN 목록 1000개 제한을 같은 방식으로 지키도록 나누기를 한 곳에 둔다. 값이 없으면 한 번도 돌리지 않는다(빈 {@code IN ()} 은 문법
+   * 오류).
+   */
+  static <T> void forEachInChunk(Collection<T> items, ChunkWork<T> work) throws SQLException {
+    List<T> all = items instanceof List<T> list ? list : new ArrayList<>(items);
+    for (int from = 0; from < all.size(); from += IN_LIST_CHUNK) {
+      work.accept(all.subList(from, Math.min(from + IN_LIST_CHUNK, all.size())));
+    }
   }
 
   /**
    * 테넌트 슬롯 계정({@code GENIA_T{id}_S%})에 걸린 SELECT 권한 {테이블 물리 이름 → 계정 이름 집합}. LIKE 는 {@code
-   * GENIA_T1_S%} 가 {@code GENIA_T1_SXYZ} 같은 이름도 잡을 수 있으므로 호출자가 슬롯 계정 이름 집합으로 다시 거른다.
+   * GENIA_T1_S%} 가 {@code GENIA_T1_SXYZ} 같은 이름도 잡을 수 있으므로 호출자가 슬롯 계정 이름 집합으로 다시 거른다. 테이블 목록으로 한정할 수
+   * 있다(WD-679 — 재확인이 바꾼 테이블 여럿만 다시 읽는다).
+   *
+   * @param onlyTables null 이면 전부, 비어 있으면 질의 없이 빈 맵, 아니면 그 이름들만({@link #IN_LIST_CHUNK} 개씩 나눠 질의).
+   *     이름은 카탈로그가 돌려준 물리 이름 그대로 정확히 비교한다(대소문자 변환 없음)
    */
-  public static Map<String, java.util.Set<String>> slotSelectGrants(
-      Connection conn, long tenantId, String onlyTable) throws SQLException {
-    Map<String, java.util.Set<String>> grants = new LinkedHashMap<>();
-    try (PreparedStatement ps = conn.prepareStatement(slotSelectGrantsQuery(onlyTable != null))) {
-      ps.setString(1, "GENIA\\_T" + tenantId + "\\_S%");
-      if (onlyTable != null) {
-        ps.setString(2, onlyTable);
-      }
-      readGrants(ps, grants);
-    }
-    return grants;
+  public static Map<String, java.util.Set<String>> slotSelectGrantsAmong(
+      Connection conn, long tenantId, Collection<String> onlyTables) throws SQLException {
+    return readSlotGrants(
+        conn,
+        List.of("GENIA\\_T" + tenantId + "\\_S%"),
+        onlyTables,
+        TiberoCatalog::slotSelectGrantsQuery);
   }
 
   /**
    * 지정한 계정들({@code grantees}, 정확한 이름)에 걸린 SELECT 권한 {테이블 물리 이름 → 계정 이름 집합}(WD-78). 실행 준비처럼 다룰 슬롯
-   * 계정을 이미 아는 경우 LIKE 로 테넌트 슬롯 전부를 읽은 뒤 거르지 않고 그 계정만 읽는다. 계정이 없으면 질의하지 않는다.
+   * 계정을 이미 아는 경우 LIKE 로 테넌트 슬롯 전부를 읽은 뒤 거르지 않고 그 계정만 읽는다. 계정이 없으면 질의하지 않는다. 계정 IN 목록은 슬롯 수(최대 10)라
+   * 나누지 않고, 테이블 목록만 {@link #IN_LIST_CHUNK} 개씩 나눈다(WD-679).
+   *
+   * @param onlyTables null 이면 전부, 비어 있으면 질의 없이 빈 맵, 아니면 그 이름들만
    */
-  public static Map<String, java.util.Set<String>> slotSelectGrants(
-      Connection conn, java.util.Collection<String> grantees, String onlyTable)
+  public static Map<String, java.util.Set<String>> slotSelectGrantsAmong(
+      Connection conn, Collection<String> grantees, Collection<String> onlyTables)
+      throws SQLException {
+    if (grantees.isEmpty()) {
+      return new LinkedHashMap<>();
+    }
+    return readSlotGrants(
+        conn,
+        grantees,
+        onlyTables,
+        tables -> slotSelectGrantsByGranteeQuery(grantees.size(), tables));
+  }
+
+  /**
+   * 권한 조회 공통부(WD-679): 앞쪽 바인드(계정 패턴·계정 이름) 뒤에 테이블 이름을 붙여 실행하고 {테이블 → 계정 집합} 에 모은다. 테이블 목록은 Tibero
+   * (Oracle 계열) IN 목록 1000개 제한을 넘지 않게 {@link #IN_LIST_CHUNK} 개씩 나눠 질의한다 — 한 테이블의 권한은 한 조각에만 있으므로
+   * 조각별 결과를 그대로 합친다.
+   *
+   * @param onlyTables null 이면 테이블 조건 없이 한 번, 비어 있으면 질의하지 않는다
+   * @param queryFor 테이블 바인드 수 → SQL(0 이면 조건 없음)
+   */
+  private static Map<String, java.util.Set<String>> readSlotGrants(
+      Connection conn,
+      Collection<String> leadingBinds,
+      Collection<String> onlyTables,
+      java.util.function.IntFunction<String> queryFor)
       throws SQLException {
     Map<String, java.util.Set<String>> grants = new LinkedHashMap<>();
-    if (grantees.isEmpty()) {
+    if (onlyTables == null) {
+      readSlotGrantsChunk(conn, queryFor.apply(0), leadingBinds, List.of(), grants);
       return grants;
     }
-    try (PreparedStatement ps =
-        conn.prepareStatement(slotSelectGrantsByGranteeQuery(grantees.size(), onlyTable != null))) {
+    forEachInChunk(
+        onlyTables,
+        chunk ->
+            readSlotGrantsChunk(conn, queryFor.apply(chunk.size()), leadingBinds, chunk, grants));
+    return grants;
+  }
+
+  /** 질의 한 번: 앞쪽 바인드 → 테이블 바인드 순으로 묶어 실행한다. */
+  private static void readSlotGrantsChunk(
+      Connection conn,
+      String sql,
+      Collection<String> leadingBinds,
+      List<String> tableBinds,
+      Map<String, java.util.Set<String>> grants)
+      throws SQLException {
+    try (PreparedStatement ps = conn.prepareStatement(sql)) {
       int i = 1;
-      for (String grantee : grantees) {
-        ps.setString(i++, grantee);
+      for (String bind : leadingBinds) {
+        ps.setString(i++, bind);
       }
-      if (onlyTable != null) {
-        ps.setString(i, onlyTable);
+      for (String table : tableBinds) {
+        ps.setString(i++, table);
       }
       readGrants(ps, grants);
     }
-    return grants;
   }
 
   /** (TABLE_NAME, GRANTEE) 행을 {테이블 → 계정 집합} 에 모은다. */

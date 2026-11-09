@@ -367,8 +367,9 @@ class TiberoLiveSlotGrantTest extends IntegrationTestBase {
   /**
    * 휴지통 객체의 권한 가시성(WD-645): 휴지통이 켜져 있으면 PURGE 없이 DROP 한 테이블이 {@code BIN$...} 객체로 슬롯 GRANT 를 쥔 채
    * 남는다. {@code TiberoPythonReadGrantSync} 재판정의 fail-closed 는 {@link
-   * TiberoCatalog#slotSelectGrants}({@code USER_TAB_PRIVS_MADE})가 이 BIN$ 객체의 권한을 계속 보여 준다는 데 기대므로,
-   * 그것을 실서버로 확인한다. 휴지통이 꺼져 있으면(DROP 뒤 {@code USER_RECYCLEBIN} 에 원래 이름이 없으면) 확인할 대상이 없으므로 건너뛴다.
+   * TiberoCatalog#slotSelectGrantsAmong}({@code USER_TAB_PRIVS_MADE})가 이 BIN$ 객체의 권한을 계속 보여 준다는 데
+   * 기대므로, 그것을 실서버로 확인한다. 휴지통이 꺼져 있으면(DROP 뒤 {@code USER_RECYCLEBIN} 에 원래 이름이 없으면) 확인할 대상이 없으므로
+   * 건너뛴다.
    */
   @Test
   void droppedTableInRecycleBin_slotGrantStillListed() {
@@ -406,10 +407,10 @@ class TiberoLiveSlotGrantTest extends IntegrationTestBase {
     try {
       Map<String, Set<String>> grants =
           connections.withDdl(
-              env.tenantId, c -> TiberoCatalog.slotSelectGrants(c, List.of(account), null));
+              env.tenantId, c -> TiberoCatalog.slotSelectGrantsAmong(c, List.of(account), null));
       Map<String, Set<String>> likeGrants =
           connections.withDdl(
-              env.tenantId, c -> TiberoCatalog.slotSelectGrants(c, env.tenantId, null));
+              env.tenantId, c -> TiberoCatalog.slotSelectGrantsAmong(c, env.tenantId, null));
       probe("recyclebin-grant-visible", String.valueOf(grants.containsKey(bin)));
       assertThat(grants.get(bin)).as("정확 바인드 조회가 BIN$ 객체의 슬롯 GRANT 를 보여 준다").contains(account);
       assertThat(likeGrants.get(bin)).as("LIKE 조회도 BIN$ 객체의 슬롯 GRANT 를 보여 준다").contains(account);

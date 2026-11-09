@@ -63,6 +63,9 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
 
   private static final String SCHEMA = "GENIA_T1";
 
+  /** 카탈로그 IN 목록 한 조각 크기({@code TiberoCatalog.IN_LIST_CHUNK}, 패키지 전용) — Oracle 계열 IN 1000개 제한. */
+  private static final int IN_LIST_CHUNK = 1000;
+
   @Autowired private DSLContext dsl;
   @Autowired private DatasetRepository datasetRepository;
   @Autowired private PasswordEncoder encoder;
@@ -100,6 +103,12 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
 
   /** 계정을 정확히 바인드한 슬롯 GRANT 조회 수(실행 준비 경로, WD-78). */
   private int exactGrantQueries;
+
+  /** 슬롯 GRANT 조회마다 묶은 테이블 이름(순서대로, 빈 목록 = 테넌트 전체) — 재확인 범위를 고정한다(WD-679). */
+  private final List<List<String>> grantQueryTables = new ArrayList<>();
+
+  /** REVOKE 가 "성공" 해도 사라지지 않는 "TABLE|GRANTEE" 권한 — 재확인이 남은 권한을 잡는지 본다(WD-679). */
+  private final Set<String> stickyGrants = new TreeSet<>();
 
   private TenantDataStoreRow storeRow;
   private List<StoredAccount> accounts;
@@ -223,32 +232,41 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
         }
       }
     } else if (sql.contains("FROM USER_TAB_PRIVS_MADE") && sql.contains("GRANTEE IN (")) {
-      // 실행 준비: 바인드 1..n = 정확한 계정 이름, 다음(선택) = 테이블. LIKE 를 쓰지 않는다.
+      // 실행 준비: 바인드 1..n = 정확한 계정 이름, 그 뒤(선택) = 테이블 IN 목록. LIKE 를 쓰지 않는다.
       exactGrantQueries++;
       String in = sql.substring(sql.indexOf("GRANTEE IN (") + 12, sql.indexOf(')'));
       int n = in.split(",").length;
-      List<String> grantees = binds.subList(0, n);
-      for (String g : grants) {
-        String[] parts = g.split("\\|");
-        if (grantees.contains(parts[1]) && (binds.size() <= n || parts[0].equals(binds.get(n)))) {
-          rows.add(new String[] {parts[0], parts[1]});
-        }
-      }
+      Set<String> grantees = Set.copyOf(binds.subList(0, n));
+      slotGrantRows(binds, n, grantees::contains, rows);
     } else if (sql.contains("FROM USER_TAB_PRIVS_MADE")) {
-      // 바인드 1: GENIA\_T1\_S% (ESCAPE '\' 로 해석하는 진짜 LIKE), 바인드 2(선택): 테이블.
+      // 바인드 1: GENIA\_T1\_S% (ESCAPE '\' 로 해석하는 진짜 LIKE), 그 뒤(선택) = 테이블 IN 목록(WD-679).
       assertThat(sql).as("LIKE 는 ESCAPE '\\' 와 함께여야 한다").contains("ESCAPE '\\'");
       Pattern like = likeToRegex(binds.get(0));
-      for (String g : grants) {
-        String[] parts = g.split("\\|");
-        if (like.matcher(parts[1]).matches()
-            && (binds.size() < 2 || parts[0].equals(binds.get(1)))) {
-          rows.add(new String[] {parts[0], parts[1]});
-        }
-      }
+      slotGrantRows(binds, 1, g -> like.matcher(g).matches(), rows);
     } else {
       throw new AssertionError("예상하지 못한 카탈로그 질의: " + sql);
     }
     return rows;
+  }
+
+  /**
+   * 슬롯 GRANT 조회 공통부(WD-679): 앞쪽 바인드 {@code leading} 개(계정 패턴·계정 이름) 뒤의 바인드는 테이블 IN 목록(없으면 전부)이다. 묶은
+   * 테이블은 순서대로 {@link #grantQueryTables} 에 남기고, 계정 조건({@code grantee})과 테이블 조건을 모두 맞는 권한 행을 돌려준다.
+   */
+  private void slotGrantRows(
+      List<String> binds,
+      int leading,
+      java.util.function.Predicate<String> grantee,
+      List<String[]> rows) {
+    List<String> boundTables = List.copyOf(binds.subList(leading, binds.size()));
+    grantQueryTables.add(boundTables); // 순서 검증용 목록
+    Set<String> onlyTables = Set.copyOf(boundTables); // 소속 판정용 집합
+    for (String g : grants) {
+      String[] parts = g.split("\\|");
+      if (grantee.test(parts[1]) && (onlyTables.isEmpty() || onlyTables.contains(parts[0]))) {
+        rows.add(new String[] {parts[0], parts[1]});
+      }
+    }
   }
 
   /** SQL LIKE(ESCAPE '\\')를 정규식으로: {@code \x} 는 문자 x 그대로, {@code %} 는 임의 길이, {@code _} 는 한 글자. */
@@ -294,7 +312,7 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
     String key = mt.group(3) + "|" + mt.group(4);
     if (mt.group(1).equals("GRANT")) {
       grants.add(key);
-    } else {
+    } else if (!stickyGrants.contains(key)) {
       grants.remove(key);
     }
   }
@@ -979,6 +997,129 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
         .hasMessageContaining("회수하지 못한");
     assertThat(failedStatements).containsExactly(revokeSql(upper, 1), revokeSql(backup, 1));
     assertThat(slotsOf(backup)).containsExactly(1);
+  }
+
+  /**
+   * carriedBin 객체의 다른 계정 회수 성공도 변경이다(WD-679): 첫 맞춤의 BIN$ 실패(슬롯 1)를 옮긴 객체에 재맞춤에서 새로 보인 슬롯 2 권한의
+   * REVOKE 가 오류 없이 끝나면 그 객체를 변경 테이블로 세고 재확인한다 — REVOKE 가 "성공" 했는데도 권한이 남으면(sticky) 재확인이 잡아 회수 실패에
+   * 더한다.
+   */
+  @Test
+  void repass_carriedBinOtherAccountRevoked_countsChanged_andRechecksRemainingGrant() {
+    String bin = binName();
+    grants.add(bin + "|" + slot(1));
+    failingFragments.add(revokeSql(bin, 1)); // 휴지통 객체 슬롯 1 회수는 늘 실패한다
+    String upper = sensitiveWithFailingRevoke("sen");
+    String backup = upper + "_BAK";
+    stickyGrants.add(bin + "|" + slot(2)); // 슬롯 2 REVOKE 는 오류 없이 끝나지만 권한이 남는다
+    onFailingStatement =
+        () -> {
+          renameObject(upper, backup);
+          grants.add(bin + "|" + slot(2)); // 첫 맞춤 뒤에 새로 보이는 휴지통 권한
+        };
+
+    PythonReadGrantSync.SyncResult r = sync.syncTenant();
+
+    assertThat(executed).as("재맞춤이 새로 보인 슬롯 2 를 한 번 회수한다").contains(revokeSql(bin, 2));
+    assertThat(failedStatements)
+        .as("옮긴 슬롯 1 REVOKE 는 다시 보내지 않는다")
+        .containsOnlyOnce(revokeSql(bin, 1));
+    assertThat(r.revokeFailed().get(bin))
+        .as("재확인이 \"성공\" 뒤에도 남은 슬롯 2 까지 회수 실패로 센다")
+        .containsExactly(slot(1), slot(2));
+    assertThat(r.changedTables()).as("보관본 + 일부 계정을 회수한 BIN$").isEqualTo(2);
+  }
+
+  /** 한 테이블에서 일부 계정 회수만 실패해도 다른 계정을 회수했으면 변경 테이블로 센다(WD-679). GRANT 는 여전히 건너뛴다(fail-closed). */
+  @Test
+  void partialRevokeFailure_otherAccountRevoked_countsChanged() {
+    String upper = sensitiveWithFailingRevoke("sen"); // 슬롯 1 회수는 늘 실패
+    grants.add(upper + "|" + slot(2)); // 슬롯 2 과권한 — 회수는 성공한다
+
+    PythonReadGrantSync.SyncResult r = sync.syncTenant();
+
+    assertThat(executed).contains(revokeSql(upper, 2));
+    assertThat(slotsOf(upper)).as("실패한 테이블에는 GRANT 를 걸지 않는다").containsExactly(1);
+    assertThat(r.revokeFailed().get(upper)).containsExactly(slot(1));
+    assertThat(r.changedTables()).isEqualTo(1);
+  }
+
+  /**
+   * 재확인은 바꾼 테이블이 여럿이어도 그 목록(IN)만 다시 읽는다(WD-679) — 전에는 하나일 때만 좁히고 둘 이상이면 테넌트 전체를 다시 읽었다. 전체
+   * 동기화(LIKE)와 실행 준비(계정 정확히 바인드) 두 경로를 모두 본다.
+   */
+  @Test
+  void recheck_multipleChangedTables_readsOnlyThoseTables() {
+    String a = table("a", "민감").toUpperCase();
+    String b = table("b", "민감").toUpperCase();
+    table("c", "공개"); // 바뀌지 않는 테이블 — 재확인 목록에 들지 않는다
+    sync.syncTenant(); // 먼저 계산값으로 맞춰 둔다
+    grants.add(a + "|" + slot(1));
+    grants.add(b + "|" + slot(2));
+    grantQueryTables.clear();
+
+    PythonReadGrantSync.SyncResult r = sync.syncTenant();
+
+    assertThat(r.changedTables()).isEqualTo(2);
+    assertThat(grantQueryTables)
+        .as("적용 전 읽기는 테넌트 전체, 재확인은 바꾼 두 테이블만")
+        .containsExactly(List.of(), List.of(a, b));
+
+    grants.add(a + "|" + slot(1));
+    grants.add(b + "|" + slot(1));
+    grantQueryTables.clear();
+    assertThat(sync.prepareForRun(clearanceAt("공개"), levelRank("공개"))).isEqualTo(1);
+    assertThat(grantQueryTables).containsExactly(List.of(), List.of(a, b));
+  }
+
+  /**
+   * 바꾼 객체가 IN 한 조각({@code TiberoCatalog.IN_LIST_CHUNK})을 넘어도 재확인은 바꾼 목록만 읽는다(WD-679) — 카탈로그가 1000개씩
+   * 나눠 질의하므로 IN 목록 1000개 제한을 넘는 질의를 만들지 않는다.
+   */
+  @Test
+  void recheck_moreChangedThanInChunk_readsChangedListInChunks() {
+    List<String> objects = new ArrayList<>();
+    for (int i = 0; i <= IN_LIST_CHUNK; i++) {
+      String object = "V_" + m.toUpperCase() + "_" + i;
+      objects.add(object);
+      grants.add(object + "|" + slot(1)); // 테이블이 아닌 객체 — 전부 회수 대상
+    }
+    grantQueryTables.clear();
+
+    PythonReadGrantSync.SyncResult r = sync.syncTenant();
+
+    assertThat(r.revokeFailed()).isEmpty();
+    assertThat(r.changedTables()).isEqualTo(IN_LIST_CHUNK + 1);
+    assertThat(grantQueryTables).as("적용 전 전체 한 번 + 재확인 두 조각").hasSize(3);
+    assertThat(grantQueryTables.get(0)).isEmpty();
+    assertThat(grantQueryTables.get(1)).hasSize(IN_LIST_CHUNK);
+    assertThat(grantQueryTables.get(2)).hasSize(1);
+    List<String> rechecked = new ArrayList<>(grantQueryTables.get(1));
+    rechecked.addAll(grantQueryTables.get(2));
+    assertThat(rechecked).as("재확인은 바꾼 객체 전부, 그것만").containsExactlyInAnyOrderElementsOf(objects);
+    assertThat(grants).noneMatch(g -> g.startsWith("V_"));
+  }
+
+  /**
+   * 테이블 하나 동기화의 변경 수는 그 테이블만 센다(WD-679) — 재맞춤이 범위 밖(다른 테이블·뷰)에서 회수한 객체는 회수는 하되 변경 수에 넣지 않는다(로그에 따로
+   * 싣는다). 전에는 "변경 테이블 3개" 로 과다 집계됐다.
+   */
+  @Test
+  void singleTableSync_outOfScopeRevokes_notCountedAsChanged() {
+    String stray = table("stray", "민감").toUpperCase();
+    grants.add(stray + "|" + slot(2));
+    String view = "A_VIEW_" + m.toUpperCase();
+    grants.add(view + "|" + slot(3));
+    String upper = sensitiveWithFailingRevoke("sen");
+    String revoke = revokeSql(upper, 1);
+    onFailingStatement = () -> failingFragments.remove(revoke); // 첫 맞춤에서 한 번만 실패한다
+
+    PythonReadGrantSync.SyncResult r = sync.syncTable(upper.toLowerCase());
+
+    assertThat(executed).contains(revoke, revokeSql(stray, 2), revokeSql(view, 3));
+    assertThat(slotsOf(upper)).isEqualTo(range(3, 10));
+    assertThat(r.revokeFailed()).isEmpty();
+    assertThat(r.changedTables()).as("범위 밖 회수(stray·view)는 세지 않는다").isEqualTo(1);
   }
 
   /**

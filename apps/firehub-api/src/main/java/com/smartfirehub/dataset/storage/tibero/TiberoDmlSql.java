@@ -57,7 +57,11 @@ final class TiberoDmlSql {
     return String.join(", ", out);
   }
 
-  private static String placeholders(int n) {
+  /**
+   * 자리표시자 목록 {@code "?, ?, ..."}({@code n} 개) — INSERT VALUES·IN 목록이 같은 모양을 쓴다. Tibero 저장소 패키지 안의
+   * 자리표시자 만들기는 카탈로그 IN 질의({@link TiberoCatalog})까지 이것 하나로 모았다(WD-679).
+   */
+  static String placeholders(int n) {
     return String.join(", ", java.util.Collections.nCopies(n, "?"));
   }
 

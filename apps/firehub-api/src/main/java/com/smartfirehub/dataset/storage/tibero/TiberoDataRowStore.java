@@ -55,9 +55,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class TiberoDataRowStore implements DataRowStore {
 
-  /** Oracle 계열 IN 목록 상한. */
-  private static final int IN_LIMIT = 1000;
-
   private static final String SPATIAL_FEATURE = "공간 데이터";
 
   private final ExternalStoreConnections connections;
@@ -755,28 +752,29 @@ public class TiberoDataRowStore implements DataRowStore {
       }
     }
     Set<List<Object>> found = new HashSet<>();
-    for (int start = 0; start < probe.size(); start += IN_LIMIT) {
-      List<Map<String, Object>> part =
-          probe.subList(start, Math.min(start + IN_LIMIT, probe.size()));
-      String sql = TiberoDmlSql.existingKeys(schema, tableName, pkColumns, part.size());
-      try (PreparedStatement ps = prepare(conn, sql)) {
-        int i = 1;
-        for (Map<String, Object> row : part) {
-          i = bindRow(ps, i, pkColumns, row);
-        }
-        try (ResultSet rs = ps.executeQuery()) {
-          while (rs.next()) {
-            List<Object> key = new ArrayList<>();
-            for (int col = 1; col <= pkColumns.size(); col++) {
-              key.add(normalizeKey(TiberoValues.read(rs, col)));
+    // Oracle 계열 IN 목록 1000개 제한 — 카탈로그와 같은 나누기를 쓴다(WD-679).
+    TiberoCatalog.forEachInChunk(
+        probe,
+        part -> {
+          String sql = TiberoDmlSql.existingKeys(schema, tableName, pkColumns, part.size());
+          try (PreparedStatement ps = prepare(conn, sql)) {
+            int i = 1;
+            for (Map<String, Object> row : part) {
+              i = bindRow(ps, i, pkColumns, row);
             }
-            if (wanted.contains(key)) {
-              found.add(key);
+            try (ResultSet rs = ps.executeQuery()) {
+              while (rs.next()) {
+                List<Object> key = new ArrayList<>();
+                for (int col = 1; col <= pkColumns.size(); col++) {
+                  key.add(normalizeKey(TiberoValues.read(rs, col)));
+                }
+                if (wanted.contains(key)) {
+                  found.add(key);
+                }
+              }
             }
           }
-        }
-      }
-    }
+        });
     return found.size();
   }
 
@@ -792,18 +790,20 @@ public class TiberoDataRowStore implements DataRowStore {
     return connections.withDml(
         c.tenantId(),
         conn -> {
-          int deleted = 0;
-          for (int start = 0; start < rowIds.size(); start += IN_LIMIT) {
-            List<Long> part = rowIds.subList(start, Math.min(start + IN_LIMIT, rowIds.size()));
-            try (PreparedStatement ps =
-                prepare(conn, TiberoDmlSql.deleteByIds(c.schema(), tableName, part.size()))) {
-              for (int i = 0; i < part.size(); i++) {
-                ps.setLong(i + 1, part.get(i));
-              }
-              deleted += ps.executeUpdate();
-            }
-          }
-          return deleted;
+          // Oracle 계열 IN 목록 1000개 제한 — 카탈로그와 같은 나누기를 쓴다(WD-679). 람다 안에서 더하므로 배열 한 칸에 모은다.
+          int[] deleted = {0};
+          TiberoCatalog.forEachInChunk(
+              rowIds,
+              part -> {
+                try (PreparedStatement ps =
+                    prepare(conn, TiberoDmlSql.deleteByIds(c.schema(), tableName, part.size()))) {
+                  for (int i = 0; i < part.size(); i++) {
+                    ps.setLong(i + 1, part.get(i));
+                  }
+                  deleted[0] += ps.executeUpdate();
+                }
+              });
+          return deleted[0];
         });
   }
 
