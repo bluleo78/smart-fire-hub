@@ -199,6 +199,17 @@ class DatasetAuditTest extends IntegrationTestBase {
     return objectMapper.readTree(row.get("metadata", String.class));
   }
 
+  /** JSON 의 모든 말단 값(숫자·문자열)을 글자로 모은다 — 값 누출을 부분 문자열이 아니라 값 단위로 검사한다(WD-689). */
+  private static List<String> jsonValues(JsonNode node) {
+    List<String> out = new ArrayList<>();
+    if (node.isContainerNode()) {
+      node.forEach(child -> out.addAll(jsonValues(child)));
+    } else {
+      out.add(node.asText());
+    }
+    return out;
+  }
+
   private static String desc(Record row) {
     return row.get("description", String.class);
   }
@@ -494,7 +505,9 @@ class DatasetAuditTest extends IntegrationTestBase {
     assertThat(addMeta.get("count").asInt()).isEqualTo(1);
     assertThat(addMeta.get("rowIds").toString()).isEqualTo("[" + rowId + "]");
     assertThat(addMeta.get("changedFields").toString()).isEqualTo("[\"title\",\"amount\"]");
-    assertThat(row(add)).doesNotContain("4631");
+    // 행 값(4631)이 실리면 안 된다. 설명은 위에서 통째로 고정했다. metadata 는 통째 문자열이 아니라 값 단위로 본다(WD-689) — 데이터셋 이름의
+    // nanoTime·행 ID 같은 숫자 안에 4631 이 우연히 들어 있으면 부분 문자열 검사가 간헐 실패한다.
+    assertThat(jsonValues(addMeta)).doesNotContain("4631");
 
     // 바뀐 칸만 보내는 편집 창과 같게 title 만 바꾼다.
     long m2 = mark();

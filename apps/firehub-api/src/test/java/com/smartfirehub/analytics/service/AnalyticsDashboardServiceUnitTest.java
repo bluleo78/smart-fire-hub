@@ -56,6 +56,7 @@ class AnalyticsDashboardServiceUnitTest {
    */
   @BeforeEach
   void setUp() {
+    PipelineDataSchema schema = mock(PipelineDataSchema.class);
     dashboardService =
         new AnalyticsDashboardService(
             dashboardRepository,
@@ -65,11 +66,12 @@ class AnalyticsDashboardServiceUnitTest {
             savedQueryRepository,
             clearanceResolver,
             guardedSqlExecutor,
-            mock(PipelineDataSchema.class),
+            schema,
             TransactionTemplateConfig.readOnly(mock(PlatformTransactionManager.class)),
             mock(AnalyticsAuditRecorder.class),
             // 동시 실행 상한(WD-599)은 이 테스트의 관심사가 아니다 — 끈 게이트.
-            new InteractiveQueryConcurrencyGate(0, 0, 0));
+            new InteractiveQueryConcurrencyGate(0, 0, 0),
+            new PermitWaitRejudger(schema, clearanceResolver, guardedSqlExecutor));
   }
 
   /**
@@ -135,6 +137,8 @@ class AnalyticsDashboardServiceUnitTest {
     // 판정 통과 토큰(denied()=false) → 그 토큰 실행 결과(판정 1회 + 판정 토큰 실행으로 바뀐 seam).
     GuardedSqlExecutor.AnalyticsJudgment allowed = mock(GuardedSqlExecutor.AnalyticsJudgment.class);
     when(chartService.judge(any(), anyString())).thenReturn(allowed);
+    // 허가 뒤 재판정(PermitWaitRejudger, WD-684·WD-689)도 같은 통과 토큰을 낸다.
+    when(guardedSqlExecutor.judgeAnalytics(any(), anyString())).thenReturn(allowed);
     when(chartService.executeJudged(allowed)).thenReturn(queryResponse);
     // getByIdOptional이 호출될 때 chartResponse 반환
     when(chartService.getByIdOptional(chartId, userId)).thenReturn(Optional.of(chartResponse));
@@ -230,6 +234,8 @@ class AnalyticsDashboardServiceUnitTest {
     // 판정 통과 토큰(denied()=false) → 그 토큰 실행 결과(판정 1회 + 판정 토큰 실행으로 바뀐 seam).
     GuardedSqlExecutor.AnalyticsJudgment allowed = mock(GuardedSqlExecutor.AnalyticsJudgment.class);
     when(chartService.judge(any(), anyString())).thenReturn(allowed);
+    // 허가 뒤 재판정(PermitWaitRejudger, WD-684·WD-689)도 같은 통과 토큰을 낸다.
+    when(guardedSqlExecutor.judgeAnalytics(any(), anyString())).thenReturn(allowed);
     when(chartService.executeJudged(allowed)).thenReturn(queryResponse);
     when(chartService.getByIdOptional(chartId1, userId)).thenReturn(Optional.of(chartResponse1));
     when(chartService.getByIdOptional(chartId2, userId)).thenReturn(Optional.of(chartResponse2));

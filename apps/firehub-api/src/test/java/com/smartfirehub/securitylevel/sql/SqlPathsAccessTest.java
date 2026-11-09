@@ -34,6 +34,15 @@ import org.springframework.test.web.servlet.MvcResult;
 @AutoConfigureMockMvc
 class SqlPathsAccessTest extends IntegrationTestBase {
 
+  /**
+   * 민감 테이블의 값 — 응답 어디에 나와도 누출이다(WD-689). 숫자 표식(예전 4242)은 거부 응답의 timestamp 나노초·id 에도 우연히 나와 테스트가 간헐
+   * 실패했다 — 숫자·시각·id 에 나올 수 없는 문자열로 둔다.
+   */
+  private static final String SEC_VALUE = "SECRET_WD689";
+
+  /** 공개 테이블의 값(양성 대조). */
+  private static final String PUB_VALUE = "pub_wd689";
+
   @Autowired private MockMvc mockMvc;
   @Autowired private DSLContext dsl;
   @Autowired private PasswordEncoder encoder;
@@ -61,11 +70,11 @@ class SqlPathsAccessTest extends IntegrationTestBase {
     String m = "sp" + System.nanoTime();
     pubTable = m + "_pub";
     secTable = m + "_sec";
-    // 실행 결과까지 확인하므로 물리 테이블도 만든다. 민감 테이블의 값 4242 가 응답에 나오면 누출이다.
-    dsl.execute("CREATE TABLE " + schema + "." + pubTable + " (v int)");
-    dsl.execute("INSERT INTO " + schema + "." + pubTable + " VALUES (1)");
-    dsl.execute("CREATE TABLE " + schema + "." + secTable + " (v int)");
-    dsl.execute("INSERT INTO " + schema + "." + secTable + " VALUES (4242)");
+    // 실행 결과까지 확인하므로 물리 테이블도 만든다. 민감 테이블의 값 SEC_VALUE 가 응답에 나오면 누출이다.
+    dsl.execute("CREATE TABLE " + schema + "." + pubTable + " (v text)");
+    dsl.execute("INSERT INTO " + schema + "." + pubTable + " VALUES ('" + PUB_VALUE + "')");
+    dsl.execute("CREATE TABLE " + schema + "." + secTable + " (v text)");
+    dsl.execute("INSERT INTO " + schema + "." + secTable + " VALUES ('" + SEC_VALUE + "')");
     pubId = fx.createDatasetRow(pubTable, fx.levelId("공개"), owner);
     datasets.add(pubId);
     secId = fx.createDatasetRow(secTable, fx.levelId("민감"), owner);
@@ -139,14 +148,14 @@ class SqlPathsAccessTest extends IntegrationTestBase {
     assertThat(r.getResponse().getStatus()).isEqualTo(403);
     assertThat(json(r).get("code").asText()).isEqualTo(code);
     // 거부 응답 본문 어디에도 민감 값이 실리면 안 된다.
-    assertThat(r.getResponse().getContentAsString()).doesNotContain("4242");
+    assertThat(r.getResponse().getContentAsString()).doesNotContain(SEC_VALUE);
   }
 
-  private void assertRows(MvcResult r, int expectedValue) throws Exception {
+  private void assertRows(MvcResult r, String expectedValue) throws Exception {
     assertThat(r.getResponse().getStatus()).isEqualTo(200);
     JsonNode rows = json(r).get("rows");
     assertThat(rows).hasSize(1);
-    assertThat(rows.get(0).get("v").asInt()).isEqualTo(expectedValue);
+    assertThat(rows.get(0).get("v").asText()).isEqualTo(expectedValue);
   }
 
   @Test
@@ -157,9 +166,9 @@ class SqlPathsAccessTest extends IntegrationTestBase {
     assertDenied(
         postJson(path, low, sqlBody("SELECT v FROM " + secTable)), "DATASET_SQL_ACCESS_DENIED");
     // 양성 대조 1: 같은 사용자가 공개 테이블은 읽는다.
-    assertRows(postJson(path, low, sqlBody("SELECT v FROM " + pubTable)), 1);
+    assertRows(postJson(path, low, sqlBody("SELECT v FROM " + pubTable)), PUB_VALUE);
     // 양성 대조 2: 민감 자격은 같은 SQL(민감 테이블)로 값을 받는다 — 거부가 경로 고장이 아님을 증명.
-    assertRows(postJson(path, tokenAt("민감"), sqlBody("SELECT v FROM " + secTable)), 4242);
+    assertRows(postJson(path, tokenAt("민감"), sqlBody("SELECT v FROM " + secTable)), SEC_VALUE);
   }
 
   @Test
@@ -172,7 +181,14 @@ class SqlPathsAccessTest extends IntegrationTestBase {
         "SQL_WRITE_DOWNGRADE");
     // 거부 후 공개 테이블에 민감 값이 복사되지 않았다(부작용 없음).
     assertThat(
-            dsl.fetchValue("SELECT count(*) FROM " + schema + "." + pubTable + " WHERE v = 4242"))
+            dsl.fetchValue(
+                "SELECT count(*) FROM "
+                    + schema
+                    + "."
+                    + pubTable
+                    + " WHERE v = '"
+                    + SEC_VALUE
+                    + "'"))
         .isEqualTo(0L);
     // 양성 대조: 하향이 아닌 쓰기(공개 소스 → 공개 대상)는 허용된다.
     MvcResult ok =
@@ -220,7 +236,14 @@ class SqlPathsAccessTest extends IntegrationTestBase {
     }
     // 부작용 없음: 공개 테이블에 민감 값이 복사되지 않았고, 민감 테이블 행이 지워지지 않았다.
     assertThat(
-            dsl.fetchValue("SELECT count(*) FROM " + schema + "." + pubTable + " WHERE v = 4242"))
+            dsl.fetchValue(
+                "SELECT count(*) FROM "
+                    + schema
+                    + "."
+                    + pubTable
+                    + " WHERE v = '"
+                    + SEC_VALUE
+                    + "'"))
         .isEqualTo(0L);
     assertThat(dsl.fetchValue("SELECT count(*) FROM " + schema + "." + secTable)).isEqualTo(1L);
   }
@@ -231,15 +254,15 @@ class SqlPathsAccessTest extends IntegrationTestBase {
     String low = tokenAt("공개");
     assertDenied(
         postJson(url, low, sqlBody("SELECT v FROM " + secTable)), "DATASET_SQL_ACCESS_DENIED");
-    assertRows(postJson(url, low, sqlBody("SELECT v FROM " + pubTable)), 1);
-    assertRows(postJson(url, tokenAt("민감"), sqlBody("SELECT v FROM " + secTable)), 4242);
+    assertRows(postJson(url, low, sqlBody("SELECT v FROM " + pubTable)), PUB_VALUE);
+    assertRows(postJson(url, tokenAt("민감"), sqlBody("SELECT v FROM " + secTable)), SEC_VALUE);
   }
 
   @Test
   void sharedSavedQuery_isJudgedForExecutor_notOwner() throws Exception {
     String url = "/api/v1/analytics/queries/" + savedQueryId + "/execute";
     assertDenied(postJson(url, tokenAt("공개"), "{\"maxRows\":10}"), "DATASET_SQL_ACCESS_DENIED");
-    assertRows(postJson(url, tokenAt("민감"), "{\"maxRows\":10}"), 4242);
+    assertRows(postJson(url, tokenAt("민감"), "{\"maxRows\":10}"), SEC_VALUE);
   }
 
   @Test
