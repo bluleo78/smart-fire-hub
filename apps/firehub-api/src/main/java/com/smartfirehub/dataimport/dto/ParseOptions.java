@@ -35,8 +35,20 @@ public record ParseOptions(
   public static final String UNSUPPORTED_ENCODING_MESSAGE =
       "지원하지 않는 인코딩입니다. 사용할 수 있는 값: " + String.join(", ", ALLOWED_ENCODINGS);
 
+  /**
+   * 쓸 수 없는 구분자일 때의 400 문구(WD-602). opencsv 는 구분자가 기본 따옴표(")·기본 이스케이프(\)와 같거나 NUL 이면
+   * UnsupportedOperationException 을 던져 500 이 났고, 줄바꿈(\n·\r)은 행 경계와 겹쳐 파싱이 깨진다.
+   */
+  public static final String INVALID_DELIMITER_MESSAGE =
+      "구분자는 따옴표(\")·역슬래시(\\)·줄바꿈이 아닌 한 글자여야 합니다.";
+
   public ParseOptions {
     if (delimiter == null || delimiter.isEmpty()) delimiter = ",";
+    // 파서는 첫 글자만 구분자로 쓰므로(FileParserService.newCsvReader) 첫 글자를 검사한다. 미리보기·사전 검증·가져오기 모두
+    // 이 생성자를 거치므로 한 곳에서 막으면 세 엔드포인트가 같은 400 을 낸다(WD-602).
+    if (isUnusableDelimiter(delimiter.charAt(0))) {
+      throw new IllegalArgumentException(INVALID_DELIMITER_MESSAGE);
+    }
     if (encoding == null || encoding.isEmpty()) encoding = "AUTO";
     if (!ALLOWED_ENCODINGS.contains(encoding)) {
       throw new IllegalArgumentException(UNSUPPORTED_ENCODING_MESSAGE);
@@ -48,6 +60,14 @@ public record ParseOptions(
   /** 시트를 지정하지 않는 생성자 — CSV 호출부와 기존 코드 호환(sheetName=null → 첫 번째 보이는 시트). */
   public ParseOptions(String delimiter, String encoding, boolean hasHeader, int skipRows) {
     this(delimiter, encoding, hasHeader, skipRows, null);
+  }
+
+  /**
+   * 구분자로 쓸 수 없는 글자인지 판정한다(WD-602). 따옴표·역슬래시는 opencsv 기본 quote·escape 와 충돌하고, NUL 은 opencsv 가 「구분자
+   * 미정의」로 거부하며, 줄바꿈은 행 구분과 겹친다.
+   */
+  private static boolean isUnusableDelimiter(char c) {
+    return c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\0';
   }
 
   public static ParseOptions defaults() {
