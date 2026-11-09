@@ -4,6 +4,7 @@
  * 제출 버튼을 aria-disabled 로만 잠그므로(PendingSubmitButton) 진행 중 재제출은 폼 onSubmit 의 잠금이 막아야 한다.
  * 잠금이 「진행 중 재제출 무시·무시한 제출도 기본 동작 차단·끝나면 다시 허용·여러 경로가 같은 잠금 공유」를 지키는지 본다.
  * 무시한 제출의 Promise 는 진행 중 제출이 끝날 때 끝난다(WD-678 충돌 창 잠금과 정렬) — 그 전에 끝나면 창 잠금이 먼저 풀린다.
+ * 결과로 무시 여부를 가른다(WD-688) — 무시한 호출은 { ignored: true }, 실제 제출은 { ignored: false }.
  *
  * 시간에 기대지 않는다: 잠금은 진행 중이면 첫 await 전에(동기로) preventDefault 하고 돌아오므로, 두 번째 호출 직후 동기로 센다.
  * 잠금이 없다면 그 시점에 이미 제출 함수가 한 번 더 불려 있어 기다릴 것 없이 실패한다.
@@ -77,17 +78,32 @@ describe('useSubmitGuard', () => {
     expect(secondState.settled).toBe(false);
 
     finish();
-    await first;
-    await secondDone;
+    // 실제로 제출한 첫 호출과 무시된 두 번째 호출을 결과로 가를 수 있다(WD-688)
+    await expect(first).resolves.toEqual({ ignored: false });
+    await expect(secondDone).resolves.toEqual({ ignored: true });
     const third = submit(fakeSubmitEvent().event);
     expect(submitted).toHaveBeenCalledTimes(2);
     finish();
-    await third;
+    // 잠금이 풀린 뒤의 제출은 다시 실제 제출이다
+    await expect(third).resolves.toEqual({ ignored: false });
+  });
+
+  it('폼 이벤트 없이(버튼 onClick 등) 불러도 같은 잠금이 걸린다', async () => {
+    const { result } = renderHook(() => useSubmitGuard());
+    const { submitted, finish } = heldForm();
+    const submit = result.current(submitted);
+
+    const first = submit();
+    const ignored = submit();
+    expect(submitted).toHaveBeenCalledTimes(1);
+    finish();
+    await expect(first).resolves.toEqual({ ignored: false });
+    await expect(ignored).resolves.toEqual({ ignored: true });
   });
 });
 
 describe('useSubmitGuard — 실패한 제출', () => {
-  it('진행 중 제출이 실패하면 무시한 제출은 오류 없이 끝나고(오류는 첫 호출자만 받음) 잠금도 풀린다', async () => {
+  it('진행 중 제출이 실패하면 무시한 제출은 오류 없이 「무시됨」으로 끝나고(오류는 첫 호출자만 받음) 잠금도 풀린다', async () => {
     const { result } = renderHook(() => useSubmitGuard());
     const { submitted, fail, finish } = heldForm();
     const submit = result.current(submitted);
@@ -96,7 +112,7 @@ describe('useSubmitGuard — 실패한 제출', () => {
     const ignored = submit(fakeSubmitEvent().event);
     fail(new Error('서버 오류'));
     await expect(first).rejects.toThrow('서버 오류');
-    await expect(ignored).resolves.toBeUndefined();
+    await expect(ignored).resolves.toEqual({ ignored: true });
 
     const retry = submit(fakeSubmitEvent().event);
     expect(submitted).toHaveBeenCalledTimes(2);
@@ -138,12 +154,13 @@ describe('guardFormSubmit', () => {
     expect(ignoredState.settled).toBe(false);
 
     save.finish();
-    await saving;
-    await ignoredDone;
+    // 결과로 「이 덮어쓰기는 무시됐고 저장이 끝났다」를 가를 수 있다(WD-688)
+    await expect(saving).resolves.toEqual({ ignored: false });
+    await expect(ignoredDone).resolves.toEqual({ ignored: true });
     const overwriting = overwriteSubmit(fakeSubmitEvent().event);
     expect(overwrite.submitted).toHaveBeenCalledTimes(1);
     overwrite.finish();
-    await overwriting;
+    await expect(overwriting).resolves.toEqual({ ignored: false });
   });
 });
 
@@ -171,10 +188,13 @@ describe('useGuardedSubmit', () => {
       return { form, submit: useGuardedSubmit(form.handleSubmit, onValid) };
     });
 
+    let outcome: unknown;
     await act(async () => {
-      await result.current.submit(fakeSubmitEvent().event);
+      outcome = await result.current.submit(fakeSubmitEvent().event);
     });
     expect(onValid).not.toHaveBeenCalled();
+    // 검증 실패도 이 호출이 실제로 처리한 제출이다 — 「무시됨」이 아니다(WD-688)
+    expect(outcome).toEqual({ ignored: false });
 
     act(() => {
       result.current.form.setValue('name', '고친 값');

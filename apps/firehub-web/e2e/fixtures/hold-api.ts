@@ -28,9 +28,6 @@ export async function holdApi(page: Page, method: string, path: string, status: 
   return { requests, release };
 }
 
-/** 마지막 재제출 뒤 늦게 오는 중복 요청을 기다려 보는 창(ms) */
-const DUPLICATE_WINDOW_MS = 200;
-
 /**
  * 제출 버튼에 포커스를 두고 Enter 로 제출한 뒤, 진행 중(응답 붙잡힘) 상태를 확인하고 두 갈래로 다시 제출해 본다 (WD-637).
  * - 두 번째 Enter: 포커스된 잠긴 버튼의 click — PendingSubmitButton 이 막는다.
@@ -40,7 +37,7 @@ const DUPLICATE_WINDOW_MS = 200;
  *
  * 요청 1회 판정(WD-683): 응답을 아직 붙잡은 채로 센다 — 중복 요청은 붙잡힌 동안 반드시 requests 에 쌓이므로,
  * 응답을 푼 뒤 세다가 늦게 온 중복 요청이 바로 응답돼 놓치는 일이 없다. 첫 요청이 닿을 때까지 기다린 뒤(느린 CI),
- * requestSubmit 의 비동기 검증을 거쳐 늦게 오는 중복 요청까지 짧은 창만큼 더 기다리고 1회인지 본다.
+ * requestSubmit 의 비동기 검증을 거쳐 늦게 오는 중복 요청까지 짧은 창만큼 더 기다리고 1회인지 본다(expectSingleHeldRequest).
  */
 export async function submitAndRetryWhilePending(
   page: Page,
@@ -54,9 +51,23 @@ export async function submitAndRetryWhilePending(
   await expect(pending).toHaveAttribute('aria-disabled', 'true');
   await page.keyboard.press('Enter');
   await pending.locator('xpath=ancestor::form').evaluate((f: HTMLFormElement) => f.requestSubmit());
-  await expect.poll(() => held.requests.length).toBeGreaterThanOrEqual(1);
+  await expectSingleHeldRequest(() => held.requests.length);
+}
+
+/**
+ * 붙잡힌 요청이 생긴 뒤 늦게 오는 중복 요청을 기다려 보는 창(ms). 한계(WD-688): 이 창 안에 온 중복만 잡고, 응답을 푼 뒤 오는 중복은 놓친다.
+ * 200ms 로 충분하다 — 잠금이 없으면 중복은 재제출 직후 비동기 검증(마이크로태스크)만 거쳐 수 ms 안에 나간다.
+ */
+export const DUPLICATE_WINDOW_MS = 200;
+
+/**
+ * 응답을 붙잡은 채 요청이 정확히 1회인지 본다(WD-688) — 첫 요청이 닿을 때까지 기다리고(느린 CI), 중복이 나갈 틈(DUPLICATE_WINDOW_MS)을 준 뒤 센다.
+ * count: 지금까지 붙잡힌 요청 수(holdApi 는 `() => held.requests.length`, holdRequests 는 `hold.count`).
+ */
+export async function expectSingleHeldRequest(count: () => number, message = '응답을 붙잡은 동안 요청은 1회여야 한다') {
+  await expect.poll(count).toBeGreaterThanOrEqual(1);
   await new Promise((resolve) => setTimeout(resolve, DUPLICATE_WINDOW_MS));
-  expect(held.requests.length, '응답을 붙잡은 동안 요청은 1회여야 한다').toBe(1);
+  expect(count(), message).toBe(1);
 }
 
 // ── 원래 모킹으로 넘기는 붙잡기·편집 충돌 창 잠금 확인 (WD-678) ──

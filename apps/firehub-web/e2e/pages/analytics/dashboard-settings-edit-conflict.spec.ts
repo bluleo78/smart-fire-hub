@@ -15,6 +15,7 @@ import type { UpdateDashboardRequest } from '@/types/analytics';
 import { createDashboard, createDashboardListItem } from '../../factories/analytics.factory';
 import { createPageResponse } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectLockedInFlight, expectSingleHeldRequest, holdRequests } from '../../fixtures/hold-api';
 
 /** 서버 버전 — 마이크로초까지 있는 문자열을 그대로 되돌려 보내는지 확인하려고 소수점 6자리를 쓴다 */
 const V1 = '2026-10-30T10:00:00.123456';
@@ -89,6 +90,15 @@ async function openSettings(page: Page, rowName: string) {
   await expect(settingsDialog(page)).toBeVisible();
 }
 
+/** 설정 창에서 설명을 「mine」으로 고친 사이 다른 탭이 먼저 저장하게 하고, 저장해 충돌 창을 띄운다 */
+async function openConflictDialog(page: Page, server: Awaited<ReturnType<typeof mockVersionedDashboard>>) {
+  await openSettings(page, '버전 대시보드');
+  await settingsDialog(page).getByLabel('설명').fill('mine');
+  server.otherTabSaves('other-tab');
+  await settingsDialog(page).getByRole('button', { name: '저장' }).click();
+  await expect(conflictDialog(page)).toBeVisible();
+}
+
 test.describe('대시보드 설정 — 동시 편집 충돌 (WD-364)', () => {
   test('저장 요청이 목록 행의 updatedAt 을 그대로 싣고, 다시 열어 저장하면 새 버전을 기준으로 보낸다', async ({
     authenticatedPage: page,
@@ -122,12 +132,7 @@ test.describe('대시보드 설정 — 동시 편집 충돌 (WD-364)', () => {
     const server = await mockVersionedDashboard(page);
     await page.goto('/analytics/dashboards');
 
-    await openSettings(page, '버전 대시보드');
-    await settingsDialog(page).getByLabel('설명').fill('mine');
-    server.otherTabSaves('other-tab');
-    await settingsDialog(page).getByRole('button', { name: '저장' }).click();
-
-    await expect(conflictDialog(page)).toBeVisible();
+    await openConflictDialog(page, server);
     await expect(conflictDialog(page)).toContainText('이 대시보드은(는) 편집을 시작한 뒤 다른 사용자 또는 다른 탭에서 변경되었습니다');
     expect(server.puts[0].expectedUpdatedAt).toBe(V1);
     expect(server.description()).toBe('other-tab');
@@ -148,11 +153,7 @@ test.describe('대시보드 설정 — 동시 편집 충돌 (WD-364)', () => {
     const server = await mockVersionedDashboard(page);
     await page.goto('/analytics/dashboards');
 
-    await openSettings(page, '버전 대시보드');
-    await settingsDialog(page).getByLabel('설명').fill('mine');
-    server.otherTabSaves('other-tab');
-    await settingsDialog(page).getByRole('button', { name: '저장' }).click();
-    await expect(conflictDialog(page)).toBeVisible();
+    await openConflictDialog(page, server);
 
     await conflictDialog(page).getByRole('button', { name: '다시 불러오기' }).click();
     await expect(conflictDialog(page)).toHaveCount(0);
@@ -188,5 +189,66 @@ test.describe('대시보드 설정 — 동시 편집 충돌 (WD-364)', () => {
     await settingsDialog(page).getByRole('button', { name: '저장' }).click();
     await expect(page.getByText('같은 이름의 대시보드가 이미 있습니다.')).toBeVisible();
     await expect(conflictDialog(page)).toHaveCount(0);
+  });
+});
+
+/**
+ * 설정 창 저장·덮어쓰기의 중복 제출 잠금 (WD-688).
+ * 화면 전용 ref 플래그를 공용 useSubmitGuard 로 옮겼다 — 저장과 덮어쓰기가 같은 잠금을 나눠 쓴다.
+ * PUT 을 붙잡아(holdRequests) 응답 전 상태에서 거듭 눌러 보고, 시간 지연이 아니라 붙잡힌 요청 수로 판정한다.
+ */
+test.describe('대시보드 설정 — 진행 중 재제출 잠금 (WD-688)', () => {
+  test('「저장」을 빠르게 두 번 눌러도 응답 전까지 PUT 은 한 번만 가고, 풀리면 한 번 저장된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const server = await mockVersionedDashboard(page);
+    // 상태 서버 모킹 뒤에 등록해야 먼저 받는다 — 풀면 상태 서버가 응답한다
+    const hold = await holdRequests(page, '/api/v1/analytics/dashboards/1', 'PUT');
+    await page.goto('/analytics/dashboards');
+
+    await openSettings(page, '버전 대시보드');
+    await settingsDialog(page).getByLabel('설명').fill('once');
+    // 같은 틱의 두 클릭 — isPending 으로 버튼이 막히기(다시 그리기) 전에 두 번째 클릭이 들어온다
+    await settingsDialog(page).getByRole('button', { name: '저장' }).dblclick();
+
+    await expectSingleHeldRequest(hold.count, '응답을 붙잡은 동안 PUT 은 1회여야 한다');
+
+    hold.release();
+    await expect(settingsDialog(page)).toHaveCount(0);
+    expect(server.puts).toHaveLength(1);
+    expect(server.puts[0]).toMatchObject({ description: 'once', expectedUpdatedAt: V1 });
+    expect(server.description()).toBe('once');
+  });
+
+  test('충돌 뒤 「내 변경으로 덮어쓰기」 진행 중 다시 눌러도 기준 버전 없는 PUT 은 한 번만 가고, 끝날 때까지 창 버튼이 잠긴다', async ({
+    authenticatedPage: page,
+  }) => {
+    const server = await mockVersionedDashboard(page);
+    await page.goto('/analytics/dashboards');
+
+    await openConflictDialog(page, server);
+    // 충돌을 낸 첫 PUT 뒤부터 붙잡는다
+    const hold = await holdRequests(page, '/api/v1/analytics/dashboards/1', 'PUT');
+
+    const overwrite = conflictDialog(page).getByRole('button', { name: '내 변경으로 덮어쓰기' });
+    await overwrite.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => hold.count()).toBe(1);
+    // 응답 전: 세 버튼 모두 aria-disabled, 누른 버튼은 포커스를 그대로 가진다
+    await expectLockedInFlight(conflictDialog(page), overwrite);
+
+    // 진행 중 다시 Enter, 잠긴 버튼에 클릭 이벤트를 직접 보내도(aria-disabled 는 클릭을 막지 않는다) 두 번째 PUT 은 없다
+    await page.keyboard.press('Enter');
+    await overwrite.dispatchEvent('click');
+    await expectSingleHeldRequest(hold.count, '응답을 붙잡은 동안 덮어쓰기 PUT 은 1회여야 한다');
+    await expectLockedInFlight(conflictDialog(page), overwrite);
+
+    hold.release();
+    await expect(conflictDialog(page)).toHaveCount(0);
+    await expect(settingsDialog(page)).toHaveCount(0);
+    // 충돌을 낸 첫 PUT + 덮어쓰기 PUT 한 번(기준 버전 없음)
+    expect(server.puts).toHaveLength(2);
+    expect('expectedUpdatedAt' in server.puts[1]).toBe(false);
+    expect(server.description()).toBe('mine');
   });
 });
