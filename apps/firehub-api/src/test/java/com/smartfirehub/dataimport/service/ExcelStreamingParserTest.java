@@ -1161,4 +1161,68 @@ class ExcelStreamingParserTest {
         .isInstanceOf(com.smartfirehub.dataimport.exception.ExcelSheetSelectionException.class)
         .hasMessage("파일의 시트 목록을 읽을 수 없어 '다른시트' 시트를 고를 수 없습니다. 시트를 지정하지 않으면 첫 번째 시트를 가져옵니다.");
   }
+
+  // ---- XXE 방어(WD-615): 업로드한 xlsx 의 시트 XML 에 DOCTYPE 이 있으면 엔티티를 펼치지 않고 파일을 거부한다 ----
+
+  /** 시트를 끝까지 읽어 행 목록을 돌려준다(파일 경로 기반 — 미리보기·검증·적재가 쓰는 경로). */
+  private static List<List<String>> readAllRows(File f) throws Exception {
+    List<List<String>> rows = new ArrayList<>();
+    ExcelStreamingParser.parse(
+        f,
+        null,
+        (idx, cells) -> {
+          rows.add(cells);
+          return true;
+        });
+    return rows;
+  }
+
+  /** 대조군: DOCTYPE 없는 같은 최소 xlsx 는 인라인 문자열까지 그대로 읽힌다 — 아래 거부가 파일 구조 탓이 아님을 보인다. */
+  @Test
+  void minimal_xlsx_without_doctype_reads_inline_strings(@TempDir File dir) throws Exception {
+    File f = toFile(dir, XxeXlsxFixture.xlsx(XxeXlsxFixture.sheetXml("", "hello")));
+    assertThat(readAllRows(f)).containsExactly(List.of("col"), List.of("hello"));
+  }
+
+  /** 외부 엔티티로 서버 파일을 셀에 끌어오려는 xlsx 는 한국어 「읽을 수 없음」으로 거부되고, 파일 내용은 행·예외 어디에도 나오지 않는다. */
+  @Test
+  void xlsx_with_external_entity_is_rejected_without_leaking_file(@TempDir File dir)
+      throws Exception {
+    String marker = "WD615-SECRET-" + java.util.UUID.randomUUID();
+    java.nio.file.Path secret =
+        java.nio.file.Files.writeString(dir.toPath().resolve("secret.txt"), marker);
+    File f = toFile(dir, XxeXlsxFixture.xlsx(XxeXlsxFixture.externalEntitySheet(secret)));
+
+    List<List<String>> rows = new ArrayList<>();
+    Throwable thrown =
+        org.assertj.core.api.Assertions.catchThrowable(
+            () ->
+                ExcelStreamingParser.parse(
+                    f,
+                    null,
+                    (idx, cells) -> {
+                      rows.add(cells);
+                      return true;
+                    }));
+
+    assertThat(rows.toString()).doesNotContain(marker);
+    assertThat(thrown)
+        .isInstanceOf(com.smartfirehub.dataimport.exception.FileUnreadableException.class)
+        .hasMessage(com.smartfirehub.dataimport.exception.FileUnreadableException.EXCEL_UNREADABLE);
+    for (Throwable t = thrown; t != null; t = t.getCause()) {
+      assertThat(String.valueOf(t.getMessage())).doesNotContain(marker);
+    }
+  }
+
+  /** 내부 엔티티를 거듭 펼치는 billion laughs 도 DOCTYPE 단계에서 거부된다(펼치기 전에 끝나 메모리를 쓰지 않는다). */
+  @Test
+  void xlsx_with_billion_laughs_is_rejected(@TempDir File dir) throws Exception {
+    File f = toFile(dir, XxeXlsxFixture.xlsx(XxeXlsxFixture.billionLaughsSheet()));
+    assertThatThrownBy(() -> readAllRows(f))
+        .isInstanceOf(com.smartfirehub.dataimport.exception.FileUnreadableException.class)
+        .hasMessage(com.smartfirehub.dataimport.exception.FileUnreadableException.EXCEL_UNREADABLE)
+        // JDK 기본 엔티티 확장 한도로 우연히 막힌 게 아니라 DOCTYPE 금지로 거부됐는지 원인(로그 전용)으로 확인한다.
+        .rootCause()
+        .hasMessageContaining("DOCTYPE");
+  }
 }
