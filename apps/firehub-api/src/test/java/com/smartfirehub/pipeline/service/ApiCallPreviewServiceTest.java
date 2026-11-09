@@ -12,6 +12,7 @@ import com.smartfirehub.pipeline.dto.ApiCallPreviewResponse;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
+import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -75,7 +76,12 @@ class ApiCallPreviewServiceTest {
 
     service =
         new ApiCallPreviewService(
-            noOpSsrf, new JsonResponseParser(), apiConnectionService, WebClient.builder());
+            noOpSsrf,
+            new JsonResponseParser(),
+            apiConnectionService,
+            WebClient.builder(),
+            // WireMock(루프백)에 접속해야 하므로 접속 시점 주소 검사(WD-613)도 끈다.
+            new SsrfSafeHttpClientFactory(address -> {}));
   }
 
   // =========================================================================
@@ -385,7 +391,8 @@ class ApiCallPreviewServiceTest {
             new SsrfProtectionService(), // 실제 구현체
             new JsonResponseParser(),
             apiConnectionService,
-            WebClient.builder());
+            WebClient.builder(),
+            new SsrfSafeHttpClientFactory(new SsrfProtectionService()));
 
     ApiCallPreviewResponse response =
         realSsrfService.preview(

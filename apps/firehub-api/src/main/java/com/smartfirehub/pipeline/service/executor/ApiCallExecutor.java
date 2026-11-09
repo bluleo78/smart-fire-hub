@@ -61,6 +61,12 @@ public class ApiCallExecutor {
   /** 출력 테이블 쓰기 잠금(WD-666) — APPEND 페이지 쓰기와 REPLACE 맞바꿈을 데이터셋 행 잠금과 같은 트랜잭션에서 한다. */
   private final DatasetDataWriteLock writeLock;
 
+  /**
+   * 접속 시점 주소 검사가 걸린 HTTP 클라이언트(WD-613). validateUrl 은 호출 전 한 번만 해석하므로, 접속 때 DNS 가 내부 주소로 바뀌는 재바인딩을
+   * 이 클라이언트의 해석기가 막는다(첫 요청·리다이렉트 홉 모두).
+   */
+  private final SsrfSafeHttpClientFactory ssrfSafeHttpClientFactory;
+
   // -------------------------------------------------------------------------
   // Result type
   // -------------------------------------------------------------------------
@@ -420,7 +426,8 @@ public class ApiCallExecutor {
     // Fix 2: disable automatic redirects so every hop is SSRF-validated before following.
     // Without this, a malicious server could 301-redirect to http://169.254.169.254/ and
     // bypass the initial validateUrl() check.
-    HttpClient reactorHttpClient = HttpClient.create().followRedirect(false);
+    // (WD-613) 해석기는 접속할 IP 를 SSRF 정책으로 다시 검사한다 — 검사(validateUrl) 뒤 DNS 재바인딩으로 내부 주소가 나와도 접속하지 않는다.
+    HttpClient reactorHttpClient = ssrfSafeHttpClientFactory.httpClient().followRedirect(false);
 
     WebClient client =
         webClientBuilder
@@ -441,6 +448,12 @@ public class ApiCallExecutor {
       // 이미 사용자 문구를 담은 예외 — ExternalServiceException 은 재시도할 HTTP 상태(5xx·408·429)다.
       throw e;
     } catch (Exception e) {
+      // 접속 시점 주소 검사(WD-613)에 막힌 경우 — WebClientRequestException 에 감싸여 오므로 꺼내서, 사전 검사와 같은 차단 문구의
+      // SsrfException 으로 즉시 실패시킨다(아래로 떨어지면 재시도 대상 ExternalServiceException 이 되어 같은 차단을 N회 반복한다).
+      SsrfException blocked = SsrfException.findIn(e);
+      if (blocked != null) {
+        throw new SsrfException(blocked.getMessage(), e);
+      }
       // 타임아웃·연결 거부 등 — 재시도 대상. 원인을 분류한 한국어 문구로 감싼다(WD-150). 예전 문구는 쿼리 포함
       // URL 을 담을 수 있어(customUrl 에 serviceKey 등) 원인을 묻고 키까지 남겼다.
       // (WD-177) 분류하지 못한 원문 메시지에 쿼리 인증 키가 실려 올 수 있어 키도 가린다 — 이 문구는 재시도 로그·실행 기록으로 간다.

@@ -19,7 +19,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 /**
  * WD-670 API_CALL 적재 중 구조 변경 테스트들의 공용 조립 — 실제 DB 빈(데이터셋·테이블·잠금)과 WireMock 두 페이지 API(둘째 페이지 지연)로
- * {@link ApiCallExecutor} 를 직접 만든다. SSRF 검사만 끈다(localhost WireMock).
+ * {@link ApiCallExecutor} 를 직접 만든다. SSRF 검사(사전·연결 시점)만 끈다(localhost WireMock).
  */
 final class ApiCallLoadDriftTestSupport {
 
@@ -42,7 +42,9 @@ final class ApiCallLoadDriftTestSupport {
         dataTableService,
         dataTableRowService,
         WebClient.builder(),
-        writeLock);
+        writeLock,
+        // 연결 시점 SSRF 검사(WD-613)도 끈다 — WireMock 이 루프백이라 사전 검사와 함께 우회해야 한다.
+        new SsrfSafeHttpClientFactory(address -> {}));
   }
 
   /** 두 페이지(각 2행, code·name) API — 둘째 페이지는 {@code delayMs} 늦게 답한다. */

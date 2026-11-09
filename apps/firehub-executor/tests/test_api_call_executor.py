@@ -877,7 +877,9 @@ def test_connection_refused_real_socket_retried_with_cause():
         retry=RetryConfig(max_retries=1, initial_backoff_ms=0, max_backoff_ms=0),
     )
     conn, _ = make_conn()
-    with patch("app.services.api_call_executor.validate_url"), patch("time.sleep"):
+    # 루프백에 실제로 붙어야 하므로 주소 정책을 연다 — 사전 검사와 연결 시점 가드(WD-613)가 같은 함수를 쓴다.
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("app.validators.ssrf_protection.validate_resolved_address"), patch("time.sleep"):
         result = execute_api_call(req, conn)
 
     assert result.error == (
@@ -901,7 +903,9 @@ def test_timeout_real_socket_retried_with_cause():
             retry=RetryConfig(max_retries=1, initial_backoff_ms=0, max_backoff_ms=0),
         )
         conn, _ = make_conn()
-        with patch("app.services.api_call_executor.validate_url"), patch("time.sleep"):
+        # 루프백에 실제로 붙어야 하므로 주소 정책을 연다(연결 시점 가드 WD-613 포함).
+        with patch("app.services.api_call_executor.validate_url"), \
+                patch("app.validators.ssrf_protection.validate_resolved_address"), patch("time.sleep"):
             result = execute_api_call(req, conn)
     finally:
         server.close()

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
+import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
 import com.smartfirehub.settings.model.AiCredentialSlot;
 import io.netty.channel.ChannelOption;
 import java.net.InetAddress;
@@ -96,6 +97,14 @@ public class OpencodeProbeService {
   private final WebClient.Builder webClientBuilder;
   private final Duration timeout;
 
+  /**
+   * 접속 시점 주소 검사가 걸린 HTTP 클라이언트 출처(WD-613). {@link #validateTarget} 은 검사 시점 해석값만 보므로, 접속 때 DNS 가 내부
+   * 주소로 바뀌는 재바인딩을 이 해석기가 {@link #checkConnectAddress} 로 막는다. 공용 빈 대신 직접 만드는 이유: 차단 판정을 재정의 가능한 이
+   * 클래스의 메서드로 걸어, 테스트 확장점({@code validateTarget} 처럼 재정의)과 이 클래스의 고정 문구(MSG_BLOCKED_ADDRESS, 해석 IP
+   * 비노출)를 유지하려고.
+   */
+  private final SsrfSafeHttpClientFactory connectGuard;
+
   @Autowired
   public OpencodeProbeService(
       AiCredentialService aiCredentialService,
@@ -114,6 +123,7 @@ public class OpencodeProbeService {
     this.ssrfProtectionService = ssrfProtectionService;
     this.webClientBuilder = webClientBuilder;
     this.timeout = timeout;
+    this.connectGuard = new SsrfSafeHttpClientFactory(this::checkConnectAddress);
   }
 
   /**
@@ -449,7 +459,8 @@ public class OpencodeProbeService {
       // 호스트명 문자열이 아니라 실제 DNS 해석 결과를 검사한다 — "사설 대역처럼 보이는 문자열"이
       // 아니라 "지금 이 이름이 가리키는 IP"를 판정해야 DNS rebinding(검사 시점엔 공인 IP를
       // 돌려주고, 접속 시점엔 사설 IP로 바뀌는 공격)을 막을 수 있다. 이 판정 자체는 여전히
-      // 검사-시점 값이라 접속 시점까지의 완전한 방어(= IP 고정 접속)는 아니다 — 보고서에 남긴다.
+      // 검사-시점 값이라 이것만으로는 접속 시점까지 막지 못한다 — 접속 시점 재검사는 doRequest 의 해석기
+      // (connectGuard → checkConnectAddress, WD-613)가 맡는다.
       addresses = resolve(uri.getHost());
     } catch (UnknownHostException e) {
       throw new GuardViolation(MSG_UNRESOLVED_HOST, ProbeResult.Reason.UNRESOLVED_HOST, e);
@@ -470,6 +481,18 @@ public class OpencodeProbeService {
       // CGNAT·IPv6 ULA·0.0.0.0/8 처럼 InetAddress 판정이 놓치는 대역도 이제 공용 가드가 막는다(WD-148) —
       // 예전에는 이 프로브만 따로 보강했고, 같은 구멍이 pipeline API_CALL 「테스트 호출」에 남아 있었다.
     }
+  }
+
+  /**
+   * 접속 시점 주소 검사(WD-613) — Netty 해석기가 실제로 접속할 IP 마다 부른다. {@link #validateTarget} 의 주소 판정과 같은 공용 가드를
+   * 쓴다. 막으면 {@link SsrfException} 을 던지고, {@link #doRequest} 가 이를 {@code
+   * BLOCKED_ADDRESS}(MSG_BLOCKED_ADDRESS)로 바꾼다 — 해석된 내부 IP 는 응답에 싣지 않는다.
+   *
+   * <p><b>protected — 테스트 전용 확장점.</b> WireMock(루프백)을 상대하는 테스트는 {@code validateTarget} 과 함께 이것도 재정의해
+   * 건너뛴다.
+   */
+  protected void checkConnectAddress(InetAddress address) {
+    ssrfProtectionService.validateResolvedAddress(address);
   }
 
   /** DNS 해석. protected — DNS rebinding 테스트가 "실제 이름은 그대로 두고 해석 결과만 사설 IP로" 재현하려면 필요하다. */
@@ -500,8 +523,12 @@ public class OpencodeProbeService {
     // 대신 연결 자체가 안 되는 상황(사설 대역이 아니면서 방화벽이 조용히 드롭하는 호스트 등)만
     // CONNECT_TIMEOUT_MILLIS 로 별도로 막는다 — 이건 응답 대기가 아니라 접속 자체의 문제라
     // MSG_UNREACHABLE 로 분류되는 것이 맞다.
+    //
+    // (WD-613) 해석기는 접속할 IP 를 checkConnectAddress 로 다시 검사한다 — validateTarget 뒤 DNS 재바인딩으로 내부 주소가 나와도
+    // 접속하지 않는다.
     HttpClient reactorClient =
-        HttpClient.create()
+        connectGuard
+            .httpClient()
             .followRedirect(false)
             .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) timeout.toMillis());
 
@@ -556,6 +583,11 @@ public class OpencodeProbeService {
     } catch (DataBufferLimitException e) {
       return new ProbeResult(false, List.of(), MSG_TOO_LARGE, ProbeResult.Reason.TOO_LARGE);
     } catch (Exception e) {
+      // 접속 시점 주소 검사(WD-613)에 막힘 — 사전 가드와 같은 사유·문구(BLOCKED_ADDRESS)로 돌려준다. 해석된 IP 를 담은 원문은 내보내지 않는다.
+      if (SsrfException.findIn(e) != null) {
+        return new ProbeResult(
+            false, List.of(), MSG_BLOCKED_ADDRESS, ProbeResult.Reason.BLOCKED_ADDRESS);
+      }
       if (isTimeout(e)) {
         return new ProbeResult(false, List.of(), MSG_TIMEOUT, ProbeResult.Reason.TIMEOUT);
       }

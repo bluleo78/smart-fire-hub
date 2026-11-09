@@ -65,7 +65,9 @@ class ApiCallExecutorCancelTest {
             dataTableService,
             dataTableRowService,
             WebClient.builder(),
-            com.smartfirehub.support.PassThroughWriteLock.create());
+            com.smartfirehub.support.PassThroughWriteLock.create(),
+            // WireMock(루프백)에 접속해야 하므로 접속 시점 주소 검사(WD-613)도 끈다.
+            new SsrfSafeHttpClientFactory(address -> {}));
   }
 
   private String url(String path) {

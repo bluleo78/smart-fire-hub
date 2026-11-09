@@ -43,13 +43,26 @@ def validate_url(url: str) -> None:
     except socket.gaierror as e:
         raise SsrfException(unknown_host_message(hostname)) from e
 
+    validate_addr_infos(addr_infos)
+
+
+def validate_addr_infos(addr_infos) -> list[str]:
+    """``socket.getaddrinfo`` 결과의 모든 주소를 검사하고, 통과한 IP 문자열을 중복 없이 해석 순서대로 돌려준다.
+
+    주소 하나라도 내부망이면 ``SsrfException`` — 어느 주소로 붙을지는 연결 시점에 정해지므로 전부 막혀야 안전하다.
+    호출 전 검사(``validate_url``)와 연결 시점 검사(``ssrf_safe_transport``, WD-613 DNS 리바인딩 대응)가 같은 정책을
+    쓰도록 한 곳에 둔다 — 두 곳의 차단 범위·문구가 어긋나지 않게.
+    """
     seen: set[str] = set()
+    ips: list[str] = []
     for _family, _type, _proto, _canonname, sockaddr in addr_infos:
         ip_str = sockaddr[0]
         if ip_str in seen:
             continue
         seen.add(ip_str)
         validate_resolved_address(ipaddress.ip_address(ip_str))
+        ips.append(ip_str)
+    return ips
 
 
 def validate_resolved_address(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:

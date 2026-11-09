@@ -49,6 +49,13 @@ class ApiCallExecutorTest {
     wireMock.resetAll();
   }
 
+  /**
+   * 접속 시점 주소 검사(WD-613)를 끈 팩토리 — WireMock 은 루프백(localhost)에서 뜨므로, 사전 검사(validateUrl)를 우회하는 테스트는 접속
+   * 검사도 함께 우회한다. 접속 검사 자체는 {@link SsrfSafeHttpClientFactoryTest} 와 아래 재바인딩 TC 가 검증한다.
+   */
+  static final SsrfSafeHttpClientFactory ALLOW_LOOPBACK_CONNECT =
+      new SsrfSafeHttpClientFactory(address -> {});
+
   @Mock DataTableService dataTableService;
   @Mock DataTableRowService dataTableRowService;
 
@@ -82,7 +89,8 @@ class ApiCallExecutorTest {
             dataTableService,
             dataTableRowService,
             WebClient.builder(),
-            writeLock);
+            writeLock,
+            ALLOW_LOOPBACK_CONNECT);
   }
 
   // -------------------------------------------------------------------------
@@ -1378,7 +1386,8 @@ class ApiCallExecutorTest {
             dataTableService,
             dataTableRowService,
             WebClient.builder(),
-            com.smartfirehub.support.PassThroughWriteLock.create());
+            com.smartfirehub.support.PassThroughWriteLock.create(),
+            ALLOW_LOOPBACK_CONNECT);
     wireMock.stubFor(
         get(urlEqualTo("/api/redirect"))
             .willReturn(
@@ -1391,6 +1400,49 @@ class ApiCallExecutorTest {
         .isInstanceOf(SsrfException.class)
         .hasMessage("내부망 주소는 호출할 수 없습니다(루프백): 127.0.0.1");
     wireMock.verify(1, getRequestedFor(urlEqualTo("/api/redirect")));
+  }
+
+  /**
+   * DNS 재바인딩(WD-613) — 사전 검사(validateUrl) 때는 공인 IP 였던 호스트가 접속 때 루프백으로 풀리면, 접속 시점 해석기가 막아 요청이 나가지 않고
+   * 사전 검사와 같은 차단 문구의 SsrfException 으로 즉시 실패한다(재시도해 「N회 재시도 후 실패」 문구로 묻히지 않는다).
+   */
+  @Test
+  void execute_dnsRebindingToLoopbackAfterPreCheck_blockedAtConnectTime() {
+    // 검사 시점: 공격자 DNS 가 공인 IP 를 준 상황 — 실제 판정 로직으로 공인 IP 를 검사해 통과시킨다.
+    SsrfProtectionService preCheckSeesPublicIp =
+        new SsrfProtectionService() {
+          @Override
+          public void validateUrl(String url) {
+            validateResolvedAddress(FakeDnsResolverGroup.ip("8.8.8.8"));
+          }
+        };
+    // 접속 시점: 같은 이름이 루프백(WireMock 이 뜬 곳)으로 풀린다.
+    FakeDnsResolverGroup dns =
+        new FakeDnsResolverGroup().answer("rebind.test", FakeDnsResolverGroup.ips("127.0.0.1"));
+    ApiCallExecutor rebindingExecutor =
+        new ApiCallExecutor(
+            preCheckSeesPublicIp,
+            jsonParser,
+            paginationHandler,
+            dataTableService,
+            dataTableRowService,
+            WebClient.builder(),
+            writeLock,
+            new SsrfSafeHttpClientFactory(dns, preCheckSeesPublicIp::validateResolvedAddress));
+    wireMock.stubFor(get(urlPathEqualTo("/api/internal")).willReturn(okJson("{\"items\":[]}")));
+
+    assertThatThrownBy(
+            () ->
+                rebindingExecutor.execute(
+                    retryConfig("http://rebind.test:" + wireMock.port() + "/api/internal", 2, 5000),
+                    "t",
+                    null,
+                    "APPEND",
+                    null))
+        .isInstanceOf(SsrfException.class)
+        .hasMessage("내부망 주소는 호출할 수 없습니다(루프백): 127.0.0.1");
+    assertThat(dns.queries()).isPositive();
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
   }
 
   /** 응답 크기 초과 문구도 한국어이고, URL(쿼리 포함 가능)을 담지 않는다. */
@@ -1719,7 +1771,8 @@ class ApiCallExecutorTest {
             dataTableService,
             dataTableRowService,
             WebClient.builder(),
-            writeLock);
+            writeLock,
+            ALLOW_LOOPBACK_CONNECT);
     stubRedirect("/r657/rel", "/r657/v2/items?page=2");
     stubEmptyItems("/r657/v2/items");
 

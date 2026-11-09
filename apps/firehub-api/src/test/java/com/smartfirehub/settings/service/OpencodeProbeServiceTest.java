@@ -109,6 +109,28 @@ class OpencodeProbeServiceTest {
       protected void validateTarget(URI uri) {
         // no-op: WireMock 은 127.0.0.1 에서 뜬다 — 실제 가드라면 언제나 차단한다.
       }
+
+      @Override
+      protected void checkConnectAddress(InetAddress address) {
+        // no-op: 접속 시점 주소 검사(WD-613)도 같은 이유로 건너뛴다.
+      }
+    };
+  }
+
+  /**
+   * 사전 가드(validateTarget)만 건너뛰고 접속 시점 주소 검사(WD-613)는 살려 둔 인스턴스 — 사전 검사를 통과한 뒤 접속 주소가 내부로 바뀐 상황(DNS
+   * 재바인딩)을 WireMock(루프백)으로 재현한다.
+   */
+  private OpencodeProbeService preCheckBypassedService() {
+    return new OpencodeProbeService(
+        mock(AiCredentialService.class),
+        new SsrfProtectionService(),
+        WebClient.builder(),
+        Duration.ofSeconds(10)) {
+      @Override
+      protected void validateTarget(URI uri) {
+        // no-op: 검사 시점에는 공인 IP 였다고 가정한다.
+      }
     };
   }
 
@@ -406,6 +428,22 @@ class OpencodeProbeServiceTest {
   // ---------------------------------------------------------------------
   // 2. WireMock 그룹 — 리다이렉트 미추적 / 응답 파싱 / 비밀 비유출
   // ---------------------------------------------------------------------
+
+  /**
+   * DNS 재바인딩(WD-613) — 사전 가드를 통과한 뒤 접속 주소가 루프백(WireMock)이면, 접속 시점 해석기가 막아 요청이 나가지 않고 사전 가드와 같은
+   * BLOCKED_ADDRESS(고정 문구, 해석 IP 비노출)로 돌아온다. 예전에는 그대로 접속해 Bearer 키를 내부 주소로 보냈다.
+   */
+  @Test
+  void 사전검사_뒤_내부주소로_바뀌면_접속시점에_차단한다() {
+    wireMock.stubFor(get("/v1/models").willReturn(okJson("{\"data\":[{\"id\":\"internal\"}]}")));
+
+    ProbeResultAssertHelper.assertBlocked(
+        preCheckBypassedService().probe(wireMockUrl("/v1"), "k"),
+        OpencodeProbeService.MSG_BLOCKED_ADDRESS,
+        Reason.BLOCKED_ADDRESS);
+
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
 
   @Test
   void 리다이렉트를_따라가지_않는다() {
