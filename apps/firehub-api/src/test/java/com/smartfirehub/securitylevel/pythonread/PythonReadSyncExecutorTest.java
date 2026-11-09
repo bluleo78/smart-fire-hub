@@ -926,6 +926,71 @@ class PythonReadSyncExecutorTest {
   }
 
   /**
+   * 회귀(WD-673): 재시작 뒤 옛 스케줄러에 인터럽트를 무시하고 멈춘 시도가 있어도 새 스케줄러는 상한({@code retiredAwaitTimeout})까지만 기다리고
+   * 다른 테넌트의 작업을 진행한다 — 예전에는 1분마다 WARN 만 남기며 무기한 기다려 모든 테넌트의 커밋 뒤 동기화가 멈췄다. 상한 전에는 여전히 기다리고(순서 보장),
+   * 멈춘 시도의 테넌트에 온 제출은 그 작업에 합쳐져 겹쳐 돌지 않으며, 멈춘 시도가 끝나면 그 뒤에 돈다. 버림은 없다. 변이: 상한을 지우고 무기한 기다리면 새 작업이
+   * 돌지 않아 실패.
+   */
+  @Test
+  void restartWithStuckOldAttempt_proceedsAfterBound_andKeepsStuckTenantSerialized()
+      throws Exception {
+    Duration bound = Duration.ofMillis(500);
+    PythonReadSyncExecutor executor =
+        new PythonReadSyncExecutor(
+            PythonReadSyncExecutor.QUEUE_CAPACITY, Duration.ofMillis(200), bound);
+    String stuckGroup = "stuck-" + KEYS.incrementAndGet();
+    CountDownLatch release = new CountDownLatch(1);
+    CountDownLatch started = new CountDownLatch(1);
+    AtomicBoolean oldRunning = new AtomicBoolean(true);
+    AtomicReference<Thread> oldThread = new AtomicReference<>();
+    AtomicInteger stuckGroupAttempts = new AtomicInteger();
+    AtomicReference<Boolean> oldRunningSeenByFollowUp = new AtomicReference<>();
+    executor.submitRetryable(
+        stuckGroup,
+        "t",
+        (items, lockWait) -> {
+          if (stuckGroupAttempts.incrementAndGet() == 1) {
+            oldThread.set(Thread.currentThread());
+            started.countDown();
+            while (release.getCount() > 0) {
+              try {
+                release.await(10, TimeUnit.SECONDS);
+              } catch (InterruptedException ignored) {
+                // 의도적으로 무시 — 응답 없는 JDBC 호출처럼 멈춘 시도
+              }
+            }
+            oldRunning.set(false);
+          } else {
+            oldRunningSeenByFollowUp.set(oldRunning.get());
+          }
+          return Outcome.DONE;
+        });
+    assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+    executor.stop(); // 200ms 비우기 → shutdownNow → 시도가 인터럽트를 무시해 옛 스케줄러가 끝나지 않는다.
+    long restartedAt = System.nanoTime();
+    executor.start();
+
+    CountDownLatch otherRan = new CountDownLatch(1);
+    assertThat(submit(executor, otherRan::countDown)).isTrue();
+    assertThat(executor.submitRetryable(stuckGroup, "t2", (items, lockWait) -> Outcome.DONE))
+        .as("멈춘 시도의 테넌트에 온 제출은 그 작업에 합쳐진다")
+        .isTrue();
+    assertThat(otherRan.await(100, TimeUnit.MILLISECONDS)).as("상한 전에는 옛 스케줄러를 기다린다").isFalse();
+    assertThat(otherRan.await(5, TimeUnit.SECONDS)).as("상한 뒤에는 다른 테넌트 작업이 돈다").isTrue();
+    assertThat(Duration.ofNanos(System.nanoTime() - restartedAt)).isGreaterThanOrEqualTo(bound);
+    assertThat(oldRunning.get()).as("옛 시도는 아직 멈춰 있다").isTrue();
+    assertThat(stuckGroupAttempts.get()).as("멈춘 테넌트는 겹쳐 돌지 않는다").isEqualTo(1);
+
+    release.countDown();
+    oldThread.get().join(TimeUnit.SECONDS.toMillis(5));
+    assertThat(executor.awaitIdle(Duration.ofSeconds(5))).isTrue();
+    assertThat(stuckGroupAttempts.get()).as("합쳐진 항목은 멈춘 시도가 끝난 뒤 한 번 돈다").isEqualTo(2);
+    assertThat(oldRunningSeenByFollowUp.get()).as("뒤따르는 회차는 옛 시도와 겹치지 않았다").isFalse();
+    assertThat(executor.droppedCount()).as("멈춘 시도도, 그 뒤 제출도 버리지 않는다").isZero();
+    executor.shutdown();
+  }
+
+  /**
    * WD-655: isRunning 은 워커의 생사가 아니라 라이프사이클 상태(켜짐)다. 옛 워커가 안 끝난 채 start 했어도 isRunning 이 true 라
    * Spring 이 stop 을 건너뛰지 않는다(SmartLifecycle 은 isRunning 이 true 인 빈에만 stop 을 부른다). 그 stop 뒤에는 꺼짐이고
    * 제출을 버린다.

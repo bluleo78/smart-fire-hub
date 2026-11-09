@@ -517,6 +517,49 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
   }
 
   /**
+   * 회귀(WD-673): 동기화가 테이블 잠금을 기다리는 사이 그 테이블이 실제로 DROP 되면 슬롯 GRANT 도 테이블과 함께 사라진다 — 과권한이 남지 않으므로 회수
+   * 실패로 세지 않고, 그 동기화와 겹친 PYTHON 실행 준비도 거부하지 않는다. 예전에는 RENAME(권한이 따라감)과 같은 분기에서 회수 실패로 세어 실행이 한 번
+   * 거부됐다. 진짜 회수 실패(RENAME·REVOKE 오류)는 {@link
+   * #lockFailedBecauseRenamed_countsExcessAsRevokeFailure_untilNextSync}· {@link
+   * #revokeThatErrors_recordsExcessRoles_andRefusesOnlyThatSlot} 가 계속 지킨다. 변이: 잠금 실패 분기의 oid 확인 제거
+   * → 회수 실패에 테이블이 실리고 실행 준비가 거부돼 실패.
+   */
+  @Test
+  void lockFailedBecauseDropped_isNotRevokeFailure() throws Exception {
+    String s1 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 1);
+    long publicUser = userAt("공개");
+    Clearance publicClearance = clearanceResolver.resolve(publicUser);
+    String t1 = m + "_dropsync";
+    String t2 = m + "_droprun";
+    try {
+      // 전체 동기화: 사라진 테이블은 회수 실패가 아니다.
+      PythonReadGrantSync.SyncResult r =
+          raceWithDdl(t1, "DROP TABLE " + DataSchema.qualify(t1), s1, () -> sync.syncTenant())
+              .get(30, TimeUnit.SECONDS);
+      assertThat(r.revokeFailedTables()).as("DROP 된 테이블은 회수 실패가 아니다").doesNotContain(t1);
+
+      // 실행 준비: 같은 경합에서도 슬롯 1 실행을 거부하지 않는다.
+      Integer slot =
+          raceWithDdl(
+                  t2,
+                  "DROP TABLE " + DataSchema.qualify(t2),
+                  s1,
+                  () -> sync.prepareForRun(publicClearance))
+              .get(30, TimeUnit.SECONDS);
+      assertThat(slot).as("DROP 과 겹친 실행 준비는 통과한다").isEqualTo(1);
+    } finally {
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate,
+          DEFAULT_TEST_TENANT_ID,
+          () -> {
+            for (String t : List.of(t1, t2)) {
+              dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(t));
+            }
+          });
+    }
+  }
+
+  /**
    * WD-655: 데이터셋이 아닌 테이블 {@code table} 에 슬롯 GRANT 를 걸고, 다른 연결이 그 테이블을 ACCESS EXCLUSIVE 로 쥔 동안
    * {@code action} (동기화)을 다른 스레드에서 시작한다. 동기화가 그 테이블 잠금을 기다리는 것을 pg_locks 로 확인한 뒤 같은 트랜잭션에서 {@code
    * renamed} 로 이름을 바꿔 커밋한다 — 동기화의 LOCK TABLE 은 옛 이름을 다시 찾지 못해 실패하고 옛 이름의 to_regclass 는 null 이
@@ -524,6 +567,19 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
    */
   private <T> java.util.concurrent.Future<T> raceWithRename(
       String table, String renamed, String slotRole, java.util.function.Supplier<T> action) {
+    return raceWithDdl(
+        table,
+        "ALTER TABLE " + DataSchema.qualify(table) + " RENAME TO \"" + renamed + "\"",
+        slotRole,
+        action);
+  }
+
+  /**
+   * {@link #raceWithRename} 의 일반형(WD-673) — 동기화가 {@code table} 잠금을 기다리는 동안 잠금을 쥔 연결이 {@code ddl}
+   * (RENAME·DROP 등)을 실행하고 커밋한다.
+   */
+  private <T> java.util.concurrent.Future<T> raceWithDdl(
+      String table, String ddl, String slotRole, java.util.function.Supplier<T> action) {
     TenantRlsTestSupport.runInTenantTransaction(
         fixtureTransactionTemplate,
         DEFAULT_TEST_TENANT_ID,
@@ -545,8 +601,7 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
             assertThat(awaitRelationWaiter(holder, DataSchema.qualify(table)))
                 .as("동기화가 %s 잠금을 기다려야 한다", table)
                 .isNotNull();
-            holder.execute(
-                "ALTER TABLE " + DataSchema.qualify(table) + " RENAME TO \"" + renamed + "\"");
+            holder.execute(ddl);
           });
       return running.get();
     } finally {
