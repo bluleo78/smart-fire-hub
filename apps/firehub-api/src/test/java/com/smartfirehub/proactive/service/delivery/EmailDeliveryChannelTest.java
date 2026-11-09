@@ -4,7 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -13,17 +17,27 @@ import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.service.PdfExportService;
 import com.smartfirehub.proactive.service.ReportRenderUtils;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.settings.service.SmtpFailureMessages;
+import com.smartfirehub.settings.service.SmtpMailSenders;
 import com.smartfirehub.user.dto.UserResponse;
+import jakarta.mail.MessagingException;
+import jakarta.mail.Session;
+import jakarta.mail.internet.MimeMessage;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.mail.MailSendException;
+import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.thymeleaf.context.IContext;
 import org.thymeleaf.spring6.SpringTemplateEngine;
 
@@ -42,6 +56,28 @@ class EmailDeliveryChannelTest {
   @Mock private PdfExportService pdfExportService;
 
   @InjectMocks private EmailDeliveryChannel emailDeliveryChannel;
+
+  /**
+   * SMTP 팩토리 정적 mock(WD-676) — 실제 SMTP 없이 발송 성공·실패를 정한다. 예전 테스트는 「실제 SMTP 가 없어 내부에서 잡힌다」에 기댔는데, 이제
+   * 한 통도 못 보내면 예외라 기본은 성공하는 mock sender 를 돌려준다.
+   */
+  private MockedStatic<SmtpMailSenders> smtpFactory;
+
+  private JavaMailSenderImpl mailSender;
+
+  @BeforeEach
+  void mockSmtpFactory() {
+    mailSender = mock(JavaMailSenderImpl.class);
+    when(mailSender.createMimeMessage())
+        .thenAnswer(inv -> new MimeMessage(Session.getInstance(new Properties())));
+    smtpFactory = mockStatic(SmtpMailSenders.class);
+    smtpFactory.when(() -> SmtpMailSenders.create(any())).thenReturn(mailSender);
+  }
+
+  @AfterEach
+  void closeSmtpFactory() {
+    smtpFactory.close();
+  }
 
   @BeforeEach
   void setup() {
@@ -127,7 +163,7 @@ class EmailDeliveryChannelTest {
                     "recipientEmails", List.of())));
     ProactiveJobResponse job = makeJob(1L, config);
 
-    // Will try to send but fail (no real SMTP) — the exception is caught internally
+    // mock sender 로 보낸다(WD-676 — 실제 SMTP 실패를 삼키던 동작에 기대지 않는다)
     emailDeliveryChannel.deliver(job, 1L, makeResult());
 
     // Verify owner email was resolved
@@ -158,8 +194,9 @@ class EmailDeliveryChannelTest {
                     "recipientEmails", List.of())));
     ProactiveJobResponse job = makeJob(99L, config);
 
-    // Will try to send but SMTP will fail internally (caught)
+    // mock sender 로 두 사람에게 보낸다
     emailDeliveryChannel.deliver(job, 1L, makeResult());
+    verify(mailSender, times(2)).send(any(MimeMessage.class));
 
     verify(recipientResolver).activeUsers(List.of(10L, 20L));
     // owner should NOT be looked up (recipients specified)
@@ -324,5 +361,76 @@ class EmailDeliveryChannelTest {
             EmailDeliveryChannel.distinctAddresses(
                 List.of("qa267low@example.com", " QA267LOW@example.com ", "other@example.com", "")))
         .containsExactly("qa267low@example.com", "other@example.com");
+  }
+
+  // ── WD-676: 한 통도 못 보내면 예외(실행 기록에 「전달됨」이 남지 않게) ─────────────────────────
+
+  private static final Map<String, String> SMTP =
+      Map.of("smtp.host", "smtp.example.com", "smtp.port", "587");
+
+  private ProactiveJobResponse jobWithExternal(String... emails) {
+    return makeJob(
+        99L,
+        Map.of(
+            "channels",
+            List.of(
+                Map.of(
+                    "type", "EMAIL",
+                    "recipientUserIds", List.of(),
+                    "recipientEmails", List.of(emails)))));
+  }
+
+  /** 모든 수신자에서 STARTTLS 미지원으로 실패하면 한국어 분류 문구(설정 위치 포함)로 예외를 던진다. */
+  @Test
+  void deliver_allSendsFailWithStarttls_throwsClassifiedKoreanMessage() {
+    when(settingsService.getSmtpConfig()).thenReturn(SMTP);
+    when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("<html/>");
+    doThrow(
+            new MailSendException(
+                "Mail server connection failed",
+                new MessagingException("STARTTLS is required but host does not support STARTTLS")))
+        .when(mailSender)
+        .send(any(MimeMessage.class));
+
+    assertThatThrownBy(
+            () ->
+                emailDeliveryChannel.deliver(
+                    jobWithExternal("a@example.com", "b@example.com"), 1L, makeResult()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("STARTTLS")
+        .hasMessageContaining(SmtpFailureMessages.SETTINGS_PLACE)
+        .hasMessageContaining("smtp.example.com");
+    verify(mailSender, times(2)).send(any(MimeMessage.class));
+  }
+
+  /** 두 수신자 중 하나만 실패하면 지금처럼 정상 반환한다(개별 주소 오류는 로그로만). */
+  @Test
+  void deliver_oneOfTwoFails_returnsNormally() {
+    when(settingsService.getSmtpConfig()).thenReturn(SMTP);
+    when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("<html/>");
+    doThrow(new MailSendException("Invalid Addresses"))
+        .doNothing()
+        .when(mailSender)
+        .send(any(MimeMessage.class));
+
+    emailDeliveryChannel.deliver(
+        jobWithExternal("bad@example.com", "ok@example.com"), 1L, makeResult());
+
+    verify(mailSender, times(2)).send(any(MimeMessage.class));
+  }
+
+  /** sender 를 만들지 못하면(바깥 catch — 숫자가 아닌 옛 포트 등) 아무에게도 못 보냈으므로 예외다. */
+  @Test
+  void deliver_senderCreationFails_throws() {
+    when(settingsService.getSmtpConfig()).thenReturn(SMTP);
+    smtpFactory
+        .when(() -> SmtpMailSenders.create(any()))
+        .thenThrow(new NumberFormatException("For input string: \"smtp\""));
+
+    assertThatThrownBy(
+            () -> emailDeliveryChannel.deliver(jobWithExternal("a@example.com"), 1L, makeResult()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("포트")
+        .hasMessageContaining(SmtpFailureMessages.SETTINGS_PLACE);
   }
 }

@@ -296,7 +296,7 @@ class InteractiveQueryConcurrencyIntegrationTest extends IntegrationTestBase {
   }
 
   @Test
-  void waitExceeded_chartAndSqlEditorAre429_missingDashboardIs404() throws Exception {
+  void waitExceeded_chartAndSqlEditorAre429_missingDashboardAndDatasetAre404() throws Exception {
     try (Connection raw = rawConnection()) {
       Async first = startBlockedChart(raw);
       try {
@@ -322,6 +322,24 @@ class InteractiveQueryConcurrencyIntegrationTest extends IntegrationTestBase {
             .as(missingDashboard.getContentAsString())
             .isEqualTo(404);
         assertThat(System.currentTimeMillis() - dashboardStart).isLessThan(WAIT_MS);
+
+        // SQL 편집기도 존재 확인·판정 뒤에 허가를 잡는다(WD-638) — 게이트가 차 있어도 없는 데이터셋은 줄 서지 않고 곧바로 404.
+        long missingDatasetStart = System.currentTimeMillis();
+        MockHttpServletResponse missingDataset =
+            mockMvc
+                .perform(
+                    post("/api/v1/datasets/" + Long.MAX_VALUE + "/query")
+                        .header("Authorization", token(viewer))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                            om.writeValueAsString(
+                                Map.of("sql", "SELECT v FROM " + freeTable, "maxRows", 100))))
+                .andReturn()
+                .getResponse();
+        assertThat(missingDataset.getStatus())
+            .as(missingDataset.getContentAsString())
+            .isEqualTo(404);
+        assertThat(System.currentTimeMillis() - missingDatasetStart).isLessThan(WAIT_MS);
       } finally {
         release(raw, first);
       }

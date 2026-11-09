@@ -21,6 +21,7 @@ import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
+import com.smartfirehub.pipeline.service.executor.UrlAuthority;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.net.URI;
@@ -441,6 +442,8 @@ public class ApiConnectionService {
       // 쿼리 인증이면 이미 인코딩을 마친 URI 를 넘긴다(WD-182) — 문자열로 넘기면 WebClient 가 템플릿으로 다시 인코딩해 인코딩 키의
       // %2B 가 %252B 로 나갔다(미리보기·실행은 URI 를 넘겨 그대로 나가 경로마다 보내는 바이트가 달랐다). 쿼리 인증이 아니면 예전처럼
       // 문자열로 넘겨 경로의 한글·공백을 WebClient 가 인코딩하게 둔다(buildUrls 가 URL 을 손대지 않는다).
+      // Netty 가 못 부르는 호스트(밑줄 등)는 요청 전에 고정 문구로 실패한다(WD-676) — 아래 catch 가 그 문구를 그대로 보인다.
+      UrlAuthority.requireClientSupportedHost(urls.callUrl());
       var resp =
           (auth.isQueryApiKey()
                   ? webClient.get().uri(urls.callUri())
@@ -528,10 +531,12 @@ public class ApiConnectionService {
     return AuthQueryMasker.scrubSecret(message, secret);
   }
 
-  /** 「호스트 이름을 찾을 수 없습니다: X」 문구용 호스트. 해석할 수 없으면 null(문구는 「알 수 없음」). */
+  /**
+   * 「호스트 이름을 찾을 수 없습니다: X」 문구용 호스트(밑줄 든 호스트도 {@link UrlAuthority} 로 읽는다, WD-676). 해석할 수 없으면 null.
+   */
   private static String hostOf(String url) {
     try {
-      return url != null ? URI.create(url).getHost() : null;
+      return url != null ? UrlAuthority.hostOrNull(URI.create(url)) : null;
     } catch (IllegalArgumentException e) {
       return null;
     }
@@ -692,7 +697,10 @@ public class ApiConnectionService {
           || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
         throw new ApiConnectionException("baseUrl은 http 또는 https 스킴이어야 합니다");
       }
-      if (uri.getHost() == null || uri.getHost().isBlank()) {
+      // 호스트는 UrlAuthority 로 읽는다(WD-676) — getHost() 는 밑줄 든 호스트(my_api.internal)에서 null 이라 거부했다.
+      // 모호한 authority 는 여전히 호스트 없음으로 거부된다.
+      String host = UrlAuthority.hostOrNull(uri);
+      if (host == null || host.isBlank()) {
         throw new ApiConnectionException("baseUrl에 호스트가 없습니다");
       }
       // SSRF 방어: 사설 IP/예약 IP 차단 (DNS 해석 포함)

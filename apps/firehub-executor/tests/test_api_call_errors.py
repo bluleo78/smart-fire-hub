@@ -54,10 +54,18 @@ def test_seconds_format(ms, expected):
         ("http://user:pass@host.example:8080/p?x=1#frag", "http://host.example:8080/p"),
         ("https://api.example.com", "https://api.example.com"),
         ("example.com/x?k=SECRET123", "example.com/x"),
+        # WD-676: 밑줄 호스트도 userinfo·쿼리 없이 — Java ApiCallErrorMessages.redactUrl 과 같은 결과.
+        ("https://svc:S3cret@my_api.internal/x?key=K", "https://my_api.internal/x"),
     ],
 )
 def test_redact_url(url, expected):
     assert errors.redact_url(url) == expected
+
+
+def test_redact_urls_in_text_removes_repeated_userinfo():
+    # WD-676: @ 가 여럿인 userinfo 도 마지막 @ 까지 지운다(Java 와 같은 패턴).
+    text = "failed GET https://a:S3cret@b:S3cret2@my_api.internal/x?key=K done"
+    assert errors.redact_urls_in_text(text) == "failed GET https://my_api.internal/x done"
 
 
 def test_describe_exception_classification():

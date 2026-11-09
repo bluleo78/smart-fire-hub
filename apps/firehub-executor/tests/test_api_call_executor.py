@@ -1581,3 +1581,70 @@ def test_execution_log_scrubs_secret_in_url():
     result, _, _ = _run_with_responses(req, [mock_response({"items": []})])
     assert result.success is True
     assert "UrlKey657abc" not in result.execution_log
+
+
+# ---------------------------------------------------------------------------
+# WD-676: 다른 출처 307/308 리다이렉트에 POST 본문을 싣지 않는다(Java 와 같게)
+# ---------------------------------------------------------------------------
+
+def _sent_method_body(client, index):
+    """index 번째 요청의 (method, content)."""
+    kwargs = client.request.call_args_list[index].kwargs
+    return kwargs["method"], kwargs["content"]
+
+
+@pytest.mark.parametrize("status", [307, 308])
+def test_cross_origin_307_308_post_follows_as_get_without_body(status):
+    req = make_request(
+        url="https://a.example.com/token",
+        method="POST",
+        body='{"client_secret":"x"}',
+        headers={"Content-Type": "application/json", "X-Trace": "t676"},
+    )
+    result, client, _ = _run_with_responses(
+        req, [_redirect(status, "https://b.example.com/next"), mock_response({"items": []})]
+    )
+
+    assert result.success is True
+    assert _sent_method_body(client, 0) == ("POST", b'{"client_secret":"x"}')
+    assert _sent_method_body(client, 1) == ("GET", None)
+    # 본문을 버린 홉에는 본문 헤더도 없다(Java 리다이렉트 GET 홉과 같다). 다른 헤더는 그대로 간다.
+    first_headers = {k.lower(): v for k, v in _sent(client, 0)[1].items()}
+    second_headers = {k.lower(): v for k, v in _sent(client, 1)[1].items()}
+    assert first_headers["content-type"] == "application/json"
+    assert "content-type" not in second_headers
+    assert "content-length" not in second_headers
+    assert second_headers["x-trace"] == "t676"
+
+
+def test_redirect_a_to_b_to_a_does_not_restore_post_body():
+    # 처음 출처로 돌아와도(인증은 다시 붙지만) 본문은 다시 싣지 않는다.
+    req = make_request(
+        url="https://a.example.com/one",
+        method="POST",
+        body='{"client_secret":"x"}',
+        headers={"Content-Type": "application/json"},
+    )
+    _, client, _ = _run_with_responses(
+        req,
+        [
+            _redirect(307, "https://b.example.com/two"),
+            _redirect(307, "https://a.example.com/three"),
+            mock_response({"items": []}),
+        ],
+    )
+    assert _sent_method_body(client, 1) == ("GET", None)
+    assert _sent_method_body(client, 2) == ("GET", None)
+    # 처음 출처로 돌아와 인증 헤더가 다시 붙어도 본문 헤더는 붙지 않는다.
+    assert "content-type" not in {k.lower() for k in _sent(client, 2)[1]}
+
+
+def test_same_origin_307_keeps_post_and_body():
+    # 같은 출처 307 은 지금 동작(POST·본문 유지)을 고정한다 — 운영 동작 보존.
+    req = make_request(
+        url="https://a.example.com/one", method="POST", body='{"client_secret":"x"}'
+    )
+    _, client, _ = _run_with_responses(
+        req, [_redirect(307, "https://a.example.com/two"), mock_response({"items": []})]
+    )
+    assert _sent_method_body(client, 1) == ("POST", b'{"client_secret":"x"}')

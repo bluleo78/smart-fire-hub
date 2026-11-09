@@ -11,6 +11,7 @@ import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
+import com.smartfirehub.pipeline.service.executor.UrlAuthority;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
@@ -84,9 +85,11 @@ public class ApiCallPreviewService {
               resolvedUrl, request.queryParams() != null ? request.queryParams() : Map.of());
       URI requestUri = urls.callUri();
       resolvedRequestUrl = urls.displayUrl();
-      targetHost = requestUri.getHost();
+      // 오류 문구용 호스트 — 밑줄 든 호스트도 실제 이름으로 보이게 UrlAuthority 로 읽는다(WD-676, getHost() 는 null).
+      targetHost = UrlAuthority.hostOrNull(requestUri);
 
-      // 6. Execute HTTP request
+      // 6. Execute HTTP request — Netty 가 못 부르는 호스트(밑줄 등)는 요청 전에 고정 문구로 실패한다(WD-676).
+      UrlAuthority.requireClientSupportedHost(requestUri);
       String responseBody = executeRequest(requestUri, request, auth, timeoutMs);
 
       // 7. 응답을 가린다 — (WD-177) 응답이 요청 파라미터·헤더를 되울려 보낸 비밀이 담겨 올 수 있다. rawJson 과 결과 행(previewRows)을 이

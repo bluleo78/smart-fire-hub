@@ -238,9 +238,13 @@ class InteractiveGatePermitPlacementTest {
     TxRecordingInteractiveGate gate = gate(SHORT_WAIT_MS);
     DashFixture f = dash(gate, Set.of());
     try (AnalyticsQueryConcurrencyGate.Permit held = gate.acquire(OTHER_USER)) {
+      int before = gate.acquireTx.size();
       Throwable e = catchThrowable(() -> f.service().getDashboardData(1L, USER));
 
+      // 실제 결과가 하나도 없으니(미스 2, 히트 0) 지금처럼 429 다(WD-676).
       assertConcurrencyLimit(e);
+      // 빨리 끝내기(WD-676) — 첫 미스만 허가를 기다리고 두 번째 미스는 다시 기다리지 않는다.
+      assertThat(gate.acquireTx).hasSize(before + 1);
     }
     verify(f.chartService(), never()).executeJudged(any());
     assertThat(active(gate)).isZero();
@@ -277,5 +281,119 @@ class InteractiveGatePermitPlacementTest {
     // 히트(300)는 조회자별로 정확히 한 번 감사, 직접 실행한 미스(301)는 따로 남기지 않는다.
     verify(f.guarded(), times(1)).recordDelivered(f.j300());
     verify(f.guarded(), never()).recordDelivered(f.j301());
+  }
+
+  // ---------------------------------------------------------------- WD-676: 부분 결과
+
+  /** 저장 쿼리 {@code id} 의 SQL 을 바꿔 캐시 키를 달리한다 — 그 쿼리만 미스가 된다. */
+  private static void changeSql(DashFixture f, long savedQueryId) {
+    when(f.chartRepo().findSavedQuerySqlTextById(savedQueryId))
+        .thenReturn(Optional.of("SELECT " + savedQueryId + " v2"));
+  }
+
+  /** 차트 id 의 위젯 결과. */
+  private static ChartDataResponse widgetOf(DashboardDataResponse r, long chartId) {
+    return r.widgetData().stream()
+        .map(DashboardDataResponse.WidgetData::chartData)
+        .filter(c -> c.chart().id() == chartId)
+        .findFirst()
+        .orElseThrow();
+  }
+
+  private static void assertLimitedWidget(ChartDataResponse c) {
+    assertLimitedWidget(c, InteractiveQueryConcurrencyGate.TIMEOUT_MESSAGE);
+  }
+
+  /** 상한에 걸린 위젯 — 오류 문구는 받은 상한 예외의 문구 그대로다(WD-676). */
+  private static void assertLimitedWidget(ChartDataResponse c, String message) {
+    assertThat(c.denied()).isFalse();
+    assertThat(c.queryResult().error()).isEqualTo(message);
+    assertThat(c.queryResult().rows()).isEmpty();
+    assertThat(c.exportAllowed()).isFalse();
+  }
+
+  /**
+   * 일부만 캐시된 대시보드 + 게이트 가득 참 — 응답 전체를 429 로 버리지 않고 200 이다. 히트 위젯은 결과 그대로, 미스 위젯만 대기 초과 오류다. 미스는 실행하지
+   * 않았고 허가 시도는 한 번이며 남은 허가는 없다.
+   */
+  @Test
+  void partiallyCachedDashboard_gateFull_200WithLimitedWidgetOnly() {
+    TxRecordingInteractiveGate gate = gate(SHORT_WAIT_MS);
+    DashFixture f = dash(gate, Set.of());
+    f.service().getDashboardData(1L, USER);
+    verify(f.chartService(), times(2)).executeJudged(any());
+    changeSql(f, 301L);
+
+    DashboardDataResponse r;
+    try (AnalyticsQueryConcurrencyGate.Permit held = gate.acquire(OTHER_USER)) {
+      int before = gate.acquireTx.size();
+
+      r = f.service().getDashboardData(1L, USER);
+
+      assertThat(gate.acquireTx).hasSize(before + 1);
+    }
+    assertThat(widgetOf(r, 100L).queryResult()).isEqualTo(RESULT);
+    assertLimitedWidget(widgetOf(r, 101L));
+    verify(f.chartService(), times(2)).executeJudged(any());
+    assertThat(active(gate)).isZero();
+  }
+
+  /**
+   * 히트 1 + 미스 2 + 게이트 가득 참 — 첫 미스만 허가를 기다리고(+1) 두 번째 미스는 곧바로 대기 초과로 표시한다(빨리 끝내기). 자리가 나면 대기 초과였던
+   * 쿼리를 다시 실행한다(캐시에 남지 않았다).
+   */
+  @Test
+  void oneHitTwoMisses_gateFull_fastFailsAfterFirstLimit_thenReexecutes() {
+    TxRecordingInteractiveGate gate = gate(SHORT_WAIT_MS);
+    DashFixture f = dashFixture(tx(), schema(false), gate, Set.of(), NONE, NONE, 3);
+    f.service().getDashboardData(1L, USER);
+    verify(f.chartService(), times(3)).executeJudged(any());
+    changeSql(f, 301L);
+    changeSql(f, 302L);
+
+    DashboardDataResponse r;
+    try (AnalyticsQueryConcurrencyGate.Permit held = gate.acquire(OTHER_USER)) {
+      int before = gate.acquireTx.size();
+
+      r = f.service().getDashboardData(1L, USER);
+
+      assertThat(gate.acquireTx).as("첫 429 뒤 남은 미스는 허가를 다시 기다리지 않는다").hasSize(before + 1);
+    }
+    assertThat(widgetOf(r, 100L).queryResult()).isEqualTo(RESULT);
+    assertLimitedWidget(widgetOf(r, 101L));
+    assertLimitedWidget(widgetOf(r, 102L));
+    verify(f.chartService(), times(3)).executeJudged(any());
+    assertThat(active(gate)).isZero();
+
+    // 자리가 났다 — 대기 초과였던 두 쿼리는 캐시에 없으므로 다시 실행한다.
+    DashboardDataResponse again = f.service().getDashboardData(1L, USER);
+    verify(f.chartService(), times(5)).executeJudged(any());
+    assertThat(again.widgetData())
+        .hasSize(3)
+        .allSatisfy(w -> assertThat(w.chartData().queryResult()).isEqualTo(RESULT));
+  }
+
+  /**
+   * 같은 코드(QUERY_CONCURRENCY_LIMIT)의 WD-553 즉시 거절(사용자 상한)이 실행 안에서 나면, 위젯 오류는 고정 대기 초과 문구가 아니라 그 예외의
+   * 문구다. 다른 위젯은 캐시 히트라 응답은 200 이다.
+   */
+  @Test
+  void immediateLimitInsideExecution_widgetCarriesThatMessage() {
+    TxRecordingInteractiveGate gate = gate(LONG_WAIT_MS);
+    DashFixture f = dash(gate, Set.of());
+    f.service().getDashboardData(1L, USER);
+    changeSql(f, 301L);
+    when(f.chartService().executeJudged(any()))
+        .thenThrow(
+            new CodedApiException(
+                HttpStatus.TOO_MANY_REQUESTS,
+                AnalyticsQueryConcurrencyGate.LIMIT_CODE,
+                AnalyticsQueryConcurrencyGate.USER_LIMIT_MESSAGE));
+
+    DashboardDataResponse r = f.service().getDashboardData(1L, USER);
+
+    assertThat(widgetOf(r, 100L).queryResult()).isEqualTo(RESULT);
+    assertLimitedWidget(widgetOf(r, 101L), AnalyticsQueryConcurrencyGate.USER_LIMIT_MESSAGE);
+    assertThat(active(gate)).isZero();
   }
 }

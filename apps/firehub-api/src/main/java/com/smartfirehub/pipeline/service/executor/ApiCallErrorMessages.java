@@ -7,6 +7,7 @@ import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.regex.Pattern;
 import org.springframework.core.io.buffer.DataBufferLimitException;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
@@ -32,9 +33,12 @@ public final class ApiCallErrorMessages {
   private static final Pattern URL_QUERY_IN_TEXT =
       Pattern.compile("(?i)(https?://[^\\s?#\"'<>]*)[?#][^\\s\"'<>]*");
 
-  /** 문구 안의 URL 에서 userinfo(user:pass@)를 지우기 위한 패턴. */
+  /**
+   * 문구 안 URL 의 userinfo(user:pass@)를 지우는 패턴 — 「a:x@b:y@host」 처럼 @ 가 여럿이어도 마지막 @ 까지 지운다(WD-676,
+   * Python 과 같다).
+   */
   private static final Pattern URL_USERINFO_IN_TEXT =
-      Pattern.compile("(?i)(https?://)[^\\s/@\"'<>]+@");
+      Pattern.compile("(?i)(https?://)(?:[^\\s/@\"'<>]+@)+");
 
   private ApiCallErrorMessages() {}
 
@@ -90,6 +94,14 @@ public final class ApiCallErrorMessages {
     return "대상 서버에 연결하지 못했습니다 — 주소·포트와 네트워크 상태를 확인하세요";
   }
 
+  /**
+   * HTTP 클라이언트(Reactor Netty)가 받지 않는 호스트 이름(밑줄 등)일 때(WD-676) — {@link
+   * UrlAuthority#requireClientSupportedHost}.
+   */
+  public static String unsupportedHostName(String host) {
+    return "이 호스트 이름은 호출할 수 없습니다(밑줄 등 지원하지 않는 문자): " + host;
+  }
+
   public static String unknownHost(String host) {
     return "호스트 이름을 찾을 수 없습니다: " + host;
   }
@@ -105,6 +117,21 @@ public final class ApiCallErrorMessages {
 
   public static String tooManyRedirects(int max) {
     return "리다이렉트가 너무 많습니다(최대 " + max + "회)";
+  }
+
+  /**
+   * 3xx 응답에 Location 헤더가 없을 때(WD-676) — Python {@code redirect_without_location_message} 와 같은 문장이다.
+   */
+  public static String redirectWithoutLocation() {
+    return "리다이렉트 응답에 이동할 주소(Location)가 없습니다";
+  }
+
+  /**
+   * Location 이 URL 문법에 맞지 않을 때(WD-676, 공백·한글 등) — 주소는 싣지 않는다(쿼리에 비밀이 있을 수 있다). Python 실행기는 이 경우
+   * httpx 가 인코딩해 보내므로 두 실행기 결과가 다르다.
+   */
+  public static String invalidRedirectLocation() {
+    return "리다이렉트 응답의 이동할 주소(Location) 형식이 올바르지 않습니다";
   }
 
   public static String notJson() {
@@ -277,10 +304,13 @@ public final class ApiCallErrorMessages {
     if (url == null) return "";
     try {
       URI uri = new URI(url);
-      if (uri.getScheme() != null && uri.getHost() != null) {
+      // 호스트·포트는 UrlAuthority 로 읽는다(WD-676, 밑줄 호스트). 결과는 스킴·호스트·포트·경로로만
+      // 다시 만들어 userinfo 가 들어갈 자리가 없다.
+      Optional<UrlAuthority> authority = UrlAuthority.of(uri);
+      if (uri.getScheme() != null && authority.isPresent()) {
         StringBuilder sb = new StringBuilder();
-        sb.append(uri.getScheme()).append("://").append(uri.getHost());
-        if (uri.getPort() != -1) sb.append(':').append(uri.getPort());
+        sb.append(uri.getScheme()).append("://").append(authority.get().host());
+        if (authority.get().port() != -1) sb.append(':').append(authority.get().port());
         if (uri.getRawPath() != null) sb.append(uri.getRawPath());
         return sb.toString();
       }
@@ -292,8 +322,7 @@ public final class ApiCallErrorMessages {
     int h = url.indexOf('#');
     if (q >= 0) cut = Math.min(cut, q);
     if (h >= 0) cut = Math.min(cut, h);
-    String head = url.substring(0, cut);
-    return URL_USERINFO_IN_TEXT.matcher(head).replaceAll("$1");
+    return URL_USERINFO_IN_TEXT.matcher(url.substring(0, cut)).replaceAll("$1");
   }
 
   public static String redactUrl(URI uri) {

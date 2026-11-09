@@ -1,12 +1,15 @@
 package com.smartfirehub.apiconnection.service;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import com.smartfirehub.global.util.ExactJsonMapper;
+import java.io.IOException;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
@@ -146,6 +149,14 @@ public final class AuthQueryMasker {
     return text == null || scrubber == null ? text : scrubber.scrub(text);
   }
 
+  /** {@link #scrubSecret(String, String)} 와 같되 가림 문자열을 정한다 — 끝 4자도 보이면 안 되는 비밀번호용(SMTP, WD-676). */
+  public static String scrubSecret(String text, String secret, String mask) {
+    Scrubber scrubber = Scrubber.of(secret);
+    return text == null || scrubber == null
+        ? text
+        : new Scrubber(scrubber.forms(), mask).scrub(text);
+  }
+
   /**
    * 응답 본문에서 보낸 비밀을 가린다(WD-657) — API_CALL 미리보기(결과 행·rawJson 이 함께 쓰는 본문)와 연결 테스트의 응답 본문이 같은 규칙을 쓴다.
    *
@@ -155,6 +166,8 @@ public final class AuthQueryMasker {
    * <ul>
    *   <li>비밀이 없거나 최소 길이(4자) 미만이면 손대지 않는다 — 짧은 값을 지우면 평범한 글자까지 지워진다.
    *   <li>어느 형태의 비밀도 없고 역슬래시(JSON 이스케이프)도 없으면 파싱하지 않고 그대로 돌려준다 — 대부분의 응답이 여기서 끝난다.
+   *   <li>문자열에 걸린 것은 없고 역슬래시만 있으면 스트리밍 판정({@link #jsonValuesContainSecret})으로 이스케이프된 비밀이 실제로 있을 때만
+   *       트리를 만든다(WD-676) — 없으면 원문을 그대로 돌려준다.
    *   <li>가린 값이 하나도 없으면 원문 형태(줄바꿈·들여쓰기)를 지키려고 문자열 가림만 한 본문을 돌려준다.
    *   <li>JSON 이 아니면(파싱 실패) 문자열 가림 결과.
    * </ul>
@@ -166,16 +179,78 @@ public final class AuthQueryMasker {
     Scrubber scrubber = Scrubber.of(secret);
     if (body == null || scrubber == null) return body;
     String textMasked = scrubber.scrub(body);
-    if (textMasked.equals(body) && body.indexOf('\\') < 0) return body;
+    if (textMasked.equals(body)) {
+      if (body.indexOf('\\') < 0) return body;
+      // 문자열 가림에 걸린 것이 없고 역슬래시만 있으면(WD-676) 트리를 만들기 전에 스트리밍으로 비밀이 실제로 있는지 본다 — 역슬래시는
+      // 흔해(「\/」·「\n」·유니코드 이스케이프) 큰 응답마다 전체 트리를 만들던 비용을 비밀이 있을 때만 치른다.
+      if (!jsonValuesContainSecret(body, scrubber)) return body;
+    }
+    return maskJsonTree(body, scrubber, textMasked);
+  }
+
+  /**
+   * 본문을 JSON 트리로 읽어 값마다 가린다. 가린 것이 없거나 JSON 이 아니면 {@code fallback}(문자열 가림 결과)을 돌려준다.
+   *
+   * @param fallback 가린 것이 없을 때 돌려줄 본문 — 원문 형태(줄바꿈·들여쓰기)를 지킨다
+   */
+  private static String maskJsonTree(String body, Scrubber scrubber, String fallback) {
     ObjectMapper mapper = ExactJsonMapper.INSTANCE;
     try {
       JsonNode tree = mapper.readTree(body);
-      if (tree == null) return textMasked;
+      if (tree == null) return fallback;
       JsonNode masked = maskNode(tree, scrubber);
       // 바뀐 노드만 새로 만들므로 같은 객체면 가린 것이 없다.
-      return masked == tree ? textMasked : mapper.writeValueAsString(masked);
+      return masked == tree ? fallback : mapper.writeValueAsString(masked);
     } catch (JsonProcessingException e) {
-      return textMasked;
+      return fallback;
+    }
+  }
+
+  /** 테스트 교차 검증용 — 스트리밍 판정을 건너뛰고 늘 트리 경로로 가린다(WD-676, {@link #jsonValuesContainSecret} 의 기준). */
+  static String maskBodyViaTree(String body, String secret) {
+    Scrubber scrubber = Scrubber.of(secret);
+    if (body == null || scrubber == null) return body;
+    return maskJsonTree(body, scrubber, scrubber.scrub(body));
+  }
+
+  /**
+   * JSON 본문의 키·값 가운데 {@link #maskNode} 가 가릴 것이 하나라도 있는지 스트리밍으로 본다(WD-676) — 트리를 만들지 않는다.
+   *
+   * <p>판정 규칙은 {@link #maskNode} 와 같은 근거를 쓴다 — 어긋나면 이스케이프된 비밀이 새므로 두 경로를 같은 입력 표로 교차 검증한다.
+   *
+   * <ul>
+   *   <li>키·문자열: 이스케이프를 푼 텍스트에 {@link Scrubber#scrub} 을 적용해 바뀌면 있음.
+   *   <li>정수: {@code getBigIntegerValue().toString()} 이 비밀 형태와 같으면 있음 — 트리 정수 노드의 {@code asText()}
+   *       와 같은 표기.
+   *   <li>소수: {@code getDecimalValue().toString()} 이 비밀 형태와 같으면 있음 — {@link ExactJsonMapper} 의 정확한
+   *       BigDecimal 노드 {@code asText()} 와 같은 정규형(예: {@code 1e3} → {@code 1E+3}).
+   * </ul>
+   *
+   * JSON 이 아니면(파싱 오류) 없음으로 본다 — 트리 경로도 파싱 실패면 문자열 가림 결과를 돌려주므로 결과가 같다.
+   */
+  static boolean jsonValuesContainSecret(String body, Scrubber scrubber) {
+    try (JsonParser parser = ExactJsonMapper.INSTANCE.getFactory().createParser(body)) {
+      JsonToken token;
+      while ((token = parser.nextToken()) != null) {
+        switch (token) {
+          case FIELD_NAME, VALUE_STRING -> {
+            String text = parser.getText();
+            if (!scrubber.scrub(text).equals(text)) return true;
+          }
+          case VALUE_NUMBER_INT -> {
+            if (scrubber.forms().contains(parser.getBigIntegerValue().toString())) return true;
+          }
+          case VALUE_NUMBER_FLOAT -> {
+            if (scrubber.forms().contains(parser.getDecimalValue().toString())) return true;
+          }
+          default -> {
+            // 구조 토큰·불리언·null 은 가릴 것이 없다.
+          }
+        }
+      }
+      return false;
+    } catch (IOException e) {
+      return false;
     }
   }
 
@@ -240,12 +315,13 @@ public final class AuthQueryMasker {
   }
 
   /**
-   * 비밀 하나를 가리는 데 필요한 값을 한 번만 계산해 둔 것(WD-657) — 본문의 값마다 형태·가림 문자열을 다시 만들지 않는다.
+   * 비밀 하나를 가리는 데 필요한 값을 한 번만 계산해 둔 것(WD-657) — 본문의 값마다 형태·가림 문자열을 다시 만들지 않는다. 패키지 공개는 테스트가 스트리밍 판정에
+   * 직접 넘기기 위해서다(WD-676).
    *
    * @param forms 지울 형태(긴 것부터, 최소 길이 이상만)
    * @param mask 바꿔 넣을 가림 문자열({@link #maskSecret})
    */
-  private record Scrubber(List<String> forms, String mask) {
+  record Scrubber(List<String> forms, String mask) {
 
     /** 비밀이 없거나 최소 길이 미만이면 null — 가릴 것이 없다. */
     static Scrubber of(String secret) {

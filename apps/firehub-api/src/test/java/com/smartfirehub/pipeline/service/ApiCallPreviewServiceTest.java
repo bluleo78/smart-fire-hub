@@ -410,6 +410,19 @@ class ApiCallPreviewServiceTest {
   // 오류 케이스
   // =========================================================================
 
+  /** 밑줄 든 호스트는 요청 전에 호스트 이름을 담은 고정 문구로 실패한다(WD-676) — 실행과 같은 문장. */
+  @Test
+  void preview_underscoreHost_failsWithUnsupportedHostMessage() {
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "http://my_api.invalid/x", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage())
+        .isEqualTo(ApiCallErrorMessages.unsupportedHostName("my_api.invalid"));
+  }
+
   /** 오류: HTTP 서버 연결 실패 시 success=false, errorMessage 반환 */
   @Test
   void preview_connectionRefused_returnsError() throws Exception {

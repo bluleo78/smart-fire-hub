@@ -22,6 +22,7 @@ import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -402,6 +403,10 @@ public class AnalyticsDashboardService {
     // 조회자별 내보내기 플래그 — 공유 캐시(queryResultCache) 밖에 둔다. 캐시 결과에 실으면 먼저 데운 조회자의 값이 다른 조회자에게 샌다(설계 결정 5,
     // Review Focus 2). 빈 SQL·판정 없음은 false(fail-closed).
     Map<Long, Boolean> exportByQuery = new HashMap<>();
+    // 동시 실행 상한(429)에 걸린 쿼리와, 실제 결과(캐시 히트·실행 결과)를 얻은 쿼리가 있었는지(WD-676) — 위젯 하나가 429 면 응답 전체를 429 로
+    // 버리던 것을 위젯별 오류로 바꾸고, 실제 결과가 하나도 없을 때만 429 를 던진다(클라이언트 재시도 의미 유지).
+    CodedApiException firstLimit = null;
+    boolean anyRealResult = false;
     for (Long savedQueryId : new java.util.HashSet<>(load.chartIdToSavedQueryId().values())) {
       String sqlText = load.sqlByQuery().getOrDefault(savedQueryId, "");
       if (sqlText.isBlank()) {
@@ -421,21 +426,48 @@ public class AnalyticsDashboardService {
       // 이 조회자가 로더를 실제로 돌렸는지 — 돌렸으면 실행 지점이 감사 등급 접근을 이미 남겼다. 아니면(남이 데운 캐시, 동시 로드 대기 포함) 받은
       // 결과를 이 조회자에게 넘기는 것이므로 조회자별로 남긴다(공유 캐시 값 안에 넣지 않는다).
       boolean[] loadedHere = {false};
-      AnalyticsQueryResponse result =
-          queryResultCache.get(
-              new QueryCacheKey(savedQueryId, sqlText),
-              k -> {
-                loadedHere[0] = true;
-                return interactiveQueryGate.runGated(
-                    pipelineDataSchema,
-                    readOnlyTx,
-                    userId,
-                    () -> chartService.executeJudged(judgment));
-              });
+      QueryCacheKey key = new QueryCacheKey(savedQueryId, sqlText);
+      AnalyticsQueryResponse result;
+      if (firstLimit != null) {
+        // 빨리 끝내기(WD-676): 이 요청에서 이미 429 를 한 번 받았으면 남은 미스는 허가를 다시 기다리지 않는다 — 기다리면 최악의 경우 미스 수 ×
+        // wait-ms 가 걸린다. 캐시 히트는 그대로 쓴다.
+        result = queryResultCache.getIfPresent(key);
+        if (result == null) {
+          markLimited(savedQueryId, firstLimit.getMessage(), resultByQuery, exportByQuery);
+          continue;
+        }
+      } else {
+        try {
+          result =
+              queryResultCache.get(
+                  key,
+                  k -> {
+                    loadedHere[0] = true;
+                    return interactiveQueryGate.runGated(
+                        pipelineDataSchema,
+                        readOnlyTx,
+                        userId,
+                        () -> chartService.executeJudged(judgment));
+                  });
+        } catch (CodedApiException e) {
+          // 동시 실행 상한만 위젯 오류로 바꾼다 — 그 밖의 구조화 예외(403 등)는 그대로 올라간다. 로더가 예외로 끝났으므로 캐시에는 남지 않는다.
+          if (!AnalyticsQueryConcurrencyGate.LIMIT_CODE.equals(e.code())) {
+            throw e;
+          }
+          firstLimit = e;
+          markLimited(savedQueryId, e.getMessage(), resultByQuery, exportByQuery);
+          continue;
+        }
+      }
       if (!loadedHere[0] && result.error() == null) {
         guardedSqlExecutor.recordDelivered(judgment);
       }
+      anyRealResult = true;
       resultByQuery.put(savedQueryId, result);
+    }
+    // 실제 결과가 하나도 없고 상한에만 걸렸으면 지금처럼 429 — 거부·빈 SQL 위젯은 실제 결과로 치지 않는다.
+    if (firstLimit != null && !anyRealResult) {
+      throw firstLimit;
     }
     return new DashboardExecution(load, resultByQuery, deniedQueries, exportByQuery);
   }
@@ -578,7 +610,22 @@ public class AnalyticsDashboardService {
     widgetRepository.batchUpdateLayout(dashboardId, positions);
   }
 
-  private AnalyticsQueryResponse emptyQueryResponse() {
-    return new AnalyticsQueryResponse("SELECT", List.of(), List.of(), 0, 0L, 0, false, null);
+  private static AnalyticsQueryResponse emptyQueryResponse() {
+    return emptyQueryResponse(null);
+  }
+
+  /** 빈 결과 — {@code error} 가 있으면 그 위젯만 오류로 보인다(상한 문구는 받은 예외 그대로, WD-676). */
+  private static AnalyticsQueryResponse emptyQueryResponse(String error) {
+    return new AnalyticsQueryResponse("SELECT", List.of(), List.of(), 0, 0L, 0, false, error);
+  }
+
+  /** 상한에 걸린 쿼리를 오류 결과로 표시하고 내보내기를 막는다(결과가 없으니 내려받을 것도 없다). */
+  private static void markLimited(
+      Long savedQueryId,
+      String message,
+      Map<Long, AnalyticsQueryResponse> resultByQuery,
+      Map<Long, Boolean> exportByQuery) {
+    resultByQuery.put(savedQueryId, emptyQueryResponse(message));
+    exportByQuery.put(savedQueryId, false);
   }
 }

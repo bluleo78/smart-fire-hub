@@ -154,10 +154,30 @@ final class AnalyticsServiceFixtures {
       Set<Long> denied,
       Runnable onMetaRead,
       Runnable onExecute) {
-    var w1 =
-        new DashboardResponse.DashboardWidgetResponse(10L, 100L, "c100", "BAR", 0, 0, 6, 4, true);
-    var w2 =
-        new DashboardResponse.DashboardWidgetResponse(11L, 101L, "c101", "BAR", 6, 0, 6, 4, true);
+    return dashFixture(tx, schema, gate, denied, onMetaRead, onExecute, 2);
+  }
+
+  /**
+   * 위젯 수를 정하는 판(WD-676) — 위젯 i(0부터)는 차트 100+i → 저장 쿼리 300+i("SELECT 300+i"). 판정 토큰은 300 이면 j300,
+   * 나머지는 모두 j301 이다(301 이후 쿼리는 같은 토큰을 공유한다).
+   */
+  static DashFixture dashFixture(
+      TransactionTemplate tx,
+      PipelineDataSchema schema,
+      InteractiveQueryConcurrencyGate gate,
+      Set<Long> denied,
+      Runnable onMetaRead,
+      Runnable onExecute,
+      int widgetCount) {
+    List<DashboardResponse.DashboardWidgetResponse> widgets = new java.util.ArrayList<>();
+    Set<Long> chartIds = new java.util.HashSet<>();
+    for (int i = 0; i < widgetCount; i++) {
+      long chartId = 100L + i;
+      widgets.add(
+          new DashboardResponse.DashboardWidgetResponse(
+              10L + i, chartId, "c" + chartId, "BAR", (i % 2) * 6, (i / 2) * 4, 6, 4, true));
+      chartIds.add(chartId);
+    }
     DashboardResponse dash =
         new DashboardResponse(
             1L,
@@ -165,8 +185,8 @@ final class AnalyticsServiceFixtures {
             null,
             false,
             null,
-            List.of(w1, w2),
-            2,
+            widgets,
+            widgetCount,
             "u",
             USER,
             LocalDateTime.now(),
@@ -176,7 +196,7 @@ final class AnalyticsServiceFixtures {
         .thenAnswer(
             inv -> {
               onMetaRead.run();
-              return List.of(w1, w2);
+              return widgets;
             });
     AnalyticsDashboardRepository dashRepo = mock(AnalyticsDashboardRepository.class);
     when(dashRepo.findById(anyLong(), anyLong(), any()))
@@ -191,7 +211,7 @@ final class AnalyticsServiceFixtures {
         .thenAnswer(
             inv -> {
               onMetaRead.run();
-              return Set.of(100L, 101L);
+              return chartIds;
             });
     when(chartRepo.findSavedQueryId(anyLong()))
         .thenAnswer(

@@ -54,6 +54,42 @@
       "origin": "https://api.example.com/",
       "target": "/relative",
       "expected": false
+    },
+    {
+      "name": "underscore host http to https upgrade (WD-676)",
+      "origin": "http://my_api.internal/data",
+      "target": "https://my_api.internal/data",
+      "expected": true
+    },
+    {
+      "name": "underscore host same scheme default port normalized (WD-676)",
+      "origin": "http://my_api.internal/a",
+      "target": "http://my_api.internal:80/b",
+      "expected": true
+    },
+    {
+      "name": "underscore host case-insensitive (WD-676)",
+      "origin": "http://My_API.internal/a",
+      "target": "http://my_api.INTERNAL/b",
+      "expected": true
+    },
+    {
+      "name": "underscore host port change (WD-676)",
+      "origin": "http://my_api.internal:8080/a",
+      "target": "http://my_api.internal:9090/a",
+      "expected": false
+    },
+    {
+      "name": "underscore host different host (WD-676)",
+      "origin": "http://my_api.internal/a",
+      "target": "http://other_api.internal/a",
+      "expected": false
+    },
+    {
+      "name": "underscore host with userinfo (WD-676)",
+      "origin": "http://my_api.internal/a",
+      "target": "http://user@my_api.internal/b",
+      "expected": true
     }
   ],
   "bearerToken": [
@@ -167,6 +203,80 @@
       "text": "star tilde: ab%2Acd~ef9876 ab*cd%7Eef9876",
       "secret": "ab*cd~ef9876",
       "expected": "star tilde: ****9876 ****9876"
+    }
+  ],
+  "redirectLocation": [
+    {
+      "name": "empty-path base, relative path with query",
+      "base": "https://api.example.com?k=v",
+      "location": "items?page=2",
+      "expected": "https://api.example.com/items?page=2"
+    },
+    {
+      "name": "query-only reference keeps base path",
+      "base": "http://a/b/c?x=1",
+      "location": "?page=2",
+      "expected": "http://a/b/c?page=2"
+    },
+    {
+      "name": "parent segment",
+      "base": "http://a/b/c?x=1",
+      "location": "../d",
+      "expected": "http://a/d"
+    },
+    {
+      "name": "parent above root is dropped",
+      "base": "http://a/b/c?x=1",
+      "location": "../../../g",
+      "expected": "http://a/g"
+    },
+    {
+      "name": "network-path reference",
+      "base": "http://a/b/c?x=1",
+      "location": "//other.example/x",
+      "expected": "http://other.example/x"
+    },
+    {
+      "name": "fragment-only reference",
+      "base": "http://a/b/c?x=1",
+      "location": "#f",
+      "expected": "http://a/b/c?x=1#f"
+    },
+    {
+      "name": "empty reference",
+      "base": "http://a/b/c?x=1",
+      "location": "",
+      "expected": "http://a/b/c?x=1"
+    },
+    {
+      "name": "absolute URL",
+      "base": "http://a/b/c?x=1",
+      "location": "https://other.example/p?q=1",
+      "expected": "https://other.example/p?q=1"
+    },
+    {
+      "name": "absolute path",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "/v2/items?page=2",
+      "expected": "https://api.example.com/v2/items?page=2"
+    },
+    {
+      "name": "relative sibling",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "next?page=2",
+      "expected": "https://api.example.com/v1/next?page=2"
+    },
+    {
+      "name": "dot segments inside",
+      "base": "http://a/b/c/d",
+      "location": "./e/../f",
+      "expected": "http://a/b/c/f"
+    },
+    {
+      "name": "underscore host relative",
+      "base": "http://my_api.internal/v1/a",
+      "location": "b?x=1",
+      "expected": "http://my_api.internal/v1/b?x=1"
     }
   ]
 }
