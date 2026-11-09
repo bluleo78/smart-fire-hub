@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 
 import { datasetsApi } from '../../../api/datasets';
 import { EditConflictDialog } from '../../../components/EditConflictDialog';
+import { PendingSubmitButton } from '../../../components/PendingSubmitButton';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
@@ -23,6 +24,7 @@ import {
 } from '../../../components/ui/select';
 import { useDatasetPermissions, useUpdateDataset } from '../../../hooks/queries/useDatasets';
 import { useEditModeFocus } from '../../../hooks/useEditModeFocus';
+import { useSubmitGuard } from '../../../hooks/useSubmitGuard';
 import { isEditConflict } from '../../../lib/api-error';
 import { formatDate, formatRelativeTime, getOriginTypeLabel, getStorageTypeLabel } from '../../../lib/formatters';
 import type { UpdateDatasetFormData } from '../../../lib/validations/dataset';
@@ -57,6 +59,8 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
   const [editConflict, setEditConflict] = React.useState(false);
   // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
   const [isReloading, setIsReloading] = React.useState(false);
+  // 제출 잠금(WD-637) — 버튼을 disabled 대신 aria-disabled 로 잠가 포커스를 지키므로, 진행 중 재제출(입력칸 Enter 연타)은 여기서 무시한다
+  const guardInfoSubmit = useSubmitGuard();
 
   const infoForm = useForm<UpdateDatasetFormData>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -220,7 +224,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
               editRegionRef.current = el;
             }}
             // handleSubmit 은 두 번째 인자로 이벤트를 넘기므로 감싸서 부른다 — 그대로 넘기면 이벤트가 overwrite 로 읽혀 기준 없이 저장된다
-            onSubmit={infoForm.handleSubmit((data) => onInfoSubmit(data))}
+            onSubmit={guardInfoSubmit(infoForm.handleSubmit((data) => onInfoSubmit(data)))}
             className="space-y-4"
           >
             <div className="space-y-2">
@@ -267,9 +271,10 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
             </div>
 
             <div className="flex gap-2">
-              <Button type="submit" disabled={infoForm.formState.isSubmitting}>
+              {/* 제출 중에도 포커스가 버튼에 남도록 aria-disabled 로 잠근다(WD-637) */}
+              <PendingSubmitButton pending={infoForm.formState.isSubmitting}>
                 저장
-              </Button>
+              </PendingSubmitButton>
               <Button
                 type="button"
                 variant="outline"

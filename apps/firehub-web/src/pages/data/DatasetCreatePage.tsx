@@ -4,6 +4,7 @@ import { FormProvider, useForm } from 'react-hook-form';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { PendingSubmitButton } from '../../components/PendingSubmitButton';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
@@ -417,12 +418,17 @@ export default function DatasetCreatePage() {
           )}
 
           <div className="flex gap-2">
-            <Button
-              type="submit"
-              disabled={form.formState.isSubmitting || isNameDuplicate || isTableNameDuplicate}
+            {/*
+             * 제출 중에는 aria-disabled 로만 잠가 Enter·클릭으로 제출한 포커스가 버튼에 남게 한다(WD-637).
+             * 진행 중 재제출은 handleFormSubmit 의 submitLockRef(WD-642)가 막는다 — useSubmitGuard 를 겹치지 않는다.
+             * 이름·테이블명 중복은 제출 전에 입력칸에서 생기는 상태라 포커스가 버튼에 있지 않으므로 disabled 를 유지한다.
+             */}
+            <PendingSubmitButton
+              pending={form.formState.isSubmitting}
+              disabled={isNameDuplicate || isTableNameDuplicate}
             >
               {form.formState.isSubmitting ? '만드는 중...' : '만들기'}
-            </Button>
+            </PendingSubmitButton>
             <Button
               type="button"
               variant="outline"
