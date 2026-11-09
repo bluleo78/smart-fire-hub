@@ -64,8 +64,15 @@ import org.springframework.stereotype.Component;
  *
  * <p><b>재시작(WD-629 → WD-655).</b> stop 뒤 start 하면 옛 스케줄러가 끝났든 아니든(비우는 중, 인터럽트를 무시하는 시도) 곧바로 새 스케줄러로
  * 바꿔 제출을 다시 받아들인다 — 버리지 않는다. 새 스케줄러의 첫 작업({@link AwaitRetiredSchedulers})이 옛 스케줄러들이 모두 끝나기를 기다리므로
- * 옛·새 스케줄러의 동기화가 동시에 돌지 않는다(단일 스레드 전제). 비우기 도중의 start 는 그 비우기를 넘겨받는다: 옛 스케줄러는 새 예약을 받지 않게 닫히고(이미
- * 올라간 예약은 마저 돈다), 남은 작업의 다음 시도는 새 스케줄러로 가며, 비우던 stop 은 남은 작업을 버리지 않고 돌아온다({@link #shutdown()}).
+ * 보통은 옛·새 스케줄러의 동기화가 동시에 돌지 않는다(단일 스레드 전제). 비우기 도중의 start 는 그 비우기를 넘겨받는다: 옛 스케줄러는 새 예약을 받지 않게
+ * 닫히고(이미 올라간 예약은 마저 돈다), 남은 작업의 다음 시도는 새 스케줄러로 가며, 비우던 stop 은 남은 작업을 버리지 않고 돌아온다({@link
+ * #shutdown()}).
+ *
+ * <p><b>기다림의 상한(WD-673).</b> 인터럽트를 무시하고 멈춘 옛 시도(예: 응답 없는 JDBC 호출)가 있으면 그 기다림이 끝나지 않아 모든 테넌트의 커밋 뒤
+ * 동기화가 무기한 멈췄다. 그래서 {@link #RETIRED_AWAIT_TIMEOUT} 만 기다리고, 넘기면 ERROR 를 남긴 뒤 새 스케줄러가 진행한다. 그 뒤 옛 시도와
+ * 새 작업이 겹쳐 돌아도 정합성은 깨지지 않는다: 멈춘 시도의 작업은 잡 목록에 실행 중(running)으로 남아 같은 그룹 키의 새 제출은 그 작업에 합쳐질 뿐 두 번째 작업이
+ * 생기지 않고, 같은 테넌트의 다른 그룹·다른 테넌트의 작업은 동시에 돌 수 있지만 테넌트 동기화 잠금이 보호한다(멈춘 시도가 잠금을 쥐면 BUSY 로 재시도할 뿐 버리지 않음). 비용은 그동안 스레드·커넥션 하나가 더 쓰이는 것이다. 멈춘 시도는 버림으로 세지 않는다 — 끝나면 평소처럼
+ * 스스로 다음 회차를 현재 스케줄러에 올린다(그 테넌트의 커밋 뒤 동기화는 그때까지 멈춰 있다 — 이전부터 있던 성질).
  */
 @Slf4j
 @Component
@@ -82,6 +89,13 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
 
   /** 묶인 대기 한 번의 운영 기본값 — 단일 스레드가 한 테넌트 잠금에 붙잡히는 시간을 회차마다 이만큼으로 묶는다. */
   static final Duration DEFAULT_LOCK_WAIT = Duration.ofSeconds(5);
+
+  /**
+   * 재시작 뒤 새 스케줄러가 옛 스케줄러들의 끝을 기다리는 최대 시간(WD-673, 운영 기본값). 정상 시도는 묶인 대기({@link #DEFAULT_LOCK_WAIT})와
+   * 동기화 시간 안에 끝나지만, 테이블이 많은 묶음은 테이블마다 잠금 시간 초과(5초)를 거쳐 1분을 넘길 수도 있다 — 그런 정상 시도를 상한이 끊어도 스레드·커넥션 하나가
+   * 잠시 더 쓰일 뿐 정합성은 지켜진다(클래스 설명 참고).
+   */
+  static final Duration RETIRED_AWAIT_TIMEOUT = Duration.ofMinutes(1);
 
   /**
    * 시도 한 번의 결과 — 묶음 전체에 대한 {@link Outcome}, 또는 잠금을 잡아 묶음을 돌았지만 일부 항목만 실패한 {@link
@@ -188,6 +202,9 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
   /** 종료 시 남은 동기화를 비우는 최대 대기 — 테스트는 짧게 줘서 shutdownNow 경로를 재현한다(WD-629). */
   private final Duration drainTimeout;
 
+  /** 새 스케줄러가 옛 스케줄러들의 끝을 기다리는 최대 시간 — 운영은 {@link #RETIRED_AWAIT_TIMEOUT}, 테스트는 짧게 준다(WD-673). */
+  private final Duration retiredAwaitTimeout;
+
   /** 그룹(백엔드·테넌트) → 진행 중 작업. 합치기의 기준이다. {@code this} 모니터로 보호한다. */
   private final Map<String, Job> jobs = new HashMap<>();
 
@@ -229,11 +246,23 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
     this(capacity, retryPolicy, DRAIN_TIMEOUT);
   }
 
-  /** 공통 생성자. 스케줄러는 생성자에서 바로 만든다 — start 전에 제출하는 경로(빈 초기화 중 커밋·단위 테스트)를 그대로 받기 위해서다. */
+  /** 테스트용 — 재시도 규칙과 비우기 대기를 함께 준다. */
   PythonReadSyncExecutor(int capacity, RetryPolicy retryPolicy, Duration drainTimeout) {
+    this(capacity, retryPolicy, drainTimeout, RETIRED_AWAIT_TIMEOUT);
+  }
+
+  /** 테스트용 — 옛 스케줄러 기다림의 상한을 줄여 멈춘 옛 시도를 넘어 진행하는 경로를 재현한다(WD-673). */
+  PythonReadSyncExecutor(int capacity, Duration drainTimeout, Duration retiredAwaitTimeout) {
+    this(capacity, DEFAULT_RETRY_POLICY, drainTimeout, retiredAwaitTimeout);
+  }
+
+  /** 공통 생성자. 스케줄러는 생성자에서 바로 만든다 — start 전에 제출하는 경로(빈 초기화 중 커밋·단위 테스트)를 그대로 받기 위해서다. */
+  private PythonReadSyncExecutor(
+      int capacity, RetryPolicy retryPolicy, Duration drainTimeout, Duration retiredAwaitTimeout) {
     this.capacity = capacity;
     this.retryPolicy = retryPolicy;
     this.drainTimeout = drainTimeout;
+    this.retiredAwaitTimeout = retiredAwaitTimeout;
     this.scheduler = newScheduler();
   }
 
@@ -627,7 +656,8 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
    *       {@link #schedule} 로 현재(새) 스케줄러에 올린다.
    *   <li>옛 스케줄러를 닫는다(shutdown — 새 예약은 받지 않는다). 비우기 도중이면 아직 열려 있으므로 여기서 닫아야 끝날 수 있다.
    *   <li>아직 끝나지 않은 옛 스케줄러(들)가 있으면 새 스케줄러의 첫 작업으로 {@link AwaitRetiredSchedulers} 를 넣는다 — 지연 0 의 첫
-   *       예약이라 뒤에 올라온 어떤 예약보다 먼저 돌고, 단일 스레드라 그동안 다른 작업은 돌지 않는다.
+   *       예약이라 뒤에 올라온 어떤 예약보다 먼저 돌고, 단일 스레드라 그동안 다른 작업은 돌지 않는다. 기다림은 {@link #retiredAwaitTimeout}
+   *       으로 묶인다(WD-673).
    *   <li>새 스케줄러를 걸고 비우기 상태를 끈 뒤, 비우기를 기다리던 stop({@link #awaitIdleOrRestart})을 깨워 넘겨받았음을 알린다. 꺼낸
    *       작업은 그 뒤 새 스케줄러에 다시 올린다.
    * </ol>
@@ -650,7 +680,7 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
     }
     ScheduledThreadPoolExecutor fresh = newScheduler();
     if (!retired.isEmpty()) {
-      fresh.execute(new AwaitRetiredSchedulers(List.copyOf(retired)));
+      fresh.execute(new AwaitRetiredSchedulers(List.copyOf(retired), retiredAwaitTimeout));
     }
     synchronized (this) {
       scheduler = fresh;
@@ -661,19 +691,31 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
   }
 
   /**
-   * 새 스케줄러의 첫 작업 — 옛 스케줄러들이 모두 끝날 때까지 기다린다(WD-655). 그동안 새 스케줄러에 올라온 예약은 이 작업이 끝난 뒤에 돈다.
+   * 새 스케줄러의 첫 작업 — 옛 스케줄러들이 모두 끝날 때까지, 최대 {@code timeout} 기다린다(WD-655, 상한은 WD-673). 그동안 새 스케줄러에 올라온
+   * 예약은 이 작업이 끝난 뒤에 돈다.
+   *
+   * <p><b>상한(WD-673).</b> 마감은 목록 전체에 하나다 — 옛 스케줄러마다 따로 재면 N 개면 N 배를 기다린다. 넘기면 ERROR 를 남기고 더 기다리지
+   * 않는다(겹쳐 돌아도 안전한 이유는 클래스 설명). 끝나지 않은 옛 스케줄러는 {@link #retired} 에 그대로 남긴다 — 다음 재시작도 그 끝을 다시(상한까지)
+   * 기다려, 그사이 끝났으면 순서 보장을 되찾고, 여전히 멈췄으면 같은 상한 뒤 진행한다(재시작은 드물어 그 지연은 감수한다).
    *
    * <p>인터럽트는 새 스케줄러의 shutdownNow({@link #discardRemaining})에서만 온다 — 그때는 남은 작업도 이미 정리했으므로 기다리기를
    * 그만두고, 인터럽트 상태를 되살린 채 끝낸다. pending 에는 세지 않는 내부 작업이다(submitRetryable 을 거치지 않는다).
    */
-  private record AwaitRetiredSchedulers(List<ScheduledThreadPoolExecutor> previous)
-      implements Runnable {
+  private record AwaitRetiredSchedulers(
+      List<ScheduledThreadPoolExecutor> previous, Duration timeout) implements Runnable {
     @Override
     public void run() {
+      long deadline = System.nanoTime() + timeout.toNanos();
       for (ScheduledThreadPoolExecutor p : previous) {
         try {
-          while (!p.awaitTermination(1, TimeUnit.MINUTES)) {
-            log.warn("PYTHON 읽기 권한 동기화 실행기: 이전 스케줄러가 아직 끝나지 않아 새 스케줄러의 작업이 기다리는 중이다");
+          if (!p.awaitTermination(
+              Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
+            log.error(
+                "PYTHON 읽기 권한 동기화 실행기: 이전 스케줄러가 {} 안에 끝나지 않아(인터럽트를 무시하고 멈춘 시도) 더 기다리지 않고 새"
+                    + " 스케줄러의 작업을 진행한다 — 멈춘 시도는 끝나면 스스로 다음 회차를 올린다(그 테넌트의 동기화는 그때까지 멈춤, 실행 중 시도 {}개)",
+                timeout,
+                p.getActiveCount());
+            return;
           }
         } catch (InterruptedException e) {
           Thread.currentThread().interrupt();

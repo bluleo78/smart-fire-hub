@@ -634,9 +634,12 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     // 왜 뷰까지 보는가(CR5): 뷰는 소유자 권한으로 바닥 테이블을 읽는다 — 손으로(또는 SQL 스텝이) 슬롯 롤에 뷰 SELECT 를 걸면 등급 밖
     // 테이블을 그 뷰로 우회해 읽는다. 테이블만 보면 이 GRANT 를 탐지·회수하지 못한다. 시퀀스('S')는 행 데이터가 없어 제외한다.
     Map<String, Character> relkinds = new HashMap<>();
+    // 관계 oid(WD-673) — 잠금을 못 잡았을 때 "그새 DROP(권한도 함께 사라짐)" 과 "RENAME·잠금 시간 초과(권한이 남음)" 를 가른다.
+    // 이름은 RENAME 뒤 옛 이름으로 찾을 수 없어 가를 수 없고(WD-655 fail-open), oid 는 RENAME 해도 그대로다.
+    Map<String, Long> oids = new HashMap<>();
     for (var r :
         dsl.fetch(
-            "select c.relname::text, c.relkind::text from pg_class c"
+            "select c.relname::text, c.relkind::text, c.oid::bigint from pg_class c"
                 + " join pg_namespace n on n.oid = c.relnamespace"
                 + " where n.nspname = {0} and c.relkind in ('r','p','v','m','f')"
                 + (onlyTable == null ? "" : " and c.relname = {1}"),
@@ -644,6 +647,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
                 ? new Object[] {DSL.val(schema)}
                 : new Object[] {DSL.val(schema), DSL.val(onlyTable)})) {
       relkinds.put(r.get(0, String.class), r.get(1, String.class).charAt(0));
+      oids.put(r.get(0, String.class), r.get(2, Long.class));
     }
     // 이름 오름차순(WD-629) — 아래 루프가 테이블마다 ACCESS SHARE 를 잡아 트랜잭션 끝까지 쥐므로, 해시 순서(HashMap)면 잠금 순서가
     // 비결정이라 잠금 순서 규칙(lockTableForAclChange 참고)을 세우거나 검증할 수 없다. Java 문자열 순서면 충분하다 — 이 동기화 내부의
@@ -689,8 +693,18 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
       // 못 잡으면(시간 초과, 그새 DROP·RENAME) 이번에는 이 테이블을 건너뛴다.
       // 부족한 GRANT 는 과소권한이라 안전하다. 남는 권한은 회수 실패로 세어 prepareForRun 이 실행을 거부한다.
       if (!lockTableForAclChange(qualified)) {
-        // WD-655: 옛 이름이 사라졌어도 RENAME 이면 GRANT 가 새 이름으로 따라가므로 Tibero 판과 같은 근거로 fail-closed(회수 실패).
-        // advisory 밖의 실제 DROP 과 겹치면 다음 동기화 전까지 다음 PYTHON 실행이 한 번 거부된다(의도한 비용).
+        // WD-673: 목록을 읽은 뒤 실제로 DROP 된 테이블(oid 가 사라짐)은 ACL 도 함께 사라졌다 — 과권한이 남지 않으므로 회수 실패로
+        // 세지 않는다(예전에는 세어 그 동기화와 겹친 PYTHON 실행이 한 번 거부됐다). 아직 진행 중(미커밋)인 DROP 은 oid 가 보이므로
+        // 아래 fail-closed 로 간다 — 되돌려질 수 있기 때문이다.
+        if (!relationExists(oids.get(table))) {
+          log.info(
+              "PYTHON 읽기 권한 동기화: 테이블이 그새 삭제돼 건너뛴다(권한도 함께 사라짐): tenant={} table={}",
+              tenantId,
+              table);
+          continue;
+        }
+        // WD-655: 같은 oid 가 남아 있으면 RENAME(GRANT 가 새 이름으로 따라감)이거나 잠금 시간 초과다 — Tibero 판과 같은 근거로
+        // fail-closed(회수 실패). 다음 동기화가 새 이름의 권한을 회수하면 거부가 풀린다.
         log.warn(
             "PYTHON 읽기 권한 동기화: 테이블 잠금을 얻지 못해 이번에는 건너뛴다(다음 동기화에서 재시도, 남는 권한은 회수 실패로 센다): tenant={}"
                 + " table={}",
@@ -742,6 +756,17 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
           revokeFailed.size());
     }
     return new SyncResult(levelsAsc, availableSlots, changed, revokeFailed, runSlot);
+  }
+
+  /**
+   * 관계 oid 가 아직 카탈로그에 있는가(WD-673) — 잠금 실패 뒤 "실제 DROP" 과 "RENAME·잠금 시간 초과" 를 가른다. 카탈로그 읽기는 문장마다 새
+   * 스냅숏이라 그새 커밋된 DROP 이 보인다. oid 를 모르면(목록에 없던 이름) 있다고 본다(fail-closed).
+   */
+  private boolean relationExists(Long oid) {
+    return oid == null
+        || Boolean.TRUE.equals(
+            dsl.fetchValue(
+                "select exists(select 1 from pg_class where oid = {0}::oid)", DSL.val(oid)));
   }
 
   /** 주어진 테이블들에 슬롯 롤이 가진 SELECT 권한(테이블명, 롤명) 쌍. 테이블 목록이 비면 빈 결과. */
