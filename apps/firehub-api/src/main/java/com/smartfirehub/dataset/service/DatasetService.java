@@ -812,7 +812,7 @@ public class DatasetService {
     if (lock.lockedIds().isEmpty()) {
       throw new DatasetNotFoundException();
     }
-    deleteLocked(lock, true);
+    deleteLocked(lock, TenantSyncLockTiming.BEFORE_EACH_DROP);
   }
 
   /**
@@ -827,36 +827,44 @@ public class DatasetService {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public void deleteLockedDatasets(DatasetDeleteLock lock) {
-    deleteLocked(lock, false);
+    deleteLocked(lock, TenantSyncLockTiming.ONCE_BEFORE_FIRST_DELETE);
   }
 
   /**
-   * 단건·일괄 삭제 공용 — 증표의 데이터셋을 읽고 지운다. 동기화 잠금 시점은 {@link DatasetDeleteLock} 문서의 규칙대로다.
-   *
-   * @param syncBeforeDrop true 면 단건 삭제 — 테이블 DROP 직전에 동기화 잠금을 잡는다. false 면 일괄 삭제 — 테이블 있는 데이터셋이
-   *     하나라도 있으면 첫 삭제 전에 한 번 잡는다
+   * 삭제 때 테넌트 PYTHON 읽기 권한 동기화 잠금을 언제 잡는지(WD-680 — 예전에는 boolean 이라 호출부에서 뜻이 안 보였다). 규칙은 {@link
+   * DatasetDeleteLock} 문서.
    */
-  private void deleteLocked(DatasetDeleteLock lock, boolean syncBeforeDrop) {
+  private enum TenantSyncLockTiming {
+    /** 단건 삭제 — 테이블 있는 데이터셋의 DROP 직전에 잡는다(참조 거부 409 로 끝나면 잡지 않는다). */
+    BEFORE_EACH_DROP,
+    /** 일괄 삭제 — 지울 목록에 테이블 있는 데이터셋이 하나라도 있으면 첫 삭제 전에 한 번 잡는다. */
+    ONCE_BEFORE_FIRST_DELETE
+  }
+
+  /** 단건·일괄 삭제 공용 — 증표의 데이터셋을 읽고 지운다. 동기화 잠금은 {@code syncTiming} 에 따라 잡는다. */
+  private void deleteLocked(DatasetDeleteLock lock, TenantSyncLockTiming syncTiming) {
     lock.requireActive();
     List<DatasetResponse> datasets = new ArrayList<>();
     for (Long id : lock.lockedIds()) {
       datasets.add(
           datasetRepository.findById(id).orElseThrow(() -> new DatasetNotFoundException()));
     }
-    if (!syncBeforeDrop && datasets.stream().anyMatch(d -> isTableBacked(d.storageType()))) {
+    if (syncTiming == TenantSyncLockTiming.ONCE_BEFORE_FIRST_DELETE
+        && datasets.stream().anyMatch(d -> isTableBacked(d.storageType()))) {
       dataTableService.lockTenantGrantSyncForDdl();
     }
     for (DatasetResponse dataset : datasets) {
-      deleteRowLockedDataset(dataset, syncBeforeDrop);
+      deleteRowLockedDataset(dataset, syncTiming);
     }
   }
 
   /**
    * 데이터셋 행이 이미 삭제 잠금된 상태에서의 데이터셋 하나 삭제 본문.
    *
-   * @param syncBeforeDrop 테이블 DROP 직전에 동기화 잠금을 잡을지(단건 삭제) — 일괄 삭제는 이미 잡았다
+   * @param syncTiming {@link TenantSyncLockTiming#BEFORE_EACH_DROP} 이면 테이블 DROP 직전에 동기화 잠금을 잡는다 —
+   *     일괄 삭제는 이미 잡았다
    */
-  private void deleteRowLockedDataset(DatasetResponse dataset, boolean syncBeforeDrop) {
+  private void deleteRowLockedDataset(DatasetResponse dataset, TenantSyncLockTiming syncTiming) {
     Long id = dataset.id();
 
     // 파이프라인 스텝 출력 데이터셋으로 참조 중인 경우 삭제 불가 (#126)
@@ -876,7 +884,7 @@ public class DatasetService {
       // 동기화 잠금을 잡는다(WD-629, 잠금 순서 규칙). 순서는 「데이터셋 행 → 동기화 → 테이블」 하나다
       // (WD-666 — 출력 맞바꿈·임시 데이터셋 일괄 삭제도 같은 순서. WD-655 는 이 순서를 바꾸지 않는다).
       // 일괄 삭제는 삭제 시작 전에 이미 잡았다(WD-675, DatasetDeleteLock 문서).
-      if (syncBeforeDrop) {
+      if (syncTiming == TenantSyncLockTiming.BEFORE_EACH_DROP) {
         dataTableService.lockTenantGrantSyncForDdl();
       }
       // 색인 테이블은 FK 가 없어 CASCADE 로 사라지지 않는다 — 원본과 함께 지운다.
