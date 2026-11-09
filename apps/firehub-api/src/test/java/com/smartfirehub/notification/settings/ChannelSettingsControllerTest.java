@@ -140,6 +140,29 @@ class ChannelSettingsControllerTest {
         .andExpect(status().isBadRequest());
   }
 
+  /**
+   * enabled 를 빠뜨리거나(빈 본문 {}), 이름을 잘못 쓰거나(enabledd), null 로 보내면 400 이고 서비스는 불리지 않는다(WD-595). 예전에는 원시
+   * boolean 이라 누락이 false 로 바인딩되어 204 와 함께 「수신 끔」이 조용히 저장됐다.
+   */
+  @Test
+  void updatePreference_missingOrMistypedEnabled_returns400AndKeepsSetting() throws Exception {
+    for (String body : new String[] {"{}", "{\"enabledd\": true}", "{\"enabled\": null}"}) {
+      mockMvc
+          .perform(
+              patch("/api/v1/channels/settings/EMAIL/preference")
+                  .header("Authorization", AUTH_HEADER)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(body))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.enabled").value(ENABLED_REQUIRED_MESSAGE));
+    }
+
+    verifyNoInteractions(channelSettingsService);
+  }
+
+  /** enabled 누락 안내 문구(WD-595) — DTO 의 @NotNull 메시지와 같다. */
+  private static final String ENABLED_REQUIRED_MESSAGE = "알림 수신 여부(enabled)는 필수입니다.";
+
   /** 지원 채널 안내 문구(WD-543) — ChannelType.values() 순서와 같다. */
   private static final String UNKNOWN_CHANNEL_MESSAGE =
       "지원하지 않는 채널입니다: NOPE (CHAT, EMAIL, KAKAO, SLACK 중 하나)";
