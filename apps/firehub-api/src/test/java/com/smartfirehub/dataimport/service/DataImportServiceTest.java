@@ -249,6 +249,30 @@ class DataImportServiceTest extends IntegrationTestBase {
     }
   }
 
+  /**
+   * XXE(WD-615): 시트 XML 에 외부 엔티티를 넣은 xlsx 로 미리보기·사전 검증을 부르면 서버 파일 내용이 헤더·매핑 제안에 실려 나갔다. 이제 DOCTYPE
+   * 이 있는 시트는 읽지 않고 한국어 안내 예외(→ 400)로 끝나며, 메시지에 파일 내용이 없다.
+   */
+  @Test
+  void previewAndValidate_xlsxWithExternalEntity_rejectedWithoutLeakingFile(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+    String marker = "WD615-SECRET-" + java.util.UUID.randomUUID();
+    java.nio.file.Path secret = java.nio.file.Files.writeString(dir.resolve("secret.txt"), marker);
+    MockMultipartFile file =
+        new MockMultipartFile(
+            "file",
+            "xxe.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            XxeXlsxFixture.xlsx(XxeXlsxFixture.externalEntitySheet(secret)));
+
+    assertThatThrownBy(() -> dataImportService.previewImport(testDatasetId, file))
+        .isInstanceOf(FileUnreadableException.class)
+        .hasMessage(FileUnreadableException.EXCEL_UNREADABLE);
+    assertThatThrownBy(() -> dataImportService.validateImport(testDatasetId, file, null))
+        .isInstanceOf(FileUnreadableException.class)
+        .hasMessage(FileUnreadableException.EXCEL_UNREADABLE);
+  }
+
   @Test
   void previewImport_fullCsv_countsAllRows() throws Exception {
     // Given - 완전한 CSV (partial=false, 기본 경로)

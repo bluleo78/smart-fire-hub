@@ -11,8 +11,6 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import javax.xml.parsers.ParserConfigurationException;
-import javax.xml.parsers.SAXParser;
-import javax.xml.parsers.SAXParserFactory;
 import org.apache.poi.EncryptedDocumentException;
 import org.apache.poi.ooxml.POIXMLTypeLoader;
 import org.apache.poi.openxml4j.exceptions.OpenXML4JException;
@@ -24,6 +22,7 @@ import org.apache.poi.poifs.crypt.Decryptor;
 import org.apache.poi.poifs.filesystem.FileMagic;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
 import org.apache.poi.ss.util.CellAddress;
+import org.apache.poi.util.XMLHelper;
 import org.apache.poi.xssf.binary.XSSFBRecordType;
 import org.apache.poi.xssf.binary.XSSFBSharedStringsTable;
 import org.apache.poi.xssf.binary.XSSFBSheetHandler;
@@ -780,12 +779,25 @@ public final class ExcelStreamingParser {
     }
   }
 
+  /**
+   * 업로드한 시트 XML 을 읽을 SAX 리더를 만든다(WD-615 XXE 방어).
+   *
+   * <p>시트 XML 은 사용자가 올린 zip 안의 신뢰할 수 없는 입력이다. 기본 {@code SAXParserFactory} 는 DOCTYPE 의 외부 엔티티를 펼쳐 서버
+   * 파일(/etc/passwd 등)이 셀 값으로 미리보기에 실려 나갔다. POI 의 {@link XMLHelper#newXMLReader()} 는 POI 자신의 파서와 같은
+   * 안전 설정(네임스페이스 인식·DOCTYPE 금지·외부 엔티티/DTD 차단·secure processing·엔티티 무시 리졸버)을 건다. 다만 POI 는 설정 실패를 조용히
+   * 넘기므로, 핵심인 DOCTYPE 금지는 여기서 한 번 더 직접 건다 — 지원하지 않는 파서면 예외로 멈춰(fail-closed) 안전하지 않은 리더가 쓰이지 않게 한다.
+   * 엑셀이 쓰는 정상 시트에는 DOCTYPE 이 없으므로, DOCTYPE 이 있는 시트는 파싱 오류가 되어 {@link #guardExcel} 이 한국어 「읽을 수
+   * 없음」(400)으로 바꾼다.
+   */
   private static XMLReader newXmlReader() throws SAXException, ParserConfigurationException {
-    SAXParserFactory factory = SAXParserFactory.newInstance();
-    factory.setNamespaceAware(true);
-    SAXParser parser = factory.newSAXParser();
-    return parser.getXMLReader();
+    XMLReader reader = XMLHelper.newXMLReader();
+    reader.setFeature(DISALLOW_DOCTYPE_DECL, true);
+    return reader;
   }
+
+  /** DOCTYPE 선언 자체를 파싱 오류로 만드는 Xerces 기능 — 외부 엔티티(XXE)와 엔티티 폭탄을 한 번에 막는다. */
+  private static final String DISALLOW_DOCTYPE_DECL =
+      "http://apache.org/xml/features/disallow-doctype-decl";
 
   /**
    * SheetContentsHandler 구현. 행 단위로 셀을 누적하고 endRow에서 RowConsumer를 호출한다. 빈 셀은 cellRef의 컬럼 인덱스로 보정한다.
