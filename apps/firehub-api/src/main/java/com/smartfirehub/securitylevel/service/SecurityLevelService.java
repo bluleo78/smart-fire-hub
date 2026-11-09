@@ -152,9 +152,11 @@ public class SecurityLevelService {
           return null;
         });
     // allowlist_required 를 새로 켜고 시드를 요청했으면, 빈 허용 목록 데이터셋을 현재 열람 가능 역할로 채운다(Task 9).
+    // allowlistRequired 는 WD-598 부터 래퍼(Boolean)다 — 컨트롤러 @Valid 가 null 을 막지만, 검증을 거치지 않는 직접 호출에서도
+    // 언박싱 NPE 없이 「켜지 않음」으로 보도록 TRUE 비교로 읽는다.
     int seeded = 0;
     if (!before.allowlistRequired()
-        && req.allowlistRequired()
+        && Boolean.TRUE.equals(req.allowlistRequired())
         && Boolean.TRUE.equals(req.seedAllowlistFromViewers())) {
       seeded = allowlistSeeder.seedEmptyAllowlistsWithViewerRoles(id, actor);
     }

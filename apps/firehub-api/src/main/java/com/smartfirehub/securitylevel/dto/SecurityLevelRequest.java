@@ -17,24 +17,26 @@ import jakarta.validation.constraints.Size;
  */
 public record SecurityLevelRequest(
     @NotBlank @Size(max = 50) String name,
-    boolean allowlistRequired,
-    boolean adminBypass,
+    // WD-598: 세 플래그는 원시 boolean 이면 본문에서 빠질 때 조용히 false 로 저장돼 허용 목록 강제·관리자 우회·열람 감사가
+    // 경고 없이 꺼진다. 래퍼 + @NotNull 로 빠지거나 null 이면 400 으로 거부한다(정책 3종과 같은 규칙).
+    @NotNull Boolean allowlistRequired,
+    @NotNull Boolean adminBypass,
     @NotNull ExportPolicy exportPolicy,
     @NotNull AiPolicy aiPolicy,
     @NotNull SharePolicy sharePolicy,
-    boolean auditAccess,
+    @NotNull Boolean auditAccess,
     Boolean seedAllowlistFromViewers,
     SecurityLevelBaseline expected) {
 
   /** 기준 값 없이 만드는 요청 — 추가 요청과 기준 없이 부르는 호출부용. */
   public SecurityLevelRequest(
       String name,
-      boolean allowlistRequired,
-      boolean adminBypass,
+      Boolean allowlistRequired,
+      Boolean adminBypass,
       ExportPolicy exportPolicy,
       AiPolicy aiPolicy,
       SharePolicy sharePolicy,
-      boolean auditAccess,
+      Boolean auditAccess,
       Boolean seedAllowlistFromViewers) {
     this(
         name,
