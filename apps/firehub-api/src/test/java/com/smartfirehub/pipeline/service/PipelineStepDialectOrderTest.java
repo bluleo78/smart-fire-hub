@@ -110,7 +110,7 @@ class PipelineStepDialectOrderTest {
   @Mock IncrementalCursorService incrementalCursorService;
   @Mock IncrementalStepLock incrementalStepLock;
   @Mock TiberoIncrementalCursor tiberoIncrementalCursor;
-  @Mock OutputTableSessionLock outputTableSessionLock;
+  @Mock OutputSwapLock outputSwapLock;
   @Mock PipelineSecurityGate pipelineSecurityGate;
   @Mock DatasetAccessGuard datasetAccessGuard;
   @Mock AiHostingResolver aiHostingResolver;

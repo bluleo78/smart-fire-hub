@@ -145,7 +145,7 @@ public class PipelineAsyncRunner {
   /** Tibero 테넌트 증분 책갈피 후보를 Tibero 시계로 캡처한다(WD-77) — PG 후보 함수·PG 시계는 Tibero 테넌트에서 쓰지 않는다. */
   private final TiberoIncrementalCursor tiberoIncrementalCursor;
 
-  private final OutputTableSessionLock outputTableSessionLock;
+  private final OutputSwapLock outputSwapLock;
 
   /** 증분 스텝의 「책갈피 읽기 → 적재 → 전진」 직렬화 잠금(WD-223). */
   private final IncrementalStepLock incrementalStepLock;
@@ -177,6 +177,9 @@ public class PipelineAsyncRunner {
 
   /** 스크립트 토큰 만료에 더하는 여유(초) — 발급부터 실행 시작까지(스테이징 DDL·실행기 대기)와 시계 차이를 덮는다. */
   static final long PYTHON_TOKEN_TTL_MARGIN_SECONDS = 60;
+
+  /** 맞바꿈 직전에 할 일이 없는 경로(실행기 PYTHON·API_CALL·Tibero)가 {@code runStaged} 에 넘기는 빈 훅. */
+  private static final Runnable NO_SWAP_HOOK = () -> {};
 
   /** 실행기 끈(로컬) Tibero PYTHON 의 스크립트 토큰 유효 시간 — 자식 프로세스 시간 제한 + 여유. */
   static final Duration LOCAL_PYTHON_TOKEN_TTL =
@@ -1087,6 +1090,8 @@ public class PipelineAsyncRunner {
                       pyOutputTable,
                       isReplace,
                       tiberoAppend,
+                      // 실행기 경로는 출력 잠금을 잡지 않는다(예전과 같다) — 실행기는 SQL 스텝만 잠근다.
+                      NO_SWAP_HOOK,
                       targetTable -> {
                         Map<String, Object> request = new LinkedHashMap<>();
                         request.put("script", step.scriptContent());
@@ -1160,28 +1165,28 @@ public class PipelineAsyncRunner {
           if (pyOutputTable == null) {
             executionLog = outputText;
           } else {
-            Supplier<PythonLoad> load =
-                () ->
-                    loadPythonOutput(
+            // PG REPLACE 는 맞바꿈 트랜잭션 안에서 출력 잠금을 잡는다(WD-690, OutputSwapLock 참조). 대기 중 들어온 취소는 잠금을 얻은
+            // 직후 확인해 출력을 바꾸기 전에 멈춘다(SQL 경로의 WD-466 과 같다) — 던지면 롤백되고 runStaged 가 임시 테이블을 버린다.
+            // Tibero 는 잡지 않는다.
+            Runnable beforeSwap =
+                dialect.takesOutputLock(isReplace)
+                    ? () -> {
+                      outputSwapLock.lockInCurrentTransaction(pyOutputTable);
+                      cancel.checkpoint(0, true);
+                    }
+                    : NO_SWAP_HOOK;
+            executionLog =
+                loadPythonOutput(
                         pyOutputTable,
                         isReplace,
                         tiberoAppend,
+                        beforeSwap,
                         targetTable ->
                             new PythonLoad(
                                 outputText,
                                 // Tibero 대상은 언제나 스테이징이다 — PG 트랜잭션 없이 스테이징 창구로 넣는다(방언이 고른다).
                                 dialect.loadLocalPythonOutput(
-                                    targetTable, run.stdout(), pyColumnTypes)));
-            // REPLACE 는 출력 테이블 세션 잠금 아래에서 임시 테이블 생성 → 적재 → 맞바꿈을 한다(#735).
-            // 임시 테이블 이름은 WD-151 부터 실행마다 달라 임시 테이블 충돌만 놓고 보면 이 잠금이 없어도 되지만, 예전 동작(같은 출력의 로컬
-            // REPLACE 끼리, 그리고 SQL 스텝의 비우기+적재와 직렬화 — 잠금 키가 같다)을 바꾸지 않으려고 그대로 둔다. 스크립트 실행(읽기
-            // 전용)은 잠금 밖 — 쓰는 구간만 덮는다.
-            // Tibero 는 이 잠금을 잡지 않는다 — 잠금의 목적(같은 출력의 PG SQL 비우기+적재와의 직렬화)이 Tibero 에는 없고(Tibero SQL
-            // 단계는 이
-            // 키를 잡지 않는다), 잡으면 Tibero 작업 내내 PG 풀 연결만 쥔다. 원자성은 스테이징 + 옮기기(한 Tibero 트랜잭션)가 맡는다.
-            boolean takePgLock = dialect.takesOutputSessionLock(isReplace);
-            executionLog =
-                (takePgLock ? outputTableSessionLock.callLocked(pyOutputTable, load) : load.get())
+                                    targetTable, run.stdout(), pyColumnTypes)))
                     .log();
           }
         }
@@ -1286,6 +1291,7 @@ public class PipelineAsyncRunner {
                       outputTableName,
                       isReplace,
                       tiberoAppend,
+                      NO_SWAP_HOOK,
                       "Failed to drop temp table after API call failure: {}",
                       targetTable -> {
                         Map<String, Object> request =
@@ -1850,11 +1856,13 @@ public class PipelineAsyncRunner {
       String outputTable,
       boolean isReplace,
       boolean tiberoAppend,
+      Runnable beforeSwap,
       Function<String, PythonLoad> load) {
     return runStaged(
         outputTable,
         isReplace,
         tiberoAppend,
+        beforeSwap,
         "Failed to drop temp table after Python execution failure: {}",
         load,
         PythonLoad::rowsLoaded);
@@ -1878,6 +1886,10 @@ public class PipelineAsyncRunner {
    * 실패는 경로별 문구로 경고만 남긴다) 원래 예외를 그대로 다시 던진다 — 원본은 그대로다.
    *
    * @param stagesAppend APPEND 도 스테이징을 거치는가(호출자가 방언에 물어 넘긴다 — REPLACE 해석은 경로마다 달라 호출자가 한다)
+   * @param beforeSwap REPLACE 가 실제로 맞바꿀 때(적재 행 > 0) 맞바꿈 트랜잭션 안에서 {@code finishReplace} 직전에 부르는 훅 —
+   *     로컬 PG PYTHON 이 출력 잠금({@link OutputSwapLock})과 취소 확인을 넣는다(WD-690). 던지면 트랜잭션이 롤백되고 스테이징이
+   *     지워진다. 0행이면 부르지 않는다(원본 유지·우리 임시 테이블만 버리므로 같은 출력의 SQL 스텝 뒤에 줄 설 이유가 없다). 필요 없으면 {@link
+   *     #NO_SWAP_HOOK}
    * @param dropFailureLog 스테이징 삭제 실패 경고 문구(경로별로 예전 문구 그대로, {@code {}} 자리에 사유)
    * @param body 적재 대상 테이블 이름(스테이징·출력·null)을 받아 적재하고 결과를 돌려준다
    * @param rowsLoaded 결과에서 적재 행 수를 꺼낸다(맞바꿈·옮기기 판단 재료)
@@ -1886,6 +1898,7 @@ public class PipelineAsyncRunner {
       String outputTable,
       boolean isReplace,
       boolean stagesAppend,
+      Runnable beforeSwap,
       String dropFailureLog,
       Function<String, T> body,
       ToLongFunction<T> rowsLoaded) {
@@ -1900,7 +1913,15 @@ public class PipelineAsyncRunner {
       // 스테이징 적재(body) 동안에는 잠그지 않는다(다른 테이블이고, 오래 걸릴 수 있다).
       if (isReplace) {
         datasetWriteLock.writeToOutput(
-            outputTable, () -> dataTableService.finishReplace(outputTable, tempTable, rows));
+            outputTable,
+            () -> {
+              // 훅(출력 잠금 등)은 맞바꿈과 같은 트랜잭션(데이터셋 행 잠금 뒤)에서 돈다 — 잠금 순서는 「데이터셋 행 → 출력 잠금 → 테이블」.
+              // 0행이면 finishReplace 가 임시 테이블만 버리고 원본은 건드리지 않으므로 훅을 건너뛴다.
+              if (rows > 0) {
+                beforeSwap.run();
+              }
+              dataTableService.finishReplace(outputTable, tempTable, rows);
+            });
       } else {
         // 스테이징의 행을 출력에 한 Tibero 트랜잭션으로 옮긴다(0행이면 스테이징만 버린다).
         // 옮기기가 커밋된 뒤 스테이징 DROP 실패는 저장소가 삼킨다.

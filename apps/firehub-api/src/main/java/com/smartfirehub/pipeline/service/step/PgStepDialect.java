@@ -220,9 +220,12 @@ public class PgStepDialect implements StepDialect {
     return localPythonOutputLoader.load(targetTable, stdout, columnTypes);
   }
 
-  /** PG REPLACE 만 출력 테이블 세션 잠금을 잡는다 — 같은 출력의 SQL 스텝 비우기+적재와 직렬화하려는 예전 동작(#735)을 바꾸지 않으려고 그대로 둔다. */
+  /**
+   * PG REPLACE 만 출력 잠금을 잡는다 — 같은 출력의 SQL 스텝 비우기+적재와 직렬화하려는 예전 동작(#735)을 바꾸지 않으려고 그대로 둔다. 잠금은 맞바꿈
+   * 트랜잭션 안에서 잡는다(WD-690, {@code OutputSwapLock}).
+   */
   @Override
-  public boolean takesOutputSessionLock(boolean isReplace) {
+  public boolean takesOutputLock(boolean isReplace) {
     return isReplace;
   }
 

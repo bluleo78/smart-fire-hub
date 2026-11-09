@@ -48,6 +48,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -104,7 +105,7 @@ class PipelineAsyncRunnerTest {
 
   @Mock PythonScriptValidator pythonScriptValidator;
   @Mock IncrementalCursorService incrementalCursorService;
-  @Mock OutputTableSessionLock outputTableSessionLock;
+  @Mock OutputSwapLock outputSwapLock;
   @Mock IncrementalStepLock incrementalStepLock;
   // 보안 등급 판정은 PipelineSqlAccessTest(통합)가 검증한다 — 여기서는 통과(목 기본값)로 두고 실행 로직만 본다.
   @Mock PipelineSecurityGate pipelineSecurityGate;
@@ -945,7 +946,7 @@ class PipelineAsyncRunnerTest {
 
     assertThat(status).isEqualTo("FAILED");
     verify(dataTableRowService, never()).truncateTable(anyString());
-    verify(outputTableSessionLock, never()).callLocked(anyString(), any());
+    verifyNoInteractions(outputSwapLock);
     verify(pythonExecutor, never()).run(anyString(), anyInt());
   }
 
@@ -1990,64 +1991,104 @@ class PipelineAsyncRunnerTest {
   }
 
   /**
-   * 실행기를 끈 PYTHON + REPLACE 는 출력 테이블 세션 잠금 <b>안에서</b> 임시 테이블 생성 → stdout JSON 적재 → 맞바꿈을 한다(#735,
-   * R5). 임시 테이블 이름이 WD-151 부터 실행마다 달라 임시 테이블 충돌은 이름이 막지만, 같은 출력의 REPLACE·SQL 스텝과의 직렬화라는 기존 동작을 지키려고
-   * 이 경로의 잠금은 유지한다. 잠금 목이 본문을 실행하지 않게 해 "잠금 밖에서는 출력에 손대지 않는다"를 먼저 고정하고(스크립트 실행은 읽기 전용이라 잠금 밖), 이어서
-   * 본문을 돌려 순서를 확인한다. truncate 는 더 이상 없다.
+   * 로컬 PYTHON REPLACE 테스트 공통 셋업 — 출력 {@code out735_py}, 스크립트 stdout 과 로더가 돌려줄 적재 행 수를 정하고 스텝을
+   * 돌려준다(권한은 허용).
+   */
+  private PipelineStepResponse stubLocalPythonReplace(long stepId, String stdout, long rowsLoaded) {
+    Long outputDatasetId = 737L;
+    when(permissionChecker.hasPermission(1L, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out735_py"));
+    when(pythonExecutor.run("print('x')", 2))
+        .thenReturn(new PythonScriptExecutor.RunResult(0, stdout, "warn\n"));
+    when(localPythonOutputLoader.load(eq(runTemp("out735_py")), anyString(), any()))
+        .thenReturn(rowsLoaded);
+    return replaceStep(stepId, "PYTHON", "print('x')", outputDatasetId);
+  }
+
+  /**
+   * 실행기를 끈 PYTHON + REPLACE 는 임시 테이블 생성 → stdout JSON 적재 → (맞바꿈 트랜잭션 안에서) 출력 잠금 → 맞바꿈 순서로
+   * 돈다(WD-690, R5). 잠금은 예전(#735)처럼 세션 잠금으로 생성~맞바꿈 전체를 덮지 않고 맞바꿈과 같은 트랜잭션에서 맞바꿈 직전에 잡는다. 스크립트는 읽기
+   * 전용이라 잠금 전에 돈다. truncate 는 더 이상 없다.
    */
   @Test
-  void 실행기_꺼진_PYTHON_REPLACE는_출력_잠금_안에서만_임시테이블에_적재하고_맞바꾼다() {
-    Long outputDatasetId = 737L;
-    Long userId = 1L;
-    PipelineStepResponse step = replaceStep(7370L, "PYTHON", "print('x')", outputDatasetId);
+  void 실행기_꺼진_PYTHON_REPLACE는_맞바꿈_직전에_트랜잭션_안에서_출력_잠금을_잡는다() {
+    PipelineStepResponse step = stubLocalPythonReplace(7370L, "[{\"v\": \"a\"}]\n", 1L);
+    when(columnRepository.findByDatasetId(737L)).thenReturn(List.of(col("v", false)));
 
-    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
-    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out735_py"));
-    when(columnRepository.findByDatasetId(outputDatasetId)).thenReturn(List.of(col("v", false)));
-    when(pythonExecutor.run("print('x')", 2))
-        .thenReturn(new PythonScriptExecutor.RunResult(0, "[{\"v\": \"a\"}]\n", "warn\n"));
-    @SuppressWarnings("unchecked")
-    ArgumentCaptor<java.util.function.Supplier<Object>> body =
-        ArgumentCaptor.forClass(java.util.function.Supplier.class);
-    when(outputTableSessionLock.callLocked(eq("out735_py"), body.capture()))
-        .thenAnswer(inv -> body.getValue().get());
-
-    String status = runner.executeStep(7371L, step, 73L, "TestPipeline", userId, false);
+    String status = runner.executeStep(7371L, step, 73L, "TestPipeline", 1L, false);
 
     assertThat(status).isEqualTo("COMPLETED");
     verify(dataTableRowService, never()).truncateTable(anyString());
-    // 잠금 → 임시 테이블 → 적재(_tmp, stdout 그대로) → 맞바꿈 순서. 스크립트는 잠금 전에 돈다.
+    // 스크립트 → 임시 테이블 → 적재(_tmp, stdout 그대로) → 출력 잠금(맞바꿈 트랜잭션 안) → 맞바꿈 순서.
     var order =
-        inOrder(pythonExecutor, outputTableSessionLock, dataTableService, localPythonOutputLoader);
+        inOrder(
+            pythonExecutor,
+            dataTableService,
+            localPythonOutputLoader,
+            datasetWriteLock,
+            outputSwapLock);
     order.verify(pythonExecutor).run("print('x')", 2);
-    order.verify(outputTableSessionLock).callLocked(eq("out735_py"), any());
     order.verify(dataTableService).createTempTable("out735_py");
     order
         .verify(localPythonOutputLoader)
         .load(runTemp("out735_py"), "[{\"v\": \"a\"}]\n", Map.of("v", "TEXT"));
-    order.verify(dataTableService).finishReplace("out735_py", runTemp("out735_py"), 0L);
+    order.verify(datasetWriteLock).writeToOutput(eq("out735_py"), any(Runnable.class));
+    order.verify(outputSwapLock).lockInCurrentTransaction("out735_py");
+    order.verify(dataTableService).finishReplace("out735_py", runTemp("out735_py"), 1L);
   }
 
-  /** 같은 셋업에서 잠금 목이 본문을 실행하지 않으면 출력(임시 테이블 생성·적재·맞바꿈)에 아무 일도 일어나지 않는다 — 쓰는 구간 전체가 잠금 안이다. */
+  /** 적재 행이 0이면 맞바꿈이 없다(원본 유지) — 같은 출력의 SQL 스텝 뒤에 줄 서지 않도록 출력 잠금도 잡지 않는다. */
   @Test
-  void 실행기_꺼진_PYTHON_REPLACE는_잠금_밖에서_출력에_손대지_않는다() {
-    Long outputDatasetId = 737L;
-    Long userId = 1L;
-    PipelineStepResponse step = replaceStep(7372L, "PYTHON", "print('x')", outputDatasetId);
+  void 실행기_꺼진_PYTHON_REPLACE는_적재_0행이면_출력_잠금을_잡지_않는다() {
+    PipelineStepResponse step = stubLocalPythonReplace(7374L, "[]", 0L);
 
-    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
-    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out735_py"));
-    when(pythonExecutor.run("print('x')", 2))
-        .thenReturn(new PythonScriptExecutor.RunResult(0, "[{\"v\": \"a\"}]", ""));
-    // 잠금 목은 본문을 실행하지 않고 null 을 돌려준다 — 이어지는 log() 에서 스텝이 실패하지만, 판정 대상은 상태가 아니라 부작용이다.
-    runner.executeStep(7373L, step, 73L, "TestPipeline", userId, false);
+    runner.executeStep(7375L, step, 73L, "TestPipeline", 1L, false);
 
-    verify(outputTableSessionLock).callLocked(eq("out735_py"), any());
+    verifyNoInteractions(outputSwapLock);
+    verify(dataTableService).finishReplace("out735_py", runTemp("out735_py"), 0L);
+  }
 
-    verify(dataTableService, never()).createTempTable(anyString());
+  /**
+   * 출력 잠금을 기다리는 동안 들어온 취소는 출력을 바꾸기 전에 멈춘다(SQL 경로의 WD-466 과 같다) — 잠금을 얻은 직후 취소가 켜져 있으면 맞바꿈하지 않고 임시
+   * 테이블을 지운다.
+   */
+  @Test
+  void 실행기_꺼진_PYTHON_REPLACE는_출력_잠금_뒤_취소되면_맞바꾸지_않고_임시테이블을_지운다() {
+    PipelineStepResponse step = stubLocalPythonReplace(7376L, "[{\"v\": \"a\"}]", 1L);
+    AtomicBoolean stop = new AtomicBoolean();
+    // 잠금을 얻는 순간(대기 끝)에 취소가 들어온 상황 — 앞선 체크포인트(스크립트 전·후)는 이미 지났다.
+    doAnswer(
+            inv -> {
+              stop.set(true);
+              return null;
+            })
+        .when(outputSwapLock)
+        .lockInCurrentTransaction("out735_py");
+
+    String status =
+        runner.executeStep(
+            7377L, step, 73L, "TestPipeline", 1L, false, ExecutionCancelCheck.of(778L, stop::get));
+
+    assertThat(status).isEqualTo("CANCELLED");
+    verify(outputSwapLock).lockInCurrentTransaction("out735_py");
     verify(dataTableService, never()).finishReplace(anyString(), anyString(), anyLong());
+    verify(dataTableService).dropTempTable(eq("out735_py"), anyString());
+  }
+
+  /** 맞바꿈 트랜잭션 안의 잠금이 실패하면 맞바꿈하지 않고 임시 테이블을 지운다 — 원본은 그대로다. */
+  @Test
+  void 실행기_꺼진_PYTHON_REPLACE는_출력_잠금이_실패하면_맞바꾸지_않고_임시테이블을_지운다() {
+    PipelineStepResponse step = stubLocalPythonReplace(7372L, "[{\"v\": \"a\"}]", 1L);
+    doThrow(new IllegalStateException("잠금 실패"))
+        .when(outputSwapLock)
+        .lockInCurrentTransaction("out735_py");
+
+    String status = runner.executeStep(7373L, step, 73L, "TestPipeline", 1L, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(dataTableService, never()).finishReplace(anyString(), anyString(), anyLong());
+    verify(dataTableService).dropTempTable(eq("out735_py"), anyString());
     verify(dataTableRowService, never()).truncateTable(anyString());
-    verifyNoInteractions(localPythonOutputLoader);
   }
 
   /** 권한이 없어 거부되는 PYTHON 스텝은 출력을 비우지 않는다 — 비우기가 실행 직전으로 옮겨졌다(#735). */
@@ -2064,7 +2105,7 @@ class PipelineAsyncRunnerTest {
 
     assertThat(status).isEqualTo("FAILED");
     verify(dataTableRowService, never()).truncateTable(anyString());
-    verifyNoInteractions(outputTableSessionLock, pythonExecutor);
+    verifyNoInteractions(outputSwapLock, pythonExecutor);
   }
 
   /** 실행기를 끈 PYTHON + APPEND 는 출력 테이블에 바로 적재한다 — 임시 테이블·잠금·비우기 없음. */
@@ -2088,7 +2129,7 @@ class PipelineAsyncRunnerTest {
     verify(localPythonOutputLoader).load(eq("out735_ap"), eq("[{\"v\": 1}]"), any());
     verify(dataTableRowService, never()).truncateTable(anyString());
     verify(dataTableService, never()).createTempTable(anyString());
-    verifyNoInteractions(outputTableSessionLock);
+    verifyNoInteractions(outputSwapLock);
   }
 
   /**
@@ -2117,7 +2158,7 @@ class PipelineAsyncRunnerTest {
             contains("NameError: boom"),
             isNull(),
             any());
-    verifyNoInteractions(localPythonOutputLoader, outputTableSessionLock);
+    verifyNoInteractions(localPythonOutputLoader, outputSwapLock);
     verify(dataTableService, never()).createTempTable(anyString());
   }
 
@@ -2131,8 +2172,6 @@ class PipelineAsyncRunnerTest {
     when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out_bad"));
     when(pythonExecutor.run("print('x')", 2))
         .thenReturn(new PythonScriptExecutor.RunResult(0, "[{\"nope\": 1}]", ""));
-    when(outputTableSessionLock.callLocked(eq("out_bad"), any()))
-        .thenAnswer(inv -> inv.<java.util.function.Supplier<?>>getArgument(1).get());
     when(localPythonOutputLoader.load(eq(runTemp("out_bad")), anyString(), any()))
         .thenThrow(
             new ScriptExecutionException(
@@ -2211,8 +2250,6 @@ class PipelineAsyncRunnerTest {
     when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out_nj"));
     when(pythonExecutor.run("print('x')", 2))
         .thenReturn(new PythonScriptExecutor.RunResult(0, "start\n[{\"v\": 1}]\n", ""));
-    when(outputTableSessionLock.callLocked(eq("out_nj"), any()))
-        .thenAnswer(inv -> inv.<java.util.function.Supplier<?>>getArgument(1).get());
     when(localPythonOutputLoader.load(eq(runTemp("out_nj")), anyString(), any()))
         .thenCallRealMethod();
 
@@ -2256,8 +2293,6 @@ class PipelineAsyncRunnerTest {
         .thenReturn(
             new PythonScriptExecutor.RunResult(
                 0, "[{\"n\": 1}, {\"n\": 2}, {\"n\": \"not-a-number\"}]", ""));
-    when(outputTableSessionLock.callLocked(eq("out_cv"), any()))
-        .thenAnswer(inv -> inv.<java.util.function.Supplier<?>>getArgument(1).get());
     when(localPythonOutputLoader.load(eq(runTemp("out_cv")), anyString(), any()))
         .thenCallRealMethod();
 
@@ -2296,7 +2331,7 @@ class PipelineAsyncRunnerTest {
     verify(executionRepository)
         .updateStepExecution(
             eq(7421L), eq("COMPLETED"), any(), eq("out\nerr\n"), isNull(), any(), any());
-    verifyNoInteractions(localPythonOutputLoader, outputTableSessionLock);
+    verifyNoInteractions(localPythonOutputLoader, outputSwapLock);
   }
 
   /** 실행기 켠 PYTHON 은 실행 주체 슬롯을 실어 보낸다(출력 없음). */
@@ -2402,7 +2437,7 @@ class PipelineAsyncRunnerTest {
     assertThat(executorOn).isEqualTo("FAILED");
     assertThat(executorOff).isEqualTo("FAILED");
     verify(executorClient, never()).executePython(anyMap(), anyInt());
-    verifyNoInteractions(pythonExecutor, localPythonOutputLoader, outputTableSessionLock);
+    verifyNoInteractions(pythonExecutor, localPythonOutputLoader, outputSwapLock);
     verify(dataTableService, never()).createTempTable(anyString());
     verify(dataTableRowService, never()).truncateTable(anyString());
     verify(executionRepository)
@@ -3297,6 +3332,8 @@ class PipelineAsyncRunnerTest {
     verify(dataTableService).finishReplace("output_replace", runTemp("output_replace"), 10L);
     // WD-666: 맞바꿈은 출력 테이블 잠금 안에서 한다.
     verify(datasetWriteLock).writeToOutput(eq("output_replace"), any(Runnable.class));
+    // WD-690: 실행기 경로는 출력 잠금을 잡지 않는다(실행기는 SQL 스텝만 잠근다).
+    verifyNoInteractions(outputSwapLock);
     verify(dataTableService, never()).dropTempTable(any(), any());
     // 실행기에는 이번 실행의 임시 테이블 이름이 그대로 적재 대상으로 간다(WD-151) — 실행기는 이름을 스스로 만들지 않는다.
     @SuppressWarnings("unchecked")

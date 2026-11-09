@@ -34,6 +34,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
@@ -41,16 +42,20 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 
 /**
- * 출력 테이블 세션 잠금(#735)의 계약 — 실제 DB 로 확인한다. 세션 범위 advisory 잠금은 커밋으로 풀리지 않고 풀로 돌아간 커넥션에도 남으므로, <b>누수가
- * 없다는 것</b>이 이 클래스의 핵심 단언이다.
+ * 세션 범위 advisory 잠금 공통 장치({@link SessionAdvisoryLock})의 계약 — 실제 DB 로 확인한다. 출력 테이블 세션 잠금(#735)에서 옮겨
+ * 온 테스트다(WD-690). 세션 범위 advisory 잠금은 커밋으로 풀리지 않고 풀로 돌아간 커넥션에도 남으므로, <b>누수가 없다는 것</b>이 이 클래스의 핵심
+ * 단언이다.
  *
- * <p>잠금 관측은 {@code pg_locks} 의 advisory 행으로 한다. 테스트 DB 는 이 JVM 전용 컨테이너이고, 세션 범위 advisory 잠금은 출력 테이블
- * 직렬화와 증분 스텝 직렬화(WD-223, 같은 클래스에서 검증)만 쓰며 테스트 클래스는 차례로 돌아 다른 잠금이 섞이지 않는다(트랜잭션 범위 잠금은 트랜잭션이 끝나면
+ * <p>잠금 관측은 {@code pg_locks} 의 advisory 행으로 한다. 테스트 DB 는 이 JVM 전용 컨테이너이고, 세션 범위 advisory 잠금은 이 클래스가
+ * 검증하는 증분 스텝 직렬화(WD-223)와 이 클래스의 공통 장치 테스트만 쓰며 테스트 클래스는 차례로 돌아 다른 잠금이 섞이지 않는다(트랜잭션 범위 잠금은 트랜잭션이 끝나면
  * 사라진다). 클래스 레벨 {@code @Transactional} 은 쓰지 않는다 — 다른 커넥션이 픽스처를 봐야 한다.
  */
-class OutputTableSessionLockTest extends IntegrationTestBase {
+class SessionAdvisoryLockTest extends IntegrationTestBase {
 
-  @Autowired private OutputTableSessionLock sessionLock;
+  /** 데이터 저장소 풀 — 출력 테이블 세션 잠금이 쓰던 풀(잠금 전용 커넥션을 여기서 빌린다). */
+  @Autowired @DataStoreDb private DataSource storeDataSource;
+
+  @Autowired private DataStoreSessionLocks storeLocks;
   @Autowired private SqlScriptExecutor sqlScriptExecutor;
   @Autowired private DSLContext dsl;
 
@@ -84,7 +89,26 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
         .get(0, Integer.class);
   }
 
-  private <T> T inTenant(java.util.function.Supplier<T> action) {
+  /**
+   * 출력 테이블 키로 세션 잠금을 쥔 채 본문을 실행한다 — 예전 출력 테이블 세션 잠금 클래스(#735, WD-690 에서 제거)가 하던 일을 공통 장치로 직접 한다. 이
+   * 클래스가 검증하는 것은 그 뒤의 공통 장치({@link SessionAdvisoryLock})의 획득·재시도·해제·누수 방지 계약이다.
+   */
+  private <T> T callLocked(
+      DataSource pool, DataStoreSessionLocks locks, String key, Supplier<T> body) {
+    try (SessionAdvisoryLock.Held ignored =
+        SessionAdvisoryLock.acquire(
+            locks,
+            pool,
+            key,
+            "출력 테이블 잠금",
+            SessionAdvisoryLock.NO_LIMIT,
+            ExecutionCancelCheck.NONE,
+            () -> "출력 테이블 잠금 대기 시간이 끝났습니다")) {
+      return body.get();
+    }
+  }
+
+  private <T> T inTenant(Supplier<T> action) {
     return TenantContext.runScopedGet(DEFAULT_TEST_TENANT_ID, action::get);
   }
 
@@ -95,8 +119,10 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
     String result =
         inTenant(
             () ->
-                sessionLock.callLocked(
-                    table,
+                callLocked(
+                    storeDataSource,
+                    storeLocks,
+                    SqlScriptExecutor.outputLockKeyFor(table),
                     () -> {
                       // 본문 안: 잠금이 실제로 잡혀 있다(없으면 이 테스트 전체가 공허하다).
                       assertThat(advisoryLocks("granted")).isEqualTo(1);
@@ -116,8 +142,10 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
             () ->
                 inTenant(
                     () ->
-                        sessionLock.callLocked(
-                            table,
+                        callLocked(
+                            storeDataSource,
+                            storeLocks,
+                            SqlScriptExecutor.outputLockKeyFor(table),
                             () -> {
                               assertThat(advisoryLocks("granted")).isEqualTo(1);
                               throw new IllegalStateException("자식 프로세스 실패");
@@ -127,7 +155,15 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
 
     assertThat(advisoryLocks("true")).isZero();
     // 같은 테이블을 바로 다시 잠글 수 있다 — 앞 실패가 뒤 실행을 막지 않는다.
-    assertThat(inTenant(() -> sessionLock.callLocked(table, () -> "again"))).isEqualTo("again");
+    assertThat(
+            inTenant(
+                () ->
+                    callLocked(
+                        storeDataSource,
+                        storeLocks,
+                        SqlScriptExecutor.outputLockKeyFor(table),
+                        () -> "again")))
+        .isEqualTo("again");
     assertThat(advisoryLocks("true")).isZero();
   }
 
@@ -149,8 +185,10 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
       Future<String> sqlRun =
           inTenant(
               () ->
-                  sessionLock.callLocked(
-                      out,
+                  callLocked(
+                      storeDataSource,
+                      storeLocks,
+                      SqlScriptExecutor.outputLockKeyFor(out),
                       () -> {
                         Future<String> run =
                             pool.submit(
@@ -198,8 +236,10 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
       Future<String> second =
           inTenant(
               () ->
-                  sessionLock.callLocked(
-                      table,
+                  callLocked(
+                      storeDataSource,
+                      storeLocks,
+                      SqlScriptExecutor.outputLockKeyFor(table),
                       () -> {
                         Future<String> run =
                             pool.submit(
@@ -208,8 +248,10 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
                                         DEFAULT_TEST_TENANT_ID,
                                         () -> {
                                           secondStarted.countDown();
-                                          return sessionLock.callLocked(
-                                              table,
+                                          return callLocked(
+                                              storeDataSource,
+                                              storeLocks,
+                                              SqlScriptExecutor.outputLockKeyFor(table),
                                               () -> {
                                                 secondEntered.countDown();
                                                 return "second";
@@ -219,7 +261,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
                           assertThat(secondStarted.await(10, TimeUnit.SECONDS)).isTrue();
                           assertThat(
                                   secondEntered.await(
-                                      OutputTableSessionLock.RETRY_INTERVAL_MS * 5,
+                                      SessionAdvisoryLock.RETRY_INTERVAL_MS * 5,
                                       TimeUnit.MILLISECONDS))
                               .as("앞 본문이 도는 동안 뒤 본문은 시작하지 않는다")
                               .isFalse();
@@ -259,9 +301,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
 
     String result =
         inTenant(
-            () ->
-                new OutputTableSessionLock(dataSource, new DataStoreSessionLocks())
-                    .callLocked("some_out", () -> "ok"));
+            () -> callLocked(dataSource, new DataStoreSessionLocks(), "some_out_key", () -> "ok"));
 
     // 본문의 결과는 그대로 돌려준다(해제 실패가 성공한 실행을 실패로 바꾸지 않는다).
     assertThat(result).isEqualTo("ok");
@@ -285,10 +325,7 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
     when(acquired.getBoolean(1)).thenReturn(true);
     when(connection.createStatement()).thenReturn(release);
 
-    inTenant(
-        () ->
-            new OutputTableSessionLock(dataSource, new DataStoreSessionLocks())
-                .callLocked("some_out", () -> "ok"));
+    inTenant(() -> callLocked(dataSource, new DataStoreSessionLocks(), "some_out_key", () -> "ok"));
 
     verify(release).executeQuery(DataStoreSessionLocks.RELEASE_SQL);
     verify(connection, never()).abort(any());

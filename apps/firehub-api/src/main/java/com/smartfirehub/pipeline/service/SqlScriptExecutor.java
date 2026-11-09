@@ -75,6 +75,14 @@ public class SqlScriptExecutor {
   }
 
   /**
+   * 출력 테이블 이름으로 만든 잠금 키 — SQL 스텝의 전체 비우기 선행 문장과 같은 키라서 같은 출력을 쓰는 다른 경로(로컬 PYTHON 맞바꿈 등)가 이 키로 SQL
+   * 스텝과 서로를 본다. 키 식을 한 곳에 두려는 것이다(어긋나면 두 경로가 서로를 못 본다).
+   */
+  static String outputLockKeyFor(String outputTableName) {
+    return outputLockKey(OutputClearStatement.deleteAll(outputTableName));
+  }
+
+  /**
    * 테넌트별 파이프라인 실행 커넥션 풀의 레지스트리.
    *
    * <p><b>왜 단일 {@code pipelineDslContext} 빈을 주입받지 않는가(P3-b1 R2).</b> 그 빈은 공용 {@code

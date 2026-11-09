@@ -67,6 +67,8 @@ class PlatformDbAccessArchitectureTest {
           "com.smartfirehub.global.util.ResultColumnNames",
           "com.smartfirehub.global.util.TemporalSafeFetch",
           "com.smartfirehub.pipeline.service.IncrementalCursorService",
+          // 출력 잠금(WD-690) — 맞바꿈 트랜잭션 연결(@DataStoreDb DSLContext)에서 advisory 잠금 문장을 실행한다.
+          "com.smartfirehub.pipeline.service.OutputSwapLock",
           "com.smartfirehub.pipeline.service.SqlColumnProbe",
           "com.smartfirehub.pipeline.service.SqlScriptExecutor",
           "com.smartfirehub.pipeline.service.VerbatimSql");

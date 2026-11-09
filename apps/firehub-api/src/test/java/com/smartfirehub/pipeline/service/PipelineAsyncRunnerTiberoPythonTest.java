@@ -52,7 +52,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -129,7 +128,7 @@ class PipelineAsyncRunnerTiberoPythonTest {
 
   @Mock PythonScriptValidator pythonScriptValidator;
   @Mock IncrementalCursorService incrementalCursorService;
-  @Mock OutputTableSessionLock outputTableSessionLock;
+  @Mock OutputSwapLock outputSwapLock;
   @Mock PipelineSecurityGate pipelineSecurityGate;
   @Mock DatasetAccessGuard datasetAccessGuard;
   @Mock AiHostingResolver aiHostingResolver;
@@ -172,9 +171,6 @@ class PipelineAsyncRunnerTiberoPythonTest {
     lenient()
         .when(scriptTokenIssuer.issue(eq(TENANT_ID), eq(SLOT), eq(EPOCH), any()))
         .thenReturn(TOKEN);
-    lenient()
-        .when(outputTableSessionLock.callLocked(anyString(), any()))
-        .thenAnswer(inv -> inv.<Supplier<?>>getArgument(1).get());
   }
 
   @AfterEach
@@ -345,8 +341,9 @@ class PipelineAsyncRunnerTiberoPythonTest {
   }
 
   @Test
-  void localReplace_onTibero_doesNotTakePgOutputTableSessionLock() {
-    // M3: PG 세션 잠금은 같은 출력의 PG SQL 비우기+적재와 직렬화하려는 것이라 Tibero 에는 해당하지 않는다(Tibero SQL 은 그 키를 잡지 않는다).
+  void localReplace_onTibero_doesNotTakeOutputSwapLock() {
+    // M3: PG 출력 잠금(OutputSwapLock)은 같은 출력의 PG SQL 비우기+적재와 직렬화하려는 것이라 Tibero 에는 해당하지 않는다(Tibero SQL
+    // 은 그 키를 잡지 않는다).
     when(pythonExecutor.runTibero(SCRIPT, TOKEN))
         .thenReturn(new PythonScriptExecutor.RunResult(0, "[{\"name\":\"a\"}]", ""));
     when(localPythonOutputLoader.loadStaging(eq(STG), anyString(), anyMap())).thenReturn(1L);
@@ -355,7 +352,7 @@ class PipelineAsyncRunnerTiberoPythonTest {
 
     assertThat(status).isEqualTo("COMPLETED");
     verify(dataTableService).finishReplace(OUTPUT_TABLE, STG, 1L);
-    verifyNoInteractions(outputTableSessionLock);
+    verifyNoInteractions(outputSwapLock);
   }
 
   @Test

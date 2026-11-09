@@ -60,6 +60,6 @@ public interface StepDialect {
    */
   List<String> reservedColumnNames();
 
-  /** 로컬 REPLACE 에 PG 출력 세션 잠금을 잡는가(PG REPLACE 만 true). */
-  boolean takesOutputSessionLock(boolean isReplace);
+  /** 로컬 REPLACE 의 맞바꿈 트랜잭션에서 출력 잠금({@code OutputSwapLock}, WD-690)을 잡는가(PG REPLACE 만 true). */
+  boolean takesOutputLock(boolean isReplace);
 }

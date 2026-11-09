@@ -117,7 +117,7 @@ class PipelineAsyncRunnerTiberoInsertTest {
   @Mock IncrementalCursorService incrementalCursorService;
   // 증분 스텝 겹친 실행 직렬화(WD-223) — 목 기본값(null 잠금)으로 둔다. 러너가 null 잠금을 닫지 않는다.
   @Mock IncrementalStepLock incrementalStepLock;
-  @Mock OutputTableSessionLock outputTableSessionLock;
+  @Mock OutputSwapLock outputSwapLock;
   @Mock PipelineSecurityGate pipelineSecurityGate;
   @Mock DatasetAccessGuard datasetAccessGuard;
   @Mock AiHostingResolver aiHostingResolver;

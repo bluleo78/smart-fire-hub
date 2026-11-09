@@ -42,7 +42,7 @@ class PlatformDbPgSpecificSourceTest {
           "global/tenant/TenantPipelineRoleProvisioner.java",
           "R2/R5: 롤 프로비저너의 hashtext(...)::bigint inline 잠금은 PG 데이터 저장소 인프라 안에 둔다",
           "pipeline/service/SqlScriptExecutor.java",
-          "OOS(§0.2): PG 데이터 경로의 출력 테이블 잠금 키 식(OutputTableSessionLock 과 같은 해시)",
+          "OOS(§0.2): PG 데이터 경로의 출력 테이블 잠금 키 식(OutputSwapLock 과 같은 해시)",
           "dataset/service/PostgresDataTableStore.java",
           "OOS(§0.2): PG 데이터 저장소 구현 — 필드 인덱스 직렬화 잠금",
           "dataset/storage/DatasetStructureLock.java",

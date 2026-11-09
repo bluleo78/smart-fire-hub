@@ -318,11 +318,11 @@ public class TiberoStepDialect implements StepDialect {
   }
 
   /**
-   * Tibero 는 출력 세션 잠금을 잡지 않는다 — 잠금의 목적(같은 출력의 PG SQL 비우기+적재와의 직렬화)이 Tibero 에는 없고(Tibero SQL 단계는 이
-   * 키를 잡지 않는다), 잡으면 Tibero 작업 내내 PG 풀 연결만 쥔다. 원자성은 스테이징 + 옮기기(한 Tibero 트랜잭션)가 맡는다.
+   * Tibero 는 출력 잠금을 잡지 않는다 — 잠금의 목적(같은 출력의 PG SQL 비우기+적재와의 직렬화)이 Tibero 에는 없고(Tibero SQL 단계는 이 키를
+   * 잡지 않는다), 잡을 PG 연결도 없다. 원자성은 스테이징 + 옮기기(한 Tibero 트랜잭션)가 맡는다.
    */
   @Override
-  public boolean takesOutputSessionLock(boolean isReplace) {
+  public boolean takesOutputLock(boolean isReplace) {
     return false;
   }
 

@@ -260,12 +260,12 @@ class StepDialectTest {
   }
 
   @Test
-  void pg_takesOutputSessionLock_onlyForReplace() {
-    assertThat(pg.takesOutputSessionLock(true)).isTrue();
-    assertThat(pg.takesOutputSessionLock(false)).isFalse();
-    // Tibero 는 REPLACE 여도 PG 출력 세션 잠금을 잡지 않는다 — 잠금의 목적이 Tibero 에 없다.
-    assertThat(tibero.takesOutputSessionLock(true)).isFalse();
-    assertThat(tibero.takesOutputSessionLock(false)).isFalse();
+  void pg_takesOutputLock_onlyForReplace() {
+    assertThat(pg.takesOutputLock(true)).isTrue();
+    assertThat(pg.takesOutputLock(false)).isFalse();
+    // Tibero 는 REPLACE 여도 PG 출력 잠금(맞바꿈 트랜잭션 안)을 잡지 않는다 — 잠금의 목적이 Tibero 에 없다.
+    assertThat(tibero.takesOutputLock(true)).isFalse();
+    assertThat(tibero.takesOutputLock(false)).isFalse();
   }
 
   @Test

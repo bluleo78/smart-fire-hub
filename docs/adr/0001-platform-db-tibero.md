@@ -178,9 +178,9 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 - 이 불변식의 범위는 **플랫폼 어드바이저리 잠금**(`PlatformLocks.xactLock`·`IncrementalStepLock`)이다. 데이터 저장소 DDL 뒤에 잡는 행 잠금(`FOR UPDATE`, 예: `DatasetService.updateColumn`)은 전수 점검하지 않았다.
 - 데이터 저장소 잠금을 쥔 채 플랫폼 풀 커넥션을 따로 빌리는 곳이 있다(`isStopRequested`·`backendFor`·`syncTable`). 분리 모드에서는 플랫폼 풀 크기도 동시 실행 수에 맞춰야 한다.
 
-**분리 모드 풀 크기:** `@DataStoreDb` 풀(기본 최대 10)을 추가로 점유하는 것은 출력 테이블 세션 잠금(`OutputTableSessionLock`, 실행기를 끈 로컬 PYTHON 의 PG REPLACE)뿐이다. 세션 잠금 연결을 쥔 채 안쪽 적재·맞바꿈이 풀에서 연결을 따로 빌리므로 한 건당 1개가 더 묶인다. SQL REPLACE 의 출력 잠금(`OUTPUT_LOCK_SQL`)은 테넌트 파이프라인 전용 풀을 쓰므로 `@DataStoreDb` 풀을 더 쓰지 않는다. 위 불변식 항목처럼 데이터 저장소 잠금 보유자가 플랫폼 풀 커넥션도 빌리므로 `PLATFORM_DB_POOL_SIZE` 도 함께 본다.
+**분리 모드 풀 크기:** `@DataStoreDb` 풀(기본 최대 10)을 추가로 점유하는 잠금은 이제 없다. 실행기를 끈 로컬 PYTHON 의 PG REPLACE 는 예전에 세션 잠금 연결을 쥔 채 안쪽 적재·맞바꿈이 풀에서 연결을 따로 빌려 한 건당 1개가 더 묶였고(동시에 몰리면 풀 상한에서 서로 막힘), 이 이중 점유는 WD-690 으로 해소됐다 — 출력 잠금(`OutputSwapLock`)을 맞바꿈 트랜잭션 안의 트랜잭션 범위 잠금으로 옮겨 스레드당 연결 하나만 쥔다. SQL REPLACE 의 출력 잠금(`OUTPUT_LOCK_SQL`)은 테넌트 파이프라인 전용 풀을 쓰므로 `@DataStoreDb` 풀을 더 쓰지 않는다. 위 불변식 항목처럼 데이터 저장소 잠금 보유자가 플랫폼 풀 커넥션도 빌리므로 `PLATFORM_DB_POOL_SIZE` 도 함께 본다.
 
-**알려진 한계(분리 모드 풀 고갈):** 실행기를 끈 로컬 PYTHON REPLACE 는 `@DataStoreDb` 잠금 연결을 쥔 채 같은 풀에서 적재용 연결을 하나 더 빌린다. 이런 REPLACE 가 풀 크기만큼 동시에 돌면 모두 잠금 연결만 쥐고 적재 연결을 기다려 `connection-timeout` 까지 풀이 막힌다. 개발용 경로(운영은 실행기를 켠다)라 지금은 고치지 않고 별도 이슈 후보로 둔다.
+**해소된 한계(분리 모드 풀 고갈, WD-690):** 실행기를 끈 로컬 PYTHON REPLACE 가 `@DataStoreDb` 잠금 연결과 적재·맞바꿈 연결을 함께 쥐어 풀 크기만큼 동시에 돌면 `connection-timeout` 까지 풀이 막히던 한계는, 출력 잠금을 맞바꿈 트랜잭션 안으로 옮겨(`OutputSwapLock`) 실행당 데이터 저장소 연결 하나만 쓰게 되면서 해소됐다. 남은 한계: 출력 잠금 대기가 플랫폼 쓰기 트랜잭션 안(데이터셋 KEY SHARE 행 잠금 뒤)에서 일어나, 같은 출력의 SQL 스텝이 끝날 때까지 기다리는 동안 플랫폼 커넥션과 행 잠금을 쥔다(그 출력의 데이터셋 삭제·필드 변경이 함께 기다림). 「플랫폼 잠금 먼저, 데이터 저장소 잠금 나중」 순서(WD-493)를 지키려는 선택이며 실행기를 끈 로컬 경로 전용이다(운영은 실행기를 켜고, 실행기는 Python 출력 잠금을 잡지 않는다).
 
 #### Tibero 잠금·깨우기 구현(WD-493)
 
