@@ -136,9 +136,9 @@ public abstract class IntegrationTestBase {
   }
 
   /**
-   * 바깥 트랜잭션 완료 후 비동기로 넘어간 접근 거부·감사 등급 접근 기록(SecurityAuditRecorder)이 모두 쓰일 때까지 기다린다. 그 감사 행을
-   * 단언(있음·없음 모두)하거나 정리(DELETE)하기 직전에 부른다 — 부르지 않으면 "없음" 단언이 아직 안 쓴 행 때문에 공허하게 통과하거나, 정리 뒤에 행이 늦게
-   * 남는다.
+   * 전용 실행기로 비동기로 넘어간(WD-682 부터 바깥 트랜잭션 유무와 무관) 접근 거부·감사 등급 접근 기록(SecurityAuditRecorder)이 모두 쓰일 때까지
+   * 기다린다. 그 감사 행을 단언(있음·없음 모두)하거나 정리(DELETE)하기 직전에 부른다 — 부르지 않으면 "없음" 단언이 아직 안 쓴 행 때문에 공허하게 통과하거나,
+   * 정리 뒤에 행이 늦게 남는다.
    */
   protected void awaitSecurityAudit() {
     try {
