@@ -104,6 +104,14 @@ class PipelineStepInputValidationTest extends IntegrationTestBase {
                 sql("b", "SELECT 1", List.of("a")),
                 sql("c", "SELECT 1", List.of())),
             "스텝 사이에 순환 의존이 있어 실행 순서를 정할 수 없습니다. 순환에 걸린 스텝: 'a', 'b'"),
+        // WD-620: 순환과 없는 이름이 함께 있으면 없는 이름을 먼저 알린다 — 없는 이름이 빠진 그래프로 순환을 판정하면 원인을 잘못 짚는다.
+        Arguments.of(
+            "순환과 없는 선행 스텝 이름이 함께",
+            List.of(
+                sql("a", "SELECT 1", List.of("b")),
+                sql("b", "SELECT 1", List.of("a")),
+                sql("c", "SELECT 1", List.of("ghost"))),
+            "스텝 'c' 의 선행 스텝 'ghost' 를 찾을 수 없습니다."),
         Arguments.of(
             "자기 자신 의존",
             List.of(sql("a", "SELECT 1", List.of("a"))),

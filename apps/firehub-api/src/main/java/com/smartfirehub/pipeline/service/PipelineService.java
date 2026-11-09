@@ -458,9 +458,15 @@ public class PipelineService {
       if (stepRequest.dependsOnStepNames() != null) {
         for (String dependsOnStepName : stepRequest.dependsOnStepNames()) {
           Long dependsOnStepId = stepNameToId.get(dependsOnStepName);
-          if (dependsOnStepId != null) {
-            stepRepository.saveStepDependency(stepId, dependsOnStepId);
+          // WD-620: 생성·수정 모두 쓰기 전에 validateDAG 가 없는 선행 스텝 이름을 400 으로 거부한다. 예전처럼 조용히 건너뛰면
+          // 그 검사가 빠진 새 경로에서 의존이 말없이 사라지므로, 여기 도달하면 불변식 위반 예외로 드러낸다(트랜잭션 롤백, 전역 처리기에서 409).
+          if (dependsOnStepId == null) {
+            throw new IllegalStateException(
+                "선행 스텝 '"
+                    + dependsOnStepName
+                    + "' 를 찾을 수 없습니다 — 저장 전 검사(validateDAG)에서 걸러졌어야 합니다.");
           }
+          stepRepository.saveStepDependency(stepId, dependsOnStepId);
         }
       }
     }

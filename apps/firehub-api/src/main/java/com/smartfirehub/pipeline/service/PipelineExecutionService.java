@@ -81,9 +81,12 @@ public class PipelineExecutionService {
   }
 
   /**
-   * DAG 유효성 검사 — Kahn's algorithm으로 위상 정렬을 시도하여 순환 의존성을 감지한다.
+   * DAG 유효성 검사 — 먼저 스텝 이름(빈 값·중복)과 선행 스텝 참조(같은 요청에 있는 이름인지)를 확인하고, 그다음 Kahn's algorithm 으로 위상 정렬을
+   * 시도해 순환 의존성을 감지한다.
    *
    * @param steps 검증할 스텝 목록
+   * @throws IllegalArgumentException 스텝 이름이 비었거나 겹치는 경우, 또는 같은 요청에 없는 선행 스텝 이름을 가리키는 경우(400) — 순환
+   *     검사보다 먼저 본다(WD-586·WD-620)
    * @throws CyclicDependencyException 순환 의존성이 감지된 경우
    */
   public void validateDAG(List<PipelineStepRequest> steps) {
@@ -113,10 +116,14 @@ public class PipelineExecutionService {
       if (step.dependsOnStepNames() != null) {
         for (String dependsOnName : step.dependsOnStepNames()) {
           Integer dependsOnIndex = stepNameToIndex.get(dependsOnName);
-          if (dependsOnIndex != null) {
-            adjacencyList.get(dependsOnIndex).add(i);
-            inDegree.put(i, inDegree.get(i) + 1);
+          // WD-620: 없는 이름은 위 validateStepNamesAndDependencies 가 400 으로 먼저 거부한다. 예전처럼 조용히 건너뛰면
+          // 사전 검사가 빠졌을 때 의존이 말없이 사라지므로, 여기 도달하면 불변식 위반 예외로 드러낸다(전역 처리기에서 409).
+          if (dependsOnIndex == null) {
+            throw new IllegalStateException(
+                "선행 스텝 '" + dependsOnName + "' 를 찾을 수 없습니다 — 사전 검사에서 걸러졌어야 합니다.");
           }
+          adjacencyList.get(dependsOnIndex).add(i);
+          inDegree.put(i, inDegree.get(i) + 1);
         }
       }
     }
