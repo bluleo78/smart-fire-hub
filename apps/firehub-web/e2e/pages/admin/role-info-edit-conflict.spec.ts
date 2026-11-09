@@ -17,6 +17,7 @@ import { createPermissions, createRoleDetail } from '../../factories/admin.facto
 import { setupAdminAuth } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectLockedInFlight, holdRequests } from '../../fixtures/hold-api';
 import { setupSecurityLevelMocks } from '../../fixtures/security-level.fixture';
 
 const conflictDialog = (page: Page) => page.getByRole('alertdialog', { name: '다른 곳에서 먼저 변경되었습니다' });
@@ -199,5 +200,49 @@ test.describe('역할 상세 — 이름·설명 동시 편집 충돌 (WD-575)', 
     await expect(conflictDialog(page)).toBeVisible();
     expect(server.puts[0].expectedUpdatedAt).toBe('2026-01-01T09:00:00.123456');
     expect(server.state().name).toBe('EDITOR_RENAMED');
+  });
+});
+
+test.describe('역할 상세 — 충돌 창 진행 중 포커스 유지 (WD-678)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  test('Enter 로 「다시 불러오기」를 누르면 진행 중 포커스가 그 버튼에 남고, 다시 Enter 를 눌러도 GET 은 한 번만 간다', async ({
+    authenticatedPage: page,
+  }) => {
+    const server = await mockRoleInfoServer(page);
+    await page.goto('/admin/roles/3');
+    await expect(page.getByLabel('역할 이름')).toHaveValue('EDITOR');
+
+    server.otherAdminRenames();
+    await page.getByLabel('설명').fill('B 가 고친 설명');
+    await roleInfoSave(page).click();
+    await expect(conflictDialog(page)).toBeVisible();
+
+    // 화면 첫 조회 뒤부터 역할 다시 읽기를 붙잡는다
+    const hold = await holdRequests(page, '/api/v1/roles/3', 'GET');
+    const reload = conflictDialog(page).getByRole('button', { name: '다시 불러오기' });
+    await reload.focus();
+    await page.keyboard.press('Enter');
+
+    // 응답 전: disabled 가 아니라 aria-disabled 로 잠겨 포커스가 body 로 떨어지지 않는다
+    await expect.poll(() => hold.count()).toBe(1);
+    await expectLockedInFlight(conflictDialog(page), reload);
+
+    // 진행 중 다시 Enter — 두 번째 조회가 나가지 않는다
+    await page.keyboard.press('Enter');
+    await expect(conflictDialog(page)).toBeVisible();
+    // 두 번째 요청이 나갈 틈을 잠깐 준 뒤 센다 — 누른 직후 바로 세면 아직 안 나간 요청을 놓친다
+    await page.waitForTimeout(300);
+    expect(hold.count()).toBe(1);
+
+    hold.release();
+    await expect(conflictDialog(page)).toBeHidden();
+    await expect(page.getByLabel('역할 이름')).toHaveValue('EDITOR_RENAMED');
+    await expect(page.getByLabel('설명')).toHaveValue('편집자 역할');
+    expect(hold.count()).toBe(1);
+    // 다시 불러오기는 저장하지 않는다 — 충돌을 낸 PUT 한 번뿐
+    expect(server.puts).toHaveLength(1);
   });
 });

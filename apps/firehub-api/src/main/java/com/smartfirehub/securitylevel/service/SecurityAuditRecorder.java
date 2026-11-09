@@ -21,6 +21,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -36,15 +37,19 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <ul>
  *   <li>{@link #record} — 관리 작업(등급 변경·허용 목록 변경 등). 호출자 트랜잭션에 합류해 변경과 감사가 함께 커밋/롤백된다.
  *   <li>{@link #recordDenial}·{@link #recordAccess} — 접근 거부와 감사 등급 접근. 요청이 403/404 로 끝나 호출자 트랜잭션이
- *       롤백돼도 남아야 하므로 호출자 트랜잭션과 <b>분리된</b> 자기 트랜잭션으로 쓴다. 같은 키는 1분에 1건(보충 스펙 §3 폭주 방지) — 인스턴스 메모리
- *       기준이다(다중 인스턴스면 인스턴스 수만큼 중복될 수 있다).
+ *       롤백돼도 남아야 하므로 호출자 트랜잭션에 합류하지 않고 전용 실행기 스레드가 자기 트랜잭션으로 쓴다(아래). 접속 정보(IP·User-Agent)는 실행기 스레드에
+ *       요청이 없으므로 호출 시점에 요청 스레드에서 읽어 넘긴다. 같은 키는 1분에 1건(보충 스펙 §3 폭주 방지) — 인스턴스 메모리 기준이다(다중 인스턴스면 인스턴스
+ *       수만큼 중복될 수 있다).
  * </ul>
  *
  * <p><b>커넥션 1개 원칙(풀 교착 방지).</b> 바깥 트랜잭션(또는 트랜잭션 동기화 범위)이 커넥션을 쥔 채 같은 스레드에서 REQUIRES_NEW 로 커넥션을 하나 더
- * 잡으면, 풀 크기만큼 요청이 동시에 판정 경로에 들어왔을 때 모두가 두 번째 커넥션을 기다리며 서로 막힌다. 그래서:
+ * 잡으면, 풀 크기만큼 요청이 동시에 판정 경로에 들어왔을 때 모두가 두 번째 커넥션을 기다리며 서로 막힌다. 그래서 <b>호출 스레드는 감사 쓰기 커넥션을 열지 않는다</b>
+ * — 쓰기는 언제나 전용 단일 스레드 실행기가 한다:
  *
  * <ul>
- *   <li>동기화 범위가 없으면(커넥션을 쥔 바깥 범위 없음) 호출 스레드에서 즉시 자기 트랜잭션으로 쓴다 — 커넥션 1개.
+ *   <li>동기화 범위가 없으면(커넥션을 쥔 바깥 범위 없음) 바로 실행기로 넘긴다. 호출 스레드에서 쓰면 바깥 커넥션은 없어도, 허가(게이트) 전에 판정하는 경로(데이터셋
+ *       /query 앞 판정, WD-638)의 거부 요청이 감사 쓰기마다 풀 커넥션을 잡아 — 게이트가 가득 찬 동안 거부 요청이 몰리면 허가를 쥔 실행이 쓸 커넥션까지
+ *       빼앗는다(WD-682). 실행기는 스레드 하나라 감사 쓰기는 커넥션을 최대 1개만 쓴다.
  *   <li>있으면 기록 작업을 그 범위의 <b>완료 후</b>(afterCompletion, 커밋·롤백 무관)에 전용 단일 스레드 실행기로 넘긴다.
  *       afterCompletion 에서 동기로 쓰면 안 된다 — Spring 은 afterCompletion 콜백을 부른 <b>뒤</b>에 바깥 커넥션을
  *       반납하므로(spring-tx 6.2.1 AbstractPlatformTransactionManager.processCommit:
@@ -86,13 +91,13 @@ public class SecurityAuditRecorder {
   private final UserRepository userRepository;
   private final SecurityLevelRepository levelRepository;
 
-  /** 호출자 트랜잭션과 분리된 새 트랜잭션 — 호출자 롤백에 감사 행이 휩쓸리지 않게 한다. 바깥 커넥션이 없는 스레드에서만 연다. */
+  /** 실행기 스레드가 기록마다 여는 트랜잭션 — 그 스레드엔 바깥 트랜잭션이 없지만 합류를 막는 안전장치로 REQUIRES_NEW 를 둔다. */
   private final TransactionTemplate ownTx;
 
   /** 최근 1분 안에 기록한 키(값은 의미 없음). 키에 테넌트를 넣어 테넌트 간 합치기를 막는다. */
   private final Cache<String, Boolean> recent;
 
-  /** 바깥 범위 완료 후의 기록을 처리하는 단일 스레드 실행기(유한 큐, 포화 시 예외 → 버림). */
+  /** 모든 거부·접근 기록을 처리하는 단일 스레드 실행기(유한 큐, 포화 시 예외 → 버림). */
   private final ThreadPoolExecutor writer;
 
   /** 실행기에 넘겼으나 아직 끝나지 않은 기록 수 — {@link #awaitIdle} 가 기다리는 대상. {@code this} 모니터로 보호한다. */
@@ -207,7 +212,7 @@ public class SecurityAuditRecorder {
     }
     dispatch(
         tenantId,
-        () ->
+        origin ->
             auditLogService.log(
                 actorUserId,
                 actorName(actorUserId),
@@ -215,8 +220,8 @@ public class SecurityAuditRecorder {
                 "dataset",
                 datasetId == null ? null : String.valueOf(datasetId),
                 action.name() + " 거부: " + reasonCode,
-                null,
-                null,
+                origin.ipAddress(),
+                origin.userAgent(),
                 "FAILURE",
                 null,
                 meta),
@@ -254,10 +259,10 @@ public class SecurityAuditRecorder {
     if (fresh.isEmpty()) {
       return;
     }
-    // 감사 등급 판정(findAuditedDatasetIds)도 기록 작업 안에서 한다 — 바깥 범위가 있으면 그 완료 후 실행기 스레드의 커넥션 하나로.
+    // 감사 등급 판정(findAuditedDatasetIds)도 기록 작업 안에서 한다 — 실행기 스레드의 커넥션 하나로(바깥 범위가 있으면 그 완료 후).
     dispatch(
         tenantId,
-        () -> {
+        origin -> {
           Set<Long> audited = levelRepository.findAuditedDatasetIds(fresh.keySet());
           String name = actorName(actorUserId);
           for (Long id : fresh.keySet()) {
@@ -270,8 +275,8 @@ public class SecurityAuditRecorder {
                   "dataset",
                   String.valueOf(id),
                   kind.name(),
-                  null,
-                  null,
+                  origin.ipAddress(),
+                  origin.userAgent(),
                   "SUCCESS",
                   null,
                   Map.of("kind", kind.name()));
@@ -283,14 +288,21 @@ public class SecurityAuditRecorder {
   }
 
   /**
-   * 기록 작업을 커넥션 1개 원칙에 맞게 실행한다(클래스 설명 참고).
+   * 기록 작업을 실행기로 넘긴다 — 갈래는 넘기는 시점(바로·범위 완료 후)만 정한다. 접속 정보(IP·User-Agent, WD-394)는 실행기 스레드에 요청 속성이
+   * 없으므로 여기(호출 스레드)서 한 번 읽어 기록 작업에 넘긴다.
    *
    * <p>판단 기준은 {@code isSynchronizationActive} 다 — 실제 트랜잭션이 없어도(SUPPORTS 등) 동기화 범위 안에서 jOOQ 가 얻은
    * 커넥션은 범위가 끝날 때까지 스레드에 묶여 있을 수 있으므로, 동기화 범위가 있으면 실제 트랜잭션 여부와 무관하게 완료 후로 미룬다.
    *
    * @param keys 실패·버림 시 지울 합치기 키(다음 호출이 다시 시도하게)
    */
-  private void dispatch(long tenantId, Runnable write, List<String> keys, String what) {
+  private void dispatch(
+      long tenantId,
+      Consumer<AuditLogService.RequestOrigin> writeWithOrigin,
+      List<String> keys,
+      String what) {
+    AuditLogService.RequestOrigin origin = auditLogService.currentOrigin();
+    Runnable write = () -> writeWithOrigin.accept(origin);
     if (TransactionSynchronizationManager.isSynchronizationActive()) {
       TransactionSynchronizationManager.registerSynchronization(
           new TransactionSynchronization() {
@@ -300,12 +312,9 @@ public class SecurityAuditRecorder {
               submit(tenantId, write, keys, what);
             }
           });
-    } else if (TransactionSynchronizationManager.isActualTransactionActive()) {
-      // 동기화 없는 실제 트랜잭션(SYNCHRONIZATION_NEVER) — 완료 시점을 알 수 없으니 바로 실행기로 넘긴다(이 스레드는 기다리지 않는다).
-      submit(tenantId, write, keys, what);
     } else {
-      // 바깥 커넥션이 없다 — 호출 스레드(테넌트 컨텍스트가 이미 서 있음)에서 즉시 자기 트랜잭션으로 쓴다.
-      writeNow(write, keys, what);
+      // 동기화 범위 없음(바깥 커넥션 없음·SYNCHRONIZATION_NEVER) — 호출 스레드는 커넥션을 열지 않고 바로 넘긴다(WD-682).
+      submit(tenantId, write, keys, what);
     }
   }
 
@@ -332,7 +341,7 @@ public class SecurityAuditRecorder {
     }
   }
 
-  /** 자기 트랜잭션으로 쓴다. 실패하면 합치기 키를 지우고 WARN(요청은 실패시키지 않는다). */
+  /** 실행기 스레드에서 기록 하나를 트랜잭션으로 쓴다. 실패하면 합치기 키를 지우고 WARN(요청은 실패시키지 않는다). */
   private void writeNow(Runnable write, List<String> keys, String what) {
     try {
       ownTx.executeWithoutResult(s -> write.run());

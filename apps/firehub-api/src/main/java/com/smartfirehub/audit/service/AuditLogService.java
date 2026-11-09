@@ -66,13 +66,13 @@ public class AuditLogService {
     // 호출처가 IP·User-Agent 를 넘기지 않았으면 지금 처리 중인 HTTP 요청에서 채운다(WD-394) — 데이터셋·API 연결·역할·멤버·보안 등급
     // 감사 도우미 대부분이 null 을 넘겨, 로그인·임포트 밖의 사용자 행위는 IP 가 비어 있었다. 요청 밖(스케줄·비동기 잡)에서는 요청이 없어
     // 그대로 비운다 — 그때는 사람의 접속 주소가 없다.
-    HttpServletRequest request = currentRequest();
-    if (request != null) {
+    if (ipAddress == null || userAgent == null) {
+      RequestOrigin origin = currentOrigin();
       if (ipAddress == null) {
-        ipAddress = clientIpExtractor.extract(request);
+        ipAddress = origin.ipAddress();
       }
       if (userAgent == null) {
-        userAgent = request.getHeader("User-Agent");
+        userAgent = origin.userAgent();
       }
     }
 
@@ -90,6 +90,24 @@ public class AuditLogService {
         result,
         errorMessage,
         metadataJson);
+  }
+
+  /** 감사 행에 남길 접속 정보(클라이언트 IP·User-Agent). 요청 밖이면 둘 다 null. */
+  public record RequestOrigin(String ipAddress, String userAgent) {
+    /** 요청 밖(스케줄러·비동기 잡) — 사람의 접속 주소가 없다. */
+    public static final RequestOrigin NONE = new RequestOrigin(null, null);
+  }
+
+  /**
+   * 지금 스레드가 처리 중인 HTTP 요청의 접속 정보. 기록을 다른 스레드(실행기)로 넘기는 호출자(SecurityAuditRecorder, WD-682)는 요청 스레드에서
+   * 이것을 미리 읽어 {@link #log} 에 명시적으로 넘긴다 — 실행기 스레드에는 요청 속성이 없어 log 가 스스로 채우지 못한다.
+   */
+  public RequestOrigin currentOrigin() {
+    HttpServletRequest request = currentRequest();
+    if (request == null) {
+      return RequestOrigin.NONE;
+    }
+    return new RequestOrigin(clientIpExtractor.extract(request), request.getHeader("User-Agent"));
   }
 
   /** 지금 스레드가 처리 중인 HTTP 요청(요청 밖 — 스케줄러·비동기 잡 — 이면 null). */

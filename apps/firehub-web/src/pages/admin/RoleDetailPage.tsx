@@ -88,8 +88,6 @@ export default function RoleDetailPage() {
   const [roleInfoBaselineUpdatedAt, setRoleInfoBaselineUpdatedAt] = useState<string | null>(null);
   // 이름·설명 저장이 편집 충돌(409 EDIT_CONFLICT)로 거부됐는가(WD-575)
   const [isRoleInfoConflictOpen, setIsRoleInfoConflictOpen] = useState(false);
-  // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
-  const [isReloadingRoleInfo, setIsReloadingRoleInfo] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingRole, setIsSavingRole] = useState(false);
   const [isSavingPermissions, setIsSavingPermissions] = useState(false);
@@ -287,7 +285,6 @@ export default function RoleDetailPage() {
    */
   const reloadRoleInfo = async () => {
     if (!role) return;
-    setIsReloadingRoleInfo(true);
     try {
       const { data: latest } = await rolesApi.getRoleById(role.id);
       setRole(latest);
@@ -301,8 +298,6 @@ export default function RoleDetailPage() {
         return;
       }
       toast.error('역할 정보를 불러오는 데 실패했습니다.');
-    } finally {
-      setIsReloadingRoleInfo(false);
     }
   };
 
@@ -453,9 +448,9 @@ export default function RoleDetailPage() {
         open={isRoleInfoConflictOpen}
         onOpenChange={setIsRoleInfoConflictOpen}
         resourceLabel="역할 정보"
-        pending={isSavingRole || isReloadingRoleInfo}
-        onReload={() => void reloadRoleInfo()}
-        onOverwrite={() => void form.handleSubmit(data => onRoleSubmit(data, true))()}
+        pending={isSavingRole}
+        onReload={reloadRoleInfo}
+        onOverwrite={() => form.handleSubmit(data => onRoleSubmit(data, true))()}
       />
 
       {/* 권한 전체 해제 확인 AlertDialog — "권한 저장" 시점에 선택된 권한이 0개일 때만 표시된다 (#567) */}
@@ -465,13 +460,14 @@ export default function RoleDetailPage() {
         onOpenChange={setIsPermissionsConflictOpen}
         resourceLabel="역할의 권한"
         pending={isSavingPermissions}
+        // pending(isSavingPermissions)은 다시 불러오기를 덮지 않는다 — 불러오기 중 잠금은 돌려준 Promise 가 맡는다(WD-678)
         onReload={() => {
           if (!role) return;
-          void reloadPermissions(role.id)
+          return reloadPermissions(role.id)
             .then(() => setIsPermissionsConflictOpen(false))
             .catch(() => toast.error('역할 정보를 불러오는 데 실패했습니다.'));
         }}
-        onOverwrite={() => void handleSavePermissions(true)}
+        onOverwrite={() => handleSavePermissions(true)}
       />
 
       <AlertDialog open={isClearPermissionsDialogOpen} onOpenChange={setIsClearPermissionsDialogOpen}>

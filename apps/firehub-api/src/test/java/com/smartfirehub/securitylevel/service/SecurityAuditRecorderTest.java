@@ -1,6 +1,10 @@
 package com.smartfirehub.securitylevel.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.securitylevel.access.AccessDenialAction;
@@ -11,6 +15,7 @@ import com.smartfirehub.user.repository.UserRepository;
 import java.sql.Connection;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
@@ -18,9 +23,13 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
  * 스펙 §4.6·보충 스펙 §3 — 접근 거부는 요청이 실패(롤백)해도 남아야 하고, 같은 거부는 1분에 1건으로 합쳐진다. 감사 등급(audit_access)의 접근만
@@ -184,5 +193,81 @@ class SecurityAuditRecorderTest extends IntegrationTestBase {
     assertThat(elapsedMs[0]).isLessThan(3_000);
     assertThat(count("DATASET_ACCESS_DENIED")).isEqualTo(1);
     assertThat(count("DATASET_ACCESS")).isEqualTo(1);
+  }
+
+  /**
+   * WD-682 — 바깥 트랜잭션·동기화 범위가 없는 호출(데이터셋 /query 의 허가 전 앞 판정이 거부하는 경로)에서도 쓰기는 호출 스레드가 아니라
+   * security-audit-writer 실행기 스레드가 한다 — 호출 스레드는 감사 쓰기 커넥션을 열지 않는다. 쓰기 대역(AuditLogService mock)이 실제로
+   * 불린 스레드를 기록해 결정적으로 본다(벽시계·풀 고갈 없이). 호출 스레드에서 자기 트랜잭션으로 쓰던 구현이면 기록된 스레드가 테스트 스레드다.
+   */
+  @Test
+  void auditWithoutOuterTransaction_isWrittenOnWriterThread_notCallerThread() throws Exception {
+    AuditLogService auditMock = mock(AuditLogService.class);
+    when(auditMock.currentOrigin()).thenReturn(AuditLogService.RequestOrigin.NONE);
+    List<String> writeThreads = new CopyOnWriteArrayList<>();
+    doAnswer(
+            inv -> {
+              writeThreads.add(Thread.currentThread().getName());
+              return 1L;
+            })
+        .when(auditMock)
+        .log(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+    SecurityAuditRecorder isolated =
+        new SecurityAuditRecorder(
+            auditMock, userRepository, levelRepository, txManager, nanos::get);
+    try {
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      isolated.recordDenial(
+          actor, AccessDenialAction.VIEW, "CLEARANCE_INSUFFICIENT", sensitive, null);
+      isolated.recordAccess(actor, SecurityAuditRecorder.AccessKind.SQL, List.of(sensitive));
+      assertThat(isolated.awaitIdle(Duration.ofSeconds(30))).isTrue();
+    } finally {
+      isolated.shutdown();
+    }
+    // 거부 1건 + 감사 등급(민감) 접근 1건, 둘 다 실행기 스레드에서.
+    assertThat(writeThreads)
+        .hasSize(2)
+        .allMatch("security-audit-writer"::equals)
+        .doesNotContain(Thread.currentThread().getName());
+  }
+
+  /**
+   * WD-682 리뷰 — 실행기 스레드에는 요청 속성이 없으므로, 거부·접근 감사 행의 IP·User-Agent(WD-394)는 호출 시점에 요청 스레드에서 읽어 넘겨야
+   * 한다. 바깥 범위 없는 갈래(바로 실행기)와 바깥 트랜잭션 완료 후 갈래(afterCompletion → 실행기) 모두 요청의 IP·UA 가 남아야 한다.
+   */
+  @Test
+  void asyncAuditRows_keepRequestIpAndUserAgent() {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.setRemoteAddr("203.0.113.7");
+    request.addHeader("User-Agent", "wd682-agent/1.0");
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+    try {
+      // 바깥 범위 없음 — 바로 실행기로.
+      recorder.recordDenial(actor, AccessDenialAction.VIEW, "NOT_ON_ALLOWLIST", sensitive, null);
+      recorder.recordAccess(actor, SecurityAuditRecorder.AccessKind.SQL, List.of(sensitive));
+      // 바깥 트랜잭션 — 완료 후 실행기로(사유가 달라 합치지 않는다).
+      new TransactionTemplate(txManager)
+          .executeWithoutResult(
+              s ->
+                  recorder.recordDenial(
+                      actor, AccessDenialAction.VIEW, "CLEARANCE_INSUFFICIENT", sensitive, null));
+    } finally {
+      RequestContextHolder.resetRequestAttributes();
+    }
+    assertThat(count("DATASET_ACCESS_DENIED")).isEqualTo(2);
+    assertThat(count("DATASET_ACCESS")).isEqualTo(1);
+    var rows =
+        inTenantFixture(
+            () ->
+                dsl.fetch(
+                    "SELECT ip_address, user_agent FROM audit_log WHERE user_id = ?"
+                        + " AND action_type IN ('DATASET_ACCESS_DENIED', 'DATASET_ACCESS')",
+                    actor));
+    assertThat(rows).hasSize(3);
+    rows.forEach(
+        r -> {
+          assertThat(r.get("ip_address", String.class)).isEqualTo("203.0.113.7");
+          assertThat(r.get("user_agent", String.class)).isEqualTo("wd682-agent/1.0");
+        });
   }
 }

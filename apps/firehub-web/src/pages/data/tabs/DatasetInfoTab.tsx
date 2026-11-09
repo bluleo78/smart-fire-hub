@@ -57,8 +57,6 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
   const queryClient = useQueryClient();
   // 정보 저장이 편집 충돌(409 EDIT_CONFLICT)로 거부됐는가(WD-575) — 참이면 EditConflictDialog 를 띄운다
   const [editConflict, setEditConflict] = React.useState(false);
-  // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
-  const [isReloading, setIsReloading] = React.useState(false);
   // 제출 잠금(WD-637) — 버튼을 disabled 대신 aria-disabled 로 잠가 포커스를 지키므로, 진행 중 재제출(입력칸 Enter 연타)은 여기서 무시한다
   const guardInfoSubmit = useSubmitGuard();
 
@@ -131,7 +129,6 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
    * 편집 모드는 닫는다 — 최신 내용을 보기 화면에서 확인한 뒤 다시 「수정」하게 한다.
    */
   const handleReloadLatest = useCallback(async () => {
-    setIsReloading(true);
     try {
       const latest = await queryClient.fetchQuery({
         queryKey: ['datasets', datasetId],
@@ -152,8 +149,6 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
       } else {
         toast.error('최신 내용을 불러오지 못했습니다.');
       }
-    } finally {
-      setIsReloading(false);
     }
   }, [queryClient, datasetId, infoForm]);
 
@@ -343,9 +338,9 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
         open={editConflict}
         onOpenChange={setEditConflict}
         resourceLabel="데이터셋"
-        pending={infoForm.formState.isSubmitting || isReloading}
-        onReload={() => void handleReloadLatest()}
-        onOverwrite={() => void infoForm.handleSubmit((data) => onInfoSubmit(data, true))()}
+        pending={infoForm.formState.isSubmitting}
+        onReload={handleReloadLatest}
+        onOverwrite={() => infoForm.handleSubmit((data) => onInfoSubmit(data, true))()}
       />
     </div>
   );

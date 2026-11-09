@@ -76,6 +76,9 @@ public class GuardedSqlExecutor {
    * 실행 직전 재판정)도 실행에서는 다시 판정하지 않고 토큰에 담긴 바로 그 문자열을 실행한다(판정 = 실행). {@link AnalyticsJudgment} 와 달리 거부는
    * 값이 아니라 판정 시점의 예외(403)라, 이 토큰은 언제나 허용 판정이다.
    *
+   * <p>{@link AnalyticsJudgment} 와 공통 형태로 묶지 않는다(WD-682) — 겹치는 것은 정규화본·자격 두 필드뿐이고, 판정 결과 타입({@link
+   * SqlAccessResult} 대 {@code SqlVerdict}·파싱 오류)과 거부 처리 시점(판정 때 던짐 대 실행 때 던짐)이 달라 묶으면 실행 쪽에 갈래만 는다.
+   *
    * <p>생성자는 이 관문만 부른다 — 바깥에서 판정 없이 실행할 토큰을 만들 수 없게 한다.
    */
   public static final class DatasetQueryJudgment {
@@ -149,6 +152,10 @@ public class GuardedSqlExecutor {
    * 애널리틱스 SQL 판정 결과 — 판정한 정규화본({@link NormalizedSql})과 판정 결과를 함께 들고 다니는 토큰. 차트·대시보드는 거부를 예외가 아니라
    * 값으로 받아 위젯만 denied 로 바꾸고(스펙 §4.2 4행), 통과한 토큰만 {@link #executeJudgedAnalytics} 로 실행한다 — 판정을 두 번
    * 하지 않고, 판정한 바로 그 문자열이 실행된다(판정 = 실행).
+   *
+   * <p>{@link DatasetQueryJudgment} 와 따로 두는 이유(WD-682): 이 토큰은 거부·파싱 실패도 값으로 담아야 해서(위젯 denied, 200 +
+   * error 계약) 결과가 nullable {@code SqlVerdict}·{@code parseError} 이고, 거부 감사·403 을 실행 때 한다 — 언제나 허용인
+   * 데이터셋 토큰과 공통 형태로 묶으면 그쪽에 쓸모없는 상태와 분기가 생긴다.
    *
    * <p>생성자는 이 관문만 부른다 — 바깥에서 "허용" 토큰을 만들어 판정 없이 실행할 수 없게 한다.
    */

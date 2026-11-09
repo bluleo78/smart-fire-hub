@@ -17,6 +17,7 @@ import { createCategories, createDatasetDetail } from '../../factories/dataset.f
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
+import { expectLockedInFlight, holdRequests } from '../../fixtures/hold-api';
 
 const conflictDialog = (page: Page) => page.getByRole('alertdialog', { name: '다른 곳에서 먼저 변경되었습니다' });
 
@@ -81,6 +82,17 @@ async function mockDatasetInfoServer(page: Page) {
       bump();
     },
   };
+}
+
+/** 이 화면을 연 뒤 다른 사용자가 이름을 바꿔, 설명만 고친 저장이 충돌 안내 창을 띄우게 한다. */
+async function openConflictDialog(page: Page, server: Awaited<ReturnType<typeof mockDatasetInfoServer>>) {
+  await page.goto('/data/datasets/1');
+  await expect(infoValue(page, '이름')).toHaveText('테스트 데이터셋');
+  server.otherUserRenames();
+  await page.getByRole('button', { name: '수정' }).click();
+  await page.getByLabel('설명').fill('내 설명');
+  await page.getByRole('button', { name: '저장', exact: true }).click();
+  await expect(conflictDialog(page)).toBeVisible();
 }
 
 test.describe('데이터셋 기본 정보 — 동시 편집 충돌 (WD-575)', () => {
@@ -174,5 +186,91 @@ test.describe('데이터셋 기본 정보 — 동시 편집 충돌 (WD-575)', ()
       '2026-01-01T09:00:01.654321',
     ]);
     await expect(conflictDialog(page)).toBeHidden();
+  });
+});
+
+test.describe('데이터셋 기본 정보 — 충돌 창 진행 중 포커스 유지 (WD-678)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantDatasetPermissions(page);
+  });
+
+  test('Enter 로 「내 변경으로 덮어쓰기」를 누르면 진행 중 포커스가 그 버튼에 남고, 다시 Enter 를 눌러도 PUT 은 한 번만 간다', async ({
+    authenticatedPage: page,
+  }) => {
+    const server = await mockDatasetInfoServer(page);
+    await openConflictDialog(page, server);
+    // 충돌을 낸 첫 PUT 뒤부터 붙잡는다
+    const hold = await holdRequests(page, '/api/v1/datasets/1', 'PUT');
+
+    const overwrite = conflictDialog(page).getByRole('button', { name: '내 변경으로 덮어쓰기' });
+    const cancel = conflictDialog(page).getByRole('button', { name: '계속 편집' });
+    await overwrite.focus();
+    await page.keyboard.press('Enter');
+
+    // 응답 전: disabled 가 아니라 aria-disabled 로 잠겨 포커스가 body 로 떨어지지 않는다
+    await expect.poll(() => hold.count()).toBe(1);
+    await expectLockedInFlight(conflictDialog(page), overwrite);
+
+    // 진행 중 다시 Enter, 「계속 편집」 클릭 — 두 번째 요청도, 창 닫기도 일어나지 않는다
+    await page.keyboard.press('Enter');
+    await cancel.dispatchEvent('click');
+    await expect(conflictDialog(page)).toBeVisible();
+    await expect(overwrite).toBeFocused();
+    // 두 번째 요청이 나갈 틈을 잠깐 준 뒤 센다 — 누른 직후 바로 세면 아직 안 나간 요청을 놓친다
+    await page.waitForTimeout(300);
+    expect(hold.count()).toBe(1);
+
+    // Escape 는 끝나지 않는 요청의 비상구로 창을 닫는다 — 요청은 더 나가지 않는다
+    await page.keyboard.press('Escape');
+    await expect(conflictDialog(page)).toBeHidden();
+    expect(hold.count()).toBe(1);
+
+    hold.release();
+    await expect(page.getByText('데이터셋 정보가 업데이트되었습니다.')).toBeVisible();
+    // 첫 충돌 PUT + 덮어쓰기 PUT 한 번
+    expect(server.puts).toHaveLength(2);
+    expect(server.puts[1]).not.toHaveProperty('expectedUpdatedAt');
+    expect(server.state()).toMatchObject({ name: '테스트 데이터셋', description: '내 설명' });
+  });
+
+  test('덮어쓰기가 500 으로 실패하면 창이 열린 채 남고 포커스도 창 안(누른 버튼)에 남아 다시 누를 수 있다', async ({
+    authenticatedPage: page,
+  }) => {
+    const server = await mockDatasetInfoServer(page);
+    await openConflictDialog(page, server);
+
+    // 덮어쓰기 PUT 은 서버 오류로 실패한다(fail 을 끄면 상태 서버로 넘긴다)
+    let fail = true;
+    let failingPuts = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1',
+      (route) => {
+        if (route.request().method() !== 'PUT' || !fail) return route.fallback();
+        failingPuts += 1;
+        return route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 500, message: '일시적인 서버 오류입니다.' }),
+        });
+      },
+    );
+
+    const overwrite = conflictDialog(page).getByRole('button', { name: '내 변경으로 덮어쓰기' });
+    await overwrite.focus();
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByText('일시적인 서버 오류입니다.')).toBeVisible();
+    expect(failingPuts).toBe(1);
+    // 창은 열린 채, 잠금은 풀리고, 포커스는 누른 버튼에 그대로 있다
+    await expect(conflictDialog(page)).toBeVisible();
+    await expect(overwrite).not.toHaveAttribute('aria-disabled');
+    await expect(overwrite).toBeFocused();
+
+    // 다시 Enter 로 재시도할 수 있다 — 이번엔 상태 서버가 받아 저장된다
+    fail = false;
+    await page.keyboard.press('Enter');
+    await expect(conflictDialog(page)).toBeHidden();
+    await expect(page.getByText('데이터셋 정보가 업데이트되었습니다.')).toBeVisible();
+    expect(server.state()).toMatchObject({ description: '내 설명' });
   });
 });

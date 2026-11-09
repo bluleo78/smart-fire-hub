@@ -21,18 +21,36 @@ public final class TxRecordingInteractiveGate extends InteractiveQueryConcurrenc
    */
   public final List<Boolean> acquireTx = Collections.synchronizedList(new ArrayList<>());
 
+  /**
+   * 허가를 얻는 순간(기록 직후, 실제 대기 전) 부르는 훅. 허가를 기다리는 동안 다른 요청이 커밋한 변경(예: 관리자의 열람자 등급 하향, WD-682)을 스레드 없이
+   * 결정적으로 흉내 낸다. 기본은 아무것도 하지 않는다.
+   */
+  private final Runnable onAcquire;
+
   public TxRecordingInteractiveGate() {
     this(0, 0, 0);
   }
 
   /** 상한을 켠 기록 게이트 — 인자는 {@link InteractiveQueryConcurrencyGate} 생성자와 같다. */
   public TxRecordingInteractiveGate(int maxTotal, int maxPerUser, long waitMs) {
+    this(maxTotal, maxPerUser, waitMs, () -> {});
+  }
+
+  /** 상한을 끈 기록 게이트 + 허가 순간 훅. */
+  public TxRecordingInteractiveGate(Runnable onAcquire) {
+    this(0, 0, 0, onAcquire);
+  }
+
+  private TxRecordingInteractiveGate(
+      int maxTotal, int maxPerUser, long waitMs, Runnable onAcquire) {
     super(maxTotal, maxPerUser, waitMs);
+    this.onAcquire = onAcquire;
   }
 
   @Override
   public AnalyticsQueryConcurrencyGate.Permit acquire(long userId) {
     acquireTx.add(TransactionSynchronizationManager.isActualTransactionActive());
+    onAcquire.run();
     return super.acquire(userId);
   }
 }

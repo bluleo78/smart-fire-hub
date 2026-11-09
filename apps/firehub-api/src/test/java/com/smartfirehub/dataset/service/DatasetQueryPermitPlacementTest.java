@@ -90,6 +90,8 @@ class DatasetQueryPermitPlacementTest {
     when(datasets.findById(anyLong())).thenReturn(Optional.of(mock(DatasetResponse.class)));
     ClearanceResolver resolver = mock(ClearanceResolver.class);
     when(resolver.current()).thenReturn(mock(Clearance.class));
+    // 실행 직전 재판정은 캐시를 건너뛴 자격으로 한다(WD-682).
+    when(resolver.readFresh()).thenReturn(mock(Clearance.class));
     GuardedSqlExecutor executor = mock(GuardedSqlExecutor.class);
     GuardedSqlExecutor.DatasetQueryJudgment judgment =
         mock(GuardedSqlExecutor.DatasetQueryJudgment.class);

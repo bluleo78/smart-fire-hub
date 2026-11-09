@@ -15,7 +15,6 @@ import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.io.IOException;
-import java.net.ServerSocket;
 import java.sql.Types;
 import java.time.Duration;
 import java.util.List;
@@ -217,14 +216,10 @@ class DbExecutorClientTest {
 
   @Test
   void connectionRefused_throwsConnectFailure() throws IOException {
-    int closedPort;
-    try (ServerSocket s = new ServerSocket(0)) {
-      closedPort = s.getLocalPort();
-    }
-
+    // 특권 포트 1 — 임시 포트 범위가 아니라 남이 다시 잡을 일이 없어 거부가 확실하다(WD-685: 방금 닫은 포트는 부하 중 재사용돼 간헐 실패)
     assertThatThrownBy(
             () ->
-                client("http://localhost:" + closedPort, Duration.ofSeconds(5))
+                client("http://127.0.0.1:1", Duration.ofSeconds(5))
                     .executeSql("SELECT 1 FROM dual", List.of()))
         .isInstanceOf(ScriptExecutionException.class)
         .hasMessage("Tibero 실행기에 연결하지 못했습니다.");
@@ -344,11 +339,8 @@ class DbExecutorClientTest {
   /** 연결 거부는 연결 실패 문구로 바뀐다. */
   @Test
   void executeQuery_connectionRefused_throwsConnectFailure() throws IOException {
-    int closedPort;
-    try (ServerSocket socket = new ServerSocket(0)) {
-      closedPort = socket.getLocalPort();
-    }
-    DbExecutorClient client = client("http://localhost:" + closedPort, Duration.ofSeconds(5));
+    // 특권 포트 1 — 임시 포트 범위가 아니라 남이 다시 잡을 일이 없어 거부가 확실하다(WD-685: 방금 닫은 포트는 부하 중 재사용돼 간헐 실패)
+    DbExecutorClient client = client("http://127.0.0.1:1", Duration.ofSeconds(5));
 
     assertThatThrownBy(() -> client.executeQuery("SELECT 1 FROM DUAL", 10))
         .isInstanceOf(ScriptExecutionException.class)
