@@ -3,6 +3,7 @@ package com.smartfirehub.global.platformdb.tibero;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.smartfirehub.global.platformdb.ConditionalOnTiberoPlatformDb;
+import com.smartfirehub.global.platformdb.PlatformLockWaitTimeoutException;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
@@ -75,7 +76,7 @@ public class TiberoPlatformLocks implements PlatformLocks, InitializingBean {
   /** 트랜잭션 잠금 대기 상한(초) — DBMS_LOCK.MAXWAIT(32767)는 "끝없이 기다림"이다. PG 의 xact 잠금과 같은 무기한 대기. */
   static final int XACT_TIMEOUT_SECONDS = 32767;
 
-  /** 시도형 트랜잭션 잠금({@link #tryXactLock})의 재시도 간격(밀리초) — PG 구현과 같은 50ms. */
+  /** 시도형 트랜잭션 잠금({@link #tryXactLock(String, Duration)})의 재시도 간격(밀리초) — PG 구현과 같은 50ms. */
   static final long TRY_XACT_POLL_MILLIS = 50;
 
   /** 배타 모드(X_MODE). */
@@ -181,6 +182,66 @@ public class TiberoPlatformLocks implements PlatformLocks, InitializingBean {
     } finally {
       DataSourceUtils.releaseConnection(connection, dataSource);
     }
+  }
+
+  /**
+   * 문자열 키 트랜잭션 잠금의 기다리지 않는 시도형(WD-644) — 호출자 트랜잭션 커넥션에서 커밋 해제형 요청을 timeout 0 으로 <b>한 번</b>만 한다. 커밋
+   * 뒤 PYTHON 읽기 동기화 실행기가 처음 몇 번에 쓴다(바쁜 테넌트가 단일 스레드를 붙잡지 않게). 못 잡아도 호출자 트랜잭션은 그대로다(반환값 1 은 예외가 아니다).
+   * 메시지에는 키 대신 id 만 싣는다({@link #xactLock(String)} 설명 참고).
+   *
+   * @return 잡았으면(0) 또는 이 트랜잭션이 이미 쥐었으면(4) true, 다른 세션이 쥐고 있으면(1) false
+   */
+  @Override
+  public boolean tryXactLock(String key) {
+    int id = lockId(requireSchema(), key);
+    requireBoundTransaction(id);
+    Connection connection = DataSourceUtils.getConnection(dataSource);
+    try {
+      return checkTryResult(request(connection, REQUEST_XACT_SQL, id, 0));
+    } catch (SQLException e) {
+      throw translateXact(e);
+    } finally {
+      DataSourceUtils.releaseConnection(connection, dataSource);
+    }
+  }
+
+  /**
+   * 문자열 키 트랜잭션 잠금의 묶인 대기(WD-644) — DBMS_LOCK 의 대기 줄에 서서 최대 {@code timeout} 기다린다. 시도형을 되풀이하는 {@link
+   * #tryXactLock(String, Duration)} 과 달리 대기 줄에 서므로, 잠금이 쉴 새 없이 쓰이는 테넌트에서도 굶지 않는다(커밋 뒤 실행기가 시도형 몇 번
+   * 뒤에 이 방식으로 격상한다).
+   *
+   * <p>DBMS_LOCK 의 timeout 인자는 초 단위 정수다 — {@link #boundedWaitSeconds} 로 올림한다(1초 미만은 1초). 시간 초과(반환값
+   * 1)는 SQLState 가 없으므로 {@link PlatformLockWaitTimeoutException} 으로 던져 호출자가 "바쁨" 으로 가르게 한다(PG 의
+   * 55P03 과 같은 자리). 교착(2)·잘못된 호출은 {@link #checkXactResult} 규칙 그대로다. 메시지에는 키 대신 id 만 싣는다.
+   */
+  @Override
+  public void xactLock(String key, Duration timeout) {
+    int id = lockId(requireSchema(), key);
+    requireBoundTransaction(id);
+    Connection connection = DataSourceUtils.getConnection(dataSource);
+    int code;
+    try {
+      code = request(connection, REQUEST_XACT_SQL, id, boundedWaitSeconds(timeout));
+    } catch (SQLException e) {
+      throw translateXact(e);
+    } finally {
+      DataSourceUtils.releaseConnection(connection, dataSource);
+    }
+    if (code == 1) {
+      throw new PlatformLockWaitTimeoutException(
+          "Tibero 트랜잭션 잠금 대기 시간 초과(id " + id + ", 제한 " + timeout + ")");
+    }
+    checkXactResult(code);
+  }
+
+  /**
+   * 묶인 대기 시간 → DBMS_LOCK timeout(초). 초 단위 정수만 받으므로 올림하고(1초 미만 → 1초, 0 이하도 1초 — 0 이면 시도형이 되어 줄에 서지
+   * 않는다), 무기한 대기 값({@link #XACT_TIMEOUT_SECONDS})보다 작게 묶는다.
+   */
+  static int boundedWaitSeconds(Duration timeout) {
+    long millis = Math.max(1, timeout.toMillis());
+    long seconds = (millis + 999) / 1000;
+    return (int) Math.min(seconds, XACT_TIMEOUT_SECONDS - 1);
   }
 
   /**

@@ -19,9 +19,11 @@ import com.smartfirehub.securitylevel.pythonread.PythonReadGrantBackend.NarrowRe
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -86,6 +88,12 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
   private final SecurityLevelRepository levelRepository;
   private final TransactionTemplate requiresNew;
 
+  /**
+   * 커밋 뒤 묶음 동기화에서 테이블 하나를 감싸는 PG 메타 savepoint 템플릿(PROPAGATION_NESTED, WD-644 리뷰) — 테이블 하나의 메타 읽기
+   * 실패(등급· 저장소·데이터셋 행)가 묶음 트랜잭션을 aborted 로 만들어 뒤따르는 테이블까지 실패시키지 않게 한다.
+   */
+  private final TransactionTemplate tableSavepoint;
+
   /** 테넌트 동기화 직렬화 잠금 — 플랫폼 잠금 추상화(WD-486). */
   private final PlatformLocks locks;
 
@@ -111,12 +119,14 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
     this.levelRepository = levelRepository;
     this.requiresNew = new TransactionTemplate(txManager);
     this.requiresNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    this.tableSavepoint = new TransactionTemplate(txManager);
+    this.tableSavepoint.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
   }
 
   /** 현재 테넌트 전체 재동기화. 실패는 예외(호출부가 로그/실패를 정한다). */
   @Override
   public PythonReadGrantSync.SyncResult syncTenant() {
-    return requiresNew.execute(status -> syncInTx(null, null));
+    return lockedSync(null, null);
   }
 
   /**
@@ -187,6 +197,7 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
     if (table == null) {
       return NarrowResult.confirmed(exposed);
     }
+    // 커밋 직전 경로라 WD-644 의 묶인 대기(lock_timeout — 시간 초과가 발행 트랜잭션을 깨뜨린다)가 아니라 WD-624 의 폴링형 시도를 쓴다.
     if (!locks.tryXactLock(
         PythonReadGrantSync.syncLockKey(tenantId), PythonReadGrantSync.NARROW_LOCK_WAIT)) {
       log.warn("Tibero 데이터셋 등급 좁히기: 테넌트 동기화 잠금을 얻지 못했다(tenant={} dataset={})", tenantId, datasetId);
@@ -247,7 +258,88 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
 
   /** 테이블 하나만 재동기화(생성·클론 직후, 데이터셋 등급 변경). 이름은 소문자 메타데이터 이름이다. */
   public PythonReadGrantSync.SyncResult syncTable(String tableName) {
-    return requiresNew.execute(status -> syncInTx(tableName, null));
+    return lockedSync(tableName, null);
+  }
+
+  /**
+   * 테이블 여러 개를 테넌트 동기화 잠금 <b>한 번</b> 안에서 차례로 동기화한다(WD-644 리뷰) — 커밋 뒤 실행기 전용. 잠금 대기가 0 이면 시도만, 양수면
+   * 그만큼 묶인 대기로 잡는다. 잠금이 바쁘면 아무 일도 하지 않고 곧바로 트랜잭션을 끝내(커넥션 반납) BUSY 를 돌려준다. 실행기가 나중에 다시 부른다.
+   *
+   * <p><b>테이블마다 격리(WD-644 리뷰).</b> Tibero GRANT/REVOKE 는 DDL 이라 문장마다 곧바로 반영되지만, 등급·저장소·데이터셋 행은 PG
+   * 메타 트랜잭션에서 읽는다. 테이블 B 의 읽기(메타·Tibero 카탈로그) 실패가 묶음 밖으로 새면 B 뒤의 테이블은 맞추지 못하고, 이미 회수한 A 까지 묶음째 "버림"
+   * 으로 세였다. 그래서 테이블 하나의 동기화를 PG 메타 savepoint 로 감싸 실패하면 그 테이블만 되돌리고(메타 트랜잭션은 계속 쓸 수 있다) 다음 테이블로
+   * 넘어간다. 실패한 테이블만 결과에 실어 실행기가 그것만 다시 하거나 버린다. 방식 선택 이유는 PG 판 {@link
+   * PythonReadGrantSync#syncTablesWith} 와 같다.
+   *
+   * @return 잠금이 바빠 건너뛰었으면 BUSY, 아니면 실패한 테이블 → 예외(없으면 빈 맵)
+   */
+  @Override
+  public BatchResult syncTablesWith(List<String> tableNames, Duration lockWait) {
+    return PythonReadGrantBackend.withTenantSyncLock(
+            requiresNew,
+            lockOps(),
+            PythonReadGrantBackend.LockMode.forExecutorWait(lockWait),
+            lockWait,
+            () -> {
+              Map<String, RuntimeException> failed = new LinkedHashMap<>();
+              for (String table : PythonReadGrantBackend.batchOrder(tableNames)) {
+                try {
+                  // 실패하면 savepoint 가 이 테이블의 메타 변경만 되돌리고 예외를 그대로 던진다.
+                  tableSavepoint.executeWithoutResult(status -> syncInTx(table, null));
+                } catch (RuntimeException e) {
+                  failed.put(table, e);
+                }
+              }
+              return BatchResult.done(failed);
+            })
+        .orElse(BatchResult.BUSY);
+  }
+
+  /**
+   * 데이터셋 등급 변경의 커밋 뒤 실행기 경로(WD-624 리스너 → WD-644 실행기) — 데이터셋들의 테이블을 찾아 {@link #syncTablesWith} 로 잠금
+   * 한 번에 맞춘다. 공통부는 {@link PythonReadGrantBackend#syncDatasetTablesWith}.
+   */
+  @Override
+  public BatchResult syncDatasetsWith(List<String> datasetIds, Duration lockWait) {
+    return PythonReadGrantBackend.syncDatasetTablesWith(
+        requiresNew, datasetRepository, datasetIds, lockWait, this::syncTablesWith);
+  }
+
+  /** 잠금을 기다려 잡은 뒤 동기화한다 — 커밋 뒤 실행기를 뺀 모든 경로(전체·테이블 하나·실행 준비)의 공통 진입점. */
+  private PythonReadGrantSync.SyncResult lockedSync(String onlyTable, Integer runRank) {
+    return PythonReadGrantBackend.withTenantSyncLock(
+            requiresNew,
+            lockOps(),
+            PythonReadGrantBackend.LockMode.WAIT,
+            null,
+            () -> syncInTx(onlyTable, runRank))
+        .orElseThrow();
+  }
+
+  /**
+   * 테넌트 동기화 잠금 원시 동작(WD-644) — 플랫폼 DB 의 잠금({@link PlatformLocks}, 현재 플랫폼 트랜잭션)이다. 플랫폼이 PG 면 PG
+   * advisory({@code pg_try_advisory_xact_lock}·{@code lock_timeout} 묶인 대기), Tibero 면 {@code
+   * DBMS_LOCK}(timeout 0 시도·초 단위 묶인 대기)로 잡힌다(WD-493 저장소별 잠금). PG 판(lockTenantSync, 데이터 저장소)과는 다른
+   * 저장소의 잠금이지만 테넌트마다 백엔드는 하나라 겹치지 않는다. 대기·시도·묶인 대기 선택과 시간 초과 판정은 {@link
+   * PythonReadGrantBackend#withTenantSyncLock} 한곳에서 한다.
+   */
+  private PythonReadGrantBackend.SyncLockOps lockOps() {
+    return new PythonReadGrantBackend.SyncLockOps() {
+      @Override
+      public void lock(String key) {
+        locks.xactLock(key);
+      }
+
+      @Override
+      public boolean tryLock(String key) {
+        return locks.tryXactLock(key);
+      }
+
+      @Override
+      public void lock(String key, Duration timeout) {
+        locks.xactLock(key, timeout);
+      }
+    };
   }
 
   /** 데이터셋 하나 — 테이블 이름을 찾아 syncTable. 물리 테이블이 없는 데이터셋은 할 일이 없다. */
@@ -264,7 +356,7 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
   @Override
   public void syncTableAfterCommit(String tableName) {
     PythonReadGrantBackend.scheduleTableSync(
-        tableName, log, "Tibero ", afterCommitExecutor, this::syncTable);
+        tableName, log, "Tibero ", afterCommitExecutor, this::syncTable, this::syncTablesWith);
   }
 
   /**
@@ -278,7 +370,7 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
     return PythonReadRunGate.prepare(
         runAs,
         readRank,
-        () -> requiresNew.execute(status -> syncInTx(null, readRank)),
+        () -> lockedSync(null, readRank),
         slot -> DataStoreAccountRole.forSlot(slot).usernameFor(runAs.tenantId()));
   }
 
@@ -289,15 +381,14 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
   private record Applied(Set<String> changedTables, Map<String, Set<String>> revokeFailed) {}
 
   /**
-   * 트랜잭션(=테넌트 GUC) 안에서 호출된다.
+   * 트랜잭션(=테넌트 GUC) 안에서, 호출자가 그 트랜잭션에 테넌트 동기화 잠금을 <b>잡은 뒤</b> 호출된다({@link #lockedSync}·{@link
+   * #syncTablesWith}). 잠금을 어떻게 잡을지(대기·시도·묶인 대기)는 호출자 몫이라 이 메서드는 언제나 끝까지 동기화한다(WD-644).
    *
    * @param onlyTable null 이면 테넌트 전체, 아니면 그 테이블만(소문자 메타데이터 이름)
    * @param runRank null 이면 슬롯 계정 전부, 아니면 그 자격 rank 의 실행 슬롯 계정 하나만(실행 준비)
    */
   private PythonReadGrantSync.SyncResult syncInTx(String onlyTable, Integer runRank) {
     long tenantId = TenantContext.require("Tibero PYTHON 읽기 권한 동기화");
-    // 같은 테넌트 동기화 직렬화(트랜잭션 종료 시 자동 해제) — 플랫폼에서 잡는다. 테넌트마다 백엔드는 하나라 PG 판(데이터 저장소)과 겹치지 않는다(WD-493).
-    locks.xactLock(PythonReadGrantSync.syncLockKey(tenantId));
     return applyInTx(tenantId, onlyTable, runRank, false);
   }
 

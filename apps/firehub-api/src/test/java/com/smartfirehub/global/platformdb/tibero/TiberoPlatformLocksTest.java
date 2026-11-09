@@ -12,6 +12,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.global.platformdb.PlatformLockWaitTimeoutException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -270,6 +271,79 @@ class TiberoPlatformLocksTest {
     } finally {
       TransactionSynchronizationManager.unbindResource(ds);
     }
+  }
+
+  /**
+   * WD-644: 기다리지 않는 시도형은 호출자 트랜잭션 커넥션에서 커밋 해제형 요청을 timeout 0 으로 <b>한 번</b>만 한다 — 다른 세션이 쥐고 있으면(1)
+   * 다시 시도하지 않고 곧바로 false, 잡히면(0) true. 되풀이하면 커밋 뒤 실행기의 단일 스레드를 붙잡는다(변이: 상한 있는 시도형에 위임).
+   */
+  @Test
+  void tryXactLockWithoutWaitRequestsOnce() throws Exception {
+    DataSource ds = mock(DataSource.class);
+    var locks = initialized(ds);
+    Connection txConn = mock(Connection.class);
+    CallableStatement request = mock(CallableStatement.class);
+    when(txConn.prepareCall(contains("release_on_commit => TRUE"))).thenReturn(request);
+    when(request.getInt(3)).thenReturn(1, 0);
+    TransactionSynchronizationManager.bindResource(ds, new ConnectionHolder(txConn));
+    try {
+      assertThat(locks.tryXactLock("k")).as("바쁘면 한 번만 시도하고 false").isFalse();
+      verify(request, times(1)).setInt(2, 0);
+      assertThat(locks.tryXactLock("k")).isTrue();
+      verify(request, times(2)).setInt(2, 0);
+      verify(txConn, never()).prepareCall(contains("release_on_commit => FALSE"));
+    } finally {
+      TransactionSynchronizationManager.unbindResource(ds);
+    }
+  }
+
+  /**
+   * WD-644: 묶인 대기는 DBMS_LOCK 의 대기 줄에 초 단위(올림) timeout 으로 한 번 선다 — 시간 초과(1)는 {@link
+   * PlatformLockWaitTimeoutException}(호출자가 "바쁨" 으로 가르는 표시), 교착(2)은 그 표시가 아닌 일반 잠금 실패, 잡히면(0) 예외 없음.
+   */
+  @Test
+  void boundedXactLockWaitsInQueueAndSignalsTimeout() throws Exception {
+    DataSource ds = mock(DataSource.class);
+    var locks = initialized(ds);
+    Connection txConn = mock(Connection.class);
+    CallableStatement request = mock(CallableStatement.class);
+    when(txConn.prepareCall(contains("release_on_commit => TRUE"))).thenReturn(request);
+    when(request.getInt(3)).thenReturn(1, 2, 0);
+    TransactionSynchronizationManager.bindResource(ds, new ConnectionHolder(txConn));
+    try {
+      assertThatThrownBy(() -> locks.xactLock("k", Duration.ofSeconds(5)))
+          .isInstanceOf(PlatformLockWaitTimeoutException.class);
+      verify(request).setInt(2, 5);
+      assertThatThrownBy(() -> locks.xactLock("k", Duration.ofMillis(1500)))
+          .isInstanceOf(CannotAcquireLockException.class)
+          .isNotInstanceOf(PlatformLockWaitTimeoutException.class);
+      verify(request).setInt(2, 2);
+      assertThatCode(() -> locks.xactLock("k", Duration.ofMillis(200))).doesNotThrowAnyException();
+      verify(request).setInt(2, 1);
+    } finally {
+      TransactionSynchronizationManager.unbindResource(ds);
+    }
+  }
+
+  /** 묶인 대기 → DBMS_LOCK 초: 올림, 1초 미만·0 이하는 1초(0 이면 시도형이 된다), 무기한 값보다 작게. */
+  @Test
+  void boundedWaitSecondsRoundsUpAndStaysFinite() {
+    assertThat(TiberoPlatformLocks.boundedWaitSeconds(Duration.ZERO)).isEqualTo(1);
+    assertThat(TiberoPlatformLocks.boundedWaitSeconds(Duration.ofMillis(1))).isEqualTo(1);
+    assertThat(TiberoPlatformLocks.boundedWaitSeconds(Duration.ofMillis(1000))).isEqualTo(1);
+    assertThat(TiberoPlatformLocks.boundedWaitSeconds(Duration.ofMillis(1001))).isEqualTo(2);
+    assertThat(TiberoPlatformLocks.boundedWaitSeconds(Duration.ofSeconds(5))).isEqualTo(5);
+    assertThat(TiberoPlatformLocks.boundedWaitSeconds(Duration.ofDays(30)))
+        .isEqualTo(TiberoPlatformLocks.XACT_TIMEOUT_SECONDS - 1);
+  }
+
+  /** WD-644 시도형·묶인 대기도 트랜잭션에 묶이지 않은 풀이면 거절한다(자동 커밋 커넥션에서 잡혀 곧바로 풀리는 것을 막는다). */
+  @Test
+  void tryAndBoundedXactLockRejectUnboundDataSource() throws Exception {
+    var locks = initialized(mock(DataSource.class));
+    assertThatThrownBy(() -> locks.tryXactLock("k")).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> locks.xactLock("k", Duration.ofSeconds(1)))
+        .isInstanceOf(IllegalStateException.class);
   }
 
   /** 기동 확인을 거친(스키마를 읽은) 잠금 — 확인 키는 비어 있다고(0) 응답하게 한다. */

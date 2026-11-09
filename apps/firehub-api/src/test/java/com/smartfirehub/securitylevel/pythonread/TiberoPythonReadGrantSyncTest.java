@@ -37,6 +37,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -109,6 +110,9 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
 
   /** REVOKE 가 "성공" 해도 사라지지 않는 "TABLE|GRANTEE" 권한 — 재확인이 남은 권한을 잡는지 본다(WD-679). */
   private final Set<String> stickyGrants = new TreeSet<>();
+
+  /** 이 물리 테이블의 슬롯 GRANT 조회(LIKE)를 실패시킨다(WD-644 리뷰 — 묶음 안 테이블 하나의 읽기 실패 흉내). null 이면 실패 없음. */
+  private String failGrantLookupFor;
 
   private TenantDataStoreRow storeRow;
   private List<StoredAccount> accounts;
@@ -241,6 +245,12 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
     } else if (sql.contains("FROM USER_TAB_PRIVS_MADE")) {
       // 바인드 1: GENIA\_T1\_S% (ESCAPE '\' 로 해석하는 진짜 LIKE), 그 뒤(선택) = 테이블 IN 목록(WD-679).
       assertThat(sql).as("LIKE 는 ESCAPE '\\' 와 함께여야 한다").contains("ESCAPE '\\'");
+      if (failGrantLookupFor != null
+          && binds.size() >= 2
+          && failGrantLookupFor.equals(binds.get(1))) {
+        // withDdl 이 SQLException 을 감싸 내는 것과 같은 Spring 일시 오류(연결 끊김 흉내).
+        throw new org.springframework.dao.TransientDataAccessResourceException("슬롯 GRANT 조회 실패");
+      }
       Pattern like = likeToRegex(binds.get(0));
       slotGrantRows(binds, 1, g -> like.matcher(g).matches(), rows);
     } else {
@@ -367,6 +377,89 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
         + "\" FROM \""
         + slot(k)
         + "\"";
+  }
+
+  /** 커밋 뒤 실행기의 재시도형 시도로 테이블 묶음을 한 번 돌린다(묶인 대기 5초 — 앞선 동기화와 잠금이 겹쳐도 BUSY 가 되지 않게). */
+  private PythonReadSyncExecutor.AttemptResult runBatch(
+      TiberoPythonReadGrantSync backend, List<String> tables) {
+    return PythonReadGrantBackend.retryableAttempt(
+            DEFAULT_TEST_TENANT_ID,
+            org.slf4j.LoggerFactory.getLogger(TiberoPythonReadGrantSyncTest.class),
+            "Tibero ",
+            backend::syncTablesWith)
+        .run(tables, Duration.ofSeconds(5));
+  }
+
+  /**
+   * WD-644 리뷰: 묶음 안 테이블 b 의 슬롯 GRANT 조회가 실패해도 a·c 의 회수는 그대로 적용되고, 결과에는 b 만 일시 실패로 실린다(실행기가 b 만 다시
+   * 한다). 테이블별 격리를 지우면 b 의 예외가 묶음 밖으로 새어 b 뒤의 c 는 맞추지 못하고 묶음 전체가 실패한다(변이).
+   */
+  @Test
+  void syncTablesWith_grantLookupFailureOnOneTable_keepsOthers_andReportsOnlyThatTable() {
+    String a = table("a", "민감");
+    String b = table("b", "민감");
+    String c = table("c", "민감");
+    sync.syncTenant();
+    grants.add(a.toUpperCase() + "|" + slot(1));
+    grants.add(b.toUpperCase() + "|" + slot(1));
+    grants.add(c.toUpperCase() + "|" + slot(1));
+    executed.clear();
+    failGrantLookupFor = b.toUpperCase();
+
+    PythonReadSyncExecutor.AttemptResult result = runBatch(sync, List.of(c, b, a));
+
+    assertThat(result)
+        .as("b 만 실패(일시) — a·c 는 끝났다")
+        .isEqualTo(new PythonReadSyncExecutor.PartialFailure(List.of(b), List.of()));
+    assertThat(slotsOf(a)).isEqualTo(range(3, 10));
+    assertThat(slotsOf(c)).as("b 뒤의 c 도 맞췄다").isEqualTo(range(3, 10));
+    assertThat(slotsOf(b)).as("b 는 이번에 건드리지 못했다").contains(1);
+    assertThat(executed).containsExactlyInAnyOrder(revokeSql(a, 1), revokeSql(c, 1));
+  }
+
+  /**
+   * WD-644 리뷰: 테이블 b 의 PG 메타 읽기(데이터셋 행)가 문장 오류로 실패해 메타 트랜잭션이 aborted 가 돼도, savepoint 가 b 만 되돌려 뒤따르는
+   * c 의 메타 읽기·회수가 이어지고 묶음은 커밋된다. 결과에는 b 만 영구 실패로 실린다. 테이블별 savepoint 를 지우면 c 의 읽기가 「current
+   * transaction is aborted」 로 실패하고 커밋도 실패해 묶음 전체가 실패한다(변이).
+   */
+  @Test
+  void syncTablesWith_metaReadFailureOnOneTable_doesNotAbortTheBatch() {
+    String a = table("a", "민감");
+    String b = table("b", "민감");
+    String c = table("c", "민감");
+    sync.syncTenant();
+    grants.add(a.toUpperCase() + "|" + slot(1));
+    grants.add(c.toUpperCase() + "|" + slot(1));
+    executed.clear();
+    com.smartfirehub.dataset.repository.DatasetRepository failingForB =
+        mock(com.smartfirehub.dataset.repository.DatasetRepository.class);
+    when(failingForB.findTableLevels(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            inv -> {
+              String only = inv.getArgument(0);
+              if (b.equals(only)) {
+                dsl.execute("select 1/0"); // PG 문장 오류 — 메타 트랜잭션을 aborted 로 만든다
+              }
+              return datasetRepository.findTableLevels(only);
+            });
+    TiberoPythonReadGrantSync isolated =
+        new TiberoPythonReadGrantSync(
+            failingForB,
+            connections,
+            repository,
+            levelRepository,
+            new PostgresPlatformLocks(dsl),
+            txManager,
+            syncExecutor);
+
+    PythonReadSyncExecutor.AttemptResult result = runBatch(isolated, List.of(a, b, c));
+
+    assertThat(result)
+        .as("b 만 실패(영구) — a·c 는 끝났다")
+        .isEqualTo(new PythonReadSyncExecutor.PartialFailure(List.of(), List.of(b)));
+    assertThat(slotsOf(a)).isEqualTo(range(3, 10));
+    assertThat(slotsOf(c)).as("b 뒤의 c 도 맞췄다").isEqualTo(range(3, 10));
+    assertThat(executed).containsExactlyInAnyOrder(revokeSql(a, 1), revokeSql(c, 1));
   }
 
   /** 위치 p 등급이면 슬롯 p..10 이 SELECT 를 받고, 허용 목록 등급은 아무도 못 받는다. 정확한 문장 집합을 고정한다. */

@@ -56,10 +56,27 @@ class PythonReadGrantListenerTest {
     }
   }
 
+  /**
+   * 실행기에 일반 작업 하나를 넣는다(테스트용) — WD-644 실행기에는 Runnable 제출 API 가 없으므로, 겹치지 않는 그룹의 재시도형 작업으로 넣고 곧바로
+   * DONE 을 돌려준다. 실행기를 막아 "커밋 뒤 단계가 아직 안 돈" 창을 고정하는 데 쓴다.
+   */
+  private boolean submitBlocking(Runnable work) {
+    return executor.submitRetryable(
+        "test-block-" + BLOCK_SEQ.incrementAndGet(),
+        "block",
+        (items, lockWait) -> {
+          work.run();
+          return PythonReadSyncExecutor.Outcome.DONE;
+        });
+  }
+
+  private static final java.util.concurrent.atomic.AtomicInteger BLOCK_SEQ =
+      new java.util.concurrent.atomic.AtomicInteger();
+
   /** 실행기를 막는 작업을 넣고 풀어 줄 래치를 돌려준다. */
   private CountDownLatch block() {
     CountDownLatch release = new CountDownLatch(1);
-    executor.submit(
+    submitBlocking(
         () -> {
           try {
             release.await(10, TimeUnit.SECONDS);
@@ -140,7 +157,7 @@ class PythonReadGrantListenerTest {
     executor = new PythonReadSyncExecutor(1);
     listener = new PythonReadGrantListener(grants, executor);
     CountDownLatch release = block(); // 워커 점유
-    executor.submit(() -> {}); // 큐(1) 점유
+    submitBlocking(() -> {}); // 큐(1) 점유
     listener.onLevelsChanged(LEVELS); // 버려진다
     release.countDown();
     drain();
@@ -278,20 +295,45 @@ class PythonReadGrantListenerTest {
     assertThatCode(() -> listener.narrowDatasetBeforeCommit(DATASET)).doesNotThrowAnyException();
   }
 
-  /** 데이터셋 등급 변경의 넓히기(테이블 재동기화)는 실행기에서, 이벤트 테넌트로 돈다. */
+  /**
+   * 데이터셋 등급 변경의 넓히기(테이블 재동기화)는 실행기에서, 이벤트 테넌트로 돈다 — WD-644 재시도형 경로라 처음에는 시도형 잠금(대기 0)으로 부르고, 바쁘면
+   * (BUSY) 다시 부른다. 변이: 대기형으로 올리면(잠금 대기 값을 무시) 바쁨을 돌려줄 길이 없어 두 번째 호출이 없다.
+   */
   @Test
-  void datasetAfterCommit_queuesTableSyncUnderEventTenant() throws Exception {
+  void datasetAfterCommit_queuesRetryableSyncUnderEventTenant() throws Exception {
     AtomicInteger seenTenant = new AtomicInteger(-1);
+    AtomicInteger calls = new AtomicInteger();
+    List<Duration> waits = new java.util.concurrent.CopyOnWriteArrayList<>();
     doAnswer(
             inv -> {
               seenTenant.set((int) TenantContext.require("t"));
-              return null;
+              waits.add(inv.getArgument(1));
+              // 첫 시도는 잠금이 바빴다
+              return calls.incrementAndGet() > 1
+                  ? PythonReadGrantBackend.BatchResult.done(java.util.Map.of())
+                  : PythonReadGrantBackend.BatchResult.BUSY;
             })
         .when(grants)
-        .syncDataset(42L);
+        .syncDatasetsWith(any(), any());
     listener.onDatasetLevelChanged(DATASET);
     drain();
-    verify(grants).syncDataset(42L);
+    verify(grants, times(2)).syncDatasetsWith(List.of("42"), waits.get(0));
+    assertThat(waits.get(0)).isZero();
     assertThat(seenTenant.get()).isEqualTo((int) TENANT);
+  }
+
+  /** 실행기가 막혀 있는 동안 같은 테넌트의 데이터셋 등급 변경들은 한 작업으로 모여 한 번에 동기화된다(WD-644 테넌트 묶음). */
+  @Test
+  void datasetAfterCommit_sameTenantChanges_areBatched() throws Exception {
+    when(grants.syncDatasetsWith(any(), any()))
+        .thenReturn(PythonReadGrantBackend.BatchResult.done(java.util.Map.of()));
+    CountDownLatch release = block();
+    listener.onDatasetLevelChanged(DATASET);
+    listener.onDatasetLevelChanged(
+        new DatasetSecurityLevelChangedEvent(
+            TENANT, 43L, 1L, 3L, DatasetSecurityLevelChangedEvent.Cause.AUTO_RAISE));
+    release.countDown();
+    drain();
+    verify(grants, times(1)).syncDatasetsWith(List.of("42", "43"), Duration.ZERO);
   }
 }

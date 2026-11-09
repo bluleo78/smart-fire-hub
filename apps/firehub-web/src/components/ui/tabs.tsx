@@ -82,9 +82,10 @@ function TabsContent({
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
-      // 탭 패널은 Radix 가 tabIndex=0 을 줘 Tab 으로 닿으므로, 키보드 포커스가 보이게 링을 그린다(WD-514, WCAG 2.4.7)
+      // 탭 패널은 Radix 가 tabIndex=0 을 줘 Tab 으로 닿으므로, 키보드 포커스가 보이게 링을 그린다(WD-514, WCAG 2.4.7).
+      // 링은 불투명 ring 토큰 — 알파(/50)는 대비 2.0:1 로 SC 1.4.11 위반이라 알파 게이트가 막는다(WD-668)
       className={cn(
-        "flex-1 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        "flex-1 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring",
         className
       )}
       {...props}

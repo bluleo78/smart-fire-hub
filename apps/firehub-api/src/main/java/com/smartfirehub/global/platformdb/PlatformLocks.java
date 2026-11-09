@@ -20,6 +20,31 @@ public interface PlatformLocks extends SessionLocks {
    */
   void xactLock(String key);
 
+  /**
+   * {@link #xactLock(String)} 의 시도형 — 현재 Spring 트랜잭션에서 같은 키 공간의 트랜잭션 범위 잠금을 <b>기다리지 않고</b> 시도한다.
+   * 잡으면 커밋·롤백 때 풀린다.
+   *
+   * <p>왜(WD-644): 커밋 뒤 PYTHON 읽기 권한 동기화는 단일 실행기에서 돈다. 한 테넌트의 잠금을 기다리면 그 뒤에 줄 선 다른 테넌트의 동기화가 모두
+   * 멈추므로, 그 경로만 시도형으로 잡고 바쁘면 나중에 다시 시도한다. 모든 구현은 즉시 반환해야 한다.
+   *
+   * <p>주의: PG 의 시도형은 다른 트랜잭션이 쥐고 있을 때뿐 아니라 <b>기다리는 트랜잭션이 줄에 있을 때도</b> 실패한다. 그래서 시도만 되풀이하면 잠금이 쉴 새
+   * 없이 쓰이는 동안 끝내 잡지 못할 수 있다 — 그런 호출자는 몇 번 뒤 {@link #xactLock(String, Duration)} 으로 줄에 선다.
+   *
+   * @return 잡았으면 true, 다른 트랜잭션이 쥐고 있거나 기다리는 트랜잭션이 있으면 false
+   */
+  boolean tryXactLock(String key);
+
+  /**
+   * {@link #xactLock(String)} 과 같되 최대 {@code timeout} 만 기다린다(WD-644) — 잠금 대기 줄에 서므로 시도형처럼 굶지 않고, 대기
+   * 시간은 묶인다. 대기 제한은 이 잠금 대기에만 걸리고, 잡은 뒤의 문장에는 남지 않는다.
+   *
+   * <p>시간을 넘기면 예외를 던진다 — PG 는 SQLState {@code 55P03}(lock_not_available)의 SQLException 이 원인 사슬에 있고
+   * 현재 트랜잭션은 중단된다. Tibero({@code DBMS_LOCK})는 {@link PlatformLockWaitTimeoutException} 이다(WD-493
+   * 이후, 트랜잭션은 깨지지 않지만 호출자는 같은 방식으로 트랜잭션을 끝낸다). 어느 쪽이든 호출자는 트랜잭션을 끝내고 다시 시도한다. 대기 길이의 단위는 구현마다 다르다 —
+   * Tibero 는 초 단위 정수라 1초 미만은 1초로 올린다.
+   */
+  void xactLock(String key, Duration timeout);
+
   /** 현재 Spring 트랜잭션에서 정수 키로 트랜잭션 범위 잠금을 건다. 문자열 키와 해시 공간이 달라 서로 섞이지 않는다(PG 기준). */
   void xactLock(long key);
 

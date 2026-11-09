@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# 전체 회귀(web E2E 전체 → api gradle test) — pre-push 가 부르고, 워크트리에서 push 전에 직접 돌려도 된다(`pnpm test:full`).
+# 전체 회귀(web 단위 테스트 → web E2E 전체 → api gradle test) — pre-push 가 부르고, 워크트리에서 push 전에 직접 돌려도 된다(`pnpm test:full`).
 # (WD-459, smart-workplace WP-446·WP-1208 이식)
 # 바뀐 곳(origin/main 기준)에 따라 단계를 줄인다(gate-scope.sh): firehub-web 만 → web E2E 만(gradle 건너뜀), 그 밖은 전체.
 # 끝까지 통과하면 지금 커밋의 트리 해시를 「검증 완료 트리」로 그 범위와 함께 기록한다.
@@ -42,8 +42,8 @@ else
   GATE_SCOPE=full
 fi
 case "$GATE_SCOPE" in
-  full) STAGES="web E2E · api gradle" ;;
-  web) STAGES="web E2E (api 변경 없음 — gradle 건너뜀)" ;;
+  full) STAGES="web vitest · web E2E · api gradle" ;;
+  web) STAGES="web vitest · web E2E (api 변경 없음 — gradle 건너뜀)" ;;
   *) echo "[full-regression] 알 수 없는 범위 '$GATE_SCOPE' — full|web" >&2; exit 1 ;;
 esac
 export GATE_SCOPE
@@ -63,6 +63,9 @@ else
     FLAKY_LOG="$(cd "$(git rev-parse --git-common-dir)" && pwd)/firehub-e2e-flaky.tsv"
     REPORT_JSON="$(pwd)/test-results/e2e-report.json"
     rm -f "$REPORT_JSON"
+    # web 단위 테스트(vitest — 디자인·알파·접근성 게이트 포함)를 E2E 보다 먼저 — 몇 초면 끝나 빨리 실패한다.
+    # 예전엔 게이트가 E2E 만 돌아, 게이트 테스트를 어긴 변경이 main 에 들어갔다(WD-668).
+    (cd apps/firehub-web && pnpm exec vitest run)
     e2e_status=0
     (cd apps/firehub-web && PLAYWRIGHT_JSON_OUTPUT_FILE="$REPORT_JSON" E2E_SERVER=preview pnpm test:e2e --reporter=html,json) || e2e_status=$?
     node scripts/e2e-flaky-record.mjs "$REPORT_JSON" "$FLAKY_LOG" || true
