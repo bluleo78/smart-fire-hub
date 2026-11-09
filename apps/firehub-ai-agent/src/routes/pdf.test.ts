@@ -11,14 +11,37 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 
 // vi.hoisted()로 mock 함수를 팩토리 호이스팅 전에 선언
-const { mockPdf, mockSetContent, mockClose, mockNewPage, mockLaunch } = vi.hoisted(() => {
+const {
+  mockPdf,
+  mockSetContent,
+  mockClose,
+  mockNewPage,
+  mockLaunch,
+  mockSetRequestInterception,
+  mockSetJavaScriptEnabled,
+  mockOn,
+  mockUrl,
+  mockMainFrame,
+} = vi.hoisted(() => {
   const mockPdf = vi.fn();
   const mockSetContent = vi.fn();
   const mockClose = vi.fn();
+  // WD-617: 요청 가로채기·JS 비활성화 호출을 검증하기 위한 mock
+  const mockSetRequestInterception = vi.fn();
+  const mockSetJavaScriptEnabled = vi.fn();
+  const mockOn = vi.fn();
+  // WD-617: 메인 프레임 이동 감지용 — 기본은 이동 없이 about:blank 에 머문 상태
+  const mockUrl = vi.fn();
+  const mockMainFrame = {};
   const mockPage = {
     setContent: mockSetContent,
     pdf: mockPdf,
     close: mockClose,
+    setRequestInterception: mockSetRequestInterception,
+    setJavaScriptEnabled: mockSetJavaScriptEnabled,
+    on: mockOn,
+    url: mockUrl,
+    mainFrame: () => mockMainFrame,
   };
   const mockNewPage = vi.fn().mockResolvedValue(mockPage);
   const mockBrowser = {
@@ -26,7 +49,18 @@ const { mockPdf, mockSetContent, mockClose, mockNewPage, mockLaunch } = vi.hoist
     connected: true,
   };
   const mockLaunch = vi.fn().mockResolvedValue(mockBrowser);
-  return { mockPdf, mockSetContent, mockClose, mockNewPage, mockLaunch };
+  return {
+    mockPdf,
+    mockSetContent,
+    mockClose,
+    mockNewPage,
+    mockLaunch,
+    mockSetRequestInterception,
+    mockSetJavaScriptEnabled,
+    mockOn,
+    mockUrl,
+    mockMainFrame,
+  };
 });
 
 // Puppeteer 모킹 — 실제 headless Chrome 실행 방지
@@ -110,7 +144,13 @@ describe('POST /agent/html-to-pdf', () => {
       setContent: mockSetContent,
       pdf: mockPdf,
       close: mockClose,
+      setRequestInterception: mockSetRequestInterception,
+      setJavaScriptEnabled: mockSetJavaScriptEnabled,
+      on: mockOn,
+      url: mockUrl,
+      mainFrame: () => mockMainFrame,
     };
+    mockUrl.mockReturnValue('about:blank');
     mockNewPage.mockResolvedValue(mockPage);
     mockLaunch.mockResolvedValue({ newPage: mockNewPage, connected: true });
     mockSetContent.mockResolvedValue(undefined);
@@ -242,5 +282,88 @@ describe('POST /agent/html-to-pdf', () => {
         landscape: false,
       }),
     );
+  });
+
+  // 시나리오 9 (WD-617): 렌더 전에 요청 가로채기·JS 비활성화를 켜고, 네트워크 요청은 abort 한다
+  it('should block network requests before rendering (SSRF guard)', async () => {
+    mockPdf.mockResolvedValue(Buffer.from('%PDF-1.4 fake'));
+
+    const app = createApp();
+    await makeRequest(
+      app,
+      { html: '<img src="http://169.254.169.254/latest/meta-data/">' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(mockSetRequestInterception).toHaveBeenCalledWith(true);
+    expect(mockSetJavaScriptEnabled).toHaveBeenCalledWith(false);
+    // 가로채기·JS 비활성화는 HTML 을 넣기 전에 켜져야 한다
+    const contentOrder = mockSetContent.mock.invocationCallOrder[0];
+    expect(mockSetRequestInterception.mock.invocationCallOrder[0]).toBeLessThan(contentOrder);
+    expect(mockSetJavaScriptEnabled.mock.invocationCallOrder[0]).toBeLessThan(contentOrder);
+
+    // 등록된 request 핸들러를 꺼내 판정 결과가 continue/abort 로 이어지는지 확인
+    const handler = mockOn.mock.calls.find(([event]) => event === 'request')?.[1] as (
+      req: unknown,
+    ) => void;
+    expect(handler).toBeTypeOf('function');
+    const fakeRequest = (url: string, navigation = false, frame: unknown = {}) => ({
+      url: () => url,
+      isNavigationRequest: () => navigation,
+      frame: () => frame,
+      continue: vi.fn().mockResolvedValue(undefined),
+      abort: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const blocked = fakeRequest('http://169.254.169.254/latest/meta-data/');
+    handler(blocked);
+    expect(blocked.abort).toHaveBeenCalledWith('blockedbyclient');
+    expect(blocked.continue).not.toHaveBeenCalled();
+
+    const inline = fakeRequest('data:image/png;base64,iVBORw0KGgo=');
+    handler(inline);
+    expect(inline.continue).toHaveBeenCalledOnce();
+    expect(inline.abort).not.toHaveBeenCalled();
+
+    // 하위 프레임(iframe)의 data: 이동은 허용하고, 메인 프레임 이동은 data: 라도 막는다
+    const childNav = fakeRequest('data:text/html,<p>x</p>', true, {});
+    handler(childNav);
+    expect(childNav.continue).toHaveBeenCalledOnce();
+    const mainNav = fakeRequest('data:text/html,<p>x</p>', true, mockMainFrame);
+    handler(mainNav);
+    expect(mainNav.abort).toHaveBeenCalledWith('blockedbyclient');
+    expect(mainNav.continue).not.toHaveBeenCalled();
+  });
+
+  // 시나리오 10 (WD-617): 메인 프레임이 다른 문서로 이동하려 했으면 빈 오류 페이지 PDF 대신 422
+  it('should return 422 instead of an error-page PDF when the main frame tries to navigate', async () => {
+    mockPdf.mockResolvedValue(Buffer.from('%PDF-1.4 fake'));
+    // setContent 도중 meta refresh 가 메인 프레임 이동 요청을 일으킨 상황을 흉내 낸다
+    mockSetContent.mockImplementation(async () => {
+      const handler = mockOn.mock.calls.find(([event]) => event === 'request')?.[1] as (
+        req: unknown,
+      ) => void;
+      handler({
+        url: () => 'http://127.0.0.1:5010/refresh',
+        isNavigationRequest: () => true,
+        frame: () => mockMainFrame,
+        continue: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      });
+    });
+    mockUrl.mockReturnValue('chrome-error://chromewebdata/');
+
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      { html: '<meta http-equiv="refresh" content="0;url=http://127.0.0.1:5010/refresh">' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(422);
+    expect(res.body).toHaveProperty('error', 'PDF generation rejected');
+    expect(mockPdf).not.toHaveBeenCalled();
+    // 거부해도 페이지는 닫혀야 한다
+    expect(mockClose).toHaveBeenCalledOnce();
   });
 });
