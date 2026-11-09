@@ -1,5 +1,7 @@
 package com.smartfirehub.document.service;
 
+import com.smartfirehub.file.exception.StoragePathEscapeException;
+import com.smartfirehub.file.service.StoredFileNames;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -7,8 +9,6 @@ import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
-import java.util.Locale;
-import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -26,14 +26,16 @@ public class DocumentStorageService {
   /** 바이트를 documents/{date}/{uuid.ext} 로 저장하고 절대 경로 반환. */
   public String store(byte[] data, String originalName) {
     try {
-      String ext = extension(originalName);
-      String storedName = UUID.randomUUID() + (ext.isEmpty() ? "" : "." + ext);
       String datePath = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
       Path dir = Paths.get(uploadDir, "documents", datePath).toAbsolutePath();
       Files.createDirectories(dir);
-      Path target = dir.resolve(storedName);
+      // 저장 경로는 FileUploadService 와 같은 공용 규칙(uuid + 안전한 확장자, 폴더 이탈 검사)으로 만든다(WD-610).
+      Path target = StoredFileNames.resolveInside(dir, originalName);
       Files.write(target, data);
       return target.toString();
+    } catch (StoragePathEscapeException e) {
+      // 폴더 이탈은 코드 결함 신호라 감싸지 않고 그대로 올려 500 으로 끝낸다(IllegalStateException 은 409 로 매핑됨).
+      throw e;
     } catch (Exception e) {
       throw new IllegalStateException("문서 저장 실패: " + originalName, e);
     }
@@ -65,15 +67,5 @@ public class DocumentStorageService {
     } catch (Exception e) {
       throw new IllegalStateException("체크섬 계산 실패", e);
     }
-  }
-
-  /** 파일명에서 확장자(소문자)를 추출한다. 없으면 빈 문자열. */
-  private String extension(String name) {
-    if (name == null) return "";
-    int dot = name.lastIndexOf('.');
-    // 소문자화 후 영숫자만 허용해 경로 조작/특수문자 주입을 차단한다.
-    return dot < 0
-        ? ""
-        : name.substring(dot + 1).toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
   }
 }

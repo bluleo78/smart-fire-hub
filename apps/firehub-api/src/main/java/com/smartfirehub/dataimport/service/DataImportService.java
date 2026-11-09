@@ -20,6 +20,7 @@ import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetDataWriteLock;
+import com.smartfirehub.file.service.StoredFileNames;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -378,8 +379,8 @@ public class DataImportService {
 
     long fileSize = file.getSize();
     String upperFileType = fileType.toUpperCase(Locale.ROOT);
-    String safeFileName =
-        originalFilename.length() > 255 ? originalFilename.substring(0, 255) : originalFilename;
+    // 잡에 보존하는 원본 이름은 255 코드포인트까지 자른다 — 업로드 공용 규칙(서로게이트 쌍을 가르지 않고 확장자를 살림, WD-610).
+    String safeFileName = StoredFileNames.displayName(originalFilename);
 
     // 이미 진행 중인 가져오기가 있으면 업로드 전체를 디스크에 쓰기 전에 바로 409 로 끝낸다. 여기서 통과해도 동시에 들어온 요청은
     // 아래 createJob 의 partial unique index 가 최종으로 막는다(이 확인은 큰 파일을 헛되이 저장하지 않으려는 빠른 길일 뿐이다).

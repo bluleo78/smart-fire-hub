@@ -18,7 +18,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
@@ -128,15 +127,18 @@ public class FileUploadService {
       throw new FileSizeLimitExceededException(category, sizeLimit);
     }
 
-    String originalName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "file";
-    String ext = getExtension(originalName);
-    String storedName = UUID.randomUUID().toString() + (ext.isEmpty() ? "" : "." + ext);
+    // 원본 이름은 DB original_name(VARCHAR 255)에 보존한다 — 길면 공용 규칙으로 255 코드포인트까지 잘라 저장한다(거부하지 않음, WD-610).
+    String originalName =
+        StoredFileNames.displayName(
+            file.getOriginalFilename() != null ? file.getOriginalFilename() : "file");
 
     String datePath = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
     Path dir = Paths.get(uploadDir, "chat-files", datePath).toAbsolutePath();
     Files.createDirectories(dir);
 
-    Path storagePath = dir.resolve(storedName);
+    // 저장 경로는 공용 규칙(uuid + 안전한 확장자, 폴더 이탈 검사)으로 만든다(WD-610) — 원본 이름의 /·..·초장문이 경로에 섞이지 않게.
+    Path storagePath = StoredFileNames.resolveInside(dir, originalName);
+    String storedName = storagePath.getFileName().toString();
     file.transferTo(storagePath.toFile());
 
     Instant now = Instant.now();
@@ -220,10 +222,11 @@ public class FileUploadService {
         && !contentType.equals("application/octet-stream")) {
       return contentType.split(";")[0].trim().toLowerCase(Locale.ROOT);
     }
-    // Fallback: derive from filename extension
+    // Fallback: 파일명 확장자로 MIME 을 추론한다. 공용 규칙(소문자 영숫자 1~10자)을 그대로 쓴다 — 아래 매핑 대상은 모두 이 형식이라
+    // 정상 이름의 결과는 예전과 같고, 형식에 맞지 않는 꼬리는 어차피 어떤 case 에도 맞지 않아 default 로 떨어진다.
     String name = file.getOriginalFilename();
     if (name != null) {
-      String ext = getExtension(name).toLowerCase(Locale.ROOT);
+      String ext = StoredFileNames.safeExtension(name);
       return switch (ext) {
         case "png" -> "image/png";
         case "jpg", "jpeg" -> "image/jpeg";
@@ -241,10 +244,5 @@ public class FileUploadService {
       };
     }
     return contentType != null ? contentType : "application/octet-stream";
-  }
-
-  private String getExtension(String filename) {
-    int dotIdx = filename.lastIndexOf('.');
-    return dotIdx >= 0 ? filename.substring(dotIdx + 1) : "";
   }
 }

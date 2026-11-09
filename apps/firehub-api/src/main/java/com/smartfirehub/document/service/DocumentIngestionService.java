@@ -11,6 +11,7 @@ import com.smartfirehub.document.repository.DocumentFileRepository;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.file.service.StoredFileNames;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
 import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -46,7 +47,10 @@ public class DocumentIngestionService {
   // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
   // 여기서 감싸면 파일 전송/외부 저장이 DB 커넥션을 잡은 채로 진행된다.
   public DocumentFileResponse upload(
-      Long datasetId, byte[] data, String originalName, String mimeType, Long userId) {
+      Long datasetId, byte[] data, String uploadedName, String mimeType, Long userId) {
+    // document_file.original_name 은 VARCHAR(255) — 긴 이름은 공용 규칙으로 255 코드포인트까지 잘라 보존한다(거부하지 않음,
+    // WD-610).
+    String originalName = StoredFileNames.displayName(uploadedName);
     // 잘못된 대상에 blob 이 먼저 저장되지 않도록, 체크섬/저장보다 앞서 대상 데이터셋을 검증한다.
     DatasetResponse dataset =
         datasetRepository.findById(datasetId).orElseThrow(() -> new DatasetNotFoundException());
