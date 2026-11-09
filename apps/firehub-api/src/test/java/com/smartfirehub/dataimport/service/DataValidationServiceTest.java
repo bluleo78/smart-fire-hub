@@ -2,10 +2,14 @@ package com.smartfirehub.dataimport.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataimport.dto.ColumnMappingEntry;
 import com.smartfirehub.dataimport.dto.ValidationErrorDetail;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.storage.DataStoreBackend;
+import com.smartfirehub.dataset.storage.DataStoreResolver;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -26,9 +30,19 @@ class DataValidationServiceTest {
         1L, name, name, dataType, null, isNullable, false, null, 0, false);
   }
 
+  /**
+   * 지정한 저장소를 현재 테넌트 저장소로 보는 검증기를 만든다(WD-659) — 길이 미지정 VARCHAR 한도가 저장소마다 다르므로 Spring·테넌트 컨텍스트 없이
+   * 해석기만 고정한다. 매핑 테스트도 같은 도우미를 쓴다.
+   */
+  static DataValidationService serviceFor(DataStoreBackend backend) {
+    DataStoreResolver resolver = mock(DataStoreResolver.class);
+    when(resolver.currentBackend()).thenReturn(backend);
+    return new DataValidationService(resolver);
+  }
+
   @BeforeEach
   void setUp() {
-    service = new DataValidationService();
+    service = serviceFor(DataStoreBackend.POSTGRESQL);
   }
 
   // -----------------------------------------------------------------------
@@ -578,6 +592,51 @@ class DataValidationServiceTest {
     assertThat(validateCell(service, code, "a".repeat(255)).error()).isNull();
     assertThat(validateCell(service, code, "a".repeat(256)).error().error())
         .isEqualTo("최대 255자까지 입력할 수 있습니다(입력 256자)");
+  }
+
+  /**
+   * WD-659: Tibero 저장소의 길이 미지정 VARCHAR 는 물리 타입이 VARCHAR2(4000 CHAR) — PG 기본값 255 로 막으면 저장소가 받는 값을
+   * 임포트가 거부한다. 세 경로(validate·validateWithMapping·toRows)가 모두 저장소 기본 길이 4000 을 쓰고, 4001자는 거부한다.
+   */
+  @Test
+  void varchar_withoutMaxLength_onTibero_usesTiberoDefault4000() {
+    DataValidationService tibero = serviceFor(DataStoreBackend.TIBERO);
+    DatasetColumnResponse code = varcharCol("code", null);
+    String v300 = "가".repeat(300);
+
+    // 매핑 경로(웹)
+    assertThat(validateCell(tibero, code, v300).value()).isEqualTo(v300);
+    assertThat(validateCell(tibero, code, "a".repeat(4000)).error()).isNull();
+    assertThat(validateCell(tibero, code, "a".repeat(4001)).error().error())
+        .isEqualTo("최대 4000자까지 입력할 수 있습니다(입력 4001자)");
+
+    // 매핑 없는 경로와 삽입 변환(Pass2)도 같은 한도
+    List<Map<String, String>> rows = List.of(Map.of("code", v300));
+    DataValidationService.ValidationResult plain = tibero.validate(rows, List.of(code));
+    assertThat(plain.validCount()).isEqualTo(1);
+    assertThat(plain.errors()).isEmpty();
+    assertThat(tibero.toRows(rows, List.of(code), null)).containsExactly(List.of(v300));
+
+    // 관대 모드 — 공백뿐인 초과분은 저장소 기본 길이(4000)에 맞춰 자른다.
+    assertThat(validateCell(tibero, code, "a".repeat(4000) + "  x").error()).isNotNull();
+    assertThat(
+            tibero
+                .toRows(
+                    List.of(Map.of("code", "\"" + "a".repeat(4000) + "  \"")), List.of(code), null)
+                .get(0)
+                .get(0))
+        .isEqualTo("a".repeat(4000));
+  }
+
+  /** WD-659: 저장소와 무관하게 명시한 길이가 이긴다 — Tibero 에서도 VARCHAR(10) 은 11자를 거부한다. */
+  @Test
+  void varchar_explicitMaxLength_winsOverBackendDefault() {
+    DatasetColumnResponse code = varcharCol("code", 10);
+    assertThat(
+            validateCell(serviceFor(DataStoreBackend.TIBERO), code, "a".repeat(11)).error().error())
+        .isEqualTo("최대 10자까지 입력할 수 있습니다(입력 11자)");
+    assertThat(validateCell(service, code, "a".repeat(11)).error().error())
+        .isEqualTo("최대 10자까지 입력할 수 있습니다(입력 11자)");
   }
 
   @Test

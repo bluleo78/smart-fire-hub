@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { PendingSubmitButton } from '../../../components/PendingSubmitButton';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { useAddRow } from '../../../hooks/queries/useDatasets';
+import { useDataStoreFeatures } from '../../../hooks/queries/useDataStoreCapabilities';
 import { useGuardedSubmit } from '../../../hooks/useSubmitGuard';
 import { handleApiError } from '../../../lib/api-error';
 import type { DatasetColumnResponse } from '../../../types/dataset';
@@ -24,7 +25,12 @@ export function AddRowDialog({ open, onOpenChange, datasetId, columns }: AddRowD
   // (#673) 이 앱의 테이블 생성 폼에는 auto-increment 옵션이 없어 PK는 항상 사용자가 정의한
   // 일반 컬럼이고 값도 직접 입력해야 한다. 그래서 "행 추가"에서는 PK를 숨기지 않고 다른
   // 필수 컬럼과 동일하게 입력 필드로 노출한다(반대로 "행 수정"에서는 PK가 불변이라 읽기 전용).
-  const schema = useMemo(() => buildRowZodSchema(columns, 'add'), [columns]);
+  // (WD-659) 길이 미지정 VARCHAR 한도는 저장소 기본 길이(PG 255, Tibero 4000)를 따른다 — 서버 행 API 와 같은 판정.
+  const { defaultVarcharLength } = useDataStoreFeatures();
+  const schema = useMemo(
+    () => buildRowZodSchema(columns, 'add', undefined, defaultVarcharLength),
+    [columns, defaultVarcharLength],
+  );
 
   const defaultValues = useMemo(() => {
     const vals: Record<string, unknown> = {};

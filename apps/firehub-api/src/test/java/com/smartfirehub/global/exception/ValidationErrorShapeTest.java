@@ -2,6 +2,7 @@ package com.smartfirehub.global.exception;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -23,6 +24,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.validation.BeanPropertyBindingResult;
@@ -246,5 +248,74 @@ class ValidationErrorShapeTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.errors.sid").value("3자 이하로 입력하세요."))
         .andExpect(jsonPath("$.errors.session").doesNotExist());
+  }
+
+  /**
+   * 애너테이션 없는 MultipartFile 은 값 파라미터다 — 키는 파라미터 이름(file), _global 이 아니다(WD-665 1). 결함: BeanUtils 로
+   * 단순 타입이 아니라 폼 객체로 갈려 _global 로 나갔다(Spring 은 요청 파라미터로 바인딩하는데).
+   */
+  @Test
+  void unannotatedMultipartFile_keyedByParameterName() throws Exception {
+    mockMvc
+        .perform(
+            multipart("/test/validation/multipart-unannotated")
+                .file(new MockMultipartFile("other", "a.txt", "text/plain", new byte[] {1})))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(GlobalExceptionHandler.VALIDATION_FAILED_CODE))
+        .andExpect(jsonPath("$.errors.file").value("필수 입력값입니다."))
+        .andExpect(jsonPath("$.errors._global").doesNotExist());
+  }
+
+  /** 애너테이션 없는 MultipartFile 목록도 값 파라미터다 — 키는 files(WD-665 1). */
+  @Test
+  void unannotatedMultipartFileList_keyedByParameterName() throws Exception {
+    mockMvc
+        .perform(
+            multipart("/test/validation/multipart-list-unannotated")
+                .file(new MockMultipartFile("other", "a.txt", "text/plain", new byte[] {1})))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.files").value("비어 있을 수 없습니다."))
+        .andExpect(jsonPath("$.errors._global").doesNotExist());
+  }
+
+  /** 애너테이션 없는 Optional&lt;Integer&gt; 는 값 파라미터다 — 키는 page(WD-665 1). */
+  @Test
+  void unannotatedOptionalSimple_keyedByParameterName() throws Exception {
+    mockMvc
+        .perform(get("/test/validation/optional-param").param("page", "0"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.page").value("1 이상이어야 합니다."))
+        .andExpect(jsonPath("$.errors._global").doesNotExist());
+  }
+
+  /**
+   * 목록 본문의 한 원소가 필드 오류와 클래스 단위 오류를 함께 내면 「[1].name」·「[1]」 — 접두 모양이 하나이고(「pairs[1]」 없음), 원소 위치를 잃고
+   * _global 로 가지 않는다(WD-665 2·4).
+   */
+  @Test
+  void listBodyElement_fieldAndClassLevelShareIndexPrefix() throws Exception {
+    mockMvc
+        .perform(
+            post("/test/validation/pair-list")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "[{\"name\":\"ok\",\"password\":\"a\",\"confirm\":\"a\"},"
+                        + "{\"name\":\"\",\"password\":\"a\",\"confirm\":\"b\"}]"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors['[1].name']").value("필수 입력값입니다."))
+        .andExpect(jsonPath("$.errors['[1]']").value("비밀번호 확인이 일치하지 않습니다."))
+        .andExpect(jsonPath("$.errors['pairs[1]']").doesNotExist())
+        .andExpect(jsonPath("$.errors._global").doesNotExist())
+        .andExpect(jsonPath("$.errors['[0]']").doesNotExist());
+  }
+
+  /** 합성(메타 애너테이션) 제약의 위반도 키는 @RequestParam 이름(code)이다(WD-665 5). */
+  @Test
+  void composedConstraint_keyedByRequestParamName() throws Exception {
+    mockMvc
+        .perform(get("/test/validation/composed").param("code", "abcdef"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.code").value("3자 이하로 입력하세요."))
+        .andExpect(jsonPath("$.errors.value").doesNotExist());
   }
 }

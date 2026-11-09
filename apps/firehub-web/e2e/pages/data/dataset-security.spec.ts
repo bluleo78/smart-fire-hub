@@ -5,6 +5,7 @@ import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
 import { setupSecurityLevelMocks } from '../../fixtures/security-level.fixture';
+import { expectNoTitle } from '../../fixtures/table-layout';
 
 /** 화면 2(목업 s2) — 헤더 배지, 등급 변경, 「보안」 탭(정책 칩·자동 상향 배너·허용 목록). */
 async function setup(page: import('@playwright/test').Page, level: '공개' | '내부' | '민감' | '기밀', opts: { autoRaised?: boolean; myRank?: number } = {}) {
@@ -29,6 +30,8 @@ test.describe('데이터셋 상세 — 보안', () => {
     const badge = page.getByTestId('security-level-badge').first();
     await expect(badge).toHaveText('기밀');
     await expect(badge).toHaveAttribute('data-tone', 'caution');
+    // WD-658: 목록 표 밖(상세 헤더)의 배지에는 말줄임 title 이 없다
+    await expectNoTitle(badge);
     await expect(page.getByRole('button', { name: '보안 등급 변경' })).toBeVisible();
   });
 

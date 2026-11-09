@@ -11,6 +11,7 @@ import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
+import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
 import com.smartfirehub.pipeline.service.executor.UrlAuthority;
 import java.net.URI;
 import java.time.Duration;
@@ -18,6 +19,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
@@ -34,6 +36,12 @@ public class ApiCallPreviewService {
   private final JsonResponseParser jsonResponseParser;
   private final ApiConnectionService apiConnectionService;
   private final WebClient.Builder webClientBuilder;
+
+  /**
+   * 접속 시점 주소 검사가 걸린 HTTP 클라이언트(WD-613) — 사전 검사(validateUrl) 뒤 DNS 재바인딩으로 내부 주소가 나와도 접속하지 않는다. 막히면
+   * SsrfException 이 원인 사슬에 실려 와 ApiCallErrorMessages.describe 가 사전 검사와 같은 차단 문구를 보인다.
+   */
+  private final SsrfSafeHttpClientFactory ssrfSafeHttpClientFactory;
 
   public ApiCallPreviewResponse preview(ApiCallPreviewRequest request) {
     String resolvedRequestUrl = null;
@@ -182,7 +190,15 @@ public class ApiCallPreviewService {
   private String executeRequest(
       URI uri, ApiCallPreviewRequest request, ApiCallAuth.ResolvedAuth auth, int timeoutMs) {
 
-    WebClient client = webClientBuilder.build();
+    // 커넥터만 접속 시점 주소 검사가 걸린 것으로 바꾼다(WD-613). 압축(compress)은 Spring 기본 커넥터와 같게 켠다 — 예전 기본 커넥터 동작 유지.
+    // 주입된 빌더는 이 서비스가 공유하므로 복제해서 바꾼다(동시 호출끼리 설정이 섞이지 않게).
+    WebClient client =
+        webClientBuilder
+            .clone()
+            .clientConnector(
+                new ReactorClientHttpConnector(
+                    ssrfSafeHttpClientFactory.httpClient().compress(true)))
+            .build();
     String method = request.method() != null ? request.method().toUpperCase(Locale.ROOT) : "GET";
 
     WebClient.RequestHeadersSpec<?> requestSpec;

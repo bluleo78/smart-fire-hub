@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.service.executor;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
+import com.smartfirehub.pipeline.service.StructureGuard;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -285,11 +286,30 @@ public class ExecutorClient {
    * @param executionId 파이프라인 실행 id — null 이면 싣지 않는다(되묻지 않는다, 기존 동작)
    */
   public SqlExecuteResult executeSql(String query, List<String> preStatements, Long executionId) {
+    return executeSql(query, preStatements, executionId, List.of());
+  }
+
+  /**
+   * {@link #executeSql(String, List, Long)} 에 구조 잠금 대상을 더한 판(WD-670). 실행기는 트랜잭션 첫 문장으로 각 키의 공유
+   * advisory 잠금을 잡고(키 순서), 테이블 존재·계획 컬럼을 다시 확인한 뒤 출력 잠금·선행 문장·본문을 보낸다 — 앱 안 경로({@code
+   * SqlScriptExecutor})와 같은 계약이다. 키 문자열은 api 가 만들고({@link StructureGuard#key()}) 실행기는 테넌트 스키마 형식인지
+   * 검증한 뒤에만 쓴다. 테넌트 문맥 안에서 부른다.
+   *
+   * @param structureGuards 구조 잠금·확인 대상 — 비면 싣지 않는다(기존 요청 본문 그대로)
+   */
+  public SqlExecuteResult executeSql(
+      String query,
+      List<String> preStatements,
+      Long executionId,
+      List<StructureGuard> structureGuards) {
     Map<String, Object> request = new LinkedHashMap<>();
     request.put("query", query);
     request.put("preStatements", preStatements);
     if (executionId != null) {
       request.put("executionId", executionId);
+    }
+    if (structureGuards != null && !structureGuards.isEmpty()) {
+      request.put("structureLocks", StructureGuard.toExecutorPayload(structureGuards));
     }
     return guardSize(
         () ->

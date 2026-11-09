@@ -445,6 +445,15 @@ public class DataTableService {
   }
 
   /**
+   * 구조 변경 전에 테이블의 구조 잠금을 배타로 잡는다(WD-670). 데이터셋 행 FOR UPDATE 바로 뒤·테넌트 동기화 잠금보다 먼저 부른다 — 근거·대기 규칙은
+   * {@link DataTableStore#lockStructureExclusive}. 보통은 {@code DatasetDataWriteLock} 을 거쳐 부른다.
+   */
+  public void lockStructureExclusive(String tableName) {
+    DataTableNames.validate(tableName);
+    resolver.tableStore().lockStructureExclusive(tableName);
+  }
+
+  /**
    * REPLACE 적재용 임시(staging) 테이블을 <b>이번 실행 전용 이름</b>({@link #newTempTableName})으로 만들고 그 이름을
    * 돌려준다(WD-151). 호출자는 적재·{@link #finishReplace}·{@link #swapTable}·{@link #dropTempTable} 에 이 이름을
    * 그대로 넘긴다 — 이름을 다시 계산할 방법이 없다(난수).

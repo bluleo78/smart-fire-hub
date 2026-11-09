@@ -2,11 +2,13 @@ package com.smartfirehub.dataimport.service.export;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataimport.service.DataValidationService;
 import com.smartfirehub.dataimport.service.FileParserService;
+import com.smartfirehub.dataset.storage.DataStoreResolver;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
@@ -145,7 +147,8 @@ class TypedExportCellsTest {
     List<Map<String, String>> parsed = new FileParserService().parse(excel(ROW), "xlsx");
     assertThat(parsed).hasSize(1);
     Map<String, String> row = parsed.get(0);
-    DataValidationService v = new DataValidationService();
+    // convertValue 는 형식 변환만 하고 저장소 한도를 보지 않으므로 해석기는 빈 mock 이면 된다(WD-659).
+    DataValidationService v = new DataValidationService(mock(DataStoreResolver.class));
     assertThat(v.convertValue(row.get("cnt"), "INTEGER")).isEqualTo(3L);
     assertThat((BigDecimal) v.convertValue(row.get("amount"), "DECIMAL"))
         .isEqualByComparingTo("1234567.891");

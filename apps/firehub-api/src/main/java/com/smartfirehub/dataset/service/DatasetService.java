@@ -201,6 +201,12 @@ public class DatasetService {
   /** DB 오류 판정 창구 — 필드명 유니크 제약 위반을 벤더 중립으로 알아본다(WD-486). */
   private final PlatformDbErrors platformDbErrors;
 
+  /**
+   * 데이터셋 쓰기 잠금 공용 층 — 구조 변경이 데이터셋 행 잠금 바로 뒤에 구조 잠금(WD-670)을 잡고, 러너 TEMP 재생성·되돌리기·버리기·맞춤이 데이터셋 행을
+   * 테넌트 동기화 잠금보다 먼저 잡게 한다.
+   */
+  private final DatasetDataWriteLock writeLock;
+
   /** 파이프라인 전용 출처 필드를 일반 생성 경로에서 보냈을 때의 오류 코드. */
   public static final String ORIGIN_RESERVED_CODE = "DATASET_ORIGIN_RESERVED";
 
@@ -289,6 +295,9 @@ public class DatasetService {
   @Transactional
   public PipelineTempRebuild rebuildPipelineTempTable(
       Long datasetId, List<DatasetColumnRequest> columns) {
+    // WD-670: 무엇보다 먼저 데이터셋 행(FOR UPDATE) → 구조 잠금을 잡는다. 아래 보관(이름 바꾸기)이 테넌트 동기화 잠금을 잡은 뒤 컬럼 메타·등급 갱신이
+    // 데이터셋 행을 잡으면, 「행 → 동기화」 순서로 잡는 데이터셋 삭제와 거꾸로 기다려 교착(40P01)할 수 있었다.
+    writeLock.lockForStructureChange(datasetId);
     DatasetResponse dataset = requirePipelineTemp(datasetId);
     // 검증은 테이블을 옮기기보다 먼저다 — 실패할 컬럼 구성으로 옛 테이블을 건드리지 않는다.
     dataTableService.validateNewColumns(columns);
@@ -334,6 +343,8 @@ public class DatasetService {
    */
   @Transactional
   public void restorePipelineTempTable(PipelineTempRebuild rebuild, long runAsUserId) {
+    // WD-670: 데이터셋 행 → 구조 잠금을 테넌트 동기화 잠금(되돌리기 DDL)보다 먼저 — 재생성과 같은 이유(데이터셋 삭제와의 교착 방지).
+    writeLock.lockForStructureChange(rebuild.datasetId());
     requirePipelineTemp(rebuild.datasetId());
     // 저장소 되돌리기를 메타 쓰기보다 먼저 부른다(리뷰 C1). PG 는 DDL 도 이 트랜잭션이라 함께 커밋·롤백된다. Tibero 는 여기서 보관본(OID)만 확인해
     // 없거나 남의 것이면 메타를 쓰기 전에 실패하고, 물리 복원은 아래 메타 복구가 <b>커밋된 뒤</b>로 미룬다 — 그래서 커밋 뒤 어떤 실패·크래시도 「메타=옛 열,
@@ -357,6 +368,8 @@ public class DatasetService {
    */
   @Transactional
   public boolean discardPipelineTempBackup(PipelineTempRebuild rebuild) {
+    // WD-670: 데이터셋 행 → 구조 잠금을 테넌트 동기화 잠금보다 먼저 — 재생성과 같은 이유(데이터셋 삭제와의 교착 방지).
+    writeLock.lockForStructureChange(rebuild.datasetId());
     requirePipelineTemp(rebuild.datasetId());
     // 보관본과 행 검색 색인 테이블들을 한 트랜잭션에서 지운다 — 테이블 잠금보다 먼저 동기화 잠금을 잡는다(WD-629, 잠금 순서 규칙).
     dataTableService.lockTenantGrantSyncForDdl();
@@ -380,6 +393,10 @@ public class DatasetService {
    */
   @Transactional
   public RebuildBackupState reconcilePipelineTempTable(Long datasetId) {
+    // WD-670: 데이터셋 행을 저장소 맞춤(테넌트 동기화 잠금·DDL 을 낼 수 있다)보다 먼저 잡는다 — 데이터셋 삭제(행 → 동기화)와 거꾸로 기다리지 않게.
+    // 구조 잠금은 잡지 않는다: 맞춤은 매 실행 쓰기 직전에 불리는데 PG 는 아무것도 하지 않고(NONE), Tibero 는 구조 잠금이 없다 — 잡으면 같은 TEMP 에
+    // 쓰는 겹친 실행 때문에 이 실행이 409 로 실패할 뿐이다.
+    writeLock.lockRowForStructureChange(datasetId);
     DatasetResponse dataset = requirePipelineTemp(datasetId);
     String fingerprint = columnMetaFingerprint(columnRepository.snapshotByDatasetId(datasetId));
     RebuildBackupState state =
@@ -851,6 +868,13 @@ public class DatasetService {
     }
     if (syncTiming == TenantSyncLockTiming.ONCE_BEFORE_FIRST_DELETE
         && datasets.stream().anyMatch(d -> isTableBacked(d.storageType()))) {
+      // WD-670: 일괄 삭제는 동기화 잠금을 여기서 한 번 먼저 잡으므로, 테이블마다의 구조 잠금도 그 앞에서(증표의 id 오름차순으로) 모두 잡는다 —
+      // 순서 「데이터셋 행 → 구조 → 동기화 → 테이블」. 아래 본문(deleteRowLockedDataset)은 일괄 삭제일 때 구조 잠금을 다시 잡지 않는다.
+      for (DatasetResponse dataset : datasets) {
+        if (isTableBacked(dataset.storageType())) {
+          writeLock.lockStructure(dataset.tableName());
+        }
+      }
       dataTableService.lockTenantGrantSyncForDdl();
     }
     for (DatasetResponse dataset : datasets) {
@@ -880,6 +904,12 @@ public class DatasetService {
     // isTableBacked 로 통일한다.) document_file/document_chunk 행, file_dataset_config 행은
     // dataset 삭제 시 FK CASCADE 로 함께 제거된다.
     if (isTableBacked(dataset.storageType())) {
+      // WD-670: 행 잠금 뒤·테넌트 동기화 잠금 앞에서 구조 잠금을 잡는다 — 출력 없는 DML 스텝처럼 데이터셋 행을 잡지 않고 이 테이블에 쓰는
+      // 파이프라인이 끝난 뒤에 지운다(시간 넘으면 409). 순서: 데이터셋 행 → 구조 → 동기화 → 테이블. 단건 삭제만 여기서 잡는다(참조 거부 409 면
+      // 잡지 않음) — 일괄 삭제는 deleteLocked 가 동기화 잠금 앞에서 이미 잡았다(다시 잡지 않음).
+      if (syncTiming == TenantSyncLockTiming.BEFORE_EACH_DROP) {
+        writeLock.lockStructure(dataset.tableName());
+      }
       // 색인·원본·(TEMP 면) 재생성 보관본까지 기존 테이블 여럿을 이 트랜잭션에서 지운다 — 어떤 테이블 잠금보다 먼저 테넌트 PYTHON 읽기 권한
       // 동기화 잠금을 잡는다(WD-629, 잠금 순서 규칙). 순서는 「데이터셋 행 → 동기화 → 테이블」 하나다
       // (WD-666 — 출력 맞바꿈·임시 데이터셋 일괄 삭제도 같은 순서. WD-655 는 이 순서를 바꾸지 않는다).
@@ -948,6 +978,8 @@ public class DatasetService {
     // 각자 데이터 테이블을 읽어(행 수 세기 — 공유 잠금) 쥔 채 서로의 ALTER TABLE(배타 잠금)을 기다려 교착이 나고, 중복 이름 확인도
     // 읽기와 쓰기 사이 틈으로 둘 다 통과한다. 필드 삭제·이름 바꾸기와 같은 잠금(매핑 저장과도 직렬화)이라 잠금 순서도 같다.
     mappingReferenceService.lockForColumnChange(datasetId);
+    // WD-670: 행 잠금 바로 뒤 구조 잠금 — 데이터 저장소에 직접 쓰는 파이프라인 SQL 스텝·실행기 적재가 끝난 뒤에 DDL 을 낸다(시간 넘으면 409).
+    writeLock.lockStructure(dataset.tableName());
 
     DatasetColumnRequest colRequest =
         new DatasetColumnRequest(
@@ -1039,6 +1071,8 @@ public class DatasetService {
     // 잠그지 않는다.
     if (request.columnName() != null || request.dataType() != null) {
       mappingReferenceService.lockForColumnChange(datasetId);
+      // WD-670: 이름·타입 변경 DDL 전 구조 잠금(행 잠금 바로 뒤).
+      writeLock.lockStructure(dataset.tableName());
     } else if (request.maxLength() != null
         || request.isNullable() != null
         || request.isIndexed() != null
@@ -1047,6 +1081,8 @@ public class DatasetService {
       // (추가·삭제·기본 키)과 직렬화하도록 데이터셋 행은 잡는다. 매핑과 무관해 매핑·온톨로지 잠금은 잡지 않는다. 표시명·설명만 고치는
       // 요청은 DDL 이 없어 지금처럼 잠그지 않는다.
       datasetRepository.lockForColumnChange(datasetId);
+      // WD-670: 길이·NULL 허용·인덱스·기본 키 DDL 전 구조 잠금(행 잠금 바로 뒤).
+      writeLock.lockStructure(dataset.tableName());
     }
 
     DatasetColumnResponse column =
@@ -1352,6 +1388,8 @@ public class DatasetService {
     // WD-531: 기본 키 인덱스를 다시 만드는(DROP·CREATE INDEX) 요청끼리, 그리고 필드 추가·삭제와 겹치면 교착이 났다 — 필드 목록을 읽기
     // 전에 필드 변경과 같은 데이터셋 행 잠금으로 직렬화한다.
     mappingReferenceService.lockForColumnChange(datasetId);
+    // WD-670: 기본 키 인덱스 DDL 전 구조 잠금(행 잠금 바로 뒤).
+    writeLock.lockStructure(dataset.tableName());
 
     List<Long> pkIds = requestedPkIds != null ? requestedPkIds : List.of();
 
@@ -1427,6 +1465,8 @@ public class DatasetService {
 
     // WD-186: 필드를 읽기 전에 매핑 저장과 직렬화하는 잠금을 잡는다 — 판정 직후 매핑 저장이 이 필드를 새로 연결하는 틈을 없앤다.
     mappingReferenceService.lockForColumnChange(datasetId);
+    // WD-670: 필드 삭제 DDL 전 구조 잠금(행 잠금 바로 뒤) — 실행 중 SQL 스텝이 계획한 컬럼이 그 아래에서 사라지지 않게 한다.
+    writeLock.lockStructure(dataset.tableName());
 
     DatasetColumnResponse column =
         columnRepository

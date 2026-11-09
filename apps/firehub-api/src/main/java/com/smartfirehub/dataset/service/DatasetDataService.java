@@ -21,6 +21,7 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetWriteTarget;
 import com.smartfirehub.dataset.repository.QueryHistoryRepository;
+import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.StoreTransactions;
@@ -569,6 +570,9 @@ public class DatasetDataService {
       Set<String> columnsToValidate) {
     Map<String, Object> result = new HashMap<>();
     List<String> errors = new ArrayList<>();
+    // 길이 미지정 VARCHAR 의 한도는 저장소마다 다르다(PG 255, Tibero 4000) — 행마다 한 번 현재 테넌트 저장소를 정해 모든 칸에
+    // 쓴다(WD-659).
+    DataStoreBackend backend = dataTableService.currentBackend();
 
     for (DatasetColumnResponse col : columns) {
       Object value = data.get(col.columnName());
@@ -588,7 +592,7 @@ public class DatasetDataService {
       }
 
       try {
-        Object converted = convertValue(col, value);
+        Object converted = convertValue(col, value, backend);
         result.put(col.columnName(), converted);
       } catch (IllegalArgumentException e) {
         // 변환기가 던지는 IllegalArgumentException 은 모두 사용자용 한국어 사유다(WD-201).
@@ -619,11 +623,12 @@ public class DatasetDataService {
 
   /**
    * 요청 값을 컬럼 타입의 Java 값으로 바꾼 뒤 물리 타입 한도를 엄격 모드로 검사한다 — 사람이 직접 입력한 값이라 저장값이 입력값과 달라질 값(소수부 7자리 이상,
-   * 길이 초과)은 반올림·절단하지 않고 거부한다(웹 행 폼과 같은 판정, 임포트는 관대 모드).
+   * 길이 초과)은 반올림·절단하지 않고 거부한다(웹 행 폼과 같은 판정, 임포트는 관대 모드). 길이 미지정 VARCHAR 는 {@code backend} 의 기본 길이로
+   * 검사한다(WD-659 — Tibero 는 4000자까지 받는다).
    */
-  private Object convertValue(DatasetColumnResponse col, Object value) {
+  private Object convertValue(DatasetColumnResponse col, Object value, DataStoreBackend backend) {
     return ColumnPhysicalType.enforceLimitsStrict(
-        convertFormat(col, value), col.dataType(), col.maxLength());
+        convertFormat(col, value), col.dataType(), col.maxLength(), backend);
   }
 
   /** 요청 값의 형식만 컬럼 타입에 맞춰 변환한다 — 물리 한도 검사는 {@link #convertValue} 가 이어서 한다. */

@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { usePipelinePermissions } from '@/hooks/queries/usePipelines';
 import { useEditModeFocus } from '@/hooks/useEditModeFocus';
+import { syncOverflowTitle } from '@/lib/overflow-title';
 
 import type { EditorAction,PipelineEditorState } from '../hooks/usePipelineEditor';
 import type { ExecutionCancelState } from '../utils/execution-cancel';
@@ -122,9 +123,14 @@ export function EditorHeader({
         ) : (
           <Input
             value={state.name}
-            onChange={(e) =>
-              dispatch({ type: 'SET_META', payload: { name: e.target.value } })
-            }
+            onChange={(e) => {
+              dispatch({ type: 'SET_META', payload: { name: e.target.value } });
+              // 입력으로 글자가 바뀌면 잘림을 다시 재서 title 을 맞춘다 — hover 중에 쳐도 툴팁이 새 이름을 따른다(WD-669)
+              syncOverflowTitle(e.currentTarget);
+            }}
+            // 입력칸은 400px 에서 잘린다 — 잘렸을 때만 title 로 전체 이름을 보인다(WD-669, WD-517 원칙: 잘리지 않은 값엔 title 없음).
+            // 늘 관찰하지 않고 hover 때 잰다(WD-663 과 같은 방식).
+            onPointerEnter={(e) => syncOverflowTitle(e.currentTarget)}
             // Ctrl+A가 ReactFlow 등 부모로 전파되지 않도록 차단 — 인풋 내 텍스트만 선택되게 제한
             onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === 'a') {

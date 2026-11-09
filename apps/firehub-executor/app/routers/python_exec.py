@@ -54,4 +54,6 @@ async def execute_python(
         read_slot=request.read_slot,
         output_table=request.output_table,
         column_type_map=request.column_type_map,
+        # 구조 잠금 대상(WD-670) — PG APPEND 직접 적재일 때만 api 가 싣는다.
+        structure_locks=request.structure_locks,
     )

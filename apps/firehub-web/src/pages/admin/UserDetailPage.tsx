@@ -30,6 +30,7 @@ import { Switch } from '../../components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../components/ui/tooltip';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAuth } from '../../hooks/useAuth';
+import { useIsMounted } from '../../hooks/useIsMounted';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import {
   extractApiError,
@@ -50,9 +51,20 @@ import { memberLockReason, roleLockReason } from './components/memberLockReason'
 /** 들어올 때 사용자가 없거나(코드 없는 404) 주소의 id 가 잘못됐을 때의 화면 안 안내 (WD-581) */
 const USER_NOT_FOUND_MESSAGE = '사용자를 찾을 수 없습니다.';
 
+/**
+ * 사용자 상세 — 주소의 사용자 id 마다 화면을 새로 만든다 (WD-646).
+ * 같은 컴포넌트를 다른 id 에 재사용하면 이전 id 의 안내·화면·늦은 응답이 새 id 화면에 섞인다. key 로 다시 만들면 상태가 새로 시작하고,
+ * 떠난 화면의 늦은 응답은 진입 조회의 cancelled 와 핸들러의 isMounted 가 버린다.
+ */
 export default function UserDetailPage() {
   const { id } = useParams<{ id: string }>();
+  return <UserDetailView key={id} />;
+}
+
+function UserDetailView() {
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const isMounted = useIsMounted();
   // 목록에서 넘겨준 그 목록의 page·검색어(?page=·?q=) — 돌아갈 때 보던 위치로 간다(WD-283). 주소로 바로 들어오면 없다.
   const listSearch = (useLocation().state as { listSearch?: string } | null)?.listSearch ?? '';
   const listPath = `/admin/users${listSearch === '?' ? '' : listSearch}`;
@@ -108,44 +120,68 @@ export default function UserDetailPage() {
   );
 
   useEffect(() => {
+    // 화면을 떠난 뒤 늦게 온 응답은 버린다 (WD-646)
+    let cancelled = false;
     const fetchData = async () => {
       // 잘못된 id 는 조회하지 않는다 — 아래 렌더가 화면 안 안내를 그린다 (WD-581)
       if (userId == null) return;
       setIsLoading(true);
       setNotFoundMessage(null);
+      // 그 밖의 실패(500·네트워크·역할 목록 실패 등)는 기존대로 일반 안내 후 목록에 돌아간다.
+      // 조회가 겹쳐(개발 StrictMode 의 effect 두 번 실행 등) 실패해도 토스트는 하나만 보이게 id 를 준다.
+      const failLoad = () => {
+        toast.error('사용자 정보를 불러오는 데 실패했습니다.', { id: 'user-detail-load-failed' });
+        navigate(listPath);
+      };
       try {
         // 역할 목록(GET /roles, role:read)은 역할을 할당할 수 있을 때만 읽는다 — 사용자 조회 권한(user:read)만 있는
         // 사람에게도 같이 읽으면 403 이 사용자 조회까지 실패로 만들어 화면이 열리지 않고 목록으로 튕겼다(WD-121).
-        const [userRes, rolesRes] = await Promise.all([
-          usersApi.getUserById(userId),
-          canAssignRoles ? rolesApi.getRoles() : Promise.resolve(null),
-        ]);
+        // 두 요청을 함께 보내되 사용자 응답을 먼저 기다려 404 를 판정한다(WD-646) — 「사용자 없음」은 사용자 조회의 404 만이다.
+        const userPromise = usersApi.getUserById(userId);
+        const rolesPromise = canAssignRoles ? rolesApi.getRoles() : Promise.resolve(null);
+        // 사용자를 기다리는 사이 역할 목록이 먼저 실패해도 처리되지 않은 거부로 남지 않게 한다 — 실제 처리는 아래 await 가 한다
+        rolesPromise.catch(() => {});
+        let userRes;
+        try {
+          userRes = await userPromise;
+        } catch (error) {
+          if (cancelled) return;
+          // 없는(제거된) 멤버면 주소를 그대로 두고 화면 안에 안내한다(WD-581) — 공유받은 링크의 멤버가 이미 제거된 경우 등.
+          // 제거된 멤버(USER_NOT_IN_WORKSPACE)면 서버 안내(WD-288)를, 코드 없는 404 면 일반 「찾을 수 없습니다」를 보인다.
+          if (isNotFoundError(error)) {
+            setNotFoundMessage(
+              isMemberGoneError(error) ? extractApiError(error, MEMBER_GONE_MESSAGE) : USER_NOT_FOUND_MESSAGE,
+            );
+            // 목록 캐시(staleTime 30s)에 없는 멤버가 남아 「목록으로」를 눌렀을 때 다시 보이지 않게 한다 — 코드 없는 404 도 같다
+            void queryClient.invalidateQueries({ queryKey: ['users'] });
+            return;
+          }
+          failLoad();
+          return;
+        }
+        let rolesRes;
+        try {
+          rolesRes = await rolesPromise;
+        } catch {
+          // 역할 목록 실패(404 포함)는 「사용자 없음」이 아니라 일반 실패다
+          if (!cancelled) failLoad();
+          return;
+        }
+        if (cancelled) return;
         setUser(userRes.data);
         setAllRoles(rolesRes?.data ?? []);
         const roleIds = userRes.data.roles.map(r => r.id);
         setSelectedRoleIds(roleIds);
         setInitialRoleIds(roleIds);
-      } catch (error) {
-        // 없는(제거된) 멤버면 주소를 그대로 두고 화면 안에 안내한다(WD-581) — 공유받은 링크의 멤버가 이미 제거된 경우 등.
-        // 제거된 멤버(USER_NOT_IN_WORKSPACE)면 서버 안내(WD-288)를, 코드 없는 404 면 일반 「찾을 수 없습니다」를 보인다.
-        if (isNotFoundError(error)) {
-          setNotFoundMessage(
-            isMemberGoneError(error) ? extractApiError(error, MEMBER_GONE_MESSAGE) : USER_NOT_FOUND_MESSAGE,
-          );
-          // 목록 캐시(staleTime 30s)에 없는 멤버가 남아 「목록으로」를 눌렀을 때 다시 보이지 않게 한다 — 코드 없는 404 도 같다
-          void queryClient.invalidateQueries({ queryKey: ['users'] });
-          return;
-        }
-        // 그 밖의 실패(500·네트워크 등)는 기존대로 일반 안내 후 목록에 돌아간다.
-        // 조회가 겹쳐(개발 StrictMode 의 effect 두 번 실행 등) 실패해도 토스트는 하나만 보이게 id 를 준다.
-        toast.error('사용자 정보를 불러오는 데 실패했습니다.', { id: 'user-detail-load-failed' });
-        navigate(listPath);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     fetchData();
+    return () => {
+      cancelled = true;
+    };
   }, [userId, navigate, canAssignRoles, listPath, queryClient]);
 
   const handleRoleToggle = (roleId: number, checked: boolean) => {
@@ -179,13 +215,18 @@ export default function UserDetailPage() {
     void handleSaveRoles();
   };
 
-  /** 서버의 최신 사용자·역할로 화면을 다시 맞춘다 — 저장 뒤와 충돌 안내의 「다시 불러오기」가 쓴다(이때 내 체크 변경은 버린다). */
-  const reloadUserRoles = async (userId: number) => {
+  /**
+   * 서버의 최신 사용자·역할로 화면을 다시 맞춘다 — 저장 뒤와 충돌 안내의 「다시 불러오기」가 쓴다(이때 내 체크 변경은 버린다).
+   * 응답 전에 화면을 떠났으면 반영하지 않고 false 를 돌려준다 — 호출처도 뒤처리를 건너뛴다.
+   */
+  const reloadUserRoles = async (userId: number): Promise<boolean> => {
     const { data: updatedUser } = await usersApi.getUserById(userId);
+    if (!isMounted()) return false;
     setUser(updatedUser);
     const roleIds = updatedUser.roles.map(r => r.id);
     setSelectedRoleIds(roleIds);
     setInitialRoleIds(roleIds);
+    return true;
   };
 
   /**
@@ -200,11 +241,13 @@ export default function UserDetailPage() {
         roleIds: selectedRoleIds,
         ...(overwrite ? {} : { expectedRoleIds: initialRoleIds }),
       });
+      if (!isMounted()) return;
       setIsRolesConflictOpen(false);
       // 저장은 끝났으므로 다시 읽기 전에 알린다 — 그 사이 멤버가 제거돼 다시 읽기가 404 여도 저장된 사실은 보인다(WD-288)
       toast.success('역할이 저장되었습니다.');
       await reloadUserRoles(user.id);
     } catch (error) {
+      if (!isMounted()) return;
       if (isEditConflict(error)) {
         setIsRolesConflictOpen(true);
       } else if (!leaveIfMemberGone(error)) {
@@ -229,11 +272,17 @@ export default function UserDetailPage() {
     setIsTogglingActive(true);
     try {
       await usersApi.setUserActive(user.id, { active: !user.isActive });
+      if (!isMounted()) {
+        // 화면은 떠났지만 목록 캐시의 상태 열은 바뀌었으니 무효화만 한다
+        void queryClient.invalidateQueries({ queryKey: ['users'] });
+        return;
+      }
       setUser({ ...user, isActive: !user.isActive });
       // 목록 캐시(staleTime 30s)의 상태 열이 낡지 않도록 무효화
       await queryClient.invalidateQueries({ queryKey: ['users'] });
       toast.success(user.isActive ? '멤버십이 정지되었습니다' : '멤버십이 재활성화되었습니다');
     } catch (error) {
+      if (!isMounted()) return;
       if (!leaveIfMemberGone(error)) handleApiError(error, '상태 변경에 실패했습니다.');
     } finally {
       setIsTogglingActive(false);
@@ -405,9 +454,13 @@ export default function UserDetailPage() {
         // pending(isSavingRoles)은 다시 불러오기를 덮지 않는다 — 불러오기 중 잠금은 돌려준 Promise 가 맡는다(WD-678)
         onReload={() => {
           if (!user) return;
+          // 돌려준 Promise 로 창이 불러오기 동안 잠기고(WD-678), 적용되지 않은(떠난 뒤) 결과는 창을 닫지 않는다(WD-646)
           return reloadUserRoles(user.id)
-            .then(() => setIsRolesConflictOpen(false))
+            .then(applied => {
+              if (applied) setIsRolesConflictOpen(false);
+            })
             .catch(error => {
+              if (!isMounted()) return;
               // 그사이 제거된 멤버면 충돌 창째 목록으로 돌아간다(WD-288)
               if (!leaveIfMemberGone(error)) toast.error('사용자 정보를 불러오는 데 실패했습니다.');
             });

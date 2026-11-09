@@ -329,4 +329,9 @@ export interface DataStoreCapabilities {
   rowSearch: boolean;
   /** 문자열(VARCHAR) 필드 최대 길이 — PG 10000, Tibero 4000. 생성 폼·필드 대화상자의 길이 입력 상한이다. (WD-636) */
   maxVarcharLength: number;
+  /**
+   * 길이 미지정 VARCHAR 필드의 실제 길이 — PG 255, Tibero 4000. 행 추가·수정 폼의 길이 검사 한도다.
+   * 단일 출처는 서버 DataStoreBackend.defaultVarcharLength. (WD-659)
+   */
+  defaultVarcharLength: number;
 }

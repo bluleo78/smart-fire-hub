@@ -33,7 +33,7 @@ function toProfileFormValues(name: string, email: string | null | undefined, use
 }
 
 export default function ProfilePage() {
-  const { user, refreshUser } = useAuth();
+  const { user, refreshUser, applySavedProfile } = useAuth();
 
   const profileForm = useForm<UpdateProfileFormData>({
     resolver: zodResolver(updateProfileSchema),
@@ -79,12 +79,15 @@ export default function ProfilePage() {
     }
 
     // 저장은 끝났다 — 다시 읽기 실패를 저장 실패로 안내하지 않는다(WD-654). 안내는 하나만:
-    // 성공이면 토스트(폼은 바뀐 user 로 위 effect 가 맞춘다), 실패면 보낸 값으로 폼을 맞추고 새로고침 안내.
+    // 성공이면 토스트(폼은 바뀐 user 로 위 effect 가 맞춘다), 실패면 보낸 값으로 맞추고 새로고침 안내.
     try {
       await refreshUser();
       toast.success('프로필이 업데이트되었습니다.');
     } catch (error) {
       console.warn('프로필 저장 후 사용자 정보를 다시 불러오지 못했습니다.', error);
+      // 인증 상태의 user 도 저장한 값으로 맞춘다(WD-665) — 폼만 바꾸면 헤더·아바타가 새로고침 전까지 예전 이름을 보였다.
+      // 빈 이메일은 보내지 않았고 서버는 이메일을 비웠으므로 null 로 둔다. user 가 바뀌면 위 effect 가 폼도 같은 규칙으로 맞춘다.
+      applySavedProfile({ name: sent.name, email: sent.email ?? null });
       profileForm.reset(toProfileFormValues(sent.name, sent.email, user?.username));
       toast.success('저장은 완료되었습니다. 최신 정보는 새로고침하면 반영됩니다.');
     }

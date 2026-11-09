@@ -113,7 +113,7 @@ test.describe('데이터셋 상세 — 존재하지 않는 ID 처리 (#96, WD-58
     await expect.poll(() => readRecentIds(page)).toEqual([2]);
   });
 
-  test('404 가 아닌 실패(500)는 예전처럼 토스트 후 목록으로 이동하고 이력은 지우지 않는다', async ({
+  test('404 가 아닌 실패(500)는 「찾을 수 없음」이 아닌 다시 시도 안내 토스트 후 목록으로 이동하고 이력은 지우지 않는다 (WD-646)', async ({
     authenticatedPage: page,
   }) => {
     await seedRecent(page, [{ id: 5, name: '데이터셋 5', tableName: 'dataset_5' }]);
@@ -122,7 +122,11 @@ test.describe('데이터셋 상세 — 존재하지 않는 ID 처리 (#96, WD-58
 
     await page.goto('/data/datasets/5');
 
-    await expect(page.locator('[data-sonner-toast]').filter({ hasText: '데이터셋을 찾을 수 없습니다.' }).first()).toBeVisible();
+    // 일시적 실패에 「찾을 수 없습니다」는 거짓 안내다 — 다시 시도를 권하는 문구를 보인다 (WD-646)
+    await expect(
+      page.locator('[data-sonner-toast]').filter({ hasText: '데이터셋을 불러오지 못했습니다. 잠시 후 다시 시도하세요.' }).first(),
+    ).toBeVisible();
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: '데이터셋을 찾을 수 없습니다.' })).toHaveCount(0);
     await expect(page).toHaveURL(/\/data\/datasets$/);
     await expect(page.getByRole('heading', { name: '데이터셋을 찾을 수 없습니다.' })).toHaveCount(0);
     // 일시적 실패는 「최근 접근」에서 빼지 않는다 (WD-390)

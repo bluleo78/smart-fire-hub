@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.storage.tibero;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -15,6 +16,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
+import com.smartfirehub.dataset.exception.OutputStructureChangedException;
 import com.smartfirehub.dataset.storage.external.ExternalStoreConnections;
 import com.smartfirehub.dataset.storage.external.ExternalStoreConnections.SqlWork;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -209,15 +211,21 @@ class TiberoDataTableStoreTempTest {
     verifyNoInteractions(mover, rowStore);
   }
 
+  /**
+   * 구조가 다른(다른 테이블의) 스테이징은 옮기지 않고 거부한다. WD-670 부터 컬럼 집합 불일치는 {@link OutputStructureChangedException}
+   * 으로 알린다 — 스테이징 이름에 테이블 정보가 없어 「인자가 뒤바뀐 다른 테이블의 스테이징」과 「스테이징 동안 원본 필드가 추가·삭제·이름변경됨」을 컬럼 집합만으로 구분할
+   * 수 없고, 실제로 일어나는 쪽은 후자이기 때문이다. 지켜야 할 성질(옮기지 않음·원본 유지·정리는 호출자 몫)은 그대로다.
+   */
   @Test
   void swapTable_stagingOfAnotherTable_rejected() {
     catalogs.add(staging("code", "other_col"));
     catalogs.add(target());
 
     assertThatThrownBy(() -> store.swapTable("orders", STG))
-        .isInstanceOf(InvalidTableNameException.class);
+        .isInstanceOf(OutputStructureChangedException.class);
 
-    verify(mover, never()).move(anyLong(), any(), any(), any(), any(), eq(true));
+    verify(mover, never()).move(anyLong(), any(), any(), any(), any(), anyBoolean());
+    verify(rowStore, never()).dropStagingTable(any());
   }
 
   @Test
@@ -281,15 +289,18 @@ class TiberoDataTableStoreTempTest {
     verify(rowStore).dropStagingTable(STG_LOGICAL);
   }
 
-  /** 출력 테이블 컬럼 일부만 가진(더 좁은) 스테이징은 다른 테이블의 것으로 보고 거부한다. */
+  /**
+   * 출력 테이블 컬럼 일부만 가진(더 좁은) 스테이징은 옮기지 않고 거부한다. WD-670: 스테이징을 만든 뒤 원본에 필드가 추가된 경우와 같은 모양이라 「임시 테이블이
+   * 아닙니다」 대신 「구조가 바뀌었습니다 — 다시 실행」으로 알린다(원본 유지·스테이징 정리는 호출자 몫은 그대로).
+   */
   @Test
   void swapTable_narrowerStaging_rejected_leavesDropToCaller() {
     catalogs.add(staging("code"));
     catalogs.add(target());
 
     assertThatThrownBy(() -> store.swapTable("orders", STG))
-        .isInstanceOf(InvalidTableNameException.class)
-        .hasMessageContaining("임시 테이블이 아닙니다");
+        .isInstanceOf(OutputStructureChangedException.class)
+        .hasMessage(OutputStructureChangedException.MESSAGE);
 
     verify(mover, never()).move(anyLong(), any(), any(), any(), any(), eq(true));
     verify(rowStore, never()).dropStagingTable(any());

@@ -21,6 +21,7 @@ import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
+import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
 import com.smartfirehub.pipeline.service.executor.UrlAuthority;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
@@ -38,6 +39,7 @@ import java.util.concurrent.Executor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -82,8 +84,11 @@ public class ApiConnectionService {
   @Qualifier("pipelineExecutor")
   private final Executor pipelineExecutor;
 
-  /** WebClient는 프로젝트 관행에 따라 빌더를 직접 생성한다 (별도 Bean 없음). */
-  private final WebClient webClient = WebClient.builder().build();
+  /**
+   * 헬스체크용 HTTP 클라이언트의 출처(WD-613) — 접속 시점에 해석한 IP 를 SSRF 정책으로 다시 검사한다. 예전에는 기본 WebClient 가 호출 직전 검사
+   * 뒤에 호스트를 다시 해석해, DNS 재바인딩으로 내부 주소에 접속할 수 있었다.
+   */
+  private final SsrfSafeHttpClientFactory ssrfSafeHttpClientFactory;
 
   /** 헬스체크 HTTP 호출 타임아웃(초). 메시지 문구(「응답 시간 초과(N초) — …」)와 값이 어긋나지 않도록 한 곳에서 관리한다. */
   private static final int HEALTH_CHECK_TIMEOUT_SECONDS = 5;
@@ -484,7 +489,8 @@ public class ApiConnectionService {
    * 쿼리를 붙이기 전 URL 을 검사한다. 키 붙은 URL 을 넘기면 검사 실패 문구에 키가 실릴 위험만 커진다.
    *
    * <p>리다이렉트: 이 WebClient 는 Reactor Netty 기본값(리다이렉트를 따라가지 않음)이라 3xx 응답을 그대로 결과로 돌려줄 뿐 다른 주소로 다시
-   * 요청하지 않는다. DNS: API_CALL 과 마찬가지로 검사 때 해석한 IP 로 고정하지는 않는다(검사 후 WebClient 가 다시 해석).
+   * 요청하지 않는다. DNS: WebClient 가 접속 때 다시 해석하지만, 그 해석 결과를 {@link SsrfSafeHttpClientFactory} 의 해석기가 같은
+   * 판정으로 다시 검사한다(WD-613) — 검사 뒤 DNS 가 내부 주소로 바뀌어도(재바인딩) 접속하지 않고 같은 차단 문구의 DOWN 결과가 된다.
    *
    * <p><b>인증(WD-657).</b> 헤더·쿼리 키·가릴 비밀 모두 {@link ApiCallAuth#resolve} 로 푼 값 하나로 만든다 — 파이프라인
    * 실행(Java·Python 실행기)·미리보기와 같은 값을 보낸다.
@@ -526,6 +532,7 @@ public class ApiConnectionService {
       // 문자열로 넘겨 경로의 한글·공백을 WebClient 가 인코딩하게 둔다(buildUrls 가 URL 을 손대지 않는다).
       // Netty 가 못 부르는 호스트(밑줄 등)는 요청 전에 고정 문구로 실패한다(WD-676) — 아래 catch 가 그 문구를 그대로 보인다.
       UrlAuthority.requireClientSupportedHost(urls.callUrl());
+      WebClient webClient = healthCheckClient();
       var resp =
           (auth.isQueryApiKey()
                   ? webClient.get().uri(urls.callUri())
@@ -572,11 +579,30 @@ public class ApiConnectionService {
 
     } catch (Exception e) {
       long latency = System.currentTimeMillis() - start;
+      // 접속 시점 주소 검사(WD-613)에 막힌 경우 — WebClientRequestException 에 감싸여 오므로 꺼내서 사전 검사와 같은 차단 문구로 보인다.
+      // 접속하지 않았으므로 본문·헤더는 비운다.
+      SsrfException blocked = SsrfException.findIn(e);
+      if (blocked != null) {
+        return new TestConnectionResponse(
+            false, null, latency, blocked.getMessage(), displayUrl, null, Map.of(), null);
+      }
       // 예외 메시지에 URL·키가 실릴 수 있어 가린 문구만 응답·lastErrorMessage·알림으로 보낸다(WD-177).
       String msg = toUserFacingErrorMessage(e, targetUrl, secret);
       return new TestConnectionResponse(
           false, null, latency, msg, displayUrl, null, Map.of(), null);
     }
+  }
+
+  /**
+   * 헬스체크 WebClient — 접속 시점 주소 검사가 걸린 커넥터를 쓴다(WD-613). 압축(compress)은 예전 기본 커넥터({@code
+   * WebClient.builder().build()})와 같게 켠다. HttpClient 는 전역 연결 풀·이벤트 루프를 공유하므로 호출마다 만들어도 연결을 새로 열지
+   * 않는다.
+   */
+  private WebClient healthCheckClient() {
+    return WebClient.builder()
+        .clientConnector(
+            new ReactorClientHttpConnector(ssrfSafeHttpClientFactory.httpClient().compress(true)))
+        .build();
   }
 
   /**

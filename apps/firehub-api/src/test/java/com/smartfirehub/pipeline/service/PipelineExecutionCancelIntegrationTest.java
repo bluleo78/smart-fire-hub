@@ -280,14 +280,16 @@ class PipelineExecutionCancelIntegrationTest extends IntegrationTestBase {
               if (pre.isEmpty()) {
                 statementStarted.countDown();
               }
+              // WD-670: 러너는 구조 잠금 계획을 넷째 인자로 넘기는 4인자 오버로드를 부른다 — 그대로 이어 넘긴다.
               return ((SqlScriptExecutor) invocation.getMock())
-                  .execute(pre, invocation.getArgument(1), wrapped);
+                  .execute(pre, invocation.getArgument(1), wrapped, invocation.getArgument(3));
             })
         .when(sqlScriptExecutor)
         .execute(
             org.mockito.ArgumentMatchers.anyList(),
             org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.any());
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyList());
 
     Long executionId = executionService.executePipeline(pipelineId, userId);
     // 「SQL 실행 직전」 체크포인트를 지나 문장이 돌기 시작한 뒤에 취소한다 — 그 전이면 체크포인트가 잡아 스텝도 CANCELLED 다. 문장은 수 초 걸려

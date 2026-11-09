@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
+import com.smartfirehub.dataset.exception.OutputStructureChangedException;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreFeatureUnsupportedException;
 import com.smartfirehub.dataset.storage.DataTableStore;
@@ -748,8 +749,10 @@ public class TiberoDataTableStore implements DataTableStore {
 
   /**
    * 스테이징의 데이터 컬럼(= 옮길 컬럼)을 카탈로그에서 읽고, 출력 테이블의 사용자 컬럼과 <b>같은 집합</b>인지 확인한다. {@code createTempTable}
-   * 이 사용자 컬럼을 모두 복사하므로 같아야 한다 — 스테이징 이름에는 어느 테이블 것인지 정보가 없어서, 인자가 뒤바뀌었을 때 구조가 다른 테이블의 스테이징이면 여기서
-   * 막는다(구조가 같은 다른 테이블의 스테이징은 구분할 수 없다). 스테이징이 없으면 출력 카탈로그는 읽지 않는다.
+   * 이 사용자 컬럼을 모두 복사하므로 같아야 한다 — 다르면 옮기지 않는다. 다른 경우는 둘이다: 스테이징 동안 원본 필드가 추가·삭제·이름변경됐거나(WD-670), 인자가
+   * 뒤바뀌어 구조가 다른 테이블의 스테이징이 왔거나. 스테이징 이름에는 어느 테이블 것인지 정보가 없어 컬럼 집합만으로는 둘을 구분할 수 없으므로, 실제로 일어나는 앞쪽
+   * 문구({@link OutputStructureChangedException})로 함께 거부한다 — 어느 쪽이든 옮기지 않고 원본을 둔다는 성질은 같다(구조가 같은 다른
+   * 테이블의 스테이징은 여전히 구분할 수 없다). 스테이징이 없으면 출력 카탈로그는 읽지 않는다.
    */
   private static List<String> stagingColumnsFor(
       Connection conn, String schema, String tableName, String tempName) throws SQLException {
@@ -765,9 +768,15 @@ public class TiberoDataTableStore implements DataTableStore {
         staging.add(c);
       }
     }
-    if (staging.isEmpty() || !Set.copyOf(staging).equals(Set.copyOf(target))) {
+    if (staging.isEmpty()) {
       throw new InvalidTableNameException(
           "'" + tempName + "' 은(는) 테이블 '" + tableName + "' 의 임시 테이블이 아닙니다");
+    }
+    // WD-670: 스테이징을 만든 뒤 원본에 필드 추가·삭제가 커밋됐으면(Tibero DDL 은 자동 커밋) 두 집합이 다르다 — 그대로 옮기면 그 변경과
+    // 어긋난 행이 들어가거나 옮기기가 원문 오류로 실패한다. 호출자(맞바꿈·옮기기)는 데이터셋 행 KEY SHARE 를 쥐고 있어 이 확인 뒤에는 구조가
+    // 바뀌지 않는다. 다르면 깔끔한 문구로 실패시켜 호출자가 스테이징을 버리게 한다(원본 유지).
+    if (!Set.copyOf(staging).equals(Set.copyOf(target))) {
+      throw new OutputStructureChangedException();
     }
     return staging;
   }

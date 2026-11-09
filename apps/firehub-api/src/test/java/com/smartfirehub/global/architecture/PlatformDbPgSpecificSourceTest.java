@@ -45,6 +45,8 @@ class PlatformDbPgSpecificSourceTest {
           "OOS(§0.2): PG 데이터 경로의 출력 테이블 잠금 키 식(OutputTableSessionLock 과 같은 해시)",
           "dataset/service/PostgresDataTableStore.java",
           "OOS(§0.2): PG 데이터 저장소 구현 — 필드 인덱스 직렬화 잠금",
+          "dataset/storage/DatasetStructureLock.java",
+          "OOS(§0.2): PG 데이터 경로의 데이터셋 구조 공유 잠금 SQL — SQL 스텝이 PG 데이터 저장소 트랜잭션 첫 문장으로 쓴다(WD-670, Tibero 는 후속)",
           "pipeline/service/validator/SqlValidator.java",
           "OOS(§0.2): 사용자 SQL 검증",
           "global/util/SqlValidationUtils.java",

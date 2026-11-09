@@ -24,7 +24,9 @@ from app.services import value_conversion as vc
 from app.services.api_call_errors import RetryableApiCallError
 from app.services.db_utils import insert_batch
 from app.services.query_key_encoding import encode_query_key, has_invalid_percent
+from app.services.structure_lock import StructureChangedError, StructureLockError, acquire_structure_locks
 from app.validators.ssrf_protection import SsrfException, validate_url
+from app.validators.ssrf_safe_transport import create_ssrf_safe_transport
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +53,17 @@ def execute_api_call(request: ApiCallExecuteRequest, conn) -> ApiCallExecuteResp
     # 인증 설정은 실행마다 한 번만 푼다(WD-657) — 페이지·재시도·리다이렉트·실행 로그 가림이 모두 이 값을 쓴다(Java 실행기와 같다).
     auth = _resolve_auth(request.auth)
     try:
+        # 구조 잠금(WD-670) — PG APPEND 로 출력에 직접 쓸 때 api 가 싣는다. 수집 전에 이 트랜잭션의 첫 문장으로 공유 잠금을 잡고 구조를
+        # 확인한다. 끝에 한 번 커밋하므로 수집 내내 잠금을 쥔다(결정 C) — 그동안 api 의 구조 변경은 수 초 뒤 409 로 끝나고, 페이지 사이에 필드가
+        # 사라지는 일은 없다.
+        if request.structure_locks:
+            with conn.cursor() as cur:
+                acquire_structure_locks(cur, request.tenant_id, request.structure_locks)
         total_rows, total_pages, log_lines = _fetch_and_write_pages(request, write_to_pg, start_time, auth)
         conn.commit()
         return _success_response(request, total_rows, total_pages, log_lines, start_time, auth)
 
-    except (SsrfException, ApiCallException) as e:
+    except (SsrfException, ApiCallException, StructureChangedError, StructureLockError) as e:
         conn.rollback()
         return _failure_response(e, start_time)
     except Exception as e:
@@ -285,6 +293,7 @@ def _execute_request(
             return response_body
         except (ApiCallException, SsrfException):
             # 재시도 안 함: 고쳐지지 않는 4xx·응답 크기 초과 등과 리다이렉트 대상이 내부망인 경우(SsrfException).
+            # 연결 시점 가드(WD-613, ssrf_safe_transport)가 DNS 리바인딩을 막을 때도 같은 SsrfException 이라 여기서 끝난다.
             # 예전에는 SsrfException 이 아래로 떨어져 같은 차단을 N회 재시도했다(WD-150, Java 와 같게).
             raise
         except Exception as e:
@@ -358,7 +367,11 @@ def _do_request(
     # 리다이렉트로 본문을 버렸는지(WD-686, 규칙은 _redirect_keeps_method_and_body) — 한 번 True 면 되돌리지 않는다.
     body_dropped = False
 
-    with httpx.Client(follow_redirects=False, timeout=timeout_sec) as client:
+    # 연결 시점에도 같은 SSRF 정책을 건다(WD-613) — validate_url 뒤 httpx 가 DNS 를 다시 해석하는 사이 응답이 내부망 IP 로
+    # 바뀌는 DNS 리바인딩을 막는다. 막히면 SsrfException 이 그대로 올라와 아래 _execute_request 가 재시도하지 않는다.
+    with httpx.Client(
+        follow_redirects=False, timeout=timeout_sec, transport=create_ssrf_safe_transport()
+    ) as client:
         while True:
             # 리다이렉트 대상(Location)의 쿼리는 받은 그대로 쓴다 — 예전에는 params={} 로 Location 의 쿼리(흔한 http→https 리다이렉트가
             # 옮겨 주는 키 포함)까지 지워졌다(WD-182).

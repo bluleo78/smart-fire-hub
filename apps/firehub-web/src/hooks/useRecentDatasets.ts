@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { useAuth } from './useAuth';
 
@@ -77,12 +77,18 @@ export function useRecentDatasets() {
     setRecents(updated.slice(0, MAX_SHOWN));
   };
 
-  /** 특정 데이터셋을 최근 목록에서 뺀다 — 접근을 잃은(숨겨진) 데이터셋이 바로가기로 남지 않게. */
-  const removeRecent = (id: number) => {
-    const updated = readFromStorage(key).filter((d) => d.id !== id);
-    writeToStorage(key, updated);
-    setRecents(updated.slice(0, MAX_SHOWN));
-  };
+  /**
+   * 특정 데이터셋을 최근 목록에서 뺀다 — 접근을 잃은(숨겨진) 데이터셋이 바로가기로 남지 않게.
+   * 키가 같은 동안 같은 함수로 고정한다(WD-646) — 상세 화면의 조회 실패 effect 가 의존성에 넣어도 렌더마다 다시 돌지 않게.
+   */
+  const removeRecent = useCallback(
+    (id: number) => {
+      const updated = readFromStorage(key).filter((d) => d.id !== id);
+      writeToStorage(key, updated);
+      setRecents(updated.slice(0, MAX_SHOWN));
+    },
+    [key],
+  );
 
   /**
    * 서버에서 받은 현재 데이터셋 값으로 저장된 이름·테이블명을 고친다 — 다른 탭·다른 사람이 이름을 바꿔도

@@ -5,6 +5,8 @@ import com.smartfirehub.dataimport.dto.ValidationErrorDetail;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.service.ColumnPhysicalType;
 import com.smartfirehub.dataset.service.GeoJsonValues;
+import com.smartfirehub.dataset.storage.DataStoreBackend;
+import com.smartfirehub.dataset.storage.DataStoreResolver;
 import java.math.BigDecimal;
 import java.text.ParsePosition;
 import java.time.LocalDate;
@@ -24,6 +26,18 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class DataValidationService {
+
+  /**
+   * 현재 테넌트의 데이터 저장소 해석기(WD-659) — 길이 미지정 VARCHAR 의 실제 길이가 저장소마다 달라(PG 255, Tibero 4000) 값 한도 검사에
+   * 저장소가 필요하다. 검증·변환의 공개 진입점마다 한 번 해석해 모든 칸에 같은 저장소를 쓴다. 테넌트 컨텍스트가 없으면 해석기가 예외를 던지므로(조용한 PG 기본값 금지)
+   * 임포트 잡은 {@code TenantContext.runScoped} 안에서 부른다.
+   */
+  private final DataStoreResolver dataStoreResolver;
+
+  /** 저장소 해석기를 주입받는다 — 값 한도 검사가 현재 테넌트 저장소의 VARCHAR 기본 길이를 쓰게 하기 위함(WD-659). */
+  public DataValidationService(DataStoreResolver dataStoreResolver) {
+    this.dataStoreResolver = dataStoreResolver;
+  }
 
   // 모든 날짜·시각 형식은 STRICT 해석기로 만든다(WD-379) — 기본 SMART 해석기는 2026-02-30·2026-04-31 을 그달 말일로,
   // 24:00:00 을 다음 날 0시로 바꿔 「검증 성공」 뒤 다른 값을 저장했다(행 추가 API 는 같은 값을 거부). STRICT 에서 yyyy 는
@@ -276,6 +290,8 @@ public class DataValidationService {
     List<String> errors = new ArrayList<>();
     // 소수점 아래 6자리를 넘어 저장 때 반올림되는 값의 수 — 검증 결과로 알린다(WD-371)
     RoundingTally rounding = new RoundingTally();
+    // 길이 미지정 VARCHAR 한도를 정할 현재 테넌트 저장소 — 이 호출의 모든 행에 같은 값을 쓴다(WD-659).
+    DataStoreBackend backend = dataStoreResolver.currentBackend();
     int rowIndex = rowIndexBase;
 
     for (Map<String, String> row : rows) {
@@ -286,7 +302,7 @@ public class DataValidationService {
       // 미묘한 버그(Task2 핵심 위험)가 생긴다. 에러는 기존과 동일한 "행/컬럼/사유" 구조의 String 메시지로 조립한다.
       List<ValidationErrorDetail> rowErrors = new ArrayList<>();
       List<Object> convertedRow =
-          convertRowOrNull(row, columns, rowIndex, rowErrors, dateOrders, rounding);
+          convertRowOrNull(row, columns, rowIndex, rowErrors, dateOrders, rounding, backend);
 
       if (convertedRow != null) {
         validRows.add(convertedRow);
@@ -603,6 +619,8 @@ public class DataValidationService {
     List<ValidationErrorDetail> errors = new ArrayList<>();
     // 소수점 아래 6자리를 넘어 저장 때 반올림되는 값의 수 — 검증 결과로 알린다(WD-371)
     RoundingTally rounding = new RoundingTally();
+    // 길이 미지정 VARCHAR 한도를 정할 현재 테넌트 저장소 — 이 호출의 모든 행에 같은 값을 쓴다(WD-659).
+    DataStoreBackend backend = dataStoreResolver.currentBackend();
     int rowIndex = rowIndexBase;
 
     for (Map<String, String> row : rows) {
@@ -614,7 +632,7 @@ public class DataValidationService {
       // Pass1(검증)과 Pass2(삽입의 toRows)가 동일한 변환 로직(convertRowOrNull)을 호출한다 —
       // 두 벌로 갈라지면 "검증 통과 == 값 변환 성공"이 어긋나는 미묘한 버그가 생긴다(Task2 핵심 위험).
       List<Object> convertedRow =
-          convertRowOrNull(remappedRow, columns, rowIndex, errors, dateOrders, rounding);
+          convertRowOrNull(remappedRow, columns, rowIndex, errors, dateOrders, rounding, backend);
       if (convertedRow != null) {
         validRows.add(convertedRow);
       }
@@ -659,6 +677,8 @@ public class DataValidationService {
     boolean hasMappings = mappings != null && !mappings.isEmpty();
     Map<String, String> columnMapping = hasMappings ? buildColumnMapping(mappings) : Map.of();
     List<ValidationErrorDetail> discardedErrors = new ArrayList<>();
+    // Pass1 검증과 같은 저장소 한도로 변환해야 "검증 통과 == 변환 성공"이 유지된다(WD-659) — 같은 테넌트 스코프에서 같은 값이 나온다.
+    DataStoreBackend backend = dataStoreResolver.currentBackend();
 
     List<List<Object>> result = new ArrayList<>();
     int rowIndex = 0;
@@ -666,7 +686,8 @@ public class DataValidationService {
       rowIndex++;
       Map<String, String> effectiveRow = hasMappings ? remapRow(row, columnMapping) : row;
       List<Object> convertedRow =
-          convertRowOrNull(effectiveRow, columns, rowIndex, discardedErrors, dateOrders, null);
+          convertRowOrNull(
+              effectiveRow, columns, rowIndex, discardedErrors, dateOrders, null, backend);
       if (convertedRow == null) {
         // Pass1(검증)을 통과한 행이 Pass2(삽입)에서 변환 실패하는 것은 불변식 위반이다.
         // 조용히 빈 행을 삽입하면 데이터 정합성이 깨지므로 즉시 실패시킨다.
@@ -708,6 +729,8 @@ public class DataValidationService {
    * 한 행(매핑 경로는 이미 매핑 적용됨)을 데이터셋 컬럼 순서의 값 리스트로 변환한다. 필수값 누락/타입 변환 실패는 errorSink에 기록하고 null을 반환한다(행
    * 전체 무효). {@link #validate}, {@link #validateWithMapping}, {@link #toRows} 세 경로 모두 이 메서드를 공유해 변환
    * 로직이 하나로 유지되게 한다(Task2 핵심 위험 3) — 두 벌로 갈라지면 "검증 통과 == 값 변환 성공"이 어긋나는 미묘한 버그가 생긴다.
+   *
+   * @param backend 값이 들어갈 테넌트 저장소 — 길이 미지정 VARCHAR 의 한도(PG 255, Tibero 4000)를 정한다(WD-659)
    */
   private List<Object> convertRowOrNull(
       Map<String, String> row,
@@ -715,7 +738,8 @@ public class DataValidationService {
       int rowIndex,
       List<ValidationErrorDetail> errorSink,
       DateOrderContext dateOrders,
-      RoundingTally rounding) {
+      RoundingTally rounding,
+      DataStoreBackend backend) {
     List<Object> convertedRow = new ArrayList<>();
     boolean rowValid = true;
     int roundedInRow = 0;
@@ -758,7 +782,8 @@ public class DataValidationService {
                 convertValue(
                     rawValue.trim(), column.dataType(), column.columnName(), dateOrders, rowIndex),
                 column.dataType(),
-                column.maxLength());
+                column.maxLength(),
+                backend);
         if (rawDecimalRounds(rawValue.trim(), column.dataType())) {
           roundedInRow++;
         }

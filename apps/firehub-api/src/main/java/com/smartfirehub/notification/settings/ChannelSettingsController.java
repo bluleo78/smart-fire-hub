@@ -4,6 +4,7 @@ import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.settings.dto.ChannelPreferenceRequest;
 import com.smartfirehub.notification.settings.dto.ChannelSettingResponse;
 import com.smartfirehub.notification.settings.dto.ChannelTestResult;
+import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -54,13 +55,14 @@ public class ChannelSettingsController {
    *
    * @param channel URL 경로의 채널 이름 (대소문자 무관). 모르는 이름은 {@link ChannelType#fromPath} 가 지원 채널 목록을 담은 한국어
    *     400 으로 거른다(WD-543 — enum 원문 메시지의 클래스 경로 노출 방지). 다른 엔드포인트도 같다.
-   * @param request 활성화 여부
+   * @param request 활성화 여부 — {@code @Valid} 로 enabled 누락·null 을 400 으로 막는다(WD-595, 누락이 「수신 끔」으로 저장되던
+   *     문제)
    * @param authentication 인증 객체
    */
   @PatchMapping("/{channel}/preference")
   public ResponseEntity<Void> updatePreference(
       @PathVariable("channel") String channel,
-      @RequestBody ChannelPreferenceRequest request,
+      @Valid @RequestBody ChannelPreferenceRequest request,
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     ChannelType channelType = ChannelType.fromPath(channel);

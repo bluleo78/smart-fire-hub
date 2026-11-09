@@ -9,10 +9,13 @@ import { expect, test } from '../../fixtures/auth.fixture';
 import { setupDatasetMocks } from '../../fixtures/dataset.fixture';
 import {
   expectBadgesFitDeclaredWidth,
+  expectCellWithinLongValueCap,
   expectKMatchesDeclaredWidths,
   expectLongValueTruncated,
+  expectNoTitle,
   expectTableFits,
   expectValueNotTruncated,
+  measureCellInnerWidth,
   TABLE_LAYOUT_WIDTHS,
 } from '../../fixtures/table-layout';
 
@@ -24,8 +27,6 @@ import {
 test.describe('데이터셋 목록 긴 이름 말줄임 (WD-517, WD-634)', () => {
   const LONG_NAME = '가'.repeat(100);
   const NAME = '119 출동 기록 원천 데이터 2025';
-  // 1024px 의 이름 칸 남는 폭(약 124px)에 들어가는 평범한 이름 (WD-650)
-  const FIT_NAME = '119 출동 기록 원천';
   // 공백 없는 긴 태그 여럿·긴 카테고리 이름 — 태그·카테고리 칸도 선언 폭을 넘지 않아야 한다
   const LONG_TAGS = ['t'.repeat(40), '태'.repeat(30), 'x'.repeat(50), 'more'];
   const LONG_CATEGORY = '카'.repeat(40);
@@ -56,8 +57,16 @@ test.describe('데이터셋 목록 긴 이름 말줄임 (WD-517, WD-634)', () =>
       await expectLongValueTruncated(row.getByText(LONG_CATEGORY, { exact: true }), LONG_CATEGORY);
       // 긴 태그는 배지 안에서 말줄임되고 전체 태그는 배지 title 로 남는다
       await expect(row.getByTitle(LONG_TAGS[0], { exact: true })).toBeVisible();
+      // WD-658: 긴 태그가 와도 태그 칸은 상한 안이고 상한은 --k 규칙 안이다
+      await expectCellWithinLongValueCap(row.getByRole('cell').filter({ has: page.getByTitle(LONG_TAGS[0], { exact: true }) }));
     });
   }
+
+  // --k 는 rem 으로만 적어 화면 폭과 무관하다 — 폭마다 보지 않고 표당 한 번 본다(WD-650)
+  test('--k 가 헤더 선언 폭 합과 맞는다 (WD-650)', async ({ authenticatedPage: page }) => {
+    await open(page, 1280, { name: NAME });
+    await expectKMatchesDeclaredWidths(page.getByRole('row').filter({ has: page.getByRole('link', { name: NAME }) }).getByRole('cell').last());
+  });
 
   /**
    * 짧은 칸의 가장 넓은 값 (WD-650)
@@ -106,8 +115,6 @@ test.describe('데이터셋 목록 긴 이름 말줄임 (WD-517, WD-634)', () =>
     }) => {
       const { link, row } = await openWorstShortCells(page, width);
       await expectTableFits(row.getByRole('cell').last());
-      // --k(짧은 칸 선언 폭의 합)가 헤더 w-[..] 와 어긋나면 긴 값 상한이 틀어진다
-      await expectKMatchesDeclaredWidths(row.getByRole('cell').last());
       await expectLongValueTruncated(link, LONG_NAME);
       // 관리자가 정한 긴 등급 이름은 배지 안에서 말줄임되고(선언 폭 안) 전체 이름은 title 로 남는다
       const levelBadge = row.getByTestId('security-level-badge');
@@ -123,6 +130,10 @@ test.describe('데이터셋 목록 긴 이름 말줄임 (WD-517, WD-634)', () =>
       const unknownText = page.getByText(UNKNOWN_STORAGE, { exact: true });
       await expectLongValueTruncated(unknownText, UNKNOWN_STORAGE);
       await expectBadgesFitDeclaredWidth(page.getByRole('cell').filter({ has: unknownText }));
+      // WD-658: 알려진 유형은 잘리지 않으므로 title 이 없다
+      await expectNoTitle(typeCell);
+      // 평범한 태그가 든 태그 칸도 한 줄 폭을 다 받고 상한 안이다
+      await expectCellWithinLongValueCap(row.getByRole('cell').filter({ has: page.getByText(NORMAL_TAGS[1], { exact: true }) }));
     });
   }
 
@@ -134,6 +145,15 @@ test.describe('데이터셋 목록 긴 이름 말줄임 (WD-517, WD-634)', () =>
     }
   });
 
+  // WD-658: 빈 등급 이름은 예전처럼 빈칸 — 「-」를 그리지 않는다
+  test('보안 등급 이름이 비면 배지에 「-」를 그리지 않는다 (WD-658)', async ({ authenticatedPage: page }) => {
+    await open(page, 1280, { name: NAME, securityLevel: { ...createLevelSummary('기밀'), name: '' } });
+    const row = page.getByRole('row').filter({ has: page.getByRole('link', { name: NAME }) });
+    const badge = row.getByTestId('security-level-badge');
+    await expect(badge).toHaveText('');
+    await expectNoTitle(badge);
+  });
+
   test('1280px 에서 평범한 길이의 이름은 잘리지 않는다', async ({ authenticatedPage: page }) => {
     await open(page, 1280, { name: NAME });
     const link = page.getByRole('link', { name: NAME });
@@ -141,23 +161,26 @@ test.describe('데이터셋 목록 긴 이름 말줄임 (WD-517, WD-634)', () =>
     await expectValueNotTruncated(link);
   });
 
-  // WD-650: 이름 칸은 짧은 칸이 자리를 잡고 남는 폭 전부를 쓴다 — 태그가 짧으면 태그 몫만큼 이름이 줄지 않는다.
-  // 1024px 에서 남는 폭(약 124px)에 들어가는 평범한 이름은 다 보여야 한다. 이전(이름 0.75 몫 상한, 약 97px)에는 잘렸다.
-  test('1024px 에서 태그가 짧으면 남는 폭에 들어가는 평범한 이름은 잘리지 않는다 (WD-650)', async ({
-    authenticatedPage: page,
-  }) => {
-    await open(page, 1024, { name: FIT_NAME, tags: NORMAL_TAGS });
-    const link = page.getByRole('link', { name: FIT_NAME });
+  // WD-650·WD-658: 이름 칸은 남는 폭 전부를 쓴다 — 넘치는 이름의 링크 폭이 min(22rem, 이름 칸 안쪽 폭)과 같아야 한다(남는 폭 px 를 박지 않는다)
+  test('1024px 에서 태그가 짧으면 이름이 이름 칸의 남는 폭을 다 쓴다 (WD-650)', async ({ authenticatedPage: page }) => {
+    await open(page, 1024, { name: LONG_NAME, tags: NORMAL_TAGS });
+    const link = page.getByRole('link', { name: LONG_NAME });
     const row = page.getByRole('row').filter({ has: link });
     await expectTableFits(row.getByRole('cell').last());
-    await expectValueNotTruncated(link);
+    const inner = await measureCellInnerWidth(link);
+    const { linkWidth, remPx } = await link.evaluate((a) => ({
+      linkWidth: a.getBoundingClientRect().width,
+      remPx: parseFloat(getComputedStyle(document.documentElement).fontSize),
+    }));
+    expect(inner, '이름 칸 안쪽 폭(px)').toBeGreaterThan(0);
+    expect(Math.abs(linkWidth - Math.min(22 * remPx, inner)), '링크 폭과 min(22rem, 안쪽 폭)의 차이(px)').toBeLessThanOrEqual(1);
+    await expectLongValueTruncated(link, LONG_NAME);
     for (const tag of NORMAL_TAGS) {
       await expectValueNotTruncated(row.getByText(tag, { exact: true }));
     }
   });
 
-  // 1024px 은 짧은 칸(즐겨찾기·보안 등급·태그·유형·카테고리·생성일·작업)의 선언 폭을 빼고 남는 폭(약 124px)이
-  // 이 이름(약 183px)보다 좁다 — WD-650 이전(상한 150px)에도 잘렸다. 표가 들어맞고 이름 전체가 title 로 남는지만 본다.
+  // 1024px 에서 이 이름의 잘림 여부는 남는 폭에 달려 있어 보지 않고, 표가 들어맞고 전체 이름이 title 로 남는지만 본다
   test('1024px 에서 평범한 길이의 이름이 있어도 표가 들어맞고 전체 이름은 title 로 남는다', async ({
     authenticatedPage: page,
   }) => {

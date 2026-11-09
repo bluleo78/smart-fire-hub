@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -381,7 +382,8 @@ class LocalPythonOutputLoaderTest {
     loader.load("py_out", "[{\"name\": \"a\"}]", Map.of("name", "TEXT"));
 
     InOrder order = inOrder(writeLock, rowService);
-    order.verify(writeLock).lockLoadTarget("py_out");
+    // WD-670: 쓸 컬럼을 넘겨 잠금 뒤 현재 필드 목록과 대조한다.
+    order.verify(writeLock).lockLoadTarget(eq("py_out"), eq(List.of("name")));
     order.verify(rowService).insertBatch(eq("py_out"), anyList(), anyList(), nullable(Map.class));
   }
 
@@ -390,7 +392,7 @@ class LocalPythonOutputLoaderTest {
   void load_outputDatasetGone_failsWithoutInsert() {
     DataTableRowService rowService = mock(DataTableRowService.class);
     DatasetDataWriteLock writeLock = mock(DatasetDataWriteLock.class);
-    doThrow(new DatasetNotFoundException()).when(writeLock).lockLoadTarget("py_out");
+    doThrow(new DatasetNotFoundException()).when(writeLock).lockLoadTarget(eq("py_out"), any());
     LocalPythonOutputLoader loader =
         new LocalPythonOutputLoader(rowService, mock(PlatformTransactionManager.class), writeLock);
 
@@ -425,13 +427,33 @@ class LocalPythonOutputLoaderTest {
             new BadSqlGrammarException(
                 "jOOQ",
                 "INSERT INTO data.\"r8_out\" (\"name\") VALUES (?)",
-                new SQLException("column does not exist", "42703")))
+                new SQLException("permission denied", "42501")))
         .when(rowService)
         .insertBatch(anyString(), anyList(), anyList(), anyMap());
     LocalPythonOutputLoader loader = loaderWith(rowService);
     assertThatThrownBy(() -> loader.load("r8_out", "[{\"name\": \"a\"}]", Map.of("name", "TEXT")))
         .isInstanceOf(ScriptExecutionException.class)
         .hasMessage("Python 실행 실패: 출력 결과를 데이터셋에 적재하지 못했습니다. 출력 JSON 의 키와 값 형식을 확인해 주세요.");
+  }
+
+  /**
+   * WD-670: 컬럼 없음(42703)은 실행 중 출력 구조가 바뀐 것이다(쓸 키는 이미 필드 목록과 대조했다) — 원문 대신 「다시 실행」 안내를 보인다. 수정 전에는
+   * 일반 적재 실패 문구였다.
+   */
+  @Test
+  void undefinedColumnDuringInsert_isReportedAsStructureChange() {
+    DataTableRowService rowService = mock(DataTableRowService.class);
+    doThrow(
+            new BadSqlGrammarException(
+                "jOOQ",
+                "INSERT INTO data.\"r8_out\" (\"name\") VALUES (?)",
+                new SQLException("column does not exist", "42703")))
+        .when(rowService)
+        .insertBatch(anyString(), anyList(), anyList(), anyMap());
+    LocalPythonOutputLoader loader = loaderWith(rowService);
+    assertThatThrownBy(() -> loader.load("r8_out", "[{\"name\": \"a\"}]", Map.of("name", "TEXT")))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessage("Python 실행 실패: 실행 중 출력 데이터셋 구조가 바뀌었습니다. 다시 실행해 주세요");
   }
 
   /** WD-211: DB 데이터 오류(22xxx)는 DataExceptionTranslator 사유 문장을 재사용한다(원문 없이). */

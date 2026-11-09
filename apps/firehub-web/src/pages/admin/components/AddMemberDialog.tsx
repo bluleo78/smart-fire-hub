@@ -8,7 +8,7 @@ import { Controller, useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { rolesApi } from '../../../api/roles';
+import { ROLE_LIST_KEY, rolesApi } from '../../../api/roles';
 import { usersApi } from '../../../api/users';
 import { PendingSubmitButton } from '../../../components/PendingSubmitButton';
 import { Button } from '../../../components/ui/button';
@@ -80,7 +80,7 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
 
   // 다이얼로그를 열 때만 역할 목록을 읽는다(목록 페이지 진입만으로 불필요한 호출을 만들지 않음).
   const rolesQuery = useQuery({
-    queryKey: ['roles'],
+    queryKey: ROLE_LIST_KEY,
     queryFn: () => rolesApi.getRoles().then((r) => r.data),
     enabled: open && canReadRoles,
   });

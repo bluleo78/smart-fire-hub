@@ -15,6 +15,7 @@ import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector'
 import { isNumericColumn, isWeightColumn } from '../../components/analytics/numeric-columns';
 import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
+import { ResourceNotFound } from '../../components/ResourceNotFound';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import {
@@ -45,6 +46,7 @@ import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Switch } from '../../components/ui/switch';
 import {
+  CHART_LIST_KEY,
   useAddWidget,
   useAllDashboards,
   useAllSavedQueries,
@@ -53,6 +55,7 @@ import {
   useExecuteSavedQuery,
   useUpdateChart,
 } from '../../hooks/queries/useAnalytics';
+import { useInvalidateListsOnEntryNotFound } from '../../hooks/queries/useInvalidateListsOnEntryNotFound';
 import { useIsOwner } from '../../hooks/useIsOwner';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { handleApiError, isEditConflict } from '../../lib/api-error';
@@ -502,7 +505,13 @@ export default function ChartBuilderPage() {
   const queries = allQueries ?? [];
 
   // Existing chart (edit mode) — isError: 존재하지 않는 차트 ID(404 등) 접근 시 에러 감지
-  const { data: existingChart, isLoading: chartLoading, isError: chartError } = useChart(chartId);
+  const {
+    data: existingChart,
+    isLoading: chartLoading,
+    isError: chartError,
+    isLoadingError: isChartLoadingError,
+    error: chartFetchError,
+  } = useChart(chartId);
   // 서버가 설정을 가린 차트(WD-31②) — 설정 패널·차트 타입·쿼리 실행을 잠그고, 저장 시 config·chartType 을 보내지 않는다(기존 값 유지).
   const configWithheld = existingChart?.configWithheld === true;
   // 저장(덮어쓰기)·이름 변경은 작성자만 — 서버가 남의 수정 요청을 404 로 거절한다(WD-196). 남이 공유한 차트는 저장 버튼 대신 안내를 둔다.
@@ -514,6 +523,7 @@ export default function ChartBuilderPage() {
   const createChart = useCreateChart();
   const updateChart = useUpdateChart();
   const queryClient = useQueryClient();
+  useInvalidateListsOnEntryNotFound({ isLoadingError: isChartLoadingError, error: chartFetchError }, CHART_LIST_KEY);
 
   /**
    * 지금 화면 내용의 기준 버전 — 그 내용을 불러온(또는 저장한) 시점의 서버 updatedAt(WD-364 낙관적 잠금).
@@ -851,16 +861,14 @@ export default function ChartBuilderPage() {
     );
   }
 
-  // 존재하지 않는 차트 ID(404 등) 접근 시: 에러 안내 + 목록 이동 버튼 표시
+  // 존재하지 않는 차트 ID(404 등) 접근 시: 공용 「찾을 수 없음」 안내(제목 h1) + 목록 이동 버튼
   if (!isNew && (chartError || isInvalidId)) {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 py-20">
-        <BarChart2 className="h-12 w-12 text-muted-foreground" />
-        <p className="text-muted-foreground">차트를 찾을 수 없습니다.</p>
-        <Button variant="outline" onClick={() => navigate('/analytics/charts')}>
-          목록으로
-        </Button>
-      </div>
+      <ResourceNotFound
+        icon={BarChart2}
+        message="차트를 찾을 수 없습니다."
+        onBackToList={() => navigate('/analytics/charts')}
+      />
     );
   }
 

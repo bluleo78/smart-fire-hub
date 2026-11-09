@@ -141,7 +141,7 @@ test.describe('파이프라인 머리글 동작 버튼·편집 모드 (WD-656)',
     await page.goto('/pipelines/1');
   });
 
-  test('긴 이름이어도 머리글 동작 버튼이 화면·머리글 안에 보이고, 편집 모드 입력칸에는 title 이 없다', async ({
+  test('긴 이름이어도 머리글 동작 버튼이 화면·머리글 안에 보이고, 편집 모드 입력칸은 잘렸을 때만 title 이 있다', async ({
     authenticatedPage: page,
   }) => {
     const header = page.locator('header');
@@ -152,13 +152,22 @@ test.describe('파이프라인 머리글 동작 버튼·편집 모드 (WD-656)',
       await expectInsideHorizontally(button, header, `「${name}」 버튼`);
     }
 
-    // 편집 모드 — 입력칸에는 title 을 두지 않는다(WD-663: 스크린리더가 이름을 두 번 읽고, 입력 중에도 툴팁이 뜬다).
+    // 편집 모드 — 입력칸도 WD-517 원칙을 따른다(WD-669): 잘린 긴 이름은 hover 때 전체 이름 title, 잘리지 않은 짧은 이름은 title 없음.
     // 저장·취소 버튼도 화면 안에 보인다
     await header.getByRole('button', { name: '수정', exact: true }).click();
     const input = header.getByRole('textbox', { name: '파이프라인 이름' });
     await expect(input).toHaveValue(LONG_UNBROKEN_NAME);
-    await input.hover();
-    await expect(input).not.toHaveAttribute('title');
+    await expectTruncatedWithHoverTitle(input, LONG_UNBROKEN_NAME);
+
+    // hover 한 채로 짧은 이름으로 고치면 입력 때 다시 재서 title 이 빠진다 — 다시 hover 해도 없다
+    await input.fill(SHORT_NAME);
+    await expect(input, '짧은 이름으로 고치면 title 이 빠진다').not.toHaveAttribute('title');
+    await expectNoTitleOnHover(input);
+
+    // 다시 긴 이름을 치면(hover 중) 새 이름으로 title 이 붙는다
+    const renamed = `${LONG_UNBROKEN_NAME.slice(0, 99)}Y`;
+    await input.fill(renamed);
+    await expect(input).toHaveAttribute('title', renamed);
     await expectInsideHorizontally(input, header, '이름 입력칸', { content: false });
     for (const name of ['저장', '취소']) {
       const button = header.getByRole('button', { name, exact: true });
@@ -192,5 +201,31 @@ test.describe('TruncatedTitle 글자가 바뀌면 이전 title 을 뗀다 (WD-66
 
     // 다시 hover 하면 새 이름으로 단다
     await expectTruncatedWithHoverTitle(current, renamed);
+  });
+
+  test('포인터가 위에 있는 채로 이름이 잘리는 길이로 바뀌면 바로 title 이 붙는다 (WD-669)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize(NARROW_DESKTOP_VIEWPORT);
+    await grantPipelinePermissions(page);
+    await SCENARIOS[0].setup(page, SHORT_NAME);
+    await page.goto('/pipelines/1');
+
+    const header = page.locator('header');
+    await header.getByRole('button', { name: '수정', exact: true }).click();
+    const input = header.getByRole('textbox', { name: '파이프라인 이름' });
+    await expect(input).toHaveValue(SHORT_NAME);
+
+    // 짧은 이름 위에 포인터를 올려 둔다 — 잘리지 않았으니 title 이 없다
+    const current = page.getByRole('navigation', { name: '현재 위치' }).locator('[aria-current="page"]');
+    await expectNoTitleOnHover(current);
+
+    // 포인터는 그대로 두고 키보드로 긴 이름을 친다 — pointerenter 가 다시 오지 않아도 새 글자로 다시 재서 title 을 단다
+    await input.focus();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.insertText(LONG_UNBROKEN_NAME);
+    await expect(current).toHaveText(LONG_UNBROKEN_NAME);
+    expect(await current.evaluate((el) => el.matches(':hover')), '포인터가 아직 위에 있어야 한다(전제)').toBe(true);
+    await expect(current).toHaveAttribute('title', LONG_UNBROKEN_NAME);
   });
 });

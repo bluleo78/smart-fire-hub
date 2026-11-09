@@ -18,11 +18,13 @@ import org.junit.jupiter.api.Test;
 class ColumnPhysicalTypeTest {
 
   private static Object strict(String v) {
-    return ColumnPhysicalType.enforceLimitsStrict(new BigDecimal(v), "DECIMAL", null);
+    return ColumnPhysicalType.enforceLimitsStrict(
+        new BigDecimal(v), "DECIMAL", null, DataStoreBackend.POSTGRESQL);
   }
 
   private static Object lenient(String v) {
-    return ColumnPhysicalType.enforceLimits(new BigDecimal(v), "DECIMAL", null);
+    return ColumnPhysicalType.enforceLimits(
+        new BigDecimal(v), "DECIMAL", null, DataStoreBackend.POSTGRESQL);
   }
 
   /** 0 은 scale·지수와 무관하게 0 으로 통과하고, 끝 0 만 붙은 값은 값이 같아 엄격 모드도 통과한다. */
@@ -60,9 +62,73 @@ class ColumnPhysicalTypeTest {
   /** 엄격 모드 VARCHAR 는 공백뿐인 초과분도 거부, 관대 모드는 잘라 저장한다. */
   @Test
   void varchar_trailingSpaceOverflow_strictRejects_lenientTrims() {
-    assertThatThrownBy(() -> ColumnPhysicalType.enforceLimitsStrict("abc  ", "VARCHAR", 3))
+    assertThatThrownBy(
+            () ->
+                ColumnPhysicalType.enforceLimitsStrict(
+                    "abc  ", "VARCHAR", 3, DataStoreBackend.POSTGRESQL))
         .hasMessage("최대 3자까지 입력할 수 있습니다(입력 5자)");
-    assertThat(ColumnPhysicalType.enforceLimits("abc  ", "VARCHAR", 3)).isEqualTo("abc");
+    assertThat(ColumnPhysicalType.enforceLimits("abc  ", "VARCHAR", 3, DataStoreBackend.POSTGRESQL))
+        .isEqualTo("abc");
+  }
+
+  /**
+   * WD-659 — 길이 미지정 VARCHAR 의 값 한도는 저장소 기본 길이다. Tibero(VARCHAR2(4000 CHAR))는 300자를 엄격·관대 모드 모두 받고
+   * 4001자는 거부한다. PG(VARCHAR(255))는 예전처럼 256자를 거부(엄격)하거나, 초과분이 공백뿐이면 255자로 자른다(관대).
+   */
+  @Test
+  void varchar_withoutLength_usesBackendDefaultLength() {
+    String v300 = "a".repeat(300);
+    assertThat(
+            ColumnPhysicalType.enforceLimitsStrict(v300, "VARCHAR", null, DataStoreBackend.TIBERO))
+        .isEqualTo(v300);
+    assertThat(ColumnPhysicalType.enforceLimits(v300, "VARCHAR", null, DataStoreBackend.TIBERO))
+        .isEqualTo(v300);
+    String v4001 = "a".repeat(4001);
+    assertThatThrownBy(
+            () ->
+                ColumnPhysicalType.enforceLimitsStrict(
+                    v4001, "VARCHAR", null, DataStoreBackend.TIBERO))
+        .hasMessage("최대 4000자까지 입력할 수 있습니다(입력 4001자)");
+    assertThatThrownBy(
+            () -> ColumnPhysicalType.enforceLimits(v4001, "VARCHAR", null, DataStoreBackend.TIBERO))
+        .hasMessage("최대 4000자까지 입력할 수 있습니다(입력 4001자)");
+
+    // PG 는 그대로 255
+    assertThatThrownBy(
+            () ->
+                ColumnPhysicalType.enforceLimitsStrict(
+                    "a".repeat(256), "VARCHAR", null, DataStoreBackend.POSTGRESQL))
+        .hasMessage("최대 255자까지 입력할 수 있습니다(입력 256자)");
+    assertThatThrownBy(
+            () ->
+                ColumnPhysicalType.enforceLimits(
+                    v300, "VARCHAR", null, DataStoreBackend.POSTGRESQL))
+        .hasMessage("최대 255자까지 입력할 수 있습니다(입력 300자)");
+    assertThat(
+            ColumnPhysicalType.enforceLimits(
+                "a".repeat(255) + "   ", "VARCHAR", null, DataStoreBackend.POSTGRESQL))
+        .isEqualTo("a".repeat(255));
+  }
+
+  /** WD-659 — 명시한 길이는 저장소 기본 길이보다 우선한다(Tibero 에서도 VARCHAR(10) 은 11자 거부). */
+  @Test
+  void varchar_explicitLength_winsOverBackendDefault() {
+    assertThatThrownBy(
+            () ->
+                ColumnPhysicalType.enforceLimitsStrict(
+                    "a".repeat(11), "VARCHAR", 10, DataStoreBackend.TIBERO))
+        .hasMessage("최대 10자까지 입력할 수 있습니다(입력 11자)");
+    assertThat(
+            ColumnPhysicalType.enforceLimitsStrict(
+                "a".repeat(300), "VARCHAR", 1000, DataStoreBackend.POSTGRESQL))
+        .isEqualTo("a".repeat(300));
+  }
+
+  /** WD-659 — 저장소 없이 부르면 PG 기본값으로 조용히 떨어지지 않고 즉시 실패한다. */
+  @Test
+  void enforceLimits_withoutBackend_failsFast() {
+    assertThatThrownBy(() -> ColumnPhysicalType.enforceLimits("a", "VARCHAR", null, null))
+        .isInstanceOf(NullPointerException.class);
   }
 
   /** 정수 변환은 잘라 내거나 포화시키지 않는다 — 소수부가 0 인 값·지수 표기는 정수, 그 밖은 형식/범위 오류. */

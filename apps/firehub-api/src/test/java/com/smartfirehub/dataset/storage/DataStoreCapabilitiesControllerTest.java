@@ -52,7 +52,9 @@ class DataStoreCapabilitiesControllerTest {
         .andExpect(jsonPath("$.geometry").value(true))
         .andExpect(jsonPath("$.rowSearch").value(true))
         // WD-636: 웹 폼 VARCHAR 길이 상한 — PG 는 10000.
-        .andExpect(jsonPath("$.maxVarcharLength").value(10000));
+        .andExpect(jsonPath("$.maxVarcharLength").value(10000))
+        // WD-659: 길이 미지정 VARCHAR 의 실제 길이 — PG 는 VARCHAR(255).
+        .andExpect(jsonPath("$.defaultVarcharLength").value(255));
   }
 
   @Test
@@ -66,7 +68,9 @@ class DataStoreCapabilitiesControllerTest {
         .andExpect(jsonPath("$.geometry").value(false))
         .andExpect(jsonPath("$.rowSearch").value(false))
         // WD-636: Tibero VARCHAR2 상한 4000 — 서버가 DDL 전에 거부하는 값과 같다.
-        .andExpect(jsonPath("$.maxVarcharLength").value(4000));
+        .andExpect(jsonPath("$.maxVarcharLength").value(4000))
+        // WD-659: Tibero 의 길이 미지정 VARCHAR 는 VARCHAR2(4000 CHAR).
+        .andExpect(jsonPath("$.defaultVarcharLength").value(4000));
   }
 
   @Test

@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.service.executor;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -551,8 +552,8 @@ class AiClassifyExecutorTest {
     assertThat(result.executionLog()).contains("0 rows dropped");
     verify(aiAgentClient).classify(any(), any(), eq(1L));
     verify(dataTableRowService).insertBatch(eq("output_table"), anyList(), anyList(), anyMap());
-    // WD-666: APPEND 배치 쓰기는 출력 테이블의 쓰기 잠금 안에서 한다.
-    verify(writeLock).writeToOutput(eq("output_table"), any(Runnable.class));
+    // WD-666: APPEND 배치 쓰기는 출력 테이블의 쓰기 잠금 안에서 한다(WD-670: 쓸 컬럼 확인 판).
+    verify(writeLock).writeToOutput(eq("output_table"), anyCollection(), any(Runnable.class));
   }
 
   @Test

@@ -1,5 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
+import com.smartfirehub.dataset.exception.OutputStructureChangedException;
+import com.smartfirehub.dataset.storage.DatasetStructureLock;
 import com.smartfirehub.global.config.TenantPipelineDataSourceRegistry;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -7,10 +9,15 @@ import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
+import org.jooq.DSLContext;
+import org.jooq.Record;
+import org.jooq.Result;
 import org.springframework.stereotype.Service;
 
 /**
@@ -138,6 +145,28 @@ public class SqlScriptExecutor {
    */
   public String execute(
       List<String> preStatements, String scriptContent, ExecutionCancelCheck cancel) {
+    return execute(preStatements, scriptContent, cancel, List.of());
+  }
+
+  /**
+   * {@link #execute(List, String, ExecutionCancelCheck)} 에 <b>구조 잠금</b>을 더한 판(WD-670) — 러너가 출력 테이블과
+   * 사용자 DML 쓰기 대상을 넘겨 부른다.
+   *
+   * <p><b>왜 필요한가.</b> 이 실행은 테넌트 파이프라인 풀의 자기 트랜잭션에서 돌아 플랫폼 데이터셋 행 잠금(WD-666)을 잡지 않는다 — 잡으려면 실행 내내
+   * 플랫폼 연결을 붙잡아야 해 풀이 마른다(이전 시도 A 가 그래서 되돌려졌다). 그래서 필드 추가(NOT NULL)·변경·삭제·데이터셋 삭제가 실행 도중 커밋돼 원문
+   * 오류(「column does not exist」)로 실패하거나 구조와 어긋난 행이 남았다. 이제 트랜잭션의 <b>첫 문장</b>으로 대상마다 구조 잠금을 공유로
+   * 잡는다(테이블 이름순) — 구조 변경은 같은 키를 배타로 잡으므로 이 실행이 커밋할 때까지 기다리거나(최대 수 초 뒤 409) 이 실행이 그 변경 커밋 뒤에 시작한다. 그
+   * 경우를 위해 잠금 직후 테이블 존재·계획 컬럼을 다시 확인해, 바뀌었으면 {@link OutputStructureChangedException} 으로 아무것도 쓰지 않고
+   * 롤백한다. 출력 잠금(#731)보다 먼저 잡는다 — 출력 잠금을 기다리는 동안에도 구조가 바뀌지 않게.
+   *
+   * @param structureGuards 공유 잠금·확인 대상(없으면 빈 목록 — 예전 동작)
+   */
+  public String execute(
+      List<String> preStatements,
+      String scriptContent,
+      ExecutionCancelCheck cancel,
+      List<StructureGuard> structureGuards) {
+    List<StructureGuard> guards = StructureGuard.normalize(structureGuards);
     // 선행 문장은 DataSchema.current() 로 얻은 "현재 테넌트 스키마" 를 대상으로 하는 DELETE 전체
     // 삭제문과, 그 뒤에 정확히 " WHERE false" 만 붙은 잠금 전용 문장(WD-426)만 허용한다 — 다른 WHERE 절도, 다른 스키마도,
     // 세미콜론으로 이어붙인 두 번째 문장도 이 접두어·접미사·패턴 조합을 통과할 수 없다(접미사는 한 번만 뗀다).
@@ -194,6 +223,8 @@ public class SqlScriptExecutor {
           tenantDsl -> {
             tenantDsl.transaction(
                 cfg -> {
+                  // 구조 잠금(WD-670) — 이 트랜잭션의 첫 문장들. 이유는 위 Javadoc.
+                  acquireStructureLocks(cfg.dsl(), guards);
                   // search_path 는 한정 이름이 아니라 스키마 식별자 목록이므로 qualify() 가 아니라 current().
                   //
                   // P3-b2 T4 — 무변경 판정(실측 근거). 인용된 단일 스키마 조립은 숫자 접미사가
@@ -224,6 +255,12 @@ public class SqlScriptExecutor {
           });
       return "SQL executed successfully";
     } catch (Exception e) {
+      // 실행 중 구조 변경(WD-670) — 깔끔한 문구 그대로 올린다(실행 실패 문구·원문으로 감싸지 않는다). 트랜잭션은 이미 롤백됐다.
+      OutputStructureChangedException changed = findStructureChange(e);
+      if (changed != null) {
+        log.info("SQL 스텝이 구조 잠금 뒤 대상 구조가 바뀐 것을 확인해 롤백했습니다");
+        throw changed;
+      }
       // 잠금 뒤 취소(WD-466)는 실패가 아니다 — 실행 실패 문구로 감싸지 않고 그대로 올려 러너가 CANCELLED 로 기록하게 한다.
       PipelineExecutionCancelledException cancelled = PipelineExecutionCancelledException.findIn(e);
       if (cancelled != null) {
@@ -236,6 +273,66 @@ public class SqlScriptExecutor {
       throw new ScriptExecutionException(
           PipelineSqlErrorMessages.describe(PipelineSqlErrorMessages.EXECUTION_PREFIX, e), e);
     }
+  }
+
+  /** 구조 잠금 공유 획득 + 잠금 뒤 확인(WD-670). 대상은 이미 테이블 이름순이다. */
+  private static void acquireStructureLocks(DSLContext tx, List<StructureGuard> guards) {
+    for (StructureGuard guard : guards) {
+      tx.fetch(DatasetStructureLock.SHARED_LOCK_SQL, guard.key());
+    }
+    for (StructureGuard guard : guards) {
+      verifyStructure(tx, guard);
+    }
+  }
+
+  /**
+   * 잠금 뒤 테이블 존재·계획 컬럼 확인(WD-670) — 규칙은 {@link StructureGuard}. 실행기(sql_executor.py)도 같은 문장·같은 규칙이다.
+   *
+   * @throws OutputStructureChangedException 테이블이 없거나 계획 컬럼이 없거나 계획 밖 필수 컬럼이 생겼을 때
+   */
+  private static void verifyStructure(DSLContext tx, StructureGuard guard) {
+    Result<Record> rows = tx.fetch(STRUCTURE_COLUMNS_SQL, DataSchema.qualify(guard.tableName()));
+    if (rows.isEmpty()) {
+      throw new OutputStructureChangedException();
+    }
+    if (guard.columns() == null) {
+      return;
+    }
+    Set<String> physical = new HashSet<>();
+    for (Record r : rows) {
+      physical.add(r.get(0, String.class));
+    }
+    for (String column : guard.columns()) {
+      if (!physical.contains(column)) {
+        throw OutputStructureChangedException.missingField(column);
+      }
+    }
+    Set<String> known = new HashSet<>(guard.columns());
+    for (Record r : rows) {
+      String name = r.get(0, String.class);
+      if (Boolean.TRUE.equals(r.get(1, Boolean.class)) && !known.contains(name)) {
+        throw new OutputStructureChangedException();
+      }
+    }
+  }
+
+  /**
+   * 테이블의 물리 컬럼과 「값이 꼭 필요한가」(NOT NULL·기본값 없음·identity 아님). 테이블이 없으면 행이 없다({@code to_regclass} 가
+   * null). 실행기(sql_executor.py STRUCTURE_COLUMNS_SQL)와 같은 문장이다.
+   */
+  static final String STRUCTURE_COLUMNS_SQL =
+      "SELECT a.attname::text, (a.attnotnull AND NOT a.atthasdef AND a.attidentity = '')"
+          + " FROM pg_attribute a WHERE a.attrelid = to_regclass(?) AND a.attnum > 0"
+          + " AND NOT a.attisdropped";
+
+  /** 예외 원인 사슬에서 구조 변경 예외를 찾는다(jOOQ 트랜잭션이 감쌀 수 있다). */
+  private static OutputStructureChangedException findStructureChange(Throwable e) {
+    for (Throwable t = e; t != null; t = t.getCause()) {
+      if (t instanceof OutputStructureChangedException c) {
+        return c;
+      }
+    }
+    return null;
   }
 
   /**

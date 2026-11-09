@@ -50,6 +50,19 @@ public final class PassThroughWriteLock {
         .doAnswer(inv -> ((Supplier<Object>) inv.getArgument(2)).get())
         .when(lock)
         .writeToDataset(anyLong(), any(Function.class), any(Supplier.class));
+    // WD-670: 쓸 컬럼 확인을 더한 판(페이지·배치 APPEND) — 확인 없이 본문만 실행한다.
+    lenient()
+        .doAnswer(inv -> ((Supplier<Object>) inv.getArgument(2)).get())
+        .when(lock)
+        .writeToOutput(anyString(), any(), any(Supplier.class));
+    lenient()
+        .doAnswer(
+            inv -> {
+              ((Runnable) inv.getArgument(2)).run();
+              return null;
+            })
+        .when(lock)
+        .writeToOutput(anyString(), any(), any(Runnable.class));
     return lock;
   }
 }

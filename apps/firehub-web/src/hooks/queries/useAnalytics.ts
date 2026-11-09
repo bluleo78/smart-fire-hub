@@ -23,6 +23,9 @@ import { useMyPermissions } from './useMyPermissions';
 // Phase 1: Saved Queries
 // ============================================================
 
+/** 저장 쿼리 목록 쿼리 키 접두 — 목록 접두 규칙은 useInvalidateListsOnEntryNotFound 참고 */
+export const SAVED_QUERY_LIST_KEY = ['analytics', 'queries', 'list'] as const;
+
 export function useSavedQueries(params: {
   search?: string;
   folder?: string;
@@ -32,7 +35,7 @@ export function useSavedQueries(params: {
   size?: number;
 }) {
   return useQuery({
-    queryKey: ['analytics', 'queries', params],
+    queryKey: [...SAVED_QUERY_LIST_KEY, params],
     queryFn: () => analyticsApi.listQueries(params).then((r) => r.data),
   });
 }
@@ -49,7 +52,7 @@ const ANALYTICS_LIST_MAX_SIZE = 100;
  */
 export function useAllSavedQueries() {
   return useQuery({
-    queryKey: ['analytics', 'queries', 'all'],
+    queryKey: [...SAVED_QUERY_LIST_KEY, 'all'],
     queryFn: () =>
       fetchAllPages(
         (page, size) => analyticsApi.listQueries({ page, size }).then((r) => r.data),
@@ -162,6 +165,9 @@ export function useQueryFolders(params: { sharedOnly?: boolean; mineOnly?: boole
 // Phase 2: Charts
 // ============================================================
 
+/** 차트 목록 쿼리 키 접두 — 목록 접두 규칙은 useInvalidateListsOnEntryNotFound 참고 */
+export const CHART_LIST_KEY = ['analytics', 'charts', 'list'] as const;
+
 export function useCharts(params: {
   search?: string;
   savedQueryId?: number;
@@ -171,7 +177,7 @@ export function useCharts(params: {
   size?: number;
 }) {
   return useQuery({
-    queryKey: ['analytics', 'charts', params],
+    queryKey: [...CHART_LIST_KEY, params],
     queryFn: () => analyticsApi.listCharts(params).then((r) => r.data),
   });
 }
@@ -188,7 +194,7 @@ export function useChartsInfinite(params: {
   size?: number;
 }) {
   return useInfiniteQuery({
-    queryKey: ['analytics', 'charts', 'infinite', params],
+    queryKey: [...CHART_LIST_KEY, 'infinite', params],
     queryFn: ({ pageParam }) =>
       analyticsApi.listCharts({ ...params, page: pageParam }).then((r) => r.data),
     initialPageParam: 0,
@@ -326,6 +332,9 @@ export function useDeleteImpact(kind: 'query' | 'chart', id: number, options?: {
 // Phase 3: Dashboards
 // ============================================================
 
+/** 대시보드 목록 쿼리 키 접두 — 목록 접두 규칙은 useInvalidateListsOnEntryNotFound 참고 */
+export const DASHBOARD_LIST_KEY = ['analytics', 'dashboards', 'list'] as const;
+
 export function useDashboards(params: {
   search?: string;
   sharedOnly?: boolean;
@@ -334,7 +343,7 @@ export function useDashboards(params: {
   size?: number;
 }) {
   return useQuery({
-    queryKey: ['analytics', 'dashboards', params],
+    queryKey: [...DASHBOARD_LIST_KEY, params],
     queryFn: () => analyticsApi.listDashboards(params).then((r) => r.data),
   });
 }
@@ -347,7 +356,7 @@ export function useDashboards(params: {
  */
 export function useAllDashboards() {
   return useQuery({
-    queryKey: ['analytics', 'dashboards', 'all'],
+    queryKey: [...DASHBOARD_LIST_KEY, 'all'],
     queryFn: () =>
       fetchAllPages(
         (page, size) => analyticsApi.listDashboards({ page, size }).then((r) => r.data),
@@ -426,7 +435,7 @@ export function useAddWidget(dashboardId: number) {
     // 무한 스크롤 목록만 무효화한다(['analytics','charts'] 전체면 위젯마다 차트 데이터 쿼리까지 다시 돈다).
     onError: (error) => {
       if (isNotFoundError(error)) {
-        queryClient.invalidateQueries({ queryKey: ['analytics', 'charts', 'infinite'] });
+        queryClient.invalidateQueries({ queryKey: [...CHART_LIST_KEY, 'infinite'] });
       }
     },
   });

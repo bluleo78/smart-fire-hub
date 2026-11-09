@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Null;
 import jakarta.validation.constraints.Size;
 import java.lang.annotation.ElementType;
@@ -16,6 +17,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -25,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * 검증 실패 응답 모양(WD-640) 확인용 스텁 컨트롤러 — 운영 코드에는 아직 없는 검증 경로(메서드 파라미터 제약, @ModelAttribute, 클래스 단위 합성 제약,
@@ -51,16 +54,45 @@ public class ValidationStubController {
   }
 
   /** {@link SameValues} 검증기. */
-  public static class SameValuesValidator implements ConstraintValidator<SameValues, PasswordPair> {
+  public static class SameValuesValidator implements ConstraintValidator<SameValues, PairLike> {
     @Override
-    public boolean isValid(PasswordPair value, ConstraintValidatorContext context) {
+    public boolean isValid(PairLike value, ConstraintValidatorContext context) {
       return value == null || Objects.equals(value.password(), value.confirm());
     }
   }
 
+  /** 비밀번호·확인 두 칸을 가진 값 — {@link SameValues} 가 검사한다(WD-665 에서 여러 레코드가 함께 쓰도록 인터페이스로 뺐다). */
+  public interface PairLike {
+    String password();
+
+    String confirm();
+  }
+
   /** 합성 제약이 붙은 본문. */
   @SameValues
-  public record PasswordPair(String password, String confirm) {}
+  public record PasswordPair(String password, String confirm) implements PairLike {}
+
+  /** 필드 제약(name)과 클래스 단위 제약(두 칸 일치)을 함께 가진 원소(WD-665) — 같은 원소의 두 오류가 같은 접두 모양인지 본다. */
+  @SameValues
+  public record NamedPair(@NotBlank String name, String password, String confirm)
+      implements PairLike {}
+
+  /**
+   * 합성 제약(WD-665) — 제약 애너테이션 위에 @NotBlank·@Size 를 메타 애너테이션으로 얹었다. 합성 제약의 위반도 값 파라미터 키(클라이언트 이름)로
+   * 나와야 한다.
+   */
+  @Target({ElementType.PARAMETER, ElementType.FIELD, ElementType.TYPE_USE})
+  @Retention(RetentionPolicy.RUNTIME)
+  @Constraint(validatedBy = {})
+  @NotBlank
+  @Size(max = 3)
+  public @interface ShortCode {
+    String message() default "";
+
+    Class<?>[] groups() default {};
+
+    Class<? extends Payload>[] payload() default {};
+  }
 
   /** 필드 제약 본문. */
   public record NamedBody(@NotBlank String name) {}
@@ -148,4 +180,30 @@ public class ValidationStubController {
   /** 위와 같되 애너테이션 없는 폼 객체. */
   @GetMapping("/model-value-unannotated")
   public void modelValueUnannotated(@Null SearchForm form) {}
+
+  /**
+   * 애너테이션 없는 MultipartFile(WD-665 1) — Spring 은 요청 파라미터로 바인딩한다(없으면 null). 키는 파라미터 이름(file)이어야 하고 폼
+   * 객체처럼 _global 로 가면 안 된다.
+   */
+  @PostMapping("/multipart-unannotated")
+  public void multipartUnannotated(@NotNull MultipartFile file) {}
+
+  /** 애너테이션 없는 MultipartFile 목록(WD-665 1) — 키는 files. */
+  @PostMapping("/multipart-list-unannotated")
+  public void multipartListUnannotated(@NotEmpty List<MultipartFile> files) {}
+
+  /** 애너테이션 없는 Optional 단순 타입(WD-665 1) — Spring 은 요청 파라미터로 바인딩한다. 키는 page. */
+  @GetMapping("/optional-param")
+  public void optionalParam(Optional<@Min(1) Integer> page) {}
+
+  /**
+   * 목록 본문 원소의 필드 오류와 클래스 단위 오류(WD-665 2·4) — 한 원소의 두 오류가 「[1].name」·「[1]」로, 같은 접두 모양이어야
+   * 한다(「pairs[1]」· _global 이 아니다).
+   */
+  @PostMapping("/pair-list")
+  public void pairList(@Valid @RequestBody List<NamedPair> pairs) {}
+
+  /** 합성(메타 애너테이션) 제약이 붙은 쿼리 파라미터(WD-665 5) — 키는 @RequestParam 이름(code). */
+  @GetMapping("/composed")
+  public void composed(@RequestParam("code") @ShortCode String value) {}
 }

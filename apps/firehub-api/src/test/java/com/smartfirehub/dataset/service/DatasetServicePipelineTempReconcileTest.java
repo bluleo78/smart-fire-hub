@@ -42,6 +42,8 @@ class DatasetServicePipelineTempReconcileTest {
   @Mock private DatasetSecurityService datasetSecurityService;
   @Mock private DatasetEmbeddingService datasetEmbeddingService;
   @Mock private ApplicationEventPublisher events;
+  // WD-670: 구조 변경·TEMP 재생성이 공용 쓰기 잠금 층(행 → 구조 잠금)을 부르므로 가짜로 둔다(없으면 null 주입으로 NPE).
+  @Mock private DatasetDataWriteLock writeLock;
 
   @InjectMocks private DatasetService datasetService;
 

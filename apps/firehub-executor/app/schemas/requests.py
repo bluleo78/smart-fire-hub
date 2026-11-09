@@ -30,6 +30,17 @@ class TenantScopedRequest(BaseModel):
     tenant_id: int = Field(alias="tenantId", gt=0, strict=True)
 
 
+class StructureLock(BaseModel):
+    """구조 잠금 대상 하나(WD-670) — api 가 만든 키와 계획 컬럼.
+
+    ``key`` 는 ``ds-structure:<스키마>."<테이블>"`` 이고 실행기는 요청 테넌트의 스키마 형식인지 검증한 뒤에만 쓴다
+    (``structure_lock.validate_key``). ``columns`` 는 계획 때 알던 출력 필드 목록 — 없으면(None) 테이블 존재만 확인한다.
+    """
+
+    key: str
+    columns: Optional[List[str]] = None
+
+
 class SqlExecuteRequest(TenantScopedRequest):
     query: str
     params: Optional[dict] = None
@@ -46,6 +57,9 @@ class SqlExecuteRequest(TenantScopedRequest):
     # 파이프라인 실행 id(선택, WD-466). 있으면 출력 잠금을 얻은 직후·사용자 SQL 전에 api 에 이 실행의 중지 요청을 되묻고, 중지면
     # 롤백한 뒤 cancelled=True 로 답한다 — 잠금 대기 중에 들어온 취소를 api 러너의 체크포인트가 볼 수 없어서다. 없으면 되묻지 않는다.
     execution_id: Optional[int] = Field(default=None, alias="executionId", gt=0, strict=True)
+    # 구조 잠금 대상(WD-670, 선택). 있으면 트랜잭션 첫 문장으로 키마다 공유 advisory 잠금을 잡고 구조를 다시 확인한 뒤 출력 잠금·선행 문장·본문을
+    # 보낸다. 없으면 예전 동작 그대로.
+    structure_locks: List[StructureLock] = Field(default_factory=list, alias="structureLocks")
 
 
 class PythonExecuteRequest(TenantScopedRequest):
@@ -61,6 +75,8 @@ class PythonExecuteRequest(TenantScopedRequest):
     # 스크립트에 GENIA_DB_TOKEN 으로 넘겨 조회 도우미가 db-executor 슬롯 조회에 쓴다. SecretStr 이라 요청 모델을 repr·로그로 찍어도
     # 값이 나오지 않는다. Tibero 인데 없으면 실행하지 않는다(라우터).
     script_token: Optional[SecretStr] = None
+    # 구조 잠금 대상(WD-670, 선택) — PG APPEND 로 출력에 직접 쓸 때만 api 가 싣는다. 적재 트랜잭션 첫 문장으로 잠근다.
+    structure_locks: List[StructureLock] = Field(default_factory=list, alias="structureLocks")
 
 
 # 분석 조회 요청 timeout_seconds 의 상한(초, WD-641) — 편집기 조회는 사람이 기다리는 짧은 조회라, 잘못된 값으로 커넥션을 오래 쥐지 않게
@@ -115,6 +131,8 @@ class LoadRequest(TenantScopedRequest):
     # 요청별 시간 제한(초, 선택). Python 실행기에서는 문장 단위 제한(SET LOCAL statement_timeout — execute_values 가 페이지마다
     # 문장을 실행하므로 페이지 하나에 적용된다), db-executor 는 요청 전체 기한이다. 의도된 차이이며 계약 벡터 notes 에도 적었다.
     timeout_seconds: Optional[int] = Field(default=None, gt=0, strict=True)
+    # 구조 잠금 대상(WD-670, 선택) — 적재 트랜잭션 첫 문장으로 잠근다.
+    structure_locks: List[StructureLock] = Field(default_factory=list, alias="structureLocks")
 
 
 class FieldMapping(BaseModel):
@@ -157,3 +175,6 @@ class ApiCallExecuteRequest(TenantScopedRequest):
     load_strategy: str = "REPLACE"
     column_type_map: Optional[dict] = None
     auth: Optional[dict] = None
+    # 구조 잠금 대상(WD-670, 선택) — PG APPEND 로 출력에 직접 쓸 때만 api 가 싣는다. 수집 시작 전 첫 문장으로 잠그고 끝에 한 번 커밋하므로
+    # 수집 내내 쥔다(결정 C — 그동안 api 의 구조 변경은 수 초 뒤 409).
+    structure_locks: List[StructureLock] = Field(default_factory=list, alias="structureLocks")

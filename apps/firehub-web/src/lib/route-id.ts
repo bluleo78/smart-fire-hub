@@ -15,13 +15,14 @@ export function parseRouteId(raw: string | undefined): number | null | undefined
 }
 
 /**
- * 조회에 쓸 수 있는 id 인가 — 양의 정수만 참이다 (WD-667).
+ * 조회에 쓸 수 있는 id 인가 — 안전한 정수 범위의 양의 정수만 참이다 (WD-667·WD-671).
  * 상세 조회 훅이 `id == null` 만 걸러 0·NaN 이 통과했다. 형식 없는 값을 Number() 로 바꾼 NaN 은
  * `/jobs/NaN/executions/NaN` 을 부르고, 쿼리 키 해시에서 null 로 바뀌어 꺼진 관찰자와 같은 캐시를 나눠 썼다.
+ * `Number.isInteger(1e21)` 은 참이라 정밀도를 잃은 값(`1e21`)이 주소 조각 `1e+21` 로 새므로 isSafeInteger 로 본다(WD-671).
  * 타입 가드라 `isValidId(id) ? () => api(id) : skipToken` 의 조회 함수 안에서 id 가 number 로 좁혀진다.
  */
 export function isValidId(id: number | null | undefined): id is number {
-  return typeof id === 'number' && Number.isInteger(id) && id > 0;
+  return typeof id === 'number' && Number.isSafeInteger(id) && id > 0;
 }
 
 /**
@@ -29,7 +30,7 @@ export function isValidId(id: number | null | undefined): id is number {
  * 아니면 null. `Number('abc')` 의 NaN·`Number('')` 의 0 이 조회로 새지 않게 parseRouteId 와 같은 규칙을 쓴다.
  */
 export function toValidId(raw: unknown): number | null {
-  if (typeof raw === 'number') return isValidId(raw) && Number.isSafeInteger(raw) ? raw : null;
+  if (typeof raw === 'number') return isValidId(raw) ? raw : null;
   if (typeof raw === 'string') return parseRouteId(raw) ?? null;
   return null;
 }

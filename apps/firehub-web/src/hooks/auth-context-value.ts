@@ -21,6 +21,11 @@ export interface AuthContextValue {
   isAdmin: boolean;
   refreshUser: () => Promise<void>;
   /**
+   * 서버 저장이 끝난 프로필 값(이름·이메일)을 현재 사용자 상태에 바로 반영한다(WD-665).
+   * 저장 뒤 다시 읽기(refreshUser)가 실패해도 헤더·아바타가 예전 이름에 머물지 않게 하려는 것 — 서버를 다시 부르지 않는다.
+   */
+  applySavedProfile: (saved: Pick<UserResponse, 'name' | 'email'>) => void;
+  /**
    * 현재 토큰이 가리키는 테넌트. `null` 이면 **미선택** — 워크스페이스 선택 화면으로 보내야 한다.
    * 표시 목적일 뿐이고 격리는 서버측 JWT + RLS 가 한다.
    */

@@ -57,20 +57,24 @@ function breadcrumbCurrent(page: Page) {
   return page.getByRole('navigation', { name: '현재 위치' }).locator('[aria-current="page"]');
 }
 /**
- * breadcrumb 가운데 「데이터셋」 링크의 라벨을 긴 이름으로 바꾸고 그 링크를 돌려준다 (WD-663)
- * - 두 화면 모두 가운데 라벨이 고정 문구라 모킹으로 길게 만들 수 없다 — 글자 노드만 바꿔 배치(CSS)·title 동작을 검증한다.
+ * breadcrumb 가운데 「데이터셋」 링크의 라벨이 12rem 을 넘게 넓어지게 하고 그 링크와 라벨을 돌려준다 (WD-663, WD-669)
+ * - 두 화면 모두 가운데 라벨이 고정 문구라 모킹으로 길게 만들 수 없다.
+ * - 예전에는 React 가 관리하는 글자 노드의 nodeValue 를 직접 바꿨는데, 다시 그리면 원래 라벨로 돌아가 테스트가 흔들릴 수 있었다(WD-669).
+ *   대신 스타일시트(letter-spacing)로 라벨 폭만 넓힌다 — React 가 다시 그려도 그대로 남고, 배치(CSS)·title 동작은 같은 조건으로 검증된다.
  */
-async function makeMiddleLabelLong(page: Page) {
+async function makeMiddleLabelWide(page: Page) {
   const nav = page.getByRole('navigation', { name: '현재 위치' });
-  const middle = nav.getByRole('link', { name: '데이터셋', exact: true });
-  await expect(middle).toBeVisible();
-  await middle.evaluate((el, longLabel) => {
-    const node = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode();
-    if (node) node.nodeValue = longLabel;
-  }, LONG_UNBROKEN_NAME);
-  const middleLink = nav.getByRole('link', { name: LONG_UNBROKEN_NAME });
+  const middleLink = nav.getByRole('link', { name: '데이터셋', exact: true });
   await expect(middleLink).toBeVisible();
-  return middleLink;
+  // 「데이터 › 데이터셋 › 이름」 의 세 번째 li(가운데 항목) 라벨 — 글자 사이를 4rem 씩 벌려 12rem(192px)을 넉넉히 넘긴다
+  await page.addStyleTag({
+    content: 'nav[aria-label="현재 위치"] ol > li:nth-child(3) a > span { letter-spacing: 4rem; }',
+  });
+  const label = middleLink.locator('span').first();
+  await expect
+    .poll(() => label.evaluate((el) => el.scrollWidth), { message: '가운데 라벨이 12rem 보다 넓어져야 한다(전제)' })
+    .toBeGreaterThan(192);
+  return { middleLink, label };
 }
 
 test.describe('데이터셋 상세 긴 값 배치 (WD-656)', () => {
@@ -208,7 +212,11 @@ test.describe('좁은 폭 breadcrumb (WD-663)', () => {
       const chevrons = n.querySelectorAll('li[aria-hidden]');
       const lastChevron = chevrons[chevrons.length - 1].getBoundingClientRect();
       const cur = n.querySelector('[aria-current]') as HTMLElement;
-      return { text: cur.scrollWidth, remaining: n.getBoundingClientRect().right - lastChevron.right, full: n.clientWidth };
+      // 글자 폭은 Range 로 잰다 — 마지막 항목은 칸 폭을 채우므로(WD-669) scrollWidth 는 글자가 아니라 칸 폭이다
+      const range = document.createRange();
+      range.selectNodeContents(cur);
+      const text = range.getBoundingClientRect().width;
+      return { text, remaining: n.getBoundingClientRect().right - lastChevron.right, full: n.clientWidth };
     });
     expect(fit.text, '이름이 첫 줄 남는 폭보다 넓어야 한다(전제)').toBeGreaterThan(fit.remaining);
     expect(fit.text, '이름이 한 줄 전체 폭에는 들어가야 한다(전제)').toBeLessThan(fit.full);
@@ -229,33 +237,90 @@ test.describe('좁은 폭 breadcrumb (WD-663)', () => {
     await setupDataset(page, { name: '화재 출동 기록' });
     await page.goto('/data/datasets/1');
     const nav = page.getByRole('navigation', { name: '현재 위치' });
-    const middleLink = await makeMiddleLabelLong(page);
+    const { middleLink, label } = await makeMiddleLabelWide(page);
 
     // 가운데 항목이 nav·화면 밖으로 뻗지 않고, 마지막 항목도 화면 안에 남는다
     await expectInsideHorizontally(middleLink, nav, 'breadcrumb 가운데 항목', { content: false });
     await expectNoOverflowWithin(nav, 'breadcrumb');
     await expectNoHorizontalOverflow(page);
     await expect(breadcrumbCurrent(page)).toBeInViewport();
-    // 라벨은 링크 안 TruncatedTitle 이 말줄임한다 — 링크는 그대로 링크다
-    const label = middleLink.locator('span').first();
-    expect(await label.evaluate((el) => el.scrollWidth > el.clientWidth), '긴 가운데 라벨은 말줄임된다').toBe(true);
+    // 라벨은 링크 안 TruncatedTitle 이 말줄임하고 hover 하면 전체 라벨 title 이 붙는다 — 링크는 그대로 링크다
+    await expectTruncatedWithHoverTitle(label, '데이터셋');
     await expect(middleLink).toHaveAttribute('href', '/data/datasets');
   });
 
-  test('키보드 Tab 으로 긴 가운데 링크에 포커스하면 라벨에 전체 이름 title 이 붙는다', async ({ authenticatedPage: page }) => {
+  test('320px 에서 첫 줄에 들어가는 짧은 이름은 다음 줄로 밀리지 않고 한 줄에 남는다 (WD-669)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 「화재 출동 기록」(~90px) — 첫 줄 남는 폭은 10rem(160px)보다 좁지만 이름은 들어간다.
+    // 예전 flex-[1_1_10rem] 은 기준 폭 160px 로 재서 이 이름도 둘째 줄로 밀었다.
     await setupDataset(page, { name: '화재 출동 기록' });
     await page.goto('/data/datasets/1');
-    const nav = page.getByRole('navigation', { name: '현재 위치' });
-    const middleLink = await makeMiddleLabelLong(page);
-    const label = middleLink.locator('span').first();
-    await expect(label).not.toHaveAttribute('title');
 
-    // 앞 링크(「데이터」)에서 Tab 한 번 — 링크의 onFocus 가 안쪽 라벨의 잘림을 재서 title 을 넘겨 준다
+    const nav = page.getByRole('navigation', { name: '현재 위치' });
+    const current = breadcrumbCurrent(page);
+    await expect(current).toHaveText('화재 출동 기록');
+    // 전제 — 첫 줄 남는 폭이 10rem 보다 좁고, 이름은 그 안에 들어간다
+    const fit = await nav.evaluate((n) => {
+      const chevrons = n.querySelectorAll('li[aria-hidden]');
+      const lastChevron = chevrons[chevrons.length - 1].getBoundingClientRect();
+      const cur = n.querySelector('[aria-current]') as HTMLElement;
+      const rootFontSize = parseFloat(getComputedStyle(document.documentElement).fontSize);
+      // 글자 폭은 Range 로 잰다 — 마지막 항목은 칸 폭을 채우므로 scrollWidth 는 글자가 아니라 칸 폭이다
+      const range = document.createRange();
+      range.selectNodeContents(cur);
+      return { text: range.getBoundingClientRect().width, remaining: n.getBoundingClientRect().right - lastChevron.right, basis: 10 * rootFontSize };
+    });
+    expect(fit.remaining, '첫 줄 남는 폭이 10rem 보다 좁아야 한다(전제)').toBeLessThan(fit.basis);
+    expect(fit.text, '이름은 첫 줄 남는 폭에 들어가야 한다(전제)').toBeLessThan(fit.remaining);
+
+    // 한 줄 — 마지막 항목이 첫 링크와 같은 줄이고, breadcrumb 목록 높이가 한 줄 높이다
+    const firstBox = await nav.getByRole('link', { name: '데이터', exact: true }).boundingBox();
+    const currentBox = await current.boundingBox();
+    expect(
+      Math.abs(firstBox!.y + firstBox!.height / 2 - (currentBox!.y + currentBox!.height / 2)),
+      '마지막 항목이 첫 링크와 같은 줄',
+    ).toBeLessThanOrEqual(2);
+    const list = await nav.locator('ol').evaluate((ol) => ({
+      height: ol.getBoundingClientRect().height,
+      lineHeight: parseFloat(getComputedStyle(ol).lineHeight),
+    }));
+    expect(list.height, 'breadcrumb 가 한 줄 높이').toBeLessThan(list.lineHeight * 1.5);
+    expect(await lineCount(current)).toBe(1);
+    await expectNoTitleOnHover(current);
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test('1px 이내로 넘치는 글자(반올림 차이)에는 title 을 달지 않는다 (WD-669)', async ({ authenticatedPage: page }) => {
+    await setupDataset(page, { name: '화재 출동 기록' });
+    await page.goto('/data/datasets/1');
+    const current = breadcrumbCurrent(page);
+    await expect(current).toHaveText('화재 출동 기록');
+
+    // 글자 폭 근처에서 폭을 줄여 가며 scrollWidth 가 clientWidth 보다 정확히 1 큰 폭을 찾는다 — 소수점 글자 폭의 반올림 차이를 재현한다.
+    // 마지막 항목은 칸 폭을 채우므로 글자 폭은 scrollWidth 가 아니라 Range 로 잰다.
+    const diff = await current.evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const natural = Math.ceil(range.getBoundingClientRect().width) + 1;
+      for (let w = natural; w >= natural - 4; w--) {
+        el.style.width = `${w}px`;
+        if (el.scrollWidth - el.clientWidth === 1) return 1;
+      }
+      return el.scrollWidth - el.clientWidth;
+    });
+    expect(diff, '1px 넘치는 폭을 만들 수 있어야 한다(전제)').toBe(1);
     await page.mouse.move(0, 0);
-    await nav.getByRole('link', { name: '데이터', exact: true }).focus();
-    await page.keyboard.press('Tab');
-    await expect(middleLink).toBeFocused();
-    await expect(label).toHaveAttribute('title', LONG_UNBROKEN_NAME);
+    await current.hover();
+    await expect(current, '1px 이내 넘침은 잘리지 않은 것으로 본다').not.toHaveAttribute('title');
+
+    // 2px 이상 넘치면(실제로 잘림) title 이 붙는다 — 여유가 판정을 아예 꺼 버리지 않았는지 함께 본다
+    await current.evaluate((el) => {
+      el.style.width = `${el.clientWidth - 8}px`;
+    });
+    await page.mouse.move(0, 0);
+    await current.hover();
+    await expect(current).toHaveAttribute('title', '화재 출동 기록');
   });
 
   test('flex 가 아닌 블록 부모 안에서도 TruncatedTitle 은 말줄임된다', async ({ authenticatedPage: page }) => {

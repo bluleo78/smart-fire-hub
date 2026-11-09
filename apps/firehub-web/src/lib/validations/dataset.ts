@@ -66,6 +66,13 @@ export function findDuplicateColumnIndexes(names: string[]): number[] {
 export const DEFAULT_MAX_VARCHAR_LENGTH = 10000;
 
 /**
+ * 저장소 기능 조회 전·실패 시 쓰는 "길이 미지정 VARCHAR 의 실제 길이" — PostgreSQL 의 VARCHAR(255)(WD-659).
+ * 저장소별 값의 단일 출처는 서버 DataStoreBackend.defaultVarcharLength 이고(PG 255, Tibero 4000), 화면은
+ * GET /data-store/capabilities 의 defaultVarcharLength 로 받는다. 기본값 상태에서 더 넓은 저장소(Tibero)는 서버가 최종 판정한다.
+ */
+export const DEFAULT_VARCHAR_LENGTH = 255;
+
+/**
  * VARCHAR 길이 입력 규칙(WD-636) — 상한은 저장소마다 달라(PG 10000, Tibero 4000) GET /data-store/capabilities 의
  * maxVarcharLength 를 받는다. 예전에는 10000 고정이라 Tibero 에서 4001~10000 이 폼을 통과해 서버 400 토스트로만 알 수 있었다.
  */

@@ -9,6 +9,12 @@ from app.services.db_utils import (
     statement_timeout_message,
 )
 from app.services.query_executor import RunningStatement, detect_statement_type, sqlstate
+from app.services.structure_lock import (
+    StructureChangedError,
+    StructureLockError,
+    acquire_structure_locks,
+    validate_locks,
+)
 from app.validators.sql_validator import (
     SqlValidationError,
     output_lock_key,
@@ -80,6 +86,8 @@ def execute_sql(
     query: str, conn, pre_statements=(), timeout_seconds: Optional[int] = None,
     *, default_timeout_seconds: int, pre_statement_timeout_seconds: int,
     stop_requested: Optional[Callable[[], bool]] = None,
+    tenant_id: Optional[int] = None,
+    structure_locks=(),
 ) -> SqlExecuteResponse:
     """``default_timeout_seconds`` 는 요청에 제한이 없을 때 쓸 값 — 기본값은 ``Settings.sql_statement_timeout_seconds``
     한 곳뿐이라 여기서는 기본값을 두지 않고 라우터가 설정값을 넘긴다.
@@ -89,7 +97,11 @@ def execute_sql(
 
     ``stop_requested`` 는 파이프라인 중지 요청 확인(WD-466, 요청에 실행 id 가 있을 때 라우터가 넘긴다). 출력 잠금을 얻은 **직후**
     부른다 — 잠금 대기는 api 러너의 「SQL 실행 직전」 체크포인트보다 뒤라 그 사이 들어온 취소를 api 가 볼 수 없었고, 잠금을 얻은 뒤
-    사용자 SQL 이 끝까지 돌아 출력을 다시 교체했다. 중지면 비우기·본문을 보내지 않고 롤백해 ``cancelled=True`` 로 답한다."""
+    사용자 SQL 이 끝까지 돌아 출력을 다시 교체했다. 중지면 비우기·본문을 보내지 않고 롤백해 ``cancelled=True`` 로 답한다.
+
+    ``structure_locks`` 는 구조 잠금 대상(WD-670, api 가 만든 키 + 계획 컬럼)이고 ``tenant_id`` 는 키 검증에 쓴다. 있으면 트랜잭션의 **첫
+    문장**으로 키마다 공유 advisory 잠금을 잡고 구조를 다시 확인한다 — 출력 잠금(#731)보다 먼저다(출력 잠금을 기다리는 동안에도 구조가
+    바뀌지 않게). 구조가 바뀌었으면 아무것도 쓰지 않고 롤백해 깔끔한 문구로 실패한다."""
     # 본 쿼리와 선행 문장(pre-statement) 모두 실행 전에 검증한다.
     # pre-statement 는 화이트리스트 기반 validate_pre_statement 로 본 쿼리보다 엄격하게 검사한다.
     try:
@@ -98,7 +110,12 @@ def execute_sql(
             validate_pre_statement(stmt)
         # 잠금 전용 선행 문장과 자기 출력 다시 채우기 문장은 서로의 짝으로만 받는다(WD-426) — 형태 검사를 지난 뒤 조합을 본다.
         validate_pre_statement_pairing(query, pre_statements)
-    except SqlValidationError as exc:
+        # 구조 잠금 키도 연결을 쓰기 전에 검증한다 — 테넌트 스키마 형식이 아닌 키는 아무것도 잠그지 않고 거부한다(WD-670).
+        if structure_locks:
+            if tenant_id is None:
+                raise StructureLockError("구조 잠금에는 테넌트가 필요합니다")
+            validate_locks(structure_locks, tenant_id)
+    except (SqlValidationError, StructureLockError) as exc:
         return _failed(str(exc), db_error=db_error_of(str(exc)))
 
     # 선행 문장이 있으면 "출력 비우기 + 쓰기"인 쓰기 트랜잭션이다.
@@ -122,6 +139,8 @@ def execute_sql(
             # 이것이 "비우기와 쓰기를 원자적으로 만든다"는 이번 기능의 핵심이다.
             # 선행 문장 합계 예산(WD-262): 첫 선행 문장 시작부터 monotonic 으로 재고, 문장을 보내기 직전마다 남은 시간을
             # statement_timeout 으로 건다. db-executor SqlRunner 의 「선행 상한」과 같은 의미다(대형 출력의 DELETE 가 끝없이 도는 것을 막는다).
+            # 구조 잠금(WD-670) — 이 트랜잭션의 첫 문장들. 구조 변경(api)이 진행 중이면 그 커밋까지 기다리고, 잡은 뒤 구조를 다시 확인한다.
+            acquire_structure_locks(cursor, tenant_id, structure_locks)
             pre_started_at = monotonic()
             for stmt in pre_statements:
                 # 출력 테이블 단위 직렬화(#731). 비우기(DELETE) **직전에, 별도 문장으로** 이 테이블의
@@ -179,6 +198,9 @@ def execute_sql(
                 success=False, rows=None, columns=None, row_count=0, execution_log="",
                 error=CANCELLED_MESSAGE, cancelled=True,
             )
+        if isinstance(exc, StructureChangedError):
+            # 실행 중 구조 변경(WD-670) — DB 가 거부한 것이 아니라 실행기가 판정한 실패라 구조화 오류 없이 한국어 문구만 싣는다.
+            return _failed(str(exc))
         if isinstance(exc, PreStatementBudgetExhausted) or running.timed_out(exc):
             # 우리가 건 제한에 걸렸다 — 선행 문장이면 합계 상한 초과(예산 소진으로 다음 문장을 못 보냈거나 선행 문장이 그 문장의 남은 예산만큼
             # 돌고 취소됨, 본문은 실행되지 않았고 위 rollback 으로 선행 문장도 취소됐다), 본문이면 본문 제한 초과다. 문구는 db-executor 와 같다.

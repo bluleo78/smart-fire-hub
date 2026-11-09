@@ -7,8 +7,10 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataimport.exception.ImportProcessingException;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
+import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetWriteTarget;
+import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetDataWriteLock;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -32,8 +34,13 @@ class DataImportWriteTargetTest {
   private static final long DATASET_ID = 42L;
 
   private final DatasetRepository datasetRepository = mock(DatasetRepository.class);
+  // WD-670: 잠금 층이 구조 잠금·컬럼 확인용 의존성을 더 받는다 — 가져오기 쓰기는 쓰지 않으므로 목으로 채운다.
   private final DatasetDataWriteLock writeLock =
-      new DatasetDataWriteLock(datasetRepository, mock(PlatformTransactionManager.class));
+      new DatasetDataWriteLock(
+          datasetRepository,
+          mock(DataTableService.class),
+          mock(DatasetColumnRepository.class),
+          mock(PlatformTransactionManager.class));
 
   @BeforeEach
   void simulateActiveTransaction() {

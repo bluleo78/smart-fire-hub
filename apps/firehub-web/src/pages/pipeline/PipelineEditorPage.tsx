@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { EditConflictDialog } from '@/components/EditConflictDialog';
 import { Breadcrumb } from '@/components/layout/Breadcrumb';
 import { DurationText } from '@/components/pipeline/DurationText';
+import { ResourceNotFound } from '@/components/ResourceNotFound';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,7 +32,8 @@ import {
 } from '@/components/ui/table';
 import { Tabs, TabsContent,TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAllDatasets } from '@/hooks/queries/useDatasets';
-import { useCancelExecution, useExecutePipeline, useExecution, useExecutions,usePipeline, usePipelinePermissions } from '@/hooks/queries/usePipelines';
+import { useInvalidateListsOnEntryNotFound } from '@/hooks/queries/useInvalidateListsOnEntryNotFound';
+import { PIPELINE_LIST_KEY, useCancelExecution, useExecutePipeline, useExecution, useExecutions,usePipeline, usePipelinePermissions } from '@/hooks/queries/usePipelines';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError } from '@/lib/api-error';
 import { formatDate, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '@/lib/formatters';
@@ -104,7 +106,14 @@ export default function PipelineEditorPage() {
   const [isReloading, setIsReloading] = useState(false);
 
   // isError: 존재하지 않는 파이프라인 ID(404 등) 접근 시 에러 상태를 감지한다.
-  const { data: pipelineData, isLoading: pipelineLoading, isError: pipelineError } = usePipeline(pipelineId!);
+  const {
+    data: pipelineData,
+    isLoading: pipelineLoading,
+    isError: pipelineError,
+    isLoadingError: isPipelineLoadingError,
+    error: pipelineFetchError,
+  } = usePipeline(pipelineId!);
+  useInvalidateListsOnEntryNotFound({ isLoadingError: isPipelineLoadingError, error: pipelineFetchError }, PIPELINE_LIST_KEY);
   // isError: 존재하지 않는 실행 ID(400 등) 접근 시 에러 상태를 감지한다.
   const { data: executionData, isError: executionError } = useExecution(pipelineId!, executionId!);
   const executeMutation = useExecutePipeline(pipelineId!);
@@ -379,15 +388,10 @@ export default function PipelineEditorPage() {
   // 기존 파이프라인 ID가 있으나 에러(404 등)이거나, 애초에 숫자로 변환 불가능한 ID(#544)인 경우:
   // 존재하지 않는 페이지 안내. isInvalidId는 pipelineId를 undefined로 정규화시켜 usePipeline
   // 쿼리 자체가 실행되지 않으므로(enabled:!!id), pipelineError만으로는 잡히지 않아 별도로 합류시킨다.
+  // 공용 「찾을 수 없음」 안내(제목 h1)로 그린다
   if (pipelineError || isInvalidId) {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 py-20">
-        <GitBranch className="h-12 w-12 text-muted-foreground" />
-        <p className="text-muted-foreground">파이프라인을 찾을 수 없습니다.</p>
-        <Button variant="outline" onClick={() => navigate('/pipelines')}>
-          목록으로
-        </Button>
-      </div>
+      <ResourceNotFound icon={GitBranch} message="파이프라인을 찾을 수 없습니다." onBackToList={() => navigate('/pipelines')} />
     );
   }
 

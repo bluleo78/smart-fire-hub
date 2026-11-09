@@ -5,9 +5,11 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
+import com.smartfirehub.dataset.exception.OutputStructureChangedException;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DatasetDataWriteLock;
 import com.smartfirehub.dataset.storage.DataTableStore;
+import com.smartfirehub.dataset.storage.OutputStructureErrors;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.math.BigDecimal;
 import java.time.DateTimeException;
@@ -147,10 +149,14 @@ public class LocalPythonOutputLoader {
           status -> {
             // WD-666: 출력 테이블에 쓰기 전에 같은 트랜잭션에서 데이터셋 행을 잡는다(임시 테이블이면 건너뛴다) — 잠금이 적재 커밋까지
             // 유지돼 NOT NULL 필드 추가·truncate·삭제가 이 적재 뒤로 줄 선다.
-            writeLock.lockLoadTarget(tableName);
+            // WD-670: 잠금 뒤 쓸 컬럼이 아직 모두 있는지 본다 — 스크립트 실행 동안 필드가 지워졌으면 그 필드를 짚어 실패한다.
+            writeLock.lockLoadTarget(tableName, columns);
             dataTableRowService.insertBatch(tableName, columns, rows, geometryOnly(columnTypeMap));
           });
       return rows.size();
+    } catch (OutputStructureChangedException e) {
+      // 실행 중 출력 구조가 바뀌었다(WD-670) — 문구가 곧 사용자 안내다(일반 적재 실패 문구로 덮지 않는다).
+      throw new ScriptExecutionException(PythonStepErrorMessages.PREFIX + e.getMessage(), e);
     } catch (DatasetNotFoundException e) {
       // 잠금 전에 출력 데이터셋이 지워졌다 — 사라진 테이블에 INSERT 하지 않고 이유를 그대로 알린다.
       throw new ScriptExecutionException(
@@ -158,6 +164,11 @@ public class LocalPythonOutputLoader {
     } catch (RuntimeException e) {
       // 원문(jOOQ 의 SQL 메아리·내부 스키마)은 로그에만 남기고, 사용자에게는 데이터 오류 사유 또는 일반 안내만 보인다(WD-211).
       log.warn("Python 출력 적재 실패: table={}", tableName, e);
+      // 확인 뒤에도 DB 가 구조 변경 오류(컬럼·테이블 없음)를 냈으면 같은 깔끔한 문구로 알린다(WD-670 마지막 방어선).
+      if (OutputStructureErrors.isStructureChange(e)) {
+        throw new ScriptExecutionException(
+            PythonStepErrorMessages.PREFIX + OutputStructureChangedException.MESSAGE, e);
+      }
       throw new ScriptExecutionException(PythonStepErrorMessages.loadFailed(e), e);
     }
   }

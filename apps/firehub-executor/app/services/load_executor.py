@@ -19,6 +19,12 @@ from app.services.db_utils import (
 )
 from app.services.python_executor import _apply_type_conversion
 from app.services.query_executor import RunningStatement, sqlstate
+from app.services.structure_lock import (
+    StructureChangedError,
+    StructureLockError,
+    acquire_structure_locks,
+    validate_locks,
+)
 
 # 테이블·컬럼 이름 형식(앱 이름 규칙) — INSERT 조립이 식별자를 인용하지만 형식을 한 번 더 좁힌다. ``$`` 는 끝 개행도 받으므로
 # fullmatch 로 전체 일치를 요구한다. 길이는 PG 식별자 한도(63).
@@ -69,6 +75,8 @@ def execute_load(
     timeout_seconds: Optional[int] = None,
     *,
     default_timeout_seconds: int,
+    tenant_id: Optional[int] = None,
+    structure_locks=(),
 ) -> LoadResponse:
     """검증 → 문장 제한 → 타입 변환 → 배치 INSERT → 커밋. 오류는 예외가 아니라 ``success=False`` 로 돌려준다.
 
@@ -78,6 +86,14 @@ def execute_load(
     """
     if not _valid_name(table):
         return _failure(BAD_TABLE)
+    # 구조 잠금 키(WD-670)는 연결을 쓰기 전에 검증한다 — 형식·테넌트가 틀리면 아무것도 하지 않고 거부한다.
+    if structure_locks:
+        try:
+            if tenant_id is None:
+                raise StructureLockError("구조 잠금에는 테넌트가 필요합니다")
+            validate_locks(structure_locks, tenant_id)
+        except StructureLockError as exc:
+            return _failure(str(exc))
     if not rows:
         return LoadResponse(success=True, rows_loaded=0)
     # 요청별 값 또는 기본값 — 한 번만 정해 SET LOCAL 과 시간 초과 안내 문구가 같은 값을 쓴다(최종 리뷰).
@@ -93,6 +109,8 @@ def execute_load(
         # 요청별 값 또는 기본값을 트랜잭션 문장 제한으로 건다 — /execute/sql 과 같은 도우미. 기본값이 늘 있으므로 언제나 건다(리뷰 M-4).
         # 주의: execute_values 는 페이지(문장) 단위로 실행하므로 이 제한은 문장 단위다(요청 전체 기한이 아니다).
         with conn.cursor() as cur:
+            # 구조 잠금(WD-670) — 이 적재 트랜잭션의 첫 문장들(문장 제한보다 먼저 — 진행 중인 구조 변경의 커밋을 기다린다).
+            acquire_structure_locks(cur, tenant_id, structure_locks)
             set_local_statement_timeout(cur, effective_timeout)
             # 행 모양이 합집합으로 맞춰져 있어 모든 페이지가 같은 컬럼·같은 문장이다 — 한 번만 조립한다.
             columns = list(normalized[0].keys())
@@ -108,6 +126,8 @@ def execute_load(
         return LoadResponse(success=True, rows_loaded=len(normalized))
     except Exception as exc:
         _rollback_quietly(conn)
+        if isinstance(exc, StructureChangedError):
+            return LoadResponse(success=False, rows_loaded=0, error=str(exc))
         if running.timed_out(exc):
             # 우리가 건 문장 제한에 걸린 페이지 — Tibero 적재(db-executor LoadRunner)와 같은 뜻의 한국어 문구를, 같은 값(db_error 없음)으로
             # 돌려준다(WD-261). 시간 초과는 DB 가 거부한 오류가 아니라 실행기가 판정한 실패라서다.

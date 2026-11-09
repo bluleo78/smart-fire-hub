@@ -425,8 +425,10 @@ public class AiClassifyExecutor {
     } else {
       // WD-666: 실제 출력 테이블 쓰기 — 배치마다 짧은 트랜잭션에서 데이터셋 행을 잡고 쓰고 커밋한다. 다음 배치의 LLM 호출 동안에는 잠금을
       // 쥐지 않는다(배치마다 커밋해 진척이 남는 #690 의 특성도 그대로다).
+      // WD-670: 배치 사이에 필드가 지워졌으면 잠금 뒤 확인에서 그 필드를 짚어 깔끔하게 실패한다.
       writeLock.writeToOutput(
           targetTable,
+          outputColumnNames,
           () -> dataTableRowService.insertBatch(targetTable, outputColumnNames, rows, columnTypes));
     }
     return rows.size();
