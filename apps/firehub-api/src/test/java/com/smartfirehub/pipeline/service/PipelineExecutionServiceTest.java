@@ -228,6 +228,15 @@ class PipelineExecutionServiceTest {
     assertThatCode(() -> service.validateDAG(steps)).doesNotThrowAnyException();
   }
 
+  /** WD-620 — 이름 대조는 정확히 일치(대소문자 구분) — 저장(saveSteps)과 같은 규칙을 그대로 지킨다. */
+  @Test
+  void validateDAG_dependencyNameDiffersOnlyByCase_throwsIllegalArgument() {
+    List<PipelineStepRequest> steps = List.of(step("Load", List.of()), step("B", List.of("load")));
+    assertThatThrownBy(() -> service.validateDAG(steps))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스텝 'B' 의 선행 스텝 'load' 를 찾을 수 없습니다.");
+  }
+
   // ------------------------------------------------------------------ //
   // executePipeline 오케스트레이션 테스트
   // ------------------------------------------------------------------ //
