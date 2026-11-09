@@ -60,12 +60,23 @@ public final class RedirectLocations {
    *       뺀다.
    * </ul>
    *
-   * Python {@code _redirect_keeps_method_and_body} 와 같고, 공용 사례 표({@code redirectMethod})로 검증한다. 그
-   * 밖의 3xx(300·304·305 …)는 Java 실행기가 본문 없는 GET 으로 따라가고(이 메서드가 false) Python 은 일반 응답으로 다룬다 — 원래 있던
-   * 차이로, 바꾸지 않았다.
+   * Python {@code _redirect_keeps_method_and_body} 와 같고, 공용 사례 표({@code redirectMethod})로 검증한다.
+   * 따라가는 상태 자체는 {@link #isFollowed} 가 정한다(WD-693 — 그 밖의 3xx 는 따라가지 않으므로 이 메서드에 오지 않는다).
    */
   public static boolean keepsMethodAndBody(int status, boolean sameOrigin) {
     return (status == 307 || status == 308) && sameOrigin;
+  }
+
+  /**
+   * 리다이렉트로 따라가는 상태인지(WD-693) — 301·302·303·307·308 만 따라간다.
+   *
+   * <p>300(선택지)·304(변경 없음)·305(프록시 사용, 폐기) 등 그 밖의 3xx 는 따라갈 곳이 정해지지 않았거나 따라가면 안 되는 상태라 일반 응답으로 읽는다
+   * — JSON 본문이면 그대로 쓰고, 본문이 없거나 JSON 이 아니면 「JSON 형식이 아닙니다」로 실패한다. 예전 Java 실행기는 모든 3xx 를 본문 없는 GET
+   * 으로 따라가 Python 실행기({@code _is_followed_redirect}, 다섯 상태만)와 같은 응답에서 결과가 달랐다. 공용 사례 표({@code
+   * redirectFollow})로 두 쪽을 함께 검증한다.
+   */
+  public static boolean isFollowed(int status) {
+    return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
   }
 
   /** 문자열 단위 RFC 3986 참조 해석(§5.2.2, 프래그먼트 포함) — 프래그먼트는 호출부 {@link #resolve} 가 뗀다. */

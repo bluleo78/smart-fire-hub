@@ -1828,3 +1828,33 @@ def test_basic_short_password_withholds_error_text():
 
     assert result.success is False
     assert "q7z" not in result.error
+
+
+# ---------------------------------------------------------------------------
+# WD-693: 따라가는 3xx 는 301·302·303·307·308 만 — 300·304·305 는 일반 응답(Java 실행기와 같다)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("status", [300, 305])
+def test_other_3xx_with_json_body_is_plain_response_not_followed(status):
+    # Location 이 있어도 따라가지 않고 그 응답의 JSON 본문을 적재한다 — Java 도 같은 결과(공용 표 redirectFollow).
+    req = make_request(url="https://a.example.com/one")
+    resp = mock_response({"items": [{"name": "n693"}]})
+    resp.status_code = status
+    resp.headers = {"location": "https://a.example.com/elsewhere"}
+    result, client, _ = _run_with_responses(req, [resp])
+    assert result.success is True
+    assert client.request.call_count == 1
+
+
+def test_304_without_body_is_not_followed_and_fails_as_not_json():
+    # 본문 없는 304 는 따라가지 않고 「JSON 형식이 아닙니다」로 실패한다 — Java(JsonResponseParser)와 같은 문구.
+    req = make_request(url="https://a.example.com/one")
+    resp = MagicMock()
+    resp.status_code = 304
+    resp.headers = {"location": "https://a.example.com/elsewhere"}
+    resp.content = b""
+    resp.json.side_effect = ValueError("empty")
+    result, client, _ = _run_with_responses(req, [resp])
+    assert result.success is False
+    assert result.error == errors.not_json_message()
+    assert client.request.call_count == 1

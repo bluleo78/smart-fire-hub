@@ -1,5 +1,5 @@
 {
-  "description": "API_CALL \uc778\uc99d \uacf5\uc6a9 \uc0ac\ub840 \ud45c(WD-657) \u2014 Java(ApiCallAuthVectorsTest)\uc640 Python(test_api_call_auth_vectors.py)\uc774 \uac19\uc740 \ud45c\ub85c \uac19\uc740 \uacb0\uacfc\ub97c \ub0b4\ub294\uc9c0 \ubcf8\ub2e4. \ud55c\ucabd \uaddc\uce59\ub9cc \ubc14\uafb8\uba74 \uc5b4\ub290 \ud55c\ucabd \ud14c\uc2a4\ud2b8\uac00 \uae68\uc9c4\ub2e4. \ud5e4\ub354 \uc774\ub984 \uae30\ubcf8\uac12\uc740 Java X-API-Key\u00b7Python x-api-key \ub85c \ub300\uc18c\ubb38\uc790\ub9cc \ub2ec\ub77c \ub300\uc18c\ubb38\uc790\ub97c \ubb34\uc2dc\ud558\uace0 \ube44\uad50\ud55c\ub2e4. redirectMethod(WD-686)\uc758 \uaddc\uce59\uc740 Java RedirectLocations.keepsMethodAndBody\u00b7Python _redirect_keeps_method_and_body \ucc38\uace0. redirectLocation \uacb0\uacfc\uc5d0\ub294 \ud504\ub798\uadf8\uba3c\ud2b8\uac00 \uc5c6\ub2e4(WD-686 \u2014 \ub9ac\ub2e4\uc774\ub809\ud2b8 \ud574\uc11d\uc774 \ubb38\ubc95 \uac80\uc0ac \uc804\uc5d0 \ub5c0\ub2e4). BASIC \uc778\uc99d \ud5e4\ub354(basicAuth)\uc640 URL \uc0ac\uc6a9\uc790 \uc815\ubcf4 \uac00\ub9bc(maskUserInfo)\ub3c4 \uac19\uc740 \ud45c\ub85c \ubcf8\ub2e4(WD-681). BASIC \ube44\ubc00 \uac00\ub9bc(basicScrub)\uc740 Basic \ub369\uc5b4\ub9ac\ub97c \ub298 \uace0\uc815 ****, \ube44\ubc00\ubc88\ud638\ub97c SMTP \uaddc\uce59(\uc9c0\uc6b0\uace0 \ub0a8\uc73c\uba74 \ubb38\uc7a5\uc744 \ud1b5\uc9f8\ub85c \uac00\ub9bc)\uc73c\ub85c \ubcf8\ub2e4(WD-681 \ub9ac\ubdf0).",
+  "description": "API_CALL \uc778\uc99d \uacf5\uc6a9 \uc0ac\ub840 \ud45c(WD-657) \u2014 Java(ApiCallAuthVectorsTest)\uc640 Python(test_api_call_auth_vectors.py)\uc774 \uac19\uc740 \ud45c\ub85c \uac19\uc740 \uacb0\uacfc\ub97c \ub0b4\ub294\uc9c0 \ubcf8\ub2e4. \ud55c\ucabd \uaddc\uce59\ub9cc \ubc14\uafb8\uba74 \uc5b4\ub290 \ud55c\ucabd \ud14c\uc2a4\ud2b8\uac00 \uae68\uc9c4\ub2e4. \ud5e4\ub354 \uc774\ub984 \uae30\ubcf8\uac12\uc740 Java X-API-Key\u00b7Python x-api-key \ub85c \ub300\uc18c\ubb38\uc790\ub9cc \ub2ec\ub77c \ub300\uc18c\ubb38\uc790\ub97c \ubb34\uc2dc\ud558\uace0 \ube44\uad50\ud55c\ub2e4. redirectMethod(WD-686)\uc758 \uaddc\uce59\uc740 Java RedirectLocations.keepsMethodAndBody\u00b7Python _redirect_keeps_method_and_body \ucc38\uace0. redirectLocation \uacb0\uacfc\uc5d0\ub294 \ud504\ub798\uadf8\uba3c\ud2b8\uac00 \uc5c6\ub2e4(WD-686 \u2014 \ub9ac\ub2e4\uc774\ub809\ud2b8 \ud574\uc11d\uc774 \ubb38\ubc95 \uac80\uc0ac \uc804\uc5d0 \ub5c0\ub2e4). BASIC \uc778\uc99d \ud5e4\ub354(basicAuth)\uc640 URL \uc0ac\uc6a9\uc790 \uc815\ubcf4 \uac00\ub9bc(maskUserInfo)\ub3c4 \uac19\uc740 \ud45c\ub85c \ubcf8\ub2e4(WD-681). BASIC \ube44\ubc00 \uac00\ub9bc(basicScrub)\uc740 Basic \ub369\uc5b4\ub9ac\ub97c \ub298 \uace0\uc815 ****, \ube44\ubc00\ubc88\ud638\ub97c SMTP \uaddc\uce59(\uc9c0\uc6b0\uace0 \ub0a8\uc73c\uba74 \ubb38\uc7a5\uc744 \ud1b5\uc9f8\ub85c \uac00\ub9bc)\uc73c\ub85c \ubcf8\ub2e4(WD-681 \ub9ac\ubdf0). redirectFollow(WD-693)\ub294 \ub9ac\ub2e4\uc774\ub809\ud2b8\ub85c \ub530\ub77c\uac00\ub294 \uc0c1\ud0dc(301\u00b7302\u00b7303\u00b7307\u00b7308)\uc778\uc9c0 \u2014 300\u00b7304\u00b7305 \ub4f1 \uadf8 \ubc16\uc758 3xx \ub294 \ub450 \uc2e4\ud589\uae30 \ubaa8\ub450 \ub530\ub77c\uac00\uc9c0 \uc54a\uace0 \uc77c\ubc18 \uc751\ub2f5\uc73c\ub85c \ub2e4\ub8ec\ub2e4(Java RedirectLocations.isFollowed\u00b7Python _is_followed_redirect).",
   "sameAuthOrigin": [
     {
       "name": "same origin, host case, explicit default port",
@@ -477,6 +477,53 @@
       "password": "admin",
       "text": "user admin denied",
       "expected": "user **** denied"
+    }
+  ],
+  "redirectFollow": [
+    {
+      "name": "300 not followed (plain response)",
+      "status": 300,
+      "follows": false
+    },
+    {
+      "name": "301 followed",
+      "status": 301,
+      "follows": true
+    },
+    {
+      "name": "302 followed",
+      "status": 302,
+      "follows": true
+    },
+    {
+      "name": "303 followed",
+      "status": 303,
+      "follows": true
+    },
+    {
+      "name": "304 not followed (plain response)",
+      "status": 304,
+      "follows": false
+    },
+    {
+      "name": "305 not followed (plain response)",
+      "status": 305,
+      "follows": false
+    },
+    {
+      "name": "306 not followed (plain response)",
+      "status": 306,
+      "follows": false
+    },
+    {
+      "name": "307 followed",
+      "status": 307,
+      "follows": true
+    },
+    {
+      "name": "308 followed",
+      "status": 308,
+      "follows": true
     }
   ]
 }

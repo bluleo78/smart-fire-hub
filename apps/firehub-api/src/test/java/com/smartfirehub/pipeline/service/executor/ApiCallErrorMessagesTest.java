@@ -125,4 +125,43 @@ class ApiCallErrorMessagesTest {
     assertThat(ApiCallErrorMessages.describe(other, 1000, "h"))
         .isEqualTo("API 호출 중 오류가 발생했습니다: bad thing at https://a.example/p now");
   }
+
+  /**
+   * WD-693: 「대상 서버 오류(HTTP n)」 같은 재시도할 상태 문구는 이 패키지가 만든 {@link RetryableApiCallException} 만 그대로 쓴다.
+   * 다른 곳에서 온 {@code ExternalServiceException} 원문(URL·쿼리 키가 실릴 수 있다)은 일반 분류를 거친다.
+   */
+  @Test
+  void describe_onlyRetryableApiCallExceptionPassesThroughVerbatim() {
+    assertThat(
+            ApiCallErrorMessages.describe(
+                new RetryableApiCallException(ApiCallErrorMessages.httpStatus(503)), 1000, "h"))
+        .isEqualTo("대상 서버 오류(HTTP 503)");
+
+    RuntimeException foreign =
+        new com.smartfirehub.global.exception.ExternalServiceException(
+            "boom at https://a.example/p?serviceKey=SECRET123");
+    assertThat(ApiCallErrorMessages.describe(foreign, 1000, "h"))
+        .isEqualTo("API 호출 중 오류가 발생했습니다: boom at https://a.example/p");
+
+    // 감싼 ExternalServiceException 이 첫 반복에서 원문으로 새지 않고 응답 크기 초과로 분류된다.
+    RuntimeException wrappedLimit =
+        new com.smartfirehub.global.exception.ExternalServiceException(
+            "outer", new org.springframework.core.io.buffer.DataBufferLimitException("limit"));
+    assertThat(ApiCallErrorMessages.describe(wrappedLimit, 1000, "h"))
+        .isEqualTo(ApiCallErrorMessages.responseTooLarge());
+  }
+
+  /**
+   * WD-693: 사용자 문구 표지(SafeUserMessage)를 단 예외는 감싸여 있어도 원문 그대로 쓴다 — RedirectFollower 가 실패한 홉의 호스트로 만든
+   * 전송 오류 문구가 호출부 분류에서 처음 호스트 문구로 바뀌지 않는다.
+   */
+  @Test
+  void describe_safeUserMessage_passesThroughEvenWhenWrapped() {
+    RuntimeException hop =
+        new RetryableApiCallException(
+            ApiCallErrorMessages.unknownHost("second.invalid"),
+            new RuntimeException(new UnknownHostException("second.invalid")));
+    assertThat(ApiCallErrorMessages.describe(new RuntimeException("outer", hop), 1000))
+        .isEqualTo(ApiCallErrorMessages.unknownHost("second.invalid"));
+  }
 }

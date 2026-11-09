@@ -9,6 +9,7 @@ import com.smartfirehub.notification.Payload;
 import com.smartfirehub.notification.PermanentFailureReason;
 import com.smartfirehub.notification.TransientFailureReason;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.settings.service.SmtpFailureLog;
 import com.smartfirehub.settings.service.SmtpFailureMessages;
 import com.smartfirehub.settings.service.SmtpTlsPolicy;
 import com.smartfirehub.user.repository.UserRepository;
@@ -99,7 +100,8 @@ public class EmailChannel implements Channel {
     try {
       tls = SmtpTlsPolicy.from(smtp);
     } catch (NumberFormatException e) {
-      log.warn("EmailChannel SMTP 포트 값이 숫자가 아님 (outboxId={})", ctx.outboxId());
+      // 메일 코드는 Logger 를 직접 부르지 않는다(WD-693, SmtpFailureLog).
+      SmtpFailureLog.warn(log, "EmailChannel SMTP 포트 값이 숫자가 아님 (outboxId={})", ctx.outboxId());
       return new DeliveryResult.PermanentFailure(
           PermanentFailureReason.UNRECOVERABLE, SMTP_PORT_INVALID);
     }
@@ -131,22 +133,25 @@ public class EmailChannel implements Channel {
             host, smtp.get("smtp.username"), smtp.get("smtp.password"));
     try {
       channelHttpClient.send("EMAIL", recipient, message);
-      log.info("EmailChannel sent to {} (outboxId={})", toAddress, ctx.outboxId());
+      SmtpFailureLog.info(log, "EmailChannel sent to {} (outboxId={})", toAddress, ctx.outboxId());
       return new DeliveryResult.Sent("email-" + ctx.outboxId());
     } catch (ChannelHttpException e) {
-      Throwable masked = masker.maskedCopy(e);
-      log.warn(
-          "EmailChannel ChannelHttpException {} (outboxId={})",
-          e.getStatusCode(),
-          ctx.outboxId(),
-          masked);
+      // 로그는 SmtpFailureLog 로만 남긴다(WD-693) — 가린 사본만 스택으로 붙고, 그 사본을 결과 cause 로도 쓴다.
+      Throwable masked =
+          SmtpFailureLog.warn(
+              log,
+              masker,
+              e,
+              "EmailChannel ChannelHttpException {} (outboxId={})",
+              e.getStatusCode(),
+              ctx.outboxId());
       return new DeliveryResult.TransientFailure(
           TransientFailureReason.CHANNEL_HTTP_PREFIX + e.getStatusCode(), masked);
     } catch (Exception e) {
       // 원본 예외(클래스명 등)는 서버 로그에만 남기고, 사용자에게는 노출하지 않는다.
       // reason()에는 안정적인 사유 코드만 담아 ChannelSettingsService가 한국어 메시지로 매핑한다.
-      Throwable masked = masker.maskedCopy(e);
-      log.warn("EmailChannel 네트워크 오류 (outboxId={})", ctx.outboxId(), masked);
+      Throwable masked =
+          SmtpFailureLog.warn(log, masker, e, "EmailChannel 네트워크 오류 (outboxId={})", ctx.outboxId());
       return new DeliveryResult.TransientFailure(TransientFailureReason.NETWORK_ERROR, masked);
     }
   }

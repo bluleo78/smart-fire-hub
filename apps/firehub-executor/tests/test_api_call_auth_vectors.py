@@ -37,6 +37,7 @@ def test_fixture_is_loaded():
         "basicAuth",
         "maskUserInfo",
         "basicScrub",
+        "redirectFollow",
     ):
         assert len(_DATA[section]) >= 4, section
 
@@ -106,3 +107,9 @@ def test_basic_scrub_matches_vector(case):
         {"authType": "BASIC", "username": case["username"], "password": case["password"]}
     )
     assert errors.scrub_secret(case["text"], resolved.sent_secrets) == case["expected"]
+
+
+@pytest.mark.parametrize("case", _DATA["redirectFollow"], ids=_ids("redirectFollow"))
+def test_redirect_follow_matches_vector(case):
+    # 리다이렉트로 따라가는 상태인지(WD-693) — 301·302·303·307·308 만 따라가고 300·304·305 등은 일반 응답(Java RedirectLocations.isFollowed 와 같다).
+    assert api_call_executor._is_followed_redirect(case["status"]) is case["follows"]

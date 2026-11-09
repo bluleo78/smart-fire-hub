@@ -412,3 +412,32 @@ test.describe('대시보드 위젯 — 조회 실패 안내 (WD-686)', () => {
     await expect(card(page, '위젯 A').getByText('a-1')).toBeVisible();
   });
 });
+
+/**
+ * 조회 성공·데이터 없음 (WD-693)
+ * 단건 데이터 응답이 성공(200)인데 본문이 비어 있으면(null) 예전에는 「아직 받은 데이터 없음」으로 보고 스피너에 영영 멈췄다.
+ * 이제 조회 실패와 같은 안내(「데이터를 불러올 수 없습니다.」 + 그 위젯만 다시 조회하는 「다시 시도」)를 보인다.
+ */
+test.describe('대시보드 위젯 — 조회 성공·데이터 없음 (WD-693)', () => {
+  test('성공 응답의 본문이 비어 있으면 스피너 대신 안내와 「다시 시도」를 보이고, 누르면 그 위젯만 다시 조회한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDashboard(page);
+    const a = await routeChartData(page, 1, [{ body: rowsBody(chartA, 'a-1') }]);
+    const b = await routeChartData(page, 2, [{ body: null }, { body: rowsBody(chartB, 'b-after-empty') }]);
+
+    await page.goto('/analytics/dashboards/1');
+    const cardA = card(page, '위젯 A');
+    const cardB = card(page, '위젯 B');
+    await expect(cardA.getByText('a-1')).toBeVisible();
+    await expect(cardB.getByRole('alert')).toContainText('데이터를 불러올 수 없습니다.');
+    await expect(cardB.locator('.animate-spin')).toHaveCount(0);
+
+    await cardB.getByRole('button', { name: '다시 시도' }).click();
+
+    await expect(cardB.getByText('b-after-empty')).toBeVisible();
+    await expect(cardB.getByRole('alert')).toHaveCount(0);
+    expect(b.count).toBe(2);
+    expect(a.count).toBe(1);
+  });
+});

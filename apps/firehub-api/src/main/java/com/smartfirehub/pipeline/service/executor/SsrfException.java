@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service.executor;
 
-public class SsrfException extends RuntimeException {
+/** 내부망 등 호출할 수 없는 주소 — 메시지는 고정 한국어 차단 문구다({@link SafeUserMessage}, WD-693). */
+public class SsrfException extends RuntimeException implements SafeUserMessage {
   public SsrfException(String message) {
     super(message);
   }

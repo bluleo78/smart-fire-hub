@@ -77,6 +77,10 @@ class ApiCallAuthVectorsTest {
     return cases("maskUserInfo");
   }
 
+  static Stream<Arguments> redirectFollow() throws IOException {
+    return cases("redirectFollow");
+  }
+
   /** 표가 비면 아래 파라미터 테스트가 공허하게 통과한다 — 갈래마다 사례가 실제로 읽혔는지 본다. */
   @Test
   void fixture_isLoaded() throws IOException {
@@ -90,7 +94,8 @@ class ApiCallAuthVectorsTest {
             "redirectMethod",
             "basicAuth",
             "maskUserInfo",
-            "basicScrub")) {
+            "basicScrub",
+            "redirectFollow")) {
       assertThat(section(name).size()).as(name).isGreaterThanOrEqualTo(4);
     }
   }
@@ -197,5 +202,17 @@ class ApiCallAuthVectorsTest {
   @MethodSource("maskUserInfo")
   void maskUserInfo_matchesVector(String name, JsonNode c) {
     assertThat(BaseUrlUserInfo.mask(c.get("url").asText())).isEqualTo(c.get("expected").asText());
+  }
+
+  /**
+   * 리다이렉트로 따라가는 상태인지(WD-693) — 301·302·303·307·308 만 따라가고 300·304·305 등 그 밖의 3xx 는 일반 응답이다. 예전에는
+   * Java 가 모든 3xx 를 따라가고 Python 은 다섯 상태만 따라가 같은 응답에서 결과가 달랐다. 규칙은 {@link
+   * RedirectLocations#isFollowed} 참고.
+   */
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("redirectFollow")
+  void redirectFollow_matchesVector(String name, JsonNode c) {
+    assertThat(RedirectLocations.isFollowed(c.get("status").asInt()))
+        .isEqualTo(c.get("follows").asBoolean());
   }
 }

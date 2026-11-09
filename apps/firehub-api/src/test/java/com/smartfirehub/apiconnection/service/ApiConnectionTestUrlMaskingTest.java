@@ -420,8 +420,8 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
   }
 
   /**
-   * 리다이렉트 응답: WebClient 는 리다이렉트를 따라가지 않아 3xx 의 {@code Location}(쿼리 포함)과 본문이 그대로 결과에 실린다. 흔한
-   * http→https 리다이렉트가 쿼리를 그대로 옮기므로 헤더·본문 미리보기에서도 키를 가려야 한다.
+   * 따라가지 않는 3xx 응답(300 등, WD-693 부터 301·302·303·307·308 은 따라간다)의 {@code Location}(쿼리 포함)과 본문은 그대로
+   * 결과에 실린다. 쿼리를 그대로 옮긴 Location 이 올 수 있으므로 헤더·본문 미리보기에서도 키를 가려야 한다.
    */
   @Test
   void testConnection_redirectEchoingKey_headersAndBodyMasked() {
@@ -429,7 +429,7 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
         get(urlPathEqualTo("/health"))
             .willReturn(
                 aResponse()
-                    .withStatus(301)
+                    .withStatus(300)
                     .withHeader("Location", "https://secure.example.com/health?serviceKey=" + KEY)
                     .withBody("moved: serviceKey=" + KEY)));
     ApiConnectionResponse created =
@@ -621,23 +621,105 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     verify(ssrfProtectionService, never()).validateUrl(argThat(u -> u != null && u.contains(KEY)));
   }
 
-  /** 리다이렉트는 따라가지 않는다 — 3xx 를 결과로 돌려줄 뿐 Location 주소로 다시 요청하지 않는다(검사를 우회하는 두 번째 요청이 없다). */
+  /**
+   * 리다이렉트는 미리보기·실행과 같은 규칙(RedirectFollower)으로 따라간다(WD-693) — 예전에는 따라가지 않고 3xx 를 결과로 돌려줘 같은 연결의 테스트와
+   * 실행 결과가 달랐다. 결과는 마지막 응답이고, 표시 URL 은 처음 요청 주소(키 가림)다.
+   */
   @Test
-  void testConnection_redirect_notFollowed() {
+  void testConnection_302_followedLikeExecution() {
     wireMock.stubFor(
         get(urlPathEqualTo("/health"))
             .willReturn(
                 aResponse().withStatus(302).withHeader("Location", wireMockBase() + "/internal")));
     wireMock.stubFor(get(urlPathEqualTo("/internal")).willReturn(aResponse().withStatus(200)));
     ApiConnectionResponse created =
-        apiConnectionService.create(queryKeyReq("WD178 redirect", wireMockBase(), KEY), testUserId);
+        apiConnectionService.create(queryKeyReq("WD693 redirect", wireMockBase(), KEY), testUserId);
+
+    TestConnectionResponse result = apiConnectionService.testConnection(created.id());
+
+    assertThat(result.ok()).isTrue();
+    assertThat(result.status()).isEqualTo(200);
+    assertThat(result.requestUrl()).isEqualTo(wireMockBase() + "/health?serviceKey=****9876");
+    wireMock.verify(1, getRequestedFor(urlPathEqualTo("/health")));
+    wireMock.verify(1, getRequestedFor(urlPathEqualTo("/internal")));
+  }
+
+  /** 리다이렉트 대상이 내부망이면 홉마다 하는 주소 검사로 막는다(WD-693) — 처음 주소(WireMock)만 검사를 통과시킨다. */
+  @Test
+  void testConnection_302ToInternalAddress_blocked() {
+    org.mockito.Mockito.doAnswer(
+            inv -> {
+              String url = inv.getArgument(0);
+              if (!url.startsWith(wireMockBase())) {
+                inv.callRealMethod();
+              }
+              return null;
+            })
+        .when(ssrfProtectionService)
+        .validateUrl(anyString());
+    doCallRealMethod().when(ssrfProtectionService).validateResolvedAddress(any());
+    wireMock.stubFor(
+        get(urlPathEqualTo("/health"))
+            .willReturn(
+                aResponse().withStatus(302).withHeader("Location", "http://127.0.0.1:1/meta")));
+    ApiConnectionResponse created =
+        apiConnectionService.create(queryKeyReq("WD693 ssrf", wireMockBase(), KEY), testUserId);
 
     TestConnectionResponse result = apiConnectionService.testConnection(created.id());
 
     assertThat(result.ok()).isFalse();
-    assertThat(result.status()).isEqualTo(302);
-    wireMock.verify(1, getRequestedFor(urlPathEqualTo("/health")));
-    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/internal")));
+    assertThat(result.status()).isNull();
+    assertThat(result.errorMessage()).isEqualTo(LOOPBACK_BLOCKED + ": 127.0.0.1");
+    assertThat(result.requestUrl()).isEqualTo(wireMockBase() + "/health?serviceKey=****9876");
+  }
+
+  /** 리다이렉트 끝이 404 면 실패로 알린다(WD-693) — 상태·「HTTP 404」 문구는 예전 4xx 결과와 같다. */
+  @Test
+  void testConnection_302To404_reportedAsFailure() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/health"))
+            .willReturn(
+                aResponse().withStatus(302).withHeader("Location", wireMockBase() + "/gone")));
+    wireMock.stubFor(
+        get(urlPathEqualTo("/gone")).willReturn(aResponse().withStatus(404).withBody("no such")));
+    ApiConnectionResponse created =
+        apiConnectionService.create(queryKeyReq("WD693 404", wireMockBase(), KEY), testUserId);
+
+    TestConnectionResponse result = apiConnectionService.testConnection(created.id());
+
+    assertThat(result.ok()).isFalse();
+    assertThat(result.status()).isEqualTo(404);
+    assertThat(result.errorMessage()).isEqualTo("HTTP 404");
+    assertThat(result.responseBodyPreview()).isEqualTo("no such");
+    assertThat(result.requestUrl()).isEqualTo(wireMockBase() + "/health?serviceKey=****9876");
+  }
+
+  /**
+   * 300·304 는 따라가는 상태가 아니라 그대로 결과다(WD-693, RedirectLocations.isFollowed) — Location 으로 다시 요청하지 않는다.
+   */
+  @Test
+  void testConnection_300And304_notFollowed() {
+    for (int status : new int[] {300, 304}) {
+      wireMock.resetAll();
+      wireMock.stubFor(
+          get(urlPathEqualTo("/health"))
+              .willReturn(
+                  aResponse()
+                      .withStatus(status)
+                      .withHeader("Location", wireMockBase() + "/internal")));
+      wireMock.stubFor(get(urlPathEqualTo("/internal")).willReturn(aResponse().withStatus(200)));
+      ApiConnectionResponse created =
+          apiConnectionService.create(
+              queryKeyReq("WD693 " + status, wireMockBase(), KEY), testUserId);
+
+      TestConnectionResponse result = apiConnectionService.testConnection(created.id());
+
+      assertThat(result.ok()).isFalse();
+      assertThat(result.status()).isEqualTo(status);
+      assertThat(result.errorMessage()).isEqualTo("HTTP " + status);
+      wireMock.verify(1, getRequestedFor(urlPathEqualTo("/health")));
+      wireMock.verify(0, getRequestedFor(urlPathEqualTo("/internal")));
+    }
   }
 
   // ── 상태 전환 알림·감사: 「테스트」·새로고침·주기 점검이 한 곳을 거친다(WD-189) ─────────────

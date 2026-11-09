@@ -69,6 +69,8 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching, dataError
   // 다시 하면 되는 실패도 알 수 없었다. 이전 결과가 있으면 그것을 그대로 보이고 신선도 바 배지가 실패를 알린다.
   // 로딩 표시보다 먼저 본다 — 데이터 없는 쿼리를 다시 조회하면 TanStack 이 pending 으로 되돌려 error 를 비우므로 카드가 기억한 마지막 오류로
   // 안내를 유지하고, 「다시 시도」만 진행 중 잠근다(스피너로 바뀌면 버튼이 사라져 잠금을 보일 수 없다).
+  // 성공(200)인데 차트 데이터가 없는 응답(WD-693)은 조회 함수(analyticsApi.getChartData)가 오류로 바꾸므로 이 갈래로 온다 — 예전에는
+  // 아래 로딩 갈래로 떨어져 스피너에 영영 멈췄다. 그 오류는 서버 응답이 없어 일반 문구가 된다.
   if (!chartData && dataError) {
     return (
       <WidgetErrorBox

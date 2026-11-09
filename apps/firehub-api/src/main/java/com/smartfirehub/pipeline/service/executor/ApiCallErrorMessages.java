@@ -225,13 +225,18 @@ public final class ApiCallErrorMessages {
    * <p>{@link WebClientResponseException} 의 메시지는 {@code 401 Unauthorized from GET
    * http://…?serviceKey=…} 처럼 쿼리 포함 URL 을 담으므로 절대 그대로 쓰지 않고 상태 코드로만 문구를 만든다.
    *
+   * <p>전송 오류는 {@link RedirectFollower} 가 실패한 홉 안에서 그 홉의 호스트로 이 메서드를 불러 문구를 만들어 둔다(WD-693) — 호출부는 그
+   * 문구({@link SafeUserMessage})를 그대로 받으므로 호스트를 넘길 필요가 없다({@link #describe(Throwable, int)}).
+   *
    * @param timeoutMs 이 요청에 건 시간 제한(타임아웃 문구용)
-   * @param host 요청 대상 호스트(DNS 실패 문구용, null 이면 「알 수 없음」)
+   * @param host 실패한 요청의 대상 호스트(DNS 실패 문구용, null 이면 「알 수 없음」)
    */
   public static String describe(Throwable error, int timeoutMs, String host) {
-    // 1) 이미 사용자 문구를 담은 예외(이 패키지가 만든 것)는 그대로 — 가장 바깥 것을 쓴다.
+    // 1) 이미 사용자 문구를 담은 예외(SafeUserMessage 표지, WD-693)는 그대로 — 가장 바깥 것을 쓴다. 범용
+    // ExternalServiceException
+    // 은 다른 곳의 원문(URL·쿼리 키 포함 가능)일 수 있어 표지가 없으면 아래 일반 분류를 거친다.
     for (Throwable c = error; c != null; c = next(c)) {
-      if (c instanceof ApiCallException || c instanceof SsrfException) {
+      if (c instanceof SafeUserMessage) {
         return c.getMessage();
       }
       if (c instanceof WebClientResponseException wre) {
@@ -270,6 +275,14 @@ public final class ApiCallErrorMessages {
     }
     String raw = root.getMessage() != null ? root.getMessage() : root.getClass().getSimpleName();
     return "API 호출 중 오류가 발생했습니다: " + redactUrlsInText(raw);
+  }
+
+  /**
+   * 호스트를 모르는 호출부(미리보기·API 연결 테스트)용(WD-693). 대상 서버와 주고받다 난 전송 오류는 {@link RedirectFollower} 가 그 홉의
+   * 호스트로 이미 문구를 만들어 {@link SafeUserMessage} 로 내므로, 여기 오는 나머지 오류에는 호스트가 필요 없다(DNS 실패면 「알 수 없음」).
+   */
+  public static String describe(Throwable error, int timeoutMs) {
+    return describe(error, timeoutMs, null);
   }
 
   private static boolean isTimeout(Throwable c) {

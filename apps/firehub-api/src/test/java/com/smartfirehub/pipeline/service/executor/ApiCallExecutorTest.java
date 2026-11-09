@@ -1445,6 +1445,62 @@ class ApiCallExecutorTest {
     wireMock.verify(0, anyRequestedFor(anyUrl()));
   }
 
+  /**
+   * 리다이렉트 홉의 DNS 재바인딩(WD-613 × WD-693) — 홉마다 하는 사전 검사(validateUrl)는 통과했지만 리다이렉트 대상 호스트가 접속 때 내부 주소로
+   * 풀리면, RedirectFollower 의 클라이언트도 접속 시점 해석기를 거치므로 그 홉은 나가지 않는다. 사전 검사와 같은 차단 문구의 SsrfException 으로
+   * 즉시 실패하고(재시도 대상으로 감싸지 않는다) 첫 요청만 한 번 나간다.
+   */
+  @Test
+  void execute_dnsRebindingOnRedirectHop_blockedAtConnectTime() {
+    // 사전 검사는 모든 주소를 통과시킨다 — 리다이렉트 대상도 검사 때는 공인 IP 였던 상황.
+    SsrfProtectionService preCheckPasses =
+        new SsrfProtectionService() {
+          @Override
+          public void validateUrl(String url) {
+            // 통과
+          }
+        };
+    // 첫 요청 호스트는 WireMock(127.0.0.1)로, 리다이렉트 대상은 접속 때 127.0.0.2 로 풀린다.
+    FakeDnsResolverGroup dns =
+        new FakeDnsResolverGroup()
+            .answer("origin.test", FakeDnsResolverGroup.ips("127.0.0.1"))
+            .answer("rebind.test", FakeDnsResolverGroup.ips("127.0.0.2"));
+    // 접속 시점 정책: 127.0.0.2 만 막는다(첫 홉의 WireMock 접속은 허용).
+    SsrfGuardedAddressResolverGroup.AddressPolicy blockRebound =
+        address -> {
+          if ("127.0.0.2".equals(address.getHostAddress())) {
+            throw new SsrfException("내부망 주소는 호출할 수 없습니다(루프백): 127.0.0.2");
+          }
+        };
+    ApiCallExecutor rebindingExecutor =
+        new ApiCallExecutor(
+            preCheckPasses,
+            jsonParser,
+            paginationHandler,
+            dataTableService,
+            dataTableRowService,
+            WebClient.builder(),
+            writeLock,
+            new SsrfSafeHttpClientFactory(dns, blockRebound));
+    int port = wireMock.port();
+    stubRedirect("/r613/start", "http://rebind.test:" + port + "/r613/internal");
+    wireMock.stubFor(get(urlPathEqualTo("/r613/internal")).willReturn(okJson("{\"items\":[]}")));
+
+    assertThatThrownBy(
+            () ->
+                rebindingExecutor.execute(
+                    retryConfig("http://origin.test:" + port + "/r613/start", 2, 5000),
+                    "t",
+                    null,
+                    "APPEND",
+                    null))
+        .isInstanceOf(SsrfException.class)
+        .hasMessage("내부망 주소는 호출할 수 없습니다(루프백): 127.0.0.2");
+    // 재시도하지 않았고(첫 요청 한 번), 막힌 홉은 나가지 않았다.
+    wireMock.verify(1, getRequestedFor(urlEqualTo("/r613/start")));
+    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/r613/internal")));
+  }
+
   /** 응답 크기 초과 문구도 한국어이고, URL(쿼리 포함 가능)을 담지 않는다. */
   @Test
   void execute_responseTooLarge_koreanMessage() {
@@ -1842,12 +1898,12 @@ class ApiCallExecutorTest {
     URI origin = URI.create("http://api.example.com/data?serviceKey=UpKey657");
     URI upgraded = URI.create("https://api.example.com/data?serviceKey=UpKey657");
     assertThat(ApiCallAuth.isSameAuthOrigin(origin, upgraded)).isTrue();
-    assertThat(ApiCallExecutor.adjustQueryAuth(upgraded, auth, true, false)).isEqualTo(upgraded);
+    assertThat(RedirectFollower.adjustQueryAuth(upgraded, auth, true, false)).isEqualTo(upgraded);
 
     URI httpsOrigin = URI.create("https://api.example.com/data");
     URI downgraded = URI.create("http://api.example.com/data?serviceKey=UpKey657&x=1");
     assertThat(ApiCallAuth.isSameAuthOrigin(httpsOrigin, downgraded)).isFalse();
-    assertThat(ApiCallExecutor.adjustQueryAuth(downgraded, auth, false, false).toString())
+    assertThat(RedirectFollower.adjustQueryAuth(downgraded, auth, false, false).toString())
         .isEqualTo("http://api.example.com/data?x=1");
   }
 
@@ -2070,5 +2126,71 @@ class ApiCallExecutorTest {
     executor.execute(postConfig("/r686/d1", "{\"k\":\"v686\"}"), "t", null, "APPEND", null);
 
     assertSingleBodylessGet("/r686/d3");
+  }
+
+  // -------------------------------------------------------------------------
+  // WD-693: 따라가는 3xx 는 301·302·303·307·308 만 — 그 밖의 3xx 는 일반 응답(Python 과 같다)
+  // -------------------------------------------------------------------------
+
+  /**
+   * 300·305 는 Location 이 있어도 따라가지 않고 그 응답 본문을 일반 응답으로 읽는다(WD-693) — Python 실행기는 다섯 상태만 따라가 JSON 본문을
+   * 그대로 적재하는데, 예전 Java 는 모든 3xx 를 본문 없는 GET 으로 따라가 두 실행기 결과가 달랐다.
+   */
+  @ParameterizedTest(name = "{0} is a plain response")
+  @ValueSource(ints = {300, 305})
+  void execute_otherThreeXx_notFollowed_bodyReadAsResponse(int status) {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/r693/o" + status))
+            .willReturn(
+                aResponse()
+                    .withStatus(status)
+                    .withHeader("Location", baseUrl() + "/r693/elsewhere" + status)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"items\":[{\"name\":\"n693\"}]}")));
+    stubEmptyItems("/r693/elsewhere" + status);
+
+    ApiCallExecutor.ApiCallResult result =
+        executor.execute(
+            retryConfig(baseUrl() + "/r693/o" + status, 0, 5000), "t", null, "APPEND", null);
+
+    assertThat(result.totalRows()).isEqualTo(1);
+    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/r693/elsewhere" + status)));
+  }
+
+  /** 본문 없는 304 는 따라가지 않고, Python(resp.json() 실패)과 같은 「JSON 형식이 아닙니다」로 실패한다(WD-693). */
+  @Test
+  void execute_304_notFollowed_failsAsNotJson() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/r693/nm"))
+            .willReturn(
+                aResponse().withStatus(304).withHeader("Location", baseUrl() + "/r693/nm-next")));
+    stubEmptyItems("/r693/nm-next");
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    retryConfig(baseUrl() + "/r693/nm", 0, 5000), "t", null, "APPEND", null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.notJson());
+    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/r693/nm-next")));
+  }
+
+  /** 리다이렉트 뒤 홉의 DNS 실패는 그 홉의 호스트를 문구에 쓴다(WD-693 — 예전에는 처음 호스트를 보였다). */
+  @Test
+  void execute_unknownHostOnRedirectHop_namesThatHop() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/e693/d1"))
+            .willReturn(
+                aResponse()
+                    .withStatus(302)
+                    .withHeader("Location", "http://wd693-no-such-host.invalid/x")));
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    retryConfig(baseUrl() + "/e693/d1", 0, 5000), "t", null, "APPEND", null))
+        .hasMessage(
+            ApiCallErrorMessages.retriesExhausted(
+                0, ApiCallErrorMessages.unknownHost("wd693-no-such-host.invalid")));
   }
 }

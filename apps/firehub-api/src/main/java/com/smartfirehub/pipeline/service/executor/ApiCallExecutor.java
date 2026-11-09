@@ -7,24 +7,18 @@ import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetDataWriteLock;
-import com.smartfirehub.global.exception.ExternalServiceException;
 import java.net.URI;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.buffer.DataBufferLimitException;
-import org.springframework.http.HttpStatusCode;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.netty.http.client.HttpClient;
 
 /**
  * @deprecated Use {@link ExecutorClient#executeApiCall} instead. Retained for
@@ -43,15 +37,6 @@ public class ApiCallExecutor {
   private static final int DEFAULT_MAX_BACKOFF = 30_000;
   private static final int DEFAULT_PAGE_SIZE = 100;
   private static final int DEFAULT_MAX_RESPONSE_SIZE_MB = 10;
-  private static final int MAX_REDIRECTS = 5;
-
-  /**
-   * 본문을 설명하는 헤더(소문자, WD-676) — 본문을 버린 리다이렉트 홉부터 사용자 헤더에 있어도 보내지 않는다(규칙: {@link
-   * RedirectLocations#keepsMethodAndBody}). Python {@code _BODY_HEADERS} 와 같다.
-   */
-  private static final java.util.Set<String> BODY_HEADERS =
-      java.util.Set.of("content-type", "content-length", "content-encoding", "transfer-encoding");
-
   private final SsrfProtectionService ssrfProtectionService;
   private final JsonResponseParser jsonResponseParser;
   private final OffsetPaginationHandler offsetPaginationHandler;
@@ -149,6 +134,12 @@ public class ApiCallExecutor {
     int maxDurationMs =
         config.maxDurationMs() != null ? config.maxDurationMs() : DEFAULT_MAX_DURATION_MS;
     int timeoutMs = config.timeoutMs() != null ? config.timeoutMs() : DEFAULT_TIMEOUT_MS;
+    // 응답 크기 제한(maxResponseSizeMb)을 건 클라이언트는 실행마다 한 번만 만든다(WD-693) — 페이지·재시도마다 다시 만들지 않는다.
+    int maxResponseSizeMb =
+        (config.maxResponseSizeMb() != null)
+            ? config.maxResponseSizeMb()
+            : DEFAULT_MAX_RESPONSE_SIZE_MB;
+    HttpTarget http = new HttpTarget(noRedirectClient(maxResponseSizeMb), maxResponseSizeMb);
 
     int totalRows = 0;
     int totalPages = 0;
@@ -178,6 +169,7 @@ public class ApiCallExecutor {
           String responseBody =
               executeRequest(
                   config,
+                  http,
                   resolvedUrl,
                   auth,
                   pagParams,
@@ -248,7 +240,8 @@ public class ApiCallExecutor {
         // 취소 체크포인트(WD-153) — 요청 전.
         cancel.checkpoint(0, isReplace);
         String responseBody =
-            executeRequest(config, resolvedUrl, auth, Map.of(), timeoutMs, cancel, 0, isReplace);
+            executeRequest(
+                config, http, resolvedUrl, auth, Map.of(), timeoutMs, cancel, 0, isReplace);
         List<Map<String, Object>> rows =
             jsonResponseParser.parseAndMap(
                 responseBody, config.dataPath(), config.fieldMappings(), columnTypeMap, 0);
@@ -317,6 +310,7 @@ public class ApiCallExecutor {
    */
   private String executeRequest(
       ApiCallConfig config,
+      HttpTarget http,
       String resolvedUrl,
       ApiCallAuth.ResolvedAuth auth,
       Map<String, String> paginationParams,
@@ -342,10 +336,12 @@ public class ApiCallExecutor {
 
     while (attempt <= maxRetries) {
       try {
-        return doHttpRequest(config, resolvedUrl, auth, paginationParams, timeoutMs);
+        return doHttpRequest(config, http, resolvedUrl, auth, paginationParams, timeoutMs);
       } catch (ApiCallException | SsrfException e) {
         // 재시도 안 함: 고쳐지지 않는 4xx·응답 크기 초과 등(ApiCallException)과 리다이렉트 대상이 내부망인 경우(SsrfException).
         // 예전에는 SsrfException 이 아래 catch 로 떨어져 같은 차단을 N회 재시도하고 원인까지 묻혔다(WD-150).
+        // 접속 시점 주소 검사(WD-613, DNS 재바인딩)에 막힌 홉도 RedirectFollower 가 같은 SsrfException 으로 꺼내 주므로 여기서
+        // 끝난다.
         throw e;
       } catch (Exception e) {
         lastException = e;
@@ -383,6 +379,7 @@ public class ApiCallExecutor {
 
   private String doHttpRequest(
       ApiCallConfig config,
+      HttpTarget http,
       String resolvedUrl,
       ApiCallAuth.ResolvedAuth auth,
       Map<String, String> paginationParams,
@@ -397,10 +394,6 @@ public class ApiCallExecutor {
       allQueryParams.putAll(paginationParams);
     }
 
-    // 오류 문구에서 가릴 값 — 쿼리 키뿐 아니라 실제로 보내는 비밀 전부다(헤더 키·Bearer 토큰 포함).
-    // BASIC 은 비밀번호와 Basic 헤더의 Base64 덩어리 둘 다다(WD-681).
-    AuthQueryMasker.SentSecrets authSecret = auth.sentSecrets();
-
     // Build the full URI with query params (resolvedUrl은 이미 SSRF 검증 완료)
     // 쿼리 인증 키(API_KEY + placement=query)는 execute 가 한 번 푼 값으로, 연결 테스트·미리보기와 같은 공용
     // 빌더(ResolvedAuth.buildUrls,
@@ -414,300 +407,57 @@ public class ApiCallExecutor {
       throw new ApiCallException(e.getMessage());
     }
 
-    // Fix 1: enforce maxResponseSizeMb via ExchangeStrategies codec limit.
-    // If the response body exceeds this limit WebClient throws DataBufferLimitException,
-    // which is caught below and wrapped as a non-retryable ApiCallException.
-    int maxResponseSizeMb =
-        (config.maxResponseSizeMb() != null)
-            ? config.maxResponseSizeMb()
-            : DEFAULT_MAX_RESPONSE_SIZE_MB;
+    String method = (config.method() != null) ? config.method().toUpperCase(Locale.ROOT) : "GET";
+
+    try {
+      // 홉마다 SSRF 검사·메서드/본문 규칙·다른 출처 인증 떼기는 RedirectFollower 한 곳에 있다(WD-693 — 미리보기·연결 테스트도
+      // 같은 경로). 전송 오류는 RedirectFollower 가 실패한 홉의 호스트로 분류·가린 재시도 예외(RetryableApiCallException)로 낸다.
+      return RedirectFollower.follow(
+              new RedirectFollower.Request(
+                  http.client(),
+                  ssrfProtectionService,
+                  method,
+                  requestUri,
+                  config.headers(),
+                  config.body(),
+                  auth,
+                  timeoutMs,
+                  // 홉마다 timeoutMs — Python 실행기(httpx)와 같고, 전체 시간은 재시도·maxDurationMs 가 따로 다룬다
+                  true,
+                  // 4xx·5xx 는 예외(재시도 판단은 예외 타입으로)
+                  true))
+          .getBody();
+    } catch (DataBufferLimitException e) {
+      // Fix 1: 응답이 maxResponseSizeMb 코덱 한도를 넘었다 — 재시도해도 같으므로 재시도하지 않는 ApiCallException 으로 낸다.
+      throw new ApiCallException(
+          ApiCallErrorMessages.responseTooLarge(http.maxResponseSizeMb()), e);
+    }
+  }
+
+  /**
+   * 한 실행이 쓰는 HTTP 클라이언트와 그 응답 크기 제한(WD-693) — 실행마다 한 번 만들어 페이지·재시도에 그대로 넘긴다.
+   *
+   * @param client 자동 리다이렉트를 끄고 응답 크기 제한을 건 클라이언트({@link #noRedirectClient})
+   * @param maxResponseSizeMb 응답 크기 제한(MB) — 초과 문구용
+   */
+  private record HttpTarget(WebClient client, int maxResponseSizeMb) {}
+
+  /**
+   * 응답 크기 제한을 건, 자동 리다이렉트를 끈 클라이언트를 만든다.
+   *
+   * <p>Fix 1: maxResponseSizeMb 는 ExchangeStrategies 코덱 상한으로 강제한다 — 넘으면 WebClient 가
+   * DataBufferLimitException 을 낸다. Fix 2: 자동 리다이렉트를 꺼 홉마다 SSRF 를 검사한다 — 그렇지 않으면 악성 서버가
+   * http://169.254.169.254/ 로 301 해 처음 validateUrl() 을 우회한다. withoutAutoRedirect 는 주입받은 공유 빌더를 복제해
+   * 쓴다(WD-693) — 응답 크기 제한이 다른 파이프라인이 동시에 돌아도 서로의 코덱 설정을 덮어쓰지 않는다.
+   */
+  private WebClient noRedirectClient(int maxResponseSizeMb) {
     ExchangeStrategies exchangeStrategies =
         ExchangeStrategies.builder()
             .codecs(c -> c.defaultCodecs().maxInMemorySize(maxResponseSizeMb * 1024 * 1024))
             .build();
-
-    // Fix 2: disable automatic redirects so every hop is SSRF-validated before following.
-    // Without this, a malicious server could 301-redirect to http://169.254.169.254/ and
-    // bypass the initial validateUrl() check.
-    // (WD-613) 해석기는 접속할 IP 를 SSRF 정책으로 다시 검사한다 — 검사(validateUrl) 뒤 DNS 재바인딩으로 내부 주소가 나와도 접속하지 않는다.
-    HttpClient reactorHttpClient = ssrfSafeHttpClientFactory.httpClient().followRedirect(false);
-
-    WebClient client =
-        webClientBuilder
-            .clientConnector(new ReactorClientHttpConnector(reactorHttpClient))
-            .exchangeStrategies(exchangeStrategies)
-            .build();
-
-    String method = (config.method() != null) ? config.method().toUpperCase(Locale.ROOT) : "GET";
-
-    try {
-      // 첫 요청의 출처가 리다이렉트마다 인증을 붙일지 정하는 기준이다(WD-657).
-      RedirectContext ctx =
-          new RedirectContext(client, requestUri, config, resolvedUrl, auth, timeoutMs);
-      return executeWithRedirects(ctx, method, requestUri, 0, false, false);
-    } catch (DataBufferLimitException e) {
-      throw new ApiCallException(ApiCallErrorMessages.responseTooLarge(maxResponseSizeMb), e);
-    } catch (ApiCallException | SsrfException | ExternalServiceException e) {
-      // 이미 사용자 문구를 담은 예외 — ExternalServiceException 은 재시도할 HTTP 상태(5xx·408·429)다.
-      throw e;
-    } catch (Exception e) {
-      // 접속 시점 주소 검사(WD-613)에 막힌 경우 — WebClientRequestException 에 감싸여 오므로 꺼내서, 사전 검사와 같은 차단 문구의
-      // SsrfException 으로 즉시 실패시킨다(아래로 떨어지면 재시도 대상 ExternalServiceException 이 되어 같은 차단을 N회 반복한다).
-      SsrfException blocked = SsrfException.findIn(e);
-      if (blocked != null) {
-        throw new SsrfException(blocked.getMessage(), e);
-      }
-      // 타임아웃·연결 거부 등 — 재시도 대상. 원인을 분류한 한국어 문구로 감싼다(WD-150). 예전 문구는 쿼리 포함
-      // URL 을 담을 수 있어(customUrl 에 serviceKey 등) 원인을 묻고 키까지 남겼다.
-      // (WD-177) 분류하지 못한 원문 메시지에 쿼리 인증 키가 실려 올 수 있어 키도 가린다 — 이 문구는 재시도 로그·실행 기록으로 간다.
-      throw new ExternalServiceException(
-          authSecret.scrubText(
-              ApiCallErrorMessages.describe(e, timeoutMs, UrlAuthority.hostOrNull(requestUri))),
-          e);
-    }
-  }
-
-  /**
-   * Executes a single HTTP request hop and manually follows redirects after SSRF-validating each
-   * Location URL. This prevents open-redirect SSRF attacks where an attacker's server issues a
-   * 301/302 to an internal address (e.g. http://169.254.169.254/).
-   *
-   * <p>리다이렉트 홉의 메서드·본문 규칙은 {@link RedirectLocations#keepsMethodAndBody} 참고(WD-686).
-   *
-   * <p>인증은 처음 요청과 같은 출처(스킴·호스트·포트)로 가는 홉에만 붙인다(WD-657) — 다른 출처로 3xx 하면 인증 헤더·쿼리 인증 키를 떼고 따라간다. 판단
-   * 기준은 언제나 처음 요청의 출처라, A→B→A 면 B 에는 떼고 다시 A 로 올 때는 붙인다. 리다이렉트 자체는 따른다(막으면 기존 파이프라인이 깨진다).
-   *
-   * @param ctx 홉마다 바뀌지 않는 값(클라이언트·처음 요청 URI·설정·인증·시간 제한)
-   * @param redirectCount number of redirects followed so far (guards against infinite loops)
-   * @param hasLeftOrigin 이 홉까지 오는 동안 리다이렉트가 처음 출처를 벗어난 적이 있는지 — 처음 출처로 돌아올 때 뗐던 쿼리 인증 키를 되붙이는 데 쓴다
-   * @param bodyDropped 앞선 리다이렉트가 본문을 버렸는지(WD-686) — 한 번 true 면 되돌리지 않는다(Python {@code
-   *     body_dropped})
-   */
-  private String executeWithRedirects(
-      RedirectContext ctx,
-      String method,
-      URI requestUri,
-      int redirectCount,
-      boolean hasLeftOrigin,
-      boolean bodyDropped) {
-    WebClient client = ctx.client();
-    URI originUri = ctx.originUri();
-    ApiCallConfig config = ctx.config();
-    ApiCallAuth.ResolvedAuth auth = ctx.auth();
-
-    if (redirectCount > MAX_REDIRECTS) {
-      throw new ApiCallException(ApiCallErrorMessages.tooManyRedirects(MAX_REDIRECTS));
-    }
-
-    // 이 홉이 처음 요청과 같은 출처일 때만 인증 헤더를 붙인다(WD-657). 첫 홉은 판정 없이 붙인다 — java.net.URI 가 호스트를 못 읽는 주소(밑줄 든
-    // 호스트 이름 등)도 예전처럼 인증해 보내야 한다.
-    boolean sendAuth = redirectCount == 0 || ApiCallAuth.isSameAuthOrigin(originUri, requestUri);
-    // Netty 가 못 부르는 호스트(밑줄 등)는 요청 전에 고정 문구로 실패한다(WD-676) — 리다이렉트 대상도 여기서 같이 본다.
-    UrlAuthority.requireClientSupportedHost(requestUri);
-    WebClient.RequestHeadersSpec<?> requestSpec =
-        buildRequestSpec(client, method, requestUri, config, auth, sendAuth, bodyDropped);
-
-    // Use exchangeToMono so we can inspect both status and headers before consuming the body.
-    // 3xx 의 상태 코드·Location 은 리액티브 콜백이 두 값을 함께 돌려줄 수 없어 AtomicReference 로 받는다 — 3xx 일 때만 채워진다.
-    AtomicReference<Redirect> redirectRef = new AtomicReference<>();
-
-    String body =
-        requestSpec
-            .exchangeToMono(
-                response -> {
-                  HttpStatusCode status = response.statusCode();
-
-                  if (status.is3xxRedirection()) {
-                    // Capture Location header, drain body without buffering, signal redirect with
-                    // null
-                    String location = response.headers().asHttpHeaders().getFirst("Location");
-                    // Location 이 없으면 빈 문자열로 둔다(WD-676) — null 은 「3xx 아님」이라, 아래에서 빈 값을 「Location 없는
-                    // 3xx」로 판정한다.
-                    redirectRef.set(new Redirect(status.value(), location != null ? location : ""));
-                    return response
-                        .releaseBody()
-                        .thenReturn(""); // sentinel: empty string + redirectRef set
-                  }
-
-                  if (status.is4xxClientError() || status.is5xxServerError()) {
-                    // 상태별 한국어 안내(WD-150). 5xx·408·429 만 재시도(ExternalServiceException), 나머지 4xx 는
-                    // 다시 보내도 같은 답이라 즉시 실패(ApiCallException) — 예전에는 400/401/403/404 만 즉시 실패라
-                    // 405 같은 오류도 재시도하며 오래 걸렸다.
-                    // 문구에 요청 URL 을 넣지 않는다 — requestUri 에는 query 로 붙인 API 키가 들어 있다.
-                    // 본문은 읽지 않고 버린다 — 큰 오류 본문이 응답 크기 제한에 걸려 「응답 크기 초과」로 잘못 보이지 않게.
-                    int code = status.value();
-                    String message = ApiCallErrorMessages.httpStatus(code);
-                    RuntimeException failure =
-                        ApiCallErrorMessages.isRetryableStatus(code)
-                            ? new ExternalServiceException(message)
-                            : new ApiCallException(message);
-                    return response
-                        .releaseBody()
-                        .then(reactor.core.publisher.Mono.<String>error(failure));
-                  }
-
-                  // 2xx — read the response body (size enforced by ExchangeStrategies codec limit)
-                  return response.bodyToMono(String.class);
-                })
-            .timeout(Duration.ofMillis(ctx.timeoutMs()))
-            .block();
-
-    // Handle redirect: redirectRef is set only when a 3xx was received
-    Redirect redirect = redirectRef.get();
-    if (redirect != null && redirect.location().isBlank()) {
-      // Location 없는 3xx 는 따라갈 곳이 없다(WD-676) — 예전에는 빈 본문을 성공으로 보고 0행 「완료」가 됐다. Python 실행기
-      // (redirect_without_location)와 같은 문구로 실패시킨다. 다시 보내도 같으므로 재시도하지 않는다.
-      throw new ApiCallException(ApiCallErrorMessages.redirectWithoutLocation());
-    }
-    if (redirect != null) {
-      // Location 은 무엇보다 먼저 지금 요청 기준 절대 주소로 푼다(WD-657) — 주소 검사(SSRF)·출처 판단·다음 요청이 모두 같은 절대 주소를 본다.
-      // 예전에는 상대 주소(「/v2/items?page=2」)를 그대로 써 검사·요청이 실패했다.
-      // (WD-676) JDK URI.resolve 대신 RFC 3986 해석기를 쓴다. JDK 는 path 가 빈 base 에 슬래시 없는 상대 경로를
-      // 호스트에 붙이고, 쿼리만 있는 참조에서 base 경로를 잘라 Python(urljoin)과 다른 주소로 갔다.
-      // 문법 오류 Location 은 재시도하지 않는 고정 문구로 실패한다.
-      URI target = RedirectLocations.resolve(requestUri, redirect.location());
-      log.debug(
-          "Redirect {}/{}: {} -> {}",
-          redirectCount + 1,
-          MAX_REDIRECTS,
-          ApiCallErrorMessages.redactUrl(requestUri),
-          ApiCallErrorMessages.redactUrl(target));
-
-      // SSRF-validate the redirect target before following it
-      ssrfProtectionService.validateUrl(target.toString());
-
-      boolean sameOrigin = ApiCallAuth.isSameAuthOrigin(originUri, target);
-      if (auth.isQueryApiKey()) {
-        target = adjustQueryAuth(target, auth, sameOrigin, hasLeftOrigin);
-      }
-      // 다음 홉의 메서드·본문(WD-686) — 규칙은 RedirectLocations.keepsMethodAndBody 참고.
-      boolean keep = RedirectLocations.keepsMethodAndBody(redirect.status(), sameOrigin);
-      return executeWithRedirects(
-          ctx,
-          keep ? method : "GET",
-          target,
-          redirectCount + 1,
-          hasLeftOrigin || !sameOrigin,
-          bodyDropped || !keep);
-    }
-
-    return body;
-  }
-
-  /**
-   * 리다이렉트 대상의 쿼리 인증 키를 출처에 맞춘다(WD-657).
-   *
-   * <ul>
-   *   <li>다른 출처: Location 이 되울려 담아 온 키를 뺀다 — 헤더만 떼고 쿼리 키를 남기면 같은 비밀이 그대로 나간다.
-   *   <li>처음 출처로 돌아옴(A→B→A): 앞에서 뗀 키가 빠져 있으면 되붙인다 — 헤더 인증은 같은 출처 홉에 다시 붙으므로 쿼리 인증도 같게 한다.
-   *   <li>처음부터 같은 출처 안에서만 옮겨 다니면 Location 을 받은 그대로 쓴다(WD-182).
-   * </ul>
-   */
-  static URI adjustQueryAuth(
-      URI target, ApiCallAuth.ResolvedAuth auth, boolean sameOrigin, boolean hasLeftOrigin) {
-    String url = target.toString();
-    if (!sameOrigin) {
-      return URI.create(ApiCallAuth.stripQueryParam(url, auth.paramName()));
-    }
-    if (hasLeftOrigin && !ApiCallAuth.hasQueryParam(url, auth.paramName())) {
-      try {
-        // 처음 요청과 같은 공용 빌더(QueryApiKeyEncoding 으로 한 번만 인코딩)로 붙인다.
-        return auth.buildUrls(url, Map.of()).callUri();
-      } catch (AuthQueryMasker.InvalidRequestUrlException e) {
-        throw new ApiCallException(e.getMessage());
-      }
-    }
-    return target;
-  }
-
-  /** 받은 3xx 응답(WD-686) — 다음 홉의 메서드·본문을 정할 상태 코드와 Location(없으면 빈 문자열). */
-  private record Redirect(int status, String location) {}
-
-  /**
-   * 리다이렉트를 따라가는 동안 홉마다 바뀌지 않는 값(WD-657) — 홉마다 바뀌는 메서드·URI·횟수·출처 이탈 여부만 인자로 넘긴다.
-   *
-   * @param originUri 처음 요청 URI — 인증을 붙일지 판단하는 출처 기준
-   */
-  private record RedirectContext(
-      WebClient client,
-      URI originUri,
-      ApiCallConfig config,
-      String resolvedUrl,
-      ApiCallAuth.ResolvedAuth auth,
-      int timeoutMs) {}
-
-  /**
-   * Builds a {@link WebClient.RequestHeadersSpec} for the given method and URI, applying configured
-   * headers and auth.
-   *
-   * @param sendAuth 인증 헤더를 붙일지 — 처음 요청과 다른 출처로 가는 리다이렉트 홉이면 false(WD-657)
-   * @param bodyDropped 리다이렉트가 본문을 버린 홉인지 — 본문 헤더(Content-Type 등)를 뺀다(WD-676)
-   */
-  private WebClient.RequestHeadersSpec<?> buildRequestSpec(
-      WebClient client,
-      String method,
-      URI requestUri,
-      ApiCallConfig config,
-      ApiCallAuth.ResolvedAuth auth,
-      boolean sendAuth,
-      boolean bodyDropped) {
-
-    WebClient.RequestHeadersSpec<?> requestSpec;
-
-    if ("POST".equals(method)) {
-      WebClient.RequestBodySpec bodySpec = client.post().uri(requestUri);
-      applyHeaders(bodySpec, config, auth, sendAuth, false);
-      if (config.body() != null && !config.body().isBlank()) {
-        requestSpec = bodySpec.header("Content-Type", "application/json").bodyValue(config.body());
-      } else {
-        requestSpec = bodySpec;
-      }
-    } else {
-      // GET(기본) — 처음 요청 또는 리다이렉트 홉
-      WebClient.RequestHeadersSpec<?> getSpec = client.get().uri(requestUri);
-      applyHeaders(getSpec, config, auth, sendAuth, bodyDropped);
-      requestSpec = getSpec;
-    }
-
-    return requestSpec;
-  }
-
-  /**
-   * 사용자 헤더와 인증 헤더를 붙인다.
-   *
-   * <p>{@code sendAuth} 가 false(다른 출처 리다이렉트, WD-657)면 인증 헤더를 붙이지 않고, 사용자 헤더 가운데 자격 증명 헤더도 뺀다 —
-   * Authorization·Proxy-Authorization·Cookie 와 인증 헤더와 같은 이름({@link
-   * ApiCallAuth.ResolvedAuth#isCredentialHeader}). 비밀을 사용자 헤더로 넣어 둔 경우까지 다른 출처로 나가지 않게 한다. Python
-   * {@code _do_request} 도 같은 규칙이다.
-   */
-  private void applyHeaders(
-      WebClient.RequestHeadersSpec<?> spec,
-      ApiCallConfig config,
-      ApiCallAuth.ResolvedAuth auth,
-      boolean sendAuth,
-      boolean dropBodyHeaders) {
-
-    // Custom headers from config — 다른 출처 홉이면 자격 증명 헤더를 뺀다(WD-657). 본문을 버린 홉이면 본문 헤더도
-    // 뺀다(BODY_HEADERS 참고).
-    if (config.headers() != null) {
-      config
-          .headers()
-          .forEach(
-              (name, value) -> {
-                if (dropBodyHeaders && BODY_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
-                  return;
-                }
-                if (sendAuth || !auth.isCredentialHeader(name)) {
-                  spec.header(name, value);
-                }
-              });
-    }
-
-    // 인증 헤더 — execute 가 한 번 푼 값(ApiCallAuth.resolve)을 미리보기와 같은 규칙(ResolvedAuth.applyHeaders)으로
-    // 붙인다(WD-647). 다른 출처 홉에는 붙이지 않는다(WD-657).
-    if (sendAuth) {
-      auth.applyHeaders(spec::header);
-    }
+    return RedirectFollower.withoutAutoRedirect(webClientBuilder, ssrfSafeHttpClientFactory)
+        .exchangeStrategies(exchangeStrategies)
+        .build();
   }
 
   // -------------------------------------------------------------------------

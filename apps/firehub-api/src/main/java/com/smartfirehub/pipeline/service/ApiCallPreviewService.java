@@ -10,21 +10,17 @@ import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
+import com.smartfirehub.pipeline.service.executor.RedirectFollower;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
-import com.smartfirehub.pipeline.service.executor.UrlAuthority;
 import java.net.URI;
-import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import lombok.RequiredArgsConstructor;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
 @Service
-@RequiredArgsConstructor
 @lombok.extern.slf4j.Slf4j
 public class ApiCallPreviewService {
 
@@ -35,19 +31,34 @@ public class ApiCallPreviewService {
   private final SsrfProtectionService ssrfProtectionService;
   private final JsonResponseParser jsonResponseParser;
   private final ApiConnectionService apiConnectionService;
-  private final WebClient.Builder webClientBuilder;
 
   /**
-   * 접속 시점 주소 검사가 걸린 HTTP 클라이언트(WD-613) — 사전 검사(validateUrl) 뒤 DNS 재바인딩으로 내부 주소가 나와도 접속하지 않는다. 막히면
-   * SsrfException 이 원인 사슬에 실려 와 ApiCallErrorMessages.describe 가 사전 검사와 같은 차단 문구를 보인다.
+   * 자동 리다이렉트를 끈 클라이언트 — 따라가기는 {@link RedirectFollower} 가 홉마다 검사하며 한다(WD-693). 설정이 요청마다 같아(응답 크기 제한
+   * 없음) 서비스가 만들어질 때 한 번만 만든다. withoutAutoRedirect 가 주입받은 공유 빌더를 복제해 쓴다.
+   *
+   * <p>커넥터는 {@link SsrfSafeHttpClientFactory} 의 HttpClient 다(WD-613) — 첫 요청과 모든 리다이렉트 홉에서 접속할 IP 를
+   * 다시 검사해, 사전 검사(validateUrl) 뒤 DNS 재바인딩으로 내부 주소가 나와도 접속하지 않는다. 막히면 RedirectFollower 가 사전 검사와 같은
+   * 문구의 SsrfException 으로 낸다.
    */
-  private final SsrfSafeHttpClientFactory ssrfSafeHttpClientFactory;
+  private final WebClient client;
+
+  public ApiCallPreviewService(
+      SsrfProtectionService ssrfProtectionService,
+      JsonResponseParser jsonResponseParser,
+      ApiConnectionService apiConnectionService,
+      WebClient.Builder webClientBuilder,
+      SsrfSafeHttpClientFactory ssrfSafeHttpClientFactory) {
+    this.ssrfProtectionService = ssrfProtectionService;
+    this.jsonResponseParser = jsonResponseParser;
+    this.apiConnectionService = apiConnectionService;
+    this.client =
+        RedirectFollower.withoutAutoRedirect(webClientBuilder, ssrfSafeHttpClientFactory).build();
+  }
 
   public ApiCallPreviewResponse preview(ApiCallPreviewRequest request) {
     String resolvedRequestUrl = null;
-    // 오류 문구 분류용(WD-150) — 타임아웃 문구의 초, DNS 실패 문구의 호스트.
+    // 오류 문구 분류용(WD-150) — 타임아웃 문구의 초. 전송 오류의 호스트는 RedirectFollower 가 실패한 홉의 것으로 문구에 넣어 둔다(WD-693).
     int timeoutMs = request.timeoutMs() != null ? request.timeoutMs() : DEFAULT_TIMEOUT_MS;
-    String targetHost = null;
     // 오류 문구에서 가릴 비밀(WD-177) — 인증 설정을 읽은 뒤에 채운다. BASIC 은 비밀번호와 Base64 덩어리 둘이다(WD-681).
     AuthQueryMasker.SentSecrets authSecret = AuthQueryMasker.SentSecrets.NONE;
     try {
@@ -95,11 +106,10 @@ public class ApiCallPreviewService {
       URI requestUri = urls.callUri();
       // 표시용 URL 은 옛 연결·주소에 직접 쓴 사용자 정보(아이디:비밀번호@)의 비밀번호도 가려져 있다(WD-681, AuthQueryMasker.build).
       resolvedRequestUrl = urls.displayUrl();
-      // 오류 문구용 호스트 — 밑줄 든 호스트도 실제 이름으로 보이게 UrlAuthority 로 읽는다(WD-676, getHost() 는 null).
-      targetHost = UrlAuthority.hostOrNull(requestUri);
 
-      // 6. Execute HTTP request — Netty 가 못 부르는 호스트(밑줄 등)는 요청 전에 고정 문구로 실패한다(WD-676).
-      UrlAuthority.requireClientSupportedHost(requestUri);
+      // 6. Execute HTTP request — Netty 가 못 부르는 호스트(밑줄 등)는 RedirectFollower 가 첫 홉부터 홉마다 요청 전에 고정
+      // 문구로
+      //    막는다(WD-676·WD-693).
       String responseBody = executeRequest(requestUri, request, auth, timeoutMs);
 
       // 7. 응답을 가린다 — (WD-177) 응답이 요청 파라미터·헤더를 되울려 보낸 비밀이 담겨 올 수 있다. rawJson 과 결과 행(previewRows)을 이
@@ -140,8 +150,7 @@ public class ApiCallPreviewService {
       // 실행 상세와 다르게(「Connection refused: …」) 보였고, 4xx 는 WebClientResponseException 메시지에 쿼리로 붙인
       // API 키가 담긴 URL 이 그대로 노출됐다. 로그에도 원문 메시지 대신 같은 문구를 남긴다(스택은 debug 로만).
       // 분류하지 못한 원문 메시지에 키가 실려 올 수 있어 인증 쿼리 키(원문·인코딩형)도 가린다(WD-177).
-      String message =
-          authSecret.scrubText(ApiCallErrorMessages.describe(e, timeoutMs, targetHost));
+      String message = authSecret.scrubText(ApiCallErrorMessages.describe(e, timeoutMs));
       log.warn("[Preview] 실패: {} ({})", message, e.getClass().getSimpleName());
       log.debug("[Preview] 실패 상세", e);
       return new ApiCallPreviewResponse(
@@ -187,55 +196,32 @@ public class ApiCallPreviewService {
     return null;
   }
 
+  /**
+   * 대상 서버를 부른다 — 리다이렉트는 실행(ApiCallExecutor)과 같은 {@link RedirectFollower} 로 따라간다(WD-693): 홉마다 SSRF
+   * 검사, 메서드·본문 규칙(RedirectLocations.keepsMethodAndBody), 다른 출처 홉의 인증 떼기, 최대 홉 수·프래그먼트 제거. 예전에는 기본
+   * WebClient(따라가지 않음)라 3xx 본문을 미리보기로 보여 실행 결과와 달랐다. 응답 표시 URL 은 처음 요청 주소 그대로다(마지막 홉 주소는 보이지 않는다).
+   *
+   * <p>시간 제한은 모든 홉을 합쳐 timeoutMs 한 번이다(WD-693) — 홉마다 걸면 사용자가 기다리는 한 번의 미리보기가 (최대 홉 수+1)×timeoutMs
+   * 동안 붙잡힌다. 넘으면 예전과 같은 「응답 시간 초과(n초)」 문구다. 4xx·5xx 는 실행과 같은 예외·문구다.
+   */
   private String executeRequest(
       URI uri, ApiCallPreviewRequest request, ApiCallAuth.ResolvedAuth auth, int timeoutMs) {
-
-    // 커넥터만 접속 시점 주소 검사가 걸린 것으로 바꾼다(WD-613). 압축(compress)은 Spring 기본 커넥터와 같게 켠다 — 예전 기본 커넥터 동작 유지.
-    // 주입된 빌더는 이 서비스가 공유하므로 복제해서 바꾼다(동시 호출끼리 설정이 섞이지 않게).
-    WebClient client =
-        webClientBuilder
-            .clone()
-            .clientConnector(
-                new ReactorClientHttpConnector(
-                    ssrfSafeHttpClientFactory.httpClient().compress(true)))
-            .build();
     String method = request.method() != null ? request.method().toUpperCase(Locale.ROOT) : "GET";
-
-    WebClient.RequestHeadersSpec<?> requestSpec;
-
-    if ("POST".equals(method)) {
-      WebClient.RequestBodySpec bodySpec = client.post().uri(uri);
-      applyHeaders(bodySpec, request, auth);
-      if (request.body() != null && !request.body().isBlank()) {
-        requestSpec = bodySpec.header("Content-Type", "application/json").bodyValue(request.body());
-      } else {
-        requestSpec = bodySpec;
-      }
-    } else {
-      WebClient.RequestHeadersSpec<?> getSpec = client.get().uri(uri);
-      applyHeaders(getSpec, request, auth);
-      requestSpec = getSpec;
-    }
-
-    return requestSpec
-        .retrieve()
-        .bodyToMono(String.class)
-        .timeout(Duration.ofMillis(timeoutMs))
-        .block();
-  }
-
-  /** 사용자 헤더와 인증 헤더를 붙인다 — 인증은 preview 가 한 번 푼 값을 그대로 쓴다(WD-647, 다시 풀지 않는다). */
-  private void applyHeaders(
-      WebClient.RequestHeadersSpec<?> spec,
-      ApiCallPreviewRequest request,
-      ApiCallAuth.ResolvedAuth auth) {
-
-    if (request.headers() != null) {
-      request.headers().forEach(spec::header);
-    }
-
-    // 실행(ApiCallExecutor)과 같은 규칙 하나(ResolvedAuth.applyHeaders)로 인증 헤더를 붙인다.
-    auth.applyHeaders(spec::header);
+    return RedirectFollower.follow(
+            new RedirectFollower.Request(
+                client,
+                ssrfProtectionService,
+                method,
+                uri,
+                request.headers(),
+                request.body(),
+                auth,
+                timeoutMs,
+                // 모든 홉을 합쳐 timeoutMs 한 번
+                false,
+                // 4xx·5xx 는 실행과 같은 예외·문구
+                true))
+        .getBody();
   }
 
   private List<ApiCallConfig.FieldMapping> toFieldMappings(
