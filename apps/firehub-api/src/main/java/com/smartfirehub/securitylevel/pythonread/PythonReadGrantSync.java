@@ -562,16 +562,15 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
         missing.clear();
       }
       String qualified = dsl.render(DSL.name(schema, table));
-      // ACL 을 고치기 전에 그 테이블에 ACCESS SHARE 잠금을 잡는다 — 이유는 lockTableForAclChange 참고. 못 잡으면(시간 초과·그새
-      // DROP)
-      // 이번에는 건너뛴다: 부족한 GRANT 는 과소권한(안전)이고, 남는 권한은 회수 실패로 세어 prepareForRun 이 fail-closed 로 거부한다.
+      // ACL 을 고치기 전에 그 테이블에 ACCESS SHARE 잠금을 잡는다(이유는 lockTableForAclChange 참고).
+      // 못 잡으면(시간 초과, 그새 DROP·RENAME) 이번에는 이 테이블을 건너뛴다.
+      // 부족한 GRANT 는 과소권한이라 안전하다. 남는 권한은 회수 실패로 세어 prepareForRun 이 실행을 거부한다.
       if (!lockTableForAclChange(qualified)) {
-        if (!tableExists(qualified)) {
-          // 그새 지워진 테이블 — ACL 도 함께 사라졌으므로 할 일이 없다(회수 실패로 세면 실행을 공연히 거부한다).
-          continue;
-        }
+        // WD-655: 옛 이름이 사라졌어도 RENAME 이면 GRANT 가 새 이름으로 따라가므로 Tibero 판과 같은 근거로 fail-closed(회수 실패).
+        // advisory 밖의 실제 DROP 과 겹치면 다음 동기화 전까지 다음 PYTHON 실행이 한 번 거부된다(의도한 비용).
         log.warn(
-            "PYTHON 읽기 권한 동기화: 테이블 잠금을 얻지 못해 이번에는 건너뛴다(다음 동기화에서 재시도): tenant={} table={}",
+            "PYTHON 읽기 권한 동기화: 테이블 잠금을 얻지 못해 이번에는 건너뛴다(다음 동기화에서 재시도, 남는 권한은 회수 실패로 센다): tenant={}"
+                + " table={}",
             tenantId,
             table);
         if (!excess.isEmpty()) {
@@ -663,7 +662,8 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * DatasetService.discardPipelineTempBackup}). 테이블 하나만 잠그는 DDL(컬럼 DDL·REPLACE 임시 테이블 정리 등)은 고리를
    * 만들지 않는다. 동기화 잠금은 트랜잭션 범위라 바깥 트랜잭션이 끝날 때까지 쥔다 — 그동안 같은 테넌트 동기화가 기다린다(알려진 성질). 잔여 위험: 사용자 SQL 스텝이
    * 임의 순서로 여러 테이블을 DDL 하는 경우는 통제할 수 없다 — PG 교착 탐지가 한쪽을 끊고, 동기화 쪽이 지면(40P01) savepoint 로 그 테이블을
-   * 건너뛴다.
+   * 건너뛴다. 데이터셋 행 잠금은 advisory 앞이다 — 「데이터셋 행 → 동기화 → 테이블」(WD-666, {@code
+   * TempDatasetService.deleteTempDatasets} 참고).
    *
    * <p><b>왜 짧은 lock_timeout 을 이 문장에만 거는가.</b> 오래 걸리는 DDL(큰 테이블 재작성) 뒤에서 실행 준비(prepareForRun)가 끝없이
    * 멈추지 않게, 또 같은 스레드가 쥔 다른 트랜잭션의 DDL 을 기다리는 교착(데이터베이스가 볼 수 없는 교착)이 생겨도 풀리게 한다. 테넌트 advisory 잠금 대기에는
@@ -677,13 +677,6 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     } finally {
       dsl.execute("select set_config('lock_timeout', {0}, true)", DSL.val(previous));
     }
-  }
-
-  /** 그 관계가 지금 있는가(잠금 실패가 "그새 지워짐" 때문인지 가른다). */
-  private boolean tableExists(String qualified) {
-    return Boolean.TRUE.equals(
-        dsl.fetchValue(
-            DSL.field("to_regclass({0}) is not null", Boolean.class, DSL.val(qualified))));
   }
 
   /**

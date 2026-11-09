@@ -218,8 +218,8 @@ class PipelineStepShapeValidationTest extends IntegrationTestBase {
   }
 
   /**
-   * 이름이 공백인 PYTHON 스텝은 빈 스크립트보다 이름 검사(WD-586 의 validateDAG)가 먼저 걸린다 — 「N번째 스텝」 대체 문구까지 가지 않는다.
-   * 그 문구가 실제로 쓰이는 경로는 null 원소({@code steps:[null]})와 이름 null 인 SQL 스텝(위)이다.
+   * 이름이 공백인 PYTHON 스텝은 빈 스크립트보다 이름 검사(WD-586 의 validateDAG)가 먼저 걸린다 — 「N번째 스텝」 대체 문구까지 가지 않는다. 그
+   * 문구가 실제로 쓰이는 경로는 null 원소({@code steps:[null]})와 이름 null 인 SQL 스텝(위)이다.
    */
   @Test
   void create_blankNamePythonStepWithoutScript_nameCheckComesFirst() throws Exception {

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -221,18 +222,17 @@ class PythonReadSyncExecutorTest {
   }
 
   /**
-   * 회귀(WD-629): 다른 스레드의 stop 이 비우는 도중 start 가 와도 동기화 스레드가 둘이 되지 않는다 — start 는 옛 워커가 끝날 때까지 기다린 뒤에만
-   * 새 워커로 바꾼다. 고치기 전에는 isShutdown() 만 보고 바로 바꿔, 옛 워커의 작업이 아직 도는 동안 새 워커가 새 작업을 함께 돌렸다.
+   * 회귀(WD-629, WD-655 에서 조정): 다른 스레드의 stop 이 비우는 도중 start 가 와도 동기화 두 개가 동시에 돌지 않는다. WD-655 부터 start
+   * 는 기다리지 않고 새 워커를 바로 만들지만, 새 워커의 첫 작업이 옛 워커의 끝을 기다리므로 start 직후의 제출은 옛 작업이 끝난 뒤에 돈다.
    */
   @Test
-  void start_duringDrain_waitsForOldWorkerBeforeSwapping() throws Exception {
+  void start_duringDrain_newWorkRunsOnlyAfterOldWorkerEnds() throws Exception {
     PythonReadSyncExecutor executor =
         new PythonReadSyncExecutor(PythonReadSyncExecutor.QUEUE_CAPACITY, Duration.ofSeconds(10));
     try {
       CountDownLatch started = new CountDownLatch(1);
       CountDownLatch release = new CountDownLatch(1);
-      java.util.concurrent.atomic.AtomicBoolean oldRunning =
-          new java.util.concurrent.atomic.AtomicBoolean(true);
+      AtomicBoolean oldRunning = new AtomicBoolean(true);
       executor.submit(
           () -> {
             started.countDown();
@@ -247,74 +247,171 @@ class PythonReadSyncExecutorTest {
       while (executor.isRunning() && System.nanoTime() < deadline) {
         Thread.onSpinWait();
       }
-      assertThat(executor.isRunning()).as("stop 이 워커를 닫았다(비우는 중)").isFalse();
-      // start 가 기다리는 동안 옛 작업을 풀어 준다.
-      Thread releaser =
-          new Thread(
-              () -> {
-                try {
-                  Thread.sleep(300);
-                } catch (InterruptedException e) {
-                  Thread.currentThread().interrupt();
-                }
-                release.countDown();
-              });
-      releaser.start();
+      assertThat(executor.isRunning()).as("stop 이 꺼짐으로 바꿨다(비우는 중)").isFalse();
 
       executor.start();
 
-      assertThat(oldRunning.get()).as("start 는 옛 워커의 작업이 끝난 뒤에야 돌아온다").isFalse();
       assertThat(executor.isRunning()).isTrue();
       AtomicReference<Boolean> oldRunningSeenByNew = new AtomicReference<>();
       assertThat(executor.submit(() -> oldRunningSeenByNew.set(oldRunning.get()))).isTrue();
+      assertThat(executor.awaitIdle(Duration.ofMillis(100)))
+          .as("옛 작업이 끝나기 전에는 새 작업도 돌지 않는다")
+          .isFalse();
+      release.countDown();
       assertThat(executor.awaitIdle(Duration.ofSeconds(5))).isTrue();
       assertThat(oldRunningSeenByNew.get()).as("새 워커의 작업은 옛 작업과 겹치지 않았다").isFalse();
       stopper.join();
-      releaser.join();
     } finally {
       executor.shutdown();
     }
   }
 
   /**
-   * WD-629: 비우기 제한 시간이 지나도 옛 워커가 끝나지 않으면(인터럽트를 무시하는 작업) start 는 새 워커를 만들지 않는다 — 동기화 스레드 중복 대신 제출을
-   * 버림+WARN 으로 둔다. 옛 워커가 끝난 뒤의 다음 start 는 정상으로 바꾼다.
+   * WD-655: 비우기 제한 시간이 지나도 옛 워커가 끝나지 않을 때(인터럽트를 무시하는 작업) start 뒤의 제출은 버려지지 않는다 — 새 워커의 큐에 들어가 옛 워커가
+   * 끝난 뒤에 돈다. 예전에는 옛 워커가 살아 있는 동안의 제출을 버렸다(버림+WARN). 두 워커의 작업은 겹치지 않는다.
    */
   @Test
-  void start_whenOldWorkerNeverTerminates_doesNotStartSecondWorker() throws Exception {
+  void submitWhileOldWorkerAlive_isExecutedAfterOldEnds_notDropped() throws Exception {
     PythonReadSyncExecutor executor =
         new PythonReadSyncExecutor(PythonReadSyncExecutor.QUEUE_CAPACITY, Duration.ofMillis(200));
-    CountDownLatch started = new CountDownLatch(1);
     CountDownLatch release = new CountDownLatch(1);
-    executor.submit(
-        () -> {
-          started.countDown();
-          // 인터럽트를 무시하고 풀릴 때까지 버틴다(shutdownNow 로도 끝나지 않는 작업).
-          while (release.getCount() > 0) {
-            try {
-              release.await(10, TimeUnit.SECONDS);
-            } catch (InterruptedException ignored) {
-              // 의도적으로 무시
-            }
-          }
-        });
-    assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
-    executor.stop(); // 200ms 비우기 → shutdownNow → 작업이 인터럽트를 무시해 워커가 끝나지 않는다.
-    assertThat(executor.isRunning()).isFalse();
+    AtomicBoolean oldRunning = new AtomicBoolean(true);
+    AtomicReference<Thread> oldThread = submitInterruptIgnoringTask(executor, release, oldRunning);
+    executor.stop(); // 200ms 비우기 → shutdownNow → 작업이 인터럽트를 무시해 옛 워커가 끝나지 않는다.
+    executor.start();
 
-    executor.start(); // 200ms 더 기다려도 안 끝난다 → 바꾸지 않는다.
-
-    assertThat(executor.isRunning()).as("옛 워커가 살아 있는 동안 새 워커를 만들지 않는다").isFalse();
     AtomicInteger ran = new AtomicInteger();
-    assertThat(executor.submit(ran::incrementAndGet)).as("그동안 제출은 버린다").isFalse();
+    AtomicReference<Boolean> oldRunningSeenByNew = new AtomicReference<>();
+    assertThat(
+            executor.submit(
+                () -> {
+                  oldRunningSeenByNew.set(oldRunning.get());
+                  ran.incrementAndGet();
+                }))
+        .as("옛 워커가 살아 있어도 받아들인다")
+        .isTrue();
+    assertThat(executor.awaitIdle(Duration.ofMillis(100))).as("옛 워커가 끝나기 전에는 돌지 않는다").isFalse();
+    assertThat(ran.get()).isZero();
 
     release.countDown();
-    executor.start(); // 옛 워커가 끝나면 다음 start 가 바꾼다.
-    assertThat(executor.isRunning()).isTrue();
-    assertThat(executor.submit(ran::incrementAndGet)).isTrue();
+    oldThread.get().join(TimeUnit.SECONDS.toMillis(5));
     assertThat(executor.awaitIdle(Duration.ofSeconds(5))).isTrue();
-    assertThat(ran.get()).isEqualTo(1);
+    assertThat(ran.get()).as("버려지지 않고 옛 워커가 끝난 뒤 돌았다").isEqualTo(1);
+    assertThat(oldRunningSeenByNew.get()).as("새 워커의 작업은 옛 작업과 겹치지 않았다").isFalse();
+    assertThat(executor.droppedCount()).isZero();
     executor.shutdown();
+  }
+
+  /**
+   * WD-655: 옛 워커가 안 끝난 채 새 워커가 다시 닫혀도(stop) 그다음 start 의 워커는 가장 오래된 옛 워커까지 기다린다 — 직전 워커만 기다리면 끝난 직전
+   * 워커를 보고 바로 돌아 가장 오래된 워커의 작업과 겹친다.
+   */
+  @Test
+  void restartTwiceWhileOldestWorkerAlive_stillWaitsForOldest() throws Exception {
+    PythonReadSyncExecutor executor =
+        new PythonReadSyncExecutor(PythonReadSyncExecutor.QUEUE_CAPACITY, Duration.ofMillis(200));
+    CountDownLatch release = new CountDownLatch(1);
+    AtomicBoolean oldRunning = new AtomicBoolean(true);
+    AtomicReference<Thread> oldThread = submitInterruptIgnoringTask(executor, release, oldRunning);
+    executor.stop();
+    executor.start(); // 두 번째 워커 — 첫 작업이 가장 오래된 워커를 기다린다.
+    executor.stop(); // 두 번째 워커는 비우기 시간 초과 → shutdownNow 로 기다리기를 그만두고 끝난다.
+    executor.start(); // 세 번째 워커.
+
+    AtomicReference<Boolean> oldRunningSeenByNew = new AtomicReference<>();
+    assertThat(executor.submit(() -> oldRunningSeenByNew.set(oldRunning.get()))).isTrue();
+    assertThat(executor.awaitIdle(Duration.ofMillis(100)))
+        .as("가장 오래된 워커가 끝나기 전에는 돌지 않는다")
+        .isFalse();
+
+    release.countDown();
+    oldThread.get().join(TimeUnit.SECONDS.toMillis(5));
+    assertThat(executor.awaitIdle(Duration.ofSeconds(5))).isTrue();
+    assertThat(oldRunningSeenByNew.get()).as("새 작업은 가장 오래된 워커의 작업과 겹치지 않았다").isFalse();
+    executor.shutdown();
+  }
+
+  /**
+   * WD-655: isRunning 은 워커의 생사가 아니라 라이프사이클 상태(켜짐)다. 옛 워커가 안 끝난 채 start 했어도 isRunning 이 true 라
+   * Spring 이 stop 을 건너뛰지 않는다(SmartLifecycle 은 isRunning 이 true 인 빈에만 stop 을 부른다). 그 stop 뒤에는 꺼짐이고
+   * 제출을 버린다.
+   */
+  @Test
+  void isRunning_reflectsLifecycleState_afterStartWithAliveOldWorker() throws Exception {
+    PythonReadSyncExecutor executor =
+        new PythonReadSyncExecutor(PythonReadSyncExecutor.QUEUE_CAPACITY, Duration.ofMillis(200));
+    CountDownLatch release = new CountDownLatch(1);
+    AtomicBoolean oldRunning = new AtomicBoolean(true);
+    AtomicReference<Thread> oldThread = submitInterruptIgnoringTask(executor, release, oldRunning);
+    executor.stop();
+    assertThat(executor.isRunning()).isFalse();
+
+    executor.start();
+    assertThat(executor.isRunning()).as("옛 워커가 살아 있어도 켜짐이다").isTrue();
+
+    executor.stop();
+    assertThat(executor.isRunning()).isFalse();
+    AtomicInteger ran = new AtomicInteger();
+    assertThat(executor.submit(ran::incrementAndGet)).as("꺼짐 뒤 제출은 버린다").isFalse();
+    release.countDown();
+    oldThread.get().join(TimeUnit.SECONDS.toMillis(5));
+    assertThat(executor.submit(ran::incrementAndGet)).as("옛 워커가 끝나도 꺼짐이면 워커를 만들지 않는다").isFalse();
+    assertThat(ran.get()).isZero();
+  }
+
+  /**
+   * WD-655: start 와 stop 이 다른 스레드에서 겹쳐도 끝난 뒤의 상태가 늘 일관된다 — 켜짐이면 제출을 받아들이고, 꺼짐이면 버린다(꺼짐인데 새 워커가 생기거나
+   * 켜짐인데 닫힌 워커가 남지 않는다). 예전에는 stop 이 꺼짐 표시와 워커 닫기 사이에 모니터를 놓아, 그 사이의 start 가 켜짐인데 닫힌 워커를 남길 수 있었다.
+   * 경쟁 재현이라 매번 실패를 보장하지는 않는 스트레스 검사다.
+   */
+  @Test
+  void concurrentStartStop_leavesConsistentState() throws Exception {
+    PythonReadSyncExecutor executor =
+        new PythonReadSyncExecutor(PythonReadSyncExecutor.QUEUE_CAPACITY, Duration.ofSeconds(5));
+    try {
+      for (int round = 0; round < 300; round++) {
+        CountDownLatch go = new CountDownLatch(1);
+        Thread starter =
+            new Thread(
+                () -> {
+                  awaitQuietly(go);
+                  executor.start();
+                });
+        Thread stopper =
+            new Thread(
+                () -> {
+                  awaitQuietly(go);
+                  executor.stop();
+                });
+        starter.start();
+        stopper.start();
+        go.countDown();
+        starter.join();
+        stopper.join();
+        boolean running = executor.isRunning();
+        assertThat(executor.submit(() -> {}))
+            .as("round %d: 제출 수락 여부가 라이프사이클 상태(isRunning=%s)와 같다", round, running)
+            .isEqualTo(running);
+      }
+      executor.stop();
+      assertThat(executor.isRunning()).isFalse();
+      assertThat(executor.submit(() -> {})).as("끝난 stop 뒤에는 늘 버린다").isFalse();
+      assertThat(executor.awaitIdle(Duration.ofSeconds(5))).isTrue();
+    } finally {
+      executor.shutdown();
+    }
+  }
+
+  /** WD-655: stop 뒤(꺼짐)에는 옛 워커가 끝났어도 submit 이 워커를 새로 만들지 않는다 — 컨텍스트 종료 뒤 스레드 생성 방지. */
+  @Test
+  void submitAfterStop_doesNotCreateWorker() throws Exception {
+    PythonReadSyncExecutor executor = new PythonReadSyncExecutor();
+    executor.start();
+    executor.stop();
+    AtomicInteger ran = new AtomicInteger();
+    assertThat(executor.submit(ran::incrementAndGet)).isFalse();
+    assertThat(executor.isRunning()).isFalse();
+    assertThat(ran.get()).isZero();
   }
 
   /**
@@ -362,6 +459,34 @@ class PythonReadSyncExecutorTest {
     assertThat(ran.get()).as("받아들인 작업은 모두 돌았다(stop 이 비운다)").isEqualTo(accepted.get());
     assertThat(afterStart.get()).isEqualTo(rounds);
     assertThat(executor.droppedCount()).as("버린 것은 거부된 제출뿐").isEqualTo(rejected.get());
+  }
+
+  /**
+   * 인터럽트를 무시하고 {@code release} 까지 버티는 작업을 넣고 시작을 기다린다(shutdownNow 로도 끝나지 않는 옛 워커 재현, WD-655). 끝날 때
+   * {@code running} 을 false 로 바꾼다.
+   *
+   * @return 그 작업을 돌린 워커 스레드
+   */
+  private static AtomicReference<Thread> submitInterruptIgnoringTask(
+      PythonReadSyncExecutor executor, CountDownLatch release, AtomicBoolean running)
+      throws InterruptedException {
+    CountDownLatch started = new CountDownLatch(1);
+    AtomicReference<Thread> thread = new AtomicReference<>();
+    executor.submit(
+        () -> {
+          thread.set(Thread.currentThread());
+          started.countDown();
+          while (release.getCount() > 0) {
+            try {
+              release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+              // 의도적으로 무시
+            }
+          }
+          running.set(false);
+        });
+    assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+    return thread;
   }
 
   /** 테스트 작업이 풀려날 때까지 기다린다(인터럽트는 플래그만 되살린다). */

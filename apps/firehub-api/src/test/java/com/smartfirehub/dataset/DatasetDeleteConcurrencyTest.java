@@ -10,13 +10,20 @@ import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -173,5 +180,85 @@ class DatasetDeleteConcurrencyTest extends IntegrationTestBase {
     assertThatThrownBy(() -> deleteAsUser(datasetId)).isInstanceOf(DatasetNotFoundException.class);
 
     assertThat(deleteAuditCount(datasetId)).isEqualTo(1);
+  }
+
+  /**
+   * 회귀(WD-655·WD-666): 잠금 순서는 한 가지 — 데이터셋 행(FOR UPDATE) → 테넌트 PYTHON 읽기 권한 동기화 잠금(advisory) → 테이블.
+   * 임시 데이터셋 일괄 삭제·출력 맞바꿈(WD-666)도 이 순서다. 다른 트랜잭션이 advisory 를 쥔 동안 삭제 트랜잭션(자기 pid)은 advisory 대기에 서고,
+   * 그때 이미 행 잠금(= 트랜잭션 ID 할당)을 쥐고 있어야 한다. 풀리면 정상으로 지운다. 행 잠금은 pg_locks 에 행 단위로 나오지 않으므로, FOR UPDATE
+   * 가 트랜잭션 ID 를 받으면 생기는 transactionid 잠금으로 가른다. 변이: lockTenantGrantSyncForDdl 을 lockForDelete 앞으로
+   * 옮기면(WD-655 첫 수정) 대기 중 transactionid 잠금이 없어 실패.
+   */
+  @Test
+  void 삭제는_데이터셋_행_잠금을_테넌트_동기화_잠금보다_먼저_잡는다() throws Exception {
+    String tableName = "wd655_order_" + (System.nanoTime() % 100000);
+    Long datasetId = createDataset(tableName).id();
+    // 생성 커밋 뒤 걸린 동기화가 advisory 대기 행으로 섞이지 않게 끝난 뒤에 시작한다.
+    awaitPythonReadGrantSync();
+
+    ExecutorService pool = Executors.newSingleThreadExecutor();
+    try {
+      AtomicReference<Future<?>> running = new AtomicReference<>();
+      CompletableFuture<Integer> actionPid = new CompletableFuture<>();
+      AtomicBoolean returned = new AtomicBoolean();
+      dataDsl.transaction(
+          cfg -> {
+            DSLContext holder = cfg.dsl();
+            PythonReadGrantSync.lockTenantSync(holder, DEFAULT_TEST_TENANT_ID);
+            running.set(
+                pool.submit(
+                    () ->
+                        TenantRlsTestSupport.runInTenantTransaction(
+                            fixtureTransactionTemplate,
+                            DEFAULT_TEST_TENANT_ID,
+                            () -> {
+                              actionPid.complete(
+                                  dataDsl
+                                      .fetchOne("SELECT pg_backend_pid()")
+                                      .get(0, Integer.class));
+                              datasetService.deleteDataset(datasetId);
+                              returned.set(true);
+                            })));
+            int pid = actionPid.get(10, TimeUnit.SECONDS);
+            assertThat(TenantRlsTestSupport.awaitAdvisoryWait(holder, pid, returned))
+                .as("삭제 트랜잭션(pid=%d)이 테넌트 동기화 잠금을 기다려야 한다", pid)
+                .isTrue();
+            assertThat(
+                    holder
+                        .fetchOne(
+                            "SELECT count(*) FROM pg_locks WHERE pid = ?"
+                                + " AND locktype = 'transactionid' AND granted",
+                            pid)
+                        .get(0, Integer.class))
+                .as("advisory 를 기다릴 때 데이터셋 행은 이미 FOR UPDATE 로 잡혀 있다(행 → advisory 순서)")
+                .isPositive();
+          });
+      running.get().get(30, TimeUnit.SECONDS);
+    } finally {
+      pool.shutdownNow();
+    }
+    assertThat(physicalTableCount(tableName)).as("잠금이 풀린 뒤 정상 삭제").isZero();
+  }
+
+  /**
+   * 회귀(WD-655): 없는 데이터셋 삭제는 테넌트 동기화 잠금을 잡지 않고 곧바로 404 다 — 행 잠금에서 없으면 끝낸다. advisory 를 먼저 잡으면 동기화가
+   * 잠금을 쥔 동안 없는 id 삭제까지 그 뒤에 줄을 선다.
+   */
+  @Test
+  void 없는_데이터셋_삭제는_테넌트_동기화_잠금을_기다리지_않고_404_다() throws Exception {
+    awaitPythonReadGrantSync();
+    ExecutorService pool = Executors.newSingleThreadExecutor();
+    try {
+      dataDsl.transaction(
+          cfg -> {
+            PythonReadGrantSync.lockTenantSync(cfg.dsl(), DEFAULT_TEST_TENANT_ID);
+            Future<?> f = pool.submit(() -> deleteAsUser(Long.MAX_VALUE));
+            assertThatThrownBy(() -> f.get(10, TimeUnit.SECONDS))
+                .as("advisory 를 쥔 동안에도 막히지 않고 404 로 끝난다")
+                .hasCauseInstanceOf(DatasetNotFoundException.class);
+          });
+    } finally {
+      pool.shutdownNow();
+    }
   }
 }

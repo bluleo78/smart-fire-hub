@@ -827,7 +827,8 @@ public class DatasetService {
     if (isTableBacked(dataset.storageType())) {
       // 색인·원본·(TEMP 면) 재생성 보관본까지 기존 테이블 여럿을 이 트랜잭션에서 지운다 — 어떤 테이블 잠금보다 먼저 테넌트 PYTHON 읽기 권한
       // 동기화 잠금을 잡는다(WD-629, 잠금 순서 규칙). 파이프라인의 임시 데이터셋 일괄 삭제처럼 바깥 트랜잭션이 이 메서드를 여러 번 부르면 첫 호출에서
-      // 잡은 잠금이 커밋까지 이어진다(advisory 는 같은 세션에서 다시 잡아도 막히지 않는다).
+      // 잡은 잠금이 커밋까지 이어진다(advisory 는 같은 세션에서 다시 잡아도 막히지 않는다). 순서는 「데이터셋 행 → 동기화 → 테이블」 하나다
+      // (WD-666 — 출력 맞바꿈·임시 데이터셋 일괄 삭제도 같은 순서. WD-655 는 이 순서를 바꾸지 않는다).
       dataTableService.lockTenantGrantSyncForDdl();
       // 색인 테이블은 FK 가 없어 CASCADE 로 사라지지 않는다 — 원본과 함께 지운다.
       rowSearchIndex.drop(new IndexRef(TenantContext.require(), id, dataset.tableName()));
@@ -1042,12 +1043,16 @@ public class DatasetService {
 
     boolean typeChanging =
         request.dataType() != null && !request.dataType().equals(column.dataType());
+    // 실효 타입 = 요청 타입, 없으면 현재 타입(WD-636). 길이 변경 판정과 저장소 길이 검사가 같은 값을 본다.
+    String effectiveType = request.dataType() != null ? request.dataType() : column.dataType();
+    // WD-655: 타입 없이 길이만 보낸 VARCHAR 수정({maxLength})도 길이 변경이다(물리 컬럼도 ALTER 해야 메타데이터와 어긋나지 않는다).
+    // 비교는 실제 길이로 한다 — 길이 없이 저장된 VARCHAR 는 현재 저장소의 기본 길이다(PG 255, Tibero 4000).
     boolean sizeChanging =
         !typeChanging
-            && request.dataType() != null
-            && "VARCHAR".equals(request.dataType())
+            && "VARCHAR".equals(effectiveType)
             && request.maxLength() != null
-            && !request.maxLength().equals(column.maxLength());
+            && request.maxLength()
+                != dataTableService.currentBackend().effectiveVarcharLength(column.maxLength());
     if (typeChanging) {
       // 검색 대상 필드를 TEXT/VARCHAR 밖 타입으로 바꾸면 색인 텍스트를 만들 수 없다 — 먼저 해제하게 한다(409).
       if (!SearchIndexSettingsService.SEARCHABLE_TYPES.contains(request.dataType())
@@ -1066,10 +1071,10 @@ public class DatasetService {
     // WD-636: 새 타입·길이를 현재 저장소 규칙(Tibero VARCHAR 상한 4000 등)으로 DDL 전에 검사한다. 타입 변경 DDL 도 같은 검사를 하지만
     // 그건 이름 변경 DDL 뒤라, Tibero(자동 커밋 DDL)에서는 이름만 바뀐 채 실패할 수 있었다. 타입 없이 길이만 보낸 요청도 기존 타입이
     // VARCHAR 면 검사한다(실효 타입 = 요청 타입, 없으면 현재 타입) — 예전에는 타입이 없으면 길이 상한을 건너뛰었다.
-    String effectiveType = request.dataType() != null ? request.dataType() : column.dataType();
     boolean varcharLengthGiven = request.maxLength() != null && "VARCHAR".equals(effectiveType);
     if (typeChanging || varcharLengthGiven) {
-      dataTableService.validateColumnType(effectiveType, request.maxLength());
+      // 정준 타입은 위(매핑 판정 앞)에서 확인했으므로 저장소 한도만 본다(WD-655).
+      dataTableService.validateKnownColumnTypeLimits(effectiveType, request.maxLength());
     }
 
     // Prevent making PK column nullable
@@ -1138,10 +1143,11 @@ public class DatasetService {
     if (typeChanging || sizeChanging) {
       String currentColName =
           request.columnName() != null ? request.columnName() : column.columnName();
+      // 길이만 보낸 수정은 요청 타입이 null 이므로 실효 타입(VARCHAR)·새 길이로 바꾼다(WD-655).
       dataTableService.alterColumnType(
           dataset.tableName(),
           currentColName,
-          request.dataType(),
+          effectiveType,
           request.maxLength(),
           column.dataType());
     }
@@ -1171,9 +1177,8 @@ public class DatasetService {
     if (request.isIndexed() != null && request.isIndexed() != column.isIndexed()) {
       String currentColName =
           request.columnName() != null ? request.columnName() : column.columnName();
-      String resolvedType = request.dataType() != null ? request.dataType() : column.dataType();
       dataTableService.setColumnIndex(
-          dataset.tableName(), currentColName, request.isIndexed(), resolvedType);
+          dataset.tableName(), currentColName, request.isIndexed(), effectiveType);
     }
 
     // 이름 변경이 사전 검사를 지나 카탈로그 유니크 제약에 걸리는 경우도 같은 409 로(WD-99).

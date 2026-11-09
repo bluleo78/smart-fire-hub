@@ -2,6 +2,7 @@ package com.smartfirehub.securitylevel.pythonread;
 
 import jakarta.annotation.PreDestroy;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
@@ -53,17 +54,26 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
    * 단일 스레드 실행기(유한 큐, AbortPolicy — 포화 시 예외를 받아 버림 처리. CallerRuns 면 호출자를 다시 막는다).
    *
    * <p>final 이 아닌 이유(WD-629): 컨텍스트 stop() → start() 뒤에도 커밋 뒤 동기화가 계속 돌아야 한다. 종료된 ThreadPoolExecutor
-   * 는 되살릴 수 없으므로 {@link #start()} 가 새 워커로 바꾼다. 교체와 submit 의 넘기기는 {@link #lifecycleLock} 안에서 일어나고,
-   * shutdown 은 한 번 읽은 참조를 지역 변수로 쓴다.
+   * 는 되살릴 수 없으므로 {@link #start()} 만이 ({@link #replaceWorker} 로) 새 워커로 바꾼다. 교체·submit 의 넘기기·shutdown
+   * 의 닫기는 모두 {@link #lifecycleLock} 안에서 일어나므로, 워커가 닫혀 있지 않은 것이 곧 「켜짐」이다({@link #isRunning()},
+   * WD-655).
    */
   private volatile ThreadPoolExecutor worker;
 
   /**
-   * 워커 교체(start)와 submit 의 "현재 워커 읽기 + execute" 를 한 덩어리로 묶는 모니터(WD-629) — submit 이 교체 직전의 옛 워커를 읽고
-   * 교체 뒤에 넣어 거부되는 경쟁을 막는다. execute 는 유한 큐·AbortPolicy 라 막히지 않으므로 이 모니터를 오래 쥐는 쪽이 없다(start 도 옛 워커
-   * 종료를 이 모니터 밖에서 기다린다). pending 보호용 {@code this} 모니터와 분리해 awaitIdle 대기와 얽히지 않게 한다.
+   * 워커 교체(start)·닫기(shutdown)와 submit 의 "현재 워커 읽기 + execute" 를 한 덩어리로 묶는 모니터(WD-629·WD-655) —
+   * submit 이 교체 직전의 옛 워커를 읽고 교체 뒤에 넣어 거부되는 경쟁, start·stop 이 겹쳐 「켜짐인데 닫힌 워커」가 남는 경쟁을 막는다. 이 모니터를 쥔 채
+   * 기다리는 곳은 없다 — execute 는 유한 큐·AbortPolicy 라 막히지 않고, shutdown 의 비우기 대기는 모니터 밖에서 한다. pending 보호용
+   * {@code this} 모니터와 분리해 awaitIdle 대기와 얽히지 않게 한다.
    */
   private final Object lifecycleLock = new Object();
+
+  /**
+   * 닫혔지만 아직 끝나지 않은 옛 워커들(WD-655) — 새 워커의 첫 작업({@link AwaitRetiredWorkers})이 이들이 모두 끝나기를 기다린다. 직전 워커
+   * 하나만이 아니라 목록인 이유: 인터럽트를 무시하는 작업 때문에 옛 워커가 끝나지 않은 채 새 워커가 다시 닫히면, 그다음 워커는 더 오래된 워커도 기다려야 두 동기화가
+   * 동시에 돌지 않는다. {@link #lifecycleLock} 안에서만 읽고 쓴다.
+   */
+  private final List<ThreadPoolExecutor> retired = new ArrayList<>();
 
   /** 넘겼으나 아직 끝나지 않은 작업 수 — {@link #awaitIdle} 가 기다리는 대상. {@code this} 모니터로 보호한다. */
   private int pending;
@@ -110,10 +120,11 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
    * 작업을 실행기에 넘긴다. 큐 포화·종료면 예외를 던지지 않고 버린 뒤 WARN — 커밋 콜백에서 불리므로 어떤 경우에도 호출자를 막거나 실패시키지 않는다. 작업 자체의
    * 예외 처리(로그)는 작업 쪽 책임이지만, 새어 나와도 워커 스레드가 죽지 않도록 여기서 한 번 더 받는다.
    *
-   * <p>현재 워커 읽기와 execute 는 {@link #lifecycleLock} 안에서 한 번에 한다(WD-629) — start 가 워커를 바꾼 뒤의 제출은 반드시 새
-   * 워커로 간다. 그래도 stop 이 옛 워커를 닫는 것과는 겹칠 수 있는데, 그때는 거부(→ 여기서 finishOne 한 번) 또는 큐에 들어간 뒤
-   * 비우기·shutdownNow 반환(→ {@link #discardRemaining} 이 finish 한 번) 중 정확히 하나가 일어나 pending 이 어긋나지 않는다.
-   * stop 뒤~start 전 제출은 지금처럼 버림+WARN 이다 — 자동으로 워커를 다시 만들지 않는다(컨텍스트 종료 뒤 스레드 생성 방지).
+   * <p>현재 워커 읽기와 execute 는 {@link #lifecycleLock} 안에서 한 번에 한다(WD-629·WD-655). 그래서 각 제출은 둘 중 정확히 하나로
+   * 끝나 pending 이 어긋나지 않는다: (1) 거부되어 버려지고 세어진다(큐 포화, 또는 stop 뒤~start 전의 닫힌 워커 — 이때 워커를 새로 만들지 않는다:
+   * 컨텍스트 종료 뒤 스레드 생성 방지) → 여기서 finishOne 한 번. (2) 큐에 들어가 실행되거나(자기 finally), 비우기 시간 초과로 버려진다({@link
+   * #discardRemaining} 이 finish 한 번). 켜진 동안에는 옛 워커가 아직 살아 있어도 새 워커의 큐에 들어가 옛 워커가 끝난 뒤에 돈다({@link
+   * #replaceWorker}).
    *
    * @return 받아들였으면 true, 버렸으면 false
    */
@@ -142,6 +153,49 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
           "PYTHON 읽기 권한 동기화를 버렸다 — 큐 포화 또는 종료 중(누적 {}건). 실행 직전·일 1회 동기화가 회복한다",
           dropped.incrementAndGet());
       return false;
+    }
+  }
+
+  /**
+   * 닫힌 현재 워커를 새 단일 스레드 워커로 바꾼다(WD-655). {@link #lifecycleLock} 을 쥔 채 불러야 한다.
+   *
+   * <p>옛 워커(들)가 아직 끝나지 않았으면(비우는 중이거나 인터럽트를 무시하는 작업) 새 워커의 첫 작업으로 {@link AwaitRetiredWorkers} 를 넣는다.
+   * 그 뒤에 들어온 작업은 옛 워커가 모두 끝난 다음에야 돈다 — 그래서 제출을 버리지 않으면서도 옛·새 워커의 동기화가 동시에 돌지 않는다(단일 스레드 전제: 한 번에 한
+   * 동기화가 커넥션 하나만 쥔다).
+   */
+  private void replaceWorker() {
+    ThreadPoolExecutor old = worker;
+    retired.removeIf(ThreadPoolExecutor::isTerminated);
+    if (!old.isTerminated()) {
+      retired.add(old);
+    }
+    ThreadPoolExecutor fresh = newWorker(queueCapacity);
+    if (!retired.isEmpty()) {
+      // 첫 작업이라 큐가 아니라 새 스레드의 첫 작업으로 바로 들어간다(큐 칸을 차지하지 않는다).
+      fresh.execute(new AwaitRetiredWorkers(List.copyOf(retired)));
+    }
+    worker = fresh;
+  }
+
+  /**
+   * 새 워커의 첫 작업 — 옛 워커들이 모두 끝날 때까지 기다린다(WD-655). 그동안 새 워커의 큐에 쌓인 작업은 이 작업이 끝난 뒤에 돈다.
+   *
+   * <p>인터럽트는 새 워커의 shutdownNow({@link #discardRemaining})에서만 온다 — 그때는 큐에 남은 작업도 이미 꺼내 버렸으므로 기다리기를
+   * 그만두고, 인터럽트 상태를 되살린 채 끝낸다. pending 에는 세지 않는 내부 작업이다(submit 을 거치지 않는다).
+   */
+  private record AwaitRetiredWorkers(List<ThreadPoolExecutor> previous) implements Runnable {
+    @Override
+    public void run() {
+      for (ThreadPoolExecutor p : previous) {
+        try {
+          while (!p.awaitTermination(1, TimeUnit.MINUTES)) {
+            log.warn("PYTHON 읽기 권한 동기화 실행기: 이전 워커가 아직 끝나지 않아 새 워커의 작업이 기다리는 중이다");
+          }
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          return;
+        }
+      }
     }
   }
 
@@ -189,39 +243,18 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
   }
 
   /**
-   * 라이프사이클 시작 — 워커가 종료돼 있으면(앞선 stop) 새 워커로 바꾼다(WD-629). 고치기 전에는 빈 메서드라 컨텍스트 stop()/start() 뒤 이후 모든
-   * 제출이 버려져 커밋 뒤 동기화가 영구히 사라졌다. 실행 중이면 아무것도 하지 않는다(진행 중 작업·큐 유지).
+   * 라이프사이클 시작 — 워커가 닫혀 있으면(앞선 stop) 새 워커로 바꿔 커밋 뒤 동기화를 다시 받아들인다(WD-629). 실행 중이면 아무것도 하지 않는다(진행 중
+   * 작업·큐 유지).
    *
-   * <p><b>비우기 도중 start.</b> 옛 워커가 닫혔지만 아직 끝나지 않았으면(다른 스레드의 stop 이 비우는 중) 새 워커를 바로 만들지 않는다 — 동기화
-   * 스레드가 둘이 되면 단일 스레드 전제(한 번에 한 동기화가 커넥션 하나만 쥔다)가 깨진다. 옛 워커가 끝나기를 비우기 제한 시간만큼 기다린 뒤 끝났을 때만 바꾼다. 그래도
-   * 안 끝났으면 WARN 만 남기고 바꾸지 않는다 — 가장 단순한 안전 동작이다: 그동안 제출은 지금처럼 버림+WARN(실행 직전·일 1회 동기화가 회복)이고, 다음
-   * start 가 다시 시도한다. 기다리는 동안 {@link #lifecycleLock} 을 쥐지 않아 submit(커밋 콜백)을 막지 않는다.
+   * <p>옛 워커가 닫혔지만 아직 끝나지 않았어도(다른 스레드의 stop 이 비우는 중, 인터럽트를 무시하는 작업) 새 워커를 바로 만든다 — 새 워커의 첫 작업이 옛 워커의
+   * 끝을 기다리므로 동기화가 동시에 둘 돌지 않는다({@link #replaceWorker}, WD-655). 교체가 {@link #lifecycleLock} 안이라 stop
+   * 과 겹쳐도 「켜짐인데 닫힌 워커」나 「꺼짐인데 새 워커」가 남지 않는다.
    */
   @Override
   public void start() {
-    ThreadPoolExecutor old;
     synchronized (lifecycleLock) {
-      old = worker;
-      if (!old.isShutdown()) {
-        return;
-      }
-    }
-    // 옛 워커가 비우는 중이면 모니터 밖에서 끝나기를 기다린다 — 이미 끝났으면 곧바로 돌아온다.
-    try {
-      old.awaitTermination(drainTimeout.toMillis(), TimeUnit.MILLISECONDS);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-    }
-    synchronized (lifecycleLock) {
-      if (worker != old) {
-        return; // 기다리는 사이 다른 start 가 이미 바꿨다.
-      }
-      if (old.isTerminated()) {
-        worker = newWorker(queueCapacity);
-      } else {
-        log.warn(
-            "PYTHON 읽기 권한 동기화 실행기: 이전 워커가 {} 안에 끝나지 않아 새 워커를 만들지 않는다(동기화 스레드 중복 방지) — 다음 start 에서 다시 시도",
-            drainTimeout);
+      if (worker.isShutdown()) {
+        replaceWorker();
       }
     }
   }
@@ -235,7 +268,11 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
     shutdown();
   }
 
-  /** 현재 워커가 종료(stop·안전망)되기 전까지 실행 중이다. */
+  /**
+   * 라이프사이클 상태(켜짐)를 돌려준다 — 현재 워커가 닫히지 않았으면 켜짐이다. 옛 워커가 아직 끝나지 않았어도 start 뒤에는 true 다(WD-655):
+   * SmartLifecycle 계약상 Spring 은 isRunning() 이 true 인 빈에만 stop() 을 부르므로, 옛 워커의 생사를 섞으면 stop 이
+   * 건너뛰어진다.
+   */
   @Override
   public boolean isRunning() {
     return !worker.isShutdown();
@@ -245,12 +282,19 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
    * 큐에 남은 동기화를 제한 시간 안에 비운다. 넘기면 남은 작업을 버리고 WARN(다음 기동 뒤 동기화가 회복). {@link #stop()} 이 정상 경로이고,
    * {@code @PreDestroy} 는 라이프사이클 stop 이 불리지 않은 경우(예: 컨텍스트 refresh 실패)를 위한 안전망이다. stop 과 @PreDestroy
    * 는 종료 스레드에서 차례로 돌고, ThreadPoolExecutor 의 shutdown·awaitTermination 은 스레드 안전·멱등이라 두 번 불려도 이미 종료된
-   * 실행기에서는 곧바로 끝난다. 워커 참조는 지역 변수로 한 번 잡는다 — 비우는 동안 lifecycleLock 을 쥐지 않아 submit 을 막지 않는다(WD-629).
+   * 실행기에서는 곧바로 끝난다.
+   *
+   * <p>현재 워커 읽기와 닫기(shutdown — 막지 않는다)는 {@link #lifecycleLock} 안에서 한 번에 한다(WD-655) — stop 이 끝나면 늘
+   * 꺼짐이고, 그 뒤 start 전에는 워커가 새로 생기지 않는다. 끝나기를 기다리는 awaitTermination 은 모니터 밖에서 해 submit 을 막지
+   * 않는다(WD-629).
    */
   @PreDestroy
   void shutdown() {
-    ThreadPoolExecutor w = worker;
-    w.shutdown();
+    ThreadPoolExecutor w;
+    synchronized (lifecycleLock) {
+      w = worker;
+      w.shutdown();
+    }
     try {
       if (!w.awaitTermination(drainTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
         discardRemaining(w);

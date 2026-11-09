@@ -8,7 +8,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TestUsers;
@@ -45,6 +47,7 @@ class DatasetColumnTypeMessageTest extends IntegrationTestBase {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private DSLContext dsl;
+  @Autowired @DataStoreDb private DSLContext dataDsl;
   @Autowired private ObjectMapper objectMapper;
   @Autowired private JwtTokenProvider jwt;
   @Autowired private PasswordEncoder passwordEncoder;
@@ -259,11 +262,75 @@ class DatasetColumnTypeMessageTest extends IntegrationTestBase {
         updateColumn(id, firstColumnId(id), "{\"maxLength\":10001}"), varcharMessage(10001));
   }
 
+  /**
+   * WD-655: 타입 없이 길이만 보낸 VARCHAR 수정({maxLength})은 길이 변경이다 — 데이터가 있으면 타입·길이를 함께 보낸 요청과 같은 규칙으로
+   * 거부한다(ColumnModificationException → 400, 「데이터가 있는 데이터셋에서는 필드 길이를 바꿀 수 없습니다.」). 예전에는 sizeChanging
+   * 이 요청 타입이 있을 때만 참이라 메타데이터 길이만 500 으로 바뀌고 물리 컬럼은 255 로 남았다.
+   */
+  @Test
+  void updateColumn_maxLengthOnlyOnVarcharWithData_isRejected() throws Exception {
+    long id = createVarcharDataset("wd655_lendata_" + unique, 255);
+    insertRow("wd655_lendata_" + unique);
+    MvcResult r = updateColumn(id, firstColumnId(id), "{\"maxLength\":500}");
+    assertBadRequest(r, "데이터가 있는 데이터셋에서는 필드 길이를 바꿀 수 없습니다.");
+    assertThat(detail(id).get("columns").get(0).get("maxLength").asInt())
+        .as("메타데이터 길이도 그대로")
+        .isEqualTo(255);
+    assertThat(physicalVarcharLength("wd655_lendata_" + unique)).isEqualTo(255);
+  }
+
+  /** WD-655: 데이터가 없으면 길이만 보낸 수정이 물리 컬럼 길이까지 바꾼다(ALTER) — 메타데이터와 실제 컬럼이 어긋나지 않는다. */
+  @Test
+  void updateColumn_maxLengthOnlyOnVarcharWithoutData_altersPhysicalColumn() throws Exception {
+    long id = createVarcharDataset("wd655_lenempty_" + unique, 255);
+    MvcResult r = updateColumn(id, firstColumnId(id), "{\"maxLength\":500}");
+    assertThat(r.getResponse().getStatus()).as(body(r)).isBetween(200, 204);
+    assertThat(detail(id).get("columns").get(0).get("maxLength").asInt()).isEqualTo(500);
+    assertThat(physicalVarcharLength("wd655_lenempty_" + unique))
+        .as("information_schema 의 실제 길이")
+        .isEqualTo(500);
+  }
+
   // ── 헬퍼 ──────────────────────────────────────────────────────────────
 
   /** WD-636: PG 상한(10000)과 입력값을 담은 VARCHAR 길이 문구. */
   private static String varcharMessage(int given) {
     return "문자열(VARCHAR) 필드 길이는 1~10000 사이여야 합니다(입력 " + given + ").";
+  }
+
+  /** WD-655: VARCHAR(length) 컬럼 하나(a)를 가진 데이터셋을 만든다. */
+  private long createVarcharDataset(String tableName, int length) throws Exception {
+    MvcResult c =
+        create(
+            tableName,
+            "[{\"columnName\":\"a\",\"dataType\":\"VARCHAR\",\"maxLength\":" + length + "}]");
+    assertThat(c.getResponse().getStatus()).as(body(c)).isEqualTo(201);
+    long id = json(c).get("id").asLong();
+    datasets.add(id);
+    return id;
+  }
+
+  /** WD-655: 데이터 테이블에 행 하나를 직접 넣는다(행 수 > 0 조건). */
+  private void insertRow(String tableName) {
+    inTenantFixture(
+        () ->
+            dataDsl.execute(
+                "INSERT INTO "
+                    + DataSchema.forTenant(DEFAULT_TEST_TENANT_ID)
+                    + ".\""
+                    + tableName
+                    + "\" (a) VALUES ('x')"));
+  }
+
+  /** WD-655: 데이터 테이블 컬럼 a 의 실제 VARCHAR 길이(information_schema). */
+  private Integer physicalVarcharLength(String tableName) {
+    return dataDsl
+        .fetchOne(
+            "SELECT character_maximum_length FROM information_schema.columns"
+                + " WHERE table_schema = ? AND table_name = ? AND column_name = 'a'",
+            DataSchema.forTenant(DEFAULT_TEST_TENANT_ID),
+            tableName)
+        .get(0, Integer.class);
   }
 
   /** 상세 조회 응답 본문. */

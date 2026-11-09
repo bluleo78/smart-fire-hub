@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.service;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Arrays;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -25,14 +26,28 @@ public final class ColumnPhysicalType {
   /** 컬럼 데이터 타입 누락·공백 안내의 단일 출처(WD-636) — DTO({@code DatasetColumnRequest}) 상수도 이 값을 가리킨다. */
   public static final String DATA_TYPE_REQUIRED_MESSAGE = "컬럼 데이터 타입을 입력하세요.";
 
-  /** 길이 미지정 VARCHAR 의 물리 타입 길이 — {@code VARCHAR(255)}. */
-  public static final int DEFAULT_VARCHAR_LENGTH = 255;
+  /**
+   * PostgreSQL 저장소의 길이 미지정 VARCHAR 물리 타입 길이 — {@code VARCHAR(255)}. 저장소별 기본 길이의 단일 출처는 {@link
+   * DataStoreBackend#defaultVarcharLength()} 다(WD-655, Tibero 는 4000).
+   */
+  public static final int DEFAULT_VARCHAR_LENGTH =
+      DataStoreBackend.POSTGRESQL.defaultVarcharLength();
 
   /**
    * PostgreSQL 저장소가 허용하는 VARCHAR 최대 길이 — 웹 폼 기본 상한(10000)과 같다. 저장소별 상한의 단일 출처는 {@link
    * DataStoreBackend#maxVarcharLength()} 다(WD-636).
    */
   public static final int MAX_VARCHAR_LENGTH = DataStoreBackend.POSTGRESQL.maxVarcharLength();
+
+  /**
+   * 모든 저장소 VARCHAR 상한 중 가장 넓은 값(WD-655) — 테넌트 밖(저장소를 고를 수 없는) 길이 검사가 쓴다. 이보다 길면 어느 저장소도 받지 않는다.
+   * 저장소가 늘어도 맞도록 가정하지 않고 {@link DataStoreBackend#values()} 에서 계산한다.
+   */
+  public static final int WIDEST_VARCHAR_LENGTH =
+      Arrays.stream(DataStoreBackend.values())
+          .mapToInt(DataStoreBackend::maxVarcharLength)
+          .max()
+          .orElseThrow();
 
   /** DECIMAL 의 물리 타입 {@code NUMERIC(18,6)} 전체 자릿수. */
   public static final int DECIMAL_PRECISION = 18;
@@ -65,6 +80,20 @@ public final class ColumnPhysicalType {
    */
   public static String varcharLengthOutOfRangeMessage(int max, int given) {
     return "문자열(VARCHAR) 필드 길이는 1~" + max + " 사이여야 합니다(입력 " + given + ").";
+  }
+
+  /**
+   * VARCHAR 길이가 1~{@code max} 안인지 검사하고, 벗어나면 {@link #varcharLengthOutOfRangeMessage} 문구의 400
+   * (IllegalArgumentException)을 던진다(WD-655). 저장소별 검사(PG·Tibero)와 테넌트 밖 순수 검사({@code
+   * DataTableService.validateKnownColumnTypeLimits})가 같은 범위 검사·문구를 쓰도록 한 곳에 둔다.
+   *
+   * @param max 저장소 상한
+   * @param given 입력한(또는 기본값을 채운) 길이
+   */
+  public static void requireVarcharLengthWithin(int max, int given) {
+    if (given < 1 || given > max) {
+      throw new IllegalArgumentException(varcharLengthOutOfRangeMessage(max, given));
+    }
   }
 
   /**

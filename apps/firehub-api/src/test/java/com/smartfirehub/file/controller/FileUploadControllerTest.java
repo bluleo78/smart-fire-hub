@@ -128,8 +128,7 @@ class FileUploadControllerTest {
   /** POST /files — multipart 본문을 해석하지 못하면 500 이 아니라 400 (WD-521) */
   @Test
   void uploadFiles_unreadableMultipart_returnsBadRequest() throws Exception {
-    MockMultipartFile file =
-        new MockMultipartFile("files", "test.csv", "text/csv", "a".getBytes());
+    MockMultipartFile file = new MockMultipartFile("files", "test.csv", "text/csv", "a".getBytes());
     when(fileUploadService.uploadFiles(anyList(), anyLong()))
         .thenThrow(new org.springframework.web.multipart.MultipartException("no boundary"));
 
