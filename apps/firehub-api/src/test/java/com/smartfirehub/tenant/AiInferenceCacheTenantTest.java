@@ -31,6 +31,7 @@ import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.AiClassifyTarget;
 import com.smartfirehub.pipeline.service.executor.AiClassifyTargetResolver;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PassThroughWriteLock;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.HashMap;
 import java.util.List;
@@ -114,7 +115,9 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
             // 분류 공급자는 이 테스트의 관심사(테넌트 격리)가 아니다 — 미설정 테넌트로 고정한다(#707).
             stubUseChat(),
             // 입력 컬럼 해석(WD-214)·존재 대조(WD-215)도 이 테스트의 관심사가 아니다 — 고르는 text 가 있는 데이터셋으로 세운다.
-            textColumnRepository());
+            textColumnRepository(),
+            // 출력 쓰기 잠금(WD-666)은 이 테스트의 관심사가 아니다 — 본문만 그대로 실행한다.
+            PassThroughWriteLock.create());
 
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
     when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));

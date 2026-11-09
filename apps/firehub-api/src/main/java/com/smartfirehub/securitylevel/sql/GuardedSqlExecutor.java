@@ -18,6 +18,7 @@ import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -58,8 +59,7 @@ public class GuardedSqlExecutor {
 
   /**
    * 분석 쿼리 동시 실행 상한(WD-553). 애드혹·저장 쿼리 실행({@link #executeAnalytics})과 결과 내보내기 재실행({@link
-   * #executeJudgedAnalyticsGated})의 PG 실행 구간만 지난다 —
-   * 차트·대시보드는 위젯을 병렬로 불러오므로 지나지 않는다.
+   * #executeJudgedAnalyticsGated})의 PG 실행 구간만 지난다 — 차트·대시보드는 위젯을 병렬로 불러오므로 지나지 않는다.
    */
   private final AnalyticsQueryConcurrencyGate concurrencyGate;
 
@@ -68,8 +68,20 @@ public class GuardedSqlExecutor {
    * 예외(400), 열람 거부는 403.
    */
   public SqlQueryResponse executeDatasetQuery(Clearance c, String sql, int maxRows) {
+    return executeDatasetQuery(c, sql, maxRows, writeTargets -> {});
+  }
+
+  /**
+   * {@link #executeDatasetQuery(Clearance, String, int)} 에 「실행 직전 쓰기 대상 처리」를 끼운 판(WD-666). 판정이 알아낸
+   * DML 쓰기 대상 데이터셋 id({@link SqlAccessResult#writeDatasetIds()}, SELECT 면 빈 집합)를 실행 바로 전에 {@code
+   * beforeExecute} 로 넘긴다 — 호출자(데이터셋 /query)가 같은 트랜잭션에서 그 데이터셋들의 쓰기 잠금을 잡아, DML 이 truncate·NOT NULL
+   * 필드 추가·삭제와 줄 서게 한다.
+   */
+  public SqlQueryResponse executeDatasetQuery(
+      Clearance c, String sql, int maxRows, Consumer<Set<Long>> beforeExecute) {
     NormalizedSql normalized = NormalizedSql.of(sql);
     SqlAccessResult r = guard.requireSql(c, normalized.text(), SqlAccessMode.INTERACTIVE);
+    beforeExecute.accept(r.writeDatasetIds());
     SqlQueryResponse response = dataTableQueryService.executeQuery(normalized, maxRows);
     // 감사 등급 데이터셋을 읽은 사용자 SQL 은 접근 기록을 남긴다(거부는 requireSql 이 감사한다). 허용 판정이 아니라 실행이 성공해 결과가
     // 나가는 지점에서 남긴다 — 검증 예외·실행 오류(200 + error)는 데이터가 나가지 않았다(executeJudgedAnalytics 와 같은 규칙, 코드리뷰
@@ -199,8 +211,8 @@ public class GuardedSqlExecutor {
   }
 
   /**
-   * 판정 토큰을 실행한다 — {@link #executeJudgedAnalytics} 와 같고, PG 실행 구간을 동시 실행 상한(WD-553)으로 감싼다. 이름으로
-   * 구분해 readOnly 와 뒤바뀔 수 있는 위치 boolean 을 두지 않는다.
+   * 판정 토큰을 실행한다 — {@link #executeJudgedAnalytics} 와 같고, PG 실행 구간을 동시 실행 상한(WD-553)으로 감싼다. 이름으로 구분해
+   * readOnly 와 뒤바뀔 수 있는 위치 boolean 을 두지 않는다.
    *
    * <p>허가는 판정 거부(403)·파싱 오류 뒤, {@code @Transactional} 실행 서비스가 커넥션을 열기 <b>전</b>에 얻고, 실행이 어떻게
    * 끝나든(정상·200 + error·statement timeout·예외) try-with-resources 로 돌려준다. 기다리지 않고 즉시 거절한다 — 저장 쿼리 실행은

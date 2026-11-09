@@ -94,4 +94,36 @@ test.describe('파이프라인 에디터 — 스텝 추가 후 포커스 (WD-545
     await expect(stepName).toHaveValue('데이터 추출');
     await expect(stepName).not.toBeFocused();
   });
+  test('리듀서가 무시한 추가(지워진 원본) 뒤 카드 클릭이 이름 입력으로 포커스를 끌어가지 않는다(WD-666)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupPipelineEditorMocks(page);
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await expect(page.locator('.react-flow__node')).toHaveCount(2);
+
+    // 두 번째 스텝(나가는 연결 없음)의 삭제 확인을 연다
+    const secondNode = page.locator('.react-flow__node').nth(1);
+    await secondNode.getByRole('button', { name: '스텝 삭제' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+
+    // 삭제 확정과 그 스텝의 「다음 스텝 추가」를 한 이벤트 루프 안에서 연달아 누른다 — 두 번째 클릭은 다시 그려지기 전의
+    // 옛 콜백(지워진 원본)을 부르므로 리듀서가 추가를 무시한다(새 스텝·선택 변화 없음).
+    await page.evaluate(() => {
+      const confirm = Array.from(document.querySelectorAll('[role="alertdialog"] button')).find(
+        (b) => b.textContent?.trim() === '삭제',
+      ) as HTMLButtonElement | undefined;
+      const addAfter = document.querySelectorAll<HTMLButtonElement>('.react-flow__node button[aria-label="다음 스텝 추가"]');
+      const stale = addAfter[addAfter.length - 1];
+      confirm?.click();
+      stale?.click();
+    });
+    await expect(page.locator('.react-flow__node')).toHaveCount(1);
+
+    // 남은 카드를 클릭해 선택만 바꾼다 — 남아 있던 포커스 표시가 이름 입력으로 포커스를 뺏으면 안 된다
+    await page.locator('.react-flow__node').first().click();
+    const stepName = page.locator('#step-name');
+    await expect(stepName).toHaveValue('데이터 추출');
+    await expect(stepName).not.toBeFocused();
+  });
 });

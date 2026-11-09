@@ -31,8 +31,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  * WD-551·WD-566 — 같은 데이터셋에 구조 변경(필드 순서·truncate·NOT NULL 필드 추가·데이터셋 삭제)과 행 쓰기가 겹칠 때 교착(409)·무결성
  * 오류(409)·테이블 없음(500)이 새어 나가던 문제.
  *
- * <p>규칙: 구조 변경은 데이터셋 행을 배타 잠금(lockForColumnChange/lockForDelete)으로, 행 쓰기는 같은 행을 FOR SHARE 로 먼저 잡는다
- * — 행 쓰기끼리는 막지 않고 구조 변경과만 줄 선다. 잠금 순서는 항상 「데이터셋 행 → 데이터 테이블」이다.
+ * <p>규칙: 구조 변경은 데이터셋 행을 배타 잠금(FOR UPDATE —
+ * lockForColumnChange·lockForStructureWrite·lockForDelete)으로, 행 쓰기는 같은 행을 KEY SHARE(WD-666,
+ * DatasetDataWriteLock)로 먼저 잡는다 — 행 쓰기끼리는 막지 않고 구조 변경과만 줄 선다. 잠금 순서는 항상 「데이터셋 행 → 데이터 테이블」이다.
  *
  * <p>교착·틈은 타이밍에 달려 있어 두 요청을 장벽(CyclicBarrier)으로 같은 순간에 출발시키는 것을 여러 회 되풀이한다. 테스트 커넥션 풀이 2개라 동시에 2건씩
  * 겹친다. 클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 각 요청이 실제처럼 자기 트랜잭션으로 커밋해야 서로를 기다린다

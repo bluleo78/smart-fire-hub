@@ -19,6 +19,7 @@ import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.repository.DatasetWriteTarget;
 import com.smartfirehub.dataset.repository.QueryHistoryRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
@@ -54,6 +55,9 @@ public class DatasetDataService {
   private final ClearanceResolver clearanceResolver;
   private final QueryHistoryRepository queryHistoryRepository;
 
+  /** 데이터 테이블 쓰기 공용 잠금(WD-666). */
+  private final DatasetDataWriteLock writeLock;
+
   /** 실행 구간을 코드로 나누는 트랜잭션 템플릿(쓰기 기본값) — Tibero 실행을 PG 트랜잭션 밖에 두려고 쓴다(WD-207). */
   private final TransactionTemplate tx;
 
@@ -78,36 +82,9 @@ public class DatasetDataService {
     }
   }
 
-  /**
-   * WD-551·WD-566: 데이터 테이블 구조를 통째로 바꾸는 쓰기(truncate·replace)의 첫 문장 — 데이터셋 행을 배타 잠금(필드 변경과 같은
-   * lockForColumnChange, NO KEY UPDATE)으로 잡은 뒤 데이터셋을 다시 읽는다.
-   *
-   * <p>왜: truncate 는 행 수를 세며(ACCESS SHARE) 테이블을 쥔 채 TRUNCATE(ACCESS EXCLUSIVE)로 격상한다. 두 truncate 가
-   * 겹치면 서로의 공유 잠금을 기다려 교착(409)이 났다. 데이터 테이블을 만지기 전에 데이터셋 행에서 줄 세우면 격상 교착이 사라지고, 행 쓰기(FOR SHARE)도 이
-   * 잠금 뒤로 줄 선다. 잠금 순서는 항상 「데이터셋 행 → 데이터 테이블」이다.
-   *
-   * <p>잠금 뒤에 읽으므로, 그 사이 데이터셋이 삭제됐다면 404(DatasetNotFoundException)가 된다.
-   */
-  private DatasetResponse lockForStructureChange(Long datasetId) {
-    datasetRepository.lockForColumnChange(datasetId);
-    return datasetRepository.findById(datasetId).orElseThrow(DatasetNotFoundException::new);
-  }
-
-  /**
-   * WD-551·WD-566: 행 쓰기(행 추가·일괄 추가·행 수정·행 삭제)의 첫 문장 — 데이터셋 행을 FOR SHARE 로 잡은 뒤 데이터셋을 다시 읽는다.
-   *
-   * <p>왜: 잠금 없이 두면 ① 필드 추가의 「행이 있는지」 검사 뒤에 행이 끼어들어 NOT NULL ALTER 가 무결성 오류(409)로 깨지고 ② 데이터셋 삭제가
-   * 테이블을 DROP 한 뒤 INSERT 가 나가 「테이블 없음」 500 이 났으며 ③ truncate 와 격상 교착이 났다. FOR SHARE 는 행 쓰기끼리는 서로 막지
-   * 않고(SHARE 끼리 호환), 구조 변경(NO KEY UPDATE·삭제의 FOR UPDATE)과만 충돌해 그 뒤로 줄 선다. 데이터 테이블에 쓰기 전에 잡으므로 잠금
-   * 순서는 「데이터셋 행 → 데이터 테이블」로 구조 변경과 같다. 호출자는 모두 {@code @Transactional} 이라 잠금이 데이터 테이블 쓰기와 같은 트랜잭션에서
-   * 커밋까지 유지된다.
-   *
-   * <p>삭제를 기다렸다면 잠금이 행을 찾지 못하고 이어지는 조회도 비어 404(DatasetNotFoundException)가 된다.
-   */
-  private DatasetResponse lockForRowWrite(Long datasetId) {
-    datasetRepository.lockForShare(datasetId);
-    return datasetRepository.findById(datasetId).orElseThrow(DatasetNotFoundException::new);
-  }
+  // WD-551·WD-566·WD-666: 쓰기 잠금은 공용 층(DatasetDataWriteLock)이 맡는다 — 행 쓰기는 KEY SHARE,
+  // truncate·replace 는 FOR
+  // UPDATE. 호출자가 모두 @Transactional 이라 잠금이 데이터 테이블 쓰기와 같은 트랜잭션에서 커밋까지 유지된다.
 
   @Transactional(readOnly = true)
   public List<ColumnStatsResponse> getDatasetStats(Long datasetId) {
@@ -126,7 +103,7 @@ public class DatasetDataService {
 
   @Transactional
   public DataDeleteResponse truncateDatasetData(Long datasetId) {
-    DatasetResponse dataset = lockForStructureChange(datasetId);
+    DatasetWriteTarget dataset = writeLock.lockForStructureChange(datasetId);
     rejectIfDocument(dataset.storageType(), "데이터 삭제");
     long rowCount = dataTableRowService.countRows(dataset.tableName());
     dataTableRowService.truncateTable(dataset.tableName());
@@ -144,7 +121,7 @@ public class DatasetDataService {
 
   @Transactional
   public BatchRowDataResponse replaceDatasetData(Long datasetId, BatchRowDataRequest request) {
-    DatasetResponse dataset = lockForStructureChange(datasetId);
+    DatasetWriteTarget dataset = writeLock.lockForStructureChange(datasetId);
     rejectIfDocument(dataset.storageType(), "데이터 교체");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -181,7 +158,7 @@ public class DatasetDataService {
    */
   @Transactional
   public DataDeleteResponse deleteDataRows(Long datasetId, List<Long> rowIds, Long userId) {
-    DatasetResponse dataset = lockForRowWrite(datasetId);
+    DatasetWriteTarget dataset = writeLock.lockForDataWrite(datasetId);
     rejectIfDocument(dataset.storageType(), "행 삭제");
     int deletedCount = dataTableRowService.deleteRows(dataset.tableName(), rowIds);
     if (deletedCount > 0) {
@@ -297,8 +274,14 @@ public class DatasetDataService {
   /** SQL 을 실행한다. 트랜잭션 구간은 호출자(executeQuery)가 정한다. */
   private SqlQueryResponse executeSql(SqlQueryRequest request) {
     // 보안 등급(S2): 경로의 데이터셋이 아니라 SQL 이 참조하는 모든 데이터셋을 실행자 기준으로 판정한다 — /query 는 data 스키마 전체에 닿는다.
+    // WD-666: DML 이면 쓰기 대상 데이터셋들의 쓰기 잠금(KEY SHARE, id 오름차순)을 실행 직전에 같은 PG 트랜잭션에서 잡는다 — 잠금이
+    // 이력 저장 커밋까지 유지돼 truncate·NOT NULL 필드 추가·삭제와 줄 선다. Tibero 는 실행이 PG 트랜잭션 밖이라(WD-207) 잠금을 쥘 수
+    // 없어 잡지 않는다(남은 위험).
     return guardedSqlExecutor.executeDatasetQuery(
-        clearanceResolver.current(), request.sql(), request.maxRows());
+        clearanceResolver.current(),
+        request.sql(),
+        request.maxRows(),
+        pipelineDataSchema.isTibero() ? writeTargets -> {} : writeLock::lockAllForDataWrite);
   }
 
   /** 실행 결과를 쿼리 이력에 저장한다. 호출자가 연 쓰기 트랜잭션 안에서 부른다. */
@@ -335,7 +318,7 @@ public class DatasetDataService {
   /** 행을 추가하고, 성공하면 감사(WD-463, ROW_ADD)를 남긴다 — 새 내부 행 id 와 값을 넣은 필드 이름만 싣는다. */
   @Transactional
   public RowDataResponse addRow(Long datasetId, RowDataRequest request, Long userId) {
-    DatasetResponse dataset = lockForRowWrite(datasetId);
+    DatasetWriteTarget dataset = writeLock.lockForDataWrite(datasetId);
     rejectIfDocument(dataset.storageType(), "행 추가");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -382,7 +365,7 @@ public class DatasetDataService {
 
   @Transactional
   public BatchRowDataResponse addRowsBatch(Long datasetId, BatchRowDataRequest request) {
-    DatasetResponse dataset = lockForRowWrite(datasetId);
+    DatasetWriteTarget dataset = writeLock.lockForDataWrite(datasetId);
     rejectIfDocument(dataset.storageType(), "행 일괄 추가");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -417,7 +400,7 @@ public class DatasetDataService {
    */
   @Transactional
   public void updateRow(Long datasetId, Long rowId, RowDataRequest request, Long userId) {
-    DatasetResponse dataset = lockForRowWrite(datasetId);
+    DatasetWriteTarget dataset = writeLock.lockForDataWrite(datasetId);
     rejectIfDocument(dataset.storageType(), "행 수정");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);

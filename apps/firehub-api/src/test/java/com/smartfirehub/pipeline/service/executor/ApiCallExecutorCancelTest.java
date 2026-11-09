@@ -64,7 +64,8 @@ class ApiCallExecutorCancelTest {
             new OffsetPaginationHandler(),
             dataTableService,
             dataTableRowService,
-            WebClient.builder());
+            WebClient.builder(),
+            com.smartfirehub.support.PassThroughWriteLock.create());
   }
 
   private String url(String path) {

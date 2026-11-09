@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.service.DatasetDataWriteLock;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
@@ -68,6 +69,8 @@ public class AiClassifyExecutor {
   private final AiClassifyTargetResolver targetResolver;
   // 입력 컬럼 미지정 시 "전체 컬럼"을 데이터셋에 정의된 사용자 컬럼으로 풀기 위한 저장소(WD-214).
   private final DatasetColumnRepository datasetColumnRepository;
+  // 출력 테이블 쓰기 잠금(WD-666) — APPEND 배치 쓰기와 REPLACE 맞바꿈을 데이터셋 행 잠금과 같은 트랜잭션에서 한다.
+  private final DatasetDataWriteLock writeLock;
 
   public record ExecutionResult(long outputRows, String executionLog) {}
 
@@ -344,7 +347,9 @@ public class AiClassifyExecutor {
       if (isReplace) {
         // 취소 체크포인트(WD-153) — 맞바꾸기 직전. 마지막 배치 도중 취소됐으면 임시 테이블을 버리고(아래 catch) 원본을 지킨다.
         cancel.checkpoint(0, true);
-        dataTableService.swapTable(outputTableName, tempTable);
+        // WD-666: 맞바꿈은 출력 테이블을 바꾸는 쓰기 — 데이터셋 행 잠금과 같은 트랜잭션에서 해 구조 변경·삭제와 줄 선다.
+        writeLock.writeToOutput(
+            outputTableName, () -> dataTableService.swapTable(outputTableName, tempTable));
       }
 
     } catch (Exception e) {
@@ -418,7 +423,11 @@ public class AiClassifyExecutor {
       // insertBatch.
       dataTableRowService.insertTempBatch(targetTable, outputColumnNames, rows, columnTypes);
     } else {
-      dataTableRowService.insertBatch(targetTable, outputColumnNames, rows, columnTypes);
+      // WD-666: 실제 출력 테이블 쓰기 — 배치마다 짧은 트랜잭션에서 데이터셋 행을 잡고 쓰고 커밋한다. 다음 배치의 LLM 호출 동안에는 잠금을
+      // 쥐지 않는다(배치마다 커밋해 진척이 남는 #690 의 특성도 그대로다).
+      writeLock.writeToOutput(
+          targetTable,
+          () -> dataTableRowService.insertBatch(targetTable, outputColumnNames, rows, columnTypes));
     }
     return rows.size();
   }

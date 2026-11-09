@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.dto.UpdateDatasetRequest;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetSchemaMeta;
+import com.smartfirehub.dataset.repository.DatasetWriteTarget;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.util.LikePatternUtils;
@@ -32,6 +33,8 @@ import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.Record4;
+import org.jooq.SelectConditionStep;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
@@ -358,12 +361,51 @@ public class JooqDatasetRepository implements DatasetRepository {
   }
 
   // WD-186: 필드 이름 변경·타입 변경·삭제가 잡는 데이터셋 행 잠금. 매핑 저장·활성화(MappingService.validate — 이 행을 FOR SHARE
-  // 로 잡고 나서 필드 목록을 읽는다)와 직렬화해, "옛 필드 목록으로 검증한 매핑이 필드 변경 뒤에 저장되는" 틈을 없앤다. NO KEY UPDATE
-  // 인 이유: FOR SHARE 와는 충돌하면서도, 이 데이터셋을 FK 로 참조하는 단순 삽입(KEY SHARE)까지 막지는 않는다.
+  // 로 잡고 나서 필드 목록을 읽는다)와 직렬화해, "옛 필드 목록으로 검증한 매핑이 필드 변경 뒤에 저장되는" 틈을 없앤다.
+  // WD-666: FOR UPDATE 다 — 데이터 쓰기는 KEY SHARE 만 잡고, 그것과 충돌하는 모드는 FOR UPDATE 뿐이다.
   // 잠금 순서(교착 방지): 온톨로지 행 → 데이터셋 행 → 매핑 행. MappingReferenceService.lockForColumnChange 참고.
   @Override
   public void lockForColumnChange(Long id) {
-    dsl.select(DS_ID).from(DATASET).where(DS_ID.eq(id)).forNoKeyUpdate().fetch();
+    dsl.select(DS_ID).from(DATASET).where(DS_ID.eq(id)).forUpdate().fetch();
+  }
+
+  // WD-666: 데이터 쓰기 잠금(KEY SHARE) + 쓰기 대상 읽기를 한 문장으로. KEY SHARE 는 정보 수정과 호환되고 구조 변경·삭제(FOR UPDATE)와만
+  // 충돌한다. 조인이 없어 OF 절 없이도 데이터셋 행만 잠근다.
+  @Override
+  public Optional<DatasetWriteTarget> lockForDataWrite(Long id) {
+    return writeTargetWhere(DS_ID.eq(id)).forKeyShare().fetchOptional(this::toWriteTarget);
+  }
+
+  // WD-666: 테이블 이름판(파이프라인 출력). 테넌트 범위는 RLS 가 정한다(existsByTableName 과 같은 관례).
+  @Override
+  public Optional<DatasetWriteTarget> lockForDataWriteByTableName(String tableName) {
+    return writeTargetWhere(DS_TABLE_NAME.eq(tableName))
+        .forKeyShare()
+        .fetchOptional(this::toWriteTarget);
+  }
+
+  // WD-666: 데이터 테이블을 통째로 바꾸는 쓰기(truncate·replace) — FOR UPDATE 잠금 + 읽기를 한 문장으로.
+  @Override
+  public Optional<DatasetWriteTarget> lockForStructureWrite(Long id) {
+    return writeTargetWhere(DS_ID.eq(id)).forUpdate().fetchOptional(this::toWriteTarget);
+  }
+
+  // WD-551·WD-666: 필드 순서 변경 — NO KEY UPDATE 잠금 + 읽기를 한 문장으로. 데이터 쓰기(KEY SHARE)는 막지 않는다.
+  @Override
+  public Optional<DatasetWriteTarget> lockForColumnReorder(Long id) {
+    return writeTargetWhere(DS_ID.eq(id)).forNoKeyUpdate().fetchOptional(this::toWriteTarget);
+  }
+
+  /** 잠금 + 읽기 네 판이 같이 쓰는 쓰기 대상 SELECT(잠금 절은 호출자가 붙인다). */
+  private SelectConditionStep<Record4<Long, String, String, String>> writeTargetWhere(
+      Condition condition) {
+    return dsl.select(DS_ID, DS_NAME, DS_TABLE_NAME, DS_STORAGE_TYPE)
+        .from(DATASET)
+        .where(condition);
+  }
+
+  private DatasetWriteTarget toWriteTarget(Record4<Long, String, String, String> r) {
+    return new DatasetWriteTarget(r.value1(), r.value2(), r.value3(), r.value4());
   }
 
   // WD-184: 지식 모델 연결·재연결(DatasetOntologyService.bind)이 잡는 데이터셋 행 잠금. 재연결은 "이전 연결 읽기 → 연결 갱신 → 옛 모델
@@ -377,7 +419,6 @@ public class JooqDatasetRepository implements DatasetRepository {
 
   // WD-186: 매핑 저장·활성화가 필드 목록을 읽기 전에 잡는 공유 잠금 — 진행 중인 필드 변경(lockForColumnChange)이 끝난 뒤의 필드
   // 목록으로 검증하게 한다. 매핑 저장끼리는 서로 막지 않는다(SHARE 는 서로 호환).
-  // WD-551·WD-566: 데이터 탭 행 쓰기(DatasetDataService)도 데이터 테이블에 쓰기 전에 이 잠금을 잡아 구조 변경 뒤로 줄 선다.
   @Override
   public void lockForShare(Long id) {
     dsl.select(DS_ID).from(DATASET).where(DS_ID.eq(id)).forShare().fetch();
@@ -506,14 +547,16 @@ public class JooqDatasetRepository implements DatasetRepository {
         .fetchOptional(r -> r.get(DS_ID));
   }
 
-  // WD-575: 정보 수정의 편집 기준 버전 비교용 — 다른 편집 충돌 보호(차트·쿼리·대시보드)와 같은 FOR UPDATE 행 잠금이다.
+  // WD-575: 정보 수정의 편집 기준 버전 비교용 행 잠금. WD-666: FOR NO KEY UPDATE — 키를 바꾸지 않으니 충분하고 데이터 쓰기(KEY
+  // SHARE)를
+  // 기다리지 않는다(정보 수정끼리는 여전히 줄 선다).
   // 이 잠금은 트랜잭션 끝까지 유지돼 같은 데이터셋의 동시 정보 수정이 한 줄로 서고, 나중 요청은 앞 저장이 바꾼 수정 시각을 읽는다.
   @Override
   public Optional<LockedRowVersion> lockUpdatedAtById(Long id) {
     return dsl.select(DS_UPDATED_AT)
         .from(DATASET)
         .where(DS_ID.eq(id))
-        .forUpdate()
+        .forNoKeyUpdate()
         .fetchOptional()
         .map(r -> new LockedRowVersion(r.value1()));
   }

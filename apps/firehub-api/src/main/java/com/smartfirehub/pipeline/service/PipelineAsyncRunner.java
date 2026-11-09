@@ -11,6 +11,7 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.TenantDataStoreRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.service.DatasetDataWriteLock;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataTableNames;
@@ -105,6 +106,10 @@ public class PipelineAsyncRunner {
 
   private final PipelineRepository pipelineRepository;
   private final DataTableService dataTableService;
+
+  /** 출력 테이블 쓰기 잠금(WD-666) — 스테이징 맞바꿈·옮기기를 데이터셋 행 잠금과 같은 트랜잭션에서 한다. */
+  private final DatasetDataWriteLock datasetWriteLock;
+
   private final DataTableRowService dataTableRowService;
   private final DatasetRepository datasetRepository;
   private final DatasetColumnRepository columnRepository;
@@ -1807,12 +1812,17 @@ public class PipelineAsyncRunner {
     String tempTable = dataTableService.createTempTable(outputTable);
     try {
       T result = body.apply(tempTable);
+      long rows = rowsLoaded.applyAsLong(result);
+      // WD-666: 맞바꿈·옮기기는 출력 테이블에 닿는 쓰기다 — 데이터셋 행 잠금(KEY SHARE)과 같은 트랜잭션에서 해 구조 변경·삭제와 줄 선다.
+      // 스테이징 적재(body) 동안에는 잠그지 않는다(다른 테이블이고, 오래 걸릴 수 있다).
       if (isReplace) {
-        dataTableService.finishReplace(outputTable, tempTable, rowsLoaded.applyAsLong(result));
+        datasetWriteLock.writeToOutput(
+            outputTable, () -> dataTableService.finishReplace(outputTable, tempTable, rows));
       } else {
         // 스테이징의 행을 출력에 한 Tibero 트랜잭션으로 옮긴다(0행이면 스테이징만 버린다).
         // 옮기기가 커밋된 뒤 스테이징 DROP 실패는 저장소가 삼킨다.
-        dataTableService.finishAppend(outputTable, tempTable, rowsLoaded.applyAsLong(result));
+        datasetWriteLock.writeToOutput(
+            outputTable, () -> dataTableService.finishAppend(outputTable, tempTable, rows));
       }
       return result;
     } catch (Exception e) {

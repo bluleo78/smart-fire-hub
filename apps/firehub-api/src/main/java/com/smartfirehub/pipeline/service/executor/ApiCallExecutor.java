@@ -5,6 +5,7 @@ import com.smartfirehub.apiconnection.service.AuthQueryMasker;
 import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.service.DatasetDataWriteLock;
 import com.smartfirehub.global.exception.ExternalServiceException;
 import java.net.URI;
 import java.time.Duration;
@@ -48,6 +49,9 @@ public class ApiCallExecutor {
   private final DataTableService dataTableService;
   private final DataTableRowService dataTableRowService;
   private final WebClient.Builder webClientBuilder;
+
+  /** 출력 테이블 쓰기 잠금(WD-666) — APPEND 페이지 쓰기와 REPLACE 맞바꿈을 데이터셋 행 잠금과 같은 트랜잭션에서 한다. */
+  private final DatasetDataWriteLock writeLock;
 
   // -------------------------------------------------------------------------
   // Result type
@@ -246,7 +250,11 @@ public class ApiCallExecutor {
       if (isReplace) {
         // 취소 체크포인트(WD-153) — 맞바꾸기 직전. 마지막 페이지를 받는 동안 취소됐으면 임시 테이블을 버리고(아래 catch) 원본을 지킨다.
         cancel.checkpoint(0, true);
-        dataTableService.finishReplace(outputTableName, tempTable, totalRows);
+        // WD-666: 맞바꿈은 출력 테이블을 바꾸는 쓰기다 — 데이터셋 행 잠금과 같은 트랜잭션에서 해 구조 변경·삭제와 줄 선다.
+        final int rowsForSwap = totalRows;
+        writeLock.writeToOutput(
+            outputTableName,
+            () -> dataTableService.finishReplace(outputTableName, tempTable, rowsForSwap));
         swapped = true;
       }
 
@@ -642,7 +650,9 @@ public class ApiCallExecutor {
     if (isReplace) {
       dataTableRowService.insertTempBatch(target, columns, rows, null);
     } else {
-      dataTableRowService.insertBatch(target, columns, rows);
+      // WD-666: 실제 출력 테이블 쓰기 — 페이지마다 짧은 트랜잭션에서 데이터셋 행을 잡고 쓰고 커밋한다. 다음 페이지를 받는(외부 API) 동안에는
+      // 잠금을 쥐지 않는다.
+      writeLock.writeToOutput(target, () -> dataTableRowService.insertBatch(target, columns, rows));
     }
   }
 

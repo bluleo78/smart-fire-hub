@@ -44,7 +44,11 @@ class LocalPythonOutputLoaderTiberoTest {
 
   private final DataTableRowService rowService = mock(DataTableRowService.class);
   private final PlatformTransactionManager txManager = mock(PlatformTransactionManager.class);
-  private final LocalPythonOutputLoader loader = new LocalPythonOutputLoader(rowService, txManager);
+  private final LocalPythonOutputLoader loader =
+      new LocalPythonOutputLoader(
+          rowService,
+          txManager,
+          org.mockito.Mockito.mock(com.smartfirehub.dataset.service.DatasetDataWriteLock.class));
 
   @Test
   void loadStaging_insertsIntoStagingWithoutPgTransaction() {

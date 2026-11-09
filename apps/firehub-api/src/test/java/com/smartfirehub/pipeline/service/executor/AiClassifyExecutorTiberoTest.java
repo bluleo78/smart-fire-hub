@@ -87,7 +87,8 @@ class AiClassifyExecutorTiberoTest {
                 mock(org.springframework.transaction.PlatformTransactionManager.class)),
             mock(PipelineExecutionRepository.class),
             targetResolver,
-            datasetColumnRepository);
+            datasetColumnRepository,
+            com.smartfirehub.support.PassThroughWriteLock.create());
 
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
     when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
