@@ -41,8 +41,8 @@ public final class TxRecordingInteractiveGate extends InteractiveQueryConcurrenc
     this(0, 0, 0, onAcquire);
   }
 
-  private TxRecordingInteractiveGate(
-      int maxTotal, int maxPerUser, long waitMs, Runnable onAcquire) {
+  /** 상한을 켠 기록 게이트 + 허가 순간 훅 — 허가 대기가 429 로 끝나는 동안의 변경을 흉내 낸다(WD-689). */
+  public TxRecordingInteractiveGate(int maxTotal, int maxPerUser, long waitMs, Runnable onAcquire) {
     super(maxTotal, maxPerUser, waitMs);
     this.onAcquire = onAcquire;
   }

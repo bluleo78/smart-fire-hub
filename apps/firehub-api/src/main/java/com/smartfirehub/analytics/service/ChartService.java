@@ -59,6 +59,9 @@ public class ChartService {
   /** 화면 쿼리 동시 실행 상한(WD-599) — 실행이 정해진 뒤 runGated 로만 지난다(WD-625, 게이트 클래스 설명). */
   private final InteractiveQueryConcurrencyGate interactiveQueryGate;
 
+  /** 허가를 기다린 뒤의 재판정 규칙(WD-684) — 대시보드 일괄 경로와 같은 한 벌을 쓴다(WD-689). */
+  private final PermitWaitRejudger permitWaitRejudger;
+
   /**
    * 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-464). 공유 여부는 따로 STATUS_CHANGE 로 남기므로 여기 없다. 차트 설정(config)은 무엇이 바뀌었든
    * "config" 하나로만 남긴다 — 설정 값(원본 컬럼명 등)은 감사에 싣지 않는다.
@@ -283,10 +286,11 @@ public class ChartService {
     ChartLoad load = readOnlyTx.execute(status -> loadChart(id, userId));
     // 보안 등급(S2): 조회자 기준 판정 — 위반이면 실행하지 않고 200 + denied. 단건 위젯 경로(DashboardWidgetCard→useChartData)도
     // 대시보드 일괄 경로와 같은 계약이어야 위젯 하나가 화면 전체를 오류로 만들지 않는다(스펙 §4.2 4행).
-    // 앞 판정(허가 전)은 거부를 허가 없이 빨리 끝내기 위한 것이고, 실행하는 것은 허가 구간 안의 재판정 토큰이다(WD-684, 아래 rejudgeAfterWait).
-    GuardedSqlExecutor.AnalyticsJudgment judgment =
-        judge(clearanceResolver.resolve(userId), load.sqlText());
-    if (judgment.denied()) {
+    // 앞 판정(허가 전)은 거부를 허가 없이 빨리 끝내기 위한 것이고, 실행하는 것은 허가 구간 안의 재판정 토큰이다(WD-684, PermitWaitRejudger).
+    Clearance viewer = clearanceResolver.resolve(userId);
+    PermitWaitRejudger.Judged judged =
+        new PermitWaitRejudger.Judged(viewer, judge(viewer, load.sqlText()));
+    if (judged.judgment().denied()) {
       return deniedData(load.chart());
     }
     // 재판정이 거부면 null — 앞 판정 거부와 같은 200 denied 로 끝내고 실행하지 않는다.
@@ -297,7 +301,8 @@ public class ChartService {
             readOnlyTx,
             userId,
             () -> {
-              executed[0] = rejudgeAfterWait(userId, load.sqlText(), judgment);
+              executed[0] =
+                  permitWaitRejudger.afterPermit(userId, load.sqlText(), judged).judgment();
               return executed[0].denied() ? null : executeJudged(executed[0]);
             });
     if (result == null) {
@@ -305,26 +310,6 @@ public class ChartService {
     }
     // 내보내기 플래그는 실행한 조회자 판정 토큰에서 계산한다(설계 결정 5 — 결과 캐시와 무관하게 조회자별).
     return new ChartDataResponse(load.chart(), result, false, executed[0].exportAllowedFor());
-  }
-
-  /**
-   * 화면 쿼리 허가를 얻은 뒤(허가 구간 안, 실행 직전) 차트 SQL 을 새 자격으로 다시 판정한다(WD-684). 대시보드 캐시 미스 로더도 같은 규칙으로
-   * 재판정한다(AnalyticsDashboardService.executeDashboard — 새 자격을 뒤 위젯 판정에도 써야 해서 그쪽에서 직접 한다).
-   *
-   * <p><b>왜.</b> 앞 판정은 허가 대기(최대 wait-ms) 전에 끝난다. 기다리는 동안 관리자가 열람자 역할의 최대 등급을 낮추거나 데이터셋 등급을 올리면 앞 판정
-   * 토큰은 낡아, 그대로 실행하면 이제는 볼 수 없는 데이터가 나간다. 데이터셋 /query 의 실행 직전 재판정(WD-638·WD-682)과 같은 규칙이다. 자격은
-   * {@link ClearanceResolver#resolve(long)} 로 DB 에서 새로 읽는다 — 이 메서드는 요청 캐시를 쓰지 않으므로 {@code
-   * readFresh()} 와 같은 효과이고, principal 이 아니라 인자로 받은 조회자 id 를 쓰는 차트·대시보드 경로와 맞는다.
-   *
-   * <p><b>Tibero.</b> 화면 쿼리 게이트는 Tibero 테넌트에 허가를 걸지 않아 기다림이 없다({@link
-   * InteractiveQueryConcurrencyGate#acquireUnlessTibero}) — 앞 판정과 실행 사이에 낡을 틈이 없어 앞 판정 토큰을 그대로
-   * 쓴다(데이터셋 /query 의 Tibero 경로와 같다).
-   */
-  private GuardedSqlExecutor.AnalyticsJudgment rejudgeAfterWait(
-      long userId, String sqlText, GuardedSqlExecutor.AnalyticsJudgment judgment) {
-    return pipelineDataSchema.isTibero()
-        ? judgment
-        : judge(clearanceResolver.resolve(userId), sqlText);
   }
 
   /** 1단계에서 읽은 차트 응답과 저장 쿼리 SQL 원문. */

@@ -127,7 +127,8 @@ final class AnalyticsServiceFixtures {
             schema,
             tx,
             mock(AnalyticsAuditRecorder.class),
-            gate);
+            gate,
+            new PermitWaitRejudger(schema, resolver, executor));
     return new ChartFixture(service, repo, executor);
   }
 
@@ -246,6 +247,9 @@ final class AnalyticsServiceFixtures {
     ClearanceResolver resolver = mock(ClearanceResolver.class);
     when(resolver.resolve(anyLong())).thenReturn(mock(Clearance.class));
     GuardedSqlExecutor guarded = mock(GuardedSqlExecutor.class);
+    // 허가 뒤 재판정(PermitWaitRejudger)은 관문을 직접 부른다 — chartService.judge 와 같은 토큰을 낸다.
+    when(guarded.judgeAnalytics(any(), anyString()))
+        .thenAnswer(inv -> "SELECT 300".equals(inv.getArgument(1)) ? j300 : j301);
     AnalyticsDashboardService service =
         new AnalyticsDashboardService(
             dashRepo,
@@ -258,7 +262,8 @@ final class AnalyticsServiceFixtures {
             schema,
             tx,
             mock(AnalyticsAuditRecorder.class),
-            gate);
+            gate,
+            new PermitWaitRejudger(schema, resolver, guarded));
     return new DashFixture(service, dashRepo, chartRepo, chartService, guarded, j300, j301);
   }
 }

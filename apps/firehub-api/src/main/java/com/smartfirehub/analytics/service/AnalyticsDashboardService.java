@@ -77,6 +77,9 @@ public class AnalyticsDashboardService {
   /** 화면 쿼리 동시 실행 상한(WD-599) — 캐시 미스의 로더가 runGated 로만 지난다(WD-625, 게이트 클래스 설명). */
   private final InteractiveQueryConcurrencyGate interactiveQueryGate;
 
+  /** 허가·동시 로드를 기다린 뒤의 재판정 규칙(WD-684) — 차트 단건과 같은 한 벌을 쓴다(WD-689). */
+  private final PermitWaitRejudger permitWaitRejudger;
+
   /** 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-464). 공유 여부는 따로 STATUS_CHANGE 로 남기므로 여기 없다. */
   private static final Map<String, String> AUDIT_FIELD_LABELS =
       Map.of("name", "이름", "description", "설명", "autoRefreshSeconds", "자동 새로고침");
@@ -398,32 +401,38 @@ public class AnalyticsDashboardService {
     //  (3) saved_query id 는 전역 시퀀스라 테넌트 간 키 충돌이 없다.
     // 행·열 단위 필터가 생기면 (2) 가 깨지므로 키에 조회자 가시성을 넣어야 한다.
     //
-    // 조회자 자격은 배열 칸에 둔다(WD-684) — 캐시 미스 로더가 허가를 기다린 뒤 새로 읽은 자격으로 갈아 끼워, 그 뒤에 판정하는 위젯(허가 없이 나가는 캐시
+    // 조회자 자격은 요청 안 칸에 둔다(WD-684) — 캐시 미스 로더가 허가를 기다린 뒤 새로 읽은 자격으로 갈아 끼워, 그 뒤에 판정하는 위젯(허가 없이 나가는 캐시
     // 히트 포함)도 대기 중 바뀐 등급을 본다. 요청 시작 때 한 번 읽은 자격을 끝까지 쓰면 앞 위젯이 기다리는 동안 등급이 낮아져도 뒤 캐시 히트가 옛 자격으로
-    // 통과한다.
-    Clearance[] viewer = {clearanceResolver.resolve(userId)};
+    // 통과한다. 앞에서 이미 통과한 위젯은 끝에서 다시 판정한다(WD-689, 아래 마지막 재판정).
+    ViewerClearance viewer = new ViewerClearance(clearanceResolver.resolve(userId));
     Map<Long, AnalyticsQueryResponse> resultByQuery = new HashMap<>();
     java.util.Set<Long> deniedQueries = new java.util.HashSet<>();
     // 조회자별 내보내기 플래그 — 공유 캐시(queryResultCache) 밖에 둔다. 캐시 결과에 실으면 먼저 데운 조회자의 값이 다른 조회자에게 샌다(설계 결정 5,
-    // Review Focus 2). 빈 SQL·판정 없음은 false(fail-closed).
+    // Review Focus 2). 빈 SQL·판정 없음·상한은 false(fail-closed, getOrDefault). 통과한 위젯의 값은 마지막 재판정에서 최종
+    // 토큰으로 넣는다.
     Map<Long, Boolean> exportByQuery = new HashMap<>();
-    // 동시 실행 상한(429)에 걸린 쿼리와, 실제 결과(캐시 히트·실행 결과)를 얻은 쿼리가 있었는지(WD-676) — 위젯 하나가 429 면 응답 전체를 429 로
-    // 버리던 것을 위젯별 오류로 바꾸고, 실제 결과가 하나도 없을 때만 429 를 던진다(클라이언트 재시도 의미 유지).
+    // 실제 결과(캐시 히트·실행 결과)를 얻은 위젯 — 넘길 토큰과 그 토큰을 판정한 자격 세대. 감사(recordDelivered)·내보내기 플래그는 마지막 재판정 뒤에
+    // 정해진다(끝에서 거부로 바뀐 위젯에 전달 감사를 남기지 않게).
+    Map<Long, Passed> passed = new java.util.LinkedHashMap<>();
+    // 동시 실행 상한(429)에 걸린 쿼리(WD-676) — 위젯 하나가 429 면 응답 전체를 429 로 버리던 것을 위젯별 오류로 바꾸고, 실제 결과가 하나도 없을 때만
+    // 429 를 던진다(클라이언트 재시도 의미 유지).
     CodedApiException firstLimit = null;
-    boolean anyRealResult = false;
-    for (Long savedQueryId : new java.util.HashSet<>(load.chartIdToSavedQueryId().values())) {
+    // 저장 쿼리 id 오름차순으로 처리한다(WD-689) — HashSet 순회 순서는 id 값·버킷 충돌에 따라 달라져 위젯 간 상호작용(앞 위젯의 허가 대기가 뒤
+    // 위젯 판정에 주는 영향)을 재현·검증하기 어렵다.
+    for (Long savedQueryId : new java.util.TreeSet<>(load.chartIdToSavedQueryId().values())) {
       String sqlText = load.sqlByQuery().getOrDefault(savedQueryId, "");
       if (sqlText.isBlank()) {
         // 빈 SQL 은 판정할 테이블이 없다 — 기존 동작(빈 결과)을 유지한다.
         resultByQuery.put(savedQueryId, emptyQueryResponse());
         continue;
       }
-      GuardedSqlExecutor.AnalyticsJudgment judgment = chartService.judge(viewer[0], sqlText);
-      if (judgment.denied()) {
+      PermitWaitRejudger.Judged judged =
+          new PermitWaitRejudger.Judged(
+              viewer.clearance, chartService.judge(viewer.clearance, sqlText));
+      if (judged.judgment().denied()) {
         deniedQueries.add(savedQueryId);
         continue;
       }
-      exportByQuery.put(savedQueryId, judgment.exportAllowedFor());
       // 판정을 통과한 쿼리만 캐시에 닿는다. 로더는 진짜 미스일 때만 돌고 그때만 runGated(허가 → 실행 구간 트랜잭션)로 실행한다 — 모두 캐시면 허가를
       // 얻지 않고, 미스마다 허가 하나·짧은 트랜잭션 하나다. 실행하는 토큰은 허가 구간 안에서 새 자격으로 다시 판정한 토큰이다(WD-684, 판정한 그 정규화본을
       // 실행하는 판정 = 실행은 그대로) — 허가를 기다리는 동안 등급이 바뀌었을 수 있다. 로더의 429 는 런타임 예외라 Caffeine 이 감싸지 않고 캐시에
@@ -432,7 +441,7 @@ public class AnalyticsDashboardService {
       // 로드 대기 포함) 받은 결과를 이 조회자에게 넘기는 것이므로 조회자별로 남긴다(공유 캐시 값 안에 넣지 않는다).
       GuardedSqlExecutor.AnalyticsJudgment[] executedHere = {null};
       // 결과를 이 조회자에게 넘길 때 감사·내보내기 플래그에 쓰는 토큰 — 남의 동시 로드를 기다려 받았으면 그 뒤 재판정 토큰으로 바뀐다.
-      GuardedSqlExecutor.AnalyticsJudgment delivered = judgment;
+      GuardedSqlExecutor.AnalyticsJudgment delivered = judged.judgment();
       QueryCacheKey key = new QueryCacheKey(savedQueryId, sqlText);
       AnalyticsQueryResponse result;
       if (firstLimit != null) {
@@ -456,7 +465,9 @@ public class AnalyticsDashboardService {
                           userId,
                           () -> {
                             GuardedSqlExecutor.AnalyticsJudgment fresh =
-                                rejudgeAfterWait(viewer, userId, sqlText, judgment);
+                                viewer.adopt(
+                                    permitWaitRejudger.afterPermit(userId, sqlText, judged),
+                                    judged);
                             if (fresh.denied()) {
                               throw new RejudgedDenied();
                             }
@@ -468,64 +479,133 @@ public class AnalyticsDashboardService {
           // 남지 않는다(값으로 돌려주면 다른 조회자에게 이 조회자의 거부가 캐시로 퍼진다). 같은 키를 기다리던 다른 조회자는 값이 없으므로 자기 로더를 다시
           // 돌려 자기 허가·자기 자격으로 재판정한다 — 이 조회자의 거부를 함께 받지 않는다.
           deniedQueries.add(savedQueryId);
-          exportByQuery.remove(savedQueryId);
           continue;
         } catch (CodedApiException e) {
           // 동시 실행 상한만 위젯 오류로 바꾼다 — 그 밖의 구조화 예외(403 등)는 그대로 올라간다. 로더가 예외로 끝났으므로 캐시에는 남지 않는다.
           if (!AnalyticsQueryConcurrencyGate.LIMIT_CODE.equals(e.code())) {
             throw e;
           }
+          // 429 는 허가를 wait-ms 동안 실제로 기다린 끝일 수 있다(WD-689) — 그동안 등급이 바뀌었을 수 있는데 재판정 없이 끝나 자격을 다시 읽지
+          // 않으면
+          // 뒤 캐시 히트가 옛 자격으로 판정되고 앞에서 통과한 위젯도 마지막 재판정을 건너뛴다. 그래서 자격을 한 번 다시 읽어 세대를 올린다. 이 catch 는
+          // 첫 429 에서만 온다(그 뒤 미스는 위 빨리 끝내기 분기로 허가를 다시 기다리지 않는다) — 요청당 최대 한 번. Tibero 는 게이트가 허가를 걸지
+          // 않아
+          // 여기 오지 않는다. 다시 읽기가 실패하면 데이터를 내보내지 않도록 원래 429 로 요청 전체를 끝낸다(500 이 아니라 재시도 의미 유지).
+          try {
+            viewer.refresh(clearanceResolver.resolve(userId));
+          } catch (RuntimeException rereadFailure) {
+            e.addSuppressed(rereadFailure);
+            throw e;
+          }
           firstLimit = e;
           markLimited(savedQueryId, e.getMessage(), resultByQuery, exportByQuery);
           continue;
         }
-        if (executedHere[0] == null) {
+        if (executedHere[0] != null) {
+          delivered = executedHere[0];
+        } else {
           // 같은 키를 먼저 로드하던 다른 조회자의 결과를 (그 허가 대기·실행 시간만큼) 기다려 받았다 — 기다리는 동안 이 조회자의 등급이 바뀌었을 수 있어
           // 넘기기 전에 새 자격으로 다시 판정한다(WD-684). Tibero 도 남의 로드(db-executor 응답)를 기다릴 수 있어 건너뛰지 않는다.
-          delivered = rejudgeFresh(viewer, userId, sqlText);
+          delivered = viewer.refresh(permitWaitRejudger.fresh(userId, sqlText));
           if (delivered.denied()) {
             deniedQueries.add(savedQueryId);
-            exportByQuery.remove(savedQueryId);
             continue;
           }
-          exportByQuery.put(savedQueryId, delivered.exportAllowedFor());
         }
       }
-      if (executedHere[0] != null) {
-        // 내보내기 플래그도 실제로 실행한 재판정 토큰 기준이다.
-        exportByQuery.put(savedQueryId, executedHere[0].exportAllowedFor());
-      } else if (result.error() == null) {
-        guardedSqlExecutor.recordDelivered(delivered);
-      }
-      anyRealResult = true;
       resultByQuery.put(savedQueryId, result);
+      passed.put(
+          savedQueryId, new Passed(sqlText, delivered, viewer.generation, executedHere[0] != null));
     }
-    // 실제 결과가 하나도 없고 상한에만 걸렸으면 지금처럼 429 — 거부·빈 SQL 위젯은 실제 결과로 치지 않는다.
-    if (firstLimit != null && !anyRealResult) {
+    rejudgeStaleAndRecord(passed, viewer, resultByQuery, deniedQueries, exportByQuery);
+    // 실제 결과가 하나도 없고 상한에만 걸렸으면 지금처럼 429 — 거부(마지막 재판정에서 거부로 바뀐 위젯 포함)·빈 SQL 위젯은 실제 결과로 치지 않는다.
+    if (firstLimit != null && passed.isEmpty()) {
       throw firstLimit;
     }
     return new DashboardExecution(load, resultByQuery, deniedQueries, exportByQuery);
   }
 
   /**
-   * 캐시 미스 로더의 실행 직전 재판정(WD-684) — 허가를 얻은 뒤(허가 구간 안) 조회자 자격을 DB 에서 새로 읽어({@link
-   * ClearanceResolver#resolve(long)} 는 요청 캐시를 쓰지 않는다) 다시 판정하고, 새 자격을 {@code viewer} 칸에 남겨 뒤 위젯 판정도
-   * 그 자격을 쓰게 한다. 차트 단건의 {@code ChartService.rejudgeAfterWait} 와 같은 규칙이다. Tibero 테넌트는 허가를 기다리지
-   * 않아(게이트가 지나지 않음) 앞 판정 토큰을 그대로 쓴다.
+   * 마지막 재판정(WD-689)과 전달 감사 — 응답을 만들기 직전, 통과한 위젯 가운데 그 뒤에 자격을 다시 읽은(다른 위젯이 허가·동시 로드를 기다린) 위젯을 최신
+   * 자격으로 다시 판정한다.
+   *
+   * <p><b>왜.</b> 응답은 모든 위젯 처리가 끝난 뒤 한 번에 나간다. 앞에서 통과한 위젯(특히 허가 없이 나가는 캐시 히트)은 뒤 위젯이 허가를 기다리는 동안 등급이
+   * 낮아지거나 데이터셋 등급이 올라가도 옛 판정으로 응답에 실린다. 자격 값이 같아도 데이터셋 등급은 바뀌었을 수 있어 「다시 읽었는지」(세대)로 정한다. 기다림이 없던
+   * 요청은 세대가 0 그대로라 판정·DB 읽기를 더 하지 않는다.
+   *
+   * <p>새로 거부된 위젯은 다른 거부와 같은 모양(denied, 행·내보내기 없음)이 된다. 공유 캐시는 건드리지 않는다(캐시 값은 조회자와 무관한 판정 통과 결과다).
+   * 전달 감사는 이 재판정 뒤에 최종 토큰으로 남겨, 거부로 바뀐 위젯에 전달 기록이 남지 않는다. 이 요청에서 직접 실행한 위젯은 실행 지점이 이미 감사 접근을 남겼다 —
+   * 실제로 실행했으므로 그 기록은 사실이고, 결과를 넘기지 않을 뿐이다.
    */
-  private GuardedSqlExecutor.AnalyticsJudgment rejudgeAfterWait(
-      Clearance[] viewer,
-      long userId,
-      String sqlText,
-      GuardedSqlExecutor.AnalyticsJudgment judgment) {
-    return pipelineDataSchema.isTibero() ? judgment : rejudgeFresh(viewer, userId, sqlText);
+  private void rejudgeStaleAndRecord(
+      Map<Long, Passed> passed,
+      ViewerClearance viewer,
+      Map<Long, AnalyticsQueryResponse> resultByQuery,
+      java.util.Set<Long> deniedQueries,
+      Map<Long, Boolean> exportByQuery) {
+    for (java.util.Iterator<Map.Entry<Long, Passed>> it = passed.entrySet().iterator();
+        it.hasNext(); ) {
+      Map.Entry<Long, Passed> e = it.next();
+      Long savedQueryId = e.getKey();
+      Passed p = e.getValue();
+      GuardedSqlExecutor.AnalyticsJudgment token = p.token();
+      if (p.generation() != viewer.generation) {
+        // 최신 자격은 이미 기다림 뒤에 새로 읽은 것이다 — 다시 읽지 않고 판정만 한다.
+        token = chartService.judge(viewer.clearance, p.sqlText());
+        if (token.denied()) {
+          deniedQueries.add(savedQueryId);
+          resultByQuery.remove(savedQueryId);
+          it.remove();
+          continue;
+        }
+      }
+      // 내보내기 플래그는 최종 토큰 기준이다(직접 실행했으면 실행한 재판정 토큰).
+      exportByQuery.put(savedQueryId, token.exportAllowedFor());
+      if (!p.executedHere() && resultByQuery.get(savedQueryId).error() == null) {
+        guardedSqlExecutor.recordDelivered(token);
+      }
+    }
   }
 
-  /** 조회자 자격을 DB 에서 새로 읽어 {@code viewer} 칸을 갈아 끼우고 그 자격으로 판정한다 — 기다림 뒤 재판정 공통부. */
-  private GuardedSqlExecutor.AnalyticsJudgment rejudgeFresh(
-      Clearance[] viewer, long userId, String sqlText) {
-    viewer[0] = clearanceResolver.resolve(userId);
-    return chartService.judge(viewer[0], sqlText);
+  /** 응답에 실릴 위젯 결과의 넘길 토큰·판정 SQL·판정 자격 세대·이 요청에서 직접 실행했는지(WD-689 마지막 재판정용). */
+  private record Passed(
+      String sqlText,
+      GuardedSqlExecutor.AnalyticsJudgment token,
+      int generation,
+      boolean executedHere) {}
+
+  /**
+   * 요청 안 조회자 자격 칸(WD-684·WD-689) — 허가·동시 로드를 기다린 뒤 새로 읽은 자격으로 갈아 끼우고, 갈아 끼울 때마다 세대를 올린다. 세대로 「이 위젯을
+   * 판정한 뒤 자격을 다시 읽었는지」를 가려 마지막 재판정 대상을 고른다. 한 요청 스레드 안에서만 쓴다(Caffeine 로더는 호출 스레드에서 돈다).
+   */
+  private static final class ViewerClearance {
+    private Clearance clearance;
+    private int generation;
+
+    ViewerClearance(Clearance initial) {
+      this.clearance = initial;
+    }
+
+    /**
+     * 허가 뒤 재판정 결과를 받아들인다 — {@code rejudged} 가 앞 판정({@code prior}) 그대로면(Tibero 허가 경로: 기다림 없음) 자격을
+     * 바꾸지 않고, 새로 읽은 판정이면 {@link #refresh}. 판정 토큰을 돌려준다.
+     */
+    GuardedSqlExecutor.AnalyticsJudgment adopt(
+        PermitWaitRejudger.Judged rejudged, PermitWaitRejudger.Judged prior) {
+      return rejudged == prior ? rejudged.judgment() : refresh(rejudged);
+    }
+
+    /** 새로 읽은 자격의 판정으로 칸을 갈아 끼우고 세대를 올린다. 판정 토큰을 돌려준다. */
+    GuardedSqlExecutor.AnalyticsJudgment refresh(PermitWaitRejudger.Judged fresh) {
+      refresh(fresh.clearance());
+      return fresh.judgment();
+    }
+
+    /** 새로 읽은 자격으로 칸을 갈아 끼우고 세대를 올린다 — 판정 없이 기다림만 끝난 경우(허가 대기 429, WD-689). */
+    void refresh(Clearance fresh) {
+      clearance = fresh;
+      generation++;
+    }
   }
 
   /**

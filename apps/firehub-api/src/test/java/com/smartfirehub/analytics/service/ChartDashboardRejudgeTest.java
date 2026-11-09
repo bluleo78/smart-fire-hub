@@ -20,7 +20,6 @@ import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TxRecordingInteractiveGate;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -59,6 +58,7 @@ class ChartDashboardRejudgeTest extends IntegrationTestBase {
   @Autowired private DashboardWidgetRepository widgetRepository;
   @Autowired private PipelineDataSchema pipelineDataSchema;
   @Autowired private AnalyticsAuditRecorder auditRecorder;
+  @Autowired private PermitWaitRejudger permitWaitRejudger;
 
   @Autowired
   @Qualifier(TransactionTemplateConfig.READ_ONLY)
@@ -215,7 +215,8 @@ class ChartDashboardRejudgeTest extends IntegrationTestBase {
         pipelineDataSchema,
         readOnlyTx,
         auditRecorder,
-        gate);
+        gate,
+        permitWaitRejudger);
   }
 
   /** 게이트만 대역인 실제 대시보드 서비스(새 인스턴스 = 빈 결과 캐시). */
@@ -231,7 +232,8 @@ class ChartDashboardRejudgeTest extends IntegrationTestBase {
         pipelineDataSchema,
         readOnlyTx,
         auditRecorder,
-        gate);
+        gate,
+        permitWaitRejudger);
   }
 
   /** 결과 행에 들어 있는 값 전부(누출 확인용). */
@@ -367,24 +369,24 @@ class ChartDashboardRejudgeTest extends IntegrationTestBase {
     assertThat(secAccessRows()).isZero();
   }
 
+  /** 위젯 둘(캐시 히트 하나 + 허가를 기다리는 캐시 미스 하나) 대시보드 시나리오의 결과. */
+  private record HitMissResult(
+      DashboardDataResponse response, long hitChart, long missChart, int acquiresDuringRequest) {}
+
   /**
-   * 한 대시보드 안에서 앞 위젯(캐시 미스)이 허가를 기다리는 동안 열람자 등급이 낮아지면, 그 뒤에 판정하는 위젯(다른 조회자가 데운 캐시 히트 — 허가 없이 바로
-   * 나간다)도 낮아진 자격으로 판정해야 한다. 요청 시작 때 한 번 계산한 자격을 끝까지 쓰면 캐시 히트가 민감 행을 돌려준다.
+   * 두 위젯 대시보드에서 민감 SQL 위젯은 다른(자격 있는) 조회자가 미리 데운 캐시 히트, 공개 SQL 위젯은 캐시 미스(허가 대기)로 만들고, 열람자 요청의 허가 대기
+   * 중에 {@code onWait} 를 커밋한다.
    *
-   * <p>위젯 처리 순서는 서비스가 저장 쿼리 id 를 담는 HashSet 의 순회 순서다 — 같은 내용의 HashSet 으로 순서를 구한 뒤, 먼저 처리되는 쪽에 공개
-   * SQL(미스)을, 나중 쪽에 민감 SQL(히트)을 둔다.
+   * <p>위젯 처리 순서는 서비스가 저장 쿼리 id 오름차순으로 정한다(WD-689) — {@code hitFirst} 면 id 가 작은 쪽 차트에 민감 SQL(히트)을, 큰
+   * 쪽에 공개 SQL(미스)을 둔다. 반대면 그 반대다. HashSet 순회 순서를 흉내 내지 않아 id 값과 무관하게 결정적이다.
    */
-  @Test
-  void dashboard_clearanceLoweredWhileEarlierMissWaits_laterCacheHitAlsoDenied() {
-    long first = savedQueryOf(secChart);
-    long second = savedQueryOf(pubChart);
-    if (new HashSet<>(List.of(first, second)).iterator().next() != first) {
-      long t = first;
-      first = second;
-      second = t;
-    }
-    long missChart = savedQueryOf(secChart) == first ? secChart : pubChart;
-    long hitChart = missChart == secChart ? pubChart : secChart;
+  private HitMissResult runHitMissScenario(boolean hitFirst, Runnable onWait) {
+    long lowFirst = savedQueryOf(secChart) < savedQueryOf(pubChart) ? secChart : pubChart;
+    long highLast = lowFirst == secChart ? pubChart : secChart;
+    long hitChart = hitFirst ? lowFirst : highLast;
+    long missChart = hitFirst ? highLast : lowFirst;
+    setSql(hitChart, "SELECT v FROM " + secTable);
+    setSql(missChart, "SELECT v FROM " + pubTable);
     long hitOnly = dashboard(hitChart);
     long board = dashboard(missChart, hitChart);
     AtomicBoolean armed = new AtomicBoolean(false);
@@ -392,14 +394,11 @@ class ChartDashboardRejudgeTest extends IntegrationTestBase {
         new TxRecordingInteractiveGate(
             () -> {
               if (armed.get()) {
-                lowerViewerRoleToPublic();
+                onWait.run();
               }
             });
     AnalyticsDashboardService service = dashboardService(gate);
-    // 먼저 처리되는 위젯은 공개 SQL(캐시 미스 → 허가 대기), 나중 위젯은 민감 SQL.
-    setSql(missChart, "SELECT v FROM " + pubTable);
-    setSql(hitChart, "SELECT v FROM " + secTable);
-    // 다른(자격 있는) 조회자가 민감 위젯 결과를 캐시에 데운다 — 이 요청에서 나중 위젯은 허가 없이 캐시 히트다.
+    // 다른(자격 있는) 조회자가 민감 위젯 결과를 캐시에 데운다 — 열람자 요청에서 민감 위젯은 허가 없이 캐시 히트다.
     long warmer = fx.createUser("rj_w");
     long warmerRole =
         fx.createRole("rj_wr_" + System.nanoTime(), fx.levelId("민감"), "analytics:read");
@@ -413,10 +412,122 @@ class ChartDashboardRejudgeTest extends IntegrationTestBase {
 
       DashboardDataResponse d = service.getDashboardData(board, viewer);
 
-      // 앞 위젯(미스)만 허가를 얻었고, 그 대기 중에 등급이 낮아졌다.
-      assertThat(gate.acquireTx).hasSize(before + 1);
-      assertThat(values(byChart(d).get(missChart))).containsExactly(PUB_VALUE);
-      assertDeniedNoData(byChart(d).get(hitChart));
+      return new HitMissResult(d, hitChart, missChart, gate.acquireTx.size() - before);
+    } finally {
+      awaitSecurityAudit();
+      inTenantFixture(() -> dsl.execute("delete from audit_log where user_id = ?", warmer));
+      fx.deleteUser(warmer);
+      fx.deleteRole(warmerRole);
+    }
+  }
+
+  /** 미스 위젯은 공개 행을 받고, 민감 캐시 히트 위젯은 denied(행·내보내기 없음)이며 민감 데이터셋 감사 접근이 남지 않았다. */
+  private void assertMissServedHitDenied(HitMissResult r) {
+    // 미스 위젯만 허가를 얻었고, 그 대기 중에 변경이 커밋됐다.
+    assertThat(r.acquiresDuringRequest()).isEqualTo(1);
+    assertThat(values(byChart(r.response()).get(r.missChart()))).containsExactly(PUB_VALUE);
+    ChartDataResponse hit = byChart(r.response()).get(r.hitChart());
+    assertDeniedNoData(hit);
+    assertThat(hit.exportAllowed()).isFalse();
+    assertThat(secAccessRows()).isZero();
+  }
+
+  /**
+   * 양성 대조(WD-689) — 뒤 위젯이 허가를 기다렸지만(자격을 다시 읽음) 그동안 바뀐 것이 없으면 앞 캐시 히트 위젯은 마지막 재판정을 통과해 민감 행을 받고, 전달
+   * 감사는 정확히 한 번 남는다(재판정 뒤로 미룬 recordDelivered 가 빠지거나 두 번 남지 않는다). 마지막 재판정이 지나치게 거부하지 않는다는 대조이기도 하다.
+   */
+  @Test
+  void dashboard_laterMissWaitsWithoutChange_earlierCacheHitServedAndAuditedOnce() {
+    HitMissResult r = runHitMissScenario(true, () -> {});
+
+    assertThat(r.acquiresDuringRequest()).isEqualTo(1);
+    assertThat(values(byChart(r.response()).get(r.missChart()))).containsExactly(PUB_VALUE);
+    ChartDataResponse hit = byChart(r.response()).get(r.hitChart());
+    assertThat(hit.denied()).isFalse();
+    assertThat(values(hit)).containsExactly(SEC_VALUE);
+    assertThat(secAccessRows()).isEqualTo(1);
+  }
+
+  /**
+   * 한 대시보드 안에서 앞 위젯(캐시 미스)이 허가를 기다리는 동안 열람자 등급이 낮아지면, 그 뒤에 판정하는 위젯(다른 조회자가 데운 캐시 히트 — 허가 없이 바로
+   * 나간다)도 낮아진 자격으로 판정해야 한다. 요청 시작 때 한 번 계산한 자격을 끝까지 쓰면 캐시 히트가 민감 행을 돌려준다.
+   */
+  @Test
+  void dashboard_clearanceLoweredWhileEarlierMissWaits_laterCacheHitAlsoDenied() {
+    assertMissServedHitDenied(runHitMissScenario(false, this::lowerViewerRoleToPublic));
+  }
+
+  /**
+   * WD-689 — 앞 위젯(캐시 히트)은 허가 없이 그 시점 자격으로 통과하지만 응답은 뒤 위젯(캐시 미스)의 허가 대기가 끝난 뒤에 나간다. 그 대기 중에 열람자 등급이
+   * 낮아지면 앞 위젯도 낮아진 자격으로 다시 판정해 denied 로 바꿔야 한다 — 그러지 않으면 이제 볼 수 없는 민감 행이 응답에 실려 나가고 전달 감사도 남는다.
+   */
+  @Test
+  void dashboard_clearanceLoweredWhileLaterMissWaits_earlierCacheHitAlsoDenied() {
+    assertMissServedHitDenied(runHitMissScenario(true, this::lowerViewerRoleToPublic));
+  }
+
+  /**
+   * WD-689 — 뒤 위젯의 허가 대기 중 데이터셋 등급이 열람자 자격 위로 올라가면(열람자 자격 값은 그대로) 앞 캐시 히트 위젯도 denied. 자격 값이 바뀌었는지가
+   * 아니라 기다림 뒤 다시 읽었는지로 재판정을 정해야 이 경우를 놓치지 않는다.
+   */
+  @Test
+  void dashboard_datasetLevelRaisedWhileLaterMissWaits_earlierCacheHitAlsoDenied() {
+    assertMissServedHitDenied(runHitMissScenario(true, this::raiseSecDatasetToSecret));
+  }
+
+  /**
+   * WD-689 리뷰 — 뒤 위젯(B, 캐시 미스)의 허가 대기가 재판정 없이 429 로 끝나도 그 대기 중 바뀐 자격을 반영해야 한다. 429 는 wait-ms 를 실제로
+   * 기다린 끝이라 그동안 등급이 낮아졌을 수 있다. 처리 순서(저장 쿼리 id 오름차순): A 민감 캐시 히트 → B 공개 미스(게이트가 차 있어 기다리다 429, 대기 중
+   * 등급 하향) → C 민감 캐시 히트(빨리 끝내기 분기) → D 공개 캐시 히트. 429 뒤 자격을 다시 읽지 않던 구현은 A·C 의 민감 행을 응답에 싣고 전달 감사도
+   * 남긴다. D(공개)가 살아남아 응답은 200 이다 — 거부가 429 로 뭉개지지 않고 위젯별로 보인다.
+   */
+  @Test
+  void dashboard_laterMissTimesOutWhileClearanceLowered_cacheHitsDenied() {
+    String m = "rj" + System.nanoTime();
+    long a = secChart;
+    long b = pubChart;
+    long c = chart(m + "_secq2", "SELECT v FROM " + secTable + " WHERE v IS NOT NULL");
+    long dPub = chart(m + "_pubq2", "SELECT v FROM " + pubTable + " WHERE v IS NOT NULL");
+    // 처리 순서 전제 — 차트를 만든 순서대로 저장 쿼리 id 가 오른다.
+    assertThat(List.of(savedQueryOf(a), savedQueryOf(b), savedQueryOf(c), savedQueryOf(dPub)))
+        .isSorted();
+    long warmBoard = dashboard(a, c, dPub);
+    long board = dashboard(a, b, c, dPub);
+    AtomicBoolean armed = new AtomicBoolean(false);
+    // 전체 상한 1·대기 100ms — 미리 허가 하나를 쥐고 있으면 B 는 100ms 기다린 뒤 429 다. 훅은 기다리기 직전에 등급 하향을 커밋한다.
+    TxRecordingInteractiveGate gate =
+        new TxRecordingInteractiveGate(
+            1,
+            1,
+            100,
+            () -> {
+              if (armed.get()) {
+                lowerViewerRoleToPublic();
+              }
+            });
+    AnalyticsDashboardService service = dashboardService(gate);
+    long warmer = fx.createUser("rj_w");
+    long warmerRole =
+        fx.createRole("rj_wr_" + System.nanoTime(), fx.levelId("민감"), "analytics:read");
+    try {
+      fx.removeUserRole(warmer);
+      fx.assignRole(warmer, warmerRole);
+      // 다른(자격 있는) 조회자가 A·C·D 를 캐시에 데운다 — 열람자 요청에서는 B 만 미스다.
+      assertThat(values(byChart(service.getDashboardData(warmBoard, warmer)).get(a)))
+          .containsExactly(SEC_VALUE);
+      DashboardDataResponse d;
+      try (var held = gate.acquire(owner)) {
+        armed.set(true);
+        d = service.getDashboardData(board, viewer);
+      }
+
+      Map<Long, ChartDataResponse> w = byChart(d);
+      assertThat(w.get(b).queryResult().error()).isNotNull();
+      assertThat(values(w.get(b))).isEmpty();
+      assertDeniedNoData(w.get(a));
+      assertDeniedNoData(w.get(c));
+      assertThat(w.get(dPub).denied()).isFalse();
+      assertThat(values(w.get(dPub))).containsExactly(PUB_VALUE);
       assertThat(secAccessRows()).isZero();
     } finally {
       awaitSecurityAudit();
