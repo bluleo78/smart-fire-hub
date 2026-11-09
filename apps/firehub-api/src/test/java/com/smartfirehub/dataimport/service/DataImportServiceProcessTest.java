@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -688,5 +689,51 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
     Mockito.verify(asyncJobService)
         .failJob("process-sheet-missingopts", DataImportService.PARSE_OPTIONS_UNREADABLE);
     assertThat(countRows(tableName)).isZero();
+  }
+
+  /**
+   * 검증 단계에 들어선 뒤 데이터셋이 지워지면 적재 단계와 같은 「삭제되어…」 안내로 잡이 실패해야 한다(WD-677). 예전에는 검증 단계의 데이터셋 재조회가 인자 없는
+   * orElseThrow() 라 NoSuchElementException 이 범용 「관리자에게 문의」 문구로 떨어졌다. 「VALIDATING」 진행률 갱신 시점에 데이터셋을
+   * 지워 실제 경합을 재현한다.
+   */
+  @Test
+  void datasetDeletedDuringValidation_failsJobWithDatasetGoneMessage() throws Exception {
+    String jobId = "process-gone-validating";
+    Long datasetId = createDatasetWithBigintColumn("process_gone_validating");
+    Path csv = writeCsv(10, -1);
+    AtomicBoolean deleted = new AtomicBoolean();
+    Mockito.doAnswer(
+            inv -> {
+              // 검증 단계 첫 진행률 갱신에서 한 번만 데이터셋을 지운다 — 사용자가 임포트 도중 삭제한 상황.
+              if (deleted.compareAndSet(false, true)) {
+                datasetService.deleteDataset(datasetId);
+              }
+              return inv.callRealMethod();
+            })
+        .when(asyncJobService)
+        .updateProgress(
+            Mockito.eq(jobId),
+            Mockito.eq("VALIDATING"),
+            Mockito.anyInt(),
+            Mockito.anyString(),
+            Mockito.anyMap());
+
+    runImport(jobId, datasetId, csv, "APPEND");
+
+    assertThat(deleted).isTrue();
+    Mockito.verify(asyncJobService).failJob(jobId, DataImportService.DATASET_GONE_MESSAGE);
+  }
+
+  /** 잡이 집히기 전에 데이터셋이 지워진 경우도 같은 「삭제되어…」 안내로 실패해야 한다(WD-677). */
+  @Test
+  void datasetDeletedBeforeJobStarts_failsJobWithDatasetGoneMessage() throws Exception {
+    String jobId = "process-gone-before-start";
+    Long datasetId = createDatasetWithBigintColumn("process_gone_before_start");
+    Path csv = writeCsv(10, -1);
+    datasetService.deleteDataset(datasetId);
+
+    runImport(jobId, datasetId, csv, "APPEND");
+
+    Mockito.verify(asyncJobService).failJob(jobId, DataImportService.DATASET_GONE_MESSAGE);
   }
 }

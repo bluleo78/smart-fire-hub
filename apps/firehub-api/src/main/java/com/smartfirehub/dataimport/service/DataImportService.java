@@ -597,7 +597,15 @@ public class DataImportService {
                   ? importModeName
                   : ImportMode.APPEND.name());
 
-      DatasetResponse dataset = datasetRepository.findById(datasetId).orElseThrow();
+      // 검증 단계 중(또는 잡이 집히기 전)에 데이터셋이 지워졌으면 적재 단계(writeToTarget)와 같은 「삭제되어…」 안내로 끝낸다(WD-677).
+      // 예전에는 인자 없는 orElseThrow() 의 NoSuchElementException 이 범용 「관리자에게 문의」 문구로 떨어져 원인을 알 수 없었다.
+      DatasetResponse dataset =
+          datasetRepository
+              .findById(datasetId)
+              .orElseThrow(
+                  () ->
+                      new ImportProcessingException(
+                          DATASET_GONE_MESSAGE, new DatasetNotFoundException()));
       List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
       // 대상 테이블에 바로 넣는 경로(APPEND·PK 없는 REPLACE)는 컬럼 타입을 넘겨야 GEOMETRY 가
       // ST_GeomFromGeoJSON(?) 로 들어간다 — 없으면 GeoJSON 문자열이 varchar 로 묶여 PG 가 거부한다(WD-160).
