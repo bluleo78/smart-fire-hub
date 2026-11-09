@@ -133,8 +133,10 @@ test.describe('파이프라인 에디터 — 스텝 추가 후 포커스 (WD-545
   }) => {
     // 실행 목록 폴링이 RUNNING → COMPLETED 를 보면 상세가 재조회된다(#733). 테스트가 completeRun 을 켜기 전까지는 RUNNING 만 준다 —
     // 무시된 추가를 보낸 뒤에 재조회가 오도록 순서를 정하기 위해서다. 재조회 응답은 내용이 달라야 새 객체로 반영된다(structural sharing).
+    // WD-675: 상세 응답 내용은 「실행 완료 뒤인가」로만 바뀐다 — 완료 전에 다른 이유(편집 취소·포커스 복귀 등)로 오는 상세 GET 은 처음과 같은
+    // 내용이라 화면을 바꾸지 않는다. 그래서 아래 대기가 그런 GET 에 걸려 「재조회 뒤」를 잘못 판정하지 않고, 완료 뒤 재조회만 집어 확인한다.
     let completeRun = false;
-    let detailCalls = 0;
+    const REFETCHED_STEP_DESCRIPTION = '실행 완료 뒤 재조회된 설명';
     await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
     await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
     await mockApi(page, 'GET', '/api/v1/datasets', { content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0 });
@@ -150,8 +152,11 @@ test.describe('파이프라인 에디터 — 스텝 추가 후 포커스 (WD-545
             body: JSON.stringify(createPageResponse([createExecution({ id: 475, pipelineId: 1, status })])),
           });
         }
-        detailCalls += 1;
-        const body = createPipelineDetail({ id: 1, description: detailCalls === 1 ? '처음 설명' : '다른 탭에서 바뀐 설명' });
+        // 스텝 구성은 그대로 두고 완료 뒤에는 첫 스텝의 설명만 바꾼다 — 다른 동작(스텝 수·의존 관계 변화)에 기대지 않게
+        const body = createPipelineDetail({ id: 1, description: '처음 설명' });
+        if (completeRun) {
+          body.steps[0].description = REFETCHED_STEP_DESCRIPTION;
+        }
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
       },
     );
@@ -195,17 +200,16 @@ test.describe('파이프라인 에디터 — 스텝 추가 후 포커스 (WD-545
 
     // 실행이 끝나 상세가 재조회되면 tempId 가 새로 만들어지고, 선택은 이름으로 새 id 에 다시 붙는다 —
     // 남아 있던 포커스 표시가 이 「새 id 선택」을 새 스텝으로 오인해 이름 입력으로 포커스를 뺏으면 안 된다
-    // WD-674: 고정 대기 대신 조건으로 기다린다 — ① 재조회 응답, ② 그 응답이 편집기에 반영됨(tempId 가 새로 만들어져 노드 data-id 가
-    // 바뀜), ③ 반영 커밋의 effect(포커스 판정)가 끝남(두 프레임). 실행 목록 폴링 주기가 5초라 응답 대기에만 넉넉한 상한을 둔다.
+    // WD-674: 고정 대기 대신 조건으로 기다린다 — ① 재조회 내용이 화면에 반영됨, ② tempId 가 새로 만들어져 노드 data-id 가 바뀜,
+    // ③ 반영 커밋의 effect(포커스 판정)가 끝남(두 프레임).
     const firstNode = page.locator('.react-flow__node').first();
     const nodeIdBeforeRefetch = await firstNode.getAttribute('data-id');
     expect(nodeIdBeforeRefetch).toBeTruthy();
-    const refetched = page.waitForResponse(
-      (res) => res.request().method() === 'GET' && new URL(res.url()).pathname === '/api/v1/pipelines/1',
-      { timeout: 15_000 },
-    );
+    // WD-675: 아무 상세 GET 이 아니라 「실행 완료 뒤 재조회」가 화면에 반영됐는지를 바뀐 스텝 설명으로 확인한다 — 완료 전 다른 상세 GET 은
+    // 처음 내용이라 이 조건을 채우지 못한다. 실행 목록 폴링 주기가 5초라 넉넉한 상한을 둔다.
+    await expect(firstNode).not.toContainText(REFETCHED_STEP_DESCRIPTION);
     completeRun = true;
-    await refetched;
+    await expect(firstNode).toContainText(REFETCHED_STEP_DESCRIPTION, { timeout: 15_000 });
     await expect(firstNode).not.toHaveAttribute('data-id', nodeIdBeforeRefetch as string);
     await page.evaluate(
       () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),

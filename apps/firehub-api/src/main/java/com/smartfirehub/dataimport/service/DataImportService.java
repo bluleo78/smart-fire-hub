@@ -41,6 +41,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
@@ -1336,19 +1337,17 @@ public class DataImportService {
    * DatasetDataWriteLock#writeToDataset}, WD-672). 그 사이 데이터셋이 지워졌으면 사라진 테이블에 쓰지 않고 이유가 담긴 실패로 끝낸다.
    */
   private <T> T writeToTarget(Long datasetId, Supplier<T> body) {
-    return writeToTarget(writeLock, datasetId, body);
+    return writeLock.writeToDataset(datasetId, ON_DATASET_GONE, body);
   }
 
   /**
-   * {@link #writeToTarget(Long, Supplier)} 의 본체 — 잠금 층만 받아 서비스 전체를 조립하지 않고 단위 테스트한다(WD-674).
+   * 잠글 때 대상 데이터셋이 없을 때의 실패 변환(WD-674) — 「삭제되어…」 안내는 잠금을 잡을 때 데이터셋이 없을 때만 붙인다. 예전에는 쓰기 본문 전체를 감싸 잡아,
+   * 본문 안에서 난 무관한 {@link DatasetNotFoundException} 까지 삭제로 오인해 안내했다.
    *
-   * <p>WD-674: 「삭제되어…」 안내는 잠금을 잡을 때 데이터셋이 없을 때만 붙인다. 예전에는 쓰기 본문 전체를 감싸 잡아, 본문 안에서 난 무관한 {@link
-   * DatasetNotFoundException} 까지 삭제로 오인해 안내했다.
+   * <p>서비스와 단위 테스트(DataImportWriteTargetTest)가 같은 변환을 잠금 층에 넘기도록 상수로 둔다(WD-675).
    */
-  static <T> T writeToTarget(DatasetDataWriteLock writeLock, Long datasetId, Supplier<T> body) {
-    return writeLock.writeToDataset(
-        datasetId, gone -> new ImportProcessingException(DATASET_GONE_MESSAGE, gone), body);
-  }
+  static final Function<DatasetNotFoundException, ImportProcessingException> ON_DATASET_GONE =
+      gone -> new ImportProcessingException(DATASET_GONE_MESSAGE, gone);
 
   /** 값을 돌려주는 데이터 행 쓰기용 {@link #dataWrite(Runnable)}. */
   static <T> T dataWrite(Supplier<T> write) {

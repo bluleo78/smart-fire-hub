@@ -10,12 +10,14 @@ import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.pipeline.service.TempDatasetService;
 import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -51,6 +53,7 @@ class DatasetDeleteConcurrencyTest extends IntegrationTestBase {
   private static final int ROUNDS = 3;
 
   @Autowired private DatasetService datasetService;
+  @Autowired private TempDatasetService tempDatasetService;
   @Autowired private DSLContext dsl;
   @Autowired @DataStoreDb private DSLContext dataDsl;
   @Autowired private PasswordEncoder encoder;
@@ -72,6 +75,14 @@ class DatasetDeleteConcurrencyTest extends IntegrationTestBase {
                 "WD583",
                 DEFAULT_TEST_TENANT_ID)
             .id();
+  }
+
+  /**
+   * 테이블 이름용 고유 접미사(WD-675) — 예전 {@code nanoTime % 100000} 은 실행·회차가 겹치면 같은 이름이 나올 수 있었다. 테이블 이름
+   * 규칙({@code [a-z][a-z0-9_]*})에 맞게 UUID 의 16진 12자를 쓴다.
+   */
+  private static String uniqueSuffix() {
+    return UUID.randomUUID().toString().replace("-", "").substring(0, 12);
   }
 
   /** 테이블형 데이터셋 하나를 만든다(색인·DROP 경로까지 타도록). */
@@ -130,7 +141,7 @@ class DatasetDeleteConcurrencyTest extends IntegrationTestBase {
   @Test
   void 같은_데이터셋을_동시에_여러_번_삭제하면_한_번만_성공하고_나머지는_404_감사도_한_건이다() throws Exception {
     for (int round = 0; round < ROUNDS; round++) {
-      String tableName = "wd583_race_" + round + "_" + (System.nanoTime() % 100000);
+      String tableName = "wd583_race_" + round + "_" + uniqueSuffix();
       Long datasetId = createDataset(tableName).id();
 
       // 모든 요청을 장벽으로 같은 순간에 출발시키고, 결과(성공 또는 예외)를 모은다.
@@ -173,7 +184,7 @@ class DatasetDeleteConcurrencyTest extends IntegrationTestBase {
 
   @Test
   void 이미_삭제한_데이터셋을_다시_삭제하면_404_이고_감사는_늘지_않는다() {
-    String tableName = "wd583_seq_" + (System.nanoTime() % 100000);
+    String tableName = "wd583_seq_" + uniqueSuffix();
     Long datasetId = createDataset(tableName).id();
 
     deleteAsUser(datasetId);
@@ -191,7 +202,7 @@ class DatasetDeleteConcurrencyTest extends IntegrationTestBase {
    */
   @Test
   void 삭제는_데이터셋_행_잠금을_테넌트_동기화_잠금보다_먼저_잡는다() throws Exception {
-    String tableName = "wd655_order_" + (System.nanoTime() % 100000);
+    String tableName = "wd655_order_" + uniqueSuffix();
     Long datasetId = createDataset(tableName).id();
     // 생성 커밋 뒤 걸린 동기화가 advisory 대기 행으로 섞이지 않게 끝난 뒤에 시작한다.
     awaitPythonReadGrantSync();
@@ -260,5 +271,61 @@ class DatasetDeleteConcurrencyTest extends IntegrationTestBase {
     } finally {
       pool.shutdownNow();
     }
+  }
+
+  /**
+   * 회귀(WD-675): 테이블 없는 데이터셋(DOCUMENT)만 일괄 삭제하면 테넌트 동기화 잠금을 잡지 않는다 — 그 잠금은 기존 테이블 DROP 앞에서만 필요하다. 예전
+   * 일괄 삭제({@code TempDatasetService.deleteTempDatasets})는 행을 잠근 뒤 무조건 동기화 잠금을 잡아, 다른 트랜잭션이 그 잠금을 쥔
+   * 동안 문서 데이터셋만 지우는 삭제도 동기화가 끝날 때까지 줄을 섰다. 변이: 일괄 삭제가 다시 무조건 동기화 잠금을 잡으면 기한 안에 끝나지 않아 실패.
+   */
+  @Test
+  void 문서_데이터셋만_일괄_삭제하면_테넌트_동기화_잠금을_기다리지_않는다() throws Exception {
+    Long docA = createDocumentDataset("wd675_doc_a_" + uniqueSuffix());
+    Long docB = createDocumentDataset("wd675_doc_b_" + uniqueSuffix());
+    awaitPythonReadGrantSync();
+
+    ExecutorService pool = Executors.newSingleThreadExecutor();
+    try {
+      dataDsl.transaction(
+          cfg -> {
+            PythonReadGrantSync.lockTenantSync(cfg.dsl(), DEFAULT_TEST_TENANT_ID);
+            Future<?> f =
+                pool.submit(
+                    () ->
+                        TenantRlsTestSupport.runInTenantTransaction(
+                            fixtureTransactionTemplate,
+                            DEFAULT_TEST_TENANT_ID,
+                            () -> tempDatasetService.deleteTempDatasets(List.of(docB, docA))));
+            // 동기화 잠금을 쥔 채로 기다린다 — 일괄 삭제가 그 잠금을 잡으려 하면 여기서 기한을 넘긴다
+            f.get(10, TimeUnit.SECONDS);
+          });
+    } finally {
+      pool.shutdownNow();
+    }
+    assertThat(datasetExists(docA)).as("문서 데이터셋 A 삭제").isFalse();
+    assertThat(datasetExists(docB)).as("문서 데이터셋 B 삭제").isFalse();
+  }
+
+  /** 테이블 없는 문서 데이터셋 하나를 만든다(WD-675 — 동기화 잠금이 필요 없는 삭제 대상). */
+  private Long createDocumentDataset(String tableName) {
+    return inTenantFixture(
+            () ->
+                datasetService.createDataset(
+                    new CreateDatasetRequest(
+                        "WD675 " + tableName,
+                        tableName,
+                        null,
+                        null,
+                        "DOCUMENT",
+                        "SOURCE",
+                        List.of(),
+                        null),
+                    userId))
+        .id();
+  }
+
+  /** 데이터셋 행이 남아 있는지. */
+  private boolean datasetExists(Long datasetId) {
+    return inTenantFixture(() -> TenantRlsTestSupport.rowExists(dsl, "dataset", "id", datasetId));
   }
 }
